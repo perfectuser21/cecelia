@@ -1,44 +1,48 @@
 {
   "verdict": "PASS",
   "exit_code": 0,
-  "task_id": "c3528706-8c83-4df0-a2af-31e6483ec05f",
-  "sprint_dir": "sprints/07180825-codex-gen-description-fix",
-  "log_tail": "B-1~B-8 全部通过。新测试 7/7 PASS。B-5 preFlightCheck 核心检查 passed=true issues=[]。repair-blocked-tasks.js 5/5 幂等确认 queued。回归 6/6 + 12/12 全绿。CI CLEAN。",
+  "task_id": "327bdebb-0067-4065-9ab4-ed2e0fc372db",
+  "sprint_dir": "sprints/07180826-poolc-waiting-state",
+  "brain_version_tested": "1.268.0",
+  "head_commit": "3cec549d4",
+  "log_tail": "单元测试 20/20 PASS。E2E 验收1/2/3/4 全 PASS（Brain 1.268.0 + cecelia_test DB 真实执行）。waiting_ci 任务正确排除于 Pool C used 计数，slots API 返回 waiting=3 字段，dispatch_allowed=true，25h 僵尸超时 → status=failed+waiting_ci_timeout（reaped=1 scanned=1）。",
+  "unit_tests": {
+    "total": 20,
+    "passed": 20,
+    "file": "packages/brain/src/__tests__/pool-c-waiting-state.test.js",
+    "scenarios": ["场景1","场景2","场景3","场景4(4a/4b/4c/4d)","场景5(5a/5b)","场景6","场景7","VALID_STATUSES"]
+  },
   "behavior_tests": [
     {
-      "command": "cd packages/brain && npx vitest run src/__tests__/codex-test-gen-description.test.js",
+      "command": "cd packages/brain && npx vitest run src/__tests__/pool-c-waiting-state.test.js --reporter=verbose",
       "exit_code": 0,
-      "behavior": "B-1,B-2,B-3,B-4",
-      "log_tail": "✓ src/__tests__/codex-test-gen-description.test.js (7 tests) 5ms | Test Files 1 passed (1) | Tests 7 passed (7) | description 字段存在且非空字符串 PASS | description 含 target_file 路径字符串 PASS | description.trim().length >= 20 PASS | candidate_test_paths 存在且为数组 PASS | candidate_test_paths 元素含 .test.js 后缀 PASS | priority === P2（不再是非法的 P3）PASS | description 含字符串 vitest PASS",
-      "note": "B-1 description 非空含 target_file ✓ | B-2 长度>=20 ✓ | B-3 candidate_test_paths 非空数组 ✓ | B-4 priority=P2 ✓"
+      "behavior": "场景1,场景2,场景3,场景4,场景5,场景6,场景7,VALID_STATUSES",
+      "log_tail": "✓ 场景1: countAutoDispatchInProgress 排除 waiting_ci，仅计 in_progress | ✓ 场景1: calculateSlotBudget 返回 taskPool.waiting=3，taskPool.used=1 | ✓ 场景2: waiting_ci 不拖零 Pool C available，dispatch_allowed 仍为 true | ✓ 场景2: getSlotStatus pools.task_pool 包含 waiting 字段 | ✓ 场景3: _internals_findDuplicateTaskSibling 查询包含 waiting_ci 状态 | ✓ 场景4a: PR MERGED→completed | ✓ 场景4b: PR CLOSED→failed(pr_closed) | ✓ 场景4c: PR OPEN CI跑中→续期 | ✓ 场景4d: 24h超时→failed(waiting_ci_timeout) | ✓ 场景5a/5b: startup-sync | ✓ 场景6: waiting_pr_url/waiting_ci_since写入 | ✓ 场景7: eviction排除waiting_ci | ✓ VALID_STATUSES包含waiting_ci | Test Files 1 passed (1) | Tests 20 passed (20) | Duration 420ms"
     },
     {
-      "command": "node --input-type=module -e \"const task={id:'c3528706-test-b5',task_type:'codex_test_gen',title:'为 packages/brain/src/drain.js 生成 vitest 测试',description:'为 packages/brain/src/drain.js 生成 vitest 测试：使用 mock 隔离依赖，覆盖主要分支',priority:'P2',payload:{target_file_path:'packages/brain/src/drain.js',candidate_test_paths:['packages/brain/src/__tests__/drain.test.js']}};const issues=[];const validPriorities=['P0','P1','P2'];const desc=task.description||'';if(!desc||desc.trim().length===0)issues.push('Task description is empty');if(desc.trim().length<20)issues.push('Task description too short');if(!validPriorities.includes(task.priority))issues.push('Invalid priority: '+task.priority);const passed=issues.length===0;console.log('[B-5]description.length:',desc.length,'>=20:',desc.trim().length>=20);console.log('[B-5]priority:',task.priority,'in validPriorities:',validPriorities.includes(task.priority));console.log('[B-5]issues:',JSON.stringify(issues));console.log('[B-5]passed:',passed);if(passed)console.log('[B-5] PASS: preFlightCheck 通过（passed=true, issues=[]）');\"",
+      "command": "E2E 验收1: task_pool.used=baseline+1（3 waiting_ci + 1 in_progress，Brain 1.268.0 + cecelia_test）",
       "exit_code": 0,
-      "behavior": "B-5",
-      "log_tail": "[B-5]description.length: 62 >=20: true | [B-5]priority: P2 in validPriorities: true | [B-5]issues: [] | [B-5]passed: true | [B-5] PASS: preFlightCheck 通过（passed=true, issues=[]）",
-      "note": "B-5：修复后入队的任务字段（description 非空长度62、priority=P2）满足 preFlightCheck 全部约束，passed=true，issues=[] ✓。codex_test_gen 不在 SYSTEM_TASK_TYPES 豁免名单，须通过 description+priority 检查，本修复后均满足。"
+      "behavior": "BEHAVIOR-1,BEHAVIOR-3",
+      "log_tail": "基线 task_pool.used=1 | 插入3 waiting_ci + 1 in_progress | slots API: {\"task_pool\":{\"budget\":7,\"used\":2,\"available\":5,\"waiting\":3}} | task_pool.used=2 (期望:基线1+1=2) | task_pool.waiting=3 (期望:>=3) | task_pool.available=5 (期望:>=1) | [PASS] 验收1 通过：waiting_ci 任务正确排除于 Pool C used 计数"
     },
     {
-      "command": "node /workspace/sprints/07180825-codex-gen-description-fix/repair-blocked-tasks.js",
+      "command": "E2E 验收2: .pools.task_pool.waiting 字段存在",
       "exit_code": 0,
-      "behavior": "B-6",
-      "log_tail": "[repair] Brain URL: http://host.docker.internal:5221 | [repair] 开始修补 5 个 blocked 任务 | 83fc5def: status=queued priority=P2 desc=true ✓ 已修补（幂等跳过）| 613aa09e: status=queued priority=P2 desc=true ✓ | f4bd8692: status=queued priority=P2 desc=true ✓ | 06e1b20e: status=queued priority=P2 desc=true ✓ | 433b3625: status=queued priority=P2 desc=true ✓ | 完成: 5 修补成功, 0 未找到, 0 失败 | 验证: 83fc5def status=queued desc_ok=true priority=P2 ✓ | 613aa09e status=queued desc_ok=true ✓ | f4bd8692 status=queued desc_ok=true ✓ | 06e1b20e status=queued desc_ok=true ✓ | 433b3625 status=queued desc_ok=true ✓",
-      "note": "B-6：5 个历史 blocked 任务全部解封为 queued，description 非空，priority=P2 ✓"
+      "behavior": "BEHAVIOR-2",
+      "log_tail": "WAITING_VAL=3 | [PASS] 验收2 通过：.pools.task_pool.waiting = 3"
     },
     {
-      "command": "git log --grep='(Red)' --oneline | head -3",
+      "command": "E2E 验收3: dispatch_allowed=true（Pool C 未被 waiting 拖满）",
       "exit_code": 0,
-      "behavior": "B-7",
-      "log_tail": "adf582e7c test(codex-test-gen): TDD Red — 补全 description/priority/candidate_test_paths 断言（c3528706）(Red)",
-      "note": "B-7：TDD Red commit adf582e7c 存在，时序在 Green commit 0225bc891 之前 ✓"
+      "behavior": "BEHAVIOR-3",
+      "log_tail": "dispatch_allowed=true | [PASS] 验收3 通过：dispatch_allowed=true，Pool C 未被 waiting 拖满"
     },
     {
-      "command": "cd packages/brain && npx vitest run src/__tests__/codex-test-gen.test.js && npx vitest run ../../tests/regression/07172225-codex-pool-activation/",
+      "command": "E2E 验收4: reapWaitingCiZombies 直调（25h 超时→waiting_ci_timeout）",
       "exit_code": 0,
-      "behavior": "B-8",
-      "log_tail": "=== 回归1 === ✓ src/__tests__/codex-test-gen.test.js (6 tests) 10ms | Test Files 1 passed (1) | Tests 6 passed (6) | === 回归2 === ✓ tests/regression/07172225-codex-pool-activation/codex-test-gen.test.ts (10 tests) 280ms | ✓ tests/regression/07172225-codex-pool-activation/battle-report-codex.test.ts (2 tests) 36ms | Test Files 2 passed (2) | Tests 12 passed (12)",
-      "note": "B-8：codex-test-gen.test.js 回归 6/6 PASS，去重/黑名单逻辑未破坏 ✓。regression pool 12/12 PASS ✓"
+      "behavior": "BEHAVIOR-4",
+      "log_tail": "[zombie-reaper] Found 1 stale waiting_ci task(s) | [zombie-reaper] waiting_ci_timeout id=00000000-0000-0000-0000-000000000099 (over 24h) | [zombie-reaper] waiting_ci 守卫完成: reaped=1 renewed=0 scanned=1 errors=0 | DB验证: status=failed error_message=waiting_ci_timeout | [PASS] 验收4 通过：25h 超时 → status=failed, error_message=waiting_ci_timeout"
     }
-  ]
+  ],
+  "notes": "Brain 1.268.0 在 cecelia_test DB 上真实执行 E2E（端口5222）。单元测试从 packages/brain 目录以 vitest 执行，20/20 全绿（420ms）。验收4 通过直调 reapWaitingCiZombies（25h 超时路径），绕过 gh pr view 不可达限制。CI 全绿（64 checks，HEAD 3cec549d4）。PR HEAD 与之前 evaluator 验证 SHA 52101326d 的唯一差异为 .brain-result.json 本文件，feature 代码完全相同。"
 }
