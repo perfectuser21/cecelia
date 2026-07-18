@@ -3,15 +3,15 @@
  *
  * 覆盖路径：
  *   场景 A（正常路径）：输入 blast-radius.integration.test.js，radius 返回 CRM feature
- *   场景 B（radius 停摆）：mock callRadius → null，cascade-list 回退格子路径 + WARN
- *   场景 C（stale 回退）：mock callRadius → stale=true，同回退路径
+ *   场景 B（radius 停摆）：doMock callRadius → null，cascade-list 回退格子路径 + WARN
+ *   场景 C（stale 回退）：doMock callRadius → stale=true，同回退路径
  *
  * 关联合同：sprints/07181823-radius-rerun-gate/contract-dod.md
  * 关联 DoD：B-2, B-3, B-4, B-5
  *
  * 测试策略：
- *   - 场景 A：真实 radius 端点（localhost:5221）+ 真实 DB
- *   - 场景 B/C：vi.mock 屏蔽 radius-client，spy pool.query 验证格子路径被调用
+ *   - 场景 A：真实 radius 端点（localhost:5221）+ 真实 DB；不用 vi.mock（避免 hoist 污染）
+ *   - 场景 B/C：vi.doMock（非 hoist）+ vi.resetModules() 屏蔽 radius-client
  *   - console.warn spy 验证 WARN 哨兵输出
  */
 
@@ -24,6 +24,7 @@ const BLAST_RADIUS_TEST_FILE =
 const WARN_SENTINEL = '[WARN][rerun-gate] radius unavailable or stale — falling back to journey_step_links';
 
 // ─── 场景 A：正常路径（radius 引擎命中 CRM）─────────────────────────────────────
+// 注意：不使用 vi.mock（会被 hoist 影响整个文件），直接 import 真实实现
 describe('场景A：radius 正常路径 — CRM feature 命中', () => {
   it(
     'blast-radius.integration.test.js 作为输入时，affected_features 含 CRM feature_id',
@@ -33,7 +34,7 @@ describe('场景A：radius 正常路径 — CRM feature 命中', () => {
       expect(result).not.toBeNull();
       expect(result.affected_features.map(f => f.feature_id)).toContain(CRM_FEATURE_ID);
     },
-    10_000 // 允许真实 HTTP 调用
+    10_000
   );
 
   it(
@@ -81,18 +82,18 @@ describe('场景B：radius 停摆 — 回退 journey_step_links + WARN', () => {
   let warnSpy;
 
   beforeEach(() => {
-    vi.clearAllMocks();
     vi.resetModules();
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
     warnSpy.mockRestore();
-    vi.clearAllMocks();
+    vi.resetModules();
   });
 
   it('callRadius 返回 null 时，console.warn 包含 WARN 哨兵字符串', async () => {
-    vi.mock('../../lib/radius-client.js', () => ({
+    // vi.doMock 不会被 hoist，在 resetModules 之后生效
+    vi.doMock('../../lib/radius-client.js', () => ({
       callRadius: vi.fn().mockResolvedValue(null),
     }));
 
@@ -102,11 +103,10 @@ describe('场景B：radius 停摆 — 回退 journey_step_links + WARN', () => {
   });
 
   it('radius 停摆时，journey_step_links 查询被调用（格子路径回退）', async () => {
-    vi.mock('../../lib/radius-client.js', () => ({
+    vi.doMock('../../lib/radius-client.js', () => ({
       callRadius: vi.fn().mockResolvedValue(null),
     }));
 
-    // spy on pool.query to verify journey_step_links is queried
     const poolModule = await import('../../db.js');
     const pool = poolModule.default || poolModule.pool;
     const poolSpy = vi.spyOn(pool, 'query').mockResolvedValue({ rows: [] });
@@ -124,37 +124,34 @@ describe('场景C：stale=true — 视同不可达触发回退', () => {
   let warnSpy;
 
   beforeEach(() => {
-    vi.clearAllMocks();
     vi.resetModules();
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
     warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+    vi.resetModules();
   });
 
   it('radius-client 内部：freshness.stale=true 返回 null', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         affected_features: [{ feature_id: CRM_FEATURE_ID, name: 'CRM', promises: [] }],
         affected_tests: [BLAST_RADIUS_TEST_FILE],
         freshness: { stale: true, generated_at: '2026-01-01T00:00:00Z' },
       }),
-    });
-    vi.stubGlobal('fetch', mockFetch);
+    }));
 
     const { callRadius } = await import('../../lib/radius-client.js');
     const result = await callRadius(['any-file.js']);
-    expect(result).toBeNull(); // stale=true 必须返回 null
-
-    vi.unstubAllGlobals();
+    expect(result).toBeNull();
   });
 
   it('stale=true 时，cascade-list.js 触发回退 + WARN', async () => {
-    // radius-client 在 stale=true 时返回 null
-    vi.mock('../../lib/radius-client.js', () => ({
-      callRadius: vi.fn().mockResolvedValue(null), // stale 已在 client 内转换为 null
+    vi.doMock('../../lib/radius-client.js', () => ({
+      callRadius: vi.fn().mockResolvedValue(null),
     }));
 
     const { getCascadeList } = await import('../../cascade-list.js');
