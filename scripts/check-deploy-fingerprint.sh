@@ -88,8 +88,12 @@ if [[ "$LOCAL_SHA" != "FETCH_FAIL" && "$LOCAL_SHA" != "PARSE_FAIL" && -n "$LOCAL
         fi
     fi
     echo "  ⚠️ HK build-info 取不到（${HK_SHA}），退回 index hash 对比"
+else
+    echo "  ⚠️ build-info sha 不可用（旧产物/服务异常，本机=${LOCAL_SHA}），退回 index hash 对比"
+    if [[ -n "${EXPECTED_GIT_SHA:-}" ]]; then
+        echo "  ⚠️ 本机取不到 build-info（可能在服老产物 = 分家/容器 inode 陈旧——重启 cecelia-frontend 后复查），期望 sha 检查退化为 index hash 对比"
+    fi
 fi
-echo "  ⚠️ build-info sha 不可用（旧产物/服务异常），退回 index hash 对比"
 
 # ── 回退路径：index.html hash 对比 ─────────────────────────────────────────────
 LOCAL_HASH=$(_hash "$LOCAL_URL")

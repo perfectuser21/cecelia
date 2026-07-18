@@ -52,7 +52,18 @@ cleanup() {
   else
     rm -f "$RELEASE_FILE" 2>/dev/null || true
   fi
-  [[ "${RELEASES_DIR_PREEXISTED:-0}" == "0" ]] && rm -rf "$RELEASES_DIR" 2>/dev/null || true
+  # .dist-releases：smoke 前已存在 → 只删 smoke 期间新增的条目（保真实回滚留存不被 fixture 污染/prune 挤掉）；
+  #                 smoke 前不存在 → 整删。
+  if [[ "${RELEASES_DIR_PREEXISTED:-0}" == "1" ]]; then
+    if [[ -d "$RELEASES_DIR" && -f "$TMP/dist-releases.snapshot" ]]; then
+      while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+        grep -qxF "$entry" "$TMP/dist-releases.snapshot" 2>/dev/null || rm -rf "${RELEASES_DIR:?}/$entry" 2>/dev/null || true
+      done < <(ls -1 "$RELEASES_DIR" 2>/dev/null)
+    fi
+  else
+    rm -rf "$RELEASES_DIR" 2>/dev/null || true
+  fi
   rm -rf "$TMP" "$STAGING_DIST" "$PENDING" "$PID_FILE" "$NOTIFY" "$DASH/.dist-dev" "$DASH/.dev-preview.pid" "$DASH/.dev-preview.log" 2>/dev/null || true
   # 复原 live dist/ 为 smoke 之前不存在的状态（live dist/ 是 gitignore 构建产物）
   [[ "${LIVE_DIST_PREEXISTED:-0}" == "0" ]] && rm -rf "$LIVE_DIST" 2>/dev/null || true
@@ -60,7 +71,12 @@ cleanup() {
 trap cleanup EXIT
 
 [[ -d "$LIVE_DIST" ]] && LIVE_DIST_PREEXISTED=1 || LIVE_DIST_PREEXISTED=0
-[[ -d "$RELEASES_DIR" ]] && RELEASES_DIR_PREEXISTED=1 || RELEASES_DIR_PREEXISTED=0
+if [[ -d "$RELEASES_DIR" ]]; then
+  RELEASES_DIR_PREEXISTED=1
+  ls -1 "$RELEASES_DIR" > "$TMP/dist-releases.snapshot" 2>/dev/null || true
+else
+  RELEASES_DIR_PREEXISTED=0
+fi
 if [[ -f "$RELEASE_FILE" ]]; then cp "$RELEASE_FILE" "$TMP/.production-release.bak"; REL_FILE_PREEXISTED=1; else REL_FILE_PREEXISTED=0; fi
 
 # ── 造 fixture：一个能通过 selfcheck 的最小合法 dist（含 #root + 可达入口资产）──
