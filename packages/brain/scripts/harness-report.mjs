@@ -25,6 +25,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
+import { execFileSync } from 'child_process';
 
 // ── CLI argument parsing ─────────────────────────────────────────────────────
 function parseArgs(argv) {
@@ -220,6 +221,51 @@ if (FEATURE_ID) {
   }
 } else {
   console.log('[S6] feature-id empty, skipping');
+}
+
+// ── S6b: 锚点自动焊(merge自动焊)——三锚字段皆空时用PR changed files回填unit_test_path ──
+function getPrChangedFiles(prUrl) {
+  const ghCmd = process.env.GH_CMD || 'gh';
+  try {
+    const out = execFileSync(ghCmd, ['pr', 'view', prUrl, '--json', 'files', '-q', '.files[].path'], {
+      encoding: 'utf8',
+    });
+    return out.split('\n').map((l) => l.trim()).filter(Boolean);
+  } catch (err) {
+    console.warn(`[S6b] gh pr view 失败(非致命): ${err.message}`);
+    return [];
+  }
+}
+
+if (FEATURE_ID) {
+  try {
+    const getResp = await fetch(`${BRAIN_URL}/api/brain/journey_features/${FEATURE_ID}`);
+    if (getResp.ok) {
+      const feature = await getResp.json();
+      const hasAnyAnchor = feature.unit_test_path || feature.workflow_ref || feature.guard_ref;
+      if (!hasAnyAnchor) {
+        const changedFiles = getPrChangedFiles(PR_URL);
+        const testFile = changedFiles.find((f) => /\.(test|spec)\.[jt]sx?$|_test\.py$|test_.*\.py$/.test(f));
+        if (testFile) {
+          const patchResp = await brainPatch(`/journey_features/${FEATURE_ID}`, { unit_test_path: testFile });
+          if (patchResp.ok) {
+            console.log(`[S6b] 锚点自动焊: unit_test_path=${testFile}`);
+          } else {
+            console.warn(`[S6b] 锚点回填 PATCH 返回 HTTP ${patchResp.status} — non-fatal`);
+          }
+        } else {
+          console.log('[S6b] PR changed files 中未找到测试文件，跳过自动焊');
+        }
+      } else {
+        console.log('[S6b] feature 已有锚点，不覆盖');
+      }
+    } else {
+      console.warn(`[S6b] GET journey_features 返回 HTTP ${getResp.status} — 跳过自动焊`);
+    }
+  } catch (err) {
+    console.error(`[S6b] FAIL: ${err.message}`);
+    connectionErrors.push(`S6b: ${err.message}`);
+  }
 }
 
 // ── S7: POST notes ────────────────────────────────────────────────────────────
