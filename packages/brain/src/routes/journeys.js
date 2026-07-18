@@ -249,7 +249,7 @@ router.post('/journey_features', async (req, res) => {
 // PATCH /api/brain/journey_features/:id
 router.patch('/journey_features/:id', async (req, res) => {
   try {
-    const { thickness, status, unit_test_path, version, guard_ref, softness, group } = req.body;
+    const { thickness, status, unit_test_path, version, guard_ref, softness, group, workflow_ref } = req.body;
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
     }
@@ -265,6 +265,7 @@ router.patch('/journey_features/:id', async (req, res) => {
     if (unit_test_path)                 { sets.push(`unit_test_path=$${idx++}`);  vals.push(unit_test_path); }
     if (version)                        { sets.push(`version=$${idx++}`);         vals.push(version); }
     if (guard_ref !== undefined)        { sets.push(`guard_ref=$${idx++}`);       vals.push(guard_ref ?? null); }
+    if (workflow_ref !== undefined)     { sets.push(`workflow_ref=$${idx++}`);    vals.push(workflow_ref ?? null); }
     if (softness !== undefined)         { sets.push(`softness=$${idx++}`);        vals.push(softness ?? null); }
     if (group !== undefined)            { sets.push(`"group"=$${idx++}`);         vals.push(group ?? null); }
     if (!sets.length)                   return res.status(400).json({ error: 'no fields to update' });

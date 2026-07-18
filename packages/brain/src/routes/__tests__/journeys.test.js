@@ -511,6 +511,49 @@ describe('PATCH /journey_features/:id softness/group', () => {
   });
 });
 
+describe('PATCH /journey_features/:id workflow_ref', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('workflow_ref 写入 UPDATE 语句', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'f1', workflow_ref: 'e2e/foo.spec.ts' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .patch('/api/brain/journey_features/f1')
+      .send({ workflow_ref: 'e2e/foo.spec.ts' });
+
+    expect(res.status).toBe(200);
+    const updateSql = mockQuery.mock.calls[0][0];
+    expect(updateSql).toContain('workflow_ref');
+    expect(mockQuery.mock.calls[0][1]).toContain('e2e/foo.spec.ts');
+  });
+
+  it('workflow_ref 传 null 会清空字段', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'f1', workflow_ref: null }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .patch('/api/brain/journey_features/f1')
+      .send({ workflow_ref: null });
+
+    expect(res.status).toBe(200);
+    const updateSql = mockQuery.mock.calls[0][0];
+    expect(updateSql).toContain('workflow_ref');
+  });
+});
+
 describe('POST /journey_steps promise', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
