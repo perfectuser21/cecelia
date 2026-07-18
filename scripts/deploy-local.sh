@@ -144,8 +144,10 @@ if [[ -z "$DASH_PROD_SHA" && -z "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     DASH_PROD_SHA=$(curl -sf --max-time 5 "http://localhost:5211/build-info.json" 2>/dev/null \
         | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.git_sha||'')}catch{process.stdout.write('')}})" \
         2>/dev/null || echo "")
-    [[ "$DASH_PROD_SHA" == "unknown" ]] && DASH_PROD_SHA=""
 fi
+# unknown 归一化统一在钩子/curl 赋值之后做（测试钩子注入 unknown 也归一，
+# 不走"不在 git 历史"的误导路径）
+[[ "$DASH_PROD_SHA" == "unknown" ]] && DASH_PROD_SHA=""
 if [[ -n "$DASH_PROD_SHA" ]]; then
     DASH_BASE_REF="origin/$BASE_BRANCH"
     git -C "$MAIN_ROOT" rev-parse --verify "$DASH_BASE_REF" >/dev/null 2>&1 || DASH_BASE_REF="$BASE_BRANCH"
@@ -154,8 +156,12 @@ if [[ -n "$DASH_PROD_SHA" ]]; then
         echo "🔎 Dashboard 对账：生产自报 sha=${DASH_PROD_SHA} 不在 git 历史 → 保守触发构建"
         DASHBOARD_SHA_MISMATCH=true
     else
-        DASH_DIFF=$(git -C "$MAIN_ROOT" diff --name-only "$DASH_FULL_SHA".."$DASH_BASE_REF" -- apps/dashboard apps/api 2>/dev/null || echo "")
-        if [[ -n "$DASH_DIFF" ]]; then
+        # diff 失败 ≠ diff 为空：失败必须保守触发（整段唯一"出错→不部署"的反向路径要堵死）。
+        # 命令替换放 if 条件位，set -e 不触发。
+        if ! DASH_DIFF=$(git -C "$MAIN_ROOT" diff --name-only "$DASH_FULL_SHA".."$DASH_BASE_REF" -- apps/dashboard apps/api 2>/dev/null); then
+            echo "⚠️  Dashboard 对账：diff 命令失败（生产=${DASH_PROD_SHA} 基准=${DASH_BASE_REF}）→ 保守触发构建"
+            DASHBOARD_SHA_MISMATCH=true
+        elif [[ -n "$DASH_DIFF" ]]; then
             echo "🔎 Dashboard 对账：生产=${DASH_PROD_SHA} ← ${DASH_BASE_REF} 有 dashboard 改动 → 触发构建"
             DASHBOARD_SHA_MISMATCH=true
         else
@@ -210,7 +216,9 @@ done <<< "$CHANGED_FILES"
 if [[ "$NEED_DASHBOARD" == true ]]; then
     DEDUP_PENDING="$MAIN_ROOT/apps/dashboard/.staging-pending"
     if [[ -f "$DEDUP_PENDING" ]]; then
-        DEDUP_COMMIT=$(grep '^commit=' "$DEDUP_PENDING" | head -1 | cut -d= -f2)
+        # || echo "" 兜底：pending 文件缺 commit= 行（截断/旧格式）时 grep 退 1 + pipefail
+        # 会被 set -e 静默吞成 exit 1 零输出——兜成空串走"不去重"分支即可
+        DEDUP_COMMIT=$(grep '^commit=' "$DEDUP_PENDING" | head -1 | cut -d= -f2 || echo "")
         DEDUP_HEAD=$(git -C "$MAIN_ROOT" rev-parse --short "origin/$BASE_BRANCH" 2>/dev/null \
             || git -C "$MAIN_ROOT" rev-parse --short "$BASE_BRANCH" 2>/dev/null || echo "")
         if [[ -n "$DEDUP_COMMIT" && -n "$DEDUP_HEAD" && "$DEDUP_COMMIT" == "$DEDUP_HEAD" ]]; then
