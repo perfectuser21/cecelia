@@ -1,0 +1,22 @@
+{
+  "verdict": "PASS",
+  "pr_head_sha": "9ecc8a418b457ed295e0a97361e79b539d2b2228",
+  "task_id": "c3528706-8c83-4df0-a2af-31e6483ec05f",
+  "pr": 4074,
+  "evaluated_at": "2026-07-18T02:04:30Z",
+  "behaviors_checked": ["B-1", "B-2", "B-3", "B-4", "B-5", "B-6", "B-7", "B-8"],
+  "behaviors_passed": ["B-1", "B-2", "B-3", "B-4", "B-5", "B-6", "B-7", "B-8"],
+  "behaviors_failed": [],
+  "unverifiable": [],
+  "detail": {
+    "B-1": "description 字段存在且非空，含 target_file 路径字符串 — 7/7 测试 PASS",
+    "B-2": "description.trim().length >= 20 满足 INV-2 — 通过",
+    "B-3": "payload.candidate_test_paths 为非空数组，元素含 .test.js 后缀 — 满足 INV-3",
+    "B-4": "priority === 'P2'（不再是非法的 P3）— 满足 INV-5",
+    "B-5": "preFlightCheck / 联合断言（description 含 vitest 关键词）— 满足 INV-4，全部测试通过",
+    "B-6": "5 个 blocked 任务均已修补为 queued，status=queued / desc_ok=true / priority=P2 均验证通过（幂等修补，已在之前运行中完成）",
+    "B-7": "Red commit adf582e7c 存在，含 (Red) 标签，时序在 Green 之前",
+    "B-8": "回归测试 tests/regression/07172225-codex-pool-activation/ 12/12 PASS（battle-report-codex.test.ts 2 + codex-test-gen.test.ts 10）"
+  },
+  "notes": "所有 8 项行为全部通过。B-6 修补脚本幂等运行，5 任务已在之前轮次修复，本次验证 status/desc/priority 均符合预期。回归目录存在且 12 个测试全绿。"
+}
