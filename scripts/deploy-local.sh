@@ -61,48 +61,6 @@ echo "=== Cecelia 本地部署 ==="
 echo "  主仓库: $MAIN_ROOT"
 echo ""
 
-# 检测改动文件范围（在当前 git 上下文中检测）
-if [[ -z "$CHANGED_FILES" ]]; then
-    if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
-        CHANGED_FILES=$(git diff --name-only "origin/$BASE_BRANCH"...HEAD 2>/dev/null || echo "")
-    else
-        CHANGED_FILES=$(git diff --name-only "$BASE_BRANCH"...HEAD 2>/dev/null || echo "")
-    fi
-fi
-
-# ── Gate3 假跳过根治 v2（SHA 对账，bug becfd554）──────────────────────────
-# G1 版本号兜底在 squash merge 不 bump version 时失效（#4024 webhook 假跳过实证）。
-# 真正的判变真相：origin/main HEAD SHA vs 生产容器构建期烙入的 GIT_SHA。
-# 不等 = main 有新代码、生产跑旧镜像 → 必须部署；SHA 相等 = 幂等跳过。
-# 测试钩子：CECELIA_PROD_GIT_SHA 注入生产 SHA（跳过真实 curl）。
-SHA_MISMATCH=false
-ORIGIN_SHA=$(git -C "$MAIN_ROOT" rev-parse "origin/$BASE_BRANCH" 2>/dev/null || echo "")
-PROD_SHA="${CECELIA_PROD_GIT_SHA:-}"
-if [[ -z "$PROD_SHA" ]]; then
-    PROD_SHA=$(curl -sf --max-time 5 \
-        "http://localhost:${BRAIN_PORT:-5221}/api/brain/health" 2>/dev/null \
-        | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.git_sha||'')}catch{process.stdout.write('')}})" \
-        2>/dev/null || echo "")
-fi
-if [[ -n "$ORIGIN_SHA" && -n "$PROD_SHA" && "$PROD_SHA" != "unknown" ]]; then
-    if [[ "$ORIGIN_SHA" != "$PROD_SHA" ]]; then
-        echo "🔎 SHA 对账：origin/main=$ORIGIN_SHA 生产=$PROD_SHA → 不等，强制走 Brain 部署"
-        SHA_MISMATCH=true
-    else
-        echo "✅ SHA 对账：origin/main=$ORIGIN_SHA 生产=$PROD_SHA → 一致，Brain 无需重部署"
-    fi
-else
-    echo "⚠️  SHA 对账：无法获取完整 SHA（origin=$ORIGIN_SHA 生产=${PROD_SHA:-N/A}），跳过对账"
-fi
-
-echo "📋 改动范围："
-if [[ -z "$CHANGED_FILES" ]]; then
-    echo "  (无改动)"
-else
-    echo "$CHANGED_FILES" | sed 's/^/  /'
-fi
-echo ""
-
 # ── 部署根守卫（07-10 Gate3 五连红根治）──────────────────────────────
 # 真实模式必跑；CECELIA_DEPLOY_ROOT 测试隔离模式默认跳过（现有 smoke 兼容），
 # 测试要验守卫时用 CECELIA_DEPLOY_FORCE_GUARD=1 强制开启。
@@ -138,6 +96,87 @@ if [[ "$RUN_GUARD" == true ]]; then
     echo ""
 fi
 
+# 检测改动文件范围（在当前 git 上下文中检测）
+if [[ -z "$CHANGED_FILES" ]]; then
+    if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+        CHANGED_FILES=$(git diff --name-only "origin/$BASE_BRANCH"...HEAD 2>/dev/null || echo "")
+    else
+        CHANGED_FILES=$(git diff --name-only "$BASE_BRANCH"...HEAD 2>/dev/null || echo "")
+    fi
+fi
+
+# ── Gate3 假跳过根治 v2（SHA 对账，bug becfd554）──────────────────────────
+# G1 版本号兜底在 squash merge 不 bump version 时失效（#4024 webhook 假跳过实证）。
+# 真正的判变真相：origin/main HEAD SHA vs 生产容器构建期烙入的 GIT_SHA。
+# 不等 = main 有新代码、生产跑旧镜像 → 必须部署；SHA 相等 = 幂等跳过。
+# 测试钩子：CECELIA_PROD_GIT_SHA 注入生产 SHA（跳过真实 curl）。
+# 隔离守卫：CECELIA_DEPLOY_ROOT 测试模式禁 curl 真生产——否则真生产落后 main 时
+# NEED_BRAIN=true 会在隔离根真点火 brain-deploy.sh（staging-gate smoke 实证）。
+SHA_MISMATCH=false
+ORIGIN_SHA=$(git -C "$MAIN_ROOT" rev-parse --verify "origin/$BASE_BRANCH^{commit}" 2>/dev/null || echo "")
+PROD_SHA="${CECELIA_PROD_GIT_SHA:-}"
+if [[ -z "$PROD_SHA" && -z "${CECELIA_DEPLOY_ROOT:-}" ]]; then
+    PROD_SHA=$(curl -sf --max-time 5 \
+        "http://localhost:${BRAIN_PORT:-5221}/api/brain/health" 2>/dev/null \
+        | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.git_sha||'')}catch{process.stdout.write('')}})" \
+        2>/dev/null || echo "")
+fi
+if [[ -n "$ORIGIN_SHA" && -n "$PROD_SHA" && "$PROD_SHA" != "unknown" ]]; then
+    if [[ "$ORIGIN_SHA" != "$PROD_SHA" ]]; then
+        echo "🔎 SHA 对账：origin/main=$ORIGIN_SHA 生产=$PROD_SHA → 不等，强制走 Brain 部署"
+        SHA_MISMATCH=true
+    else
+        echo "✅ SHA 对账：origin/main=$ORIGIN_SHA 生产=$PROD_SHA → 一致，Brain 无需重部署"
+    fi
+else
+    echo "⚠️  SHA 对账：无法获取完整 SHA（origin=$ORIGIN_SHA 生产=${PROD_SHA:-N/A}），跳过对账"
+fi
+
+# ── Dashboard 判变：生产自报 SHA 对账（与 Brain SHA 对账同构，bug 89079934）──
+# 专用部署根 reset --hard 后 git diff origin/main...HEAD 恒空，dashboard 改动会被
+# 静默跳过（#4022/#4038 实证）。真相 = 生产容器在服产物自报的 build-info.json git_sha。
+# 注意：build-info.json 不存在时 SPA fallback 返 200+HTML（非 404），-f 抓不住，
+# 靠 JSON 解析失败兜底。测试钩子 CECELIA_PROD_DASHBOARD_SHA 注入（禁复用
+# CECELIA_PROD_GIT_SHA——那是 Brain 的，会连带 NEED_BRAIN 在隔离根炸 brain-deploy.sh）。
+DASHBOARD_SHA_MISMATCH=false
+DASH_PROD_SHA="${CECELIA_PROD_DASHBOARD_SHA:-}"
+if [[ -z "$DASH_PROD_SHA" && -z "${CECELIA_DEPLOY_ROOT:-}" ]]; then
+    DASH_PROD_SHA=$(curl -sf --max-time 5 "http://localhost:5211/build-info.json" 2>/dev/null \
+        | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.git_sha||'')}catch{process.stdout.write('')}})" \
+        2>/dev/null || echo "")
+    [[ "$DASH_PROD_SHA" == "unknown" ]] && DASH_PROD_SHA=""
+fi
+if [[ -n "$DASH_PROD_SHA" ]]; then
+    DASH_BASE_REF="origin/$BASE_BRANCH"
+    git -C "$MAIN_ROOT" rev-parse --verify "$DASH_BASE_REF" >/dev/null 2>&1 || DASH_BASE_REF="$BASE_BRANCH"
+    DASH_FULL_SHA=$(git -C "$MAIN_ROOT" rev-parse --verify "${DASH_PROD_SHA}^{commit}" 2>/dev/null || echo "")
+    if [[ -z "$DASH_FULL_SHA" ]]; then
+        echo "🔎 Dashboard 对账：生产自报 sha=${DASH_PROD_SHA} 不在 git 历史 → 保守触发构建"
+        DASHBOARD_SHA_MISMATCH=true
+    else
+        DASH_DIFF=$(git -C "$MAIN_ROOT" diff --name-only "$DASH_FULL_SHA".."$DASH_BASE_REF" -- apps/dashboard apps/api 2>/dev/null || echo "")
+        if [[ -n "$DASH_DIFF" ]]; then
+            echo "🔎 Dashboard 对账：生产=${DASH_PROD_SHA} ← ${DASH_BASE_REF} 有 dashboard 改动 → 触发构建"
+            DASHBOARD_SHA_MISMATCH=true
+        else
+            echo "✅ Dashboard 对账：生产=${DASH_PROD_SHA} 与 ${DASH_BASE_REF} 无 dashboard 改动"
+        fi
+    fi
+elif [[ -z "${CECELIA_DEPLOY_ROOT:-}" ]]; then
+    echo "⚠️  Dashboard 对账：拿不到生产自报 sha（容器未起/产物无 build-info.json）→ 保守触发构建"
+    DASHBOARD_SHA_MISMATCH=true
+else
+    echo "⚠️  Dashboard 对账：测试模式未注入 CECELIA_PROD_DASHBOARD_SHA，跳过"
+fi
+
+echo "📋 改动范围："
+if [[ -z "$CHANGED_FILES" ]]; then
+    echo "  (无改动)"
+else
+    echo "$CHANGED_FILES" | sed 's/^/  /'
+fi
+echo ""
+
 # 判断需要哪些部署步骤
 NEED_BRAIN=false
 NEED_DASHBOARD=false
@@ -163,6 +202,23 @@ done <<< "$CHANGED_FILES"
 
 # SHA 对账结果叠加（优先于文件列表，确保 squash merge 不 bump version 场景也触发）
 [[ "$SHA_MISMATCH" == true ]] && NEED_BRAIN=true
+
+# Dashboard 对账结果叠加（webhook changed_paths 降级为并集提示，不再是唯一判据）
+[[ "$DASHBOARD_SHA_MISMATCH" == true ]] && NEED_DASHBOARD=true
+
+# ── 去重闸：staging 已就绪等放行时不重建（防刀2前保守构建 + Bark 风暴）──────
+if [[ "$NEED_DASHBOARD" == true ]]; then
+    DEDUP_PENDING="$MAIN_ROOT/apps/dashboard/.staging-pending"
+    if [[ -f "$DEDUP_PENDING" ]]; then
+        DEDUP_COMMIT=$(grep '^commit=' "$DEDUP_PENDING" | head -1 | cut -d= -f2)
+        DEDUP_HEAD=$(git -C "$MAIN_ROOT" rev-parse --short "origin/$BASE_BRANCH" 2>/dev/null \
+            || git -C "$MAIN_ROOT" rev-parse --short "$BASE_BRANCH" 2>/dev/null || echo "")
+        if [[ -n "$DEDUP_COMMIT" && -n "$DEDUP_HEAD" && "$DEDUP_COMMIT" == "$DEDUP_HEAD" ]]; then
+            echo "⏸️  staging 已就绪（commit $DEDUP_COMMIT）等人工放行 → 跳过重建（防重复构建/Bark）"
+            NEED_DASHBOARD=false
+        fi
+    fi
+fi
 
 # 没有相关改动，跳过
 if [[ "$NEED_BRAIN" == false && "$NEED_DASHBOARD" == false && "$NEED_WORKFLOW_SKILLS" == false ]]; then
@@ -232,13 +288,15 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
                     -v "$MAIN_ROOT:$MAIN_ROOT:rw" \
                     -w "$DASH_DIR" \
                     -e NODE_OPTIONS="--max-old-space-size=3072" \
+                    -e GIT_SHA="$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
                     --memory=4g \
                     --memory-swap=4g \
                     node:20-alpine \
                     npm run build -- --outDir "$STAGING_DIST"
             else
                 cd "$DASH_DIR"
-                NODE_OPTIONS="--max-old-space-size=3072" npm run build -- --outDir "$STAGING_DIST"
+                GIT_SHA="$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
+                    NODE_OPTIONS="--max-old-space-size=3072" npm run build -- --outDir "$STAGING_DIST"
             fi
             cd "$MAIN_ROOT"
         fi
