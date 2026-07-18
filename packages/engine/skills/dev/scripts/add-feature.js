@@ -44,6 +44,8 @@ const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
       thickness,
       area: args.area || null,
       unit_test_path: args['unit-test-path'] || null,
+      workflow_ref: args['workflow-ref'] || null,
+      guard_ref: args['guard-ref'] || null,
     }),
   });
 
