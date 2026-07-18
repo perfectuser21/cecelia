@@ -236,7 +236,7 @@ POST /api/brain/execution-callback
 | 2 | 意图 | 承诺了什么 | 承诺地图(journeys/steps.promise/journey_features/golden_path)+判定点/决策表+锚点(回填进行中) | ✅ 机制在;锚点加厚中(刀C) |
 | 3 | 生产 | 意图→代码 | /dev 三路径 + harness skill-relay(planner→GAN→generator) | ✅ 成熟(2026-07-18 B② 全自动实证) |
 | 4 | 质检 | 证明做对 | 合同层(GAN rubric/格式硬检)+代码层(TDD 闸/不可变校验/island-gate/重跑闸)+验收层(evaluator 真跑/judge 权威) | ✅ 密 |
-| 5 | 生存 | 执行体死了有人收 | harness-orphan-guard(callback 一致性闸+定时兜底扫描+等待自杀检测)+zombie-reaper+主仓哨兵(main-repo-sentinel) | ✅ 2026-07-19 守卫补链刀闭合 |
+| 5 | 生存 | 执行体死了有人收 | harness-orphan-guard(callback 一致性闸+定时兜底,只收 generator_done 前的裸孤儿)+harness-relay-watchdog(PR 态收口:MERGED→finalize/OPEN绿→静等/红→重点火)+zombie-reaper+主仓哨兵 | ✅ 2026-07-19 守卫补链刀闭合(收权分界:开 PR 前归闸,开 PR 后归 watchdog) |
 | 6 | 交付 | 合并→安全上线 | Gate3 自动部署+staging 放行+版本 bump 闸+部署自检 | ✅ 2026-07-15 根治 |
 | 7 | 学习 | 不掉同一个坑 | learnings 落库/issue 立案/decisions/判定点活性/棘轮族(smoke/无主比例/暗边计数) | ✅ 永续运转 |
 

@@ -141,3 +141,36 @@ describe('sweepOrphanHarnessTasks', () => {
     expect(r.requeued).toBe(0);
   });
 });
+
+// ─── 终审必修回归锁:收权分界(generator_done 归 relay-watchdog,闸不抢) ────────
+describe('收权分界:generator_done 后闸让位 watchdog', () => {
+  const shortId = 'aaaabbbb';
+  const containerId = `cecelia-relay-${shortId}-deadbeef`;
+
+  it('callback 闸:任务 generator_done=true → noop(PR 态收口归 watchdog)', async () => {
+    const pool = mockPool({
+      id: 'aaaabbbb-0000-0000-0000-000000000000', status: 'in_progress',
+      task_type: 'harness_initiative', payload: { generator_done: true },
+    });
+    const execFn = vi.fn(() => '');
+    const r = await handleRelayExitConsistency({ pool, execFn, containerId, exitCode: 0, resultText: '等 Monitor 通知' });
+    expect(r.action).toBe('noop');
+  });
+
+  it('sweep:SELECT 排除 generator_done 任务', async () => {
+    const pool = mockPool();
+    pool.query = vi.fn(async (sql) => {
+      pool.calls.push({ sql: String(sql) });
+      return { rows: [] };
+    });
+    await sweepOrphanHarnessTasks({ pool, execFn: vi.fn(() => ''), idleMinutes: 15 });
+    const sel = pool.calls.find((c) => c.sql.includes("task_type LIKE 'harness%'"));
+    expect(sel.sql).toContain('generator_done');
+  });
+});
+
+describe('WAIT_SUICIDE_PATTERN 头号死因原句(终审 Minor1 回归锁)', () => {
+  it('命中"等待 CI 结果通知"', () => {
+    expect(WAIT_SUICIDE_PATTERN.test('PR 已开出,等待 CI 结果通知。')).toBe(true);
+  });
+});

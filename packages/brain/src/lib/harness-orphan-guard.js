@@ -19,7 +19,7 @@
 import { execSync } from 'child_process';
 import defaultPool from '../db.js';
 
-export const WAIT_SUICIDE_PATTERN = /等\s*(?:待)?\s*(?:Monitor|监控|通知)|waiting\s+for\s+(?:Monitor|notification)/i;
+export const WAIT_SUICIDE_PATTERN = /等\s*(?:待)?.{0,10}(?:Monitor|监控|通知)|waiting\s+for\s+.{0,12}(?:Monitor|notification|CI\b)/i;
 
 const MAX_ORPHAN_REQUEUES = 3;
 
@@ -108,6 +108,9 @@ export async function handleRelayExitConsistency({ pool, execFn = defaultExecFn,
     );
     const task = rows[0];
     if (!task || task.status !== 'in_progress') return { action: 'noop' };
+    // 收权分界(终审必修):generator_done=true 即 PR 已开,收口归 harness-relay-watchdog
+    // (它有 PR 态感知:MERGED→finalize/OPEN+绿→静等/红→重点火);本闸只收开 PR 前的裸孤儿。
+    if (task.payload?.generator_done === true) return { action: 'noop' };
 
     let live;
     try {
@@ -148,6 +151,7 @@ export async function sweepOrphanHarnessTasks({ pool, execFn = defaultExecFn, id
        FROM tasks
        WHERE status = 'in_progress'
          AND task_type LIKE 'harness%'
+         AND COALESCE(payload->>'generator_done', 'false') <> 'true'
          AND updated_at < NOW() - INTERVAL '${Number(idleMinutes)} minutes'
        ORDER BY updated_at ASC
        LIMIT 50`
