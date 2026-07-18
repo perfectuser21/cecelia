@@ -139,3 +139,4 @@ admission-report-smoke.sh
 codex-gen-description-fix-smoke.sh
 registry-photo-layer-smoke.sh
 graph-photo-layer-smoke.sh
+graph-query-api-smoke.sh
