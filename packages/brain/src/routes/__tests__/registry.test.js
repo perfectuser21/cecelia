@@ -71,10 +71,10 @@ describe('GET /api/brain/registry?type=skill routing', () => {
 
   it('routes other types to system_registry', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [
-      { id: 'xyz', name: 'my-api', type: 'api', status: 'active' }
+      { id: 'xyz', name: 'us-m4', type: 'machine', status: 'active' }
     ]});
     const request = await import('supertest');
-    const res = await request.default(app).get('/api/brain/registry?type=api&limit=1');
+    const res = await request.default(app).get('/api/brain/registry?type=machine&limit=1');
     expect(res.status).toBe(200);
     const sql = mockQuery.mock.calls[0][0];
     expect(sql).toContain('system_registry');

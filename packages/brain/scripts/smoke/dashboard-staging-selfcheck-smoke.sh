@@ -40,6 +40,8 @@ GOOD="$WORK/good-dist"
 mkdir -p "$GOOD/assets"
 echo 'console.log("app");' > "$GOOD/assets/index-good.js"
 echo 'body{margin:0}'      > "$GOOD/assets/index-good.css"
+# gate 守卫[5] 要求产物含 build-info.json 且 git_sha 非空(判变对账数据源)
+echo '{"git_sha":"smoke-fixture-0000000","built_at":"1970-01-01T00:00:00Z"}' > "$GOOD/build-info.json"
 cat > "$GOOD/index.html" <<'HTML'
 <!DOCTYPE html>
 <html lang="zh-CN"><head><title>Perfect21</title>
