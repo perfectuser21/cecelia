@@ -14,5 +14,8 @@
     "dashboard:build": "npm run build -w apps/dashboard",
     "dashboard:dev": "npm run dev -w apps/dashboard",
     "test": "npm run brain:test"
+  },
+  "devDependencies": {
+    "dependency-cruiser": "^17.4.3"
   }
 }

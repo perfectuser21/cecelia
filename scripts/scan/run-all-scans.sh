@@ -15,8 +15,8 @@ else
 fi
 
 FAIL=0
-for s in scan-api-registry scan-db-schema scan-test-registry; do
-  if node "scripts/scan/${s}.js"; then
+for s in scan-api-registry.js scan-db-schema.js scan-test-registry.js scan-graph.mjs; do
+  if node "scripts/scan/${s}"; then
     echo "OK: ${s}"
   else
     echo "FAIL: ${s}"
