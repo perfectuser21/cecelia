@@ -78,6 +78,42 @@ function extractHttpEdges(content, srcPath) {
   return edges;
 }
 
+
+// ─── 入边检测(2026-07-18 修盲区)──────────────────────────────────────────────
+// 零出边的叶子模块(只用内建/全局 fetch)可能被仓内其他生产文件 import——
+// 静态扫仓判入边,不依赖 DB。测试文件不算入边源(只被自己单测引用的仍是孤岛,闸保牙)。
+const IN_EDGE_ROOTS = ['packages/brain/src', 'packages/brain/server.js', 'packages/brain/scripts', 'scripts'];
+const TEST_PATH_RE = /(^|\/)__tests__\/|\.test\.|\.spec\.|(^|\/)tests\//;
+
+function hasInEdges(filePath) {
+  const base = path.basename(filePath).replace(/\.(js|mjs|cjs|ts)$/, '');
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const QUOTE = '[\'"`]';
+  const needle = new RegExp(
+    '(from\\s+|require\\(|import\\()\\s*' + QUOTE + '[^\'"`]*\\/' + escaped + '(\\.(js|mjs|cjs))?' + QUOTE
+  );
+  const target = path.resolve(REPO_ROOT, filePath);
+  const stack = IN_EDGE_ROOTS.map((r) => path.resolve(REPO_ROOT, r)).filter((q) => fs.existsSync(q));
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    let st;
+    try { st = fs.statSync(cur); } catch { continue; }
+    if (st.isDirectory()) {
+      if (path.basename(cur) === 'node_modules') continue;
+      for (const e of fs.readdirSync(cur)) stack.push(path.join(cur, e));
+      continue;
+    }
+    if (!/\.(js|mjs|cjs|ts)$/.test(cur)) continue;
+    if (cur === target) continue;
+    const rel = path.relative(REPO_ROOT, cur);
+    if (TEST_PATH_RE.test(rel)) continue;
+    try {
+      if (needle.test(fs.readFileSync(cur, 'utf8'))) return true;
+    } catch { /* unreadable, skip */ }
+  }
+  return false;
+}
+
 function hasOutEdges(content, srcPath) {
   const all = [
     ...extractImportEdges(content, srcPath),
@@ -210,7 +246,11 @@ async function main() {
       continue;
     }
 
-    const connected = hasOutEdges(content, filePath);
+    const outEdge = hasOutEdges(content, filePath);
+    const connected = outEdge || hasInEdges(filePath);
+    if (!outEdge && connected) {
+      console.log(`[ISLAND-GATE] in-edge: ${filePath} 零出边但被仓内生产文件引用,判连通`);
+    }
 
     if (!connected) {
       // 无出边 → isolated（孤岛）
