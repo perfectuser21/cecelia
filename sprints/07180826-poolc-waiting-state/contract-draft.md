@@ -191,14 +191,14 @@ AND  task_id=E1 不在驱逐候选列表中
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| waiting_ci 不计入 used 槽位 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-1: countAutoDispatchInProgress 排除 waiting_ci | → FAIL（改前 SQL 无排除条件） |
-| slots API waiting 字段 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-2: getSlotStatus 返回 taskPool.waiting | → FAIL（改前无 waiting 字段） |
-| dispatcher 去重覆盖 waiting_ci | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-3: dispatcher 去重查询含 waiting_ci | → FAIL（改前去重不含 waiting_ci） |
-| zombie-reaper 守卫 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-4: reapWaitingCiZombies 6h/24h 窗口 | → FAIL（改前无此函数） |
-| 转入写 pr_url | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-5: waiting_pr_url 写入 payload | → FAIL（改前无 waiting_ci 状态转换） |
-| VALID_STATUSES 白名单 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-6: task-updater 允许 waiting_ci | → FAIL（改前白名单无此值） |
-| startup-sync 再分类 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-7: scanOrphanedRelayTasks 覆盖 waiting_ci | → FAIL（改前不处理 waiting_ci） |
-| eviction 排除 waiting_ci | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-8: findEvictionCandidate 不返回 waiting_ci | → FAIL（改前无排除逻辑） |
+| waiting_ci 不计入 used 槽位 | `../../packages/brain/src/__tests__/pool-c-waiting-state.test.js` | countAutoDispatchInProgress 排除 waiting_ci / waiting_ci 不拖零 Pool C | → FAIL（改前 SQL 无排除条件） |
+| slots API waiting 字段 | `../../packages/brain/src/__tests__/pool-c-waiting-state.test.js` | taskPool.waiting = 3 / pools.task_pool 包含 waiting 字段 | → FAIL（改前无 waiting 字段） |
+| dispatcher 去重覆盖 waiting_ci | `../../packages/brain/src/__tests__/pool-c-waiting-state.test.js` | findDuplicateTaskSibling 查询包含 waiting_ci / waiting_ci 任务 T1 出现在去重集合中 | → FAIL（改前去重不含 waiting_ci） |
+| zombie-reaper 守卫 | `../../packages/brain/src/__tests__/pool-c-waiting-state.test.js` | reapWaitingCiZombies / 场景4a / 场景4b / 场景4c / 场景4d | → FAIL（改前无此函数） |
+| 转入写 pr_url | `../../packages/brain/src/__tests__/pool-c-waiting-state.test.js` | waiting_pr_url 写入 payload / waiting_ci_since 写入 payload / UPDATE tasks SET status=waiting_ci | → FAIL（改前无 waiting_ci 状态转换） |
+| VALID_STATUSES 白名单 | `../../packages/brain/src/__tests__/pool-c-waiting-state.test.js` | VALID_STATUSES 包含 waiting_ci | → FAIL（改前白名单无此值） |
+| startup-sync 再分类 | `../../packages/brain/src/__tests__/pool-c-waiting-state.test.js` | scanOrphanedRelayTasks / 场景5a / 场景5b | → FAIL（改前不处理 waiting_ci） |
+| eviction 排除 waiting_ci | `../../packages/brain/src/__tests__/pool-c-waiting-state.test.js` | findEvictionCandidate 不返回 / SQL 显式排除 waiting_ci | → FAIL（改前无排除逻辑） |
 
 ---
 
