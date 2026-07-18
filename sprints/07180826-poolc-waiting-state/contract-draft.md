@@ -226,6 +226,11 @@ echo "Brain URL: $BRAIN_URL"
 CLEANUP_SQL="DELETE FROM tasks WHERE title LIKE 'e2e-waiting-ci-test%';"
 psql "$DB_URL" -c "$CLEANUP_SQL" > /dev/null 2>&1 || true
 
+# ——— 记录基线 used 计数（插入前）———
+BASELINE_RESP=$(curl -sf "$BRAIN_URL/api/brain/slots")
+BASELINE_USED=$(echo "$BASELINE_RESP" | jq '.pools.task_pool.used')
+echo "[OK] 基线 task_pool.used=$BASELINE_USED（插入测试数据前）"
+
 # ——— 插入测试数据 ———
 # HARD-2 修复：先提取 date +%s 为 bash 变量，避免在单引号 SQL 内不展开
 NOW_TS=$(date +%s)
@@ -256,12 +261,15 @@ TASK_POOL_USED=$(echo "$SLOTS_RESP" | jq '.pools.task_pool.used')
 TASK_POOL_WAITING=$(echo "$SLOTS_RESP" | jq '.pools.task_pool.waiting')
 TASK_POOL_AVAILABLE=$(echo "$SLOTS_RESP" | jq '.pools.task_pool.available')
 
-echo "task_pool.used=$TASK_POOL_USED (期望: 1)"
+# 用 delta 比较：插入了 1 个 in_progress 测试任务，used 应该比基线多 1
+# 基线中可能已有其他 in_progress 任务（开发环境），故不用绝对值 ==1
+USED_EXPECTED=$((BASELINE_USED + 1))
+echo "task_pool.used=$TASK_POOL_USED (期望: 基线$BASELINE_USED+1=$USED_EXPECTED)"
 echo "task_pool.waiting=$TASK_POOL_WAITING (期望: >=3)"
 echo "task_pool.available=$TASK_POOL_AVAILABLE (期望: >=1)"
 
-if [ "$TASK_POOL_USED" != "1" ]; then
-  echo "[FAIL] task_pool.used 应为 1，实际为 $TASK_POOL_USED" >&2
+if [ "$TASK_POOL_USED" != "$USED_EXPECTED" ]; then
+  echo "[FAIL] task_pool.used 应为 $USED_EXPECTED（基线$BASELINE_USED+1个测试in_progress），实际为 $TASK_POOL_USED" >&2
   exit 1
 fi
 if [ "$TASK_POOL_WAITING" = "null" ] || [ "$TASK_POOL_WAITING" -lt 3 ]; then
