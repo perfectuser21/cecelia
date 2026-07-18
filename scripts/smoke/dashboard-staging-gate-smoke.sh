@@ -62,6 +62,7 @@ make_fixture() {
 <script type="module" src="/assets/app.js"></script>
 </head><body><div id="root"></div><!-- $marker --></body></html>
 HTML
+  printf '{"git_sha":"fixture-fake-sha","built_at":"1970-01-01T00:00:00Z"}' > "$dir/build-info.json"
 }
 
 # ── 造 live dist/ 旧版本哨兵 ──

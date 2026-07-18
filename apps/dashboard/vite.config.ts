@@ -2,9 +2,35 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
+import { execSync } from 'child_process'
+import type { Plugin } from 'vite'
 
 // Core features — point to api's features directory (monorepo: core → api)
 const coreFeaturesPath = path.resolve(__dirname, '../api/features')
+
+// 产物自报身份：把构建时的 git sha 烙进 build-info.json（deploy-local.sh 判变对账用）。
+// emitFile 自动跟随 --outDir（deploy-local 构建到 .dist-staging，写死 dist/ 不行）。
+// docker 构建容器（node:20-alpine）无 git，GIT_SHA 由 deploy-local.sh 以 -e 传入。
+function buildInfoPlugin(): Plugin {
+  return {
+    name: 'build-info',
+    generateBundle() {
+      let sha = process.env.GIT_SHA || ''
+      if (!sha) {
+        try {
+          sha = execSync('git rev-parse HEAD', { cwd: __dirname }).toString().trim()
+        } catch {
+          sha = 'unknown'
+        }
+      }
+      this.emitFile({
+        type: 'asset',
+        fileName: 'build-info.json',
+        source: JSON.stringify({ git_sha: sha, built_at: new Date().toISOString() }, null, 2),
+      })
+    },
+  }
+}
 
 export default defineConfig({
   resolve: {
@@ -31,6 +57,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    buildInfoPlugin(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'logo-color.png', 'logo-white.png'],
