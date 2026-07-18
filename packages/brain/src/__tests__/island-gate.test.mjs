@@ -12,7 +12,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(__dirname, '../../../scripts/ci/island-gate.mjs');
+// 测试文件在 src/__tests__/，脚本在 scripts/ci/ → 相对两层上
+const SCRIPT = path.resolve(__dirname, '../../scripts/ci/island-gate.mjs');
 
 function runGate(fixtureFiles, extraEnv = {}) {
   const result = spawnSync(

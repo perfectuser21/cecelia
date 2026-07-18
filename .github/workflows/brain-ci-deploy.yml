@@ -20,10 +20,12 @@ on:
       - 'packages/brain/**'
       - 'scripts/brain-deploy.sh'
   # PR 触发：skill 快照 / CI 防线脚本变更时跑「CI 防线三件套」守卫（不触发部署）
+  # 同时：packages/brain/src/** 新增文件时触发 island-gate 孤岛检测
   pull_request:
     paths:
       - 'packages/workflows/skills/**'
       - 'packages/brain/scripts/ci/**'
+      - 'packages/brain/src/**'
       - '.github/workflows/brain-ci-deploy.yml'
 
 concurrency:
@@ -66,6 +68,70 @@ jobs:
           BASE="origin/${{ github.base_ref }}"
           git diff --name-only "$BASE"...HEAD > /tmp/pr-diff.txt 2>/dev/null || true
           node packages/brain/scripts/ci/contract-exists.mjs --fixture /tmp/pr-diff.txt
+
+  # ─── Island Gate: PR 新增 packages/brain/src/** 文件孤岛检测 ─────────────────
+  # 独立于 deploy job（互不 needs），孤岛文件 → exit 1，带 import 文件 → exit 0
+  # B7: island-gate 失败不阻 deploy，deploy 不含 island-gate 在 needs 中
+  island-gate:
+    name: Island Gate (PR — src/** 新增文件孤岛检测)
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD || 'cecelia' }}
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 全量 migrations（cecelia_test DB）
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD || 'cecelia' }}
+        run: |
+          cd packages/brain
+          node src/migrate.js
+          echo "✅ migrations 完成"
+
+      - name: Island Gate — 新增文件孤岛检测
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD || 'cecelia' }}
+        run: |
+          BASE="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --depth=1 || true
+          ADDED_FILES=$(git diff --diff-filter=A --name-only "${BASE}...HEAD" 2>/dev/null | grep '^packages/brain/src/' | tr '\n' ',' | sed 's/,$//' || echo "")
+          echo "新增文件: ${ADDED_FILES:-（无）}"
+          node packages/brain/scripts/ci/island-gate.mjs --fixture-files="${ADDED_FILES}"
+          echo "island-gate exit: $?"
 
   # ─── Gate 3: Brain HTTP 自动部署（仅 push:main，PR 不部署）────────────────
   deploy:
