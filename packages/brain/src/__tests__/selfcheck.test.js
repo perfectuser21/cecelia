@@ -194,8 +194,8 @@ describe('selfcheck', () => {
   // 348（承诺地图 schema thin 版：四表扩展，MJ5 刀1 容器首刀）推进地板到 348。
   // 349（MJ5 刀1 和解补齐：domain/cell_key/双 partial unique/FK SET NULL/软硬列归一）推进地板到 349。
   // 350（MJ5 刀1：智能客服+首次成功两域承诺地图 seed 数据）推进地板到 350。
-  it('EXPECTED_SCHEMA_VERSION should be 350 (floor, bumped for promise-map reconcile + seed)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('350');
+  it('EXPECTED_SCHEMA_VERSION should be 351 (floor, bumped for graph_edges)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('351');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

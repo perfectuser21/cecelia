@@ -54,9 +54,10 @@ grep -q "cell_kind IS NULL" packages/brain/src/notion-push-sync.js \
   || { echo "FAIL: notion push 未排除格子行"; exit 1; }
 echo "OK: notion push 格子过滤在位"
 
-# 6. selfcheck 地板已推进到 350
-grep -q "EXPECTED_SCHEMA_VERSION = '350'" packages/brain/src/selfcheck.js \
-  || { echo "FAIL: EXPECTED_SCHEMA_VERSION 未推进到 350"; exit 1; }
-echo "OK: schema 地板 350"
+# 6. selfcheck 地板已推进到 ≥350(数值断言,后续 migration 推进不误伤本 smoke——07-18 刀A1 351 曾被旧等值断言打红)
+VER=$(sed -n "s/.*EXPECTED_SCHEMA_VERSION = '\([0-9]*\)'.*/\1/p" packages/brain/src/selfcheck.js | head -1)
+[ "${VER:-0}" -ge 350 ] \
+  || { echo "FAIL: EXPECTED_SCHEMA_VERSION(${VER:-空}) 未推进到 ≥350"; exit 1; }
+echo "OK: schema 地板 ${VER} (≥350)"
 
 echo "PASS: promise-map-ledger smoke 全部通过"
