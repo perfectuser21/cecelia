@@ -144,4 +144,55 @@ router.get('/claim-status', async (req, res) => {
   }
 });
 
+router.post('/radius', async (req, res) => {
+  try {
+    const files = req.body && req.body.files;
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ error: 'files must be a non-empty array' });
+    }
+    const maxDepth = Math.min(Math.max(parseInt(req.body.max_depth) || 10, 1), 20);
+    const ctx = await loadGraphContext();
+    const norm = files.map(normalizePath);
+    const reached = reachable(ctx.adj, norm, { dir: 'rev', maxDepth });
+    const affected_tests = [...reached].filter(isTestPath).sort();
+    const affected = ctx.classified.filter((c) =>
+      c.anchors.some((a) => a.matched_node && reached.has(a.matched_node)));
+    const promiseMap = await promisesForFeatures(affected.map((f) => f.feature_id));
+    return res.json({
+      input_files: norm,
+      reached_count: reached.size,
+      affected_tests,
+      affected_features: affected.map((f) => ({
+        feature_id: f.feature_id, name: f.name, anchors: f.anchors,
+        promises: promiseMap.get(f.feature_id) || [],
+      })),
+      uncovered_anchor_features: ctx.classified.filter((c) => c.status === 'uncovered').length,
+      freshness: ctx.freshness,
+    });
+  } catch (err) {
+    console.error('[graph] radius error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/island-check', async (req, res) => {
+  try {
+    const files = req.body && req.body.files;
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ error: 'files must be a non-empty array' });
+    }
+    const ctx = await loadGraphContext();
+    const zones = buildClaimZones(ctx);
+    const results = files.map((raw) => {
+      const p = normalizePath(raw);
+      const v = claimVerdict(p, ctx, zones);
+      return { file: p, ...v };
+    });
+    return res.json({ results, freshness: ctx.freshness, anchor_coverage: ctx.anchor_coverage });
+  } catch (err) {
+    console.error('[graph] island-check error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

@@ -85,6 +85,7 @@ import skillEvalRoutes from './src/routes/eval.js';
 import rpaDevVerifyRouter from './src/routes/rpa-dev-verify.js';
 import deployDevRouter from './src/routes/deploy-dev.js';
 import incidentsRouter from './src/routes/incidents.js';
+import graphRoutes from './src/routes/graph.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -250,6 +251,7 @@ app.use(express.json({ limit: '4mb' }));
 app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/settings', settingsRoutes);
 app.use('/api/brain/quality', qualityRoutes);
+app.use('/api/brain/graph', graphRoutes);
 
 // KV 读写统一走 src/routes/kv.js（经 routes.js 挂 /api/brain/kv）。
 // 旧 app 级 GET（available 语义 + 连字符转下划线取键）已删：与 kv.js 双实现分脑——
