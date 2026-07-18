@@ -7,6 +7,8 @@
  */
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
+import pg from 'pg';
+import { DB_DEFAULTS } from '../src/db-config.js';
 
 const ANCHOR_FIELDS = ['unit_test_path', 'workflow_ref', 'guard_ref'];
 
@@ -58,8 +60,7 @@ async function main() {
   const dryRun = !!args['dry-run'];
   const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
 
-  const { default: pg } = await import('pg');
-  const pool = new pg.Pool();
+  const pool = new pg.Pool(DB_DEFAULTS);
   const queryFn = (sql, params) => pool.query(sql, params);
 
   const entries = parseApprovedFile(readFileSync(resolve(args.input), 'utf8'));
