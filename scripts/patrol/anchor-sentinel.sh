@@ -22,7 +22,7 @@ if [ -z "$broken" ]; then
 fi
 
 if [ -f "$STATE_FILE" ]; then
-  last=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
+  last=$(cat "$STATE_FILE" 2>/dev/null); last="${last:-0}"
   if [ "$broken" -gt "$last" ]; then
     echo "ALERT: 断锚数上升 $last → $broken"
     notify "锚点哨兵" "断锚数上升: $last → $broken,查 /api/brain/graph/locate 排查"
