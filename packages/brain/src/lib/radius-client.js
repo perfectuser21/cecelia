@@ -40,7 +40,7 @@ export async function callRadius(changedFiles) {
     }
 
     return data;
-  } catch (_err) {
+  } catch {
     // 网络错误、超时（AbortError）、JSON 解析错误等，一律返回 null
     return null;
   } finally {

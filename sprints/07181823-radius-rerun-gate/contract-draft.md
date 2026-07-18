@@ -188,6 +188,15 @@ grep -n "callRadius\|null" /workspace/packages/brain/src/cascade-list.js \
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| B-2/B-4: radius 停摆 + WARN | `../../packages/brain/src/__tests__/integration/rerun-gate-radius.integration.test.js` | WARN 哨兵字符串 / radius 停摆 / cascade-list.js 触发回退 | Red: 8931595ac |
+| B-1/B-3: radius-client 单元 | `../../packages/brain/src/lib/radius-client.test.js` | 返回 affected_features | Red: 8931595ac |
+
+---
+
 ## 不变量映射
 
 | 合同条款 | 来源不变量 |
