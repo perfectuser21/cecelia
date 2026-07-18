@@ -19,7 +19,7 @@ const FEATURE_ROWS = [
 // loadGraphContext 依次三查:edges → max(scanned_at) → features;之后端点可能再查 promises/siblings
 function primeContext({ promiseRows = [], siblingRows = [] } = {}) {
   mockQuery.mockReset();
-  mockQuery.mockImplementation(async (sql, params) => {
+  mockQuery.mockImplementation(async (sql, _params) => {
     const s = String(sql);
     if (s.includes('FROM graph_edges') && s.includes('src_path')) return { rows: EDGE_ROWS };
     if (s.includes('max(scanned_at)')) return { rows: [{ latest: new Date() }] };
