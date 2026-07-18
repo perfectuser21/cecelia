@@ -208,6 +208,14 @@ router.post('/journey_features', async (req, res) => {
     const { name, journey_id, thickness, status, area, unit_test_path, version, kind,
             workflow_ref, guard_ref, softness } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
+    if (status && status !== 'planned') {
+      const hasAnchor = unit_test_path || workflow_ref || guard_ref;
+      if (!hasAnchor) {
+        return res.status(400).json({
+          error: 'status 非 planned 时必须至少提供一个锚点字段(unit_test_path/workflow_ref/guard_ref)',
+        });
+      }
+    }
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
     }

@@ -150,6 +150,77 @@ describe('POST /api/brain/journey_features', () => {
   });
 });
 
+describe('POST /journey_features 出生即焊校验', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('status=working 且无锚点 → 400', async () => {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_features')
+      .send({ name: 'Feature X', status: 'working' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('锚点');
+  });
+
+  it('status=working 带 guard_ref → 201', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'f1', name: 'Feature X', status: 'working' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_features')
+      .send({ name: 'Feature X', status: 'working', guard_ref: 'script:foo.ts' });
+
+    expect(res.status).toBe(201);
+  });
+
+  it('status 不传(默认 planned)且无锚点 → 201(骨架阶段不强制)', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'f1', name: 'Feature Y' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_features')
+      .send({ name: 'Feature Y' });
+
+    expect(res.status).toBe(201);
+  });
+
+  it('status=planned 显式传入且无锚点 → 201', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'f1', name: 'Feature Z' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_features')
+      .send({ name: 'Feature Z', status: 'planned' });
+
+    expect(res.status).toBe(201);
+  });
+});
+
 describe('GET /api/brain/journeys (list)', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
