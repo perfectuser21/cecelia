@@ -7,14 +7,14 @@
 
 ## [BEHAVIOR] 条目
 
-### [BEHAVIOR-1] waiting_ci 任务不计入 Pool C used 槽位
+### [BEHAVIOR] [BEHAVIOR-1] waiting_ci 任务不计入 Pool C used 槽位
 
 **描述**：`countAutoDispatchInProgress()` 在 WHERE 子句中排除 `status = 'waiting_ci'` 的行，使 waiting_ci 任务不影响 Pool C 的 used 计数。
 
 **验证方式**：
 - 单元测试：场景1（3 waiting_ci + 1 in_progress → used=1）
 - 单元测试：场景2（0 in_progress + 3 waiting_ci → used=0，available=effectiveSlots）
-- E2E：`curl localhost:5221/api/brain/slots | jq '.pools.task_pool.used'` 返回 1（非 4）
+- E2E：`manual:bash curl localhost:5221/api/brain/slots | jq '.pools.task_pool.used'` 返回 1（非 4）
 
 **相关代码**：`packages/brain/src/slot-allocator.js:countAutoDispatchInProgress()`
 
@@ -22,12 +22,12 @@
 
 ---
 
-### [BEHAVIOR-2] slots API 返回 waiting 字段
+### [BEHAVIOR] [BEHAVIOR-2] slots API 返回 waiting 字段
 
 **描述**：`GET /api/brain/slots` 响应的 `pools.task_pool` 对象中包含 `waiting` 字段（整数，非 null），代表当前 waiting_ci 状态的 auto-dispatch 任务数。
 
 **验证方式**：
-- E2E：`curl localhost:5221/api/brain/slots | jq '.pools.task_pool.waiting'` 返回数值（非 null）
+- E2E：`manual:bash curl localhost:5221/api/brain/slots | jq '.pools.task_pool.waiting'` 返回数值（非 null）
 - 响应结构断言：`{ budget, used, waiting, available }` 四字段齐全
 
 **相关代码**：`packages/brain/src/slot-allocator.js:getSlotStatus()`
@@ -36,7 +36,7 @@
 
 ---
 
-### [BEHAVIOR-3] waiting_ci 任务在 dispatcher 去重列表中可见（防重派）
+### [BEHAVIOR] [BEHAVIOR-3] waiting_ci 任务在 dispatcher 去重列表中可见（防重派）
 
 **描述**：dispatcher 的派发候选去重查询覆盖 `status = 'waiting_ci'`，使已有 PR 的等待态任务不被重复派发。
 
@@ -50,13 +50,13 @@
 
 ---
 
-### [BEHAVIOR-4] waiting_ci 僵尸守卫：6h 超时检测与处置
+### [BEHAVIOR] [BEHAVIOR-4] waiting_ci 僵尸守卫：6h 超时检测与处置
 
 **描述**：`zombie-reaper.js` 新增守卫分支，扫描 `waiting_ci_since < NOW() - INTERVAL '6 hours'` 的 waiting_ci 任务，依据 `gh pr view` 结果分别处置：MERGED→completed，CLOSED→failed(pr_closed)，OPEN+running→续期，超 24h 总窗口→failed(waiting_ci_timeout)。
 
 **验证方式**：
 - 单元测试：场景4（4 个子场景：MERGED/CLOSED/OPEN/超24h）
-- E2E：插入 7h 前的 waiting_ci 任务，触发 reaper，验证最终 status=failed 且 error_message 含 waiting_ci_timeout
+- E2E：`manual:bash curl localhost:5221/api/brain/tasks?status=failed | jq '.[] | select(.error_message | contains("waiting_ci_timeout"))'` 返回非空（插入 7h 前 waiting_ci 任务触发 reaper 后验证）
 
 **相关代码**：`packages/brain/src/zombie-reaper.js`
 
@@ -64,7 +64,7 @@
 
 ---
 
-### [BEHAVIOR-5] waiting_ci 转入时写 pr_url（INV-e90c0fbb 合规）
+### [BEHAVIOR] [BEHAVIOR-5] waiting_ci 转入时写 pr_url（INV-e90c0fbb 合规）
 
 **描述**：`harness-relay-watchdog.js` 在转入 waiting_ci 时同步写 `payload.waiting_pr_url` 和 `payload.waiting_ci_since`，确保 watchdog 再次扫到时不因缺 pr_url 而误判重复 spawn。
 
@@ -78,7 +78,7 @@
 
 ---
 
-### [BEHAVIOR-6] VALID_STATUSES 白名单包含 waiting_ci
+### [BEHAVIOR] [BEHAVIOR-6] VALID_STATUSES 白名单包含 waiting_ci
 
 **描述**：`task-updater.js` 的 `VALID_STATUSES` 数组包含 `'waiting_ci'`，使所有 `UPDATE tasks SET status='waiting_ci'` 不被安全校验层拒绝。
 
@@ -92,7 +92,7 @@
 
 ---
 
-### [BEHAVIOR-7] 既有测试全部通过（回归保护）
+### [BEHAVIOR] [BEHAVIOR-7] 既有测试全部通过（回归保护）
 
 **描述**：`slot-allocator.test.js`（1396 行）、`slot-accounting.test.js`（173 行）、`dispatcher.test.js`、`harness-slot-check.test.js` 在本次改动后全部绿灯。
 
@@ -106,7 +106,7 @@
 
 ---
 
-### [BEHAVIOR-8] Brain 版本 bump 至 1.268.0
+### [BEHAVIOR] [BEHAVIOR-8] Brain 版本 bump 至 1.268.0
 
 **描述**：`packages/brain/package.json` 版本从 `1.267.2` 升至 `1.268.0`（minor bump，功能性变更）。
 
