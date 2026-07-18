@@ -187,6 +187,21 @@ AND  task_id=E1 不在驱逐候选列表中
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| waiting_ci 不计入 used 槽位 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-1: countAutoDispatchInProgress 排除 waiting_ci | → FAIL（改前 SQL 无排除条件） |
+| slots API waiting 字段 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-2: getSlotStatus 返回 taskPool.waiting | → FAIL（改前无 waiting 字段） |
+| dispatcher 去重覆盖 waiting_ci | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-3: dispatcher 去重查询含 waiting_ci | → FAIL（改前去重不含 waiting_ci） |
+| zombie-reaper 守卫 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-4: reapWaitingCiZombies 6h/24h 窗口 | → FAIL（改前无此函数） |
+| 转入写 pr_url | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-5: waiting_pr_url 写入 payload | → FAIL（改前无 waiting_ci 状态转换） |
+| VALID_STATUSES 白名单 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-6: task-updater 允许 waiting_ci | → FAIL（改前白名单无此值） |
+| startup-sync 再分类 | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-7: scanOrphanedRelayTasks 覆盖 waiting_ci | → FAIL（改前不处理 waiting_ci） |
+| eviction 排除 waiting_ci | `packages/brain/src/__tests__/pool-c-waiting-state.test.js` | BEHAVIOR-8: findEvictionCandidate 不返回 waiting_ci | → FAIL（改前无排除逻辑） |
+
+---
+
 ## E2E 验收
 
 > target_environment: local_api
