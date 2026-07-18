@@ -36,6 +36,16 @@ describe('extractSpawnEdges', () => {
   it('无匹配 → []', () => {
     expect(extractSpawnEdges('const a = 1;', 'src/f.js')).toEqual([]);
   });
+
+  it('双引号串内嵌单引号 → 不丢边', () => {
+    const edges = extractSpawnEdges(`execSync("docker ps --filter 'name=cecelia' --format '{{.ID}}'")`, 'src/k.js');
+    expect(edges[0].dst_path).toBe('cmd:docker');
+  });
+
+  it('反引号串内嵌双引号与模板变量 → 不丢边', () => {
+    const edges = extractSpawnEdges('execSync(`git -C "${p}" worktree list --porcelain`)', 'src/l.js');
+    expect(edges[0].dst_path).toBe('cmd:git');
+  });
 });
 
 describe('extractHttpEdges', () => {
