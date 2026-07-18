@@ -231,6 +231,24 @@ async function countAutoDispatchInProgress() {
     const result = await pool.query(`
       SELECT COUNT(*) FROM tasks
       WHERE status = 'in_progress'
+      AND status != 'waiting_ci'
+      AND (payload->>'decomposition' IS NULL
+           AND (payload->>'requires_cortex' IS NULL OR payload->>'requires_cortex' != 'true'))
+    `);
+    return parseInt(result.rows[0].count, 10);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Count auto-dispatched tasks currently in waiting_ci state.
+ */
+async function countWaitingCiTasks() {
+  try {
+    const result = await pool.query(`
+      SELECT COUNT(*) FROM tasks
+      WHERE status = 'waiting_ci'
       AND (payload->>'decomposition' IS NULL
            AND (payload->>'requires_cortex' IS NULL OR payload->>'requires_cortex' != 'true'))
     `);
@@ -421,6 +439,7 @@ async function calculateSlotBudget() {
   // Fix: use userSlotsUsed (headed only, no zombies) + DB task counts.
   const ceceliaUsed = await countCeceliaInProgress();
   const autoDispatchUsed = await countAutoDispatchInProgress();
+  const waitingCiCount = await countWaitingCiTasks();
   const totalRunning = userSlotsUsed + ceceliaUsed + autoDispatchUsed;
 
   // User reserve: 1 slot headroom when user is active
@@ -523,6 +542,7 @@ async function calculateSlotBudget() {
       budget: availableBuffered + autoDispatchUsed,
       used: autoDispatchUsed,
       available: availableBuffered,
+      waiting: waitingCiCount,
     },
     codex: {
       running: codexRunning,
@@ -576,6 +596,7 @@ async function getSlotStatus() {
         budget: budget.taskPool.budget,
         used: budget.taskPool.used,
         available: budget.taskPool.available,
+        waiting: budget.taskPool.waiting ?? 0,
       },
     },
     codex: budget.codex,

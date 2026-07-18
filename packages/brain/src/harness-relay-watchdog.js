@@ -201,8 +201,8 @@ export async function _finalizeMergedRun(dbPool, initiativeId, prUrl, out, opts 
   await dbPool.query(runSql, setPrUrl ? [initiativeId, prUrl] : [initiativeId]);
 
   const taskSql = setPrUrl
-    ? `UPDATE tasks SET status='completed', completed_at=NOW(), pr_url=$2 WHERE id=$1 AND status='in_progress'`
-    : `UPDATE tasks SET status='completed', completed_at=NOW() WHERE id=$1 AND status='in_progress'`;
+    ? `UPDATE tasks SET status='completed', completed_at=NOW(), pr_url=$2 WHERE id=$1 AND (status='in_progress' OR status='waiting_ci')`
+    : `UPDATE tasks SET status='completed', completed_at=NOW() WHERE id=$1 AND (status='in_progress' OR status='waiting_ci')`;
   await dbPool.query(taskSql, setPrUrl ? [initiativeId, prUrl] : [initiativeId]);
   await _closeSpawnEvents(dbPool, initiativeId, 'done');
 
@@ -353,7 +353,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
           await dbPool.query(
             `UPDATE tasks SET status='failed', completed_at=NOW(),
                     error_message='generator 完成后 ' || $2 || 'h 内 PR 未 MERGED（收账权收归超时兜底）'
-              WHERE id=$1 AND status='in_progress'`,
+              WHERE id=$1 AND (status='in_progress' OR status='waiting_ci')`,
             [run.initiative_id, String(GENERATOR_DONE_TIMEOUT_MS / 3600000)]);
           await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
           out.capped++;
@@ -419,8 +419,23 @@ export async function resumeStalledRelayRuns(deps = {}) {
               console.log(`[relay-watchdog] resume_ci_red initiative=${run.initiative_id} pr=${effectivePrUrl} reason=${reason}`);
               // fall through — 不 continue，走下方 cap 检查 → spawn
             } else if (!isDirty && ciStatus === 'pending') {
-              // CI 跑中/pending（非 DIRTY）→ 等待，不重点火
-              console.log(`[relay-watchdog] wait_ci_running initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+              // CI 跑中/pending（非 DIRTY）→ 转入 waiting_ci，不重点火，释放 Pool C 槽位
+              console.log(`[relay-watchdog] wait_ci_running initiative=${run.initiative_id} pr=${effectivePrUrl} → 转入 waiting_ci`);
+              if (effectivePrUrl) {
+                try {
+                  await dbPool.query(
+                    `UPDATE tasks SET status='waiting_ci', payload=payload || $1::jsonb
+                     WHERE id=$2 AND (status='in_progress' OR status='waiting_ci')`,
+                    [JSON.stringify({
+                      waiting_pr_url: effectivePrUrl,
+                      waiting_ci_since: Math.floor(Date.now() / 1000),
+                    }), task.id]
+                  );
+                  console.log(`[relay-watchdog] 已转入 waiting_ci initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+                } catch (updateErr) {
+                  console.warn(`[relay-watchdog] waiting_ci 写入失败 initiative=${run.initiative_id}: ${updateErr.message}`);
+                }
+              }
               continue;
             } else {
               // CI 全绿 + 非 BEHIND → evaluator 已完成则等待 merge；未完成则重点火（feat(harness): PR 不被 auto-merge）
@@ -490,7 +505,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
         await dbPool.query(
           `UPDATE tasks SET status='failed', completed_at=NOW(),
                   error_message='relay watchdog: 重点火 ' || $2 || ' 次仍未收敛到 merge'
-            WHERE id=$1 AND status='in_progress'`,
+            WHERE id=$1 AND (status='in_progress' OR status='waiting_ci')`,
           [run.initiative_id, String(attempts)]
         );
         await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
@@ -556,7 +571,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
         await dbPool.query(
           `UPDATE tasks SET status='failed', completed_at=NOW(),
                   error_message='OOM 升档后仍 exit=137，撞墙终止（oom_wall）'
-            WHERE id=$1 AND status='in_progress'`,
+            WHERE id=$1 AND (status='in_progress' OR status='waiting_ci')`,
           [run.initiative_id]
         );
         await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
