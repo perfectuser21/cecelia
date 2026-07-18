@@ -13,6 +13,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { isPhotoType, listPhotoLayer } from '../lib/registry-photo-layer.js';
 
 const router = Router();
 
@@ -91,6 +92,16 @@ router.get('/', async (req, res) => {
         params
       );
       return res.json(rows);
+    }
+
+    // 照相层三 type → 扫描表 + 账龄哨兵(刀0 2026-07-18,照相层/账本层分离)
+    if (isPhotoType(req.query.type)) {
+      const result = await listPhotoLayer(pool, req.query.type, {
+        search: req.query.search || req.query.q,
+        limit,
+        offset,
+      });
+      return res.json(result);
     }
 
     // 其余 type → system_registry（保持原有行为）
