@@ -12,7 +12,7 @@ created: 2026-07-18
 
 **描述**：`callRadius(changedFiles)` 在 radius 端点无响应（网络错误、超时 >3s）时返回 `null`，不抛出异常，不阻塞调用方。
 
-**验收命令**：
+**验收命令** (manual:bash)：
 ```bash
 # 单元测试层：mock fetch 超时，断言返回 null
 cd /workspace && npx vitest run packages/brain/src/lib/radius-client.test.js \
@@ -38,7 +38,7 @@ node -e "
 
 **描述**：radius 端点成功响应但 `freshness.stale === true` 时，`callRadius` 返回 `null`，不使用过期图数据做波及计算。
 
-**验收命令**：
+**验收命令** (manual:bash)：
 ```bash
 # 单元测试层：mock fetch 返回 stale=true 响应
 cd /workspace && npx vitest run packages/brain/src/lib/radius-client.test.js \
@@ -72,7 +72,7 @@ node -e "
 
 **描述**：`cascade-list.js` 在 radius 返回 null 时，调用 `console.warn` 输出精确字符串 `[WARN][rerun-gate] radius unavailable or stale — falling back to journey_step_links`，之后执行格子路径查询。
 
-**验收命令**：
+**验收命令** (manual:bash)：
 ```bash
 # 集成测试层
 cd /workspace && npx vitest run \
@@ -100,7 +100,7 @@ node -e "
 
 **描述**：radius 不可达时，`cascade-list.js` 必须查询 `journey_step_links` 表（现有 DB 查询逻辑），输出与纯格子路径一致。格子路径代码不得被删除。
 
-**验收命令**：
+**验收命令** (manual:bash)：
 ```bash
 # 集成测试层：spy journey_step_links 查询，断言被调用
 cd /workspace && npx vitest run \
@@ -122,7 +122,7 @@ grep -n "journey_step_links" /workspace/packages/brain/src/cascade-list.js
 
 **描述**：输入文件为 `packages/brain/src/__tests__/integration/blast-radius.integration.test.js` 时，radius 引擎返回的 `affected_features` 中包含 CRM 表底座（`feature_id: 0b70f2ff-1a16-4029-a71a-e6cb5a523ea2`）。
 
-**验收命令**：
+**验收命令** (manual:bash)：
 ```bash
 # E2E 验证（需 Brain 运行）
 curl -s -X POST http://localhost:5221/api/brain/graph/radius \
@@ -156,7 +156,7 @@ cd /workspace && npx vitest run \
 
 **描述**：任何针对本功能的 bug 修复，必须先写能复现的 failing test，提交后再修代码。修 bug 的测试必须 commit 进 repo 永久留在 CI，不得删除。
 
-**验收命令**：
+**验收命令** (manual:bash)：
 ```bash
 # 验证 rerun-gate-radius 测试文件已在 git 中
 git -C /workspace log --oneline -- \
