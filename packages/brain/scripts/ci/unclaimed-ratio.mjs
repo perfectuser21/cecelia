@@ -63,7 +63,14 @@ async function getKV(key) {
     const resp = await fetch(`${BRAIN_URL}/api/brain/kv/${key}`);
     if (!resp.ok) return null;
     const data = await resp.json();
-    return data.value;
+    // Brain KV stores whatever was POSTed as the value field.
+    // setKV sends { value: num }, so data.value = { value: num }.
+    // Unwrap one level if the stored payload is { value: ... }.
+    const raw = data.value;
+    if (raw !== null && typeof raw === 'object' && 'value' in raw) {
+      return raw.value;
+    }
+    return raw;
   } catch {
     return null;
   }
