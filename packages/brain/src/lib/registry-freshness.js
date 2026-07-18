@@ -14,6 +14,14 @@ export function computeFreshness(latestScanAt, now = new Date(), thresholdHours 
     };
   }
   const latest = latestScanAt instanceof Date ? latestScanAt : new Date(latestScanAt);
+  if (Number.isNaN(latest.getTime())) {
+    return {
+      latest_scan: null,
+      age_hours: null,
+      stale: true,
+      warning: `照相层 scanned_at 无效(${String(latestScanAt)}),按 stale 处理`,
+    };
+  }
   const ageHours = (now.getTime() - latest.getTime()) / 3600000;
   const stale = ageHours > thresholdHours;
   return {
