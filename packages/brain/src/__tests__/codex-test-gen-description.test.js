@@ -1,5 +1,5 @@
 /**
- * codex-test-gen-description.test.js — TDD Red 阶段测试
+ * codex-test-gen-description.test.js — TDD Red/Green 阶段测试
  *
  * Sprint: 07180825-codex-gen-description-fix
  * Task:   c3528706-8c83-4df0-a2af-31e6483ec05f
@@ -8,11 +8,16 @@
  *   断言 runCodexTestGen 入队的任务 body 含合规 description、
  *   candidate_test_paths 及合法 priority。
  *
+ * 设计说明：
+ *   通过 mock scanMissingTestFiles 模块函数以强制返回候选文件，
+ *   避免因测试文件已全部存在导致 candidates 为空而跳过所有断言。
+ *
  * Red 阶段：在 codex-test-gen.js 修复前，所有 B-1～B-4 断言必须 FAIL。
  * Green 阶段：修复后所有断言 PASS。
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as codexTestGenModule from '../codex-test-gen.js';
 
 // ---- 测试辅助：mock fetch，捕获入队 body ----
 
@@ -42,60 +47,46 @@ function makeMockPool() {
   };
 }
 
+// 固定候选文件（确保入队分支一定触发）
+const MOCK_CANDIDATES = ['packages/brain/src/drain.js'];
+
 beforeEach(() => {
   capturedBodies = [];
+  // Mock scanMissingTestFiles 返回固定候选文件，避免因文件系统全覆盖而跳过
+  vi.spyOn(codexTestGenModule, 'scanMissingTestFiles').mockResolvedValue(MOCK_CANDIDATES);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// 共享辅助：执行 runCodexTestGen 并返回第一个 codex_test_gen body
+async function runAndCapture() {
+  const globalFetch = makeMockFetch();
+  vi.stubGlobal('fetch', globalFetch);
+  const pool = makeMockPool();
+
+  await codexTestGenModule.runCodexTestGen(pool, 'http://localhost:5221').catch(() => {});
+
+  return capturedBodies.find((b) => b?.task_type === 'codex_test_gen') ?? null;
+}
+
 // ---- B-1：description 非空且含 targetFile 路径 ----
 
 describe('[B-1] 入队 body description 非空且含 targetFile 路径', () => {
   it('description 字段存在且非空字符串', async () => {
-    // 动态 import + 替换全局 fetch（ESM 环境）
-    const globalFetch = makeMockFetch();
-    vi.stubGlobal('fetch', globalFetch);
+    const postedBody = await runAndCapture();
 
-    // Mock scanMissingTestFiles 返回固定候选文件
-    const { runCodexTestGen } = await import('../codex-test-gen.js?B1a');
-    const pool = makeMockPool();
-
-    await runCodexTestGen(pool, 'http://localhost:5221').catch(() => {});
-
-    const postedBody = capturedBodies.find(
-      (b) => b?.task_type === 'codex_test_gen'
-    );
-
-    // 若无入队（候选为空），跳过断言——但说明扫描本身有问题
-    if (!postedBody) {
-      console.warn('[B-1] 无 codex_test_gen 任务入队，可能 candidates 为空，跳过');
-      return;
-    }
-
+    expect(postedBody, '应有 codex_test_gen 任务入队').not.toBeNull();
     expect(postedBody.description, 'description 字段应存在').toBeDefined();
     expect(postedBody.description, 'description 不应为空字符串').not.toBe('');
     expect(postedBody.description, 'description 不应为 null').not.toBeNull();
   });
 
   it('description 含 target_file 路径字符串', async () => {
-    const globalFetch = makeMockFetch();
-    vi.stubGlobal('fetch', globalFetch);
+    const postedBody = await runAndCapture();
 
-    const { runCodexTestGen } = await import('../codex-test-gen.js?B1b');
-    const pool = makeMockPool();
-
-    await runCodexTestGen(pool, 'http://localhost:5221').catch(() => {});
-
-    const postedBody = capturedBodies.find(
-      (b) => b?.task_type === 'codex_test_gen'
-    );
-
-    if (!postedBody) {
-      console.warn('[B-1b] 无 codex_test_gen 任务入队，跳过');
-      return;
-    }
+    expect(postedBody, '应有 codex_test_gen 任务入队').not.toBeNull();
 
     // target_file 路径应出现在 description 中（INV-1）
     const targetFile = postedBody.payload?.target_file;
@@ -108,22 +99,9 @@ describe('[B-1] 入队 body description 非空且含 targetFile 路径', () => {
 
 describe('[B-2] description 长度 >= 20 字符（INV-2）', () => {
   it('description.trim().length >= 20', async () => {
-    const globalFetch = makeMockFetch();
-    vi.stubGlobal('fetch', globalFetch);
+    const postedBody = await runAndCapture();
 
-    const { runCodexTestGen } = await import('../codex-test-gen.js?B2');
-    const pool = makeMockPool();
-
-    await runCodexTestGen(pool, 'http://localhost:5221').catch(() => {});
-
-    const postedBody = capturedBodies.find(
-      (b) => b?.task_type === 'codex_test_gen'
-    );
-
-    if (!postedBody) {
-      console.warn('[B-2] 无 codex_test_gen 任务入队，跳过');
-      return;
-    }
+    expect(postedBody, '应有 codex_test_gen 任务入队').not.toBeNull();
 
     const desc = (postedBody.description || '').trim();
     expect(desc.length, `description 长度 ${desc.length} < 20`).toBeGreaterThanOrEqual(20);
@@ -134,22 +112,9 @@ describe('[B-2] description 长度 >= 20 字符（INV-2）', () => {
 
 describe('[B-3] payload.candidate_test_paths 为非空数组（INV-3）', () => {
   it('candidate_test_paths 存在且为数组', async () => {
-    const globalFetch = makeMockFetch();
-    vi.stubGlobal('fetch', globalFetch);
+    const postedBody = await runAndCapture();
 
-    const { runCodexTestGen } = await import('../codex-test-gen.js?B3a');
-    const pool = makeMockPool();
-
-    await runCodexTestGen(pool, 'http://localhost:5221').catch(() => {});
-
-    const postedBody = capturedBodies.find(
-      (b) => b?.task_type === 'codex_test_gen'
-    );
-
-    if (!postedBody) {
-      console.warn('[B-3a] 无 codex_test_gen 任务入队，跳过');
-      return;
-    }
+    expect(postedBody, '应有 codex_test_gen 任务入队').not.toBeNull();
 
     expect(Array.isArray(postedBody.payload?.candidate_test_paths),
       'candidate_test_paths 应为数组').toBe(true);
@@ -158,22 +123,9 @@ describe('[B-3] payload.candidate_test_paths 为非空数组（INV-3）', () => 
   });
 
   it('candidate_test_paths 元素含 .test.js 后缀', async () => {
-    const globalFetch = makeMockFetch();
-    vi.stubGlobal('fetch', globalFetch);
+    const postedBody = await runAndCapture();
 
-    const { runCodexTestGen } = await import('../codex-test-gen.js?B3b');
-    const pool = makeMockPool();
-
-    await runCodexTestGen(pool, 'http://localhost:5221').catch(() => {});
-
-    const postedBody = capturedBodies.find(
-      (b) => b?.task_type === 'codex_test_gen'
-    );
-
-    if (!postedBody) {
-      console.warn('[B-3b] 无 codex_test_gen 任务入队，跳过');
-      return;
-    }
+    expect(postedBody, '应有 codex_test_gen 任务入队').not.toBeNull();
 
     const paths = postedBody.payload?.candidate_test_paths || [];
     const allHaveTestSuffix = paths.every((p) => p.endsWith('.test.js'));
@@ -185,22 +137,9 @@ describe('[B-3] payload.candidate_test_paths 为非空数组（INV-3）', () => 
 
 describe('[B-4] priority 为合法值 P2（INV-5）', () => {
   it('priority === "P2"（不再是非法的 P3）', async () => {
-    const globalFetch = makeMockFetch();
-    vi.stubGlobal('fetch', globalFetch);
+    const postedBody = await runAndCapture();
 
-    const { runCodexTestGen } = await import('../codex-test-gen.js?B4');
-    const pool = makeMockPool();
-
-    await runCodexTestGen(pool, 'http://localhost:5221').catch(() => {});
-
-    const postedBody = capturedBodies.find(
-      (b) => b?.task_type === 'codex_test_gen'
-    );
-
-    if (!postedBody) {
-      console.warn('[B-4] 无 codex_test_gen 任务入队，跳过');
-      return;
-    }
+    expect(postedBody, '应有 codex_test_gen 任务入队').not.toBeNull();
 
     const validPriorities = ['P0', 'P1', 'P2'];
     expect(validPriorities).toContain(postedBody.priority);
@@ -208,26 +147,13 @@ describe('[B-4] priority 为合法值 P2（INV-5）', () => {
   });
 });
 
-// ---- B-4（直接断言）：description 含 vitest 关键词（INV-4）----
+// ---- B-2+B-4 联合：description 含 vitest 关键词（INV-4）----
 
 describe('[B-2+B-4 联合] description 含 vitest 关键词（INV-4）', () => {
   it('description 含字符串 "vitest"', async () => {
-    const globalFetch = makeMockFetch();
-    vi.stubGlobal('fetch', globalFetch);
+    const postedBody = await runAndCapture();
 
-    const { runCodexTestGen } = await import('../codex-test-gen.js?Bvitest');
-    const pool = makeMockPool();
-
-    await runCodexTestGen(pool, 'http://localhost:5221').catch(() => {});
-
-    const postedBody = capturedBodies.find(
-      (b) => b?.task_type === 'codex_test_gen'
-    );
-
-    if (!postedBody) {
-      console.warn('[vitest] 无 codex_test_gen 任务入队，跳过');
-      return;
-    }
+    expect(postedBody, '应有 codex_test_gen 任务入队').not.toBeNull();
 
     expect(
       (postedBody.description || '').toLowerCase(),
