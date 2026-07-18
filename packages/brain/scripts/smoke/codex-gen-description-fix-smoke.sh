@@ -6,9 +6,9 @@ BRAIN="${BRAIN_URL:-http://localhost:5221}"
 
 echo "[smoke] codex-gen-description-fix: 验证生成器建任务时 description 非空"
 
-# 1. 检查 codex-test-gen.js 中包含 description 字段
-if ! grep -q '"description"' packages/brain/src/codex-test-gen.js 2>/dev/null; then
-  echo "[FAIL] codex-test-gen.js 中未找到 description 字段"
+# 1. 检查 codex-test-gen.js 中包含 description 字段（JS 简写属性形式）
+if ! grep -q 'const description' packages/brain/src/codex-test-gen.js 2>/dev/null; then
+  echo "[FAIL] codex-test-gen.js 中未找到 description 变量定义"
   exit 1
 fi
 echo "[PASS] description 字段存在于生成器代码"

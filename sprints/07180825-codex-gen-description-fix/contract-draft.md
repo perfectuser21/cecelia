@@ -115,11 +115,11 @@ cd /workspace && npx vitest run packages/brain/src/__tests__/codex-test-gen.test
 
 | BEHAVIOR | Test File | it() 名称（子串匹配） |
 |----------|-----------|----------------------|
-| B-1 description 非空 | packages/brain/src/__tests__/codex-test-gen-description.test.js | description 字段存在且非空字符串 |
-| B-2 description 含 vitest 关键词 | packages/brain/src/__tests__/codex-test-gen-description.test.js | description 含字符串 "vitest" |
-| B-3 candidate_test_paths 非空 | packages/brain/src/__tests__/codex-test-gen-description.test.js | candidate_test_paths 存在且为数组 |
-| B-4 priority 为 P2 | packages/brain/src/__tests__/codex-test-gen-description.test.js | priority === "P2" |
-| B-5 preFlightCheck 通过 | packages/brain/src/__tests__/codex-test-gen-description.test.js | description 字段存在且非空字符串 |
+| B-1 description 非空 | ../../packages/brain/src/__tests__/codex-test-gen-description.test.js | description 字段存在且非空字符串 |
+| B-2 description 含 vitest 关键词 | ../../packages/brain/src/__tests__/codex-test-gen-description.test.js | description 含字符串 "vitest" |
+| B-3 candidate_test_paths 非空 | ../../packages/brain/src/__tests__/codex-test-gen-description.test.js | candidate_test_paths 存在且为数组 |
+| B-4 priority 为 P2 | ../../packages/brain/src/__tests__/codex-test-gen-description.test.js | priority === "P2" |
+| B-5 preFlightCheck 通过 | ../../packages/brain/src/__tests__/codex-test-gen-description.test.js | description 字段存在且非空字符串 |
 
 ---
 
