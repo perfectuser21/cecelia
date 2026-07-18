@@ -97,7 +97,7 @@ describe('handleRelayExitConsistency', () => {
     expect(r.action).toBe('requeued');
     expect(r.suicide).toBe(true);
     const upd = pool.calls.find((c) => c.sql.includes('UPDATE tasks'));
-    expect(upd.sql).toContain('wait_suicide_count');
+    expect(JSON.stringify(upd.params)).toContain('wait_suicide_count');
   });
 
   it('docker 查询抛错 → fail-open 不动(宁漏不误杀)', async () => {
