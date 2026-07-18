@@ -2,7 +2,7 @@
  * PR Plans API - Three-layer decomposition (Objective → KR → Initiative → PR Plans → Tasks)
  */
 
-const BRAIN_API_URL = 'http://localhost:5221/api/brain';
+const BRAIN_API_URL = '/api/brain';
 
 export interface PRPlan {
   id: string;

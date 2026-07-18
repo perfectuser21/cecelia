@@ -23,7 +23,9 @@ import {
   Users, Code,
 } from 'lucide-react';
 
-const BRAIN_URL = 'http://localhost:5221';
+// 相对路径走代理（本机 5211 frontend-proxy / HK / vite dev 均已配 /api/brain 转发）。
+// 禁止硬编码 localhost:5221——浏览器端 localhost=用户设备，手机/公网打开会全空（task 935499cb）。
+const BRAIN_URL = '';
 
 // ======== 类型定义 ========
 
