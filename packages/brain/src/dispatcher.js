@@ -148,7 +148,7 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
       `SELECT tasks.id AS id, tasks.title AS title
         FROM tasks
         WHERE tasks.task_type = $1
-          AND tasks.status IN ('queued', 'in_progress')
+          AND tasks.status IN ('queued', 'in_progress', 'waiting_ci')
           AND tasks.id != $2
           AND tasks.created_at BETWEEN $3::timestamptz - INTERVAL '${DUPLICATE_TASK_WINDOW_HOURS} hours'
                                     AND $3::timestamptz + INTERVAL '${DUPLICATE_TASK_WINDOW_HOURS} hours'
@@ -560,7 +560,7 @@ export async function dispatchNextTask(goalIds) {
       const lockCheck = await pool.query(
         `SELECT id, title FROM tasks
          WHERE project_id = $1
-           AND status = 'in_progress'
+           AND (status = 'in_progress' OR status = 'waiting_ci')
            AND task_type = ANY($3::text[])
            AND id != $2
          LIMIT 1`,

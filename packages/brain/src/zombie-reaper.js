@@ -190,4 +190,133 @@ export function startZombieReaper({ pool = defaultPool, idleMinutes = DEFAULT_ID
   return timer;
 }
 
-export default { reapZombies, startZombieReaper, ZOMBIE_REAPER_INTERVAL_MS };
+/**
+ * 扫描并处置 waiting_ci 超时任务（6h 守卫 / 24h 总窗口）。
+ *
+ * 处置规则：
+ *   - waiting_ci_since < NOW() - 6h 且 PR 状态为 MERGED  → completed
+ *   - waiting_ci_since < NOW() - 6h 且 PR 状态为 CLOSED  → failed(pr_closed)
+ *   - waiting_ci_since < NOW() - 6h 且 PR 状态为 OPEN    → 续期（更新 waiting_ci_since）
+ *   - waiting_ci_since < NOW() - 24h                    → failed(waiting_ci_timeout)
+ *
+ * @param {object} [opts]
+ * @param {import('pg').Pool} [opts.pool] - PostgreSQL 连接池（测试可注入 mock）
+ * @param {Function} [opts.execFn] - execSync 替代（测试注入，默认用真实 execSync）
+ * @returns {Promise<{ reaped: number, renewed: number, scanned: number, errors: string[] }>}
+ */
+export async function reapWaitingCiZombies({ pool = defaultPool, execFn } = {}) {
+  const result = { reaped: 0, renewed: 0, scanned: 0, errors: [] };
+
+  // 扫描所有 waiting_ci_since < NOW() - 6h 的任务
+  let staleRows;
+  try {
+    const selectResult = await pool.query(`
+      SELECT id, title, payload
+      FROM tasks
+      WHERE status = 'waiting_ci'
+        AND (payload->>'waiting_ci_since')::bigint < extract(epoch from now() - interval '6 hours')
+      ORDER BY (payload->>'waiting_ci_since')::bigint ASC
+      LIMIT 100
+    `);
+    staleRows = selectResult.rows;
+    result.scanned = staleRows.length;
+  } catch (err) {
+    const msg = `SELECT waiting_ci zombies failed: ${err.message}`;
+    result.errors.push(msg);
+    console.error(`[zombie-reaper] ${msg}`);
+    return result;
+  }
+
+  if (staleRows.length === 0) {
+    return result;
+  }
+
+  console.warn(`[zombie-reaper] Found ${staleRows.length} stale waiting_ci task(s)`);
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const TWENTY_FOUR_HOURS_SEC = 86400;
+
+  for (const task of staleRows) {
+    try {
+      const prUrl = task.payload?.waiting_pr_url;
+      const since = parseInt(task.payload?.waiting_ci_since || '0', 10);
+      const over24h = (nowSec - since) > TWENTY_FOUR_HOURS_SEC;
+
+      // 超过 24h 总守卫窗口 → 直接 timeout，不查 PR
+      if (over24h) {
+        await pool.query(
+          `UPDATE tasks SET status='failed', error_message=$2 WHERE id=$1 AND status='waiting_ci'`,
+          [task.id, 'waiting_ci_timeout']
+        );
+        result.reaped++;
+        console.warn(`[zombie-reaper] waiting_ci_timeout id=${task.id} (over 24h)`);
+        continue;
+      }
+
+      // 查 PR 状态
+      if (!prUrl) {
+        // 无 pr_url → 无法确认，保守续期
+        await pool.query(
+          `UPDATE tasks SET payload=payload||jsonb_build_object('waiting_ci_since', $2::bigint) WHERE id=$1 AND status='waiting_ci'`,
+          [task.id, nowSec]
+        );
+        result.renewed++;
+        continue;
+      }
+
+      let prState = 'OPEN';
+      try {
+        const execSync = execFn ?? (await import('child_process')).execSync;
+        const output = execSync(
+          `gh pr view "${prUrl}" --json state --jq '.state'`,
+          { encoding: 'utf8', timeout: 15000 }
+        ).trim();
+        prState = output.toUpperCase();
+      } catch (ghErr) {
+        console.warn(`[zombie-reaper] gh pr view 失败 id=${task.id}: ${ghErr.message}，保守续期`);
+        await pool.query(
+          `UPDATE tasks SET payload=payload||jsonb_build_object('waiting_ci_since', $2::bigint) WHERE id=$1 AND status='waiting_ci'`,
+          [task.id, nowSec]
+        );
+        result.renewed++;
+        continue;
+      }
+
+      if (prState === 'MERGED') {
+        await pool.query(
+          `UPDATE tasks SET status='completed', completed_at=NOW() WHERE id=$1 AND (status='in_progress' OR status='waiting_ci')`,
+          [task.id]
+        );
+        result.reaped++;
+        console.log(`[zombie-reaper] waiting_ci MERGED → completed id=${task.id}`);
+      } else if (prState === 'CLOSED') {
+        await pool.query(
+          `UPDATE tasks SET status='failed', error_message=$2 WHERE id=$1 AND status='waiting_ci'`,
+          [task.id, 'pr_closed']
+        );
+        result.reaped++;
+        console.warn(`[zombie-reaper] waiting_ci CLOSED → failed(pr_closed) id=${task.id}`);
+      } else {
+        // OPEN → 续期
+        await pool.query(
+          `UPDATE tasks SET payload=payload||jsonb_build_object('waiting_ci_since', $2::bigint) WHERE id=$1 AND status='waiting_ci'`,
+          [task.id, nowSec]
+        );
+        result.renewed++;
+        console.log(`[zombie-reaper] waiting_ci OPEN → 续期 id=${task.id}`);
+      }
+    } catch (err) {
+      const msg = `处置 waiting_ci task id=${task.id} 失败: ${err.message}`;
+      result.errors.push(msg);
+      console.error(`[zombie-reaper] ${msg}`);
+    }
+  }
+
+  console.log(
+    `[zombie-reaper] waiting_ci 守卫完成: reaped=${result.reaped} renewed=${result.renewed} scanned=${result.scanned} errors=${result.errors.length}`
+  );
+
+  return result;
+}
+
+export default { reapZombies, startZombieReaper, reapWaitingCiZombies, ZOMBIE_REAPER_INTERVAL_MS };

@@ -74,8 +74,8 @@ async function findEvictionCandidate(incomingPriority) {
   // Get all in-progress task priorities from DB
   const taskIds = Array.from(pidMap.keys());
   const result = await pool.query(
-    'SELECT id, priority FROM tasks WHERE id = ANY($1) AND status = $2',
-    [taskIds, 'in_progress']
+    "SELECT id, priority FROM tasks WHERE id = ANY($1) AND status = 'in_progress' AND status != 'waiting_ci'",
+    [taskIds]
   );
 
   const taskPriorityMap = new Map(result.rows.map(r => [r.id, r.priority]));
