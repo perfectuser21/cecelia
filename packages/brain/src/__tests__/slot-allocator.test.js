@@ -1047,10 +1047,11 @@ describe('calculateSlotBudget 三池模型完整性', () => {
   });
 
   it('codex 字段包含 running/max/available', async () => {
-    // New DB order: cecelia → autoDispatch → queueDepth → codex
+    // New DB order: cecelia → autoDispatch → waitingCi → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countWaitingCiTasks
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '2' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
@@ -1061,10 +1062,11 @@ describe('calculateSlotBudget 三池模型完整性', () => {
   });
 
   it('codex.available=false when running >= MAX_CODEX_CONCURRENT', async () => {
-    // New DB order: cecelia → autoDispatch → queueDepth → codex
+    // New DB order: cecelia → autoDispatch → waitingCi → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countWaitingCiTasks
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '3' }] }); // countCodexInProgress = 3 (full)
     const budget = await calculateSlotBudget();
@@ -1198,10 +1200,11 @@ describe('Backpressure', () => {
   });
 
   it('queue_depth=9 < threshold=20: backpressure.active=false（新阈值下不再触发）', async () => {
-    // New DB order: cecelia → autoDispatch → queueDepth → codex
+    // New DB order: cecelia → autoDispatch → waitingCi → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countWaitingCiTasks
       .mockResolvedValueOnce({ rows: [{ count: '9' }] }) // getQueueDepth = 9 (低于新阈值 20)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
@@ -1216,6 +1219,7 @@ describe('Backpressure', () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countWaitingCiTasks
       .mockResolvedValueOnce({ rows: [{ count: '3' }] }) // getQueueDepth = 3 (正常)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
@@ -1228,6 +1232,7 @@ describe('Backpressure', () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countWaitingCiTasks
       .mockResolvedValueOnce({ rows: [{ count: '20' }] }) // getQueueDepth = 20 (等于阈值)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
@@ -1239,6 +1244,7 @@ describe('Backpressure', () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countWaitingCiTasks
       .mockResolvedValueOnce({ rows: [{ count: '21' }] }) // getQueueDepth = 21 (刚超过阈值)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
