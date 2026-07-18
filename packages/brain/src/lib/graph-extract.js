@@ -11,7 +11,7 @@ function lineOf(content, index) {
 
 export function extractSpawnEdges(content, srcPath) {
   const edges = [];
-  const re = /\b(spawn|execFile|execSync|exec)\(\s*(['"`])([^'"`\n]+)\2/g;
+  const re = /\b(spawn|execFile|execSync|exec)\(\s*(['"`])((?:(?!\2)[^\n])+)\2/g;
   let m;
   while ((m = re.exec(content)) !== null) {
     const via = m[1];
