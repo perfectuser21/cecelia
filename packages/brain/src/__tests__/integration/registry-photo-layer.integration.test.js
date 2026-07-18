@@ -1,13 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { listPhotoLayer } from '../../lib/registry-photo-layer.js';
+import { DB_DEFAULTS } from '../../db-config.js';
 
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia',
-});
+const pool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
 const MARK = 'itest-photo-layer';
 // 破坏性清库场景只在测试库执行(死规矩:禁对本地 cecelia 做 DELETE 全表)
-const isTestDb = /_test|_scratch/.test(process.env.DATABASE_URL || '');
+const isTestDb = /_test$|_scratch$/.test(DB_DEFAULTS.database || '');
 
 beforeAll(async () => {
   await pool.query(`DELETE FROM api_registry WHERE file_path LIKE $1`, [`${MARK}%`]);
