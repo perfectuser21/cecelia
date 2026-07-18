@@ -30,6 +30,7 @@ import { Command } from '@langchain/langgraph';
 import { lookupHarnessThread } from '../lib/harness-thread-lookup.js';
 import { sendBark } from '../notifier.js';
 import pool from '../db.js';
+import { handleRelayExitConsistency } from '../lib/harness-orphan-guard.js';
 
 const router = Router();
 
@@ -121,6 +122,21 @@ router.post('/harness/callback/:containerId', async (req, res) => {
       } catch (err) {
         console.error(`[harness-callback] 认证失败告警发送异常（不影响 ack）: ${err.message}`);
       }
+    }
+
+    // 守卫补链刀(72e2b7a6):容器退出但任务非终态 → 一致性闸自动 requeue(封顶3次,fail-open)
+    try {
+      const consistency = await handleRelayExitConsistency({
+        pool,
+        containerId,
+        exitCode: exit_code,
+        resultText: [result, error, stdout].filter(Boolean).join(' '),
+      });
+      if (consistency.action !== 'noop') {
+        console.warn(`[harness-callback] 一致性闸处置 ${containerId}: ${consistency.action}${consistency.suicide ? '(等待自杀)' : ''}`);
+      }
+    } catch (err) {
+      console.error(`[harness-callback] 一致性闸异常(不影响 ack): ${err.message}`);
     }
 
     return res.json({ ok: true, relayAck: true, containerId });

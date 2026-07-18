@@ -912,6 +912,8 @@ async function onBrainListening() {
   try {
     const { startZombieReaper } = await import('./src/zombie-reaper.js');
     startZombieReaper();
+    const { startHarnessOrphanGuard } = await import('./src/lib/harness-orphan-guard.js');
+    startHarnessOrphanGuard();
     console.log('[Server] Zombie Reaper started (5min interval) - auto-reap in_progress tasks idle >30min');
   } catch (e) {
     console.warn('[Server] Zombie Reaper init failed (non-fatal):', e.message);
