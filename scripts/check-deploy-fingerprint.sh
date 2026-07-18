@@ -37,11 +37,15 @@ _hash() {
 }
 
 # 取 build-info.json 的 git_sha；FETCH_FAIL=取不到，PARSE_FAIL=非 JSON（如 SPA fallback 的 HTML）
+# git_sha=unknown（构建时没注入 GIT_SHA）也归 PARSE_FAIL：与 deploy-local 判变端"unknown=拿不到"
+# 语义对齐，防止 unknown==unknown 三方对账假绿。
 _get_sha() {
-    local url="$1" body
+    local url="$1" body sha
     body=$(curl -s --max-time "$TIMEOUT" "$url/build-info.json" 2>/dev/null) || { echo "FETCH_FAIL"; return; }
     [[ -z "$body" ]] && { echo "FETCH_FAIL"; return; }
-    printf '%s' "$body" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.git_sha||'PARSE_FAIL')}catch{process.stdout.write('PARSE_FAIL')}})" 2>/dev/null || echo "PARSE_FAIL"
+    sha=$(printf '%s' "$body" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.git_sha||'PARSE_FAIL')}catch{process.stdout.write('PARSE_FAIL')}})" 2>/dev/null || echo "PARSE_FAIL")
+    [[ "$sha" == "unknown" ]] && sha="PARSE_FAIL"
+    echo "$sha"
 }
 
 _send_bark() {
