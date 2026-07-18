@@ -150,7 +150,8 @@ router.post('/radius', async (req, res) => {
     if (!Array.isArray(files) || files.length === 0) {
       return res.status(400).json({ error: 'files must be a non-empty array' });
     }
-    const maxDepth = Math.min(Math.max(parseInt(req.body.max_depth) || 10, 1), 20);
+    const rawDepth = req.body.max_depth == null ? 10 : parseInt(req.body.max_depth);
+    const maxDepth = Math.min(Math.max(Number.isNaN(rawDepth) ? 10 : rawDepth, 1), 20);
     const ctx = await loadGraphContext();
     const norm = files.map(normalizePath);
     const reached = reachable(ctx.adj, norm, { dir: 'rev', maxDepth });

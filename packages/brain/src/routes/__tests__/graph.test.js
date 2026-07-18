@@ -137,3 +137,10 @@ describe('POST /island-check', () => {
     expect(res.body.anchor_coverage.covered_by_graph).toBe(1);
   });
 });
+
+describe('POST /radius max_depth 边界(falsy 陷阱回归锁)', () => {
+  it('max_depth=0 被 clamp 到 1,不回退默认 10', async () => {
+    const res = await request(app).post('/api/brain/graph/radius').send({ files: ['c.js'], max_depth: 0 });
+    expect(res.body.reached_count).toBe(2); // 与 max_depth=1 相同(c,b),绝不是全图 4
+  });
+});
