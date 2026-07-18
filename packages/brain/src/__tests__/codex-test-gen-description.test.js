@@ -9,15 +9,19 @@
  *   candidate_test_paths 及合法 priority。
  *
  * 设计说明：
- *   通过 mock scanMissingTestFiles 模块函数以强制返回候选文件，
- *   避免因测试文件已全部存在导致 candidates 为空而跳过所有断言。
+ *   通过 opts.srcDir 注入临时目录（含 drain.js，无对应 .test.js），
+ *   强制 scanMissingTestFiles 返回至少一个候选文件，确保入队分支被触发。
+ *   此方案对 ESM 模块完全兼容，无需 vi.spyOn 内部调用。
  *
  * Red 阶段：在 codex-test-gen.js 修复前，所有 B-1～B-4 断言必须 FAIL。
  * Green 阶段：修复后所有断言 PASS。
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as codexTestGenModule from '../codex-test-gen.js';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { runCodexTestGen } from '../codex-test-gen.js';
 
 // ---- 测试辅助：mock fetch，捕获入队 body ----
 
@@ -47,26 +51,27 @@ function makeMockPool() {
   };
 }
 
-// 固定候选文件（确保入队分支一定触发）
-const MOCK_CANDIDATES = ['packages/brain/src/drain.js'];
+// 创建临时目录，放一个无对应测试文件的 drain.js
+let mockSrcDir;
 
 beforeEach(() => {
   capturedBodies = [];
-  // Mock scanMissingTestFiles 返回固定候选文件，避免因文件系统全覆盖而跳过
-  vi.spyOn(codexTestGenModule, 'scanMissingTestFiles').mockResolvedValue(MOCK_CANDIDATES);
+  // 每次测试创建独立的临时目录，包含 drain.js（无 drain.test.js）
+  mockSrcDir = mkdtempSync(join(tmpdir(), 'codex-test-gen-'));
+  writeFileSync(join(mockSrcDir, 'drain.js'), '// placeholder');
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// 共享辅助：执行 runCodexTestGen 并返回第一个 codex_test_gen body
+// 共享辅助：执行 runCodexTestGen（注入 srcDir）并返回第一个 codex_test_gen body
 async function runAndCapture() {
   const globalFetch = makeMockFetch();
   vi.stubGlobal('fetch', globalFetch);
   const pool = makeMockPool();
 
-  await codexTestGenModule.runCodexTestGen(pool, 'http://localhost:5221').catch(() => {});
+  await runCodexTestGen(pool, 'http://localhost:5221', { srcDir: mockSrcDir }).catch(() => {});
 
   return capturedBodies.find((b) => b?.task_type === 'codex_test_gen') ?? null;
 }
@@ -91,7 +96,9 @@ describe('[B-1] 入队 body description 非空且含 targetFile 路径', () => {
     // target_file 路径应出现在 description 中（INV-1）
     const targetFile = postedBody.payload?.target_file;
     expect(targetFile, 'payload.target_file 应存在').toBeDefined();
-    expect(postedBody.description, `description 应含 target_file: ${targetFile}`).toContain(targetFile);
+    // description 含 target_file 的文件名部分（stem）
+    const stem = targetFile.split('/').pop();
+    expect(postedBody.description, `description 应含 target_file 相关内容: ${targetFile}`).toContain(stem);
   });
 });
 

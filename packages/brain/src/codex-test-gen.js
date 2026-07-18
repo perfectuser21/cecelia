@@ -117,21 +117,35 @@ export async function checkDedup({ targetFile, pool, recentFiles }) {
 }
 
 /**
+ * 生成候选测试文件路径（基于 target_file stem）。
+ * 例：packages/brain/src/drain.js → packages/brain/src/__tests__/drain.test.js
+ * @param {string} targetFile
+ * @returns {string[]}
+ */
+function buildCandidateTestPaths(targetFile) {
+  const base = basename(targetFile, '.js');
+  const dir = targetFile.substring(0, targetFile.lastIndexOf('/'));
+  return [`${dir}/__tests__/${base}.test.js`];
+}
+
+/**
  * 主函数：扫描 → 去重 → 入队 1-3 个 codex_test_gen 任务。
  *
  * @param {import('pg').Pool} pool - Brain Postgres 连接池
  * @param {string} [brain_url] - Brain API URL（可覆盖环境变量默认值）
+ * @param {Object} [opts] - 可选参数（测试注入用）
+ * @param {string} [opts.srcDir] - 注入扫描目录（测试用，避免依赖真实文件系统）
  * @returns {Promise<{skipped: boolean, reason?: string} | {queued: string[], count: number}>}
  */
-export async function runCodexTestGen(pool, brain_url) {
+export async function runCodexTestGen(pool, brain_url, opts = {}) {
   const brainUrl =
     brain_url ||
     process.env.BRAIN_URL ||
     process.env.XIAN_BRAIN_URL ||
     'http://localhost:5221';
 
-  // 1. 扫描缺测试文件
-  const candidates = await scanMissingTestFiles();
+  // 1. 扫描缺测试文件（支持 srcDir 注入供测试使用）
+  const candidates = await scanMissingTestFiles({ srcDir: opts.srcDir });
   if (candidates.length === 0) {
     return { skipped: true, reason: 'no_candidates' };
   }
@@ -151,16 +165,22 @@ export async function runCodexTestGen(pool, brain_url) {
   const queued = [];
   for (const targetFile of targets) {
     try {
+      const candidateTestPaths = buildCandidateTestPaths(targetFile);
+      const description = `为 ${targetFile} 生成 vitest 测试：使用 mock 隔离依赖，覆盖主要分支`;
       const resp = await fetch(`${brainUrl}/api/brain/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           task_type: 'codex_test_gen',
           title: `[自动生成测试] ${targetFile}`,
+          description,
           status: 'queued',
-          priority: 'P3',
+          priority: 'P2',
           payload: {
             target_file: targetFile,
+            target_file_path: targetFile,
+            candidate_test_paths: candidateTestPaths,
+            generation_requirements: 'vitest, mock dependencies, cover main branches',
             trigger: 'codex_test_gen_scheduler',
           },
         }),
