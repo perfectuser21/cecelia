@@ -428,6 +428,8 @@ jobs:
         run: bash scripts/__tests__/write-current-state.test.sh
       - name: rescan-if-changed 事件扳机自测
         run: bash scripts/__tests__/rescan-if-changed.test.sh
+      - name: main-repo-sentinel 主仓哨兵自测
+        run: bash scripts/__tests__/main-repo-sentinel.test.sh
       - name: 真跑守卫
         run: node scripts/test-pyramid-guard.mjs
 

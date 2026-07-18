@@ -1,13 +1,14 @@
 ---
 id: current-system-map
-version: 1.2.0
+version: 1.3.0
 created: 2026-03-10
-updated: 2026-05-26
+updated: 2026-07-19
 authority: CURRENT_STATE
 changelog:
   - 1.0.0: 初始版本，基于 main 分支代码实际审计
   - 1.1.0: Wave1 双层架构 — LLM fire-and-forget、circuit_breaker_states 持久化、brain_guidance 表
   - 1.2.0: Harness Pipeline 可视化 v2 — GET /initiative/:id/detail 端点 + Dashboard initiative 详情面板（data-testid: initiative-card/detail-panel/prd-content/step-timeline）+ reportNode step_timing/ws_issues/ws_costs 增强
+  - 1.3.0: 七大机制总账(DevOps 完备性基准,2026-07-18/19 信息逻辑重建周收官)
 ---
 
 # Cecelia 系统架构图（当前事实版）
@@ -220,3 +221,23 @@ POST /api/brain/execution-callback
 | G1 | SHA 对账判变（假跳过根治） | brain-ci-deploy.yml SHA 对账 + brain-deploy.sh SHA 回读断言 | ✅ 已上线 |
 | G2 | 漂移哨兵 | packages/brain/src/cron/drift-sentinel.js（每 30min 自动补部署） | ✅ 已上线 |
 | G3 | 每日演习 | scripts/smoke/e2e/deploy-daily-drill.sh（nightly 09:00 对账断言） | 🆕 本 PR |
+
+---
+
+## 七大机制总账(DevOps 完备性基准,主理人验收表)
+
+> 2026-07-18/19 拍板:大机制清单**封闭为七条**。完备性判据(可验伪):
+> 今后任何新问题若能落进七机制之一的现有家(issue/棘轮/learning/守卫)而无需发明新机制,
+> 即机制层完备的持续证明;出现"无家可归"的问题才允许加第八行。
+
+| # | 机制 | 回答什么 | 载体 | 状态 |
+|---|---|---|---|---|
+| 1 | 认知 | 系统有什么、谁连谁 | 照相层四表(api/db_schema/test/graph_edges)+事件扳机(rescan-if-changed)+五查询(/api/brain/graph)+账龄哨兵 | ✅ 2026-07-18 闭合(PR#4082/4085/4087/4092) |
+| 2 | 意图 | 承诺了什么 | 承诺地图(journeys/steps.promise/journey_features/golden_path)+判定点/决策表+锚点(回填进行中) | ✅ 机制在;锚点加厚中(刀C) |
+| 3 | 生产 | 意图→代码 | /dev 三路径 + harness skill-relay(planner→GAN→generator) | ✅ 成熟(2026-07-18 B② 全自动实证) |
+| 4 | 质检 | 证明做对 | 合同层(GAN rubric/格式硬检)+代码层(TDD 闸/不可变校验/island-gate/重跑闸)+验收层(evaluator 真跑/judge 权威) | ✅ 密 |
+| 5 | 生存 | 执行体死了有人收 | harness-orphan-guard(callback 一致性闸+定时兜底扫描+等待自杀检测)+zombie-reaper+主仓哨兵(main-repo-sentinel) | ✅ 2026-07-19 守卫补链刀闭合 |
+| 6 | 交付 | 合并→安全上线 | Gate3 自动部署+staging 放行+版本 bump 闸+部署自检 | ✅ 2026-07-15 根治 |
+| 7 | 学习 | 不掉同一个坑 | learnings 落库/issue 立案/decisions/判定点活性/棘轮族(smoke/无主比例/暗边计数) | ✅ 永续运转 |
+
+> 剪裁说明:骨架=行业 DevOps 闭环;1(认知)与 5(生存)为 AI 工人特化——行业默认工人是"有记忆、不蒸发的人",我们的工人是失忆且会蒸发的 LLM,故显式机制化。适用于本组织全部仓(Cecelia/ZenithJoy)。
