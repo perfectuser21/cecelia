@@ -115,6 +115,27 @@
 
 改动涉及 slot-allocator.js（核心计数逻辑），按 semver bump patch 版本：`1.267.2 → 1.268.0`（功能性变更，minor bump）。
 
+## Invariant 约束
+
+### 关联 Pool C / 调度 / Slot / Waiting 的系统 Invariant
+
+- INV-cec579d2: 产能配比政策线（本周）：工厂 70% / 业务 30%——planner/排序官按此配比取格子；本次 waiting_ci 改动使更多格子真正可用，不得打破此配比约束。
+- INV-7ccfa168: 单 slot 串行任务，并行只许跨 slot——同一 slot 内严格串行，等待态任务（waiting_ci）占槽不跑实际代码，仍算「占用该 slot」，不得用 waiting_ci 绕过此串行规则在同 slot 塞入第二个活跃任务。
+- INV-dc18d43d: 无闸不成文——pipeline 生命周期/记账/验收判据一律下沉代码——waiting_ci 状态转入/转出逻辑、Pool C 计数排除逻辑必须写进代码（slot-allocator.js / harness-relay-watchdog.js），不得靠运行时人工操作或文档约定替代。
+- INV-c1d0abce: 替换核心驱动/调度器必清孤儿——改动 countAutoDispatchInProgress() 时，必须 grep 所有消费 `in_progress` 的查询点逐一确认兼容（本 PRD FR-5 已枚举），不得留下孤立的旧计数点。
+- INV-e90c0fbb: relay watchdog pr_url 未写回缺口——转入 waiting_ci 时必须同步写 pr_url 到 tasks 表，否则 watchdog 再次扫到该任务时因缺 pr_url 误判，导致重复 spawn。
+- INV-b0b2d702: harness pipeline 禁用于 infrastructure 仓库——本 sprint 属 infrastructure 类改动（Brain 后端调度），验收走 local_api，不套 harness-controller 完整流水线（已在 journey_type 段确认）。
+
+### 代码层约束（slot-allocator.js / task-updater.js）
+
+- **VALID_STATUSES 白名单（task-updater.js:13）**：当前枚举为 `['queued', 'in_progress', 'completed', 'failed', 'pending_postdeploy']`，不含 `waiting_ci`——方案 A 必须在此处新增，否则所有 `UPDATE … SET status='waiting_ci'` 会被安全校验层拒绝并抛错。
+- **countAutoDispatchInProgress 查询边界（slot-allocator.js:229-241）**：当前 WHERE 子句 `status = 'in_progress'` 不区分「容器活跃」vs「passive 等 CI」——本次核心改动即修改此处，修改后必须保证排除 waiting_ci 行（方案 A）或排除 `payload->>'waiting_ci'='true'` 行（方案 B）。
+- **三池优先级约束（slot-allocator.js:9）**：`Priority: User (B) > Cecelia (A) > Task Pool (C)`，Pool C available 计算必须在 B、A 扣除后进行，waiting_ci 任务不得影响 B/A 池计数，只影响 C 池的 used 字段（改动后 C.used 减少，C.available 增加）。
+
+### 其余系统 Invariant（43 条）已在设计中遵守
+
+其余 43 条系统 invariant（含凭据安全、租户隔离、鉴权、PII 脱敏、真环境验证等）与本次 Pool C 等待态改动无直接交叉，设计已默认遵守，不逐条展开。
+
 ## 铁律
 
 1. **禁 mock 判定与数据源的边**：测试中不允许通过 mock 让「waiting_ci 任务」凭空变成「不存在的任务」——DB mock 必须真实返回 waiting_ci 行，Pool C 计数函数必须真实排除它。
