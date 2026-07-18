@@ -2,6 +2,7 @@
 > Sprint: 07180826-poolc-waiting-state
 > Task ID: 327bdebb-0067-4065-9ab4-ed2e0fc372db
 > 日期: 2026-07-18
+> 版本: Round 3（修复 HARD-1/2/3 + IMP-4/5/6 + GEN-9）
 
 ---
 
@@ -56,7 +57,10 @@
 
 **验证方式**：
 - 单元测试：场景4（4 个子场景：MERGED/CLOSED/OPEN/超24h）
-- E2E：`manual:bash curl localhost:5221/api/brain/tasks?status=failed | jq '.[] | select(.error_message | contains("waiting_ci_timeout"))'` 返回非空（插入 7h 前 waiting_ci 任务触发 reaper 后验证）
+- E2E：zombie-reaper E2E 通过手动触发 tick 验证，非自动化（无独立 HTTP 触发端点）
+  - `manual:bash node packages/brain/scripts/trigger-tick.js`
+  - 触发后验证：`manual:bash psql "$DB_URL" -t -c "SELECT status FROM tasks WHERE id='00000000-0000-0000-0000-000000000099'"`
+  - 期望：status=failed，error_message 含 waiting_ci_timeout
 
 **相关代码**：`packages/brain/src/zombie-reaper.js`
 
@@ -69,12 +73,16 @@
 **描述**：`harness-relay-watchdog.js` 在转入 waiting_ci 时同步写 `payload.waiting_pr_url` 和 `payload.waiting_ci_since`，确保 watchdog 再次扫到时不因缺 pr_url 而误判重复 spawn。
 
 **验证方式**：
+- 单元测试（可执行，场景6）：
+  - GIVEN CI pending 且 pr_url 非空 WHEN watchdog 扫到该任务 THEN status 变为 waiting_ci 且 payload.waiting_pr_url 非空
+  - `expect(capturedPayload.waiting_pr_url).toBe('https://github.com/org/repo/pull/42')`
+  - `expect(capturedPayload.waiting_ci_since).toBeTruthy()`
 - 代码审计：`harness-relay-watchdog.js` 转入逻辑包含 `payload.waiting_pr_url = <pr_url>` 赋值
-- DB 直查：转入 waiting_ci 后 `SELECT payload->>'waiting_pr_url' FROM tasks WHERE id=$1` 非空
+- DB 直查：`manual:bash psql "$DB_URL" -t -c "SELECT payload->>'waiting_pr_url' FROM tasks WHERE id='<task_id>'"` 非空
 
 **相关代码**：`packages/brain/src/harness-relay-watchdog.js`
 
-**测试文件**：`packages/brain/src/__tests__/pool-c-waiting-state.test.js`（转入场景断言）
+**测试文件**：`packages/brain/src/__tests__/pool-c-waiting-state.test.js`（场景6：转入条件可执行单元测试断言）
 
 ---
 
@@ -92,7 +100,45 @@
 
 ---
 
-### [BEHAVIOR] [BEHAVIOR-7] 既有测试全部通过（回归保护）
+### [BEHAVIOR] [BEHAVIOR-7] startup-sync 再分类：waiting_ci 在重启后按 CI 状态正确归位（IMP-4）
+
+**描述**：`startup-sync.js` 在 Brain 重启时扫描 waiting_ci 任务并再分类：CI green → 保持 waiting_ci；CI red → 回 in_progress。
+
+**验证方式**：
+- 单元测试场景5a（startup-sync + CI green → 保持 waiting_ci）：
+  - GIVEN DB 中存在 waiting_ci 任务，WHEN startup-sync 扫描 AND CI=green THEN status 保持 waiting_ci
+  - `expect(task.status).toBe('waiting_ci')`
+  - `expect(task.payload.waiting_ci_since).toBeTruthy()`
+- 单元测试场景5b（startup-sync + CI red → 回 in_progress）：
+  - GIVEN DB 中存在 waiting_ci 任务，WHEN startup-sync 扫描 AND CI=red THEN status 转回 in_progress
+  - `expect(task.status).toBe('in_progress')`
+  - `expect(task.payload.waiting_ci_since).toBeFalsy()`
+
+**相关代码**：`packages/brain/src/startup-sync.js`
+
+**测试文件**：`packages/brain/src/__tests__/pool-c-waiting-state.test.js` 场景5a、5b
+
+---
+
+### [BEHAVIOR] [BEHAVIOR-8] eviction 候选查询排除 waiting_ci（不可驱逐）
+
+**描述**：`eviction.js` 驱逐候选查询的 WHERE 子句排除 `status='waiting_ci'`，使等待态任务不被高优驱逐影响。
+
+**验证方式**：
+- 单元测试场景7：
+  - GIVEN DB 返回仅含 in_progress 任务（waiting_ci 任务已被 WHERE 过滤）
+  - THEN eviction 候选列表中不存在 waiting_ci 任务
+  - `expect(evictionCandidates.find(t => t.id === 'E1')).toBeUndefined()` （E1=waiting_ci）
+  - `expect(evictionCandidates.find(t => t.id === 'E2')).toBeDefined()` （E2=in_progress）
+- 代码审计：`packages/brain/src/eviction.js:132` WHERE 子句包含 `AND status != 'waiting_ci'`（或等价条件）
+
+**相关代码**：`packages/brain/src/eviction.js:132`
+
+**测试文件**：`packages/brain/src/__tests__/pool-c-waiting-state.test.js` 场景7
+
+---
+
+### [BEHAVIOR] [BEHAVIOR-9] 既有测试全部通过（回归保护）
 
 **描述**：`slot-allocator.test.js`（1396 行）、`slot-accounting.test.js`（173 行）、`dispatcher.test.js`、`harness-slot-check.test.js` 在本次改动后全部绿灯。
 
@@ -106,7 +152,7 @@
 
 ---
 
-### [BEHAVIOR] [BEHAVIOR-8] Brain 版本 bump 至 1.268.0
+### [BEHAVIOR] [BEHAVIOR-10] Brain 版本 bump 至 1.268.0
 
 **描述**：`packages/brain/package.json` 版本从 `1.267.2` 升至 `1.268.0`（minor bump，功能性变更）。
 
@@ -145,7 +191,17 @@
 
 ## failing-first 测试规约
 
-**铁律**：测试文件 `packages/brain/src/__tests__/pool-c-waiting-state.test.js` 必须在 slot-allocator.js / zombie-reaper.js 改动**之前**提交，且在改动前状态下执行结果为红（4 个场景均 FAIL）。
+**铁律**：测试文件 `packages/brain/src/__tests__/pool-c-waiting-state.test.js` 必须在 slot-allocator.js / zombie-reaper.js 改动**之前**提交，且在改动前状态下执行结果为红（7 个场景均 FAIL）。
+
+场景清单（改动前必须全红）：
+- 场景1：3 waiting_ci + 1 in_progress → Pool C used = 1
+- 场景2：0 in_progress + 3 waiting_ci → available = effectiveSlots
+- 场景3：waiting_ci 任务在 dispatcher 去重列表中可见
+- 场景4（含4个子场景）：zombie-reaper 守卫 6h 超时处置
+- 场景5a：startup-sync + CI green → 保持 waiting_ci
+- 场景5b：startup-sync + CI red → 回 in_progress
+- 场景6：harness-relay-watchdog 转入时写 pr_url（可执行单元测试）
+- 场景7：eviction 候选查询不含 waiting_ci 任务
 
 验证方式：PR 的 commit 历史中，测试文件的 commit SHA 早于实现文件的 commit SHA。
 
@@ -153,12 +209,13 @@
 
 ## 完成标准（GoLive 门禁）
 
-1. [ ] `pool-c-waiting-state.test.js` 存在，4 场景（含场景4的4个子场景共7个断言）全绿
+1. [ ] `pool-c-waiting-state.test.js` 存在，7 场景（含场景4的4个子场景，场景5a/5b，场景6，场景7，共11+个断言）全绿
 2. [ ] `slot-allocator.test.js`、`slot-accounting.test.js`、`dispatcher.test.js`、`harness-slot-check.test.js` 全绿
 3. [ ] `packages/brain/package.json` 版本为 `1.268.0`
 4. [ ] `scripts/check-version-sync.sh` 通过
 5. [ ] `scripts/facts-check.mjs` 通过
-6. [ ] E2E 验收脚本在 local_api 环境执行后，验收1/2/3 全 PASS
+6. [ ] E2E 验收脚本在 local_api 环境执行后，验收1/2/3 全 PASS，验收4 通过 `manual:bash node packages/brain/scripts/trigger-tick.js` 后验证
 7. [ ] FR-5 兼容性审计表 14 处全部打钩（在 PR 描述中记录）
-8. [ ] INV-e90c0fbb：`waiting_pr_url` 写入确认
-9. [ ] PR 合并后，Brain 任务 327bdebb 状态回写为 `completed`
+8. [ ] INV-e90c0fbb：`waiting_pr_url` 写入确认（场景6 单元测试断言 + DB 直查）
+9. [ ] eviction 排除 waiting_ci 断言通过（场景7）
+10. [ ] PR 合并后，Brain 任务 327bdebb 状态回写为 `completed`

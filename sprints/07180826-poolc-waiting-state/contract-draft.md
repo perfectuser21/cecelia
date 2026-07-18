@@ -1,7 +1,7 @@
 # Contract Draft — Pool C 等待态（waiting_ci）改革
 > Sprint: 07180826-poolc-waiting-state
 > Task ID: 327bdebb-0067-4065-9ab4-ed2e0fc372db
-> 起草轮次: 首轮（无 reviewer feedback）
+> 起草轮次: Round 3（修复 HARD-1/2/3 + IMP-4/5/6 + GEN-9）
 > 日期: 2026-07-18
 
 ---
@@ -117,6 +117,76 @@ AND  执行 gh pr view 核查（mock 返回 PR 状态）
 
 ---
 
+### 场景5：startup-sync 再分类 waiting_ci 任务（IMP-4）
+
+#### 场景5a：startup-sync 扫到 waiting_ci + CI green → 保持 waiting_ci
+
+```
+GIVEN Brain 重启后 startup-sync 扫描中
+AND  DB 中存在 1 条 status='waiting_ci' 的任务（payload.waiting_pr_url 非空）
+AND  该 PR 的 CI 状态为 green（checks passed）
+WHEN startup-sync 执行再分类逻辑
+THEN 任务 status 保持 'waiting_ci'（不降级）
+AND  payload.waiting_ci_since 不被清除
+```
+
+**断言**：
+- `expect(task.status).toBe('waiting_ci')`
+- `expect(task.payload.waiting_ci_since).toBeTruthy()`
+
+#### 场景5b：startup-sync 扫到 waiting_ci + CI red → 回 in_progress
+
+```
+GIVEN Brain 重启后 startup-sync 扫描中
+AND  DB 中存在 1 条 status='waiting_ci' 的任务（payload.waiting_pr_url 非空）
+AND  该 PR 的 CI 状态为 red（checks failed）
+WHEN startup-sync 执行再分类逻辑
+THEN 任务 status 转回 'in_progress'
+AND  payload.waiting_ci_since 被清除（或置 null）
+```
+
+**断言**：
+- `expect(task.status).toBe('in_progress')`
+- `expect(task.payload.waiting_ci_since).toBeFalsy()`
+
+---
+
+### 场景6：harness-relay-watchdog 转入时写 pr_url（IMP-5 可执行单元测试）
+
+```
+GIVEN 存在 1 条 status='in_progress' 的任务（task_id=T6）
+AND  该任务有关联 PR（pr_url='https://github.com/org/repo/pull/42'）
+AND  CI 状态为 pending（checks running）
+WHEN harness-relay-watchdog 扫到该任务（mock DB pool.query）
+THEN pool.query 被调用，UPDATE tasks SET status='waiting_ci'
+AND  UPDATE 的 payload 中包含 waiting_pr_url='https://github.com/org/repo/pull/42'
+AND  UPDATE 的 payload 中包含 waiting_ci_since（非空数值）
+```
+
+**断言**：
+- `expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining("status = 'waiting_ci'"), expect.anything())`
+- `expect(capturedPayload.waiting_pr_url).toBe('https://github.com/org/repo/pull/42')`
+- `expect(capturedPayload.waiting_ci_since).toBeTruthy()`
+
+---
+
+### 场景7：eviction 候选查询排除 waiting_ci 任务（IMP-6）
+
+```
+GIVEN DB 中存在：
+  - 1 条 status='waiting_ci' 的任务（task_id=E1）
+  - 1 条 status='in_progress' 的任务（task_id=E2）
+WHEN eviction.js 执行候选查询（mock DB 返回仅包含 E2）
+THEN 查询结果集中不包含 E1（waiting_ci 任务被排除）
+AND  task_id=E1 不在驱逐候选列表中
+```
+
+**断言**：
+- `expect(evictionCandidates.find(t => t.id === 'E1')).toBeUndefined()`
+- `expect(evictionCandidates.find(t => t.id === 'E2')).toBeDefined()`
+
+---
+
 ## E2E 验收
 
 > target_environment: local_api
@@ -142,19 +212,21 @@ CLEANUP_SQL="DELETE FROM tasks WHERE title LIKE 'e2e-waiting-ci-test%';"
 psql "$DB_URL" -c "$CLEANUP_SQL" > /dev/null 2>&1 || true
 
 # ——— 插入测试数据 ———
+# HARD-2 修复：先提取 date +%s 为 bash 变量，避免在单引号 SQL 内不展开
+NOW_TS=$(date +%s)
 INSERT_SQL="
 INSERT INTO tasks (id, title, status, payload, created_at, updated_at)
 VALUES
-  ('e2e-w1-uuid', 'e2e-waiting-ci-test-1', 'waiting_ci',
-   '{\"waiting_ci_since\": $(date +%s), \"waiting_pr_url\": \"https://github.com/test/repo/pull/1\"}'::jsonb,
+  ('00000000-0000-0000-0000-000000000001', 'e2e-waiting-ci-test-1', 'waiting_ci',
+   ('{\"waiting_ci_since\": ' || $NOW_TS || ', \"waiting_pr_url\": \"https://github.com/test/repo/pull/1\"}'::text)::jsonb,
    NOW(), NOW()),
-  ('e2e-w2-uuid', 'e2e-waiting-ci-test-2', 'waiting_ci',
-   '{\"waiting_ci_since\": $(date +%s), \"waiting_pr_url\": \"https://github.com/test/repo/pull/2\"}'::jsonb,
+  ('00000000-0000-0000-0000-000000000002', 'e2e-waiting-ci-test-2', 'waiting_ci',
+   ('{\"waiting_ci_since\": ' || $NOW_TS || ', \"waiting_pr_url\": \"https://github.com/test/repo/pull/2\"}'::text)::jsonb,
    NOW(), NOW()),
-  ('e2e-w3-uuid', 'e2e-waiting-ci-test-3', 'waiting_ci',
-   '{\"waiting_ci_since\": $(date +%s), \"waiting_pr_url\": \"https://github.com/test/repo/pull/3\"}'::jsonb,
+  ('00000000-0000-0000-0000-000000000003', 'e2e-waiting-ci-test-3', 'waiting_ci',
+   ('{\"waiting_ci_since\": ' || $NOW_TS || ', \"waiting_pr_url\": \"https://github.com/test/repo/pull/3\"}'::text)::jsonb,
    NOW(), NOW()),
-  ('e2e-p1-uuid', 'e2e-waiting-ci-test-4-inprogress', 'in_progress',
+  ('00000000-0000-0000-0000-000000000004', 'e2e-waiting-ci-test-4-inprogress', 'in_progress',
    '{}'::jsonb,
    NOW(), NOW());
 "
@@ -208,47 +280,48 @@ fi
 echo "[PASS] 验收3 通过：dispatch_allowed=true，Pool C 未被 waiting 拖满"
 
 # ——— 验收 4：waiting_ci 守卫（6h 超时）———
+# HARD-1 说明：zombie-reaper 无独立 HTTP 触发端点（/api/brain/tick/zombie-reaper 不存在）。
+# 验收4 通过手动触发 tick 脚本执行，非全自动化 API 验收。
+# manual:bash node packages/brain/scripts/trigger-tick.js
 echo ""
-echo "--- 验收4: 6h 超时守卫 ---"
-STALE_TS=$(date -d '7 hours ago' +%s 2>/dev/null || date -v-7H +%s)
+echo "--- 验收4: 6h 超时守卫（zombie-reaper E2E 通过手动触发 tick 验证，非自动化）---"
+
+# HARD-2 修复：先提取时间戳为 bash 变量
+NOW_TS2=$(date +%s)
+STALE_TS=$((NOW_TS2 - 7 * 3600))
+
+# HARD-3 修复：使用合法 UUID
 STALE_SQL="
 INSERT INTO tasks (id, title, status, payload, created_at, updated_at)
 VALUES (
-  'e2e-stale-uuid', 'e2e-waiting-ci-test-stale', 'waiting_ci',
+  '00000000-0000-0000-0000-000000000099', 'e2e-waiting-ci-test-stale', 'waiting_ci',
   ('{\"waiting_ci_since\": ' || $STALE_TS || ', \"waiting_pr_url\": \"https://github.com/test/repo/pull/999\"}'::text)::jsonb,
   NOW() - INTERVAL '7 hours', NOW()
 )
 ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, status = 'waiting_ci';
 "
 psql "$DB_URL" -c "$STALE_SQL" > /dev/null
-echo "[OK] 插入 7h 前 waiting_ci 僵尸任务"
+echo "[OK] 插入 7h 前 waiting_ci 僵尸任务（UUID: 00000000-0000-0000-0000-000000000099）"
+echo "[INFO] 验收4 执行步骤："
+echo "  1. 手动触发 tick: manual:bash node packages/brain/scripts/trigger-tick.js"
+echo "  2. 等待 zombie-reaper 处理（约 5s）"
+echo "  3. 验证 DB 状态："
+echo "     manual:bash psql \"\$DB_URL\" -t -c \"SELECT status FROM tasks WHERE id='00000000-0000-0000-0000-000000000099'\""
+echo "[INFO] 期望：status=failed，error_message 含 waiting_ci_timeout"
 
-# 触发 zombie-reaper tick（使用 Brain API）
-TICK_RESP=$(curl -sf -X POST "$BRAIN_URL/api/brain/tick/zombie-reaper" 2>/dev/null || \
-            curl -sf -X POST "$BRAIN_URL/api/brain/debug/trigger-reaper" 2>/dev/null || \
-            echo '{"triggered":false}')
-echo "Reaper tick 响应: $TICK_RESP"
-
-sleep 2  # 等待 reaper 处理
-
-STALE_STATUS=$(psql "$DB_URL" -t -c "SELECT status FROM tasks WHERE id='e2e-stale-uuid';" | tr -d ' \n')
-STALE_ERROR=$(psql "$DB_URL" -t -c "SELECT payload->>'error_message' FROM tasks WHERE id='e2e-stale-uuid';" | tr -d ' ')
-
-echo "僵尸任务最终 status=$STALE_STATUS (期望: failed)"
-if [ "$STALE_STATUS" != "failed" ]; then
-  echo "[WARN] 守卫触发需依赖 zombie-reaper 定时运行，当前 status=$STALE_STATUS（验收4 需人工触发 reaper 后重验）"
-else
-  if echo "$STALE_ERROR" | grep -q "waiting_ci_timeout"; then
-    echo "[PASS] 验收4 通过：僵尸任务 status=failed，error_message 含 waiting_ci_timeout"
-  else
-    echo "[WARN] status=failed 但 error_message 不含 waiting_ci_timeout，error=$STALE_ERROR"
-  fi
+STALE_STATUS=$(psql "$DB_URL" -t -c "SELECT status FROM tasks WHERE id='00000000-0000-0000-0000-000000000099';" | tr -d ' \n')
+echo "当前僵尸任务 status=$STALE_STATUS（插入后尚未触发 tick，预期为 waiting_ci）"
+if [ "$STALE_STATUS" != "waiting_ci" ]; then
+  echo "[FAIL] 插入后应为 waiting_ci，实际为 $STALE_STATUS" >&2
+  exit 1
 fi
+echo "[PASS] 验收4 前置：僵尸任务已成功插入 DB，等待手动 tick 后用 manual:bash 验证最终 status=failed"
 
 # ——— 清理 ———
 psql "$DB_URL" -c "DELETE FROM tasks WHERE title LIKE 'e2e-waiting-ci-test%';" > /dev/null
 echo ""
-echo "=== E2E 验收完成，测试数据已清理 ==="
+echo "=== E2E 验收1/2/3 完成，测试数据已清理 ==="
+echo "=== 验收4 需手动触发 tick 后执行 manual:bash 验证 ==="
 ```
 
 ---

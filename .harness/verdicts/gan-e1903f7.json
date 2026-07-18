@@ -1,0 +1,15 @@
+{
+  "phase": "gan",
+  "round": 2,
+  "verdict": "REVISION",
+  "judgments_written": 27,
+  "rubric_scores": {
+    "铁律覆盖": {"score": 8, "note": "铁律1 E2E验收4降级WARN违反精神"},
+    "4场景完整性": {"score": 8, "note": "转入场景缺可执行测试"},
+    "E2E可执行性": {"score": 7, "note": "验收4 WARN降级/psql语法问题/UUID格式错误"},
+    "兼容性覆盖": {"score": 9, "note": "14点全覆盖，部分缺测试断言"},
+    "未覆盖真实链路": {"score": 7, "note": "startup-sync/relay转入点无测试"},
+    "方案A实施可行性": {"score": 8, "note": "watchdog WHERE扩展和actions.js转换缺断言"},
+    "回归风险": {"score": 7, "note": "eviction排除/inflight grace无测试覆盖"}
+  }
+}
