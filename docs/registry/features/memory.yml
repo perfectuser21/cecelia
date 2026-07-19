@@ -435,7 +435,6 @@ features:
         - packages/brain/src/__tests__/bare-modules/pending-conversations.test.js
         - packages/brain/src/__tests__/consolidation.test.js
         - packages/brain/src/__tests__/conversation-consolidator.test.js
-        - packages/brain/src/__tests__/conversation-digest.test.js
         - packages/brain/src/__tests__/pending-conversations.test.js
         - packages/brain/src/__tests__/unified-conversations.test.js
       integration: []
@@ -451,7 +450,6 @@ features:
             - packages/brain/src/__tests__/bare-modules/pending-conversations.test.js
             - packages/brain/src/__tests__/consolidation.test.js
             - packages/brain/src/__tests__/conversation-consolidator.test.js
-            - packages/brain/src/__tests__/conversation-digest.test.js
             - packages/brain/src/__tests__/pending-conversations.test.js
             - packages/brain/src/__tests__/unified-conversations.test.js
           integration: []
