@@ -10,8 +10,6 @@
  */
 import { triggerArchReview, triggerCiPatrol } from './daily-review-scheduler.js';
 import { maybeTriggerStrategySession } from './active-goals-zero-trigger.js';
-import { runConversationDigest } from './conversation-digest.js';
-import { runCaptureDigestion } from './capture-digestion.js';
 import { scheduleDailyBackup } from './daily-backup-scheduler.js';
 import { maybeRunLineDreaming } from './line-dreaming.js';
 import { maybeGenerateBattleReport } from './battle-report.js';
@@ -42,8 +40,6 @@ export const JOBS = [
   { name: 'arch-review', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerArchReview, description: '架构巡检（自带4h窗口+guard）' },
   { name: 'ci-patrol', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerCiPatrol, description: 'CI/CD 巡检（自带北京08:00窗口+当日去重）' },
   { name: 'strategy-trigger', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeTriggerStrategySession, description: '战略会应急触发（自带active_goals gate+24h冷却）' },
-  { name: 'conversation-digest', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runConversationDigest, description: '对话提炼' },
-  { name: 'capture-digestion', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runCaptureDigestion, description: 'capture 消化（想法箱进箱通道）' },
   { name: 'daily-backup', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: scheduleDailyBackup, description: '每日 DB 备份任务创建（自带窗口+当日去重；作战史单库保命符）' },
   { name: 'line-dreaming', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunLineDreaming, description: 'L1 line 级夜间蒸馏（自带北京05:00窗口+20h去重，晨报前跑完）' },
   { name: 'ledger-hygiene', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunLedgerHygiene, description: '账本保鲜守卫（自带北京05:10窗口+20h去重，m1-m7指标+棘轮击穿开issue）' },

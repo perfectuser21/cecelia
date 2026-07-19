@@ -155,33 +155,12 @@ tests:
     status: active
     note: "4个executor的callLLM调用逻辑 + 降级处理（mock LLM）"
 
-  - id: capture-digestion-job
-    path: tests/capture-digestion-job.test.js
-    type: unit
-    ci: L3
-    status: active
-    note: "runCaptureDigestion：解析captures为6种target_type（mock DB）"
-
   - id: capability-probe-rumination
     path: tests/capability-probe-rumination.test.js
     type: unit
     ci: L3
     status: active
     note: "probeRumination使用48h窗口和idle状态判断（合约测试）"
-
-  - id: conversation-digest-tick
-    path: tests/conversation-digest-tick.test.js
-    type: unit
-    ci: L3
-    status: pending-ci
-    note: "验证tick.js引用conversation-digest（代码结构合约），价值一般"
-
-  - id: conversation-captures-route
-    path: tests/conversation-captures-route.test.js
-    type: unit
-    ci: L3
-    status: pending-ci
-    note: "Router结构验证（mock Express），价值一般"
 
   - id: capture-api
     path: tests/capture-api.test.js

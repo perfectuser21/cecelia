@@ -7,12 +7,6 @@ vi.mock('../daily-review-scheduler.js', () => ({
 vi.mock('../active-goals-zero-trigger.js', () => ({
   maybeTriggerStrategySession: vi.fn().mockResolvedValue({ created: false, reason: 'active_goals_present' }),
 }));
-vi.mock('../conversation-digest.js', () => ({
-  runConversationDigest: vi.fn().mockResolvedValue({ digested: 0 }),
-}));
-vi.mock('../capture-digestion.js', () => ({
-  runCaptureDigestion: vi.fn().mockResolvedValue({ processed: 0 }),
-}));
 vi.mock('../daily-backup-scheduler.js', () => ({
   scheduleDailyBackup: vi.fn().mockResolvedValue({ inWindow: false, triggered: false, alreadyDone: false }),
 }));
@@ -82,8 +76,6 @@ import {
 } from '../scheduler-jobs.js';
 import { triggerArchReview, triggerCiPatrol } from '../daily-review-scheduler.js';
 import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
-import { runConversationDigest } from '../conversation-digest.js';
-import { runCaptureDigestion } from '../capture-digestion.js';
 import { scheduleDailyBackup } from '../daily-backup-scheduler.js';
 import { maybeGenerateBattleReport } from '../battle-report.js';
 import { maybeRunLineDreaming } from '../line-dreaming.js';
@@ -103,9 +95,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 23 个 job（含 disk-guard + promise-map-nightly + machine-vitals + codex-test-gen）', () => {
+  it('JOBS 注册了 21 个 job（含 disk-guard + promise-map-nightly + machine-vitals + codex-test-gen）', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly', 'codex-test-gen',
+      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly', 'codex-test-gen',
     ]);
   });
 
@@ -115,8 +107,6 @@ describe('scheduler-jobs 注册表', () => {
     expect(triggerArchReview).toHaveBeenCalledWith(pool);
     expect(triggerCiPatrol).toHaveBeenCalledWith(pool);
     expect(maybeTriggerStrategySession).toHaveBeenCalledWith(pool);
-    expect(runConversationDigest).toHaveBeenCalledWith();
-    expect(runCaptureDigestion).toHaveBeenCalledWith();
     expect(scheduleDailyBackup).toHaveBeenCalledWith(pool);
     expect(maybeRunLineDreaming).toHaveBeenCalledWith(pool);
     expect(maybeRunLedgerHygiene).toHaveBeenCalledWith(pool);
@@ -126,7 +116,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
     expect(maybeRunDirectionProposer).toHaveBeenCalledWith(pool);
     expect(runPostdeployVerifier).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(23);
+    expect(results).toHaveLength(21);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -136,8 +126,7 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results.find((r) => r.name === 'arch-review')).toMatchObject({ ok: false, error: 'boom' });
     expect(results.filter((r) => r.name !== 'arch-review').every((r) => r.ok)).toBe(true);
-    expect(results).toHaveLength(23);
-    expect(runCaptureDigestion).toHaveBeenCalled();
+    expect(results).toHaveLength(21);
   });
 
   it('handler 永挂时按 timeoutMs 标记 timedOut 并继续', async () => {
@@ -206,8 +195,6 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     await vi.advanceTimersByTimeAsync(60 * 1000);
     expect(triggerArchReview).toHaveBeenCalledTimes(1);
     expect(maybeTriggerStrategySession).toHaveBeenCalledTimes(1);
-    expect(runConversationDigest).toHaveBeenCalledTimes(1);
-    expect(runCaptureDigestion).toHaveBeenCalledTimes(1);
   });
 
   it('重入守卫：慢 handler 挂起时前进 120s 不叠加并发', async () => {
