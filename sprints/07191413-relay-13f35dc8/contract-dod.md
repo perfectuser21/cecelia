@@ -33,8 +33,8 @@ target_environment: local_api
 - [ ] [BEHAVIOR] INV-8 [capture-triage] Test Contract 表格固定 4 列格式：contract-draft.md `## Test Contract` 段落已按 `Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据` 4 列格式书写
   Test: manual:bash -c 'grep -A2 "^| Workstream | Test File" sprints/07191413-relay-13f35dc8/contract-draft.md | head -1 | grep -q "BEHAVIOR 覆盖" && echo OK'
   期望: OK
-- [ ] [BEHAVIOR] INV-9 [capture-triage] Red commit 只 git add 精确路径：本次 propose 提交只 `git add` 了 `contract-draft.md`/`contract-dod.md`/`tests/`/`smoke-verify.sh`/`task-plan.json` 五个精确路径，未用 `git add .`
-  Test: manual:bash -c 'git show --stat HEAD | grep -E "^\s+sprints/07191413-relay-13f35dc8/" | grep -qvE "contract-draft\.md|contract-dod\.md|tests/slugify\.contract\.test\.ts|smoke-verify\.sh|task-plan\.json" && exit 1 || echo OK'
+- [ ] [BEHAVIOR] INV-9 [capture-triage] Red commit 只 git add 精确路径：本次 propose 提交（round-2 修订，新增 `verify/` 单一事实源脚本用于修复 GAN Round 1 问题 1）只 `git add` 了 `contract-draft.md`/`contract-dod.md`/`verify/*.sh` 精确路径，未用 `git add .`
+  Test: manual:bash -c 'git show --stat HEAD | grep -E "^\s+sprints/07191413-relay-13f35dc8/" | grep -qvE "contract-draft\.md|contract-dod\.md|verify/(step[1-4]|red-missing|red-broken)\.sh|tests/slugify\.contract\.test\.ts|smoke-verify\.sh|task-plan\.json" && exit 1 || echo OK'
   期望: OK
 - N/A-10 [capture-triage] 回归测试用 source-code inspection 验证调度接线：N/A，本 sprint 无调度接线，测试改用真实子进程执行验证
 - N/A-11 [capture-triage] 新增 cron 检查 scheduler-jobs.js JOBS：N/A，本 sprint 不新增任何 cron
@@ -93,56 +93,31 @@ target_environment: local_api
 
 ## BEHAVIOR 条目（内嵌可执行 manual:bash 命令）
 
+> **单一事实源说明（GAN Round 1 问题 1 修复）**：以下 6 条 `[BEHAVIOR]` 的 `Test:` 均改为直接执行 `sprints/07191413-relay-13f35dc8/verify/*.sh` 脚本文件，不再与 contract-draft.md 的「验证命令」逐字重复粘贴。可执行内容只存在于 `verify/` 目录下的脚本文件里，contract-draft.md 与本文件均只引用、不复制。
+
 - [ ] [BEHAVIOR] Step 1：提供任意字符串参数后，CLI 以 `node scripts/relay-demo/slugify.mjs <string>` 形态成功执行并返回退出码 0
-  Test: manual:bash -c 'OUT="$(node scripts/relay-demo/slugify.mjs "Test")"; STATUS=$?; [ "$STATUS" -eq 0 ] && test "$OUT" = "test"'
-  期望: OK
+  Test: manual:bash sprints/07191413-relay-13f35dc8/verify/step1.sh
+  期望: exit 0（同 contract-draft.md Step 1 验证命令，见该处摘要）
 
 - [ ] [BEHAVIOR] Step 2：输入空字符串时，结果稳定返回空字符串，不会报错或抛异常
-  Test: manual:bash -c 'OUT="$(node scripts/relay-demo/slugify.mjs "")"; STATUS=$?; [ "$STATUS" -eq 0 ] && test "$OUT" = ""'
-  期望: OK
+  Test: manual:bash sprints/07191413-relay-13f35dc8/verify/step2.sh
+  期望: exit 0（同 contract-draft.md Step 2 验证命令，见该处摘要）
 
 - [ ] [BEHAVIOR] Step 3：输入含空格与标点的普通短语 `"Hello, World!"` 时，结果必须为小写连字符 slug `hello-world`
-  Test: manual:bash -c 'OUT="$(node scripts/relay-demo/slugify.mjs "Hello, World!")"; STATUS=$?; [ "$STATUS" -eq 0 ] && test "$OUT" = "hello-world"'
-  期望: OK
+  Test: manual:bash sprints/07191413-relay-13f35dc8/verify/step3.sh
+  期望: exit 0（同 contract-draft.md Step 3 验证命令，见该处摘要）
 
 - [ ] [BEHAVIOR] Step 4：输入含连续分隔符与非 ASCII 字符 `"  Hello   世界---World  "` 时，结果必须确定性折叠为 `hello-world`，且本地 vitest 三个合同用例全部通过
-  Test: manual:bash -c 'TMP_CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay-vitest-config.XXXXXX")"; TMP_CFG="$TMP_CFG_DIR/vitest.config.mjs"; trap "rm -rf \"$TMP_CFG_DIR\"" EXIT; OUT="$(node scripts/relay-demo/slugify.mjs "  Hello   世界---World  ")"; STATUS=$?; [ "$STATUS" -eq 0 ] && test "$OUT" = "hello-world" && cat > "$TMP_CFG" <<EOF
-export default {
-  test: {
-    environment: "node",
-    globals: false,
-  },
-};
-EOF
-npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts --reporter=verbose 2>&1 | tee /tmp/slugify-vitest.log; VITEST_STATUS=${PIPESTATUS[0]}; [ "$VITEST_STATUS" -eq 0 ] && grep -Eq "3 passed|3 tests" /tmp/slugify-vitest.log'
-  期望: OK
+  Test: manual:bash sprints/07191413-relay-13f35dc8/verify/step4.sh
+  期望: exit 0（同 contract-draft.md Step 4 验证命令，见该处摘要）
 
 - [ ] [BEHAVIOR] Red 前提：当 `scripts/relay-demo/slugify.mjs` 未实现时，直接运行合同测试必须非零失败，并出现缺失实现的失败定位
-  Test: manual:bash -c 'TMP_REPO="$(mktemp -d "${PWD}/packages/brain/tmp-red-missing.XXXXXX")"; TMP_CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay-vitest-config.XXXXXX")"; TMP_CFG="$TMP_CFG_DIR/vitest.config.mjs"; trap "rm -rf \"$TMP_REPO\" \"$TMP_CFG_DIR\"" EXIT; mkdir -p "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests"; cp sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests/"; REL_TEST="$(node --input-type=module -e '"'"'import path from "node:path"; console.log(path.relative(process.argv[1], process.argv[2]));'"'"' "$PWD/packages/brain" "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts")"; cat > "$TMP_CFG" <<'"'"'EOF'"'"'
-export default {
-  test: {
-    environment: "node",
-    globals: false,
-  },
-};
-EOF
-npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$REL_TEST" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-missing.log"; VITEST_STATUS=${PIPESTATUS[0]}; [ "$VITEST_STATUS" -ne 0 ] && grep -Eq "空字符串输入返回空字符串|普通短语转换为小写连字符 slug|连续分隔符与非 ASCII 字符折叠为单个连字符|ENOENT|AssertionError|expected" "$TMP_REPO/red-missing.log"'
-  期望: non-zero，并出现具体失败用例名或 `ENOENT` / `AssertionError` / `expected` 摘要
+  Test: manual:bash sprints/07191413-relay-13f35dc8/verify/red-missing.sh
+  期望: exit 0（脚本内部断言 vitest 非零失败 + 命中具体用例名或 `ENOENT`/`AssertionError`/`expected`，同 contract-draft.md「Red 前提」未实现状态验证命令，见该处摘要）
 
 - [ ] [BEHAVIOR] Red 前提：当 `scripts/relay-demo/slugify.mjs` 错误实现为"仅做小写化、不折叠分隔符也不剔除非 ASCII 字符"时，直接运行合同测试必须非零失败，并出现具体失败用例或断言摘要
-  Test: manual:bash -c 'TMP_REPO="$(mktemp -d "${PWD}/packages/brain/tmp-red-broken.XXXXXX")"; TMP_CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay-vitest-config.XXXXXX")"; TMP_CFG="$TMP_CFG_DIR/vitest.config.mjs"; trap "rm -rf \"$TMP_REPO\" \"$TMP_CFG_DIR\"" EXIT; mkdir -p "$TMP_REPO/scripts/relay-demo" "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests"; cp sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests/"; cat > "$TMP_REPO/scripts/relay-demo/slugify.mjs" <<'"'"'EOF'"'"'
-process.stdout.write(`${(process.argv[2] ?? "").toLowerCase()}\n`);
-EOF
-REL_TEST="$(node --input-type=module -e '"'"'import path from "node:path"; console.log(path.relative(process.argv[1], process.argv[2]));'"'"' "$PWD/packages/brain" "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts")"; cat > "$TMP_CFG" <<'"'"'EOF'"'"'
-export default {
-  test: {
-    environment: "node",
-    globals: false,
-  },
-};
-EOF
-npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$REL_TEST" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-broken.log"; VITEST_STATUS=${PIPESTATUS[0]}; [ "$VITEST_STATUS" -ne 0 ] && grep -Eq "普通短语转换为小写连字符 slug|连续分隔符与非 ASCII 字符折叠为单个连字符|AssertionError|expected|to be" "$TMP_REPO/red-broken.log"'
-  期望: non-zero，并出现 `普通短语转换为小写连字符 slug` 或 `连续分隔符与非 ASCII 字符折叠为单个连字符` 用例名，或 `AssertionError` / `expected` 摘要
+  Test: manual:bash sprints/07191413-relay-13f35dc8/verify/red-broken.sh
+  期望: exit 0（脚本内部断言 vitest 非零失败 + 命中 `普通短语转换为小写连字符 slug`/`连续分隔符与非 ASCII 字符折叠为单个连字符`/`AssertionError`/`expected`，同 contract-draft.md「Red 前提」错误实现状态验证命令，见该处摘要）
 
 ## 机械验收钩子
 
@@ -150,4 +125,5 @@ npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$REL_TEST
 - `[MECH:DRAFT_E2E_HEADING]` `grep -q '## E2E 验收' sprints/07191413-relay-13f35dc8/contract-draft.md`
 - `[MECH:MANUAL_BASH]` `grep -q 'manual:bash' sprints/07191413-relay-13f35dc8/contract-dod.md`
 - `[MECH:E2E_STATUS_PORCELAIN]` `grep -q 'git status --porcelain --untracked-files=all' sprints/07191413-relay-13f35dc8/smoke-verify.sh`
-- `[MECH:RED_NONZERO]` `grep -q 'Red 前提' sprints/07191413-relay-13f35dc8/contract-draft.md && grep -q 'VITEST_STATUS.*-ne 0' sprints/07191413-relay-13f35dc8/contract-dod.md`
+- `[MECH:RED_NONZERO]` `grep -q 'Red 前提' sprints/07191413-relay-13f35dc8/contract-draft.md && grep -q 'VITEST_STATUS.*-ne 0' sprints/07191413-relay-13f35dc8/verify/red-missing.sh && grep -q 'VITEST_STATUS.*-ne 0' sprints/07191413-relay-13f35dc8/verify/red-broken.sh`（v2：脚本抽取到 `verify/` 单一事实源后改查脚本文件，不再查 contract-dod.md 文本本身）
+- `[MECH:SMOKE_TMP_RED_CLEANUP]` `grep -q "find packages/brain -maxdepth 1 -type d -name 'tmp-red-\*' -exec rm -rf" sprints/07191413-relay-13f35dc8/smoke-verify.sh`（Risk R1 现有防线落地校验：`smoke-verify.sh` 启动时清理 `tmp-red-*` 残留目录）

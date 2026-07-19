@@ -62,17 +62,28 @@ N/A
 | 非 ASCII 字符（中文/emoji）如何处理 | A. 保留原字符直接拼入 slug；B. 剔除（作为分隔符边界处理，不出现在结果中） | B. 剔除 | PRD 要求"URL-safe slug"——保留非 ASCII 字符会破坏 URL-safe 特性（需额外编码），剔除后结果保证只含 `[a-z0-9-]`，天然 URL-safe，且实现最简单确定 | 若选 A 未做百分比编码，输出的 slug 直接用于 URL path 会产生非法字符；本 sprint 选 B，此判定点误判后果为 N/A（已消除该风险） |
 
 > 该判定点误判后果非"静默丢数据"级别（纯 CLI 演练工具，无面客/不可逆动作），不标 `⚠️`，无需 `judgment-pending-user` 登记。
+>
+> ⚠️ **限制（详见下方 `## Risks` R2）**："剔除非 ASCII"策略仅适用于本次纯 CLI relay 自测演练，非通用中文/多语言 slug 方案；未来任何复用场景必须重新评估非 ASCII 处理策略，禁止未评估直接套用。
 
 ### 失败语义声明
 
-| 场景 | 失败行为 | 重试幂等？ | 降级策略 |
-|------|----------|-----------|----------|
-| 未提供任何参数（`process.argv[2]` 为 `undefined`） | 视为空字符串处理，返回空字符串，退出码 0（不抛异常） | 天然幂等（纯函数，无状态） | 无需降级 |
-| 传入非字符串类型（理论上 CLI argv 恒为字符串，此分支仅防御性覆盖） | 内部函数对非 string 输入抛 `TypeError`，但 CLI 入口层保证 argv 恒为 string，故该分支不会在 CLI 路径触发 | N/A | N/A |
+| 场景 | 失败行为 | 重试幂等？ | 降级策略 | 验证状态 |
+|------|----------|-----------|----------|----------|
+| 未提供任何参数（`process.argv[2]` 为 `undefined`） | 视为空字符串处理，返回空字符串，退出码 0（不抛异常） | 天然幂等（纯函数，无状态） | 无需降级 | 未被任何 DoD/BEHAVIOR/测试用例单独验证（现有测试仅覆盖显式传入 `""` 字符串场景，即 Golden Path Step 2）；预期效果与显式空字符串场景等价，但"零参数调用"路径本身未真跑，如后续需要强保证需另补一条 `node scripts/relay-demo/slugify.mjs`（零参数）的验证命令 |
+| 传入非字符串类型（理论上 CLI argv 恒为字符串，此分支仅防御性覆盖） | 内部函数对非 string 输入抛 `TypeError`，但 CLI 入口层保证 argv 恒为 string，故该分支不会在 CLI 路径触发 | N/A | N/A | 理论分支，CLI 路径不可达，不适用测试 |
 
 ### 输入对抗面
 
 （本任务为本地 CLI 纯函数工具，非对外暴露 agent，无外部用户可写入接口，N/A）
+
+## Risks
+
+| # | 风险 | 影响 | Mitigation |
+|---|------|------|------------|
+| R1 | `verify/red-missing.sh` / `verify/red-broken.sh`（Red 前提验证脚本）在 `packages/brain/tmp-red-missing.XXXXXX` / `packages/brain/tmp-red-broken.XXXXXX` 下用 `mktemp -d` 创建临时目录，仅靠 `trap ... EXIT` 清理；若执行进程被 `SIGKILL` 或宿主机异常中断（非正常 EXIT 信号），残留目录不会被清理。经核实 `.gitignore` 未收录 `tmp-red-*` 模式（`git check-ignore -v packages/brain/tmp-red-missing.abc123` 无命中，已实测复核）。 | 残留目录会出现在后续 `git status --porcelain`（含 `smoke-verify.sh` 自身的"改动范围外新增文件"基线对比）中，存在被误判为范围外改动、甚至被后续无关操作 `git add .` 误收进仓库的风险。 | 现有防线（已生效，非本轮新增）：`smoke-verify.sh` 在开头执行 `find packages/brain -maxdepth 1 -type d -name 'tmp-red-*' -exec rm -rf {} +` 做启动时清理，覆盖"上次异常中断残留、这次跑之前先扫掉"的场景。**已知限制**：根 `.gitignore` 加 `tmp-red-*/` 规则会是更彻底的静态防线（残留目录即使发生也不会被 git 追踪/误 add），但属于仓库根级共享配置改动，超出本 sprint `[ASSERT:PREPPRD:SCOPE_ONLY_SCRIPT_AND_SPRINT]` 声明的范围（只允许改 `scripts/relay-demo/slugify.mjs` 与 `sprints/07191413-relay-13f35dc8/`）——本轮不实施，仅登记为后续独立 sprint 的改进建议，不 block 本次交付。 |
+| R2 | 判定点登记表选定"剔除非 ASCII 字符"作为 slug 处理策略；该策略会让不同的非 ASCII 输入（如不同中文标题）折叠出相同、甚至同为空的 slug，存在碰撞。 | 若未来其他 relay-demo 工具或真实业务场景（如把真实中文标题转 URL slug）不加评估直接复用该策略，会静默产生 slug 碰撞（不同内容映射到同一 URL），本 sprint 范围内无碰撞影响（仅用于演练验证）。 | 判定点登记表旁与本条已显式标注"仅限本次纯 CLI relay 自测演练，非通用中文/多语言 slug 方案"；未来任何复用场景（如真实发布类工具需要中文 slug）必须重新评估非 ASCII 处理策略（如改用拼音转写、Base32/百分号编码等），禁止未评估直接套用本策略。 |
+
+> 两条风险均为本任务实际存在、非凑数登记的真实风险；均不属于 block 本 sprint 交付的阻塞级风险（S 号纯函数演练，无生产影响面），登记目的是防止后续复用时误判改动范围（R1）或误踩 slug 碰撞坑（R2）。
 
 ## Golden Path
 
@@ -84,13 +95,11 @@ N/A
 
 **可观测行为**: 命令入口形态必须是 `node scripts/relay-demo/slugify.mjs "<string>"`；给出合法字符串后命令成功执行并返回退出码 0
 
-**验证命令**:
+**验证命令**（单一事实源脚本，contract-dod.md 对应 `[BEHAVIOR]` 条目直接执行本文件，不重复粘贴一份）:
 ```bash
-OUT="$(node scripts/relay-demo/slugify.mjs "Test")"
-STATUS=$?
-[ "$STATUS" -eq 0 ]
-test "$OUT" = "test"
+bash sprints/07191413-relay-13f35dc8/verify/step1.sh
 ```
+脚本摘要：`node scripts/relay-demo/slugify.mjs "Test"`，断言退出码为 0 且 `stdout` 精确等于 `test`。完整可执行内容见 `sprints/07191413-relay-13f35dc8/verify/step1.sh`。
 
 **硬阈值**: 命令入口形态必须是 `node scripts/relay-demo/slugify.mjs <string>`；成功路径退出码必须为 0；`stdout` 必须为确定性单行字符串
 
@@ -102,13 +111,11 @@ test "$OUT" = "test"
 
 **可观测行为**: 输入空字符串时，`stdout` 输出空字符串（单行仅换行符），退出码为 0，不抛异常
 
-**验证命令**:
+**验证命令**（单一事实源脚本，contract-dod.md 对应 `[BEHAVIOR]` 条目直接执行本文件，不重复粘贴一份）:
 ```bash
-OUT="$(node scripts/relay-demo/slugify.mjs "")"
-STATUS=$?
-[ "$STATUS" -eq 0 ]
-test "$OUT" = ""
+bash sprints/07191413-relay-13f35dc8/verify/step2.sh
 ```
+脚本摘要：`node scripts/relay-demo/slugify.mjs ""`，断言退出码为 0 且 `stdout` 精确等于空字符串。完整可执行内容见 `sprints/07191413-relay-13f35dc8/verify/step2.sh`。
 
 **硬阈值**: 空字符串输入必须返回空字符串；退出码必须为 0；`stderr` 不得输出异常堆栈
 
@@ -120,13 +127,11 @@ test "$OUT" = ""
 
 **可观测行为**: 输入 `"Hello, World!"` 时，脚本输出 `hello-world`（标点与空格被折叠为单个连字符，末尾标点不留下多余连字符）
 
-**验证命令**:
+**验证命令**（单一事实源脚本，contract-dod.md 对应 `[BEHAVIOR]` 条目直接执行本文件，不重复粘贴一份）:
 ```bash
-OUT="$(node scripts/relay-demo/slugify.mjs "Hello, World!")"
-STATUS=$?
-[ "$STATUS" -eq 0 ]
-test "$OUT" = "hello-world"
+bash sprints/07191413-relay-13f35dc8/verify/step3.sh
 ```
+脚本摘要：`node scripts/relay-demo/slugify.mjs "Hello, World!"`，断言退出码为 0 且 `stdout` 精确等于 `hello-world`。完整可执行内容见 `sprints/07191413-relay-13f35dc8/verify/step3.sh`。
 
 **硬阈值**: `"Hello, World!"` 输入必须返回 `hello-world`；不得保留标点符号或大写字母；退出码必须为 0
 
@@ -138,28 +143,11 @@ test "$OUT" = "hello-world"
 
 **可观测行为**: 输入 `"  Hello   世界---World  "`（含首尾空白、连续空格、连续连字符、中文非 ASCII 字符）时，脚本输出 `hello-world`（中文字符按判定点登记表所选策略"剔除"处理、作为分隔符边界，不出现在结果中；所有分隔符折叠为单个连字符；首尾连字符被去除）；本地运行 vitest 时，三个合同用例全部通过且退出码为 0
 
-**验证命令**:
+**验证命令**（单一事实源脚本，contract-dod.md 对应 `[BEHAVIOR]` 条目直接执行本文件，不重复粘贴一份）:
 ```bash
-OUT="$(node scripts/relay-demo/slugify.mjs "  Hello   世界---World  ")"
-STATUS=$?
-[ "$STATUS" -eq 0 ]
-test "$OUT" = "hello-world"
-TMP_CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay-vitest-config.XXXXXX")"
-TMP_CFG="$TMP_CFG_DIR/vitest.config.mjs"
-cat > "$TMP_CFG" <<'EOF'
-export default {
-  test: {
-    environment: 'node',
-    globals: false,
-  },
-};
-EOF
-npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts --reporter=verbose | tee /tmp/slugify-vitest.log
-VITEST_STATUS=${PIPESTATUS[0]}
-[ "$VITEST_STATUS" -eq 0 ]
-grep -Eq '3 passed|3 tests' /tmp/slugify-vitest.log
-rm -rf "$TMP_CFG_DIR"
+bash sprints/07191413-relay-13f35dc8/verify/step4.sh
 ```
+脚本摘要：`node scripts/relay-demo/slugify.mjs "  Hello   世界---World  "` 断言退出码为 0 且 `stdout` 精确等于 `hello-world`；随后在临时 vitest config 下运行 `sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts`，断言退出码为 0 且输出含 `3 passed`/`3 tests`。完整可执行内容见 `sprints/07191413-relay-13f35dc8/verify/step4.sh`。
 
 **硬阈值**: `"  Hello   世界---World  "` 输入必须返回 `hello-world`；vitest 命令退出码必须为 0；输出必须表明三个合同用例全部通过
 
@@ -167,54 +155,17 @@ rm -rf "$TMP_CFG_DIR"
 
 在 `scripts/relay-demo/slugify.mjs` 未实现或错误实现时，直接运行合同测试必须以非零退出码失败；失败输出必须能定位到具体合同用例名或断言摘要，不能出现"实现缺失/错误但合同测试仍为 0"的假绿。
 
-**未实现状态验证命令**:
+**未实现状态验证命令**（单一事实源脚本，contract-dod.md 对应 `[BEHAVIOR]` 条目直接执行本文件，不重复粘贴一份）:
 ```bash
-TMP_REPO="$(mktemp -d "${PWD}/packages/brain/tmp-red-missing.XXXXXX")"
-TMP_CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay-vitest-config.XXXXXX")"
-TMP_CFG="$TMP_CFG_DIR/vitest.config.mjs"
-trap 'rm -rf "$TMP_REPO" "$TMP_CFG_DIR"' EXIT
-mkdir -p "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests"
-cp sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests/"
-REL_TEST="$(node --input-type=module -e 'import path from "node:path"; console.log(path.relative(process.argv[1], process.argv[2]));' "$PWD/packages/brain" "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts")"
-cat > "$TMP_CFG" <<'EOF'
-export default {
-  test: {
-    environment: 'node',
-    globals: false,
-  },
-};
-EOF
-npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$REL_TEST" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-missing.log"
-VITEST_STATUS=${PIPESTATUS[0]}
-[ "$VITEST_STATUS" -ne 0 ]
-grep -Eq '空字符串输入返回空字符串|普通短语转换为小写连字符 slug|连续分隔符与非 ASCII 字符折叠为单个连字符|ENOENT|AssertionError|expected' "$TMP_REPO/red-missing.log"
+bash sprints/07191413-relay-13f35dc8/verify/red-missing.sh
 ```
+脚本摘要：在 `packages/brain/tmp-red-missing.XXXXXX` 临时目录下拷贝合同测试并指向不存在的 `scripts/relay-demo/slugify.mjs` 跑 vitest，断言退出码非零且失败输出命中具体用例名或 `ENOENT`/`AssertionError`/`expected`。完整可执行内容见 `sprints/07191413-relay-13f35dc8/verify/red-missing.sh`。
 
-**错误实现状态验证命令**:
+**错误实现状态验证命令**（单一事实源脚本，contract-dod.md 对应 `[BEHAVIOR]` 条目直接执行本文件，不重复粘贴一份）:
 ```bash
-TMP_REPO="$(mktemp -d "${PWD}/packages/brain/tmp-red-broken.XXXXXX")"
-TMP_CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay-vitest-config.XXXXXX")"
-TMP_CFG="$TMP_CFG_DIR/vitest.config.mjs"
-trap 'rm -rf "$TMP_REPO" "$TMP_CFG_DIR"' EXIT
-mkdir -p "$TMP_REPO/scripts/relay-demo" "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests"
-cp sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests/"
-cat > "$TMP_REPO/scripts/relay-demo/slugify.mjs" <<'EOF'
-process.stdout.write(`${(process.argv[2] ?? '').toLowerCase()}\n`);
-EOF
-REL_TEST="$(node --input-type=module -e 'import path from "node:path"; console.log(path.relative(process.argv[1], process.argv[2]));' "$PWD/packages/brain" "$TMP_REPO/sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts")"
-cat > "$TMP_CFG" <<'EOF'
-export default {
-  test: {
-    environment: 'node',
-    globals: false,
-  },
-};
-EOF
-npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$REL_TEST" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-broken.log"
-VITEST_STATUS=${PIPESTATUS[0]}
-[ "$VITEST_STATUS" -ne 0 ]
-grep -Eq '普通短语转换为小写连字符 slug|连续分隔符与非 ASCII 字符折叠为单个连字符|AssertionError|expected|to be' "$TMP_REPO/red-broken.log"
+bash sprints/07191413-relay-13f35dc8/verify/red-broken.sh
 ```
+脚本摘要：在 `packages/brain/tmp-red-broken.XXXXXX` 临时目录下放一份"仅小写化、不折叠分隔符、不剔除非 ASCII"的错误实现，跑合同测试，断言退出码非零且失败输出命中 `普通短语转换为小写连字符 slug` / `连续分隔符与非 ASCII 字符折叠为单个连字符` 用例名或 `AssertionError`/`expected`。完整可执行内容见 `sprints/07191413-relay-13f35dc8/verify/red-broken.sh`。
 
 **硬阈值**: 上述 Red 验证命令都必须返回非零失败信号；未实现状态至少出现具体用例名或 `ENOENT` / `AssertionError` / `expected` 失败摘要；错误实现状态（只做小写化、不折叠分隔符不剔除非 ASCII）至少出现 `普通短语转换为小写连字符 slug` 或 `连续分隔符与非 ASCII 字符折叠为单个连字符` 用例名，或 `AssertionError` / `expected` 断言摘要
 
