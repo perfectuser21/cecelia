@@ -1,0 +1,22 @@
+{
+  "phase": "gan",
+  "round": 3,
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 8,
+    "scope_match_prd": 8,
+    "test_is_red": 8,
+    "internal_consistency": 9,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 8,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 1,
+  "judgment_ids": ["69aa5ea7-389e-4d61-9711-b0c180e8bff9"],
+  "invariant_coverage": "5/5 (mapped to BEHAVIOR INV-8/9/14/25/26; remaining 26 area-level invariants marked N/A with rationale)",
+  "rounds_history": [
+    {"round": 1, "verdict": "REVISION", "reason": "internal_consistency=6, risk_registered=3"},
+    {"round": 2, "verdict": "REVISION", "reason": "risk_registered fixed(8); internal_consistency regressed(5) - verify/ script comments contradicted Risks R1"},
+    {"round": 3, "verdict": "APPROVED", "reason": "verify/ script comments corrected, all 7 dims >=7"}
+  ]
+}
