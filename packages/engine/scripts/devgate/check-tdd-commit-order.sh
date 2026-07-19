@@ -132,7 +132,9 @@ for ((i = RED_IDX + 1; i < COMMIT_COUNT; i++)); do
 
   # 检测本 commit 有无实现代码（包含 .sql 迁移文件）
   # sprints/*.sh 也算实现（harness 任务可交付 sprint 脚本而非 packages/ 代码）
-  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps|sprints)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh|sql)$' || true)
+  # scripts/relay-demo/*.{mjs,js} 也算实现（headed relay 自测合同 scope-lock 在此目录，
+  # 已有 pretty-bytes.mjs/sort-json-keys.mjs 先例，同 sprints/*.sh 的口子对称开放，13f35dc8 实证补齐）
+  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps|sprints)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh|sql)$|^scripts/relay-demo/.+\.(mjs|js)$' || true)
   if [ -n "$IMPL_TOUCHED" ]; then
     IMPL_FOUND=1
   fi
@@ -140,7 +142,7 @@ done
 
 # ── Check 3: Red commit 之后必须有一个 commit 含实现 ───────────────────────
 if [ $IMPL_FOUND -eq 0 ] && [ "$RED_IDX" -lt "$((COMMIT_COUNT - 1))" ]; then
-  echo -e "${RED}❌ Red commit 之后未找到实现代码（packages/ 或 apps/ 或 sprints/*.{sh,sql}）${RESET}"
+  echo -e "${RED}❌ Red commit 之后未找到实现代码（packages/ 或 apps/ 或 sprints/*.{sh,sql} 或 scripts/relay-demo/*.{mjs,js}）${RESET}"
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
 

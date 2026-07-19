@@ -1,0 +1,32 @@
+{
+  "initiative_id": "07191413-relay-13f35dc8",
+  "task_id": "13f35dc8-5566-416d-975f-de686644b392",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是本地 Node CLI 工具与 vitest 合同测试，无前端、远端服务或视觉步骤，验收完全通过 local CLI 完成",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 slugify CLI 并打通 headed relay 合同",
+      "scope": "1) 新增 scripts/relay-demo/slugify.mjs，支持 node scripts/relay-demo/slugify.mjs <string> 调用；2) 把输入字符串转换为小写、以连字符分隔、去除首尾多余连字符的 URL-safe slug；3) 覆盖空字符串、含空格标点的普通短语、含连续分隔符/非 ASCII 字符三个合同阈值；4) 非 ASCII 字符按判定点登记表所选策略（剔除，作为分隔符边界处理）实现；5) 不引入外部依赖；6) 不修改或覆盖已存在的 pretty-bytes.mjs / sort-json-keys.mjs；7) 跑通 sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts 三个用例；8) smoke 验证必须对白名单外文件改动失败",
+      "dod": [
+        "[ARTIFACT] scripts/relay-demo/slugify.mjs 存在且入口读取字符串参数",
+        "[ARTIFACT] 工具实现不引入外部依赖",
+        "[ARTIFACT] pretty-bytes.mjs 与 sort-json-keys.mjs 未被修改",
+        "[BEHAVIOR] Step 1: CLI 以字符串参数成功执行并返回退出码 0",
+        "[BEHAVIOR] Step 2: 空字符串输入稳定返回空字符串",
+        "[BEHAVIOR] Step 3: 含空格标点的普通短语转换为 hello-world 形式的小写连字符 slug",
+        "[BEHAVIOR] Step 4: 含连续分隔符与非 ASCII 字符的输入确定性折叠，且 vitest 合同测试三用例全部通过"
+      ],
+      "files": [
+        "scripts/relay-demo/slugify.mjs",
+        "sprints/07191413-relay-13f35dc8/contract-draft.md",
+        "sprints/07191413-relay-13f35dc8/contract-dod.md",
+        "sprints/07191413-relay-13f35dc8/tests/slugify.contract.test.ts",
+        "sprints/07191413-relay-13f35dc8/smoke-verify.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 25
+    }
+  ]
+}
