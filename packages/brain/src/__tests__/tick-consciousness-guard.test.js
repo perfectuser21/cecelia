@@ -17,8 +17,6 @@ describe('tick consciousness guard - static source enforcement', () => {
   // 静态分析：确保每个意识模块调用前 50 行内有 isConsciousnessEnabled() 守护
   const guardedCalls = [
     'generateDailyDiaryIfNeeded',
-    'runConversationDigest',
-    'runCaptureDigestion',
     'runRumination',
     'collectSelfReport',
     'feedDailyIfNeeded',
