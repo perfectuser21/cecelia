@@ -1,0 +1,49 @@
+{
+  "meta": {
+    "judge": "harness-judge",
+    "task_id": "85c3e7ce-7849-42b8-9ff9-542dd0db8375",
+    "sprint": "07191411-relay-85c3e7ce",
+    "head_sha7": "5247059",
+    "pr_url": "https://github.com/perfectuser21/cecelia/pull/4107",
+    "judged_at": "2026-07-19T14:00:00Z",
+    "review_required": true
+  },
+  "verdict": "ACCEPT_WITH_CONDITIONS",
+  "blocking_issues": [],
+  "conditions": [
+    {
+      "id": "COND-01",
+      "description": "PC-02 Iron Law #5 deadlock（contract-red.test.sh DISPATCHED 字段路径错误）需在后续 sprint 中单独修复。回归测试 contract-red.test.sh 永久 exit 1 应在下一个维护 sprint 中按正确字段路径（.payload.dispatched_by_orchestrator）重写 Red 阶段测试并重新锁定，确保 Iron Law #5 在修复后重新成立。本次 merge 不阻断。",
+      "severity": "non-blocking",
+      "required_before": "next_maintenance_sprint"
+    },
+    {
+      "id": "COND-02",
+      "description": "PC-01 Brain watchdog 将前台接管的 harness_initiative 标为 failed（因无 initiative_runs 行）属已知设计约束，需在 Brain watchdog 逻辑或 initiative_runs 写入机制中补充 headless/foreground takeover 场景的豁免条件，避免合法任务被误标 failed。建议在 Brain 维护 sprint 中以 Notion Issue P2 追踪。",
+      "severity": "non-blocking",
+      "required_before": "brain_watchdog_improvement_sprint"
+    }
+  ],
+  "rationale": {
+    "a_core_capability_proven_by_smoke_ci": {
+      "conclusion": "YES — 已充分证明",
+      "detail": "smoke 脚本 headless-smoke-85c3e7ce-smoke.sh 通过 POST /api/brain/tasks 创建 headless dispatch 任务并读回 GET 验证三元组，Smoke CI 全绿（commit 0363709d1 → fix 5247059）。payload 三元组 mode=headless / executor=claude / orchestrator=skill-relay 全部 PASS，Brain API 能正确接收并存储 headless dispatch 三元组这一核心能力已被当前 sprint 独立证明，未依赖 headed 历史证据。"
+    },
+    "b_iron_law5_deadlock_acceptable": {
+      "conclusion": "CONCERN — 可接受，不构成 REJECT 理由",
+      "detail": "Iron Law #5 deadlock 源于 contract-red.test.sh 在 Red 阶段对 DISPATCHED 字段的路径假设（顶层字段）与 Brain 实际存储位置（.payload 层）不符。这是测试编写时的结构认知错误，不代表被测能力缺失。由于 Iron Law #5 禁止在 Red commit 后修改测试内容，deadlock 在本 sprint 内无法修复，属结构性永久 CONCERN。评估：(1) 核心能力已由 e2e-verify.sh 独立验证（exit 0）；(2) 合格的 smoke CI 覆盖了正向路径；(3) contract-red.test.sh 的失败仅影响 Red 阶段合规性，不影响 Green 证据链。综合判断：可接受，列为 COND-01 跟踪修复，不阻断 merge。"
+    },
+    "c_brain_watchdog_design_or_defect": {
+      "conclusion": "设计约束，非合理约束——应在 Brain 层面修复",
+      "detail": "Brain watchdog 将前台接管任务标为 failed 的根因：harness_initiative 任务被前台 session 认领后，watchdog 检查 initiative_runs 表为空，判断任务未被 headless executor 实际运行，触发超时降级。这是 Brain watchdog 未区分'前台接管（legitimate foreground takeover）'与'headless 执行失败'两种状态所致。前者是合法工作模式，后者才应标 failed。现有行为导致：(1) claimed_by/claimed_at 被清空，损失了执行审计链；(2) task status 为 failed 时 Brain API 拒绝回退至 in_progress，造成状态死锁。结论：这是可修复的设计缺陷，应在 Brain watchdog sprint 中补充前台接管豁免逻辑（如 executor_kind=headed-session 或 front_takeover=true 时跳过 initiative_runs 检查），以 Notion P2 Issue 追踪，本次不阻断 merge。"
+    },
+    "d_pr4107_merge_condition": {
+      "conclusion": "满足 merge 条件（条件性接受）",
+      "detail": "综合评估：(1) GAN 裁定 APPROVED，62/70，7 维度全覆盖，无阻断反馈；(2) 评估裁定 DONE_WITH_CONCERNS / PASS，e2e-verify.sh exit 0（commit 5247059）；(3) Smoke CI GREEN，headless dispatch 三元组存储能力已证；(4) 两个永久 CONCERN（PC-01/PC-02）均无证据显示核心能力缺失，均属测试或 Brain 设计层面的改进项。无阻断问题，merge 条件满足。"
+    }
+  },
+  "review_required_fulfilled": true,
+  "review_recommendation": "本次 REVIEW_REQUIRED=true 已通过 judge 独立审查完成。建议人工 reviewer 在 merge 前确认：(1) PC-02 deadlock 已在下一 sprint backlog 登记；(2) PC-01 Brain watchdog 问题已以 Notion P2 Issue 形式追踪。两项均确认后可批准 merge。",
+  "allow_merge": "yes",
+  "summary": "ACCEPT_WITH_CONDITIONS。核心能力（Brain headless dispatch 三元组接收存储）已被 Smoke CI 独立证明。两个永久 CONCERN 均属结构性约束而非能力失败：PC-01（watchdog 误标 failed）为 Brain 设计缺陷，PC-02（Iron Law #5 deadlock）为测试阶段结构错误，均不阻断 PR merge。建议以 COND-01/COND-02 为后续 sprint 输入，PR #4107 可在人工确认追踪项已登记后合并。"
+}

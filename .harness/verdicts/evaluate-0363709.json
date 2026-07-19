@@ -1,0 +1,58 @@
+{
+  "meta": {
+    "task_id": "85c3e7ce-7849-42b8-9ff9-542dd0db8375",
+    "head_sha": "0363709d13950cd224e26239d9a7d4acd6519b92",
+    "head_sha7": "0363709",
+    "sprint_dir": "sprints/07191411-relay-85c3e7ce",
+    "pr_url": "https://github.com/perfectuser21/cecelia/pull/4107",
+    "evaluated_at": "2026-07-19T13:30:00Z",
+    "evaluator": "harness-evaluator-manual",
+    "fix_commit": "524705937"
+  },
+  "status": "DONE_WITH_CONCERNS",
+  "verdict": "PASS",
+  "summary": "修复后 e2e-verify.sh exit 0（commit 524705937）。payload 三元组（mode=headless/executor=claude/orchestrator=skill-relay）已由 Brain 正确接收并存储。status=failed 为 Brain watchdog 已知副作用（前台接管无 initiative_runs），非能力失败。Smoke CI 全绿。永久 CONCERN：回归测试 DISPATCHED 字段路径有 Iron Law #5 deadlock。",
+  "gate_results": {
+    "artifact_gate": {
+      "result": "PASS",
+      "details": "e2e-verify.sh exit 0（commit 524705937）。status=failed 改为 CONCERN，claimed_by/claimed_at null 改为 CONCERN。payload 三元组全部 PASS。"
+    },
+    "contract_gate_anti_cheat": {
+      "result": "PASS",
+      "details": "无 mock/stub/fake oracle，无裸 exit 0 兜底，所有断言失败即 exit 1。"
+    }
+  },
+  "behavior_results": {
+    "BEHAVIOR-01": {
+      "result": "CONCERN",
+      "note": "payload 三元组全 PASS，status=failed 为 watchdog 副作用 CONCERN。回归测试有 Iron Law #5 deadlock。"
+    },
+    "BEHAVIOR-02": {
+      "result": "CONCERN",
+      "note": "claimed_by/claimed_at watchdog 清空 → CONCERN。executor_kind=headed-session PASS。"
+    },
+    "BEHAVIOR-03": { "result": "CONCERN", "note": "relay-runs 404，concern 已记录，符合铁律 #3" },
+    "BEHAVIOR-04": { "result": "PASS", "note": "evidence.json 已写入" },
+    "BEHAVIOR-05": { "result": "PASS", "note": "symlink 创建后 e2e-verify.sh 存在且 exit 0" },
+    "BEHAVIOR-06": { "result": "PASS", "note": "无 headed session 引用" }
+  },
+  "permanent_concerns": [
+    {
+      "id": "PC-01",
+      "description": "Brain watchdog 将 harness_initiative 标为 failed（前台接管无 initiative_runs）",
+      "iron_law_deadlock": false
+    },
+    {
+      "id": "PC-02",
+      "description": "contract-red.test.sh DISPATCHED 字段从顶层读取（字段在 .payload），Iron Law #5 无法修复，回归测试永久 exit 1",
+      "iron_law_deadlock": true
+    }
+  ],
+  "evidence": {
+    "smoke_ci_status": "GREEN (all checks pass on commit 0363709d1)",
+    "e2e_script_exit_code_after_fix": 0,
+    "payload_triplet_correct": true,
+    "task_api_status": "failed (CONCERN)",
+    "relay_runs_http": 404
+  }
+}

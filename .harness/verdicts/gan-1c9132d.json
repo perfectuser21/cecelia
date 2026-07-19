@@ -1,0 +1,83 @@
+{
+  "reviewer": "harness-contract-reviewer",
+  "round": 1,
+  "task_id": "85c3e7ce-7849-42b8-9ff9-542dd0db8375",
+  "sprint": "07191411-relay-85c3e7ce",
+  "commit7": "1c9132d",
+  "generated_at": "2026-07-19",
+  "rubric_scores": {
+    "scope_coverage": {
+      "score": 9,
+      "max": 10,
+      "notes": "PRD 5 条 FR 全部映射到 BEHAVIOR-01~05；铁律 5 条全覆盖；未覆盖链路表明确列出 initiative_runs/headless-container/codex。BEHAVIOR-06 额外覆盖独立性断言，超出最低要求。小扣分：prep-prd.md 存在但未作为输入文件，scope 声明完整度略有信息孤岛风险。"
+    },
+    "behavior_clarity": {
+      "score": 9,
+      "max": 10,
+      "notes": "6 条 BEHAVIOR 条目均含断言文本、对应铁律、判定方式、可执行 bash 代码块，清晰度高。字段路径兼容双结构（直接字段 / .data 包装），容错设计正确。小扣分：BEHAVIOR-02 中'status=in_progress 为充分条件'未区分 claimed_by 是当前 session 还是历史残留，语义精确度不足。"
+    },
+    "testability": {
+      "score": 8,
+      "max": 10,
+      "notes": "e2e-verify.sh 和 contract-red.test.sh 均为可执行 bash，断言失败即 exit 1，无 mock/stub，真实调用 Brain API。问题点：(1) contract-red.test.sh BEHAVIOR-05 的 exit 0 检测逻辑有误报风险——grep '^exit 0' 会匹配 e2e-verify.sh 第 181 行合法的终止 exit 0，导致误判为兜底；(2) e2e-verify.sh 用 set -uo pipefail 但未加 -e，若中间命令意外静默失败，pipefail 不能覆盖所有路径。"
+    },
+    "invariant_alignment": {
+      "score": 10,
+      "max": 10,
+      "notes": "5 条铁律全部显式映射到 BEHAVIOR 条目和脚本注释。铁律 #3（initiative_runs concern 非失败）的处理逻辑正确：404/空集/无法连接均走 concern 路径，不阻断 exit 0。铁律 #4（禁止 exit 0 兜底）的终止 exit 0 有注释说明是真实通过后的正常结束，合规。"
+    },
+    "nfr_coverage": {
+      "score": 9,
+      "max": 10,
+      "notes": "可观测性：evidence.json 包含脱敏摘要，脚本输出清晰。幂等性：evidence.json 可覆写，concerns.txt 追加模式（幂等性略有问题：重复执行会重复追加 concern 条目，但不影响正确性）。安全性：无 secrets 硬编码，evidence 不含凭据。最小变更：无功能代码改动。可恢复：concerns.txt 输出正确。小扣分：幂等执行时 concerns.txt 累积重复条目，未去重。"
+    },
+    "edge_case_coverage": {
+      "score": 8,
+      "max": 10,
+      "notes": "覆盖：Brain API 不可达（exit 1）、relay-runs 404（concern）、relay-runs 空集（concern）、relay-runs 连接失败 000（concern）、jq/curl 未安装（exit 1）、evidence.json 写入失败（exit 1）。未覆盖：(1) Brain API 返回非 200 HTTP 错误码（如 500）时 curl -sf 会 exit 非 0，但错误信息不够具体；(2) payload 字段为 null object 而非缺失时的 jq // empty 降级路径未测试；(3) SPRINT_DIR 为相对路径，在非仓库根目录执行时路径解析会失败。"
+    },
+    "e2e_completeness": {
+      "score": 9,
+      "max": 10,
+      "notes": "e2e-verify.sh 真实调用 Brain API，使用 jq 校验字段，无 exit 0 早期兜底，幂等可重复。覆盖 FR-01~05 全部验收点。BEHAVIOR-06 独立性检查作为额外保障。小扣分：脚本中 SPRINT_DIR 默认为相对路径 sprints/07191411-relay-85c3e7ce，若从子目录执行则路径错误；建议加 $( cd ... && pwd ) 或要求从仓库根执行的明确文档。"
+    }
+  },
+  "total_score": 62,
+  "max_score": 70,
+  "verdict": "APPROVED",
+  "summary": "合同文档（PRD/contract-draft/contract-dod/e2e-verify.sh/contract-red.test.sh）整体质量高，覆盖所有 FR 和铁律，BEHAVIOR 条目清晰可测，E2E 脚本真实调用 Brain API 且无兜底路径。存在 3 个 minor 问题（非阻断）列为 feedback，可在后续迭代修复。",
+  "feedback": [
+    {
+      "id": "FB-01",
+      "severity": "minor",
+      "file": "sprints/07191411-relay-85c3e7ce/tests/contract-red.test.sh",
+      "line": 153,
+      "issue": "exit 0 误报：grep '^exit 0' 会匹配 e2e-verify.sh 第 181 行合法终止语句，导致 BEHAVIOR-05 误判为 backdoor。",
+      "fix": "改为 grep -c '^exit 0' == 1（精确匹配单个终止 exit 0 为合法）或 grep -P '^exit 0' 配合行号判断是否在末尾，或修改检测逻辑为：只有第一个非注释 exit 0 早于任何 FAIL 断言才认为是兜底。"
+    },
+    {
+      "id": "FB-02",
+      "severity": "minor",
+      "file": "sprints/07191411-relay-85c3e7ce/e2e-verify.sh",
+      "line": 8,
+      "issue": "set -uo pipefail 缺少 -e，若某个命令意外静默失败（非 pipefail 覆盖路径），脚本可能继续执行到 exit 0。",
+      "fix": "改为 set -euo pipefail，并对已有的 '|| true' 保护行（如 concerns.txt 追加）确认仍然正确。"
+    },
+    {
+      "id": "FB-03",
+      "severity": "minor",
+      "file": "sprints/07191411-relay-85c3e7ce/e2e-verify.sh",
+      "line": 12,
+      "issue": "SPRINT_DIR 默认为相对路径 sprints/07191411-relay-85c3e7ce，从非仓库根目录执行时路径解析失败，concerns.txt / evidence.json 写入会无声失败（因为有 || true 兜底）。",
+      "fix": "在脚本顶部加 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) 并将默认值改为 ${REPO_ROOT}/sprints/07191411-relay-85c3e7ce，或在脚本头部添加执行前置检查：[ -d \"${SPRINT_DIR}\" ] || (echo \"[FATAL] SPRINT_DIR not found: ${SPRINT_DIR}\" && exit 1)。"
+    }
+  ],
+  "judgments_written": 6,
+  "iron_rules_coverage": {
+    "rule_1_no_headed_dependency": "COVERED",
+    "rule_2_realtime_api_evidence": "COVERED",
+    "rule_3_initiative_runs_concern": "COVERED",
+    "rule_4_no_exit0_backdoor": "COVERED",
+    "rule_5_test_lock": "COVERED"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "task_id": "85c3e7ce-7849-42b8-9ff9-542dd0db8375",
+  "status": "failed",
+  "payload": {
+    "mode": "headless",
+    "executor": "claude",
+    "orchestrator": "skill-relay",
+    "generator_done": true,
+    "generator_done_at": "2026-07-19T01:28:22.0351-05:00",
+    "dispatched_by_orchestrator": true,
+    "orchestrator_dispatched_at": "2026-07-19T02:26:28.051Z",
+    "dispatched_orchestrator_date": "2026-07-19"
+  },
+  "orchestrator_dispatched_at": null,
+  "claimed_at": null,
+  "executor_kind": "headed-session",
+  "claimed_by": null,
+  "evidence_captured_at": "2026-07-19T07:27:53Z"
+}

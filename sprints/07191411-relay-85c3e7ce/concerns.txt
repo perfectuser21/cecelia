@@ -1,0 +1,7 @@
+CONCERN [2026-07-19T06:24:45Z]: relay-runs endpoint returned 404 for task 85c3e7ce-7849-42b8-9ff9-542dd0db8375
+CONCERN [2026-07-19T06:25:55Z]: relay-runs endpoint 404 for task 85c3e7ce-7849-42b8-9ff9-542dd0db8375
+CONCERN [2026-07-19T07:18:57Z]: relay-runs endpoint returned 404 for task 85c3e7ce-7849-42b8-9ff9-542dd0db8375
+CONCERN: task status=failed (watchdog timeout, front-stage takeover)
+CONCERN: claimed_by null (watchdog cleared on failed)
+CONCERN: claimed_at null (watchdog cleared on failed)
+CONCERN [2026-07-19T07:27:53Z]: relay-runs endpoint 404 for task 85c3e7ce-7849-42b8-9ff9-542dd0db8375

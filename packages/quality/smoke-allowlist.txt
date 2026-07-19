@@ -143,3 +143,4 @@ graph-query-api-smoke.sh
 radius-rerun-gate-smoke.sh
 orphan-guard-smoke.sh
 anchor-backfill-smoke.sh
+headless-smoke-85c3e7ce-smoke.sh

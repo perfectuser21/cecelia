@@ -1,4 +1,10 @@
-# Sprint: 07181823-radius-rerun-gate (2a8a33c5)
-# Started: 2026-07-18
-planner: done (sprint-prd.md@1f733db6, invariants=5, fr=4)
-contract-proposer: done (contract-draft.md, contract-dod.md, tests/骨架×2, behaviors=6, invariants_covered=5/5)
+# Sprint: 07191411-relay-85c3e7ce (85c3e7ce)
+# Started: 2026-07-19
+planner: done (sprint-prd.md@c5364b1, invariants=5, fr=5)
+gan: done (contract-draft.md@1c9132d r1, verdict=APPROVED, 铁律覆盖=5/5, judgments_written=6, rubric=.harness/verdicts/gan-1c9132d.json)
+harness-generator: done (Red@9f6a82eed exit=1 4FAIL, Green=pending, smoke=headless-smoke-85c3e7ce-smoke.sh, dod=[x]x6)
+generator: pr_opened (#4107, red=9f6a82e)
+graduation: done (纯 rename, tests/regression/relay-85c3e7ce/ + scripts/smoke/e2e/relay-85c3e7ce.sh)
+generator: done (pr=#4107, red=9f6a82e, green=f6b4a66, head=0363709)
+evaluate: done (verdict=PASS/DONE_WITH_CONCERNS, fix@5247059, e2e=exit0, PC-01=watchdog/PC-02=Iron-Law-5-deadlock, smoke_ci=GREEN)
+judge: done (verdict=ACCEPT_WITH_CONDITIONS, blocking=0, COND-01=Iron-Law-5-future-sprint, COND-02=Brain-watchdog-P2-issue, merge=yes-pending-review)
