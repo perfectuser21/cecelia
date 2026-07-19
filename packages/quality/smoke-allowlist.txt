@@ -142,3 +142,4 @@ graph-photo-layer-smoke.sh
 graph-query-api-smoke.sh
 radius-rerun-gate-smoke.sh
 orphan-guard-smoke.sh
+anchor-backfill-smoke.sh
