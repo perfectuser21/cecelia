@@ -77,4 +77,78 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
     const r = await resumeStalledHarnessDrivers({});
     expect(r.resumed).toEqual([]);
   });
+
+  // ── 容器存活探测（07-19 bug fix）────────────────────────────────────────
+  // 真实事故：本次对话内实测复现4次——claude-headed-smoke/GP-A补齐触发入口/
+  // 两次headless-smoke——都是容器慢启动或前台接管，claimed_at超过20分钟阈值
+  // 但没来得及写initiative_runs首行，被区段C无差别标failed、清空claim，触发
+  // 重新完整派发（产出多个重复PR）。修法：判死前先探测docker ps，容器还活着
+  // 就不判死，留给下次tick再看——复用harness-relay-watchdog.js:331已验证过的
+  // `docker ps -q --filter "name=cecelia-relay-${short}"` 模式。
+
+  it('容器仍在跑（docker ps 探测到）→ 不判死，不清空 claim', async () => {
+    const TASK_ID = 'dddd1111-2222-3333-4444-555566667777';
+    let updateCalled = false;
+    mockPoolQuery.mockImplementation(async (sql) => {
+      if (/SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql) && /claimed_at/i.test(sql)) {
+        return { rows: [{ id: TASK_ID }] };
+      }
+      if (/UPDATE\s+tasks/i.test(sql)) {
+        updateCalled = true;
+        return { rows: [{ id: TASK_ID }] };
+      }
+      return { rows: [] };
+    });
+    // 容器仍在跑：docker ps -q 返回非空容器 ID
+    const execFn = vi.fn(() => 'abc123def456\n');
+
+    const r = await resumeStalledHarnessDrivers({ execFn });
+
+    expect(execFn).toHaveBeenCalledWith(expect.stringMatching(/docker ps -q --filter/));
+    expect(updateCalled).toBe(false);
+    expect(r.resumed).toEqual([]);
+  });
+
+  it('容器已退出（docker ps 探测为空）→ 保留现有判死逻辑，标 failed', async () => {
+    const TASK_ID = 'eeee1111-2222-3333-4444-555566667777';
+    let updateSql = '';
+    mockPoolQuery.mockImplementation(async (sql) => {
+      if (/SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql) && /claimed_at/i.test(sql)) {
+        return { rows: [{ id: TASK_ID }] };
+      }
+      if (/UPDATE\s+tasks/i.test(sql)) {
+        updateSql = sql;
+        return { rows: [{ id: TASK_ID }] };
+      }
+      return { rows: [] };
+    });
+    // 容器已退出：docker ps -q 返回空字符串
+    const execFn = vi.fn(() => '');
+
+    const r = await resumeStalledHarnessDrivers({ execFn });
+
+    expect(updateSql).toMatch(/status\s*=\s*'failed'/i);
+    expect(r.resumed).toContain(TASK_ID);
+  });
+
+  it('docker 命令失败（不可用）→ fail-open 保留现有判死逻辑，不因探测失败而漏判真死亡任务', async () => {
+    const TASK_ID = 'ffff1111-2222-3333-4444-555566667777';
+    let updateSql = '';
+    mockPoolQuery.mockImplementation(async (sql) => {
+      if (/SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql) && /claimed_at/i.test(sql)) {
+        return { rows: [{ id: TASK_ID }] };
+      }
+      if (/UPDATE\s+tasks/i.test(sql)) {
+        updateSql = sql;
+        return { rows: [{ id: TASK_ID }] };
+      }
+      return { rows: [] };
+    });
+    const execFn = vi.fn(() => { throw new Error('docker: command not found'); });
+
+    const r = await resumeStalledHarnessDrivers({ execFn });
+
+    expect(updateSql).toMatch(/status\s*=\s*'failed'/i);
+    expect(r.resumed).toContain(TASK_ID);
+  });
 });
