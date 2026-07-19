@@ -459,6 +459,7 @@ describe('selfcheck schema version', () => {
     // 350 = migration 350 智能客服+首次成功两域承诺地图 seed 数据，故推进地板到 350。
     // 351 = migration 351 graph_edges 表（graph.js 语义关联网络直接依赖），故推进地板到 351。
     // 352 = migration 352 features 表更名 brain_modules（澄清 Brain 内部模块语义），故推进地板到 352。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('352');
+    // 353 = migration 353 DROP conversation_captures + conversation_log_cursors（inbox P0 清场，decisions a823206d），故推进地板到 353。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('353');
   });
 });
