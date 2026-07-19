@@ -77,18 +77,20 @@ target_environment: local_api
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令，local_api 本机执行）
 
-- [ ] [BEHAVIOR] e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记
-  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -F "packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh" "$SCRIPT" >/dev/null || { echo "FAIL: wrapper 未调用 headed smoke"; exit 1; }; grep -F "packages/quality/smoke-allowlist.txt" "$SCRIPT" >/dev/null || { echo "FAIL: wrapper 未校验 allowlist"; exit 1; }; echo OK'
+**round 2 修订说明（单一权威来源收敛，呼应 reviewer 第一轮反馈第 1 条）**：以下 3 条 BEHAVIOR 的断言逻辑不再独立重写，而是用 `awk` 从 `e2e-verify.sh` 的 `# GP-STEP-N BEGIN`~`# GP-STEP-N END` 标记段原样提取后直接执行——`e2e-verify.sh` 本体（`## E2E 验收` 唯一权威脚本）是断言逻辑的唯一物理来源，此处物理上不可能产生第二份漂移文本。第 4 条（完整 wrapper）本就是直接调用整份脚本，逻辑不变。
+
+- [ ] [BEHAVIOR] e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记（从唯一权威脚本 GP-STEP-1 段提取执行）
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; awk "/# GP-STEP-1 BEGIN/{f=1;next} /# GP-STEP-1 END/{f=0} f" "$SCRIPT" > /tmp/gp-step1-57e25e92.sh; BRAIN_URL="$BRAIN_URL" DB="$DB" bash -euo pipefail /tmp/gp-step1-57e25e92.sh && echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] task payload 四字段齐全且不含敏感字段（真实 curl 当前 task）
-  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-57e25e92-84a3-4599-992c-b4b74ec54acc}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"); echo "$RESP" | jq -e ".id == env.TASK_ID"; echo "$RESP" | jq -e ".task_type == \"harness_initiative\""; echo "$RESP" | jq -e ".payload.mode == \"headed\" and .payload.executor == \"claude\" and .payload.orchestrator == \"skill-relay\" and .payload.journey_id == \"bb8cc561-b3ee-4fec-b74d-2255694bd963\""; echo "$RESP" | jq -e "(.payload | has(\"token\") | not) and (.payload | has(\"github_token\") | not) and (.payload | has(\"anthropic_token\") | not) and (.payload | has(\"thin_prd\") | not)"; echo OK'
+- [ ] [BEHAVIOR] task payload 四字段齐全且不含敏感字段（从唯一权威脚本 GP-STEP-2 段提取执行，真实 curl 当前 task）
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; TASK_ID="${TASK_ID:-57e25e92-84a3-4599-992c-b4b74ec54acc}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; awk "/# GP-STEP-2 BEGIN/{f=1;next} /# GP-STEP-2 END/{f=0} f" "$SCRIPT" > /tmp/gp-step2-57e25e92.sh; TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" bash -euo pipefail /tmp/gp-step2-57e25e92.sh && echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] initiative_runs 含 skill-relay-claude-headed 且 phase 使用真实 DB 枚举拒绝 failed/unknown（真实 psql 定点查当前 task）
-  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-57e25e92-84a3-4599-992c-b4b74ec54acc}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; ROW=$(psql "$DB" -XAt -F "|" -c "SELECT orchestrator_host, phase, started_at FROM initiative_runs WHERE initiative_id = \$\$${TASK_ID}\$\$ ORDER BY started_at DESC LIMIT 1"); [ -n "$ROW" ] || { echo "FAIL: initiative_runs 无当前 task run"; exit 1; }; HOST=$(printf "%s" "$ROW" | cut -d"|" -f1); PHASE=$(printf "%s" "$ROW" | cut -d"|" -f2); STARTED_AT=$(printf "%s" "$ROW" | cut -d"|" -f3); case "$HOST" in *skill-relay-claude-headed*) ;; *) echo "FAIL: host=$HOST"; exit 1 ;; esac; if [ "$PHASE" = "failed" ]; then echo "FAIL: phase=failed"; exit 1; fi; case "$PHASE" in A_planning|A_contract|B_task_loop|C_final_e2e|planning|gan|generate|evaluate|done) ;; *) echo "FAIL: phase=$PHASE"; exit 1 ;; esac; [ -n "$STARTED_AT" ] || { echo "FAIL: started_at 为空"; exit 1; }; echo OK'
-  期望: OK
+- [ ] [BEHAVIOR] initiative_runs 含 skill-relay-claude-headed 且 phase 使用真实 DB 枚举拒绝 failed/unknown，且 started_at 新鲜度不早于 task.created_at（从唯一权威脚本 GP-STEP-3 段提取执行，真实 psql 定点查当前 task，round 2 新增新鲜度校验）
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; TASK_ID="${TASK_ID:-57e25e92-84a3-4599-992c-b4b74ec54acc}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; awk "/# GP-STEP-3 BEGIN/{f=1;next} /# GP-STEP-3 END/{f=0} f" "$SCRIPT" > /tmp/gp-step3-57e25e92.sh; TASK_ID="$TASK_ID" DB="$DB" bash -euo pipefail /tmp/gp-step3-57e25e92.sh && echo OK'
+  期望: OK（若 FAIL 且信息提示「已知外部时序依赖」，见 contract-draft.md Risks R1——不代表脚本实现有误，需等 orchestrator 推进落库后重跑）
 
-- [ ] [BEHAVIOR] local_api E2E wrapper 锚定当前 task_id 完整验证 smoke/task/run 外部真相
+- [ ] [BEHAVIOR] local_api E2E wrapper 锚定当前 task_id 完整验证 smoke/task/run 外部真相（整份 e2e-verify.sh 即唯一权威脚本本体，逻辑与上 3 条同源）
   Test: manual:bash -c 'TASK_ID="${TASK_ID:-57e25e92-84a3-4599-992c-b4b74ec54acc}" BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}" bash sprints/07191312-relay-57e25e92/e2e-verify.sh'
   期望: OK
