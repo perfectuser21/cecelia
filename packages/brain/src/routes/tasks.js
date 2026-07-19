@@ -393,7 +393,14 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
 
     // Get current task
-    const taskResult = await pool.query("SELECT id, status, claimed_by, executor_kind, task_type, payload->>'orchestrator' AS orchestrator FROM tasks WHERE id = $1", [task_id]);
+    const taskResult = await pool.query(
+      `SELECT id, status, claimed_by, executor_kind, task_type,
+              payload->>'orchestrator' AS orchestrator,
+              payload->>'review_required' AS review_required_raw,
+              review_status, pr_url, pr_merged_at
+       FROM tasks WHERE id = $1`,
+      [task_id]
+    );
     if (taskResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
@@ -433,6 +440,39 @@ router.patch('/tasks/:task_id', async (req, res) => {
           current_status: currentStatus,
           requested_status: status,
           allowed: allowedTransitions[currentStatus] || []
+        });
+      }
+    }
+
+    // 完成态前置条件硬闸（三案实证漏洞，2026-07-19）
+    // 阻止 review 未通过/PR 未合并/harness_initiative 绕过验证直接写 completed
+    if (status === 'completed' && !isStatusNoop) {
+      // Rule 1: review_required=true → review_status 必须是明确通过态（非 pending/null）
+      if (task.review_required_raw === 'true' && (!task.review_status || task.review_status === 'pending')) {
+        return res.status(422).json({
+          success: false,
+          error: 'review_required=true 但 review_status 仍是 pending — 需先通过审核',
+          code: 'REVIEW_NOT_APPROVED',
+          current_review_status: task.review_status || null,
+        });
+      }
+
+      // Rule 2: pr_url 非空 → pr_merged_at 必须非空（PR 已合并）
+      if (task.pr_url && !task.pr_merged_at) {
+        return res.status(422).json({
+          success: false,
+          error: 'pr_url 已设置但 pr_merged_at 为空 — PR 需先合并',
+          code: 'PR_NOT_MERGED',
+          pr_url: task.pr_url,
+        });
+      }
+
+      // Rule 3: harness_initiative 只能通过 POST /api/brain/harness/complete 收尾
+      if (task.task_type === 'harness_initiative') {
+        return res.status(422).json({
+          success: false,
+          error: 'harness_initiative 任务不能通过 PATCH /tasks/:id 标记 completed，请使用 POST /api/brain/harness/complete',
+          code: 'USE_HARNESS_COMPLETE',
         });
       }
     }

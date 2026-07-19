@@ -58,7 +58,7 @@ export async function preFlightCheck(task, opts = {}) {
   // Use description / prd_content / payload.prd_summary as fallback —
   // autonomous-created tasks often place the PRD in payload.prd_summary
   // instead of the top-level description column.
-  const descContent = task.description || task.prd_content || task.payload?.prd_summary;
+  const descContent = task.description || task.prd_content || task.payload?.thin_prd || task.payload?.prd_summary;
   if (!isSystemTask) {
     if (!descContent || descContent.trim().length === 0) {
       issues.push('Task description is empty');

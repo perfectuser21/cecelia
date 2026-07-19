@@ -433,6 +433,62 @@ describe('payload.prd_summary fallback', () => {
   });
 });
 
+describe('payload.thin_prd fallback', () => {
+  it('payload.thin_prd 兜底：无 description/prd_content/prd_summary 时不报 description is empty', async () => {
+    const task = {
+      title: 'Valid Title For thin_prd Test',
+      description: null,
+      prd_content: null,
+      priority: 'P1',
+      payload: { thin_prd: 'Implement anchor sentinel to verify steps before dispatch and prevent orphan tasks.' },
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Task description is empty');
+  });
+
+  it('只有 payload.thin_prd 为空字符串时仍报 description is empty', async () => {
+    const task = {
+      title: 'Valid Title',
+      description: null,
+      prd_content: null,
+      priority: 'P1',
+      payload: { thin_prd: '' },
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Task description is empty');
+  });
+
+  it('payload.thin_prd 优先于 payload.prd_summary', async () => {
+    const task = {
+      title: 'Valid Title',
+      description: null,
+      prd_content: null,
+      priority: 'P1',
+      payload: {
+        thin_prd: 'Thin PRD content with more than twenty characters here.',
+        prd_summary: 'prd summary fallback',
+      },
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+  });
+
+  it('payload.thin_prd 太短时报 description too short', async () => {
+    const task = {
+      title: 'Valid Title',
+      description: null,
+      prd_content: null,
+      priority: 'P1',
+      payload: { thin_prd: 'too short' },
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Task description too short (< 20 characters)');
+  });
+});
+
 describe('priority normalize', () => {
   const baseTask = () => ({
     title: 'Valid Title',
