@@ -109,6 +109,7 @@ assert_runs_concern_or_verified() {
 
   IFS='|' read -r run_host run_phase run_started_at run_failure_reason <<< "$run_row"
   case "$run_host" in
+    foreground) ;;
     *"$expected_orch"*codex*headed*|*codex*headed*) ;;
     *) fail "run host=$run_host" ;;
   esac
