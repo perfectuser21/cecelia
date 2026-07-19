@@ -173,7 +173,7 @@
 
 独立小路（无父路）
 
-Brain 当前 task `d355821f-4a37-4fa2-ad2f-99668bc91a3d` → generator 实现 sprint-local `sprints/07191314-relay-d355821f/e2e-verify.sh` → 脚本定点读取 Brain task API → 脚本定点读取 DB `tasks` claim oracle → 脚本读取 harness runs/DB `initiative_runs` 并在缺失时输出 concern → 脚本扫描当前 sprint 证据边界与脱敏 → exit code 成为 codex headed skill-relay smoke oracle。
+Brain 当前 task `d355821f-4a37-4fa2-ad2f-99668bc91a3d` → generator 使用永久 wrapper `scripts/smoke/e2e/relay-d355821f.sh` → 脚本定点读取 Brain task API → 脚本定点读取 DB `tasks` claim oracle → 脚本读取 harness runs/DB `initiative_runs` 并在缺失时输出 concern → 脚本扫描当前 sprint 证据边界与脱敏 → exit code 成为 codex headed skill-relay smoke oracle。
 
 ### Step 1: 当前 task payload shape 被 Brain API 真实返回
 
@@ -399,9 +399,9 @@ echo "PASS: codex headed skill-relay smoke validated for current task"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| task API payload | `sprints/07191314-relay-d355821f/tests/contract-red.test.sh` | e2e-verify.sh 校验当前 task API payload shape | `e2e-verify.sh` 尚未实现时 FAIL |
-| DB claim oracle | `sprints/07191314-relay-d355821f/tests/contract-red.test.sh` | e2e-verify.sh 校验当前 task DB claim oracle | `e2e-verify.sh` 尚未实现时 FAIL |
-| run concern 分支 | `sprints/07191314-relay-d355821f/tests/contract-red.test.sh` | e2e-verify.sh 对 initiative_runs 缺失输出 concern 且不当作成功证据 | `e2e-verify.sh` 尚未实现时 FAIL；run 缺失不能单独 PASS |
-| 当前 task 重绑定 | `sprints/07191314-relay-d355821f/tests/contract-red.test.sh` | e2e-verify.sh 拒绝历史 task 作为当前证据 | `e2e-verify.sh` 尚未实现或接受历史 task 时 FAIL |
-| 证据边界与脱敏 | `sprints/07191314-relay-d355821f/tests/contract-red.test.sh` | e2e-verify.sh 日志证据限于当前 sprint 且脱敏 | `e2e-verify.sh` 尚未实现或日志含 secret-like 内容时 FAIL |
-| local_api 全链路 | `sprints/07191314-relay-d355821f/tests/contract-red.test.sh` | e2e-verify.sh local_api 全链路基于当前 task API 和 DB claim oracle | `e2e-verify.sh` 尚未实现或未真 curl/psql 时 FAIL |
+| task API payload | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 校验当前 task API payload shape | `e2e-verify.sh` 尚未实现时 FAIL |
+| DB claim oracle | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 校验当前 task DB claim oracle | `e2e-verify.sh` 尚未实现时 FAIL |
+| run concern 分支 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 对 initiative_runs 缺失输出 concern 且不当作成功证据 | `e2e-verify.sh` 尚未实现时 FAIL；run 缺失不能单独 PASS |
+| 当前 task 重绑定 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 拒绝历史 task 作为当前证据 | `e2e-verify.sh` 尚未实现或接受历史 task 时 FAIL |
+| 证据边界与脱敏 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 日志证据限于当前 sprint 且脱敏 | `e2e-verify.sh` 尚未实现或日志含 secret-like 内容时 FAIL |
+| local_api 全链路 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh local_api 全链路基于当前 task API 和 DB claim oracle | `e2e-verify.sh` 尚未实现或未真 curl/psql 时 FAIL |
