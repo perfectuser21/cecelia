@@ -1,0 +1,65 @@
+{
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 10,
+    "internal_consistency": 8,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 2,
+  "feedback": "APPROVED。合同覆盖 PRD 5 条 FR 与 7 条 Invariant；DoD 有 11 条 [BEHAVIOR] 且包含 manual:bash；E2E 代码块 bash -n 通过，并以真实 curl/psql/jq 校验当前 task API、DB claim oracle、runs concern 与证据脱敏。当前 initiative_runs 当前 task 行缺失已作为 concern/foreground takeover 分支登记，不作为成功证据。target_environment=local_api 与本机 Brain API/DB 验收匹配。",
+  "round": 1,
+  "contract_sha": "9827406e53502ff2eef16d5e0fe048d6336cd008",
+  "checked_files": [
+    "sprints/07191314-relay-d355821f/sprint-prd.md",
+    "sprints/07191314-relay-d355821f/prep-prd.md",
+    "sprints/07191314-relay-d355821f/contract-draft.md",
+    "sprints/07191314-relay-d355821f/contract-dod.md",
+    "sprints/07191314-relay-d355821f/tests/contract-red.test.sh"
+  ],
+  "rubric_evidence": {
+    "dod_machineability": "contract-dod.md 含 11 条行首 [BEHAVIOR]，每条都有 manual:bash -c；11 条 manual 命令均通过 bash -n -c。少量 Invariant 条目含静态 grep 辅助检查，但核心路径执行 sprint-local wrapper。",
+    "scope_match_prd": "PRD FR-001..FR-005 在 DoD FR 覆盖登记中逐条映射；PRD 7 条 Invariant 中 1..5 有 BEHAVIOR，6/7 因本 sprint 不新增 endpoint 且不触租户数据而明确 N/A。",
+    "test_is_red": "sprints/07191314-relay-d355821f/tests/contract-red.test.sh 当前 exit=1，原因是 e2e-verify.sh 尚未实现；这是 GAN 后 generator 的 Red 基线。",
+    "internal_consistency": "contract-draft.md 的 Response Schema、Golden Path、E2E 与 contract-dod.md 的 assert 名称一致；起草期 queued 事实被表述为失败条件，当前重新认领事实仍由 in_progress/claim oracle 校验。",
+    "risk_registered": "八要素含失败语义、死亡告警、保质期、输入对抗面与判定点；风险集中在 run 缺失、历史证据冒充、secret 泄漏、API/DB 不可读并给出拦截或 concern 策略。",
+    "verification_oracle_completeness": "E2E 真实执行 curl 当前 Brain task API、psql tasks/initiative_runs、jq 字段 oracle 与日志 secret 扫描；runs 缺失只能 concern 且必须先通过 API+DB claim oracle。E2E bash 代码块 bash -n 通过，未命中全角标点贴 $VAR。",
+    "ci_workflow_alignment": "target_environment=local_api，按 Skill 规则 CI workflow 审查为 N/A=10；合同未引用 GHA workflow。"
+  },
+  "mechanical_checks": {
+    "behavior_count": 11,
+    "has_manual_bash": true,
+    "e2e_bash_n_exit": 0,
+    "manual_bash_commands": 11,
+    "manual_bash_bad": 0,
+    "red_test_exit": 1,
+    "red_test_reason": "missing sprints/07191314-relay-d355821f/e2e-verify.sh",
+    "fullwidth_var_punctuation_matches": 0,
+    "target_environment": "local_api",
+    "judgment_rows_in_contract": 2
+  },
+  "coverage": {
+    "prd_invariants": {
+      "INV-1 单slot串行": "covered by DoD BEHAVIOR lines 59-63",
+      "INV-2 禁写死环境": "covered by DoD BEHAVIOR lines 65-69",
+      "INV-3 真验才done": "covered by DoD BEHAVIOR lines 71-75",
+      "INV-4 凭据安全": "covered by DoD BEHAVIOR lines 77-81",
+      "INV-5 日志脱敏": "covered by DoD BEHAVIOR lines 83-87",
+      "INV-6 端点鉴权": "N/A: no new or modified endpoint",
+      "INV-7 租户隔离": "N/A: no tenant data touched; DB reads scoped to task id"
+    },
+    "prd_frs": {
+      "FR-001 当前 task payload/状态": "covered by task-payload-shape",
+      "FR-002 foreground takeover/claim oracle": "covered by db-claim-oracle",
+      "FR-003 缺 initiative_runs concern": "covered by runs-concern-or-verified",
+      "FR-004 sprint 证据文件/日志边界": "covered by current-task-only",
+      "FR-005 安全日志边界": "covered by evidence-boundary-and-redaction and INV-4/INV-5"
+    },
+    "rule_c_uncovered_real_chain_list": "contract-draft.md includes ## 未覆盖真实链路清单 for current task initiative_runs missing evidence; no force_/stub/data_b64 mock exemption is used.",
+    "real_oracle": "E2E runs current Brain API and PostgreSQL DB oracle; it is not text-only self-attestation."
+  },
+  "warnings": []
+}

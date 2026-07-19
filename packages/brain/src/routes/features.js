@@ -1,10 +1,14 @@
 // packages/brain/src/routes/features.js
+// 注意：这里操作的是 brain_modules 表（原名 features），追踪 Brain 自身内部意识模块的健康状态
+// （tick/cortex/memory/quarantine/immune/desire/alertness 等，对应 brain-manifest.js 架构）。
+// 客户 Golden Path 功能表是 journey_features，不是这里。
 import { Router } from 'express';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
 import pool from '../db.js';
+import { computeLedgerStatus } from '../lib/eleven-elements-ledger.js';
 
 const router = Router();
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -39,7 +43,7 @@ router.post('/seed', async (req, res) => {
 
     for (const f of data.features) {
       const { rows } = await pool.query(
-        `INSERT INTO features
+        `INSERT INTO brain_modules
            (id, name, domain, area, priority, status, description, smoke_cmd,
             has_unit_test, has_integration_test, has_e2e, last_verified, notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
@@ -78,7 +82,7 @@ router.get('/', async (req, res) => {
   try {
     const { where, params } = buildWhereClause(req.query);
     const { rows } = await pool.query(
-      `SELECT * FROM features ${where} ORDER BY priority, domain, id`,
+      `SELECT * FROM brain_modules ${where} ORDER BY priority, domain, id`,
       params
     );
     res.json({ features: rows, total: rows.length });
@@ -92,7 +96,7 @@ router.get('/', async (req, res) => {
 router.get('/ledger', async (req, res) => {
   try {
     const { rows: features } = await pool.query(
-      `SELECT * FROM features ORDER BY priority, domain, name`
+      `SELECT * FROM brain_modules ORDER BY priority, domain, name`
     );
 
     // 统计每个 feature 的 NFR 决策数（category='nfr'，target_id 关联）
@@ -116,57 +120,6 @@ router.get('/ledger', async (req, res) => {
 
     const now = Date.now();
 
-    function daysSince(isoStr) {
-      if (!isoStr) return null;
-      return Math.floor((now - new Date(isoStr).getTime()) / 86400000);
-    }
-
-    function ledgerStatus(feature) {
-      const daysVerified = daysSince(feature.last_verified);
-      const daysUpdated = daysSince(feature.updated_at);
-      const testScore = (feature.has_unit_test ? 1 : 0) +
-                        (feature.has_integration_test ? 1 : 0) +
-                        (feature.has_e2e ? 1 : 0);
-
-      return {
-        // 1. FR: 功能描述是否齐全
-        fr: feature.description ? 'ok' : 'missing',
-        // 2. NFR: 非功能决策（DB 关联 + smoke_cmd 作补充）
-        nfr: (nfrMap[feature.id] || 0) > 0 ? 'ok' : (feature.smoke_cmd ? 'partial' : 'missing'),
-        // 3. Invariant: 不变量（DB 关联 + smoke_cmd 兜底）
-        invariant: (invMap[feature.id] || 0) > 0 ? 'ok'
-                   : (feature.smoke_cmd ? 'partial' : 'missing'),
-        // 4. 判定点: 测试覆盖分数 (0-3)
-        checkpoints: testScore,
-        checkpoints_max: 3,
-        checkpoints_status: testScore === 3 ? 'ok' : testScore > 0 ? 'partial' : 'missing',
-        // 5. 保质期: 上次验证距今天数
-        freshness_days: daysVerified,
-        freshness_status: daysVerified === null ? 'missing'
-                          : daysVerified <= 30 ? 'ok'
-                          : daysVerified <= 90 ? 'partial' : 'stale',
-        // 6. 死亡告警: 当前 smoke 状态
-        death_alert: feature.smoke_status === 'failing' ? 'alert'
-                     : feature.smoke_status === 'passing' ? 'ok'
-                     : feature.smoke_cmd ? 'unknown' : 'missing',
-        // 7. 失败语义: notes 描述了什么叫失败
-        failure_semantics: feature.notes ? 'ok' : 'missing',
-        // 8. 效果确认: smoke_cmd 存在且通过
-        effect_confirmed: feature.smoke_status === 'passing' ? 'ok'
-                          : feature.smoke_cmd ? 'partial' : 'missing',
-        // 9. 输入对抗面: 暂从 notes 推断
-        adversarial: (feature.notes && /对抗|adversar/i.test(feature.notes)) ? 'ok' : 'missing',
-        // 10. 账本保鲜: 上次更新距今天数
-        ledger_age_days: daysUpdated,
-        ledger_status: daysUpdated === null ? 'missing'
-                       : daysUpdated <= 7 ? 'ok'
-                       : daysUpdated <= 30 ? 'partial' : 'stale',
-        // 11. 两轴衔接: priority 已设且状态 active
-        axis_aligned: (feature.priority && feature.status === 'active') ? 'ok'
-                      : feature.priority ? 'partial' : 'missing',
-      };
-    }
-
     // 按 domain 分组
     const grouped = {};
     for (const f of features) {
@@ -174,7 +127,7 @@ router.get('/ledger', async (req, res) => {
       if (!grouped[domain]) grouped[domain] = [];
       grouped[domain].push({
         ...f,
-        ledger: ledgerStatus(f),
+        ledger: computeLedgerStatus(f, nfrMap, invMap, now),
       });
     }
 
@@ -192,7 +145,7 @@ router.get('/ledger', async (req, res) => {
 // GET /:id — 单条
 router.get('/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM features WHERE id = $1', [req.params.id]);
+    const { rows } = await pool.query('SELECT * FROM brain_modules WHERE id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Feature not found' });
     res.json(rows[0]);
   } catch (err) {
@@ -208,7 +161,7 @@ router.post('/', async (req, res) => {
     if (!id || !name) return res.status(400).json({ error: 'id and name are required' });
 
     const { rows } = await pool.query(
-      `INSERT INTO features
+      `INSERT INTO brain_modules
          (id, name, domain, area, priority, status, description, smoke_cmd,
           has_unit_test, has_integration_test, has_e2e, last_verified, notes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
@@ -245,7 +198,7 @@ router.patch('/:id', async (req, res) => {
     const set = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
 
     const { rows } = await pool.query(
-      `UPDATE features SET ${set} WHERE id = $${keys.length + 1} RETURNING *`,
+      `UPDATE brain_modules SET ${set} WHERE id = $${keys.length + 1} RETURNING *`,
       [...vals, req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Feature not found' });
