@@ -25,6 +25,7 @@
 | claim oracle 验证 | `../../tests/regression/relay-dedbca0c/contract-red.test.sh` | B-3/B-4: status_history 转换记录与 claimed_by/claimed_at 字段验证 | claim 流程未正确写入 DB 时 FAIL |
 | sprint 产物完整性 | `../../tests/regression/relay-dedbca0c/contract-red.test.sh` | B-5: sprint-prd.md + contract-draft.md + contract-dod.md 三文件存在 | sprint 产物文件缺失时 FAIL |
 | harness run 记录（完成态） | `../../tests/regression/relay-dedbca0c/contract-red.test.sh` | B-6/B-7/B-8: harness run DB 记录、started_at、status=completed（optional，Green 完成后才通过） | harness run 未创建或任务未 completed 时 WARN（optional） |
+| L3 真目标复核 | `../../tests/regression/relay-dedbca0c/contract-red.test.sh` | B-9: verification_level L3 断言（真实 Brain API 调用，非 mock） | 无法连通 Brain API 时 FAIL |
 
 ## E2E 验收
 

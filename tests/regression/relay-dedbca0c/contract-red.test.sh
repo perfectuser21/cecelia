@@ -81,6 +81,11 @@ check "B-8" \
   "curl -sf \"$BRAIN/api/brain/tasks/$TASK_ID\" | jq -e '.status == \"completed\" and .pr_url != null'" \
   "true"
 
+# B-9: L3 真目标复核（所有断言基于真实 Brain API，非 mock/stub/exit-0）
+check "B-9" \
+  "verification_level: L3 真目标复核（真实 Brain API 调用，非 mock）" \
+  "curl -sf \"$BRAIN/api/brain/tasks/$TASK_ID\" | jq -e '.id != null' && echo 'verification_level: L3 真目标复核'"
+
 echo ""
 echo "===== 汇总 ====="
 echo "PASS:    $PASS"

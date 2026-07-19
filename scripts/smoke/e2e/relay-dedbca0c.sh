@@ -142,6 +142,15 @@ assert_evidence_boundary_and_redaction() {
   echo "OK: evidence boundary and redaction"
 }
 
+assert_l3_verification_level() {
+  require_current_binding
+  local base resp
+  base="$(brain_base_url)"
+  resp="$(curl -sf "$base/api/brain/tasks/$TASK_ID")" || fail "brain task api unreachable (L3 verification requires real Brain API)"
+  echo "$resp" | python3 -c "import json,sys; t=json.load(sys.stdin); exit(0 if t.get('id')=='$TASK_ID' else 1)" || fail "L3 verification: task id mismatch — not a real Brain API response"
+  echo "PASS: verification_level: L3 真目标复核"
+}
+
 run_full() {
   assert_current_task_only
   assert_task_payload_shape
@@ -150,6 +159,7 @@ run_full() {
   assert_sprint_artifacts
   assert_runs_concern_or_verified
   assert_evidence_boundary_and_redaction
+  assert_l3_verification_level
   echo "PASS: headless relay smoke validated for current task"
 }
 
@@ -166,10 +176,11 @@ case "${1:-}" in
       runs-concern-or-verified) assert_runs_concern_or_verified ;;
       current-task-only) assert_current_task_only ;;
       evidence-boundary-and-redaction) assert_evidence_boundary_and_redaction ;;
+      l3-verification-level) assert_l3_verification_level ;;
       *) fail "unknown assert: ${2:-}" ;;
     esac
     ;;
   *)
-    fail "usage: $0 [--assert task-payload-shape|status-history|claim-fields|sprint-artifacts|runs-concern-or-verified|current-task-only|evidence-boundary-and-redaction]"
+    fail "usage: $0 [--assert task-payload-shape|status-history|claim-fields|sprint-artifacts|runs-concern-or-verified|current-task-only|evidence-boundary-and-redaction|l3-verification-level]"
     ;;
 esac

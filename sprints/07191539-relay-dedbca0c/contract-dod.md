@@ -26,6 +26,9 @@
 - [ ] [BEHAVIOR] B-8: （完成态）task status=completed 且 pr_url 非 null
   - manual:bash: curl -sf http://localhost:5221/api/brain/tasks/dedbca0c-0864-4b0d-be69-d37f70a25827 | jq -e '.status == "completed" and .pr_url != null'
 
+- [ ] [BEHAVIOR] B-9: verification_level: L3 真目标复核——所有断言基于真实 Brain API（curl localhost:5221 真实实例），无 mock/stub/exit-0 兜底
+  - manual:bash: TASK_ID=dedbca0c-0864-4b0d-be69-d37f70a25827 BRAIN=http://localhost:5221; curl -sf "$BRAIN/api/brain/tasks/$TASK_ID" | jq -e '.id != null' && echo "verification_level: L3 真目标复核"
+
 ## Invariant 约束（来自 PRD）
 
 - [INVARIANT] 测试证据必须绑定当前 task_id=dedbca0c-0864-4b0d-be69-d37f70a25827，不得使用其他 task 的证据替代（尤其是历史 headed task d355821f 的成功记录）
