@@ -1,4 +1,4 @@
-# Sprint: 07181823-radius-rerun-gate (2a8a33c5)
-# Started: 2026-07-18
-planner: done (sprint-prd.md@1f733db6, invariants=5, fr=4)
-contract-proposer: done (contract-draft.md, contract-dod.md, tests/骨架×2, behaviors=6, invariants_covered=5/5)
+# Sprint: 07191541-relay-565fa27a (565fa27a)
+# Started: 2026-07-19
+planner: done (sprint-prd.md@6980c407b, invariants=7, fr=5)
+gan: done (contract-draft.md@f69ebb1 r1, verdict=APPROVED, 铁律覆盖=7/7, judgments_written=6, rubric=.harness/verdicts/gan-f69ebb1.json)
