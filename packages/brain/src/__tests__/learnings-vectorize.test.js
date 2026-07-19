@@ -457,6 +457,8 @@ describe('selfcheck schema version', () => {
     // 348 = migration 348 承诺地图 schema thin 版（四表扩展，MJ5 刀1 容器首刀），故推进地板到 348。
     // 349 = migration 349 MJ5 刀1 和解补齐（domain/cell_key/双 partial unique/FK SET NULL），故推进地板到 349。
     // 350 = migration 350 智能客服+首次成功两域承诺地图 seed 数据，故推进地板到 350。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('351');
+    // 351 = migration 351 graph_edges 表（graph.js 语义关联网络直接依赖），故推进地板到 351。
+    // 352 = migration 352 features 表更名 brain_modules（澄清 Brain 内部模块语义），故推进地板到 352。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('352');
   });
 });
