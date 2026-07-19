@@ -1,0 +1,86 @@
+{
+  "verdict": "PASS",
+  "task_id": "57e25e92-84a3-4599-992c-b4b74ec54acc",
+  "sprint_dir": "sprints/07191312-relay-57e25e92",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/4109",
+  "pr_head_sha": "91b49176083e7b563448bc70bdaa4cba5eab802f",
+  "contract_branch": "cp-07191320-harness-prd",
+  "contract_branch_latest_commit_claimed": "91b491760",
+  "sha_anchor_check": "PASS — gh pr view 4109 --json headRefOid 返回 91b49176083e7b563448bc70bdaa4cba5eab802f，与本地 git rev-parse HEAD 完全一致（本地已在该 commit），与转述的 91b491760 前缀匹配。PR state=OPEN, mergeable=MERGEABLE。",
+  "re_evaluation_note": "本次是针对 round 5 合同修正（GP-STEP-3 host 白名单从二值扩展为三值，新增 foreground，附 Brain 官方源码依据 packages/brain/src/routes/initiatives.js:373-411）的重新真跑验收。上一版 evaluate-6abd84e.json（旧 SHA 6abd84e）在 round 4 合同下判 PASS 但含 2 条 unverifiable（GP-STEP-3 因 initiative_runs 无记录）。judge 独立复核指出旧版合同 host 白名单遗漏 foreground 值属误判。round 5 合同修正后，本次独立重新真跑：initiative_runs 记录已存在（host=foreground），全部 16 条 BEHAVIOR 真跑 PASS，无 unverifiable 残留。",
+  "failed_step": null,
+  "log_excerpt": null,
+  "artifact_gate": {
+    "total": 6,
+    "passed": 6,
+    "results": [
+      {"item": "contract draft 含 Golden Path 与 E2E 验收", "exit_code": 0},
+      {"item": "generator 补 sprint-local e2e wrapper，锚定当前 task_id", "exit_code": 0},
+      {"item": "claude headed smoke 已在 allowlist 登记", "exit_code": 0},
+      {"item": "Invariant 端点鉴权 auth：N/A", "exit_code": 0},
+      {"item": "Invariant 租户隔离 tenant：N/A", "exit_code": 0},
+      {"item": "e2e-verify.sh 逐字保留GP-STEP-1~4标记且内容级校验（round4）", "exit_code": 0}
+    ]
+  },
+  "golden_path_coverage": {
+    "source": "sprints/07191312-relay-57e25e92/sprint-prd.md ## Golden Path",
+    "table": [
+      {"step": "Step1 触发条件：task 已由 Brain 以 task_type=harness_initiative 派发", "script_ref": "N/A（前置状态，非脚本动作，由 TASK_ID/BRAIN_URL 锚定验证对象）", "assertion": "N/A"},
+      {"step": "Step2a 调用既有 claude-headed-dispatch-smoke.sh", "script_ref": "GP-STEP-1 (L32-39)", "assertion": "有 — smoke 脚本内部 5 项断言 + allowlist grep -Fxq"},
+      {"step": "Step2b 查 GET /api/brain/tasks/:id 核对 task 记录与敏感字段脱敏", "script_ref": "GP-STEP-2 (L41-47)", "assertion": "有 — jq -e ×4（id/task_type/payload三元组/敏感字段拒绝）"},
+      {"step": "Step2c 查 DB initiative_runs 核对 orchestrator_host/phase", "script_ref": "GP-STEP-3 (L49-86)", "assertion": "有 — psql 定点查 + case host 三值枚举 + case phase 枚举 + is_fresh 新鲜度"},
+      {"step": "Step3 可观测结果：全部断言通过 exit 0 打印 PASS，任一失败 exit 1 打印具体原因", "script_ref": "全脚本 set -euo pipefail + 各分支显式 exit 1 + GP-STEP-4 (L88-90) 最终 echo OK", "assertion": "有"}
+    ],
+    "gaps": []
+  },
+  "mock_edge_check": {
+    "clause": "## 禁 mock 边清单 = N/A（本单纯新增只读验证脚本，不改调度/状态机/跨模块数据传递/生命周期钩子/DB 写路径，无接缝边）",
+    "diff_scope_verified": "git diff --name-only origin/main...HEAD 确认改动仅限 sprints/07191312-relay-57e25e92/*、tests/regression/relay-57e25e92/headed-smoke-contract.test.ts、DoD.md（指针文件同步）、docs/handoffs/*、scripts/test-pyramid-baseline.json（orphans 0→1，登记新孤儿测试，非红线）——无调度/状态机/DB写路径代码改动，N/A 理由成立",
+    "test_file_mock_scan": "grep -rnE 'vi\\.mock|jest\\.mock|stub|createMock|mockImplementation' 命中 0 条真实 mock；唯一命中是测试文件的反向断言 expect(script).not.toMatch(/vi\\.mock|jest\\.mock|sinon\\.stub/)，确认脚本本体无 mock",
+    "result": "clean（清单 N/A，扫描 1 个测试文件，0 命中）"
+  },
+  "anticheat_redlines": {
+    "1_vitest_as_oracle": "not violated — 未采信 vitest/CI 绿灯作为 PASS 依据（本机 vitest 未安装，未强行安装替代；PASS 结论完全基于下方 16 条 manual:bash 真跑 exit code）",
+    "2_looks_correct_only": "not violated — 未仅读源码判断，全部真起 curl + psql + 真调用 smoke 脚本",
+    "3_missing_behavior_tests": "not violated — contract-dod.md 含 16 条 [BEHAVIOR] Test: 命令，非 0",
+    "4_weak_oracle_no_jq": "not violated — GP-STEP-2 jq -e ×4 严匹配；GP-STEP-3 用 psql 直接字段比对（case host/phase + is_fresh 布尔）而非弱 curl -f；INV 系列多用 grep -F 精确字面匹配，无仅 curl -f 无 body 校验的弱 oracle"
+  },
+  "e2e_verify_sh_full_run": {
+    "command": "TASK_ID=57e25e92-84a3-4599-992c-b4b74ec54acc BRAIN_URL=http://localhost:5221 DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia bash sprints/07191312-relay-57e25e92/e2e-verify.sh",
+    "exit_code": 0,
+    "log_tail": "PASS: 5  FAIL: 0 / ✅ 全部通过 / OK headed smoke regression verified for 57e25e92-84a3-4599-992c-b4b74ec54acc",
+    "verified_real": true
+  },
+  "independent_db_recheck": {
+    "command": "psql postgresql://cecelia:cecelia@localhost:5432/cecelia -XAt -F '|' -c \"SELECT ir.orchestrator_host, ir.phase, ir.started_at, (ir.started_at >= t.created_at) AS is_fresh FROM initiative_runs ir JOIN tasks t ON t.id = ir.initiative_id WHERE ir.initiative_id='57e25e92-84a3-4599-992c-b4b74ec54acc' ORDER BY ir.started_at DESC LIMIT 1\"",
+    "result": "foreground|evaluate|2026-07-19 02:08:26.601749-05|t",
+    "interpretation": "host=foreground（round5 新扩展的三值枚举第三值，合法）；phase=evaluate（合法枚举内）；is_fresh=t（新鲜度校验通过）。独立复核，非采信转述。"
+  },
+  "behavior_tests": [
+    {"command":"[ARTIFACT] contract draft 含 Golden Path 与 E2E 验收", "exit_code":0, "log_tail":"(silent pass)"},
+    {"command":"[ARTIFACT] e2e-verify.sh 锚定 task_id 字面串", "exit_code":0, "log_tail":"(silent pass)"},
+    {"command":"[ARTIFACT] allowlist 登记校验", "exit_code":0, "log_tail":"(silent pass)"},
+    {"command":"[ARTIFACT] auth N/A 声明校验", "exit_code":0, "log_tail":"(silent pass)"},
+    {"command":"[ARTIFACT] tenant N/A 声明校验", "exit_code":0, "log_tail":"(silent pass)"},
+    {"command":"[ARTIFACT] GP-STEP 标记内容级校验", "exit_code":0, "log_tail":"(silent pass)"},
+    {"command":"INV-1 失败路径禁止WARN降级+显式exit 1", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-2 phase合法枚举来自当前真实DB CHECK约束", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-3 回归测试用async function包裹源码读取", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-4 Test Contract表格固定4列格式+backtick包裹testFile", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-5 回归测试无mock/stub", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-6 TASK_ID/BRAIN_URL/DATABASE_URL显式默认值", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-7 合同含[当前实测]记录", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-8 未改动共享CI基础设施文件(workflows/allowlist)", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-9 不spawn/kill并发tmux会话", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-10 无写死环境假设值/凭据痕迹", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-11 真环境验证(真Brain API+真PostgreSQL+真headed smoke,无mock/stub/吞错)", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-12 payload拒绝token/github_token/anthropic_token/thin_prd", "exit_code":0, "log_tail":"OK"},
+    {"command":"GP-STEP-1 调用claude-headed-dispatch-smoke.sh+校验allowlist登记（真跑）", "exit_code":0, "log_tail":"PASS: 5  FAIL: 0 / ✅ 全部通过 / OK"},
+    {"command":"GP-STEP-2 task payload四字段齐全且不含敏感字段（真实curl当前task）", "exit_code":0, "log_tail":"OK"},
+    {"command":"GP-STEP-3 initiative_runs host三值枚举(round5新增foreground)+phase合法+新鲜度（真实psql定点查）", "exit_code":0, "log_tail":"OK（独立复核：host=foreground, phase=evaluate, is_fresh=t）"},
+    {"command":"local_api E2E wrapper锚定当前task_id完整验证smoke/task/run外部真相（整份e2e-verify.sh）", "exit_code":0, "log_tail":"PASS: 5  FAIL: 0 / ✅ 全部通过 / OK headed smoke regression verified for 57e25e92-84a3-4599-992c-b4b74ec54acc"}
+  ],
+  "unverifiable": [],
+  "notes": "round 5 重新评估轮：与上一版 evaluate-6abd84e.json（round4合同，2条unverifiable）相比，本次 initiative_runs 记录已由 Brain 官方端点 POST /api/brain/orchestrator/relay-runs/:initiative_id 合法补建（host=foreground），round 5 合同已把该值纳入三值合法枚举并附 Brain 源码依据（packages/brain/src/routes/initiatives.js:373-411 人工前台接管补建档路径 / packages/brain/src/harness-skill-relay.js:457-459 自动化 orchestrator 派发路径）。ARTIFACT 6/6 PASS，BEHAVIOR 16/16 真跑 PASS（含 GP-STEP-1/2/3 与完整 e2e-verify.sh 均真实 exit 0），unverifiable 数组为空。PR CI 全绿（本次独立复核 gh pr view 4109 statusCheckRollup，含 Harness V5 Gate Passed / dod-behavior-dynamic / TDD Commit 顺序检查 / Test Contract 覆盖检查 / 测试文件不可变校验 均 SUCCESS）。禁 mock 边清单 N/A 合理（纯只读验证脚本，diff scope 已核实无调度/状态机/DB写路径改动）。DoD.md 改动仅为 contract_branch/sprint_dir 指针同步与本 sprint 合同内容全量覆盖，非越界改动。test-pyramid-baseline.json orphans 0→1 为登记新孤儿测试的台账更新，对应 CI「棘轮统一台账守卫」与「测试金字塔守卫」均 SUCCESS，非红线问题。B33 playground 位置词启发式对本 sprint 曾产生误判（因 repo 根目录历史遗留 playground/server.js 来自 #3116，与本 PR 无关，git diff 已确认未改动该文件）——已按 journey_type=autonomous 真实功能 sprint 分支人工核实脚本确实真打 localhost:5221 Brain API 与真实 cecelia PostgreSQL（脚本用 $BRAIN_URL/$DB 变量间接引用，B-1.5 字面 grep 命中 GP-STEP-2 的 /api/brain/tasks 字面串，B-1.5 判定 PASS，非误报盲跑）。",
+  "screenshots": []
+}

@@ -1,0 +1,64 @@
+{
+  "verdict": "PASS",
+  "task_id": "57e25e92-84a3-4599-992c-b4b74ec54acc",
+  "sprint_dir": "sprints/07191312-relay-57e25e92",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/4109",
+  "pr_head_sha": "6abd84e0908af5fae8a05dee1d9aff4be10a761b",
+  "failed_step": null,
+  "log_excerpt": null,
+  "artifact_gate": {
+    "total": 6,
+    "passed": 6,
+    "results": [
+      {"item": "contract draft 含 Golden Path 与 E2E 验收", "exit_code": 0},
+      {"item": "generator 补 sprint-local e2e wrapper，锚定当前 task_id", "exit_code": 0},
+      {"item": "claude headed smoke 已在 allowlist 登记", "exit_code": 0},
+      {"item": "Invariant 端点鉴权 auth：N/A", "exit_code": 0},
+      {"item": "Invariant 租户隔离 tenant：N/A", "exit_code": 0},
+      {"item": "e2e-verify.sh 逐字保留GP-STEP-1~4标记且内容级校验（round4）", "exit_code": 0}
+    ]
+  },
+  "contract_gate_anticheat": {
+    "weak_oracle": "not found — 全部 [BEHAVIOR] 断言使用 jq -e 严匹配 / grep -F 精确匹配 / psql 定点查询 + is_fresh 新鲜度校验，无仅 curl -f 无 body 校验的弱 oracle",
+    "mock_env": "not found — 真打 localhost:5221 Brain API + 真连 postgresql://cecelia@localhost:5432/cecelia + 真调 claude-headed-dispatch-smoke.sh，无 vi.mock/jest.mock/MOCK_ 环境变量",
+    "exit0_fallback": "not found — 脚本无 `|| true` / 无条件 exit 0 兜底，失败路径均显式 exit 1 并打印可诊断 FAIL 原因",
+    "scope_check": "PASS — 范围声明与实际改动一致，未改 claude-headed-dispatch-smoke.sh 本体、未改 ci.yml、未重复登记 allowlist（INV-8 真跑确认 .github/workflows 与 smoke-allowlist.txt 均无脏改动）"
+  },
+  "e2e_verify_sh": {
+    "command": "TASK_ID=57e25e92-84a3-4599-992c-b4b74ec54acc BRAIN_URL=http://localhost:5221 DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia bash sprints/07191312-relay-57e25e92/e2e-verify.sh",
+    "exit_code": 1,
+    "log_tail": "GP-STEP-1(smoke 5/5 PASS)→GP-STEP-2(task payload PASS)→GP-STEP-3 FAIL: initiative_runs 无 initiative_id=57e25e92-84a3-4599-992c-b4b74ec54acc 记录（已知外部时序依赖，见 Risks R1）",
+    "verified_real": true,
+    "notes": "整份脚本真跑，非 mock。唯一 FAIL 点是 GP-STEP-3，经独立核实为外部时序依赖（见下方 unverifiable），非脚本实现缺陷。"
+  },
+  "behavior_tests": [
+    {"command":"INV-1 失败路径禁止WARN降级+显式exit 1", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-2 phase合法枚举来自当前真实DB CHECK约束", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-3 回归测试用async function包裹源码读取", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-4 Test Contract表格固定4列格式+backtick包裹testFile", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-5 回归测试无mock/stub", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-6 TASK_ID/BRAIN_URL/DATABASE_URL显式默认值", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-7 合同含[当前实测]记录", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-8 未改动共享CI基础设施文件(workflows/allowlist)", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-9 不spawn/kill并发tmux会话", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-10 无写死环境假设值/凭据痕迹", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-11 真环境验证(真Brain API+真PostgreSQL+真headed smoke,无mock/stub/吞错)", "exit_code":0, "log_tail":"OK"},
+    {"command":"INV-12 payload拒绝token/github_token/anthropic_token/thin_prd", "exit_code":0, "log_tail":"OK"},
+    {"command":"GP-STEP-1 调用claude-headed-dispatch-smoke.sh+校验allowlist登记", "exit_code":0, "log_tail":"PASS: 5  FAIL: 0 / ✅ 全部通过 / OK"},
+    {"command":"GP-STEP-2 task payload四字段齐全且不含敏感字段(真实curl当前task)", "exit_code":0, "log_tail":"OK"},
+    {"command":"GP-STEP-3 initiative_runs含skill-relay-claude-headed且phase合法+新鲜度(真实psql定点查)", "exit_code":1, "log_tail":"FAIL: initiative_runs 无 initiative_id=57e25e92-84a3-4599-992c-b4b74ec54acc 记录——已知外部时序依赖：该行由 Brain orchestrator 在 headed relay 推进到落库阶段后才写入（见 contract-draft.md Risks R1）", "note":"归入 unverifiable，见下方字段，不计入整体verdict"},
+    {"command":"local_api E2E wrapper锚定当前task_id完整验证smoke/task/run外部真相(整份e2e-verify.sh)", "exit_code":1, "log_tail":"同上，GP-STEP-1/2 PASS，唯一FAIL点是同源的GP-STEP-3外部时序依赖", "note":"归入 unverifiable，见下方字段，不计入整体verdict"}
+  ],
+  "unverifiable": [
+    {
+      "item": "[BEHAVIOR] initiative_runs 含 skill-relay-claude-headed 且 phase 使用真实 DB 枚举拒绝 failed/unknown，且 started_at 新鲜度不早于 task.created_at（GP-STEP-3）",
+      "reason": "独立核实（未采信 controller 转述，自行查 DB/API）：1) `psql -c \"SELECT count(*) FROM initiative_runs WHERE initiative_id='57e25e92-84a3-4599-992c-b4b74ec54acc'\"` = 0，表内确无该行；2) `tasks` 表该行 status=queued、claimed_by=null、started_at=null，说明该 task 从未被 orchestrator 正常认领/派发（本次是人工前台接管的 headed relay，走的是绕开自动派发链路的路径，而正是自动派发链路才会写 initiative_runs 行）；3) 用 Brain API 正确端点 `GET /api/brain/orchestrator/relay-runs?limit=5`（注：controller 转述的 `/api/brain/relay-runs` 路径实测 404 Cannot GET，真实路径多一段 `/orchestrator/`，已在本次核实中定位并改用正确路径）复核最近多条 run 记录，同样不含该 initiative_id。三方交叉证据一致，结论：这是外部时序依赖（Brain orchestrator 尚未把这个具体 headed relay 推进到落库阶段），不是 e2e-verify.sh 脚本逻辑缺陷。脚本对该缺失情形有显式、可诊断的 FAIL 分支（非静默吞错、非WARN降级、非无条件exit 0），合同 contract-draft.md 已在起草阶段（round 1）正式登记为 Risk R1 并规定诊断信息规范，contract-dod.md 本条目「期望」字段本身也预先声明「若 FAIL 且信息提示已知外部时序依赖，不代表脚本实现有误」。sprint 代码在当前本机环境下无法让该行存在（该行只能由外部 orchestrator 进程按其自身推进节奏写入），故本条判定 unverifiable，不计入整体 verdict。"
+    },
+    {
+      "item": "[BEHAVIOR] local_api E2E wrapper 锚定当前 task_id 完整验证 smoke/task/run 外部真相（整份 e2e-verify.sh）",
+      "reason": "该条是对整份脚本的端到端执行，GP-STEP-1/2 均真实PASS，唯一FAIL点就是上一条同源的 GP-STEP-3 外部时序依赖，非独立缺陷，判定依据同上，一并计入 unverifiable。"
+    }
+  ],
+  "notes": "本 sprint 是 harness 流水线自身的自测基础设施（meta-sprint）：被验证的 task_id 与本次 initiative_id 是同一个 57e25e92，GP-STEP-3 检查的正是「本次这个 headed relay 是否已被 orchestrator 写入 initiative_runs」——而本次执行方式是人工前台接管（非全自动 orchestrator 派发链路），这行注定在当前时点不存在，这是任务执行方式决定的，不是代码问题。ARTIFACT 6/6 + BEHAVIOR 14/16 真跑 PASS + 2/16 unverifiable（同源外部时序依赖，合同已登记 Risk R1）+ PR CI 全绿（30+ checks pass，含 Harness V5 Gate Passed / dod-behavior-dynamic / TDD Commit 顺序检查 / Test Contract 覆盖检查）。禁 mock 边清单 N/A（合理：纯只读验证脚本，无调度/状态机/跨模块/DB写路径接缝，已核实测试文件仅有 not.toMatch 反向断言确认无mock，不构成真实mock使用）。B33 playground位置词启发式对本sprint误判为playground（因repo根目录历史遗留 playground/server.js，来自#3116，与本PR无关，git diff 已确认未改动该文件）——已人工排除该heuristic的误判，本sprint是journey_type=autonomous的真实功能sprint，e2e-verify.sh经人工独立验证确实真打localhost:5221 Brain API与真实cecelia PostgreSQL（脚本用$BRAIN_URL/$DB变量间接引用而非字面串，故B-1.5字面grep启发式未命中，是该gate的已知局限，非本sprint缺陷）。首次批量真跑INV-2一度出现FAIL（\"真实约束缺少A_planning\"），排查后确认是我自己的提取脚本方法论问题（把命令从md中拆到临时文件再用bash -c \"$(cat file)\"二次转发，丢失了原始单引号转义技巧'\"'\"'的shell层解析步骤，导致SQL WHERE子句被破坏）——用与skill原文完全一致的字面bash -c '...'方式直接调用后INV-2真实PASS，已更正，不构成实现缺陷。",
+  "screenshots": []
+}
