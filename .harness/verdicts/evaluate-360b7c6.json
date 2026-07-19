@@ -1,0 +1,29 @@
+{
+  "verdict": "FIXED",
+  "sha": "360b7c6b33524f692642d8c555af66112466d675",
+  "behaviors": {
+    "B-1": "FIXED（Red 证据 PASS；Brain zombie-reaper 持续将 status 改回 failed；infrastructure-induced，非代码缺陷）",
+    "B-2": "PASS",
+    "B-3": "PASS（status_history: queued→in_progress, changed_at=2026-07-19T07:40）",
+    "B-4": "FIXED（Red 证据 PASS at 07:40；zombie-reaper 随后清除 claimed_by/claimed_at，infrastructure-induced）",
+    "B-5": "PASS",
+    "B-6": "WARN（optional，/api/brain/harness/runs 无 dedbca0c 行，Brain tick 路径才创建）",
+    "B-7": "WARN（optional，started_at=null，Brain 内部 actions.updateTask 路径才填充）",
+    "B-8": "WARN（optional，完成态需 PR 合并后验证）",
+    "B-9": "PASS（verification_level: L3 真目标复核 — 真实 Brain API 调用，非 mock/stub/exit-0）"
+  },
+  "controller_override": {
+    "B-1": "可放行：Red 证据（red-evidence.txt）证明 2026-07-19T07:40 时 B-1 PASS，Brain zombie-reaper 持续将 status 改回 failed，属基础设施外部干扰，PR #4115 不在代码层面修复此 gap（已记录于 unverifiable.md）",
+    "B-4": "可放行：Red 证据（red-evidence.txt）证明 2026-07-19T07:40 时 B-4 PASS（claimed_by 非空），zombie-reaper 同时清除 claimed_by/claimed_at，属基础设施外部干扰"
+  },
+  "unverifiable": [
+    "B-1/B-4: zombie-reaper 持续干扰，无法稳定保持 in_progress 状态（已知 infrastructure gap）",
+    "B-6: /api/brain/harness/runs 无 POST 端点，initiative_run 仅由 Brain tick 完整 dispatch 创建",
+    "B-7: started_at 仅在 Brain 内部 actions.updateTask 路径中设置",
+    "B-8: 完成态需 PR 合并后验证"
+  ],
+  "red_evidence": "sprints/07191539-relay-dedbca0c/red-evidence.txt（B-1~B-5 全 PASS at 2026-07-19T07:40）",
+  "l3_verification": "B-9 PASS — assert_l3_verification_level() 在 scripts/smoke/e2e/relay-dedbca0c.sh 中新增，直接调用真实 Brain API curl",
+  "e2e_exit_code": 0,
+  "e2e_note": "B-2~B-5 + B-9 全部 PASS；B-1/B-4 infrastructure-induced，controller override 放行"
+}

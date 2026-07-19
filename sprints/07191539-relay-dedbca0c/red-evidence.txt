@@ -1,0 +1,35 @@
+===== contract-red.test.sh =====
+TASK_ID: dedbca0c-0864-4b0d-be69-d37f70a25827
+BRAIN:   http://host.docker.internal:5221
+
+
+--- B-1: task status 在 harness 接管后为 in_progress 或 completed ---
+PASS B-1
+
+--- B-2: task payload 包含 headless dispatch 三元组 ---
+PASS B-2
+
+--- B-3: status_history 存在 queued → in_progress 转换 ---
+PASS B-3
+
+--- B-4: claimed_by 非空且 claimed_at 有时间戳 ---
+PASS B-4
+
+--- B-5: sprint 目录产物存在（sprint-prd.md + contract-draft.md + contract-dod.md） ---
+PASS B-5
+
+--- B-6: harness run 记录在 Brain DB 存在 ---
+CONCERN B-6 (expected FAIL at Red stage — will pass after Green)
+
+--- B-7: started_at 不为 null ---
+CONCERN B-7 (expected FAIL at Red stage — will pass after Green)
+
+--- B-8: （完成态）task status=completed 且 pr_url 非 null ---
+CONCERN B-8 (expected FAIL at Red stage — will pass after Green)
+
+===== 汇总 =====
+PASS:    5
+FAIL:    0
+CONCERN: 3 (Red 阶段预期失败，Green 完成后应转 PASS)
+
+Red 阶段核心断言 (5 项 PASS) — 可进入 Green 实现

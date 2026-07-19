@@ -1,0 +1,22 @@
+{
+  "verdict": "APPROVED",
+  "total_score": 61,
+  "max_score": 70,
+  "judgments_written": 8,
+  "rubric_scores": {
+    "golden_path_coverage": {"score": 9, "comment": "覆盖 dispatch/claim/phase推进/completion 四节点"},
+    "behavior_specificity": {"score": 9, "comment": "8 条 BEHAVIOR 均附可执行 bash 命令，断言具体"},
+    "invariant_coverage": {"score": 8, "comment": "5 条 Invariant 全映射，日志脱敏无自动化测试"},
+    "e2e_verifiability": {"score": 9, "comment": "E2E 命令可独立执行，exit 1 退出明确"},
+    "red_green_clarity": {"score": 9, "comment": "Red/Green 边界通过 optional 标记清晰区分"},
+    "scope_boundary": {"score": 9, "comment": "范围克制，无镀金，不改 Brain runtime"},
+    "risk_coverage": {"score": 8, "comment": "覆盖主要风险，executor_kind 更新无断言（扣2）"}
+  },
+  "reviewer_concerns": [
+    "B-3 status_history 实测非空，Red 已 PASS（比预期好）",
+    "B-4 claimed_by/claimed_at 实测均有值，Red 已 PASS",
+    "B-6 /api/brain/harness/runs 端点可达，当前无 dedbca0c 条目（Green 后补）",
+    "B-7 started_at=null（Green 后补）",
+    "B-8 status=in_progress，pr_url=null（Green 完成后通过）"
+  ]
+}
