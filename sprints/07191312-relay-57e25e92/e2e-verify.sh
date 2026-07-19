@@ -59,8 +59,13 @@ STARTED_AT=$(printf '%s' "$ROW" | cut -d'|' -f3)
 IS_FRESH=$(printf '%s' "$ROW" | cut -d'|' -f4)
 
 case "$HOST" in
-  *skill-relay-claude-headed*) ;;
-  *) echo "FAIL: host=$HOST"; exit 1 ;;
+  # round 5 修正：三值合法枚举——skill-relay-claude-headed / skill-relay-codex-headed 来自
+  # packages/brain/src/harness-skill-relay.js HEADED_HOSTS（第457-459行）自动化 orchestrator 派发路径；
+  # foreground 来自 packages/brain/src/routes/initiatives.js POST /orchestrator/relay-runs/:initiative_id
+  # 端点（第373-411行）人工前台接管补建档路径，Brain 官方设计的合法场景（见 contract-draft.md Risks R2）
+  *skill-relay-claude-headed*|*skill-relay-codex-headed*) ;;
+  foreground) ;;
+  *) echo "FAIL: host=$HOST（合法值：skill-relay-claude-headed / skill-relay-codex-headed / foreground，round 5 修正见 contract-draft.md Risks R2）"; exit 1 ;;
 esac
 if [ "$PHASE" = "failed" ]; then echo "FAIL: phase=failed"; exit 1; fi
 case "$PHASE" in
