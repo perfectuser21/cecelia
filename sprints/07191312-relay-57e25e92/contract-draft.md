@@ -225,9 +225,9 @@ bash "${SPRINT_DIR}/e2e-verify.sh"
 **journey_type**: autonomous
 **target_environment**: local_api
 
-后续 generator 必须补 `sprints/07191312-relay-57e25e92/e2e-verify.sh`，内容等价于以下脚本，**且必须逐字保留 `# GP-STEP-N BEGIN`/`# GP-STEP-N END` 标记注释行**（N=1..4，共 4 对 8 处，一字不改、不省略、不重新措辞）——contract-dod.md 对应 3 条 `[BEHAVIOR]` 条目依赖这些标记做 `awk` 抽取执行，另有 1 条 `[ARTIFACT]` 条目逐一校验这些标记字面存在（round 3 新增，见下方修订记录）；标记缺失或被改写会导致 `[BEHAVIOR]` 非空守卫 FAIL 且 `[ARTIFACT]` 标记存在性校验 FAIL，双重拦截。proposer 本阶段不创建该脚本，以保证 TDD Red。
+后续 generator 必须补 `sprints/07191312-relay-57e25e92/e2e-verify.sh`，内容等价于以下脚本，**且必须逐字保留 `# GP-STEP-N BEGIN`/`# GP-STEP-N END` 标记注释行**（N=1..4，共 4 对 8 处，一字不改、不省略、不重新措辞），**且 GP-STEP-1/2/3 标记之间的断言原语字面串不得被替换/清空**（round 4 新增硬约束，见下方 round 4 修订记录）——contract-dod.md 对应 3 条 `[BEHAVIOR]` 条目依赖这些标记做 `awk` 抽取执行，另有 1 条 `[ARTIFACT]` 条目做标记存在性 + 内容级字面串双重校验（round 3 新增标记存在性、round 4 升级为内容级，见下方修订记录）；脚本本体最开头新增 `# CONTENT-INTEGRITY-GATE` 段（round 4 新增），在执行任何 GP-STEP 之前先自证三段内容非空且含关键断言原语，标记缺失、被改写或内容被掏空（如替换成占位注释）均会在脚本最开始就 FAIL，覆盖"标记保留但内容被掏空后直接执行完整脚本"这一最关键复测场景。proposer 本阶段不创建该脚本，以保证 TDD Red。
 
-**本脚本是全合同唯一权威逻辑来源（round 2 修订）**：Golden Path Step 1-3 的「验证命令」与 contract-dod.md 对应 `[BEHAVIOR]` 条目均通过 `# GP-STEP-N BEGIN`/`# GP-STEP-N END` 标记从本脚本原文 `awk` 提取后原样执行，不在别处重复粘贴完整命令，消除三处独立维护导致的写法漂移（reviewer 第一轮反馈第 1 条）。`# GP-STEP-3` 段新增新鲜度校验（reviewer 第一轮反馈第 3 条），行缺失时的 FAIL 信息显式引用 `## Risks` R1（reviewer 第一轮反馈第 2 条）：
+**本脚本是全合同唯一权威逻辑来源（round 2 修订）**：Golden Path Step 1-3 的「验证命令」与 contract-dod.md 对应 `[BEHAVIOR]` 条目均通过 `# GP-STEP-N BEGIN`/`# GP-STEP-N END` 标记从本脚本原文 `awk` 提取后原样执行，不在别处重复粘贴完整命令，消除三处独立维护导致的写法漂移（reviewer 第一轮反馈第 1 条）。`# GP-STEP-3` 段新增新鲜度校验（reviewer 第一轮反馈第 3 条），行缺失时的 FAIL 信息显式引用 `## Risks` R1（reviewer 第一轮反馈第 2 条）。`# CONTENT-INTEGRITY-GATE` 段（round 4 新增）在脚本最开头对自身源码做内容级自证，见下方 round 4 修订记录：
 
 ```bash
 #!/usr/bin/env bash
@@ -238,6 +238,28 @@ SPRINT_DIR="${SPRINT_DIR:-sprints/07191312-relay-57e25e92}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 export TASK_ID
+
+# CONTENT-INTEGRITY-GATE BEGIN: 交付物整体自证——防止 GP-STEP 标记保留但内容被掏空（round 4 新增，
+# 呼应 reviewer 第三轮反馈：round 3 的非空守卫/标记存在性硬闸只验证"标记文字在不在"，未验证"标记之间
+# 是否留有真实断言原语"。本段在脚本最开头读取自身源码（$SELF），逐段抽取 GP-STEP-1/2/3 标记之间的原文，
+# 对每段做内容级字面串校验；只要某段被替换成占位注释（如 "# TODO: 断言逻辑已挪到别处"），本段会在
+# 执行到任何 GP-STEP 之前就先 FAIL，覆盖"直接执行完整 e2e-verify.sh"这一最关键复测场景。
+SELF="${BASH_SOURCE[0]:-$0}"
+_gp_extract() { awk "/# $1 BEGIN/{f=1;next} /# $1 END/{f=0} f" "$SELF"; }
+
+_GP1_BODY="$(_gp_extract "GP-STEP-1")"
+echo "$_GP1_BODY" | grep -qF "claude-headed-dispatch-smoke.sh" || { echo "FAIL: GP-STEP-1 内容自证失败——提取段缺少字面串 claude-headed-dispatch-smoke.sh（标记可能保留但内容被掏空）"; exit 1; }
+echo "$_GP1_BODY" | grep -qF "grep -Fxq" || { echo "FAIL: GP-STEP-1 内容自证失败——提取段缺少字面串 grep -Fxq（标记可能保留但内容被掏空）"; exit 1; }
+
+_GP2_BODY="$(_gp_extract "GP-STEP-2")"
+echo "$_GP2_BODY" | grep -qF 'curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"' || { echo "FAIL: GP-STEP-2 内容自证失败——提取段缺少真实 curl Brain task API 断言字面串（标记可能保留但内容被掏空）"; exit 1; }
+_GP2_JQ_COUNT=$(echo "$_GP2_BODY" | grep -o 'jq -e' | wc -l | tr -d ' ')
+[ "${_GP2_JQ_COUNT:-0}" -ge 4 ] || { echo "FAIL: GP-STEP-2 内容自证失败——jq -e 断言出现次数=${_GP2_JQ_COUNT:-0} < 4（需覆盖 id/task_type/payload三元组/禁用字段四类断言，标记可能保留但内容被掏空）"; exit 1; }
+
+_GP3_BODY="$(_gp_extract "GP-STEP-3")"
+echo "$_GP3_BODY" | grep -qF 'psql "$DB"' || { echo "FAIL: GP-STEP-3 内容自证失败——提取段缺少真实 psql 查询字面串（标记可能保留但内容被掏空）"; exit 1; }
+echo "$_GP3_BODY" | grep -qF "is_fresh" || { echo "FAIL: GP-STEP-3 内容自证失败——提取段缺少 is_fresh 新鲜度断言字面串（标记可能保留但内容被掏空）"; exit 1; }
+# CONTENT-INTEGRITY-GATE END
 
 # GP-STEP-1 BEGIN: 复用调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记
 BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DB" bash packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh
@@ -319,6 +341,18 @@ echo "OK headed smoke regression verified for $TASK_ID"
   2. 修复（两条都做，互补不冲突）：① 在 contract-dod.md 的 3 条 GP-STEP `[BEHAVIOR]` Test 命令里，`awk` 提取后、执行前插入非空守卫 `[ -s /tmp/gp-stepN-57e25e92.sh ] || { echo "FAIL: GP-STEP-N 标记未在 e2e-verify.sh 中找到或提取为空"; exit 1; }`（运行时兜底）；② contract-dod.md 新增一条 `[ARTIFACT]` 条目，用 Node 逐一校验生成的 `e2e-verify.sh` 字面包含全部 4 对（8 处）标记 `# GP-STEP-1 BEGIN`~`# GP-STEP-4 END`（构建期硬闸，独立于 awk 抽取路径）；③ 本文件（contract-draft.md）`## E2E 验收` 段「内容等价于以下脚本」措辞改为「且必须逐字保留 `# GP-STEP-N BEGIN`/`# GP-STEP-N END` 标记注释行」，消除歧义。
   3. 反例复测（round 3 起草时实测，证据见本轮 Bash 输出，不重复粘贴于此）：构造一份不含 `# GP-STEP-N BEGIN`/`# GP-STEP-N END` 字面注释、但断言逻辑等价的假 `e2e-verify.sh`，跑修订后的 3 条 GP-STEP `[BEHAVIOR]` Test 命令与新增 `[ARTIFACT]` 命令，全部正确输出 FAIL（不再误判 OK）；标记齐全的真实草稿脚本上跑同一组命令，GP-STEP-1/2 非空守卫 PASS 后进入真实断言（STEP-1/2 本身按预期 PASS，STEP-3 因 `initiative_runs` 尚无本 task 行按 Risk R1 预期 FAIL，与 round 2 结论一致，非本轮改动引入的回归），`[ARTIFACT]` 标记存在性校验 PASS。
   4. 条目数变化：`[ARTIFACT]` 由 round 2 的 5 条增至 6 条（新增标记存在性校验 1 条）；`[BEHAVIOR]` 仍为 16 条（未新增/删减，3 条 Test 命令内部插入非空守卫属命令内容修订，不新增条目），符合精简纪律 B50——只补 reviewer 指出的真漏覆盖，不额外加码。
+- **round 4 修订记录（本轮，针对 reviewer 第三轮反馈唯一阻塞问题：dod_machineability=4、verification_oracle_completeness=4 两维未达标）**：
+  1. 问题（reviewer 三场景复测实证）：round 3 的两处修复（非空守卫 `[ -s file]` + `[ARTIFACT]` 标记存在性硬闸）只验证"结构是否存在"（标记文字在不在、提取字节数是否非零），未验证"提取内容是否包含真实的断言执行"。reviewer 构造一份 GP-STEP-2/3 标记保留但段内只留 `# TODO: 断言逻辑已挪到别处，这里留空占位` 的假 `e2e-verify.sh`：① `[ARTIFACT]` 标记存在性检查 PASS（标记字面确实都在）；② GP-STEP-2 `[BEHAVIOR]` 命令的非空守卫也 PASS（提取出 93 字节纯注释，非空）；③ 最关键——直接 `bash e2e-verify.sh` 执行完整脚本，GP-STEP-2/3 因为只是注释直接跳过，GP-STEP-4 打印 OK，整个脚本 exit 0 全绿过关，但一次真实 Brain API/DB 调用都没发生。
+  2. 修复方向（按 reviewer 要求同时覆盖"诊断命令"与"交付物整体"两层面，均在现有 awk 抽取机制基础上追加内容级字面串校验，不重新设计机制）：
+     - **交付物整体层面**：`## E2E 验收` 脚本本体（`e2e-verify.sh` 权威逻辑来源）最开头新增 `# CONTENT-INTEGRITY-GATE BEGIN/END` 段——脚本读取自身源码（`SELF="${BASH_SOURCE[0]:-$0}"`），用与 contract-dod.md 相同的 `awk "/# GP-STEP-N BEGIN/{f=1;next} /# GP-STEP-N END/{f=0} f" "$SELF"` 抽取 GP-STEP-1/2/3 段原文，对每段做字面串校验：GP-STEP-1 段必须含 `claude-headed-dispatch-smoke.sh` 且含 `grep -Fxq`；GP-STEP-2 段必须含 `curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"` 且 `jq -e` 出现次数 ≥4；GP-STEP-3 段必须含 `psql "$DB"` 且含 `is_fresh`。该段在脚本执行任何 GP-STEP 之前先跑，任一断言不满足立即打印诊断信息并 `exit 1`——这样即使直接执行完整 `e2e-verify.sh`（场景 3，也是 BEHAVIOR-4 的检查对象），内容被掏空的版本会在最开头就被拦下，不会跑到 GP-STEP-4 打印假 OK。
+     - **诊断命令层面**：contract-dod.md 的 3 条 GP-STEP `awk` 抽取式 `[BEHAVIOR]`（GP-STEP-1/2/3）Test 命令，在原有非空守卫 `[ -s tmpfile ]` 之后追加同一组内容级字面串 `grep -qF`/`grep -o | wc -l` 校验，对提取出的临时文件内容做与 CONTENT-INTEGRITY-GATE 完全一致的断言（同一套字面串标准，双处独立实现互相印证，不共享同一份可能被绕过的判断逻辑）。
+     - `[ARTIFACT]` 标记存在性条目同步升级：原先只用 `c.includes('# GP-STEP-N BEGIN')` 做整份文件级字符串包含判断（存在性），round 4 改为先用 `indexOf` 定位每对 BEGIN/END 的精确边界、切出段落原文，再对切出的段落做与上面相同的字面串内容校验（内容级），标记存在但内容为空/被替换的版本会被此条目直接拦下。
+  3. **反例复测（round 4 起草时实测，reviewer 三场景全覆盖，逐一列出）**：
+     - **场景 1（完全无标记版）**：构造一份不含任何 `# GP-STEP-N BEGIN`/`# GP-STEP-N END` 字面注释的 `e2e-verify.sh`。`[ARTIFACT]` 标记存在性/内容级校验：FAIL（`indexOf` 返回 -1，段落定位失败，符合预期）。CONTENT-INTEGRITY-GATE：FAIL（`_gp_extract` 对不存在的标记返回空字符串，`grep -qF` 对空输入必然不匹配，`exit 1`，符合预期）。3 条 GP-STEP `[BEHAVIOR]`：FAIL（非空守卫先拦下，`-s tmpfile` 为假，符合预期）。**结果：FAIL，符合预期（与 round 3 结论一致，未回归）。**
+     - **场景 2（标记保留但内容被掏空版，reviewer 原话构造）**：把真实 `e2e-verify.sh` 的 GP-STEP-2/3 段内容替换为单行 `# TODO: 断言逻辑已挪到别处，这里留空占位`，GP-STEP-1/4 与标记行本身保持不变。`[ARTIFACT]` 内容级校验：FAIL（GP-STEP-2 段落原文只有占位注释，`grep -qF 'curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"'` 不匹配，`process.exit(1)`）。3 条 GP-STEP `[BEHAVIOR]` 中 GP-STEP-2/3：非空守卫 PASS（占位注释非空）但**新增内容级校验 FAIL**（`grep -qF` 不匹配，`exit 1`，round 3 的漏洞点已堵上）；GP-STEP-1 `[BEHAVIOR]` 因 GP-STEP-1 段内容未被改动，内容级校验 PASS（符合预期，不误伤未改动的段）。CONTENT-INTEGRITY-GATE：FAIL（同样对 GP-STEP-2 段做 `grep -qF` 不匹配判定，`exit 1`，在脚本最开头即拦下）。**结果：FAIL，符合预期（round 3 的假绿场景在 round 4 被内容级校验堵上）。**
+     - **场景 3（直接执行完整 e2e-verify.sh，最关键场景）**：对场景 2 构造的掏空版 `e2e-verify.sh` 直接 `bash e2e-verify.sh` 整体执行（不经过任何 contract-dod.md 诊断命令，只跑脚本本体）。执行顺序：变量导出 → `CONTENT-INTEGRITY-GATE` 段最先执行 → `_gp_extract "GP-STEP-2"` 取回占位注释 → `grep -qF` 不匹配 → 打印 `FAIL: GP-STEP-2 内容自证失败——提取段缺少真实 curl Brain task API 断言字面串（标记可能保留但内容被掏空）` → `exit 1`。脚本在到达 GP-STEP-1 执行段之前即终止，**不会跑到 GP-STEP-4 打印 OK，不会有任何"假绿 exit 0"**。**结果：FAIL，符合预期（round 3 exit code=0 全绿过关的假绿在 round 4 被彻底堵上，这是本轮修复的核心目标）。**
+     - **正例复测（标记齐全、内容未被掏空的真实草稿脚本）**：对当前 `## E2E 验收` 完整脚本原样执行 CONTENT-INTEGRITY-GATE 段——GP-STEP-1/2/3 三段内容级校验全部 PASS（GP-STEP-1 含 `claude-headed-dispatch-smoke.sh`+`grep -Fxq`；GP-STEP-2 含目标 curl 字面串且 `jq -e` 计数=4；GP-STEP-3 含 `psql "$DB"`+`is_fresh`），Gate 通过后脚本继续执行到 GP-STEP-1/2（实测 PASS）、GP-STEP-3（因 `initiative_runs` 当前仍无本 task 行，按 Risk R1 预期 FAIL，非本轮改动引入的回归，与 round 2/3 结论一致）。确认新增 Gate 不会误伤未被篡改的真实脚本。
+  4. 条目数变化：`[ARTIFACT]` 仍为 6 条（原有标记存在性条目原地升级为内容级，未新增条目）；`[BEHAVIOR]` 仍为 16 条（3 条 GP-STEP Test 命令内部追加内容级校验属命令内容修订，不新增条目数）；`e2e-verify.sh` 脚本本体新增 1 个 `# CONTENT-INTEGRITY-GATE` 段（非 GP-STEP 编号段，不计入 4 对标记数）。符合精简纪律 B50——只补 reviewer 指出的真漏覆盖（内容级校验），不额外加码。
 - 历史路径漂移记录：049ebf93/53710094 两例文档声称 sprint-local 路径实际都落地在 `scripts/smoke/e2e/relay-<id>.sh`；本合同按当前 PRD 字面重复指定的 `sprints/07191312-relay-57e25e92/e2e-verify.sh` 执行，不复制该漂移。
 - phase 合法枚举已用 `pg_get_constraintdef(initiative_runs_phase_check)` 实测更新为完整集合（含 `A_contract`/`B_task_loop`/`C_final_e2e`），比历史合同子集更准确。
 - self-check 已知假阳性：Step 2b-check 第 6 项全角标点检测正则 `[（）：，""]\$` 在本机 shell（`LANG`/`LC_ALL` 均未设置）下对任意 `"$VAR` 结尾/含 `"..."$` 的 ASCII 行普遍误报（round 1 复测命中 22 处，round 2 修订后复测命中 21 处，数量变化仅因文本增删，误报性质不变）——已用已毕业先例 `scripts/smoke/e2e/relay-4bb31ef5.sh`（已过 GAN/evaluator/merge 的真实生产脚本）同一正则复测，同样大量误报，且该脚本内实际只有 3 处真实全角标点，证明是环境性假阳性（BSD/无 locale grep 字节范围匹配问题），非本合同脚本真的存在全角标点紧贴 `$VAR`。本合同 E2E 脚本经人工逐行核对不含真实全角标点紧贴 `$VAR`，此项判定为假阳性，不阻塞交付；其余 Step 2b-check round 2 复测全部通过：`[BEHAVIOR]` 行首 checkbox 格式 = 16 条（≥4，与 round 1 持平）、`Test: manual:` = 16/16、E2E bash 代码块 = 1、`bash -n` 语法通过、真执行断言（curl/psql/bash/node 开头）16/16 条（≥2 且占比 100% ≥50%，grep 开头文本自证 0 条）。round 2 额外验证：`# GP-STEP-1/2/3/4` 标记段用 `awk` 独立提取后可分别语法通过（`bash -n`）并在本机真实执行——STEP-1（allowlist）/STEP-2（task payload）均实测 PASS，STEP-3（initiative_runs）实测按预期 FAIL 并打印引用 `## Risks` R1 的诊断信息（因当前 `initiative_runs` 确无本 task 行，与 Risk R1 描述一致，非脚本逻辑缺陷）；contract-dod.md 对应 4 条 BEHAVIOR 断言在临时补入草稿版 `e2e-verify.sh` 后用真实 vitest（`tests/regression/relay-57e25e92/headed-smoke-contract.test.ts`，未改动）复测 4/4 PASS，移除后复测回归 4/4 FAIL（ENOENT），证明 TDD Red 状态未被破坏、测试文件与合同断言逐字段仍然对齐，round 2 全部改动未触碰 tests/ 骨架。
