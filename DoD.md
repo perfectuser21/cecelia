@@ -80,7 +80,7 @@ target_environment: local_api
   期望: OK
 
 - [x] [ARTIFACT] `scripts/relay-demo/slugify.mjs` 不引入外部依赖
-  Test: manual:bash -c 'test -f scripts/relay-demo/slugify.mjs && node --input-type=module -e "import fs from \"node:fs\"; const src = fs.readFileSync(\"scripts/relay-demo/slugify.mjs\", \"utf8\"); const specs = [...src.matchAll(/from\\s+[\"'\''']([^\"'\''']+)[\"'\''']|require\\([\"'\''']([^\"'\''']+)[\"'\''']\\)/g)].map(([, esm, cjs]) => esm ?? cjs); const bad = specs.filter((spec) => !spec.startsWith(\"./\") && !spec.startsWith(\"../\") && !spec.startsWith(\"node:\")); if (bad.length) { console.error(bad.join(\"\\n\")); process.exit(1); }"'
+  Test: manual:bash -c 'test -f scripts/relay-demo/slugify.mjs && node --input-type=module -e "import fs from \"node:fs\"; const src = fs.readFileSync(\"scripts/relay-demo/slugify.mjs\", \"utf8\"); const specs = [...src.matchAll(/from\\s+[\u0022\u0027]([^\u0022\u0027]+)[\u0022\u0027]|require\\([\u0022\u0027]([^\u0022\u0027]+)[\u0022\u0027]\\)/g)].map(([, esm, cjs]) => esm ?? cjs); const bad = specs.filter((spec) => !spec.startsWith(\"./\") && !spec.startsWith(\"../\") && !spec.startsWith(\"node:\")); if (bad.length) { console.error(bad.join(\"\\n\")); process.exit(1); }"'
   期望: OK
 
 - [x] [ARTIFACT] `scripts/relay-demo/pretty-bytes.mjs` 与 `scripts/relay-demo/sort-json-keys.mjs` 未被修改或覆盖
