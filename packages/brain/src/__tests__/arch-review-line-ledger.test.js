@@ -50,6 +50,28 @@ describe('triggerArchReview — line_ledger 摘要注入', () => {
 });
 
 // ============================================================
+// triggerArchReview — location 字段必须为 'us'（回归测试，防止硬编码 xian 重现）
+// ============================================================
+describe('triggerArchReview — INSERT location 必须为 us', () => {
+  it('生成的 INSERT SQL 里 location 值为 us，不是 xian', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })  // hasRecentArchReview -> false
+        .mockResolvedValueOnce({ rows: [] })  // guard 通过
+        .mockResolvedValueOnce({ rows: [] })  // fetchAllLineLedgersDigest
+        .mockResolvedValueOnce({ rows: [{ id: 'ar-location-test' }] }), // INSERT
+    };
+    const triggerTime = new Date('2026-03-23T20:00:00Z');
+    const result = await triggerArchReview(pool, triggerTime);
+    expect(result.triggered).toBe(true);
+    // pool.query.mock.calls[3][0] 是 INSERT 语句运行时实际传给 pool.query 的 SQL
+    const insertSql = pool.query.mock.calls[3][0];
+    expect(insertSql).toContain("'us'");
+    expect(insertSql).not.toContain("'xian'");
+  });
+});
+
+// ============================================================
 // fetchAllLineLedgersDigest（拼接所有 line_ledger 为一段摘要）
 // ============================================================
 describe('fetchAllLineLedgersDigest — 拼接所有 line_ledger 为一段摘要', () => {
