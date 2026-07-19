@@ -186,8 +186,6 @@ vi.mock('../../daily-review-scheduler.js', () => ({
   triggerArchReview: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn() }));
-vi.mock('../../conversation-digest.js', () => ({ runConversationDigest: vi.fn() }));
-vi.mock('../../capture-digestion.js', () => ({ runCaptureDigestion: vi.fn() }));
 vi.mock('../../topic-selection-scheduler.js', () => ({ triggerDailyTopicSelection: vi.fn() }));
 vi.mock('../../topic-suggestion-manager.js', () => ({ autoPromoteSuggestions: vi.fn() }));
 vi.mock('../../daily-publish-scheduler.js', () => ({ triggerDailyPublish: vi.fn() }));

@@ -24,8 +24,6 @@ const MEMORY_KEY = 'consciousness_enabled';
 // ========== 意识模块 mocks（要断言调用次数）==========
 vi.mock('../../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({ accumulator: 0 }) }));
 vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn().mockResolvedValue({}) }));
-vi.mock('../../conversation-digest.js', () => ({ runConversationDigest: vi.fn().mockResolvedValue({}) }));
-vi.mock('../../capture-digestion.js', () => ({ runCaptureDigestion: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../suggestion-cycle.js', () => ({ runSuggestionCycle: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../conversation-consolidator.js', () => ({ runConversationConsolidator: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../notebook-feeder.js', () => ({ feedDailyIfNeeded: vi.fn().mockResolvedValue({}) }));
