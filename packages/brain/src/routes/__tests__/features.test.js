@@ -1,8 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { computeLedgerStatus } from '../../lib/eleven-elements-ledger.js';
+import { describe, it, expect } from 'vitest';
 
-// 注：buildWhereClause 测试不需要 DB mock，单独 import
-// GET /ledger 测试需要 DB mock，放在独立 describe 块内动态 import
+// buildWhereClause 测试不需要 DB mock，单独 import
+// computeLedgerStatus 纯函数测试见 lib/__tests__/eleven-elements-ledger.test.js
 
 describe('features route — buildWhereClause', () => {
   it('returns empty clause when no filters', async () => {
@@ -62,66 +61,5 @@ describe('features route — SQL 表名验证', () => {
     const src = readFileSync(join(__dirname, '../features.js'), 'utf8');
     expect(src).toContain("import { computeLedgerStatus }");
     expect(src).toContain("eleven-elements-ledger");
-  });
-});
-
-// 验证 computeLedgerStatus 被 features.js 和 journeys.js 共享使用（不是各写一份）
-describe('eleven-elements-ledger — 共享纯函数', () => {
-  const NOW = new Date('2026-01-31T00:00:00Z').getTime();
-
-  const baseFeature = {
-    id: 'f1',
-    description: '测试模块描述',
-    smoke_cmd: 'bash smoke.sh',
-    smoke_status: 'passing',
-    has_unit_test: true,
-    has_integration_test: true,
-    has_e2e: true,
-    last_verified: '2026-01-15T00:00:00Z', // 16天前
-    updated_at: '2026-01-25T00:00:00Z',    // 6天前
-    notes: '对抗输入已覆盖',
-    priority: 'P0',
-    status: 'active',
-  };
-
-  it('全齐的模块返回 ok', () => {
-    const result = computeLedgerStatus(baseFeature, { f1: 2 }, { f1: 1 }, NOW);
-    expect(result.fr).toBe('ok');
-    expect(result.nfr).toBe('ok');
-    expect(result.invariant).toBe('ok');
-    expect(result.checkpoints_status).toBe('ok');
-    expect(result.freshness_status).toBe('ok');
-    expect(result.death_alert).toBe('ok');
-    expect(result.failure_semantics).toBe('ok');
-    expect(result.effect_confirmed).toBe('ok');
-    expect(result.adversarial).toBe('ok');
-    expect(result.ledger_status).toBe('ok');
-    expect(result.axis_aligned).toBe('ok');
-  });
-
-  it('无描述 → fr: missing', () => {
-    const result = computeLedgerStatus({ ...baseFeature, description: null }, {}, {}, NOW);
-    expect(result.fr).toBe('missing');
-  });
-
-  it('无 NFR 决策且无 smoke_cmd → nfr: missing', () => {
-    const result = computeLedgerStatus({ ...baseFeature, smoke_cmd: null }, {}, {}, NOW);
-    expect(result.nfr).toBe('missing');
-  });
-
-  it('无 NFR 决策但有 smoke_cmd → nfr: partial', () => {
-    const result = computeLedgerStatus(baseFeature, {}, {}, NOW);
-    expect(result.nfr).toBe('partial');
-  });
-
-  it('保质期 > 90 天 → freshness_status: stale', () => {
-    const old = { ...baseFeature, last_verified: '2025-10-01T00:00:00Z' }; // >90天
-    const result = computeLedgerStatus(old, {}, {}, NOW);
-    expect(result.freshness_status).toBe('stale');
-  });
-
-  it('smoke_status=failing → death_alert: alert', () => {
-    const result = computeLedgerStatus({ ...baseFeature, smoke_status: 'failing' }, {}, {}, NOW);
-    expect(result.death_alert).toBe('alert');
   });
 });
