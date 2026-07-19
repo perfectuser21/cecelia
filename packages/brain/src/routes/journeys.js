@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { buildCascadeReport } from '../cascade-list.js';
+import { computeLedgerStatus } from '../lib/eleven-elements-ledger.js';
 
 const router = Router();
 
@@ -671,6 +672,82 @@ router.post('/cascade-list', async (req, res) => {
     });
   } catch (err) {
     console.error('[journeys] POST /cascade-list error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/brain/journey_steps/:step_id/ledger
+// 对该步骤关联的 journey_features 跑 11 要素体检，只读计算视图，不存储
+router.get('/journey_steps/:step_id/ledger', async (req, res) => {
+  try {
+    const stepId = req.params.step_id;
+
+    const { rows: stepRows } = await pool.query(
+      'SELECT id, name FROM journey_steps WHERE id=$1', [stepId]
+    );
+    if (!stepRows.length) {
+      return res.status(404).json({ error: 'journey_step not found' });
+    }
+
+    const { rows: linked } = await pool.query(
+      `SELECT jf.*, jsl.cell_kind, jsl.cell_status, jsl.assertion_ref
+         FROM journey_step_links jsl
+         JOIN journey_features jf ON jf.id = jsl.feature_id
+        WHERE jsl.step_id = $1 AND jsl.feature_id IS NOT NULL
+        ORDER BY jsl.step_order NULLS LAST, jsl.id`,
+      [stepId]
+    );
+
+    if (!linked.length) {
+      return res.json({
+        step_id: stepId,
+        step_name: stepRows[0].name,
+        features: [],
+        total: 0,
+        generated_at: new Date().toISOString(),
+      });
+    }
+
+    const featureIds = linked.map(r => r.id);
+
+    const { rows: nfrDecisions } = await pool.query(
+      `SELECT target_id, COUNT(*) AS cnt
+         FROM decisions
+        WHERE category = 'nfr' AND target_id = ANY($1::uuid[])
+        GROUP BY target_id`,
+      [featureIds]
+    );
+    const nfrMap = Object.fromEntries(nfrDecisions.map(d => [d.target_id, parseInt(d.cnt)]));
+
+    const { rows: invDecisions } = await pool.query(
+      `SELECT target_id, COUNT(*) AS cnt
+         FROM decisions
+        WHERE (category = 'invariant' OR topic ILIKE '%铁律%' OR topic ILIKE '%invariant%')
+          AND target_id = ANY($1::uuid[])
+        GROUP BY target_id`,
+      [featureIds]
+    );
+    const invMap = Object.fromEntries(invDecisions.map(d => [d.target_id, parseInt(d.cnt)]));
+
+    const now = Date.now();
+    const features = linked.map(r => ({
+      feature_id: r.id,
+      feature_name: r.name,
+      cell_kind: r.cell_kind,
+      cell_status: r.cell_status,
+      assertion_ref: r.assertion_ref,
+      ledger: computeLedgerStatus(r, nfrMap, invMap, now),
+    }));
+
+    res.json({
+      step_id: stepId,
+      step_name: stepRows[0].name,
+      features,
+      total: features.length,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[journeys] GET /journey_steps/:step_id/ledger error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
