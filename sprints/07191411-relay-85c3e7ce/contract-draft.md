@@ -62,6 +62,19 @@ bash sprints/07191411-relay-85c3e7ce/e2e-verify.sh
 
 ---
 
+## Test Contract 表
+
+| [BEHAVIOR] | 测试函数/段落名 | 覆盖断言 |
+|-----------|----------------|----------|
+| [BEHAVIOR-01] Task 状态与三元组 | FR-01: Task 状态与 headless 三元组 | status=in_progress, mode=headless, executor=claude, orchestrator=skill-relay, dispatched_by_orchestrator=true, orchestrator_dispatched_at 非空 |
+| [BEHAVIOR-02] Claim Oracle | FR-02: Claim Oracle | claimed_by 非空, claimed_at 非空, executor_kind 非空 |
+| [BEHAVIOR-03] initiative_runs Concern | FR-03: initiative_runs 检查 | 404/空集记录 concern，不阻断 |
+| [BEHAVIOR-04] 证据文件写入 | FR-04: 证据写入 | evidence.json 含 task_id/status/payload/claimed_at |
+| [BEHAVIOR-05] e2e-verify.sh 真实执行 | BEHAVIOR-05: e2e-verify.sh 存在性 | 脚本存在、可执行、无裸 exit 0 兜底 |
+| [BEHAVIOR-06] headless 路径独立性 | BEHAVIOR-06: headless 路径独立性 | 无 headed session 历史依赖，含正确 task_id curl 调用 |
+
+---
+
 ## 覆盖链路图
 
 ```
