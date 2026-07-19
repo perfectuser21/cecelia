@@ -13,6 +13,7 @@ import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { emit as emitEvent } from '../event-bus.js';
 import { pushCaptureAtom } from '../capture-inbox.js';
 import { checkAnchor } from '../anchor-check.js';
+import { blockTask } from '../task-updater.js';
 
 const router = Router();
 
@@ -454,6 +455,12 @@ router.patch('/tasks/:task_id', async (req, res) => {
     if (status === 'completed' && !isStatusNoop && !isSkillRelayHarness) {
       // Rule 1: review_required=true → review_status 必须是明确通过态（非 pending/null）
       if (task.review_required_raw === 'true' && (!task.review_status || task.review_status === 'pending')) {
+        // liveness probe 误杀回归（07-19 实锤）：若不把任务转出 in_progress，
+        // 容器进程退出后 probeTaskLiveness()（只扫 status='in_progress'）会把
+        // "合法等待审核"误判成"进程死了"，触发 requeueTask 完整重新派发——
+        // 产出多个重复 PR。转 blocked 后 liveness probe 不会再碰到它；
+        // review 通过后由外部流程重新 PATCH completed，届时此闸放行。
+        await blockTask(task_id, { reason: 'review_not_approved', detail: 'review_status 仍是 pending，等待人工审核通过' });
         return res.status(422).json({
           success: false,
           error: 'review_required=true 但 review_status 仍是 pending — 需先通过审核',
@@ -464,6 +471,10 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
       // Rule 2: pr_url 非空 → pr_merged_at 必须非空（PR 已合并）
       if (task.pr_url && !task.pr_merged_at) {
+        // 同上：转 blocked 避免 liveness probe 误杀重跑（dc69c8df 任务实测复现，
+        // 4106→4108→4112 三个重复 PR）。PR 真正合并后 engine-pr-watchdog 的
+        // 终态 PATCH 会重新尝试，此时 pr_merged_at 有值，本闸放行。
+        await blockTask(task_id, { reason: 'pr_not_merged', detail: `pr_url=${task.pr_url} 已设置但尚未合并` });
         return res.status(422).json({
           success: false,
           error: 'pr_url 已设置但 pr_merged_at 为空 — PR 需先合并',
