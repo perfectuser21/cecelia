@@ -30,11 +30,11 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07191314-relay-d355821f}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-d355821f.sh}"; TASK_ID="${TASK_ID:-d355821f-4a37-4fa2-ad2f-99668bc91a3d}"; DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; [ -f "$VERIFY" ] || { echo "FAIL: missing $VERIFY"; exit 1; }; TASK_ID="$TASK_ID" DATABASE_URL="$DATABASE_URL" SPRINT_DIR="$SPRINT_DIR" bash "$VERIFY" --assert db-claim-oracle'
   期望: exit 0；DB row 缺失、未认领、executor_kind 非 headed-session 均 FAIL。
 
-- [x] [BEHAVIOR] [L2] e2e-verify.sh 对 initiative_runs 缺失输出 concern 且不当作成功证据
+- [x] [BEHAVIOR] [L2] e2e-verify.sh 对 foreground run 绑定 claim oracle，拒绝 headless/container run
   动作: 执行 `--assert runs-concern-or-verified`，真实读取 `/api/brain/harness/runs?limit=50`、journey golden-paths 与 DB `initiative_runs`。
-  预期观察: run 存在时 host/phase 非 failed 且属于 codex headed；run 缺失时必须先通过当前 task API + DB claim oracle，再输出 `CONCERN`。
+  预期观察: 当前 task run 存在时 `orchestrator_host=foreground`、phase 非 failed/unknown，且当前 task API + DB claim oracle 已证明 `mode=headed`、`executor=codex`、`executor_kind=headed-session`；run 缺失时必须先通过 claim oracle，再输出 `CONCERN`。
   验证命令: Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07191314-relay-d355821f}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-d355821f.sh}"; TASK_ID="${TASK_ID:-d355821f-4a37-4fa2-ad2f-99668bc91a3d}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; [ -f "$VERIFY" ] || { echo "FAIL: missing $VERIFY"; exit 1; }; OUT=$(TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DATABASE_URL" SPRINT_DIR="$SPRINT_DIR" bash "$VERIFY" --assert runs-concern-or-verified); printf "%s\n" "$OUT"; if printf "%s\n" "$OUT" | grep -q "CONCERN"; then printf "%s\n" "$OUT" | grep -q "foreground takeover oracle validated" || { echo "FAIL: concern without foreground oracle"; exit 1; }; fi'
-  期望: exit 0；initiative_runs 缺失只能是 concern/foreground takeover 分支，不能被写成 run 成功。
+  期望: exit 0；foreground run 只有绑定当前 claim oracle 才有效；headless/container run、failed/unknown phase、历史 task run 均 FAIL；initiative_runs 缺失只能是 concern，不能被写成 run 成功。
 
 - [x] [BEHAVIOR] [L2] e2e-verify.sh 拒绝历史 task 作为当前证据
   动作: 执行 `--assert current-task-only`，验证默认 `TASK_ID` 与 `SPRINT_DIR` 均重绑定当前 sprint。
@@ -50,7 +50,7 @@ target_environment: local_api
 
 - [x] [BEHAVIOR] [L2] e2e-verify.sh local_api 全链路基于当前 task API 和 DB claim oracle
   动作: 不带 `--assert` 执行永久 wrapper，跑完整 local_api Golden Path。
-  预期观察: 当前 task API、DB claim oracle、run concern/verified 分支、证据边界全部通过；缺 run 时输出 concern 但不将 run 缺失写成成功。
+  预期观察: 当前 task API、DB claim oracle、foreground run verified/缺失 concern 分支、证据边界全部通过；缺 run 时输出 concern 但不将 run 缺失写成成功。
   验证命令: Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07191314-relay-d355821f}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-d355821f.sh}"; TASK_ID="${TASK_ID:-d355821f-4a37-4fa2-ad2f-99668bc91a3d}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; [ -f "$VERIFY" ] || { echo "FAIL: missing $VERIFY"; exit 1; }; TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DATABASE_URL" SPRINT_DIR="$SPRINT_DIR" bash "$VERIFY"'
   期望: exit 0；任一真实 API/DB 断言失败则整体 FAIL。
 
@@ -70,7 +70,7 @@ target_environment: local_api
 
 - [x] [BEHAVIOR] [L2] INV-3 真验才done：done/pass 只能来自当前 task API + DB claim oracle
   动作: 执行 full wrapper。
-  预期观察: wrapper 必须真实 curl Brain API 并真实 psql 当前 DB；`initiative_runs` 缺失时只输出 concern。
+  预期观察: wrapper 必须真实 curl Brain API 并真实 psql 当前 DB；当前 run 存在时只接受 `orchestrator_host=foreground` + claim oracle，`initiative_runs` 缺失时只输出 concern。
   验证命令: Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07191314-relay-d355821f}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-d355821f.sh}"; [ -f "$VERIFY" ] || { echo "FAIL: missing $VERIFY"; exit 1; }; grep -q "curl -sf.*api/brain/tasks" "$VERIFY" || { echo "FAIL: missing task API curl"; exit 1; }; grep -q "psql.*tasks" "$VERIFY" || { echo "FAIL: missing DB tasks oracle"; exit 1; }; bash "$VERIFY"'
   期望: exit 0。
 
@@ -93,6 +93,6 @@ target_environment: local_api
 
 - FR-001: 覆盖于 BEHAVIOR `e2e-verify.sh 校验当前 task API payload shape`。
 - FR-002: 覆盖于 BEHAVIOR `e2e-verify.sh 校验当前 task DB claim oracle`。
-- FR-003: 覆盖于 BEHAVIOR `e2e-verify.sh 对 initiative_runs 缺失输出 concern 且不当作成功证据`。
+- FR-003: 覆盖于 BEHAVIOR `e2e-verify.sh 对 foreground run 绑定 claim oracle，拒绝 headless/container run`。
 - FR-004: 覆盖于 BEHAVIOR `e2e-verify.sh 拒绝历史 task 作为当前证据`。
 - FR-005: 覆盖于 BEHAVIOR `e2e-verify.sh 日志证据限于当前 sprint 且脱敏` 与 INV-4/INV-5。

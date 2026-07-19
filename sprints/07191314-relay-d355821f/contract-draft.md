@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: PRD字面 + api_registry推导 + 当前 Brain API 实测）
 
@@ -75,13 +75,13 @@
   },
   "initiative_runs": {
     "initiative_id": "d355821f-4a37-4fa2-ad2f-99668bc91a3d",
-    "orchestrator_host": "skill-relay-codex-headed",
+    "orchestrator_host": "foreground",
     "phase": "<non-failed phase>"
   }
 }
 ```
 
-`initiative_runs` 对当前 task 不得作为缺失即成功的捷径：run 缺失只能输出 concern，并且必须先通过当前 task API + DB `tasks` claim oracle 才能走 foreground takeover 分支。
+`initiative_runs` 对当前 task 不得作为缺失即成功的捷径：run 缺失只能输出 concern。当前 run 若存在 `orchestrator_host=foreground`，也必须先通过当前 task API + DB `tasks` claim oracle，证明 `mode=headed`、`executor=codex`、`executor_kind=headed-session` 后，才可作为 headed foreground takeover 的有效 run 证据。
 
 ## 已知约束（来自回归测试 / registry / 当前实测）
 
@@ -93,26 +93,26 @@
 - [context-manifest] `GET /api/brain/line/bb8cc561-b3ee-4fec-b74d-2255694bd963/context-manifest` 当前 HTTP 404，累积 FR 以 PRD `## 累积 FR` 为准。
 - [PRD事实] PRD/PrepPRD 记录当前 task `d355821f-4a37-4fa2-ad2f-99668bc91a3d` 的目标 claim oracle 为 `status=in_progress`、`claimed_by=session:engine-patch`、`claimed_at=2026-07-19T05:16:22.702Z`、`executor_kind=headed-session`。
 - [起草期二次实测] Brain API/DB 随后显示当前 task 已漂到 `status=queued`、`claimed_by/claimed_at=null`，payload 出现 `orphan_requeue_count=1`；合同将该状态视为 claim oracle 未满足，不能作为 headed relay 成功。
-- [当前实测] 当前 task 无 `initiative_runs` 行，`/api/brain/harness/runs?limit=50` 与 journey golden-paths 未提供可归因到当前 task 的 run 证据；这是 concern，不是成功证据。
+- [当前实测] 当前 task 已由官方 endpoint 建立 `initiative_runs` 行：`initiative_id=d355821f-4a37-4fa2-ad2f-99668bc91a3d`、`orchestrator_host=foreground`、`phase=evaluate`；这只能与当前 task API + DB claim oracle 合并作为 headed foreground takeover 证据，不能把 headless/container run 或历史 task run 当作本 sprint 成功证据。
 
 ## 八要素需求规范
 
 | 要素 | 说明 | 本次答案（必填，可 N/A） |
 |------|------|--------------------------|
-| **FR（做什么）** | 功能需求：系统对外承诺做什么 | 覆盖 PRD FR-001..FR-005：当前 task payload/status、foreground takeover/claim oracle、缺 run concern、当前 sprint 证据边界、日志脱敏。 |
+| **FR（做什么）** | 功能需求：系统对外承诺做什么 | 覆盖 PRD FR-001..FR-005：当前 task payload/status、foreground takeover/claim oracle、foreground run 证据门槛、当前 sprint 证据边界、日志脱敏。 |
 | **NFR（做得多好）** | 非功能需求：性能/可靠性/并发阈值等 | local_api 只读验收；不重复 spawn；不抢占或误杀已有 headed session；Brain API/DB 读失败即 FAIL；证据输出脱敏。 |
 | **Invariant（永不违反）** | 任何情况下不得打破的不变量 | 覆盖 PRD 7 条 Invariant：单 slot 串行、禁写死环境、真验才 done、凭据安全、日志脱敏、端点鉴权 N/A、租户隔离 N/A。 |
 | **判定点（怎么知道）** | 对模糊现实的判断假设 | 见下方登记表。 |
 | **保质期（何时过期）** | 该能力/数据/token 何时失效，谁负责退役 | 本合同锚定一次性 task id；当 Brain task API、`tasks` claim 字段、`initiative_runs` schema 或 foreground takeover 语义变更时过期。 |
 | **死亡告警（停了谁知道）** | 功能停止工作后谁知道 | Evaluator/Controller 执行 `e2e-verify.sh` 或 DoD `manual:bash` 非 0 即知道；本 sprint 不新增常驻告警。 |
-| **失败语义（挂了怎么办）** | 故障时放行还是拦截？重试幂等？降级策略？ | Brain API/DB 不可读、payload/claim 不符、task failed、run failed 均拦截；run 缺失只在 API+DB claim oracle 通过后输出 concern。 |
-| **效果确认（已发≠已生效）** | 每个对外动作如何确认真实生效？回执方式/时限/拿不到算什么 | 本 sprint 无对外发布；以当前 task API + DB `tasks` claim 定点读作为生效 oracle；run/golden-path 缺失登记 concern。 |
+| **失败语义（挂了怎么办）** | 故障时放行还是拦截？重试幂等？降级策略？ | Brain API/DB 不可读、payload/claim 不符、task failed、run failed/unknown、host 非 foreground 均拦截；run 缺失只在 API+DB claim oracle 通过后输出 concern。 |
+| **效果确认（已发≠已生效）** | 每个对外动作如何确认真实生效？回执方式/时限/拿不到算什么 | 本 sprint 无对外发布；以当前 task API + DB `tasks` claim 定点读 + 当前 task `orchestrator_host=foreground` run 作为生效 oracle；run 缺失登记 concern。 |
 
 ### 判定点登记表（对模糊现实的判断假设）
 
 | 判定点 | 候选方法 | 所选方法 | 依据 | 误判后果 |
 |--------|----------|----------|------|----------|
-| 当前 task 是否可判定为 codex headed relay foreground takeover | A. 强制要求 `initiative_runs` 当前行存在；B. run 缺失时要求 Brain task API + DB `tasks` claim oracle 同时成立并输出 concern | B. foreground takeover oracle | PRD 明确禁止把 `initiative_runs` 缺失当成功，也禁止把缺失当唯一失败；成功必须基于当前 task API + DB claim oracle | 未认领 task 可能假通过，或真实 foreground takeover 被误判失败 |
+| 当前 task 是否可判定为 codex headed relay foreground takeover | A. 任意当前 `initiative_runs` 行都算成功；B. 仅接受当前 task 的 `orchestrator_host=foreground` run，且必须先由 Brain task API + DB `tasks` claim oracle 证明 headed/codex/headed-session；C. run 缺失时输出 concern | B/C. foreground takeover oracle | 官方 endpoint 已建当前 foreground run，但 headless/container run 不能作为本 sprint 成功证据；PRD 仍禁止把 run 缺失当成功 | 未认领 task 或 headless/container run 可能假通过，或真实 foreground takeover 被误判失败 |
 | 当前证据是否属于本 task 而非历史同名 task | A. 查询最近 done run；B. 所有 API/DB/文件路径均定点绑定 `d355821f-4a37-4fa2-ad2f-99668bc91a3d` 与当前 sprint 目录 | B. 当前 task 定点绑定 | PRD 明确历史同名只能借结构，不能复用证据/task id | 历史成功被误当当前成功，直接污染验收结论 |
 
 ### 失败语义声明
@@ -122,8 +122,8 @@
 | Brain task API 不可达或非 200 | exit 1，输出 `FAIL: brain task api` | 是，只读重跑 | 无降级 |
 | task payload/status/claim 与 PRD 不符 | exit 1，列出不匹配字段 | 是，只读重跑 | 无降级 |
 | DB `tasks` 当前行缺失或未认领 | exit 1 | 是，只读重跑 | 无降级 |
-| `initiative_runs` 当前行存在但 failed/unknown/host 非 codex headed | exit 1 | 是，只读重跑 | 无降级 |
-| `initiative_runs` 当前行缺失 | 输出 `CONCERN`；必须先通过当前 task API + DB claim oracle | 是，只读重跑 | foreground takeover branch，不标 run 成功 |
+| `initiative_runs` 当前行存在但 failed/unknown/host 非 foreground，或仅提供 headless/container run 证据 | exit 1 | 是，只读重跑 | 无降级 |
+| `initiative_runs` 当前行缺失 | 输出 `CONCERN`；必须先通过当前 task API + DB claim oracle | 是，只读重跑 | foreground takeover concern，不标 run 成功 |
 | 证据文件含 secret 或历史 task 证据冒充当前证据 | exit 1 | 是，只读重跑 | 无降级 |
 
 ### 输入对抗面（对外暴露 agent 必填）
@@ -155,25 +155,25 @@
 
 - Brain task API ↔ `tasks` 表：当前 task 的 API 响应与 DB `tasks.id` 必须同一个 task id，且 payload/claim 字段一致。
 - Foreground takeover ↔ claim oracle：`status/claimed_by/claimed_at/executor_kind` 必须从当前 task API + DB 真读，不能由脚本变量或 fixture 伪造。
-- Harness runs API ↔ `initiative_runs` 表：若当前 task run 存在，必须真读 DB host/phase；若不存在，只能登记 concern。
+- Harness runs API ↔ `initiative_runs` 表：若当前 task run 存在，必须真读 DB host/phase；只有当前 task `orchestrator_host=foreground` 且 claim oracle 已证明 headed/codex/headed-session 才可作为有效 run 证据；若不存在，只能登记 concern。
 - Sprint evidence ↔ 文件系统日志：证据路径只能在 `sprints/07191314-relay-d355821f/`，日志需脱敏。
 
 ## 禁 mock 边清单
 
 - Brain task API ↔ `tasks` 表：测试必须真实 `curl "$BRAIN_URL/api/brain/tasks/$TASK_ID"` 并真实 `psql` 定点读取同一 `tasks.id`，禁止 mock API 响应或 fixture JSON。
 - Foreground takeover/claim ↔ `tasks.claimed_by/claimed_at/executor_kind`：必须真读当前 DB 行，禁止手工设置 claim 变量冒充。
-- Harness runs ↔ `initiative_runs` 表：当前 task run 存在时必须真读 DB `initiative_runs` host/phase；缺失时必须输出 concern，禁止插入假 run、mock run 或把历史 run 当当前证据。
+- Harness runs ↔ `initiative_runs` 表：当前 task run 存在时必须真读 DB `initiative_runs` host/phase；缺失时必须输出 concern；禁止插入假 run、mock run、把历史 run 当当前证据，或把 headless/container run 当本 sprint 成功证据。
 - `e2e-verify.sh` ↔ shell exit code：DoD 必须真执行脚本并传播非 0 exit，禁止 `MOCK_*`、`force_*`、stub、`|| true` 或无条件 `exit 0`。
 
 ## 未覆盖真实链路清单
 
-- 当前 task `d355821f-4a37-4fa2-ad2f-99668bc91a3d` 的 `initiative_runs` 当前行未覆盖：本机 DB 查询无行，`/api/brain/harness/runs?limit=50` 和 journey golden-paths 未提供可归因到当前 task 的 run 证据；验收必须将其作为 concern/foreground takeover 分支，不能作为 headed relay 成功证据。
+- 本 sprint 未覆盖 Brain 无头 spawn 出来的 skill-relay container run；当前可用证据是人工前台/foreground relay-run + 当前 task API + DB `tasks` claim oracle。任何 headless/container run、历史 task run 或未通过 headed/codex/headed-session claim oracle 的 foreground run，都不能作为本 sprint 成功证据。
 
 ## Golden Path
 
 独立小路（无父路）
 
-Brain 当前 task `d355821f-4a37-4fa2-ad2f-99668bc91a3d` → generator 使用永久 wrapper `scripts/smoke/e2e/relay-d355821f.sh` → 脚本定点读取 Brain task API → 脚本定点读取 DB `tasks` claim oracle → 脚本读取 harness runs/DB `initiative_runs` 并在缺失时输出 concern → 脚本扫描当前 sprint 证据边界与脱敏 → exit code 成为 codex headed skill-relay smoke oracle。
+Brain 当前 task `d355821f-4a37-4fa2-ad2f-99668bc91a3d` → generator 使用永久 wrapper `scripts/smoke/e2e/relay-d355821f.sh` → 脚本定点读取 Brain task API → 脚本定点读取 DB `tasks` claim oracle → 脚本读取 harness runs/DB `initiative_runs`，接受当前 task foreground run + claim oracle，或在 run 缺失时输出 concern → 脚本扫描当前 sprint 证据边界与脱敏 → exit code 成为 codex headed skill-relay smoke oracle。
 
 ### Step 1: 当前 task payload shape 被 Brain API 真实返回
 
@@ -217,11 +217,11 @@ IFS='|' read -r STATUS TASK_TYPE MODE EXECUTOR ORCH JOURNEY_ID CLAIMED_BY CLAIME
 
 **硬阈值**: 当前 DB 行存在；`status=in_progress`；payload 三元组与 journey_id 匹配；claim/executor_kind 匹配。
 
-### Step 3: `initiative_runs` 存在则真验 host/phase，缺失只作为 concern
+### Step 3: `initiative_runs` foreground run 必须绑定 claim oracle，缺失只作为 concern
 
-**来源**: `[FROM_PRD]` — PRD FR-003 与用户约束要求 `/api/brain/harness/runs` 或 DB 未提供当前 task run 时不得判定 headed relay 已成功完成。
+**来源**: `[FROM_PRD]` — PRD FR-003 与 Round 2 用户约束要求当前 foreground run 只能在 task API + DB claim oracle 已证明 headed/codex/headed-session 后，作为 headed foreground takeover 证据；headless/container run 与历史 task run 不得作为本 sprint 成功证据。
 
-**可观测行为**: 若当前 task run 存在，host/phase 必须为 codex headed 且非 failed；若不存在，脚本必须先完成 Step 1/2，再输出 `CONCERN` 并走 foreground takeover 分支。
+**可观测行为**: 若当前 task run 存在，`orchestrator_host` 必须为 `foreground`，phase 必须属于已知非 failed 集合，且 Step 1/2 已证明 `mode=headed`、`executor=codex`、`executor_kind=headed-session`；若不存在，脚本必须先完成 Step 1/2，再输出 `CONCERN`。
 
 **验证命令**:
 ```bash
@@ -238,14 +238,14 @@ if [ -z "$RUN_ROW" ]; then
   echo "CONCERN: initiative_runs missing for current task; runs_api_count=$RUN_API_COUNT golden_path_refs=$GP_CURRENT_REFS; foreground takeover oracle required"
 else
   IFS='|' read -r RUN_HOST RUN_PHASE RUN_STARTED_AT RUN_FAILURE_REASON <<< "$RUN_ROW"
-  case "$RUN_HOST" in *skill-relay*codex*headed*|*codex*headed*) ;; *) echo "FAIL: run host=$RUN_HOST"; exit 1 ;; esac
+  [ "$RUN_HOST" = "foreground" ] || { echo "FAIL: run host=$RUN_HOST"; exit 1; }
   [ "$RUN_PHASE" != "failed" ] || { echo "FAIL: run failed reason=$RUN_FAILURE_REASON"; exit 1; }
   case "$RUN_PHASE" in A_planning|planning|gan|generate|evaluate|done|completed|running|in_progress) ;; *) echo "FAIL: run phase=$RUN_PHASE"; exit 1 ;; esac
   [ -n "$RUN_STARTED_AT" ] || { echo "FAIL: run started_at missing"; exit 1; }
 fi
 ```
 
-**硬阈值**: run 存在时 host/phase 合法且非 failed；run 缺失时只输出 concern，并不得跳过 Step 1/2 当前 task API + DB claim oracle。
+**硬阈值**: run 存在时必须为当前 task `orchestrator_host=foreground`、phase 合法且非 failed，并不得跳过 Step 1/2 当前 task API + DB claim oracle；run 缺失时只输出 concern。
 
 ### Step 4: 当前 sprint 证据边界与脱敏规则生效
 
@@ -345,17 +345,14 @@ assert_runs_concern_or_verified() {
     return 0
   fi
   IFS='|' read -r RUN_HOST RUN_PHASE RUN_STARTED_AT RUN_FAILURE_REASON <<< "$RUN_ROW"
-  case "$RUN_HOST" in
-    *skill-relay*codex*headed*|*codex*headed*) ;;
-    *) fail "run host=$RUN_HOST" ;;
-  esac
+  [ "$RUN_HOST" = "foreground" ] || fail "run host=$RUN_HOST"
   [ "$RUN_PHASE" != "failed" ] || fail "run failed reason=$RUN_FAILURE_REASON"
   case "$RUN_PHASE" in
     A_planning|planning|gan|generate|evaluate|done|completed|running|in_progress) ;;
     *) fail "run phase=$RUN_PHASE" ;;
   esac
   [ -n "$RUN_STARTED_AT" ] || fail "run started_at missing"
-  echo "OK: initiative_runs current run verified"
+  echo "OK: initiative_runs foreground run verified with claim oracle"
 }
 
 assert_evidence_boundary_and_redaction() {
@@ -401,7 +398,7 @@ echo "PASS: codex headed skill-relay smoke validated for current task"
 |---|---|---|---|
 | task API payload | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 校验当前 task API payload shape | `e2e-verify.sh` 尚未实现时 FAIL |
 | DB claim oracle | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 校验当前 task DB claim oracle | `e2e-verify.sh` 尚未实现时 FAIL |
-| run concern 分支 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 对 initiative_runs 缺失输出 concern 且不当作成功证据 | `e2e-verify.sh` 尚未实现时 FAIL；run 缺失不能单独 PASS |
+| foreground run 分支 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 对 foreground run 绑定 claim oracle，拒绝 headless/container run | `e2e-verify.sh` 尚未支持 foreground host 或接受 headless/container run 时 FAIL；run 缺失不能单独 PASS |
 | 当前 task 重绑定 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 拒绝历史 task 作为当前证据 | `e2e-verify.sh` 尚未实现或接受历史 task 时 FAIL |
 | 证据边界与脱敏 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 日志证据限于当前 sprint 且脱敏 | `e2e-verify.sh` 尚未实现或日志含 secret-like 内容时 FAIL |
 | local_api 全链路 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh local_api 全链路基于当前 task API 和 DB claim oracle | `e2e-verify.sh` 尚未实现或未真 curl/psql 时 FAIL |
