@@ -19,16 +19,12 @@
 
 ## Test Contract
 
-| # | Behavior | Test 名称 |
-|---|----------|-----------|
-| B-1 | task status 在 harness 接管后为 `in_progress` 或 `completed` | `test_task_claimed` |
-| B-2 | task payload 包含 headless dispatch 三元组（`mode=headless`, `orchestrator=skill-relay`, `dispatched_by_orchestrator=true`） | `test_headless_payload` |
-| B-3 | `status_history` 存在 `queued → in_progress` 转换记录 | `test_status_transition` |
-| B-4 | `claimed_by` 非空、`claimed_at` 有时间戳（证明 harness 已认领） | `test_claim_fields` |
-| B-5 | Sprint 目录产物齐全（`sprint-prd.md` + `contract-draft.md` + `contract-dod.md`） | `test_sprint_artifacts` |
-| B-6 | harness run 记录存在于 Brain DB（`/api/brain/harness/runs` 中有 `initiative_id=dedbca0c` 的条目） | `test_harness_run_recorded` |
-| B-7 | `started_at` 不为 null（证明任务已被启动） | `test_started_at` |
-| B-8 | （完成态）task `status=completed`，`pr_url` 非空，`quality_gate` 非 `pending` | `test_completion` |
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| headless dispatch 验证 | `../../tests/regression/relay-dedbca0c/contract-red.test.sh` | B-1/B-2: task 状态与 payload 三元组验证（dispatched_by_orchestrator=true） | task 未被 dispatch 或 payload 字段缺失时 FAIL |
+| claim oracle 验证 | `../../tests/regression/relay-dedbca0c/contract-red.test.sh` | B-3/B-4: status_history 转换记录与 claimed_by/claimed_at 字段验证 | claim 流程未正确写入 DB 时 FAIL |
+| sprint 产物完整性 | `../../tests/regression/relay-dedbca0c/contract-red.test.sh` | B-5: sprint-prd.md + contract-draft.md + contract-dod.md 三文件存在 | sprint 产物文件缺失时 FAIL |
+| harness run 记录（完成态） | `../../tests/regression/relay-dedbca0c/contract-red.test.sh` | B-6/B-7/B-8: harness run DB 记录、started_at、status=completed（optional，Green 完成后才通过） | harness run 未创建或任务未 completed 时 WARN（optional） |
 
 ## E2E 验收
 
