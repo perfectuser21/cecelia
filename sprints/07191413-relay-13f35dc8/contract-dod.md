@@ -76,6 +76,8 @@ target_environment: local_api
   Test: manual:bash -c 'OUT="$(node scripts/relay-demo/slugify.mjs "Hello, World!")"; STATUS=$?; [ "$STATUS" -eq 0 ] && test "$OUT" = "hello-world" && OUT2="$(node scripts/relay-demo/slugify.mjs "  Hello   世界---World  ")" && test "$OUT2" = "hello-world"'
   期望: OK
 
+gate-allow: weak-oracle/file-existence-only 第 80 行 Test 命令虽以 `test -f` 开头，但 `&&` 之后用 `node --input-type=module -e` 读取 `scripts/relay-demo/slugify.mjs` 的真实文件内容，用正则解析出全部 `import ... from` / `require(...)` 的 specifier，过滤出不以 `./`、`../`、`node:` 开头的"外部依赖"字符串，一旦发现即打印并 `process.exit(1)`——这是对文件内容做的 import 白名单业务校验，不是只查文件存在/大小；`test -f` 只是前置守卫（文件不存在时给出更明确的失败信号），不是本断言的唯一判据。
+
 - [ ] [ARTIFACT] `scripts/relay-demo/slugify.mjs` 不引入外部依赖
   Test: manual:bash -c 'test -f scripts/relay-demo/slugify.mjs && node --input-type=module -e "import fs from \"node:fs\"; const src = fs.readFileSync(\"scripts/relay-demo/slugify.mjs\", \"utf8\"); const specs = [...src.matchAll(/from\\s+[\u0022\u0027]([^\u0022\u0027]+)[\u0022\u0027]|require\\([\u0022\u0027]([^\u0022\u0027]+)[\u0022\u0027]\\)/g)].map(([, esm, cjs]) => esm ?? cjs); const bad = specs.filter((spec) => !spec.startsWith(\"./\") && !spec.startsWith(\"../\") && !spec.startsWith(\"node:\")); if (bad.length) { console.error(bad.join(\"\\n\")); process.exit(1); }"'
   期望: OK
