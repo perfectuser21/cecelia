@@ -8,7 +8,6 @@ const ENGINE_ROOT = resolve(__dirname, '../..');
 const STOP_SH = resolve(ENGINE_ROOT, 'hooks/stop.sh');
 const STOP_DEV_SH = resolve(ENGINE_ROOT, 'hooks/stop-dev.sh');
 const DEVLOOP_CHECK = resolve(ENGINE_ROOT, 'lib/devloop-check.sh');
-const GUARDIAN = resolve(ENGINE_ROOT, 'lib/dev-heartbeat-guardian.sh');
 const SHIP_FINALIZE = resolve(ENGINE_ROOT, 'scripts/ship-finalize.sh');
 
 describe('stop.sh routing — post goal-hook refactor', () => {
@@ -16,9 +15,13 @@ describe('stop.sh routing — post goal-hook refactor', () => {
     expect(existsSync(STOP_DEV_SH)).toBe(false);
   });
 
-  it('dev-heartbeat-guardian.sh has been deleted', () => {
-    expect(existsSync(GUARDIAN)).toBe(false);
-  });
+  // dev-heartbeat-guardian.sh 的"已删除"断言在 Stop Hook v23 PR-2（dd60f635c，
+  // 心跳模型核心切换）里被推翻：worktree-manage.sh 的 cmd_create 从那次起就在
+  // 调用这个文件做 .cecelia/lights/*.live 心跳续期（同名但语义完全不同于 v22
+  // 时代给 stop hook 判断用的旧 guardian）。此前该文件本身一直缺失，导致心跳
+  // 从未真正生效（每次建 worktree 都打印"guardian.sh 不存在，跳过心跳启动"），
+  // 07-19 zombie-cleaner 修复里补齐了这个从设计出来就未落地的功能缺口。
+  // 见 packages/brain/src/__tests__/platform-utils.test.js 里对应的功能测试。
 
   it('devloop-check.sh has been deleted', () => {
     expect(existsSync(DEVLOOP_CHECK)).toBe(false);

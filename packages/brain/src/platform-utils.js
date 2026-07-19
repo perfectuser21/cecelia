@@ -12,7 +12,7 @@
  */
 
 import { execSync } from 'child_process';
-import { readFileSync, readlinkSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, readlinkSync, existsSync, readdirSync, realpathSync } from 'fs';
 import os from 'os';
 
 // ============================================================
@@ -374,24 +374,36 @@ export function readProcessCwd(pid) {
  * macOS: one `lsof -a -d cwd -Fn` call to collect all process cwds.
  * Linux: iterate /proc/<pid>/cwd symlinks.
  *
+ * Both /proc/<pid>/cwd readlink and lsof return the real (symlink-resolved) path.
+ * We must resolve wtPath to its real path too, otherwise paths like
+ * /Users/... on macOS (which maps to /System/Volumes/Data/Users/...) fail to match.
+ *
  * Throws on unexpected failure — callers should conservatively skip deletion.
  */
 export function anyProcessHasCwdUnder(wtPath) {
-  const prefix = wtPath.endsWith('/') ? wtPath : wtPath + '/';
+  // Resolve symlinks so we compare apples-to-apples with what /proc and lsof report.
+  let resolved;
+  try {
+    resolved = realpathSync(wtPath);
+  } catch {
+    resolved = wtPath; // path may not exist; fall back to original
+  }
+  const prefix = resolved.endsWith('/') ? resolved : resolved + '/';
+
   if (IS_DARWIN) {
     const output = execSync('lsof -a -d cwd -Fn 2>/dev/null', {
       encoding: 'utf-8',
       timeout: 10000,
     });
     const cwds = output.split('\n').filter(l => l.startsWith('n')).map(l => l.slice(1));
-    return cwds.some(cwd => cwd === wtPath || cwd.startsWith(prefix));
+    return cwds.some(cwd => cwd === resolved || cwd.startsWith(prefix));
   }
-  // Linux: /proc/<pid>/cwd symlinks
+  // Linux: /proc/<pid>/cwd symlinks (readlink already returns the real path)
   const entries = readdirSync('/proc').filter(d => /^\d+$/.test(d));
   for (const entry of entries) {
     try {
       const cwd = readlinkSync(`/proc/${entry}/cwd`);
-      if (cwd === wtPath || cwd.startsWith(prefix)) return true;
+      if (cwd === resolved || cwd.startsWith(prefix)) return true;
     } catch { /* process exited between readdir and readlink */ }
   }
   return false;
