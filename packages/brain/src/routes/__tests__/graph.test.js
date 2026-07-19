@@ -144,3 +144,13 @@ describe('POST /radius max_depth 边界(falsy 陷阱回归锁)', () => {
     expect(res.body.reached_count).toBe(2); // 与 max_depth=1 相同(c,b),绝不是全图 4
   });
 });
+
+describe('GET /anchor-coverage', () => {
+  it('返回全量锚点覆盖率与断锚数', async () => {
+    const res = await request(app).get('/api/brain/graph/anchor-coverage');
+    expect(res.status).toBe(200);
+    expect(res.body.anchor_coverage).toEqual({ total_features: 2, anchored: 2, covered_by_graph: 1 });
+    expect(res.body.broken).toBe(1);
+    expect(res.body.freshness.stale).toBe(false);
+  });
+});

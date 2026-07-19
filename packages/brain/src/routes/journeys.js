@@ -190,12 +190,32 @@ router.get('/journey_features', async (req, res) => {
   }
 });
 
+// GET /api/brain/journey_features/:id — 单行精确取值(merge自动焊/apply器消费)
+router.get('/journey_features/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM journey_features WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[journeys] GET /journey_features/:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/brain/journey_features
 router.post('/journey_features', async (req, res) => {
   try {
     const { name, journey_id, thickness, status, area, unit_test_path, version, kind,
             workflow_ref, guard_ref, softness } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
+    if (status && status !== 'planned') {
+      const hasAnchor = unit_test_path || workflow_ref || guard_ref;
+      if (!hasAnchor) {
+        return res.status(400).json({
+          error: 'status 非 planned 时必须至少提供一个锚点字段(unit_test_path/workflow_ref/guard_ref)',
+        });
+      }
+    }
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
     }
@@ -249,7 +269,7 @@ router.post('/journey_features', async (req, res) => {
 // PATCH /api/brain/journey_features/:id
 router.patch('/journey_features/:id', async (req, res) => {
   try {
-    const { thickness, status, unit_test_path, version, guard_ref, softness, group } = req.body;
+    const { thickness, status, unit_test_path, version, guard_ref, softness, group, workflow_ref } = req.body;
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
     }
@@ -265,6 +285,7 @@ router.patch('/journey_features/:id', async (req, res) => {
     if (unit_test_path)                 { sets.push(`unit_test_path=$${idx++}`);  vals.push(unit_test_path); }
     if (version)                        { sets.push(`version=$${idx++}`);         vals.push(version); }
     if (guard_ref !== undefined)        { sets.push(`guard_ref=$${idx++}`);       vals.push(guard_ref ?? null); }
+    if (workflow_ref !== undefined)     { sets.push(`workflow_ref=$${idx++}`);    vals.push(workflow_ref ?? null); }
     if (softness !== undefined)         { sets.push(`softness=$${idx++}`);        vals.push(softness ?? null); }
     if (group !== undefined)            { sets.push(`"group"=$${idx++}`);         vals.push(group ?? null); }
     if (!sets.length)                   return res.status(400).json({ error: 'no fields to update' });

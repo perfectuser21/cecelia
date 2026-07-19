@@ -1,0 +1,225 @@
+{
+  "applied": [
+    {
+      "feature_id": "adc64d68",
+      "resolved_id": "adc64d68-6840-4935-b701-d0698cd89477",
+      "fields": {
+        "unit_test_path": "services/agent/publishers/douyin-publisher/__tests__/publish-douyin-article.test.cjs"
+      }
+    },
+    {
+      "feature_id": "388873b3",
+      "resolved_id": "388873b3-e73c-4603-820d-7cf823c517c1",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/tests/auth-bridge.test.ts"
+      }
+    },
+    {
+      "feature_id": "f91be81a",
+      "resolved_id": "f91be81a-c413-4910-92ba-535fe8dcf6b3",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/src/handlers/folder-watch.ts"
+      }
+    },
+    {
+      "feature_id": "6b2ab9b5",
+      "resolved_id": "6b2ab9b5-6f93-48d5-be91-f9210ea122ff",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/src/handlers/__tests__/douyin-publish.test.ts",
+        "workflow_ref": "zenithjoy/apps/dashboard/e2e/walking-skeleton-1.spec.ts"
+      }
+    },
+    {
+      "feature_id": "9b56cbae",
+      "resolved_id": "9b56cbae-62df-46f7-b1c3-08599eb858cb",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/src/handlers/__tests__/qr-bind-douyin.test.ts",
+        "workflow_ref": "zenithjoy/apps/dashboard/src/pages/__tests__/DouyinBindPage.test.tsx"
+      }
+    },
+    {
+      "feature_id": "5fea9715",
+      "resolved_id": "5fea9715-32fd-409e-a48e-a85548d567be",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/dashboard/src/pages/__tests__/AgentDownloadPage.test.tsx"
+      }
+    },
+    {
+      "feature_id": "2cc21ae5",
+      "resolved_id": "2cc21ae5-a601-4d4f-9404-c5deee58a8b3",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/dashboard/src/pages/__tests__/PublishPage.test.tsx"
+      }
+    },
+    {
+      "feature_id": "6691d09a",
+      "resolved_id": "6691d09a-3525-4610-87d2-2d8261d68111",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/wechat-rpa/tests/test_classify_unread_no_drop.py"
+      }
+    },
+    {
+      "feature_id": "7f680eb3",
+      "resolved_id": "7f680eb3-0866-4429-a600-b396e980fc59",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/src/middleware/cs-config-guard.test.ts",
+        "guard_ref": "script:zenithjoy/apps/api/src/middleware/cs-config-guard.ts"
+      }
+    },
+    {
+      "feature_id": "39130340",
+      "resolved_id": "39130340-16f0-47f1-9779-fc0b57218dd0",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/src/services/wechat/__tests__/tenant-memory.test.ts",
+        "workflow_ref": "tests/integration/p4-line04-cs-memory/tenant-memory.integration.test.ts"
+      }
+    },
+    {
+      "feature_id": "ca5fe5ec",
+      "resolved_id": "ca5fe5ec-7cab-418f-a3f6-d64287679e0c",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/dashboard/src/pages/__tests__/CustomerListPage.test.tsx",
+        "workflow_ref": "crm-customer-list.spec.ts"
+      }
+    },
+    {
+      "feature_id": "8a2d2b2f",
+      "resolved_id": "8a2d2b2f-2e11-45f8-922f-8bffd18b1b60",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/tests/routes/crm-status-history.test.ts"
+      }
+    },
+    {
+      "feature_id": "ca26491c",
+      "resolved_id": "ca26491c-9de5-4920-aefc-4c30b44ac757",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/tests/regression/line04-cs-tenant-isolation.test.ts"
+      }
+    },
+    {
+      "feature_id": "4fcb5bbd",
+      "resolved_id": "4fcb5bbd-473c-49e4-b578-9da4fb173f80",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/wechat-rpa/tests/test_cs_config_gate.py",
+        "guard_ref": "script:zenithjoy/services/agent/wechat-rpa/cs_config_gate.py"
+      }
+    },
+    {
+      "feature_id": "8d21253a",
+      "resolved_id": "8d21253a-a649-4ee6-ab10-98b60663218f",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/src/services/__tests__/daily-crm-analysis.test.ts"
+      }
+    },
+    {
+      "feature_id": "a88d4eda",
+      "resolved_id": "a88d4eda-7abb-49b2-9700-c81e45be0f08",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/src/services/crm-wechat-sync.ts"
+      }
+    },
+    {
+      "feature_id": "7b5b403c",
+      "resolved_id": "7b5b403c-01b8-418f-a064-27f6b063c096",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/src/services/wechat/__tests__/cs-work-stats.test.ts",
+        "workflow_ref": "cs-work-stats.spec.ts"
+      }
+    },
+    {
+      "feature_id": "7bf891b8",
+      "resolved_id": "7bf891b8-df1f-4525-8b5f-0f67dc2383e6",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/src/services/wechat/__tests__/cs-daily-report.test.ts"
+      }
+    },
+    {
+      "feature_id": "ee0b211c",
+      "resolved_id": "ee0b211c-46fc-4bdb-aaa4-cab6c46832e4",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/src/services/wechat/__tests__/cs-daily-report.test.ts"
+      }
+    },
+    {
+      "feature_id": "5778a80a",
+      "resolved_id": "5778a80a-3c71-4df1-afce-72c10551efe5",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/src/services/wechat/__tests__/cs-route-decision.test.ts"
+      }
+    },
+    {
+      "feature_id": "12d572b0",
+      "resolved_id": "12d572b0-f995-498f-8fb5-f650a3bcb925",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/modules/line04/__tests__/wechat-rpa-python-path.test.ts"
+      }
+    },
+    {
+      "feature_id": "00de40bd",
+      "resolved_id": "00de40bd-537c-42bb-bb51-d3947e3c1f1e",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/src/__tests__/tray-fallback-icon.test.ts"
+      }
+    },
+    {
+      "feature_id": "22c67be2",
+      "resolved_id": "22c67be2-b6ea-4bce-a654-c182245aa7c8",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/wechat-rpa/tests/test_overlay_window.py"
+      }
+    },
+    {
+      "feature_id": "1e4ee48d",
+      "resolved_id": "1e4ee48d-365d-4373-a4bc-86a20a917289",
+      "fields": {
+        "unit_test_path": "services/agent/wechat-rpa/tests/test_delivery_verification.py"
+      }
+    },
+    {
+      "feature_id": "85d08c6c",
+      "resolved_id": "85d08c6c-ef57-4a03-8df4-b1c4b318a1a1",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/wechat-rpa/qr_bind.py"
+      }
+    },
+    {
+      "feature_id": "bb5b6a1f",
+      "resolved_id": "bb5b6a1f-ceb7-471c-9f89-6e1bcaf46e9a",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/wechat-rpa/auto_reply.py"
+      }
+    },
+    {
+      "feature_id": "49d982cc",
+      "resolved_id": "49d982cc-bfa3-4029-b65a-161c56a08505",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/wechat-rpa/send_moment.py",
+        "guard_ref": "script:zenithjoy/services/agent/wechat-rpa/rate_limiter.py"
+      }
+    },
+    {
+      "feature_id": "24a98312",
+      "resolved_id": "24a98312-1941-4a0b-91c9-8bf79ef47311",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/wechat-rpa/tests/test_startup_selfcheck.py",
+        "workflow_ref": "zenithjoy/services/agent/modules/line04/__tests__/preflight.test.ts"
+      }
+    },
+    {
+      "feature_id": "2dde3bb5",
+      "resolved_id": "2dde3bb5-2cb9-4c33-b592-224b1f4ffe41",
+      "fields": {
+        "unit_test_path": "zenithjoy/services/agent/wechat-rpa/tests/test_uia_send_no_swrestore.py"
+      }
+    },
+    {
+      "feature_id": "0b70f2ff",
+      "resolved_id": "0b70f2ff-1a16-4029-a71a-e6cb5a523ea2",
+      "fields": {
+        "unit_test_path": "zenithjoy/apps/api/tests/routes/crm-status-history.test.ts"
+      }
+    }
+  ],
+  "skipped": [],
+  "failed": []
+}

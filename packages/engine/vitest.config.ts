@@ -61,7 +61,9 @@ export default defineConfig({
           globals: true,
           environment: 'node',
           // 排除并行组的文件，其余全部串行运行
-          include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
+          // skills/**/__tests__/**/*.test.mjs：skill 脚本测试（如 add-feature.test.mjs），
+          // 用 execFile 起子进程，属于有 shell 依赖的测试，放串行组
+          include: ['tests/**/*.test.ts', 'src/**/*.test.ts', 'skills/**/__tests__/**/*.test.mjs'],
           exclude: [
             '**/node_modules/**',
             '**/devgate-fake-test-detection.test.cjs',
