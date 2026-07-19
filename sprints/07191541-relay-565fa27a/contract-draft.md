@@ -292,12 +292,12 @@ BRAIN_URL=http://localhost:5221 DATABASE_URL=postgresql://cecelia:cecelia@localh
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| task API payload shape | `tests/regression/relay-565fa27a/contract-red.test.sh` | B1: e2e-verify.sh 校验当前 task API payload shape | wrapper 不存在或 payload 不符时 FAIL |
-| DB dispatch oracle | `tests/regression/relay-565fa27a/contract-red.test.sh` | B2: e2e-verify.sh 校验 status=in_progress + dispatched_by_orchestrator=true | DB 行缺失或字段不符时 FAIL |
-| initiative_runs concern 路径 | `tests/regression/relay-565fa27a/contract-red.test.sh` | B3: initiative_runs 缺 run 时只输出 concern | run 缺失被误判为成功时 FAIL |
-| 历史 task 拒绝 | `tests/regression/relay-565fa27a/contract-red.test.sh` | B4: 拒绝历史 task d355821f 作为当前证据 | TASK_ID 或 SPRINT_DIR 绑历史任务时 FAIL |
-| 证据边界与脱敏 | `tests/regression/relay-565fa27a/contract-red.test.sh` | B5: 证据只在当前 sprint，日志脱敏 | SPRINT_DIR 偏离或日志含 secret 时 FAIL |
-| L3 真目标复核 | `tests/regression/relay-565fa27a/contract-red.test.sh` | B6: wrapper 真实 curl/psql，禁止 mock/stub/exit0 | wrapper 含 mock/stub/无条件 exit0 时 FAIL |
+| task API payload shape | `../../tests/regression/relay-565fa27a/contract-red.test.sh` | B1: e2e-verify.sh 校验当前 task API payload shape | wrapper 不存在或 payload 不符时 FAIL |
+| DB dispatch oracle | `../../tests/regression/relay-565fa27a/contract-red.test.sh` | B2: e2e-verify.sh 校验 status=in_progress + dispatched_by_orchestrator=true | DB 行缺失或字段不符时 FAIL |
+| initiative_runs concern 路径 | `../../tests/regression/relay-565fa27a/contract-red.test.sh` | B3: initiative_runs 缺 run 时只输出 concern | run 缺失被误判为成功时 FAIL |
+| 历史 task 拒绝 | `../../tests/regression/relay-565fa27a/contract-red.test.sh` | B4: 拒绝历史 task d355821f 作为当前证据 | TASK_ID 或 SPRINT_DIR 绑历史任务时 FAIL |
+| 证据边界与脱敏 | `../../tests/regression/relay-565fa27a/contract-red.test.sh` | B5: 证据只在当前 sprint，日志脱敏 | SPRINT_DIR 偏离或日志含 secret 时 FAIL |
+| L3 真目标复核 | `../../tests/regression/relay-565fa27a/contract-red.test.sh` | B6: wrapper 真实 curl/psql，禁止 mock/stub/exit0 | wrapper 含 mock/stub/无条件 exit0 时 FAIL |
 
 ---
 
