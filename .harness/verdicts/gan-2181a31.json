@@ -1,0 +1,64 @@
+{
+  "phase": "gan_review",
+  "round": 2,
+  "verdict": "APPROVED",
+  "anchored_sha": "2181a31dd97612842de1fd3443daf389d256f3d9",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 10,
+    "internal_consistency": 9,
+    "risk_registered": 9,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 4,
+  "judgments_written_note": "Brain decisions 回读当前 task judgment 共 4 条；本次按合同判定点登记表 POST 2 条，回读计数包含同 task 既有重复行。",
+  "mechanical_checks": {
+    "behavior_count": 11,
+    "behavior_count_gate": "PASS",
+    "contract_draft_has_e2e_acceptance": true,
+    "contract_dod_has_manual_bash": true,
+    "contract_red_test_command": "bash tests/regression/relay-d355821f/contract-red.test.sh",
+    "contract_red_test_exit_code": 1,
+    "contract_red_test_interpretation": "PASS_AS_GENERATOR_RED: 当前 wrapper 尚未支持 orchestrator_host=foreground，runs-concern-or-verified 与 full path 按预期失败；这不是 reviewer 阻塞项。",
+    "bash_syntax": {
+      "tests/regression/relay-d355821f/contract-red.test.sh": "PASS",
+      "scripts/smoke/e2e/relay-d355821f.sh": "PASS"
+    },
+    "fullwidth_punctuation_adjacent_to_var": "PASS",
+    "harness_contract_lint": {
+      "exit_code": 1,
+      "finding": "11 条 MISSING_TEST",
+      "judgment": "NON_BLOCKING_COMPAT_WARNING: 本 Step 2 硬门是 [BEHAVIOR] >= 4、contract-draft.md 含 ## E2E 验收、contract-dod.md 含 manual:bash；当前 lint 未识别 `验证命令: Test:` 格式。"
+    }
+  },
+  "coverage": {
+    "invariants": {
+      "INV-1 单slot串行": "COVERED: DoD INV-1 要求 wrapper 只读、不 spawn/dispatch/kill。",
+      "INV-2 禁写死环境": "COVERED: DoD INV-2 检查 BRAIN_URL/DATABASE_URL/SPRINT_DIR/TASK_ID env 覆盖。",
+      "INV-3 真验才done": "COVERED: DoD INV-3 与 full wrapper 要求真实 curl Brain API + psql DB claim oracle。",
+      "INV-4 凭据安全": "COVERED: payload 禁用字段与证据扫描覆盖。",
+      "INV-5 日志脱敏": "COVERED: tui.log/harness-report.md token-like 扫描覆盖。",
+      "INV-6 端点鉴权": "COVERED_AS_NA: 本 sprint 不新增或修改 API endpoint，只读现有 local Brain API。",
+      "INV-7 租户隔离": "COVERED_AS_NA: 本 smoke 不查询/写入租户数据，DB 查询定点绑定 task id。"
+    },
+    "functional_requirements": {
+      "FR-001 当前 task payload/状态": "COVERED: task-payload-shape 断言 id/task_type/status/payload 三元组与 journey_id。",
+      "FR-002 foreground takeover/claim oracle": "COVERED: db-claim-oracle 断言 status/claimed_by/claimed_at/executor_kind。",
+      "FR-003 foreground run concern/verified": "COVERED: runs-concern-or-verified 接受当前 task foreground run 但先绑定 API + DB claim oracle，拒绝 failed/unknown、历史 task、headless/container。",
+      "FR-004 sprint 证据文件/日志边界": "COVERED: current-task-only 与 evidence-boundary-and-redaction 绑定当前 task/sprint。",
+      "FR-005 安全日志边界": "COVERED: payload 禁用 secret 字段并扫描当前 sprint 证据文件。"
+    },
+    "round_2_foreground_requirement": "COVERED: contract-draft 明确当前 task initiative_runs orchestrator_host=foreground phase=evaluate 可作为证据，但必须先通过 task API + DB tasks claim oracle 证明 mode=headed、executor=codex、executor_kind=headed-session；run failed/unknown、历史 task run、headless/container run 均 FAIL。"
+  },
+  "concerns": [
+    "红测当前失败是预期 generator red：wrapper 仍按旧逻辑拒绝纯 foreground host，需 generator 后续实现支持。",
+    "lint 对 `验证命令: Test:` 格式报 MISSING_TEST，属于当前 lint 与合同格式兼容风险，不是 Round 2 三项机械硬门阻塞项。",
+    "contract-draft 记录过 task 状态曾漂移到 queued；合同已把 claim oracle 不满足定义为 FAIL，未将漂移状态放行。"
+  ],
+  "warnings": [
+    "judgments_written 回读为 4，包含本 task 既有重复 judgment；本次实际新增 POST 为 2 条。",
+    "target_environment=local_api，ci_workflow_alignment 按 N/A 计 10；本合同未引用 GHA workflow。"
+  ]
+}
