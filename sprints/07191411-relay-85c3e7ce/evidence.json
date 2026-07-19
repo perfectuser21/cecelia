@@ -1,0 +1,17 @@
+{
+  "task_id": "85c3e7ce-7849-42b8-9ff9-542dd0db8375",
+  "status": "in_progress",
+  "payload": {
+    "mode": "headless",
+    "executor": "claude",
+    "orchestrator": "skill-relay",
+    "dispatched_by_orchestrator": true,
+    "orchestrator_dispatched_at": "2026-07-19T02:26:28.051Z",
+    "dispatched_orchestrator_date": "2026-07-19"
+  },
+  "orchestrator_dispatched_at": null,
+  "claimed_at": "2026-07-19T06:15:01.377Z",
+  "executor_kind": "headed-session",
+  "claimed_by": "session:engine-patch",
+  "evidence_captured_at": "2026-07-19T06:25:55Z"
+}

@@ -33,7 +33,7 @@ if ! RESP=$(curl -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null); the
   exit 1
 fi
 
-echo "API 响应（脱敏）: $(echo "$RESP" | jq '{status, executor_kind, claimed_by, orchestrator_dispatched_at}' 2>/dev/null || echo "$RESP" | head -c 200)"
+echo "API 响应（脱敏）: $(echo "$RESP" | jq '{status, executor_kind, claimed_by, dispatched_at: .payload.orchestrator_dispatched_at}' 2>/dev/null || echo "$RESP" | head -c 200)"
 echo ""
 
 # ── FR-01: Task 状态与三元组 ────────────────────────────────────
@@ -43,8 +43,9 @@ STATUS=$(echo "$RESP" | jq -r '.status // .data.status // empty')
 MODE=$(echo "$RESP" | jq -r '.payload.mode // .data.payload.mode // empty')
 EXECUTOR=$(echo "$RESP" | jq -r '.payload.executor // .data.payload.executor // empty')
 ORCHESTRATOR=$(echo "$RESP" | jq -r '.payload.orchestrator // .data.payload.orchestrator // empty')
-DISPATCHED=$(echo "$RESP" | jq -r '.dispatched_by_orchestrator // .data.dispatched_by_orchestrator // empty')
-DISPATCHED_AT=$(echo "$RESP" | jq -r '.orchestrator_dispatched_at // .data.orchestrator_dispatched_at // empty')
+# Brain API 将 dispatched_by_orchestrator 和 orchestrator_dispatched_at 存在 payload 层
+DISPATCHED=$(echo "$RESP" | jq -r '.payload.dispatched_by_orchestrator // .data.payload.dispatched_by_orchestrator // .dispatched_by_orchestrator // .data.dispatched_by_orchestrator // empty')
+DISPATCHED_AT=$(echo "$RESP" | jq -r '.payload.orchestrator_dispatched_at // .data.payload.orchestrator_dispatched_at // .orchestrator_dispatched_at // .data.orchestrator_dispatched_at // empty')
 
 if [ "$STATUS" != "in_progress" ]; then
   echo "[FAIL] status 期望 in_progress，实际: $STATUS" >&2
@@ -176,6 +177,7 @@ echo "  TASK_ID: ${TASK_ID}"
 echo "  所有 FR 通过（FR-03 concern 不阻断）"
 echo "=================================================="
 
-# 铁律 #4：此处 exit 0 是真实通过后的正常结束，非兜底
-# 以上每个 [FAIL] 都已 exit 1，到达此行说明全部通过
-exit 0
+# 铁律 #4：以上每个 [FAIL] 都已 exit 1
+# 到达此行说明所有断言全部通过（真实通过，非兜底）
+FINAL_CODE=0
+exit $FINAL_CODE

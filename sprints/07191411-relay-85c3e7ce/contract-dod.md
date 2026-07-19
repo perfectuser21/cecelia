@@ -158,13 +158,14 @@ BRAIN_URL=http://localhost:5221 SPRINT_DIR=sprints/07191411-relay-85c3e7ce bash 
 
 ## DoD 检查表
 
-| # | [BEHAVIOR] | 铁律覆盖 | 判定 |
-|---|-----------|----------|------|
-| 1 | BEHAVIOR-01: Task 状态与三元组 | #1 #2 | manual:bash |
-| 2 | BEHAVIOR-02: Claim Oracle | #2 | manual:bash |
-| 3 | BEHAVIOR-03: initiative_runs Concern | #3 | manual:bash |
-| 4 | BEHAVIOR-04: 证据文件写入 | #2 | manual:bash |
-| 5 | BEHAVIOR-05: e2e-verify.sh 真实执行 | #1 #4 | manual:bash |
-| 6 | BEHAVIOR-06: headless 路径独立性 | #1 #5 | manual:bash |
+| # | [BEHAVIOR] | 铁律覆盖 | 判定 | 状态 |
+|---|-----------|----------|------|------|
+| 1 | BEHAVIOR-01: Task 状态与三元组 | #1 #2 | manual:bash | [x] |
+| 2 | BEHAVIOR-02: Claim Oracle | #2 | manual:bash | [x] |
+| 3 | BEHAVIOR-03: initiative_runs Concern | #3 | manual:bash | [x] |
+| 4 | BEHAVIOR-04: 证据文件写入 | #2 | manual:bash | [x] |
+| 5 | BEHAVIOR-05: e2e-verify.sh 真实执行 | #1 #4 | manual:bash | [x] |
+| 6 | BEHAVIOR-06: headless 路径独立性 | #1 #5 | manual:bash | [x] |
 
 **铁律覆盖**: 5/5（铁律 #1 #2 #3 #4 #5 全部覆盖）
+**Green 验收**: 2026-07-19 — e2e-verify.sh exit 0，全部 [BEHAVIOR] 通过
