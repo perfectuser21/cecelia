@@ -4,8 +4,8 @@
 
 export const GUARDED_MODULES = [
   'thalamus', 'rumination', 'rumination-scheduler', 'narrative',
-  'diary-scheduler', 'conversation-digest', 'conversation-consolidator',
-  'capture-digestion', 'self-report', 'notebook-feeder',
+  'diary-scheduler', 'conversation-consolidator',
+  'self-report', 'notebook-feeder',
   'proactive-mouth', 'evolution-synthesizer',
   'desire-system', 'suggestion-cycle',
   'dept-heartbeat', 'pending-followups',
