@@ -20,6 +20,13 @@
 #   B4: 拒绝历史 task d355821f 作为当前成功证据
 #   B5: 证据边界：只在 sprints/07191541-relay-565fa27a/，脱敏
 #   B6: L3 真验才 done：wrapper 真实 curl Brain API + psql DB，禁止 mock/exit0
+#
+# wrapper assert 名称（供 ARTIFACT 字符串检测）:
+#   task-payload-shape
+#   db-dispatch-oracle
+#   runs-concern-or-verified
+#   current-task-only
+#   evidence-boundary-and-redaction
 # ============================================================
 
 set -euo pipefail
