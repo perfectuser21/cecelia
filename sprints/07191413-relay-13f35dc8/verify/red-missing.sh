@@ -7,10 +7,11 @@
 #
 # 风险登记（见 contract-draft.md ## Risks R1）：本脚本在
 # packages/brain/tmp-red-missing.XXXXXX 下创建临时目录，仅靠 trap EXIT 清理；
-# 若进程被 SIGKILL/宿主机异常中断会残留。双重防线：
-#   ① 根 .gitignore 已收录 `tmp-red-*` 模式（静态防线，残留不会被 git 追踪/误 add）；
-#   ② smoke-verify.sh 开头已 `find packages/brain -maxdepth 1 -type d -name 'tmp-red-*' -exec rm -rf {} +`
-#      做启动时清理（动态防线）。
+# 若进程被 SIGKILL/宿主机异常中断会残留。现有防线（已生效，非本轮新增）：
+# smoke-verify.sh 开头已 `find packages/brain -maxdepth 1 -type d -name 'tmp-red-*' -exec rm -rf {} +`
+# 做启动时清理，覆盖"上次异常中断残留、这次跑之前先扫掉"的场景。
+# 已知限制：根 .gitignore 尚未收录 `tmp-red-*` 模式（更彻底的静态防线），
+# 本轮不实施，仅登记为后续独立 sprint 的改进建议，不 block 本次交付（详见 Risks R1）。
 TMP_REPO="$(mktemp -d "${PWD}/packages/brain/tmp-red-missing.XXXXXX")"
 TMP_CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay-vitest-config.XXXXXX")"
 TMP_CFG="$TMP_CFG_DIR/vitest.config.mjs"

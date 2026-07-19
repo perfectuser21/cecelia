@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 单一事实源：Red 前提「错误实现状态」验证命令（见 verify/red-missing.sh 顶部说明，
-# 同一双重防线适用：根 .gitignore `tmp-red-*` + smoke-verify.sh 启动时清理）。
+# 同一防线适用：smoke-verify.sh 启动时清理；根 .gitignore 尚未收录 `tmp-red-*` 模式，
+# 本轮不实施，仅登记为后续 sprint 改进建议，详见 contract-draft.md ## Risks R1）。
 # 需从 repo root 执行。
 TMP_REPO="$(mktemp -d "${PWD}/packages/brain/tmp-red-broken.XXXXXX")"
 TMP_CFG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay-vitest-config.XXXXXX")"
