@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Response Schema（推导来源: PRD字面 + api_registry推导 + 当前 Brain API 实测）
 
@@ -168,6 +168,12 @@
 ## 未覆盖真实链路清单
 
 - 本 sprint 未覆盖 Brain 无头 spawn 出来的 skill-relay container run；当前可用证据是人工前台/foreground relay-run + 当前 task API + DB `tasks` claim oracle。任何 headless/container run、历史 task run 或未通过 headed/codex/headed-session claim oracle 的 foreground run，都不能作为本 sprint 成功证据。
+
+## L3 真目标复核
+
+- [BEHAVIOR] verification_level: L3 真目标复核：codex-headed-smoke 的 done 只能由真实 Brain API 与 PostgreSQL `tasks`/`initiative_runs` 或 foreground takeover 接缝命令给出，不接受 mock/stub/fixture、静态日志替代、吞错或无条件 exit 0。
+  verification_level: L3
+  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07191314-relay-d355821f}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-d355821f.sh}"; TASK_ID="${TASK_ID:-d355821f-4a37-4fa2-ad2f-99668bc91a3d}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; [ -f "$VERIFY" ] || { echo "FAIL: missing $VERIFY"; exit 1; }; grep -F "curl -sf" "$VERIFY" >/dev/null || { echo "FAIL: missing real curl"; exit 1; }; grep -F "psql" "$VERIFY" >/dev/null || { echo "FAIL: missing real psql"; exit 1; }; ! grep -E "MOCK_|mock|stub|\\|\\|[[:space:]]*true|exit[[:space:]]+0[[:space:]]*(#.*)?$" "$VERIFY" >/dev/null || { echo "FAIL: wrapper contains mock/stub/swallow/exit0"; exit 1; }; TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DATABASE_URL" SPRINT_DIR="$SPRINT_DIR" bash "$VERIFY"'
 
 ## Golden Path
 
@@ -402,3 +408,4 @@ echo "PASS: codex headed skill-relay smoke validated for current task"
 | 当前 task 重绑定 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 拒绝历史 task 作为当前证据 | `e2e-verify.sh` 尚未实现或接受历史 task 时 FAIL |
 | 证据边界与脱敏 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh 日志证据限于当前 sprint 且脱敏 | `e2e-verify.sh` 尚未实现或日志含 secret-like 内容时 FAIL |
 | local_api 全链路 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | e2e-verify.sh local_api 全链路基于当前 task API 和 DB claim oracle | `e2e-verify.sh` 尚未实现或未真 curl/psql 时 FAIL |
+| L3 真目标复核 | `../../tests/regression/relay-d355821f/contract-red.test.sh` | verification_level: L3 真目标复核 | `e2e-verify.sh` 尚未实现、未真实 curl/psql 或含 mock/stub/吞错时 FAIL |

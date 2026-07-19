@@ -11,7 +11,7 @@ target_environment: local_api
 ## ARTIFACT 条目
 
 - [x] [ARTIFACT] 永久回归 red test 骨架存在，且默认绑定当前 task、当前 sprint 与永久 wrapper
-  Test: node -e "const fs=require('fs');const p='tests/regression/relay-d355821f/contract-red.test.sh';const c=fs.readFileSync(p,'utf8');for(const s of ['d355821f-4a37-4fa2-ad2f-99668bc91a3d','sprints/07191314-relay-d355821f','scripts/smoke/e2e/relay-d355821f.sh','task-payload-shape','db-claim-oracle','runs-concern-or-verified','current-task-only','evidence-boundary-and-redaction']){if(!c.includes(s)){console.error('missing '+s);process.exit(1)}}"
+  Test: node -e "const fs=require('fs');const p='tests/regression/relay-d355821f/contract-red.test.sh';const c=fs.readFileSync(p,'utf8');for(const s of ['d355821f-4a37-4fa2-ad2f-99668bc91a3d','sprints/07191314-relay-d355821f','scripts/smoke/e2e/relay-d355821f.sh','task-payload-shape','db-claim-oracle','runs-concern-or-verified','current-task-only','evidence-boundary-and-redaction','verification_level: L3 真目标复核']){if(!c.includes(s)){console.error('missing '+s);process.exit(1)}}"
 
 - [x] [ARTIFACT] generator 产出的永久 wrapper `scripts/smoke/e2e/relay-d355821f.sh` 存在且 bash 语法正确
   Test: bash -n scripts/smoke/e2e/relay-d355821f.sh
@@ -53,6 +53,13 @@ target_environment: local_api
   预期观察: 当前 task API、DB claim oracle、foreground run verified/缺失 concern 分支、证据边界全部通过；缺 run 时输出 concern 但不将 run 缺失写成成功。
   验证命令: Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07191314-relay-d355821f}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-d355821f.sh}"; TASK_ID="${TASK_ID:-d355821f-4a37-4fa2-ad2f-99668bc91a3d}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; [ -f "$VERIFY" ] || { echo "FAIL: missing $VERIFY"; exit 1; }; TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DATABASE_URL" SPRINT_DIR="$SPRINT_DIR" bash "$VERIFY"'
   期望: exit 0；任一真实 API/DB 断言失败则整体 FAIL。
+
+- [x] [BEHAVIOR] [L3] verification_level: L3 真目标复核
+  verification_level: L3
+  动作: 不带 `--assert` 执行永久 wrapper，作为 smoke/验证脚本类交付物的真目标复核。
+  预期观察: wrapper 必须真实 curl 当前 Brain task API，并真实 psql 当前 `tasks`/`initiative_runs` 或 foreground takeover 证据；不接受 mock/stub/fixture、静态日志替代、吞错或无条件 exit 0。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07191314-relay-d355821f}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-d355821f.sh}"; TASK_ID="${TASK_ID:-d355821f-4a37-4fa2-ad2f-99668bc91a3d}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; [ -f "$VERIFY" ] || { echo "FAIL: missing $VERIFY"; exit 1; }; grep -F "curl -sf" "$VERIFY" >/dev/null || { echo "FAIL: missing real curl"; exit 1; }; grep -F "psql" "$VERIFY" >/dev/null || { echo "FAIL: missing real psql"; exit 1; }; ! grep -E "MOCK_|mock|stub|\\|\\|[[:space:]]*true|exit[[:space:]]+0[[:space:]]*(#.*)?$" "$VERIFY" >/dev/null || { echo "FAIL: wrapper contains mock/stub/swallow/exit0"; exit 1; }; TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DATABASE_URL" SPRINT_DIR="$SPRINT_DIR" bash "$VERIFY"'
+  期望: exit 0；该条为 judge `meta_verification_gap` 的 L3 断言，不新增真机关键词。
 
 ## Invariant 覆盖登记
 
@@ -96,3 +103,4 @@ target_environment: local_api
 - FR-003: 覆盖于 BEHAVIOR `e2e-verify.sh 对 foreground run 绑定 claim oracle，拒绝 headless/container run`。
 - FR-004: 覆盖于 BEHAVIOR `e2e-verify.sh 拒绝历史 task 作为当前证据`。
 - FR-005: 覆盖于 BEHAVIOR `e2e-verify.sh 日志证据限于当前 sprint 且脱敏` 与 INV-4/INV-5。
+- Judge meta_verification_gap: 覆盖于 BEHAVIOR `verification_level: L3 真目标复核`。

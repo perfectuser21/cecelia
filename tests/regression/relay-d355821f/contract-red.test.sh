@@ -64,6 +64,7 @@ run_test "e2e-verify.sh 对 foreground run 绑定 claim oracle，拒绝 headless
 run_test "e2e-verify.sh 拒绝历史 task 作为当前证据" "current-task-only"
 run_test "e2e-verify.sh 日志证据限于当前 sprint 且脱敏" "evidence-boundary-and-redaction"
 run_test "e2e-verify.sh local_api 全链路基于当前 task API 和 DB claim oracle"
+run_test "verification_level: L3 真目标复核"
 
 if [ "$FAILURES" -ne 0 ]; then
   echo "FAIL: $FAILURES contract red assertions failed"
