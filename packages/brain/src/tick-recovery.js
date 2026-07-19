@@ -175,6 +175,15 @@ async function initTickLoop() {
     const { ensureEventsTable } = await import('./event-bus.js');
     await ensureEventsTable();
 
+    // Restore drain state persisted before a possible restart (07-19 bug fix —
+    // draining was purely in-memory, Gate3 deploy restarts silently cleared it).
+    try {
+      const { restoreDrainState } = await import('./drain.js');
+      await restoreDrainState();
+    } catch (drainErr) {
+      console.error('[tick-loop] restoreDrainState failed (non-fatal):', drainErr.message);
+    }
+
     // Auto-enable tick from env var if set
     const envEnabled = process.env.CECELIA_TICK_ENABLED;
     if (envEnabled === 'true') {
