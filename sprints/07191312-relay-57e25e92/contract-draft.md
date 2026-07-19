@@ -331,7 +331,7 @@ echo "OK headed smoke regression verified for $TASK_ID"
 |---|---|---|---|
 | e2e-verify.sh 复用 smoke 脚本并校验 allowlist | `../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts` | `e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记` | `e2e-verify.sh` 尚未存在，测试失败 |
 | task payload 四字段 + 敏感字段脱敏 | `../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts` | `payload 四字段齐全且禁用 token/github_token/anthropic_token/thin_prd` | `e2e-verify.sh` 尚未存在，测试失败 |
-| initiative_runs host/phase 校验 | `../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts` | `initiative_runs host 属于三值合法枚举（skill-relay-claude-headed/skill-relay-codex-headed/foreground，round 5 修正）且 phase 使用真实 DB 枚举拒绝 failed/unknown` | `e2e-verify.sh` 尚未存在，测试失败 |
+| initiative_runs host/phase 校验 | `../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts` | `initiative_runs 含 skill-relay-claude-headed 且 phase 使用真实 DB 枚举拒绝 failed/unknown` | `e2e-verify.sh` 尚未存在，测试失败 |
 | local_api E2E wrapper 完整链路 | `../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts` | `local_api E2E wrapper 完整验证当前 task/run/smoke 外部真相，无 mock/吞错` | `e2e-verify.sh` 尚未存在，测试失败 |
 
 ## Notes
