@@ -311,7 +311,7 @@ export async function triggerArchReview(pool, now = new Date()) {
       : '';
     const { rows } = await pool.query(
       `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
-       VALUES ($1, 'arch_review', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'xian')
+       VALUES ($1, 'arch_review', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'us')
        RETURNING id`,
       [
         `[arch-review] 定时架构巡检 ${timestamp} UTC`,
