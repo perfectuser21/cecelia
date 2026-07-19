@@ -445,8 +445,13 @@ router.patch('/tasks/:task_id', async (req, res) => {
     }
 
     // 完成态前置条件硬闸（三案实证漏洞，2026-07-19）
-    // 阻止 review 未通过/PR 未合并/harness_initiative 绕过验证直接写 completed
-    if (status === 'completed' && !isStatusNoop) {
+    // 阻止 review 未通过/PR 未合并绕过验证直接写 completed。
+    // harness_initiative(skill-relay) 任务已有专属的"收账权收归"机制(finalizeHarnessTask，
+    // 决策dc18d43d，见下方紧接的代码块)独立核验外部真相并优雅降级——这两条硬闸规则不覆盖
+    // 它，避免抢在前面短路已有的降级逻辑（07-19 回归实测：会导致该机制的测试从
+    // 200 accepted:false 变成本处硬 422，是真实冲突不是理论风险）。
+    const isSkillRelayHarness = task.task_type === 'harness_initiative' && task.orchestrator === 'skill-relay';
+    if (status === 'completed' && !isStatusNoop && !isSkillRelayHarness) {
       // Rule 1: review_required=true → review_status 必须是明确通过态（非 pending/null）
       if (task.review_required_raw === 'true' && (!task.review_status || task.review_status === 'pending')) {
         return res.status(422).json({
@@ -464,15 +469,6 @@ router.patch('/tasks/:task_id', async (req, res) => {
           error: 'pr_url 已设置但 pr_merged_at 为空 — PR 需先合并',
           code: 'PR_NOT_MERGED',
           pr_url: task.pr_url,
-        });
-      }
-
-      // Rule 3: harness_initiative 只能通过 POST /api/brain/harness/complete 收尾
-      if (task.task_type === 'harness_initiative') {
-        return res.status(422).json({
-          success: false,
-          error: 'harness_initiative 任务不能通过 PATCH /tasks/:id 标记 completed，请使用 POST /api/brain/harness/complete',
-          code: 'USE_HARNESS_COMPLETE',
         });
       }
     }

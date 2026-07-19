@@ -4,9 +4,14 @@
  * 三案实证漏洞（2026-07-19）:
  *   Rule 1: review_required=true + review_status=pending → 422 REVIEW_NOT_APPROVED
  *   Rule 2: pr_url 非空 + pr_merged_at 为空 → 422 PR_NOT_MERGED
- *   Rule 3: task_type=harness_initiative → 422 USE_HARNESS_COMPLETE
  *
- * 回归哨兵: 无 review_required / 无 pr_url / 非 harness_initiative 的普通任务仍可正常完成。
+ * task_type=harness_initiative && orchestrator=skill-relay 的任务不受 Rule1/2 约束——
+ * 它们已有专属的"收账权收归"机制（finalizeHarnessTask，决策dc18d43d）独立核验外部真相
+ * 并优雅降级为 200 accepted:false，本文件的硬闸只覆盖该机制不管的其余场景（07-19 回归
+ * 实测发现：不排除会与 harness-completion-authority.test.js 的既有场景冲突，已改用
+ * isSkillRelayHarness 显式让路，见下方对应测试）。
+ *
+ * 回归哨兵: 无 review_required / 无 pr_url 的普通任务仍可正常完成。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
@@ -161,31 +166,61 @@ describe('PATCH /api/brain/tasks/:task_id — completed 状态硬闸 [BEHAVIOR]'
     expect(res.status).toBe(200);
   });
 
-  // ── Rule 3: harness_initiative → 必须走 /harness/complete ───────────────────
+  // ── skill-relay harness 任务让路给 finalizeHarnessTask，不受 Rule1/2 约束 ────
 
-  it('Rule3: task_type=harness_initiative via 普通 PATCH → 422 USE_HARNESS_COMPLETE', async () => {
+  it('harness_initiative(skill-relay) + review_required未过 → 不触发Rule1，交给finalizeHarnessTask放行', async () => {
+    const finalizeMock = vi.fn().mockResolvedValue({ applies: true, allow: true });
+    vi.doMock('../../lib/harness-finalize.js', () => ({ finalizeHarnessTask: finalizeMock }));
+    vi.resetModules();
+    mockQuery.mockReset();
+    const { default: freshRouter } = await import('../tasks.js');
+    const freshApp = express();
+    freshApp.use(express.json());
+    freshApp.use('/api/brain', freshRouter);
+
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'task-hi-1', status: 'in_progress',
+          task_type: 'harness_initiative', orchestrator: 'skill-relay',
+          review_required_raw: 'true', review_status: 'pending',
+          pr_url: null, pr_merged_at: null,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] });
+
+    const res = await request(freshApp)
+      .patch('/api/brain/tasks/task-hi-1')
+      .send({ status: 'completed' });
+
+    // 没有被本文件的硬闸拦下（不是422 REVIEW_NOT_APPROVED）——finalizeHarnessTask 是唯一权威
+    expect(res.status).not.toBe(422);
+    expect(finalizeMock).toHaveBeenCalled();
+  });
+
+  it('harness_initiative 但非 skill-relay orchestrator → 仍受 Rule1/2 约束（不是全体 harness_initiative 都豁免）', async () => {
     mockQuery.mockResolvedValueOnce({
       rows: [{
-        id: 'task-hi-1', status: 'in_progress',
-        task_type: 'harness_initiative', review_required_raw: null, review_status: null,
+        id: 'task-hi-2', status: 'in_progress',
+        task_type: 'harness_initiative', orchestrator: null,
+        review_required_raw: 'true', review_status: 'pending',
         pr_url: null, pr_merged_at: null,
       }],
     });
 
     const res = await request(app)
-      .patch('/api/brain/tasks/task-hi-1')
+      .patch('/api/brain/tasks/task-hi-2')
       .send({ status: 'completed' });
 
     expect(res.status).toBe(422);
-    expect(res.body.code).toBe('USE_HARNESS_COMPLETE');
-    expect(res.body.error).toContain('/harness/complete');
+    expect(res.body.code).toBe('REVIEW_NOT_APPROVED');
   });
 
-  it('Rule3: harness_initiative → in_progress 仍然允许（只限 completed）', async () => {
+  it('harness_initiative(skill-relay) → in_progress 转换不受影响（只有 completed 会考虑豁免）', async () => {
     mockQuery
       .mockResolvedValueOnce({
         rows: [{
-          id: 'task-hi-2', status: 'queued',
+          id: 'task-hi-3', status: 'queued',
           task_type: 'harness_initiative', review_required_raw: null, review_status: null,
           pr_url: null, pr_merged_at: null,
         }],
@@ -193,7 +228,7 @@ describe('PATCH /api/brain/tasks/:task_id — completed 状态硬闸 [BEHAVIOR]'
       .mockResolvedValueOnce({ rows: [{ status: 'in_progress', updated_at: 'x' }] });
 
     const res = await request(app)
-      .patch('/api/brain/tasks/task-hi-2')
+      .patch('/api/brain/tasks/task-hi-3')
       .send({ status: 'in_progress' });
 
     expect(res.status).toBe(200);
