@@ -34,8 +34,9 @@ target_environment: local_api
   Test: manual:bash -c 'grep -A2 "^| Workstream | Test File" sprints/07191413-relay-13f35dc8/contract-draft.md | head -1 | grep -q "BEHAVIOR 覆盖" && echo OK'
   期望: OK
 - [ ] [BEHAVIOR] INV-9 [capture-triage] Red commit 只 git add 精确路径：本次 propose 提交（round-2 修订，新增 `verify/` 单一事实源脚本用于修复 GAN Round 1 问题 1）只 `git add` 了 `contract-draft.md`/`contract-dod.md`/`verify/*.sh` 精确路径，未用 `git add .`
-  Test: manual:bash -c 'git show --stat HEAD | grep -E "^\s+sprints/07191413-relay-13f35dc8/" | grep -qvE "contract-draft\.md|contract-dod\.md|verify/(step[1-4]|red-missing|red-broken)\.sh|tests/slugify\.contract\.test\.ts|smoke-verify\.sh|task-plan\.json" && exit 1 || echo OK'
+  Test: manual:bash -c 'git diff-tree --no-commit-id --name-only -r HEAD | grep -E "^sprints/07191413-relay-13f35dc8/" | grep -qvE "contract-draft\.md$|contract-dod\.md$|verify/(step[1-4]|red-missing|red-broken)\.sh$|tests/slugify\.contract\.test\.ts$|smoke-verify\.sh$|task-plan\.json$" && exit 1 || echo OK'
   期望: OK
+  （v2：改用 `git diff-tree --no-commit-id --name-only -r HEAD` 替代 `git show --stat HEAD`——后者对长路径按终端列宽截断，会把 `sprints/.../verify/red-broken.sh` 显示成 `.../07191413-relay-13f35dc8/verify/red-broken.sh`，丢失 `sprints/` 前缀导致该行完全脱离 `^\s+sprints/` 锚定，形成对新增文件的验证盲区；`--name-only` 输出纯路径列表，无截断、无 commit message 干扰，验证盲区已消除）
 - N/A-10 [capture-triage] 回归测试用 source-code inspection 验证调度接线：N/A，本 sprint 无调度接线，测试改用真实子进程执行验证
 - N/A-11 [capture-triage] 新增 cron 检查 scheduler-jobs.js JOBS：N/A，本 sprint 不新增任何 cron
 - N/A-12 [capture-triage] 禁止 generator 自行 merge PR：N/A，proposer 阶段不涉及 merge 操作，合并权归 controller，本合同未授权 generator 自行合并
