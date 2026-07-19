@@ -25,6 +25,9 @@ target_environment: local_api
 - [ ] [ARTIFACT] Invariant 租户隔离 tenant：N/A，本 sprint 不查询或修改租户作用域数据
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07191312-relay-57e25e92/contract-dod.md','utf8');if(!c.includes('租户隔离 tenant：N/A')||!c.includes('不查询或修改租户作用域数据'))process.exit(1)"
 
+- [ ] [ARTIFACT] e2e-verify.sh 逐字保留全部 GP-STEP-1~GP-STEP-4 BEGIN/END 标记注释行（round 3 新增，呼应 reviewer 第二轮反馈唯一阻塞项：防止 awk 抽取式 BEHAVIOR 因标记缺失/被重新措辞而静默产出空脚本、`bash -euo pipefail` 对空文件 exit 0 误判 OK）
+  Test: node -e "const fs=require('fs');const p='sprints/07191312-relay-57e25e92/e2e-verify.sh';const c=fs.readFileSync(p,'utf8');const marks=['# GP-STEP-1 BEGIN','# GP-STEP-1 END','# GP-STEP-2 BEGIN','# GP-STEP-2 END','# GP-STEP-3 BEGIN','# GP-STEP-3 END','# GP-STEP-4 BEGIN','# GP-STEP-4 END'];const missing=marks.filter(m=>!c.includes(m));if(missing.length){console.error('missing markers: '+missing.join(', '));process.exit(1)}"
+
 ## Invariant 覆盖条目（PRD 铁律 1:1 映射，12 条 BEHAVIOR，来源: area）
 
 - [ ] [BEHAVIOR] INV-1 (9202c14e) 失败路径禁止 warning 降级：所有失败分支必须显式 FAIL + exit 非零
@@ -79,16 +82,18 @@ target_environment: local_api
 
 **round 2 修订说明（单一权威来源收敛，呼应 reviewer 第一轮反馈第 1 条）**：以下 3 条 BEHAVIOR 的断言逻辑不再独立重写，而是用 `awk` 从 `e2e-verify.sh` 的 `# GP-STEP-N BEGIN`~`# GP-STEP-N END` 标记段原样提取后直接执行——`e2e-verify.sh` 本体（`## E2E 验收` 唯一权威脚本）是断言逻辑的唯一物理来源，此处物理上不可能产生第二份漂移文本。第 4 条（完整 wrapper）本就是直接调用整份脚本，逻辑不变。
 
+**round 3 修订说明（非空守卫 + 标记存在性硬闸，呼应 reviewer 第二轮反馈唯一阻塞项）**：reviewer 实测复现——若 `e2e-verify.sh` 的 `# GP-STEP-N BEGIN`/`# GP-STEP-N END` 标记注释被删除或重新措辞，`awk` 抽取会静默产出空文件（`/tmp/gp-stepN-57e25e92.sh` 大小为 0），随后 `bash -euo pipefail` 对空文件执行 exit 0，导致以下 3 条 BEHAVIOR 误判 OK（零断言实际执行）。本轮双重修复（互补不冲突）：① 以下 3 条 Test 命令在 `awk` 提取后、`bash` 执行前插入 `[ -s <tmpfile> ]` 非空守卫，提取为空立即打印诊断信息并 `exit 1`（运行时兜底）；② 新增一条 `[ARTIFACT]` 条目（见上方"e2e-verify.sh 逐字保留全部 GP-STEP-1~GP-STEP-4 BEGIN/END 标记注释行"），用 `grep`/字符串包含校验逐一确认生成的 `e2e-verify.sh` 字面包含全部 4 对（8 处）标记（构建期硬闸，独立于 awk 抽取路径，即使某条 BEHAVIOR 的非空守卫因其他原因被绕过，ARTIFACT 条目仍会拦截标记缺失）。
+
 - [ ] [BEHAVIOR] e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记（从唯一权威脚本 GP-STEP-1 段提取执行）
-  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; awk "/# GP-STEP-1 BEGIN/{f=1;next} /# GP-STEP-1 END/{f=0} f" "$SCRIPT" > /tmp/gp-step1-57e25e92.sh; BRAIN_URL="$BRAIN_URL" DB="$DB" bash -euo pipefail /tmp/gp-step1-57e25e92.sh && echo OK'
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; awk "/# GP-STEP-1 BEGIN/{f=1;next} /# GP-STEP-1 END/{f=0} f" "$SCRIPT" > /tmp/gp-step1-57e25e92.sh; [ -s /tmp/gp-step1-57e25e92.sh ] || { echo "FAIL: GP-STEP-1 标记未在 e2e-verify.sh 中找到或提取为空"; exit 1; }; BRAIN_URL="$BRAIN_URL" DB="$DB" bash -euo pipefail /tmp/gp-step1-57e25e92.sh && echo OK'
   期望: OK
 
 - [ ] [BEHAVIOR] task payload 四字段齐全且不含敏感字段（从唯一权威脚本 GP-STEP-2 段提取执行，真实 curl 当前 task）
-  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; TASK_ID="${TASK_ID:-57e25e92-84a3-4599-992c-b4b74ec54acc}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; awk "/# GP-STEP-2 BEGIN/{f=1;next} /# GP-STEP-2 END/{f=0} f" "$SCRIPT" > /tmp/gp-step2-57e25e92.sh; TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" bash -euo pipefail /tmp/gp-step2-57e25e92.sh && echo OK'
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; TASK_ID="${TASK_ID:-57e25e92-84a3-4599-992c-b4b74ec54acc}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; awk "/# GP-STEP-2 BEGIN/{f=1;next} /# GP-STEP-2 END/{f=0} f" "$SCRIPT" > /tmp/gp-step2-57e25e92.sh; [ -s /tmp/gp-step2-57e25e92.sh ] || { echo "FAIL: GP-STEP-2 标记未在 e2e-verify.sh 中找到或提取为空"; exit 1; }; TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" bash -euo pipefail /tmp/gp-step2-57e25e92.sh && echo OK'
   期望: OK
 
 - [ ] [BEHAVIOR] initiative_runs 含 skill-relay-claude-headed 且 phase 使用真实 DB 枚举拒绝 failed/unknown，且 started_at 新鲜度不早于 task.created_at（从唯一权威脚本 GP-STEP-3 段提取执行，真实 psql 定点查当前 task，round 2 新增新鲜度校验）
-  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; TASK_ID="${TASK_ID:-57e25e92-84a3-4599-992c-b4b74ec54acc}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; awk "/# GP-STEP-3 BEGIN/{f=1;next} /# GP-STEP-3 END/{f=0} f" "$SCRIPT" > /tmp/gp-step3-57e25e92.sh; TASK_ID="$TASK_ID" DB="$DB" bash -euo pipefail /tmp/gp-step3-57e25e92.sh && echo OK'
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07191312-relay-57e25e92/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; TASK_ID="${TASK_ID:-57e25e92-84a3-4599-992c-b4b74ec54acc}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; awk "/# GP-STEP-3 BEGIN/{f=1;next} /# GP-STEP-3 END/{f=0} f" "$SCRIPT" > /tmp/gp-step3-57e25e92.sh; [ -s /tmp/gp-step3-57e25e92.sh ] || { echo "FAIL: GP-STEP-3 标记未在 e2e-verify.sh 中找到或提取为空"; exit 1; }; TASK_ID="$TASK_ID" DB="$DB" bash -euo pipefail /tmp/gp-step3-57e25e92.sh && echo OK'
   期望: OK（若 FAIL 且信息提示「已知外部时序依赖」，见 contract-draft.md Risks R1——不代表脚本实现有误，需等 orchestrator 推进落库后重跑）
 
 - [ ] [BEHAVIOR] local_api E2E wrapper 锚定当前 task_id 完整验证 smoke/task/run 外部真相（整份 e2e-verify.sh 即唯一权威脚本本体，逻辑与上 3 条同源）
