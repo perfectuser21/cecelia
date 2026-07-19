@@ -28,7 +28,7 @@ RESP=$(curl -sf -X POST "${BRAIN_URL}/api/brain/tasks" \
   -d '{
     "title": "smoke-verify-headless-dispatch",
     "task_type": "harness_initiative",
-    "priority": "P3",
+    "priority": "P2",
     "payload": {
       "mode": "headless",
       "executor": "claude",
