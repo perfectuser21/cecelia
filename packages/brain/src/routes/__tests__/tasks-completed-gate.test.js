@@ -18,9 +18,14 @@ import express from 'express';
 import request from 'supertest';
 
 const mockQuery = vi.fn();
+const mockBlockTask = vi.fn().mockResolvedValue({ success: true });
 
 vi.mock('../../db.js', () => ({
   default: { query: (...args) => mockQuery(...args) },
+}));
+
+vi.mock('../../task-updater.js', () => ({
+  blockTask: (...args) => mockBlockTask(...args),
 }));
 
 describe('PATCH /api/brain/tasks/:task_id — completed 状态硬闸 [BEHAVIOR]', () => {
@@ -30,6 +35,8 @@ describe('PATCH /api/brain/tasks/:task_id — completed 状态硬闸 [BEHAVIOR]'
     vi.resetModules();
     mockQuery.mockReset();
     mockQuery.mockResolvedValue({ rows: [] });
+    mockBlockTask.mockClear();
+    mockBlockTask.mockResolvedValue({ success: true });
     app = express();
     app.use(express.json());
     const { default: router } = await import('../tasks.js');
@@ -54,6 +61,33 @@ describe('PATCH /api/brain/tasks/:task_id — completed 状态硬闸 [BEHAVIOR]'
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('REVIEW_NOT_APPROVED');
     expect(res.body.current_review_status).toBe('pending');
+  });
+
+  // ── liveness probe 误杀回归（2026-07-19 实锤复现）────────────────────────
+  // 根因链条：Rule1/2 拒绝(422)后任务原地留在 in_progress，headless 容器进程随后
+  // 退出，executor.js:probeTaskLiveness()（WHERE status='in_progress'）把它当"进程
+  // 消失=死了"，requeueTask 完整重新派发——产出多个重复 PR（dc69c8df 任务实测复现
+  // 4106→4108→4112 三个几乎相同实现）。修法：拒绝的同时把任务转 blocked（task-updater.js
+  // 现成的 blockTask，liveness probe 只扫 in_progress，不会再碰到它），PR 真正合并后
+  // 由 engine-pr-watchdog 的终态 PATCH 重新尝试，此时 pr_merged_at 有值，Rule2 放行。
+
+  it('Rule1拒绝(422)时应把任务转blocked，避免liveness probe误判死亡重跑', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: 'task-rr-1', status: 'in_progress',
+        task_type: 'dev', review_required_raw: 'true', review_status: 'pending',
+        pr_url: null, pr_merged_at: null,
+      }],
+    });
+
+    const res = await request(app)
+      .patch('/api/brain/tasks/task-rr-1')
+      .send({ status: 'completed' });
+
+    expect(res.status).toBe(422);
+    expect(mockBlockTask).toHaveBeenCalledWith('task-rr-1', expect.objectContaining({
+      reason: 'review_not_approved',
+    }));
   });
 
   it('Rule1: review_required=true + review_status=null → 422 REVIEW_NOT_APPROVED', async () => {
@@ -128,6 +162,44 @@ describe('PATCH /api/brain/tasks/:task_id — completed 状态硬闸 [BEHAVIOR]'
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('PR_NOT_MERGED');
     expect(res.body.pr_url).toBe('https://github.com/org/repo/pull/42');
+  });
+
+  it('Rule2拒绝(422)时应把任务转blocked，避免liveness probe误判死亡重跑', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: 'task-pr-1', status: 'in_progress',
+        task_type: 'dev', review_required_raw: null, review_status: null,
+        pr_url: 'https://github.com/org/repo/pull/42', pr_merged_at: null,
+      }],
+    });
+
+    const res = await request(app)
+      .patch('/api/brain/tasks/task-pr-1')
+      .send({ status: 'completed' });
+
+    expect(res.status).toBe(422);
+    expect(mockBlockTask).toHaveBeenCalledWith('task-pr-1', expect.objectContaining({
+      reason: 'pr_not_merged',
+    }));
+  });
+
+  it('正常完成(200)时不应调用blockTask', async () => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'task-pr-2', status: 'in_progress',
+          task_type: 'dev', review_required_raw: null, review_status: null,
+          pr_url: 'https://github.com/org/repo/pull/43', pr_merged_at: '2026-07-18T10:00:00Z',
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] });
+
+    const res = await request(app)
+      .patch('/api/brain/tasks/task-pr-2')
+      .send({ status: 'completed' });
+
+    expect(res.status).toBe(200);
+    expect(mockBlockTask).not.toHaveBeenCalled();
   });
 
   it('Rule2: pr_url 已设置 + pr_merged_at 已填充 → 通过（写 completed）', async () => {

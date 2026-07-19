@@ -18,6 +18,42 @@ let _drainStartedAt = null;
 let _postDrainCooldown = false;
 let _postDrainCooldownTimer = null;
 
+// working_memory 持久化 key（07-19 bug fix：draining 此前纯内存，Brain 容器
+// 重启——最常见是 Gate3 部署触发——会静默清零，用户明确要求的"停止后台自动
+// 派发"因此反复失效。持久化到 working_memory，与 tick_enabled 同款模式，
+// Brain 启动时靠 restoreDrainState() 读回内存态。auto-complete / cancelDrain
+// 时同步清库，避免"已经不需要 drain 了"却在下次重启时被误恢复。）
+const DRAIN_STATE_KEY = 'tick_draining';
+
+async function persistDrainState() {
+  await pool.query(`
+    INSERT INTO working_memory (key, value_json, updated_at)
+    VALUES ($1, $2, NOW())
+    ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+  `, [DRAIN_STATE_KEY, { draining: true, drain_started_at: _drainStartedAt }]);
+}
+
+async function clearPersistedDrainState() {
+  await pool.query(`DELETE FROM working_memory WHERE key = $1`, [DRAIN_STATE_KEY]);
+}
+
+/**
+ * Restore drain state from DB on Brain startup — call once during init.
+ * If a drain was active before the process restarted (e.g. Gate3 deploy),
+ * re-activates the in-memory flag so dispatch stays paused.
+ */
+export async function restoreDrainState() {
+  const result = await pool.query(
+    `SELECT value_json FROM working_memory WHERE key = $1`,
+    [DRAIN_STATE_KEY]
+  );
+  const saved = result.rows[0]?.value_json;
+  if (saved?.draining) {
+    _draining = true;
+    _drainStartedAt = saved.drain_started_at || new Date().toISOString();
+  }
+}
+
 // ─── Getter API（供 tick.js 等 caller 读取状态）────────────────────────
 export function isDraining() {
   return _draining;
@@ -51,6 +87,7 @@ export async function drainTick() {
   _draining = true;
   _drainStartedAt = new Date().toISOString();
   log(`[tick] Drain mode activated at ${_drainStartedAt}`);
+  await persistDrainState();
 
   // Count in_progress tasks for initial status (no auto-complete on activation)
   const inProgressResult = await pool.query(
@@ -93,6 +130,7 @@ export async function getDrainStatus() {
     const startedAt = _drainStartedAt;
     _draining = false;
     _drainStartedAt = null;
+    await clearPersistedDrainState();
 
     // Set post-drain cooldown: dispatch rate limited to 1 for 5 minutes
     _postDrainCooldown = true;
@@ -130,7 +168,7 @@ export async function getDrainStatus() {
 /**
  * Cancel drain mode — resume normal dispatching.
  */
-export function cancelDrain() {
+export async function cancelDrain() {
   if (!_draining) {
     return { success: true, was_draining: false };
   }
@@ -138,6 +176,7 @@ export function cancelDrain() {
   log('[tick] Drain mode cancelled, resuming normal dispatch');
   _draining = false;
   _drainStartedAt = null;
+  await clearPersistedDrainState();
   return { success: true, was_draining: true };
 }
 
