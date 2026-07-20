@@ -109,3 +109,18 @@
 ## E2E 验收
 
 见 `contract-dod.md` ## E2E 验收 段落及 `e2e-verify.sh`。
+
+---
+
+## Test Contract
+
+| Test File | BEHAVIOR 覆盖 |
+|---|---|
+| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-1: executor=grok → CECELIA_EXECUTOR=grok 注入 spawnFn env |
+| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-2: GROK_RELAY_HOME="" → spawnFn 未被调用 |
+| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-3: GROK_RELAY_HOME 未设置 → spawnFn 被调用，r.ok===true |
+| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-4: extraMounts 含 GROK_RELAY_HOME:/home/cecelia/.grok:rw |
+| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-5: detectQuotaWall 是导出的函数 |
+| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-6: grok 撞墙 → 第二次 spawnFn 调用使用 CECELIA_EXECUTOR=claude |
+| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-7: HEADED_HOSTS 含 grok 条目 |
+| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-8: executor=codex（CODEX_RELAY_HOME 配置）→ orchestrator_host=skill-relay-codex（不变）|
