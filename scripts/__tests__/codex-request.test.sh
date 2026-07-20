@@ -141,7 +141,11 @@ test_chmod_600_both_directions() {
   set -e
   if [[ -f "$HOME/.codex-team3/auth.json" ]]; then
     local mode
-    mode=$(stat -f "%Lp" "$HOME/.codex-team3/auth.json" 2>/dev/null || stat -c "%a" "$HOME/.codex-team3/auth.json")
+    if stat --version >/dev/null 2>&1; then
+      mode=$(stat -c "%a" "$HOME/.codex-team3/auth.json")   # GNU coreutils (Linux CI)
+    else
+      mode=$(stat -f "%Lp" "$HOME/.codex-team3/auth.json")  # BSD stat (macOS)
+    fi
     if [[ "$mode" == "600" ]]; then
       pass "本地 auth.json 落盘后 mode 为 600"
     else
