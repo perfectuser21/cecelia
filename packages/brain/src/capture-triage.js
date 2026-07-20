@@ -79,7 +79,7 @@ ${atom.content}
 只输出 JSON：{"route":"urgent|line_backlog|invariant|okr","confidence":0.0-1.0,"reason":"一句话","scope":"repair|capability"}
 scope 仅在 route=line_backlog 时必填：repair=修复/回归/既有能力小改；capability=新方向/新能力/新平台/新业务。其他 route 可省略。`;
 
-const ATOM_UPDATE_STATUSES = ['confirmed', 'pending_review'];
+const ATOM_UPDATE_STATUSES = ['confirmed', 'pending_review', 'dropped', 'parked', 'routed', 'dismissed'];
 
 /** db 可传 pool 或事务内 client（query 接口相同）。status 显式白名单，非法值 throw。 */
 export async function updateAtom(db, id, { status = null, routedToTable = null, routedToId = null, confidence = null, aiReason }) {
@@ -145,7 +145,49 @@ function resolveScope(atom, verdict) {
 async function routeAtom(pool, atom, verdict, opts) {
   const { route, confidence, reason = '' } = verdict;
   if (route === 'urgent') {
-    return updateAtom(pool, atom.id, { status: 'confirmed', confidence, aiReason: `[triage:urgent] ${reason}` });
+    // 生产护栏：命中 → 仅 Bark，不自动建 task（决策 57d296a1）
+    if (isProductionSensitive(atom)) {
+      try {
+        const { sendBark } = await import('./notifier.js');
+        await sendBark(`[Cecelia] 紧急进箱（生产护栏命中，需人工审批）: ${atom.content.slice(0, 60)}`).catch(() => {});
+      } catch {}
+      return updateAtom(pool, atom.id, { status: 'confirmed', confidence, aiReason: `[triage:urgent] 生产护栏命中，仅 Bark，不建 task。${reason}` });
+    }
+    // 建真实 task（P1 优先级）
+    let taskId = null;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await createTask({
+        title: `[紧急] ${atom.content.slice(0, 80)}`,
+        description: `来源: capture_atoms urgent路由, atom_id=${atom.id}\n\n${atom.content}`,
+        task_type: 'harness_initiative',
+        priority: 'P1',
+        trigger_source: 'cortex',
+        dedupe_key: `capture-triage-urgent-${atom.id}`,
+        payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' },
+      });
+      taskId = result?.task?.id;
+      await updateAtom(client, atom.id, {
+        status: 'confirmed',
+        routedToTable: 'tasks',
+        routedToId: taskId,
+        confidence,
+        aiReason: `[triage:urgent] task=${taskId}. ${reason}`,
+      });
+      await client.query('COMMIT');
+    } catch (urgentErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw urgentErr;
+    } finally {
+      client.release();
+    }
+    // Bark 告警（非阻塞）
+    try {
+      const { sendBark } = await import('./notifier.js');
+      await sendBark(`[Cecelia] 紧急进箱: ${atom.content.slice(0, 60)}`).catch(() => {});
+    } catch {}
+    return;
   }
   if (route === 'line_backlog') {
     let journeyId = null;
@@ -221,7 +263,30 @@ async function routeAtom(pool, atom, verdict, opts) {
     return;
   }
   if (route === 'okr') {
-    return updateAtom(pool, atom.id, { status: 'confirmed', confidence, aiReason: `[triage:okr] ${reason}` });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `INSERT INTO notes (content, category, source, ai_reason)
+         VALUES ($1, 'strategic_input', 'capture_triage', $2) RETURNING id`,
+        [atom.content, reason]
+      );
+      const noteId = rows[0].id;
+      await updateAtom(client, atom.id, {
+        status: 'confirmed',
+        routedToTable: 'notes',
+        routedToId: noteId,
+        confidence,
+        aiReason: `[triage:okr] note=${noteId}. ${reason}`,
+      });
+      await client.query('COMMIT');
+    } catch (okrErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw okrErr;
+    } finally {
+      client.release();
+    }
+    return;
   }
   return updateAtom(pool, atom.id, { aiReason: `[triage:unknown_route] ${route}` });
 }

@@ -1,0 +1,32 @@
+{
+  "verdict": "PASS",
+  "sha": "5ec5f076770101ebe9b0dcbf2f0d89fe35757a07",
+  "sha7": "5ec5f07",
+  "evaluator_version": "harness-controller-2.7.0",
+  "artifact_gate": "N/A",
+  "contract_gate": "PASS",
+  "fr_results": {
+    "FR-1": "PASS",
+    "FR-2": "PASS",
+    "FR-3": "PASS",
+    "FR-4": "PASS",
+    "FR-5": "PASS",
+    "FR-6": "PASS",
+    "FR-7": "PASS",
+    "FR-8": "PASS",
+    "FR-9": "PASS",
+    "FR-10": "PASS"
+  },
+  "nfr_results": {
+    "NFR-2": "PASS",
+    "NFR-4": "PASS"
+  },
+  "unverifiable": [
+    "Bark 推送真实到达（A-11, A-13）——需要配置好 Bark token 的设备",
+    "Dashboard Playwright E2E（A-24至A-27, CP-17）——需要 localhost:5174",
+    "账龄哨兵 INTERVAL_MS 环境变量覆盖（NFR-6）——运行时覆盖未经活跑验证",
+    "backfill 脚本清零生产库（A-28, A-29, CP-18）——需要实际 DB 连接"
+  ],
+  "ci_status": "green",
+  "test_contract_coverage": "PASS"
+}

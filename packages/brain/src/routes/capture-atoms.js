@@ -251,4 +251,85 @@ async function routeAtomToTarget(client, atom, targetType, targetSubtype, areaId
   }
 }
 
+
+// ─── PATCH /api/brain/capture-atoms/:id/confirm ─────────────────────────────
+// 扩展：支持 reroute/drop action
+router.patch('/:id/confirm', async (req, res) => {
+  const { action, nature, target_type, target_subtype } = req.body;
+  const validActions = ['confirm', 'dismiss', 'reroute', 'drop'];
+  if (!action || !validActions.includes(action)) {
+    return res.status(400).json({ error: `action must be one of: ${validActions.join(', ')}` });
+  }
+
+  try {
+    const atomResult = await pool.query('SELECT * FROM capture_atoms WHERE id = $1', [req.params.id]);
+    if (atomResult.rows.length === 0) {
+      return res.status(404).json({ error: 'capture_atom not found' });
+    }
+    const atom = atomResult.rows[0];
+
+    if (action === 'drop') {
+      await pool.query(
+        `UPDATE capture_atoms SET status = 'dropped', updated_at = now() WHERE id = $1`,
+        [atom.id]
+      );
+      return res.json({ id: atom.id, status: 'dropped' });
+    }
+
+    if (action === 'reroute') {
+      // 清空 ai_reason，更新 nature（如有），重新进入分诊队列
+      const updates = ['ai_reason = NULL', 'updated_at = now()', "status = 'pending_review'"];
+      const params = [atom.id];
+      if (nature) {
+        params.push(nature);
+        updates.push(`nature = $${params.length}`);
+      }
+      if (target_type) {
+        params.push(target_type);
+        updates.push(`target_type = $${params.length}`);
+      }
+      if (target_subtype !== undefined) {
+        params.push(target_subtype);
+        updates.push(`target_subtype = $${params.length}`);
+      }
+      await pool.query(`UPDATE capture_atoms SET ${updates.join(', ')} WHERE id = $1`, params);
+      const updated = await pool.query('SELECT * FROM capture_atoms WHERE id = $1', [atom.id]);
+      return res.json(updated.rows[0]);
+    }
+
+    if (action === 'dismiss') {
+      await pool.query(
+        `UPDATE capture_atoms SET status = 'dismissed', updated_at = now() WHERE id = $1`,
+        [atom.id]
+      );
+      return res.json({ id: atom.id, status: 'dismissed' });
+    }
+
+    // action === 'confirm'（兜底）
+    return res.json({ id: atom.id, status: atom.status });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update capture_atom', details: err.message });
+  }
+});
+
+// ─── POST /api/brain/capture-atoms/:id/retry ────────────────────────────────
+router.post('/:id/retry', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE capture_atoms
+       SET ai_reason = NULL, retry_count = COALESCE(retry_count, 0) + 1,
+           status = 'pending_review', updated_at = now()
+       WHERE id = $1
+       RETURNING id, status, retry_count`,
+      [req.params.id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'capture_atom not found' });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retry capture_atom', details: err.message });
+  }
+});
+
 export default router;
