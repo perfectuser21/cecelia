@@ -3,3 +3,5 @@
 # Started: 2026-07-20
 planner: done (sprint-prd.md@c55432e57, invariants=10, fr=10, nfr=7, 行数=427[大任务10FR合理])
 gan: done (contract-draft.md@d869b71f2 r1, verdict=APPROVED, 铁律覆盖=10/10, judgments_written=29, rubric=.harness/verdicts/gan-d869b71.json)
+generator: done (pr=#4130, ci=green, last_push=5ec5f0767)
+evaluator: done (verdict=PASS, sha=5ec5f0767, verdict_file=.harness/verdicts/evaluate-5ec5f07.json, fr=10/10, nfr=2/2)
