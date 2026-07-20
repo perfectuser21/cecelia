@@ -23,6 +23,7 @@ export default defineConfig({
       'tests/hooks/pr-gate.test.ts',
       'tests/hooks/branch-protect.test.ts',
       '**/node_modules/**',
+      'e2e/**',
     ],
   },
 });

@@ -96,6 +96,7 @@ function makePool(atoms, extra = {}) {
     }
     if (/SELECT id FROM decisions/.test(sql)) return { rows: extra.existingDecisionId ? [{ id: extra.existingDecisionId }] : [] };
     if (/INSERT INTO decisions/.test(sql)) { inserts.push({ sql, params }); return { rows: [{ id: 'dec-1' }] }; }
+    if (/INSERT INTO notes/.test(sql)) { inserts.push({ sql, params }); return { rows: [{ id: 'note-1' }] }; }
     if (/SELECT payload->>'journey_id'/.test(sql)) return { rows: [{ journey_id: extra.journeyId !== undefined ? extra.journeyId : 'jrn-1' }] };
     return { rows: [] };
   };

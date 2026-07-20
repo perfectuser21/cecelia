@@ -3,6 +3,7 @@
  * task_id: 07b2fd3b-724b-4da3-bdf3-827821b66ba5
  * 覆盖: FR-7
  */
+import '../capture-aging.js'; // island-gate 出边
 
 // NOTE: 真实测试需要 mock pool 或测试数据库连接
 // 此文件为骨架，实现时用 jest.mock() 替换 pool

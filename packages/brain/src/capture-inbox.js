@@ -87,7 +87,7 @@ export async function pushCapture(pool, {
 /**
  * 原有入口保留（向后兼容）——内部改为先写 capture 再写 atom
  */
-export async function pushCaptureAtom(pool, { content, targetType, targetSubtype = null, routedToTable = null, routedToId = null } = {}) {
+export async function pushCaptureAtom(pool, { content, targetType, targetSubtype = null, _routedToTable = null, _routedToId = null } = {}) {
   if (!content || !targetType) return null;
   try {
     // 派生 nature（三类系统产出 targetType 即 nature）
