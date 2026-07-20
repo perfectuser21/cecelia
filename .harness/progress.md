@@ -5,3 +5,6 @@ planner: done (sprint-prd.md@c55432e57, invariants=10, fr=10, nfr=7, 行数=427[
 gan: done (contract-draft.md@d869b71f2 r1, verdict=APPROVED, 铁律覆盖=10/10, judgments_written=29, rubric=.harness/verdicts/gan-d869b71.json)
 generator: done (pr=#4130, ci=green, last_push=5ec5f0767)
 evaluator: done (verdict=PASS, sha=5ec5f0767, verdict_file=.harness/verdicts/evaluate-5ec5f07.json, fr=10/10, nfr=2/2)
+judge: FAIL (reason=pre-merge-e2e-unverifiable, verdict_file=.harness/verdicts/judge-fail-5ec5f07.json)
+  → Brain 1.267.18 无 captures 路由，E2E-1~4 需 post-deploy 环境
+  → 单测+CI 全绿，REVIEW_REQUIRED=true 人工审批 gate 生效
