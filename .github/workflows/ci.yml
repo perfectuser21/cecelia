@@ -458,6 +458,17 @@ jobs:
       - name: launcher 单元自测
         run: bash scripts/__tests__/codex-remote-launch.test.sh
 
+  # ─── codex-request 西安侧 pull 请求脚本自测 ─────────────────────
+  # 白名单(ALLOWED_TEAMS team1~5)+拉取→前台跑codex→trap推回全流程自测，mock ssh/scp/codex
+  codex-request-test:
+    name: codex-request 西安侧pull模式自测
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: 西安侧pull脚本单元自测
+        run: bash scripts/__tests__/codex-request.test.sh
+
   # ─── 棘轮统一台账守卫（刀4-T2）────────────────────────────────
   # 读 ratchet-registry.json，逐项断言健康数未越水位。
   # Brain 依赖指标（bare_fr / seven_ring_hard_flaws）在 CI 中自动跳过。
