@@ -12,14 +12,13 @@ import {
 } from '../lib/graph-query.js';
 
 const router = Router();
-const REPO = 'cecelia';
 const CLAIM_DEPTH = 10;
 
-async function loadGraphContext() {
+export async function loadGraphContext(repo = 'cecelia') {
   const { rows: edges } = await pool.query(
-    `SELECT src_path, dst_path, edge_type FROM graph_edges WHERE repo = $1`, [REPO]);
+    `SELECT src_path, dst_path, edge_type FROM graph_edges WHERE repo = $1`, [repo]);
   const { rows: fr } = await pool.query(
-    `SELECT max(scanned_at) AS latest FROM graph_edges WHERE repo = $1`, [REPO]);
+    `SELECT max(scanned_at) AS latest FROM graph_edges WHERE repo = $1`, [repo]);
   const { rows: features } = await pool.query(
     `SELECT id, name, unit_test_path, workflow_ref, guard_ref FROM journey_features`);
   const adj = buildAdjacency(edges);
@@ -76,7 +75,8 @@ router.get('/locate', async (req, res) => {
     const q = String(req.query.q || '').trim();
     if (!q) return res.status(400).json({ error: 'Missing required param: q' });
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-    const ctx = await loadGraphContext();
+    const repo = String(req.query.repo || 'cecelia');
+    const ctx = await loadGraphContext(repo);
     const ql = q.toLowerCase();
     const features = ctx.classified.filter((c) => c.name.toLowerCase().includes(ql)).slice(0, limit);
     const promiseMap = await promisesForFeatures(features.map((f) => f.feature_id));
@@ -99,7 +99,8 @@ router.get('/related', async (req, res) => {
     const raw = String(req.query.path || '').trim();
     if (!raw) return res.status(400).json({ error: 'Missing required param: path' });
     const p = normalizePath(raw);
-    const ctx = await loadGraphContext();
+    const repo = String(req.query.repo || 'cecelia');
+    const ctx = await loadGraphContext(repo);
     const dependencies = (ctx.adj.fwd.get(p) || []).map((e) => ({ path: e.dst, edge_type: e.edge_type }));
     const dependents = (ctx.adj.rev.get(p) || []).map((e) => ({ path: e.src, edge_type: e.edge_type }));
     const claimedFeatures = ctx.classified.filter((c) => c.anchors.some((a) => a.matched_node === p));
@@ -134,7 +135,8 @@ router.get('/claim-status', async (req, res) => {
     const raw = String(req.query.path || '').trim();
     if (!raw) return res.status(400).json({ error: 'Missing required param: path' });
     const p = normalizePath(raw);
-    const ctx = await loadGraphContext();
+    const repo = String(req.query.repo || 'cecelia');
+    const ctx = await loadGraphContext(repo);
     const zones = buildClaimZones(ctx);
     const v = claimVerdict(p, ctx, zones);
     return res.json({ path: p, claimed: v.verdict === 'claimed', ...v, freshness: ctx.freshness });
@@ -152,7 +154,8 @@ router.post('/radius', async (req, res) => {
     }
     const rawDepth = req.body.max_depth == null ? 10 : parseInt(req.body.max_depth);
     const maxDepth = Math.min(Math.max(Number.isNaN(rawDepth) ? 10 : rawDepth, 1), 20);
-    const ctx = await loadGraphContext();
+    const repo = String(req.body.repo || 'cecelia');
+    const ctx = await loadGraphContext(repo);
     const norm = files.map(normalizePath);
     const reached = reachable(ctx.adj, norm, { dir: 'rev', maxDepth });
     const affected_tests = [...reached].filter(isTestPath).sort();
@@ -182,7 +185,8 @@ router.post('/island-check', async (req, res) => {
     if (!Array.isArray(files) || files.length === 0) {
       return res.status(400).json({ error: 'files must be a non-empty array' });
     }
-    const ctx = await loadGraphContext();
+    const repo = String(req.body.repo || 'cecelia');
+    const ctx = await loadGraphContext(repo);
     const zones = buildClaimZones(ctx);
     const results = files.map((raw) => {
       const p = normalizePath(raw);
@@ -197,9 +201,10 @@ router.post('/island-check', async (req, res) => {
 });
 
 // GET /api/brain/graph/anchor-coverage — 全量锚点覆盖率(nightly 断锚哨兵消费)
-router.get('/anchor-coverage', async (_req, res) => {
+router.get('/anchor-coverage', async (req, res) => {
   try {
-    const { anchor_coverage, freshness } = await loadGraphContext();
+    const repo = String(req.query.repo || 'cecelia');
+    const { anchor_coverage, freshness } = await loadGraphContext(repo);
     const broken = anchor_coverage.total_features - anchor_coverage.covered_by_graph;
     res.json({ anchor_coverage, freshness, broken });
   } catch (err) {
