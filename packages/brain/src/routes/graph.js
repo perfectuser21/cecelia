@@ -148,8 +148,11 @@ router.get('/claim-status', async (req, res) => {
 
 router.post('/radius', async (req, res) => {
   try {
-    const files = req.body && req.body.files;
-    if (!Array.isArray(files) || files.length === 0) {
+    // 兼容 file（singular）和 files（array）两种 payload 格式
+    const raw = req.body;
+    const files = Array.isArray(raw?.files) ? raw.files
+      : (raw?.file ? [raw.file] : null);
+    if (!files || files.length === 0) {
       return res.status(400).json({ error: 'files must be a non-empty array' });
     }
     const rawDepth = req.body.max_depth == null ? 10 : parseInt(req.body.max_depth);
