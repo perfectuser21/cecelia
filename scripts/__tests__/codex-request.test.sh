@@ -183,6 +183,36 @@ SH
   teardown
 }
 
+test_push_skipped_on_empty_local_json() {
+  setup
+  # 模拟 codex 运行中被 kill -9 / 磁盘满，导致本地 auth.json 被截断成 0 字节空文件
+  # （这是 jq empty 校验测不出来的具名场景：jq empty 对空文件视为"无 JSON 值可解析"返回成功）
+  cat >"$BIN/codex" <<SH
+#!/bin/bash
+echo "codex ran with CODEX_HOME=\$CODEX_HOME" >> "$LOG"
+: > "\$CODEX_HOME/auth.json"
+exit "\${CODEX_MOCK_EXIT_CODE:-0}"
+SH
+  chmod +x "$BIN/codex"
+
+  set +e
+  CODEX_MOCK_EXIT_CODE=5 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
+  local rc=$?
+  set -e
+
+  if [[ "$rc" -ne 5 ]]; then
+    fail "本地 auth.json 为空文件场景下脚本仍应正常透传 codex 原始退出码(5)" "实际 rc=$rc, 输出: $(cat /tmp/out.$$)"
+  elif grep -F -- "$HOME/.codex-team3/auth.json" "$LOG" | grep -qE ':[^[:space:]]*$'; then
+    fail "本地 auth.json 是空文件时不应发生推回 scp（会用空文件覆盖美国侧唯一持久副本）" "$(cat "$LOG")"
+  elif ! grep -q "跳过推回" /tmp/out.$$; then
+    fail "应打印 WARN 说明因空文件跳过推回" "$(cat /tmp/out.$$)"
+  else
+    pass "本地 auth.json 是空文件时：跳过推回、不覆盖远端，且 codex 原始退出码仍正常透传"
+  fi
+  rm -f /tmp/out.$$
+  teardown
+}
+
 echo "=== codex-request.sh 单元测试 ==="
 test_invalid_team_rejected
 test_missing_team_rejected
@@ -193,6 +223,7 @@ test_no_token_content_printed
 test_no_login_command
 test_chmod_600_both_directions
 test_push_skipped_on_corrupt_local_json
+test_push_skipped_on_empty_local_json
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"

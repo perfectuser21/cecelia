@@ -105,6 +105,14 @@ push_token_back() {
     printf '[codex-request] WARN: 本地 %s 不存在，跳过推回\n' "$LOCAL_AUTH" >&2
     return 0
   fi
+  # -s：文件存在但大小为 0（空文件）。必须单独判——
+  # jq empty 对 0 字节文件视为"没有 JSON 值可解析"，会直接返回成功(exit 0)，
+  # 完全堵不住 codex 被 kill -9/磁盘满导致文件被截断成空文件这个具名场景。
+  if [[ ! -s "$LOCAL_AUTH" ]]; then
+    printf '[codex-request] WARN: 本地 %s 是空文件（可能 codex 异常终止/磁盘满导致），跳过推回，保留美国侧现有副本不被覆盖\n' \
+      "$LOCAL_AUTH" >&2
+    return 0
+  fi
   if ! jq empty "$LOCAL_AUTH" >/dev/null 2>&1; then
     printf '[codex-request] WARN: 本地 %s 不是合法 JSON（可能 codex 异常终止/磁盘满导致写坏），跳过推回，保留美国侧现有副本不被覆盖\n' \
       "$LOCAL_AUTH" >&2
