@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const BRAIN_URL = import.meta.env.VITE_BRAIN_URL || 'http://localhost:5221';
-
 interface Capture {
   id: string;
   content: string;
@@ -92,7 +90,7 @@ export default function InboxPage() {
       const params = new URLSearchParams({ limit: '50', offset: String(page * 50) });
       if (selectedStage && selectedStage !== 'parked') params.set('stage', selectedStage);
       if (selectedNature) params.set('nature', selectedNature);
-      const resp = await fetch(`${BRAIN_URL}/api/brain/captures?${params}`);
+      const resp = await fetch(`/api/brain/captures?${params}`);
       const data = await resp.json();
       setItems(data.items || []);
       setTotal(data.total || 0);
@@ -110,7 +108,7 @@ export default function InboxPage() {
 
   const openDetail = async (id: string) => {
     try {
-      const resp = await fetch(`${BRAIN_URL}/api/brain/captures/${id}`);
+      const resp = await fetch(`/api/brain/captures/${id}`);
       const data = await resp.json();
       setSelectedItem(data);
       setDrawerOpen(true);
@@ -120,7 +118,7 @@ export default function InboxPage() {
   };
 
   const handleReroute = async (atomId: string, nature: string) => {
-    await fetch(`${BRAIN_URL}/api/brain/capture-atoms/${atomId}/confirm`, {
+    await fetch(`/api/brain/capture-atoms/${atomId}/confirm`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'reroute', nature }),
@@ -129,7 +127,7 @@ export default function InboxPage() {
   };
 
   const handleDrop = async (atomId: string) => {
-    await fetch(`${BRAIN_URL}/api/brain/capture-atoms/${atomId}/confirm`, {
+    await fetch(`/api/brain/capture-atoms/${atomId}/confirm`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'drop' }),
@@ -138,7 +136,7 @@ export default function InboxPage() {
   };
 
   const handleRetry = async (atomId: string) => {
-    await fetch(`${BRAIN_URL}/api/brain/capture-atoms/${atomId}/retry`, { method: 'POST' });
+    await fetch(`/api/brain/capture-atoms/${atomId}/retry`, { method: 'POST' });
     if (selectedItem) openDetail(selectedItem.id);
   };
 
