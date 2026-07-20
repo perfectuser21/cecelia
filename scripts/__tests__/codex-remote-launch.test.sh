@@ -95,11 +95,23 @@ test_team3_unaffected() {
   teardown
 }
 
+test_help_mentions_team1_team2() {
+  setup
+  out="$(bash "$TARGET" --help 2>&1)"
+  if [[ "$out" == *"team1"* && "$out" == *"team2"* ]]; then
+    pass "--help 输出包含 team1/team2（白名单扩容对外可见）"
+  else
+    fail "--help 输出包含 team1/team2（白名单扩容对外可见）" "$out"
+  fi
+  teardown
+}
+
 echo "=== codex-remote-launch.sh 白名单扩容测试 ==="
 test_team1_now_allowed
 test_team2_now_allowed
 test_team6_still_rejected
 test_team3_unaffected
+test_help_mentions_team1_team2
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"
