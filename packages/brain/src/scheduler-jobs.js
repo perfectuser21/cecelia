@@ -63,6 +63,11 @@ export const JOBS = [
   { name: 'conversation-capture', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => {
     const r = await runConversationCapture(pool);
     if (r?.ok === false) throw new Error(r.error || 'conversation-capture failed');
+    // pushCapture 永不抛出，写入失败只体现在 r.errors 上；不检查这里会让
+    // 部分失败的跑（有 pushed 也有 errors）在哨兵里显示为纯绿，重演历史事故
+    // （相似功能静默丢数据 4 个月无人发现）。errors>0 必须让本轮 job 记为失败，
+    // 才能被 seven-ring-audit / capture-aging 告警层读到。
+    if (r?.errors > 0) throw new Error(`conversation-capture: ${r.errors} 条写入失败（已推送 ${r.pushed ?? 0} 条）`);
     return r;
   }, description: '对话原始捕获：机械过滤~/.claude/projects/*.jsonl真人文本写入captures(source=conversation)，自带10min间隔gate（decision f64adaaf/0c9e1652）' },
 ];

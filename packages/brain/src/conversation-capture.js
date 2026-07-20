@@ -149,11 +149,23 @@ export async function runConversationCapture(pool) {
           const result = await pushCapture(pool, {
             content: turn.text,
             source: 'conversation',
-            repo: dir.name,
+            // captures.repo 是 varchar(100)，dir.name 是 Claude Code 项目目录名
+            // （完整路径把 / 替换成 -），嵌套 worktree 路径真实超过 100 字符。
+            // repo 只是描述性元数据非唯一键（dedupeKey 已负责去重），截断即可。
+            repo: dir.name.slice(0, 100),
             dedupeKey: turn.dedupeKey,
           });
-          if (result?.captureId) pushed++;
+          if (result?.captureId) {
+            pushed++;
+          } else {
+            // pushCapture 的契约是永不抛出：DB 错误（含约束违反）内部 catch 后
+            // console.warn 并 resolve(null)。这才是它真实的失败信号路径，
+            // 必须在这里计入 errors，否则会出现"全绿返回但数据丢失"的假阳性。
+            errors++;
+            console.warn(`[conversation-capture] pushCapture returned null for ${filePath} (dedupeKey=${turn.dedupeKey})`);
+          }
         } catch (e) {
+          // 防御性兜底：pushCapture 本身不会走到这里，但保留以覆盖其他未预期异常。
           errors++;
           console.warn(`[conversation-capture] push failed for ${filePath}: ${e.message}`);
         }

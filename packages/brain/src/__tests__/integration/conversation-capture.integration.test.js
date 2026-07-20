@@ -123,19 +123,24 @@ describe('conversation-capture integration（真 DB）', () => {
     vi.unstubAllEnvs();
   });
 
-  it('写入异常不抛出，errors 计数非零且 sentinel 可查到', async () => {
+  it('pushCapture 真实失败契约（resolve null，不 throw）时 errors 计数非零且 sentinel 可查到', async () => {
+    // pushCapture 的真实契约是永不抛出：DB 错误内部 catch 后 console.warn 并
+    // resolve(null)（见 capture-inbox.test.js:29）。用 mockRejectedValueOnce
+    // 模拟"抛异常"不代表生产环境的真实失败模式，会掩盖 result===null 分支未
+    // 计入 errors 的 bug（历史事故：相似功能静默丢数据 4 个月无人发现）。
+    // 这里改用 mockResolvedValueOnce(null) 还原真实契约。
     const { root } = makeFixtureDir();
     originalDir = root;
     const finalProjectDir = path.join(root, `itest-${Date.now()}`);
     fs.mkdirSync(finalProjectDir);
     writeSession(finalProjectDir, 'bad-session.jsonl', [
-      { type: 'user', uuid: 'itest-uuid-bad', timestamp: new Date().toISOString(), message: { role: 'user', content: 'x'.repeat(3000) } },
+      { type: 'user', uuid: 'itest-uuid-bad', timestamp: new Date().toISOString(), message: { role: 'user', content: '这条会被模拟成 pushCapture 内部失败' } },
     ]);
 
     vi.stubEnv('CLAUDE_PROJECTS_DIR', root);
     vi.resetModules();
     const captureInbox = await import('../../capture-inbox.js');
-    const spy = vi.spyOn(captureInbox, 'pushCapture').mockRejectedValueOnce(new Error('模拟写入失败'));
+    const spy = vi.spyOn(captureInbox, 'pushCapture').mockResolvedValueOnce(null);
 
     const mod = await import('../../conversation-capture.js');
     let threw = false;
@@ -154,6 +159,39 @@ describe('conversation-capture integration（真 DB）', () => {
     expect(rows[0].value_json.errors).toBeGreaterThanOrEqual(1);
 
     spy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it('repo 目录名超过 100 字符时会被截断写入，不触发 varchar(100) 约束失败（防止真实事故复现）', async () => {
+    // 复现审查者在本机 ~/.claude/projects/ 发现的真实场景：嵌套 worktree 路径
+    // 编码后的项目目录名可以轻松超过 captures.repo 的 varchar(100) 上限。
+    // 若不截断，pushCapture 会内部吞掉约束错误并 resolve(null)，导致数据静默丢失
+    // 且哨兵显示全绿——这正是本次修复要根治的事故模式。
+    const { root } = makeFixtureDir();
+    originalDir = root;
+    const longSuffix = 'x'.repeat(90);
+    const finalProjectDir = path.join(root, `itest-${Date.now()}-${longSuffix}`);
+    fs.mkdirSync(finalProjectDir);
+    const repoName = path.basename(finalProjectDir);
+    expect(repoName.length).toBeGreaterThan(100);
+    writeSession(finalProjectDir, 'long-dirname-session.jsonl', [
+      { type: 'user', uuid: 'itest-uuid-longdir', timestamp: new Date().toISOString(), message: { role: 'user', content: '目录名超长场景下应该正常写入' } },
+    ]);
+
+    vi.stubEnv('CLAUDE_PROJECTS_DIR', root);
+    vi.resetModules();
+    const mod = await import('../../conversation-capture.js');
+    const result = await mod.runConversationCapture(pool);
+    expect(result.ok).toBe(true);
+    expect(result.errors).toBe(0);
+    expect(result.pushed).toBeGreaterThanOrEqual(1);
+
+    const { rows } = await pool.query(
+      `SELECT content, repo FROM captures WHERE source = 'conversation' AND repo = $1`,
+      [repoName.slice(0, 100)]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].content).toBe('目录名超长场景下应该正常写入');
     vi.unstubAllEnvs();
   });
 });

@@ -71,6 +71,15 @@ vi.mock('../capture-aging.js', () => ({
   runCaptureAging: vi.fn().mockResolvedValue({ skipped: false, overdue_captures: 0, overdue_atoms: 0, retried: 0, parked_by_aging: 0 }),
 }));
 
+// conversation-capture 真实 handler 会扫描本机 ~/.claude/projects 真实文件并调用
+// pushCapture——在这个纯路由行为单测里必须 mock 掉，否则结果依赖本机磁盘状态
+// 且会被 pushCapture 对假 pool（query 恒返回 {rows:[]}）的真实失败信号触发
+// job 失败，这不是本测试想覆盖的东西（conversation-capture 自身逻辑由
+// conversation-capture.test.js + integration 测试覆盖）。
+vi.mock('../conversation-capture.js', () => ({
+  runConversationCapture: vi.fn().mockResolvedValue({ ok: true, pushed: 0, errors: 0 }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
