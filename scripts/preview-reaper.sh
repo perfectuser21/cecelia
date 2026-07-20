@@ -15,6 +15,12 @@
 
 set -uo pipefail
 
+# cron 默认 PATH 只有 /usr/bin:/bin，找不到装在 /opt/homebrew/bin 的 gh/psql/dropdb，
+# 导致 gh pr view 在 cron 下 100% 失败、"保守跳过"分支永远命中，dropdb 从未被真正执行过
+# （2026-07-20 磁盘几乎打满事故根因，见 test 8 in preview-reaper.test.sh）。
+# 追加而非前插：不能抢在调用方已设置的 PATH（含测试 mock 目录）前面。
+export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
+
 PREVIEW_BASE_DIR="${PREVIEW_BASE_DIR:-/Users/administrator/worktrees/cecelia-previews}"
 REPO_ROOT="${REPO_ROOT:-/Users/administrator/perfect21/cecelia}"
 DB_HOST="${DB_HOST:-localhost}"
