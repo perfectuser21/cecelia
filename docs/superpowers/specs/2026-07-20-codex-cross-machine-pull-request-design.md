@@ -20,7 +20,7 @@ PR #4132 落地了 `scripts/codex-remote-launch.sh`：美国 M4 作为 team3/4/5
 1. 反向 SSH 探活美国 M4（`assert_ssh`，复用 codex-remote-launch.sh 同款 BatchMode 探测逻辑）
 2. `scp` 从美国拉取 `~/.codex-teamN/auth.json` → 本地写入，`chmod 600`（不打印 token 内容）
 3. 注册 `trap` on EXIT：无论 codex 正常退出还是异常中断，都尝试把本地（可能已被 codex CLI 自动刷新过 access_token 的）`auth.json` scp 回美国对应路径，`chmod 600`；失败不静默吞掉，打印明确错误到 stderr
-4. `exec env CODEX_HOME=~/.codex-teamN <codex_bin>`，前台运行，同事在自己已有的 SSH 会话里直接交互，不需要 tmux attach
+4. **不用 `exec`**，以普通前台子进程运行 `env CODEX_HOME=~/.codex-teamN <codex_bin>`——`exec` 会把脚本自身进程替换成 codex 进程，脚本进程消失后第 3 步注册的 `trap ... EXIT` 永远不会触发；普通前台调用等 codex 退出（无论退出码是什么、包括 Ctrl-C）后脚本继续运行，`exit` 时 trap 正常触发完成回传。同事仍然是在自己已有的 SSH 会话里直接交互，观感和 `exec` 一样，不需要 tmux attach
 
 同时把 `scripts/codex-remote-launch.sh` 的 `ALLOWED_TEAMS` 从 `(team3 team4 team5)` 扩展为 `(team1 team2 team3 team4 team5)`，让"美国主动推"通道（headless 自动化用）也覆盖全部 5 个账号。
 
@@ -46,8 +46,8 @@ PR #4132 落地了 `scripts/codex-remote-launch.sh`：美国 M4 作为 team3/4/5
 
 - **Unit（trivial 脚本自测，仿照 `scripts/__tests__/preview-reaper.test.sh` 模式）**：`scripts/__tests__/codex-request.test.sh` + 扩充 `scripts/__tests__/codex-remote-launch.test.sh`（如原 PR 无测试文件则新建），用 mock `ssh`/`scp`/`codex` 二进制覆盖 PATH，断言：
   - 非法 team 参数被拒绝（team6、空值等）
-  - 正常流程按序调用 scp 拉取 → chmod 600 → exec codex → trap 内 scp 推回
-  - trap 在 codex 异常退出（非 0）时依然触发回传
+  - 正常流程按序调用 scp 拉取 → chmod 600 → 前台跑 codex（非 exec）→ trap 内 scp 推回
+  - trap 在 codex 异常退出（非 0）时依然触发回传（验证 `exec` 未被使用，否则 trap 不会触发）
   - grep 断言脚本源码不含打印 token 内容的语句（`cat.*auth.json`、`echo.*auth`等）
 - **集成验证（不进 CI，本任务人工核验一次即可，属于跨真实机器的操作）**：真实在西安 M4 上跑一次 `codex-request.sh --team team3`（或 team1/team2 中一个此前没验证过的账号），确认：
   1. `ssh xian-m4 'ps aux | grep codex'` 能看到进程真实起来
