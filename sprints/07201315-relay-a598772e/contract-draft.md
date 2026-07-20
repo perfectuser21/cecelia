@@ -114,13 +114,13 @@
 
 ## Test Contract
 
-| Test File | BEHAVIOR 覆盖 |
-|---|---|
-| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-1: executor=grok → CECELIA_EXECUTOR=grok 注入 spawnFn env |
-| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-2: GROK_RELAY_HOME="" → spawnFn 未被调用 |
-| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-3: GROK_RELAY_HOME 未设置 → spawnFn 被调用，r.ok===true |
-| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-4: extraMounts 含 GROK_RELAY_HOME:/home/cecelia/.grok:rw |
-| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-5: detectQuotaWall 是导出的函数 |
-| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-6: grok 撞墙 → 第二次 spawnFn 调用使用 CECELIA_EXECUTOR=claude |
-| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-7: HEADED_HOSTS 含 grok 条目 |
-| sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js | BEHAVIOR-8: executor=codex（CODEX_RELAY_HOME 配置）→ orchestrator_host=skill-relay-codex（不变）|
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| BEHAVIOR-1 | `tests/harness-skill-relay-grok.test.js` | CECELIA_EXECUTOR=grok 注入 spawnFn env | Red commit 8a2304b91: 24 failures |
+| BEHAVIOR-2 | `tests/harness-skill-relay-grok.test.js` | GROK_RELAY_HOME="" → spawnFn 未被调用 | Red commit 8a2304b91: 24 failures |
+| BEHAVIOR-3 | `tests/harness-skill-relay-grok.test.js` | GROK_RELAY_HOME 未设置 → spawnFn 被调用，r.ok===true | Red commit 8a2304b91 |
+| BEHAVIOR-4 | `tests/harness-skill-relay-grok.test.js` | extraMounts 含 GROK_RELAY_HOME | Red commit 8a2304b91 |
+| BEHAVIOR-5 | `tests/harness-skill-relay-grok.test.js` | detectQuotaWall 是导出的函数 | Red commit 8a2304b91 |
+| BEHAVIOR-6 | `tests/harness-skill-relay-grok.test.js` | grok 撞墙 → 第二次 spawnFn 调用使用 CECELIA_EXECUTOR=claude | Red commit 8a2304b91 |
+| BEHAVIOR-7 | `tests/harness-skill-relay-grok.test.js` | HEADED_HOSTS 含 grok 条目 | Red commit 8a2304b91 |
+| BEHAVIOR-8 | `tests/harness-skill-relay-grok.test.js` | executor=codex（CODEX_RELAY_HOME 配置）→ orchestrator_host=skill-relay-codex（不变） | Red commit 8a2304b91 |
