@@ -216,6 +216,90 @@ CORR=$(psql -U postgres -d cecelia -t -c \
 
 ---
 
+### [BEHAVIOR-8] 信封字段焊死（Inv-3）— triage job 不得覆写 nature/repo/lane/ref_task_id
+
+**描述**：capture-triage 运行后，captures 表中 nature、repo、lane、ref_task_id 四个信封字段必须保持进箱时的原始值，triage job 只允许修改 status 和 atom 相关字段，禁止覆写信封。本条目对应 PRD Inv-3。
+
+**验收命令（manual:bash）**：
+```bash
+# 1. 插入带明确信封字段的 capture
+CAP_ID=$(psql -U postgres -d cecelia -t -c \
+  "INSERT INTO captures (content, source, status, nature, repo, lane, ref_task_id, dedupe_key) \
+   VALUES ('DoD-Inv3-信封焊死测试', 'api', 'captured', 'learning', 'cecelia', 'backlog', 'task-inv3-anchor', 'dod-inv3-test-001') RETURNING id;" \
+  2>/dev/null | tr -d ' \n')
+echo "插入 capture_id=$CAP_ID"
+
+# 2. 直接调用 capture-triage（不等 scheduler 自然触发）
+node -e "
+const { triageCapture } = require('./packages/brain/src/capture-triage.js');
+triageCapture('$CAP_ID').then(() => console.log('triage done')).catch(e => console.error('triage error:', e.message));
+" 2>&1 | tail -5
+
+# 3. 查询信封字段——必须与插入时完全一致
+ROW=$(psql -U postgres -d cecelia -t -c \
+  "SELECT nature, repo, lane, ref_task_id FROM captures WHERE id='$CAP_ID';" \
+  2>/dev/null | tr -d ' ')
+echo "信封字段查询结果: $ROW"
+
+NATURE=$(psql -U postgres -d cecelia -t -c \
+  "SELECT nature FROM captures WHERE id='$CAP_ID';" 2>/dev/null | tr -d ' \n')
+REPO=$(psql -U postgres -d cecelia -t -c \
+  "SELECT repo FROM captures WHERE id='$CAP_ID';" 2>/dev/null | tr -d ' \n')
+LANE=$(psql -U postgres -d cecelia -t -c \
+  "SELECT lane FROM captures WHERE id='$CAP_ID';" 2>/dev/null | tr -d ' \n')
+REF=$(psql -U postgres -d cecelia -t -c \
+  "SELECT ref_task_id FROM captures WHERE id='$CAP_ID';" 2>/dev/null | tr -d ' \n')
+
+[ "$NATURE" = "learning" ] && echo "PASS: nature 未被覆写" || echo "FAIL: nature 变为 $NATURE"
+[ "$REPO" = "cecelia" ]    && echo "PASS: repo 未被覆写"   || echo "FAIL: repo 变为 $REPO"
+[ "$LANE" = "backlog" ]    && echo "PASS: lane 未被覆写"   || echo "FAIL: lane 变为 $LANE"
+[ "$REF" = "task-inv3-anchor" ] && echo "PASS: ref_task_id 未被覆写" || echo "FAIL: ref_task_id 变为 $REF"
+```
+
+**通过条件**：四个信封字段（nature/repo/lane/ref_task_id）均输出 PASS，与进箱时写入值完全一致。
+
+---
+
+### [BEHAVIOR-9] POST /api/brain/capture-atoms/:id/retry — 手动重试接口
+
+**描述**：FR-9 定义的手动重试接口，对 llm_failed 状态的 atom 触发重试（retry_count+1，重置 status 为 pending_review），当 retry_count 已达上限（≥3）时拒绝重试并将 atom 转 parked。
+
+**验收命令（manual:bash）**：
+```bash
+# 场景 A：retry_count < 3 时，retry_count+1，status 重置为 pending_review
+ATOM_A=$(psql -U postgres -d cecelia -t -c \
+  "INSERT INTO capture_atoms (content, target_type, status, retry_count) \
+   VALUES ('DoD-retry-未到上限', 'issue', 'llm_failed', 1) RETURNING id;" \
+  2>/dev/null | tr -d ' \n')
+echo "插入 atom_A=$ATOM_A（retry_count=1）"
+
+RESP_A=$(curl -s -X POST "http://localhost:5221/api/brain/capture-atoms/$ATOM_A/retry")
+echo "retry 响应: $RESP_A"
+echo "$RESP_A" | grep -q '"retry_count":2' && echo "PASS: retry_count+1 变为 2" || echo "FAIL: retry_count 未递增，$RESP_A"
+
+STATUS_A=$(psql -U postgres -d cecelia -t -c \
+  "SELECT status FROM capture_atoms WHERE id='$ATOM_A';" 2>/dev/null | tr -d ' \n')
+[ "$STATUS_A" = "pending_review" ] && echo "PASS: status 重置为 pending_review" || echo "FAIL: status=$STATUS_A"
+
+# 场景 B：retry_count >= 3 时，转 parked，不再重试
+ATOM_B=$(psql -U postgres -d cecelia -t -c \
+  "INSERT INTO capture_atoms (content, target_type, status, retry_count) \
+   VALUES ('DoD-retry-已到上限', 'issue', 'llm_failed', 3) RETURNING id;" \
+  2>/dev/null | tr -d ' \n')
+echo "插入 atom_B=$ATOM_B（retry_count=3）"
+
+RESP_B=$(curl -s -X POST "http://localhost:5221/api/brain/capture-atoms/$ATOM_B/retry")
+echo "超限 retry 响应: $RESP_B"
+
+STATUS_B=$(psql -U postgres -d cecelia -t -c \
+  "SELECT status FROM capture_atoms WHERE id='$ATOM_B';" 2>/dev/null | tr -d ' \n')
+[ "$STATUS_B" = "parked" ] && echo "PASS: 超限后 atom 转 parked" || echo "FAIL: status=$STATUS_B（期望 parked）"
+```
+
+**通过条件**：场景 A 中 retry_count 从1变2 + status=pending_review；场景 B 中 status=parked。
+
+---
+
 ## DoD 检查清单
 
 ### 功能完整性
@@ -226,6 +310,8 @@ CORR=$(psql -U postgres -d cecelia -t -c \
 - [ ] [BEHAVIOR-5] pushCapture 旁路封死 ✓
 - [ ] [BEHAVIOR-6] Dashboard /inbox 漏斗渲染 ✓
 - [ ] [BEHAVIOR-7] confirm reroute 改判 ✓
+- [ ] [BEHAVIOR-8] Inv-3 信封字段焊死 — triage 后 nature/repo/lane/ref_task_id 不变 ✓
+- [ ] [BEHAVIOR-9] FR-9 POST /retry 接口 — retry_count+1 + 超限转 parked ✓
 
 ### 测试覆盖
 - [ ] `packages/brain/src/__tests__/capture-aging.test.js` 存在且通过
@@ -240,5 +326,26 @@ CORR=$(psql -U postgres -d cecelia -t -c \
 
 ### 不变量验证
 - [ ] pushCapture 失败不影响 handoff/learning/issue 主流程（单测 mock DB 报错验证）
-- [ ] status CHECK constraint 阻止非法值（单测 DB 约束验证）
+- [ ] status CHECK constraint 阻止非法值（psql 验收命令见下）
 - [ ] capture-triage 四路骨架测试不回归（`packages/brain/src/__tests__/capture-triage.test.js` 全绿）
+
+**Inv-4 DB CHECK constraint 验收命令（manual:bash）**：
+```bash
+# 验证 captures 表 status CHECK constraint — 插入非法值应被 DB 拒绝
+RESULT=$(psql -U postgres -d cecelia -t -c \
+  "INSERT INTO captures (content, source, status) VALUES ('constraint-test-inv4', 'api', 'invalid_status');" \
+  2>&1)
+echo "DB 响应: $RESULT"
+echo "$RESULT" | grep -qiE "violates check constraint|check_violation|new row.*violates" \
+  && echo "PASS: CHECK constraint 有效，非法 status 已被 DB 拒绝" \
+  || echo "FAIL: constraint 未生效，非法值被接受"
+
+# 同样验证 capture_atoms 表的 status constraint
+RESULT2=$(psql -U postgres -d cecelia -t -c \
+  "INSERT INTO capture_atoms (content, target_type, status) VALUES ('constraint-test-inv4', 'issue', 'invalid_status');" \
+  2>&1)
+echo "capture_atoms DB 响应: $RESULT2"
+echo "$RESULT2" | grep -qiE "violates check constraint|check_violation|new row.*violates" \
+  && echo "PASS: capture_atoms CHECK constraint 有效" \
+  || echo "FAIL: capture_atoms constraint 未生效"
+```
