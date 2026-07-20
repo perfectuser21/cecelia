@@ -20,6 +20,9 @@
 #   - 本地与远端 auth.json 均 mode 600
 #   - 不使用 exec 运行 codex —— exec 会替换脚本自身进程，
 #     导致 EXIT trap 无法在 codex 退出后触发，回传逻辑就此失效
+#   - 推回前必须校验本地 auth.json 是合法 JSON（依赖 jq）——
+#     codex 若被 kill -9 / 磁盘满导致文件写坏，绝不能把坏文件当"最新版本"
+#     覆盖美国侧唯一持久副本；校验失败则跳过推回，人工核查
 set -uo pipefail  # 不用 -e：codex 非零退出时仍须继续执行 trap 回传逻辑
 
 ALLOWED_TEAMS=(team1 team2 team3 team4 team5)
@@ -102,13 +105,18 @@ push_token_back() {
     printf '[codex-request] WARN: 本地 %s 不存在，跳过推回\n' "$LOCAL_AUTH" >&2
     return 0
   fi
+  if ! jq empty "$LOCAL_AUTH" >/dev/null 2>&1; then
+    printf '[codex-request] WARN: 本地 %s 不是合法 JSON（可能 codex 异常终止/磁盘满导致写坏），跳过推回，保留美国侧现有副本不被覆盖\n' \
+      "$LOCAL_AUTH" >&2
+    return 0
+  fi
   chmod 600 "$LOCAL_AUTH"
   if scp -o BatchMode=yes -o ConnectTimeout=15 \
       "$LOCAL_AUTH" "${US_HOST}:${REMOTE_AUTH}" 2>/tmp/codex-request-pushback-err.$$; then
     ssh_cmd "chmod 600 ${REMOTE_AUTH}" || true
     log "已把 ${TEAM} token 推回美国"
   else
-    printf '[codex-request] ERROR: %s token 推回美国失败，请人工核查（不重试，避免覆盖坏数据）: %s\n' \
+    printf '[codex-request] ERROR: %s token 推回美国失败，请人工核查（scp 本次连接已不通，重试无意义，不做自动重试）: %s\n' \
       "$TEAM" "$(cat /tmp/codex-request-pushback-err.$$ 2>/dev/null)" >&2
   fi
   rm -f /tmp/codex-request-pushback-err.$$

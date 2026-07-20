@@ -46,7 +46,6 @@ SH
 
   export PATH="$BIN:$PATH"
   export HOME
-  export CODEX_REMOTE_LAUNCH_TEST=1
 }
 
 teardown() { rm -rf "$TMP"; }
@@ -85,8 +84,10 @@ test_pull_then_run_then_pushback_on_success() {
     fail "应以正确 CODEX_HOME 前台运行 codex" "$(cat "$LOG")"
   elif [[ "$(grep -c '^scp ' "$LOG")" -lt 2 ]]; then
     fail "应发生至少 2 次 scp（拉取 + 推回）" "$(cat "$LOG")"
+  elif ! (grep -F -- "$HOME/.codex-team3/auth.json" "$LOG" | grep -qE ':[^[:space:]]*$'); then
+    fail "应有一次 scp 以本地 auth.json（$HOME/.codex-team3/auth.json）为源、推回远端(host:path)" "$(cat "$LOG")"
   else
-    pass "正常退出：拉取→前台跑codex→推回 全流程正确"
+    pass "正常退出：拉取→前台跑codex→推回 全流程正确（含 scp src/dest 方向校验）"
   fi
   rm -f /tmp/out.$$
   teardown
@@ -153,6 +154,35 @@ test_chmod_600_both_directions() {
   teardown
 }
 
+test_push_skipped_on_corrupt_local_json() {
+  setup
+  # 模拟 codex 运行中被 kill -9 / 磁盘满，导致本地 auth.json 被写坏成截断的非法 JSON
+  cat >"$BIN/codex" <<SH
+#!/bin/bash
+echo "codex ran with CODEX_HOME=\$CODEX_HOME" >> "$LOG"
+echo -n '{"broken' > "\$CODEX_HOME/auth.json"
+exit "\${CODEX_MOCK_EXIT_CODE:-0}"
+SH
+  chmod +x "$BIN/codex"
+
+  set +e
+  CODEX_MOCK_EXIT_CODE=3 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
+  local rc=$?
+  set -e
+
+  if [[ "$rc" -ne 3 ]]; then
+    fail "本地 auth.json 写坏场景下脚本仍应正常透传 codex 原始退出码(3)" "实际 rc=$rc, 输出: $(cat /tmp/out.$$)"
+  elif grep -F -- "$HOME/.codex-team3/auth.json" "$LOG" | grep -qE ':[^[:space:]]*$'; then
+    fail "本地 auth.json 是非法 JSON 时不应发生推回 scp（会覆盖美国侧唯一持久副本）" "$(cat "$LOG")"
+  elif ! grep -q "跳过推回" /tmp/out.$$; then
+    fail "应打印 WARN 说明因 JSON 校验失败跳过推回" "$(cat /tmp/out.$$)"
+  else
+    pass "本地 auth.json 是非法 JSON 时：跳过推回、不覆盖远端，且 codex 原始退出码仍正常透传"
+  fi
+  rm -f /tmp/out.$$
+  teardown
+}
+
 echo "=== codex-request.sh 单元测试 ==="
 test_invalid_team_rejected
 test_missing_team_rejected
@@ -162,6 +192,7 @@ test_no_exec_used
 test_no_token_content_printed
 test_no_login_command
 test_chmod_600_both_directions
+test_push_skipped_on_corrupt_local_json
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"
