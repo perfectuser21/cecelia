@@ -249,8 +249,11 @@ if [[ "$NEED_BRAIN" == true ]]; then
         # 一旦最新代码新增/变更了依赖（如 zod），宿主机 node_modules 落后于代码，
         # smoke 脚本因 "Cannot find package" 误判部署失败——即使 Docker 镜像本身
         # 完全正常（已用 docker build --no-cache 实测验证）。
+        # --cache 必须显式指定：容器内 $HOME=/Users/administrator 是只读挂载点，
+        # npm 默认缓存路径 $HOME/.npm 从未被单独挂载为可写，裸 npm ci 会在容器内
+        # 直接 "Read-only file system" 失败（2026-07-20 实锤，见同名 smoke 脚本）。
         echo "  同步宿主机 packages/brain 依赖（npm ci）..."
-        if ! (cd "$MAIN_ROOT" && npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-scripts); then
+        if ! (cd "$MAIN_ROOT" && npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-scripts --cache "$MAIN_ROOT/.npm-cache"); then
             echo "❌ 宿主机依赖同步失败，拒绝部署（带着滞后依赖继续会让 pre-swap smoke 误判）"
             exit 1
         fi
