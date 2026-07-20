@@ -4,7 +4,7 @@ vi.mock('../../db.js', () => ({
   default: { query: vi.fn() },
 }));
 
-describe('captures route — VALID_SOURCES 含 conversation', () => {
+describe('captures route — 三工具 source 值 + session_summary nature', () => {
   let router, pool;
 
   beforeEach(async () => {
@@ -25,10 +25,27 @@ describe('captures route — VALID_SOURCES 含 conversation', () => {
     return res;
   }
 
-  it('source=conversation 被接受（不落 400）', async () => {
+  it.each(['conversation-claude', 'conversation-codex', 'conversation-grok'])('source=%s 被接受', async (source) => {
     pool.query.mockResolvedValueOnce({ rows: [{ id: 'x', status: 'captured', dedupe_key: null, created_at: new Date() }] });
     const handler = findPostHandler();
+    const req = { body: { content: '测试内容', source } };
+    const res = mockRes();
+    await handler(req, res);
+    expect(res.statusCode).not.toBe(400);
+  });
+
+  it('旧的 source=conversation（未分工具）不再被接受', async () => {
+    const handler = findPostHandler();
     const req = { body: { content: '测试内容', source: 'conversation' } };
+    const res = mockRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('nature=session_summary 被接受', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 'x', status: 'clarified', dedupe_key: null, created_at: new Date() }] });
+    const handler = findPostHandler();
+    const req = { body: { content: '摘要内容', source: 'conversation-claude', nature: 'session_summary' } };
     const res = mockRes();
     await handler(req, res);
     expect(res.statusCode).not.toBe(400);
