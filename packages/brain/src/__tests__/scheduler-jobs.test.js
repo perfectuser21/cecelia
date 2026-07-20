@@ -67,6 +67,10 @@ vi.mock('../codex-test-gen.js', () => ({
   runCodexTestGen: vi.fn().mockResolvedValue({ queued: [], count: 0 }),
 }));
 
+vi.mock('../capture-aging.js', () => ({
+  runCaptureAging: vi.fn().mockResolvedValue({ skipped: false, overdue_captures: 0, overdue_atoms: 0, retried: 0, parked_by_aging: 0 }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
@@ -95,9 +99,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 21 个 job（含 disk-guard + promise-map-nightly + machine-vitals + codex-test-gen）', () => {
+  it('JOBS 注册了 22 个 job（含 disk-guard + promise-map-nightly + machine-vitals + codex-test-gen + capture-aging）', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly', 'codex-test-gen',
+      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly', 'codex-test-gen', 'capture-aging',
     ]);
   });
 
@@ -116,7 +120,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
     expect(maybeRunDirectionProposer).toHaveBeenCalledWith(pool);
     expect(runPostdeployVerifier).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(21);
+    expect(results).toHaveLength(22);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -126,7 +130,7 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results.find((r) => r.name === 'arch-review')).toMatchObject({ ok: false, error: 'boom' });
     expect(results.filter((r) => r.name !== 'arch-review').every((r) => r.ok)).toBe(true);
-    expect(results).toHaveLength(21);
+    expect(results).toHaveLength(22);
   });
 
   it('handler 永挂时按 timeoutMs 标记 timedOut 并继续', async () => {

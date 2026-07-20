@@ -83,7 +83,7 @@ describe('I-10: 生产护栏保留', () => {
     const path = require('path');
     const triageFile = path.resolve(
       __dirname,
-      '../../../packages/brain/src/capture-triage.js'
+      '../../capture-triage.js'
     );
     expect(fs.existsSync(triageFile)).toBe(true);
     const content = fs.readFileSync(triageFile, 'utf8');
