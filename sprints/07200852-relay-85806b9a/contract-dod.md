@@ -5,7 +5,7 @@ TASK_ID: 85806b9a-ad3b-409e-8aba-74d232df7589
 
 ---
 
-## [BEHAVIOR] B-1：scan-graph.mjs REPOS 清单替代硬编码
+## [BEHAVIOR] B-1：scan-graph.mjs REPOS 清单替代硬编码（覆盖 I-1 全量替换 + I-5 路径跳过）
 
 **描述**：`scripts/scan/scan-graph.mjs` 不再含 `const REPO = 'cecelia'` 或单一 `const ROOT = path.resolve(...)` 硬编码；改为 REPOS 数组，含至少三个条目（cecelia / zenithjoy-workspace / zenithjoy-skills），每项支持环境变量覆盖。
 
