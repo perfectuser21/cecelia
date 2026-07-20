@@ -71,6 +71,15 @@ vi.mock('../capture-aging.js', () => ({
   runCaptureAging: vi.fn().mockResolvedValue({ skipped: false, overdue_captures: 0, overdue_atoms: 0, retried: 0, parked_by_aging: 0 }),
 }));
 
+// conversation-capture 真实 handler 会扫描本机 ~/.claude/projects 真实文件并调用
+// pushCapture——在这个纯路由行为单测里必须 mock 掉，否则结果依赖本机磁盘状态
+// 且会被 pushCapture 对假 pool（query 恒返回 {rows:[]}）的真实失败信号触发
+// job 失败，这不是本测试想覆盖的东西（conversation-capture 自身逻辑由
+// conversation-capture.test.js + integration 测试覆盖）。
+vi.mock('../conversation-capture.js', () => ({
+  runConversationCapture: vi.fn().mockResolvedValue({ ok: true, pushed: 0, errors: 0 }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
@@ -99,9 +108,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 22 个 job（含 disk-guard + promise-map-nightly + machine-vitals + codex-test-gen + capture-aging）', () => {
+  it('JOBS 注册了 23 个 job（含 disk-guard + promise-map-nightly + machine-vitals + codex-test-gen + capture-aging + conversation-capture）', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly', 'codex-test-gen', 'capture-aging',
+      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly', 'codex-test-gen', 'capture-aging', 'conversation-capture',
     ]);
   });
 
@@ -120,7 +129,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
     expect(maybeRunDirectionProposer).toHaveBeenCalledWith(pool);
     expect(runPostdeployVerifier).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(22);
+    expect(results).toHaveLength(23);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -130,7 +139,7 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results.find((r) => r.name === 'arch-review')).toMatchObject({ ok: false, error: 'boom' });
     expect(results.filter((r) => r.name !== 'arch-review').every((r) => r.ok)).toBe(true);
-    expect(results).toHaveLength(22);
+    expect(results).toHaveLength(23);
   });
 
   it('handler 永挂时按 timeoutMs 标记 timedOut 并继续', async () => {
