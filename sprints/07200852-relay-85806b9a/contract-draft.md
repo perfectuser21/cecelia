@@ -84,7 +84,7 @@ for repo of REPOS:
 
 ---
 
-## 三、Final E2E 验收段（真实执行）
+## E2E 验收（Final E2E，真实执行）
 
 ### E2E-1 三仓全量扫描验收
 

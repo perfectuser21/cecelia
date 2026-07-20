@@ -31,7 +31,7 @@ grep "zenithjoy-workspace" /workspace/scripts/scan/scan-graph.mjs
 
 **验收**：
 ```bash
-# manual
+# manual:bash
 REPO_ROOT_ZJ_SKILLS=/nonexistent_path_xxx \
   REPO_ROOT_ZJ_WORKSPACE=/nonexistent_path_yyy \
   node /workspace/scripts/scan/scan-graph.mjs 2>&1 | grep "WARN:"
@@ -52,7 +52,7 @@ psql $DATABASE_URL -c "SELECT count(*) FROM graph_edges WHERE repo='cecelia';"
 
 **验收**：
 ```bash
-# manual：扫描完成后检查每仓 freshness 摘要
+# manual:bash：扫描完成后检查每仓 freshness 摘要
 node /workspace/scripts/scan/scan-graph.mjs 2>&1 | grep -E "repo=.*stale="
 # 期望：各 repo 各自一行，stale=false（扫描刚完成）
 ```
@@ -67,7 +67,7 @@ node /workspace/scripts/scan/scan-graph.mjs 2>&1 | grep -E "repo=.*stale="
 
 **验收**：
 ```bash
-# manual
+# manual:bash
 grep "const REPO = 'cecelia'" /workspace/packages/brain/src/routes/graph.js
 # 期望：无输出
 
