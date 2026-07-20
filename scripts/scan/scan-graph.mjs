@@ -29,7 +29,8 @@ export const REPOS = [
 ];
 
 const FILE_RE = /\.(js|mjs|cjs|ts|tsx)$/;
-const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage']);
+// .claude 含 worktrees，扫它会把临时分支代码污染入图谱
+const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage', '.claude']);
 
 function walk(dir, out) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -51,11 +52,10 @@ function getCeceliaScanDirs(root) {
   ].filter((d) => fs.existsSync(path.join(root, d)));
 }
 
-// 获取通用扫描目录（src, lib, scripts 等）
-function getGenericScanDirs(root) {
-  return [
-    'src', 'lib', 'scripts', 'index.js', 'index.ts',
-  ].filter((d) => fs.existsSync(path.join(root, d)));
+// 获取通用扫描目录：对 skills/文档仓库直接扫根目录，避免只扫 scripts/ 而遗漏 skill 子目录
+function getGenericScanDirs(_root) {
+  // 返回 '.' 让 walk 扫整个 repo（.claude worktrees 已由 SKIP_DIRS 排除）
+  return ['.'];
 }
 
 /**
