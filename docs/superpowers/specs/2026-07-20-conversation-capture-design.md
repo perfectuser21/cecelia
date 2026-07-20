@@ -1,6 +1,6 @@
 # Design: 对话原始捕获（conversation raw capture）
 
-- 状态: 已批准（三轮口头确认 + PrepPRD 确认，见 sprints/07201602-conversation-capture/prep-prd.md）
+- 状态: 已批准（三轮口头确认 + PrepPRD 确认，见 docs/superpowers/plans/2026-07-20-conversation-capture-prep-prd.md）
 - Decision 锚点: f64adaaf-5313-4d1c-95a4-e4822de4b7f6 / 0c9e1652-f35b-4322-8687-8161f8be87f6
 - Initiative: 5402c2e5-975a-41ac-9a5c-e07184aa2d7c
 
