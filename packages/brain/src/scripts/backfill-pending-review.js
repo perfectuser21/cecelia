@@ -1,66 +1,95 @@
 #!/usr/bin/env node
 /**
- * backfill-pending-review.js — 消化 pending_review 积压（一次性）
- * FR-10: 积压清零
+ * backfill-pending-review.js — 积压清零脚本（FR-10）
+ *
+ * 消化所有 status='pending_review' 的 capture_atoms：
+ * 1. ai_reason LIKE '[triage:%' → 已有分诊标记 → 转 parked（进人工队列）
+ * 2. target_type IN ('handoff','learning','issue') 且无 journey 关联 → 转 parked
+ * 3. 其余（ai_reason IS NULL 或无标记）→ 保持 pending_review，让下次 triage 自然跑
+ *
+ * 用法：
+ *   node packages/brain/src/scripts/backfill-pending-review.js [--dry-run]
  */
-import pool from '../db.js';
 
-async function main() {
-  console.log('[backfill] 开始消化 pending_review 积压...');
+import pg from 'pg';
 
-  // 1. 记录积压数
-  const { rows: before } = await pool.query(
-    `SELECT count(*) FROM capture_atoms WHERE status='pending_review'`
+const { Pool } = pg;
+const DRY_RUN = process.argv.includes('--dry-run');
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia',
+});
+
+async function run() {
+  console.log(`[backfill-pending-review] 开始积压清零（dry_run=${DRY_RUN}）`);
+
+  // 记录初始数量
+  const beforeResult = await pool.query(
+    "SELECT count(*) FROM capture_atoms WHERE status='pending_review'"
   );
-  console.log(`[backfill] 运行前 pending_review: ${before[0].count}`);
+  const beforeCount = parseInt(beforeResult.rows[0].count, 10);
+  console.log(`[backfill-pending-review] 当前 pending_review 总数: ${beforeCount}`);
 
-  // 2. 已有 [triage:] 前缀标记 → 转 parked（进人工队列）
-  const { rows: parked } = await pool.query(
-    `UPDATE capture_atoms
-     SET status = 'parked', updated_at = now()
-     WHERE status = 'pending_review'
-       AND (ai_reason LIKE '[triage:%' OR ai_reason LIKE '[aging:%')
-     RETURNING id`
-  );
-  console.log(`[backfill] 转 parked: ${parked.length} 条`);
+  let parkedCount = 0;
 
-  // 3. no_journey / low_confidence 标记 → 转 parked
-  const { rows: parked2 } = await pool.query(
-    `UPDATE capture_atoms
-     SET status = 'parked', updated_at = now()
-     WHERE status = 'pending_review'
-       AND (ai_reason LIKE '%no_journey%' OR ai_reason LIKE '%low_confidence%')
-     RETURNING id`
-  );
-  console.log(`[backfill] no_journey/low_confidence 转 parked: ${parked2.length} 条`);
+  if (!DRY_RUN) {
+    // Case 1: ai_reason 含 [triage:] 前缀 → 已有分诊标记，转 parked
+    const parkedByTriage = await pool.query(
+      `UPDATE capture_atoms
+       SET status = 'parked', updated_at = now()
+       WHERE status = 'pending_review'
+         AND ai_reason LIKE '[triage:%'
+       RETURNING id`
+    );
+    parkedCount += parkedByTriage.rows.length;
+    console.log(`[backfill-pending-review] 含 [triage:] 标记转 parked: ${parkedByTriage.rows.length}`);
 
-  // 4. 剩余 pending_review（ai_reason IS NULL 或无 triage 前缀）→ 保持，让 triage 自然处理
-  // 不动，等 triage 自然跑
+    // Case 2: target_type 系统产出类型且无 journey 关联 → 转 parked
+    const parkedNoJourney = await pool.query(
+      `UPDATE capture_atoms
+       SET status = 'parked', ai_reason = '[backfill:no_journey]', updated_at = now()
+       WHERE status = 'pending_review'
+         AND target_type IN ('handoff','learning','issue')
+         AND (ai_reason IS NULL OR ai_reason NOT LIKE '[triage:%')
+         AND (routed_to_table IS NULL OR routed_to_id IS NULL)
+       RETURNING id`
+    );
+    parkedCount += parkedNoJourney.rows.length;
+    console.log(`[backfill-pending-review] 无 journey 关联转 parked: ${parkedNoJourney.rows.length}`);
+  } else {
+    const dryTriage = await pool.query(
+      "SELECT count(*) FROM capture_atoms WHERE status='pending_review' AND ai_reason LIKE '[triage:%'"
+    );
+    console.log(`[backfill-pending-review] [DRY-RUN] 含 [triage:] 标记将转 parked: ${dryTriage.rows[0].count}`);
 
-  // 5. 触发一次 capture-triage 运行
-  try {
-    const { runCaptureTriage } = await import('../capture-triage.js');
-    const result = await runCaptureTriage(pool);
-    console.log('[backfill] capture-triage 运行结果:', result);
-  } catch (err) {
-    console.warn('[backfill] capture-triage 调用失败（非致命）:', err.message);
+    const dryNoJourney = await pool.query(
+      `SELECT count(*) FROM capture_atoms
+       WHERE status='pending_review'
+         AND target_type IN ('handoff','learning','issue')
+         AND (ai_reason IS NULL OR ai_reason NOT LIKE '[triage:%')
+         AND (routed_to_table IS NULL OR routed_to_id IS NULL)`
+    );
+    console.log(`[backfill-pending-review] [DRY-RUN] 无 journey 关联将转 parked: ${dryNoJourney.rows[0].count}`);
   }
 
-  const { rows: after } = await pool.query(
-    `SELECT count(*) FROM capture_atoms WHERE status='pending_review'`
+  // 剩余 pending_review 数量
+  const afterResult = await pool.query(
+    "SELECT count(*) FROM capture_atoms WHERE status='pending_review'"
   );
-  console.log(`[backfill] 运行后 pending_review: ${after[0].count}`);
+  const afterCount = parseInt(afterResult.rows[0].count, 10);
 
-  const { rows: parkedCount } = await pool.query(
-    `SELECT count(*) FROM capture_atoms WHERE status='parked'`
-  );
-  console.log(`[backfill] 当前 parked: ${parkedCount[0].count}`);
+  console.log(`[backfill-pending-review] 完成: 转 parked=${parkedCount}, 剩余 pending_review=${afterCount}`);
+
+  if (afterCount === 0) {
+    console.log('[backfill-pending-review] ✓ 积压已全部清零');
+  } else {
+    console.log(`[backfill-pending-review] ⚠ 仍有 ${afterCount} 条待下次 triage 处理`);
+  }
 
   await pool.end();
-  console.log('[backfill] 完成');
 }
 
-main().catch(err => {
-  console.error('[backfill] 失败:', err);
+run().catch(err => {
+  console.error(`[backfill-pending-review] 失败: ${err.message}`);
   process.exit(1);
 });
