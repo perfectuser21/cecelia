@@ -11,6 +11,7 @@ TASK_ID: 85806b9a-ad3b-409e-8aba-74d232df7589
 
 **验收**：
 ```bash
+# manual:bash
 grep "const REPO = 'cecelia'" /workspace/scripts/scan/scan-graph.mjs
 # 期望：无输出（grep 返回非 0）
 
@@ -19,6 +20,11 @@ grep "REPO_ROOT_CECELIA" /workspace/scripts/scan/scan-graph.mjs
 
 grep "zenithjoy-workspace" /workspace/scripts/scan/scan-graph.mjs
 # 期望：有输出（三仓清单包含此项）
+
+# DB 断言：执行扫描后三仓实际入库（防止代码存在但未执行入库）
+node /workspace/scripts/scan/scan-graph.mjs
+psql $DATABASE_URL -c "SELECT DISTINCT repo FROM graph_edges ORDER BY repo;"
+# 期望：结果包含 cecelia、zenithjoy-workspace、zenithjoy-skills 三行
 ```
 
 **测试文件**：`sprints/07200852-relay-85806b9a/tests/scan-graph-multi-repo.test.mjs`
@@ -126,12 +132,28 @@ curl -sf "localhost:5221/api/brain/graph/locate?q=src&repo=cecelia" | jq '.fresh
 
 ---
 
+## [BEHAVIOR] B-5：run-all-scans.sh 调用链不变（I-6 铁律对应）
+
+**描述**：`scripts/run-all-scans.sh` 中调用 `scan-graph.mjs` 的方式保持不变（`node scripts/scan/scan-graph.mjs`），本次多仓扩展只修改 scan-graph.mjs 内部实现，不修改 run-all-scans.sh。
+
+**验收**：
+```bash
+# manual:bash
+grep "scan-graph.mjs" /workspace/scripts/run-all-scans.sh
+# 期望：有输出（调用链仍存在）
+```
+
+**测试文件**：无需专属测试文件，A-3 Step 3 确认 run-all-scans.sh 可正常触发扫描。
+
+---
+
 ## 满足条件汇总（全通过才算 DoD 完成）
 
-- [ ] B-1：REPOS 清单存在，三仓覆盖，环境变量支持
+- [ ] B-1：REPOS 清单存在，三仓覆盖，环境变量支持；psql 确认三仓实际入库
 - [ ] B-2：路径不存在时 WARN 跳过，其余仓正常入库，exit 非 0
 - [ ] B-3：per-repo freshness 独立，日志含各仓 stale 状态
 - [ ] B-4：graph 路由接受 repo 参数，默认 cecelia 向后兼容
+- [ ] B-5：run-all-scans.sh 调用链不变，grep 确认 scan-graph.mjs 仍被调用
 - [ ] A-1：三个测试文件存在且在实现前 RED（失败）
 - [ ] A-2：只改上述两个文件，不改 run-all-scans.sh
 - [ ] A-3：E2E 手动验收全通过（含真实 psql 查询结果）
