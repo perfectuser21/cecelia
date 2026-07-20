@@ -1,0 +1,134 @@
+{
+  "task_id": "85806b9a-ad3b-409e-8aba-74d232df7589",
+  "sprint": "07200852-relay-85806b9a",
+  "title": "graph_edges 多仓库扫描扩展",
+  "created_at": "2026-07-20",
+  "dag": [
+    {
+      "id": "T0",
+      "title": "确认 migration 351 已存在（I-4/I-7 前置）",
+      "type": "verify",
+      "depends_on": [],
+      "action": "psql $DATABASE_URL -c \"SELECT version FROM schema_migrations WHERE version='351';\"",
+      "acceptance": "返回 1 行，version=351",
+      "files_touched": [],
+      "invariants": ["I-4", "I-7"],
+      "estimated_minutes": 2
+    },
+    {
+      "id": "T1",
+      "title": "重构 scan-graph.mjs：REPOS 多仓清单 + 循环骨架",
+      "type": "code",
+      "depends_on": ["T0"],
+      "description": "删除 const REPO='cecelia' 和单一 const ROOT 硬编码，改为 REPOS 数组（三仓），添加 for-of 循环骨架，导出 REPOS / scanRepo / scanRepoList 供测试",
+      "files_touched": ["scripts/scan/scan-graph.mjs"],
+      "invariants": ["I-1", "I-2", "I-5", "I-6"],
+      "dod_items": ["B-1"],
+      "estimated_minutes": 20
+    },
+    {
+      "id": "T2",
+      "title": "实现路径检测 + 失败隔离（I-2 + I-5）",
+      "type": "code",
+      "depends_on": ["T1"],
+      "description": "fs.existsSync 检测 → WARN + continue；try/catch 包裹每仓扫描步骤 2-7；有失败时 exit 1，全成功 exit 0",
+      "files_touched": ["scripts/scan/scan-graph.mjs"],
+      "invariants": ["I-2", "I-5"],
+      "dod_items": ["B-2"],
+      "estimated_minutes": 15
+    },
+    {
+      "id": "T3",
+      "title": "实现 per-repo freshness 摘要（I-3）",
+      "type": "code",
+      "depends_on": ["T2"],
+      "description": "每仓成功入库后独立查 max(scanned_at) WHERE repo=$name，调 computeFreshness，打印 per-repo freshness 摘要行",
+      "files_touched": ["scripts/scan/scan-graph.mjs"],
+      "invariants": ["I-3"],
+      "dod_items": ["B-3"],
+      "estimated_minutes": 10
+    },
+    {
+      "id": "T4",
+      "title": "重构 routes/graph.js：loadGraphContext(repo) + 路由读 query param",
+      "type": "code",
+      "depends_on": ["T0"],
+      "description": "删除 const REPO='cecelia'；loadGraphContext 改为接受 repo 参数（默认 cecelia）；各路由从 req.query.repo（GET）或 req.body.repo（POST）读取；导出 loadGraphContext 供测试",
+      "files_touched": ["packages/brain/src/routes/graph.js"],
+      "invariants": [],
+      "dod_items": ["B-4"],
+      "estimated_minutes": 20
+    },
+    {
+      "id": "T5",
+      "title": "运行合同测试（TDD Green）",
+      "type": "test",
+      "depends_on": ["T1", "T2", "T3", "T4"],
+      "description": "运行三个合同测试文件，确保全部通过（Green）",
+      "action": "cd /workspace && node --experimental-vm-modules node_modules/.bin/vitest run sprints/07200852-relay-85806b9a/tests/",
+      "files_touched": [],
+      "estimated_minutes": 10
+    },
+    {
+      "id": "T6",
+      "title": "Final E2E：真实扫描 + psql 验收（E2E-1/2/3）",
+      "type": "e2e",
+      "depends_on": ["T5"],
+      "description": "真实执行 scan-graph.mjs，psql 验证三仓各有 count>0；验证 per-repo freshness stale=false；故意配错一仓路径验证 WARN 隔离",
+      "action": "node /workspace/scripts/scan/scan-graph.mjs && psql $DATABASE_URL -c 'SELECT repo, count(*) FROM graph_edges GROUP BY repo ORDER BY repo;'",
+      "acceptance": "≥3行 repo，各 count>0；zenithjoy-skills 路径错误时 WARN 告警存在，其余两仓正常入库",
+      "files_touched": [],
+      "invariants": ["I-1", "I-2", "I-3", "I-5"],
+      "estimated_minutes": 15
+    },
+    {
+      "id": "T7",
+      "title": "Final E2E：API 端点 repo 参数验收（E2E-4）",
+      "type": "e2e",
+      "depends_on": ["T6"],
+      "description": "curl 验证 /locate?repo=cecelia 返回 freshness.stale=false；不传 repo 默认 cecelia 行为不变",
+      "action": "curl -sf 'localhost:5221/api/brain/graph/locate?q=src&repo=cecelia' | jq '.freshness.stale'",
+      "acceptance": "返回 false",
+      "files_touched": [],
+      "estimated_minutes": 5
+    },
+    {
+      "id": "T8",
+      "title": "提交 PR",
+      "type": "release",
+      "depends_on": ["T7"],
+      "description": "git commit + gh pr create，PR 标题含 task_id，body 含 E2E 验收结果截图/日志",
+      "files_touched": [
+        "scripts/scan/scan-graph.mjs",
+        "packages/brain/src/routes/graph.js",
+        "sprints/07200852-relay-85806b9a/contract-draft.md",
+        "sprints/07200852-relay-85806b9a/contract-dod.md",
+        "sprints/07200852-relay-85806b9a/tests/scan-graph-multi-repo.test.mjs",
+        "sprints/07200852-relay-85806b9a/tests/scan-graph-freshness.test.mjs",
+        "sprints/07200852-relay-85806b9a/tests/graph-route-repo-param.test.mjs",
+        "sprints/07200852-relay-85806b9a/task-plan.json"
+      ],
+      "estimated_minutes": 5
+    }
+  ],
+  "critical_path": ["T0", "T1", "T2", "T3", "T5", "T6", "T7", "T8"],
+  "parallel_opportunities": [
+    ["T1+T2+T3", "T4"],
+    "注：T4（routes/graph.js）可与 T1-T3（scan-graph.mjs）并行开发，都依赖 T0"
+  ],
+  "total_estimated_minutes": 102,
+  "files_to_change": {
+    "scripts/scan/scan-graph.mjs": "重构：REPOS多仓循环 + 失败隔离 + per-repo freshness + 具名导出",
+    "packages/brain/src/routes/graph.js": "修改：删const REPO, loadGraphContext(repo), 路由读query param + 导出loadGraphContext"
+  },
+  "files_not_to_change": [
+    "scripts/scan/run-all-scans.sh",
+    "packages/brain/src/lib/graph-store.js",
+    "packages/brain/src/lib/registry-freshness.js"
+  ],
+  "risk_notes": [
+    "zenithjoy-workspace 和 zenithjoy-skills 在 CI 环境不存在 → I-5 路径跳过机制在 CI 必须稳定",
+    "scan-graph.mjs 当前是 top-level script（无导出），重构为可导出模块后需确保 main() 入口仍然工作",
+    "dependency-cruiser 在不同 repo 的 chdir 后行为需验证（特别是配置文件查找路径）"
+  ]
+}

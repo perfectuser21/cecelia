@@ -40,7 +40,7 @@ echo "[smoke:anchor-backfill] Case 3: GET /api/brain/graph/anchor-coverage 端�
 node -e "
 const js = require('fs').readFileSync('$GRAPH_ROUTE', 'utf8');
 if (!/router\.get\('\/anchor-coverage',/.test(js)) throw new Error('Case 3 FAIL: 未找到 GET /anchor-coverage 路由');
-if (!/loadGraphContext\(\)/.test(js.match(/router\.get\('\/anchor-coverage'[\s\S]{0,500}/)?.[0] || '')) throw new Error('Case 3 FAIL: anchor-coverage 未复用 loadGraphContext');
+if (!/loadGraphContext\(/.test(js.match(/router\.get\('\/anchor-coverage'[\s\S]{0,500}/)?.[0] || '')) throw new Error('Case 3 FAIL: anchor-coverage 未复用 loadGraphContext');
 console.log('  PASS: anchor-coverage 端点复用 loadGraphContext');
 "
 
