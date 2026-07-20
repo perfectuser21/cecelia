@@ -196,8 +196,9 @@ describe('selfcheck', () => {
   // 350（MJ5 刀1：智能客服+首次成功两域承诺地图 seed 数据）推进地板到 350。
   // 351（graph_edges 表，代码依赖图谱）推进地板到 351。
   // 352（features 表更名 brain_modules，澄清语义非产品功能表）推进地板到 352。
-  it('EXPECTED_SCHEMA_VERSION should be 352 (floor, bumped for brain_modules rename)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('352');
+  // 353（DROP conversation_captures + conversation_log_cursors，inbox P0 清场，decisions a823206d）推进地板到 353。
+  it('EXPECTED_SCHEMA_VERSION should be 353 (floor, bumped for conversation-capture drop)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('353');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

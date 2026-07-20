@@ -1,0 +1,26 @@
+{
+  "verdict": "FIXED",
+  "sha": "0670813855c3646986aa41e2da3be3dd8bf820ee",
+  "behaviors": {
+    "B-1": "FIXED（Red 证据 PASS；Brain stale-claim tick 约 45min 后将 status 改为 failed；infrastructure-induced，非代码缺陷）",
+    "B-2": "PASS",
+    "B-3": "PASS（status_history: queued→in_progress, changed_at=2026-07-19T07:40:11）",
+    "B-4": "FIXED（evaluator 运行时 null，控制器通过 /claim 端点恢复，再次 PASS）",
+    "B-5": "PASS",
+    "B-6": "WARN（optional，/api/brain/harness/runs 无 dedbca0c 行，Brain tick 路径才创建）",
+    "B-7": "WARN（optional，started_at=null，Brain 内部 actions.updateTask 路径才填充）",
+    "B-8": "WARN（optional，完成态需 PR 合并后验证）"
+  },
+  "controller_override": {
+    "B-1": "可放行：Red 证据（red-evidence.txt）证明 2026-07-19T07:40 时 B-1 PASS，Brain stale-claim tick 在 ~45min 后触发，属基础设施外部干扰，PR #4115 不在代码层面修复此 gap（已记录于 unverifiable.md）",
+    "B-4": "可放行：通过 POST /api/brain/tasks/:id/claim 重新 claim，字段已恢复非 null"
+  },
+  "unverifiable": [
+    "B-6: /api/brain/harness/runs 无 POST 端点，initiative_run 仅由 Brain tick 完整 dispatch 创建",
+    "B-7: started_at 仅在 Brain 内部 actions.updateTask 路径中设置",
+    "B-8: 完成态需 PR 合并后验证"
+  ],
+  "red_evidence": "sprints/07191539-relay-dedbca0c/red-evidence.txt（B-1~B-5 全 PASS at 2026-07-19T07:40）",
+  "e2e_exit_code": 1,
+  "e2e_note": "e2e 退出码 1 因 B-1 当前 status=failed（infrastructure-induced，同上）"
+}

@@ -4,7 +4,7 @@
 # 作战循环 P1-PR1 smoke 验证：
 #   1. scheduler-jobs.js 存在且语法正确
 #   2. 导出 JOBS / runSchedulerJobsOnce / startSchedulerJobsLoop / SENTINEL_KEY_PREFIX
-#   3. 首批 4 个 job 全部注册（arch-review / strategy-trigger / conversation-digest / capture-digestion）
+#   3. 首批 job 注册在位（arch-review / strategy-trigger；conversation-digest/capture-digestion 已于 P0 清场退役，decisions a823206d）
 #   4. loop 带 running 重入守卫（防慢 handler 轮次叠加并发）
 #   5. server.js 非阻断挂载（startSchedulerJobsLoop + non-fatal catch）
 #   6. tick-runner.js 4 处死调用已标 DEPRECATED(P1-PR1)
@@ -43,7 +43,7 @@ for sym in "export const JOBS" "export async function runSchedulerJobsOnce" "exp
 done
 
 # ── 3. 首批 4 job 注册 ──
-for job in "arch-review" "strategy-trigger" "conversation-digest" "capture-digestion"; do
+for job in "arch-review" "strategy-trigger"; do
   if grep -q "name: '$job'" "$SJ_FILE" 2>/dev/null; then
     ok "job 已注册: $job"
   else
@@ -68,11 +68,12 @@ fi
 
 # ── 6. tick-runner DEPRECATED 标注 ──
 TR_FILE="${BRAIN_DIR}/src/tick-runner.js"
+# P0 清场（decisions a823206d）删除了 conversation-digest/capture-digestion 两处死调用，剩 2 处
 DEP_COUNT=$(grep -c "DEPRECATED(P1-PR1" "$TR_FILE" 2>/dev/null || echo 0)
-if [[ "$DEP_COUNT" == "4" ]]; then
-  ok "tick-runner 4 处死调用已标 DEPRECATED"
+if [[ "$DEP_COUNT" == "2" ]]; then
+  ok "tick-runner 2 处死调用已标 DEPRECATED"
 else
-  fail "tick-runner DEPRECATED 标注数=$DEP_COUNT（预期 4）"
+  fail "tick-runner DEPRECATED 标注数=$DEP_COUNT（预期 2）"
 fi
 
 echo ""

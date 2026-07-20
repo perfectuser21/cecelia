@@ -238,8 +238,22 @@ fi
 if [[ "$NEED_BRAIN" == true ]]; then
     echo "🧠 Brain 改动 → 执行 brain-deploy.sh（主仓库）"
     if [[ "$DRY_RUN" == true ]]; then
+        echo "  [dry-run] npm ci --workspace=packages/brain（宿主机依赖同步）"
         echo "  [dry-run] bash $MAIN_SCRIPTS/brain-deploy.sh"
     else
+        # 宿主机依赖同步（07-19 事故：生产部署连续 3 次原地失败，PR#4108/4116/4118
+        # 均未真正上线）。根因：pre-swap smoke 里 harness-schema-validation-smoke.sh
+        # 与其余 4 条不同——不是纯 HTTP 探测 green 容器，而是直接在宿主机本地 Node
+        # 进程 import brain 源码模块做白盒验证。上面的"部署根守卫"块只 git pull
+        # 同步了 $MAIN_ROOT 的代码，从未同步执行 npm install/ci 更新其 node_modules。
+        # 一旦最新代码新增/变更了依赖（如 zod），宿主机 node_modules 落后于代码，
+        # smoke 脚本因 "Cannot find package" 误判部署失败——即使 Docker 镜像本身
+        # 完全正常（已用 docker build --no-cache 实测验证）。
+        echo "  同步宿主机 packages/brain 依赖（npm ci）..."
+        if ! (cd "$MAIN_ROOT" && npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-scripts); then
+            echo "❌ 宿主机依赖同步失败，拒绝部署（带着滞后依赖继续会让 pre-swap smoke 误判）"
+            exit 1
+        fi
         bash "$MAIN_SCRIPTS/brain-deploy.sh"
     fi
     echo ""

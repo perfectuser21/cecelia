@@ -20,6 +20,7 @@
  *   - 不主动 DELETE FROM checkpoints — 避免误删 in-flight 任务
  */
 import pool from './db.js';
+import { execSync } from 'child_process';
 
 /**
  * 扫描所有 in-flight initiative_runs，标 deadline_at 已过未完成的为 watchdog_overdue。
@@ -129,6 +130,10 @@ export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
  * @param {number} [opts.staleMinutes=10]   B 阶段心跳陈旧阈值（分钟）
  * @param {number} [opts.staleMinutesA=20]  A 阶段活动静默阈值（分钟）
  * @param {number} [opts.maxFreshStarts]    A 阶段 fresh-start 上限（默认 = executor.MAX_INITIATIVE_FRESH_STARTS）
+ * @param {(cmd: string) => string} [opts.execFn]  shell 执行函数（供测试注入 mock），
+ *   默认 execSync 包装。区段C 判死前用它探测容器是否仍在跑
+ *   （docker ps -q --filter "name=cecelia-relay-<task前8字符>"），
+ *   与 harness-relay-watchdog.js:resumeStalledRelayRuns 同款模式。
  * @returns {Promise<{ resumed: string[], scanned: number }>}
  */
 export async function resumeStalledHarnessDrivers({
@@ -136,6 +141,7 @@ export async function resumeStalledHarnessDrivers({
   staleMinutes = 10,
   staleMinutesA = 20,
   maxFreshStarts,
+  execFn = (cmd) => execSync(cmd, { encoding: 'utf8', timeout: 8000, stdio: 'pipe' }),
 } = {}) {
   const resumed = [];
   let scanned = 0;
@@ -281,6 +287,24 @@ export async function resumeStalledHarnessDrivers({
 
   for (const row of neverStarted.rows) {
     try {
+      // 容器存活探测（07-19 bug fix）：慢启动/前台接管容器可能仍在正常干活，
+      // 只是还没来得及写 initiative_runs 首行——命名规约与 relay-watchdog 一致
+      // （cecelia-relay-<task前8字符>）。docker 命令失败时 fail-open：保留现有
+      // 判死逻辑，不因探测本身出问题而漏判真正死亡的任务。
+      const short8 = String(row.id).replace(/-/g, '').slice(0, 8);
+      let containerAlive = false;
+      try {
+        const running = execFn(`docker ps -q --filter "name=cecelia-relay-${short8}"`).trim();
+        containerAlive = Boolean(running);
+      } catch { /* docker 不可用，fail-open 走判死路径 */ }
+
+      if (containerAlive) {
+        console.log(
+          `[harness-watchdog] never-started 候选 task=${row.id} 容器仍在跑（docker ps 命中），跳过本轮判死`
+        );
+        continue;
+      }
+
       const upd = await dbPool.query(
         `UPDATE tasks SET
            status = 'failed',

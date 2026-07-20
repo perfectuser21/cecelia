@@ -122,18 +122,22 @@ function findTaskIdForWorktree(wtPath) {
 }
 
 /**
- * 判断 worktree 是否活跃（依据 .dev-mode* 文件 mtime < ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS）。
- * 覆盖老 `.dev-mode` 无后缀格式和新 `.dev-mode.${branch}` 格式（v19.0.0 cwd-as-key 起）。
- * Phase B2-bis: fix findTaskIdForWorktree 文件名不匹配 bug —— 改用 mtime 判活跃而非依赖文件内容解析 UUID。
+ * 判断 worktree 是否活跃，依据 .dev-mode* 或 .dev-lock* 文件的 mtime < ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS。
+ *
+ * 同时检查两种文件：
+ *   .dev-mode* — worktree-manage.sh create 写入，dev-heartbeat-guardian 续期
+ *   .dev-lock* — worktree-manage.sh create 同步写入，Stop Hook 创建时也会写
+ * 这样避免"只建了 .dev-lock 忘了 .dev-mode"时漏保护的情况。
  *
  * @param {string} wtPath - Worktree 目录路径
- * @returns {boolean} - true 如果任一 .dev-mode* 文件 mtime < 24h
+ * @returns {boolean} - true 如果任一 signal 文件 mtime < 24h
  */
 function isWorktreeActive(wtPath) {
   try {
     const now = Date.now();
-    const entries = readdirSync(wtPath).filter(f => f.startsWith('.dev-mode'));
-    for (const name of entries) {
+    const all = readdirSync(wtPath);
+    const signalFiles = all.filter(f => f.startsWith('.dev-mode') || f.startsWith('.dev-lock'));
+    for (const name of signalFiles) {
       try {
         const mtimeMs = statSync(join(wtPath, name)).mtimeMs;
         if (now - mtimeMs < ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS) {

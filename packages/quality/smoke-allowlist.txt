@@ -143,4 +143,5 @@ graph-query-api-smoke.sh
 radius-rerun-gate-smoke.sh
 orphan-guard-smoke.sh
 anchor-backfill-smoke.sh
+scripts/smoke/e2e/relay-dedbca0c.sh
 scripts/smoke/e2e/relay-565fa27a.sh
