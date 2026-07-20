@@ -33,7 +33,7 @@
 #
 set -euo pipefail
 
-ALLOWED_TEAMS=(team3 team4 team5)
+ALLOWED_TEAMS=(team1 team2 team3 team4 team5)
 REMOTE_HOST="${CODEX_REMOTE_HOST:-xian-m4}"
 REMOTE_CODEX_BIN="${CODEX_REMOTE_BIN:-/opt/homebrew/bin/codex}"
 REMOTE_PATH_PREFIX="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
