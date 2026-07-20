@@ -1,0 +1,17 @@
+{
+  "phase": "gan-correction",
+  "round": 5,
+  "verdict": "APPROVED",
+  "sha": "f5dd6140c",
+  "reason": "round1 起草误判 host 白名单（未识别人工前台接管场景），judge实测FAIL后触发修正轮",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 8,
+    "test_is_red": 8,
+    "internal_consistency": 9,
+    "risk_registered": 9,
+    "verification_oracle_completeness": 8,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 7
+}
