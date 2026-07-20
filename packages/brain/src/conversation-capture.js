@@ -27,7 +27,7 @@ export function __resetConversationCaptureForTest() { lastRunAt = 0; }
 function dedupeKeyFor(filePath, entry, lineIndex) {
   const idPart = entry.uuid || `line${lineIndex}`;
   const raw = `${path.basename(filePath)}:${idPart}`;
-  return crypto.createHash('sha1').update(raw).digest('hex');
+  return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
 function isRealUserText(entry) {

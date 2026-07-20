@@ -66,7 +66,7 @@ describe('extractUserTurns', () => {
     const first = extractUserTurns(filePath, 0);
     const second = extractUserTurns(filePath, 0);
     expect(first[0].dedupeKey).toBe(second[0].dedupeKey);
-    expect(first[0].dedupeKey).toMatch(/^[a-f0-9]{40}$/);
+    expect(first[0].dedupeKey).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it('文件不存在时返回空数组，不抛异常', () => {
