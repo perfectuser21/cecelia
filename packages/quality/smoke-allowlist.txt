@@ -147,3 +147,5 @@ graph-multi-repo-smoke.sh
 scripts/smoke/e2e/relay-dedbca0c.sh
 scripts/smoke/e2e/relay-565fa27a.sh
 inbox-p1-smoke.sh
+inbox-p1-migration-verify.sh
+migration-verify.sh
