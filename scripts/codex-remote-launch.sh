@@ -298,7 +298,7 @@ collect_one() {
 if [[ "$COLLECT" == "1" ]]; then
   assert_ssh
   if [[ -n "$TEAM" ]]; then
-    is_allowed_team "$TEAM" || die "非法 team: $TEAM（允许: ${ALLOWED_TEAMS[*]}）"
+    is_allowed_team "$TEAM" || die "非法 team: $TEAM（允许: ${ALLOWED_TEAMS_STR}）"
     collect_one "$TEAM"
   else
     for t in "${ALLOWED_TEAMS[@]}"; do
@@ -310,7 +310,7 @@ if [[ "$COLLECT" == "1" ]]; then
 fi
 
 [[ -n "$TEAM" ]] || die "需要 --team <${ALLOWED_TEAMS_STR}>（或 --collect）"
-is_allowed_team "$TEAM" || die "非法 team: $TEAM（允许: ${ALLOWED_TEAMS[*]}）"
+is_allowed_team "$TEAM" || die "非法 team: $TEAM（允许: ${ALLOWED_TEAMS_STR}）"
 
 assert_ssh
 push_token "$TEAM"

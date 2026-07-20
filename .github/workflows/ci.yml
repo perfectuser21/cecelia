@@ -447,6 +447,17 @@ jobs:
       - name: reaper 单元自测
         run: bash scripts/__tests__/preview-reaper.test.sh
 
+  # ─── codex-remote-launch 跨机 token launcher 自测 ────────────────
+  # 白名单(ALLOWED_TEAMS team1~5)+核心流程单元自测，mock ssh/scp，不依赖真实远端
+  codex-remote-launch-test:
+    name: codex-remote-launch 白名单/流程自测
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: launcher 单元自测
+        run: bash scripts/__tests__/codex-remote-launch.test.sh
+
   # ─── 棘轮统一台账守卫（刀4-T2）────────────────────────────────
   # 读 ratchet-registry.json，逐项断言健康数未越水位。
   # Brain 依赖指标（bare_fr / seven_ring_hard_flaws）在 CI 中自动跳过。

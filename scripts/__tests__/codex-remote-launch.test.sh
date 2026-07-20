@@ -43,10 +43,12 @@ SH
 
   export PATH="$BIN:$PATH"
   export HOME
-  mkdir -p "$HOME/.codex-team1" "$HOME/.codex-team2" "$HOME/.codex-team3"
+  mkdir -p "$HOME/.codex-team1" "$HOME/.codex-team2" "$HOME/.codex-team3" "$HOME/.codex-team4" "$HOME/.codex-team5"
   echo '{"mock":"team1"}' > "$HOME/.codex-team1/auth.json"
   echo '{"mock":"team2"}' > "$HOME/.codex-team2/auth.json"
   echo '{"mock":"team3"}' > "$HOME/.codex-team3/auth.json"
+  echo '{"mock":"team4"}' > "$HOME/.codex-team4/auth.json"
+  echo '{"mock":"team5"}' > "$HOME/.codex-team5/auth.json"
 }
 
 teardown() { rm -rf "$TMP"; }
@@ -95,6 +97,23 @@ test_team3_unaffected() {
   teardown
 }
 
+test_team4_team5_unaffected() {
+  setup
+  if bash "$TARGET" --team team4 --dry-run >/tmp/out.$$ 2>&1; then
+    pass "team4（原有白名单成员）行为不受影响"
+  else
+    fail "team4（原有白名单成员）行为不受影响" "$(cat /tmp/out.$$)"
+  fi
+  rm -f /tmp/out.$$
+  if bash "$TARGET" --team team5 --dry-run >/tmp/out.$$ 2>&1; then
+    pass "team5（原有白名单成员）行为不受影响"
+  else
+    fail "team5（原有白名单成员）行为不受影响" "$(cat /tmp/out.$$)"
+  fi
+  rm -f /tmp/out.$$
+  teardown
+}
+
 test_help_mentions_team1_team2() {
   setup
   out="$(bash "$TARGET" --help 2>&1)"
@@ -111,6 +130,7 @@ test_team1_now_allowed
 test_team2_now_allowed
 test_team6_still_rejected
 test_team3_unaffected
+test_team4_team5_unaffected
 test_help_mentions_team1_team2
 
 echo ""
