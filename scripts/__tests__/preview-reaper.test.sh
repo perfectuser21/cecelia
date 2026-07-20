@@ -174,6 +174,38 @@ else
 fi
 teardown
 
+# ── 测试 8：cron 裸 PATH 环境接缝 ────────────────────────────────────────────
+# 2026-07-20 事故根因：以上 1-7 全部在 setup() 里把 mock 塞进 PATH 最前面，
+# 从未模拟过 cron 真实的裸 PATH（/usr/bin:/bin），导致 gh/psql/dropdb 在 cron
+# 下 100% 找不到（都装在 /opt/homebrew/bin），dropdb 从建库以来从未被真正执行过。
+# 这条不 mock，直接检查脚本自身有没有显式导出 PATH 覆盖 /opt/homebrew/bin，
+# 并在真实裸 PATH 环境下验证脚本的导出行确实能让这些二进制被找到。
+echo ""
+echo "── 测试 8：cron 裸 PATH 环境接缝 ──"
+if grep -q 'export PATH=.*opt/homebrew/bin' "$REAPER"; then
+  pass "脚本顶部有显式 PATH 导出覆盖 /opt/homebrew/bin"
+else
+  fail "脚本没有显式 PATH 导出" "cron 默认 PATH（/usr/bin:/bin）下 gh/psql/dropdb 必然找不到，dropdb 步骤永远不会被触发"
+fi
+
+PATH_LINE=$(grep -m1 '^export PATH=' "$REAPER" || echo "")
+if [ -n "$PATH_LINE" ]; then
+  MISSING=""
+  for bin in gh psql dropdb; do
+    real_path=$(env -i HOME="$HOME" PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" bash -c "command -v ${bin}" 2>/dev/null)
+    [ -z "$real_path" ] && continue  # 本机没装，跳过该项
+    found=$(env -i HOME="$HOME" PATH="/usr/bin:/bin" bash -c "$PATH_LINE; command -v ${bin}" 2>/dev/null)
+    [ -z "$found" ] && MISSING="$MISSING $bin"
+  done
+  if [ -z "$MISSING" ]; then
+    pass "脚本的 PATH 导出行能让裸 cron 环境找到 gh/psql/dropdb"
+  else
+    fail "脚本的 PATH 导出行仍找不到:$MISSING" "裸 cron 环境下这些工具不可用"
+  fi
+else
+  fail "跳过二进制查找测试" "脚本没有 PATH 导出行"
+fi
+
 # ── 总结 ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "结果: PASS=${PASS}, FAIL=${FAIL}"
