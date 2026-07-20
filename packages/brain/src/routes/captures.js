@@ -8,7 +8,7 @@ import pool from '../db.js';
 
 const router = Router();
 
-const VALID_SOURCES = ['harness', 'dashboard', 'feishu', 'api'];
+const VALID_SOURCES = ['harness', 'dashboard', 'feishu', 'api', 'conversation'];
 const VALID_NATURES = ['learning', 'issue', 'handoff'];
 
 // POST /api/brain/captures
