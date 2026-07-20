@@ -32,6 +32,34 @@ const SOURCE_COLORS: Record<string, string> = {
   api: 'bg-slate-500/20 text-slate-400',
 };
 
+// migration 356 起，对话捕获的 source 从单一的 'conversation' 拆成
+// 'conversation-claude'/'conversation-codex'/'conversation-grok' 三个工具专属值，
+// 旧数据也被改名为 'conversation-claude'。这里统一用前缀匹配识别"这是一条对话捕获"，
+// 具体工具名作为标签后缀展示，避免走精确匹配后全部退化成通用 fallback 徽标。
+const CONVERSATION_TOOL_LABELS: Record<string, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  grok: 'Grok',
+};
+
+function isConversationSource(source: string): boolean {
+  return source === 'conversation' || source.startsWith('conversation-');
+}
+
+function getSourceLabel(source: string): string {
+  if (isConversationSource(source)) {
+    const tool = source.startsWith('conversation-') ? source.slice('conversation-'.length) : null;
+    const toolLabel = tool ? CONVERSATION_TOOL_LABELS[tool] : null;
+    return toolLabel ? `${SOURCE_LABELS.conversation}·${toolLabel}` : SOURCE_LABELS.conversation;
+  }
+  return SOURCE_LABELS[source] ?? source;
+}
+
+function getSourceColor(source: string): string {
+  if (isConversationSource(source)) return SOURCE_COLORS.conversation;
+  return SOURCE_COLORS[source] ?? 'bg-slate-700/50 text-slate-400';
+}
+
 function formatTime(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
@@ -82,9 +110,9 @@ function KanbanColumn({ title, status, captures, updating, onUpdateStatus }: Kan
               <p className="text-xs text-gray-200 leading-relaxed line-clamp-3 mb-2">{cap.content}</p>
               <div className="flex items-center justify-between gap-1">
                 <div className="flex items-center gap-1 flex-wrap">
-                  <span className={`px-1.5 py-0.5 text-[10px] rounded-full ${SOURCE_COLORS[cap.source] ?? 'bg-slate-700/50 text-slate-400'}`}>
-                    {cap.source === 'conversation' && <MessageSquare size={8} className="inline mr-0.5" />}
-                    {SOURCE_LABELS[cap.source] ?? cap.source}
+                  <span className={`px-1.5 py-0.5 text-[10px] rounded-full ${getSourceColor(cap.source)}`}>
+                    {isConversationSource(cap.source) && <MessageSquare size={8} className="inline mr-0.5" />}
+                    {getSourceLabel(cap.source)}
                   </span>
                   <span className="flex items-center gap-0.5 text-[10px] text-slate-600">
                     <Clock size={8} />

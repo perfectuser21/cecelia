@@ -22,6 +22,12 @@ import { extractGrokSessions } from './conversation-capture-grok.js';
 const SCAN_INTERVAL_MS = parseInt(process.env.CECELIA_CONVERSATION_CAPTURE_INTERVAL_MS || String(10 * 60 * 1000), 10);
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const IDLE_THRESHOLD_MS = 15 * 60 * 1000;
+// mtime 下限必须用固定回看窗口而非"上次扫描时间"，否则 sinceMs 会随每次 10 分钟扫描滑动追上
+// now，导致文件在"刚写完、还没闲置"和"已闲置但 mtime 早已滑出窗口"之间永远没有交集，
+// session 结构性地永远捕获不到（decision：Critical #1 fix，见 handoff）。
+// 35 分钟 = 15 分钟闲置阈值 + 2 个扫描周期缓冲，保证一个 session 越过闲置线后能被连续
+// 好几轮扫描重新读到（dedupeKey 防重复写入）。
+const LOOKBACK_WINDOW_MS = IDLE_THRESHOLD_MS + 2 * SCAN_INTERVAL_MS;
 const SENTINEL_KEY = 'conversation_capture_last_scan';
 const MAX_CONTENT_LEN = 2000;
 
@@ -69,15 +75,19 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
   if (now - lastRunAt < SCAN_INTERVAL_MS) return { skipped: true };
   lastRunAt = now;
 
-  let lastScanMs;
+  // sentinel 只用来判断"是否首次运行"（首次要回看 24h 补历史积压），不再用它的
+  // last_scan_at 作为 mtime 下限——那个用法正是 Critical #1 的病灶。
+  let hasSentinel = false;
   try {
     const { rows } = await pool.query(`SELECT value_json FROM working_memory WHERE key = $1`, [SENTINEL_KEY]);
-    const lastScanIso = rows[0]?.value_json?.last_scan_at;
-    lastScanMs = lastScanIso ? new Date(lastScanIso).getTime() : now - FIRST_RUN_LOOKBACK_MS;
+    hasSentinel = !!rows[0]?.value_json?.last_scan_at;
   } catch {
-    lastScanMs = now - FIRST_RUN_LOOKBACK_MS;
+    hasSentinel = false;
   }
+  const sinceMs = hasSentinel ? (now - LOOKBACK_WINDOW_MS) : (now - FIRST_RUN_LOOKBACK_MS);
 
+  let errors = 0;
+  const adapterFailures = [];
   let allSessions = [];
   const adapters = [
     ['claude', extractClaudeSessions],
@@ -86,8 +96,10 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
   ];
   for (const [name, fn] of adapters) {
     try {
-      allSessions = allSessions.concat(fn(lastScanMs));
+      allSessions = allSessions.concat(fn(sinceMs));
     } catch (e) {
+      errors++;
+      adapterFailures.push(name);
       console.warn(`[conversation-capture] ${name} adapter failed: ${e.message}`);
     }
   }
@@ -97,17 +109,34 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
   );
 
   let pushed = 0;
-  let errors = 0;
 
   for (const session of idleSessions) {
     const rawText = joinTurns(session.turns);
+    const dedupeKey = sessionDedupeKey(session);
+
+    // 已经在之前某次扫描完整处理过（原始文本已入库）就整段跳过——既不重新
+    // pushCapture（那只是廉价的 ON CONFLICT no-op），更不要再花钱调一次 LLM
+    // 摘要（Critical #2）。查询本身失败要 fail open（当作未捕获继续处理），
+    // 不能因为一次 DB 抖动就静默漏掉一个 session。
+    let alreadyCaptured = false;
+    try {
+      const { rows: existing } = await pool.query(
+        'SELECT 1 FROM captures WHERE dedupe_key = $1 LIMIT 1',
+        [dedupeKey]
+      );
+      alreadyCaptured = existing.length > 0;
+    } catch (e) {
+      console.warn(`[conversation-capture] dedupe check failed for session=${session.sessionId}, fail-open and processing anyway: ${e.message}`);
+      alreadyCaptured = false;
+    }
+    if (alreadyCaptured) continue;
 
     try {
       const result = await pushCapture(pool, {
         content: rawText,
         source: session.source,
         repo: session.repo,
-        dedupeKey: sessionDedupeKey(session),
+        dedupeKey,
       });
       if (result?.captureId) {
         pushed++;
@@ -141,7 +170,13 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
     }
   }
 
-  const record = { last_scan_at: new Date(now).toISOString(), pushed, errors, sessions_processed: idleSessions.length };
+  const record = {
+    last_scan_at: new Date(now).toISOString(),
+    pushed,
+    errors,
+    sessions_processed: idleSessions.length,
+    adapter_failures: adapterFailures,
+  };
   try {
     await pool.query(
       `INSERT INTO working_memory (key, value_json, updated_at)

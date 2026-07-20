@@ -165,6 +165,88 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
     expect(rows[0].content).toBe('目录名超长场景下应该正常写入');
   });
 
+  // Critical #1 回归测试（final code review 挖出）：mtime 增量过滤器 sinceMs 若取自
+  // "上次扫描时间"（会随每次 10 分钟扫描滑动追上 now），会和 15 分钟闲置阈值互斥——
+  // 文件写完后 mtime 固定不变，等它真正闲置满 15 分钟时，sinceMs 早已滑过 mtime，
+  // 文件被过滤器永久排除，结构性地永远捕获不到任何 session。之前的用例全部走
+  // afterEach 清空哨兵 = 每次都是冷启动（无 sentinel），根本走不到这条滑动路径，
+  // 检测不出这个 bug class。这里手工预置一个"刚刚扫描过"的哨兵（模拟 sinceMs 貌似
+  // 逼近 now 的场景）+ 用 fs.utimesSync 把文件 mtime 钉死在 20 分钟前，验证修复后
+  // （固定 35 分钟回看窗口，而非跟着上次扫描时间滑动）依然能捕获到。
+  it('固定回看窗口下，mtime 早于"上次扫描时间"但仍在闲置阈值内的 session 依然会被捕获（回归 Critical #1）', async () => {
+    homeRoot = makeFixtureHome();
+    const idleMs = 20 * 60 * 1000; // 20分钟前，越过15分钟闲置阈值
+    const oldTs = new Date(Date.now() - idleMs).toISOString();
+    const filePath = writeClaudeSession(homeRoot, 'itest-mt-lookback', 'session-lookback.jsonl', [
+      { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: '跨扫描周期闲置捕获测试' } },
+    ]);
+    // 模拟"文件写完后再没被碰过"：mtime 固定钉在 20 分钟前，不会随扫描推进而改变。
+    const oldMtime = new Date(Date.now() - idleMs);
+    fs.utimesSync(filePath, oldMtime, oldMtime);
+
+    vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
+    os.homedir = () => homeRoot;
+
+    // 预置一个"1 分钟前刚扫描过"的哨兵——旧版 bug 的必要条件：如果 sinceMs 取自
+    // 这个值（约等于 now），就会比文件 mtime（20 分钟前）晚，导致文件被 mtime
+    // 过滤器排除。修复后 sinceMs 应改为固定的 now-35min 回看窗口，与这个哨兵值
+    // 无关，因此依然能读到这个文件。
+    await pool.query(
+      `INSERT INTO working_memory (key, value_json, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
+      ['conversation_capture_last_scan', JSON.stringify({
+        last_scan_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        pushed: 0,
+        errors: 0,
+      })]
+    );
+
+    vi.resetModules();
+    const mod = await import('../../conversation-capture.js');
+    const result = await mod.runConversationCapture(pool, { llm: FAKE_LLM });
+    expect(result.ok).toBe(true);
+    expect(result.pushed).toBeGreaterThanOrEqual(1);
+
+    const { rows } = await pool.query(
+      `SELECT nature, content FROM captures WHERE repo = 'itest-mt-lookback' ORDER BY nature NULLS FIRST`
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].content).toBe('跨扫描周期闲置捕获测试');
+  });
+
+  // Critical #2 回归测试（final code review 挖出）：summarizeSession（调 Haiku）此前对
+  // idleSessions 里的每个 session 无条件调用，哪怕这个 session 早在上一轮扫描就已经
+  // 完整处理过（原始文本 + 摘要都已入库）。pushCapture 自己的 dedupe 只挡重复行，挡不
+  // 住这次多余的 LLM 调用。随着 Critical #1 把回看窗口放宽到 35 分钟，同一个已处理
+  // session 会在连续好几轮扫描里反复出现在 idleSessions 中，每次都会重新触发一次真实
+  // LLM 调用——这里验证修复后（写入前先查 captures.dedupe_key 是否已存在，命中则整段
+  // session 跳过）第二次扫描不会再调用 LLM。
+  it('同一已闲置 session 连续两次扫描只调用一次 LLM，不重复计费（回归 Critical #2）', async () => {
+    homeRoot = makeFixtureHome();
+    const oldTs = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    writeClaudeSession(homeRoot, 'itest-mt-llmonce', 'session-llmonce.jsonl', [
+      { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: 'LLM只调用一次测试' } },
+    ]);
+    vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
+    os.homedir = () => homeRoot;
+
+    const spyLlm = vi.fn(FAKE_LLM);
+
+    vi.resetModules();
+    const mod = await import('../../conversation-capture.js');
+    const firstResult = await mod.runConversationCapture(pool, { llm: spyLlm });
+    expect(firstResult.pushed).toBeGreaterThanOrEqual(1);
+    expect(spyLlm).toHaveBeenCalledTimes(1);
+
+    mod.__resetConversationCaptureForTest();
+    await mod.runConversationCapture(pool, { llm: spyLlm });
+    expect(spyLlm).toHaveBeenCalledTimes(1); // 第二轮同一 session 已捕获，LLM 不应被再次调用
+
+    const { rows } = await pool.query(`SELECT id FROM captures WHERE repo = 'itest-mt-llmonce'`);
+    expect(rows).toHaveLength(2); // 原始+摘要各一条，第二轮没有多写也没有多调 LLM
+  });
+
   it('pushCapture 真实失败契约（resolve null，不 throw）时 errors 计数非零且 sentinel 可查到', async () => {
     // pushCapture 的真实契约是永不抛出：DB 错误内部 catch 后 console.warn 并
     // resolve(null)（见 packages/brain/src/capture-inbox.js 末尾 catch 块）。用
