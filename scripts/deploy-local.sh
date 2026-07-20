@@ -249,11 +249,14 @@ if [[ "$NEED_BRAIN" == true ]]; then
         # 一旦最新代码新增/变更了依赖（如 zod），宿主机 node_modules 落后于代码，
         # smoke 脚本因 "Cannot find package" 误判部署失败——即使 Docker 镜像本身
         # 完全正常（已用 docker build --no-cache 实测验证）。
-        # --cache 必须显式指定：容器内 $HOME=/Users/administrator 是只读挂载点，
-        # npm 默认缓存路径 $HOME/.npm 从未被单独挂载为可写，裸 npm ci 会在容器内
-        # 直接 "Read-only file system" 失败（2026-07-20 实锤，见同名 smoke 脚本）。
+        # --cache 和 --logs-dir 必须都显式指定：容器内 $HOME=/Users/administrator
+        # 是只读挂载点，npm 默认缓存路径 $HOME/.npm 从未被单独挂载为可写，裸 npm ci
+        # 会在容器内直接 "Read-only file system" 失败。只加 --cache 不够——npm
+        # 无论 --cache 指哪都会单独尝试把运行日志写到 $HOME/.npm/_logs（--cache
+        # 只管包缓存，不管日志），同一个 mkdir 失败原样复发（2026-07-20 实锤，
+        # 见同名 smoke 脚本）。
         echo "  同步宿主机 packages/brain 依赖（npm ci）..."
-        if ! (cd "$MAIN_ROOT" && npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-scripts --cache "$MAIN_ROOT/.npm-cache"); then
+        if ! (cd "$MAIN_ROOT" && npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-scripts --cache "$MAIN_ROOT/.npm-cache" --logs-dir "$MAIN_ROOT/.npm-logs"); then
             echo "❌ 宿主机依赖同步失败，拒绝部署（带着滞后依赖继续会让 pre-swap smoke 误判）"
             exit 1
         fi
@@ -297,10 +300,13 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         else
             # 确保当前平台的 native 模块已安装（容器 Linux 和宿主 macOS 可能不同）
             # cache 挂 $MAIN_ROOT/.npm-cache（bind-mounted volume），避免 Brain /tmp 100MB tmpfs 被塞满
+            # logs-dir 同理必须显式指定：--cache 不管 npm 自己的运行日志，容器内
+            # 默认日志路径 $HOME/.npm/_logs 只读会导致同一类 mkdir 失败（2026-07-20 实锤）
             cd "$MAIN_ROOT"
             NPM_CACHE_DIR="$MAIN_ROOT/.npm-cache"
-            if ! npm install --prefer-offline --cache "$NPM_CACHE_DIR" 2>&1; then
-                if ! npm install --cache "$NPM_CACHE_DIR" 2>&1; then
+            NPM_LOGS_DIR="$MAIN_ROOT/.npm-logs"
+            if ! npm install --prefer-offline --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" 2>&1; then
+                if ! npm install --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" 2>&1; then
                     echo "❌ npm install 失败，中止部署"
                     exit 1
                 fi
