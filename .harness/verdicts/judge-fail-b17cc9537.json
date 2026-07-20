@@ -1,0 +1,20 @@
+{
+  "verdict": "FAIL",
+  "sha": "b17cc9537224099f453c5af2a3090add1b39aed6",
+  "sha7": "b17cc9537",
+  "judge_version": "harness-controller-2.7.0",
+  "judged": true,
+  "reason": "pre-merge-e2e-unverifiable",
+  "explanation": "生产 Brain 版本 1.267.18（schema=353）不含 PR#4130 的 captures 路由（待合并后 migration 354/355 才上）。E2E-1~E2E-4 均需已部署的新端点或生产 DB（实测 curl 返回 Cannot POST /api/brain/captures 404）。所有单测（FR-1~FR-10 PASS）、CI gate（ci-passed/Smoke Glob Runner Passed/Harness V5 Gate Passed 全绿）、合同覆盖检查（PASS）均已满足。judge FAIL 为技术性——E2E 可验证项已全部满足，不可验证项为 post-deploy smoke 范围。REVIEW_REQUIRED=true：人工审批可 override。",
+  "unverifiable_e2e_steps": [
+    "E2E-1: POST /captures 全链路（端点 pre-deploy 不存在，实测 404）",
+    "E2E-2: urgent→task psql 确认（无生产 DB 连接）",
+    "E2E-3: 积压清零 backfill（无生产 DB 连接）",
+    "E2E-4: Dashboard /inbox Playwright（/captures 端点 pre-deploy 不存在，UI 无数据）"
+  ],
+  "all_unit_tests_pass": true,
+  "ci_green": true,
+  "ci_required_checks": "ci-passed=PASS, Harness V5 Gate Passed=PASS, Smoke Glob Runner Passed=PASS",
+  "test_contract_coverage": "PASS",
+  "fr_coverage": "10/10 PASS（evaluator 5ec5f07 → re-anchor b17cc9537）"
+}
