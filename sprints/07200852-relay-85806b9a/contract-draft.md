@@ -164,9 +164,9 @@ curl -s -X POST "localhost:5221/api/brain/graph/radius" \
 
 | 功能 | Test File | BEHAVIOR 覆盖 |
 |---|---|---|
-| graph.js 端点 repo 参数化 | `../../tests/regression/relay-85806b9a/graph-route-repo-param.test.mjs` | B-4, FR-4 |
-| per-repo freshness 独立 | `../../tests/regression/relay-85806b9a/scan-graph-freshness.test.mjs` | B-3, I-3 |
-| REPOS 多仓库清单导出 | `../../tests/regression/relay-85806b9a/scan-graph-multi-repo.test.mjs` | B-1, B-2, I-1, I-5 |
+| graph.js 端点 repo 参数化 | `../../tests/regression/relay-85806b9a/graph-route-repo-param.test.mjs` | req.query.repo |
+| per-repo freshness 独立 | `../../tests/regression/relay-85806b9a/scan-graph-freshness.test.mjs` | stale |
+| REPOS 多仓库清单导出 | `../../tests/regression/relay-85806b9a/scan-graph-multi-repo.test.mjs` | REPOS 清单 |
 
 ## 四、非目标（Out of Scope）
 

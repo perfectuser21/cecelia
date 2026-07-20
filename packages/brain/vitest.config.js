@@ -147,6 +147,10 @@ export default defineConfig({
       '../../tests/capability-probe-rumination.test.js',
       // Pre-existing failure: process.cwd() relative paths broken in brain-unit (cwd=packages/brain)
       'src/routes/__tests__/harness-feature-propagation.test.js',
+      // relay-85806b9a: 集成测试需真实 Postgres + 硬编码 /workspace/ 路径，不兼容 brain-unit GitHub Actions 环境
+      '../../tests/regression/relay-85806b9a/graph-route-repo-param.test.mjs',
+      '../../tests/regression/relay-85806b9a/scan-graph-freshness.test.mjs',
+      '../../tests/regression/relay-85806b9a/scan-graph-multi-repo.test.mjs',
     ],
     coverage: {
       provider: 'v8',
