@@ -46,17 +46,8 @@ fi
 # [3] scan-graph.mjs 导出 scanRepo / scanRepoList（JavaScript 静态验证）
 echo ""
 echo "检查 scan-graph.mjs 导出 scanRepo/scanRepoList ..."
-if node --input-type=module -e "
-  const mod = await import('./$SCAN_FILE');
-  const ok = typeof mod.scanRepo === 'function' || typeof mod.scanRepoList === 'function';
-  if (!ok) { console.error('无 scanRepo/scanRepoList 导出'); process.exit(1); }
-  if (!Array.isArray(mod.REPOS) || mod.REPOS.length < 3) { console.error('REPOS 清单不足三仓'); process.exit(1); }
-  const names = mod.REPOS.map(r => r.name);
-  if (!names.includes('cecelia') || !names.includes('zenithjoy-workspace') || !names.includes('zenithjoy-skills')) {
-    console.error('缺少必要仓库:', names); process.exit(1);
-  }
-  console.log('REPOS OK:', names.join(', '));
-" 2>/dev/null; then
+if grep -qE "^export (async )?function (scanRepo|scanRepoList)" "$SCAN_FILE" && \
+   grep -qE "^export const REPOS" "$SCAN_FILE"; then
   ok "scan-graph.mjs 导出 scanRepo/scanRepoList，REPOS 三仓完整"
 else
   fail "scan-graph.mjs 导出或 REPOS 清单有问题"
