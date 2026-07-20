@@ -216,13 +216,13 @@ npx playwright test sprints/07200850-relay-07b2fd3b/tests/inbox-e2e.spec.ts --gr
 
 | Behavior | Test File | it() Name |
 |---|---|---|
-| BEHAVIOR-1: POST /api/brain/captures 幂等进箱 | packages/brain/src/routes/__tests__/captures-api.test.ts | captures API - POST 幂等 dedupe |
-| BEHAVIOR-2: urgent→task+Bark | packages/brain/src/routes/__tests__/capture-triage-routes.test.ts | urgent路由产生真实task |
-| BEHAVIOR-3: okr→notes | packages/brain/src/routes/__tests__/capture-triage-routes.test.ts | okr路由写notes表 |
-| BEHAVIOR-4: aging重试 | packages/brain/src/__tests__/capture-aging.test.ts | llm_failed重试逻辑 |
-| BEHAVIOR-5: /inbox漏斗渲染 | packages/quality/e2e/inbox-e2e.spec.ts | Dashboard /inbox 漏斗计数渲染 |
-| BEHAVIOR-6: 积压清零 | packages/brain/src/routes/__tests__/captures-api.test.ts | pending_review积压清零 |
-| BEHAVIOR-7: CRUD reroute/drop | packages/brain/src/routes/__tests__/captures-api.test.ts | capture-atoms confirm reroute |
+| BEHAVIOR-1: POST /api/brain/captures 幂等进箱 | `../../packages/brain/src/routes/__tests__/captures-api.test.ts` | `dedupe_key 重复` |
+| BEHAVIOR-2: urgent→task+Bark | `../../packages/brain/src/routes/__tests__/capture-triage-routes.test.ts` | `urgent 路由后 atom 包含 routed_to_table` |
+| BEHAVIOR-3: okr→notes | `../../packages/brain/src/routes/__tests__/capture-triage-routes.test.ts` | `okr 路由 atom → notes` |
+| BEHAVIOR-4: aging重试 | `../../packages/brain/src/__tests__/capture-aging.test.ts` | `llm_failed atom → retry_count` |
+| BEHAVIOR-5: /inbox漏斗渲染 | `../../packages/quality/e2e/inbox-e2e.spec.ts` | `漏斗磁贴存在且含计数` |
+| BEHAVIOR-6: 积压清零 | `../../packages/brain/src/scripts/__tests__/backfill-pending-review.test.js` | `脚本文件可以加载` |
+| BEHAVIOR-7: CRUD reroute/drop | `../../packages/brain/src/routes/__tests__/captures-api.test.ts` | `action:reroute` |
 
 ---
 
