@@ -27,14 +27,14 @@
 
 ### 测试（packages/brain/src/__tests__/harness-skill-relay.test.js）
 
-- [ ] [BEHAVIOR-1] isGrok 分支识别单测（fake spawnFn 注入，验证 CECELIA_EXECUTOR='grok'）
-- [ ] [BEHAVIOR-2] `GROK_RELAY_HOME=''` loud-fail + task 回滚单测（spawnFn 未被调用，pool UPDATE queued）
-- [ ] [BEHAVIOR-3] `GROK_RELAY_HOME=undefined` 放行单测（spawnFn 被调用，r.ok===true）
-- [ ] [BEHAVIOR-4] headless spawn 参数正确性单测（extraMounts、orchestrator_host='skill-relay-grok'、deadline=8h）
-- [ ] [BEHAVIOR-5] `detectQuotaWall` 全 pattern 覆盖单测（6 个 pattern 各返回 true，正常输出返回 false）
-- [ ] [BEHAVIOR-6] 额度撞墙 fallback 路径单测（grok 撞墙 → claude 重试，二次 spawnFn CECELIA_EXECUTOR='claude'）
-- [ ] [BEHAVIOR-7] headed grok 入口白名单单测（headedExecutor='grok'，tmuxPrefix='grok-relay-'）
-- [ ] [BEHAVIOR-8] 回归：现有 isCodex/claude 全量测试绿（_activeCodexRelays 不变，orchestrator_host 区分正确）
+- [ ] [BEHAVIOR] isGrok 分支识别单测（fake spawnFn 注入，验证 CECELIA_EXECUTOR='grok'）
+- [ ] [BEHAVIOR] `GROK_RELAY_HOME=''` loud-fail + task 回滚单测（spawnFn 未被调用，pool UPDATE queued）
+- [ ] [BEHAVIOR] `GROK_RELAY_HOME=undefined` 放行单测（spawnFn 被调用，r.ok===true）
+- [ ] [BEHAVIOR] headless spawn 参数正确性单测（extraMounts、orchestrator_host='skill-relay-grok'、deadline=8h）
+- [ ] [BEHAVIOR] `detectQuotaWall` 全 pattern 覆盖单测（6 个 pattern 各返回 true，正常输出返回 false）
+- [ ] [BEHAVIOR] 额度撞墙 fallback 路径单测（grok 撞墙 → claude 重试，二次 spawnFn CECELIA_EXECUTOR='claude'）
+- [ ] [BEHAVIOR] headed grok 入口白名单单测（headedExecutor='grok'，tmuxPrefix='grok-relay-'）
+- [ ] [BEHAVIOR] 回归：现有 isCodex/claude 全量测试绿（_activeCodexRelays 不变，orchestrator_host 区分正确）
 
 ### 集成 / 冒烟
 
