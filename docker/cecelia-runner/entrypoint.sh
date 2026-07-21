@@ -23,12 +23,32 @@ HOST_CFG="/host-claude-config"
 LOCAL_CFG="${CLAUDE_CONFIG_DIR:-/home/cecelia/.claude}"
 
 # 1. 复制只读配置到可写副本（session-env 等需要运行时写入）
+#
+# issue d4e0ec91：账号 home 目录（HOST_CFG）会被多个并发容器同时挂载使用，
+# projects/ 等会话历史目录在被其他并发的活跃 session 实时读写。原先
+# `cp -aL "$HOST_CFG/." "$LOCAL_CFG/"` 整目录复制在这种并发写入下会随机
+# 卡死或中途失败（实测复现：失败容器内完全没有 .credentials.json，因为
+# 复制在到达它之前就被打断）。这些高频变动、体积大的目录本来就不是一次性
+# headless 容器任务需要的东西（不会恢复历史会话），逐条排除即可。
 if [[ -d "$HOST_CFG" ]]; then
   mkdir -p "$LOCAL_CFG"
-  # 复制内容而不是整个目录（保留 LOCAL_CFG 本身的权限属主）
-  # -aL 跟随 symlink 拷贝真实文件（skills/ 常是 symlink 指向项目 workflows 目录）
-  # 配合 docker-executor 挂载的 symlink-target volume，harness skills 才能在容器里可见
-  cp -aL "$HOST_CFG/." "$LOCAL_CFG/" 2>/dev/null || true
+  # 高频并发写入 + 容器不需要的目录：跳过，避免整树复制卡死/中途失败
+  EXCLUDE_FROM_CONFIG_COPY=(projects sessions file-history telemetry shell-snapshots paste-cache cache)
+  # 逐个顶层条目复制（含隐藏文件），跳过排除列表 —— 保留 -aL 跟随 symlink
+  # 拷贝真实文件的语义（skills/ 常是 symlink 指向项目 workflows 目录，配合
+  # docker-executor 挂载的 symlink-target volume，harness skills 才能在容器里可见）
+  shopt -s nullglob dotglob
+  for entry in "$HOST_CFG"/*; do
+    name="$(basename "$entry")"
+    [[ "$name" == "." || "$name" == ".." ]] && continue
+    skip=0
+    for ex in "${EXCLUDE_FROM_CONFIG_COPY[@]}"; do
+      [[ "$name" == "$ex" ]] && skip=1 && break
+    done
+    [[ $skip -eq 1 ]] && continue
+    cp -aL "$entry" "$LOCAL_CFG/" 2>/dev/null || true
+  done
+  shopt -u nullglob dotglob
   # session-env 是运行时可写目录
   mkdir -p "$LOCAL_CFG/session-env"
 fi
