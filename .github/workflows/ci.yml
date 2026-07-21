@@ -241,6 +241,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      - uses: actions/checkout@v4
       - name: 检查分支命名规范
         run: bash scripts/ci/check-branch-naming.sh "${{ github.head_ref }}"
 
