@@ -113,12 +113,50 @@ describe('handleAuth', () => {
 // ─── handleRateLimit ──────────────────────────────────────────────────────────
 
 describe('handleRateLimit', () => {
-  it('写 defer_until 到 DB，不调 spawnFn', async () => {
+  it('grok skill-relay rate_limit → 续接到 claude，并写 continuation 留痕', async () => {
+    const spawnFn = makeSpawnStub();
+    const db = makeDbStub();
+
+    const task = {
+      id: 'task-rl-grok-001',
+      task_type: 'harness_initiative',
+      payload: { orchestrator: 'skill-relay', executor: 'grok' },
+    };
+
+    const result = await handleRateLimit(task, {
+      cause: 'rate_limit',
+      spawnFn,
+      pool: db,
+      now: () => new Date('2026-07-21T12:00:00.000Z'),
+    });
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    expect(spawnFn.mock.calls[0][0].payload.executor).toBe('claude');
+    expect(spawnFn.mock.calls[0][1]).toMatchObject({
+      continuation: {
+        level: 'L3_cross_vendor_fallback',
+        reason: 'grok_rate_limit_runtime_continuation',
+      },
+    });
+    const sqlCall = db.query.mock.calls.find(([sql]) => /UPDATE tasks SET payload/.test(sql));
+    expect(sqlCall).toBeTruthy();
+    expect(sqlCall[1][0]).toContain('"executor":"claude"');
+    expect(sqlCall[1][0]).toContain('"continuation_level":"L3_cross_vendor_fallback"');
+    expect(sqlCall[1][0]).toContain('"reason":"grok_rate_limit_runtime_continuation"');
+    expect(result).toMatchObject({
+      action: 'continued',
+      executor: 'claude',
+      continuation_level: 'L3_cross_vendor_fallback',
+      reason: 'grok_rate_limit_runtime_continuation',
+    });
+  });
+
+  it('非 grok 任务仍写 defer_until 到 DB，不调 spawnFn', async () => {
     const spawnFn = makeSpawnStub();
     const db = makeDbStub();
     const beforeTs = Date.now();
 
-    const task = { id: 'task-rl-001', payload: {} };
+    const task = { id: 'task-rl-001', payload: { orchestrator: 'skill-relay', executor: 'claude' } };
 
     const result = await handleRateLimit(task, {
       cause: 'rate_limit',

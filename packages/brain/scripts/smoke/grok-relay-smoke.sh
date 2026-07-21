@@ -8,13 +8,14 @@
 # Case 5: grok containerId 命名规约 -gk 后缀
 # Case 6: orchestrator_host='skill-relay-grok' 内联在 SQL
 # Case 7: GROK_RELAY_DEADLINE_HOURS=8（对齐 codex 等级）
-# Case 8: 合同单测全部通过
+# Case 8: 永久池 grok 合同单测全部通过
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BRAIN_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$BRAIN_ROOT/../.." && pwd)"
 RELAY_SRC="$BRAIN_ROOT/src/harness-skill-relay.js"
-TEST_FILE="$BRAIN_ROOT/../../sprints/07201315-relay-a598772e/tests/harness-skill-relay-grok.test.js"
+TEST_FILE="$REPO_ROOT/tests/regression/relay-a598772e/harness-skill-relay-grok.test.js"
 
 echo "[smoke:grok-relay] Case 1: isGrok 分支识别"
 node -e "
@@ -71,13 +72,10 @@ if (!/GROK_RELAY_DEADLINE_HOURS\s*=\s*8/.test(js)) throw new Error('Case 7 FAIL:
 console.log('  PASS: GROK_RELAY_DEADLINE_HOURS=8');
 "
 
-echo "[smoke:grok-relay] Case 8: 合同单测全部通过"
-if [ -f "$TEST_FILE" ]; then
-  cd "$(cd "$BRAIN_ROOT/../.." && pwd)"
-  node_modules/.bin/vitest run "$TEST_FILE" --reporter=verbose 2>&1 | tail -5
-  echo "  PASS: 合同单测全部通过"
-else
-  echo "  SKIP: 测试文件不在预期路径 $TEST_FILE"
-fi
+echo "[smoke:grok-relay] Case 8: 永久池 grok 合同单测全部通过"
+[ -f "$TEST_FILE" ] || { echo "  FAIL: 测试文件不存在 $TEST_FILE"; exit 1; }
+cd "$REPO_ROOT"
+npx vitest run "$TEST_FILE" --reporter=verbose 2>&1 | tail -5
+echo "  PASS: 永久池 grok 合同单测全部通过"
 
 echo "[smoke:grok-relay] ✅ 全部通过"

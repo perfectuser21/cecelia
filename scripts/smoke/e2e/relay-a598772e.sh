@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # e2e-verify.sh — harness relay grok executor 收编 Final E2E 验收脚本
 # TASK_ID: a598772e-7f74-40f0-a022-d0e8d2b35dc0
-# SPRINT_DIR: sprints/07201315-relay-a598772e
+# REGRESSION_TEST: tests/regression/relay-a598772e/harness-skill-relay-grok.test.js
 # target_environment: local_api
 #
 # 用法：
-#   bash sprints/07201315-relay-a598772e/e2e-verify.sh [TASK_ID]
+#   bash scripts/smoke/e2e/relay-a598772e.sh [TASK_ID]
 #
 # 若不传 TASK_ID，使用脚本内默认值（本 sprint task id）。
 # 所有验收点 PASS → exit 0；任一 FAIL → exit 1。
@@ -16,6 +16,8 @@ TASK_ID="${1:-a598772e-7f74-40f0-a022-d0e8d2b35dc0}"
 SHORT=$(echo "$TASK_ID" | tr -d '-' | cut -c1-8)
 CONTAINER="cecelia-relay-${SHORT}-gk"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+REGRESSION_TEST="$REPO_ROOT/tests/regression/relay-a598772e/harness-skill-relay-grok.test.js"
 PASS=0
 FAIL=0
 
@@ -104,21 +106,23 @@ fi
 # ── E7: 撞墙 fallback 单测 ───────────────────────────────────────────────────
 echo ""
 echo "[E7] quota fallback 单测..."
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-if cd "$REPO_ROOT" && npm test packages/brain/src/__tests__/harness-skill-relay.test.js \
-    -- --grep "quota|detectQuotaWall|fallback" 2>&1 | tail -5; then
+if [ ! -f "$REGRESSION_TEST" ]; then
+  fail "E7" "regression test missing: ${REGRESSION_TEST}"
+elif cd "$REPO_ROOT" && npx vitest run "$REGRESSION_TEST" -t "额度撞墙 fallback" --reporter=verbose 2>&1 | tail -10; then
   pass "E7" "quota fallback tests pass"
 else
-  fail "E7" "quota fallback tests failed — 见上方 npm test 输出"
+  fail "E7" "quota fallback tests failed — 见上方 vitest 输出"
 fi
 
 # ── E8: 全量 relay 回归测试 ───────────────────────────────────────────────────
 echo ""
 echo "[E8] 全量 harness-skill-relay 回归测试..."
-if cd "$REPO_ROOT" && npm test packages/brain/src/__tests__/harness-skill-relay.test.js 2>&1 | tail -10; then
-  pass "E8" "all relay tests pass (isCodex/claude 路径回归保护)"
+if [ ! -f "$REGRESSION_TEST" ]; then
+  fail "E8" "regression test missing: ${REGRESSION_TEST}"
+elif cd "$REPO_ROOT" && npx vitest run "$REGRESSION_TEST" --reporter=verbose 2>&1 | tail -10; then
+  pass "E8" "all grok relay regression tests pass from permanent pool"
 else
-  fail "E8" "relay regression test failed — 见上方 npm test 输出"
+  fail "E8" "relay regression test failed — 见上方 vitest 输出"
 fi
 
 # ── 汇总 ─────────────────────────────────────────────────────────────────────
