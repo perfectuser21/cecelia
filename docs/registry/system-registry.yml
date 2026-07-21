@@ -39,7 +39,7 @@ systems:
     package: packages/brain
     purpose: Tick 调度、OKR 管理、Area 调度、拆解引擎
     features_file: features/orchestration.yml
-    feature_count: 4
+    feature_count: 5
     ci_jobs: [brain-unit, brain-integration]
     health:
       maturity_avg: 1.75

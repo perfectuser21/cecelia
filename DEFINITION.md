@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.267.26
+**Brain 版本**: 1.267.27
 
 **状态**: 生产运行中
 
@@ -516,8 +516,9 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 353 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 357 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
+| **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
 | **janitor_runs** | Janitor 任务执行记录（migration 272，job_name/status/output/duration） |
 | **janitor_config** | Janitor 任务配置（migration 272，enabled/schedule/last_run） |
@@ -615,6 +616,23 @@ queued → in_progress → completed
 | content-export | 西安 | 内容导出阶段，生成卡片并上传 NAS (/content-creator) | - | general |
 | content_publish | US | 内容发布阶段，按平台路由到对应 publisher skill（douyin/kuaishou 等需要 CDP 浏览器） | Sonnet / - | 默认 anthropic |
 | platform_scraper | CN | 自媒体平台数据采集（抖音/小红书/视频号/公众号/快手/知乎，CDP 浏览器） | Sonnet / - | 默认 anthropic |
+
+---
+
+### 4.7 Provider-neutral Harness Kernel（灰度）
+
+`harness_initiative` / `golden_path_proposal` 可在任务 payload 显式设置
+`harness_runtime: "kernel-v1"`，进入确定性 Harness Kernel；缺省仍走原
+`harness-controller`，作为一键回滚路径。Kernel 使用统一 TaskBundle/HarnessResult
+契约和仓库内冻结 Skill，将 Claude Code、Codex 视为可替换执行器；
+`executor: "auto"` 只选择满足能力的 provider，不固定 model。只有 payload
+显式提供 `model` 时才向 CLI 传模型参数。
+
+对抗验收不会因 provider 统一而取消：proposer、reviewer、generator、evaluator
+使用独立 attempt/session，judge 走独立证据门；同一 provider session 不能跨 role
+或跨 attempt 复用。Attempt 通过 lease + heartbeat 防止跨设备/进程重复执行；
+看门狗仅在同一 attempt 有 session 时原位 resume，否则从 Git/PR/DB 真相重新推导
+下一 hop。运行手册见 `packages/brain/src/orchestrator/README.md`。
 
 ---
 

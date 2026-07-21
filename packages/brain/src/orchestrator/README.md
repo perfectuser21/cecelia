@@ -1,4 +1,77 @@
-# Brain v2 L2 Orchestrator
+# Provider-neutral Harness Kernel
+
+本目录是 Harness 的确定性内核。它决定阶段、门禁、重试、合并与恢复；Claude
+Code、Codex 等 CLI 只是执行 TaskBundle 的 worker，不拥有流程状态机。
+
+## 灰度启用与回滚
+
+仅对 `orchestrator: "skill-relay"` 的任务生效：
+
+```json
+{
+  "harness_runtime": "kernel-v1",
+  "executor": "auto"
+}
+```
+
+- `executor: "auto"`：按 capability 选择已注册 provider，不选择 model。
+- `executor: "claude"` / `"codex"`：显式选择 provider。
+- `model` 缺省：不向 CLI 传模型，让账号或 CLI 配置决定。
+- `model` 显式设置：才透传为 provider 的模型参数。
+- 回滚：删除 `harness_runtime` 或改成其他值，立即回到原
+  `harness-controller` 路径，不需要迁移或删除 attempt 数据。
+
+当前生产 adapter 为 Claude Code 与 Codex。新增 Grok 等 provider 时只需实现
+`start / resume / inspect / cancel / normalizeResult`，声明 capabilities，并通过
+TaskBundle、结构化输出、session 隔离和恢复测试；不要把 provider 专有指令写入
+Skill 或状态机。
+
+## 契约与 Skill
+
+- `execution-contract.js`：内部 v1 `TaskBundle` / `HarnessResult` schema。
+- `skill-bundle.js`：从仓库 `packages/workflows/skills/` 读取 Skill，记录 version、
+  `sha256` 和完整内容后再派发；运行时不以 `~/.claude/skills` 为事实源。
+- `provider-registry.js`：按能力解析 provider，注册顺序是 `auto` 的确定性优先级。
+- `providers/`：仅生成 CLI 调用描述并规范化返回，不决定 Harness 流程。
+
+每个 planner / proposer / reviewer / generator / evaluator / judge 都写一条
+`harness_attempts`。唯一 `(run_id, hop)` 固定 relay 次序；provider session 在同一
+run 内只能属于一个 attempt。回调结果必须匹配 attempt id、provider 和 role。
+
+## 对抗与恢复不变量
+
+1. proposer 与 reviewer、generator 与 evaluator 必须是不同 attempt 和新 session。
+2. reviewer/evaluator 的 decision 是必填项；judge 使用独立证据门，不复用 agent
+   的自我评价。
+3. runner 每 60 秒 heartbeat；lease 未过期时其他进程不得接管。
+4. lease 过期且已有 provider session：只 reclaim 并 resume 同一 attempt。
+5. 没有可恢复 session：不猜进度，重启 kernel reconcile，从 DB、PR、Git 和产物
+   重新推导下一 hop。
+6. callback 是幂等终态写入；verdict 以 attempt id 去重并绑定 round / PR SHA。
+
+## 运行与排障
+
+```bash
+# 只观测、推导，不写 DB/不派发
+node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid> --dry-run
+
+# 真实运行（通常由 skill-relay 启动）
+node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
+
+# provider runner 静态契约
+bash docker/cecelia-runner/entrypoint-provider-contract.test.sh
+```
+
+内部 callback：
+
+- `POST /api/brain/harness/attempts/:attemptId/heartbeat`
+- `POST /api/brain/harness/attempts/:attemptId/callback`
+
+排障先查 `harness_attempts` 的 status、lease_owner、lease_expires_at、
+provider_session_id、error_code，再查 `orchestrator_decision_log`。不要人工复制 session
+到另一个 role；需要恢复时让 watchdog 按上述规则接管。
+
+## 既有 Brain v2 编排模块
 
 **位置**：Brain v2 三层架构中间层 L2（L1 Scheduler → L2 Orchestrator → L3 Executor）。
 **spec**：`docs/design/brain-orchestrator-v2.md` §6。
