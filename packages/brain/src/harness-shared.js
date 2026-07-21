@@ -17,51 +17,21 @@
 import { readFileSync, existsSync } from 'fs';
 import { readFile } from 'node:fs/promises';
 import path from 'path';
-import os from 'os';
 import { z } from 'zod';
+import { loadSkillBundle } from './orchestrator/skill-bundle.js';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
 // Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
 // 必须把 SKILL.md 原文内联到 prompt 里，Claude 才能按 skill 指令工作。
 //
-// 搜索顺序:
-// 1-3. host 上 ~/.claude*/skills 的 symlink（软链接指向 zenithjoy-skills repo）
-// 4.   monorepo 内 packages/workflows/skills/（CI fallback，用于单元测试与 smoke）
-const SKILL_SEARCH_DIRS = [
-  path.join(os.homedir(), '.claude-account1', 'skills'),
-  path.join(os.homedir(), '.claude-account2', 'skills'),
-  path.join(os.homedir(), '.claude', 'skills'),
-  // CI / dev fallback: monorepo 内已同步的 SKILL 快照（从 zenithjoy-skills 同步）
-  path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'workflows', 'skills'),
-];
-
-const _skillCache = new Map();
-
 /**
- * 读取 skill 的 SKILL.md 内容（成功结果缓存）。
- * 按 SKILL_SEARCH_DIRS 顺序查找。
+ * 读取仓库内冻结 Skill bundle 的完整内容（成功结果缓存）。
+ * 不再读取 ~/.claude* 账号目录，避免跨账号/跨机器的隐式版本漂移。
  * B56: 找不到/读失败 → throw（不返回空串、不缓存失败）。
  * 调用方拿空 SKILL 静默降级会跑出错误成果（generator 无 PR），故 fail-fast。
  */
 export function loadSkillContent(skillName) {
-  if (_skillCache.has(skillName)) return _skillCache.get(skillName);
-  const tried = [];
-  for (const base of SKILL_SEARCH_DIRS) {
-    const p = path.join(base, skillName, 'SKILL.md');
-    tried.push(p);
-    if (existsSync(p)) {
-      try {
-        const content = readFileSync(p, 'utf8');
-        _skillCache.set(skillName, content); // 只缓存成功结果
-        return content;
-      } catch { /* 读失败继续下一路径，不缓存 */ }
-    }
-  }
-  // B56: 找不到 SKILL.md = 系统配置错误，fail-fast（不返回空串、不缓存失败）。
-  // 历史 bug：返回空串 + 缓存空串 → generator 拿空 SKILL prompt 静默跑出无 PR 的假成功。
-  throw new Error(
-    `loadSkillContent: SKILL.md not found for "${skillName}". Searched: ${tried.join(', ')}`
-  );
+  return loadSkillBundle(skillName).content;
 }
 
 // ─── Docker 输出解析 ─────────────────────────────────────────────────────────
