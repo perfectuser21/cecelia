@@ -21,6 +21,7 @@ const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
 const CODEX_RELAY_DEADLINE_HOURS = 8; // B5: codex 路径用 8h
 const GROK_RELAY_DEADLINE_HOURS = 8;  // grok 路径对齐 codex 等级
+const GROK_HOME_IN_CONTAINER = '/home/cecelia/.grok';
 
 // B2: 进程内并发守门（MAX=1）
 let _activeCodexRelays = 0;
@@ -327,9 +328,10 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       || null;
     const effectiveMemoryOverride = memoryOverride || oomEnvOverride || null;
 
-    // grok extraMounts：宿主 GROK_RELAY_HOME 挂到容器内 /home/cecelia/.grok
+    // grok extraMounts：宿主 GROK_RELAY_HOME 以只读视图挂到容器内 GROK_HOME。
+    // 约束：relay 只提供最小权限只读凭据/二进制视图，不允许容器内刷新/覆写宿主 token。
     const grokExtraMounts = isGrok && grokRelayHome
-      ? [`${grokRelayHome}:/home/cecelia/.grok:rw`]
+      ? [`${grokRelayHome}:${GROK_HOME_IN_CONTAINER}:ro`]
       : undefined;
 
     // 决定 CECELIA_EXECUTOR 值
@@ -563,6 +565,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
       ? 'grok'
       : 'codex';
   const headedHost = HEADED_HOSTS[headedExecutor];
+  const isCodexHeaded = headedExecutor === 'codex';
   const isClaudeHeaded = headedExecutor === 'claude';
   const isGrokHeaded = headedExecutor === 'grok';
 
@@ -570,7 +573,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   // CODEX_RELAY_HOME/GROK_RELAY_HOME 检查）。
   // 未配置（undefined）→ 放行（本地/测试环境）；显式配置为空字符串 → loud-fail。
   const codexRelayHome = process.env.CODEX_RELAY_HOME;
-  if (!isClaudeHeaded && !isGrokHeaded) {
+  if (isCodexHeaded) {
     if (codexRelayHome !== undefined && !codexRelayHome) {
       console.error('[skill-relay][headed][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
       try {
@@ -585,9 +588,11 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     }
   }
 
-  // grok headed 门禁：GROK_RELAY_HOME='' → loud-fail（对齐 codex headed 门禁 L478-491）
+  // grok headed 约束：生产应把 GROK_RELAY_HOME 指向宿主只读 key-only 目录或只读凭据镜像。
+  // headed 是宿主直跑，没有 docker bind 的 :ro 可降权；因此这里只显式使用该目录，
+  // 不回退去碰宿主默认 ~/.grok 以外的刷新路径。undefined 仍放行给本地/测试注入。
+  const grokRelayHomeHeaded = isGrokHeaded ? process.env.GROK_RELAY_HOME : undefined;
   if (isGrokHeaded) {
-    const grokRelayHomeHeaded = process.env.GROK_RELAY_HOME;
     if (grokRelayHomeHeaded !== undefined && !grokRelayHomeHeaded) {
       console.error('[skill-relay][headed][ALERT] GROK_RELAY_HOME 未配置，grok executor 无法挂载凭据');
       try {
@@ -701,7 +706,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   // 在起 tmux 之前，经同一条 ssh 通道幂等预写 trust 段：
   //   ①config.toml 不存在（账号未初始化）→ 跳过 + warn，不硬造文件，让 codex 自己处理
   //   ②该 worktree 表已存在 → grep 命中跳过，不产生重复 TOML 表
-  if (!isClaudeHeaded && codexRelayHome) {
+  if (isCodexHeaded && codexRelayHome) {
     const codexConfigPath = `${codexRelayHome}/config.toml`;
     try {
       execFn(
@@ -710,7 +715,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     } catch (trustErr) {
       console.warn(`[skill-relay][headed] trust preseed 失败（non-fatal，交给 codex 自行处理交互确认）: ${trustErr.message}`);
     }
-  } else if (!isClaudeHeaded) {
+  } else if (isCodexHeaded) {
     console.warn('[skill-relay][headed] CODEX_RELAY_HOME 未配置，跳过 trust preseed');
   }
 
@@ -750,9 +755,13 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // post-pr-create.sh hook 检测到该变量后跳过 auto-merge，保证 evaluator gate 不被绕过
     // (P0 a638f840 根治：PR 在 evaluator 运行前被 GitHub 自动合并)。
     // headless docker relay 已通过 spawnFn env 参数注入，此处仅补 headed 路径。
+    const grokHomePrefix = grokRelayHomeHeaded ? `GROK_HOME=${grokRelayHomeHeaded} ` : '';
+    const grokBinary = grokRelayHomeHeaded ? `${grokRelayHomeHeaded}/bin/grok` : '~/.grok/bin/grok';
     const innerCmd = isClaudeHeaded
       ? `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`
-      : `cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
+      : isGrokHeaded
+        ? `cd ${worktreePath} && ${grokHomePrefix}${grokBinary} -p \\"\\$(cat ${promptFile})\\" --cwd ${worktreePath} --always-approve`
+        : `cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     try {
       execFn(
         `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} '${innerCmd}'"`

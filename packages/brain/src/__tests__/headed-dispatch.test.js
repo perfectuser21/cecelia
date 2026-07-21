@@ -264,6 +264,29 @@ describe('4. claude headed 分支（T6）', () => {
       expect(tmuxCmd).toContain('CODEX_HOME');
     } finally { delete process.env.CODEX_RELAY_HOME; }
   });
+
+  it('grok headed 路径用真实 grok CLI 签名，不回退到 codex，并显式绑定 GROK_HOME 只读目录约束', async () => {
+    const calls = []; const inserts = [];
+    process.env.GROK_RELAY_HOME = '/Users/administrator/.grok-readonly';
+    try {
+      const task = { id: '00000000-0000-0000-0000-00000000c1e3', title: 't', payload: { orchestrator: 'skill-relay', executor: 'grok', mode: 'headed' } };
+      const result = await spawnSkillRelaySession(task, makeDeps(calls, inserts));
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('skill-relay-grok-headed');
+      expect(result.tmuxSession).toMatch(/^grok-relay-/);
+
+      const tmuxCmd = calls.find((c) => c.includes('tmux new-session'));
+      expect(tmuxCmd).toContain('GROK_HOME=/Users/administrator/.grok-readonly');
+      expect(tmuxCmd).toContain('/Users/administrator/.grok-readonly/bin/grok');
+      expect(tmuxCmd).toContain(' -p ');
+      expect(tmuxCmd).toContain('--cwd /tmp/fake-worktree');
+      expect(tmuxCmd).toContain('--always-approve');
+      expect(tmuxCmd).not.toContain(' codex ');
+      expect(tmuxCmd).not.toContain('CODEX_HOME');
+      expect(calls.some((c) => c.includes('config.toml'))).toBe(false);
+      expect(JSON.stringify(inserts[0])).toContain('skill-relay-grok-headed');
+    } finally { delete process.env.GROK_RELAY_HOME; }
+  });
 });
 
 describe('5. ssh spawn 失败 → B4 回滚（ALERT + 回 queued）', () => {

@@ -169,7 +169,7 @@ describe('dispatcher allocation guide', () => {
     });
   });
 
-  it('harness_initiative 在 claude 无可用容量时续接到 codex', async () => {
+  it('harness_initiative 读取 slot budget + llm_capacity snapshot，claude 无可用容量时续接到 codex', async () => {
     const task = {
       id: 'task-guided-2',
       title: 'guided harness task',
@@ -211,10 +211,13 @@ describe('dispatcher allocation guide', () => {
       return { rows: [], rowCount: 1 };
     });
 
+    const { calculateSlotBudget } = await import('../slot-allocator.js');
     const { dispatchNextTask } = await import('../dispatcher.js');
     const result = await dispatchNextTask([]);
 
     expect(result.dispatched).toBe(true);
+    expect(calculateSlotBudget).toHaveBeenCalledTimes(1);
+    expect(getLlmCapacitySnapshot).toHaveBeenCalledTimes(1);
     expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({
       id: task.id,
       provider: 'codex',
@@ -227,5 +230,14 @@ describe('dispatcher allocation guide', () => {
         }),
       }),
     }));
+    expect(mockTriggerCeceliaRun.mock.calls[0][0].provider).toBe('codex');
+    console.log(
+      '[evidence] dispatcher_reads budget_state=tight '
+      + `calculateSlotBudget.calls=${calculateSlotBudget.mock.calls.length} `
+      + `getLlmCapacitySnapshot.calls=${getLlmCapacitySnapshot.mock.calls.length} `
+      + `provider=${mockTriggerCeceliaRun.mock.calls[0][0].provider} `
+      + `payload.executor=${mockTriggerCeceliaRun.mock.calls[0][0].payload.executor} `
+      + 'llm_capacity.sampled_at=2026-07-21T10:00:00.000Z claude=0 codex=1 grok=1'
+    );
   });
 });

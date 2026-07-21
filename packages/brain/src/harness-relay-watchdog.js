@@ -599,7 +599,8 @@ export async function resumeStalledRelayRuns(deps = {}) {
         } else if (classified.cause === 'rate_limit') {
           // defer_until 未到期时跳过已在外层 defer_until 检查处理；首次写入 defer_until
           const { handleRateLimit } = await import('./harness-death-handlers.js');
-          await handleRateLimit(task, { cause: classified.cause, spawnFn, pool: dbPool });
+          const handled = await handleRateLimit(task, { cause: classified.cause, spawnFn, pool: dbPool });
+          if (handled?.action === 'continued') out.resumed++;
           continue; // rate_limit defer，不烧 attempt
         } else if (classified.cause === 'green_waiting_merge') {
           const { handleGreenWaitingMerge } = await import('./harness-death-handlers.js');

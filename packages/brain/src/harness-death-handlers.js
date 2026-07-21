@@ -66,13 +66,72 @@ export async function handleAuth(task, {
 
 /**
  * BEHAVIOR-3: rate_limit defer 处置器
- * - 不 spawn，写 defer_until 到 DB
+ * - grok skill-relay 运行期优先续接到 claude（刀3 四级续接闭环）
+ * - 其余情况不 spawn，写 defer_until 到 DB
  */
 export async function handleRateLimit(task, {
   cause,
-  spawnFn: _spawnFn,
+  spawnFn,
   pool,
+  now = () => new Date(),
 }) {
+  const continuationLevel = 'L3_cross_vendor_fallback';
+  const continuationReason = 'grok_rate_limit_runtime_continuation';
+  const canContinueToClaude =
+    task?.payload?.orchestrator === 'skill-relay'
+    && task?.payload?.executor === 'grok'
+    && typeof spawnFn === 'function';
+
+  if (canContinueToClaude) {
+    const allocation = {
+      ...(task.payload?.allocation && typeof task.payload.allocation === 'object' ? task.payload.allocation : {}),
+      selector: 'harness-death-handlers/rate-limit-v1',
+      path: 'relay_watchdog.rate_limit',
+      task_type: task?.task_type || 'harness_initiative',
+      selected_executor: 'claude',
+      previous_executor: 'grok',
+      continuation_level: continuationLevel,
+      reason: continuationReason,
+      decided_at: now().toISOString(),
+    };
+    const payloadPatch = {
+      executor: 'claude',
+      continuation_level: continuationLevel,
+      continuation_reason: continuationReason,
+      allocation,
+    };
+
+    console.log(`cause=${cause} action=rate_limit_continue_claude initiative=${task.id} from=grok`);
+
+    await pool.query(
+      `UPDATE tasks SET payload = COALESCE(payload,'{}')::jsonb || $1::jsonb WHERE id=$2`,
+      [JSON.stringify(payloadPatch), task.id]
+    );
+
+    const continuedTask = {
+      ...task,
+      payload: {
+        ...(task.payload || {}),
+        ...payloadPatch,
+      },
+    };
+    const r = await spawnFn(continuedTask, {
+      pool,
+      continuation: {
+        level: continuationLevel,
+        reason: continuationReason,
+      },
+    });
+
+    return {
+      action: 'continued',
+      executor: 'claude',
+      continuation_level: continuationLevel,
+      reason: continuationReason,
+      containerId: r?.containerId,
+    };
+  }
+
   const retryAfterTs = task.payload?.retry_after_ts;
   const deferUntil = retryAfterTs ?? (Date.now() + 60 * 60 * 1000);
 

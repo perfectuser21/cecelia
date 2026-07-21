@@ -24,6 +24,7 @@ function makeDeps({
   attempts = 2,
   containerRunning = false,
   orchestrator = 'skill-relay',
+  taskPayload = null,
   prUrl = null,
   prState = null,   // 'MERGED' | 'OPEN' | 'CLOSED' | null（execFn 返回的 gh pr view JSON）
   orchestratorHost = 'skill-relay-session',
@@ -37,7 +38,7 @@ function makeDeps({
       return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost }] };
     }
     if (/FROM tasks/.test(sql)) {
-      return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator } }] };
+      return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: taskPayload || { orchestrator } }] };
     }
     if (/FROM initiative_run_events/.test(sql)) {
       return { rows: evaluatorGate ? [{ x: 1 }] : [] };
@@ -220,6 +221,55 @@ describe('resumeStalledRelayRuns', () => {
     const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
     expect(ghCall).toBeFalsy();
     expect(deps.spawnFn).toHaveBeenCalledOnce();
+  });
+
+  it('grok relay 被判 rate_limit → 优先续接到 claude，不写 defer_until', async () => {
+    const deps = makeDeps({
+      taskPayload: {
+        orchestrator: 'skill-relay',
+        executor: 'grok',
+        stdout_tail: '429 Too Many Requests',
+        last_container_exit_code: 1,
+      },
+    });
+    const r = await resumeStalledRelayRuns(deps);
+
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    expect(deps.spawnFn.mock.calls[0][0].payload).toMatchObject({
+      executor: 'claude',
+      continuation_level: 'L3_cross_vendor_fallback',
+      continuation_reason: 'grok_rate_limit_runtime_continuation',
+    });
+    expect(deps.spawnFn.mock.calls[0][1]).toMatchObject({
+      continuation: {
+        level: 'L3_cross_vendor_fallback',
+        reason: 'grok_rate_limit_runtime_continuation',
+      },
+    });
+    const updates = deps.pool.query.mock.calls.map(([sql, params]) => ({ sql, params }));
+    const payloadUpdate = updates.find(({ sql }) => /UPDATE tasks SET payload/.test(sql));
+    expect(payloadUpdate).toBeTruthy();
+    expect(payloadUpdate.params[0]).toContain('"executor":"claude"');
+    expect(payloadUpdate.params[0]).toContain('"reason":"grok_rate_limit_runtime_continuation"');
+    expect(updates.some(({ sql }) => /defer_until/.test(sql))).toBe(false);
+    expect(r.resumed).toBe(1);
+  });
+
+  it('非 grok relay 被判 rate_limit → 仍 defer，不续接', async () => {
+    const deps = makeDeps({
+      taskPayload: {
+        orchestrator: 'skill-relay',
+        executor: 'claude',
+        stdout_tail: '429 Too Many Requests',
+        last_container_exit_code: 1,
+      },
+    });
+    const r = await resumeStalledRelayRuns(deps);
+
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    const updates = deps.pool.query.mock.calls.map(([sql]) => sql);
+    expect(updates.some((sql) => /defer_until/.test(sql))).toBe(true);
+    expect(r.resumed).toBe(0);
   });
 
   it('容器消失 + pr_url 存在 + PR MERGED + evaluator 从未执行 → 标 done 但打 failure_reason，不触发 regression 提升，发告警', async () => {
