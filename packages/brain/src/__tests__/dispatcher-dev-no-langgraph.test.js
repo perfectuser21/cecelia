@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   triggerCeceliaRun: vi.fn(),
   runWorkflow: vi.fn(),
   selectNextDispatchableTask: vi.fn(),
+  calculateSlotBudget: vi.fn(),
+  shouldDowngrade: vi.fn(),
 }));
 
 vi.mock('../db.js', () => ({ default: { query: mocks.query } }));
@@ -39,15 +41,10 @@ vi.mock('../executor.js', () => ({
 }));
 vi.mock('../slot-allocator.js', () => ({
   harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
-  calculateSlotBudget: vi.fn().mockResolvedValue({
-    dispatchAllowed: true,
-    taskPool: { budget: 5, available: 3 },
-    user: { mode: 'absent', used: 0 },
-    codex: { available: true, running: 0, max: 5 },
-  }),
+  calculateSlotBudget: mocks.calculateSlotBudget,
   shouldBypassBackpressure: vi.fn(() => false),
 }));
-vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: vi.fn(() => false) }));
+vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: mocks.shouldDowngrade }));
 vi.mock('../event-bus.js', () => ({
   emit: vi.fn().mockResolvedValue(undefined),
   ensureEventsTable: vi.fn().mockResolvedValue(undefined),
@@ -142,8 +139,17 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     mocks.triggerCeceliaRun.mockReset();
     mocks.runWorkflow.mockReset();
     mocks.selectNextDispatchableTask.mockReset();
+    mocks.calculateSlotBudget.mockReset();
+    mocks.shouldDowngrade.mockReset();
     mocks.selectNextDispatchableTask.mockResolvedValue(null);
     mocks.triggerCeceliaRun.mockResolvedValue({ success: true, runId: 'run-t6-001' });
+    mocks.calculateSlotBudget.mockResolvedValue({
+      dispatchAllowed: true,
+      taskPool: { budget: 5, available: 3 },
+      user: { mode: 'absent', used: 0 },
+      codex: { available: true, running: 0, max: 5 },
+    });
+    mocks.shouldDowngrade.mockReturnValue(false);
   });
 
   it('dev task 派发 → triggerCeceliaRun 被调，runWorkflow 不被调', async () => {
@@ -183,5 +189,24 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     expect(result.dispatched).toBe(true);
     expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
     expect(mocks.runWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('budget_state=tight 且任务可降级时，传给 triggerCeceliaRun 的 payload.executor 必须是 codex', async () => {
+    const task = makeDevTask({ id: 'dev-task-downgrade-001', payload: { orchestrator: 'skill-relay' } });
+    setupDispatch(task);
+    mocks.calculateSlotBudget.mockResolvedValueOnce({
+      dispatchAllowed: true,
+      budgetState: { state: 'tight' },
+      taskPool: { budget: 5, available: 3 },
+      user: { mode: 'absent', used: 0 },
+      codex: { available: true, running: 0, max: 5 },
+    });
+    mocks.shouldDowngrade.mockReturnValueOnce(true);
+
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result.dispatched).toBe(true);
+    expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
+    expect(mocks.triggerCeceliaRun.mock.calls[0][0].payload?.executor).toBe('codex');
   });
 });
