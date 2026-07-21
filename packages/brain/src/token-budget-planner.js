@@ -71,6 +71,9 @@ const EXECUTOR_AFFINITY = {
   'arch_review':          { primary: 'claude', fallback: null,      no_downgrade: true  },
   'suggestion_plan':      { primary: 'claude', fallback: null,      no_downgrade: true  },
   'knowledge':            { primary: 'claude', fallback: null,      no_downgrade: true  },
+  // harness_initiative：GAN对抗阶段(proposer×reviewer)依赖Task工具拉独立subagent，
+  // Codex CLI无等价能力，降级会导致GAN退化成自问自答（07-21实证：合同漏掉关键behavior仍APPROVED）
+  'harness_initiative':   { primary: 'claude', fallback: null,      no_downgrade: true  },
 
   // 始终走 Codex（不消耗 Claude）
   'codex_dev':            { primary: 'codex',   fallback: null,     no_downgrade: true  },
