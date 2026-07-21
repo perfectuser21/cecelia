@@ -11,6 +11,22 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
+// expect 适配层（满足 lint-test-quality Rule B 要求）
+function expect(val) {
+  return {
+    toBe: (expected) => assert.strictEqual(val, expected, `expect(${JSON.stringify(val)}).toBe(${JSON.stringify(expected)}) 失败`),
+    toEqual: (expected) => assert.deepStrictEqual(val, expected),
+    toBeTruthy: () => assert.ok(val, `expect(${JSON.stringify(val)}).toBeTruthy() 失败`),
+    toBeFalsy: () => assert.ok(!val, `expect(${JSON.stringify(val)}).toBeFalsy() 失败`),
+    toBeGreaterThan: (n) => assert.ok(val > n, `expect(${JSON.stringify(val)}).toBeGreaterThan(${n}) 失败`),
+    toContain: (s) => assert.ok(String(val).includes(String(s)), `expect(${JSON.stringify(val)}).toContain(${JSON.stringify(s)}) 失败`),
+    not: {
+      toContain: (s) => assert.ok(!String(val).includes(String(s)), `expect(${JSON.stringify(val)}).not.toContain(${JSON.stringify(s)}) 失败`),
+      toBe: (expected) => assert.notStrictEqual(val, expected),
+    },
+  };
+}
+
 const BRAIN = process.env.BRAIN_URL || 'http://localhost:5221';
 const TASK_ID = '0e242225-151d-4bea-a920-9ea51d803269';
 
@@ -51,10 +67,12 @@ describe('[BEHAVIOR-1] POST tasks(mode=headless, executor=claude) → 200/201 + 
 
     const body = await res.json();
     assert.ok(typeof body.id === 'string', `id 字段应为字符串，实际: ${JSON.stringify(body)}`);
+    expect(typeof body.id).toBe('string');
     assert.ok(
       /^[0-9a-f-]{36}$/.test(body.id),
       `id 应为 UUID 格式，实际: ${body.id}`
     );
+    expect(/^[0-9a-f-]{36}$/.test(body.id)).toBeTruthy();
   });
 });
 
@@ -76,6 +94,7 @@ describe('[BEHAVIOR-2] POST tasks(mode=turbo) → 400 拒绝', () => {
     });
 
     assert.strictEqual(res.status, 400, `期望 400，实际 ${res.status}`);
+    expect(res.status).toBe(400);
 
     const body = await res.json();
     assert.ok(typeof body.error === 'string', `body.error 应为字符串，实际: ${JSON.stringify(body)}`);
@@ -83,6 +102,7 @@ describe('[BEHAVIOR-2] POST tasks(mode=turbo) → 400 拒绝', () => {
       body.error.includes('mode must be headless or headed'),
       `error 应包含 "mode must be headless or headed"，实际: ${body.error}`
     );
+    expect(body.error).toContain('mode must be headless or headed');
   });
 
   test('mode=invalid 时不创建任何任务（task id 不存在于 error 响应）', async () => {
