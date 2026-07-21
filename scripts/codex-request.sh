@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# codex-request.sh — 西安 M4 侧发起的 codex token pull-request
+# codex-request.sh — 西安 M4 侧发起的 codex token 只读借用
 #
 # 设计目标：
 #   西安 M4（本脚本运行处）= 同事交互式使用发起点
-#   美国 M4 = token 的家（唯一持久存储）
-#   模型：用前拉最新（scp pull）→ 前台跑 codex → 用后立即还（trap EXIT scp push）
+#   美国 M4 = token 的家（唯一持久存储、唯一写者）
+#   模型：只读快照 —— 每次用前从美国拉最新，用完不回传、不覆盖美国侧。
+#         美国侧 crontab 的自动续期脚本是唯一负责刷新与持久化的角色。
 #
 # 用法：
 #   bash scripts/codex-request.sh --team <team1|team2|team3|team4|team5>
@@ -13,22 +14,27 @@
 #   CODEX_US_HOST   默认 mac-mini-m4-us 的 Tailscale 用户@地址；
 #                   可用 CODEX_US_HOST 覆盖（如 Tailscale 不可达时切换别名）
 #   CODEX_BIN       本地 codex 可执行文件名，默认 codex
+#   CODEX_MIN_REMAINING_SECONDS  拒绝运行的最低剩余有效期阈值，默认 172800（48小时）
 #
 # 红线：
 #   - 绝不在本机（西安）执行 codex 的登录（login）子命令 / 任何触发认证刷新的命令
 #   - token 内容绝不打印到 stdout/日志
-#   - 本地与远端 auth.json 均 mode 600
-#   - 不使用 exec 运行 codex —— exec 会替换脚本自身进程，
-#     导致 EXIT trap 无法在 codex 退出后触发，回传逻辑就此失效
-#   - 推回前必须校验本地 auth.json 是合法 JSON（依赖 jq）——
-#     codex 若被 kill -9 / 磁盘满导致文件写坏，绝不能把坏文件当"最新版本"
-#     覆盖美国侧唯一持久副本；校验失败则跳过推回，人工核查
-set -uo pipefail  # 不用 -e：codex 非零退出时仍须继续执行 trap 回传逻辑
+#   - 本地 auth.json mode 600
+#   - 绝不往回推（scp push）——美国侧 crontab 是唯一写者，本脚本只读借用，
+#     用完就地丢弃。这不是遗漏，是刻意设计：曾经的"用完整份回传"模式在跨机
+#     场景下会产生 lost-update 竞态（回传旧版本覆盖美国侧 cron 已刷新的新版本，
+#     导致 refresh_token 失效，整个账号需要重新登录才能恢复；如果美国侧自己
+#     也正有会话在用，这次覆盖还会反过来把美国自己的会话弄断）。没有第二个
+#     写者，就没有竞态，不需要加锁。
+#   - 拉取到的 token 若剩余有效期不足 CODEX_MIN_REMAINING_SECONDS，拒绝运行——
+#     这是美国侧 cron 掉线的哨兵，不能让西安悄悄用着一份快过期的陈旧 token
+set -uo pipefail
 
 ALLOWED_TEAMS=(team1 team2 team3 team4 team5)
 ALLOWED_TEAMS_STR="$(IFS='|'; echo "${ALLOWED_TEAMS[*]}")"
 US_HOST="${CODEX_US_HOST:-administrator@100.71.151.105}"
 CODEX_BIN="${CODEX_BIN:-codex}"
+MIN_REMAINING_SECONDS="${CODEX_MIN_REMAINING_SECONDS:-172800}"
 
 TEAM=""
 
@@ -40,8 +46,9 @@ usage() {
 流程:
   1. 反向 SSH 探活美国 M4
   2. scp 从美国拉取该账号最新 auth.json（覆盖本地）
-  3. 前台运行 codex（非 exec，保留退出后 trap 回传能力）
-  4. 无论 codex 正常/异常退出，trap 都会把（可能已被刷新的）auth.json scp 推回美国
+  3. 校验剩余有效期 >= ${MIN_REMAINING_SECONDS} 秒，不足则拒绝运行
+  4. 前台运行 codex
+  5. 用完不回传——美国侧 crontab 是唯一写者
 EOF
 }
 
@@ -100,43 +107,33 @@ pull_token() {
   log "拉取完成，本地已 chmod 600"
 }
 
-push_token_back() {
-  if [[ ! -f "$LOCAL_AUTH" ]]; then
-    printf '[codex-request] WARN: 本地 %s 不存在，跳过推回\n' "$LOCAL_AUTH" >&2
-    return 0
+# 剩余有效期检查：美国侧 cron 是唯一写者，正常情况下拉到的 token 应该有
+# 大把余量（实测约 9 天）。剩余不足 48 小时意味着美国侧 cron 大概率已经
+# 掉线/失败，此时不应该继续借用一份快过期的陈旧 token 出去。
+assert_fresh_enough() {
+  local remaining
+  remaining=$(python3 -c "
+import json, base64, time, sys
+try:
+    d = json.load(open('$LOCAL_AUTH'))
+    at = d.get('tokens', {}).get('access_token', '')
+    if not at or at.count('.') != 2:
+        print(-1); sys.exit(0)
+    p = at.split('.')[1] + '=='
+    exp = json.loads(base64.b64decode(p + '==')).get('exp', 0)
+    print(int(exp - time.time()))
+except Exception:
+    print(-1)
+")
+  if [[ "$remaining" -lt "$MIN_REMAINING_SECONDS" ]]; then
+    die "${TEAM} token 剩余有效期不足（约 ${remaining} 秒 < 要求 ${MIN_REMAINING_SECONDS} 秒），拒绝运行。可能是美国侧 refresh-codex-tokens cron 掉线未及时刷新，请去美国机核查 /tmp/codex-token-refresh.log"
   fi
-  # -s：文件存在但大小为 0（空文件）。必须单独判——
-  # jq empty 对 0 字节文件视为"没有 JSON 值可解析"，会直接返回成功(exit 0)，
-  # 完全堵不住 codex 被 kill -9/磁盘满导致文件被截断成空文件这个具名场景。
-  if [[ ! -s "$LOCAL_AUTH" ]]; then
-    printf '[codex-request] WARN: 本地 %s 是空文件（可能 codex 异常终止/磁盘满导致），跳过推回，保留美国侧现有副本不被覆盖\n' \
-      "$LOCAL_AUTH" >&2
-    return 0
-  fi
-  if ! jq empty "$LOCAL_AUTH" >/dev/null 2>&1; then
-    printf '[codex-request] WARN: 本地 %s 不是合法 JSON（可能 codex 异常终止/磁盘满导致写坏），跳过推回，保留美国侧现有副本不被覆盖\n' \
-      "$LOCAL_AUTH" >&2
-    return 0
-  fi
-  chmod 600 "$LOCAL_AUTH"
-  if scp -o BatchMode=yes -o ConnectTimeout=15 \
-      "$LOCAL_AUTH" "${US_HOST}:${REMOTE_AUTH}" 2>/tmp/codex-request-pushback-err.$$; then
-    ssh_cmd "chmod 600 ${REMOTE_AUTH}" || true
-    log "已把 ${TEAM} token 推回美国"
-  else
-    printf '[codex-request] ERROR: %s token 推回美国失败，请人工核查（scp 本次连接已不通，重试无意义，不做自动重试）: %s\n' \
-      "$TEAM" "$(cat /tmp/codex-request-pushback-err.$$ 2>/dev/null)" >&2
-  fi
-  rm -f /tmp/codex-request-pushback-err.$$
+  log "剩余有效期检查通过（约 ${remaining} 秒 >= ${MIN_REMAINING_SECONDS} 秒）"
 }
 
 assert_ssh
 pull_token
+assert_fresh_enough
 
-trap push_token_back EXIT
-
-log "启动 codex（CODEX_HOME=${LOCAL_HOME}）"
-env CODEX_HOME="$LOCAL_HOME" "$CODEX_BIN"
-CODEX_EXIT=$?
-
-exit "$CODEX_EXIT"
+log "启动 codex（CODEX_HOME=${LOCAL_HOME}；用完不回传，美国侧 crontab 是唯一写者）"
+exec env CODEX_HOME="$LOCAL_HOME" "$CODEX_BIN"
