@@ -187,6 +187,16 @@ fi
 # CODEX_RELAY_HOME 挂载目录（~/.codex-team2，含 auth/config）
 CODEX_RELAY_HOME="${CODEX_RELAY_HOME:-/home/cecelia/.codex-team2}"
 
+# B7 真实性校验：只认"真实错误行"（带 ERROR/FATAL 标记的行）里的关键词。
+# 裸词全文匹配会把 agent 自然语言总结（如复述"usage limit 治理"类 PRD）误判为失败，
+# 连环击杀正常任务（2026-07-21 两例实锤，issue 在案）。
+scan_error_keywords() {
+  local f="$1"
+  [[ -f "$f" ]] || return 1
+  grep -E '(^|[[:space:]])(ERROR|FATAL)([:[:space:]]|$)' "$f" 2>/dev/null \
+    | grep -qiE '401|unauthorized|usage limit|stream error'
+}
+
 set +e
 if [[ "${CECELIA_EXECUTOR:-}" = "codex" ]]; then
   # B7: codex exec 分支
@@ -197,8 +207,8 @@ if [[ "${CECELIA_EXECUTOR:-}" = "codex" ]]; then
   fi
   EXIT_CODE=${PIPESTATUS[0]}
 
-  # B7: exit=0 但 stdout 含错误关键词 → 覆写为退出码 1（真实性校验）
-  if [[ $EXIT_CODE -eq 0 ]] && grep -qE '401|unauthorized|usage limit|stream error' "$STDOUT_FILE" 2>/dev/null; then
+  # B7: exit=0 但 stdout 的真实错误行含关键词 → 覆写为退出码 1（真实性校验）
+  if [[ $EXIT_CODE -eq 0 ]] && scan_error_keywords "$STDOUT_FILE"; then
     echo "[entrypoint] codex exit=0 but error keyword detected → overriding EXIT_CODE=1" >&2
     EXIT_CODE=1
   fi
