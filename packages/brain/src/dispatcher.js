@@ -21,7 +21,6 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
-import { shouldDowngrade } from './token-budget-planner.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
@@ -35,6 +34,7 @@ import { findDuplicateSibling } from './dispatch-dedup.js';
 import { blockTask } from './task-updater.js';
 import { raise } from './alerting.js';
 import { checkAnchor } from './anchor-check.js';
+import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -613,7 +613,12 @@ export async function dispatchNextTask(goalIds) {
     // 3d. Codex Pool D: check concurrent limit for Codex-native task types.
     //     HOL fix: non-P0 codex tasks blocked by full pool → release claim, skip, try next.
     //     P0 tasks stop the loop immediately (high-priority signal must not be bypassed).
-    const isCodexNativeTask = candidate.task_type === 'codex_qa' || candidate.task_type === 'codex_dev' || candidate.task_type === 'codex_test_gen';
+    const budgetState = slotBudget?.budgetState?.state || 'abundant';
+    const guidedCandidate = applyDispatchAllocationGuide(candidate, { budgetState }).task;
+    const isCodexNativeTask = candidate.task_type === 'codex_qa'
+      || candidate.task_type === 'codex_dev'
+      || candidate.task_type === 'codex_test_gen'
+      || guidedCandidate?.payload?.executor === 'codex';
     if (isCodexNativeTask) {
       const codexSlots = slotBudget?.codex;
       if (codexSlots && !codexSlots.available) {
@@ -648,7 +653,7 @@ export async function dispatchNextTask(goalIds) {
     }
 
     // Passed all checks — this is the task to dispatch
-    nextTask = candidate;
+    nextTask = guidedCandidate;
     break;
   }
 
@@ -742,24 +747,29 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'task_not_found', task_id: nextTask.id, actions };
   }
 
-  // Budget-aware executor downgrade：
-  // 当 Claude 7day 配额紧张（tight/critical）时，将可降级的任务（dev/code_review）
-  // 自动路由到 Codex（设置 provider=codex），节省 Claude token。
   let taskToDispatch = fullTaskResult.rows[0];
   try {
     const budgetState = slotBudget?.budgetState?.state || 'abundant';
-    const taskType = taskToDispatch.task_type || 'dev';
-    if (shouldDowngrade(taskType, budgetState)) {
-      tickLog(`[dispatch] budget_state=${budgetState} → downgrade task=${taskToDispatch.id} type=${taskType} to codex`);
-      taskToDispatch = {
-        ...taskToDispatch,
-        provider: 'codex',
-        _downgraded: true,
-        _downgrade_reason: `budget_state=${budgetState}`,
-      };
+    const guided = applyDispatchAllocationGuide(taskToDispatch, { budgetState });
+    taskToDispatch = guided.task;
+    if (guided.changed && guided.payloadPatch) {
+      if (guided.payloadPatch.executor === 'codex') {
+        tickLog(`[dispatch] allocation_guide task=${taskToDispatch.id} type=${taskToDispatch.task_type} budget_state=${budgetState} → executor=codex`);
+      }
+      try {
+        await pool.query(
+          `UPDATE tasks
+             SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+                 updated_at = NOW()
+           WHERE id = $1`,
+          [taskToDispatch.id, JSON.stringify(guided.payloadPatch)]
+        );
+      } catch (persistErr) {
+        console.warn(`[dispatch] allocation guide payload persist failed (non-fatal): ${persistErr.message}`);
+      }
     }
   } catch (err) {
-    console.warn(`[dispatch] shouldDowngrade check failed: ${err.message}, proceeding with original executor`);
+    console.warn(`[dispatch] allocation guide failed: ${err.message}, proceeding with original executor`);
   }
 
   execResult = await triggerCeceliaRun(taskToDispatch);
@@ -940,4 +950,3 @@ export async function dispatchNextTask(goalIds) {
   incrementActionsToday(1).catch(() => {});
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
 }
-
