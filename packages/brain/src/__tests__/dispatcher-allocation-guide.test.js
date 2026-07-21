@@ -211,10 +211,12 @@ describe('dispatcher allocation guide', () => {
       return { rows: [], rowCount: 1 };
     });
 
+    const { calculateSlotBudget } = await import('../slot-allocator.js');
     const { dispatchNextTask } = await import('../dispatcher.js');
     const result = await dispatchNextTask([]);
 
     expect(result.dispatched).toBe(true);
+    expect(calculateSlotBudget).toHaveBeenCalledTimes(1);
     expect(getLlmCapacitySnapshot).toHaveBeenCalledTimes(1);
     expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({
       id: task.id,
@@ -228,6 +230,11 @@ describe('dispatcher allocation guide', () => {
         }),
       }),
     }));
-    console.log('[evidence] budget_state=tight llm_capacity.sampled_at=2026-07-21T10:00:00.000Z claude=0 codex=1 grok=1');
+    console.log(
+      '[evidence] dispatcher_reads budget_state=tight '
+      + `calculateSlotBudget.calls=${calculateSlotBudget.mock.calls.length} `
+      + `getLlmCapacitySnapshot.calls=${getLlmCapacitySnapshot.mock.calls.length} `
+      + 'llm_capacity.sampled_at=2026-07-21T10:00:00.000Z claude=0 codex=1 grok=1'
+    );
   });
 });
