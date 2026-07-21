@@ -6,7 +6,14 @@ const mockPool = {
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
-const { allocatePreview, allocatePort, stopPreview, markPreviewInactive, getPreview } = await import('../preview-manager.js');
+const {
+  allocatePreview,
+  allocatePort,
+  stopPreview,
+  markPreviewActive,
+  markPreviewInactive,
+  getPreview,
+} = await import('../preview-manager.js');
 
 describe('allocatePreview', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -96,6 +103,21 @@ describe('markPreviewInactive', () => {
       expect.stringMatching(/UPDATE preview_environments SET status = 'inactive'/i),
       [5],
     );
+  });
+});
+
+describe('markPreviewActive', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('updates only the latest non-inactive row to active', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    await markPreviewActive(4164);
+    expect(mockPool.query).toHaveBeenCalledWith(
+      expect.stringMatching(/WITH latest AS/i),
+      [4164],
+    );
+    expect(mockPool.query.mock.calls[0][0]).toMatch(/WHERE pr_number = \$1 AND status != 'inactive'/);
+    expect(mockPool.query.mock.calls[0][0]).toMatch(/SET status = 'active'/);
   });
 });
 
