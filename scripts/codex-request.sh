@@ -74,7 +74,7 @@ is_allowed_team() {
   done
   return 1
 }
-is_allowed_team "$TEAM" || die "非法 team: $TEAM（允许: ${ALLOWED_TEAMS_STR}）"
+is_allowed_team "$TEAM" || die "非法 team: ${TEAM}（允许: ${ALLOWED_TEAMS_STR}）"
 
 LOCAL_HOME="${HOME}/.codex-${TEAM}"
 LOCAL_AUTH="${LOCAL_HOME}/auth.json"

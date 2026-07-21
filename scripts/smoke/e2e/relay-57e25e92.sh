@@ -9,7 +9,7 @@ export TASK_ID
 
 # CONTENT-INTEGRITY-GATE BEGIN: 交付物整体自证——防止 GP-STEP 标记保留但内容被掏空（round 4 新增，
 # 呼应 reviewer 第三轮反馈：round 3 的非空守卫/标记存在性硬闸只验证"标记文字在不在"，未验证"标记之间
-# 是否留有真实断言原语"。本段在脚本最开头读取自身源码（$SELF），逐段抽取 GP-STEP-1/2/3 标记之间的原文，
+# 是否留有真实断言原语"。本段在脚本最开头读取自身源码（${SELF}），逐段抽取 GP-STEP-1/2/3 标记之间的原文，
 # 对每段做内容级字面串校验；只要某段被替换成占位注释（如 "# TODO: 断言逻辑已挪到别处"），本段会在
 # 执行到任何 GP-STEP 之前就先 FAIL，覆盖"直接执行完整 e2e-verify.sh"这一最关键复测场景。
 SELF="${BASH_SOURCE[0]:-$0}"
@@ -65,7 +65,7 @@ case "$HOST" in
   # 端点（第373-411行）人工前台接管补建档路径，Brain 官方设计的合法场景（见 contract-draft.md Risks R2）
   *skill-relay-claude-headed*|*skill-relay-codex-headed*) ;;
   foreground) ;;
-  *) echo "FAIL: host=$HOST（合法值：skill-relay-claude-headed / skill-relay-codex-headed / foreground，round 5 修正见 contract-draft.md Risks R2）"; exit 1 ;;
+  *) echo "FAIL: host=${HOST}（合法值：skill-relay-claude-headed / skill-relay-codex-headed / foreground，round 5 修正见 contract-draft.md Risks R2）"; exit 1 ;;
 esac
 if [ "$PHASE" = "failed" ]; then echo "FAIL: phase=failed"; exit 1; fi
 case "$PHASE" in
