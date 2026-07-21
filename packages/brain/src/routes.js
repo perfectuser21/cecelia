@@ -76,7 +76,7 @@ router.use('/handoffs', handoffsRouter);
 // 调度哨兵健康 — GET /sentinel/health（warroom 哨兵灯，relay-baton4 item1）
 router.use('/sentinel', sentinelRouter);
 
-// dispatch 诊断 — GET /dispatch/recent（B6: dispatch_events 可观察性）
+// dispatch 诊断 — GET /dispatch/recent, /dispatch/llm-capacity
 router.use('/', dispatchRouter);
 
 

@@ -20,11 +20,31 @@ import { existsSync } from 'node:fs';
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
 const CODEX_RELAY_DEADLINE_HOURS = 8; // B5: codex 路径用 8h
+const GROK_RELAY_DEADLINE_HOURS = 8;  // grok 路径对齐 codex 等级
 
 // B2: 进程内并发守门（MAX=1）
 let _activeCodexRelays = 0;
 /** 仅供测试注入（_setActiveCodexRelays(1) 模拟已有活跃 relay）*/
 export function _setActiveCodexRelays(n) { _activeCodexRelays = n; }
+
+/**
+ * detectQuotaWall — 检测 grok 输出是否命中额度/速率撞墙。
+ * 匹配 6 个 pattern（大小写不敏感）：
+ *   out of credits / rate limit / 429 / quota exceeded / quota reached / usage limit
+ * @param {string} output — spawn 错误信息或容器 stdout
+ * @returns {boolean}
+ */
+export function detectQuotaWall(output) {
+  const text = String(output || '').toLowerCase();
+  return (
+    text.includes('out of credits') ||
+    text.includes('rate limit') ||
+    text.includes('429') ||
+    text.includes('quota exceeded') ||
+    text.includes('quota reached') ||
+    text.includes('usage limit')
+  );
+}
 
 /**
  * P2-1 review 分级判定（主理人规矩：新功能人审，非新功能 auto merge——risk-based gating）。
@@ -99,6 +119,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const initiativeId = task.payload?.initiative_id || task.id; // B51: initiative_id = task.id
   const short = shortId(task.id);
   const isCodex = task.payload?.executor === 'codex';
+  const isGrok = task.payload?.executor === 'grok';
   const isHeaded = task.payload?.mode === 'headed';
 
   // ─── headed 分支：ssh+tmux 路径 ──────────────────────────────────────────
@@ -150,6 +171,25 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     }
     return { ok: false, mode: RELAY_FLAG, error: 'CODEX_RELAY_HOME 未配置' };
   }
+
+  // ─── grok 凭据门禁：GROK_RELAY_HOME='' → loud-fail + task 回滚 ─────────────
+  // 对齐 codex 的 CODEX_RELAY_HOME 设计（B6）：
+  // - 已配置但值为空（GROK_RELAY_HOME=''）→ 显式失败（生产错误配置）。
+  // - 未配置（undefined）→ 允许继续（extraMounts 为空，凭据挂载跳过），测试注入 spawnFn 覆盖。
+  const grokRelayHome = process.env.GROK_RELAY_HOME;
+  if (isGrok && grokRelayHome !== undefined && !grokRelayHome) {
+    console.error('[skill-relay][ALERT] GROK_RELAY_HOME 未配置，grok executor 无法挂载凭据');
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+    } catch (rollbackErr) {
+      console.warn(`[skill-relay] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+    }
+    return { ok: false, mode: RELAY_FLAG, error: 'GROK_RELAY_HOME 未配置' };
+  }
+  // ─── end grok 凭据门禁 ────────────────────────────────────────────────────
 
   // ─── B2+B3: codex 路径守门（在 try 外，defer 不抛异常）─────────────────
   if (isCodex) {
@@ -270,10 +310,12 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     ].join('\n');
 
     // 7. spawn detached session
-    // B5: codex 路径容器名用 -cx 后缀
+    // B5: codex 路径容器名用 -cx 后缀；grok 路径用 -gk 后缀（对齐命名规约）
     const containerId = isCodex
       ? `cecelia-relay-${short}-cx`
-      : `cecelia-relay-${short}-${Math.random().toString(16).slice(2, 10)}`;
+      : isGrok
+        ? `cecelia-relay-${short}-gk`
+        : `cecelia-relay-${short}-${Math.random().toString(16).slice(2, 10)}`;
     const spawnFn = deps.spawnFn
       || (await import('./spawn/detached.js')).spawnDockerDetached;
 
@@ -285,19 +327,32 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       || null;
     const effectiveMemoryOverride = memoryOverride || oomEnvOverride || null;
 
+    // grok extraMounts：宿主 GROK_RELAY_HOME 挂到容器内 /home/cecelia/.grok
+    const grokExtraMounts = isGrok && grokRelayHome
+      ? [`${grokRelayHome}:/home/cecelia/.grok:rw`]
+      : undefined;
+
+    // 决定 CECELIA_EXECUTOR 值
+    const effectiveExecutor = isCodex ? 'codex' : isGrok ? 'grok' : 'claude';
+
     // B4: spawn 失败回滚（在 spawn 前不落 initiative_runs 行）
-    try {
+    // grok 路径额外支持 detectQuotaWall fallback：撞墙 → 降级 claude 重试一次
+    const doSpawn = async (overrideExecutor) => {
+      const spawnExecutor = overrideExecutor || effectiveExecutor;
+      const spawnExtraMounts = isCodex
+        ? [`${codexRelayHome}:/home/cecelia/.codex:rw`]
+        : (spawnExecutor === 'grok' ? grokExtraMounts : undefined);
       await spawnFn({
         containerId,
         task: { ...task, task_type: 'harness_controller' },
         prompt,
         worktreePath,
-        extraMounts: isCodex ? [`${codexRelayHome}:/home/cecelia/.codex:rw`] : undefined,
+        extraMounts: spawnExtraMounts,
         ...(effectiveMemoryOverride ? { memoryOverride: effectiveMemoryOverride } : {}),
         env: {
           ...acctOpts.env,
           CECELIA_TASK_TYPE: 'harness_controller',
-          CECELIA_EXECUTOR: isCodex ? 'codex' : 'claude',
+          CECELIA_EXECUTOR: spawnExecutor,
           // v1.0.1：HARNESS_NODE 使 entrypoint tee stdout（过程观测）+ 结束 POST callback；
           // relay 容器无 thread_lookup，callback 由 harness-callback 路由 200 ack（免 5×404 重试尾巴）
           HARNESS_NODE: 'controller',
@@ -316,9 +371,32 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           BRAIN_URL: 'http://host.docker.internal:5221',
         },
       });
+    };
+
+    try {
+      await doSpawn();
     } catch (spawnErr) {
+      // grok 路径：检测额度撞墙，命中时降级 claude 重试一次
+      if (isGrok && detectQuotaWall(spawnErr.message)) {
+        console.warn(`[skill-relay][grok] 额度撞墙（${spawnErr.message}），降级 claude 重试`);
+        try {
+          await doSpawn('claude');
+          // fallback 成功：继续落 initiative_runs（executor 已切换；orchestrator_host 仍标 grok 留痕）
+          const abilityId = task.ability_id || task.payload?.ability_id || null;
+          await dbPool.query(
+            `INSERT INTO initiative_runs
+               (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
+             VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-grok', NOW() + INTERVAL '${GROK_RELAY_DEADLINE_HOURS} hours', $3, $4)`,
+            [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
+          );
+          console.log(`[skill-relay][grok] fallback claude spawn ok: container=${containerId} sprint=${sprintDir}`);
+          return { ok: true, mode: RELAY_FLAG, containerId, sprintDir, worktreePath, fallback: 'claude' };
+        } catch (fallbackErr) {
+          console.error(`[skill-relay][grok][ALERT] fallback claude spawn failed: ${fallbackErr.message}`);
+        }
+      }
       // B4: spawn 失败 → 回滚 task，不落 initiative_runs
-      console.error(`[skill-relay][ALERT] codex spawn failed: ${spawnErr.message}`);
+      console.error(`[skill-relay][ALERT] spawn failed: ${spawnErr.message}`);
       try {
         await dbPool.query(
           `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
@@ -330,21 +408,30 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       return { ok: false, mode: RELAY_FLAG, error: spawnErr.message };
     }
 
-    // 8. initiative_runs 落行：A_planning + v2 + deadline（codex=8h, claude=6h）+ orchestrator_host 区分
-    const deadlineHours = isCodex ? CODEX_RELAY_DEADLINE_HOURS : RELAY_DEADLINE_HOURS;
-    const orchestratorHost = isCodex ? 'skill-relay-codex' : 'skill-relay-session';
+    // 8. initiative_runs 落行：A_planning + v2 + deadline（codex/grok=8h, claude=6h）+ orchestrator_host 区分
+    // orchestrator_host 内联在 SQL 模板（对齐 headed 路径，便于测试断言且无注入面——值来自固定常量）
+    const deadlineHours = isCodex
+      ? CODEX_RELAY_DEADLINE_HOURS
+      : isGrok
+        ? GROK_RELAY_DEADLINE_HOURS
+        : RELAY_DEADLINE_HOURS;
+    const orchestratorHost = isCodex
+      ? 'skill-relay-codex'
+      : isGrok
+        ? 'skill-relay-grok'
+        : 'skill-relay-session';
     const abilityId = task.ability_id || task.payload?.ability_id || null;
     await dbPool.query(
       `INSERT INTO initiative_runs
          (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
-       VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${deadlineHours} hours', $4, $5)`,
-      [initiativeId, task.payload?.journey_id || null, orchestratorHost, abilityId, task.id]
+       VALUES ($1, 'A_planning', $2, 'v2', '${orchestratorHost}', NOW() + INTERVAL '${deadlineHours} hours', $3, $4)`,
+      [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
     );
 
     // 进程内守门计数
     if (isCodex) _activeCodexRelays++;
 
-    console.log(`[skill-relay] session spawned: container=${containerId} sprint=${sprintDir} executor=${isCodex ? 'codex' : 'claude'}`);
+    console.log(`[skill-relay] session spawned: container=${containerId} sprint=${sprintDir} executor=${effectiveExecutor}`);
     return { ok: true, mode: RELAY_FLAG, containerId, sprintDir, worktreePath };
   } catch (err) {
     console.error(`[skill-relay][ALERT] spawn failed: ${err.message}`);
@@ -457,26 +544,33 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
 const HEADED_HOSTS = {
   codex: 'skill-relay-codex-headed',
   claude: 'skill-relay-claude-headed',
+  grok: 'skill-relay-grok-headed',
 };
-const HEADED_TMUX_PREFIXES = { codex: 'codex-relay-', claude: 'claude-relay-' };
+const HEADED_TMUX_PREFIXES = { codex: 'codex-relay-', claude: 'claude-relay-', grok: 'grok-relay-' };
 const HEADED_RELAY_DEADLINE_HOURS = 8;
 
 export { HEADED_HOSTS, HEADED_TMUX_PREFIXES };
 
 /**
- * headed 模式：ssh 逃逸宿主，tmux new-session 启动 codex TUI / claude-launch.sh。
+ * headed 模式：ssh 逃逸宿主，tmux new-session 启动 codex TUI / claude-launch.sh / grok。
  * 不走 docker，不产生 extraMounts，不注入 GITHUB_TOKEN 进 tmux 命令串。
  */
 async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps }) {
-  const headedExecutor = task.payload?.executor === 'claude' ? 'claude' : 'codex'; // executor 缺省时按 codex 处理（入口白名单已限 claude/codex/缺省）
+  // executor 映射：claude/grok 显式判，其余（codex/缺省）按 codex 处理（入口白名单已限 claude/codex/grok/缺省）
+  const headedExecutor = task.payload?.executor === 'claude'
+    ? 'claude'
+    : task.payload?.executor === 'grok'
+      ? 'grok'
+      : 'codex';
   const headedHost = HEADED_HOSTS[headedExecutor];
   const isClaudeHeaded = headedExecutor === 'claude';
+  const isGrokHeaded = headedExecutor === 'grok';
 
   // B6 门禁在 headed 分支同样生效（headed 早退绕过了 spawnSkillRelaySession 主体里的
-  // CODEX_RELAY_HOME 检查——codex headed 需凭据目录；claude headed 不适用）。
+  // CODEX_RELAY_HOME/GROK_RELAY_HOME 检查）。
   // 未配置（undefined）→ 放行（本地/测试环境）；显式配置为空字符串 → loud-fail。
   const codexRelayHome = process.env.CODEX_RELAY_HOME;
-  if (!isClaudeHeaded) {
+  if (!isClaudeHeaded && !isGrokHeaded) {
     if (codexRelayHome !== undefined && !codexRelayHome) {
       console.error('[skill-relay][headed][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
       try {
@@ -488,6 +582,23 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
         console.warn(`[skill-relay][headed] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
       }
       return { ok: false, mode: headedHost, error: 'CODEX_RELAY_HOME 未配置' };
+    }
+  }
+
+  // grok headed 门禁：GROK_RELAY_HOME='' → loud-fail（对齐 codex headed 门禁 L478-491）
+  if (isGrokHeaded) {
+    const grokRelayHomeHeaded = process.env.GROK_RELAY_HOME;
+    if (grokRelayHomeHeaded !== undefined && !grokRelayHomeHeaded) {
+      console.error('[skill-relay][headed][ALERT] GROK_RELAY_HOME 未配置，grok executor 无法挂载凭据');
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      } catch (rollbackErr) {
+        console.warn(`[skill-relay][headed] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+      }
+      return { ok: false, mode: headedHost, error: 'GROK_RELAY_HOME 未配置' };
     }
   }
 
