@@ -11,6 +11,8 @@
 
 验证 Brain `executor=claude + mode=headless + orchestrator=skill-relay` 完整 dispatch chain 的可观测行为，与 headed 路径（claude-headed-dispatch-smoke.sh）形成对称验收。
 
+**verification_level: L3**（本 smoke 所有验收点均依赖真实 Brain API localhost:5221 + 真实 PostgreSQL；无 mock/stub，每次 CI Smoke Glob Runner 跑真环境）
+
 ## 核心断言
 
 ### 断言 A — POST tasks(mode=headless) 路径放行
