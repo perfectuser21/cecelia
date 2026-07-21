@@ -227,7 +227,7 @@ start_remote_session() {
 set -euo pipefail
 export PATH=${REMOTE_PATH_PREFIX}
 export CODEX_HOME=${remote_home_expr}
-exec ${REMOTE_CODEX_BIN} \"\$(cat ${remote_brief_path})\"
+exec ${REMOTE_CODEX_BIN} --dangerously-bypass-approvals-and-sandbox \"\$(cat ${remote_brief_path})\"
 EOS
 chmod 700 ${remote_launcher}"
   else
@@ -236,7 +236,7 @@ chmod 700 ${remote_launcher}"
 set -euo pipefail
 export PATH=${REMOTE_PATH_PREFIX}
 export CODEX_HOME=${remote_home_expr}
-exec ${REMOTE_CODEX_BIN}
+exec ${REMOTE_CODEX_BIN} --dangerously-bypass-approvals-and-sandbox
 EOS
 chmod 700 ${remote_launcher}"
   fi
