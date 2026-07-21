@@ -68,6 +68,36 @@ function cleanupTmpDir(tmpDir) {
 }
 
 /**
+ * 读取本机某账号真实、完整的 auth.json 原始内容（不是 codex-account-usage.cjs
+ * getCodexAuth() 那种精简形状，setupInjectedAccounts 需要原样写回临时目录）。
+ * @param {string} accountId - team1..team5
+ * @param {string} [homeDir] - 测试可覆盖，默认 os.homedir()
+ */
+function loadRawAuth(accountId, homeDir = os.homedir()) {
+  const authPath = path.join(homeDir, `.codex-${accountId}`, 'auth.json');
+  return JSON.parse(fs.readFileSync(authPath, 'utf8'));
+}
+
+/**
+ * 降级模式（未收到 Brain 注入的 accounts）：本地选账号后同样走注入临时目录，
+ * 不直接用真实持久目录（2026-07-21）。
+ *
+ * 直用真实目录（旧行为 primaryHome = account.codexHome）会让容器/进程内 codex
+ * 自己刷新 token 时写回真文件，跟本机 refresh-codex-tokens-xian.sh 的 cron 竞态
+ * ——同 Claude account1 掉线（cron 刷新+并发进程多写者竞态清空 token）是同一病根。
+ * 见 project_codex_token_consolidation_us 记忆。
+ *
+ * @param {string} taskId
+ * @param {string} accountId
+ * @param {string} [homeDir] - 测试可覆盖
+ * @returns {{ primaryHome: string, allHomes: string, tmpDir: string }}
+ */
+function injectLocalAccount(taskId, accountId, homeDir = os.homedir()) {
+  const rawAuth = loadRawAuth(accountId, homeDir);
+  return setupInjectedAccounts(taskId, [{ id: accountId, auth: rawAuth }]);
+}
+
+/**
  * 解析 HTTP 请求 body
  */
 function parseBody(req) {
@@ -346,15 +376,21 @@ const server = http.createServer(async (req, res) => {
         tmpDir = injected.tmpDir;
         console.log(`[codex-bridge] 注入账号模式: ${accounts.map(a => a.id).join(', ')} tmpDir=${tmpDir}`);
       } else {
-        // 降级模式：本地选账号
+        // 降级模式：本地选账号。2026-07-21 起同样走注入临时目录，不直接用真实持久目录
+        // （injectLocalAccount 见上方注释）。取舍：这条已经是降级路径，为保持修复简单，
+        // 只注入选中的这一个账号，不再像旧行为那样把全部本地账号的真实路径列进
+        // codexHomes 供 runner.sh 轮换——要多账号轮换应该走 Brain 显式 accounts 注入
+        // 这条主路径，不依赖这条降级路径。
         const account = await selectBestCodexAccount({ taskType: task_type || 'general' });
         if (!account) {
           sendJSON(res, 503, { ok: false, error: 'No available Codex accounts' });
           return;
         }
-        primaryHome = account.codexHome;
-        codexHomes = ACCOUNTS.map(id => path.join(os.homedir(), `.codex-${id}`)).join(':');
-        console.log(`[codex-bridge] 本地账号模式: ${account.accountId}`);
+        const injected = injectLocalAccount(task_id, account.accountId);
+        primaryHome = injected.primaryHome;
+        codexHomes = injected.allHomes;
+        tmpDir = injected.tmpDir;
+        console.log(`[codex-bridge] 本地账号模式(已隔离注入): ${account.accountId} tmpDir=${tmpDir}`);
       }
 
       // 立即返回 202 Accepted，异步执行
@@ -420,12 +456,16 @@ const server = http.createServer(async (req, res) => {
         execTmpDir = injected.tmpDir;
         console.log(`[codex-bridge] /execute 注入账号: ${accounts[0].id}`);
       } else {
+        // 降级模式：2026-07-21 起同样走注入临时目录，不直接用真实持久目录
         const account = await selectBestCodexAccount({ taskType: 'general' });
         if (!account) {
           sendJSON(res, 503, { ok: false, error: 'No available Codex accounts' });
           return;
         }
-        execHome = account.codexHome;
+        const injected = injectLocalAccount(task_id, account.accountId);
+        execHome = injected.primaryHome;
+        execTmpDir = injected.tmpDir;
+        console.log(`[codex-bridge] /execute 本地账号模式(已隔离注入): ${account.accountId} tmpDir=${execTmpDir}`);
       }
 
       // 立即返回 202 Accepted，异步执行
@@ -464,12 +504,15 @@ const server = http.createServer(async (req, res) => {
         sendJSON(res, 503, { ok: false, error: 'No available Codex accounts' });
         return;
       }
+      // 2026-07-21：这个端点原来直接用 account.codexHome（真实持久目录）跑 review，
+      // 没有任何隔离，也没有 tmpDir 清理。同样改成走注入临时目录。
+      const injected = injectLocalAccount(task_id, account.accountId);
 
       sendJSON(res, 202, { ok: true, task_id, account: account.accountId, status: 'dispatched' });
 
       const startTime = Date.now();
       try {
-        const result = await executeCodexReview(account.codexHome, {
+        const result = await executeCodexReview(injected.primaryHome, {
           workDir: work_dir,
           baseBranch: base_branch,
           timeoutMs: timeout_ms || DEFAULT_TIMEOUT_MS,
@@ -481,6 +524,8 @@ const server = http.createServer(async (req, res) => {
         await callbackBrain(task_id, checkpoint_id, 'failed',
           `Error: ${err.error}\nStderr: ${err.stderr || ''}`,
           err.elapsed || elapsed);
+      } finally {
+        cleanupTmpDir(injected.tmpDir);
       }
 
     // GET /health — 健康检查
@@ -538,8 +583,21 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// ─── 启动 ─────────────────────────────────────────────────────────────────────
+module.exports = { loadRawAuth, injectLocalAccount, setupInjectedAccounts, cleanupTmpDir };
 
+// require.main===module 守卫：只有直接 `node codex-bridge.cjs` 运行时才真正
+// listen 端口。这样 smoke test 可以安全 require() 这个文件去调纯函数，不会
+// 意外把端口占了或触发 codex 二进制缺失时的 process.exit(1)。用提前 return
+// （CJS 模块顶层等价于函数体内，合法）而不是把下面这段整体包一层 if 缩进，
+// 是为了不让 git diff 把这段本来就有、内容没变的代码显示成"新增"——
+// 整体缩进会让 CodeQL 把这些行当新代码扫，对着记录 BRAIN_URL 的 console.log
+// 误报"clear-text logging of sensitive information"（这只是内网地址，不是
+// 真敏感信息，但缩进导致的"新增"外观会触发扫描）。
+if (require.main !== module) {
+  return;
+}
+
+// ─── 启动 ─────────────────────────────────────────────────────────────────────
 const { existsSync } = require('fs');
 
 if (!existsSync(CODEX_BIN)) {

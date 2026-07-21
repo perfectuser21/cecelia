@@ -15,7 +15,9 @@
  */
 import pool from './db.js';
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
@@ -109,8 +111,35 @@ export function stampMMDDHHNN(now) {
 }
 
 /**
+ * codex 容器凭据挂载改成"先快照再挂"（2026-07-21，project_codex_token_consolidation_us 记忆）。
+ *
+ * 背景：直接把 CODEX_RELAY_HOME（宿主真实持久目录，默认 ~/.codex-team2）以 :rw 挂进容器，
+ * 容器内 codex 一旦自己判断 access_token 快过期就会刷新写回——这个写会通过 bind mount
+ * 穿透落回宿主真实 auth.json，跟宿主自己的 refresh-codex-tokens-us.sh cron 竞态（同 Claude
+ * account1 掉线的"cron刷新+并发进程多写者竞态清空token"病根）。
+ *
+ * 改成：先把真实目录里的 auth.json 复制到一次性临时目录，挂临时目录而不是真实目录——
+ * 容器内不管怎么写，都碰不到宿主真实持久文件。真实凭据目录下找不到 auth.json 视为
+ * 配置错误，loud fail（不静默退回直挂真实目录）。
+ *
+ * @param {string} codexRelayHome 宿主真实凭据目录（CODEX_RELAY_HOME）
+ * @param {string} taskId 用于临时目录命名，保证唯一性
+ * @returns {string} 一次性临时目录路径
+ */
+export function snapshotCodexRelayHome(codexRelayHome, taskId) {
+  const srcAuth = join(codexRelayHome, 'auth.json');
+  if (!existsSync(srcAuth)) {
+    throw new Error(`CODEX_RELAY_HOME 下找不到 auth.json: ${srcAuth}`);
+  }
+  const dir = join(tmpdir(), `codex-relay-cred-${taskId}-${Date.now()}`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  copyFileSync(srcAuth, join(dir, 'auth.json'));
+  return dir;
+}
+
+/**
  * spawn 一个 skill-relay controller session。
- * deps 全注入（测试 fake）：{pool, spawnFn, sshSpawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now}
+ * deps 全注入（测试 fake）：{pool, spawnFn, sshSpawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now, snapshotCodexHome}
  * @returns {Promise<{ok:boolean, mode:string, containerId?:string, error?:string}>}
  */
 export async function spawnSkillRelaySession(task, deps = {}) {
@@ -170,6 +199,28 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       console.warn(`[skill-relay] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
     }
     return { ok: false, mode: RELAY_FLAG, error: 'CODEX_RELAY_HOME 未配置' };
+  }
+
+  // 2026-07-21：不直接挂真实 CODEX_RELAY_HOME，先快照到一次性临时目录再挂
+  // （见 snapshotCodexRelayHome 顶部注释——直挂会跟宿主 cron 刷新竞态）。
+  // 快照失败（真实目录下没有 auth.json，配置错误）同样 loud-fail + task 回滚。
+  let codexRelayCredDir;
+  if (isCodex && codexRelayHome) {
+    const snapshotFn = deps.snapshotCodexHome || snapshotCodexRelayHome;
+    try {
+      codexRelayCredDir = snapshotFn(codexRelayHome, task.id);
+    } catch (snapshotErr) {
+      console.error(`[skill-relay][ALERT] codex 凭据快照失败: ${snapshotErr.message}`);
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      } catch (rollbackErr) {
+        console.warn(`[skill-relay] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+      }
+      return { ok: false, mode: RELAY_FLAG, error: `codex 凭据快照失败: ${snapshotErr.message}` };
+    }
   }
 
   // ─── grok 凭据门禁：GROK_RELAY_HOME='' → loud-fail + task 回滚 ─────────────
@@ -340,7 +391,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const doSpawn = async (overrideExecutor) => {
       const spawnExecutor = overrideExecutor || effectiveExecutor;
       const spawnExtraMounts = isCodex
-        ? [`${codexRelayHome}:/home/cecelia/.codex:rw`]
+        ? [`${codexRelayCredDir}:/home/cecelia/.codex:rw`]
         : (spawnExecutor === 'grok' ? grokExtraMounts : undefined);
       await spawnFn({
         containerId,
