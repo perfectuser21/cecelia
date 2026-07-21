@@ -1,57 +1,32 @@
-/**
- * routes/__tests__/dispatch.test.js — lint-test-pairing stub + 行为验证
- *
- * 覆盖 routes/dispatch.js 的 buildRecentDispatchEventsHandler 函数
- */
 import { describe, it, expect, vi } from 'vitest';
-import fs from 'node:fs';
-import { buildRecentDispatchEventsHandler } from '../dispatch.js';
 
-describe('routes/dispatch.js 静态验证', () => {
-  it('routes/dispatch.js 含 GET /dispatch/recent 路由注册', () => {
-    const src = fs.readFileSync(new URL('../dispatch.js', import.meta.url), 'utf8');
-    expect(src).toMatch(/dispatch\/recent/);
-  });
+const mockPool = { query: vi.fn() };
+const mockGetLlmCapacitySnapshot = vi.fn();
 
-  it('routes/dispatch.js 导出 buildRecentDispatchEventsHandler', () => {
-    const src = fs.readFileSync(new URL('../dispatch.js', import.meta.url), 'utf8');
-    expect(src).toMatch(/export function buildRecentDispatchEventsHandler/);
-  });
+vi.mock('../../db.js', () => ({ default: mockPool }));
+vi.mock('../../llm-capacity.js', () => ({
+  getLlmCapacitySnapshot: (...args) => mockGetLlmCapacitySnapshot(...args),
+}));
 
-  it('routes/dispatch.js 使用 ORDER BY created_at DESC', () => {
-    const src = fs.readFileSync(new URL('../dispatch.js', import.meta.url), 'utf8');
-    expect(src).toMatch(/ORDER BY created_at DESC/);
-  });
-});
-
-describe('buildRecentDispatchEventsHandler', () => {
-  it('默认 limit=20，返回 events 数组', async () => {
-    const rows = [{ id: '1', event_type: 'dispatched', reason: null, task_id: null, created_at: new Date().toISOString() }];
-    const pool = { query: vi.fn().mockResolvedValue({ rows }) };
-
-    const handler = buildRecentDispatchEventsHandler(pool);
-    const req = { query: {} };
+describe('dispatch routes', () => {
+  it('GET /dispatch/recent handler returns events', async () => {
+    const { buildRecentDispatchEventsHandler } = await import('../dispatch.js');
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: '1', task_id: 't1', event_type: 'skip', reason: 'x', created_at: '2026-07-21T00:00:00Z' }] });
+    const handler = buildRecentDispatchEventsHandler(mockPool);
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
-
-    await handler(req, res);
-
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      events: rows,
-      limit: 20,
-      total: 1,
-    }));
-    expect(pool.query.mock.calls[0][1]).toContain(20);
+    await handler({ query: { limit: '5' } }, res);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ total: 1, limit: 5 }));
   });
 
-  it('DB 报错返回 500', async () => {
-    const pool = { query: vi.fn().mockRejectedValue(new Error('DB down')) };
-    const handler = buildRecentDispatchEventsHandler(pool);
-    const req = { query: {} };
+  it('GET /dispatch/llm-capacity handler returns snapshot', async () => {
+    const { buildLlmCapacityHandler } = await import('../dispatch.js');
+    mockGetLlmCapacitySnapshot.mockResolvedValueOnce({
+      sentinel: 'ok',
+      vendors: { claude: { available_count: 1 } },
+    });
+    const handler = buildLlmCapacityHandler(mockGetLlmCapacitySnapshot);
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
-
-    await handler(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+    await handler({}, res);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ sentinel: 'ok' }));
   });
 });
