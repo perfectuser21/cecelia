@@ -6,7 +6,7 @@ SPRINT_DIR="${SPRINT_DIR:-sprints/07212140-relay-833f9aa8}"
 TASK_ID="${TASK_ID:-833f9aa8-7d17-4537-bff7-0ad4e16ca1be}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
-VERIFY="${VERIFY:-$ROOT_DIR/sprints/07212140-relay-833f9aa8/e2e-verify.sh}"
+VERIFY="${VERIFY:-$ROOT_DIR/scripts/smoke/e2e/relay-833f9aa8.sh}"
 FAILURES=0
 
 record_fail() {

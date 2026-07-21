@@ -9,7 +9,7 @@
 1. 当前 task API 返回 `mode=headed`、`executor=codex`、`orchestrator=skill-relay`、`journey_id=bb8cc561-b3ee-4fec-b74d-2255694bd963`。
 2. 当前 DB `tasks` 行返回 `status=in_progress`、`claimed_by=brain-tick-7`、`claimed_at` 非空、`executor_kind=relay-container`。
 3. 当前 `initiative_runs` 行返回 `initiative_id=833f9aa8-7d17-4537-bff7-0ad4e16ca1be`、`orchestrator_host=skill-relay-codex-headed`、`phase=A_planning` 且非 failed。
-4. `e2e-verify.sh` 与 contract red test 只对当前 task 通过，不接受历史 task/run 或 secret 泄露。
+4. `scripts/smoke/e2e/relay-833f9aa8.sh` 与 `tests/regression/relay-833f9aa8/contract-red.test.sh` 只对当前 task 通过，不接受历史 task/run 或 secret 泄露。
 
 ## 边界情况
 
@@ -21,8 +21,7 @@
 ## 范围限定
 
 在范围内：
-- 新增当前 sprint 的 `contract-draft.md`、`contract-dod.md`、`tests/contract-red.test.sh`、`e2e-verify.sh`。
-- 毕业后新增永久资产到 `tests/regression/relay-833f9aa8/` 与 `scripts/smoke/e2e/relay-833f9aa8.sh`。
+- 新增当前 sprint 的 `contract-draft.md`、`contract-dod.md`，并已毕业测试资产到 `tests/regression/relay-833f9aa8/` 与 `scripts/smoke/e2e/relay-833f9aa8.sh`。
 
 不在范围内：
 - 不修改运行时代码、CI 流程、dashboard、数据库结构。
@@ -56,12 +55,12 @@
 
 ```bash
 # generator 将实现以下入口：
-# 1. bash sprints/07212140-relay-833f9aa8/e2e-verify.sh --assert task-payload-shape
-# 2. bash sprints/07212140-relay-833f9aa8/e2e-verify.sh --assert db-claim-oracle
-# 3. bash sprints/07212140-relay-833f9aa8/e2e-verify.sh --assert run-host-phase
-# 4. bash sprints/07212140-relay-833f9aa8/e2e-verify.sh --assert current-task-only
-# 5. bash sprints/07212140-relay-833f9aa8/e2e-verify.sh --assert evidence-boundary-and-redaction
-# 6. bash sprints/07212140-relay-833f9aa8/e2e-verify.sh
+# 1. bash scripts/smoke/e2e/relay-833f9aa8.sh --assert task-payload-shape
+# 2. bash scripts/smoke/e2e/relay-833f9aa8.sh --assert db-claim-oracle
+# 3. bash scripts/smoke/e2e/relay-833f9aa8.sh --assert run-host-phase
+# 4. bash scripts/smoke/e2e/relay-833f9aa8.sh --assert current-task-only
+# 5. bash scripts/smoke/e2e/relay-833f9aa8.sh --assert evidence-boundary-and-redaction
+# 6. bash scripts/smoke/e2e/relay-833f9aa8.sh
 ```
 
 ## 未覆盖真实链路清单
