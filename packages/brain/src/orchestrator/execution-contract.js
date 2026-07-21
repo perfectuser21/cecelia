@@ -84,7 +84,8 @@ export function parseTaskBundle(value) {
 
 export function parseHarnessResult(value, role) {
   const parsed = harnessResultSchema.parse(value);
-  if (['reviewer', 'evaluator', 'judge'].includes(role) && !parsed.decision) {
+  const decisionRequired = ['completed', 'completed_with_concerns'].includes(parsed.status);
+  if (decisionRequired && ['reviewer', 'evaluator', 'judge'].includes(role) && !parsed.decision) {
     throw new Error(`decision is required for adversarial role ${role}`);
   }
   return parsed;

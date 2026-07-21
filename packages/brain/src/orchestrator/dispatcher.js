@@ -215,6 +215,10 @@ export function createDetachedLauncher({
         extraMounts = [`${providerEnv.CODEX_HOME}:/home/cecelia/.codex:rw`];
         providerEnv.CODEX_HOME = '/home/cecelia/.codex';
       }
+      const modelIndex = spec.args?.indexOf('--model') ?? -1;
+      if (modelIndex >= 0 && spec.args[modelIndex + 1]) {
+        providerEnv.HARNESS_MODEL = spec.args[modelIndex + 1];
+      }
       return spawnDetached({
         containerId: `cecelia-harness-${String(attempt.id).slice(0, 8)}`,
         task: { ...task, task_type: `harness_${attempt.role}` },
@@ -228,6 +232,7 @@ export function createDetachedLauncher({
           CECELIA_TASK_ID: bundle.inputs.task_id,
           HARNESS_NODE: attempt.role,
           HARNESS_ATTEMPT_ID: attempt.id,
+          HARNESS_LEASE_OWNER: leaseOwner,
           HARNESS_RUN_ID: attempt.run_id,
           HARNESS_HOP: String(attempt.hop),
           HARNESS_CALLBACK_URL: `${brainUrl}/api/brain/harness/attempts/${attempt.id}/callback`,

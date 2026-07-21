@@ -190,6 +190,7 @@ describe('createDetachedLauncher', () => {
       bundle,
       spec: {
         provider: 'codex',
+        args: ['exec', '--model', 'configured-model'],
         stdin: '{"bundle":true}',
         env: { CODEX_HOME: '/host/codex-team' },
       },
@@ -211,6 +212,8 @@ describe('createDetachedLauncher', () => {
       env: expect.objectContaining({
         CECELIA_EXECUTOR: 'codex',
         CODEX_HOME: '/home/cecelia/.codex',
+        HARNESS_MODEL: 'configured-model',
+        HARNESS_LEASE_OWNER: expect.any(String),
         HARNESS_ATTEMPT_ID: attemptId,
         HARNESS_RUN_ID: runId,
       }),

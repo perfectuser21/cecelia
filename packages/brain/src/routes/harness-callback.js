@@ -31,8 +31,155 @@ import { lookupHarnessThread } from '../lib/harness-thread-lookup.js';
 import { sendBark } from '../notifier.js';
 import pool from '../db.js';
 import { handleRelayExitConsistency } from '../lib/harness-orphan-guard.js';
+import { createAttemptStore } from '../orchestrator/attempt-store.js';
+import { parseHarnessResult } from '../orchestrator/execution-contract.js';
 
 const router = Router();
+const attemptStore = createAttemptStore(pool);
+
+function normalizeVerdict(role, outcome) {
+  const value = String(outcome ?? '').trim().toUpperCase();
+  if (role === 'reviewer') {
+    return ['PASS', 'APPROVED'].includes(value) ? 'APPROVED' : 'REVISION_REQUESTED';
+  }
+  if (role === 'evaluator') {
+    return value === 'FIXED' ? 'FIXED' : (value === 'PASS' ? 'PASS' : 'FAIL');
+  }
+  return value;
+}
+
+async function appendAttemptVerdict(attempt, result) {
+  if (!result.decision || !['reviewer', 'evaluator'].includes(attempt.role)) return;
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
+
+  const action = attempt.role === 'reviewer' ? 'verdict:reviewer' : 'verdict:evaluate';
+  const inputs = attempt.task_bundle?.inputs ?? {};
+  const detail = attempt.role === 'reviewer'
+    ? {
+        attempt_id: attempt.id,
+        verdict: normalizeVerdict(attempt.role, result.decision.outcome),
+        rn: inputs.contract_round ?? null,
+        feedback: result.decision.reason,
+      }
+    : {
+        attempt_id: attempt.id,
+        verdict: normalizeVerdict(attempt.role, result.decision.outcome),
+        pr_head_sha: inputs.pull_request?.head_sha ?? null,
+        failure_class: result.decision.failure_class ?? null,
+        feedback: result.decision.reason,
+      };
+
+  // One statement + transaction-scoped advisory lock makes callback retries/concurrency
+  // idempotent without adding a second mutable verdict table.
+  await pool.query(
+    `WITH lock AS (
+       SELECT pg_advisory_xact_lock(hashtext($1::text))
+     ), next_hop AS (
+       SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+         FROM orchestrator_decision_log
+        WHERE run_id=$1
+     )
+     INSERT INTO orchestrator_decision_log
+       (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+     SELECT $1, next_hop.hop, $2::jsonb, $3, $4, '${action}', $5::jsonb
+       FROM lock, next_hop
+      WHERE NOT EXISTS (
+        SELECT 1 FROM orchestrator_decision_log
+         WHERE run_id=$1 AND detail->>'attempt_id'=$6
+      )`,
+    [
+      attempt.run_id,
+      JSON.stringify({ attempt_id: attempt.id, role: attempt.role }),
+      attempt.role === 'reviewer' ? 'gan' : 'evaluate',
+      detail.verdict === 'APPROVED' || detail.verdict === 'PASS' || detail.verdict === 'FIXED'
+        ? 'allow'
+        : `deny:${detail.verdict.toLowerCase()}`,
+      JSON.stringify(detail),
+      attempt.id,
+    ],
+  );
+}
+
+function resultError(result) {
+  if (typeof result.error === 'string') return { code: 'provider_failed', message: result.error };
+  return {
+    code: result.error?.code ?? 'provider_failed',
+    message: result.error?.message ?? result.summary ?? 'provider execution failed',
+  };
+}
+
+router.post('/harness/attempts/:attemptId/heartbeat', async (req, res) => {
+  const leaseOwner = req.body?.lease_owner;
+  const leaseSeconds = Number(req.body?.lease_seconds ?? 180);
+  if (typeof leaseOwner !== 'string' || !leaseOwner || !Number.isInteger(leaseSeconds)
+      || leaseSeconds < 30 || leaseSeconds > 600) {
+    return res.status(400).json({ ok: false, error: 'valid lease_owner and lease_seconds (30..600) required' });
+  }
+  try {
+    const attempt = await attemptStore.heartbeat(req.params.attemptId, { leaseOwner, leaseSeconds });
+    if (!attempt) return res.status(409).json({ ok: false, error: 'attempt lease lost or terminal' });
+    return res.json({ ok: true, attemptId: req.params.attemptId });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+router.post('/harness/attempts/:attemptId/callback', async (req, res) => {
+  const { attemptId } = req.params;
+  const attempt = await attemptStore.getById(attemptId);
+  if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
+
+  let result;
+  try {
+    result = parseHarnessResult(req.body, attempt.role);
+    if (result.attempt_id !== attemptId) {
+      throw new Error(`attempt_id mismatch: body=${result.attempt_id} path=${attemptId}`);
+    }
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+
+  const sessionId = result.provider_metadata?.session_id ?? null;
+  if (sessionId) {
+    try {
+      await attemptStore.assertFreshRoleSession({
+        runId: attempt.run_id,
+        attemptId,
+        role: attempt.role,
+        sessionId,
+      });
+    } catch (error) {
+      return res.status(409).json({ ok: false, error: error.message });
+    }
+  }
+
+  try {
+    let outcome;
+    if (result.status === 'failed' || result.status === 'cancelled') {
+      const error = resultError(result);
+      outcome = await attemptStore.fail(attemptId, { ...error, status: result.status });
+    } else {
+      outcome = await attemptStore.complete(attemptId, result);
+      await appendAttemptVerdict(attempt, result);
+
+      if (attempt.role === 'generator') {
+        const pullRequest = result.artifacts.find(
+          (artifact) => artifact?.type === 'pull_request' && artifact.url,
+        );
+        if (pullRequest) {
+          await pool.query(
+            'UPDATE initiative_runs SET pr_url=$2, updated_at=NOW() WHERE id=$1',
+            [attempt.run_id, pullRequest.url],
+          );
+        }
+      }
+    }
+    return res.json({ ok: true, attemptId, deduped: outcome.deduped });
+  } catch (error) {
+    console.error(`[harness-attempt-callback] attempt=${attemptId}: ${error.message}`);
+    return res.status(500).json({ ok: false, error: 'attempt callback persistence failed' });
+  }
+});
 
 // relay 容器认证失败特征（Claude Code CLI 未登录/token 失效时的典型话术）。
 // 只聚焦"未登录"这个具体信号，不做通用失败分类——那是 quarantine.js 的事，

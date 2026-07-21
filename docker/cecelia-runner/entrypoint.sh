@@ -156,6 +156,128 @@ if [[ "${CECELIA_ENTRYPOINT_TEST:-}" == "1" ]]; then
   exit 0
 fi
 
+# provider-neutral:start
+# Kernel attempt path. The prompt file is the frozen TaskBundle envelope written by
+# spawnDockerDetached; provider CLIs are only transports and never own workflow state.
+PROVIDER_CONTRACT=0
+NORMALIZED_RESULT_FILE=""
+
+run_provider_contract() {
+  PROVIDER_CONTRACT=1
+  local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-$PROMPT_FILE}"
+  local result_schema_file="/tmp/harness-result-${HARNESS_ATTEMPT_ID}.schema.json"
+  local result_file="/tmp/harness-result-${HARNESS_ATTEMPT_ID}.json"
+  NORMALIZED_RESULT_FILE="/tmp/harness-result-${HARNESS_ATTEMPT_ID}.normalized.json"
+  local result_schema_json
+  local provider="${CECELIA_EXECUTOR:-claude}"
+  local provider_session_id=""
+  local provider_exit=1
+  local heartbeat_pid=""
+
+  if [[ ! -f "$task_bundle_file" ]] || ! jq -e '.task_bundle' "$task_bundle_file" >/dev/null 2>&1; then
+    jq -n \
+      --arg attempt "$HARNESS_ATTEMPT_ID" \
+      --arg provider "$provider" \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"TaskBundle missing or invalid",artifacts:[],checks:[],decision:null,error:{code:"invalid_task_bundle",message:"runner could not parse TaskBundle envelope"},provider_metadata:{provider:$provider,session_id:null}}' \
+      > "$NORMALIZED_RESULT_FILE"
+    return 1
+  fi
+
+  result_schema_json='{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array"},"checks":{"type":"array"},"decision":{"anyOf":[{"type":"object"},{"type":"null"}]},"error":{}},"required":["status","summary","artifacts","checks","decision","error"],"additionalProperties":true}'
+  printf '%s' "$result_schema_json" > "$result_schema_file"
+
+  local model_args=()
+  if [[ -n "${HARNESS_MODEL:-}" ]]; then
+    model_args=(--model "$HARNESS_MODEL")
+  fi
+
+  if [[ -n "${HARNESS_LEASE_OWNER:-}" ]]; then
+    (
+      while :; do
+        curl -sf -m 10 -X POST \
+          "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
+          -H 'Content-Type: application/json' \
+          -d "$(jq -nc --arg owner "$HARNESS_LEASE_OWNER" '{lease_owner:$owner,lease_seconds:180}')" \
+          >/dev/null 2>&1 || true
+        sleep 60
+      done
+    ) &
+    heartbeat_pid=$!
+  fi
+
+  if [[ "$provider" == "codex" ]]; then
+    local codex_args=(exec)
+    if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
+      codex_args+=(resume "$HARNESS_RESUME_SESSION_ID")
+    fi
+    codex_args+=(
+      --json
+      --output-schema "$result_schema_file"
+      --output-last-message "$result_file"
+      --skip-git-repo-check
+      -c 'approval_policy="never"'
+      -c 'sandbox_mode="danger-full-access"'
+      "${model_args[@]}"
+      -
+    )
+    codex "${codex_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"
+    provider_exit=${PIPESTATUS[0]}
+    provider_session_id=$(jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' "$STDOUT_FILE" 2>/dev/null | head -n 1)
+  elif [[ "$provider" == "claude" ]]; then
+    local claude_args=(-p --dangerously-skip-permissions --output-format json --json-schema "$result_schema_json")
+    if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
+      claude_args+=(--resume "$HARNESS_RESUME_SESSION_ID")
+    fi
+    claude_args+=("${model_args[@]}")
+    claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"
+    provider_exit=${PIPESTATUS[0]}
+    if [[ $provider_exit -eq 0 ]]; then
+      jq -c '
+        if .structured_output then .structured_output
+        elif (.result | type) == "object" then .result
+        else (.result | fromjson)
+        end
+      ' "$STDOUT_FILE" > "$result_file" 2>/dev/null || provider_exit=1
+    fi
+    provider_session_id=$(jq -r '.session_id // empty' "$STDOUT_FILE" 2>/dev/null || true)
+  else
+    provider_exit=1
+    printf '{"error":"unsupported provider: %s"}\n' "$provider" > "$STDOUT_FILE"
+  fi
+
+  if [[ -n "$heartbeat_pid" ]]; then
+    kill "$heartbeat_pid" >/dev/null 2>&1 || true
+    wait "$heartbeat_pid" 2>/dev/null || true
+  fi
+
+  if [[ $provider_exit -eq 0 ]] && jq -e 'type == "object" and .status' "$result_file" >/dev/null 2>&1; then
+    jq \
+      --arg attempt "$HARNESS_ATTEMPT_ID" \
+      --arg provider "$provider" \
+      --arg session "$provider_session_id" \
+      '.contract_version = (.contract_version // "1.0")
+       | .attempt_id = $attempt
+       | .provider_metadata = ((.provider_metadata // {}) + {
+           provider: $provider,
+           session_id: (if $session == "" then null else $session end)
+         })' \
+      "$result_file" > "$NORMALIZED_RESULT_FILE"
+  else
+    local stderr_tail
+    stderr_tail=$(tail -c 2000 "$STDOUT_FILE" 2>/dev/null || true)
+    jq -n \
+      --arg attempt "$HARNESS_ATTEMPT_ID" \
+      --arg provider "$provider" \
+      --arg session "$provider_session_id" \
+      --arg message "$stderr_tail" \
+      --argjson exit_code "$provider_exit" \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:{provider:$provider,session_id:(if $session == "" then null else $session end)}}' \
+      > "$NORMALIZED_RESULT_FILE"
+  fi
+  return "$provider_exit"
+}
+# provider-neutral:end
+
 # v1.229.0: 不再用 `exec claude` 直接接管进程。改为先在子进程跑 claude，
 # 拿到 exit code 后向 brain POST callback（让 LangGraph interrupt resume），
 # 再用同一 exit code 退出容器。HARNESS_NODE/CECELIA_TASK_ID 任一为空时
@@ -198,7 +320,10 @@ scan_error_keywords() {
 }
 
 set +e
-if [[ "${CECELIA_EXECUTOR:-}" = "codex" ]]; then
+if [[ -n "${HARNESS_ATTEMPT_ID:-}" ]]; then
+  run_provider_contract
+  EXIT_CODE=$?
+elif [[ "${CECELIA_EXECUTOR:-}" = "codex" ]]; then
   # B7: codex exec 分支
   if [[ -f "$PROMPT_FILE" ]]; then
     codex exec -c approval_policy="never" -c sandbox_mode="danger-full-access" < "$PROMPT_FILE" 2>&1 | tee "$STDOUT_FILE"
@@ -230,14 +355,17 @@ else
 fi
 set -e
 
-STDOUT_CONTENT=""
-if [[ -f "$STDOUT_FILE" ]]; then
-  STDOUT_CONTENT=$(tail -c 4000 "$STDOUT_FILE" 2>/dev/null || echo "")
+if [[ $PROVIDER_CONTRACT -eq 1 ]]; then
+  CALLBACK_BODY=$(cat "$NORMALIZED_RESULT_FILE")
+else
+  STDOUT_CONTENT=""
+  if [[ -f "$STDOUT_FILE" ]]; then
+    STDOUT_CONTENT=$(tail -c 4000 "$STDOUT_FILE" 2>/dev/null || echo "")
+  fi
+  # jq -Rs 把任意 stdout 安全编码成 JSON 字符串（含换行、引号）
+  STDOUT_JSON=$(printf '%s' "$STDOUT_CONTENT" | jq -Rs . 2>/dev/null || echo '""')
+  CALLBACK_BODY=$(printf '{"result":"completed","exit_code":%d,"stdout":%s}' "$EXIT_CODE" "$STDOUT_JSON")
 fi
-# jq -Rs 把任意 stdout 安全编码成 JSON 字符串（含换行、引号）
-STDOUT_JSON=$(printf '%s' "$STDOUT_CONTENT" | jq -Rs . 2>/dev/null || echo '""')
-
-CALLBACK_BODY=$(printf '{"result":"completed","exit_code":%d,"stdout":%s}' "$EXIT_CODE" "$STDOUT_JSON")
 
 # 优先用 Layer 3 spawnNode 传的 HARNESS_CALLBACK_URL（含完整 URL + --name 作 containerId），
 # fallback HOSTNAME（旧方式，但 Layer 3 spawn 给 docker 起的 --name ≠ HOSTNAME，会导致 callback router 找不到 thread_lookup）。
