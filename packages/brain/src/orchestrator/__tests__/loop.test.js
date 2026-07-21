@@ -327,6 +327,35 @@ describe('runLoop：dry-run（F5 前台雏形）', () => {
 });
 
 describe('runLoop：wait:* 不灌水', () => {
+  it('wait:human_review 首次派发预览/通知，随后同 SHA 只心跳等待', async () => {
+    const pr = { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-review' };
+    const verdicts = {
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review' },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review' },
+    };
+    const requested = {
+      hop: 1,
+      action: 'wait:human_review',
+      observed: { pr: { head_sha: 'sha-review' } },
+      detail: null,
+    };
+    const observedSeq = [
+      obs({ generatorSpawned: true, pr, reviewRequired: true, ...verdicts }),
+      obs({ generatorSpawned: true, pr, reviewRequired: true, decisionLog: [requested], ...verdicts }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, sleeps, heartbeats } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.dispatch).toHaveBeenCalledWith('wait:human_review', expect.any(Object));
+    expect(appended).toHaveLength(1);
+    expect(sleeps).toHaveLength(1);
+    expect(heartbeats).toHaveLength(2);
+  });
+
   it('wait:poll_ci → 不派 dispatcher、不 append hop，只心跳+sleep', async () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' };
     const observedSeq = [

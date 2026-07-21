@@ -144,8 +144,22 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       continue;
     }
 
-    // ---- wait:*：只心跳+sleep，不 append（日志不灌水）、不派发 ----
-    if (decision.action.startsWith('wait:')) {
+    // ---- 纯轮询 wait：只心跳+sleep，不 append（日志不灌水）、不派发 ----
+    // wait:human_review 首次必须经过 dispatcher，才能真正创建预览并通知人；同一
+    // PR SHA 已写过 intent 后才转为纯等待，避免每 90s 重复通知。
+    if (decision.action === ACTION.WAIT_HUMAN_REVIEW) {
+      const reviewAlreadyRequested = observed.decisionLog.some(
+        (row) => row.action === ACTION.WAIT_HUMAN_REVIEW
+          && row.observed?.pr?.head_sha === observed.pr?.head_sha,
+      );
+      if (reviewAlreadyRequested) {
+        pollCount = 0;
+        await beat();
+        await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
+    }
+    if (decision.action === ACTION.WAIT_RUNNING || decision.action === ACTION.WAIT_POLL_CI) {
       pollCount = decision.action === ACTION.WAIT_POLL_CI ? pollCount + 1 : 0;
       await beat();
       await sleep(POLL_INTERVAL_MS);
