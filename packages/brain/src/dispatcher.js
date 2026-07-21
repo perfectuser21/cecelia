@@ -753,6 +753,10 @@ export async function dispatchNextTask(goalIds) {
       tickLog(`[dispatch] budget_state=${budgetState} → downgrade task=${taskToDispatch.id} type=${taskType} to codex`);
       taskToDispatch = {
         ...taskToDispatch,
+        payload: {
+          ...(taskToDispatch.payload || {}),
+          executor: 'codex',
+        },
         provider: 'codex',
         _downgraded: true,
         _downgrade_reason: `budget_state=${budgetState}`,
@@ -940,4 +944,3 @@ export async function dispatchNextTask(goalIds) {
   incrementActionsToday(1).catch(() => {});
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
 }
-
