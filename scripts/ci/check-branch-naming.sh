@@ -11,6 +11,13 @@ if echo "$BRANCH" | grep -qE '^(main|master|develop|staging|release)$'; then
   exit 0
 fi
 
+# Dependabot 官方固定分支名格式（dependabot/npm_and_yarn/xxx），非 /dev 工作流产出，
+# 单独放行——其余 CI job（测试/依赖冲突扫描等）对 Dependabot PR 照常跑，不豁免
+if echo "$BRANCH" | grep -qE '^dependabot/'; then
+  echo "✅ Dependabot 分支，跳过命名检查: $BRANCH"
+  exit 0
+fi
+
 # 兼容 8 位 (MMDDHHNN) 与 10 位 (MMDDHHMMSS) 时间戳
 if echo "$BRANCH" | grep -qE '^cp-[0-9]{8,10}-[a-z0-9-]+$'; then
   echo "✅ 分支命名规范: $BRANCH"
