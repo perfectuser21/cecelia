@@ -754,6 +754,8 @@ export async function dispatchNextTask(goalIds) {
     taskToDispatch = guided.task;
     if (guided.changed && guided.payloadPatch) {
       if (guided.payloadPatch.executor === 'codex') {
+        // 顶层 provider 与 payload.executor 同步写（PR#4155 保护：尚不能排除存量读方）
+        taskToDispatch = { ...taskToDispatch, provider: 'codex' };
         tickLog(`[dispatch] allocation_guide task=${taskToDispatch.id} type=${taskToDispatch.task_type} budget_state=${budgetState} → executor=codex`);
       }
       try {
