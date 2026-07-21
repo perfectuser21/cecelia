@@ -45,7 +45,9 @@ describe('allocatePreview', () => {
       .mockResolvedValueOnce({ rows: [] }); // UPDATE
     await allocatePreview(1, 'test-branch', 'cecelia');
     const updateCall = mockPool.query.mock.calls[1];
-    expect(updateCall[0]).toMatch(/UPDATE preview_environments SET status = 'starting'/);
+    expect(updateCall[0]).toMatch(/WITH latest AS/);
+    expect(updateCall[0]).toMatch(/status = 'starting'/);
+    expect(updateCall[0]).toMatch(/WHERE pr_number = \$1 AND status != 'inactive'/);
     expect(updateCall[1]).toEqual([1]);
   });
 
