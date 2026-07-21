@@ -50,6 +50,7 @@ describe('claudeAdapter', () => {
     expect(spec.args).toEqual(expect.arrayContaining(['-p', '--output-format', 'json', '--json-schema']));
     expect(spec.args).not.toContain('--model');
     expect(spec.args).not.toContain('--resume');
+    expect(spec.args).toEqual(expect.arrayContaining(['--session-id', bundle.attempt_id]));
     expect(JSON.parse(spec.stdin).task_bundle).toEqual(bundle);
   });
 
@@ -63,6 +64,7 @@ describe('claudeAdapter', () => {
       execution: { model: 'auto' },
     });
     expect(resumed.args).toEqual(expect.arrayContaining(['--resume', 'session-1']));
+    expect(resumed.args).not.toContain('--session-id');
     expect(resumed.args).not.toContain('--model');
   });
 

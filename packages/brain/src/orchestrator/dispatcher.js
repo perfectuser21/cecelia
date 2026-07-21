@@ -232,6 +232,7 @@ export function createDetachedLauncher({
         task: { ...task, task_type: `harness_${attempt.role}` },
         prompt: spec.stdin,
         worktreePath: bundle.inputs.worktree_path,
+        readOnlyWorktree: bundle.constraints.read_only,
         labels,
         extraMounts,
         env: {
@@ -243,6 +244,7 @@ export function createDetachedLauncher({
           HARNESS_LEASE_OWNER: leaseOwner,
           HARNESS_RUN_ID: attempt.run_id,
           HARNESS_HOP: String(attempt.hop),
+          HARNESS_READ_ONLY: String(bundle.constraints.read_only),
           HARNESS_CALLBACK_URL: `${brainUrl}/api/brain/harness/attempts/${attempt.id}/callback`,
           BRAIN_URL: brainUrl,
         },

@@ -11,6 +11,7 @@ const DEFAULT_RESULT_SCHEMA = { type: 'object' };
 function invocation({ bundle, execution = {}, sessionId = null, continuation = null }) {
   const args = ['-p', '--output-format', 'json'];
   if (sessionId) args.push('--resume', sessionId);
+  else args.push('--session-id', bundle.attempt_id);
   addExplicitModel(args, execution.model);
   args.push('--json-schema', JSON.stringify(execution.resultSchema ?? DEFAULT_RESULT_SCHEMA));
 

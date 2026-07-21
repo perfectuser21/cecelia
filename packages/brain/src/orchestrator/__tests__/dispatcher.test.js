@@ -183,6 +183,7 @@ describe('createDetachedLauncher', () => {
     const bundle = {
       ...observed,
       inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+      constraints: { read_only: true },
     };
 
     await launcher.launch({
@@ -202,6 +203,7 @@ describe('createDetachedLauncher', () => {
     }));
     expect(spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
       prompt: '{"bundle":true}',
+      readOnlyWorktree: true,
       labels: {
         'cecelia.run_id': runId,
         'cecelia.hop': '6',
@@ -216,6 +218,7 @@ describe('createDetachedLauncher', () => {
         HARNESS_LEASE_OWNER: expect.any(String),
         HARNESS_ATTEMPT_ID: attemptId,
         HARNESS_RUN_ID: runId,
+        HARNESS_READ_ONLY: 'true',
       }),
     }));
   });

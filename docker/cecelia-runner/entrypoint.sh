@@ -93,7 +93,8 @@ fi
 # (/Users/...)，容器里 git fetch / push 直接挂 "does not appear to be a git repo"。
 # Brain dispatch 注入 CONTRACT_BRANCH 后 generator 第一步就 git fetch origin
 # <branch>，这里必须把宿主路径改成 https GitHub URL。
-if [[ -d /workspace/.git || -f /workspace/.git ]]; then
+if [[ "${HARNESS_READ_ONLY:-false}" != "true" ]] \
+    && [[ -d /workspace/.git || -f /workspace/.git ]]; then
   REMOTE_URL=$(cd /workspace && git remote get-url origin 2>/dev/null || echo "")
   if [[ "$REMOTE_URL" =~ ^/ ]]; then
     (cd /workspace && git remote set-url origin "https://github.com/perfectuser21/cecelia.git")
@@ -220,6 +221,10 @@ run_provider_contract() {
 
   if [[ "$provider" == "codex" ]]; then
     local codex_args=(exec)
+    local codex_permission_args=(-c 'approval_policy="never"' -c 'sandbox_mode="danger-full-access"')
+    if [[ "${HARNESS_READ_ONLY:-false}" == "true" ]]; then
+      codex_permission_args=(--sandbox read-only -c 'approval_policy="never"')
+    fi
     if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
       codex_args+=(resume "$HARNESS_RESUME_SESSION_ID")
     fi
@@ -228,8 +233,7 @@ run_provider_contract() {
       --output-schema "$result_schema_file"
       --output-last-message "$result_file"
       --skip-git-repo-check
-      -c 'approval_policy="never"'
-      -c 'sandbox_mode="danger-full-access"'
+      "${codex_permission_args[@]}"
       "${model_args[@]}"
       -
     )
@@ -245,9 +249,20 @@ run_provider_contract() {
     provider_exit=${PIPESTATUS[0]}
     provider_session_id=$(jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' "$STDOUT_FILE" 2>/dev/null | head -n 1)
   elif [[ "$provider" == "claude" ]]; then
-    local claude_args=(-p --dangerously-skip-permissions --output-format json --json-schema "$result_schema_json")
+    local claude_args=(-p --output-format json --json-schema "$result_schema_json")
+    if [[ "${HARNESS_READ_ONLY:-false}" == "true" ]]; then
+      claude_args+=(--permission-mode plan)
+    else
+      claude_args+=(--dangerously-skip-permissions)
+    fi
     if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
       claude_args+=(--resume "$HARNESS_RESUME_SESSION_ID")
+    else
+      # Claude JSON output exposes session_id only at process exit. Pre-allocate a
+      # deterministic UUID so watchdog can resume even if the container dies mid-run.
+      provider_session_id="$HARNESS_ATTEMPT_ID"
+      claude_args+=(--session-id "$provider_session_id")
+      persist_provider_session "$provider_session_id" || true
     fi
     claude_args+=("${model_args[@]}")
     claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"

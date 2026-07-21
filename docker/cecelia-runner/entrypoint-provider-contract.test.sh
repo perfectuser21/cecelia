@@ -19,6 +19,10 @@ grep -q 'NORMALIZED_RESULT_FILE' <<<"$SECTION"
 grep -q '/heartbeat' <<<"$SECTION"
 grep -q 'HARNESS_LEASE_OWNER' <<<"$SECTION"
 grep -q 'provider_session_id:\$session' <<<"$SECTION"
+grep -q -- '--session-id' <<<"$SECTION"
+grep -q 'HARNESS_READ_ONLY' <<<"$SECTION"
+grep -q -- '--sandbox read-only' <<<"$SECTION"
+grep -q -- '--permission-mode plan' <<<"$SECTION"
 
 # The Kernel path may pass --model only under an explicit HARNESS_MODEL guard.
 if grep -Eq -- '--model[[:space:]]+(sonnet|opus|haiku|gpt-|o[0-9])' <<<"$SECTION"; then
