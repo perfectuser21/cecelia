@@ -230,10 +230,13 @@ describe('dispatcher allocation guide', () => {
         }),
       }),
     }));
+    expect(mockTriggerCeceliaRun.mock.calls[0][0].provider).toBe('codex');
     console.log(
       '[evidence] dispatcher_reads budget_state=tight '
       + `calculateSlotBudget.calls=${calculateSlotBudget.mock.calls.length} `
       + `getLlmCapacitySnapshot.calls=${getLlmCapacitySnapshot.mock.calls.length} `
+      + `provider=${mockTriggerCeceliaRun.mock.calls[0][0].provider} `
+      + `payload.executor=${mockTriggerCeceliaRun.mock.calls[0][0].payload.executor} `
       + 'llm_capacity.sampled_at=2026-07-21T10:00:00.000Z claude=0 codex=1 grok=1'
     );
   });
