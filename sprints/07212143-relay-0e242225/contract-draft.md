@@ -145,6 +145,12 @@ psql "$DB" -t -c "SELECT column_name FROM information_schema.columns WHERE table
 grep -q "claude-headless-dispatch-smoke.sh" /workspace/packages/quality/smoke-allowlist.txt && echo "PASS: smoke 已登记" || echo "FAIL: smoke 未登记"
 ```
 
+## Test Contract
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| WS1 | `../../tests/regression/relay-0e242225/headless-dispatch-contract.test.js` | BEHAVIOR-1 / BEHAVIOR-2 / BEHAVIOR-3 / BEHAVIOR-4 / BEHAVIOR-5 / BEHAVIOR-6 | Red commit 13087a36e 测试套件失败（6 个新测试 FAIL） |
+
 ## 不变量（来自 PRD Invariant 约束）
 
 - [单slot串行] 合同测试不并发触发多个 headless 任务
