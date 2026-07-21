@@ -57,6 +57,12 @@ function makeHeadedDeps(overrides = {}) {
     tokenFn: vi.fn().mockResolvedValue('gh-token'),
     now: () => new Date('2026-07-07T12:00:00Z'),
     execFn: vi.fn().mockReturnValue(''), // 去重守卫：无存活容器
+    // 2026-07-21：docker(非headed)路径 isCodex=true 时会调用 snapshotCodexHome
+    // 把 CODEX_RELAY_HOME 快照到临时目录（见 harness-skill-relay.js）。不 mock 会
+    // 落到真实 snapshotCodexRelayHome，在 CI 里 CODEX_RELAY_HOME 是全局假路径
+    // （ci.yml env: /tmp/ci-fake-codex-home）、没有真实 auth.json，导致 loud-fail
+    // 回滚，这个文件里跟"docker路径零回归"无关的测试跟着连带失败。
+    snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     ...overrides,
   };
 }
