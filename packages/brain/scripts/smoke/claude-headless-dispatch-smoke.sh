@@ -21,7 +21,7 @@ echo ""
 
 # ── 1. POST tasks(mode=headless, executor=claude) → 200/201 + id ─────────────
 echo "[1] POST tasks(mode=headless, executor=claude) → 200/201 + id"
-RESP=$(curl -sf -X POST "$BRAIN/api/brain/tasks" \
+RESP=$(curl -sf --max-time 10 -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d '{"task_type":"harness_initiative","title":"headless-smoke-test","payload":{"executor":"claude","mode":"headless","orchestrator":"skill-relay"}}' 2>/dev/null) || { fail "POST tasks(mode=headless) 不可达"; RESP="{}"; }
 echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);exit(0 if isinstance(d.get('id'),str) else 1)" 2>/dev/null \
@@ -30,7 +30,7 @@ echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);exit(0 if isin
 
 # ── 2. POST tasks(mode=invalid) → 400 拒绝 ───────────────────────────────────
 echo "[2] POST tasks(mode=turbo/invalid) → 400 拒绝"
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
+CODE=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d '{"task_type":"harness_initiative","title":"invalid-mode-smoke","payload":{"executor":"claude","mode":"turbo"}}' 2>/dev/null || echo "000")
 [ "$CODE" = "400" ] \
@@ -39,7 +39,7 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
 
 # ── 3. GET task — payload 三元组完整且无敏感字段 ─────────────────────────────
 echo "[3] GET /api/brain/tasks/$TASK_ID — payload 三元组 + 凭据安全"
-TASK_RESP=$(curl -sf "$BRAIN/api/brain/tasks/$TASK_ID" 2>/dev/null) || { fail "GET task 不可达"; TASK_RESP="{}"; }
+TASK_RESP=$(curl -sf --max-time 10 "$BRAIN/api/brain/tasks/$TASK_ID" 2>/dev/null) || { fail "GET task 不可达"; TASK_RESP="{}"; }
 echo "$TASK_RESP" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
@@ -82,10 +82,11 @@ COL=$(psql "$DB" -t -c \
 # ── 6. smoke 脚本结构合法（自检） ────────────────────────────────────────────
 echo "[6] smoke 脚本文件结构合法 + allowlist 已登记（自检）"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/claude-headless-dispatch-smoke.sh"
-ALLOWLIST_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/packages/quality/smoke-allowlist.txt"
-# 允许 allowlist 在不同相对位置
+# 脚本位于 packages/brain/scripts/smoke/，向上 4 级到仓库根
+ALLOWLIST_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)/packages/quality/smoke-allowlist.txt"
+# 备用路径（兼容从仓库根目录直接引用的场景）
 if [ ! -f "$ALLOWLIST_PATH" ]; then
-  ALLOWLIST_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)/packages/quality/smoke-allowlist.txt"
+  ALLOWLIST_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/packages/quality/smoke-allowlist.txt"
 fi
 [ -f "$SCRIPT_PATH" ] \
   && ok "smoke 脚本文件存在: $SCRIPT_PATH" \
