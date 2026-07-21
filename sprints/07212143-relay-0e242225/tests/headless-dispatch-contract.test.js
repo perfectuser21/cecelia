@@ -151,6 +151,50 @@ describe('[BEHAVIOR-3] GET /api/brain/tasks/0e242225-... payload 三元组 + 凭
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// [BEHAVIOR-4] DB initiative_runs 落行 orchestrator_host=skill-relay-session
+// [BEHAVIOR-5] initiative_runs 含 tmux_killed_at 字段（migration 316 已跑）
+// ─────────────────────────────────────────────────────────────────────────────
+describe('[BEHAVIOR-4] DB initiative_runs 落行（orchestrator_host=skill-relay-session）', () => {
+  const DB_URL = process.env.DATABASE_URL;
+
+  test('initiative_runs 含 orchestrator_host=skill-relay-session 且 phase!=failed（skip if no DB）', { skip: !DB_URL ? 'DATABASE_URL 未设置，跳过 psql 验证' : false }, async () => {
+    const { execSync } = require('child_process');
+    const query = `SELECT COUNT(*) FROM initiative_runs WHERE initiative_id='${TASK_ID}' AND orchestrator_host='skill-relay-session' AND phase!='failed'`;
+    let count;
+    try {
+      const out = execSync(`psql "${DB_URL}" -t -c "${query}" 2>/dev/null`, { timeout: 10000 }).toString().trim();
+      count = parseInt(out, 10);
+    } catch (e) {
+      throw new Error(`psql 查询失败: ${e.message}`);
+    }
+    assert.ok(
+      count >= 1,
+      `initiative_runs 无合法记录：initiative_id=${TASK_ID} orchestrator_host=skill-relay-session phase!=failed（实际 ${count} 条）`
+    );
+  });
+});
+
+describe('[BEHAVIOR-5] initiative_runs 含 tmux_killed_at 字段（migration 316）', () => {
+  const DB_URL = process.env.DATABASE_URL;
+
+  test('initiative_runs.tmux_killed_at 字段存在（skip if no DB）', { skip: !DB_URL ? 'DATABASE_URL 未设置，跳过 psql 验证' : false }, async () => {
+    const { execSync } = require('child_process');
+    const query = `SELECT column_name FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name='tmux_killed_at'`;
+    let col;
+    try {
+      col = execSync(`psql "${DB_URL}" -t -c "${query}" 2>/dev/null`, { timeout: 10000 }).toString().trim();
+    } catch (e) {
+      throw new Error(`psql 查询失败: ${e.message}`);
+    }
+    assert.strictEqual(
+      col,
+      'tmux_killed_at',
+      `initiative_runs.tmux_killed_at 字段不存在（migration 316 未跑？），实际查询结果: "${col}"`
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // [BEHAVIOR-6] smoke 脚本文件结构合法（静态检查）
 // ─────────────────────────────────────────────────────────────────────────────
 describe('[BEHAVIOR-6] smoke 脚本结构合法 + allowlist 登记', () => {
