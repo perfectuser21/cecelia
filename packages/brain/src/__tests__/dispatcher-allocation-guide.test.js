@@ -169,7 +169,7 @@ describe('dispatcher allocation guide', () => {
     });
   });
 
-  it('harness_initiative 在 claude 无可用容量时续接到 codex', async () => {
+  it('harness_initiative 读取 slot budget + llm_capacity snapshot，claude 无可用容量时续接到 codex', async () => {
     const task = {
       id: 'task-guided-2',
       title: 'guided harness task',
@@ -215,6 +215,7 @@ describe('dispatcher allocation guide', () => {
     const result = await dispatchNextTask([]);
 
     expect(result.dispatched).toBe(true);
+    expect(getLlmCapacitySnapshot).toHaveBeenCalledTimes(1);
     expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({
       id: task.id,
       provider: 'codex',
@@ -227,5 +228,6 @@ describe('dispatcher allocation guide', () => {
         }),
       }),
     }));
+    console.log('[evidence] budget_state=tight llm_capacity.sampled_at=2026-07-21T10:00:00.000Z claude=0 codex=1 grok=1');
   });
 });
