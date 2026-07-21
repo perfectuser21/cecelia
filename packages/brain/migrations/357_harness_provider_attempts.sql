@@ -38,8 +38,10 @@ CREATE INDEX IF NOT EXISTS idx_harness_attempts_active_lease
   ON harness_attempts (lease_expires_at)
   WHERE status IN ('queued','starting','running');
 
-CREATE INDEX IF NOT EXISTS idx_harness_attempts_provider_session
-  ON harness_attempts (provider, provider_session_id)
+-- One provider session belongs to exactly one attempt inside a run.
+-- This makes cross-role/cross-attempt resume races fail atomically in PostgreSQL.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_harness_attempts_provider_session
+  ON harness_attempts (run_id, provider, provider_session_id)
   WHERE provider_session_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_harness_attempts_run_created

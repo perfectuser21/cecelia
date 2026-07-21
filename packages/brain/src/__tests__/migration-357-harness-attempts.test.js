@@ -14,5 +14,8 @@ describe('migration 357 harness_attempts', () => {
     expect(sql).toMatch(/task_bundle JSONB NOT NULL/);
     expect(sql).toMatch(/result JSONB/);
     expect(sql).toMatch(/lease_expires_at TIMESTAMPTZ/);
+    expect(sql).toMatch(
+      /CREATE UNIQUE INDEX IF NOT EXISTS[\s\S]*?ON harness_attempts\s*\(run_id, provider, provider_session_id\)/,
+    );
   });
 });
