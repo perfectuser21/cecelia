@@ -4,10 +4,9 @@
  * 以 CPU 和 Memory 的 80% 为上限，动态计算最大并行数。
  * 所有并行数引用此文件，统一来源。
  *
- * 资源模型（基于 docker-executor.js RESOURCE_TIERS + 实测数据）：
- *   - 默认 / dev / harness / propose：~400MB / 0.5 core（原估算）
- *   - content_research / content_copywrite：~2048MB / 1 core（Claude CLI + 长 prompt，实测 800-1100MB 峰值）
- *   - content_generate：~1536MB / 2 cores（SVG napi 渲染 9 PNG）
+ * 资源模型：
+ *   - 统一按 MEM_PER_TASK_MB_DEFAULT=400MB / 0.5 core 估算（排班粗算用）
+ *   - 实际内存由容器 cgroup 硬顶执行时兜底（超限 OOM 自动升配），不做 task_type 细分估算
  *   保留 20% 系统余量，保留 2 seat 给用户交互
  */
 
