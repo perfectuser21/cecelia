@@ -125,6 +125,32 @@ test_help_mentions_team1_team2() {
   teardown
 }
 
+test_remote_session_without_brief_uses_full_access() {
+  setup
+  if bash "$TARGET" --team team1 >/tmp/out.$$ 2>&1 && \
+    grep -Fqx 'exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox' "$LOG"; then
+    pass "无 brief 的远程 Codex 会话使用 Full access"
+  else
+    fail "无 brief 的远程 Codex 会话使用 Full access" "$(cat "$LOG")"
+  fi
+  rm -f /tmp/out.$$
+  teardown
+}
+
+test_remote_session_with_brief_uses_full_access_before_prompt() {
+  setup
+  brief="$TMP/brief.txt"
+  echo 'mock task' > "$brief"
+  if bash "$TARGET" --team team1 --brief "$brief" >/tmp/out.$$ 2>&1 && \
+    grep -Fq 'exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox "$(cat /tmp/codex-brief-team1-' "$LOG"; then
+    pass "有 brief 的远程 Codex 会话在 prompt 前使用 Full access"
+  else
+    fail "有 brief 的远程 Codex 会话在 prompt 前使用 Full access" "$(cat "$LOG")"
+  fi
+  rm -f /tmp/out.$$
+  teardown
+}
+
 echo "=== codex-remote-launch.sh 白名单扩容测试 ==="
 test_team1_now_allowed
 test_team2_now_allowed
@@ -132,6 +158,8 @@ test_team6_still_rejected
 test_team3_unaffected
 test_team4_team5_unaffected
 test_help_mentions_team1_team2
+test_remote_session_without_brief_uses_full_access
+test_remote_session_with_brief_uses_full_access_before_prompt
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"
