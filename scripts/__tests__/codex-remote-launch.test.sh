@@ -142,7 +142,7 @@ test_remote_session_with_brief_uses_full_access_before_prompt() {
   brief="$TMP/brief.txt"
   echo 'mock task' > "$brief"
   if bash "$TARGET" --team team1 --brief "$brief" >/tmp/out.$$ 2>&1 && \
-    grep -Fq 'exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox "$(cat /tmp/codex-brief-team1-' "$LOG"; then
+    grep -Eq '^exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox "\$\(cat /tmp/codex-brief-team1-[0-9]{14}\.txt\)"$' "$LOG"; then
     pass "有 brief 的远程 Codex 会话在 prompt 前使用 Full access"
   else
     fail "有 brief 的远程 Codex 会话在 prompt 前使用 Full access" "$(cat "$LOG")"
