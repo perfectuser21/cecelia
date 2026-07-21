@@ -151,3 +151,4 @@ inbox-p1-migration-verify.sh
 migration-verify.sh
 conversation-capture-smoke.sh
 conversation-capture-multitool-smoke.sh
+dispatch-allocation-guide-smoke.sh
