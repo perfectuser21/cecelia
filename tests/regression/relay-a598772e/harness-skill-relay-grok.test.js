@@ -165,7 +165,7 @@ describe('[BEHAVIOR-4] headless grok spawn 参数正确性', () => {
     vi.unstubAllEnvs();
   });
 
-  it('extraMounts 含 GROK_RELAY_HOME:/home/cecelia/.grok:rw', async () => {
+  it('extraMounts 含 GROK_RELAY_HOME:/home/cecelia/.grok:ro', async () => {
     vi.stubEnv('GROK_RELAY_HOME', '/home/user/.grok');
     const deps = makeDeps();
     const task = makeGrokTask();
@@ -173,7 +173,7 @@ describe('[BEHAVIOR-4] headless grok spawn 参数正确性', () => {
 
     const spawnOpts = deps.spawnFn.mock.calls[0][0];
     expect(spawnOpts.extraMounts).toBeDefined();
-    expect(spawnOpts.extraMounts).toContain('/home/user/.grok:/home/cecelia/.grok:rw');
+    expect(spawnOpts.extraMounts).toContain('/home/user/.grok:/home/cecelia/.grok:ro');
   });
 
   it('spawn 命令含 ~/.grok/bin/grok 调用特征（prompt 或 env 中含 grok）', async () => {
