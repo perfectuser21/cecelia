@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.267.29
+**Brain 版本**: 1.267.30
 
 **状态**: 生产运行中
 
@@ -784,12 +784,12 @@ CLOSED ──(3次失败)──► OPEN ──(30分钟)──► HALF_OPEN
 ```javascript
 CPU_CORES = os.cpus().length
 TOTAL_MEM_MB = os.totalmem() / 1024 / 1024
-MEM_PER_TASK = 500MB
+MEM_PER_TASK = 400MB
 CPU_PER_TASK = 0.5 core
 INTERACTIVE_RESERVE = 2 seats  // 留给有头会话
 
-// Layer 1: 物理上限（MAX_PHYSICAL_CAP=10 兜底）
-PHYSICAL_CAPACITY = min(floor(min(USABLE_MEM / 500, USABLE_CPU / 0.5)), MAX_PHYSICAL_CAP=10)
+// Layer 1: 物理上限（MAX_PHYSICAL_CAP=20 兜底）
+PHYSICAL_CAPACITY = min(floor(min(USABLE_MEM / 400, USABLE_CPU / 0.5)), MAX_PHYSICAL_CAP=20)
 
 // Layer 2: 硬上限（CECELIA_MAX_SEATS env var，防止物理上限失控飙升）
 EFFECTIVE_MAX_SEATS = min(CECELIA_MAX_SEATS, PHYSICAL_CAPACITY)  // 当前 10

@@ -12,7 +12,6 @@
 
 import os from 'os';
 
-// 每个任务的内存消耗（跟 docker-executor.js RESOURCE_TIERS 对齐）
 const MEM_PER_TASK_MB_DEFAULT = 400; // 每并行流内存估算（排班粗算用）
 // 按 task_type 细分的估算表已删除（2026-07-21 decision 4186b574）：
 // 旧表是 LangGraph「每 phase 一个 Brain task」时代的遗物（harness_generator 等键
