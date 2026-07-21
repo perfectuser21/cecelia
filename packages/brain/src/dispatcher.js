@@ -35,6 +35,7 @@ import { blockTask } from './task-updater.js';
 import { raise } from './alerting.js';
 import { checkAnchor } from './anchor-check.js';
 import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
+import { getLlmCapacitySnapshot } from './llm-capacity.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -183,6 +184,7 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
  */
 export async function dispatchNextTask(goalIds) {
   const actions = [];
+  let llmCapacitySnapshot = null;
 
   // 0. Drain check — skip dispatch if draining (let in_progress tasks finish)
   // Also check alertness-requested drain mode
@@ -614,7 +616,14 @@ export async function dispatchNextTask(goalIds) {
     //     HOL fix: non-P0 codex tasks blocked by full pool → release claim, skip, try next.
     //     P0 tasks stop the loop immediately (high-priority signal must not be bypassed).
     const budgetState = slotBudget?.budgetState?.state || 'abundant';
-    const guidedCandidate = applyDispatchAllocationGuide(candidate, { budgetState }).task;
+    if (!llmCapacitySnapshot && (candidate.task_type === 'dev' || candidate.task_type === 'harness_initiative')) {
+      try {
+        llmCapacitySnapshot = await getLlmCapacitySnapshot();
+      } catch (err) {
+        console.warn(`[dispatch] llm capacity snapshot failed (non-fatal): ${err.message}`);
+      }
+    }
+    const guidedCandidate = applyDispatchAllocationGuide(candidate, { budgetState, llmCapacity: llmCapacitySnapshot }).task;
     const isCodexNativeTask = candidate.task_type === 'codex_qa'
       || candidate.task_type === 'codex_dev'
       || candidate.task_type === 'codex_test_gen'
@@ -750,13 +759,23 @@ export async function dispatchNextTask(goalIds) {
   let taskToDispatch = fullTaskResult.rows[0];
   try {
     const budgetState = slotBudget?.budgetState?.state || 'abundant';
-    const guided = applyDispatchAllocationGuide(taskToDispatch, { budgetState });
+    if (!llmCapacitySnapshot && (taskToDispatch.task_type === 'dev' || taskToDispatch.task_type === 'harness_initiative')) {
+      try {
+        llmCapacitySnapshot = await getLlmCapacitySnapshot();
+      } catch (err) {
+        console.warn(`[dispatch] llm capacity snapshot failed (non-fatal): ${err.message}`);
+      }
+    }
+    const guided = applyDispatchAllocationGuide(taskToDispatch, { budgetState, llmCapacity: llmCapacitySnapshot });
     taskToDispatch = guided.task;
     if (guided.changed && guided.payloadPatch) {
       if (guided.payloadPatch.executor === 'codex') {
         // 顶层 provider 与 payload.executor 同步写（PR#4155 保护：尚不能排除存量读方）
         taskToDispatch = { ...taskToDispatch, provider: 'codex' };
         tickLog(`[dispatch] allocation_guide task=${taskToDispatch.id} type=${taskToDispatch.task_type} budget_state=${budgetState} → executor=codex`);
+      } else if (guided.payloadPatch.executor === 'grok') {
+        taskToDispatch = { ...taskToDispatch, provider: 'grok' };
+        tickLog(`[dispatch] allocation_guide task=${taskToDispatch.id} type=${taskToDispatch.task_type} budget_state=${budgetState} → executor=grok`);
       }
       try {
         await pool.query(
