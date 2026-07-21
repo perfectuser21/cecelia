@@ -8,9 +8,13 @@ const REQUEST_TIMEOUT_MS = 8_000;
 const USABLE_THRESHOLD = 90;
 const CODEX_USAGE_API = 'https://chatgpt.com/backend-api/wham/usage';
 
+// team1~5 auth.json 全在本机（07-21 拍板 a1c86e2e：t1=Pro 大池，跨机只发 token 不跨机执行）
 const CODEX_ACCOUNTS = [
   { vendor: 'codex', name: 'team1', home: join(homedir(), '.codex-team1') },
   { vendor: 'codex', name: 'team2', home: join(homedir(), '.codex-team2') },
+  { vendor: 'codex', name: 'team3', home: join(homedir(), '.codex-team3') },
+  { vendor: 'codex', name: 'team4', home: join(homedir(), '.codex-team4') },
+  { vendor: 'codex', name: 'team5', home: join(homedir(), '.codex-team5') },
 ];
 
 const GROK_ACCOUNTS = [
