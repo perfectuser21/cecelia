@@ -139,6 +139,14 @@ router.post('/harness/attempts/:attemptId/callback', async (req, res) => {
     return res.status(400).json({ ok: false, error: error.message });
   }
 
+  if (attempt.provider && attempt.provider !== 'auto'
+      && result.provider_metadata.provider !== attempt.provider) {
+    return res.status(409).json({
+      ok: false,
+      error: `provider_mismatch: attempt=${attempt.provider} callback=${result.provider_metadata.provider}`,
+    });
+  }
+
   const sessionId = result.provider_metadata?.session_id ?? null;
   if (sessionId) {
     try {

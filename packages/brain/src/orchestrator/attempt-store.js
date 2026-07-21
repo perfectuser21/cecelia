@@ -106,6 +106,22 @@ export function createAttemptStore(pool) {
       return firstRow(result);
     },
 
+    async reclaim(id, { leaseOwner, leaseSeconds }) {
+      const result = await pool.query(
+        `UPDATE harness_attempts
+            SET status = 'starting',
+                lease_owner = $2,
+                lease_expires_at = NOW() + ($3 * INTERVAL '1 second'),
+                updated_at = NOW()
+          WHERE id = $1
+            AND status IN ('starting','running')
+            AND lease_expires_at < NOW()
+          RETURNING *`,
+        [id, leaseOwner, leaseSeconds],
+      );
+      return firstRow(result);
+    },
+
     async complete(id, resultPayload) {
       if (!SUCCESS_TERMINAL_STATUSES.has(resultPayload?.status)) {
         throw new Error(`invalid successful terminal status: ${resultPayload?.status}`);

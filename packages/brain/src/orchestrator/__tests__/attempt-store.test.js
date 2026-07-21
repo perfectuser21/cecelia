@@ -63,6 +63,18 @@ describe('attempt store', () => {
     expect(pool.query.mock.calls[2][0]).toMatch(/lease_owner = \$2.*status IN \('starting','running'\)/is);
   });
 
+  it('watchdog 只能 reclaim 已过期的同一个非终态 attempt', async () => {
+    const pool = poolWith({ rows: [{ id: input.id, status: 'starting' }], rowCount: 1 });
+    const store = createAttemptStore(pool);
+
+    await store.reclaim(input.id, { leaseOwner: 'watchdog-1', leaseSeconds: 180 });
+
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/lease_expires_at < NOW\(\)/i);
+    expect(sql).toMatch(/status IN \('starting','running'\)/i);
+    expect(values).toEqual([input.id, 'watchdog-1', 180]);
+  });
+
   it('终态写入只接受一次，重复 callback 返回 deduped', async () => {
     const pool = poolWith(
       { rows: [{ id: input.id, status: 'completed' }], rowCount: 1 },

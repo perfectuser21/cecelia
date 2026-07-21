@@ -45,6 +45,44 @@ describe('isSkillRelayTask', () => {
 });
 
 describe('spawnSkillRelaySession', () => {
+  it('kernel-v1 启动确定性 orchestrator，不加载或 spawn harness-controller', async () => {
+    const runId = '11111111-1111-4111-8111-111111111111';
+    const pool = { query: vi.fn(async (sql) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) return { rows: [{ id: runId }], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    }) };
+    const deps = makeDeps({
+      pool,
+      launchKernel: vi.fn(async () => ({ pid: 4242 })),
+    });
+    const task = {
+      ...TASK,
+      payload: { ...TASK.payload, harness_runtime: 'kernel-v1', executor: 'auto' },
+    };
+
+    const result = await spawnSkillRelaySession(task, deps);
+
+    expect(result).toMatchObject({ ok: true, mode: 'kernel-v1', runId, pid: 4242 });
+    expect(deps.launchKernel).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: TASK.id,
+      runId,
+      worktreePath: '/tmp/wt/task-aaaabbbb',
+    }));
+    expect(deps.loadSkill).not.toHaveBeenCalled();
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('harness_runtime 缺省继续走旧 controller，保留一键回滚路径', async () => {
+    const deps = makeDeps({ launchKernel: vi.fn() });
+
+    const result = await spawnSkillRelaySession(TASK, deps);
+
+    expect(result.mode).toBe('skill-relay');
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    expect(deps.loadSkill).toHaveBeenCalledWith('harness-controller');
+  });
+
   it('happy path：worktree→账号→spawn(prompt 含 skill 内容+上下文头)→initiative_runs 落行', async () => {
     const deps = makeDeps();
     const r = await spawnSkillRelaySession(TASK, deps);

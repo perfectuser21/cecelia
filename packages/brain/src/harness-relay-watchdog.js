@@ -68,6 +68,107 @@ function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
+export async function resumeKernelAttempt(attempt, { task, dbPool }) {
+  const [
+    { createAttemptStore },
+    { createProviderRegistry },
+    { claudeAdapter },
+    { codexAdapter },
+    { createDetachedLauncher },
+    { spawnDockerDetached },
+  ] = await Promise.all([
+    import('./orchestrator/attempt-store.js'),
+    import('./orchestrator/provider-registry.js'),
+    import('./orchestrator/providers/claude.js'),
+    import('./orchestrator/providers/codex.js'),
+    import('./orchestrator/dispatcher.js'),
+    import('./spawn/detached.js'),
+  ]);
+  const store = createAttemptStore(dbPool);
+  const leaseOwner = `watchdog:${process.pid}`;
+  const reclaimed = await store.reclaim(attempt.id, { leaseOwner, leaseSeconds: 300 });
+  if (!reclaimed) return { ok: false, reason: 'attempt_lease_conflict' };
+
+  const registry = createProviderRegistry([claudeAdapter, codexAdapter]);
+  const adapter = registry.resolve({ provider: attempt.provider, requires: ['resume'] });
+  const execution = {};
+  if (task.payload?.model && task.payload.model !== 'auto') execution.model = task.payload.model;
+  if (task.payload?.codex_home) execution.codexHome = task.payload.codex_home;
+  if (task.payload?.claude_home) execution.claudeHome = task.payload.claude_home;
+  const spec = adapter.resume({
+    attempt: { ...attempt, task_bundle: attempt.task_bundle },
+    input: 'Continue this same Harness attempt from its last durable checkpoint.',
+    execution,
+  });
+  const launcher = createDetachedLauncher({
+    spawnDetached: spawnDockerDetached,
+    attemptStore: store,
+    leaseOwner,
+  });
+  const launched = await launcher.launch({
+    attempt,
+    bundle: attempt.task_bundle,
+    spec,
+    adapter,
+    task,
+    leaseClaimed: true,
+  });
+  return { ok: true, resumed: true, ...launched };
+}
+
+async function _recoverKernelRun(run, task, deps, out) {
+  const dbPool = deps.pool || deps.dbPool || pool;
+  const latestQ = await dbPool.query(
+    `SELECT * FROM harness_attempts
+      WHERE run_id=$1
+      ORDER BY hop DESC LIMIT 1`,
+    [run.id],
+  );
+  const attempt = latestQ.rows?.[0] ?? null;
+  const activeStatus = attempt && ['queued', 'starting', 'running'].includes(attempt.status);
+  const leaseLive = activeStatus && attempt.lease_expires_at
+    && new Date(attempt.lease_expires_at).getTime() > Date.now();
+  if (leaseLive) return;
+
+  if (activeStatus && attempt.provider_session_id) {
+    const resumeAttempt = deps.resumeAttempt || resumeKernelAttempt;
+    const resumed = await resumeAttempt(attempt, { task, run, dbPool });
+    if (resumed?.ok) {
+      out.resumed++;
+      console.log(`[relay-watchdog][kernel-v1] resumed attempt=${attempt.id} session=${attempt.provider_session_id}`);
+    }
+    // Whether resume won or lost the reclaim race, never start a second reconcile
+    // process in the same watchdog pass.
+    return;
+  }
+
+  if (activeStatus && attempt) {
+    await dbPool.query(
+      `UPDATE harness_attempts
+          SET status='failed', error_code='recovery_without_session',
+              error_message='expired attempt had no resumable provider session',
+              completed_at=NOW(), lease_owner=NULL, lease_expires_at=NULL, updated_at=NOW()
+        WHERE id=$1 AND status IN ('queued','starting','running')
+          AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
+      [attempt.id],
+    );
+  }
+
+  // No resumable session: restart only the deterministic reconcile process. It re-reads
+  // Git/PR/DB and allocates a new hop; it never reuses another role's conversation.
+  const launchKernel = deps.launchKernel
+    || (await import('./harness-skill-relay.js')).launchKernelProcess;
+  const launched = await launchKernel({
+    taskId: task.id,
+    runId: run.id,
+    worktreePath: task.payload?.worktree_path,
+  });
+  if (launched) {
+    out.resumed++;
+    console.log(`[relay-watchdog][kernel-v1] reconcile restarted run=${run.id} pid=${launched.pid ?? '?'}`);
+  }
+}
+
 /**
  * 路径→仓库名静态映射（容器内宿主机绝对路径）。
  * 可被 HARNESS_REPO_MAP 环境变量（JSON 对象）覆盖。
@@ -238,7 +339,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, started_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
+    `SELECT DISTINCT ON (initiative_id) id, initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, started_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
   const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
@@ -286,6 +387,11 @@ export async function resumeStalledRelayRuns(deps = {}) {
       // defer_until 未到期 → 跳过（rate_limit 处置）
       if (task.payload?.defer_until && task.payload.defer_until > Date.now()) {
         console.log(`[relay-watchdog] defer_until 未到期，跳过 initiative=${run.initiative_id}`);
+        continue;
+      }
+
+      if (task.payload?.harness_runtime === 'kernel-v1') {
+        await _recoverKernelRun(run, task, deps, out);
         continue;
       }
 

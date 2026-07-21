@@ -136,6 +136,10 @@ export function createDispatcher(deps) {
     const bundle = buildBundle(action, spec, ctx, attemptId, skill);
     const payload = asObject(ctx.observed.task.payload);
     const requestedProvider = payload.executor ?? payload.provider ?? 'auto';
+    const adapter = spec.role === 'judge' ? null : deps.registry.resolve({
+      provider: requestedProvider,
+      requires: ['structured_output'],
+    });
 
     const persisted = await deps.attemptStore.createAttempt({
       id: attemptId,
@@ -143,7 +147,7 @@ export function createDispatcher(deps) {
       hop: ctx.hop,
       phase: bundle.phase,
       role: spec.role,
-      provider: spec.role === 'judge' ? 'independent-judge' : requestedProvider,
+      provider: spec.role === 'judge' ? 'independent-judge' : adapter.name,
       accountId: payload.executor_account ?? null,
       machineId,
       bundle,
@@ -164,10 +168,6 @@ export function createDispatcher(deps) {
         return await judge({ ...ctx, attempt, bundle });
       }
 
-      const adapter = deps.registry.resolve({
-        provider: requestedProvider,
-        requires: ['structured_output'],
-      });
       const adapterSpec = adapter.start({ bundle, execution: executionConfig(payload) });
       const launched = await deps.launcher.launch({
         attempt,
@@ -200,9 +200,11 @@ export function createDetachedLauncher({
   leaseSeconds = 300,
 }) {
   return Object.freeze({
-    async launch({ attempt, bundle, spec, task }) {
-      const starting = await attemptStore.markStarting(attempt.id, { leaseOwner, leaseSeconds });
-      if (!starting) throw new Error(`attempt_lease_conflict: ${attempt.id}`);
+    async launch({ attempt, bundle, spec, task, leaseClaimed = false }) {
+      if (!leaseClaimed) {
+        const starting = await attemptStore.markStarting(attempt.id, { leaseOwner, leaseSeconds });
+        if (!starting) throw new Error(`attempt_lease_conflict: ${attempt.id}`);
+      }
       const labels = {
         'cecelia.run_id': attempt.run_id,
         'cecelia.hop': String(attempt.hop),
@@ -219,6 +221,12 @@ export function createDetachedLauncher({
       if (modelIndex >= 0 && spec.args[modelIndex + 1]) {
         providerEnv.HARNESS_MODEL = spec.args[modelIndex + 1];
       }
+      const resumeFlagIndex = spec.args?.indexOf('--resume') ?? -1;
+      const resumeCommandIndex = spec.args?.indexOf('resume') ?? -1;
+      const resumeSessionId = resumeFlagIndex >= 0
+        ? spec.args[resumeFlagIndex + 1]
+        : (resumeCommandIndex >= 0 ? spec.args[resumeCommandIndex + 1] : null);
+      if (resumeSessionId) providerEnv.HARNESS_RESUME_SESSION_ID = resumeSessionId;
       return spawnDetached({
         containerId: `cecelia-harness-${String(attempt.id).slice(0, 8)}`,
         task: { ...task, task_type: `harness_${attempt.role}` },

@@ -134,6 +134,19 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.complete).not.toHaveBeenCalled();
   });
 
+  it('拒绝 callback 冒充另一个 provider', async () => {
+    const response = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
+      .send({
+        ...validResult,
+        provider_metadata: { provider: 'claude', session_id: 'session-x' },
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toMatch(/provider_mismatch/);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
   it('拒绝 attempt_id 不匹配或 schema 不完整的结果', async () => {
     const mismatch = await request(app)
       .post(`/api/brain/harness/attempts/${attemptId}/callback`)
