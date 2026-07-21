@@ -229,6 +229,13 @@ describe('getExecutorAffinity()', () => {
     expect(getExecutorAffinity('initiative_plan').no_downgrade).toBe(true);
   });
 
+  it('harness_initiative → claude primary，no_downgrade=true（GAN对抗依赖Task工具，Codex无等价能力）', () => {
+    const a = getExecutorAffinity('harness_initiative');
+    expect(a.primary).toBe('claude');
+    expect(a.fallback).toBe(null);
+    expect(a.no_downgrade).toBe(true);
+  });
+
   it('codex_dev → codex primary，no_downgrade=true', () => {
     const a = getExecutorAffinity('codex_dev');
     expect(a.primary).toBe('codex');
