@@ -46,7 +46,7 @@ async function apiFetch(path, options = {}) {
 // [BEHAVIOR-1] POST tasks(mode=headless) → 200/201 + task id
 // ─────────────────────────────────────────────────────────────────────────────
 describe('[BEHAVIOR-1] POST tasks(mode=headless, executor=claude) → 200/201 + id', () => {
-  test('应返回 200/201 且 body.id 为 UUID 字符串', async () => {
+  test('[BEHAVIOR-1] 应返回 200/201 且 body.id 为 UUID 字符串', async () => {
     const res = await apiFetch('/api/brain/tasks', {
       method: 'POST',
       body: JSON.stringify({
@@ -80,7 +80,7 @@ describe('[BEHAVIOR-1] POST tasks(mode=headless, executor=claude) → 200/201 + 
 // [BEHAVIOR-2] POST tasks(mode=invalid) → 400 拒绝
 // ─────────────────────────────────────────────────────────────────────────────
 describe('[BEHAVIOR-2] POST tasks(mode=turbo) → 400 拒绝', () => {
-  test('应返回 400，body.error 包含 "mode must be headless or headed"', async () => {
+  test('[BEHAVIOR-2] 应返回 400 body.error 含 mode 拒绝信息', async () => {
     const res = await apiFetch('/api/brain/tasks', {
       method: 'POST',
       body: JSON.stringify({
@@ -125,7 +125,7 @@ describe('[BEHAVIOR-2] POST tasks(mode=turbo) → 400 拒绝', () => {
 // [BEHAVIOR-3] GET task — payload 三元组完整 + 无敏感字段
 // ─────────────────────────────────────────────────────────────────────────────
 describe('[BEHAVIOR-3] GET /api/brain/tasks/0e242225-... payload 三元组 + 凭据安全', () => {
-  test('payload.mode === headless', async () => {
+  test('[BEHAVIOR-3] payload.mode === headless', async () => {
     const res = await apiFetch(`/api/brain/tasks/${TASK_ID}`);
     assert.strictEqual(res.status, 200, `期望 200，实际 ${res.status}`);
     const body = await res.json();
@@ -177,7 +177,7 @@ describe('[BEHAVIOR-3] GET /api/brain/tasks/0e242225-... payload 三元组 + 凭
 describe('[BEHAVIOR-4] DB initiative_runs 落行（orchestrator_host=skill-relay-session）', () => {
   const DB_URL = process.env.DATABASE_URL;
 
-  test('initiative_runs 含 orchestrator_host=skill-relay-session 且 phase!=failed（skip if no DB）', { skip: !DB_URL ? 'DATABASE_URL 未设置，跳过 psql 验证' : false }, async () => {
+  test('[BEHAVIOR-4] initiative_runs 落行 orchestrator_host=skill-relay-session（skip if no DB）', { skip: !DB_URL ? 'DATABASE_URL 未设置，跳过 psql 验证' : false }, async () => {
     const { execSync } = require('child_process');
     const query = `SELECT COUNT(*) FROM initiative_runs WHERE initiative_id='${TASK_ID}' AND orchestrator_host='skill-relay-session' AND phase!='failed'`;
     let count;
@@ -197,7 +197,7 @@ describe('[BEHAVIOR-4] DB initiative_runs 落行（orchestrator_host=skill-relay
 describe('[BEHAVIOR-5] initiative_runs 含 tmux_killed_at 字段（migration 316）', () => {
   const DB_URL = process.env.DATABASE_URL;
 
-  test('initiative_runs.tmux_killed_at 字段存在（skip if no DB）', { skip: !DB_URL ? 'DATABASE_URL 未设置，跳过 psql 验证' : false }, async () => {
+  test('[BEHAVIOR-5] initiative_runs.tmux_killed_at 字段存在（skip if no DB）', { skip: !DB_URL ? 'DATABASE_URL 未设置，跳过 psql 验证' : false }, async () => {
     const { execSync } = require('child_process');
     const query = `SELECT column_name FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name='tmux_killed_at'`;
     let col;
@@ -226,7 +226,7 @@ describe('[BEHAVIOR-6] smoke 脚本结构合法 + allowlist 登记', () => {
   const SMOKE_FILE = path.join(REPO_ROOT, 'packages/brain/scripts/smoke/claude-headless-dispatch-smoke.sh');
   const ALLOWLIST = path.join(REPO_ROOT, 'packages/quality/smoke-allowlist.txt');
 
-  test('claude-headless-dispatch-smoke.sh 文件存在', () => {
+  test('[BEHAVIOR-6] claude-headless-dispatch-smoke.sh 文件存在', () => {
     assert.ok(fs.existsSync(SMOKE_FILE), `smoke 脚本不存在: ${SMOKE_FILE}`);
   });
 
