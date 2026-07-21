@@ -114,5 +114,24 @@ describe('dispatcher allocation guide', () => {
         }),
       }),
     }));
+
+    // 顶层 provider 必须与 payload.executor 同步（PR#4155 防御语义，引导员不得丢失）
+    expect(mockTriggerCeceliaRun.mock.calls[0][0].provider).toBe('codex');
+
+    // allocation 账本必须持久化回 tasks.payload（审计接缝：复盘要能从 DB 看到当时的选择依据）
+    const persistCall = mockQuery.mock.calls.find(
+      ([sql, params]) => typeof sql === 'string'
+        && sql.includes("payload = COALESCE(payload, '{}'::jsonb)")
+        && Array.isArray(params) && params[0] === task.id
+    );
+    expect(persistCall).toBeTruthy();
+    expect(JSON.parse(persistCall[1][1])).toMatchObject({
+      executor: 'codex',
+      allocation: expect.objectContaining({
+        selector: expect.stringContaining('dispatch-allocation-guide'),
+        selected_executor: 'codex',
+        budget_state: 'tight',
+      }),
+    });
   });
 });
