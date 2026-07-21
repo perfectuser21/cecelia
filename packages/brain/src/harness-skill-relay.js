@@ -122,6 +122,13 @@ export function stampMMDDHHNN(now) {
  * 容器内不管怎么写，都碰不到宿主真实持久文件。真实凭据目录下找不到 auth.json 视为
  * 配置错误，loud fail（不静默退回直挂真实目录）。
  *
+ * 2026-07-22：headed 分支（SSH+tmux 直接跑，不走 docker）复用本函数，同一病根——
+ * headed session 里 codex 自己刷新一样会写回真文件，跟 refresh-codex-tokens-us.sh
+ * 的 cron 竞态。headed 分支还依赖 config.toml 做"雷9 trust 预写"（避免 codex TUI
+ * 每次进新 worktree 都卡交互确认），所以顺带把 config.toml 也复制进快照——
+ * 缺失不算错误（本来就允许账号目录还没有 config.toml，trust preseed 自己会优雅
+ * 跳过），只有 auth.json 缺失才是真正的配置错误。
+ *
  * @param {string} codexRelayHome 宿主真实凭据目录（CODEX_RELAY_HOME）
  * @param {string} taskId 用于临时目录命名，保证唯一性
  * @returns {string} 一次性临时目录路径
@@ -134,6 +141,10 @@ export function snapshotCodexRelayHome(codexRelayHome, taskId) {
   const dir = join(tmpdir(), `codex-relay-cred-${taskId}-${Date.now()}`);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   copyFileSync(srcAuth, join(dir, 'auth.json'));
+  const srcConfig = join(codexRelayHome, 'config.toml');
+  if (existsSync(srcConfig)) {
+    copyFileSync(srcConfig, join(dir, 'config.toml'));
+  }
   return dir;
 }
 
@@ -636,6 +647,29 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     }
   }
 
+  // 2026-07-22：不直接用真实 CODEX_RELAY_HOME 跑 codex（同 docker relay 病根——
+  // headed session 里 codex 自己刷新会写回真文件，跟宿主 cron 竞态），先快照到
+  // 一次性临时目录再用。快照失败（真实目录下没有 auth.json，配置错误）loud-fail
+  // + task 回滚，跟 docker 路径的处理方式一致。
+  let codexRelayCredDir;
+  if (!isClaudeHeaded && !isGrokHeaded && codexRelayHome) {
+    const snapshotFn = deps.snapshotCodexHome || snapshotCodexRelayHome;
+    try {
+      codexRelayCredDir = snapshotFn(codexRelayHome, task.id);
+    } catch (snapshotErr) {
+      console.error(`[skill-relay][headed][ALERT] codex 凭据快照失败: ${snapshotErr.message}`);
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      } catch (rollbackErr) {
+        console.warn(`[skill-relay][headed] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+      }
+      return { ok: false, mode: headedHost, error: `codex 凭据快照失败: ${snapshotErr.message}` };
+    }
+  }
+
   // grok headed 门禁：GROK_RELAY_HOME='' → loud-fail（对齐 codex headed 门禁 L478-491）
   if (isGrokHeaded) {
     const grokRelayHomeHeaded = process.env.GROK_RELAY_HOME;
@@ -752,8 +786,8 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   // 在起 tmux 之前，经同一条 ssh 通道幂等预写 trust 段：
   //   ①config.toml 不存在（账号未初始化）→ 跳过 + warn，不硬造文件，让 codex 自己处理
   //   ②该 worktree 表已存在 → grep 命中跳过，不产生重复 TOML 表
-  if (!isClaudeHeaded && codexRelayHome) {
-    const codexConfigPath = `${codexRelayHome}/config.toml`;
+  if (!isClaudeHeaded && codexRelayCredDir) {
+    const codexConfigPath = `${codexRelayCredDir}/config.toml`;
     try {
       execFn(
         `ssh ${SSH_OPTS} ${sshHost} "if [ -f ${codexConfigPath} ]; then grep -qF '[projects.\\"${worktreePath}\\"]' ${codexConfigPath} || printf '\\n[projects.\\"${worktreePath}\\"]\\ntrust_level = \\"trusted\\"\\n' >> ${codexConfigPath}; else echo 'codex config.toml not found, skip trust preseed' >&2; fi"`
@@ -803,7 +837,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // headless docker relay 已通过 spawnFn env 参数注入，此处仅补 headed 路径。
     const innerCmd = isClaudeHeaded
       ? `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`
-      : `cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
+      : `cd ${worktreePath} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     try {
       execFn(
         `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} '${innerCmd}'"`

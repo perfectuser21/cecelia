@@ -157,6 +157,15 @@ export default defineConfig({
       // brain-integration 测试：需要真实 Brain HTTP server（localhost:5221），brain-unit 无 server
       'src/routes/__tests__/captures-api.test.ts',
       '../../tests/regression/relay-07b2fd3b/captures-api.test.ts',
+      // 2026-07-22：真实 Playwright spec（需要 @playwright/test，仓库未装此依赖，也不该装——
+      // 这两个文件是浏览器 E2E，要用 `npx playwright test` 单独跑，不是 vitest 单测），被
+      // include 里 tests/regression/**/*.{test,spec}.* 这条过宽的 glob 误当成 vitest 测试
+      // 加载，报 "Failed to load url @playwright/test"。目前仓库里没有任何 CI job 真的用
+      // playwright 跑这两个文件（搜过 .github/workflows/ 和 package.json scripts，都没有），
+      // 是"刀1毕业池"迁移时连同同目录的 .test.ts 一起搬过来的副作用。先排除掉止住 vitest
+      // 报红；要不要真的接一条 playwright CI job 去跑它们是另一个问题，不在本次修复范围。
+      '../../tests/regression/cockpit-route-wire/e2e-verify.spec.ts',
+      '../../tests/regression/relay-07b2fd3b/inbox-e2e.spec.ts',
       // Pre-existing failure (PR #4109): 读取 sprints/07191312-relay-57e25e92/e2e-verify.sh，
       // 该文件已 rename 到 scripts/smoke/e2e/relay-57e25e92.sh，sprint 目录未提交 repo
       '../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts',
