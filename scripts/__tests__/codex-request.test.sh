@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# codex-request.test.sh — 西安侧 pull 请求脚本单元自测（mock ssh/scp/codex）
+# codex-request.test.sh — 西安侧只读借用脚本单元自测（mock ssh/scp/codex）
+#
+# 单一写者模型：美国侧 crontab 是唯一负责刷新+持久化的角色，本脚本只读借用，
+# 用完不回传、不覆盖美国侧。详见 codex-request.sh 顶部注释里的红线说明。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,6 +12,18 @@ PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1 — $2"; FAIL=$((FAIL + 1)); }
 
+# 生成一个 exp 声明在 offset_seconds 之后的假 JWT（payload 是唯一被脚本解析的部分，
+# header/signature 内容无所谓）。offset_seconds 可以是负数，模拟已过期的 token。
+make_fake_jwt() {
+  local offset_seconds="$1"
+  python3 -c "
+import json, base64, time
+payload = json.dumps({'exp': int(time.time()) + $offset_seconds}).encode()
+b64 = base64.urlsafe_b64encode(payload).rstrip(b'=').decode()
+print('header.' + b64 + '.signature')
+"
+}
+
 setup() {
   TMP=$(mktemp -d)
   HOME="$TMP/home"
@@ -17,6 +32,9 @@ setup() {
   mkdir -p "$BIN"
   LOG="$TMP/calls.log"
   touch "$LOG"
+
+  # 默认拉到手的 token 剩余有效期 9 天（跟生产实测数值同量级），远高于 48h 阈值
+  FAKE_AT_FRESH="$(make_fake_jwt 777600)"
 
   cat >"$BIN/ssh" <<SH
 #!/bin/bash
@@ -31,7 +49,7 @@ SH
 echo "scp \$*" >> "$LOG"
 dest="\${@: -1}"
 if [[ "\$dest" != *":"* ]]; then
-  echo '{"mock":"pulled-token"}' > "\$dest"
+  printf '{"tokens":{"access_token":"%s","refresh_token":"mock_rt"}}' "$FAKE_AT_FRESH" > "\$dest"
 fi
 exit 0
 SH
@@ -72,7 +90,7 @@ test_missing_team_rejected() {
   teardown
 }
 
-test_pull_then_run_then_pushback_on_success() {
+test_pull_then_run_no_pushback_on_success() {
   setup
   set +e
   CODEX_MOCK_EXIT_CODE=0 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
@@ -82,18 +100,16 @@ test_pull_then_run_then_pushback_on_success() {
     fail "codex 正常退出(0)时脚本应以 0 退出" "实际 rc=$rc, 输出: $(cat /tmp/out.$$)"
   elif ! grep -q "codex ran with CODEX_HOME=$HOME/.codex-team3" "$LOG"; then
     fail "应以正确 CODEX_HOME 前台运行 codex" "$(cat "$LOG")"
-  elif [[ "$(grep -c '^scp ' "$LOG")" -lt 2 ]]; then
-    fail "应发生至少 2 次 scp（拉取 + 推回）" "$(cat "$LOG")"
-  elif ! (grep -F -- "$HOME/.codex-team3/auth.json" "$LOG" | grep -qE ':[^[:space:]]*$'); then
-    fail "应有一次 scp 以本地 auth.json（$HOME/.codex-team3/auth.json）为源、推回远端(host:path)" "$(cat "$LOG")"
+  elif [[ "$(grep -c '^scp ' "$LOG")" -ne 1 ]]; then
+    fail "只读模式下应且只应发生 1 次 scp（拉取），不应有回传" "$(cat "$LOG")"
   else
-    pass "正常退出：拉取→前台跑codex→推回 全流程正确（含 scp src/dest 方向校验）"
+    pass "正常退出：拉取→跑codex→结束，全程只有 1 次 scp（无回传）"
   fi
   rm -f /tmp/out.$$
   teardown
 }
 
-test_pushback_happens_even_on_nonzero_exit() {
+test_no_pushback_even_on_nonzero_exit() {
   setup
   set +e
   CODEX_MOCK_EXIT_CODE=7 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
@@ -101,20 +117,39 @@ test_pushback_happens_even_on_nonzero_exit() {
   set -e
   if [[ "$rc" -ne 7 ]]; then
     fail "脚本应透传 codex 的非零退出码(7)" "实际 rc=$rc"
-  elif [[ "$(grep -c '^scp ' "$LOG")" -lt 2 ]]; then
-    fail "codex 异常退出(7)时仍应触发 trap 推回token" "$(cat "$LOG")"
+  elif [[ "$(grep -c '^scp ' "$LOG")" -ne 1 ]]; then
+    fail "codex 异常退出(7)时也不应回传，只应有拉取那 1 次 scp" "$(cat "$LOG")"
   else
-    pass "codex 非零退出(7)时 trap 依然触发推回，且退出码透传"
+    pass "codex 非零退出(7)时依然不回传，且退出码透传"
   fi
   rm -f /tmp/out.$$
   teardown
 }
 
-test_no_exec_used() {
-  if grep -qE '^\s*exec\s' "$TARGET"; then
-    fail "不能用 exec 跑 codex（会导致脚本进程消失、trap 不触发）" "$(grep -nE '^\s*exec\s' "$TARGET")"
+test_no_exec_removed_the_old_constraint() {
+  # 旧版本刻意不用 exec，是为了保留 trap EXIT 回传的能力。
+  # 现在没有回传逻辑了，用 exec 交出进程、原样透传退出码是更干净的做法，
+  # 所以这里反过来验证：脚本应该用 exec 启动 codex（不再有 trap 需要保留）。
+  if grep -qE '^\s*exec\s+env\s+CODEX_HOME' "$TARGET"; then
+    pass "已改用 exec 启动 codex（不再需要为 trap 回传保留额外进程）"
   else
-    pass "未使用 exec（trap 回传逻辑得以保留）"
+    fail "预期用 exec 启动 codex" "$(grep -n 'CODEX_HOME=.*CODEX_BIN\|CODEX_BIN"' "$TARGET")"
+  fi
+}
+
+test_no_trap_registered() {
+  if grep -qE '^\s*trap\s' "$TARGET"; then
+    fail "不应再注册任何 trap（回传逻辑已删除）" "$(grep -nE '^\s*trap\s' "$TARGET")"
+  else
+    pass "未注册任何 trap（回传逻辑已彻底删除）"
+  fi
+}
+
+test_no_push_function_defined() {
+  if grep -qE 'push_token_back|scp.*REMOTE_AUTH' "$TARGET"; then
+    fail "脚本不应再包含任何往回推的 scp 调用" "$(grep -nE 'push_token_back|scp.*REMOTE_AUTH' "$TARGET")"
+  else
+    pass "脚本内无任何回传相关代码"
   fi
 }
 
@@ -134,7 +169,7 @@ test_no_login_command() {
   fi
 }
 
-test_chmod_600_both_directions() {
+test_chmod_600_on_pull() {
   setup
   set +e
   CODEX_MOCK_EXIT_CODE=0 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
@@ -158,60 +193,54 @@ test_chmod_600_both_directions() {
   teardown
 }
 
-test_push_skipped_on_corrupt_local_json() {
+test_rejects_when_remaining_below_48h() {
   setup
-  # 模拟 codex 运行中被 kill -9 / 磁盘满，导致本地 auth.json 被写坏成截断的非法 JSON
-  cat >"$BIN/codex" <<SH
+  # 覆盖默认的新鲜 mock scp：这次拉到手的 token 只剩 1 小时（3600秒）就过期
+  local stale_jwt
+  stale_jwt="$(make_fake_jwt 3600)"
+  cat >"$BIN/scp" <<SH
 #!/bin/bash
-echo "codex ran with CODEX_HOME=\$CODEX_HOME" >> "$LOG"
-echo -n '{"broken' > "\$CODEX_HOME/auth.json"
-exit "\${CODEX_MOCK_EXIT_CODE:-0}"
+echo "scp \$*" >> "$LOG"
+dest="\${@: -1}"
+if [[ "\$dest" != *":"* ]]; then
+  printf '{"tokens":{"access_token":"%s","refresh_token":"mock_rt"}}' "$stale_jwt" > "\$dest"
+fi
+exit 0
 SH
-  chmod +x "$BIN/codex"
+  chmod +x "$BIN/scp"
 
   set +e
-  CODEX_MOCK_EXIT_CODE=3 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
+  bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
   local rc=$?
   set -e
 
-  if [[ "$rc" -ne 3 ]]; then
-    fail "本地 auth.json 写坏场景下脚本仍应正常透传 codex 原始退出码(3)" "实际 rc=$rc, 输出: $(cat /tmp/out.$$)"
-  elif grep -F -- "$HOME/.codex-team3/auth.json" "$LOG" | grep -qE ':[^[:space:]]*$'; then
-    fail "本地 auth.json 是非法 JSON 时不应发生推回 scp（会覆盖美国侧唯一持久副本）" "$(cat "$LOG")"
-  elif ! grep -q "跳过推回" /tmp/out.$$; then
-    fail "应打印 WARN 说明因 JSON 校验失败跳过推回" "$(cat /tmp/out.$$)"
+  if [[ "$rc" -eq 0 ]]; then
+    fail "剩余有效期不足 48h 时应拒绝运行（非 0 退出）" "实际 rc=0, 输出: $(cat /tmp/out.$$)"
+  elif grep -q "codex ran with CODEX_HOME" "$LOG"; then
+    fail "剩余有效期不足 48h 时不应该跑 codex" "$(cat "$LOG")"
+  elif ! grep -qE "剩余有效期不足" /tmp/out.$$; then
+    fail "应打印说明剩余有效期不足而拒绝运行的错误信息" "$(cat /tmp/out.$$)"
   else
-    pass "本地 auth.json 是非法 JSON 时：跳过推回、不覆盖远端，且 codex 原始退出码仍正常透传"
+    pass "剩余有效期不足 48h（模拟美国侧 cron 掉线）时正确拒绝运行，且不调用 codex"
   fi
   rm -f /tmp/out.$$
   teardown
 }
 
-test_push_skipped_on_empty_local_json() {
+test_allows_when_remaining_above_48h() {
   setup
-  # 模拟 codex 运行中被 kill -9 / 磁盘满，导致本地 auth.json 被截断成 0 字节空文件
-  # （这是 jq empty 校验测不出来的具名场景：jq empty 对空文件视为"无 JSON 值可解析"返回成功）
-  cat >"$BIN/codex" <<SH
-#!/bin/bash
-echo "codex ran with CODEX_HOME=\$CODEX_HOME" >> "$LOG"
-: > "\$CODEX_HOME/auth.json"
-exit "\${CODEX_MOCK_EXIT_CODE:-0}"
-SH
-  chmod +x "$BIN/codex"
-
+  # 默认 mock 已经是 9 天有效期（远高于 48h），直接复用 setup 里的默认值
   set +e
-  CODEX_MOCK_EXIT_CODE=5 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
+  bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
   local rc=$?
   set -e
 
-  if [[ "$rc" -ne 5 ]]; then
-    fail "本地 auth.json 为空文件场景下脚本仍应正常透传 codex 原始退出码(5)" "实际 rc=$rc, 输出: $(cat /tmp/out.$$)"
-  elif grep -F -- "$HOME/.codex-team3/auth.json" "$LOG" | grep -qE ':[^[:space:]]*$'; then
-    fail "本地 auth.json 是空文件时不应发生推回 scp（会用空文件覆盖美国侧唯一持久副本）" "$(cat "$LOG")"
-  elif ! grep -q "跳过推回" /tmp/out.$$; then
-    fail "应打印 WARN 说明因空文件跳过推回" "$(cat /tmp/out.$$)"
+  if [[ "$rc" -ne 0 ]]; then
+    fail "剩余有效期充足（9天）时应正常运行" "实际 rc=$rc, 输出: $(cat /tmp/out.$$)"
+  elif ! grep -q "codex ran with CODEX_HOME=$HOME/.codex-team3" "$LOG"; then
+    fail "剩余有效期充足时应正常跑 codex" "$(cat "$LOG")"
   else
-    pass "本地 auth.json 是空文件时：跳过推回、不覆盖远端，且 codex 原始退出码仍正常透传"
+    pass "剩余有效期充足（9天 >= 48h）时正常放行运行 codex"
   fi
   rm -f /tmp/out.$$
   teardown
@@ -220,14 +249,16 @@ SH
 echo "=== codex-request.sh 单元测试 ==="
 test_invalid_team_rejected
 test_missing_team_rejected
-test_pull_then_run_then_pushback_on_success
-test_pushback_happens_even_on_nonzero_exit
-test_no_exec_used
+test_pull_then_run_no_pushback_on_success
+test_no_pushback_even_on_nonzero_exit
+test_no_exec_removed_the_old_constraint
+test_no_trap_registered
+test_no_push_function_defined
 test_no_token_content_printed
 test_no_login_command
-test_chmod_600_both_directions
-test_push_skipped_on_corrupt_local_json
-test_push_skipped_on_empty_local_json
+test_chmod_600_on_pull
+test_rejects_when_remaining_below_48h
+test_allows_when_remaining_above_48h
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"
