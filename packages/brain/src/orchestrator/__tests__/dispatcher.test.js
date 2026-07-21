@@ -222,4 +222,43 @@ describe('createDetachedLauncher', () => {
       }),
     }));
   });
+
+  it('Claude fresh/resume 共用 attempt 级宿主 session 目录，容器替换后仍可 resume', async () => {
+    const spawnDetached = vi.fn(async () => ({ containerId: 'claude-cx' }));
+    const attemptStore = { markStarting: vi.fn(async () => ({ status: 'starting' })) };
+    const ensureDir = vi.fn();
+    const launcher = createDetachedLauncher({
+      spawnDetached,
+      attemptStore,
+      sessionRoot: '/tmp/harness-sessions',
+      ensureDir,
+    });
+    const attempt = { id: attemptId, run_id: runId, hop: 2, role: 'reviewer' };
+    const bundle = {
+      inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+      constraints: { read_only: true },
+    };
+
+    await launcher.launch({
+      attempt,
+      bundle,
+      spec: { provider: 'claude', args: ['-p'], stdin: '{}', env: {} },
+      task: observed.task,
+    });
+
+    expect(ensureDir).toHaveBeenCalledWith(
+      `/tmp/harness-sessions/${attemptId}/projects`,
+      { recursive: true, mode: 0o700 },
+    );
+    expect(ensureDir).toHaveBeenCalledWith(
+      `/tmp/harness-sessions/${attemptId}/sessions`,
+      { recursive: true, mode: 0o700 },
+    );
+    expect(spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
+      extraMounts: [
+        `/tmp/harness-sessions/${attemptId}/projects:/home/cecelia/.claude/projects:rw`,
+        `/tmp/harness-sessions/${attemptId}/sessions:/home/cecelia/.claude/sessions:rw`,
+      ],
+    }));
+  });
 });

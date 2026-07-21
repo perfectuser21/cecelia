@@ -1,5 +1,7 @@
 import { randomUUID as nodeRandomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 import { parseTaskBundle } from './execution-contract.js';
 
@@ -198,6 +200,9 @@ export function createDetachedLauncher({
   brainUrl = 'http://host.docker.internal:5221',
   leaseOwner = `${os.hostname()}:${process.pid}`,
   leaseSeconds = 300,
+  sessionRoot = process.env.CECELIA_HARNESS_SESSION_DIR
+    ?? path.join(os.tmpdir(), 'cecelia-harness-sessions'),
+  ensureDir = mkdirSync,
 }) {
   return Object.freeze({
     async launch({ attempt, bundle, spec, task, leaseClaimed = false }) {
@@ -212,10 +217,21 @@ export function createDetachedLauncher({
         'cecelia.attempt_id': attempt.id,
       };
       const providerEnv = { ...spec.env };
-      let extraMounts;
+      const extraMounts = [];
       if (spec.provider === 'codex' && providerEnv.CODEX_HOME) {
-        extraMounts = [`${providerEnv.CODEX_HOME}:/home/cecelia/.codex:rw`];
+        extraMounts.push(`${providerEnv.CODEX_HOME}:/home/cecelia/.codex:rw`);
         providerEnv.CODEX_HOME = '/home/cecelia/.codex';
+      }
+      if (spec.provider === 'claude') {
+        const attemptSessionRoot = path.join(sessionRoot, attempt.id);
+        const projectsDir = path.join(attemptSessionRoot, 'projects');
+        const sessionsDir = path.join(attemptSessionRoot, 'sessions');
+        ensureDir(projectsDir, { recursive: true, mode: 0o700 });
+        ensureDir(sessionsDir, { recursive: true, mode: 0o700 });
+        extraMounts.push(
+          `${projectsDir}:/home/cecelia/.claude/projects:rw`,
+          `${sessionsDir}:/home/cecelia/.claude/sessions:rw`,
+        );
       }
       const modelIndex = spec.args?.indexOf('--model') ?? -1;
       if (modelIndex >= 0 && spec.args[modelIndex + 1]) {

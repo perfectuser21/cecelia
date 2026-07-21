@@ -49,6 +49,12 @@ run 内只能属于一个 attempt。回调结果必须匹配 attempt id、provid
    重新推导下一 hop。
 6. callback 是幂等终态写入；verdict 以 attempt id 去重并绑定 round / PR SHA。
 
+Claude 的本地 session 文件按 attempt 持久化在宿主
+`CECELIA_HARNESS_SESSION_DIR`（缺省为系统临时目录下的
+`cecelia-harness-sessions/`），容器替换后继续挂载同一目录。跨设备若没有共享该目录，
+不要复制 session id 冒充可恢复；watchdog 应关闭旧 attempt，并按 Git/PR/DB 真相重新
+推导。Codex thread 由 provider 自身保存，`thread.started` 到达时立即落 attempt。
+
 ## 运行与排障
 
 ```bash
