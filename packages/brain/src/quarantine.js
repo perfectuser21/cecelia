@@ -24,6 +24,7 @@ import { upsertLearning } from './learning.js';
 import { hasActiveSignal } from './quarantine-active-signal.js';
 import { resolveResourceTier } from './spawn/middleware/resource-tier.js';
 import { getBackoffMs, getMaxRetries } from './lib/retry-policy.js';
+import { isConsciousnessEnabled } from './consciousness-guard.js';
 
 const execFile = promisify(execFileCb);
 
@@ -256,32 +257,37 @@ async function quarantineTask(taskId, reason, details = {}) {
     console.log(`[quarantine] Task ${taskId} quarantined: ${reason}`);
 
     // 失败学习：当任务因重复失败进隔离区时，自动分析根因
+    // consciousness.enabled=false 时跳过（rumination 属 GUARDED_MODULES，2026-07-21 补齐门禁）
     if (reason === QUARANTINE_REASONS.REPEATED_FAILURE && quarantineInfo.failure_count >= FAILURE_THRESHOLD) {
-      try {
-        // 动态导入 callLLM 避免循环依赖
-        const { callLLM } = await import('./llm-caller.js');
+      if (!isConsciousnessEnabled()) {
+        console.log(`[quarantine] consciousness disabled, skip LLM analysis for task ${taskId}`);
+      } else {
+        try {
+          // 动态导入 callLLM 避免循环依赖
+          const { callLLM } = await import('./llm-caller.js');
 
-        // 构建分析提示词
-        const quarantinePrompt = `任务「${task.title}」连续${quarantineInfo.failure_count}次失败。类型：${task.task_type || '未知'}。描述：${(task.description || '').slice(0, 300)}。请用1-2句分析失败根因，第一人称（我）。`;
+          // 构建分析提示词
+          const quarantinePrompt = `任务「${task.title}」连续${quarantineInfo.failure_count}次失败。类型：${task.task_type || '未知'}。描述：${(task.description || '').slice(0, 300)}。请用1-2句分析失败根因，第一人称（我）。`;
 
-        // 调用 LLM 分析（限制 150 tokens）
-        const analysisResult = await callLLM('rumination', quarantinePrompt, { maxTokens: 150 });
+          // 调用 LLM 分析（限制 150 tokens）
+          const analysisResult = await callLLM('rumination', quarantinePrompt, { maxTokens: 150 });
 
-        if (analysisResult && analysisResult.text) {
-          // 写入 learnings 表（upsertLearning 去重，同 title 只保留一行并递增 frequency_count）
-          await upsertLearning({
-            title: `隔离分析：${task.title}`,
-            content: analysisResult.text.trim(),
-            category: 'quarantine_pattern',
-            triggerEvent: 'quarantine',
-            task_id: taskId || null,
-          });
+          if (analysisResult && analysisResult.text) {
+            // 写入 learnings 表（upsertLearning 去重，同 title 只保留一行并递增 frequency_count）
+            await upsertLearning({
+              title: `隔离分析：${task.title}`,
+              content: analysisResult.text.trim(),
+              category: 'quarantine_pattern',
+              triggerEvent: 'quarantine',
+              task_id: taskId || null,
+            });
 
-          console.log(`[quarantine] LLM analysis completed for task ${taskId}`);
+            console.log(`[quarantine] LLM analysis completed for task ${taskId}`);
+          }
+        } catch (analysisErr) {
+          // 分析失败不影响隔离主流程
+          console.warn(`[quarantine] LLM analysis failed for task ${taskId}:`, analysisErr.message);
         }
-      } catch (analysisErr) {
-        // 分析失败不影响隔离主流程
-        console.warn(`[quarantine] LLM analysis failed for task ${taskId}:`, analysisErr.message);
       }
     }
 
