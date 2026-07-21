@@ -201,7 +201,8 @@ describe('F7: dev 派发迁离 LangGraph', () => {
       user: { mode: 'absent', used: 0 },
       codex: { available: true, running: 0, max: 5 },
     });
-    mocks.shouldDowngrade.mockReturnValueOnce(true);
+    // 引导员在候选阶段与派发阶段各调一次 shouldDowngrade，两次都须返回 tight 判定
+    mocks.shouldDowngrade.mockReturnValue(true);
 
     const result = await dispatchNextTask(['goal-1']);
 
