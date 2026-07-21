@@ -50,12 +50,22 @@ allow = set(os.environ.get('ALLOW','').split())
 d = json.load(sys.stdin)
 bad = {}
 for name, v in d.get('vulnerabilities', {}).items():
-    if v.get('severity') not in ('high', 'critical'):
-        continue
     if name in allow:
         continue
-    titles = [via.get('title','') for via in v.get('via', []) if isinstance(via, dict)]
-    bad[name] = (v.get('severity'), '; '.join(t for t in titles if t)[:70])
+    # 只信这个包自己直接挂着的 advisory（via 里的 dict 项，带它自己的 severity/cvss）。
+    # 不用顶层 v['severity']——那是 npm 沿整条依赖链滚算出来的聚合值，会被链上别的
+    # 包的高危漏洞拉高，哪怕这个包跟那条 CVE 的关系只是'依赖了持有它的包'，不是
+    # '自己有洞'。真正持有该 CVE 的包会在同一份 audit 输出里单独有自己的顶层条目
+    # （自己的 via 里就有这条 advisory），用它自己的条目判断即可，不需要在这里对
+    # 每一层继承者重复拦一次，否则会出现包没有任何自己的 CVE 却被拦下的假阳性。
+    advisories = [via for via in v.get('via', []) if isinstance(via, dict)]
+    if not advisories:
+        continue  # 纯继承（via 全是包名字符串），没有自己的 advisory，交给真正持有 CVE 的那个包条目处理
+    own_high = [a for a in advisories if a.get('severity') in ('high', 'critical')]
+    if not own_high:
+        continue
+    titles = [a.get('title','') for a in own_high]
+    bad[name] = (own_high[0].get('severity'), '; '.join(t for t in titles if t)[:70])
 for n, (sev, t) in sorted(bad.items()):
     print(f'{n}\t{sev}\t{t}')
 ")
