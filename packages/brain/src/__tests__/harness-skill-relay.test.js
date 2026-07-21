@@ -371,6 +371,9 @@ describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () 
       resolveAccountFn: vi.fn().mockResolvedValue(undefined),
       tokenFn: vi.fn().mockResolvedValue('t'),
       now: () => new Date('2026-07-05T12:00:00Z'),
+      // 2026-07-22：headed 分支缺省 executor 时按 codex 处理，CODEX_RELAY_HOME 在
+      // CI 里全局设了假路径，会触发真实 snapshotCodexRelayHome 找不到 auth.json
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
       ...overrides,
     };
   }
