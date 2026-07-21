@@ -43,6 +43,11 @@ function makeDeps(overrides = {}) {
     tokenFn: vi.fn().mockResolvedValue('gh-token-grok'),
     now: () => new Date('2026-07-20T12:00:00Z'),
     execFn: vi.fn().mockReturnValue(''),
+    // 2026-07-21：isCodex=true 时 spawnSkillRelaySession 会调用 snapshotCodexHome
+    // 把 CODEX_RELAY_HOME 快照到临时目录（见 harness-skill-relay.js）。不 mock 会
+    // 落到真实 snapshotCodexRelayHome，本文件多处 vi.stubEnv('CODEX_RELAY_HOME',
+    // '/tmp/fake-codex-home') 是假路径、没有真实 auth.json，导致 loud-fail 回滚。
+    snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     ...overrides,
   };
 }
