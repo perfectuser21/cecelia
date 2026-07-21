@@ -207,6 +207,44 @@ describe('codex executor 凭据挂载（extraMounts 接线，demo task a150998c 
   });
 });
 
+describe('grok executor 回归（命令签名沿用 dispatch-worker，挂载改只读）', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('executor=grok + GROK_RELAY_HOME 已配置 → spawnFn 收到只读 .grok 挂载，保留 gk 命名和 grok orchestrator_host', async () => {
+    vi.stubEnv('GROK_RELAY_HOME', '/tmp/fake-grok-home');
+    const deps = makeDeps();
+    const task = { ...TASK, payload: { ...TASK.payload, executor: 'grok' } };
+    const r = await spawnSkillRelaySession(task, deps);
+
+    expect(r.ok).toBe(true);
+    expect(r.containerId).toBe('cecelia-relay-aaaabbbb-gk');
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+    expect(spawnOpts.extraMounts).toContain('/tmp/fake-grok-home:/home/cecelia/.grok:ro');
+    expect(spawnOpts.env.CECELIA_EXECUTOR).toBe('grok');
+
+    const insertCall = deps.pool.query.mock.calls.find(
+      ([sql]) => /INSERT INTO initiative_runs/.test(sql)
+    );
+    expect(insertCall, '必须 INSERT grok initiative_runs').toBeTruthy();
+    const [sql] = insertCall;
+    expect(sql).toContain('skill-relay-grok');
+  });
+
+  it('executor=grok 且 GROK_RELAY_HOME 未设 → 仍允许放行（无挂载）', async () => {
+    const deps = makeDeps();
+    const task = { ...TASK, payload: { ...TASK.payload, executor: 'grok' } };
+    const r = await spawnSkillRelaySession(task, deps);
+
+    expect(r.ok).toBe(true);
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+    expect(spawnOpts.extraMounts ?? []).toHaveLength(0);
+    expect(spawnOpts.env.CECELIA_EXECUTOR).toBe('grok');
+  });
+});
+
 describe('router 集成：flag 命中不碰图', async () => {
   it('runHarnessInitiativeRouter 对 skill-relay 任务不 compile 图', async () => {
     const { runHarnessInitiativeRouter } = await import('../executor.js');
