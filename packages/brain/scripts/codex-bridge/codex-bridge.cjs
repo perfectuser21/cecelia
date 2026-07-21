@@ -584,18 +584,26 @@ const server = http.createServer(async (req, res) => {
 });
 
 // ─── 启动 ─────────────────────────────────────────────────────────────────────
+// require.main===module 守卫：只有直接 `node codex-bridge.cjs` 运行时才真正
+// listen 端口。这样 smoke test 可以安全 require() 这个文件去调纯函数
+// （loadRawAuth/injectLocalAccount/setupInjectedAccounts/cleanupTmpDir），
+// 不会意外把端口占了或触发 codex 二进制缺失时的 process.exit(1)。
 
-const { existsSync } = require('fs');
+if (require.main === module) {
+  const { existsSync } = require('fs');
 
-if (!existsSync(CODEX_BIN)) {
-  console.error(`[codex-bridge] ❌ Codex binary 不存在: ${CODEX_BIN}`);
-  console.error('[codex-bridge] 请确认 codex-bin 已安装在 /opt/homebrew/bin/codex-bin');
-  process.exit(1);
+  if (!existsSync(CODEX_BIN)) {
+    console.error(`[codex-bridge] ❌ Codex binary 不存在: ${CODEX_BIN}`);
+    console.error('[codex-bridge] 请确认 codex-bin 已安装在 /opt/homebrew/bin/codex-bin');
+    process.exit(1);
+  }
+
+  server.listen(PORT, BRIDGE_HOST, () => {
+    console.log(`[codex-bridge] 🚀 codex-bridge 启动，监听 ${BRIDGE_HOST}:${PORT}`);
+    console.log(`[codex-bridge]    Brain URL: ${BRAIN_URL}`);
+    console.log(`[codex-bridge]    Codex bin: ${CODEX_BIN}`);
+    console.log(`[codex-bridge]    账号: ${ACCOUNTS.join(', ')}`);
+  });
 }
 
-server.listen(PORT, BRIDGE_HOST, () => {
-  console.log(`[codex-bridge] 🚀 codex-bridge 启动，监听 ${BRIDGE_HOST}:${PORT}`);
-  console.log(`[codex-bridge]    Brain URL: ${BRAIN_URL}`);
-  console.log(`[codex-bridge]    Codex bin: ${CODEX_BIN}`);
-  console.log(`[codex-bridge]    账号: ${ACCOUNTS.join(', ')}`);
-});
+module.exports = { loadRawAuth, injectLocalAccount, setupInjectedAccounts, cleanupTmpDir };

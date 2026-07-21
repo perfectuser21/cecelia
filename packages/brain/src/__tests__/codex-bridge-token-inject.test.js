@@ -1,45 +1,21 @@
 /**
  * codex-bridge token 注入模式测试
- * 验证 setupInjectedAccounts / cleanupTmpDir 逻辑
+ * 验证 setupInjectedAccounts / cleanupTmpDir / loadRawAuth / injectLocalAccount 逻辑
+ *
+ * 2026-07-21：codex-bridge.cjs 加了 require.main===module 守卫 + module.exports，
+ * 现在直接 require() 真实文件测真实函数，不再内联复刻（旧注释说"避免 require CJS
+ * 在 ESM 测试中的问题"已不成立——用 createRequire 从 ESM 测试文件里 require CJS
+ * 完全没问题，之前是文件本身顶层直接 listen 端口/可能 process.exit 导致不敢 require）。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-// 内联实现（与 codex-bridge.cjs 保持一致，避免 require CJS 在 ESM 测试中的问题）
-function setupInjectedAccounts(taskId, accounts) {
-  const tmpDir = path.join(os.tmpdir(), `codex-inj-${taskId}-${Date.now()}`);
-  const homes = [];
-  for (const { id, auth } of accounts) {
-    const dir = path.join(tmpDir, id);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.chmodSync(dir, 0o700);
-    const authFile = path.join(dir, 'auth.json');
-    fs.writeFileSync(authFile, JSON.stringify(auth), { mode: 0o600 });
-    homes.push(dir);
-  }
-  return { primaryHome: homes[0], allHomes: homes.join(':'), tmpDir };
-}
-
-function cleanupTmpDir(tmpDir) {
-  if (!tmpDir) return;
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
-}
-
-// 内联实现（与 codex-bridge.cjs 保持一致）：2026-07-21 新增——降级模式（/run /execute
-// /execute-review 未收到 Brain 注入的 accounts 时）不再直接用 account.codexHome（真实持久
-// 目录）跑 codex，改成读一次真实 auth.json 后同样走 setupInjectedAccounts 注入临时目录。
-// 直用真实目录会让 codex 自刷新写回真文件，跟 refresh-codex-tokens-xian.sh 的 cron 竞态。
-function loadRawAuth(accountId, homeDir = os.homedir()) {
-  const authPath = path.join(homeDir, `.codex-${accountId}`, 'auth.json');
-  return JSON.parse(fs.readFileSync(authPath, 'utf8'));
-}
-
-function injectLocalAccount(taskId, accountId, homeDir = os.homedir()) {
-  const rawAuth = loadRawAuth(accountId, homeDir);
-  return setupInjectedAccounts(taskId, [{ id: accountId, auth: rawAuth }]);
-}
+const require = createRequire(import.meta.url);
+const { setupInjectedAccounts, cleanupTmpDir, loadRawAuth, injectLocalAccount } =
+  require('../../scripts/codex-bridge/codex-bridge.cjs');
 
 const MOCK_AUTH = {
   auth_mode: 'chatgpt',
