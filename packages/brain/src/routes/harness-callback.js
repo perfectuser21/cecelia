@@ -111,12 +111,20 @@ function resultError(result) {
 router.post('/harness/attempts/:attemptId/heartbeat', async (req, res) => {
   const leaseOwner = req.body?.lease_owner;
   const leaseSeconds = Number(req.body?.lease_seconds ?? 180);
+  const providerSessionId = req.body?.provider_session_id ?? null;
   if (typeof leaseOwner !== 'string' || !leaseOwner || !Number.isInteger(leaseSeconds)
-      || leaseSeconds < 30 || leaseSeconds > 600) {
+      || leaseSeconds < 30 || leaseSeconds > 600
+      || (providerSessionId !== null && (typeof providerSessionId !== 'string' || !providerSessionId))) {
     return res.status(400).json({ ok: false, error: 'valid lease_owner and lease_seconds (30..600) required' });
   }
   try {
-    const attempt = await attemptStore.heartbeat(req.params.attemptId, { leaseOwner, leaseSeconds });
+    const attempt = providerSessionId
+      ? await attemptStore.markRunning(req.params.attemptId, {
+          leaseOwner,
+          providerSessionId,
+          leaseSeconds,
+        })
+      : await attemptStore.heartbeat(req.params.attemptId, { leaseOwner, leaseSeconds });
     if (!attempt) return res.status(409).json({ ok: false, error: 'attempt lease lost or terminal' });
     return res.json({ ok: true, attemptId: req.params.attemptId });
   } catch (error) {

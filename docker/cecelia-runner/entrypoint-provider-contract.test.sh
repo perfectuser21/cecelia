@@ -18,6 +18,7 @@ grep -q 'HARNESS_MODEL' <<<"$SECTION"
 grep -q 'NORMALIZED_RESULT_FILE' <<<"$SECTION"
 grep -q '/heartbeat' <<<"$SECTION"
 grep -q 'HARNESS_LEASE_OWNER' <<<"$SECTION"
+grep -q 'provider_session_id:\$session' <<<"$SECTION"
 
 # The Kernel path may pass --model only under an explicit HARNESS_MODEL guard.
 if grep -Eq -- '--model[[:space:]]+(sonnet|opus|haiku|gpt-|o[0-9])' <<<"$SECTION"; then

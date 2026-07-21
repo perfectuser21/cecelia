@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     complete: vi.fn(),
     fail: vi.fn(),
     heartbeat: vi.fn(),
+    markRunning: vi.fn(),
   },
   pool: { query: vi.fn() },
 }));
@@ -65,6 +66,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       .mockResolvedValueOnce({ attempt: null, deduped: true });
     mocks.store.fail.mockResolvedValue({ attempt: { ...attempt, status: 'failed' }, deduped: false });
     mocks.store.heartbeat.mockResolvedValue({ ...attempt, heartbeat_at: new Date().toISOString() });
+    mocks.store.markRunning.mockResolvedValue({ ...attempt, provider_session_id: 'thread-live' });
     mocks.pool.query.mockResolvedValue({ rows: [], rowCount: 1 });
 
     const { default: router } = await import('../harness-callback.js');
@@ -189,5 +191,23 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       leaseOwner: 'brain-1:123',
       leaseSeconds: 180,
     });
+  });
+
+  it('worker 一拿到 provider session 就转 running 并持久化，崩溃后可原 session resume', async () => {
+    const response = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+      .send({
+        lease_owner: 'brain-1:123',
+        lease_seconds: 180,
+        provider_session_id: 'thread-live',
+      });
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.markRunning).toHaveBeenCalledWith(attemptId, {
+      leaseOwner: 'brain-1:123',
+      providerSessionId: 'thread-live',
+      leaseSeconds: 180,
+    });
+    expect(mocks.store.heartbeat).not.toHaveBeenCalled();
   });
 });

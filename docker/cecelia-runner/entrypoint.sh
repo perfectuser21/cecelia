@@ -162,6 +162,19 @@ fi
 PROVIDER_CONTRACT=0
 NORMALIZED_RESULT_FILE=""
 
+persist_provider_session() {
+  local session="$1"
+  [[ -n "$session" && -n "${HARNESS_LEASE_OWNER:-}" ]] || return 0
+  curl -sf -m 10 -X POST \
+    "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -nc \
+      --arg owner "$HARNESS_LEASE_OWNER" \
+      --arg session "$session" \
+      '{lease_owner:$owner,lease_seconds:180,provider_session_id:$session}')" \
+    >/dev/null 2>&1
+}
+
 run_provider_contract() {
   PROVIDER_CONTRACT=1
   local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-$PROMPT_FILE}"
@@ -220,7 +233,15 @@ run_provider_contract() {
       "${model_args[@]}"
       -
     )
-    codex "${codex_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"
+    : > "$STDOUT_FILE"
+    codex "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
+      | while IFS= read -r line || [[ -n "$line" ]]; do
+          printf '%s\n' "$line" | tee -a "$STDOUT_FILE"
+          live_session=$(printf '%s\n' "$line" \
+            | jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' 2>/dev/null \
+            || true)
+          [[ -z "$live_session" ]] || persist_provider_session "$live_session" || true
+        done
     provider_exit=${PIPESTATUS[0]}
     provider_session_id=$(jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' "$STDOUT_FILE" 2>/dev/null | head -n 1)
   elif [[ "$provider" == "claude" ]]; then
@@ -244,6 +265,10 @@ run_provider_contract() {
     provider_exit=1
     printf '{"error":"unsupported provider: %s"}\n' "$provider" > "$STDOUT_FILE"
   fi
+
+  # Persist the session before the terminal callback. If callback delivery fails after
+  # the CLI exits, watchdog can still reclaim and resume this exact attempt/session.
+  [[ -z "$provider_session_id" ]] || persist_provider_session "$provider_session_id" || true
 
   if [[ -n "$heartbeat_pid" ]]; then
     kill "$heartbeat_pid" >/dev/null 2>&1 || true
