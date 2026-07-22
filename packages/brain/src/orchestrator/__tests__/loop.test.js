@@ -337,8 +337,8 @@ describe('runLoop：wait:* 不灌水', () => {
       judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review' },
     };
     const requested = {
-      hop: 1,
-      action: 'wait:human_review',
+      hop: 2,
+      action: 'effect:human_review_requested',
       observed: { pr: { head_sha: 'sha-review' } },
       detail: null,
     };
@@ -354,9 +354,49 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(result.exitReason).toBe('run_done');
     expect(deps.dispatch).toHaveBeenCalledTimes(1);
     expect(deps.dispatch).toHaveBeenCalledWith('wait:human_review', expect.any(Object));
-    expect(appended).toHaveLength(1);
+    expect(appended.map((entry) => entry.action)).toEqual([
+      'wait:human_review',
+      'effect:human_review_requested',
+    ]);
     expect(sleeps).toHaveLength(1);
     expect(heartbeats).toHaveLength(2);
+  });
+
+  it('human review 首次派发失败只有 intent 时会重试，成功后才写 effect marker', async () => {
+    const pr = { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-review' };
+    const verdicts = {
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review' },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review' },
+    };
+    const failedIntent = {
+      hop: 1,
+      action: 'wait:human_review',
+      observed: { pr: { head_sha: 'sha-review' } },
+    };
+    const observedSeq = [
+      obs({ generatorSpawned: true, pr, reviewRequired: true, ...verdicts }),
+      obs({
+        generatorSpawned: true,
+        pr,
+        reviewRequired: true,
+        decisionLog: [failedIntent],
+        ...verdicts,
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const dispatch = vi.fn()
+      .mockResolvedValueOnce({ status: 'BLOCKED', detail: 'preview failed' })
+      .mockResolvedValueOnce({ status: 'DONE', detail: 'preview ready' });
+    const { deps, appended } = makeEnv({ observedSeq, dispatch });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch).toHaveBeenCalledTimes(2);
+    expect(appended.map((entry) => entry.action)).toEqual([
+      'wait:human_review',
+      'wait:human_review',
+      'effect:human_review_requested',
+    ]);
   });
 
   it('wait:poll_ci → 不派 dispatcher、不 append hop，只心跳+sleep', async () => {

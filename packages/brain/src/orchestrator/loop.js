@@ -179,7 +179,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     // PR SHA 已写过 intent 后才转为纯等待，避免每 90s 重复通知。
     if (decision.action === ACTION.WAIT_HUMAN_REVIEW) {
       const reviewAlreadyRequested = observed.decisionLog.some(
-        (row) => row.action === ACTION.WAIT_HUMAN_REVIEW
+        (row) => row.action === LOG_ACTION.HUMAN_REVIEW_REQUESTED
           && row.observed?.pr?.head_sha === observed.pr?.head_sha,
       );
       if (reviewAlreadyRequested) {
@@ -236,6 +236,23 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     const result = gateVerdict?.startsWith('deny:')
       ? { status: 'BLOCKED', detail: gateVerdict }
       : await deps.dispatch(decision.action, { taskId, runId: resolvedRunId, hop, observed, decision });
+
+    // Intent 只能证明“准备通知”，不能证明 preview/通知副作用成功。成功后追加独立
+    // effect marker；若首次派发失败，下一轮看不到 marker，仍会重试而不是永久空等。
+    if (decision.action === ACTION.WAIT_HUMAN_REVIEW
+        && (result.status === 'DONE' || result.status === 'DONE_WITH_CONCERNS')) {
+      const effectHop = await next(deps.pool, resolvedRunId);
+      await append(deps.pool, {
+        runId: resolvedRunId,
+        hop: effectHop,
+        observed: buildSnapshot(observed, fullCounters, LOG_ACTION.HUMAN_REVIEW_REQUESTED),
+        derivedPhase: decision.phase,
+        gateVerdict: null,
+        action: LOG_ACTION.HUMAN_REVIEW_REQUESTED,
+        detail: { dispatch_hop: hop, result: result.detail ?? null },
+      });
+      hops++;
+    }
 
     if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
       if (blockedState === result.status) blockedStreak++;
