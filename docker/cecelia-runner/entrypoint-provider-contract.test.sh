@@ -18,6 +18,27 @@ grep -q 'HARNESS_RESUME_SESSION_ID' <<<"$SECTION"
 grep -q -- '--json-schema' <<<"$SECTION"
 grep -q 'HARNESS_MODEL' <<<"$SECTION"
 grep -q 'NORMALIZED_RESULT_FILE' <<<"$SECTION"
+
+# Evaluator writes the authoritative mechanical evidence to .brain-result.json.
+# The provider-facing summary may reduce checks to strings, so the runner must
+# bridge the structured behavior_tests into the callback envelope before POST.
+EVIDENCE_BRIDGE="$(sed -n '/evaluator-evidence-bridge:start/,/evaluator-evidence-bridge:end/p' "$ENTRYPOINT")"
+[[ -n "$EVIDENCE_BRIDGE" ]] || { echo 'missing evaluator evidence bridge' >&2; exit 1; }
+eval "$EVIDENCE_BRIDGE"
+EVIDENCE_TMP="$(mktemp -d)"
+trap 'rm -rf "$EVIDENCE_TMP"' EXIT
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":["npm test passed"],"decision":{"outcome":"PASS","reason":"verified"}}
+JSON
+cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
+{"verdict":"PASS","behavior_tests":[{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]}
+JSON
+HARNESS_NODE=evaluator WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+jq -e '.checks == [{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]' \
+  "$EVIDENCE_TMP/result.json" >/dev/null || {
+  echo 'evaluator evidence bridge did not preserve structured behavior_tests' >&2
+  exit 1
+}
 # The runner's provider-facing schema must emit decisions accepted by the Brain
 # callback parser. A permissive object here caused real planner callbacks to 400.
 grep -q '"required":\["outcome","reason"\]' <<<"$SECTION"
