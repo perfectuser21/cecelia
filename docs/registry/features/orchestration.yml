@@ -338,7 +338,12 @@ features:
     tests:
       unit:
         - packages/brain/src/orchestrator/__tests__/execution-contract.test.js
-        - packages/brain/src/orchestrator/__tests__/provider-adapters.test.js
+        - packages/brain/src/orchestrator/__tests__/callback-auth.test.js
+        - packages/brain/src/orchestrator/__tests__/github-pr-discovery.test.js
+        - packages/brain/src/orchestrator/providers/shared.test.js
+        - packages/brain/src/orchestrator/providers/claude.test.js
+        - packages/brain/src/orchestrator/providers/codex.test.js
+        - packages/brain/src/orchestrator/providers/grok.test.js
         - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
         - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
         - packages/brain/src/__tests__/harness-relay-watchdog.test.js
