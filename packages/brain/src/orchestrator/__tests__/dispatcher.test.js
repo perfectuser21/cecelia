@@ -340,7 +340,7 @@ describe('createDetachedLauncher', () => {
     }));
   });
 
-  it('evaluator 以可写工作树和执行模式进入 runner，避免 plan/EROFS 哑火', async () => {
+  it('evaluator 以可写工作树进入 runner，但远端 Git 写入被执行层阻断', async () => {
     const spawnDetached = vi.fn(async () => ({ containerId: 'eval-cx' }));
     const launcher = createDetachedLauncher({
       spawnDetached,
@@ -359,8 +359,36 @@ describe('createDetachedLauncher', () => {
 
     expect(spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
       readOnlyWorktree: false,
-      env: expect.objectContaining({ HARNESS_READ_ONLY: 'false' }),
+      env: expect.objectContaining({
+        HARNESS_READ_ONLY: 'false',
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
+        GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
+      }),
     }));
+  });
+
+  it('generator 保留 Git push 能力', async () => {
+    const spawnDetached = vi.fn(async () => ({ containerId: 'generator-cx' }));
+    const launcher = createDetachedLauncher({
+      spawnDetached,
+      attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
+    });
+
+    await launcher.launch({
+      attempt: { id: attemptId, run_id: runId, hop: 8, role: 'generator' },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: false },
+      },
+      spec: { provider: 'codex', args: [], stdin: '{}', env: {} },
+      task: observed.task,
+    });
+
+    const env = spawnDetached.mock.calls[0][0].env;
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+    expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
+    expect(env.GIT_CONFIG_VALUE_0).toBeUndefined();
   });
 
   it('docker launch 失败只用当前 lease owner 标记 attempt failed', async () => {

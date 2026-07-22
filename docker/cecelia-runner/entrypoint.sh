@@ -163,6 +163,51 @@ fi
 PROVIDER_CONTRACT=0
 NORMALIZED_RESULT_FILE=""
 
+# evaluator-evidence-bridge:start
+EVALUATOR_EVIDENCE_PREPARED=0
+
+prepare_evaluator_evidence() {
+  [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+  EVALUATOR_EVIDENCE_PREPARED=1
+}
+
+merge_evaluator_evidence() {
+  local normalized_result_file="$1"
+  local brain_result_file="${WORKTREE_PATH:-$PWD}/.brain-result.json"
+  local merged_result_file="${normalized_result_file}.evidence"
+
+  [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+  [[ "$EVALUATOR_EVIDENCE_PREPARED" == "1" ]] || return 0
+  [[ -f "$normalized_result_file" && -f "$brain_result_file" ]] || return 0
+  jq -e \
+    --arg task_id "${CECELIA_TASK_ID:-}" \
+    --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" '
+    type == "object"
+    and ($task_id | length > 0)
+    and .task_id == $task_id
+    and ($attempt_id | length > 0)
+    and .attempt_id == $attempt_id
+    and (.behavior_tests | type == "array")
+    and (.behavior_tests | length > 0)
+    and all(.behavior_tests[];
+      type == "object"
+      and (.command | type == "string" and length > 0)
+      and (.exit_code | type == "number")
+      and (.log_tail | type == "string")
+    )
+  ' "$brain_result_file" >/dev/null 2>&1 || return 0
+
+  if jq --slurpfile evidence "$brain_result_file" \
+    '.checks = $evidence[0].behavior_tests' \
+    "$normalized_result_file" > "$merged_result_file"; then
+    mv "$merged_result_file" "$normalized_result_file"
+  else
+    rm -f "$merged_result_file"
+    return 1
+  fi
+}
+# evaluator-evidence-bridge:end
+
 persist_provider_session() {
   local session="$1"
   [[ -n "$session" && -n "${HARNESS_LEASE_OWNER:-}" ]] || return 0
@@ -205,6 +250,10 @@ run_provider_contract() {
   if [[ -n "${HARNESS_MODEL:-}" ]]; then
     model_args=(--model "$HARNESS_MODEL")
   fi
+
+  # Arm the evaluator bridge before provider execution. Evidence ownership is
+  # established by the exact attempt_id written by the evaluator Skill.
+  prepare_evaluator_evidence
 
   if [[ -n "${HARNESS_LEASE_OWNER:-}" ]]; then
     (
@@ -344,6 +393,7 @@ run_provider_contract() {
       '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:{provider:$provider,session_id:(if $session == "" then null else $session end)}}' \
       > "$NORMALIZED_RESULT_FILE"
   fi
+  merge_evaluator_evidence "$NORMALIZED_RESULT_FILE" || true
   return "$provider_exit"
 }
 # provider-neutral:end
