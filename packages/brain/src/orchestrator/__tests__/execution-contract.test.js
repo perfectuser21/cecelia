@@ -92,6 +92,21 @@ describe('HarnessResult contract', () => {
     });
   });
 
+  it('accepts the real planner metadata decision emitted by the runner schema', () => {
+    const parsed = parseHarnessResult(validResult({
+      decision: {
+        verdict: 'DONE',
+        branch: 'cp-07221848-ws-f5bf5b50',
+        sprint_dir: 'sprints/07221848-kernel-fire-drill-quickcheck',
+      },
+    }), 'planner');
+
+    expect(parsed.decision).toMatchObject({
+      verdict: 'DONE',
+      branch: 'cp-07221848-ws-f5bf5b50',
+    });
+  });
+
   it.each(['reviewer', 'evaluator', 'judge'])('requires a decision for %s', (role) => {
     expect(() => parseHarnessResult(validResult(), role)).toThrow(/decision/);
   });
@@ -101,6 +116,23 @@ describe('HarnessResult contract', () => {
       decision: { outcome: 'changes_requested', reason: 'Missing recovery check.' },
     }), 'reviewer');
     expect(parsed.decision.outcome).toBe('changes_requested');
+  });
+
+  it('normalizes a skill-native reviewer verdict into the canonical decision fields', () => {
+    const parsed = parseHarnessResult(validResult({
+      decision: { verdict: 'APPROVED', feedback: 'Contract covers the PRD.' },
+    }), 'reviewer');
+
+    expect(parsed.decision).toMatchObject({
+      outcome: 'APPROVED',
+      reason: 'Contract covers the PRD.',
+    });
+  });
+
+  it('rejects an adversarial decision with no outcome or verdict', () => {
+    expect(() => parseHarnessResult(validResult({
+      decision: { branch: 'cp-no-verdict' },
+    }), 'reviewer')).toThrow(/outcome/);
   });
 
   it.each([
