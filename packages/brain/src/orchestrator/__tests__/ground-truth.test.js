@@ -21,6 +21,7 @@ function fakePool(rowsByTable = {}) {
       if (sql.includes('FROM initiative_runs')) return { rows: rowsByTable.initiative_runs ?? [] };
       if (sql.includes('FROM initiative_contracts')) return { rows: rowsByTable.initiative_contracts ?? [] };
       if (sql.includes('FROM tasks')) return { rows: rowsByTable.tasks ?? [] };
+      if (sql.includes('FROM harness_attempts')) return { rows: rowsByTable.harness_attempts ?? [] };
       if (sql.includes('FROM orchestrator_decision_log')) return { rows: rowsByTable.orchestrator_decision_log ?? [] };
       if (sql.includes('FROM account_usage_cache')) return { rows: rowsByTable.account_usage_cache ?? [] };
       throw new Error(`unexpected sql: ${sql}`);
@@ -62,6 +63,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
     initiative_runs: [runRow],
     initiative_contracts: rows.contracts ?? [{ id: CONTRACT_ID, status: 'draft' }],
     tasks: rows.tasks ?? [{ id: TASK_ID, status: 'in_progress', payload: {} }],
+    harness_attempts: rows.attempts ?? [],
     orchestrator_decision_log: rows.log ?? [],
     account_usage_cache: rows.circuit ?? [],
     ...(rows.run === null ? { initiative_runs: [] } : {}),
@@ -118,6 +120,27 @@ describe('collectGroundTruth：DB 通道组装', () => {
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.authCircuit).toEqual([{ account_id: 'account1', is_auth_failed: true }]);
     expect(deps.pool.calls.some(([sql]) => sql.includes('account_usage_cache'))).toBe(false);
+  });
+
+  it('读取最新完成 evaluator attempt 的完整 result，供 judge 取机械证据', async () => {
+    const evaluatorResult = {
+      contract_version: '1.0',
+      status: 'completed',
+      summary: 'all checks passed',
+      checks: [{ command: 'npm test', exit_code: 0, log_tail: '12 tests passed' }],
+      decision: { outcome: 'PASS', reason: 'verified' },
+      provider_metadata: { provider: 'codex', session_id: 'thread-1' },
+    };
+    const deps = makeDeps({ rows: { attempts: [{ result: evaluatorResult }] } });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.evaluateResult).toEqual(evaluatorResult);
+    expect(deps.pool.calls.some(([sql, params]) => (
+      sql.includes('FROM harness_attempts')
+      && sql.includes("role = 'evaluator'")
+      && params[0] === RUN_ID
+    ))).toBe(true);
   });
 });
 

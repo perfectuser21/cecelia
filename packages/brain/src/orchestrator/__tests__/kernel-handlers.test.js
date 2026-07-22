@@ -66,6 +66,37 @@ describe('kernel deterministic handlers', () => {
     expect(d.pool.query.mock.calls.some(([sql]) => /verdict:judge/.test(sql))).toBe(true);
   });
 
+  it('judge 优先使用 evaluator attempt result，并把 checks 适配为机械闸证据', async () => {
+    const d = deps();
+    const evaluatorResult = {
+      status: 'completed',
+      summary: 'all checks passed',
+      checks: [{ command: 'npm test', exit_code: 0, log_tail: '12 tests passed' }],
+      decision: { outcome: 'PASS', reason: 'verified' },
+      judgments_written: 2,
+    };
+    const ctx = context({
+      observed: {
+        ...context().observed,
+        evaluateResult: evaluatorResult,
+        callbackResult: null,
+      },
+    });
+
+    await createKernelHandlers(d)['spawn:judge'](ctx);
+
+    expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      agentVerdict: 'PASS',
+      agentFeedback: 'verified',
+      brainResult: {
+        verdict: 'PASS',
+        behavior_tests: evaluatorResult.checks,
+        judgments_written: 2,
+        summary: 'all checks passed',
+      },
+    }), expect.any(Object));
+  });
+
   it('judge 没有完成独立判定时返回 NEEDS_CONTEXT，不伪造第二个 PASS', async () => {
     const d = deps();
     d.judgeGate.mockResolvedValueOnce({ verdict: 'PASS', judged: false, feedback: null });
