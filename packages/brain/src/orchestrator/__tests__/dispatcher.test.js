@@ -150,6 +150,60 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({ contract_branch: 'cp-propose-r1' });
   });
 
+  it('按 role_assignments 为同一 run 的 generator/evaluator 选择不同 provider 与账户 home', async () => {
+    const attempts = ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
+    const adapters = Object.fromEntries(['codex', 'claude'].map((provider) => [provider, {
+      name: provider,
+      start: vi.fn(({ execution }) => ({ provider, args: [], env: {}, stdin: '{}', execution })),
+    }]));
+    const attemptStore = {
+      createAttempt: vi.fn(async (input) => ({ id: input.id, ...input, task_bundle: input.bundle })),
+      fail: vi.fn(),
+    };
+    const launcher = { launch: vi.fn(async () => ({ containerId: 'cx' })) };
+    const payload = {
+      executor: 'grok',
+      sprint_dir: 'sprints/provider-neutral',
+      worktree_path: '/tmp/worktree',
+      role_assignments: {
+        generator: { provider: 'codex', account: 'team3' },
+        evaluator: { provider: 'claude', account: 'account2' },
+      },
+    };
+    const dispatch = createDispatcher({
+      attemptStore,
+      registry: { resolve: vi.fn(({ provider }) => adapters[provider]) },
+      launcher,
+      loadSkill: vi.fn(fakeSkill),
+      randomUUID: () => attempts.shift(),
+      createCallbackSecret: () => 'secret',
+      resolveAccountHome: (provider, account) => `/accounts/${provider}/${account}`,
+    });
+    const baseCtx = {
+      taskId,
+      runId,
+      observed: { ...observed, task: { ...observed.task, payload } },
+    };
+
+    await dispatch('spawn:generator', { ...baseCtx, hop: 5, decision: { phase: 'generate' } });
+    await dispatch('spawn:evaluator', { ...baseCtx, hop: 6, decision: { phase: 'evaluate' } });
+
+    expect(attemptStore.createAttempt.mock.calls.map(([input]) => ({
+      role: input.role,
+      provider: input.provider,
+      accountId: input.accountId,
+    }))).toEqual([
+      { role: 'generator', provider: 'codex', accountId: 'team3' },
+      { role: 'evaluator', provider: 'claude', accountId: 'account2' },
+    ]);
+    expect(adapters.codex.start).toHaveBeenCalledWith(expect.objectContaining({
+      execution: expect.objectContaining({ codexHome: '/accounts/codex/team3' }),
+    }));
+    expect(adapters.claude.start).toHaveBeenCalledWith(expect.objectContaining({
+      execution: expect.objectContaining({ claudeHome: '/accounts/claude/account2' }),
+    }));
+  });
+
   it('launch 失败会把 attempt 记为 failed 后再抛出', async () => {
     const deps = makeDeps();
     deps.launcher.launch.mockRejectedValueOnce(new Error('docker unavailable'));
@@ -310,5 +364,40 @@ describe('createDetachedLauncher', () => {
       'remove:cecelia-harness-22222222-g3',
       'spawn:cecelia-harness-22222222-g3',
     ]);
+  });
+
+  it('launcher 把 Claude/Grok 指定账户 home 挂到各自容器凭据目录', async () => {
+    const spawnDetached = vi.fn(async () => ({ containerId: 'cx' }));
+    const launcher = createDetachedLauncher({
+      spawnDetached,
+      attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
+    });
+    const base = {
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: true },
+      },
+      task: observed.task,
+    };
+
+    await launcher.launch({
+      ...base,
+      attempt: { id: attemptId, run_id: runId, hop: 2, role: 'evaluator' },
+      spec: { provider: 'claude', args: [], stdin: '{}', env: { CLAUDE_CONFIG_DIR: '/accounts/claude/account2' } },
+    });
+    await launcher.launch({
+      ...base,
+      attempt: { id: '33333333-3333-4333-8333-333333333333', run_id: runId, hop: 3, role: 'evaluator' },
+      spec: { provider: 'grok', args: [], stdin: '{}', env: { GROK_HOME: '/accounts/grok/grok' } },
+    });
+
+    expect(spawnDetached.mock.calls[0][0]).toMatchObject({
+      extraMounts: expect.arrayContaining(['/accounts/claude/account2:/host-claude-config:ro']),
+      env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/home/cecelia/.claude' }),
+    });
+    expect(spawnDetached.mock.calls[1][0]).toMatchObject({
+      extraMounts: ['/accounts/grok/grok:/home/cecelia/.grok:rw'],
+      env: expect.objectContaining({ GROK_HOME: '/home/cecelia/.grok' }),
+    });
   });
 });
