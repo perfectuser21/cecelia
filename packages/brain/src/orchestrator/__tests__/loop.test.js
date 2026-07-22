@@ -258,22 +258,43 @@ describe('runLoop：控制 action 自消费', () => {
     expect(failSql[1]).toEqual(expect.arrayContaining([RUN_ID, 'hop_cap']));
   });
 
-  it('persist_contract_approval 但 contract 行缺失（id=null）→ failed(approved_but_no_contract_row)，不死转热循环', async () => {
+  it('persist_contract_approval 在 contract 行缺失时从冻结分支物化并继续 generator', async () => {
     const observedSeq = [
-      obs({ contract: { approved: false, id: null }, proposeBranchRn: 1, ganLatestRoundVerdict: 'APPROVED' }),
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: 'sprints/kernel-contract' } },
+        contract: { approved: false, id: null },
+        proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+        proposeBranchRn: 1,
+        ganLatestRoundVerdict: 'APPROVED',
+      }),
+      obs({ contract: { approved: true, id: CONTRACT_ID }, generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
     ];
     const { deps, sqls, sleeps } = makeEnv({ observedSeq });
+    const files = {
+      'sprints/kernel-contract/sprint-prd.md': '# PRD',
+      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-dod.md': '# DoD',
+    };
+    deps.fileExists = vi.fn((filePath) => Object.hasOwn(files, filePath));
+    deps.readFile = vi.fn((filePath) => files[filePath]);
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
-    expect(result.exitReason).toBe('approved_but_no_contract_row');
-    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
     expect(sleeps).toHaveLength(0);
-    const failSql = sqls.find(([sql]) => sql.includes('initiative_runs') && sql.includes("'failed'"));
-    expect(failSql).toBeTruthy();
-    expect(failSql[1]).toEqual(expect.arrayContaining([RUN_ID, 'approved_but_no_contract_row']));
-    // 没有打向 initiative_contracts 的 0 行 UPDATE
-    expect(sqls.some(([sql]) => sql.includes('initiative_contracts'))).toBe(false);
+    const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
+    expect(materializeSql).toBeTruthy();
+    expect(materializeSql[1]).toEqual(expect.arrayContaining([
+      RUN_ID,
+      1,
+      'cp-harness-propose-r1-11111111-a3',
+      '# PRD',
+    ]));
+    expect(materializeSql[1].join('\n')).toContain('# Contract');
+    expect(materializeSql[1].join('\n')).toContain('# DoD');
   });
 
   it('exit（terminal）→ 直接退出，无任何写入', async () => {
