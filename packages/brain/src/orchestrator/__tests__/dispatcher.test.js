@@ -278,4 +278,37 @@ describe('createDetachedLauncher', () => {
       ],
     }));
   });
+
+  it('resume 使用带代次的新容器名，并在 launch 前清除同名残留', async () => {
+    const order = [];
+    const removeContainer = vi.fn(async (name) => {
+      order.push(`remove:${name}`);
+    });
+    const spawnDetached = vi.fn(async ({ containerId }) => {
+      order.push(`spawn:${containerId}`);
+      return { containerId };
+    });
+    const launcher = createDetachedLauncher({
+      spawnDetached,
+      removeContainer,
+      attemptStore: { markStarting: vi.fn() },
+    });
+
+    await launcher.launch({
+      attempt: { id: attemptId, run_id: runId, hop: 2, role: 'evaluator' },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: true },
+      },
+      spec: { provider: 'codex', args: ['exec', 'resume', 'thread-1'], stdin: '{}', env: {} },
+      task: observed.task,
+      leaseClaimed: true,
+      generation: 3,
+    });
+
+    expect(order).toEqual([
+      'remove:cecelia-harness-22222222-g3',
+      'spawn:cecelia-harness-22222222-g3',
+    ]);
+  });
 });

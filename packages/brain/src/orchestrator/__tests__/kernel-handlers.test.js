@@ -158,7 +158,7 @@ describe('kernel deterministic handlers', () => {
     expect(d.saveHandoff).toHaveBeenCalledOnce();
     expect(d.syncOkr).toHaveBeenCalledOnce();
     expect(d.spawnStaging).toHaveBeenCalledOnce();
-    expect(d.cleanup).toHaveBeenCalledOnce();
+    expect(d.cleanup).toHaveBeenCalledWith(runId);
     const sql = d.pool.query.mock.calls.map(([statement]) => statement).join('\n');
     expect(sql).toMatch(/UPDATE initiative_runs/);
     expect(sql).toMatch(/UPDATE tasks/);
