@@ -590,7 +590,10 @@ export async function runMechanicalGate(ctx, deps = {}) {
     for (const contractName of ['contract-dod.md', 'contract-draft.md']) {
       try {
         const contract = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', contractName));
-        behaviorCount += (String(contract).match(/\[BEHAVIOR\]/g) || []).length;
+        behaviorCount += String(contract).split(/\r?\n/).filter((line) => (
+          /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?\[BEHAVIOR\](?:\s|$)/i.test(line)
+          || /^\s*#{2,6}\s+\[BEHAVIOR\]\s*\[BEHAVIOR-\d+\]/i.test(line)
+        )).length;
       } catch { /* missing contract variant */ }
     }
     if (behaviorCount === 0) {

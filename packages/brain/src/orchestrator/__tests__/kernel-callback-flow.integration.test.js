@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { createHash } from 'node:crypto';
 
 const runtime = vi.hoisted(() => {
   const attempts = new Map();
@@ -61,6 +62,7 @@ vi.mock('../../lib/harness-orphan-guard.js', () => ({
 
 import callbackRouter from '../../routes/harness-callback.js';
 import { createDispatcher } from '../dispatcher.js';
+import { createKernelHandlers } from '../kernel-handlers.js';
 import { runLoop } from '../loop.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
@@ -200,5 +202,83 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       status: 'completed',
     });
     expect(launcher.launch).toHaveBeenCalledTimes(2);
+  });
+
+  it('evaluator 结构化 checks 经 callback 落库后原样进入 judge 机械闸', async () => {
+    const evaluatorAttemptId = '55555555-5555-4555-8555-555555555555';
+    const judgeAttemptId = '66666666-6666-4666-8666-666666666666';
+    const callbackToken = 'evaluator-evidence-token';
+    const leaseOwner = 'integration-host:4242';
+    const behaviorTests = [
+      { command: 'npm test', exit_code: 0, log_tail: '12 tests passed' },
+    ];
+    runtime.attempts.set(evaluatorAttemptId, {
+      id: evaluatorAttemptId,
+      run_id: RUN_ID,
+      hop: 5,
+      role: 'evaluator',
+      provider: 'codex',
+      status: 'running',
+      lease_owner: leaseOwner,
+      callback_secret_hash: createHash('sha256').update(callbackToken).digest('hex'),
+      task_bundle: { inputs: { pull_request: { head_sha: 'sha-evidence' } } },
+      result: null,
+    });
+    runtime.attempts.set(judgeAttemptId, {
+      id: judgeAttemptId,
+      run_id: RUN_ID,
+      hop: 6,
+      role: 'judge',
+      provider: 'independent-judge',
+      status: 'running',
+      result: null,
+    });
+    runtime.pool.query.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', callbackRouter);
+    const callback = await request(app)
+      .post(`/api/brain/harness/attempts/${evaluatorAttemptId}/callback`)
+      .set('Authorization', `Bearer ${callbackToken}`)
+      .set('X-Harness-Lease-Owner', leaseOwner)
+      .send({
+        contract_version: '1.0',
+        attempt_id: evaluatorAttemptId,
+        status: 'completed',
+        summary: 'evaluator verified behavior',
+        artifacts: [],
+        checks: behaviorTests,
+        decision: { outcome: 'PASS', reason: 'verified' },
+        error: null,
+        provider_metadata: { provider: 'codex', session_id: 'thread-evaluator' },
+      });
+
+    expect(callback.status).toBe(200);
+    const judgeGate = vi.fn(async () => ({ verdict: 'PASS', feedback: 'grounded', judged: true }));
+    const handlers = createKernelHandlers({
+      pool: runtime.pool,
+      attemptStore: runtime.store,
+      judgeGate,
+    });
+    await handlers['spawn:judge']({
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      attempt: { id: judgeAttemptId },
+      bundle: { inputs: { worktree_path: '/workspace', sprint_dir: SPRINT_DIR } },
+      observed: {
+        pr: { head_sha: 'sha-evidence' },
+        evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-evidence' },
+        evaluateResult: runtime.attempts.get(evaluatorAttemptId).result,
+      },
+    });
+
+    expect(judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      agentVerdict: 'PASS',
+      brainResult: expect.objectContaining({
+        verdict: 'PASS',
+        behavior_tests: behaviorTests,
+      }),
+    }), expect.objectContaining({ strict: true, dbPool: runtime.pool }));
   });
 });

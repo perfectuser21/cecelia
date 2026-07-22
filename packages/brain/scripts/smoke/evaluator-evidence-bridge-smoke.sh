@@ -14,11 +14,14 @@ trap '[[ -n "${TMP_DIR:-}" ]] && rm -r "$TMP_DIR"' EXIT
 printf '%s\n' \
   '{"status":"completed","checks":["claimed pass"],"decision":{"outcome":"PASS","reason":"verified"}}' \
   > "$TMP_DIR/result.json"
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=evidence-smoke-attempt CECELIA_TASK_ID=evidence-smoke \
+  WORKTREE_PATH="$TMP_DIR" prepare_evaluator_evidence
 printf '%s\n' \
-  '{"verdict":"PASS","behavior_tests":[{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]}' \
+  '{"verdict":"PASS","task_id":"evidence-smoke","behavior_tests":[{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]}' \
   > "$TMP_DIR/.brain-result.json"
 
-HARNESS_NODE=evaluator WORKTREE_PATH="$TMP_DIR" merge_evaluator_evidence "$TMP_DIR/result.json"
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=evidence-smoke-attempt CECELIA_TASK_ID=evidence-smoke \
+  WORKTREE_PATH="$TMP_DIR" merge_evaluator_evidence "$TMP_DIR/result.json"
 jq -e '.checks[0].exit_code == 0 and .checks[0].log_tail == "12 tests passed"' \
   "$TMP_DIR/result.json" >/dev/null
 
@@ -45,9 +48,23 @@ try {
     },
   });
   if (!result.pass) throw new Error(`judge rejected contract-draft evidence: ${result.reasons.join('; ')}`);
+
+  await writeFile(path.join(sprintRoot, 'contract-draft.md'), '## [BEHAVIOR]\n\n在这里填写行为断言。\n');
+  const headingOnly = await runMechanicalGate({
+    taskId: 'evidence-smoke',
+    worktreePath: root,
+    sprintDir,
+    brainResult: {
+      verdict: 'PASS',
+      behavior_tests: [{ command: 'npm test', exit_code: 0, log_tail: '12 tests passed' }],
+    },
+  });
+  if (headingOnly.pass || !headingOnly.reasons.some((reason) => reason.includes('contract_tests'))) {
+    throw new Error('judge accepted a heading-only contract-draft');
+  }
 } finally {
   await rm(root, { recursive: true, force: true });
 }
 NODE
 
-echo 'PASS: evaluator evidence survives callback and contract-draft satisfies judge gate'
+echo 'PASS: fresh evaluator evidence bridge and contract-draft judge gate'

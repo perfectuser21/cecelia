@@ -164,17 +164,45 @@ PROVIDER_CONTRACT=0
 NORMALIZED_RESULT_FILE=""
 
 # evaluator-evidence-bridge:start
+EVALUATOR_EVIDENCE_BASELINE=""
+EVALUATOR_EVIDENCE_PREPARED=0
+
+prepare_evaluator_evidence() {
+  local brain_result_file="${WORKTREE_PATH:-$PWD}/.brain-result.json"
+
+  [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+  EVALUATOR_EVIDENCE_PREPARED=1
+  if [[ -f "$brain_result_file" ]]; then
+    EVALUATOR_EVIDENCE_BASELINE="$(cksum < "$brain_result_file" 2>/dev/null || true)"
+  else
+    EVALUATOR_EVIDENCE_BASELINE="__missing__"
+  fi
+}
+
 merge_evaluator_evidence() {
   local normalized_result_file="$1"
   local brain_result_file="${WORKTREE_PATH:-$PWD}/.brain-result.json"
   local merged_result_file="${normalized_result_file}.evidence"
+  local current_evidence_checksum=""
 
   [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+  [[ "$EVALUATOR_EVIDENCE_PREPARED" == "1" ]] || return 0
   [[ -f "$normalized_result_file" && -f "$brain_result_file" ]] || return 0
-  jq -e '
+  current_evidence_checksum="$(cksum < "$brain_result_file" 2>/dev/null || true)"
+  [[ "$EVALUATOR_EVIDENCE_BASELINE" == "__missing__" \
+    || "$current_evidence_checksum" != "$EVALUATOR_EVIDENCE_BASELINE" ]] || return 0
+  jq -e --arg task_id "${CECELIA_TASK_ID:-}" '
     type == "object"
+    and ($task_id | length > 0)
+    and .task_id == $task_id
     and (.behavior_tests | type == "array")
     and (.behavior_tests | length > 0)
+    and all(.behavior_tests[];
+      type == "object"
+      and (.command | type == "string" and length > 0)
+      and (.exit_code | type == "number")
+      and (.log_tail | type == "string")
+    )
   ' "$brain_result_file" >/dev/null 2>&1 || return 0
 
   if jq --slurpfile evidence "$brain_result_file" \
@@ -230,6 +258,10 @@ run_provider_contract() {
   if [[ -n "${HARNESS_MODEL:-}" ]]; then
     model_args=(--model "$HARNESS_MODEL")
   fi
+
+  # Snapshot the evaluator's pre-run evidence without mutating the worktree.
+  # The callback bridge accepts only content written after this snapshot.
+  prepare_evaluator_evidence
 
   if [[ -n "${HARNESS_LEASE_OWNER:-}" ]]; then
     (
