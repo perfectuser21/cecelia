@@ -328,7 +328,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
 
     # ── Blue-green canary：green 验证健康后才删 blue（根治 outage，issue f38f989f）──
     # 原"先删后建"（无条件 docker rm -f blue → compose up）会在坏镜像/中断时留 5221 空窗。
-    # 改为：green 临时端口(5223)起 + BRAIN_DEPLOY_CANARY 关 tick + health 全过 → 才删 blue。
+    # 改为：green 临时端口(5233)起 + BRAIN_DEPLOY_CANARY 关 tick + health 全过 → 才删 blue。
     # green 失败则 blue(5221) 原封不动 + Bark 告警 + 终止部署（exit 1）。
     # （bluegreen.sh 已在脚本顶层 source）
     if [[ "$DRY_RUN" == true ]]; then
@@ -336,14 +336,14 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
         drain_before_swap
         echo ""
-        echo "  [dry-run] bluegreen_swap TARGET_VERSION=${VERSION} BLUE=cecelia-node-brain GREEN=cecelia-node-brain-green PORT=5223"
+        echo "  [dry-run] bluegreen_swap TARGET_VERSION=${VERSION} BLUE=cecelia-node-brain GREEN=cecelia-node-brain-green PORT=5233"
     elif docker inspect cecelia-node-brain >/dev/null 2>&1; then
         # blue 在跑 → swap 前先 drain（停派发 + 等 in_progress 回调收尾）
         echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
         drain_before_swap
         echo ""
 
-        # blue 是 bridge 网络（docker ps 显示 0.0.0.0:5221->5221），green 用 bridge + -p 5223:5221，
+        # blue 是 bridge 网络（docker ps 显示 0.0.0.0:5221->5221），green 用 bridge + -p 5233:5221，
         # 不加 --network host（否则 green 抢占 host 5221 与 blue 冲突）。
         GREEN_ENV=$(docker inspect cecelia-node-brain --format '{{range .Config.Env}}-e {{.}} {{end}}' 2>/dev/null || echo "")
         GREEN_VOL=$(docker inspect cecelia-node-brain --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if not .RW}}:ro{{end}} {{end}}' 2>/dev/null || echo "")
