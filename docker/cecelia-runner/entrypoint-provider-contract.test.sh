@@ -63,6 +63,27 @@ jq -e '.checks == ["current provider summary"]' "$EVIDENCE_TMP/result.json" >/de
   exit 1
 }
 
+# Re-running the current evaluator may legitimately reproduce byte-identical
+# evidence. A real rewrite must be distinguished from an untouched stale file.
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":["current provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
+JSON
+cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
+{"verdict":"PASS","task_id":"task-current","behavior_tests":[{"command":"same test","exit_code":0,"log_tail":"same pass"}]}
+JSON
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-identical CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
+cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
+{"verdict":"PASS","task_id":"task-current","behavior_tests":[{"command":"same test","exit_code":0,"log_tail":"same pass"}]}
+JSON
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-identical CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+jq -e '.checks == [{"command":"same test","exit_code":0,"log_tail":"same pass"}]' \
+  "$EVIDENCE_TMP/result.json" >/dev/null || {
+  echo 'evaluator evidence bridge rejected a fresh byte-identical rewrite' >&2
+  exit 1
+}
+
 # A newly written result for another task must not cross the task boundary.
 cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
 {"verdict":"PASS","task_id":"old-task","behavior_tests":[{"command":"foreign test","exit_code":0,"log_tail":"old pass"}]}
