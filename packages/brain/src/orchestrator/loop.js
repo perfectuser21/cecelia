@@ -19,6 +19,7 @@ import { deriveCounters } from './counters.js';
 import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
+import { materializeApprovedContract } from './contract-store.js';
 import { ACTION, LOG_ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -39,6 +40,25 @@ function asPayload(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch { return {}; }
+}
+
+function frozenContractArtifacts(deps, observed, groundTruthPaths) {
+  const payload = asPayload(observed.task?.payload);
+  const sprintDir = String(payload.sprint_dir ?? '').replace(/\/$/, '');
+  const prdPath = groundTruthPaths.prdPath
+    ?? (sprintDir ? `${sprintDir}/sprint-prd.md` : 'sprint-prd.md');
+  const contractPath = sprintDir ? `${sprintDir}/contract-draft.md` : 'contract-draft.md';
+  const dodPath = sprintDir ? `${sprintDir}/contract-dod.md` : 'contract-dod.md';
+  const paths = [prdPath, contractPath, dodPath];
+  const missing = paths.filter((filePath) => !deps.fileExists?.(filePath));
+  if (missing.length > 0) return { missing };
+  const contractDraft = deps.readFile(contractPath);
+  const contractDod = deps.readFile(dodPath);
+  return {
+    missing: [],
+    prdContent: deps.readFile(prdPath),
+    contractContent: `${contractDraft}\n\n${contractDod}`,
+  };
 }
 
 async function resolveGroundTruthPaths(pool, taskId) {
@@ -159,11 +179,27 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.PERSIST_CONTRACT_APPROVAL) {
-      // 护栏：contract 行缺失（run.contract_id 为空）时 UPDATE 匹配 0 行 →
-      // 观测永不变 → 无 sleep 无 hop 的死转热循环。直接终局，交人工/上游修数据。
       if (!observed.contract.id) {
-        await markRunFailed(deps.pool, resolvedRunId, 'approved_but_no_contract_row');
-        return { exitReason: 'approved_but_no_contract_row', hops };
+        if (!observed.proposeBranch || !Number.isInteger(observed.proposeBranchRn)
+            || observed.proposeBranchRn < 1) {
+          await markRunFailed(deps.pool, resolvedRunId, 'approved_but_no_contract_branch');
+          return { exitReason: 'approved_but_no_contract_branch', hops };
+        }
+        const artifacts = frozenContractArtifacts(deps, observed, groundTruthPaths);
+        if (artifacts.missing.length > 0) {
+          await markRunFailed(deps.pool, resolvedRunId, 'approved_but_contract_artifacts_missing');
+          return { exitReason: 'approved_but_contract_artifacts_missing', hops };
+        }
+        await materializeApprovedContract(deps.pool, {
+          runId: resolvedRunId,
+          version: observed.proposeBranchRn,
+          branch: observed.proposeBranch,
+          prdContent: artifacts.prdContent,
+          contractContent: artifacts.contractContent,
+          approvedAt: now(),
+        });
+        await beat();
+        continue;
       }
       // 崩溃窗口补落库（reviewer APPROVED 已出但 contract 未 approved），补完继续下一跳
       await deps.pool.query(
