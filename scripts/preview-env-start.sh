@@ -59,6 +59,33 @@ log() { echo "[preview-start PR#${PR_NUMBER}] $*" | tee -a "$LOG_FILE"; }
 
 log "开始启动预览环境: branch=${BRANCH_NAME} port=${PORT} db=${DB_NAME}"
 
+# ── 0. 停止上一轮遗留的常驻 Brain 进程 ──────────────────────────────────────────
+# 必须在 Step 4（数据库克隆）之前完成，且必须等待确认真正退出（SIGKILL 兜底）。
+# 上一轮 preview-env-start.sh 脚本本身跑完就退出了（SCRIPT_LOCK 已释放），但它
+# nohup 启动的 Brain 子进程是预期常驻的（预览环境要一直活到 PR 关闭），仍连着
+# 同名 $DB_NAME。若这一步拖到 Step 5（原位置）才做，re-push 间隔较短时旧进程
+# 还没被杀，Step 4 的 dropdb 会报 "is being accessed by other users"，createdb
+# 因库已存在报错，脚本 exit 1，Brain API status 永远停留 starting，GHA 只能
+# 傻等两层硬编码超时（600s 轮询 + 120s 健康检查 ≈ 12min）才报错（PR#4176 CI 实测复现）。
+if [ -f "$PID_FILE" ]; then
+  OLD_BRAIN_PID=$(cat "$PID_FILE" 2>/dev/null || echo "")
+  if [ -n "$OLD_BRAIN_PID" ] && kill -0 "$OLD_BRAIN_PID" 2>/dev/null; then
+    log "Step 0: 停止上一轮遗留 Brain 进程 PID=${OLD_BRAIN_PID}..."
+    kill "$OLD_BRAIN_PID" 2>/dev/null || true
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      kill -0 "$OLD_BRAIN_PID" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "$OLD_BRAIN_PID" 2>/dev/null; then
+      log "  ⚠ ${OLD_BRAIN_PID} 10s 内未退出，SIGKILL 兜底"
+      kill -9 "$OLD_BRAIN_PID" 2>/dev/null || true
+      sleep 1
+    fi
+    log "  ✓ 上一轮 Brain 进程已停止"
+  fi
+  rm -f "$PID_FILE"
+fi
+
 # ── 1. git worktree ──────────────────────────────────────────────────────────
 log "Step 1: git worktree 检出 ${BRANCH_NAME}..."
 # 如果已存在先清理（幂等，支持 re-push 场景）
@@ -158,14 +185,8 @@ else
 fi
 
 # ── 5. 启动预览 Brain ─────────────────────────────────────────────────────────
+# 上一轮遗留进程已在 Step 0（数据库克隆之前）停止，这里不再重复处理。
 log "Step 5: 启动预览 Brain on port=${PORT}..."
-
-# 停止可能残留的旧进程
-if [ -f "$PID_FILE" ]; then
-  OLD_PID=$(cat "$PID_FILE")
-  kill "$OLD_PID" 2>/dev/null || true
-  rm -f "$PID_FILE"
-fi
 
 DB_URL="postgresql://${DB_USER:-cecelia}:${DB_PASSWORD:-cecelia}@${DB_HOST:-localhost}/${DB_NAME}"
 BRAIN_SERVER="${WORK_DIR}/packages/brain/server.js"
