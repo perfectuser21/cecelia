@@ -127,6 +127,21 @@ export async function collectGroundTruth(deps, opts) {
   );
   const decisionLog = logRes.rows;
 
+  // evaluator 的完整机械证据存于 attempt.result；decision_log 只承载 SHA 锚定 verdict。
+  // 旧 controller 的 .brain-result.json 仍在文件通道读取，供兼容路径兜底。
+  const evaluatorAttemptRes = await pool.query(
+    `SELECT result
+       FROM harness_attempts
+      WHERE run_id = $1
+        AND role = 'evaluator'
+        AND status IN ('completed', 'completed_with_concerns')
+        AND result IS NOT NULL
+      ORDER BY completed_at DESC NULLS LAST, created_at DESC
+      LIMIT 1`,
+    [runId],
+  );
+  const evaluateResult = asJson(evaluatorAttemptRes.rows[0]?.result);
+
   // 熔断状态（P0-3 通道②）：markAuthFailure 写 account_usage_cache（src/account-usage.js:194-202）。
   // derive 不读——熔断换号分路归 T3 dispatcher；这里只透传观测。
   let authCircuit;
@@ -228,6 +243,7 @@ export async function collectGroundTruth(deps, opts) {
     ganLatestRoundVerdict,
     generatorSpawned,
     evaluateVerdict,
+    evaluateResult,
     judgeVerdict,
     reviewRequired,
     reviewApproved,

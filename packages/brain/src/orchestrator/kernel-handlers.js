@@ -7,6 +7,17 @@ function prNumber(prUrl) {
   return value ? Number(value) : null;
 }
 
+function evaluatorBrainResult(result) {
+  if (!result) return null;
+  if (Array.isArray(result.behavior_tests)) return result;
+  return {
+    verdict: result.decision?.outcome ?? null,
+    behavior_tests: Array.isArray(result.checks) ? result.checks : [],
+    judgments_written: result.judgments_written ?? result.decision?.judgments_written,
+    summary: result.summary ?? null,
+  };
+}
+
 async function appendJudgeVerdict(pool, ctx, verdict, feedback) {
   await pool.query(
     `INSERT INTO orchestrator_decision_log
@@ -37,11 +48,13 @@ export function createKernelHandlers(deps) {
   return Object.freeze({
     async 'spawn:judge'(ctx) {
       const evaluator = ctx.observed.evaluateVerdict ?? {};
+      const evaluateResult = ctx.observed.evaluateResult ?? null;
+      const brainResult = evaluatorBrainResult(evaluateResult) ?? ctx.observed.callbackResult;
       const result = await deps.judgeGate({
-        agentVerdict: evaluator.verdict,
-        agentFeedback: evaluator.feedback ?? null,
-        brainResult: ctx.observed.callbackResult,
-        transcript: ctx.observed.callbackResult?.transcript,
+        agentVerdict: evaluator.verdict ?? evaluateResult?.decision?.outcome,
+        agentFeedback: evaluator.feedback ?? evaluateResult?.decision?.reason ?? null,
+        brainResult,
+        transcript: evaluateResult?.transcript ?? ctx.observed.callbackResult?.transcript,
         worktreePath: ctx.bundle.inputs.worktree_path,
         sprintDir: ctx.bundle.inputs.sprint_dir,
         taskId: ctx.taskId,
