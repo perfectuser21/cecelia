@@ -819,6 +819,16 @@ BREOF
     ;;
 esac
 
+# Step B-3 可能由 Agent 的下一次 Bash 调用执行，shell 变量不会跨调用保留。
+# 把本次真实执行元数据写到 /tmp，PASS writer 再从文件读取，避免退化成泛化命令。
+E2E_EXECUTION_FILE="${E2E_EXECUTION_FILE:-/tmp/evaluator-execution.json}"
+E2E_EXECUTION_TMP="${E2E_EXECUTION_FILE}.tmp"
+jq -n \
+  --arg command "$E2E_COMMAND" \
+  --argjson exit_code "$EXIT_CODE" \
+  '{command:$command, exit_code:$exit_code}' > "$E2E_EXECUTION_TMP"
+mv "$E2E_EXECUTION_TMP" "$E2E_EXECUTION_FILE"
+
 # ── 统一超时判定（timeout 退出码 124 = 超时）──────────────────────────
 # 各 case 分支用 timeout 跑脚本，超时统一在此判定，不在分支内重复
 if [[ "$EXIT_CODE" -eq 124 ]]; then
@@ -925,10 +935,22 @@ fi
 ```bash
 # evaluator-result-writer:start
 E2E_RESULT_LOG="${E2E_RESULT_LOG:-/tmp/e2e-result.log}"
-E2E_COMMAND="${E2E_COMMAND:-target_environment=${TARGET_ENV:-unknown} E2E verification}"
+E2E_EXECUTION_FILE="${E2E_EXECUTION_FILE:-/tmp/evaluator-execution.json}"
+EXECUTION_COMMAND=""
+EXECUTION_EXIT_CODE=""
+if jq -e '
+  type == "object"
+  and (.command | type == "string" and length > 0)
+  and (.exit_code | type == "number")
+' "$E2E_EXECUTION_FILE" >/dev/null 2>&1; then
+  EXECUTION_COMMAND="$(jq -r '.command' "$E2E_EXECUTION_FILE")"
+  EXECUTION_EXIT_CODE="$(jq -r '.exit_code' "$E2E_EXECUTION_FILE")"
+fi
+E2E_COMMAND="${EXECUTION_COMMAND:-${E2E_COMMAND:-target_environment=${TARGET_ENV:-unknown} E2E verification}}"
+E2E_EXIT_CODE="${EXECUTION_EXIT_CODE:-${EXIT_CODE:-0}}"
 E2E_LOG_TAIL="$(tail -n 5 "$E2E_RESULT_LOG" 2>/dev/null || true)"
 if [[ -z "$E2E_LOG_TAIL" ]]; then
-  E2E_LOG_TAIL="target_environment=${TARGET_ENV:-unknown} completed with exit_code=${EXIT_CODE:-0}"
+  E2E_LOG_TAIL="target_environment=${TARGET_ENV:-unknown} completed with exit_code=$E2E_EXIT_CODE"
 fi
 SCREENSHOTS_VALUE="${SCREENSHOTS_JSON:-[]}"
 CASCADE_ASSERTIONS_VALUE="${CASCADE_ASSERTIONS:-[]}"
@@ -938,7 +960,7 @@ jq -n \
   --arg task_id "$TASK_ID" \
   --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" \
   --arg command "$E2E_COMMAND" \
-  --argjson exit_code "${EXIT_CODE:-0}" \
+  --argjson exit_code "$E2E_EXIT_CODE" \
   --arg log_tail "$E2E_LOG_TAIL" \
   --argjson screenshots "$SCREENSHOTS_VALUE" \
   --argjson cascade_assertions "$CASCADE_ASSERTIONS_VALUE" \

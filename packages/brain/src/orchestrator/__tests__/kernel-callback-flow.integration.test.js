@@ -91,6 +91,10 @@ function runEvaluatorWriterAndBridge(result, { attemptId, command, logTail }) {
   try {
     writeFileSync(path.join(tempDir, 'result.json'), JSON.stringify(result));
     writeFileSync(path.join(tempDir, 'e2e-result.log'), `${logTail}\n`);
+    writeFileSync(path.join(tempDir, 'evaluator-execution.json'), JSON.stringify({
+      command,
+      exit_code: 0,
+    }));
     execFileSync('bash', ['-c', `
       set -euo pipefail
       BRIDGE="$(sed -n '/evaluator-evidence-bridge:start/,/evaluator-evidence-bridge:end/p' "$1")"
@@ -109,8 +113,7 @@ function runEvaluatorWriterAndBridge(result, { attemptId, command, logTail }) {
         WORKSPACE: tempDir,
         TASK_ID,
         TARGET_ENV: 'local_api',
-        EXIT_CODE: '0',
-        E2E_COMMAND: command,
+        E2E_EXECUTION_FILE: path.join(tempDir, 'evaluator-execution.json'),
         E2E_RESULT_LOG: path.join(tempDir, 'e2e-result.log'),
         SCREENSHOTS_JSON: '[]',
         CASCADE_ASSERTIONS: '[]',
