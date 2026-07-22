@@ -35,6 +35,22 @@ async function resolveRunId(pool, taskId) {
   return rows[0].id;
 }
 
+function asPayload(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return {}; }
+}
+
+async function resolveGroundTruthPaths(pool, taskId) {
+  const { rows } = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
+  const payload = asPayload(rows[0]?.payload);
+  const sprintDir = String(payload.sprint_dir ?? '').replace(/\/$/, '');
+  return {
+    prdPath: sprintDir ? `${sprintDir}/sprint-prd.md` : 'sprint-prd.md',
+    callbackResultPath: payload.callback_result_path ?? '.brain-result.json',
+  };
+}
+
 /**
  * appendHop 的 observed 快照：摘要而非全量（jsonb 列，回放/streak 推导用）。
  * counters 的 streak 契约（spec 决策 5）：proposer/reviewer intent 行必须带
@@ -101,6 +117,9 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   const pid = deps.pid ?? process.pid;
 
   const resolvedRunId = runId ?? (await resolveRunId(deps.pool, taskId));
+  const groundTruthPaths = collect === defaultCollect
+    ? await resolveGroundTruthPaths(deps.pool, taskId)
+    : {};
 
   let hops = 0;
   let pollCount = 0; // 进程内计数：wait:poll_ci 不落日志，poll 上限只约束本进程连续等待
@@ -110,7 +129,11 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   const beat = () => heartbeat(deps.pool, { runId: resolvedRunId, host, pid, now: now() });
 
   while (true) {
-    const observed = await collect(deps, { taskId, runId: resolvedRunId });
+    const observed = await collect(deps, {
+      taskId,
+      runId: resolvedRunId,
+      ...groundTruthPaths,
+    });
     const counters = deriveCounters(observed.decisionLog, { proposeBranchMaxRn: observed.proposeBranchRn });
     const fullCounters = { ...counters, pollCount, ganCostUsd: Number(observed.run.cost_usd ?? 0) };
     const decision = derive({ ...observed, counters: fullCounters });
