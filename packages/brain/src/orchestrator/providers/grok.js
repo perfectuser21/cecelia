@@ -61,7 +61,7 @@ export const grokAdapter = Object.freeze({
 
   normalizeResult({ attempt, raw }) {
     const wrapper = parseJsonValue(raw?.stdout, 'Grok stdout');
-    const candidate = wrapper.structured_output ?? wrapper.result ?? wrapper;
+    const candidate = wrapper.structuredOutput ?? wrapper.structured_output ?? wrapper.result ?? wrapper;
     const payload = typeof candidate === 'string'
       ? parseJsonValue(candidate, 'Grok result')
       : candidate;
@@ -69,7 +69,7 @@ export const grokAdapter = Object.freeze({
       attempt,
       payload,
       provider: 'grok',
-      sessionId: wrapper.session_id ?? wrapper.session?.id,
+      sessionId: wrapper.sessionId ?? wrapper.session_id ?? wrapper.session?.id,
     });
   },
 });
