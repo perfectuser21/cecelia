@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENTRYPOINT="$SCRIPT_DIR/entrypoint.sh"
+DOCKERFILE="$SCRIPT_DIR/Dockerfile"
 SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
 
 [[ -n "$SECTION" ]] || { echo 'missing provider-neutral runner section' >&2; exit 1; }
@@ -28,6 +29,7 @@ grep -q -- '--permission-mode plan' <<<"$SECTION"
 grep -q 'provider" == "grok' <<<"$SECTION"
 grep -q 'grok_args' <<<"$SECTION"
 grep -q -- '--always-approve' <<<"$SECTION"
+grep -q '@xai-official/grok' "$DOCKERFILE"
 
 # The Kernel path may pass --model only under an explicit HARNESS_MODEL guard.
 if grep -Eq -- '--model[[:space:]]+(sonnet|opus|haiku|gpt-|o[0-9])' <<<"$SECTION"; then

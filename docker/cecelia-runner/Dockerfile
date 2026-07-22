@@ -68,6 +68,10 @@ RUN (curl -fsSL https://claude.ai/install.sh | sh) \
 # codex --version 冒烟断言：build 失败时快速暴露（对应 contract-dod.md A1）
 RUN npm i -g @openai/codex && codex --version
 
+# Provider-neutral Grok worker. Use xAI's official npm package so headless
+# runner images do not depend on an interactive curl installer or host binary.
+RUN npm i -g @xai-official/grok && grok --version
+
 # V6 图生成依赖 — 全局装 linux 版 @resvg/resvg-js
 # 用途：content pipeline generate 节点调 ~/claude-output/scripts/gen-v6-person.mjs
 # 渲染 9 张卡片 PNG。宿主 node_modules 是 Mac darwin-arm64 二进制，容器 Linux 无法加载。
