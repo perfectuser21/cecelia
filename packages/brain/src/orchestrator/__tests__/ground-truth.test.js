@@ -268,12 +268,28 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.proposeBranchRn).toBe(3);
+    expect(o.proposeBranch).toBe('cp-harness-propose-r3-11111111-a0');
   });
 
   it('无 propose 分支 → 0', async () => {
     const deps = makeDeps({ exec: { lsRemote: '' } });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.proposeBranchRn).toBe(0);
+    expect(o.proposeBranch).toBeNull();
+  });
+
+  it('同轮多 attempt 时返回 attempt 序号最大的精确分支', async () => {
+    const deps = makeDeps({
+      exec: {
+        lsRemote: [
+          'aaa\trefs/heads/cp-harness-propose-r2-11111111-a3',
+          'bbb\trefs/heads/cp-harness-propose-r2-11111111-a9',
+        ].join('\n'),
+      },
+    });
+    const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(o.proposeBranchRn).toBe(2);
+    expect(o.proposeBranch).toBe('cp-harness-propose-r2-11111111-a9');
   });
 
   it('task 作用域：跨 task 分支不计入（并发 initiative 的 rN 不污染 ganRound），ls-remote pattern 带 taskId 前 8 位', async () => {

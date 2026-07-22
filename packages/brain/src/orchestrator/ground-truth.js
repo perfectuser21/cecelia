@@ -203,9 +203,17 @@ export async function collectGroundTruth(deps, opts) {
     `git ls-remote --heads origin "cp-harness-propose-r*-${shortTask}-*"`,
   );
   let proposeBranchRn = 0;
-  const rnPattern = new RegExp(`cp-harness-propose-r(\\d+)-${shortTask}-`, 'g');
+  let proposeBranchAttempt = -1;
+  let proposeBranch = null;
+  const rnPattern = new RegExp(`(cp-harness-propose-r(\\d+)-${shortTask}-a(\\d+))`, 'g');
   for (const m of String(lsRemote).matchAll(rnPattern)) {
-    proposeBranchRn = Math.max(proposeBranchRn, Number(m[1]));
+    const round = Number(m[2]);
+    const attempt = Number(m[3]);
+    if (round > proposeBranchRn || (round === proposeBranchRn && attempt > proposeBranchAttempt)) {
+      proposeBranchRn = round;
+      proposeBranchAttempt = attempt;
+      proposeBranch = m[1];
+    }
   }
 
   // ---- docker 在途/已退（P0-1 / P0-3；dispatcher spawn 时必打 label：run_id+hop+role）----
@@ -253,6 +261,7 @@ export async function collectGroundTruth(deps, opts) {
     inflight: { containers, host_pids: hostPids },
     lastAgentExit,
     proposeBranchRn,
+    proposeBranch,
     ganLatestRoundVerdict,
     generatorSpawned,
     evaluateVerdict,

@@ -99,8 +99,14 @@ function buildInputs(spec, ctx) {
   if (spec.role !== 'planner') {
     common.prd = { path: `${common.sprint_dir}/sprint-prd.md` };
   }
-  if (spec.role === 'proposer' || spec.role === 'reviewer') {
-    common.contract_branch = observed.contract?.row?.propose_branch ?? null;
+  if (spec.role === 'proposer') {
+    const nextRound = Number(observed.proposeBranchRn ?? 0) + 1;
+    common.contract_branch = observed.proposeBranch ?? observed.contract?.row?.propose_branch ?? null;
+    common.contract_round = nextRound;
+    common.propose_branch = `cp-harness-propose-r${nextRound}-${String(common.task_id).slice(0, 8)}-a${ctx.hop}`;
+  }
+  if (spec.role === 'reviewer') {
+    common.contract_branch = observed.proposeBranch ?? observed.contract?.row?.propose_branch ?? null;
     common.contract_round = observed.proposeBranchRn ?? 0;
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
@@ -275,6 +281,18 @@ export function createDetachedLauncher({
         'cecelia.attempt_id': attempt.id,
       };
       const providerEnv = { ...spec.env };
+      const roleEnv = {};
+      if (bundle.inputs.sprint_dir) roleEnv.SPRINT_DIR = String(bundle.inputs.sprint_dir);
+      roleEnv.WORKSPACE_PATH = '/workspace';
+      if (bundle.inputs.contract_round != null) {
+        roleEnv.PROPOSE_ROUND = String(bundle.inputs.contract_round);
+      }
+      if (bundle.inputs.propose_branch) {
+        roleEnv.PROPOSE_BRANCH = String(bundle.inputs.propose_branch);
+      }
+      if (bundle.inputs.contract_branch) {
+        roleEnv.CONTRACT_BRANCH = String(bundle.inputs.contract_branch);
+      }
       const extraMounts = [];
       if (spec.provider === 'codex' && providerEnv.CODEX_HOME) {
         extraMounts.push(`${providerEnv.CODEX_HOME}:/home/cecelia/.codex:rw`);
@@ -320,6 +338,7 @@ export function createDetachedLauncher({
           extraMounts,
           env: {
             ...providerEnv,
+            ...roleEnv,
             CECELIA_EXECUTOR: spec.provider,
             CECELIA_TASK_ID: bundle.inputs.task_id,
             HARNESS_NODE: attempt.role,

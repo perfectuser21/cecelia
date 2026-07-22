@@ -28,6 +28,7 @@ const observed = {
   pr: null,
   prdExists: true,
   proposeBranchRn: 1,
+  proposeBranch: 'cp-harness-propose-r1-aaaaaaaa-a3',
   callbackResult: { transcript: 'private proposer chain of thought' },
 };
 
@@ -149,7 +150,28 @@ describe('createDispatcher', () => {
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
     expect(created.bundle.constraints).toMatchObject({ fresh_session: true, read_only: true });
     expect(JSON.stringify(created.bundle)).not.toContain('private proposer chain of thought');
-    expect(created.bundle.inputs).toMatchObject({ contract_branch: 'cp-propose-r1' });
+    expect(created.bundle.inputs).toMatchObject({
+      contract_branch: 'cp-harness-propose-r1-aaaaaaaa-a3',
+      contract_round: 1,
+    });
+  });
+
+  it('proposer bundle 指定下一轮规范分支，避免产物落到共享任务分支', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 17,
+      observed: { ...observed, proposeBranchRn: 0, proposeBranch: null },
+      decision: { phase: 'gan', reason: 'no_contract_yet' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).toMatchObject({
+      contract_round: 1,
+      propose_branch: 'cp-harness-propose-r1-aaaaaaaa-a17',
+    });
   });
 
   it('evaluator 工作树可写，以便切 PR 分支、真启服务并固化验收证据', async () => {
@@ -281,6 +303,41 @@ describe('createDispatcher', () => {
 });
 
 describe('createDetachedLauncher', () => {
+  it('把 proposer/reviewer 的分支协议注入 runner env', async () => {
+    const spawnDetached = vi.fn(async () => ({ containerId: 'gan-cx' }));
+    const launcher = createDetachedLauncher({
+      spawnDetached,
+      attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
+    });
+
+    await launcher.launch({
+      attempt: { id: attemptId, run_id: runId, hop: 17, role: 'proposer' },
+      bundle: {
+        inputs: {
+          task_id: taskId,
+          worktree_path: '/tmp/worktree',
+          sprint_dir: 'sprints/provider-neutral',
+          contract_round: 2,
+          propose_branch: 'cp-harness-propose-r2-aaaaaaaa-a17',
+          contract_branch: 'cp-harness-propose-r1-aaaaaaaa-a3',
+        },
+        constraints: { read_only: false },
+      },
+      spec: { provider: 'claude', args: [], stdin: '{}', env: {} },
+      task: observed.task,
+    });
+
+    expect(spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
+      env: expect.objectContaining({
+        SPRINT_DIR: 'sprints/provider-neutral',
+        WORKSPACE_PATH: '/workspace',
+        PROPOSE_ROUND: '2',
+        PROPOSE_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
+        CONTRACT_BRANCH: 'cp-harness-propose-r1-aaaaaaaa-a3',
+      }),
+    }));
+  });
+
   it('evaluator 以可写工作树和执行模式进入 runner，避免 plan/EROFS 哑火', async () => {
     const spawnDetached = vi.fn(async () => ({ containerId: 'eval-cx' }));
     const launcher = createDetachedLauncher({
