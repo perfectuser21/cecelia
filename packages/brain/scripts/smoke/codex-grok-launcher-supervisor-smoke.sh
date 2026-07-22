@@ -16,7 +16,7 @@ FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1 — $2"; FAIL=$((FAIL + 1)); }
 
-WORKSPACE="${WORKSPACE:-/workspace}"
+WORKSPACE="${WORKSPACE:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 echo ""
 echo "[codex-grok-launcher-supervisor-smoke] 快速冒烟验证"
