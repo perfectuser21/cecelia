@@ -3078,7 +3078,11 @@ export function computeHarnessInitiativeOk(final) {
  */
 export function classifyHarnessRelayAction(result) {
   if (result?.ok === null) return 'waiting';
-  if (result?.ok && typeof result?.mode === 'string' && result.mode.startsWith('skill-relay')) return 'relay_spawned';
+  if (
+    result?.ok
+    && typeof result?.mode === 'string'
+    && (result.mode.startsWith('skill-relay') || result.mode === 'kernel-v1')
+  ) return 'relay_spawned';
   if (result?.deferred) return 'deferred';
   if (result?.ok) return 'completed';
   return 'failed';
