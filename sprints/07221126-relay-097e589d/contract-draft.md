@@ -192,7 +192,8 @@ bash -lc "cd packages/brain && npx vitest run src/utils/relay-smoke.test.js --re
 echo "PASS step4: brain-ci 常跑单测全绿"
 
 # Step 5: 零生产接线负向验证（source-code inspection）
-W=$(grep -rl "relay-smoke" packages/brain/src --include="*.js" | grep -v "utils/relay-smoke" || true)
+# r4 勘误传播：与 r3 A3 同源缺陷——原子串 grep 撞 main 预存 v2.2.0 HTTP 探针路由字符串，改为 import/require 语句级断言（与 contract-dod.md A3 r3 勘误版及 e2e-verify.sh 固化版完全一致）
+W=$(grep -rlE "(from|import)[[:space:]]+[^[:space:]]*relay-smoke|(require|import)\([^[:space:]]*relay-smoke" packages/brain/src --include="*.js" | grep -vE "^packages/brain/src/utils/relay-smoke(\.test)?\.js$" || true)
 [ -z "$W" ] || { echo "FAIL: 发现生产接线 $W"; exit 1; }
 echo "PASS step5: 零生产接线"
 
