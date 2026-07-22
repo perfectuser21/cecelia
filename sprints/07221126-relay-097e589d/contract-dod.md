@@ -17,8 +17,8 @@ journey_type: autonomous
 - [x] [ARTIFACT] CI 常跑测试副本 `packages/brain/src/utils/relay-smoke.test.js` 存在（brain vitest include `src/**/*.test.js` 覆盖路径），且含合同关键用例名
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/utils/relay-smoke.test.js','utf8');if(!c.includes('smoke:097e589d:20260722')||!c.includes('TypeError'))process.exit(1)"
 
-- [x] [ARTIFACT] 零生产接线：`packages/brain/src` 下除 `utils/relay-smoke.js` / `utils/relay-smoke.test.js` 自身外无任何文件引用 relay-smoke（source-code inspection，铁律[接线验证]）
-  Test: bash -c 'W=$(grep -rl "relay-smoke" packages/brain/src --include="*.js" | grep -v "utils/relay-smoke" || true); [ -z "$W" ]'
+- [x] [ARTIFACT] 零生产接线：`packages/brain/src` 下除 `utils/relay-smoke.js` / `utils/relay-smoke.test.js` 自身外无任何文件 import/require 本模块（source-code inspection，铁律[接线验证]。r3 勘误：原命令子串 grep "relay-smoke" 撞 main 预存同名 v2.2.0 HTTP 探针路由字符串——routes/walking-skeleton.js 与 routes/__tests__/relay-smoke.contract.test.js 引用的是 `/api/brain/relay-smoke` 路由名而非本模块 import，oracle 天生不可 PASS，属起草缺陷；改为 import/require 语句级断言，真红能力保留：任何生产文件 import 本模块必 FAIL）
+  Test: bash -c 'W=$(grep -rlE "(from|import)[[:space:]]+[^[:space:]]*relay-smoke|(require|import)\([^[:space:]]*relay-smoke" packages/brain/src --include="*.js" | grep -vE "^packages/brain/src/utils/relay-smoke(\.test)?\.js$" || true); [ -z "$W" ]'
 
 - [x] [ARTIFACT] 合同测试文件 `tests/regression/relay-097e589d/relay-smoke.test.ts` 原样保留（CONTRACT IS LAW，commit 1 后不可修改）
   Test: node -e "const c=require('fs').readFileSync('tests/regression/relay-097e589d/relay-smoke.test.ts','utf8');if(!c.includes('同进程多轮调用状态不重置输出确定'))process.exit(1)"
