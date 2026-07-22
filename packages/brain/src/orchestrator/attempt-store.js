@@ -123,6 +123,20 @@ export function createAttemptStore(pool) {
       return firstRow(result);
     },
 
+    async rotateCallbackSecret(id, { leaseOwner, callbackSecretHash }) {
+      const result = await pool.query(
+        `UPDATE harness_attempts
+            SET callback_secret_hash = $3,
+                updated_at = NOW()
+          WHERE id = $1
+            AND lease_owner = $2
+            AND status IN ('starting','running')
+          RETURNING *`,
+        [id, leaseOwner, callbackSecretHash],
+      );
+      return firstRow(result);
+    },
+
     async complete(id, resultPayload, { leaseOwner = null } = {}) {
       if (!SUCCESS_TERMINAL_STATUSES.has(resultPayload?.status)) {
         throw new Error(`invalid successful terminal status: ${resultPayload?.status}`);

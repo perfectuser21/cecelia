@@ -82,6 +82,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     { codexAdapter },
     { createDetachedLauncher },
     { spawnDockerDetached, removeDockerContainer },
+    { generateCallbackSecret, hashCallbackSecret },
   ] = await Promise.all([
     import('./orchestrator/attempt-store.js'),
     import('./orchestrator/provider-registry.js'),
@@ -89,11 +90,18 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     import('./orchestrator/providers/codex.js'),
     import('./orchestrator/dispatcher.js'),
     import('./spawn/detached.js'),
+    import('./orchestrator/callback-auth.js'),
   ]);
   const store = createAttemptStore(dbPool);
   const leaseOwner = `watchdog:${process.pid}`;
   const reclaimed = await store.reclaim(attempt.id, { leaseOwner, leaseSeconds: 300 });
   if (!reclaimed) return { ok: false, reason: 'attempt_lease_conflict' };
+  const callbackSecret = generateCallbackSecret();
+  const rotated = await store.rotateCallbackSecret(attempt.id, {
+    leaseOwner,
+    callbackSecretHash: hashCallbackSecret(callbackSecret),
+  });
+  if (!rotated) return { ok: false, reason: 'attempt_callback_secret_rotation_conflict' };
 
   const registry = createProviderRegistry([claudeAdapter, codexAdapter]);
   const adapter = registry.resolve({ provider: attempt.provider, requires: ['resume'] });
@@ -113,7 +121,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     leaseOwner,
   });
   const launched = await launcher.launch({
-    attempt,
+    attempt: { ...attempt, ...reclaimed, callbackSecret },
     bundle: attempt.task_bundle,
     spec,
     adapter,
