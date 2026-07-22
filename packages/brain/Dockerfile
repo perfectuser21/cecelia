@@ -52,6 +52,9 @@ WORKDIR /app
 # 向上找 /repo/node_modules）
 COPY --from=deps /repo/node_modules /repo/node_modules
 COPY --from=deps /repo/packages/brain/node_modules /repo/packages/brain/node_modules
+# 预览环境用根 lock 对账分支依赖；没有这个不可变指纹时只能为每个 PR 重装依赖。
+COPY --from=deps /repo/package.json /repo/package.json
+COPY --from=deps /repo/package-lock.json /repo/package-lock.json
 # 运行期仍走 /app（server.js 期待此路径），把 node_modules 也链到 /app
 RUN ln -s /repo/node_modules /app/node_modules
 
