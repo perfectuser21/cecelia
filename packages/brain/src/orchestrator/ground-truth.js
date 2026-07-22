@@ -90,6 +90,7 @@ function latestRow(logRows, predicate) {
 /**
  * lastAgentExit —— 严格按最新 spawn:* intent hop 作用域（derive.js 3d 契约）：
  * 只取本 run 最新 spawn intent hop 对应容器（label cecelia.hop=<hop>）的 ExitCode；
+ * 同时保留该 intent 的 action，避免 evaluator/reviewer 等基础设施退出被误判为 generator 代码失败；
  * fix 后新 intent hop 无对应已退容器 → {code:null}，旧 exit 不残留、不会反复命中 3d 白吃 fix round。
  * auth_failed 同作用域：仅当作用域容器存在时才采信 callback 文件的 auth 标记。
  */
@@ -107,7 +108,7 @@ function scopeLastAgentExit({ execCmd, exitedContainers, logRows, callbackResult
   const authFailed =
     callbackResult != null &&
     (callbackResult.ci_fail_type === 'auth_failed' || callbackResult.auth_failed === true);
-  return { code: state.ExitCode ?? null, auth_failed: authFailed };
+  return { code: state.ExitCode ?? null, auth_failed: authFailed, action: lastSpawn.action };
 }
 
 /**

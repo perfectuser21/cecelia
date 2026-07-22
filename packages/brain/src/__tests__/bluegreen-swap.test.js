@@ -57,6 +57,12 @@ esac
   const bin = join(dir, 'docker');
   writeFileSync(bin, script);
   chmodSync(bin, 0o755);
+  // Stable-health gate now requires a real HTTP probe before swap. Keep this
+  // swap fixture honest by mocking curl alongside docker instead of allowing
+  // the test to fall through to the developer/CI host network.
+  const curl = join(dir, 'curl');
+  writeFileSync(curl, `#!/usr/bin/env bash\nexit ${greenHealthy ? 0 : 1}\n`);
+  chmodSync(curl, 0o755);
   writeFileSync(log, ''); // 预建空 log
   return log;
 }
@@ -69,7 +75,14 @@ function runSwap(dir, log, extraEnv = {}) {
       `bash -c 'source "${BG_LIB}"; BLUE_NAME=cecelia-node-brain GREEN_NAME=cecelia-node-brain-green ` +
         `TEMP_PORT=5223 TARGET_VERSION=9.9.9 HEALTH_TIMEOUT=2 bluegreen_swap'`,
       {
-        env: { ...process.env, HOME: dir, PATH: `${dir}:${process.env.PATH}`, DOCKER_LOG: log, ...extraEnv },
+        env: {
+          ...process.env,
+          HOME: dir,
+          PATH: `${dir}:${process.env.PATH}`,
+          DOCKER_LOG: log,
+          GREEN_STABLE_SUCCESSES: '1',
+          ...extraEnv,
+        },
         stdio: 'pipe',
       }
     ).toString();

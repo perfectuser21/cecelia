@@ -437,9 +437,31 @@ describe('collectGroundTruth：lastAgentExit hop 作用域（P0-3 + derive 3d �
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.lastAgentExit.code).toBe(137);
+    expect(o.lastAgentExit.action).toBe('spawn:generator-fix');
     const inspectCmd = deps.execCmd.calls.find((c) => c.includes('docker inspect'));
     expect(inspectCmd).toContain('new1');
     expect(inspectCmd).not.toContain('old1');
+  });
+
+  it('保留最新退出 attempt 的 spawn action，供 derive 按角色分路', async () => {
+    const deps = makeDeps({
+      rows: {
+        log: [...logWithSpawns, { hop: 7, action: 'spawn:evaluator', observed: {}, detail: null }],
+      },
+      exec: {
+        dockerPsExited: [
+          exitedContainers(),
+          JSON.stringify({ ID: 'eval1', Labels: `cecelia.run_id=${RUN_ID},cecelia.hop=7,cecelia.role=evaluator` }),
+        ].join('\n'),
+        dockerInspect: '{"ExitCode":1}',
+      },
+    });
+    const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(o.lastAgentExit).toEqual({
+      code: 1,
+      auth_failed: false,
+      action: 'spawn:evaluator',
+    });
   });
 
   it('fix 后：最新 spawn intent hop=7 无对应容器 → code:null（旧 exit 不残留，不反复命中 3d）', async () => {

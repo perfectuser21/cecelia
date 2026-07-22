@@ -9,7 +9,7 @@
  *   run:{phase} / task:{status} / prdExists / contract:{approved}
  *   pr:{url,state,ci,merged,head_sha}|null
  *   inflight:{containers[],host_pids[]}          —— P0-1 在途观测
- *   lastAgentExit:{code,auth_failed}             —— P0-3 exit/auth 观测（熔断状态给 T3 换号，derive 不读）
+ *   lastAgentExit:{code,auth_failed,action?}     —— P0-3 exit/auth 观测；action 标识退出 worker 的 intent
  *   proposeBranchRn（propose 分支现查的最大 rN，0=无）
  *   ganLatestRoundVerdict（最新 rN 的 reviewer verdict，null=无本轮 verdict）
  *   generatorSpawned（决策日志里是否派过 generator）
@@ -18,6 +18,7 @@
  *   counters:{hops,fixRound,pollCount,noPushStreak,noVerdictStreak,ganCostUsd}
  */
 import { caps, isPassVerdict } from './gates.js';
+import { ACTION } from './constants.js';
 
 const REQUIRED_FIELDS = [
   'run', 'task', 'prdExists', 'contract', 'pr', 'inflight', 'lastAgentExit',
@@ -141,7 +142,14 @@ function deriveTask(observed) {
   // 熔断/换号由 T3 dispatcher 依 DB 熔断状态处理，derive 只分路。
   // 契约（T2-C/T3 实现责任）：ground-truth 必须按最新 intent hop 作用域提供 lastAgentExit——
   // fix 后残留旧 exit code 会让本分支反复命中、白吃 fix round。
-  if (lastAgentExit.auth_failed || (lastAgentExit.code != null && lastAgentExit.code !== 0)) {
+  const exitBelongsToGenerator =
+    lastAgentExit.action == null ||
+    lastAgentExit.action === ACTION.SPAWN_GENERATOR ||
+    lastAgentExit.action === ACTION.SPAWN_GENERATOR_FIX;
+  if (
+    exitBelongsToGenerator &&
+    (lastAgentExit.auth_failed || (lastAgentExit.code != null && lastAgentExit.code !== 0))
+  ) {
     return fixOrFail(counters, lastAgentExit.auth_failed ? 'auth_failed' : 'container_exit');
   }
 
