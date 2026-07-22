@@ -73,6 +73,39 @@ describe('runMechanicalGate（刀B：DeepSeek 前纯代码闸）', () => {
     expect(r.pass).toBe(false);
     expect(r.reasons.join()).toMatch(/contract_tests/);
   });
+  it('kernel contract-draft 含 [BEHAVIOR] 时不因缺 contract-dod 误判 contract_tests=0', async () => {
+    const deps = makeDeps({ testFiles: [] });
+    deps.readFileFn = vi.fn(async (p) => {
+      if (String(p).includes('contract-dod')) throw new Error('ENOENT');
+      if (String(p).includes('contract-draft')) return '- [ ] [BEHAVIOR] manual:bash npm test';
+      throw new Error('ENOENT');
+    });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(true);
+    expect(r.reasons.join()).not.toMatch(/contract_tests/);
+  });
+  it('contract-draft 只有 [BEHAVIOR] 章节标题时仍判 contract_tests=0', async () => {
+    const deps = makeDeps({ testFiles: [] });
+    deps.readFileFn = vi.fn(async (p) => {
+      if (String(p).includes('contract-dod')) throw new Error('ENOENT');
+      if (String(p).includes('contract-draft')) return '## [BEHAVIOR]\n\n在这里填写行为断言。';
+      throw new Error('ENOENT');
+    });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join()).toMatch(/contract_tests/);
+  });
+  it('contract-draft 只有空的 [BEHAVIOR] 列表项时仍判 contract_tests=0', async () => {
+    const deps = makeDeps({ testFiles: [] });
+    deps.readFileFn = vi.fn(async (p) => {
+      if (String(p).includes('contract-dod')) throw new Error('ENOENT');
+      if (String(p).includes('contract-draft')) return '- [BEHAVIOR]';
+      throw new Error('ENOENT');
+    });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join()).toMatch(/contract_tests/);
+  });
   it('judgments_written=5 声明 > decisions 回读 0 → FAIL', async () => {
     const ctx = goodCtx(); ctx.brainResult.judgments_written = 5;
     const r = await runMechanicalGate(ctx, makeDeps({ judgmentRows: 0 }));

@@ -576,7 +576,9 @@ export async function runMechanicalGate(ctx, deps = {}) {
     }
   }
 
-  // ② sprint 测试文件存在性：文件扫描 + contract-dod [BEHAVIOR] fallback，两者全 0 → FAIL（关键词 contract_tests）。
+  // ② sprint 测试文件存在性：文件扫描 + kernel 合同 [BEHAVIOR] fallback，两者全 0 → FAIL。
+  // Kernel 的 proposer 真相文件是 contract-draft.md；旧 controller 仍可能产出 contract-dod.md，
+  // 所以两者都读，避免有真实合同却被误判 contract_tests=0。
   const sprintRoot = path.join(ctx.worktreePath || '', ctx.sprintDir || '');
   let testCount = 0;
   try {
@@ -585,12 +587,17 @@ export async function runMechanicalGate(ctx, deps = {}) {
   } catch { testCount = 0; }
   if (testCount === 0) {
     let behaviorCount = 0;
-    try {
-      const dod = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', 'contract-dod.md'));
-      behaviorCount = (String(dod).match(/\[BEHAVIOR\]/g) || []).length;
-    } catch { behaviorCount = 0; }
+    for (const contractName of ['contract-dod.md', 'contract-draft.md']) {
+      try {
+        const contract = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', contractName));
+        behaviorCount += String(contract).split(/\r?\n/).filter((line) => (
+          /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?\[BEHAVIOR\]\s+\S/i.test(line)
+          || /^\s*#{2,6}\s+\[BEHAVIOR\]\s*\[BEHAVIOR-\d+\]\s+\S/i.test(line)
+        )).length;
+      } catch { /* missing contract variant */ }
+    }
     if (behaviorCount === 0) {
-      reasons.push('contract_tests 为 0（sprint 目录无 *.test.{ts,js,mjs,sh}，contract-dod.md 亦无 [BEHAVIOR]）');
+      reasons.push('contract_tests 为 0（sprint 目录无 *.test.{ts,js,mjs,sh}，contract-dod.md/contract-draft.md 亦无 [BEHAVIOR]）');
     }
   }
 

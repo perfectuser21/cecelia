@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.30.0
+version: 1.31.0
 created: 2026-05-06
 updated: 2026-07-23
 changelog:
+  - 1.31.0: kernel evidence 绑定 attempt——注入 `HARNESS_ATTEMPT_ID` 时，`.brain-result.json` 顶层必须原样写入 `attempt_id`；runner 只桥接 task_id 与 attempt_id 均精确匹配的结构化 behavior_tests，禁止 checkout/reset 恢复的旧证据冒充当前 evaluator 结果
   - 1.30.0: evaluator 角色隔离——Step B-1 只把合同 E2E 提取到 /tmp 并执行，禁止 commit/push 或改写 PR；永久回归脚本由 Generator 在 evaluator 前入库，缺失或 CI 不接受时由 verdict/fix loop 反馈 Generator。配套 kernel launcher 用 remote.origin.pushurl 环境 fence 阻断 evaluator 远端 Git 写入，保留可写 worktree 供真实 package manager/E2E 使用
   - 1.29.0: MJ5 S3 联动清单（thin档，additive）——Step B-1.4 改用 payload.feature_id + GET /features/:id/blast-radius；评估可跑断言（tests/|manual:）并直接 PATCH cell_status=green；cascade_assertions 数组写入 verdict JSON 供 Brain execution.js Step 3.6 幂等备份；feature_id 缺失时跳过不 block（thin档不强制全跑）
   - 1.28.0: target_environment 加 android_realmachine 路由分支（洞①）— TARGET_ENV 表 + case 并入 windows_cloud|windows_wechat 桶 + ANDROID_REALMACHINE_WORKFLOW 变量
@@ -89,6 +90,7 @@ generator 写代码 + push PR
 | `IS_FINAL_E2E` | harness v2 始终注入 `true`（单模式 E2E）；v1 env 路径下缺失或非 `true` = Brain dispatch 异常，直接 FATAL（见 Step 0）；**relay prompt 派发时必然缺失，视为 `true`，不 FATAL**（见「Relay 入口协议」） |
 | `SPRINT_DIR` | Sprint 目录，如 `sprints/run-20260506-1400` |
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
+| `HARNESS_ATTEMPT_ID` | kernel 当前 evaluator attempt 的 UUID；注入时 verdict JSON 顶层 `attempt_id` 必须逐字一致，禁止沿用旧 attempt 证据 |
 | `PR_BRANCH` | 待验证 PR 分支名——Brain evaluateContractNode 注入 / relay prompt 提供（Step 0a 消费）（EVA v2 E7 补） |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
 | `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground` / `android_realmachine`（来自 PRD `target_environment` 字段；`mac_web` = 在宿主 Mac 直跑（非 Docker），Playwright 可达 localhost:5174；`windows_wechat` = xian-rog self-hosted，微信已登录；`windows_cloud` = GHA windows-latest 云端；`android_realmachine` = xian-rog Android 真机，通过 GHA runner 派发）|
@@ -672,11 +674,14 @@ exit 0
 ```bash
 # 读取 target_environment（从 PRD 或注入变量）
 TARGET_ENV="${TARGET_ENV:-local_api}"
+E2E_RESULT_LOG="${E2E_RESULT_LOG:-/tmp/e2e-result.log}"
+E2E_COMMAND=""
 
 case "$TARGET_ENV" in
 
   local_api)
     # Brain 本地部署，curl + psql
+    E2E_COMMAND="timeout 120 bash /tmp/e2e-verify.sh"
     timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
@@ -685,8 +690,10 @@ case "$TARGET_ENV" in
     # Playwright 本机浏览器（Cecelia Dashboard，localhost:5174）
     # Step B-1 提取的脚本是 /tmp/e2e-verify.sh（bash 块）；若合同为 .js 则 fallback node
     if [[ -f /tmp/e2e-verify.js ]]; then
+      E2E_COMMAND="timeout 180 node /tmp/e2e-verify.js"
       timeout 180 node /tmp/e2e-verify.js 2>&1 | tee /tmp/e2e-result.log
     else
+      E2E_COMMAND="timeout 180 bash /tmp/e2e-verify.sh"
       timeout 180 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
     fi
     EXIT_CODE=${PIPESTATUS[0]}
@@ -716,6 +723,7 @@ case "$TARGET_ENV" in
     else
       WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
     fi
+    E2E_COMMAND="gh workflow run $WORKFLOW --repo $REPO; wait for completed conclusion"
     # ── 前置检查：workflow 内容是否覆盖合同 BEHAVIOR（防假绿）──────────────
     # 读取 workflow 文件，对比合同 BEHAVIOR 断言
     WORKFLOW_FILE=".github/workflows/${WORKFLOW}"
@@ -776,11 +784,12 @@ BREOF
     done
     if [[ "$RUN_CONCLUSION" == "success" ]]; then
       EXIT_CODE=0
+      printf 'workflow=%s repo=%s conclusion=success\n' "$WORKFLOW" "$REPO" > "$E2E_RESULT_LOG"
     else
       EXIT_CODE=1
       gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
-        --json url --jq '.[0].url' > /tmp/e2e-result.log 2>&1
-      echo "conclusion: $RUN_CONCLUSION" >> /tmp/e2e-result.log
+        --json url --jq '.[0].url' > "$E2E_RESULT_LOG" 2>&1
+      echo "conclusion: $RUN_CONCLUSION" >> "$E2E_RESULT_LOG"
     fi
     ;;
 
@@ -788,6 +797,7 @@ BREOF
   linux_server)
     # SSH 到 hk-vps 或 us-vps 执行 bash 脚本
     LINUX_HOST="${LINUX_E2E_HOST:-hk-vps}"
+    E2E_COMMAND="timeout 180 ssh $LINUX_HOST bash /tmp/cecelia-e2e.sh"
     scp /tmp/e2e-verify.sh "$LINUX_HOST:/tmp/cecelia-e2e.sh" 2>&1
     timeout 180 ssh "$LINUX_HOST" "bash /tmp/cecelia-e2e.sh" \
       2>&1 | tee /tmp/e2e-result.log
@@ -796,16 +806,31 @@ BREOF
 
   playground)
     # playground 训练 sprint，本地执行
+    E2E_COMMAND="timeout 60 bash /tmp/e2e-verify.sh"
     timeout 60 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
 
   *)
     echo "WARN: 未知 TARGET_ENV=$TARGET_ENV，回退到 local_api"
+    E2E_COMMAND="timeout 120 bash /tmp/e2e-verify.sh"
     timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
 esac
+
+# Step B-3 可能由 Agent 的下一次 Bash 调用执行，shell 变量不会跨调用保留。
+# 把本次真实执行元数据写到 /tmp，PASS writer 再从文件读取，避免退化成泛化命令。
+E2E_EXECUTION_FILE="${E2E_EXECUTION_FILE:-/tmp/evaluator-execution-${HARNESS_ATTEMPT_ID:-legacy}.json}"
+E2E_EXECUTION_TMP="${E2E_EXECUTION_FILE}.tmp"
+jq -n \
+  --arg task_id "${TASK_ID:-}" \
+  --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" \
+  --arg command "$E2E_COMMAND" \
+  --argjson exit_code "$EXIT_CODE" \
+  '{task_id:$task_id, attempt_id:$attempt_id, command:$command, exit_code:$exit_code}' \
+  > "$E2E_EXECUTION_TMP"
+mv "$E2E_EXECUTION_TMP" "$E2E_EXECUTION_FILE"
 
 # ── 统一超时判定（timeout 退出码 124 = 超时）──────────────────────────
 # 各 case 分支用 timeout 跑脚本，超时统一在此判定，不在分支内重复
@@ -911,9 +936,59 @@ fi
 **脚本 exit 0（通过）**：
 
 ```bash
-cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]},"cascade_assertions":${CASCADE_ASSERTIONS:-[]}}
-BREOF
+# evaluator-result-writer:start
+E2E_RESULT_LOG="${E2E_RESULT_LOG:-/tmp/e2e-result.log}"
+E2E_EXECUTION_FILE="${E2E_EXECUTION_FILE:-/tmp/evaluator-execution-${HARNESS_ATTEMPT_ID:-legacy}.json}"
+EXECUTION_COMMAND=""
+EXECUTION_EXIT_CODE=""
+EXECUTION_METADATA_VALID=0
+if jq -e \
+  --arg task_id "${TASK_ID:-}" \
+  --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" '
+  type == "object"
+  and .task_id == $task_id
+  and .attempt_id == $attempt_id
+  and (.command | type == "string" and length > 0)
+  and (.exit_code | type == "number")
+' "$E2E_EXECUTION_FILE" >/dev/null 2>&1; then
+  EXECUTION_METADATA_VALID=1
+  EXECUTION_COMMAND="$(jq -r '.command' "$E2E_EXECUTION_FILE")"
+  EXECUTION_EXIT_CODE="$(jq -r '.exit_code' "$E2E_EXECUTION_FILE")"
+fi
+if [[ -n "${HARNESS_ATTEMPT_ID:-}" && "$EXECUTION_METADATA_VALID" != "1" ]]; then
+  jq -n \
+    --arg task_id "${TASK_ID:-}" \
+    --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" \
+    '{verdict:"FAIL", task_id:$task_id, attempt_id:$attempt_id,
+      failed_step:"evidence_ownership",
+      log_excerpt:"当前 attempt 缺少匹配的 evaluator execution metadata，禁止复用旧证据"}' \
+    > "$WORKSPACE/.brain-result.json"
+else
+  E2E_COMMAND="${EXECUTION_COMMAND:-${E2E_COMMAND:-target_environment=${TARGET_ENV:-unknown} E2E verification}}"
+  E2E_EXIT_CODE="${EXECUTION_EXIT_CODE:-${EXIT_CODE:-0}}"
+  E2E_LOG_TAIL="$(tail -n 5 "$E2E_RESULT_LOG" 2>/dev/null || true)"
+  if [[ -z "$E2E_LOG_TAIL" ]]; then
+    E2E_LOG_TAIL="target_environment=${TARGET_ENV:-unknown} completed with exit_code=$E2E_EXIT_CODE"
+  fi
+  SCREENSHOTS_VALUE="${SCREENSHOTS_JSON:-[]}"
+  CASCADE_ASSERTIONS_VALUE="${CASCADE_ASSERTIONS:-[]}"
+  jq -e 'type == "array"' <<< "$SCREENSHOTS_VALUE" >/dev/null 2>&1 || SCREENSHOTS_VALUE='[]'
+  jq -e 'type == "array"' <<< "$CASCADE_ASSERTIONS_VALUE" >/dev/null 2>&1 || CASCADE_ASSERTIONS_VALUE='[]'
+  jq -n \
+    --arg task_id "$TASK_ID" \
+    --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" \
+    --arg command "$E2E_COMMAND" \
+    --argjson exit_code "$E2E_EXIT_CODE" \
+    --arg log_tail "$E2E_LOG_TAIL" \
+    --argjson screenshots "$SCREENSHOTS_VALUE" \
+    --argjson cascade_assertions "$CASCADE_ASSERTIONS_VALUE" \
+    '{verdict:"PASS", task_id:$task_id, attempt_id:$attempt_id,
+      failed_step:null, log_excerpt:null, screenshots:$screenshots,
+      cascade_assertions:$cascade_assertions,
+      behavior_tests:[{command:$command, exit_code:$exit_code, log_tail:$log_tail}]}' \
+    > "$WORKSPACE/.brain-result.json"
+fi
+# evaluator-result-writer:end
 ```
 
 **脚本 exit ≠ 0（失败）**：
@@ -930,7 +1005,7 @@ BREOF
 
 ## 输出规范
 
-**输出协议（v1.5.0+ — 文件协议）**：最终结果写入 `"$WORKSPACE/.brain-result.json"`（Docker 默认 `/workspace/.brain-result.json`，mac_web host 执行时为 `$WORKSPACE_PATH/.brain-result.json`，relay 宿主执行且两者皆无时 fallback `$PWD/.brain-result.json`，见 Step 0），Brain 读文件不读 stdout。
+**输出协议（v1.5.0+ — 文件协议）**：最终结果写入 `"$WORKSPACE/.brain-result.json"`（Docker 默认 `/workspace/.brain-result.json`，mac_web host 执行时为 `$WORKSPACE_PATH/.brain-result.json`，relay 宿主执行且两者皆无时 fallback `$PWD/.brain-result.json`，见 Step 0），Brain 读文件不读 stdout。kernel 注入 `HARNESS_ATTEMPT_ID` 时，所有最终 verdict JSON 顶层必须写 `"attempt_id":"${HARNESS_ATTEMPT_ID}"`；缺失、空值或与当前 attempt 不一致时，runner 必须拒绝把该文件桥接进 callback。
 
 **behavior_tests 真跑证据（EVA v2 E1 硬要求）**：verdict JSON 必须带 `behavior_tests` 数组，**每条必须是对象 `{command, exit_code, log_tail}`**——`log_tail` = 该命令输出末 5 行（如 `tail -5 /tmp/e2e-result.log`）。缺 `exit_code` 或 `log_tail` 任一 = 该条视为未跑，**禁 PASS**。a85e0582 实证：verdict 只列命令原文时，"真跑"与"声称跑过"从 verdict 本身无法区分——退出码和真实输出尾巴是唯一能自证真跑的东西。
 
@@ -960,7 +1035,7 @@ BREOF
 非三段式（legacy 格式）条目只需 `command`/`exit_code`/`log_tail`，`action`/`expected` 可省略。
 
 ```json
-{"verdict":"PASS","verification_level":"L2","behavior_tests":[{"command":"curl -sf localhost:5221/api/brain/ping | jq -e '.ok==true'","exit_code":0,"log_tail":"{\"ok\":true}","verification_level":"L2"}], ...}
+{"verdict":"PASS","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","verification_level":"L2","behavior_tests":[{"command":"curl -sf localhost:5221/api/brain/ping | jq -e '.ok==true'","exit_code":0,"log_tail":"{\"ok\":true}","verification_level":"L2"}], ...}
 ```
 
 **verification_level 字段（W3 新增，与 judge #4004 对齐）**：
@@ -973,7 +1048,7 @@ BREOF
 
 ```bash
 cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null}
+{"verdict":"PASS","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","failed_step":null,"log_excerpt":null,"behavior_tests":[{"command":"<本次真实执行命令>","exit_code":0,"log_tail":"<真实输出末 5 行>"}]}
 BREOF
 ```
 
