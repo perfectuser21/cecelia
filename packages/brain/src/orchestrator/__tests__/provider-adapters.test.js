@@ -5,6 +5,7 @@ import {
   codexAdapter,
   readCodexThreadId,
 } from '../providers/codex.js';
+import { grokAdapter } from '../providers/grok.js';
 
 const bundle = {
   contract_version: '1.0',
@@ -159,5 +160,57 @@ describe('codexAdapter', () => {
   it('显式 model 才添加 --model', () => {
     const spec = codexAdapter.start({ bundle, execution: { model: 'gpt-5.4' } });
     expect(spec.args).toEqual(expect.arrayContaining(['--model', 'gpt-5.4']));
+  });
+});
+
+describe('grokAdapter', () => {
+  it('声明结构化输出与 resume 能力，并使用指定账户 home', () => {
+    const spec = grokAdapter.start({
+      bundle,
+      execution: { grokHome: '/tmp/grok-home', model: 'grok-code-fast-1' },
+    });
+
+    expect(grokAdapter.capabilities).toEqual(expect.arrayContaining(['structured_output', 'resume']));
+    expect(spec).toMatchObject({
+      provider: 'grok',
+      command: 'grok',
+      cwd: '/workspace',
+      env: { GROK_HOME: '/tmp/grok-home' },
+    });
+    expect(spec.args).toEqual(expect.arrayContaining([
+      '-p', '--cwd', '/workspace', '--always-approve', '--output-format', 'json',
+      '--json-schema', expect.any(String), '--session-id', bundle.attempt_id,
+      '--model', 'grok-code-fast-1',
+    ]));
+  });
+
+  it('resume 锚定同一 attempt session，JSON wrapper 规范化为统一结果', () => {
+    const spec = grokAdapter.resume({
+      attempt: {
+        id: bundle.attempt_id,
+        provider: 'grok',
+        provider_session_id: 'grok-session-1',
+        task_bundle: bundle,
+      },
+      input: 'continue',
+    });
+    expect(spec.args).toEqual(expect.arrayContaining(['--resume', 'grok-session-1']));
+    expect(spec.args).not.toContain('--session-id');
+
+    const result = grokAdapter.normalizeResult({
+      attempt: { id: bundle.attempt_id },
+      raw: {
+        stdout: JSON.stringify({
+          session_id: 'grok-session-1',
+          result: { status: 'completed', summary: 'verified' },
+        }),
+      },
+    });
+    expect(result).toMatchObject({
+      attempt_id: bundle.attempt_id,
+      status: 'completed',
+      summary: 'verified',
+      provider_metadata: { provider: 'grok', session_id: 'grok-session-1' },
+    });
   });
 });

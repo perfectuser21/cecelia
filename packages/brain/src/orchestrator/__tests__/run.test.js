@@ -35,4 +35,46 @@ describe('buildRealDeps', () => {
     expect(deps.dispatch).toBe(dispatch);
     expect(String(deps.dispatch)).not.toContain('NotImplemented');
   });
+
+  it('默认 registry 注册 Grok，可把 evaluator 派给不同厂商', async () => {
+    const attemptStore = {
+      createAttempt: vi.fn(async (input) => ({ id: input.id, ...input, task_bundle: input.bundle })),
+      fail: vi.fn(),
+    };
+    const launcher = { launch: vi.fn(async () => ({ containerId: 'grok-worker' })) };
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      attemptStore,
+      launcher,
+      handlers: {},
+      loadSkill: vi.fn(() => ({
+        name: 'harness-evaluator', version: '1.0.0', digest: `sha256:${'a'.repeat(64)}`, content: 'evaluate',
+      })),
+    });
+
+    await deps.dispatch('spawn:evaluator', {
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      hop: 7,
+      decision: { phase: 'evaluate' },
+      observed: {
+        task: {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          title: 'cross-vendor review',
+          payload: {
+            sprint_dir: 'sprints/x',
+            worktree_path: '/tmp/wt',
+            role_assignments: { evaluator: { provider: 'grok', account: 'grok' } },
+          },
+        },
+        run: { phase: 'evaluate' },
+        contract: { row: {} },
+        pr: { url: 'https://github.com/o/r/pull/1' },
+      },
+    });
+
+    expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'evaluator', provider: 'grok', accountId: 'grok',
+    }));
+  });
 });

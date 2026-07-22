@@ -25,6 +25,9 @@ grep -q -- '--session-id' <<<"$SECTION"
 grep -q 'HARNESS_READ_ONLY' <<<"$SECTION"
 grep -q -- '--sandbox read-only' <<<"$SECTION"
 grep -q -- '--permission-mode plan' <<<"$SECTION"
+grep -q 'provider" == "grok' <<<"$SECTION"
+grep -q 'grok_args' <<<"$SECTION"
+grep -q -- '--always-approve' <<<"$SECTION"
 
 # The Kernel path may pass --model only under an explicit HARNESS_MODEL guard.
 if grep -Eq -- '--model[[:space:]]+(sonnet|opus|haiku|gpt-|o[0-9])' <<<"$SECTION"; then
