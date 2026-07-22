@@ -227,6 +227,15 @@ describe('resolveToapisConfig — env 优先 → toapis.env 兜底', () => {
     expect(cfg.baseUrl).toBe('https://toapis.com/v1');
     expect(cfg.model).toBe('deepseek-v4-flash');
   });
+  it('兼容 shell source 文件的 export 前缀', async () => {
+    const fileContent = [
+      'export TOAPIS_API_KEY=sk-export-fromfile',
+      'export TOAPIS_BASE_URL=https://export.example/v1',
+    ].join('\n');
+    const cfg = await resolveToapisConfig({ readFileFn: async () => fileContent });
+    expect(cfg.apiKey).toBe('sk-export-fromfile');
+    expect(cfg.baseUrl).toBe('https://export.example/v1');
+  });
   it('全缺失 → apiKey 空 + 默认 baseUrl', async () => {
     const cfg = await resolveToapisConfig({ readFileFn: async () => { throw new Error('ENOENT'); } });
     expect(cfg.apiKey).toBe('');

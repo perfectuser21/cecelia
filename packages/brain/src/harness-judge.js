@@ -34,7 +34,7 @@ export async function resolveToapisConfig(deps = {}) {
     try {
       const content = await readFileFn(deps.credsPath || TOAPIS_CREDS_FILE);
       for (const line of String(content).split(/\r?\n/)) {
-        const m = line.match(/^\s*(TOAPIS_API_KEY|TOAPIS_BASE_URL)\s*=\s*(\S+)\s*$/);
+        const m = line.match(/^\s*(?:export\s+)?(TOAPIS_API_KEY|TOAPIS_BASE_URL)\s*=\s*(\S+)\s*$/);
         if (m) {
           if (m[1] === 'TOAPIS_API_KEY' && !apiKey) apiKey = m[2];
           if (m[1] === 'TOAPIS_BASE_URL' && !baseUrl) baseUrl = m[2];
