@@ -351,7 +351,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         # sidecar 需要知道部署根和 region（bluegreen.sh 通过 env 读取）
         export DEPLOY_ROOT_DIR="$ROOT_DIR"
         if ! TARGET_VERSION="${VERSION}" BLUE_NAME=cecelia-node-brain \
-             GREEN_NAME=cecelia-node-brain-green TEMP_PORT=5223 HEALTH_TIMEOUT=90 bluegreen_swap; then
+             GREEN_NAME=cecelia-node-brain-green TEMP_PORT=5233 HEALTH_TIMEOUT=90 bluegreen_swap; then
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
             # blue 仍在运行且已进入 drain 模式 → 恢复正常派发
             echo "  [drain] green 未通过，恢复旧 Brain 派发..."
