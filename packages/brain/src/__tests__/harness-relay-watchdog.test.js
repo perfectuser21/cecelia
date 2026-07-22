@@ -32,11 +32,12 @@ function makeDeps({
   ciChecks = undefined,         // CheckRow[] | undefined（gh pr checks --json state）
   harnessRuntime = null,
   latestAttempt = null,
+  orchestratorHeartbeatAt = null,
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
     if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ id: '11111111-1111-4111-8111-111111111111', initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost }] };
+      return { rows: [{ id: '11111111-1111-4111-8111-111111111111', initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator, ...(harnessRuntime ? { harness_runtime: harnessRuntime } : {}) } }] };
@@ -164,6 +165,27 @@ describe('resumeStalledRelayRuns', () => {
     expect(deps.resumeAttempt).not.toHaveBeenCalled();
     expect(deps.launchKernel).not.toHaveBeenCalled();
     expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('kernel-v1 原 reconcile 心跳仍新鲜时不 resume、不重拉第二个进程', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      orchestratorHeartbeatAt: new Date(Date.now() - 30_000).toISOString(),
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        provider_session_id: 'thread-stale-lease',
+        status: 'running',
+        lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn();
+
+    await resumeStalledRelayRuns(deps);
+
+    expect(deps.resumeAttempt).not.toHaveBeenCalled();
+    expect(deps.launchKernel).not.toHaveBeenCalled();
   });
 
   it('kernel-v1 resume reclaim 冲突时让位，不并发启动新 reconcile', async () => {
