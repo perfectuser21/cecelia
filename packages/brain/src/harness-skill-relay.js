@@ -282,7 +282,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     // innerCmd 三分支（INV-1 + FR-R1/R3/R4，isGrokHeaded 决策在函数内）：
     //   isClaudeHeaded → claude-launch.sh（GP1 零回归）
     //   isGrokHeaded   → grok-launch.sh（FR-R4 新增 GP3 路径）
-    //   default(codex) → codex-launch.sh（FR-R3 INV-11 快照）
+    //   default(codex) → 直接调 codex TUI（INV-11 快照 CODEX_HOME，不走 launcher 脚本）
   }
   // ─── end headed ──────────────────────────────────────────────────────────
 
@@ -956,13 +956,13 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // 三分支路由（INV-1 + FR-R1/R3/R4）：
     //   claude → claude-launch.sh（GP1 不回归）
     //   grok   → grok-launch.sh（FR-R4，新增 GP3 路径）
-    //   codex  → codex-launch.sh（FR-R3，INV-11 快照 CODEX_HOME）
+    //   codex  → 直接调 codex TUI（INV-11 快照 CODEX_HOME；headed TUI 不走 launcher 脚本）
     // 禁止二元形式 isClaudeHeaded ? ... : codex（Grok headed 会落入 codex 命令的 bug）
     const innerCmd = isClaudeHeaded
       ? `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`
       : isGrokHeaded
         ? `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`
-        : `cd ${worktreePath} && CODEX_HOME=${codexRelayCredDir || ''} bash ${hostRepo}/scripts/codex-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
+        : `cd ${worktreePath} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     try {
       execFn(
         `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} '${innerCmd}'"`
