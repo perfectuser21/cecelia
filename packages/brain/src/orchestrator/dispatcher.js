@@ -283,6 +283,14 @@ export function createDetachedLauncher({
       };
       const providerEnv = { ...spec.env };
       const roleEnv = {};
+      if (attempt.role === 'evaluator') {
+        // Evaluator needs a writable worktree for package managers and real E2E tests,
+        // but must never advance the PR it is judging. Git's environment config is
+        // inherited by child processes, so accidental pushes fail before GitHub.
+        roleEnv.GIT_CONFIG_COUNT = '1';
+        roleEnv.GIT_CONFIG_KEY_0 = 'remote.origin.pushurl';
+        roleEnv.GIT_CONFIG_VALUE_0 = 'blocked-by-harness://evaluator';
+      }
       if (bundle.inputs.sprint_dir) roleEnv.SPRINT_DIR = String(bundle.inputs.sprint_dir);
       roleEnv.WORKSPACE_PATH = '/workspace';
       if (bundle.inputs.contract_round != null) {
