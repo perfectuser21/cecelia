@@ -310,7 +310,10 @@ export function createDetachedLauncher({
         );
       }
       if (spec.provider === 'grok' && providerEnv.GROK_HOME) {
-        extraMounts.push(`${providerEnv.GROK_HOME}:/home/cecelia/.grok:rw`);
+        extraMounts.push(
+          `${path.join(providerEnv.GROK_HOME, 'auth.json')}:/home/cecelia/.grok/auth.json:rw`,
+          `${path.join(providerEnv.GROK_HOME, 'sessions')}:/home/cecelia/.grok/sessions:rw`,
+        );
         providerEnv.GROK_HOME = '/home/cecelia/.grok';
       }
       const modelIndex = spec.args?.indexOf('--model') ?? -1;
