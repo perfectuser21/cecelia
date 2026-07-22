@@ -674,11 +674,14 @@ exit 0
 ```bash
 # 读取 target_environment（从 PRD 或注入变量）
 TARGET_ENV="${TARGET_ENV:-local_api}"
+E2E_RESULT_LOG="${E2E_RESULT_LOG:-/tmp/e2e-result.log}"
+E2E_COMMAND=""
 
 case "$TARGET_ENV" in
 
   local_api)
     # Brain 本地部署，curl + psql
+    E2E_COMMAND="timeout 120 bash /tmp/e2e-verify.sh"
     timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
@@ -687,8 +690,10 @@ case "$TARGET_ENV" in
     # Playwright 本机浏览器（Cecelia Dashboard，localhost:5174）
     # Step B-1 提取的脚本是 /tmp/e2e-verify.sh（bash 块）；若合同为 .js 则 fallback node
     if [[ -f /tmp/e2e-verify.js ]]; then
+      E2E_COMMAND="timeout 180 node /tmp/e2e-verify.js"
       timeout 180 node /tmp/e2e-verify.js 2>&1 | tee /tmp/e2e-result.log
     else
+      E2E_COMMAND="timeout 180 bash /tmp/e2e-verify.sh"
       timeout 180 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
     fi
     EXIT_CODE=${PIPESTATUS[0]}
@@ -718,6 +723,7 @@ case "$TARGET_ENV" in
     else
       WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
     fi
+    E2E_COMMAND="gh workflow run $WORKFLOW --repo $REPO; wait for completed conclusion"
     # ── 前置检查：workflow 内容是否覆盖合同 BEHAVIOR（防假绿）──────────────
     # 读取 workflow 文件，对比合同 BEHAVIOR 断言
     WORKFLOW_FILE=".github/workflows/${WORKFLOW}"
@@ -778,11 +784,12 @@ BREOF
     done
     if [[ "$RUN_CONCLUSION" == "success" ]]; then
       EXIT_CODE=0
+      printf 'workflow=%s repo=%s conclusion=success\n' "$WORKFLOW" "$REPO" > "$E2E_RESULT_LOG"
     else
       EXIT_CODE=1
       gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
-        --json url --jq '.[0].url' > /tmp/e2e-result.log 2>&1
-      echo "conclusion: $RUN_CONCLUSION" >> /tmp/e2e-result.log
+        --json url --jq '.[0].url' > "$E2E_RESULT_LOG" 2>&1
+      echo "conclusion: $RUN_CONCLUSION" >> "$E2E_RESULT_LOG"
     fi
     ;;
 
@@ -790,6 +797,7 @@ BREOF
   linux_server)
     # SSH 到 hk-vps 或 us-vps 执行 bash 脚本
     LINUX_HOST="${LINUX_E2E_HOST:-hk-vps}"
+    E2E_COMMAND="timeout 180 ssh $LINUX_HOST bash /tmp/cecelia-e2e.sh"
     scp /tmp/e2e-verify.sh "$LINUX_HOST:/tmp/cecelia-e2e.sh" 2>&1
     timeout 180 ssh "$LINUX_HOST" "bash /tmp/cecelia-e2e.sh" \
       2>&1 | tee /tmp/e2e-result.log
@@ -798,12 +806,14 @@ BREOF
 
   playground)
     # playground 训练 sprint，本地执行
+    E2E_COMMAND="timeout 60 bash /tmp/e2e-verify.sh"
     timeout 60 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
 
   *)
     echo "WARN: 未知 TARGET_ENV=$TARGET_ENV，回退到 local_api"
+    E2E_COMMAND="timeout 120 bash /tmp/e2e-verify.sh"
     timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
@@ -913,9 +923,31 @@ fi
 **脚本 exit 0（通过）**：
 
 ```bash
-cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]},"cascade_assertions":${CASCADE_ASSERTIONS:-[]}}
-BREOF
+# evaluator-result-writer:start
+E2E_RESULT_LOG="${E2E_RESULT_LOG:-/tmp/e2e-result.log}"
+E2E_COMMAND="${E2E_COMMAND:-target_environment=${TARGET_ENV:-unknown} E2E verification}"
+E2E_LOG_TAIL="$(tail -n 5 "$E2E_RESULT_LOG" 2>/dev/null || true)"
+if [[ -z "$E2E_LOG_TAIL" ]]; then
+  E2E_LOG_TAIL="target_environment=${TARGET_ENV:-unknown} completed with exit_code=${EXIT_CODE:-0}"
+fi
+SCREENSHOTS_VALUE="${SCREENSHOTS_JSON:-[]}"
+CASCADE_ASSERTIONS_VALUE="${CASCADE_ASSERTIONS:-[]}"
+jq -e 'type == "array"' <<< "$SCREENSHOTS_VALUE" >/dev/null 2>&1 || SCREENSHOTS_VALUE='[]'
+jq -e 'type == "array"' <<< "$CASCADE_ASSERTIONS_VALUE" >/dev/null 2>&1 || CASCADE_ASSERTIONS_VALUE='[]'
+jq -n \
+  --arg task_id "$TASK_ID" \
+  --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" \
+  --arg command "$E2E_COMMAND" \
+  --argjson exit_code "${EXIT_CODE:-0}" \
+  --arg log_tail "$E2E_LOG_TAIL" \
+  --argjson screenshots "$SCREENSHOTS_VALUE" \
+  --argjson cascade_assertions "$CASCADE_ASSERTIONS_VALUE" \
+  '{verdict:"PASS", task_id:$task_id, attempt_id:$attempt_id,
+    failed_step:null, log_excerpt:null, screenshots:$screenshots,
+    cascade_assertions:$cascade_assertions,
+    behavior_tests:[{command:$command, exit_code:$exit_code, log_tail:$log_tail}]}' \
+  > "$WORKSPACE/.brain-result.json"
+# evaluator-result-writer:end
 ```
 
 **脚本 exit ≠ 0（失败）**：
@@ -975,7 +1007,7 @@ BREOF
 
 ```bash
 cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","failed_step":null,"log_excerpt":null}
+{"verdict":"PASS","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","failed_step":null,"log_excerpt":null,"behavior_tests":[{"command":"<本次真实执行命令>","exit_code":0,"log_tail":"<真实输出末 5 行>"}]}
 BREOF
 ```
 

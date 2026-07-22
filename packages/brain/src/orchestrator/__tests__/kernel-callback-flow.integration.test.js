@@ -78,29 +78,42 @@ const ATTEMPT_IDS = [
 ];
 const SPRINT_DIR = 'sprints/07220001-kernel-flow';
 
-function bridgeEvaluatorResult(result, brainResult) {
+function runEvaluatorWriterAndBridge(result, { attemptId, command, logTail }) {
   const tempDir = mkdtempSync(path.join(tmpdir(), 'kernel-evidence-bridge-'));
   const entrypoint = fileURLToPath(new URL(
     '../../../../../docker/cecelia-runner/entrypoint.sh',
     import.meta.url,
   ));
+  const evaluatorSkill = fileURLToPath(new URL(
+    '../../../../../packages/workflows/skills/harness-evaluator/SKILL.md',
+    import.meta.url,
+  ));
   try {
     writeFileSync(path.join(tempDir, 'result.json'), JSON.stringify(result));
-    writeFileSync(path.join(tempDir, 'fresh-brain-result.json'), JSON.stringify(brainResult));
+    writeFileSync(path.join(tempDir, 'e2e-result.log'), `${logTail}\n`);
     execFileSync('bash', ['-c', `
       set -euo pipefail
       BRIDGE="$(sed -n '/evaluator-evidence-bridge:start/,/evaluator-evidence-bridge:end/p' "$1")"
+      RESULT_WRITER="$(sed -n '/evaluator-result-writer:start/,/evaluator-result-writer:end/p' "$3")"
       eval "$BRIDGE"
       prepare_evaluator_evidence
-      cp "$2/fresh-brain-result.json" "$2/.brain-result.json"
+      eval "$RESULT_WRITER"
       merge_evaluator_evidence "$2/result.json"
-    `, 'bridge-test', entrypoint, tempDir], {
+    `, 'bridge-test', entrypoint, tempDir, evaluatorSkill], {
       env: {
         ...process.env,
         HARNESS_NODE: 'evaluator',
-        HARNESS_ATTEMPT_ID: '55555555-5555-4555-8555-555555555555',
+        HARNESS_ATTEMPT_ID: attemptId,
         CECELIA_TASK_ID: TASK_ID,
         WORKTREE_PATH: tempDir,
+        WORKSPACE: tempDir,
+        TASK_ID,
+        TARGET_ENV: 'local_api',
+        EXIT_CODE: '0',
+        E2E_COMMAND: command,
+        E2E_RESULT_LOG: path.join(tempDir, 'e2e-result.log'),
+        SCREENSHOTS_JSON: '[]',
+        CASCADE_ASSERTIONS: '[]',
       },
     });
     return JSON.parse(readFileSync(path.join(tempDir, 'result.json'), 'utf8'));
@@ -271,7 +284,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
     });
     runtime.pool.query.mockResolvedValue({ rows: [], rowCount: 1 });
 
-    const bridgedResult = bridgeEvaluatorResult({
+    const bridgedResult = runEvaluatorWriterAndBridge({
       contract_version: '1.0',
       attempt_id: evaluatorAttemptId,
       status: 'completed',
@@ -282,10 +295,9 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       error: null,
       provider_metadata: { provider: 'codex', session_id: 'thread-evaluator' },
     }, {
-      verdict: 'PASS',
-      task_id: TASK_ID,
-      attempt_id: evaluatorAttemptId,
-      behavior_tests: behaviorTests,
+      attemptId: evaluatorAttemptId,
+      command: 'npm test',
+      logTail: '12 tests passed',
     });
     expect(bridgedResult.checks).toEqual(behaviorTests);
 
