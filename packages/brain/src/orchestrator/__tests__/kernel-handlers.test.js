@@ -31,8 +31,15 @@ function context(overrides = {}) {
 }
 
 function deps() {
+  const transactionQuery = vi.fn(async () => ({ rows: [], rowCount: 1 }));
+  const releaseTransaction = vi.fn();
   return {
-    pool: { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) },
+    pool: {
+      query: vi.fn(async () => ({ rows: [], rowCount: 1 })),
+      connect: vi.fn(async () => ({ query: transactionQuery, release: releaseTransaction })),
+      transactionQuery,
+      releaseTransaction,
+    },
     execCmd: vi.fn(() => ''),
     attemptStore: { complete: vi.fn(async () => ({ deduped: false })) },
     judgeGate: vi.fn(async () => ({ verdict: 'PASS', feedback: null, judged: true })),
@@ -159,9 +166,32 @@ describe('kernel deterministic handlers', () => {
     expect(d.syncOkr).toHaveBeenCalledOnce();
     expect(d.spawnStaging).toHaveBeenCalledOnce();
     expect(d.cleanup).toHaveBeenCalledWith(runId);
-    const sql = d.pool.query.mock.calls.map(([statement]) => statement).join('\n');
+    expect(d.pool.connect).toHaveBeenCalledOnce();
+    const sql = d.pool.transactionQuery.mock.calls.map(([statement]) => statement).join('\n');
+    expect(d.pool.transactionQuery.mock.calls[0][0]).toBe('BEGIN');
     expect(sql).toMatch(/UPDATE initiative_runs/);
     expect(sql).toMatch(/UPDATE tasks/);
+    expect(d.pool.transactionQuery.mock.calls.at(-1)[0]).toBe('COMMIT');
+    expect(d.pool.releaseTransaction).toHaveBeenCalledOnce();
     expect(result.status).toBe('DONE');
+  });
+
+  it('report 事务失败时在同一 client 回滚并归还连接', async () => {
+    const d = deps();
+    d.pool.transactionQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockRejectedValueOnce(new Error('task update failed'))
+      .mockResolvedValueOnce({});
+
+    await expect(createKernelHandlers(d).report(context())).rejects.toThrow('task update failed');
+
+    expect(d.pool.transactionQuery.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      expect.stringMatching(/UPDATE initiative_runs/),
+      expect.stringMatching(/UPDATE tasks/),
+      'ROLLBACK',
+    ]);
+    expect(d.pool.releaseTransaction).toHaveBeenCalledOnce();
   });
 });

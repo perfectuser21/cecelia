@@ -162,24 +162,27 @@ export function createKernelHandlers(deps) {
       });
       await deps.cleanup(ctx.runId);
 
-      await deps.pool.query('BEGIN');
+      const client = await deps.pool.connect();
       try {
-        await deps.pool.query(
+        await client.query('BEGIN');
+        await client.query(
           `UPDATE initiative_runs
               SET phase='done', completed_at=NOW(), updated_at=NOW()
             WHERE id=$1`,
           [ctx.runId],
         );
-        await deps.pool.query(
+        await client.query(
           `UPDATE tasks
               SET status='completed', completed_at=NOW(), updated_at=NOW()
             WHERE id=$1`,
           [ctx.taskId],
         );
-        await deps.pool.query('COMMIT');
+        await client.query('COMMIT');
       } catch (error) {
-        await deps.pool.query('ROLLBACK');
+        await client.query('ROLLBACK');
         throw error;
+      } finally {
+        client.release();
       }
       return { status: 'DONE', detail: 'report chain completed' };
     },
