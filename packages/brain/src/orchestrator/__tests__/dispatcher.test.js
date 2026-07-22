@@ -518,7 +518,7 @@ describe('createDetachedLauncher', () => {
     ]);
   });
 
-  it('launcher 让 docker builder 挂 Claude home，并直接挂 Grok home', async () => {
+  it('launcher 只挂 Grok 认证与会话，不把宿主 Mach-O CLI 挂进 Linux 容器', async () => {
     const spawnDetached = vi.fn(async () => ({ containerId: 'cx' }));
     const launcher = createDetachedLauncher({
       spawnDetached,
@@ -550,9 +550,15 @@ describe('createDetachedLauncher', () => {
       '/accounts/claude/account2:/host-claude-config:ro',
     );
     expect(spawnDetached.mock.calls[1][0]).toMatchObject({
-      extraMounts: ['/accounts/grok/grok:/home/cecelia/.grok:rw'],
+      extraMounts: [
+        '/accounts/grok/grok/auth.json:/home/cecelia/.grok/auth.json:rw',
+        '/accounts/grok/grok/sessions:/home/cecelia/.grok/sessions:rw',
+      ],
       env: expect.objectContaining({ GROK_HOME: '/home/cecelia/.grok' }),
     });
+    expect(spawnDetached.mock.calls[1][0].extraMounts).not.toContain(
+      '/accounts/grok/grok:/home/cecelia/.grok:rw',
+    );
   });
 
   it('Claude launcher 与 buildDockerArgs 组合后只挂一次配置目录', async () => {
