@@ -42,3 +42,4 @@ graduation: done (e2e-verify.sh -> scripts/smoke/e2e/relay-097e589d.sh 纯rename
 evaluator: re-anchor 8403a6c78->2a14d8563 done (verdict=PASS, verdict_file=.harness/verdicts/evaluate-2a14d85.json, 区间4commit零packages/变更[14d416f99叶子新增/dba48812a r4勘误传播/3595f7ff9毕业纯rename/2a14d8563附件], behavior=7/7, artifact=6/6, e2e毕业新路径复证exit0)
 controller: 恢复接管 (worktree=session-d5388c0f 孤儿[无.dev-lock/无活跃进程], .brain-result.json 误留旧任务07b2fd3b内容已修正为097e589d, PR#4185与main冲突4commit待解)
 controller: merge冲突已解 (main 4 commits 冲突文件=.brain-result.json/.brain-versions/.harness/progress.md/DoD.md，均为共享状态文件机械合并：DoD.md/.brain-result.json取ours当前sprint内容，.brain-versions取ours[已是superset含1.267.33+1.267.34]，progress.md三段按时间序合并保留完整审计轨迹)
+evaluator: re-anchor 2a14d8563->415b25d8a (git diff --stat确认区间仅merge main无关文件[#4184/#4187/#4188/#4189]+version-bump-gate要求的版本号bump，本PR自身relay-smoke.js零变更, verdict_file=.harness/verdicts/evaluate-415b25d.json)
