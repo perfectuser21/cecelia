@@ -214,8 +214,10 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
         prList: JSON.stringify([
           { headRefName: 'cp-0722-feature-11111111', title: 'feature', url: PR_URL, state: 'OPEN' },
         ]),
-        prView: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 'sha-discovered' }),
-        prChecks: JSON.stringify([{ state: 'SUCCESS' }]),
+        prView: JSON.stringify({
+          state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 'sha-discovered',
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
       },
     });
 
@@ -231,8 +233,10 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     const deps = makeDeps({
       rows: { run: { pr_url: PR_URL } },
       exec: {
-        prView: JSON.stringify({ state: 'MERGED', mergeStateStatus: 'CLEAN', headRefOid: 'sha-abc' }),
-        prChecks: JSON.stringify([{ state: 'SUCCESS' }]),
+        prView: JSON.stringify({
+          state: 'MERGED', mergeStateStatus: 'CLEAN', headRefOid: 'sha-abc',
+          statusCheckRollup: [{ state: 'SUCCESS' }],
+        }),
       },
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
@@ -246,20 +250,30 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     const deps = makeDeps({
       rows: { run: { pr_url: PR_URL } },
       exec: {
-        prView: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', headRefOid: 's' }),
-        prChecksThrow: JSON.stringify([{ state: 'SUCCESS' }, { state: 'FAILURE' }]),
+        prView: JSON.stringify({
+          state: 'OPEN', mergeStateStatus: 'BLOCKED', headRefOid: 's',
+          statusCheckRollup: [
+            { status: 'COMPLETED', conclusion: 'SUCCESS' },
+            { status: 'COMPLETED', conclusion: 'FAILURE' },
+          ],
+        }),
       },
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.pr.ci).toBe('fail');
   });
 
-  it('ci 映射：有 PENDING/IN_PROGRESS → pending（gh pr checks 非零退出用 err.stdout 兜底解析）', async () => {
+  it('ci 映射：有 PENDING/IN_PROGRESS → pending', async () => {
     const deps = makeDeps({
       rows: { run: { pr_url: PR_URL } },
       exec: {
-        prView: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'UNKNOWN', headRefOid: 's' }),
-        prChecksThrow: JSON.stringify([{ state: 'SUCCESS' }, { state: 'IN_PROGRESS' }]),
+        prView: JSON.stringify({
+          state: 'OPEN', mergeStateStatus: 'UNKNOWN', headRefOid: 's',
+          statusCheckRollup: [
+            { state: 'SUCCESS' },
+            { status: 'IN_PROGRESS', conclusion: '' },
+          ],
+        }),
       },
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
@@ -267,18 +281,20 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
   });
 
   it('ci 映射：全 SUCCESS → pass；空 checks → pending（CI 尚未挂上）', async () => {
-    const base = {
-      prView: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 's' }),
-    };
     const deps1 = makeDeps({
       rows: { run: { pr_url: PR_URL } },
-      exec: { ...base, prChecks: JSON.stringify([{ state: 'SUCCESS' }, { state: 'SUCCESS' }]) },
+      exec: { prView: JSON.stringify({
+        state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 's',
+        statusCheckRollup: [{ state: 'SUCCESS' }, { conclusion: 'SUCCESS' }],
+      }) },
     });
     expect((await collectGroundTruth(deps1, { taskId: TASK_ID, runId: RUN_ID })).pr.ci).toBe('pass');
 
     const deps2 = makeDeps({
       rows: { run: { pr_url: PR_URL } },
-      exec: { ...base, prChecks: '[]' },
+      exec: { prView: JSON.stringify({
+        state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 's', statusCheckRollup: [],
+      }) },
     });
     expect((await collectGroundTruth(deps2, { taskId: TASK_ID, runId: RUN_ID })).pr.ci).toBe('pending');
   });
@@ -520,8 +536,10 @@ describe('collectGroundTruth：决策日志推导字段', () => {
         log: [{ hop: 12, action: 'verdict:human_review', observed: {}, detail: { approved: true, pr_head_sha: 'sha-abc' } }],
       },
       exec: {
-        prView: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 'sha-abc' }),
-        prChecks: JSON.stringify([{ state: 'SUCCESS' }]),
+        prView: JSON.stringify({
+          state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 'sha-abc',
+          statusCheckRollup: [{ state: 'SUCCESS' }],
+        }),
       },
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
@@ -537,8 +555,10 @@ describe('collectGroundTruth：决策日志推导字段', () => {
         log: [{ hop: 12, action: 'verdict:human_review', observed: {}, detail: { approved: true, pr_head_sha: 'sha-old' } }],
       },
       exec: {
-        prView: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 'sha-new' }),
-        prChecks: JSON.stringify([{ state: 'SUCCESS' }]),
+        prView: JSON.stringify({
+          state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 'sha-new',
+          statusCheckRollup: [{ state: 'SUCCESS' }],
+        }),
       },
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
