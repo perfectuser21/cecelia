@@ -76,6 +76,67 @@ bluegreen_guard_blue() {
   esac
 }
 
+# bluegreen_canary_host：宿主执行探活走 localhost；deploy webhook 在 Brain 容器内
+# 执行时，必须走 host.docker.internal 才能访问宿主发布的 TEMP_PORT。
+bluegreen_canary_host() {
+  if [[ -n "${CANARY_HOST:-}" ]]; then
+    printf '%s\n' "$CANARY_HOST"
+  elif [[ -f /.dockerenv ]]; then
+    printf '%s\n' 'host.docker.internal'
+  else
+    printf '%s\n' 'localhost'
+  fi
+}
+
+# bluegreen_wait_for_stable_http <green> <port> <timeout> <canary_url> <required>
+# 同一可访问 URL 必须连续成功 required 次才放行。复用 5223 时，刚移除的旧
+# canary/proxy 可能短暂回一个 200；单点成功会让 smoke 打到尚未 ready 的新容器。
+# 成功时把稳定 URL 写入 BLUEGREEN_HEALTHY_URL。
+bluegreen_wait_for_stable_http() {
+  local green="$1"
+  local port="$2"
+  local timeout="$3"
+  local canary_url="$4"
+  local required="${5:-3}"
+  local elapsed=0 consecutive=0 last_url="" green_ip="" probe_url="" hs=""
+
+  BLUEGREEN_HEALTHY_URL=""
+  while [[ "$elapsed" -lt "$timeout" ]]; do
+    probe_url=""
+    if curl -sf --max-time 3 "${canary_url}/api/brain/tick/status" >/dev/null 2>&1; then
+      probe_url="$canary_url"
+    else
+      green_ip=$(docker inspect "$green" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null) || true
+      if [[ -n "$green_ip" ]] \
+          && curl -sf --max-time 3 "http://${green_ip}:${port}/api/brain/tick/status" >/dev/null 2>&1; then
+        probe_url="http://${green_ip}:${port}"
+      fi
+    fi
+
+    if [[ -n "$probe_url" ]]; then
+      if [[ "$probe_url" == "$last_url" ]]; then
+        consecutive=$((consecutive + 1))
+      else
+        last_url="$probe_url"
+        consecutive=1
+      fi
+      if [[ "$consecutive" -ge "$required" ]]; then
+        BLUEGREEN_HEALTHY_URL="$probe_url"
+        return 0
+      fi
+    else
+      consecutive=0
+      last_url=""
+    fi
+
+    hs=$(docker inspect "$green" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || echo missing)
+    [[ "$hs" == "unhealthy" ]] && return 1
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  return 1
+}
+
 # bluegreen_swap：green canary 验证后原子切。入参走 env：
 #   BLUE_NAME(默认 cecelia-node-brain) / GREEN_NAME(默认 cecelia-node-brain-green)
 #   TEMP_PORT(默认 5223) / TARGET_VERSION(必填，镜像 tag) / HEALTH_TIMEOUT(默认 60)
@@ -89,6 +150,10 @@ bluegreen_swap() {
   local port="${TEMP_PORT:-5223}"
   local timeout="${HEALTH_TIMEOUT:-60}"
   local version="${TARGET_VERSION:?TARGET_VERSION 必填}"
+  local stable_required="${GREEN_STABLE_SUCCESSES:-3}"
+  local canary_host canary_url
+  canary_host=$(bluegreen_canary_host)
+  canary_url="http://${canary_host}:${port}"
 
   echo "[bluegreen] 起 green canary（${green}，端口 ${port}，tick 关）..."
   docker rm -f "$green" >/dev/null 2>&1 || true
@@ -109,38 +174,18 @@ bluegreen_swap() {
     return 1
   fi
 
-  # poll green health（GREEN_URL 双模式：宿主执行走 localhost:${port}，容器内执行走
-  # green_ip:5221 直连；兜底 docker inspect health）。锁定的 green_url 供 pre-swap smoke 复用。
-  # 注意：elapsed 只按 sleep 累加，两路 curl --max-time 3 + docker inspect 使每轮最坏墙钟 ~8s，
-  # HEALTH_TIMEOUT 是逻辑轮数预算而非精确墙钟（仅影响失败路径耗时，blue 不受影响）。
-  local elapsed=0 healthy=false green_url="" green_ip=""
-  while [ "$elapsed" -lt "$timeout" ]; do
-    if curl -sf --max-time 3 "http://localhost:${port}/api/brain/tick/status" >/dev/null 2>&1; then
-      healthy=true; green_url="http://localhost:${port}"; break
-    fi
-    green_ip=$(docker inspect "$green" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null) || true
-    if [[ -n "$green_ip" ]] && curl -sf --max-time 3 "http://${green_ip}:5221/api/brain/tick/status" >/dev/null 2>&1; then
-      healthy=true; green_url="http://${green_ip}:5221"; break
-    fi
-    local hs
-    hs=$(docker inspect "$green" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || echo missing)
-    if [ "$hs" = "healthy" ]; then healthy=true; break; fi
-    if [ "$hs" = "unhealthy" ]; then break; fi
-    sleep 2; elapsed=$((elapsed + 2))
-  done
-  # docker inspect 兜底通过（两路 curl 都没通）时默认 green_ip 直连（容器内场景最可能可达）
-  if [[ "$healthy" == true && -z "$green_url" ]]; then
-    [[ -z "$green_ip" ]] && green_ip=$(docker inspect "$green" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null) || true
-    if [[ -n "$green_ip" ]]; then green_url="http://${green_ip}:5221"; else green_url="http://localhost:${port}"; fi
-  fi
-
-  if [ "$healthy" != true ]; then
+  # 只接受可被后续 smoke 复用的 HTTP URL，且必须连续稳定成功。
+  # Docker health 仅用于 unhealthy 时提前失败，不能代替 HTTP 放行。
+  local green_url=""
+  if ! bluegreen_wait_for_stable_http \
+      "$green" "5221" "$timeout" "$canary_url" "$stable_required"; then
     echo "[bluegreen] ❌ green 健康检查未通过，保留 blue($blue) 原封不动"
     docker rm -f "$green" >/dev/null 2>&1 || true
     send_bark "green 镜像 v${version} 健康检查失败，已保留旧版(5221不受影响)"
     bluegreen_guard_blue "$blue"
     return 1
   fi
+  green_url="$BLUEGREEN_HEALTHY_URL"
 
   # ── Pre-swap 核心 smoke（T2 闸）─────────────────────────────────────────────
   # green 健康后、切换前跑 smoke-core.txt，任一失败 → 保留 blue 不切。

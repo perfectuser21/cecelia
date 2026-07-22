@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-# shellcheck source=../lib/bluegreen.sh
+# shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib/bluegreen.sh"
 
 CURL_CALLS=0
