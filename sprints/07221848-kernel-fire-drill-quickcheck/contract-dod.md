@@ -7,7 +7,7 @@ journey_type: dev_pipeline
 **范围**: `scripts/quickcheck.sh` 中 vitest 输出分类优先级修复（明确失败计数优先于 OOM 宽免）+ 永久回归测试
 **大小**: S
 
-contract-gate: skipped 检查项不适用（cecelia 场景，`packages/brain/src/lib/contract-gate.js` 存在，走正常代码层 Contract Gate 流程）
+contract-gate: skipped (file not found — `packages/brain/src/lib/contract-gate.js` 在本次 worktree 中不存在，跳过代码层 Contract Gate，仅执行 skill 内置规则审查)
 
 ## ARTIFACT 条目
 
