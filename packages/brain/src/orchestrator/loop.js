@@ -252,6 +252,23 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
 
     // ---- 派发 action：intent-log-before-dispatch ----
     const hop = await next(deps.pool, resolvedRunId);
+    const observedMaxHop = observed.decisionLog.reduce(
+      (max, row) => Math.max(max, Number(row.hop) || 0),
+      0,
+    );
+    // collectGroundTruth 在读 decision log 后还会做 gh/git/docker IO。外部
+    // callback 可能在这段窗口追加 verdict，使当前 decision 已经过期。nextHop
+    // 看到的数据库版本若领先于 observed 快照，就必须丢弃快照重新观测；否则
+    // 会在 PASS 已落库后重复 spawn 同一角色。hop=0 的初始兼容路径继续交给
+    // appendHop UNIQUE(run_id,hop) 做最终并发栅栏。
+    if (observedMaxHop > 0 && hop !== observedMaxHop + 1) {
+      log(
+        `[orchestrator] stale observation on run ${resolvedRunId}: ` +
+        `observed max hop ${observedMaxHop}, database next hop ${hop}; re-observing`,
+      );
+      await beat();
+      continue;
+    }
     let gateVerdict = null;
     if (decision.action === ACTION.MERGE_PR) {
       // F6 双保险：derive 说 merge，仍过一遍 mergeGate（唯一 merge 权威）
