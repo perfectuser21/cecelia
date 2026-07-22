@@ -146,7 +146,7 @@ router.patch('/:id/review', async (req, res) => {
 
     const { rowCount, rows } = await pool.query(
       `UPDATE tasks
-       SET payload = payload || $1::jsonb,
+       SET payload = COALESCE(payload, '{}'::jsonb) || $1::jsonb,
            updated_at = NOW()
        WHERE id = $2
          AND task_type = 'content-pipeline'
