@@ -1,0 +1,5 @@
+{
+  "verdict": "PASS",
+  "anchored_sha": "415b25d8a7c90c6ec02835ecee242fde9785aaef",
+  "notes": "re-anchor 2a14d8563->415b25d8a：git diff --stat 确认区间(5a72c906f/ac981eabc/4867d5cdd/415b25d8a)仅两类改动——①merge main 带入的无关 PR(#4184/#4187/#4188/#4189)文件（非本PR own内容）②brain-version-bump-gate要求的版本号bump(packages/brain/package.json+package-lock.json/.brain-versions/DEFINITION.md)。本PR自身实现文件packages/brain/src/utils/relay-smoke.js及其测试零变更，沿用evaluate-2a14d85.json的BEHAVIOR 7/7 / ARTIFACT 6/6结论"
+}

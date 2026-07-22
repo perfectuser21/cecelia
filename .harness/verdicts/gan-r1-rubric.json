@@ -1,0 +1,15 @@
+{
+  "round": 1,
+  "verdict": "REVISION",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 9,
+    "internal_consistency": 5,
+    "risk_registered": 5,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 0,
+  "feedback": ".harness/gan-feedback-r1.md — 唯一阻塞：铁律[smoke登记] N/A 依据（'已核查 ci.yml 无机械闸'）与 repo 事实相反：lint-feature-has-smoke.sh 是 ci.yml 必过 job（line 1613/1736/1778），feat: commit + packages/brain/src 非测试 .js 改动必拦；ci-smoke-glob-runner 棘轮另要求新 smoke.sh 登记 packages/quality/smoke-allowlist.txt。round 2 需补最小 smoke.sh + allowlist 登记 + 两条机检 ARTIFACT，其余部分全部合格不得改动。"
+}

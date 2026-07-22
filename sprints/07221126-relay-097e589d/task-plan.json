@@ -1,0 +1,29 @@
+{
+  "initiative_id": "097e589d-ec53-4102-b8d1-9aa582b88ebd",
+  "journey_type": "autonomous",
+  "journey_type_reason": "冒烟切片仅涉及 packages/brain 纯函数（无 dashboard/agent 协议/engine 路径），按路径优先级链命中 autonomous",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 relay 冒烟纯函数 formatSmokeStamp + 单测（TDD，零生产接线）",
+      "scope": "packages/brain/src/utils/relay-smoke.js 提供确定性冒烟戳 formatSmokeStamp(taskId, date) -> smoke:<taskId前8位>:<YYYYMMDD>（UTC），非法输入抛 TypeError；单测进入 brain-ci 常跑（CI 副本 packages/brain/src/utils/relay-smoke.test.js）；不接入任何生产调用点",
+      "dod": [
+        "[BEHAVIOR] node 直调 formatSmokeStamp('097e589d-ec53-4102-b8d1-9aa582b88ebd', new Date('2026-07-22T00:00:00Z')) 输出恰为 smoke:097e589d:20260722（对应合同 Step 2 验证命令）",
+        "[BEHAVIOR] 空/非字符串 taskId、Invalid Date/非 Date 均抛 TypeError；短 taskId 用完整 taskId（对应合同 Step 3 验证命令）",
+        "[BEHAVIOR] cd packages/brain && npx vitest run src/utils/relay-smoke.test.js 全绿（对应合同 Step 4 验证命令）",
+        "[ARTIFACT] packages/brain/src/utils/relay-smoke.js 存在且 export function formatSmokeStamp；零生产接线负向 grep 通过（对应合同 Step 5）",
+        "[ARTIFACT] packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh 存在（≥5 实代码行 + ≥1 条 node 真命令，复用合同 E2E Step 1+2/Step 3 断言）实跑 exit 0，且 packages/quality/smoke-allowlist.txt 登记一行 relay-smoke-stamp-smoke.sh（合同硬条款第 7 条，铁律[smoke登记]）"
+      ],
+      "files": [
+        "packages/brain/src/utils/relay-smoke.js",
+        "packages/brain/src/utils/relay-smoke.test.js",
+        "sprints/07221126-relay-097e589d/tests/relay-smoke.test.ts",
+        "packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh",
+        "packages/quality/smoke-allowlist.txt"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}

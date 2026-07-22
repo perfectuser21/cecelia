@@ -1,0 +1,30 @@
+{
+  "round": 2,
+  "proposer_commit": "e1acf5775",
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 9,
+    "internal_consistency": 8,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "evidence": {
+    "dod_machineability": "全部 DoD 为 exit-code 命令：node -e 直调真实模块 / vitest 实跑 / bash 实跑 smoke.sh / grep -qx allowlist；新增两条 ARTIFACT 机检均可真红",
+    "scope_match_prd": "与 PRD 1:1；r2 新增 smoke 登记为铁律[smoke登记]+repo 机械闸事实要求，非范围蔓延；锁定内容 diff 核实零改动（tests/ 与 sprint-prd.md diff 为空）",
+    "test_is_red": "tests/relay-smoke.test.ts 未动（CONTRACT IS LAW），import 不存在模块必 FAIL，r1 已实跑确认",
+    "internal_consistency": "r1 阻塞的错误核查结论已删除并替换为与 lint-feature-has-smoke.sh/ci-smoke-glob-runner.yml 实读一致的描述；draft 硬条款第7条/dod INV-2 两条 ARTIFACT/task-plan.json 三处一致。小瑕疵：硬条款第7条写'Round 2 Reviewer 指出'实为 Round 1 反馈，轮次标注误差不影响执行",
+    "risk_registered": "smoke 双闸风险已入 INV-2 + 硬条款第7条（含禁止非 feat: 前缀绕闸）；其余风险与 N/A 映射 r1 已核合规",
+    "verification_oracle_completeness": "非 HTTP 任务等价 oracle 已 codify：CLI stdout 精确断言 + TypeError 边界 x4 + vitest 实跑 + 零接线负向 grep；E2E 脚本 bash -n 通过、真执行断言为主、无全角标点紧贴 $VAR；BEHAVIOR 共 7 条 ≥4",
+    "ci_workflow_alignment": "target_environment=local_api → N/A 填 10；另已实读 lint-feature-has-smoke.sh 与 ci-smoke-glob-runner.yml 核实两条 ARTIFACT 与闸门语义一致（allowlist 为裸文件名格式，grep -qx 匹配；smoke.sh 命名/路径/内容校验 ≥5 实代码行+node 真命令全部对齐）"
+  },
+  "convergence": {
+    "r1_blockers": 1,
+    "resolved": 1,
+    "remaining": 0,
+    "new_blockers": 0,
+    "contract_lines": "220 -> 223"
+  }
+}

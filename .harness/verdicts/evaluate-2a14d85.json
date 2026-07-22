@@ -1,0 +1,189 @@
+{
+  "verdict": "PASS",
+  "task_id": "097e589d-ec53-4102-b8d1-9aa582b88ebd",
+  "sprint_dir": "sprints/07221126-relay-097e589d",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/4185",
+  "anchored_head_sha": "2a14d8563",
+  "post_verdict_fixation_sha": "14d416f99",
+  "failed_step": null,
+  "log_excerpt": null,
+  "exit_code": 0,
+  "log_tail": "PASS step5: 零生产接线\n✅ Golden Path 验证通过",
+  "unverifiable": [],
+  "dual_gate": {
+    "artifact": {
+      "result": "PASS",
+      "passed": 6,
+      "total": 6,
+      "detail": [
+        {
+          "item": "A1 relay-smoke.js 命名导出 export function formatSmokeStamp",
+          "exit_code": 0
+        },
+        {
+          "item": "A2 CI 常跑副本含关键用例名（smoke:097e589d:20260722 + TypeError）",
+          "exit_code": 0
+        },
+        {
+          "item": "A3 零生产接线（r3 勘误 import/require 语句级断言）",
+          "exit_code": 0
+        },
+        {
+          "item": "A4 合同测试 tests/regression/relay-097e589d/relay-smoke.test.ts 原样保留",
+          "exit_code": 0
+        },
+        {
+          "item": "A5 smoke 脚本实跑 relay-smoke-stamp-smoke.sh",
+          "exit_code": 0,
+          "log_tail": "✅ relay-smoke-stamp smoke 通过"
+        },
+        {
+          "item": "A6 smoke-allowlist.txt 登记 grep -qx",
+          "exit_code": 0
+        }
+      ]
+    },
+    "behavior": {
+      "result": "PASS",
+      "passed": 7,
+      "total": 7
+    }
+  },
+  "behavior_tests": [
+    {
+      "command": "node -e \"import(...).then(m=>{...formatSmokeStamp('097e589d-...','2026-07-22T00:00:00Z')===smoke:097e589d:20260722...})\" ./packages/brain/src/utils/relay-smoke.js（B1 标准输入冒烟戳，argv 注入原命令全文见 contract-dod.md L37）",
+      "exit_code": 0,
+      "log_tail": "OK"
+    },
+    {
+      "command": "B2 确定性两次调用一致 + 短 taskId abc → smoke:abc:20260722（contract-dod.md L41 原命令）",
+      "exit_code": 0,
+      "log_tail": "OK"
+    },
+    {
+      "command": "B3 UTC 日期语义 2026-01-05T00:00:00Z → smoke:abcd1234:20260105 零填充（contract-dod.md L45 原命令）",
+      "exit_code": 0,
+      "log_tail": "OK"
+    },
+    {
+      "command": "B4 空 taskId / 非字符串 taskId 抛 TypeError（contract-dod.md L49 原命令）",
+      "exit_code": 0,
+      "log_tail": "OK"
+    },
+    {
+      "command": "B5 Invalid Date / 非 Date 抛 TypeError（contract-dod.md L53 原命令）",
+      "exit_code": 0,
+      "log_tail": "OK"
+    },
+    {
+      "command": "bash -lc \"cd packages/brain && npx vitest run src/utils/relay-smoke.test.js --reporter=basic\" && echo OK（B6 CI 常跑单测）",
+      "exit_code": 0,
+      "log_tail": "Tests  10 passed (10)\nOK"
+    },
+    {
+      "command": "B7 INV-1 同进程 100 轮交错输入不重置恒一致（contract-dod.md L61 原命令）",
+      "exit_code": 0,
+      "log_tail": "OK"
+    }
+  ],
+  "e2e": {
+    "target_environment": "local_api",
+    "as_written_run": {
+      "exit_code": 1,
+      "failed_step": "Step 5",
+      "adjudication": "非实现缺陷——Step 5 旧版子串 grep 'relay-smoke' 命中 main 预存 v2.2.0 HTTP 探针路由字符串（routes/walking-skeleton.js 的 /api/brain/relay-smoke 路由 + routes/__tests__/relay-smoke.contract.test.js），两文件均实证为 origin/main 预存且形态是路由名字符串而非本模块 import。此即 r3 勘误 A3（commit 8403a6c78，GAN 双方批准）裁定的『起草缺陷，oracle 天生不可 PASS』；勘误只更新了 contract-dod.md A3 命令，contract-draft.md E2E 段 Step 5 文本未同步（勘误传播不完整）"
+    },
+    "erratum_corrected_run": {
+      "exit_code": 0,
+      "steps": [
+        "PASS step1+2: smoke:097e589d:20260722",
+        "PASS step3: TypeError x4 + short-taskId",
+        "PASS step4: brain-ci 常跑单测全绿（10 passed）",
+        "PASS step5: 零生产接线（import 级断言）",
+        "✅ Golden Path 验证通过"
+      ],
+      "note": "Step 1-4 与合同原文逐字一致，仅 Step 5 替换为 contract-dod.md A3 的 r3 勘误命令（真红能力保留：任何生产文件 import 本模块必 FAIL）"
+    },
+    "fixation": "e2e-verify.sh（勘误语义版）固化于 14d416f99，后经 3595f7ff9 毕业纯 rename 至 scripts/smoke/e2e/relay-097e589d.sh（永久池）；新路径实跑 exit 0"
+  },
+  "golden_path_coverage": [
+    {
+      "step": "Step 1 调用方 import 并调用 formatSmokeStamp",
+      "e2e_lines": "e2e L8-9（node import 直调）",
+      "assertion": "字面比对 smoke:097e589d:20260722，exit 非零显式 FAIL"
+    },
+    {
+      "step": "Step 2 纯函数确定性格式化（前8位+YYYYMMDD）",
+      "e2e_lines": "e2e L8-10（两次调用 a!==b 即 exit 1）",
+      "assertion": "确定性 + 字面值双断言"
+    },
+    {
+      "step": "Step 3 可观测冒烟戳 + 边界（TypeError x4 / 短 taskId）",
+      "e2e_lines": "e2e L13-15",
+      "assertion": "4 类非法输入必须 TypeError，短 taskId 字面比对"
+    },
+    {
+      "step": "Step 4 单测进入 brain-ci 常跑全绿",
+      "e2e_lines": "e2e L18-20（vitest 实跑）",
+      "assertion": "vitest exit 0，10/10 passed，文件位于 brain vitest include 路径"
+    },
+    {
+      "step": "Step 5 零生产接线负向验证",
+      "e2e_lines": "e2e L23-25（r3 勘误 import 级 grep）",
+      "assertion": "import/require 引用集合为空，命中即 FAIL"
+    }
+  ],
+  "contract_is_law": {
+    "result": "PASS",
+    "detail": "合同测试 relay-smoke.test.ts 内容自合同提交 c4d09eb47 至 HEAD 零改动（git diff c4d09eb47:sprints/.../tests/relay-smoke.test.ts HEAD:tests/regression/.../relay-smoke.test.ts 为空，exit 0）；19f94f450 为 R100 纯 rename（git 实证）；77e873b3c 仅改 DoD.md + 合同 md 路径跟随；8403a6c78 仅改 contract-dod.md（A3 勘误，GAN 双方批准），均未触碰测试断言。CI 常跑副本 relay-smoke.test.js（Green c995a9911 落地后零改动）与合同 .ts 10 条用例逐条语义一致（仅 import 路径改 ./relay-smoke.js + 去除 TS 类型转换）。Red 提交 ff7c95f6f 仅更新根 DoD.md（harness 约定文件），合同测试本体由合同提交携带，符合『commit 1 后不可修改』约束"
+  },
+  "anti_cheat": {
+    "mock_edge_check": "clean（合同禁 mock 边清单 N/A，扫描 2 个测试文件 0 命中 vi.mock/jest.mock/stub/mockImplementation）",
+    "b15_url_validation": "e2e 脚本无 Brain API URL——符合合同『零接线纯函数，node 直调真实 repo 模块』oracle（GAN r2 批准语义，PRD E2E 占位同语义）",
+    "real_execution": "全部断言真跑 node/vitest 于真实 repo 代码，无 mock/dry-run"
+  },
+  "notes": "①旧 verdict 观察项「勘误传播不完整」已由 dba48812a r4 勘误闭环（GAN 双方 APPROVED），contract-draft E2E Step5 现与 r3 A3 同源 import 级断言，全合同 oracle 一致。②8403a6c78..2a14d8563 零 packages/ 变更，BEHAVIOR/ARTIFACT 全量结论继承有效（E2E 新路径 + B1/B6 已在新锚实跑复证）。③Island Gate 红为已知结构性假阳性（非 required，Notion issue b9653c81），与本验收无关",
+  "re_anchor": {
+    "from_sha": "8403a6c78",
+    "to_sha": "2a14d8563",
+    "reason": "Step 4 新 commit 旧 verdict 作废条款——PR #4185 在旧锚后进 4 个 commit，controller 请求重锚",
+    "interim_commits": [
+      {
+        "sha": "14d416f99",
+        "nature": "evaluator 自身 Slice3 固化 e2e-verify.sh（叶子新增）"
+      },
+      {
+        "sha": "dba48812a",
+        "nature": "r4 勘误传播：contract-draft E2E Step5 同步 r3 A3 import 级断言（GAN 双方 APPROVED，gan-dba4881.json）——闭环旧 verdict notes① 观察项"
+      },
+      {
+        "sha": "3595f7ff9",
+        "nature": "毕业纯 rename R100：sprints/.../e2e-verify.sh → scripts/smoke/e2e/relay-097e589d.sh（git 实证 R100）"
+      },
+      {
+        "sha": "2a14d8563",
+        "nature": ".harness/verdicts 附件 + 台账入库（非代码）"
+      }
+    ],
+    "reverify": {
+      "packages_diff": "git diff 8403a6c78..2a14d8563 -- packages/ 输出 0 行（零生产代码变更）",
+      "e2e_new_path": {
+        "command": "bash scripts/smoke/e2e/relay-097e589d.sh",
+        "exit_code": 0,
+        "log_tail": "PASS step5: 零生产接线\n✅ Golden Path 验证通过"
+      },
+      "behavior_spot_check": [
+        {
+          "command": "B1 标准输入冒烟戳（contract-dod.md L37 原命令）",
+          "exit_code": 0,
+          "log_tail": "OK"
+        },
+        {
+          "command": "B6 cd packages/brain && npx vitest run src/utils/relay-smoke.test.js",
+          "exit_code": 0,
+          "log_tail": "OK"
+        }
+      ]
+    }
+  }
+}
