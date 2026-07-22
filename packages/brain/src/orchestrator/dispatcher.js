@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { parseTaskBundle } from './execution-contract.js';
+import { generateCallbackSecret, hashCallbackSecret } from './callback-auth.js';
 
 const ACTION_SPECS = Object.freeze({
   'spawn:planner': {
@@ -126,6 +127,7 @@ export function createDispatcher(deps) {
   const randomUUID = deps.randomUUID ?? nodeRandomUUID;
   const machineId = deps.machineId ?? os.hostname();
   const handlers = deps.handlers ?? {};
+  const createCallbackSecret = deps.createCallbackSecret ?? generateCallbackSecret;
 
   return async function dispatch(action, ctx) {
     if (handlers[action] && !ACTION_SPECS[action]) {
@@ -134,6 +136,7 @@ export function createDispatcher(deps) {
 
     const spec = resolveAction(action);
     const attemptId = randomUUID();
+    const callbackSecret = createCallbackSecret();
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
     const bundle = buildBundle(action, spec, ctx, attemptId, skill);
     const payload = asObject(ctx.observed.task.payload);
@@ -153,6 +156,7 @@ export function createDispatcher(deps) {
       accountId: payload.executor_account ?? null,
       machineId,
       bundle,
+      callbackSecretHash: hashCallbackSecret(callbackSecret),
     });
     const attempt = {
       ...persisted,
@@ -161,6 +165,7 @@ export function createDispatcher(deps) {
       hop: persisted?.hop ?? ctx.hop,
       role: persisted?.role ?? spec.role,
       task_bundle: persisted?.task_bundle ?? bundle,
+      callbackSecret,
     };
 
     try {
@@ -257,6 +262,7 @@ export function createDetachedLauncher({
           CECELIA_TASK_ID: bundle.inputs.task_id,
           HARNESS_NODE: attempt.role,
           HARNESS_ATTEMPT_ID: attempt.id,
+          HARNESS_CALLBACK_TOKEN: attempt.callbackSecret,
           HARNESS_LEASE_OWNER: leaseOwner,
           HARNESS_RUN_ID: attempt.run_id,
           HARNESS_HOP: String(attempt.hop),

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS harness_attempts (
       'needs_context','blocked','failed','cancelled'
     )),
   provider_session_id TEXT,
+  callback_secret_hash TEXT NOT NULL,
   lease_owner TEXT,
   lease_expires_at TIMESTAMPTZ,
   heartbeat_at TIMESTAMPTZ,

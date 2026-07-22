@@ -169,6 +169,7 @@ persist_provider_session() {
   curl -sf -m 10 -X POST \
     "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
     -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
     -d "$(jq -nc \
       --arg owner "$HARNESS_LEASE_OWNER" \
       --arg session "$session" \
@@ -211,6 +212,7 @@ run_provider_contract() {
         curl -sf -m 10 -X POST \
           "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
           -H 'Content-Type: application/json' \
+          -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
           -d "$(jq -nc --arg owner "$HARNESS_LEASE_OWNER" '{lease_owner:$owner,lease_seconds:180}')" \
           >/dev/null 2>&1 || true
         sleep 60
@@ -416,9 +418,16 @@ if [[ -z "$TARGET_URL" ]]; then
 fi
 
 CALLBACK_OK=0
+CALLBACK_HEADERS=(-H "Content-Type: application/json")
+if [[ -n "${HARNESS_ATTEMPT_ID:-}" ]]; then
+  CALLBACK_HEADERS+=(
+    -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}"
+    -H "X-Harness-Lease-Owner: ${HARNESS_LEASE_OWNER}"
+  )
+fi
 for _retry in 1 2 3 4 5; do
   if curl -sf -m 10 -X POST "$TARGET_URL" \
-      -H "Content-Type: application/json" \
+      "${CALLBACK_HEADERS[@]}" \
       -d "$CALLBACK_BODY" >/dev/null 2>&1; then
     echo "[entrypoint] harness callback POST ok (url=${TARGET_URL} exit=${EXIT_CODE} attempt=${_retry})"
     CALLBACK_OK=1

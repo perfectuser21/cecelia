@@ -33,9 +33,19 @@ import pool from '../db.js';
 import { handleRelayExitConsistency } from '../lib/harness-orphan-guard.js';
 import { createAttemptStore } from '../orchestrator/attempt-store.js';
 import { parseHarnessResult } from '../orchestrator/execution-contract.js';
+import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
 
 const router = Router();
 const attemptStore = createAttemptStore(pool);
+
+function bearerToken(req) {
+  const authorization = req.get('authorization') ?? '';
+  return authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+}
+
+function callbackAuthorized(req, attempt) {
+  return verifyCallbackSecret(bearerToken(req), attempt?.callback_secret_hash);
+}
 
 function normalizeVerdict(role, outcome) {
   const value = String(outcome ?? '').trim().toUpperCase();
@@ -109,6 +119,11 @@ function resultError(result) {
 }
 
 router.post('/harness/attempts/:attemptId/heartbeat', async (req, res) => {
+  const attempt = await attemptStore.getById(req.params.attemptId);
+  if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
+  if (!callbackAuthorized(req, attempt)) {
+    return res.status(401).json({ ok: false, error: 'invalid attempt callback credential' });
+  }
   const leaseOwner = req.body?.lease_owner;
   const leaseSeconds = Number(req.body?.lease_seconds ?? 180);
   const providerSessionId = req.body?.provider_session_id ?? null;
@@ -136,6 +151,13 @@ router.post('/harness/attempts/:attemptId/callback', async (req, res) => {
   const { attemptId } = req.params;
   const attempt = await attemptStore.getById(attemptId);
   if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
+  if (!callbackAuthorized(req, attempt)) {
+    return res.status(401).json({ ok: false, error: 'invalid attempt callback credential' });
+  }
+  const leaseOwner = req.get('x-harness-lease-owner') ?? '';
+  if (!leaseOwner || leaseOwner !== attempt.lease_owner) {
+    return res.status(409).json({ ok: false, error: 'attempt lease owner mismatch' });
+  }
 
   let result;
   try {
@@ -173,9 +195,13 @@ router.post('/harness/attempts/:attemptId/callback', async (req, res) => {
     let outcome;
     if (result.status === 'failed' || result.status === 'cancelled') {
       const error = resultError(result);
-      outcome = await attemptStore.fail(attemptId, { ...error, status: result.status });
+      outcome = await attemptStore.fail(
+        attemptId,
+        { ...error, status: result.status },
+        { leaseOwner },
+      );
     } else {
-      outcome = await attemptStore.complete(attemptId, result);
+      outcome = await attemptStore.complete(attemptId, result, { leaseOwner });
       await appendAttemptVerdict(attempt, result);
 
       if (attempt.role === 'generator') {

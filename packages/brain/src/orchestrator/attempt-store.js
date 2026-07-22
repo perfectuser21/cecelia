@@ -32,8 +32,8 @@ export function createAttemptStore(pool) {
         `WITH inserted AS (
            INSERT INTO harness_attempts (
              id, run_id, hop, phase, role, provider, account_id, machine_id,
-             skill_name, skill_version, skill_digest, task_bundle
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             skill_name, skill_version, skill_digest, task_bundle, callback_secret_hash
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
            ON CONFLICT (run_id, hop) DO NOTHING
            RETURNING *
          )
@@ -54,6 +54,7 @@ export function createAttemptStore(pool) {
           skill?.version ?? null,
           skill?.digest ?? null,
           input.bundle,
+          input.callbackSecretHash,
         ],
       );
       return firstRow(result);
@@ -122,7 +123,7 @@ export function createAttemptStore(pool) {
       return firstRow(result);
     },
 
-    async complete(id, resultPayload) {
+    async complete(id, resultPayload, { leaseOwner = null } = {}) {
       if (!SUCCESS_TERMINAL_STATUSES.has(resultPayload?.status)) {
         throw new Error(`invalid successful terminal status: ${resultPayload?.status}`);
       }
@@ -132,24 +133,25 @@ export function createAttemptStore(pool) {
                 result = $3,
                 provider_session_id = COALESCE($4, provider_session_id),
                 completed_at = NOW(),
-                lease_owner = NULL,
                 lease_expires_at = NULL,
                 updated_at = NOW()
           WHERE id = $1
             AND status NOT IN (${TERMINAL_SQL})
+            AND ($5::text IS NULL OR lease_owner = $5)
           RETURNING *`,
         [
           id,
           resultPayload.status,
           resultPayload,
           resultPayload.provider_metadata?.session_id ?? null,
+          leaseOwner,
         ],
       );
       const attempt = firstRow(result);
       return { attempt, deduped: attempt === null };
     },
 
-    async fail(id, { code, message, status = 'failed' }) {
+    async fail(id, { code, message, status = 'failed' }, { leaseOwner = null } = {}) {
       if (!['failed', 'cancelled'].includes(status)) {
         throw new Error(`invalid failure status: ${status}`);
       }
@@ -159,13 +161,13 @@ export function createAttemptStore(pool) {
                 error_code = $3,
                 error_message = $4,
                 completed_at = NOW(),
-                lease_owner = NULL,
                 lease_expires_at = NULL,
                 updated_at = NOW()
           WHERE id = $1
             AND status NOT IN (${TERMINAL_SQL})
+            AND ($5::text IS NULL OR lease_owner = $5)
           RETURNING *`,
-        [id, status, code ?? null, message ?? null],
+        [id, status, code ?? null, message ?? null, leaseOwner],
       );
       const attempt = firstRow(result);
       return { attempt, deduped: attempt === null };
