@@ -281,10 +281,6 @@ export function createDetachedLauncher({
         providerEnv.CODEX_HOME = '/home/cecelia/.codex';
       }
       if (spec.provider === 'claude') {
-        if (providerEnv.CLAUDE_CONFIG_DIR) {
-          extraMounts.push(`${providerEnv.CLAUDE_CONFIG_DIR}:/host-claude-config:ro`);
-          providerEnv.CLAUDE_CONFIG_DIR = '/home/cecelia/.claude';
-        }
         const attemptSessionRoot = path.join(sessionRoot, attempt.id);
         const projectsDir = path.join(attemptSessionRoot, 'projects');
         const sessionsDir = path.join(attemptSessionRoot, 'sessions');

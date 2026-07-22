@@ -6,6 +6,8 @@ import {
   resolveAction,
 } from '../dispatcher.js';
 
+const { buildDockerArgs } = (await import('../../docker-executor.js')).__test__;
+
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const runId = '11111111-1111-4111-8111-111111111111';
 const attemptId = '22222222-2222-4222-8222-222222222222';
@@ -459,7 +461,7 @@ describe('createDetachedLauncher', () => {
     ]);
   });
 
-  it('launcher 把 Claude/Grok 指定账户 home 挂到各自容器凭据目录', async () => {
+  it('launcher 让 docker builder 挂 Claude home，并直接挂 Grok home', async () => {
     const spawnDetached = vi.fn(async () => ({ containerId: 'cx' }));
     const launcher = createDetachedLauncher({
       spawnDetached,
@@ -485,12 +487,53 @@ describe('createDetachedLauncher', () => {
     });
 
     expect(spawnDetached.mock.calls[0][0]).toMatchObject({
-      extraMounts: expect.arrayContaining(['/accounts/claude/account2:/host-claude-config:ro']),
-      env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/home/cecelia/.claude' }),
+      env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/accounts/claude/account2' }),
     });
+    expect(spawnDetached.mock.calls[0][0].extraMounts).not.toContain(
+      '/accounts/claude/account2:/host-claude-config:ro',
+    );
     expect(spawnDetached.mock.calls[1][0]).toMatchObject({
       extraMounts: ['/accounts/grok/grok:/home/cecelia/.grok:rw'],
       env: expect.objectContaining({ GROK_HOME: '/home/cecelia/.grok' }),
     });
+  });
+
+  it('Claude launcher 与 buildDockerArgs 组合后只挂一次配置目录', async () => {
+    let built;
+    const spawnDetached = vi.fn(async (opts) => {
+      built = buildDockerArgs(opts, {
+        homedir: '/home/fake',
+        existsSyncFn: () => false,
+      });
+      return { containerId: 'cx' };
+    });
+    const launcher = createDetachedLauncher({
+      spawnDetached,
+      attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
+      ensureDir: vi.fn(),
+      sessionRoot: '/tmp/harness-sessions',
+    });
+
+    await launcher.launch({
+      attempt: { id: attemptId, run_id: runId, hop: 2, role: 'planner' },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: false },
+      },
+      spec: {
+        provider: 'claude',
+        args: [],
+        stdin: '{}',
+        env: { CLAUDE_CONFIG_DIR: '/accounts/claude/account1' },
+      },
+      task: observed.task,
+    });
+
+    const mounts = built.args.flatMap((arg, index, args) => (
+      args[index - 1] === '-v' ? [arg] : []
+    ));
+    expect(mounts.filter((mount) => mount.includes(':/host-claude-config:'))).toEqual([
+      '/accounts/claude/account1:/host-claude-config:ro',
+    ]);
   });
 });
