@@ -14,6 +14,7 @@
  *   listHostPids({runId}) → number[] —— 可选注入；主机执行（mac_web 类）pid 检查，T3 接线，缺省 []
  */
 import { ACTION, LOG_ACTION } from './constants.js';
+import { discoverPrFromGithub } from './github-pr-discovery.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -167,11 +168,23 @@ export async function collectGroundTruth(deps, opts) {
 
   // ---- PR 状态（gh 封装）----
   let pr = null;
-  if (run.pr_url) {
-    const view = asJson(execTolerant(execCmd, `gh pr view ${run.pr_url} --json state,mergeStateStatus,headRefOid`)) ?? {};
-    const checks = asJson(execTolerant(execCmd, `gh pr checks ${run.pr_url} --json state`)) ?? [];
+  let prUrl = run.pr_url;
+  if (!prUrl) {
+    try {
+      prUrl = discoverPrFromGithub(
+        { ...task, payload: asJson(task.payload) ?? {} },
+        String(taskId).slice(0, 8),
+        execCmd,
+      )?.url ?? null;
+    } catch {
+      prUrl = null;
+    }
+  }
+  if (prUrl) {
+    const view = asJson(execTolerant(execCmd, `gh pr view ${prUrl} --json state,mergeStateStatus,headRefOid`)) ?? {};
+    const checks = asJson(execTolerant(execCmd, `gh pr checks ${prUrl} --json state`)) ?? [];
     pr = {
-      url: run.pr_url,
+      url: prUrl,
       state: view.state ?? null,
       mergeStateStatus: view.mergeStateStatus ?? null,
       merged: view.state === 'MERGED',
