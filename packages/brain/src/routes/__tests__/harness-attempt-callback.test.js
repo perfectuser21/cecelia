@@ -262,4 +262,36 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     });
     expect(mocks.store.heartbeat).not.toHaveBeenCalled();
   });
+
+  it('同一 attempt 的终态 callback 连续认证失败 10 次后返回 429，且不再访问 DB', async () => {
+    const limitedAttemptId = '33333333-3333-4333-8333-333333333333';
+    const responses = [];
+
+    for (let requestNumber = 0; requestNumber < 11; requestNumber += 1) {
+      responses.push(await request(app)
+        .post(`/api/brain/harness/attempts/${limitedAttemptId}/callback`)
+        .set('Authorization', 'Bearer wrong-secret')
+        .set('X-Harness-Lease-Owner', leaseOwner)
+        .send({}));
+    }
+
+    expect(responses.slice(0, 10).every(({ status }) => status === 401)).toBe(true);
+    expect(responses[10].status).toBe(429);
+    expect(mocks.store.getById).toHaveBeenCalledTimes(10);
+  });
+
+  it('同一 attempt 的 heartbeat 连续认证失败 30 次后返回 429，且不再访问 DB', async () => {
+    const limitedAttemptId = '44444444-4444-4444-8444-444444444444';
+    const responses = [];
+
+    for (let requestNumber = 0; requestNumber < 31; requestNumber += 1) {
+      responses.push(await request(app)
+        .post(`/api/brain/harness/attempts/${limitedAttemptId}/heartbeat`)
+        .send({ lease_owner: leaseOwner, lease_seconds: 180 }));
+    }
+
+    expect(responses.slice(0, 30).every(({ status }) => status === 401)).toBe(true);
+    expect(responses[30].status).toBe(429);
+    expect(mocks.store.getById).toHaveBeenCalledTimes(30);
+  });
 });

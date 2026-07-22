@@ -26,6 +26,7 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { Command } from '@langchain/langgraph';
 import { lookupHarnessThread } from '../lib/harness-thread-lookup.js';
 import { sendBark } from '../notifier.js';
@@ -44,6 +45,28 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
   'blocked',
 ]);
 const FAILURE_TERMINAL_STATUSES = new Set(['failed', 'cancelled']);
+
+function createAttemptCallbackRateLimit({ limit, identifier }) {
+  return rateLimit({
+    windowMs: 60_000,
+    limit,
+    keyGenerator: (req) => req.params.attemptId,
+    skipSuccessfulRequests: true,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    identifier,
+    message: { ok: false, error: 'attempt callback rate limit exceeded' },
+  });
+}
+
+const heartbeatRateLimit = createAttemptCallbackRateLimit({
+  limit: 30,
+  identifier: 'harness-attempt-heartbeat',
+});
+const callbackRateLimit = createAttemptCallbackRateLimit({
+  limit: 10,
+  identifier: 'harness-attempt-callback',
+});
 
 function bearerToken(req) {
   const authorization = req.get('authorization') ?? '';
@@ -125,7 +148,7 @@ function resultError(result) {
   };
 }
 
-router.post('/harness/attempts/:attemptId/heartbeat', async (req, res) => {
+router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async (req, res) => {
   const attempt = await attemptStore.getById(req.params.attemptId);
   if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
   if (!callbackAuthorized(req, attempt)) {
@@ -154,7 +177,7 @@ router.post('/harness/attempts/:attemptId/heartbeat', async (req, res) => {
   }
 });
 
-router.post('/harness/attempts/:attemptId/callback', async (req, res) => {
+router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (req, res) => {
   const { attemptId } = req.params;
   const attempt = await attemptStore.getById(attemptId);
   if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
