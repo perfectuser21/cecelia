@@ -144,6 +144,7 @@ grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt
 **验证命令**:
 ```bash
 TASK_ID="${TASK_ID:-7630f4fb-0acf-4f7a-ad42-e2dea3485089}"
+export TASK_ID
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID")
 echo "$RESP" | jq -e '.id == env.TASK_ID'

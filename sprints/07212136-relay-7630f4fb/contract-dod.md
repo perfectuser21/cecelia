@@ -26,7 +26,7 @@ target_environment: local_api
   期望: OK
 
 - [ ] [BEHAVIOR] 当前 task 的 Brain API payload 关键字段齐全且不含敏感字段明文
-  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-7630f4fb-0acf-4f7a-ad42-e2dea3485089}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"); echo "$RESP" | jq -e ".id == env.TASK_ID" >/dev/null; echo "$RESP" | jq -e ".payload.mode == \"headed\"" >/dev/null; echo "$RESP" | jq -e ".payload.executor == \"claude\"" >/dev/null; echo "$RESP" | jq -e ".payload.orchestrator == \"skill-relay\"" >/dev/null; echo "$RESP" | jq -e ".payload.journey_id | type == \"string\" and length > 0" >/dev/null; echo "$RESP" | jq -e "(.payload | has(\"token\") | not) and (.payload | has(\"github_token\") | not) and (.payload | has(\"anthropic_token\") | not) and (.payload | has(\"thin_prd\") | not)" >/dev/null; echo OK'
+  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-7630f4fb-0acf-4f7a-ad42-e2dea3485089}"; export TASK_ID; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"); echo "$RESP" | jq -e ".id == env.TASK_ID" >/dev/null; echo "$RESP" | jq -e ".payload.mode == \"headed\"" >/dev/null; echo "$RESP" | jq -e ".payload.executor == \"claude\"" >/dev/null; echo "$RESP" | jq -e ".payload.orchestrator == \"skill-relay\"" >/dev/null; echo "$RESP" | jq -e ".payload.journey_id | type == \"string\" and length > 0" >/dev/null; echo "$RESP" | jq -e "(.payload | has(\"token\") | not) and (.payload | has(\"github_token\") | not) and (.payload | has(\"anthropic_token\") | not) and (.payload | has(\"thin_prd\") | not)" >/dev/null; echo OK'
   期望: OK
 
 - [ ] [BEHAVIOR] DB initiative_runs 定点核对 orchestrator_host 精确匹配 + phase 合法非 failed/unknown
