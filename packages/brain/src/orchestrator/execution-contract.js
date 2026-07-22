@@ -54,10 +54,10 @@ const taskBundleSchema = z.object({
   expected_output: z.string().min(1),
 });
 
-const decisionSchema = z.object({
-  outcome: z.string().min(1),
-  reason: z.string().min(1),
-}).passthrough();
+// Keep transport parsing permissive because legacy role Skills emit useful
+// metadata alongside either `outcome` or `verdict`. Adversarial roles are
+// normalized and validated in parseHarnessResult below.
+const decisionSchema = z.object({}).passthrough();
 
 const harnessResultSchema = z.object({
   contract_version: z.literal(RESULT_CONTRACT_VERSION),
@@ -85,8 +85,24 @@ export function parseTaskBundle(value) {
 export function parseHarnessResult(value, role) {
   const parsed = harnessResultSchema.parse(value);
   const decisionRequired = ['completed', 'completed_with_concerns'].includes(parsed.status);
-  if (decisionRequired && ['reviewer', 'evaluator', 'judge'].includes(role) && !parsed.decision) {
+  const adversarialRole = ['reviewer', 'evaluator', 'judge'].includes(role);
+  if (decisionRequired && adversarialRole && !parsed.decision) {
     throw new Error(`decision is required for adversarial role ${role}`);
+  }
+  if (decisionRequired && adversarialRole && parsed.decision) {
+    const outcome = parsed.decision.outcome ?? parsed.decision.verdict;
+    if (typeof outcome !== 'string' || !outcome.trim()) {
+      throw new Error(`decision outcome is required for adversarial role ${role}`);
+    }
+    const reason = parsed.decision.reason ?? parsed.decision.feedback ?? parsed.summary;
+    return {
+      ...parsed,
+      decision: {
+        ...parsed.decision,
+        outcome: outcome.trim(),
+        reason: String(reason ?? '').trim(),
+      },
+    };
   }
   return parsed;
 }

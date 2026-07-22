@@ -17,6 +17,9 @@ grep -q 'HARNESS_RESUME_SESSION_ID' <<<"$SECTION"
 grep -q -- '--json-schema' <<<"$SECTION"
 grep -q 'HARNESS_MODEL' <<<"$SECTION"
 grep -q 'NORMALIZED_RESULT_FILE' <<<"$SECTION"
+# The runner's provider-facing schema must emit decisions accepted by the Brain
+# callback parser. A permissive object here caused real planner callbacks to 400.
+grep -q '"required":\["outcome","reason"\]' <<<"$SECTION"
 grep -q '/heartbeat' <<<"$SECTION"
 grep -q 'HARNESS_LEASE_OWNER' <<<"$SECTION"
 grep -q 'HARNESS_CALLBACK_TOKEN' <<<"$SECTION"
