@@ -399,3 +399,16 @@ bash /workspace/scripts/__tests__/install-launchers.test.sh
 | INV-10 | grok-launch.sh 源码不含 patch/sed.*grok/awk.*grok 等修改 Grok 内部逻辑的操作 | DoD BEHAVIOR grep -v 静态断言 |
 | INV-11 | codex-launch.sh 用凭据快照目录，非真实 CODEX_HOME | `codex-launch.test.sh` |
 | INV-12 | codex-launch.sh 和 grok-launch.sh 不含 --no-tty 或强制去 TTY 的标志 | DoD BEHAVIOR grep 静态断言 |
+
+---
+
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| 四路 executor 路由（GP1-GP3 + loud-fail）| `../../tests/regression/codex-grok-launcher-supervisor/harness-skill-relay-routing.test.js` | executor=grok / executor=claude / executor=unknown / isGrokHeaded | 修复前 Grok 路由落 Codex 分支 → test() 断言 FAIL |
+| Codex headed launcher | `../../tests/regression/codex-grok-launcher-supervisor/codex-launch.test.sh` | Codex launcher 存在 + 重试/恢复/session逻辑 | codex-launch.sh 缺失或关键逻辑未实现 → FAIL |
+| Grok headed launcher | `../../tests/regression/codex-grok-launcher-supervisor/grok-launch.test.sh` | Grok launcher 存在 + SIGABRT恢复/session/重试上限 | grok-launch.sh 缺失或关键逻辑未实现 → FAIL |
+| entrypoint 三路路由（GP4-GP6）| `../../tests/regression/codex-grok-launcher-supervisor/codex-grok-entrypoint-routing.test.sh` | headless claude/codex/grok 三分支 + 未知 loud-fail | 修复前 Grok headless 落 Claude → FAIL |
+| launcher routing 全路径验证 | `../../tests/regression/codex-grok-launcher-supervisor/codex-grok-launcher-routing.test.sh` | 全路 launcher 分支覆盖 | 任一分支缺失 → FAIL |
+| install-launchers.sh 幂等 | `../../tests/regression/codex-grok-launcher-supervisor/install-launchers.test.sh` | 幂等 alias 追加不覆盖 .zshrc | 非幂等 / 覆盖 .zshrc → FAIL |
