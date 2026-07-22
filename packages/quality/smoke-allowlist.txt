@@ -63,6 +63,7 @@ postdeploy-verifier-smoke.sh
 preview-env-smoke.sh
 protocol-hygiene-smoke.sh
 provider-neutral-harness-smoke.sh
+harness-contract-sha-freeze-smoke.sh
 relay-runs-filter-smoke.sh
 relay-runs-since-smoke.sh
 relay-runs-smoke.sh

@@ -198,7 +198,7 @@ run_provider_contract() {
     return 1
   fi
 
-  result_schema_json='{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array"},"checks":{"type":"array"},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string"},"reason":{"type":"string"}},"required":["outcome","reason"],"additionalProperties":true},{"type":"null"}]},"error":{}},"required":["status","summary","artifacts","checks","decision","error"],"additionalProperties":true}'
+  result_schema_json='{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"type":"string"}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string"},"reason":{"type":"string"}},"required":["outcome","reason"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]}},"required":["status","summary","artifacts","checks","decision","error"],"additionalProperties":false}'
   printf '%s' "$result_schema_json" > "$result_schema_file"
 
   local model_args=()
@@ -281,14 +281,10 @@ run_provider_contract() {
   elif [[ "$provider" == "grok" ]]; then
     local grok_args=(
       --cwd "${WORKTREE_PATH:-$PWD}"
+      --always-approve
       --output-format json
       --json-schema "$result_schema_json"
     )
-    if [[ "${HARNESS_READ_ONLY:-false}" == "true" ]]; then
-      grok_args+=(--permission-mode plan)
-    else
-      grok_args+=(--always-approve)
-    fi
     if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
       grok_args+=(--resume "$HARNESS_RESUME_SESSION_ID")
     else
@@ -301,14 +297,15 @@ run_provider_contract() {
     provider_exit=${PIPESTATUS[0]}
     if [[ $provider_exit -eq 0 ]]; then
       jq -c '
-        if .structured_output then .structured_output
+        if .structuredOutput then .structuredOutput
+        elif .structured_output then .structured_output
         elif (.result | type) == "object" then .result
         elif (.result | type) == "string" then (.result | fromjson)
         else .
         end
       ' "$STDOUT_FILE" > "$result_file" 2>/dev/null || provider_exit=1
     fi
-    provider_session_id=$(jq -r '.session_id // .session.id // empty' "$STDOUT_FILE" 2>/dev/null || true)
+    provider_session_id=$(jq -r '.sessionId // .session_id // .session.id // empty' "$STDOUT_FILE" 2>/dev/null || true)
   else
     provider_exit=1
     printf '{"error":"unsupported provider: %s"}\n' "$provider" > "$STDOUT_FILE"

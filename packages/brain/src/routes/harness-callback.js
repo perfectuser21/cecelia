@@ -88,7 +88,7 @@ function normalizeVerdict(role, outcome) {
   return value;
 }
 
-async function appendAttemptVerdict(attempt, result) {
+export async function appendAttemptVerdict(attempt, result, db = pool) {
   if (!result.decision || !['reviewer', 'evaluator'].includes(attempt.role)) return;
   if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
 
@@ -99,6 +99,7 @@ async function appendAttemptVerdict(attempt, result) {
         attempt_id: attempt.id,
         verdict: normalizeVerdict(attempt.role, result.decision.outcome),
         rn: inputs.contract_round ?? null,
+        contract_sha: inputs.contract_sha ?? null,
         feedback: result.decision.reason,
       }
     : {
@@ -111,21 +112,21 @@ async function appendAttemptVerdict(attempt, result) {
 
   // One statement + transaction-scoped advisory lock makes callback retries/concurrency
   // idempotent without adding a second mutable verdict table.
-  await pool.query(
+  await db.query(
     `WITH lock AS (
        SELECT pg_advisory_xact_lock(hashtext($1::text))
      ), next_hop AS (
        SELECT COALESCE(MAX(hop), 0) + 1 AS hop
          FROM orchestrator_decision_log
-        WHERE run_id=$1
+        WHERE run_id=$1::uuid
      )
      INSERT INTO orchestrator_decision_log
        (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
-     SELECT $1, next_hop.hop, $2::jsonb, $3, $4, '${action}', $5::jsonb
+     SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, $4, '${action}', $5::jsonb
        FROM lock, next_hop
       WHERE NOT EXISTS (
         SELECT 1 FROM orchestrator_decision_log
-         WHERE run_id=$1 AND detail->>'attempt_id'=$6
+         WHERE run_id=$1::uuid AND detail->>'attempt_id'=$6::text
       )`,
     [
       attempt.run_id,

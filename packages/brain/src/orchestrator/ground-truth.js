@@ -6,7 +6,6 @@
  * deps 全注入（不测真外部）：
  *   pool       —— pg pool（../db.js 复用，run.js 组装）
  *   execCmd(cmd) → stdout string —— gh/git/docker 封装；非零退出应 throw 且 err.stdout 带输出
- *                  （gh pr checks 对 pending/fail 会非零退出，本文件用 err.stdout 兜底解析）
  *   fileExists(path) → boolean
  *   readFile(path) → string
  *   readAuthCircuit() → rows —— 可选注入；缺省查 account_usage_cache
@@ -27,7 +26,21 @@ function mapCiStatus(checkRows) {
   return 'pending'; // PENDING/QUEUED/IN_PROGRESS/EXPECTED 等
 }
 
-/** execCmd 容忍非零退出（gh pr checks 对 pending=8 / fail=1），用 err.stdout 兜底 */
+/**
+ * gh pr view statusCheckRollup 同时包含 CheckRun 与 StatusContext：
+ * - CheckRun: status=COMPLETED/IN_PROGRESS, conclusion=SUCCESS/FAILURE/...
+ * - StatusContext: state=SUCCESS/FAILURE/PENDING
+ * 统一为 mapCiStatus 消费的 state，避免依赖 gh 2.46+ 才支持的
+ * `gh pr checks --json`。
+ */
+function normalizeStatusCheckRollup(checkRows) {
+  if (!Array.isArray(checkRows)) return [];
+  return checkRows.map((check) => ({
+    state: String(check?.state || check?.conclusion || check?.status || '').toUpperCase(),
+  }));
+}
+
+/** execCmd 容忍可解析的非零退出，用 err.stdout 兜底 */
 function execTolerant(execCmd, cmd) {
   try {
     return execCmd(cmd);
@@ -181,8 +194,11 @@ export async function collectGroundTruth(deps, opts) {
     }
   }
   if (prUrl) {
-    const view = asJson(execTolerant(execCmd, `gh pr view ${prUrl} --json state,mergeStateStatus,headRefOid`)) ?? {};
-    const checks = asJson(execTolerant(execCmd, `gh pr checks ${prUrl} --json state`)) ?? [];
+    const view = asJson(execTolerant(
+      execCmd,
+      `gh pr view ${prUrl} --json state,mergeStateStatus,headRefOid,statusCheckRollup`,
+    )) ?? {};
+    const checks = normalizeStatusCheckRollup(view.statusCheckRollup);
     pr = {
       url: prUrl,
       state: view.state ?? null,
@@ -205,15 +221,17 @@ export async function collectGroundTruth(deps, opts) {
   let proposeBranchRn = 0;
   let proposeBranchAttempt = -1;
   let proposeBranch = null;
-  const rnPattern = /(cp-harness-propose-r(\d+)-([a-zA-Z0-9]{8})-a(\d+))/g;
+  let proposeBranchSha = null;
+  const rnPattern = /^(\S+)\s+refs\/heads\/(cp-harness-propose-r(\d+)-([a-zA-Z0-9]{8})-a(\d+))$/gm;
   for (const m of String(lsRemote).matchAll(rnPattern)) {
-    if (m[3] !== shortTask) continue;
-    const round = Number(m[2]);
-    const attempt = Number(m[4]);
+    if (m[4] !== shortTask) continue;
+    const round = Number(m[3]);
+    const attempt = Number(m[5]);
     if (round > proposeBranchRn || (round === proposeBranchRn && attempt > proposeBranchAttempt)) {
       proposeBranchRn = round;
       proposeBranchAttempt = attempt;
-      proposeBranch = m[1];
+      proposeBranch = m[2];
+      proposeBranchSha = m[1];
     }
   }
 
@@ -240,8 +258,17 @@ export async function collectGroundTruth(deps, opts) {
   // GAN 本轮 verdict：只认 detail.rn === 当前分支 rN 的 reviewer verdict（旧轮不算）
   const reviewerRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_REVIEWER);
   const reviewerDetail = reviewerRow ? asJson(reviewerRow.detail) : null;
+  const reviewerShaMatches = reviewerDetail?.contract_sha == null
+    || reviewerDetail.contract_sha === proposeBranchSha;
   const ganLatestRoundVerdict =
-    reviewerDetail && reviewerDetail.rn === proposeBranchRn ? reviewerDetail.verdict ?? null : null;
+    reviewerDetail && reviewerDetail.rn === proposeBranchRn && reviewerShaMatches
+      ? reviewerDetail.verdict ?? null
+      : null;
+  // Legacy verdicts created before SHA anchoring are accepted only for the in-flight
+  // rollout and are bound to the current tip at materialization time.
+  const ganLatestRoundContractSha = ganLatestRoundVerdict
+    ? reviewerDetail.contract_sha ?? proposeBranchSha
+    : null;
 
   // review gate：required 来自 tasks.payload（harness-initiative 透传 review_required）；
   // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
@@ -263,7 +290,9 @@ export async function collectGroundTruth(deps, opts) {
     lastAgentExit,
     proposeBranchRn,
     proposeBranch,
+    proposeBranchSha,
     ganLatestRoundVerdict,
+    ganLatestRoundContractSha,
     generatorSpawned,
     evaluateVerdict,
     evaluateResult,
