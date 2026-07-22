@@ -205,7 +205,7 @@ echo "✅ Golden Path 验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint | `tests/relay-smoke.test.ts` | 标准输入返回 smoke:097e589d:20260722；同输入两次调用输出一致；日期格式化按 UTC 取 YYYYMMDD 并零填充；taskId 不足 8 位时使用完整 taskId；空 taskId 抛 TypeError；非字符串 taskId 抛 TypeError；Invalid Date 抛 TypeError；非 Date 参数抛 TypeError；同进程多轮调用状态不重置输出确定；await 异步包装调用返回相同结果 | → 1 failed suite（模块不存在，import 失败，已实跑确认） |
+| 整个 Sprint | `../../tests/regression/relay-097e589d/relay-smoke.test.ts` | 标准输入返回 smoke:097e589d:20260722；同输入两次调用输出一致；日期格式化按 UTC 取 YYYYMMDD 并零填充；taskId 不足 8 位时使用完整 taskId；空 taskId 抛 TypeError；非字符串 taskId 抛 TypeError；Invalid Date 抛 TypeError；非 Date 参数抛 TypeError；同进程多轮调用状态不重置输出确定；await 异步包装调用返回相同结果 | → 1 failed suite（模块不存在，import 失败，已实跑确认） |
 
 ---
 

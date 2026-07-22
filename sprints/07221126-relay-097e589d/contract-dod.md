@@ -20,8 +20,8 @@ journey_type: autonomous
 - [x] [ARTIFACT] 零生产接线：`packages/brain/src` 下除 `utils/relay-smoke.js` / `utils/relay-smoke.test.js` 自身外无任何文件引用 relay-smoke（source-code inspection，铁律[接线验证]）
   Test: bash -c 'W=$(grep -rl "relay-smoke" packages/brain/src --include="*.js" | grep -v "utils/relay-smoke" || true); [ -z "$W" ]'
 
-- [x] [ARTIFACT] 合同测试文件 `sprints/07221126-relay-097e589d/tests/relay-smoke.test.ts` 原样保留（CONTRACT IS LAW，commit 1 后不可修改）
-  Test: node -e "const c=require('fs').readFileSync('sprints/07221126-relay-097e589d/tests/relay-smoke.test.ts','utf8');if(!c.includes('同进程多轮调用状态不重置输出确定'))process.exit(1)"
+- [x] [ARTIFACT] 合同测试文件 `tests/regression/relay-097e589d/relay-smoke.test.ts` 原样保留（CONTRACT IS LAW，commit 1 后不可修改）
+  Test: node -e "const c=require('fs').readFileSync('tests/regression/relay-097e589d/relay-smoke.test.ts','utf8');if(!c.includes('同进程多轮调用状态不重置输出确定'))process.exit(1)"
 
 - [x] [ARTIFACT] smoke 脚本 `packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh` 存在、含真 `node` 命令且实跑通过（铁律[smoke登记]；满足 lint-feature-has-smoke 内容校验：≥5 实代码行 + ≥1 条 node 真命令，非 echo 空架子）
   Test: bash packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh
