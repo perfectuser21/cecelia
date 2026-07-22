@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.29.0
+version: 1.30.0
 created: 2026-05-06
-updated: 2026-07-17
+updated: 2026-07-23
 changelog:
+  - 1.30.0: evaluator 角色隔离——Step B-1 只把合同 E2E 提取到 /tmp 并执行，禁止 commit/push 或改写 PR；永久回归脚本由 Generator 在 evaluator 前入库，缺失或 CI 不接受时由 verdict/fix loop 反馈 Generator。配套 kernel launcher 用 remote.origin.pushurl 环境 fence 阻断 evaluator 远端 Git 写入，保留可写 worktree 供真实 package manager/E2E 使用
   - 1.29.0: MJ5 S3 联动清单（thin档，additive）——Step B-1.4 改用 payload.feature_id + GET /features/:id/blast-radius；评估可跑断言（tests/|manual:）并直接 PATCH cell_status=green；cascade_assertions 数组写入 verdict JSON 供 Brain execution.js Step 3.6 幂等备份；feature_id 缺失时跳过不 block（thin档不强制全跑）
   - 1.28.0: target_environment 加 android_realmachine 路由分支（洞①）— TARGET_ENV 表 + case 并入 windows_cloud|windows_wechat 桶 + ANDROID_REALMACHINE_WORKFLOW 变量
   - 1.27.0: gear 档位：「Relay 入口段」新增 SEGMENT_EVAL=<task_id> 段级轻验收（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策5）——跳过 final-E2E，只跑该段 [BEHAVIOR]/tests 断言 + 复跑此前所有已绿段测试（回归棘轮：已绿变红 → 本段 FAIL 且失败摘要注明回归项）；verdict 输出格式不变，额外带 segment_eval 字段；default（未出现 SEGMENT_EVAL）保持全量模式原文行为不变
@@ -129,7 +130,7 @@ WORKSPACE="${WORKSPACE_PATH:-/workspace}"
 
 ### relay 下不许跳过的事（红线接回）
 
-**主体流程 Step 0a → B-3 在 relay 下照跑，一步不少**：切 PR 分支、E2E 段提取 + 固化（B-1 / Slice3 cp 进 sprint 目录）、位置词验证（B-1.5）、环境预检（B-1.6）、Golden Path 覆盖对照表（B-1.8）、领域死规则、真跑 E2E 脚本（B-2）、结果文件写入。**「反作弊红线」四条在 relay 路径同等生效**（见下节加粗段）。relay 不是简化模式——它只改变参数来源，不改变验收标准。
+**主体流程 Step 0a → B-3 在 relay 下照跑，一步不少**：切 PR 分支、E2E 段提取到 `/tmp`（B-1）、位置词验证（B-1.5）、环境预检（B-1.6）、Golden Path 覆盖对照表（B-1.8）、领域死规则、真跑 E2E 脚本（B-2）、结果文件写入。**「反作弊红线」四条在 relay 路径同等生效**（见下节加粗段）。relay 不是简化模式——它只改变参数来源，不改变验收标准。
 
 ### SEGMENT_EVAL 段级轻验收（segmented 档位 — harness gear 一体化 60a80ddc 决策5）
 
@@ -155,6 +156,7 @@ WORKSPACE="${WORKSPACE_PATH:-/workspace}"
 - **具体反馈**：FAIL 时的 `feedback` 必须指明具体失败原因 + 具体修复方向，严禁笼统输出"建议检查代码"
 - **输出格式**：最后一条消息必须是 **纯 JSON 对象**，不加 markdown 代码块
 - **角色边界**：FAIL 报告由 Brain 编排层接收，Brain 负责决定是否重新 dispatch Generator（最多 3 次）；Evaluator 本身无需计数轮次
+- **Evaluator 禁止 commit/push**：可写 worktree 仅用于安装依赖、启动服务、生成临时证据；禁止修改、提交或推送被评 PR。永久回归资产由 Generator 入库，Evaluator 只验证并报告缺口
 
 ### 反作弊红线（v1.1 强制 — 不要让 evaluator 过度通过）
 
@@ -325,22 +327,8 @@ if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]]; 
 BREOF
     exit 0
   fi
-  # 写入 sprint_dir 并 push 到 PR 分支，GHA workflow checkout 后直接运行
-  cp /tmp/e2e-verify.ps1 "${SPRINT_DIR}/e2e-verify.ps1"
-  # EVA v2 E4：post-merge 补验模式（Step 0a checkout merge commit = detached HEAD）下跳过 commit/push——
-  # 固化脚本已随原 PR 入库，无分支可推也无需重推；写入 E2E_FIXATION_NOTE 供 verdict notes 使用。
-  if git symbolic-ref -q HEAD >/dev/null 2>&1; then
-    git add "${SPRINT_DIR}/e2e-verify.ps1" 2>/dev/null || true
-    git commit -m "chore(harness): add e2e-verify.ps1 for windows_cloud runner" --no-verify 2>/dev/null || true
-    # EVA v2 E4：push 失败不再静默吞掉——输出 WARN 并记入 verdict notes（固化未入库 = merge 后无回归守护）
-    if ! git push origin HEAD 2>/tmp/e2e-push-err; then
-      echo "WARN: e2e-verify.ps1 固化 push 失败：$(head -c 200 /tmp/e2e-push-err | tr '\n' ' ')" >&2
-      E2E_FIXATION_NOTE="e2e-verify.ps1 固化 push 失败，脚本未随 PR 入库（详见 evaluator 日志）"
-    fi
-  else
-    echo "post-merge 补验模式（detached HEAD），跳过 commit/push" >&2
-    E2E_FIXATION_NOTE="post-merge 补验，固化脚本已随原 PR 入库无需重推"
-  fi
+  # evaluator 只执行 /tmp 副本，不改写被评 PR。Windows workflow 需要的永久
+  # e2e-verify.ps1 必须由 Generator 在进入 evaluator gate 前入库。
 else
   # 提取 "## E2E 验收" 区块内全部 bash 代码块（拼接，直到下一个 ## 标题；修 a638f840 只取第一块 bug）
   awk '/^##+[[:space:]]*E2E[[:space:]]*验收/{found=1; next} found && /^## /{exit} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
@@ -352,7 +340,7 @@ BREOF
     exit 0
   fi
   chmod +x /tmp/e2e-verify.sh
-  # 固化前语法门（issue a638f840：入库的 e2e-verify.sh 自带 bash bug（全角字符紧贴 $VAR 插值），
+  # 执行前语法门（issue a638f840：E2E 脚本自带 bash bug（全角字符紧贴 $VAR 插值），
   # 跑到一半 unbound variable 崩溃，7 项验收只跑完 1 项。bash -n 抓语法层问题，运行时问题由真跑兜住）
   if ! bash -n /tmp/e2e-verify.sh 2>/tmp/e2e-syntax-err; then
     ERR_EXCERPT=$(head -c 200 /tmp/e2e-syntax-err | tr '"' "'" | tr '\n' ' ')
@@ -361,25 +349,10 @@ BREOF
 BREOF
     exit 0
   fi
-  # Slice3 固化：把 bash golden-path E2E 脚本 cp 进 sprint 目录随 PR 一起 merge（镜像上方 windows 分支），
-  # 否则脚本只活在 /tmp 跑一次就蒸发、merge 后无任何东西守护端到端行为（地基洞主洞）。
-  cp /tmp/e2e-verify.sh "${SPRINT_DIR}/e2e-verify.sh"
-  # EVA v2 E4：同 windows 分支——detached HEAD（post-merge 补验）跳过 commit/push；push 失败 WARN 不静默。
-  if git symbolic-ref -q HEAD >/dev/null 2>&1; then
-    git add "${SPRINT_DIR}/e2e-verify.sh" 2>/dev/null || true
-    git commit -m "chore(harness): 固化 e2e-verify.sh 进 sprint（回归套件，merge 后永久重跑）" --no-verify 2>/dev/null || true
-    if ! git push origin HEAD 2>/tmp/e2e-push-err; then
-      echo "WARN: e2e-verify.sh 固化 push 失败：$(head -c 200 /tmp/e2e-push-err | tr '\n' ' ')" >&2
-      E2E_FIXATION_NOTE="e2e-verify.sh 固化 push 失败，脚本未随 PR 入库（详见 evaluator 日志）"
-    fi
-  else
-    echo "post-merge 补验模式（detached HEAD），跳过 commit/push" >&2
-    E2E_FIXATION_NOTE="post-merge 补验，固化脚本已随原 PR 入库无需重推"
-  fi
+  # evaluator 只执行 /tmp 副本，不改写被评 PR。若合同要求永久回归脚本，
+  # Generator 必须把它放入仓库正式 smoke/test 目录，并由 CI gate 验证。
 fi
 ```
-
-> **EVA v2 E4**：上面两个分支写入的 `$E2E_FIXATION_NOTE` 非空时，Step B-3 / 输出规范写 verdict JSON 必须追加 `"notes":"$E2E_FIXATION_NOTE"` 字段（v1 消费方忽略未知字段无害），让"固化是否真入库/为何不推"从 verdict 本身可见。
 
 #### Step B-1.4 (S3 联动清单，thin档 — MJ5 刀3)
 

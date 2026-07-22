@@ -28,6 +28,7 @@ compute-ssh-reachability-smoke.sh
 decision-system-smoke.sh
 decisions-dedup-smoke.sh
 direction-proposer-t4-smoke.sh
+evaluator-no-push-smoke.sh
 executor-liveness-t1-smoke.sh
 feature-registry-smoke.sh
 features-ledger-smoke.sh

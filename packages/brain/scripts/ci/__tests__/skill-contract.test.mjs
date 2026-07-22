@@ -16,6 +16,7 @@ const ROOT = join(__dir, '..', '..', '..', '..', '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 
 const evaluator = read('packages/workflows/skills/harness-evaluator/SKILL.md');
+const evaluatorBody = evaluator.slice(evaluator.indexOf('# /harness-evaluator'));
 const reviewer = read('packages/workflows/skills/harness-contract-reviewer/SKILL.md');
 const generator = read('packages/workflows/skills/harness-generator/SKILL.md');
 const proposer = read('packages/workflows/skills/harness-contract-proposer/SKILL.md');
@@ -46,5 +47,11 @@ describe('skill-contract — 5 类不变量守现网快照', () => {
 
   it('不变量5: proposer 含「领域验证规则」段', () => {
     expect(checkProposer(proposer).ok).toBe(true);
+  });
+
+  it('不变量6: evaluator 只产证据，不 commit/push PR 分支', () => {
+    expect(evaluatorBody).toContain('Evaluator 禁止 commit/push');
+    expect(evaluatorBody).not.toMatch(/\bgit\s+commit\b/);
+    expect(evaluatorBody).not.toMatch(/\bgit\s+push\b/);
   });
 });
