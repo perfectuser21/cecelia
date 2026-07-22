@@ -92,6 +92,8 @@ function runEvaluatorWriterAndBridge(result, { attemptId, command, logTail }) {
     writeFileSync(path.join(tempDir, 'result.json'), JSON.stringify(result));
     writeFileSync(path.join(tempDir, 'e2e-result.log'), `${logTail}\n`);
     writeFileSync(path.join(tempDir, 'evaluator-execution.json'), JSON.stringify({
+      task_id: TASK_ID,
+      attempt_id: attemptId,
       command,
       exit_code: 0,
     }));
