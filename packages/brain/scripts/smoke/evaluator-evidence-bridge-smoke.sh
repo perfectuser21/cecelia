@@ -17,7 +17,7 @@ printf '%s\n' \
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=evidence-smoke-attempt CECELIA_TASK_ID=evidence-smoke \
   WORKTREE_PATH="$TMP_DIR" prepare_evaluator_evidence
 printf '%s\n' \
-  '{"verdict":"PASS","task_id":"evidence-smoke","behavior_tests":[{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]}' \
+  '{"verdict":"PASS","task_id":"evidence-smoke","attempt_id":"evidence-smoke-attempt","behavior_tests":[{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]}' \
   > "$TMP_DIR/.brain-result.json"
 
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=evidence-smoke-attempt CECELIA_TASK_ID=evidence-smoke \

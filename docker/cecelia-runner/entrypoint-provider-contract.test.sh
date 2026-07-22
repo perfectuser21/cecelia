@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENTRYPOINT="$SCRIPT_DIR/entrypoint.sh"
 DOCKERFILE="$SCRIPT_DIR/Dockerfile"
+EVALUATOR_SKILL="$SCRIPT_DIR/../../packages/workflows/skills/harness-evaluator/SKILL.md"
 SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
 GROK_SECTION="$(sed -n '/elif \[\[ "$provider" == "grok" \]\]/,/^  else$/p' <<<"$SECTION")"
 
@@ -37,7 +38,7 @@ JSON
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-current CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
 cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
-{"verdict":"PASS","task_id":"task-current","behavior_tests":[{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]}
+{"verdict":"PASS","task_id":"task-current","attempt_id":"attempt-current","behavior_tests":[{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]}
 JSON
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-current CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
@@ -52,7 +53,7 @@ cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":["current provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
 JSON
 cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
-{"verdict":"PASS","task_id":"task-current","behavior_tests":[{"command":"stale test","exit_code":0,"log_tail":"old pass"}]}
+{"verdict":"PASS","task_id":"task-current","attempt_id":"attempt-old","behavior_tests":[{"command":"stale test","exit_code":0,"log_tail":"old pass"}]}
 JSON
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-retry CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
@@ -69,12 +70,12 @@ cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":["current provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
 JSON
 cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
-{"verdict":"PASS","task_id":"task-current","behavior_tests":[{"command":"same test","exit_code":0,"log_tail":"same pass"}]}
+{"verdict":"PASS","task_id":"task-current","attempt_id":"attempt-identical","behavior_tests":[{"command":"same test","exit_code":0,"log_tail":"same pass"}]}
 JSON
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-identical CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
 cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
-{"verdict":"PASS","task_id":"task-current","behavior_tests":[{"command":"same test","exit_code":0,"log_tail":"same pass"}]}
+{"verdict":"PASS","task_id":"task-current","attempt_id":"attempt-identical","behavior_tests":[{"command":"same test","exit_code":0,"log_tail":"same pass"}]}
 JSON
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-identical CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
@@ -89,7 +90,7 @@ cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":["current provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
 JSON
 cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
-{"verdict":"PASS","task_id":"old-task","behavior_tests":[{"command":"foreign test","exit_code":0,"log_tail":"old pass"}]}
+{"verdict":"PASS","task_id":"old-task","attempt_id":"attempt-foreign","behavior_tests":[{"command":"foreign test","exit_code":0,"log_tail":"old pass"}]}
 JSON
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-foreign CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
@@ -98,6 +99,34 @@ HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-foreign CECELIA_TASK_ID=task-c
   WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
 jq -e '.checks == ["current provider summary"]' "$EVIDENCE_TMP/result.json" >/dev/null || {
   echo 'evaluator evidence bridge accepted evidence for another task' >&2
+  exit 1
+}
+
+# Metadata changes (for example git checkout/reset touching a tracked file) do
+# not transfer old evidence to the current attempt.
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":["current provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
+JSON
+cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
+{"verdict":"PASS","task_id":"task-current","attempt_id":"attempt-old","behavior_tests":[{"command":"stale test","exit_code":0,"log_tail":"old pass"}]}
+JSON
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-metadata CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
+node -e 'const fs=require("node:fs"); const p=process.argv[1]; const now=new Date(); fs.utimesSync(p, now, now)' \
+  "$EVIDENCE_TMP/.brain-result.json"
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-metadata CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+jq -e '.checks == ["current provider summary"]' "$EVIDENCE_TMP/result.json" >/dev/null || {
+  echo 'evaluator evidence bridge accepted metadata-only stale evidence' >&2
+  exit 1
+}
+
+grep -q '^version: 1\.31\.0$' "$EVALUATOR_SKILL" || {
+  echo 'harness-evaluator skill version was not bumped for attempt-bound evidence' >&2
+  exit 1
+}
+grep -q 'HARNESS_ATTEMPT_ID' "$EVALUATOR_SKILL" || {
+  echo 'harness-evaluator skill does not emit attempt-bound evidence' >&2
   exit 1
 }
 # The runner's provider-facing schema must emit decisions accepted by the Brain

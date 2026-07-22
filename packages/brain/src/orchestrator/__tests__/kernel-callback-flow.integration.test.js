@@ -284,6 +284,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
     }, {
       verdict: 'PASS',
       task_id: TASK_ID,
+      attempt_id: evaluatorAttemptId,
       behavior_tests: behaviorTests,
     });
     expect(bridgedResult.checks).toEqual(behaviorTests);
