@@ -189,6 +189,14 @@ export function createDispatcher(deps) {
       bundle,
       callbackSecretHash: hashCallbackSecret(callbackSecret),
     });
+    if (persisted?.id && persisted.id !== attemptId) {
+      return {
+        status: 'DONE_WITH_CONCERNS',
+        detail: `run/hop already owns attempt ${persisted.id}; duplicate launch suppressed`,
+        attemptId: persisted.id,
+        provider: persisted.provider ?? (spec.role === 'judge' ? 'independent-judge' : adapter.name),
+      };
+    }
     const attempt = {
       ...persisted,
       id: persisted?.id ?? attemptId,
@@ -199,6 +207,7 @@ export function createDispatcher(deps) {
       callbackSecret,
     };
 
+    let handedToLauncher = false;
     try {
       if (spec.role === 'judge') {
         const judge = handlers[action];
@@ -210,6 +219,7 @@ export function createDispatcher(deps) {
         bundle,
         execution: executionConfig(payload, { provider: adapter.name, accountHome }),
       });
+      handedToLauncher = true;
       const launched = await deps.launcher.launch({
         attempt,
         bundle,
@@ -224,10 +234,15 @@ export function createDispatcher(deps) {
         provider: adapter.name,
       };
     } catch (error) {
-      await deps.attemptStore.fail(attempt.id, {
-        code: spec.role === 'judge' ? 'judge_failed' : 'launch_failed',
-        message: error.message,
-      });
+      // Worker launcher owns the lease and performs its own fenced failure write.
+      // Fail here only before ownership transfers (adapter construction) or for
+      // the in-process judge, which never claims a worker lease.
+      if (!handedToLauncher || spec.role === 'judge') {
+        await deps.attemptStore.fail(attempt.id, {
+          code: spec.role === 'judge' ? 'judge_failed' : 'launch_failed',
+          message: error.message,
+        });
+      }
       throw error;
     }
   };
@@ -250,6 +265,7 @@ export function createDetachedLauncher({
         const starting = await attemptStore.markStarting(attempt.id, { leaseOwner, leaseSeconds });
         if (!starting) throw new Error(`attempt_lease_conflict: ${attempt.id}`);
       }
+      try {
       const labels = {
         'cecelia.run_id': attempt.run_id,
         'cecelia.hop': String(attempt.hop),
@@ -296,29 +312,36 @@ export function createDetachedLauncher({
         : `-g${String(generation).replace(/[^a-zA-Z0-9_-]/g, '') || '0'}`;
       const containerId = `cecelia-harness-${String(attempt.id).slice(0, 8)}${generationSuffix}`;
       if (generation != null) await removeContainer(containerId);
-      return spawnDetached({
-        containerId,
-        task: { ...task, task_type: `harness_${attempt.role}` },
-        prompt: spec.stdin,
-        worktreePath: bundle.inputs.worktree_path,
-        readOnlyWorktree: bundle.constraints.read_only,
-        labels,
-        extraMounts,
-        env: {
-          ...providerEnv,
-          CECELIA_EXECUTOR: spec.provider,
-          CECELIA_TASK_ID: bundle.inputs.task_id,
-          HARNESS_NODE: attempt.role,
-          HARNESS_ATTEMPT_ID: attempt.id,
-          HARNESS_CALLBACK_TOKEN: attempt.callbackSecret,
-          HARNESS_LEASE_OWNER: leaseOwner,
-          HARNESS_RUN_ID: attempt.run_id,
-          HARNESS_HOP: String(attempt.hop),
-          HARNESS_READ_ONLY: String(bundle.constraints.read_only),
-          HARNESS_CALLBACK_URL: `${brainUrl}/api/brain/harness/attempts/${attempt.id}/callback`,
-          BRAIN_URL: brainUrl,
-        },
-      });
+      return await spawnDetached({
+          containerId,
+          task: { ...task, task_type: `harness_${attempt.role}` },
+          prompt: spec.stdin,
+          worktreePath: bundle.inputs.worktree_path,
+          readOnlyWorktree: bundle.constraints.read_only,
+          labels,
+          extraMounts,
+          env: {
+            ...providerEnv,
+            CECELIA_EXECUTOR: spec.provider,
+            CECELIA_TASK_ID: bundle.inputs.task_id,
+            HARNESS_NODE: attempt.role,
+            HARNESS_ATTEMPT_ID: attempt.id,
+            HARNESS_CALLBACK_TOKEN: attempt.callbackSecret,
+            HARNESS_LEASE_OWNER: leaseOwner,
+            HARNESS_RUN_ID: attempt.run_id,
+            HARNESS_HOP: String(attempt.hop),
+            HARNESS_READ_ONLY: String(bundle.constraints.read_only),
+            HARNESS_CALLBACK_URL: `${brainUrl}/api/brain/harness/attempts/${attempt.id}/callback`,
+            BRAIN_URL: brainUrl,
+          },
+        });
+      } catch (error) {
+        await attemptStore.fail(attempt.id, {
+          code: 'launch_failed',
+          message: error.message,
+        }, { leaseOwner });
+        throw error;
+      }
     },
   });
 }

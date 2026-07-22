@@ -216,10 +216,32 @@ describe('createDispatcher', () => {
       observed,
       decision: { phase: 'generate', reason: 'approved' },
     })).rejects.toThrow(/docker unavailable/);
-    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
-      code: 'launch_failed',
-      message: 'docker unavailable',
+    // launcher 持有 lease owner，只有 launcher 能做带 fence 的失败落库；
+    // dispatcher 不得用无 lease 的 fail 覆盖已被接管的 attempt。
+    expect(deps.attemptStore.fail).not.toHaveBeenCalled();
+  });
+
+  it('createAttempt 命中同 run/hop 旧 attempt 时不拿新密钥重复 launch', async () => {
+    const deps = makeDeps();
+    deps.attemptStore.createAttempt.mockResolvedValueOnce({
+      id: '33333333-3333-4333-8333-333333333333',
+      run_id: runId,
+      hop: 5,
+      status: 'starting',
     });
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).resolves.toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      attemptId: '33333333-3333-4333-8333-333333333333',
+    });
+    expect(deps.registry.resolve.mock.results[0].value.start).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
   });
 
   it.each(['wait:human_review', 'merge_pr', 'report'])(
@@ -236,6 +258,33 @@ describe('createDispatcher', () => {
 });
 
 describe('createDetachedLauncher', () => {
+  it('docker launch 失败只用当前 lease owner 标记 attempt failed', async () => {
+    const attemptStore = {
+      markStarting: vi.fn(async () => ({ status: 'starting' })),
+      fail: vi.fn(async () => ({ deduped: false })),
+    };
+    const launcher = createDetachedLauncher({
+      spawnDetached: vi.fn(async () => { throw new Error('docker unavailable'); }),
+      attemptStore,
+      leaseOwner: 'brain-1:123',
+    });
+
+    await expect(launcher.launch({
+      attempt: { id: attemptId, run_id: runId, hop: 2, role: 'generator' },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: false },
+      },
+      spec: { provider: 'codex', args: ['exec'], stdin: '{}', env: {} },
+      task: observed.task,
+    })).rejects.toThrow('docker unavailable');
+
+    expect(attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_failed',
+      message: 'docker unavailable',
+    }, { leaseOwner: 'brain-1:123' });
+  });
+
   it('把 attempt/run/hop/role 作为 runner env 和 Docker labels 传递', async () => {
     const spawnDetached = vi.fn(async () => ({ containerId: 'cx' }));
     const attemptStore = { markStarting: vi.fn(async () => ({ status: 'starting' })) };
