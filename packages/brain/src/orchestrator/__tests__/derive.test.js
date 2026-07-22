@@ -190,6 +190,16 @@ describe('规则 3a：contract approved && !pr', () => {
 });
 
 describe('规则 3d：exit/auth 观测分路（P0-3，routeAfterCallback ci_fail_type∈{container_exit,auth_failed}→fix）', () => {
+  it('evaluator provider 退出 → 重派 evaluator，不误派 generator-fix', () => {
+    const r = derive(baseObserved({
+      pr: { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: 's' },
+      lastAgentExit: { code: 1, auth_failed: false, action: 'spawn:evaluator' },
+    }));
+    expect(r.phase).toBe('evaluate');
+    expect(r.action).toBe('spawn:evaluator');
+    expect(r.reason).toBe('no_evaluate_verdict_for_head_sha');
+  });
+
   it('auth_failed → spawn:generator-fix（熔断状态给 T3 换号）', () => {
     const r = derive(baseObserved({
       pr: { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' },
