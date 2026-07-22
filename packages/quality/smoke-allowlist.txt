@@ -156,3 +156,4 @@ conversation-capture-multitool-smoke.sh
 dispatch-allocation-guide-smoke.sh
 grok-relay-smoke.sh
 codex-cred-isolation-smoke.sh
+codex-grok-launcher-supervisor-smoke.sh

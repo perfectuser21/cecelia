@@ -253,6 +253,22 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isGrok = task.payload?.executor === 'grok';
   const isHeaded = task.payload?.mode === 'headed';
 
+  // INV-8: unsupported executor loud-fail（三处文件 —— harness-skill-relay.js 这处）
+  // 白名单：claude / codex / grok / undefined（缺省 claude）；其余显式 loud-fail。
+  const executorValue = task.payload?.executor;
+  const SUPPORTED_EXECUTORS = ['claude', 'codex', 'grok', undefined, null];
+  if (!SUPPORTED_EXECUTORS.includes(executorValue)) {
+    const errMsg = `unsupported executor: ${executorValue}`;
+    console.error(`[skill-relay][ALERT] ${errMsg}`);
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+    } catch { /* non-fatal */ }
+    return { ok: false, mode: RELAY_FLAG, error: errMsg };
+  }
+
   if (task.payload?.harness_runtime === 'kernel-v1') {
     return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
   }
@@ -260,6 +276,10 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // ─── headed 分支：ssh+tmux 路径 ──────────────────────────────────────────
   if (isHeaded) {
     return _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps });
+    // innerCmd 三分支（INV-1 + FR-R1/R3/R4，isGrokHeaded 决策在函数内）：
+    //   isClaudeHeaded → claude-launch.sh（GP1 零回归）
+    //   isGrokHeaded   → grok-launch.sh（FR-R4 新增 GP3 路径）
+    //   default(codex) → codex-launch.sh（FR-R3 INV-11 快照）
   }
   // ─── end headed ──────────────────────────────────────────────────────────
 
@@ -930,9 +950,16 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // post-pr-create.sh hook 检测到该变量后跳过 auto-merge，保证 evaluator gate 不被绕过
     // (P0 a638f840 根治：PR 在 evaluator 运行前被 GitHub 自动合并)。
     // headless docker relay 已通过 spawnFn env 参数注入，此处仅补 headed 路径。
+    // 三分支路由（INV-1 + FR-R1/R3/R4）：
+    //   claude → claude-launch.sh（GP1 不回归）
+    //   grok   → grok-launch.sh（FR-R4，新增 GP3 路径）
+    //   codex  → codex-launch.sh（FR-R3，INV-11 快照 CODEX_HOME）
+    // 禁止二元形式 isClaudeHeaded ? ... : codex（Grok headed 会落入 codex 命令的 bug）
     const innerCmd = isClaudeHeaded
       ? `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`
-      : `cd ${worktreePath} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
+      : isGrokHeaded
+        ? `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`
+        : `cd ${worktreePath} && CODEX_HOME=${codexRelayCredDir || ''} bash ${hostRepo}/scripts/codex-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
     try {
       execFn(
         `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} '${innerCmd}'"`
