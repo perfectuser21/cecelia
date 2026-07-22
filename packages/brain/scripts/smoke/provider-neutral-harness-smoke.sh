@@ -8,15 +8,16 @@ node --input-type=module <<'NODE'
 import { createProviderRegistry } from './packages/brain/src/orchestrator/provider-registry.js';
 import { claudeAdapter } from './packages/brain/src/orchestrator/providers/claude.js';
 import { codexAdapter } from './packages/brain/src/orchestrator/providers/codex.js';
+import { grokAdapter } from './packages/brain/src/orchestrator/providers/grok.js';
 
-const registry = createProviderRegistry([claudeAdapter, codexAdapter]);
+const registry = createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
 const bundle = {
   attempt_id: '11111111-1111-4111-8111-111111111111',
   objective: 'Return structured evidence.',
   inputs: { worktree_path: process.cwd() },
 };
 
-for (const provider of ['claude', 'codex']) {
+for (const provider of ['claude', 'codex', 'grok']) {
   const adapter = registry.resolve({ provider, requires: ['structured_output', 'resume'] });
   const spec = adapter.start({ bundle });
   if (spec.provider !== provider || spec.args.includes('--model')) {

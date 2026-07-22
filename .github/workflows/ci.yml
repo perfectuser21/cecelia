@@ -752,6 +752,11 @@ jobs:
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           NODE_ENV: test
         run: cd packages/brain && npx vitest run src/__tests__/integration/ --reporter=verbose
+      - name: Provider-neutral Kernel Spawn Callback Progression
+        run: >-
+          cd packages/brain && npx vitest run
+          src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
+          --reporter=verbose
 
   # ─── Workspace: Build ──────────────────────────────────────
   workspace-build:

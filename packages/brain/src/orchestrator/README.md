@@ -10,18 +10,23 @@ Code、Codex 等 CLI 只是执行 TaskBundle 的 worker，不拥有流程状态�
 ```json
 {
   "harness_runtime": "kernel-v1",
-  "executor": "auto"
+  "role_assignments": {
+    "generator": { "provider": "codex", "account": "team3" },
+    "evaluator": { "provider": "grok", "account": "grok" }
+  }
 }
 ```
 
 - `executor: "auto"`：按 capability 选择已注册 provider，不选择 model。
-- `executor: "claude"` / `"codex"`：显式选择 provider。
+- `executor: "claude"` / `"codex"` / `"grok"`：未配置角色表时的兼容默认值。
+- `role_assignments.<role>`：按角色显式选择 `{provider, account}`；每条 attempt
+  独立落库，允许 writer 与 reviewer 使用不同厂商和账户。
 - `model` 缺省：不向 CLI 传模型，让账号或 CLI 配置决定。
 - `model` 显式设置：才透传为 provider 的模型参数。
 - 回滚：删除 `harness_runtime` 或改成其他值，立即回到原
   `harness-controller` 路径，不需要迁移或删除 attempt 数据。
 
-当前生产 adapter 为 Claude Code 与 Codex。新增 Grok 等 provider 时只需实现
+当前生产 adapter 为 Claude Code、Codex 与 Grok。新增 provider 时只需实现
 `start / resume / inspect / cancel / normalizeResult`，声明 capabilities，并通过
 TaskBundle、结构化输出、session 隔离和恢复测试；不要把 provider 专有指令写入
 Skill 或状态机。
@@ -76,6 +81,20 @@ bash docker/cecelia-runner/entrypoint-provider-contract.test.sh
 排障先查 `harness_attempts` 的 status、lease_owner、lease_expires_at、
 provider_session_id、error_code，再查 `orchestrator_decision_log`。不要人工复制 session
 到另一个 role；需要恢复时让 watchdog 按上述规则接管。
+
+## Kernel 架构铁律
+
+1. 真相只在 Git、GitHub PR、数据库和已落库产物中；worker 对话、进程内状态和容器
+   文件都不是事实源。
+2. `derive.js` 必须保持纯函数：不得读写 DB、文件、网络，不得包含 provider/account
+   分支。账户与 provider 只能在 dispatcher/launcher 边界解析。
+3. `orchestrator_decision_log` 是控制流唯一回放源；任何恢复都先重读外部真相，再由
+   derive 计算下一 hop。
+4. 禁止把 LangGraph checkpoint、thread resume 或 provider session 当成流程真相。
+   session resume 只是在同一 attempt、同一 role、同一 provider 下的执行优化，缺失时
+   必须回到 Git/PR/DB 重推，绝不能用 checkpoint 猜阶段。
+5. Kernel 不得重新引入 LangGraph 状态机。下方“既有 Brain v2 编排模块”仅记录旧模块，
+   不适用于 Provider-neutral Harness Kernel，也不得成为它的依赖。
 
 ## 既有 Brain v2 编排模块
 

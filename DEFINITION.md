@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.267.32
+**Brain 版本**: 1.267.33
 
 **状态**: 生产运行中
 
@@ -624,9 +624,12 @@ queued → in_progress → completed
 `harness_initiative` / `golden_path_proposal` 可在任务 payload 显式设置
 `harness_runtime: "kernel-v1"`，进入确定性 Harness Kernel；缺省仍走原
 `harness-controller`，作为一键回滚路径。Kernel 使用统一 TaskBundle/HarnessResult
-契约和仓库内冻结 Skill，将 Claude Code、Codex 视为可替换执行器；
+契约和仓库内冻结 Skill，将 Claude Code、Codex、Grok 视为可替换执行器；
 `executor: "auto"` 只选择满足能力的 provider，不固定 model。只有 payload
 显式提供 `model` 时才向 CLI 传模型参数。
+
+角色级 `role_assignments.<role> = {provider, account}` 允许 generator 与 evaluator
+使用不同厂商/账户；分配只影响 dispatcher/launcher，不进入纯函数 derive 或门禁。
 
 对抗验收不会因 provider 统一而取消：proposer、reviewer、generator、evaluator
 使用独立 attempt/session，judge 走独立证据门；同一 provider session 不能跨 role

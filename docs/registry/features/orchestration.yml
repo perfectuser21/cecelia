@@ -342,7 +342,8 @@ features:
         - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
         - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
         - packages/brain/src/__tests__/harness-relay-watchdog.test.js
-      integration: []
+      integration:
+        - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
       e2e:
         - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
       regression: []
@@ -355,13 +356,15 @@ features:
           unit:
             - packages/brain/src/orchestrator/__tests__/execution-contract.test.js
             - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
-          integration: []
+          integration:
+            - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
           e2e:
             - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
         status: active
     ci:
       jobs:
         - brain-unit
+        - brain-integration
       layers:
         - L2
         - L3
