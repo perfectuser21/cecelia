@@ -8,8 +8,12 @@
  * 10 分钟自 gate（接 scheduler-jobs.js），零静默失败——失败必计入 errors。
  *
  * 与 PR#4135 版本的区别：从"逐条消息 + 只支持 Claude Code"改为"按 session 分组 +
- * 15 分钟闲置判定 + 三工具"。dedupeKey 绑定 sessionId+lastEntryId（而非只绑
- * sessionId），确保同一 session 复聊后再次闲置时能产生新 capture，不会漏内容。
+ * 15 分钟闲置判定 + 三工具"。
+ *
+ * dedupeKey 只绑 sessionId（2026-07-22 起，此前绑 sessionId+lastEntryId 导致同一
+ * 会话每次"闲置又复聊"都被当新会话重新摘要，造成三倍冗余）：复聊后内容变化时，
+ * 按 dedupe_key 做 UPDATE 覆盖已有 capture 的 content，而不是 INSERT 新行——既不
+ * 丢内容，也不会一个 session 产生多条记录。
  */
 import crypto from 'crypto';
 import { pushCapture } from './capture-inbox.js';
@@ -35,7 +39,7 @@ let lastRunAt = 0;
 export function __resetConversationCaptureForTest() { lastRunAt = 0; }
 
 export function sessionDedupeKey(session, suffix = '') {
-  const raw = `${session.source}:${session.sessionId}:${session.lastEntryId}${suffix}`;
+  const raw = `${session.source}:${session.sessionId}${suffix}`;
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
@@ -114,22 +118,22 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
     const rawText = joinTurns(session.turns);
     const dedupeKey = sessionDedupeKey(session);
 
-    // 已经在之前某次扫描完整处理过（原始文本已入库）就整段跳过——既不重新
-    // pushCapture（那只是廉价的 ON CONFLICT no-op），更不要再花钱调一次 LLM
-    // 摘要（Critical #2）。查询本身失败要 fail open（当作未捕获继续处理），
-    // 不能因为一次 DB 抖动就静默漏掉一个 session。
-    let alreadyCaptured = false;
+    // 内容和上次入库完全一致就整段跳过——既不重新 pushCapture，更不要再花钱调一次
+    // LLM 摘要（Critical #2）。内容有变化（同一 session 复聊后再次闲置）则往下走，
+    // pushCapture 会按 dedupeKey UPDATE 已有行的 content，不产生新行。查询本身失败
+    // 要 fail open（当作未捕获继续处理），不能因为一次 DB 抖动就静默漏掉一个 session。
+    let existingContent;
     try {
       const { rows: existing } = await pool.query(
-        'SELECT 1 FROM captures WHERE dedupe_key = $1 LIMIT 1',
+        'SELECT content FROM captures WHERE dedupe_key = $1 LIMIT 1',
         [dedupeKey]
       );
-      alreadyCaptured = existing.length > 0;
+      existingContent = existing.length > 0 ? existing[0].content : undefined;
     } catch (e) {
       console.warn(`[conversation-capture] dedupe check failed for session=${session.sessionId}, fail-open and processing anyway: ${e.message}`);
-      alreadyCaptured = false;
+      existingContent = undefined;
     }
-    if (alreadyCaptured) continue;
+    if (existingContent === rawText) continue;
 
     try {
       const result = await pushCapture(pool, {

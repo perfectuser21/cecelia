@@ -13,10 +13,10 @@ describe('sessionDedupeKey', () => {
     expect(sessionDedupeKey(session)).not.toBe(sessionDedupeKey(session, ':summary'));
   });
 
-  it('lastEntryId 不同（复聊后再次闲置）产生不同的 key', () => {
+  it('lastEntryId 不同（复聊后再次闲置）产生相同的 key——只绑 sessionId，避免同一会话被当新会话重复摘要', () => {
     const before = { source: 'conversation-claude', sessionId: 's1', lastEntryId: 'u2' };
     const after = { source: 'conversation-claude', sessionId: 's1', lastEntryId: 'u5' };
-    expect(sessionDedupeKey(before)).not.toBe(sessionDedupeKey(after));
+    expect(sessionDedupeKey(before)).toBe(sessionDedupeKey(after));
   });
 
   it('source 不同（同一 sessionId 但不同工具，理论上不会发生，但函数本身要正确区分）产生不同的 key', () => {
