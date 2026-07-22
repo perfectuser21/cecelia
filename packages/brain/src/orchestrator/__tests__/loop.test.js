@@ -80,7 +80,9 @@ function makeEnv({ observedSeq, dispatch }) {
 
 describe('runLoop：全链 planning→done', () => {
   it('逐跳推进 planner→proposer→reviewer→persist→generator→poll→evaluator→judge→merge→report→exit', async () => {
-    const prMeta = { url: 'u', state: 'OPEN', merged: false, head_sha: 'sha-1' };
+    const prMeta = {
+      url: 'u', state: 'OPEN', mergeStateStatus: 'CLEAN', merged: false, head_sha: 'sha-1',
+    };
     const observedSeq = [
       // 1. 无 prd → spawn:planner
       obs({ prdExists: false, contract: { approved: false, id: CONTRACT_ID } }),
@@ -143,6 +145,7 @@ describe('runLoop：全链 planning→done', () => {
     // merge_pr 跳带 gateVerdict=allow
     const mergeEntry = appended.find((e) => e.action === 'merge_pr');
     expect(mergeEntry.gateVerdict).toBe('allow');
+    expect(mergeEntry.observed.pr.mergeStateStatus).toBe('CLEAN');
   });
 
   it('每个派发 hop：先 appendHop 再 dispatch（intent-before-dispatch 顺序）', async () => {

@@ -155,6 +155,28 @@ describe('kernel deterministic handlers', () => {
     expect(conflictDeps.execCmd).not.toHaveBeenCalled();
   });
 
+  it('连续三次 BEHIND 已写入快照时封顶，不再 update-branch', async () => {
+    const d = deps();
+    const priorRebases = [1, 2, 3].map((hop) => ({
+      hop,
+      action: 'merge_pr',
+      observed: { pr: { mergeStateStatus: 'BEHIND' } },
+    }));
+    const ctx = context({
+      observed: {
+        ...context().observed,
+        pr: { ...context().observed.pr, mergeStateStatus: 'BEHIND' },
+        decisionLog: priorRebases,
+      },
+    });
+
+    await expect(createKernelHandlers(d).merge_pr(ctx)).resolves.toMatchObject({
+      status: 'BLOCKED',
+      detail: 'rebase attempt cap reached',
+    });
+    expect(d.execCmd).not.toHaveBeenCalled();
+  });
+
   it('report 执行完整收尾链，最后才写 run/task done', async () => {
     const d = deps();
     const handlers = createKernelHandlers(d);

@@ -61,7 +61,14 @@ function buildSnapshot(observed, counters, action) {
     prdExists: observed.prdExists,
     contractApproved: observed.contract.approved,
     pr: observed.pr
-      ? { url: observed.pr.url, state: observed.pr.state, ci: observed.pr.ci, merged: observed.pr.merged, head_sha: observed.pr.head_sha }
+      ? {
+          url: observed.pr.url,
+          state: observed.pr.state,
+          mergeStateStatus: observed.pr.mergeStateStatus,
+          ci: observed.pr.ci,
+          merged: observed.pr.merged,
+          head_sha: observed.pr.head_sha,
+        }
       : null,
     inflightContainers: observed.inflight.containers.length,
     lastAgentExit: observed.lastAgentExit,
