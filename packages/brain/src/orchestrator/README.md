@@ -73,6 +73,26 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 bash docker/cecelia-runner/entrypoint-provider-contract.test.sh
 ```
 
+### 部署前必须重建 Runner 镜像
+
+`docker/cecelia-runner/entrypoint.sh` 由 Dockerfile `COPY` 进
+`cecelia/runner:latest`，不是运行时 bind mount。仅更新仓库或重启 Brain 不会刷新已有
+镜像；旧镜像不会发送 attempt Bearer token，新 callback 会连续返回 401。
+
+每次部署包含 `Dockerfile`、`entrypoint.sh` 或 provider contract 变更时，必须先执行：
+
+```bash
+bash docker/build.sh --no-cache
+
+# 验证实际将运行的镜像，而不是只检查仓库源码
+docker run --rm --entrypoint sh cecelia/runner:latest -c \
+  'grep -q HARNESS_CALLBACK_TOKEN /usr/local/bin/entrypoint.sh && \
+   grep -q PROVIDER_CONTRACT /usr/local/bin/entrypoint.sh'
+```
+
+上述验镜失败时禁止启用 `harness_runtime: "kernel-v1"`。`ensureDockerImage()` 只会在
+镜像不存在时自动构建，不会判断本地 `latest` 是否落后于仓库源码。
+
 内部 callback：
 
 - `POST /api/brain/harness/attempts/:attemptId/heartbeat`
