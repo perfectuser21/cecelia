@@ -163,6 +163,31 @@ fi
 PROVIDER_CONTRACT=0
 NORMALIZED_RESULT_FILE=""
 
+# evaluator-evidence-bridge:start
+merge_evaluator_evidence() {
+  local normalized_result_file="$1"
+  local brain_result_file="${WORKTREE_PATH:-$PWD}/.brain-result.json"
+  local merged_result_file="${normalized_result_file}.evidence"
+
+  [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+  [[ -f "$normalized_result_file" && -f "$brain_result_file" ]] || return 0
+  jq -e '
+    type == "object"
+    and (.behavior_tests | type == "array")
+    and (.behavior_tests | length > 0)
+  ' "$brain_result_file" >/dev/null 2>&1 || return 0
+
+  if jq --slurpfile evidence "$brain_result_file" \
+    '.checks = $evidence[0].behavior_tests' \
+    "$normalized_result_file" > "$merged_result_file"; then
+    mv "$merged_result_file" "$normalized_result_file"
+  else
+    rm -f "$merged_result_file"
+    return 1
+  fi
+}
+# evaluator-evidence-bridge:end
+
 persist_provider_session() {
   local session="$1"
   [[ -n "$session" && -n "${HARNESS_LEASE_OWNER:-}" ]] || return 0
@@ -344,6 +369,7 @@ run_provider_contract() {
       '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:{provider:$provider,session_id:(if $session == "" then null else $session end)}}' \
       > "$NORMALIZED_RESULT_FILE"
   fi
+  merge_evaluator_evidence "$NORMALIZED_RESULT_FILE" || true
   return "$provider_exit"
 }
 # provider-neutral:end
