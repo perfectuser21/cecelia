@@ -37,6 +37,11 @@ function fakeExecCmd(handlers = {}) {
     if (cmd.includes('gh pr list')) return handlers.prList ?? '[]';
     if (cmd.includes('gh pr view')) return handlers.prView ?? '';
     if (cmd.includes('gh pr checks')) {
+      if (handlers.prChecksUnsupported) {
+        const err = new Error('Command failed: gh pr checks --json state');
+        err.stderr = 'unknown flag: --json';
+        throw err;
+      }
       if (handlers.prChecksThrow) {
         const err = new Error('gh pr checks nonzero exit');
         err.stdout = handlers.prChecksThrow;
@@ -169,6 +174,30 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.pr).toBeNull();
     expect(deps.execCmd.calls.some((c) => c.includes('gh pr'))).toBe(false);
+  });
+
+  it('gh 2.45 不支持 pr checks --json 时，直接用 pr view statusCheckRollup 采集 CI，不触发 fatal', async () => {
+    const deps = makeDeps({
+      rows: { run: { pr_url: PR_URL } },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'BLOCKED',
+          headRefOid: 'sha-compat',
+          statusCheckRollup: [
+            { status: 'COMPLETED', conclusion: 'SUCCESS' },
+            { status: 'IN_PROGRESS', conclusion: '' },
+          ],
+        }),
+        prChecksUnsupported: true,
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.pr).toMatchObject({ head_sha: 'sha-compat', ci: 'pending' });
+    expect(deps.execCmd.calls.some((cmd) => cmd.includes('gh pr checks'))).toBe(false);
+    expect(deps.execCmd.calls.some((cmd) => cmd.includes('statusCheckRollup'))).toBe(true);
   });
 
   it('模型漏填 pr_url 时按 task 分支标识从 GitHub 反查 PR', async () => {
