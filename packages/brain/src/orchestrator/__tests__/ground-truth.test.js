@@ -34,6 +34,7 @@ function fakeExecCmd(handlers = {}) {
   const calls = [];
   const fn = vi.fn((cmd) => {
     calls.push(cmd);
+    if (cmd.includes('gh pr list')) return handlers.prList ?? '[]';
     if (cmd.includes('gh pr view')) return handlers.prView ?? '';
     if (cmd.includes('gh pr checks')) {
       if (handlers.prChecksThrow) {
@@ -168,6 +169,33 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.pr).toBeNull();
     expect(deps.execCmd.calls.some((c) => c.includes('gh pr'))).toBe(false);
+  });
+
+  it('模型漏填 pr_url 时按 task 分支标识从 GitHub 反查 PR', async () => {
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: null },
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: { base_repo: 'https://github.com/o/r.git' },
+        }],
+      },
+      exec: {
+        prList: JSON.stringify([
+          { headRefName: 'cp-0722-feature-11111111', title: 'feature', url: PR_URL, state: 'OPEN' },
+        ]),
+        prView: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: 'sha-discovered' }),
+        prChecks: JSON.stringify([{ state: 'SUCCESS' }]),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.pr).toMatchObject({ url: PR_URL, head_sha: 'sha-discovered', ci: 'pass' });
+    expect(deps.execCmd.calls.some((cmd) => (
+      cmd.includes('gh pr list --repo "o/r"') && cmd.includes('headRefName')
+    ))).toBe(true);
   });
 
   it('gh pr view json 解析：state/headRefOid/merged 映射', async () => {
