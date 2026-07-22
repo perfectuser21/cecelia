@@ -154,7 +154,7 @@ async function getAvailableSlots() {
  *
  * @param {string} taskId
  */
-async function markDispatched(taskId) {
+export async function markDispatched(taskId) {
   const today = new Date().toISOString().split('T')[0];
   await pool.query(`
     UPDATE tasks
