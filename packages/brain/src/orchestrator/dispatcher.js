@@ -201,6 +201,7 @@ export function createDispatcher(deps) {
 
 export function createDetachedLauncher({
   spawnDetached,
+  removeContainer = async () => false,
   attemptStore,
   brainUrl = 'http://host.docker.internal:5221',
   leaseOwner = `${os.hostname()}:${process.pid}`,
@@ -210,7 +211,7 @@ export function createDetachedLauncher({
   ensureDir = mkdirSync,
 }) {
   return Object.freeze({
-    async launch({ attempt, bundle, spec, task, leaseClaimed = false }) {
+    async launch({ attempt, bundle, spec, task, leaseClaimed = false, generation = null }) {
       if (!leaseClaimed) {
         const starting = await attemptStore.markStarting(attempt.id, { leaseOwner, leaseSeconds });
         if (!starting) throw new Error(`attempt_lease_conflict: ${attempt.id}`);
@@ -248,8 +249,13 @@ export function createDetachedLauncher({
         ? spec.args[resumeFlagIndex + 1]
         : (resumeCommandIndex >= 0 ? spec.args[resumeCommandIndex + 1] : null);
       if (resumeSessionId) providerEnv.HARNESS_RESUME_SESSION_ID = resumeSessionId;
+      const generationSuffix = generation == null
+        ? ''
+        : `-g${String(generation).replace(/[^a-zA-Z0-9_-]/g, '') || '0'}`;
+      const containerId = `cecelia-harness-${String(attempt.id).slice(0, 8)}${generationSuffix}`;
+      if (generation != null) await removeContainer(containerId);
       return spawnDetached({
-        containerId: `cecelia-harness-${String(attempt.id).slice(0, 8)}`,
+        containerId,
         task: { ...task, task_type: `harness_${attempt.role}` },
         prompt: spec.stdin,
         worktreePath: bundle.inputs.worktree_path,

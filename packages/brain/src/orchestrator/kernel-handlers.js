@@ -160,7 +160,7 @@ export function createKernelHandlers(deps) {
         base_repo: payload.base_repo,
         project_id: payload.project_id,
       });
-      await deps.cleanup(observed.run?.initiative_id);
+      await deps.cleanup(ctx.runId);
 
       await deps.pool.query('BEGIN');
       try {

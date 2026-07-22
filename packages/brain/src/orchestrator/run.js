@@ -101,9 +101,14 @@ export async function buildRealDeps(overrides = {}) {
   let dispatch = overrides.dispatch;
   if (!dispatch) {
     const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter]);
-    const spawnDetached = overrides.spawnDetached
-      ?? (await import('../spawn/detached.js')).spawnDockerDetached;
-    const launcher = overrides.launcher ?? createDetachedLauncher({ spawnDetached, attemptStore });
+    const detached = await import('../spawn/detached.js');
+    const spawnDetached = overrides.spawnDetached ?? detached.spawnDockerDetached;
+    const removeContainer = overrides.removeContainer ?? detached.removeDockerContainer;
+    const launcher = overrides.launcher ?? createDetachedLauncher({
+      spawnDetached,
+      removeContainer,
+      attemptStore,
+    });
     const handlers = overrides.handlers
       ?? await buildDefaultHandlers({ pool, execCmd, attemptStore });
     dispatch = createDispatcher({

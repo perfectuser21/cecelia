@@ -81,7 +81,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     { claudeAdapter },
     { codexAdapter },
     { createDetachedLauncher },
-    { spawnDockerDetached },
+    { spawnDockerDetached, removeDockerContainer },
   ] = await Promise.all([
     import('./orchestrator/attempt-store.js'),
     import('./orchestrator/provider-registry.js'),
@@ -108,6 +108,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
   });
   const launcher = createDetachedLauncher({
     spawnDetached: spawnDockerDetached,
+    removeContainer: removeDockerContainer,
     attemptStore: store,
     leaseOwner,
   });
@@ -118,6 +119,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     adapter,
     task,
     leaseClaimed: true,
+    generation: new Date(reclaimed.updated_at ?? Date.now()).getTime(),
   });
   return { ok: true, resumed: true, ...launched };
 }

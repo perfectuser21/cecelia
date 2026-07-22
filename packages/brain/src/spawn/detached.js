@@ -24,6 +24,15 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
 import { buildDockerArgs } from '../docker-executor.js';
 
+/** Best-effort cleanup before a reclaimed attempt starts a new container generation. */
+export function removeDockerContainer(containerId) {
+  return new Promise((resolve) => {
+    const proc = nodeSpawn('docker', ['rm', '-f', containerId], { stdio: ['ignore', 'ignore', 'ignore'] });
+    proc.on('error', () => resolve(false));
+    proc.on('exit', (code) => resolve(code === 0));
+  });
+}
+
 // 注意：本文件**不再**自带本地 prompt 落盘函数 / 本地 prompt 目录常量。
 // prompt 文件落盘路径必须由 buildDockerArgs 返回的 forensics.promptFile 决定——它与注入容器的
 // CECELIA_PROMPT_FILE env 共享同一 runInstance（HOST_PROMPT_DIR 解析也同源）。若在此另写一份
