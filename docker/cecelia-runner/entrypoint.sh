@@ -198,7 +198,7 @@ run_provider_contract() {
     return 1
   fi
 
-  result_schema_json='{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array"},"checks":{"type":"array"},"decision":{"anyOf":[{"type":"object"},{"type":"null"}]},"error":{}},"required":["status","summary","artifacts","checks","decision","error"],"additionalProperties":true}'
+  result_schema_json='{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array"},"checks":{"type":"array"},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string"},"reason":{"type":"string"}},"required":["outcome","reason"],"additionalProperties":true},{"type":"null"}]},"error":{}},"required":["status","summary","artifacts","checks","decision","error"],"additionalProperties":true}'
   printf '%s' "$result_schema_json" > "$result_schema_file"
 
   local model_args=()
