@@ -18,7 +18,7 @@ import { readFileSync, existsSync } from 'fs';
 import { readFile } from 'node:fs/promises';
 import path from 'path';
 import { z } from 'zod';
-import { loadSkillBundle } from './orchestrator/skill-bundle.js';
+import { loadRepositorySkillContent } from './orchestrator/skill-bundle.js';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
 // Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
@@ -31,7 +31,7 @@ import { loadSkillBundle } from './orchestrator/skill-bundle.js';
  * 调用方拿空 SKILL 静默降级会跑出错误成果（generator 无 PR），故 fail-fast。
  */
 export function loadSkillContent(skillName) {
-  return loadSkillBundle(skillName).content;
+  return loadRepositorySkillContent(skillName);
 }
 
 // ─── Docker 输出解析 ─────────────────────────────────────────────────────────

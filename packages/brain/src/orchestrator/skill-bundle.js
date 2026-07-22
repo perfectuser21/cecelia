@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const bundleCache = new Map();
+const contentCache = new Map();
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(moduleDir, '../../../..');
 const VALID_SKILL_NAME = /^[a-z0-9][a-z0-9._-]*$/i;
@@ -26,17 +27,13 @@ function readVersion(content, skillName) {
   return version;
 }
 
-/**
- * Load one repository-owned Skill as an immutable execution snapshot.
- * The digest lets every attempt prove which exact instructions it received.
- */
-export function loadSkillBundle(skillName, options = {}) {
+function readSkillSnapshot(skillName, options = {}) {
   if (!VALID_SKILL_NAME.test(skillName)) {
     throw new Error(`loadSkillBundle: invalid skill name "${skillName}"`);
   }
 
   const skillPath = path.join(resolveSkillsRoot(options), skillName, 'SKILL.md');
-  if (bundleCache.has(skillPath)) return bundleCache.get(skillPath);
+  if (contentCache.has(skillPath)) return contentCache.get(skillPath);
   if (!existsSync(skillPath)) {
     throw new Error(`loadSkillBundle: SKILL.md not found for "${skillName}". Searched: ${skillPath}`);
   }
@@ -51,6 +48,28 @@ export function loadSkillBundle(skillName, options = {}) {
     );
   }
 
+  const snapshot = Object.freeze({ content, source_path: skillPath });
+  contentCache.set(skillPath, snapshot);
+  return snapshot;
+}
+
+/**
+ * Read repository-owned Skill instructions for legacy prompt inlining.
+ * Unlike a kernel execution bundle, legacy Skills are not required to carry
+ * version metadata; the repository file is still the single source of truth.
+ */
+export function loadRepositorySkillContent(skillName, options = {}) {
+  return readSkillSnapshot(skillName, options).content;
+}
+
+/**
+ * Load one repository-owned Skill as an immutable execution snapshot.
+ * The digest lets every attempt prove which exact instructions it received.
+ */
+export function loadSkillBundle(skillName, options = {}) {
+  const { content, source_path: skillPath } = readSkillSnapshot(skillName, options);
+  if (bundleCache.has(skillPath)) return bundleCache.get(skillPath);
+
   const bundle = Object.freeze({
     name: skillName,
     version: readVersion(content, skillName),
@@ -64,4 +83,5 @@ export function loadSkillBundle(skillName, options = {}) {
 
 export function clearSkillBundleCacheForTests() {
   bundleCache.clear();
+  contentCache.clear();
 }

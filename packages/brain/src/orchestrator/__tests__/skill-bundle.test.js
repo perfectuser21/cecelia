@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   clearSkillBundleCacheForTests,
+  loadRepositorySkillContent,
   loadSkillBundle,
 } from '../skill-bundle.js';
 
@@ -98,5 +99,13 @@ describe('loadSkillBundle', () => {
     const repoRoot = createSkill('unversioned', '---\nid: unversioned\n---\ncontent\n');
 
     expect(() => loadSkillBundle('unversioned', { repoRoot })).toThrow(/version/i);
+  });
+
+  it('旧 Skill 可只读仓库正文，不放宽内核 bundle 的版本要求', () => {
+    const content = '---\nid: legacy-skill\n---\nlegacy instructions\n';
+    const repoRoot = createSkill('legacy-skill', content);
+
+    expect(loadRepositorySkillContent('legacy-skill', { repoRoot })).toBe(content);
+    expect(() => loadSkillBundle('legacy-skill', { repoRoot })).toThrow(/version/i);
   });
 });
