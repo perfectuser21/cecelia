@@ -20,6 +20,7 @@ import { codexAdapter } from './providers/codex.js';
 import { grokAdapter } from './providers/grok.js';
 import { loadSkillBundle } from './skill-bundle.js';
 import { createKernelHandlers } from './kernel-handlers.js';
+import { readGitArtifact } from './git-artifact-reader.js';
 
 /** 解析 --task-id / --run-id / --dry-run */
 export function parseArgs(argv) {
@@ -125,6 +126,7 @@ export async function buildRealDeps(overrides = {}) {
     execCmd,
     fileExists: overrides.fileExists ?? ((p) => existsSync(p)),
     readFile: overrides.readFile ?? ((p) => readFileSync(p, 'utf-8')),
+    readGitFile: overrides.readGitFile ?? ((sha, p) => readGitArtifact(sha, p)),
     dispatch,
     host: os.hostname(),
     pid: process.pid,

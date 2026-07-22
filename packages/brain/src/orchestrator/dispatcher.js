@@ -108,6 +108,7 @@ function buildInputs(spec, ctx) {
   if (spec.role === 'reviewer') {
     common.contract_branch = observed.proposeBranch ?? observed.contract?.row?.propose_branch ?? null;
     common.contract_round = observed.proposeBranchRn ?? 0;
+    common.contract_sha = observed.proposeBranchSha ?? null;
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
     common.contract = observed.contract?.row ?? null;

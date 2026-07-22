@@ -99,6 +99,7 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
         attempt_id: attempt.id,
         verdict: normalizeVerdict(attempt.role, result.decision.outcome),
         rn: inputs.contract_round ?? null,
+        contract_sha: inputs.contract_sha ?? null,
         feedback: result.decision.reason,
       }
     : {

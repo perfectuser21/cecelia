@@ -205,15 +205,17 @@ export async function collectGroundTruth(deps, opts) {
   let proposeBranchRn = 0;
   let proposeBranchAttempt = -1;
   let proposeBranch = null;
-  const rnPattern = /(cp-harness-propose-r(\d+)-([a-zA-Z0-9]{8})-a(\d+))/g;
+  let proposeBranchSha = null;
+  const rnPattern = /^(\S+)\s+refs\/heads\/(cp-harness-propose-r(\d+)-([a-zA-Z0-9]{8})-a(\d+))$/gm;
   for (const m of String(lsRemote).matchAll(rnPattern)) {
-    if (m[3] !== shortTask) continue;
-    const round = Number(m[2]);
-    const attempt = Number(m[4]);
+    if (m[4] !== shortTask) continue;
+    const round = Number(m[3]);
+    const attempt = Number(m[5]);
     if (round > proposeBranchRn || (round === proposeBranchRn && attempt > proposeBranchAttempt)) {
       proposeBranchRn = round;
       proposeBranchAttempt = attempt;
-      proposeBranch = m[1];
+      proposeBranch = m[2];
+      proposeBranchSha = m[1];
     }
   }
 
@@ -240,8 +242,17 @@ export async function collectGroundTruth(deps, opts) {
   // GAN 本轮 verdict：只认 detail.rn === 当前分支 rN 的 reviewer verdict（旧轮不算）
   const reviewerRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_REVIEWER);
   const reviewerDetail = reviewerRow ? asJson(reviewerRow.detail) : null;
+  const reviewerShaMatches = reviewerDetail?.contract_sha == null
+    || reviewerDetail.contract_sha === proposeBranchSha;
   const ganLatestRoundVerdict =
-    reviewerDetail && reviewerDetail.rn === proposeBranchRn ? reviewerDetail.verdict ?? null : null;
+    reviewerDetail && reviewerDetail.rn === proposeBranchRn && reviewerShaMatches
+      ? reviewerDetail.verdict ?? null
+      : null;
+  // Legacy verdicts created before SHA anchoring are accepted only for the in-flight
+  // rollout and are bound to the current tip at materialization time.
+  const ganLatestRoundContractSha = ganLatestRoundVerdict
+    ? reviewerDetail.contract_sha ?? proposeBranchSha
+    : null;
 
   // review gate：required 来自 tasks.payload（harness-initiative 透传 review_required）；
   // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
@@ -263,7 +274,9 @@ export async function collectGroundTruth(deps, opts) {
     lastAgentExit,
     proposeBranchRn,
     proposeBranch,
+    proposeBranchSha,
     ganLatestRoundVerdict,
+    ganLatestRoundContractSha,
     generatorSpawned,
     evaluateVerdict,
     evaluateResult,

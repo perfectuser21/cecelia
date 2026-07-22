@@ -314,6 +314,25 @@ describe('runLoop：控制 action 自消费', () => {
     expect(materializeSql[1].join('\n')).toContain('# DoD');
   });
 
+  it('APPROVED 没有不可变合同 SHA 时 fail closed，不读取可变 branch', async () => {
+    const observedSeq = [obs({
+      run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+      task: { status: 'in_progress', payload: { sprint_dir: 'sprints/kernel-contract' } },
+      contract: { approved: false, id: null },
+      proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+      proposeBranchRn: 1,
+      ganLatestRoundVerdict: 'APPROVED',
+      ganLatestRoundContractSha: null,
+    })];
+    const { deps } = makeEnv({ observedSeq });
+    deps.readGitFile = vi.fn(() => { throw new Error('missing immutable SHA'); });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('approved_but_no_contract_sha');
+    expect(deps.readGitFile).not.toHaveBeenCalled();
+  });
+
   it('exit（terminal）→ 直接退出，无任何写入', async () => {
     const observedSeq = [obs({ task: { status: 'aborted' } })];
     const { deps, appended, sqls } = makeEnv({ observedSeq });
