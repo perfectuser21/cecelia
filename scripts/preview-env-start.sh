@@ -63,7 +63,7 @@ log "开始启动预览环境: branch=${BRANCH_NAME} port=${PORT} db=${DB_NAME}"
 # 必须在 Step 4（数据库克隆）之前完成，且必须等待确认真正退出（SIGKILL 兜底）。
 # 上一轮 preview-env-start.sh 脚本本身跑完就退出了（SCRIPT_LOCK 已释放），但它
 # nohup 启动的 Brain 子进程是预期常驻的（预览环境要一直活到 PR 关闭），仍连着
-# 同名 $DB_NAME。若这一步拖到 Step 5（原位置）才做，re-push 间隔较短时旧进程
+# 同名 ${DB_NAME}。若这一步拖到 Step 5（原位置）才做，re-push 间隔较短时旧进程
 # 还没被杀，Step 4 的 dropdb 会报 "is being accessed by other users"，createdb
 # 因库已存在报错，脚本 exit 1，Brain API status 永远停留 starting，GHA 只能
 # 傻等两层硬编码超时（600s 轮询 + 120s 健康检查 ≈ 12min）才报错（PR#4176 CI 实测复现）。
