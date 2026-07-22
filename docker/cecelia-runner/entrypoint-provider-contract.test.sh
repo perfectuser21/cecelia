@@ -141,10 +141,13 @@ cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":["provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
 JSON
 printf '%s\n' '12 tests passed' > "$EVIDENCE_TMP/e2e-result.log"
+printf '%s\n' \
+  '{"command":"timeout 120 bash /tmp/e2e-verify.sh","exit_code":0}' \
+  > "$EVIDENCE_TMP/evaluator-execution.json"
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
 WORKSPACE="$EVIDENCE_TMP" TASK_ID=task-current HARNESS_ATTEMPT_ID=attempt-skill \
-  TARGET_ENV=local_api EXIT_CODE=0 E2E_COMMAND='timeout 120 bash /tmp/e2e-verify.sh' \
+  TARGET_ENV=local_api E2E_EXECUTION_FILE="$EVIDENCE_TMP/evaluator-execution.json" \
   E2E_RESULT_LOG="$EVIDENCE_TMP/e2e-result.log" SCREENSHOTS_JSON='[]' CASCADE_ASSERTIONS='[]' \
   eval "$RESULT_WRITER"
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
