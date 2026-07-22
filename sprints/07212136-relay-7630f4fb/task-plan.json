@@ -1,0 +1,28 @@
+{
+  "initiative_id": "7630f4fb-0acf-4f7a-ad42-e2dea3485089",
+  "journey_type": "autonomous",
+  "journey_type_reason": "PRD 指定 target_environment=local_api，验收对象为 Brain API(localhost:5221)、PostgreSQL initiative_runs、既有 smoke 脚本本机执行，无用户可见 UI 交互。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增锚定 task_id=7630f4fb 的 e2e-verify.sh，只读校验 headed relay 三件事",
+      "scope": "新增 sprints/07212136-relay-7630f4fb/e2e-verify.sh：① 复用（不重实现）packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh，确认全绿执行且已在 packages/quality/smoke-allowlist.txt 精确登记（不重复登记）；② curl GET /api/brain/tasks/7630f4fb-0acf-4f7a-ad42-e2dea3485089 核对 payload.mode=headed / payload.executor=claude / payload.orchestrator=skill-relay / payload.journey_id 非空，且反向断言不含 token/github_token/anthropic_token/thin_prd 明文；③ psql 定点查 initiative_runs WHERE initiative_id=当前 task_id，核对 orchestrator_host 精确等于 skill-relay-claude-headed，phase 落在 A_planning|planning|gan|generate|evaluate|done 且非 failed/unknown。不新增业务功能/dashboard/UI/migration，不改 claude-headed-dispatch-smoke.sh 本体，不改 .github/workflows/ci.yml，不重复登记 allowlist。",
+      "dod": [
+        "[BEHAVIOR] 复用 claude-headed-dispatch-smoke.sh 全绿执行 + allowlist 精确登记确认",
+        "[BEHAVIOR] 当前 task 的 Brain API payload 关键字段齐全且不含敏感字段明文",
+        "[BEHAVIOR] DB initiative_runs 定点核对 orchestrator_host 精确匹配 + phase 合法非 failed/unknown",
+        "[BEHAVIOR] e2e-verify.sh 完整脚本端到端跑通（三件事全过，脚本 exit 0）",
+        "[BEHAVIOR] 未改动 claude-headed-dispatch-smoke.sh 本体（范围限定）",
+        "[BEHAVIOR] 未改动 .github/workflows/ci.yml（范围限定）",
+        "[BEHAVIOR] allowlist 未重复登记（第 23 行精确唯一）",
+        "[ARTIFACT] sprints/07212136-relay-7630f4fb/e2e-verify.sh 存在，锚定当前 task_id/sprint_dir，具备可执行权限"
+      ],
+      "files": [
+        "sprints/07212136-relay-7630f4fb/e2e-verify.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}
