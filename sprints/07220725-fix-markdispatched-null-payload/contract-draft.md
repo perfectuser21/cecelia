@@ -70,15 +70,18 @@ cd packages/brain && npx vitest run src/__tests__/nightly-orchestrator.integrati
 
 同一集成测试文件中，调用两轮 `getPendingBacklog()`：第一轮含目标任务，第二轮（markDispatched 后）不含该任务 ID。
 
-### E2E-3：全文件无裸 NULL 陷阱静态扫描
+### E2E-3：全文件无裸 NULL 陷阱静态扫描 + 运行时语义验证
 
 ```bash
-# 扫描修复后四个文件中不存在裸写法
-grep -rn "payload = payload || \$\|result = result || \$" \
+# 扫描修复后四个文件中不存在裸写法（使用单引号避免 bash 转义）
+grep -rn 'payload = payload || $\|result = result || $' \
   packages/brain/src/nightly-orchestrator.js \
   packages/brain/src/post-publish-data-collector.js \
   packages/brain/src/routes/content-library.js
 # 预期：无输出（exitcode 1 = grep 无匹配 = 通过）
+
+# 运行时语义验证（FR-4/FR-5 等效 SQL，需连接真实 Postgres）
+# 见 contract-dod.md [BEHAVIOR-4] 运行时验证命令
 ```
 
 ### E2E-4：全量回归测试通过
@@ -97,4 +100,17 @@ cd packages/brain && npx vitest run
 - `getPendingBacklog` 过滤逻辑不得修改
 - `scoreTask` 评分逻辑不在本 Sprint 修改范围
 - 新增回归测试必须 commit 进仓库，永久留在 CI，不得删除
-- 集成测试必须连接真实 PostgreSQL（不可用纯 mock 替代数据库层）
+- 集成测试必须连接真实 PostgreSQL（不可用纯 mock 替代数据库层；`vi.mock('pg')` / `jest.mock('pg')` 不允许出现）
+- **Bug Fix TDD 铁律**：必须先写 failing 集成测试并单独 commit（此时测试 red），再修复 SQL 并单独 commit（测试 green）；不允许测试与修复合并到同一 commit
+
+## 实现指引（TDD 步骤）
+
+1. **Step 1 — 写 failing test（Commit A）**
+   - 在 `packages/brain/src/__tests__/nightly-orchestrator.integration.test.js` 新增集成测试
+   - 测试此时必须失败（证明 bug 存在）
+   - 单独提交：`git commit -m "test: 添加 markDispatched NULL payload 回归测试（failing）"`
+
+2. **Step 2 — 修复代码（Commit B）**
+   - 修改 `nightly-orchestrator.js`、`post-publish-data-collector.js`、`routes/content-library.js` 四处 SQL
+   - 运行测试确认全绿
+   - 单独提交：`git commit -m "fix: markDispatched NULL payload COALESCE 防御修复"`

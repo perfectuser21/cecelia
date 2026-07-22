@@ -157,9 +157,9 @@ DISPATCHED=$(psql "$DATABASE_URL" -tAc "SELECT payload->>'dispatched_by_orchestr
 
 ---
 
-### [BEHAVIOR-4] 三处同款 NULL 陷阱全部修复（无裸写）
+### [BEHAVIOR-4] 三处同款 NULL 陷阱全部修复（无裸写 + 运行时验证）
 
-**类型**: code-invariant / static-scan
+**类型**: code-invariant / static-scan + runtime-assertion
 **文件**:
 - `packages/brain/src/post-publish-data-collector.js`（writeBackToPublishTask + completeScraperTask）
 - `packages/brain/src/routes/content-library.js`（content-pipeline review patch）
@@ -167,45 +167,94 @@ DISPATCHED=$(psql "$DATABASE_URL" -tAc "SELECT payload->>'dispatched_by_orchestr
 **断言**:
 - 上述三个文件中，所有 `payload = payload || $N::jsonb` 模式已改为 `COALESCE` 防御写法
 - `grep` 扫描无命中
+- 运行时：对 `payload=NULL` 的任务执行等效 COALESCE SQL，结果非 NULL（运行时语义正确性验证）
 
 **验收命令** (`manual:bash`):
 ```bash
-# 静态扫描：四个文件中不存在裸 NULL 陷阱写法
-RESULT=$(grep -rn "payload = payload || \$\|result = result || \$" \
+# 静态扫描：四个文件中不存在裸 NULL 陷阱写法（使用单引号避免 bash 转义）
+RESULT=$(grep -rn 'payload = payload || $\|result = result || $' \
   /workspace/packages/brain/src/nightly-orchestrator.js \
   /workspace/packages/brain/src/post-publish-data-collector.js \
   /workspace/packages/brain/src/routes/content-library.js \
   2>/dev/null)
 
 if [ -z "$RESULT" ]; then
-  echo "PASS: BEHAVIOR-4 通过，无裸 NULL 陷阱写法"
+  echo "PASS: BEHAVIOR-4 静态扫描通过，无裸 NULL 陷阱写法"
 else
   echo "FAIL: BEHAVIOR-4 失败，发现裸写法:"
   echo "$RESULT"
   exit 1
 fi
+
+# 运行时验证：COALESCE 语义等效集成断言（FR-4/FR-5 对应）
+export DATABASE_URL="${TEST_DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia_test}"
+TODAY=$(date +%Y-%m-%d)
+
+TASK_ID=$(psql "$DATABASE_URL" -tAc "
+  INSERT INTO tasks (id, title, task_type, status, priority, payload)
+  VALUES (gen_random_uuid(), 'COALESCE-runtime-test', 'dev', 'queued', 'P2', NULL)
+  RETURNING id
+")
+
+# 等效 post-publish-data-collector / content-library 中 COALESCE 写法
+psql "$DATABASE_URL" -c "
+  UPDATE tasks
+  SET payload = COALESCE(payload, '{}'::jsonb) || '{\"scraped_result\": \"ok\", \"updated_date\": \"$TODAY\"}'::jsonb,
+      updated_at = NOW()
+  WHERE id = '$TASK_ID'
+" > /dev/null
+
+RUNTIME_RESULT=$(psql "$DATABASE_URL" -tAc "SELECT payload->>'scraped_result' FROM tasks WHERE id = '$TASK_ID'")
+[ "$RUNTIME_RESULT" = "ok" ] \
+  && echo "PASS: BEHAVIOR-4 运行时验证通过，COALESCE 写入 NULL payload 正确" \
+  || { echo "FAIL: BEHAVIOR-4 运行时验证失败，scraped_result=$RUNTIME_RESULT"; exit 1; }
+
+# 清理测试数据
+psql "$DATABASE_URL" -c "DELETE FROM tasks WHERE id = '$TASK_ID'" > /dev/null
 ```
 
 ---
 
-### [BEHAVIOR-5] TDD 回归测试永久留存于 CI
+### [BEHAVIOR-5] TDD 先写 failing test 再修代码，回归测试永久留存于 CI
 
-**类型**: test-coverage / ci-permanence
+**类型**: test-coverage / ci-permanence / tdd-order
 **文件**: `packages/brain/src/__tests__/nightly-orchestrator.integration.test.js`（新增）
+
+**TDD 顺序约束（Bug Fix 铁律）**:
+实现必须严格按以下顺序产生两个独立 commit：
+1. **Commit A（failing test）**：先写集成测试，此时测试必须失败（red）；
+2. **Commit B（fix）**：再修 `markDispatched` 等四处 SQL，使测试变绿（green）。
+不允许测试和修复在同一 commit 中提交，不允许跳过 red 阶段。
 
 **断言**:
 - 新增集成测试文件存在且包含至少 2 个测试用例（BEHAVIOR-1 + BEHAVIOR-2 对应）
 - `packages/brain` 全量测试通过（含新增用例）
-- 测试使用真实 PostgreSQL 连接（不可仅用 vi.mock 替代 pool.query）
+- 测试使用真实 PostgreSQL 连接（不可仅用 `vi.mock` / `jest.mock` 替代 pool.query）
+- 集成测试文件中无 pg mock（`vi.mock('pg')` / `jest.mock('pg')` 均不存在）
+- CI workflow 配置中存在 `vitest run` 命令，确保测试进入 CI
 
 **验收命令** (`manual:bash`):
 ```bash
-# 检查集成测试文件存在
+# 1. 检查集成测试文件存在
 [ -f "/workspace/packages/brain/src/__tests__/nightly-orchestrator.integration.test.js" ] \
   && echo "OK: 集成测试文件存在" \
   || { echo "FAIL: 集成测试文件缺失"; exit 1; }
 
-# 运行全量测试（包含新增用例）
+# 2. 验证集成测试中无 pg mock（真实 Postgres 连接，不可绕过）
+grep -n 'vi\.mock.*pg\|jest\.mock.*pg' \
+  /workspace/packages/brain/src/__tests__/nightly-orchestrator.integration.test.js
+# 预期：无输出（有输出则 FAIL）
+MOCK_COUNT=$(grep -c 'vi\.mock.*pg\|jest\.mock.*pg' \
+  /workspace/packages/brain/src/__tests__/nightly-orchestrator.integration.test.js 2>/dev/null || echo 0)
+[ "$MOCK_COUNT" = "0" ] \
+  && echo "PASS: 集成测试无 pg mock，连接真实 Postgres" \
+  || { echo "FAIL: 发现 pg mock，违反 INV-6"; exit 1; }
+
+# 3. 验证 CI workflow 包含 vitest run（测试进入 CI 留存）
+grep -n 'vitest run' /workspace/.github/workflows/brain-ci-deploy.yml
+# 预期：至少一行输出
+
+# 4. 运行全量测试（包含新增用例，所有用例全绿）
 cd /workspace/packages/brain && npx vitest run 2>&1 | tail -20
 ```
 
@@ -218,11 +267,19 @@ cd /workspace/packages/brain && npx vitest run 2>&1 | tail -20
 cd /workspace
 
 echo "=== 静态扫描 NULL 陷阱 ==="
-SCAN=$(grep -rn "payload = payload || \$\|result = result || \$" \
+SCAN=$(grep -rn 'payload = payload || $\|result = result || $' \
   packages/brain/src/nightly-orchestrator.js \
   packages/brain/src/post-publish-data-collector.js \
   packages/brain/src/routes/content-library.js 2>/dev/null)
 [ -z "$SCAN" ] && echo "PASS" || { echo "FAIL: $SCAN"; exit 1; }
+
+echo "=== 验证集成测试无 pg mock ==="
+MOCK_COUNT=$(grep -c 'vi\.mock.*pg\|jest\.mock.*pg' \
+  packages/brain/src/__tests__/nightly-orchestrator.integration.test.js 2>/dev/null || echo 0)
+[ "$MOCK_COUNT" = "0" ] && echo "PASS: 无 pg mock" || { echo "FAIL: 发现 pg mock"; exit 1; }
+
+echo "=== 验证 CI 留存 vitest run ==="
+grep -n 'vitest run' .github/workflows/brain-ci-deploy.yml && echo "PASS" || { echo "FAIL: CI 无 vitest run"; exit 1; }
 
 echo "=== 运行 Brain 全量测试 ==="
 cd packages/brain && npx vitest run
@@ -238,5 +295,6 @@ echo "DONE"
 | INV-1 | 禁止裸写 `payload = payload \|\| $x::jsonb` | BEHAVIOR-4 静态扫描 |
 | INV-2 | markDispatched 不得改变任务 status | BEHAVIOR-1 断言中验证 status 仍为 queued |
 | INV-3 | getPendingBacklog 过滤逻辑不修改 | 代码 review：第 75-108 行无变更 |
-| INV-4 | 集成测试连接真实 Postgres | BEHAVIOR-5 断言测试文件不使用纯 mock |
-| INV-5 | 回归测试永久留存 CI | BEHAVIOR-5 + CI workflow 配置检查 |
+| INV-4 | 集成测试连接真实 Postgres | BEHAVIOR-5 验证 `vi.mock('pg')` / `jest.mock('pg')` 均不存在 |
+| INV-5 | 回归测试永久留存 CI | BEHAVIOR-5 验证 `vitest run` 出现在 brain-ci-deploy.yml |
+| INV-6 | Bug Fix TDD 顺序：先 failing test commit，再 fix commit | BEHAVIOR-5 实现指引 + git log 验证两个独立 commit |
