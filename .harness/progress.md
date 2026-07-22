@@ -24,3 +24,5 @@ evaluator-gate: 重跑 ARTIFACT 6/6 PASS (A3勘误后原样提取真跑), CI req
 evaluator: done (verdict=PASS, sha=8403a6c[待重锚至终head], verdict_file=.harness/verdicts/evaluate-8403a6c.json, behavior=7/7, artifact=6/6独立复跑, unverifiable=[], e2e-verify.sh已固化@14d416f, 观察项=draft E2E Step5勘误未传播→派GAN微勘误r4)
 gan: 微勘误r4 done (draft E2E Step5 勘误传播, commit=dba4881, verdict=APPROVED, 三处逐字节一致[dod A3/e2e-verify.sh/draft Step5], rubric=.harness/verdicts/gan-dba4881.json)
 graduation: done (e2e-verify.sh -> scripts/smoke/e2e/relay-097e589d.sh 纯rename, 孤儿棘轮1->0, tests已由generator提前毕业19f94f4)
+evaluator: re-anchor 8403a6c78->2a14d8563 done (verdict=PASS, verdict_file=.harness/verdicts/evaluate-2a14d85.json, 区间4commit零packages/变更[14d416f99叶子新增/dba48812a r4勘误传播/3595f7ff9毕业纯rename/2a14d8563附件], behavior=7/7, artifact=6/6, e2e毕业新路径复证exit0)
+controller: 恢复接管 (worktree=session-d5388c0f 孤儿[无.dev-lock/无活跃进程], .brain-result.json 误留旧任务07b2fd3b内容已修正为097e589d, PR#4185与main冲突4commit待解)
