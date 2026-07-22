@@ -113,7 +113,7 @@ for PKG in packages/engine packages/brain apps/api apps/dashboard; do
       echo "$VITEST_OUT"
       if [[ $VITEST_EXIT -eq 0 ]]; then
         echo -e "  ${GREEN}✅ 通过${RESET}"
-      elif echo "$VITEST_OUT" | grep -q " FAIL "; then
+      elif echo "$VITEST_OUT" | grep -Eq '(^|[^[:alpha:]])Tests?[[:space:]]+[1-9][0-9]*[[:space:]]+failed\b| FAIL '; then
         echo -e "  ${RED}❌ 失败 — 修复后重新 push${RESET}"
         PASS=false
       else
