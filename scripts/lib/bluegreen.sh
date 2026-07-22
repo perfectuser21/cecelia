@@ -139,7 +139,9 @@ bluegreen_wait_for_stable_http() {
 
 # bluegreen_swap：green canary 验证后原子切。入参走 env：
 #   BLUE_NAME(默认 cecelia-node-brain) / GREEN_NAME(默认 cecelia-node-brain-green)
-#   TEMP_PORT(默认 5223) / TARGET_VERSION(必填，镜像 tag) / HEALTH_TIMEOUT(默认 60)
+#   TEMP_PORT(默认 5233，故意避开 dashboard-slot-server.cjs 的默认端口 5223——两者曾撞车导致
+#   green canary pre-swap smoke 恒败，见 scripts/__tests__/bluegreen-temp-port-collision.test.sh)
+#   / TARGET_VERSION(必填，镜像 tag) / HEALTH_TIMEOUT(默认 60)
 #   GREEN_RUN_ARGS(可选，起 green 的额外 docker run 参数：env/mounts 等)
 #   DEPLOY_ROOT_DIR(可选，设置后启动 compose sidecar 规避自杀竞态)
 # 返回：0 = green 健康、blue 已删（或 sidecar 已启动将删）、compose up 将由 sidecar 完成
@@ -147,7 +149,7 @@ bluegreen_wait_for_stable_http() {
 bluegreen_swap() {
   local blue="${BLUE_NAME:-cecelia-node-brain}"
   local green="${GREEN_NAME:-cecelia-node-brain-green}"
-  local port="${TEMP_PORT:-5223}"
+  local port="${TEMP_PORT:-5233}"
   local timeout="${HEALTH_TIMEOUT:-60}"
   local version="${TARGET_VERSION:?TARGET_VERSION 必填}"
   local stable_required="${GREEN_STABLE_SUCCESSES:-3}"
