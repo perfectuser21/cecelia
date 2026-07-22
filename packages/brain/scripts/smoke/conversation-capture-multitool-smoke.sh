@@ -40,7 +40,7 @@ if (missing.length > 0) { console.error('FAIL: ' + missing.map(m=>m[1]).join(', 
 console.log('Grok 适配器结构正确');
 " && ok "conversation-capture-grok.js 结构正确" || fail "Grok 适配器结构缺失"
 
-echo "── L1 编排层：闲置判定 + dedupeKey 绑定 lastEntryId + LLM 摘要 ──"
+echo "── L1 编排层：闲置判定 + dedupeKey 只绑 sessionId + LLM 摘要 ──"
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('$ROOT/src/conversation-capture.js', 'utf8');
@@ -48,25 +48,34 @@ const checks = [
   ['IDLE_THRESHOLD_MS', '15分钟闲置阈值常量'],
   ['LOOKBACK_WINDOW_MS', '固定回看窗口（修复mtime窗口互斥bug）'],
   ['sessionDedupeKey', 'dedupeKey 生成函数'],
-  ['lastEntryId', 'dedupeKey 绑定 lastEntryId（非仅sessionId）'],
   ['summarizeSession', 'Haiku摘要函数'],
   ['session_summary', '摘要 nature 值'],
   ['adapter_failures', '适配器失败可观测字段'],
 ];
 const missing = checks.filter(([p]) => !src.includes(p));
 if (missing.length > 0) { console.error('FAIL: ' + missing.map(m=>m[1]).join(', ')); process.exit(1); }
+// dedupeKey 只绑 sessionId（2026-07-22 起，不再绑 lastEntryId）：函数体不能再拼 lastEntryId，
+// 否则同一 session 复聊后再闲置会被当新会话重复摘要（回归 captures 表噪音事故）。
+const fnBody = src.slice(src.indexOf('export function sessionDedupeKey'), src.indexOf('export function sessionDedupeKey') + 300);
+if (fnBody.includes('lastEntryId')) { console.error('FAIL: sessionDedupeKey 仍绑定 lastEntryId（应只绑 sessionId）'); process.exit(1); }
 console.log('编排层关键结构正确');
-" && ok "conversation-capture.js 编排层结构正确（含mtime窗口修复+LLM去重前置检查）" || fail "编排层结构缺失"
+" && ok "conversation-capture.js 编排层结构正确（含mtime窗口修复+dedupeKey只绑sessionId）" || fail "编排层结构缺失"
 
-echo "── L1 dedupe 前置检查（防重复LLM计费）──"
+echo "── L1 dedupe 前置检查（防重复LLM计费，2026-07-22 起改内容比对）──"
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('$ROOT/src/conversation-capture.js', 'utf8');
-if (!/SELECT 1 FROM captures WHERE dedupe_key/.test(src)) {
-  console.error('FAIL: 缺少 dedupe_key 存在性前置检查（会导致LLM重复计费）');
+// 内容未变化直接跳过（既不重新 push 也不重新摘要）：按 dedupeKey 查 content 比对，
+// 而非只判存在性——存在性判断挡不住'复聊内容变了但 key 没变'的场景，会漏内容。
+if (!/SELECT content FROM captures WHERE dedupe_key/.test(src)) {
+  console.error('FAIL: 缺少 dedupe_key 内容比对前置检查（会导致LLM重复计费或漏内容）');
   process.exit(1);
 }
-console.log('LLM调用前有dedupe_key存在性检查');
+if (!/existingContent === rawText/.test(src)) {
+  console.error('FAIL: 缺少内容未变化跳过逻辑（existingContent === rawText）');
+  process.exit(1);
+}
+console.log('LLM调用前有dedupe_key内容比对检查');
 " && ok "LLM调用前置去重检查存在" || fail "缺少LLM前置去重检查"
 
 # ── L1 migration 356 内容 ──

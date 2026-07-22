@@ -1,0 +1,7 @@
+{
+  "next_steps_suggested": [
+    "harness-generator 在实现阶段禁止未经合同授权修改共享 CI 基础设施文件（.github/workflows/*.yml、packages/quality/smoke-allowlist.txt、scripts/test-pyramid-baseline.json 等）——铁律 id=1100cb8f；发现 generator 为让 CI 变绿而擅自调整这类文件（如孤儿棘轮基线数值）时，应视为违规打回而非放行，根治方式是从源头把测试产物/e2e wrapper 落点选为永久池路径以避免触发该类检查，而不是事后修改基线容忍它",
+    "harness-contract-proposer 起草 Test Contract 表的测试文件路径列前，必须先读 check-test-coverage.cjs 的 path.join(sprintDir, testFile) 拼接语义并核对至少一个历史先例 PR 的真实路径写法，避免因路径是否含 sprintDir 前缀不一致导致 CI 报'声明的测试文件不存在'",
+    "headed-smoke-test 一类自测/回归验证任务的合同应默认把测试产物与 e2e wrapper 落点写为永久池路径（tests/regression/relay-<slug>/、scripts/smoke/e2e/relay-<slug>.sh），而非 sprints/ 下临时路径，从源头避免孤儿棘轮误报，减少不必要的 GAN 往返"
+  ]
+}
