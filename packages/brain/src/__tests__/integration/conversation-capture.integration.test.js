@@ -247,6 +247,37 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
     expect(rows).toHaveLength(2); // 原始+摘要各一条，第二轮没有多写也没有多调 LLM
   });
 
+  it('同一 session 复聊后再次闲置：更新已有 capture 内容而不新增行（dedupeKey 从绑 lastEntryId 改为只绑 sessionId 后的回归测试）', async () => {
+    homeRoot = makeFixtureHome();
+    const oldTs = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const filePath = writeClaudeSession(homeRoot, 'itest-mt-resume', 'session-resume.jsonl', [
+      { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: '第一轮内容' } },
+    ]);
+    vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
+    os.homedir = () => homeRoot;
+
+    vi.resetModules();
+    const mod = await import('../../conversation-capture.js');
+    await mod.runConversationCapture(pool, { llm: FAKE_LLM });
+
+    // 模拟复聊：同一 sessionId（文件名不变），追加一条新消息，lastEntryId 变了
+    const laterTs = new Date(Date.now() - 20 * 60 * 1000 + 1000).toISOString();
+    fs.appendFileSync(filePath, JSON.stringify(
+      { type: 'user', uuid: 'u2', timestamp: laterTs, message: { role: 'user', content: '复聊后的新内容' } }
+    ) + '\n');
+    const idleMtime = new Date(Date.now() - 20 * 60 * 1000);
+    fs.utimesSync(filePath, idleMtime, idleMtime);
+
+    mod.__resetConversationCaptureForTest();
+    await mod.runConversationCapture(pool, { llm: FAKE_LLM });
+
+    const { rows } = await pool.query(
+      `SELECT nature, content FROM captures WHERE repo = 'itest-mt-resume' ORDER BY nature NULLS FIRST`
+    );
+    expect(rows).toHaveLength(2); // 仍然只有原始+摘要各一条，不因复聊翻倍
+    expect(rows[0].content).toContain('复聊后的新内容'); // 内容已更新为最新
+  });
+
   it('pushCapture 真实失败契约（resolve null，不 throw）时 errors 计数非零且 sentinel 可查到', async () => {
     // pushCapture 的真实契约是永不抛出：DB 错误内部 catch 后 console.warn 并
     // resolve(null)（见 packages/brain/src/capture-inbox.js 末尾 catch 块）。用

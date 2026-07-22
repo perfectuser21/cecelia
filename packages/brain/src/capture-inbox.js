@@ -30,23 +30,15 @@ export async function pushCapture(pool, {
     const truncated = String(content).slice(0, MAX_CONTENT_LEN);
     const status = nature ? 'clarified' : 'captured';
 
-    // 1. 写 captures（信封）——dedupe_key 幂等
+    // 1. 写 captures（信封）——dedupe_key 幂等，内容有变化（如同一 session 复聊后
+    //    再次闲置）时 ON CONFLICT DO UPDATE 覆盖 content，不产生新行、不丢内容。
     let captureId = null;
-    if (dedupeKey) {
-      const { rows: existing } = await pool.query(
-        'SELECT id FROM captures WHERE dedupe_key = $1',
-        [dedupeKey]
-      );
-      if (existing.length > 0) {
-        captureId = existing[0].id;
-      }
-    }
-    if (!captureId) {
+    {
       try {
         const { rows } = await pool.query(
           `INSERT INTO captures (content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-           ON CONFLICT (dedupe_key) DO UPDATE SET updated_at = now()
+           ON CONFLICT (dedupe_key) DO UPDATE SET content = EXCLUDED.content, updated_at = now()
            RETURNING id`,
           [truncated, source, nature, repo, lane, refTaskId, refJourneyId, refPrUrl, dedupeKey, status]
         );

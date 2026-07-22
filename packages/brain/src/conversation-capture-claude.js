@@ -27,6 +27,11 @@ function extractText(entry) {
 /**
  * 扫描 ~/.claude/projects 下每个子目录内的 .jsonl 文件，每个文件当一个 session。
  * 返回 [{sessionId, source, repo, turns:[{text,timestamp}], lastActivityMs, lastEntryId}]
+ *
+ * 排除 `-private-tmp-` 前缀目录：Brain 无头 LLM 调用（含本模块自身的 Haiku 摘要
+ * 调用）的 cwd 落在 /private/tmp 下，projects 目录名按 cwd 编码，role='user' 过滤
+ * 挡不住这类机器写的字。不排除会导致摘要器把自己调用 Haiku 产生的新会话再捕获一遍，
+ * 形成自我喂养循环（见 2026-07-22 事故复盘）。
  */
 export function extractClaudeSessions(sinceMs, projectsDir = CLAUDE_PROJECTS_DIR) {
   const sessions = [];
@@ -34,7 +39,8 @@ export function extractClaudeSessions(sinceMs, projectsDir = CLAUDE_PROJECTS_DIR
 
   let projectDirs = [];
   try {
-    projectDirs = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((d) => d.isDirectory());
+    projectDirs = fs.readdirSync(projectsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.name.startsWith('-private-tmp-'));
   } catch {
     return sessions;
   }

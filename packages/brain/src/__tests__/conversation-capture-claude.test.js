@@ -60,4 +60,19 @@ describe('extractClaudeSessions', () => {
     expect(() => extractClaudeSessions(0, '/tmp/definitely-not-exists-claude-projects')).not.toThrow();
     expect(extractClaudeSessions(0, '/tmp/definitely-not-exists-claude-projects')).toEqual([]);
   });
+
+  it('排除 -private-tmp- 前缀目录（Brain 无头 LLM 调用会话，非真人交互），真实项目目录正常保留', () => {
+    const root = makeProjectsDir({
+      '-private-tmp-cecelia-llm/019headless.jsonl': [
+        { type: 'user', uuid: 'h1', timestamp: '2026-07-20T01:00:00.000Z', message: { role: 'user', content: 'Brain 派发的无头 prompt' } },
+      ],
+      '-Users-administrator-perfect21-cecelia/019real.jsonl': [
+        { type: 'user', uuid: 'r1', timestamp: '2026-07-20T01:00:00.000Z', message: { role: 'user', content: 'Alex 真人交互' } },
+      ],
+    });
+    const sessions = extractClaudeSessions(0, root);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].repo).toBe('-Users-administrator-perfect21-cecelia');
+    expect(sessions[0].turns.map((t) => t.text)).toEqual(['Alex 真人交互']);
+  });
 });
