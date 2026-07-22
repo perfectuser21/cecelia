@@ -118,9 +118,12 @@ export async function launchKernelProcess({ taskId, runId, worktreePath }) {
 }
 
 async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
+  // harness_runtime 由 tasks.payload 持久化，current_task_id + 非终态才是 run 身份。
+  // orchestrator_host 是活性观测字段，heartbeat 会把它改成实际 hostname，
+  // 不得用它做去重键，否则每次重派都会再建一条 run。
   const active = await dbPool.query(
     `SELECT id FROM initiative_runs
-      WHERE current_task_id=$1 AND orchestrator_host='kernel-v1'
+      WHERE current_task_id=$1 AND orchestrator_version='v2'
         AND phase NOT IN ('done','failed')
       ORDER BY started_at DESC LIMIT 1`,
     [task.id],
