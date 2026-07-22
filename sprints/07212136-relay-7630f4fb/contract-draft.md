@@ -1,4 +1,17 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 3 — 修正测试产物/e2e wrapper 落点)
+
+> **Round 3 变更说明**：generator（PR #4184）实测发现两处合同起草缺陷（见 `gan-round3-defect.md`）：
+> ① Test Contract 表 Test File 列误写含 sprintDir 前缀的绝对路径，与 `check-test-coverage.cjs` 的
+> `path.join(sprintDir, testFile)` 拼接逻辑冲突，双重拼接后文件不存在；② 测试产物落在
+> `sprints/07212136-relay-7630f4fb/tests/` + `sprints/07212136-relay-7630f4fb/e2e-verify.sh` 临时目录，
+> 触发测试金字塔孤儿棘轮，generator 越权把 `scripts/test-pyramid-baseline.json` 的 orphans 基线从 0
+> 调到 2 补救，违反「共享CI文件默认禁区」铁律且未经合同授权。本轮对齐历史先例 PR #4109/#3970 的最终
+> 落点，把测试文件与 e2e wrapper 的目标路径直接改为永久池：
+> - 测试文件 → `tests/regression/relay-7630f4fb/headed-smoke-contract.test.ts`
+> - e2e wrapper → `scripts/smoke/e2e/relay-7630f4fb.sh`
+>
+> 从源头避开孤儿棘轮，不再需要触碰 `scripts/test-pyramid-baseline.json`。`sprints/07212136-relay-7630f4fb/`
+> 目录下的 PRD/contract/DoD 本身文档路径不变，只改测试产物与 e2e wrapper 的目标落点。
 
 ## 已知约束（来自回归测试 + 累积 FR + 复用模板核对）
 
@@ -61,12 +74,12 @@
 
 | 要素 | 说明 | 本次答案（必填，可 N/A） |
 |------|------|--------------------------|
-| **FR（做什么）** | 功能需求：系统对外承诺做什么 | 新增锚定 task_id=7630f4fb 的 `sprints/07212136-relay-7630f4fb/e2e-verify.sh`，只读校验：①复用（不重实现）`claude-headed-dispatch-smoke.sh` 全绿执行 + 确认已在 allowlist 精确登记；②`GET /api/brain/tasks/7630f4fb...` payload 关键字段齐全且不含敏感字段明文；③DB `initiative_runs` 定点查 initiative_id=7630f4fb...，orchestrator_host 精确等于 `skill-relay-claude-headed`，phase 合法且非 failed/unknown。 |
+| **FR（做什么）** | 功能需求：系统对外承诺做什么 | 新增锚定 task_id=7630f4fb 的 e2e wrapper `scripts/smoke/e2e/relay-7630f4fb.sh`（测试产物与 e2e 脚本直接落永久池，不落 sprints/ 临时目录，从源头避开测试金字塔孤儿棘轮，对齐历史先例 PR #4109/#3970 的最终落点），只读校验：①复用（不重实现）`claude-headed-dispatch-smoke.sh` 全绿执行 + 确认已在 allowlist 精确登记；②`GET /api/brain/tasks/7630f4fb...` payload 关键字段齐全且不含敏感字段明文；③DB `initiative_runs` 定点查 initiative_id=7630f4fb...，orchestrator_host 精确等于 `skill-relay-claude-headed`，phase 合法且非 failed/unknown。 |
 | **NFR（做得多好）** | 非功能需求：性能/可靠性/并发阈值等 | 见 PRD NFR 段：N/A（纯只读校验），无长耗时依赖，同步一次性执行；断言失败必须打印明确 FAIL 原因并 exit 非 0。 |
 | **Invariant（永不违反）** | 任何情况下不得打破的不变量 | 不新增业务功能/dashboard/UI/migration；不改 `claude-headed-dispatch-smoke.sh` 本体；不改 `.github/workflows/ci.yml`；不重复登记 `packages/quality/smoke-allowlist.txt`；不写入/篡改任何生产数据（纯只读）；不泄漏 token/github_token/anthropic_token/thin_prd 明文。 |
 | **判定点（怎么知道）** | 对模糊现实的判断假设 | 见下方判定点登记表。 |
-| **保质期（何时过期）** | 该能力/数据/token 何时失效，谁负责退役 | 本 e2e-verify.sh 锚定单个 task_id=7630f4fb，是一次性回归证据脚本，不设计为长期复用；`claude-headed-dispatch-smoke.sh` 语义变更或 allowlist 治理规则变更时，本脚本的 allowlist 断言需要维护者同步更新。 |
-| **死亡告警（停了谁知道）** | 该功能停止工作后，谁在多久内会知道 | e2e-verify.sh 本身即是"evaluator 执行 → 非 0 即失败"的探针；Brain API/DB 不可达时脚本立即 FAIL 并打印原因，不静默通过。 |
+| **保质期（何时过期）** | 该能力/数据/token 何时失效，谁负责退役 | 本 e2e wrapper（`scripts/smoke/e2e/relay-7630f4fb.sh`）锚定单个 task_id=7630f4fb，是一次性回归证据脚本，不设计为长期复用；`claude-headed-dispatch-smoke.sh` 语义变更或 allowlist 治理规则变更时，本脚本的 allowlist 断言需要维护者同步更新。 |
+| **死亡告警（停了谁知道）** | 该功能停止工作后，谁在多久内会知道 | `scripts/smoke/e2e/relay-7630f4fb.sh` 本身即是"evaluator 执行 → 非 0 即失败"的探针；Brain API/DB 不可达时脚本立即 FAIL 并打印原因，不静默通过。 |
 | **失败语义（挂了怎么办）** | 故障时放行还是拦截？重试幂等？降级策略？ | 见下方失败语义声明表；所有失败路径一律拦截（exit 1），无降级，只读操作天然幂等可重跑。 |
 | **效果确认（已发≠已生效）** | 每个对外动作如何确认真实生效？ | 本 sprint 无对外写入动作（除了复用调用 `claude-headed-dispatch-smoke.sh` 内部自带的 POST /api/brain/tasks smoke 探针，该脚本本体行为不属本次改动范围）；本脚本自身只做 GET/SELECT 读取，以现网 API 响应与 DB 查询结果作为唯一真相源。 |
 
@@ -85,7 +98,7 @@
 
 | 场景 | 失败行为 | 重试幂等？ | 降级策略 |
 |------|----------|-----------|----------|
-| `claude-headed-dispatch-smoke.sh` 执行非 0 | e2e-verify.sh 立即传播非 0，打印 `FAIL: claude-headed-dispatch-smoke.sh 未全绿` | 是，只读 smoke 天然幂等 | 不允许吞错（无 `\|\| true`） |
+| `claude-headed-dispatch-smoke.sh` 执行非 0 | `scripts/smoke/e2e/relay-7630f4fb.sh` 立即传播非 0，打印 `FAIL: claude-headed-dispatch-smoke.sh 未全绿` | 是，只读 smoke 天然幂等 | 不允许吞错（无 `\|\| true`） |
 | `claude-headed-dispatch-smoke.sh` 未在 allowlist 精确登记 | exit 1，打印 `FAIL: allowlist 未登记` | 是 | 不允许自动追加登记（违反 PRD 范围限定） |
 | Brain API 不可达 / task 不存在 | `curl -f` 非 0 → exit 1，打印 `FAIL: Brain task 不可达或不存在` | 是，只读重跑幂等 | 不降级为 PASS，不用历史缓存代替 |
 | payload 缺字段或字段值不匹配 | `jq -e` 非 0 → exit 1，打印具体缺失/不匹配字段 | 是 | 不降级 |
@@ -107,7 +120,7 @@
 
 ## 禁 mock 边清单
 
-（本单为纯只读回归校验脚本，不改调度/状态机/跨模块数据传递/生命周期钩子/DB 写路径，无新增或修改的"边"。e2e-verify.sh 本身对 Brain API 与 PostgreSQL 的调用禁止 mock——见上方"接缝清单"与下方 Golden Path 验证命令，均为真实 curl/psql 调用，不使用 stub/mock/fake。N/A：本单无被改的调度/状态机/数据传递/生命周期钩子/DB写路径边）
+（本单为纯只读回归校验脚本，不改调度/状态机/跨模块数据传递/生命周期钩子/DB 写路径，无新增或修改的"边"。`scripts/smoke/e2e/relay-7630f4fb.sh` 本身对 Brain API 与 PostgreSQL 的调用禁止 mock——见上方"接缝清单"与下方 Golden Path 验证命令，均为真实 curl/psql 调用，不使用 stub/mock/fake。N/A：本单无被改的调度/状态机/数据传递/生命周期钩子/DB写路径边）
 
 ## 未覆盖真实链路清单
 
@@ -115,11 +128,11 @@
 
 ## 真实调用方请求 shape
 
-（本任务不涉及"设备/agent 调服务端"的新增或修改路径，e2e-verify.sh 是 evaluator/开发者手动或 CI 触发的只读校验脚本，本身不是被外部真实调用方（Android/Windows agent 等）调用的服务端点，N/A）
+（本任务不涉及"设备/agent 调服务端"的新增或修改路径，`scripts/smoke/e2e/relay-7630f4fb.sh` 是 evaluator/开发者手动或 CI 触发的只读校验脚本，本身不是被外部真实调用方（Android/Windows agent 等）调用的服务端点，N/A）
 
 ## Golden Path
 
-Brain 已派发 headed relay 任务(task_id=7630f4fb) → e2e-verify.sh 复用既有 smoke 校验 + 定点核对 Brain API payload + 定点核对 DB initiative_runs → 全部通过则 exit 0 打印 PASS，任一失败则 exit 1 打印具体 FAIL 原因
+Brain 已派发 headed relay 任务(task_id=7630f4fb) → `scripts/smoke/e2e/relay-7630f4fb.sh` 复用既有 smoke 校验 + 定点核对 Brain API payload + 定点核对 DB initiative_runs → 全部通过则 exit 0 打印 PASS，任一失败则 exit 1 打印具体 FAIL 原因
 
 ### Step 1: 复用既有 headed dispatch smoke 全绿执行 + 确认 allowlist 精确登记
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 2 点第一子项「调用既有 `claude-headed-dispatch-smoke.sh`（不重实现，只校验其全绿执行与 allowlist 登记）」，及范围限定「已登记过则只校验存在，不重复登记」。
@@ -243,4 +256,4 @@ echo "✅ PASS: headed relay 回归证据全部验证通过 task_id=$TASK_ID"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| e2e-verify.sh 三件事校验骨架 | `sprints/07212136-relay-7630f4fb/tests/e2e-verify-contract.test.ts` | 文件存在且调用 smoke 与 allowlist 校验、payload 关键字段齐全且不含敏感字段明文、initiative_runs host 精确匹配且 phase 合法非 failed/unknown | → N failures（e2e-verify.sh 未创建前测试全部 FAIL） |
+| e2e wrapper 三件事校验骨架 | `../../tests/regression/relay-7630f4fb/headed-smoke-contract.test.ts` | 文件存在且调用 smoke 与 allowlist 校验、payload 关键字段齐全且不含敏感字段明文、initiative_runs host 精确匹配且 phase 合法非 failed/unknown | → N failures（`scripts/smoke/e2e/relay-7630f4fb.sh` 未创建前测试全部 FAIL） |
