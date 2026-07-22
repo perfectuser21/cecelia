@@ -253,8 +253,15 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isGrok = task.payload?.executor === 'grok';
   const isHeaded = task.payload?.mode === 'headed';
 
+  // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
+  // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
+  if (task.payload?.harness_runtime === 'kernel-v1') {
+    return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
+  }
+
   // INV-8: unsupported executor loud-fail（三处文件 —— harness-skill-relay.js 这处）
   // 白名单：claude / codex / grok / undefined（缺省 claude）；其余显式 loud-fail。
+  // kernel-v1 路径已提前处理，此处只校验 headed/headless 路由所需的 executor 值。
   const executorValue = task.payload?.executor;
   const SUPPORTED_EXECUTORS = ['claude', 'codex', 'grok', undefined, null];
   if (!SUPPORTED_EXECUTORS.includes(executorValue)) {
@@ -267,10 +274,6 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       );
     } catch { /* non-fatal */ }
     return { ok: false, mode: RELAY_FLAG, error: errMsg };
-  }
-
-  if (task.payload?.harness_runtime === 'kernel-v1') {
-    return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
   }
 
   // ─── headed 分支：ssh+tmux 路径 ──────────────────────────────────────────
