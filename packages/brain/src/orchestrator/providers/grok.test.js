@@ -53,4 +53,23 @@ describe('grokAdapter', () => {
       provider_metadata: { provider: 'grok', session_id: 'grok-session' },
     });
   });
+
+  it('normalizes the camelCase structured output returned by Grok 0.2.106', () => {
+    const result = grokAdapter.normalizeResult({
+      attempt: { id: bundle.attempt_id },
+      raw: {
+        stdout: JSON.stringify({
+          stopReason: 'EndTurn',
+          sessionId: 'grok-session-real',
+          structuredOutput: { status: 'completed', summary: 'reviewed' },
+        }),
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      summary: 'reviewed',
+      provider_metadata: { provider: 'grok', session_id: 'grok-session-real' },
+    });
+  });
 });

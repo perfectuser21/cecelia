@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENTRYPOINT="$SCRIPT_DIR/entrypoint.sh"
 DOCKERFILE="$SCRIPT_DIR/Dockerfile"
 SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
+GROK_SECTION="$(sed -n '/elif \[\[ "$provider" == "grok" \]\]/,/^  else$/p' <<<"$SECTION")"
 
 [[ -n "$SECTION" ]] || { echo 'missing provider-neutral runner section' >&2; exit 1; }
 
@@ -32,6 +33,12 @@ grep -q -- '--permission-mode plan' <<<"$SECTION"
 grep -q 'provider" == "grok' <<<"$SECTION"
 grep -q 'grok_args' <<<"$SECTION"
 grep -q -- '--always-approve' <<<"$SECTION"
+grep -q -- '--always-approve' <<<"$GROK_SECTION"
+grep -q 'structuredOutput' <<<"$GROK_SECTION"
+if grep -q -- '--permission-mode plan' <<<"$GROK_SECTION"; then
+  echo 'Grok reviewer must rely on the read-only worktree mount, not CLI plan mode' >&2
+  exit 1
+fi
 grep -q '@xai-official/grok' "$DOCKERFILE"
 
 # The Kernel path may pass --model only under an explicit HARNESS_MODEL guard.
