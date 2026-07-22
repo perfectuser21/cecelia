@@ -1,0 +1,31 @@
+{
+  "round": 3,
+  "mode": "errata_review",
+  "proposer_commit": "8403a6c78",
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 9,
+    "internal_consistency": 9,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "evidence": {
+    "scope_check": "git diff 7230910..8403a6c78 实核：仅 sprints/07221126-relay-097e589d/contract-dod.md 1 文件 +2/-2，两行均为 A3（零接线 ARTIFACT）的描述行+Test 行，无夹带",
+    "dod_machineability": "新 A3 命令纯静态 grep -rlE，无时间/网络/进程依赖，确定性；当前树实跑 exit 0（PASS），起草缺陷已修",
+    "test_is_red": "真红抽验 3 反例全红：植入生产文件 require('./utils/relay-smoke')（CJS）/ import ... from '.../relay-smoke.js'（ESM）/ await import(...)（动态）→ 命令均 exit 1；验后清理，git status 干净",
+    "internal_consistency": "勘误说明内嵌于 A3 描述行，与 draft 铁律[接线验证]语义一致（import/require 级即接线定义），无第二处需同步文本",
+    "loosening_check": "属修 oracle 缺陷非放水：撞名两文件（routes/walking-skeleton.js L65-66 / routes/__tests__/relay-smoke.contract.test.js）实读确认仅引用 v2.2.0 HTTP 探针路由字符串 '/api/brain/relay-smoke' 与注释，非本模块 import；合同意图'零生产接线'=无文件 wire 本模块，新命令语义更精确且保留全部真红能力",
+    "ci_workflow_alignment": "target_environment=local_api → N/A 填 10（与 r2 一致）"
+  },
+  "convergence": {
+    "r2_blockers": 0,
+    "resolved": 0,
+    "remaining": 0,
+    "new_blockers": 0,
+    "contract_lines": "223 -> 223",
+    "note": "勘误轮，controller 确定性门发现的 A3 起草缺陷已修，收敛"
+  }
+}
