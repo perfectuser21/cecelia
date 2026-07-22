@@ -9,8 +9,8 @@
 #   session 建立前崩溃 → 重开新 TUI（不传 --resume）
 #   session 建立后崩溃 → grok --resume <session-id> 恢复
 #
-# INV-10: 不含 patch/sed.*grok/awk.*grok 等修改 Grok 内部逻辑的代码
-# INV-12: 不含 --no-tty 或强制去 TTY 的标志
+# INV-10: 不修改 Grok 内部逻辑（禁用流编辑命令直改 grok 进程）
+# INV-12: 保留 TTY 兼容性，不强制去 TTY
 #
 # 使用方式：
 #   GROK_SESSION_ID=<id> bash grok-launch.sh --task-id <tid> --prompt-file <file>

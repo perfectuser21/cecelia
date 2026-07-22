@@ -884,7 +884,9 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
 
   // claude-launch.sh 在宿主直跑，host.docker.internal 对宿主进程不可达是已知形态；
   // codex 原值不动防回归。
-  const brainUrl = isClaudeHeaded ? 'http://localhost:5221' : 'http://host.docker.internal:5221';
+  // claude headed 进程跑在宿主，直连 localhost；其余路径走 docker DNS
+  let brainUrl = 'http://host.docker.internal:5221';
+  if (isClaudeHeaded) { brainUrl = 'http://localhost:5221'; }
   const prompt = [
     `你是 harness-controller session（headed 模式）。按下面 SKILL 指令跑完整条 sprint。`,
     ``,
@@ -953,16 +955,15 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // post-pr-create.sh hook 检测到该变量后跳过 auto-merge，保证 evaluator gate 不被绕过
     // (P0 a638f840 根治：PR 在 evaluator 运行前被 GitHub 自动合并)。
     // headless docker relay 已通过 spawnFn env 参数注入，此处仅补 headed 路径。
-    // 三分支路由（INV-1 + FR-R1/R3/R4）：
-    //   claude → claude-launch.sh（GP1 不回归）
-    //   grok   → grok-launch.sh（FR-R4，新增 GP3 路径）
-    //   codex  → 直接调 codex TUI（INV-11 快照 CODEX_HOME；headed TUI 不走 launcher 脚本）
-    // 禁止二元形式 isClaudeHeaded ? ... : codex（Grok headed 会落入 codex 命令的 bug）
-    const innerCmd = isClaudeHeaded
-      ? `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`
-      : isGrokHeaded
-        ? `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`
-        : `cd ${worktreePath} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
+    // 三分支路由（INV-1 + FR-R1/R3/R4）：claude / grok / codex 各占一条独立分支
+    let innerCmd;
+    if (isClaudeHeaded) {
+      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`;
+    } else if (isGrokHeaded) {
+      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
+    } else {
+      innerCmd = `cd ${worktreePath} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
+    }
     try {
       execFn(
         `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} '${innerCmd}'"`

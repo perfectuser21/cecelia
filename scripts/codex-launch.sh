@@ -6,7 +6,7 @@
 #            exit 0 / SIGINT(130) → 正常退出，不重启
 #
 # INV-11: 使用凭据快照目录（CODEX_HOME 由调用方注入已快照的临时目录）
-# INV-12: 不含 --no-tty 或强制去 TTY 的标志
+# INV-12: 保留 TTY 兼容性，不强制去 TTY
 #
 # 使用方式：
 #   CODEX_HOME=/tmp/codex-relay-cred-<id> bash codex-launch.sh --task-id <tid> --prompt-file <file>
