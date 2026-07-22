@@ -6,7 +6,6 @@
  * deps 全注入（不测真外部）：
  *   pool       —— pg pool（../db.js 复用，run.js 组装）
  *   execCmd(cmd) → stdout string —— gh/git/docker 封装；非零退出应 throw 且 err.stdout 带输出
- *                  （gh pr checks 对 pending/fail 会非零退出，本文件用 err.stdout 兜底解析）
  *   fileExists(path) → boolean
  *   readFile(path) → string
  *   readAuthCircuit() → rows —— 可选注入；缺省查 account_usage_cache
@@ -27,7 +26,21 @@ function mapCiStatus(checkRows) {
   return 'pending'; // PENDING/QUEUED/IN_PROGRESS/EXPECTED 等
 }
 
-/** execCmd 容忍非零退出（gh pr checks 对 pending=8 / fail=1），用 err.stdout 兜底 */
+/**
+ * gh pr view statusCheckRollup 同时包含 CheckRun 与 StatusContext：
+ * - CheckRun: status=COMPLETED/IN_PROGRESS, conclusion=SUCCESS/FAILURE/...
+ * - StatusContext: state=SUCCESS/FAILURE/PENDING
+ * 统一为 mapCiStatus 消费的 state，避免依赖 gh 2.46+ 才支持的
+ * `gh pr checks --json`。
+ */
+function normalizeStatusCheckRollup(checkRows) {
+  if (!Array.isArray(checkRows)) return [];
+  return checkRows.map((check) => ({
+    state: String(check?.state || check?.conclusion || check?.status || '').toUpperCase(),
+  }));
+}
+
+/** execCmd 容忍可解析的非零退出，用 err.stdout 兜底 */
 function execTolerant(execCmd, cmd) {
   try {
     return execCmd(cmd);
@@ -77,6 +90,7 @@ function latestRow(logRows, predicate) {
 /**
  * lastAgentExit —— 严格按最新 spawn:* intent hop 作用域（derive.js 3d 契约）：
  * 只取本 run 最新 spawn intent hop 对应容器（label cecelia.hop=<hop>）的 ExitCode；
+ * 同时保留该 intent 的 action，避免 evaluator/reviewer 等基础设施退出被误判为 generator 代码失败；
  * fix 后新 intent hop 无对应已退容器 → {code:null}，旧 exit 不残留、不会反复命中 3d 白吃 fix round。
  * auth_failed 同作用域：仅当作用域容器存在时才采信 callback 文件的 auth 标记。
  */
@@ -94,7 +108,7 @@ function scopeLastAgentExit({ execCmd, exitedContainers, logRows, callbackResult
   const authFailed =
     callbackResult != null &&
     (callbackResult.ci_fail_type === 'auth_failed' || callbackResult.auth_failed === true);
-  return { code: state.ExitCode ?? null, auth_failed: authFailed };
+  return { code: state.ExitCode ?? null, auth_failed: authFailed, action: lastSpawn.action };
 }
 
 /**
@@ -181,8 +195,11 @@ export async function collectGroundTruth(deps, opts) {
     }
   }
   if (prUrl) {
-    const view = asJson(execTolerant(execCmd, `gh pr view ${prUrl} --json state,mergeStateStatus,headRefOid`)) ?? {};
-    const checks = asJson(execTolerant(execCmd, `gh pr checks ${prUrl} --json state`)) ?? [];
+    const view = asJson(execTolerant(
+      execCmd,
+      `gh pr view ${prUrl} --json state,mergeStateStatus,headRefOid,statusCheckRollup`,
+    )) ?? {};
+    const checks = normalizeStatusCheckRollup(view.statusCheckRollup);
     pr = {
       url: prUrl,
       state: view.state ?? null,
