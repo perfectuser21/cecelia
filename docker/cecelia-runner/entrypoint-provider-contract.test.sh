@@ -21,6 +21,20 @@ grep -q 'NORMALIZED_RESULT_FILE' <<<"$SECTION"
 # The runner's provider-facing schema must emit decisions accepted by the Brain
 # callback parser. A permissive object here caused real planner callbacks to 400.
 grep -q '"required":\["outcome","reason"\]' <<<"$SECTION"
+# Codex structured output uses OpenAI strict JSON Schema. Every object must be
+# closed and must require each declared property; arrays must declare items.
+RESULT_SCHEMA_JSON=$(sed -n "s/^  result_schema_json='\(.*\)'$/\1/p" <<<"$SECTION")
+[[ -n "$RESULT_SCHEMA_JSON" ]] || { echo 'missing runner result schema' >&2; exit 1; }
+jq -e '
+  all(.. | objects | select(.type? == "object");
+    .additionalProperties == false
+    and (((.properties // {}) | keys) - (.required // []) | length == 0)
+  )
+  and all(.. | objects | select(.type? == "array"); has("items"))
+' <<<"$RESULT_SCHEMA_JSON" >/dev/null || {
+  echo 'runner result schema is not Codex strict-output compatible' >&2
+  exit 1
+}
 grep -q '/heartbeat' <<<"$SECTION"
 grep -q 'HARNESS_LEASE_OWNER' <<<"$SECTION"
 grep -q 'HARNESS_CALLBACK_TOKEN' <<<"$SECTION"
