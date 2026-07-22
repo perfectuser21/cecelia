@@ -58,6 +58,7 @@ export const MAX_CODEX_RELAY_ATTEMPTS = 2;
 
 // generator 完成后 6h 无 MERGED → failed（防 e90c0fbb pr_url 空永挂）
 export const GENERATOR_DONE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const KERNEL_RECONCILE_STALE_MS = 3 * 60 * 1000;
 
 /** C3：按 initiative 批量关闭 skill-relay-spawn 事件（写点在 executor.js spawn，写完即弃无 id 可用）。 */
 async function _closeSpawnEvents(dbPool, initiativeId, status) {
@@ -134,6 +135,12 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
 
 async function _recoverKernelRun(run, task, deps, out) {
   const dbPool = deps.pool || deps.dbPool || pool;
+  const heartbeatAt = run.orchestrator_heartbeat_at
+    ? new Date(run.orchestrator_heartbeat_at).getTime()
+    : 0;
+  // Kernel wait loops beat every 90s. A heartbeat inside two intervals plus
+  // scheduling margin means the original reconcile process still owns the run.
+  if (heartbeatAt && Date.now() - heartbeatAt <= KERNEL_RECONCILE_STALE_MS) return;
   const latestQ = await dbPool.query(
     `SELECT * FROM harness_attempts
       WHERE run_id=$1
@@ -282,7 +289,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT DISTINCT ON (initiative_id) id, initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, started_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
+    `SELECT DISTINCT ON (initiative_id) id, initiative_id, phase, deadline_at, pr_url, orchestrator_host, orchestrator_heartbeat_at, completed_at, tmux_killed_at, started_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
   const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
