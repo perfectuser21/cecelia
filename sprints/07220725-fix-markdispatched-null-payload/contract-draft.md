@@ -94,6 +94,16 @@ cd packages/brain && npx vitest run
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|-----------|-----------|--------------|---------|
+| WS1 | `../../packages/brain/src/__tests__/nightly-orchestrator.integration.test.js` | BEHAVIOR-1/BEHAVIOR-2/BEHAVIOR-3 | markDispatched NULL payload 写入失败（修复前） |
+| WS2 | `../../packages/brain/src/__tests__/post-publish-data-collector.test.js` | COALESCE 防御 | COALESCE 防御写法覆盖（writeBackToPublishTask+completeScraperTask） |
+| WS3 | `../../packages/brain/src/routes/__tests__/content-library.test.js` | COALESCE 防御写法 | COALESCE 防御写法覆盖（content-library review patch） |
+
+---
+
 ## 不变量约束
 
 - `markDispatched` 不得修改任务 `status` 字段
