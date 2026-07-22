@@ -1,0 +1,19 @@
+{
+  "phase": "evaluate",
+  "task_id": "7630f4fb-0acf-4f7a-ad42-e2dea3485089",
+  "pr": 4184,
+  "anchored_sha": "40f85875149ae1f8bf00b3b4fecdefaf072f9e25",
+  "verdict": "PASS",
+  "behavior_verified": "20/20",
+  "artifact_verified": "3/3",
+  "scope_check": {
+    "no_new_business_feature": true,
+    "smoke_script_body_untouched": true,
+    "ci_yml_untouched": true,
+    "allowlist_not_duplicated": true,
+    "pyramid_baseline_untouched": true,
+    "artifacts_in_permanent_pool": true
+  },
+  "unverifiable": [],
+  "notes": "唯一记录偏差：controller 派发描述提到22条BEHAVIOR，实测contract-dod.md为20条（7核心+13 invariant），非阻塞，全部已验证PASS"
+}

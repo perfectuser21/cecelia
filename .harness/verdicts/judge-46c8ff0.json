@@ -1,0 +1,11 @@
+{
+  "phase": "judge",
+  "task_id": "7630f4fb-0acf-4f7a-ad42-e2dea3485089",
+  "pr": 4184,
+  "anchored_sha": "46c8ff0449453a5df1a02ce6a747654561c03c9b",
+  "verdict": "PASS",
+  "feedback": null,
+  "source": "Brain judge API (POST /api/brain/harness/judge)",
+  "agent_verdict_source": ".brain-result.json (top-level exit_code+log_tail 补齐后)",
+  "notes": "首次调用因 .brain-result.json 缺顶层 exit_code/log_tail 字段被 mechFail=missing_exit_code 拒绝（对应 PRD 铁律 id=de6a2ee1）；补齐后重新判定 PASS。HEAD sha 与 PR head 精确一致，未再产生新 commit。"
+}
