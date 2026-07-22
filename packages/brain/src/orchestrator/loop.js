@@ -42,7 +42,7 @@ function asPayload(value) {
   try { return JSON.parse(value); } catch { return {}; }
 }
 
-function frozenContractArtifacts(deps, observed, groundTruthPaths) {
+function frozenContractArtifacts(deps, observed, groundTruthPaths, approvedSha) {
   const payload = asPayload(observed.task?.payload);
   const sprintDir = String(payload.sprint_dir ?? '').replace(/\/$/, '');
   const prdPath = groundTruthPaths.prdPath
@@ -50,13 +50,19 @@ function frozenContractArtifacts(deps, observed, groundTruthPaths) {
   const contractPath = sprintDir ? `${sprintDir}/contract-draft.md` : 'contract-draft.md';
   const dodPath = sprintDir ? `${sprintDir}/contract-dod.md` : 'contract-dod.md';
   const paths = [prdPath, contractPath, dodPath];
-  const missing = paths.filter((filePath) => !deps.fileExists?.(filePath));
-  if (missing.length > 0) return { missing };
-  const contractDraft = deps.readFile(contractPath);
-  const contractDod = deps.readFile(dodPath);
+  if (typeof deps.readGitFile !== 'function') return { missing: paths };
+  const contents = [];
+  for (const filePath of paths) {
+    try {
+      contents.push(deps.readGitFile(approvedSha, filePath));
+    } catch {
+      return { missing: [filePath] };
+    }
+  }
+  const [prdContent, contractDraft, contractDod] = contents;
   return {
     missing: [],
-    prdContent: deps.readFile(prdPath),
+    prdContent,
     contractContent: `${contractDraft}\n\n${contractDod}`,
   };
 }
@@ -93,6 +99,7 @@ function buildSnapshot(observed, counters, action) {
     inflightContainers: observed.inflight.containers.length,
     lastAgentExit: observed.lastAgentExit,
     proposeBranchRn: observed.proposeBranchRn,
+    proposeBranchSha: observed.proposeBranchSha,
     counters,
   };
   const prev = (a) => {
@@ -185,7 +192,17 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
           await markRunFailed(deps.pool, resolvedRunId, 'approved_but_no_contract_branch');
           return { exitReason: 'approved_but_no_contract_branch', hops };
         }
-        const artifacts = frozenContractArtifacts(deps, observed, groundTruthPaths);
+        const approvedSha = observed.ganLatestRoundContractSha ?? null;
+        if (!approvedSha) {
+          await markRunFailed(deps.pool, resolvedRunId, 'approved_but_no_contract_sha');
+          return { exitReason: 'approved_but_no_contract_sha', hops };
+        }
+        const artifacts = frozenContractArtifacts(
+          deps,
+          observed,
+          groundTruthPaths,
+          approvedSha,
+        );
         if (artifacts.missing.length > 0) {
           await markRunFailed(deps.pool, resolvedRunId, 'approved_but_contract_artifacts_missing');
           return { exitReason: 'approved_but_contract_artifacts_missing', hops };

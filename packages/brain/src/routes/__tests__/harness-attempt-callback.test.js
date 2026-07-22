@@ -157,21 +157,24 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(verdictCall[1].join(' ')).toContain('sha-1');
   });
 
-  it('reviewer 只写 round/verdict，不接收 proposer transcript', async () => {
+  it('reviewer verdict 从服务端 TaskBundle 锚定 round/SHA，不接收 worker 自报 SHA', async () => {
+    const contractSha = 'a'.repeat(40);
     mocks.store.getById.mockResolvedValueOnce({
       ...attempt,
       role: 'reviewer',
-      task_bundle: { inputs: { contract_round: 3 } },
+      task_bundle: { inputs: { contract_round: 3, contract_sha: contractSha } },
     });
     const response = await postCallback(app, {
         ...validResult,
-        decision: { outcome: 'APPROVED', reason: 'contract covers PRD' },
+        decision: { outcome: 'APPROVED', reason: 'contract covers PRD', contract_sha: 'b'.repeat(40) },
       });
 
     expect(response.status).toBe(200);
     const verdictCall = mocks.pool.query.mock.calls.find(([sql]) => /verdict:reviewer/.test(sql));
     expect(verdictCall).toBeTruthy();
     expect(verdictCall[1].join(' ')).toContain('3');
+    expect(verdictCall[1].join(' ')).toContain(contractSha);
+    expect(verdictCall[1].join(' ')).not.toContain('b'.repeat(40));
   });
 
   it('跨角色/attempt session 复用冲突返回 409，且不完成 attempt', async () => {
