@@ -54,6 +54,11 @@ run 内只能属于一个 attempt。回调结果必须匹配 attempt id、provid
    重新推导下一 hop。
 6. callback 是幂等终态写入；verdict 以 attempt id 去重并绑定 round / PR SHA。
 
+Reviewer 只读合同，因此使用只读 worktree 和 provider plan/read-only 模式。Evaluator
+不是只读角色：其 Skill 必须 checkout PR、安装依赖、真启服务、执行 E2E，并把验收脚本/
+证据固化到 PR 分支；因此 evaluator 使用可写 worktree。独立性由不同 attempt、fresh
+session、provider/account 分配和 Judge 证据门保证，不能用文件系统只读替代真实验收。
+
 Claude 的本地 session 文件按 attempt 持久化在宿主
 `CECELIA_HARNESS_SESSION_DIR`（缺省为系统临时目录下的
 `cecelia-harness-sessions/`），容器替换后继续挂载同一目录。跨设备若没有共享该目录，

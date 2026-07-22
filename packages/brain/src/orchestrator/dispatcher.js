@@ -28,7 +28,9 @@ const ACTION_SPECS = Object.freeze({
     expectedOutput: 'harness-result/generator-v1',
   },
   'spawn:evaluator': {
-    role: 'evaluator', skill: 'harness-evaluator', readOnly: true,
+    // Evaluator must checkout the PR branch, start services, run package managers,
+    // and persist E2E evidence. OS/provider read-only modes make that path inert.
+    role: 'evaluator', skill: 'harness-evaluator', readOnly: false,
     expectedOutput: 'harness-result/evaluator-v1',
   },
   'spawn:judge': {

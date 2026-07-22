@@ -150,6 +150,27 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({ contract_branch: 'cp-propose-r1' });
   });
 
+  it('evaluator 工作树可写，以便切 PR 分支、真启服务并固化验收证据', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: {
+        ...observed,
+        pr: { url: 'https://github.com/o/r/pull/42', head_sha: 'sha-1', ci: 'pass' },
+      },
+      decision: { phase: 'evaluate', reason: 'ci_pass' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.constraints).toMatchObject({ fresh_session: true, read_only: false });
+    expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
+      bundle: expect.objectContaining({ constraints: expect.objectContaining({ read_only: false }) }),
+    }));
+  });
+
   it('按 role_assignments 为同一 run 的 generator/evaluator 选择不同 provider 与账户 home', async () => {
     const attempts = ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
     const adapters = Object.fromEntries(['codex', 'claude'].map((provider) => [provider, {
@@ -258,6 +279,29 @@ describe('createDispatcher', () => {
 });
 
 describe('createDetachedLauncher', () => {
+  it('evaluator 以可写工作树和执行模式进入 runner，避免 plan/EROFS 哑火', async () => {
+    const spawnDetached = vi.fn(async () => ({ containerId: 'eval-cx' }));
+    const launcher = createDetachedLauncher({
+      spawnDetached,
+      attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
+    });
+
+    await launcher.launch({
+      attempt: { id: attemptId, run_id: runId, hop: 7, role: 'evaluator' },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: false },
+      },
+      spec: { provider: 'claude', args: [], stdin: '{}', env: {} },
+      task: observed.task,
+    });
+
+    expect(spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
+      readOnlyWorktree: false,
+      env: expect.objectContaining({ HARNESS_READ_ONLY: 'false' }),
+    }));
+  });
+
   it('docker launch 失败只用当前 lease owner 标记 attempt failed', async () => {
     const attemptStore = {
       markStarting: vi.fn(async () => ({ status: 'starting' })),
