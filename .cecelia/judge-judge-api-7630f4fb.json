@@ -1,0 +1,35 @@
+{
+  "agentVerdict": "PASS",
+  "judge": {
+    "verdict": "PASS",
+    "coverage": [
+      {
+        "step": "[触发条件] task_id=7630f4fb-0acf-4f7a-ad42-e2dea3485089 已由 Brain 以 task_type=harness_initiative、payload.mode=headed / executor=claude / orchestrator=skill-relay / journey_id=bb8cc561-b3ee-4fec-b74d-2255694bd963 派发",
+        "passed": true,
+        "evidence": ".brain-result.json test-2: manual:bash curl tasks/$TASK_ID | jq payload.mode/executor/orchestrator/journey_id/敏感字段 → exit_code=0, log_tail='OK'; 同时 test-0 脚本 Step 2 输出 'OK Step 2' 确认 payload 字段校验通过，间接证明触发条件满足。"
+      },
+      {
+        "step": "[系统处理] e2e-verify.sh 依次：调用既有 claude-headed-dispatch-smoke.sh（全绿执行与 allowlist 登记）→ 查 GET /api/brain/tasks/... 核对 task payload 关键字段齐全并对敏感字段脱敏断言 → 查 DB initiative_runs 核对 orchestrator_host/phase",
+        "passed": true,
+        "evidence": "test-0 完整脚本输出包含 'OK Step 1'（对应 claude-headed-dispatch-smoke.sh + allowlist）、'OK Step 2'（task payload 校验）、'OK Step 3'（DB 核对）；test-1 显示 claude-headed-dispatch-smoke.sh 输出 'PASS: 5 FAIL: 0 ✅ 全部通过 OK'；test-3 显示 psql 检查输出 'OK'。所有子步骤均通过。"
+      },
+      {
+        "step": "[可观测结果] 全部断言通过则脚本 exit 0 并打印 PASS；任一断言失败则 exit 1 并打印具体 FAIL 原因",
+        "passed": true,
+        "evidence": "test-0 的 log_tail 包含 '✅ PASS: headed relay 回归证据全部验证通过 task_id=7630f4fb...' 且 exit_code=0，符合通过标准。"
+      }
+    ],
+    "feedback": null
+  },
+  "coverageCheck": {
+    "ok": true,
+    "missing": [],
+    "failed": []
+  },
+  "goldenPathSteps": [
+    "[触发条件] task_id=7630f4fb-0acf-4f7a-ad42-e2dea3485089 已由 Brain 以 task_type=harness_initiative、payload.mode=headed / executor=claude / orchestrator=skill-relay / journey_id=bb8cc561-b3ee-4fec-b74d-2255694bd963 派发",
+    "[系统处理] e2e-verify.sh 依次：调用既有 `claude-headed-dispatch-smoke.sh`（不重实现，只校验其全绿执行与 allowlist 登记）→ 查 `GET /api/brain/tasks/7630f4fb...` 核对 task payload 关键字段齐全并对敏感字段脱敏断言 → 查 DB `initiative_runs` 核对本次 initiative_id 的 orchestrator_host/phase",
+    "[可观测结果] 全部断言通过则脚本 exit 0 并打印 PASS；任一断言失败则 exit 1 并打印具体 FAIL 原因"
+  ],
+  "finalVerdict": "PASS"
+}
