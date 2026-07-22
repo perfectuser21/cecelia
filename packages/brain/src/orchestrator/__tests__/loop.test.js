@@ -193,6 +193,43 @@ describe('runLoop：崩溃在 log 与 dispatch 之间（hop 协议）', () => {
     expect(appended[0].action).toBe('spawn:generator-fix');
     expect(deps.dispatch).toHaveBeenCalledTimes(1);
   });
+
+  it('callback 在慢观测窗口追加 verdict → 丢弃旧快照，不重复派 evaluator', async () => {
+    const pr = {
+      url: 'u', state: 'OPEN', mergeStateStatus: 'CLEAN', ci: 'pass', merged: false, head_sha: 'sha-1',
+    };
+    const evaluatorIntent = {
+      hop: 44, action: 'spawn:evaluator', observed: {}, detail: null,
+    };
+    const evaluatePass = {
+      hop: 45,
+      action: 'verdict:evaluate',
+      observed: {},
+      detail: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+    };
+    const observedSeq = [
+      // collect 先读到 hop 44；慢速 gh/git/docker 期间 callback 追加 hop 45。
+      obs({ generatorSpawned: true, pr, decisionLog: [evaluatorIntent] }),
+      // 重新观测后才能看见 PASS，并正确进入 judge。
+      obs({
+        generatorSpawned: true,
+        pr,
+        decisionLog: [evaluatorIntent, evaluatePass],
+        evaluateVerdict: evaluatePass.detail,
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended } = makeEnv({ observedSeq });
+    // 第一次 next 已看见 callback 的 hop 45，所以返回 46；第二次仍返回 46。
+    deps.nextHop = vi.fn().mockResolvedValueOnce(46).mockResolvedValueOnce(46);
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch.mock.calls.map(([action]) => action)).toEqual(['spawn:judge']);
+    expect(appended.map((entry) => entry.action)).toEqual(['spawn:judge']);
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('stale observation'));
+  });
 });
 
 describe('runLoop：四态返回控制流', () => {
