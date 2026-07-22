@@ -92,7 +92,8 @@ bash docker/build.sh --no-cache
 # 验证实际将运行的镜像，而不是只检查仓库源码
 docker run --rm --entrypoint sh cecelia/runner:latest -c \
   'grep -q HARNESS_CALLBACK_TOKEN /usr/local/bin/entrypoint.sh && \
-   grep -q PROVIDER_CONTRACT /usr/local/bin/entrypoint.sh'
+   grep -q PROVIDER_CONTRACT /usr/local/bin/entrypoint.sh && \
+   grep -q evaluator-evidence-bridge:start /usr/local/bin/entrypoint.sh'
 ```
 
 上述验镜失败时禁止启用 `harness_runtime: "kernel-v1"`。`ensureDockerImage()` 只会在
