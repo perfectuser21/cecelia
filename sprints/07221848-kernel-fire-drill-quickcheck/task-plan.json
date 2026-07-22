@@ -1,0 +1,23 @@
+{
+  "initiative_id": "f5bf5b50-2992-49c3-b5c6-76fe2d00c418",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "quickcheck.sh 的回归测试位于 packages/engine/tests/scripts/，被 packages/engine/hooks/pre-push.sh 调用，属于 DevGate/开发工作流引擎范畴",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 quickcheck.sh 中 vitest 输出分类优先级：明确失败计数优先于 OOM 宽免",
+      "scope": "在 scripts/quickcheck.sh 现有分类逻辑（vitest 退出码 -> 逐文件 FAIL 标记 -> OOM 宽免）中，新增对 vitest 汇总行失败计数（如 'Tests  N failed'）的检测，使其优先于 OOM 宽免分支；保持正常 PASS 与仅 OOM 无失败两类场景的现有放行行为不变；不修改互斥锁/DoD 守卫等其他逻辑；不触碰 packages/brain/src；不引入 DB migration",
+      "dod": [
+        "[BEHAVIOR] packages/engine/tests/scripts/quickcheck-oom-priority.test.ts 四个场景全部通过（失败计数+OOM同现 -> 非0；仅OOM无失败 -> 0；正常PASS -> 0；多包混合 -> 非0）",
+        "[ARTIFACT] scripts/quickcheck.sh 语法合法，未触碰 packages/brain/src，无 DB migration"
+      ],
+      "files": [
+        "scripts/quickcheck.sh",
+        "packages/engine/tests/scripts/quickcheck-oom-priority.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
