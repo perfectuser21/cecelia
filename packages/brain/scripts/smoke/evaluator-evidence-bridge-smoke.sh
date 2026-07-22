@@ -62,6 +62,20 @@ try {
   if (headingOnly.pass || !headingOnly.reasons.some((reason) => reason.includes('contract_tests'))) {
     throw new Error('judge accepted a heading-only contract-draft');
   }
+
+  await writeFile(path.join(sprintRoot, 'contract-draft.md'), '- [BEHAVIOR]\n');
+  const emptyAssertion = await runMechanicalGate({
+    taskId: 'evidence-smoke',
+    worktreePath: root,
+    sprintDir,
+    brainResult: {
+      verdict: 'PASS',
+      behavior_tests: [{ command: 'npm test', exit_code: 0, log_tail: '12 tests passed' }],
+    },
+  });
+  if (emptyAssertion.pass || !emptyAssertion.reasons.some((reason) => reason.includes('contract_tests'))) {
+    throw new Error('judge accepted an empty BEHAVIOR assertion');
+  }
 } finally {
   await rm(root, { recursive: true, force: true });
 }

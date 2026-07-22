@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const runtime = vi.hoisted(() => {
   const attempts = new Map();
@@ -72,6 +77,37 @@ const ATTEMPT_IDS = [
   '44444444-4444-4444-8444-444444444444',
 ];
 const SPRINT_DIR = 'sprints/07220001-kernel-flow';
+
+function bridgeEvaluatorResult(result, brainResult) {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'kernel-evidence-bridge-'));
+  const entrypoint = fileURLToPath(new URL(
+    '../../../../../docker/cecelia-runner/entrypoint.sh',
+    import.meta.url,
+  ));
+  try {
+    writeFileSync(path.join(tempDir, 'result.json'), JSON.stringify(result));
+    writeFileSync(path.join(tempDir, 'fresh-brain-result.json'), JSON.stringify(brainResult));
+    execFileSync('bash', ['-c', `
+      set -euo pipefail
+      BRIDGE="$(sed -n '/evaluator-evidence-bridge:start/,/evaluator-evidence-bridge:end/p' "$1")"
+      eval "$BRIDGE"
+      prepare_evaluator_evidence
+      cp "$2/fresh-brain-result.json" "$2/.brain-result.json"
+      merge_evaluator_evidence "$2/result.json"
+    `, 'bridge-test', entrypoint, tempDir], {
+      env: {
+        ...process.env,
+        HARNESS_NODE: 'evaluator',
+        HARNESS_ATTEMPT_ID: '55555555-5555-4555-8555-555555555555',
+        CECELIA_TASK_ID: TASK_ID,
+        WORKTREE_PATH: tempDir,
+      },
+    });
+    return JSON.parse(readFileSync(path.join(tempDir, 'result.json'), 'utf8'));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
 
 function skill(name) {
   return {
@@ -235,6 +271,23 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
     });
     runtime.pool.query.mockResolvedValue({ rows: [], rowCount: 1 });
 
+    const bridgedResult = bridgeEvaluatorResult({
+      contract_version: '1.0',
+      attempt_id: evaluatorAttemptId,
+      status: 'completed',
+      summary: 'evaluator verified behavior',
+      artifacts: [],
+      checks: ['provider summary only'],
+      decision: { outcome: 'PASS', reason: 'verified' },
+      error: null,
+      provider_metadata: { provider: 'codex', session_id: 'thread-evaluator' },
+    }, {
+      verdict: 'PASS',
+      task_id: TASK_ID,
+      behavior_tests: behaviorTests,
+    });
+    expect(bridgedResult.checks).toEqual(behaviorTests);
+
     const app = express();
     app.use(express.json());
     app.use('/api/brain', callbackRouter);
@@ -242,17 +295,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       .post(`/api/brain/harness/attempts/${evaluatorAttemptId}/callback`)
       .set('Authorization', `Bearer ${callbackToken}`)
       .set('X-Harness-Lease-Owner', leaseOwner)
-      .send({
-        contract_version: '1.0',
-        attempt_id: evaluatorAttemptId,
-        status: 'completed',
-        summary: 'evaluator verified behavior',
-        artifacts: [],
-        checks: behaviorTests,
-        decision: { outcome: 'PASS', reason: 'verified' },
-        error: null,
-        provider_metadata: { provider: 'codex', session_id: 'thread-evaluator' },
-      });
+      .send(bridgedResult);
 
     expect(callback.status).toBe(200);
     const judgeGate = vi.fn(async () => ({ verdict: 'PASS', feedback: 'grounded', judged: true }));

@@ -85,6 +85,9 @@ jq -e '.checks == [{"command":"same test","exit_code":0,"log_tail":"same pass"}]
 }
 
 # A newly written result for another task must not cross the task boundary.
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":["current provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
+JSON
 cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
 {"verdict":"PASS","task_id":"old-task","behavior_tests":[{"command":"foreign test","exit_code":0,"log_tail":"old pass"}]}
 JSON

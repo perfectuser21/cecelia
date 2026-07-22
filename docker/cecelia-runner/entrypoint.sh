@@ -165,7 +165,18 @@ NORMALIZED_RESULT_FILE=""
 
 # evaluator-evidence-bridge:start
 EVALUATOR_EVIDENCE_BASELINE=""
+EVALUATOR_EVIDENCE_BASELINE_STATE=""
 EVALUATOR_EVIDENCE_PREPARED=0
+
+evaluator_evidence_state() {
+  node -e '
+    const fs = require("node:fs");
+    const stat = fs.statSync(process.argv[1], { bigint: true });
+    process.stdout.write([
+      stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs,
+    ].map(String).join(":"));
+  ' "$1" 2>/dev/null
+}
 
 prepare_evaluator_evidence() {
   local brain_result_file="${WORKTREE_PATH:-$PWD}/.brain-result.json"
@@ -174,8 +185,10 @@ prepare_evaluator_evidence() {
   EVALUATOR_EVIDENCE_PREPARED=1
   if [[ -f "$brain_result_file" ]]; then
     EVALUATOR_EVIDENCE_BASELINE="$(cksum < "$brain_result_file" 2>/dev/null || true)"
+    EVALUATOR_EVIDENCE_BASELINE_STATE="$(evaluator_evidence_state "$brain_result_file" || true)"
   else
     EVALUATOR_EVIDENCE_BASELINE="__missing__"
+    EVALUATOR_EVIDENCE_BASELINE_STATE="__missing__"
   fi
 }
 
@@ -184,13 +197,16 @@ merge_evaluator_evidence() {
   local brain_result_file="${WORKTREE_PATH:-$PWD}/.brain-result.json"
   local merged_result_file="${normalized_result_file}.evidence"
   local current_evidence_checksum=""
+  local current_evidence_state=""
 
   [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
   [[ "$EVALUATOR_EVIDENCE_PREPARED" == "1" ]] || return 0
   [[ -f "$normalized_result_file" && -f "$brain_result_file" ]] || return 0
   current_evidence_checksum="$(cksum < "$brain_result_file" 2>/dev/null || true)"
+  current_evidence_state="$(evaluator_evidence_state "$brain_result_file" || true)"
   [[ "$EVALUATOR_EVIDENCE_BASELINE" == "__missing__" \
-    || "$current_evidence_checksum" != "$EVALUATOR_EVIDENCE_BASELINE" ]] || return 0
+    || "$current_evidence_checksum" != "$EVALUATOR_EVIDENCE_BASELINE" \
+    || "$current_evidence_state" != "$EVALUATOR_EVIDENCE_BASELINE_STATE" ]] || return 0
   jq -e --arg task_id "${CECELIA_TASK_ID:-}" '
     type == "object"
     and ($task_id | length > 0)
