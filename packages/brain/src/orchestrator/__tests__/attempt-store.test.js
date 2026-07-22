@@ -77,6 +77,22 @@ describe('attempt store', () => {
     expect(values).toEqual([input.id, 'watchdog-1', 180]);
   });
 
+  it('reclaim 后按 lease fencing 原子轮换 callback secret hash', async () => {
+    const pool = poolWith({ rows: [{ id: input.id, status: 'starting' }], rowCount: 1 });
+    const store = createAttemptStore(pool);
+
+    await store.rotateCallbackSecret(input.id, {
+      leaseOwner: 'watchdog-1',
+      callbackSecretHash: 'c'.repeat(64),
+    });
+
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/callback_secret_hash\s*=\s*\$3/i);
+    expect(sql).toMatch(/lease_owner\s*=\s*\$2/i);
+    expect(sql).toMatch(/status IN \('starting','running'\)/i);
+    expect(values).toEqual([input.id, 'watchdog-1', 'c'.repeat(64)]);
+  });
+
   it('终态写入只接受一次，重复 callback 返回 deduped', async () => {
     const pool = poolWith(
       { rows: [{ id: input.id, status: 'completed' }], rowCount: 1 },
