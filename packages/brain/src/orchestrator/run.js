@@ -17,6 +17,7 @@ import { createDispatcher, createDetachedLauncher } from './dispatcher.js';
 import { createProviderRegistry } from './provider-registry.js';
 import { claudeAdapter } from './providers/claude.js';
 import { codexAdapter } from './providers/codex.js';
+import { grokAdapter } from './providers/grok.js';
 import { loadSkillBundle } from './skill-bundle.js';
 import { createKernelHandlers } from './kernel-handlers.js';
 
@@ -100,7 +101,7 @@ export async function buildRealDeps(overrides = {}) {
   const attemptStore = overrides.attemptStore ?? createAttemptStore(pool);
   let dispatch = overrides.dispatch;
   if (!dispatch) {
-    const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter]);
+    const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
     const detached = await import('../spawn/detached.js');
     const spawnDetached = overrides.spawnDetached ?? detached.spawnDockerDetached;
     const removeContainer = overrides.removeContainer ?? detached.removeDockerContainer;

@@ -81,6 +81,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     { createProviderRegistry },
     { claudeAdapter },
     { codexAdapter },
+    { grokAdapter },
     { createDetachedLauncher, resolveProviderAccountHome },
     { spawnDockerDetached, removeDockerContainer },
     { generateCallbackSecret, hashCallbackSecret },
@@ -89,6 +90,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     import('./orchestrator/provider-registry.js'),
     import('./orchestrator/providers/claude.js'),
     import('./orchestrator/providers/codex.js'),
+    import('./orchestrator/providers/grok.js'),
     import('./orchestrator/dispatcher.js'),
     import('./spawn/detached.js'),
     import('./orchestrator/callback-auth.js'),
@@ -104,7 +106,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
   });
   if (!rotated) return { ok: false, reason: 'attempt_callback_secret_rotation_conflict' };
 
-  const registry = createProviderRegistry([claudeAdapter, codexAdapter]);
+  const registry = createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
   const adapter = registry.resolve({ provider: attempt.provider, requires: ['resume'] });
   const execution = {};
   if (task.payload?.model && task.payload.model !== 'auto') execution.model = task.payload.model;
