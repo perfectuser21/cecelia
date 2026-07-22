@@ -14,7 +14,7 @@ function resolveSkillsRoot(options) {
   if (process.env.CECELIA_SKILLS_ROOT) {
     return path.resolve(process.env.CECELIA_SKILLS_ROOT);
   }
-  const repoRoot = path.resolve(options.repoRoot ?? defaultRepoRoot);
+  const repoRoot = path.resolve(options.repoRoot || process.env.REPO_ROOT || defaultRepoRoot);
   return path.join(repoRoot, 'packages', 'workflows', 'skills');
 }
 

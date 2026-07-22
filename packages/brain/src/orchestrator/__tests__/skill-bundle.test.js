@@ -15,6 +15,7 @@ import {
 } from '../skill-bundle.js';
 
 const tempRoots = [];
+const originalRepoRoot = process.env.REPO_ROOT;
 
 function createSkill(name, content) {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'cecelia-skill-bundle-'));
@@ -27,6 +28,8 @@ function createSkill(name, content) {
 
 afterEach(() => {
   clearSkillBundleCacheForTests();
+  if (originalRepoRoot === undefined) delete process.env.REPO_ROOT;
+  else process.env.REPO_ROOT = originalRepoRoot;
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -82,6 +85,20 @@ describe('loadSkillBundle', () => {
     );
 
     expect(loadSkillBundle('harness-evaluator', { skillsRoot: root }).version).toBe('4.0.0');
+  });
+
+  it('生产镜像扁平部署时从 REPO_ROOT 读取仓库 Skill', () => {
+    const repoRoot = createSkill(
+      'kernel-mounted',
+      '---\nversion: 1.0.0\n---\nmounted instructions\n',
+    );
+    process.env.REPO_ROOT = repoRoot;
+
+    const bundle = loadSkillBundle('kernel-mounted');
+
+    expect(bundle.source_path).toBe(
+      path.join(repoRoot, 'packages', 'workflows', 'skills', 'kernel-mounted', 'SKILL.md'),
+    );
   });
 
   it('找不到 Skill 时 fail-fast', () => {
