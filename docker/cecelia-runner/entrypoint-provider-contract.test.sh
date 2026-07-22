@@ -129,6 +129,31 @@ grep -q 'HARNESS_ATTEMPT_ID' "$EVALUATOR_SKILL" || {
   echo 'harness-evaluator skill does not emit attempt-bound evidence' >&2
   exit 1
 }
+
+# Execute the Skill's real PASS writer, then carry its output through the same
+# bridge. This prevents prose/examples from drifting away from the runnable exit.
+RESULT_WRITER="$(sed -n '/evaluator-result-writer:start/,/evaluator-result-writer:end/p' "$EVALUATOR_SKILL")"
+[[ -n "$RESULT_WRITER" ]] || {
+  echo 'harness-evaluator skill is missing its executable PASS result writer' >&2
+  exit 1
+}
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":["provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
+JSON
+printf '%s\n' '12 tests passed' > "$EVIDENCE_TMP/e2e-result.log"
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
+WORKSPACE="$EVIDENCE_TMP" TASK_ID=task-current HARNESS_ATTEMPT_ID=attempt-skill \
+  TARGET_ENV=local_api EXIT_CODE=0 E2E_COMMAND='timeout 120 bash /tmp/e2e-verify.sh' \
+  E2E_RESULT_LOG="$EVIDENCE_TMP/e2e-result.log" SCREENSHOTS_JSON='[]' CASCADE_ASSERTIONS='[]' \
+  eval "$RESULT_WRITER"
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+jq -e '.checks == [{"command":"timeout 120 bash /tmp/e2e-verify.sh","exit_code":0,"log_tail":"12 tests passed"}]' \
+  "$EVIDENCE_TMP/result.json" >/dev/null || {
+  echo 'harness-evaluator executable PASS writer did not survive the callback bridge' >&2
+  exit 1
+}
 # The runner's provider-facing schema must emit decisions accepted by the Brain
 # callback parser. A permissive object here caused real planner callbacks to 400.
 grep -q '"required":\["outcome","reason"\]' <<<"$SECTION"
