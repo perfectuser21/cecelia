@@ -107,6 +107,47 @@ describe('envToArgs', () => {
   });
 });
 
+describe('buildDockerArgs labels', () => {
+  it('把 Harness run/hop/role labels 传给 docker run，供 ground-truth 防双 spawn', () => {
+    const built = __test__.buildDockerArgs({
+      task: { id: 'task-labels', task_type: 'harness_evaluator' },
+      prompt: '{}',
+      worktreePath: '/tmp/worktree',
+      labels: {
+        'cecelia.run_id': 'run-1',
+        'cecelia.hop': '7',
+        'cecelia.role': 'evaluator',
+      },
+    }, {
+      homedir: '/tmp/no-home',
+      existsSyncFn: () => false,
+    });
+
+    expect(built.args).toEqual(expect.arrayContaining([
+      '--label', 'cecelia.run_id=run-1',
+      '--label', 'cecelia.hop=7',
+      '--label', 'cecelia.role=evaluator',
+    ]));
+  });
+});
+
+describe('buildDockerArgs read-only worktree', () => {
+  it('adversarial reviewer/evaluator 把共享 worktree 只读挂载，不能污染后续门禁', () => {
+    const built = __test__.buildDockerArgs({
+      task: { id: 'task-readonly', task_type: 'harness_evaluator' },
+      prompt: '{}',
+      worktreePath: '/tmp/worktree',
+      readOnlyWorktree: true,
+    }, {
+      homedir: '/tmp/no-home',
+      existsSyncFn: () => false,
+    });
+
+    expect(built.args).toEqual(expect.arrayContaining(['-v', '/tmp/worktree:/workspace:ro']));
+    expect(built.args).not.toContain('/tmp/worktree:/workspace');
+  });
+});
+
 describe('writePromptFile', () => {
   it('写入文件并返回路径', () => {
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'cecelia-prompt-test-'));

@@ -2,8 +2,8 @@
  * run.js CLI 入口单测：parseArgs 解析契约。
  * buildRealDeps/main 组装真实 pg/execSync，不在单测覆盖（--dry-run 冒烟见 scripts/smoke/orchestrator-smoke.sh）。
  */
-import { describe, it, expect } from 'vitest';
-import { parseArgs } from '../run.js';
+import { describe, it, expect, vi } from 'vitest';
+import { buildRealDeps, parseArgs } from '../run.js';
 
 describe('parseArgs', () => {
   it('--task-id 必填，缺失即抛用法错误', () => {
@@ -18,5 +18,63 @@ describe('parseArgs', () => {
   it('默认 dryRun=false、runId=null', () => {
     const a = parseArgs(['--task-id', 'T1']);
     expect(a).toEqual({ taskId: 'T1', runId: null, dryRun: false });
+  });
+});
+
+describe('buildRealDeps', () => {
+  it('组装真实 dispatcher，不再返回 T3 NotImplemented 占位', async () => {
+    const dispatch = vi.fn();
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      dispatch,
+      execCmd: vi.fn(),
+      fileExists: vi.fn(),
+      readFile: vi.fn(),
+    });
+
+    expect(deps.dispatch).toBe(dispatch);
+    expect(String(deps.dispatch)).not.toContain('NotImplemented');
+  });
+
+  it('默认 registry 注册 Grok，可把 evaluator 派给不同厂商', async () => {
+    const attemptStore = {
+      createAttempt: vi.fn(async (input) => ({ id: input.id, ...input, task_bundle: input.bundle })),
+      fail: vi.fn(),
+    };
+    const launcher = { launch: vi.fn(async () => ({ containerId: 'grok-worker' })) };
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      attemptStore,
+      launcher,
+      handlers: {},
+      loadSkill: vi.fn(() => ({
+        name: 'harness-evaluator', version: '1.0.0', digest: `sha256:${'a'.repeat(64)}`, content: 'evaluate',
+      })),
+    });
+
+    await deps.dispatch('spawn:evaluator', {
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      hop: 7,
+      decision: { phase: 'evaluate' },
+      observed: {
+        task: {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          title: 'cross-vendor review',
+          payload: {
+            sprint_dir: 'sprints/x',
+            worktree_path: '/tmp/wt',
+            role_assignments: { evaluator: { provider: 'grok', account: 'grok' } },
+          },
+        },
+        run: { phase: 'evaluate' },
+        contract: { row: {} },
+        pr: { url: 'https://github.com/o/r/pull/1' },
+      },
+    });
+
+    expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'evaluator', provider: 'grok', accountId: 'grok',
+    }));
   });
 });

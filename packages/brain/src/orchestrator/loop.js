@@ -35,6 +35,22 @@ async function resolveRunId(pool, taskId) {
   return rows[0].id;
 }
 
+function asPayload(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return {}; }
+}
+
+async function resolveGroundTruthPaths(pool, taskId) {
+  const { rows } = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
+  const payload = asPayload(rows[0]?.payload);
+  const sprintDir = String(payload.sprint_dir ?? '').replace(/\/$/, '');
+  return {
+    prdPath: sprintDir ? `${sprintDir}/sprint-prd.md` : 'sprint-prd.md',
+    callbackResultPath: payload.callback_result_path ?? '.brain-result.json',
+  };
+}
+
 /**
  * appendHop 的 observed 快照：摘要而非全量（jsonb 列，回放/streak 推导用）。
  * counters 的 streak 契约（spec 决策 5）：proposer/reviewer intent 行必须带
@@ -45,7 +61,14 @@ function buildSnapshot(observed, counters, action) {
     prdExists: observed.prdExists,
     contractApproved: observed.contract.approved,
     pr: observed.pr
-      ? { url: observed.pr.url, state: observed.pr.state, ci: observed.pr.ci, merged: observed.pr.merged, head_sha: observed.pr.head_sha }
+      ? {
+          url: observed.pr.url,
+          state: observed.pr.state,
+          mergeStateStatus: observed.pr.mergeStateStatus,
+          ci: observed.pr.ci,
+          merged: observed.pr.merged,
+          head_sha: observed.pr.head_sha,
+        }
       : null,
     inflightContainers: observed.inflight.containers.length,
     lastAgentExit: observed.lastAgentExit,
@@ -101,6 +124,9 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   const pid = deps.pid ?? process.pid;
 
   const resolvedRunId = runId ?? (await resolveRunId(deps.pool, taskId));
+  const groundTruthPaths = collect === defaultCollect
+    ? await resolveGroundTruthPaths(deps.pool, taskId)
+    : {};
 
   let hops = 0;
   let pollCount = 0; // 进程内计数：wait:poll_ci 不落日志，poll 上限只约束本进程连续等待
@@ -110,7 +136,11 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   const beat = () => heartbeat(deps.pool, { runId: resolvedRunId, host, pid, now: now() });
 
   while (true) {
-    const observed = await collect(deps, { taskId, runId: resolvedRunId });
+    const observed = await collect(deps, {
+      taskId,
+      runId: resolvedRunId,
+      ...groundTruthPaths,
+    });
     const counters = deriveCounters(observed.decisionLog, { proposeBranchMaxRn: observed.proposeBranchRn });
     const fullCounters = { ...counters, pollCount, ganCostUsd: Number(observed.run.cost_usd ?? 0) };
     const decision = derive({ ...observed, counters: fullCounters });
@@ -144,8 +174,22 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       continue;
     }
 
-    // ---- wait:*：只心跳+sleep，不 append（日志不灌水）、不派发 ----
-    if (decision.action.startsWith('wait:')) {
+    // ---- 纯轮询 wait：只心跳+sleep，不 append（日志不灌水）、不派发 ----
+    // wait:human_review 首次必须经过 dispatcher，才能真正创建预览并通知人；同一
+    // PR SHA 已写过 intent 后才转为纯等待，避免每 90s 重复通知。
+    if (decision.action === ACTION.WAIT_HUMAN_REVIEW) {
+      const reviewAlreadyRequested = observed.decisionLog.some(
+        (row) => row.action === LOG_ACTION.HUMAN_REVIEW_REQUESTED
+          && row.observed?.pr?.head_sha === observed.pr?.head_sha,
+      );
+      if (reviewAlreadyRequested) {
+        pollCount = 0;
+        await beat();
+        await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
+    }
+    if (decision.action === ACTION.WAIT_RUNNING || decision.action === ACTION.WAIT_POLL_CI) {
       pollCount = decision.action === ACTION.WAIT_POLL_CI ? pollCount + 1 : 0;
       await beat();
       await sleep(POLL_INTERVAL_MS);
@@ -192,6 +236,23 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     const result = gateVerdict?.startsWith('deny:')
       ? { status: 'BLOCKED', detail: gateVerdict }
       : await deps.dispatch(decision.action, { taskId, runId: resolvedRunId, hop, observed, decision });
+
+    // Intent 只能证明“准备通知”，不能证明 preview/通知副作用成功。成功后追加独立
+    // effect marker；若首次派发失败，下一轮看不到 marker，仍会重试而不是永久空等。
+    if (decision.action === ACTION.WAIT_HUMAN_REVIEW
+        && (result.status === 'DONE' || result.status === 'DONE_WITH_CONCERNS')) {
+      const effectHop = await next(deps.pool, resolvedRunId);
+      await append(deps.pool, {
+        runId: resolvedRunId,
+        hop: effectHop,
+        observed: buildSnapshot(observed, fullCounters, LOG_ACTION.HUMAN_REVIEW_REQUESTED),
+        derivedPhase: decision.phase,
+        gateVerdict: null,
+        action: LOG_ACTION.HUMAN_REVIEW_REQUESTED,
+        detail: { dispatch_hop: hop, result: result.detail ?? null },
+      });
+      hops++;
+    }
 
     if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
       if (blockedState === result.status) blockedStreak++;

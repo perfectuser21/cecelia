@@ -77,4 +77,5 @@ export const LOG_ACTION = Object.freeze({
   VERDICT_JUDGE: 'verdict:judge',
   VERDICT_REVIEWER: 'verdict:reviewer',
   VERDICT_HUMAN_REVIEW: 'verdict:human_review',
+  HUMAN_REVIEW_REQUESTED: 'effect:human_review_requested',
 });

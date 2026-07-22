@@ -13,6 +13,12 @@
 import pool from './db.js';
 import { execSync } from 'node:child_process';
 import { HEADED_HOSTS, HEADED_TMUX_PREFIXES } from './harness-skill-relay.js';
+import {
+  parseBaseRepo as _parseBaseRepo,
+  discoverPrFromGithub as _discoverPrFromGithub,
+} from './orchestrator/github-pr-discovery.js';
+
+export { _parseBaseRepo, _discoverPrFromGithub };
 
 // ── CI 状态映射（复用 ground-truth.js 的等价逻辑，不重复造轮子）────────────────
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -52,6 +58,7 @@ export const MAX_CODEX_RELAY_ATTEMPTS = 2;
 
 // generator 完成后 6h 无 MERGED → failed（防 e90c0fbb pr_url 空永挂）
 export const GENERATOR_DONE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const KERNEL_RECONCILE_STALE_MS = 3 * 60 * 1000;
 
 /** C3：按 initiative 批量关闭 skill-relay-spawn 事件（写点在 executor.js spawn，写完即弃无 id 可用）。 */
 async function _closeSpawnEvents(dbPool, initiativeId, status) {
@@ -68,77 +75,136 @@ function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
-/**
- * 路径→仓库名静态映射（容器内宿主机绝对路径）。
- * 可被 HARNESS_REPO_MAP 环境变量（JSON 对象）覆盖。
- * key: 路径片段（basename 或路径包含检测），value: owner/repo
- */
-const DEFAULT_REPO_MAP = {
-  cecelia: 'perfectuser21/cecelia',
-  zenithjoy: 'perfectuser21/zenithjoy-workspace',
-  'zenithjoy-skills': 'perfectuser21/zenithjoy-skills',
-};
-
-function _buildRepoMap() {
-  const raw = process.env.HARNESS_REPO_MAP;
-  if (!raw) return DEFAULT_REPO_MAP;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') return { ...DEFAULT_REPO_MAP, ...parsed };
-  } catch { /* JSON 解析失败 → 忽略 env，用默认 */ }
-  return DEFAULT_REPO_MAP;
-}
-
-/**
- * 从 payload.base_repo 解析 owner/repo。
- * 优先放行 https://github.com/<owner>/<repo>[.git][/]，owner/repo 限 [\w.-]
- * （防 shell 注入——结果会拼进 execFn 命令）。
- * 其次尝试路径→仓库名静态映射（basename 或路径包含检测）：
- *   - /Users/administrator/perfect21/cecelia → perfectuser21/cecelia
- *   - /workspace → perfectuser21/cecelia（/workspace 等同 cecelia）
- *   - 可被 HARNESS_REPO_MAP env（JSON）覆盖
- * 未知路径 / null 输入返回 null。
- */
-export function _parseBaseRepo(baseRepo) {
-  if (typeof baseRepo !== 'string') return null;
-  // 1. URL 格式优先
-  const m = baseRepo.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/);
-  if (m) return m[1];
-  // 2. 路径映射：先尝试 env 覆盖 map，再尝试 basename，最后尝试路径包含检测
-  const repoMap = _buildRepoMap();
-  // 2a. 精确 key 匹配（env 覆盖用例，如 'custom/path'）
-  if (repoMap[baseRepo]) return repoMap[baseRepo];
-  // 2b. basename 匹配（/Users/.../cecelia → basename=cecelia）
-  const base = baseRepo.split('/').filter(Boolean).pop() || '';
-  if (base && repoMap[base]) return repoMap[base];
-  // 2c. 路径包含匹配（/workspace → 包含 'workspace'，特殊映射到 cecelia）
-  if (baseRepo === '/workspace' || baseRepo.endsWith('/workspace')) return repoMap['cecelia'] || null;
-  // 2d. 路径片段包含检测（降序长度优先，防短 key 误匹配）
-  const keys = Object.keys(repoMap).sort((a, b) => b.length - a.length);
-  for (const key of keys) {
-    if (baseRepo.includes(key)) return repoMap[key];
+export async function resumeKernelAttempt(attempt, { task, dbPool }) {
+  const [
+    { createAttemptStore },
+    { createProviderRegistry },
+    { claudeAdapter },
+    { codexAdapter },
+    { grokAdapter },
+    { createDetachedLauncher, resolveProviderAccountHome },
+    { spawnDockerDetached, removeDockerContainer },
+    { generateCallbackSecret, hashCallbackSecret },
+    { killAttemptContainers },
+  ] = await Promise.all([
+    import('./orchestrator/attempt-store.js'),
+    import('./orchestrator/provider-registry.js'),
+    import('./orchestrator/providers/claude.js'),
+    import('./orchestrator/providers/codex.js'),
+    import('./orchestrator/providers/grok.js'),
+    import('./orchestrator/dispatcher.js'),
+    import('./spawn/detached.js'),
+    import('./orchestrator/callback-auth.js'),
+    import('./harness-container-cleanup.js'),
+  ]);
+  const store = createAttemptStore(dbPool);
+  const leaseOwner = `watchdog:${process.pid}`;
+  const reclaimed = await store.reclaim(attempt.id, { leaseOwner, leaseSeconds: 300 });
+  if (!reclaimed) return { ok: false, reason: 'attempt_lease_conflict' };
+  const callbackSecret = generateCallbackSecret();
+  const rotated = await store.rotateCallbackSecret(attempt.id, {
+    leaseOwner,
+    callbackSecretHash: hashCallbackSecret(callbackSecret),
+  });
+  if (!rotated) return { ok: false, reason: 'attempt_callback_secret_rotation_conflict' };
+  const cleanup = await killAttemptContainers(attempt.id);
+  if (!cleanup.ok) {
+    return { ok: false, reason: 'attempt_container_cleanup_failed', cleanup };
   }
-  return null;
+
+  const registry = createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
+  const adapter = registry.resolve({ provider: attempt.provider, requires: ['resume'] });
+  const execution = {};
+  if (task.payload?.model && task.payload.model !== 'auto') execution.model = task.payload.model;
+  if (task.payload?.codex_home) execution.codexHome = task.payload.codex_home;
+  if (task.payload?.claude_home) execution.claudeHome = task.payload.claude_home;
+  if (task.payload?.grok_home) execution.grokHome = task.payload.grok_home;
+  if (attempt.account_id) {
+    const accountHome = resolveProviderAccountHome(attempt.provider, attempt.account_id);
+    if (attempt.provider === 'codex') execution.codexHome = accountHome;
+    if (attempt.provider === 'claude') execution.claudeHome = accountHome;
+    if (attempt.provider === 'grok') execution.grokHome = accountHome;
+  }
+  const spec = adapter.resume({
+    attempt: { ...attempt, task_bundle: attempt.task_bundle },
+    input: 'Continue this same Harness attempt from its last durable checkpoint.',
+    execution,
+  });
+  const launcher = createDetachedLauncher({
+    spawnDetached: spawnDockerDetached,
+    removeContainer: removeDockerContainer,
+    attemptStore: store,
+    leaseOwner,
+  });
+  const launched = await launcher.launch({
+    attempt: { ...attempt, ...reclaimed, callbackSecret },
+    bundle: attempt.task_bundle,
+    spec,
+    adapter,
+    task,
+    leaseClaimed: true,
+    generation: new Date(reclaimed.updated_at ?? Date.now()).getTime(),
+  });
+  return { ok: true, resumed: true, ...launched };
 }
 
-/**
- * 从 GitHub 反查该 task 的 PR（Issue 198ba8db：relay session 不回写 pr_url，
- * DB 侧护栏失明）。按分支名含 task short 匹配（spawn/controller 分支规约
- * cp-*-<short>* / cp-*-ws-<short>*）。MERGED 优先于 OPEN；仅 CLOSED 视为无命中。
- * gh 调用/解析失败会抛错——调用方必须保守跳过（不盲目重点火）。
- */
-export function _discoverPrFromGithub(task, short, execFn) {
-  const repo = _parseBaseRepo(task.payload?.base_repo);
-  if (!repo) return null;
-  // limit 100（非 50）：高流量 repo 短时间内 PR 数多，窗口太小会把目标 PR 挤出结果
-  const raw = execFn(`gh pr list --repo "${repo}" --state all --limit 100 --json headRefName,title,url,state`);
-  const prs = JSON.parse(raw);
-  if (!Array.isArray(prs)) return null;
-  const matches = prs.filter((p) =>
-    (typeof p?.headRefName === 'string' && p.headRefName.includes(short)) ||
-    (typeof p?.title === 'string' && p.title.includes('[' + short + ']'))
+async function _recoverKernelRun(run, task, deps, out) {
+  const dbPool = deps.pool || deps.dbPool || pool;
+  const heartbeatAt = run.orchestrator_heartbeat_at
+    ? new Date(run.orchestrator_heartbeat_at).getTime()
+    : 0;
+  // Kernel wait loops beat every 90s. A heartbeat inside two intervals plus
+  // scheduling margin means the original reconcile process still owns the run.
+  if (heartbeatAt && Date.now() - heartbeatAt <= KERNEL_RECONCILE_STALE_MS) return;
+  const latestQ = await dbPool.query(
+    `SELECT * FROM harness_attempts
+      WHERE run_id=$1
+      ORDER BY hop DESC LIMIT 1`,
+    [run.id],
   );
-  return matches.find((m) => m.state === 'MERGED') || matches.find((m) => m.state === 'OPEN') || null;
+  const attempt = latestQ.rows?.[0] ?? null;
+  const activeStatus = attempt && ['queued', 'starting', 'running'].includes(attempt.status);
+  const leaseLive = activeStatus && attempt.lease_expires_at
+    && new Date(attempt.lease_expires_at).getTime() > Date.now();
+  if (leaseLive) return;
+
+  if (activeStatus && attempt.provider_session_id) {
+    const resumeAttempt = deps.resumeAttempt || resumeKernelAttempt;
+    const resumed = await resumeAttempt(attempt, { task, run, dbPool });
+    if (resumed?.ok) {
+      out.resumed++;
+      console.log(`[relay-watchdog][kernel-v1] resumed attempt=${attempt.id} session=${attempt.provider_session_id}`);
+    }
+    // Whether resume won or lost the reclaim race, never start a second reconcile
+    // process in the same watchdog pass.
+    return;
+  }
+
+  if (activeStatus && attempt) {
+    await dbPool.query(
+      `UPDATE harness_attempts
+          SET status='failed', error_code='recovery_without_session',
+              error_message='expired attempt had no resumable provider session',
+              completed_at=NOW(), lease_owner=NULL, lease_expires_at=NULL, updated_at=NOW()
+        WHERE id=$1 AND status IN ('queued','starting','running')
+          AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
+      [attempt.id],
+    );
+  }
+
+  // No resumable session: restart only the deterministic reconcile process. It re-reads
+  // Git/PR/DB and allocates a new hop; it never reuses another role's conversation.
+  const launchKernel = deps.launchKernel
+    || (await import('./harness-skill-relay.js')).launchKernelProcess;
+  const launched = await launchKernel({
+    taskId: task.id,
+    runId: run.id,
+    worktreePath: task.payload?.worktree_path,
+  });
+  if (launched) {
+    out.resumed++;
+    console.log(`[relay-watchdog][kernel-v1] reconcile restarted run=${run.id} pid=${launched.pid ?? '?'}`);
+  }
 }
 
 /**
@@ -238,7 +304,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, started_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
+    `SELECT DISTINCT ON (initiative_id) id, initiative_id, phase, deadline_at, pr_url, orchestrator_host, orchestrator_heartbeat_at, completed_at, tmux_killed_at, started_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
   const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
@@ -286,6 +352,11 @@ export async function resumeStalledRelayRuns(deps = {}) {
       // defer_until 未到期 → 跳过（rate_limit 处置）
       if (task.payload?.defer_until && task.payload.defer_until > Date.now()) {
         console.log(`[relay-watchdog] defer_until 未到期，跳过 initiative=${run.initiative_id}`);
+        continue;
+      }
+
+      if (task.payload?.harness_runtime === 'kernel-v1') {
+        await _recoverKernelRun(run, task, deps, out);
         continue;
       }
 

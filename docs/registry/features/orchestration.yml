@@ -1,5 +1,5 @@
 # 编排系统 (orchestration) - Feature 详情
-# 更新时间: 2026-04-03
+# 更新时间: 2026-07-22
 # Schema: v2.0.0
 
 system_id: orchestration
@@ -300,6 +300,81 @@ features:
         - L3
         - L4
     runtime: {}
+
+  - feature_id: provider_neutral_harness
+    name: Provider-neutral Harness Kernel
+    purpose: 用统一 relay 契约和冻结 Skill 调度 Claude Code、Codex 等可替换执行器，并保留独立对抗验收
+    maturity: 2
+    code:
+      root: packages/brain/src/orchestrator
+      entry_files:
+        - packages/brain/src/orchestrator/run.js
+        - packages/brain/src/orchestrator/dispatcher.js
+        - packages/brain/src/orchestrator/execution-contract.js
+        - packages/brain/src/harness-skill-relay.js
+        - packages/brain/src/harness-relay-watchdog.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: docs/superpowers/specs/2026-07-21-provider-neutral-harness-design.md
+      dod: docs/superpowers/plans/2026-07-21-provider-neutral-harness.md
+      adr: docs/superpowers/specs/2026-07-21-provider-neutral-harness-design.md
+      api_doc: packages/brain/src/orchestrator/README.md
+      runbook: packages/brain/src/orchestrator/README.md
+    skills: []
+    apis:
+      - method: POST
+        path: /api/brain/harness/attempts/:attemptId/heartbeat
+        service: brain
+        purpose: 延长当前 provider attempt 的执行租约
+        code_file: packages/brain/src/routes/harness-callback.js
+        auth: internal
+      - method: POST
+        path: /api/brain/harness/attempts/:attemptId/callback
+        service: brain
+        purpose: 幂等接收并校验结构化 HarnessResult
+        code_file: packages/brain/src/routes/harness-callback.js
+        auth: internal
+    tests:
+      unit:
+        - packages/brain/src/orchestrator/__tests__/execution-contract.test.js
+        - packages/brain/src/orchestrator/__tests__/callback-auth.test.js
+        - packages/brain/src/orchestrator/__tests__/github-pr-discovery.test.js
+        - packages/brain/src/orchestrator/providers/shared.test.js
+        - packages/brain/src/orchestrator/providers/claude.test.js
+        - packages/brain/src/orchestrator/providers/codex.test.js
+        - packages/brain/src/orchestrator/providers/grok.test.js
+        - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
+        - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
+        - packages/brain/src/__tests__/harness-relay-watchdog.test.js
+      integration:
+        - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
+      e2e:
+        - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
+      regression: []
+    capabilities:
+      - id: provider_neutral_harness_relay
+        name: Provider-neutral Harness Relay
+        entry_file: packages/brain/src/orchestrator/run.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/orchestrator/__tests__/execution-contract.test.js
+            - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
+          integration:
+            - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
+          e2e:
+            - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+        - brain-integration
+      layers:
+        - L2
+        - L3
+    runtime:
+      flag: payload.harness_runtime=kernel-v1
   - feature_id: okr_system
     name: OKR 层级管理
     purpose: 管理 Vision→Objective→KR→Project→Scope→Initiative→Task 7层结构

@@ -80,7 +80,9 @@ function makeEnv({ observedSeq, dispatch }) {
 
 describe('runLoop：全链 planning→done', () => {
   it('逐跳推进 planner→proposer→reviewer→persist→generator→poll→evaluator→judge→merge→report→exit', async () => {
-    const prMeta = { url: 'u', state: 'OPEN', merged: false, head_sha: 'sha-1' };
+    const prMeta = {
+      url: 'u', state: 'OPEN', mergeStateStatus: 'CLEAN', merged: false, head_sha: 'sha-1',
+    };
     const observedSeq = [
       // 1. 无 prd → spawn:planner
       obs({ prdExists: false, contract: { approved: false, id: CONTRACT_ID } }),
@@ -143,6 +145,7 @@ describe('runLoop：全链 planning→done', () => {
     // merge_pr 跳带 gateVerdict=allow
     const mergeEntry = appended.find((e) => e.action === 'merge_pr');
     expect(mergeEntry.gateVerdict).toBe('allow');
+    expect(mergeEntry.observed.pr.mergeStateStatus).toBe('CLEAN');
   });
 
   it('每个派发 hop：先 appendHop 再 dispatch（intent-before-dispatch 顺序）', async () => {
@@ -327,6 +330,75 @@ describe('runLoop：dry-run（F5 前台雏形）', () => {
 });
 
 describe('runLoop：wait:* 不灌水', () => {
+  it('wait:human_review 首次派发预览/通知，随后同 SHA 只心跳等待', async () => {
+    const pr = { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-review' };
+    const verdicts = {
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review' },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review' },
+    };
+    const requested = {
+      hop: 2,
+      action: 'effect:human_review_requested',
+      observed: { pr: { head_sha: 'sha-review' } },
+      detail: null,
+    };
+    const observedSeq = [
+      obs({ generatorSpawned: true, pr, reviewRequired: true, ...verdicts }),
+      obs({ generatorSpawned: true, pr, reviewRequired: true, decisionLog: [requested], ...verdicts }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, sleeps, heartbeats } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.dispatch).toHaveBeenCalledWith('wait:human_review', expect.any(Object));
+    expect(appended.map((entry) => entry.action)).toEqual([
+      'wait:human_review',
+      'effect:human_review_requested',
+    ]);
+    expect(sleeps).toHaveLength(1);
+    expect(heartbeats).toHaveLength(2);
+  });
+
+  it('human review 首次派发失败只有 intent 时会重试，成功后才写 effect marker', async () => {
+    const pr = { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-review' };
+    const verdicts = {
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review' },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review' },
+    };
+    const failedIntent = {
+      hop: 1,
+      action: 'wait:human_review',
+      observed: { pr: { head_sha: 'sha-review' } },
+    };
+    const observedSeq = [
+      obs({ generatorSpawned: true, pr, reviewRequired: true, ...verdicts }),
+      obs({
+        generatorSpawned: true,
+        pr,
+        reviewRequired: true,
+        decisionLog: [failedIntent],
+        ...verdicts,
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const dispatch = vi.fn()
+      .mockResolvedValueOnce({ status: 'BLOCKED', detail: 'preview failed' })
+      .mockResolvedValueOnce({ status: 'DONE', detail: 'preview ready' });
+    const { deps, appended } = makeEnv({ observedSeq, dispatch });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch).toHaveBeenCalledTimes(2);
+    expect(appended.map((entry) => entry.action)).toEqual([
+      'wait:human_review',
+      'wait:human_review',
+      'effect:human_review_requested',
+    ]);
+  });
+
   it('wait:poll_ci → 不派 dispatcher、不 append hop，只心跳+sleep', async () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' };
     const observedSeq = [

@@ -14,10 +14,11 @@
  *   与 T3 多容器模式不同，不需要 fencing——见 decision「N3 skill-relay 最小接线设计」）
  */
 import pool from './db.js';
-import { execSync } from 'node:child_process';
+import { execSync, spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
@@ -100,6 +101,96 @@ export function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
+export async function launchKernelProcess({ taskId, runId, worktreePath }) {
+  const runner = fileURLToPath(new URL('./orchestrator/run.js', import.meta.url));
+  const child = nodeSpawn(
+    process.execPath,
+    [runner, '--task-id', taskId, '--run-id', runId],
+    {
+      cwd: worktreePath,
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, CECELIA_HARNESS_RUNTIME: 'kernel-v1' },
+    },
+  );
+  child.unref();
+  return { pid: child.pid };
+}
+
+async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
+  // harness_runtime 由 tasks.payload 持久化，current_task_id + 非终态才是 run 身份。
+  // orchestrator_host 是活性观测字段，heartbeat 会把它改成实际 hostname，
+  // 不得用它做去重键，否则每次重派都会再建一条 run。
+  const active = await dbPool.query(
+    `SELECT id FROM initiative_runs
+      WHERE current_task_id=$1 AND orchestrator_version='v2'
+        AND phase NOT IN ('done','failed')
+      ORDER BY started_at DESC LIMIT 1`,
+    [task.id],
+  );
+  if (active.rows?.[0]) {
+    return { ok: false, mode: 'kernel-v1', deferred: true, reason: 'kernel_run_exists', runId: active.rows[0].id };
+  }
+
+  const ensureWt = deps.ensureWt
+    || (await import('./harness-worktree.js')).ensureHarnessWorktree;
+  const worktreePath = await ensureWt({
+    taskId: task.id,
+    initiativeId,
+    baseRepo: task.payload?.base_repo,
+  });
+  const sprintDir = task.payload?.sprint_dir
+    || `sprints/${stampMMDDHHNN(now())}-kernel-${shortId(task.id)}`;
+  const reviewRequired = deriveReviewRequired(task);
+
+  await dbPool.query(
+    `UPDATE tasks
+        SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+            updated_at=NOW()
+      WHERE id=$1`,
+    [task.id, JSON.stringify({
+      harness_runtime: 'kernel-v1',
+      sprint_dir: sprintDir,
+      worktree_path: worktreePath,
+      review_required: reviewRequired,
+    })],
+  );
+
+  const inserted = await dbPool.query(
+    `INSERT INTO initiative_runs
+       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
+        deadline_at, ability_id, current_task_id)
+     VALUES ($1, 'planning', $2, 'v2', 'kernel-v1', NOW() + INTERVAL '8 hours', $3, $4)
+     RETURNING id`,
+    [
+      initiativeId,
+      task.payload?.journey_id || null,
+      task.ability_id || task.payload?.ability_id || null,
+      task.id,
+    ],
+  );
+  const runId = inserted.rows?.[0]?.id;
+  if (!runId) throw new Error('kernel-v1 initiative_runs INSERT returned no id');
+
+  const launchKernel = deps.launchKernel || launchKernelProcess;
+  try {
+    const launched = await launchKernel({ taskId: task.id, runId, worktreePath });
+    console.log(`[skill-relay][kernel-v1] launched run=${runId} pid=${launched.pid ?? '?'}`);
+    return { ok: true, mode: 'kernel-v1', runId, ...launched, sprintDir, worktreePath };
+  } catch (error) {
+    await dbPool.query(
+      `UPDATE initiative_runs SET phase='failed', failure_reason='kernel_launch_failed', completed_at=NOW()
+        WHERE id=$1`,
+      [runId],
+    );
+    await dbPool.query(
+      `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+      [task.id],
+    );
+    return { ok: false, mode: 'kernel-v1', runId, error: error.message };
+  }
+}
+
 /** 上海时区 MMDDHHNN（sprint_dir 缺省生成用；now 注入保持可测确定性） */
 export function stampMMDDHHNN(now) {
   const fmt = new Intl.DateTimeFormat('en-GB', {
@@ -161,6 +252,10 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isCodex = task.payload?.executor === 'codex';
   const isGrok = task.payload?.executor === 'grok';
   const isHeaded = task.payload?.mode === 'headed';
+
+  if (task.payload?.harness_runtime === 'kernel-v1') {
+    return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
+  }
 
   // ─── headed 分支：ssh+tmux 路径 ──────────────────────────────────────────
   if (isHeaded) {

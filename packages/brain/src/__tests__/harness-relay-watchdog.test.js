@@ -30,14 +30,20 @@ function makeDeps({
   evaluatorGate = true, // initiative_run_events 是否存在 node='evaluator' AND status='done'
   mergeStateStatus = undefined, // 'BEHIND' | 'CLEAN' | undefined（gh pr view mergeStateStatus）
   ciChecks = undefined,         // CheckRow[] | undefined（gh pr checks --json state）
+  harnessRuntime = null,
+  latestAttempt = null,
+  orchestratorHeartbeatAt = null,
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
     if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost }] };
+      return { rows: [{ id: '11111111-1111-4111-8111-111111111111', initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt }] };
     }
     if (/FROM tasks/.test(sql)) {
-      return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator } }] };
+      return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator, ...(harnessRuntime ? { harness_runtime: harnessRuntime } : {}) } }] };
+    }
+    if (/FROM harness_attempts/.test(sql)) {
+      return { rows: latestAttempt ? [latestAttempt] : [] };
     }
     if (/FROM initiative_run_events/.test(sql)) {
       return { rows: evaluatorGate ? [{ x: 1 }] : [] };
@@ -83,6 +89,126 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
 });
 
 describe('resumeStalledRelayRuns', () => {
+  it('kernel-v1 有可恢复 session 时只 resume 同一个 attempt', async () => {
+    const resumeAttempt = vi.fn(async () => ({ ok: true, resumed: true }));
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        run_id: '11111111-1111-4111-8111-111111111111',
+        role: 'evaluator',
+        provider: 'codex',
+        provider_session_id: 'thread-1',
+        status: 'running',
+        lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    deps.resumeAttempt = resumeAttempt;
+    deps.launchKernel = vi.fn();
+
+    const result = await resumeStalledRelayRuns(deps);
+
+    expect(resumeAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      id: '22222222-2222-4222-8222-222222222222',
+      provider_session_id: 'thread-1',
+    }), expect.any(Object));
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(result.resumed).toBe(1);
+  });
+
+  it('kernel-v1 无可恢复 session 时重启 reconcile，由外部真相推导新 hop', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        run_id: '11111111-1111-4111-8111-111111111111',
+        role: 'planner',
+        provider: 'claude',
+        provider_session_id: null,
+        status: 'failed',
+        lease_expires_at: null,
+      },
+    });
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn(async () => ({ pid: 5252 }));
+
+    const result = await resumeStalledRelayRuns(deps);
+
+    expect(deps.resumeAttempt).not.toHaveBeenCalled();
+    expect(deps.launchKernel).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: TASK_ID,
+      runId: '11111111-1111-4111-8111-111111111111',
+    }));
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(result.resumed).toBe(1);
+  });
+
+  it('kernel-v1 attempt lease 仍有效时不恢复、不重启', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        provider_session_id: 'thread-live',
+        status: 'running',
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn();
+
+    await resumeStalledRelayRuns(deps);
+
+    expect(deps.resumeAttempt).not.toHaveBeenCalled();
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('kernel-v1 原 reconcile 心跳仍新鲜时不 resume、不重拉第二个进程', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      orchestratorHeartbeatAt: new Date(Date.now() - 30_000).toISOString(),
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        provider_session_id: 'thread-stale-lease',
+        status: 'running',
+        lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn();
+
+    await resumeStalledRelayRuns(deps);
+
+    expect(deps.resumeAttempt).not.toHaveBeenCalled();
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+  });
+
+  it('kernel-v1 resume reclaim 冲突时让位，不并发启动新 reconcile', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        provider_session_id: 'thread-raced',
+        provider: 'codex',
+        status: 'running',
+        lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    deps.resumeAttempt = vi.fn(async () => ({ ok: false, reason: 'attempt_lease_conflict' }));
+    deps.launchKernel = vi.fn();
+
+    await resumeStalledRelayRuns(deps);
+
+    expect(deps.resumeAttempt).toHaveBeenCalledOnce();
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+  });
+
   it('in_progress + 无在跑容器 + attempts < 上限 → 重点火一次', async () => {
     const deps = makeDeps();
     const r = await resumeStalledRelayRuns(deps);

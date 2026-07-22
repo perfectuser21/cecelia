@@ -2,7 +2,7 @@
  * harness-container-cleanup.js — initiative 终态容器清理
  *
  * initiative 变 failed/completed 时，主动 docker rm -f 所有关联容器。
- * 容器通过 HARNESS_INITIATIVE_ID env var 识别（容器无 --label 时的替代方案）。
+ * kernel 容器通过 cecelia.run_id label 精确识别。
  */
 import { execFile as execFileCb } from 'node:child_process';
 
@@ -15,45 +15,41 @@ function dockerCmd(args) {
   });
 }
 
-/**
- * Kill all running Docker containers whose HARNESS_INITIATIVE_ID env var
- * matches the given initiativeId.
- *
- * @param {string} initiativeId
- */
-export async function killInitiativeContainers(initiativeId) {
-  if (!initiativeId) return;
+async function killContainersByLabel(label, value, logScope) {
+  if (!value) return { ok: true, matched: 0, killed: 0 };
 
   let containerIds;
   try {
-    const stdout = await dockerCmd(['ps', '-q']);
+    const stdout = await dockerCmd(['ps', '-q', '--filter', `label=${label}=${value}`]);
     containerIds = stdout.trim().split('\n').filter(Boolean);
   } catch (err) {
     console.warn(`[harness-container-cleanup] docker ps failed: ${err.message}`);
-    return;
+    return { ok: false, matched: 0, killed: 0 };
   }
 
-  if (containerIds.length === 0) return;
+  if (containerIds.length === 0) return { ok: true, matched: 0, killed: 0 };
 
   let killed = 0;
   for (const cid of containerIds) {
     try {
-      const envOut = await dockerCmd([
-        'inspect', '--format', '{{range .Config.Env}}{{.}}\n{{end}}', cid,
-      ]);
-      if (envOut.includes(`HARNESS_INITIATIVE_ID=${initiativeId}`)) {
-        try {
-          await dockerCmd(['rm', '-f', cid]);
-          killed++;
-          console.log(`[harness-container-cleanup] killed ${cid} (initiative=${initiativeId})`);
-        } catch (rmErr) {
-          console.warn(`[harness-container-cleanup] rm -f ${cid} failed: ${rmErr.message}`);
-        }
-      }
-    } catch {
-      // container exited between ps and inspect — ignore
+      await dockerCmd(['rm', '-f', cid]);
+      killed++;
+      console.log(`[harness-container-cleanup] killed ${cid} (${logScope}=${value})`);
+    } catch (rmErr) {
+      console.warn(`[harness-container-cleanup] rm -f ${cid} failed: ${rmErr.message}`);
     }
   }
 
-  console.log(`[harness-container-cleanup] initiative=${initiativeId} killed=${killed}/${containerIds.length} scanned`);
+  console.log(`[harness-container-cleanup] ${logScope}=${value} killed=${killed}/${containerIds.length} matched`);
+  return { ok: killed === containerIds.length, matched: containerIds.length, killed };
+}
+
+/** Kill all running Docker containers whose cecelia.run_id label matches runId. */
+export async function killInitiativeContainers(runId) {
+  return killContainersByLabel('cecelia.run_id', runId, 'run');
+}
+
+/** Kill every old generation belonging to one attempt before watchdog resume. */
+export async function killAttemptContainers(attemptId) {
+  return killContainersByLabel('cecelia.attempt_id', attemptId, 'attempt');
 }

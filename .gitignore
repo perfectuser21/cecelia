@@ -92,6 +92,9 @@ coverage/
 # Claude Code worktrees
 .claude/worktrees/
 
+# Shared agent worktrees
+.worktrees/
+
 # Playwright
 frontend/playwright-report/
 frontend/test-results/

@@ -26,13 +26,248 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { Command } from '@langchain/langgraph';
 import { lookupHarnessThread } from '../lib/harness-thread-lookup.js';
 import { sendBark } from '../notifier.js';
 import pool from '../db.js';
 import { handleRelayExitConsistency } from '../lib/harness-orphan-guard.js';
+import { createAttemptStore } from '../orchestrator/attempt-store.js';
+import { parseHarnessResult } from '../orchestrator/execution-contract.js';
+import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
 
 const router = Router();
+const attemptStore = createAttemptStore(pool);
+const SUCCESS_TERMINAL_STATUSES = new Set([
+  'completed',
+  'completed_with_concerns',
+  'needs_context',
+  'blocked',
+]);
+const FAILURE_TERMINAL_STATUSES = new Set(['failed', 'cancelled']);
+
+function createAttemptCallbackRateLimit({ limit, identifier }) {
+  return rateLimit({
+    windowMs: 60_000,
+    limit,
+    keyGenerator: (req) => req.params.attemptId,
+    skipSuccessfulRequests: true,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    identifier,
+    message: { ok: false, error: 'attempt callback rate limit exceeded' },
+  });
+}
+
+const heartbeatRateLimit = createAttemptCallbackRateLimit({
+  limit: 30,
+  identifier: 'harness-attempt-heartbeat',
+});
+const callbackRateLimit = createAttemptCallbackRateLimit({
+  limit: 10,
+  identifier: 'harness-attempt-callback',
+});
+
+function bearerToken(req) {
+  const authorization = req.get('authorization') ?? '';
+  return authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+}
+
+function callbackAuthorized(req, attempt) {
+  return verifyCallbackSecret(bearerToken(req), attempt?.callback_secret_hash);
+}
+
+function normalizeVerdict(role, outcome) {
+  const value = String(outcome ?? '').trim().toUpperCase();
+  if (role === 'reviewer') {
+    return ['PASS', 'APPROVED'].includes(value) ? 'APPROVED' : 'REVISION_REQUESTED';
+  }
+  if (role === 'evaluator') {
+    return value === 'FIXED' ? 'FIXED' : (value === 'PASS' ? 'PASS' : 'FAIL');
+  }
+  return value;
+}
+
+async function appendAttemptVerdict(attempt, result) {
+  if (!result.decision || !['reviewer', 'evaluator'].includes(attempt.role)) return;
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
+
+  const action = attempt.role === 'reviewer' ? 'verdict:reviewer' : 'verdict:evaluate';
+  const inputs = attempt.task_bundle?.inputs ?? {};
+  const detail = attempt.role === 'reviewer'
+    ? {
+        attempt_id: attempt.id,
+        verdict: normalizeVerdict(attempt.role, result.decision.outcome),
+        rn: inputs.contract_round ?? null,
+        feedback: result.decision.reason,
+      }
+    : {
+        attempt_id: attempt.id,
+        verdict: normalizeVerdict(attempt.role, result.decision.outcome),
+        pr_head_sha: inputs.pull_request?.head_sha ?? null,
+        failure_class: result.decision.failure_class ?? null,
+        feedback: result.decision.reason,
+      };
+
+  // One statement + transaction-scoped advisory lock makes callback retries/concurrency
+  // idempotent without adding a second mutable verdict table.
+  await pool.query(
+    `WITH lock AS (
+       SELECT pg_advisory_xact_lock(hashtext($1::text))
+     ), next_hop AS (
+       SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+         FROM orchestrator_decision_log
+        WHERE run_id=$1
+     )
+     INSERT INTO orchestrator_decision_log
+       (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+     SELECT $1, next_hop.hop, $2::jsonb, $3, $4, '${action}', $5::jsonb
+       FROM lock, next_hop
+      WHERE NOT EXISTS (
+        SELECT 1 FROM orchestrator_decision_log
+         WHERE run_id=$1 AND detail->>'attempt_id'=$6
+      )`,
+    [
+      attempt.run_id,
+      JSON.stringify({ attempt_id: attempt.id, role: attempt.role }),
+      attempt.role === 'reviewer' ? 'gan' : 'evaluate',
+      detail.verdict === 'APPROVED' || detail.verdict === 'PASS' || detail.verdict === 'FIXED'
+        ? 'allow'
+        : `deny:${detail.verdict.toLowerCase()}`,
+      JSON.stringify(detail),
+      attempt.id,
+    ],
+  );
+}
+
+function resultError(result) {
+  if (typeof result.error === 'string') return { code: 'provider_failed', message: result.error };
+  return {
+    code: result.error?.code ?? 'provider_failed',
+    message: result.error?.message ?? result.summary ?? 'provider execution failed',
+  };
+}
+
+router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async (req, res) => {
+  const attempt = await attemptStore.getById(req.params.attemptId);
+  if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
+  if (!callbackAuthorized(req, attempt)) {
+    return res.status(401).json({ ok: false, error: 'invalid attempt callback credential' });
+  }
+  const leaseOwner = req.body?.lease_owner;
+  const leaseSeconds = Number(req.body?.lease_seconds ?? 180);
+  const providerSessionId = req.body?.provider_session_id ?? null;
+  if (typeof leaseOwner !== 'string' || !leaseOwner || !Number.isInteger(leaseSeconds)
+      || leaseSeconds < 30 || leaseSeconds > 600
+      || (providerSessionId !== null && (typeof providerSessionId !== 'string' || !providerSessionId))) {
+    return res.status(400).json({ ok: false, error: 'valid lease_owner and lease_seconds (30..600) required' });
+  }
+  try {
+    const attempt = providerSessionId
+      ? await attemptStore.markRunning(req.params.attemptId, {
+          leaseOwner,
+          providerSessionId,
+          leaseSeconds,
+        })
+      : await attemptStore.heartbeat(req.params.attemptId, { leaseOwner, leaseSeconds });
+    if (!attempt) return res.status(409).json({ ok: false, error: 'attempt lease lost or terminal' });
+    return res.json({ ok: true, attemptId: req.params.attemptId });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (req, res) => {
+  const { attemptId } = req.params;
+  const attempt = await attemptStore.getById(attemptId);
+  if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
+  if (!callbackAuthorized(req, attempt)) {
+    return res.status(401).json({ ok: false, error: 'invalid attempt callback credential' });
+  }
+  const leaseOwner = req.get('x-harness-lease-owner') ?? '';
+  if (!leaseOwner || leaseOwner !== attempt.lease_owner) {
+    return res.status(409).json({ ok: false, error: 'attempt lease owner mismatch' });
+  }
+
+  let result;
+  try {
+    result = parseHarnessResult(req.body, attempt.role);
+    if (result.attempt_id !== attemptId) {
+      throw new Error(`attempt_id mismatch: body=${result.attempt_id} path=${attemptId}`);
+    }
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+
+  if (attempt.provider && attempt.provider !== 'auto'
+      && result.provider_metadata.provider !== attempt.provider) {
+    return res.status(409).json({
+      ok: false,
+      error: `provider_mismatch: attempt=${attempt.provider} callback=${result.provider_metadata.provider}`,
+    });
+  }
+
+  const sessionId = result.provider_metadata?.session_id ?? null;
+  if (sessionId) {
+    try {
+      await attemptStore.assertFreshRoleSession({
+        runId: attempt.run_id,
+        attemptId,
+        role: attempt.role,
+        sessionId,
+      });
+    } catch (error) {
+      return res.status(409).json({ ok: false, error: error.message });
+    }
+  }
+
+  try {
+    let outcome;
+    if (result.status === 'failed' || result.status === 'cancelled') {
+      const error = resultError(result);
+      outcome = await attemptStore.fail(
+        attemptId,
+        { ...error, status: result.status },
+        { leaseOwner },
+      );
+      if (!outcome.attempt) {
+        const current = await attemptStore.getById(attemptId);
+        if (current?.lease_owner !== leaseOwner || !FAILURE_TERMINAL_STATUSES.has(current?.status)) {
+          return res.status(409).json({ ok: false, error: 'attempt lease lost before terminal write' });
+        }
+      }
+    } else {
+      outcome = await attemptStore.complete(attemptId, result, { leaseOwner });
+      let completedAttempt = outcome.attempt;
+      let persistedResult = completedAttempt?.result ?? result;
+      if (!completedAttempt) {
+        const current = await attemptStore.getById(attemptId);
+        if (current?.lease_owner !== leaseOwner || !SUCCESS_TERMINAL_STATUSES.has(current?.status)) {
+          return res.status(409).json({ ok: false, error: 'attempt lease lost before terminal write' });
+        }
+        completedAttempt = current;
+        persistedResult = current.result ?? result;
+      }
+      await appendAttemptVerdict(attempt, persistedResult);
+
+      if (attempt.role === 'generator') {
+        const pullRequest = persistedResult.artifacts.find(
+          (artifact) => artifact?.type === 'pull_request' && artifact.url,
+        );
+        if (pullRequest) {
+          await pool.query(
+            'UPDATE initiative_runs SET pr_url=$2, updated_at=NOW() WHERE id=$1',
+            [attempt.run_id, pullRequest.url],
+          );
+        }
+      }
+    }
+    return res.json({ ok: true, attemptId, deduped: outcome.deduped });
+  } catch (error) {
+    console.error(`[harness-attempt-callback] attempt=${attemptId}: ${error.message}`);
+    return res.status(500).json({ ok: false, error: 'attempt callback persistence failed' });
+  }
+});
 
 // relay 容器认证失败特征（Claude Code CLI 未登录/token 失效时的典型话术）。
 // 只聚焦"未登录"这个具体信号，不做通用失败分类——那是 quarantine.js 的事，

@@ -1,0 +1,56 @@
+import { describe, expect, it } from 'vitest';
+
+import { grokAdapter } from './grok.js';
+
+const bundle = {
+  attempt_id: '22222222-2222-4222-8222-222222222222',
+  inputs: { worktree_path: '/workspace' },
+};
+
+describe('grokAdapter', () => {
+  it('starts with approval, schema, session, and assigned account home', () => {
+    const spec = grokAdapter.start({
+      bundle,
+      execution: { grokHome: '/tmp/grok-home', model: 'grok-code-fast-1' },
+    });
+
+    expect(spec).toMatchObject({
+      provider: 'grok',
+      cwd: '/workspace',
+      env: { GROK_HOME: '/tmp/grok-home' },
+    });
+    expect(spec.args).toEqual(expect.arrayContaining([
+      '--always-approve', '--output-format', 'json', '--json-schema',
+      '--session-id', bundle.attempt_id, '--model', 'grok-code-fast-1',
+    ]));
+  });
+
+  it('resumes the original session and normalizes a Grok JSON wrapper', () => {
+    const resumed = grokAdapter.resume({
+      attempt: {
+        id: bundle.attempt_id,
+        provider: 'grok',
+        provider_session_id: 'grok-session',
+        task_bundle: bundle,
+      },
+      input: 'continue',
+    });
+    expect(resumed.args).toEqual(expect.arrayContaining(['--resume', 'grok-session']));
+    expect(resumed.args).not.toContain('--session-id');
+
+    const result = grokAdapter.normalizeResult({
+      attempt: { id: bundle.attempt_id },
+      raw: {
+        stdout: JSON.stringify({
+          session_id: 'grok-session',
+          result: { status: 'completed', summary: 'verified' },
+        }),
+      },
+    });
+    expect(result).toMatchObject({
+      status: 'completed',
+      summary: 'verified',
+      provider_metadata: { provider: 'grok', session_id: 'grok-session' },
+    });
+  });
+});

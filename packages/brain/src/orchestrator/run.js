@@ -5,14 +5,21 @@
  *   node packages/brain/src/orchestrator/run.js --task-id <uuid> [--run-id <uuid>] [--dry-run]
  *
  * --dry-run：只观测+推导+打印（F5 前台雏形），零写入零派发。
- * 真实 dispatcher 归 T3：本入口的 dispatch 是占位 throw（--dry-run 下用不到）；
- * Brain tick 拉起/watchdog 重拉归 T4。
+ * 非 dry-run 组装 provider-neutral dispatcher；Brain tick 拉起/watchdog 重拉另行接线。
  */
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { runLoop } from './loop.js';
+import { createAttemptStore } from './attempt-store.js';
+import { createDispatcher, createDetachedLauncher } from './dispatcher.js';
+import { createProviderRegistry } from './provider-registry.js';
+import { claudeAdapter } from './providers/claude.js';
+import { codexAdapter } from './providers/codex.js';
+import { grokAdapter } from './providers/grok.js';
+import { loadSkillBundle } from './skill-bundle.js';
+import { createKernelHandlers } from './kernel-handlers.js';
 
 /** 解析 --task-id / --run-id / --dry-run */
 export function parseArgs(argv) {
@@ -29,18 +36,96 @@ export function parseArgs(argv) {
   return args;
 }
 
+async function buildDefaultHandlers({ pool, execCmd, attemptStore }) {
+  const [
+    judge,
+    previewManager,
+    staging,
+    notifier,
+    regression,
+    handoff,
+    okr,
+    cleanup,
+  ] = await Promise.all([
+    import('../harness-judge.js'),
+    import('../preview-manager.js'),
+    import('../staging-e2e-runner.js'),
+    import('../notifier.js'),
+    import('../lib/callback-postprocess.js'),
+    import('../handoff.js'),
+    import('../okr-initiative-sync.js'),
+    import('../harness-container-cleanup.js'),
+  ]);
+
+  const spawnStaging = async (payload) => {
+    if (!payload.pr_url) return { created: false, reason: 'missing_pr_url' };
+    const result = await pool.query(
+      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
+       SELECT $1, $2, 'staging_e2e', 'queued', 'P2', $3::jsonb
+       WHERE NOT EXISTS (
+         SELECT 1 FROM tasks WHERE task_type='staging_e2e' AND payload->>'pr_url'=$4
+       )`,
+      [
+        `[Staging E2E] ${payload.pr_branch || payload.pr_url}`,
+        `Kernel post-merge staging verification for ${payload.pr_url}`,
+        JSON.stringify(payload),
+        payload.pr_url,
+      ],
+    );
+    return { created: result.rowCount > 0 };
+  };
+
+  return createKernelHandlers({
+    pool,
+    execCmd,
+    attemptStore,
+    judgeGate: judge.runJudgeGate,
+    allocatePort: previewManager.allocatePort,
+    spawnReviewPreview: staging.spawnReviewPreview,
+    notifyReview: notifier.notifyHarnessReviewPending,
+    promote: regression.promoteRegressionOnHarnessMerged,
+    buildHandoff: handoff.buildHandoff,
+    saveHandoff: handoff.saveHandoff,
+    syncOkr: okr.syncOkrInitiativeStatus,
+    spawnStaging,
+    cleanup: cleanup.killInitiativeContainers,
+  });
+}
+
 /** 真实 deps 组装（ground-truth 的 execCmd 契约：返回 stdout；非零退出 throw 且 err.stdout 带输出） */
-export async function buildRealDeps() {
-  const { default: pool } = await import('../db.js'); // 延迟 import：--help/参数错误时不连库
+export async function buildRealDeps(overrides = {}) {
+  const pool = overrides.pool
+    ?? (await import('../db.js')).default; // 延迟 import：--help/参数错误时不连库
+  const execCmd = overrides.execCmd
+    ?? ((cmd) => execSync(cmd, { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 60_000 }));
+  const attemptStore = overrides.attemptStore ?? createAttemptStore(pool);
+  let dispatch = overrides.dispatch;
+  if (!dispatch) {
+    const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
+    const detached = await import('../spawn/detached.js');
+    const spawnDetached = overrides.spawnDetached ?? detached.spawnDockerDetached;
+    const removeContainer = overrides.removeContainer ?? detached.removeDockerContainer;
+    const launcher = overrides.launcher ?? createDetachedLauncher({
+      spawnDetached,
+      removeContainer,
+      attemptStore,
+    });
+    const handlers = overrides.handlers
+      ?? await buildDefaultHandlers({ pool, execCmd, attemptStore });
+    dispatch = createDispatcher({
+      attemptStore,
+      registry,
+      launcher,
+      loadSkill: overrides.loadSkill ?? loadSkillBundle,
+      handlers,
+    });
+  }
   return {
     pool,
-    execCmd: (cmd) => execSync(cmd, { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 60_000 }),
-    fileExists: (p) => existsSync(p),
-    readFile: (p) => readFileSync(p, 'utf-8'),
-    dispatch: async (action) => {
-      // T3 认领：docker/codex/主机执行、换号、ARTIFACT 门、review 预览+Bark、merge 执行、report 六步链
-      throw new Error(`NotImplemented: dispatcher(${action}) 归 T3，本骨架只支持 --dry-run`);
-    },
+    execCmd,
+    fileExists: overrides.fileExists ?? ((p) => existsSync(p)),
+    readFile: overrides.readFile ?? ((p) => readFileSync(p, 'utf-8')),
+    dispatch,
     host: os.hostname(),
     pid: process.pid,
   };

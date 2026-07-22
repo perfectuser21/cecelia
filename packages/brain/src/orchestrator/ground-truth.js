@@ -14,6 +14,7 @@
  *   listHostPids({runId}) → number[] —— 可选注入；主机执行（mac_web 类）pid 检查，T3 接线，缺省 []
  */
 import { ACTION, LOG_ACTION } from './constants.js';
+import { discoverPrFromGithub } from './github-pr-discovery.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -127,6 +128,21 @@ export async function collectGroundTruth(deps, opts) {
   );
   const decisionLog = logRes.rows;
 
+  // evaluator 的完整机械证据存于 attempt.result；decision_log 只承载 SHA 锚定 verdict。
+  // 旧 controller 的 .brain-result.json 仍在文件通道读取，供兼容路径兜底。
+  const evaluatorAttemptRes = await pool.query(
+    `SELECT result
+       FROM harness_attempts
+      WHERE run_id = $1
+        AND role = 'evaluator'
+        AND status IN ('completed', 'completed_with_concerns')
+        AND result IS NOT NULL
+      ORDER BY completed_at DESC NULLS LAST, created_at DESC
+      LIMIT 1`,
+    [runId],
+  );
+  const evaluateResult = asJson(evaluatorAttemptRes.rows[0]?.result);
+
   // 熔断状态（P0-3 通道②）：markAuthFailure 写 account_usage_cache（src/account-usage.js:194-202）。
   // derive 不读——熔断换号分路归 T3 dispatcher；这里只透传观测。
   let authCircuit;
@@ -152,11 +168,23 @@ export async function collectGroundTruth(deps, opts) {
 
   // ---- PR 状态（gh 封装）----
   let pr = null;
-  if (run.pr_url) {
-    const view = asJson(execTolerant(execCmd, `gh pr view ${run.pr_url} --json state,mergeStateStatus,headRefOid`)) ?? {};
-    const checks = asJson(execTolerant(execCmd, `gh pr checks ${run.pr_url} --json state`)) ?? [];
+  let prUrl = run.pr_url;
+  if (!prUrl) {
+    try {
+      prUrl = discoverPrFromGithub(
+        { ...task, payload: asJson(task.payload) ?? {} },
+        String(taskId).slice(0, 8),
+        execCmd,
+      )?.url ?? null;
+    } catch {
+      prUrl = null;
+    }
+  }
+  if (prUrl) {
+    const view = asJson(execTolerant(execCmd, `gh pr view ${prUrl} --json state,mergeStateStatus,headRefOid`)) ?? {};
+    const checks = asJson(execTolerant(execCmd, `gh pr checks ${prUrl} --json state`)) ?? [];
     pr = {
-      url: run.pr_url,
+      url: prUrl,
       state: view.state ?? null,
       mergeStateStatus: view.mergeStateStatus ?? null,
       merged: view.state === 'MERGED',
@@ -228,6 +256,7 @@ export async function collectGroundTruth(deps, opts) {
     ganLatestRoundVerdict,
     generatorSpawned,
     evaluateVerdict,
+    evaluateResult,
     judgeVerdict,
     reviewRequired,
     reviewApproved,

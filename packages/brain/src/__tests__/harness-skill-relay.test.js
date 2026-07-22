@@ -48,6 +48,82 @@ describe('isSkillRelayTask', () => {
 });
 
 describe('spawnSkillRelaySession', () => {
+  it('kernel-v1 启动确定性 orchestrator，不加载或 spawn harness-controller', async () => {
+    const runId = '11111111-1111-4111-8111-111111111111';
+    const pool = { query: vi.fn(async (sql) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) return { rows: [{ id: runId }], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    }) };
+    const deps = makeDeps({
+      pool,
+      launchKernel: vi.fn(async () => ({ pid: 4242 })),
+    });
+    const task = {
+      ...TASK,
+      payload: { ...TASK.payload, harness_runtime: 'kernel-v1', executor: 'auto' },
+    };
+
+    const result = await spawnSkillRelaySession(task, deps);
+
+    expect(result).toMatchObject({ ok: true, mode: 'kernel-v1', runId, pid: 4242 });
+    expect(deps.launchKernel).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: TASK.id,
+      runId,
+      worktreePath: '/tmp/wt/task-aaaabbbb',
+    }));
+    expect(deps.loadSkill).not.toHaveBeenCalled();
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('P0: heartbeat 覆写 orchestrator_host 后再派发仍命中同任务 kernel run，不 INSERT 第二条', async () => {
+    const activeRunId = '55555555-5555-4555-8555-555555555555';
+    const insertedRunId = '66666666-6666-4666-8666-666666666666';
+    const pool = { query: vi.fn(async (sql) => {
+      if (/SELECT id FROM initiative_runs/.test(sql)) {
+        // 真实事故状态：heartbeat 已把 host 改成 us-macmini，因此依赖
+        // orchestrator_host='kernel-v1' 的查询会漏掉活跃 run。
+        return sql.includes("orchestrator_host='kernel-v1'")
+          ? { rows: [] }
+          : { rows: [{ id: activeRunId, orchestrator_host: 'us-macmini' }] };
+      }
+      if (/INSERT INTO initiative_runs/.test(sql)) {
+        return { rows: [{ id: insertedRunId }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    }) };
+    const deps = makeDeps({
+      pool,
+      launchKernel: vi.fn(async () => ({ pid: 4242 })),
+    });
+    const task = {
+      ...TASK,
+      payload: { ...TASK.payload, harness_runtime: 'kernel-v1', executor: 'auto' },
+    };
+
+    const result = await spawnSkillRelaySession(task, deps);
+
+    expect(result).toMatchObject({
+      ok: false,
+      mode: 'kernel-v1',
+      deferred: true,
+      reason: 'kernel_run_exists',
+      runId: activeRunId,
+    });
+    expect(pool.query.mock.calls.some(([sql]) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+  });
+
+  it('harness_runtime 缺省继续走旧 controller，保留一键回滚路径', async () => {
+    const deps = makeDeps({ launchKernel: vi.fn() });
+
+    const result = await spawnSkillRelaySession(TASK, deps);
+
+    expect(result.mode).toBe('skill-relay');
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    expect(deps.loadSkill).toHaveBeenCalledWith('harness-controller');
+  });
+
   it('happy path：worktree→账号→spawn(prompt 含 skill 内容+上下文头)→initiative_runs 落行', async () => {
     const deps = makeDeps();
     const r = await spawnSkillRelaySession(TASK, deps);

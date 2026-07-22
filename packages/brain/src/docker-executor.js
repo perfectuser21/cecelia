@@ -191,6 +191,16 @@ function envToArgs(env) {
   return args;
 }
 
+function labelsToArgs(labels) {
+  if (!labels || typeof labels !== 'object') return [];
+  const args = [];
+  for (const [key, value] of Object.entries(labels)) {
+    if (value === undefined || value === null) continue;
+    args.push('--label', `${key}=${String(value)}`);
+  }
+  return args;
+}
+
 /**
  * 生成 container 名。
  *
@@ -426,7 +436,8 @@ export function buildDockerArgs(opts, ctx = {}) {
     '--cidfile', cidfile,
     `--memory=${memoryMB}m`,
     `--cpus=${cpuCores}`,
-    '-v', `${worktreePath}:/workspace`,
+    ...labelsToArgs(opts.labels),
+    '-v', `${worktreePath}:/workspace${opts.readOnlyWorktree ? ':ro' : ''}`,
     // mount 源路径用 HOST_PROMPT_DIR（宿主解析），目标路径固定 /tmp/cecelia-prompts（容器内）
     // H12: rw 让 H7 entrypoint tee STDOUT_FILE 写到此 mount 真生效（v13 暴露 :ro 让 tee silent fail）
     '-v', `${HOST_PROMPT_DIR}:/tmp/cecelia-prompts:rw`,
@@ -718,6 +729,7 @@ export const __test__ = {
   cidFilePath,
   readContainerIdFromCidfile,
   envToArgs,
+  labelsToArgs,
   writePromptFile,
   buildDockerArgs,
 };

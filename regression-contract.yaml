@@ -9,12 +9,28 @@
 # ============================================================================
 
 version: "1.0.0"
-updated: "2026-02-04"
+updated: "2026-07-22"
 
 # ============================================================================
 # 核心功能回归契约
 # ============================================================================
 core: []
+
+# ============================================================================
+# API 回归索引（新增 Brain 路由必须登记）
+# ============================================================================
+ci:
+  - id: brain-api-harness-attempts-attemptid-heartbeat
+    description: "Provider attempt lease heartbeat"
+    endpoint: "/harness/attempts/:attemptId/heartbeat"
+    method: "POST"
+    trigger: [PR, Release]
+
+  - id: brain-api-harness-attempts-attemptid-callback
+    description: "Idempotent structured HarnessResult callback"
+    endpoint: "/harness/attempts/:attemptId/callback"
+    method: "POST"
+    trigger: [PR, Release]
 
 # ============================================================================
 # Golden Paths（must-never-break 核心断言）
