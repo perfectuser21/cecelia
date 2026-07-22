@@ -142,7 +142,7 @@ cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 JSON
 printf '%s\n' '12 tests passed' > "$EVIDENCE_TMP/e2e-result.log"
 printf '%s\n' \
-  '{"command":"timeout 120 bash /tmp/e2e-verify.sh","exit_code":0}' \
+  '{"task_id":"task-current","attempt_id":"attempt-skill","command":"timeout 120 bash /tmp/e2e-verify.sh","exit_code":0}' \
   > "$EVIDENCE_TMP/evaluator-execution.json"
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
@@ -155,6 +155,27 @@ HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-cur
 jq -e '.checks == [{"command":"timeout 120 bash /tmp/e2e-verify.sh","exit_code":0,"log_tail":"12 tests passed"}]' \
   "$EVIDENCE_TMP/result.json" >/dev/null || {
   echo 'harness-evaluator executable PASS writer did not survive the callback bridge' >&2
+  exit 1
+}
+
+# A shared/stale metadata file from another attempt cannot be repackaged under
+# the current attempt's identity by the PASS writer.
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":["provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
+JSON
+printf '%s\n' \
+  '{"task_id":"old-task","attempt_id":"old-attempt","command":"prior-attempt-command","exit_code":0}' \
+  > "$EVIDENCE_TMP/evaluator-execution.json"
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
+WORKSPACE="$EVIDENCE_TMP" TASK_ID=task-current HARNESS_ATTEMPT_ID=attempt-skill \
+  TARGET_ENV=local_api E2E_EXECUTION_FILE="$EVIDENCE_TMP/evaluator-execution.json" \
+  E2E_RESULT_LOG="$EVIDENCE_TMP/e2e-result.log" SCREENSHOTS_JSON='[]' CASCADE_ASSERTIONS='[]' \
+  eval "$RESULT_WRITER"
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+jq -e '.checks == ["provider summary"]' "$EVIDENCE_TMP/result.json" >/dev/null || {
+  echo 'harness-evaluator PASS writer accepted foreign execution metadata' >&2
   exit 1
 }
 # The runner's provider-facing schema must emit decisions accepted by the Brain
