@@ -127,7 +127,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
 
     let launchCount = 0;
     const launcher = {
-      launch: vi.fn(async ({ attempt, bundle, spec }) => {
+      launch: vi.fn(async ({ attempt, spec }) => {
         launchCount += 1;
         if (launchCount === 1) {
           runtime.attempts.get(attempt.id).lease_owner = 'docker-stub-owner';
