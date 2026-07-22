@@ -292,6 +292,46 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     expect(o.proposeBranch).toBe('cp-harness-propose-r2-11111111-a9');
   });
 
+  it('同时保留 propose tip SHA，且只接受锚定当前 SHA 的 reviewer verdict', async () => {
+    const approvedSha = 'a'.repeat(40);
+    const movedSha = 'b'.repeat(40);
+    const branch = 'cp-harness-propose-r2-11111111-a9';
+    const base = {
+      exec: { lsRemote: `${approvedSha}\trefs/heads/${branch}` },
+    };
+    const approved = await collectGroundTruth(makeDeps({
+      ...base,
+      rows: {
+        log: [{
+          hop: 4,
+          action: 'verdict:reviewer',
+          observed: {},
+          detail: { verdict: 'APPROVED', rn: 2, contract_sha: approvedSha },
+        }],
+      },
+    }), { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(approved.proposeBranchSha).toBe(approvedSha);
+    expect(approved.ganLatestRoundVerdict).toBe('APPROVED');
+    expect(approved.ganLatestRoundContractSha).toBe(approvedSha);
+
+    const stale = await collectGroundTruth(makeDeps({
+      exec: { lsRemote: `${movedSha}\trefs/heads/${branch}` },
+      rows: {
+        log: [{
+          hop: 4,
+          action: 'verdict:reviewer',
+          observed: {},
+          detail: { verdict: 'APPROVED', rn: 2, contract_sha: approvedSha },
+        }],
+      },
+    }), { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(stale.proposeBranchSha).toBe(movedSha);
+    expect(stale.ganLatestRoundVerdict).toBeNull();
+    expect(stale.ganLatestRoundContractSha).toBeNull();
+  });
+
   it('task 作用域：跨 task 分支不计入（并发 initiative 的 rN 不污染 ganRound），ls-remote pattern 带 taskId 前 8 位', async () => {
     const deps = makeDeps({
       exec: {

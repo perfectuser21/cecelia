@@ -38,11 +38,12 @@ describe('appendAttemptVerdict PostgreSQL contract', () => {
   });
 
   it('persists a reviewer verdict when run_id is a UUID column', async () => {
+    const contractSha = 'a'.repeat(40);
     await appendAttemptVerdict({
       id: attemptId,
       run_id: runId,
       role: 'reviewer',
-      task_bundle: { inputs: { contract_round: 1 } },
+      task_bundle: { inputs: { contract_round: 1, contract_sha: contractSha } },
     }, {
       status: 'completed',
       decision: { outcome: 'APPROVED', reason: 'contract covers PRD' },
@@ -54,7 +55,12 @@ describe('appendAttemptVerdict PostgreSQL contract', () => {
     expect(rows).toEqual([expect.objectContaining({
       run_id: runId,
       action: 'verdict:reviewer',
-      detail: expect.objectContaining({ attempt_id: attemptId, verdict: 'APPROVED', rn: 1 }),
+      detail: expect.objectContaining({
+        attempt_id: attemptId,
+        verdict: 'APPROVED',
+        rn: 1,
+        contract_sha: contractSha,
+      }),
     })]);
   });
 });

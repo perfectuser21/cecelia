@@ -264,14 +264,17 @@ describe('runLoop：控制 action 自消费', () => {
   });
 
   it('persist_contract_approval 在 contract 行缺失时从冻结分支物化并继续 generator', async () => {
+    const approvedSha = 'a'.repeat(40);
     const observedSeq = [
       obs({
         run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
         task: { status: 'in_progress', payload: { sprint_dir: 'sprints/kernel-contract' } },
         contract: { approved: false, id: null },
         proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+        proposeBranchSha: approvedSha,
         proposeBranchRn: 1,
         ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
       }),
       obs({ contract: { approved: true, id: CONTRACT_ID }, generatorSpawned: false }),
       obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
@@ -282,14 +285,23 @@ describe('runLoop：控制 action 自消费', () => {
       'sprints/kernel-contract/contract-draft.md': '# Contract',
       'sprints/kernel-contract/contract-dod.md': '# DoD',
     };
-    deps.fileExists = vi.fn((filePath) => Object.hasOwn(files, filePath));
-    deps.readFile = vi.fn((filePath) => files[filePath]);
+    deps.fileExists = vi.fn(() => false);
+    deps.readGitFile = vi.fn((sha, filePath) => {
+      expect(sha).toBe(approvedSha);
+      if (!Object.hasOwn(files, filePath)) throw new Error(`missing ${filePath}`);
+      return files[filePath];
+    });
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
     expect(result.exitReason).toBe('run_done');
     expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
     expect(sleeps).toHaveLength(0);
+    expect(deps.readGitFile.mock.calls).toEqual([
+      [approvedSha, 'sprints/kernel-contract/sprint-prd.md'],
+      [approvedSha, 'sprints/kernel-contract/contract-draft.md'],
+      [approvedSha, 'sprints/kernel-contract/contract-dod.md'],
+    ]);
     const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
     expect(materializeSql).toBeTruthy();
     expect(materializeSql[1]).toEqual(expect.arrayContaining([

@@ -29,6 +29,7 @@ const observed = {
   prdExists: true,
   proposeBranchRn: 1,
   proposeBranch: 'cp-harness-propose-r1-aaaaaaaa-a3',
+  proposeBranchSha: 'a'.repeat(40),
   callbackResult: { transcript: 'private proposer chain of thought' },
 };
 
@@ -153,6 +154,7 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       contract_branch: 'cp-harness-propose-r1-aaaaaaaa-a3',
       contract_round: 1,
+      contract_sha: 'a'.repeat(40),
     });
   });
 
