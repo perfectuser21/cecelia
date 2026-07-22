@@ -14,53 +14,53 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `packages/brain/src/utils/relay-smoke.js` 存在且以命名导出形式 `export function formatSmokeStamp` 提供纯函数
+- [x] [ARTIFACT] `packages/brain/src/utils/relay-smoke.js` 存在且以命名导出形式 `export function formatSmokeStamp` 提供纯函数
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/utils/relay-smoke.js','utf8');if(!c.includes('export function formatSmokeStamp'))process.exit(1)"
 
-- [ ] [ARTIFACT] CI 常跑测试副本 `packages/brain/src/utils/relay-smoke.test.js` 存在（brain vitest include `src/**/*.test.js` 覆盖路径），且含合同关键用例名
+- [x] [ARTIFACT] CI 常跑测试副本 `packages/brain/src/utils/relay-smoke.test.js` 存在（brain vitest include `src/**/*.test.js` 覆盖路径），且含合同关键用例名
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/utils/relay-smoke.test.js','utf8');if(!c.includes('smoke:097e589d:20260722')||!c.includes('TypeError'))process.exit(1)"
 
-- [ ] [ARTIFACT] 零生产接线：`packages/brain/src` 下除 `utils/relay-smoke.js` / `utils/relay-smoke.test.js` 自身外无任何文件引用 relay-smoke（source-code inspection，铁律[接线验证]）
+- [x] [ARTIFACT] 零生产接线：`packages/brain/src` 下除 `utils/relay-smoke.js` / `utils/relay-smoke.test.js` 自身外无任何文件引用 relay-smoke（source-code inspection，铁律[接线验证]）
   Test: bash -c 'W=$(grep -rl "relay-smoke" packages/brain/src --include="*.js" | grep -v "utils/relay-smoke" || true); [ -z "$W" ]'
 
-- [ ] [ARTIFACT] 合同测试文件 `sprints/07221126-relay-097e589d/tests/relay-smoke.test.ts` 原样保留（CONTRACT IS LAW，commit 1 后不可修改）
+- [x] [ARTIFACT] 合同测试文件 `sprints/07221126-relay-097e589d/tests/relay-smoke.test.ts` 原样保留（CONTRACT IS LAW，commit 1 后不可修改）
   Test: node -e "const c=require('fs').readFileSync('sprints/07221126-relay-097e589d/tests/relay-smoke.test.ts','utf8');if(!c.includes('同进程多轮调用状态不重置输出确定'))process.exit(1)"
 
-- [ ] [ARTIFACT] smoke 脚本 `packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh` 存在、含真 `node` 命令且实跑通过（铁律[smoke登记]；满足 lint-feature-has-smoke 内容校验：≥5 实代码行 + ≥1 条 node 真命令，非 echo 空架子）
+- [x] [ARTIFACT] smoke 脚本 `packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh` 存在、含真 `node` 命令且实跑通过（铁律[smoke登记]；满足 lint-feature-has-smoke 内容校验：≥5 实代码行 + ≥1 条 node 真命令，非 echo 空架子）
   Test: bash packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh
 
-- [ ] [ARTIFACT] smoke 脚本已登记 `packages/quality/smoke-allowlist.txt`（ci-smoke-glob-runner.yml 棘轮：新脚本未登记 → CI 红，新债不许欠）
+- [x] [ARTIFACT] smoke 脚本已登记 `packages/quality/smoke-allowlist.txt`（ci-smoke-glob-runner.yml 棘轮：新脚本未登记 → CI 红，新债不许欠）
   Test: bash -c "grep -qx 'relay-smoke-stamp-smoke.sh' packages/quality/smoke-allowlist.txt"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令，journey_type = autonomous）
 
 > 本 sprint 为零接线纯函数（无 Brain API/DB 面，PRD Golden Path 即 node 直调），BEHAVIOR oracle 为 node 真跑真实 repo 模块 + vitest 实跑，全部真执行断言、无 mock。所有入参经 argv 注入（非硬编码进 JS 字符串），纯函数无历史态可冒充，无需时间窗。
 
-- [ ] [BEHAVIOR] 标准输入返回确定冒烟戳：`formatSmokeStamp('097e589d-ec53-4102-b8d1-9aa582b88ebd', new Date('2026-07-22T00:00:00Z'))` 恰为 `smoke:097e589d:20260722`
+- [x] [BEHAVIOR] 标准输入返回确定冒烟戳：`formatSmokeStamp('097e589d-ec53-4102-b8d1-9aa582b88ebd', new Date('2026-07-22T00:00:00Z'))` 恰为 `smoke:097e589d:20260722`
   Test: manual:bash -c 'node -e "import(process.argv[1]).then(m=>{const out=m.formatSmokeStamp(process.argv[2],new Date(process.argv[3]));if(out!==process.argv[4]){console.error(out);process.exit(1)}console.log(process.argv[5]);})" ./packages/brain/src/utils/relay-smoke.js 097e589d-ec53-4102-b8d1-9aa582b88ebd 2026-07-22T00:00:00Z smoke:097e589d:20260722 OK'
   期望: OK
 
-- [ ] [BEHAVIOR] 确定性 + 短 taskId：同输入两次调用输出一致；taskId 不足 8 位（`abc`）用完整 taskId 得 `smoke:abc:20260722`
+- [x] [BEHAVIOR] 确定性 + 短 taskId：同输入两次调用输出一致；taskId 不足 8 位（`abc`）用完整 taskId 得 `smoke:abc:20260722`
   Test: manual:bash -c 'node -e "import(process.argv[1]).then(m=>{const d=new Date(process.argv[3]);const a=m.formatSmokeStamp(process.argv[2],d);const b=m.formatSmokeStamp(process.argv[2],d);if(a!==b)process.exit(1);if(m.formatSmokeStamp(process.argv[4],d)!==process.argv[5])process.exit(1);console.log(process.argv[6]);})" ./packages/brain/src/utils/relay-smoke.js 097e589d-ec53-4102-b8d1-9aa582b88ebd 2026-07-22T00:00:00Z abc smoke:abc:20260722 OK'
   期望: OK
 
-- [ ] [BEHAVIOR] UTC 日期语义：`new Date('2026-01-05T00:00:00Z')` 恒得 `20260105`（月/日零填充；本地时区实现在西半球机器会漂到 20260104 → FAIL）
+- [x] [BEHAVIOR] UTC 日期语义：`new Date('2026-01-05T00:00:00Z')` 恒得 `20260105`（月/日零填充；本地时区实现在西半球机器会漂到 20260104 → FAIL）
   Test: manual:bash -c 'node -e "import(process.argv[1]).then(m=>{const out=m.formatSmokeStamp(process.argv[2],new Date(process.argv[3]));if(out!==process.argv[4]){console.error(out);process.exit(1)}console.log(process.argv[5]);})" ./packages/brain/src/utils/relay-smoke.js abcd1234-0000-0000-0000-000000000000 2026-01-05T00:00:00Z smoke:abcd1234:20260105 OK'
   期望: OK
 
-- [ ] [BEHAVIOR] error path — 空 taskId / 非字符串 taskId 抛 TypeError（不静默返回）
+- [x] [BEHAVIOR] error path — 空 taskId / 非字符串 taskId 抛 TypeError（不静默返回）
   Test: manual:bash -c 'node -e "import(process.argv[1]).then(m=>{const d=new Date(process.argv[2]);const must=f=>{try{f();process.exit(1)}catch(e){if(!(e instanceof TypeError))process.exit(1)}};must(()=>m.formatSmokeStamp(String(),d));must(()=>m.formatSmokeStamp(12345678,d));console.log(process.argv[3]);})" ./packages/brain/src/utils/relay-smoke.js 2026-07-22T00:00:00Z OK'
   期望: OK
 
-- [ ] [BEHAVIOR] error path — Invalid Date / 非 Date 参数抛 TypeError（不静默返回）
+- [x] [BEHAVIOR] error path — Invalid Date / 非 Date 参数抛 TypeError（不静默返回）
   Test: manual:bash -c 'node -e "import(process.argv[1]).then(m=>{const must=f=>{try{f();process.exit(1)}catch(e){if(!(e instanceof TypeError))process.exit(1)}};must(()=>m.formatSmokeStamp(process.argv[2],new Date(NaN)));must(()=>m.formatSmokeStamp(process.argv[2],123));console.log(process.argv[3]);})" ./packages/brain/src/utils/relay-smoke.js 097e589d-ec53-4102-b8d1-9aa582b88ebd OK'
   期望: OK
 
-- [ ] [BEHAVIOR] 单测进入 brain-ci 常跑且全绿：CI 常跑副本在 brain vitest include 路径下 vitest 实跑 exit 0
+- [x] [BEHAVIOR] 单测进入 brain-ci 常跑且全绿：CI 常跑副本在 brain vitest include 路径下 vitest 实跑 exit 0
   Test: manual:bash -c 'bash -lc "cd packages/brain && npx vitest run src/utils/relay-smoke.test.js --reporter=basic" && echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] INV-1 多轮不重置：同进程连续 100 轮交错输入调用，输出与首轮基准恒一致（铁律[测试设计]：非冷启动式、状态不重置）
+- [x] [BEHAVIOR] INV-1 多轮不重置：同进程连续 100 轮交错输入调用，输出与首轮基准恒一致（铁律[测试设计]：非冷启动式、状态不重置）
   Test: manual:bash -c 'node -e "import(process.argv[1]).then(m=>{const d=new Date(process.argv[3]);const base=m.formatSmokeStamp(process.argv[2],d);const d2=new Date(process.argv[5]);const base2=m.formatSmokeStamp(process.argv[4],d2);for(let i=0;i<100;i++){if(m.formatSmokeStamp(process.argv[2],d)!==base)process.exit(1);if(m.formatSmokeStamp(process.argv[4],d2)!==base2)process.exit(1)}console.log(process.argv[6]);})" ./packages/brain/src/utils/relay-smoke.js 097e589d-ec53-4102-b8d1-9aa582b88ebd 2026-07-22T00:00:00Z deadbeef-0000-0000-0000-000000000000 2026-01-05T00:00:00Z OK'
   期望: OK
 
