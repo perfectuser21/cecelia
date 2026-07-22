@@ -81,7 +81,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     { createProviderRegistry },
     { claudeAdapter },
     { codexAdapter },
-    { createDetachedLauncher },
+    { createDetachedLauncher, resolveProviderAccountHome },
     { spawnDockerDetached, removeDockerContainer },
     { generateCallbackSecret, hashCallbackSecret },
   ] = await Promise.all([
@@ -110,6 +110,13 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
   if (task.payload?.model && task.payload.model !== 'auto') execution.model = task.payload.model;
   if (task.payload?.codex_home) execution.codexHome = task.payload.codex_home;
   if (task.payload?.claude_home) execution.claudeHome = task.payload.claude_home;
+  if (task.payload?.grok_home) execution.grokHome = task.payload.grok_home;
+  if (attempt.account_id) {
+    const accountHome = resolveProviderAccountHome(attempt.provider, attempt.account_id);
+    if (attempt.provider === 'codex') execution.codexHome = accountHome;
+    if (attempt.provider === 'claude') execution.claudeHome = accountHome;
+    if (attempt.provider === 'grok') execution.grokHome = accountHome;
+  }
   const spec = adapter.resume({
     attempt: { ...attempt, task_bundle: attempt.task_bundle },
     input: 'Continue this same Harness attempt from its last durable checkpoint.',

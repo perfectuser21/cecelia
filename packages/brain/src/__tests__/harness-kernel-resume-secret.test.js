@@ -22,6 +22,7 @@ vi.mock('../orchestrator/providers/claude.js', () => ({ claudeAdapter: {} }));
 vi.mock('../orchestrator/providers/codex.js', () => ({ codexAdapter: {} }));
 vi.mock('../orchestrator/dispatcher.js', () => ({
   createDetachedLauncher: () => ({ launch: mocks.launch }),
+  resolveProviderAccountHome: vi.fn(),
 }));
 vi.mock('../spawn/detached.js', () => ({
   spawnDockerDetached: vi.fn(),

@@ -58,6 +58,27 @@ function asObject(value) {
   try { return JSON.parse(value); } catch { return {}; }
 }
 
+export function resolveProviderAccountHome(provider, account) {
+  if (!account) return null;
+  const value = String(account);
+  if (provider === 'codex') {
+    const number = value.match(/^(?:codex-)?team([1-9]\d*)$/)?.[1]
+      ?? value.match(/^([1-9]\d*)$/)?.[1];
+    if (!number) throw new Error(`invalid codex account: ${value}`);
+    return path.join(os.homedir(), `.codex-team${number}`);
+  }
+  if (provider === 'claude') {
+    const number = value.match(/^(?:claude-)?account([1-9]\d*)$/)?.[1]
+      ?? value.match(/^([1-9]\d*)$/)?.[1];
+    if (!number) throw new Error(`invalid claude account: ${value}`);
+    return path.join(os.homedir(), `.claude-account${number}`);
+  }
+  if (provider === 'grok' && ['grok', 'default'].includes(value)) {
+    return path.join(os.homedir(), '.grok');
+  }
+  throw new Error(`invalid ${provider} account: ${value}`);
+}
+
 function buildInputs(spec, ctx) {
   const { observed } = ctx;
   const task = observed.task;
@@ -115,11 +136,15 @@ function buildBundle(action, spec, ctx, attemptId, skill) {
   });
 }
 
-function executionConfig(payload) {
+function executionConfig(payload, { provider, accountHome } = {}) {
   const execution = {};
   if (payload.model && payload.model !== 'auto') execution.model = payload.model;
   if (payload.codex_home) execution.codexHome = payload.codex_home;
   if (payload.claude_home) execution.claudeHome = payload.claude_home;
+  if (payload.grok_home) execution.grokHome = payload.grok_home;
+  if (accountHome && provider === 'codex') execution.codexHome = accountHome;
+  if (accountHome && provider === 'claude') execution.claudeHome = accountHome;
+  if (accountHome && provider === 'grok') execution.grokHome = accountHome;
   return execution;
 }
 
@@ -128,6 +153,7 @@ export function createDispatcher(deps) {
   const machineId = deps.machineId ?? os.hostname();
   const handlers = deps.handlers ?? {};
   const createCallbackSecret = deps.createCallbackSecret ?? generateCallbackSecret;
+  const resolveAccountHome = deps.resolveAccountHome ?? resolveProviderAccountHome;
 
   return async function dispatch(action, ctx) {
     if (handlers[action] && !ACTION_SPECS[action]) {
@@ -140,11 +166,16 @@ export function createDispatcher(deps) {
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
     const bundle = buildBundle(action, spec, ctx, attemptId, skill);
     const payload = asObject(ctx.observed.task.payload);
-    const requestedProvider = payload.executor ?? payload.provider ?? 'auto';
+    const roleAssignment = asObject(asObject(payload.role_assignments)[spec.role]);
+    const requestedProvider = roleAssignment.provider ?? payload.executor ?? payload.provider ?? 'auto';
+    const requestedAccount = roleAssignment.account ?? payload.executor_account ?? null;
     const adapter = spec.role === 'judge' ? null : deps.registry.resolve({
       provider: requestedProvider,
       requires: ['structured_output'],
     });
+    const accountHome = spec.role === 'judge' || !requestedAccount
+      ? null
+      : resolveAccountHome(adapter.name, requestedAccount);
 
     const persisted = await deps.attemptStore.createAttempt({
       id: attemptId,
@@ -153,7 +184,7 @@ export function createDispatcher(deps) {
       phase: bundle.phase,
       role: spec.role,
       provider: spec.role === 'judge' ? 'independent-judge' : adapter.name,
-      accountId: payload.executor_account ?? null,
+      accountId: requestedAccount,
       machineId,
       bundle,
       callbackSecretHash: hashCallbackSecret(callbackSecret),
@@ -175,7 +206,10 @@ export function createDispatcher(deps) {
         return await judge({ ...ctx, attempt, bundle });
       }
 
-      const adapterSpec = adapter.start({ bundle, execution: executionConfig(payload) });
+      const adapterSpec = adapter.start({
+        bundle,
+        execution: executionConfig(payload, { provider: adapter.name, accountHome }),
+      });
       const launched = await deps.launcher.launch({
         attempt,
         bundle,
@@ -229,6 +263,10 @@ export function createDetachedLauncher({
         providerEnv.CODEX_HOME = '/home/cecelia/.codex';
       }
       if (spec.provider === 'claude') {
+        if (providerEnv.CLAUDE_CONFIG_DIR) {
+          extraMounts.push(`${providerEnv.CLAUDE_CONFIG_DIR}:/host-claude-config:ro`);
+          providerEnv.CLAUDE_CONFIG_DIR = '/home/cecelia/.claude';
+        }
         const attemptSessionRoot = path.join(sessionRoot, attempt.id);
         const projectsDir = path.join(attemptSessionRoot, 'projects');
         const sessionsDir = path.join(attemptSessionRoot, 'sessions');
@@ -238,6 +276,10 @@ export function createDetachedLauncher({
           `${projectsDir}:/home/cecelia/.claude/projects:rw`,
           `${sessionsDir}:/home/cecelia/.claude/sessions:rw`,
         );
+      }
+      if (spec.provider === 'grok' && providerEnv.GROK_HOME) {
+        extraMounts.push(`${providerEnv.GROK_HOME}:/home/cecelia/.grok:rw`);
+        providerEnv.GROK_HOME = '/home/cecelia/.grok';
       }
       const modelIndex = spec.args?.indexOf('--model') ?? -1;
       if (modelIndex >= 0 && spec.args[modelIndex + 1]) {
