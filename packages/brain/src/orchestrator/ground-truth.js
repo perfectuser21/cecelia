@@ -205,10 +205,11 @@ export async function collectGroundTruth(deps, opts) {
   let proposeBranchRn = 0;
   let proposeBranchAttempt = -1;
   let proposeBranch = null;
-  const rnPattern = new RegExp(`(cp-harness-propose-r(\\d+)-${shortTask}-a(\\d+))`, 'g');
+  const rnPattern = /(cp-harness-propose-r(\d+)-([a-zA-Z0-9]{8})-a(\d+))/g;
   for (const m of String(lsRemote).matchAll(rnPattern)) {
+    if (m[3] !== shortTask) continue;
     const round = Number(m[2]);
-    const attempt = Number(m[3]);
+    const attempt = Number(m[4]);
     if (round > proposeBranchRn || (round === proposeBranchRn && attempt > proposeBranchAttempt)) {
       proposeBranchRn = round;
       proposeBranchAttempt = attempt;
