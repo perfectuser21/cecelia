@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# preview-env-start.test.sh — 验证"杀死上一轮遗留 Brain 进程"必须在 Step4 数据库克隆之前完成
+# preview-env-start.test.sh — 验证 preview 启动的进程顺序与分支依赖隔离
 #
 # 根因（PR#4176 CI 实测复现，2026-07-21）：re-push 间隔 <3 分钟时，上一轮 preview-env-start.sh
 # 启动的常驻 Brain 子进程仍然存活、仍连着同名预览 DB。旧代码把"杀死旧进程"放在 Step5（DB 克隆
 # 之后），导致 Step4 的 dropdb 报 "is being accessed by other users"，createdb 因库已存在报错，
 # 脚本 exit 1，Brain API status 永远停留 starting，GHA 傻等 720s(600s轮询+120s健康检查) 超时。
 #
-# 用 mock 覆盖 git/npm/node/curl/pg_dump/pg_restore/createdb/psql，dropdb 里检测调用发生时
-# PID_FILE 记录的旧进程是否还活着——这是能直接证伪"顺序修对了没有"的行为断言，不是脆弱的
-# 字符串位置断言。
+# 用 mock 覆盖 git/npm/node/curl/pg_dump/pg_restore/createdb/psql，直接验证两条行为：
+# 1. dropdb 调用时 PID_FILE 记录的旧进程已经死亡；
+# 2. PR 根 lock 与镜像指纹不同时，按根 workspace 安装分支 Brain 生产依赖且不建旧依赖 symlink。
+# 都是能直接证伪真实故障的行为断言，不是脆弱的源码字符串位置断言。
 
 set -uo pipefail
 
@@ -29,10 +30,15 @@ setup() {
   PREVIEW_BASE_DIR="$TMP/previews"
   mkdir -p "$PREVIEW_BASE_DIR"
   REPO_ROOT="$TMP/repo"
-  mkdir -p "$REPO_ROOT/node_modules"
+  mkdir -p "$REPO_ROOT/node_modules" "$REPO_ROOT/packages/brain/node_modules"
+  printf '%s\n' "${IMAGE_ROOT_LOCK_CONTENT:-image-lock-v1}" > "$REPO_ROOT/package-lock.json"
   BIN="$TMP/bin"
   mkdir -p "$BIN"
   DROPDB_MARKER="$TMP/dropdb_saw_old_pid_status"
+  NPM_MARKER="$TMP/npm_calls"
+  BRAIN_NM_TARGET="$REPO_ROOT/node_modules"
+  BRAIN_BRAIN_NM_TARGET="$REPO_ROOT/packages/brain/node_modules"
+  BRAIN_LOCK_TARGET="$REPO_ROOT/package-lock.json"
 
   # 真实起一个长驻"旧进程"，模拟上一轮遗留的常驻 Brain 子进程
   sleep 300 &
@@ -50,14 +56,23 @@ elif [[ "$*" == *"worktree add"* ]]; then
   args=("$@")
   n=${#args[@]}
   target_dir="${args[$((n-2))]}"
-  mkdir -p "$target_dir"
+  mkdir -p "$target_dir/apps/dashboard" "$target_dir/packages/brain"
+  printf '%s\n' "${BRANCH_ROOT_LOCK_CONTENT:-image-lock-v1}" > "$target_dir/package-lock.json"
   exit 0
 fi
 exit 0
 SH
   chmod +x "$BIN/git"
 
-  printf '#!/bin/bash\nexit 0\n' >"$BIN/npm"; chmod +x "$BIN/npm"
+  cat >"$BIN/npm" <<'SH'
+#!/bin/bash
+printf '%s|%s\n' "$PWD" "$*" >> "$NPM_MARKER"
+if [[ "$PWD" == */preview-900001 ]] && [[ "$*" == *"--workspace=packages/brain"* ]]; then
+  mkdir -p node_modules
+fi
+exit 0
+SH
+  chmod +x "$BIN/npm"
 
   # mock node：起一个假的新 Brain 常驻进程（真实 sleep，验证 BRAIN_PID 被正确捕获即可）
   cat >"$BIN/node" <<'SH'
@@ -91,6 +106,8 @@ SH
   chmod +x "$BIN/dropdb"
 
   export PATH="$BIN:$PATH"
+  export REPO_ROOT PREVIEW_BASE_DIR NPM_MARKER BRANCH_ROOT_LOCK_CONTENT
+  export BRAIN_NM_TARGET BRAIN_BRAIN_NM_TARGET BRAIN_LOCK_TARGET
 }
 
 teardown() {
@@ -103,8 +120,7 @@ teardown() {
 
 # ── 测试：dropdb 执行时，PID_FILE 记录的旧进程必须已经死亡 ──────────────────────
 setup
-REPO_ROOT="$REPO_ROOT" PREVIEW_BASE_DIR="$PREVIEW_BASE_DIR" \
-  DB_HOST="testhost" DB_USER="testuser" DB_PASSWORD="testpw" \
+DB_HOST="testhost" DB_USER="testuser" DB_PASSWORD="testpw" \
   bash "$TARGET" "$PR_NUMBER" "test-branch" "59999" "cecelia_preview_test900001" \
   > "$TMP/stdout.log" 2>&1
 RC=$?
@@ -121,6 +137,35 @@ if [ "${RC:-1}" -eq 0 ]; then
   pass "脚本正常完成（exit 0）"
 else
   fail "脚本非正常退出" "exit code=${RC:-unknown}，见 $TMP/stdout.log"
+fi
+teardown
+
+# ── 测试：分支根 lock 变化时，不得复用镜像里的旧依赖 ────────────────────────
+BRANCH_ROOT_LOCK_CONTENT="branch-lock-v2"
+setup
+DB_HOST="testhost" DB_USER="testuser" DB_PASSWORD="testpw" \
+  bash "$TARGET" "$PR_NUMBER" "test-branch" "59999" "cecelia_preview_test900001" \
+  > "$TMP/stdout.log" 2>&1
+RC=$?
+
+BRAIN_WORK_ROOT="${PREVIEW_BASE_DIR}/preview-${PR_NUMBER}"
+if grep -Fq "${BRAIN_WORK_ROOT}|ci --workspace=packages/brain --omit=dev --omit=optional --ignore-scripts" "$NPM_MARKER" 2>/dev/null; then
+  pass "根 lock 变化时按 workspace 安装分支声明的 Brain 生产依赖"
+else
+  fail "根 lock 变化时未安装分支 Brain 生产依赖" "npm 调用记录: $(tr '\n' ';' < "$NPM_MARKER" 2>/dev/null)"
+fi
+
+if [ -d "${BRAIN_WORK_ROOT}/node_modules" ] && [ ! -L "${BRAIN_WORK_ROOT}/node_modules" ] \
+    && [ ! -L "${BRAIN_WORK_ROOT}/packages/brain/node_modules" ]; then
+  pass "根 lock 变化时使用 worktree 独立 node_modules"
+else
+  fail "根 lock 变化时仍复用旧依赖" "worktree 根/Brain node_modules 不能是镜像 symlink"
+fi
+
+if [ "${RC:-1}" -eq 0 ]; then
+  pass "依赖变化场景脚本正常完成（exit 0）"
+else
+  fail "依赖变化场景脚本非正常退出" "exit code=${RC:-unknown}，见 $TMP/stdout.log"
 fi
 teardown
 

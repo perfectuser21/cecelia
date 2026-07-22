@@ -126,25 +126,48 @@ else
   DIST_DIR=""
 fi
 
-# ── 3. node_modules symlink（Brain 运行时用，生产依赖即可）────────────────────
-# 在前端构建完成后再建 Brain node_modules symlink，避免 npm ci 触碰只读路径。
-# 优先用容器镜像内置的 /repo/node_modules（Dockerfile Stage1 npm ci --omit=dev 构建，
-# 始终包含 Brain 全部生产依赖，包括 dotenv）。REPO_ROOT 指向 cecelia-deploy-main，
-# 该目录通常不单独跑 npm ci，node_modules 可能缺失或不完整（PR#3810 实测根因之一）。
-log "Step 3: 链接 node_modules（Brain 运行时）..."
-BRAIN_NM_TARGET="/repo/node_modules"
-BRAIN_BRAIN_NM_TARGET="/repo/packages/brain/node_modules"
+# ── 3. 准备 Brain 运行时依赖 ─────────────────────────────────────────────────
+# 快路径复用镜像依赖，但前提是镜像内烙入的根 package-lock 与 PR 完全相同。
+# 不能只看 node_modules 是否存在：PR 新增生产依赖时，旧镜像目录仍然存在却缺包，
+# Brain 会在启动后报 ERR_MODULE_NOT_FOUND，preview 状态卡在 starting 直到 CI 超时。
+# lock 不同或镜像没有 lock 时，在干净 worktree 根按 Brain workspace 做 npm ci；这既
+# 使用 PR 的根 lock，又避免从 packages/brain 子目录执行时误用陈旧的子 package-lock。
+log "Step 3: 准备 Brain 运行时依赖..."
+BRAIN_NM_TARGET="${BRAIN_NM_TARGET:-/repo/node_modules}"
+BRAIN_BRAIN_NM_TARGET="${BRAIN_BRAIN_NM_TARGET:-/repo/packages/brain/node_modules}"
+BRAIN_LOCK_TARGET="${BRAIN_LOCK_TARGET:-/repo/package-lock.json}"
+
+# 旧镜像没有烙 root lock 时无法证明依赖与源码匹配，必须走隔离安装。只有整个
+# /repo 依赖目录不存在时才退回 deploy root；不能拿 deploy root 的 lock 给镜像背书。
 if [ ! -d "$BRAIN_NM_TARGET" ] && [ -d "${REPO_ROOT}/node_modules" ]; then
   BRAIN_NM_TARGET="${REPO_ROOT}/node_modules"
   BRAIN_BRAIN_NM_TARGET="${REPO_ROOT}/packages/brain/node_modules"
+  BRAIN_LOCK_TARGET="${REPO_ROOT}/package-lock.json"
 fi
-rm -rf "${WORK_DIR}/node_modules"
-ln -sfn "$BRAIN_NM_TARGET" "${WORK_DIR}/node_modules"
-log "  ✓ 根 node_modules 已链接 → ${BRAIN_NM_TARGET}"
-if [ -d "$BRAIN_BRAIN_NM_TARGET" ]; then
-  rm -rf "${WORK_DIR}/packages/brain/node_modules"
-  ln -sfn "$BRAIN_BRAIN_NM_TARGET" "${WORK_DIR}/packages/brain/node_modules"
-  log "  ✓ Brain node_modules 已链接 → ${BRAIN_BRAIN_NM_TARGET}"
+
+rm -rf "${WORK_DIR}/node_modules" "${WORK_DIR}/packages/brain/node_modules"
+if [ -d "$BRAIN_NM_TARGET" ] \
+    && [ -f "$BRAIN_LOCK_TARGET" ] \
+    && cmp -s "${WORK_DIR}/package-lock.json" "$BRAIN_LOCK_TARGET"; then
+  ln -sfn "$BRAIN_NM_TARGET" "${WORK_DIR}/node_modules"
+  log "  ✓ 根 lock 一致，复用镜像 node_modules → ${BRAIN_NM_TARGET}"
+  if [ -d "$BRAIN_BRAIN_NM_TARGET" ]; then
+    ln -sfn "$BRAIN_BRAIN_NM_TARGET" "${WORK_DIR}/packages/brain/node_modules"
+    log "  ✓ Brain node_modules 已链接 → ${BRAIN_BRAIN_NM_TARGET}"
+  fi
+else
+  NPM_LOGS_DIR="${PREVIEW_BASE_DIR}/.npm-logs-preview-${PR_NUMBER}"
+  mkdir -p "$NPM_LOGS_DIR"
+  log "  根 lock 与镜像不一致或镜像无依赖指纹，安装 PR 的 Brain 生产依赖..."
+  if (cd "$WORK_DIR" && npm ci --workspace=packages/brain \
+      --omit=dev --omit=optional --ignore-scripts \
+      --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" \
+      >> "$LOG_FILE" 2>&1); then
+    log "  ✓ PR Brain 生产依赖安装完成"
+  else
+    log "ERROR: PR Brain 生产依赖安装失败，拒绝用旧镜像依赖启动"
+    exit 1
+  fi
 fi
 
 # ── 4. 克隆生产数据库 ─────────────────────────────────────────────────────────
