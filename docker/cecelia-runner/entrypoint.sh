@@ -469,9 +469,25 @@ elif [[ "${CECELIA_EXECUTOR:-}" = "codex" ]]; then
   fi
 
   echo "[entrypoint] goal-hook N/A for codex" >&2
-else
+elif [[ "${CECELIA_EXECUTOR:-}" = "grok" ]]; then
+  # INV-2 + GP6: grok 显式分支（三分支修正——旧版仅 codex/claude 二元，grok 落入 run_claude）
+  # headless grok 走 run_provider_contract（HARNESS_ATTEMPT_ID 路径），此处为旧路径兜底
+  if [[ -f "$PROMPT_FILE" ]]; then
+    grok -p "$(cat "$PROMPT_FILE")" --output-format json --always-approve 2>&1 | tee "$STDOUT_FILE"
+  else
+    grok -p "" --output-format json --always-approve "$@" 2>&1 | tee "$STDOUT_FILE"
+  fi
+  EXIT_CODE=${PIPESTATUS[0]}
+  echo "[entrypoint] goal-hook N/A for grok" >&2
+elif [[ -z "${CECELIA_EXECUTOR:-}" || "${CECELIA_EXECUTOR:-}" = "claude" ]]; then
   run_claude "$@"
   EXIT_CODE=$?
+else
+  # INV-2 + GP7: 未知 executor loud-fail（exit 1 + 明确错误信息）
+  echo "[entrypoint] unsupported executor: ${CECELIA_EXECUTOR}" >&2
+  echo "[entrypoint] supported values: claude, codex, grok (or empty for default claude)" >&2
+  EXIT_CODE=1
+  exit 1
 fi
 set -e
 

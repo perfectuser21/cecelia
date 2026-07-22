@@ -1,0 +1,37 @@
+{
+  "verdict": "PASS",
+  "sha": "30d8a992f8e31d0b46c1f252e0a4bc35abc316a7",
+  "sha7": "30d8a99",
+  "pr": 4200,
+  "sprint": "07222128-codex-grok-launcher-supervisor",
+  "task_id": "f7ddad91-df1a-428c-9990-c4d02bedfcae",
+  "evaluated_at": "2026-07-22",
+  "artifact_gate": {
+    "result": "PASS",
+    "total": 7,
+    "passed": 7,
+    "failed": 0
+  },
+  "behavior_gate": {
+    "result": "PASS",
+    "total": 24,
+    "passed": 24,
+    "failed": 0
+  },
+  "e2e": {
+    "result": "PASS",
+    "suites": [
+      {"name": "codex-grok-launcher-routing.test.sh", "pass": 10, "fail": 0},
+      {"name": "codex-launch.test.sh", "pass": 8, "fail": 0},
+      {"name": "grok-launch.test.sh", "pass": 9, "fail": 0},
+      {"name": "codex-supervisor.test.mjs", "pass": 9, "fail": 0},
+      {"name": "grok-supervisor.test.mjs", "pass": 10, "fail": 0},
+      {"name": "codex-grok-entrypoint-routing.test.sh", "pass": 6, "fail": 0},
+      {"name": "install-launchers.test.sh", "pass": 6, "fail": 0},
+      {"name": "harness-skill-relay-routing.test.js (Jest)", "pass": 9, "fail": 0}
+    ]
+  },
+  "contract_gate": "PASS",
+  "unverifiable": [],
+  "uncovered_real_paths": "N/A"
+}
