@@ -48,6 +48,11 @@ function makeEnv({ observedSeq, dispatch }) {
     pool: {
       query: vi.fn(async (sql, params) => {
         sqls.push([sql, params]);
+        if (sql.includes('INSERT INTO initiative_contracts')) {
+          return {
+            rows: [{ id: CONTRACT_ID, version: params[1], status: 'approved', branch: params[2] }],
+          };
+        }
         return { rows: [] };
       }),
     },
