@@ -15,6 +15,7 @@ const runtime = vi.hoisted(() => {
         provider: input.provider,
         account_id: input.accountId,
         machine_id: input.machineId,
+        callback_secret_hash: input.callbackSecretHash,
         task_bundle: input.bundle,
         status: 'queued',
         result: null,
@@ -129,9 +130,12 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       launch: vi.fn(async ({ attempt, bundle, spec }) => {
         launchCount += 1;
         if (launchCount === 1) {
+          runtime.attempts.get(attempt.id).lease_owner = 'docker-stub-owner';
           files.add(`${SPRINT_DIR}/sprint-prd.md`);
           const callback = await request(app)
             .post(`/api/brain/harness/attempts/${attempt.id}/callback`)
+            .set('Authorization', `Bearer ${attempt.callbackSecret}`)
+            .set('X-Harness-Lease-Owner', 'docker-stub-owner')
             .send({
               contract_version: '1.0',
               attempt_id: attempt.id,

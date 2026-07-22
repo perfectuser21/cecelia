@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { createHash } from 'node:crypto';
 
 const mocks = vi.hoisted(() => ({
   store: {
@@ -26,6 +27,8 @@ vi.mock('../../lib/harness-orphan-guard.js', () => ({
 
 const attemptId = '22222222-2222-4222-8222-222222222222';
 const runId = '11111111-1111-4111-8111-111111111111';
+const callbackToken = 'attempt-callback-secret';
+const leaseOwner = 'brain-1:123';
 
 const attempt = {
   id: attemptId,
@@ -34,6 +37,8 @@ const attempt = {
   role: 'evaluator',
   provider: 'codex',
   status: 'running',
+  lease_owner: leaseOwner,
+  callback_secret_hash: createHash('sha256').update(callbackToken).digest('hex'),
   task_bundle: {
     inputs: {
       contract_round: 2,
@@ -53,6 +58,14 @@ const validResult = {
   error: null,
   provider_metadata: { provider: 'codex', session_id: 'thread-1' },
 };
+
+function postCallback(app, body = validResult, token = callbackToken, owner = leaseOwner) {
+  let call = request(app)
+    .post(`/api/brain/harness/attempts/${attemptId}/callback`)
+    .set('Authorization', `Bearer ${token}`)
+    .set('X-Harness-Lease-Owner', owner);
+  return call.send(body);
+}
 
 describe('POST /harness/attempts/:attemptId/callback', () => {
   let app;
@@ -76,12 +89,8 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   });
 
   it('校验、完成 attempt，并让重复 callback 幂等返回 deduped', async () => {
-    const first = await request(app)
-      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
-      .send(validResult);
-    const second = await request(app)
-      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
-      .send(validResult);
+    const first = await postCallback(app);
+    const second = await postCallback(app);
 
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({ ok: true, deduped: false });
@@ -95,10 +104,33 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     });
   });
 
-  it('evaluator decision 写入 SHA 锚定的 append-only verdict 行', async () => {
-    const response = await request(app)
+  it('无密钥或错密钥的 callback 返回 401，伪造 reviewer APPROVED 不得写 verdict', async () => {
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'reviewer' });
+    const forged = {
+      ...validResult,
+      decision: { outcome: 'APPROVED', reason: 'forged approval' },
+    };
+
+    const missing = await request(app)
       .post(`/api/brain/harness/attempts/${attemptId}/callback`)
-      .send(validResult);
+      .set('X-Harness-Lease-Owner', leaseOwner)
+      .send(forged);
+    const wrong = await postCallback(app, forged, 'wrong-secret');
+
+    expect(missing.status).toBe(401);
+    expect(wrong.status).toBe(401);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.pool.query.mock.calls.some(([sql]) => /verdict:reviewer/.test(sql))).toBe(false);
+  });
+
+  it('终态 callback 的 lease_owner 不匹配时返回 409', async () => {
+    const response = await postCallback(app, validResult, callbackToken, 'other-owner');
+    expect(response.status).toBe(409);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
+  it('evaluator decision 写入 SHA 锚定的 append-only verdict 行', async () => {
+    const response = await postCallback(app);
 
     expect(response.status).toBe(200);
     const verdictCall = mocks.pool.query.mock.calls.find(([sql]) => /verdict:evaluate/.test(sql));
@@ -112,9 +144,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       role: 'reviewer',
       task_bundle: { inputs: { contract_round: 3 } },
     });
-    const response = await request(app)
-      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
-      .send({
+    const response = await postCallback(app, {
         ...validResult,
         decision: { outcome: 'APPROVED', reason: 'contract covers PRD' },
       });
@@ -127,9 +157,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
   it('跨角色/attempt session 复用冲突返回 409，且不完成 attempt', async () => {
     mocks.store.assertFreshRoleSession.mockRejectedValueOnce(new Error('role_session_reuse'));
-    const response = await request(app)
-      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
-      .send(validResult);
+    const response = await postCallback(app);
 
     expect(response.status).toBe(409);
     expect(response.body.error).toMatch(/role_session_reuse/);
@@ -137,9 +165,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   });
 
   it('拒绝 callback 冒充另一个 provider', async () => {
-    const response = await request(app)
-      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
-      .send({
+    const response = await postCallback(app, {
         ...validResult,
         provider_metadata: { provider: 'claude', session_id: 'session-x' },
       });
@@ -150,21 +176,18 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   });
 
   it('拒绝 attempt_id 不匹配或 schema 不完整的结果', async () => {
-    const mismatch = await request(app)
-      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
-      .send({ ...validResult, attempt_id: '33333333-3333-4333-8333-333333333333' });
+    const mismatch = await postCallback(app, {
+      ...validResult,
+      attempt_id: '33333333-3333-4333-8333-333333333333',
+    });
     expect(mismatch.status).toBe(400);
 
-    const invalid = await request(app)
-      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
-      .send({ status: 'completed' });
+    const invalid = await postCallback(app, { status: 'completed' });
     expect(invalid.status).toBe(400);
   });
 
   it('failed result 走 fail 终态，不伪装为 completed', async () => {
-    const response = await request(app)
-      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
-      .send({
+    const response = await postCallback(app, {
         ...validResult,
         status: 'failed',
         summary: 'provider process failed',
@@ -177,13 +200,14 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       code: 'provider_exit',
       message: 'exit 1',
       status: 'failed',
-    });
+    }, { leaseOwner });
     expect(mocks.store.complete).not.toHaveBeenCalled();
   });
 
   it('worker 用 lease owner 续租，跨设备 watchdog 不会误领活 attempt', async () => {
     const response = await request(app)
       .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+      .set('Authorization', `Bearer ${callbackToken}`)
       .send({ lease_owner: 'brain-1:123', lease_seconds: 180 });
 
     expect(response.status).toBe(200);
@@ -193,9 +217,18 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     });
   });
 
+  it('heartbeat 同样拒绝无密钥请求', async () => {
+    const response = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+      .send({ lease_owner: leaseOwner, lease_seconds: 180 });
+    expect(response.status).toBe(401);
+    expect(mocks.store.heartbeat).not.toHaveBeenCalled();
+  });
+
   it('worker 一拿到 provider session 就转 running 并持久化，崩溃后可原 session resume', async () => {
     const response = await request(app)
       .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+      .set('Authorization', `Bearer ${callbackToken}`)
       .send({
         lease_owner: 'brain-1:123',
         lease_seconds: 180,

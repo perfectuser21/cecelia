@@ -65,6 +65,7 @@ function makeDeps(order = []) {
     },
     loadSkill: vi.fn(fakeSkill),
     randomUUID: () => attemptId,
+    createCallbackSecret: () => 'attempt-secret',
     machineId: 'brain-1',
   };
 }
@@ -103,6 +104,12 @@ describe('createDispatcher', () => {
 
     expect(order).toEqual(['attempt.create', 'adapter.start', 'launcher.launch']);
     expect(result).toMatchObject({ status: 'DONE', attemptId, provider: 'codex' });
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      callbackSecretHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    }));
+    expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: expect.objectContaining({ callbackSecret: 'attempt-secret' }),
+    }));
   });
 
   it('auto 只交给 registry 选 provider，不注入 model', async () => {
@@ -179,7 +186,13 @@ describe('createDetachedLauncher', () => {
     const spawnDetached = vi.fn(async () => ({ containerId: 'cx' }));
     const attemptStore = { markStarting: vi.fn(async () => ({ status: 'starting' })) };
     const launcher = createDetachedLauncher({ spawnDetached, attemptStore, brainUrl: 'http://brain:5221' });
-    const attempt = { id: attemptId, run_id: runId, hop: 6, role: 'evaluator' };
+    const attempt = {
+      id: attemptId,
+      run_id: runId,
+      hop: 6,
+      role: 'evaluator',
+      callbackSecret: 'attempt-secret',
+    };
     const bundle = {
       ...observed,
       inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
@@ -217,10 +230,14 @@ describe('createDetachedLauncher', () => {
         HARNESS_MODEL: 'configured-model',
         HARNESS_LEASE_OWNER: expect.any(String),
         HARNESS_ATTEMPT_ID: attemptId,
+        HARNESS_CALLBACK_TOKEN: 'attempt-secret',
         HARNESS_RUN_ID: runId,
         HARNESS_READ_ONLY: 'true',
       }),
     }));
+    const spawnArgs = spawnDetached.mock.calls[0][0];
+    expect(JSON.stringify(spawnArgs.labels)).not.toContain('attempt-secret');
+    expect(JSON.stringify(spawnArgs.labels)).not.toMatch(/callback.*token/i);
   });
 
   it('Claude fresh/resume 共用 attempt 级宿主 session 目录，容器替换后仍可 resume', async () => {

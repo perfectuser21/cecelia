@@ -11,6 +11,7 @@ const input = {
   provider: 'auto',
   accountId: null,
   machineId: 'worker-1',
+  callbackSecretHash: 'b'.repeat(64),
   bundle: {
     skill: {
       name: 'harness-contract-reviewer',
@@ -43,6 +44,7 @@ describe('attempt store', () => {
       'harness-contract-reviewer',
       '9.16.0',
       `sha256:${'a'.repeat(64)}`,
+      'b'.repeat(64),
     ]));
   });
 
@@ -83,9 +85,11 @@ describe('attempt store', () => {
     const store = createAttemptStore(pool);
     const result = { status: 'completed', summary: 'done' };
 
-    expect(await store.complete(input.id, result)).toMatchObject({ deduped: false });
-    expect(await store.complete(input.id, result)).toEqual({ attempt: null, deduped: true });
+    expect(await store.complete(input.id, result, { leaseOwner: 'brain-1' })).toMatchObject({ deduped: false });
+    expect(await store.complete(input.id, result, { leaseOwner: 'brain-1' })).toEqual({ attempt: null, deduped: true });
     expect(pool.query.mock.calls[0][0]).toMatch(/status NOT IN \(/i);
+    expect(pool.query.mock.calls[0][0]).toMatch(/lease_owner\s*=\s*\$5/i);
+    expect(pool.query.mock.calls[0][0]).not.toMatch(/lease_owner\s*=\s*NULL/i);
   });
 
   it('失败也遵循终态幂等守卫', async () => {
