@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1) — claude-headed-smoke：headed relay 链冒烟（Brain 纯函数 smoke stamp）
+# Sprint Contract Draft (Round 2) — claude-headed-smoke：headed relay 链冒烟（Brain 纯函数 smoke stamp）
 
 **journey_type**: autonomous
 **target_environment**: local_api
@@ -211,9 +211,13 @@ echo "✅ Golden Path 验证通过"
 
 ## 合同硬条款（generator 义务）
 
-1. **CONTRACT IS LAW**：只实现 `packages/brain/src/utils/relay-smoke.js` 一个文件 + 测试；合同外一字不加，禁止接入任何生产调用点
+1. **CONTRACT IS LAW**：只实现 `packages/brain/src/utils/relay-smoke.js` 一个文件 + 测试 + 第 7 条 smoke 登记两处改动（smoke.sh + allowlist 一行）；合同外一字不加，禁止接入任何生产调用点
 2. **TDD 两 commit**：commit 1 = 合同 tests 原样复制进 `${SPRINT_DIR}/tests/` 保持不变 + CI 常跑副本 `packages/brain/src/utils/relay-smoke.test.js`（import 改 `./relay-smoke.js`，用例名与语义与合同 tests 逐条一致）先 Red；commit 2 = 实现 Green
 3. **Red commit 只 `git add` 精确测试路径**（铁律[Red提交]），禁止 `git add .`
 4. **禁改 `.github/workflows/*.yml`**（铁律[CI禁区]）；禁自行 merge PR（铁律[禁自合]）
 5. **UTC 日期语义**：实现必须用 getUTC* 系列取日期分量并零填充（见函数契约「日期语义」）；用本地时区 API（getFullYear 等）= 违约
 6. contract-gate: applicable（cecelia repo，packages/brain/src/lib/contract-gate.js 存在）
+7. **smoke 登记（铁律[smoke登记]）** `[AI_ADDED]` — 理由（GAN Round 2 Reviewer 指出，repo 机械闸事实）：`.github/workflows/scripts/lint-feature-has-smoke.sh` 是 ci.yml 必过 job，`feat:` commit + `packages/brain/src/` 非测试 .js 改动（本 sprint 的 `relay-smoke.js` 恰命中）→ 未新增 smoke.sh 则 CI 必红；第二道闸 `ci-smoke-glob-runner.yml` 棘轮要求新增 smoke.sh 同 PR 登记 allowlist。故 Green commit 必须同时带：
+   - `packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh`：≥5 实代码行 + ≥1 条 `node` 真命令，直接复用本合同「E2E 验收」脚本 Step 1+2 与 Step 3 的两条 `node -e` 断言（真跑 `packages/brain/src/utils/relay-smoke.js` 真实模块），失败路径显式 exit 非零；禁止纯 echo + exit 0 空架子
+   - 同 PR 在 `packages/quality/smoke-allowlist.txt` 登记一行 `relay-smoke-stamp-smoke.sh`
+   - **禁止改用非 `feat:` commit 前缀绕开闸门触发条件**（绕闸不是合规）

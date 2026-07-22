@@ -4,7 +4,7 @@ journey_type: autonomous
 ---
 # Contract DoD — Sprint: claude-headed-smoke（headed relay 链冒烟：Brain 纯函数 smoke stamp）
 
-**范围**: 新增 `packages/brain/src/utils/relay-smoke.js` 纯函数 `formatSmokeStamp(taskId, date)` + 单测（CI 常跑副本落 `packages/brain/src/utils/relay-smoke.test.js`）；零生产接线，不改任何现有 Brain 行为
+**范围**: 新增 `packages/brain/src/utils/relay-smoke.js` 纯函数 `formatSmokeStamp(taskId, date)` + 单测（CI 常跑副本落 `packages/brain/src/utils/relay-smoke.test.js`）+ smoke 登记（`packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh` + `packages/quality/smoke-allowlist.txt` 一行，过 ci.yml lint-feature-has-smoke 与 ci-smoke-glob-runner 棘轮两道机械闸）；零生产接线，不改任何现有 Brain 行为
 **大小**: S
 
 > 执行目录约定：所有 manual:bash 命令在 repo 根目录执行（worktree 根）。
@@ -22,6 +22,12 @@ journey_type: autonomous
 
 - [ ] [ARTIFACT] 合同测试文件 `sprints/07221126-relay-097e589d/tests/relay-smoke.test.ts` 原样保留（CONTRACT IS LAW，commit 1 后不可修改）
   Test: node -e "const c=require('fs').readFileSync('sprints/07221126-relay-097e589d/tests/relay-smoke.test.ts','utf8');if(!c.includes('同进程多轮调用状态不重置输出确定'))process.exit(1)"
+
+- [ ] [ARTIFACT] smoke 脚本 `packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh` 存在、含真 `node` 命令且实跑通过（铁律[smoke登记]；满足 lint-feature-has-smoke 内容校验：≥5 实代码行 + ≥1 条 node 真命令，非 echo 空架子）
+  Test: bash packages/brain/scripts/smoke/relay-smoke-stamp-smoke.sh
+
+- [ ] [ARTIFACT] smoke 脚本已登记 `packages/quality/smoke-allowlist.txt`（ci-smoke-glob-runner.yml 棘轮：新脚本未登记 → CI 红，新债不许欠）
+  Test: bash -c "grep -qx 'relay-smoke-stamp-smoke.sh' packages/quality/smoke-allowlist.txt"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令，journey_type = autonomous）
 
@@ -92,7 +98,7 @@ journey_type: autonomous
 - N/A [CI禁区]：已写入合同硬条款第 4 条（generator 禁改 .github/workflows/*.yml）
 - N/A [提前合并]：evaluator/judge 侧义务
 - N/A [冒烟占位] smoke-invariant-1783850042-79911：历史冒烟占位铁律，无实体约束
-- N/A [smoke登记]：本 sprint 为零接线纯函数冒烟，无生产行为面需 smoke.sh 覆盖；回归保障由 brain-ci 常跑单测承担（BEHAVIOR 第 6 条）；已核查 devgate/ci.yml 无机械闸强制 feat+brain/src 必带 smoke 脚本。若 Reviewer 判定该铁律字面适用，round 2 可补最小 smoke.sh + allowlist 登记
+- INV-2 [smoke登记] → 已立两条 [ARTIFACT] 机检（smoke.sh 实跑 exit 0 + allowlist 登记 grep -qx）+ 合同硬条款第 7 条。事实依据（round 2 修正 round 1 错误核查结论）：`.github/workflows/scripts/lint-feature-has-smoke.sh` 是 ci.yml **必过 job**——`feat:`/`feat(...):` commit + `packages/brain/src/` 新增/修改非测试 .js（`.test.js` 被排除但 `relay-smoke.js` 源文件不被排除）即命中，未新增 `packages/brain/scripts/smoke/*.sh` 则 exit 1 整个 CI 红，且脚本含内容校验（≥5 实代码行 + ≥1 条 curl/psql/docker/node/npm 真命令）；第二道闸 `ci-smoke-glob-runner.yml` 棘轮要求新 smoke.sh 同 PR 登记 `packages/quality/smoke-allowlist.txt`。禁止用非 feat: 前缀绕闸
 - N/A [接线清单]：无新 task_type
 - N/A [双信号]：无服务存活判定
 - N/A [驻留位置]：无常驻服务
