@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockExecFile = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', () => ({ execFile: mockExecFile }));
 
-import { killInitiativeContainers } from '../harness-container-cleanup.js';
+import { killAttemptContainers, killInitiativeContainers } from '../harness-container-cleanup.js';
 
 describe('killInitiativeContainers', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -25,6 +25,21 @@ describe('killInitiativeContainers', () => {
     const rmCalls = mockExecFile.mock.calls.filter(c => c[1]?.[0] === 'rm');
     expect(rmCalls).toHaveLength(2);
     expect(mockExecFile.mock.calls.some(([, args]) => args[0] === 'inspect')).toBe(false);
+  });
+
+  it('恢复前按 cecelia.attempt_id 精确清除旧代容器并报告结果', async () => {
+    mockExecFile.mockImplementation((cmd, args, cb) => {
+      const a = args.join(' ');
+      if (a === 'ps -q --filter label=cecelia.attempt_id=attempt-1') cb(null, 'old-container\n');
+      else if (a === 'rm -f old-container') cb(null, 'old-container');
+      else cb(null, '');
+    });
+
+    await expect(killAttemptContainers('attempt-1')).resolves.toEqual({
+      ok: true,
+      matched: 1,
+      killed: 1,
+    });
   });
 
   it('handles docker ps failure gracefully', async () => {

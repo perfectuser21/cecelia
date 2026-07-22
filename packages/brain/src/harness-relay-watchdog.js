@@ -85,6 +85,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     { createDetachedLauncher, resolveProviderAccountHome },
     { spawnDockerDetached, removeDockerContainer },
     { generateCallbackSecret, hashCallbackSecret },
+    { killAttemptContainers },
   ] = await Promise.all([
     import('./orchestrator/attempt-store.js'),
     import('./orchestrator/provider-registry.js'),
@@ -94,6 +95,7 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     import('./orchestrator/dispatcher.js'),
     import('./spawn/detached.js'),
     import('./orchestrator/callback-auth.js'),
+    import('./harness-container-cleanup.js'),
   ]);
   const store = createAttemptStore(dbPool);
   const leaseOwner = `watchdog:${process.pid}`;
@@ -105,6 +107,10 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     callbackSecretHash: hashCallbackSecret(callbackSecret),
   });
   if (!rotated) return { ok: false, reason: 'attempt_callback_secret_rotation_conflict' };
+  const cleanup = await killAttemptContainers(attempt.id);
+  if (!cleanup.ok) {
+    return { ok: false, reason: 'attempt_container_cleanup_failed', cleanup };
+  }
 
   const registry = createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
   const adapter = registry.resolve({ provider: attempt.provider, requires: ['resume'] });
