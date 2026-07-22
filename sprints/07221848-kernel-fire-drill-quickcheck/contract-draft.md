@@ -171,10 +171,10 @@ echo "✅ Golden Path 验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 失败计数与 worker OOM 文案同现时非零退出 | `packages/engine/tests/scripts/quickcheck-oom-priority.test.ts` | 失败计数与 worker OOM 文案同现 | 现状代码下该 it() FAIL（误判为 exit 0） |
-| 仅 OOM 无失败时保持 0（宽免不误伤） | `packages/engine/tests/scripts/quickcheck-oom-priority.test.ts` | 仅 worker OOM、无任何失败计数 | 现状代码下该 it() 已 PASS（非回归目标，作为宽免不误伤基线） |
-| 正常 PASS 时保持 0（不引入误报） | `packages/engine/tests/scripts/quickcheck-oom-priority.test.ts` | 正常全部 PASS 时 | 现状代码下该 it() 已 PASS（回归保护基线） |
-| 多包混合场景以失败为准 | `packages/engine/tests/scripts/quickcheck-oom-priority.test.ts` | 多包混合场景 | 现状代码下该 it() FAIL（同一根因，OOM 宽免优先级错误） |
+| 失败计数与 worker OOM 文案同现时非零退出 | `../../packages/engine/tests/scripts/quickcheck-oom-priority.test.ts` | 失败计数与 worker OOM 文案同现 | 现状代码下该 it() FAIL（误判为 exit 0） |
+| 仅 OOM 无失败时保持 0（宽免不误伤） | `../../packages/engine/tests/scripts/quickcheck-oom-priority.test.ts` | 仅 worker OOM、无任何失败计数 | 现状代码下该 it() 已 PASS（非回归目标，作为宽免不误伤基线） |
+| 正常 PASS 时保持 0（不引入误报） | `../../packages/engine/tests/scripts/quickcheck-oom-priority.test.ts` | 正常全部 PASS 时 | 现状代码下该 it() 已 PASS（回归保护基线） |
+| 多包混合场景以失败为准 | `../../packages/engine/tests/scripts/quickcheck-oom-priority.test.ts` | 多包混合场景 | 现状代码下该 it() FAIL（同一根因，OOM 宽免优先级错误） |
 
 （"BEHAVIOR 覆盖"列均为 `packages/engine/tests/scripts/quickcheck-oom-priority.test.ts` 中对应 `it()` 测试名的字面子串，可用 `grep -F` 命中。）
 
