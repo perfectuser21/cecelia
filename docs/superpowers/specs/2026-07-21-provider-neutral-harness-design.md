@@ -233,3 +233,11 @@ Grok 或其他执行器只需新增 Adapter 并通过合同测试，不修改 Ke
 - 在本阶段实现真实 Grok Adapter（先冻结接口和认证测试）；
 - 替用户选择或硬编码具体模型；
 - 顺手修复与本任务无关的全量 Brain 基线端口/OOM 问题。
+
+## 14. CodeQL 跟进：Attempt Callback 限流
+
+新 attempt callback 的 heartbeat 与终态写入路由必须在访问数据库前经过独立限流器：heartbeat 每个 `attemptId` 每分钟最多 30 次，terminal callback 每个 `attemptId` 每分钟最多 10 次。两者分开计数，避免频繁心跳耗尽终态回调额度；合法成功请求不消耗失败预算，使 runner 的正常心跳及幂等重试不被误伤。
+
+实现使用 `express-rate-limit` 的进程内 MemoryStore，返回标准 `RateLimit`/`Retry-After` 头和 JSON 429。按高熵 UUID attempt id 分桶，使同宿主并行 initiative 互不影响；无效、未认证、租约错误或 schema 错误请求会累计并触发限流。Brain 当前是单进程，分布式共享计数器不在本修复范围。
+
+验收要求：两个路由分别有先红后绿的 429 回归测试；既有认证、lease fence、callback 幂等和 kernel 集成测试保持通过；CodeQL 的两条 `Missing rate limiting` 告警在新提交重扫后消失。
