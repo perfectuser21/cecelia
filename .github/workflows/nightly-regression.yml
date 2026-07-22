@@ -9,7 +9,7 @@ name: Nightly Regression Gate (刀A)
 #
 # 覆盖范围（vs PR CI 关键差异）：
 #   PR CI：只跑变更文件相关测试（--changed 过滤）
-#   刀A：无条件全量——brain-unit 全 4 shard + integration + e2e-smoke + real-env-smoke + workspace
+#   刀A：无条件全量——brain-unit 全 6 shard + integration + e2e-smoke + real-env-smoke + workspace
 
 on:
   schedule:
@@ -33,17 +33,17 @@ permissions:
   issues: write  # 失败时开 GitHub Issue
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Job 1: Brain Unit Tests（全量 4 shard，无 --changed 过滤）
+# Job 1: Brain Unit Tests（全量 6 shard，无 --changed 过滤）
 # ──────────────────────────────────────────────────────────────────────────────
 jobs:
   brain-unit-nightly:
-    name: Brain Unit (全量 shard ${{ matrix.shard }}/4)
+    name: Brain Unit (全量 shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,14 +53,14 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: cd packages/brain && npm ci
-      - name: Brain Unit Tests（全量 shard ${{ matrix.shard }}/4）
+      - name: Brain Unit Tests（全量 shard ${{ matrix.shard }}/6）
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
         run: |
           cd packages/brain
           SHARD=${{ matrix.shard }}
           set +e
-          npx vitest run --shard=$SHARD/4 \
+          npx vitest run --shard=$SHARD/6 \
             --exclude='src/__tests__/integration/**' \
             --reporter=verbose \
             2>&1 | tee /tmp/vitest-nightly-$SHARD.txt
@@ -68,10 +68,10 @@ jobs:
           if [ $EXIT -ne 0 ]; then
             if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-nightly-$SHARD.txt && \
                ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-nightly-$SHARD.txt; then
-              echo "[nightly shard $SHARD/4] OOM worker exit, all tests passed — OK"
+              echo "[nightly shard $SHARD/6] OOM worker exit, all tests passed — OK"
               exit 0
             fi
-            echo "::error::[nightly shard $SHARD/4] 测试失败"
+            echo "::error::[nightly shard $SHARD/6] 测试失败"
             cat /tmp/vitest-nightly-$SHARD.txt | grep -E "FAIL|×|✗" | tail -30 || true
             exit $EXIT
           fi
@@ -425,7 +425,7 @@ jobs:
           BODY="$BODY"$'\n\n'"**日期**: $TODAY"
           BODY="$BODY"$'\n'"**Run**: $RUN_URL"
           BODY="$BODY"$'\n\n'"### 各 Job 结果"$'\n'
-          BODY="$BODY"$'\n'"$(format_result "Brain Unit 全量 (4 shards)" "$BRAIN_UNIT")"
+          BODY="$BODY"$'\n'"$(format_result "Brain Unit 全量 (6 shards)" "$BRAIN_UNIT")"
           BODY="$BODY"$'\n'"$(format_result "Brain Integration" "$BRAIN_INT")"
           BODY="$BODY"$'\n'"$(format_result "E2E 贯通冒烟" "$E2E")"
           BODY="$BODY"$'\n'"$(format_result "Real-Env Smoke (Brain 容器)" "$REAL_ENV")"

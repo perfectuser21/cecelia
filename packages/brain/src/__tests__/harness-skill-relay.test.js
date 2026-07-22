@@ -29,6 +29,9 @@ function makeDeps(overrides = {}) {
     now: () => new Date('2026-07-04T12:00:00Z'),
     // 去重守卫默认放行（无存活容器）；单独测试里覆盖为返回容器 id 模拟"容器仍在跑"
     execFn: vi.fn().mockReturnValue(''),
+    // 2026-07-21：codex 凭据不再直挂真实 CODEX_RELAY_HOME，先快照到一次性临时目录再挂
+    // （见 project_codex_token_consolidation_us 记忆 — 直挂会跟宿主 cron 刷新竞态）
+    snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     ...overrides,
   };
 }
@@ -212,16 +215,34 @@ describe('codex executor 凭据挂载（extraMounts 接线，demo task a150998c 
     vi.unstubAllEnvs();
   });
 
-  it('executor=codex + CODEX_RELAY_HOME 已配置 → spawnFn 收到 extraMounts 含凭据挂载', async () => {
+  it('executor=codex + CODEX_RELAY_HOME 已配置 → 先快照真实凭据目录到临时目录，spawnFn 收到临时目录挂载（不是真实目录）', async () => {
     vi.stubEnv('CODEX_RELAY_HOME', '/tmp/fake-codex-home');
     const deps = makeDeps();
     const task = { ...TASK, payload: { ...TASK.payload, executor: 'codex' } };
     const r = await spawnSkillRelaySession(task, deps);
 
     expect(r.ok).toBe(true);
+    expect(deps.snapshotCodexHome).toHaveBeenCalledWith('/tmp/fake-codex-home', task.id);
     expect(deps.spawnFn).toHaveBeenCalledOnce();
     const spawnOpts = deps.spawnFn.mock.calls[0][0];
-    expect(spawnOpts.extraMounts).toContain('/tmp/fake-codex-home:/home/cecelia/.codex:rw');
+    // 挂的必须是快照函数返回的临时目录，不能是真实 CODEX_RELAY_HOME 本身——
+    // 直挂真实目录会让容器内 codex 自刷新写回真文件，跟宿主 cron 刷新竞态
+    expect(spawnOpts.extraMounts).toContain('/tmp/fake-snapshot-dir:/home/cecelia/.codex:rw');
+    expect(spawnOpts.extraMounts.join(' ')).not.toContain('/tmp/fake-codex-home:');
+  });
+
+  it('executor=codex 但快照失败（真实凭据目录下找不到 auth.json）→ 不 spawn，ok=false（loud fail，不静默用真实目录兜底）', async () => {
+    vi.stubEnv('CODEX_RELAY_HOME', '/tmp/fake-codex-home');
+    const deps = makeDeps({
+      snapshotCodexHome: vi.fn().mockImplementation(() => {
+        throw new Error('CODEX_RELAY_HOME 下找不到 auth.json: /tmp/fake-codex-home/auth.json');
+      }),
+    });
+    const task = { ...TASK, payload: { ...TASK.payload, executor: 'codex' } };
+    const r = await spawnSkillRelaySession(task, deps);
+
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.ok).toBe(false);
   });
 
   it('executor 缺省（claude）→ extraMounts 为空/未定义', async () => {
@@ -388,6 +409,9 @@ describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () 
       resolveAccountFn: vi.fn().mockResolvedValue(undefined),
       tokenFn: vi.fn().mockResolvedValue('t'),
       now: () => new Date('2026-07-05T12:00:00Z'),
+      // 2026-07-22：headed 分支缺省 executor 时按 codex 处理，CODEX_RELAY_HOME 在
+      // CI 里全局设了假路径，会触发真实 snapshotCodexRelayHome 找不到 auth.json
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
       ...overrides,
     };
   }

@@ -10,6 +10,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { getLlmCapacitySnapshot } from '../llm-capacity.js';
 
 const router = Router();
 
@@ -43,7 +44,20 @@ export function buildRecentDispatchEventsHandler(poolInstance) {
   };
 }
 
+export function buildLlmCapacityHandler(getSnapshot = getLlmCapacitySnapshot) {
+  return async function llmCapacityHandler(_req, res) {
+    try {
+      const snapshot = await getSnapshot();
+      return res.json(snapshot);
+    } catch (err) {
+      console.error('[dispatch/llm-capacity] query failed:', err.message);
+      return res.status(500).json({ error: 'Failed to query llm capacity', details: err.message });
+    }
+  };
+}
+
 // GET /dispatch/recent
 router.get('/dispatch/recent', buildRecentDispatchEventsHandler(pool));
+router.get('/dispatch/llm-capacity', buildLlmCapacityHandler());
 
 export default router;

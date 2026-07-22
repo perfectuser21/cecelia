@@ -5,6 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { computeCapacity, isAtCapacity, MAX_ACTIVE_PROJECTS, getMaxStreams } from '../capacity.js';
+import * as capacityAll from '../capacity.js';
 
 describe('computeCapacity - project max 聚焦执行', () => {
   it('D1: SLOTS=9 → project.max = 2（不超过 MAX_ACTIVE_PROJECTS）', () => {
@@ -99,5 +100,15 @@ describe('isAtCapacity', () => {
   it('未达上限返回 false', () => {
     expect(isAtCapacity(3, 5)).toBe(false);
     expect(isAtCapacity(0, 5)).toBe(false);
+  });
+});
+
+describe('死码清理回归（decision 4186b574）', () => {
+  it('不再导出 estimateMemPerTask（按类型估算链路已删除）', () => {
+    expect(capacityAll.estimateMemPerTask).toBeUndefined();
+  });
+
+  it('getMaxStreams 不再接受 taskType 参数（arity 为 0）', () => {
+    expect(capacityAll.getMaxStreams.length).toBe(0);
   });
 });

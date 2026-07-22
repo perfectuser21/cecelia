@@ -57,6 +57,12 @@ function makeHeadedDeps(overrides = {}) {
     tokenFn: vi.fn().mockResolvedValue('gh-token'),
     now: () => new Date('2026-07-07T12:00:00Z'),
     execFn: vi.fn().mockReturnValue(''), // 去重守卫：无存活容器
+    // 2026-07-21：docker(非headed)路径 isCodex=true 时会调用 snapshotCodexHome
+    // 把 CODEX_RELAY_HOME 快照到临时目录（见 harness-skill-relay.js）。不 mock 会
+    // 落到真实 snapshotCodexRelayHome，在 CI 里 CODEX_RELAY_HOME 是全局假路径
+    // （ci.yml env: /tmp/ci-fake-codex-home）、没有真实 auth.json，导致 loud-fail
+    // 回滚，这个文件里跟"docker路径零回归"无关的测试跟着连带失败。
+    snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     ...overrides,
   };
 }
@@ -204,6 +210,7 @@ describe('4. claude headed 分支（T6）', () => {
       loadSkill: () => 'SKILL CONTENT',
       ensureWt: async () => '/tmp/fake-worktree',
       now: () => new Date('2026-07-10T04:00:00Z'),
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     };
   }
 
@@ -302,6 +309,7 @@ describe('5. 五连雷返修回归（execFn 降级路径 = 生产真实路径）
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
       now: () => new Date('2026-07-07T12:00:00Z'),
       execFn: vi.fn().mockReturnValue(''),
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
       ...overrides,
     };
   }
@@ -380,7 +388,7 @@ describe('5. 五连雷返修回归（execFn 降级路径 = 生产真实路径）
       }
     });
 
-    it('CODEX_RELAY_HOME 已配置时，tmux pane 命令注入 CODEX_HOME=<值>', async () => {
+    it('CODEX_RELAY_HOME 已配置时，tmux pane 命令注入 CODEX_HOME=<快照目录>（不是真实持久目录）', async () => {
       process.env.CODEX_RELAY_HOME = '/Users/administrator/.codex-team2';
       const calls = [];
       const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
@@ -391,7 +399,9 @@ describe('5. 五连雷返修回归（execFn 降级路径 = 生产真实路径）
 
       const tmuxCall = calls.find((c) => /tmux new-session/.test(c.cmd));
       expect(tmuxCall).toBeTruthy();
-      expect(tmuxCall.cmd).toContain('CODEX_HOME=/Users/administrator/.codex-team2');
+      // 2026-07-22：headed 分支同样改成先快照再用，CODEX_HOME 注入的是快照目录
+      expect(tmuxCall.cmd).toContain('CODEX_HOME=/tmp/fake-snapshot-dir');
+      expect(tmuxCall.cmd).not.toContain('CODEX_HOME=/Users/administrator/.codex-team2');
     });
 
     it('CODEX_RELAY_HOME 显式配置为空字符串时，headed 分支 loud-fail（不绕过 B6 门禁）', async () => {
@@ -426,6 +436,7 @@ describe('6. 雷6：ssh 目标容器感知 + 非交互 flags', () => {
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
       now: () => new Date('2026-07-07T12:00:00Z'),
       execFn: vi.fn().mockReturnValue(''),
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
       ...overrides,
     };
   }
@@ -486,6 +497,7 @@ describe('7. 雷7：ssh 私钥自动发现（-i）', () => {
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
       now: () => new Date('2026-07-07T12:00:00Z'),
       execFn: vi.fn().mockReturnValue(''),
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
       ...overrides,
     };
   }
@@ -532,6 +544,7 @@ describe('8. 雷9：codex trust 预写（config.toml [projects.] 幂等预写）
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
       now: () => new Date('2026-07-07T12:00:00Z'),
       execFn: vi.fn().mockReturnValue(''),
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
       ...overrides,
     };
   }
@@ -554,10 +567,16 @@ describe('8. 雷9：codex trust 预写（config.toml [projects.] 幂等预写）
     const r = await spawnSkillRelaySession(HEADED_TASK, deps);
     expect(r.ok).toBe(true);
 
+    // 2026-07-22：headed 分支同样改成先快照再用（跟 docker relay / codex-bridge 降级
+    // 模式待遇一致），trust preseed 操作的是快照目录而不是真实 CODEX_RELAY_HOME，
+    // 避免直接对真实持久文件做写操作
+    expect(deps.snapshotCodexHome).toHaveBeenCalledWith('/Users/administrator/.codex-team2', HEADED_TASK.id);
+
     const trustCallIdx = calls.findIndex((c) => c.cmd.includes('config.toml'));
     expect(trustCallIdx, 'trust preseed ssh 调用必须出现').toBeGreaterThanOrEqual(0);
     const trustCall = calls[trustCallIdx];
-    expect(trustCall.cmd).toContain('/Users/administrator/.codex-team2/config.toml');
+    expect(trustCall.cmd).toContain('/tmp/fake-snapshot-dir/config.toml');
+    expect(trustCall.cmd).not.toContain('/Users/administrator/.codex-team2/config.toml');
     expect(trustCall.cmd).toContain('/tmp/wt/task-aaaabbbb'); // worktree 路径
     expect(trustCall.cmd).toContain('trust_level');
     expect(trustCall.cmd).toMatch(/grep -qF/); // 幂等判断
@@ -632,6 +651,7 @@ describe('9. 雷12：headed codex TUI 批准框（含 GitHub MCP）→ 整体 by
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
       now: () => new Date('2026-07-07T12:00:00Z'),
       execFn: vi.fn().mockReturnValue(''),
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
       ...overrides,
     };
   }
@@ -674,6 +694,7 @@ describe('10. 雷11：headed tmux 去重守卫（防 Brain 重启后双 spawn �
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
       now: () => new Date('2026-07-07T12:00:00Z'),
       execFn: vi.fn().mockReturnValue(''),
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
       ...overrides,
     };
   }

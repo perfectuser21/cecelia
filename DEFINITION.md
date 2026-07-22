@@ -802,12 +802,12 @@ CLOSED ──(3次失败)──► OPEN ──(30分钟)──► HALF_OPEN
 ```javascript
 CPU_CORES = os.cpus().length
 TOTAL_MEM_MB = os.totalmem() / 1024 / 1024
-MEM_PER_TASK = 500MB
+MEM_PER_TASK = 400MB
 CPU_PER_TASK = 0.5 core
 INTERACTIVE_RESERVE = 2 seats  // 留给有头会话
 
-// Layer 1: 物理上限（MAX_PHYSICAL_CAP=10 兜底）
-PHYSICAL_CAPACITY = min(floor(min(USABLE_MEM / 500, USABLE_CPU / 0.5)), MAX_PHYSICAL_CAP=10)
+// Layer 1: 物理上限（MAX_PHYSICAL_CAP=20 兜底）
+PHYSICAL_CAPACITY = min(floor(min(USABLE_MEM / 400, USABLE_CPU / 0.5)), MAX_PHYSICAL_CAP=20)
 
 // Layer 2: 硬上限（CECELIA_MAX_SEATS env var，防止物理上限失控飙升）
 EFFECTIVE_MAX_SEATS = min(CECELIA_MAX_SEATS, PHYSICAL_CAPACITY)  // 当前 10
@@ -818,7 +818,7 @@ OPERATIONAL_CAP = CECELIA_BUDGET_SLOTS  // 当前 7，控制日常并发
 AUTO_DISPATCH_MAX = OPERATIONAL_CAP - INTERACTIVE_RESERVE  // 当前 5
 ```
 
-**10 核 16GB（美国 Mac mini M4）**：PHYSICAL_CAPACITY=10, CECELIA_MAX_SEATS=10（硬上限）, CECELIA_BUDGET_SLOTS=7（运营上限）, AUTO_DISPATCH=5
+**10 核 16GB（美国 Mac mini M4）**：PHYSICAL_CAPACITY=16（被 Layer 2 压到 10）, CECELIA_MAX_SEATS=10（硬上限）, CECELIA_BUDGET_SLOTS=7（运营上限）, AUTO_DISPATCH=5
 
 **环境变量配置**（`packages/brain/.env` + `docker-compose.yml` 双写）：
 ```

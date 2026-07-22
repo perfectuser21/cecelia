@@ -27,6 +27,18 @@ ALLOW_PKGS=(
   #   可接受：non-breaking 修复在 3.4.10，但为传递依赖、需 override 验证；本仓 dompurify 仅渲染自有可信内容。
   #   移除条件：override dompurify ≥3.4.10 验证 dashboard 构建通过后删本行（推荐尽快做）。TODO(deps): 升 dompurify。
   "dompurify"
+  # @opentelemetry/propagator-jaeger — Denial of service in JaegerPropagator。
+  #   不可利用：packages/brain/src/otel.js 是本仓唯一的 OTel 初始化点，只配置了
+  #   OTLPTraceExporter（走 Honeycomb），从未 import/配置 JaegerPropagator——
+  #   grep 全仓 "propagator-jaeger|JaegerPropagator|jaeger" 零命中，是传递依赖
+  #   （随 @opentelemetry/sdk-node 或 auto-instrumentations-node 带入），漏洞代码
+  #   路径从未被调用。
+  #   不能 non-breaking 修：受 @opentelemetry/sdk-node 版本链约束，修复需 sdk-node
+  #   升级到 0.221.0（major，breaking）。
+  #   移除条件：opentelemetry 链升级带出安全版本后删本行。TODO(deps): 同 opentelemetry P2 track
+  #   （见 protobufjs 同批 track，@opentelemetry/sdk-node 本身的 high 漏洞暂不在本白名单——
+  #   该包是直接依赖且真在用，是否可豁免需要单独评估，见另一条 track，不跟这条一起处理）。
+  "@opentelemetry/propagator-jaeger"
 )
 
 JSON=$(npm audit --audit-level=high --omit=dev --json 2>/dev/null || true)
@@ -38,12 +50,22 @@ allow = set(os.environ.get('ALLOW','').split())
 d = json.load(sys.stdin)
 bad = {}
 for name, v in d.get('vulnerabilities', {}).items():
-    if v.get('severity') not in ('high', 'critical'):
-        continue
     if name in allow:
         continue
-    titles = [via.get('title','') for via in v.get('via', []) if isinstance(via, dict)]
-    bad[name] = (v.get('severity'), '; '.join(t for t in titles if t)[:70])
+    # 只信这个包自己直接挂着的 advisory（via 里的 dict 项，带它自己的 severity/cvss）。
+    # 不用顶层 v['severity']——那是 npm 沿整条依赖链滚算出来的聚合值，会被链上别的
+    # 包的高危漏洞拉高，哪怕这个包跟那条 CVE 的关系只是'依赖了持有它的包'，不是
+    # '自己有洞'。真正持有该 CVE 的包会在同一份 audit 输出里单独有自己的顶层条目
+    # （自己的 via 里就有这条 advisory），用它自己的条目判断即可，不需要在这里对
+    # 每一层继承者重复拦一次，否则会出现包没有任何自己的 CVE 却被拦下的假阳性。
+    advisories = [via for via in v.get('via', []) if isinstance(via, dict)]
+    if not advisories:
+        continue  # 纯继承（via 全是包名字符串），没有自己的 advisory，交给真正持有 CVE 的那个包条目处理
+    own_high = [a for a in advisories if a.get('severity') in ('high', 'critical')]
+    if not own_high:
+        continue
+    titles = [a.get('title','') for a in own_high]
+    bad[name] = (own_high[0].get('severity'), '; '.join(t for t in titles if t)[:70])
 for n, (sev, t) in sorted(bad.items()):
     print(f'{n}\t{sev}\t{t}')
 ")

@@ -476,7 +476,7 @@ jobs:
   # 扫 packages/brain/migrations/*.sql 提取首数字前缀，发现同号即 fail。
   # 教训：W7.4 / 2026-05 事故 — 264_failure_type_dispatch / 264_fix_progress_ledger
   # 同号进 main，Brain 启动按字母序只跑了第一个，schema drift 半天才发现。
-  # 设为 brain-unit 前置 dep — 同号即不跑测试，省下 4×20min shard 时间。
+  # 设为 brain-unit 前置 dep — 同号即不跑测试，省下 6×20min shard 时间。
   lint-migration-unique-version:
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -526,10 +526,21 @@ jobs:
       - name: smoke-core 依赖守卫（禁 jq）
         run: bash scripts/ci/__tests__/smoke-core-no-jq.test.sh
 
-  # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
+  # ─── Brain: Unit Tests (6-shard matrix + Test Impact Analysis) ─
   # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）
   # push 模式：跑全量 test 保 main 绿
-  # vitest 原生 --shard=i/N 按测试文件 hash 均匀分布，4 shards 并行
+  # vitest 原生 --shard=i/N 按测试文件 hash 均匀分布，6 shards 并行
+  # 2026-07-22：4→6 shard，缓解测试文件数增长(6月#3397修OOM时787个→现在989个,+26%)
+  # 把单fork堆(vitest.config.js execArgv 8192MB)累积压力撑爆导致的 "Worker exited
+  # unexpectedly" 确定性OOM（PR #4168 连续4次同一位置复现实证）。不改堆大小——
+  # 依赖"ubuntu-latest真实内存规格"这个未验证假设风险更高，拆shard更稳健。
+  #
+  # 资源用量说明（回应"扩大shard数是否有资源风险"的疑问）：
+  # 4→6 shard 只是把同一份、总量不变的测试文件切成更小的批次，单个 shard 分到的
+  # 测试文件数下降（约787/4≈197 → 989/6≈165，每shard文件更少，内存压力更低，不是
+  # 更高）。fail-fast:false + matrix 并行数从4增到6，不会突破 GitHub 标准并发上限
+  # （公开仓库标准套餐并发 job 数远高于6），也不改变runner机型/单机内存规格，
+  # 只是把原本4个runner各扛约197个文件，改成6个runner各扛约165个文件。
   brain-unit:
     needs: [changes, lint-migration-unique-version]
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
@@ -538,7 +549,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -572,7 +583,7 @@ jobs:
             echo "🎯 PR 模式：vitest --changed $BASE_REF（$TOTAL 个变更文件）"
             echo "$CHANGED" | head -20
           fi
-      - name: Unit Tests (shard ${{ matrix.shard }}/4)
+      - name: Unit Tests (shard ${{ matrix.shard }}/6)
         if: steps.scope.outputs.mode != 'skip'
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
@@ -595,15 +606,15 @@ jobs:
           run_vitest() {
             local label="$1"; local covdir="$2"; shift 2
             set +e
-            npx vitest run --shard=$SHARD/4 "$@" --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory="$covdir" 2>&1 | tee /tmp/vitest-$label.txt
+            npx vitest run --shard=$SHARD/6 "$@" --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory="$covdir" 2>&1 | tee /tmp/vitest-$label.txt
             local exit=${PIPESTATUS[0]}
             if [ $exit -ne 0 ]; then
               if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-$label.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-$label.txt; then
-                echo "[brain-unit shard $SHARD/4 · $label] OOM worker exit but all tests passed — treating as success"
+                echo "[brain-unit shard $SHARD/6 · $label] OOM worker exit but all tests passed — treating as success"
                 return 0
               fi
               if grep -qiE "No test files found|filter matched no test files" /tmp/vitest-$label.txt; then
-                echo "[brain-unit shard $SHARD/4 · $label] 过滤命中 0 测试 — 视为 pass"
+                echo "[brain-unit shard $SHARD/6 · $label] 过滤命中 0 测试 — 视为 pass"
                 return 0
               fi
               return $exit
@@ -617,7 +628,7 @@ jobs:
             # 独立 coverage 目录避免覆盖 shard-1 主 lcov（diff-cover 依赖后者）。
             GUARDS=$(bash "$GITHUB_WORKSPACE/.github/workflows/scripts/list-fs-guard-tests.sh" src/__tests__ | tr '\n' ' ')
             if [ -n "$GUARDS" ]; then
-              echo "🛡️  fs 读取型守卫组强制全跑（shard $SHARD/4）：$(echo $GUARDS | wc -w | tr -d ' ') 个文件"
+              echo "🛡️  fs 读取型守卫组强制全跑（shard $SHARD/6）：$(echo $GUARDS | wc -w | tr -d ' ') 个文件"
               run_vitest guards "coverage/guards-shard-$SHARD" $GUARDS || exit $?
             fi
           else
