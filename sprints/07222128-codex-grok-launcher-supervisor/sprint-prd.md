@@ -303,3 +303,12 @@ Phase 5 (集成验收):
 - **Bug S2 精确位置**：`docker/cecelia-runner/entrypoint.sh` 约 L238-260（末段 `if CECELIA_EXECUTOR=codex` 二元判断）
 - **Bug S3 精确位置**：`scripts/dispatch-worker.mjs` L24-38（`buildCommand`）
 - **参考实现**：`scripts/claude-launch.sh`（launcher 模式参考）；`docker/cecelia-runner/entrypoint.sh` `run_provider_contract` 函数（三分支 claude/codex/grok 已正确实现）
+
+---
+
+## journey_type: autonomous
+## journey_type_reason: 纯 Brain/harness 后端路由修正 + launcher/supervisor 脚本，无用户可见 UI 交互
+## target_environment: linux
+## target_environment_reason: 测试运行在 CI Linux 容器（packages/brain/__tests__ + entrypoint.sh 集成测试）；headed launcher 验收需真机但非 E2E 路由范围
+## journey_id: bdd411c0-ecbc-4b4a-b784-a8e65fd76396
+## step_id: none（PrepPRD 未锚定）
