@@ -2,11 +2,15 @@
  * grok-supervisor.test.mjs
  * Contract test — scripts/grok-supervisor.mjs
  *
- * 对齐 codex-supervisor.test.mjs，验证：
+ * 【静态源码断言，非运行时验证】
+ * 通过 grep/正则对 grok-supervisor.mjs 源码进行结构断言，验证：
  *   - continue 时用 grok -p ... --resume session-id（INV-5 + GP6）
  *   - blocked 写 Brain 不标 completed（INV-7）
  *   - 超 MAX_TURNS 标 timed_out exit 1（FR-R6）
  *   - complete 须外部验收（INV-6）
+ *
+ * 注意：本测试为纯静态分析（源码结构验证），不启动 fake binary 或 fake Brain HTTP server。
+ * 运行时行为验证通过 RED 阶段 git stash 对比执行，由 generator 在 PR 描述中注释结果。
  *
  * 运行方式：node sprints/07222128-codex-grok-launcher-supervisor/tests/grok-supervisor.test.mjs
  */

@@ -2,22 +2,24 @@
  * codex-supervisor.test.mjs
  * Contract test — scripts/codex-supervisor.mjs
  *
- * 使用 fake binary + fake Brain HTTP server 验证：
+ * 【静态源码断言，非运行时验证】
+ * 通过 grep/正则对 codex-supervisor.mjs 源码进行结构断言，验证：
  *   - continue 时用同一 session-id 续跑（INV-5 + GP5）
  *   - complete 须外部验收，不信模型自称（INV-6）
  *   - blocked 写 Brain 不标 completed（INV-7）
  *   - 超 MAX_TURNS 标 timed_out exit 1（FR-R5）
- *   - Brain 不可达时走 blocked（Risk mitigation）
+ *   - Brain API 调用存在（Risk mitigation）
+ *
+ * 注意：本测试为纯静态分析（源码结构验证），不启动 fake binary 或 fake Brain HTTP server。
+ * 运行时行为验证通过 RED 阶段 git stash 对比执行，由 generator 在 PR 描述中注释结果。
  *
  * 运行方式：node sprints/07222128-codex-grok-launcher-supervisor/tests/codex-supervisor.test.mjs
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { createServer } from 'http';
-import { spawnSync, execSync } from 'child_process';
-import { tmpdir } from 'os';
+import { execSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TARGET = join(__dirname, '../../../scripts/codex-supervisor.mjs');

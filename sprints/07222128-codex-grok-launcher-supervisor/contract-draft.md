@@ -88,9 +88,12 @@ E2E 验收（真机跨 Janitor 周期）：Final E2E 章节描述 — 真机跑�
 
 ## Step 1: harness-skill-relay.js 三分支路由（GP2/GP3 核心 + INV-1）
 
-**来源**: `[FROM_PRD]` — FR-R1 + INV-1
+**来源**: `[FROM_PRD]` — FR-R1 + INV-1 + FR-R7
 
 **可观测行为**: `_spawnHeadedSession` 的 `innerCmd` 对 executor=grok 生成含 `grok-launch.sh` 的命令（当前 bug：落入二元 else 分支，生成 codex 命令）
+
+**FR-R7 RED 阶段说明**（TDD RED→GREEN）：
+RED 阶段验证当前代码存在 bug，不纳入 CI 正式断言。执行方式：generator 在修复前通过 `git stash` 将修复代码暂存，在原始有 bug 的代码上运行路由测试，确认 executor=grok 断言为 FAIL（证明 bug 存在），再 `git stash pop` 恢复修复代码。RED 阶段执行结果由 generator 注释在 PR 描述中。CI 中只保留 GREEN 断言（修复后的正确断言）。
 
 **验证命令（逻辑断言）**:
 ```bash
@@ -338,14 +341,16 @@ bash /workspace/scripts/__tests__/grok-launch.test.sh
 
 ---
 
-### E2E-3: Supervisor fake binary 测试（CI 绿）
+### E2E-3: Supervisor 静态源码断言（CI 绿）
 
-**期望**: `scripts/__tests__/codex-supervisor.test.mjs` + `scripts/__tests__/grok-supervisor.test.mjs` 通过 fake binary + fake Brain 验证三态协议
+**说明**：本测试为**静态分析，非运行时验证**。`codex-supervisor.test.mjs` / `grok-supervisor.test.mjs` 通过 grep/正则对源码结构进行断言（三态协议字符串、Brain PATCH 逻辑、MAX_TURNS/DEADLINE 常量、session-id resume 逻辑）。不启动 fake binary 或 fake Brain HTTP server。运行时行为（continue 续跑、blocked 写 Brain、complete 外部验收）通过 RED 阶段 `git stash` 前后对比由 generator 手动执行，结果注释在 PR 描述中。
+
+**期望**: `codex-supervisor.test.mjs` + `grok-supervisor.test.mjs` 源码结构断言全部 PASS
 
 **验证命令**:
 ```bash
-node /workspace/scripts/__tests__/codex-supervisor.test.mjs
-node /workspace/scripts/__tests__/grok-supervisor.test.mjs
+node /workspace/sprints/07222128-codex-grok-launcher-supervisor/tests/codex-supervisor.test.mjs
+node /workspace/sprints/07222128-codex-grok-launcher-supervisor/tests/grok-supervisor.test.mjs
 ```
 
 **硬阈值**: 全部 PASS，0 FAIL
@@ -391,6 +396,6 @@ bash /workspace/scripts/__tests__/install-launchers.test.sh
 | INV-7 | blocked 写 Brain 不标 completed | `codex-supervisor.test.mjs`, `grok-supervisor.test.mjs` |
 | INV-8 | 未知 executor loud-fail（三处文件）| `codex-grok-launcher-routing.test.sh`, `codex-grok-entrypoint-routing.test.sh` |
 | INV-9 | install-launchers.sh 幂等 | `install-launchers.test.sh` |
-| INV-10 | grok-launch.sh 不修 Grok 内部逻辑，只做检测/日志/重试 | 源码 grep 断言（无 Grok 内部 patch） |
+| INV-10 | grok-launch.sh 源码不含 patch/sed.*grok/awk.*grok 等修改 Grok 内部逻辑的操作 | DoD BEHAVIOR grep -v 静态断言 |
 | INV-11 | codex-launch.sh 用凭据快照目录，非真实 CODEX_HOME | `codex-launch.test.sh` |
-| INV-12 | launcher 进程符合 janitor TTY 判定 | `codex-launch.test.sh`, `grok-launch.test.sh`（TTY 检测断言） |
+| INV-12 | codex-launch.sh 和 grok-launch.sh 不含 --no-tty 或强制去 TTY 的标志 | DoD BEHAVIOR grep 静态断言 |

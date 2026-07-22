@@ -211,6 +211,43 @@ test_debug_log_in_script() {
   fi
 }
 
+# ─── 测试 9: session 建立前崩溃不传 --resume（GP3 pre/post session 区分）───────
+# PRD GP3: 崩溃发生在 session 建立前 → 允许重开新 TUI（不传 --resume）
+#           崩溃发生在 session 建立后 → 用 grok --resume <session-id> 恢复
+# 本用例验证：当 GROK_SESSION_ID 未设置（session 未建立），重试不传 --resume
+test_pre_session_crash_no_resume() {
+  setup
+  CALL_LOG="$TMP/calls_presession.log"
+
+  # fake grok：每次 abort（但不写 session-id 文件）
+  cat >"$BIN/grok" <<SH
+#!/bin/bash
+echo "\$*" >> "$CALL_LOG"
+count=\$(wc -l < "$CALL_LOG" | tr -d ' ')
+if [[ "\$count" -le 1 ]]; then
+  exit 134
+fi
+exit 0
+SH
+  chmod +x "$BIN/grok"
+
+  # 不设置 GROK_SESSION_ID → 模拟 session 建立前崩溃
+  GROK_HOME="$GROK_HOME" PATH="$BIN:$PATH" MAX_RETRIES=3 \
+    timeout 30s bash "$TARGET" --task-id "test-pre-session" --prompt-file /dev/null \
+    2>/tmp/grok-launch-presession.$$ || true
+
+  # session 建立前：重试时不应传 --resume
+  if grep -q '\-\-resume' "$CALL_LOG" 2>/dev/null; then
+    fail "session 建立前崩溃不传 --resume（GP3 pre-session）" \
+      "session 未建立时重试却传了 --resume：$(cat "$CALL_LOG" 2>/dev/null)"
+  else
+    pass "session 建立前崩溃不传 --resume，重开新 TUI（GP3 pre-session）"
+  fi
+
+  rm -f /tmp/grok-launch-presession.$$
+  teardown
+}
+
 # ─── 运行所有测试 ──────────────────────────────────────────────────────────────
 test_max_retries_defined
 test_trap_sigabrt
@@ -220,6 +257,7 @@ test_exit0_no_restart
 test_sigabrt_retries_max3
 test_exit1_after_max_retries
 test_resume_with_session_id
+test_pre_session_crash_no_resume
 
 echo ""
 echo "结果: ${PASS} PASS, ${FAIL} FAIL"
