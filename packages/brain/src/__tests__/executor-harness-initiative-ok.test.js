@@ -168,6 +168,16 @@ describe('classifyHarnessRelayAction — P1 bug 39b97ade：deferred 结果之前
     expect(classifyHarnessRelayAction({ ok: true, mode: 'skill-relay', containerId: 'c1' })).toBe('relay_spawned');
   });
 
+  it('P0: ok=true + mode=kernel-v1 → relay_spawned（kernel 刚启动，任务不得秒标 completed）', () => {
+    expect(
+      classifyHarnessRelayAction({
+        ok: true,
+        mode: 'kernel-v1',
+        runId: '11111111-1111-4111-8111-111111111111',
+      }),
+    ).toBe('relay_spawned');
+  });
+
   it('deferred=true（codex_concurrent_limit）→ deferred，不是 failed', () => {
     expect(classifyHarnessRelayAction({ ok: false, deferred: true, reason: 'codex_concurrent_limit' })).toBe('deferred');
   });
