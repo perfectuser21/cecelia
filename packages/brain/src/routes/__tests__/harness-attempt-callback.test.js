@@ -71,7 +71,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   let app;
 
   beforeEach(async () => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.store.getById.mockResolvedValue(attempt);
     mocks.store.assertFreshRoleSession.mockResolvedValue(true);
     mocks.store.complete
@@ -89,6 +89,12 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   });
 
   it('校验、完成 attempt，并让重复 callback 幂等返回 deduped', async () => {
+    const completedAttempt = { ...attempt, status: 'completed', result: validResult };
+    mocks.store.getById
+      .mockReset()
+      .mockResolvedValueOnce(attempt)
+      .mockResolvedValueOnce(completedAttempt)
+      .mockResolvedValueOnce(completedAttempt);
     const first = await postCallback(app);
     const second = await postCallback(app);
 
@@ -127,6 +133,19 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const response = await postCallback(app, validResult, callbackToken, 'other-owner');
     expect(response.status).toBe(409);
     expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
+  it('认证后发生换租时拒绝旧 worker，且不得追加 evaluator verdict', async () => {
+    mocks.store.complete.mockReset().mockResolvedValue({ attempt: null, deduped: true });
+    mocks.store.getById
+      .mockResolvedValueOnce(attempt)
+      .mockResolvedValueOnce({ ...attempt, status: 'starting', lease_owner: 'brain-2:456' });
+
+    const response = await postCallback(app);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toMatch(/lease/i);
+    expect(mocks.pool.query.mock.calls.some(([sql]) => /verdict:evaluate/.test(sql))).toBe(false);
   });
 
   it('evaluator decision 写入 SHA 锚定的 append-only verdict 行', async () => {

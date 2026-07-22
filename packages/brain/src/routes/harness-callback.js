@@ -37,6 +37,13 @@ import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
 
 const router = Router();
 const attemptStore = createAttemptStore(pool);
+const SUCCESS_TERMINAL_STATUSES = new Set([
+  'completed',
+  'completed_with_concerns',
+  'needs_context',
+  'blocked',
+]);
+const FAILURE_TERMINAL_STATUSES = new Set(['failed', 'cancelled']);
 
 function bearerToken(req) {
   const authorization = req.get('authorization') ?? '';
@@ -200,12 +207,28 @@ router.post('/harness/attempts/:attemptId/callback', async (req, res) => {
         { ...error, status: result.status },
         { leaseOwner },
       );
+      if (!outcome.attempt) {
+        const current = await attemptStore.getById(attemptId);
+        if (current?.lease_owner !== leaseOwner || !FAILURE_TERMINAL_STATUSES.has(current?.status)) {
+          return res.status(409).json({ ok: false, error: 'attempt lease lost before terminal write' });
+        }
+      }
     } else {
       outcome = await attemptStore.complete(attemptId, result, { leaseOwner });
-      await appendAttemptVerdict(attempt, result);
+      let completedAttempt = outcome.attempt;
+      let persistedResult = completedAttempt?.result ?? result;
+      if (!completedAttempt) {
+        const current = await attemptStore.getById(attemptId);
+        if (current?.lease_owner !== leaseOwner || !SUCCESS_TERMINAL_STATUSES.has(current?.status)) {
+          return res.status(409).json({ ok: false, error: 'attempt lease lost before terminal write' });
+        }
+        completedAttempt = current;
+        persistedResult = current.result ?? result;
+      }
+      await appendAttemptVerdict(attempt, persistedResult);
 
       if (attempt.role === 'generator') {
-        const pullRequest = result.artifacts.find(
+        const pullRequest = persistedResult.artifacts.find(
           (artifact) => artifact?.type === 'pull_request' && artifact.url,
         );
         if (pullRequest) {
