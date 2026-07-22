@@ -1,40 +1,8 @@
 {
-  "verdict": "PASS",
-  "exit_code": 0,
-  "task_id": "07b2fd3b-724b-4da3-bdf3-827821b66ba5",
-  "sprint_dir": "sprints/07200850-relay-07b2fd3b",
-  "phase": "evaluator",
-  "log_tail": "FR-1~FR-10 全 PASS，NFR-2/NFR-4 PASS。CI green（brain-unit×4 + brain-integration + Smoke Glob Runner）。Test Contract coverage PASS。PR #4130 head sha=5ec5f076770101ebe9b0dcbf2f0d89fe35757a07。",
-  "behavior_tests": [
-    {
-      "command": "cd /workspace/packages/brain && npx vitest run src/__tests__/capture-inbox.test.js 2>&1 | tail -6",
-      "exit_code": 0,
-      "behavior": "FR-1,FR-2",
-      "log_tail": "Test Files  1 passed (1)\n     Tests  4 passed (4)\n  Start at  03:15:57\n  Duration  368ms"
-    },
-    {
-      "command": "cd /workspace/packages/brain && npx vitest run src/__tests__/capture-aging.test.ts 2>&1 | tail -6",
-      "exit_code": 0,
-      "behavior": "FR-6,FR-7",
-      "log_tail": "Test Files  1 passed (1)\n     Tests  8 passed (8)\n  Start at  03:15:58\n  Duration  287ms"
-    },
-    {
-      "command": "cd /workspace/packages/brain && npx vitest run src/__tests__/scheduler-jobs.test.js 2>&1 | tail -6",
-      "exit_code": 0,
-      "behavior": "FR-8",
-      "log_tail": "Test Files  1 passed (1)\n     Tests  13 passed (13)\n  Start at  03:15:59\n  Duration  386ms"
-    },
-    {
-      "command": "node packages/engine/scripts/devgate/check-test-coverage.cjs 2>&1 | tail -4",
-      "exit_code": 0,
-      "behavior": "test-contract-coverage",
-      "log_tail": "✅ Test Contract 覆盖完整\n✅ Test Coverage 检查通过 (1 个合同)"
-    },
-    {
-      "command": "gh pr checks 4130 --repo perfectuser21/cecelia 2>&1 | grep -E 'brain-unit|brain-integration|Smoke Glob Runner Passed|ci-passed'",
-      "exit_code": 0,
-      "behavior": "ci-gate",
-      "log_tail": "Smoke Glob Runner Passed\tpass\nbrain-integration\tpass\nbrain-unit (1)\tpass\nbrain-unit (2)\tpass\nbrain-unit (3)\tpass\nbrain-unit (4)\tpass\nbrain-unit-all\tpass\nci-passed\tpass"
-    }
-  ]
+  "verdict": "DONE_WITH_CONCERNS",
+  "task_id": "7630f4fb-0acf-4f7a-ad42-e2dea3485089",
+  "report_path": "sprints/07212136-relay-7630f4fb/harness-report.md",
+  "pr_url": "https://github.com/perfectuser21/cecelia/pull/4184",
+  "screenshots": [],
+  "concerns": "CONCERN: Step5:飞书通知sent=false(接口ok但未真实送达);;CONCERN: Step8f:capture_atoms未写入(HTTP 404);"
 }

@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# preview-env-start.test.sh — 验证"杀死上一轮遗留 Brain 进程"必须在 Step4 数据库克隆之前完成
+#
+# 根因（PR#4176 CI 实测复现，2026-07-21）：re-push 间隔 <3 分钟时，上一轮 preview-env-start.sh
+# 启动的常驻 Brain 子进程仍然存活、仍连着同名预览 DB。旧代码把"杀死旧进程"放在 Step5（DB 克隆
+# 之后），导致 Step4 的 dropdb 报 "is being accessed by other users"，createdb 因库已存在报错，
+# 脚本 exit 1，Brain API status 永远停留 starting，GHA 傻等 720s(600s轮询+120s健康检查) 超时。
+#
+# 用 mock 覆盖 git/npm/node/curl/pg_dump/pg_restore/createdb/psql，dropdb 里检测调用发生时
+# PID_FILE 记录的旧进程是否还活着——这是能直接证伪"顺序修对了没有"的行为断言，不是脆弱的
+# 字符串位置断言。
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TARGET="${SCRIPT_DIR}/../preview-env-start.sh"
+PASS=0; FAIL=0
+
+pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
+fail() { echo "  FAIL: $1 — $2"; FAIL=$((FAIL + 1)); }
+
+PR_NUMBER=900001
+LOG_FILE="/tmp/preview-${PR_NUMBER}.log"
+PID_FILE="/tmp/preview-${PR_NUMBER}.pid"
+SCRIPT_LOCK="/tmp/preview-script-lock-${PR_NUMBER}"
+
+setup() {
+  TMP=$(mktemp -d)
+  PREVIEW_BASE_DIR="$TMP/previews"
+  mkdir -p "$PREVIEW_BASE_DIR"
+  REPO_ROOT="$TMP/repo"
+  mkdir -p "$REPO_ROOT/node_modules"
+  BIN="$TMP/bin"
+  mkdir -p "$BIN"
+  DROPDB_MARKER="$TMP/dropdb_saw_old_pid_status"
+
+  # 真实起一个长驻"旧进程"，模拟上一轮遗留的常驻 Brain 子进程
+  sleep 300 &
+  OLD_PID=$!
+  echo "$OLD_PID" > "$PID_FILE"
+
+  # mock git：worktree add 建目录即可（倒数第二个参数是目标目录：worktree add <dir> <ref>）
+  cat >"$BIN/git" <<'SH'
+#!/bin/bash
+if [[ "$*" == *"worktree list"* ]]; then exit 0
+elif [[ "$*" == *"worktree remove"* ]]; then exit 0
+elif [[ "$*" == *"worktree prune"* ]]; then exit 0
+elif [[ "$*" == *"fetch"* ]]; then exit 0
+elif [[ "$*" == *"worktree add"* ]]; then
+  args=("$@")
+  n=${#args[@]}
+  target_dir="${args[$((n-2))]}"
+  mkdir -p "$target_dir"
+  exit 0
+fi
+exit 0
+SH
+  chmod +x "$BIN/git"
+
+  printf '#!/bin/bash\nexit 0\n' >"$BIN/npm"; chmod +x "$BIN/npm"
+
+  # mock node：起一个假的新 Brain 常驻进程（真实 sleep，验证 BRAIN_PID 被正确捕获即可）
+  cat >"$BIN/node" <<'SH'
+#!/bin/bash
+exec sleep 300
+SH
+  chmod +x "$BIN/node"
+
+  # mock curl：健康检查直接返回 running，Step6 立即通过，不用真等
+  cat >"$BIN/curl" <<'SH'
+#!/bin/bash
+echo '{"status":"running"}'
+SH
+  chmod +x "$BIN/curl"
+
+  printf '#!/bin/bash\nexit 0\n' >"$BIN/pg_dump"; chmod +x "$BIN/pg_dump"
+  printf '#!/bin/bash\ncat >/dev/null\nexit 0\n' >"$BIN/pg_restore"; chmod +x "$BIN/pg_restore"
+  printf '#!/bin/bash\nexit 0\n' >"$BIN/createdb"; chmod +x "$BIN/createdb"
+  printf '#!/bin/bash\nexit 0\n' >"$BIN/psql"; chmod +x "$BIN/psql"
+
+  # mock dropdb：调用发生的那一刻，记录 PID_FILE 里的旧进程是否还活着
+  cat >"$BIN/dropdb" <<SH
+#!/bin/bash
+if kill -0 "$OLD_PID" 2>/dev/null; then
+  echo "ALIVE" > "$DROPDB_MARKER"
+else
+  echo "DEAD" > "$DROPDB_MARKER"
+fi
+exit 0
+SH
+  chmod +x "$BIN/dropdb"
+
+  export PATH="$BIN:$PATH"
+}
+
+teardown() {
+  kill -9 "$OLD_PID" 2>/dev/null || true
+  BRAIN_PID_LEFTOVER=$(cat "$PID_FILE" 2>/dev/null || echo "")
+  [ -n "$BRAIN_PID_LEFTOVER" ] && kill -9 "$BRAIN_PID_LEFTOVER" 2>/dev/null || true
+  rm -f "$LOG_FILE" "$PID_FILE" "$SCRIPT_LOCK"
+  rm -rf "$TMP"
+}
+
+# ── 测试：dropdb 执行时，PID_FILE 记录的旧进程必须已经死亡 ──────────────────────
+setup
+REPO_ROOT="$REPO_ROOT" PREVIEW_BASE_DIR="$PREVIEW_BASE_DIR" \
+  DB_HOST="testhost" DB_USER="testuser" DB_PASSWORD="testpw" \
+  bash "$TARGET" "$PR_NUMBER" "test-branch" "59999" "cecelia_preview_test900001" \
+  > "$TMP/stdout.log" 2>&1
+RC=$?
+
+if [ ! -f "$DROPDB_MARKER" ]; then
+  fail "dropdb 从未被调用" "脚本可能提前失败退出，见 $TMP/stdout.log: $(cat "$TMP/stdout.log" 2>/dev/null | tail -20)"
+elif [ "$(cat "$DROPDB_MARKER")" = "DEAD" ]; then
+  pass "dropdb 执行前，上一轮遗留 Brain 进程已被杀死"
+else
+  fail "dropdb 执行时上一轮遗留 Brain 进程仍存活" "PID=$OLD_PID 未被及时清理，会导致 dropdb 报 is-being-accessed-by-other-users，进而 createdb 因库已存在报错、脚本 exit 1（PR#4176 CI 实测根因）"
+fi
+
+if [ "${RC:-1}" -eq 0 ]; then
+  pass "脚本正常完成（exit 0）"
+else
+  fail "脚本非正常退出" "exit code=${RC:-unknown}，见 $TMP/stdout.log"
+fi
+teardown
+
+# ── 总结 ──────────────────────────────────────────────────────────────────────
+echo ""
+echo "结果: PASS=${PASS}, FAIL=${FAIL}"
+[ "$FAIL" -eq 0 ] || exit 1

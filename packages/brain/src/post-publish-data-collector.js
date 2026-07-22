@@ -122,7 +122,7 @@ async function writeBackToPublishTask(pool, publishTaskId, metrics) {
   const { views = 0, likes = 0, comments = 0, shares = 0 } = metrics;
   await pool.query(
     `UPDATE tasks
-     SET payload    = payload || $1::jsonb,
+     SET payload    = COALESCE(payload, '{}'::jsonb) || $1::jsonb,
          updated_at = NOW()
      WHERE id = $2`,
     [
@@ -151,7 +151,7 @@ async function completeScraperTask(pool, scraperTaskId, result) {
      SET status       = 'completed',
          completed_at = NOW(),
          updated_at   = NOW(),
-         payload      = payload || $1::jsonb
+         payload      = COALESCE(payload, '{}'::jsonb) || $1::jsonb
      WHERE id = $2`,
     [
       JSON.stringify({ result, processed_by: 'brain-internal-collector' }),
