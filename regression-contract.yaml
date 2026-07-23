@@ -104,3 +104,11 @@ golden_paths:
     method: auto
     test_command: "node scripts/ci/invariants/core-inv-05-gan-convergence.mjs"
     must_never_break: true
+
+  - id: HARN-SUPERVISOR-PARSE-01
+    name: "codex/grok supervisor 三态解析吃真实 CLI 输出（嵌套 item.text / 整块 JSON / 驼峰 sessionId）"
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    test_command: "node tests/regression/codex-grok-launcher-supervisor/supervisor-parse-behavior.test.mjs"
+    must_never_break: true

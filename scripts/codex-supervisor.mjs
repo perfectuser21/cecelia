@@ -14,9 +14,7 @@
  */
 
 import { execSync, spawnSync } from 'child_process';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
-import { fileURLToPath } from 'url';
+import { readFileSync, existsSync } from 'fs';
 import { parseCodexDecision as parseDecision, extractCodexSessionId as extractSessionId } from './lib/supervisor-parse.mjs';
 
 // ─── 配置常量 ─────────────────────────────────────────────────────────────────
