@@ -87,13 +87,24 @@ function productFixRoute(observed, reason) {
       reason: convergence.reason,
     };
   }
+  if (convergence.outcome === 'pending') {
+    return {
+      phase: 'generate',
+      action: ACTION.WAIT_GENERATOR_FIX_CALLBACK,
+      reason: convergence.reason,
+    };
+  }
   return fixRoute(reason);
 }
 
 function applyHopFence(decision, counters) {
   // Convergence and escalation routes are the primary stop condition. The hop
   // budget is only a wide fallback for otherwise continuing automation.
-  if ([ACTION.MARK_FAILED, ACTION.WAIT_HUMAN_REVIEW].includes(decision.action)) {
+  if ([
+    ACTION.MARK_FAILED,
+    ACTION.WAIT_HUMAN_REVIEW,
+    ACTION.WAIT_GENERATOR_FIX_CALLBACK,
+  ].includes(decision.action)) {
     return decision;
   }
   if (caps.hopsExceeded(counters.hops)) {

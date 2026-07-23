@@ -183,6 +183,10 @@ function buildSnapshot(observed, counters, action, reason = null) {
       if (crashSignature != null) snapshot.crash_signature = crashSignature;
     }
   }
+  if (action === ACTION.WAIT_GENERATOR_FIX_CALLBACK) {
+    const latestIntent = prev(ACTION.SPAWN_GENERATOR_FIX);
+    snapshot.trigger_hop = latestIntent?.hop ?? null;
+  }
   if (
     isFailureSetReview(reason)
     && [ACTION.WAIT_HUMAN_REVIEW, LOG_ACTION.HUMAN_REVIEW_REQUESTED].includes(action)
@@ -436,6 +440,38 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       }
     }
     if (decision.action === ACTION.WAIT_RUNNING) {
+      await beat();
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
+    if (decision.action === ACTION.WAIT_GENERATOR_FIX_CALLBACK) {
+      const callbackWaitHop = await next(deps.pool, resolvedRunId);
+      const snapshot = buildSnapshot(
+        observed,
+        fullCounters,
+        ACTION.WAIT_GENERATOR_FIX_CALLBACK,
+      );
+      try {
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: callbackWaitHop,
+          observed: snapshot,
+          derivedPhase: decision.phase,
+          gateVerdict: null,
+          action: ACTION.WAIT_GENERATOR_FIX_CALLBACK,
+          detail: {
+            reason: decision.reason,
+            trigger_hop: snapshot.trigger_hop,
+          },
+        });
+        hops++;
+      } catch (err) {
+        if (err instanceof SingletonConflictError) {
+          log(`[orchestrator] singleton conflict on generator callback wait ${resolvedRunId} hop ${callbackWaitHop}, exiting`);
+          return { exitReason: 'singleton_conflict', hops };
+        }
+        throw err;
+      }
       await beat();
       await sleep(POLL_INTERVAL_MS);
       continue;

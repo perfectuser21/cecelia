@@ -197,16 +197,19 @@ export async function appendGeneratorFixCallback(
     noProgressReason = 'callback_sha_invalid';
   } else {
     let resolvedSha = null;
+    let resolutionFailed = false;
     try {
       resolvedSha = context.pr_url
         ? normalizeGitSha(await resolvePrHead(context.pr_url))
         : null;
     } catch {
-      resolvedSha = null;
+      resolutionFailed = true;
     }
     if (resolvedSha && resolvedSha === normalizedClaimedSha) {
       prHeadSha = resolvedSha;
       verificationStatus = 'verified';
+    } else if (resolutionFailed) {
+      verificationStatus = 'verification_pending';
     } else {
       verificationStatus = 'unverified';
       noProgressReason = 'callback_sha_unverified';
@@ -224,6 +227,9 @@ export async function appendGeneratorFixCallback(
     pr_head_sha: prHeadSha,
     status: result.status,
     verification_status: verificationStatus,
+    ...(verificationStatus === 'verification_pending'
+      ? { claimed_pr_head_sha: normalizedClaimedSha }
+      : {}),
     ...(noProgressReason ? { no_progress_reason: noProgressReason } : {}),
   };
   await db.query(

@@ -116,7 +116,9 @@ export function replayProductConvergence(
       && !dispatchDidNotExecute(rows, intent);
   });
   const completed = [];
-  let latestPending = false;
+  let latestMissingCallback = false;
+  let latestMissingCallbackObserved = false;
+  let pendingReason = null;
   let immediateFailureReason = null;
 
   for (let index = 0; index < modernIntents.length; index++) {
@@ -129,16 +131,42 @@ export function replayProductConvergence(
       modernIntents[index + 1],
     );
     if (!callback) {
-      if (index === modernIntents.length - 1) latestPending = true;
+      if (index === modernIntents.length - 1) {
+        latestMissingCallback = true;
+        latestMissingCallbackObserved = rows.some((row) => (
+          row.action === ACTION.WAIT_GENERATOR_FIX_CALLBACK
+          && Number(row.hop) > Number(intent.hop)
+          && (
+            modernIntents[index + 1] == null
+            || Number(row.hop) < Number(modernIntents[index + 1].hop)
+          )
+        ));
+      }
       continue;
     }
     const callbackObserved = asJson(callback.observed) ?? {};
     const callbackDetail = asJson(callback.detail) ?? {};
     const verificationStatus = callbackDetail.verification_status ?? null;
-    const callbackSha = callbackObserved.pr_head_sha
+    let callbackSha = callbackObserved.pr_head_sha
       ?? callbackDetail.pr_head_sha
       ?? null;
-    if (verificationStatus !== 'verified') {
+    const legacyVerified = verificationStatus == null;
+    if (verificationStatus === 'verification_pending') {
+      const claimedSha = callbackDetail.claimed_pr_head_sha ?? null;
+      if (currentHeadSha == null) {
+        if (index === modernIntents.length - 1) {
+          pendingReason = 'callback_sha_verification_pending';
+        }
+        continue;
+      }
+      if (claimedSha !== currentHeadSha) {
+        if (index === modernIntents.length - 1) {
+          immediateFailureReason = 'callback_sha_unverified';
+        }
+        continue;
+      }
+      callbackSha = currentHeadSha;
+    } else if (verificationStatus !== 'verified' && !legacyVerified) {
       if (index === modernIntents.length - 1) {
         immediateFailureReason = callbackDetail.no_progress_reason
           ?? 'callback_sha_unverified';
@@ -154,6 +182,7 @@ export function replayProductConvergence(
     completed.push({
       intent,
       callback,
+      callbackSha,
       failureSet: normalizeFailureSet(observed.failure_set),
       failureSetKey: failureSetKey(observed.failure_set),
     });
@@ -199,12 +228,21 @@ export function replayProductConvergence(
   if (modernIntents.length === 0) {
     return { outcome: 'continue', reason: 'first_product_fix' };
   }
-  if (latestPending) {
-    return { outcome: 'failed', reason: 'no_progress_same_sha' };
+  if (pendingReason != null) {
+    return { outcome: 'pending', reason: pendingReason };
   }
-  const latestCompletedSha = (
-    asJson(completed.at(-1)?.callback?.observed) ?? {}
-  ).pr_head_sha ?? null;
+  if (latestMissingCallback) {
+    return latestMissingCallbackObserved
+      ? {
+          outcome: 'failed',
+          reason: 'generator_fix_callback_missing_after_observation',
+        }
+      : {
+          outcome: 'pending',
+          reason: 'generator_fix_callback_pending',
+        };
+  }
+  const latestCompletedSha = completed.at(-1)?.callbackSha ?? null;
   if (
     latestCompletedSha != null
     && currentHeadSha != null
@@ -433,7 +471,9 @@ export function deriveCounters(logRows, options) {
             noProgress = true;
             noProgressReason = 'no_progress_same_sha'; // 统一 reason 常量（derive 和 ground-truth 对齐）
           } else if (cbDetail.verification_status != null
-              && cbDetail.verification_status !== 'verified') {
+              && !['verified', 'verification_pending'].includes(
+                cbDetail.verification_status,
+              )) {
             noProgress = true;
             noProgressReason = cbDetail.no_progress_reason ?? 'callback_sha_unverified';
           }
