@@ -18,7 +18,6 @@ import os from 'os';
 import { execSync } from 'child_process';
 import { getLlmCapacitySnapshot } from '../llm-capacity.js';
 import { countClaudeProcesses } from '../platform-utils.js';
-import { detectUserSessions } from '../slot-allocator.js';
 
 const router = Router();
 
@@ -162,7 +161,7 @@ router.get('/', async (req, res) => {
     Promise.resolve(countCodexProcesses()),
     withTimeout(safeDockerPs()),
     withTimeout(getLlmCapacitySnapshot().catch(() => null)),
-    Promise.resolve(detectUserSessions()),
+    withTimeout(import('../slot-allocator.js').then(m => m.detectUserSessions()).catch(() => null)),
   ]);
 
   const tasks = tasksResult ?? { in_progress_count: 0, vendor_dist: { claude: 0, codex: 0, grok: 0, unknown: 0 } };
