@@ -36,7 +36,95 @@ const TASK_ID = '90000000-0000-4000-8000-000000000009';
 const ATTEMPT_ID = 'a0000000-0000-4000-8000-00000000000a';
 const CALLBACK_TOKEN = 'generator-callback-token';
 const LEASE_OWNER = 'stub-generator:1';
-const SHA = 'same-pr-head';
+const PR_URL = 'https://github.com/example/repo/pull/1';
+const SHA = '1111111111111111111111111111111111111111';
+const VERIFIED_SHA = 'abcdefabcdefabcdefabcdefabcdefabcdefabcd';
+const UPPERCASE_VERIFIED_SHA = VERIFIED_SHA.toUpperCase();
+const SHORT_SHA = 'abc1234';
+const FAKE_SHA = 'ffffffffffffffffffffffffffffffffffffffff';
+
+function parseJsonParameters(params = []) {
+  return params.flatMap((value) => {
+    if (typeof value !== 'string' || (!value.startsWith('{') && !value.startsWith('['))) {
+      return [];
+    }
+    try {
+      return [JSON.parse(value)];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function callbackRowFromQuery(sql, params) {
+  if (!sql.includes('verdict:generator-fix-callback')) return null;
+  const payloads = parseJsonParameters(params);
+  const observedPayload = payloads.find(
+    (payload) => payload?.attempt_id === ATTEMPT_ID && 'trigger_hop' in payload,
+  );
+  const detailPayload = payloads.find(
+    (payload) => payload?.attempt_id === ATTEMPT_ID && payload !== observedPayload,
+  );
+  return {
+    action: 'verdict:generator-fix-callback',
+    observed: observedPayload ?? {},
+    detail: detailPayload ?? {},
+  };
+}
+
+function callbackResult({ artifactSha = null, decisionSha = null, providerSha = null } = {}) {
+  return {
+    contract_version: '1.0',
+    attempt_id: ATTEMPT_ID,
+    status: 'completed',
+    summary: 'generator completed',
+    artifacts: artifactSha
+      ? [{ type: 'pull_request', url: PR_URL, head_sha: artifactSha }]
+      : [],
+    checks: [],
+    decision: decisionSha ? { pr_head_sha: decisionSha } : null,
+    error: null,
+    provider_metadata: {
+      provider: 'codex',
+      session_id: 'generator-session',
+      ...(providerSha ? { pr_head_sha: providerSha } : {}),
+    },
+  };
+}
+
+function mountCallbackRouter({ resolver }) {
+  const app = express();
+  app.use(express.json());
+  app.set('pool', runtime.pool);
+  app.set('kernelPrHeadResolver', resolver);
+  app.use('/api/brain', callbackRouter);
+  return app;
+}
+
+async function postCallback(app, result) {
+  return request(app)
+    .post(`/api/brain/harness/attempts/${ATTEMPT_ID}/callback`)
+    .set('Authorization', `Bearer ${CALLBACK_TOKEN}`)
+    .set('X-Harness-Lease-Owner', LEASE_OWNER)
+    .send(result);
+}
+
+function installCallbackPersistence({ callbackRows }) {
+  runtime.pool.query.mockImplementation(async (sql, params = []) => {
+    if (sql.includes('initiative_runs') && sql.includes('pr_url')) {
+      return {
+        rows: [{
+          pr_url: PR_URL,
+          trigger_sha: SHA,
+        }],
+        rowCount: 1,
+      };
+    }
+    const callbackRow = callbackRowFromQuery(sql, params);
+    if (callbackRow) callbackRows.push(callbackRow);
+    return { rows: [], rowCount: callbackRow ? 1 : 0 };
+  });
+}
 
 function observed(decisionLog, provider) {
   return {
@@ -103,11 +191,16 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
 
   test('real loop→derive→dispatch→HTTP callback detects same SHA despite next-hop provider change', async () => {
     const decisionLog = [];
-    const app = express();
-    app.use(express.json());
-    app.use('/api/brain', callbackRouter);
+    const resolver = vi.fn(async () => SHA);
+    const app = mountCallbackRouter({ resolver });
     let failureReason = null;
     runtime.pool.query.mockImplementation(async (sql, params) => {
+      if (sql.includes('initiative_runs') && sql.includes('pr_url')) {
+        return {
+          rows: [{ pr_url: PR_URL, trigger_sha: SHA }],
+          rowCount: 1,
+        };
+      }
       if (sql.includes('SELECT deadline_at')) {
         return { rows: [{ deadline_at: new Date(Date.now() + 120 * 60 * 1000) }] };
       }
@@ -166,7 +259,7 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
             summary: 'generator completed without advancing the PR',
             artifacts: [{
               type: 'pull_request',
-              url: 'https://github.com/example/repo/pull/1',
+              url: PR_URL,
               head_sha: SHA,
             }],
             checks: [],
@@ -197,5 +290,87 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
     expect(result.exitReason).toBe('no_progress_same_sha');
     expect(failureReason).toBe('no_progress_same_sha');
     expect(dispatches).toBe(1);
+  });
+
+  test('uppercase artifact SHA is stored only as the lowercase resolver-confirmed head', async () => {
+    const callbackRows = [];
+    const resolver = vi.fn(async () => VERIFIED_SHA);
+    installCallbackPersistence({ callbackRows });
+    const app = mountCallbackRouter({ resolver });
+
+    const response = await postCallback(
+      app,
+      callbackResult({ artifactSha: UPPERCASE_VERIFIED_SHA }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(callbackRows).toHaveLength(1);
+    expect(callbackRows[0]).toMatchObject({
+      observed: {
+        trigger_hop: runtime.attempt.hop,
+        pr_head_sha: VERIFIED_SHA,
+      },
+      detail: {
+        pr_head_sha: VERIFIED_SHA,
+        verification_status: 'verified',
+      },
+    });
+    expect(JSON.stringify(callbackRows[0])).not.toContain(UPPERCASE_VERIFIED_SHA);
+    expect(resolver).toHaveBeenCalledWith(PR_URL);
+  });
+
+  test('short decision SHA becomes replayable invalid no-progress at the trigger SHA', async () => {
+    const callbackRows = [];
+    const resolver = vi.fn(async () => VERIFIED_SHA);
+    installCallbackPersistence({ callbackRows });
+    const app = mountCallbackRouter({ resolver });
+
+    const response = await postCallback(
+      app,
+      callbackResult({ decisionSha: SHORT_SHA }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(callbackRows).toHaveLength(1);
+    expect(callbackRows[0]).toMatchObject({
+      observed: {
+        trigger_hop: runtime.attempt.hop,
+        pr_head_sha: SHA,
+      },
+      detail: {
+        pr_head_sha: SHA,
+        verification_status: 'invalid',
+        no_progress_reason: 'callback_sha_invalid',
+      },
+    });
+  });
+
+  test('fake provider-metadata SHA becomes replayable unverified no-progress at the trigger SHA', async () => {
+    const callbackRows = [];
+    const resolver = vi.fn(async () => VERIFIED_SHA);
+    installCallbackPersistence({ callbackRows });
+    const app = mountCallbackRouter({ resolver });
+
+    const response = await postCallback(
+      app,
+      callbackResult({ providerSha: FAKE_SHA }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(callbackRows).toHaveLength(1);
+    expect(callbackRows[0]).toMatchObject({
+      observed: {
+        trigger_hop: runtime.attempt.hop,
+        pr_head_sha: SHA,
+      },
+      detail: {
+        pr_head_sha: SHA,
+        verification_status: 'unverified',
+        no_progress_reason: 'callback_sha_unverified',
+      },
+    });
+    expect(JSON.stringify(callbackRows[0])).not.toContain(FAKE_SHA);
+    expect(resolver).toHaveBeenCalledWith(PR_URL);
   });
 });
