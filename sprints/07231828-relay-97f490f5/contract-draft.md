@@ -38,6 +38,14 @@ GET /sign?value=<整数>
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| GET /sign 完整覆盖（B1-B4+B5-B6） | `../../tests/regression/relay-97f490f5/sign.test.js` | value=5 → 200, value=0 → 200, value=-3 → 200, value 缺失, 成功响应顶层 keys, operation 字段字面值 | → 实现前全部 FAIL（Green commit 才通过） |
+
+---
+
 ## 验收规则汇总
 
 | 输入 | 期望 HTTP | 期望 body |
