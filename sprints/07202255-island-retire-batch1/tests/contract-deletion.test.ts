@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { execSync } from 'child_process';
 import path from 'path';
 
@@ -149,6 +149,41 @@ describe('[B3] 组 C：保留文件完整性验证', () => {
 
   it('@features/core 实现文件存在（RelayProgressPage 真实实现）', () => {
     expect(existsSync(path.join(REPO_ROOT, 'apps/api/features/execution/pages/RelayProgressPage.tsx'))).toBe(true);
+  });
+});
+
+// ─── 组 C 补充：B7 测试文件不再直接 import 已删桩 ───────────────────────────
+
+describe('[B7] 组 C：__tests__ 业务测试文件不再直接 import 已删桩', () => {
+  it('test-pyramid/__tests__ 文件不含直接引用 ../TestPyramidPage 的 import', () => {
+    const testsDir = path.join(REPO_ROOT, 'apps/dashboard/src/pages/test-pyramid/__tests__');
+    if (!existsSync(testsDir)) {
+      // 目录不存在则跳过（不是本批次关注点）
+      return;
+    }
+    const files = readdirSync(testsDir).filter(f => f.endsWith('.tsx') || f.endsWith('.ts'));
+    for (const file of files) {
+      const content = readFileSync(path.join(testsDir, file), 'utf8');
+      expect(
+        content,
+        `${file} 不应直接 import 已删桩 ../TestPyramidPage`
+      ).not.toMatch(/from\s+['"]\.\.\\/TestPyramidPage['"]/);
+    }
+  });
+
+  it('relay-progress/__tests__ 文件不含直接引用 ../RelayProgressPage 的 import', () => {
+    const testsDir = path.join(REPO_ROOT, 'apps/dashboard/src/pages/relay-progress/__tests__');
+    if (!existsSync(testsDir)) {
+      return;
+    }
+    const files = readdirSync(testsDir).filter(f => f.endsWith('.tsx') || f.endsWith('.ts'));
+    for (const file of files) {
+      const content = readFileSync(path.join(testsDir, file), 'utf8');
+      expect(
+        content,
+        `${file} 不应直接 import 已删桩 ../RelayProgressPage`
+      ).not.toMatch(/from\s+['"]\.\.\\/RelayProgressPage['"]/);
+    }
   });
 });
 

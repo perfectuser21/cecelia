@@ -81,11 +81,14 @@ grep -q "@features/core" /workspace/apps/dashboard/src/pages/relay-progress/inde
 
 **manual:bash 验收命令**：
 ```bash
-cd /workspace/apps/dashboard && npm run build 2>&1 | tail -30
-echo "Build exit: $?"
+cd /workspace/apps/dashboard
+npm run build 2>&1 | tail -30
+BUILD_EXIT=${PIPESTATUS[0]:-$?}
+echo "Build exit: $BUILD_EXIT"
+[ $BUILD_EXIT -eq 0 ] && echo "OK: build 通过" || { echo "FAIL: build 失败"; exit 1; }
 ```
 
-**预期结果**：build 输出末尾无红色错误，exit 0
+**预期结果**：build 输出末尾无红色错误，`OK: build 通过`，exit 0
 
 ---
 
@@ -100,6 +103,22 @@ HITS=$(grep -r "n8n/archive" /workspace --include="*.js" --include="*.ts" --incl
 ```
 
 **预期结果**：`OK: 0 命中`，exit 0
+
+---
+
+### [BEHAVIOR] B7：__tests__ 业务测试文件不再直接 import 已删桩
+
+**描述**：`test-pyramid.test.tsx` 和 `relay-progress.test.tsx` 中不再直接引用 `TestPyramidPage.tsx` / `RelayProgressPage.tsx` 路径。
+
+**manual:bash 验收命令**：
+```bash
+grep -n "import.*'\.\.\/TestPyramidPage'" /workspace/apps/dashboard/src/pages/test-pyramid/__tests__/*.tsx \
+  && { echo "FAIL: 仍引用已删桩"; exit 1; } || echo "OK: test-pyramid 测试不再引用桩"
+grep -n "import.*'\.\.\/RelayProgressPage'" /workspace/apps/dashboard/src/pages/relay-progress/__tests__/*.tsx \
+  && { echo "FAIL: 仍引用已删桩"; exit 1; } || echo "OK: relay-progress 测试不再引用桩"
+```
+
+**预期结果**：两行 `OK`，exit 0
 
 ---
 
