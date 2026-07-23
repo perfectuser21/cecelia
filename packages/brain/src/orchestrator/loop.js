@@ -346,7 +346,8 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     });
     // collect 前只凭“有开放 request”允许进行一次外部对账；collect 后必须确认
     // request 仍锚定当前 GitHub head，旧 SHA 的人审不能暂停新 SHA 的活动时钟。
-    let deadlinePaused = hasOpenHumanReview
+    const deadlinePaused = decision.action === ACTION.WAIT_HUMAN_REVIEW
+      && hasOpenHumanReview
       && Boolean(observed.pr?.head_sha)
       && deadlineState.review_head_sha === observed.pr.head_sha;
 
@@ -438,7 +439,11 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
             return detail.review_reason === decision.reason
               && failureSetKey(detail.failure_set) === failureSetKey(currentSet);
           }
-          return detail.review_reason === decision.reason;
+          return detail.review_reason === decision.reason
+            || (
+              detail.review_reason == null
+              && decision.reason === 'awaiting_human_review'
+            );
         },
       );
       if (reviewAlreadyRequested) {

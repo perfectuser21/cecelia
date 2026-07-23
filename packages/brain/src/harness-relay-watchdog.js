@@ -828,12 +828,19 @@ export async function scanStuckHarness(opts = {}) {
             FROM orchestrator_decision_log review_request
            WHERE review_request.run_id = initiative_runs.id
              AND review_request.action = 'effect:human_review_requested'
+             AND review_request.observed #>> '{pr,head_sha}' IS NOT NULL
              AND NOT EXISTS (
                SELECT 1
                  FROM orchestrator_decision_log approval
                 WHERE approval.run_id = review_request.run_id
                   AND approval.action = 'verdict:human_review'
                   AND approval.detail->>'review_request_hop' = review_request.hop::text
+             )
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM orchestrator_decision_log later
+                WHERE later.run_id = review_request.run_id
+                  AND later.hop > review_request.hop
              )
         )
       LIMIT 50`
