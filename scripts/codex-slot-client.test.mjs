@@ -232,8 +232,8 @@ test('start checks identity, duplicate, every host health then orchestrates in p
     'session-get',
     'health:xian-m4',
     'health:xian-m1',
-    'acquire',
     'prepare:xian-m4',
+    'acquire',
     'deliver',
     'launch:xian-m4',
     'session-put',
@@ -243,8 +243,8 @@ test('start checks identity, duplicate, every host health then orchestrates in p
   assert.equal(result.host, 'xian-m4');
   assert.equal(result.status, 'running');
 
-  const acquiredSession = option(transport.calls[4].args, 'session');
-  const prepared = transport.calls[5].args;
+  const prepared = transport.calls[4].args;
+  const acquiredSession = option(transport.calls[5].args, 'session');
   assert.equal(option(prepared, 'actor'), 'alex');
   assert.equal(option(prepared, 'session'), acquiredSession);
   assert.equal(option(prepared, 'project'), 'infrastructure');
@@ -260,6 +260,50 @@ test('start checks identity, duplicate, every host health then orchestrates in p
     transport.calls.at(-1).tmuxTarget,
     `=codex-slot-${acquiredSession}`
   );
+});
+
+test('start prepare failure happens before lease acquisition or token delivery', async () => {
+  const transport = makeTransport({
+    agent: async (_host, args) => {
+      if (args[0] === 'prepare') {
+        throw new Error('Tailscale 出口不安全 on second sample');
+      }
+      return undefined;
+    },
+  });
+
+  await assert.rejects(
+    runClient(['start', '--project', 'infrastructure'], transport),
+    /Tailscale 出口不安全/
+  );
+  assert.deepEqual(transport.calls.map(({ op }) => op), [
+    'identity',
+    'session-get',
+    'health:xian-m4',
+    'health:xian-m1',
+    'prepare:xian-m4',
+  ]);
+  assert.equal(transport.calls.some(({ op }) => op === 'acquire'), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'deliver'), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'release'), false);
+});
+
+test('start preserves prepared resources when acquire outcome is unknown', async () => {
+  const transport = makeTransport({
+    broker: async (args) => {
+      if (args[0] === 'acquire') throw new Error('broker unavailable');
+      return undefined;
+    },
+  });
+
+  await assert.rejects(
+    runClient(['start', '--project', 'infrastructure'], transport),
+    /broker acquire outcome unknown/
+  );
+  assert.equal(transport.calls.filter(({ op }) => op === 'acquire').length, 2);
+  assert.equal(transport.calls.some(({ op }) => op.startsWith('stop:')), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'deliver'), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'release'), false);
 });
 
 test('start selects first configured ok enabled host with available capacity', async () => {

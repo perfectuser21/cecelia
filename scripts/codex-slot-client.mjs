@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { readFile as fsReadFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
@@ -684,7 +685,6 @@ async function commandStart(flags, positionals, transport, actor, hosts) {
   let prepared = false;
   let registered = false;
   try {
-    lease = await acquireExactLease(transport, expected, host);
     const prepare = assertPrepare(
       await transport.agent(host, [
         'prepare',
@@ -701,6 +701,7 @@ async function commandStart(flags, positionals, transport, actor, hosts) {
       host
     );
     prepared = true;
+    lease = await acquireExactLease(transport, expected, host);
     await transport.broker([
       'deliver',
       '--lease',
@@ -1279,6 +1280,9 @@ async function main() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))
+) {
   await main();
 }
