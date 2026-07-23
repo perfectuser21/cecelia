@@ -1028,6 +1028,7 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           NODE_ENV: test
+          CECELIA_TICK_ENABLED: 'false'
         run: |
           cd packages/brain
           node server.js > /tmp/brain.log 2>&1 &

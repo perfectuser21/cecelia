@@ -9,6 +9,7 @@ import { REPO_ROOT, realPool, fail, ok, testPrNumber, cleanupPrRow, runCommand, 
 
 const mode = process.argv[2];
 const PSQL_ARGS = ['-h', 'localhost', '-U', 'cecelia'];
+const QUERY_PSQL_ARGS = [...PSQL_ARGS, '-d', process.env.DB_NAME || 'cecelia_test'];
 const previewBaseDir = mkdtempSync(join(tmpdir(), 'preview-base-'));
 const seededPrs = [];
 let seededDbs = [];
@@ -19,7 +20,7 @@ function shDb(cmd, ...args) {
 
 async function dbExists(dbName) {
   const out = runCommand('psql', [
-    ...PSQL_ARGS,
+    ...QUERY_PSQL_ARGS,
     '-t',
     '-A',
     '-c',
