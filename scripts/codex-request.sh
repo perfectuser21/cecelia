@@ -37,6 +37,8 @@ CODEX_BIN="${CODEX_BIN:-codex}"
 MIN_REMAINING_SECONDS="${CODEX_MIN_REMAINING_SECONDS:-172800}"
 
 TEAM=""
+EXIT_GUARD_ACTIVE=0
+EXIT_STATE=""
 
 usage() {
   cat <<EOF
@@ -131,9 +133,32 @@ except Exception:
   log "剩余有效期检查通过（约 ${remaining} 秒 >= ${MIN_REMAINING_SECONDS} 秒）"
 }
 
+restore_exit_guard() {
+  local original_rc=$? restore_rc=0
+  trap - EXIT
+  if [[ "$EXIT_GUARD_ACTIVE" == "1" ]]; then
+    "$EXIT_GUARD" restore "$EXIT_STATE" || restore_rc=$?
+  fi
+  if [[ "$original_rc" -ne 0 ]]; then
+    exit "$original_rc"
+  fi
+  exit "$restore_rc"
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXIT_GUARD="${CODEX_EXIT_GUARD:-${SCRIPT_DIR}/codex-us-exit-guard.sh}"
+EXIT_STATE="${TMPDIR:-/tmp}/codex-us-exit-request-${TEAM}-$$.state"
+
+[[ -x "$EXIT_GUARD" ]] || die "美国出口守卫不可执行: ${EXIT_GUARD}"
+"$EXIT_GUARD" prepare "$EXIT_STATE" || die "美国出口门禁失败，未拉取 ${TEAM} token"
+EXIT_GUARD_ACTIVE=1
+trap restore_exit_guard EXIT
+
 assert_ssh
 pull_token
 assert_fresh_enough
 
 log "启动 codex（CODEX_HOME=${LOCAL_HOME}；用完不回传，美国侧 crontab 是唯一写者）"
-exec env CODEX_HOME="$LOCAL_HOME" "$CODEX_BIN"
+env CODEX_HOME="$LOCAL_HOME" "$CODEX_BIN"
+CODEX_RC=$?
+exit "$CODEX_RC"
