@@ -44,7 +44,7 @@
 ## 假设
 
 - [ASSUMPTION: payload 明确指定 `target_environment=local_api`，因此主验收由本地 evaluator 编排；xian-m1/xian-m4 真实接缝仍必须分别留证后才能判 done。]
-- [ASSUMPTION: PrepPRD 未提供 journey_id/step_id，本 Sprint 作为尚未挂载 Journey 的独立安全整改处理。]
+- [ASSUMPTION: 本 Sprint 按 task payload 的 anchor 锚定 `codex-slot-company-access` Journey、`secure-slot-lifecycle` Step 与 `broker-only-token-delivery` Golden Path。]
 - [ASSUMPTION: `mmv` 的允许 stable node ID/IP、身份映射和 agent root 配置由部署时的受控配置提供，不在 PRD 中写死具体值。]
 
 ## 预期受影响范围
@@ -122,7 +122,7 @@
 
 ## 累积 FR（本 line 已验收行为，本 sprint 不得回退/重复）
 
-<!-- 来源: task payload 无 journey_id，无法挂载 line 历史 -->
+<!-- 来源: payload.anchor.journey_id=codex-slot-company-access；该 line 当前无已完成/working ability 历史 -->
 - （本 line 暂无历史）
 
 ## E2E 验收
@@ -143,5 +143,6 @@
 ## journey_type_reason: 核心链路涉及 client、broker 与 xian-m1/xian-m4 远端 agent 的 SSH 协议、身份和生命周期。
 ## target_environment: local_api
 ## target_environment_reason: task payload 明确指定 local_api，由本地 evaluator 编排；远端 xian 主机接缝另行真验留证。
-## journey_id: none
-## step_id: none（PrepPRD 未锚定）
+## journey_id: codex-slot-company-access
+## step_id: secure-slot-lifecycle
+## gp_id: broker-only-token-delivery
