@@ -350,10 +350,15 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       && hasOpenHumanReview
       && Boolean(observed.pr?.head_sha)
       && deadlineState.review_head_sha === observed.pr.head_sha;
+    const decisionIsTerminal = [
+      ACTION.EXIT,
+      ACTION.MARK_FAILED,
+      ACTION.REPORT,
+    ].includes(decision.action);
 
     // ---- Deadline fence 2：derive 后 ----
     // wait/control 分支都在此 fence 之后，不能绕开硬上限。
-    if (deadlineExceeded(observed.run) && !deadlinePaused) {
+    if (deadlineExceeded(observed.run) && !deadlinePaused && !decisionIsTerminal) {
       await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }
