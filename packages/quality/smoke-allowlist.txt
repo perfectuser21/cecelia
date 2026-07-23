@@ -163,3 +163,4 @@ codex-grok-launcher-supervisor-smoke.sh
 preview-capacity-gate-and-destroyer-smoke.sh
 review-approve-auth-smoke.sh
 kernel-bounded-run-smoke.sh
+triage-officer-smoke.sh
