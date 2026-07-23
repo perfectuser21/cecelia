@@ -294,6 +294,73 @@ describe('append-only product convergence replay', () => {
     });
   });
 
+  test('legacy callback without verification_status remains a verified new-SHA round', () => {
+    const rows = [{
+      hop: 1,
+      action: 'spawn:generator-fix',
+      observed: {
+        trigger_sha: SHAS[0],
+        failure_class: 'product_failure',
+        failure_set: ['lint'],
+      },
+      detail: { reason: 'ci_fail' },
+    }, {
+      hop: 2,
+      action: 'verdict:generator-fix-callback',
+      observed: { trigger_hop: 1, pr_head_sha: SHAS[1] },
+      detail: { pr_head_sha: SHAS[1] },
+    }];
+
+    expect(derive(observedFor({
+      rows,
+      sha: SHAS[1],
+      failureSet: ['unit'],
+    }))).toMatchObject({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+    });
+  });
+
+  test('missing callback waits for one durable observation before a distinct terminal reason', () => {
+    const rows = [{
+      hop: 1,
+      action: 'spawn:generator-fix',
+      observed: {
+        trigger_sha: SHAS[0],
+        failure_class: 'product_failure',
+        failure_set: ['lint'],
+      },
+      detail: { reason: 'ci_fail' },
+    }];
+
+    expect(derive(observedFor({
+      rows,
+      sha: SHAS[0],
+      failureSet: ['lint'],
+    }))).toMatchObject({
+      phase: 'generate',
+      action: 'wait:generator_fix_callback',
+      reason: 'generator_fix_callback_pending',
+    });
+
+    rows.push({
+      hop: 2,
+      action: 'wait:generator_fix_callback',
+      observed: { trigger_hop: 1, pr: { head_sha: SHAS[0] } },
+      detail: { reason: 'generator_fix_callback_pending', trigger_hop: 1 },
+    });
+
+    expect(derive(observedFor({
+      rows,
+      sha: SHAS[0],
+      failureSet: ['lint'],
+    }))).toMatchObject({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'generator_fix_callback_missing_after_observation',
+    });
+  });
+
   test('an unstructured round between structured rounds does not consume patience', () => {
     const rows = [];
     appendVerifiedRound(rows, {
@@ -442,6 +509,51 @@ describe('patience approval is a one-shot observation unlock', () => {
 });
 
 describe('loop ordering and human-review side effect', () => {
+  test('missing callback writes one observation marker, then terminates without redispatch', async () => {
+    const history = [{
+      hop: 1,
+      action: 'spawn:generator-fix',
+      observed: {
+        trigger_sha: SHAS[0],
+        failure_class: 'product_failure',
+        failure_set: ['lint'],
+      },
+      detail: { reason: 'ci_fail' },
+    }];
+    const appended = [];
+    const deps = {
+      pool: { query: vi.fn(async () => ({ rows: [] })) },
+      collectGroundTruth: vi.fn(async () => observedFor({
+        rows: history,
+        sha: SHAS[0],
+        failureSet: ['lint'],
+      })),
+      nextHop: vi.fn(async () => Number(history.at(-1).hop) + 1),
+      appendHop: vi.fn(async (entry) => {
+        appended.push(entry);
+        history.push({ ...entry, hop: entry.hop });
+      }),
+      writeHeartbeat: vi.fn(async () => {}),
+      dispatch: vi.fn(),
+      sleep: vi.fn(async () => {}),
+      now: vi.fn(() => new Date('2026-07-23T08:00:00Z')),
+      log: vi.fn(),
+    };
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('generator_fix_callback_missing_after_observation');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toMatchObject({
+      action: 'wait:generator_fix_callback',
+      detail: {
+        reason: 'generator_fix_callback_pending',
+        trigger_hop: 1,
+      },
+    });
+  });
+
   test('recurrence dispatches Bark/human review and records its effect marker', async () => {
     const history = [];
     appendVerifiedRound(history, {

@@ -29,6 +29,7 @@ vi.mock('../../../packages/brain/src/lib/harness-orphan-guard.js', () => ({
 }));
 
 import callbackRouter from '../../../packages/brain/src/routes/harness-callback.js';
+import { deriveCounters } from '../../../packages/brain/src/orchestrator/counters.js';
 import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const RUN_ID = '80000000-0000-4000-8000-000000000008';
@@ -368,5 +369,49 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
     });
     expect(JSON.stringify(callbackRows[0])).not.toContain(FAKE_SHA);
     expect(resolver).toHaveBeenCalledWith(PR_URL);
+  });
+
+  test('resolver transport failure is verification_pending and does not trip no-progress', async () => {
+    const callbackRows = [];
+    const resolver = vi.fn(async () => {
+      throw new Error('GitHub rate limited');
+    });
+    installCallbackPersistence({ callbackRows });
+    const app = mountCallbackRouter({ resolver });
+
+    const response = await postCallback(
+      app,
+      callbackResult({ artifactSha: VERIFIED_SHA }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(callbackRows).toHaveLength(1);
+    expect(callbackRows[0]).toMatchObject({
+      observed: {
+        trigger_hop: runtime.attempt.hop,
+        pr_head_sha: SHA,
+      },
+      detail: {
+        pr_head_sha: SHA,
+        claimed_pr_head_sha: VERIFIED_SHA,
+        verification_status: 'verification_pending',
+      },
+    });
+    expect(callbackRows[0].detail).not.toHaveProperty('no_progress_reason');
+
+    const counters = deriveCounters([{
+      hop: runtime.attempt.hop,
+      action: 'spawn:generator-fix',
+      observed: {
+        trigger_sha: SHA,
+        failure_class: 'product_failure',
+      },
+      detail: { reason: 'ci_fail' },
+    }, {
+      hop: runtime.attempt.hop + 1,
+      ...callbackRows[0],
+    }], { proposeBranchMaxRn: 0 });
+    expect(counters.noProgress).toBe(false);
+    expect(counters.noProgressReason).toBeNull();
   });
 });
