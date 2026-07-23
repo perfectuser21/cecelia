@@ -115,6 +115,32 @@ describe('kernel deterministic handlers', () => {
     expect(d.pool.query.mock.calls.some(([sql]) => /verdict:judge/.test(sql))).toBe(false);
   });
 
+  it('judge 缺 failure_class 时落 null，不得用 evaluator 分类回填', async () => {
+    const d = deps();
+    d.judgeGate.mockResolvedValueOnce({
+      verdict: 'FAIL',
+      judged: true,
+      feedback: 'judge omitted classification',
+    });
+    const ctx = context({
+      observed: {
+        ...context().observed,
+        evaluateVerdict: {
+          verdict: 'FAIL',
+          pr_head_sha: 'sha-1',
+          failure_class: 'product_failure',
+        },
+      },
+    });
+
+    await createKernelHandlers(d)['spawn:judge'](ctx);
+
+    const verdictCall = d.pool.query.mock.calls.find(([sql]) => /verdict:judge/.test(sql));
+    const detail = JSON.parse(verdictCall[1][3]);
+    expect(detail.failure_class).toBeNull();
+    expect(detail.evaluator_failure_class).toBe('product_failure');
+  });
+
   it('human review 首次创建预览并通知', async () => {
     const d = deps();
     const result = await createKernelHandlers(d)['wait:human_review'](context());

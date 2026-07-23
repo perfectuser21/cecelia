@@ -105,6 +105,15 @@ describe('merged 短路（routeAfterPoll merged 语义）', () => {
     }));
     expect(r.action).toBe('report');
   });
+
+  it('no-progress 已落库后 PR 被 merge，merged 仍优先收敛为 done', () => {
+    const r = derive(baseObserved({
+      pr: { url: 'u', state: 'MERGED', ci: 'fail', merged: true, head_sha: 's' },
+      noProgress: true,
+      noProgressReason: 'no_progress_same_sha',
+    }));
+    expect(r).toEqual({ phase: 'done', action: 'report', reason: 'pr_merged' });
+  });
 });
 
 describe('规则 1：planning', () => {
