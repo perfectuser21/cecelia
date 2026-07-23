@@ -1,16 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   validateSegment,
   acquireLease,
+  atomicWriteJson,
   releaseLease,
   heartbeatLease,
   putSession,
   getSession,
   listSessions,
+  withDirLock,
 } from './codex-slot-store.mjs';
 
 async function tempRoot(t) {
@@ -61,6 +63,59 @@ test('同一 team 的并发 acquire 只有一个成功', async (t) => {
   assert.equal(fulfilled.length, 1);
   assert.equal(fulfilled[0].value.team, 'team1');
   assert.equal(fulfilled[0].value.state, 'active');
+});
+
+test('acquireLease honors caller account order when multiple accounts are free', async (t) => {
+  const root = await tempRoot(t);
+
+  const lease = await acquireLease({
+    root,
+    actor: 'alex',
+    sessionId: 'alex-infra-main',
+    host: 'xian-m4',
+    accounts: ['team2', 'team1'],
+    now: '2026-07-23T00:00:00Z',
+  });
+
+  assert.equal(lease.team, 'team2');
+});
+
+test('atomicWriteJson leaves one complete target and no temp residue under concurrent writes', async (t) => {
+  const root = await tempRoot(t);
+  const target = join(root, 'registry/leases/atomic.json');
+  const writes = Array.from({ length: 16 }, (_, index) => ({
+    writer: `writer-${index}`,
+    payload: `${index}`.repeat(4096),
+    updatedAt: `2026-07-23T00:${String(index).padStart(2, '0')}:00Z`,
+  }));
+
+  await Promise.all(writes.map((value) => atomicWriteJson(target, value)));
+
+  const stored = JSON.parse(await readFile(target, 'utf8'));
+  assert.deepEqual(stored, writes.find((value) => value.writer === stored.writer));
+  assert.deepEqual(
+    (await readdir(join(root, 'registry/leases'))).filter((entry) => entry.endsWith('.tmp')),
+    []
+  );
+});
+
+test('withDirLock removes lock directory after callback throw and can lock again', async (t) => {
+  const root = await tempRoot(t);
+  const lockPath = join(root, 'locks/failing.lock');
+
+  await assert.rejects(
+    withDirLock(lockPath, async () => {
+      throw new Error('callback failed');
+    }),
+    /callback failed/
+  );
+  assert.deepEqual(await readdir(join(root, 'locks')), []);
+
+  assert.equal(
+    await withDirLock(lockPath, async () => 'second acquisition'),
+    'second acquisition'
+  );
+  assert.deepEqual(await readdir(join(root, 'locks')), []);
 });
 
 test('release 拒绝 lease ID 不匹配且保留原租约', async (t) => {
