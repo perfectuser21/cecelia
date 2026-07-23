@@ -143,14 +143,17 @@ describe('B-03: 同四元组 (run_id, failure_class, trigger_sha, role) 最多�
       },
     ];
 
-    // TODO: import { deriveNoProgress } from 'ground-truth.js' 或等价函数
-    // const np = deriveNoProgress(decisionLogRows, { runId: 'run-1' });
-    // expect(np.noProgressSameSha).toBe(true);
-
     // 骨架验证：decision log 数据结构符合预期（触发 SHA 可以读取）
     const fixIntent = decisionLogRows.find((r) => r.action === 'spawn:generator-fix');
     const callback = decisionLogRows.find((r) => r.action === 'verdict:generator-fix-callback');
     expect(fixIntent.detail.trigger_sha).toBe('sha-abc');
     expect(callback.detail.pr_head_sha).toBe('sha-abc'); // 相同 → no progress
+
+    // 关键断言：deriveNoProgress 未实现时必须让测试为红（不可绕过）
+    // TODO: 实现后替换为以下断言：
+    // import { deriveNoProgress } from 'ground-truth.js'
+    // const np = deriveNoProgress(decisionLogRows, { runId: 'run-1' });
+    // expect(np.noProgressSameSha).toBe(true);
+    expect(true).toBe(false, 'not_implemented: deriveNoProgress from ground-truth.js 尚未实现，实现后删除此行并取消上方注释');
   });
 });

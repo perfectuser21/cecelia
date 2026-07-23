@@ -2,7 +2,7 @@
 
 **Task ID**: 1b997ed6-d984-46d4-8336-12bff5a5ba3c  
 **Sprint Dir**: sprints/07230920-relay-1b997ed6  
-**合同版本**: v1（首轮，无 reviewer feedback）  
+**合同版本**: v2（第二轮修订，基于 reviewer feedback R1）  
 **生成日期**: 2026-07-23
 
 ---
@@ -234,8 +234,35 @@ worker 超时后不能仅靠容器消失让 watchdog 猜，必须产生包含 `t
 
 ---
 
+## NFR 断言
+
+### NFR-05：向后兼容（harness_runtime:kernel-v1 路由切换）
+
+缺少 `harness_runtime: "kernel-v1"` 的任务不进入 Kernel 新路径，继续走旧 one-session/controller。
+
+**断言**：`packages/brain/src/harness-skill-relay.js` 或 `packages/brain/src/task-router.js` 中存在对 `harness_runtime` 字段的检查：只有 `harness_runtime === "kernel-v1"` 的任务才进入新 Kernel 流程；其他任务由现有路由处理，不受本次修改影响。
+
+双轨并行 E2E 验证（旧路径任务走旧路径）已显式排除于排除范围（见下方）。
+
+### NFR-07：migration 幂等性
+
+**本 Sprint 无 DB schema 变更，NFR-07 N/A。**
+
+本次修复仅变更 JavaScript 业务逻辑文件，不新增或修改任何 PostgreSQL schema、migration 文件或 DB 表结构。现有表（`initiative_runs`、`orchestrator_decision_log`、`harness_attempts`）schema 不变。
+
+### NFR-08：镜像验证（SUPERVISOR_DEADLINE_SECONDS）
+
+`scripts/codex-supervisor.mjs` 和 `scripts/grok-supervisor.mjs` 的 `SUPERVISOR_DEADLINE_SECONDS` 默认值必须从 28800 修改为动态计算值。
+
+**断言**：B-06 的 manual:bash 验收命令检查源文件不含 28800 硬编码。若 Docker 镜像在本 Sprint 内重建，须从镜像内验证实际值（命令见 contract-dod.md NFR-08 节）。若本 Sprint 内不重建镜像，镜像内验证推迟到重建时，源文件断言作为替代保障。
+
+---
+
 ## 边界与排除范围
 
+- **FR-11 回滚路由隔离**：缺少 `harness_runtime: kernel-v1` 的旧路径任务的 E2E 验证不在本 Sprint 自动化范围内（须双轨并行部署环境）。旧路径行为保持不变由 NFR-05 承诺；新路径安全性由 B-01/B-03/B-04/B-07 保证。（此处为显式排除，非静默省略）
+- **FR-12 条目 15（deadline 与 callback 竞态）**：已在 B-12 中添加对应 [BEHAVIOR] 断言和测试骨架（deadline-callback-race.test.js）。
 - Human Validation / RPA 类验收不在本 Sprint 自动化范围内，需人工确认
 - Fire Drill 在 CI-free 环境执行，不依赖 GitHub CI 绿色
 - 真实 docker spawn 的行为测试（FR-12 条目 13-14）需要 Docker 环境，CI 中以 stub 代替
+- NFR-08 镜像内验证（从实际镜像读取 SUPERVISOR_DEADLINE_SECONDS）：仅当 runner 镜像重建后执行；未重建时以源文件断言（B-06）代替
