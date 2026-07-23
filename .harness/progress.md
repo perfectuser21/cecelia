@@ -6,3 +6,4 @@
 planner: done (sprint-prd.md@951032688, invariants=20, fr=14)
 gan: done (contract-draft.md@34ac19fee, r2, verdict=APPROVED, 铁律覆盖=7/7, judgments_written=13, rubric=.harness/verdicts/gan-r2-34ac19fee.json)
 generator: pr_opened (branch cp-07230920-ws-1b997ed6, red=38c3f8e7a, green=60538b4fc)
+generator: done (pr=#4220, red=38c3f8e7a, green=60538b4fc)
