@@ -16,9 +16,9 @@
  *
  * 修复后期望：
  *   hop 56: verdict:judge（FAIL）
- *   hop 57: mark_failed（no_progress_same_sha：judge_fail 后 SHA 未前进）
- *   或
- *   hop 57: spawn:generator-fix（fix_cap 检查：fix >= MAX_FIX_ROUNDS 后 terminal）
+ *   hop 57: 首次 spawn:generator-fix（允许尝试修复）
+ *   下一跳：若该 trigger SHA 没有 resolver-verified 新 SHA callback，
+ *           mark_failed(no_progress_same_sha)，不得重复派 fix。
  *
  * Sprint: 07231527-relay-50170af2
  * TASK_ID: 50170af2-fefa-41a7-b0b4-dcf1a5d7b077
@@ -143,22 +143,9 @@ const D707_HOP57_66_REPEATED_FIX = Array.from({ length: 10 }, (_, i) => ({
 const D707_FINAL_SHA = 'dc7e1bc0a97e87d7a93b9f297cb8db6de6ae6cd7';
 
 describe('[BEHAVIOR] B-08 d707 hop 55-66 replay 不产生重复 fix', () => {
-
-  /**
-   * T-04-a: hop 56 verdict:judge FAIL → 路由正确（不是无限 generator-fix）
-   * 真实 Bug：verdict:judge FAIL 后 derive 循环 spawn:generator-fix（同 SHA，10 次重复）
-   * 修复后期望：judge FAIL + SHA 未变化 → no_progress_same_sha terminal
-   * 或：judge FAIL → mark_failed(fix_cap) 当 fixRound >= MAX
-   */
-  test('T-04-a: hop 56 verdict:judge FAIL + 同 SHA → 不继续 spawn:generator-fix（no-progress 或 fix_cap）', () => {
-    const logWithHop56 = [
-      ...D707_REAL_DECISION_LOG,
-      D707_HOP56_JUDGE_VERDICT,
-    ];
-
-    const counters = deriveCounters(logWithHop56, { proposeBranchMaxRn: 0 });
-
-    const observed = {
+  function replayObserved(logRows, overrides = {}) {
+    const counters = deriveCounters(logRows, { proposeBranchMaxRn: 1 });
+    return {
       run: { phase: 'judge', cost_usd: '5.00' },
       task: { status: 'in_progress', payload: {} },
       prdExists: true,
@@ -184,198 +171,135 @@ describe('[BEHAVIOR] B-08 d707 hop 55-66 replay 不产生重复 fix', () => {
       judgeVerdict: {
         verdict: 'FAIL',
         pr_head_sha: D707_FINAL_SHA,
-        feedback: '机械闸 FAIL：behavior_tests 缺 exit_code + log_tail 为空',
+        failure_class: 'product_failure',
       },
-      reviewRequired: false,
-      reviewApproved: false,
-      decisionLog: logWithHop56,
-      authCircuit: [],
-      callbackResult: null,
-      // fixRound=10 已超过旧 MAX_FIX_ROUNDS=20 很高（真实数据），实现后 MAX=3 会熔断
-      counters: { ...counters, pollCount: counters.pollCount ?? 0, ganCostUsd: 5.00 },
-    };
-
-    const result = derive(observed);
-
-    // 实现后期望：任意 terminal 动作（no_progress 或 fix_cap）
-    // 当前（先红）：无 no-progress 检测，judge_fail → generator-fix 无限循环
-    expect(result.action).not.toBe('spawn:generator-fix');
-    // 期望 terminal：mark_failed（fix_cap 或 no_progress_same_sha）
-    expect(['mark_failed', 'exit']).toContain(result.action);
-  });
-
-  /**
-   * T-04-b: hop 57 generator-fix callback same SHA → no_progress terminal
-   * 即使进了 generator-fix，callback same SHA 也必须 terminal
-   */
-  test('T-04-b: generator-fix callback same SHA → no_progress_same_sha', () => {
-    const prHeadSha = D707_FINAL_SHA;
-    const logWithSameShaFix = [
-      ...D707_REAL_DECISION_LOG.slice(0, 40), // 前 40 hop 的精简版
-      {
-        hop: 41,
-        action: 'spawn:generator-fix',
-        observed: {
-          trigger_sha: prHeadSha, // 记录当时的 PR head_sha
-          failure_class: 'judge_fail',
-        },
-      },
-      {
-        hop: 42,
-        action: 'verdict:generator-fix-callback',
-        observed: {
-          pr_head_sha: prHeadSha, // same SHA → no-progress
-        },
-      },
-    ];
-
-    const counters = deriveCounters(logWithSameShaFix, { proposeBranchMaxRn: 0 });
-
-    const observed = {
-      run: { phase: 'generate', cost_usd: '3.00' },
-      task: { status: 'in_progress', payload: {} },
-      prdExists: true,
-      contract: { approved: true, id: 'c-d707', row: {} },
-      pr: {
-        url: 'https://github.com/perfectuser21/cecelia/pull/4204',
-        state: 'OPEN',
-        merged: false,
-        ci: 'pass',
-        head_sha: prHeadSha, // SHA 仍未变化
-      },
-      inflight: { containers: [], host_pids: [] },
-      lastAgentExit: { code: null, auth_failed: false, action: null },
-      proposeBranchRn: 0,
-      ganLatestRoundVerdict: null,
-      generatorSpawned: true,
-      evaluateVerdict: null,
-      evaluateResult: null,
-      judgeVerdict: null,
-      reviewRequired: false,
-      reviewApproved: false,
-      decisionLog: logWithSameShaFix,
-      noProgress: true, // 实现后 ground-truth 推导此字段
-      noProgressReason: 'same_sha',
-      authCircuit: [],
-      callbackResult: null,
-      counters: {
-        ...counters,
-        pollCount: counters.pollCount ?? 0,
-        ganCostUsd: 3.00,
-        noProgress: true,
-      },
-    };
-
-    const result = derive(observed);
-
-    // 实现后期望：terminal
-    expect(result.action).toBe('mark_failed');
-    expect(result.reason).toBe('no_progress_same_sha');
-  });
-
-  /**
-   * T-04-c: MAX_FIX_ROUNDS=3 防止重复 fix（边界测试）
-   */
-  test('T-04-c: fixRound >= 3 → mark_failed(fix_cap)，不再是 20', () => {
-    const logRows = [
-      { hop: 1, action: 'spawn:generator', observed: {} },
-      { hop: 2, action: 'spawn:generator-fix', observed: { trigger_sha: 'sha-0' } },
-      { hop: 3, action: 'verdict:generator-fix-callback', observed: { pr_head_sha: 'sha-1' } },
-      { hop: 4, action: 'spawn:generator-fix', observed: { trigger_sha: 'sha-1' } },
-      { hop: 5, action: 'verdict:generator-fix-callback', observed: { pr_head_sha: 'sha-2' } },
-      { hop: 6, action: 'spawn:generator-fix', observed: { trigger_sha: 'sha-2' } },
-      { hop: 7, action: 'verdict:generator-fix-callback', observed: { pr_head_sha: 'sha-3' } },
-    ];
-
-    const counters = deriveCounters(logRows, { proposeBranchMaxRn: 0 });
-
-    const observed = {
-      run: { phase: 'generate', cost_usd: '5.00' },
-      task: { status: 'in_progress', payload: {} },
-      prdExists: true,
-      contract: { approved: true, id: 'c1', row: {} },
-      pr: { url: 'https://github.com/test/repo/pull/1', state: 'OPEN', merged: false, ci: 'fail', head_sha: 'sha-3' },
-      inflight: { containers: [], host_pids: [] },
-      lastAgentExit: { code: null, auth_failed: false, action: null },
-      proposeBranchRn: 0,
-      ganLatestRoundVerdict: null,
-      generatorSpawned: true,
-      evaluateVerdict: null,
-      evaluateResult: null,
-      judgeVerdict: null,
       reviewRequired: false,
       reviewApproved: false,
       decisionLog: logRows,
       authCircuit: [],
       callbackResult: null,
-      counters: { ...counters, pollCount: 0, ganCostUsd: 5.00 },
+      noProgress: counters.noProgress,
+      noProgressReason: counters.noProgressReason,
+      counters: { ...counters, ganCostUsd: 5.00 },
+      ...overrides,
     };
+  }
 
-    const result = derive(observed);
+  test('T-04-a: hop 56 product failure allows the first fix attempt', () => {
+    const logWithHop56 = [...D707_REAL_DECISION_LOG, D707_HOP56_JUDGE_VERDICT];
 
-    // 实现后（MAX_FIX_ROUNDS=3）：fixRound=3 触发 fix_cap
-    // 当前（先红）：MAX_FIX_ROUNDS=20，fixRound=3 < 20，会继续 generator-fix
-    expect(result.action).toBe('mark_failed');
-    expect(result.reason).toBe('fix_cap');
+    expect(derive(replayObserved(logWithHop56))).toMatchObject({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+    });
   });
 
-  /**
-   * T-04-d: d707 真实 replay 验证 hop 57 不再产生 generator-fix
-   * 综合测试：judge FAIL + no-progress 熔断
-   */
-  test('T-04-d: d707 真实 replay hop 56 judge FAIL 不产生 spawn:generator-fix', () => {
-    const logWithHop56 = [
+  test('T-04-b: an existing same-trigger fix without verified callback fails before a second dispatch', () => {
+    const firstFix = {
+      hop: 57,
+      action: 'spawn:generator-fix',
+      observed: {
+        trigger_sha: D707_FINAL_SHA,
+        failure_class: 'product_failure',
+        failure_set: null,
+        failure_set_key: null,
+      },
+      detail: { reason: 'judge_fail' },
+    };
+    const logWithoutCallback = [
       ...D707_REAL_DECISION_LOG,
       D707_HOP56_JUDGE_VERDICT,
+      firstFix,
     ];
 
-    const counters = deriveCounters(logWithHop56, { proposeBranchMaxRn: 0 });
-    const generatorFixHops = [];
+    expect(derive(replayObserved(logWithoutCallback))).toMatchObject({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'no_progress_same_sha',
+    });
+  });
 
-    const observed = {
-      run: { phase: 'judge', cost_usd: '5.00' },
-      task: { status: 'in_progress', payload: {} },
-      prdExists: true,
-      contract: { approved: true, id: 'c-d707', row: {} },
+  test('T-04-c: resolver-verified same-SHA callback remains immediately terminal', () => {
+    const firstFix = {
+      hop: 57,
+      action: 'spawn:generator-fix',
+      observed: {
+        trigger_sha: D707_FINAL_SHA,
+        failure_class: 'product_failure',
+        failure_set: null,
+        failure_set_key: null,
+      },
+    };
+    const sameShaCallback = {
+      hop: 58,
+      action: 'verdict:generator-fix-callback',
+      observed: {
+        trigger_hop: 57,
+        pr_head_sha: D707_FINAL_SHA,
+      },
+      detail: {
+        verification_status: 'verified',
+        pr_head_sha: D707_FINAL_SHA,
+      },
+    };
+    const rows = [
+      ...D707_REAL_DECISION_LOG,
+      D707_HOP56_JUDGE_VERDICT,
+      firstFix,
+      sameShaCallback,
+    ];
+
+    expect(derive(replayObserved(rows))).toMatchObject({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'no_progress_same_sha',
+    });
+  });
+
+  test('T-04-d: many resolver-verified advancing SHA rounds never terminate by fix count', () => {
+    const rows = [];
+    for (let index = 0; index < 8; index++) {
+      const triggerSha = String((index + 1) % 10).repeat(40);
+      const nextSha = String((index + 2) % 10).repeat(40);
+      const hop = rows.length + 1;
+      rows.push({
+        hop,
+        action: 'spawn:generator-fix',
+        observed: {
+          trigger_sha: triggerSha,
+          failure_class: 'product_failure',
+          failure_set: null,
+          failure_set_key: null,
+        },
+      }, {
+        hop: hop + 1,
+        action: 'verdict:generator-fix-callback',
+        observed: { trigger_hop: hop, pr_head_sha: nextSha },
+        detail: { verification_status: 'verified', pr_head_sha: nextSha },
+      });
+    }
+    const currentSha = '9'.repeat(40);
+    const observed = replayObserved(rows, {
+      run: { phase: 'generate', cost_usd: '5.00' },
       pr: {
         url: 'https://github.com/perfectuser21/cecelia/pull/4204',
         state: 'OPEN',
         merged: false,
-        ci: 'pass',
-        head_sha: D707_FINAL_SHA,
+        ci: 'fail',
+        head_sha: currentSha,
+        failed_checks: null,
       },
-      inflight: { containers: [], host_pids: [] },
-      lastAgentExit: { code: null, auth_failed: false, action: null },
-      proposeBranchRn: 1,
-      ganLatestRoundVerdict: null,
-      generatorSpawned: true,
-      evaluateVerdict: { verdict: 'PASS', pr_head_sha: D707_FINAL_SHA, failure_class: null },
-      evaluateResult: null,
-      judgeVerdict: { verdict: 'FAIL', pr_head_sha: D707_FINAL_SHA },
-      reviewRequired: false,
-      reviewApproved: false,
-      decisionLog: logWithHop56,
-      authCircuit: [],
-      callbackResult: null,
-      counters: { ...counters, pollCount: 0, ganCostUsd: 5.00 },
-    };
+      evaluateVerdict: null,
+      judgeVerdict: null,
+    });
 
-    const result = derive(observed);
-
-    if (result.action === 'spawn:generator-fix') {
-      generatorFixHops.push(57);
-    }
-
-    // 验证：hop 57 不产生 generator-fix（真实 Bug fix 后）
-    expect(generatorFixHops).toHaveLength(0);
-    expect(result.action).not.toBe('spawn:generator-fix');
+    expect(derive(observed)).toMatchObject({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+    });
   });
 
-  /**
-   * T-04-e: d707 真实 hop 57-66 重复模式验证
-   * 验证真实 Bug：10 次 spawn:generator-fix 同一 SHA，是 no-progress 熔断缺失导致
-   */
-  test('T-04-e: 真实 d707 hop 57-66 全部同 SHA（no-progress 应熔断）', () => {
+  test('T-04-e: the historical fixture contains ten repeated same-SHA fix intents', () => {
     // 验证 fixture 本身：所有重复 fix hop 确实是同一 SHA
     const uniqueShas = new Set(
       D707_HOP57_66_REPEATED_FIX.map((h) => h.observed.pr.head_sha),
