@@ -75,7 +75,9 @@ while IFS= read -r sha; do
     REAL_TEST_FOUND=0
     while IFS= read -r tf; do
       [ -z "$tf" ] && continue
-      [ ! -f "$tf" ] && continue
+      # 测试可能在后续 commit 毕业 rename；必须读该 commit 的 Git 对象，
+      # 不能用当前工作树路径存在性判断历史 Red。
+      git cat-file -e "$sha:$tf" 2>/dev/null || continue
       # 此 commit 加的内容（diff +）必须含至少一个非 skip 的 it/test
       ADDED=$(git show "$sha" -- "$tf" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' || true)
       if echo "$ADDED" | grep -qE "(^|[^a-zA-Z\.])(it|test)\s*\("; then
