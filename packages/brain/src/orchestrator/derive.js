@@ -246,10 +246,15 @@ function deriveVerdictChain(observed) {
     return { phase: 'evaluate', action: 'spawn:judge', reason: 'evaluate_passed_awaiting_judge' };
   }
 
-  // 4c. judge FAIL(本 sha) → generator-fix（P0-2 显式分支；新 commit 改 SHA，旧 verdict 天然作废）
+  // 4c. judge FAIL(本 sha) → 按 failure_class 显式分支；缺失分类归 unknown 等人工。
   if (!isPassVerdict(judgeRow.verdict)) {
     if (judgeRow.failure_class == null) {
-      return fixRoute('judge_fail');
+      return deriveFailureClassRoute(
+        'unknown',
+        counters,
+        observed.decisionLog,
+        pr.head_sha,
+      );
     }
     return deriveFailureClassRoute(
       judgeRow.failure_class,
