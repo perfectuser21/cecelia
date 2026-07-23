@@ -130,13 +130,14 @@ printf '\n' >>"$MOCK_COMMAND_LOG"
 command_arg="${!#}"
 remote_host="${@: -2:1}"
 remote_home="$MOCK_REMOTE_ROOT/$remote_host"
+remote_shell="${MOCK_REMOTE_LOGIN_SHELL:-/bin/sh}"
 mkdir -p "$remote_home"
 if [[ "$command_arg" == *"shasum -a 256"* ]]; then
   if [[ "${MOCK_REMOTE_SHA_MODE:-ok}" == "mismatch" ]]; then
     printf '%064d  remote.new\n' 0
     exit 0
   fi
-  HOME="$remote_home" /bin/sh -c "$command_arg"
+  HOME="$remote_home" "$remote_shell" -c "$command_arg"
   exit $?
 fi
 
@@ -147,7 +148,7 @@ if [[ ! -t 0 ]]; then
       >>"$MOCK_COMMAND_LOG"
   fi
 fi
-HOME="$remote_home" /bin/sh -c "$command_arg"
+HOME="$remote_home" "$remote_shell" -c "$command_arg"
 MOCK
 
   cat >"$mock_bin/mv" <<'MOCK'
@@ -584,8 +585,8 @@ test_role_isolation_and_all_defaults() {
   assert_not_contains "agent 不上传 client" "codex-slot-client.mjs" "$agent_log"
   assert_contains "agent 创建 slot 根并设 700" \
     'mkdir -p "$HOME/.codex-slots"' "$agent_log"
-  assert_contains "agent 部署声明 exit node 值为 mmv" \
-    "exit_node='mmv'" "$agent_log"
+  assert_contains "agent 最终事务明确交给 /bin/sh -c" \
+    "/bin/sh -c " "$agent_log"
   assert_contains "agent 部署导出 CODEX_SLOT_EXIT_NODE" \
     'CODEX_SLOT_EXIT_NODE="$exit_node"' "$agent_log"
   assert_contains "agent 文件设 755" "chmod 755" "$agent_log"
@@ -622,6 +623,56 @@ test_role_isolation_and_all_defaults() {
     "xian-m4:.local/lib/codex-slot/codex-slot-agent.mjs.new." "$all_log"
   assert_contains "all 默认 agent 含 xian-m1" \
     "xian-m1:.local/lib/codex-slot/codex-slot-agent.mjs.new." "$all_log"
+}
+
+test_remote_zsh_executes_multi_file_transactions() {
+  local root
+  root="$(new_case "remote-zsh-'special")"
+  assert_true "真实 /bin/zsh 可用于远端默认 shell 回归" test -x /bin/zsh
+
+  local status=0
+  MOCK_REMOTE_LOGIN_SHELL=/bin/zsh \
+    run_install "$root" --all >"$root/out" 2>&1 || status=$?
+  assert_eq "远端默认 zsh 时 all 安装成功" "0" "$status"
+
+  local host
+  local role
+  for host in mmv xian-m4 xian-m1; do
+    if [[ "$host" == "mmv" ]]; then
+      role="broker"
+    else
+      role="agent"
+    fi
+    local base="$root/remotes/$host/.local/lib/codex-slot"
+    assert_true "$host zsh 事务安装独立 $role 文件" \
+      test -f "$base/codex-slot-$role.mjs"
+    assert_true "$host zsh 事务安装独立 store 文件" \
+      test -f "$base/codex-slot-store.mjs"
+    assert_true "$host zsh 事务不生成错误合并文件名" \
+      test ! -e "$base/codex-slot-$role.mjs codex-slot-store.mjs"
+    assert_true "$host zsh 事务不遗留 store staging" \
+      sh -c '! find "$1" -maxdepth 1 -name "codex-slot-store.mjs.new.*" -print -quit | grep -q .' \
+        sh "$base"
+  done
+}
+
+test_remote_replacement_values_cannot_escape_final_command() {
+  local root
+  root="$(new_case "remote-quote-guard")"
+  local escaped="$root/escaped"
+  local status=0
+  CODEX_SLOT_EXIT_NODE="mmv'; touch '$escaped'; \$(touch '$escaped')" \
+    run_install "$root" --agent-host xian-m4 >"$root/out" 2>&1 || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    pass "带单引号和特殊文本的替换值在最终事务前拒绝"
+  else
+    fail "带单引号和特殊文本的替换值在最终事务前拒绝" \
+      "installer unexpectedly succeeded"
+  fi
+  assert_true "特殊替换文本不能创建逃逸文件" test ! -e "$escaped"
+  assert_eq "非法 exit-node 不触发 SSH/SCP" "0" \
+    "$(grep -Ec '^(ssh|scp)' "$root/commands.log" || true)"
 }
 
 test_sha_mismatch_and_transfer_failure_do_not_move() {
@@ -1043,6 +1094,8 @@ test_installed_client_entry_runs_real_esm
 test_client_final_transaction_failures_restore_everything
 test_path_component_detection
 test_role_isolation_and_all_defaults
+test_remote_zsh_executes_multi_file_transactions
+test_remote_replacement_values_cannot_escape_final_command
 test_sha_mismatch_and_transfer_failure_do_not_move
 test_unique_staging_names
 test_remote_second_file_failures_restore_content_and_mode

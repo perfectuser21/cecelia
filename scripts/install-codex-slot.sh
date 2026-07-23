@@ -78,6 +78,16 @@ validate_host() {
   esac
 }
 
+posix_single_quote() {
+  local value="$1"
+  printf "'"
+  while [[ "$value" == *"'"* ]]; do
+    printf '%s%s' "${value%%\'*}" "'\\''"
+    value="${value#*\'}"
+  done
+  printf "%s'" "$value"
+}
+
 parse_args() {
   if [[ "$#" -eq 0 ]]; then
     usage
@@ -588,6 +598,7 @@ deploy_remote_role() {
   local new_words=""
   local exit_node="${CODEX_SLOT_EXIT_NODE:-mmv}"
   local final_command
+  local quoted_final_command
   local lock_ttl
 
   validate_host "$host"
@@ -810,8 +821,9 @@ REMOTE_INSTALL
   final_command="${final_command//@LOCK_TTL@/$lock_ttl}"
   final_command="${final_command//@FILES@/$files_words}"
   final_command="${final_command//@NEW_FILES@/$new_words}"
+  quoted_final_command="$(posix_single_quote "$final_command")"
 
-  ssh "${SSH_OPTIONS[@]}" "$host" "$final_command"
+  ssh "${SSH_OPTIONS[@]}" "$host" "/bin/sh -c $quoted_final_command"
   REMOTE_CLEANUP_HOST=""
   REMOTE_CLEANUP_PATHS=()
   printf 'Installed codex-slot %s on %s\n' "$role" "$host"
