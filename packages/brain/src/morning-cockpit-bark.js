@@ -13,6 +13,7 @@
  */
 
 import { sendBark } from './notifier.js';
+import { LEADERBOARD_KEY } from './triage-officer-rank.js';
 
 /** 触发小时（UTC）= 北京时间 08:30 */
 const TRIGGER_HOUR_UTC = 0;
@@ -79,6 +80,46 @@ async function writeSentinel(pool) {
 }
 
 /**
+ * 读取排序官榜单（best-effort，失败降级 null）
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{leaderboard: Array, budget: object, veto_deadline: string, anomaly_lines: string[]} | null>}
+ */
+async function fetchTriageLeaderboard(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT value_json FROM working_memory WHERE key = $1 LIMIT 1`,
+      [LEADERBOARD_KEY],
+    );
+    if (!rows.length) return null;
+    const record = rows[0].value_json;
+    if (!record?.leaderboard?.length) return null;
+    const generatedAt = record.generated_at ? new Date(record.generated_at) : null;
+    // 超过 20h 的榜单不展示
+    if (generatedAt && (Date.now() - generatedAt.getTime()) > 20 * 60 * 60 * 1000) return null;
+    return record;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 格式化否决截止时间（北京时间 HH:mm）
+ */
+function fmtVetoDeadline(isoStr) {
+  if (!isoStr) return '';
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(isoStr));
+  } catch {
+    return '';
+  }
+}
+
+/**
  * 采集简报数据：完成率 + 在途任务数。
  * @param {import('pg').Pool} pool
  * @returns {Promise<{completionRate: string, inProgressCount: number}>}
@@ -138,15 +179,34 @@ export async function runMorningCockpitBark(pool) {
     return { skipped: true, reason: 'already_sent_today' };
   }
 
-  // 3. 采集简报数据
-  const { completionRate, inProgressCount } = await buildBriefData(pool);
+  // 3. 采集简报数据 + 榜单（并行，榜单 best-effort）
+  const [{ completionRate, inProgressCount }, triageBoard] = await Promise.all([
+    buildBriefData(pool),
+    fetchTriageLeaderboard(pool),
+  ]);
 
   // 4. 构造推送内容
   const title = '☀️ 主理人指挥舱晨报';
-  const body = [
+  const lines = [
     `完成率 ${completionRate}｜进行中 ${inProgressCount} 个任务`,
-    `点击进入指挥舱 →`,
-  ].join('\n');
+  ];
+
+  if (triageBoard?.leaderboard?.length) {
+    const topItems = triageBoard.leaderboard.slice(0, 3);
+    lines.push(`今日排序官 Top${triageBoard.budget?.top_n ?? topItems.length}：`);
+    topItems.forEach((item) => {
+      lines.push(`  ${item.rank}. [${item.priority}] ${item.title.slice(0, 30)}`);
+    });
+    const anomaly = (triageBoard.anomaly_lines ?? []);
+    if (anomaly.length) {
+      lines.push(`⚠️ 烧率异常线：${anomaly.join('、')}`);
+    }
+    const vetoTime = fmtVetoDeadline(triageBoard.veto_deadline);
+    if (vetoTime) lines.push(`否决窗至 ${vetoTime}，逾时自动放行`);
+  }
+
+  lines.push(`点击进入指挥舱 →`);
+  const body = lines.join('\n');
 
   // 5. 发送 Bark（复用 notifier.js sendBark，dedupeKey 二重去重）
   const dedupeKey = `morning-cockpit-bark:${new Date().toISOString().slice(0, 10)}`;
@@ -158,6 +218,6 @@ export async function runMorningCockpitBark(pool) {
   // 6. 写入 sentinel（无论 Bark 是否 token 可用，避免重复调 API）
   await writeSentinel(pool);
 
-  console.log(`[morning-cockpit-bark] 推送完成 sent=${sent} url=${DASHBOARD_URL}`);
-  return { sent: true, completionRate, inProgressCount };
+  console.log(`[morning-cockpit-bark] 推送完成 sent=${sent} board_items=${triageBoard?.leaderboard?.length ?? 0}`);
+  return { sent: true, completionRate, inProgressCount, triage_items: triageBoard?.leaderboard?.length ?? 0 };
 }
