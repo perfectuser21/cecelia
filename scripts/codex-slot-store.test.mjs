@@ -1,8 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   validateSegment,
   acquireLease,
@@ -14,6 +25,10 @@ import {
   listSessions,
   withDirLock,
 } from './codex-slot-store.mjs';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function tempRoot(t) {
   const root = await mkdtemp(join(tmpdir(), 'codex-slot-store-'));
@@ -34,6 +49,108 @@ function session(sessionId, actor, extra = {}) {
     updatedAt: '2026-07-23T00:00:00Z',
     ...extra,
   };
+}
+
+async function writeLockOwner(lockPath, owner) {
+  await mkdir(lockPath, { recursive: true });
+  await writeFile(
+    join(lockPath, 'owner.json'),
+    `${JSON.stringify(owner, null, 2)}\n`,
+    'utf8'
+  );
+}
+
+async function readLockOwner(lockPath) {
+  return JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8'));
+}
+
+async function pathExists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function writeNeverReadyLockf(root) {
+  const lockfPath = join(root, 'never-ready-lockf.mjs');
+  await writeFile(
+    lockfPath,
+    `#!/usr/bin/env node
+process.stdin.resume();
+`,
+    'utf8'
+  );
+  await chmod(lockfPath, 0o755);
+  return lockfPath;
+}
+
+async function writeReadyThenExitLockf(root) {
+  const lockfPath = join(root, 'ready-then-exit-lockf.mjs');
+  await writeFile(
+    lockfPath,
+    `#!/usr/bin/env node
+import { stat } from 'node:fs/promises';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const markerPath = process.env.CODEX_SLOT_LOCKF_EXIT_AFTER_FILE;
+process.stdout.write('READY\\n');
+
+const deadline = Date.now() + 2000;
+while (markerPath && Date.now() < deadline) {
+  try {
+    await stat(markerPath);
+    break;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+    await sleep(10);
+  }
+}
+
+process.stderr.write('helper self-terminated after READY\\n');
+process.exit(66);
+`,
+    'utf8'
+  );
+  await chmod(lockfPath, 0o755);
+  return lockfPath;
+}
+
+function waitForChild(child, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`child process timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('close', (exitCode, signal) => {
+      clearTimeout(timer);
+      resolve({ exitCode, signal, stdout, stderr });
+    });
+  });
 }
 
 test('rejects empty and traversal path segments', () => {
@@ -109,13 +226,222 @@ test('withDirLock removes lock directory after callback throw and can lock again
     }),
     /callback failed/
   );
-  assert.deepEqual(await readdir(join(root, 'locks')), []);
+  assert.equal(await pathExists(lockPath), false);
 
   assert.equal(
     await withDirLock(lockPath, async () => 'second acquisition'),
     'second acquisition'
   );
-  assert.deepEqual(await readdir(join(root, 'locks')), []);
+  assert.equal(await pathExists(lockPath), false);
+});
+
+test('withDirLock serializes concurrent long callbacks with a kernel lock', async (t) => {
+  const root = await tempRoot(t);
+  const lockPath = join(root, 'locks/concurrent.lock');
+  let activeCount = 0;
+  let maxActiveCount = 0;
+  const entries = [];
+
+  async function runWithLock(token, pid) {
+    return withDirLock(
+      lockPath,
+      async () => {
+        activeCount += 1;
+        maxActiveCount = Math.max(maxActiveCount, activeCount);
+        entries.push(token);
+
+        const owner = await readLockOwner(lockPath);
+        assert.equal(owner.token, token);
+        assert.equal(owner.pid, pid);
+
+        await sleep(80);
+
+        activeCount -= 1;
+        return token;
+      },
+      {
+        token,
+        pid,
+        hostname: hostname(),
+        timeoutMs: 1000,
+      }
+    );
+  }
+
+  const results = await Promise.all([
+    runWithLock('owner-a', 11_111),
+    runWithLock('owner-b', 22_222),
+  ]);
+
+  assert.deepEqual(results.sort(), ['owner-a', 'owner-b']);
+  assert.deepEqual(entries.sort(), ['owner-a', 'owner-b']);
+  assert.equal(maxActiveCount, 1);
+  assert.equal(await pathExists(lockPath), false);
+  assert.equal(await pathExists(`${lockPath}.kernel`), true);
+});
+
+test('withDirLock timeout kills helper and does not run callback before READY', async (t) => {
+  const root = await tempRoot(t);
+  const lockPath = join(root, 'locks/timeout.lock');
+  const lockfPath = await writeNeverReadyLockf(root);
+  let called = false;
+
+  await assert.rejects(
+    withDirLock(
+      lockPath,
+      async () => {
+        called = true;
+      },
+      {
+        lockfPath,
+        timeoutMs: 25,
+      }
+    ),
+    /timed out waiting for lock/
+  );
+
+  assert.equal(called, false);
+});
+
+test('withDirLock fail-stops when helper exits after READY while callback is running', async (t) => {
+  const root = await tempRoot(t);
+  const lockPath = join(root, 'locks/compromised.lock');
+  const lockfPath = await writeReadyThenExitLockf(root);
+  const enteredPath = join(root, 'entered');
+  const finishedPath = join(root, 'finished');
+  const childPath = join(root, 'compromised-child.mjs');
+  const storeUrl = pathToFileURL(join(process.cwd(), 'scripts/codex-slot-store.mjs')).href;
+
+  await writeFile(
+    childPath,
+    `import { writeFile } from 'node:fs/promises';
+import { withDirLock } from ${JSON.stringify(storeUrl)};
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const [, , lockPath, lockfPath, enteredPath, finishedPath] = process.argv;
+
+await withDirLock(
+  lockPath,
+  async () => {
+    await writeFile(enteredPath, 'entered\\n', 'utf8');
+    await sleep(1000);
+    await writeFile(finishedPath, 'finished\\n', 'utf8');
+  },
+  {
+    lockfPath,
+    timeoutMs: 1000,
+  }
+);
+`,
+    'utf8'
+  );
+
+  const child = spawn(
+    process.execPath,
+    [childPath, lockPath, lockfPath, enteredPath, finishedPath],
+    {
+      env: {
+        ...process.env,
+        CODEX_SLOT_LOCKF_EXIT_AFTER_FILE: enteredPath,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  );
+  const result = await waitForChild(child);
+
+  assert.equal(result.exitCode, 70, result.stderr);
+  assert.equal(result.signal, null);
+  assert.equal(await pathExists(enteredPath), true);
+  assert.equal(await pathExists(finishedPath), false);
+
+  assert.equal(
+    await withDirLock(
+      lockPath,
+      async () => 'reacquired',
+      {
+        timeoutMs: 1000,
+      }
+    ),
+    'reacquired'
+  );
+});
+
+test('withDirLock ignores and removes legacy .mutating directories', async (t) => {
+  const root = await tempRoot(t);
+  const lockPath = join(root, 'locks/legacy.lock');
+  await mkdir(`${lockPath}.mutating`, { recursive: true });
+  await writeFile(join(`${lockPath}.mutating`, 'owner.json'), '{"legacy":true}\n', 'utf8');
+
+  assert.equal(
+    await withDirLock(
+      lockPath,
+      async () => {
+        const owner = await readLockOwner(lockPath);
+        assert.equal(owner.token, 'fresh-owner');
+        return 'acquired';
+      },
+      {
+        token: 'fresh-owner',
+        timeoutMs: 500,
+      }
+    ),
+    'acquired'
+  );
+
+  assert.equal(await pathExists(lockPath), false);
+  assert.equal(await pathExists(`${lockPath}.mutating`), false);
+});
+
+test('withDirLock finally does not delete a replacement with the same token but different owner', async (t) => {
+  const root = await tempRoot(t);
+  const lockPath = join(root, 'locks/replaced-same-token.lock');
+  const replacementOwner = {
+    token: 'shared-token',
+    pid: 22_222,
+    hostname: hostname(),
+    acquiredAtMs: 2_000,
+  };
+
+  assert.equal(
+    await withDirLock(
+      lockPath,
+      async () => {
+        const originalOwner = await readLockOwner(lockPath);
+        assert.equal(originalOwner.token, 'shared-token');
+        assert.equal(originalOwner.pid, 11_111);
+
+        await rm(lockPath, { recursive: true, force: true });
+        await writeLockOwner(lockPath, replacementOwner);
+        return 'callback-result';
+      },
+      {
+        token: 'shared-token',
+        pid: 11_111,
+        hostname: hostname(),
+        nowMs: () => 1_000,
+      }
+    ),
+    'callback-result'
+  );
+
+  assert.deepEqual(await readLockOwner(lockPath), replacementOwner);
+  assert.equal(await pathExists(`${lockPath}.kernel`), true);
+});
+
+test('atomicWriteJson removes its temp file when rename fails', async (t) => {
+  const root = await tempRoot(t);
+  const target = join(root, 'target.json');
+  await mkdir(target);
+
+  await assert.rejects(atomicWriteJson(target, { value: 'cannot replace directory' }));
+
+  assert.deepEqual(
+    (await readdir(root)).filter((entry) => entry.endsWith('.tmp')),
+    []
+  );
 });
 
 test('release 拒绝 lease ID 不匹配且保留原租约', async (t) => {
