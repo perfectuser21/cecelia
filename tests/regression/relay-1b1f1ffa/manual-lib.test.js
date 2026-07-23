@@ -20,4 +20,27 @@ describe('runQuietCommand [BEHAVIOR]', () => {
       rmSync(workDir, { recursive: true, force: true });
     }
   });
+
+  it('把 CI 的 DB_PASSWORD 映射为 PostgreSQL CLI 识别的 PGPASSWORD', () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'quiet-command-env-'));
+    const marker = join(workDir, 'pgpassword-forwarded');
+    const oldDbPassword = process.env.DB_PASSWORD;
+    const oldPgPassword = process.env.PGPASSWORD;
+    process.env.DB_PASSWORD = 'ci-db-secret';
+    delete process.env.PGPASSWORD;
+    try {
+      runQuietCommand(process.execPath, [
+        '-e',
+        "if (process.env.PGPASSWORD !== 'ci-db-secret') process.exit(2); require('fs').writeFileSync(process.argv[1], process.env.PGPASSWORD)",
+        marker,
+      ]);
+      expect(readFileSync(marker, 'utf8')).toBe('ci-db-secret');
+    } finally {
+      if (oldDbPassword === undefined) delete process.env.DB_PASSWORD;
+      else process.env.DB_PASSWORD = oldDbPassword;
+      if (oldPgPassword === undefined) delete process.env.PGPASSWORD;
+      else process.env.PGPASSWORD = oldPgPassword;
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
 });

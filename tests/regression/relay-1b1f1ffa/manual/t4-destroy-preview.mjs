@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync 
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { spawn } from 'child_process';
-import { REPO_ROOT, realPool, fail, ok, testPrNumber, cleanupPrRow, runQuietCommand } from './_lib.mjs';
+import { REPO_ROOT, realPool, fail, ok, testPrNumber, cleanupPrRow, runCommand, runQuietCommand } from './_lib.mjs';
 
 const mode = process.argv[2];
 const PSQL_ARGS = ['-h', 'localhost', '-U', 'cecelia'];
@@ -18,9 +18,13 @@ function shDb(cmd, ...args) {
 }
 
 async function dbExists(dbName) {
-  const out = execSync(
-    `psql ${PSQL_ARGS.join(' ')} -t -A -c "SELECT 1 FROM pg_database WHERE datname='${dbName}'"`,
-  ).toString().trim();
+  const out = runCommand('psql', [
+    ...PSQL_ARGS,
+    '-t',
+    '-A',
+    '-c',
+    `SELECT 1 FROM pg_database WHERE datname='${dbName}'`,
+  ]).toString().trim();
   return out === '1';
 }
 

@@ -5,9 +5,16 @@ import { randomUUID } from 'crypto';
 export const GIB = 1073741824;
 export const REPO_ROOT = process.env.REPO_ROOT || execSync('git rev-parse --show-toplevel').toString().trim();
 
+export function runCommand(command, args = [], options = {}) {
+  const env = { ...process.env };
+  // CI 统一注入 DB_PASSWORD；PostgreSQL CLI 只读取 PGPASSWORD，否则会卡在交互式密码提示。
+  if (!env.PGPASSWORD && env.DB_PASSWORD) env.PGPASSWORD = env.DB_PASSWORD;
+  return execFileSync(command, args, { ...options, env });
+}
+
 /** 动态手测无需保留命令输出；直接丢弃可避免 execSync 默认 maxBuffer 导致 ENOBUFS。 */
 export function runQuietCommand(command, args = []) {
-  execFileSync(command, args, { stdio: 'ignore' });
+  runCommand(command, args, { stdio: 'ignore' });
 }
 
 /** 真实 pool（NODE_ENV=test 强制走 cecelia_test，db-config.js 的 guard 保证不会碰生产库） */
