@@ -62,10 +62,13 @@ function renderRemoteScript(script) {
   return quotePosix(script);
 }
 
-function renderNodeRemoteCommand(script, args) {
+function renderNodeRemoteCommand(script, args, logicalHost) {
   return [
     'env',
     `PATH=${REMOTE_FIXED_PATH}`,
+    ...(logicalHost === undefined
+      ? []
+      : [`CODEX_SLOT_HOST=${validateHost(logicalHost)}`]),
     'node',
     renderRemoteScript(script),
     ...args.map(quotePosix),
@@ -1229,7 +1232,11 @@ export async function createSshTransport(options = {}) {
       ...(broker ? ['-T'] : []),
       ...SSH_OPTIONS,
       host,
-      renderNodeRemoteCommand(script, args),
+      renderNodeRemoteCommand(
+        script,
+        args,
+        broker ? undefined : validateHost(host)
+      ),
     ];
     let result;
     try {

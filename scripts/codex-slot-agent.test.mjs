@@ -302,6 +302,48 @@ test('health reports host disk capacity and enabled state', async (t) => {
   assert.equal(linux.execCalls[0].args.at(-1), linux.home);
 });
 
+test('health reports CODEX_SLOT_HOST as the logical hostname when deps hostname is absent', async (t) => {
+  const previous = process.env.CODEX_SLOT_HOST;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CODEX_SLOT_HOST;
+    else process.env.CODEX_SLOT_HOST = previous;
+  });
+  process.env.CODEX_SLOT_HOST = 'xian-m1';
+  const { deps } = await makeDeps(t);
+  delete deps.hostname;
+
+  const result = await runAgent(['health'], deps);
+
+  assert.equal(result.hostname, 'xian-m1');
+});
+
+test('deps hostname takes precedence over CODEX_SLOT_HOST and is strictly validated', async (t) => {
+  const previous = process.env.CODEX_SLOT_HOST;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CODEX_SLOT_HOST;
+    else process.env.CODEX_SLOT_HOST = previous;
+  });
+  process.env.CODEX_SLOT_HOST = 'xian-m1';
+  const valid = await makeDeps(t, { hostname: () => 'xian-m4' });
+  assert.equal((await runAgent(['health'], valid.deps)).hostname, 'xian-m4');
+
+  const invalid = await makeDeps(t, { hostname: () => '../physical-host' });
+  await assert.rejects(runAgent(['health'], invalid.deps), /unsafe hostname/);
+});
+
+test('invalid CODEX_SLOT_HOST fails closed instead of falling back to OS hostname', async (t) => {
+  const previous = process.env.CODEX_SLOT_HOST;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CODEX_SLOT_HOST;
+    else process.env.CODEX_SLOT_HOST = previous;
+  });
+  process.env.CODEX_SLOT_HOST = 'xian-m4;touch-pwned';
+  const { deps } = await makeDeps(t);
+  delete deps.hostname;
+
+  await assert.rejects(runAgent(['health'], deps), /unsafe hostname/);
+});
+
 test('health samples tailscale status --json and accepts the selected online mmv peer', async (t) => {
   const { deps, execCalls } = await makeDeps(t, {
     processHook: async ({ cmd, args }) => {
