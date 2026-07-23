@@ -28,7 +28,8 @@ function findHandler(router, path, method = 'post') {
     (l) => l.route?.path === path && l.route?.methods?.[method]
   );
   if (!layer) throw new Error(`route ${method} ${path} not found`);
-  return layer.route.stack[0].handle;
+  // 路由前挂了限流中间件（stack[0]），业务 handler 取末位
+  return layer.route.stack[layer.route.stack.length - 1].handle;
 }
 
 function mkReq({ taskId = '11111111-2222-3333-4444-555555555555', token, body = {} } = {}) {

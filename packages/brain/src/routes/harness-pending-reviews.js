@@ -26,10 +26,22 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { timingSafeEqual } from 'node:crypto';
 import pool from '../db.js';
 
 const router = Router();
+
+// 审批动作限流：人工触发的低频动作，60s/10 次足够；连错误请求也计数，
+// 顺带钝化对 approver token 的暴力猜测（js/missing-rate-limiting，CodeQL）。
+const approvalRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  identifier: 'pending-reviews-approval',
+  message: { error: 'approval rate limit exceeded' },
+});
 
 /**
  * 审批权认证。通过返回 { ok: true, approvedBy }；失败已写响应，返回 { ok: false }。
@@ -93,7 +105,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/:taskId/approve', async (req, res) => {
+router.post('/:taskId/approve', approvalRateLimit, async (req, res) => {
   const { taskId } = req.params;
   const dbPool = req.app.get('pool') || pool;
 
@@ -127,7 +139,7 @@ router.post('/:taskId/approve', async (req, res) => {
   res.status(202).json({ ok: true, taskId, approved: true, approved_by: auth.approvedBy });
 });
 
-router.post('/:taskId/reject', async (req, res) => {
+router.post('/:taskId/reject', approvalRateLimit, async (req, res) => {
   const { taskId } = req.params;
   const { reason = 'rejected by user' } = req.body || {};
   const dbPool = req.app.get('pool') || pool;
