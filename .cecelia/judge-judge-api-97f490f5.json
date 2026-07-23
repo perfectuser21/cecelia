@@ -1,0 +1,35 @@
+{
+  "agentVerdict": "PASS",
+  "judge": {
+    "verdict": "PASS",
+    "coverage": [
+      {
+        "step": "1. 客户端发送 GET /sign?value=5",
+        "passed": true,
+        "evidence": "test-0 log_tail: [B1/DP-1] value=5→200 result:1 PASS"
+      },
+      {
+        "step": "2. 系统校验 value 存在且格式合法；判断符号",
+        "passed": true,
+        "evidence": "test-0/1/2/3: 合法值返回正确result，非法值返回400；.brain-result.json: vitest sign 34/34 all green"
+      },
+      {
+        "step": "3. 返回 HTTP 200：{\"result\":1,\"operation\":\"sign\"}",
+        "passed": true,
+        "evidence": "test-5 log_tail: [B6/DP-10] operation==='sign' PASS; test-0 确认 result:1"
+      }
+    ],
+    "feedback": null
+  },
+  "coverageCheck": {
+    "ok": true,
+    "missing": [],
+    "failed": []
+  },
+  "goldenPathSteps": [
+    "客户端发送 `GET /sign?value=5`（或任意匹配 `^-?\\d+$` 的整数字符串）",
+    "系统校验 value 存在且格式合法；判断符号",
+    "返回 HTTP 200：`{\"result\": 1, \"operation\": \"sign\"}`"
+  ],
+  "finalVerdict": "PASS"
+}
