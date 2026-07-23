@@ -186,9 +186,8 @@ beforeAll(createIsolatedDatabase, 30_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
 describe('Kernel restart recovery on real PostgreSQL decision log', () => {
-  it.each(['BLOCKED', 'NEEDS_CONTEXT'])(
-    'instance B resumes the persisted %s streak from instance A',
-    async (status) => {
+  function persistedStatusCase(status) {
+    return async () => {
       const run = await seedRun();
       await appendLog(run.runId, {
         hop: 1,
@@ -241,10 +240,16 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
         'SELECT failure_reason FROM initiative_runs WHERE id=$1',
         [run.runId],
       )).rows[0].failure_reason).toBe(`blocked_same_state:${status}`);
-    },
-  );
+    };
+  }
 
-  it('instance B resumes pollCount from instance A instead of resetting it', async () => {
+  it('blocked restart resumes the persisted BLOCKED streak from instance A',
+    persistedStatusCase('BLOCKED'));
+
+  it('needs-context restart resumes the persisted NEEDS_CONTEXT streak from instance A',
+    persistedStatusCase('NEEDS_CONTEXT'));
+
+  it('poll 重启: instance B resumes pollCount >= 3 from instance A', async () => {
     const run = await seedRun({ ci: 'pending' });
     await appendLog(run.runId, {
       hop: 1,
@@ -254,14 +259,25 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
       gateVerdict: 'allow',
     });
 
+    let instanceASleeps = 0;
     const instanceA = await runLoop({
       ...loopDeps({ ci: 'pending' }),
       dispatch: async () => {
         throw new Error('poll must not dispatch');
       },
-      sleep: async () => setTaskStatus(run.taskId, 'aborted'),
+      sleep: async () => {
+        instanceASleeps += 1;
+        if (instanceASleeps >= 3) await setTaskStatus(run.taskId, 'aborted');
+      },
     }, { taskId: run.taskId, runId: run.runId });
     expect(instanceA.exitReason).toBe('task_aborted');
+
+    const instanceARows = (await testPool.query(
+      `SELECT hop, observed FROM orchestrator_decision_log
+        WHERE run_id=$1 AND action='wait:poll_ci' ORDER BY hop`,
+      [run.runId],
+    )).rows;
+    expect(instanceARows).toHaveLength(3);
 
     await setTaskStatus(run.taskId, 'in_progress');
     const instanceB = await runLoop({
@@ -278,13 +294,13 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
         WHERE run_id=$1 AND action='wait:poll_ci' ORDER BY hop`,
       [run.runId],
     );
-    expect(rows).toHaveLength(2);
-    expect(rows[1].observed.counters.pollCount).toBe(1);
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(rows[instanceARows.length].observed.counters.pollCount).toBeGreaterThanOrEqual(3);
   });
 });
 
 describe('Kernel failure classifications on real PostgreSQL writers', () => {
-  it('preserves evaluator and judge classes independently and derives by judge class', async () => {
+  it('failure_class routes evidence repair without generator fix and preserves judge class', async () => {
     const run = await seedRun();
     const evaluatorAttemptId = randomUUID();
     await appendAttemptVerdict({
@@ -295,8 +311,37 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
     }, {
       status: 'completed',
       decision: {
+        outcome: 'FAIL',
+        reason: 'evidence invalid and requires evaluator repair',
+        failure_class: 'evidence_invalid',
+      },
+    }, testPool);
+
+    const repairDispatches = [];
+    const repairResult = await runLoop({
+      ...loopDeps(),
+      sleep: async () => {},
+      dispatch: async (action) => {
+        repairDispatches.push(action);
+        await setTaskStatus(run.taskId, 'aborted');
+        return { status: 'DONE', detail: 'evaluator evidence repair dispatched' };
+      },
+    }, { taskId: run.taskId, runId: run.runId });
+    expect(repairResult.exitReason).toBe('task_aborted');
+    expect(repairDispatches).toEqual(['spawn:evaluator-evidence-repair']);
+    await setTaskStatus(run.taskId, 'in_progress');
+
+    const repairedEvaluatorAttemptId = randomUUID();
+    await appendAttemptVerdict({
+      id: repairedEvaluatorAttemptId,
+      run_id: run.runId,
+      role: 'evaluator',
+      task_bundle: { inputs: { pull_request: { head_sha: HEAD_SHA } } },
+    }, {
+      status: 'completed',
+      decision: {
         outcome: 'PASS',
-        reason: 'evidence accepted with evaluator classification retained',
+        reason: 'evidence repaired while preserving the original classification',
         failure_class: 'evidence_invalid',
       },
     }, testPool);
@@ -346,15 +391,31 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       },
     });
 
-    const { rows } = await testPool.query(
-      `SELECT action, detail FROM orchestrator_decision_log
-        WHERE run_id=$1 AND action IN ('verdict:evaluate','verdict:judge')
+    const decisionRows = (await testPool.query(
+      `SELECT hop, action, observed, gate_verdict, detail
+         FROM orchestrator_decision_log
+        WHERE run_id=$1
         ORDER BY hop`,
       [run.runId],
+    )).rows;
+    const verdictRows = decisionRows.filter(
+      (row) => ['verdict:evaluate', 'verdict:judge'].includes(row.action),
     );
-    expect(rows).toHaveLength(2);
-    expect(rows[0].detail.failure_class).toBe('evidence_invalid');
-    expect(rows[1].detail).toMatchObject({
+    const actions = decisionRows.map((row) => row.action);
+    expect(actions.filter((action) => action === 'spawn:evaluator-evidence-repair'))
+      .toHaveLength(1);
+    expect(actions).not.toContain('spawn:generator-fix');
+    expect(deriveCounters(decisionRows, { proposeBranchMaxRn: 0 }).fixRound).toBe(0);
+    expect(verdictRows).toHaveLength(3);
+    expect(verdictRows[0].detail).toMatchObject({
+      verdict: 'FAIL',
+      failure_class: 'evidence_invalid',
+    });
+    expect(verdictRows[1].detail).toMatchObject({
+      verdict: 'PASS',
+      failure_class: 'evidence_invalid',
+    });
+    expect(verdictRows[2].detail).toMatchObject({
       verdict: 'FAIL',
       failure_class: 'needs_context',
       evaluator_failure_class: 'evidence_invalid',
@@ -376,7 +437,7 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
 });
 
 describe('Kernel no-progress through real loop, attempt store, HTTP callback, and PostgreSQL', () => {
-  it('same SHA callback becomes terminal after a new collect despite hop/provider changes', async () => {
+  it('callback no-progress: same SHA becomes terminal despite hop/provider changes', async () => {
     const run = await seedRun();
     await appendLog(run.runId, {
       hop: 1,
@@ -485,7 +546,7 @@ describe('Kernel approval HTTP route on real PostgreSQL', () => {
     else process.env.HARNESS_REVIEW_APPROVER_TOKEN = originalToken;
   });
 
-  it('fails closed, rejects stale/concurrent duplicates, writes once, derives merge, and rate-limits', async () => {
+  it('approval 并发与 429: fails closed, writes once, and derives merge', async () => {
     process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
     const run = await seedRun({ reviewRequired: true });
     await appendLog(run.runId, {
