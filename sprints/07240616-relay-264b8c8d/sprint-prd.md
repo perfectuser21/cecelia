@@ -288,3 +288,8 @@ Sprint 累积：9 条
 | golden_path 表外键：golden_path.id 非 journeys.id | 已确认 migration 294 定义了 golden_path 表，外键 gp_id REFERENCES golden_path(id) |
 | migration 顺序 | 358 已落库，359 是下一个，命名安全 |
 | current_session_id 存 TEXT 不加 UNIQUE | 正确——同一个 claude session_id 在多个 conversation 中不应共用，但 session 可为空（PR1 阶段不 spawn） |
+
+## journey_type: user_facing
+## journey_type_reason: 本 PR 是 Brain 后端 API + DB schema，为后续 Dashboard UI（PR3）和 agent spawn（PR2）打基础；整体 initiative 包含 UI 层，journey_type 定为 user_facing
+## target_environment: mac_web
+## target_environment_reason: Final E2E 在 Dashboard 真实打开验收（mac_web），本 PR 阶段为 API 冒烟
