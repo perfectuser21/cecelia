@@ -258,6 +258,21 @@ worker 超时后不能仅靠容器消失让 watchdog 猜，必须产生包含 `t
 
 ---
 
+## Test Contract
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| B-01 | `../../packages/brain/src/orchestrator/__tests__/deadline.test.js` | 未超时 / 恰好超时 / 函数不依赖 Date.now() | Red commit `__tests__/` 导入不存在的实现 → 全红；Green commit 实现补齐后通过 |
+| B-04 | `../../packages/brain/src/orchestrator/__tests__/persistent-counters.test.js` | 空日志 → pollCount=0 / 空日志 → blockedStreak=0 / pollCount 跨进程重启 | 同上 |
+| B-05 | `../../packages/brain/src/orchestrator/__tests__/phase-budgets.test.js` | planning 预算 = 10 分钟 / generate_fix 预算 = 45 分钟 | 同上 |
+| B-06 | `../../packages/brain/src/orchestrator/__tests__/worker-budget.test.js` | planner 角色上限 = 600 秒 / generator 角色上限 = 1800 秒 | 同上 |
+| B-03 | `../../packages/brain/src/orchestrator/__tests__/no-progress-fence.test.js` | 触发熔断 / mark_failed reason=no_progress_same_sha | 同上 |
+| B-07 | `../../packages/brain/src/orchestrator/__tests__/failure-class-routing.test.js` | product_failure + fixRound=0 → generator-fix / evidence_invalid 不得产生 spawn:generator / contract_invalid → mark_failed | 同上 |
+| B-09 | `../../packages/brain/src/orchestrator/__tests__/d707-replay.test.js` | fixture 文件存在 / hop 58 callback（SHA 未变）后，derive() 输出 mark_failed reason=no_progress_same_sha | 同上 |
+| B-10 | `../../packages/brain/src/orchestrator/__tests__/watchdog-boundary.test.js` | watchdogShouldResume / 过期 run watchdog 动作应为 fenced_terminal_cleanup | 同上 |
+| B-12 | `../../packages/brain/src/orchestrator/__tests__/deadline-callback-race.test.js` | run 已有 terminal_reason=automation_deadline_exceeded → callback 到达时 derive 输出 noop / deadline 先写入 terminal 后，decision log 中只有一个 terminal 行 | 同上 |
+| B-08 | `../../packages/brain/src/orchestrator/__tests__/approval-bridge.test.js` | 所有条件满足 → valid=true / request.prHeadSha 与 context.currentPrHeadSha 不一致 → invalid（stale_sha） | 同上 |
+
 ## 边界与排除范围
 
 - **FR-11 回滚路由隔离**：缺少 `harness_runtime: kernel-v1` 的旧路径任务的 E2E 验证不在本 Sprint 自动化范围内（须双轨并行部署环境）。旧路径行为保持不变由 NFR-05 承诺；新路径安全性由 B-01/B-03/B-04/B-07 保证。（此处为显式排除，非静默省略）

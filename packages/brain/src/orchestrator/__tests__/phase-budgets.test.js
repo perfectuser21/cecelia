@@ -110,7 +110,7 @@ describe('B-05: 总预算约束（阶段预算不突破 120 分钟）', () => {
     // gan 可用 = min(20 分钟, 总剩余 115 分钟) = 20 分钟
     // 当 run 总用时达到 120 分钟时，gan 阶段也必须 terminal
     const runStarted = BASE;
-    const ganStarted = at(minMs(5)); // planning 耗时 5 分钟
+    const _ganStarted = at(minMs(5)); // planning 耗时 5 分钟
 
     // 总用时 119:59 时（gan 阶段已跑 114:59）：总预算未到
     const at119m59s = at(minMs(119) + 59000);

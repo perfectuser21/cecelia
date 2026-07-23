@@ -318,7 +318,7 @@ export async function collectGroundTruth(deps, opts) {
  * @param {{runId?: string}} opts
  * @returns {{noProgressSameSha: boolean, noProgressSameEvidence: boolean}}
  */
-export function deriveNoProgress(decisionLogRows, opts = {}) {
+export function deriveNoProgress(decisionLogRows, _opts = {}) {
   const rows = Array.isArray(decisionLogRows) ? [...decisionLogRows].sort((a, b) => a.hop - b.hop) : [];
 
   // 找最新的 generator-fix intent

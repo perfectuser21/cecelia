@@ -17,7 +17,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(__dirname, 'fixtures/d707-hops-55-66.json');
 
 import { derive } from '../derive.js';
-import { deriveCounters } from '../counters.js';
 
 /**
  * d707 hop 55-66 fixture — 模拟真实事故数据结构

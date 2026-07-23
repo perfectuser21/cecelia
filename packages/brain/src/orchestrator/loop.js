@@ -21,6 +21,7 @@ import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConf
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
 import { ACTION, LOG_ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
+import { watchdogShouldResume } from './watchdog.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -145,8 +146,8 @@ async function markRunFailed(pool, runId, reason) {
  * @returns {{resolved: string, action: string}}
  */
 export function resolveRaceCondition(runState, incomingAction) {
-  if (runState.terminal_reason || runState.phase === 'failed' || runState.phase === 'done') {
-    // 已有 terminal → 拦截 spawn，返回 noop
+  if (!watchdogShouldResume(runState)) {
+    // 已有 terminal / phase=failed|done → 拦截 spawn，返回 noop
     return { resolved: 'terminal_exists', action: 'noop' };
   }
   // 未有 terminal → 正常通过
