@@ -8,61 +8,61 @@
 
 ## BEHAVIOR 条目
 
-[BEHAVIOR-1] 基础成功场景 — 正整数平方
+[BEHAVIOR] 基础成功场景 — 正整数平方
 - 触发：GET /square?value=5
 - 期望：HTTP 200，body `{result: 25, operation: "square"}`
 - 断言：`res.status === 200 && res.body.result === 25 && res.body.operation === "square"`
 - 测试：tests/server.test.contracts.js describe "GET /square 基础成功场景"
 
-[BEHAVIOR-2] 精度上界边界 — value=94906265 → 200（最大合法值）
+[BEHAVIOR] 精度上界边界 — value=94906265 → 200（最大合法值）
 - 触发：GET /square?value=94906265
 - 期望：HTTP 200，result = 9007199254740225（= 94906265²）
 - 断言：`res.status === 200 && typeof res.body.result === 'number'`
 - 测试：tests/server.test.contracts.js describe "GET /square 精度上界"
 
-[BEHAVIOR-3] 精度上界边界 — value=94906266 → 400（超过精度上界）
+[BEHAVIOR] 精度上界边界 — value=94906266 → 400（超过精度上界）
 - 触发：GET /square?value=94906266
 - 期望：HTTP 400，body `{error: <非空字符串>}`
 - 断言：`res.status === 400 && typeof res.body.error === 'string' && res.body.error.length > 0`
 - 测试：tests/server.test.contracts.js describe "GET /square 精度上界"
 
-[BEHAVIOR-4] strict-schema 拒绝 — 小数/科学计数法/前导+
+[BEHAVIOR] strict-schema 拒绝 — 小数/科学计数法/前导+
 - 触发：GET /square?value=1.5 | value=1e2 | value=+5
 - 期望：HTTP 400 for all
 - 断言：`res.status === 400`
 - 测试：tests/server.test.contracts.js describe "GET /square strict-schema 拒绝"
 
-[BEHAVIOR-5] 缺参拒绝 — 无 value 参数
+[BEHAVIOR] 缺参拒绝 — 无 value 参数
 - 触发：GET /square（无 query 参数）
 - 期望：HTTP 400，body `{error: <非空字符串>}`
 - 断言：`res.status === 400 && typeof res.body.error === 'string'`
 - 测试：tests/server.test.contracts.js describe "GET /square strict-schema 拒绝"
 
-[BEHAVIOR-6] 别名参数拒绝 — query 名锁死为 value
+[BEHAVIOR] 别名参数拒绝 — query 名锁死为 value
 - 触发：GET /square?n=5 | ?x=5 | ?a=5 | ?b=5
 - 期望：HTTP 400（识别为缺参）
 - 断言：`res.status === 400`
 - 测试：tests/server.test.contracts.js describe "GET /square query 名锁死"
 
-[BEHAVIOR-7] 响应 schema 严格 — 成功响应只含 result + operation
+[BEHAVIOR] 响应 schema 严格 — 成功响应只含 result + operation
 - 触发：GET /square?value=5
 - 期望：body keys 字面集合 === `["operation","result"]`（不多不少）
 - 断言：`Object.keys(res.body).sort() deep equals ["operation","result"]`
 - 测试：tests/server.test.contracts.js describe "GET /square 响应 schema 严格"
 
-[BEHAVIOR-8] 响应 schema 严格 — 错误响应只含 error
+[BEHAVIOR] 响应 schema 严格 — 错误响应只含 error
 - 触发：GET /square?value=1.5
 - 期望：body keys 字面集合 === `["error"]`（禁止 message/msg/reason/detail）
 - 断言：`Object.keys(res.body).sort() deep equals ["error"]`
 - 测试：tests/server.test.contracts.js describe "GET /square 响应 schema 严格"
 
-[BEHAVIOR-9] 负数场景 — value=-3 → result=9
+[BEHAVIOR] 负数场景 — value=-3 → result=9
 - 触发：GET /square?value=-3
 - 期望：HTTP 200，`{result: 9, operation: "square"}`
 - 断言：`res.status === 200 && res.body.result === 9`
 - 测试：tests/server.test.contracts.js describe "GET /square 基础成功场景"
 
-[BEHAVIOR-10] 零值场景 — value=0 → result=0
+[BEHAVIOR] 零值场景 — value=0 → result=0
 - 触发：GET /square?value=0
 - 期望：HTTP 200，`{result: 0, operation: "square"}`
 - 断言：`res.status === 200 && res.body.result === 0`
