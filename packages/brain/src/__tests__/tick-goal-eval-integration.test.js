@@ -18,6 +18,26 @@ vi.mock('../goal-evaluator.js', () => ({
   _resetGoalEvalTimes: vi.fn(),
 }));
 
+// This suite exercises Goal Outer Loop only. Never let its executeTick() calls
+// run destructive cleanup against the developer's real git worktrees.
+const mockZombieSweep = vi.fn().mockResolvedValue({
+  worktrees: { removed: 0 },
+  processes: { killed: 0 },
+  lock_slots: { removed: 0 },
+});
+vi.mock('../zombie-sweep.js', () => ({
+  zombieSweep: (...args) => mockZombieSweep(...args),
+}));
+vi.mock('../zombie-cleaner.js', () => ({
+  runZombieCleanup: vi.fn().mockResolvedValue({
+    slotsReclaimed: 0,
+    worktreesRemoved: 0,
+  }),
+}));
+vi.mock('../harness-worktree.js', () => ({
+  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0 }),
+}));
+
 // 其他依赖 mock
 vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn().mockResolvedValue(null) }));
 vi.mock('../alertness/index.js', () => ({
@@ -110,6 +130,7 @@ describe('tick.js: Goal Outer Loop (0.5.5)', () => {
     await executeTick();
 
     expect(mockEvaluateGoalOuterLoop).toHaveBeenCalled();
+    expect(mockZombieSweep).toHaveBeenCalled();
   });
 
   it('does not call evaluateGoalOuterLoop when interval not elapsed', async () => {
