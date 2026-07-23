@@ -1,0 +1,128 @@
+{
+  "_comment": "d707 生产事故 decision log 片段，hop 55-66。真实数据请从 DB 导出后替换此文件。骨架占位版本由 contract-proposer 生成。",
+  "runId": "d707",
+  "triggerSha": "sha-d707-v57",
+  "hops": [
+    {
+      "hop": 55,
+      "action": "verdict:evaluate",
+      "detail": {
+        "verdict": "PASS",
+        "pr_head_sha": "sha-d707-v57",
+        "evidence_digest": "digest-55"
+      }
+    },
+    {
+      "hop": 56,
+      "action": "verdict:judge",
+      "detail": {
+        "verdict": "FAIL",
+        "pr_head_sha": "sha-d707-v57",
+        "failure_class": "product_failure",
+        "failure_summary": "test assertion failed: expected 200 got 500"
+      }
+    },
+    {
+      "hop": 57,
+      "action": "spawn:generator-fix",
+      "detail": {
+        "trigger_sha": "sha-d707-v57",
+        "failure_class": "product_failure",
+        "role": "generator",
+        "fix_round": 1
+      }
+    },
+    {
+      "hop": 58,
+      "action": "verdict:generator-fix-callback",
+      "detail": {
+        "pr_head_sha": "sha-d707-v57",
+        "status": "completed",
+        "worker_said": "DONE",
+        "exit_code": 0
+      }
+    },
+    {
+      "hop": 59,
+      "action": "spawn:generator-fix",
+      "detail": {
+        "trigger_sha": "sha-d707-v57",
+        "failure_class": "product_failure",
+        "role": "generator",
+        "fix_round": 2,
+        "_old_behavior": "旧实现未检测 no-progress，继续第 2 次 fix"
+      }
+    },
+    {
+      "hop": 60,
+      "action": "verdict:generator-fix-callback",
+      "detail": {
+        "pr_head_sha": "sha-d707-v57",
+        "status": "completed",
+        "worker_said": "DONE",
+        "exit_code": 0
+      }
+    },
+    {
+      "hop": 61,
+      "action": "spawn:generator-fix",
+      "detail": {
+        "trigger_sha": "sha-d707-v57",
+        "failure_class": "product_failure",
+        "role": "generator",
+        "fix_round": 3,
+        "_old_behavior": "旧实现第 3 次"
+      }
+    },
+    {
+      "hop": 62,
+      "action": "verdict:generator-fix-callback",
+      "detail": {
+        "pr_head_sha": "sha-d707-v57",
+        "status": "completed",
+        "worker_said": "DONE",
+        "exit_code": 0
+      }
+    },
+    {
+      "hop": 63,
+      "action": "spawn:generator-fix",
+      "detail": {
+        "trigger_sha": "sha-d707-v57",
+        "failure_class": "product_failure",
+        "role": "generator",
+        "fix_round": 4
+      }
+    },
+    {
+      "hop": 64,
+      "action": "verdict:generator-fix-callback",
+      "detail": {
+        "pr_head_sha": "sha-d707-v57",
+        "status": "completed",
+        "worker_said": "DONE",
+        "exit_code": 0
+      }
+    },
+    {
+      "hop": 65,
+      "action": "spawn:generator-fix",
+      "detail": {
+        "trigger_sha": "sha-d707-v57",
+        "failure_class": "product_failure",
+        "role": "generator",
+        "fix_round": 5
+      }
+    },
+    {
+      "hop": 66,
+      "action": "verdict:generator-fix-callback",
+      "detail": {
+        "pr_head_sha": "sha-d707-v57",
+        "status": "completed",
+        "worker_said": "DONE",
+        "exit_code": 0
+      }
+    }
+  ]
+}
