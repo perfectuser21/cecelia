@@ -174,13 +174,13 @@ curl -s -o /dev/null -w "%{http_code}" -X POST \
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| B-01 failure_class 路由 | `tests/kernel-failure-class-routing.test.js` | T-01-a/T-01-b/T-10-a/T-10-b/T-11-a/T-13-a/T-13-b | 先红：derive 无 evidence_invalid 分支 |
-| B-02 no-progress terminal | `tests/kernel-no-progress.test.js` | T-02-a/T-02-b/T-03-a/T-03-b | 先红：derive 未识别 noProgress=true |
-| B-02 no-progress 集成 | `tests/kernel-no-progress-integration.test.js` | T-NP-INT-01/T-NP-INT-02/T-NP-INT-03/T-NP-INT-04 | 先红：ground-truth 不推导 noProgress |
-| B-03 deadline fence | `tests/kernel-deadline.test.js` | T-05/T-06/T-07 | 先红：loop 无三道 deadline fence |
-| B-05 持久化计数 | `tests/kernel-persistent-counters.test.js` | T-08-a/T-08-b/T-08-c/T-08-d/T-09 | 先红：wait:poll_ci 不写 decision log |
-| B-06 approval bridge | `tests/kernel-approval-bridge.test.js` | T-17-a/T-17-b/T-17-c/T-17-d/T-17-e/T-17-f | 先红：bridge 无 SHA 锚定校验 |
-| B-08 d707 replay | `tests/d707-replay.test.js` | T-04-a/T-04-b/T-04-c/T-04-d/T-04-e | 先红：d707 10次 fix 无熔断 |
+| B-01 failure_class 路由 | `../../tests/regression/relay-50170af2/kernel-failure-class-routing.test.js` | T-01-a/T-01-b/T-10-a/T-10-b/T-11-a/T-13-a/T-13-b | 先红：derive 无 evidence_invalid 分支 |
+| B-02 no-progress terminal | `../../tests/regression/relay-50170af2/kernel-no-progress.test.js` | T-02-a/T-02-b/T-03-a/T-03-b | 先红：derive 未识别 noProgress=true |
+| B-02 no-progress 集成 | `../../tests/regression/relay-50170af2/kernel-no-progress-integration.test.js` | T-NP-INT-01/T-NP-INT-02/T-NP-INT-03/T-NP-INT-04 | 先红：ground-truth 不推导 noProgress |
+| B-03 deadline fence | `../../tests/regression/relay-50170af2/kernel-deadline.test.js` | T-05/T-06/T-07 | 先红：loop 无三道 deadline fence |
+| B-05 持久化计数 | `../../tests/regression/relay-50170af2/kernel-persistent-counters.test.js` | T-08-a/T-08-b/T-08-c/T-08-d/T-09 | 先红：wait:poll_ci 不写 decision log |
+| B-06 approval bridge | `../../tests/regression/relay-50170af2/kernel-approval-bridge.test.js` | T-17-a/T-17-b/T-17-c/T-17-d/T-17-e/T-17-f | 先红：bridge 无 SHA 锚定校验 |
+| B-08 d707 replay | `../../tests/regression/relay-50170af2/d707-replay.test.js` | T-04-a/T-04-b/T-04-c/T-04-d/T-04-e | 先红：d707 10次 fix 无熔断 |
 
 ## 不变量约束（全量引用）
 

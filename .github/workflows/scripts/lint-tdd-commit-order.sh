@@ -27,11 +27,39 @@ if [ -z "$COMMITS" ]; then
   exit 0
 fi
 
+# 找 (Red) commit 作为 TDD 检查起点（GAN 阶段合同修订豁免 src 改动）
+# GAN 阶段（proposer/reviewer 修订轮）可能修改 src 以支持合同测试结构，不应被 TDD 顺序拦截。
+# 规则：若 PR 内有 (Red) commit，则其前的所有 commit 全部豁免；从 (Red) 起严格检查。
+RED_SHA=""
+while IFS= read -r sha; do
+  MSG=$(git log -1 --format="%s" "$sha" 2>/dev/null || true)
+  if echo "$MSG" | grep -qE "\(Red\)"; then
+    RED_SHA="$sha"
+    break
+  fi
+done <<< "$COMMITS"
+
+SKIP_BEFORE_RED=0
+if [ -n "$RED_SHA" ]; then
+  SKIP_BEFORE_RED=1
+  echo "  [info] 找到 (Red) commit ${RED_SHA:0:12}，GAN 阶段（Red 之前）src 改动全部豁免"
+fi
+
 SEEN_TEST=0
 FIRST_BAD_SHA=""
 FIRST_BAD_FILES=""
 while IFS= read -r sha; do
   [ -z "$sha" ] && continue
+
+  # GAN 阶段豁免：(Red) commit 之前的全部 commits 跳过 TDD 检查
+  if [ "$SKIP_BEFORE_RED" -eq 1 ]; then
+    if [ "$sha" = "$RED_SHA" ]; then
+      SKIP_BEFORE_RED=0  # (Red) commit 本身开始接受检查
+    else
+      continue
+    fi
+  fi
+
   CHANGED=$(git diff-tree --no-commit-id --name-only -r "$sha" 2>/dev/null || true)
 
   HAS_TEST=$(echo "$CHANGED" | grep -E '\.(test|spec)\.(js|ts)$|/__tests__/' || true)
