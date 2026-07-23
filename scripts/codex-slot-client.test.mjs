@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -15,6 +15,7 @@ import {
 
 const CLIENT_PATH = resolve('scripts/codex-slot-client.mjs');
 const ENTRY_PATH = resolve('scripts/codex-slot');
+const REMOTE_FIXED_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
 function option(args, name) {
   const index = args.indexOf(`--${name}`);
@@ -25,11 +26,98 @@ function decodeSessionPut(args) {
   return JSON.parse(Buffer.from(option(args, 'json'), 'base64url').toString('utf8'));
 }
 
-function remoteShellArgv(remoteCommand, executable) {
-  const collector = `${executable}() { printf '%s\\n' "$@"; }\n${remoteCommand}`;
-  const result = spawnSync('/bin/sh', ['-c', collector], { encoding: 'utf8' });
+function remoteShellInvocation(remoteCommand, executable) {
+  const collector = [
+    'env() {',
+    '  printf "ENVARG=%s\\n" "$1";',
+    '  shift;',
+    '  printf "UTILITY=%s\\n" "$1";',
+    '  shift;',
+    '  for arg do printf "ARG=%s\\n" "$arg"; done',
+    '}',
+    remoteCommand,
+  ].join('\n');
+  const result = spawnSync('/bin/sh', ['-c', collector], {
+    encoding: 'utf8',
+    env: {
+      HOME: process.env.HOME ?? '',
+      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    },
+  });
   assert.equal(result.status, 0, result.stderr);
-  return result.stdout.trimEnd().split('\n');
+  const lines = result.stdout.trimEnd().split('\n');
+  const envArg = lines.shift();
+  const utility = lines.shift();
+  assert.equal(envArg, `ENVARG=PATH=${REMOTE_FIXED_PATH}`);
+  assert.equal(utility, `UTILITY=${executable}`);
+  return {
+    envPath: envArg.slice('ENVARG=PATH='.length),
+    utility: utility.slice('UTILITY='.length),
+    argv: lines.map((line) => {
+      assert.match(line, /^ARG=/);
+      return line.slice('ARG='.length);
+    }),
+  };
+}
+
+function remoteShellArgv(remoteCommand, executable) {
+  return remoteShellInvocation(remoteCommand, executable).argv;
+}
+
+async function writeFakeRemoteExecutable(dir, name) {
+  const path = join(dir, name);
+  await writeFile(
+    path,
+    [
+      '#!/bin/sh',
+      `printf 'UTILITY=%s\\n' '${name}'`,
+      'printf "INHERITED_PATH=%s\\n" "$PATH"',
+      'for arg do printf "ARG=%s\\n" "$arg"; done',
+      '',
+    ].join('\n'),
+    'utf8'
+  );
+  await chmod(path, 0o755);
+}
+
+async function runRemoteWithFakeExecutable(t, remoteCommand, executable, initialPath) {
+  const root = await mkdtemp(join(tmpdir(), 'codex-slot-remote-path-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const bin = join(root, 'bin');
+  await mkdir(bin, { recursive: true });
+  await writeFakeRemoteExecutable(bin, executable);
+  const collector = [
+    'env() {',
+    '  case "$1" in',
+    '    PATH=*) remote_path="${1#PATH=}" ;;',
+    '    *) printf "bad env assignment: %s\\n" "$1" >&2; return 64 ;;',
+    '  esac',
+    '  shift;',
+    '  utility="$1";',
+    '  shift;',
+    '  PATH="$remote_path" "$FAKE_BIN/$utility" "$@"',
+    '}',
+    remoteCommand,
+  ].join('\n');
+  const result = spawnSync('/bin/sh', ['-c', collector], {
+    encoding: 'utf8',
+    env: {
+      FAKE_BIN: bin,
+      HOME: process.env.HOME ?? '',
+      PATH: initialPath,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const lines = result.stdout.trimEnd().split('\n');
+  assert.equal(lines.shift(), `UTILITY=${executable}`);
+  const inherited = lines.shift();
+  assert.equal(inherited, `INHERITED_PATH=${REMOTE_FIXED_PATH}`);
+  return lines.map((line) => {
+    assert.match(line, /^ARG=/);
+    return line.slice('ARG='.length);
+  });
 }
 
 function runningSession(overrides = {}) {
@@ -1336,9 +1424,11 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
   for (const value of required) assert.ok(calls[0].args.includes(value));
   assert.deepEqual(calls[0].args.slice(-2), [
     'broker-host',
-    `node "$HOME"/'.local/lib/codex slot'\\''s/codex-slot-broker.mjs' 'deliver' '--path' '/remote/codex home/slot'\\''s/auth.json'`,
+    `env PATH=${REMOTE_FIXED_PATH} node "$HOME"/'.local/lib/codex slot'\\''s/codex-slot-broker.mjs' 'deliver' '--path' '/remote/codex home/slot'\\''s/auth.json'`,
   ]);
-  assert.deepEqual(remoteShellArgv(calls[0].args.at(-1), 'node'), [
+  const brokerInvocation = remoteShellInvocation(calls[0].args.at(-1), 'node');
+  assert.equal(brokerInvocation.envPath, REMOTE_FIXED_PATH);
+  assert.deepEqual(brokerInvocation.argv, [
     `${process.env.HOME}/.local/lib/codex slot's/codex-slot-broker.mjs`,
     'deliver',
     '--path',
@@ -1351,9 +1441,11 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
   for (const value of required) assert.ok(calls[1].args.includes(value));
   assert.deepEqual(calls[1].args.slice(-2), [
     'agent-host',
-    `node '/remote/codex slot'\\''s/codex-slot-agent.mjs' 'health'`,
+    `env PATH=${REMOTE_FIXED_PATH} node '/remote/codex slot'\\''s/codex-slot-agent.mjs' 'health'`,
   ]);
-  assert.deepEqual(remoteShellArgv(calls[1].args.at(-1), 'node'), [
+  const agentInvocation = remoteShellInvocation(calls[1].args.at(-1), 'node');
+  assert.equal(agentInvocation.envPath, REMOTE_FIXED_PATH);
+  assert.deepEqual(agentInvocation.argv, [
     "/remote/codex slot's/codex-slot-agent.mjs",
     'health',
   ]);
@@ -1365,11 +1457,13 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
     args: [
       '-t',
       'agent-host',
-      `tmux 'attach-session' '-t' '=codex-slot-s-abc'`,
+      `env PATH=${REMOTE_FIXED_PATH} tmux 'attach-session' '-t' '=codex-slot-s-abc'`,
     ],
     options: { shell: false, stdio: 'inherit' },
   });
-  assert.deepEqual(remoteShellArgv(calls[2].args.at(-1), 'tmux'), [
+  const tmuxInvocation = remoteShellInvocation(calls[2].args.at(-1), 'tmux');
+  assert.equal(tmuxInvocation.envPath, REMOTE_FIXED_PATH);
+  assert.deepEqual(tmuxInvocation.argv, [
     'attach-session',
     '-t',
     '=codex-slot-s-abc',
@@ -1386,6 +1480,47 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
     runInteractive,
   });
   await assert.rejects(invalid.broker(['identity']), /JSON/);
+});
+
+test('remote env prefix lets fake node and tmux inherit fixed PATH with empty or minimal caller PATH', async (t) => {
+  const calls = [];
+  const runCommand = async (cmd, args, options) => {
+    calls.push({ kind: 'command', cmd, args, options });
+    return { stdout: '{"ok":true,"actor":"alex"}\n', stderr: '' };
+  };
+  const runInteractive = async (cmd, args, options) => {
+    calls.push({ kind: 'interactive', cmd, args, options });
+    return { ok: true };
+  };
+  const transport = await createSshTransport({
+    config: {
+      broker: 'broker-host',
+      hosts: ['agent-host'],
+      brokerScript: '~/.local/lib/codex-slot/codex-slot-broker.mjs',
+      agentScript: '/remote/codex-slot-agent.mjs',
+    },
+    runCommand,
+    runInteractive,
+  });
+
+  await transport.broker(['identity']);
+  await transport.agent('agent-host', ['health']);
+  await transport.attach('agent-host', '=codex-slot-s-abc');
+
+  for (const initialPath of ['', '/usr/bin:/bin:/usr/sbin:/sbin']) {
+    assert.deepEqual(
+      await runRemoteWithFakeExecutable(t, calls[0].args.at(-1), 'node', initialPath),
+      [`${process.env.HOME}/.local/lib/codex-slot/codex-slot-broker.mjs`, 'identity']
+    );
+    assert.deepEqual(
+      await runRemoteWithFakeExecutable(t, calls[1].args.at(-1), 'node', initialPath),
+      ['/remote/codex-slot-agent.mjs', 'health']
+    );
+    assert.deepEqual(
+      await runRemoteWithFakeExecutable(t, calls[2].args.at(-1), 'tmux', initialPath),
+      ['attach-session', '-t', '=codex-slot-s-abc']
+    );
+  }
 });
 
 test('runProcess waits for close after TERM, escalates to KILL, and settles timeout once', async () => {

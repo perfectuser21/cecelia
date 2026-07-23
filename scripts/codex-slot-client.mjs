@@ -15,6 +15,7 @@ const DEFAULT_CONFIG = Object.freeze({
   agentScript: '~/.local/lib/codex-slot/codex-slot-agent.mjs',
 });
 const NON_INTERACTIVE_TIMEOUT_MS = 30_000;
+const REMOTE_FIXED_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 const SSH_OPTIONS = Object.freeze([
   '-o',
   'BatchMode=yes',
@@ -62,12 +63,18 @@ function renderRemoteScript(script) {
 }
 
 function renderNodeRemoteCommand(script, args) {
-  return ['node', renderRemoteScript(script), ...args.map(quotePosix)].join(' ');
+  return [
+    'env',
+    `PATH=${REMOTE_FIXED_PATH}`,
+    'node',
+    renderRemoteScript(script),
+    ...args.map(quotePosix),
+  ].join(' ');
 }
 
 function renderTmuxAttachRemoteCommand(tmuxTarget) {
-  return ['tmux', 'attach-session', '-t', tmuxTarget]
-    .map((value, index) => (index === 0 ? value : quotePosix(value)))
+  return ['env', `PATH=${REMOTE_FIXED_PATH}`, 'tmux', 'attach-session', '-t', tmuxTarget]
+    .map((value, index) => (index <= 2 ? value : quotePosix(value)))
     .join(' ');
 }
 
