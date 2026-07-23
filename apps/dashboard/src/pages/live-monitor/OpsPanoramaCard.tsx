@@ -135,8 +135,10 @@ export function OpsPanoramaCard() {
     try {
       const res = await fetch('/api/brain/ops-panorama');
       if (!res.ok) return;
-      const json: OpsPanoramaData = await res.json();
-      setData(json);
+      const json = await res.json();
+      // 仅接受合法对象（防止 mock 或异常返回数组/null 导致渲染崩溃）
+      if (!json || typeof json !== 'object' || Array.isArray(json)) return;
+      setData(json as OpsPanoramaData);
     } catch {
       /* 静默降级 */
     }
@@ -166,7 +168,7 @@ export function OpsPanoramaCard() {
     );
   }
 
-  const relayCount = data.relay.container_count;
+  const relayCount = data.relay?.container_count ?? null;
   const claudeAccounts = data.llm_capacity?.vendors?.claude?.accounts ?? [];
   const sentinelColor =
     data.llm_capacity?.sentinel === 'ok'
@@ -215,15 +217,15 @@ export function OpsPanoramaCard() {
       {/* HOST 指标 */}
       <MetricRow
         label="CPU"
-        value={`${data.host.cpu_usage_pct.toFixed(1)}%`}
-        pct={data.host.cpu_usage_pct}
+        value={`${(data.host?.cpu_usage_pct ?? 0).toFixed(1)}%`}
+        pct={data.host?.cpu_usage_pct ?? 0}
         testId="ops-panorama-cpu"
         valueTestId="ops-panorama-cpu-value"
       />
       <MetricRow
         label="MEM"
-        value={`${data.host.mem_used_pct.toFixed(1)}%`}
-        pct={data.host.mem_used_pct}
+        value={`${(data.host?.mem_used_pct ?? 0).toFixed(1)}%`}
+        pct={data.host?.mem_used_pct ?? 0}
         testId="ops-panorama-mem"
         valueTestId="ops-panorama-mem-value"
       />
@@ -233,9 +235,9 @@ export function OpsPanoramaCard() {
 
       {/* 统计行 */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-        <StatChip label="任务" value={data.tasks.in_progress_count} testId="ops-panorama-tasks-count" />
-        <StatChip label="Claude" value={data.processes.claude_total} testId="ops-panorama-claude-procs" />
-        <StatChip label="Codex" value={data.processes.codex_total} testId="ops-panorama-codex-procs" />
+        <StatChip label="任务" value={data.tasks?.in_progress_count ?? 0} testId="ops-panorama-tasks-count" />
+        <StatChip label="Claude" value={data.processes?.claude_total ?? 0} testId="ops-panorama-claude-procs" />
+        <StatChip label="Codex" value={data.processes?.codex_total ?? 0} testId="ops-panorama-codex-procs" />
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ fontSize: 9, color: '#484f58' }}>Relay</span>
           <span
