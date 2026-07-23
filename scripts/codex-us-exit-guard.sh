@@ -154,51 +154,63 @@ prepare() {
   selected="$current"
   changed=0
 
-  if [[ "$current" != "$PRIMARY_EXIT" && "$current" != "$FALLBACK_EXIT" ]]; then
+  if [[ "$current" != "$PRIMARY_EXIT" ]]; then
     selected=""
     if try_candidate "$PRIMARY_EXIT"; then
       selected="$PRIMARY_EXIT"
+    elif [[ "$current" == "$FALLBACK_EXIT" ]] && candidate_is_available "$FALLBACK_EXIT"; then
+      selected="$FALLBACK_EXIT"
     elif try_candidate "$FALLBACK_EXIT"; then
       selected="$FALLBACK_EXIT"
     else
       die "两个美国出口节点均不可用（M4=${PRIMARY_EXIT}, SF=${FALLBACK_EXIT}）"
       return 1
     fi
-    changed=1
-    log "已切换美国 exit node（${selected}）"
+    if [[ "$selected" != "$current" ]]; then
+      changed=1
+      log "已切换美国 exit node（${selected}）"
+    fi
   fi
 
   write_state "$state_file" "$previous" "$selected" "$changed"
   if ! assert_public_country_us || ! assert_chatgpt_transport; then
-    if [[ "$changed" == "1" ]]; then
-      restore "$state_file" || true
-    fi
+    restore "$state_file" || true
     return 1
   fi
   log "美国出口门禁通过（exit node: ${selected}）"
 }
 
 restore() {
-  local state_file="$1" changed previous current
+  local state_file="$1" current
   [[ -f "$state_file" ]] || return 0
-  changed="$(awk -F= '$1 == "changed" { print $2; exit }' "$state_file")"
-  if [[ "$changed" == "1" ]]; then
-    previous="$(awk -F= '$1 == "previous_exit" { print $2; exit }' "$state_file")"
-    if ! set_exit_node "$previous"; then
-      die "恢复 Tailscale exit node 失败（目标: ${previous:-none}）"
-      return 1
-    fi
-    current="$(current_exit_ip)" || {
-      die "恢复后无法读取 Tailscale exit node"
-      return 1
-    }
-    if [[ "$current" != "$previous" ]]; then
-      die "恢复 Tailscale exit node 未生效（期望: ${previous:-none}, 实际: ${current:-none}）"
-      return 1
-    fi
-    log "已恢复进入前的 Tailscale exit node（${previous:-none}）"
+
+  current="$(current_exit_ip)" || {
+    die "收尾时无法读取 Tailscale exit node"
+    return 1
+  }
+  if [[ "$current" == "$PRIMARY_EXIT" ]]; then
+    rm -f "$state_file"
+    log "默认美国 M4 exit node 保持不变（${PRIMARY_EXIT}）"
+    return 0
   fi
-  rm -f "$state_file"
+
+  if try_candidate "$PRIMARY_EXIT"; then
+    rm -f "$state_file"
+    log "已回归默认美国 M4 exit node（${PRIMARY_EXIT}）"
+    return 0
+  fi
+
+  if [[ "$current" != "$FALLBACK_EXIT" ]]; then
+    if ! try_candidate "$FALLBACK_EXIT"; then
+      die "无法回归美国 M4，SF 兜底也不可用（M4=${PRIMARY_EXIT}, SF=${FALLBACK_EXIT}）"
+      return 1
+    fi
+  elif ! candidate_is_available "$FALLBACK_EXIT"; then
+    die "美国 M4 与当前 SF 兜底均不可用（M4=${PRIMARY_EXIT}, SF=${FALLBACK_EXIT}）"
+    return 1
+  fi
+
+  die "美国 M4 仍不可用，保留 SF exit node（${FALLBACK_EXIT}）"
 }
 
 main() {
