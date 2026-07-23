@@ -149,6 +149,20 @@ app.get('/echo', (req, res) => {
   return res.json({ msg: String(req.query.msg) });
 });
 
+app.get('/sign', (req, res) => {
+  const STRICT_INT = /^-?\d+$/;
+  const v = req.query.value;
+  if (v === undefined || typeof v !== 'string' || !STRICT_INT.test(v)) {
+    return res.status(400).json({ error: 'value 必须匹配 ^-?\\d+$（仅整数；禁小数、前导 +、双重负号、科学计数法、十六进制、千分位、Infinity、NaN、空串）' });
+  }
+  const n = Number(v);
+  if (Math.abs(n) > 9007199254740991) {
+    return res.status(400).json({ error: 'value 超出合法范围：|value| 必须 ≤ 9007199254740991 (Number.MAX_SAFE_INTEGER)' });
+  }
+  const result = n > 0 ? 1 : n < 0 ? -1 : 0;
+  return res.json({ operation: 'sign', result });
+});
+
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => console.log(`playground listening on ${PORT}`));
 }
