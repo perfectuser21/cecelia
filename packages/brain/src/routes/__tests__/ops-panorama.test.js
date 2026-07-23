@@ -7,7 +7,7 @@
  * 或: npx jest sprints/07231722-relay-28e7c41a/tests/ops-panorama.test.js --passWithNoTests
  */
 
-import { jest } from '@jest/globals';
+import { vi } from 'vitest';
 
 // ── Mock 工厂 ──────────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ describe('ops-panorama 聚合逻辑', () => {
   function mockDeps(overrides = {}) {
     return {
       db: {
-        query: jest.fn().mockResolvedValue({
+        query: vi.fn().mockResolvedValue({
           rows: [
             { executor: 'claude' },
             { executor: 'codex' },
@@ -108,11 +108,11 @@ describe('ops-panorama 聚合逻辑', () => {
           ],
         }),
       },
-      getLlmSnapshot: jest.fn().mockResolvedValue(mockSnapshot),
-      countClaude: jest.fn().mockReturnValue(2),
-      countCodex: jest.fn().mockReturnValue(1),
-      safeDockerPs: jest.fn().mockResolvedValue('relay-1\nrelay-2\n'),
-      getHostMetrics: jest.fn().mockReturnValue({ cpu_usage_pct: 42.5, mem_used_pct: 67.3 }),
+      getLlmSnapshot: vi.fn().mockResolvedValue(mockSnapshot),
+      countClaude: vi.fn().mockReturnValue(2),
+      countCodex: vi.fn().mockReturnValue(1),
+      safeDockerPs: vi.fn().mockResolvedValue('relay-1\nrelay-2\n'),
+      getHostMetrics: vi.fn().mockReturnValue({ cpu_usage_pct: 42.5, mem_used_pct: 67.3 }),
       ...overrides,
     };
   }
@@ -151,13 +151,13 @@ describe('ops-panorama 聚合逻辑', () => {
   });
 
   test('BEHAVIOR-05: host.cpu_usage_pct in [0,100]', async () => {
-    const result = await buildPayload(mockDeps({ getHostMetrics: jest.fn().mockReturnValue({ cpu_usage_pct: 42.5, mem_used_pct: 67.3 }) }));
+    const result = await buildPayload(mockDeps({ getHostMetrics: vi.fn().mockReturnValue({ cpu_usage_pct: 42.5, mem_used_pct: 67.3 }) }));
     expect(result.host.cpu_usage_pct).toBeGreaterThanOrEqual(0);
     expect(result.host.cpu_usage_pct).toBeLessThanOrEqual(100);
   });
 
   test('BEHAVIOR-06: host.mem_used_pct in [0,100]', async () => {
-    const result = await buildPayload(mockDeps({ getHostMetrics: jest.fn().mockReturnValue({ cpu_usage_pct: 99, mem_used_pct: 100 }) }));
+    const result = await buildPayload(mockDeps({ getHostMetrics: vi.fn().mockReturnValue({ cpu_usage_pct: 99, mem_used_pct: 100 }) }));
     expect(result.host.mem_used_pct).toBeGreaterThanOrEqual(0);
     expect(result.host.mem_used_pct).toBeLessThanOrEqual(100);
   });
@@ -174,12 +174,12 @@ describe('ops-panorama 聚合逻辑', () => {
 
   test('BEHAVIOR-09: docker 不可达 → relay.container_count = null，不抛出', async () => {
     const handler = buildMockHandler({ dockerFails: true });
-    const result = await handler(mockDeps({ safeDockerPs: jest.fn().mockRejectedValue(new Error('docker not found')) }));
+    const result = await handler(mockDeps({ safeDockerPs: vi.fn().mockRejectedValue(new Error('docker not found')) }));
     expect(result.relay.container_count).toBeNull();
   });
 
   test('BEHAVIOR-10: llm_capacity 异常 → 该字段 null，不影响整体', async () => {
-    const deps = mockDeps({ getLlmSnapshot: jest.fn().mockRejectedValue(new Error('timeout')) });
+    const deps = mockDeps({ getLlmSnapshot: vi.fn().mockRejectedValue(new Error('timeout')) });
     const handler = buildMockHandler({ llmCapacityFails: true });
     const result = await handler(deps);
     expect(result.llm_capacity).toBeNull();
@@ -203,7 +203,7 @@ describe('ops-panorama 聚合逻辑', () => {
   });
 
   test('BEHAVIOR-13: 并行聚合（Promise.all），单个超时不崩整体', async () => {
-    const slowDocker = jest.fn().mockImplementation(() =>
+    const slowDocker = vi.fn().mockImplementation(() =>
       new Promise(resolve => setTimeout(() => resolve('relay-1\n'), 6100)) // 超出 5s 超时
     );
     const deps = mockDeps({ safeDockerPs: slowDocker });

@@ -152,3 +152,28 @@ bash sprints/07231722-relay-28e7c41a/tests/e2e-ops-panorama.sh
 ```
 
 覆盖范围：DoD-01~10（API 层）、DoD-11（安全合规）、DoD-17（回归护栏）。
+
+## Test Contract
+
+| BEHAVIOR | Test File | it() 描述 |
+|---|---|---|
+| BEHAVIOR-01 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-01: sampled_at 非 null |
+| BEHAVIOR-02 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-02: 顶层 schema 完整 |
+| BEHAVIOR-03 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-03: tasks.in_progress_count >= 0 |
+| BEHAVIOR-04 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-04: vendor_dist 含 claude/codex/grok/unknown |
+| BEHAVIOR-05 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-05: host.cpu_usage_pct in [0,100] |
+| BEHAVIOR-06 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-06: host.mem_used_pct in [0,100] |
+| BEHAVIOR-07 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-07: processes.claude_total >= 0 |
+| BEHAVIOR-08 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-08: processes.codex_total >= 0 |
+| BEHAVIOR-09 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-09: docker 不可达 → relay.container_count = null，不抛出 |
+| BEHAVIOR-10 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-10: llm_capacity 异常 → 该字段 null，不影响整体 |
+| BEHAVIOR-11 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-11: llm_capacity.sentinel 值合法 |
+| BEHAVIOR-12 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-12: llm_capacity.vendors.claude.accounts 为数组 |
+| BEHAVIOR-13 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-13: 并行聚合（Promise.all），单个超时不崩整体 |
+| BEHAVIOR-14 | packages/brain/src/routes/__tests__/ops-panorama.test.js | BEHAVIOR-14: 响应体不含 token/secret/password 字段 |
+| BEHAVIOR-16 | apps/dashboard/src/pages/live-monitor/OpsPanoramaCard.test.tsx | BEHAVIOR-16: 存在含"执行全景"的标题元素 |
+| BEHAVIOR-17 | apps/dashboard/src/pages/live-monitor/OpsPanoramaCard.test.tsx | BEHAVIOR-17: 每 30s 自动轮询（interval 设置为 30000ms） |
+| BEHAVIOR-18 | apps/dashboard/src/pages/live-monitor/OpsPanoramaCard.test.tsx | BEHAVIOR-18: 展示 cpu/mem 进度条 |
+| BEHAVIOR-19 | apps/dashboard/src/pages/live-monitor/OpsPanoramaCard.test.tsx | BEHAVIOR-19: 账号余量颜色编码（<50%绿，50-80%黄，>80%红） |
+| BEHAVIOR-20 | apps/dashboard/src/pages/live-monitor/OpsPanoramaCard.test.tsx | BEHAVIOR-20: 展示 sampled_at 抓取时间（相对时间） |
+| BEHAVIOR-21 | apps/dashboard/src/pages/live-monitor/OpsPanoramaCard.test.tsx | BEHAVIOR-21: relay.container_count 为 null 时显示"—"不崩溃 |
