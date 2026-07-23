@@ -239,3 +239,14 @@ npx vitest run packages/brain/src/routes/__tests__/conversations.test.js
 | golden_path 表是否存在 | migration 294 已确认定义，PR1 安全引用 |
 | migration 序号冲突 | migration 358 已落库，359 是下一个，安全 |
 | current_session_id 无 UNIQUE 约束 | 正确设计，同一 session_id 在不同 conversation 间不应共用 |
+
+---
+
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
+|---|---|---|---|
+| POST /conversations 创建 | `packages/brain/src/routes/__tests__/conversations.test.js` | BEHAVIOR-1（201+结构）/ BEHAVIOR-4（400/404） | 路由文件不存在 → import 报错 → 全红 |
+| POST /:id/messages turn_count | `packages/brain/src/routes/__tests__/conversations.test.js` | BEHAVIOR-2（turn_count 自增）/ role=assistant 不增 | 路由文件不存在 → 全红 |
+| PATCH status 枚举校验 | `packages/brain/src/routes/__tests__/conversations.test.js` | BEHAVIOR-3（400 无效枚举）/ 合法枚举 200 | 路由文件不存在 → 全红 |
+| GET 列表/单条 | `packages/brain/src/routes/__tests__/conversations.test.js` | BEHAVIOR-5（列表过滤）/ BEHAVIOR-6（单条含 messages） | 路由文件不存在 → 全红 |
