@@ -94,7 +94,6 @@ function structuredEvidenceVerdict(observed) {
     .find((verdict) => (
       verdict?.pr_head_sha === observed.pr?.head_sha
       && verdict?.failure_class === 'evidence_invalid'
-      && normalizeFailureSignature(verdict?.failure_signature) != null
     )) ?? null;
 }
 
@@ -207,16 +206,22 @@ function buildSnapshot(observed, counters, action, reason = null) {
       evidenceVerdict.failure_signature,
     );
     if ([ACTION.WAIT_HUMAN_REVIEW, LOG_ACTION.HUMAN_REVIEW_REQUESTED].includes(action)) {
-      snapshot.review_reason = 'evidence_invalid:repeated_signature';
+      snapshot.review_reason = reason;
     }
+  }
+  if ([ACTION.WAIT_HUMAN_REVIEW, LOG_ACTION.HUMAN_REVIEW_REQUESTED].includes(action)) {
+    snapshot.review_reason = reason;
   }
   return snapshot;
 }
 
 function humanReviewDetail(observed, reason) {
-  if (reason === 'evidence_invalid:repeated_signature') {
+  if ([
+    'evidence_invalid:repeated_signature',
+    'unknown:missing_failure_signature',
+  ].includes(reason)) {
     const verdict = structuredEvidenceVerdict(observed);
-    if (!verdict) return {};
+    if (!verdict) return { review_reason: reason };
     return {
       review_reason: reason,
       failure_signature: normalizeFailureSignature(verdict.failure_signature),
@@ -230,7 +235,7 @@ function humanReviewDetail(observed, reason) {
       failure_set_key: failureSetKey(failureSet),
     };
   }
-  return {};
+  return { review_reason: reason };
 }
 
 async function markRunFailed(pool, runId, reason) {
@@ -417,7 +422,10 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
           const snapshot = asStructuredJson(row.observed) ?? {};
           const detail = asStructuredJson(row.detail) ?? {};
           if (snapshot.pr?.head_sha !== observed.pr?.head_sha) return false;
-          if (decision.reason === 'evidence_invalid:repeated_signature') {
+          if ([
+            'evidence_invalid:repeated_signature',
+            'unknown:missing_failure_signature',
+          ].includes(decision.reason)) {
             const evidenceVerdict = structuredEvidenceVerdict(observed);
             return detail.review_reason === decision.reason
               && JSON.stringify(normalizeFailureSignature(detail.failure_signature))
@@ -430,7 +438,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
             return detail.review_reason === decision.reason
               && failureSetKey(detail.failure_set) === failureSetKey(currentSet);
           }
-          return true;
+          return detail.review_reason === decision.reason;
         },
       );
       if (reviewAlreadyRequested) {

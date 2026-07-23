@@ -119,10 +119,60 @@ function sortedLogRows(decisionLog) {
     : [];
 }
 
+function currentHumanReviewRejection(decisionLog, currentHeadSha) {
+  const rows = sortedLogRows(decisionLog);
+  return rows.find((row) => {
+    if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+    const detail = asStructuredJson(row.detail) ?? {};
+    if (detail.rejected !== true && detail.verdict !== 'REJECTED') return false;
+    if (detail.pr_head_sha !== currentHeadSha) return false;
+    return rows.some((request) => (
+      request.action === LOG_ACTION.HUMAN_REVIEW_REQUESTED
+      && Number(request.hop) < Number(row.hop)
+      && String(request.hop) === String(detail.review_request_hop)
+      && (asStructuredJson(request.observed) ?? {}).pr?.head_sha === currentHeadSha
+    ));
+  }) ?? null;
+}
+
 function evidenceReplayRoute(decisionLog, currentHeadSha, currentVerdict) {
   const signature = normalizeFailureSignature(currentVerdict?.failure_signature);
   const signatureKey = failureSignatureKey(signature);
   if (signatureKey == null) {
+    const rows = sortedLogRows(decisionLog);
+    const unsignedVerdicts = rows.filter((row) => {
+      if (![LOG_ACTION.VERDICT_EVALUATE, LOG_ACTION.VERDICT_JUDGE].includes(row.action)) {
+        return false;
+      }
+      const detail = asStructuredJson(row.detail) ?? {};
+      return detail.failure_class === 'evidence_invalid'
+        && detail.pr_head_sha === currentHeadSha
+        && failureSignatureKey(detail.failure_signature) == null;
+    });
+    const unsignedRepairs = rows.filter((row) => {
+      if (row.action !== ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR) return false;
+      const snapshot = asStructuredJson(row.observed) ?? {};
+      return snapshot.pr?.head_sha === currentHeadSha
+        && snapshot.failure_class === 'evidence_invalid'
+        && failureSignatureKey(snapshot.failure_signature) == null;
+    });
+    const latestVerdict = unsignedVerdicts.at(-1) ?? null;
+    const latestRepair = unsignedRepairs.at(-1) ?? null;
+    if (latestRepair && latestVerdict
+        && Number(latestVerdict.hop) > Number(latestRepair.hop)) {
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'unknown:missing_failure_signature',
+      };
+    }
+    if (latestRepair) {
+      return {
+        phase: 'evaluate',
+        action: ACTION.WAIT_RUNNING,
+        reason: 'evidence_repair_awaiting_verdict',
+      };
+    }
     return {
       phase: 'evaluate',
       action: ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR,
@@ -232,6 +282,14 @@ export function derive(observed) {
   // merged 短路：GitHub merged 是外部终态真相，必须先于所有 fence / 在途观测。
   if (pr && pr.merged) {
     return { phase: 'done', action: 'report', reason: 'pr_merged' };
+  }
+
+  if (currentHumanReviewRejection(observed.decisionLog, pr?.head_sha ?? null)) {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: 'human_review_rejected',
+    };
   }
 
   // 0.4 no-progress terminal（Sprint 07231527 Blocking 4）：

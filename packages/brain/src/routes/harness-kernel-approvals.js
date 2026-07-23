@@ -20,7 +20,10 @@ function asJson(value) {
   try { return JSON.parse(value); } catch { return {}; }
 }
 
-router.post('/:runId/approve', approvalRateLimit, async (req, res) => {
+async function handleReviewDecision(req, res, { approved }) {
+  if (!approved && !req.body?.approved_by && req.body?.rejected_by) {
+    req.body.approved_by = req.body.rejected_by;
+  }
   const auth = authenticateApprover(req, res);
   if (!auth.ok) return;
 
@@ -92,15 +95,16 @@ router.post('/:runId/approve', approvalRateLimit, async (req, res) => {
           WHERE run_id=$1::uuid
             AND action='verdict:human_review'
             AND detail->>'pr_head_sha'=$2
+            AND detail->>'review_request_hop'=$3
           LIMIT 1`,
-        [runId, currentSha],
+        [runId, currentSha, String(reviewRequestHop)],
       );
       if (duplicate.rowCount > 0) {
         if (transactionOpen) {
           await client.query('ROLLBACK');
           transactionOpen = false;
         }
-        return res.status(409).json({ error: 'already_approved' });
+        return res.status(409).json({ error: 'already_decided' });
       }
 
       // 人审等待不消耗 8h 自动化活动预算。判重之后才补时，保证重复批准
@@ -123,40 +127,62 @@ router.post('/:runId/approve', approvalRateLimit, async (req, res) => {
         'SELECT COALESCE(MAX(hop), 0) + 1 AS next_hop FROM orchestrator_decision_log WHERE run_id=$1::uuid',
         [runId],
       );
-      const approvalHop = Number(hopRows[0].next_hop);
-      const approvedAt = new Date().toISOString();
+      const decisionHop = Number(hopRows[0].next_hop);
+      const decidedAt = new Date().toISOString();
       const observed = {
         pr: { head_sha: currentSha },
         review_request_hop: reviewRequestHop,
       };
-      const detail = {
-        verdict: 'APPROVED',
-        approved: true,
-        pr_head_sha: currentSha,
-        review_request_hop: reviewRequestHop,
-        approved_by: auth.approvedBy,
-        approved_at: approvedAt,
-      };
+      const detail = approved
+        ? {
+            verdict: 'APPROVED',
+            approved: true,
+            pr_head_sha: currentSha,
+            review_request_hop: reviewRequestHop,
+            approved_by: auth.approvedBy,
+            approved_at: decidedAt,
+          }
+        : {
+            verdict: 'REJECTED',
+            approved: false,
+            rejected: true,
+            pr_head_sha: currentSha,
+            review_request_hop: reviewRequestHop,
+            rejected_by: auth.approvedBy,
+            rejected_at: decidedAt,
+          };
       await client.query(
         `INSERT INTO orchestrator_decision_log
            (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
          VALUES ($1::uuid, $2, $3::jsonb, 'review', $4, 'verdict:human_review', $5::jsonb)`,
-        [runId, approvalHop, JSON.stringify(observed), 'allow', JSON.stringify(detail)],
+        [
+          runId,
+          decisionHop,
+          JSON.stringify(observed),
+          approved ? 'allow' : 'deny:human_review_rejected',
+          JSON.stringify(detail),
+        ],
       );
       if (transactionOpen) {
         await client.query('COMMIT');
         transactionOpen = false;
       }
 
-      return res.status(202).json({
+      const response = {
         ok: true,
         run_id: runId,
         task_id: taskId,
         pr_head_sha: currentSha,
         review_request_hop: reviewRequestHop,
-        approved_by: auth.approvedBy,
-        approved_at: approvedAt,
-      });
+      };
+      if (approved) {
+        response.approved_by = auth.approvedBy;
+        response.approved_at = decidedAt;
+      } else {
+        response.rejected_by = auth.approvedBy;
+        response.rejected_at = decidedAt;
+      }
+      return res.status(202).json(response);
     } catch (error) {
       if (transactionOpen) {
         await client.query('ROLLBACK').catch(() => {});
@@ -167,8 +193,15 @@ router.post('/:runId/approve', approvalRateLimit, async (req, res) => {
       if (transactional) client.release();
     }
   } catch (error) {
-    return res.status(500).json({ error: `kernel approval failed: ${error.message}` });
+    return res.status(500).json({ error: `kernel review decision failed: ${error.message}` });
   }
-});
+}
+
+router.post('/:runId/approve', approvalRateLimit, (req, res) => (
+  handleReviewDecision(req, res, { approved: true })
+));
+router.post('/:runId/reject', approvalRateLimit, (req, res) => (
+  handleReviewDecision(req, res, { approved: false })
+));
 
 export default router;
