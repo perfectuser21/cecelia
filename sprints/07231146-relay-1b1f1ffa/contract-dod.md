@@ -24,6 +24,10 @@ journey_type: autonomous
 - [ ] [ARTIFACT] scripts/preview-cleanup.sh 已重写为 preview-destroyer.js 的唯一 shell 执行体
   Test: node -e "const c=require('fs').readFileSync('scripts/preview-cleanup.sh','utf8'); if(!c.includes('preview-destroyer')) process.exit(1);"
 
+- [ ] [ARTIFACT] T10 消费者代码 grep 断言：capacity-gate.js/preview-destroyer.js 内不存在本地 df/diskutil 直接调用（统一只经 readHostDisk() 消费 host-disk-sampler.sh 的采样结果，禁止消费者重复实现磁盘采样，违背"统一采样、统一消费"设计目标）
+  Test: node -e "const fs=require('fs'); const files=['packages/brain/src/capacity-gate.js','packages/brain/src/preview-destroyer.js']; const bad=/execSync\(\s*['\"\`]\s*df\b|spawnSync\(\s*['\"\`]df['\"\`]|spawn\(\s*['\"\`]df['\"\`]|exec\(\s*['\"\`]\s*df\b|['\"\`]diskutil['\"\`]|\bdf\s+-k\b/; let fail=false; for (const f of files) { const c=fs.readFileSync(f,'utf8'); if (bad.test(c)) { console.error('FAIL: ' + f + ' 内含本地 df/diskutil 直接调用，应改为经 capacity-gate.js 的 readHostDisk() 读取 .runtime/host-disk.json'); fail=true; } } if (fail) process.exit(1); console.log('OK: no local df/diskutil calls in capacity-gate.js or preview-destroyer.js');"
+  期望: exit 0（两文件源码内均不含 df/diskutil 直接调用）
+
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令，journey_type=autonomous，真实 Brain/DB/文件系统/git worktree，禁 mock）
 
 ### 模块1 宿主磁盘采样器
