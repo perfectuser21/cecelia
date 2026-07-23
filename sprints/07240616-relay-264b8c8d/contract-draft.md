@@ -246,7 +246,7 @@ npx vitest run packages/brain/src/routes/__tests__/conversations.test.js
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
 |---|---|---|---|
-| POST /conversations 创建 | `packages/brain/src/routes/__tests__/conversations.test.js` | BEHAVIOR-1（201+结构）/ BEHAVIOR-4（400/404） | 路由文件不存在 → import 报错 → 全红 |
-| POST /:id/messages turn_count | `packages/brain/src/routes/__tests__/conversations.test.js` | BEHAVIOR-2（turn_count 自增）/ role=assistant 不增 | 路由文件不存在 → 全红 |
-| PATCH status 枚举校验 | `packages/brain/src/routes/__tests__/conversations.test.js` | BEHAVIOR-3（400 无效枚举）/ 合法枚举 200 | 路由文件不存在 → 全红 |
-| GET 列表/单条 | `packages/brain/src/routes/__tests__/conversations.test.js` | BEHAVIOR-5（列表过滤）/ BEHAVIOR-6（单条含 messages） | 路由文件不存在 → 全红 |
+| POST /conversations 创建 | `../../packages/brain/src/routes/__tests__/conversations.test.js` | 201 + status=active + turn_count=0 / 缺失 journey_id → 400 / journey_id 不存在于 journeys 表 → 404 | 路由文件不存在 → 全红 |
+| POST /:id/messages turn_count | `../../packages/brain/src/routes/__tests__/conversations.test.js` | role=user → 201 + turn_count 自增 1 / role=assistant → 201，turn_count 不自增 | 路由文件不存在 → 全红 |
+| PATCH status 枚举校验 | `../../packages/brain/src/routes/__tests__/conversations.test.js` | 无效 status → 400 | 路由文件不存在 → 全红 |
+| GET 列表/单条 | `../../packages/brain/src/routes/__tests__/conversations.test.js` | 按 journey_id 返回 conversations 数组 + total / 返回 conversation + messages 数组 + decisions 数组 | 路由文件不存在 → 全红 |
