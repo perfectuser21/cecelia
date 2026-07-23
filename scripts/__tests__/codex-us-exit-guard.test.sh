@@ -169,14 +169,26 @@ test_chatgpt_transport_timeout_fails_closed() {
   teardown
 }
 
-test_macos_empty_exitnodeip_uses_status_exitnode() {
+test_macos_empty_exitnodeip_uses_status_and_prefers_m4() {
   setup
   printf '%s' '100.79.41.61' > "$MOCK_EXIT_FILE"
   export MOCK_PREFS_EXIT_EMPTY=1
-  if run_prepare && ! grep -q '^tailscale set' "$TEST_LOG"; then
-    pass "macOS prefs ExitNodeIP 为空时从 status 识别 SF 出口"
+  if run_prepare && [[ "$(cat "$MOCK_EXIT_FILE")" == "100.71.151.105" ]] && \
+     grep -q '^tailscale set --exit-node=100.71.151.105' "$TEST_LOG"; then
+    pass "macOS prefs ExitNodeIP 为空时从 status 识别 SF 并优先切 M4"
   else
-    fail "macOS prefs ExitNodeIP 为空时从 status 识别 SF 出口" "$(cat "${TEST_TMP}/out") $(cat "$TEST_LOG")"
+    fail "macOS prefs ExitNodeIP 为空时从 status 识别 SF 并优先切 M4" "$(cat "${TEST_TMP}/out") $(cat "$TEST_LOG")"
+  fi
+  teardown
+}
+
+test_existing_sf_prefers_m4_when_available() {
+  setup
+  printf '%s' '100.79.41.61' > "$MOCK_EXIT_FILE"
+  if run_prepare && [[ "$(cat "$MOCK_EXIT_FILE")" == "100.71.151.105" ]]; then
+    pass "当前 SF 且 M4 在线时切到 M4"
+  else
+    fail "当前 SF 且 M4 在线时切到 M4" "$(cat "${TEST_TMP}/out")"
   fi
   teardown
 }
@@ -192,31 +204,31 @@ test_transient_chatgpt_timeout_retries_until_ready() {
   teardown
 }
 
-test_no_exit_switches_to_m4_and_restore_clears_exit() {
+test_no_exit_switches_to_m4_and_restore_keeps_m4() {
   setup
   : > "$MOCK_EXIT_FILE"
   if ! run_prepare; then
-    fail "无 exit 时切 M4，restore 后清空" "$(cat "${TEST_TMP}/out")"
+    fail "无 exit 时切 M4，restore 后保持 M4" "$(cat "${TEST_TMP}/out")"
   elif [[ "$(cat "$MOCK_EXIT_FILE")" != "100.71.151.105" ]]; then
-    fail "无 exit 时切 M4，restore 后清空" "prepare 后出口=$(cat "$MOCK_EXIT_FILE")"
+    fail "无 exit 时切 M4，restore 后保持 M4" "prepare 后出口=$(cat "$MOCK_EXIT_FILE")"
   elif ! bash "$TARGET" restore "${TEST_TMP}/state" >> "${TEST_TMP}/out" 2>&1; then
-    fail "无 exit 时切 M4，restore 后清空" "$(cat "${TEST_TMP}/out")"
-  elif [[ -s "$MOCK_EXIT_FILE" ]]; then
-    fail "无 exit 时切 M4，restore 后清空" "restore 后出口=$(cat "$MOCK_EXIT_FILE")"
+    fail "无 exit 时切 M4，restore 后保持 M4" "$(cat "${TEST_TMP}/out")"
+  elif [[ "$(cat "$MOCK_EXIT_FILE")" != "100.71.151.105" ]]; then
+    fail "无 exit 时切 M4，restore 后保持 M4" "restore 后出口=$(cat "$MOCK_EXIT_FILE")"
   else
-    pass "无 exit 时切 M4，restore 后清空"
+    pass "无 exit 时切 M4，restore 后保持 M4"
   fi
   teardown
 }
 
-test_non_us_exit_restores_original_after_session() {
+test_non_us_exit_finishes_on_m4() {
   setup
   printf '%s' '100.86.118.99' > "$MOCK_EXIT_FILE"
   if run_prepare && bash "$TARGET" restore "${TEST_TMP}/state" >> "${TEST_TMP}/out" 2>&1 && \
-     [[ "$(cat "$MOCK_EXIT_FILE")" == "100.86.118.99" ]]; then
-    pass "非美国出口在会话后恢复原节点"
+     [[ "$(cat "$MOCK_EXIT_FILE")" == "100.71.151.105" ]]; then
+    pass "非美国出口在会话后保持 M4"
   else
-    fail "非美国出口在会话后恢复原节点" "$(cat "${TEST_TMP}/out")"
+    fail "非美国出口在会话后保持 M4" "$(cat "${TEST_TMP}/out")"
   fi
   teardown
 }
@@ -229,6 +241,24 @@ test_m4_unavailable_falls_back_to_sf() {
     pass "美国 M4 不可用时回退 SF"
   else
     fail "美国 M4 不可用时回退 SF" "$(cat "${TEST_TMP}/out")"
+  fi
+  teardown
+}
+
+test_sf_fallback_returns_to_m4_after_recovery() {
+  setup
+  : > "$MOCK_EXIT_FILE"
+  printf '%s\n' '{"Peer":{"m4":{"HostName":"perfect21","TailscaleIPs":["100.71.151.105"],"Online":false,"ExitNodeOption":true},"sf":{"HostName":"sf-vps","TailscaleIPs":["100.79.41.61"],"Online":true,"ExitNodeOption":true}}}' > "$MOCK_STATUS_FILE"
+  if ! run_prepare || [[ "$(cat "$MOCK_EXIT_FILE")" != "100.79.41.61" ]]; then
+    fail "临时 SF 在 M4 恢复后回归 M4" "$(cat "${TEST_TMP}/out")"
+  else
+    printf '%s\n' '{"Peer":{"m4":{"HostName":"perfect21","TailscaleIPs":["100.71.151.105"],"Online":true,"ExitNodeOption":true},"sf":{"HostName":"sf-vps","TailscaleIPs":["100.79.41.61"],"Online":true,"ExitNodeOption":true}}}' > "$MOCK_STATUS_FILE"
+    if bash "$TARGET" restore "${TEST_TMP}/state" >> "${TEST_TMP}/out" 2>&1 && \
+       [[ "$(cat "$MOCK_EXIT_FILE")" == "100.71.151.105" ]]; then
+      pass "临时 SF 在 M4 恢复后回归 M4"
+    else
+      fail "临时 SF 在 M4 恢复后回归 M4" "$(cat "${TEST_TMP}/out")"
+    fi
   fi
   teardown
 }
@@ -247,36 +277,36 @@ test_both_candidates_unavailable_fails() {
   teardown
 }
 
-test_prepare_verification_failure_rolls_back_immediately() {
+test_prepare_verification_failure_keeps_m4() {
   setup
   : > "$MOCK_EXIT_FILE"
   printf '%s' 'CN' > "$MOCK_COUNTRY_FILE"
   if run_prepare; then
-    fail "切换后验证失败立即回滚" "prepare 意外成功"
-  elif [[ -s "$MOCK_EXIT_FILE" ]]; then
-    fail "切换后验证失败立即回滚" "残留出口=$(cat "$MOCK_EXIT_FILE")"
+    fail "切换后验证失败仍保持 M4" "prepare 意外成功"
+  elif [[ "$(cat "$MOCK_EXIT_FILE")" != "100.71.151.105" ]]; then
+    fail "切换后验证失败仍保持 M4" "出口=$(cat "$MOCK_EXIT_FILE")"
   elif ! grep -q '公网出口不是 US' "${TEST_TMP}/out"; then
-    fail "切换后验证失败立即回滚" "$(cat "${TEST_TMP}/out")"
+    fail "切换后验证失败仍保持 M4" "$(cat "${TEST_TMP}/out")"
   else
-    pass "切换后验证失败立即回滚"
+    pass "切换后验证失败仍保持 M4"
   fi
   teardown
 }
 
-test_restore_failure_returns_nonzero() {
+test_restore_keeps_sf_and_fails_when_m4_still_offline() {
   setup
   : > "$MOCK_EXIT_FILE"
+  printf '%s\n' '{"Peer":{"m4":{"HostName":"perfect21","TailscaleIPs":["100.71.151.105"],"Online":false,"ExitNodeOption":true},"sf":{"HostName":"sf-vps","TailscaleIPs":["100.79.41.61"],"Online":true,"ExitNodeOption":true}}}' > "$MOCK_STATUS_FILE"
   if ! run_prepare; then
-    fail "恢复失败返回非零" "prepare 失败: $(cat "${TEST_TMP}/out")"
+    fail "M4 仍离线时保留 SF 并报错" "$(cat "${TEST_TMP}/out")"
+  elif bash "$TARGET" restore "${TEST_TMP}/state" >> "${TEST_TMP}/out" 2>&1; then
+    fail "M4 仍离线时保留 SF 并报错" "restore 意外成功"
+  elif [[ "$(cat "$MOCK_EXIT_FILE")" != "100.79.41.61" ]]; then
+    fail "M4 仍离线时保留 SF 并报错" "出口=$(cat "$MOCK_EXIT_FILE")"
+  elif grep -q 'M4.*不可用.*保留 SF' "${TEST_TMP}/out"; then
+    pass "M4 仍离线时保留 SF 并报错"
   else
-    export MOCK_FAIL_RESTORE=1
-    if bash "$TARGET" restore "${TEST_TMP}/state" >> "${TEST_TMP}/out" 2>&1; then
-      fail "恢复失败返回非零" "restore 意外成功"
-    elif grep -q '恢复 Tailscale exit node 失败' "${TEST_TMP}/out"; then
-      pass "恢复失败返回非零"
-    else
-      fail "恢复失败返回非零" "$(cat "${TEST_TMP}/out")"
-    fi
+    fail "M4 仍离线时保留 SF 并报错" "$(cat "${TEST_TMP}/out")"
   fi
   teardown
 }
@@ -286,14 +316,16 @@ test_allowed_m4_passes_without_switching
 test_loopback_hosts_fails_before_network_change
 test_cn_public_egress_fails_closed
 test_chatgpt_transport_timeout_fails_closed
-test_macos_empty_exitnodeip_uses_status_exitnode
+test_macos_empty_exitnodeip_uses_status_and_prefers_m4
+test_existing_sf_prefers_m4_when_available
 test_transient_chatgpt_timeout_retries_until_ready
-test_no_exit_switches_to_m4_and_restore_clears_exit
-test_non_us_exit_restores_original_after_session
+test_no_exit_switches_to_m4_and_restore_keeps_m4
+test_non_us_exit_finishes_on_m4
 test_m4_unavailable_falls_back_to_sf
+test_sf_fallback_returns_to_m4_after_recovery
 test_both_candidates_unavailable_fails
-test_prepare_verification_failure_rolls_back_immediately
-test_restore_failure_returns_nonzero
+test_prepare_verification_failure_keeps_m4
+test_restore_keeps_sf_and_fails_when_m4_still_offline
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"
