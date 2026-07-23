@@ -14,7 +14,7 @@
  *        collectGroundTruth?, appendHop?, nextHop?, writeHeartbeat?}（后四者可注入 fake）
  */
 import { derive } from './derive.js';
-import { mergeGate } from './gates.js';
+import { isPassVerdict, mergeGate } from './gates.js';
 import { deriveCounters } from './counters.js';
 import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
@@ -23,7 +23,9 @@ import { materializeApprovedContract } from './contract-store.js';
 import { ACTION, LOG_ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
 import {
   asStructuredJson,
+  failureSetKey,
   generatorCrashSignature,
+  normalizeFailureSet,
   normalizeFailureSignature,
 } from './convergence-signatures.js';
 
@@ -96,7 +98,33 @@ function structuredEvidenceVerdict(observed) {
     )) ?? null;
 }
 
-function buildSnapshot(observed, counters, action) {
+function currentFailureVerdict(observed) {
+  return [observed.judgeVerdict, observed.evaluateVerdict]
+    .find((verdict) => (
+      verdict?.pr_head_sha === observed.pr?.head_sha
+      && !isPassVerdict(verdict?.verdict)
+    )) ?? null;
+}
+
+function currentProductFailureSet(observed) {
+  if (observed.pr?.ci === 'fail') {
+    return normalizeFailureSet(observed.pr.failed_checks);
+  }
+  const verdict = currentFailureVerdict(observed);
+  if (verdict?.failure_class === 'product_failure' || verdict?.failure_class == null) {
+    return normalizeFailureSet(verdict?.failure_signature);
+  }
+  return null;
+}
+
+function isFailureSetReview(reason) {
+  return [
+    'failure_set_repeated',
+    'failure_set_patience_exhausted',
+  ].includes(reason);
+}
+
+function buildSnapshot(observed, counters, action, reason = null) {
   const snapshot = {
     prdExists: observed.prdExists,
     contractApproved: observed.contract.approved,
@@ -108,6 +136,7 @@ function buildSnapshot(observed, counters, action) {
           ci: observed.pr.ci,
           merged: observed.pr.merged,
           head_sha: observed.pr.head_sha,
+          failed_checks: normalizeFailureSet(observed.pr.failed_checks),
         }
       : null,
     inflightContainers: observed.inflight.containers.length,
@@ -140,13 +169,28 @@ function buildSnapshot(observed, counters, action) {
   }
   if (action === ACTION.SPAWN_GENERATOR_FIX) {
     snapshot.trigger_sha = observed.pr?.head_sha ?? null;
-    snapshot.failure_class = observed.judgeVerdict?.failure_class
-      ?? observed.evaluateVerdict?.failure_class
-      ?? null;
+    const failureVerdict = currentFailureVerdict(observed);
+    snapshot.failure_class = observed.pr?.ci === 'fail'
+      ? 'product_failure'
+      : failureVerdict?.failure_class
+        ?? (failureVerdict ? 'product_failure' : null);
+    if (snapshot.failure_class === 'product_failure') {
+      snapshot.failure_set = currentProductFailureSet(observed);
+      snapshot.failure_set_key = failureSetKey(snapshot.failure_set);
+    }
     if (!observed.pr) {
       const crashSignature = generatorCrashSignature(observed.lastAgentExit);
       if (crashSignature != null) snapshot.crash_signature = crashSignature;
     }
+  }
+  if (
+    isFailureSetReview(reason)
+    && [ACTION.WAIT_HUMAN_REVIEW, LOG_ACTION.HUMAN_REVIEW_REQUESTED].includes(action)
+  ) {
+    const failureSet = currentProductFailureSet(observed);
+    snapshot.review_reason = reason;
+    snapshot.failure_set = failureSet;
+    snapshot.failure_set_key = failureSetKey(failureSet);
   }
   const evidenceVerdict = structuredEvidenceVerdict(observed);
   if (evidenceVerdict && [
@@ -165,14 +209,24 @@ function buildSnapshot(observed, counters, action) {
   return snapshot;
 }
 
-function evidenceReviewDetail(observed, reason) {
-  if (reason !== 'evidence_invalid:repeated_signature') return {};
-  const verdict = structuredEvidenceVerdict(observed);
-  if (!verdict) return {};
-  return {
-    review_reason: reason,
-    failure_signature: normalizeFailureSignature(verdict.failure_signature),
-  };
+function humanReviewDetail(observed, reason) {
+  if (reason === 'evidence_invalid:repeated_signature') {
+    const verdict = structuredEvidenceVerdict(observed);
+    if (!verdict) return {};
+    return {
+      review_reason: reason,
+      failure_signature: normalizeFailureSignature(verdict.failure_signature),
+    };
+  }
+  if (isFailureSetReview(reason)) {
+    const failureSet = currentProductFailureSet(observed);
+    return {
+      review_reason: reason,
+      failure_set: failureSet,
+      failure_set_key: failureSetKey(failureSet),
+    };
+  }
+  return {};
 }
 
 async function markRunFailed(pool, runId, reason) {
@@ -367,6 +421,11 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
                   normalizeFailureSignature(evidenceVerdict?.failure_signature),
                 );
           }
+          if (isFailureSetReview(decision.reason)) {
+            const currentSet = currentProductFailureSet(observed);
+            return detail.review_reason === decision.reason
+              && failureSetKey(detail.failure_set) === failureSetKey(currentSet);
+          }
           return true;
         },
       );
@@ -444,14 +503,19 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       await append(deps.pool, {
         runId: resolvedRunId,
         hop,
-        observed: buildSnapshot(observed, fullCounters, decision.action),
+        observed: buildSnapshot(
+          observed,
+          fullCounters,
+          decision.action,
+          decision.reason,
+        ),
         derivedPhase: decision.phase,
         gateVerdict,
         action: decision.action,
         detail: {
           reason: decision.reason,
           crossCheckMismatch: counters.crossCheckMismatch,
-          ...evidenceReviewDetail(observed, decision.reason),
+          ...humanReviewDetail(observed, decision.reason),
         },
       });
     } catch (err) {
@@ -503,14 +567,19 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       await append(deps.pool, {
         runId: resolvedRunId,
         hop: effectHop,
-        observed: buildSnapshot(observed, fullCounters, LOG_ACTION.HUMAN_REVIEW_REQUESTED),
+        observed: buildSnapshot(
+          observed,
+          fullCounters,
+          LOG_ACTION.HUMAN_REVIEW_REQUESTED,
+          decision.reason,
+        ),
         derivedPhase: decision.phase,
         gateVerdict: null,
         action: LOG_ACTION.HUMAN_REVIEW_REQUESTED,
         detail: {
           dispatch_hop: hop,
           result: result.detail ?? null,
-          ...evidenceReviewDetail(observed, decision.reason),
+          ...humanReviewDetail(observed, decision.reason),
         },
       });
       hops++;

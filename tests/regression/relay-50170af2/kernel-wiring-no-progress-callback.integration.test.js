@@ -208,12 +208,8 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
         decisionLog.push({
           hop: decisionLog.reduce((max, row) => Math.max(max, row.hop), 0) + 1,
           action: 'verdict:generator-fix-callback',
-          observed: {
-            attempt_id: params[2],
-            pr_head_sha: params[3],
-            provider: params[4],
-          },
-          detail: { attempt_id: params[2], pr_head_sha: params[3] },
+          observed: JSON.parse(params[5]),
+          detail: JSON.parse(params[6]),
         });
         return { rows: [], rowCount: 1 };
       }

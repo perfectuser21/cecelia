@@ -19,6 +19,7 @@
  */
 import { caps, isPassVerdict } from './gates.js';
 import { ACTION, LOG_ACTION } from './constants.js';
+import { replayProductConvergence } from './counters.js';
 import {
   asStructuredJson,
   crashSignatureKey,
@@ -50,6 +51,55 @@ function verdictForSha(verdictRow, headSha) {
 /** fix 分路统一出口；fixRound 只作观测，终止由结构化收敛探测器决定。 */
 function fixRoute(reason) {
   return { phase: 'generate', action: 'spawn:generator-fix', reason };
+}
+
+function currentProductFailureSet(observed) {
+  if (observed.pr?.ci === 'fail') {
+    return normalizeFailureSignature(observed.pr.failed_checks);
+  }
+  const currentHeadSha = observed.pr?.head_sha ?? null;
+  const productVerdict = [observed.judgeVerdict, observed.evaluateVerdict]
+    .find((verdict) => (
+      verdict?.pr_head_sha === currentHeadSha
+      && !isPassVerdict(verdict.verdict)
+      && (verdict.failure_class === 'product_failure'
+        || verdict.failure_class == null)
+    ));
+  return normalizeFailureSignature(productVerdict?.failure_signature);
+}
+
+function productFixRoute(observed, reason) {
+  const convergence = replayProductConvergence(observed.decisionLog ?? [], {
+    currentFailureSet: currentProductFailureSet(observed),
+    currentHeadSha: observed.pr?.head_sha ?? null,
+  });
+  if (convergence.outcome === 'failed') {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: convergence.reason,
+    };
+  }
+  if (convergence.outcome === 'review') {
+    return {
+      phase: 'review',
+      action: ACTION.WAIT_HUMAN_REVIEW,
+      reason: convergence.reason,
+    };
+  }
+  return fixRoute(reason);
+}
+
+function applyHopFence(decision, counters) {
+  // Convergence and escalation routes are the primary stop condition. The hop
+  // budget is only a wide fallback for otherwise continuing automation.
+  if ([ACTION.MARK_FAILED, ACTION.WAIT_HUMAN_REVIEW].includes(decision.action)) {
+    return decision;
+  }
+  if (caps.hopsExceeded(counters.hops)) {
+    return { phase: 'failed', action: ACTION.MARK_FAILED, reason: 'hop_cap' };
+  }
+  return decision;
 }
 
 function sortedLogRows(decisionLog) {
@@ -172,18 +222,16 @@ export function derive(observed) {
   // generator-fix callback SHA === trigger_sha → 无进展，立即终局
   // INV-K4：no-progress 后禁止对相同 (run_id, failure_class, trigger_sha, role) 再派 generator-fix
   if (observed.noProgress === true) {
-    // 固定 reason 字符串（标准化，不依赖 observed.noProgressReason 的不同来源拼法）
-    return { phase: 'failed', action: 'mark_failed', reason: 'no_progress_same_sha' };
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: observed.noProgressReason ?? 'no_progress_same_sha',
+    };
   }
 
   // 0.5 在途观测（P0-1）：有在途容器/主机 pid → 只写心跳不派发，杜绝崩溃重拉双 spawn
   if (inflight.containers.length > 0 || inflight.host_pids.length > 0) {
     return { phase: run.phase, action: 'wait:running', reason: 'agent_inflight' };
-  }
-
-  // 0.6 hop 硬上限（P2）
-  if (caps.hopsExceeded(counters.hops)) {
-    return { phase: 'failed', action: 'mark_failed', reason: 'hop_cap' };
   }
 
   // merged 短路：任何时刻 pr.merged=true → 跳过所有 spawn 直入 5（routeAfterPoll merged 语义）
@@ -193,16 +241,19 @@ export function derive(observed) {
 
   // 1. planning：sprint-prd.md 落盘即真相，丢失重跑 planner（D2，plannerOutput 不持久化）
   if (!prdExists) {
-    return { phase: 'planning', action: 'spawn:planner', reason: 'no_prd' };
+    return applyHopFence(
+      { phase: 'planning', action: 'spawn:planner', reason: 'no_prd' },
+      counters,
+    );
   }
 
   // 2. GAN：prd 存在 && contract 未 approved
   if (!contract.approved) {
-    return deriveGan(observed);
+    return applyHopFence(deriveGan(observed), counters);
   }
 
   // 3/4/5. contract approved 之后的单 sub-task 主线
-  return deriveTask(observed);
+  return applyHopFence(deriveTask(observed), counters);
 }
 
 /**
@@ -299,7 +350,7 @@ function deriveTask(observed) {
 
   // 3c. ci fail → fix loop（routeAfterPoll fail→fix；fix 同 PR，不 reset pr_url/pr_branch）
   if (pr.ci === 'fail') {
-    return fixRoute('ci_fail');
+    return productFixRoute(observed, 'ci_fail');
   }
 
   // 4. ci pass —— verdict 全部锚定当前 head SHA（P0-2）
@@ -325,6 +376,7 @@ function deriveFailureClassRoute(
   decisionLog,
   currentHeadSha,
   currentVerdict = null,
+  observed = null,
 ) {
   const fc = failureClass ?? null;
 
@@ -357,6 +409,9 @@ function deriveFailureClassRoute(
   }
 
   // product_failure / null / 任何其他 → 保守路由 generator-fix
+  if (observed != null) {
+    return productFixRoute(observed, fc ?? 'evaluate_fail');
+  }
   return fixRoute(fc ?? 'evaluate_fail');
 }
 
@@ -381,6 +436,7 @@ function deriveVerdictChain(observed) {
       observed.decisionLog,
       pr.head_sha,
       evalRow,
+      observed,
     );
   }
 
@@ -398,6 +454,7 @@ function deriveVerdictChain(observed) {
         observed.decisionLog,
         pr.head_sha,
         judgeRow,
+        observed,
       );
     }
     return deriveFailureClassRoute(
@@ -406,6 +463,7 @@ function deriveVerdictChain(observed) {
       observed.decisionLog,
       pr.head_sha,
       judgeRow,
+      observed,
     );
   }
 

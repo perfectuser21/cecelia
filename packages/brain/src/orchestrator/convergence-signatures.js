@@ -41,6 +41,12 @@ export function failureSignatureKey(value) {
   return normalized == null ? null : JSON.stringify(normalized);
 }
 
+// Product CI failures and evaluator/judge signatures share the same strict
+// structured-set contract. Keep aliases so call sites state which evidence
+// type they are handling without creating a second normalization scheme.
+export const normalizeFailureSet = normalizeFailureSignature;
+export const failureSetKey = failureSignatureKey;
+
 function nonEmptyString(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();

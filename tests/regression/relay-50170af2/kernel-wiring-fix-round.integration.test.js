@@ -13,6 +13,7 @@ function fixPair(hop, triggerSha, callbackSha, failureClass = 'product_failure')
       hop: hop + 1,
       action: 'verdict:generator-fix-callback',
       observed: { trigger_hop: hop, pr_head_sha: callbackSha },
+      detail: { verification_status: 'verified', pr_head_sha: callbackSha },
     },
   ];
 }

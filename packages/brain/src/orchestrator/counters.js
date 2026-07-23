@@ -27,6 +27,10 @@
  *   noProgressReason = 'no_progress_same_sha' | null
  */
 import { ACTION, LOG_ACTION } from './constants.js';
+import {
+  failureSetKey,
+  normalizeFailureSet,
+} from './convergence-signatures.js';
 
 /** jsonb 列兼容：pg 返回对象，测试/fake 可能是 JSON 字符串 */
 function asJson(value) {
@@ -35,6 +39,224 @@ function asJson(value) {
     try { return JSON.parse(value); } catch { return null; }
   }
   return value;
+}
+
+function sortedUniqueRows(logRows) {
+  const seen = new Set();
+  return [...logRows]
+    .sort((a, b) => Number(a.hop) - Number(b.hop))
+    .filter((row) => {
+      if (seen.has(row.hop)) return false;
+      seen.add(row.hop);
+      return true;
+    });
+}
+
+function isProductFixIntent(row) {
+  if (row.action !== ACTION.SPAWN_GENERATOR_FIX) return false;
+  const observed = asJson(row.observed) ?? {};
+  const detail = asJson(row.detail) ?? {};
+  return observed.failure_class === 'product_failure'
+    || (observed.failure_class == null && detail.reason === 'ci_fail');
+}
+
+function callbackForIntentFromRows(rows, callbacks, intent, nextIntent) {
+  return callbacks.find((callback) => {
+    const callbackObserved = asJson(callback.observed) ?? {};
+    if (Number(callbackObserved.trigger_hop) === Number(intent.hop)) return true;
+    if (callbackObserved.trigger_hop != null) return false;
+    return Number(callback.hop) > Number(intent.hop)
+      && (nextIntent == null || Number(callback.hop) < Number(nextIntent.hop));
+  }) ?? null;
+}
+
+function approvalForRequest(rows, request) {
+  const requestObserved = asJson(request.observed) ?? {};
+  const requestHeadSha = requestObserved.pr?.head_sha ?? null;
+  return rows.find((row) => {
+    if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+    const detail = asJson(row.detail) ?? {};
+    return Number(row.hop) > Number(request.hop)
+      && detail.approved === true
+      && detail.pr_head_sha === requestHeadSha
+      && String(detail.review_request_hop) === String(request.hop);
+  }) ?? null;
+}
+
+/**
+ * Replay product-fix convergence directly from the append-only decision log.
+ * No natural-language fields are inspected. Old rows without explicit
+ * trigger/status/set fields are ignored rather than promoted to progress.
+ */
+export function replayProductConvergence(
+  logRows,
+  { currentFailureSet, currentHeadSha },
+) {
+  if (!Array.isArray(logRows)) {
+    throw new Error('replayProductConvergence: logRows must be an array');
+  }
+  const rows = sortedUniqueRows(logRows);
+  const intents = rows.filter(isProductFixIntent);
+  const callbacks = rows.filter(
+    (row) => row.action === LOG_ACTION.VERDICT_GENERATOR_FIX_CALLBACK,
+  );
+  const modernIntents = intents.filter((intent) => {
+    const observed = asJson(intent.observed) ?? {};
+    return typeof observed.trigger_sha === 'string' && observed.trigger_sha.length > 0;
+  });
+  const completed = [];
+  let latestPending = false;
+  let immediateFailureReason = null;
+
+  for (let index = 0; index < modernIntents.length; index++) {
+    const intent = modernIntents[index];
+    const observed = asJson(intent.observed) ?? {};
+    const callback = callbackForIntentFromRows(
+      rows,
+      callbacks,
+      intent,
+      modernIntents[index + 1],
+    );
+    if (!callback) {
+      if (index === modernIntents.length - 1) latestPending = true;
+      continue;
+    }
+    const callbackObserved = asJson(callback.observed) ?? {};
+    const callbackDetail = asJson(callback.detail) ?? {};
+    const verificationStatus = callbackDetail.verification_status ?? null;
+    const callbackSha = callbackObserved.pr_head_sha
+      ?? callbackDetail.pr_head_sha
+      ?? null;
+    if (verificationStatus !== 'verified') {
+      if (index === modernIntents.length - 1) {
+        immediateFailureReason = callbackDetail.no_progress_reason
+          ?? 'callback_sha_unverified';
+      }
+      continue;
+    }
+    if (!callbackSha || callbackSha === observed.trigger_sha) {
+      if (index === modernIntents.length - 1) {
+        immediateFailureReason = 'no_progress_same_sha';
+      }
+      continue;
+    }
+    completed.push({
+      intent,
+      callback,
+      failureSet: normalizeFailureSet(observed.failure_set),
+      failureSetKey: failureSetKey(observed.failure_set),
+    });
+  }
+
+  const currentSet = normalizeFailureSet(currentFailureSet);
+  const currentKey = failureSetKey(currentSet);
+  const structuredCompleted = completed.filter(
+    (round) => round.failureSetKey != null,
+  );
+  const seenKeys = new Set();
+  let historicalMinimum = null;
+  let patience = 0;
+  for (const round of structuredCompleted) {
+    const size = round.failureSet.length;
+    if (historicalMinimum == null || size < historicalMinimum) {
+      historicalMinimum = size;
+      patience = 0;
+    } else if (!seenKeys.has(round.failureSetKey)) {
+      patience += 1;
+    }
+    seenKeys.add(round.failureSetKey);
+  }
+
+  const reviewReasons = new Set([
+    'failure_set_repeated',
+    'failure_set_patience_exhausted',
+  ]);
+  const requests = rows.filter((row) => {
+    if (row.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
+    const detail = asJson(row.detail) ?? {};
+    return reviewReasons.has(detail.review_reason)
+      && failureSetKey(detail.failure_set) != null;
+  });
+  const request = requests.at(-1) ?? null;
+  const approval = request == null
+    ? null
+    : approvalForRequest(rows, request);
+
+  if (immediateFailureReason != null) {
+    return { outcome: 'failed', reason: immediateFailureReason };
+  }
+  if (modernIntents.length === 0) {
+    return { outcome: 'continue', reason: 'first_product_fix' };
+  }
+  if (latestPending) {
+    return { outcome: 'failed', reason: 'no_progress_same_sha' };
+  }
+  const latestCompletedSha = (
+    asJson(completed.at(-1)?.callback?.observed) ?? {}
+  ).pr_head_sha ?? null;
+  if (
+    latestCompletedSha != null
+    && currentHeadSha != null
+    && latestCompletedSha !== currentHeadSha
+  ) {
+    return { outcome: 'failed', reason: 'callback_sha_unverified' };
+  }
+
+  if (approval) {
+    const postApprovalIntents = modernIntents.filter(
+      (intent) => Number(intent.hop) > Number(approval.hop),
+    );
+    if (postApprovalIntents.length === 0) {
+      return { outcome: 'continue', reason: 'failure_set_approved_single_retry' };
+    }
+
+    // The first post-approval intent is the one explicitly unlocked by the
+    // approval. A later structured intent proves the one-shot observation
+    // already reached a historical low and normal replay may resume.
+    const laterStructuredIntent = postApprovalIntents.slice(1).find((intent) => {
+      const observed = asJson(intent.observed) ?? {};
+      return failureSetKey(observed.failure_set) != null;
+    });
+    if (!laterStructuredIntent && currentSet != null) {
+      const preApprovalSets = modernIntents
+        .filter((intent) => Number(intent.hop) < Number(request.hop))
+        .map((intent) => normalizeFailureSet((asJson(intent.observed) ?? {}).failure_set))
+        .filter(Boolean);
+      const preApprovalMinimum = preApprovalSets.length > 0
+        ? Math.min(...preApprovalSets.map((set) => set.length))
+        : null;
+      if (preApprovalMinimum != null && currentSet.length >= preApprovalMinimum) {
+        return {
+          outcome: 'failed',
+          reason: 'failure_set_no_progress_after_approval',
+        };
+      }
+    }
+  }
+
+  if (currentSet == null) {
+    return { outcome: 'continue', reason: 'verified_new_sha' };
+  }
+  if (historicalMinimum == null || currentSet.length < historicalMinimum) {
+    return { outcome: 'continue', reason: 'failure_set_historical_low' };
+  }
+  if (seenKeys.has(currentKey)) {
+    return {
+      outcome: 'review',
+      reason: 'failure_set_repeated',
+      failureSet: currentSet,
+      failureSetKey: currentKey,
+    };
+  }
+  if (patience + 1 >= 3) {
+    return {
+      outcome: 'review',
+      reason: 'failure_set_patience_exhausted',
+      failureSet: currentSet,
+      failureSetKey: currentKey,
+    };
+  }
+  return { outcome: 'continue', reason: 'failure_set_novel' };
 }
 
 /**
@@ -68,14 +290,7 @@ export function deriveCounters(logRows, options) {
   const { proposeBranchMaxRn } = options;
 
   // 按 hop 排序 + 同 hop 去重（保留首次出现的行）
-  const seen = new Set();
-  const rows = [...logRows]
-    .sort((a, b) => a.hop - b.hop)
-    .filter((r) => {
-      if (seen.has(r.hop)) return false;
-      seen.add(r.hop);
-      return true;
-    });
+  const rows = sortedUniqueRows(logRows);
 
   // fixRound：只计 callback 证明 SHA 前进的 product fix。
   // intent/崩溃、same-SHA、evidence repair、environment recovery 都不消耗 product fix cap。
@@ -88,13 +303,12 @@ export function deriveCounters(logRows, options) {
     'contract_invalid',
     'unknown',
   ]);
-  const callbackForIntent = (intent, nextIntent) => callbacks.find((callback) => {
-    const callbackObserved = asJson(callback.observed) ?? {};
-    if (Number(callbackObserved.trigger_hop) === Number(intent.hop)) return true;
-    if (callbackObserved.trigger_hop != null) return false;
-    return callback.hop > intent.hop
-      && (nextIntent == null || callback.hop < nextIntent.hop);
-  });
+  const callbackForIntent = (intent, nextIntent) => callbackForIntentFromRows(
+    rows,
+    callbacks,
+    intent,
+    nextIntent,
+  );
 
   let fixRound = 0;
   for (let i = 0; i < fixIntents.length; i++) {
@@ -105,8 +319,15 @@ export function deriveCounters(logRows, options) {
     const cb = callbackForIntent(intent, fixIntents[i + 1]);
     if (triggerSha && cb) {
       const cbObs = asJson(cb.observed) ?? {};
+      const cbDetail = asJson(cb.detail) ?? {};
       const callbackSha = cbObs.pr_head_sha ?? null;
-      if (callbackSha && callbackSha !== triggerSha) fixRound++;
+      if (
+        cbDetail.verification_status === 'verified'
+        && callbackSha
+        && callbackSha !== triggerSha
+      ) {
+        fixRound++;
+      }
       continue;
     }
 
@@ -190,9 +411,18 @@ export function deriveCounters(logRows, options) {
         if (lastCallback) {
           const cbObs = asJson(lastCallback.observed) ?? {};
           const callbackSha = cbObs.pr_head_sha ?? null;
-          if (callbackSha && callbackSha === triggerSha) {
+          const cbDetail = asJson(lastCallback.detail) ?? {};
+          if (
+            cbDetail.verification_status === 'verified'
+            && callbackSha
+            && callbackSha === triggerSha
+          ) {
             noProgress = true;
             noProgressReason = 'no_progress_same_sha'; // 统一 reason 常量（derive 和 ground-truth 对齐）
+          } else if (cbDetail.verification_status != null
+              && cbDetail.verification_status !== 'verified') {
+            noProgress = true;
+            noProgressReason = cbDetail.no_progress_reason ?? 'callback_sha_unverified';
           }
         }
       }

@@ -15,6 +15,7 @@
 import { ACTION, LOG_ACTION } from './constants.js';
 import { discoverPrFromGithub } from './github-pr-discovery.js';
 import { deriveCounters } from './counters.js';
+import { normalizeFailureSet } from './convergence-signatures.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -36,9 +37,23 @@ function mapCiStatus(checkRows) {
  */
 function normalizeStatusCheckRollup(checkRows) {
   if (!Array.isArray(checkRows)) return [];
-  return checkRows.map((check) => ({
-    state: String(check?.state || check?.conclusion || check?.status || '').toUpperCase(),
-  }));
+  return checkRows.map((check) => {
+    const name = [check?.name, check?.context]
+      .find((value) => typeof value === 'string' && value.trim().length > 0);
+    return {
+      state: String(check?.state || check?.conclusion || check?.status || '').toUpperCase(),
+      name: typeof name === 'string' ? name.trim() : '',
+    };
+  });
+}
+
+function failedCheckNames(checkRows) {
+  return normalizeFailureSet(
+    checkRows
+      .filter((check) => CI_FAIL_STATES.has(check.state))
+      .map((check) => check.name)
+      .filter(Boolean),
+  );
 }
 
 /** execCmd 容忍可解析的非零退出，用 err.stdout 兜底 */
@@ -208,6 +223,7 @@ export async function collectGroundTruth(deps, opts) {
       merged: view.state === 'MERGED',
       head_sha: view.headRefOid ?? null,
       ci: mapCiStatus(checks),
+      failed_checks: failedCheckNames(checks),
     };
   }
 
