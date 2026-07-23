@@ -1,7 +1,7 @@
-import { execFileSync } from 'node:child_process';
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
+import { defaultPrHeadResolver } from '../orchestrator/pr-head-resolver.js';
 import { authenticateApprover } from './harness-pending-reviews.js';
 
 const router = Router();
@@ -18,15 +18,6 @@ function asJson(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch { return {}; }
-}
-
-async function defaultPrHeadResolver(prUrl) {
-  const output = execFileSync(
-    'gh',
-    ['pr', 'view', prUrl, '--json', 'headRefOid'],
-    { encoding: 'utf8', timeout: 15_000 },
-  );
-  return JSON.parse(output).headRefOid ?? null;
 }
 
 router.post('/:runId/approve', approvalRateLimit, async (req, res) => {
