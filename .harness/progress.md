@@ -14,4 +14,4 @@ review-gate: blocking-poll (30min reminder interval, max 24h → blocked)
 
 ## === Sprint fa59d318-89ca-4b13-bee5-93cdf8c4362e (headless-smoke) START 2026-07-23T22:30:07Z ===
 planner: done (sprint-prd.md@b533602, invariants=2, fr=5)
-gan: done (contract-draft.md+contract-dod.md+tests/@pending, r1, verdict=APPROVED, behaviors=8, coverage=A1-A5+sad-path)
+gan: done (contract-draft.md+contract-dod.md+tests/@047884b, r1, verdict=APPROVED, behaviors=8, coverage=A1-A5+sad-path)
