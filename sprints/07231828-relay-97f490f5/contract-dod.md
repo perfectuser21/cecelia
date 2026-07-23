@@ -13,6 +13,8 @@
 
 ### [BEHAVIOR-1] 正整数符号函数返回 1
 
+[BEHAVIOR] GET /sign?value=5 → HTTP 200 {result:1, operation:"sign"}；value=9007199254740991 → HTTP 200 {result:1}
+
 **描述**: 当 value 为正整数时，GET /sign 返回 HTTP 200，body 为 `{result: 1, operation: "sign"}`。
 
 **覆盖输入**:
@@ -30,6 +32,8 @@
 
 ### [BEHAVIOR-2] 零的符号函数返回 0
 
+[BEHAVIOR] GET /sign?value=0 → HTTP 200 {result:0, operation:"sign"}；Object.is(result, -0) === false
+
 **描述**: 当 value=0 时，GET /sign 返回 HTTP 200，body 为 `{result: 0, operation: "sign"}`。零是特殊边界，不同于正负数路径。
 
 **覆盖输入**:
@@ -44,6 +48,8 @@
 ---
 
 ### [BEHAVIOR-3] 负整数符号函数返回 -1
+
+[BEHAVIOR] GET /sign?value=-3 → HTTP 200 {result:-1, operation:"sign"}；value=-9007199254740991 → HTTP 200 {result:-1}
 
 **描述**: 当 value 为负整数时，GET /sign 返回 HTTP 200，body 为 `{result: -1, operation: "sign"}`。
 
@@ -61,6 +67,8 @@
 ---
 
 ### [BEHAVIOR-4] value 缺失或非法格式 → HTTP 400 + 非空 error
+
+[BEHAVIOR] GET /sign（缺 value）→ HTTP 400 {error:"<非空>"}；value=3.14/abc/1e3/Infinity/NaN/9007199254740992 → HTTP 400
 
 **描述**: 当 value query 参数缺失，或格式不匹配 `^-?\d+$`（含小数、前导 +、科学计数法、十六进制、空串、Infinity、NaN、"-0" 等），或超出 `|value| ≤ 9007199254740991` 范围时，返回 HTTP 400，body 含非空 error 字符串。
 
