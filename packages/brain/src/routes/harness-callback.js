@@ -155,6 +155,7 @@ export async function appendGeneratorFixCallback(attempt, result, db = pool) {
 
   const observed = {
     attempt_id: attempt.id,
+    trigger_hop: attempt.hop,
     pr_head_sha: prHeadSha,
     provider: result.provider_metadata?.provider ?? attempt.provider ?? null,
   };

@@ -76,28 +76,53 @@ export function deriveCounters(logRows, options) {
       return true;
     });
 
-  // fixRound：COUNT(spawn:generator-fix) - COUNT(same-SHA no-progress fix)
-  // 语义：计所有 fix intent 轮次，但排除 callback 明确证明是 same-SHA no-progress 的 fix
-  // （same-SHA fix 由 noProgress 字段单独处理终局，fixRound 不重复计入这些"无效轮次"）
-  // 理由：无 callback 的 fix（agent 崩溃/在途/d707 历史数据）仍应计入轮次上限防控，
-  // 不能因为缺 callback 就归零（d707 实证：10 次 fix 无 callback → 旧逻辑无限循环）
+  // fixRound：只计 callback 证明 SHA 前进的 product fix。
+  // intent/崩溃、same-SHA、evidence repair、environment recovery 都不消耗 product fix cap。
   const fixIntents = rows.filter((r) => r.action === ACTION.SPAWN_GENERATOR_FIX);
   const callbacks = rows.filter((r) => r.action === LOG_ACTION.VERDICT_GENERATOR_FIX_CALLBACK);
+  const excludedFixClasses = new Set([
+    'evidence_invalid',
+    'environment_recovery',
+    'needs_context',
+    'contract_invalid',
+    'unknown',
+  ]);
+  const callbackForIntent = (intent, nextIntent) => callbacks.find((callback) => {
+    const callbackObserved = asJson(callback.observed) ?? {};
+    if (Number(callbackObserved.trigger_hop) === Number(intent.hop)) return true;
+    if (callbackObserved.trigger_hop != null) return false;
+    return callback.hop > intent.hop
+      && (nextIntent == null || callback.hop < nextIntent.hop);
+  });
 
-  // 统计 same-SHA no-progress fix（有 callback 且 SHA 不变）
-  let noProgressFixCount = 0;
+  let fixRound = 0;
   for (let i = 0; i < fixIntents.length; i++) {
     const intent = fixIntents[i];
     const intentObs = asJson(intent.observed) ?? {};
     const triggerSha = intentObs.trigger_sha ?? null;
-    if (!triggerSha) continue;
-    const cb = callbacks.find((c) => c.hop > intent.hop);
-    if (!cb) continue;
-    const cbObs = asJson(cb.observed) ?? {};
-    const callbackSha = cbObs.pr_head_sha ?? null;
-    if (callbackSha && callbackSha === triggerSha) noProgressFixCount++;
+    if (excludedFixClasses.has(intentObs.failure_class)) continue;
+    const cb = callbackForIntent(intent, fixIntents[i + 1]);
+    if (triggerSha && cb) {
+      const cbObs = asJson(cb.observed) ?? {};
+      const callbackSha = cbObs.pr_head_sha ?? null;
+      if (callbackSha && callbackSha !== triggerSha) fixRound++;
+      continue;
+    }
+
+    // Legacy rows before trigger_sha/callback wiring: only the final intent in a
+    // consecutive fix burst may claim the immediately following PR snapshot.
+    // This preserves replayability without treating an uncompleted modern
+    // intent (which always has trigger_sha) as an effective fix.
+    if (!Object.hasOwn(intentObs, 'trigger_sha')) {
+      const rowIndex = rows.indexOf(intent);
+      const nextRow = rows[rowIndex + 1];
+      if (nextRow && nextRow.action !== ACTION.SPAWN_GENERATOR_FIX) {
+        const beforeSha = intentObs.pr?.head_sha ?? null;
+        const afterSha = (asJson(nextRow.observed) ?? {}).pr?.head_sha ?? null;
+        if (afterSha && afterSha !== beforeSha) fixRound++;
+      }
+    }
   }
-  const fixRound = fixIntents.length - noProgressFixCount;
 
   // ganRound：分支 rN 是唯一权威（外部真相）；proposer intent COUNT 只作交叉校验，
   // 不一致（崩溃窗口漏记 / 记了没派）一律取分支值，mismatch 信号由 loop 写进 appendHop detail。
@@ -160,9 +185,7 @@ export function deriveCounters(logRows, options) {
       const triggerSha = lastFixObs.trigger_sha ?? null;
       if (triggerSha) {
         // 找该 intent 之后的第一个 verdict:generator-fix-callback
-        const lastCallback = rows.find(
-          (r) => r.action === LOG_ACTION.VERDICT_GENERATOR_FIX_CALLBACK && r.hop > lastFixIntent.hop,
-        );
+        const lastCallback = callbackForIntent(lastFixIntent, null);
         if (lastCallback) {
           const cbObs = asJson(lastCallback.observed) ?? {};
           const callbackSha = cbObs.pr_head_sha ?? null;

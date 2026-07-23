@@ -47,7 +47,7 @@ describe('deriveCounters：hops 与 fixRound', () => {
     expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).hops).toBe(3);
   });
 
-  it('fixRound = COUNT(spawn:generator-fix)，其他 action 不计', () => {
+  it('没有 callback 证明 SHA 前进的 fix intent 不计 fixRound', () => {
     const rows = [
       row(1, 'spawn:generator'),
       row(2, 'spawn:generator-fix'),
@@ -55,7 +55,7 @@ describe('deriveCounters：hops 与 fixRound', () => {
       row(4, 'spawn:generator-fix'),
       row(5, 'spawn:evaluator'),
     ];
-    expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).fixRound).toBe(2);
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).fixRound).toBe(0);
   });
 
   it('同 hop 不重复计：重复 hop 行只算一次（hops 与 fixRound 都去重）', () => {
@@ -66,7 +66,7 @@ describe('deriveCounters：hops 与 fixRound', () => {
     ];
     const c = deriveCounters(rows, { proposeBranchMaxRn: 0 });
     expect(c.hops).toBe(2);
-    expect(c.fixRound).toBe(1);
+    expect(c.fixRound).toBe(0);
   });
 
   it('乱序输入按 hop 排序后推导（结果与有序输入一致）', () => {
