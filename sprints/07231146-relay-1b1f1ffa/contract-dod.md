@@ -72,7 +72,7 @@ journey_type: autonomous
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs usage-limit'
   期望: OK:admit-usage-limit
 
-- [ ] [BEHAVIOR] admitPreview() 并发准入经 pg_advisory_xact_lock 串行化，剩余 1 名额时 3 并发请求恰好 1 个 admitted
+- [ ] [BEHAVIOR] admitPreview() 并发准入经 pg_advisory_xact_lock 串行化，剩余 1 名额时 3 并发「真实判定+预留」请求恰好 1 个 admitted，且 preview_environments 表针对这 3 个候选 PR 最终恰好新增 1 行真实 DB 记录（不是只数返回值里 admitted===true 的个数——GAN Round 1 反馈问题2 修复：抓出"admitPreview 判 true 后调用方再单独调无锁 allocatePreview() 做预留"的 TOCTOU 实现），admitted 返回值须含 port/db_name（方案A schema 升级）
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs concurrency-lock'
   期望: OK:admit-concurrency-lock
 

@@ -75,12 +75,34 @@ try {
     writeSample();
     await seedActiveRows(pool, 5);
     const prs = [testPrNumber(), testPrNumber(), testPrNumber()];
+    seededPrs.push(...prs); // 无论是否 admitted 都要清理，负向情形不留残留
+
     const results = await Promise.all(
       prs.map((pr) => admitPreview(pr, 'cp-race', 'cecelia', pool, { samplePath: jsonPath })),
     );
-    seededPrs.push(...prs.filter((pr, i) => results[i].admitted));
     const admittedCount = results.filter((r) => r.admitted === true).length;
     if (admittedCount !== 1) fail(`并发 3 请求在剩余 1 个名额下应恰好 1 个 admitted，实际 ${admittedCount}（advisory lock 未生效或判定非原子）`);
+
+    // GAN Round 1 反馈问题2 核心修复：不能只数返回值里 admitted===true 的个数——必须验证
+    // preview_environments 表针对这 3 个候选 PR 确实恰好新增了 1 行真实 DB 记录。
+    // 如果 generator 让 admitPreview() 判定通过后，调用方再单独调无锁的旧 allocatePreview()
+    // 做端口扫描+INSERT（两段式、TOCTOU 竞态未消除的错误实现），这里会抓出行数与 admittedCount 不一致
+    // 或者行数本身就因竞态多写。
+    const { rows: rowCountRows } = await pool.query(
+      `SELECT count(*)::int AS n FROM preview_environments WHERE pr_number = ANY($1::int[])`,
+      [prs],
+    );
+    const dbRowCount = rowCountRows[0].n;
+    if (dbRowCount !== 1) {
+      fail(`preview_environments 表针对 3 个候选 PR 应恰好新增 1 行真实记录，实际 ${dbRowCount} 行（admitted 返回计数为 ${admittedCount}）——admitPreview 判定与端口预留之间存在未加锁的竞态窗口`);
+    }
+
+    // 方案A schema 升级校验：admitted:true 的响应必须携带 port/db_name（不是纯判定 {admitted:true}）
+    const admittedResult = results.find((r) => r.admitted === true);
+    if (typeof admittedResult.port !== 'number' || typeof admittedResult.db_name !== 'string' || !admittedResult.db_name) {
+      fail(`admitted:true 响应应携带 port(number)/db_name(string)，实际 ${JSON.stringify(admittedResult)}`);
+    }
+
     ok('admit-concurrency-lock');
   } else if (mode === 'idempotent-reuse') {
     // 已存在该 PR 的活跃记录（re-push 场景）：即使采样过期/容量爆满，也应直接放行（幂等复用不重新走准入）

@@ -116,7 +116,7 @@ describe('admitPreview [BEHAVIOR] — 四层判定 + 并发串行化', () => {
     expect(r.reason).toBe('usage_pct_too_high');
   });
 
-  it('并发准入通过 pg_advisory_xact_lock 串行化，剩余 1 名额时 3 并发请求只 1 个 admitted', async () => {
+  it('并发准入通过 pg_advisory_xact_lock 串行化，剩余 1 名额时 3 并发请求只 1 个 admitted，且 DB 恰好新增 1 行真实预留记录', async () => {
     const samplePath = mkSampleFile();
     for (let i = 0; i < 5; i++) {
       const pr = testPr();
@@ -128,9 +128,25 @@ describe('admitPreview [BEHAVIOR] — 四层判定 + 并发串行化', () => {
       );
     }
     const prs = [testPr(), testPr(), testPr()];
+    seededPrs.push(...prs); // 无论是否 admitted 都要清理
+
     const results = await Promise.all(prs.map((pr) => admitPreview(pr, 'cp-race', 'cecelia', pool, { samplePath })));
-    results.forEach((r, i) => { if (r.admitted) seededPrs.push(prs[i]); });
     expect(results.filter((r) => r.admitted).length).toBe(1);
+
+    // GAN Round 1 反馈问题2 核心修复：不能只数返回值里 admitted===true 的个数，必须验证
+    // preview_environments 表针对这 3 个候选 PR 确实恰好新增了 1 行真实 DB 记录——
+    // 抓出"admitPreview 判 true 后调用方再单独调无锁 allocatePreview() 做预留"的 TOCTOU 实现。
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM preview_environments WHERE pr_number = ANY($1::int[])`,
+      [prs],
+    );
+    expect(rows[0].n).toBe(1);
+
+    // 方案A schema 升级：admitted:true 的响应必须携带 port/db_name（不是纯判定 {admitted:true}）
+    const admittedResult = results.find((r) => r.admitted === true);
+    expect(typeof admittedResult.port).toBe('number');
+    expect(typeof admittedResult.db_name).toBe('string');
+    expect(admittedResult.db_name.length).toBeGreaterThan(0);
   });
 
   it('已存在活跃记录的 PR 重推（幂等复用）跳过准入，即使样本过期也放行', async () => {

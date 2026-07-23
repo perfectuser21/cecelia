@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 3 — GAN Round 1 Reviewer REVISION 修订)
 
 Sprint: preview-capacity-gate-and-destroyer（task 1b1f1ffa-c1df-42a1-8ff7-1c62d5b3b914）
 journey_type: autonomous　target_environment: local_api
@@ -49,7 +49,7 @@ readHostDisk(path?: string) → Promise<
 >
 
 admitPreview(prNumber, branchName, baseRepo, dbPool, opts?: { samplePath?: string }) → Promise<
-  { admitted: true }
+  { admitted: true, port: number, db_name: string }
   | { admitted: false, reason: string, free_bytes: number|null, projected_cost_bytes: number, need_release_bytes: number }
 >
 
@@ -59,13 +59,22 @@ destroyPreview(prNumber, reason, executionId, dbPool, opts?: { previewBaseDir?: 
 >
 ```
 
+**设计决策（GAN Round 1 Reviewer 反馈问题2 修复 — 方案A，`[AI_ADDED]`）**：`admitPreview()` 不再是纯判定函数，内部直接吸收"端口扫描 + INSERT"，整个判定+预留过程包在同一个 `pg_advisory_xact_lock(<固定 key>)` 事务内，串行化执行序列：
+
+1. `BEGIN` + `SELECT pg_advisory_xact_lock(<固定 key，如 hashtext('preview_admission')>)`——锁作用域覆盖判定与预留全过程，事务提交/回滚时自动释放，不留手动 unlock 遗漏风险
+2. 幂等复用检查：该 `pr_number` 已存在 `status != 'inactive'` 的行 → 直接返回 `{admitted:true, port, db_name}`（沿用既存行的端口/库名），不重新走 4 层判定（PRD"已存在活跃记录的幂等复用路径不重新走准入"）
+3. 否则依次执行 4 层判定（采样新鲜度 → 数量红线 → 容量红线 → usage_pct 红线），任一拒绝 → 事务回滚（未写入任何行）+ 返回 `{admitted:false, reason, free_bytes, projected_cost_bytes, need_release_bytes}`
+4. 4 层全部通过 → **在同一把锁保护的事务内**扫描空闲端口（5300-5399，首个未被 `status != 'inactive'` 占用的端口）+ `INSERT INTO preview_environments (...) VALUES (..., 'starting')` → `COMMIT` → 返回 `{admitted:true, port, db_name}`
+
+`routes/preview.js` 的 `POST /preview/start` 处理器改为**唯一**调用 `admitPreview()`，直接消费其返回值的 `port`/`db_name`，**不再单独调用**现有的无锁 `allocatePreview()`（`packages/brain/src/preview-manager.js` 源码已确认该函数目前是两条独立无事务查询，无 advisory lock）。`allocatePreview()` 本身保留导出不删除（避免破坏 `preview-manager.test.js` 既有回归用例），但对外调用路径（routes 层）不得再绕过 `admitPreview()` 单独调它；`admitPreview()` 内部端口扫描+INSERT 的具体实现可复用 `allocatePreview()` 的算法，但必须在 `admitPreview()` 自己开启的同一把 advisory lock 事务内执行，不能是"先调 admitPreview() 判定、判定通过后调用方再单独调一次无锁的 allocatePreview()"这种两段式调用——这正是本设计要消除的 TOCTOU 竞态窗口。
+
 若 sprint 无 HTTP 响应变更部分已在上方覆盖；无遗漏字段。
 
 ---
 
 ## 已知约束（来自回归测试 + 累积 FR + 现有代码惯例）
 
-- [preview-manager.test.js] → `allocatePreview` 已有"已存在活跃记录时幂等复用（重置 status='starting'）"回归测试（PR#3810），本 sprint 的 admitPreview 幂等复用判定必须与其语义一致：`status != 'inactive'` 视为活跃
+- [preview-manager.test.js] → `allocatePreview` 已有"已存在活跃记录时幂等复用（重置 status='starting'）"回归测试（PR#3810），本 sprint 的 admitPreview 幂等复用判定必须与其语义一致：`status != 'inactive'` 视为活跃；`allocatePreview()` 导出本身保留不删除（该回归测试直接调用它，不受影响），但 `routes/preview.js` 改为唯一调用 `admitPreview()`（见"内部函数返回值 Schema"段设计决策，方案A），不再是该函数的调用方
 - [preview-reaper.test.sh] test 8 → cron 默认 PATH 只有 `/usr/bin:/bin`，找不到 `/opt/homebrew/bin` 下的 gh/psql/dropdb，是 2026-07-20 磁盘几乎打满事故的直接根因（PATH 坑导致 dropdb 从未真正执行）——host-disk-sampler.sh 必须同样做显式 PATH 处理，不能重蹈覆辙
 - [routes/preview.test.js] → `POST /start` 现有测试覆盖 `400 缺 pr_number`/`500 端口池耗尽`；`POST /stop/:pr` 现有测试覆盖 `无记录→note`/`400 非数字 pr_number`——本 sprint 新增的 503 准入拒绝分支、cleanup_failed 分支不得破坏这些既有用例
 - [vitest.config.js include/exclude 惯例] → `sprints/**` 路径不在 include glob 内，sprint 测试文件在 generator 实现完成后需经 `scripts/graduate-sprint-tests.mjs` 搬运进 `tests/regression/<slug>/` 才会被 CI 采集（刀1 毕业池机制，2026-07-14）
@@ -145,7 +154,7 @@ Body: (empty)
 > 规则 C：mock 豁免显式登记。
 
 - **Bark 告警通道（`sendBark`）**：admitPreview 在 layer1（样本无效）拒绝分支需触发 Bark 告警（PRD 边界情况段要求）。测试中允许对 `sendBark` 打桩（不真发 Apple Push），因为它是"更外层的无关依赖（通知渠道）"，真发送不改变 admitPreview 本身判定逻辑正确性，且真发送会对真实 Bark 频道造成测试噪音。真验证补位计划：Bark 集成本身已有独立测试覆盖（`credentials-health-scheduler`/`harness-relay-watchdog` 等既有调用方同款豁免先例），本 sprint 不重复验证 Bark 通道本身是否可达，只验证"该触发时是否被调用"。
-- **`gh pr view` PR 状态查询（preview-reaper.sh 既有逻辑）**：Final E2E 现存资源批量清扫阶段，判断"已关闭 PR"依赖 `gh pr view --json state`，属已有三源对账逻辑（非本 sprint 新增），保持现状不 mock，真调 `gh` CLI（已在 CI/本机可用）。
+- **`gh pr view` PR 状态查询（GAN Round 1 Reviewer 反馈问题1 修复后）**：Final E2E `## E2E 验收` Step3 现存资源批量清扫阶段，对每个候选 PR 判断"是否应销毁"依赖两个判据取或（OR）：判据A `gh pr view --json state --jq '.state'` 真调 `gh` CLI（不 mock，`gh` 不可用/查询失败时不当"已关闭"处理，安全兜底为"未知"交给判据B 决定，不放大误杀风险）；判据B `preview_environments.created_at` 距今是否超过 24h（字面对应 PRD 模块4"已关闭 PR 或超 24h"）。二者满足其一才调用 `destroyPreview`，均不满足则跳过（对应负向断言场景）。此判据实现已直接写入 `## E2E 验收` Step3 脚本本体，不再是"文字承诺但脚本未调用"的空文本（修复 GAN Round 1 内部一致性问题）。
 - 其余（宿主磁盘采样 `df`/`diskutil`、Postgres 读写、advisory lock、git worktree、进程 kill、文件系统操作）**均为本单核心改动路径，全部真实执行，无 mock，N/A**。
 
 ---
@@ -158,7 +167,20 @@ Body: (empty)
 - **preview-destroyer.js ↔ 文件系统 + git worktree**（`git worktree add/remove`、`rm -rf` fallback、realpath 校验、`/tmp/preview-*.pid` 清理）：测试须真实创建/销毁 git worktree 与真实子进程，不 mock `child_process`/`fs`
 - **routes/preview.js（POST /start、POST /stop/:pr）↔ capacity-gate.js/preview-destroyer.js**：路由层测试须真调这两个模块的导出函数，不 stub 内部函数替代
 - **代码 ↔ `preview_environments` 表 status 状态机**（starting/active/cleaning/inactive/cleanup_failed 迁移）：本单新增 'cleaning'/'cleanup_failed' 两态 + `cleanup_detail` jsonb 列（migration 358），状态迁移测试须真 UPDATE/SELECT 验证，不 mock 状态转移结果
-- **允许 mock 的边**：`sendBark`（通知渠道，见"未覆盖真实链路清单"）；`gh pr view`（Final E2E 阶段既有对账逻辑，非本单改动路径，保持现状真调不 mock，此处仅澄清它不在"禁 mock 边"新增范围内，因为它本就不 mock）
+- **允许 mock 的边**：`sendBark`（通知渠道，见"未覆盖真实链路清单"）；`gh pr view`（Final E2E 阶段真调不 mock，此处仅澄清它不在"禁 mock 边"新增范围内，因为它本就不 mock）
+
+---
+
+## Risks
+
+> GAN Round 1 Reviewer 反馈 `risk_registered=4`（问题3）：全篇无独立风险登记段。本段登记本 sprint 两条最高优先级真实生产风险 + 已落入合同的具体 mitigation（非纸面承诺，均可在下方 Golden Path/E2E 验收对应位置核实）。
+
+| # | 风险 | 触发场景 | 影响 | Mitigation（已落入合同的具体设计，非计划） |
+|---|------|----------|------|------|
+| 1 | **Final E2E 批量清扫误杀合法 active preview**（破坏性风险，最高优先级，对应 GAN Round 1 问题1） | `## E2E 验收` Step3 若对 `preview_environments.status != 'inactive'` 的全部行无差别调用 `destroyPreview`，未过滤 PRD 模块4 明确要求的"已关闭 PR 或超 24h"条件；该脚本默认连接 `BRAIN_URL=localhost:5221`（本机真实 Brain，无 staging 隔离） | 当前所有仍在开发、PR 仍开着、远未过期的合法 active preview 被一并销毁，属真实生产事故（正在进行的工作被清空、CI/开发流程中断） | Step3 改为对每个候选 PR 先判定「`gh pr view --json state` 显示 `CLOSED`/`MERGED`」或「`created_at` 距今 >24h」，二者满足其一才调用 `destroyPreview`，否则跳过；并新增负向 fixture（刚创建、`status='active'` 的 preview 行），sweep 循环结束后断言该行仍存在且 `status` 未变，证明过滤条件真实生效。见 `## E2E 验收` Step3 脚本 |
+| 2 | **admitPreview 判定与端口预留之间的 TOCTOU 竞态**（对应 GAN Round 1 问题2，正是本 sprint 立项要修的根因 bug） | 若 `admitPreview()` 只做纯判定（返回 `{admitted:true}`），generator 之后仍按现有无锁的 `allocatePreview()`（真正做端口扫描+INSERT，源码已确认无 transaction/无 advisory lock）单独再调一次；两次调用之间存在竞态窗口，并发的多个请求可能都读到"未占用端口/未超红线"，各自都成功 INSERT | 准入判定总数实际超出红线，磁盘再次被打满（2026-07-20 事故重演），容量准入闸门形同虚设 | 采用方案A：`admitPreview()` 内部在同一个 `pg_advisory_xact_lock` 事务内直接完成"判定 + 端口扫描 + INSERT"，成功时返回值升级为 `{admitted:true, port, db_name}`；`routes/preview.js` 唯一调用 `admitPreview()`，不再单独调用无锁的 `allocatePreview()`。新增/强化 BEHAVIOR：剩余 1 名额时 3 个并发准入请求，断言 `preview_environments` 表针对这批候选 PR 恰好新增 1 行真实 DB 记录（而非只数返回值里 `admitted===true` 的个数）。见"内部函数返回值 Schema"设计决策段 + Golden Path Step 6 |
+
+两条风险的 mitigation 均已实装进本轮合同的对应 Golden Path Step / E2E 验收脚本 / BEHAVIOR 条目，不是"计划中"的待办——generator 按合同实现即自动满足。
 
 ---
 
@@ -241,14 +263,14 @@ node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs usage-lim
 ### Step 6: 并发准入串行化（pg_advisory_xact_lock）+ 幂等复用跳过准入
 **来源**: `[FROM_PRD]` — "两个 PR 同时申请 preview 时，准入判定 + 端口扫描 + INSERT 全程包在 pg_advisory_xact_lock 内串行执行，消除并发双通过竞态；已存在活跃记录的幂等复用路径（re-push）不重新走准入"
 
-**可观测行为**: 剩余 1 个名额（已有 5 个 active，LIMIT=6）时并发发起 3 个不同 PR 的准入请求，最终 `admitted:true` 的数量严格等于 1（不因并发竞态多批准）；已存在该 PR 活跃记录时（re-push 场景），即使当前样本明显过期（若重新走准入会被 layer1 拒绝），也直接放行（不重新走四层判定）。
+**可观测行为**: 剩余 1 个名额（已有 5 个 active，LIMIT=6）时并发发起 3 个不同 PR 的准入请求，最终 `admitted:true` 的数量严格等于 1（不因并发竞态多批准），**且 `preview_environments` 表针对这 3 个候选 PR 最终恰好新增 1 行真实 DB 记录**（不是只统计返回值里 `admitted===true` 的个数——该行必须是在 `admitPreview()` 自己开启的同一把 advisory lock 事务内被真实 `INSERT` 的，用于抓出"admitPreview 判 true 后调用方再单独调无锁 allocatePreview() 做预留"这种 TOCTOU 实现，见 Risks #2）；被 admitted 的返回值须含 `port`/`db_name`（方案A schema 升级，非纯判定 `{admitted:true}`）。已存在该 PR 活跃记录时（re-push 场景），即使当前样本明显过期（若重新走准入会被 layer1 拒绝），也直接放行（不重新走四层判定），返回沿用既存行的 `port`/`db_name`。
 
 **验证命令**:
 ```bash
 node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs concurrency-lock
 node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs idempotent-reuse
 ```
-**硬阈值**: 两条命令均 exit 0；`OK:admit-concurrency-lock` / `OK:admit-idempotent-reuse`
+**硬阈值**: 两条命令均 exit 0；`OK:admit-concurrency-lock` / `OK:admit-idempotent-reuse`；concurrency-lock 场景额外要求 `SELECT count(*) FROM preview_environments WHERE pr_number = ANY($1::int[])`（3 个候选 PR）严格等于 1
 
 ---
 
@@ -296,7 +318,7 @@ node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs concurr
 ### Step 10: 路由层接入（POST /preview/start 准入拒绝 503 + POST /preview/stop 销毁终态透出）
 **来源**: `[FROM_PRD]` — Golden Path 第 2/5 点描述的 admitPreview/destroyPreview 分别接入创建/销毁两个既有端点；`[AI_ADDED]` HTTP 状态码 503 选型，理由：容量/数量/新鲜度耗尽是"服务端资源暂时不可用"而非客户端输入错误，503 比 429（限流语义，本场景非按客户端限速）更贴切，且不破坏 `preview-deploy.yml` 现有的"无 port 字段即判失败"逻辑
 
-**可观测行为**: 准入被拒绝时 `POST /preview/start` 返回 HTTP 503 + Response Schema 段定义的拒绝体；销毁完成时 `POST /preview/stop/:pr` 返回 `status`/`cleanup_detail` 字段。
+**可观测行为**: 准入被拒绝时 `POST /preview/start` 返回 HTTP 503 + Response Schema 段定义的拒绝体；准入通过时，处理器**唯一**调用 `admitPreview()`，直接消费其返回值的 `port`/`db_name`（方案A schema 升级，见"内部函数返回值 Schema"段设计决策）拼装 200 响应，**不再单独调用**现有无锁的 `allocatePreview()`；销毁完成时 `POST /preview/stop/:pr` 返回 `status`/`cleanup_detail` 字段。
 
 **验证命令**（要求本地 Brain 已加载本 sprint 新代码，端口 5221）:
 ```bash
@@ -372,28 +394,70 @@ test -f "$SAMPLE_JSON" || { echo "FAIL: cron 等价环境下采样失败（显�
 bash "$REPO_ROOT/scripts/preview-cleanup.sh" --help >/dev/null 2>&1 || true  # 存在性/可执行性冒烟（真实回收已在[1/3]/[3/3]验证）
 echo "✅ [2/3] cron 等价环境验证通过"
 
-echo "=== [3/3] 现存资源批量清扫，宿主 df 实测 avail 上升 ==="
+echo "=== [3/3] 现存资源批量清扫：仅销毁「已关闭 PR 或超 24h」候选（PRD 模块4 过滤条件），宿主 df 实测 avail 上升 + 负向断言不误杀活跃/未过期 preview ==="
+
+GH_REPO_OWNER="${GH_REPO_OWNER:-perfectuser21}"
+
+# 3a. 负向 fixture：刚创建、status=active（模拟 PR 仍开着且远未过 24h）的 preview 行——验证 sweep 不会误杀（GAN Round 1 反馈问题1 修复）
+NEG_PR=$((970000 + RANDOM % 9000))
+NEG_DB="cecelia_preview_${NEG_PR}"
+psql "$DB" -c "INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status, created_at, updated_at)
+  VALUES (${NEG_PR}, 'cp-e2e-negative-fixture', 'cecelia-e2e-nonexistent-fixture-repo', 5199, '${NEG_DB}', 'active', NOW(), NOW())
+  ON CONFLICT DO NOTHING" >/dev/null
+
 AVAIL_BEFORE=$(df -k /System/Volumes/Data 2>/dev/null | tail -1 | awk '{print $4}' || df -k / | tail -1 | awk '{print $4}')
 echo "清扫前 avail(KB)=${AVAIL_BEFORE}"
 
-# 对所有非 inactive 的现存 preview_environments 记录逐个调统一销毁器（真实批量清扫）
-EXISTING_PRS=$(psql "$DB" -t -A -c "SELECT pr_number FROM preview_environments WHERE status != 'inactive'")
+# 3b. 逐个候选 PR 判定「已关闭 PR 或超 24h」，只有满足其一才销毁（PRD 模块4 原文过滤条件；上一版本无差别销毁全部非 inactive 行，本轮修复）
+EXISTING_ROWS=$(psql "$DB" -t -A -F'|' -c "SELECT pr_number, base_repo, EXTRACT(EPOCH FROM (NOW() - created_at))::bigint FROM preview_environments WHERE status != 'inactive'")
 SWEEP_COUNT=0
-for pr in $EXISTING_PRS; do
+SKIP_COUNT=0
+while IFS='|' read -r pr base_repo age_seconds; do
   [ -z "$pr" ] && continue
-  curl -sf -X POST "${BRAIN_URL}/api/brain/preview/stop/${pr}" >/dev/null 2>&1 || true
-  SWEEP_COUNT=$((SWEEP_COUNT + 1))
-done
-echo "本轮清扫触发 ${SWEEP_COUNT} 个现存 preview"
+
+  # 判据A：gh pr view 判断 PR 是否已关闭/合并（真调 gh CLI，不 mock）。
+  # gh 不可用或查询失败（如 fixture 仓库不存在）时不当"已关闭"处理，安全兜底交给判据B。
+  GH_STATE=""
+  if command -v gh >/dev/null 2>&1; then
+    GH_STATE=$(gh pr view "$pr" --repo "${GH_REPO_OWNER}/${base_repo}" --json state --jq '.state' 2>/dev/null || echo "")
+  fi
+  PR_CLOSED=false
+  if [ "$GH_STATE" = "CLOSED" ] || [ "$GH_STATE" = "MERGED" ]; then
+    PR_CLOSED=true
+  fi
+
+  # 判据B：created_at 超 24h（86400s）
+  OVER_24H=false
+  if [ -n "$age_seconds" ]; then
+    if [ "$age_seconds" -gt 86400 ] 2>/dev/null; then
+      OVER_24H=true
+    fi
+  fi
+
+  if [ "$PR_CLOSED" = true ] || [ "$OVER_24H" = true ]; then
+    curl -sf -X POST "${BRAIN_URL}/api/brain/preview/stop/${pr}" >/dev/null 2>&1 || true
+    SWEEP_COUNT=$((SWEEP_COUNT + 1))
+    echo "  销毁 pr=${pr}（gh_state=${GH_STATE:-N/A} age=${age_seconds}s closed=${PR_CLOSED} over24h=${OVER_24H}）"
+  else
+    SKIP_COUNT=$((SKIP_COUNT + 1))
+    echo "  跳过 pr=${pr}（活跃且未过 24h，gh_state=${GH_STATE:-N/A} age=${age_seconds}s）"
+  fi
+done <<< "$EXISTING_ROWS"
+echo "本轮清扫：销毁 ${SWEEP_COUNT} 个，跳过 ${SKIP_COUNT} 个（活跃/未过期）"
 sleep 5
+
+# 3c. 负向断言：刚创建、仍活跃、未过 24h 的 fixture 行必须原封不动未被销毁（核心防误杀断言）
+NEG_STATUS=$(psql "$DB" -t -A -c "SELECT status FROM preview_environments WHERE pr_number=${NEG_PR}")
+[ "$NEG_STATUS" = "active" ] || { echo "FAIL: 负向 fixture pr=${NEG_PR} 被误杀，status=${NEG_STATUS}（预期仍为 active，说明过滤条件未生效）"; exit 1; }
+psql "$DB" -c "DELETE FROM preview_environments WHERE pr_number=${NEG_PR}" >/dev/null
+echo "✅ 负向断言通过：刚创建、仍活跃、未过 24h 的 preview 未被 sweep 误杀"
 
 AVAIL_AFTER=$(df -k /System/Volumes/Data 2>/dev/null | tail -1 | awk '{print $4}' || df -k / | tail -1 | awk '{print $4}')
 echo "清扫后 avail(KB)=${AVAIL_AFTER}"
 REMAINING=$(psql "$DB" -t -A -c "SELECT count(*) FROM preview_environments WHERE status NOT IN ('inactive','cleanup_failed')" | tr -d '[:space:]')
-echo "清扫后仍在途(非 inactive/cleanup_failed)记录数: ${REMAINING}"
-[ "$REMAINING" = "0" ] || echo "⚠ 仍有 ${REMAINING} 条记录未达终态（可能正在 cleaning，非 FAIL，供人工复核）"
+echo "清扫后仍在途(非 inactive/cleanup_failed)记录数: ${REMAINING}（含本轮被跳过的活跃/未过期候选，非 FAIL）"
 echo "avail 前后对比: ${AVAIL_BEFORE}KB → ${AVAIL_AFTER}KB"
-echo "✅ [3/3] 现存资源批量清扫验证通过（前后字节数已记录）"
+echo "✅ [3/3] 现存资源批量清扫验证通过（仅销毁已关闭/超24h 候选，前后字节数已记录，负向断言通过）"
 
 rm -rf "$CECELIA_DEPLOY_ROOT"
 echo "✅ Golden Path 全部验证通过"
