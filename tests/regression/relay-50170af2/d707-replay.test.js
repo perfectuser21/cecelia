@@ -194,7 +194,7 @@ describe('[BEHAVIOR] B-08 d707 hop 55-66 replay 不产生重复 fix', () => {
     });
   });
 
-  test('T-04-b: an existing same-trigger fix without verified callback fails before a second dispatch', () => {
+  test('T-04-b: a missing callback gets one observation, then fails before a second dispatch', () => {
     const firstFix = {
       hop: 57,
       action: 'spawn:generator-fix',
@@ -213,9 +213,27 @@ describe('[BEHAVIOR] B-08 d707 hop 55-66 replay 不产生重复 fix', () => {
     ];
 
     expect(derive(replayObserved(logWithoutCallback))).toMatchObject({
+      phase: 'generate',
+      action: 'wait:generator_fix_callback',
+      reason: 'generator_fix_callback_pending',
+    });
+
+    const afterObservation = [...logWithoutCallback, {
+      hop: 58,
+      action: 'wait:generator_fix_callback',
+      observed: {
+        trigger_hop: 57,
+        pr: { head_sha: D707_FINAL_SHA },
+      },
+      detail: {
+        trigger_hop: 57,
+        reason: 'generator_fix_callback_pending',
+      },
+    }];
+    expect(derive(replayObserved(afterObservation))).toMatchObject({
       phase: 'failed',
       action: 'mark_failed',
-      reason: 'no_progress_same_sha',
+      reason: 'generator_fix_callback_missing_after_observation',
     });
   });
 

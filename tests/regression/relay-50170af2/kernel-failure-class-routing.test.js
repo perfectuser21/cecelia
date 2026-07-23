@@ -212,7 +212,12 @@ describe('[BEHAVIOR] B-04 Judge 落库保留 failure_class', () => {
     const { createKernelHandlers } = await import('../../../packages/brain/src/orchestrator/kernel-handlers.js');
     const handlers = createKernelHandlers({
       pool: mockPool,
-      judgeGate: async () => ({ judged: true, verdict: 'FAIL', feedback: 'test' }),
+      judgeGate: async () => ({
+        judged: true,
+        verdict: 'FAIL',
+        feedback: 'test',
+        failure_class: 'evidence_invalid',
+      }),
       attemptStore: { complete: async () => {} },
     });
 
