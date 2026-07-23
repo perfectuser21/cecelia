@@ -15,7 +15,7 @@ const DEFAULT_CONFIG = Object.freeze({
   agentScript: '~/.local/lib/codex-slot/codex-slot-agent.mjs',
 });
 const NON_INTERACTIVE_TIMEOUT_MS = 30_000;
-const REMOTE_FIXED_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+const REMOTE_FIXED_PATH = '/Applications/Tailscale.app/Contents/MacOS:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 const SSH_OPTIONS = Object.freeze([
   '-o',
   'BatchMode=yes',
