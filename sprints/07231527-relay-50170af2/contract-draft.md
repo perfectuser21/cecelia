@@ -216,7 +216,7 @@ cd packages/brain && npx --no-install vitest run \
 | R4 SHA | `../../tests/regression/relay-50170af2/kernel-wiring-no-progress-callback.integration.test.js` | uppercase artifact SHA / short decision SHA / fake provider-metadata SHA | resolver 对账与 terminal |
 | R5/R6 signature | `../../tests/regression/relay-50170af2/kernel-convergence-signatures.test.js` | second no-PR generator crash / second identical evidence_invalid signature / after approval | 崩溃 FAILED；evidence 人审/解锁后 FAILED |
 | 收敛历史 | `../../tests/regression/relay-50170af2/kernel-convergence-history.test.js` | historical-low / never-seen set / exact historical set recurrence / three consecutive novel structured rounds | 新低、新集合、重现、patience |
-| d707 | `../../tests/regression/relay-50170af2/d707-replay.test.js` | same-trigger fix without verified callback / many resolver-verified advancing SHA rounds | 结构化 no-progress / convergence |
+| d707 | `../../tests/regression/relay-50170af2/d707-replay.test.js` | a missing callback gets one observation, then fails before a second dispatch / many resolver-verified advancing SHA rounds | 结构化 no-progress / convergence |
 | 真 PostgreSQL | `../../packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js` | same run accepts / callback no-progress / failure-set recurrence | 8/8 |
 
 所有 R 项都必须先有旧实现上的 Red commit，再有最小 Green commit。不得修改
