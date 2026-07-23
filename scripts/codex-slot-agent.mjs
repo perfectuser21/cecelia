@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -22,7 +23,10 @@ const DEFAULT_MIN_FREE_GIB = 45;
 const DEFAULT_MAX_USED_PERCENT = 80;
 const DEFAULT_DISK_SAMPLE_MAX_AGE_MS = 30_000;
 const DEFAULT_TMUX_TIMEOUT_MS = 10_000;
+const DEFAULT_TAILSCALE_TIMEOUT_MS = 5_000;
+const DEFAULT_EXIT_NODE = 'mmv';
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SAFE_EXIT_NODE = /^[a-z0-9](?:[a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*)?$/;
 
 const nodeFs = {
   chmod,
@@ -139,6 +143,24 @@ function diskSampleMaxAgeMs(deps) {
 
 function tmuxTimeoutMs(deps) {
   return numberConfig(deps, 'tmuxTimeoutMs', 'CODEX_SLOT_TMUX_TIMEOUT_MS', DEFAULT_TMUX_TIMEOUT_MS);
+}
+
+function tailscaleTimeoutMs(deps) {
+  const value = deps.tailscaleTimeoutMs ?? DEFAULT_TAILSCALE_TIMEOUT_MS;
+  if (!Number.isFinite(Number(value)) || Number(value) <= 0) {
+    throw new Error('tailscaleTimeoutMs must be a positive number');
+  }
+  return Number(value);
+}
+
+function expectedExitNode(deps) {
+  const value = normalizeExitNodeName(
+    deps.exitNode ?? process.env.CODEX_SLOT_EXIT_NODE ?? DEFAULT_EXIT_NODE
+  );
+  if (value === null || value === '') {
+    throw new Error('CODEX_SLOT_EXIT_NODE must be a safe host or DNS name');
+  }
+  return value;
 }
 
 function resolveHome(deps) {
@@ -583,29 +605,131 @@ async function guardedDiskSample(deps) {
   return sample;
 }
 
+function normalizeExitNodeName(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  const normalized = value.trim().toLowerCase().replace(/\.+$/, '');
+  if (normalized.length === 0) {
+    return '';
+  }
+  return SAFE_EXIT_NODE.test(normalized) ? normalized : null;
+}
+
+function normalizeTailscaleStatus(raw) {
+  let status = raw;
+  if (Buffer.isBuffer(status)) {
+    status = status.toString('utf8');
+  }
+  if (typeof status === 'string') {
+    status = JSON.parse(status);
+  }
+  if (!status || typeof status !== 'object' || Array.isArray(status)) {
+    throw new Error('tailscale status must be a JSON object');
+  }
+  return status;
+}
+
+function selectedExitNode(status, expected) {
+  const peers = status.Peer;
+  if (!peers || typeof peers !== 'object' || Array.isArray(peers)) {
+    return { exitNode: null, exitNodeOk: false };
+  }
+  const selected = Object.values(peers).filter((peer) =>
+    peer && typeof peer === 'object' && !Array.isArray(peer) && peer.ExitNode === true
+  );
+  if (selected.length !== 1) {
+    return { exitNode: null, exitNodeOk: false };
+  }
+
+  const peer = selected[0];
+  const hostName = normalizeExitNodeName(peer.HostName);
+  const dnsName = normalizeExitNodeName(peer.DNSName);
+  if (hostName === null || dnsName === null) {
+    return { exitNode: null, exitNodeOk: false };
+  }
+  if (hostName && dnsName && hostName !== dnsName.split('.')[0]) {
+    return { exitNode: null, exitNodeOk: false };
+  }
+  const exitNode = hostName || dnsName || null;
+  if (!exitNode) {
+    return { exitNode: null, exitNodeOk: false };
+  }
+  return {
+    exitNode,
+    exitNodeOk: peer.Online === true && (expected === exitNode || (dnsName !== '' && expected === dnsName)),
+  };
+}
+
+async function defaultSampleTailscaleStatus(deps) {
+  const result = await runProcess(
+    deps,
+    'tailscale',
+    ['status', '--json'],
+    { timeoutMs: tailscaleTimeoutMs(deps) }
+  );
+  if (result.exitCode !== 0) {
+    throw new Error('tailscale status failed');
+  }
+  return result.stdout;
+}
+
+async function sampleExitNode(deps) {
+  const sample = deps.sampleTailscaleStatus ?? defaultSampleTailscaleStatus;
+  const status = normalizeTailscaleStatus(await sample(deps));
+  return selectedExitNode(status, expectedExitNode(deps));
+}
+
+async function guardedExitNodeSample(deps) {
+  let result;
+  try {
+    result = await sampleExitNode(deps);
+  } catch {
+    throw new Error('Tailscale 出口检查失败');
+  }
+  if (!result.exitNodeOk) {
+    throw new Error(
+      `Tailscale 出口不安全: expected=${expectedExitNode(deps)}, selected=${result.exitNode ?? 'none'}`
+    );
+  }
+  return result;
+}
+
 async function health(deps) {
   const hostname = resolveHostname(deps);
+  let sample = null;
+  let diskError = false;
   try {
-    const sample = normalizeDiskSample(await sampleDisk(deps));
-    return {
-      ok: true,
-      hostname,
-      freeGiB: sample.freeGiB,
-      usedPercent: sample.usedPercent,
-      capacity: sample.capacity,
-      enabled: diskEnabled(sample, deps),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      hostname,
-      freeGiB: null,
-      usedPercent: null,
-      capacity: null,
-      enabled: false,
-      error: `磁盘采样失败: ${error.message}`,
-    };
+    sample = normalizeDiskSample(await sampleDisk(deps));
+  } catch {
+    diskError = true;
   }
+
+  let exit = { exitNode: null, exitNodeOk: false };
+  let tailscaleError = false;
+  try {
+    exit = await sampleExitNode(deps);
+  } catch {
+    tailscaleError = true;
+  }
+
+  const result = {
+    ok: !diskError && !tailscaleError,
+    hostname,
+    freeGiB: sample?.freeGiB ?? null,
+    usedPercent: sample?.usedPercent ?? null,
+    capacity: sample?.capacity ?? null,
+    exitNode: exit.exitNode,
+    exitNodeOk: exit.exitNodeOk,
+    enabled: Boolean(sample && diskEnabled(sample, deps) && exit.exitNodeOk),
+  };
+  if (diskError || tailscaleError) {
+    result.error = [
+      diskError ? '磁盘采样失败' : null,
+      tailscaleError ? 'Tailscale 出口检查失败' : null,
+    ].filter(Boolean).join('; ');
+  }
+  return result;
 }
 
 const TRUSTED_METADATA_FIELDS = [
@@ -898,6 +1022,7 @@ async function prepareAgent(argv, deps) {
   if (!resolveAllowedProjects(deps).has(input.project)) {
     throw new Error(`project not allowed: ${input.project}`);
   }
+  await guardedExitNodeSample(deps);
   await guardedDiskSample(deps);
   return withSessionLock(
     deps,
@@ -1286,6 +1411,9 @@ async function main() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   await main();
 }

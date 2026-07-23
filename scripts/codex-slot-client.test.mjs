@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -15,6 +15,7 @@ import {
 
 const CLIENT_PATH = resolve('scripts/codex-slot-client.mjs');
 const ENTRY_PATH = resolve('scripts/codex-slot');
+const REMOTE_FIXED_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
 function option(args, name) {
   const index = args.indexOf(`--${name}`);
@@ -25,11 +26,98 @@ function decodeSessionPut(args) {
   return JSON.parse(Buffer.from(option(args, 'json'), 'base64url').toString('utf8'));
 }
 
-function remoteShellArgv(remoteCommand, executable) {
-  const collector = `${executable}() { printf '%s\\n' "$@"; }\n${remoteCommand}`;
-  const result = spawnSync('/bin/sh', ['-c', collector], { encoding: 'utf8' });
+function remoteShellInvocation(remoteCommand, executable) {
+  const collector = [
+    'env() {',
+    '  printf "ENVARG=%s\\n" "$1";',
+    '  shift;',
+    '  printf "UTILITY=%s\\n" "$1";',
+    '  shift;',
+    '  for arg do printf "ARG=%s\\n" "$arg"; done',
+    '}',
+    remoteCommand,
+  ].join('\n');
+  const result = spawnSync('/bin/sh', ['-c', collector], {
+    encoding: 'utf8',
+    env: {
+      HOME: process.env.HOME ?? '',
+      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    },
+  });
   assert.equal(result.status, 0, result.stderr);
-  return result.stdout.trimEnd().split('\n');
+  const lines = result.stdout.trimEnd().split('\n');
+  const envArg = lines.shift();
+  const utility = lines.shift();
+  assert.equal(envArg, `ENVARG=PATH=${REMOTE_FIXED_PATH}`);
+  assert.equal(utility, `UTILITY=${executable}`);
+  return {
+    envPath: envArg.slice('ENVARG=PATH='.length),
+    utility: utility.slice('UTILITY='.length),
+    argv: lines.map((line) => {
+      assert.match(line, /^ARG=/);
+      return line.slice('ARG='.length);
+    }),
+  };
+}
+
+function remoteShellArgv(remoteCommand, executable) {
+  return remoteShellInvocation(remoteCommand, executable).argv;
+}
+
+async function writeFakeRemoteExecutable(dir, name) {
+  const path = join(dir, name);
+  await writeFile(
+    path,
+    [
+      '#!/bin/sh',
+      `printf 'UTILITY=%s\\n' '${name}'`,
+      'printf "INHERITED_PATH=%s\\n" "$PATH"',
+      'for arg do printf "ARG=%s\\n" "$arg"; done',
+      '',
+    ].join('\n'),
+    'utf8'
+  );
+  await chmod(path, 0o755);
+}
+
+async function runRemoteWithFakeExecutable(t, remoteCommand, executable, initialPath) {
+  const root = await mkdtemp(join(tmpdir(), 'codex-slot-remote-path-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const bin = join(root, 'bin');
+  await mkdir(bin, { recursive: true });
+  await writeFakeRemoteExecutable(bin, executable);
+  const collector = [
+    'env() {',
+    '  case "$1" in',
+    '    PATH=*) remote_path="${1#PATH=}" ;;',
+    '    *) printf "bad env assignment: %s\\n" "$1" >&2; return 64 ;;',
+    '  esac',
+    '  shift;',
+    '  utility="$1";',
+    '  shift;',
+    '  PATH="$remote_path" "$FAKE_BIN/$utility" "$@"',
+    '}',
+    remoteCommand,
+  ].join('\n');
+  const result = spawnSync('/bin/sh', ['-c', collector], {
+    encoding: 'utf8',
+    env: {
+      FAKE_BIN: bin,
+      HOME: process.env.HOME ?? '',
+      PATH: initialPath,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const lines = result.stdout.trimEnd().split('\n');
+  assert.equal(lines.shift(), `UTILITY=${executable}`);
+  const inherited = lines.shift();
+  assert.equal(inherited, `INHERITED_PATH=${REMOTE_FIXED_PATH}`);
+  return lines.map((line) => {
+    assert.match(line, /^ARG=/);
+    return line.slice('ARG='.length);
+  });
 }
 
 function runningSession(overrides = {}) {
@@ -157,6 +245,8 @@ function makeTransport(options = {}) {
             ok: true,
             hostname: host,
             enabled: host === 'xian-m4',
+            exitNode: 'mmv',
+            exitNodeOk: true,
             availableSlots: host === 'xian-m4' ? 1 : 0,
           };
         case 'prepare':
@@ -230,8 +320,8 @@ test('start checks identity, duplicate, every host health then orchestrates in p
     'session-get',
     'health:xian-m4',
     'health:xian-m1',
-    'acquire',
     'prepare:xian-m4',
+    'acquire',
     'deliver',
     'launch:xian-m4',
     'session-put',
@@ -241,8 +331,8 @@ test('start checks identity, duplicate, every host health then orchestrates in p
   assert.equal(result.host, 'xian-m4');
   assert.equal(result.status, 'running');
 
-  const acquiredSession = option(transport.calls[4].args, 'session');
-  const prepared = transport.calls[5].args;
+  const prepared = transport.calls[4].args;
+  const acquiredSession = option(transport.calls[5].args, 'session');
   assert.equal(option(prepared, 'actor'), 'alex');
   assert.equal(option(prepared, 'session'), acquiredSession);
   assert.equal(option(prepared, 'project'), 'infrastructure');
@@ -260,6 +350,50 @@ test('start checks identity, duplicate, every host health then orchestrates in p
   );
 });
 
+test('start prepare failure happens before lease acquisition or token delivery', async () => {
+  const transport = makeTransport({
+    agent: async (_host, args) => {
+      if (args[0] === 'prepare') {
+        throw new Error('Tailscale 出口不安全 on second sample');
+      }
+      return undefined;
+    },
+  });
+
+  await assert.rejects(
+    runClient(['start', '--project', 'infrastructure'], transport),
+    /Tailscale 出口不安全/
+  );
+  assert.deepEqual(transport.calls.map(({ op }) => op), [
+    'identity',
+    'session-get',
+    'health:xian-m4',
+    'health:xian-m1',
+    'prepare:xian-m4',
+  ]);
+  assert.equal(transport.calls.some(({ op }) => op === 'acquire'), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'deliver'), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'release'), false);
+});
+
+test('start preserves prepared resources when acquire outcome is unknown', async () => {
+  const transport = makeTransport({
+    broker: async (args) => {
+      if (args[0] === 'acquire') throw new Error('broker unavailable');
+      return undefined;
+    },
+  });
+
+  await assert.rejects(
+    runClient(['start', '--project', 'infrastructure'], transport),
+    /broker acquire outcome unknown/
+  );
+  assert.equal(transport.calls.filter(({ op }) => op === 'acquire').length, 2);
+  assert.equal(transport.calls.some(({ op }) => op.startsWith('stop:')), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'deliver'), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'release'), false);
+});
+
 test('start selects first configured ok enabled host with available capacity', async () => {
   const transport = makeTransport({
     agent: async (host, args) => {
@@ -268,6 +402,8 @@ test('start selects first configured ok enabled host with available capacity', a
         ok: true,
         hostname: host,
         enabled: true,
+        exitNode: 'mmv',
+        exitNodeOk: true,
         availableSlots: host === 'xian-m4' ? 0 : 2,
       };
     },
@@ -276,6 +412,55 @@ test('start selects first configured ok enabled host with available capacity', a
   await runClient(['start', '--project', 'infrastructure'], transport);
   assert.equal(option(transport.calls.find((call) => call.op === 'acquire').args, 'host'), 'xian-m1');
   assert.ok(transport.calls.some((call) => call.op === 'prepare:xian-m1'));
+});
+
+test('start health-checks every host and never acquires when exit-node contract is unsafe', async () => {
+  const transport = makeTransport({
+    agent: async (host, args) => {
+      if (args[0] !== 'health') return undefined;
+      return {
+        ok: true,
+        hostname: host,
+        enabled: true,
+        exitNode: host === 'xian-m4' ? 'china-gateway' : 'mmv',
+        exitNodeOk: false,
+        availableSlots: 1,
+      };
+    },
+  });
+
+  await assert.rejects(
+    runClient(['start', '--project', 'infrastructure'], transport),
+    /没有.*host/
+  );
+  assert.deepEqual(transport.calls.map(({ op }) => op), [
+    'identity',
+    'session-get',
+    'health:xian-m4',
+    'health:xian-m1',
+  ]);
+});
+
+test('start rejects legacy health without explicit exitNodeOk before acquire or deliver', async () => {
+  const transport = makeTransport({
+    hosts: ['xian-m4'],
+    agent: async (host, args) => {
+      if (args[0] !== 'health') return undefined;
+      return {
+        ok: true,
+        hostname: host,
+        enabled: true,
+        availableSlots: 1,
+      };
+    },
+  });
+
+  await assert.rejects(
+    runClient(['start', '--project', 'infrastructure'], transport),
+    /没有.*host/
+  );
+  assert.equal(transport.calls.some(({ op }) => op === 'acquire'), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'deliver'), false);
 });
 
 test('start and stopped resume recover one exact lease after the first acquire response is lost', async () => {
@@ -607,9 +792,15 @@ test('resume without handle selects current actor project by most recent updated
   assert.equal(transport.calls.at(-1).op, 'attach:xian-m4');
 });
 
-test('resume running validates agent status and directly attaches without lease mutation', async () => {
+test('resume running validates agent status and directly attaches without lease or health mutation', async () => {
   const session = runningSession();
-  const transport = makeTransport({ sessions: [session] });
+  const transport = makeTransport({
+    sessions: [session],
+    agent: async (_host, args) => {
+      if (args[0] === 'health') throw new Error('health must not gate running resume');
+      return undefined;
+    },
+  });
   await runClient(['resume', session.handle], transport);
 
   assert.deepEqual(transport.calls.map((call) => call.op), [
@@ -621,7 +812,7 @@ test('resume running validates agent status and directly attaches without lease 
   assert.equal(transport.calls.at(-1).tmuxTarget, `=${session.tmuxSession}`);
 });
 
-test('resume stopped reacquires on fixed home host without preparing a new worktree', async () => {
+test('resume stopped health-checks fixed home host, idempotently prepares, then reacquires', async () => {
   const session = runningSession({
     host: 'xian-m1',
     state: 'stopped',
@@ -629,22 +820,131 @@ test('resume stopped reacquires on fixed home host without preparing a new workt
     leaseId: null,
     team: null,
   });
-  const transport = makeTransport({ sessions: [session] });
+  const transport = makeTransport({
+    sessions: [session],
+    agent: async (host, args) => {
+      if (args[0] !== 'health') return undefined;
+      return {
+        ok: true,
+        hostname: host,
+        enabled: true,
+        exitNode: 'mmv',
+        exitNodeOk: true,
+        availableSlots: 1,
+      };
+    },
+  });
   const result = await runClient(['resume', session.handle], transport);
 
   assert.deepEqual(transport.calls.map((call) => call.op), [
     'identity',
     'session-get',
     'status:xian-m1',
+    'health:xian-m1',
+    'prepare:xian-m1',
     'acquire',
     'deliver',
     'launch:xian-m1',
     'session-put',
     'attach:xian-m1',
   ]);
-  assert.equal(option(transport.calls[3].args, 'host'), 'xian-m1');
-  assert.equal(transport.calls.some((call) => call.op.startsWith('prepare:')), false);
+  const prepared = transport.calls[4].args;
+  assert.equal(option(prepared, 'actor'), session.actor);
+  assert.equal(option(prepared, 'session'), session.sessionId);
+  assert.equal(option(prepared, 'project'), session.project);
+  assert.equal(option(prepared, 'name'), session.name);
+  assert.equal(option(transport.calls[5].args, 'host'), 'xian-m1');
+  assert.equal(
+    option(transport.calls[6].args, 'path'),
+    `/Users/alex/.codex-slots/alex/${session.sessionId}/codex-home/auth.json`
+  );
   assert.equal(result.status, 'running');
+});
+
+test('resume stopped rejects unsafe or legacy health before prepare, acquire, or deliver', async () => {
+  const session = runningSession({
+    state: 'stopped',
+    status: 'stopped',
+    leaseId: null,
+    team: null,
+  });
+  for (const health of [
+    {
+      ok: true,
+      hostname: session.host,
+      enabled: true,
+      availableSlots: 1,
+    },
+    {
+      ok: true,
+      hostname: session.host,
+      enabled: true,
+      exitNode: 'china-gateway',
+      exitNodeOk: false,
+      availableSlots: 1,
+    },
+    {
+      ok: true,
+      hostname: session.host,
+      enabled: true,
+      exitNode: 'mmv',
+      exitNodeOk: true,
+      availableSlots: 0,
+    },
+  ]) {
+    const transport = makeTransport({
+      sessions: [session],
+      agent: async (_host, args) => {
+        if (args[0] === 'health') return health;
+        return undefined;
+      },
+    });
+
+    await assert.rejects(
+      runClient(['resume', session.handle], transport),
+      /没有.*host/
+    );
+    assert.deepEqual(transport.calls.map((call) => call.op), [
+      'identity',
+      'session-get',
+      'status:xian-m4',
+      'health:xian-m4',
+    ]);
+    assert.equal(transport.calls.some((call) => call.op.startsWith('prepare:')), false);
+    assert.equal(transport.calls.some((call) => call.op === 'acquire'), false);
+    assert.equal(transport.calls.some((call) => call.op === 'deliver'), false);
+  }
+});
+
+test('resume stopped prepare failure happens before lease acquisition or token delivery', async () => {
+  const session = runningSession({
+    state: 'stopped',
+    status: 'stopped',
+    leaseId: null,
+    team: null,
+  });
+  const transport = makeTransport({
+    sessions: [session],
+    agent: async (_host, args) => {
+      if (args[0] === 'prepare') throw new Error('Tailscale 出口不安全 on second sample');
+      return undefined;
+    },
+  });
+
+  await assert.rejects(
+    runClient(['resume', session.handle], transport),
+    /Tailscale 出口不安全/
+  );
+  assert.deepEqual(transport.calls.map((call) => call.op), [
+    'identity',
+    'session-get',
+    'status:xian-m4',
+    'health:xian-m4',
+    'prepare:xian-m4',
+  ]);
+  assert.equal(transport.calls.some((call) => call.op === 'acquire'), false);
+  assert.equal(transport.calls.some((call) => call.op === 'deliver'), false);
+  assert.equal(transport.calls.some((call) => call.op === 'release'), false);
 });
 
 test('resume and attach fail closed on cross actor, unreachable host, or metadata mismatch', async () => {
@@ -1124,9 +1424,11 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
   for (const value of required) assert.ok(calls[0].args.includes(value));
   assert.deepEqual(calls[0].args.slice(-2), [
     'broker-host',
-    `node "$HOME"/'.local/lib/codex slot'\\''s/codex-slot-broker.mjs' 'deliver' '--path' '/remote/codex home/slot'\\''s/auth.json'`,
+    `env PATH=${REMOTE_FIXED_PATH} node "$HOME"/'.local/lib/codex slot'\\''s/codex-slot-broker.mjs' 'deliver' '--path' '/remote/codex home/slot'\\''s/auth.json'`,
   ]);
-  assert.deepEqual(remoteShellArgv(calls[0].args.at(-1), 'node'), [
+  const brokerInvocation = remoteShellInvocation(calls[0].args.at(-1), 'node');
+  assert.equal(brokerInvocation.envPath, REMOTE_FIXED_PATH);
+  assert.deepEqual(brokerInvocation.argv, [
     `${process.env.HOME}/.local/lib/codex slot's/codex-slot-broker.mjs`,
     'deliver',
     '--path',
@@ -1139,9 +1441,11 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
   for (const value of required) assert.ok(calls[1].args.includes(value));
   assert.deepEqual(calls[1].args.slice(-2), [
     'agent-host',
-    `node '/remote/codex slot'\\''s/codex-slot-agent.mjs' 'health'`,
+    `env PATH=${REMOTE_FIXED_PATH} node '/remote/codex slot'\\''s/codex-slot-agent.mjs' 'health'`,
   ]);
-  assert.deepEqual(remoteShellArgv(calls[1].args.at(-1), 'node'), [
+  const agentInvocation = remoteShellInvocation(calls[1].args.at(-1), 'node');
+  assert.equal(agentInvocation.envPath, REMOTE_FIXED_PATH);
+  assert.deepEqual(agentInvocation.argv, [
     "/remote/codex slot's/codex-slot-agent.mjs",
     'health',
   ]);
@@ -1153,11 +1457,13 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
     args: [
       '-t',
       'agent-host',
-      `tmux 'attach-session' '-t' '=codex-slot-s-abc'`,
+      `env PATH=${REMOTE_FIXED_PATH} tmux 'attach-session' '-t' '=codex-slot-s-abc'`,
     ],
     options: { shell: false, stdio: 'inherit' },
   });
-  assert.deepEqual(remoteShellArgv(calls[2].args.at(-1), 'tmux'), [
+  const tmuxInvocation = remoteShellInvocation(calls[2].args.at(-1), 'tmux');
+  assert.equal(tmuxInvocation.envPath, REMOTE_FIXED_PATH);
+  assert.deepEqual(tmuxInvocation.argv, [
     'attach-session',
     '-t',
     '=codex-slot-s-abc',
@@ -1174,6 +1480,47 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
     runInteractive,
   });
   await assert.rejects(invalid.broker(['identity']), /JSON/);
+});
+
+test('remote env prefix lets fake node and tmux inherit fixed PATH with empty or minimal caller PATH', async (t) => {
+  const calls = [];
+  const runCommand = async (cmd, args, options) => {
+    calls.push({ kind: 'command', cmd, args, options });
+    return { stdout: '{"ok":true,"actor":"alex"}\n', stderr: '' };
+  };
+  const runInteractive = async (cmd, args, options) => {
+    calls.push({ kind: 'interactive', cmd, args, options });
+    return { ok: true };
+  };
+  const transport = await createSshTransport({
+    config: {
+      broker: 'broker-host',
+      hosts: ['agent-host'],
+      brokerScript: '~/.local/lib/codex-slot/codex-slot-broker.mjs',
+      agentScript: '/remote/codex-slot-agent.mjs',
+    },
+    runCommand,
+    runInteractive,
+  });
+
+  await transport.broker(['identity']);
+  await transport.agent('agent-host', ['health']);
+  await transport.attach('agent-host', '=codex-slot-s-abc');
+
+  for (const initialPath of ['', '/usr/bin:/bin:/usr/sbin:/sbin']) {
+    assert.deepEqual(
+      await runRemoteWithFakeExecutable(t, calls[0].args.at(-1), 'node', initialPath),
+      [`${process.env.HOME}/.local/lib/codex-slot/codex-slot-broker.mjs`, 'identity']
+    );
+    assert.deepEqual(
+      await runRemoteWithFakeExecutable(t, calls[1].args.at(-1), 'node', initialPath),
+      ['/remote/codex-slot-agent.mjs', 'health']
+    );
+    assert.deepEqual(
+      await runRemoteWithFakeExecutable(t, calls[2].args.at(-1), 'tmux', initialPath),
+      ['attach-session', '-t', '=codex-slot-s-abc']
+    );
+  }
 });
 
 test('runProcess waits for close after TERM, escalates to KILL, and settles timeout once', async () => {
