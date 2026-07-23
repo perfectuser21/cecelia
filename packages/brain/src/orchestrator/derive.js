@@ -222,10 +222,14 @@ export function derive(observed) {
   // generator-fix callback SHA === trigger_sha → 无进展，立即终局
   // INV-K4：no-progress 后禁止对相同 (run_id, failure_class, trigger_sha, role) 再派 generator-fix
   if (observed.noProgress === true) {
+    const noProgressReason = String(observed.noProgressReason ?? '');
+    const terminalReason = noProgressReason.startsWith('callback_sha_')
+      ? noProgressReason
+      : 'no_progress_same_sha';
     return {
       phase: 'failed',
       action: ACTION.MARK_FAILED,
-      reason: observed.noProgressReason ?? 'no_progress_same_sha',
+      reason: terminalReason,
     };
   }
 

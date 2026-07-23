@@ -322,7 +322,8 @@ export function deriveCounters(logRows, options) {
       const cbDetail = asJson(cb.detail) ?? {};
       const callbackSha = cbObs.pr_head_sha ?? null;
       if (
-        cbDetail.verification_status === 'verified'
+        (cbDetail.verification_status === 'verified'
+          || cbDetail.verification_status == null)
         && callbackSha
         && callbackSha !== triggerSha
       ) {
@@ -413,7 +414,8 @@ export function deriveCounters(logRows, options) {
           const callbackSha = cbObs.pr_head_sha ?? null;
           const cbDetail = asJson(lastCallback.detail) ?? {};
           if (
-            cbDetail.verification_status === 'verified'
+            (cbDetail.verification_status === 'verified'
+              || cbDetail.verification_status == null)
             && callbackSha
             && callbackSha === triggerSha
           ) {
