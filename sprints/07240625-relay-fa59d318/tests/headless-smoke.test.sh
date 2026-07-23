@@ -78,7 +78,7 @@ grep -q "headless-smoke.sh" "$ALLOWLIST" \
   || fail "B6: headless-smoke.sh 未登记 smoke-allowlist.txt（违反 I-02）"
 
 # [BEHAVIOR] B1-B3, B5: Brain 可达时运行完整 smoke（跳过条件：Brain 不可达）
-HEALTHZ_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "$BRAIN/healthz" 2>/dev/null || echo "000")
+HEALTHZ_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "$BRAIN/api/brain/healthz" 2>/dev/null || echo "000")
 if [ "$HEALTHZ_CODE" = "200" ]; then
   echo "  Brain 可达，运行完整 smoke 脚本..."
   if bash "$SMOKE_SCRIPT"; then
