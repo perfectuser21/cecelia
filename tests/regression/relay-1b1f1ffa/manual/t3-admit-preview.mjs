@@ -129,3 +129,7 @@ try {
   } catch { /* best-effort cleanup */ }
   rmSync(workDir, { recursive: true, force: true });
 }
+// realPool() 返回的是 db.js 模块级共享 pool（idleTimeoutMillis=30000），不显式退出
+// 的话每次调用都要空等 30s 才让事件循环清空退出——CI 里连续跑十几次直接吃满
+// timeout。成功路径主动 exit(0)（对称于 fail() 的 exit(1)），跳过空闲等待。
+process.exit(0);

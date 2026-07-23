@@ -1441,6 +1441,7 @@ jobs:
       - name: Run all packages/brain/scripts/smoke/*.sh
         env:
           BRAIN_URL: http://localhost:5221
+          BRAIN_CONTAINER: cecelia-brain-smoke
           DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'

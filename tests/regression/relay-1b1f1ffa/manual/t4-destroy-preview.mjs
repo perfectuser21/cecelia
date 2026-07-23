@@ -169,3 +169,6 @@ try {
   } catch { /* best-effort */ }
   rmSync(previewBaseDir, { recursive: true, force: true });
 }
+// 同 t3-admit-preview.mjs：realPool() 是共享 pool（idleTimeoutMillis=30000），
+// 不主动退出会空等 30s 才让事件循环清空。成功路径主动 exit(0)。
+process.exit(0);
