@@ -48,6 +48,28 @@ describe('isSkillRelayTask', () => {
 });
 
 describe('spawnSkillRelaySession', () => {
+  it('claude 执行体选号全不可用（env 无 CECELIA_CREDENTIALS）→ defer 不裸 spawn（issue 5167ef48）', async () => {
+    // account-rotation 全号熔断/打满时静默返回（env 不写）——旧行为会继续裸 spawn，
+    // 容器 "Not logged in" exit(1) 三连 → orphan-guard 终态（143f66e1 事故复现面）
+    const deps = makeDeps({ resolveAccountFn: vi.fn().mockResolvedValue(undefined) });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.ok).toBe(false);
+    expect(r.deferred).toBe(true);
+    expect(r.reason).toBe('no_available_claude_account');
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('claude 执行体选号成功（env 有 CECELIA_CREDENTIALS）→ 正常 spawn', async () => {
+    const deps = makeDeps({
+      resolveAccountFn: vi.fn().mockImplementation(async (opts) => {
+        opts.env.CECELIA_CREDENTIALS = 'account1';
+      }),
+    });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.ok).toBe(true);
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+  });
+
   it('kernel-v1 启动确定性 orchestrator，不加载或 spawn harness-controller', async () => {
     const runId = '11111111-1111-4111-8111-111111111111';
     const pool = { query: vi.fn(async (sql) => {
