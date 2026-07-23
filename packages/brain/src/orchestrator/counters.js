@@ -120,15 +120,23 @@ export function deriveCounters(logRows, options) {
     }
   }
 
-  // blockedStreak：从 decision log 推导（Sprint 07231527 Blocking 2）
-  // 语义：尾部连续的 gate_verdict 含 'deny:BLOCKED' 的 dispatch 行数
+  // blockedStreak：从 append-only dispatch result 推导。
+  // 每个 BLOCKED/NEEDS_CONTEXT result 紧跟对应 intent；扫描时跳过这条配对 intent，
+  // 但遇到任何其他行即断开，保证 DONE 后不会沿用旧 streak。
   let blockedStreak = 0;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i];
-    const gv = r.gate_verdict ?? '';
-    if (typeof gv === 'string' && gv.includes('BLOCKED')) {
-      blockedStreak++;
-    } else {
+  let blockedStatus = null;
+  for (let i = rows.length - 1; i >= 0;) {
+    const resultRow = rows[i];
+    if (resultRow.action !== LOG_ACTION.DISPATCH_RESULT) break;
+    const verdict = String(resultRow.gate_verdict ?? '');
+    const status = verdict.startsWith('deny:') ? verdict.slice('deny:'.length) : null;
+    if (!['BLOCKED', 'NEEDS_CONTEXT'].includes(status)) break;
+    if (blockedStatus == null) blockedStatus = status;
+    if (status !== blockedStatus) break;
+    blockedStreak++;
+    i--;
+    if (i >= 0 && rows[i].gate_verdict === 'allow') i--;
+    if (i >= 0 && rows[i].action !== LOG_ACTION.DISPATCH_RESULT) {
       break;
     }
   }
@@ -176,6 +184,7 @@ export function deriveCounters(logRows, options) {
     crossCheckMismatch: proposerCount !== proposeBranchMaxRn,
     pollCount,
     blockedStreak,
+    blockedStatus,
     noProgress,
     noProgressReason,
   };

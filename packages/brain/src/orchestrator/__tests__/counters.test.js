@@ -25,6 +25,7 @@ describe('deriveCounters：空日志', () => {
       crossCheckMismatch: false,
       pollCount: 0,
       blockedStreak: 0,
+      blockedStatus: null,
       noProgress: false,
       noProgressReason: null,
     });

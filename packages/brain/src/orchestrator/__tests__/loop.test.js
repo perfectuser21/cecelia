@@ -41,6 +41,7 @@ function makeEnv({ observedSeq, dispatch }) {
   let i = 0;
   let hopCounter = 0;
   const appended = [];
+  const persistedRows = [];
   const heartbeats = [];
   const sqls = [];
   const sleeps = [];
@@ -59,14 +60,25 @@ function makeEnv({ observedSeq, dispatch }) {
     collectGroundTruth: vi.fn(async () => {
       const o = observedSeq[Math.min(i, observedSeq.length - 1)];
       i++;
-      return typeof o === 'function' ? o() : o;
+      const value = typeof o === 'function' ? o() : o;
+      return {
+        ...value,
+        decisionLog: [...(value.decisionLog ?? []), ...persistedRows],
+      };
     }),
     nextHop: vi.fn(async () => {
       hopCounter++;
       return hopCounter;
     }),
-    appendHop: vi.fn(async (pool, entry) => {
+    appendHop: vi.fn(async (entry) => {
       appended.push(entry);
+      persistedRows.push({
+        hop: entry.hop,
+        action: entry.action,
+        observed: entry.observed,
+        gate_verdict: entry.gateVerdict,
+        detail: entry.detail,
+      });
     }),
     writeHeartbeat: vi.fn(async (pool, entry) => {
       heartbeats.push(entry);
@@ -136,9 +148,9 @@ describe('runLoop：全链 planning→done', () => {
       'merge_pr',
       'report',
     ]);
-    // 每个派发跳恰一条日志（intent-before-dispatch）
-    expect(appended).toHaveLength(8);
-    expect(result.hops).toBe(8);
+    // 每个派发跳恰一条 intent；poll 另有一条持久计数日志。
+    expect(appended).toHaveLength(9);
+    expect(result.hops).toBe(9);
     // persist 控制跳 + wait 跳也要心跳：8 派发 + 1 persist + 1 wait = 10
     expect(heartbeats).toHaveLength(10);
     // persist_contract_approval 落库 initiative_contracts
@@ -377,7 +389,7 @@ describe('runLoop：控制 action 自消费', () => {
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(result.exitReason).toBe('task_aborted');
     expect(appended).toHaveLength(0);
-    expect(sqls).toHaveLength(0);
+    expect(sqls.some(([sql]) => /\b(?:INSERT|UPDATE|DELETE)\b/.test(sql))).toBe(false);
   });
 });
 
@@ -416,7 +428,7 @@ describe('runLoop：dry-run（F5 前台雏形）', () => {
     expect(deps.dispatch).not.toHaveBeenCalled();
     expect(appended).toHaveLength(0);
     expect(heartbeats).toHaveLength(0);
-    expect(sqls).toHaveLength(0);
+    expect(sqls.some(([sql]) => /\b(?:INSERT|UPDATE|DELETE)\b/.test(sql))).toBe(false);
     expect(deps.log).toHaveBeenCalled();
     // 推导结果对外可见
     expect(result.decision.action).toBe('spawn:generator');
@@ -488,12 +500,13 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(deps.dispatch).toHaveBeenCalledTimes(2);
     expect(appended.map((entry) => entry.action)).toEqual([
       'wait:human_review',
+      'result:dispatch',
       'wait:human_review',
       'effect:human_review_requested',
     ]);
   });
 
-  it('wait:poll_ci → 不派 dispatcher、不 append hop，只心跳+sleep', async () => {
+  it('wait:poll_ci → 不派 dispatcher，持久化 poll hop 后心跳+sleep', async () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' };
     const observedSeq = [
       obs({ generatorSpawned: true, pr }),
@@ -505,7 +518,7 @@ describe('runLoop：wait:* 不灌水', () => {
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
     expect(result.exitReason).toBe('run_done');
-    expect(appended).toHaveLength(0);
+    expect(appended.map((entry) => entry.action)).toEqual(['wait:poll_ci', 'wait:poll_ci']);
     expect(deps.dispatch).not.toHaveBeenCalled();
     expect(sleeps).toHaveLength(2);
     expect(heartbeats).toHaveLength(2);

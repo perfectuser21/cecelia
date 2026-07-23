@@ -167,8 +167,6 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     : {};
 
   let hops = 0;
-  let blockedState = null;
-
   const beat = () => heartbeat(deps.pool, { runId: resolvedRunId, host, pid, now: now() });
 
   // deadline fence 辅助：检查 run.deadline_at 是否已超过当前时间
@@ -325,7 +323,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       await beat();
       continue;
     }
-    let gateVerdict = null;
+    let gateVerdict = 'allow';
     if (decision.action === ACTION.MERGE_PR) {
       // F6 双保险：derive 说 merge，仍过一遍 mergeGate（唯一 merge 权威）
       const gate = mergeGate({
@@ -370,6 +368,25 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       ? { status: 'BLOCKED', detail: gateVerdict }
       : await deps.dispatch(decision.action, { taskId, runId: resolvedRunId, hop, observed, decision });
 
+    if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
+      const resultHop = await next(deps.pool, resolvedRunId);
+      await append(deps.pool, {
+        runId: resolvedRunId,
+        hop: resultHop,
+        observed: buildSnapshot(observed, fullCounters, LOG_ACTION.DISPATCH_RESULT),
+        derivedPhase: decision.phase,
+        gateVerdict: `deny:${result.status}`,
+        action: LOG_ACTION.DISPATCH_RESULT,
+        detail: {
+          dispatch_hop: hop,
+          dispatch_action: decision.action,
+          status: result.status,
+          result: result.detail ?? null,
+        },
+      });
+      hops++;
+    }
+
     // Intent 只能证明“准备通知”，不能证明 preview/通知副作用成功。成功后追加独立
     // effect marker；若首次派发失败，下一轮看不到 marker，仍会重试而不是永久空等。
     if (decision.action === ACTION.WAIT_HUMAN_REVIEW
@@ -388,13 +405,9 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     }
 
     if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
-      // blockedStreak 从 DB 推导（Sprint 07231527 Blocking 2，counters.blockedStreak 已含此跳）
-      const currentBlockedStreak = counters.blockedStreak ?? 0;
-      if (blockedState === result.status) {
-        // 同态继续累积；counters.blockedStreak 是 DB 推导值（含本跳前的值），本跳 +1 在下轮 derive 后
-      } else {
-        blockedState = result.status;
-      }
+      const currentBlockedStreak = counters.blockedStatus === result.status
+        ? counters.blockedStreak
+        : 0;
       const streak = currentBlockedStreak + 1; // 本轮实际 streak
       log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status} (streak ${streak}): ${result.detail ?? ''}`);
       if (streak >= BLOCKED_SAME_STATE_CAP) {
@@ -403,7 +416,6 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       }
     } else {
       // DONE / DONE_WITH_CONCERNS：记 detail 继续
-      blockedState = null;
       log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status}${result.detail ? `: ${result.detail}` : ''}`);
     }
 
