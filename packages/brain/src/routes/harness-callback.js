@@ -37,7 +37,6 @@ import { parseHarnessResult } from '../orchestrator/execution-contract.js';
 import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
 
 const router = Router();
-const attemptStore = createAttemptStore(pool);
 const SUCCESS_TERMINAL_STATUSES = new Set([
   'completed',
   'completed_with_concerns',
@@ -75,6 +74,10 @@ function bearerToken(req) {
 
 function callbackAuthorized(req, attempt) {
   return verifyCallbackSecret(bearerToken(req), attempt?.callback_secret_hash);
+}
+
+function requestDatabase(req) {
+  return req.app.get('pool') || pool;
 }
 
 function normalizeVerdict(role, outcome) {
@@ -166,7 +169,9 @@ export async function appendGeneratorFixCallback(attempt, result, db = pool) {
   };
   await db.query(
     `WITH lock AS (
-       SELECT pg_advisory_xact_lock(hashtext($1::text))
+       SELECT pg_advisory_xact_lock(hashtext($1::text)),
+              $4::text AS callback_sha,
+              $5::text AS callback_provider
      ), fix_intent AS (
        SELECT 1
          FROM orchestrator_decision_log
@@ -208,6 +213,8 @@ function resultError(result) {
 }
 
 router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async (req, res) => {
+  const db = requestDatabase(req);
+  const attemptStore = createAttemptStore(db);
   const attempt = await attemptStore.getById(req.params.attemptId);
   if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
   if (!callbackAuthorized(req, attempt)) {
@@ -238,6 +245,8 @@ router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async 
 
 router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (req, res) => {
   const { attemptId } = req.params;
+  const db = requestDatabase(req);
+  const attemptStore = createAttemptStore(db);
   const attempt = await attemptStore.getById(attemptId);
   if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
   if (!callbackAuthorized(req, attempt)) {
@@ -307,15 +316,15 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
         completedAttempt = current;
         persistedResult = current.result ?? result;
       }
-      await appendAttemptVerdict(attempt, persistedResult);
-      await appendGeneratorFixCallback(attempt, persistedResult);
+      await appendAttemptVerdict(attempt, persistedResult, db);
+      await appendGeneratorFixCallback(attempt, persistedResult, db);
 
       if (attempt.role === 'generator') {
         const pullRequest = persistedResult.artifacts.find(
           (artifact) => artifact?.type === 'pull_request' && artifact.url,
         );
         if (pullRequest) {
-          await pool.query(
+          await db.query(
             'UPDATE initiative_runs SET pr_url=$2, updated_at=NOW() WHERE id=$1',
             [attempt.run_id, pullRequest.url],
           );

@@ -1,9 +1,18 @@
 import { execFileSync } from 'node:child_process';
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { authenticateApprover } from './harness-pending-reviews.js';
 
 const router = Router();
+const approvalRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  identifier: 'kernel-reviews-approval',
+  message: { error: 'approval rate limit exceeded' },
+});
 
 function asJson(value) {
   if (!value) return {};
@@ -20,7 +29,7 @@ async function defaultPrHeadResolver(prUrl) {
   return JSON.parse(output).headRefOid ?? null;
 }
 
-router.post('/:runId/approve', async (req, res) => {
+router.post('/:runId/approve', approvalRateLimit, async (req, res) => {
   const auth = authenticateApprover(req, res);
   if (!auth.ok) return;
 
@@ -74,51 +83,80 @@ router.post('/:runId/approve', async (req, res) => {
       return res.status(409).json({ error: 'human_review_request_not_found_for_sha' });
     }
 
-    const duplicate = await dbPool.query(
-      `SELECT 1
-         FROM orchestrator_decision_log
-        WHERE run_id=$1::uuid AND action='verdict:human_review'
-        LIMIT 1`,
-      [runId],
-    );
-    if (duplicate.rowCount > 0) {
-      return res.status(409).json({ error: 'already_approved' });
+    const transactional = typeof dbPool.connect === 'function';
+    const client = transactional ? await dbPool.connect() : dbPool;
+    let transactionOpen = false;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        transactionOpen = true;
+      }
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        [runId],
+      );
+      const duplicate = await client.query(
+        `SELECT 1
+           FROM orchestrator_decision_log
+          WHERE run_id=$1::uuid AND action='verdict:human_review'
+          LIMIT 1`,
+        [runId],
+      );
+      if (duplicate.rowCount > 0) {
+        if (transactionOpen) {
+          await client.query('ROLLBACK');
+          transactionOpen = false;
+        }
+        return res.status(409).json({ error: 'already_approved' });
+      }
+
+      const { rows: hopRows } = await client.query(
+        'SELECT COALESCE(MAX(hop), 0) + 1 AS next_hop FROM orchestrator_decision_log WHERE run_id=$1::uuid',
+        [runId],
+      );
+      const approvalHop = Number(hopRows[0].next_hop);
+      const approvedAt = new Date().toISOString();
+      const observed = {
+        pr: { head_sha: currentSha },
+        review_request_hop: reviewRequestHop,
+      };
+      const detail = {
+        verdict: 'APPROVED',
+        approved: true,
+        pr_head_sha: currentSha,
+        review_request_hop: reviewRequestHop,
+        approved_by: auth.approvedBy,
+        approved_at: approvedAt,
+      };
+      await client.query(
+        `INSERT INTO orchestrator_decision_log
+           (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+         VALUES ($1::uuid, $2, $3::jsonb, 'review', $4, 'verdict:human_review', $5::jsonb)`,
+        [runId, approvalHop, JSON.stringify(observed), 'allow', JSON.stringify(detail)],
+      );
+      if (transactionOpen) {
+        await client.query('COMMIT');
+        transactionOpen = false;
+      }
+
+      return res.status(202).json({
+        ok: true,
+        run_id: runId,
+        task_id: taskId,
+        pr_head_sha: currentSha,
+        review_request_hop: reviewRequestHop,
+        approved_by: auth.approvedBy,
+        approved_at: approvedAt,
+      });
+    } catch (error) {
+      if (transactionOpen) {
+        await client.query('ROLLBACK').catch(() => {});
+        transactionOpen = false;
+      }
+      throw error;
+    } finally {
+      if (transactional) client.release();
     }
-
-    const { rows: hopRows } = await dbPool.query(
-      'SELECT COALESCE(MAX(hop), 0) + 1 AS next_hop FROM orchestrator_decision_log WHERE run_id=$1::uuid',
-      [runId],
-    );
-    const approvalHop = Number(hopRows[0].next_hop);
-    const approvedAt = new Date().toISOString();
-    const observed = {
-      pr: { head_sha: currentSha },
-      review_request_hop: reviewRequestHop,
-    };
-    const detail = {
-      verdict: 'APPROVED',
-      approved: true,
-      pr_head_sha: currentSha,
-      review_request_hop: reviewRequestHop,
-      approved_by: auth.approvedBy,
-      approved_at: approvedAt,
-    };
-    await dbPool.query(
-      `INSERT INTO orchestrator_decision_log
-         (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
-       VALUES ($1::uuid, $2, $3::jsonb, 'review', $4, 'verdict:human_review', $5::jsonb)`,
-      [runId, approvalHop, JSON.stringify(observed), 'allow', JSON.stringify(detail)],
-    );
-
-    return res.status(202).json({
-      ok: true,
-      run_id: runId,
-      task_id: taskId,
-      pr_head_sha: currentSha,
-      review_request_hop: reviewRequestHop,
-      approved_by: auth.approvedBy,
-      approved_at: approvedAt,
-    });
   } catch (error) {
     return res.status(500).json({ error: `kernel approval failed: ${error.message}` });
   }
