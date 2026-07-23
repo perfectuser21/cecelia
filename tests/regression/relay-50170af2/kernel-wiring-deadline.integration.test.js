@@ -156,10 +156,14 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
         }
         if (/orchestrator_decision_log/i.test(normalized)) {
           state.reviewQueries.push(normalized);
-          if (/verdict:human_review/i.test(normalized) && !/effect:human_review_requested/i.test(normalized)) {
-            return { rows: [], rowCount: 0 };
-          }
-          return { rows: [reviewRequest], rowCount: 1 };
+          return {
+            rows: [{
+              ...reviewRequest,
+              review_request_hop: reviewRequest.hop,
+              review_head_sha: headSha,
+            }],
+            rowCount: 1,
+          };
         }
         if (/initiative_runs/i.test(normalized)) {
           return {
@@ -223,6 +227,48 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
       .rejects.toThrow('open-review-sleep-sentinel');
     expect(state.collects).toBe(1);
     expect(state.failedWrites).toBe(0);
+  });
+
+  test('an unrelated decision-log row cannot masquerade as an open human review', async () => {
+    const expired = new Date(BASE_MS - 1000);
+    const state = { failedWrites: 0, collects: 0 };
+    const pool = {
+      async query(sql) {
+        const normalized = String(sql);
+        if (/UPDATE initiative_runs/i.test(normalized) && /failure_reason/i.test(normalized)) {
+          state.failedWrites += 1;
+          return { rows: [], rowCount: 1 };
+        }
+        if (/orchestrator_decision_log/i.test(normalized)) {
+          return {
+            rows: [{
+              hop: 88,
+              action: 'wait:poll_ci',
+              observed: { pr: { head_sha: 'a'.repeat(40) } },
+            }],
+            rowCount: 1,
+          };
+        }
+        if (/SELECT\s+deadline_at/i.test(normalized)) {
+          return { rows: [{ deadline_at: expired }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+
+    const result = await runLoop({
+      pool,
+      collectGroundTruth: async () => {
+        state.collects += 1;
+        throw new Error('expired run must not collect');
+      },
+      now: () => new Date(BASE_MS),
+      log: () => {},
+    }, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('automation_deadline_exceeded');
+    expect(state.collects).toBe(0);
+    expect(state.failedWrites).toBe(1);
   });
 
   test.each([

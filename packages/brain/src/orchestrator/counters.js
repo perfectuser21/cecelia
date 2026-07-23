@@ -13,7 +13,8 @@
  * 计数语义：
  *   hops       = 去重后的行数（同 hop 不重复计——崩溃重放窗口防御，UNIQUE 正常场景已挡）
  *   fixRound   = 只计产生新 SHA 的有效 product fix（spawn:generator-fix + callback pr_head_sha !== trigger_sha）
- *                Sprint 07231527：语义修正，同 SHA no-progress 不递增 fixRound（MAX_FIX_ROUNDS=3）
+ *                Sprint 07231527：语义修正，同 SHA no-progress 不递增 fixRound；
+ *                fixRound 仅保留为观测指标，不再承担终止判据。
  *   ganRound   = proposeBranchMaxRn（权威）；COUNT(action='spawn:proposer') 仅交叉校验，不一致取分支值
  *   noPushStreak    = 尾部连续的 spawn:proposer 行中 observed.propose_branch_advanced === false 的个数，
  *                     出现 true 即断；缺字段（旧行/崩溃窗口）保守断开不计

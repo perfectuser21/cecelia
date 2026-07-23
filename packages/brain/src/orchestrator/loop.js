@@ -135,17 +135,47 @@ function buildSnapshot(observed, counters, action) {
 
 async function markRunFailed(pool, runId, reason) {
   await pool.query(
-    `UPDATE initiative_runs SET phase = 'failed', failure_reason = $2, updated_at = NOW() WHERE id = $1`,
+    `UPDATE initiative_runs
+        SET phase = 'failed', failure_reason = $2, updated_at = NOW()
+      WHERE id = $1
+        AND phase NOT IN ('done', 'failed')`,
     [runId, reason],
   );
 }
 
-async function loadRunDeadline(pool, runId) {
-  const { rows } = await pool.query(
+async function loadRunDeadlineState(pool, runId) {
+  const deadlineResult = await pool.query(
     'SELECT deadline_at FROM initiative_runs WHERE id = $1',
     [runId],
   );
-  return rows[0]?.deadline_at ?? null;
+  const reviewResult = await pool.query(
+    `SELECT request.hop AS review_request_hop,
+            request.observed,
+            request.observed #>> '{pr,head_sha}' AS review_head_sha,
+            request.created_at
+       FROM orchestrator_decision_log request
+      WHERE request.run_id = $1
+        AND request.action = 'effect:human_review_requested'
+        AND NOT EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log approval
+           WHERE approval.run_id = request.run_id
+             AND approval.action = 'verdict:human_review'
+             AND approval.detail->>'review_request_hop' = request.hop::text
+        )
+      ORDER BY request.hop DESC
+      LIMIT 1`,
+    [runId],
+  );
+  const deadline = deadlineResult.rows[0] ?? {};
+  const review = reviewResult.rows[0] ?? {};
+  const reviewObserved = asPayload(review.observed);
+  return {
+    deadline_at: deadline.deadline_at ?? null,
+    review_request_hop: review.review_request_hop ?? null,
+    review_head_sha: review.review_head_sha ?? reviewObserved.pr?.head_sha ?? null,
+    open_human_review: review.review_request_hop != null,
+  };
 }
 
 /**
@@ -184,8 +214,11 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   while (true) {
     // ---- Deadline fence 1：collect 前 ----
     // collect 会调用 git/gh/docker，过期 run 不应再触发任何外部观测。
-    const deadlineAt = await loadRunDeadline(deps.pool, resolvedRunId);
-    if (deadlineExceeded({ deadline_at: deadlineAt })) {
+    const deadlineState = await loadRunDeadlineState(deps.pool, resolvedRunId);
+    const hasOpenHumanReview = deadlineState.open_human_review === true
+      || deadlineState.open_human_review === 'true'
+      || deadlineState.review_request_hop != null;
+    if (deadlineExceeded(deadlineState) && !hasOpenHumanReview) {
       await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }
@@ -206,10 +239,15 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       noProgressReason: counters.noProgressReason,
       counters: fullCounters,
     });
+    // collect 前只凭“有开放 request”允许进行一次外部对账；collect 后必须确认
+    // request 仍锚定当前 GitHub head，旧 SHA 的人审不能暂停新 SHA 的活动时钟。
+    let deadlinePaused = hasOpenHumanReview
+      && Boolean(observed.pr?.head_sha)
+      && deadlineState.review_head_sha === observed.pr.head_sha;
 
     // ---- Deadline fence 2：derive 后 ----
     // wait/control 分支都在此 fence 之后，不能绕开硬上限。
-    if (deadlineExceeded(observed.run)) {
+    if (deadlineExceeded(observed.run) && !deadlinePaused) {
       await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }
@@ -369,7 +407,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
 
     // ---- Deadline fence 3：dispatch 前 ----
     // intent 持久化与真实副作用之间仍可能跨过 deadline；此时保留审计 intent，但不派发。
-    if (deadlineExceeded(observed.run)) {
+    if (deadlineExceeded(observed.run) && !deadlinePaused) {
       await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }
@@ -413,6 +451,8 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         detail: { dispatch_hop: hop, result: result.detail ?? null },
       });
       hops++;
+      // effect 已持久化且 snapshot 锚定当前 SHA；从这一刻起人审等待停表。
+      deadlinePaused = Boolean(observed.pr?.head_sha);
     }
 
     if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
@@ -432,7 +472,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
 
     // ---- Deadline fence 3：DONE 心跳后检查（崩溃窗口补丁）----
     // INV-K1：三道 fence，防止在 deadline 后派遣下一轮 intent（即使 dispatch 已返回 DONE）
-    if (deadlineExceeded(observed.run)) {
+    if (deadlineExceeded(observed.run) && !deadlinePaused) {
       await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }

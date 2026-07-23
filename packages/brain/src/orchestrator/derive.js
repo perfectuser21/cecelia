@@ -40,12 +40,8 @@ function verdictForSha(verdictRow, headSha) {
   return verdictRow && verdictRow.pr_head_sha === headSha ? verdictRow : null;
 }
 
-/** fix 分路统一出口：fix_round < MAX_FIX_ROUNDS → spawn:generator-fix，否则 failed */
-function fixOrFail(counters, reason) {
-  // routeAfterFix 语义：error→end(超 MAX_FIX_ROUNDS=20)；否则回 spawn
-  if (caps.fixExceeded(counters.fixRound)) {
-    return { phase: 'failed', action: 'mark_failed', reason: 'fix_cap' };
-  }
+/** fix 分路统一出口；fixRound 只作观测，终止由结构化收敛探测器决定。 */
+function fixRoute(reason) {
   return { phase: 'generate', action: 'spawn:generator-fix', reason };
 }
 
@@ -143,7 +139,7 @@ function deriveTask(observed) {
     }
     // generator 已退出且无 PR（no_pr）→ 计入 fix_round
     // （修订声明：旧图 routeAfterParse !pr_url→no_pr(END) 直接终局，新语义=可重试入 fix 上限）
-    return fixOrFail(counters, 'no_pr');
+    return fixRoute('no_pr');
   }
 
   // 3d. exit/auth 观测分路（P0-3）——优先于 CI 状态判定：
@@ -159,7 +155,7 @@ function deriveTask(observed) {
     exitBelongsToGenerator &&
     (lastAgentExit.auth_failed || (lastAgentExit.code != null && lastAgentExit.code !== 0))
   ) {
-    return fixOrFail(counters, lastAgentExit.auth_failed ? 'auth_failed' : 'container_exit');
+    return fixRoute(lastAgentExit.auth_failed ? 'auth_failed' : 'container_exit');
   }
 
   // 3b. ci pending → poll；超限（20×90s）→ failed
@@ -173,7 +169,7 @@ function deriveTask(observed) {
 
   // 3c. ci fail → fix loop（routeAfterPoll fail→fix；fix 同 PR，不 reset pr_url/pr_branch）
   if (pr.ci === 'fail') {
-    return fixOrFail(counters, 'ci_fail');
+    return fixRoute('ci_fail');
   }
 
   // 4. ci pass —— verdict 全部锚定当前 head SHA（P0-2）
@@ -220,11 +216,11 @@ function deriveFailureClassRoute(failureClass, counters, decisionLog, currentHea
     if (prevEnvRecovery) {
       return { phase: 'failed', action: 'mark_failed', reason: 'repeated_environment_recovery' };
     }
-    return fixOrFail(counters, 'environment_recovery');
+    return fixRoute('environment_recovery');
   }
 
   // product_failure / null / 任何其他 → 保守路由 generator-fix
-  return fixOrFail(counters, fc ?? 'evaluate_fail');
+  return fixRoute(fc ?? 'evaluate_fail');
 }
 
 /**
@@ -253,7 +249,7 @@ function deriveVerdictChain(observed) {
   // 4c. judge FAIL(本 sha) → generator-fix（P0-2 显式分支；新 commit 改 SHA，旧 verdict 天然作废）
   if (!isPassVerdict(judgeRow.verdict)) {
     if (judgeRow.failure_class == null) {
-      return fixOrFail(counters, 'judge_fail');
+      return fixRoute('judge_fail');
     }
     return deriveFailureClassRoute(
       judgeRow.failure_class,

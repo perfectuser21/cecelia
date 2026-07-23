@@ -4,10 +4,6 @@
  * 纯常量文件——禁任何运行时计算/非确定性调用。
  */
 
-// Task Graph routeAfterFix：error→end(超 MAX_FIX_ROUNDS=3)
-// Sprint 07231527：从 20 改为 3（同 SHA no-progress terminal 后不需要大预算）
-export const MAX_FIX_ROUNDS = 3;
-
 // Task Graph routeAfterPoll：pending→回环 poll，超限 timeout（20 次 × 90s）
 export const MAX_POLL_COUNT = 20;
 export const POLL_INTERVAL_MS = 90000;
@@ -20,9 +16,9 @@ export const BUDGET_CAP_USD = 10;
 // mergePrNode：BEHIND→update-branch(≤3)
 export const MAX_REBASE_ATTEMPTS = 3;
 
-// 新增（spec P2）：整条 run 的 hop 硬上限，防 reconcile loop 失控
-// Sprint 07231527：从 200 改为 60（MAX_FIX_ROUNDS=3 后不需要 200 跳预算）
-export const MAX_HOPS = 60;
+// 整条 run 的宽兜底：poll/callback/effect 都会记 hop，正常终止由收敛探测器负责。
+// 4096 不作为 repair 轮次预算，只防决策日志异常失控。
+export const MAX_HOPS = 4096;
 
 // loop 四态最小语义：NEEDS_CONTEXT/BLOCKED 连续 2 次同态 → failed
 // （"绝不同模型无变化重试"铁律骨架版；对应父图 serial_gate requeue CAP(2) 精神）

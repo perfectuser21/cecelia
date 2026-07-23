@@ -823,20 +823,37 @@ export async function scanStuckHarness(opts = {}) {
         AND deadline_at < NOW()
         AND phase NOT IN ('done', 'failed')
         AND completed_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log review_request
+           WHERE review_request.run_id = initiative_runs.id
+             AND review_request.action = 'effect:human_review_requested'
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM orchestrator_decision_log approval
+                WHERE approval.run_id = review_request.run_id
+                  AND approval.action = 'verdict:human_review'
+                  AND approval.detail->>'review_request_hop' = review_request.hop::text
+             )
+        )
       LIMIT 50`
   );
 
   const rows = overdueQ?.rows ?? [];
   for (const row of rows) {
     try {
-      await dbPool.query(
+      const failedRun = await dbPool.query(
         `UPDATE initiative_runs
             SET phase = 'failed',
                 failure_reason = $2,
                 completed_at = NOW()
-          WHERE id = $1`,
+          WHERE id = $1
+            AND phase NOT IN ('done', 'failed')`,
         [row.id, 'relay_deadline_exceeded']
       );
+      // SELECT 与 UPDATE 之间可能已完成/失败；终态 guard 未命中时，不得继续
+      // 把关联 task 标 failed 或关闭已经完成的 spawn events。
+      if (failedRun?.rowCount === 0) continue;
       await dbPool.query(
         `UPDATE tasks SET status = 'failed', completed_at = NOW()
           WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled')`,

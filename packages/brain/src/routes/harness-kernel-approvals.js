@@ -60,7 +60,7 @@ router.post('/:runId/approve', approvalRateLimit, async (req, res) => {
     }
 
     const requestResult = await dbPool.query(
-      `SELECT hop, observed, detail
+      `SELECT hop, observed, detail, created_at
          FROM orchestrator_decision_log
         WHERE run_id=$1::uuid
           AND hop=$2
@@ -101,6 +101,22 @@ router.post('/:runId/approve', approvalRateLimit, async (req, res) => {
           transactionOpen = false;
         }
         return res.status(409).json({ error: 'already_approved' });
+      }
+
+      // 人审等待不消耗 8h 自动化活动预算。判重之后才补时，保证重复批准
+      // 不会反复延长 deadline；与 verdict 写入处于同一事务，避免半完成。
+      if (requestRow.created_at) {
+        await client.query(
+          `UPDATE initiative_runs
+              SET deadline_at = CASE
+                    WHEN deadline_at IS NULL THEN NULL
+                    ELSE deadline_at + GREATEST(INTERVAL '0 seconds', NOW() - $2::timestamptz)
+                  END,
+                  updated_at = NOW()
+            WHERE id = $1::uuid
+              AND phase NOT IN ('done', 'failed')`,
+          [runId, requestRow.created_at],
+        );
       }
 
       const { rows: hopRows } = await client.query(

@@ -138,7 +138,7 @@ export async function collectGroundTruth(deps, opts) {
   if (!task) throw new Error(`collectGroundTruth: tasks 无此 task 行: ${taskId}`);
 
   const logRes = await pool.query(
-    'SELECT hop, action, observed, derived_phase, gate_verdict, detail FROM orchestrator_decision_log WHERE run_id = $1 ORDER BY hop',
+    'SELECT hop, action, observed, derived_phase, gate_verdict, detail, created_at FROM orchestrator_decision_log WHERE run_id = $1 ORDER BY hop',
     [runId],
   );
   const decisionLog = logRes.rows;

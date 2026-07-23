@@ -298,8 +298,13 @@ describe('runLoop：四态返回控制流', () => {
 });
 
 describe('runLoop：控制 action 自消费', () => {
-  it('mark_failed（如 hop cap）→ UPDATE initiative_runs phase=failed + 退出，不派发', async () => {
-    const bigLog = Array.from({ length: 200 }, (_, k) => ({ hop: k + 1, action: 'wait_marker', observed: {}, detail: null }));
+  it('mark_failed（宽 hop 兜底）→ UPDATE initiative_runs phase=failed + 退出，不派发', async () => {
+    const bigLog = Array.from({ length: 4096 }, (_, k) => ({
+      hop: k + 1,
+      action: 'wait_marker',
+      observed: {},
+      detail: null,
+    }));
     const observedSeq = [obs({ decisionLog: bigLog })];
     const { deps, sqls } = makeEnv({ observedSeq });
 
