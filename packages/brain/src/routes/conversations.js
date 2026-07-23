@@ -178,7 +178,7 @@ router.get('/:id', async (req, res) => {
       decisions,
     });
   } catch (err) {
-    console.error(`[conversations] GET /${req.params.id} error:`, err.message);
+    console.error('[conversations] GET error:', { id: req.params.id }, err.message);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -249,10 +249,10 @@ router.patch('/:id', async (req, res) => {
       return res.status(404).json({ error: `conversation ${id} 不存在` });
     }
 
-    console.log(`[conversations] PATCH /${id} updated`);
+    console.log('[conversations] PATCH updated:', { id });
     return res.status(200).json(result.rows[0]);
   } catch (err) {
-    console.error(`[conversations] PATCH /${req.params.id} error:`, err.message);
+    console.error('[conversations] PATCH error:', { id: req.params.id }, err.message);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -301,10 +301,10 @@ router.post('/:id/messages', async (req, res) => {
       );
     }
 
-    console.log(`[conversations] POST /${id}/messages role=${role}`);
+    console.log('[conversations] POST messages:', { id, role });
     return res.status(201).json(msgResult.rows[0]);
   } catch (err) {
-    console.error(`[conversations] POST /${req.params.id}/messages error:`, err.message);
+    console.error('[conversations] POST messages error:', { id: req.params.id }, err.message);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -340,7 +340,7 @@ router.get('/:id/messages', async (req, res) => {
 
     return res.status(200).json({ messages, has_more });
   } catch (err) {
-    console.error(`[conversations] GET /${req.params.id}/messages error:`, err.message);
+    console.error('[conversations] GET messages error:', { id: req.params.id }, err.message);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -362,10 +362,10 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: `conversation ${id} 不存在` });
     }
 
-    console.log(`[conversations] DELETE /${id} archived`);
+    console.log('[conversations] DELETE archived:', { id });
     return res.status(200).json(result.rows[0]);
   } catch (err) {
-    console.error(`[conversations] DELETE /${req.params.id} error:`, err.message);
+    console.error('[conversations] DELETE error:', { id: req.params.id }, err.message);
     return res.status(500).json({ error: err.message });
   }
 });
