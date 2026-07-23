@@ -16,6 +16,14 @@
  *   evaluateVerdict / judgeVerdict:{verdict,pr_head_sha,failure_class?}|null —— P0-2 SHA 锚定
  *   reviewRequired / reviewApproved
  *   counters:{hops,fixRound,pollCount,noPushStreak,noVerdictStreak,ganCostUsd}
+ *
+ * Sprint 1b997ed6 新增字段（可选，缺省 false/undefined）：
+ *   noProgressSameSha {boolean}        — generator-fix 后 SHA 未变（ground-truth 从 DB 推导）
+ *   noProgressSameEvidence {boolean}   — evidence-repair 后 digest 未变
+ *   environmentRecoveryCount {number}  — 同错误签名 environment_failure 恢复次数
+ *   needsContextCount {number}         — unknown failure_class needs_context 次数
+ *   isDeadlineExceeded {boolean}       — 外部已过 deadline（loop 注入）
+ *   terminalReasonWritten {string}     — 已写入的 terminal reason（竞态保护）
  */
 import { caps, isPassVerdict } from './gates.js';
 import { ACTION } from './constants.js';
@@ -51,6 +59,24 @@ function fixOrFail(counters, reason) {
 export function derive(observed) {
   assertObservedShape(observed);
   const { run, task, prdExists, contract, pr, inflight, counters } = observed;
+
+  // Sprint 1b997ed6：竞态保护 — 已有 terminal reason 写入，不产生新 spawn（返回 noop）
+  if (observed.terminalReasonWritten) {
+    return { phase: 'terminal', action: 'noop', reason: observed.terminalReasonWritten };
+  }
+
+  // Sprint 1b997ed6：外部 deadline 超时（loop 注入 isDeadlineExceeded=true）
+  if (observed.isDeadlineExceeded) {
+    return { phase: 'failed', action: 'mark_failed', reason: 'automation_deadline_exceeded' };
+  }
+
+  // Sprint 1b997ed6：no-progress 熔断（ground-truth 从 DB decision log 推导）
+  if (observed.noProgressSameSha) {
+    return { phase: 'failed', action: 'mark_failed', reason: 'no_progress_same_sha' };
+  }
+  if (observed.noProgressSameEvidence) {
+    return { phase: 'failed', action: 'mark_failed', reason: 'no_progress_same_evidence' };
+  }
 
   // 0. terminal（P2 修订：aborted/cancelled 也终局；routeAfterEvaluate status==='aborted'→end）
   if (run.phase === 'done' || run.phase === 'failed') {
@@ -196,9 +222,9 @@ function deriveVerdictChain(observed) {
     return { phase: 'evaluate', action: 'spawn:judge', reason: 'evaluate_passed_awaiting_judge' };
   }
 
-  // 4c. judge FAIL(本 sha) → generator-fix（P0-2 显式分支；新 commit 改 SHA，旧 verdict 天然作废）
+  // 4c. judge FAIL(本 sha) → failure_class 路由矩阵（Sprint 1b997ed6）
   if (!isPassVerdict(judgeRow.verdict)) {
-    return fixOrFail(counters, 'judge_fail');
+    return deriveJudgeFailRoute(observed, judgeRow);
   }
 
   // 4d. 双 PASS && review_required && 未批准 → 等人工（Bark/预览副作用归 T3）
@@ -208,4 +234,53 @@ function deriveVerdictChain(observed) {
 
   // 4e. 全门过 && !merged → merge（gates.mergeGate 放行；唯一 merge 权威）
   return { phase: 'merge', action: 'merge_pr', reason: 'all_gates_passed' };
+}
+
+/**
+ * Sprint 1b997ed6：judge FAIL 的 failure_class 路由矩阵（五种）。
+ *
+ * | failure_class      | action                             |
+ * |--------------------|-------------------------------------|
+ * | product_failure    | spawn:generator-fix（受 fix cap）   |
+ * | evidence_invalid   | spawn:evaluator-evidence-repair     |
+ * | contract_invalid   | mark_failed（terminal）             |
+ * | environment_failure| spawn:judge 恢复一次；否则 failed  |
+ * | unknown/缺失       | needs_context 一次；否则 failed     |
+ */
+function deriveJudgeFailRoute(observed, judgeRow) {
+  const { counters } = observed;
+  const failureClass = judgeRow.failure_class ?? 'unknown';
+
+  switch (failureClass) {
+    case 'product_failure':
+      // 受 MAX_FIX_ROUNDS 上限约束
+      return fixOrFail(counters, `judge_fail:product_failure`);
+
+    case 'evidence_invalid':
+      // 绝不触发 generator；交 evaluator 重修 evidence
+      return { phase: 'evaluate', action: 'spawn:evaluator-evidence-repair', reason: 'judge_fail:evidence_invalid' };
+
+    case 'contract_invalid':
+      // terminal，创建独立后续任务（由 dispatcher 处理后续任务创建）
+      return { phase: 'failed', action: 'mark_failed', reason: 'judge_fail:contract_invalid' };
+
+    case 'environment_failure': {
+      // 同错误签名最多恢复 1 次
+      const recoveryCount = observed.environmentRecoveryCount ?? 0;
+      if (recoveryCount >= 1) {
+        return { phase: 'failed', action: 'mark_failed', reason: 'judge_fail:environment_failure:recovery_cap' };
+      }
+      // 首次：重跑 judge（不重跑 evaluator）
+      return { phase: 'evaluate', action: 'spawn:judge', reason: 'judge_fail:environment_failure:recovery' };
+    }
+
+    default: {
+      // unknown 或缺失 failure_class → needs_context 一次，再次未知 → mark_failed
+      const needsContextCount = observed.needsContextCount ?? 0;
+      if (needsContextCount >= 1) {
+        return { phase: 'failed', action: 'mark_failed', reason: 'judge_fail:unknown:needs_context_cap' };
+      }
+      return { phase: 'evaluate', action: 'needs_context', reason: 'judge_fail:unknown' };
+    }
+  }
 }

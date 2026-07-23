@@ -1,0 +1,16 @@
+{
+  "round": 1,
+  "verdict": "REVISION",
+  "rubric_scores": {
+    "fr_coverage": 7,
+    "acceptance_quality": 8,
+    "scope_guard": 7,
+    "testability": 7,
+    "completeness": 7,
+    "security": 7,
+    "nfr_coverage": 6
+  },
+  "total": 49,
+  "threshold": 60,
+  "pass": false
+}

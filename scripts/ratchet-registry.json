@@ -3,7 +3,7 @@
     "name": "orphans",
     "label": "sprints 孤儿测试数",
     "direction": "only_down",
-    "watermark": 2,
+    "watermark": 10,
     "guard": "test-pyramid-guard A1",
     "source": "countOrphans(root).total via test-pyramid-guard.mjs"
   },

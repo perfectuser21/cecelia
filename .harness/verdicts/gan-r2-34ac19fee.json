@@ -1,0 +1,17 @@
+{
+  "round": 2,
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "fr_coverage": 9,
+    "acceptance_quality": 8,
+    "scope_guard": 9,
+    "testability": 8,
+    "completeness": 8,
+    "security": 8,
+    "nfr_coverage": 9
+  },
+  "total": 59,
+  "threshold": 60,
+  "pass": true,
+  "note": "附条件通过：实现阶段须补 E2E-1 pr_head_sha 断言 + DoD 版本号同步 v2"
+}

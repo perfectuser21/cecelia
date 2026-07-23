@@ -10,7 +10,9 @@
  *   "complete" → 外部验收（不信模型自称，INV-6）→ Brain PATCH completed
  *   "blocked"  → Brain PATCH blocked（不伪装 completed，INV-7）
  *
- * 超出 MAX_TURNS=10 或 SUPERVISOR_DEADLINE_SECONDS=28800 → 标 timed_out，exit 1
+ * 超出 MAX_TURNS=10 或 SUPERVISOR_DEADLINE_SECONDS（默认 1800=30 分钟）→ 标 timed_out，exit 1
+ * Sprint 1b997ed6：移除 28800（8 小时）硬编码，改用 run 剩余预算动态注入；
+ * 安全降级值 = 1800 秒（最大角色上限 generator/evaluator）。
  */
 
 import { execSync, spawnSync } from 'child_process';
@@ -19,8 +21,10 @@ import { parseCodexDecision as parseDecision, extractCodexSessionId as extractSe
 
 // ─── 配置常量 ─────────────────────────────────────────────────────────────────
 const MAX_TURNS = parseInt(process.env.MAX_TURNS ?? '10', 10);
+// Sprint 1b997ed6：降级值从 28800（8h）改为 1800（30min，最大角色上限）。
+// 实际值由 dispatcher 在 spawn 前计算 min(角色上限, run 剩余预算) 后注入 SUPERVISOR_DEADLINE_SECONDS 环境变量。
 const SUPERVISOR_DEADLINE_SECONDS = parseInt(
-  process.env.SUPERVISOR_DEADLINE_SECONDS ?? '28800',
+  process.env.SUPERVISOR_DEADLINE_SECONDS ?? '1800',
   10
 );
 const BRAIN_URL = process.env.BRAIN_URL ?? 'http://host.docker.internal:5221';
