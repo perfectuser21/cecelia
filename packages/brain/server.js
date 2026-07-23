@@ -86,6 +86,7 @@ import rpaDevVerifyRouter from './src/routes/rpa-dev-verify.js';
 import deployDevRouter from './src/routes/deploy-dev.js';
 import incidentsRouter from './src/routes/incidents.js';
 import graphRoutes from './src/routes/graph.js';
+import opsPanoramaRoutes from './src/routes/ops-panorama.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -418,6 +419,9 @@ app.use('/api/cecelia', ceceliaRoutes);
 app.use('/api/brain/trace', traceRoutes);
 app.use('/api/brain/langfuse', langfuseRoutes);
 app.use('/api/brain/features', featuresRoutes);
+
+// GET /api/brain/ops-panorama — 执行全景面板聚合端点 [28e7c41a]
+app.use('/api/brain/ops-panorama', opsPanoramaRoutes);
 
 // GET /api/brain/scan-status
 app.get('/api/brain/scan-status', (_req, res) => {
