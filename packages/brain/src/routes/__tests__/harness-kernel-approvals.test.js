@@ -45,6 +45,11 @@ function createApprovalDatabase() {
         if (normalized.includes("detail->>'pr_head_sha'")) {
           rows = rows.filter((row) => row.detail.pr_head_sha === params[1]);
         }
+        if (normalized.includes("detail->>'review_request_hop'")) {
+          rows = rows.filter(
+            (row) => String(row.detail.review_request_hop) === String(params[2]),
+          );
+        }
         return { rows: rows.slice(0, 1), rowCount: Math.min(rows.length, 1) };
       }
       if (normalized.includes('SELECT COALESCE(MAX(hop), 0) + 1 AS next_hop')) {
@@ -140,6 +145,23 @@ function approvalRequest(app, {
   return call;
 }
 
+function rejectionRequest(app, {
+  token = APPROVER_TOKEN,
+  sha = HEAD_SHA,
+  reviewRequestHop = 3,
+} = {}) {
+  const call = request(app)
+    .post(`/kernel-reviews/${RUN_ID}/reject`)
+    .send({
+      task_id: TASK_ID,
+      pr_head_sha: sha,
+      review_request_hop: reviewRequestHop,
+      rejected_by: 'review-owner',
+    });
+  if (token !== null) call.set('x-approver-token', token);
+  return call;
+}
+
 describe('harness-kernel-approvals mounted Router behavior', () => {
   afterEach(() => {
     delete process.env.HARNESS_REVIEW_APPROVER_TOKEN;
@@ -216,13 +238,12 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
     expect(commitIndex).toBeGreaterThan(updateIndex);
   });
 
-  it('allows one approval per GitHub head SHA in the same run', async () => {
+  it('allows approvals for two GitHub head SHAs in the same run', async () => {
     process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
     const { database, state } = createApprovalDatabase();
     const app = createApp(database, state);
 
     expect((await approvalRequest(app)).status).toBe(202);
-    expect((await approvalRequest(app)).status).toBe(409);
 
     state.currentSha = NEXT_HEAD_SHA;
     state.decisionLog.push({
@@ -246,5 +267,55 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
       (row) => row.action === 'verdict:human_review'
         && row.detail.pr_head_sha === NEXT_HEAD_SHA,
     )).toHaveLength(1);
+  });
+
+  it('allows two review-request hops on the same SHA exactly once each', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    const { database, state } = createApprovalDatabase();
+    const app = createApp(database, state);
+
+    expect((await approvalRequest(app)).status).toBe(202);
+    state.decisionLog.push({
+      hop: 5,
+      action: 'effect:human_review_requested',
+      observed: { pr: { head_sha: HEAD_SHA } },
+      detail: { dispatch_hop: 4, review_reason: 'failure_set_repeated' },
+      created_at: new Date('2026-07-23T01:00:00.000Z'),
+    });
+
+    expect((await approvalRequest(app, { reviewRequestHop: 5 })).status).toBe(202);
+    expect((await approvalRequest(app, { reviewRequestHop: 5 })).status).toBe(409);
+    expect(state.decisionLog.filter(
+      (row) => row.action === 'verdict:human_review'
+        && row.detail.pr_head_sha === HEAD_SHA,
+    )).toHaveLength(2);
+  });
+
+  it('authenticated reject records one terminal human verdict for its request', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    const { database, state } = createApprovalDatabase();
+    const app = createApp(database, state);
+
+    const response = await rejectionRequest(app);
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      run_id: RUN_ID,
+      review_request_hop: 3,
+      rejected_by: 'review-owner',
+    });
+    expect(state.insertedDetail).toMatchObject({
+      verdict: 'REJECTED',
+      approved: false,
+      rejected: true,
+      pr_head_sha: HEAD_SHA,
+      review_request_hop: 3,
+      rejected_by: 'review-owner',
+    });
+    expect(state.decisionLog.filter(
+      (row) => row.action === 'verdict:human_review',
+    )).toHaveLength(1);
+    expect((await rejectionRequest(app)).status).toBe(409);
   });
 });

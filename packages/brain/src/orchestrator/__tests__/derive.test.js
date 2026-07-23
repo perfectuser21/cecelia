@@ -116,6 +116,36 @@ describe('merged 短路（routeAfterPoll merged 语义）', () => {
   });
 });
 
+describe('human review rejection', () => {
+  it('a rejection for the current SHA and request hop terminates the run', () => {
+    const r = derive(baseObserved({
+      decisionLog: [{
+        hop: 7,
+        action: 'effect:human_review_requested',
+        observed: { pr: { head_sha: 'sha-new' } },
+        detail: { review_reason: 'failure_set_repeated' },
+      }, {
+        hop: 8,
+        action: 'verdict:human_review',
+        observed: { pr: { head_sha: 'sha-new' } },
+        detail: {
+          verdict: 'REJECTED',
+          approved: false,
+          rejected: true,
+          pr_head_sha: 'sha-new',
+          review_request_hop: 7,
+        },
+      }],
+    }));
+
+    expect(r).toEqual({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'human_review_rejected',
+    });
+  });
+});
+
 describe('规则 1：planning', () => {
   it('!prd存在 → phase=planning, action=spawn:planner', () => {
     const r = derive(baseObserved({ prdExists: false, contract: { approved: false }, pr: null }));

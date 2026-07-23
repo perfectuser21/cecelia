@@ -105,6 +105,11 @@ function createRealApprovalHarness() {
       if (normalized.includes("detail->>'pr_head_sha'")) {
         rows = rows.filter((candidate) => candidate.detail.pr_head_sha === params[1]);
       }
+      if (normalized.includes("detail->>'review_request_hop'")) {
+        rows = rows.filter(
+          (candidate) => String(candidate.detail.review_request_hop) === String(params[2]),
+        );
+      }
       return { rows: rows.slice(0, 1), rowCount: Math.min(rows.length, 1) };
     }
     if (normalized.includes('SELECT COALESCE(MAX(hop), 0) + 1 AS next_hop')) {
@@ -180,7 +185,17 @@ function createRealApprovalHarness() {
       approved_by: 'alex',
     });
 
-  return { state, addReviewRound, approve };
+  const reject = ({ sha = state.currentSha, reviewHop = 3 } = {}) => request(app)
+    .post(`/api/brain/harness/kernel-reviews/${ROUTE_RUN_ID}/reject`)
+    .set('x-approver-token', ROUTE_TOKEN)
+    .send({
+      task_id: ROUTE_TASK_ID,
+      pr_head_sha: sha,
+      review_request_hop: reviewHop,
+      rejected_by: 'alex',
+    });
+
+  return { state, addReviewRound, approve, reject };
 }
 
 describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
@@ -346,6 +361,39 @@ describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
       (row) => row.action === 'verdict:human_review'
         && row.detail.pr_head_sha === ROUTE_SHA_B,
     )).toHaveLength(1);
+  });
+
+  test('T-17-g: 同 SHA 的两个 review request hop 各可批准一次（真实 Router）', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = ROUTE_TOKEN;
+    const { state, addReviewRound, approve } = createRealApprovalHarness();
+
+    expect((await approve()).status).toBe(202);
+    const secondReviewHop = addReviewRound(ROUTE_SHA_A);
+    expect((await approve({ reviewHop: secondReviewHop })).status).toBe(202);
+    expect(state.decisionLog.filter(
+      (row) => row.action === 'verdict:human_review'
+        && row.detail.pr_head_sha === ROUTE_SHA_A,
+    )).toHaveLength(2);
+  });
+
+  test('T-17-h: reject 经真实认证 Router 写入终局 verdict', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = ROUTE_TOKEN;
+    const { state, reject } = createRealApprovalHarness();
+
+    const response = await reject();
+
+    expect(response.status).toBe(202);
+    expect(state.decisionLog.find(
+      (row) => row.action === 'verdict:human_review',
+    )).toMatchObject({
+      gate_verdict: 'deny:human_review_rejected',
+      detail: {
+        verdict: 'REJECTED',
+        rejected: true,
+        approved: false,
+        review_request_hop: 3,
+      },
+    });
   });
 });
 

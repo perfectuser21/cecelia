@@ -345,6 +345,67 @@ describe('R5/R6 structured convergence signatures', () => {
     expect(failureWrites).toEqual([]);
   });
 
+  test('R6: a second unsigned evidence_invalid verdict routes to unknown human review', async () => {
+    const log = createDecisionLog();
+    const firstAttempt = evaluatorAttempt('77000000-0000-4000-8000-000000000077');
+    const secondAttempt = evaluatorAttempt('78000000-0000-4000-8000-000000000078');
+    await appendAttemptVerdict(
+      firstAttempt,
+      evidenceInvalidResult(firstAttempt.id, null),
+      log.db,
+    );
+
+    const { deps, dispatchSpy, failureWrites } = makeLoop(
+      log,
+      () => {
+        const reviewEffect = log.rows.find(
+          (row) => row.action === 'effect:human_review_requested',
+        );
+        const repairIntents = log.rows.filter(
+          (row) => row.action === 'spawn:evaluator-evidence-repair',
+        );
+        if (reviewEffect || repairIntents.length >= 2) {
+          return observed(log, {
+            run: { id: RUN_ID, phase: 'done', cost_usd: 0 },
+            evaluateVerdict: log.rows
+              .filter((row) => row.action === 'verdict:evaluate')
+              .at(-1)?.detail ?? null,
+          });
+        }
+        return observed(log, {
+          evaluateVerdict: log.rows
+            .filter((row) => row.action === 'verdict:evaluate')
+            .at(-1)?.detail ?? null,
+        });
+      },
+      async (action) => {
+        if (
+          action === 'spawn:evaluator-evidence-repair'
+          && log.rows.filter((row) => row.action === 'verdict:evaluate').length === 1
+        ) {
+          await appendAttemptVerdict(
+            secondAttempt,
+            evidenceInvalidResult(secondAttempt.id, null),
+            log.db,
+          );
+        }
+        return { status: 'DONE', detail: 'notified' };
+      },
+    );
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(dispatchSpy.mock.calls.filter(
+      ([action]) => action === 'spawn:evaluator-evidence-repair',
+    )).toHaveLength(1);
+    expect(log.rows.find(
+      (row) => row.action === 'effect:human_review_requested',
+    )?.detail).toMatchObject({
+      review_reason: 'unknown:missing_failure_signature',
+    });
+    expect(failureWrites).toEqual([]);
+  });
+
   test('R6: after approval, one more unchanged evidence signature fails without a second review', async () => {
     const log = createDecisionLog();
     const attempts = [
