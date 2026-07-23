@@ -98,9 +98,11 @@ router.post('/:runId/approve', approvalRateLimit, async (req, res) => {
       const duplicate = await client.query(
         `SELECT 1
            FROM orchestrator_decision_log
-          WHERE run_id=$1::uuid AND action='verdict:human_review'
+          WHERE run_id=$1::uuid
+            AND action='verdict:human_review'
+            AND detail->>'pr_head_sha'=$2
           LIMIT 1`,
-        [runId],
+        [runId, currentSha],
       );
       if (duplicate.rowCount > 0) {
         if (transactionOpen) {
