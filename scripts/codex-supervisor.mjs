@@ -17,6 +17,7 @@ import { execSync, spawnSync } from 'child_process';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
+import { parseCodexDecision as parseDecision, extractCodexSessionId as extractSessionId } from './lib/supervisor-parse.mjs';
 
 // ─── 配置常量 ─────────────────────────────────────────────────────────────────
 const MAX_TURNS = parseInt(process.env.MAX_TURNS ?? '10', 10);
@@ -129,46 +130,6 @@ function runCodexTurn(sessionId, promptFile) {
   };
 }
 
-// ─── 三态决策解析 ────────────────────────────────────────────────────────────
-
-function parseDecision(stdout) {
-  // 解析 codex JSON 输出中的决策字段
-  const lines = stdout.split('\n').filter(Boolean);
-
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      // 检查三态字段
-      if (obj.decision === 'continue' || obj.status === 'continue') return 'continue';
-      if (obj.decision === 'complete' || obj.status === 'complete' || obj.status === 'completed') return 'complete';
-      if (obj.decision === 'blocked' || obj.status === 'blocked') return 'blocked';
-
-      // 检查 outcome 字段
-      if (obj.outcome === 'complete' || obj.outcome === 'completed') return 'complete';
-      if (obj.outcome === 'blocked') return 'blocked';
-      if (obj.outcome === 'continue') return 'continue';
-    } catch {
-      // 非 JSON 行，跳过
-    }
-  }
-
-  // 默认：无法解析 → continue（保守策略）
-  return 'continue';
-}
-
-function extractSessionId(stdout) {
-  const lines = stdout.split('\n').filter(Boolean);
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      const sid = obj.thread_id ?? obj.thread?.id ?? obj.session_id ?? obj.session?.id;
-      if (sid) return String(sid);
-    } catch {
-      // skip
-    }
-  }
-  return null;
-}
 
 // ─── 主循环 ───────────────────────────────────────────────────────────────────
 

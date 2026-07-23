@@ -1,0 +1,26 @@
+{
+  "text": "{\"decision\":\"complete\"}",
+  "stopReason": "EndTurn",
+  "sessionId": "019f8c99-b66d-72e2-b4b7-e41cbf65bace",
+  "requestId": "a5dfb5b4-ca3b-4ec3-bbf4-0d092301f391",
+  "thought": "The user wants me to reply with exactly this JSON and nothing else: {\"decision\":\"complete\"}\n",
+  "usage": {
+    "input_tokens": 18391,
+    "cache_read_input_tokens": 5248,
+    "output_tokens": 52,
+    "reasoning_tokens": 42,
+    "total_tokens": 23691
+  },
+  "num_turns": 1,
+  "total_cost_usd": 0.0386684,
+  "total_cost_usd_ticks": 386684000,
+  "modelUsage": {
+    "grok-4.5-build": {
+      "inputTokens": 18391,
+      "outputTokens": 52,
+      "cacheReadInputTokens": 5248,
+      "modelCalls": 1,
+      "costUSD": 0.0386684
+    }
+  }
+}
