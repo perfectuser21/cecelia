@@ -161,3 +161,4 @@ grok-relay-smoke.sh
 codex-cred-isolation-smoke.sh
 codex-grok-launcher-supervisor-smoke.sh
 review-approve-auth-smoke.sh
+kernel-bounded-run-smoke.sh
