@@ -161,6 +161,16 @@ test_blocked_not_completed();
 test_syntax_valid();
 
 console.log(`\n结果: ${PASS} PASS, ${FAIL} FAIL\n`);
-if (FAIL > 0) {
+
+// vitest 兼容桥（issue 5167ef48 修复时发现的存量雷）：brain CI 的 fs-guard 全量轮会把本
+// plain-node 脚本当测试文件 import——顶层 process.exit 会杀死 vitest worker（shard 级全红）。
+// vitest 环境下改为注册单条用例传递结果；plain node 下维持原退出码语义（core-regression 用）。
+if (process.env.VITEST) {
+  const { describe, it, expect } = await import('vitest');
+  describe('grok-supervisor (plain-node bridge)', () => {
+    it(`${PASS} PASS, ${FAIL} FAIL`, () => { expect(FAIL).toBe(0); });
+  });
+} else if (FAIL > 0) {
   process.exit(1);
 }
+

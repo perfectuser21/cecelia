@@ -72,7 +72,7 @@ describe('E2E smoke（DoD F2）：golden_path_proposal 路由→orchestrator校�
       spawnFn: vi.fn().mockResolvedValue({ containerId: 'cid', dockerStdout: 'x' }),
       loadSkill: vi.fn().mockReturnValue('SKILL golden-path-controller 全文'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt/gp-smoke'),
-      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),  // 新契约（5167ef48）：claude 需已解析账号
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
       now: () => new Date('2026-07-12T04:00:00Z'),
       execFn: vi.fn().mockReturnValue(''),

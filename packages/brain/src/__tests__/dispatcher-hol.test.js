@@ -56,6 +56,16 @@ vi.mock('../dispatch-stats.js', () => ({
   recordDispatchResult: vi.fn().mockResolvedValue(undefined),
   getDispatchStats: vi.fn().mockResolvedValue({}),
 }));
+// llm-capacity 必须 mock（issue 5167ef48 修复时发现的环境依赖雷）：不 mock 时真实
+// getLlmCapacitySnapshot 会读宿主机 ~/.codex-team* auth 文件——本机 codex 可见时
+// 引导员 L3 跨厂商把 dev 任务路由到 codex，撞上本测试的 codex 满池 fixture → C1 假红。
+// 测试必须与宿主机凭据状态隔离。
+vi.mock('../llm-capacity.js', () => ({
+  getLlmCapacitySnapshot: vi.fn().mockResolvedValue(null),
+  chooseGuidedExecutor: vi.fn(() => null),
+  summarizeLlmCapacity: vi.fn(() => null),
+}));
+
 vi.mock('../account-usage.js', () => ({
   proactiveTokenCheck: vi.fn().mockResolvedValue({ ok: true })
 }));

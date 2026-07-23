@@ -39,7 +39,7 @@ function makeDeps(overrides = {}) {
     spawnFn: vi.fn().mockResolvedValue({ containerId: 'cid-gk', dockerStdout: 'ok' }),
     loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT harness-controller'),
     ensureWt: vi.fn().mockResolvedValue('/tmp/wt/grok-task'),
-    resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+    resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),  // 新契约（5167ef48）：claude 需已解析账号
     tokenFn: vi.fn().mockResolvedValue('gh-token-grok'),
     now: () => new Date('2026-07-20T12:00:00Z'),
     execFn: vi.fn().mockReturnValue(''),
@@ -336,7 +336,7 @@ describe('[BEHAVIOR-7] headed grok 入口白名单', () => {
       execFn,
       loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt/headed-grok'),
-      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),  // 新契约（5167ef48）：claude 需已解析账号
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
       now: () => new Date('2026-07-20T12:00:00Z'),
       inDockerFn: () => false,
@@ -375,7 +375,7 @@ describe('[BEHAVIOR-7] headed grok 入口白名单', () => {
       execFn,
       loadSkill: vi.fn().mockReturnValue('SKILL'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
-      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),  // 新契约（5167ef48）：claude 需已解析账号
       tokenFn: vi.fn().mockResolvedValue('t'),
       now: () => new Date(),
       inDockerFn: () => false,

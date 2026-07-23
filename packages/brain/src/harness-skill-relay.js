@@ -465,7 +465,16 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     try {
       await resolveAccountFn(acctOpts, { taskId: task.id });
     } catch (err) {
-      console.warn(`[skill-relay] resolveAccount failed（继续，用默认凭据）: ${err.message}`);
+      console.warn(`[skill-relay] resolveAccount failed: ${err.message}`);
+    }
+
+    // claude 执行体无可用账号 → defer 不裸 spawn（issue 5167ef48）：
+    // 全号熔断/打满时 account-rotation 静默返回（env 不写），旧行为继续 spawn 无凭据
+    // 容器 → "Not logged in" exit(1) 三连 → orphan-guard 终态（143f66e1 事故）。
+    // defer 让任务留在 queued，账号自愈（usage 实测 200 清熔断）后下一 tick 自然续派。
+    if (!isCodex && !isGrok && !acctOpts.env.CECELIA_CREDENTIALS) {
+      console.warn(`[skill-relay] claude 无可用账号（全号熔断/打满）→ defer task=${task.id}`);
+      return { ok: false, deferred: true, reason: 'no_available_claude_account' };
     }
 
     // 5. github token

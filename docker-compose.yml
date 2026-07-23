@@ -82,6 +82,10 @@ services:
       - DB_NAME=${DB_NAME:-cecelia}
       - DB_USER=${DB_USER:-cecelia}
       - DB_PASSWORD=${DB_PASSWORD:-cecelia}
+      # review 门审批 token（issue afc50c30）：只注入 Brain 本容器，relay/harness 执行体
+      # 容器不挂载——执行体物理上无法伪造人工批准。值从部署机根 .env（gitignored）/
+      # ~/.credentials/cecelia-brain.env 注入；缺省空 → 路由 503 fail-closed。
+      - HARNESS_REVIEW_APPROVER_TOKEN=${HARNESS_REVIEW_APPROVER_TOKEN:-}
       - BRAIN_PORT=5221
       - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-true}
       # Concurrency: auto-calculated from hardware (CPU/memory) via slot-allocator.js
