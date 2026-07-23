@@ -1,8 +1,56 @@
 {
-  "verdict": "DONE_WITH_CONCERNS",
-  "task_id": "7630f4fb-0acf-4f7a-ad42-e2dea3485089",
-  "report_path": "sprints/07212136-relay-7630f4fb/harness-report.md",
-  "pr_url": "https://github.com/perfectuser21/cecelia/pull/4184",
-  "screenshots": [],
-  "concerns": "CONCERN: Step5:飞书通知sent=false(接口ok但未真实送达);;CONCERN: Step8f:capture_atoms未写入(HTTP 404);"
+  "task_id": "97f490f5-d3d0-499c-835b-b4558406e9d1",
+  "sprint_dir": "sprints/07231828-relay-97f490f5",
+  "pr_url": "https://github.com/perfectuser21/cecelia/pull/4230",
+  "pr_sha": "8f9608e",
+  "verdict_raw": "PASS",
+  "exit_code": 0,
+  "log_tail": "vitest: 260 passed / 0 failed (sign 34/34 all green). bash E2E: 16 PASS / 0 FAIL. DoD DP-1..DP-13 all covered. No regressions.",
+  "verification_level": "L2",
+  "behavior_tests": [
+    {
+      "behavior": "BEHAVIOR-1: 正整数符号函数返回 1",
+      "command": "npx vitest run --reporter=verbose",
+      "exit_code": 0,
+      "log_tail": "[B1/DP-1] value=5→200 result:1 PASS; value=1 PASS; value=9007199254740991 PASS; bash: [B1] 3 cases PASS",
+      "verification_level": "L2"
+    },
+    {
+      "behavior": "BEHAVIOR-2: 零的符号函数返回 0 (Object.is 反-0)",
+      "command": "npx vitest run --reporter=verbose",
+      "exit_code": 0,
+      "log_tail": "[B2/DP-2] value=0→200 result:0 Object.is(result,-0)===false PASS; bash: [B2] PASS",
+      "verification_level": "L2"
+    },
+    {
+      "behavior": "BEHAVIOR-3: 负整数符号函数返回 -1",
+      "command": "npx vitest run --reporter=verbose",
+      "exit_code": 0,
+      "log_tail": "[B3/DP-3] value=-3→200 result:-1 PASS; value=-9007199254740991 PASS; bash: [B3] 2 cases PASS",
+      "verification_level": "L2"
+    },
+    {
+      "behavior": "BEHAVIOR-4: value 缺失或非法格式 → HTTP 400",
+      "command": "npx vitest run --reporter=verbose",
+      "exit_code": 0,
+      "log_tail": "[B4/DP-5] value=9007199254740992→400 PASS; [DP-6] 缺参→400 PASS; [DP-7] 3.14→400 PASS; [DP-8] abc→400 PASS; bash: 9 cases PASS",
+      "verification_level": "L2"
+    },
+    {
+      "behavior": "BEHAVIOR-5: 成功响应 schema 完整性",
+      "command": "npx vitest run --reporter=verbose",
+      "exit_code": 0,
+      "log_tail": "[B5/DP-9] Object.keys(body).sort()==['operation','result'] PASS; [DP-11] result∈{-1,0,1} PASS; [DP-13] 禁用字段黑名单 PASS",
+      "verification_level": "L2"
+    },
+    {
+      "behavior": "BEHAVIOR-6: operation 字段字面值锁定为 sign",
+      "command": "npx vitest run --reporter=verbose",
+      "exit_code": 0,
+      "log_tail": "[B6/DP-10] operation==='sign' PASS; signum/sgn 变体拒绝 PASS; bash: [B6] PASS",
+      "verification_level": "L2"
+    }
+  ],
+  "judgments_written": 0,
+  "summary": "GET /sign 34/34 vitest + 16/16 bash E2E PASS, DP-1..DP-13 covered"
 }
