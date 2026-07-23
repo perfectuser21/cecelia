@@ -39,6 +39,7 @@ import {
   defaultPrHeadResolver,
   normalizeGitSha,
 } from '../orchestrator/pr-head-resolver.js';
+import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
 
 const router = Router();
 const SUCCESS_TERMINAL_STATUSES = new Set([
@@ -101,6 +102,7 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
 
   const action = attempt.role === 'reviewer' ? 'verdict:reviewer' : 'verdict:evaluate';
   const inputs = attempt.task_bundle?.inputs ?? {};
+  const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
   const detail = attempt.role === 'reviewer'
     ? {
         attempt_id: attempt.id,
@@ -114,6 +116,7 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
         verdict: normalizeVerdict(attempt.role, result.decision.outcome),
         pr_head_sha: inputs.pull_request?.head_sha ?? null,
         failure_class: result.decision.failure_class ?? null,
+        ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         feedback: result.decision.reason,
       };
 

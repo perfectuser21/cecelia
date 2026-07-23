@@ -1,3 +1,5 @@
+import { normalizeFailureSignature } from './convergence-signatures.js';
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
@@ -18,13 +20,21 @@ function evaluatorBrainResult(result) {
   };
 }
 
-async function appendJudgeVerdict(pool, ctx, verdict, feedback, judgeFailureClass) {
+async function appendJudgeVerdict(
+  pool,
+  ctx,
+  verdict,
+  feedback,
+  judgeFailureClass,
+  judgeFailureSignature,
+) {
   const evaluateVerdict = ctx.observed.evaluateVerdict ?? {};
   const evaluatorFailureClass = evaluateVerdict.failure_class ?? null;
   // Older judge implementations did not return a classification. Keep their
   // evaluator-derived fallback compatible, but never overwrite an explicit
   // independent judge classification.
   const failureClass = judgeFailureClass ?? evaluatorFailureClass;
+  const failureSignature = normalizeFailureSignature(judgeFailureSignature);
 
   await pool.query(
     `INSERT INTO orchestrator_decision_log
@@ -47,6 +57,7 @@ async function appendJudgeVerdict(pool, ctx, verdict, feedback, judgeFailureClas
         pr_head_sha: ctx.observed.pr?.head_sha ?? null,
         feedback: feedback ?? null,
         failure_class: failureClass,
+        ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         evaluator_failure_class: evaluatorFailureClass,
       }),
     ],
@@ -91,7 +102,9 @@ export function createKernelHandlers(deps) {
         result.verdict,
         result.feedback,
         result.failure_class ?? null,
+        result.failure_signature ?? null,
       );
+      const failureSignature = normalizeFailureSignature(result.failure_signature);
       await deps.attemptStore.complete(ctx.attempt.id, {
         contract_version: '1.0',
         attempt_id: ctx.attempt.id,
@@ -99,7 +112,12 @@ export function createKernelHandlers(deps) {
         summary: result.feedback ?? `Independent judge: ${result.verdict}`,
         artifacts: [],
         checks: [],
-        decision: { outcome: result.verdict, reason: 'independent judge verdict' },
+        decision: {
+          outcome: result.verdict,
+          reason: 'independent judge verdict',
+          ...(result.failure_class == null ? {} : { failure_class: result.failure_class }),
+          ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+        },
         error: null,
         provider_metadata: { provider: 'independent-judge', session_id: null },
       });

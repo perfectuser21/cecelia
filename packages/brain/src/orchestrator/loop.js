@@ -21,6 +21,11 @@ import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConf
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
 import { ACTION, LOG_ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
+import {
+  asStructuredJson,
+  generatorCrashSignature,
+  normalizeFailureSignature,
+} from './convergence-signatures.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -82,6 +87,15 @@ async function resolveGroundTruthPaths(pool, taskId) {
  * counters 的 streak 契约（spec 决策 5）：proposer/reviewer intent 行必须带
  * "上一跳产物出现与否"——propose_branch_advanced / verdict_parsed，从上一同类 intent 对比现查真相得出。
  */
+function structuredEvidenceVerdict(observed) {
+  return [observed.judgeVerdict, observed.evaluateVerdict]
+    .find((verdict) => (
+      verdict?.pr_head_sha === observed.pr?.head_sha
+      && verdict?.failure_class === 'evidence_invalid'
+      && normalizeFailureSignature(verdict?.failure_signature) != null
+    )) ?? null;
+}
+
 function buildSnapshot(observed, counters, action) {
   const snapshot = {
     prdExists: observed.prdExists,
@@ -129,8 +143,36 @@ function buildSnapshot(observed, counters, action) {
     snapshot.failure_class = observed.judgeVerdict?.failure_class
       ?? observed.evaluateVerdict?.failure_class
       ?? null;
+    if (!observed.pr) {
+      const crashSignature = generatorCrashSignature(observed.lastAgentExit);
+      if (crashSignature != null) snapshot.crash_signature = crashSignature;
+    }
+  }
+  const evidenceVerdict = structuredEvidenceVerdict(observed);
+  if (evidenceVerdict && [
+    ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR,
+    ACTION.WAIT_HUMAN_REVIEW,
+    LOG_ACTION.HUMAN_REVIEW_REQUESTED,
+  ].includes(action)) {
+    snapshot.failure_class = 'evidence_invalid';
+    snapshot.failure_signature = normalizeFailureSignature(
+      evidenceVerdict.failure_signature,
+    );
+    if ([ACTION.WAIT_HUMAN_REVIEW, LOG_ACTION.HUMAN_REVIEW_REQUESTED].includes(action)) {
+      snapshot.review_reason = 'evidence_invalid:repeated_signature';
+    }
   }
   return snapshot;
+}
+
+function evidenceReviewDetail(observed, reason) {
+  if (reason !== 'evidence_invalid:repeated_signature') return {};
+  const verdict = structuredEvidenceVerdict(observed);
+  if (!verdict) return {};
+  return {
+    review_reason: reason,
+    failure_signature: normalizeFailureSignature(verdict.failure_signature),
+  };
 }
 
 async function markRunFailed(pool, runId, reason) {
@@ -312,8 +354,21 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     // PR SHA 已写过 intent 后才转为纯等待，避免每 90s 重复通知。
     if (decision.action === ACTION.WAIT_HUMAN_REVIEW) {
       const reviewAlreadyRequested = observed.decisionLog.some(
-        (row) => row.action === LOG_ACTION.HUMAN_REVIEW_REQUESTED
-          && row.observed?.pr?.head_sha === observed.pr?.head_sha,
+        (row) => {
+          if (row.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
+          const snapshot = asStructuredJson(row.observed) ?? {};
+          const detail = asStructuredJson(row.detail) ?? {};
+          if (snapshot.pr?.head_sha !== observed.pr?.head_sha) return false;
+          if (decision.reason === 'evidence_invalid:repeated_signature') {
+            const evidenceVerdict = structuredEvidenceVerdict(observed);
+            return detail.review_reason === decision.reason
+              && JSON.stringify(normalizeFailureSignature(detail.failure_signature))
+                === JSON.stringify(
+                  normalizeFailureSignature(evidenceVerdict?.failure_signature),
+                );
+          }
+          return true;
+        },
       );
       if (reviewAlreadyRequested) {
         await beat();
@@ -393,7 +448,11 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         derivedPhase: decision.phase,
         gateVerdict,
         action: decision.action,
-        detail: { reason: decision.reason, crossCheckMismatch: counters.crossCheckMismatch },
+        detail: {
+          reason: decision.reason,
+          crossCheckMismatch: counters.crossCheckMismatch,
+          ...evidenceReviewDetail(observed, decision.reason),
+        },
       });
     } catch (err) {
       if (err instanceof SingletonConflictError) {
@@ -448,7 +507,11 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         derivedPhase: decision.phase,
         gateVerdict: null,
         action: LOG_ACTION.HUMAN_REVIEW_REQUESTED,
-        detail: { dispatch_hop: hop, result: result.detail ?? null },
+        detail: {
+          dispatch_hop: hop,
+          result: result.detail ?? null,
+          ...evidenceReviewDetail(observed, decision.reason),
+        },
       });
       hops++;
       // effect 已持久化且 snapshot 锚定当前 SHA；从这一刻起人审等待停表。
