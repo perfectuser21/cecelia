@@ -1,54 +1,63 @@
-#!/bin/bash
-# preview-cleanup.sh — 预览环境清理脚本
+#!/usr/bin/env bash
+# preview-cleanup.sh — 预览环境清理脚本（重写为 preview-destroyer.js 的唯一 shell 执行体）
 #
 # 用法:
-#   preview-cleanup.sh <PORT> [BRANCH_NAME]
+#   scripts/preview-cleanup.sh <PR_NUMBER> [REASON]
 #
-# 通过 PID 文件精确 kill 进程，释放端口
+# 本脚本按 pr_number 维度调用统一销毁器 packages/brain/src/preview-destroyer.js 的
+# destroyPreview()，与 preview-env-start.sh/preview-env-stop.sh/preview-reaper.sh 的
+# pr_number 维度惯例保持一致（旧版按 port 维度找 /tmp/preview-${PORT}.pid 已废弃——
+# 与新版 WS1 完整预览环境流程不一致，见合同"已知约束"段）。
+#
+# 环境变量：
+#   REPO_ROOT          （默认 /Users/administrator/perfect21/cecelia）
+#   PREVIEW_BASE_DIR    （默认 /Users/administrator/worktrees/cecelia-previews）
+#   DB_HOST / DB_USER / DB_PASSWORD / DB_NAME
 
-set -e
+set -euo pipefail
 
-PORT="${1:-}"
-BRANCH_NAME="${2:-}"
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
 
-if [ -z "$PORT" ]; then
-  echo "ERROR: 必须提供 PORT 参数" >&2
-  echo "用法: $0 <PORT> [BRANCH_NAME]" >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+PR_NUMBER="${1:-}"
+REASON="${2:-manual-cli}"
+
+if [ -z "$PR_NUMBER" ]; then
+  echo "ERROR: 必须提供 PR_NUMBER 参数" >&2
+  echo "用法: $0 <PR_NUMBER> [REASON]" >&2
   exit 1
 fi
 
-echo "[preview-cleanup] port=$PORT branch=${BRANCH_NAME:-unknown}"
-
-PID_FILE="/tmp/preview-${PORT}.pid"
-BRANCH_FILE="/tmp/preview-${PORT}.branch"
-LOG_FILE="/tmp/preview-${PORT}.log"
-
-# 通过 PID 文件 kill 进程
-if [ -f "$PID_FILE" ]; then
-  PID=$(cat "$PID_FILE")
-  if kill -0 "$PID" 2>/dev/null; then
-    echo "[preview-cleanup] 停止进程 PID=$PID (port=$PORT)"
-    kill "$PID" 2>/dev/null || true
-    sleep 1
-    # 强制 kill（如果进程还存在）
-    kill -9 "$PID" 2>/dev/null || true
-  else
-    echo "[preview-cleanup] PID=$PID 进程已不存在（已停止）"
-  fi
-  rm -f "$PID_FILE"
-else
-  echo "[preview-cleanup] 未找到 PID 文件 ${PID_FILE}，尝试 pkill 兜底"
-  pkill -f "http.server ${PORT}" 2>/dev/null || true
+if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: PR_NUMBER 必须是数字，实际: $PR_NUMBER" >&2
+  exit 1
 fi
 
-# 清理元数据文件
-rm -f "$BRANCH_FILE" "$LOG_FILE"
+echo "[preview-cleanup] pr_number=${PR_NUMBER} reason=${REASON}"
+echo "[preview-cleanup] 调用统一销毁器 preview-destroyer.js destroyPreview()..."
 
-# 清理部署目录
-DEPLOY_DIR="${HOME}/previews/${PORT}"
-if [ -d "$DEPLOY_DIR" ]; then
-  echo "[preview-cleanup] 删除部署目录 $DEPLOY_DIR"
-  rm -rf "$DEPLOY_DIR"
-fi
+cd "$REPO_ROOT"
+PREVIEW_CLEANUP_PR="$PR_NUMBER" PREVIEW_CLEANUP_REASON="$REASON" node -e "
+(async () => {
+  const { destroyPreview } = await import('./packages/brain/src/preview-destroyer.js');
+  const pool = (await import('./packages/brain/src/db.js')).default;
+  const prNumber = parseInt(process.env.PREVIEW_CLEANUP_PR, 10);
+  const reason = process.env.PREVIEW_CLEANUP_REASON;
+  const result = await destroyPreview(
+    prNumber,
+    reason,
+    'preview-cleanup-cli-' + Date.now(),
+    pool,
+  );
+  console.log('[preview-cleanup] destroyPreview 结果:', JSON.stringify(result));
+  await pool.end();
+  process.exit(result.destroyed ? 0 : 1);
+})().catch((err) => {
+  console.error('[preview-cleanup] 执行异常:', err.message);
+  process.exit(1);
+});
+"
 
-echo "[preview-cleanup] ✅ 端口 $PORT 已释放"
+echo "[preview-cleanup] ✅ PR#${PR_NUMBER} 清理完成"

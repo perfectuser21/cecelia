@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r1-1b1f1ffa
-sprint_dir: sprints/07231146-relay-1b1f1ffa
-
 ---
 skeleton: false
 journey_type: autonomous
@@ -108,11 +105,11 @@ journey_type: autonomous
 ### 路由层接入（POST /preview/start 准入拒绝 503 + POST /preview/stop 销毁终态透出）
 
 - [x] [BEHAVIOR] POST /api/brain/preview/start 数量红线场景返回 HTTP 503 + reason/free_bytes/projected_cost_bytes/need_release_bytes 四字段类型正确
-  Test: manual:bash -c 'for i in $(seq 1 6); do psql "$DB" -v ON_ERROR_STOP=1 -c "INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status) VALUES (89000$i, '"'"'cp-dod-fixture'"'"', '"'"'cecelia'"'"', $((5290+i)), '"'"'cecelia_preview_89000'"'"'||$i, '"'"'active'"'"') ON CONFLICT DO NOTHING;" >/dev/null || exit 1; done; CODE=$(curl -s -o /tmp/dod-admit-resp.json -w "%{http_code}" -X POST localhost:5221/api/brain/preview/start -H "Content-Type: application/json" -d "{\"pr_number\": 899999, \"branch_name\": \"cp-dod-fixture\"}"); psql "$DB" -v ON_ERROR_STOP=1 -c "DELETE FROM preview_environments WHERE branch_name='"'"'cp-dod-fixture'"'"';" >/dev/null; [ "$CODE" = "503" ] || { echo "FAIL: got $CODE"; cat /tmp/dod-admit-resp.json; exit 1; }; jq -e ".reason and (.projected_cost_bytes|type==\"number\") and (.need_release_bytes|type==\"number\")" /tmp/dod-admit-resp.json'
+  Test: manual:bash -c 'for i in $(seq 1 6); do psql -h localhost -U cecelia -d cecelia -c "INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status) VALUES (89000$i, '"'"'cp-dod-fixture'"'"', '"'"'cecelia'"'"', $((5290+i)), '"'"'cecelia_preview_89000'"'"'||$i, '"'"'active'"'"') ON CONFLICT DO NOTHING;" >/dev/null; done; CODE=$(curl -s -o /tmp/dod-admit-resp.json -w "%{http_code}" -X POST localhost:5221/api/brain/preview/start -H "Content-Type: application/json" -d "{\"pr_number\": 899999, \"branch_name\": \"cp-dod-fixture\"}"); psql -h localhost -U cecelia -d cecelia -c "DELETE FROM preview_environments WHERE branch_name='"'"'cp-dod-fixture'"'"';" >/dev/null; [ "$CODE" = "503" ] || { echo "FAIL: got $CODE"; cat /tmp/dod-admit-resp.json; exit 1; }; jq -e ".reason and (.projected_cost_bytes|type==\"number\") and (.need_release_bytes|type==\"number\")" /tmp/dod-admit-resp.json'
   期望: exit 0（HTTP 503 + 四字段类型正确）
 
 - [x] [BEHAVIOR] POST /api/brain/preview/stop/:pr 正常销毁场景响应体含 status:"inactive" 字段
-  Test: manual:bash -c 'PR=898888; psql "$DB" -v ON_ERROR_STOP=1 -c "INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status) VALUES ($PR, '"'"'cp-dod-stop-fixture'"'"', '"'"'cecelia'"'"', 5298, '"'"'cecelia_preview_'"'"'||$PR, '"'"'active'"'"') ON CONFLICT DO NOTHING;" >/dev/null; RESP=$(curl -sf -X POST localhost:5221/api/brain/preview/stop/$PR); echo "$RESP" | jq -e ".status == \"inactive\" or .status == \"cleanup_failed\""'
+  Test: manual:bash -c 'PR=898888; psql -h localhost -U cecelia -d cecelia -c "INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status) VALUES ($PR, '"'"'cp-dod-stop-fixture'"'"', '"'"'cecelia'"'"', 5298, '"'"'cecelia_preview_'"'"'||$PR, '"'"'active'"'"') ON CONFLICT DO NOTHING;" >/dev/null; RESP=$(curl -sf -X POST localhost:5221/api/brain/preview/stop/$PR); echo "$RESP" | jq -e ".status == \"inactive\" or .status == \"cleanup_failed\""'
   期望: exit 0（响应体含合法 status 枚举值）
 
 ## Invariant 覆盖（49 条铁律逐条映射，来源: area）

@@ -100,9 +100,11 @@ while IFS= read -r src; do
   cand1="${dir}/${base}.test.js"
   cand2="${dir}/__tests__/${base}.test.js"
   cand3="${dir}/${base}.spec.js"
+  # 需要真实 Postgres 的集成测试毕业进 __tests__/integration/（brain-unit 无 DB，brain-integration 覆盖）
+  cand4="${dir}/__tests__/integration/${base}.test.js"
 
   found=0
-  for cand in "$cand1" "$cand2" "$cand3"; do
+  for cand in "$cand1" "$cand2" "$cand3" "$cand4"; do
     # PR diff 内含 OR 仓库已存在
     if echo "$PR_TESTS" | grep -qxF "$cand" || [ -f "$cand" ]; then
       found=1
