@@ -16,6 +16,7 @@ export const ANCHOR_EXEMPT_TASK_TYPES = new Set([
   'dept_heartbeat', 'arch_review', 'ci_patrol',
   'research', 'explore', 'talk', 'data',
   'staging_e2e', 'deploy_drill', 'nightly', 'janitor',
+  'strategist_decision',
   // harness pipeline 子任务（orchestrator 生成，无需手动锚）
   'harness_initiative', 'harness_task', 'harness_final_e2e',
   'harness_planner', 'harness_contract_propose', 'harness_contract_review',
