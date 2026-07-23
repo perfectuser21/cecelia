@@ -8,24 +8,24 @@
 ## DoD 条目（全部通过 = 合同完成）
 
 ### [DOD-1] 成功 schema 键名铁律
-**断言**：`GET /negate?value=5` → HTTP 200，`Object.keys(res.body).sort()` 严格等于 `["operation", "result"]`
-**验证方式**：vitest 单测
+[BEHAVIOR] GET /negate?value=5 → HTTP 200 {result:-5, operation:"negate"}，`Object.keys(res.body).sort()` 严格等于 `["operation", "result"]`
+  Test: vitest supertest（negate.contract.test.js DOD-1）
 
 ### [DOD-2] operation 字面值铁律
-**断言**：`res.body.operation === "negate"`（不允许是 `negation`/`neg`/`negative`/其他任何变体）
-**验证方式**：vitest 单测
+[BEHAVIOR] GET /negate?value=5 → HTTP 200，res.body.operation === "negate"（禁用 negation/neg/negative）
+  Test: vitest 单测（negate.contract.test.js DOD-2）
 
 ### [DOD-3] result 键名铁律
-**断言**：`res.body.result` 存在，`res.body` 不含 `negated`/`value`/`output`/`answer`/`data`
-**验证方式**：vitest 单测
+[BEHAVIOR] GET /negate?value=5 → HTTP 200，res.body.result 存在，res.body 不含 negated/value/output/answer/data
+  Test: vitest 单测（negate.contract.test.js DOD-3）
 
 ### [DOD-4] 正数取反
-**断言**：`GET /negate?value=5` → `result === -5`
-**验证方式**：vitest 单测
+[BEHAVIOR] GET /negate?value=5 → HTTP 200 {result:-5, operation:"negate"}
+  Test: vitest 单测（negate.contract.test.js DOD-4）
 
 ### [DOD-5] 负数取反
-**断言**：`GET /negate?value=-5` → `result === 5`
-**验证方式**：vitest 单测
+[BEHAVIOR] GET /negate?value=-5 → HTTP 200 {result:5, operation:"negate"}
+  Test: vitest 单测（negate.contract.test.js DOD-5）
 
 ### [DOD-6] 零取反（-0 规范化）
 **断言**：`GET /negate?value=0` → `result === 0` 且 `Object.is(result, -0) === false`
@@ -70,6 +70,7 @@
 ### [DOD-16] Final E2E bash 脚本通过
 **断言**：使用 `bash + curl` 对 `PLAYGROUND_PORT=3001` 运行端到端脚本，全部检查点通过
 **验证方式**：`sprints/07231722-relay-17d5b58d/tests/e2e.sh` 执行返回 exit 0
+manual:bash PLAYGROUND_PORT=3001 bash sprints/07231722-relay-17d5b58d/tests/e2e.sh
 
 ---
 

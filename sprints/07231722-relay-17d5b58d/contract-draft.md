@@ -98,6 +98,29 @@
 
 ---
 
+## E2E 验收
+
+端到端验收使用 `bash + curl` 对真实运行中的服务执行检查，脚本位于 `sprints/07231722-relay-17d5b58d/tests/e2e.sh`。
+
+**执行命令**：
+```bash
+PLAYGROUND_PORT=3001 bash sprints/07231722-relay-17d5b58d/tests/e2e.sh
+```
+
+**验收检查点**（脚本内逐一 curl 验证）：
+- `GET /negate?value=5` → HTTP 200，`result === -5`，`operation === "negate"`
+- `GET /negate?value=-5` → HTTP 200，`result === 5`
+- `GET /negate?value=0` → HTTP 200，`result === 0`（非 `-0`）
+- `GET /negate?value=9007199254740990` → HTTP 200，`result === -9007199254740990`
+- `GET /negate` → HTTP 400
+- `GET /negate?value=abc` → HTTP 400
+- `GET /negate?value=9007199254740991` → HTTP 400
+- 现有路由 `/health`、`/increment?value=1`、`/decrement?value=1` 仍正常返回
+
+脚本全部检查点通过则返回 exit 0，任意失败则 exit 1。
+
+---
+
 ## 5. 实现文件范围
 
 - **允许改动**：`playground/server.js`（新增 GET /negate 路由）
