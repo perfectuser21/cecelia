@@ -1,0 +1,44 @@
+{
+  "phase": "gan",
+  "sprint": "preview-capacity-gate-and-destroyer",
+  "task_id": "1b1f1ffa-c1df-42a1-8ff7-1c62d5b3b914",
+  "contract_branch": "cp-harness-propose-r1-1b1f1ffa",
+  "anchored_sha": "9e413c6c92ad222d1498e0fcb9fecb58978e0d47",
+  "rounds": 2,
+  "final_verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 8,
+    "test_is_red": 9,
+    "internal_consistency": 8,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 8,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 3,
+  "invariant_coverage": "49/49 (area) + T1-T10 (10/10 PrepPRD 合同测试锚点)",
+  "round_history": [
+    {
+      "round": 1,
+      "actor": "controller铁律覆盖硬检查",
+      "verdict": "REVISION",
+      "issue": "T10 消费者代码禁本地 df 调用 grep 断言缺失"
+    },
+    {
+      "round": 2,
+      "actor": "reviewer",
+      "verdict": "REVISION",
+      "issues": [
+        "E2E Step3 无差别销毁未过滤已关闭/24h条件,与gh调用承诺自相矛盾",
+        "admitPreview/allocatePreview 锁共享方式未说清,TOCTOU竞态未被测到",
+        "缺 ## Risks 段"
+      ]
+    },
+    {
+      "round": 3,
+      "actor": "reviewer复审",
+      "verdict": "APPROVED",
+      "note": "3项阻塞全部核实解决,无新增阻塞,合同423→486行(+64行可追溯到修复内容)"
+    }
+  ]
+}

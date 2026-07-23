@@ -1,0 +1,35 @@
+{
+  "initiative_id": "1b1f1ffa-c1df-42a1-8ff7-1c62d5b3b914",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动落在 packages/brain/src/（capacity-gate.js/preview-destroyer.js）+ scripts/（host-disk-sampler.sh/preview-cleanup.sh），无 apps/dashboard、无 agent_remote 协议、无 packages/engine 改动，按优先级链归类为 autonomous（纯后端容量治理/调度）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "preview 容量准入闸门 + 统一销毁器 + 宿主磁盘采样器 + 现存资源清扫",
+      "scope": "实现 scripts/host-disk-sampler.sh（原子写 host-disk.json，字节级字段，显式 PATH，set -euo pipefail）；packages/brain/src/capacity-gate.js（readHostDisk 4 种拒绝分支 + admitPreview 四层判定 + pg_advisory_xact_lock 全局串行化 + 幂等复用跳过）；packages/brain/src/preview-destroyer.js（destroyPreview 7 步流程 + per-PR advisory lock + DB 名正则校验 + realpath 逃逸防护 + 终态复查 + cleanup_detail）；migration 358（新增 cleaning/cleanup_failed 状态 + cleanup_detail jsonb）；routes/preview.js 接入 admitPreview（POST /start 503 拒绝）与 destroyPreview（POST /stop 终态透出）；scripts/preview-cleanup.sh 重写为 preview-destroyer.js 唯一 shell 执行体；preview-reaper.sh 的内联 kill/dropdb/worktree remove 逻辑改为调用统一销毁器；Final E2E 阶段对现存所有已关闭 PR 或超 24h 的 preview 逐个执行统一销毁器",
+      "dod": [
+        "[BEHAVIOR] host-disk-sampler.sh 原子写入 host-disk.json 且字段完整、字节级数值",
+        "[BEHAVIOR] host-disk-sampler.sh 在 cron 等价环境（仅 PATH=/usr/bin:/bin）下仍能成功采样",
+        "[BEHAVIOR] readHostDisk() 4 种拒绝分支（sample_missing/sample_corrupt/sample_stale/sample_incomplete）",
+        "[BEHAVIOR] admitPreview() 四层判定（too_many_active/insufficient_free_space/usage_pct_too_high + 并发串行化 + 幂等复用）",
+        "[BEHAVIOR] destroyPreview() 7 步流程完整执行 + DB 名正则校验 + realpath 逃逸防护 + 幂等 + 并发去重",
+        "[BEHAVIOR] POST /api/brain/preview/start 数量红线场景返回 HTTP 503 + 四字段类型正确",
+        "[BEHAVIOR] POST /api/brain/preview/stop/:pr 响应体含合法 status 枚举值",
+        "[ARTIFACT] migration 358 存在且含 cleaning/cleanup_failed/cleanup_detail",
+        "[ARTIFACT] scripts/preview-cleanup.sh 已重写为 preview-destroyer.js 的唯一 shell 执行体"
+      ],
+      "files": [
+        "scripts/host-disk-sampler.sh",
+        "packages/brain/src/capacity-gate.js",
+        "packages/brain/src/preview-destroyer.js",
+        "packages/brain/migrations/358_preview_environments_cleanup_states.sql",
+        "packages/brain/src/routes/preview.js",
+        "scripts/preview-cleanup.sh",
+        "scripts/preview-reaper.sh"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
