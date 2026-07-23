@@ -8,14 +8,14 @@
 
 ## [BEHAVIOR] 行为断言
 
-**[BEHAVIOR-1] 创建 conversation 返回正确结构**
+**[BEHAVIOR] [BEHAVIOR-1] 创建 conversation 返回正确结构**
 
 当 `POST /api/brain/conversations` 传入合法 `journey_id`（UUID，且存在于 journeys 表），系统必须：
 - 返回 HTTP 201
 - 响应体含 `id`（UUID）、`status: "active"`、`turn_count: 0`、`ttl_expires_at`（约 24 小时后的 ISO 时间戳）
 - 在 conversations 表插入一行，`journey_id` 与请求匹配
 
-**[BEHAVIOR-2] 消息写入触发 turn_count 自增**
+**[BEHAVIOR] [BEHAVIOR-2] 消息写入触发 turn_count 自增**
 
 当 `POST /api/brain/conversations/:id/messages` 传入 `role: "user"`，系统必须：
 - 在 conversation_messages 表插入一行
@@ -23,7 +23,7 @@
 - 返回 HTTP 201 + 新消息对象（含 id、role、content、created_at）
 - 若 role 为 `assistant` 或 `system`，turn_count 不自增
 
-**[BEHAVIOR-3] 无效 status 枚举被拒绝**
+**[BEHAVIOR] [BEHAVIOR-3] 无效 status 枚举被拒绝**
 
 当 `PATCH /api/brain/conversations/:id` 传入 `status: "invalid_status"`（不在 active/resolved/suspended/archived 内），系统必须：
 - 返回 HTTP 400
@@ -33,7 +33,7 @@
 - 返回 HTTP 200
 - 数据库中对应行 status 字段更新为新值，`updated_at` 刷新
 
-**[BEHAVIOR-4] 缺失 journey_id 返回 400，不存在的 journey_id 返回 404**
+**[BEHAVIOR] [BEHAVIOR-4] 缺失 journey_id 返回 400，不存在的 journey_id 返回 404**
 
 当 `POST /api/brain/conversations` 传入空 body 或 journey_id 为空字符串，系统必须：
 - 返回 HTTP 400
@@ -43,7 +43,7 @@
 - 返回 HTTP 404
 - 不插入任何数据库行
 
-**[BEHAVIOR-5] GET 列表按 journey_id 过滤**
+**[BEHAVIOR] [BEHAVIOR-5] GET 列表按 journey_id 过滤**
 
 当 `GET /api/brain/conversations?journey_id=<id>` 请求，系统必须：
 - 返回 HTTP 200
@@ -51,7 +51,7 @@
 - 每条记录含 `last_message`（最近消息前 120 字符，无消息则 null）和 `related_decision_count`（整数）
 - 响应体含 `total` 字段（整数，总记录数）
 
-**[BEHAVIOR-6] GET 单条包含 messages 数组**
+**[BEHAVIOR] [BEHAVIOR-6] GET 单条包含 messages 数组**
 
 当 `GET /api/brain/conversations/:id` 请求，系统必须：
 - 返回 HTTP 200
