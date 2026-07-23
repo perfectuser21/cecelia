@@ -186,9 +186,6 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
       result = { exitReason: error.message };
     }
 
-    expect(result.exitReason).toBe('no_progress_same_sha');
-    expect(failureReason).toBe('no_progress_same_sha');
-    expect(dispatches).toBe(1);
     expect(decisionLog.find((row) => row.action === 'spawn:generator-fix')?.observed)
       .toMatchObject({ trigger_sha: SHA });
     expect(decisionLog).toEqual(expect.arrayContaining([
@@ -197,5 +194,8 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
         observed: expect.objectContaining({ pr_head_sha: SHA }),
       }),
     ]));
+    expect(result.exitReason).toBe('no_progress_same_sha');
+    expect(failureReason).toBe('no_progress_same_sha');
+    expect(dispatches).toBe(1);
   });
 });

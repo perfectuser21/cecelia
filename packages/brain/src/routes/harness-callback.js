@@ -141,6 +141,63 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
   );
 }
 
+export async function appendGeneratorFixCallback(attempt, result, db = pool) {
+  if (attempt.role !== 'generator') return;
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
+  const pullRequest = result.artifacts.find(
+    (artifact) => artifact?.type === 'pull_request' && artifact.head_sha,
+  );
+  const prHeadSha = pullRequest?.head_sha
+    ?? result.decision?.pr_head_sha
+    ?? result.provider_metadata?.pr_head_sha
+    ?? null;
+  if (!prHeadSha) return;
+
+  const observed = {
+    attempt_id: attempt.id,
+    pr_head_sha: prHeadSha,
+    provider: result.provider_metadata?.provider ?? attempt.provider ?? null,
+  };
+  const detail = {
+    attempt_id: attempt.id,
+    pr_head_sha: prHeadSha,
+    status: result.status,
+  };
+  await db.query(
+    `WITH lock AS (
+       SELECT pg_advisory_xact_lock(hashtext($1::text))
+     ), fix_intent AS (
+       SELECT 1
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid AND hop=$2 AND action='spawn:generator-fix'
+     ), next_hop AS (
+       SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid
+     )
+     INSERT INTO orchestrator_decision_log
+       (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+     SELECT $1::uuid, next_hop.hop, $6::jsonb, 'generate', 'allow',
+            'verdict:generator-fix-callback', $7::jsonb
+       FROM lock, fix_intent, next_hop
+      WHERE NOT EXISTS (
+        SELECT 1 FROM orchestrator_decision_log
+         WHERE run_id=$1::uuid
+           AND action='verdict:generator-fix-callback'
+           AND detail->>'attempt_id'=$3::text
+      )`,
+    [
+      attempt.run_id,
+      attempt.hop,
+      attempt.id,
+      prHeadSha,
+      observed.provider,
+      JSON.stringify(observed),
+      JSON.stringify(detail),
+    ],
+  );
+}
+
 function resultError(result) {
   if (typeof result.error === 'string') return { code: 'provider_failed', message: result.error };
   return {
@@ -250,6 +307,7 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
         persistedResult = current.result ?? result;
       }
       await appendAttemptVerdict(attempt, persistedResult);
+      await appendGeneratorFixCallback(attempt, persistedResult);
 
       if (attempt.role === 'generator') {
         const pullRequest = persistedResult.artifacts.find(

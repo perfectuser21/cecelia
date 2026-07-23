@@ -124,6 +124,12 @@ function buildSnapshot(observed, counters, action) {
       );
     }
   }
+  if (action === ACTION.SPAWN_GENERATOR_FIX) {
+    snapshot.trigger_sha = observed.pr?.head_sha ?? null;
+    snapshot.failure_class = observed.judgeVerdict?.failure_class
+      ?? observed.evaluateVerdict?.failure_class
+      ?? null;
+  }
   return snapshot;
 }
 
@@ -194,7 +200,12 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     // pollCount 从 DB 持久化推导（Sprint 07231527 Blocking 2：进程内变量改为 DB 推导）
     const pollCount = counters.pollCount;
     const fullCounters = { ...counters, pollCount, ganCostUsd: Number(observed.run.cost_usd ?? 0) };
-    const decision = derive({ ...observed, counters: fullCounters });
+    const decision = derive({
+      ...observed,
+      noProgress: counters.noProgress,
+      noProgressReason: counters.noProgressReason,
+      counters: fullCounters,
+    });
 
     // ---- Deadline fence 2：derive 后 ----
     // wait/control 分支都在此 fence 之后，不能绕开硬上限。
