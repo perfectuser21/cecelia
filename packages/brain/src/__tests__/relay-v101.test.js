@@ -95,7 +95,7 @@ describe('spawn env 观测接线（HARNESS_NODE + HARNESS_CALLBACK_URL）', () =
       spawnFn: vi.fn().mockResolvedValue({}),
       loadSkill: vi.fn().mockReturnValue('SKILL'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
-      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),  // 新契约（5167ef48）：claude 需已解析账号
       tokenFn: vi.fn().mockResolvedValue('t'),
       now: () => new Date('2026-07-04T12:00:00Z'),
     };

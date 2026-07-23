@@ -10,7 +10,12 @@
  *   node --test sprints/07162100-release-gate-rtm/tests/release-gate-api-contract.test.mjs
  */
 
-import { test, describe, before } from 'node:test';
+// vitest 兼容桥（5167ef48 修复时发现的存量雷）：node:test 的 describe/test 在 vitest import
+// 下不注册 suite → "No test suite found" 文件级红。按环境选 runner；node:test 的 before
+// 映射 vitest beforeAll（语义等价：suite 前置一次）。断言是 node:assert 通用。
+const { test, describe, before } = process.env.VITEST
+  ? await import('vitest').then((m) => ({ test: m.test, describe: m.describe, before: m.beforeAll }))
+  : await import('node:test');
 import assert from 'node:assert/strict';
 
 const BRAIN_URL = process.env.BRAIN_URL ?? 'http://localhost:5221';

@@ -18,7 +18,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
-import { test, describe } from 'node:test';
+// vitest 兼容桥（5167ef48 修复时发现的存量雷）：本文件用 node:test runner，被 brain CI
+// fs-guard 全量轮以 vitest import 时 node:test 的 describe/test 不注册 → "No test suite
+// found" 文件级红。按运行环境选 runner——两者 describe/test 签名兼容，断言是 node:assert 通用。
+const { test, describe } = process.env.VITEST ? await import('vitest') : await import('node:test');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
