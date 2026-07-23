@@ -4,8 +4,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { mergeGate, caps, isPassVerdict } from '../gates.js';
-import {
-  MAX_FIX_ROUNDS,
+import * as constants from '../constants.js';
+
+const {
   MAX_POLL_COUNT,
   POLL_INTERVAL_MS,
   MAX_HOPS,
@@ -14,7 +15,7 @@ import {
   MAX_REBASE_ATTEMPTS,
   BLOCKED_SAME_STATE_CAP,
   BUDGET_CAP_USD,
-} from '../constants.js';
+} = constants;
 
 function baseInput(overrides = {}) {
   return {
@@ -91,28 +92,27 @@ describe('mergeGate（mergePrNode 前置门=evaluate_verdict PASS + review_gate 
 });
 
 describe('常量 pin（钉死具体数值，防改值后测试仍绿的语义漂移；出处 routing-extraction.md）', () => {
-  it('9 个常量数值不变', () => {
-    expect(MAX_FIX_ROUNDS).toBe(3);   // Sprint 07231527 Blocking 1: 从 20 改为 3
+  it('固定 fix cap 不再导出，hop 只保留 4096 宽兜底', () => {
+    expect(constants).not.toHaveProperty('MAX_FIX_ROUNDS');
     expect(MAX_POLL_COUNT).toBe(20);
     expect(POLL_INTERVAL_MS).toBe(90000);
     expect(MAX_NO_PUSH_STREAK).toBe(2);
     expect(MAX_NO_VERDICT_STREAK).toBe(3);
     expect(MAX_REBASE_ATTEMPTS).toBe(3);
-    expect(MAX_HOPS).toBe(60);        // Sprint 07231527: 从 200 改为 60
+    expect(MAX_HOPS).toBe(4096);
     expect(BLOCKED_SAME_STATE_CAP).toBe(2);
     expect(BUDGET_CAP_USD).toBe(10);
   });
 });
 
 describe('caps 上限判断（数值出处 routing-extraction.md）', () => {
-  it('MAX_HOPS=200', () => {
+  it('MAX_HOPS=4096', () => {
     expect(caps.hopsExceeded(MAX_HOPS - 1)).toBe(false);
     expect(caps.hopsExceeded(MAX_HOPS)).toBe(true);
   });
 
-  it('MAX_FIX_ROUNDS=20', () => {
-    expect(caps.fixExceeded(MAX_FIX_ROUNDS - 1)).toBe(false);
-    expect(caps.fixExceeded(MAX_FIX_ROUNDS)).toBe(true);
+  it('固定 fix 轮次 cap API 已删除', () => {
+    expect(caps).not.toHaveProperty('fixExceeded');
   });
 
   it('MAX_POLL_COUNT=20', () => {

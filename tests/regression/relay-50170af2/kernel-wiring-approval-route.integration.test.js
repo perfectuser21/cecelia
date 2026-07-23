@@ -17,6 +17,7 @@ function fakePool() {
     observed: { pr: { head_sha: SHA } },
     gate_verdict: 'allow',
     detail: { dispatch_hop: 13 },
+    created_at: new Date('2026-07-23T00:00:00.000Z'),
   }];
   return {
     decisionLog,
@@ -57,6 +58,9 @@ function fakePool() {
           gate_verdict: params[3],
           detail: JSON.parse(params[4]),
         });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE initiative_runs') && sql.includes('deadline_at')) {
         return { rows: [], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };

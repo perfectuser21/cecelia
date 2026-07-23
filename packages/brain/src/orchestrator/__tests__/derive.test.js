@@ -5,14 +5,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import { derive } from '../derive.js';
-import {
-  MAX_FIX_ROUNDS,
+import * as constants from '../constants.js';
+
+const {
   MAX_POLL_COUNT,
   MAX_HOPS,
   MAX_NO_PUSH_STREAK,
   MAX_NO_VERDICT_STREAK,
   BUDGET_CAP_USD,
-} from '../constants.js';
+} = constants;
 
 function baseObserved(overrides = {}) {
   return {
@@ -77,8 +78,8 @@ describe('规则 0.5：在途观测（P0-1）', () => {
   });
 });
 
-describe('规则 0.6：MAX_HOPS（P2）', () => {
-  it('hops >= 200 → failed reason=hop_cap', () => {
+describe('规则 0.6：MAX_HOPS 宽兜底（P2）', () => {
+  it('hops >= 4096 → failed reason=hop_cap', () => {
     const r = derive(baseObserved({
       counters: { hops: MAX_HOPS, fixRound: 0, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     }));
@@ -173,19 +174,18 @@ describe('规则 3a：contract approved && !pr', () => {
     expect(r.action).toBe('spawn:generator');
   });
 
-  it('generator 已退出且无 PR（no_pr）→ 计入 fix_round，<20 → spawn:generator-fix（偏离旧图 no_pr 直接终局，声明为可重试入上限）', () => {
+  it('generator 已退出且无 PR（no_pr）→ spawn:generator-fix，fixRound 仅观测', () => {
     const r = derive(baseObserved({ pr: null, generatorSpawned: true, lastAgentExit: { code: 0, auth_failed: false } }));
     expect(r.action).toBe('spawn:generator-fix');
   });
 
-  it('no_pr && fix_round >= 20 → failed', () => {
+  it('no_pr && 任意高 fixRound 仍由收敛探测决定，不能命中固定轮次 cap', () => {
     const r = derive(baseObserved({
       pr: null,
       generatorSpawned: true,
-      counters: { hops: 1, fixRound: MAX_FIX_ROUNDS, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
+      counters: { hops: 1, fixRound: 10000, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     }));
-    expect(r.phase).toBe('failed');
-    expect(r.reason).toBe('fix_cap');
+    expect(r).toMatchObject({ phase: 'generate', action: 'spawn:generator-fix', reason: 'no_pr' });
   });
 });
 
@@ -216,13 +216,13 @@ describe('规则 3d：exit/auth 观测分路（P0-3，routeAfterCallback ci_fail
     expect(r.action).toBe('spawn:generator-fix');
   });
 
-  it('auth_failed && fix_round >= 20 → failed', () => {
+  it('auth_failed && 任意高 fixRound 仍可按真实故障路由 fix', () => {
     const r = derive(baseObserved({
       pr: { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' },
       lastAgentExit: { code: 1, auth_failed: true },
-      counters: { hops: 1, fixRound: MAX_FIX_ROUNDS, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
+      counters: { hops: 1, fixRound: 10000, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     }));
-    expect(r.phase).toBe('failed');
+    expect(r).toMatchObject({ phase: 'generate', action: 'spawn:generator-fix', reason: 'auth_failed' });
   });
 });
 
@@ -242,19 +242,18 @@ describe('规则 3b：ci pending → poll', () => {
   });
 });
 
-describe('规则 3c：ci fail → fix loop（routeAfterPoll fail→fix + routeAfterFix 超 MAX_FIX_ROUNDS→end）', () => {
-  it('ci fail && fix_round < 20 → spawn:generator-fix', () => {
+describe('规则 3c：ci fail → 收敛驱动 fix loop', () => {
+  it('ci fail → spawn:generator-fix', () => {
     const r = derive(baseObserved({ pr: { url: 'u', state: 'OPEN', ci: 'fail', merged: false, head_sha: 's' } }));
     expect(r.action).toBe('spawn:generator-fix');
   });
 
-  it('ci fail && fix_round >= 20 → failed', () => {
+  it('ci fail && 任意高 fixRound 仍继续，禁止固定轮次终局', () => {
     const r = derive(baseObserved({
       pr: { url: 'u', state: 'OPEN', ci: 'fail', merged: false, head_sha: 's' },
-      counters: { hops: 1, fixRound: MAX_FIX_ROUNDS, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
+      counters: { hops: 1, fixRound: 10000, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     }));
-    expect(r.phase).toBe('failed');
-    expect(r.reason).toBe('fix_cap');
+    expect(r).toMatchObject({ phase: 'generate', action: 'spawn:generator-fix', reason: 'ci_fail' });
   });
 });
 

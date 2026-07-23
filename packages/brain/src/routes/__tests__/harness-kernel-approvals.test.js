@@ -9,6 +9,7 @@ const TASK_ID = '22222222-2222-4222-8222-222222222222';
 const HEAD_SHA = 'a'.repeat(40);
 const NEXT_HEAD_SHA = 'b'.repeat(40);
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4226';
+const REVIEW_REQUESTED_AT = new Date('2026-07-23T00:00:00.000Z');
 
 function createApprovalDatabase() {
   const state = {
@@ -16,11 +17,13 @@ function createApprovalDatabase() {
     transactionCommands: [],
     insertedDetail: null,
     insertedObserved: null,
+    deadlineExtension: null,
     decisionLog: [{
       hop: 3,
       action: 'effect:human_review_requested',
       observed: { pr: { head_sha: HEAD_SHA } },
       detail: { dispatch_hop: 2 },
+      created_at: REVIEW_REQUESTED_AT,
     }],
     currentSha: HEAD_SHA,
     released: false,
@@ -65,6 +68,10 @@ function createApprovalDatabase() {
           gate_verdict: params[3],
           detail: state.insertedDetail,
         });
+        return { rows: [], rowCount: 1 };
+      }
+      if (normalized.includes('UPDATE initiative_runs') && normalized.includes('deadline_at')) {
+        state.deadlineExtension = { sql: normalized, params };
         return { rows: [], rowCount: 1 };
       }
       throw new Error(`unexpected transaction query: ${normalized}`);
@@ -179,6 +186,36 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
     expect(state.released).toBe(true);
   });
 
+  it('adds the open human-review wait back to deadline in the approval transaction', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    const { database, state } = createApprovalDatabase();
+
+    const response = await approvalRequest(createApp(database, state));
+
+    expect(response.status).toBe(202);
+    const requestRead = state.queries.find(
+      ({ scope, sql }) => scope === 'pool'
+        && sql.includes("action='effect:human_review_requested'"),
+    );
+    expect(requestRead?.sql).toMatch(/\bcreated_at\b/);
+    expect(state.deadlineExtension).not.toBeNull();
+    expect(state.deadlineExtension.sql).toMatch(
+      /UPDATE initiative_runs[\s\S]*deadline_at[\s\S]*NOW\(\)/i,
+    );
+    expect(state.deadlineExtension.params).toContain(RUN_ID);
+    expect(state.deadlineExtension.params.some(
+      (value) => new Date(value).getTime() === REVIEW_REQUESTED_AT.getTime(),
+    )).toBe(true);
+    const updateIndex = state.queries.findIndex(
+      ({ scope, sql }) => scope === 'client'
+        && sql.includes('UPDATE initiative_runs')
+        && sql.includes('deadline_at'),
+    );
+    const commitIndex = state.queries.findIndex(({ sql }) => sql === 'COMMIT');
+    expect(updateIndex).toBeGreaterThan(-1);
+    expect(commitIndex).toBeGreaterThan(updateIndex);
+  });
+
   it('allows one approval per GitHub head SHA in the same run', async () => {
     process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
     const { database, state } = createApprovalDatabase();
@@ -193,6 +230,7 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
       action: 'effect:human_review_requested',
       observed: { pr: { head_sha: NEXT_HEAD_SHA } },
       detail: { dispatch_hop: 4 },
+      created_at: new Date('2026-07-23T01:00:00.000Z'),
     });
     const secondSha = await approvalRequest(app, {
       sha: NEXT_HEAD_SHA,

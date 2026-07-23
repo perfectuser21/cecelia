@@ -65,6 +65,7 @@ function createRealApprovalHarness() {
       observed: { pr: { head_sha: ROUTE_SHA_A } },
       gate_verdict: 'allow',
       detail: { dispatch_hop: 2 },
+      created_at: new Date('2026-07-23T00:00:00.000Z'),
     }],
     transactionCommands: [],
   };
@@ -127,6 +128,9 @@ function createRealApprovalHarness() {
       });
       return { rows: [], rowCount: 1 };
     }
+    if (normalized.includes('UPDATE initiative_runs') && normalized.includes('deadline_at')) {
+      return { rows: [], rowCount: 1 };
+    }
     throw new Error(`unexpected approval test query: ${normalized}`);
   };
 
@@ -161,6 +165,7 @@ function createRealApprovalHarness() {
       observed: { pr: { head_sha: sha } },
       gate_verdict: 'allow',
       detail: { dispatch_hop: nextHop - 1 },
+      created_at: new Date('2026-07-23T01:00:00.000Z'),
     });
     return nextHop;
   };

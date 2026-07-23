@@ -86,6 +86,37 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     expect(sql).toMatch(/skill-relay%/);                  // 期望 LIKE 'skill-relay%' 覆盖全部 host
     expect(sql).not.toMatch(/=\s*'skill-relay-codex'/);   // 不应写死单一 codex host
   });
+
+  it('开放 kernel 人审按 request hop 排除，不能被绝对 deadline 收尸', async () => {
+    const overdueRun = {
+      id: '11111111-1111-4111-8111-111111111111',
+      initiative_id: TASK_ID,
+      orchestrator_host: 'skill-relay-session',
+      phase: 'review',
+      deadline_at: new Date(Date.now() - 1000).toISOString(),
+    };
+    const pool = { query: vi.fn(async (sql) => {
+      const normalized = String(sql);
+      if (/SELECT id, initiative_id, orchestrator_host, phase, deadline_at/.test(normalized)) {
+        const excludesOpenReview =
+          /effect:human_review_requested/.test(normalized)
+          && /verdict:human_review/.test(normalized)
+          && /review_request_hop/.test(normalized);
+        return { rows: excludesOpenReview ? [] : [overdueRun] };
+      }
+      return { rows: [] };
+    }) };
+
+    await scanStuckHarness({ pool });
+
+    const selectSql = pool.query.mock.calls[0]?.[0] || '';
+    expect(selectSql).toMatch(/effect:human_review_requested/);
+    expect(selectSql).toMatch(/verdict:human_review/);
+    expect(selectSql).toMatch(/review_request_hop/);
+    expect(pool.query.mock.calls.some(
+      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
+    )).toBe(false);
+  });
 });
 
 describe('resumeStalledRelayRuns', () => {

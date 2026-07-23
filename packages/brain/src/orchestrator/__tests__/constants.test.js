@@ -3,21 +3,23 @@
  * 枚举完整性 + 数值 pin（防改值后语义漂移，数值出处见 routing-extraction.md）。
  */
 import { describe, it, expect } from 'vitest';
-import {
+import * as constants from '../constants.js';
+
+const {
   ACTION, ACTIONS, LOG_ACTION,
-  MAX_FIX_ROUNDS, MAX_POLL_COUNT, POLL_INTERVAL_MS, MAX_NO_PUSH_STREAK,
+  MAX_POLL_COUNT, POLL_INTERVAL_MS, MAX_NO_PUSH_STREAK,
   MAX_NO_VERDICT_STREAK, MAX_REBASE_ATTEMPTS, MAX_HOPS, BLOCKED_SAME_STATE_CAP, BUDGET_CAP_USD,
-} from '../constants.js';
+} = constants;
 
 describe('constants', () => {
-  it('9 个上限常量数值 pin（Sprint 07231527：MAX_FIX_ROUNDS=3, MAX_HOPS=60）', () => {
-    expect(MAX_FIX_ROUNDS).toBe(3);   // Sprint 07231527 Blocking 1: 从 20 改为 3
+  it('固定 fix 轮数上限已移除，MAX_HOPS 仅保留 4096 宽兜底', () => {
+    expect(constants).not.toHaveProperty('MAX_FIX_ROUNDS');
     expect(MAX_POLL_COUNT).toBe(20);
     expect(POLL_INTERVAL_MS).toBe(90000);
     expect(MAX_NO_PUSH_STREAK).toBe(2);
     expect(MAX_NO_VERDICT_STREAK).toBe(3);
     expect(MAX_REBASE_ATTEMPTS).toBe(3);
-    expect(MAX_HOPS).toBe(60);        // Sprint 07231527: 从 200 改为 60
+    expect(MAX_HOPS).toBe(4096);
     expect(BLOCKED_SAME_STATE_CAP).toBe(2);
     expect(BUDGET_CAP_USD).toBe(10);
   });

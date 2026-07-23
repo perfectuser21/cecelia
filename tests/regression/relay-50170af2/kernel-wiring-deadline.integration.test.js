@@ -4,7 +4,7 @@ import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
 const TASK_ID = '10000000-0000-4000-8000-000000000001';
 const RUN_ID = '20000000-0000-4000-8000-000000000002';
 const BASE_MS = Date.parse('2026-07-23T00:00:00.000Z');
-const DEADLINE_MS = BASE_MS + 120 * 60 * 1000;
+const DEADLINE_MS = BASE_MS + 8 * 60 * 60 * 1000;
 
 function observed({ deadlineAt = new Date(DEADLINE_MS), inflight = [] } = {}) {
   return {
@@ -60,7 +60,7 @@ function harness({ clock, collectGroundTruth, appendHop, dispatch, sleep } = {})
 }
 
 describe('kernel wiring: deadline fences through the real runLoop', () => {
-  test('119:59 may dispatch, while 120:00 terminates before collect', async () => {
+  test('the instant before the activity deadline may dispatch; the boundary terminates before collect', async () => {
     const beforeClock = { value: DEADLINE_MS - 1000 };
     let beforeDispatches = 0;
     const before = harness({
@@ -134,5 +134,132 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
     const result = await runLoop(fixture.deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(result.exitReason).toBe('automation_deadline_exceeded');
     expect(dispatches).toBe(0);
+  });
+
+  test('an open current-SHA human review pauses an already-expired deadline in the real loop', async () => {
+    const headSha = 'a'.repeat(40);
+    const expired = new Date(BASE_MS - 1000);
+    const reviewRequest = {
+      hop: 9,
+      action: 'effect:human_review_requested',
+      observed: { pr: { head_sha: headSha } },
+      detail: { dispatch_hop: 8 },
+      created_at: new Date(BASE_MS - 60_000),
+    };
+    const state = { failedWrites: 0, collects: 0, reviewQueries: [] };
+    const pool = {
+      async query(sql) {
+        const normalized = String(sql);
+        if (/UPDATE initiative_runs/i.test(normalized) && /failure_reason/i.test(normalized)) {
+          state.failedWrites += 1;
+          return { rows: [], rowCount: 1 };
+        }
+        if (/orchestrator_decision_log/i.test(normalized)) {
+          state.reviewQueries.push(normalized);
+          if (/verdict:human_review/i.test(normalized) && !/effect:human_review_requested/i.test(normalized)) {
+            return { rows: [], rowCount: 0 };
+          }
+          return { rows: [reviewRequest], rowCount: 1 };
+        }
+        if (/initiative_runs/i.test(normalized)) {
+          return {
+            rows: [{
+              deadline_at: expired,
+              phase: 'review',
+              open_human_review: true,
+              review_request_hop: reviewRequest.hop,
+              review_head_sha: headSha,
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    const stop = new Error('open-review-sleep-sentinel');
+    const deps = {
+      pool,
+      collectGroundTruth: async () => {
+        state.collects += 1;
+        return {
+          run: { phase: 'review', cost_usd: '0', deadline_at: expired },
+          task: { status: 'in_progress', payload: {} },
+          prdExists: true,
+          contract: { approved: true, id: 'contract-1', row: {} },
+          pr: {
+            url: 'https://github.com/example/repo/pull/1',
+            state: 'OPEN',
+            merged: false,
+            ci: 'pass',
+            head_sha: headSha,
+          },
+          inflight: { containers: [], host_pids: [] },
+          lastAgentExit: { code: null, auth_failed: false },
+          proposeBranchRn: 0,
+          ganLatestRoundVerdict: null,
+          generatorSpawned: true,
+          evaluateVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+          evaluateResult: null,
+          judgeVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+          reviewRequired: true,
+          reviewApproved: false,
+          decisionLog: [reviewRequest],
+          authCircuit: [],
+          callbackResult: null,
+        };
+      },
+      appendHop: async () => {},
+      nextHop: async () => 10,
+      writeHeartbeat: async () => {},
+      dispatch: async () => {
+        throw new Error('open review must not redispatch');
+      },
+      sleep: async () => { throw stop; },
+      now: () => new Date(BASE_MS),
+      log: () => {},
+    };
+
+    await expect(runLoop(deps, { taskId: TASK_ID, runId: RUN_ID }))
+      .rejects.toThrow('open-review-sleep-sentinel');
+    expect(state.collects).toBe(1);
+    expect(state.failedWrites).toBe(0);
+  });
+
+  test.each([
+    ['done', 'already-complete'],
+    ['failed', 'original-failure'],
+  ])('deadline failure write cannot overwrite terminal phase=%s', async (phase, failureReason) => {
+    const state = { phase, failureReason };
+    const expired = new Date(BASE_MS - 1000);
+    const pool = {
+      async query(sql, params = []) {
+        const normalized = String(sql);
+        if (/SELECT\s+deadline_at/i.test(normalized)) {
+          return { rows: [{ deadline_at: expired }], rowCount: 1 };
+        }
+        if (/UPDATE initiative_runs/i.test(normalized) && /failure_reason/i.test(normalized)) {
+          const guarded = /phase\s+NOT\s+IN\s*\(\s*'done'\s*,\s*'failed'\s*\)/i.test(normalized);
+          if (!guarded || !['done', 'failed'].includes(state.phase)) {
+            state.phase = 'failed';
+            state.failureReason = params[1];
+            return { rows: [], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+
+    const result = await runLoop({
+      pool,
+      collectGroundTruth: async () => {
+        throw new Error('expired terminal run must stop before collect');
+      },
+      now: () => new Date(BASE_MS),
+      log: () => {},
+    }, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('automation_deadline_exceeded');
+    expect(state).toEqual({ phase, failureReason });
   });
 });

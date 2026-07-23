@@ -18,26 +18,18 @@ function fixPair(hop, triggerSha, callbackSha, failureClass = 'product_failure')
 }
 
 describe('kernel wiring: fixRound counts only effective product fixes', () => {
-  test('three SHA-advancing product fixes reach cap; recovery, no-callback and same-SHA do not consume it', () => {
-    const logRows = [
-      ...fixPair(1, 'sha-0', 'sha-1'),
-      // Evidence repair never enters the product fix counter.
-      { hop: 3, action: 'spawn:evaluator-evidence-repair', observed: { trigger_sha: 'sha-1' } },
-      ...fixPair(4, 'sha-1', 'sha-env', 'environment_recovery'),
-      // Intent without a completed callback is not an effective fix.
-      {
-        hop: 6,
-        action: 'spawn:generator-fix',
-        observed: { trigger_sha: 'sha-env', failure_class: 'product_failure' },
-      },
-      ...fixPair(7, 'sha-env', 'sha-2'),
-      // Same SHA belongs to the no-progress terminal, not fixRound.
-      ...fixPair(9, 'sha-2', 'sha-2'),
-      ...fixPair(11, 'sha-2', 'sha-3'),
-    ];
+  test('many SHA-advancing product fixes remain routable; fixRound is observation only', () => {
+    const logRows = [];
+    for (let round = 0; round < 12; round += 1) {
+      logRows.push(...fixPair(
+        round * 2 + 1,
+        `sha-${round}`,
+        `sha-${round + 1}`,
+      ));
+    }
 
     const counters = deriveCounters(logRows, { proposeBranchMaxRn: 0 });
-    expect(counters.fixRound).toBe(3);
+    expect(counters.fixRound).toBe(12);
 
     const decision = derive({
       run: { phase: 'generate', cost_usd: '0' },
@@ -49,7 +41,7 @@ describe('kernel wiring: fixRound counts only effective product fixes', () => {
         state: 'OPEN',
         merged: false,
         ci: 'fail',
-        head_sha: 'sha-3',
+        head_sha: 'sha-12',
       },
       inflight: { containers: [], host_pids: [] },
       lastAgentExit: { code: null, auth_failed: false },
@@ -67,9 +59,9 @@ describe('kernel wiring: fixRound counts only effective product fixes', () => {
       counters: { ...counters, ganCostUsd: 0 },
     });
     expect(decision).toMatchObject({
-      phase: 'failed',
-      action: 'mark_failed',
-      reason: 'fix_cap',
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+      reason: 'ci_fail',
     });
   });
 });

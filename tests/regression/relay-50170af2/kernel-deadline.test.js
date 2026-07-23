@@ -1,28 +1,25 @@
 /**
  * kernel-deadline.test.js
  *
- * [BEHAVIOR] B-03：120min 硬上限三道 deadline fence 全接线
+ * [BEHAVIOR] B-03：8h 自动化活动 deadline + 宽 hop fence
  *
  * 先红后绿：当前代码
- * 1. harness-skill-relay.js 写 deadline_at = NOW()+8h（应改为 120min）
- * 2. loop.js 无 deadline fence（runLoop 无任何 deadline 检查）
- * 3. constants.js MAX_FIX_ROUNDS=20, MAX_HOPS=200（应改为 3 和 60）
+ * 固定 fix 轮次上限废弃；deadline 只计算自动化活动时间。
  *
  * Sprint: 07231527-relay-50170af2
  * TASK_ID: 50170af2-fefa-41a7-b0b4-dcf1a5d7b077
  */
 
 import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
-import { MAX_FIX_ROUNDS, MAX_HOPS } from '../../../packages/brain/src/orchestrator/constants.js';
-import { deriveReviewRequired } from '../../../packages/brain/src/harness-skill-relay.js';
+import * as constants from '../../../packages/brain/src/orchestrator/constants.js';
 
 // ---- T-05/T-06：deadline fence ----
 
-describe('[BEHAVIOR] B-03 deadline 120min 三道 fence', () => {
+describe('[BEHAVIOR] B-03 deadline 三道 fence', () => {
   // 共用 mock pool builder
   function makeMockPool({ deadlineAt, decisionLog = [], phase = 'generate' } = {}) {
     const now = new Date();
-    const deadline = deadlineAt ?? new Date(now.getTime() + 120 * 60 * 1000); // default 120min
+    const deadline = deadlineAt ?? new Date(now.getTime() + 8 * 60 * 60 * 1000);
     return {
       query: async (sql, params) => {
         if (sql.includes('initiative_runs') && sql.includes('WHERE id')) {
@@ -74,10 +71,10 @@ describe('[BEHAVIOR] B-03 deadline 120min 三道 fence', () => {
   }
 
   /**
-   * T-05：119:59 时（deadline 还差 1 秒）不触发 terminal。
+   * T-05：deadline 还差 1 秒时不触发 terminal。
    * 验证 fence 仅在真正超过 deadline 时触发。
    */
-  test('T-05: deadline 前（119:59）不触发 terminal', async () => {
+  test('T-05: deadline 前 1 秒不触发 terminal', async () => {
     const futureDeadline = new Date(Date.now() + 1000); // 1 秒后 = 还未过期
     const pool = makeMockPool({ deadlineAt: futureDeadline, phase: 'planning' });
     let loopResult = null;
@@ -253,28 +250,23 @@ describe('[BEHAVIOR] B-03 deadline 120min 三道 fence', () => {
 
 // ---- T：constants 值断言 ----
 
-describe('[BEHAVIOR] B-07 MAX_FIX_ROUNDS=3, MAX_HOPS=60', () => {
-  /**
-   * 当前代码 MAX_FIX_ROUNDS=20, MAX_HOPS=200，测试会 FAIL（先红）。
-   * 实现后改为 3 和 60。
-   */
-  test('MAX_FIX_ROUNDS 应为 3', () => {
-    expect(MAX_FIX_ROUNDS).toBe(3);
+describe('[BEHAVIOR] B-07 固定 fix cap 删除，MAX_HOPS=4096', () => {
+  test('MAX_FIX_ROUNDS 不再导出', () => {
+    expect(constants).not.toHaveProperty('MAX_FIX_ROUNDS');
   });
 
-  test('MAX_HOPS 应为 60', () => {
-    expect(MAX_HOPS).toBe(60);
+  test('MAX_HOPS 应为 4096 宽兜底', () => {
+    expect(constants.MAX_HOPS).toBe(4096);
   });
 });
 
 // ---- harness-skill-relay deadline 断言 ----
 
-describe('[BEHAVIOR] B-03 harness-skill-relay deadline_at = 120min', () => {
+describe('[BEHAVIOR] B-03 kernel-v1 deadline_at = 8h', () => {
   /**
-   * 验证 _spawnKernelRuntime 的 deadline_at SQL 是 NOW()+120min 而非 NOW()+8h。
-   * 当前代码写的是 INTERVAL '8 hours'（先红）。
+   * 验证 _spawnKernelRuntime 的 kernel-v1 INSERT 使用 8h。
    */
-  test('harness-skill-relay.js 的 deadline SQL 应含 120 minutes 而非 8 hours', async () => {
+  test('kernel-v1 INSERT 的 deadline SQL 使用 8 hours', async () => {
     // 读取源文件，验证 SQL 字符串
     const { readFileSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
@@ -283,9 +275,11 @@ describe('[BEHAVIOR] B-03 harness-skill-relay deadline_at = 120min', () => {
       'utf8',
     );
 
-    // 实现后期望：含 '120 minutes'
-    // 当前（先红）：含 '8 hours' 或 '480 minutes'
-    expect(src).toMatch(/120\s*minutes/i);
-    expect(src).not.toMatch(/8\s*hours/i);
+    const kernelInsert = src.match(
+      /INSERT INTO initiative_runs[\s\S]*?'kernel-v1'[\s\S]*?RETURNING id/,
+    )?.[0];
+    expect(kernelInsert).toBeTruthy();
+    expect(kernelInsert).toMatch(/INTERVAL\s+'8 hours'/i);
+    expect(kernelInsert).not.toMatch(/INTERVAL\s+'120 minutes'/i);
   });
 });
