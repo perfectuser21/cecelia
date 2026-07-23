@@ -154,6 +154,7 @@ console.log(`──────────────────────�
 console.log(`合计: ${passed + failed} 条，${GREEN}${passed} PASS${RESET}，${RED}${failed} FAIL${RESET}`);
 console.log(`─────────────────────────────────────`);
 
+// 注：本文件是 plain-node 合同脚本，已改名 .check.cjs 移出 vitest glob（CJS 无法 require vitest）
 if (failed > 0) {
   console.log(`${RED}[合同 commit 1 = Red] 预期失败 — 实现后重跑应全绿${RESET}`);
   process.exit(1);

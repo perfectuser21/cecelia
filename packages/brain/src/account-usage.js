@@ -246,6 +246,27 @@ export function resetAuthFailureCount(accountId) {
   }
 }
 
+/**
+ * 清除账号的 auth 熔断（内存 + DB）+ 重置退避计数。
+ *
+ * 来源无关自愈（issue 5167ef48）：usage API 对该账号实测 200 = 凭据被证明有效，
+ * 无论熔断来源是 api_error / token_expired / 重启恢复丢 source，都应立即解除隔离。
+ * 旧自愈只认 source==='token_expired'，而 DB 不存 source → Brain 重启后熔断
+ * 永远清不掉，token 已刷新仍空等最长 24h（143f66e1 四连 Not logged in 事故根因）。
+ */
+export function clearAuthFailure(accountId, reason = 'credentials_verified') {
+  if (!_authFailureMap.has(accountId)) return;
+  _authFailureMap.delete(accountId);
+  _authFailureCountMap.delete(accountId);
+  console.log(`[account-usage] [auth-circuit-breaker] ${accountId}: 熔断已清除（${reason}）`);
+  pool.query(
+    `UPDATE account_usage_cache
+     SET is_auth_failed = false, auth_fail_resets_at = NULL, auth_fail_count = 0
+     WHERE account_id = $1`,
+    [accountId]
+  ).catch(err => console.warn(`[account-usage] clearAuthFailure DB 更新失败: ${err.message}`));
+}
+
 /** 测试用：清除所有 auth 失败状态（仅供 test 调用） */
 export function _resetAuthFailures() {
   _authFailureMap.clear();
@@ -590,6 +611,11 @@ export async function getAccountUsage(forceRefresh = false, accounts = ACCOUNTS)
         };
       }
     } else if (data) {
+      // usage API 实测 200 = 凭据被证明有效 → 来源无关清除该账号 auth 熔断
+      // （issue 5167ef48：重启恢复的熔断丢 source，旧自愈永不命中）
+      if (isAuthFailed(accountId)) {
+        clearAuthFailure(accountId, 'usage_api_200');
+      }
       results[accountId] = await upsertCache(accountId, data);
     } else {
       const stale = await getStaleCached(accountId);

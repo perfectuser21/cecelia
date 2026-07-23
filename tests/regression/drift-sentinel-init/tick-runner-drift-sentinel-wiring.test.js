@@ -14,7 +14,8 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BRAIN_SRC = resolve(__dirname, '../../../../packages/brain/src');
+// 毕业搬家修正（5167ef48 顺手清雷）：sprints/<x>/tests/ 时代是 4 级，tests/regression/<x>/ 是 3 级
+const BRAIN_SRC = resolve(__dirname, '../../../packages/brain/src');
 
 const SCHEDULER_JOBS_SRC = readFileSync(resolve(BRAIN_SRC, 'scheduler-jobs.js'), 'utf8');
 const DRIFT_SENTINEL_SRC = readFileSync(resolve(BRAIN_SRC, 'cron/drift-sentinel.js'), 'utf8');
