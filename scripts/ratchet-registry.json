@@ -11,7 +11,7 @@
     "name": "permanent_tests",
     "label": "永久池测试总数",
     "direction": "only_up",
-    "watermark": 1250,
+    "watermark": 1251,
     "guard": "test-pyramid-guard A3",
     "source": "countPermanent(root, roots).total via test-pyramid-guard.mjs"
   },

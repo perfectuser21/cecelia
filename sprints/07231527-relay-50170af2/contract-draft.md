@@ -98,7 +98,9 @@
 
 **验收命令**：
 ```bash
-node packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
+cd packages/brain && npx --no-install vitest run \
+  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
+  -t "failure classification" --reporter=verbose
 ```
 
 ### E2E-2：same SHA no-progress terminal（集成）
@@ -112,13 +114,9 @@ node packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.
 
 **验收命令**：
 ```bash
-node -e "
-const { default: pool } = await import('./packages/brain/src/db.js');
-const res = await pool.query(\"SELECT phase, failure_reason FROM initiative_runs WHERE id='\$RUN_ID'\");
-console.assert(res.rows[0].phase === 'failed');
-console.assert(res.rows[0].failure_reason === 'no_progress_same_sha');
-await pool.end();
-"
+cd packages/brain && npx --no-install vitest run \
+  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
+  -t "no-progress" --reporter=verbose
 ```
 
 ### E2E-3：120min deadline terminal（集成）
@@ -130,6 +128,13 @@ await pool.end();
 - run.phase = 'failed'，failure_reason = 'automation_deadline_exceeded'
 - 决策日志无新 spawn intent 行
 
+**验收命令**：
+```bash
+cd packages/brain && npx --no-install vitest run \
+  ../../tests/regression/relay-50170af2/kernel-wiring-deadline.integration.test.js \
+  --reporter=verbose
+```
+
 ### E2E-4：重启持久化计数（集成）
 
 1. 运行 runLoop 跑 3 个 wait:poll_ci 跳后人为退出
@@ -140,23 +145,57 @@ await pool.end();
 - 第二次启动后 pollCount ≥ 3
 - 决策日志中 `wait:poll_ci` 行 ≥ 3
 
+**验收命令**：
+```bash
+cd packages/brain && npx --no-install vitest run \
+  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
+  -t "restart recovery" --reporter=verbose
+```
+
 ### E2E-5：approval bridge fail-closed（manual:bash）
 
 ```bash
-# 未配 token → 503
-curl -s -o /dev/null -w "%{http_code}" -X POST \
-  http://localhost:5221/api/brain/harness/pending-reviews/fake-task/approve \
-  -H "Content-Type: application/json" \
-  -d '{"approved_by":"test"}'
-# 期望: 503
+# 主验收：真实 Express mount + 正式 migrations PostgreSQL + 并发重复批准 + 429
+(cd packages/brain && npx --no-install vitest run \
+  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
+  -t "approval HTTP route" --reporter=verbose)
 
-# 错误 token → 401
-curl -s -o /dev/null -w "%{http_code}" -X POST \
-  http://localhost:5221/api/brain/harness/pending-reviews/fake-task/approve \
-  -H "x-approver-token: wrong-token" \
-  -H "Content-Type: application/json" \
-  -d '{"approved_by":"test"}'
-# 期望: 401
+# 启动生产 router 的一次性本地 Express mount，再用 curl 补验。
+port_file="$(mktemp)"
+NODE_ENV="test" DB_NAME="cecelia_test" \
+  HARNESS_REVIEW_APPROVER_TOKEN="contract-token" PORT_FILE="$port_file" \
+  node --input-type=module <<'NODE' &
+import express from 'express';
+import { writeFileSync } from 'node:fs';
+import router from './packages/brain/src/routes/harness-kernel-approvals.js';
+const app = express();
+app.use(express.json());
+app.use('/api/brain/harness/kernel-reviews', router);
+const server = app.listen(0, '127.0.0.1', () => {
+  writeFileSync(process.env.PORT_FILE, String(server.address().port));
+});
+process.on('SIGTERM', () => server.close(() => process.exit(0)));
+NODE
+server_pid=$!
+trap 'kill "$server_pid" 2>/dev/null || true; rm -f "$port_file" "$body_file"' EXIT
+for _ in $(seq 1 50); do
+  test -s "$port_file" && break
+  sleep 0.1
+done
+test -s "$port_file"
+port="$(cat "$port_file")"
+body_file="$(mktemp)"
+http_code="$(curl -sS -o "$body_file" -w '%{http_code}' -X POST \
+  "http://127.0.0.1:${port}/api/brain/harness/kernel-reviews/00000000-0000-4000-8000-000000000000/approve" \
+  -H 'x-approver-token: wrong-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"task_id":"00000000-0000-4000-8000-000000000001","pr_head_sha":"stale","review_request_hop":1,"approved_by":"contract-test"}')"
+test "$http_code" = "401"
+jq -e '.error == "invalid approver token"' "$body_file" >/dev/null
+kill "$server_pid"
+wait "$server_pid"
+rm -f "$port_file" "$body_file"
+trap - EXIT
 ```
 
 ### E2E-6：d707 hop 55-66 replay 不产生重复 fix
@@ -167,6 +206,13 @@ curl -s -o /dev/null -w "%{http_code}" -X POST \
 - hop 58-66 不产生 9 次 `spawn:generator-fix` 行
 - 在 hop 56（evidence_invalid）时路由到 `spawn:evaluator-evidence-repair`
 - 在 hop 57（same SHA no-progress）时 terminal
+
+**验收命令**：
+```bash
+cd packages/brain && npx --no-install vitest run \
+  ../../tests/regression/relay-50170af2/d707-replay.test.js \
+  --reporter=verbose
+```
 
 ---
 
@@ -181,6 +227,24 @@ curl -s -o /dev/null -w "%{http_code}" -X POST \
 | B-05 持久化计数 | `../../tests/regression/relay-50170af2/kernel-persistent-counters.test.js` | T-08-a/T-08-b/T-08-c/T-08-d/T-09 | 先红：wait:poll_ci 不写 decision log |
 | B-06 approval bridge | `../../tests/regression/relay-50170af2/kernel-approval-bridge.test.js` | T-17-a/T-17-b/T-17-c/T-17-d/T-17-e/T-17-f | 先红：bridge 无 SHA 锚定校验 |
 | B-08 d707 replay | `../../tests/regression/relay-50170af2/d707-replay.test.js` | T-04-a/T-04-b/T-04-c/T-04-d/T-04-e | 先红：d707 10次 fix 无熔断 |
+| 真 PostgreSQL 接缝 | `packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js` | blocked/needs-context/poll 重启、failure_class、callback no-progress、approval 并发与 429 | 先红：callback 404、并发 loser 500、突发请求无 429 |
+
+## 禁 mock 边清单
+
+以下边界属于本合同的正确性核心，在
+`packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js`
+中禁止 mock，并由一次性数据库跑正式 000~357 migrations 后验证：
+
+- **DB decision log**：`orchestrator_decision_log` 的真实 PostgreSQL INSERT、JSONB、UNIQUE、advisory lock、回读与 append-only 约束。
+- **loop ↔ derive ↔ dispatch ↔ callback**：使用真实 `runLoop`、`collectGroundTruth`、`deriveCounters`、`derive`、真实 HTTP callback handler 与真实 `createAttemptStore`；禁止直接注入 `noProgressSameSha`。
+- **approval auth/mount/DB**：使用真实 Express router mount、`authenticateApprover`、PostgreSQL transaction/lock/decision-log；并发两个合法批准必须只有一个 202 和一行 verdict。
+- **重启恢复**：实例 A/B 使用同 `run_id` 和同一 PostgreSQL 数据库重新构造；禁止用进程内数组伪造 blockedStreak/pollCount。
+
+仅以下最外层、CI 不可用的外部副作用允许替身：
+
+- GitHub `gh pr view` / CI rollup 观测；
+- Docker 容器/PID 列举；
+- generator provider 的实际进程启动。
 
 ## 不变量约束（全量引用）
 
