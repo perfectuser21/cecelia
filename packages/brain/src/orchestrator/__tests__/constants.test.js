@@ -10,14 +10,14 @@ import {
 } from '../constants.js';
 
 describe('constants', () => {
-  it('9 个上限常量数值 pin（出处=旧图，routing-extraction.md）', () => {
-    expect(MAX_FIX_ROUNDS).toBe(20);
+  it('9 个上限常量数值 pin（Sprint 07231527：MAX_FIX_ROUNDS=3, MAX_HOPS=60）', () => {
+    expect(MAX_FIX_ROUNDS).toBe(3);   // Sprint 07231527 Blocking 1: 从 20 改为 3
     expect(MAX_POLL_COUNT).toBe(20);
     expect(POLL_INTERVAL_MS).toBe(90000);
     expect(MAX_NO_PUSH_STREAK).toBe(2);
     expect(MAX_NO_VERDICT_STREAK).toBe(3);
     expect(MAX_REBASE_ATTEMPTS).toBe(3);
-    expect(MAX_HOPS).toBe(200);
+    expect(MAX_HOPS).toBe(60);        // Sprint 07231527: 从 200 改为 60
     expect(BLOCKED_SAME_STATE_CAP).toBe(2);
     expect(BUDGET_CAP_USD).toBe(10);
   });

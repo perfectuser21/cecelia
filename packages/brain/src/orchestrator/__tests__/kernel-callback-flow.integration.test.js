@@ -238,7 +238,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       readFile: () => '',
       dispatch,
       nextHop: async () => ++hop,
-      appendHop: async (_pool, entry) => decisionLog.push(entry),
+      appendHop: async (entry) => decisionLog.push(entry),
       writeHeartbeat: async () => {},
       sleep: async () => {},
       now: () => new Date('2026-07-22T00:01:00Z'),
