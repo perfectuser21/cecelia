@@ -44,7 +44,7 @@
 ```bash
 #!/usr/bin/env bash
 # E2E 验收脚本 — playground GET /square
-# 使用 localhost:${PLAYGROUND_PORT:-3001}，不得调用 Brain 端口 5221
+# 使用 localhost:${PLAYGROUND_PORT:-3001}，不得调用 Brain 调度端口
 
 set -euo pipefail
 PORT=${PLAYGROUND_PORT:-3001}
