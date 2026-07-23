@@ -22,15 +22,22 @@ const SESSION = 'alex-infra-main';
 const ACTOR = 'alex';
 const PROJECT = 'infrastructure';
 const NAME = 'main';
+const REAL_XIAN_M4_TAILSCALE_STATUS = JSON.parse(
+  await readFile(new URL('./fixtures/xian-m4-tailscale-status.json', import.meta.url), 'utf8')
+);
 
 function tailscaleStatus({
+  id = 'node-id-mmv',
   hostName = 'mmv',
   dnsName = 'mmv.example.ts.net.',
+  tailscaleIPs = ['100.64.0.10'],
   online = true,
   selected = true,
+  exitNodeStatus = {},
+  includeExitNodeStatus = true,
   self = {},
 } = {}) {
-  return {
+  const status = {
     Self: {
       HostName: 'xian-m4',
       DNSName: 'xian-m4.example.ts.net.',
@@ -40,13 +47,24 @@ function tailscaleStatus({
     },
     Peer: {
       'node-key': {
+        ID: id,
         HostName: hostName,
         DNSName: dnsName,
+        TailscaleIPs: tailscaleIPs,
         Online: online,
         ExitNode: selected,
       },
     },
   };
+  if (includeExitNodeStatus) {
+    status.ExitNodeStatus = {
+      ID: id,
+      Online: true,
+      TailscaleIPs: tailscaleIPs.map((ip) => `${ip}/${ip.includes(':') ? 128 : 32}`),
+      ...exitNodeStatus,
+    };
+  }
+  return status;
 }
 
 async function tempHome(t) {
@@ -307,6 +325,112 @@ test('health samples tailscale status --json and accepts the selected online mmv
   assert.equal(result.exitNodeOk, true);
   assert.equal(result.enabled, true);
   assert.equal(execCalls.filter(({ cmd }) => cmd === 'tailscale').length, 1);
+});
+
+test('health accepts the real xian-m4 exit-node shape as canonical mmv', async (t) => {
+  const { deps } = await makeDeps(t, {
+    sampleTailscaleStatus: async () => structuredClone(REAL_XIAN_M4_TAILSCALE_STATUS),
+  });
+
+  const result = await runAgent(['health'], deps);
+
+  assert.equal(result.exitNode, 'mmv');
+  assert.equal(result.exitNodeOk, true);
+  assert.equal(result.enabled, true);
+});
+
+test('health requires an online ExitNodeStatus for the selected peer', async (t) => {
+  for (const [name, sampleTailscaleStatus] of [
+    ['missing status', async () => tailscaleStatus({ includeExitNodeStatus: false })],
+    [
+      'offline status',
+      async () => tailscaleStatus({ exitNodeStatus: { Online: false } }),
+    ],
+  ]) {
+    const { deps } = await makeDeps(t, { sampleTailscaleStatus });
+    const result = await runAgent(['health'], deps);
+    assert.equal(result.exitNodeOk, false, name);
+    assert.equal(result.enabled, false, name);
+  }
+});
+
+test('health requires ExitNodeStatus and peer stable IDs to be present and equal', async (t) => {
+  for (const [name, sampleTailscaleStatus] of [
+    [
+      'missing peer ID',
+      async () => {
+        const status = tailscaleStatus();
+        delete status.Peer['node-key'].ID;
+        return status;
+      },
+    ],
+    [
+      'missing status ID',
+      async () => tailscaleStatus({ exitNodeStatus: { ID: '' } }),
+    ],
+    [
+      'mismatched stable ID',
+      async () => tailscaleStatus({ exitNodeStatus: { ID: 'node-id-other' } }),
+    ],
+  ]) {
+    const { deps } = await makeDeps(t, { sampleTailscaleStatus });
+    const result = await runAgent(['health'], deps);
+    assert.equal(result.exitNodeOk, false, name);
+    assert.equal(result.enabled, false, name);
+  }
+});
+
+test('health compares non-empty peer and ExitNodeStatus IP sets after host-prefix normalization', async (t) => {
+  const ipv6 = 'fd7a:115c:a1e0:ab12:4843:cd96:6247:9769';
+  const accepted = await makeDeps(t, {
+    sampleTailscaleStatus: async () => tailscaleStatus({
+      tailscaleIPs: ['100.71.151.105', ipv6],
+      exitNodeStatus: {
+        TailscaleIPs: [`${ipv6}/128`, '100.71.151.105/32'],
+      },
+    }),
+  });
+  const acceptedResult = await runAgent(['health'], accepted.deps);
+  assert.equal(acceptedResult.exitNode, 'mmv');
+  assert.equal(acceptedResult.exitNodeOk, true);
+  assert.equal(acceptedResult.enabled, true);
+
+  for (const [name, sampleTailscaleStatus] of [
+    [
+      'empty peer IPs',
+      async () => tailscaleStatus({
+        tailscaleIPs: [],
+        exitNodeStatus: { TailscaleIPs: ['100.71.151.105/32'] },
+      }),
+    ],
+    [
+      'empty status IPs',
+      async () => tailscaleStatus({ exitNodeStatus: { TailscaleIPs: [] } }),
+    ],
+    [
+      'mismatched IPs',
+      async () => tailscaleStatus({
+        exitNodeStatus: { TailscaleIPs: ['100.71.151.106/32'] },
+      }),
+    ],
+  ]) {
+    const { deps } = await makeDeps(t, { sampleTailscaleStatus });
+    const result = await runAgent(['health'], deps);
+    assert.equal(result.exitNodeOk, false, name);
+    assert.equal(result.enabled, false, name);
+  }
+});
+
+test('health does not trust the mmv alias from HostName alone', async (t) => {
+  const { deps } = await makeDeps(t, {
+    sampleTailscaleStatus: async () => tailscaleStatus({ dnsName: '' }),
+  });
+
+  const result = await runAgent(['health'], deps);
+
+  assert.equal(result.exitNode, null);
+  assert.equal(result.exitNodeOk, false);
+  assert.equal(result.enabled, false);
 });
 
 test('health fails closed for every invalid exit-node state without exposing command output', async (t) => {

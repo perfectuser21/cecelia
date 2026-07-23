@@ -15,7 +15,7 @@ import {
 
 const CLIENT_PATH = resolve('scripts/codex-slot-client.mjs');
 const ENTRY_PATH = resolve('scripts/codex-slot');
-const REMOTE_FIXED_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+const REMOTE_FIXED_PATH = '/Applications/Tailscale.app/Contents/MacOS:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
 function option(args, name) {
   const index = args.indexOf(`--${name}`);
