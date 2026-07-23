@@ -45,6 +45,20 @@ function makeObserved(failureClass) {
   };
 }
 
+function makeJudgeObserved(judgeVerdict) {
+  const observed = makeObserved('product_failure');
+  observed.evaluateVerdict = {
+    verdict: 'PASS',
+    pr_head_sha: observed.pr.head_sha,
+  };
+  observed.judgeVerdict = {
+    verdict: 'FAIL',
+    pr_head_sha: observed.pr.head_sha,
+    ...judgeVerdict,
+  };
+  return observed;
+}
+
 describe('[BEHAVIOR] B-04 failure_class 五类路由矩阵', () => {
 
   /**
@@ -83,6 +97,19 @@ describe('[BEHAVIOR] B-04 failure_class 五类路由矩阵', () => {
     obs.evaluateVerdict = { verdict: 'FAIL', pr_head_sha: 'sha-abc' }; // 无 failure_class 字段
     const result = derive(obs);
     expect(result.action).toBe('spawn:generator-fix');
+  });
+
+  /**
+   * R3：judge FAIL 的 failure_class 显式为 null 时，不得沿用 evaluator
+   * 的保守 product-fix 兼容语义，必须归一为 unknown 后等待人工。
+   */
+  test('R3: judge FAIL 且 failure_class=null → unknown human review', () => {
+    const result = derive(makeJudgeObserved({ failure_class: null }));
+    expect(result).toMatchObject({
+      phase: 'review',
+      action: 'wait:human_review',
+      reason: 'unknown:awaiting_human_review',
+    });
   });
 
   /**

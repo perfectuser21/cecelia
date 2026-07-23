@@ -310,13 +310,16 @@ describe('规则 4b：judge 硬门禁', () => {
 });
 
 describe('规则 4c：judge FAIL → 显式分支（P0-2）', () => {
-  it('judge FAIL（本 sha）→ phase=generate, action=spawn:generator-fix（新 commit 改 SHA，旧 verdict 天然作废）', () => {
+  it('judge FAIL（本 sha）且 failure_class 字段缺失 → unknown human review', () => {
     const r = derive(baseObserved({
       evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
       judgeVerdict: { verdict: 'FAIL', pr_head_sha: 'sha-new' },
     }));
-    expect(r.phase).toBe('generate');
-    expect(r.action).toBe('spawn:generator-fix');
+    expect(r).toMatchObject({
+      phase: 'review',
+      action: 'wait:human_review',
+      reason: 'unknown:awaiting_human_review',
+    });
   });
 });
 
