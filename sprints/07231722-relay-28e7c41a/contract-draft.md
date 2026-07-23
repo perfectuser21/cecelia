@@ -139,3 +139,16 @@
 - 跨设备多机 panorama
 - codex-usage 实时余量（仅进程数）
 - grok resets_at（llm_capacity.vendors.grok 结构已包含但不特殊展示 resets_at）
+
+---
+
+## E2E 验收
+
+E2E 验收脚本：`sprints/07231722-relay-28e7c41a/tests/e2e-ops-panorama.sh`
+
+运行方式：
+```bash
+bash sprints/07231722-relay-28e7c41a/tests/e2e-ops-panorama.sh
+```
+
+覆盖范围：DoD-01~10（API 层）、DoD-11（安全合规）、DoD-17（回归护栏）。
