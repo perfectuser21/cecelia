@@ -1,0 +1,67 @@
+{
+  "verdict": "PASS",
+  "sha": "8f9608e",
+  "task_id": "97f490f5-d3d0-499c-835b-b4558406e9d1",
+  "pr": 4230,
+  "branch": "cp-07231828-ws-97f490f5",
+  "evaluated_at": "2026-07-23T10:51:00Z",
+  "sprint_dir": "sprints/07231828-relay-97f490f5",
+  "target_environment": "playground",
+
+  "vitest_results": {
+    "total": 260,
+    "passed": 260,
+    "failed": 0,
+    "sign_tests": {
+      "total": 34,
+      "passed": 34,
+      "failed": 0
+    },
+    "regressions": 0,
+    "note": "echo.test.js 有 4 个已有失败（与 /sign 无关，系 /echo 端点的已知问题，非本 PR 引入回退）"
+  },
+
+  "e2e_results": {
+    "total": 16,
+    "passed": 16,
+    "failed": 0,
+    "details": [
+      "PASS [B1] value=5 → 200 result:1",
+      "PASS [B1] value=1 → 200 result:1",
+      "PASS [B1] value=MAX_SAFE_INT → 200 result:1",
+      "PASS [B2] value=0 → 200 result:0",
+      "PASS [B3] value=-3 → 200 result:-1",
+      "PASS [B3] value=-1 → 200 result:-1",
+      "PASS [B6] operation 字段 === sign",
+      "PASS [B4] value 缺失 → 400",
+      "PASS [B4] value=3.14 → 400（小数）",
+      "PASS [B4] value=abc → 400（字母）",
+      "PASS [B4] value=9007199254740992 → 400（超界）",
+      "PASS [B4] value=1e3 → 400（科学计数法）",
+      "PASS [B4] value=%2B5 → 400（前导正号）",
+      "PASS [B4] value= → 400（空串）",
+      "PASS [B4] value=Infinity → 400",
+      "PASS [B4] value=NaN → 400"
+    ]
+  },
+
+  "dod_coverage": {
+    "DP-1": {"desc": "正整数 happy path", "covered": true, "tests": ["[B1/DP-1] value=5"]},
+    "DP-2": {"desc": "零 happy path（非 -0）", "covered": true, "tests": ["[B2/DP-2] value=0"]},
+    "DP-3": {"desc": "负整数 happy path", "covered": true, "tests": ["[B3/DP-3] value=-3"]},
+    "DP-4": {"desc": "MAX_SAFE_INTEGER 边界", "covered": true, "tests": ["[B1/DP-4] value=9007199254740991"]},
+    "DP-5": {"desc": "MAX_SAFE_INTEGER+1 拒", "covered": true, "tests": ["[B4/DP-5] value=9007199254740992"]},
+    "DP-6": {"desc": "value 缺失拒", "covered": true, "tests": ["[B4/DP-6] 无 query"]},
+    "DP-7": {"desc": "小数拒", "covered": true, "tests": ["[B4/DP-7] value=3.14"]},
+    "DP-8": {"desc": "字母拒", "covered": true, "tests": ["[B4/DP-8] value=abc"]},
+    "DP-9": {"desc": "schema 完整性", "covered": true, "tests": ["[B5/DP-9] Object.keys sort"]},
+    "DP-10": {"desc": "operation 字面锁定", "covered": true, "tests": ["[B6/DP-10] operation===sign"]},
+    "DP-11": {"desc": "result 值域约束", "covered": true, "tests": ["[B5/DP-11] ∈{-1,0,1}"]},
+    "DP-12": {"desc": "错误响应 schema", "covered": true, "tests": ["[B4/DP-12] keys===['error']"]},
+    "DP-13": {"desc": "禁用字段反向断言", "covered": true, "tests": ["[B5/DP-13] 禁用同义字段"]}
+  },
+
+  "unverifiable": [],
+
+  "verdict_file": ".harness/verdicts/evaluate-8f9608e.json"
+}

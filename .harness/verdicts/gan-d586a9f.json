@@ -1,0 +1,52 @@
+{
+  "verdict": "APPROVED",
+  "round": 1,
+  "sha7": "d586a9f",
+  "task_id": "97f490f5-d3d0-499c-835b-b4558406e9d1",
+  "sprint_dir": "sprints/07231828-relay-97f490f5",
+  "reviewer": "harness-contract-reviewer",
+  "reviewed_at": "2026-07-23",
+
+  "rubric_scores": {
+    "completeness": 10,
+    "correctness": 10,
+    "testability": 10,
+    "E2E_coverage": 9,
+    "boundary_coverage": 10,
+    "schema_precision": 10,
+    "NFR_coverage": 8
+  },
+  "total": 67,
+  "max_total": 70,
+
+  "judgments_written": 13,
+  "judgments_map": {
+    "DP-1":  "sign.test.js:17-22  [B1/DP-1] value=5 → 200 + result:1 + operation:'sign'",
+    "DP-2":  "sign.test.js:47-57  [B2/DP-2] value=0 → 200 + result:0 且 Object.is(result,-0)===false",
+    "DP-3":  "sign.test.js:61-66  [B3/DP-3] value=-3 → 200 + result:-1 + operation:'sign'",
+    "DP-4":  "sign.test.js:38-43  [B1/DP-4] value=9007199254740991 → 200 + result:1",
+    "DP-5":  "sign.test.js:141-148 [B4/DP-5] value=9007199254740992 → 400 + error非空 + 无result/operation",
+    "DP-6":  "sign.test.js:159-164 [B4/DP-6] 无query → 400 + error非空",
+    "DP-7":  "sign.test.js:168-174 [B4/DP-7] value=3.14 → 400 + 无result",
+    "DP-8":  "sign.test.js:184-190 [B4/DP-8] value=abc → 400 + 无result",
+    "DP-9":  "sign.test.js:91-95  [B5/DP-9] Object.keys(body).sort() === ['operation','result']",
+    "DP-10": "sign.test.js:128-137 [B6/DP-10] operation严格==='sign'，排除signum/sgn/sign_function/Symbol/symbol",
+    "DP-11": "sign.test.js:97-110 [B5/DP-11] result∈{-1,0,1} number类型",
+    "DP-12": "sign.test.js:259-283 [B4/DP-12] 错误响应keys===["error"]，不含result/operation/message/msg等",
+    "DP-13": "sign.test.js:112-124 [B5/DP-13] 成功响应不含禁用同义字段(sign/signum/value/input等)"
+  },
+
+  "dimension_notes": {
+    "completeness": "PRD 全部行为已映射到 BEHAVIOR-1..6 + DoD 13 条判定点，无遗漏。测试文件覆盖所有 DP，30 个 test case 全部落地。",
+    "correctness": "符号函数三路（正/零/负）规则、合法范围（^-?\\d+$ + |N|≤9007199254740991）、-0 拒绝、-MAX_SAFE_INT 接受等，与 PRD 完全一致。Object.is 反-0 断言技术正确。",
+    "testability": "supertest 导入 app 对象，直接 HTTP 断言，vitest 可独立执行，无外部依赖，完全可自动化运行。manual:bash 脚本亦可单独执行并自我报告 PASS/FAIL。",
+    "E2E_coverage": "manual:bash 脚本覆盖 12 个场景（正整数3+零1+负整数2+operation1+缺参1+小数1+字母1+超界1+科学计数1），漏掉 -0、value=-、value=--5、value=0xff、千分位等边界 case；vitest 层已覆盖。整体 E2E 集成覆盖率略低于单元层，扣1分。",
+    "boundary_coverage": "MAX_SAFE_INTEGER 上界（+1拒）、-MAX_SAFE_INTEGER、value=0（非-0）、前导正号、科学计数法、十六进制、千分位、仅负号 '-'、双负号 '--5' 等所有 PRD 明示边界均有测试覆盖，满分。",
+    "schema_precision": "200 响应：keys严格=['operation','result']，result类型=number，result值域∈{-1,0,1}，operation字面锁定，禁用字段黑名单完整。400响应：keys严格=['error']，error类型=string+非空，禁用替代名(message/msg/reason等)。精确度满分。",
+    "NFR_coverage": "PRD 明确标注超时/频控/版本/可观测均'无/待定'，合同无需包含，现有内容符合。NFR 约束不是本 sprint 要点，扣2分反映信息量轻微不足，非缺陷。"
+  },
+
+  "feedback": null,
+
+  "summary": "合同草稿质量高。30个测试用例覆盖全部13个判定点（DP-1到DP-13），PRD->BEHAVIOR->DP->test 链路完整闭合。边界覆盖超出PRD最低要求（额外测试 -、--5、0xff、千分位等）。schema 精确度满分，尤其 Object.is 反-0 断言、错误响应禁用字段黑名单、禁用同义字段黑名单三项均属超额交付。manual:bash E2E 脚本在集成层略少覆盖单元层已有的超边界case，属可接受差异。综合得分 67/70，直接 APPROVED。"
+}
