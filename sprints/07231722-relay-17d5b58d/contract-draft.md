@@ -80,6 +80,7 @@
 | 错误 query 名 `a=5` | HTTP 400 |
 | 错误 query 名 `b=5` | HTTP 400 |
 | 错误 query 名 `num=5` | HTTP 400 |
+| 错误 query 名 `number=5` | HTTP 400 |
 | 错误 query 名 `input=5` | HTTP 400 |
 | 错误 query 名 `v=5` | HTTP 400 |
 | 错误 query 名 `val=5` | HTTP 400 |

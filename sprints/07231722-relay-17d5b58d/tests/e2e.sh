@@ -136,6 +136,27 @@ assert_status "GET /negate?value=1e2（科学计数法）→ HTTP 400" "400" "${
 # 10. value=+5 → HTTP 400
 assert_status "GET /negate?value=+5（前导+）→ HTTP 400" "400" "${BASE}/negate?value=%2B5"
 
+# 11. 验证 400 响应包含 error 字段非空
+ERR_BODY=$(curl -s "${BASE}/negate")
+ERR_FIELD=$(echo "$ERR_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('error',''); print(v)" 2>/dev/null || echo "")
+if [ -n "$ERR_FIELD" ]; then
+  pass "400 响应包含非空 error 字段: error='$ERR_FIELD'"
+else
+  fail "400 响应缺少 error 字段或为空（body=$ERR_BODY）"
+fi
+
+echo ""
+echo "--- 回归验证 ---"
+
+# 12. /health 回归
+assert_status "GET /health 回归" "200" "${BASE}/health"
+
+# 13. /increment?value=1 回归
+assert_status "GET /increment?value=1 回归" "200" "${BASE}/increment?value=1"
+
+# 14. /decrement?value=1 回归
+assert_status "GET /decrement?value=1 回归" "200" "${BASE}/decrement?value=1"
+
 echo ""
 echo "--- 汇总 ---"
 echo -e "通过: ${GREEN}${PASS}${NC}，失败: ${RED}${FAIL}${NC}"
