@@ -229,6 +229,99 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
     expect(state.failedWrites).toBe(0);
   });
 
+  test('a stale open request cannot pause deadline when current derive is not human review', async () => {
+    const headSha = 'a'.repeat(40);
+    const expired = new Date(BASE_MS - 1000);
+    const reviewRequest = {
+      hop: 9,
+      action: 'effect:human_review_requested',
+      observed: { pr: { head_sha: headSha } },
+      detail: { review_reason: 'failure_set_repeated' },
+      created_at: new Date(BASE_MS - 60_000),
+    };
+    const state = { failedWrites: 0, collects: 0, dispatches: 0 };
+    const pool = {
+      async query(sql) {
+        const normalized = String(sql);
+        if (/UPDATE initiative_runs/i.test(normalized) && /failure_reason/i.test(normalized)) {
+          state.failedWrites += 1;
+          return { rows: [], rowCount: 1 };
+        }
+        if (/orchestrator_decision_log/i.test(normalized)) {
+          return {
+            rows: [{
+              ...reviewRequest,
+              review_request_hop: reviewRequest.hop,
+              review_head_sha: headSha,
+            }],
+            rowCount: 1,
+          };
+        }
+        if (/initiative_runs/i.test(normalized)) {
+          return { rows: [{ deadline_at: expired }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+
+    const result = await runLoop({
+      pool,
+      collectGroundTruth: async () => {
+        state.collects += 1;
+        return {
+          run: { phase: 'review', cost_usd: '0', deadline_at: expired },
+          task: { status: 'in_progress', payload: {} },
+          prdExists: true,
+          contract: { approved: true, id: 'contract-1', row: {} },
+          pr: {
+            url: 'https://github.com/example/repo/pull/1',
+            state: 'OPEN',
+            merged: false,
+            ci: 'pass',
+            head_sha: headSha,
+          },
+          inflight: { containers: [], host_pids: [] },
+          lastAgentExit: { code: null, auth_failed: false },
+          proposeBranchRn: 0,
+          ganLatestRoundVerdict: null,
+          generatorSpawned: true,
+          evaluateVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+          evaluateResult: null,
+          judgeVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+          reviewRequired: false,
+          reviewApproved: false,
+          decisionLog: [
+            reviewRequest,
+            {
+              hop: 10,
+              action: 'verdict:human_review',
+              detail: {
+                approved: true,
+                pr_head_sha: headSha,
+                review_request_hop: 9,
+              },
+            },
+          ],
+          authCircuit: [],
+          callbackResult: null,
+        };
+      },
+      nextHop: async () => 11,
+      appendHop: async () => {},
+      dispatch: async () => {
+        state.dispatches += 1;
+        throw new Error('stale-review-dispatched');
+      },
+      now: () => new Date(BASE_MS),
+      log: () => {},
+    }, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('automation_deadline_exceeded');
+    expect(state.collects).toBe(1);
+    expect(state.dispatches).toBe(0);
+    expect(state.failedWrites).toBe(1);
+  });
+
   test('an unrelated decision-log row cannot masquerade as an open human review', async () => {
     const expired = new Date(BASE_MS - 1000);
     const state = { failedWrites: 0, collects: 0 };

@@ -113,9 +113,40 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     expect(selectSql).toMatch(/effect:human_review_requested/);
     expect(selectSql).toMatch(/verdict:human_review/);
     expect(selectSql).toMatch(/review_request_hop/);
+    expect(selectSql).toMatch(/#>>\s*'\{pr,head_sha\}'\s+IS NOT NULL/);
+    expect(selectSql).toMatch(/later\.hop\s*>\s*review_request\.hop/);
     expect(pool.query.mock.calls.some(
       ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
     )).toBe(false);
+  });
+
+  it('abandoned review followed by a later decision is collected as overdue', async () => {
+    const overdueRun = {
+      id: '11111111-1111-4111-8111-111111111111',
+      initiative_id: TASK_ID,
+      orchestrator_host: 'skill-relay-session',
+      phase: 'generate',
+      deadline_at: new Date(Date.now() - 1000).toISOString(),
+    };
+    const pool = { query: vi.fn(async (sql) => {
+      const normalized = String(sql);
+      if (/SELECT id, initiative_id, orchestrator_host, phase, deadline_at/.test(normalized)) {
+        const bindsCurrentReview =
+          /#>>\s*'\{pr,head_sha\}'\s+IS NOT NULL/.test(normalized)
+          && /later\.hop\s*>\s*review_request\.hop/.test(normalized);
+        return { rows: bindsCurrentReview ? [overdueRun] : [] };
+      }
+      if (/UPDATE initiative_runs/.test(normalized)) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    }) };
+
+    await scanStuckHarness({ pool });
+
+    expect(pool.query.mock.calls.some(
+      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
+    )).toBe(true);
   });
 });
 
