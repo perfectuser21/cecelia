@@ -24,6 +24,7 @@ const REQUIRED_FIELDS = [
   'run', 'task', 'prdExists', 'contract', 'pr', 'inflight', 'lastAgentExit',
   'proposeBranchRn', 'ganLatestRoundVerdict', 'generatorSpawned',
   'evaluateVerdict', 'judgeVerdict', 'reviewRequired', 'reviewApproved', 'counters',
+  // noProgress / noProgressReason 可选（ground-truth 从 decisionLog 推导注入，测试可手动注入）
 ];
 
 function assertObservedShape(observed) {
@@ -58,6 +59,14 @@ export function derive(observed) {
   }
   if (task.status === 'aborted' || task.status === 'cancelled') {
     return { phase: 'terminal', action: 'exit', reason: `task_${task.status}` };
+  }
+
+  // 0.4 no-progress terminal（Sprint 07231527 Blocking 4）：
+  // generator-fix callback SHA === trigger_sha → 无进展，立即终局
+  // INV-K4：no-progress 后禁止对相同 (run_id, failure_class, trigger_sha, role) 再派 generator-fix
+  if (observed.noProgress === true) {
+    // 固定 reason 字符串（标准化，不依赖 observed.noProgressReason 的不同来源拼法）
+    return { phase: 'failed', action: 'mark_failed', reason: 'no_progress_same_sha' };
   }
 
   // 0.5 在途观测（P0-1）：有在途容器/主机 pid → 只写心跳不派发，杜绝崩溃重拉双 spawn
@@ -172,6 +181,53 @@ function deriveTask(observed) {
 }
 
 /**
+ * failure_class 路由矩阵（Sprint 07231527 Blocking 3）：
+ * evaluate/judge FAIL 时根据 failure_class 分差异路由，而非统一 fixOrFail。
+ *
+ * | failure_class           | 路由动作                        |
+ * |------------------------|--------------------------------|
+ * | product_failure（或null）| spawn:generator-fix             |
+ * | evidence_invalid        | spawn:evaluator-evidence-repair |
+ * | environment_recovery    | 首次 generator-fix；第二次相同签名 mark_failed |
+ * | needs_context           | wait:human_review（保守）        |
+ * | contract_invalid        | mark_failed                     |
+ * | unknown                 | wait:human_review（INV-K3）      |
+ */
+function deriveFailureClassRoute(failureClass, counters, decisionLog, currentHeadSha) {
+  const fc = failureClass ?? null;
+
+  if (fc === 'contract_invalid') {
+    return { phase: 'failed', action: 'mark_failed', reason: 'contract_invalid' };
+  }
+
+  if (fc === 'evidence_invalid') {
+    // INV-K6：evidence 修复，不进 generator-fix，不递增 fixRound
+    return { phase: 'evaluate', action: 'spawn:evaluator-evidence-repair', reason: 'evidence_invalid' };
+  }
+
+  if (fc === 'needs_context' || fc === 'unknown') {
+    // INV-K3：不确定原因不应默认归为产品代码失败 → 等人工介入
+    return { phase: 'review', action: 'wait:human_review', reason: `${fc}:awaiting_human_review` };
+  }
+
+  if (fc === 'environment_recovery') {
+    // 首次 environment_recovery → generator-fix；相同签名第二次 → terminal
+    const prevEnvRecovery = (decisionLog ?? []).some(
+      (r) => r.action === 'spawn:generator-fix'
+        && (r.observed?.failure_class === 'environment_recovery')
+        && (r.observed?.trigger_sha === currentHeadSha),
+    );
+    if (prevEnvRecovery) {
+      return { phase: 'failed', action: 'mark_failed', reason: 'repeated_environment_recovery' };
+    }
+    return fixOrFail(counters, 'environment_recovery');
+  }
+
+  // product_failure / null / 任何其他 → 保守路由 generator-fix
+  return fixOrFail(counters, fc ?? 'evaluate_fail');
+}
+
+/**
  * 规则 4a-4e：evaluate → judge → human review → merge。
  */
 function deriveVerdictChain(observed) {
@@ -184,11 +240,9 @@ function deriveVerdictChain(observed) {
     return { phase: 'evaluate', action: 'spawn:evaluator', reason: 'no_evaluate_verdict_for_head_sha' };
   }
   if (!isPassVerdict(evalRow.verdict)) {
-    // routeAfterEvaluate 语义：failure_class==='contract_invalid'→end（责任在 GAN，不入 fix loop）；否则 fix
-    if (evalRow.failure_class === 'contract_invalid') {
-      return { phase: 'failed', action: 'mark_failed', reason: 'contract_invalid' };
-    }
-    return fixOrFail(counters, 'evaluate_fail');
+    // routeAfterEvaluate 语义：failure_class 差异路由矩阵（Sprint 07231527 Blocking 3）
+    // INV-K3：Judge 缺 failure_class → unknown，禁止默认归为产品代码失败
+    return deriveFailureClassRoute(evalRow.failure_class, counters, observed.decisionLog, pr.head_sha);
   }
 
   // 4b. evaluate PASS(本 sha) && 无 judge 记录(本 sha) → judge（硬门禁，代码强制）

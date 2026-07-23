@@ -4,8 +4,9 @@
  * 纯常量文件——禁任何运行时计算/非确定性调用。
  */
 
-// Task Graph routeAfterFix：error→end(超 MAX_FIX_ROUNDS=20)
-export const MAX_FIX_ROUNDS = 20;
+// Task Graph routeAfterFix：error→end(超 MAX_FIX_ROUNDS=3)
+// Sprint 07231527：从 20 改为 3（同 SHA no-progress terminal 后不需要大预算）
+export const MAX_FIX_ROUNDS = 3;
 
 // Task Graph routeAfterPoll：pending→回环 poll，超限 timeout（20 次 × 90s）
 export const MAX_POLL_COUNT = 20;
@@ -20,7 +21,8 @@ export const BUDGET_CAP_USD = 10;
 export const MAX_REBASE_ATTEMPTS = 3;
 
 // 新增（spec P2）：整条 run 的 hop 硬上限，防 reconcile loop 失控
-export const MAX_HOPS = 200;
+// Sprint 07231527：从 200 改为 60（MAX_FIX_ROUNDS=3 后不需要 200 跳预算）
+export const MAX_HOPS = 60;
 
 // loop 四态最小语义：NEEDS_CONTEXT/BLOCKED 连续 2 次同态 → failed
 // （"绝不同模型无变化重试"铁律骨架版；对应父图 serial_gate requeue CAP(2) 精神）
@@ -78,4 +80,6 @@ export const LOG_ACTION = Object.freeze({
   VERDICT_REVIEWER: 'verdict:reviewer',
   VERDICT_HUMAN_REVIEW: 'verdict:human_review',
   HUMAN_REVIEW_REQUESTED: 'effect:human_review_requested',
+  // Sprint 07231527：generator-fix callback verdict（no-progress 推导依赖）
+  VERDICT_GENERATOR_FIX_CALLBACK: 'verdict:generator-fix-callback',
 });

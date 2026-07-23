@@ -14,6 +14,7 @@
  */
 import { ACTION, LOG_ACTION } from './constants.js';
 import { discoverPrFromGithub } from './github-pr-discovery.js';
+import { deriveCounters } from './counters.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -281,6 +282,12 @@ export async function collectGroundTruth(deps, opts) {
     hrDetail && hrDetail.approved === true && pr && hrDetail.pr_head_sha === pr.head_sha,
   );
 
+  // Sprint 07231527 Blocking 4：noProgress 从 decision log 推导（INV-K4）
+  // deriveCounters 的 noProgress 字段：spawn:generator-fix trigger_sha === callback pr_head_sha
+  const countersForNp = deriveCounters(decisionLog, { proposeBranchMaxRn: proposeBranchRn });
+  const noProgress = countersForNp.noProgress ?? false;
+  const noProgressReason = countersForNp.noProgressReason ?? null;
+
   return {
     run,
     task,
@@ -303,5 +310,7 @@ export async function collectGroundTruth(deps, opts) {
     decisionLog,
     authCircuit,
     callbackResult,
+    noProgress,
+    noProgressReason,
   };
 }

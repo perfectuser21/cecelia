@@ -12,15 +12,29 @@
  *
  * 计数语义：
  *   hops       = 去重后的行数（同 hop 不重复计——崩溃重放窗口防御，UNIQUE 正常场景已挡）
- *   fixRound   = COUNT(action='spawn:generator-fix')（intent hop 计数，崩溃窗口 ≤1 过计偏安全方向）
+ *   fixRound   = 只计产生新 SHA 的有效 product fix（spawn:generator-fix + callback pr_head_sha !== trigger_sha）
+ *                Sprint 07231527：语义修正，同 SHA no-progress 不递增 fixRound（MAX_FIX_ROUNDS=3）
  *   ganRound   = proposeBranchMaxRn（权威）；COUNT(action='spawn:proposer') 仅交叉校验，不一致取分支值
  *   noPushStreak    = 尾部连续的 spawn:proposer 行中 observed.propose_branch_advanced === false 的个数，
  *                     出现 true 即断；缺字段（旧行/崩溃窗口）保守断开不计
  *   noVerdictStreak = 同理，spawn:reviewer 行 × observed.verdict_parsed
  *   crossCheckMismatch = proposerCount !== proposeBranchMaxRn（崩溃窗口漏记 / 记了没派的交叉校验信号，
  *                        loop 把它写进 appendHop detail 供回放排障）
+ *   pollCount  = 从 decision log 推导：最后一次非 wait:poll_ci action 后的 wait:poll_ci 行数（持久化）
+ *   blockedStreak = 从 decision log 推导：尾部连续的 gate_verdict=deny:BLOCKED 行数
+ *   noProgress = 最新 spawn:generator-fix 的 trigger_sha === verdict:generator-fix-callback 的 pr_head_sha
+ *   noProgressReason = 'no_progress_same_sha' | null
  */
-import { ACTION } from './constants.js';
+import { ACTION, LOG_ACTION } from './constants.js';
+
+/** jsonb 列兼容：pg 返回对象，测试/fake 可能是 JSON 字符串 */
+function asJson(value) {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    try { return JSON.parse(value); } catch { return null; }
+  }
+  return value;
+}
 
 /**
  * 从 (action, observed) 子序列尾部数连续 streak：
@@ -33,7 +47,7 @@ function tailStreak(rows, action, flagKey) {
   let streak = 0;
   for (let i = rows.length - 1; i >= 0; i--) {
     if (rows[i].action !== action) continue;
-    const observed = rows[i].observed || {};
+    const observed = asJson(rows[i].observed) || {};
     if (observed[flagKey] === false) {
       streak++;
     } else {
@@ -62,12 +76,96 @@ export function deriveCounters(logRows, options) {
       return true;
     });
 
-  const fixRound = rows.filter((r) => r.action === ACTION.SPAWN_GENERATOR_FIX).length;
+  // fixRound：COUNT(spawn:generator-fix) - COUNT(same-SHA no-progress fix)
+  // 语义：计所有 fix intent 轮次，但排除 callback 明确证明是 same-SHA no-progress 的 fix
+  // （same-SHA fix 由 noProgress 字段单独处理终局，fixRound 不重复计入这些"无效轮次"）
+  // 理由：无 callback 的 fix（agent 崩溃/在途/d707 历史数据）仍应计入轮次上限防控，
+  // 不能因为缺 callback 就归零（d707 实证：10 次 fix 无 callback → 旧逻辑无限循环）
+  const fixIntents = rows.filter((r) => r.action === ACTION.SPAWN_GENERATOR_FIX);
+  const callbacks = rows.filter((r) => r.action === LOG_ACTION.VERDICT_GENERATOR_FIX_CALLBACK);
+
+  // 统计 same-SHA no-progress fix（有 callback 且 SHA 不变）
+  let noProgressFixCount = 0;
+  for (let i = 0; i < fixIntents.length; i++) {
+    const intent = fixIntents[i];
+    const intentObs = asJson(intent.observed) ?? {};
+    const triggerSha = intentObs.trigger_sha ?? null;
+    if (!triggerSha) continue;
+    const cb = callbacks.find((c) => c.hop > intent.hop);
+    if (!cb) continue;
+    const cbObs = asJson(cb.observed) ?? {};
+    const callbackSha = cbObs.pr_head_sha ?? null;
+    if (callbackSha && callbackSha === triggerSha) noProgressFixCount++;
+  }
+  const fixRound = fixIntents.length - noProgressFixCount;
 
   // ganRound：分支 rN 是唯一权威（外部真相）；proposer intent COUNT 只作交叉校验，
   // 不一致（崩溃窗口漏记 / 记了没派）一律取分支值，mismatch 信号由 loop 写进 appendHop detail。
   const proposerCount = rows.filter((r) => r.action === ACTION.SPAWN_PROPOSER).length;
   const ganRound = proposeBranchMaxRn;
+
+  // pollCount：从 decision log 推导，重启后不归零（Sprint 07231527 Blocking 2）
+  // 语义：最后一次非 wait:poll_ci action 后的 wait:poll_ci 行数（连续 poll 环计数）
+  let pollCount = 0;
+  {
+    let counting = true;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (r.action === ACTION.WAIT_POLL_CI) {
+        if (counting) pollCount++;
+      } else {
+        // 遇到非 poll action → 重置起点（该 action 之前的 poll 不算当前轮次）
+        break;
+      }
+    }
+  }
+
+  // blockedStreak：从 decision log 推导（Sprint 07231527 Blocking 2）
+  // 语义：尾部连续的 gate_verdict 含 'deny:BLOCKED' 的 dispatch 行数
+  let blockedStreak = 0;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    const gv = r.gate_verdict ?? '';
+    if (typeof gv === 'string' && gv.includes('BLOCKED')) {
+      blockedStreak++;
+    } else {
+      break;
+    }
+  }
+
+  // noProgress：从 decision log 推导 same-SHA no-progress（Sprint 07231527 Blocking 4）
+  // 逻辑：最新 spawn:generator-fix 有 trigger_sha，且最新 verdict:generator-fix-callback
+  // 的 pr_head_sha === trigger_sha → no-progress
+  let noProgress = false;
+  let noProgressReason = null;
+  {
+    // 找最新 generator-fix intent
+    let lastFixIntent = null;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].action === ACTION.SPAWN_GENERATOR_FIX) {
+        lastFixIntent = rows[i];
+        break;
+      }
+    }
+    if (lastFixIntent) {
+      const lastFixObs = asJson(lastFixIntent.observed) ?? {};
+      const triggerSha = lastFixObs.trigger_sha ?? null;
+      if (triggerSha) {
+        // 找该 intent 之后的第一个 verdict:generator-fix-callback
+        const lastCallback = rows.find(
+          (r) => r.action === LOG_ACTION.VERDICT_GENERATOR_FIX_CALLBACK && r.hop > lastFixIntent.hop,
+        );
+        if (lastCallback) {
+          const cbObs = asJson(lastCallback.observed) ?? {};
+          const callbackSha = cbObs.pr_head_sha ?? null;
+          if (callbackSha && callbackSha === triggerSha) {
+            noProgress = true;
+            noProgressReason = 'no_progress_same_sha'; // 统一 reason 常量（derive 和 ground-truth 对齐）
+          }
+        }
+      }
+    }
+  }
 
   return {
     hops: rows.length,
@@ -76,5 +174,9 @@ export function deriveCounters(logRows, options) {
     noPushStreak: tailStreak(rows, ACTION.SPAWN_PROPOSER, 'propose_branch_advanced'),
     noVerdictStreak: tailStreak(rows, ACTION.SPAWN_REVIEWER, 'verdict_parsed'),
     crossCheckMismatch: proposerCount !== proposeBranchMaxRn,
+    pollCount,
+    blockedStreak,
+    noProgress,
+    noProgressReason,
   };
 }

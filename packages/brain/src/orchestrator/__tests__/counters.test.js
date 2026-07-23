@@ -23,6 +23,10 @@ describe('deriveCounters：空日志', () => {
       noPushStreak: 0,
       noVerdictStreak: 0,
       crossCheckMismatch: false,
+      pollCount: 0,
+      blockedStreak: 0,
+      noProgress: false,
+      noProgressReason: null,
     });
   });
 

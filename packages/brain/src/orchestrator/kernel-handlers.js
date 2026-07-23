@@ -19,6 +19,12 @@ function evaluatorBrainResult(result) {
 }
 
 async function appendJudgeVerdict(pool, ctx, verdict, feedback) {
+  // Sprint 07231527 Blocking 3：Judge 落库时必须传递 failure_class（INV-K3）
+  // evaluateVerdict 中的 failure_class 透传到 verdict:judge detail，
+  // 使 ground-truth 和 derive 能正确读取进行差异路由
+  const evaluateVerdict = ctx.observed.evaluateVerdict ?? {};
+  const failureClass = evaluateVerdict.failure_class ?? null;
+
   await pool.query(
     `INSERT INTO orchestrator_decision_log
        (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
@@ -39,6 +45,7 @@ async function appendJudgeVerdict(pool, ctx, verdict, feedback) {
         verdict,
         pr_head_sha: ctx.observed.pr?.head_sha ?? null,
         feedback: feedback ?? null,
+        failure_class: failureClass, // 透传 failure_class（INV-K3）
       }),
     ],
   );

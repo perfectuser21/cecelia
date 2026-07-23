@@ -160,7 +160,7 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     `INSERT INTO initiative_runs
        (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
         deadline_at, ability_id, current_task_id)
-     VALUES ($1, 'planning', $2, 'v2', 'kernel-v1', NOW() + INTERVAL '8 hours', $3, $4)
+     VALUES ($1, 'planning', $2, 'v2', 'kernel-v1', NOW() + INTERVAL '120 minutes', $3, $4)
      RETURNING id`,
     [
       initiativeId,

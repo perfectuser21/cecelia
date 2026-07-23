@@ -141,7 +141,10 @@ async function markRunFailed(pool, runId, reason) {
  */
 export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   const collect = deps.collectGroundTruth ?? defaultCollect;
-  const append = deps.appendHop ?? defaultAppendHop;
+  // DI 包装：fake（测试）注入 appendHop(opts) 单对象接口；默认实现是 (pool, opts) 两参数接口
+  const append = deps.appendHop
+    ? (_pool, opts) => deps.appendHop(opts)
+    : defaultAppendHop;
   const next = deps.nextHop ?? defaultNextHop;
   const heartbeat = deps.writeHeartbeat ?? defaultWriteHeartbeat;
   const sleep = deps.sleep ?? defaultSleep;
@@ -156,11 +159,15 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     : {};
 
   let hops = 0;
-  let pollCount = 0; // 进程内计数：wait:poll_ci 不落日志，poll 上限只约束本进程连续等待
   let blockedState = null;
-  let blockedStreak = 0;
 
   const beat = () => heartbeat(deps.pool, { runId: resolvedRunId, host, pid, now: now() });
+
+  // deadline fence 辅助：检查 run.deadline_at 是否已超过当前时间
+  function deadlineExceeded(run) {
+    if (!run || !run.deadline_at) return false;
+    return now() >= new Date(run.deadline_at);
+  }
 
   while (true) {
     const observed = await collect(deps, {
@@ -168,7 +175,17 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       runId: resolvedRunId,
       ...groundTruthPaths,
     });
+
+    // ---- Deadline fence 1：collect 后立即检查，防止继续派发 ----
+    // INV-K1：collect 前、derive 后、dispatch 前三道 deadline fence，缺一不可
+    if (deadlineExceeded(observed.run)) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
+    }
+
     const counters = deriveCounters(observed.decisionLog, { proposeBranchMaxRn: observed.proposeBranchRn });
+    // pollCount 从 DB 持久化推导（Sprint 07231527 Blocking 2：进程内变量改为 DB 推导）
+    const pollCount = counters.pollCount;
     const fullCounters = { ...counters, pollCount, ganCostUsd: Number(observed.run.cost_usd ?? 0) };
     const decision = derive({ ...observed, counters: fullCounters });
 
@@ -227,7 +244,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       continue;
     }
 
-    // ---- 纯轮询 wait：只心跳+sleep，不 append（日志不灌水）、不派发 ----
+    // ---- 纯轮询 wait：只心跳+sleep（部分需 append 持久化计数）、不派发 ----
     // wait:human_review 首次必须经过 dispatcher，才能真正创建预览并通知人；同一
     // PR SHA 已写过 intent 后才转为纯等待，避免每 90s 重复通知。
     if (decision.action === ACTION.WAIT_HUMAN_REVIEW) {
@@ -236,19 +253,49 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
           && row.observed?.pr?.head_sha === observed.pr?.head_sha,
       );
       if (reviewAlreadyRequested) {
-        pollCount = 0;
         await beat();
         await sleep(POLL_INTERVAL_MS);
         continue;
       }
     }
-    if (decision.action === ACTION.WAIT_RUNNING || decision.action === ACTION.WAIT_POLL_CI) {
-      pollCount = decision.action === ACTION.WAIT_POLL_CI ? pollCount + 1 : 0;
+    if (decision.action === ACTION.WAIT_RUNNING) {
       await beat();
       await sleep(POLL_INTERVAL_MS);
       continue;
     }
-    pollCount = 0; // 离开 poll 环即重置（下一轮 pending 从头计）
+    if (decision.action === ACTION.WAIT_POLL_CI) {
+      // Sprint 07231527 Blocking 2：wait:poll_ci 必须写 decision log，持久化计数跨重启不归零
+      // pollCount 从 deriveCounters 推导，appendHop 后重启恢复正确值
+      const pollHop = await next(deps.pool, resolvedRunId);
+      try {
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: pollHop,
+          observed: buildSnapshot(observed, fullCounters, ACTION.WAIT_POLL_CI),
+          derivedPhase: decision.phase,
+          gateVerdict: null,
+          action: ACTION.WAIT_POLL_CI,
+          detail: { reason: decision.reason, ci: observed.pr?.ci ?? 'pending' },
+        });
+        hops++;
+      } catch (err) {
+        if (err instanceof SingletonConflictError) {
+          log(`[orchestrator] singleton conflict on poll_ci ${resolvedRunId} hop ${pollHop}, exiting`);
+          return { exitReason: 'singleton_conflict', hops };
+        }
+        throw err;
+      }
+      await beat();
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
+
+    // ---- Deadline fence 2：derive 后 dispatch 前，防止 deadline 后创建新 attempt ----
+    // INV-K1：collect 前已检一次，这里是 derive 计算窗口内再次检查
+    if (deadlineExceeded(observed.run)) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
+    }
 
     // ---- 派发 action：intent-log-before-dispatch ----
     const hop = await next(deps.pool, resolvedRunId);
@@ -325,18 +372,30 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     }
 
     if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
-      if (blockedState === result.status) blockedStreak++;
-      else { blockedState = result.status; blockedStreak = 1; }
-      log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status} (streak ${blockedStreak}): ${result.detail ?? ''}`);
-      if (blockedStreak >= BLOCKED_SAME_STATE_CAP) {
+      // blockedStreak 从 DB 推导（Sprint 07231527 Blocking 2，counters.blockedStreak 已含此跳）
+      const currentBlockedStreak = counters.blockedStreak ?? 0;
+      if (blockedState === result.status) {
+        // 同态继续累积；counters.blockedStreak 是 DB 推导值（含本跳前的值），本跳 +1 在下轮 derive 后
+      } else {
+        blockedState = result.status;
+      }
+      const streak = currentBlockedStreak + 1; // 本轮实际 streak
+      log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status} (streak ${streak}): ${result.detail ?? ''}`);
+      if (streak >= BLOCKED_SAME_STATE_CAP) {
         await markRunFailed(deps.pool, resolvedRunId, `blocked_same_state:${result.status}`);
         return { exitReason: 'blocked_same_state', hops };
       }
     } else {
       // DONE / DONE_WITH_CONCERNS：记 detail 继续
       blockedState = null;
-      blockedStreak = 0;
       log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status}${result.detail ? `: ${result.detail}` : ''}`);
+    }
+
+    // ---- Deadline fence 3：DONE 心跳后检查（崩溃窗口补丁）----
+    // INV-K1：三道 fence，防止在 deadline 后派遣下一轮 intent（即使 dispatch 已返回 DONE）
+    if (deadlineExceeded(observed.run)) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
     }
 
     await beat();

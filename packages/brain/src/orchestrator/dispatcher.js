@@ -33,6 +33,11 @@ const ACTION_SPECS = Object.freeze({
     role: 'evaluator', skill: 'harness-evaluator', readOnly: false,
     expectedOutput: 'harness-result/evaluator-v1',
   },
+  // Sprint 07231527 Blocking 3：evidence-repair 动作（INV-K6：修 attempt evidence，不走 generator-fix）
+  'spawn:evaluator-evidence-repair': {
+    role: 'evaluator', skill: 'harness-evaluator', readOnly: false,
+    expectedOutput: 'harness-result/evaluator-v1',
+  },
   'spawn:judge': {
     role: 'judge', skill: null, readOnly: true,
     expectedOutput: 'harness-result/judge-v1',
