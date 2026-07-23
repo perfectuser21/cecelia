@@ -95,5 +95,6 @@
       "log_tail": "Test Files  1 passed (1)\n     Tests  10 passed (10)"
     }
   ],
-  "exit_code": 0
+  "exit_code": 0,
+  "log_tail": "13 behaviors PASS: B-01 deadline pure-function OK; B-02 failure-class-routing 16 tests pass; B-03 no-progress-fence 9 tests pass; B-04 persistent-counters 10 tests pass; B-05 phase-budgets 18 tests pass; B-06 supervisor no-28800-hardcode OK; B-06-worker worker-budget 14 tests pass; B-07 constants MAX_FIX_ROUNDS=3 MAX_HOPS=60 OK; B-08 approval-bridge 8 tests pass; B-09 d707-replay 6 tests pass; B-10 watchdog-boundary 9 tests pass; B-11 harness_runtime routing found; B-12 deadline-callback-race 10 tests pass. Total: 153 tests all PASS."
 }
