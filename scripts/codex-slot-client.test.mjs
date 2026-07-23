@@ -157,6 +157,8 @@ function makeTransport(options = {}) {
             ok: true,
             hostname: host,
             enabled: host === 'xian-m4',
+            exitNode: 'mmv',
+            exitNodeOk: true,
             availableSlots: host === 'xian-m4' ? 1 : 0,
           };
         case 'prepare':
@@ -268,6 +270,8 @@ test('start selects first configured ok enabled host with available capacity', a
         ok: true,
         hostname: host,
         enabled: true,
+        exitNode: 'mmv',
+        exitNodeOk: true,
         availableSlots: host === 'xian-m4' ? 0 : 2,
       };
     },
@@ -276,6 +280,55 @@ test('start selects first configured ok enabled host with available capacity', a
   await runClient(['start', '--project', 'infrastructure'], transport);
   assert.equal(option(transport.calls.find((call) => call.op === 'acquire').args, 'host'), 'xian-m1');
   assert.ok(transport.calls.some((call) => call.op === 'prepare:xian-m1'));
+});
+
+test('start health-checks every host and never acquires when exit-node contract is unsafe', async () => {
+  const transport = makeTransport({
+    agent: async (host, args) => {
+      if (args[0] !== 'health') return undefined;
+      return {
+        ok: true,
+        hostname: host,
+        enabled: true,
+        exitNode: host === 'xian-m4' ? 'china-gateway' : 'mmv',
+        exitNodeOk: false,
+        availableSlots: 1,
+      };
+    },
+  });
+
+  await assert.rejects(
+    runClient(['start', '--project', 'infrastructure'], transport),
+    /没有.*host/
+  );
+  assert.deepEqual(transport.calls.map(({ op }) => op), [
+    'identity',
+    'session-get',
+    'health:xian-m4',
+    'health:xian-m1',
+  ]);
+});
+
+test('start rejects legacy health without explicit exitNodeOk before acquire or deliver', async () => {
+  const transport = makeTransport({
+    hosts: ['xian-m4'],
+    agent: async (host, args) => {
+      if (args[0] !== 'health') return undefined;
+      return {
+        ok: true,
+        hostname: host,
+        enabled: true,
+        availableSlots: 1,
+      };
+    },
+  });
+
+  await assert.rejects(
+    runClient(['start', '--project', 'infrastructure'], transport),
+    /没有.*host/
+  );
+  assert.equal(transport.calls.some(({ op }) => op === 'acquire'), false);
+  assert.equal(transport.calls.some(({ op }) => op === 'deliver'), false);
 });
 
 test('start and stopped resume recover one exact lease after the first acquire response is lost', async () => {
@@ -607,9 +660,15 @@ test('resume without handle selects current actor project by most recent updated
   assert.equal(transport.calls.at(-1).op, 'attach:xian-m4');
 });
 
-test('resume running validates agent status and directly attaches without lease mutation', async () => {
+test('resume running validates agent status and directly attaches without lease or health mutation', async () => {
   const session = runningSession();
-  const transport = makeTransport({ sessions: [session] });
+  const transport = makeTransport({
+    sessions: [session],
+    agent: async (_host, args) => {
+      if (args[0] === 'health') throw new Error('health must not gate running resume');
+      return undefined;
+    },
+  });
   await runClient(['resume', session.handle], transport);
 
   assert.deepEqual(transport.calls.map((call) => call.op), [
@@ -621,7 +680,7 @@ test('resume running validates agent status and directly attaches without lease 
   assert.equal(transport.calls.at(-1).tmuxTarget, `=${session.tmuxSession}`);
 });
 
-test('resume stopped reacquires on fixed home host without preparing a new worktree', async () => {
+test('resume stopped health-checks fixed home host, idempotently prepares, then reacquires', async () => {
   const session = runningSession({
     host: 'xian-m1',
     state: 'stopped',
@@ -629,22 +688,131 @@ test('resume stopped reacquires on fixed home host without preparing a new workt
     leaseId: null,
     team: null,
   });
-  const transport = makeTransport({ sessions: [session] });
+  const transport = makeTransport({
+    sessions: [session],
+    agent: async (host, args) => {
+      if (args[0] !== 'health') return undefined;
+      return {
+        ok: true,
+        hostname: host,
+        enabled: true,
+        exitNode: 'mmv',
+        exitNodeOk: true,
+        availableSlots: 1,
+      };
+    },
+  });
   const result = await runClient(['resume', session.handle], transport);
 
   assert.deepEqual(transport.calls.map((call) => call.op), [
     'identity',
     'session-get',
     'status:xian-m1',
+    'health:xian-m1',
+    'prepare:xian-m1',
     'acquire',
     'deliver',
     'launch:xian-m1',
     'session-put',
     'attach:xian-m1',
   ]);
-  assert.equal(option(transport.calls[3].args, 'host'), 'xian-m1');
-  assert.equal(transport.calls.some((call) => call.op.startsWith('prepare:')), false);
+  const prepared = transport.calls[4].args;
+  assert.equal(option(prepared, 'actor'), session.actor);
+  assert.equal(option(prepared, 'session'), session.sessionId);
+  assert.equal(option(prepared, 'project'), session.project);
+  assert.equal(option(prepared, 'name'), session.name);
+  assert.equal(option(transport.calls[5].args, 'host'), 'xian-m1');
+  assert.equal(
+    option(transport.calls[6].args, 'path'),
+    `/Users/alex/.codex-slots/alex/${session.sessionId}/codex-home/auth.json`
+  );
   assert.equal(result.status, 'running');
+});
+
+test('resume stopped rejects unsafe or legacy health before prepare, acquire, or deliver', async () => {
+  const session = runningSession({
+    state: 'stopped',
+    status: 'stopped',
+    leaseId: null,
+    team: null,
+  });
+  for (const health of [
+    {
+      ok: true,
+      hostname: session.host,
+      enabled: true,
+      availableSlots: 1,
+    },
+    {
+      ok: true,
+      hostname: session.host,
+      enabled: true,
+      exitNode: 'china-gateway',
+      exitNodeOk: false,
+      availableSlots: 1,
+    },
+    {
+      ok: true,
+      hostname: session.host,
+      enabled: true,
+      exitNode: 'mmv',
+      exitNodeOk: true,
+      availableSlots: 0,
+    },
+  ]) {
+    const transport = makeTransport({
+      sessions: [session],
+      agent: async (_host, args) => {
+        if (args[0] === 'health') return health;
+        return undefined;
+      },
+    });
+
+    await assert.rejects(
+      runClient(['resume', session.handle], transport),
+      /没有.*host/
+    );
+    assert.deepEqual(transport.calls.map((call) => call.op), [
+      'identity',
+      'session-get',
+      'status:xian-m4',
+      'health:xian-m4',
+    ]);
+    assert.equal(transport.calls.some((call) => call.op.startsWith('prepare:')), false);
+    assert.equal(transport.calls.some((call) => call.op === 'acquire'), false);
+    assert.equal(transport.calls.some((call) => call.op === 'deliver'), false);
+  }
+});
+
+test('resume stopped prepare failure happens before lease acquisition or token delivery', async () => {
+  const session = runningSession({
+    state: 'stopped',
+    status: 'stopped',
+    leaseId: null,
+    team: null,
+  });
+  const transport = makeTransport({
+    sessions: [session],
+    agent: async (_host, args) => {
+      if (args[0] === 'prepare') throw new Error('Tailscale 出口不安全 on second sample');
+      return undefined;
+    },
+  });
+
+  await assert.rejects(
+    runClient(['resume', session.handle], transport),
+    /Tailscale 出口不安全/
+  );
+  assert.deepEqual(transport.calls.map((call) => call.op), [
+    'identity',
+    'session-get',
+    'status:xian-m4',
+    'health:xian-m4',
+    'prepare:xian-m4',
+  ]);
+  assert.equal(transport.calls.some((call) => call.op === 'acquire'), false);
+  assert.equal(transport.calls.some((call) => call.op === 'deliver'), false);
+  assert.equal(transport.calls.some((call) => call.op === 'release'), false);
 });
 
 test('resume and attach fail closed on cross actor, unreachable host, or metadata mismatch', async () => {

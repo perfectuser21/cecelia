@@ -381,6 +381,7 @@ async function acquireExactLease(transport, expected, host) {
 
 function capacityEligible(health) {
   if (!health || health.ok !== true || health.enabled !== true) return false;
+  if (health.exitNodeOk !== true || typeof health.exitNode !== 'string' || !health.exitNode) return false;
   if (health.capacityAvailable !== undefined && health.capacityAvailable !== true) return false;
   if (health.availableSlots !== undefined) {
     return Number.isFinite(Number(health.availableSlots)) && Number(health.availableSlots) > 0;
@@ -390,6 +391,17 @@ function capacityEligible(health) {
     return Number(health.capacity.available) > 0;
   }
   return true;
+}
+
+function hostReady(health, host) {
+  return capacityEligible(health) && health.hostname === host;
+}
+
+function assertHostReady(health, host) {
+  if (!hostReady(health, host)) {
+    throw new Error('没有 ok、enabled、exitNodeOk 且容量合格的 host');
+  }
+  return health;
 }
 
 async function selectHost(transport, hosts) {
@@ -403,14 +415,11 @@ async function selectHost(transport, hosts) {
     }
   }
   for (const candidate of results) {
-    if (
-      capacityEligible(candidate.health) &&
-      candidate.health.hostname === candidate.host
-    ) {
+    if (hostReady(candidate.health, candidate.host)) {
       return candidate.host;
     }
   }
-  throw new Error('没有 ok、enabled 且容量合格的 host');
+  throw new Error('没有 ok、enabled、exitNodeOk 且容量合格的 host');
 }
 
 function encodeSession(session) {
@@ -788,8 +797,28 @@ async function commandResume(flags, positionals, transport, actor, hosts) {
     sessionId: session.sessionId,
   };
   let lease = null;
+  let prepare = null;
   let registered = false;
   try {
+    assertHostReady(
+      await transport.agent(session.host, ['health']),
+      session.host
+    );
+    prepare = assertPrepare(
+      await transport.agent(session.host, [
+        'prepare',
+        '--session',
+        session.sessionId,
+        '--actor',
+        session.actor,
+        '--project',
+        session.project,
+        '--name',
+        session.name,
+      ]),
+      expected,
+      session.host
+    );
     lease = await acquireExactLease(transport, expected, session.host);
     await transport.broker([
       'deliver',
@@ -798,7 +827,7 @@ async function commandResume(flags, positionals, transport, actor, hosts) {
       '--target',
       session.host,
       '--path',
-      join(status.metadata.codexHome, 'auth.json'),
+      join(prepare.codexHome, 'auth.json'),
     ]);
     const launch = assertLaunch(
       await transport.agent(session.host, ['launch', '--session', session.sessionId]),
@@ -808,7 +837,7 @@ async function commandResume(flags, positionals, transport, actor, hosts) {
       expected,
       host: session.host,
       lease,
-      prepare: status.metadata,
+      prepare,
       launch,
       previous: session,
       now: currentNow(transport),
@@ -824,7 +853,7 @@ async function commandResume(flags, positionals, transport, actor, hosts) {
       host: session.host,
       sessionId: session.sessionId,
       lease,
-      prepared: true,
+      prepared: Boolean(lease && prepare),
     });
     throw errorWithCompensation(error, compensation);
   }
