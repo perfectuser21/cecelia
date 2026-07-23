@@ -4,6 +4,7 @@
 **Sprint Dir**: sprints/07240625-relay-fa59d318
 **Date**: 2026-07-23
 **Status**: DRAFT
+**verification_level: L3** (real-Brain-API: http://localhost:5221, 对真实运行中的 Brain 服务验证，非 mock/stub/离线)
 
 ---
 
