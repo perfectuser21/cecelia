@@ -99,6 +99,14 @@
 
 ---
 
+## Test Contract
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| ws1 | `tests/negate.contract.test.js` | [DOD-1] 成功体 keys / [DOD-2] operation 字面值 / [DOD-3] result 键名 / [DOD-4] value=5 → result=-5 / [DOD-5] value=-5 → result=5 / [DOD-6] value=0 → result=0，且不是 -0 / [DOD-7] value=9007199254740990 / [DOD-9] value=9007199254740991 / [DOD-11] value 缺失 / [DOD-12] 非法格式全部 400 / [DOD-13] 错误 query 名全部 400 / [DOD-14] 400 响应 keys / [DOD-15] /health 不受影响 | Red：20 fail（/negate 返回 404，实现前） |
+
+---
+
 ## E2E 验收
 
 端到端验收使用 `bash + curl` 对真实运行中的服务执行检查，脚本位于 `sprints/07231722-relay-17d5b58d/tests/e2e.sh`。
