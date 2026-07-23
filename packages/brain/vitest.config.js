@@ -134,6 +134,12 @@ export default defineConfig({
       'src/__tests__/harness-module-constants.test.js',
       // 需要真实 PostgreSQL 连接的集成测试
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
+      // capacity-gate/preview-destroyer: 真连 cecelia_test Postgres（禁 mock db.js），走 brain-integration
+      'src/__tests__/integration/capacity-gate.test.js',
+      'src/__tests__/integration/preview-destroyer.test.js',
+      // 同上，毕业池 tests/regression/ 下的永久回归副本，同样需要真实 Postgres
+      '../../tests/regression/relay-1b1f1ffa/capacity-gate.test.js',
+      '../../tests/regression/relay-1b1f1ffa/preview-destroyer.test.js',
       // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
       'src/workflows/__tests__/dev-registry.test.js',
       // Pre-existing failures: wrong import paths (../../brain/src/ instead of ../../packages/brain/src/)
