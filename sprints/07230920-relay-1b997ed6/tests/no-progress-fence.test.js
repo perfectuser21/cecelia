@@ -14,22 +14,9 @@
  */
 import { describe, it, expect } from 'vitest';
 
-// TODO: 实现后取消注释
-// import { checkNoProgressSameSha, checkNoProgressSameEvidence } from '../../../packages/brain/src/orchestrator/gates.js';
-// import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-
-// Placeholders — 全红骨架
-function checkNoProgressSameSha(_triggerSha, _newSha) {
-  return undefined; // 未实现
-}
-
-function checkNoProgressSameEvidence(_triggerDigest, _newDigest) {
-  return undefined; // 未实现
-}
-
-function derive(_observed) {
-  return { phase: 'unknown', action: 'unknown', reason: 'not_implemented' };
-}
+import { checkNoProgressSameSha, checkNoProgressSameEvidence } from '../../../packages/brain/src/orchestrator/gates.js';
+import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
+import { deriveNoProgress } from '../../../packages/brain/src/orchestrator/ground-truth.js';
 
 describe('B-03: generator-fix SHA 未变 → no_progress_same_sha', () => {
   it('新 SHA === 触发 SHA → 返回 true（触发熔断）', () => {
@@ -149,11 +136,7 @@ describe('B-03: 同四元组 (run_id, failure_class, trigger_sha, role) 最多�
     expect(fixIntent.detail.trigger_sha).toBe('sha-abc');
     expect(callback.detail.pr_head_sha).toBe('sha-abc'); // 相同 → no progress
 
-    // 关键断言：deriveNoProgress 未实现时必须让测试为红（不可绕过）
-    // TODO: 实现后替换为以下断言：
-    // import { deriveNoProgress } from 'ground-truth.js'
-    // const np = deriveNoProgress(decisionLogRows, { runId: 'run-1' });
-    // expect(np.noProgressSameSha).toBe(true);
-    expect(true).toBe(false, 'not_implemented: deriveNoProgress from ground-truth.js 尚未实现，实现后删除此行并取消上方注释');
+    const np = deriveNoProgress(decisionLogRows, { runId: 'run-1' });
+    expect(np.noProgressSameSha).toBe(true);
   });
 });

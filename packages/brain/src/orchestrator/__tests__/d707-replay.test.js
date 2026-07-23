@@ -16,22 +16,8 @@ import { join, dirname } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(__dirname, 'fixtures/d707-hops-55-66.json');
 
-// TODO: 实现后取消注释
-// import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-// import { deriveCounters } from '../../../packages/brain/src/orchestrator/counters.js';
-
-// Placeholder derive — 全红骨架
-function derive(_observed) {
-  return { phase: 'unknown', action: 'unknown', reason: 'not_implemented' };
-}
-
-function deriveCounters(_logRows, _options) {
-  return {
-    hops: 0, fixRound: 0, ganRound: 0,
-    noPushStreak: 0, noVerdictStreak: 0,
-    crossCheckMismatch: false,
-  };
-}
+import { derive } from '../derive.js';
+import { deriveCounters } from '../counters.js';
 
 /**
  * d707 hop 55-66 fixture — 模拟真实事故数据结构

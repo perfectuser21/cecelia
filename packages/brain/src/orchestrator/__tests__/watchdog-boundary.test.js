@@ -11,22 +11,8 @@
  */
 import { describe, it, expect } from 'vitest';
 
-// TODO: 实现后取消注释
-// import { watchdogShouldResume, watchdogAction } from '../../../packages/brain/src/orchestrator/watchdog.js';
-// import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-
-// Placeholders — 全红骨架
-function watchdogShouldResume(_run) {
-  return true; // 未实现：应返回 false（过期 run）
-}
-
-function watchdogAction(_run, _decisionLog) {
-  return { action: 'resume', reason: 'not_implemented' }; // 未实现：应返回 fenced_terminal_cleanup
-}
-
-function derive(_observed) {
-  return { phase: 'unknown', action: 'unknown', reason: 'not_implemented' };
-}
+import { watchdogShouldResume, watchdogAction } from '../watchdog.js';
+import { derive } from '../derive.js';
 
 // ─── 测试数据 ───────────────────────────────────────────────────────────────
 
@@ -258,8 +244,8 @@ describe('B-10.3: Evaluator PASS 后 Judge 环境故障只允许重跑 Judge', (
       counters: { hops: 38, fixRound: 1, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     };
     const r = derive(observed);
-    // 双 PASS → 进入 human-review 请求
-    expect(r.action).toBe('effect:human_review_requested');
+    // 双 PASS → 进入 human-review 等待（loop 层会追加 effect:human_review_requested marker）
+    expect(r.action).toBe('wait:human_review');
     // 不得重跑 Evaluator
     expect(r.action).not.toBe('spawn:evaluator');
   });

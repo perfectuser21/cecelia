@@ -135,6 +135,25 @@ async function markRunFailed(pool, runId, reason) {
 }
 
 /**
+ * Sprint 1b997ed6：resolveRaceCondition — 竞态解决函数（纯函数）。
+ * 当 deadline fence 与 callback 几乎同时到达时，保证只产生一个 terminal 结果。
+ * - run 已有 terminal_reason → incoming spawn action 被拦截为 noop
+ * - run 无 terminal → incoming action 正常通过
+ *
+ * @param {{phase: string, terminal_reason: string|null}} runState
+ * @param {{action: string, reason?: string}} incomingAction
+ * @returns {{resolved: string, action: string}}
+ */
+export function resolveRaceCondition(runState, incomingAction) {
+  if (runState.terminal_reason || runState.phase === 'failed' || runState.phase === 'done') {
+    // 已有 terminal → 拦截 spawn，返回 noop
+    return { resolved: 'terminal_exists', action: 'noop' };
+  }
+  // 未有 terminal → 正常通过
+  return { resolved: 'no_terminal', action: incomingAction.action };
+}
+
+/**
  * runLoop(deps, {taskId, runId?, dryRun?}) → {exitReason, hops, decision?}
  * hops = 本进程实际派发（appendHop 成功）的跳数。
  * dryRun（F5 前台雏形）：只观测+推导+打印，单跳即返回，零写入零派发。

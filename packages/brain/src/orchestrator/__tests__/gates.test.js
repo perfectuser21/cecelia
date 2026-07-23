@@ -91,26 +91,27 @@ describe('mergeGate（mergePrNode 前置门=evaluate_verdict PASS + review_gate 
 });
 
 describe('常量 pin（钉死具体数值，防改值后测试仍绿的语义漂移；出处 routing-extraction.md）', () => {
-  it('9 个常量数值不变', () => {
-    expect(MAX_FIX_ROUNDS).toBe(20);
+  it('9 个常量数值（Sprint 1b997ed6 更新 MAX_FIX_ROUNDS=3, MAX_HOPS=60）', () => {
+    // Sprint 1b997ed6: MAX_FIX_ROUNDS 20→3, MAX_HOPS 200→60
+    expect(MAX_FIX_ROUNDS).toBe(3);
     expect(MAX_POLL_COUNT).toBe(20);
     expect(POLL_INTERVAL_MS).toBe(90000);
     expect(MAX_NO_PUSH_STREAK).toBe(2);
     expect(MAX_NO_VERDICT_STREAK).toBe(3);
     expect(MAX_REBASE_ATTEMPTS).toBe(3);
-    expect(MAX_HOPS).toBe(200);
+    expect(MAX_HOPS).toBe(60);
     expect(BLOCKED_SAME_STATE_CAP).toBe(2);
     expect(BUDGET_CAP_USD).toBe(10);
   });
 });
 
 describe('caps 上限判断（数值出处 routing-extraction.md）', () => {
-  it('MAX_HOPS=200', () => {
+  it('MAX_HOPS=60（Sprint 1b997ed6 收紧）', () => {
     expect(caps.hopsExceeded(MAX_HOPS - 1)).toBe(false);
     expect(caps.hopsExceeded(MAX_HOPS)).toBe(true);
   });
 
-  it('MAX_FIX_ROUNDS=20', () => {
+  it('MAX_FIX_ROUNDS=3（Sprint 1b997ed6 收紧）', () => {
     expect(caps.fixExceeded(MAX_FIX_ROUNDS - 1)).toBe(false);
     expect(caps.fixExceeded(MAX_FIX_ROUNDS)).toBe(true);
   });

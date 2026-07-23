@@ -13,27 +13,9 @@
  */
 import { describe, it, expect } from 'vitest';
 
-// TODO: 实现后取消注释
-// import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-// import { isDeadlineExceeded } from '../../../packages/brain/src/orchestrator/gates.js';
-// import { resolveRaceCondition } from '../../../packages/brain/src/orchestrator/loop.js';
-
-// Placeholders — 全红骨架
-function derive(_observed) {
-  return { phase: 'unknown', action: 'unknown', reason: 'not_implemented' };
-}
-
-function isDeadlineExceeded(_startedAt, _nowAt, _budgetMs) {
-  return undefined; // 未实现
-}
-
-/**
- * 模拟竞态处理：当 terminal 已存在时返回 noop
- * 实现后应读取 DB 的 run.phase/terminal_reason 状态
- */
-function resolveRaceCondition(_runState, _incomingAction) {
-  return { resolved: 'not_implemented', action: 'unknown' };
-}
+import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
+import { isDeadlineExceeded } from '../../../packages/brain/src/orchestrator/gates.js';
+import { resolveRaceCondition } from '../../../packages/brain/src/orchestrator/loop.js';
 
 // ─── 场景一：deadline fence 先触发，callback 后到达 ──────────────────────────
 

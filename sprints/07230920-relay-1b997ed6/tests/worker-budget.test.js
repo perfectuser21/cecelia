@@ -19,22 +19,8 @@ import { join, dirname } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKSPACE_ROOT = join(__dirname, '../../..');
 
-// TODO: 实现后取消注释
-// import { computeWorkerDeadlineSecs, ROLE_BUDGET_SECS } from '../../../packages/brain/src/orchestrator/constants.js';
-
-// Placeholder — 全红骨架
-function computeWorkerDeadlineSecs(_role, _runStartedAt, _nowAt, _totalBudgetMs) {
-  return undefined; // 未实现
-}
-
-const ROLE_BUDGET_SECS = {
-  planner: undefined,   // 待实现: 600
-  proposer: undefined,  // 待实现: 600
-  reviewer: undefined,  // 待实现: 600
-  judge: undefined,     // 待实现: 600
-  generator: undefined, // 待实现: 1800
-  evaluator: undefined, // 待实现: 1800
-};
+import { ROLE_BUDGET_SECS } from '../../../packages/brain/src/orchestrator/constants.js';
+import { computeWorkerDeadlineSecs } from '../../../packages/brain/src/orchestrator/gates.js';
 
 const BASE = new Date('2026-01-01T00:00:00.000Z');
 const TOTAL_BUDGET_MS = 120 * 60 * 1000;

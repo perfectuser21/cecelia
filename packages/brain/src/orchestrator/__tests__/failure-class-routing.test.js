@@ -15,13 +15,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-// TODO: 实现后取消注释
-// import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-
-// Placeholder derive — 全红骨架
-function derive(_observed) {
-  return { phase: 'unknown', action: 'unknown', reason: 'not_implemented' };
-}
+import { derive } from '../derive.js';
 
 /** 构造 "evaluate PASS + judge FAIL with failure_class" 的 observed */
 function baseObservedWithJudgeFail(failureClass, overrides = {}) {
