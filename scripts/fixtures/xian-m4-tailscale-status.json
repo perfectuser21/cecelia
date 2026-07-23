@@ -1,0 +1,22 @@
+{
+  "BackendState": "Running",
+  "ExitNodeStatus": {
+    "ID": "n6kr9EqWwN11CNTRL",
+    "Online": true,
+    "TailscaleIPs": [
+      "100.71.151.105/32"
+    ]
+  },
+  "Peer": {
+    "nodekey:public-key-is-not-the-stable-id": {
+      "ID": "n6kr9EqWwN11CNTRL",
+      "HostName": "perfect21",
+      "DNSName": "mac-mini-m4-us.tailce7a8b.ts.net.",
+      "TailscaleIPs": [
+        "100.71.151.105"
+      ],
+      "Online": true,
+      "ExitNode": true
+    }
+  }
+}

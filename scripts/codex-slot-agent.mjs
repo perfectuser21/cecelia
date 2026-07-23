@@ -27,6 +27,12 @@ const DEFAULT_TAILSCALE_TIMEOUT_MS = 5_000;
 const DEFAULT_EXIT_NODE = 'mmv';
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SAFE_EXIT_NODE = /^[a-z0-9](?:[a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*)?$/;
+const TRUSTED_EXIT_NODE_IDENTITIES = Object.freeze({
+  mmv: Object.freeze([
+    Object.freeze({ hostName: 'mmv', dnsLabel: 'mmv' }),
+    Object.freeze({ hostName: 'perfect21', dnsLabel: 'mac-mini-m4-us' }),
+  ]),
+});
 
 const nodeFs = {
   chmod,
@@ -187,11 +193,8 @@ function resolveNow(deps) {
 function resolveHostname(deps) {
   const value = typeof deps.hostname === 'function'
     ? deps.hostname()
-    : deps.hostname ?? osHostname();
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new Error('hostname must be a non-empty string');
-  }
-  return value;
+    : deps.hostname ?? process.env.CODEX_SLOT_HOST ?? osHostname();
+  return validateSafeSegment(value, 'hostname');
 }
 
 function resolveAllowedProjects(deps) {
@@ -630,6 +633,80 @@ function normalizeTailscaleStatus(raw) {
   return status;
 }
 
+function normalizeTailscaleIp(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  const slash = normalized.lastIndexOf('/');
+  const address = slash === -1 ? normalized : normalized.slice(0, slash);
+  const prefix = slash === -1 ? null : normalized.slice(slash + 1);
+
+  if (address.includes(':')) {
+    if (!/^[0-9a-f:.]+$/.test(address) || (prefix !== null && prefix !== '128')) {
+      return null;
+    }
+    return address;
+  }
+
+  const octets = address.split('.');
+  if (
+    octets.length !== 4
+    || octets.some((octet) => !/^\d{1,3}$/.test(octet) || Number(octet) > 255)
+    || (prefix !== null && prefix !== '32')
+  ) {
+    return null;
+  }
+  return octets.map((octet) => String(Number(octet))).join('.');
+}
+
+function normalizeTailscaleIpSet(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return null;
+  }
+  const normalized = values.map(normalizeTailscaleIp);
+  if (normalized.some((value) => value === null)) {
+    return null;
+  }
+  return new Set(normalized);
+}
+
+function sameNonEmptyIpSet(left, right) {
+  const leftSet = normalizeTailscaleIpSet(left);
+  const rightSet = normalizeTailscaleIpSet(right);
+  return Boolean(
+    leftSet
+    && rightSet
+    && leftSet.size === rightSet.size
+    && Array.from(leftSet).every((ip) => rightSet.has(ip))
+  );
+}
+
+function exitNodeIdentity(peer, expected) {
+  const hostName = normalizeExitNodeName(peer.HostName);
+  const dnsName = normalizeExitNodeName(peer.DNSName);
+  if (hostName === null || dnsName === null || !dnsName) {
+    return { exitNode: null, expectedMatches: false };
+  }
+
+  const dnsLabel = dnsName.split('.')[0];
+  const trusted = TRUSTED_EXIT_NODE_IDENTITIES[expected];
+  if (trusted?.some((identity) =>
+    identity.hostName === hostName && identity.dnsLabel === dnsLabel
+  )) {
+    return { exitNode: expected, expectedMatches: true };
+  }
+
+  if (hostName && hostName !== dnsLabel) {
+    return { exitNode: null, expectedMatches: false };
+  }
+  const exitNode = hostName || dnsName;
+  return {
+    exitNode,
+    expectedMatches: expected === exitNode || expected === dnsName,
+  };
+}
+
 function selectedExitNode(status, expected) {
   const peers = status.Peer;
   if (!peers || typeof peers !== 'object' || Array.isArray(peers)) {
@@ -643,21 +720,28 @@ function selectedExitNode(status, expected) {
   }
 
   const peer = selected[0];
-  const hostName = normalizeExitNodeName(peer.HostName);
-  const dnsName = normalizeExitNodeName(peer.DNSName);
-  if (hostName === null || dnsName === null) {
-    return { exitNode: null, exitNodeOk: false };
-  }
-  if (hostName && dnsName && hostName !== dnsName.split('.')[0]) {
-    return { exitNode: null, exitNodeOk: false };
-  }
-  const exitNode = hostName || dnsName || null;
+  const { exitNode, expectedMatches } = exitNodeIdentity(peer, expected);
   if (!exitNode) {
     return { exitNode: null, exitNodeOk: false };
   }
+
+  const exitNodeStatus = status.ExitNodeStatus;
+  const peerId = typeof peer.ID === 'string' ? peer.ID : '';
+  const statusId = typeof exitNodeStatus?.ID === 'string' ? exitNodeStatus.ID : '';
+  const statusMatchesPeer = Boolean(
+    exitNodeStatus
+    && typeof exitNodeStatus === 'object'
+    && !Array.isArray(exitNodeStatus)
+    && exitNodeStatus.Online === true
+    && peerId
+    && statusId
+    && peerId === statusId
+    && sameNonEmptyIpSet(peer.TailscaleIPs, exitNodeStatus.TailscaleIPs)
+  );
+
   return {
     exitNode,
-    exitNodeOk: peer.Online === true && (expected === exitNode || (dnsName !== '' && expected === dnsName)),
+    exitNodeOk: peer.Online === true && statusMatchesPeer && expectedMatches,
   };
 }
 

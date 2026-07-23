@@ -31,8 +31,16 @@ REMOTE_CLEANUP_PATHS=()
 CLIENT_TRANSACTION_ACTIVE=0
 CLIENT_TRANSACTION_OK=0
 CLIENT_LIB_DIR=""
-CLIENT_LIB_INSTALLED=0
-CLIENT_SAVED_DIR=""
+CLIENT_LIB_DIR_CREATED=0
+CLIENT_LIB_DIR_OLD_MODE=""
+CLIENT_ESM_PATH=""
+CLIENT_ESM_INSTALLED=0
+CLIENT_ESM_EXISTED=0
+CLIENT_SAVED_ESM=""
+CLIENT_ENTRY_PATH=""
+CLIENT_ENTRY_INSTALLED=0
+CLIENT_ENTRY_EXISTED=0
+CLIENT_SAVED_ENTRY=""
 CLIENT_LINK_PATH=""
 CLIENT_LINK_INSTALLED=0
 CLIENT_SAVED_LINK=""
@@ -122,12 +130,16 @@ parse_args() {
   esac
 }
 
-remove_client_lib_dir() {
+remove_client_stage_dir() {
   local dir="$1"
   rm -f \
     "$dir/codex-slot-client.mjs" \
     "$dir/codex-slot" 2>/dev/null || true
   rmdir "$dir" 2>/dev/null || true
+}
+
+file_mode() {
+  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
 }
 
 read_owner_field() {
@@ -224,11 +236,25 @@ rollback_client_transaction() {
     mv "$CLIENT_SAVED_LINK" "$CLIENT_LINK_PATH" 2>/dev/null || true
   fi
 
-  if [[ "$CLIENT_LIB_INSTALLED" -eq 1 ]]; then
-    remove_client_lib_dir "$CLIENT_LIB_DIR"
+  if [[ "$CLIENT_ENTRY_INSTALLED" -eq 1 ]]; then
+    if [[ "$CLIENT_ENTRY_EXISTED" -eq 1 && -f "$CLIENT_SAVED_ENTRY" ]]; then
+      mv -f "$CLIENT_SAVED_ENTRY" "$CLIENT_ENTRY_PATH" 2>/dev/null || true
+    else
+      rm -f "$CLIENT_ENTRY_PATH" 2>/dev/null || true
+    fi
   fi
-  if [[ -n "$CLIENT_SAVED_DIR" && -e "$CLIENT_SAVED_DIR" ]]; then
-    mv "$CLIENT_SAVED_DIR" "$CLIENT_LIB_DIR" 2>/dev/null || true
+  if [[ "$CLIENT_ESM_INSTALLED" -eq 1 ]]; then
+    if [[ "$CLIENT_ESM_EXISTED" -eq 1 && -f "$CLIENT_SAVED_ESM" ]]; then
+      mv -f "$CLIENT_SAVED_ESM" "$CLIENT_ESM_PATH" 2>/dev/null || true
+    else
+      rm -f "$CLIENT_ESM_PATH" 2>/dev/null || true
+    fi
+  fi
+
+  if [[ "$CLIENT_LIB_DIR_CREATED" -eq 1 ]]; then
+    rmdir "$CLIENT_LIB_DIR" 2>/dev/null || true
+  elif [[ -n "$CLIENT_LIB_DIR_OLD_MODE" && -d "$CLIENT_LIB_DIR" ]]; then
+    chmod "$CLIENT_LIB_DIR_OLD_MODE" "$CLIENT_LIB_DIR" 2>/dev/null || true
   fi
 }
 
@@ -238,7 +264,7 @@ cleanup_all() {
   rollback_client_transaction
 
   if [[ -n "$LOCAL_STAGE" && -d "$LOCAL_STAGE" ]]; then
-    remove_client_lib_dir "$LOCAL_STAGE"
+    remove_client_stage_dir "$LOCAL_STAGE"
   fi
   if [[ -n "$LOCAL_LINK_STAGE" ]]; then
     rm -f "$LOCAL_LINK_STAGE" 2>/dev/null || true
@@ -529,24 +555,53 @@ install_client() {
 
   CLIENT_TRANSACTION_ACTIVE=1
   CLIENT_LIB_DIR="$lib_dir"
+  CLIENT_ESM_PATH="$lib_dir/codex-slot-client.mjs"
+  CLIENT_ENTRY_PATH="$lib_dir/codex-slot"
   CLIENT_LINK_PATH="$bin_dir/codex-slot"
 
   if [[ -e "$lib_dir" || -L "$lib_dir" ]]; then
-    CLIENT_SAVED_DIR="$backup_dir/client"
-    mv "$lib_dir" "$CLIENT_SAVED_DIR"
+    [[ -d "$lib_dir" && ! -L "$lib_dir" ]] ||
+      die "cannot use non-directory client lib path: $lib_dir"
+    CLIENT_LIB_DIR_OLD_MODE="$(file_mode "$lib_dir")"
+  else
+    mkdir "$lib_dir"
+    CLIENT_LIB_DIR_CREATED=1
   fi
+  chmod 700 "$lib_dir"
+
+  if [[ -e "$CLIENT_ESM_PATH" || -L "$CLIENT_ESM_PATH" ]]; then
+    [[ -f "$CLIENT_ESM_PATH" && ! -L "$CLIENT_ESM_PATH" ]] ||
+      die "cannot replace non-regular client ESM: $CLIENT_ESM_PATH"
+    CLIENT_ESM_EXISTED=1
+    CLIENT_SAVED_ESM="$backup_dir/codex-slot-client.mjs"
+    cp -p "$CLIENT_ESM_PATH" "$CLIENT_SAVED_ESM"
+  fi
+  if [[ -e "$CLIENT_ENTRY_PATH" || -L "$CLIENT_ENTRY_PATH" ]]; then
+    [[ -f "$CLIENT_ENTRY_PATH" && ! -L "$CLIENT_ENTRY_PATH" ]] ||
+      die "cannot replace non-regular client entry: $CLIENT_ENTRY_PATH"
+    CLIENT_ENTRY_EXISTED=1
+    CLIENT_SAVED_ENTRY="$backup_dir/codex-slot"
+    cp -p "$CLIENT_ENTRY_PATH" "$CLIENT_SAVED_ENTRY"
+  fi
+
   if [[ -e "$CLIENT_LINK_PATH" || -L "$CLIENT_LINK_PATH" ]]; then
     CLIENT_SAVED_LINK="$backup_dir/entry"
     mv "$CLIENT_LINK_PATH" "$CLIENT_SAVED_LINK"
   fi
 
-  if ! mv "$LOCAL_STAGE" "$lib_dir"; then
-    die "failed to atomically install client"
+  if ! mv -f "$LOCAL_STAGE/codex-slot-client.mjs" "$CLIENT_ESM_PATH"; then
+    die "failed to atomically install client ESM"
   fi
-  CLIENT_LIB_INSTALLED=1
+  CLIENT_ESM_INSTALLED=1
+
+  if ! mv -f "$LOCAL_STAGE/codex-slot" "$CLIENT_ENTRY_PATH"; then
+    die "failed to atomically install client entry"
+  fi
+  CLIENT_ENTRY_INSTALLED=1
+  rmdir "$LOCAL_STAGE"
   LOCAL_STAGE=""
 
-  if ! mv -f "$LOCAL_LINK_STAGE" "$bin_dir/codex-slot"; then
+  if ! mv -f "$LOCAL_LINK_STAGE" "$CLIENT_LINK_PATH"; then
     die "failed to atomically install client entry"
   fi
   CLIENT_LINK_INSTALLED=1

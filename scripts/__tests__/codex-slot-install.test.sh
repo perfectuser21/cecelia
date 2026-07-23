@@ -309,6 +309,41 @@ seed_old_client() {
   chmod 640 "$home/.zshrc"
 }
 
+seed_client_observer_files() {
+  local home="$1"
+  local lib_dir="$home/.local/lib/codex-slot"
+  mkdir -p "$lib_dir"
+  printf 'broker content: keep exactly\nsecond broker line\n' \
+    >"$lib_dir/codex-slot-broker.mjs"
+  printf 'store content: keep exactly\nsecond store line\n' \
+    >"$lib_dir/codex-slot-store.mjs"
+  printf 'unrelated sentinel: keep exactly\n' >"$lib_dir/unrelated-sentinel"
+  chmod 641 "$lib_dir/codex-slot-broker.mjs"
+  chmod 604 "$lib_dir/codex-slot-store.mjs"
+  chmod 400 "$lib_dir/unrelated-sentinel"
+}
+
+assert_client_observer_files_preserved() {
+  local label="$1"
+  local home="$2"
+  local lib_dir="$home/.local/lib/codex-slot"
+  assert_eq "$label 保留 broker 精确内容" \
+    $'broker content: keep exactly\nsecond broker line' \
+    "$(cat "$lib_dir/codex-slot-broker.mjs")"
+  assert_eq "$label 保留 store 精确内容" \
+    $'store content: keep exactly\nsecond store line' \
+    "$(cat "$lib_dir/codex-slot-store.mjs")"
+  assert_eq "$label 保留无关 sentinel 精确内容" \
+    "unrelated sentinel: keep exactly" \
+    "$(tr -d '\n' <"$lib_dir/unrelated-sentinel")"
+  assert_eq "$label 保留 broker mode" "641" \
+    "$(mode_of "$lib_dir/codex-slot-broker.mjs")"
+  assert_eq "$label 保留 store mode" "604" \
+    "$(mode_of "$lib_dir/codex-slot-store.mjs")"
+  assert_eq "$label 保留无关 sentinel mode" "400" \
+    "$(mode_of "$lib_dir/unrelated-sentinel")"
+}
+
 assert_old_client_restored() {
   local label="$1"
   local home="$2"
@@ -330,6 +365,7 @@ assert_old_client_restored() {
     "$(mode_of "$home/.zshrc")"
   assert_eq "$label 恢复旧 config 目录 mode" "750" \
     "$(mode_of "$home/.config/codex-slot")"
+  assert_client_observer_files_preserved "$label 回滚" "$home"
 }
 
 seed_remote_pair() {
@@ -420,6 +456,27 @@ test_client_install_and_idempotency() {
     sh -c '! find "$1/.local/lib" -name "*.new.*" -print -quit | grep -q .' sh "$home"
 }
 
+test_client_install_preserves_shared_home_role_and_observer_files() {
+  local root
+  root="$(new_case client-shared-home)"
+  local home="$root/home with spaces"
+  seed_client_observer_files "$home"
+  chmod 750 "$home/.local/lib/codex-slot"
+
+  local status=0
+  run_install "$root" --client-only >"$root/out" 2>&1 || status=$?
+  assert_eq "共 HOME client-only 安装成功" "0" "$status"
+  assert_true "共 HOME client-only 更新 client ESM" \
+    cmp -s "$REPO_ROOT/scripts/codex-slot-client.mjs" \
+      "$home/.local/lib/codex-slot/codex-slot-client.mjs"
+  assert_true "共 HOME client-only 更新 Bash entry" \
+    cmp -s "$REPO_ROOT/scripts/codex-slot" \
+      "$home/.local/lib/codex-slot/codex-slot"
+  assert_eq "共 HOME client-only 保持 lib 目录 mode 700" "700" \
+    "$(mode_of "$home/.local/lib/codex-slot")"
+  assert_client_observer_files_preserved "共 HOME client-only 成功" "$home"
+}
+
 test_installed_client_entry_runs_real_esm() {
   local root
   root="$(new_case client-real-entry)"
@@ -447,6 +504,7 @@ test_client_final_transaction_failures_restore_everything() {
   config_root="$(new_case client-config-failure)"
   local config_home="$config_root/home with spaces"
   seed_old_client "$config_home"
+  seed_client_observer_files "$config_home"
 
   local config_status=0
   MOCK_MV_FAIL_ONCE_DEST_MATCH=".config/codex-slot/config.json" \
@@ -465,6 +523,7 @@ test_client_final_transaction_failures_restore_everything() {
   path_root="$(new_case client-path-failure)"
   local path_home="$path_root/home with spaces"
   seed_old_client "$path_home"
+  seed_client_observer_files "$path_home"
   printf '{"broker":"keep-me"}\n' >"$path_home/.config/codex-slot/config.json"
   chmod 640 "$path_home/.config/codex-slot/config.json"
 
@@ -482,6 +541,53 @@ test_client_final_transaction_failures_restore_everything() {
     "$(tr -d '\n' <"$path_home/.config/codex-slot/config.json")"
   assert_eq "PATH 失败保持既有 config mode" "640" \
     "$(mode_of "$path_home/.config/codex-slot/config.json")"
+}
+
+test_broker_install_preserves_client_in_same_home() {
+  local root
+  root="$(new_case broker-shared-home)"
+  local home="$root/home with spaces"
+  local base="$home/.local/lib/codex-slot"
+
+  if ! run_install "$root" --client-only >"$root/client.out" 2>&1; then
+    fail "反向共 HOME 先安装 client 成功" "$(cat "$root/client.out")"
+    return
+  fi
+  pass "反向共 HOME 先安装 client 成功"
+  printf 'reverse unrelated sentinel\n' >"$base/reverse-sentinel"
+  chmod 440 "$base/reverse-sentinel"
+
+  local client_content
+  local entry_content
+  local client_mode
+  local entry_mode
+  client_content="$(cat "$base/codex-slot-client.mjs")"
+  entry_content="$(cat "$base/codex-slot")"
+  client_mode="$(mode_of "$base/codex-slot-client.mjs")"
+  entry_mode="$(mode_of "$base/codex-slot")"
+
+  ln -s "$home" "$root/remotes/mmv"
+  local status=0
+  run_install "$root" --broker-host mmv >"$root/broker.out" 2>&1 || status=$?
+  assert_eq "反向共 HOME broker 安装成功" "0" "$status"
+  assert_eq "反向 broker 保留 client 精确内容" "$client_content" \
+    "$(cat "$base/codex-slot-client.mjs")"
+  assert_eq "反向 broker 保留 Bash entry 精确内容" "$entry_content" \
+    "$(cat "$base/codex-slot")"
+  assert_eq "反向 broker 保留 client mode" "$client_mode" \
+    "$(mode_of "$base/codex-slot-client.mjs")"
+  assert_eq "反向 broker 保留 Bash entry mode" "$entry_mode" \
+    "$(mode_of "$base/codex-slot")"
+  assert_eq "反向 broker 保留无关 sentinel 精确内容" \
+    "reverse unrelated sentinel" "$(tr -d '\n' <"$base/reverse-sentinel")"
+  assert_eq "反向 broker 保留无关 sentinel mode" "440" \
+    "$(mode_of "$base/reverse-sentinel")"
+  assert_true "反向共 HOME broker 文件已安装" \
+    cmp -s "$REPO_ROOT/scripts/codex-slot-broker.mjs" \
+      "$base/codex-slot-broker.mjs"
+  assert_true "反向共 HOME store 文件已安装" \
+    cmp -s "$REPO_ROOT/scripts/codex-slot-store.mjs" \
+      "$base/codex-slot-store.mjs"
 }
 
 test_path_component_detection() {
@@ -1090,8 +1196,10 @@ fi
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/codex-slot-install-test.XXXXXX")"
 
 test_client_install_and_idempotency
+test_client_install_preserves_shared_home_role_and_observer_files
 test_installed_client_entry_runs_real_esm
 test_client_final_transaction_failures_restore_everything
+test_broker_install_preserves_client_in_same_home
 test_path_component_detection
 test_role_isolation_and_all_defaults
 test_remote_zsh_executes_multi_file_transactions
