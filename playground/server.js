@@ -103,6 +103,20 @@ app.get('/increment', (req, res) => {
   return res.json({ result: n + 1, operation: 'increment' });
 });
 
+app.get('/negate', (req, res) => {
+  // 成功 schema: { result: -Number(value), operation: "negate" }
+  // strict ^-?\d+$；|value| ≤ 9007199254740990；唯一 query 名 value；-0 规范化为 0
+  const STRICT_INT = /^-?\d+$/;
+  const keys = Object.keys(req.query);
+  const v = req.query.value;
+  const n = Number(v);
+  if (keys.length !== 1 || keys[0] !== 'value' || typeof v !== 'string' || !STRICT_INT.test(v) || Math.abs(n) > 9007199254740990) {
+    return res.status(400).json({ error: 'value 必须是唯一 query 名 + 匹配 ^-?\\d+$（仅整数；禁小数、前导 +、双重负号、科学计数法、十六进制、千分位、空格、Infinity、NaN、空串）+ |value| ≤ 9007199254740990' });
+  }
+  const result = -n || 0; // -0 规范化为 0（-0 || 0 === 0）
+  return res.json({ result, operation: 'negate' });
+});
+
 app.get('/decrement', (req, res) => {
   // 成功 schema 字面: { result: <number>, operation: "decrement" }；strict ^-?\d+$；上界 |value| ≤ 9007199254740990；query 名 req.query.value
   const STRICT_INT = /^-?\d+$/;
