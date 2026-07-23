@@ -1,216 +1,206 @@
-# Contract Draft — Harness Kernel 有界运行与正确恢复（Sprint 07231527）
+# Contract Draft — Harness Kernel 收敛驱动恢复（Sprint 07231527）
 
 **TASK_ID**: 50170af2-fefa-41a7-b0b4-dcf1a5d7b077
 **Sprint**: 07231527-relay-50170af2
-**Version**: 1.0
+**Version**: 2.0
 **Date**: 2026-07-23
-**Status**: PROPOSED
+**Status**: APPROVED FOR REWORK
+**Decision**: `9aeae77e-a4f2-47f7-a94f-d515546d1a32`
 
 ---
 
-## 背景与范围
+## 背景、范围与优先级
 
-上轮 PR #4220 已被 revert，Codex 独立复审发现 6 条 blocking 缺口：deadline 未接线、持久计数是伪接线、failure_class 路由链断裂、no-progress 熔断不可达、approval bridge 未完整实现、fixRound 计数错误。本合同逐条真实闭合上述缺口。
+PR #4220 的历史事故和 PR #4226 第一轮实现证明了 deadline、持久计数、
+failure-class 路由、no-progress 与 approval bridge 必须接入真实调用链。
+独立复审进一步确认 R1–R7：原终止模型仍会死锁、误放或无限空转。
 
-修改范围：
-- `packages/brain/src/orchestrator/constants.js`（MAX_FIX_ROUNDS、MAX_HOPS）
-- `packages/brain/src/orchestrator/loop.js`（三道 deadline fence、持久化计数、no-progress trigger_sha 写入）
-- `packages/brain/src/orchestrator/derive.js`（5 类 failure_class 差异路由）
-- `packages/brain/src/orchestrator/dispatcher.js`（evidence-repair 动作支持）
-- `packages/brain/src/orchestrator/kernel-handlers.js`（failure_class 落库传递、approval bridge 完整校验）
-- `packages/brain/src/orchestrator/ground-truth.js`（deriveNoProgress 接入、trigger_sha 推导）
-- `packages/brain/src/orchestrator/counters.js`（fixRound 只计产生新 SHA 的有效 product fix）
-- `packages/brain/src/routes/harness-callback.js`（generator callback 写 verdict:generator-fix-callback + pr_head_sha）
-- `packages/brain/src/routes/harness-pending-reviews.js`（approval bridge 完整认证）
-- `packages/brain/src/harness-skill-relay.js`（deadline_at 改为 NOW()+120min）
-- `packages/brain/src/orchestrator/codex-supervisor.mjs` / `grok-supervisor.mjs`（SUPERVISOR_DEADLINE_SECONDS 不再默认 28800）
+本合同以批准后的
+`docs/superpowers/specs/2026-07-23-kernel-convergence-rework-design.md`
+为规范来源。早期固定 fix 轮数、run 级 approval 幂等和短墙钟 deadline
+描述均已废止，不得作为测试预期。R7 的最新裁决覆盖旧的
+`kernel-approval-bridge.test.js@868ee83cb` 不可修改要求：T-17-c/d/e
+必须穿过真实 Router。
+
+实现范围：
+
+- `packages/brain/src/orchestrator/`：常量、ground truth、计数回放、derive、
+  loop、gates；
+- `packages/brain/src/routes/`：approval、callback、共享 PR head resolver；
+- `packages/brain/src/harness-skill-relay.js` 与
+  `packages/brain/src/harness-relay-watchdog.js`；
+- `tests/regression/relay-50170af2/`、真实 Router 测试与真 PostgreSQL
+  integration。
+
+不改 #4223 的审批认证语义，不 merge PR #4226。
 
 ---
 
 ## Golden Path
 
-### GP-1：evidence_invalid 不进 generator-fix
+### GP-1：服务端可验证的新 SHA
 
-1. evaluator callback 写入 `failure_class: 'evidence_invalid'`
-2. Judge 落库时传递并保留 `failure_class`
-3. `derive.js` 识别 `failure_class === 'evidence_invalid'` → 路由 `spawn:evaluator-evidence-repair`
-4. generator-fix 不被调用，fixRound 不递增
+1. `spawn:generator-fix` intent 保存当前 resolver SHA 为 `trigger_sha`，
+   同时保存结构化 `failure_set` 与确定性 `failure_set_key`。
+2. callback claimed SHA 先 trim、小写并校验 40 位 hex。
+3. approval 与 callback 使用同一 GitHub PR head resolver。
+4. 只有 claimed SHA 与 resolver SHA 完全相同才落权威 callback SHA。
+5. resolver SHA 等于 `trigger_sha`，或格式/对账失败，立即
+   `FAILED + 人工升级`，不再 spawn。
 
-### GP-2：同 SHA no-progress terminal
+### GP-2：结构化失败面收敛
 
-1. generator-fix intent 写入 `trigger_sha`（当前 PR head_sha）
-2. generator-fix callback 写入 `verdict:generator-fix-callback` + `pr_head_sha`
-3. `ground-truth.js` 推导 `deriveNoProgress`：callback SHA === trigger SHA → `no_progress_same_sha`
-4. loop 识别 terminal → run.phase = 'failed'，不再派新 fix intent
+1. CI 失败集合只取 GitHub `statusCheckRollup` 中失败 check 名，排序去重。
+2. evaluator / judge 只取合法数组型 `failure_signature`。
+3. 自然语言 reason、feedback、summary 永不参与比较。
+4. resolver 确认新 SHA 后：
+   - 无结构化集合：允许继续；
+   - 集合规模创历史新低：允许继续并重置 patience；
+   - 精确集合为历史新集合：允许探索；
+   - 精确集合历史重现：`wait:human_review + Bark`；
+   - 连续 3 个新集合未创历史新低：`wait:human_review + Bark`。
+5. approval 解锁后 patience 固定为 1；下一个结构化轮次仍未创历史新低，
+   立即 FAILED，不得二次人审；创历史新低则恢复常规模型。
 
-### GP-3：deadline 120min 全链接通
+### GP-3：无 PR 崩溃与 evidence repair
 
-1. `harness-skill-relay.js` 建 run 时 `deadline_at = NOW() + INTERVAL '120 minutes'`
-2. `loop.js` collect 前检查 `deadline fence 1`：`NOW() >= run.deadline_at` → terminal `automation_deadline_exceeded`
-3. `loop.js` derive 后 dispatch 前检查 `deadline fence 2`：防止在 deadline 后创建新 attempt
-4. `loop.js` 收到 DONE 心跳后检查 `deadline fence 3`：崩溃窗口补丁
-5. deadline 触发后写 `automation_deadline_exceeded`，不 requeue
+1. 无 PR generator 崩溃签名由服务端生成：
+   `{role, error_code, failure_class}`。
+2. 相同崩溃签名第二次出现立即 FAILED；该从严策略是有意的。
+3. evidence repair 仅使用结构化 evidence signature。
+4. 相同 evidence signature 第二次出现进入人审；批准后再次重复立即
+   FAILED。
 
-### GP-4：failure_class 路由矩阵全链
+### GP-4：failure_class 保守路由
 
-| failure_class | 路由动作 |
-|--------------|---------|
-| product_failure（或 null/缺失） | spawn:generator-fix |
-| evidence_invalid | spawn:evaluator-evidence-repair |
-| environment_recovery | terminal（second_environment_recovery）|
-| needs_context | wait:human_review |
-| contract_invalid | mark_failed（已有）|
-| unknown | wait:human_review（保守路由）|
+| 来源 / `failure_class` | 动作 |
+|---|---|
+| product failure | 在 SHA 与收敛 gate 通过后 `spawn:generator-fix` |
+| evidence_invalid | `spawn:evaluator-evidence-repair` |
+| environment_recovery 第二次同服务端签名 | `mark_failed` |
+| needs_context | `wait:human_review` |
+| contract_invalid | `mark_failed` |
+| judge FAIL 缺失/null | 归一为 `unknown` → `wait:human_review` |
 
-### GP-5：持久化计数重启不归零
+缺分类不得默认派 generator。
 
-1. `loop.js` 移除进程内 `pollCount` 作为唯一权威；改从决策日志行推导
-2. `wait:poll_ci` 写 decision log（action='wait:poll_ci'），pollCount = COUNT 该 action 行
-3. `blockedStreak` 从 DB 推导：统计尾部连续 NEEDS_CONTEXT/BLOCKED 状态行
-4. 重启后 deriveCounters 从 DB decision log 恢复，无归零风险
+### GP-5：8 小时自动化活动 deadline
 
-### GP-6：approval bridge 完整认证写 verdict:human_review
+1. 新 kernel run 的 `deadline_at` 初始为 8 小时。
+2. collect、derive、dispatch 与 DONE 后 fence 均接线。
+3. 存在当前 SHA 的开放 `effect:human_review_requested` 时，loop 与 relay
+   watchdog 均跳过 deadline 终止。
+4. approval 必须引用 request hop，并在同一事务中按 request
+   `created_at` 将暂停时长加回 deadline。
+5. SHA 改变使旧 request 失效时恢复 deadline 判定。
+6. deadline / hop 触发只写 FAILED；`markRunFailed` 使用
+   `WHERE phase NOT IN ('done','failed')`，不得覆盖终态。
 
-1. POST `/api/brain/harness/pending-reviews/:taskId/approve` 须持 `HARNESS_REVIEW_APPROVER_TOKEN`
-2. 校验 `taskId`、`reviewRequestHop`、操作者身份、当前 PR head_sha
-3. 旧 SHA 批准（PR 已新 push）→ 拒绝（409）
-4. 重复批准（已有 verdict:human_review）→ 拒绝（409）
-5. 通过后写唯一 `verdict:human_review`，detail 含 `approved: true`、`pr_head_sha`、`approved_by`
+### GP-6：按 SHA approval 幂等
 
-### GP-7：fixRound 只计有效 product fix
+1. approval 校验 token、task/run、request hop、操作者和当前 GitHub SHA。
+2. 判重键为 `(run_id, action='verdict:human_review', pr_head_sha)`。
+3. 同 SHA 重复批准返回 409；同 run 的 SHA-A 与 SHA-B 可各批准一次。
+4. 每个 SHA 的并发批准通过 advisory lock 保证恰一行。
+5. approval 只解除等待，不产生 evaluator/judge PASS，不绕过 merge gate。
 
-1. `counters.js` 中 fixRound 计数：只统计 `spawn:generator-fix` 且 callback 中 `pr_head_sha !== trigger_sha`（即产生新 SHA 的 fix）
-2. 同 SHA no-progress 不递增 fixRound
-3. `MAX_FIX_ROUNDS = 3`（不再是 20）
+### GP-7：持久回放与宽兜底
+
+1. `orchestrator_decision_log` 是唯一收敛历史，不新增可变 JSON 双账本。
+2. pollCount、blockedStreak、失败面、patience 与 approval 解锁在重启后均
+   从日志恢复。
+3. `fixRound` 保留为诊断指标，无任何路由终止语义。
+4. `MAX_HOPS = 4096`，按所有新日志行计数，只在收敛探测之后作为防死循环
+   宽兜底。
 
 ---
 
 ## E2E 验收
 
-### E2E-1：evidence_invalid 路由（集成）
+### E2E-1：R1/R7 真实 approval Router
 
-运行 Kernel 编排，注入 evaluator callback 含 `failure_class: 'evidence_invalid'`。
+通过 Express 挂载生产 Router，验证：
 
-**验收断言**：
-- 决策日志中存在 `spawn:evaluator-evidence-repair` 行
-- 决策日志中不存在 `spawn:generator-fix` 行
-- `fixRound === 0`
+- 未认证 401；
+- stale SHA 409；
+- 同 SHA 重复批准 409；
+- 同 run 的两个 GitHub head SHA 各返回 202，decision log 各恰一行；
+- T-17-c/d/e 不包含复制生产 SQL/分支的内联逻辑。
 
-**验收命令**：
 ```bash
 cd packages/brain && npx --no-install vitest run \
-  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
-  -t "failure classification" --reporter=verbose
-```
-
-### E2E-2：same SHA no-progress terminal（集成）
-
-运行 Kernel 编排，注入 generator-fix callback，`pr_head_sha` 与 `trigger_sha` 相同。
-
-**验收断言**：
-- run.phase = 'failed'
-- failure_reason = 'no_progress_same_sha'
-- 无新 `spawn:generator-fix` 行
-
-**验收命令**：
-```bash
-cd packages/brain && npx --no-install vitest run \
-  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
-  -t "no-progress" --reporter=verbose
-```
-
-### E2E-3：120min deadline terminal（集成）
-
-建 run，设 `deadline_at = NOW() - INTERVAL '1 second'`（模拟过期），触发 runLoop。
-
-**验收断言**：
-- 返回 `{exitReason: 'automation_deadline_exceeded'}`
-- run.phase = 'failed'，failure_reason = 'automation_deadline_exceeded'
-- 决策日志无新 spawn intent 行
-
-**验收命令**：
-```bash
-cd packages/brain && npx --no-install vitest run \
-  ../../tests/regression/relay-50170af2/kernel-wiring-deadline.integration.test.js \
+  ../../tests/regression/relay-50170af2/kernel-approval-bridge.test.js \
+  src/routes/__tests__/harness-kernel-approvals.test.js \
+  ../../tests/regression/relay-50170af2/kernel-wiring-approval-route.integration.test.js \
   --reporter=verbose
 ```
 
-### E2E-4：重启持久化计数（集成）
+### E2E-2：R4 callback SHA 对账
 
-1. 运行 runLoop 跑 3 个 wait:poll_ci 跳后人为退出
-2. 重新启动 runLoop（相同 runId）
-3. 验证 pollCount 从 DB 恢复，不归零
+大写合法 SHA 只以 resolver 确认的小写形式落库；短 SHA 与格式合法但假的
+SHA 均形成可回放 no-progress 并终局。artifact、decision 与 provider
+metadata 都不能选择权威 head。
 
-**验收断言**：
-- 第二次启动后 pollCount ≥ 3
-- 决策日志中 `wait:poll_ci` 行 ≥ 3
-
-**验收命令**：
 ```bash
 cd packages/brain && npx --no-install vitest run \
-  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
-  -t "restart recovery" --reporter=verbose
+  src/routes/__tests__/harness-callback.test.js \
+  ../../tests/regression/relay-50170af2/kernel-wiring-no-progress-callback.integration.test.js \
+  --reporter=verbose
 ```
 
-### E2E-5：approval bridge fail-closed（manual:bash）
+### E2E-3：R2 活动 deadline 与终态 guard
 
-```bash
-# 主验收：真实 Express mount + 正式 migrations PostgreSQL + 并发重复批准 + 429
-(cd packages/brain && npx --no-install vitest run \
-  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
-  -t "approval HTTP route" --reporter=verbose)
+验证任意高 `fixRound` 的真实进展仍可继续、初始 deadline 为 8 小时、开放
+人审在 loop/watchdog 停表、approval 补回等待时长，以及 `done` / `failed`
+不被 fence 覆盖。
 
-# 启动生产 router 的一次性本地 Express mount，再用 curl 补验。
-port_file="$(mktemp)"
-NODE_ENV="test" DB_NAME="cecelia_test" \
-  HARNESS_REVIEW_APPROVER_TOKEN="contract-token" PORT_FILE="$port_file" \
-  node --input-type=module <<'NODE' &
-import express from 'express';
-import { writeFileSync } from 'node:fs';
-import router from './packages/brain/src/routes/harness-kernel-approvals.js';
-const app = express();
-app.use(express.json());
-app.use('/api/brain/harness/kernel-reviews', router);
-const server = app.listen(0, '127.0.0.1', () => {
-  writeFileSync(process.env.PORT_FILE, String(server.address().port));
-});
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
-NODE
-server_pid=$!
-trap 'kill "$server_pid" 2>/dev/null || true; rm -f "$port_file" "$body_file"' EXIT
-for _ in $(seq 1 50); do
-  test -s "$port_file" && break
-  sleep 0.1
-done
-test -s "$port_file"
-port="$(cat "$port_file")"
-body_file="$(mktemp)"
-http_code="$(curl -sS -o "$body_file" -w '%{http_code}' -X POST \
-  "http://127.0.0.1:${port}/api/brain/harness/kernel-reviews/00000000-0000-4000-8000-000000000000/approve" \
-  -H 'x-approver-token: wrong-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"task_id":"00000000-0000-4000-8000-000000000001","pr_head_sha":"stale","review_request_hop":1,"approved_by":"contract-test"}')"
-test "$http_code" = "401"
-jq -e '.error == "invalid approver token"' "$body_file" >/dev/null
-kill "$server_pid"
-wait "$server_pid"
-rm -f "$port_file" "$body_file"
-trap - EXIT
-```
-
-### E2E-6：d707 hop 55-66 replay 不产生重复 fix
-
-使用真实 d707 decision log fixture 重放 hop 55-66。
-
-**验收断言**：
-- hop 58-66 不产生 9 次 `spawn:generator-fix` 行
-- 在 hop 56（evidence_invalid）时路由到 `spawn:evaluator-evidence-repair`
-- 在 hop 57（same SHA no-progress）时 terminal
-
-**验收命令**：
 ```bash
 cd packages/brain && npx --no-install vitest run \
+  src/orchestrator/__tests__/constants.test.js \
+  src/orchestrator/__tests__/gates.test.js \
+  src/orchestrator/__tests__/loop.test.js \
+  ../../tests/regression/relay-50170af2/kernel-deadline.test.js \
+  ../../tests/regression/relay-50170af2/kernel-wiring-deadline.integration.test.js \
+  ../../tests/regression/relay-50170af2/kernel-wiring-fix-round.integration.test.js \
+  --reporter=verbose
+```
+
+### E2E-4：R3/R5/R6 路由与签名
+
+验证 judge 缺分类进入人审、无 PR 同崩溃签名第二次 FAILED、evidence 同签名
+第二次人审，以及批准后再次重复直接 FAILED。
+
+```bash
+cd packages/brain && npx --no-install vitest run \
+  src/orchestrator/__tests__/counters.test.js \
+  src/orchestrator/__tests__/derive.test.js \
+  ../../tests/regression/relay-50170af2/kernel-failure-class-routing.test.js \
+  ../../tests/regression/relay-50170af2/kernel-convergence-signatures.test.js \
+  --reporter=verbose
+```
+
+### E2E-5：完整失败面历史与 d707
+
+覆盖历史新低、新集合、集合重现、连续 3 个非新低集合、无结构化集合、
+same-SHA、patience=1 人工解锁，并要求 d707 回放只能以结构化收敛 /
+no-progress 退出。
+
+```bash
+cd packages/brain && npx --no-install vitest run \
+  ../../tests/regression/relay-50170af2/kernel-convergence-history.test.js \
   ../../tests/regression/relay-50170af2/d707-replay.test.js \
+  --reporter=verbose
+```
+
+### E2E-6：真 PostgreSQL 接缝
+
+正式 migrations 后使用真实 PostgreSQL、真实 decision log、真实
+loop→derive→dispatch→callback 与真实 approval Router，要求 8/8。
+仅 GitHub CLI、容器枚举和 provider 进程允许最外层替身。
+
+```bash
+cd packages/brain && npx --no-install vitest run \
+  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
   --reporter=verbose
 ```
 
@@ -218,57 +208,37 @@ cd packages/brain && npx --no-install vitest run \
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| Workstream | Test File | 预期 Red | Green 合同 |
 |---|---|---|---|
-| B-01 failure_class 路由 | `../../tests/regression/relay-50170af2/kernel-failure-class-routing.test.js` | T-01-a/T-01-b/T-10-a/T-10-b/T-11-a/T-13-a/T-13-b | 先红：derive 无 evidence_invalid 分支 |
-| B-02 no-progress terminal | `../../tests/regression/relay-50170af2/kernel-no-progress.test.js` | T-02-a/T-02-b/T-03-a/T-03-b | 先红：derive 未识别 noProgress=true |
-| B-02 no-progress 集成 | `../../tests/regression/relay-50170af2/kernel-no-progress-integration.test.js` | T-NP-INT-01/T-NP-INT-02/T-NP-INT-03/T-NP-INT-04 | 先红：ground-truth 不推导 noProgress |
-| B-03 deadline fence | `../../tests/regression/relay-50170af2/kernel-deadline.test.js` | T-05/T-06/T-07 | 先红：loop 无三道 deadline fence |
-| B-05 持久化计数 | `../../tests/regression/relay-50170af2/kernel-persistent-counters.test.js` | T-08-a/T-08-b/T-08-c/T-08-d/T-09 | 先红：wait:poll_ci 不写 decision log |
-| B-06 approval bridge | `../../tests/regression/relay-50170af2/kernel-approval-bridge.test.js` | T-17-a/T-17-b/T-17-c/T-17-d/T-17-e/T-17-f | 先红：bridge 无 SHA 锚定校验 |
-| B-08 d707 replay | `../../tests/regression/relay-50170af2/d707-replay.test.js` | T-04-a/T-04-b/T-04-c/T-04-d/T-04-e | 先红：d707 10次 fix 无熔断 |
-| 真 PostgreSQL 接缝 | `../../packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js` | blocked/needs-context/poll 重启、failure_class、callback no-progress、approval 并发与 429 | 先红：callback 404、并发 loser 500、突发请求无 429 |
+| R1/R7 approval | `kernel-approval-bridge.test.js` + route integration | 第二 SHA 409；mock 复制逻辑恒真 | 真 Router、双 SHA 各一行 |
+| R2 budget | `kernel-deadline.test.js` + wiring integrations | 固定 cap / 旧 deadline / 终态覆盖 | 8h 活动时钟、停表、guard、4096 hop |
+| R3 unknown | `kernel-failure-class-routing.test.js` | judge 缺分类派 generator | unknown 人审 |
+| R4 SHA | `kernel-wiring-no-progress-callback.integration.test.js` | 大写/短/假 SHA 可落库 | resolver 对账与 terminal |
+| R5/R6 signature | `kernel-convergence-signatures.test.js` | 重复签名可无限派 | 崩溃 FAILED；evidence 人审/解锁后 FAILED |
+| 收敛历史 | `kernel-convergence-history.test.js` | 固定轮数或无振荡探测 | 新低、新集合、重现、patience |
+| d707 | `d707-replay.test.js` | 重复 fix 或旧 cap 退出 | 结构化 no-progress / convergence |
+| 真 PostgreSQL | `kernel-wiring.pg.integration.test.js` | 接缝缺失 | 8/8 |
 
-## 禁 mock 边清单
-
-以下边界属于本合同的正确性核心，在
-`packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js`
-中禁止 mock，并由一次性数据库跑正式 000~357 migrations 后验证：
-
-- **DB decision log**：`orchestrator_decision_log` 的真实 PostgreSQL INSERT、JSONB、UNIQUE、advisory lock、回读与 append-only 约束。
-- **loop ↔ derive ↔ dispatch ↔ callback**：使用真实 `runLoop`、`collectGroundTruth`、`deriveCounters`、`derive`、真实 HTTP callback handler 与真实 `createAttemptStore`；禁止直接注入 `noProgressSameSha`。
-- **approval auth/mount/DB**：使用真实 Express router mount、`authenticateApprover`、PostgreSQL transaction/lock/decision-log；并发两个合法批准必须只有一个 202 和一行 verdict。
-- **重启恢复**：实例 A/B 使用同 `run_id` 和同一 PostgreSQL 数据库重新构造；禁止用进程内数组伪造 blockedStreak/pollCount。
-
-仅以下最外层、CI 不可用的外部副作用允许替身：
-
-- GitHub `gh pr view` / CI rollup 观测；
-- Docker 容器/PID 列举；
-- generator provider 的实际进程启动。
-
-## 不变量约束（全量引用）
-
-继承 PRD 中 Brain DB 17 条 + 现有 sprint 7 条（INV-K1 ~ INV-K7）共 24 条，全部适用。
-
-关键铁律：
-- **INV-K1**：collect 前、derive 后、dispatch 前三道 deadline fence，缺一不可
-- **INV-K2**：deadline 到达后写 `automation_deadline_exceeded`，不得 requeue
-- **INV-K3**：Judge 缺 failure_class → unknown，禁止默认归为产品代码失败
-- **INV-K4**：no-progress 后禁止对相同 (run_id, failure_class, trigger_sha, role) 再派 generator-fix
-- **INV-K5**：cap / streak / progress token 从 DB/decision log 推导，不用进程内变量作为权威
-- **INV-K6**：evidence_invalid 修 attempt evidence；新 evidence digest 必须变化
-- **INV-K7**：approval bridge 必须校验 task/run、PR SHA、review_request_hop 和操作者；旧 SHA/重复批准必须拒绝
+所有 R 项都必须先有旧实现上的 Red commit，再有最小 Green commit。不得修改
+测试来迁就实现；R7 修改测试是为了消除恒真 mock 并扩大到真实调用链。
 
 ---
 
-## 回滚策略
+## 禁 mock 边
 
-- `harness_runtime !== 'kernel-v1'` 的任务走旧 one-session/controller 路径，零影响
-- 本合同变更全在 orchestrator/ 模块内，不触及 LangGraph 图
+- PostgreSQL decision log INSERT、JSONB、advisory lock、回读和 append-only；
+- loop ↔ ground truth ↔ counters ↔ derive ↔ dispatch ↔ callback；
+- approval auth、真实 Router mount、事务、按 SHA 并发幂等；
+- GitHub resolver 的比较逻辑；测试可替换最外层 `gh` 执行结果，但不能
+  让 callback 自报值成为权威；
+- 重启恢复必须复用同一 `run_id` 与数据库。
 
 ---
 
-## 依赖
+## 回滚与交接
 
-- DB migration（如需）：无新表，decision log 写入新 action 类型 `spawn:evaluator-evidence-repair`、`wait:poll_ci`（持久化）、`verdict:generator-fix-callback`
-- 环境变量：`HARNESS_REVIEW_APPROVER_TOKEN`（已在部署环境配置）
+- 非 `kernel-v1` 任务走旧 one-session/controller 路径；
+- 本回炉不改 LangGraph，不碰 #4223/#4219 已有成果；
+- 回归、真 PostgreSQL、DevGate、独立 evaluator、异厂 judge 与 GitHub
+  check rollup 全绿后，只写 PR #4226 交接评论；
+- 没有独立复审 PASS 与批准 token 时，不 merge。
