@@ -134,6 +134,14 @@ async function markRunFailed(pool, runId, reason) {
   );
 }
 
+async function loadRunDeadline(pool, runId) {
+  const { rows } = await pool.query(
+    'SELECT deadline_at FROM initiative_runs WHERE id = $1',
+    [runId],
+  );
+  return rows[0]?.deadline_at ?? null;
+}
+
 /**
  * runLoop(deps, {taskId, runId?, dryRun?}) → {exitReason, hops, decision?}
  * hops = 本进程实际派发（appendHop 成功）的跳数。
@@ -170,24 +178,32 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   }
 
   while (true) {
+    // ---- Deadline fence 1：collect 前 ----
+    // collect 会调用 git/gh/docker，过期 run 不应再触发任何外部观测。
+    const deadlineAt = await loadRunDeadline(deps.pool, resolvedRunId);
+    if (deadlineExceeded({ deadline_at: deadlineAt })) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
+    }
+
     const observed = await collect(deps, {
       taskId,
       runId: resolvedRunId,
       ...groundTruthPaths,
     });
 
-    // ---- Deadline fence 1：collect 后立即检查，防止继续派发 ----
-    // INV-K1：collect 前、derive 后、dispatch 前三道 deadline fence，缺一不可
-    if (deadlineExceeded(observed.run)) {
-      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
-      return { exitReason: 'automation_deadline_exceeded', hops };
-    }
-
     const counters = deriveCounters(observed.decisionLog, { proposeBranchMaxRn: observed.proposeBranchRn });
     // pollCount 从 DB 持久化推导（Sprint 07231527 Blocking 2：进程内变量改为 DB 推导）
     const pollCount = counters.pollCount;
     const fullCounters = { ...counters, pollCount, ganCostUsd: Number(observed.run.cost_usd ?? 0) };
     const decision = derive({ ...observed, counters: fullCounters });
+
+    // ---- Deadline fence 2：derive 后 ----
+    // wait/control 分支都在此 fence 之后，不能绕开硬上限。
+    if (deadlineExceeded(observed.run)) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
+    }
 
     if (dryRun) {
       log(`[orchestrator][dry-run] run=${resolvedRunId} phase=${decision.phase} action=${decision.action} reason=${decision.reason}`);
@@ -290,13 +306,6 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       continue;
     }
 
-    // ---- Deadline fence 2：derive 后 dispatch 前，防止 deadline 后创建新 attempt ----
-    // INV-K1：collect 前已检一次，这里是 derive 计算窗口内再次检查
-    if (deadlineExceeded(observed.run)) {
-      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
-      return { exitReason: 'automation_deadline_exceeded', hops };
-    }
-
     // ---- 派发 action：intent-log-before-dispatch ----
     const hop = await next(deps.pool, resolvedRunId);
     const observedMaxHop = observed.decisionLog.reduce(
@@ -348,6 +357,13 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       throw err;
     }
     hops++;
+
+    // ---- Deadline fence 3：dispatch 前 ----
+    // intent 持久化与真实副作用之间仍可能跨过 deadline；此时保留审计 intent，但不派发。
+    if (deadlineExceeded(observed.run)) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
+    }
 
     // gateVerdict deny（derive 与 mergeGate 意见不一致 = 观测竞态）→ 不派发，按 BLOCKED 同态处理
     const result = gateVerdict?.startsWith('deny:')
