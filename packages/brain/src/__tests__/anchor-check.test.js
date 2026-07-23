@@ -144,4 +144,14 @@ describe('S2 anchor-check — checkAnchor', () => {
     const result = checkAnchor(task);
     expect(result.blocked).toBe(false);
   });
+
+  it('[B13] strategist_decision 任务免锚放行', () => {
+    const task = {
+      task_type: 'strategist_decision',
+      created_at: AFTER_CUTOFF,
+      payload: { trigger: 'run_terminal', journey_id: 'j1' },
+    };
+    const result = checkAnchor(task);
+    expect(result.blocked).toBe(false);
+  });
 });
