@@ -18,12 +18,14 @@ setup() {
   MOCK_COUNTRY_FILE="${TEST_TMP}/country"
   MOCK_HTTP_CODE_FILE="${TEST_TMP}/http-code"
   MOCK_STATUS_FILE="${TEST_TMP}/status.json"
+  MOCK_CHATGPT_ATTEMPTS_FILE="${TEST_TMP}/chatgpt-attempts"
   CODEX_HOSTS_FILE="${TEST_TMP}/hosts"
   mkdir -p "$TEST_BIN"
   : > "$TEST_LOG"
   printf '%s' '100.71.151.105' > "$MOCK_EXIT_FILE"
   printf '%s' 'US' > "$MOCK_COUNTRY_FILE"
   printf '%s' '451' > "$MOCK_HTTP_CODE_FILE"
+  printf '%s' '0' > "$MOCK_CHATGPT_ATTEMPTS_FILE"
   printf '%s\n' '127.0.0.1 localhost' > "$CODEX_HOSTS_FILE"
   printf '%s\n' '{"Peer":{"m4":{"HostName":"perfect21","TailscaleIPs":["100.71.151.105"],"Online":true,"ExitNodeOption":true},"sf":{"HostName":"sf-vps","TailscaleIPs":["100.79.41.61"],"Online":true,"ExitNodeOption":true}}}' > "$MOCK_STATUS_FILE"
 
@@ -85,6 +87,12 @@ fi
 if [[ "${MOCK_CHATGPT_TIMEOUT:-0}" == "1" ]]; then
   exit 28
 fi
+attempts="$(cat "$MOCK_CHATGPT_ATTEMPTS_FILE")"
+attempts=$((attempts + 1))
+printf '%s' "$attempts" > "$MOCK_CHATGPT_ATTEMPTS_FILE"
+if [[ "$attempts" -le "${MOCK_CHATGPT_FAILS_BEFORE_SUCCESS:-0}" ]]; then
+  exit 28
+fi
 cat "$MOCK_HTTP_CODE_FILE"
 SH
 
@@ -95,12 +103,13 @@ printf 'name: chatgpt.com\nip_address: %s\n' "${MOCK_DNS_IP:-104.18.32.47}"
 SH
 
   chmod +x "${TEST_BIN}/tailscale" "${TEST_BIN}/curl" "${TEST_BIN}/dscacheutil" "${TEST_BIN}/sudo"
-  export TEST_LOG MOCK_EXIT_FILE MOCK_COUNTRY_FILE MOCK_HTTP_CODE_FILE MOCK_STATUS_FILE
+  export TEST_LOG MOCK_EXIT_FILE MOCK_COUNTRY_FILE MOCK_HTTP_CODE_FILE MOCK_STATUS_FILE MOCK_CHATGPT_ATTEMPTS_FILE
   export CODEX_HOSTS_FILE
   export CODEX_EXIT_PRIMARY="100.71.151.105"
   export CODEX_EXIT_FALLBACK="100.79.41.61"
+  export CODEX_GUARD_RETRY_DELAY=0
   export PATH="${TEST_BIN}:${PATH}"
-  unset MOCK_CHATGPT_TIMEOUT MOCK_DNS_IP MOCK_FAIL_PRIMARY MOCK_FAIL_FALLBACK MOCK_FAIL_RESTORE MOCK_PREFS_EXIT_EMPTY
+  unset MOCK_CHATGPT_TIMEOUT MOCK_CHATGPT_FAILS_BEFORE_SUCCESS MOCK_DNS_IP MOCK_FAIL_PRIMARY MOCK_FAIL_FALLBACK MOCK_FAIL_RESTORE MOCK_PREFS_EXIT_EMPTY
 }
 
 teardown() { rm -rf "$TEST_TMP"; }
@@ -168,6 +177,17 @@ test_macos_empty_exitnodeip_uses_status_exitnode() {
     pass "macOS prefs ExitNodeIP 为空时从 status 识别 SF 出口"
   else
     fail "macOS prefs ExitNodeIP 为空时从 status 识别 SF 出口" "$(cat "${TEST_TMP}/out") $(cat "$TEST_LOG")"
+  fi
+  teardown
+}
+
+test_transient_chatgpt_timeout_retries_until_ready() {
+  setup
+  export MOCK_CHATGPT_FAILS_BEFORE_SUCCESS=1
+  if run_prepare && [[ "$(cat "$MOCK_CHATGPT_ATTEMPTS_FILE")" -eq 2 ]]; then
+    pass "ChatGPT 首次超时后按条件重试直到可达"
+  else
+    fail "ChatGPT 首次超时后按条件重试直到可达" "attempts=$(cat "$MOCK_CHATGPT_ATTEMPTS_FILE") $(cat "${TEST_TMP}/out")"
   fi
   teardown
 }
@@ -267,6 +287,7 @@ test_loopback_hosts_fails_before_network_change
 test_cn_public_egress_fails_closed
 test_chatgpt_transport_timeout_fails_closed
 test_macos_empty_exitnodeip_uses_status_exitnode
+test_transient_chatgpt_timeout_retries_until_ready
 test_no_exit_switches_to_m4_and_restore_clears_exit
 test_non_us_exit_restores_original_after_session
 test_m4_unavailable_falls_back_to_sf

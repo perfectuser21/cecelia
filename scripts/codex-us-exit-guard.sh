@@ -7,6 +7,8 @@ FALLBACK_EXIT="${CODEX_EXIT_FALLBACK:-100.79.41.61}"
 HOSTS_FILE="${CODEX_HOSTS_FILE:-/etc/hosts}"
 CHATGPT_URL="https://chatgpt.com/backend-api/ps/mcp"
 TRACE_URL="https://www.cloudflare.com/cdn-cgi/trace"
+MAX_TRANSPORT_ATTEMPTS="${CODEX_GUARD_MAX_ATTEMPTS:-4}"
+RETRY_DELAY_SECONDS="${CODEX_GUARD_RETRY_DELAY:-2}"
 
 log() { printf '[codex-us-exit-guard] %s\n' "$*"; }
 die() { printf '[codex-us-exit-guard] ERROR: %s\n' "$*" >&2; return 1; }
@@ -114,16 +116,20 @@ assert_public_country_us() {
 }
 
 assert_chatgpt_transport() {
-  local code
-  code="$(curl -sS -o /dev/null --connect-timeout 5 --max-time 10 -w '%{http_code}' "$CHATGPT_URL")" || {
-    die "ChatGPT HTTPS 连接失败或超时"
-    return 1
-  }
-  if [[ -z "$code" || "$code" == "000" ]]; then
-    die "ChatGPT HTTPS 未建立（HTTP ${code:-000}）"
-    return 1
-  fi
-  log "ChatGPT HTTPS 检查通过（HTTP ${code}）"
+  local code attempt
+  for ((attempt = 1; attempt <= MAX_TRANSPORT_ATTEMPTS; attempt++)); do
+    code=""
+    if code="$(curl -sS -o /dev/null --connect-timeout 5 --max-time 10 -w '%{http_code}' "$CHATGPT_URL" 2>/dev/null)" && \
+       [[ -n "$code" && "$code" != "000" ]]; then
+      log "ChatGPT HTTPS 检查通过（HTTP ${code}，attempt ${attempt}）"
+      return 0
+    fi
+    if [[ "$attempt" -lt "$MAX_TRANSPORT_ATTEMPTS" ]]; then
+      log "ChatGPT HTTPS 尚未就绪，继续探测（${attempt}/${MAX_TRANSPORT_ATTEMPTS}）"
+      sleep "$RETRY_DELAY_SECONDS"
+    fi
+  done
+  die "ChatGPT HTTPS 连接失败或超时（已尝试 ${MAX_TRANSPORT_ATTEMPTS} 次）"
 }
 
 write_state() {
