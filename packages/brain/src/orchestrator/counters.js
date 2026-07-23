@@ -60,6 +60,15 @@ function isProductFixIntent(row) {
     || (observed.failure_class == null && detail.reason === 'ci_fail');
 }
 
+function dispatchDidNotExecute(rows, intent) {
+  return rows.some((row) => {
+    if (row.action !== LOG_ACTION.DISPATCH_RESULT) return false;
+    const detail = asJson(row.detail) ?? {};
+    return Number(detail.dispatch_hop) === Number(intent.hop)
+      && ['BLOCKED', 'NEEDS_CONTEXT'].includes(detail.status);
+  });
+}
+
 function callbackForIntentFromRows(rows, callbacks, intent, nextIntent) {
   return callbacks.find((callback) => {
     const callbackObserved = asJson(callback.observed) ?? {};
@@ -102,7 +111,9 @@ export function replayProductConvergence(
   );
   const modernIntents = intents.filter((intent) => {
     const observed = asJson(intent.observed) ?? {};
-    return typeof observed.trigger_sha === 'string' && observed.trigger_sha.length > 0;
+    return typeof observed.trigger_sha === 'string'
+      && observed.trigger_sha.length > 0
+      && !dispatchDidNotExecute(rows, intent);
   });
   const completed = [];
   let latestPending = false;

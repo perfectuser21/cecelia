@@ -22,6 +22,8 @@ const CALLBACK_TOKEN = 'kernel-pg-callback-token';
 const LEASE_OWNER = 'kernel-pg-generator:1';
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4226';
 const HEAD_SHA = 'a'.repeat(40);
+const SECOND_SHA = 'b'.repeat(40);
+const THIRD_SHA = 'c'.repeat(40);
 
 let adminPool;
 let testPool;
@@ -121,7 +123,11 @@ async function appendLog(runId, {
   );
 }
 
-function externalObservation({ ci = 'pass', headSha = HEAD_SHA } = {}) {
+function externalObservation({
+  ci = 'pass',
+  headSha = HEAD_SHA,
+  failedChecks = ['ci'],
+} = {}) {
   return {
     execCmd(command) {
       if (command.startsWith('gh pr view ')) {
@@ -130,7 +136,9 @@ function externalObservation({ ci = 'pass', headSha = HEAD_SHA } = {}) {
           state: 'OPEN',
           mergeStateStatus: 'CLEAN',
           headRefOid: headSha,
-          statusCheckRollup: [{ state }],
+          statusCheckRollup: ci === 'fail'
+            ? failedChecks.map((name) => ({ name, state }))
+            : [{ state }],
         });
       }
       if (command.startsWith('git ls-remote ')) return '';
@@ -454,6 +462,7 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
     const app = express();
     app.use(express.json());
     app.set('pool', testPool);
+    app.set('kernelPrHeadResolver', async () => HEAD_SHA);
     app.use('/api/brain', callbackRouter);
     const attemptStore = createAttemptStore(testPool);
     let dispatchCount = 0;
@@ -538,12 +547,182 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
   });
 });
 
+describe('Kernel convergence and deadline pause on real PostgreSQL', () => {
+  it('failure-set recurrence requests human review and the open request pauses an expired deadline', async () => {
+    const run = await seedRun({ ci: 'fail' });
+    await appendLog(run.runId, {
+      hop: 1,
+      action: 'spawn:generator-fix',
+      observed: {
+        trigger_sha: HEAD_SHA,
+        failure_class: 'product_failure',
+        failure_set: ['lint', 'unit'],
+        failure_set_key: JSON.stringify(['lint', 'unit']),
+      },
+      phase: 'generate',
+      gateVerdict: 'allow',
+      detail: { reason: 'ci_fail' },
+    });
+    await appendLog(run.runId, {
+      hop: 2,
+      action: 'verdict:generator-fix-callback',
+      observed: { trigger_hop: 1, pr_head_sha: SECOND_SHA },
+      phase: 'generate',
+      gateVerdict: 'allow',
+      detail: {
+        verification_status: 'verified',
+        pr_head_sha: SECOND_SHA,
+      },
+    });
+    await appendLog(run.runId, {
+      hop: 3,
+      action: 'spawn:generator-fix',
+      observed: {
+        trigger_sha: SECOND_SHA,
+        failure_class: 'product_failure',
+        failure_set: ['integration'],
+        failure_set_key: JSON.stringify(['integration']),
+      },
+      phase: 'generate',
+      gateVerdict: 'allow',
+      detail: { reason: 'ci_fail' },
+    });
+    await appendLog(run.runId, {
+      hop: 4,
+      action: 'verdict:generator-fix-callback',
+      observed: { trigger_hop: 3, pr_head_sha: THIRD_SHA },
+      phase: 'generate',
+      gateVerdict: 'allow',
+      detail: {
+        verification_status: 'verified',
+        pr_head_sha: THIRD_SHA,
+      },
+    });
+
+    const reviewDispatches = [];
+    const first = await runLoop({
+      ...loopDeps({
+        ci: 'fail',
+        headSha: THIRD_SHA,
+        failedChecks: ['unit', 'lint'],
+      }),
+      sleep: async () => {},
+      dispatch: async (action) => {
+        reviewDispatches.push(action);
+        await setTaskStatus(run.taskId, 'aborted');
+        return { status: 'DONE', detail: 'Bark sent' };
+      },
+    }, { taskId: run.taskId, runId: run.runId });
+    expect(first.exitReason).toBe('task_aborted');
+    expect(reviewDispatches).toEqual(['wait:human_review']);
+
+    const reviewEffects = (await testPool.query(
+      `SELECT hop, observed, detail
+         FROM orchestrator_decision_log
+        WHERE run_id=$1 AND action='effect:human_review_requested'
+        ORDER BY hop`,
+      [run.runId],
+    )).rows;
+    expect(reviewEffects).toHaveLength(1);
+    expect(reviewEffects[0].observed).toMatchObject({
+      pr: { head_sha: THIRD_SHA },
+      review_reason: 'failure_set_repeated',
+      failure_set: ['lint', 'unit'],
+    });
+    expect(reviewEffects[0].detail).toMatchObject({
+      review_reason: 'failure_set_repeated',
+      failure_set: ['lint', 'unit'],
+    });
+
+    await setTaskStatus(run.taskId, 'in_progress');
+    await testPool.query(
+      `UPDATE initiative_runs
+          SET deadline_at=NOW() - INTERVAL '1 minute',
+              failure_reason=NULL
+        WHERE id=$1`,
+      [run.runId],
+    );
+    const resumed = await runLoop({
+      ...loopDeps({
+        ci: 'fail',
+        headSha: THIRD_SHA,
+        failedChecks: ['lint', 'unit'],
+      }),
+      dispatch: async () => {
+        throw new Error('an existing review effect must not dispatch twice');
+      },
+      sleep: async () => setTaskStatus(run.taskId, 'aborted'),
+    }, { taskId: run.taskId, runId: run.runId });
+    expect(resumed.exitReason).toBe('task_aborted');
+    expect((await testPool.query(
+      'SELECT phase, failure_reason FROM initiative_runs WHERE id=$1',
+      [run.runId],
+    )).rows[0]).toMatchObject({
+      phase: 'evaluate',
+      failure_reason: null,
+    });
+  });
+});
+
 describe('Kernel approval HTTP route on real PostgreSQL', () => {
   const originalToken = process.env.HARNESS_REVIEW_APPROVER_TOKEN;
 
   afterAll(() => {
     if (originalToken === undefined) delete process.env.HARNESS_REVIEW_APPROVER_TOKEN;
     else process.env.HARNESS_REVIEW_APPROVER_TOKEN = originalToken;
+  });
+
+  it('the same run accepts one approval for each of two successive PR head SHAs', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    const run = await seedRun({ reviewRequired: true });
+    await appendLog(run.runId, {
+      hop: 1,
+      action: 'effect:human_review_requested',
+      observed: { pr: { head_sha: HEAD_SHA } },
+      phase: 'review',
+      detail: { dispatch_hop: 0 },
+    });
+
+    let currentHeadSha = HEAD_SHA;
+    const app = express();
+    app.use(express.json());
+    app.set('pool', testPool);
+    app.set('kernelPrHeadResolver', async () => currentHeadSha);
+    app.use('/api/brain/harness/kernel-reviews', approvalRouter);
+    const approve = (sha, reviewRequestHop) => request(app)
+      .post(`/api/brain/harness/kernel-reviews/${run.runId}/approve`)
+      .set('x-approver-token', APPROVER_TOKEN)
+      .send({
+        task_id: run.taskId,
+        pr_head_sha: sha,
+        review_request_hop: reviewRequestHop,
+        approved_by: 'alex',
+      });
+
+    expect((await approve(HEAD_SHA, 1)).status).toBe(202);
+    currentHeadSha = SECOND_SHA;
+    await appendLog(run.runId, {
+      hop: 3,
+      action: 'effect:human_review_requested',
+      observed: { pr: { head_sha: SECOND_SHA } },
+      phase: 'review',
+      detail: { dispatch_hop: 2 },
+    });
+    expect((await approve(SECOND_SHA, 3)).status).toBe(202);
+
+    const approvals = (await testPool.query(
+      `SELECT hop, detail
+         FROM orchestrator_decision_log
+        WHERE run_id=$1 AND action='verdict:human_review'
+        ORDER BY hop`,
+      [run.runId],
+    )).rows;
+    expect(approvals).toHaveLength(2);
+    expect(approvals.map((row) => row.detail.pr_head_sha)).toEqual([
+      HEAD_SHA,
+      SECOND_SHA,
+    ]);
+    expect(approvals.map((row) => row.detail.review_request_hop)).toEqual([1, 3]);
   });
 
   it('approval 并发与 429: fails closed, writes once, and derives merge', async () => {
