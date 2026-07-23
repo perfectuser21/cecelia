@@ -1,0 +1,19 @@
+{
+  "verdict": "REVISION",
+  "round": 1,
+  "total_score": "28/35",
+  "rubric_scores": {
+    "prd_alignment": {"score": 4, "max": 5},
+    "assertion_precision": {"score": 4, "max": 5},
+    "negative_coverage": {"score": 4, "max": 5},
+    "seam_completeness": {"score": 5, "max": 5},
+    "e2e_executable": {"score": 3, "max": 5},
+    "internal_consistency": {"score": 3, "max": 5},
+    "risk_coverage": {"score": 5, "max": 5}
+  },
+  "judgments_written": 7,
+  "mandatory_fixes": [
+    "contract-draft.md §3 缺 number=5 错误 query 名断言",
+    "e2e.sh 缺 /health /increment /decrement 回归验证"
+  ]
+}

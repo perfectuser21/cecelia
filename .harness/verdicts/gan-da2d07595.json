@@ -1,0 +1,15 @@
+{
+  "verdict": "APPROVED",
+  "round": 2,
+  "total_score": "34/35",
+  "rubric_scores": {
+    "prd_alignment": {"score": 5, "max": 5},
+    "assertion_precision": {"score": 5, "max": 5},
+    "negative_coverage": {"score": 5, "max": 5},
+    "seam_completeness": {"score": 4, "max": 5},
+    "e2e_executable": {"score": 5, "max": 5},
+    "internal_consistency": {"score": 5, "max": 5},
+    "risk_coverage": {"score": 5, "max": 5}
+  },
+  "judgments_written": 7
+}
