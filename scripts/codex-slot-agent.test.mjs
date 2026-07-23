@@ -23,6 +23,32 @@ const ACTOR = 'alex';
 const PROJECT = 'infrastructure';
 const NAME = 'main';
 
+function tailscaleStatus({
+  hostName = 'mmv',
+  dnsName = 'mmv.example.ts.net.',
+  online = true,
+  selected = true,
+  self = {},
+} = {}) {
+  return {
+    Self: {
+      HostName: 'xian-m4',
+      DNSName: 'xian-m4.example.ts.net.',
+      Online: true,
+      ExitNode: false,
+      ...self,
+    },
+    Peer: {
+      'node-key': {
+        HostName: hostName,
+        DNSName: dnsName,
+        Online: online,
+        ExitNode: selected,
+      },
+    },
+  };
+}
+
 async function tempHome(t) {
   const home = await mkdtemp(join(tmpdir(), 'codex-slot-agent-'));
   t.after(async () => {
@@ -103,6 +129,8 @@ async function makeDeps(t, overrides = {}) {
       capacity: '512GiB',
       sampledAt: NOW.toISOString(),
     }),
+    sampleTailscaleStatus: async () => tailscaleStatus(),
+    exitNode: 'mmv',
     runProcess: async (cmd, args = [], options = {}) => {
       execCalls.push({ cmd, args, options });
 
@@ -238,6 +266,8 @@ test('health reports host disk capacity and enabled state', async (t) => {
     freeGiB: 88,
     usedPercent: 44,
     capacity: '1TiB',
+    exitNode: 'mmv',
+    exitNodeOk: true,
     enabled: true,
   });
   assert.equal(sampleArgs.diskPath, '/injected-volume');
@@ -252,6 +282,234 @@ test('health reports host disk capacity and enabled state', async (t) => {
   delete linux.deps.sampleDisk;
   await runAgent(['health'], linux.deps);
   assert.equal(linux.execCalls[0].args.at(-1), linux.home);
+});
+
+test('health samples tailscale status --json and accepts the selected online mmv peer', async (t) => {
+  const { deps, execCalls } = await makeDeps(t, {
+    processHook: async ({ cmd, args }) => {
+      if (cmd === 'tailscale') {
+        assert.deepEqual(args, ['status', '--json']);
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(tailscaleStatus()),
+          stderr: '',
+        };
+      }
+      return undefined;
+    },
+  });
+  delete deps.sampleTailscaleStatus;
+  delete deps.exitNode;
+
+  const result = await runAgent(['health'], deps);
+
+  assert.equal(result.exitNode, 'mmv');
+  assert.equal(result.exitNodeOk, true);
+  assert.equal(result.enabled, true);
+  assert.equal(execCalls.filter(({ cmd }) => cmd === 'tailscale').length, 1);
+});
+
+test('health fails closed for every invalid exit-node state without exposing command output', async (t) => {
+  const cases = [
+    {
+      name: 'command unavailable',
+      sampleTailscaleStatus: async () => {
+        throw new Error('tailscale unavailable access_token=company-secret');
+      },
+      exitNode: null,
+    },
+    {
+      name: 'invalid json',
+      sampleTailscaleStatus: async () => '{not-json access_token=company-secret',
+      exitNode: null,
+    },
+    {
+      name: 'not selected',
+      sampleTailscaleStatus: async () => tailscaleStatus({ selected: false }),
+      exitNode: null,
+    },
+    {
+      name: 'selected peer offline',
+      sampleTailscaleStatus: async () => tailscaleStatus({ online: false }),
+      exitNode: 'mmv',
+    },
+    {
+      name: 'wrong selected peer',
+      sampleTailscaleStatus: async () => tailscaleStatus({
+        hostName: 'china-gateway',
+        dnsName: 'china-gateway.example.ts.net.',
+      }),
+      exitNode: 'china-gateway',
+    },
+    {
+      name: 'conflicting HostName cannot be rescued by DNSName',
+      sampleTailscaleStatus: async () => tailscaleStatus({
+        hostName: 'china-gateway',
+        dnsName: 'mmv',
+      }),
+      exitNode: null,
+    },
+    {
+      name: 'Self must not count as selected peer',
+      sampleTailscaleStatus: async () => ({
+        Self: {
+          HostName: 'mmv',
+          DNSName: 'mmv.example.ts.net.',
+          Online: true,
+          ExitNode: true,
+        },
+        Peer: {},
+      }),
+      exitNode: null,
+    },
+    {
+      name: 'selected peer without HostName or DNSName',
+      sampleTailscaleStatus: async () => tailscaleStatus({
+        hostName: '',
+        dnsName: '',
+      }),
+      exitNode: null,
+    },
+  ];
+
+  for (const scenario of cases) {
+    const { deps } = await makeDeps(t, {
+      sampleTailscaleStatus: scenario.sampleTailscaleStatus,
+    });
+    const result = await runAgent(['health'], deps);
+    assert.equal(result.exitNode, scenario.exitNode, scenario.name);
+    assert.equal(result.exitNodeOk, false, scenario.name);
+    assert.equal(result.enabled, false, scenario.name);
+    assert.doesNotMatch(JSON.stringify(result), /company-secret|access_token/, scenario.name);
+  }
+});
+
+test('health can strictly match a selected peer by normalized DNSName', async (t) => {
+  const { deps } = await makeDeps(t, {
+    exitNode: 'mmv.example.ts.net',
+    sampleTailscaleStatus: async () => tailscaleStatus({ hostName: '' }),
+  });
+
+  const result = await runAgent(['health'], deps);
+
+  assert.equal(result.exitNode, 'mmv.example.ts.net');
+  assert.equal(result.exitNodeOk, true);
+  assert.equal(result.enabled, true);
+});
+
+test('health rejects selected peer when HostName and DNSName first label conflict', async (t) => {
+  const { deps } = await makeDeps(t, {
+    exitNode: 'china-gateway',
+    sampleTailscaleStatus: async () => tailscaleStatus({
+      hostName: 'china-gateway',
+      dnsName: 'mmv.example.ts.net.',
+    }),
+  });
+
+  const result = await runAgent(['health'], deps);
+
+  assert.equal(result.exitNodeOk, false);
+  assert.equal(result.enabled, false);
+});
+
+test('health normalizes selected peer and expected exit node case and trailing dots', async (t) => {
+  const byHostName = await makeDeps(t, {
+    exitNode: 'MMV...',
+    sampleTailscaleStatus: async () => tailscaleStatus({
+      hostName: 'MMV..',
+      dnsName: 'mmv.example.ts.net...',
+    }),
+  });
+
+  const hostResult = await runAgent(['health'], byHostName.deps);
+  assert.equal(hostResult.exitNode, 'mmv');
+  assert.equal(hostResult.exitNodeOk, true);
+  assert.equal(hostResult.enabled, true);
+
+  const byDnsName = await makeDeps(t, {
+    exitNode: 'MMV.EXAMPLE.TS.NET...',
+    sampleTailscaleStatus: async () => tailscaleStatus({
+      hostName: '',
+      dnsName: 'MMV.EXAMPLE.TS.NET...',
+    }),
+  });
+
+  const dnsResult = await runAgent(['health'], byDnsName.deps);
+  assert.equal(dnsResult.exitNode, 'mmv.example.ts.net');
+  assert.equal(dnsResult.exitNodeOk, true);
+  assert.equal(dnsResult.enabled, true);
+});
+
+test('health fails closed for empty unsafe or multiple selected exit-node config', async (t) => {
+  for (const exitNode of ['', 'bad/name']) {
+    const { deps } = await makeDeps(t, { exitNode });
+    const result = await runAgent(['health'], deps);
+    assert.equal(result.ok, false, exitNode || '<empty>');
+    assert.equal(result.exitNode, null, exitNode || '<empty>');
+    assert.equal(result.exitNodeOk, false, exitNode || '<empty>');
+    assert.equal(result.enabled, false, exitNode || '<empty>');
+  }
+
+  const multiple = await makeDeps(t, {
+    sampleTailscaleStatus: async () => ({
+      Peer: {
+        a: {
+          HostName: 'mmv',
+          DNSName: 'mmv.example.ts.net.',
+          Online: true,
+          ExitNode: true,
+        },
+        b: {
+          HostName: 'backup',
+          DNSName: 'backup.example.ts.net.',
+          Online: true,
+          ExitNode: true,
+        },
+      },
+    }),
+  });
+  const result = await runAgent(['health'], multiple.deps);
+  assert.equal(result.exitNode, null);
+  assert.equal(result.exitNodeOk, false);
+  assert.equal(result.enabled, false);
+});
+
+test('prepare independently resamples exit node and refuses before writes when health becomes unsafe', async (t) => {
+  let samples = 0;
+  const { deps, execCalls, home } = await makeDeps(t, {
+    sampleTailscaleStatus: async () => {
+      samples += 1;
+      return samples === 1
+        ? tailscaleStatus()
+        : tailscaleStatus({
+            hostName: 'china-gateway',
+            dnsName: 'china-gateway.example.ts.net.',
+          });
+    },
+  });
+  await mkdir(paths(home).repoPath, { recursive: true, mode: 0o700 });
+
+  const health = await runAgent(['health'], deps);
+  assert.equal(health.enabled, true);
+  await assert.rejects(
+    runAgent([
+      'prepare',
+      '--session',
+      SESSION,
+      '--actor',
+      ACTOR,
+      '--project',
+      PROJECT,
+      '--name',
+      NAME,
+    ], deps),
+    /Tailscale 出口/
+  );
+
+  assert.equal(samples, 2);
+  assert.equal(execCalls.length, 0);
+  assert.equal(await exists(join(home, '.codex-slots')), false);
+  assert.equal(await exists(join(home, 'worktrees')), false);
 });
 
 test('prepare fails closed on low disk before exec or writes', async (t) => {
