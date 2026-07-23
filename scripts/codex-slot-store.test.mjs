@@ -197,6 +197,80 @@ test('acquireLease honors caller account order when multiple accounts are free',
   assert.equal(lease.team, 'team2');
 });
 
+test('acquireLease concurrently replays one exact actor request session lease', async (t) => {
+  const root = await tempRoot(t);
+  const request = {
+    root,
+    actor: 'alex',
+    requestId: 'request-main',
+    sessionId: 'alex-infra-main',
+    host: 'xian-m4',
+    accounts: ['team1', 'team2'],
+    now: '2026-07-23T00:00:00Z',
+  };
+
+  const [first, replay] = await Promise.all([
+    acquireLease(request),
+    acquireLease(request),
+  ]);
+
+  assert.equal(replay.leaseId, first.leaseId);
+  assert.equal(replay.team, first.team);
+  assert.equal(replay.requestId, request.requestId);
+});
+
+test('acquireLease never returns an active lease from a different request tuple', async (t) => {
+  const root = await tempRoot(t);
+  const first = await acquireLease({
+    root,
+    actor: 'alex',
+    requestId: 'request-one',
+    sessionId: 'alex-infra-main',
+    host: 'xian-m4',
+    accounts: ['team1', 'team2'],
+    now: '2026-07-23T00:00:00Z',
+  });
+  const other = await acquireLease({
+    root,
+    actor: 'alex',
+    requestId: 'request-two',
+    sessionId: 'alex-infra-main',
+    host: 'xian-m4',
+    accounts: ['team1', 'team2'],
+    now: '2026-07-23T00:01:00Z',
+  });
+
+  assert.notEqual(other.leaseId, first.leaseId);
+  assert.notEqual(other.team, first.team);
+  assert.equal(other.requestId, 'request-two');
+});
+
+test('acquireLease finds an exact replay outside the current allocation candidates', async (t) => {
+  const root = await tempRoot(t);
+  const request = {
+    root,
+    actor: 'alex',
+    requestId: 'request-main',
+    sessionId: 'alex-infra-main',
+    host: 'xian-m4',
+    now: '2026-07-23T00:00:00Z',
+  };
+  const first = await acquireLease({
+    ...request,
+    accounts: ['team1'],
+    lookupAccounts: ['team1', 'team2'],
+  });
+  const replay = await acquireLease({
+    ...request,
+    accounts: ['team2'],
+    lookupAccounts: ['team1', 'team2'],
+    now: '2026-07-23T00:01:00Z',
+  });
+
+  assert.equal(replay.leaseId, first.leaseId);
+  assert.equal(replay.team, 'team1');
+});
+
 test('atomicWriteJson leaves one complete target and no temp residue under concurrent writes', async (t) => {
   const root = await tempRoot(t);
   const target = join(root, 'registry/leases/atomic.json');
@@ -499,6 +573,68 @@ test('release 后同一 team 可以重新 acquire', async (t) => {
   });
   assert.equal(next.team, 'team1');
   assert.notEqual(next.leaseId, lease.leaseId);
+});
+
+test('release is idempotent only for the same terminal state', async (t) => {
+  const root = await tempRoot(t);
+  const lease = await acquireLease({
+    root,
+    actor: 'alex',
+    sessionId: 'alex-infra-main',
+    host: 'xian-m4',
+    accounts: ['team1'],
+    now: '2026-07-23T00:00:00Z',
+  });
+
+  const first = await releaseLease({
+    root,
+    team: 'team1',
+    leaseId: lease.leaseId,
+    state: 'released',
+    now: '2026-07-23T00:01:00Z',
+  });
+  const replay = await releaseLease({
+    root,
+    team: 'team1',
+    leaseId: lease.leaseId,
+    state: 'released',
+    now: '2026-07-23T00:02:00Z',
+  });
+
+  assert.deepEqual(replay, first);
+  assert.equal(replay.releasedAt, '2026-07-23T00:01:00Z');
+});
+
+test('release refuses to turn a quarantined lease into released', async (t) => {
+  const root = await tempRoot(t);
+  const lease = await acquireLease({
+    root,
+    actor: 'alex',
+    sessionId: 'alex-infra-main',
+    host: 'xian-m4',
+    accounts: ['team1'],
+    now: '2026-07-23T00:00:00Z',
+  });
+  await releaseLease({
+    root,
+    team: 'team1',
+    leaseId: lease.leaseId,
+    state: 'quarantined',
+    now: '2026-07-23T00:01:00Z',
+  });
+
+  await assert.rejects(
+    releaseLease({
+      root,
+      team: 'team1',
+      leaseId: lease.leaseId,
+      state: 'released',
+      now: '2026-07-23T00:02:00Z',
+    }),
+    /terminal state conflict: quarantined/
+  );
+  const stored = JSON.parse(await readFile(join(root, 'registry/leases/team1.json'), 'utf8'));
+  assert.equal(stored.state, 'quarantined');
 });
 
 test('heartbeat 更新时间但拒绝 lease ID 不匹配', async (t) => {

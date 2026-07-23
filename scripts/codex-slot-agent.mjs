@@ -1136,9 +1136,31 @@ async function removeTransientState(fs, paths) {
   }
 }
 
+async function stopTmuxSession(deps, sessionName) {
+  if (!await hasTmuxSession(deps, sessionName)) {
+    return;
+  }
+
+  const killed = await runProcess(
+    deps,
+    'tmux',
+    ['kill-session', '-t', exactTmuxTarget(sessionName)],
+    { timeoutMs: tmuxTimeoutMs(deps) }
+  );
+  if (killed.exitCode !== 0) {
+    throw new Error(
+      `tmux kill-session failed: ${killed.stderr?.trim() || killed.stdout?.trim() || killed.exitCode}`
+    );
+  }
+  if (await hasTmuxSession(deps, sessionName)) {
+    throw new Error('tmux session still running after kill-session');
+  }
+}
+
 async function stopAgentUnlocked(sessionId, deps) {
   const sessionName = tmuxSessionName(sessionId);
   let metadata = await findMetadataBySession(deps, sessionId);
+  await stopTmuxSession(deps, sessionName);
 
   if (!metadata) {
     return {
@@ -1146,32 +1168,9 @@ async function stopAgentUnlocked(sessionId, deps) {
       sessionId,
       state: 'missing',
       stopped: false,
+      verified: true,
       tmux: { running: false, session: sessionName, pid: null },
     };
-  }
-
-  if (await hasTmuxSession(deps, sessionName)) {
-    let killError = null;
-    let killed = null;
-    try {
-      killed = await runProcess(
-        deps,
-        'tmux',
-        ['kill-session', '-t', exactTmuxTarget(sessionName)],
-        { timeoutMs: tmuxTimeoutMs(deps) }
-      );
-    } catch (error) {
-      killError = error;
-    }
-
-    const stillRunning = await hasTmuxSession(deps, sessionName);
-    if (stillRunning) {
-      const detail = killError?.message ??
-        killed?.stderr?.trim() ??
-        killed?.stdout?.trim() ??
-        `exit code ${killed?.exitCode}`;
-      throw new Error(`tmux session still running after kill-session: ${detail}`);
-    }
   }
 
   const fs = resolveFs(deps);
@@ -1184,6 +1183,7 @@ async function stopAgentUnlocked(sessionId, deps) {
     sessionId,
     state: 'stopped',
     stopped: true,
+    verified: true,
     tmux: { running: false, session: sessionName, pid: null },
   };
 }
@@ -1200,9 +1200,14 @@ async function stopAgent(argv, deps) {
 async function legacyList(argv, deps) {
   const { flags, positionals } = parseFlags(argv);
   rejectPositionals(positionals);
-  rejectUnknownFlags(flags, new Set());
+  rejectUnknownFlags(flags, new Set(['host']));
 
-  const host = deps.legacyHost ?? 'us-m4';
+  const host = validateSafeSegment(
+    flags.host === undefined
+      ? (deps.legacyHost ?? 'us-m4')
+      : requireStringFlag(flags, 'host'),
+    'legacy host'
+  );
   const entries = new Map(Array.from({ length: 10 }, (_, index) => {
     const slot = `slot${index + 1}`;
     return [slot, {
