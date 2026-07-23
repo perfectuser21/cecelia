@@ -36,10 +36,26 @@ elif [[ "$1 $2" == "status --json" ]]; then
   cat "$MOCK_STATUS_FILE"
 elif [[ "$1" == "set" ]]; then
   requested="${2#--exit-node=}"
+  if [[ "$requested" == "100.71.151.105" && "${MOCK_FAIL_PRIMARY:-0}" == "1" ]]; then
+    exit 1
+  fi
+  if [[ "$requested" == "100.79.41.61" && "${MOCK_FAIL_FALLBACK:-0}" == "1" ]]; then
+    exit 1
+  fi
+  if [[ -z "$requested" && "${MOCK_FAIL_RESTORE:-0}" == "1" ]]; then
+    exit 1
+  fi
   printf '%s' "$requested" > "$MOCK_EXIT_FILE"
 else
   exit 2
 fi
+SH
+
+  cat > "${TEST_BIN}/sudo" <<'SH'
+#!/usr/bin/env bash
+echo "sudo $*" >> "$TEST_LOG"
+[[ "${1:-}" == "-n" ]] && shift
+exec "$@"
 SH
 
   cat > "${TEST_BIN}/curl" <<'SH'
@@ -62,13 +78,13 @@ echo "dscacheutil $*" >> "$TEST_LOG"
 printf 'name: chatgpt.com\nip_address: %s\n' "${MOCK_DNS_IP:-104.18.32.47}"
 SH
 
-  chmod +x "${TEST_BIN}/tailscale" "${TEST_BIN}/curl" "${TEST_BIN}/dscacheutil"
+  chmod +x "${TEST_BIN}/tailscale" "${TEST_BIN}/curl" "${TEST_BIN}/dscacheutil" "${TEST_BIN}/sudo"
   export TEST_LOG MOCK_EXIT_FILE MOCK_COUNTRY_FILE MOCK_HTTP_CODE_FILE MOCK_STATUS_FILE
   export CODEX_HOSTS_FILE
   export CODEX_EXIT_PRIMARY="100.71.151.105"
   export CODEX_EXIT_FALLBACK="100.79.41.61"
   export PATH="${TEST_BIN}:${PATH}"
-  unset MOCK_CHATGPT_TIMEOUT MOCK_DNS_IP
+  unset MOCK_CHATGPT_TIMEOUT MOCK_DNS_IP MOCK_FAIL_PRIMARY MOCK_FAIL_FALLBACK MOCK_FAIL_RESTORE
 }
 
 teardown() { rm -rf "$TEST_TMP"; }
@@ -128,11 +144,106 @@ test_chatgpt_transport_timeout_fails_closed() {
   teardown
 }
 
+test_no_exit_switches_to_m4_and_restore_clears_exit() {
+  setup
+  : > "$MOCK_EXIT_FILE"
+  if ! run_prepare; then
+    fail "无 exit 时切 M4，restore 后清空" "$(cat "${TEST_TMP}/out")"
+  elif [[ "$(cat "$MOCK_EXIT_FILE")" != "100.71.151.105" ]]; then
+    fail "无 exit 时切 M4，restore 后清空" "prepare 后出口=$(cat "$MOCK_EXIT_FILE")"
+  elif ! bash "$TARGET" restore "${TEST_TMP}/state" >> "${TEST_TMP}/out" 2>&1; then
+    fail "无 exit 时切 M4，restore 后清空" "$(cat "${TEST_TMP}/out")"
+  elif [[ -s "$MOCK_EXIT_FILE" ]]; then
+    fail "无 exit 时切 M4，restore 后清空" "restore 后出口=$(cat "$MOCK_EXIT_FILE")"
+  else
+    pass "无 exit 时切 M4，restore 后清空"
+  fi
+  teardown
+}
+
+test_non_us_exit_restores_original_after_session() {
+  setup
+  printf '%s' '100.86.118.99' > "$MOCK_EXIT_FILE"
+  if run_prepare && bash "$TARGET" restore "${TEST_TMP}/state" >> "${TEST_TMP}/out" 2>&1 && \
+     [[ "$(cat "$MOCK_EXIT_FILE")" == "100.86.118.99" ]]; then
+    pass "非美国出口在会话后恢复原节点"
+  else
+    fail "非美国出口在会话后恢复原节点" "$(cat "${TEST_TMP}/out")"
+  fi
+  teardown
+}
+
+test_m4_unavailable_falls_back_to_sf() {
+  setup
+  : > "$MOCK_EXIT_FILE"
+  printf '%s\n' '{"Peer":{"m4":{"HostName":"perfect21","TailscaleIPs":["100.71.151.105"],"Online":false,"ExitNodeOption":true},"sf":{"HostName":"sf-vps","TailscaleIPs":["100.79.41.61"],"Online":true,"ExitNodeOption":true}}}' > "$MOCK_STATUS_FILE"
+  if run_prepare && [[ "$(cat "$MOCK_EXIT_FILE")" == "100.79.41.61" ]]; then
+    pass "美国 M4 不可用时回退 SF"
+  else
+    fail "美国 M4 不可用时回退 SF" "$(cat "${TEST_TMP}/out")"
+  fi
+  teardown
+}
+
+test_both_candidates_unavailable_fails() {
+  setup
+  : > "$MOCK_EXIT_FILE"
+  printf '%s\n' '{"Peer":{"m4":{"HostName":"perfect21","TailscaleIPs":["100.71.151.105"],"Online":false,"ExitNodeOption":true},"sf":{"HostName":"sf-vps","TailscaleIPs":["100.79.41.61"],"Online":false,"ExitNodeOption":true}}}' > "$MOCK_STATUS_FILE"
+  if run_prepare; then
+    fail "两个美国候选都不可用时失败" "prepare 意外成功"
+  elif grep -q '两个美国出口节点均不可用' "${TEST_TMP}/out" && ! grep -q '^tailscale set' "$TEST_LOG"; then
+    pass "两个美国候选都不可用时失败"
+  else
+    fail "两个美国候选都不可用时失败" "$(cat "${TEST_TMP}/out")"
+  fi
+  teardown
+}
+
+test_prepare_verification_failure_rolls_back_immediately() {
+  setup
+  : > "$MOCK_EXIT_FILE"
+  printf '%s' 'CN' > "$MOCK_COUNTRY_FILE"
+  if run_prepare; then
+    fail "切换后验证失败立即回滚" "prepare 意外成功"
+  elif [[ -s "$MOCK_EXIT_FILE" ]]; then
+    fail "切换后验证失败立即回滚" "残留出口=$(cat "$MOCK_EXIT_FILE")"
+  elif ! grep -q '公网出口不是 US' "${TEST_TMP}/out"; then
+    fail "切换后验证失败立即回滚" "$(cat "${TEST_TMP}/out")"
+  else
+    pass "切换后验证失败立即回滚"
+  fi
+  teardown
+}
+
+test_restore_failure_returns_nonzero() {
+  setup
+  : > "$MOCK_EXIT_FILE"
+  if ! run_prepare; then
+    fail "恢复失败返回非零" "prepare 失败: $(cat "${TEST_TMP}/out")"
+  else
+    export MOCK_FAIL_RESTORE=1
+    if bash "$TARGET" restore "${TEST_TMP}/state" >> "${TEST_TMP}/out" 2>&1; then
+      fail "恢复失败返回非零" "restore 意外成功"
+    elif grep -q '恢复 Tailscale exit node 失败' "${TEST_TMP}/out"; then
+      pass "恢复失败返回非零"
+    else
+      fail "恢复失败返回非零" "$(cat "${TEST_TMP}/out")"
+    fi
+  fi
+  teardown
+}
+
 echo "=== codex-us-exit-guard.sh 测试 ==="
 test_allowed_m4_passes_without_switching
 test_loopback_hosts_fails_before_network_change
 test_cn_public_egress_fails_closed
 test_chatgpt_transport_timeout_fails_closed
+test_no_exit_switches_to_m4_and_restore_clears_exit
+test_non_us_exit_restores_original_after_session
+test_m4_unavailable_falls_back_to_sf
+test_both_candidates_unavailable_fails
+test_prepare_verification_failure_rolls_back_immediately
+test_restore_failure_returns_nonzero
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"

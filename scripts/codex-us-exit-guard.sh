@@ -25,6 +25,38 @@ except Exception:
 '
 }
 
+candidate_is_available() {
+  local ip="$1"
+  tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+ip = sys.argv[1]
+try:
+    peers = (json.load(sys.stdin).get("Peer") or {}).values()
+except Exception:
+    sys.exit(1)
+for peer in peers:
+    if ip in (peer.get("TailscaleIPs") or []):
+        sys.exit(0 if peer.get("Online") and peer.get("ExitNodeOption") else 1)
+sys.exit(1)
+' "$ip"
+}
+
+set_exit_node() {
+  local ip="$1"
+  if tailscale set --exit-node="$ip" >/dev/null 2>&1; then
+    return 0
+  fi
+  sudo -n tailscale set --exit-node="$ip" >/dev/null 2>&1
+}
+
+try_candidate() {
+  local ip="$1" selected
+  candidate_is_available "$ip" || return 1
+  set_exit_node "$ip" || return 1
+  selected="$(current_exit_ip)" || return 1
+  [[ "$selected" == "$ip" ]]
+}
+
 assert_no_loopback_override() {
   if [[ -f "$HOSTS_FILE" ]] && grep -Eiq '^[[:space:]]*(127\.[0-9.]*|::1)[[:space:]]+([^#]*[[:space:]])?chatgpt\.com([[:space:]]|$)' "$HOSTS_FILE"; then
     local match
@@ -80,29 +112,59 @@ write_state() {
 }
 
 prepare() {
-  local state_file="$1" current
+  local state_file="$1" current previous selected changed
   assert_no_loopback_override || return 1
   current="$(current_exit_ip)" || {
     die "无法读取 Tailscale exit node"
     return 1
   }
+  previous="$current"
+  selected="$current"
+  changed=0
+
   if [[ "$current" != "$PRIMARY_EXIT" && "$current" != "$FALLBACK_EXIT" ]]; then
-    die "当前 Tailscale exit node 不是允许的美国节点（实际: ${current:-none}）"
+    selected=""
+    if try_candidate "$PRIMARY_EXIT"; then
+      selected="$PRIMARY_EXIT"
+    elif try_candidate "$FALLBACK_EXIT"; then
+      selected="$FALLBACK_EXIT"
+    else
+      die "两个美国出口节点均不可用（M4=${PRIMARY_EXIT}, SF=${FALLBACK_EXIT}）"
+      return 1
+    fi
+    changed=1
+    log "已切换美国 exit node（${selected}）"
+  fi
+
+  write_state "$state_file" "$previous" "$selected" "$changed"
+  if ! assert_public_country_us || ! assert_chatgpt_transport; then
+    if [[ "$changed" == "1" ]]; then
+      restore "$state_file" || true
+    fi
     return 1
   fi
-  write_state "$state_file" "$current" "$current" 0
-  assert_public_country_us || return 1
-  assert_chatgpt_transport || return 1
-  log "美国出口门禁通过（exit node: ${current}）"
+  log "美国出口门禁通过（exit node: ${selected}）"
 }
 
 restore() {
-  local state_file="$1" changed
+  local state_file="$1" changed previous current
   [[ -f "$state_file" ]] || return 0
   changed="$(awk -F= '$1 == "changed" { print $2; exit }' "$state_file")"
   if [[ "$changed" == "1" ]]; then
-    die "状态要求恢复已修改路由，但自动恢复尚未实现"
-    return 1
+    previous="$(awk -F= '$1 == "previous_exit" { print $2; exit }' "$state_file")"
+    if ! set_exit_node "$previous"; then
+      die "恢复 Tailscale exit node 失败（目标: ${previous:-none}）"
+      return 1
+    fi
+    current="$(current_exit_ip)" || {
+      die "恢复后无法读取 Tailscale exit node"
+      return 1
+    }
+    if [[ "$current" != "$previous" ]]; then
+      die "恢复 Tailscale exit node 未生效（期望: ${previous:-none}, 实际: ${current:-none}）"
+      return 1
+    fi
+    log "已恢复进入前的 Tailscale exit node（${previous:-none}）"
   fi
   rm -f "$state_file"
 }
