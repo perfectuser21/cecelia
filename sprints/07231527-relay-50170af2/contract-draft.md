@@ -208,16 +208,16 @@ cd packages/brain && npx --no-install vitest run \
 
 ## Test Contract
 
-| Workstream | Test File | 预期 Red | Green 合同 |
+| Workstream | Test File | BEHAVIOR 覆盖 | Green 合同 |
 |---|---|---|---|
-| R1/R7 approval | `kernel-approval-bridge.test.js` + route integration | 第二 SHA 409；mock 复制逻辑恒真 | 真 Router、双 SHA 各一行 |
-| R2 budget | `kernel-deadline.test.js` + wiring integrations | 固定 cap / 旧 deadline / 终态覆盖 | 8h 活动时钟、停表、guard、4096 hop |
-| R3 unknown | `kernel-failure-class-routing.test.js` | judge 缺分类派 generator | unknown 人审 |
-| R4 SHA | `kernel-wiring-no-progress-callback.integration.test.js` | 大写/短/假 SHA 可落库 | resolver 对账与 terminal |
-| R5/R6 signature | `kernel-convergence-signatures.test.js` | 重复签名可无限派 | 崩溃 FAILED；evidence 人审/解锁后 FAILED |
-| 收敛历史 | `kernel-convergence-history.test.js` | 固定轮数或无振荡探测 | 新低、新集合、重现、patience |
-| d707 | `d707-replay.test.js` | 重复 fix 或旧 cap 退出 | 结构化 no-progress / convergence |
-| 真 PostgreSQL | `kernel-wiring.pg.integration.test.js` | 接缝缺失 | 8/8 |
+| R1/R7 approval | `../../tests/regression/relay-50170af2/kernel-approval-bridge.test.js` | 同 run 两轮 review | 真 Router、双 SHA 各一行 |
+| R2 budget | `../../tests/regression/relay-50170af2/kernel-deadline.test.js` | deadline 过期 / MAX_HOPS | 8h 活动时钟、停表、guard、4096 hop |
+| R3 unknown | `../../tests/regression/relay-50170af2/kernel-failure-class-routing.test.js` | judge FAIL 且 failure_class=null | unknown 人审 |
+| R4 SHA | `../../tests/regression/relay-50170af2/kernel-wiring-no-progress-callback.integration.test.js` | uppercase artifact SHA / short decision SHA / fake provider-metadata SHA | resolver 对账与 terminal |
+| R5/R6 signature | `../../tests/regression/relay-50170af2/kernel-convergence-signatures.test.js` | second no-PR generator crash / second identical evidence_invalid signature / after approval | 崩溃 FAILED；evidence 人审/解锁后 FAILED |
+| 收敛历史 | `../../tests/regression/relay-50170af2/kernel-convergence-history.test.js` | historical-low / never-seen set / exact historical set recurrence / three consecutive novel structured rounds | 新低、新集合、重现、patience |
+| d707 | `../../tests/regression/relay-50170af2/d707-replay.test.js` | same-trigger fix without verified callback / many resolver-verified advancing SHA rounds | 结构化 no-progress / convergence |
+| 真 PostgreSQL | `../../packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js` | same run accepts / callback no-progress / failure-set recurrence | 8/8 |
 
 所有 R 项都必须先有旧实现上的 Red commit，再有最小 Green commit。不得修改
 测试来迁就实现；R7 修改测试是为了消除恒真 mock 并扩大到真实调用链。
