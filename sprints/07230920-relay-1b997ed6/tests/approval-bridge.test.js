@@ -17,7 +17,13 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { validateApproval } from '../../../packages/brain/src/orchestrator/kernel-handlers.js';
+// TODO: 实现后取消注释
+// import { validateApproval } from '../../../packages/brain/src/orchestrator/kernel-handlers.js';
+
+// Placeholder — 全红骨架
+function validateApproval(_request, _context) {
+  return { valid: undefined, reason: 'not_implemented' }; // 未实现
+}
 
 /** 构造合法批准请求 */
 function validRequest(overrides = {}) {

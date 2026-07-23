@@ -18,8 +18,35 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { PHASE_BUDGETS_MS, PHASE_TERMINAL_REASONS } from '../../../packages/brain/src/orchestrator/constants.js';
-import { isPhaseDeadlineExceeded } from '../../../packages/brain/src/orchestrator/gates.js';
+// TODO: 实现后取消注释
+// import {
+//   PHASE_BUDGETS_MS,
+//   PHASE_TERMINAL_REASONS,
+//   getPhaseDeadline,
+//   isPhaseDeadlineExceeded,
+// } from '../../../packages/brain/src/orchestrator/constants.js';
+// import { isDeadlineExceeded } from '../../../packages/brain/src/orchestrator/gates.js';
+
+// Placeholders — 全红骨架
+const PHASE_BUDGETS_MS = {
+  planning: undefined,         // 待实现: 10 * 60 * 1000
+  contract_gan: undefined,     // 待实现: 20 * 60 * 1000
+  generate_fix: undefined,     // 待实现: 45 * 60 * 1000
+  evaluate_judge: undefined,   // 待实现: 30 * 60 * 1000
+  merge_report: undefined,     // 待实现: 15 * 60 * 1000
+};
+
+const PHASE_TERMINAL_REASONS = {
+  planning: undefined,       // 待实现: 'planning_deadline_exceeded'
+  contract_gan: undefined,   // 待实现: 'gan_deadline_exceeded'
+  generate_fix: undefined,   // 待实现: 'generation_deadline_exceeded'
+  evaluate_judge: undefined, // 待实现: 'verification_deadline_exceeded'
+  merge_report: undefined,   // 待实现: 'delivery_deadline_exceeded'
+};
+
+function isPhaseDeadlineExceeded(_phase, _phaseStartedAt, _nowAt) {
+  return undefined; // 未实现
+}
 
 const BASE = new Date('2026-01-01T00:00:00.000Z');
 function at(ms) { return new Date(BASE.getTime() + ms); }

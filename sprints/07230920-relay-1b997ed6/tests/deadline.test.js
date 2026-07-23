@@ -13,7 +13,13 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { isDeadlineExceeded } from '../../../packages/brain/src/orchestrator/gates.js';
+// TODO: 实现后取消注释以下 import
+// import { isDeadlineExceeded } from '../../../packages/brain/src/orchestrator/gates.js';
+
+// Placeholder — 实现前始终返回 undefined，测试全红
+function isDeadlineExceeded(_startedAt, _nowAt, _budgetMs) {
+  return undefined; // 未实现
+}
 
 const BUDGET_120_MS = 120 * 60 * 1000;
 const BASE_START = new Date('2026-01-01T00:00:00.000Z');

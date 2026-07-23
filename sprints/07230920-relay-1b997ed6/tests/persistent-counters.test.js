@@ -13,7 +13,13 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { deriveCounters } from '../../../packages/brain/src/orchestrator/counters.js';
+// TODO: 实现后取消注释
+// import { deriveCounters } from '../../../packages/brain/src/orchestrator/counters.js';
+
+// Placeholder — 全红骨架（返回空对象）
+function deriveCounters(_logRows, _options) {
+  return {}; // 未实现
+}
 
 function row(hop, action, observed = {}) {
   return { hop, action, observed };
