@@ -29,8 +29,12 @@ function decodeSessionPut(args) {
 function remoteShellInvocation(remoteCommand, executable) {
   const collector = [
     'env() {',
-    '  printf "ENVARG=%s\\n" "$1";',
-    '  shift;',
+    '  while [ "$#" -gt 0 ]; do',
+    '    case "$1" in',
+    '      *=*) printf "ENVARG=%s\\n" "$1"; shift ;;',
+    '      *) break ;;',
+    '    esac',
+    '  done;',
     '  printf "UTILITY=%s\\n" "$1";',
     '  shift;',
     '  for arg do printf "ARG=%s\\n" "$arg"; done',
@@ -46,12 +50,18 @@ function remoteShellInvocation(remoteCommand, executable) {
   });
   assert.equal(result.status, 0, result.stderr);
   const lines = result.stdout.trimEnd().split('\n');
-  const envArg = lines.shift();
+  const env = {};
+  while (lines[0]?.startsWith('ENVARG=')) {
+    const assignment = lines.shift().slice('ENVARG='.length);
+    const separator = assignment.indexOf('=');
+    assert.notEqual(separator, -1);
+    env[assignment.slice(0, separator)] = assignment.slice(separator + 1);
+  }
   const utility = lines.shift();
-  assert.equal(envArg, `ENVARG=PATH=${REMOTE_FIXED_PATH}`);
   assert.equal(utility, `UTILITY=${executable}`);
   return {
-    envPath: envArg.slice('ENVARG=PATH='.length),
+    env,
+    envPath: env.PATH,
     utility: utility.slice('UTILITY='.length),
     argv: lines.map((line) => {
       assert.match(line, /^ARG=/);
@@ -72,6 +82,7 @@ async function writeFakeRemoteExecutable(dir, name) {
       '#!/bin/sh',
       `printf 'UTILITY=%s\\n' '${name}'`,
       'printf "INHERITED_PATH=%s\\n" "$PATH"',
+      'printf "INHERITED_CODEX_SLOT_HOST=%s\\n" "${CODEX_SLOT_HOST-unset}"',
       'for arg do printf "ARG=%s\\n" "$arg"; done',
       '',
     ].join('\n'),
@@ -90,14 +101,25 @@ async function runRemoteWithFakeExecutable(t, remoteCommand, executable, initial
   await writeFakeRemoteExecutable(bin, executable);
   const collector = [
     'env() {',
-    '  case "$1" in',
-    '    PATH=*) remote_path="${1#PATH=}" ;;',
-    '    *) printf "bad env assignment: %s\\n" "$1" >&2; return 64 ;;',
-    '  esac',
-    '  shift;',
+    '  remote_path=;',
+    '  logical_host=;',
+    '  logical_host_set=0;',
+    '  while [ "$#" -gt 0 ]; do',
+    '    case "$1" in',
+    '      PATH=*) remote_path="${1#PATH=}" ;;',
+    '      CODEX_SLOT_HOST=*) logical_host="${1#CODEX_SLOT_HOST=}"; logical_host_set=1 ;;',
+    '      *=*) printf "bad env assignment: %s\\n" "$1" >&2; return 64 ;;',
+    '      *) break ;;',
+    '    esac',
+    '    shift;',
+    '  done;',
     '  utility="$1";',
     '  shift;',
-    '  PATH="$remote_path" "$FAKE_BIN/$utility" "$@"',
+    '  if [ "$logical_host_set" -eq 1 ]; then',
+    '    PATH="$remote_path" CODEX_SLOT_HOST="$logical_host" "$FAKE_BIN/$utility" "$@";',
+    '  else',
+    '    PATH="$remote_path" "$FAKE_BIN/$utility" "$@";',
+    '  fi',
     '}',
     remoteCommand,
   ].join('\n');
@@ -114,10 +136,15 @@ async function runRemoteWithFakeExecutable(t, remoteCommand, executable, initial
   assert.equal(lines.shift(), `UTILITY=${executable}`);
   const inherited = lines.shift();
   assert.equal(inherited, `INHERITED_PATH=${REMOTE_FIXED_PATH}`);
-  return lines.map((line) => {
-    assert.match(line, /^ARG=/);
-    return line.slice('ARG='.length);
-  });
+  const inheritedHost = lines.shift();
+  assert.match(inheritedHost, /^INHERITED_CODEX_SLOT_HOST=/);
+  return {
+    inheritedHost: inheritedHost.slice('INHERITED_CODEX_SLOT_HOST='.length),
+    argv: lines.map((line) => {
+      assert.match(line, /^ARG=/);
+      return line.slice('ARG='.length);
+    }),
+  };
 }
 
 function runningSession(overrides = {}) {
@@ -412,6 +439,29 @@ test('start selects first configured ok enabled host with available capacity', a
   await runClient(['start', '--project', 'infrastructure'], transport);
   assert.equal(option(transport.calls.find((call) => call.op === 'acquire').args, 'host'), 'xian-m1');
   assert.ok(transport.calls.some((call) => call.op === 'prepare:xian-m1'));
+});
+
+test('start prepares the logical health alias before acquiring its lease', async () => {
+  const transport = makeTransport({
+    agent: async (host, args) => {
+      if (args[0] !== 'health') return undefined;
+      return {
+        ok: true,
+        hostname: host,
+        enabled: host === 'xian-m4',
+        exitNode: 'mmv',
+        exitNodeOk: true,
+        availableSlots: host === 'xian-m4' ? 1 : 0,
+      };
+    },
+  });
+
+  await runClient(['start', '--project', 'infrastructure', '--name', 'main'], transport);
+
+  const operations = transport.calls.map((call) => call.op);
+  const prepareIndex = operations.indexOf('prepare:xian-m4');
+  assert.notEqual(prepareIndex, -1);
+  assert.equal(operations.indexOf('acquire'), prepareIndex + 1);
 });
 
 test('start health-checks every host and never acquires when exit-node contract is unsafe', async () => {
@@ -1400,7 +1450,7 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
   const transport = await createSshTransport({
     config: {
       broker: 'broker-host',
-      hosts: ['agent-host'],
+      hosts: ['xian-m4'],
       brokerScript: "~/.local/lib/codex slot's/codex-slot-broker.mjs",
       agentScript: "/remote/codex slot's/codex-slot-agent.mjs",
     },
@@ -1410,8 +1460,18 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
 
   const deliverPath = "/remote/codex home/slot's/auth.json";
   await transport.broker(['deliver', '--path', deliverPath]);
-  await transport.agent('agent-host', ['health']);
-  await transport.attach('agent-host', '=codex-slot-s-abc');
+  const agentCommands = [
+    ['health'],
+    ['prepare', '--session', 's-safe'],
+    ['status', '--session', 's-safe'],
+    ['launch', '--session', 's-safe'],
+    ['stop', '--session', 's-safe'],
+    ['legacy-list', '--host', 'xian-m4'],
+  ];
+  for (const args of agentCommands) {
+    await transport.agent('xian-m4', args);
+  }
+  await transport.attach('xian-m4', '=codex-slot-s-abc');
 
   const required = [
     'BatchMode=yes',
@@ -1428,6 +1488,7 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
   ]);
   const brokerInvocation = remoteShellInvocation(calls[0].args.at(-1), 'node');
   assert.equal(brokerInvocation.envPath, REMOTE_FIXED_PATH);
+  assert.equal(Object.hasOwn(brokerInvocation.env, 'CODEX_SLOT_HOST'), false);
   assert.deepEqual(brokerInvocation.argv, [
     `${process.env.HOME}/.local/lib/codex slot's/codex-slot-broker.mjs`,
     'deliver',
@@ -1440,29 +1501,34 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
   assert.equal(calls[1].args.includes('-T'), false);
   for (const value of required) assert.ok(calls[1].args.includes(value));
   assert.deepEqual(calls[1].args.slice(-2), [
-    'agent-host',
-    `env PATH=${REMOTE_FIXED_PATH} node '/remote/codex slot'\\''s/codex-slot-agent.mjs' 'health'`,
+    'xian-m4',
+    `env PATH=${REMOTE_FIXED_PATH} CODEX_SLOT_HOST=xian-m4 node '/remote/codex slot'\\''s/codex-slot-agent.mjs' 'health'`,
   ]);
-  const agentInvocation = remoteShellInvocation(calls[1].args.at(-1), 'node');
-  assert.equal(agentInvocation.envPath, REMOTE_FIXED_PATH);
-  assert.deepEqual(agentInvocation.argv, [
-    "/remote/codex slot's/codex-slot-agent.mjs",
-    'health',
-  ]);
-  assert.equal(calls[1].options.timeoutMs, 30_000);
+  for (const [index, expectedArgs] of agentCommands.entries()) {
+    const call = calls[index + 1];
+    const invocation = remoteShellInvocation(call.args.at(-1), 'node');
+    assert.equal(invocation.envPath, REMOTE_FIXED_PATH);
+    assert.equal(invocation.env.CODEX_SLOT_HOST, 'xian-m4');
+    assert.deepEqual(invocation.argv, [
+      "/remote/codex slot's/codex-slot-agent.mjs",
+      ...expectedArgs,
+    ]);
+    assert.equal(call.options.timeoutMs, 30_000);
+  }
 
-  assert.deepEqual(calls[2], {
+  assert.deepEqual(calls.at(-1), {
     kind: 'interactive',
     cmd: 'ssh',
     args: [
       '-t',
-      'agent-host',
+      'xian-m4',
       `env PATH=${REMOTE_FIXED_PATH} tmux 'attach-session' '-t' '=codex-slot-s-abc'`,
     ],
     options: { shell: false, stdio: 'inherit' },
   });
-  const tmuxInvocation = remoteShellInvocation(calls[2].args.at(-1), 'tmux');
+  const tmuxInvocation = remoteShellInvocation(calls.at(-1).args.at(-1), 'tmux');
   assert.equal(tmuxInvocation.envPath, REMOTE_FIXED_PATH);
+  assert.equal(Object.hasOwn(tmuxInvocation.env, 'CODEX_SLOT_HOST'), false);
   assert.deepEqual(tmuxInvocation.argv, [
     'attach-session',
     '-t',
@@ -1495,7 +1561,7 @@ test('remote env prefix lets fake node and tmux inherit fixed PATH with empty or
   const transport = await createSshTransport({
     config: {
       broker: 'broker-host',
-      hosts: ['agent-host'],
+      hosts: ['xian-m4'],
       brokerScript: '~/.local/lib/codex-slot/codex-slot-broker.mjs',
       agentScript: '/remote/codex-slot-agent.mjs',
     },
@@ -1504,22 +1570,39 @@ test('remote env prefix lets fake node and tmux inherit fixed PATH with empty or
   });
 
   await transport.broker(['identity']);
-  await transport.agent('agent-host', ['health']);
-  await transport.attach('agent-host', '=codex-slot-s-abc');
+  await transport.agent('xian-m4', ['health']);
+  await transport.attach('xian-m4', '=codex-slot-s-abc');
 
   for (const initialPath of ['', '/usr/bin:/bin:/usr/sbin:/sbin']) {
-    assert.deepEqual(
-      await runRemoteWithFakeExecutable(t, calls[0].args.at(-1), 'node', initialPath),
-      [`${process.env.HOME}/.local/lib/codex-slot/codex-slot-broker.mjs`, 'identity']
+    const broker = await runRemoteWithFakeExecutable(
+      t,
+      calls[0].args.at(-1),
+      'node',
+      initialPath
     );
-    assert.deepEqual(
-      await runRemoteWithFakeExecutable(t, calls[1].args.at(-1), 'node', initialPath),
-      ['/remote/codex-slot-agent.mjs', 'health']
+    assert.equal(broker.inheritedHost, 'unset');
+    assert.deepEqual(broker.argv, [
+      `${process.env.HOME}/.local/lib/codex-slot/codex-slot-broker.mjs`,
+      'identity',
+    ]);
+
+    const agent = await runRemoteWithFakeExecutable(
+      t,
+      calls[1].args.at(-1),
+      'node',
+      initialPath
     );
-    assert.deepEqual(
-      await runRemoteWithFakeExecutable(t, calls[2].args.at(-1), 'tmux', initialPath),
-      ['attach-session', '-t', '=codex-slot-s-abc']
+    assert.equal(agent.inheritedHost, 'xian-m4');
+    assert.deepEqual(agent.argv, ['/remote/codex-slot-agent.mjs', 'health']);
+
+    const attach = await runRemoteWithFakeExecutable(
+      t,
+      calls[2].args.at(-1),
+      'tmux',
+      initialPath
     );
+    assert.equal(attach.inheritedHost, 'unset');
+    assert.deepEqual(attach.argv, ['attach-session', '-t', '=codex-slot-s-abc']);
   }
 });
 

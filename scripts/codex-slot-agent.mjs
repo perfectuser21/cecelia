@@ -193,11 +193,8 @@ function resolveNow(deps) {
 function resolveHostname(deps) {
   const value = typeof deps.hostname === 'function'
     ? deps.hostname()
-    : deps.hostname ?? osHostname();
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new Error('hostname must be a non-empty string');
-  }
-  return value;
+    : deps.hostname ?? process.env.CODEX_SLOT_HOST ?? osHostname();
+  return validateSafeSegment(value, 'hostname');
 }
 
 function resolveAllowedProjects(deps) {
