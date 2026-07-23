@@ -9,22 +9,22 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] scripts/host-disk-sampler.sh 存在且含 set -euo pipefail 与显式 PATH 声明
+- [x] [ARTIFACT] scripts/host-disk-sampler.sh 存在且含 set -euo pipefail 与显式 PATH 声明
   Test: node -e "const c=require('fs').readFileSync('scripts/host-disk-sampler.sh','utf8'); if(!c.includes('set -euo pipefail')) process.exit(1); if(!/PATH=/.test(c)) process.exit(1);"
 
-- [ ] [ARTIFACT] packages/brain/src/capacity-gate.js 存在且导出 readHostDisk/admitPreview
+- [x] [ARTIFACT] packages/brain/src/capacity-gate.js 存在且导出 readHostDisk/admitPreview
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/capacity-gate.js','utf8'); if(!c.includes('readHostDisk')) process.exit(1); if(!c.includes('admitPreview')) process.exit(1);"
 
-- [ ] [ARTIFACT] packages/brain/src/preview-destroyer.js 存在且导出 destroyPreview
+- [x] [ARTIFACT] packages/brain/src/preview-destroyer.js 存在且导出 destroyPreview
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/preview-destroyer.js','utf8'); if(!c.includes('destroyPreview')) process.exit(1);"
 
-- [ ] [ARTIFACT] migration 358 存在且含 cleaning/cleanup_failed/cleanup_detail
+- [x] [ARTIFACT] migration 358 存在且含 cleaning/cleanup_failed/cleanup_detail
   Test: node -e "const fs=require('fs'); const f=fs.readdirSync('packages/brain/migrations').find(x=>x.startsWith('358_')); if(!f) process.exit(1); const c=fs.readFileSync('packages/brain/migrations/'+f,'utf8'); if(!c.includes('cleaning')||!c.includes('cleanup_failed')||!c.includes('cleanup_detail')) process.exit(1);"
 
-- [ ] [ARTIFACT] scripts/preview-cleanup.sh 已重写为 preview-destroyer.js 的唯一 shell 执行体
+- [x] [ARTIFACT] scripts/preview-cleanup.sh 已重写为 preview-destroyer.js 的唯一 shell 执行体
   Test: node -e "const c=require('fs').readFileSync('scripts/preview-cleanup.sh','utf8'); if(!c.includes('preview-destroyer')) process.exit(1);"
 
-- [ ] [ARTIFACT] T10 消费者代码 grep 断言：capacity-gate.js/preview-destroyer.js 内不存在本地 df/diskutil 直接调用（统一只经 readHostDisk() 消费 host-disk-sampler.sh 的采样结果，禁止消费者重复实现磁盘采样，违背"统一采样、统一消费"设计目标）
+- [x] [ARTIFACT] T10 消费者代码 grep 断言：capacity-gate.js/preview-destroyer.js 内不存在本地 df/diskutil 直接调用（统一只经 readHostDisk() 消费 host-disk-sampler.sh 的采样结果，禁止消费者重复实现磁盘采样，违背"统一采样、统一消费"设计目标）
   Test: node -e "const fs=require('fs'); const files=['packages/brain/src/capacity-gate.js','packages/brain/src/preview-destroyer.js']; const bad=/execSync\(\s*['\"\`]\s*df\b|spawnSync\(\s*['\"\`]df['\"\`]|spawn\(\s*['\"\`]df['\"\`]|exec\(\s*['\"\`]\s*df\b|['\"\`]diskutil['\"\`]|\bdf\s+-k\b/; let fail=false; for (const f of files) { const c=fs.readFileSync(f,'utf8'); if (bad.test(c)) { console.error('FAIL: ' + f + ' 内含本地 df/diskutil 直接调用，应改为经 capacity-gate.js 的 readHostDisk() 读取 .runtime/host-disk.json'); fail=true; } } if (fail) process.exit(1); console.log('OK: no local df/diskutil calls in capacity-gate.js or preview-destroyer.js');"
   期望: exit 0（两文件源码内均不含 df/diskutil 直接调用）
 
@@ -32,83 +32,83 @@ journey_type: autonomous
 
 ### 模块1 宿主磁盘采样器
 
-- [ ] [BEHAVIOR] host-disk-sampler.sh 原子写入 host-disk.json 且字段完整、字节级数值（非 GB/GiB 字符串）
+- [x] [BEHAVIOR] host-disk-sampler.sh 原子写入 host-disk.json 且字段完整、字节级数值（非 GB/GiB 字符串）
   Test: manual:bash -c 'node sprints/07231146-relay-1b1f1ffa/tests/manual/t1-sampler.mjs atomic-write'
   期望: OK:sampler-atomic-write
 
-- [ ] [BEHAVIOR] host-disk-sampler.sh 在 cron 等价环境（仅 PATH=/usr/bin:/bin）下仍能成功采样（显式 PATH 生效）
+- [x] [BEHAVIOR] host-disk-sampler.sh 在 cron 等价环境（仅 PATH=/usr/bin:/bin）下仍能成功采样（显式 PATH 生效）
   Test: manual:bash -c 'node sprints/07231146-relay-1b1f1ffa/tests/manual/t1-sampler.mjs cron-path'
   期望: OK:sampler-cron-path
 
 ### 模块2 容量准入闸门 — readHostDisk 4 种拒绝分支
 
-- [ ] [BEHAVIOR] readHostDisk() 样本文件缺失 → reason sample_missing
+- [x] [BEHAVIOR] readHostDisk() 样本文件缺失 → reason sample_missing
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t2-read-host-disk.mjs missing'
   期望: OK:read-host-disk-missing
 
-- [ ] [BEHAVIOR] readHostDisk() 样本 JSON 损坏 → reason sample_corrupt
+- [x] [BEHAVIOR] readHostDisk() 样本 JSON 损坏 → reason sample_corrupt
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t2-read-host-disk.mjs corrupt'
   期望: OK:read-host-disk-corrupt
 
-- [ ] [BEHAVIOR] readHostDisk() 样本过期（>180s）→ reason sample_stale
+- [x] [BEHAVIOR] readHostDisk() 样本过期（>180s）→ reason sample_stale
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t2-read-host-disk.mjs stale'
   期望: OK:read-host-disk-stale
 
-- [ ] [BEHAVIOR] readHostDisk() 样本字段不完整 → reason sample_incomplete
+- [x] [BEHAVIOR] readHostDisk() 样本字段不完整 → reason sample_incomplete
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t2-read-host-disk.mjs incomplete'
   期望: OK:read-host-disk-incomplete
 
 ### 模块2 容量准入闸门 — admitPreview 四层判定 + 并发串行化 + 幂等复用
 
-- [ ] [BEHAVIOR] admitPreview() active/starting/cleaning 数量 ≥6 → 拒绝 too_many_active，返回 free_bytes/projected_cost_bytes/need_release_bytes
+- [x] [BEHAVIOR] admitPreview() active/starting/cleaning 数量 ≥6 → 拒绝 too_many_active，返回 free_bytes/projected_cost_bytes/need_release_bytes
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs count-limit'
   期望: OK:admit-count-limit
 
-- [ ] [BEHAVIOR] admitPreview() effective_free_bytes - 3.5GiB < 35GiB → 拒绝 insufficient_free_space（字节级精确比较）
+- [x] [BEHAVIOR] admitPreview() effective_free_bytes - 3.5GiB < 35GiB → 拒绝 insufficient_free_space（字节级精确比较）
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs capacity-limit'
   期望: OK:admit-capacity-limit
 
-- [ ] [BEHAVIOR] admitPreview() usage_pct ≥85 → 拒绝 usage_pct_too_high
+- [x] [BEHAVIOR] admitPreview() usage_pct ≥85 → 拒绝 usage_pct_too_high
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs usage-limit'
   期望: OK:admit-usage-limit
 
-- [ ] [BEHAVIOR] admitPreview() 并发准入经 pg_advisory_xact_lock 串行化，剩余 1 名额时 3 并发「真实判定+预留」请求恰好 1 个 admitted，且 preview_environments 表针对这 3 个候选 PR 最终恰好新增 1 行真实 DB 记录（不是只数返回值里 admitted===true 的个数——GAN Round 1 反馈问题2 修复：抓出"admitPreview 判 true 后调用方再单独调无锁 allocatePreview() 做预留"的 TOCTOU 实现），admitted 返回值须含 port/db_name（方案A schema 升级）
+- [x] [BEHAVIOR] admitPreview() 并发准入经 pg_advisory_xact_lock 串行化，剩余 1 名额时 3 并发「真实判定+预留」请求恰好 1 个 admitted，且 preview_environments 表针对这 3 个候选 PR 最终恰好新增 1 行真实 DB 记录（不是只数返回值里 admitted===true 的个数——GAN Round 1 反馈问题2 修复：抓出"admitPreview 判 true 后调用方再单独调无锁 allocatePreview() 做预留"的 TOCTOU 实现），admitted 返回值须含 port/db_name（方案A schema 升级）
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs concurrency-lock'
   期望: OK:admit-concurrency-lock
 
-- [ ] [BEHAVIOR] admitPreview() 已存在活跃记录的 PR 重推（幂等复用）跳过准入四层判定
+- [x] [BEHAVIOR] admitPreview() 已存在活跃记录的 PR 重推（幂等复用）跳过准入四层判定
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs idempotent-reuse'
   期望: OK:admit-idempotent-reuse
 
 ### 模块3 统一销毁器 — 7 步流程 / 安全防护 / 幂等 / 并发去重
 
-- [ ] [BEHAVIOR] destroyPreview() 7 步流程完整执行：真实 DB 已删 + 真实 worktree 已删 + 真实进程已杀 + 临时文件已清 + 终态 inactive
+- [x] [BEHAVIOR] destroyPreview() 7 步流程完整执行：真实 DB 已删 + 真实 worktree 已删 + 真实进程已杀 + 临时文件已清 + 终态 inactive
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs full-flow'
   期望: OK:destroy-full-flow
 
-- [ ] [BEHAVIOR] destroyPreview() DB 名不匹配 ^cecelia_preview_[0-9]+$ → 拒绝 DROP DATABASE，置 cleanup_failed，不误删邻近合法库
+- [x] [BEHAVIOR] destroyPreview() DB 名不匹配 ^cecelia_preview_[0-9]+$ → 拒绝 DROP DATABASE，置 cleanup_failed，不误删邻近合法库
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs dbname-guard'
   期望: OK:destroy-dbname-guard
 
-- [ ] [BEHAVIOR] destroyPreview() worktree 路径通过符号链接逃逸 preview 根目录 → realpath 校验 abort，不执行 rm -rf
+- [x] [BEHAVIOR] destroyPreview() worktree 路径通过符号链接逃逸 preview 根目录 → realpath 校验 abort，不执行 rm -rf
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs realpath-guard'
   期望: OK:destroy-realpath-guard
 
-- [ ] [BEHAVIOR] destroyPreview() 对已 inactive 的 PR 重复调用 → 幂等成功
+- [x] [BEHAVIOR] destroyPreview() 对已 inactive 的 PR 重复调用 → 幂等成功
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs idempotent'
   期望: OK:destroy-idempotent
 
-- [ ] [BEHAVIOR] destroyPreview() 同一 PR webhook + reaper 并发触发销毁，per-PR advisory lock 保证只实际执行一次
+- [x] [BEHAVIOR] destroyPreview() 同一 PR webhook + reaper 并发触发销毁，per-PR advisory lock 保证只实际执行一次
   Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs concurrent-dedup'
   期望: OK:destroy-concurrent-dedup
 
 ### 路由层接入（POST /preview/start 准入拒绝 503 + POST /preview/stop 销毁终态透出）
 
-- [ ] [BEHAVIOR] POST /api/brain/preview/start 数量红线场景返回 HTTP 503 + reason/free_bytes/projected_cost_bytes/need_release_bytes 四字段类型正确
+- [x] [BEHAVIOR] POST /api/brain/preview/start 数量红线场景返回 HTTP 503 + reason/free_bytes/projected_cost_bytes/need_release_bytes 四字段类型正确
   Test: manual:bash -c 'for i in $(seq 1 6); do psql -h localhost -U cecelia -d cecelia -c "INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status) VALUES (89000$i, '"'"'cp-dod-fixture'"'"', '"'"'cecelia'"'"', $((5290+i)), '"'"'cecelia_preview_89000'"'"'||$i, '"'"'active'"'"') ON CONFLICT DO NOTHING;" >/dev/null; done; CODE=$(curl -s -o /tmp/dod-admit-resp.json -w "%{http_code}" -X POST localhost:5221/api/brain/preview/start -H "Content-Type: application/json" -d "{\"pr_number\": 899999, \"branch_name\": \"cp-dod-fixture\"}"); psql -h localhost -U cecelia -d cecelia -c "DELETE FROM preview_environments WHERE branch_name='"'"'cp-dod-fixture'"'"';" >/dev/null; [ "$CODE" = "503" ] || { echo "FAIL: got $CODE"; cat /tmp/dod-admit-resp.json; exit 1; }; jq -e ".reason and (.projected_cost_bytes|type==\"number\") and (.need_release_bytes|type==\"number\")" /tmp/dod-admit-resp.json'
   期望: exit 0（HTTP 503 + 四字段类型正确）
 
-- [ ] [BEHAVIOR] POST /api/brain/preview/stop/:pr 正常销毁场景响应体含 status:"inactive" 字段
+- [x] [BEHAVIOR] POST /api/brain/preview/stop/:pr 正常销毁场景响应体含 status:"inactive" 字段
   Test: manual:bash -c 'PR=898888; psql -h localhost -U cecelia -d cecelia -c "INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status) VALUES ($PR, '"'"'cp-dod-stop-fixture'"'"', '"'"'cecelia'"'"', 5298, '"'"'cecelia_preview_'"'"'||$PR, '"'"'active'"'"') ON CONFLICT DO NOTHING;" >/dev/null; RESP=$(curl -sf -X POST localhost:5221/api/brain/preview/stop/$PR); echo "$RESP" | jq -e ".status == \"inactive\" or .status == \"cleanup_failed\""'
   期望: exit 0（响应体含合法 status 枚举值）
 

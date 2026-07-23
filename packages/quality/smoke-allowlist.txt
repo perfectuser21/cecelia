@@ -160,3 +160,4 @@ dispatch-allocation-guide-smoke.sh
 grok-relay-smoke.sh
 codex-cred-isolation-smoke.sh
 codex-grok-launcher-supervisor-smoke.sh
+preview-capacity-gate-and-destroyer-smoke.sh
