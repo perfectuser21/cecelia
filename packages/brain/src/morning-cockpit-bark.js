@@ -205,7 +205,7 @@ export async function runMorningCockpitBark(pool) {
     if (vetoTime) lines.push(`否决窗至 ${vetoTime}，逾时自动放行`);
   }
 
-  lines.push(`点击进入指挥舱 →`);
+  lines.push(`点击进入指挥舱 → ${DASHBOARD_URL}`);
   const body = lines.join('\n');
 
   // 5. 发送 Bark（复用 notifier.js sendBark，dedupeKey 二重去重）
