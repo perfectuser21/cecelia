@@ -142,6 +142,24 @@ app.get('/abs', (req, res) => {
   return res.json({ result: Math.abs(Number(n)), operation: 'abs' });
 });
 
+const SQUARE_LIMIT = 94906265;  // sqrt(MAX_SAFE_INTEGER)
+const SQUARE_INT = /^-?\d+$/;
+
+app.get('/square', (req, res) => {
+  const { value } = req.query;
+  if (value === undefined) {
+    return res.status(400).json({ error: 'value 是必填 query 参数' });
+  }
+  if (typeof value !== 'string' || !SQUARE_INT.test(value)) {
+    return res.status(400).json({ error: 'value 必须匹配 ^-?\\d+$（整数，禁止小数/科学计数法/前导+）' });
+  }
+  const n = Number(value);
+  if (Math.abs(n) > SQUARE_LIMIT) {
+    return res.status(400).json({ error: `|value| 超过精度上界 ${SQUARE_LIMIT}，平方结果会超出 MAX_SAFE_INTEGER` });
+  }
+  return res.json({ result: n * n, operation: 'square' });
+});
+
 app.get('/echo', (req, res) => {
   if (req.query.msg === undefined) {
     return res.status(400).json({ error: 'msg 是必填 query 参数' });
