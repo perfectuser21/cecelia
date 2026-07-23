@@ -1,0 +1,26 @@
+{
+  "round": 1,
+  "verdict": "REVISION",
+  "rubric_scores": {
+    "correctness": 8,
+    "completeness": 6,
+    "testability": 4,
+    "adversarial_coverage": 4,
+    "integration_chain": 3,
+    "clarity": 7,
+    "tdd_discipline": 6
+  },
+  "overall_score": 5.4,
+  "judgments_written": 0,
+  "critical_issues": [
+    "C-1: d707 replay fixture 是骨架（hop 4-49 全部缺失），不是真实 decision log",
+    "C-2: approval bridge 测试（T-17-a~e）全是 readFileSync 源码扫描，非行为测试",
+    "C-3: no-progress 测试注入 noProgress=true 字段绕过推导，未测从 DB decision log 推导链路",
+    "C-4: kernel-approval-bridge.test.js 第16行误用 @jest/globals，vitest 下无法运行"
+  ],
+  "medium_issues": [
+    "C-5: deadline fence 集成测试缺少 deps.now 注入接口规范",
+    "C-6: fixRound 崩溃窗口语义未在合同交叉验证",
+    "C-7: T-17-f 用 mock pool，未测真实 DB 写入路径"
+  ]
+}
