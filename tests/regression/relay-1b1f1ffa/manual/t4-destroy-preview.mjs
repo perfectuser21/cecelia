@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync 
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { spawn } from 'child_process';
-import { REPO_ROOT, realPool, fail, ok, testPrNumber, cleanupPrRow } from './_lib.mjs';
+import { REPO_ROOT, realPool, fail, ok, testPrNumber, cleanupPrRow, runQuietCommand } from './_lib.mjs';
 
 const mode = process.argv[2];
 const PSQL_ARGS = ['-h', 'localhost', '-U', 'cecelia'];
@@ -13,8 +13,8 @@ const previewBaseDir = mkdtempSync(join(tmpdir(), 'preview-base-'));
 const seededPrs = [];
 let seededDbs = [];
 
-function shDb(cmd, args) {
-  execSync(`${cmd} ${PSQL_ARGS.join(' ')} ${args}`, { stdio: 'pipe' });
+function shDb(cmd, ...args) {
+  runQuietCommand(cmd, [...PSQL_ARGS, ...args]);
 }
 
 async function dbExists(dbName) {
@@ -162,7 +162,7 @@ try {
     for (const pr of seededPrs) await cleanupPrRow(pool, pr);
   } catch { /* best-effort */ }
   for (const dbName of seededDbs) {
-    try { shDb('dropdb', `--if-exists ${dbName}`); } catch { /* best-effort */ }
+    try { shDb('dropdb', '--if-exists', dbName); } catch { /* best-effort */ }
   }
   try {
     execSync(`git -C "${REPO_ROOT}" worktree prune`, { stdio: 'pipe' });

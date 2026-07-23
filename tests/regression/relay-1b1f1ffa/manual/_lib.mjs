@@ -1,9 +1,14 @@
 // _lib.mjs — 手动验证脚本共享工具（真实 PG + 真实文件系统，禁 mock）
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import { randomUUID } from 'crypto';
 
 export const GIB = 1073741824;
 export const REPO_ROOT = process.env.REPO_ROOT || execSync('git rev-parse --show-toplevel').toString().trim();
+
+/** 动态手测无需保留命令输出；直接丢弃可避免 execSync 默认 maxBuffer 导致 ENOBUFS。 */
+export function runQuietCommand(command, args = []) {
+  execFileSync(command, args, { stdio: 'ignore' });
+}
 
 /** 真实 pool（NODE_ENV=test 强制走 cecelia_test，db-config.js 的 guard 保证不会碰生产库） */
 export async function realPool() {
