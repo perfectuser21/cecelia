@@ -16,11 +16,21 @@
  * - C-2b 修复：T-17-b 升级为行为测试（mock pool + collectGroundTruth）
  */
 
+import express from 'express';
+import request from 'supertest';
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
 
 // ---- 从真实模块导入（C-2a 修复） ----
 // harness-pending-reviews.js 是 ES module，直接静态导入
 import { authenticateApprover } from '../../../packages/brain/src/routes/harness-pending-reviews.js';
+import approvalRouter from '../../../packages/brain/src/routes/harness-kernel-approvals.js';
+
+const ROUTE_TOKEN = 'test-token-abc';
+const ROUTE_RUN_ID = '11111111-1111-4111-8111-111111111111';
+const ROUTE_TASK_ID = '22222222-2222-4222-8222-222222222222';
+const ROUTE_PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4226';
+const ROUTE_SHA_A = 'a'.repeat(40);
+const ROUTE_SHA_B = 'b'.repeat(40);
 
 // ---- helper: 构建 mock request/response ----
 
@@ -44,6 +54,128 @@ function mockRes() {
     send(body) { res._body = body; return res; },
   };
   return res;
+}
+
+function createRealApprovalHarness() {
+  const state = {
+    currentSha: ROUTE_SHA_A,
+    decisionLog: [{
+      hop: 3,
+      action: 'effect:human_review_requested',
+      observed: { pr: { head_sha: ROUTE_SHA_A } },
+      gate_verdict: 'allow',
+      detail: { dispatch_hop: 2 },
+    }],
+    transactionCommands: [],
+  };
+
+  const query = async (sql, params = []) => {
+    const normalized = String(sql).trim();
+    if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(normalized)) {
+      state.transactionCommands.push(normalized);
+      return { rows: [], rowCount: 0 };
+    }
+    if (normalized.includes('FROM initiative_runs r')) {
+      return {
+        rows: [{
+          run_id: ROUTE_RUN_ID,
+          task_id: ROUTE_TASK_ID,
+          pr_url: ROUTE_PR_URL,
+        }],
+        rowCount: 1,
+      };
+    }
+    if (normalized.includes("action='effect:human_review_requested'")) {
+      const row = state.decisionLog.find(
+        (candidate) => candidate.hop === Number(params[1])
+          && candidate.action === 'effect:human_review_requested',
+      );
+      return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+    }
+    if (normalized.includes('pg_advisory_xact_lock')) {
+      return { rows: [{}], rowCount: 1 };
+    }
+    if (normalized.includes("action='verdict:human_review'") && normalized.includes('SELECT 1')) {
+      let rows = state.decisionLog.filter(
+        (candidate) => candidate.action === 'verdict:human_review',
+      );
+      // The old route asks whether the run has any approval. The fixed route must
+      // include the SHA predicate and pass currentSha as $2.
+      if (normalized.includes("detail->>'pr_head_sha'")) {
+        rows = rows.filter((candidate) => candidate.detail.pr_head_sha === params[1]);
+      }
+      return { rows: rows.slice(0, 1), rowCount: Math.min(rows.length, 1) };
+    }
+    if (normalized.includes('SELECT COALESCE(MAX(hop), 0) + 1 AS next_hop')) {
+      return {
+        rows: [{
+          next_hop: state.decisionLog.reduce(
+            (maxHop, row) => Math.max(maxHop, Number(row.hop)),
+            0,
+          ) + 1,
+        }],
+        rowCount: 1,
+      };
+    }
+    if (normalized.includes('INSERT INTO orchestrator_decision_log')) {
+      state.decisionLog.push({
+        hop: Number(params[1]),
+        action: 'verdict:human_review',
+        observed: JSON.parse(params[2]),
+        gate_verdict: params[3],
+        detail: JSON.parse(params[4]),
+      });
+      return { rows: [], rowCount: 1 };
+    }
+    throw new Error(`unexpected approval test query: ${normalized}`);
+  };
+
+  const client = {
+    query,
+    release() {},
+  };
+  const database = {
+    query,
+    async connect() {
+      return client;
+    },
+  };
+  const app = express();
+  app.use(express.json());
+  app.set('pool', database);
+  app.set('kernelPrHeadResolver', async (prUrl) => {
+    expect(prUrl).toBe(ROUTE_PR_URL);
+    return state.currentSha;
+  });
+  app.use('/api/brain/harness/kernel-reviews', approvalRouter);
+
+  const addReviewRound = (sha) => {
+    const nextHop = state.decisionLog.reduce(
+      (maxHop, row) => Math.max(maxHop, Number(row.hop)),
+      0,
+    ) + 1;
+    state.currentSha = sha;
+    state.decisionLog.push({
+      hop: nextHop,
+      action: 'effect:human_review_requested',
+      observed: { pr: { head_sha: sha } },
+      gate_verdict: 'allow',
+      detail: { dispatch_hop: nextHop - 1 },
+    });
+    return nextHop;
+  };
+
+  const approve = ({ sha = state.currentSha, reviewHop = 3 } = {}) => request(app)
+    .post(`/api/brain/harness/kernel-reviews/${ROUTE_RUN_ID}/approve`)
+    .set('x-approver-token', ROUTE_TOKEN)
+    .send({
+      task_id: ROUTE_TASK_ID,
+      pr_head_sha: sha,
+      review_request_hop: reviewHop,
+      approved_by: 'alex',
+    });
+
+  return { state, addReviewRound, approve };
 }
 
 describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
@@ -167,169 +299,48 @@ describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
     expect(observed.reviewApproved).toBe(true);
   });
 
-  /**
-   * T-17-c: INV-K7 旧 SHA 批准拒绝（行为测试）
-   * mock pool.query 返回 current_pr_sha='sha-NEW'，请求 body 含 pr_head_sha='sha-OLD'，断言 409
-   */
-  test('T-17-c: 旧 SHA 批准 → 409（行为测试，mock pool）', async () => {
-    process.env.HARNESS_REVIEW_APPROVER_TOKEN = 'test-token-abc';
+  test('T-17-c: 旧 SHA 批准 → 409（真实 Router）', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = ROUTE_TOKEN;
+    const { approve } = createRealApprovalHarness();
 
-    // mock pool：查 task 返回 current_pr_sha='sha-NEW'
-    const mockPool = {
-      query: async (sql, params) => {
-        if (sql.includes('tasks') && sql.includes('SELECT')) {
-          return { rowCount: 1, rows: [{ id: 'task-1', pr_head_sha: 'sha-NEW' }] };
-        }
-        return { rowCount: 0, rows: [] };
-      },
-    };
+    const response = await approve({ sha: 'c'.repeat(40) });
 
-    // 模拟 approve 路由的 SHA 校验逻辑（实现后路由会做此校验）：
-    // 请求 body.pr_head_sha='sha-OLD' vs 当前 DB 里的 sha='sha-NEW' → 409
-    const req = mockReq({
-      headers: { 'x-approver-token': 'test-token-abc' },
-      body: { approved_by: 'alex', pr_head_sha: 'sha-OLD' },
-      params: { taskId: 'task-1' },
-    });
-    const res = mockRes();
-
-    // 执行真实 authenticateApprover（token 认证通过）
-    const auth = authenticateApprover(req, res);
-    expect(auth.ok).toBe(true); // token 认证通过
-
-    // 执行 SHA 校验（实现后路由逻辑）
-    const { rows: taskRows } = await mockPool.query('SELECT id, pr_head_sha FROM tasks WHERE id=$1', ['task-1']);
-    const currentSha = taskRows[0]?.pr_head_sha;
-    const requestedSha = req.body?.pr_head_sha;
-
-    if (requestedSha && currentSha && requestedSha !== currentSha) {
-      res.status(409).json({
-        error: 'stale_sha',
-        detail: `请求的 pr_head_sha=${requestedSha} 与当前 PR head sha=${currentSha} 不符，批准被拒绝`,
-      });
-    }
-
-    expect(res._status).toBe(409);
-    expect(res._body).toMatchObject({ error: 'stale_sha' });
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({ error: 'stale_sha' });
   });
 
-  /**
-   * T-17-d: INV-K7 重复批准拒绝（行为测试）
-   * mock pool.query 返回已存在 verdict:human_review，断言第二次批准 409
-   */
-  test('T-17-d: 重复批准 → 409（行为测试，mock pool）', async () => {
-    process.env.HARNESS_REVIEW_APPROVER_TOKEN = 'test-token-abc';
+  test('T-17-d: 同 SHA 重复批准 → 409 且只写一行（真实 Router）', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = ROUTE_TOKEN;
+    const { state, approve } = createRealApprovalHarness();
 
-    const existingSha = 'sha-current';
-    // mock pool：查 orchestrator_decision_log 返回已有 verdict:human_review
-    const mockPool = {
-      query: async (sql) => {
-        if (sql.includes('orchestrator_decision_log') && sql.includes('verdict:human_review')) {
-          return {
-            rowCount: 1,
-            rows: [{ action: 'verdict:human_review', detail: { approved: true, pr_head_sha: existingSha } }],
-          };
-        }
-        return { rowCount: 0, rows: [] };
-      },
-    };
-
-    const req = mockReq({
-      headers: { 'x-approver-token': 'test-token-abc' },
-      body: { approved_by: 'alex', pr_head_sha: existingSha },
-      params: { taskId: 'task-1' },
-    });
-    const res = mockRes();
-
-    // 调用真实 authenticateApprover，token 认证通过
-    const auth = authenticateApprover(req, res);
-    expect(auth.ok).toBe(true);
-
-    // 幂等检查（实现后路由逻辑）
-    const { rowCount } = await mockPool.query(
-      "SELECT 1 FROM orchestrator_decision_log WHERE run_id=$1 AND action='verdict:human_review' LIMIT 1",
-      ['run-1'],
-    );
-    if (rowCount > 0) {
-      res.status(409).json({ error: 'already_approved', detail: '该 run 已有 verdict:human_review 记录，不可重复批准' });
-    }
-
-    expect(res._status).toBe(409);
-    expect(res._body).toMatchObject({ error: 'already_approved' });
+    expect((await approve()).status).toBe(202);
+    expect((await approve()).status).toBe(409);
+    expect(state.decisionLog.filter(
+      (row) => row.action === 'verdict:human_review'
+        && row.detail.pr_head_sha === ROUTE_SHA_A,
+    )).toHaveLength(1);
   });
 
-  /**
-   * T-17-e: 合法批准 → 写唯一 verdict:human_review 到 orchestrator_decision_log（行为测试）
-   * mock pool.query，断言 INSERT INTO orchestrator_decision_log（action='verdict:human_review'）被调用
-   */
-  test('T-17-e: 合法批准写 verdict:human_review 到 orchestrator_decision_log（行为测试）', async () => {
-    process.env.HARNESS_REVIEW_APPROVER_TOKEN = 'test-token-abc';
+  test('T-17-e: 同 run 两轮 review 的两个 SHA 各批准一次（真实 Router）', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = ROUTE_TOKEN;
+    const { state, addReviewRound, approve } = createRealApprovalHarness();
 
-    const insertedRows = [];
-    const mockPool = {
-      query: async (sql, params) => {
-        if (sql.includes('tasks') && sql.includes('SELECT')) {
-          return { rowCount: 1, rows: [{ id: 'task-1' }] };
-        }
-        if (sql.includes('orchestrator_decision_log') && sql.includes('verdict:human_review') && sql.includes('SELECT')) {
-          return { rowCount: 0, rows: [] }; // 尚未批准
-        }
-        if (sql.includes('INSERT INTO orchestrator_decision_log')) {
-          insertedRows.push({ sql, params });
-          return { rowCount: 1, rows: [] };
-        }
-        return { rowCount: 0, rows: [] };
-      },
-    };
-
-    const req = mockReq({
-      headers: { 'x-approver-token': 'test-token-abc' },
-      body: { approved_by: 'alex', pr_head_sha: 'sha-current' },
-      params: { taskId: 'task-1' },
+    expect((await approve()).status).toBe(202);
+    const shaBReviewHop = addReviewRound(ROUTE_SHA_B);
+    const secondApproval = await approve({
+      sha: ROUTE_SHA_B,
+      reviewHop: shaBReviewHop,
     });
-    const res = mockRes();
 
-    // 调用真实 authenticateApprover，token 认证通过
-    const auth = authenticateApprover(req, res);
-    expect(auth.ok).toBe(true);
-
-    // 无重复记录
-    const dedupe = await mockPool.query(
-      "SELECT 1 FROM orchestrator_decision_log WHERE run_id=$1 AND action='verdict:human_review' LIMIT 1",
-      ['run-1'],
-    );
-    expect(dedupe.rowCount).toBe(0); // 可以批准
-
-    // 执行写入（实现后路由会调用此 INSERT）
-    const detail = JSON.stringify({
-      approved: true,
-      approved_by: auth.approvedBy,
-      pr_head_sha: req.body.pr_head_sha,
-      source: 'authenticated_route',
-      approved_at: new Date().toISOString(),
-    });
-    await mockPool.query(
-      "INSERT INTO orchestrator_decision_log (run_id, hop, action, observed, derived_phase, detail) VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb)",
-      ['run-1', 99, 'verdict:human_review', '{}', 'review', detail],
-    );
-
-    // 断言：INSERT 被调用且包含正确字段
-    expect(insertedRows).toHaveLength(1);
-    const insertSql = insertedRows[0].sql;
-    const insertParams = insertedRows[0].params;
-    expect(insertSql).toMatch(/INSERT INTO orchestrator_decision_log/);
-    // action 参数为 verdict:human_review
-    expect(insertParams).toContain('verdict:human_review');
-    // detail 包含 approved:true 和 pr_head_sha
-    const insertedDetail = JSON.parse(insertParams.find((p) => {
-      try { const d = JSON.parse(p); return d.approved === true; } catch { return false; }
-    }));
-    expect(insertedDetail.approved).toBe(true);
-    expect(insertedDetail.pr_head_sha).toBe('sha-current');
-    expect(insertedDetail.approved_by).toBe('alex');
-
-    res.status(202).json({ ok: true });
-    expect(res._status).toBe(202);
+    expect(secondApproval.status).toBe(202);
+    expect(state.decisionLog.filter(
+      (row) => row.action === 'verdict:human_review'
+        && row.detail.pr_head_sha === ROUTE_SHA_A,
+    )).toHaveLength(1);
+    expect(state.decisionLog.filter(
+      (row) => row.action === 'verdict:human_review'
+        && row.detail.pr_head_sha === ROUTE_SHA_B,
+    )).toHaveLength(1);
   });
 });
 
