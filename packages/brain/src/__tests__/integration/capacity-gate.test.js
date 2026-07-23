@@ -18,8 +18,8 @@ function testPr() {
 }
 
 beforeAll(async () => {
-  pool = (await import('../db.js')).default;
-  ({ readHostDisk, admitPreview } = await import('../capacity-gate.js'));
+  pool = (await import('../../db.js')).default;
+  ({ readHostDisk, admitPreview } = await import('../../capacity-gate.js'));
 });
 
 afterEach(async () => {

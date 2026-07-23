@@ -37,8 +37,8 @@ async function insertRow(pr, dbName, workDir, status = 'active') {
 }
 
 beforeAll(async () => {
-  pool = (await import('../db.js')).default;
-  ({ destroyPreview } = await import('../preview-destroyer.js'));
+  pool = (await import('../../db.js')).default;
+  ({ destroyPreview } = await import('../../preview-destroyer.js'));
 });
 
 afterEach(async () => {
