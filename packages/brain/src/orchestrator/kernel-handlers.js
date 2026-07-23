@@ -30,10 +30,9 @@ async function appendJudgeVerdict(
 ) {
   const evaluateVerdict = ctx.observed.evaluateVerdict ?? {};
   const evaluatorFailureClass = evaluateVerdict.failure_class ?? null;
-  // Older judge implementations did not return a classification. Keep their
-  // evaluator-derived fallback compatible, but never overwrite an explicit
-  // independent judge classification.
-  const failureClass = judgeFailureClass ?? evaluatorFailureClass;
+  // Judge classification is an independent contract field. Missing means
+  // unknown and must not be silently filled from the evaluator verdict.
+  const failureClass = judgeFailureClass ?? null;
   const failureSignature = normalizeFailureSignature(judgeFailureSignature);
 
   await pool.query(

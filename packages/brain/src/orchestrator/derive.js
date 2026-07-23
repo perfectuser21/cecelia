@@ -218,6 +218,11 @@ export function derive(observed) {
     return { phase: 'terminal', action: 'exit', reason: `task_${task.status}` };
   }
 
+  // merged 短路：GitHub merged 是外部终态真相，必须先于所有 fence / 在途观测。
+  if (pr && pr.merged) {
+    return { phase: 'done', action: 'report', reason: 'pr_merged' };
+  }
+
   // 0.4 no-progress terminal（Sprint 07231527 Blocking 4）：
   // generator-fix callback SHA === trigger_sha → 无进展，立即终局
   // INV-K4：no-progress 后禁止对相同 (run_id, failure_class, trigger_sha, role) 再派 generator-fix
@@ -236,11 +241,6 @@ export function derive(observed) {
   // 0.5 在途观测（P0-1）：有在途容器/主机 pid → 只写心跳不派发，杜绝崩溃重拉双 spawn
   if (inflight.containers.length > 0 || inflight.host_pids.length > 0) {
     return { phase: run.phase, action: 'wait:running', reason: 'agent_inflight' };
-  }
-
-  // merged 短路：任何时刻 pr.merged=true → 跳过所有 spawn 直入 5（routeAfterPoll merged 语义）
-  if (pr && pr.merged) {
-    return { phase: 'done', action: 'report', reason: 'pr_merged' };
   }
 
   // 1. planning：sprint-prd.md 落盘即真相，丢失重跑 planner（D2，plannerOutput 不持久化）
