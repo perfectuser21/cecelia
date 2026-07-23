@@ -4,7 +4,7 @@
 # 检查：watchdog/constants/derive 导出正常 + Brain 健康端点可达
 set -euo pipefail
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 PASS=0; FAIL=0
 ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
 fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
@@ -19,8 +19,8 @@ else
 fi
 
 # 2. 验证 watchdog.js 关键导出（watchdogShouldResume 返回 false 对 null run）
-WATCHDOG_CHECK=$(node --input-type=module <<'EOF' 2>&1
-import { watchdogShouldResume, watchdogAction } from '/workspace/packages/brain/src/orchestrator/watchdog.js';
+WATCHDOG_CHECK=$(node --input-type=module <<EOF 2>&1
+import { watchdogShouldResume, watchdogAction } from '$ROOT/packages/brain/src/orchestrator/watchdog.js';
 const r1 = watchdogShouldResume(null);
 const r2 = watchdogShouldResume({ phase: 'generate', terminal_reason: null });
 const r3 = watchdogAction({ phase: 'failed', terminal_reason: 'automation_deadline_exceeded' }, null);
@@ -33,8 +33,8 @@ EOF
 echo "$WATCHDOG_CHECK" | grep -q "^ok$" && ok "watchdog 导出：watchdogShouldResume / watchdogAction" || fail "watchdog 导出异常: $WATCHDOG_CHECK"
 
 # 3. 验证 constants.js PHASE_BUDGETS_MS（generate_fix = 45 分钟）
-CONST_CHECK=$(node --input-type=module <<'EOF' 2>&1
-import { PHASE_BUDGETS_MS } from '/workspace/packages/brain/src/orchestrator/constants.js';
+CONST_CHECK=$(node --input-type=module <<EOF 2>&1
+import { PHASE_BUDGETS_MS } from '$ROOT/packages/brain/src/orchestrator/constants.js';
 const expected = 45 * 60 * 1000;
 if (PHASE_BUDGETS_MS.generate_fix !== expected) throw new Error('generate_fix budget wrong: ' + PHASE_BUDGETS_MS.generate_fix);
 const total = Object.values(PHASE_BUDGETS_MS).reduce((s, v) => s + v, 0);
@@ -45,8 +45,8 @@ EOF
 echo "$CONST_CHECK" | grep -q "^ok$" && ok "PHASE_BUDGETS_MS: generate_fix=45min, total=120min" || fail "PHASE_BUDGETS_MS 异常: $CONST_CHECK"
 
 # 4. 验证 derive.js 对 noProgressSameSha=true 输出 mark_failed
-DERIVE_CHECK=$(node --input-type=module <<'EOF' 2>&1
-import { derive } from '/workspace/packages/brain/src/orchestrator/derive.js';
+DERIVE_CHECK=$(node --input-type=module <<EOF 2>&1
+import { derive } from '$ROOT/packages/brain/src/orchestrator/derive.js';
 const observed = {
   run: { phase: 'generate' },
   task: { status: 'in_progress' },
