@@ -24,7 +24,12 @@ function makeDeps(overrides = {}) {
     spawnFn: vi.fn().mockResolvedValue({ containerId: 'cid', dockerStdout: 'x' }),
     loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT_MARKER harness-controller 指令全文'),
     ensureWt: vi.fn().mockResolvedValue('/tmp/wt/task-aaaabbbb'),
-    resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+    // 新契约（issue 5167ef48）：claude 执行体必须带已解析账号才 spawn——
+    // 默认 deps 模拟"选号成功"；"全号不可用→defer"用不写 env 的覆盖单测
+    resolveAccountFn: vi.fn().mockImplementation(async (opts) => {
+      opts.env = opts.env || {};
+      opts.env.CECELIA_CREDENTIALS = 'account1';
+    }),
     tokenFn: vi.fn().mockResolvedValue('gh-token'),
     now: () => new Date('2026-07-04T12:00:00Z'),
     // 去重守卫默认放行（无存活容器）；单独测试里覆盖为返回容器 id 模拟"容器仍在跑"
@@ -390,7 +395,7 @@ describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', (
       spawnFn: vi.fn().mockResolvedValue({}),
       loadSkill: vi.fn().mockReturnValue('SKILL'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
-      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),
       tokenFn: vi.fn().mockResolvedValue('t'),
       now: () => new Date('2026-07-05T12:00:00Z'),
     };
@@ -466,7 +471,7 @@ describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () 
       spawnFn: vi.fn().mockResolvedValue({}),
       loadSkill: vi.fn().mockReturnValue('SKILL'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
-      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),
       tokenFn: vi.fn().mockResolvedValue('t'),
       now: () => new Date('2026-07-05T12:00:00Z'),
       // 2026-07-22：headed 分支缺省 executor 时按 codex 处理，CODEX_RELAY_HOME 在
@@ -596,7 +601,7 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
       execFn,
       loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt/test-headed-gate'),
-      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
       now: () => new Date('2026-07-15T07:10:00Z'),
       inDockerFn: () => false,
