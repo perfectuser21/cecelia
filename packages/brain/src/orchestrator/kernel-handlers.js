@@ -18,12 +18,13 @@ function evaluatorBrainResult(result) {
   };
 }
 
-async function appendJudgeVerdict(pool, ctx, verdict, feedback) {
-  // Sprint 07231527 Blocking 3：Judge 落库时必须传递 failure_class（INV-K3）
-  // evaluateVerdict 中的 failure_class 透传到 verdict:judge detail，
-  // 使 ground-truth 和 derive 能正确读取进行差异路由
+async function appendJudgeVerdict(pool, ctx, verdict, feedback, judgeFailureClass) {
   const evaluateVerdict = ctx.observed.evaluateVerdict ?? {};
-  const failureClass = evaluateVerdict.failure_class ?? null;
+  const evaluatorFailureClass = evaluateVerdict.failure_class ?? null;
+  // Older judge implementations did not return a classification. Keep their
+  // evaluator-derived fallback compatible, but never overwrite an explicit
+  // independent judge classification.
+  const failureClass = judgeFailureClass ?? evaluatorFailureClass;
 
   await pool.query(
     `INSERT INTO orchestrator_decision_log
@@ -45,7 +46,8 @@ async function appendJudgeVerdict(pool, ctx, verdict, feedback) {
         verdict,
         pr_head_sha: ctx.observed.pr?.head_sha ?? null,
         feedback: feedback ?? null,
-        failure_class: failureClass, // 透传 failure_class（INV-K3）
+        failure_class: failureClass,
+        evaluator_failure_class: evaluatorFailureClass,
       }),
     ],
   );
@@ -83,7 +85,13 @@ export function createKernelHandlers(deps) {
         return { status: 'NEEDS_CONTEXT', detail: 'independent judge did not run' };
       }
 
-      await appendJudgeVerdict(deps.pool, ctx, result.verdict, result.feedback);
+      await appendJudgeVerdict(
+        deps.pool,
+        ctx,
+        result.verdict,
+        result.feedback,
+        result.failure_class ?? null,
+      );
       await deps.attemptStore.complete(ctx.attempt.id, {
         contract_version: '1.0',
         attempt_id: ctx.attempt.id,

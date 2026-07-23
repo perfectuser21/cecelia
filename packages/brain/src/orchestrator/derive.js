@@ -252,7 +252,15 @@ function deriveVerdictChain(observed) {
 
   // 4c. judge FAIL(本 sha) → generator-fix（P0-2 显式分支；新 commit 改 SHA，旧 verdict 天然作废）
   if (!isPassVerdict(judgeRow.verdict)) {
-    return fixOrFail(counters, 'judge_fail');
+    if (judgeRow.failure_class == null) {
+      return fixOrFail(counters, 'judge_fail');
+    }
+    return deriveFailureClassRoute(
+      judgeRow.failure_class,
+      counters,
+      observed.decisionLog,
+      pr.head_sha,
+    );
   }
 
   // 4d. 双 PASS && review_required && 未批准 → 等人工（Bark/预览副作用归 T3）
