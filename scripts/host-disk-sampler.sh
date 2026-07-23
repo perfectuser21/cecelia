@@ -44,7 +44,7 @@ JSON_PATH="${RUNTIME_DIR}/host-disk.json"
 mkdir -p "$RUNTIME_DIR"
 
 # ── 采样 data_avail_bytes（df，1024-blocks 换算字节）──────────────────────────
-DF_LINE=$(df -k /System/Volumes/Data 2>/dev/null | tail -1)
+DF_LINE=$(df -k /System/Volumes/Data 2>/dev/null | tail -1 || true)
 if [ -z "$DF_LINE" ]; then
   DF_LINE=$(df -k / | tail -1)
 fi

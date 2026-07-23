@@ -469,10 +469,10 @@ echo "✅ Golden Path 全部验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 模块1 宿主磁盘采样器 | `sprints/07231146-relay-1b1f1ffa/tests/host-disk-sampler.test.js` | 原子写入 host-disk.json 且字段完整 / cron 等价环境（显式 PATH，仅 /usr/bin:/bin）下仍能成功采样 / 脚本头部声明 set -euo pipefail | → 3 failures（scripts/host-disk-sampler.sh 不存在） |
-| 模块2 容量准入闸门 - readHostDisk | `sprints/07231146-relay-1b1f1ffa/tests/capacity-gate.test.js` | 样本文件缺失 → reason sample_missing / 样本 JSON 损坏 → reason sample_corrupt / 样本过期（>180s）→ reason sample_stale / 样本字段不完整 → reason sample_incomplete | → suite load failure（packages/brain/src/capacity-gate.js 不存在） |
-| 模块2 容量准入闸门 - admitPreview | `sprints/07231146-relay-1b1f1ffa/tests/capacity-gate.test.js` | active/starting/cleaning 数量 >= 6 → 拒绝 too_many_active / effective_free_bytes - 3.5GiB < 35GiB → 拒绝 insufficient_free_space / usage_pct >= 85 → 拒绝 usage_pct_too_high / 并发准入通过 pg_advisory_xact_lock 串行化 / 已存在活跃记录的 PR 重推（幂等复用）跳过准入 | → suite load failure（同上） |
-| 模块3 统一销毁器 | `sprints/07231146-relay-1b1f1ffa/tests/preview-destroyer.test.js` | 7 步流程完整执行：DB 已删 + worktree 已删 + 进程已杀 + 临时文件已清 + 终态 inactive / DB 名不匹配 / worktree 路径通过符号链接逃逸 / 对已 inactive 的 PR 重复调用 → 幂等成功 / 同一 PR webhook + reaper 并发触发销毁 | → suite load failure（packages/brain/src/preview-destroyer.js 不存在） |
+| 模块1 宿主磁盘采样器 | `../../tests/regression/relay-1b1f1ffa/host-disk-sampler.test.js` | 原子写入 host-disk.json 且字段完整 / cron 等价环境（显式 PATH，仅 /usr/bin:/bin）下仍能成功采样 / 脚本头部声明 set -euo pipefail | → 3 failures（scripts/host-disk-sampler.sh 不存在） |
+| 模块2 容量准入闸门 - readHostDisk | `../../tests/regression/relay-1b1f1ffa/capacity-gate.test.js` | 样本文件缺失 → reason sample_missing / 样本 JSON 损坏 → reason sample_corrupt / 样本过期（>180s）→ reason sample_stale / 样本字段不完整 → reason sample_incomplete | → suite load failure（packages/brain/src/capacity-gate.js 不存在） |
+| 模块2 容量准入闸门 - admitPreview | `../../tests/regression/relay-1b1f1ffa/capacity-gate.test.js` | active/starting/cleaning 数量 >= 6 → 拒绝 too_many_active / effective_free_bytes - 3.5GiB < 35GiB → 拒绝 insufficient_free_space / usage_pct >= 85 → 拒绝 usage_pct_too_high / 并发准入通过 pg_advisory_xact_lock 串行化 / 已存在活跃记录的 PR 重推（幂等复用）跳过准入 | → suite load failure（同上） |
+| 模块3 统一销毁器 | `../../tests/regression/relay-1b1f1ffa/preview-destroyer.test.js` | 7 步流程完整执行：DB 已删 + worktree 已删 + 进程已杀 + 临时文件已清 + 终态 inactive / DB 名不匹配 / worktree 路径通过符号链接逃逸 / 对已 inactive 的 PR 重复调用 → 幂等成功 / 同一 PR webhook + reaper 并发触发销毁 | → suite load failure（packages/brain/src/preview-destroyer.js 不存在） |
 
 实测 Red 证据（2026-07-22，本机 `cecelia_test`）：
 ```

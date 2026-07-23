@@ -33,73 +33,73 @@ journey_type: autonomous
 ### 模块1 宿主磁盘采样器
 
 - [x] [BEHAVIOR] host-disk-sampler.sh 原子写入 host-disk.json 且字段完整、字节级数值（非 GB/GiB 字符串）
-  Test: manual:bash -c 'node sprints/07231146-relay-1b1f1ffa/tests/manual/t1-sampler.mjs atomic-write'
+  Test: manual:bash -c 'node tests/regression/relay-1b1f1ffa/manual/t1-sampler.mjs atomic-write'
   期望: OK:sampler-atomic-write
 
 - [x] [BEHAVIOR] host-disk-sampler.sh 在 cron 等价环境（仅 PATH=/usr/bin:/bin）下仍能成功采样（显式 PATH 生效）
-  Test: manual:bash -c 'node sprints/07231146-relay-1b1f1ffa/tests/manual/t1-sampler.mjs cron-path'
+  Test: manual:bash -c 'node tests/regression/relay-1b1f1ffa/manual/t1-sampler.mjs cron-path'
   期望: OK:sampler-cron-path
 
 ### 模块2 容量准入闸门 — readHostDisk 4 种拒绝分支
 
 - [x] [BEHAVIOR] readHostDisk() 样本文件缺失 → reason sample_missing
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t2-read-host-disk.mjs missing'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t2-read-host-disk.mjs missing'
   期望: OK:read-host-disk-missing
 
 - [x] [BEHAVIOR] readHostDisk() 样本 JSON 损坏 → reason sample_corrupt
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t2-read-host-disk.mjs corrupt'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t2-read-host-disk.mjs corrupt'
   期望: OK:read-host-disk-corrupt
 
 - [x] [BEHAVIOR] readHostDisk() 样本过期（>180s）→ reason sample_stale
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t2-read-host-disk.mjs stale'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t2-read-host-disk.mjs stale'
   期望: OK:read-host-disk-stale
 
 - [x] [BEHAVIOR] readHostDisk() 样本字段不完整 → reason sample_incomplete
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t2-read-host-disk.mjs incomplete'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t2-read-host-disk.mjs incomplete'
   期望: OK:read-host-disk-incomplete
 
 ### 模块2 容量准入闸门 — admitPreview 四层判定 + 并发串行化 + 幂等复用
 
 - [x] [BEHAVIOR] admitPreview() active/starting/cleaning 数量 ≥6 → 拒绝 too_many_active，返回 free_bytes/projected_cost_bytes/need_release_bytes
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs count-limit'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs count-limit'
   期望: OK:admit-count-limit
 
 - [x] [BEHAVIOR] admitPreview() effective_free_bytes - 3.5GiB < 35GiB → 拒绝 insufficient_free_space（字节级精确比较）
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs capacity-limit'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs capacity-limit'
   期望: OK:admit-capacity-limit
 
 - [x] [BEHAVIOR] admitPreview() usage_pct ≥85 → 拒绝 usage_pct_too_high
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs usage-limit'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs usage-limit'
   期望: OK:admit-usage-limit
 
 - [x] [BEHAVIOR] admitPreview() 并发准入经 pg_advisory_xact_lock 串行化，剩余 1 名额时 3 并发「真实判定+预留」请求恰好 1 个 admitted，且 preview_environments 表针对这 3 个候选 PR 最终恰好新增 1 行真实 DB 记录（不是只数返回值里 admitted===true 的个数——GAN Round 1 反馈问题2 修复：抓出"admitPreview 判 true 后调用方再单独调无锁 allocatePreview() 做预留"的 TOCTOU 实现），admitted 返回值须含 port/db_name（方案A schema 升级）
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs concurrency-lock'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs concurrency-lock'
   期望: OK:admit-concurrency-lock
 
 - [x] [BEHAVIOR] admitPreview() 已存在活跃记录的 PR 重推（幂等复用）跳过准入四层判定
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t3-admit-preview.mjs idempotent-reuse'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs idempotent-reuse'
   期望: OK:admit-idempotent-reuse
 
 ### 模块3 统一销毁器 — 7 步流程 / 安全防护 / 幂等 / 并发去重
 
 - [x] [BEHAVIOR] destroyPreview() 7 步流程完整执行：真实 DB 已删 + 真实 worktree 已删 + 真实进程已杀 + 临时文件已清 + 终态 inactive
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs full-flow'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs full-flow'
   期望: OK:destroy-full-flow
 
 - [x] [BEHAVIOR] destroyPreview() DB 名不匹配 ^cecelia_preview_[0-9]+$ → 拒绝 DROP DATABASE，置 cleanup_failed，不误删邻近合法库
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs dbname-guard'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs dbname-guard'
   期望: OK:destroy-dbname-guard
 
 - [x] [BEHAVIOR] destroyPreview() worktree 路径通过符号链接逃逸 preview 根目录 → realpath 校验 abort，不执行 rm -rf
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs realpath-guard'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs realpath-guard'
   期望: OK:destroy-realpath-guard
 
 - [x] [BEHAVIOR] destroyPreview() 对已 inactive 的 PR 重复调用 → 幂等成功
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs idempotent'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs idempotent'
   期望: OK:destroy-idempotent
 
 - [x] [BEHAVIOR] destroyPreview() 同一 PR webhook + reaper 并发触发销毁，per-PR advisory lock 保证只实际执行一次
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node sprints/07231146-relay-1b1f1ffa/tests/manual/t4-destroy-preview.mjs concurrent-dedup'
+  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs concurrent-dedup'
   期望: OK:destroy-concurrent-dedup
 
 ### 路由层接入（POST /preview/start 准入拒绝 503 + POST /preview/stop 销毁终态透出）
