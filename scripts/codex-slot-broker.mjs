@@ -661,27 +661,36 @@ async function commandAcquire({ flags, positionals, deps, root, home, hostRegist
   if (flags.team !== undefined) {
     throw new Error('不允许手工选择 team');
   }
-  rejectUnknownFlags(flags, new Set(['session', 'host']));
+  rejectUnknownFlags(flags, new Set(['session', 'host', 'request']));
 
   const sessionId = assertSafeRemoteSegment(requireStringFlag(flags, 'session'), 'sessionId');
+  const requestId = assertSafeRemoteSegment(
+    optionalStringFlag(flags, 'request', sessionId),
+    'requestId'
+  );
   const host = requireStringFlag(flags, 'host');
   assertKnownHost(hostRegistry, host, 'host');
   const { actor } = resolveIdentity(deps);
   assertSafeRemoteSegment(actor, 'actor');
   const now = resolveNow(deps);
   const accounts = await collectUsableTeams({ home, deps, now });
-  if (accounts.length === 0) {
-    throw new Error('no usable account');
+  try {
+    return await acquireLease({
+      root,
+      actor,
+      requestId,
+      sessionId,
+      host,
+      accounts,
+      lookupAccounts: DEFAULT_TEAMS,
+      now: now.toISOString(),
+    });
+  } catch (error) {
+    if (accounts.length === 0 && error?.message === 'no available lease') {
+      throw new Error('no usable account');
+    }
+    throw error;
   }
-
-  return acquireLease({
-    root,
-    actor,
-    sessionId,
-    host,
-    accounts,
-    now: now.toISOString(),
-  });
 }
 
 async function commandDeliver({ flags, positionals, deps, root, home, hostRegistry }) {
@@ -781,7 +790,13 @@ async function commandRelease({ flags, positionals, deps, root }) {
   const state = optionalStringFlag(flags, 'state', 'released');
   const { actor } = resolveIdentity(deps);
   const lease = await loadLease({ root, leaseId: requestedLeaseId, deps });
-  assertLeaseMatches({ lease, leaseId: requestedLeaseId, actor, team });
+  assertLeaseMatches({
+    lease,
+    leaseId: requestedLeaseId,
+    actor,
+    team,
+    requireActive: false,
+  });
 
   return releaseLease({
     root,

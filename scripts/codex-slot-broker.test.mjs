@@ -169,6 +169,87 @@ test('acquire filters auth sources and leases the lowest usage valid team withou
   assert.doesNotMatch(JSON.stringify(out), /access_token|refresh_token|secret|eyJ/);
 });
 
+test('acquire replays only the exact actor request session tuple', async (t) => {
+  const root = await tempRoot(t);
+  const home = join(root, 'home');
+  await writeAuth(home, 'team1');
+  await writeAuth(home, 'team2');
+  const deps = brokerDeps(root, home);
+
+  const first = await runBroker(
+    [
+      'acquire',
+      '--session',
+      'alex-infra-main',
+      '--host',
+      'xian-m4',
+      '--request',
+      'request-main',
+    ],
+    deps
+  );
+  const replay = await runBroker(
+    [
+      'acquire',
+      '--session',
+      'alex-infra-main',
+      '--host',
+      'xian-m4',
+      '--request',
+      'request-main',
+    ],
+    deps
+  );
+  assert.equal(replay.leaseId, first.leaseId);
+  assert.equal(replay.requestId, 'request-main');
+
+  const other = await runBroker(
+    [
+      'acquire',
+      '--session',
+      'alex-infra-main',
+      '--host',
+      'xian-m4',
+      '--request',
+      'request-other',
+    ],
+    deps
+  );
+  assert.notEqual(other.leaseId, first.leaseId);
+  assert.equal(other.requestId, 'request-other');
+});
+
+test('acquire recovers an exact lease even when its team is no longer allocatable', async (t) => {
+  const root = await tempRoot(t);
+  const home = join(root, 'home');
+  await writeAuth(home, 'team1');
+  await writeAuth(home, 'team2');
+  let replay = false;
+  const deps = brokerDeps(root, home, {
+    queryUsage: async ({ team }) => ({
+      usedPercent: replay
+        ? 95
+        : (team === 'team1' ? 10 : 20),
+    }),
+  });
+  const argv = [
+    'acquire',
+    '--session',
+    'alex-infra-main',
+    '--host',
+    'xian-m4',
+    '--request',
+    'request-main',
+  ];
+
+  const first = await runBroker(argv, deps);
+  replay = true;
+  const recovered = await runBroker(argv, deps);
+
+  assert.equal(recovered.leaseId, first.leaseId);
+  assert.equal(recovered.team, 'team1');
+});
+
 test('acquire fails closed for missing auth, wrong mode, short JWT and usage query failure', async (t) => {
   const root = await tempRoot(t);
   const home = join(root, 'home');
@@ -750,6 +831,34 @@ test('heartbeat and release verify the current actor before mutating a lease', a
     brokerDeps(root, home)
   );
   assert.equal(released.state, 'quarantined');
+});
+
+test('release replays the same terminal state but distinguishes quarantined from released', async (t) => {
+  const root = await tempRoot(t);
+  const home = join(root, 'home');
+  await writeAuth(home, 'team1');
+  const lease = await runBroker(
+    ['acquire', '--session', 'alex-infra-main', '--host', 'xian-m4'],
+    brokerDeps(root, home)
+  );
+
+  const quarantined = await runBroker(
+    ['release', '--team', lease.team, '--lease', lease.leaseId, '--state', 'quarantined'],
+    brokerDeps(root, home)
+  );
+  const replay = await runBroker(
+    ['release', '--team', lease.team, '--lease', lease.leaseId, '--state', 'quarantined'],
+    brokerDeps(root, home)
+  );
+  assert.deepEqual(replay, quarantined);
+
+  await assert.rejects(
+    runBroker(
+      ['release', '--team', lease.team, '--lease', lease.leaseId, '--state', 'released'],
+      brokerDeps(root, home)
+    ),
+    /terminal state conflict: quarantined/
+  );
 });
 
 test('session-put, session-get and session-list use broker actor visibility', async (t) => {

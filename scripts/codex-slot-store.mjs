@@ -32,6 +32,14 @@ function leaseLockPath(root, team) {
   return join(root, 'locks', `lease-${validateSegment(team, 'team')}.lock`);
 }
 
+function acquireRequestLockPath(root, actor, requestId, sessionId) {
+  return join(
+    root,
+    'locks',
+    `acquire-${validateSegment(actor, 'actor')}-${validateSegment(sessionId, 'sessionId')}-${validateSegment(requestId, 'requestId')}.lock`
+  );
+}
+
 function sessionPath(root, sessionId) {
   return join(root, 'registry', 'sessions', `${validateSegment(sessionId, 'sessionId')}.json`);
 }
@@ -475,44 +483,86 @@ export async function atomicWriteJson(path, value) {
   }
 }
 
-export async function acquireLease({ root, actor, sessionId, host, accounts, now }) {
+export async function acquireLease({
+  root,
+  actor,
+  requestId: rawRequestId,
+  sessionId,
+  host,
+  accounts,
+  lookupAccounts: rawLookupAccounts,
+  now,
+}) {
   requireRoot(root);
   validateSegment(actor, 'actor');
   validateSegment(sessionId, 'sessionId');
   validateSegment(host, 'host');
-  if (!Array.isArray(accounts) || accounts.length === 0) {
-    throw new Error('accounts must be a non-empty array');
+  const requestId = validateSegment(rawRequestId ?? sessionId, 'requestId');
+  if (!Array.isArray(accounts)) {
+    throw new Error('accounts must be an array');
   }
+  const teams = accounts.map((account) => validateSegment(account, 'team'));
+  const lookupAccounts = rawLookupAccounts ?? accounts;
+  if (!Array.isArray(lookupAccounts) || lookupAccounts.length === 0) {
+    throw new Error('lookupAccounts must be a non-empty array');
+  }
+  const lookupTeams = lookupAccounts.map(
+    (account) => validateSegment(account, 'lookup team')
+  );
 
-  for (const account of accounts) {
-    const team = validateSegment(account, 'team');
-    const acquired = await withDirLock(leaseLockPath(root, team), async () => {
-      const path = leasePath(root, team);
-      const current = await readJson(path);
-      if (current && ACTIVE_STATES.has(current.state)) {
-        return null;
+  return withDirLock(
+    acquireRequestLockPath(root, actor, requestId, sessionId),
+    async () => {
+      for (const team of lookupTeams) {
+        const replay = await withDirLock(leaseLockPath(root, team), async () => {
+          const current = await readJson(leasePath(root, team));
+          if (
+            current?.state === 'active' &&
+            current.actor === actor &&
+            current.requestId === requestId &&
+            current.sessionId === sessionId &&
+            current.host === host
+          ) {
+            return current;
+          }
+          return null;
+        });
+        if (replay) {
+          return replay;
+        }
       }
 
-      const lease = {
-        leaseId: randomUUID(),
-        team,
-        actor,
-        sessionId,
-        host,
-        state: 'active',
-        acquiredAt: now,
-        updatedAt: now,
-      };
-      await atomicWriteJson(path, lease);
-      return lease;
-    });
+      for (const team of teams) {
+        const acquired = await withDirLock(leaseLockPath(root, team), async () => {
+          const path = leasePath(root, team);
+          const current = await readJson(path);
+          if (current && ACTIVE_STATES.has(current.state)) {
+            return null;
+          }
 
-    if (acquired) {
-      return acquired;
+          const lease = {
+            leaseId: randomUUID(),
+            team,
+            actor,
+            requestId,
+            sessionId,
+            host,
+            state: 'active',
+            acquiredAt: now,
+            updatedAt: now,
+          };
+          await atomicWriteJson(path, lease);
+          return lease;
+        });
+
+        if (acquired) {
+          return acquired;
+        }
+      }
+
+      throw new Error('no available lease');
     }
-  }
-
-  throw new Error('no available lease');
+  );
 }
 
 export async function releaseLease({ root, team, leaseId, state = 'released', now }) {
@@ -531,6 +581,12 @@ export async function releaseLease({ root, team, leaseId, state = 'released', no
     }
     if (current.leaseId !== leaseId) {
       throw new Error(`leaseId mismatch for team ${team}`);
+    }
+    if (current.state === state) {
+      return current;
+    }
+    if (current.state !== 'active') {
+      throw new Error(`lease terminal state conflict: ${current.state}`);
     }
 
     const updated = {

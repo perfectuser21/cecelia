@@ -971,6 +971,113 @@ test('status reports metadata and tmux pid without treating missing as crash', a
   }
 });
 
+test('stop without metadata verifies and kills only the exact tmux session without cleanup', async (t) => {
+  const sessionName = `codex-slot-${SESSION}`;
+  const live = await makeDeps(t, {
+    tmuxSessions: [sessionName, `${sessionName}-extra`],
+  });
+  const unownedPaths = paths(live.home);
+  const authPath = join(unownedPaths.codexHome, 'auth.json');
+  await mkdir(unownedPaths.codexHome, { recursive: true, mode: 0o700 });
+  await mkdir(unownedPaths.worktreePath, { recursive: true, mode: 0o700 });
+  await writeFile(authPath, '{"access_token":"must-survive"}\n', { mode: 0o600 });
+
+  const stopped = await runAgent(['stop', '--session', SESSION], live.deps);
+
+  assert.equal(stopped.state, 'missing');
+  assert.equal(stopped.verified, true);
+  assert.equal(live.tmuxSessions.has(sessionName), false);
+  assert.equal(live.tmuxSessions.has(`${sessionName}-extra`), true);
+  assert.equal(await readFile(authPath, 'utf8'), '{"access_token":"must-survive"}\n');
+  assert.equal(await exists(unownedPaths.worktreePath), true);
+  assert.deepEqual(
+    live.execCalls
+      .filter((call) => call.cmd === 'tmux')
+      .map((call) => [call.args[0], call.args.at(-1)]),
+    [
+      ['has-session', `=${sessionName}`],
+      ['kill-session', `=${sessionName}`],
+      ['has-session', `=${sessionName}`],
+    ]
+  );
+
+  const absent = await makeDeps(t);
+  const missing = await runAgent(['stop', '--session', SESSION], absent.deps);
+  assert.equal(missing.state, 'missing');
+  assert.equal(missing.verified, true);
+  assert.deepEqual(
+    absent.execCalls
+      .filter((call) => call.cmd === 'tmux')
+      .map((call) => [call.args[0], call.args.at(-1)]),
+    [['has-session', `=${sessionName}`]]
+  );
+});
+
+test('stop without metadata fails closed on tmux check kill or confirmation failure', async (t) => {
+  const sessionName = `codex-slot-${SESSION}`;
+  for (const failure of [
+    'initial-error',
+    'initial-timeout',
+    'kill-error',
+    'kill-timeout',
+    'confirm-error',
+    'confirm-timeout',
+  ]) {
+    let hasSessionCalls = 0;
+    let killAttempted = false;
+    const failed = await makeDeps(t, {
+      tmuxSessions: [sessionName],
+      processHook: async ({ cmd, args, tmuxSessions }) => {
+        if (cmd !== 'tmux') return undefined;
+        if (args[0] === 'has-session') {
+          hasSessionCalls += 1;
+          const phase = hasSessionCalls === 1 ? 'initial' : 'confirm';
+          if (failure === `${phase}-timeout`) {
+            throw new Error(`process timed out: tmux ${phase}`);
+          }
+          if (failure === `${phase}-error`) {
+            return { exitCode: 2, stdout: '', stderr: `tmux ${phase} unavailable` };
+          }
+          return undefined;
+        }
+        if (args[0] === 'kill-session') {
+          killAttempted = true;
+          if (failure === 'kill-timeout') {
+            throw new Error('process timed out: tmux kill');
+          }
+          if (failure === 'kill-error') {
+            tmuxSessions.delete(sessionName);
+            return { exitCode: 1, stdout: '', stderr: 'tmux kill failed' };
+          }
+        }
+        return undefined;
+      },
+    });
+    const unownedPaths = paths(failed.home);
+    const authPath = join(unownedPaths.codexHome, 'auth.json');
+    await mkdir(unownedPaths.codexHome, { recursive: true, mode: 0o700 });
+    await mkdir(unownedPaths.worktreePath, { recursive: true, mode: 0o700 });
+    await writeFile(authPath, '{"access_token":"must-survive"}\n', { mode: 0o600 });
+
+    await assert.rejects(
+      runAgent(['stop', '--session', SESSION], failed.deps),
+      /tmux|kill|timed out|running/i,
+      failure
+    );
+    assert.equal(await readFile(authPath, 'utf8'), '{"access_token":"must-survive"}\n');
+    assert.equal(await exists(unownedPaths.worktreePath), true);
+    assert.equal(
+      failed.execCalls
+        .filter((call) => call.cmd === 'tmux')
+        .every((call) => call.args.at(-1) === `=${sessionName}`),
+      true
+    );
+    if (failure.startsWith('initial-')) {
+      assert.equal(killAttempted, false);
+    }
+  }
+});
+
 test('stop kills tmux and removes transient auth while preserving worktree history logs and metadata', async (t) => {
   await t.test('uses one session lock for prepare launch status and stop', async (t) => {
     const locked = await makeDeps(t);
@@ -1188,10 +1295,11 @@ test('stop kills tmux and removes transient auth while preserving worktree histo
 
 test('legacy-list scans slot1 through slot10 read-only', async (t) => {
   const { deps, execCalls } = await makeDeps(t);
-  const result = await runAgent(['legacy-list'], deps);
+  const result = await runAgent(['legacy-list', '--host', 'xian-m4'], deps);
 
   assert.equal(result.length, 10);
-  assert.deepEqual(result.map((entry) => entry.handle), Array.from({ length: 10 }, (_, index) => `legacy/us-m4/slot${index + 1}`));
+  assert.deepEqual(result.map((entry) => entry.handle), Array.from({ length: 10 }, (_, index) => `legacy/xian-m4/slot${index + 1}`));
+  assert.deepEqual(result.map((entry) => entry.host), Array(10).fill('xian-m4'));
   assert.deepEqual(result.map((entry) => entry.tmuxSession), Array.from({ length: 10 }, (_, index) => `slot${index + 1}`));
   assert.equal(execCalls.some((call) => /kill|remove|rename/.test([call.cmd, ...call.args].join(' '))), false);
 });
