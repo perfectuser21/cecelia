@@ -21,7 +21,6 @@ import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConf
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
 import { ACTION, LOG_ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
-import { watchdogShouldResume } from './watchdog.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -133,25 +132,6 @@ async function markRunFailed(pool, runId, reason) {
     `UPDATE initiative_runs SET phase = 'failed', failure_reason = $2, updated_at = NOW() WHERE id = $1`,
     [runId, reason],
   );
-}
-
-/**
- * Sprint 1b997ed6：resolveRaceCondition — 竞态解决函数（纯函数）。
- * 当 deadline fence 与 callback 几乎同时到达时，保证只产生一个 terminal 结果。
- * - run 已有 terminal_reason → incoming spawn action 被拦截为 noop
- * - run 无 terminal → incoming action 正常通过
- *
- * @param {{phase: string, terminal_reason: string|null}} runState
- * @param {{action: string, reason?: string}} incomingAction
- * @returns {{resolved: string, action: string}}
- */
-export function resolveRaceCondition(runState, incomingAction) {
-  if (!watchdogShouldResume(runState)) {
-    // 已有 terminal / phase=failed|done → 拦截 spawn，返回 noop
-    return { resolved: 'terminal_exists', action: 'noop' };
-  }
-  // 未有 terminal → 正常通过
-  return { resolved: 'no_terminal', action: incomingAction.action };
 }
 
 /**

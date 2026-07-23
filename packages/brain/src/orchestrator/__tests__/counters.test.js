@@ -23,9 +23,6 @@ describe('deriveCounters：空日志', () => {
       noPushStreak: 0,
       noVerdictStreak: 0,
       crossCheckMismatch: false,
-      // Sprint 1b997ed6 新增持久化计数
-      pollCount: 0,
-      blockedStreak: 0,
     });
   });
 

@@ -4,8 +4,8 @@
  * 纯常量文件——禁任何运行时计算/非确定性调用。
  */
 
-// Task Graph routeAfterFix：error→end(超 MAX_FIX_ROUNDS=3，Sprint 1b997ed6 收紧)
-export const MAX_FIX_ROUNDS = 3;
+// Task Graph routeAfterFix：error→end(超 MAX_FIX_ROUNDS=20)
+export const MAX_FIX_ROUNDS = 20;
 
 // Task Graph routeAfterPoll：pending→回环 poll，超限 timeout（20 次 × 90s）
 export const MAX_POLL_COUNT = 20;
@@ -19,43 +19,8 @@ export const BUDGET_CAP_USD = 10;
 // mergePrNode：BEHIND→update-branch(≤3)
 export const MAX_REBASE_ATTEMPTS = 3;
 
-// Sprint 1b997ed6：整条 run 的 hop 硬上限收紧（200→60），防 reconcile loop 失控
-export const MAX_HOPS = 60;
-
-// Sprint 1b997ed6：120 分钟总预算硬 deadline（ms）
-export const RUN_DEADLINE_MS = 7200000; // 120 * 60 * 1000
-
-// Sprint 1b997ed6：阶段预算（ms）
-export const PHASE_BUDGETS_MS = Object.freeze({
-  planning: 10 * 60 * 1000,        // 10 分钟
-  contract_gan: 20 * 60 * 1000,    // 20 分钟
-  generate_fix: 45 * 60 * 1000,    // 45 分钟
-  evaluate_judge: 30 * 60 * 1000,  // 30 分钟
-  merge_report: 15 * 60 * 1000,    // 15 分钟
-});
-
-// Sprint 1b997ed6：阶段 terminal reason 常量
-export const PHASE_TERMINAL_REASONS = Object.freeze({
-  planning: 'planning_deadline_exceeded',
-  contract_gan: 'gan_deadline_exceeded',
-  generate_fix: 'generation_deadline_exceeded',
-  evaluate_judge: 'verification_deadline_exceeded',
-  merge_report: 'delivery_deadline_exceeded',
-});
-
-// Sprint 1b997ed6：角色 deadline 上限（秒）
-export const ROLE_BUDGET_SECS = Object.freeze({
-  planner: 600,    // 10 分钟
-  proposer: 600,
-  reviewer: 600,
-  judge: 600,
-  generator: 1800,  // 30 分钟
-  evaluator: 1800,
-});
-
-// Sprint 1b997ed6：supervisor deadline 合理默认值（秒），替换 28800（8 小时）
-// 实际值由 run 剩余预算动态计算后注入，此处为安全降级值（最大角色上限）
-export const SUPERVISOR_DEADLINE_SECONDS = 1800;
+// 新增（spec P2）：整条 run 的 hop 硬上限，防 reconcile loop 失控
+export const MAX_HOPS = 200;
 
 // loop 四态最小语义：NEEDS_CONTEXT/BLOCKED 连续 2 次同态 → failed
 // （"绝不同模型无变化重试"铁律骨架版；对应父图 serial_gate requeue CAP(2) 精神）

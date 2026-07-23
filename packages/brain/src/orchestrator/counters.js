@@ -43,27 +43,6 @@ function tailStreak(rows, action, flagKey) {
   return streak;
 }
 
-/**
- * 尾部连续的 blocked 行数（mark:needs_context 或 mark:blocked，observed.blocked_same_state=true）。
- * Sprint 1b997ed6 新增：从 decision log 持久化推导 blockedStreak，跨进程重启不归零。
- */
-function tailBlockedStreak(rows) {
-  let streak = 0;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i];
-    // 识别 blocked/needs_context 行：以 mark: 开头或 observed.blocked_same_state=true
-    const isBlocked =
-      (typeof r.action === 'string' && (r.action === 'mark:needs_context' || r.action === 'mark:blocked'))
-      || (r.observed && r.observed.blocked_same_state === true);
-    if (isBlocked) {
-      streak++;
-    } else {
-      break;
-    }
-  }
-  return streak;
-}
-
 export function deriveCounters(logRows, options) {
   if (!Array.isArray(logRows)) {
     throw new Error('deriveCounters: logRows must be an array');
@@ -90,12 +69,6 @@ export function deriveCounters(logRows, options) {
   const proposerCount = rows.filter((r) => r.action === ACTION.SPAWN_PROPOSER).length;
   const ganRound = proposeBranchMaxRn;
 
-  // Sprint 1b997ed6：pollCount 持久化推导（COUNT(action='wait:poll_ci') 去重后）
-  const pollCount = rows.filter((r) => r.action === ACTION.WAIT_POLL_CI).length;
-
-  // Sprint 1b997ed6：blockedStreak 持久化推导（尾部连续 blocked/needs_context 行）
-  const blockedStreak = tailBlockedStreak(rows);
-
   return {
     hops: rows.length,
     fixRound,
@@ -103,8 +76,5 @@ export function deriveCounters(logRows, options) {
     noPushStreak: tailStreak(rows, ACTION.SPAWN_PROPOSER, 'propose_branch_advanced'),
     noVerdictStreak: tailStreak(rows, ACTION.SPAWN_REVIEWER, 'verdict_parsed'),
     crossCheckMismatch: proposerCount !== proposeBranchMaxRn,
-    // Sprint 1b997ed6 新增：持久化计数
-    pollCount,
-    blockedStreak,
   };
 }

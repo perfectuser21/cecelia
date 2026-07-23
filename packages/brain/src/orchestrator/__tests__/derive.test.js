@@ -310,22 +310,14 @@ describe('规则 4b：judge 硬门禁', () => {
   });
 });
 
-describe('规则 4c：judge FAIL → failure_class 路由矩阵（Sprint 1b997ed6）', () => {
-  it('judge FAIL + failure_class=product_failure → spawn:generator-fix', () => {
-    const r = derive(baseObserved({
-      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
-      judgeVerdict: { verdict: 'FAIL', pr_head_sha: 'sha-new', failure_class: 'product_failure' },
-    }));
-    expect(r.action).toBe('spawn:generator-fix');
-  });
-
-  it('judge FAIL + failure_class 缺失 → needs_context（不得 spawn:generator-fix）', () => {
-    // Sprint 1b997ed6 B-02：缺 failure_class 视为 unknown，走 needs_context 不走 generator-fix
+describe('规则 4c：judge FAIL → 显式分支（P0-2）', () => {
+  it('judge FAIL（本 sha）→ phase=generate, action=spawn:generator-fix（新 commit 改 SHA，旧 verdict 天然作废）', () => {
     const r = derive(baseObserved({
       evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
       judgeVerdict: { verdict: 'FAIL', pr_head_sha: 'sha-new' },
     }));
-    expect(r.action).not.toBe('spawn:generator-fix');
+    expect(r.phase).toBe('generate');
+    expect(r.action).toBe('spawn:generator-fix');
   });
 });
 

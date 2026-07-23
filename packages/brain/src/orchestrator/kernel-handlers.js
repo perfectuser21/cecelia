@@ -189,40 +189,4 @@ export function createKernelHandlers(deps) {
   });
 }
 
-/**
- * Sprint 1b997ed6：validateApproval — 纯函数，校验 human-review approval 请求合法性。
- * 不执行 DB 写入（纯函数，只返回验证结果）。
- *
- * @param {{runId, taskId, prHeadSha, approvedBy, approvedAt, reviewRequestHop}} request
- * @param {{currentPrHeadSha, runId, hasReviewRequestEffect, hasExistingApproval, reviewRequestHop, isAuthenticated}} context
- * @returns {{valid: boolean, reason?: string, verdictDetail?: object}}
- */
-export function validateApproval(request, context) {
-  if (!context.isAuthenticated) {
-    return { valid: false, reason: 'unauthorized' };
-  }
-  if (request.runId !== context.runId) {
-    return { valid: false, reason: 'run_mismatch' };
-  }
-  if (request.prHeadSha !== context.currentPrHeadSha) {
-    return { valid: false, reason: 'stale_sha' };
-  }
-  if (!context.hasReviewRequestEffect) {
-    return { valid: false, reason: 'no_review_request' };
-  }
-  if (context.hasExistingApproval) {
-    return { valid: false, reason: 'duplicate_approval' };
-  }
-  return {
-    valid: true,
-    verdictDetail: {
-      verdict: 'APPROVED',
-      pr_head_sha: request.prHeadSha,
-      review_request_hop: request.reviewRequestHop,
-      approved_by: request.approvedBy,
-      approved_at: request.approvedAt,
-    },
-  };
-}
-
 export const __test__ = { shellQuote, prNumber, appendJudgeVerdict };
