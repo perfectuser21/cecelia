@@ -11,37 +11,39 @@
 
 ### API 层（local_api — curl localhost:5221）
 
-- [ ] **DoD-01**: `curl -s http://localhost:5221/api/brain/ops-panorama` 返回 HTTP 200，`jq '.sampled_at'` 非 null 非 empty
-- [ ] **DoD-02**: `jq '.tasks.in_progress_count'` 为整数 >= 0
-- [ ] **DoD-03**: `jq '.tasks.vendor_dist'` 含 `claude/codex/grok/unknown` 四个键，均为整数 >= 0
-- [ ] **DoD-04**: `jq '.host.cpu_usage_pct'` 在 `[0, 100]` 范围内（数值型）
-- [ ] **DoD-05**: `jq '.host.mem_used_pct'` 在 `[0, 100]` 范围内（数值型）
-- [ ] **DoD-06**: `jq '.processes.claude_total'` >= 0，`jq '.processes.codex_total'` >= 0
-- [ ] **DoD-07**: `jq '.llm_capacity.sentinel'` 为 `"ok"` 或 `"degraded"` 或 `"exhausted"` 之一（非 null 时）
-- [ ] **DoD-08**: `jq '.llm_capacity.vendors.claude.accounts | length'` > 0（正常环境）
-- [ ] **DoD-09**: docker 不可达场景（注释掉 docker 命令或模拟）→ `jq '.relay.container_count'` 为 null，HTTP 仍 200
-- [ ] **DoD-10**: P99 响应时间 < 2000ms（对本地 localhost 发 10 次请求，median < 500ms，最大 < 2000ms）
+- [ ] **DoD-01** [BEHAVIOR]: `curl -s http://localhost:5221/api/brain/ops-panorama` 返回 HTTP 200，`jq '.sampled_at'` 非 null 非 empty
+- [ ] **DoD-02** [BEHAVIOR]: `jq '.tasks.in_progress_count'` 为整数 >= 0
+- [ ] **DoD-03** [BEHAVIOR]: `jq '.tasks.vendor_dist'` 含 `claude/codex/grok/unknown` 四个键，均为整数 >= 0
+- [ ] **DoD-04** [BEHAVIOR]: `jq '.host.cpu_usage_pct'` 在 `[0, 100]` 范围内（数值型）
+- [ ] **DoD-05** [BEHAVIOR]: `jq '.host.mem_used_pct'` 在 `[0, 100]` 范围内（数值型）
+- [ ] **DoD-06** [BEHAVIOR]: `jq '.processes.claude_total'` >= 0，`jq '.processes.codex_total'` >= 0
+- [ ] **DoD-07** [BEHAVIOR]: `jq '.llm_capacity.sentinel'` 为 `"ok"` 或 `"degraded"` 或 `"exhausted"` 之一（非 null 时）
+- [ ] **DoD-08** [BEHAVIOR]: `jq '.llm_capacity.vendors.claude.accounts | length'` > 0（正常环境）
+- [ ] **DoD-09** [BEHAVIOR]: docker 不可达场景（注释掉 docker 命令或模拟）→ `jq '.relay.container_count'` 为 null，HTTP 仍 200
+- [ ] **DoD-10** [BEHAVIOR]: P99 响应时间 < 2000ms（对本地 localhost 发 10 次请求，median < 500ms，最大 < 2000ms）
 
 ### 安全合规
 
-- [ ] **DoD-11**: 响应 JSON 不含 `token`、`key`、`secret`、`password` 字段名（jq keys_unsorted 全量检查）
-- [ ] **DoD-12**: 端点需要鉴权（与其他 `/api/brain/` 端点一致；Brain 内部 auth 中间件保护）
+- [ ] **DoD-11** [BEHAVIOR]: 响应 JSON 不含 `token`、`key`、`secret`、`password` 字段名（jq keys_unsorted 全量检查）
+- [ ] **DoD-12** [BEHAVIOR]: 端点需要鉴权（与其他 `/api/brain/` 端点一致；Brain 内部 auth 中间件保护）
 
 ### 前端 Dashboard（mac_web Playwright）
 
-- [ ] **DoD-13**: `localhost:5174/live-monitor` 页面存在含文字"执行全景"的 DOM 元素
-- [ ] **DoD-14**: 30s 后（或手动触发刷新），`sampled_at` 显示的抓取时间更新（< 35s 前）
-- [ ] **DoD-15**: `cpu_usage_pct` 和 `mem_used_pct` 进度条可见（`role=progressbar` 或等效可见元素）
-- [ ] **DoD-16**: 当 `relay.container_count` 为 null 时，页面显示"—"而非空白/报错
+- [ ] **DoD-13** [BEHAVIOR]: `localhost:5174/live-monitor` 页面存在含文字"执行全景"的 DOM 元素
+- [ ] **DoD-14** [BEHAVIOR]: 30s 后（或手动触发刷新），`sampled_at` 显示的抓取时间更新（< 35s 前）
+- [ ] **DoD-15** [BEHAVIOR]: `cpu_usage_pct` 和 `mem_used_pct` 进度条可见（`role=progressbar` 或等效可见元素）
+- [ ] **DoD-16** [BEHAVIOR]: 当 `relay.container_count` 为 null 时，页面显示"—"而非空白/报错
 
 ### 回归护栏
 
-- [ ] **DoD-17**: 现有 `/api/brain/status`、`/api/brain/tick/status`、`/api/brain/account-usage` 端点不受影响（`curl` 返回 200）
-- [ ] **DoD-18**: `packages/brain` 单元测试套件通过（`npm test` in `packages/brain`）
+- [ ] **DoD-17** [BEHAVIOR]: 现有 `/api/brain/status`、`/api/brain/tick/status`、`/api/brain/account-usage` 端点不受影响（`curl` 返回 200）
+- [ ] **DoD-18** [BEHAVIOR]: `packages/brain` 单元测试套件通过（`npm test` in `packages/brain`）
 
 ---
 
 ## E2E 验收脚本（target_environment: local_api）
+
+manual:bash
 
 ```bash
 #!/usr/bin/env bash
