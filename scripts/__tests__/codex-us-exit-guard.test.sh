@@ -31,9 +31,25 @@ setup() {
 #!/usr/bin/env bash
 echo "tailscale $*" >> "$TEST_LOG"
 if [[ "$1 $2" == "debug prefs" ]]; then
-  printf '{"ExitNodeIP":"%s"}\n' "$(cat "$MOCK_EXIT_FILE")"
+  if [[ "${MOCK_PREFS_EXIT_EMPTY:-0}" == "1" ]]; then
+    printf '{"ExitNodeID":"mock-node-id","ExitNodeIP":""}\n'
+  else
+    printf '{"ExitNodeIP":"%s"}\n' "$(cat "$MOCK_EXIT_FILE")"
+  fi
 elif [[ "$1 $2" == "status --json" ]]; then
-  cat "$MOCK_STATUS_FILE"
+  python3 - "$MOCK_STATUS_FILE" "$MOCK_EXIT_FILE" <<'PY'
+import json, sys
+status_path, exit_path = sys.argv[1:]
+with open(status_path) as f:
+    data = json.load(f)
+with open(exit_path) as f:
+    current = f.read().strip()
+if current:
+    data["ExitNodeStatus"] = {"Online": True, "TailscaleIPs": [current + "/32"]}
+for peer in (data.get("Peer") or {}).values():
+    peer["ExitNode"] = current in (peer.get("TailscaleIPs") or [])
+print(json.dumps(data))
+PY
 elif [[ "$1" == "set" ]]; then
   requested="${2#--exit-node=}"
   if [[ "$requested" == "100.71.151.105" && "${MOCK_FAIL_PRIMARY:-0}" == "1" ]]; then
@@ -84,7 +100,7 @@ SH
   export CODEX_EXIT_PRIMARY="100.71.151.105"
   export CODEX_EXIT_FALLBACK="100.79.41.61"
   export PATH="${TEST_BIN}:${PATH}"
-  unset MOCK_CHATGPT_TIMEOUT MOCK_DNS_IP MOCK_FAIL_PRIMARY MOCK_FAIL_FALLBACK MOCK_FAIL_RESTORE
+  unset MOCK_CHATGPT_TIMEOUT MOCK_DNS_IP MOCK_FAIL_PRIMARY MOCK_FAIL_FALLBACK MOCK_FAIL_RESTORE MOCK_PREFS_EXIT_EMPTY
 }
 
 teardown() { rm -rf "$TEST_TMP"; }
@@ -140,6 +156,18 @@ test_chatgpt_transport_timeout_fails_closed() {
     pass "ChatGPT 传输超时时 fail closed"
   else
     fail "ChatGPT 传输超时时 fail closed" "$(cat "${TEST_TMP}/out")"
+  fi
+  teardown
+}
+
+test_macos_empty_exitnodeip_uses_status_exitnode() {
+  setup
+  printf '%s' '100.79.41.61' > "$MOCK_EXIT_FILE"
+  export MOCK_PREFS_EXIT_EMPTY=1
+  if run_prepare && ! grep -q '^tailscale set' "$TEST_LOG"; then
+    pass "macOS prefs ExitNodeIP 为空时从 status 识别 SF 出口"
+  else
+    fail "macOS prefs ExitNodeIP 为空时从 status 识别 SF 出口" "$(cat "${TEST_TMP}/out") $(cat "$TEST_LOG")"
   fi
   teardown
 }
@@ -238,6 +266,7 @@ test_allowed_m4_passes_without_switching
 test_loopback_hosts_fails_before_network_change
 test_cn_public_egress_fails_closed
 test_chatgpt_transport_timeout_fails_closed
+test_macos_empty_exitnodeip_uses_status_exitnode
 test_no_exit_switches_to_m4_and_restore_clears_exit
 test_non_us_exit_restores_original_after_session
 test_m4_unavailable_falls_back_to_sf

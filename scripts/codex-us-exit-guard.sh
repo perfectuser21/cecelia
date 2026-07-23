@@ -16,6 +16,32 @@ usage() {
 }
 
 current_exit_ip() {
+  local status current rc
+  status="$(tailscale status --json 2>/dev/null)" || status=""
+  if [[ -n "$status" ]]; then
+    current="$(printf '%s\n' "$status" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+ips = (data.get("ExitNodeStatus") or {}).get("TailscaleIPs") or []
+if not ips:
+    for peer in (data.get("Peer") or {}).values():
+        if peer.get("ExitNode"):
+            ips = peer.get("TailscaleIPs") or []
+            break
+ipv4 = next((ip for ip in ips if ":" not in ip), "")
+print(ipv4.split("/", 1)[0])
+'
+    )"
+    rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+      printf '%s\n' "$current"
+      return 0
+    fi
+  fi
+
   tailscale debug prefs 2>/dev/null | python3 -c '
 import json, sys
 try:
