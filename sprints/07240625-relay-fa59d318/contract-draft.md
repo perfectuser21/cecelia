@@ -15,7 +15,7 @@
 | B2 | [BEHAVIOR] POST /api/brain/tasks(mode=headless, executor=claude, orchestrator=skill-relay) 返回 200/201 且响应体含 `id` 字段 | curl + python3 JSON 解析 | happy path | 200 or 201, id 为 string |
 | B3 | [BEHAVIOR] GET /api/brain/tasks/{id} 读回任务，payload.mode 字段值为 "headless" | curl + python3 断言 | happy path | payload.mode == "headless" |
 | B4 | [BEHAVIOR] `packages/brain/src/executor-contracts.js` 包含 `harness_initiative → relay-container` 静态映射（I-01 不变式） | python3 读文件 + 字符串断言 | happy path（静态代码断言） | 文件含 harness_initiative 且同上下文含 relay-container |
-| B5 | [BEHAVIOR] PATCH /api/brain/tasks/{id} 设 status=failed 返回 HTTP 200（探针清理） | curl -w "%{http_code}" | happy path | 200 |
+| B5 | [BEHAVIOR] PATCH 两步清理：queued→in_progress（200），再 in_progress→failed（200） | curl -w "%{http_code}" | happy path | 200 |
 | B6 | [BEHAVIOR] POST tasks 后读回任务 title 与探针 title "headless-smoke-probe-test" 一致（可重入身份确认） | python3 字段比对 | happy path | title == "headless-smoke-probe-test" |
 | B7 | [BEHAVIOR] Brain 不可达时脚本以非零退出码退出（防假绿） | BRAIN_URL=http://localhost:0 bash headless-smoke.sh | sad path | exit code != 0 |
 
@@ -69,7 +69,7 @@ BRAIN_URL=http://localhost:5221 bash packages/brain/scripts/smoke/headless-smoke
 
 | ID | [BEHAVIOR] 标签 | 覆盖断言 | 对应 PRD |
 |----|----------------|---------|---------|
-| B1 | GET /healthz → 200 | A1 | A1 |
+| B1 | GET /api/brain/healthz → 200 | A1 | A1 |
 | B2 | POST tasks → 200/201 + id | A2 | A2 |
 | B3 | payload.mode == "headless" | A3 | A3 |
 | B4 | executor-contracts.js 含 harness_initiative→relay-container 静态映射 | A4（静态断言） | A4 |
