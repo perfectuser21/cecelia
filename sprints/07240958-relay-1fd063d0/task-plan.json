@@ -68,21 +68,32 @@
     },
     {
       "task_id": "ws4",
-      "title": "硬切所有生产 caller、bridge fallback 与账号/选机消费旁路",
-      "scope": "四路 caller 先获 broker lease；location=xian 按 receipt agent_id 选 receiver；退役 /execute* 与 /accounts；executor 删除 /health.accounts 选机和固定 M4 fallback；其余消费者改读安全 cache。",
+      "title": "硬切全部生产 Codex credential consumer",
+      "scope": "以当前 main 的 17 路 exact inventory 收口公司账号：14 路接入 broker lease/session/receipt，3 路本机执行进入 root allowlisted 独立凭据域；保留四 caller、动态 agent、退役端点与 cache 的既有闭环。",
       "dod": [
-        "[BEHAVIOR] B02 4/4 caller 且 broker 分别选 M1/M4 时 receipt、/run slot、receiver agent_id 相同",
-        "[BEHAVIOR] B02 /execute* 真 HTTP 410 零副作用，executor health-account/fixed-M4=0，两个 cache 消费者不断链"
+        "[BEHAVIOR] B02 17/17 production credential paths 真触发且 unclassified=0；14 路 broker account_ref/lease/session/receipt/agent 对账，3 路隔离 root/FIFO canary 零触碰",
+        "[BEHAVIOR] B02 4/4 caller 与 M1/M4 对账，/execute* 真 HTTP 410 零副作用，executor health-account/fixed-M4=0，两个 cache 消费者不断链"
       ],
       "files": [
         "packages/brain/src/executor.js",
         "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/llm-caller.js",
+        "packages/brain/src/llm-capacity.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/providers/codex.js",
         "packages/brain/scripts/codex-bridge/codex-bridge.cjs",
         "packages/brain/scripts/codex-bridge/codex-account-usage.cjs",
+        "packages/brain/scripts/cron/credentials-health-check.sh",
         "packages/brain/src/codex-slot-broker.js",
         "packages/brain/src/routes/brain-meta.js",
         "packages/brain/src/credentials-health-scheduler.js",
-        "scripts/codex-slot-agent.mjs"
+        "scripts/codex-slot-agent.mjs",
+        "scripts/dispatch-worker.mjs",
+        "scripts/codex-launch.sh",
+        "scripts/codex-supervisor.mjs",
+        "packages/engine/runners/codex/runner.sh",
+        "packages/engine/runners/codex/playwright-runner.sh"
       ],
       "depends_on": [
         "ws3"
@@ -114,10 +125,10 @@
     {
       "task_id": "ws6",
       "title": "双机 fake-auth smoke、集成回归与版本收口",
-      "scope": "把所有真实 caller/PG/restart/SSOT/auth/双机 lifecycle oracle 收进单一 smoke，登记 allowlist，并完成 Brain 版本同步。",
+      "scope": "把 17 路 consumer inventory、真实 caller/PG/restart/SSOT/auth/双机 lifecycle oracle 收进单一 smoke，登记 allowlist，并完成 Brain 版本同步。",
       "dod": [
         "[BEHAVIOR] B12 两 tenant 不串且近 5 分钟 audit 无 secret",
-        "[BEHAVIOR] Final E2E INV-19 全 consumer、七类 raw Error exact、双机正常链+两支 mmv 变化与 P0 receipt 全通过",
+        "[BEHAVIOR] Final E2E INV-19 17/17 consumer 二选一 oracle、七类 raw Error exact、双机正常链+两支 mmv 变化与 P0 receipt 全通过",
         "[ARTIFACT] A05 smoke/allowlist/版本四件套一致"
       ],
       "files": [
