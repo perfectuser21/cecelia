@@ -12,7 +12,10 @@ import { collectGroundTruth } from '../../orchestrator/ground-truth.js';
 import { createKernelHandlers } from '../../orchestrator/kernel-handlers.js';
 import { runLoop } from '../../orchestrator/loop.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
-import callbackRouter, { appendAttemptVerdict } from '../../routes/harness-callback.js';
+import callbackRouter, {
+  appendAttemptVerdict,
+  appendGeneratorFixCallback,
+} from '../../routes/harness-callback.js';
 import approvalRouter from '../../routes/harness-kernel-approvals.js';
 
 const { Pool } = pg;
@@ -445,6 +448,58 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
 });
 
 describe('Kernel no-progress through real loop, attempt store, HTTP callback, and PostgreSQL', () => {
+  it('persists an unclaimed Codex callback and derives same-SHA no-progress from PostgreSQL', async () => {
+    const run = await seedRun();
+    const triggerHop = 7;
+    await appendLog(run.runId, {
+      hop: triggerHop,
+      action: 'spawn:generator-fix',
+      observed: { trigger_sha: HEAD_SHA },
+      phase: 'generate',
+      gateVerdict: 'allow',
+      detail: { reason: 'ci_fail' },
+    });
+
+    await appendGeneratorFixCallback({
+      id: randomUUID(),
+      run_id: run.runId,
+      hop: triggerHop,
+      role: 'generator',
+      provider: 'codex',
+    }, {
+      status: 'completed',
+      artifacts: ['Codex completed the requested fix.'],
+      checks: [],
+      decision: null,
+      provider_metadata: { provider: 'codex' },
+    }, testPool, async () => HEAD_SHA);
+
+    const { rows } = await testPool.query(
+      `SELECT hop, action, observed, gate_verdict, detail
+         FROM orchestrator_decision_log
+        WHERE run_id=$1
+        ORDER BY hop`,
+      [run.runId],
+    );
+    const callbacks = rows.filter((row) => row.action === 'verdict:generator-fix-callback');
+    expect(callbacks).toHaveLength(1);
+    expect(callbacks[0]).toMatchObject({
+      observed: {
+        trigger_hop: triggerHop,
+        pr_head_sha: HEAD_SHA,
+        provider: 'codex',
+      },
+      detail: {
+        verification_status: 'verified',
+        pr_head_sha: HEAD_SHA,
+      },
+    });
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 0 })).toMatchObject({
+      noProgress: true,
+      noProgressReason: 'no_progress_same_sha',
+    });
+  });
+
   it('callback no-progress: same SHA becomes terminal despite hop/provider changes', async () => {
     const run = await seedRun();
     await appendLog(run.runId, {
