@@ -1,0 +1,46 @@
+{
+  "verdict": "PASS",
+  "task_id": "07240614-relay-137fea96",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/4273",
+  "branch": "cp-07231921-harness-propose-r1-137fea96",
+  "commit": "4e049c015e3e790fd8c4798acf6a370b179953f6",
+  "target_environment": "local_api",
+  "failed_step": null,
+  "log_excerpt": null,
+  "gates": {
+    "artifact_gate": {
+      "result": "PASS",
+      "items": [
+        {"id": "ARTIFACT-1", "desc": "task-tasks.js 新增 DELETE 路由，复用 TERMINAL_STATUSES", "exit_code": 0},
+        {"id": "ARTIFACT-2", "desc": "postdeploy-verifier.js fetchPendingBatch 含 smoke: 前缀排除条件", "exit_code": 0}
+      ]
+    },
+    "behavior_gate": {
+      "result": "PASS",
+      "items_total": 7,
+      "items_passed": 7,
+      "final_e2e_steps_total": 6,
+      "final_e2e_steps_passed": 6
+    }
+  },
+  "behavior_tests": [
+    {"command": "node -e check task-tasks.js router.delete('/:id') + TERMINAL_STATUSES 引用", "exit_code": 0, "log_tail": "route ok: true true"},
+    {"command": "node -e check postdeploy-verifier.js fetchPendingBatch 含 NOT LIKE 'smoke:%'", "exit_code": 0, "log_tail": "fetchPendingBatch match: true true"},
+    {"command": "DoD BEHAVIOR-1: 存在非终态任务 DELETE -> 200 + DB cancelled（双重校验）", "exit_code": 0, "log_tail": "true\ntrue\nOK"},
+    {"command": "DoD BEHAVIOR-2: 不存在 id DELETE -> 404 + error/id 回显", "exit_code": 0, "log_tail": "true\ntrue\nOK"},
+    {"command": "DoD BEHAVIOR-3: 已 completed 任务 DELETE -> 409，DB 未被误改", "exit_code": 0, "log_tail": "true\ntrue\nOK"},
+    {"command": "DoD BEHAVIOR-4: 已 cancelled 任务再次 DELETE -> 409（幂等边界）", "exit_code": 0, "log_tail": "true\ntrue\nOK"},
+    {"command": "DoD BEHAVIOR-5: smoke: 前缀任务经 runPostdeployVerifier() 扫描后仍为 pending_postdeploy，无 retry_count 写入", "exit_code": 0, "log_tail": "[postdeploy pool init log]\nOK"},
+    {"command": "DoD BEHAVIOR-6: 对照非 smoke 前缀任务经 runPostdeployVerifier() 正常消费为 completed", "exit_code": 0, "log_tail": "[postdeploy-verifier] ✅ task=771dbe92... 验证通过 → completed\n[postdeploy-verifier] 本轮完成: verified=1 failed=0 skipped=0 batch=1\nOK"},
+    {"command": "DoD BEHAVIOR-7: postdeploy-verifier-smoke.sh 全脚本回归，Step3清理命中新DELETE路由，DB status=cancelled", "exit_code": 0, "log_tail": "──────────────────────────────\nPASS=4  FAIL=0\nOK"},
+    {"command": "最终 E2E（contract-draft.md ## E2E 验收 全 6 步，Golden Path 全链路）", "exit_code": 0, "log_tail": "PASS=4  FAIL=0\n✅ Step6 通过\n✅ Golden Path 全链路验证通过"}
+  ],
+  "unverifiable": [],
+  "notes": "target_environment=local_api，但本机常驻 Brain（OrbStack 容器 cecelia-node-brain，5221 端口）跑的是另一 checkout（/Users/administrator/perfect21/cecelia）的旧代码，不含本 PR 的 DELETE 路由，且该容器是生产编排器正在跑真实 tick/dispatch，不可停机改动。按 skill 标准做法：另起本分支 server.js 独立实例（PORT=15221, CECELIA_TICK_HARD_OFF=1 硬关 tick 防止与生产实例对同一 DB 双派发, 连接真实本地 Postgres cecelia），验证新实例已含新 DELETE 路由（真实 curl 返回 JSON 404，非旧实例的 Express 默认 HTML 404）后，将 DoD/E2E 脚本中的 localhost:5221 统一替换为 localhost:15221 执行，全部真跑；验收完成后已 kill 该临时实例，复核生产 5221 实例全程未受影响（health 持续 healthy，tick 未中断）。合同标准版 e2e-verify.sh（未做端口替换，localhost:5221 原样，供未来在真实生产/正确路由环境下重跑）已固化进 sprints/07240614-relay-137fea96/e2e-verify.sh 并随 commit 17711329b push 到 PR 分支。禁mock边清单核查：清单2条边，扫描2个contract test文件，命中0条vi.mock/jest.mock，clean。",
+  "mock_edge_check": "clean（清单 2 条，扫描 2 个测试文件，命中 0 条）",
+  "e2e_fixation": {
+    "file": "sprints/07240614-relay-137fea96/e2e-verify.sh",
+    "commit": "17711329b",
+    "pushed": true
+  }
+}

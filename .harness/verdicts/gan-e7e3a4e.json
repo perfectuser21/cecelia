@@ -1,0 +1,29 @@
+{
+  "phase": "gan",
+  "task_id": "137fea96-c596-4a34-b5ed-af8d2758ea6b",
+  "sha": "e7e3a4ed708c6e21b98e228f64cae1210460c147",
+  "sha7": "e7e3a4e",
+  "branch": "cp-07231921-harness-propose-r1-137fea96",
+  "round": 2,
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 10,
+    "internal_consistency": 8,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 2,
+  "judgment_decision_ids": [
+    "92bacd3d-eab1-4d1a-bf59-2693042a92e1",
+    "19e93135-a528-44e7-929f-fde92d3b6ee6"
+  ],
+  "controller_hard_checks": {
+    "behavior_count": 7,
+    "e2e_section_present": true,
+    "manual_bash_present": true,
+    "invariant_coverage": "8/8"
+  }
+}

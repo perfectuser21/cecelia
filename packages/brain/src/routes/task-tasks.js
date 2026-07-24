@@ -5,6 +5,7 @@
  * GET /    — 列出任务（支持 status, area_id, project_id, task_type, limit 过滤）
  * GET /:id — 获取单个 task
  * PATCH /:id — 更新 status/priority/title/okr_initiative_id
+ * DELETE /:id — 软删除（status='cancelled'），复用 TERMINAL_STATUSES 保护
  */
 
 import { Router } from 'express';
@@ -14,6 +15,10 @@ import { blockTask } from '../task-updater.js';
 import { classifyFailure as _classifyFailure } from '../quarantine.js';
 
 const router = Router();
+
+// 状态机保护：已终止的任务不能回退到非终止状态（PATCH /:id 与 DELETE /:id 共用同一常量，
+// 避免两套终态定义产生语义分裂）
+const TERMINAL_STATUSES = ['completed', 'cancelled'];
 
 // classifyFailure 和 FAILURE_CLASS 懒加载（防测试 mock 不全导致初始化爆炸）
 function classifyFailure(...args) {
@@ -254,8 +259,6 @@ router.patch('/:id', async (req, res) => {
   try {
     const { status, priority, title, okr_initiative_id, pr_url, result: taskResult, description } = req.body;
 
-    // 状态机保护：已终止的任务不能回退到非终止状态
-    const TERMINAL_STATUSES = ['completed', 'cancelled'];
     const _VALID_STATUSES = ['queued', 'in_progress', 'completed', 'cancelled', 'failed', 'blocked'];
     let harnessDemoted = false;
     let harnessDemoteReason = null;
@@ -376,6 +379,37 @@ router.patch('/:id', async (req, res) => {
       : result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update task', details: err.message });
+  }
+});
+
+// DELETE /tasks/:id — 软删除（status='cancelled'）。复用 PATCH 同一套 TERMINAL_STATUSES
+// 状态机保护：不存在 → 404；已终态（completed/cancelled）→ 409（防误删历史记录，幂等）；
+// 其余 → UPDATE status='cancelled'，200 返回更新后整行。
+router.delete('/:id', async (req, res) => {
+  try {
+    const current = await pool.query('SELECT status FROM tasks WHERE id = $1', [req.params.id]);
+    if (!current.rows.length) {
+      return res.status(404).json({ error: 'Task not found', id: req.params.id });
+    }
+    const currentStatus = current.rows[0].status;
+    if (TERMINAL_STATUSES.includes(currentStatus)) {
+      return res.status(409).json({
+        error: 'State machine violation',
+        details: `Cannot delete task in terminal status '${currentStatus}'`,
+      });
+    }
+
+    const result = await pool.query(
+      `UPDATE tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Task not found', id: req.params.id });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete task', details: err.message });
   }
 });
 

@@ -1,0 +1,32 @@
+{
+  "initiative_id": "137fea96-c596-4a34-b5ed-af8d2758ea6b",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain/ 后端 Bug 修复（新增 DELETE 路由 + SQL WHERE 过滤条件），无 UI/前端/agent 远程协议涉及，PRD 已显式声明",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "postdeploy-verifier smoke 任务清理机制真正生效：DELETE /:id 路由 + fetchPendingBatch smoke 前缀过滤",
+      "scope": "① packages/brain/src/routes/task-tasks.js 新增 DELETE /:id（软删除 status='cancelled'，复用现有 TERMINAL_STATUSES：不存在→404，已终态 completed/cancelled→409，其余→200+软删除）② packages/brain/src/postdeploy-verifier.js 的 fetchPendingBatch 查询加 WHERE title NOT LIKE 'smoke:%' 排除 smoke 前缀任务 ③ 补对应单元测试（DELETE 200/404/409 状态机；fetchPendingBatch 排除 smoke 前缀且不影响非 smoke 任务正常消费）。不重构 postdeploy-verifier 整体机制，不引入通用 is_test 字段框架，不新增鉴权，不处理 ETIMEDOUT 环境问题，不改动任务 17c9d62d 本身。",
+      "dod": [
+        "[BEHAVIOR] 存在的非终态任务 DELETE → HTTP 200，响应体 status=cancelled，DB 行 status 真实变为 cancelled",
+        "[BEHAVIOR] 不存在的任务 id DELETE → HTTP 404 + error 字段",
+        "[BEHAVIOR] 已 completed 的任务 DELETE → HTTP 409，DB 行 status 未被改动",
+        "[BEHAVIOR] 已 cancelled 的任务再次 DELETE → HTTP 409（幂等边界）",
+        "[BEHAVIOR] title 以 smoke: 开头的 pending_postdeploy 任务 → runPostdeployVerifier() 扫描后 status 仍为 pending_postdeploy（未被消费）",
+        "[BEHAVIOR] 不带 smoke: 前缀的同批次任务 → 正常被 runPostdeployVerifier() 消费为 completed（过滤未打坏批次机制）",
+        "[BEHAVIOR] postdeploy-verifier-smoke.sh 全脚本回归 — Step 3 清理命中新 DELETE 路由，脚本创建任务最终 DB status=cancelled",
+        "[ARTIFACT] task-tasks.js DELETE 路由复用既有 TERMINAL_STATUSES 常量，不新建第二套终态定义",
+        "[ARTIFACT] postdeploy-verifier.js fetchPendingBatch SQL 含 title NOT LIKE 'smoke:%' 条件"
+      ],
+      "files": [
+        "packages/brain/src/routes/task-tasks.js",
+        "packages/brain/src/postdeploy-verifier.js",
+        "packages/brain/src/__tests__/routes/task-tasks.test.js",
+        "packages/brain/src/__tests__/postdeploy-verifier.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
