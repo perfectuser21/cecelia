@@ -87,66 +87,86 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     expect(sql).not.toMatch(/=\s*'skill-relay-codex'/);   // 不应写死单一 codex host
   });
 
-  it('开放 kernel 人审按 request hop 排除，不能被绝对 deadline 收尸', async () => {
+  function reviewPausePool({ prUrl = PR_URL, reviewHeadSha = 'a'.repeat(40) } = {}) {
     const overdueRun = {
       id: '11111111-1111-4111-8111-111111111111',
       initiative_id: TASK_ID,
       orchestrator_host: 'skill-relay-session',
       phase: 'review',
       deadline_at: new Date(Date.now() - 1000).toISOString(),
+      pr_url: prUrl,
     };
     const pool = { query: vi.fn(async (sql) => {
       const normalized = String(sql);
       if (/SELECT id, initiative_id, orchestrator_host, phase, deadline_at/.test(normalized)) {
-        const excludesOpenReview =
-          /effect:human_review_requested/.test(normalized)
-          && /verdict:human_review/.test(normalized)
-          && /review_request_hop/.test(normalized);
-        return { rows: excludesOpenReview ? [] : [overdueRun] };
+        const sqlHidesOpenReviews = /effect:human_review_requested/.test(normalized);
+        return { rows: sqlHidesOpenReviews ? [] : [overdueRun] };
       }
-      return { rows: [] };
-    }) };
-
-    await scanStuckHarness({ pool });
-
-    const selectSql = pool.query.mock.calls[0]?.[0] || '';
-    expect(selectSql).toMatch(/effect:human_review_requested/);
-    expect(selectSql).toMatch(/verdict:human_review/);
-    expect(selectSql).toMatch(/review_request_hop/);
-    expect(selectSql).toMatch(/#>>\s*'\{pr,head_sha\}'\s+IS NOT NULL/);
-    expect(selectSql).toMatch(/later\.hop\s*>\s*review_request\.hop/);
-    expect(pool.query.mock.calls.some(
-      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
-    )).toBe(false);
-  });
-
-  it('abandoned review followed by a later decision is collected as overdue', async () => {
-    const overdueRun = {
-      id: '11111111-1111-4111-8111-111111111111',
-      initiative_id: TASK_ID,
-      orchestrator_host: 'skill-relay-session',
-      phase: 'generate',
-      deadline_at: new Date(Date.now() - 1000).toISOString(),
-    };
-    const pool = { query: vi.fn(async (sql) => {
-      const normalized = String(sql);
-      if (/SELECT id, initiative_id, orchestrator_host, phase, deadline_at/.test(normalized)) {
-        const bindsCurrentReview =
-          /#>>\s*'\{pr,head_sha\}'\s+IS NOT NULL/.test(normalized)
-          && /later\.hop\s*>\s*review_request\.hop/.test(normalized);
-        return { rows: bindsCurrentReview ? [overdueRun] : [] };
+      if (/FROM orchestrator_decision_log review_request/.test(normalized)) {
+        return {
+          rows: [{
+            review_request_hop: 7,
+            review_head_sha: reviewHeadSha,
+          }],
+        };
       }
       if (/UPDATE initiative_runs/.test(normalized)) {
         return { rows: [], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
     }) };
+    return { overdueRun, pool };
+  }
 
-    await scanStuckHarness({ pool });
+  it('开放 kernel 人审仅在 request SHA 与 GitHub 当前 head 对账后暂停收尸', async () => {
+    const reviewHeadSha = 'a'.repeat(40);
+    const { pool } = reviewPausePool({ reviewHeadSha });
+    const resolvePrHead = vi.fn(async () => reviewHeadSha);
 
+    await scanStuckHarness({ pool, resolvePrHead });
+
+    expect(resolvePrHead).toHaveBeenCalledWith(PR_URL);
+    expect(pool.query.mock.calls.some(
+      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
+    )).toBe(false);
+  });
+
+  it('abandoned review whose request SHA no longer matches GitHub is collected', async () => {
+    const { pool } = reviewPausePool({ reviewHeadSha: 'a'.repeat(40) });
+    const resolvePrHead = vi.fn(async () => 'b'.repeat(40));
+
+    await scanStuckHarness({ pool, resolvePrHead });
+
+    expect(resolvePrHead).toHaveBeenCalledWith(PR_URL);
     expect(pool.query.mock.calls.some(
       ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
     )).toBe(true);
+  });
+
+  it('review request without a PR URL cannot pause deadline cleanup', async () => {
+    const { pool } = reviewPausePool({ prUrl: null });
+    const resolvePrHead = vi.fn();
+
+    await scanStuckHarness({ pool, resolvePrHead });
+
+    expect(resolvePrHead).not.toHaveBeenCalled();
+    expect(pool.query.mock.calls.some(
+      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
+    )).toBe(true);
+  });
+
+  it('GitHub resolver failure defers cleanup until a later watchdog pass', async () => {
+    const { pool } = reviewPausePool();
+    const resolvePrHead = vi.fn(async () => {
+      throw new Error('GitHub rate limited');
+    });
+
+    await scanStuckHarness({ pool, resolvePrHead });
+
+    expect(resolvePrHead).toHaveBeenCalledWith(PR_URL);
+    expect(pool.query.mock.calls.some(
+      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
+    )).toBe(false);
   });
 });
 
