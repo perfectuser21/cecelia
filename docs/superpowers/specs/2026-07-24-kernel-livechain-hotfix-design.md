@@ -176,4 +176,3 @@ spawn:generator-fix
    - 一次无变更 generator-fix 通过服务端对账命中
      `no_progress_same_sha`，而不是 callback missing；
    - 不产生第二次 fix，不发生误 merge。
-
