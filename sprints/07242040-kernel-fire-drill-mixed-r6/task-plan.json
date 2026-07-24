@@ -1,0 +1,23 @@
+{
+  "initiative_id": "b21467a0-5a67-4787-9d48-92f6820c6b33",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物为 docs 文档，验收全走 Brain API + git/gh 后台校验，无 UI 改动",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 kernel-v1 mixed R6 fire drill 交付文档并以恰一行 diff 开 PR",
+      "scope": "读取并核对 HARNESS_TASK_ID=CECELIA_TASK_ID=b21467a0-5a67-4787-9d48-92f6820c6b33；从 origin/main 在独立 delivery worktree 建 cp-MMDDHHMM-b21467a0 分支；仅新增 docs/fire-drills/kernel-v1-mixed-20260724-r6.md（含 KERNEL_V1_MIXED_FIRE_DRILL_PASS_R6、1.267.67、19887912bbb581597f12c714a9ed187f051e2850、五角色 provider/account 实际运行证据摘要）；开 PR 前机械核对 origin/main...HEAD name-only diff 恰一行为目标文档；禁改 packages/brain、禁 sprints/**、.harness/**、合同产物入 PR；禁自行 merge",
+      "dod": [
+        "[BEHAVIOR] delivery PR diff 恰一行且为目标文档（manual:bash 见 contract-dod.md B1）",
+        "[BEHAVIOR] PR 分支形态 ^cp-[0-9]{8}-b21467a0$ 且 OPEN、未 merge（contract-dod.md B2）",
+        "[BEHAVIOR] PR CI within 900s 全绿（contract-dod.md B3）",
+        "[BEHAVIOR] 远端已推送文档三标记 + 五角色证据字面全命中（contract-dod.md B8）",
+        "[ARTIFACT] docs/fire-drills/kernel-v1-mixed-20260724-r6.md 存在且含三字面标记，无凭据模式"
+      ],
+      "files": ["docs/fire-drills/kernel-v1-mixed-20260724-r6.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
