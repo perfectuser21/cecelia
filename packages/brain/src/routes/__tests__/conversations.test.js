@@ -17,6 +17,15 @@ vi.mock('../../db.js', () => ({
   default: { query: vi.fn() },
 }));
 
+// ── Mock claude spawn（PR2 conversation-agent 依赖）──────────
+vi.mock('node:child_process', () => ({
+  spawnSync: vi.fn(() => ({
+    status: 0,
+    stdout: JSON.stringify({ type: 'result', result: '好的 [TURN: chat]', session_id: 'sess-mock-1' }) + '\n',
+    stderr: '',
+  })),
+}));
+
 import pool from '../../db.js';
 import conversationsRouter from '../conversations.js';
 
@@ -266,13 +275,17 @@ describe('[BEHAVIOR-3] PATCH /api/brain/conversations/:id — status 枚举校�
 describe('[BEHAVIOR-2] POST /api/brain/conversations/:id/messages — turn_count 自增', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('role=user → 201 + turn_count 自增 1', async () => {
-    // 检查 conversation 存在
+  it('role=user → 201 + turn_count 自增 1 + 触发 agent 调用', async () => {
+    // 检查 conversation 存在（含锚点坐标）
     pool.query.mockResolvedValueOnce({ rows: [FAKE_CONVERSATION] });
-    // 插入消息
+    // 插入 user 消息
     pool.query.mockResolvedValueOnce({ rows: [FAKE_MESSAGE] });
     // turn_count +1 UPDATE
     pool.query.mockResolvedValueOnce({ rows: [{ ...FAKE_CONVERSATION, turn_count: 1 }] });
+    // 插入 assistant 回复（agent 调用产出）
+    pool.query.mockResolvedValueOnce({ rows: [] });
+    // 写回 current_session_id
+    pool.query.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(makeApp())
       .post(`/api/brain/conversations/${FAKE_CONV_ID}/messages`)
@@ -281,6 +294,16 @@ describe('[BEHAVIOR-2] POST /api/brain/conversations/:id/messages — turn_count
     expect(res.status).toBe(201);
     expect(res.body.id).toBeDefined();
     expect(res.body.role).toBe('user');
+
+    // 第 4 次 query 应为插入 assistant 回复
+    const assistantInsertCall = pool.query.mock.calls[3];
+    expect(assistantInsertCall[0]).toContain("'assistant'");
+    expect(assistantInsertCall[1]).toContain('好的 [TURN: chat]');
+
+    // 第 5 次 query 应为写回 current_session_id
+    const sessionUpdateCall = pool.query.mock.calls[4];
+    expect(sessionUpdateCall[0]).toContain('current_session_id');
+    expect(sessionUpdateCall[1]).toContain('sess-mock-1');
   });
 
   it('role=assistant → 201，turn_count 不自增', async () => {
