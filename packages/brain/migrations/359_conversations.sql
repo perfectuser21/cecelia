@@ -2,6 +2,64 @@
 -- Task 264b8c8d-aad6-4f1c-84d1-274880beb3da — PR1 对话会话基础层
 -- 幂等：所有 CREATE 使用 IF NOT EXISTS
 
+-- 生产库中曾存在一张同名的 legacy conversations 表。只按表名幂等会跳过
+-- 新表创建，随后在 journey_id 索引处失败。先按新合同的判别列识别并保留旧表。
+DO $migration$
+DECLARE
+  conversations_exists BOOLEAN;
+  has_journey_id BOOLEAN;
+  backup_exists BOOLEAN;
+BEGIN
+  SELECT to_regclass(format('%I.conversations', current_schema())) IS NOT NULL
+    INTO conversations_exists;
+
+  SELECT to_regclass(
+    format('%I.conversations_legacy_pre_359', current_schema())
+  ) IS NOT NULL
+    INTO backup_exists;
+
+  IF conversations_exists THEN
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'conversations'
+        AND column_name = 'journey_id'
+    )
+      INTO has_journey_id;
+
+    IF NOT has_journey_id THEN
+      IF backup_exists THEN
+        RAISE EXCEPTION
+          'migration 359: incompatible conversations and conversations_legacy_pre_359 both exist';
+      END IF;
+
+      EXECUTE format(
+        'ALTER TABLE %I.conversations RENAME TO conversations_legacy_pre_359',
+        current_schema()
+      );
+
+      -- ALTER TABLE RENAME 不会释放旧主键约束/索引名；先改旧约束名，
+      -- 让下方新表仍能使用标准的 conversations_pkey。
+      IF EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = current_schema()
+          AND t.relname = 'conversations_legacy_pre_359'
+          AND c.conname = 'conversations_pkey'
+      ) THEN
+        EXECUTE format(
+          'ALTER TABLE %I.conversations_legacy_pre_359 RENAME CONSTRAINT conversations_pkey TO conversations_legacy_pre_359_pkey',
+          current_schema()
+        );
+      END IF;
+    END IF;
+  END IF;
+END
+$migration$;
+
 -- ── conversations 表 ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS conversations (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
