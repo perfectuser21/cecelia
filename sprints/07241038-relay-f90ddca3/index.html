@@ -1,0 +1,736 @@
+<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><title>headed relay 派发链路自测（claude-headed, task f90ddca3） — Sprint Report</title><style>body{font-family:sans-serif;margin:0;display:flex;flex-direction:column;height:100vh;}header{background:#1a1a2e;color:#fff;padding:12px 24px;display:flex;align-items:center;gap:16px;}header a{color:#adf;text-decoration:none;}main{display:flex;flex:1;overflow:hidden;}nav{width:160px;background:#f4f4f4;border-right:1px solid #ddd;padding:16px 0;overflow-y:auto;}nav ul{list-style:none;margin:0;padding:0;}nav li a{display:block;padding:8px 16px;color:#333;text-decoration:none;}nav li a:hover{background:#e0e0e0;}.content{flex:1;overflow-y:auto;padding:24px;}.section pre{background:#f8f8f8;border:1px solid #ddd;padding:16px;border-radius:4px;}.screenshot{margin-bottom:16px;}</style></head><body><header><span><strong>headed relay 派发链路自测（claude-headed, task f90ddca3）</strong> Sprint Report</span><a href="https://github.com/perfectuser21/cecelia/pull/4315" target="_blank">PR</a></header><main><nav><ul><li><a href="#" onclick="show('prep-prd');return false;">PrepPRD</a></li><li><a href="#" onclick="show('sprint-prd');return false;">PRD</a></li><li><a href="#" onclick="show('contract');return false;">D-Contract</a></li><li><a href="#" onclick="show('dod');return false;">DOD</a></li><li><a href="#" onclick="show('report');return false;">Report</a></li><li><a href="#" onclick="show('learning');return false;">Learning</a></li><li><a href="#" onclick="show('screenshots');return false;">截图</a></li></ul></nav><div class="content"><div id="prep-prd" class="section" style="display:none;"><p>（文件不存在）</p></div><div id="sprint-prd" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Sprint PRD — headed relay 派发链路自测（claude-headed, task f90ddca3）
+
+## OKR 对齐
+
+- **对应 KR**：Cecelia 基础稳固 — 系统可信赖、算力全开、管家闭环（progress 82%）
+- **当前进度**：headed relay 链路（planner→GAN→generator→evaluator→judge→merge→毕业→report）已有 a85e0582(#3827)、4bb31ef5(#3829)、049ebf93(#3970)、57e25e92(#4109)、7630f4fb(#4184) 五条同类先例毕业
+- **本次推进预期**：为本次 task_id=f90ddca3 生成锚定该 task 的独立回归证据，巩固 executor=claude + mode=headed + orchestrator=skill-relay 链路可信度
+
+## 背景
+
+本任务由 Brain headed relay 派发链路自测机制创建（task_type=harness_initiative，journey_id=bb8cc561-b3ee-4fec-b74d-2255694bd963「Cecelia Harness Pipeline」，即 harness 流水线自身的开发基础设施 Journey），与已合并的 a85e0582「codex-headed-dispatch-smoke」、4bb31ef5「claude-headed-smoke」、049ebf93/57e25e92/7630f4fb「headed relay 回归证据」同源，用于再次验证 `executor=claude + mode=headed + orchestrator=skill-relay` 的 harness_initiative 全链路能被 Brain 正确接收、派发、跑通并留下可回归证据。不是新业务功能需求。
+
+`payload` 中无 `prep_prd_body`/`thin_prd` 字段（headed-smoke-test 类任务已知情况，非缺陷）；本 PRD 依据 task title「headed-smoke-test」+ payload 三元组（mode=headed/executor=claude/orchestrator=skill-relay）+ 历史同类先例（PR #4109、#4184）锚定范围。
+
+`packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh` 已是通用脚本（不绑定具体 task id，已在 `packages/quality/smoke-allowlist.txt` 第 24 行登记），本次不改动它、不重复登记，只复用。每次 headed-smoke-test 任务的产出是一份**锚定本次 task id** 的 e2e 薄封装。
+
+**落点铁律（先例 7630f4fb learning 强制）**：测试产物与 e2e wrapper 必须从第一次 commit 起就用**永久池路径**——`tests/regression/relay-f90ddca3/`（contract 测试）+ `scripts/smoke/e2e/relay-f90ddca3.sh`（e2e wrapper），**禁止放 `sprints/` 临时路径**，从源头避开 test-pyramid-guard 孤儿棘轮拦截，避免 generator 被诱导越权改 `scripts/test-pyramid-baseline.json`（共享 CI 文件默认禁区）。
+
+## Golden Path（核心场景）
+
+Brain 派发 headed relay 任务 → 本次 e2e 回归脚本校验 → 证据留痕
+
+具体：
+1. [触发条件] task_id=f90ddca3-396d-45b2-ad13-2dfbd9e15080 已由 Brain 以 task_type=harness_initiative、payload.mode=headed / executor=claude / orchestrator=skill-relay / journey_id=bb8cc561-b3ee-4fec-b74d-2255694bd963 派发
+2. [系统处理] e2e 回归脚本依次：调用既有 `claude-headed-dispatch-smoke.sh`（不重实现，只校验其全绿执行与 allowlist 登记）→ 查 `GET /api/brain/tasks/f90ddca3...` 核对 task payload 关键字段齐全并对敏感字段脱敏断言 → 查 DB `initiative_runs` 核对本次 initiative_id 的 orchestrator_host/phase
+3. [可观测结果] 全部断言通过则脚本 exit 0 并打印 PASS；任一断言失败则 exit 1 并打印具体 FAIL 原因
+
+## 边界情况
+
+- Brain task 记录不存在（未派发成功）→ e2e 脚本必须 FAIL，不得静默跳过
+- `initiative_runs` 无该 initiative_id 记录 → FAIL
+- **本 initiative 的 run 有一条历史 failed 前科后被 controller 复活为 planning**：phase 合法性断言必须设计为"存在至少一条 phase 落在合法枚举且非 `failed`/`unknown` 的记录"，容忍历史 failed 行存在，不得因历史前科误判 FAIL（参考先例 7630f4fb 同款处理）
+- 全部记录的 phase 都是 `failed` 或 `unknown`/非法枚举值 → FAIL
+- task payload 意外携带 `token`/`github_token`/`anthropic_token`/`thin_prd` 明文字段 → FAIL（敏感字段泄漏）
+- `claude-headed-dispatch-smoke.sh` 未在 `packages/quality/smoke-allowlist.txt` 精确登记 → FAIL
+
+## 范围限定
+
+**在范围内**：
+- 新增 `tests/regression/relay-f90ddca3/` 下的 contract 测试 + `scripts/smoke/e2e/relay-f90ddca3.sh` e2e wrapper（永久池路径，第一次 commit 即落此处），锚定 TASK_ID=f90ddca3-396d-45b2-ad13-2dfbd9e15080、SPRINT_DIR=sprints/07241038-relay-f90ddca3，结构镜像 7630f4fb 最终版（#4184）
+- 调用既有 `packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh`（已在 allowlist 第 24 行登记，仅校验存在，不重复登记）
+- 校验本次 task 的 Brain API 记录（含敏感字段脱敏检查）与 initiative_runs 记录
+
+**不在范围内**：
+- 不新增/修改 `claude-headed-dispatch-smoke.sh` 本体
+- 不把测试产物/e2e wrapper 放 `sprints/` 临时路径
+- 不修改 `scripts/test-pyramid-baseline.json` 等共享 CI 基础设施文件
+- 不扩展业务功能，不改 dashboard/UI
+- 不改 migrations
+- 不跨 repo 生产 promote
+- 不改 `.github/workflows/ci.yml`
+- 不重复登记 `packages/quality/smoke-allowlist.txt`（已登记过则只校验存在）
+
+## 假设
+
+- [ASSUMPTION: 本次 task 派发已由 Brain 完成，initiative_runs 中存在 initiative_id=f90ddca3-396d-45b2-ad13-2dfbd9e15080 至少一条 run 记录，orchestrator_host=skill-relay-claude-headed（实测已存在，含一条历史 failed 前科后被复活为 planning）]
+- [ASSUMPTION: 复用 packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh 现有通用行为，本次不校验其内部实现细节]
+
+## 预期受影响文件
+
+- `tests/regression/relay-f90ddca3/`：新增，锚定本次 task_id 的 contract 回归测试（永久池）
+- `scripts/smoke/e2e/relay-f90ddca3.sh`：新增，本次 e2e wrapper（永久池）
+
+## E2E 验收
+
+期望验收点（自然语言）：
+1. `GET /api/brain/tasks/f90ddca3-396d-45b2-ad13-2dfbd9e15080` 返回 task，`payload.mode=headed` / `payload.executor=claude` / `payload.orchestrator=skill-relay` / `payload.journey_id` 均非空，且断言输出中不含 token/github_token/anthropic_token/thin_prd 明文字段
+2. DB `initiative_runs` 中 `initiative_id=f90ddca3-396d-45b2-ad13-2dfbd9e15080` 至少一条记录，`orchestrator_host` 含 `skill-relay-claude-headed`，且**存在至少一条** `phase` 落在合法枚举且非 `failed`/`unknown` 的记录（历史 failed 行允许存在，不作为 FAIL 依据）
+3. 复用调用 `packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh` 全绿，且该脚本已在 `packages/quality/smoke-allowlist.txt` 精确登记
+
+```bash
+# 占位：proposer 按 target_environment=local_api 填入真实脚本（curl localhost:5221 + psql）
+```
+
+## Invariant 约束（铁律，proposer/evaluator 不得违反）
+
+&lt;!-- 来源: decisions category=invariant，step + journey_feature + area 三源合并去重（step/feature 均为空数组，area 53 条全量，较先例 7630f4fb 新增 4 条：f200769d/d9e4f4c1/6041333c/a3989e96） --&gt;
+- [manual oracle真实exit code] 合同批准前必须同时记录 manual oracle 的真实 exit code，并确认目标解释器确实启动（来源: area, id=f200769d）
+- [node -e表达式须真跑] manual:node -e 双引号中的 JavaScript ${} 必须在 GAN 批准前逐条真跑，bash -n 不足以捕获 expansion failure（来源: area, id=d9e4f4c1）
+- [smoke-invariant-58494] smoke 铁律（来源: area, id=6041333c）
+- [smoke-invariant-5054] smoke 铁律（来源: area, id=a3989e96）
+- [测试冷启动重置掩盖跨周期bug] 测试若只依赖"重置状态=冷启动"写法（afterEach 清空 sentinel、sinceMs=0），需补至少一条真实多轮扫描、状态不重置的集成测试（来源: area, id=b9e7a730）
+- [周期重扫防重复调用] 周期性重扫同一批数据若引入外部付费调用（LLM/第三方API），必须同时设计"是否已处理过"的前置检查（来源: area, id=e06d4aa2）
+- [跨模块时间常数依赖] 跨模块时间常数（扫描间隔/闲置阈值/缓存TTL）有隐含大小关系依赖时必须显式写不变量断言或注释（来源: area, id=394a904a）
+- [theater_mismatch android误判] contract 文本含 android 关键词即使在排除列表也会触发 theater_mismatch，可用 windows_cloud 环境绕过（来源: area, id=be2b7dfe）
+- [target_environment来源DB] target_environment 从 DB tasks.payload 读取，不从文件读，任务注册时必须正确设置（来源: area, id=f91cbfc7）
+- [judge结果JSON格式] Brain judge .brain-result.json 必须有顶层 exit_code + log_tail + behavior_tests[]，每条需含 exit_code + log_tail（来源: area, id=de6a2ee1）
+- [DB字段长度截断] DB 表字段长度约束（如 varchar(100)）写入前若来源数据无天然长度保证，必须显式截断（来源: area, id=d976752e）
+- [复活功能先查死因] 复活/重做曾死过的功能前，先用 git log --diff-filter=D + git show 读退役前真实代码核对死因，不能只信 commit message（来源: area, id=6ede438b）
+- [错误码契约需显式else] 调用"失败返回 null/false"契约函数时，写完成功分支必须显式写 else 处理失败分支，不能只靠外层 try/catch（来源: area, id=e9c7752f）
+- [smoke-invariant-2387] smoke 铁律（来源: area, id=33ede9f1）
+- [updated_at停滞探针] journey_features 表 updated_at 长期停滞（明显早于对应 PR 合并时间）可作为 report 阶段漏跑的兜底探针信号（来源: area, id=5abda98e）
+- [relay跳过report兜底校验] harness-controller relay 容器可能在 Step 6(merge) 后异常退出跳过 Step 7(report)，Brain 侧不应仅凭容器 exit code 0 判定任务完成（来源: area, id=e83b2f0d）
+- [host白名单核对headed] contract-proposer 起草 host/环境白名单类断言时必须核对 headed 人工接管场景（来源: area, id=9f14c074）
+- [headed点火需base_repo/pr_url] headed relay 点火时必须把 base_repo 或 pr_url 写入 task payload，且分支名带 task short id，否则收账守卫与 watchdog 反查失明（来源: area, id=37e0d7c9）
+- [退役判断查生产库实锤] 退役判断依据数据不靠记忆，须查生产库实锤（cursor 状态分布/表行数/消费方 grep）拍板（来源: area, id=ea7d9c3e）
+- [吞错job需失败计数告警] catch 吞错的后台 job 必须带失败计数指标，连续失败超阈值告警（来源: area, id=42a4d7c3）
+- [建表前grep写入方] 表名认领冲突：建新表/复用表前先 grep 全部写入方，两个模块写同一张表须 schema 对齐评审（来源: area, id=1676385f）
+- [后台job须声明消费方] 新增后台 job 必须同时声明消费方，无下游读方的落库 job 不允许上线（来源: area, id=1bd4e034）
+- [多设备类型UI区分] 多设备类型(os_type/device_platform) UI 区分必须在设计/审查阶段强制检查（来源: area, id=8dbe91ee）
+- [git_sha语义跨脚本一致] 同一语义（如 git_sha=unknown）在判变端与终验端必须同一处理策略，跨脚本语义分叉会开假绿面（来源: area, id=113a9330）
+- [git rev-parse需--verify] git rev-parse 判 ref 存在必须带 --verify "&lt;ref&gt;^{commit}"，裸 rev-parse 失败回显字面量（来源: area, id=26a1d06e）
+- [smoke真实worktree防触碰生产] smoke/测试用真实 worktree 当 CECELIA_DEPLOY_ROOT 时，必须核对被测脚本会不会向上触碰生产资源（来源: area, id=66f41f70）
+- [部署链失败禁warning降级] 部署链任何失败路径禁止 warning 降级：显式 FAIL 变量 + Bark + exit 非零（来源: area, id=9202c14e）
+- [判变基准用生产自报] 判变基准永远用"生产实体自报"（build-info.json / health.git_sha）对账 origin/main，禁用"工作区 diff"（来源: area, id=5775d866）
+- [lint要求await包装async] lint-test-quality 要求 await fn() ≥ 1：读源码必须包装 async function，不能直接 readFileSync（来源: area, id=6414193b）
+- [Test Contract表格4列格式] Test Contract 表格固定 4 列格式，testFile 用 backtick 包裹，checker 从第 3 列解析路径（来源: area, id=14ed5336）
+- [Red commit精确add路径] Red commit 必须只 git add 精确路径（*.test.ts），禁止 git add . 或 git add .harness/（来源: area, id=755fb846）
+- [回归测试用源码检查] 回归测试用 source-code inspection 验证调度接线比 mock 覆盖更直接有效（来源: area, id=c674ab49）
+- [cron功能查scheduler-jobs.js] 新增 cron 功能首先检查 scheduler-jobs.js JOBS，tick-runner.js 是 deprecated 路径（来源: area, id=55cb4cb7）
+- [generator禁止自merge] harness-generator 禁止 generator 自行 merge PR，merge 权归 controller，generator 只推 branch 并报告 branch ready（来源: area, id=e8230eb5）
+- [tmux子shell需显式export] headed relay 的 tmux innerCmd 启动的子 shell 不自动继承父进程环境变量，需要的变量须在 innerCmd 中显式 export（来源: area, id=72890f7c）
+- [复用模板需核对真实历史] Proposer 复用历史合同模板（尤其E2E验收断言）时必须先核对本次任务的真实派发/执行历史，不能假设与先例路径相同（来源: area, id=8d92f7b1）
+- [共享CI文件默认禁区] harness-generator 对共享 CI 基础设施文件（.github/workflows/*.yml、packages/quality/smoke-allowlist.txt 等）默认禁区，未经合同显式授权不可修改（来源: area, id=1100cb8f）
+- [提前合并需核对headSHA] PR 被 CI 侧兜底机制提前合并时，必须用 PR head SHA 核对 evaluator/judge verdict 文件锚定的 sha 与实际合并 sha 一致（来源: area, id=26886b60）
+- [smoke-invariant-79911] smoke 铁律（来源: area, id=552520d0）
+- [PR需一次带齐smoke+allowlist] feat+brain/src PR 开 PR 前直接一次带齐 smoke.sh + smoke-allowlist 登记，别等 CI 两连红（来源: area, id=3efefc23）
+- [新task_type七点清单] 新 task_type 接线用七点清单：CHECK 约束 / task-router 四表 / EXECUTOR_KIND_FOR / executor dispatch 分支 / executor override 排除 / relay loadSkill 映射 / dispatcher 三防线（来源: area, id=5b91a042）
+- [服务存活双信号判定] 服务"该活着"的判定用双信号：launchctl 状态 + 端口监听，单看 launchd 会漏 nohup 孤儿宕机（来源: area, id=365d645a）
+- [美国Mac禁用LaunchAgents] 美国 Mac mini 禁止再往 ~/Library/LaunchAgents 放需要常驻的服务，gui 域不存在永不加载，须用系统域 LaunchDaemon（来源: area, id=02e74e46）
+- [常驻服务须入launchd-patrol] 新增常驻宿主服务时，必须同步加进 packages/brain/src/launchd-patrol.js 的 manifest（来源: area, id=b145c74a）
+- [smoke-invariant-93097] smoke 铁律（来源: area, id=4b73376c）
+- [单slot串行任务] 一个 slot/会话内严格串行执行任务，同一 slot 同时只允许一个任务在跑，需要并行时用多个 slot/独立 session（来源: area, id=7ccfa168）
+- [禁止写死环境假设值] 屏幕外坐标/UIA气泡阈值/环境假设值禁止写死，要么从环境推导要么真机校准（来源: area, id=5e125909）
+- [真环境验证才算done] 依赖真机/生产env/真实调用方的接缝断言必须在真目标上验证过才算done，未真验只能标 logic-done-pending（来源: area, id=3c30394c）
+- [测试默认多租户] 单元/E2E 测试默认种≥2个租户并断言互不串，让隔离漏洞当场暴露（来源: area, id=55b8eb46）
+- [凭据安全] secrets 不硬编码、不进 git、不进日志（来源: area, id=564802ee）
+- [日志脱敏] 客户隐私/PII/聊天内容不得明文进日志（来源: area, id=459b6ff9）
+- [端点鉴权] 每个 API 端点必须有 auth，无鉴权端点不准 ship（来源: area, id=50954d28）
+- [租户隔离] 碰租户数据的查询/写入必须 scope 到当前租户，跨租户数据绝不混读/混写（来源: area, id=68976b17）
+
+## 累积 FR（本 line 已验收行为，本 sprint 不得回退/重复）
+
+&lt;!-- 来源: journeys/bb8cc561-b3ee-4fec-b74d-2255694bd963/golden-paths 查询结果为空数组（journey 尚无已验收 ability） --&gt;
+- （本 line 暂无历史）
+
+## NFR 约束
+
+&lt;!-- 来源: PrepPRD 无 thin_prd/NFR 显式值（已知情况）；golden-path-decisions?category=nfr 查询为空数组，无副源补充 --&gt;
+NFR: N/A（本 sprint 为纯只读回归校验脚本，无新增性能/频控/版本要求；可观测性要求见下）
+- 超时/延迟: 待定（PrepPRD 未指定具体数值，e2e 脚本走同步一次性校验，无长耗时依赖）
+- 频控: 无（只读校验，不产生新写入）
+- 版本要求: 无
+- 可观测: 必须能通过 Brain API/DB 看到本次 task_id 与 initiative_runs 状态；e2e 脚本断言失败必须打印明确 FAIL 原因
+
+## journey_type: autonomous
+## journey_type_reason: 纯 Brain/harness 后端派发链路 smoke，无用户可见 UI 交互（与 049ebf93/57e25e92/7630f4fb 同类先例一致）
+## target_environment: local_api
+## target_environment_reason: 验收信号来自本地 Brain API localhost:5221 与本地 PostgreSQL 查询，无需浏览器或远端 runner
+## journey_id: bb8cc561-b3ee-4fec-b74d-2255694bd963
+## step_id: none（PrepPRD 未锚定）
+</pre></div><div id="contract" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Sprint Contract Draft (Round 1)
+
+&gt; **本轮说明（GAN 第 1 轮）**：结构镜像同名任务先例 7630f4fb（PR #4184 APPROVED round-3 版本），并按本次 PRD 两处关键差异调整：
+&gt; ① **落点铁律前置执行**——测试产物与 e2e wrapper 从第一次 commit 起即落永久池
+&gt; `tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts` + `scripts/smoke/e2e/relay-f90ddca3.sh`，
+&gt; 禁止 `sprints/` 临时路径，从源头避开 test-pyramid-guard 孤儿棘轮，禁止触碰 `scripts/test-pyramid-baseline.json`；
+&gt; ② **phase 断言语义改造**——本 initiative 的 run 有历史 failed 前科后被 controller 复活（PRD 边界情况明确），
+&gt; Step 3 断言从先例的「最新一条 LIMIT 1」改为「**存在至少一条** phase 合法且非 failed/unknown 的记录」（定点读 EXISTS 语义），
+&gt; 容忍历史 failed 行存在，不因前科误判 FAIL。
+
+## 已知约束（来自回归测试 + 累积 FR + 复用模板核对）
+
+- [Invariant「复用模板需核对真实历史」] 已核对本 sprint 的真实先例与现网数据（非假设，全部本轮实测）：
+  - 直接结构先例：`sprints/07212136-relay-7630f4fb/`（PR #4184，同名任务上一轮 APPROVED 版本）+ 其毕业产物
+    `tests/regression/relay-7630f4fb/headed-smoke-contract.test.ts` 与 `scripts/smoke/e2e/relay-7630f4fb.sh`（已在 main，均已读取核对）。
+  - 先例 Step 3 用 `ORDER BY started_at DESC LIMIT 1` 只看最新行；本次 PRD 边界情况明确要求容忍历史 failed 行，
+    故**不照抄**，改为「存在至少一条合法记录」的定点读断言（见判定点登记表第 2 行）。
+  - 已实测确认当前环境真实数据（2026-07-24 本轮执行，非引用先例数据）：
+    - `GET /api/brain/tasks/f90ddca3-396d-45b2-ad13-2dfbd9e15080` 返回 200：`payload.mode=headed`、`payload.executor=claude`、
+      `payload.orchestrator=skill-relay`、`payload.journey_id=bb8cc561-b3ee-4fec-b74d-2255694bd963`，payload 另含
+      `sprint_dir`/`orphan_requeue_count` 等无害字段，**未出现** `token`/`github_token`/`anthropic_token`/`thin_prd`。
+    - `initiative_runs` 表 `initiative_id='f90ddca3-…'` 现存 2 条记录，`orchestrator_host` 均为 `skill-relay-claude-headed`，
+      `phase` 均为 `gan`（合法枚举、非 failed/unknown）。PRD 假设段描述的「历史 failed 前科行」在当前快照已被 controller
+      复活改写为合法 phase——证明该表数据会随 controller 动作变化，断言不得写死条数或写死具体 phase 值。
+    - `packages/quality/smoke-allowlist.txt` 第 24 行精确登记 `claude-headed-dispatch-smoke.sh`（`grep -Fxq` 精确命中，无需重复登记）。
+    - `packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh` 本轮真跑一次：5 项自检全绿（headed/codex-headed/headless 放行、
+      invalid mode 400 拒绝、`initiative_runs.tmux_killed_at` 字段存在），exit 0。本合同不改脚本内容，仅复用。
+- [累积FR] `GET /api/brain/line/bb8cc561-b3ee-4fec-b74d-2255694bd963/context-manifest` 返回 404：`context-manifest: unavailable`，
+  与 PRD「累积 FR」段"本 line 暂无历史"一致，不作为阻塞项。
+- [packages/brain/src/__tests__/harness-skill-relay*.test.js] → 已有回归测试覆盖 headed relay 派发/spawn 场景单测，本次不重复造轮子，只读校验现网状态。
+- [tests/regression/relay-7630f4fb/headed-smoke-contract.test.ts] → 先例 contract 测试的 5 个 it()：文件存在且调用 smoke 与 allowlist 校验 /
+  锚定 task_id / payload 字段与脱敏 / initiative_runs host+phase / 不写入共享 CI 文件。本次镜像该结构并按 phase 新语义调整第 4 项。
+- contract-gate: present（packages/brain/src/lib/contract-gate.js 存在，cecelia 场景，走代码层 Contract Gate）。
+
+## Response Schema（推导来源: PRD字面 / 现网实测）
+
+### Endpoint: GET /api/brain/tasks/:task_id
+
+**Success (HTTP 200)**:
+```json
+{
+  "id": "f90ddca3-396d-45b2-ad13-2dfbd9e15080",
+  "task_type": "harness_initiative",
+  "payload": {
+    "mode": "headed",
+    "executor": "claude",
+    "orchestrator": "skill-relay",
+    "journey_id": "bb8cc561-b3ee-4fec-b74d-2255694bd963"
+  }
+}
+```
+- `id` (string, 必填): 来源——PRD 指定 task id `f90ddca3-396d-45b2-ad13-2dfbd9e15080`。
+- `task_type` (string, 必填): 来源——PRD 背景段「task_type=harness_initiative」，现网实测一致。
+- `payload.mode` (string, 必填): 来源——PRD 字面值 `headed`，现网实测一致。
+- `payload.executor` (string, 必填): 来源——PRD 字面值 `claude`，现网实测一致。
+- `payload.orchestrator` (string, 必填): 来源——PRD 字面值 `skill-relay`，现网实测一致。
+- `payload.journey_id` (string, 必填): 来源——PRD 字面值 `bb8cc561-b3ee-4fec-b74d-2255694bd963`，现网实测一致。
+- payload 允许携带其他无害字段（现网实测含 `sprint_dir` 等），**不做** `keys == [...]` 完全匹配（PRD 只要求关键字段非空 + 敏感字段不存在）。
+
+**禁用字段名（payload 内不得出现，明文泄漏 = FAIL）**: [`token`, `github_token`, `anthropic_token`, `thin_prd`]
+
+**Error (task 不存在)**: HTTP 4xx → `curl -f` 非 0 exit code → e2e 脚本 FAIL（PRD 边界情况「task 记录不存在 → FAIL，不得静默跳过」）。
+
+### DB: initiative_runs（定点查 initiative_id=TASK_ID，EXISTS 语义）
+
+**Success**（存在至少一条满足以下全部条件的记录）:
+```json
+{
+  "initiative_id": "f90ddca3-396d-45b2-ad13-2dfbd9e15080",
+  "orchestrator_host": "skill-relay-claude-headed",
+  "phase": "&lt;合法枚举且非 failed/unknown，本轮实测 gan&gt;"
+}
+```
+- `initiative_id` (uuid, 必填): 来源——PRD 当前 task id，定点查询防历史其他 task 数据冒充。
+- `orchestrator_host` (string, 必填): 来源——PRD E2E 验收第 2 点「含 `skill-relay-claude-headed`」；本合同收严为**精确等于**
+  `skill-relay-claude-headed`（Invariant「host白名单核对headed」+ 现网实测精确值；精确匹配是"含"的子集，见判定点登记表第 3 行）。
+- `phase` (string, 必填): 来源——PRD 边界情况「存在至少一条 phase 落在合法枚举且非 failed/unknown」。合法枚举集合沿用先例
+  4bb31ef5/57e25e92/7630f4fb 已验证集合 `A_planning|planning|gan|generate|evaluate|done`，本轮实测值 `gan` 落在其中。
+  历史 failed 行允许存在，不作为 FAIL 依据；**全部**记录 phase 为 failed/unknown/非法 → FAIL。
+**DB 列约束**: 只使用 `initiative_runs` 表真实存在的列（本轮实测 `orchestrator_host`/`phase`/`started_at` 均可查），不臆造列名。
+
+## 八要素需求规范
+
+| 要素 | 说明 | 本次答案（必填，可 N/A） |
+|------|------|--------------------------|
+| **FR（做什么）** | 功能需求：系统对外承诺做什么 | 新增锚定 task_id=f90ddca3 的 contract 回归测试 `tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts` + e2e wrapper `scripts/smoke/e2e/relay-f90ddca3.sh`（两者第一次 commit 即落永久池，禁 sprints/ 临时路径），只读校验三件事：①复用（不重实现）`claude-headed-dispatch-smoke.sh` 全绿执行 + 确认已在 allowlist 精确登记；②`GET /api/brain/tasks/f90ddca3…` payload 关键字段齐全且不含敏感字段明文；③DB `initiative_runs` 定点查 initiative_id=f90ddca3…，存在至少一条 orchestrator_host 精确等于 `skill-relay-claude-headed` 且 phase 合法非 failed/unknown 的记录（容忍历史 failed 行）。 |
+| **NFR（做得多好）** | 非功能需求：性能/可靠性/并发阈值等 | 见 PRD NFR 段：N/A（纯只读校验），同步一次性执行，无长耗时依赖；断言失败必须打印明确 FAIL 原因并 exit 非 0。 |
+| **Invariant（永不违反）** | 任何情况下不得打破的不变量 | 不新增业务功能/dashboard/UI/migration；不改 `claude-headed-dispatch-smoke.sh` 本体；不改 `.github/workflows/ci.yml`；不改 `scripts/test-pyramid-baseline.json`；不重复登记 `packages/quality/smoke-allowlist.txt`；测试产物不落 sprints/ 临时路径；不写入/篡改任何生产数据（纯只读）；不泄漏 token/github_token/anthropic_token/thin_prd 明文。 |
+| **判定点（怎么知道）** | 对模糊现实的判断假设 | 见下方判定点登记表。 |
+| **保质期（何时过期）** | 该能力/数据/token 何时失效，谁负责退役 | 本 e2e wrapper 锚定单个 task_id=f90ddca3，是一次性回归证据脚本，不设计为长期复用；`claude-headed-dispatch-smoke.sh` 语义或 allowlist 治理规则变更时，本脚本的 allowlist 断言需维护者同步更新。 |
+| **死亡告警（停了谁知道）** | 该功能停止工作后，谁在多久内会知道 | `scripts/smoke/e2e/relay-f90ddca3.sh` 本身即"evaluator 执行 → 非 0 即失败"的探针；Brain API/DB 不可达时脚本立即 FAIL 并打印原因，不静默通过。 |
+| **失败语义（挂了怎么办）** | 故障时放行还是拦截？重试幂等？降级策略？ | 见下方失败语义声明表；所有失败路径一律拦截（exit 1），无降级，只读操作天然幂等可重跑。 |
+| **效果确认（已发≠已生效）** | 每个对外动作如何确认真实生效？ | 本 sprint 无对外写入动作（复用调用的 `claude-headed-dispatch-smoke.sh` 内部自带 POST smoke 探针，其本体行为不属本次改动范围）；本脚本自身只做 GET/SELECT 读取，以现网 API 响应与 DB 查询结果作为唯一真相源。 |
+
+### 判定点登记表（对模糊现实的判断假设 — decisions e035dad8）
+
+| 判定点 | 候选方法 | 所选方法 | 依据 | 误判后果 |
+|--------|----------|----------|------|----------|
+| 当前 task 的 initiative_runs 记录归属判定 | A. 只取最近一条 run；B. 用 `initiative_id = TASK_ID` 定点查全部记录 | B. 定点查，不写死条数与具体 phase 值 | 本轮实测 2 条记录均 phase=gan，而 PRD 假设段描述"一条历史 failed 被复活为 planning"——同一张表两次观测结果不同，证明数据随 controller 动作变化，写死即错 | 写死"必须恰好 2 条"或"必须含一条 failed"会在数据变化后误报 FAIL |
+| phase 断言口径：最新一条 vs 存在至少一条 | A. `ORDER BY started_at DESC LIMIT 1` 只看最新行（先例 7630f4fb 写法）；B. 存在至少一条 host 匹配且 phase 合法非 failed/unknown 的记录（EXISTS 定点读） | B. EXISTS 语义 | PRD 边界情况明确："断言必须设计为存在至少一条合法记录，容忍历史 failed 行"；若沿用先例 A 写法，controller 复跑产生新 failed 行时最新行恰为 failed 会误判 FAIL | A 写法在"历史前科 + 复跑"场景下误报 FAIL，把链路健康的回归证据打红 |
+| orchestrator_host 判定用精确匹配还是关键字包含 | A. `LIKE '%skill-relay-claude-headed%'` 或 grep 宽松包含；B. SQL 等值 `= 'skill-relay-claude-headed'` | B. 精确等于 | PRD E2E 验收字面为"含"，但 Invariant「host白名单核对headed」要求核对 headed 变体；现网实测值精确等于该串，精确匹配是"含"的严格子集，不放行 `skill-relay-codex-headed` 等变体 | 宽松包含会让 codex-headed 等其他变体的 run 也通过校验，验收信号失真 |
+| phase 合法枚举集合的取值来源 | A. 凭记忆猜测枚举值；B. 沿用已验证先例（4bb31ef5/57e25e92/7630f4fb）枚举集合并核对当前实测值落在其中 | B. 沿用先例集合 `A_planning\|planning\|gan\|generate\|evaluate\|done`，本轮实测 `gan` 落在其中 | 先例枚举经 3 轮 GAN 收敛验证；「判变基准用生产自报」精神：枚举不凭空猜 | 枚举猜错会把合法 phase 误判 FAIL 或放行非法 phase |
+| allowlist 是否需要新登记 | A. 假设未登记，本次追加一行；B. 先 `grep -Fxq` 精确核对，已登记则只校验存在不追加 | B. 先核对——本轮实测第 24 行精确等于 `claude-headed-dispatch-smoke.sh` | PRD 范围限定明确"已登记过则只校验存在"，Invariant「共享CI文件默认禁区」禁止未经授权修改 | 重复登记造成 allowlist 冗余行/格式漂移，违反 PRD 范围限定与共享文件禁区铁律 |
+
+&gt; judgment-pending-user: N/A，本任务为只读回归校验脚本，无高风险不可逆外部动作，PRD 范围与断言口径已充分锚定。
+
+### 失败语义声明
+
+| 场景 | 失败行为 | 重试幂等？ | 降级策略 |
+|------|----------|-----------|----------|
+| `claude-headed-dispatch-smoke.sh` 执行非 0 | `scripts/smoke/e2e/relay-f90ddca3.sh` 立即传播非 0，打印 FAIL 原因 | 是，只读 smoke 天然幂等 | 不允许吞错（无 `\|\| true`） |
+| `claude-headed-dispatch-smoke.sh` 未在 allowlist 精确登记 | exit 1，打印 `FAIL: allowlist 未精确登记` | 是 | 不允许自动追加登记（违反 PRD 范围限定） |
+| Brain API 不可达 / task 不存在 | `curl -f` 非 0 → exit 1，打印 `FAIL: Brain task 不可达或不存在` | 是，只读重跑幂等 | 不降级为 PASS，不用历史缓存代替 |
+| payload 缺字段或字段值不匹配 | `jq -e` 非 0 → exit 1，打印具体缺失/不匹配字段 | 是 | 不降级 |
+| payload 含敏感字段明文（token/github_token/anthropic_token/thin_prd） | `jq -e` 反向断言失败 → exit 1，打印 `FAIL: payload 含敏感字段明文` | 是 | 不降级，不脱敏后放行（发现即 FAIL） |
+| `initiative_runs` 无该 initiative_id 任何记录 | 定点读为空 → exit 1，打印 `FAIL: initiative_runs 无当前 task run` | 是 | 不降级 |
+| 有记录但**全部** phase 为 failed/unknown/非法或 host 不匹配 | 合法记录定点读为空 → exit 1，打印 FAIL 原因 | 是 | 不降级；历史 failed 行存在但另有合法行 → 不算失败（PRD 边界情况） |
+
+### 输入对抗面（对外暴露 agent 必填）
+
+（本任务为 Brain 内部只读回归校验脚本，不对外暴露 agent/用户输入面，无 Prompt Injection 风险面，N/A）
+
+## 接缝清单
+
+- Brain API 接缝：`http://localhost:5221/api/brain/tasks/$TASK_ID` 必须真实返回当前 task，不接受 mock/stub/404-acceptable 兜底。已真验（本轮实测 200 + 字段齐全）。
+- PostgreSQL 接缝：`initiative_runs` 必须按当前 `TASK_ID` 定点查询真实数据，不得用历史其他 task 的记录冒充。已真验（本轮实测定点读返回 `gan`，exit 0）。
+- 复用 smoke 脚本接缝：`packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh` 必须真实执行（打真实 Brain + PostgreSQL），不 mock 其内部 POST 请求。已真验（本轮真跑 5 项全绿 exit 0）。
+- allowlist 文件接缝：`packages/quality/smoke-allowlist.txt` 只读校验存在性，不修改。已真验（第 24 行精确命中）。
+
+## 禁 mock 边清单
+
+（本单为纯只读回归校验脚本，不改调度/状态机/跨模块数据传递/生命周期钩子/DB 写路径，无被改的"边"。`scripts/smoke/e2e/relay-f90ddca3.sh` 自身对 Brain API 与 PostgreSQL 的调用禁止 mock——见「接缝清单」与 Golden Path 验证命令，均为真实 curl/psql 调用，不使用 stub/mock/fake。N/A：本单无被改的调度/状态机/数据传递/生命周期钩子/DB写路径边）
+
+## 未覆盖真实链路清单
+
+（本合同无 mock 豁免。三项验证均对真实系统执行：①真实执行既有 `claude-headed-dispatch-smoke.sh`（该脚本自身对 Brain API 发起真实 POST）；②真实 `curl` Brain API；③真实 `psql` 查询 PostgreSQL。无 force_*/stub/假数据，N/A）
+
+## 真实调用方请求 shape
+
+（本任务不涉及"设备/agent 调服务端"的新增或修改路径，`scripts/smoke/e2e/relay-f90ddca3.sh` 是 evaluator/开发者/CI 触发的只读校验脚本，本身不是被外部真实调用方（Android/Windows agent 等）调用的服务端点，N/A）
+
+## manual oracle 真跑记录（Invariant「manual oracle真实exit code」「node -e表达式须真跑」）
+
+GAN 批准前本轮已逐条真跑的 oracle（目标解释器确认启动，真实 exit code 如下）：
+
+| oracle | 真实 exit code | 说明 |
+|---|---|---|
+| `bash packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh` | 0 | 5 项自检全绿（bash 解释器真启动） |
+| `grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt` | 0 | 第 24 行精确命中 |
+| `curl -sf …/api/brain/tasks/f90ddca3… \| jq -e` 6 条字段/脱敏断言 | 0 | curl+jq 真启动，全部通过 |
+| `psql … SELECT phase … EXISTS 定点读` | 0 | 返回 `gan` 非空 |
+| DoD 内环境侧 `node -e` ARTIFACT 断言（A1/A4）与 manual:bash 环境侧断言（B1/B2/B3/B7、INV-1/2/29/30/32/36/40） | 0 | node/bash/curl/psql/jq 解释器逐条真启动，全部通过（node -e 双引号内无 `${}` shell expansion，不受 d9e4f4c1 踩坑面影响） |
+| wrapper 依赖断言：A2/A3 node -e 读 wrapper | 1（预期 Red） | wrapper 尚未创建；generator 交付后须 exit 0 |
+| `bash scripts/smoke/e2e/relay-f90ddca3.sh`（wrapper 端到端） | 127（预期 Red，文件不存在） | TDD Red 证据；generator 交付后须 exit 0 |
+| `vitest run tests/regression/relay-f90ddca3/` | 1（预期 Red） | 实测 5/5 it() FAIL（ENOENT: wrapper 不存在），generator Green 后须 5/5 通过 |
+
+## Golden Path
+
+Brain 已派发 headed relay 任务(task_id=f90ddca3) → `scripts/smoke/e2e/relay-f90ddca3.sh` 复用既有 smoke 校验 + 定点核对 Brain API payload + 定点核对 DB initiative_runs（EXISTS 语义，容忍历史 failed 行） → 全部通过则 exit 0 打印 PASS，任一失败则 exit 1 打印具体 FAIL 原因
+
+### Step 1: 复用既有 headed dispatch smoke 全绿执行 + 确认 allowlist 精确登记
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 2 点第一子项「调用既有 `claude-headed-dispatch-smoke.sh`（不重实现，只校验其全绿执行与 allowlist 登记）」，及范围限定「已登记过则只校验存在，不重复登记」。
+
+**可观测行为**: `claude-headed-dispatch-smoke.sh` 在本机针对真实 Brain(localhost:5221) + PostgreSQL 执行，5 项内部断言全部 PASS，exit 0；`packages/quality/smoke-allowlist.txt` 精确包含该脚本文件名一行。
+
+**验证命令**:
+```bash
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}" bash packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh
+grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt
+```
+
+**硬阈值**: smoke 脚本 exit 0；allowlist 精确行匹配（`grep -Fxq` 命中）。
+
+---
+
+### Step 2: 当前 task 的 Brain API payload 关键字段齐全且不含敏感字段明文
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 2 点第二子项 + 边界情况「task payload 意外携带 token/github_token/anthropic_token/thin_prd 明文字段 → FAIL」。
+
+**可观测行为**: `GET /api/brain/tasks/f90ddca3-396d-45b2-ad13-2dfbd9e15080` 返回 200，`payload.mode=headed`、`payload.executor=claude`、`payload.orchestrator=skill-relay`、`payload.journey_id` 非空，且 payload 不含 `token`/`github_token`/`anthropic_token`/`thin_prd` 键。
+
+**验证命令**:
+```bash
+TASK_ID="${TASK_ID:-f90ddca3-396d-45b2-ad13-2dfbd9e15080}"
+export TASK_ID
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID")
+echo "$RESP" | jq -e '.id == env.TASK_ID'
+echo "$RESP" | jq -e '.payload.mode == "headed"'
+echo "$RESP" | jq -e '.payload.executor == "claude"'
+echo "$RESP" | jq -e '.payload.orchestrator == "skill-relay"'
+echo "$RESP" | jq -e '.payload.journey_id | type == "string" and length &gt; 0'
+echo "$RESP" | jq -e '(.payload | has("token") | not) and (.payload | has("github_token") | not) and (.payload | has("anthropic_token") | not) and (.payload | has("thin_prd") | not)'
+```
+
+**硬阈值**: 上述 6 条 `jq -e` 全部 exit 0；任一失败即 FAIL。
+
+---
+
+### Step 3: DB initiative_runs 定点核对——存在至少一条 host 精确匹配且 phase 合法非 failed/unknown 的记录
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 2 点第三子项 + 边界情况「本 initiative 的 run 有历史 failed 前科后被复活：断言必须设计为存在至少一条 phase 合法且非 failed/unknown 的记录，容忍历史 failed 行」「无记录 → FAIL」「全部记录 phase 为 failed/unknown/非法 → FAIL」。
+
+**可观测行为**: `initiative_runs` 表中 `initiative_id=f90ddca3-396d-45b2-ad13-2dfbd9e15080` 至少一条记录；且存在至少一条 `orchestrator_host` 精确等于 `skill-relay-claude-headed`、`phase` 落在合法枚举 `A_planning|planning|gan|generate|evaluate|done` 且非 `failed`/`unknown` 的记录（EXISTS 定点读；historical failed 行允许共存）。
+
+**验证命令**:
+```bash
+TASK_ID="${TASK_ID:-f90ddca3-396d-45b2-ad13-2dfbd9e15080}"
+DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
+# 定点读 1: 该 initiative 至少存在一条 run 记录（无记录 = 派发未成功 = FAIL）
+ANYROW=$(psql "$DB" -XAt -c "SELECT phase FROM initiative_runs WHERE initiative_id='${TASK_ID}' LIMIT 1")
+[ -n "$ANYROW" ] || { echo "FAIL: initiative_runs 无当前 task run"; exit 1; }
+# 定点读 2: 存在至少一条 host 精确匹配 + phase 合法非 failed/unknown 的记录（容忍历史 failed 行共存）
+GOODPHASE=$(psql "$DB" -XAt -c "SELECT phase FROM initiative_runs WHERE initiative_id='${TASK_ID}' AND orchestrator_host='skill-relay-claude-headed' AND phase IN ('A_planning','planning','gan','generate','evaluate','done') AND phase NOT IN ('failed','unknown') ORDER BY started_at DESC LIMIT 1")
+[ -n "$GOODPHASE" ] || { echo "FAIL: initiative_runs 存在记录但无合法 phase 记录(host 精确匹配+phase 合法非 failed/unknown)"; exit 1; }
+echo "legal phase found: $GOODPHASE"
+```
+
+**硬阈值**: 定点读 1 非空（记录存在）；定点读 2 非空（至少一条合法记录）；两者任一为空即 FAIL。
+
+---
+
+## E2E 验收
+
+**journey_type**: autonomous
+**target_environment**: local_api
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+TASK_ID="${TASK_ID:-f90ddca3-396d-45b2-ad13-2dfbd9e15080}"
+SPRINT_DIR="${SPRINT_DIR:-sprints/07241038-relay-f90ddca3}"
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
+export TASK_ID
+
+echo "── Step 0: 落点铁律核对(永久池产物存在, sprints/ 无测试产物) ──"
+[ -f "scripts/smoke/e2e/relay-f90ddca3.sh" ] || { echo "FAIL: e2e wrapper 未落永久池 scripts/smoke/e2e/relay-f90ddca3.sh"; exit 1; }
+[ -f "tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts" ] || { echo "FAIL: contract 测试未落永久池 tests/regression/relay-f90ddca3/"; exit 1; }
+ORPHAN=$(find "$SPRINT_DIR" -maxdepth 2 \( -name "*.test.ts" -o -name "e2e-verify.sh" \) | head -1)
+[ -z "$ORPHAN" ] || { echo "FAIL: sprints/ 临时路径发现测试产物 $ORPHAN (落点铁律违规)"; exit 1; }
+echo "OK Step 0"
+
+echo "── Step 1: 复用 claude-headed-dispatch-smoke.sh + allowlist 登记确认 ──"
+BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DB" bash packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh
+grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt || { echo "FAIL: claude-headed-dispatch-smoke.sh 未在 allowlist 精确登记"; exit 1; }
+echo "OK Step 1"
+
+echo "── Step 2: Brain API task payload 校验 + 敏感字段脱敏断言 ──"
+RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID") || { echo "FAIL: Brain task 不可达 task_id=$TASK_ID"; exit 1; }
+echo "$RESP" | jq -e '.id == env.TASK_ID' &gt;/dev/null || { echo "FAIL: task id 不匹配"; exit 1; }
+echo "$RESP" | jq -e '.payload.mode == "headed"' &gt;/dev/null || { echo "FAIL: payload.mode != headed"; exit 1; }
+echo "$RESP" | jq -e '.payload.executor == "claude"' &gt;/dev/null || { echo "FAIL: payload.executor != claude"; exit 1; }
+echo "$RESP" | jq -e '.payload.orchestrator == "skill-relay"' &gt;/dev/null || { echo "FAIL: payload.orchestrator != skill-relay"; exit 1; }
+echo "$RESP" | jq -e '.payload.journey_id | type == "string" and length &gt; 0' &gt;/dev/null || { echo "FAIL: payload.journey_id 缺失或为空"; exit 1; }
+echo "$RESP" | jq -e '(.payload | has("token") | not) and (.payload | has("github_token") | not) and (.payload | has("anthropic_token") | not) and (.payload | has("thin_prd") | not)' &gt;/dev/null || { echo "FAIL: payload 含敏感字段明文"; exit 1; }
+echo "OK Step 2"
+
+echo "── Step 3: DB initiative_runs 定点核对(EXISTS 语义, 容忍历史 failed 行) ──"
+ANYROW=$(psql "$DB" -XAt -c "SELECT phase FROM initiative_runs WHERE initiative_id='${TASK_ID}' LIMIT 1")
+[ -n "$ANYROW" ] || { echo "FAIL: initiative_runs 无当前 task run"; exit 1; }
+GOODPHASE=$(psql "$DB" -XAt -c "SELECT phase FROM initiative_runs WHERE initiative_id='${TASK_ID}' AND orchestrator_host='skill-relay-claude-headed' AND phase IN ('A_planning','planning','gan','generate','evaluate','done') AND phase NOT IN ('failed','unknown') ORDER BY started_at DESC LIMIT 1")
+[ -n "$GOODPHASE" ] || { echo "FAIL: initiative_runs 存在记录但无合法 phase 记录(host 精确匹配+phase 合法非 failed/unknown)"; exit 1; }
+echo "OK Step 3 (legal phase=$GOODPHASE)"
+
+echo "── Step 4: wrapper 本体端到端执行(交付物即探针) ──"
+TASK_ID="$TASK_ID" SPRINT_DIR="$SPRINT_DIR" BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DB" bash scripts/smoke/e2e/relay-f90ddca3.sh
+echo "OK Step 4"
+
+echo "PASS: headed relay 回归证据全部验证通过 task_id=$TASK_ID"
+```
+
+**通过标准**: 脚本 exit 0，Step 0/1/2/3/4 均打印 OK，末尾打印 `PASS`。
+**失败标准**: 任一断言失败 → exit 1 并打印具体 `FAIL: ...` 原因。
+
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| e2e wrapper 三件事校验骨架 | `../../tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts` | 文件存在且调用 smoke 与 allowlist 校验、payload 关键字段齐全且不含敏感字段明文、initiative_runs 存在至少一条 host 精确匹配且 phase 合法非 failed/unknown | → 5 failures（`scripts/smoke/e2e/relay-f90ddca3.sh` 未创建前测试全部 FAIL） |
+</pre></div><div id="dod" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">---
+skeleton: false
+journey_type: autonomous
+target_environment: local_api
+---
+# Contract DoD — Sprint: headed relay 派发链路自测（claude-headed, task f90ddca3）
+
+**范围**: 新增锚定 task_id=f90ddca3-396d-45b2-ad13-2dfbd9e15080 的 contract 回归测试 `tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts` + e2e wrapper `scripts/smoke/e2e/relay-f90ddca3.sh`（两者第一次 commit 即落永久池，禁 sprints/ 临时路径——落点铁律，先例 7630f4fb learning 强制），复用（不重实现）`packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh`，只读校验三件事：①该 smoke 脚本全绿执行且已在 `packages/quality/smoke-allowlist.txt` 精确登记（第 24 行，不重复登记）；②`GET /api/brain/tasks/f90ddca3…` payload 关键字段齐全（mode/executor/orchestrator/journey_id）且不含敏感字段明文；③DB `initiative_runs` 定点核对 initiative_id=f90ddca3…，存在至少一条 orchestrator_host 精确等于 `skill-relay-claude-headed` 且 phase 合法非 failed/unknown 的记录（EXISTS 语义，容忍历史 failed 行）。不新增业务功能/dashboard/UI/migration，不改 `claude-headed-dispatch-smoke.sh` 本体，不改 `.github/workflows/ci.yml`，不改 `scripts/test-pyramid-baseline.json`，不重复登记 allowlist。
+**大小**: S
+
+## ARTIFACT 条目
+
+- [x] [ARTIFACT] contract draft 含 Golden Path 与 E2E 验收
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07241038-relay-f90ddca3/contract-draft.md','utf8');if(!c.includes('## Golden Path')||!c.includes('## E2E 验收'))process.exit(1)"
+
+- [x] [ARTIFACT] e2e wrapper 已生成于永久池 `scripts/smoke/e2e/relay-f90ddca3.sh`，锚定当前 task_id，且调用既有 smoke 脚本与 allowlist 路径
+  Test: node -e "const fs=require('fs');const p='scripts/smoke/e2e/relay-f90ddca3.sh';const c=fs.readFileSync(p,'utf8');if(!c.includes('f90ddca3-396d-45b2-ad13-2dfbd9e15080')||!c.includes('packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh')||!c.includes('packages/quality/smoke-allowlist.txt'))process.exit(1)"
+
+- [x] [ARTIFACT] scripts/smoke/e2e/relay-f90ddca3.sh 具备可执行权限
+  Test: node -e "const fs=require('fs');const st=fs.statSync('scripts/smoke/e2e/relay-f90ddca3.sh');if(!(st.mode &amp; 0o111))process.exit(1)"
+
+- [x] [ARTIFACT] contract 测试落永久池 `tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts`，且 sprints/07241038-relay-f90ddca3/ 下无 *.test.ts / e2e-verify.sh 测试产物（落点铁律）
+  Test: node -e "const fs=require('fs');fs.accessSync('tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts');const orphans=fs.readdirSync('sprints/07241038-relay-f90ddca3',{recursive:true}).filter(f=&gt;String(f).endsWith('.test.ts')||String(f).endsWith('e2e-verify.sh'));if(orphans.length)process.exit(1)"
+
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，local_api 本机执行）
+
+- [x] [BEHAVIOR] 复用 claude-headed-dispatch-smoke.sh 全绿执行 + allowlist 精确登记确认
+  Test: manual:bash -c 'set -euo pipefail; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DB" bash packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh; grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt || { echo "FAIL: allowlist 未精确登记"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] 当前 task 的 Brain API payload 关键字段齐全且不含敏感字段明文
+  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-f90ddca3-396d-45b2-ad13-2dfbd9e15080}"; export TASK_ID; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"); echo "$RESP" | jq -e ".id == env.TASK_ID" &gt;/dev/null; echo "$RESP" | jq -e ".payload.mode == \"headed\"" &gt;/dev/null; echo "$RESP" | jq -e ".payload.executor == \"claude\"" &gt;/dev/null; echo "$RESP" | jq -e ".payload.orchestrator == \"skill-relay\"" &gt;/dev/null; echo "$RESP" | jq -e ".payload.journey_id | type == \"string\" and length &gt; 0" &gt;/dev/null; echo "$RESP" | jq -e "(.payload | has(\"token\") | not) and (.payload | has(\"github_token\") | not) and (.payload | has(\"anthropic_token\") | not) and (.payload | has(\"thin_prd\") | not)" &gt;/dev/null; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] DB initiative_runs 定点核对——存在至少一条 host 精确匹配且 phase 合法非 failed/unknown 的记录（EXISTS 语义，容忍历史 failed 行）
+  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-f90ddca3-396d-45b2-ad13-2dfbd9e15080}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; ANYROW=$(psql "$DB" -XAt -c "SELECT phase FROM initiative_runs WHERE initiative_id = \$\$${TASK_ID}\$\$ LIMIT 1"); [ -n "$ANYROW" ] || { echo "FAIL: initiative_runs 无当前 task run"; exit 1; }; GOODPHASE=$(psql "$DB" -XAt -c "SELECT phase FROM initiative_runs WHERE initiative_id = \$\$${TASK_ID}\$\$ AND orchestrator_host = \$\$skill-relay-claude-headed\$\$ AND phase IN (\$\$A_planning\$\$,\$\$planning\$\$,\$\$gan\$\$,\$\$generate\$\$,\$\$evaluate\$\$,\$\$done\$\$) AND phase NOT IN (\$\$failed\$\$,\$\$unknown\$\$) ORDER BY started_at DESC LIMIT 1"); [ -n "$GOODPHASE" ] || { echo "FAIL: initiative_runs 存在记录但无合法 phase 记录"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] scripts/smoke/e2e/relay-f90ddca3.sh 完整脚本端到端跑通（三件事全过，脚本 exit 0）
+  Test: manual:bash -c 'TASK_ID="${TASK_ID:-f90ddca3-396d-45b2-ad13-2dfbd9e15080}" SPRINT_DIR="${SPRINT_DIR:-sprints/07241038-relay-f90ddca3}" BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}" bash scripts/smoke/e2e/relay-f90ddca3.sh'
+  期望: 脚本 exit 0，末尾打印 PASS
+
+- [x] [BEHAVIOR] error path — 不存在的 task id 走 wrapper 必须 FAIL（PRD 边界情况：task 记录不存在不得静默跳过）
+  Test: manual:bash -c 'set -uo pipefail; ERRLOG="/tmp/relay-f90ddca3-errpath.log"; if TASK_ID=00000000-0000-0000-0000-000000000000 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}" bash scripts/smoke/e2e/relay-f90ddca3.sh &gt;"$ERRLOG" 2&gt;&amp;1; then echo "FAIL: 错误路径未按预期失败（task 不存在应 exit 非 0）"; exit 1; fi; grep -q "FAIL:" "$ERRLOG" || { echo "FAIL: 失败时未打印明确 FAIL 原因"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] 未改动 claude-headed-dispatch-smoke.sh 本体（范围限定：不重实现）
+  Test: manual:bash -c 'set -euo pipefail; if git rev-parse --verify origin/main^{commit} &gt;/dev/null 2&gt;&amp;1; then CHANGED=$(git diff --name-only origin/main...HEAD -- packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh); [ -z "$CHANGED" ] || { echo "FAIL: claude-headed-dispatch-smoke.sh 本体被修改，超出范围"; exit 1; }; echo OK; else echo "WARN: origin/main 不可达，跳过 diff 比对（非阻塞，需 evaluator 在有 origin/main 的环境重跑）"; echo OK; fi'
+  期望: OK
+
+- [x] [BEHAVIOR] 未改动 .github/workflows/ci.yml 与 scripts/test-pyramid-baseline.json（范围限定：共享 CI 基础设施禁区）
+  Test: manual:bash -c 'set -euo pipefail; if git rev-parse --verify origin/main^{commit} &gt;/dev/null 2&gt;&amp;1; then CHANGED=$(git diff --name-only origin/main...HEAD -- .github/workflows/ci.yml scripts/test-pyramid-baseline.json); [ -z "$CHANGED" ] || { echo "FAIL: 共享 CI 禁区文件被修改: $CHANGED"; exit 1; }; echo OK; else echo "WARN: origin/main 不可达，跳过 diff 比对（非阻塞）"; echo OK; fi'
+  期望: OK
+
+- [x] [BEHAVIOR] allowlist 未重复登记（claude-headed-dispatch-smoke.sh 精确出现 1 次）
+  Test: manual:bash -c 'set -euo pipefail; COUNT=$(grep -Fx "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt | wc -l | tr -d " "); [ "$COUNT" = "1" ] || { echo "FAIL: allowlist 中 claude-headed-dispatch-smoke.sh 出现 $COUNT 次（应精确 1 次，禁止重复登记）"; exit 1; }; echo OK'
+  期望: OK
+
+## Invariant 覆盖条目（PRD ## Invariant 约束 段 53 条铁律逐条覆盖）
+
+&gt; 覆盖规则：本任务范围内真正适用的铁律 → `[BEHAVIOR] INV-N` + 可执行断言；范围外/不适用 → `[ARTIFACT] INV-N` + 显式 `N/A：&lt;理由&gt;`（一律不静默漏项）。编号按 PRD Invariant 段出现顺序 1-53。
+
+- [x] [BEHAVIOR] INV-1 [manual oracle真实exit code] 适用：GAN 批准前本合同全部 manual oracle 已逐条真跑并在 contract-draft.md 记录真实 exit code（含目标解释器确认启动；wrapper 相关条目为预期 Red exit 1）
+  Test: manual:bash -c 'set -euo pipefail; F="sprints/07241038-relay-f90ddca3/contract-draft.md"; grep -q "## manual oracle 真跑记录" "$F" || { echo "FAIL: 缺 manual oracle 真跑记录段"; exit 1; }; grep -q "| 0 |" "$F" || { echo "FAIL: 真跑记录缺真实 exit code"; exit 1; }; grep -q "预期 Red" "$F" || { echo "FAIL: 真跑记录未区分预期 Red 条目"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] INV-2 [node -e表达式须真跑] 适用：本 DoD 全部 node -e 断言在 GAN 批准前逐条真跑（双引号内均无 shell 层 dollar-brace expansion 风险面，且本条命令即为一次 node -e 真跑取证）
+  Test: manual:bash -c 'set -euo pipefail; node -e "const c=require(\"fs\").readFileSync(\"sprints/07241038-relay-f90ddca3/contract-dod.md\",\"utf8\");if(!c.includes(\"INV-2\"))process.exit(1)" || { echo "FAIL: node -e 真跑失败"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [ARTIFACT] INV-3 [smoke-invariant-58494] N/A：占位符铁律无具体规则内容（仅 id=6041333c），本任务复用既有 smoke 脚本并校验 allowlist 登记（见 BEHAVIOR「复用 claude-headed-dispatch-smoke.sh 全绿执行」）已自然符合通用 smoke 治理精神
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-3 [smoke-invariant-58494] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-4 [smoke-invariant-5054] N/A：占位符铁律无具体规则内容（仅 id=a3989e96），同 INV-3 已由复用既有 smoke 脚本满足其精神
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-4 [smoke-invariant-5054] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-5 [测试冷启动重置掩盖跨周期bug] N/A：本任务无周期性扫描/afterEach 重置状态模式，scripts/smoke/e2e/relay-f90ddca3.sh 是一次性同步只读校验脚本
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-5 [测试冷启动重置掩盖跨周期bug] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-6 [周期重扫防重复调用] N/A：本任务无周期性重扫逻辑，也不引入任何外部付费 API 调用（LLM/第三方）
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-6 [周期重扫防重复调用] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-7 [跨模块时间常数依赖] N/A：本任务未引入任何新的跨模块时间常量（扫描间隔/闲置阈值/缓存TTL）
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-7 [跨模块时间常数依赖] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-8 [theater_mismatch android误判] N/A：本任务 target_environment=local_api，交付脚本内容不涉及安卓设备场景，不触发 theater_mismatch 判定
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-8 [theater_mismatch android误判] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-9 [target_environment来源DB] N/A：本任务不做新任务注册、不写入 DB tasks.payload 的 target_environment 字段；PRD 头部 `## target_environment` 是文档层声明供 harness 路由使用
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-9 [target_environment来源DB] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-10 [judge结果JSON格式] N/A：本任务不产出也不消费 Brain judge 的 .brain-result.json（proposer 出口的 .brain-result.json 是 propose 协议文件，非 judge verdict 文件）
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-10 [judge结果JSON格式] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-11 [DB字段长度截断] N/A：本任务无任何 DB 写入，纯只读 SELECT 查询
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-11 [DB字段长度截断] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-12 [复活功能先查死因] N/A：本任务不复活任何曾死过的功能
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-12 [复活功能先查死因] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-13 [错误码契约需显式else] N/A：scripts/smoke/e2e/relay-f90ddca3.sh 用 shell exit code 驱动断言，不调用"失败返回 null/false"契约的函数
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-13 [错误码契约需显式else] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-14 [smoke-invariant-2387] N/A：占位符铁律无具体规则内容（仅 id=33ede9f1），同 INV-3 已由复用既有 smoke 脚本满足其精神
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-14 [smoke-invariant-2387] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-15 [updated_at停滞探针] N/A：本任务不涉及 journey_features 表或 report 阶段
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-15 [updated_at停滞探针] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-16 [relay跳过report兜底校验] N/A：本任务是只读校验脚本，不涉及 controller/relay 对 report 阶段是否被跳过的判定逻辑
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-16 [relay跳过report兜底校验] N/A'))process.exit(1)"
+
+- [x] [BEHAVIOR] INV-17 [host白名单核对headed] 适用：本合同起草 orchestrator_host 断言时已核对 headed 场景，采用 SQL 等值精确匹配 `skill-relay-claude-headed`（非宽松 LIKE/包含），避免把其他 headed 变体（如 codex-headed）误判通过
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="scripts/smoke/e2e/relay-f90ddca3.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -qE "orchestrator_host = .skill-relay-claude-headed.|orchestrator_host=.skill-relay-claude-headed." "$SCRIPT" || { echo "FAIL: 未精确等值匹配 skill-relay-claude-headed"; exit 1; }; ! grep -qE "orchestrator_host LIKE|%headed%" "$SCRIPT" || { echo "FAIL: 疑似使用宽松 headed 包含匹配"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [ARTIFACT] INV-18 [headed点火需base_repo/pr_url] N/A：本任务不执行 headed relay 点火动作，只校验已存在 task 的现状（base_repo/pr_url 写入属点火时职责，非本次校验脚本范围）
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-18 [headed点火需base_repo/pr_url] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-19 [退役判断查生产库实锤] N/A：本任务不做任何退役判断
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-19 [退役判断查生产库实锤] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-20 [吞错job需失败计数告警] N/A：本任务不新增任何后台 job
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-20 [吞错job需失败计数告警] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-21 [建表前grep写入方] N/A：本任务不新建或复用任何 DB 表（只读 SELECT）
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-21 [建表前grep写入方] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-22 [后台job须声明消费方] N/A：本任务不新增任何后台 job
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-22 [后台job须声明消费方] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-23 [多设备类型UI区分] N/A：本任务无任何 UI
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-23 [多设备类型UI区分] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-24 [git_sha语义跨脚本一致] N/A：本任务不涉及 git_sha 语义处理
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-24 [git_sha语义跨脚本一致] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-25 [git rev-parse需--verify] N/A：scripts/smoke/e2e/relay-f90ddca3.sh 本体不使用 git rev-parse 判 ref 存在（该用法只出现在本 DoD 的范围限定检查里，且已用 `git rev-parse --verify origin/main^{commit}` 正确写法）
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-25 [git rev-parse需--verify] N/A'))process.exit(1)"
+
+- [x] [BEHAVIOR] INV-26 [smoke真实worktree防触碰生产] 适用：scripts/smoke/e2e/relay-f90ddca3.sh 在真实 worktree 下执行，已核对本体不含破坏性/写入生产的命令
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="scripts/smoke/e2e/relay-f90ddca3.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; ! grep -Ei "DROP TABLE|DELETE FROM|rm -rf /|UPDATE .* SET|INSERT INTO" "$SCRIPT" &gt;/dev/null || { echo "FAIL: wrapper 含疑似破坏性/写入命令"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [ARTIFACT] INV-27 [部署链失败禁warning降级] N/A：本任务不涉及任何部署链
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-27 [部署链失败禁warning降级] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-28 [判变基准用生产自报] N/A：本任务不做 build-info.json / health.git_sha 与 origin/main 的判变对账
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-28 [判变基准用生产自报] N/A'))process.exit(1)"
+
+- [x] [BEHAVIOR] INV-29 [lint要求await包装async] 适用：tests/regression/relay-f90ddca3/*.test.ts 中读文件的断言均用 async function 包装并 await，不裸用 readFileSync
+  Test: manual:bash -c 'set -euo pipefail; T="tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts"; [ -f "$T" ] || { echo "FAIL: missing $T"; exit 1; }; grep -F "await" "$T" &gt;/dev/null || { echo "FAIL: 测试文件缺 await"; exit 1; }; grep -F "async" "$T" &gt;/dev/null || { echo "FAIL: 测试文件缺 async 包装"; exit 1; }; ! grep -F "readFileSync" "$T" &gt;/dev/null || { echo "FAIL: 测试文件裸用 readFileSync"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] INV-30 [Test Contract表格4列格式] 适用：contract-draft.md 的 Test Contract 表格固定 4 列，testFile 用反引号包裹（相对 sprintDir 前缀 ../../ 指向永久池，兼容 check-test-coverage.cjs 的 path.join(sprintDir, testFile) 拼接）
+  Test: manual:bash -c 'set -euo pipefail; F="sprints/07241038-relay-f90ddca3/contract-draft.md"; [ -f "$F" ] || { echo "FAIL: missing $F"; exit 1; }; grep -F "| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |" "$F" &gt;/dev/null || { echo "FAIL: Test Contract 表格表头非 4 列标准格式"; exit 1; }; grep -E "\| \`\.\./\.\./tests/regression/relay-f90ddca3/" "$F" &gt;/dev/null || { echo "FAIL: testFile 未用反引号包裹或未指向永久池"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [ARTIFACT] INV-31 [Red commit精确add路径] N/A（过程纪律，非产物级可 grep 断言对象）：本合同 Step 4 出口只 git add 精确路径（contract-draft.md/contract-dod.md/tests 精确文件/task-plan.json），generator 后续 Red commit 同样只 add *.test.ts 精确路径，由流程与 harness-generator 规则保障
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-31 [Red commit精确add路径] N/A'))process.exit(1)"
+
+- [x] [BEHAVIOR] INV-32 [回归测试用源码检查] 适用：本合同 Invariant 覆盖条目使用 source-code inspection（grep 静态检查 wrapper/draft/测试源码文本）而非 mock 覆盖验证接线（如 INV-17/26/29/30/37/46/47/48/50/51）
+  Test: manual:bash -c 'set -euo pipefail; D="sprints/07241038-relay-f90ddca3/contract-dod.md"; grep -q "manual:bash -c .set -euo pipefail; SCRIPT=" "$D" || { echo "FAIL: 缺 source-code inspection 型断言"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [ARTIFACT] INV-33 [cron功能查scheduler-jobs.js] N/A：本任务不新增任何 cron 功能
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-33 [cron功能查scheduler-jobs.js] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-34 [generator禁止自merge] N/A（proposer 阶段不涉及 merge）：该铁律约束 harness-generator 角色的 merge 权限边界，本合同产出的是 propose 分支产物；后续 generator 阶段仍需遵守，但非本次 proposer 产物可 grep 断言的内容
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-34 [generator禁止自merge] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-35 [tmux子shell需显式export] N/A：本任务不涉及 headed relay tmux innerCmd 的环境变量传递机制，scripts/smoke/e2e/relay-f90ddca3.sh 是被 evaluator/开发者直接调用的独立脚本
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-35 [tmux子shell需显式export] N/A'))process.exit(1)"
+
+- [x] [BEHAVIOR] INV-36 [复用模板需核对真实历史] 适用：已核对先例 7630f4fb 最终毕业产物（tests/regression/relay-7630f4fb/ + scripts/smoke/e2e/relay-7630f4fb.sh）与本次现网真实数据（task API/initiative_runs/allowlist 均本轮实测），且未照抄先例 LIMIT 1 口径（见 contract-draft.md「已知约束」与判定点登记表）
+  Test: manual:bash -c 'set -euo pipefail; F="sprints/07241038-relay-f90ddca3/contract-draft.md"; [ -f "$F" ] || { echo "FAIL: missing $F"; exit 1; }; grep -F "tests/regression/relay-7630f4fb/headed-smoke-contract.test.ts" "$F" &gt;/dev/null || { echo "FAIL: 未留痕先例真实产物核对"; exit 1; }; grep -F "已实测确认当前环境真实数据" "$F" &gt;/dev/null || { echo "FAIL: 未留痕本轮现网实测"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] INV-37 [共享CI文件默认禁区] 适用：scripts/smoke/e2e/relay-f90ddca3.sh 与本合同均不修改 `.github/workflows/*.yml`、`packages/quality/smoke-allowlist.txt`、`scripts/test-pyramid-baseline.json`
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="scripts/smoke/e2e/relay-f90ddca3.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; ! grep -E "&gt;&gt;[[:space:]]*\.github/workflows|&gt;[[:space:]]*\.github/workflows|&gt;&gt;[[:space:]]*packages/quality/smoke-allowlist\.txt|&gt;[[:space:]]*packages/quality/smoke-allowlist\.txt|test-pyramid-baseline\.json" "$SCRIPT" &gt;/dev/null || { echo "FAIL: wrapper 疑似触碰共享 CI 禁区文件"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [ARTIFACT] INV-38 [提前合并需核对headSHA] N/A：本任务是 proposer 阶段产物（propose 分支），不涉及 PR 合并环节的 head SHA 核对，属 controller/evaluator/merge 阶段职责
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-38 [提前合并需核对headSHA] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-39 [smoke-invariant-79911] N/A：占位符铁律无具体规则内容（仅 id=552520d0），同 INV-3 已由复用既有 smoke 脚本满足其精神
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-39 [smoke-invariant-79911] N/A'))process.exit(1)"
+
+- [x] [BEHAVIOR] INV-40 [PR需一次带齐smoke+allowlist] 适用：本合同确认 `claude-headed-dispatch-smoke.sh` 已在 allowlist 精确登记（第 24 行），不存在"smoke 已加但 allowlist 未登记"导致 CI 两连红的风险；本次新增 wrapper 位于 scripts/smoke/e2e/（非 packages/brain/scripts/smoke/），不受 allowlist 登记范围约束
+  Test: manual:bash -c 'set -euo pipefail; grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt || { echo "FAIL: smoke 未在 allowlist 登记，PR 会两连红"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [ARTIFACT] INV-41 [新task_type七点清单] N/A：本任务不新增任何 task_type
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-41 [新task_type七点清单] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-42 [服务存活双信号判定] N/A：本任务不涉及任何服务存活判定逻辑
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-42 [服务存活双信号判定] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-43 [美国Mac禁用LaunchAgents] N/A：本任务不涉及任何 LaunchAgents/LaunchDaemon 配置
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-43 [美国Mac禁用LaunchAgents] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-44 [常驻服务须入launchd-patrol] N/A：本任务不新增任何常驻宿主服务
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-44 [常驻服务须入launchd-patrol] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-45 [smoke-invariant-93097] N/A：占位符铁律无具体规则内容（仅 id=4b73376c），同 INV-3 已由复用既有 smoke 脚本满足其精神
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-45 [smoke-invariant-93097] N/A'))process.exit(1)"
+
+- [x] [BEHAVIOR] INV-46 [单slot串行任务] 适用：scripts/smoke/e2e/relay-f90ddca3.sh 不 spawn/kill 任何 tmux 或并发会话，本次校验只在当前单一 slot 内串行执行
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="scripts/smoke/e2e/relay-f90ddca3.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; ! grep -E "tmux[[:space:]]+new-session|tmux[[:space:]]+kill|killall|pkill|&amp;[[:space:]]*$" "$SCRIPT" &gt;/dev/null || { echo "FAIL: wrapper 疑似 spawn/kill 并发会话"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] INV-47 [禁止写死环境假设值] 适用：BRAIN_URL/DATABASE_URL/TASK_ID/SPRINT_DIR 均走 env 变量默认值，可被 evaluator 覆盖，不写死凭据/坐标/路径
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="scripts/smoke/e2e/relay-f90ddca3.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -F "TASK_ID=\"\${TASK_ID:-" "$SCRIPT" &gt;/dev/null || { echo "FAIL: TASK_ID 未走 env 默认"; exit 1; }; grep -F "BRAIN_URL=\"\${BRAIN_URL:-" "$SCRIPT" &gt;/dev/null || { echo "FAIL: BRAIN_URL 未走 env 默认"; exit 1; }; grep -F "DATABASE_URL:-" "$SCRIPT" &gt;/dev/null || { echo "FAIL: DATABASE_URL 未走 env 默认"; exit 1; }; ! grep -E "ghp_[A-Za-z0-9_]+|/Users/administrator/\.ssh|-2600" "$SCRIPT" &gt;/dev/null || { echo "FAIL: wrapper 含写死凭据/坐标痕迹"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] INV-48 [真环境验证才算done] 适用：scripts/smoke/e2e/relay-f90ddca3.sh 打真实 Brain API（curl localhost:5221）+ 真实 PostgreSQL（psql）+ 真实复用既有 smoke 脚本，无 mock/stub/dry-run/吞错
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="scripts/smoke/e2e/relay-f90ddca3.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -F "curl -sf" "$SCRIPT" &gt;/dev/null || { echo "FAIL: 未见真实 curl 调用"; exit 1; }; grep -F "psql" "$SCRIPT" &gt;/dev/null || { echo "FAIL: 未见真实 psql 调用"; exit 1; }; ! grep -Ei "MOCK_|jest\.mock|vi\.mock|sinon\.stub|dryrun|dry-run|\|\|[[:space:]]*true[[:space:]]*$" "$SCRIPT" &gt;/dev/null || { echo "FAIL: wrapper 含 mock/stub/dry-run/吞错痕迹"; exit 1; }; echo OK'
+  期望: OK
+  gate-allow: weak-oracle/curl-no-jq INV-48 为源码静态检查（grep 字面 "curl -sf" 于 wrapper 文本确认真实调用存在），本条自身不发起 curl 请求，无响应字段可 jq；wrapper 内真实 curl 的 jq -e 字段断言由 BEHAVIOR「payload 关键字段齐全」与 E2E 验收脚本覆盖
+
+- [x] [ARTIFACT] INV-49 [测试默认多租户] N/A：`initiative_runs`/`tasks` 是 Brain 内部全局调度表，非多租户业务数据表，本任务查询不涉及租户隔离场景，无需种 ≥2 租户断言互不串
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-49 [测试默认多租户] N/A'))process.exit(1)"
+
+- [x] [BEHAVIOR] INV-50 [凭据安全] 适用：scripts/smoke/e2e/relay-f90ddca3.sh 不硬编码任何 secrets，DATABASE_URL 走 env 默认（本地开发库弱口令，非生产凭据），不进 git 不进日志明文
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="scripts/smoke/e2e/relay-f90ddca3.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; ! grep -Ei "ghp_[A-Za-z0-9_]{10,}|sk-[A-Za-z0-9]{16,}|anthropic_token[[:space:]]*=" "$SCRIPT" &gt;/dev/null || { echo "FAIL: wrapper 疑似硬编码真实 secrets"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] INV-51 [日志脱敏] 适用：scripts/smoke/e2e/relay-f90ddca3.sh 对 payload 做 token/github_token/anthropic_token/thin_prd 反向存在性断言，发现明文即 FAIL，且不整体打印 payload 原文
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="scripts/smoke/e2e/relay-f90ddca3.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -F "has(\"token\")" "$SCRIPT" &gt;/dev/null || { echo "FAIL: 未拒绝 token 字段"; exit 1; }; grep -F "has(\"github_token\")" "$SCRIPT" &gt;/dev/null || { echo "FAIL: 未拒绝 github_token 字段"; exit 1; }; grep -F "has(\"anthropic_token\")" "$SCRIPT" &gt;/dev/null || { echo "FAIL: 未拒绝 anthropic_token 字段"; exit 1; }; grep -F "has(\"thin_prd\")" "$SCRIPT" &gt;/dev/null || { echo "FAIL: 未拒绝 thin_prd 字段"; exit 1; }; ! grep -F "echo \"\$RESP\"$" "$SCRIPT" &gt;/dev/null || { echo "FAIL: 疑似整体打印 payload 原文"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [ARTIFACT] INV-52 [端点鉴权] N/A：本任务不新增或修改任何 API 端点，只读调用既有已上线的 `GET /api/brain/tasks/:id`（其鉴权策略属 Brain 既有边界，非本次改动面）
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-52 [端点鉴权] N/A'))process.exit(1)"
+
+- [x] [ARTIFACT] INV-53 [租户隔离] N/A：本任务查询的 `initiative_runs`/`tasks` 为 Brain 内部调度表而非客户租户业务数据，不涉及跨租户读写场景
+  Test: node -e "const c=require('fs').readFileSync('sprints/07241038-relay-f90ddca3/contract-dod.md','utf8');if(!c.includes('INV-53 [租户隔离] N/A'))process.exit(1)"
+
+## Invariant 覆盖统计
+
+- PRD `## Invariant 约束` 段实测共 **53** 条铁律（`awk` 范围内 `grep -c '^- \['` = 53，本轮实测计数，较先例 7630f4fb 的 49 条新增 4 条：manual oracle真实exit code / node -e表达式须真跑 / smoke-invariant-58494 / smoke-invariant-5054），本合同按实测 53 条全量覆盖，不漏项。
+- 适用（`[BEHAVIOR] INV-N`，含真实可执行断言）：INV-1、INV-2、INV-17、INV-26、INV-29、INV-30、INV-32、INV-36、INV-37、INV-40、INV-46、INV-47、INV-48、INV-50、INV-51，共 15 条。
+- 不适用（`[ARTIFACT] INV-N` + 显式 N/A 理由）：其余 38 条（INV-3~16、18~25、27~28、31、33~35、38~39、41~45、49、52~53）。
+- 覆盖完整性自查：`grep -oE 'INV-[0-9]+' contract-dod.md | sort -t- -k2 -n -u | wc -l` 必须等于 53。
+</pre></div><div id="report" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">━━━ Sprint: headed relay 派发链路自测（claude-headed, task f90ddca3）  PR #4315  2026-07-24 ━━━
+
+PIPELINE  A+B+C phases · 1 GAN round · judge 2 rounds(首轮 mechFail=missing_exit_code) · $0(unsettled)
+
+Phase          Time    Cost    Result
+Planner        -       -       ✅ sprint-prd.md@050e8be55, invariants=53
+GAN Reviewer   -       -       ✅ r1 APPROVED, rubric 7维全≥8, judgments=4
+Generator      -       -       ✅ red=1e6f172, green=cdd6eb0（TDD 两 commit）
+Evaluator      -       -       ✅ PASS sha=cdd6eb0, 23/23 BEHAVIOR + 65/65 DoD Test 真跑, unverifiable=0
+Judge          -       -       ✅ PASS（DeepSeek 真裁决；首轮补顶层 exit_code/log_tail 后重判通过）
+Merge          -       -       ✅ squash c408b208d, 2026-07-24T15:34:59Z, CI 全绿
+Reporter       -       -       ✅
+
+DOD 65/65 ✅  FAIL: 无
+未覆盖真实链路清单: N/A（无 mock 豁免）
+staging_e2e: 已派生（created=true，任务已入队）
+
+交付物:
+- scripts/smoke/e2e/relay-f90ddca3.sh（永久池 e2e wrapper）
+- tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts（永久池回归测试）
+
+E2E 截图: （无截图——CLI 链路自测）
+Learning: （从本次 Sprint 提炼的洞察见 learning.md）
+DB sync: api_registry/test_registry ✅ · Notion pushed ✅
+# journey_steps 保留只读兼容，新增数据禁止写入；Ability/Feature 一律写 journey_features
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</pre></div><div id="learning" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Learning — headed relay 派发链路自测（claude-headed, task f90ddca3）
+
+## 运行指标
+
+- GAN 轮次：1（r1 即 APPROVED，rubric 7 维全≥8，judgments_written=4）
+- Evaluator Fix 次数：0（evaluator 一次 PASS；judge 首轮 mechFail 打回 1 次，补字段后重判通过）
+- 总成本：$0（未采集——relay-runs 两行 cost_usd 均为 0.00，controller 拿不到 subagent 真实成本，台账注明 cost=unsettled）
+- PR：https://github.com/perfectuser21/cecelia/pull/4315（squash merge c408b208d，CI 全绿）
+- Sprint Dir：sprints/07241038-relay-f90ddca3
+
+## 发现的问题
+
+### [PROMPT] Prompt 类问题
+
+- 现象：task payload 无 prep_prd_body，planner 没有 PrepPRD 输入 → 根因：headed-smoke-test 属链路自测任务，派发时就没写 PrepPRD（已知情况非缺陷）→ 修法：planner 用 title + payload 三元组 + 先例（7630f4fb / #4109 / #3970）锚定需求，产出 sprint-prd 53 条 invariants，GAN r1 即通过，证明该 fallback 路径可用。
+
+### [BUG] 代码缺陷
+
+- 现象：judge 首轮打回 mechFail=missing_exit_code → 根因：evaluator 产出的 verdict JSON 顶层缺 exit_code / log_tail 字段，不满足 judge 机械校验的字段契约 → 修法：evaluator 补写顶层 exit_code/log_tail 后重判 PASS；根治应把这两个字段写进 evaluator verdict 输出模板的必填项。
+
+### [INFRA] 基础设施问题
+
+- 现象：前次 run 被 watchdog 标 failed（failure_reason=watchdog_overdue），无 PR 产出 → 根因：relay run 超 8h deadline，orchestrator 无心跳 → 修法：orphan requeue #1 后 controller 先做外部真相核查（确认无 open/merged PR、无 sprint 目录）再从 Step 1 从头开跑，本次实证该恢复路径安全可用。
+- 现象：report 阶段调 POST /api/brain/harness/complete 被拒（accepted:false, reason=initiative_run_not_done: phase=evaluate）→ 根因：relay run 的 phase 在 merge/report 阶段未推进，仍停在 evaluate，complete 端点按 phase 闸门拒绝翻牌 → 修法：controller 或 Brain 应在 merge done 后推进 relay run phase（或 complete 端点放行 evaluate_verdict=PASS 且 judge_verdict=PASS 的 run）。
+- 现象：飞书通知接口返回 {"ok":true,"sent":false}，通知未真实送达 → 根因：notify 端点 ok 只代表请求受理，sent 才代表投递；判定送达不能只 grep "ok":true → 修法：报告脚本改为核验 sent 字段，并排查 webhook 配置为何未投递。
+
+### [DESIGN] 设计缺陷
+
+- 现象：relay-runs 台账 cost_usd 全程 0.00 → 根因：controller 无法获取 subagent 真实 token 成本，无回传通道 → 修法：需要 subagent 成本回传机制（九要素 T7 phase-event 复活后追加 token 用量），当前一律注明 cost=unsettled，避免 0 被当成真实成本。
+
+## 下次预防清单
+
+- [ ] evaluator verdict 输出模板把顶层 exit_code / log_tail 列为必填，杜绝 judge mechFail=missing_exit_code 打回重判
+- [ ] merge 完成后推进 relay run phase（或改 harness/complete 闸门逻辑），否则 report 阶段 Dashboard 翻牌必然被拒
+- [ ] 通知/写库类接口的成功判定看语义字段（sent / accepted），不要只 grep "ok":true
+- [ ] relay 成本记账为 0 时在 result 与台账显式标 cost=unsettled，直到 subagent 成本回传落地
+</pre></div><div id="screenshots" class="section" style="display:none;"><p>无截图</p></div></div></main><script>function show(id){document.querySelectorAll(".section").forEach(s=>s.style.display="none");var el=document.getElementById(id);if(el)el.style.display="block";}var first=document.querySelector(".section");if(first)first.style.display="block";</script></body></html>

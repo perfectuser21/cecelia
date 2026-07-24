@@ -39,6 +39,14 @@ ALLOW_PKGS=(
   #   （见 protobufjs 同批 track，@opentelemetry/sdk-node 本身的 high 漏洞暂不在本白名单——
   #   该包是直接依赖且真在用，是否可豁免需要单独评估，见另一条 track，不跟这条一起处理）。
   "@opentelemetry/propagator-jaeger"
+  # react-router — GHSA-qwww-vcr4-c8h2：RSC Mode 在返回 400 前可能执行 action。
+  #   不可利用：本仓 apps/api 仅使用客户端 Router（Link/useNavigate/MemoryRouter 等）；
+  #   全仓无 react-server、ServerRouter、RSC 或 server action 路径，漏洞前提不存在。
+  #   不能 non-breaking 修：react-router 修复版为 8.3.0，但 react-router-dom 截至
+  #   2026-07-25 最新仅 7.18.1，尚无可安装的兼容修复版本。
+  #   移除条件：react-router-dom 发布依赖 react-router >=8.3.0 的兼容版本后升级并删本行。
+  #   TODO(deps): 跟踪 react-router-dom 的 8.3+ 发布。
+  "react-router"
 )
 
 JSON=$(npm audit --audit-level=high --omit=dev --json 2>/dev/null || true)
