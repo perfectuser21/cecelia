@@ -49,7 +49,7 @@
     {
       "task_id": "ws3",
       "title": "接入 machine/fleet/slot SSOT 与 root agent",
-      "scope": "从 system_registry 派生 agent 身份，从 fleet/slot 派生新鲜容量；缺映射或陈旧时不可用，并安装 root-owned 双机 agent/config。",
+      "scope": "从 system_registry 派生 agent 身份，从 fleet/slot 派生新鲜容量；缺映射或陈旧时不可用，并安装 root-owned 双机 agent/config；以新 migration 幂等播种双机 SSOT 元数据，同步过时 missing/stale 容量旧测试到 fail-closed oracle 并保留 fresh 正向断言，落 A04 明示 fake-auth fixture。",
       "dod": [
         "[BEHAVIOR] B08 无平行 agent 表且 stale/missing capacity=0，三个 TTL 严格递增",
         "[ARTIFACT] A03 Bash 3.2/modern 各真跑 installer 均 exit 78 无半安装，A04 两台 root 映射齐全"
@@ -58,9 +58,12 @@
         "packages/brain/src/codex-slot-broker.js",
         "packages/brain/src/fleet-resource-cache.js",
         "packages/brain/src/slot-allocator.js",
+        "packages/brain/migrations/361_codex_slot_machine_mappings.sql",
+        "packages/brain/src/__tests__/slot-allocator.test.js",
         "scripts/codex-slot-agent.mjs",
         "scripts/install-codex-slot.sh",
-        "config/codex-slot/agents.example.json"
+        "config/codex-slot/agents.example.json",
+        "scripts/fixtures/codex-slot/fake-auth.json"
       ],
       "depends_on": [
         "ws2"
