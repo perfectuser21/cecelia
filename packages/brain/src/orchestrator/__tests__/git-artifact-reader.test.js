@@ -31,4 +31,34 @@ describe('readGitArtifact', () => {
     expect(() => readGitArtifact('HEAD', 'contract.md', { cwd: repo })).toThrow(/commit SHA/);
     expect(() => readGitArtifact(approvedSha, '../contract.md', { cwd: repo })).toThrow(/repository-relative/);
   });
+
+  it('批准 SHA 只存在于 origin 时，按精确 SHA fetch 后读取不可变内容', async () => {
+    const remote = mkdtempSync(path.join(os.tmpdir(), 'contract-sha-remote-'));
+    const producer = mkdtempSync(path.join(os.tmpdir(), 'contract-sha-producer-'));
+    const consumer = mkdtempSync(path.join(os.tmpdir(), 'contract-sha-consumer-'));
+    dirs.push(remote, producer, consumer);
+
+    execFileSync('git', ['init', '--bare', remote], { encoding: 'utf8' });
+    const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+
+    git(producer, 'init');
+    git(producer, 'config', 'user.email', 'test@example.com');
+    git(producer, 'config', 'user.name', 'Test');
+    git(producer, 'remote', 'add', 'origin', remote);
+    writeFileSync(path.join(producer, 'contract.md'), 'approved remote content\n');
+    git(producer, 'add', 'contract.md');
+    git(producer, 'commit', '-m', 'approved remote contract');
+    const approvedSha = git(producer, 'rev-parse', 'HEAD');
+    git(producer, 'push', 'origin', 'HEAD:refs/heads/approved-contract');
+
+    git(consumer, 'init');
+    git(consumer, 'remote', 'add', 'origin', remote);
+    expect(() => git(consumer, 'cat-file', '-e', `${approvedSha}^{commit}`)).toThrow();
+
+    const { readGitArtifact } = await import('../git-artifact-reader.js');
+
+    expect(readGitArtifact(approvedSha, 'contract.md', { cwd: consumer }))
+      .toBe('approved remote content\n');
+    expect(git(consumer, 'cat-file', '-e', `${approvedSha}^{commit}`)).toBe('');
+  });
 });
