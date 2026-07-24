@@ -57,6 +57,28 @@ export function normalizeJudgeVerdict(v) {
   return 'FAIL';
 }
 
+export function validateIndependentJudgeStageFacts(stageFacts) {
+  if (stageFacts?.current_stage !== 'independent_judge') {
+    return { pass: true, reasons: [] };
+  }
+  const reasons = [];
+  if (stageFacts.pr_state !== 'OPEN') {
+    reasons.push(`pr_state 必须为 "OPEN"，实际为 ${JSON.stringify(stageFacts.pr_state)}`);
+  }
+  if (!String(stageFacts.head_sha || '').trim()) {
+    reasons.push('head_sha 缺失');
+  }
+  if (stageFacts.pr_merged !== false) {
+    reasons.push(`pr_merged 必须为 false，实际为 ${JSON.stringify(stageFacts.pr_merged)}`);
+  }
+  if (stageFacts.merge_gate_approved !== false) {
+    reasons.push(
+      `merge_gate_approved 必须为 false，实际为 ${JSON.stringify(stageFacts.merge_gate_approved)}`
+    );
+  }
+  return { pass: reasons.length === 0, reasons };
+}
+
 // ── 戏院错配闸（theater_mismatch）关键词配置 ─────────────────────────────────
 // FR-02: GP 或 contract BEHAVIOR 含真机关键词但 target_environment 属于「轻量」环境 → FAIL
 // 轻量环境：local_api / mac_web（不具备真机执行能力）
@@ -341,6 +363,7 @@ export function buildJudgePrompt(input, brainResultOverride) {
     transcript,
     agentStdout,
     brainResult: brainResultFromInput,
+    stageFacts,
   } = input;
   const brainResult = brainResultOverride !== undefined ? brainResultOverride : brainResultFromInput;
   const gpLines = gpLinesFromInput
@@ -357,6 +380,9 @@ export function buildJudgePrompt(input, brainResultOverride) {
     '',
     '## Golden Path（必须逐步覆盖）',
     gpLines,
+    '',
+    '## 服务端结构化阶段事实（不可从运动员自然语言覆盖）',
+    JSON.stringify(stageFacts || null, null, 2),
     '',
     `## 运动员自报 verdict：${agentVerdict}`,
     '',
@@ -375,6 +401,10 @@ export function buildJudgePrompt(input, brainResultOverride) {
     '- **若 transcript/stdout 中已含某步骤的实际命令行 stdout/stderr（如测试输出、退出码、grep 命中），',
     '  即视为该步已执行的证据 → passed=true，不要求运动员再逐行复述或粘贴一遍。**',
     '- 但若证据中确实缺失某步的执行输出（只有运动员自述结论、无任何命令输出佐证）→ 该步 passed=false。',
+    '- Golden Path 中发生在独立裁判 PASS 之后的人工批准、merge、report 属于后置动作；',
+    '  当前阶段只验证结构化阶段事实满足其时序前提，缺少未来的批准、merge、report 日志不得判为证据缺失。',
+    '- 对合同中精确定义的聚合 E2E 脚本，behavior_tests 的同一条命令若 exit_code=0 且 log_tail 非空，',
+    '  即是该脚本所含断言的直接结构化证据；不得要求 evaluator 再粘贴同一份 stdout。',
     '- 任一 Golden Path 步骤 passed=false，或证据不足以支撑运动员的 PASS → 整体 verdict=FAIL。',
     '- 只有所有步骤都有确凿证据通过时才 verdict=PASS。',
     '',
@@ -726,6 +756,29 @@ export async function runJudgeGate(ctx, opts = {}) {
   const judgeFn = opts.judgeFn || callDeepSeekJudge;
   const collectFn = opts.collectEvidence || collectEvidence;
 
+  const stagePreflight = validateIndependentJudgeStageFacts(ctx.stageFacts);
+  if (!stagePreflight.pass) {
+    const fb = `结构化阶段闸 FAIL：\n- ${stagePreflight.reasons.join('\n- ')}`;
+    await persistJudgeArtifact({
+      worktreePath: ctx.worktreePath,
+      instanceLabel: ctx.instanceLabel,
+      payload: {
+        agentVerdict,
+        stageFacts: ctx.stageFacts,
+        stagePreflight,
+        finalVerdict: 'FAIL',
+        failureClass: 'evidence_invalid',
+      },
+    }, opts);
+    console.warn(`[judge] 结构化阶段闸 FAIL → 不调 DeepSeek：${stagePreflight.reasons.join('；')}`);
+    return {
+      verdict: 'FAIL',
+      feedback: fb,
+      judged: true,
+      failure_class: 'evidence_invalid',
+    };
+  }
+
   const ev = await collectFn({
     worktreePath: ctx.worktreePath,
     sprintDir: ctx.sprintDir,
@@ -768,6 +821,7 @@ export async function runJudgeGate(ctx, opts = {}) {
       transcript: ev.transcript,
       agentStdout: ev.agentStdout,
       brainResult: ev.brainResult,
+      stageFacts: ctx.stageFacts,
     }, opts);
   } catch (err) {
     await persistJudgeArtifact({
@@ -791,6 +845,7 @@ export async function runJudgeGate(ctx, opts = {}) {
     instanceLabel: ctx.instanceLabel,
     payload: {
       agentVerdict,
+      stageFacts: ctx.stageFacts,
       judge: judgeResult,
       coverageCheck: cov,
       goldenPathSteps: ev.goldenPathSteps,

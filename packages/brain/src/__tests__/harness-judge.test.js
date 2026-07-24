@@ -18,6 +18,7 @@ import {
   resolveStdoutFile,
   extractAgentTranscript,
   collectEvidence,
+  validateIndependentJudgeStageFacts,
 } from '../harness-judge.js';
 
 // 注入一个不落盘的证据收集（避免 fs）。
@@ -40,6 +41,13 @@ const baseCtx = {
   sprintDir: 'sprints/x',
   instanceLabel: 'harness-evaluate-t1-r0-abcd1234',
   transcript: 'PASS: did A\nPASS: did B',
+};
+const validStageFacts = {
+  current_stage: 'independent_judge',
+  pr_state: 'OPEN',
+  pr_merged: false,
+  head_sha: 'a'.repeat(40),
+  merge_gate_approved: false,
 };
 
 describe('runJudgeGate — 三权分立裁判门', () => {
@@ -257,11 +265,70 @@ describe('buildJudgePrompt / normalizeJudgeVerdict', () => {
     expect(p).toContain('运动员自报 verdict：PASS');
     expect(p).toContain('只输出 JSON');
   });
+  it('prompt 含结构化阶段事实，未来人审/merge/report 只验时序前提', () => {
+    const p = buildJudgePrompt({
+      contractE2E: 'bash contract-e2e.sh',
+      goldenPathSteps: ['独立裁判后人工批准', '批准后 merge 并回写报告'],
+      agentVerdict: 'PASS',
+      transcript: 'contract-e2e.sh: 8 passed',
+      brainResult: {
+        verdict: 'PASS',
+        behavior_tests: [{ command: 'bash contract-e2e.sh', exit_code: 0, log_tail: '8 passed' }],
+      },
+      stageFacts: validStageFacts,
+    });
+    expect(p).toContain('"current_stage": "independent_judge"');
+    expect(p).toContain('"merge_gate_approved": false');
+    expect(p).toContain('后置动作');
+    expect(p).toContain('缺少未来的批准、merge、report 日志不得判为证据缺失');
+    expect(p).toContain('exit_code=0');
+    expect(p).toContain('同一份 stdout');
+  });
   it('verdict 归一化：含糊/未知 → FAIL（运动员说 PASS，裁判含糊不放行）', () => {
     expect(normalizeJudgeVerdict('pass')).toBe('PASS');
     expect(normalizeJudgeVerdict('FAIL')).toBe('FAIL');
     expect(normalizeJudgeVerdict('maybe')).toBe('FAIL');
     expect(normalizeJudgeVerdict(undefined)).toBe('FAIL');
+  });
+});
+
+describe('independent judge stage facts — fail-closed 时序闸', () => {
+  it('只允许有当前 head、尚未 merge、尚未批准 merge gate 的 judge 阶段', () => {
+    expect(validateIndependentJudgeStageFacts(validStageFacts)).toEqual({ pass: true, reasons: [] });
+  });
+
+  it.each([
+    [{ ...validStageFacts, head_sha: null }, 'head_sha'],
+    [{ ...validStageFacts, pr_state: 'CLOSED' }, 'pr_state'],
+    [{ ...validStageFacts, pr_merged: true }, 'pr_merged'],
+    [{ ...validStageFacts, merge_gate_approved: true }, 'merge_gate_approved'],
+  ])('非法阶段事实 %j 在调用模型前终局 FAIL', async (stageFacts, reason) => {
+    const judgeFn = vi.fn();
+    const res = await runJudgeGate(
+      { ...baseCtx, agentVerdict: 'PASS', stageFacts },
+      { judgeFn, collectEvidence: fakeEvidence(), ...noopWrite }
+    );
+    expect(res).toMatchObject({
+      verdict: 'FAIL',
+      judged: true,
+      failure_class: 'evidence_invalid',
+    });
+    expect(res.feedback).toContain(reason);
+    expect(judgeFn).not.toHaveBeenCalled();
+  });
+
+  it('合法阶段事实透传给独立裁判并允许双 PASS', async () => {
+    const judgeFn = vi.fn().mockResolvedValue({
+      verdict: 'PASS',
+      coverage: [{ step: 'step A', passed: true }, { step: 'step B', passed: true }],
+      feedback: null,
+    });
+    const res = await runJudgeGate(
+      { ...baseCtx, agentVerdict: 'PASS', stageFacts: validStageFacts },
+      { judgeFn, collectEvidence: fakeEvidence(), ...noopWrite }
+    );
+    expect(res.verdict).toBe('PASS');
+    expect(judgeFn.mock.calls[0][0].stageFacts).toEqual(validStageFacts);
   });
 });
 

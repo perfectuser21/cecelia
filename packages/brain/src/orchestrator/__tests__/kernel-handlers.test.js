@@ -18,10 +18,12 @@ function context(overrides = {}) {
       run: { id: runId, initiative_id: taskId },
       pr: {
         url: 'https://github.com/o/r/pull/42',
+        state: 'OPEN',
         head_sha: 'sha-1',
         mergeStateStatus: 'CLEAN',
         merged: false,
       },
+      reviewApproved: false,
       evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
       callbackResult: { verdict: 'PASS', behavior_tests: [{ exit_code: 0, log_tail: 'ok' }] },
       decisionLog: [],
@@ -43,6 +45,7 @@ function deps() {
     execCmd: vi.fn(() => ''),
     attemptStore: { complete: vi.fn(async () => ({ deduped: false })) },
     judgeGate: vi.fn(async () => ({ verdict: 'PASS', feedback: null, judged: true })),
+    promptDir: '/host/cecelia-prompts',
     allocatePort: vi.fn(async () => 5301),
     spawnReviewPreview: vi.fn(() => ({ status: 0 })),
     notifyReview: vi.fn(async () => true),
@@ -56,6 +59,23 @@ function deps() {
 }
 
 describe('kernel deterministic handlers', () => {
+  it('judge receives the host forensics directory and server-derived stage facts', async () => {
+    const d = deps();
+
+    await createKernelHandlers(d)['spawn:judge'](context());
+
+    expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      promptDir: '/host/cecelia-prompts',
+      stageFacts: {
+        current_stage: 'independent_judge',
+        pr_state: 'OPEN',
+        pr_merged: false,
+        head_sha: 'sha-1',
+        merge_gate_approved: false,
+      },
+    }), expect.any(Object));
+  });
+
   it('judge 必须是真正独立判定，写 attempt 与 SHA 锚定 verdict', async () => {
     const d = deps();
     const handlers = createKernelHandlers(d);
@@ -66,6 +86,14 @@ describe('kernel deterministic handlers', () => {
     expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
       agentVerdict: 'PASS',
       worktreePath: '/tmp/wt',
+      promptDir: '/host/cecelia-prompts',
+      stageFacts: {
+        current_stage: 'independent_judge',
+        pr_state: 'OPEN',
+        pr_merged: false,
+        head_sha: 'sha-1',
+        merge_gate_approved: false,
+      },
     }), expect.objectContaining({ strict: true, dbPool: d.pool }));
     expect(d.attemptStore.complete).toHaveBeenCalledWith(attemptId, expect.objectContaining({
       decision: { outcome: 'PASS', reason: 'independent judge verdict' },
