@@ -17,8 +17,8 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] migration 定义 account/lease/session/audit/rollout/observation，路径列为 TEXT，单账号阻塞租约有唯一约束。
-  Test: manual:node -e "const fs=require('fs');const p=fs.readdirSync('packages/brain/migrations').find(x=>x.includes('codex_slot'));if(!p)process.exit(1);const s=fs.readFileSync('packages/brain/migrations/'+p,'utf8');for(const k of ['codex_company_accounts','codex_account_leases','codex_slot_sessions','codex_slot_audit','codex_slot_rollout','codex_slot_agent_observations','repo_path TEXT','worktree_path TEXT','UNIQUE'])if(!s.includes(k))process.exit(1)"
+- [ ] [ARTIFACT] migration 定义 account/lease/session/audit/rollout/observation，audit evidence 含 id/kind/result/run/freshness，rollout 双 evidence 引用真实行；路径列为 TEXT，单账号阻塞租约有唯一约束。
+  Test: manual:node -e "const fs=require('fs');const p=fs.readdirSync('packages/brain/migrations').find(x=>x.includes('codex_slot'));if(!p)process.exit(1);const s=fs.readFileSync('packages/brain/migrations/'+p,'utf8');for(const k of ['codex_company_accounts','codex_account_leases','codex_slot_sessions','codex_slot_audit','codex_slot_rollout','codex_slot_agent_observations','evidence_id','evidence_kind','result','repo_path TEXT','worktree_path TEXT','UNIQUE','REFERENCES'])if(!s.includes(k))process.exit(1)"
 
 - [ ] [ARTIFACT] root config schema 包含 actor key/UID、xian-m1/xian-m4、max_slots、credential store、固定 agent/audit SSH config 与 `mmv` trust 字段。
   Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/src/codex-slot/config.js','utf8');for(const k of ['actors','uid','ssh_key','xian-m1','xian-m4','max_slots','credential_store','agent_ssh_config','audit_ssh_config','stable_node_id','peer','allowed_ip','backend'])if(!s.includes(k))process.exit(1);if(/38\\.23\\.47\\.81/.test(s))process.exit(1)"
@@ -35,8 +35,14 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
 - [ ] [ARTIFACT] installer 配置 broker service account、forced-command、root/agent/audit 权限、Bash 3.2 零参数分支与失败告警。
   Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/scripts/install-codex-slot.sh','utf8');for(const k of ['codex-slot-broker','codex-slot-agent','codex-slot-audit','forced-command','0600','0710','Bash 3.2','alert'])if(!s.includes(k))process.exit(1)"
 
-- [ ] [ARTIFACT] security/host smoke 含独立 stat/tmux/process/`mmv`/cleanup oracle，allowlist 仅各登记一次。
-  Test: manual:node -e "const fs=require('fs');const a='packages/brain/scripts/smoke/codex-slot-security-smoke.sh',b='packages/brain/scripts/smoke/codex-slot-host-smoke.sh';for(const [p,ks] of [[a,['run_id','session_handle','stat','snapshot_too_large']],[b,['codex-slot-audit','tmux','process','mmv','cleanup']]]){const s=fs.readFileSync(p,'utf8');for(const k of ks)if(!s.includes(k))process.exit(1)}const l=fs.readFileSync('packages/quality/smoke-allowlist.txt','utf8');for(const n of ['codex-slot-security-smoke.sh','codex-slot-host-smoke.sh'])if(l.split('\\n').filter(x=>x.includes(n)).length!==1)process.exit(1)"
+- [ ] [ARTIFACT] Ubuntu CI-safe security smoke 在 allowlist 恰登记一次；xian host smoke 位于 real-machine 目录，绝不进入 Ubuntu 无条件 smoke glob。
+  Test: manual:node -e "const fs=require('fs');const a='packages/brain/scripts/smoke/codex-slot-security-smoke.sh',b='packages/brain/scripts/real-machine/codex-slot-host-smoke.sh';for(const [p,ks] of [[a,['run_id','session_handle','snapshot_too_large']],[b,['codex-slot-audit','tmux','process','mmv','cleanup']]]){const s=fs.readFileSync(p,'utf8');for(const k of ks)if(!s.includes(k))process.exit(1)}const l=fs.readFileSync('packages/quality/smoke-allowlist.txt','utf8');if(l.split('\\n').filter(x=>x.includes('codex-slot-security-smoke.sh')).length!==1||l.includes('codex-slot-host-smoke.sh'))process.exit(1)"
+
+- [ ] [ARTIFACT] 长期回归位于 Brain unit/integration 目录且分别覆盖 identity、agent auth、transport/auth、lifecycle、reaper/rollout；不依赖批准后只读 sprint tests。
+  Test: manual:node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/codex-slot-identity-routing.test.js','packages/brain/src/__tests__/codex-slot-agent-auth.test.js','packages/brain/src/__tests__/codex-slot-protocol-auth.test.js','packages/brain/src/__tests__/integration/codex-slot-lifecycle.integration.test.js','packages/brain/src/__tests__/integration/codex-slot-reaper-rollout.integration.test.js']){const s=fs.readFileSync(p,'utf8');if(!/describe|test|it/.test(s))process.exit(1)}"
+
+- [ ] [ARTIFACT] Mac Bash 双版本与 xian 双真机分别有持续 workflow，宿主/脚本路径不混用。
+  Test: manual:node -e "const fs=require('fs');const m=fs.readFileSync('.github/workflows/codex-slot-bash-compat.yml','utf8'),x=fs.readFileSync('.github/workflows/nightly-real-machine.yml','utf8');for(const k of ['macos-13','/bin/bash','brew --prefix bash'])if(!m.includes(k))process.exit(1);for(const k of ['xian-m1','xian-m4','packages/brain/scripts/real-machine/codex-slot-host-smoke.sh','workflow_dispatch'])if(!x.includes(k))process.exit(1);if(x.includes('packages/brain/scripts/smoke/codex-slot-host-smoke.sh'))process.exit(1)"
 
 - [ ] [ARTIFACT] DEFINITION 与 Brain VERSION 同步记录 Codex Slot，版本不是 Round 1 基线值。
   Test: manual:node -e "const fs=require('fs');const d=fs.readFileSync('DEFINITION.md','utf8'),v=fs.readFileSync('packages/brain/VERSION','utf8').trim();if(!/Codex Slot|codex slot/i.test(d)||!new RegExp(v.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')).test(d))process.exit(1)"
@@ -55,39 +61,39 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
   Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts -t "单账号并发竞争|相同 request_id" --reporter=verbose'
   期望：2 tests pass；fulfilled=1、blocking=1。
 
-- [ ] [BEHAVIOR] BEH-04 [GP-1/7] actor B 对 actor A handle 的 status 与 stop 均拒绝。
+- [ ] [BEHAVIOR] BEH-04 [GP-1/7] actor B 对 actor A handle 的 status、stop 与 release 均拒绝。
   Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts -t "actor B 对 actor A handle" --reporter=verbose'
   期望：1 test pass；真实 E2E 再验 forced-command。
 
-- [ ] [BEHAVIOR] BEH-05 [GP-3/7] acquire/status/error 精确 keys、类型、enum、稳定 error_code 与禁用字段。
-  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "acquire/status/error JSON" --reporter=verbose'
-  期望：1 test pass；actual CLI schema 在 BEH-12 E2E 复验。
+- [ ] [BEHAVIOR] BEH-05 [GP-1/3/7] acquire/status/stop/release/error 的 request/response 精确 keys、类型、enum、稳定 error_code、额外字段拒绝与禁用字段。
+  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "acquire/status/stop/release/error JSON" --reporter=verbose'
+  期望：1 test pass；真实 forced-command stdin/argv/env 在 BEH-12 E2E 独立复验。
 
-- [ ] [BEHAVIOR] BEH-06 [GP-5/6] 受控 store、262144-byte 上限、hash、nonce replay 与 0600 写盘边界。
-  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "受控 credential store|snapshot Buffer|oversize、nonce replay" --reporter=verbose'
-  期望：3 tests pass；权限/owner、内存清零与三个错误码逐字匹配。
+- [ ] [BEHAVIOR] BEH-06 [GP-5/6] 受控 store owner/mode、symlink/non-regular/read-side oversize、hash、跨重启 nonce replay、失败即零 auth/tmux 与目标 0600。
+  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "受控 credential store|snapshot Buffer|snapshot oversize/hash mismatch|nonce durable" --reporter=verbose'
+  期望：4 tests pass；expected UID/GID 不从被测文件反推，错误码逐字匹配。
 
 - [ ] [BEHAVIOR] BEH-07 [GP-7] 未知结果只 quarantine，broker 重建后同 handle 可 readback。
   Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts -t "未知投递结果|重建实例" --reporter=verbose'
   期望：2 tests pass。
 
-- [ ] [BEHAVIOR] BEH-08 [GP-8] reaper 五分类分别 heartbeat/release/quarantine，连续两轮幂等。
-  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "reaper 对" --reporter=verbose'
-  期望：5 parameterized cases pass。
+- [ ] [BEHAVIOR] BEH-08 [GP-8] reaper 从独立 reachability/identity/tmux/process/state facts 计算五分类，client status readback 消费结果且终态第二轮 no-op。
+  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "reaper 从独立事实计算" --reporter=verbose'
+  期望：5 cases pass；测试输入无最终 classification 字段。
 
-- [ ] [BEHAVIOR] BEH-09 [GP-9] rollout 成功链、blocking lease、双证据缺失与原子 readback 全覆盖。
+- [ ] [BEHAVIOR] BEH-09 [GP-9] rollout 只接受同 run、5 分钟内、passed、kind 正确的 inventory/legacy probe evidence；垃圾/跨 run/过期/failed/缺失与 blocking lease 均阻断。
   Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "rollout" --reporter=verbose'
-  期望：成功链与 3 类阻断全部 pass。
+  期望：成功链与 blocking/缺失/垃圾/跨 run/过期/failed 阻断全部 pass。
 
-- [ ] [BEHAVIOR] BEH-10 [GP-9] 两个旧入口真执行均非零，显式 env allowlist 的隔离 HOME 零 auth。
+- [ ] [BEHAVIOR] BEH-10 [GP-9] 两个旧入口以历史真实参数 `--team team1` 与 `--team team3 --brief <fixture>` 真执行，稳定 broker-only 非零语义，隔离 HOME 与真机旧路径零 auth/tmux。
   Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "旧入口" --reporter=verbose'
   期望：2 parameterized cases pass。
 
-- [ ] [BEHAVIOR] BEH-11 [GP-9/11] client/agent/installer 通过真实 Bash 3.2 与现代 Bash，零参数均非零。
+- [ ] [BEHAVIOR] BEH-11 [GP-9/11] Mac host 上 client/agent/installer 通过真实 Bash 3.2 与现代 Bash，零参数均非零；对应 macos-13 workflow 持续回归。
   Test: manual:bash -lc 'BASH_32_BIN="${BASH_32_BIN:-/bin/bash}" BASH_MODERN_BIN="${BASH_MODERN_BIN:-/opt/homebrew/bin/bash}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "Bash 3.2" --reporter=verbose'
   期望：两个 shell version 互异且均通过。
 
-- [ ] [BEHAVIOR] BEH-12 [GP-1→10] 真 client→broker→agent 双机链，逐 handle 独立查 SSH/PG/tmux/process/`mmv`/清理。
+- [ ] [BEHAVIOR] BEH-12 [GP-1→10] 真 client→broker→agent 双机链，逐 handle 独立查 request/auth transport、源/目标权限、root trust 对比、SSH/PG/tmux/process/reaper readback/清理。
   Test: manual:bash -lc 'awk '"'"'/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'"'"' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh'
   期望：exit 0；两个 host 各 5 个绑定本轮 handle 的 audit 事件。
 
@@ -105,7 +111,7 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
   Test: manual:bash -lc 'RUN_ID="inv01-$(date +%s)-$$"; bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh full --run-id "$RUN_ID" | jq -e --arg r "$RUN_ID" ".ok == true and .run_id == \$r"'
 - INV-02 — N/A：与 INV-01 字面重复，由 INV-01 单一真实 oracle 覆盖。
 - [ ] [BEHAVIOR] INV-03 [GP-8] reaper 状态不重置并真实等待两轮。
-  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "reaper 对" --reporter=verbose'
+  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "reaper 从独立事实计算" --reporter=verbose'
 - INV-04 — N/A：reaper 无 LLM/付费第三方调用。
 - [ ] [BEHAVIOR] INV-05 [GP-2/8] freshness 常数满足 `0 < freshness <= 60000`。
   Test: manual:bash -lc 'node -e "Promise.all([import(\"./packages/brain/src/codex-slot/config.js\"),import(\"./packages/brain/src/codex-slot/reaper.js\")]).then(([c,r])=>{if(!(c.MMV_FRESHNESS_MS>0&&c.CAPACITY_FRESHNESS_MS>0&&c.MMV_FRESHNESS_MS<=60000&&c.CAPACITY_FRESHNESS_MS<=60000&&r.REAPER_INTERVAL_MS===60000))process.exit(1)})"'
@@ -118,7 +124,7 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
 - [ ] [BEHAVIOR] INV-10 [GP-11] 新 Codex Slot 路径不复活未审 death history。
   Test: manual:bash -lc 'LOG=$(git log --all --diff-filter=D --format= --name-only -- packages/brain/src/codex-slot scripts/codex-slot-client.sh scripts/codex-slot-agent.sh | sed "/^$/d"); [ -z "$LOG" ] || { echo "FAIL: 新路径命中 deleted history: $LOG"; exit 1; }'
 - [ ] [BEHAVIOR] INV-11 [GP-5/6] false/error 返回路径显式拒绝，不靠异常兜底。
-  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "oversize、nonce replay" --reporter=verbose'
+  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "snapshot oversize/hash mismatch|nonce durable" --reporter=verbose'
 - INV-12 — N/A：与 INV-01 重复的冒烟条目。
 - INV-13 — N/A：不改 journey_features/report pipeline。
 - INV-14 — N/A：不改 harness-controller finalize/report。
@@ -126,16 +132,16 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
   Test: manual:bash -lc 'RUN_ID="inv15-$(date +%s)-$$"; bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh identity-modes --run-id "$RUN_ID" | jq -e ".headed_actor == .headless_actor and .tty_bypass == false"'
 - INV-16 — N/A：本产品路径不点火 headed relay。
 - [ ] [BEHAVIOR] INV-17 [GP-9] rollout 退役依据来自真 inventory 与双旧入口证据。
-  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "rollout 成功|旧入口" --reporter=verbose'
+  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "rollout 只接受本 run|旧入口" --reporter=verbose'
 - [ ] [BEHAVIOR] INV-18 [GP-8] reaper 失败计数与 sentinel 绑定本轮 run_id。
   Test: manual:bash -lc 'RUN_ID="inv18-$(date +%s)-$$"; bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh reaper-failure --run-id "$RUN_ID"; DB_URL="${DB_URL:-postgresql://localhost/cecelia}"; C=$(psql "$DB_URL" -Atc "SELECT count(*) FROM codex_slot_audit WHERE run_id='"'"'"'"'"'$RUN_ID'"'"'"'"'"' AND event='"'"'"'"'"'reaper_failed'"'"'"'"'"' AND created_at > NOW() - interval '"'"'"'"'"'5 minutes'"'"'"'"'"'"); [ "$C" -eq 1 ]'
 - [ ] [BEHAVIOR] INV-19 [GP-3] 新表写入方只在 codex-slot 模块，schema owner 唯一。
   Test: manual:bash -lc 'if HITS=$(rg -l "INSERT INTO codex_(company_accounts|account_leases|slot_sessions|slot_audit|slot_rollout|slot_agent_observations)" packages/brain/src scripts | rg -v "packages/brain/src/codex-slot/"); then echo "$HITS"; exit 1; else RC=$?; [ "$RC" -eq 1 ] || exit "$RC"; fi'
-- [ ] [BEHAVIOR] INV-20 [GP-7/8] reaper 更新可由 client status 消费。
-  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "reaper 对" --reporter=verbose'
+- [ ] [BEHAVIOR] INV-20 [GP-7/8] reaper 从独立事实推导后，由同一 actor 的真实 status/readback 消费 active/released/quarantined 终态。
+  Test: manual:bash -lc 'awk '"'"'/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'"'"' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh'
 - INV-21 — N/A：无 UI；设备差异通过 agent_id 字段对外可见。
 - [ ] [BEHAVIOR] INV-22 [GP-7/8] broker/reaper/final E2E 对 unknown 一致为 quarantine。
-  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "未知投递结果|reaper 对 unknown" --reporter=verbose'
+  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "未知投递结果|reaper 从独立事实计算 unknown" --reporter=verbose'
 - [ ] [BEHAVIOR] INV-23 [GP-4] worktree ref 必须用 `git rev-parse --verify <ref>^{commit}`。
   Test: manual:bash -lc 'node -e "const s=require(\"fs\").readFileSync(\"packages/brain/src/codex-slot/agent.js\",\"utf8\");if(!/rev-parse[\\s\\S]{0,80}--verify[\\s\\S]{0,80}\\^\\{commit\\}/.test(s))process.exit(1)"'
 - [ ] [BEHAVIOR] INV-24 [GP-10] 真机使用 run-scoped sandbox，独立 audit 证实零残留。
@@ -147,7 +153,7 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
   Test: manual:bash -lc 'node packages/engine/scripts/devgate/check-test-coverage.cjs'
 - [ ] [BEHAVIOR] INV-28 [GP-11] Test Contract 固定 4 个视觉列；checker 的 split cell 3（`cells[2]`）为反引号 test path。
   Test: manual:bash -lc 'node packages/engine/scripts/devgate/check-test-coverage.cjs && node -e "const s=require(\"fs\").readFileSync(\"sprints/07240705-relay-56bf3e23/contract-draft.md\",\"utf8\").split(\"## Test Contract\")[1];for(const line of s.split(\"\\n\").filter(x=>/^\\| WS[0-9]+ /.test(x))){const c=line.split(\"|\");if(c.length!==6||!/`tests\\/.*\\.test\\.ts`/.test(c[2]))process.exit(1)}"'
-- INV-29 — N/A：合同 commit 精确 add 四个 tests；Generator 无权修改批准后的合同 tests。
+- INV-29 — N/A：本 commit 的 task_type 是 `harness_contract_propose` 修订轮，依法同时提交 draft/DoD/task-plan/合同 tests，不是 Generator 的 Red-only 实现 commit；批准后 Generator 无权修改合同 tests，并须先精确 add task-plan 指定的长期回归 tests。
 - [ ] [BEHAVIOR] INV-30 [GP-11] 被改边测试真跑且零 vi.mock/stub。
   Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests --reporter=verbose; if rg -n "vi\\.mock|jest\\.mock|sinon\\.stub|mockResolvedValue" sprints/07240705-relay-56bf3e23/tests; then exit 1; fi'
 - [ ] [BEHAVIOR] INV-31 [GP-8] reaper 只在 scheduler JOBS 接线。
@@ -155,12 +161,12 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
 - INV-32 — N/A：merge 权归 controller；计划无 merge。
 - INV-33 — N/A：不依赖 headed relay inner shell 环境。
 - INV-34 — N/A：本轮按当前真实脚本与 reviewer feedback 重推导，未照抄旧 dispatch 先例。
-- [ ] [BEHAVIOR] INV-35 [GP-11] shared allowlist 只新增两条精确 smoke 登记且不删改其他项。
-  Test: manual:bash -lc 'BASE=$(git merge-base HEAD origin/main); D=$(git diff --unified=0 "$BASE" -- packages/quality/smoke-allowlist.txt); ADDED=$(printf "%s\n" "$D" | grep -E "^[+][^+]" | wc -l | tr -d " "); REMOVED=$(printf "%s\n" "$D" | grep -E "^-[^-]" | wc -l | tr -d " "); [ "$ADDED" -eq 2 ] && [ "$REMOVED" -eq 0 ] && printf "%s\n" "$D" | grep -q "codex-slot-security-smoke.sh" && printf "%s\n" "$D" | grep -q "codex-slot-host-smoke.sh"'
+- [ ] [BEHAVIOR] INV-35 [GP-11] shared allowlist 只新增 Ubuntu-safe security smoke；xian host smoke 明确不登记且由 real-machine workflow 独立调用。
+  Test: manual:bash -lc 'BASE=$(git merge-base HEAD origin/main); D=$(git diff --unified=0 "$BASE" -- packages/quality/smoke-allowlist.txt); ADDED=$(printf "%s\n" "$D" | grep -E "^[+][^+]" | wc -l | tr -d " "); REMOVED=$(printf "%s\n" "$D" | grep -E "^-[^-]" | wc -l | tr -d " "); [ "$ADDED" -eq 1 ] && [ "$REMOVED" -eq 0 ] && printf "%s\n" "$D" | grep -q "codex-slot-security-smoke.sh" && ! printf "%s\n" "$D" | grep -q "codex-slot-host-smoke.sh"'
 - INV-36 — N/A：PR 早合守卫属于 controller。
 - INV-37 — N/A：与 INV-01 重复的冒烟条目。
-- [ ] [BEHAVIOR] INV-38 [GP-11] Brain 改动的两份 smoke 有业务内容且 allowlist 精确登记。
-  Test: manual:bash -lc 'node -e "const fs=require(\"fs\");const a=fs.readFileSync(\"packages/brain/scripts/smoke/codex-slot-security-smoke.sh\",\"utf8\"),b=fs.readFileSync(\"packages/brain/scripts/smoke/codex-slot-host-smoke.sh\",\"utf8\"),l=fs.readFileSync(\"packages/quality/smoke-allowlist.txt\",\"utf8\");for(const k of [\"snapshot_too_large\",\"handle_forbidden\",\"run_id\"])if(!a.includes(k))process.exit(1);for(const k of [\"codex-slot-audit\",\"tmux\",\"cleanup\"])if(!b.includes(k))process.exit(1);for(const n of [\"codex-slot-security-smoke.sh\",\"codex-slot-host-smoke.sh\"])if(l.split(\"\\n\").filter(x=>x.includes(n)).length!==1)process.exit(1)"'
+- [ ] [BEHAVIOR] INV-38 [GP-11] Ubuntu security smoke 与 xian real-machine host smoke 均有业务 oracle，且只有前者进 allowlist。
+  Test: manual:bash -lc 'node -e "const fs=require(\"fs\");const a=fs.readFileSync(\"packages/brain/scripts/smoke/codex-slot-security-smoke.sh\",\"utf8\"),b=fs.readFileSync(\"packages/brain/scripts/real-machine/codex-slot-host-smoke.sh\",\"utf8\"),l=fs.readFileSync(\"packages/quality/smoke-allowlist.txt\",\"utf8\");for(const k of [\"snapshot_too_large\",\"handle_forbidden\",\"run_id\"])if(!a.includes(k))process.exit(1);for(const k of [\"codex-slot-audit\",\"tmux\",\"cleanup\",\"xian-m1\",\"xian-m4\"])if(!b.includes(k))process.exit(1);if(l.split(\"\\n\").filter(x=>x.includes(\"codex-slot-security-smoke.sh\")).length!==1||l.includes(\"codex-slot-host-smoke.sh\"))process.exit(1)"'
 - INV-39 — N/A：不新增 task_type。
 - INV-40 — N/A：不新增网络 daemon；agent 是 forced-command，reaper 用既有 scheduler。
 - INV-41 — N/A：美国本机不新增用户域常驻服务。
@@ -177,7 +183,7 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
   Test: manual:bash -lc 'awk '"'"'/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'"'"' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh'
 - [ ] [BEHAVIOR] INV-49 [GP-5/10/11] audit 只含批准元数据并绑定 run/handle/agent。
   Test: manual:bash -lc 'RUN_ID="inv49-$(date +%s)-$$"; bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh audit-schema --run-id "$RUN_ID" | jq -e ".forbidden_key_hits == 0 and .unbound_rows == 0"'
-- [ ] [BEHAVIOR] INV-50 [GP-1/7] 每个生产 CLI operation 都有 SSH auth，跨 actor handle 拒绝。
+- [ ] [BEHAVIOR] INV-50 [GP-1/7] acquire/status/stop/release 均经真实 forced-command SSH auth；transport audit 的 request keys 精确，raw 额外身份字段拒绝，actor B 对 status/stop/release 全部 `handle_forbidden`。
   Test: manual:bash -lc 'awk '"'"'/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'"'"' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh'
 - INV-51 — N/A：无 tenant-scoped 表；account lease 以 actor ownership 隔离，不冒充 tenant。
 
