@@ -57,7 +57,7 @@ function runLegacyWithTripwires(script: string, args: string[]) {
   };
 }
 
-describe('完整 Codex Slot Round 3 合同 [BEHAVIOR]', () => {
+describe('完整 Codex Slot Round 4 合同 [BEHAVIOR]', () => {
   it('旧 codex-request 合法参数在任何网络前 exit 64', () => {
     const { result, output, trace } = runLegacyWithTripwires(
       'scripts/codex-request.sh',
@@ -89,6 +89,8 @@ describe('完整 Codex Slot Round 3 合同 [BEHAVIOR]', () => {
     expect(executor).toContain("route.executor === 'codex'");
     expect(executor).toContain("location === 'xian'");
     expect(executor).toContain("location === 'xian_m1'");
+    expect(executor).not.toMatch(/function selectBestBridge[\s\S]{0,1500}\/health[\s\S]{0,500}\.accounts/);
+    expect(executor).not.toMatch(/所有 Codex Bridge 不可用[\s\S]{0,200}XIAN_CODEX_BRIDGE_URL/);
     expect(relay).not.toMatch(/account_id\s*:/);
     expect(relay).toContain('codex-slot-broker');
     expect(relay).toContain('receipt');
@@ -198,6 +200,8 @@ describe('完整 Codex Slot Round 3 合同 [BEHAVIOR]', () => {
       'predicate_id',
       'identity-authority-error-matrix',
       'protected-delivery-and-launch',
+      'prepare_to_receive',
+      'receive_to_launch',
     ]) {
       expect(smoke).toContain(marker);
     }
