@@ -1592,6 +1592,9 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
 
 test('real transport executes the configured local agent and tmux without self SSH', async () => {
   const calls = [];
+  const detachedEnv = { ...process.env };
+  delete detachedEnv.TMUX;
+  delete detachedEnv.TMUX_PANE;
   const runCommand = async (cmd, args, options) => {
     calls.push({ kind: 'command', cmd, args, options });
     return { stdout: '{"ok":true,"hostname":"xian-m4"}\n', stderr: '' };
@@ -1602,6 +1605,7 @@ test('real transport executes the configured local agent and tmux without self S
   };
   const transport = await createSshTransport({
     home: '/Users/alex',
+    env: detachedEnv,
     config: {
       broker: 'administrator@100.71.151.105',
       hosts: ['xian-m4'],
@@ -1627,7 +1631,7 @@ test('real transport executes the configured local agent and tmux without self S
       timeoutMs: 30_000,
       shell: false,
       env: {
-        ...process.env,
+        ...detachedEnv,
         PATH: REMOTE_FIXED_PATH,
         CODEX_SLOT_HOST: 'xian-m4',
       },
@@ -1641,12 +1645,49 @@ test('real transport executes the configured local agent and tmux without self S
       shell: false,
       stdio: 'inherit',
       env: {
-        ...process.env,
+        ...detachedEnv,
         PATH: REMOTE_FIXED_PATH,
       },
     },
   });
   assert.equal(calls.some((call) => call.cmd === 'ssh'), false);
+
+  const nestedCalls = [];
+  const nestedTransport = await createSshTransport({
+    home: '/Users/alex',
+    env: {
+      ...process.env,
+      TMUX: '/private/tmp/tmux-501/default,123,0',
+    },
+    config: {
+      broker: 'administrator@100.71.151.105',
+      hosts: ['xian-m4'],
+      localHost: 'xian-m4',
+      brokerScript: '~/.local/lib/codex-slot/codex-slot-broker.mjs',
+      agentScript: '~/.local/lib/codex-slot/codex-slot-agent.mjs',
+    },
+    runCommand,
+    runInteractive: async (cmd, args, options) => {
+      nestedCalls.push({ cmd, args, options });
+      return { ok: true };
+    },
+  });
+
+  await nestedTransport.attach('xian-m4', '=codex-slot-s-abc');
+
+  assert.deepEqual(nestedCalls, [{
+    cmd: 'tmux',
+    args: ['switch-client', '-t', '=codex-slot-s-abc'],
+    options: {
+      shell: false,
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        TMUX: '/private/tmp/tmux-501/default,123,0',
+        PATH: REMOTE_FIXED_PATH,
+      },
+    },
+  }]);
 });
 
 test('remote env prefix lets fake node and tmux inherit fixed PATH with empty or minimal caller PATH', async (t) => {

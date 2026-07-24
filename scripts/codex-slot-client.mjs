@@ -1251,6 +1251,7 @@ export async function createSshTransport(options = {}) {
     ? normalizeConfig(options.config)
     : await loadClientConfig(options);
   const home = options.home ?? homedir();
+  const callerEnv = options.env ?? process.env;
   const runCommand = options.runCommand ?? runProcess;
   const runInteractive = options.runInteractive ?? runProcess;
   const command = async (host, script, args, broker = false) => {
@@ -1297,7 +1298,7 @@ export async function createSshTransport(options = {}) {
               timeoutMs: NON_INTERACTIVE_TIMEOUT_MS,
               shell: false,
               env: {
-                ...process.env,
+                ...callerEnv,
                 PATH: REMOTE_FIXED_PATH,
                 CODEX_SLOT_HOST: host,
               },
@@ -1322,12 +1323,12 @@ export async function createSshTransport(options = {}) {
         if (host === config.localHost) {
           return await runInteractive(
             'tmux',
-            ['attach-session', '-t', tmuxTarget],
+            [callerEnv.TMUX ? 'switch-client' : 'attach-session', '-t', tmuxTarget],
             {
               shell: false,
               stdio: 'inherit',
               env: {
-                ...process.env,
+                ...callerEnv,
                 PATH: REMOTE_FIXED_PATH,
               },
             }
