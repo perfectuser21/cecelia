@@ -1,0 +1,23 @@
+{
+  "initiative_id": "0724181049-kernel-fire-drill-mixed-r3",
+  "journey_type": "autonomous",
+  "journey_type_reason": "后台接力链自证 + 文档产物，无 dashboard/agent 协议/engine 触碰，验收为本地文件与 git 断言",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 kernel v1 mixed fire drill r3 报告文档（含标记/版本/merge commit/六角色运行证据摘要）",
+      "scope": "仅新增 docs/fire-drills/kernel-v1-mixed-20260724-r3.md 一个文件：字面包含 KERNEL_V1_MIXED_FIRE_DRILL_PASS_R3、1.267.67、19887912bbb581597f12c714a9ed187f051e2850、本次 run_id 4c7fcc5b-32ee-4a7f-9649-3b857ed30610，以及 planner=claude/account1、proposer=claude/account1、reviewer=grok/grok、evaluator=grok/grok、generator=codex/team3 与 judge=<实际值> 的实际运行证据摘要（证据取自本次 run attempt 日志 / Brain harness runs API，禁止伪造）。不得触碰 packages/brain、现有合同测试、migrations、产品逻辑、.github/workflows",
+      "dod": [
+        "[BEHAVIOR] test -f docs/fire-drills/kernel-v1-mixed-20260724-r3.md && grep -q KERNEL_V1_MIXED_FIRE_DRILL_PASS_R3 该文件（PRD 验收命令原样）",
+        "[BEHAVIOR] 文件字面含 1.267.67 与 19887912bbb581597f12c714a9ed187f051e2850（node -e includes 断言）",
+        "[BEHAVIOR] 六角色 provider/account 证据行齐全且锚定本次 run_id 4c7fcc5b-32ee-4a7f-9649-3b857ed30610",
+        "[BEHAVIOR] git diff origin/main...HEAD 仅含 docs/fire-drills/ 与 sprints/0724181049-kernel-fire-drill-mixed-r3/ 前缀文件",
+        "[ARTIFACT] docs/fire-drills/kernel-v1-mixed-20260724-r3.md 存在且含标记"
+      ],
+      "files": ["docs/fire-drills/kernel-v1-mixed-20260724-r3.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
