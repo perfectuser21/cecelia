@@ -236,7 +236,7 @@ describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
    * mock pool.query 返回含 action='verdict:human_review', detail.approved=true 的决策日志行，
    * 调用 collectGroundTruth，断言 reviewApproved === true。
    */
-  test('T-17-b: reviewApproved 推导：verdict:human_review 行含 approved:true', async () => {
+  test('T-17-b: reviewApproved 只接受同 SHA merge-gate request 的 approved verdict', async () => {
     const { collectGroundTruth } = await import('../../../packages/brain/src/orchestrator/ground-truth.js');
 
     const headSha = 'sha-approved-b';
@@ -272,6 +272,16 @@ describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
           return {
             rows: [
               {
+                hop: 4,
+                action: 'effect:human_review_requested',
+                observed: JSON.stringify({ pr: { head_sha: headSha } }),
+                derived_phase: 'review',
+                gate_verdict: null,
+                detail: JSON.stringify({
+                  review_reason: 'awaiting_human_review',
+                }),
+              },
+              {
                 hop: 5,
                 action: 'verdict:human_review',
                 observed: JSON.stringify({}),
@@ -279,7 +289,9 @@ describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
                 gate_verdict: null,
                 detail: JSON.stringify({
                   approved: true,
+                  review_class: 'merge_gate',
                   pr_head_sha: headSha,
+                  review_request_hop: 4,
                   approved_by: 'alex',
                 }),
               },
@@ -400,7 +412,7 @@ describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
 // ---- T-17-f: ground-truth reviewApproved 语义与 verdict:human_review 对齐 ----
 
 describe('[BEHAVIOR] B-06 ground-truth reviewApproved 推导', () => {
-  test('T-17-f: reviewApproved = true 当 decision log 含 verdict:human_review(approved=true, sha 匹配)', async () => {
+  test('T-17-f: reviewApproved = true 当 merge-gate request 与批准类别、hop、SHA 全匹配', async () => {
     // 直接测试 collectGroundTruth 的 reviewApproved 推导逻辑（用 mock 注入）
     const { collectGroundTruth } = await import('../../../packages/brain/src/orchestrator/ground-truth.js');
 
@@ -436,12 +448,22 @@ describe('[BEHAVIOR] B-06 ground-truth reviewApproved 推导', () => {
           return {
             rows: [
               {
+                hop: 9,
+                action: 'effect:human_review_requested',
+                observed: JSON.stringify({ pr: { head_sha: headSha } }),
+                detail: JSON.stringify({
+                  review_reason: 'awaiting_human_review',
+                }),
+              },
+              {
                 hop: 10,
                 action: 'verdict:human_review',
                 observed: JSON.stringify({}),
                 detail: JSON.stringify({
                   approved: true,
+                  review_class: 'merge_gate',
                   pr_head_sha: headSha,
+                  review_request_hop: 9,
                   approved_by: 'alex',
                 }),
               },
@@ -479,9 +501,6 @@ describe('[BEHAVIOR] B-06 ground-truth reviewApproved 推导', () => {
       runId: 'run-1',
     });
 
-    // 实现后期望：reviewApproved = true
-    // 当前（先红）：decision log 里用 verdict:human_review + approved:true，
-    //              但 ground-truth 当前写法是检查 task_events，不读 decision_log 中的 verdict:human_review
     expect(observed.reviewApproved).toBe(true);
   });
 });
