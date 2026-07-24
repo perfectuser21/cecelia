@@ -7,7 +7,7 @@
  * - 同 hop 不重复计
  */
 import { describe, it, expect } from 'vitest';
-import { deriveCounters } from '../counters.js';
+import { deriveCounters, replayProductConvergence } from '../counters.js';
 
 /** 造一行决策日志 */
 function row(hop, action, observed = {}) {
@@ -207,5 +207,40 @@ describe('deriveCounters：入参防御', () => {
 
   it('logRows 非数组 → throw', () => {
     expect(() => deriveCounters(null, { proposeBranchMaxRn: 0 })).toThrow(/logRows/);
+  });
+});
+
+describe('replayProductConvergence：无 claimed SHA 的 pending callback', () => {
+  const triggerSha = 'a'.repeat(40);
+  const advancedSha = 'b'.repeat(40);
+
+  function unclaimedPendingRows() {
+    return [
+      row(1, 'spawn:generator-fix', {
+        trigger_sha: triggerSha,
+        failure_class: 'product_failure',
+      }),
+      {
+        ...row(2, 'verdict:generator-fix-callback', {
+          trigger_hop: 1,
+          pr_head_sha: triggerSha,
+        }),
+        detail: { verification_status: 'verification_pending' },
+      },
+    ];
+  }
+
+  it('服务端同 SHA 时将无 claimed pending callback 收敛为 no-progress', () => {
+    expect(replayProductConvergence(unclaimedPendingRows(), {
+      currentFailureSet: null,
+      currentHeadSha: triggerSha,
+    })).toEqual({ outcome: 'failed', reason: 'no_progress_same_sha' });
+  });
+
+  it('服务端 SHA 前进时将无 claimed pending callback 认定为 verified progress', () => {
+    expect(replayProductConvergence(unclaimedPendingRows(), {
+      currentFailureSet: null,
+      currentHeadSha: advancedSha,
+    })).toEqual({ outcome: 'continue', reason: 'verified_new_sha' });
   });
 });
