@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "agents": [
+    {
+      "agent_id": "xian-m1",
+      "machine_registry_name": "mac-mini-m1-xian",
+      "fleet_id": "xian-mac-m1",
+      "root_attested": true,
+      "mmv": {
+        "stable_node_id": "us-wisconsin-codex-slot-m1",
+        "allowed_ips": [
+          "38.23.47.81"
+        ]
+      }
+    },
+    {
+      "agent_id": "xian-m4",
+      "machine_registry_name": "mac-mini-m4-xian",
+      "fleet_id": "xian-mac-m4",
+      "root_attested": true,
+      "mmv": {
+        "stable_node_id": "us-wisconsin-codex-slot-m4",
+        "allowed_ips": [
+          "38.23.47.81"
+        ]
+      }
+    }
+  ]
+}

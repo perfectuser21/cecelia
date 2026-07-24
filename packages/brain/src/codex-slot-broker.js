@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import pool from './db.js';
-import { getFleetStatus } from './fleet-resource-cache.js';
+import { getCodexSlotTtls } from './fleet-resource-cache.js';
 
 // Codex Slot deliberately reuses the existing system_registry,
 // fleet-resource-cache, slot-allocator and account usage deficit sources.
@@ -206,6 +206,29 @@ async function selectAccountRef(client) {
   return ranked;
 }
 
+export function rankCodexSlotAgents(registryRows, capacitySnapshot) {
+  const capacities = new Map((capacitySnapshot?.agents || [])
+    .map(capacity => [capacity.server_id, capacity]));
+  const candidates = registryRows.flatMap(machine => {
+    const metadata = machine.metadata || {};
+    const fleetId = metadata.fleet_id;
+    const capacity = capacities.get(fleetId);
+    if (!['xian-m1', 'xian-m4'].includes(metadata.agent_id)
+        || typeof fleetId !== 'string'
+        || metadata.root_attested !== true
+        || !metadata.mmv_stable_node_id
+        || !Array.isArray(metadata.mmv_allowed_ips) || metadata.mmv_allowed_ips.length < 1
+        || capacity?.fresh !== true
+        || !Number.isInteger(capacity.available) || capacity.available < 1) {
+      return [];
+    }
+    return [{ agent_id: metadata.agent_id, available: capacity.available,
+      fleet_id: fleetId, machine_registry_name: machine.name }];
+  });
+  candidates.sort((a, b) => b.available - a.available || a.agent_id.localeCompare(b.agent_id));
+  return candidates;
+}
+
 async function selectAgent(client, dependencies) {
   if (dependencies.selectAgent) return dependencies.selectAgent(client);
 
@@ -216,28 +239,16 @@ async function selectAgent(client, dependencies) {
         AND status = 'active'
         AND metadata->>'agent_id' IN ('xian-m1', 'xian-m4')`,
   );
-  const fleet = getFleetStatus();
-  const { calculateSlotBudget } = await import('./slot-allocator.js');
-  const slots = await calculateSlotBudget();
-  if (slots?.codex?.available !== true) throw codexSlotError('AGENT_UNAVAILABLE');
-
-  const candidates = registry.rows.flatMap(machine => {
-    const metadata = machine.metadata || {};
-    const fleetId = metadata.fleet_id || metadata.server_id || machine.name;
-    const capacity = fleet.find(item => item.id === fleetId);
-    if (metadata.root_attested !== true || !metadata.mmv_stable_node_id) return [];
-    if (!capacity?.online || !Number.isInteger(capacity.effectiveSlots) || capacity.effectiveSlots < 1) {
-      return [];
-    }
-    return [{
-      agent_id: metadata.agent_id,
-      effective_slots: capacity.effectiveSlots,
-      pressure: Number(capacity.pressure) || 0,
-    }];
-  });
-  candidates.sort((a, b) => b.effective_slots - a.effective_slots || a.pressure - b.pressure);
+  const { getCodexCapacitySnapshot } = await import('./slot-allocator.js');
+  const capacity = getCodexCapacitySnapshot();
+  const candidates = rankCodexSlotAgents(registry.rows, capacity);
   if (candidates.length === 0) throw codexSlotError('AGENT_UNAVAILABLE');
   return candidates[0].agent_id;
+}
+
+export function getCodexSlotSsotMetadata() {
+  return { capacity_source: 'fleet-resource-cache', concurrency_source: 'slot-allocator',
+    identity_source: 'system_registry', ttl: getCodexSlotTtls() };
 }
 
 async function runFaultHook(dependencies, boundary, context) {

@@ -15,8 +15,17 @@
 import { SERVERS, COMPUTE_SERVERS, collectLocalStats, collectRemoteUnixStats } from './routes/infra-status.js';
 import { calculatePhysicalCapacity } from './platform-utils.js';
 
-const REFRESH_INTERVAL_MS = 30_000; // 30 秒
-const STALE_THRESHOLD_MS = 90_000;  // 90 秒后数据视为过期（不影响 offline_reason 判定）
+export const CODEX_SLOT_HEALTH_TTL_MS = 30_000;
+export const CODEX_SLOT_HEARTBEAT_STALE_MS = 90_000;
+export const CODEX_SLOT_QUARANTINE_REVIEW_MS = 15 * 60_000;
+
+const REFRESH_INTERVAL_MS = CODEX_SLOT_HEALTH_TTL_MS;
+const STALE_THRESHOLD_MS = CODEX_SLOT_HEARTBEAT_STALE_MS;
+
+if (!(CODEX_SLOT_HEALTH_TTL_MS < CODEX_SLOT_HEARTBEAT_STALE_MS
+    && CODEX_SLOT_HEARTBEAT_STALE_MS < CODEX_SLOT_QUARANTINE_REVIEW_MS)) {
+  throw new Error('Codex Slot TTL ordering must be health < heartbeat stale < quarantine review');
+}
 
 /**
  * offline 判定宽限期（分钟）
@@ -174,7 +183,43 @@ export function getRemoteCapacity(serverId) {
     physicalCapacity: entry.physicalCapacity,
     pressure: entry.pressure,
     last_ping_at: entry.last_ping_at ?? null,
-    offline_reason: online ? null : (entry.offline_reason || null),
+    offline_reason: online
+      ? null
+      : (entry.offline_reason || (fresh ? 'fetch_failed' : 'heartbeat_stale')),
+  };
+}
+
+/**
+ * Codex Slot 的 fail-closed 容量视图。
+ *
+ * 与 getRemoteCapacity 的兼容接口不同，本函数对 unknown/missing 也返回
+ * 明确的 available=0，避免 caller 将 null 当作“缓存还没热起来，可回退”。
+ */
+export function getCodexSlotCapacity(serverId) {
+  const capacity = getRemoteCapacity(serverId);
+  if (!capacity?.online || !Number.isInteger(capacity.effectiveSlots)) {
+    return {
+      server_id: serverId,
+      available: 0,
+      effective_slots: 0,
+      fresh: false,
+      reason: capacity?.offline_reason || 'missing_capacity',
+    };
+  }
+  return {
+    server_id: serverId,
+    available: Math.max(0, capacity.effectiveSlots),
+    effective_slots: Math.max(0, capacity.effectiveSlots),
+    fresh: true,
+    reason: null,
+  };
+}
+
+export function getCodexSlotTtls() {
+  return {
+    health_ms: CODEX_SLOT_HEALTH_TTL_MS,
+    heartbeat_stale_ms: CODEX_SLOT_HEARTBEAT_STALE_MS,
+    quarantine_review_ms: CODEX_SLOT_QUARANTINE_REVIEW_MS,
   };
 }
 

@@ -20,7 +20,10 @@ import {
   getBrainRssMB,
 } from './platform-utils.js';
 import { calculateBudgetState } from './token-budget-planner.js';
-import { getFleetStatus, getRemoteCapacity } from './fleet-resource-cache.js';
+import {
+  getFleetStatus,
+  getRemoteCapacity,
+} from './fleet-resource-cache.js';
 import { getMachineVitals } from './machine-vitals.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { getAvailableAccountCount } from './account-usage.js';
@@ -37,7 +40,6 @@ const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent
 const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
 const SESSION_TTL_SECONDS = 24 * 60 * 60;   // 24 hours: long-running harness/pipeline sessions stay valid
 const CODEX_ACCOUNT_COUNT = 5;              // Codex 账号总数（硬上限）
-const CODEX_FALLBACK_CONCURRENT = 3;        // Fleet cache 不可用时的降级值
 
 /**
  * 动态计算 Codex 并发上限（基于 fleet cache 的远程机器 effectiveSlots）
@@ -46,11 +48,31 @@ const CODEX_FALLBACK_CONCURRENT = 3;        // Fleet cache 不可用时的降级
 function getCodexMaxConcurrent() {
   const m4 = getRemoteCapacity('xian-mac-m4');
   const m1 = getRemoteCapacity('xian-mac-m1');
-  const remoteSlots = (m4?.online ? m4.effectiveSlots : 0) + (m1?.online ? m1.effectiveSlots : 0);
-  if (remoteSlots === 0 && !m4?.online && !m1?.online) {
-    return CODEX_FALLBACK_CONCURRENT; // fleet cache 不可用时降级
-  }
+  const remoteSlots = (m4?.online && Number.isInteger(m4.effectiveSlots) ? m4.effectiveSlots : 0)
+    + (m1?.online && Number.isInteger(m1.effectiveSlots) ? m1.effectiveSlots : 0);
   return Math.min(remoteSlots, CODEX_ACCOUNT_COUNT);
+}
+
+export function getCodexCapacitySnapshot() {
+  const agents = ['xian-mac-m1', 'xian-mac-m4'].map(serverId => {
+    const capacity = getRemoteCapacity(serverId);
+    const fresh = capacity?.online === true && Number.isInteger(capacity.effectiveSlots);
+    return {
+      server_id: serverId,
+      available: fresh ? Math.max(0, capacity.effectiveSlots) : 0,
+      effective_slots: fresh ? Math.max(0, capacity.effectiveSlots) : 0,
+      fresh,
+      reason: fresh ? null : (capacity?.offline_reason || 'missing_capacity'),
+    };
+  });
+  return {
+    available: Math.min(
+      agents.reduce((total, agent) => total + agent.available, 0),
+      CODEX_ACCOUNT_COUNT,
+    ),
+    agents,
+    source: 'fleet-resource-cache',
+  };
 }
 const BACKPRESSURE_THRESHOLD = 20;          // 队列深度超过此值时触发降速（从5调到20，防止正常KR拆解任务卡死系统）
 const BACKPRESSURE_BURST_LIMIT = 3;         // 背压激活时 burst limit（动态检测已做防雪崩，不需要压到 1）
