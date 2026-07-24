@@ -1,0 +1,22 @@
+{
+  "initiative_id": "91db186d-e6ba-4099-bcf1-0e1c4ec0625c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "docs-only fire drill，验证 Brain 侧 harness 主链在混合 provider 下自治运转，无 UI/agent 协议面",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 kernel v1 mixed fire drill r4 证据文档（PR 唯一 diff）",
+      "scope": "读取服务端注入的 HARNESS_TASK_ID，从 origin/main 创建全新合规 cp-MMDDHHMM-<task-short-id> 分支（严禁复用 cp-harness-propose/contract 分支）；仅新增 docs/fire-drills/kernel-v1-mixed-20260724-r4.md，内容含标记 KERNEL_V1_MIXED_FIRE_DRILL_PASS_R4、生产版本 1.267.67、merge commit 19887912bbb581597f12c714a9ed187f051e2850、六角色 provider/account 实际运行证据摘要（planner/proposer=claude·account1，reviewer/evaluator=grok·grok，generator=codex·team3；失败角色如实记录）；git add 仅精确路径 docs/fire-drills/kernel-v1-mixed-20260724-r4.md；创建 PR 前用 git diff --name-only origin/main...HEAD 机械确认输出恰好一行目标文档；human review 前禁止 merge",
+      "dod": [
+        "[BEHAVIOR] test -f docs/fire-drills/kernel-v1-mixed-20260724-r4.md && grep -q KERNEL_V1_MIXED_FIRE_DRILL_PASS_R4 docs/fire-drills/kernel-v1-mixed-20260724-r4.md（合同 B1）",
+        "[BEHAVIOR] git diff --name-only origin/main...HEAD 输出恰好一行且为 docs/fire-drills/kernel-v1-mixed-20260724-r4.md（合同 B5）",
+        "[BEHAVIOR] 文档含 1.267.67、19887912bbb581597f12c714a9ed187f051e2850 及 11 个角色/provider/account 关键词（合同 B2/B3）",
+        "[ARTIFACT] docs/fire-drills/kernel-v1-mixed-20260724-r4.md 存在"
+      ],
+      "files": ["docs/fire-drills/kernel-v1-mixed-20260724-r4.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
