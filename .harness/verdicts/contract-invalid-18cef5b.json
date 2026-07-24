@@ -1,0 +1,16 @@
+{
+  "phase": "contract_gate",
+  "verdict": "contract_invalid",
+  "task_id": "56bf3e23-1bba-4c6a-8d19-e32d5d746395",
+  "contract_sha": "992456f4be7702126c31d7f2be2210ab2490b638",
+  "skeleton_sha": "18cef5b33d0603d67a52f116f2a9b362cc2db463",
+  "gate": "ARTIFACT",
+  "artifact_index": 10,
+  "artifact": "DEFINITION 与 Brain VERSION 同步记录 Codex Slot",
+  "command_exit_code": 1,
+  "failure_class": "contract_oracle_shell_syntax",
+  "failure_evidence": "bash expanded JavaScript regex characters inside a double-quoted node -e payload and failed with bad substitution before Node executed",
+  "implementation_red": false,
+  "contract_files_immutable": true,
+  "disposition": "terminal_fail_no_generator_no_merge"
+}
