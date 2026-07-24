@@ -6,9 +6,10 @@
     {
       "task_id": "ws1",
       "title": "冻结旧入口并建立公司账号全局 durable 租约",
-      "scope": "让两个旧 token 入口在任何网络/auth 动作前硬停；建立 tenant-scoped rollout/identity/lease/session/audit，并以 account_ref 全局约束 blocking lease。",
+      "scope": "让两个旧 token 入口在任何网络/auth 动作前硬停；建立 mapped UID/forced-command SSH key identity 与 tenant-scoped rollout/lease/session/audit，并以 account_ref 全局约束 blocking lease。",
       "dod": [
         "[BEHAVIOR] B01 两个旧脚本合法旧参数均在 child/network 前 exit 64",
+        "[BEHAVIOR] B06 mapped UID/key 成功，未知/伪造 identity 与客户端 authority 在副作用前拒绝",
         "[BEHAVIOR] B04 两 tenant 竞争同 account_ref 只有一个 blocking lease",
         "[ARTIFACT] migration 不创建 codex_slot_agents"
       ],
@@ -24,11 +25,11 @@
     {
       "task_id": "ws2",
       "title": "实现 frozen cutover、broker API 与 crash-safe 幂等",
-      "scope": "完成 authenticated inventory/cutover gate、acquire/stop/reap 鉴权与 exact schema、既有 usage/deficit 账号选择、durable fault 重启重放。",
+      "scope": "完成 inventory/cutover gate、acquire/stop/reap 鉴权与有限 exact error matrix、既有 usage/deficit 账号选择、durable fault 重启重放。",
       "dod": [
         "[BEHAVIOR] B03 inventory/cutover 任一失败保持 durable frozen",
         "[BEHAVIOR] B05 每个 durable fault 重启后只有一份 lease/session/audit",
-        "[BEHAVIOR] B06-B07 三端点全鉴权且 acquire 重放 IDs/副作用相同"
+        "[BEHAVIOR] B06-B07 七类 error 映射逐真请求且 acquire 重放 IDs/副作用相同"
       ],
       "files": [
         "packages/brain/src/routes/codex-slots.js",
@@ -49,7 +50,7 @@
       "scope": "从 system_registry 派生 agent 身份，从 fleet/slot 派生新鲜容量；缺映射或陈旧时不可用，并安装 root-owned 双机 agent/config。",
       "dod": [
         "[BEHAVIOR] B08 无平行 agent 表且 stale/missing capacity=0，三个 TTL 严格递增",
-        "[ARTIFACT] A03 installer 失败非零无半安装，A04 两台 root 映射齐全"
+        "[ARTIFACT] A03 Bash 3.2/modern 各真跑 installer 均 exit 78 无半安装，A04 两台 root 映射齐全"
       ],
       "files": [
         "packages/brain/src/codex-slot-broker.js",
@@ -67,17 +68,20 @@
     },
     {
       "task_id": "ws4",
-      "title": "硬切 executor→bridge raw auth 与本地 fallback",
-      "scope": "让内部 executor 与用户 adapter 都先获得 broker lease；bridge /run 只接 receiver token + opaque slot receipt，退役其他执行端点与本地账号选择。",
+      "title": "硬切所有生产 caller、bridge fallback 与 `/accounts` 消费旁路",
+      "scope": "让三路 executor、harness relay 与用户 adapter 都先获得 broker lease；bridge /run 只接 receiver token + opaque slot receipt；brain-meta/credentials-health 改读安全 cache。",
       "dod": [
-        "[BEHAVIOR] B02 真实 executor/user issuer 均为 broker，跨机 raw auth=0",
-        "[BEHAVIOR] B02 bridge local auth read=0，/execute 与 /execute-review=410"
+        "[BEHAVIOR] B02 4/4 生产 caller 的 broker IDs/receipt 与 /run slot 相同，raw auth/account_id=0",
+        "[BEHAVIOR] B02 bridge fallback=0、/accounts=410，两个既有消费者不断链且不成为 issuer"
       ],
       "files": [
         "packages/brain/src/executor.js",
+        "packages/brain/src/harness-skill-relay.js",
         "packages/brain/scripts/codex-bridge/codex-bridge.cjs",
         "packages/brain/scripts/codex-bridge/codex-account-usage.cjs",
         "packages/brain/src/codex-slot-broker.js",
+        "packages/brain/src/routes/brain-meta.js",
+        "packages/brain/src/credentials-health-scheduler.js",
         "scripts/codex-slot-agent.mjs"
       ],
       "depends_on": [
@@ -89,10 +93,10 @@
     {
       "task_id": "ws5",
       "title": "收口 mmv、幂等 stop 与 reaper 死亡告警",
-      "scope": "prepare/launch 共用 mmv 判定；stop 直接比较两次响应与 release/audit 计数；reaper 两轮保留不确定租约并在连续失败时写 P0 Bark receipt。",
+      "scope": "双机先证明正常 receive 私有 durable 落盘并启动 fixture，再验证 mmv 竞态清理；stop 核 exact 类型/幂等副作用；reaper 保留不确定租约并告警。",
       "dod": [
-        "[BEHAVIOR] B09 双机 prepare/launch predicate 一致且失败清理",
-        "[BEHAVIOR] B10 重复 stop body 相同且 release/audit 各一次",
+        "[BEHAVIOR] B09 双机 fake auth 0700/0600+fsync、fixture/tmux running、stop clean，并保留 race fail closed",
+        "[BEHAVIOR] B10 重复 stop body 相同、ok/UUID/handle 类型 exact 且 release/audit 各一次",
         "[BEHAVIOR] B11 summary 全非负 integer 且连续失败写唯一 P0 Bark receipt"
       ],
       "files": [
@@ -113,7 +117,7 @@
       "scope": "把所有真实 caller/PG/restart/SSOT/auth/双机 lifecycle oracle 收进单一 smoke，登记 allowlist，并完成 Brain 版本同步。",
       "dod": [
         "[BEHAVIOR] B12 两 tenant 不串且近 5 分钟 audit 无 secret",
-        "[BEHAVIOR] Final E2E broker-only、全局唯一、三端点鉴权、双机 cleanup 与 P0 receipt 全通过",
+        "[BEHAVIOR] Final E2E 4 caller broker-only、identity/error exact、双机正常 launch+cleanup 与 P0 receipt 全通过",
         "[ARTIFACT] A05 smoke/allowlist/版本四件套一致"
       ],
       "files": [
