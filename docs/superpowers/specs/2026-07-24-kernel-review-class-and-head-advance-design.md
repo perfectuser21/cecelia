@@ -1,6 +1,6 @@
 # Kernel Review Class and Head Advance Design
 
-Date: 2026-07-24  
+Date: 2026-07-24
 Scope: PR #4226 third independent-review rework
 
 ## Goal
