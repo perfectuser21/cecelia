@@ -93,14 +93,14 @@ N/A — 无 HTTP 响应，仅 SQL WHERE 子句新增 `AND title NOT LIKE 'smoke:
 
 ## Invariant 覆盖（映射 PRD「Invariant 约束」段 8 条铁律）
 
-- [ ] [BEHAVIOR] INV-1 [单slot串行] — N/A：本任务是无状态 HTTP 路由 + 单条 SQL WHERE 子句改动，不涉及 slot/会话调度机制
-- [ ] [BEHAVIOR] INV-2 [禁止写死环境假设值] — N/A：DELETE 路由的终态判断复用既有 `TERMINAL_STATUSES` 常量（非环境值），smoke 过滤的 `'smoke:%'` 前缀是业务命名约定（PRD 假设段显式登记来源，非环境探测/坐标/阈值类环境假设值），不涉及需要"从环境推导或真机校准"的场景
-- [ ] [BEHAVIOR] INV-3 [真环境验证才算done] — 覆盖：本合同 `## E2E 验收` 段全程使用真实本地 Brain（localhost:5221）+ 真实 Postgres（`psql`/`pg.Client`），contract-dod.md 全部 [BEHAVIOR] 用 `manual:bash` 真实 curl/psql 命令，无 mock，满足此铁律，不再单列冗余断言
-- [ ] [BEHAVIOR] INV-4 [测试默认多租户] — N/A（PRD 已注明：本任务无租户维度不适用，tasks 表本次改动不涉及租户隔离查询）
-- [ ] [BEHAVIOR] INV-5 [凭据安全] — N/A：本次改动不引入任何新凭据/secret
-- [ ] [BEHAVIOR] INV-6 [日志脱敏] — N/A：DELETE 路由与 fetchPendingBatch 均不新增涉及 PII/聊天内容的日志输出
-- [ ] [BEHAVIOR] INV-7 [端点鉴权] — N/A（PRD"不在范围内"段已显式声明：新 DELETE 与本文件现有 POST/PATCH/GET 同一现状，无显式 auth，依赖 Brain 内网部署边界，本 sprint 不新增认证改造）
-- [ ] [BEHAVIOR] INV-8 [租户隔离] — N/A（PRD 已注明：tasks 表非租户数据不适用）
+- INV-1 [单slot串行] N/A：本任务是无状态 HTTP 路由 + 单条 SQL WHERE 子句改动，不涉及 slot/会话调度机制
+- INV-2 [禁止写死环境假设值] N/A：DELETE 路由的终态判断复用既有 `TERMINAL_STATUSES` 常量（非环境值），smoke 过滤的 `'smoke:%'` 前缀是业务命名约定（PRD 假设段显式登记来源，非环境探测/坐标/阈值类环境假设值），不涉及需要从环境推导或设备校准的场景
+- INV-3 [真环境验证才算done] 遵守：本合同 `## E2E 验收` 段全程使用真实本地 Brain（localhost:5221）+ 真实 Postgres（`psql`/`pg.Client`），contract-dod.md 全部 [BEHAVIOR] 用 `manual:bash` 真实 curl/psql 命令，无 mock，满足此铁律，不再单列冗余断言
+- INV-4 [测试默认多租户] N/A（PRD 已注明：本任务无租户维度不适用，tasks 表本次改动不涉及租户隔离查询）
+- INV-5 [凭据安全] N/A：本次改动不引入任何新凭据/secret
+- INV-6 [日志脱敏] N/A：DELETE 路由与 fetchPendingBatch 均不新增涉及 PII/聊天内容的日志输出
+- INV-7 [端点鉴权] N/A（PRD"不在范围内"段已显式声明：新 DELETE 与本文件现有 POST/PATCH/GET 同一现状，无显式 auth，依赖 Brain 内网部署边界，本 sprint 不新增认证改造）
+- INV-8 [租户隔离] N/A（PRD 已注明：tasks 表非租户数据不适用）
 
 ---
 
