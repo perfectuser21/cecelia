@@ -2,6 +2,11 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 const COMMIT_SHA = /^[a-f0-9]{40}$/i;
+const GIT_OPTIONS = Object.freeze({
+  encoding: 'utf8',
+  maxBuffer: 16 * 1024 * 1024,
+  timeout: 60_000,
+});
 
 function assertRepositoryRelative(filePath) {
   if (typeof filePath !== 'string' || !filePath || filePath.includes('\0')
@@ -17,11 +22,24 @@ export function readGitArtifact(commitSha, filePath, { cwd = process.cwd() } = {
     throw new Error(`git artifact ref must be a full commit SHA: ${String(commitSha)}`);
   }
   assertRepositoryRelative(filePath);
+
+  try {
+    execFileSync('git', ['cat-file', '-e', `${commitSha}^{commit}`], {
+      cwd,
+      ...GIT_OPTIONS,
+      stdio: 'ignore',
+    });
+  } catch {
+    execFileSync(
+      'git',
+      ['fetch', '--no-tags', '--no-write-fetch-head', 'origin', commitSha],
+      { cwd, ...GIT_OPTIONS },
+    );
+  }
+
   return execFileSync('git', ['show', `${commitSha}:${filePath}`], {
     cwd,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: 60_000,
+    ...GIT_OPTIONS,
   });
 }
 
