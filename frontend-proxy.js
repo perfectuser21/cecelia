@@ -8,6 +8,7 @@ const http = require('http');
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
 const PORT = process.env.FRONTEND_PORT || 5211;
 const BRAIN_PORT = process.env.BRAIN_PORT_TARGET || 5221;
@@ -27,6 +28,30 @@ const MIME_TYPES = {
   '.ttf': 'font/ttf',
   '.map': 'application/json',
 };
+
+// 移动端(经 Tailscale 转发)拉几百KB~1MB的裸JS会明显卡住加载条——这些类型值得用 CPU 换带宽压一下。
+// 图片/字体已是压缩格式，gzip 收益低甚至变大，不进这个集合。
+const COMPRESSIBLE_EXT = new Set(['.html', '.js', '.css', '.json', '.svg', '.map']);
+
+function shouldGzip(ext, acceptEncodingHeader) {
+  return COMPRESSIBLE_EXT.has(ext) && /\bgzip\b/.test(acceptEncodingHeader || '');
+}
+
+function serveFile(req, res, filePath, extraHeaders) {
+  const ext = path.extname(filePath);
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+  const headers = { 'Content-Type': contentType, ...extraHeaders };
+
+  if (shouldGzip(ext, req.headers['accept-encoding'])) {
+    headers['Content-Encoding'] = 'gzip';
+    headers['Vary'] = 'Accept-Encoding';
+    res.writeHead(200, headers);
+    fs.createReadStream(filePath).pipe(zlib.createGzip()).pipe(res);
+  } else {
+    res.writeHead(200, headers);
+    fs.createReadStream(filePath).pipe(res);
+  }
+}
 
 const server = http.createServer((req, res) => {
   // Proxy /api/brain/* directly to Brain service
@@ -120,24 +145,20 @@ const server = http.createServer((req, res) => {
   fs.stat(filePath, (err, stats) => {
     if (!err && stats.isFile()) {
       const ext = path.extname(filePath);
-      const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-      const headers = { 'Content-Type': contentType };
       const basename = path.basename(filePath);
+      const extraHeaders = {};
       if (ext === '.html' || basename === 'sw.js' || basename === 'registerSW.js') {
-        headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
-        headers['Pragma'] = 'no-cache';
-        headers['Expires'] = '0';
+        extraHeaders['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+        extraHeaders['Pragma'] = 'no-cache';
+        extraHeaders['Expires'] = '0';
       }
-      res.writeHead(200, headers);
-      fs.createReadStream(filePath).pipe(res);
+      serveFile(req, res, filePath, extraHeaders);
     } else {
       // SPA fallback
       const indexPath = path.join(STATIC_DIR, 'index.html');
-      res.writeHead(200, {
-        'Content-Type': 'text/html',
+      serveFile(req, res, indexPath, {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       });
-      fs.createReadStream(indexPath).pipe(res);
     }
   });
 });
@@ -175,26 +196,32 @@ server.on('upgrade', (req, clientSocket, head) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Frontend proxy running on http://localhost:${PORT}`);
-  console.log(`Brain target: http://localhost:${BRAIN_PORT}`);
-  console.log(`Static dir: ${STATIC_DIR}`);
-});
-
-// Langfuse TCP tunnel: port 3001 → 100.86.118.99:3000
-const LANGFUSE_HOST = '100.86.118.99';
-const LANGFUSE_PORT = 3000;
-const LANGFUSE_PROXY_PORT = process.env.LANGFUSE_PROXY_PORT || 3001;
-
-const langfuseTunnel = net.createServer((clientSocket) => {
-  const targetSocket = net.createConnection(LANGFUSE_PORT, LANGFUSE_HOST, () => {
-    clientSocket.pipe(targetSocket);
-    targetSocket.pipe(clientSocket);
+// require.main 守卫：被测试 require() 时不占端口，只借 shouldGzip 这个纯函数；
+// 容器里 `node frontend-proxy.js` 直跑时 require.main === module，行为不变。
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`Frontend proxy running on http://localhost:${PORT}`);
+    console.log(`Brain target: http://localhost:${BRAIN_PORT}`);
+    console.log(`Static dir: ${STATIC_DIR}`);
   });
-  targetSocket.on('error', () => clientSocket.destroy());
-  clientSocket.on('error', () => targetSocket.destroy());
-});
 
-langfuseTunnel.listen(LANGFUSE_PROXY_PORT, () => {
-  console.log(`Langfuse tunnel: http://localhost:${LANGFUSE_PROXY_PORT} → http://${LANGFUSE_HOST}:${LANGFUSE_PORT}`);
-});
+  // Langfuse TCP tunnel: port 3001 → 100.86.118.99:3000
+  const LANGFUSE_HOST = '100.86.118.99';
+  const LANGFUSE_PORT = 3000;
+  const LANGFUSE_PROXY_PORT = process.env.LANGFUSE_PROXY_PORT || 3001;
+
+  const langfuseTunnel = net.createServer((clientSocket) => {
+    const targetSocket = net.createConnection(LANGFUSE_PORT, LANGFUSE_HOST, () => {
+      clientSocket.pipe(targetSocket);
+      targetSocket.pipe(clientSocket);
+    });
+    targetSocket.on('error', () => clientSocket.destroy());
+    clientSocket.on('error', () => targetSocket.destroy());
+  });
+
+  langfuseTunnel.listen(LANGFUSE_PROXY_PORT, () => {
+    console.log(`Langfuse tunnel: http://localhost:${LANGFUSE_PROXY_PORT} → http://${LANGFUSE_HOST}:${LANGFUSE_PORT}`);
+  });
+}
+
+module.exports = { shouldGzip };
