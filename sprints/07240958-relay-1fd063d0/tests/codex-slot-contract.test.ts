@@ -57,7 +57,7 @@ function runLegacyWithTripwires(script: string, args: string[]) {
   };
 }
 
-describe('完整 Codex Slot Round 4 合同 [BEHAVIOR]', () => {
+describe('完整 Codex Slot Round 5 合同 [BEHAVIOR]', () => {
   it('旧 codex-request 合法参数在任何网络前 exit 64', () => {
     const { result, output, trace } = runLegacyWithTripwires(
       'scripts/codex-request.sh',
@@ -78,9 +78,25 @@ describe('完整 Codex Slot Round 4 合同 [BEHAVIOR]', () => {
     expect(trace).toBe('');
   });
 
-  it('三路 executor 与 harness relay 只发 broker receipt', () => {
+  it('全部生产 Codex credential consumer 都有 broker 或物理隔离 oracle', () => {
     const executor = readRequired('packages/brain/src/executor.js');
     const relay = readRequired('packages/brain/src/harness-skill-relay.js');
+    const brokerConsumers = [
+      'packages/brain/scripts/codex-bridge/codex-account-usage.cjs',
+      'packages/brain/scripts/cron/credentials-health-check.sh',
+      'packages/brain/src/llm-caller.js',
+      'packages/brain/src/llm-capacity.js',
+      'packages/brain/src/orchestrator/dispatcher.js',
+      'packages/brain/src/orchestrator/providers/codex.js',
+      'packages/brain/src/harness-relay-watchdog.js',
+      'scripts/dispatch-worker.mjs',
+      'scripts/codex-launch.sh',
+      'packages/engine/runners/codex/runner.sh',
+      'packages/engine/runners/codex/playwright-runner.sh',
+    ];
+    for (const path of brokerConsumers) {
+      expect(readRequired(path), `${path} 缺 broker 接线`).toContain('codex-slot');
+    }
     expect(executor).not.toMatch(/accounts\s*:\s*injectedAccounts/);
     expect(executor).not.toContain('pickLocalAccountByDeficit');
     expect(executor).toContain('slot');
@@ -91,6 +107,9 @@ describe('完整 Codex Slot Round 4 合同 [BEHAVIOR]', () => {
     expect(executor).toContain("location === 'xian_m1'");
     expect(executor).not.toMatch(/function selectBestBridge[\s\S]{0,1500}\/health[\s\S]{0,500}\.accounts/);
     expect(executor).not.toMatch(/所有 Codex Bridge 不可用[\s\S]{0,200}XIAN_CODEX_BRIDGE_URL/);
+    expect(executor).toContain('CODEX_REVIEW_HOME');
+    expect(executor).toMatch(/realpath|allowlist/i);
+    expect(readRequired('scripts/codex-supervisor.mjs')).toContain('CODEX_SUPERVISOR_HOME');
     expect(relay).not.toMatch(/account_id\s*:/);
     expect(relay).toContain('codex-slot-broker');
     expect(relay).toContain('receipt');

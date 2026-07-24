@@ -1,8 +1,9 @@
-# Sprint Contract Draft（Round 4）— 完整 Codex Slot 安全硬切换
+# Sprint Contract Draft（Round 5）— 完整 Codex Slot 安全硬切换
 
 ## 合同 Notes
 
-- 基线为 Round 3 commit `46bf004c756af7d204cb1d2738d52a225c39f96b`；Round 4 只原位核销退役 HTTP/`/health.accounts` 的 INV-19 闭环、七类 Error exact body、两段 `mmv` 变化三项 blocking。
+- 基线为 Round 4 commit `376368be78d31c42941622a03242deb1ba83a468`；Round 5 只原位扩展 consumer inventory/INV-19，核销“非 `/run` 公司 Codex account home/token 消费旁路”这一项 blocking。
+- consumer inventory 以本轮检索时当前 `origin/main` `a1b22bf72618f072f28f61baef4be38a52d1c185` 为证据锚；Round 4 已核销的退役 HTTP、executor 选机、七类 Error exact body与两段 `mmv` race 不回退。
 - registry 最近扫描已过 24h，新 HTTP 字段以 PRD和当前生产调用方源码推导并标为 `[NEW_PATTERN]`；`context-manifest` 仍不可用，累积 FR 以 PRD“暂无历史”为准。
 - `journey_type=agent_remote`、`target_environment=local_api`；不适用 user_facing staging 预览闸。
 - xian-m1/xian-m4 写入型真机验收前均为 `logic-done-pending`。
@@ -17,6 +18,8 @@
 - `packages/brain/src/executor.js` 的显式 codex override、`location=xian`、`location=xian_m1` 三路均进入 `triggerCodexBridge()`；该函数当前读取美国机完整 auth 并发送 `accounts:[{id,auth}]`，`selectBestBridge()` 又读 `/health.accounts` 且全失败时固定回退 M4。
 - `packages/brain/scripts/codex-bridge/codex-bridge.cjs` 的 `/run`、`/execute` 接受 raw `accounts`; 缺失时 `loadRawAuth()`/`injectLocalAccount()` 从西安本地真实 auth fallback；`/execute-review` 也本地取 auth。
 - `harness-skill-relay.js → spawnCodexBridgeDetached → /run` 当前发送 `account_id`；`brain-meta` 的 codex-usage/refresh 与 `credentials-health-scheduler` 当前消费 bridge `/accounts`。
+- 当前 main 的非 `/run` 生产消费者还包括：`llm-caller.js` 直接轮询 `.codex-team1/2` 并 fallback API key；executor 的 `triggerCodexReview` 继承进程凭据、`triggerLocalCodexExec` 接受 `CODEX_REVIEW_HOME/CODEX_HOME`；relay container/headed 复制 `CODEX_RELAY_HOME/auth.json`；orchestrator dispatcher/watchdog 由 `account_id/codex_home` 解析并 rw 挂载 `.codex-teamN`。
+- 代码检索还发现 `llm-capacity.js`、`scripts/dispatch-worker.mjs`、bridge `codex-account-usage.cjs`、cron `credentials-health-check.sh` 直接读公司 auth/token；engine 两个 Codex runner、`scripts/codex-launch.sh` 消费上游 `CODEX_HOME(S)`；`scripts/codex-supervisor.mjs` 与两条本机 executor 会继承默认凭据。它们必须逐路选择 broker 链或独立凭据域，不得留在盘点之外。
 - 机器身份真相源已经是 `system_registry(type='machine')`；容量/新鲜度真相源已经是 `fleet-resource-cache.js`，Codex 并发消费者是 `slot-allocator.js`，不得再建平行 agent/capacity 真相源。
 - 账号选择必须复用当前 `pickLocalAccountByDeficit` 的语义：5h `used_percent > 95` 不可选，7d `deficit = elapsed_target_pct - used_percent` 降序，同 deficit 按 5h 用量升序；broker 只返回 `account_ref`，不得返回 raw auth。
 - `packages/brain/scripts/codex-bridge/codex-account-usage.cjs` 的“bridge 本地账号选择”随 fallback 一并退役，不再是分配真相源。
@@ -91,7 +94,7 @@
 
 `/run`、`/execute` 在 `accounts` 缺失时本地 `selectBestCodexAccount→loadRawAuth→injectLocalAccount`；`/execute-review` 总是本地选择并注入。`/health.accounts`、`/accounts` 又让 executor/bridge 各自选择账号，形成第二 issuer。
 
-### 硬切后四路生产 `/run` caller
+### 硬切后生产 Codex credential consumer inventory
 
 | caller | 当前入口 | 硬切合同 |
 |---|---|---|
@@ -122,6 +125,30 @@ Idempotency-Key: <与 broker acquire 相同的 UUID>
 - `/execute` 与 `/execute-review` 返回 410 迁移错误，不再选择账号；bridge 的 `loadRawAuth/injectLocalAccount/setupInjectedAccounts` 与本地 auth fallback 删除。
 - `/health` 不返回账号用量，`/accounts` 返回 410；executor 不再从 `/health.accounts` 二次选机或固定回退 M4，`location=xian` 必须按 broker receipt 的 `agent_id` 映射真实 receiver。`brain-meta` 的 codex-usage/refresh 与 `credentials-health-scheduler` 改读 broker 写入既有 `account_usage_cache` 的无秘密字段；三者均不得成为第二 issuer。
 
+当前 main 宽搜命中的其余生产路径必须进入同一个 exact inventory；每条只能取下列两种结论之一，且 B02/final-e2e 必须真实触发：
+
+| inventory key | 当前生产路径 | 合同选择 |
+|---|---|---|
+| `executor_bridge_selector` | executor `pickLocalAccountByDeficit` 读五个 auth/token | broker：删除本地读，usage/deficit 由 broker lease/session/receipt 收口 |
+| `llm_caller` | `getNextCodexTeamHome → callCodexHeadless` + API-key fallback | broker：调用前 acquire；Codex 仅见 receipt 私有目录，API-key fallback=0 |
+| `llm_capacity` | `pollCodexLedger` 读 `.codex-team1..5/auth.json` | broker：usage probe 也有 lease/session/receipt，调用方只见无秘密容量 |
+| `dispatch_worker` | worker 读 auth、选 `account.home` 并设置 `CODEX_HOME` | broker：每次 worker attempt 独立 lease/session/receipt，不得本地轮换 |
+| `bridge_account_usage` | bridge usage 模块读 auth、选 `codexHome` | broker：usage probe 走同一租约链，不得产生第二 selector |
+| `credentials_health_cron` | cron 读 auth/token 调 wham | broker：health probe 走同一租约链，cron 不读取公司 auth |
+| `harness_relay_container` | 快照 `CODEX_RELAY_HOME/auth.json` 后 rw mount | broker：只挂 receiver receipt 私有目录，不读/复制宿主公司 auth |
+| `harness_relay_headed` | 快照后给 headed Codex 注入 `CODEX_HOME` | broker：同上，receipt agent/session 必须逐次对账 |
+| `orchestrator_dispatch` | `account_id/codex_home` → `.codex-teamN` rw mount | broker：payload authority 删除，dispatcher 只消费 receipt |
+| `relay_watchdog_resume` | attempt `account_id`/task `codex_home` 重建挂载 | broker：resume 复用原 lease/session/receipt，不重新选择 home |
+| `bridge_run` | bridge 与 receiver/runner 消费 Codex home | broker：只消费 receiver 私有 receipt 目录 |
+| `engine_runner` | `runner.sh` 接受/轮换 `CODEX_HOMES` | broker：只接受单一 receipt 私有目录，禁多公司 home fallback |
+| `engine_playwright_runner` | playwright runner 同样轮换 `CODEX_HOMES` | broker：同上 |
+| `codex_launch` | launcher 接受空/default `CODEX_HOME` | broker：必须提供 receipt 私有目录；空值/default home 失败关闭 |
+| `executor_codex_review` | `triggerCodexReview` spawn 时继承全部进程 env | 隔离：固定 `CODEX_REVIEW_HOME` 独立域；清除 `CODEX_HOME/CODEX_RELAY_HOME/OPENAI_API_KEY`，不能 realpath 到公司 roots |
+| `executor_dynamic_local` | `triggerLocalCodexExec` 接受 `CODEX_REVIEW_HOME/CODEX_HOME` | 隔离：只允许同一独立 review 域，禁 `CODEX_HOME` fallback 与公司 roots |
+| `codex_supervisor` | `spawnSync('codex')` 继承默认 home/env | 隔离：固定 `CODEX_SUPERVISOR_HOME` 独立域并清除公司/API-key fallback |
+
+broker 路统一 oracle：`trigger_count=1`、真实 adapter/PG/receiver、`account_ref/lease_id/session_id/receipt/agent_id` 逐字段对账、`company_auth_reads/company_home_mounts/api_key_fallbacks=0`。隔离路统一 oracle：真实启动该生产函数/脚本与 Codex fixture 进程，独立 root 通过 root-owned allowlist+`realpath` 校验，`company_auth_open_attempts/company_home_mounts/company_env_inherited/api_key_inherited=0`，公司 auth FIFO/canary 未触碰。`docker-executor` 与 `orchestrator/providers/codex.js` 是上述 relay/orchestrator 的通用下游，必须由对应真实触发覆盖；`conversation-capture-codex.js` 只读 session history、无 credential selection/mount，以 source scan `credential_access=false` 登记而非伪装成消费者。
+
 ### 用户调用
 
 ```text
@@ -138,8 +165,8 @@ codex-slot stop <handle>
 
 | 风险 | 失败关闭与执行 oracle |
 |---|---|
-| 三路 executor 或 harness relay 绕过 broker | A01 + B02 逐 caller 真触发；broker 分别选 M1/M4 后 `location=xian` receiver 必须匹配 receipt `agent_id`，executor `/health.accounts` read 与固定 M4 fallback 均为 0。 |
-| 退役入口或账号 consumer 恢复第二 issuer | B02 对 `/execute`、`/execute-review` 发真实 HTTP 并验 410/零 auth、进程、lease 副作用；`/accounts`=410，brain-meta/credentials-health 只读安全 cache。 |
+| 任一 `/run` 或非 `/run` 公司账号 consumer 绕过 broker | A01 + B02 对 exact 17 路 inventory 每路真触发；broker 路逐项对账 account_ref/lease/session/receipt/agent，隔离路以独立 root + 公司 auth FIFO/canary 证明物理/配置不可读。 |
+| 退役入口、usage/health/runner 或 account-home mount 恢复第二 issuer | B02 保留 `/execute*` 真 410 与 `/accounts` 退役 oracle，同时要求 llm-caller/capacity、dispatch-worker、bridge usage、cron、relay、orchestrator/watchdog、engine runner 全部进入 exact inventory。 |
 | UID/key 或客户端 authority 伪造 | A02 + B06 真验 mapped UID/key 成功、未知/伪造 403、CLI/body authority 在网络/lease 前拒绝。 |
 | inventory/cutover 部分成功 | B03 authenticated frozen、inventory gate、每个 cutover fault 后 durable state 都必须仍为 frozen。 |
 | 同公司账号跨 tenant 并发 | A02 全局 partial unique index + B04 两 tenant 同 `account_ref` 真并发，只准一个 blocking lease。 |
@@ -201,20 +228,36 @@ S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh
 
 **硬阈值**：平行 agent 表不存在；stale/unknown capacity=0；usage 输入未知时不分配。
 
-### Step 4：所有生产 caller 与用户都先取 broker lease，bridge 不再拥有 raw auth
+### Step 4：全部生产 Codex credential consumer 进入 broker 或隔离域
 
-**来源**：`[FROM_PRD]` — broker 唯一 token issuer 与受保护 receiver；`[AI_ADDED]` — Round 4 穷尽退役入口、四路 caller、executor `/health.accounts` 与两个 `/accounts` 消费者。
+**来源**：`[FROM_PRD]` — broker 唯一 token issuer 与受保护 receiver；`[AI_ADDED]` — Round 5 按当前 main 宽搜结果穷尽 17 路生产 credential consumer，并为每路固定 broker/隔离二选一 oracle。
 
-**可观测行为**：四路生产 `/run` 各自复用 broker lease/receipt；broker 分别选 M1/M4 的两次 `location=xian` 到达 receipt 指定 receiver；executor 无账号健康读取/固定 M4 fallback；`/execute*` 真 HTTP 410 且零副作用；两个 `/accounts` 消费者只读安全 cache。
+**可观测行为**：四路 `/run` 与 13 路其余 broker consumer 各有完整 lease/session/receipt；3 路本机执行只见独立凭据域且无法读取公司 auth；broker 分别选 M1/M4 的两次 `location=xian` 到达 receipt 指定 receiver；Round 4 的 `/execute*`、`/health.accounts`、`/accounts` oracle 保持不变。
 
 **验证命令**：
 
 ```bash
 S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh
-"$S" --case production-callers-broker-only --json | jq -e '.ok==true and (.callers|keys==["executor_explicit","executor_xian","executor_xian_m1","harness_relay"]) and ([.callers[]|select(.broker.issuer=="broker" and .broker.lease_id==.run.body.slot.lease_id and .broker.session_id==.run.body.slot.session_id and .broker.receipt==.run.body.slot.receipt and .broker.agent_id==.run.body.slot.agent_id and (.run.headers|keys==["authorization","content-type","idempotency-key"]))]|length)==4 and ([.callers[].run.body|select(has("account_id") or has("accounts") or has("auth") or has("token") or has("account_ref") or has("github_token") or has("anthropic_api_key"))]|length)==0 and ([.cutover.dynamic_xian[].broker.agent_id]|sort)==["xian-m1","xian-m4"] and ([.cutover.dynamic_xian[]|select(.caller=="executor_xian" and .broker.receipt==.run.body.slot.receipt and .broker.agent_id==.run.body.slot.agent_id and .broker.agent_id==.receiver.agent_id)]|length)==2 and .cutover.executor.selection_source=="broker_receipt" and .cutover.executor.bridge_health_calls==0 and .cutover.executor.account_health_reads==0 and .cutover.executor.fixed_m4_fallbacks==0 and ([.cutover.retired[]|select(.transport=="http" and .request_count==1 and .http_code==410 and .auth_reads==0 and .processes_started==0 and .leases_created==0)]|length)==2 and (.cutover.retired|keys)==["execute","execute_review"] and .bridge.local_auth_reads==0 and .bridge.fallback_attempts==0 and .bridge.accounts_code==410 and .bridge.health_has_accounts==false and .consumers.brain_meta.source=="account_usage_cache" and .consumers.brain_meta.http_codes==[200,200] and .consumers.credentials_health.source=="account_usage_cache" and .consumers.credentials_health.completed==true and .consumers.bridge_accounts_calls==0 and .consumers.raw_auth_reads==0'
+"$S" --case production-callers-broker-only --json | jq -e '
+  def brokered: .trigger_count==1 and .mode=="broker" and .transport=="real" and .broker.issuer=="broker" and .broker.account_ref==.execution.account_ref and .broker.lease_id==.execution.lease_id and .broker.session_id==.execution.session_id and .broker.receipt==.execution.receipt and .broker.agent_id==.execution.agent_id and .company_auth_reads==0 and .company_home_mounts==0 and .api_key_fallbacks==0;
+  def isolated: .trigger_count==1 and .mode=="isolated" and .transport=="real-process" and .process_exit==0 and .isolation.root_allowlisted==true and .isolation.realpath_outside_company_roots==true and .isolation.company_auth_open_attempts==0 and .isolation.company_home_mounts==0 and .isolation.company_env_inherited==0 and .isolation.api_key_inherited==0 and .isolation.company_canary_reads==0;
+  .ok==true and
+  (.callers|keys==["executor_explicit","executor_xian","executor_xian_m1","harness_relay"]) and
+  ([.callers[]|select(.broker.issuer=="broker" and .broker.lease_id==.run.body.slot.lease_id and .broker.session_id==.run.body.slot.session_id and .broker.receipt==.run.body.slot.receipt and .broker.agent_id==.run.body.slot.agent_id and (.run.headers|keys==["authorization","content-type","idempotency-key"]))]|length)==4 and
+  ([.callers[].run.body|select(has("account_id") or has("accounts") or has("auth") or has("token") or has("account_ref") or has("github_token") or has("anthropic_api_key"))]|length)==0 and
+  (.consumer_inventory|keys==["bridge_account_usage","bridge_run","codex_launch","codex_supervisor","credentials_health_cron","dispatch_worker","engine_playwright_runner","engine_runner","executor_bridge_selector","executor_codex_review","executor_dynamic_local","harness_relay_container","harness_relay_headed","llm_caller","llm_capacity","orchestrator_dispatch","relay_watchdog_resume"]) and
+  ([.consumer_inventory|to_entries[]|select(.key!="codex_supervisor" and .key!="executor_codex_review" and .key!="executor_dynamic_local")|select(.value|brokered)]|length)==14 and
+  ([.consumer_inventory|to_entries[]|select(.key=="codex_supervisor" or .key=="executor_codex_review" or .key=="executor_dynamic_local")|select(.value|isolated)]|length)==3 and
+  .inventory_scan.main_sha=="a1b22bf72618f072f28f61baef4be38a52d1c185" and .inventory_scan.production_paths==17 and .inventory_scan.unclassified_paths==0 and
+  .inventory_scan.traced_downstream.docker_executor=="harness_relay_container" and .inventory_scan.traced_downstream.orchestrator_codex_provider=="orchestrator_dispatch" and .inventory_scan.excluded.conversation_capture.credential_access==false and
+  ([.cutover.dynamic_xian[].broker.agent_id]|sort)==["xian-m1","xian-m4"] and ([.cutover.dynamic_xian[]|select(.caller=="executor_xian" and .broker.receipt==.run.body.slot.receipt and .broker.agent_id==.run.body.slot.agent_id and .broker.agent_id==.receiver.agent_id)]|length)==2 and
+  .cutover.executor.selection_source=="broker_receipt" and .cutover.executor.bridge_health_calls==0 and .cutover.executor.account_health_reads==0 and .cutover.executor.fixed_m4_fallbacks==0 and
+  ([.cutover.retired[]|select(.transport=="http" and .request_count==1 and .http_code==410 and .auth_reads==0 and .processes_started==0 and .leases_created==0)]|length)==2 and (.cutover.retired|keys)==["execute","execute_review"] and
+  .bridge.local_auth_reads==0 and .bridge.fallback_attempts==0 and .bridge.accounts_code==410 and .bridge.health_has_accounts==false and
+  .consumers.brain_meta.source=="account_usage_cache" and .consumers.brain_meta.http_codes==[200,200] and .consumers.credentials_health.source=="account_usage_cache" and .consumers.credentials_health.completed==true and .consumers.bridge_accounts_calls==0 and .consumers.raw_auth_reads==0'
 ```
 
-**硬阈值**：4/4 caller 与 M1/M4 receipt/receiver 对账；`/execute*` 两次真实 410 且零副作用；executor 健康账号读取/固定 fallback=0；两个 cache 消费者不断链。
+**硬阈值**：17/17 production paths 已分类并各真触发一次，14 路 broker 对账、3 路隔离 canary 零触碰、unclassified=0；4/4 caller、M1/M4 与 Round 4 退役/选机/cache oracle 全保留。
 
 ### Step 5：prepare/launch 共用 mmv 判定，失败清理
 
@@ -251,7 +294,7 @@ S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | 旧入口 | `tests/codex-slot-contract.test.ts` | 旧 codex-request 合法参数在任何网络前 exit 64；旧 codex-remote-launch 合法参数在任何网络前 exit 64 | 当前脚本触发 tripwire 后 exit 1 |
-| broker-only caller | `tests/codex-slot-contract.test.ts` | 三路 executor 与 harness relay 只发 broker receipt；bridge/消费者删除 raw auth fallback、health/accounts 选机依赖 | 当前源码仍发送/读取 raw auth/account_id |
+| broker-only consumer | `tests/codex-slot-contract.test.ts` | 全部生产 Codex credential consumer 都有 broker 或物理隔离 oracle；bridge/消费者删除 raw auth fallback、health/accounts 选机依赖 | 当前源码仍直接选择、读取、继承或挂载公司 auth/home |
 | 全局租约与 SSOT | `tests/codex-slot-contract.test.ts` | migration 用 account_ref 全局 blocking 唯一且不建 codex_slot_agents；agent 身份容量复用 machine fleet slot SSOT | migration/实现尚不存在 |
 | cutover/durable | `tests/codex-slot-contract.test.ts` | authenticated frozen inventory cutover 与 durable crash restart smoke 存在 | smoke 尚不存在 |
 | API oracle | `tests/codex-slot-contract.test.ts` | identity authority error matrix 逐响应 body exact 与 stop 类型 exact，acquire stop reap 鉴权幂等 | route 尚不存在 |
@@ -303,13 +346,13 @@ S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh
 
 ## 接缝清单
 
-1. **旧脚本/executor ↔ broker/bridge**：B01/B02 真调用当前生产 caller，未通过前 `logic-done-pending`。
+1. **全部生产 Codex credential consumer ↔ broker/隔离域**：B01/B02 真调用 17 路 exact inventory，未通过前 `logic-done-pending`。
 2. **broker ↔ PostgreSQL ↔ machine/fleet/slot/usage**：B03-B08 真 PostgreSQL 与真实模块，不 mock 被改边。
 3. **broker/bridge ↔ xian-m1/xian-m4 agent ↔ mmv/FS/tmux**：B09-B12 与 final-e2e 真机验证，未通过前 `logic-done-pending`。
 
 ## 禁 mock 边清单
 
-- 旧脚本/executor ↔ broker ↔ codex-bridge `/run`（必须真实捕获生产请求，禁止 mock caller）。
+- llm-caller/executor/relay/orchestrator/watchdog/worker/usage/health/runner ↔ broker 或隔离域（B02 必须逐路真触发，禁止 mock consumer）。
 - broker/state machine ↔ PostgreSQL lease/session/rollout/audit（必须真 PG + 真 kill/restart）。
 - broker ↔ `system_registry`/fleet cache/slot allocator/既有 usage-deficit selector（禁止平行 fixture SSOT；外部 wham 可用专用 usage snapshot）。
 - bridge/agent ↔ root config/mmv/私有 FS/tmux（final-e2e 真机）。
@@ -337,10 +380,17 @@ SMOKE="packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh"
 
 OUT=$("$SMOKE" --case final-e2e --hosts xian-m1,xian-m4 --fixture-id contract-v2 --json)
 printf '%s\n' "$OUT" | jq -e '
-  def exact_error($http;$code;$message;$retryable): .transport=="http" and .request_count==1 and .http_code==$http and (.body|keys)==["error","ok"] and (.body.ok|type)=="boolean" and .body.ok==false and (.body.error|keys)==["code","message","retryable"] and (.body.error.code|type)=="string" and .body.error.code==$code and (.body.error.message|type)=="string" and .body.error.message==$message and (.body.error.retryable|type)=="boolean" and .body.error.retryable==$retryable; keys==["callers","cutover","errors","global_account","hosts","identity","ok","reaper","run_id","tenants"] and
+  def exact_error($http;$code;$message;$retryable): .transport=="http" and .request_count==1 and .http_code==$http and (.body|keys)==["error","ok"] and (.body.ok|type)=="boolean" and .body.ok==false and (.body.error|keys)==["code","message","retryable"] and (.body.error.code|type)=="string" and .body.error.code==$code and (.body.error.message|type)=="string" and .body.error.message==$message and (.body.error.retryable|type)=="boolean" and .body.error.retryable==$retryable;
+  def brokered: .trigger_count==1 and .mode=="broker" and .transport=="real" and .broker.issuer=="broker" and .broker.account_ref==.execution.account_ref and .broker.lease_id==.execution.lease_id and .broker.session_id==.execution.session_id and .broker.receipt==.execution.receipt and .broker.agent_id==.execution.agent_id and .company_auth_reads==0 and .company_home_mounts==0 and .api_key_fallbacks==0;
+  def isolated: .trigger_count==1 and .mode=="isolated" and .transport=="real-process" and .process_exit==0 and .isolation.root_allowlisted==true and .isolation.realpath_outside_company_roots==true and .isolation.company_auth_open_attempts==0 and .isolation.company_home_mounts==0 and .isolation.company_env_inherited==0 and .isolation.api_key_inherited==0 and .isolation.company_canary_reads==0;
+  keys==["callers","consumer_inventory","cutover","errors","global_account","hosts","identity","inventory_scan","ok","reaper","run_id","tenants"] and
   .ok==true and
   (.callers|keys==["executor_explicit","executor_xian","executor_xian_m1","harness_relay"]) and
   ([.callers[]|select(.broker.issuer=="broker" and .broker.lease_id==.run.body.slot.lease_id and .broker.session_id==.run.body.slot.session_id and .broker.receipt==.run.body.slot.receipt and .raw_auth_boundary_bytes==0)]|length)==4 and ([.cutover.dynamic_xian[].broker.agent_id]|sort)==["xian-m1","xian-m4"] and ([.cutover.dynamic_xian[]|select(.broker.receipt==.run.body.slot.receipt and .broker.agent_id==.run.body.slot.agent_id and .broker.agent_id==.receiver.agent_id)]|length)==2 and .cutover.executor.selection_source=="broker_receipt" and .cutover.executor.bridge_health_calls==0 and .cutover.executor.account_health_reads==0 and .cutover.executor.fixed_m4_fallbacks==0 and ([.cutover.retired[]|select(.transport=="http" and .request_count==1 and .http_code==410 and .auth_reads==0 and .processes_started==0 and .leases_created==0)]|length)==2 and (.cutover.retired|keys)==["execute","execute_review"] and .cutover.consumers.brain_meta_source=="account_usage_cache" and .cutover.consumers.credentials_health_source=="account_usage_cache" and .cutover.consumers.bridge_calls==0 and
+  (.consumer_inventory|keys==["bridge_account_usage","bridge_run","codex_launch","codex_supervisor","credentials_health_cron","dispatch_worker","engine_playwright_runner","engine_runner","executor_bridge_selector","executor_codex_review","executor_dynamic_local","harness_relay_container","harness_relay_headed","llm_caller","llm_capacity","orchestrator_dispatch","relay_watchdog_resume"]) and
+  ([.consumer_inventory|to_entries[]|select(.key!="codex_supervisor" and .key!="executor_codex_review" and .key!="executor_dynamic_local")|select(.value|brokered)]|length)==14 and
+  ([.consumer_inventory|to_entries[]|select(.key=="codex_supervisor" or .key=="executor_codex_review" or .key=="executor_dynamic_local")|select(.value|isolated)]|length)==3 and
+  .inventory_scan.main_sha=="a1b22bf72618f072f28f61baef4be38a52d1c185" and .inventory_scan.production_paths==17 and .inventory_scan.unclassified_paths==0 and .inventory_scan.traced_downstream.docker_executor=="harness_relay_container" and .inventory_scan.traced_downstream.orchestrator_codex_provider=="orchestrator_dispatch" and .inventory_scan.excluded.conversation_capture.credential_access==false and
   .identity.mapped_uid==201 and .identity.mapped_ssh_key==201 and .identity.unknown==403 and .identity.forged==403 and .identity.authority_cli==64 and .identity.authority_body==400 and .identity.reject_leases==0 and
   (.errors|keys)==["account_busy","agent_unavailable","durability_failed","forbidden_identity","invalid_request","rollout_frozen","unauthenticated"] and (.errors.unauthenticated|exact_error(401;"UNAUTHENTICATED";"authentication required";false)) and (.errors.invalid_request|exact_error(400;"INVALID_REQUEST";"request does not match the exact schema";false)) and (.errors.forbidden_identity|exact_error(403;"FORBIDDEN_IDENTITY";"identity is not mapped";false)) and (.errors.account_busy|exact_error(409;"ACCOUNT_BUSY";"account already has a blocking lease";true)) and (.errors.rollout_frozen|exact_error(423;"ROLLOUT_FROZEN";"codex slot rollout is frozen";true)) and (.errors.agent_unavailable|exact_error(503;"AGENT_UNAVAILABLE";"no healthy codex slot agent available";true)) and (.errors.durability_failed|exact_error(503;"DURABILITY_FAILED";"durable write failed";true)) and
   .global_account.blocking_leases==1 and
@@ -359,5 +409,5 @@ SECRETS=$(psql "$DB_URL" -Atqc "SELECT count(*) FROM codex_slot_audit_events WHE
 printf 'OK: Codex Slot broker-only global lease + dual-host lifecycle run=%s\n' "$RUN_ID"
 ```
 
-**PASS**：exit 0；三端点鉴权/七类 Error body exact、INV-19 全 consumer、全局账号唯一、双机正常链与两段 mmv 变化、租户隔离、reaper/P0 receipt 与 DB 时间窗全部通过。
+**PASS**：exit 0；17/17 credential consumer 二选一 oracle、三端点鉴权/七类 Error body exact、全局账号唯一、双机正常链与两段 mmv 变化、租户隔离、reaper/P0 receipt 与 DB 时间窗全部通过。
 **FAIL**：任一 shell/Brain/DB/SSH/agent 非零，schema/UUID/enum 不符，raw auth/fallback、并发 blocking lease、secret 或残留出现。
