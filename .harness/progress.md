@@ -24,3 +24,4 @@ judge: done (verdict=PASS, sha=ce365b36)
 review-gate: human_review_pending 已写入 task_events(id=3383), pending-reviews 列表登记 ✅
 review-gate: bark-sent (PR #4248 Judge=PASS, 等待 human_review_approved, approve命令=curl POST /api/brain/harness/pending-reviews/fa59d318.../approve)
 review-gate: blocking-poll-start (30min reminder interval, max 24h → blocked)
+conflict-fix: merge origin/main resolved (smoke-allowlist=合并4条, progress.md=保留HEAD版本)
