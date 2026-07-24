@@ -345,8 +345,8 @@ echo "✅ Golden Path 全链路验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| DELETE /:id 状态机 | `tests/contract-task-delete.test.ts` | 存在的非终态任务 → HTTP 200，响应 status=cancelled; DB 中该任务 status 真实变为 cancelled; 不存在的 id → HTTP 404 + error 字段 (string); 已 completed 的任务 → HTTP 409，状态未被改动; 已 cancelled 的任务再次 DELETE → HTTP 409 | → 6 项断言中 5 项 FAIL（当前 404 全部命中 Express 默认 HTML 404，非 JSON 200/409） |
-| fetchPendingBatch smoke 过滤 | `tests/contract-postdeploy-smoke-filter.test.ts` | title 以 "smoke:" 开头的任务 → runPostdeployVerifier 扫描后 status 仍为 pending_postdeploy（未被消费）; 对照：不带 smoke: 前缀的同批次任务 → 正常被消费，status 变为 completed | → smoke 前缀断言 FAIL（当前无过滤，smoke 任务被正常消费为 completed），对照断言本轮已 PASS（既有批次消费逻辑未改动） |
+| DELETE /:id 状态机 | `../../tests/regression/relay-137fea96/contract-task-delete.test.ts` | 存在的非终态任务 → HTTP 200，响应 status=cancelled; DB 中该任务 status 真实变为 cancelled; 不存在的 id → HTTP 404 + error 字段 (string); 已 completed 的任务 → HTTP 409，状态未被改动; 已 cancelled 的任务再次 DELETE → HTTP 409 | → 6 项断言中 5 项 FAIL（当前 404 全部命中 Express 默认 HTML 404，非 JSON 200/409） |
+| fetchPendingBatch smoke 过滤 | `../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts` | title 以 "smoke:" 开头的任务 → runPostdeployVerifier 扫描后 status 仍为 pending_postdeploy（未被消费）; 对照：不带 smoke: 前缀的同批次任务 → 正常被消费，status 变为 completed | → smoke 前缀断言 FAIL（当前无过滤，smoke 任务被正常消费为 completed），对照断言本轮已 PASS（既有批次消费逻辑未改动） |
 
 **实测 Red 证据（本轮已跑）**：`npx vitest run sprints/07240614-relay-137fea96/tests/ --reporter=verbose` → `Test Files 2 failed (2)` / `Tests 6 failed | 1 passed (7)`。
 
