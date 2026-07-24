@@ -1,10 +1,24 @@
-import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const repo = process.cwd();
+const temps: string[] = [];
 const file = (relative: string) => join(repo, relative);
+
+afterEach(() => {
+  while (temps.length) rmSync(temps.pop()!, { recursive: true, force: true });
+});
 
 function readRequired(relative: string): string {
   const target = file(relative);
@@ -12,111 +26,153 @@ function readRequired(relative: string): string {
   return readFileSync(target, 'utf8');
 }
 
-describe('完整 Codex Slot 安全硬切换 [BEHAVIOR]', () => {
-  it('旧 codex-request 只返回 codex-slot start 迁移提示且不再描述 scp', () => {
-    const result = spawnSync('bash', [file('scripts/codex-request.sh'), '--help'], {
-      encoding: 'utf8',
-    });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('codex-slot start');
-    expect(result.stdout).not.toMatch(/\bscp\b|拉取.*token|--team/);
+function runLegacyWithTripwires(script: string, args: string[]) {
+  const root = mkdtempSync(join(tmpdir(), 'codex-slot-contract-'));
+  temps.push(root);
+  const home = join(root, 'home');
+  const bin = join(root, 'bin');
+  const trace = join(root, 'trace');
+  mkdirSync(home);
+  mkdirSync(bin);
+  for (const command of ['ssh', 'scp', 'codex', 'tmux']) {
+    const shim = join(bin, command);
+    writeFileSync(shim, `#!/bin/sh\nprintf 'called\\n' >> ${JSON.stringify(trace)}\nexit 97\n`);
+    chmodSync(shim, 0o755);
+  }
+  const result = spawnSync('bash', [file(script), ...args], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: home,
+      PATH: `${bin}:/usr/bin:/bin`,
+      CODEX_BIN: 'codex',
+      CODEX_US_HOST: 'forbidden',
+      CODEX_REMOTE_HOST: 'forbidden',
+    },
   });
+  return {
+    result,
+    output: `${result.stdout}\n${result.stderr}`,
+    trace: existsSync(trace) ? readFileSync(trace, 'utf8') : '',
+  };
+}
 
-  it('旧 codex-remote-launch 只返回 codex-slot start 迁移提示且不再描述推送 token', () => {
-    const result = spawnSync('bash', [file('scripts/codex-remote-launch.sh'), '--help'], {
-      encoding: 'utf8',
-    });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('codex-slot start');
-    expect(result.stdout).not.toMatch(/\bscp\b|推送 token|--team|--collect/);
-  });
-
-  it('新 client 拒绝 actor team host authority flags', () => {
-    const result = spawnSync(
-      process.execPath,
-      [
-        file('scripts/codex-slot-client.mjs'),
-        'start',
-        '--actor',
-        'forged',
-        '--team',
-        'team1',
-        '--host',
-        'xian-m4',
-      ],
-      { encoding: 'utf8' },
+describe('完整 Codex Slot Round 2 合同 [BEHAVIOR]', () => {
+  it('旧 codex-request 合法参数在任何网络前 exit 64', () => {
+    const { result, output, trace } = runLegacyWithTripwires(
+      'scripts/codex-request.sh',
+      ['--team', 'team1'],
     );
     expect(result.status).toBe(64);
-    expect(`${result.stdout}\n${result.stderr}`).toContain('authority flags are forbidden');
+    expect(output).toContain('codex-slot start');
+    expect(trace).toBe('');
   });
 
-  it('Brain codex-slots 路由使用 fail-closed 鉴权且 wiring 存在', () => {
+  it('旧 codex-remote-launch 合法参数在任何网络前 exit 64', () => {
+    const { result, output, trace } = runLegacyWithTripwires(
+      'scripts/codex-remote-launch.sh',
+      ['--team', 'team3'],
+    );
+    expect(result.status).toBe(64);
+    expect(output).toContain('codex-slot start');
+    expect(trace).toBe('');
+  });
+
+  it('executor bridge payload 不含 accounts auth 且必须携带 slot receipt', () => {
+    const executor = readRequired('packages/brain/src/executor.js');
+    expect(executor).not.toMatch(/accounts\s*:\s*injectedAccounts/);
+    expect(executor).not.toContain('pickLocalAccountByDeficit');
+    expect(executor).toContain('slot');
+    expect(executor).toContain('receipt');
+    expect(executor).toContain('codex-slot-broker');
+  });
+
+  it('bridge 删除 raw auth 与本地 fallback', () => {
+    const bridge = readRequired('packages/brain/scripts/codex-bridge/codex-bridge.cjs');
+    expect(bridge).not.toMatch(/loadRawAuth|injectLocalAccount|setupInjectedAccounts/);
+    expect(bridge).not.toMatch(/accounts\s*&&\s*accounts\.length/);
+    expect(bridge).toContain('CODEX_SLOT_RECEIVER_TOKEN');
+    expect(bridge).toContain("'/run'");
+    expect(bridge).toMatch(/\/execute[\s\S]{0,500}\b410\b/);
+    expect(bridge).toMatch(/\/execute-review[\s\S]{0,500}\b410\b/);
+  });
+
+  it('migration 用 account_ref 全局 blocking 唯一且不建 codex_slot_agents', () => {
+    const migration = readRequired('packages/brain/migrations/360_codex_slot.sql');
+    expect(migration).toMatch(
+      /UNIQUE INDEX[\s\S]*\(account_ref\)[\s\S]*active[\s\S]*quarantined[\s\S]*blocked/i,
+    );
+    expect(migration).not.toMatch(/CREATE TABLE[^;]*codex_slot_agents/is);
+    expect(migration).toContain('tenant_id');
+  });
+
+  it('agent 身份容量复用 machine fleet slot SSOT', () => {
+    const broker = readRequired('packages/brain/src/codex-slot-broker.js');
+    expect(broker).toContain('system_registry');
+    expect(broker).toContain('fleet-resource-cache');
+    expect(broker).toContain('slot-allocator');
+    expect(broker).toContain('deficit');
+    expect(broker).not.toContain('codex_slot_agents');
+  });
+
+  it('authenticated frozen inventory cutover 与 durable crash restart smoke 存在', () => {
+    const smoke = readRequired('packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh');
+    expect(smoke).toContain('frozen-inventory-cutover');
+    expect(smoke).toContain('durable-crash-restart');
+    expect(smoke).toContain('global-account-contention');
+    expect(smoke).toContain('usage-deficit-selection');
+  });
+
+  it('acquire stop reap 全鉴权 exact schema 并直接比较幂等副作用', () => {
     const route = readRequired('packages/brain/src/routes/codex-slots.js');
-    const wiring = readRequired('packages/brain/src/routes.js');
     expect(route).toContain('CODEX_SLOT_BROKER_TOKEN');
     expect(route).toContain('timingSafeEqual');
-    expect(route).not.toContain('未设置时放行');
-    expect(wiring).toContain("router.use('/codex-slots'");
+    expect(route).toContain('/acquire');
+    expect(route).toContain('/:session_id/stop');
+    expect(route).toContain('/reap');
+    expect(route).not.toContain('/status');
+    expect(route).toContain('retryable');
   });
 
-  it('数据库含 tenant_id 与单账号阻塞租约唯一约束', () => {
-    const migration = readRequired('packages/brain/migrations/360_codex_slot.sql');
-    expect(migration).toContain('tenant_id');
-    expect(migration).toMatch(/UNIQUE INDEX[\s\S]*account_ref[\s\S]*active[\s\S]*quarantined[\s\S]*blocked/i);
-    expect(migration).toContain('codex_slot_sessions');
-    expect(migration).toContain('codex_slot_audit_events');
-  });
-
-  it('真实 PostgreSQL 已应用 tenant-scoped codex_slot schema', () => {
-    const dbUrl = process.env.DB_URL || 'postgresql://localhost/cecelia';
-    const result = spawnSync(
-      'psql',
-      [
-        dbUrl,
-        '-Atqc',
-        `SELECT count(*)
-           FROM information_schema.columns
-          WHERE table_schema = current_schema()
-            AND table_name IN (
-              'codex_slot_actor_identities',
-              'codex_slot_leases',
-              'codex_slot_sessions',
-              'codex_slot_agents',
-              'codex_slot_rollout',
-              'codex_slot_audit_events'
-            )
-            AND column_name = 'tenant_id'`,
-      ],
-      { encoding: 'utf8' },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe('6');
-  });
-
-  it('agent 使用 root 配置的 mmv stable node ID 和允许 IP 而非 hostname', () => {
-    const agent = readRequired('scripts/codex-slot-agent.mjs');
-    expect(agent).toContain('stable_node_id');
-    expect(agent).toContain('allowed_ips');
-    expect(agent).toContain('ExitNodeStatus');
-    expect(agent).not.toMatch(/HostName\s*===\s*['"]mmv['"]|DNSName\s*===/);
-  });
-
-  it('reaper 两轮扫描对不可达状态保持隔离而不释放', () => {
-    const reaper = readRequired('packages/brain/src/codex-slot-reaper.js');
-    expect(reaper).toContain('quarantined');
-    expect(reaper).toContain('unreachable');
-    expect(reaper).toContain('last_confirmed_stopped_at');
-    expect(reaper).not.toMatch(/unreachable[\s\S]{0,160}released/i);
-  });
-
-  it('smoke 在 xian-m1 与 xian-m4 仅使用专用假 auth 并验证清理', () => {
+  it('durable crash 重启覆盖每个写边界且禁止 unknown success', () => {
     const smoke = readRequired('packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh');
-    expect(smoke).toContain('xian-m1');
-    expect(smoke).toContain('xian-m4');
-    expect(smoke).toContain('fake-auth.json');
-    expect(smoke).toContain('auth_absent');
-    expect(smoke).toContain('tmux_absent');
-    expect(smoke).toContain('temp_absent');
-    expect(smoke).not.toMatch(/\.codex-team[1-5]\/auth\.json/);
+    for (const fault of [
+      'after-lease-write',
+      'after-session-write',
+      'after-audit-write',
+      'before-commit',
+      'after-commit-before-response',
+    ]) {
+      expect(smoke).toContain(fault);
+    }
+    expect(smoke).toContain('unknown_success');
+    expect(smoke).toContain('pid_before');
+    expect(smoke).toContain('pid_after');
+  });
+
+  it('stop reaper schema副作用与连续失败P0回执 smoke 存在', () => {
+    const smoke = readRequired('packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh');
+    expect(smoke).toContain('idempotent-stop');
+    expect(smoke).toContain('reaper-two-pass-and-alert');
+    expect(smoke).toContain('release_transitions');
+    expect(smoke).toContain('stop_audits');
+    expect(smoke).toContain('action_receipts');
+  });
+
+  it('六条 blocking invariant 都有真实 smoke case', () => {
+    const smoke = readRequired('packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh');
+    const installer = readRequired('scripts/install-codex-slot.sh');
+    for (const marker of [
+      'health_ms',
+      'heartbeat_stale_ms',
+      'quarantine_review_ms',
+      'executor-bridge-broker-only',
+      'reaper-two-pass-and-alert',
+      'predicate_id',
+      'auth-matrix',
+    ]) {
+      expect(smoke).toContain(marker);
+    }
+    expect(installer).toContain('CODEX_SLOT_CONFIG');
   });
 });
