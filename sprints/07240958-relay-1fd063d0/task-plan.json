@@ -1,0 +1,130 @@
+{
+  "initiative_id": "1fd063d0-13d1-441c-891f-6791b3d7c2f7",
+  "journey_type": "agent_remote",
+  "journey_type_reason": "核心路径由本地 Brain broker 调度 xian-m1/xian-m4 远端 agent，并在真实主机验证固定 mmv 与安全生命周期。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "冻结旧入口并建立 tenant-scoped 身份与 durable schema",
+      "scope": "从 origin/main 硬切两个旧 token 直连入口，建立 rollout/identity/agent/lease/session/audit 的 tenant-scoped PostgreSQL 基础与默认 frozen 状态。",
+      "dod": [
+        "[BEHAVIOR] B01 旧入口只给 codex-slot start 迁移提示，不再执行 ssh/scp/codex/tmux",
+        "[BEHAVIOR] B04 PostgreSQL 六类表均含 tenant_id，且单账号 blocking lease 唯一索引生效",
+        "[ARTIFACT] packages/brain/migrations/360_codex_slot.sql"
+      ],
+      "files": [
+        "packages/brain/migrations/360_codex_slot.sql",
+        "scripts/codex-request.sh",
+        "scripts/codex-remote-launch.sh"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 55
+    },
+    {
+      "task_id": "ws2",
+      "title": "实现 fail-closed broker API 与幂等租约状态机",
+      "scope": "用受保护身份 shape 完成 acquire/status/stop 控制面，服务端推导 tenant/actor/account/agent，durable commit 后才返回 exact schema。",
+      "dod": [
+        "[BEHAVIOR] B02 client 拒绝 actor/team/host authority flags",
+        "[BEHAVIOR] B03 未认证 acquire 返回 exact 401，环境未配置不得 dev 放行",
+        "[BEHAVIOR] B05 同 Idempotency-Key 返回同一 session/lease 且响应无 authority/secret 字段"
+      ],
+      "files": [
+        "packages/brain/src/routes/codex-slots.js",
+        "packages/brain/src/codex-slot-broker.js",
+        "packages/brain/src/routes.js",
+        "scripts/codex-slot",
+        "scripts/codex-slot-client.mjs"
+      ],
+      "depends_on": [
+        "ws1"
+      ],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws3",
+      "title": "安装 root-owned agent 并验证身份、容量与固定 mmv",
+      "scope": "为 xian-m1/xian-m4 提供同一受保护 agent 与 Bash 3.2 兼容安装器，所有信任值来自 root 配置，Tailscale 路径由环境探测。",
+      "dod": [
+        "[BEHAVIOR] B06 两台真 agent 均返回可信 agent_id、明确容量、stable node ID/IP 对账通过",
+        "[ARTIFACT] agent/config/installer 语法通过且 root 配置不写死本次探针值"
+      ],
+      "files": [
+        "scripts/codex-slot-agent.mjs",
+        "scripts/install-codex-slot.sh",
+        "config/codex-slot/agents.example.json"
+      ],
+      "depends_on": [
+        "ws2"
+      ],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws4",
+      "title": "接通 broker-only protected auth snapshot 投递",
+      "scope": "broker 通过 forced-command SSH stdin frame 向目标 agent 投递有限 snapshot；agent 在读取与落盘前重验 mmv，并只返回安全摘要。",
+      "dod": [
+        "[BEHAVIOR] B07 prepare 后 mmv 变化时 read_auth/wrote_auth 均为 false，正常文件 mode=600",
+        "[ARTIFACT] 专用 fake auth fixture 明示不可真实认证且无真实 secret"
+      ],
+      "files": [
+        "packages/brain/src/codex-slot-broker.js",
+        "scripts/codex-slot-agent.mjs",
+        "scripts/fixtures/codex-slot/fake-auth.json"
+      ],
+      "depends_on": [
+        "ws3"
+      ],
+      "complexity": "L",
+      "estimated_minutes": 55
+    },
+    {
+      "task_id": "ws5",
+      "title": "完成 launch 二次校验、幂等 stop 与两轮 reaper",
+      "scope": "launch 前复用同一 mmv 判定，失败清理；stop 只凭精确 receipt 释放；reaper 通过 scheduler-jobs 两轮真状态扫描并隔离不确定会话。",
+      "dod": [
+        "[BEHAVIOR] B08 launch 二次 mmv 失败后 auth/tmux/temp absent 且 lease 未释放",
+        "[BEHAVIOR] B09 重复 stop 返回同一 cleanup 结果且只释放一次",
+        "[BEHAVIOR] B10 两轮 reaper 对不可达租约持续 quarantine，精确 stopped 才 release"
+      ],
+      "files": [
+        "scripts/codex-slot-agent.mjs",
+        "packages/brain/src/codex-slot-reaper.js",
+        "packages/brain/src/scheduler-jobs.js"
+      ],
+      "depends_on": [
+        "ws4"
+      ],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws6",
+      "title": "双机 fake-auth 真 smoke、租户隔离与版本收口",
+      "scope": "在 xian-m1/xian-m4 分别跑完整 lifecycle，真 PostgreSQL 对账无残留/串租户/secret audit，并完成 smoke allowlist 与 Brain 版本四件套。",
+      "dod": [
+        "[BEHAVIOR] B11 两 tenant own_count=1、cross_count=0、近 5 分钟 audit_secret_rows=0",
+        "[BEHAVIOR] Final E2E 两台真机 cleanup 四项通过且 blocking lease count=0",
+        "[ARTIFACT] codex-slot-lifecycle-smoke.sh 已登记 allowlist，DEFINITION/package/lock/.brain-versions 一致"
+      ],
+      "files": [
+        "packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh",
+        "packages/quality/smoke-allowlist.txt",
+        "packages/brain/src/__tests__/codex-slot.integration.test.js",
+        "scripts/__tests__/codex-slot-install.test.sh",
+        "DEFINITION.md",
+        ".brain-versions",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json"
+      ],
+      "depends_on": [
+        "ws5"
+      ],
+      "complexity": "L",
+      "estimated_minutes": 60
+    }
+  ]
+}
