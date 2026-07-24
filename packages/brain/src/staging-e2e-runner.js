@@ -637,32 +637,15 @@ export function runGoldenSmokeRegression(opts = {}) {
 
 /**
  * 起 per-PR review 预览进程。
- * 若在 Docker 容器内（检测 /.dockerenv），SSH 逃逸到宿主机执行，否则本地直跑。
+ * Docker 内直接监听已映射的 review 端口；宿主环境使用宿主仓库脚本。
  * opts.inContainer 可显式覆盖（测试用）。
  */
 export function spawnReviewPreview(port, prNum, opts = {}) {
   const HOST_REPO = process.env.CECELIA_HOST_REPO || '/Users/administrator/perfect21/cecelia';
-  const SSH_TARGET = process.env.CECELIA_HOST_EXEC_SSH || 'administrator@host.docker.internal';
-  const SSH_KEYS = ['/Users/administrator/.ssh/id_ed25519', '/Users/administrator/.ssh/id_rsa'];
-  const sshKey = SSH_KEYS.find(k => existsSync(k)) || SSH_KEYS[0];
   const distDir = path.join(HOST_REPO, 'apps/dashboard/.dist-staging');
-  const reviewScript = path.join(HOST_REPO, 'scripts/review-preview.sh');
-
   const inContainer = opts.inContainer ?? existsSync('/.dockerenv');
-
-  if (inContainer) {
-    const remoteCmd =
-      `export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH && ` +
-      `bash ${reviewScript} ${port} ${prNum} ${distDir}`;
-    return spawnSync('ssh', [
-      '-i', sshKey,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'BatchMode=yes',
-      '-o', 'ConnectTimeout=10',
-      SSH_TARGET,
-      remoteCmd,
-    ], { encoding: 'utf8', timeout: 35000 });
-  }
+  const scriptRoot = inContainer ? (process.env.REPO_ROOT || '/app') : HOST_REPO;
+  const reviewScript = path.join(scriptRoot, 'scripts/review-preview.sh');
   return spawnSync('bash', [reviewScript, String(port), String(prNum), distDir], {
     encoding: 'utf8', timeout: 30000,
   });
