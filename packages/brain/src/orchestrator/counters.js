@@ -159,7 +159,10 @@ export function replayProductConvergence(
         }
         continue;
       }
-      if (claimedSha !== currentHeadSha) {
+      if (
+        claimedSha !== currentHeadSha
+        && currentHeadSha === observed.trigger_sha
+      ) {
         if (index === modernIntents.length - 1) {
           immediateFailureReason = 'callback_sha_unverified';
         }
@@ -243,11 +246,20 @@ export function replayProductConvergence(
         };
   }
   const latestCompletedSha = completed.at(-1)?.callbackSha ?? null;
+  const latestCompletedTriggerSha = asJson(
+    completed.at(-1)?.intent?.observed,
+  )?.trigger_sha ?? null;
   if (
     latestCompletedSha != null
     && currentHeadSha != null
     && latestCompletedSha !== currentHeadSha
   ) {
+    if (
+      latestCompletedTriggerSha != null
+      && currentHeadSha !== latestCompletedTriggerSha
+    ) {
+      return { outcome: 'continue', reason: 'verified_new_sha' };
+    }
     return { outcome: 'failed', reason: 'callback_sha_unverified' };
   }
 
