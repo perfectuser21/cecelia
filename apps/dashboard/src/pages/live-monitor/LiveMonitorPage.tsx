@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AutonomousPRCounter } from '../../components/AutonomousPRCounter';
 import { PRProgressDashboard } from '../../components/PRProgressDashboard';
+import { OpsPanoramaCard } from './OpsPanoramaCard';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -1473,6 +1474,9 @@ export default function LiveMonitorPage() {
 
             {/* ── LEFT COLUMN ── */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+              {/* OPS PANORAMA — 执行全景面板 [28e7c41a] */}
+              <OpsPanoramaCard />
 
               {/* INFRA — US + HK 合并紧凑 */}
               <div style={cardStyle}>
