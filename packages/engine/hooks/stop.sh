@@ -57,6 +57,12 @@ if [[ -f "$PROJECT_ROOT/.decomp-mode" ]]; then
     exit $?
 fi
 
+# ===== 检查 .conversation-mode → 调用 stop-conversation.sh =====
+if [[ -f "$PROJECT_ROOT/.conversation-mode" ]]; then
+    bash "$SCRIPT_DIR/stop-conversation.sh"
+    exit $?
+fi
+
 # ===== 检查 .quality-mode → 调用 stop-quality.sh =====
 # 将来添加
 # if [[ -f "$PROJECT_ROOT/.quality-mode" ]]; then
@@ -114,6 +120,30 @@ source "$SCRIPT_DIR/lib/worktree-guard.sh"
     done < <(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)
 } &
 disown $! 2>/dev/null || true
+
+# ===== decision_saved 协议对账（PR4 主理人对话回路硬闸）=====
+# 扫描本次会话转录，验证所有 [TURN: decision_saved=<uuid>] 标记确实写入了 decisions 表。
+# 不判语义，只对账协议 —— 仿收账权收归哲学（decision d33bb636/design⑧a）。
+# Brain 不可达时跳过（网络原因不阻断工作流）。
+if [[ -n "${CLAUDE_HOOK_TRANSCRIPT_PATH:-}" && -f "${CLAUDE_HOOK_TRANSCRIPT_PATH}" ]]; then
+    _BRAIN_OK=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 4 \
+      "http://localhost:5221/api/brain/tasks?limit=1" 2>/dev/null || echo "000")
+    if [[ "$_BRAIN_OK" == "200" ]]; then
+        # UUID v4 模式：8-4-4-4-12 十六进制
+        _UUID_RE='decision_saved=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+        _CLAIMED_IDS=$(grep -oE "$_UUID_RE" "${CLAUDE_HOOK_TRANSCRIPT_PATH}" 2>/dev/null \
+          | sed 's/decision_saved=//' | sort -u)
+        for _DID in $_CLAIMED_IDS; do
+            _DEC_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 5 \
+              "http://localhost:5221/api/brain/decisions/${_DID}" 2>/dev/null || echo "000")
+            if [[ "$_DEC_STATUS" != "200" ]]; then
+                echo "⛔ [TURN] decision_saved=${_DID} 已声明但 Brain DB 查无此 id（HTTP ${_DEC_STATUS}）。"
+                echo "   请检查 decision 是否写入成功，或移除错误的 [TURN: decision_saved=...] 标记后重试。"
+                exit 2
+            fi
+        done
+    fi
+fi
 
 # ===== 没有任何 mode 文件 → 普通对话，允许结束 =====
 exit 0
