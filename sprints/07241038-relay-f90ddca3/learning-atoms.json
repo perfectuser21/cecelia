@@ -1,0 +1,7 @@
+{"next_steps_suggested": [
+  "evaluator verdict 输出模板应把顶层 exit_code/log_tail 列为必填字段，否则 judge 机械闸 mechFail=missing_exit_code 打回重判（f90ddca3 实证）",
+  "relay run 在 merge done 后 phase 仍停 evaluate，导致 report 阶段 POST /api/brain/harness/complete 被 initiative_run_not_done 拒绝——需推进 phase 或放宽 complete 闸门",
+  "通知/写库接口的成功判定必须看语义字段（sent/accepted），只 grep ok:true 会把 sent=false 误判为送达（harness/notify 实证）",
+  "watchdog_overdue 标 failed 的 relay run 经 orphan requeue + 外部真相核查（查 PR/sprint 目录）从头重跑是安全恢复路径（f90ddca3 实证成功）",
+  "relay-runs cost_usd 为 0 时应显式标 cost=unsettled，避免 0 被当真实成本；根治需 subagent 成本回传机制"
+]}
