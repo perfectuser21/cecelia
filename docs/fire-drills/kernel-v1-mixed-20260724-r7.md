@@ -46,8 +46,8 @@ KERNEL_V1_MIXED_FIRE_DRILL_PASS_R7
 
 ## Timeline
 
-judge_pass_at: 2026-07-24T16:26:30Z
-human_review_created_at: 2026-07-24T16:26:31Z
+judge_pass_at: pending_after_evaluator_pass
+human_review_created_at: pending_after_judge_pass
 human_approved_at: pending_after_authenticated_review
 merged_at: pending_after_authenticated_review
 
@@ -66,7 +66,7 @@ log_tail: `1 file changed ... docs/fire-drills/kernel-v1-mixed-20260724-r7.md`
 check: pr-state
 command: `gh pr view 4317 --json state,mergedAt,headRefName,headRefOid,statusCheckRollup`
 exit_code: 0
-log_tail: `state=OPEN mergedAt=null headRefName=cp-07250025-892405df headRefOid=d6fce4971c40b67c2fb793290949fc1b2a664ae7 completed_checks=65 success=45 skipped=20 neutral=0`
+log_tail: `state=OPEN mergedAt=null headRefName=cp-07250025-892405df headRefOid=a104d5a09e792763e4c9e5f4e2ae919fd8094426 total_checks=64 completed=63 pending=1 failed=2 success=41 skipped=20 neutral=0`
 
 check: task-roles
 command: `curl -sf http://host.docker.internal:5221/api/brain/tasks/2255a63a-2152-47c3-aa89-301cae2445ad | jq '.payload.role_assignments'`
