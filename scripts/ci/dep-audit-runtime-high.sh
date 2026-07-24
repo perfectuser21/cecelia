@@ -39,6 +39,20 @@ ALLOW_PKGS=(
   #   （见 protobufjs 同批 track，@opentelemetry/sdk-node 本身的 high 漏洞暂不在本白名单——
   #   该包是直接依赖且真在用，是否可豁免需要单独评估，见另一条 track，不跟这条一起处理）。
   "@opentelemetry/propagator-jaeger"
+  # react-router — 多条 advisory（GHSA-chx6-hx7r-mcp5 DoS / GHSA-wrjc-x8rr-h8h6 open-redirect /
+  #   GHSA-h8fp-f39c-q6mh RSC-XSS / GHSA-337j-9hxr-rhxg SSR-constructor-injection），修复版 ≥7.17.0。
+  #   apps/dashboard 直接依赖 react-router-dom ^6.20.0（CSR/SPA 模式，无 SSR/RSC）：
+  #   ① RSC-XSS（GHSA-h8fp-f39c-q6mh）、SSR-constructor-injection（GHSA-337j-9hxr-rhxg）
+  #     ——均要求 SSR/RSCErrorHandler 代码路径，本项目纯 CSR 不走该路径，不可利用。
+  #   ② DoS via inefficient route matching（GHSA-chx6-hx7r-mcp5）——路由配置静态硬编码，
+  #     用户无法注入路由 pattern，攻击路径不存在。
+  #   ③ Open redirect via backslash（GHSA-wrjc-x8rr-h8h6）——仅影响 <Link to="\\...">，
+  #     本仓 Link/navigate 调用只传内部路径常量，无用户可控 to= 输入，不可利用。
+  #   不能 non-breaking 修：v6→v7 是 major breaking change（Router API/hooks 均有变更），
+  #     需整体迁移 apps/dashboard，不属于一行 version bump。
+  #   移除条件：apps/dashboard 完成 react-router v7 迁移后删本行。
+  #   TODO(deps): track react-router-dom v6→v7 迁移（P2，与 Dashboard 重构一起处理）。
+  "react-router"
 )
 
 JSON=$(npm audit --audit-level=high --omit=dev --json 2>/dev/null || true)
