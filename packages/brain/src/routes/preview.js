@@ -17,11 +17,12 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pool from '../db.js';
 import {
-  allocatePreview,
   markPreviewInactive,
   getPreview,
   allocatePort,
 } from '../preview-manager.js';
+import { admitPreview } from '../capacity-gate.js';
+import { destroyPreview } from '../preview-destroyer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = process.env.REPO_ROOT || join(__dirname, '../../../../');
@@ -51,7 +52,20 @@ router.post('/start', async (req, res) => {
   }
   const prNum = Number(pr_number);
   try {
-    const { port, db_name } = await allocatePreview(prNum, branch_name, base_repo);
+    // 唯一调用 admitPreview()（方案A：判定+端口扫描+INSERT 全程包在同一把
+    // pg_advisory_xact_lock 事务内），不再单独调用无锁的 allocatePreview()——
+    // 消除 admitPreview 判定与端口预留之间的 TOCTOU 竞态窗口（见合同 Risks #2）。
+    const admission = await admitPreview(prNum, branch_name, base_repo, pool);
+    if (!admission.admitted) {
+      return res.status(503).json({
+        error: 'preview admission rejected',
+        reason: admission.reason,
+        free_bytes: admission.free_bytes,
+        projected_cost_bytes: admission.projected_cost_bytes,
+        need_release_bytes: admission.need_release_bytes,
+      });
+    }
+    const { port, db_name } = admission;
 
     // 异步触发 preview-env-start.sh（不等待完成）
     const startScript = join(SCRIPTS_DIR, 'preview-env-start.sh');
@@ -69,7 +83,8 @@ router.post('/start', async (req, res) => {
 });
 
 // ── POST /stop/:pr ─────────────────────────────────────────────────────────
-// 触发 preview-env-stop.sh，立即返回（异步清理）
+// 唯一调用 destroyPreview()（统一销毁器，7 步流程 + 安全防护 + 幂等 + 并发去重），
+// 同步等待其终态并直接透出 status/cleanup_detail，不再异步 spawn preview-env-stop.sh。
 router.post('/stop/:pr_number', async (req, res) => {
   if (checkDeployToken(req, res) === false) return;
   const prNumber = parseInt(req.params.pr_number, 10);
@@ -78,17 +93,15 @@ router.post('/stop/:pr_number', async (req, res) => {
     const preview = await getPreview(prNumber);
     if (!preview) return res.json({ stopped: true, note: 'no active preview found' });
 
-    // 异步触发 preview-env-stop.sh
-    const stopScript = join(SCRIPTS_DIR, 'preview-env-stop.sh');
-    const child = spawn('bash', [stopScript, String(prNumber), String(preview.port), preview.db_name], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env, REPO_ROOT },
-    });
-    child.unref();
+    const result = await destroyPreview(prNumber, 'api', `stop-${prNumber}-${Date.now()}`, pool);
 
-    await markPreviewInactive(prNumber);
-    res.json({ stopped: true, port: preview.port, db_name: preview.db_name });
+    res.json({
+      stopped: result.destroyed,
+      port: preview.port,
+      db_name: preview.db_name,
+      status: result.status,
+      cleanup_detail: result.cleanup_detail ?? null,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

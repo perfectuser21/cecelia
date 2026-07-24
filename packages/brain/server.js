@@ -55,6 +55,7 @@ import designDocsRoutes from './src/routes/design-docs.js';
 import userAnnotationsRoutes from './src/routes/user-annotations.js';
 import strategicDecisionsRoutes from './src/routes/strategic-decisions.js';
 import createDecisionsMatchRouter from './src/routes/decisions.js';
+import conversationsRoutes from './src/routes/conversations.js';
 import captureAtomsRoutes from './src/routes/capture-atoms.js';
 import capturesRoutes from './src/routes/captures.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
@@ -313,6 +314,7 @@ app.use('/api/brain/dev-records', devRecordsRoutes);
 app.use('/api/brain/design-docs', designDocsRoutes);
 app.use('/api/brain/user-annotations', userAnnotationsRoutes);
 app.use('/api/brain/strategic-decisions', strategicDecisionsRoutes);
+app.use('/api/brain/conversations', conversationsRoutes);
 app.post('/api/brain/decisions/match', express.json(), createDecisionsMatchRouter());
 // GET /api/brain/decisions — alias 返回数组格式（兼容 smoke-business.sh）
 app.get('/api/brain/decisions', async (req, res) => {

@@ -13,6 +13,26 @@ fail() { echo "❌ $1"; ((FAIL++)) || true; }
 # 0. 清理可能残留的旧记录
 curl -s -o /dev/null -X POST "$API/stop/$PR_NUM" || true
 
+# 0.5 容量准入闸门（capacity-gate.js）接入后，POST /start 唯一调用 admitPreview()，
+# 无有效 .runtime/host-disk.json 采样时会 layer1 拒绝（503 sample_missing），防静默瘫痪
+# 是设计意图（见 preview-capacity-gate-and-destroyer 合同）。本 smoke 验的是 lifecycle
+# API 本身，不是准入闸门逻辑（那部分由 preview-capacity-gate-and-destroyer-smoke.sh 覆盖），
+# 所以在容器内 Brain 进程的 REPO_ROOT 下写一份新鲜的合法采样，让 POST /start 走到端口分配分支。
+if command -v docker >/dev/null 2>&1 && [ -n "${BRAIN_CONTAINER:-}" ] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qxF "$BRAIN_CONTAINER"; then
+  docker exec "$BRAIN_CONTAINER" sh -c '
+    mkdir -p "${REPO_ROOT:-/repo_root}/.runtime"
+    cat > "${REPO_ROOT:-/repo_root}/.runtime/host-disk.json" <<EOF
+{
+  "sampled_at_epoch": $(date +%s),
+  "data_avail_bytes": 64424509440,
+  "apfs_unallocated_bytes": 66571993088,
+  "effective_free_bytes": 64424509440,
+  "usage_pct": 55
+}
+EOF
+  ' 2>/dev/null || true
+fi
+
 # 1. POST /start 分配端口 + 触发（异步）启动脚本，同步返回 port/db_name
 echo "── POST /start ──"
 RESP=$(curl -s -X POST "$API/start" \

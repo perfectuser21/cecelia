@@ -1028,6 +1028,7 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           NODE_ENV: test
+          CECELIA_TICK_ENABLED: 'false'
         run: |
           cd packages/brain
           node server.js > /tmp/brain.log 2>&1 &
@@ -1441,6 +1442,7 @@ jobs:
       - name: Run all packages/brain/scripts/smoke/*.sh
         env:
           BRAIN_URL: http://localhost:5221
+          BRAIN_CONTAINER: cecelia-brain-smoke
           DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'

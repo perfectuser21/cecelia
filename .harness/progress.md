@@ -11,3 +11,4 @@ generator: fix (version bump 1.267.56→1.267.57 commit=e6ef57d61)
 generator: ci_green (sha=e296fef, ci-passed=SUCCESS, Harness-V5=SUCCESS, Smoke-Glob=SUCCESS, failures=[测试金字塔守卫(预期)])
 evaluator: done (verdict=PASS, sha=e296fef, verified=14/14 API DoDs, unverifiable=4 frontend DoDs [controller-兜底=PASSABLE], verdict_file=.harness/verdicts/evaluate-e296fef.json)
 judge: done (verdict=PASS, judged=false mode=fail-open, mechFail=none, judgeError=DeepSeek-502, judge_verdict_patched=relay-runs)
+

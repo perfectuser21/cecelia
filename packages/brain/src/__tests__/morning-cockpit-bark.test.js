@@ -9,6 +9,10 @@ vi.mock('../notifier.js', () => ({
   sendBark: vi.fn().mockResolvedValue(true),
 }));
 
+vi.mock('../triage-officer-rank.js', () => ({
+  LEADERBOARD_KEY: 'triage_officer_leaderboard',
+}));
+
 import { isInMorningCockpitWindow, runMorningCockpitBark } from '../morning-cockpit-bark.js';
 import { sendBark } from '../notifier.js';
 

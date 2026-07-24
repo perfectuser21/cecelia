@@ -30,6 +30,8 @@ import { sampleMachineVitals } from './machine-vitals.js';
 import { runCodexTestGen } from './codex-test-gen.js';
 import { runCaptureAging } from './capture-aging.js';
 import { runConversationCapture } from './conversation-capture.js';
+import { maybeRunTriageOfficerRank } from './triage-officer-rank.js';
+import { runTriageOfficer15min } from './triage-officer-15min.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -60,6 +62,8 @@ export const JOBS = [
   { name: 'promise-map-nightly', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPromiseMapNightly, description: 'MJ5 S4 承诺地图保鲜对账（每日 UTC 02:00，4 条断言，失败 Bark，刀4）' },
   { name: 'codex-test-gen', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => runCodexTestGen(pool), description: 'Codex 每日测试补齐生成器（扫 brain/src 缺测试文件 → 去重 7 天 → 入队 1-3 个 codex_test_gen 任务，07172225）' },
   { name: 'capture-aging', needsPool: true, timeoutMs: 30_000, handler: runCaptureAging, description: '账龄哨兵：超7天告警+llm_failed重试(≤3次)+超限转parked' },
+  { name: 'triage-officer-rank', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunTriageOfficerRank, description: '排序官每日大轮（北京07:00产能感知排序，晨报前1.5h，Top N榜单+两层预算+否决窗90min）' },
+  { name: 'triage-officer-15min', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runTriageOfficer15min, description: '排序官15min规则小轮（纯SQL精确重名归并+否决窗过期自动放行，不走LLM）' },
   { name: 'conversation-capture', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => {
     const r = await runConversationCapture(pool);
     if (r?.ok === false) throw new Error(r.error || 'conversation-capture failed');
