@@ -1,0 +1,23 @@
+{
+  "initiative_id": "83f32291-99e5-46d7-98ed-f31caca35ba2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物为仓库文档文件，无 UI/agent 协议路径，验收全部为本地机检命令（PRD 字面）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 Kernel v1 mixed provider fire drill r2 证据文档",
+      "scope": "仅新增 docs/fire-drills/kernel-v1-mixed-20260724-r2.md：含 KERNEL_V1_MIXED_FIRE_DRILL_PASS_R2 标记、生产版本 1.267.67、merge commit 19887912bbb581597f12c714a9ed187f051e2850、六角色（planner/proposer/reviewer/generator/evaluator/judge）各自 provider/account 实际运行证据摘要；不碰 packages/brain、migrations、现有合同测试、CI 配置；证据摘要禁止包含 key/token 等 secrets",
+      "dod": [
+        "[BEHAVIOR] test -f docs/fire-drills/kernel-v1-mixed-20260724-r2.md && grep -q KERNEL_V1_MIXED_FIRE_DRILL_PASS_R2 通过（对应合同 BEHAVIOR 1）",
+        "[BEHAVIOR] 文档含字面 1.267.67 与 19887912bbb581597f12c714a9ed187f051e2850，且该 hash git rev-parse --verify 可解析（对应合同 BEHAVIOR 2/3）",
+        "[BEHAVIOR] 六角色每个至少一行 provider/account 证据（对应合同 BEHAVIOR 4）",
+        "[BEHAVIOR] git diff origin/main...HEAD 在 packages/brain、migrations、.github/workflows 下为空（对应合同 BEHAVIOR 5）",
+        "[ARTIFACT] docs/fire-drills/kernel-v1-mixed-20260724-r2.md 存在"
+      ],
+      "files": ["docs/fire-drills/kernel-v1-mixed-20260724-r2.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
