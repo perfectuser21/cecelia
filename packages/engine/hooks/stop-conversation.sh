@@ -77,7 +77,7 @@ if [[ -z "$DECISION_UUID" ]]; then
     exit 0
 fi
 
-echo "  → 检测到 decision_saved=$DECISION_UUID，开始验证…"
+echo "  → 检测到 decision_saved=${DECISION_UUID}，开始验证…"
 
 # ── curl 对账 ────────────────────────────────────────────────────────────────
 HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
