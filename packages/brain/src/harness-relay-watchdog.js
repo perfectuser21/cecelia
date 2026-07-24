@@ -17,6 +17,7 @@ import {
   parseBaseRepo as _parseBaseRepo,
   discoverPrFromGithub as _discoverPrFromGithub,
 } from './orchestrator/github-pr-discovery.js';
+import { defaultPrHeadResolver } from './orchestrator/pr-head-resolver.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
 
@@ -815,40 +816,65 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
  */
 export async function scanStuckHarness(opts = {}) {
   const dbPool = opts.pool || pool;
+  const resolvePrHead = opts.resolvePrHead || defaultPrHeadResolver;
 
   const overdueQ = await dbPool.query(
-    `SELECT id, initiative_id, orchestrator_host, phase, deadline_at
+    `SELECT id, initiative_id, orchestrator_host, phase, deadline_at, pr_url
        FROM initiative_runs
       WHERE orchestrator_host LIKE 'skill-relay%'
         AND deadline_at < NOW()
         AND phase NOT IN ('done', 'failed')
         AND completed_at IS NULL
-        AND NOT EXISTS (
-          SELECT 1
-            FROM orchestrator_decision_log review_request
-           WHERE review_request.run_id = initiative_runs.id
-             AND review_request.action = 'effect:human_review_requested'
-             AND review_request.observed #>> '{pr,head_sha}' IS NOT NULL
-             AND NOT EXISTS (
-               SELECT 1
-                 FROM orchestrator_decision_log approval
-                WHERE approval.run_id = review_request.run_id
-                  AND approval.action = 'verdict:human_review'
-                  AND approval.detail->>'review_request_hop' = review_request.hop::text
-             )
-             AND NOT EXISTS (
-               SELECT 1
-                 FROM orchestrator_decision_log later
-                WHERE later.run_id = review_request.run_id
-                  AND later.hop > review_request.hop
-             )
-        )
       LIMIT 50`
   );
 
   const rows = overdueQ?.rows ?? [];
   for (const row of rows) {
     try {
+      const openReviewQ = await dbPool.query(
+        `SELECT review_request.hop AS review_request_hop,
+                review_request.observed #>> '{pr,head_sha}' AS review_head_sha
+           FROM orchestrator_decision_log review_request
+          WHERE review_request.run_id = $1
+            AND review_request.action = 'effect:human_review_requested'
+            AND NOT EXISTS (
+              SELECT 1
+                FROM orchestrator_decision_log approval
+               WHERE approval.run_id = review_request.run_id
+                 AND approval.action = 'verdict:human_review'
+                 AND approval.detail->>'review_request_hop' = review_request.hop::text
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM orchestrator_decision_log later
+               WHERE later.run_id = review_request.run_id
+                 AND later.hop > review_request.hop
+            )
+          ORDER BY review_request.hop DESC
+          LIMIT 1`,
+        [row.id],
+      );
+      const openReview = openReviewQ.rows?.[0] ?? null;
+      if (openReview && row.pr_url) {
+        let currentHeadSha;
+        try {
+          currentHeadSha = await resolvePrHead(row.pr_url);
+        } catch (error) {
+          console.warn(
+            `[relay-watchdog] scanStuckHarness: review head lookup deferred ` +
+            `run=${row.id}: ${error.message}`,
+          );
+          continue;
+        }
+        if (!currentHeadSha) {
+          console.warn(
+            `[relay-watchdog] scanStuckHarness: review head unavailable; deferred run=${row.id}`,
+          );
+          continue;
+        }
+        if (currentHeadSha === openReview.review_head_sha) continue;
+      }
+
       const failedRun = await dbPool.query(
         `UPDATE initiative_runs
             SET phase = 'failed',
