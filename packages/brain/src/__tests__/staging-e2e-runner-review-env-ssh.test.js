@@ -1,6 +1,6 @@
 /**
- * Tests for spawnReviewPreview SSH-escape logic in staging-e2e-runner.js
- * Verifies: container→ssh, non-container→bash, auto-detect-true→ssh, auto-detect-false→bash
+ * Tests for spawnReviewPreview runtime routing in staging-e2e-runner.js.
+ * Verifies: container→container-local bash, non-container→host-local bash.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -35,23 +35,21 @@ describe('spawnReviewPreview — SSH escape logic', () => {
     vi.clearAllMocks();
     delete process.env.CECELIA_HOST_REPO;
     delete process.env.CECELIA_HOST_EXEC_SSH;
+    delete process.env.REPO_ROOT;
   });
 
-  it('容器内 (inContainer=true) → spawnSync 以 ssh 调用宿主', () => {
-    existsSync.mockImplementation(p => p === '/Users/administrator/.ssh/id_ed25519');
+  it('容器内 (inContainer=true) → spawnSync 以 bash 调用容器内脚本', () => {
     spawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
 
     spawnReviewPreview(5301, 42, { inContainer: true });
 
     expect(spawnSync).toHaveBeenCalledOnce();
     const [cmd, args] = spawnSync.mock.calls[0];
-    expect(cmd).toBe('ssh');
-    expect(args).toContain('administrator@host.docker.internal');
-    const remoteCmd = args[args.length - 1];
-    expect(remoteCmd).toContain(`${HOST_REPO}/scripts/review-preview.sh`);
-    expect(remoteCmd).toContain('5301');
-    expect(remoteCmd).toContain('42');
-    expect(remoteCmd).toContain(`${HOST_REPO}/apps/dashboard/.dist-staging`);
+    expect(cmd).toBe('bash');
+    expect(args[0]).toBe('/app/scripts/review-preview.sh');
+    expect(args[1]).toBe('5301');
+    expect(args[2]).toBe('42');
+    expect(args[3]).toBe(`${HOST_REPO}/apps/dashboard/.dist-staging`);
   });
 
   it('非容器 (inContainer=false) → spawnSync 以 bash 调用本地脚本', () => {
@@ -67,14 +65,15 @@ describe('spawnReviewPreview — SSH escape logic', () => {
     expect(args[2]).toBe('99');
   });
 
-  it('auto-detect: existsSync("/.dockerenv")=true → ssh 路径', () => {
-    existsSync.mockImplementation(p => p === '/.dockerenv' || p === '/Users/administrator/.ssh/id_ed25519');
+  it('auto-detect: existsSync("/.dockerenv")=true → 容器内 bash 路径', () => {
+    existsSync.mockImplementation(p => p === '/.dockerenv');
     spawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
 
     spawnReviewPreview(5303, 77);
 
-    const [cmd] = spawnSync.mock.calls[0];
-    expect(cmd).toBe('ssh');
+    const [cmd, args] = spawnSync.mock.calls[0];
+    expect(cmd).toBe('bash');
+    expect(args[0]).toBe('/app/scripts/review-preview.sh');
   });
 
   it('auto-detect: existsSync("/.dockerenv")=false → bash 路径', () => {
