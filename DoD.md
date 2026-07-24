@@ -1,176 +1,174 @@
-contract_branch: cp-harness-propose-r1-1b1f1ffa
-sprint_dir: sprints/07231146-relay-1b1f1ffa
+contract_branch: cp-harness-propose-r5-1fd063d0
+contract_head: 523df37988e9aa7570050b60bafcc3145545f7a4
+sprint_dir: sprints/07240958-relay-1fd063d0
 
 ---
 skeleton: false
-journey_type: autonomous
+journey_type: agent_remote
+target_environment: local_api
 ---
-# Contract DoD — Sprint: preview-capacity-gate-and-destroyer
 
-**范围**: 宿主磁盘采样器（`scripts/host-disk-sampler.sh`）+ 容量准入闸门（`packages/brain/src/capacity-gate.js`）+ 统一销毁器（`packages/brain/src/preview-destroyer.js`）+ `scripts/preview-cleanup.sh` 重写 + migration 358 + `routes/preview.js` 接入 + 现存资源批量清扫（Final E2E 阶段）
-**大小**: L
+# Contract DoD — 完整 Codex Slot 安全硬切换（Round 5）
+
+**范围**：仅 PRD 的 broker-only Codex Slot 硬切、全局账号租约、既有 SSOT、durable/frozen、API/stop/reaper 与双机 fake-auth。
+**状态纪律**：全未勾；L3 在 final-e2e 前为 `logic-done-pending`。
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] scripts/host-disk-sampler.sh 存在且含 set -euo pipefail 与显式 PATH 声明
-  Test: node -e "const c=require('fs').readFileSync('scripts/host-disk-sampler.sh','utf8'); if(!c.includes('set -euo pipefail')) process.exit(1); if(!/PATH=/.test(c)) process.exit(1);"
+- [ ] [ARTIFACT] A01 control plane 与当前 main 全部 17 路生产 Codex credential consumer 完整接线
+  Test: manual:bash -c 'node -e "const f=require(\"node:fs\");const req=[\"packages/brain/src/routes/codex-slots.js\",\"packages/brain/src/codex-slot-broker.js\",\"packages/brain/src/codex-slot-reaper.js\",\"packages/brain/src/executor.js\",\"packages/brain/src/harness-skill-relay.js\",\"packages/brain/scripts/codex-bridge/codex-bridge.cjs\",\"packages/brain/scripts/codex-bridge/codex-account-usage.cjs\",\"packages/brain/scripts/cron/credentials-health-check.sh\",\"packages/brain/src/llm-caller.js\",\"packages/brain/src/llm-capacity.js\",\"packages/brain/src/orchestrator/dispatcher.js\",\"packages/brain/src/orchestrator/providers/codex.js\",\"packages/brain/src/harness-relay-watchdog.js\",\"scripts/dispatch-worker.mjs\",\"scripts/codex-launch.sh\",\"scripts/codex-supervisor.mjs\",\"packages/engine/runners/codex/runner.sh\",\"packages/engine/runners/codex/playwright-runner.sh\",\"packages/brain/src/routes/brain-meta.js\",\"packages/brain/src/credentials-health-scheduler.js\"];for(const p of req){if(!f.existsSync(p)){console.error(\"RED missing \"+p);process.exit(1)}}const s=p=>f.readFileSync(p,\"utf8\"),e=s(req[3]),h=s(req[4]),b=s(req[5]),m=s(req[18]),c=s(req[19]),broker=req.slice(6,15).concat(req.slice(16,18));if(!s(\"packages/brain/src/routes.js\").includes(\"codex-slots\")||/accounts\\s*:\\s*injectedAccounts|pickLocalAccountByDeficit/.test(e)||/function selectBestBridge[\\s\\S]{0,1500}\\/health[\\s\\S]{0,500}\\.accounts/.test(e)||/所有 Codex Bridge 不可用[\\s\\S]{0,200}XIAN_CODEX_BRIDGE_URL/.test(e)||/account_id\\s*:/.test(h)||/loadRawAuth|injectLocalAccount|setupInjectedAccounts/.test(b)||broker.some(p=>!s(p).includes(\"codex-slot\"))||!e.includes(\"CODEX_REVIEW_HOME\")||!s(req[15]).includes(\"CODEX_SUPERVISOR_HOME\")||/CODEX_BRIDGE_URL[\\s\\S]{0,300}\\/accounts/.test(m)||/CODEX_BRIDGE_URL[\\s\\S]{0,300}\\/accounts/.test(c)||!m.includes(\"account_usage_cache\")||!c.includes(\"account_usage_cache\")){console.error(\"RED issuer bypass or unclassified consumer remains\");process.exit(1)}"'
+  期望: Node 真启动；17 路源码归属齐全，14 路含 broker 接线、3 路含独立 home 配置，且 Round 4 bridge/health/accounts 旁路仍关闭。
 
-- [x] [ARTIFACT] packages/brain/src/capacity-gate.js 存在且导出 readHostDisk/admitPreview
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/capacity-gate.js','utf8'); if(!c.includes('readHostDisk')) process.exit(1); if(!c.includes('admitPreview')) process.exit(1);"
+- [ ] [ARTIFACT] A02 migration 建 durable identity/lease/session/rollout/audit，公司 account_ref 全局 blocking 唯一且不建平行 agent 表
+  Test: manual:bash -c 'node -e "const f=require(\"node:fs\"),p=\"packages/brain/migrations/360_codex_slot.sql\";if(!f.existsSync(p)){console.error(\"RED missing migration\");process.exit(1)}const s=f.readFileSync(p,\"utf8\");for(const x of [\"codex_slot_actor_identities\",\"identity_kind\",\"identity_ref\",\"uid\",\"ssh_key\",\"codex_slot_leases\",\"codex_slot_sessions\",\"codex_slot_rollout\",\"codex_slot_audit_events\",\"tenant_id\",\"account_ref\",\"active\",\"quarantined\",\"blocked\"]){if(!s.includes(x)){console.error(\"RED missing \"+x);process.exit(1)}}if(/CREATE TABLE[^;]*codex_slot_agents/is.test(s)||!(/UNIQUE INDEX[\\s\\S]*\\(account_ref\\)[\\s\\S]*active[\\s\\S]*quarantined[\\s\\S]*blocked/i.test(s))){console.error(\"RED global index/SSOT violation\");process.exit(1)}"'
+  期望: Node exit 0；UID/key mapping 为 durable object；唯一索引 key 不含 tenant_id；无 `codex_slot_agents`。
 
-- [x] [ARTIFACT] packages/brain/src/preview-destroyer.js 存在且导出 destroyPreview
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/preview-destroyer.js','utf8'); if(!c.includes('destroyPreview')) process.exit(1);"
+- [ ] [ARTIFACT] A03 client/agent 语法通过，installer 在 Bash 3.2 与现代 Bash 各真跑失败隔离场景
+  Test: manual:bash -c '/bin/bash -n scripts/codex-request.sh scripts/codex-remote-launch.sh; bash -n scripts/codex-request.sh scripts/codex-remote-launch.sh; for p in scripts/codex-slot scripts/codex-slot-client.mjs scripts/codex-slot-agent.mjs scripts/install-codex-slot.sh; do [ -f "$p" ] || { echo "RED missing $p" >&2; exit 1; }; done; node --check scripts/codex-slot-client.mjs; node --check scripts/codex-slot-agent.mjs; MODERN_BASH=$(command -v bash); /bin/bash --version | grep -q "version 3\\.2"; "$MODERN_BASH" --version | grep -Eq "version ([4-9]|[1-9][0-9])\\."; T=$(mktemp -d); trap '\''rm -rf "$T"'\'' EXIT; run_fail(){ SH="$1"; ROOT="$2"; set +e; O=$(CODEX_SLOT_CONFIG="$T/missing.json" "$SH" scripts/install-codex-slot.sh --install-root "$ROOT" 2>&1); R=$?; set -e; [ "$R" -eq 78 ] && { [ ! -e "$ROOT" ] || [ -z "$(find "$ROOT" -type f -print -quit)" ]; } || { printf "FAIL shell=%s rc=%s out=%s\n" "$SH" "$R" "$O" >&2; return 1; }; }; run_fail /bin/bash "$T/bash32"; run_fail "$MODERN_BASH" "$T/modern"'
+  期望: `/bin/bash` 3.2 与 modern Bash≥4 均真实执行 installer 并 exit 78；两个隔离根都无半安装文件。
 
-- [x] [ARTIFACT] migration 358 存在且含 cleaning/cleanup_failed/cleanup_detail
-  Test: node -e "const fs=require('fs'); const f=fs.readdirSync('packages/brain/migrations').find(x=>x.startsWith('358_')); if(!f) process.exit(1); const c=fs.readFileSync('packages/brain/migrations/'+f,'utf8'); if(!c.includes('cleaning')||!c.includes('cleanup_failed')||!c.includes('cleanup_detail')) process.exit(1);"
+- [ ] [ARTIFACT] A04 root 配置只保存 agent attest/machine/fleet 映射；fake auth 明示不可真实认证
+  Test: manual:bash -c 'node -e "const f=require(\"node:fs\"),cp=\"config/codex-slot/agents.example.json\",fp=\"scripts/fixtures/codex-slot/fake-auth.json\";for(const p of [cp,fp])if(!f.existsSync(p)){console.error(\"RED missing \"+p);process.exit(1)}const c=JSON.parse(f.readFileSync(cp)),raw=f.readFileSync(fp,\"utf8\"),a=JSON.parse(raw);if(!Array.isArray(c.agents)||c.agents.length!==2||!c.agents.every(x=>x.agent_id&&x.machine_registry_name&&x.fleet_id&&x.mmv?.stable_node_id&&Array.isArray(x.mmv.allowed_ips))||a.fixture!==true||!/not.a.real.token/i.test(raw)||/sk-[A-Za-z0-9_-]{16,}/.test(raw))process.exit(1)"'
+  期望: Node exit 0；两台映射齐全、stable ID/IP 不取 hostname，fixture 无真 token。
 
-- [x] [ARTIFACT] scripts/preview-cleanup.sh 已重写为 preview-destroyer.js 的唯一 shell 执行体
-  Test: node -e "const c=require('fs').readFileSync('scripts/preview-cleanup.sh','utf8'); if(!c.includes('preview-destroyer')) process.exit(1);"
+- [ ] [ARTIFACT] A05 smoke/allowlist/scheduler/版本四件套同步
+  Test: manual:bash -c 'node -e "const f=require(\"node:fs\"),s=\"packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh\";if(!f.existsSync(s)){console.error(\"RED missing smoke\");process.exit(1)}if(!f.readFileSync(\"packages/quality/smoke-allowlist.txt\",\"utf8\").includes(\"codex-slot-lifecycle-smoke.sh\")||!f.readFileSync(\"packages/brain/src/scheduler-jobs.js\",\"utf8\").includes(\"codex-slot-reaper\"))process.exit(1);const v=JSON.parse(f.readFileSync(\"packages/brain/package.json\")).version,d=f.readFileSync(\"DEFINITION.md\",\"utf8\"),l=f.readFileSync(\".brain-versions\",\"utf8\").trim().split(/\\n/).at(-1);if(v===\"1.267.61\"||!d.includes(v)||l!==v)process.exit(1)"'
+  期望: Node exit 0；smoke 登记、reaper 接 scheduler-jobs、Brain 版本已 bump。
 
-- [x] [ARTIFACT] T10 消费者代码 grep 断言：capacity-gate.js/preview-destroyer.js 内不存在本地 df/diskutil 直接调用（统一只经 readHostDisk() 消费 host-disk-sampler.sh 的采样结果，禁止消费者重复实现磁盘采样，违背"统一采样、统一消费"设计目标）
-  Test: node -e "const fs=require('fs'); const files=['packages/brain/src/capacity-gate.js','packages/brain/src/preview-destroyer.js']; const bad=/execSync\(\s*['\"\`]\s*df\b|spawnSync\(\s*['\"\`]df['\"\`]|spawn\(\s*['\"\`]df['\"\`]|exec\(\s*['\"\`]\s*df\b|['\"\`]diskutil['\"\`]|\bdf\s+-k\b/; let fail=false; for (const f of files) { const c=fs.readFileSync(f,'utf8'); if (bad.test(c)) { console.error('FAIL: ' + f + ' 内含本地 df/diskutil 直接调用，应改为经 capacity-gate.js 的 readHostDisk() 读取 .runtime/host-disk.json'); fail=true; } } if (fail) process.exit(1); console.log('OK: no local df/diskutil calls in capacity-gate.js or preview-destroyer.js');"
-  期望: exit 0（两文件源码内均不含 df/diskutil 直接调用）
+## BEHAVIOR 条目
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令，journey_type=autonomous，真实 Brain/DB/文件系统/git worktree，禁 mock）
+- [ ] [BEHAVIOR] [L2] B01 GP1 两个旧脚本用合法旧参数时在任何网络/auth/tmux 前 exit 64
+  动作: 用只记录调用的 ssh/scp/codex/tmux tripwire，真启动两个旧 Bash 脚本的合法参数。
+  预期观察: 两者均 exit 64、只输出 `codex-slot start` 迁移提示，tripwire 记录为空。
+  验证命令: Test: manual:bash -c 'set -uo pipefail; T=$(mktemp -d); trap '\''rm -rf "$T"'\'' EXIT; TRACE="$T/trace"; mkdir -p "$T/home"; for C in ssh scp codex tmux; do printf '\''#!/bin/sh\nprintf "called\\n" >> "%s"\nexit 97\n'\'' "$TRACE" > "$T/$C"; chmod +x "$T/$C"; done; F=0; run_one(){ P="$1"; shift; set +e; O=$(HOME="$T/home" PATH="$T:/usr/bin:/bin" CODEX_BIN=codex CODEX_US_HOST=forbidden CODEX_REMOTE_HOST=forbidden bash "$P" "$@" 2>&1); R=$?; set -e; [ "$R" -eq 64 ] && printf "%s\n" "$O" | grep -q "codex-slot start" || { printf "FAIL %s rc=%s out=%s\n" "$P" "$R" "$O" >&2; return 1; }; }; run_one scripts/codex-request.sh --team team1 || F=1; run_one scripts/codex-remote-launch.sh --team team3 || F=1; [ ! -s "$TRACE" ] || { echo "FAIL child command invoked" >&2; F=1; }; [ "$F" -eq 0 ]'
+  期望: 外层/产品 Bash 均启动；两次 rc=64；零网络、零 auth 文件读取、零 tmux。
 
-### 模块1 宿主磁盘采样器
+- [ ] [BEHAVIOR] [L2] B02 GP4 当前 main 全部 17 路生产 credential consumer 逐路 broker/隔离收口
+  动作: 真触发 exact inventory 的 17 条生产路径；14 路走真实 broker/PG/receiver，3 路本机执行走独立 root 与公司 auth FIFO/canary；同时保留四 caller、M1/M4、退役 HTTP、executor/cache 的 Round 4 真验。
+  预期观察: 14 路 account_ref/lease/session/receipt/agent 全对账且零直接 auth/home/API fallback；3 路真实进程只能见 allowlisted 独立 root，公司 auth/env/canary 零触碰；unclassified=0。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; O=$("$S" --case production-callers-broker-only --json); printf "%s\n" "$O" | jq -e "def brokered: .trigger_count==1 and .mode==\"broker\" and .transport==\"real\" and .broker.issuer==\"broker\" and .broker.account_ref==.execution.account_ref and .broker.lease_id==.execution.lease_id and .broker.session_id==.execution.session_id and .broker.receipt==.execution.receipt and .broker.agent_id==.execution.agent_id and .company_auth_reads==0 and .company_home_mounts==0 and .api_key_fallbacks==0; def isolated: .trigger_count==1 and .mode==\"isolated\" and .transport==\"real-process\" and .process_exit==0 and .isolation.root_allowlisted==true and .isolation.realpath_outside_company_roots==true and .isolation.company_auth_open_attempts==0 and .isolation.company_home_mounts==0 and .isolation.company_env_inherited==0 and .isolation.api_key_inherited==0 and .isolation.company_canary_reads==0; .ok==true and (.callers|keys==[\"executor_explicit\",\"executor_xian\",\"executor_xian_m1\",\"harness_relay\"]) and ([.callers[]|select(.broker.issuer==\"broker\" and .broker.lease_id==.run.body.slot.lease_id and .broker.session_id==.run.body.slot.session_id and .broker.receipt==.run.body.slot.receipt and .broker.agent_id==.run.body.slot.agent_id)]|length)==4 and (.consumer_inventory|keys==[\"bridge_account_usage\",\"bridge_run\",\"codex_launch\",\"codex_supervisor\",\"credentials_health_cron\",\"dispatch_worker\",\"engine_playwright_runner\",\"engine_runner\",\"executor_bridge_selector\",\"executor_codex_review\",\"executor_dynamic_local\",\"harness_relay_container\",\"harness_relay_headed\",\"llm_caller\",\"llm_capacity\",\"orchestrator_dispatch\",\"relay_watchdog_resume\"]) and ([.consumer_inventory|to_entries[]|select(.key!=\"codex_supervisor\" and .key!=\"executor_codex_review\" and .key!=\"executor_dynamic_local\")|select(.value|brokered)]|length)==14 and ([.consumer_inventory|to_entries[]|select(.key==\"codex_supervisor\" or .key==\"executor_codex_review\" or .key==\"executor_dynamic_local\")|select(.value|isolated)]|length)==3 and .inventory_scan.main_sha==\"a1b22bf72618f072f28f61baef4be38a52d1c185\" and .inventory_scan.production_paths==17 and .inventory_scan.unclassified_paths==0 and .inventory_scan.traced_downstream.docker_executor==\"harness_relay_container\" and .inventory_scan.traced_downstream.orchestrator_codex_provider==\"orchestrator_dispatch\" and .inventory_scan.excluded.conversation_capture.credential_access==false and ([.cutover.dynamic_xian[].broker.agent_id]|sort)==[\"xian-m1\",\"xian-m4\"] and ([.cutover.dynamic_xian[]|select(.broker.receipt==.run.body.slot.receipt and .broker.agent_id==.run.body.slot.agent_id and .broker.agent_id==.receiver.agent_id)]|length)==2 and .cutover.executor.selection_source==\"broker_receipt\" and .cutover.executor.bridge_health_calls==0 and .cutover.executor.account_health_reads==0 and .cutover.executor.fixed_m4_fallbacks==0 and ([.cutover.retired[]|select(.transport==\"http\" and .request_count==1 and .http_code==410 and .auth_reads==0 and .processes_started==0 and .leases_created==0)]|length)==2 and (.cutover.retired|keys)==[\"execute\",\"execute_review\"] and .bridge.local_auth_reads==0 and .bridge.fallback_attempts==0 and .bridge.accounts_code==410 and .bridge.health_has_accounts==false and .consumers.brain_meta.source==\"account_usage_cache\" and .consumers.credentials_health.source==\"account_usage_cache\" and .consumers.bridge_accounts_calls==0 and .consumers.raw_auth_reads==0"; RID=$(printf "%s\n" "$O"|jq -er ".request_id"); [[ "$RID" =~ ^[0-9a-f-]{36}$ ]] || exit 1; DB="${DB_URL:-postgresql://localhost/cecelia}"; N=$(psql "$DB" -Atqc "SELECT count(*) FROM codex_slot_audit_events WHERE request_id='\''$RID'\'' AND created_at>NOW()-interval '\''5 minutes'\'' AND payload::text ~* '\''(account_id|access_token|refresh_token|auth_json|prompt|full_env)'\''"); [ "$N" -eq 0 ]'
+  期望: 17/17 真触发，14 broker + 3 isolated、unclassified=0；禁止只列四路 `/run`、源码 grep 或 mock 替代。
 
-- [x] [BEHAVIOR] host-disk-sampler.sh 原子写入 host-disk.json 且字段完整、字节级数值（非 GB/GiB 字符串）
-  Test: manual:bash -c 'node tests/regression/relay-1b1f1ffa/manual/t1-sampler.mjs atomic-write'
-  期望: OK:sampler-atomic-write
+- [ ] [BEHAVIOR] [L2] B03 GP1 authenticated frozen、inventory 与 cutover fault 保持 durable frozen
+  动作: 以正确 Bearer/identity 调 acquire，依次制造 inventory 未完成和每个 cutover step failure。
+  预期观察: 均为 423 exact error 且 lease=0；每个 failure 后 PostgreSQL rollout 仍 frozen；全步骤完成才 open。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; O=$("$S" --case frozen-inventory-cutover --json); printf "%s\n" "$O" | jq -e ".ok==true and .authenticated_frozen.http_code==423 and (.authenticated_frozen.body|keys==[\"error\",\"ok\"]) and .authenticated_frozen.body.ok==false and .authenticated_frozen.body.error=={\"code\":\"ROLLOUT_FROZEN\",\"message\":\"codex slot rollout is frozen\",\"retryable\":true} and .inventory_incomplete.http_code==423 and .inventory_incomplete.body.error==.authenticated_frozen.body.error and .leases_created==0 and ([.faults[]|select(.rollout_state==\"frozen\")]|length)==(.faults|length) and .opened.inventory_complete==true"; ID=$(printf "%s\n" "$O"|jq -er ".rollout_id"); [[ "$ID" =~ ^[0-9a-f-]{36}$ ]] || exit 1; DB="${DB_URL:-postgresql://localhost/cecelia}"; X=$(psql "$DB" -Atqc "SELECT state||'\'':'\''||inventory_complete FROM codex_slot_rollout WHERE id='\''$ID'\''"); [ "$X" = "open:true" ]'
+  期望: 真实鉴权/DB/cutover；任一 partial failure 不开放。
 
-- [x] [BEHAVIOR] host-disk-sampler.sh 在 cron 等价环境（仅 PATH=/usr/bin:/bin）下仍能成功采样（显式 PATH 生效）
-  Test: manual:bash -c 'node tests/regression/relay-1b1f1ffa/manual/t1-sampler.mjs cron-path'
-  期望: OK:sampler-cron-path
+- [ ] [BEHAVIOR] [L2] B04 GP2 两 tenant 竞争同一公司 account_ref 全局只得一个 blocking lease，并复用既有 deficit 语义
+  动作: 以两个 tenant 真并发同 account_ref acquire；另用专用 usage snapshot 走 broker 的既有排序入口。
+  预期观察: HTTP code 排序为 201/409，全局 blocking count=1；选择满足 5h≤95 后 deficit 最大且同 deficit 5h 最低的 account_ref。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; G=$("$S" --case global-account-contention --json); U=$("$S" --case usage-deficit-selection --json); printf "%s\n" "$G" | jq -e ".ok==true and ([.attempts[].http_code]|sort)==[201,409] and ([.attempts[]|select(.http_code==409 and .body.ok==false and .body.error=={\"code\":\"ACCOUNT_BUSY\",\"message\":\"account already has a blocking lease\",\"retryable\":true})]|length)==1 and .global_blocking_leases==1 and .tenant_ids[0]!=.tenant_ids[1]"; printf "%s\n" "$U" | jq -e ".ok==true and .rule==\"existing-deficit\" and .over_95_excluded==true and .selected_account_ref==.expected_account_ref"; A=$(printf "%s\n" "$G"|jq -er ".account_ref"); [[ "$A" =~ ^[A-Za-z0-9_-]+$ ]] || exit 1; DB="${DB_URL:-postgresql://localhost/cecelia}"; N=$(psql "$DB" -Atqc "SELECT count(*) FROM codex_slot_leases WHERE account_ref='\''$A'\'' AND state IN ('\''active'\'','\''quarantined'\'','\''blocked'\'') AND updated_at>NOW()-interval '\''5 minutes'\''"); [ "$N" -eq 1 ]'
+  期望: 真 PG 并发；唯一索引 key 为 account_ref 全局语义，不因 tenant 不同放行。
 
-### 模块2 容量准入闸门 — readHostDisk 4 种拒绝分支
+- [ ] [BEHAVIOR] [L2] B05 GP2 durable write 每个 fault 真 kill/restart/replay 后无第二 lease/session/audit
+  动作: 在 lease/session/audit/commit/response 边界逐点故障，kill Brain/broker，重启后同键并发重放。
+  预期观察: PID 变化且 PostgreSQL 为真；每个 fault 最终 blocking lease/session/acquire audit 均为 1，响应 IDs 相同、unknown_success=false。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; O=$("$S" --case durable-crash-restart --json); printf "%s\n" "$O" | jq -e ".ok==true and .postgresql_real==true and (.faults|length)>=5 and ([.faults[]|select(.pid_before!=.pid_after and .blocking_leases==1 and .sessions==1 and .acquire_audits==1 and .same_ids==true and .unknown_success==false)]|length)==(.faults|length)"'
+  期望: 每 case ≤60s；真实进程重启、真 PG、非 mock DB。
 
-- [x] [BEHAVIOR] readHostDisk() 样本文件缺失 → reason sample_missing
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t2-read-host-disk.mjs missing'
-  期望: OK:read-host-disk-missing
+- [ ] [BEHAVIOR] [L2] B06 GP1 mapped identity、authority 拒绝与七类真实 Error exact body matrix
+  动作: 真实 adapter 用 mapped UID/key；再逐条发未知/伪造 mapping、CLI/body authority、acquire/stop/reap 各 missing/wrong Bearer 与七类失败 HTTP 请求。
+  预期观察: 每个响应保留 `http_code+body`；body 顶层 exact `error/ok`，error exact `code/message/retryable` 且类型/值精确；不接受扁平 code 汇总。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; O=$("$S" --case identity-authority-error-matrix --json); printf "%s\n" "$O" | jq -e "def ee(\$http;\$code;\$message;\$retryable): .transport==\"http\" and .request_count==1 and .http_code==\$http and (.body|keys)==[\"error\",\"ok\"] and (.body.ok|type)==\"boolean\" and .body.ok==false and (.body.error|keys)==[\"code\",\"message\",\"retryable\"] and (.body.error.code|type)==\"string\" and .body.error.code==\$code and (.body.error.message|type)==\"string\" and .body.error.message==\$message and (.body.error.retryable|type)==\"boolean\" and .body.error.retryable==\$retryable; .ok==true and .mapped.uid.http_code==201 and .mapped.uid.identity_kind==\"uid\" and .mapped.ssh_key.http_code==201 and .mapped.ssh_key.identity_kind==\"ssh_key\" and .mapped.uid.actor_id!=.mapped.ssh_key.actor_id and (.forbidden|length)==2 and ([.forbidden[]|select(ee(403;\"FORBIDDEN_IDENTITY\";\"identity is not mapped\";false))]|length)==2 and .authority.cli.exit_code==64 and .authority.cli.network_attempts==0 and .authority.cli.rejected_fields==[\"account\",\"account_ref\",\"accounts\",\"actor\",\"agent\",\"agent_id\",\"auth\",\"host\",\"team\",\"tenant\",\"token\"] and (.authority.body|ee(400;\"INVALID_REQUEST\";\"request does not match the exact schema\";false)) and .authority.body.leases_created==0 and .authority.body.rejected_fields==.authority.cli.rejected_fields and (.auth|length)==6 and ([.auth[]|select(ee(401;\"UNAUTHENTICATED\";\"authentication required\";false))]|length)==6 and (.errors|keys)==[\"account_busy\",\"agent_unavailable\",\"durability_failed\",\"forbidden_identity\",\"invalid_request\",\"rollout_frozen\",\"unauthenticated\"] and (.errors.unauthenticated|ee(401;\"UNAUTHENTICATED\";\"authentication required\";false)) and (.errors.invalid_request|ee(400;\"INVALID_REQUEST\";\"request does not match the exact schema\";false)) and (.errors.forbidden_identity|ee(403;\"FORBIDDEN_IDENTITY\";\"identity is not mapped\";false)) and (.errors.account_busy|ee(409;\"ACCOUNT_BUSY\";\"account already has a blocking lease\";true)) and (.errors.rollout_frozen|ee(423;\"ROLLOUT_FROZEN\";\"codex slot rollout is frozen\";true)) and (.errors.agent_unavailable|ee(503;\"AGENT_UNAVAILABLE\";\"no healthy codex slot agent available\";true)) and (.errors.durability_failed|ee(503;\"DURABILITY_FAILED\";\"durable write failed\";true)) and .leases_created_on_reject==0"'
+  期望: 真 adapter/client/Brain/PG；七 code、六 401、两 403 与 authority 400 均逐 raw response exact，404/扁平汇总不接受。
 
-- [x] [BEHAVIOR] readHostDisk() 样本 JSON 损坏 → reason sample_corrupt
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t2-read-host-disk.mjs corrupt'
-  期望: OK:read-host-disk-corrupt
+- [ ] [BEHAVIOR] [L2] B07 GP2 acquire 同 Idempotency-Key 两次返回相同 UUID/handle/agent enum，副作用各一次
+  动作: smoke 以真实 adapter shape 连续两次 acquire，并直查近 5 分钟 DB。
+  预期观察: 两次 201 body 字面相同；exact keys/types；UUID 合法；agent 仅 xian-m1/xian-m4；lease/session/audit 各 1。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; O=$("$S" --case api-idempotent-acquire --json); printf "%s\n" "$O" | jq -e ".ok==true and .first.http_code==201 and .replay.http_code==201 and .first.body==.replay.body and (.first.body|keys==[\"ok\",\"session\"]) and .first.body.ok==true and (.first.body.session|keys==[\"agent_id\",\"handle\",\"lease_id\",\"session_id\",\"status\"]) and (.first.body.session.handle|type==\"string\" and length>0) and (.first.body.session.agent_id==\"xian-m1\" or .first.body.session.agent_id==\"xian-m4\") and .first.body.session.status==\"running\""; SID=$(printf "%s\n" "$O"|jq -er ".first.body.session.session_id"); LID=$(printf "%s\n" "$O"|jq -er ".first.body.session.lease_id"); RID=$(printf "%s\n" "$O"|jq -er ".request_id"); [[ "$SID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ && "$LID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ && "$RID" =~ ^[0-9a-f-]{36}$ ]] || exit 1; DB="${DB_URL:-postgresql://localhost/cecelia}"; N=$(psql "$DB" -Atqc "SELECT (SELECT count(*) FROM codex_slot_leases WHERE request_id='\''$RID'\'' AND updated_at>NOW()-interval '\''5 minutes'\'')||'\'':'\''||(SELECT count(*) FROM codex_slot_sessions WHERE request_id='\''$RID'\'' AND updated_at>NOW()-interval '\''5 minutes'\'')||'\'':'\''||(SELECT count(*) FROM codex_slot_audit_events WHERE request_id='\''$RID'\'' AND event_type='\''acquired'\'' AND created_at>NOW()-interval '\''5 minutes'\'' )"); [ "$N" = "1:1:1" ]'
+  期望: 真 API/PG/receiver；直接比较两 body，不接受汇总布尔替代。
 
-- [x] [BEHAVIOR] readHostDisk() 样本过期（>180s）→ reason sample_stale
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t2-read-host-disk.mjs stale'
-  期望: OK:read-host-disk-stale
+- [ ] [BEHAVIOR] [L2] B08 GP3 agent 身份/容量只来自 machine/fleet/slot SSOT，时间常数严格递增且 stale fail closed
+  动作: 直查 system_registry 与不存在的平行表，再让 broker 读取真实 fleet/slot 状态及 root 映射。
+  预期观察: 两个 machine 映射；`codex_slot_agents` 不存在；来源字段 exact；stale/missing 可用数=0；health TTL < heartbeat stale < quarantine review TTL。
+  验证命令: Test: manual:bash -c 'DB="${DB_URL:-postgresql://localhost/cecelia}"; M=$(psql "$DB" -Atqc "SELECT count(*) FROM system_registry WHERE type='\''machine'\'' AND status='\''active'\'' AND metadata->>'\''agent_id'\'' IN ('\''xian-m1'\'','\''xian-m4'\'') AND metadata ? '\''fleet_id'\''"); [ "$M" -eq 2 ] || { echo "RED machine mappings=$M" >&2; exit 1; }; X=$(psql "$DB" -Atqc "SELECT to_regclass('\''codex_slot_agents'\'') IS NULL"); [ "$X" = t ]; S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; "$S" --case machine-fleet-usage-ssot --json | jq -e ".ok==true and .identity_source==\"system_registry\" and .capacity_source==\"fleet-resource-cache\" and .concurrency_source==\"slot-allocator\" and .stale.available==0 and .missing.available==0 and (.ttl.health_ms < .ttl.heartbeat_stale_ms and .ttl.heartbeat_stale_ms < .ttl.quarantine_review_ms)"'
+  期望: 真 PG + 真相邻模块；无固定容量 fallback。
 
-- [x] [BEHAVIOR] readHostDisk() 样本字段不完整 → reason sample_incomplete
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t2-read-host-disk.mjs incomplete'
-  期望: OK:read-host-disk-incomplete
+- [ ] [BEHAVIOR] [L3] B09 GP4/GP5 双机正常 lifecycle 与两支独立 mmv 变化均 fail closed
+  动作: 双机各走正常 prepare/receive/launch/stop；再用不同 run 分别注入 prepare→receive 与 receive→launch 出口变化。
+  预期观察: 正常链 0700/0600+fsync+fixture/tmux；前变化支零 auth read/write/launch 且 lease blocking；后变化支先 read/0600 durable write，再拒绝 launch、清 auth/tmux/temp 且 lease blocked/quarantined。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; for H in xian-m1 xian-m4; do O=$("$S" --case protected-delivery-and-launch --host "$H" --json); printf "%s\n" "$O" | jq -e --arg h "$H" ".ok==true and .host==\$h and .normal.received==true and .normal.auth_read==true and .normal.parent_mode==\"0700\" and .normal.auth_mode==\"0600\" and .normal.fsync_file==true and .normal.fsync_parent==true and .normal.fixture_sha256==.normal.read_sha256 and .normal.response_secret_bytes==0 and .normal.launch.exit_code==0 and .normal.launch.fixture_pid>1 and .normal.launch.process_running==true and .normal.launch.tmux_present==true and .normal.stop.cleanup.auth_absent==true and .normal.stop.cleanup.tmux_absent==true and .normal.stop.cleanup.temp_absent==true and .normal.stop.cleanup.lease_state==\"released\" and .prepare.predicate_id==.launch.predicate_id and (.prepare_to_receive.run_id|type==\"string\" and length>0) and .prepare_to_receive.auth_read==false and .prepare_to_receive.auth_written==false and .prepare_to_receive.launch_attempted==false and (.prepare_to_receive.lease_state==\"blocked\" or .prepare_to_receive.lease_state==\"quarantined\") and (.receive_to_launch.run_id|type==\"string\" and length>0) and .receive_to_launch.run_id!=.prepare_to_receive.run_id and .receive_to_launch.received==true and .receive_to_launch.auth_read==true and .receive_to_launch.auth_written==true and .receive_to_launch.auth_mode==\"0600\" and .receive_to_launch.fsync_file==true and .receive_to_launch.fsync_parent==true and .receive_to_launch.launch_rejected==true and .receive_to_launch.cleanup.auth_absent==true and .receive_to_launch.cleanup.tmux_absent==true and .receive_to_launch.cleanup.temp_absent==true and (.receive_to_launch.cleanup.lease_state==\"blocked\" or .receive_to_launch.cleanup.lease_state==\"quarantined\")" || exit 1; done'
+  期望: 本地 Bash、SSH、双机 agent、mmv、FS、tmux 真执行；两对象 run_id 不同且阶段证据不混写；当前 `logic-done-pending`。
 
-### 模块2 容量准入闸门 — admitPreview 四层判定 + 并发串行化 + 幂等复用
+- [ ] [BEHAVIOR] [L3] B10 GP6 stop 两次 exact body 相同且 release/audit 副作用各一次
+  动作: fake-auth session 连续两次调用真实 stop endpoint，并让 agent 真实 cleanup。
+  预期观察: 两次 200 body 相同；UUID/keys/types exact；cleanup 四项通过；DB release transition=1、stop audit=1。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; O=$("$S" --case idempotent-stop --json); printf "%s\n" "$O" | jq -e ".ok==true and .first.http_code==200 and .replay.http_code==200 and .first.body==.replay.body and (.first.body|keys==[\"ok\",\"session\"]) and .first.body.ok==true and (.first.body.session|keys==[\"cleanup\",\"handle\",\"session_id\",\"status\"]) and (.first.body.session.session_id|type==\"string\" and test(\"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\")) and (.first.body.session.handle|type==\"string\" and length>0) and .first.body.session.status==\"stopped\" and (.first.body.session.cleanup|keys==[\"auth_absent\",\"lease_state\",\"temp_absent\",\"tmux_absent\"]) and (.first.body.session.cleanup.auth_absent|type==\"boolean\") and (.first.body.session.cleanup.temp_absent|type==\"boolean\") and (.first.body.session.cleanup.tmux_absent|type==\"boolean\") and .first.body.session.cleanup.auth_absent==true and .first.body.session.cleanup.tmux_absent==true and .first.body.session.cleanup.temp_absent==true and .first.body.session.cleanup.lease_state==\"released\" and .effects.release_transitions==1 and .effects.stop_audits==1"; RID=$(printf "%s\n" "$O"|jq -er ".request_id"); [[ "$RID" =~ ^[0-9a-f-]{36}$ ]] || exit 1; DB="${DB_URL:-postgresql://localhost/cecelia}"; N=$(psql "$DB" -Atqc "SELECT count(*) FILTER (WHERE event_type='\''lease_released'\'')||'\'':'\''||count(*) FILTER (WHERE event_type='\''session_stopped'\'') FROM codex_slot_audit_events WHERE request_id='\''$RID'\'' AND created_at>NOW()-interval '\''5 minutes'\''"); [ "$N" = "1:1" ]'
+  期望: 真 endpoint/agent/FS/tmux/PG；直接比较两 body 与计数。
 
-- [x] [BEHAVIOR] admitPreview() active/starting/cleaning 数量 ≥6 → 拒绝 too_many_active，返回 free_bytes/projected_cost_bytes/need_release_bytes
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs count-limit'
-  期望: OK:admit-count-limit
+- [ ] [BEHAVIOR] [L2] B11 GP6 reaper 两轮 summary 全非负 integer，连续失败持久计数并写唯一 P0 Bark receipt
+  动作: 同一 PG 状态两轮 reaper；再连续制造配置阈值次失败，Bark 指向本地 capture sink。
+  预期观察: 不可达 released=0；summary exact/integer；working_memory failure_count 达阈值；action_receipts 近 5 分钟恰一条 severity=P0 的 bark。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; O=$("$S" --case reaper-two-pass-and-alert --json); printf "%s\n" "$O" | jq -e ".ok==true and (.first.summary|keys==[\"checked\",\"heartbeat_updated\",\"quarantined\",\"released\"]) and (.second.summary|keys==[\"checked\",\"heartbeat_updated\",\"quarantined\",\"released\"]) and ([.first.summary[],.second.summary[]]|all(type==\"number\" and .>=0 and floor==.)) and .first.unreachable_released==0 and .second.unreachable_released==0 and .failure_count==.failure_threshold and .alert.severity==\"P0\""; A=$(printf "%s\n" "$O"|jq -er ".alert.action_id"); [[ "$A" =~ ^[0-9a-f-]{36}$ ]] || exit 1; DB="${DB_URL:-postgresql://localhost/cecelia}"; N=$(psql "$DB" -Atqc "SELECT count(*) FROM action_receipts WHERE action_id='\''$A'\'' AND kind='\''bark'\'' AND created_at>NOW()-interval '\''5 minutes'\'' AND evidence->>'\''severity'\''='\''P0'\''"); [ "$N" -eq 1 ]'
+  期望: 真 scheduler/reaper/PG/notifier receipt；仅 Bark 外网由本地 capture sink 替代。
 
-- [x] [BEHAVIOR] admitPreview() effective_free_bytes - 3.5GiB < 35GiB → 拒绝 insufficient_free_space（字节级精确比较）
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs capacity-limit'
-  期望: OK:admit-capacity-limit
+- [ ] [BEHAVIOR] [L2] B12 GP2/GP6 两 tenant 不串且近 5 分钟 audit 无 secret/prompt/full auth/env
+  动作: 两 tenant 分别 acquire/stop，并用真实 PostgreSQL tenant-scope 查询。
+  预期观察: own_count=1、cross_count=0；audit_secret_rows=0；window_minutes=5。
+  验证命令: Test: manual:bash -c 'S=packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh; [ -x "$S" ] || { echo "RED missing $S" >&2; exit 1; }; "$S" --case tenant-isolation-and-redaction --json | jq -e ".ok==true and .tenant_a.own_count==1 and .tenant_a.cross_count==0 and .tenant_b.own_count==1 and .tenant_b.cross_count==0 and .audit_secret_rows==0 and .window_minutes==5"'
+  期望: 真 PG、两个 tenant、时间窗 5 分钟。
 
-- [x] [BEHAVIOR] admitPreview() usage_pct ≥85 → 拒绝 usage_pct_too_high
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs usage-limit'
-  期望: OK:admit-usage-limit
+## Invariant 逐条覆盖（53/53）
 
-- [x] [BEHAVIOR] admitPreview() 并发准入经 pg_advisory_xact_lock 串行化，剩余 1 名额时 3 并发「真实判定+预留」请求恰好 1 个 admitted，且 preview_environments 表针对这 3 个候选 PR 最终恰好新增 1 行真实 DB 记录（不是只数返回值里 admitted===true 的个数——GAN Round 1 反馈问题2 修复：抓出"admitPreview 判 true 后调用方再单独调无锁 allocatePreview() 做预留"的 TOCTOU 实现），admitted 返回值须含 port/db_name（方案A schema 升级）
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs concurrency-lock'
-  期望: OK:admit-concurrency-lock
+| INV | 铁律 | 可执行映射或 N/A |
+|---|---|---|
+| INV-01 | manual 真退出码/解释器启动 | 本轮逐条预检记录 A01-A05/B01-B12 rc 与日志。 |
+| INV-02 | manual node 插值真运行 | N/A：无 `manual:node`；A01/A02/A04/A05 的 Node 仍真启动。 |
+| INV-03 | smoke | A05、B02-B05、B07-B12、E2E。 |
+| INV-04 | smoke | A05、B02-B05、B07-B12、E2E。 |
+| INV-05 | 周期扫描不只冷启动 | B11 同一 PG 状态两轮。 |
+| INV-06 | 付费重扫前置检查 | N/A：reaper 不调用付费 API。 |
+| INV-07 | 时间常数关系 | **B08** 真加载配置并执行 `health_ms < heartbeat_stale_ms < quarantine_review_ms`。 |
+| INV-08 | 环境路由非 theater | B09/E2E 真 SSH 双机；payload target 仍 local_api。 |
+| INV-09 | target_environment 来自 payload | front matter + E2E 均为 local_api。 |
+| INV-10 | judge exit/log tail | N/A：harness judge 协议，非产品范围。 |
+| INV-11 | 受限字段截断 | B06 error message、B02/B12 audit 输入均受限。 |
+| INV-12 | 退役死因核验 | 已知约束 + B01/B02。 |
+| INV-13 | null/false 失败分支 | B03/B05/B08/B09/B11 fail closed。 |
+| INV-14 | smoke | A05、B02-B05、B07-B12、E2E。 |
+| INV-15 | journey 报告漏跑探针 | N/A：不改 journey report。 |
+| INV-16 | merge 后 report 收口 | N/A：不改 harness merge/report。 |
+| INV-17 | headed 接管白名单 | N/A：无 headed shell；receiver forced action。 |
+| INV-18 | headed relay payload | N/A：不点火 headed relay。 |
+| INV-19 | 退役需生产消费者证据 | **B01 + B02 + A01**：当前 main 17 路 exact inventory 逐路真触发；14 路 broker 对账、3 路独立 root/FIFO canary 零触碰、unclassified=0；旧脚本、四路 `/run`、`/execute*`、executor 选机与 `/accounts` 已核销项全部保留。 |
+| INV-20 | 后台失败计数/P0/Bark | **B11**：连续失败阈值、working_memory 与近 5 分钟唯一 P0 Bark action_receipt。 |
+| INV-21 | 建表前核写入方 | A02/B08：不建 agent 表；broker/reaper 写业务表。 |
+| INV-22 | 后台落库消费者 | B07/B10/B11 真实消费 lease/session/audit。 |
+| INV-23 | 多设备 UI 区分 | N/A：无 UI；B09 以 agent_id 区分双机。 |
+| INV-24 | 判变/终验语义一致 | **B09**：双机同一 predicate；prepare→receive 与 receive→launch 用不同 run 独立断言并走真实 mmv。 |
+| INV-25 | git ref verify | N/A：产品路径不判断 git ref。 |
+| INV-26 | worktree smoke 不碰生产 | N/A：fake-auth session 临时根，不创建 worktree。 |
+| INV-27 | installer 失败非零 | **A03**：macOS `/bin/bash` 3.2 与 modern Bash≥4 分别真执行隔离 installer，均须 exact exit 78 且无半安装；`bash -n` 不代替。 |
+| INV-28 | 生产自报对账 main | N/A：不做版本判变；agent 自报对 root 配置。 |
+| INV-29 | 异步质量 await 真调用 | B02/B05/B11 通过真实 async caller/重启/scheduler。 |
+| INV-30 | Test Contract 四列 | contract-draft Test Contract 固定四列。 |
+| INV-31 | Red 精确暂存 | 仅 stage 本 sprint 四类产物。 |
+| INV-32 | 接线回归非仅 mock | A01 + B02 + B11。 |
+| INV-33 | cron 查 scheduler-jobs | A05/B11；不用 tick-runner。 |
+| INV-34 | generator 不合并 | 只 push 分支，由 controller 合并。 |
+| INV-35 | headed tmux env | N/A：无 headed relay；agent metadata root 文件化。 |
+| INV-36 | 历史派发核对 | Notes/已知约束；只用 R1 锁定合同与 main。 |
+| INV-37 | 共享 CI 禁改 | task-plan 不改共享 workflow。 |
+| INV-38 | PR SHA 对 verdict | N/A：controller pre-merge。 |
+| INV-39 | smoke | A05、B02-B05、B07-B12、E2E。 |
+| INV-40 | brain/src PR smoke/allowlist | A05。 |
+| INV-41 | 新 task type 全接线 | N/A：不新增 task_type。 |
+| INV-42 | 服务存活查 launchctl+端口 | N/A：不新增常驻端口服务；现有 bridge 接 receiver。 |
+| INV-43 | 美国 Mac LaunchDaemon | N/A：不新增常驻服务。 |
+| INV-44 | launchd patrol manifest | N/A：不新增常驻服务。 |
+| INV-45 | smoke | A05、B02-B05、B07-B12、E2E。 |
+| INV-46 | 单槽串行 | A02/B04/B05。 |
+| INV-47 | 环境值推导 | A04/B08/B09。 |
+| INV-48 | 真机未验不得 done | B09/B10/E2E 前保持 `logic-done-pending`。 |
+| INV-49 | 两 tenant 不串 | B04/B12/E2E。 |
+| INV-50 | secret 不进 git/log | A04/B02/B12。 |
+| INV-51 | PII/prompt 不明文日志 | B02/B12。 |
+| INV-52 | 每 API 端点鉴权 | **B06** 对 acquire/stop/reap 各做 missing + wrong Bearer 共 6 个真实 401 exact-oracle。 |
+| INV-53 | tenant scope | A02/B12；全局 account 锁仅唯一性跨 tenant，不开放跨 tenant 读。 |
 
-- [x] [BEHAVIOR] admitPreview() 已存在活跃记录的 PR 重推（幂等复用）跳过准入四层判定
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t3-admit-preview.mjs idempotent-reuse'
-  期望: OK:admit-idempotent-reuse
+## BEHAVIOR:E2E 条目
 
-### 模块3 统一销毁器 — 7 步流程 / 安全防护 / 幂等 / 并发去重
-
-- [x] [BEHAVIOR] destroyPreview() 7 步流程完整执行：真实 DB 已删 + 真实 worktree 已删 + 真实进程已杀 + 临时文件已清 + 终态 inactive
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs full-flow'
-  期望: OK:destroy-full-flow
-
-- [x] [BEHAVIOR] destroyPreview() DB 名不匹配 ^cecelia_preview_[0-9]+$ → 拒绝 DROP DATABASE，置 cleanup_failed，不误删邻近合法库
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs dbname-guard'
-  期望: OK:destroy-dbname-guard
-
-- [x] [BEHAVIOR] destroyPreview() worktree 路径通过符号链接逃逸 preview 根目录 → realpath 校验 abort，不执行 rm -rf
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs realpath-guard'
-  期望: OK:destroy-realpath-guard
-
-- [x] [BEHAVIOR] destroyPreview() 对已 inactive 的 PR 重复调用 → 幂等成功
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs idempotent'
-  期望: OK:destroy-idempotent
-
-- [x] [BEHAVIOR] destroyPreview() 同一 PR webhook + reaper 并发触发销毁，per-PR advisory lock 保证只实际执行一次
-  Test: manual:bash -c 'NODE_ENV=test DB_NAME=cecelia_test node tests/regression/relay-1b1f1ffa/manual/t4-destroy-preview.mjs concurrent-dedup'
-  期望: OK:destroy-concurrent-dedup
-
-### 路由层接入（POST /preview/start 准入拒绝 503 + POST /preview/stop 销毁终态透出）
-
-- [x] [BEHAVIOR] POST /api/brain/preview/start 数量红线场景返回 HTTP 503 + reason/free_bytes/projected_cost_bytes/need_release_bytes 四字段类型正确
-  Test: manual:bash -c 'for i in $(seq 1 6); do psql "$DB" -v ON_ERROR_STOP=1 -c "INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status) VALUES (89000$i, '"'"'cp-dod-fixture'"'"', '"'"'cecelia'"'"', $((5290+i)), '"'"'cecelia_preview_89000'"'"'||$i, '"'"'active'"'"') ON CONFLICT DO NOTHING;" >/dev/null || exit 1; done; CODE=$(curl -s -o /tmp/dod-admit-resp.json -w "%{http_code}" -X POST localhost:5221/api/brain/preview/start -H "Content-Type: application/json" -d "{\"pr_number\": 899999, \"branch_name\": \"cp-dod-fixture\"}"); psql "$DB" -v ON_ERROR_STOP=1 -c "DELETE FROM preview_environments WHERE branch_name='"'"'cp-dod-fixture'"'"';" >/dev/null; [ "$CODE" = "503" ] || { echo "FAIL: got $CODE"; cat /tmp/dod-admit-resp.json; exit 1; }; jq -e ".reason and (.projected_cost_bytes|type==\"number\") and (.need_release_bytes|type==\"number\")" /tmp/dod-admit-resp.json'
-  期望: exit 0（HTTP 503 + 四字段类型正确）
-
-- [x] [BEHAVIOR] POST /api/brain/preview/stop/:pr 正常销毁场景响应体含 status:"inactive" 字段
-  Test: manual:bash -c 'PR=898888; psql "$DB" -v ON_ERROR_STOP=1 -c "INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status) VALUES ($PR, '"'"'cp-dod-stop-fixture'"'"', '"'"'cecelia'"'"', 5298, '"'"'cecelia_preview_'"'"'||$PR, '"'"'active'"'"') ON CONFLICT DO NOTHING;" >/dev/null; RESP=$(curl -sf -X POST localhost:5221/api/brain/preview/stop/$PR); echo "$RESP" | jq -e ".status == \"inactive\" or .status == \"cleanup_failed\""'
-  期望: exit 0（响应体含合法 status 枚举值）
-
-## Invariant 覆盖（49 条铁律逐条映射，来源: area）
-
-> 格式说明：本段逐条铁律登记"遵守/N/A + 理由"，**不用** `- [ ] [BEHAVIOR]` checkbox 格式（避免与上方真正的可执行 BEHAVIOR 条目混入同一计数，破坏 Step 2b-check 自查的 BC/MC 比例）。已有可执行断言覆盖的铁律，直接引用上方对应 BEHAVIOR 条目名，不重复起草断言。
-
-- INV-01 [跨扫描测试] N/A：本 sprint 无冷启动重置类跨 tick 扫描测试模式，admitPreview/destroyPreview 均为单次同步真实执行
-- INV-02 [重扫去重] N/A：本 sprint 不引入外部付费 LLM/API 调用
-- INV-03 [时间常数] 遵守：`SAMPLE_STALE_SECONDS(180s)` 与采样 cron 频率(60s) 隐含大小关系已显式登记——180s = 3× 采样间隔，留足抖动余量；已由上方 BEHAVIOR「readHostDisk() 样本过期（>180s）→ reason sample_stale」间接验证该常量生效，不重复起草
-- INV-04 [环境误判] N/A：target_environment=local_api，不涉及 android 关键词误判场景
-- INV-05 [环境来源] 遵守：target_environment 已由 controller 从 DB tasks.payload 注入（sprint-prd.md 内 `## target_environment: local_api` 系派发时写入，非本合同从文件推断）
-- INV-06 [结果格式] N/A：本铁律约束 judge 的 `.brain-result.json` 顶层 exit_code/log_tail/behavior_tests[] 格式，属 evaluator/judge 产物，非本 sprint 代码改动对象
-- INV-07 [字段截断] N/A：本 sprint 涉及的 DB 列（db_name/branch_name/status）均为 TEXT 无 varchar(N) 长度约束，无截断风险
-- INV-08 [复活先查] N/A：本 sprint 是新增模块（capacity-gate.js/preview-destroyer.js 首次创建），非复活曾经死过的功能
-- INV-09 [显式else] 遵守：readHostDisk/admitPreview/destroyPreview 均"失败返回结构化对象、不抛异常"契约，routes/preview.js 调用方须写显式 else 分支（成功分支 200 / 失败分支 503|cleanup_failed），已写入 Golden Path Step 10 + Response Schema 段，由上方路由层两条 BEHAVIOR 验证
-- INV-10 [smoke占位] N/A：占位铁律，无具体文本，无法映射
-- INV-11 [漏跑探测] N/A：journey_id=none，本 sprint 无 journey_features 行可探测
-- INV-12 [跳步兜底] N/A：harness-controller relay 容器兜底机制，非本 sprint 代码改动对象
-- INV-13 [白名单核对] N/A：本 sprint 无 host/环境白名单类断言
-- INV-14 [点火写payload] N/A：本 sprint 非 headed relay 点火任务
-- INV-15 [退役实锤] N/A：本 sprint 无功能退役判断
-- INV-16 [吞错告警] 遵守：destroyPreview cleanup_failed 状态本身即失败计数信号（`SELECT count(*) FROM preview_environments WHERE status='cleanup_failed'` 可查），配合 admitPreview layer1 拒绝分支的 Bark 告警，满足"吞错 job 须带失败计数指标"精神
-- INV-17 [建表核对] 遵守：复用既有 preview_environments 表（非新建），已 grep 全部写入方（preview-manager.js/routes/preview.js/preview-reaper.sh/preview-env-start.sh/preview-env-stop.sh），migration 358 为向后兼容 ALTER ADD COLUMN，由上方 ARTIFACT「migration 358 存在」验证
-- INV-18 [落库需消费方] 遵守：cleanup_detail 新列的消费方明确——GET /preview/status 透出给调用方、Final E2E 验收读取、人工排障读取，非孤儿落库
-- INV-19 [多端UI] N/A：本 sprint 无 UI，无多设备类型区分场景
-- INV-20 [语义一致] 遵守：`status != 'inactive'` 判"活跃"的语义在既有 allocatePreview 与新增 admitPreview 之间保持一致，未引入第二套判活标准，由上方 BEHAVIOR「admitPreview() active/starting/cleaning 数量 ≥6」间接验证
-- INV-21 [ref校验] N/A：本 sprint 无 `git rev-parse` 判 ref 存在性的代码路径（worktree add 使用的是已知 branch_name/HEAD，非任意 ref 存在性判断）
-- INV-22 [越权核对] 遵守：全部 driver 脚本/vitest 用真实临时目录（mkdtemp）覆盖 CECELIA_DEPLOY_ROOT/previewBaseDir，测试 fixture 用独立随机 PR 号区间（89xxxx/90xxxx/91xxxx/92xxxx），已核对不会向上触碰生产 preview_environments 数据或真实 previews 目录
-- INV-23 [失败硬退] 遵守：dropdb/worktree remove 失败或路径逃逸场景，契约要求显式置 cleanup_failed + cleanup_detail 残留清单，绝不 warning 降级为 inactive；采样/准入侧拒绝 + Bark 告警而非静默 exit 0，已写入 Golden Path Step 2/8/9 与失败语义声明表，由上方 BEHAVIOR「destroyPreview() DB 名不匹配」「destroyPreview() worktree 路径通过符号链接逃逸」验证
-- INV-24 [判变基准] N/A：本 sprint 无"生产实体自报 git_sha 对账 origin/main"类判变场景
-- INV-25 [测试异步] 遵守：所有 BEHAVIOR 断言均 `async ()=>{}` + await 包装真实执行（manual driver scripts/vitest it() 均异步），文件存在性检查仅用于 ARTIFACT 而非业务行为断言
-- INV-26 [合同表格式] 遵守：Test Contract 表固定 4 列（功能/Test File/BEHAVIOR 覆盖/预期红证据），testFile 已用反引号包裹
-- INV-27 [Red精确add] N/A：Red commit 的 git add 精确性由 generator 在 TDD Red 阶段负责，非 proposer 义务
-- INV-28 [回归验证法] N/A：本 sprint 无"调度接线"类回归验证场景，host-disk-sampler.sh 是宿主 OS cron 非 Brain 内部调度
-- INV-29 [cron接线] N/A（边界已在 PRD 假设段声明）：host-disk-sampler.sh 是宿主 OS 级 cron（PR 内提供 crontab 行，部署方手工安装），不接入 `packages/brain/src/scheduler-jobs.js` 的 JOBS 列表，该铁律的"检查 scheduler-jobs.js"要求不适用于本模块
-- INV-30 [禁自merge] 遵守：本 sprint 走标准 harness-generator→evaluator→controller merge 流程，proposer/generator 均不自行 merge PR
-- INV-31 [tmux环境] N/A：本 sprint 非 headed relay tmux 场景
-- INV-32 [合同复用核对] 遵守：本合同 E2E 验收模板取自 local_api 官方模板，结合 PRD 明确 target_environment=local_api 派发历史，未套用其他 journey_type 先例模板
-- INV-33 [CI文件禁区] 遵守：本 sprint「预期受影响文件」不含 `.github/workflows/*.yml`——路由层改动发生在 `routes/preview.js`，`preview-deploy.yml`/`preview-cleanup.yml` 保持不变
-- INV-34 [提前合并] N/A：由 controller/CI 侧机制负责，非 proposer 合同内容
-- INV-35 [smoke占位2] N/A：占位铁律，无具体文本，无法映射
-- INV-36 [PR带smoke] 提醒 generator：本 sprint 改动 `packages/brain/src/`（capacity-gate.js/preview-destroyer.js），开 PR 前须直接一次带齐 smoke.sh + smoke-allowlist 登记，不能等 CI
-- INV-37 [新类型接线] N/A：本 sprint 不新增 task_type
-- INV-38 [存活双信号] N/A：本 sprint 不新增常驻宿主服务，host-disk-sampler.sh 是一次性 cron 脚本非常驻进程
-- INV-39 [禁用LaunchAgents] 遵守：host-disk-sampler.sh 走宿主 crontab（PRD 假设段明确），非 LaunchAgents，符合"本机禁止再放常驻 LaunchAgents 服务"要求
-- INV-40 [服务登记] N/A：本 sprint 不新增常驻宿主服务，无需登记 launchd-patrol.js manifest
-- INV-41 [smoke占位3] N/A：占位铁律，无具体文本，无法映射
-- INV-42 [单slot串行] 遵守：pg_advisory_xact_lock 是本 sprint"单 slot 串行"的具体实现——全局准入判定串行、per-PR 销毁串行，跨 PR/跨请求可并行，同一临界资源单串行，已写入 Golden Path Step 6/9，由上方 BEHAVIOR「admitPreview() 并发准入」「destroyPreview() 同一 PR webhook + reaper 并发触发销毁」验证
-- INV-43 [禁写死环境] 遵守：容量红线数值（3.5GiB/35GiB/85%/6）是 PRD 显式产品需求常量非"环境假设值"；PREVIEW_BASE_DIR/REPO_ROOT/CECELIA_DEPLOY_ROOT 均支持环境变量覆盖不写死路径
-- INV-44 [真环境验证] 遵守：Final E2E 三段均在本机真实 Postgres + 真实文件系统 + 真实 df 上验证，非 mock 环境，见 ## E2E 验收 脚本
-- INV-45 [默认多租户] N/A：preview_environments 是单租户 Brain 内部运维表，无多租户概念
-- INV-46 [凭据安全] N/A：本 sprint 不涉及新增凭据
-- INV-47 [日志脱敏] 遵守：cleanup_detail/日志输出的 residual 清单仅含路径/db_name/技术标识符，不含用户 PII
-- INV-48 [端点鉴权] 遵守：POST /preview/start、/stop 沿用既有 checkDeployToken() 鉴权，本 sprint 不新增无鉴权端点，由上方路由层两条 BEHAVIOR 间接验证（均需 checkDeployToken 通过才能到达业务逻辑）
-- INV-49 [租户隔离] N/A：同 INV-45，单租户系统
-
-## generator 执行提醒（非验收项，来自 Invariant 映射的可操作提示）
-
-- INV-36：本 PR 涉及 `packages/brain/src/`，开 PR 前带齐 smoke.sh + smoke-allowlist 登记
-- INV-33：不要触碰 `.github/workflows/preview-deploy.yml`/`preview-cleanup.yml`，路由改动只在 `routes/preview.js`
-- INV-29：host-disk-sampler.sh 的 crontab 行只需在 PR 描述里提供，由部署方手工安装（PRD ASSUMPTION 段），不要尝试接入 `scheduler-jobs.js`
+- [ ] [BEHAVIOR:E2E] local_api 控制面 + 真实 executor/user caller + xian-m1/xian-m4 fake-auth 完整生命周期
+  执行体: `contract-draft.md` 的单一 `## E2E 验收` bash 块。
+  期望: 17/17 consumer（14 broker + 3 isolated）+ 4/4 caller、七类 Error raw body exact、全局账号唯一、双机正常链与两支 mmv 变化、租户隔离、reaper/P0 receipt 与 DB 时间窗全部通过。
