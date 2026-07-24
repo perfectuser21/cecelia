@@ -1,0 +1,7 @@
+CONCERN: Step2.5/3:Notion AI Notes schema 缺 Initiative ID 属性，页面已创建但 Notion 侧无法按该属性关联 task
+CONCERN: Step3.5:prep-prd.md 不存在，PrepPRD 归档跳过
+CONCERN: Step4/PhaseB:task ability_id 为空，且 Brain 无匹配 Codex Slot Journey/Feature；合同门禁终止，无可安全翻牌记录
+CONCERN: Step5:飞书接口 HTTP 200 但 sent=false，未确认送达
+CONCERN: Step8f:capture-atoms 端点返回 HTTP 404，best-effort 收件箱未写入
+CONCERN: PhaseB:Notion Report/Contract 页面 HTTP 201，但 Brain notes 表按 task 核验为 0
+CONCERN: PhaseB:notion_sync_log 最近记录 to_notion records_failed=1，目标 DB 未共享给集成 CCAPI2026

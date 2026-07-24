@@ -1,0 +1,6 @@
+{
+  "next_steps_suggested": [
+    "manual:node -e 双引号中的 JavaScript `${}` 必须在 GAN 批准前逐条真跑，bash -n 不足以捕获 expansion failure。",
+    "合同批准前必须同时记录 manual oracle 的真实 exit code，并确认目标解释器确实启动。"
+  ]
+}
