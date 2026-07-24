@@ -1,0 +1,26 @@
+{
+  "initiative_id": "f90ddca3-396d-45b2-ad13-2dfbd9e15080",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain/harness 后端派发链路 smoke，无用户可见 UI 交互（与 049ebf93/57e25e92/7630f4fb 同类先例一致）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "headed relay 回归证据：contract 测试 + e2e wrapper（永久池落点，锚定 task f90ddca3）",
+      "scope": "新增 tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts（从合同 tests/ 原样复制，Red commit）与 scripts/smoke/e2e/relay-f90ddca3.sh（e2e wrapper，Green commit），wrapper 复用既有 claude-headed-dispatch-smoke.sh 并校验 Brain API payload（含敏感字段脱敏断言）与 DB initiative_runs（EXISTS 语义：存在至少一条 host 精确匹配且 phase 合法非 failed/unknown 的记录，容忍历史 failed 行）。测试产物一律永久池路径，禁 sprints/ 临时路径，禁改 claude-headed-dispatch-smoke.sh 本体 / .github/workflows/ci.yml / scripts/test-pyramid-baseline.json / packages/quality/smoke-allowlist.txt",
+      "dod": [
+        "[BEHAVIOR] scripts/smoke/e2e/relay-f90ddca3.sh 完整脚本端到端跑通（三件事全过，脚本 exit 0，对应合同 E2E 验收脚本）",
+        "[BEHAVIOR] DB initiative_runs 定点核对——存在至少一条 host 精确匹配且 phase 合法非 failed/unknown 的记录（EXISTS 语义，容忍历史 failed 行）",
+        "[BEHAVIOR] error path — 不存在的 task id 走 wrapper 必须 FAIL（不得静默跳过）",
+        "[ARTIFACT] tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts 存在且 vitest 全绿（wrapper 创建后）",
+        "[ARTIFACT] scripts/smoke/e2e/relay-f90ddca3.sh 存在且具备可执行权限"
+      ],
+      "files": [
+        "tests/regression/relay-f90ddca3/headed-smoke-contract.test.ts",
+        "scripts/smoke/e2e/relay-f90ddca3.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
