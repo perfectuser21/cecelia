@@ -1,370 +1,445 @@
-# Sprint Contract Draft（Round 1）— Codex Slot 安全硬切换
+# Sprint Contract Draft（Round 2）— Codex Slot 安全硬切换
 
 ## 合同边界
 
-- 基线：`acb49c193e7ea666166df9b9b9c2dc7f4299f3c7`
-- 合同分支：`cp-07240705-ws-56bf3e23`
-- 交付档位：`segmented`；实现按 `task-plan.json` 的 ws1→ws8 串行推进。
-- 在范围内：受控身份、自动 agent/slot、公司账号单租约、broker 唯一发 token、xian-m1/xian-m4 agent、固定 `mmv` 出口校验、durable registry、readback、reaper、rollout gate、旧入口硬禁用、安装和两台真机假 token smoke。
-- 不在范围内：真实公司 token smoke、长期双轨、按主机名学习信任根、TTL 自动释放、账号计费策略、直接合并 #4237–#4242。
-- `context-manifest: unavailable`：`GET /api/brain/line/codex-slot-company-access/context-manifest` 当前返回 Cannot GET；采用 PRD 的“本 line 暂无历史”字面约束。
-- contract-gate：`packages/brain/src/lib/contract-gate.js` 存在，必须通过代码层 Contract Gate。
+- 基线：`440e00ba3c560fada3aa310193cbc6ef330506e1`；合同分支：`cp-07240705-ws-56bf3e23`。
+- 交付档位：`segmented`，保留 ws1→ws8 串行链；8 段对应 durable store、身份路由、agent、broker/client、reaper/rollout、旧入口/安装、smoke、版本/终验，均有唯一实现 owner。
+- 合同测试是批准后只读法律，不得出现在任何 workstream 的 `files` 写集。
+- 在范围内：PRD 10 步、Bash 3.2/现代 Bash、真 PostgreSQL、受控 SSH forced-command、xian-m1/xian-m4 非秘密 fixture 真机接缝。
+- 不在范围内：真实公司 token smoke、长期双轨、信任根自动学习、TTL 自动释放、账号计费重做、合并 #4237–#4242。
+- `context-manifest: unavailable`：本轮实取该端点仍返回 Cannot GET；按 PRD“本 line 暂无历史”执行。
+- contract-gate：仓库内 `packages/brain/src/lib/contract-gate.js` 存在，必须通过。
 
 ## 技术上下文与已知约束
 
-- API registry 未发现现成 Codex Slot broker 端点；本 Sprint 不新增 PRD 未要求的 HTTP API，采用本地 client CLI + 受控 SSH forced-command + stdin 协议，标记 `[NEW_PATTERN]`。
-- DB registry 未发现 Codex Slot lease/session/account 表；新增表必须使用仓库 migration runner，状态字面值只允许合同定义集合。
-- 现有生产入口 `scripts/codex-request.sh` 允许西安主动拉 auth；本 Sprint 进入 `broker_only` 前必须把它改成无条件硬失败，且探针证明不会写 auth。
-- 现有 `scripts/codex-remote-launch.sh` 会直接推 auth 并启动 tmux；它同属旧直达入口，必须硬失败或仅转交 broker，不得保留第二个 token issuer。
-- 定时任务权威注册表是 `packages/brain/src/scheduler-jobs.js:JOBS`，不是 deprecated tick 路径；reaper 必须在这里以 60 秒周期接线。
-- [回归测试] `packages/brain/src/routing/resolve-executor.test.js` → agent 候选必须经过 active/capacity/required tags 筛选，未知 task type 不得误路由到西安。
-- [回归测试] `packages/brain/src/__tests__/codex-bridge-token-inject.test.js` → auth 使用隔离临时目录、目录权限 0700、真实持久 auth 不被临时会话回写。
-- [回归测试] `scripts/__tests__/codex-request.test.sh` → 旧入口当前是“只读借用”模型；硬切后这些断言必须改为“立即拒绝且零写盘”。
-- [历史退役检查] 已执行 `git log --all --diff-filter=D --name-only -- '*codex*'`；删除历史主要是已归档 Sprint 测试/旧 harness 图与文档，没有可直接复活的 Codex Slot broker 实现，故从 main 独立实现。
-- [累积 FR] 本 line 暂无已验收能力，不重复旧草稿栈。
+- API/DB/test registry 已读取；registry 快照陈旧且未发现 Codex Slot 端点/表，因此本 Sprint 的 CLI JSON 行协议、表与状态是 `[NEW_PATTERN]`，字段以 PRD 字面为最高优先级。
+- 现有 `scripts/codex-request.sh` 会从美国机拉取 auth；`scripts/codex-remote-launch.sh` 会直接推 auth 并创建 tmux。两者都是必须硬切的真实旧入口。
+- 现有回归 `scripts/__tests__/codex-request.test.sh` 与 `scripts/__tests__/codex-remote-launch.test.sh` 必须随硬切更新；任务计划授权 ws6 修改二者。
+- 定时任务唯一注册表为 `packages/brain/src/scheduler-jobs.js:JOBS`，reaper 周期固定 60000 ms。
+- [回归测试] `packages/brain/src/routing/resolve-executor.test.js`：agent 候选必须经过 active/capacity/tags 筛选。
+- [回归测试] `packages/brain/src/__tests__/codex-bridge-token-inject.test.js`：auth 临时目录隔离、0700 目录、真实持久 auth 不得被回写。
+- [累积 FR] 本 line 暂无已验收能力。
 
 ## Response Schema（推导来源：PRD 字面 + NEW_PATTERN）
 
-本任务无 HTTP response。以下是 client/broker/agent 内部 JSON 行协议；字段名来自 PRD 字面意图，未被 registry 覆盖。
+本任务无 HTTP response。生产 client、broker forced-command 与 agent 使用单行 JSON；普通输出禁止附加日志行。
 
-### `acquire` 成功 stdout
-
-```json
-{"ok":true,"operation":"acquire","session_handle":"<opaque>","agent_id":"xian-m1|xian-m4","slot":1,"lease_state":"blocking|active"}
-```
-
-- `ok`（boolean，必填）：命令是否成功。
-- `operation`（string literal `acquire`，必填）：禁止缩写。
-- `session_handle`（string，必填）：可 readback 的不透明句柄，不含 actor/account/token。
-- `agent_id`（enum `xian-m1|xian-m4`，必填）：来自 root 配置与 agent 自证。
-- `slot`（positive integer，必填）：由新鲜容量自动选择，客户端不能指定。
-- `lease_state`（enum `blocking|active`，必填）：durable write 后才可返回。
-
-### `status` 成功 stdout
+### `acquire` 成功
 
 ```json
-{"ok":true,"operation":"status","session_handle":"<opaque>","state":"prepared|auth_accepted|running|stopped|quarantined","lease_state":"blocking|active|quarantined|released","agent_id":"xian-m1|xian-m4","slot":1,"sanitized_reason":null}
+{"ok":true,"operation":"acquire","request_id":"<opaque>","session_handle":"<opaque>","agent_id":"xian-m1","slot":1,"state":"running","lease_state":"active"}
 ```
 
-### 失败 stdout/stderr JSON
+- 顶层 keys 必须精确等于 `["agent_id","lease_state","ok","operation","request_id","session_handle","slot","state"]`。
+- `ok=true`；`operation="acquire"`；`request_id/session_handle` 为非空 string；`agent_id` 仅 `xian-m1|xian-m4`；`slot` 为正整数；`state` 仅 `prepared|auth_accepted|running`；`lease_state` 仅 `blocking|active`。acquire 只承诺 durable session，client 用同一 handle status/readback 到 running。
+
+### `status|stop|release` 成功
 
 ```json
-{"ok":false,"operation":"<operation>","error_code":"<stable_code>","sanitized_reason":"<non-secret>"}
+{"ok":true,"operation":"status","request_id":"<opaque>","session_handle":"<opaque>","agent_id":"xian-m1","slot":1,"state":"running","lease_state":"active","sanitized_reason":null}
 ```
 
-**禁用字段名**：`actor`、`actor_id`、`account_key`、`token`、`auth`、`auth_json`、`environment`、`claimed_host` 不得出现在普通 client stdout；审计和错误不得包含 prompt、完整环境、auth snapshot。
+- 顶层 keys 必须精确等于 `["agent_id","lease_state","ok","operation","request_id","sanitized_reason","session_handle","slot","state"]`。
+- `operation` 字面等于本次真实操作；`state` 仅 `prepared|auth_accepted|running|stopped|released|quarantined`；`lease_state` 仅 `blocking|active|quarantined|released`。
+
+### 失败
+
+```json
+{"ok":false,"operation":"status","request_id":"<opaque>","error_code":"handle_forbidden","sanitized_reason":"handle_not_owned"}
+```
+
+- 顶层 keys 必须精确等于 `["error_code","ok","operation","request_id","sanitized_reason"]`。
+- `error_code` 是稳定非秘密代码；跨 actor 句柄固定为 `handle_forbidden`。
+
+**禁用字段名**：`actor`、`actor_id`、`account_key`、`token`、`access_token`、`refresh_token`、`auth`、`auth_json`、`environment`、`claimed_host`。所有 schema oracle 必须执行 `has(...) | not`。
 
 ## 真实调用方请求 shape
 
-### 员工设备 → broker
+### 员工设备 → broker forced-command
 
-- 认证：受控 SSH key/服务器有效 UID；actor 在 server-side forced-command/root 配置中映射。客户端 body、环境变量、`--actor`、`--host` 一律不是身份源。
-- 调用：`scripts/codex-slot-client.sh acquire --repo <absolute-repo>` 或 `resume --session-handle <opaque>`。
-- `acquire` 可提交字段仅为 `request_id`、`operation="acquire"`、`repo`；不得提交 actor、agent、host、slot、account 或 token。
-- `resume/status/stop` 可提交字段仅为 `request_id`、`operation`、`session_handle`；broker 仍以受控身份核对句柄归属。
-- SSH forced-command 必须丢弃危险环境变量，只保留受控 locale/terminal 字段；headed 人工接管与 headless 都走同一身份映射，不以 tty/headed 状态放宽白名单。
+- 生产入口：`scripts/codex-slot-client.sh <acquire|status|stop|release> ...`。
+- transport：client 只执行 `ssh -F "$CODEX_SLOT_SSH_CONFIG" codex-slot@broker codex-slot-broker`，以 stdin 发送一行 JSON；不得拼接用户输入到远端 shell。
+- 身份：broker 只读取 sshd 提供的受控 key fingerprint/有效 UID 并映射 actor；`CODEX_SLOT_SSH_CONFIG` 只选择本机受控 key 文件，不能声明 actor。
+- `acquire` 请求 keys 精确为 `["operation","repo","request_id"]`；`status|stop|release` 请求 keys 精确为 `["operation","request_id","session_handle"]`。
+- client 不接受 `actor/agent/host/slot/account/token/auth` 参数或环境字段；repo 必须是绝对路径，DB 列为 `TEXT`，worktree 派生值存 `TEXT`，不截成 `varchar(n)`。
 
 ### broker → xian agent
 
-- 认证：固定 `/etc/cecelia/codex-slot/ssh_config` 中 broker 专用 key、固定 host key 和 allowlist；agent 从 root-owned 配置声明自身 `agent_id`/`max_slots`，不接收 broker 传入的 host 身份。
-- 命令：`ssh -F /etc/cecelia/codex-slot/ssh_config codex-slot@<agent> codex-slot-agent <prepare|accept-auth|launch|status|stop|cleanup> ...`。
-- `accept-auth` 参数只含 `session_handle`、`slot`、一次性 `nonce`、`snapshot_bytes`、`snapshot_sha256`；auth snapshot 作为有限长度 stdin 原始字节流传入，不出现在 argv、环境或日志。
-- stdout 只允许一行 sanitized JSON：`ok`、`operation`、`session_handle`、`state`、`agent_id`、`slot`、`mmv_verified`、`sanitized_reason`。
+- transport：固定 `/etc/cecelia/codex-slot/agent_ssh_config`、固定 host key、broker 专用 key；命令仅为 `codex-slot-agent <prepare|accept-auth|launch|status|stop|cleanup>`。
+- agent 身份与 `max_slots` 只读 root-owned 配置；broker 不能通过 argv 传入 agent 身份。
+- `accept-auth` 元数据仅含 `operation,session_handle,slot,nonce,snapshot_bytes,snapshot_sha256`；snapshot 原始字节只走 stdin，绝不进 argv/env/stdout/audit。
+- 独立验收 principal 使用 `/etc/cecelia/codex-slot/audit_ssh_config` 与 forced `codex-slot-audit`，只允许按 handle 读取 `stat/tmux/process/mmv/cleanup` 非秘密事实，不能读取 auth 内容。
+
+## Auth snapshot 安全合同
+
+- 受控来源：`/var/lib/cecelia/codex-slot/accounts/<account_key>/auth.json`；父目录 `0710 root:codex-slot-broker`，文件 `0600 codex-slot-broker:codex-slot-broker`。broker service account 只能读取已租账号文件，员工/agent 无源 store 权限。
+- 最大长度：`MAX_AUTH_SNAPSHOT_BYTES=262144`；先 `lstat` 拒绝 symlink/非 regular/非 0600/owner 不符，再限长读取。超限稳定拒绝 `snapshot_too_large`。
+- 内存生命周期：每次读取复制到独立 Buffer；完成、失败、timeout 均在 `finally` 以 `buffer.fill(0)` 清零，不缓存、不入 DB。
+- 完整性与重放：SHA-256 在 broker 计算、agent 写盘前复算；不一致拒绝 `snapshot_hash_mismatch`。nonce 至少 128 bit、与 session 绑定、durable 单次消费；重放拒绝 `nonce_replayed`。
+- 测试只用字面非秘密 fixture；spawn 旧脚本时环境为 `HOME/PATH/TMPDIR/LC_ALL/LANG` allowlist，禁止 `{...process.env}`，避免遗留脚本读取真实 token。
 
 ## 八要素需求规范
 
-| 要素 | 说明 | 本次答案 |
-|------|------|----------|
-| **FR（做什么）** | 对外承诺 | 完成 PRD 10 步安全生命周期并硬切 broker-only。 |
-| **NFR（做得多好）** | 性能/可靠性 | reaper 60 秒；容量/出口只用受控新鲜样本；durable write 为 0600 临时文件+fsync+原子 rename+父目录 fsync；所有未知 fail closed。 |
-| **Invariant（永不违反）** | 安全/一致性 | 单账号最多一个 active/quarantined/blocking lease；broker 是唯一 issuer；客户端不能决定身份/agent/slot；未知结果不 release。 |
-| **判定点（怎么知道）** | 外部状态判断 | 见下表。 |
-| **保质期（何时过期）** | 数据失效 | 容量与 `mmv` 样本新鲜度由 root 配置给出且测试断言 `0 < freshness <= reaper interval`；nonce 单次消费；session 到明确 release 后才退役。 |
-| **死亡告警（停了谁知道）** | 停止可见性 | scheduler sentinel 记录每轮 reaper 成败；连续失败触发既有告警通道；agent unreachable 立即形成 quarantine 审计。 |
-| **失败语义（挂了怎么办）** | 拦截/重试 | 身份、容量、SSH、出口、写盘、readback 任一未知均拦截或隔离；相同 request id 幂等 readback，不推断成功。 |
-| **效果确认（已发≠已生效）** | 真回执 | acquire 以 DB durable row 为准；auth 以 agent sha256+0600+fsync 回执为准；launch 以真 tmux+进程状态为准；release 以 agent 清理和 DB 终态双确认。 |
+| 要素 | 本次答案 |
+|------|----------|
+| **FR** | 完成 PRD 10 步，从受控身份到 broker-only、reaper 与双机安全释放。 |
+| **NFR** | 60 秒 reaper；262144-byte snapshot 上限；0600+fsync+rename+父目录 fsync；所有未知 fail closed。 |
+| **Invariant** | 单账号最多一个 active/quarantined/blocking lease；broker 唯一 issuer；actor/agent/slot 不可由 client 自报。 |
+| **判定点** | 见下表。 |
+| **保质期** | 容量/出口样本新鲜度 `0 < freshness <= 60000ms`；nonce 单次；明确 release 后退役 session。 |
+| **死亡告警** | scheduler sentinel 记录每轮结果；连续失败计数与既有告警；unreachable 立即 quarantine audit。 |
+| **失败语义** | 身份、容量、SSH、出口、写盘、readback 任一未知均拒绝或隔离，不自动 release。 |
+| **效果确认** | acquire 查真 PG；auth 查独立 stat/hash；launch 查真 tmux+process；release 查远端清理与 DB 终态。 |
 
 ### 判定点登记表
 
 | 判定点 | 候选方法 | 所选方法 | 依据 | 误判后果 |
 |--------|----------|----------|------|----------|
-| ⚠️ actor 是否可信 | A. 客户端自报；B. 有效 UID/受控 SSH key 映射 | B | PRD 身份法律 | 越权使用公司账号 |
-| ⚠️ agent 是否可信且可接单 | A. host 字符串；B. root agent_id + host key + 新鲜容量 | B | host 字符串可伪造 | token 投递到错误主机 |
-| ⚠️ `mmv` 是否为固定美国出口 | A. 主机名；B. stable node ID+peer+IP+online+backend+新鲜度全校验 | B | PRD 明确要求全部信号 | auth 泄露或流量走错出口 |
-| ⚠️ SSH 丢响应后是否已生效 | A. 推断失败并重试；B. session handle 精确 readback | B | 重试可能双租约/双启动 | 双占账号或误释放活会话 |
-| agent/tmux 是否仍活 | A. 单看 tmux；B. broker registry + agent/tmux 双信号 | B | 单信号会漏孤儿/漂移 | 活会话被释放或僵尸不回收 |
+| ⚠️ actor 是否可信 | client 自报；sshd key/UID | sshd key/UID | PRD 身份法律 | 越权占用公司账号 |
+| ⚠️ agent 是否可信且可接单 | host 字符串；root identity+host key+新鲜容量 | 后者 | host 可伪造 | snapshot 发错主机 |
+| ⚠️ `mmv` 是否为固定美国出口 | host 名；stable node ID+peer+IP+online+backend+新鲜度 | 后者全满足 | PRD 明确 | auth 泄漏或出口错误 |
+| ⚠️ SSH 丢响应后是否成功 | 重试推断；handle 精确 readback | handle readback | 防双租约/双启动 | 误释放活会话 |
+| agent/tmux 是否仍活 | 单看 tmux；registry+独立 tmux/process | 双信号 | 防孤儿与漂移 | 错误 heartbeat/release |
 
 notes:
 - `judgment-pending-user: actor 是否可信`
 - `judgment-pending-user: agent 是否可信且可接单`
 - `judgment-pending-user: mmv 是否为固定美国出口`
-- `judgment-pending-user: SSH 丢响应后是否已生效`
+- `judgment-pending-user: SSH 丢响应后是否成功`
 
 ### 失败语义声明
 
-| 场景 | 失败行为 | 重试幂等？ | 降级策略 |
-|------|----------|-----------|----------|
-| 身份/容量/host key/`mmv` 无效或过期 | 拒绝 acquire/launch，不写 active | 是，request_id 定点 readback | 无自动降级 |
-| durable write 任一步失败 | 不确认 acquire，不开放 rollout | 是，事务+唯一约束 | 保持 frozen/blocking |
-| SSH/agent 回应丢失或不完整 | lease 置 quarantined | 是，只允许 status/readback | 人工核查后明确 release |
-| reaper unreachable/mismatch/unknown | quarantine + sanitized audit | 是，多轮重复不振荡 | 不按 TTL release |
-| 旧入口调用 | 非零退出并指向新 client | N/A | 绝不写 auth |
+| 场景 | 失败行为 | 重试幂等 | 降级 |
+|------|----------|----------|------|
+| 身份/容量/host key/`mmv` 无效或过期 | 拒绝 acquire/launch | request_id readback | 无 |
+| snapshot oversize/hash/nonce/写盘失败 | 删除临时 auth，不启动 | nonce/session 定点 | 无 |
+| SSH/agent 回应丢失或不完整 | quarantine | 只 status/readback | 人工核查 |
+| reaper unreachable/mismatch/unknown | quarantine+sanitized audit | 多轮不振荡 | 禁止 TTL release |
+| 旧入口调用 | 非零退出、broker-only 指引、零 auth 写入 | N/A | 无双轨 |
 
 ### 输入对抗面
 
-| 输入来源 | 信任等级 | Prompt Injection 防护 | 越权指令拒绝策略 |
-|----------|----------|----------------------|-----------------|
-| 员工 CLI 参数/环境 | 不可信 | 不把参数拼入 prompt；repo/session 结构校验和 shell 安全传参 | actor/agent/slot/account/token 字段拒绝；身份只取 server context |
-| SSH agent stdout | 半可信远端 | 只解析有长度上限的单行 JSON schema，不执行返回文本 | agent_id/slot 必须与 registry 匹配，否则 quarantine |
-| auth snapshot | 高敏感、不可信结构 | 限长、JSON shape 校验、禁止日志 | 仅 broker→agent stdin；nonce/sha256/0600 验证失败即删除 |
+| 输入来源 | 信任等级 | 防护 | 越权拒绝 |
+|----------|----------|------|----------|
+| CLI argv/env/stdin | 不可信 | 精确 keys、限长、shell 安全传参 | 身份/agent/slot/account/auth 字段拒绝 |
+| agent JSON | 半可信 | 单行限长 schema、固定 host key | agent_id/slot 与 registry 不符即 quarantine |
+| snapshot | 高敏感 | 受控 store、262144 bytes、sha256、zeroize | 仅 broker→agent stdin；错误稳定拒绝 |
+
+## Risks
+
+| 风险 | 影响 | Mitigation / 可执行 oracle |
+|------|------|----------------------------|
+| broker 误读个人/测试环境真实凭据 | 真实 token 泄漏 | 固定受控 store 权限；合同测试 spawn env allowlist；fixture SHA 扫描 stdout/stderr/audit/sandbox。 |
+| snapshot 超限、hash 被换或 nonce 重放 | 内存/写盘滥用、重复授权 | 262144-byte 上限与三个稳定错误码；写盘前无 auth/tmux。 |
+| smoke 自报成功但远端事实错误 | 假绿 | evaluator 直接用独立 audit SSH 查 owner/mode/tmux/process/mmv/cleanup，不采信 smoke 布尔值。 |
+| 并发/历史 audit 冒充本轮 | 假绿或串会话 | 所有查询同时绑定 `run_id + session_handle + agent_id`，时间仅作附加约束。 |
+| 旧入口或 rollout 非原子 | 第二 issuer/部分开放 | 两个旧脚本真执行；blocking lease 和两项证据独立阻断；真 PG 读回原子状态。 |
+| 真机不可达 | 无法证明接缝 | 保持 `logic-done-pending`，不得将本地绿标 done。 |
 
 ## 禁 mock 边清单
 
-- 员工 client ↔ broker forced-command（身份、请求 shape、session readback 均须真调用）。
-- broker ↔ PostgreSQL `codex_company_accounts` / `codex_account_leases` / `codex_slot_sessions` / `codex_slot_audit`（租约、状态、幂等须真 Postgres）。
-- broker ↔ xian agent SSH/stdin（auth 投递与 unknown result 须真 SSH；只允许在纯逻辑单测 mock 与本边无关的通知）。
-- agent ↔ root 配置 / 私有文件 / tmux / Codex 进程（prepare、0600 durable auth、launch/cleanup 须真文件系统与真进程）。
-- reaper ↔ broker registry ↔ agent/tmux（真实多轮扫描，不得 mock registry 或 agent 状态边）。
-- rollout gate ↔ legacy 入口（必须真运行旧脚本并证明非零退出与零 auth 写入）。
+- client ↔ broker forced-command（真实 SSH key/UID、stdin shape、跨 actor handle）。
+- broker ↔ 真 PostgreSQL 五张 Codex Slot 表（租约、session、audit、rollout、observation）。
+- broker ↔ agent SSH/stdin 与 agent ↔ root 配置/filesystem/tmux/process/`mmv`。
+- reaper ↔ registry observation ↔ session 状态；rollout ↔ blocking lease/双证据/旧入口。
 
 ## 未覆盖真实链路清单
 
-- 真实公司 token：PRD 明确排除；真机 smoke 使用两台各自独立、明显无效且不含秘密的 auth fixture。补位：本 Sprint 只证明投递/权限/进程/清理链，真实账号登录效果不宣称 done。
-- xian-m1/xian-m4 真机接缝在 GAN 阶段尚未执行：Generator 完成逻辑后状态只能 `logic-done-pending`；Evaluator 必须分别留存真机 smoke JSON/日志，均通过后才可 done。
-- 本合同无 `force_*`、stub、假 host/假 `mmv` 值豁免；专用假 auth fixture 是 PRD 指定的非秘密验收输入，不替代真实主机/SSH/tmux/文件系统。
+- 真实公司 token/真实 Codex 登录效果由 PRD 排除；只用非秘密 fixture 证明投递、权限、进程与清理，不宣称登录有效。
+- GAN 阶段尚未执行 xian-m1/xian-m4 接缝，状态为 `logic-done-pending`；final evaluator 双机留证后才可 done。
+- 本合同无 `force_*`/stub/mock 边豁免；非秘密 fixture 是 PRD 指定输入，不替代真 SSH、tmux、filesystem 或 PG。
 
 ## 接缝清单
 
-1. client/broker 身份与 forced-command：在真实受控 SSH 配置下，MacBook Air key 可映射，伪造 actor/host 不可改变身份。
-2. broker/agent/`mmv`：在 xian-m1、xian-m4 分别真 SSH，读取 root agent 身份与实时 `mmv` stable node ID/peer/IP/online/backend；任何一项错均 fail closed。
-3. agent/tmux/filesystem/DB：两台真机分别用专用假 auth 完成 prepare→deliver→launch→status→stop→release，并在真 Postgres 和远端目录核对零残留。
-
-未完成上述接缝真验时统一标记 `logic-done-pending`。
+1. 员工 client→broker forced-command：actor A 成功，actor B 对 A handle 的 status/stop 均稳定拒绝。
+2. broker→xian agent→`mmv`：两台分别经固定 host key/stdin，独立 audit principal 读取实时全信号。
+3. agent/tmux/filesystem↔PG：同一 handle 的进程、0600 文件、audit 与清理相互对账；未真验即 `logic-done-pending`。
 
 ## Golden Path
 
-[受控身份进入] → [安全 agent/slot 自动选择] → [durable acquire] → [agent prepare] → [broker stdin 投递] → [`mmv` 双检后 launch] → [status/readback] → [reaper] → [rollout 硬切] → [双真机 smoke 零残留]
+[受控身份] → [自动 slot] → [durable acquire] → [prepare] → [有限 snapshot stdin] → [`mmv` 双检 launch] → [handle readback] → [reaper] → [rollout/双旧入口硬切] → [双机 release 零残留] → [独立安全复核]
 
 ### Step 1：服务器映射可信 actor
 
-**来源**：`[FROM_PRD]` — Golden Path 1、NFR“身份与授权”。
+**来源**：`[FROM_PRD]` — Golden Path 1。
 
-**可观测行为**：有效 UID/受控 SSH key 映射固定 actor；`--actor`、环境 actor 与 claimed host 不能改变结果，无映射立即失败。
+**可观测行为**：key/UID 固定映射 actor；client 自报字段无效；跨 actor handle 拒绝。
 
 **验证命令**：
 
 ```bash
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-identity-routing.contract.test.ts -t '受控 SSH key 映射 actor 且忽略客户端 actor/host 自报|无 UID/SSH key 映射时 fail closed' --reporter=verbose
+DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-identity-routing.contract.test.ts sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts -t '受控 SSH key 映射 actor|无 UID/SSH key|actor B 对 actor A handle' --reporter=verbose
 ```
 
-**硬阈值**：两条身份断言 exit 0；伪造字段不进入输出。
+**硬阈值**：3 tests exit 0；真实 forced-command 跨 actor 拒绝另由 E2E 同一 handle 复验。
 
 ### Step 2：自动选择安全可用 agent/slot
 
-**来源**：`[FROM_PRD]` — Golden Path 2、边界“容量缺失/为零/过期不可选”。
+**来源**：`[FROM_PRD]` — Golden Path 2。
 
-**可观测行为**：只在 xian-m1/xian-m4 同级候选中选择 root 身份、host key、`mmv`、健康和新鲜容量全部通过且有余量的 slot；客户端不能指定。
-
-**验证命令**：
-
-```bash
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-identity-routing.contract.test.ts -t '自动选择仅接纳身份、mmv、容量与新鲜度全部有效的 agent slot|容量缺失、零容量或过期时不选择任何 agent' --reporter=verbose
-```
-
-**硬阈值**：有效候选唯一确定；全部无效时非零失败，无 fallback host。
-
-### Step 3：broker 先 durable write 再确认 acquire
-
-**来源**：`[FROM_PRD]` — Golden Path 3、NFR“一致性”。
-
-**可观测行为**：rollout gate 允许后，broker 在真 Postgres 事务内选择唯一未占账号，写 lease/session 后返回 handle；同一账号不会出现两个 blocking/active/quarantined lease。
+**可观测行为**：只选 root identity、host key、`mmv`、健康、新鲜容量且有余量的 xian-m1/xian-m4；client 无 host/slot 输入。
 
 **验证命令**：
 
 ```bash
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts -t 'durable acquire 对同一公司账号只产生一个 blocking lease|相同 idempotency key 重放返回同一 session handle' --reporter=verbose
+npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-identity-routing.contract.test.ts -t '自动选择仅接纳|容量缺失' --reporter=verbose
 ```
 
-**硬阈值**：真 Postgres 中重复 blocking lease 行数为 0；幂等重放 lease 行数为 1。
+**硬阈值**：2 tests exit 0；缺失/零/过期容量均失败。
 
-### Step 4：agent 在主机锁内 prepare
+### Step 3：单账号 durable acquire
+
+**来源**：`[FROM_PRD]` — Golden Path 3。
+
+**可观测行为**：同一公司账号并发只有一个 blocking lease；相同 `request_id` 重放返回同一 handle。
+
+**验证命令**：
+
+```bash
+DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts -t '单账号并发竞争|相同 request_id' --reporter=verbose
+```
+
+**硬阈值**：fulfilled=1、rejected=1、阻塞租约=1；重放 handle 相同。
+
+### Step 4：agent 主机锁内 prepare
 
 **来源**：`[FROM_PRD]` — Golden Path 4。
 
-**可观测行为**：agent 从 root 配置读取真实 agent_id/max_slots；持有主机锁后准备独立 worktree、0700 私有目录和一次性 nonce，slot 内不并发。
+**可观测行为**：root config 声明 agent_id/max_slots；真实主机锁、worktree 与 0700 session dir 建成。
 
 **验证命令**：
 
 ```bash
-for HOST in xian-m1 xian-m4; do
-  RESP=$(ssh -F /etc/cecelia/codex-slot/ssh_config "codex-slot@${HOST}" codex-slot-agent prepare-smoke)
-  echo "$RESP" | jq -e --arg host "$HOST" '.ok == true and .operation == "prepare" and .agent_id == $host and (.slot | type == "number") and .lock_held == true and .private_mode == "0700" and (.nonce_id | type == "string")'
-done
+awk '/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh
 ```
 
-**硬阈值**：两台均 exit 0；`lock_held=true`、`private_mode="0700"`、nonce 非空；任一 SSH/shape 异常即失败。
+**硬阈值**：两台真实 acquire 后独立 audit 均见 `auth_mode=0600`、tmux/process alive；无 smoke-only operation。
 
-### Step 5：broker 唯一投递有限 auth snapshot
+### Step 5：broker 唯一投递有限 snapshot
 
-**来源**：`[FROM_PRD]` — Golden Path 5、NFR“安全”。
+**来源**：`[FROM_PRD]` — Golden Path 5。
 
-**可观测行为**：broker 经固定 SSH config 与 stdin 投递有限长度 snapshot；argv/env/stdout/audit 无 auth；agent 消费一次性 nonce 并在写盘前实时校验 `mmv` 全信号。
+**可观测行为**：snapshot 只从受控 store 读、仅 stdin 投递、最大 262144 bytes、nonce 单次、hash 匹配、Buffer 清零。
 
 **验证命令**：
 
 ```bash
-for HOST in xian-m1 xian-m4; do
-  OUT=$(bash packages/brain/scripts/smoke/codex-slot-host-smoke.sh "$HOST" --phase deliver-only)
-  echo "$OUT" | jq -e --arg host "$HOST" '.ok == true and .agent_id == $host and .stdin_delivery == true and .nonce_consumed == true and .mmv_verified == true and .auth_logged == false'
-done
+npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t '受控 credential store|snapshot Buffer|oversize、nonce replay' --reporter=verbose
 ```
 
-**硬阈值**：两台均 stdin 投递、nonce 单次消费、`mmv_verified=true`、`auth_logged=false`。
+**硬阈值**：合法 fixture 0600；三个错误码逐字匹配；失败不留 auth。
 
-### Step 6：0600 durable auth 与 launch 前二次 `mmv` 校验
+### Step 6：0600 durable auth 与 launch 前二次 `mmv`
 
 **来源**：`[FROM_PRD]` — Golden Path 6。
 
-**可观测行为**：第一次 `mmv` 全校验后才以 0600+fsync+rename+parent fsync 写 auth；launch 前二次校验。出口切换时删除暂存 auth且不创建 tmux。
+**可观测行为**：首次全信号通过才写 auth；launch 前再采样，改变任一信号即删除 auth且不建 tmux。
 
 **验证命令**：
 
 ```bash
-for HOST in xian-m1 xian-m4; do
-  OUT=$(bash packages/brain/scripts/smoke/codex-slot-host-smoke.sh "$HOST" --phase launch-fail-closed)
-  echo "$OUT" | jq -e --arg host "$HOST" '.ok == true and .agent_id == $host and .auth_mode == "0600" and .durable_write == true and .mmv_checks == 2 and .bad_exit_rejected == true and .bad_exit_auth_removed == true and .bad_exit_tmux_created == false'
-done
+bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh mmv-fail-closed --assert-independent
 ```
 
-**硬阈值**：两台双检恰为 2；坏出口分支 auth 删除且 tmux 未创建。
+**硬阈值**：独立 audit 证实失败分支 `auth_exists=false,tmux_alive=false,process_alive=false`。
 
 ### Step 7：未知结果精确 readback
 
-**来源**：`[FROM_PRD]` — Golden Path 7、边界“丢响应只隔离”。
+**来源**：`[FROM_PRD]` — Golden Path 7。
 
-**可观测行为**：resume/status 只接受 session handle 并核对 actor；SSH 未知结果进入 quarantine，重放只 readback，不自行 stop/release。
-
-**验证命令**：
-
-```bash
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts -t '未知投递结果只 quarantine|durable store 重建实例后仍可按 session handle readback' --reporter=verbose
-```
-
-**硬阈值**：未知结果最终 lease_state=`quarantined`；重建实例仍返回同一 handle。
-
-### Step 8：reaper 每分钟按 registry 收敛
-
-**来源**：`[FROM_PRD]` — Golden Path 8、边界“重跑幂等”。
-
-**可观测行为**：reaper 以 broker registry 为唯一状态源，对 alive/stopped/unreachable/mismatch/unknown 分别 heartbeat/release/quarantine/quarantine；跨真实两轮不振荡。
+**可观测行为**：未知投递 quarantine；重启后同 handle 可读；actor B 不可 status/stop。
 
 **验证命令**：
 
 ```bash
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t 'reaper 两轮真实时间流逝不重置状态|scheduler JOBS 真实接线' --reporter=verbose
+DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts -t '未知投递结果|重建实例|actor B' --reporter=verbose
 ```
 
-**硬阈值**：JOBS intervalMs=60000；两轮间真实等待≥1秒且 quarantine 不回退/release。
+**硬阈值**：lease=`quarantined`；handle 不变；跨 actor 两操作均拒绝。
 
-### Step 9：rollout 原子硬切并禁用旧入口
+### Step 8：reaper 五分支两轮幂等
+
+**来源**：`[FROM_PRD]` — Golden Path 8。
+
+**可观测行为**：alive→heartbeat、stopped→release、unreachable/mismatch/unknown→quarantine；连续两轮不振荡。
+
+**验证命令**：
+
+```bash
+DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t 'reaper 对' --reporter=verbose
+```
+
+**硬阈值**：5 classifications × 2 rounds 均为预期 action；JOBS=60000 ms。
+
+### Step 9：rollout 原子硬切并禁用双旧入口
 
 **来源**：`[FROM_PRD]` — Golden Path 9。
 
-**可观测行为**：`frozen→inventory_complete→broker_only` 仅在存量盘点、blocking lease 收敛和所有旧入口“不可写 auth”探针通过后原子切换；旧 `codex-request` / `codex-remote-launch` 立即非零失败或转 broker。
+**可观测行为**：成功链 frozen→inventory_complete→broker_only；blocking lease、任一证据缺失均阻断且 DB 不部分写；两个旧脚本非零且零 auth。
 
 **验证命令**：
 
 ```bash
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t 'rollout 在 inventory_complete|旧 codex-request 入口硬失败' --reporter=verbose
+DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t 'rollout|旧入口' --reporter=verbose
 ```
 
-**硬阈值**：越级 transition 被拒；旧入口 exit≠0 且测试 HOME 内 auth.json 不存在。
+**硬阈值**：成功链完整；3 类阻断保持 frozen；两个入口各自非零、隔离 HOME 无 auth。
 
-### Step 10：xian-m1/xian-m4 真机假 token 全生命周期
+### Step 10：双主机生产调用链安全释放
 
-**来源**：`[FROM_PRD]` — Golden Path 10、E2E 验收。
+**来源**：`[FROM_PRD]` — Golden Path 10。
 
-**可观测行为**：两台主机各用不同的非秘密 fixture 经真实 SSH/stdin/tmux/worktree 完成 prepare→deliver→launch→status→stop→release，结束无 auth/tmux/worktree/lease 残留。
+**可观测行为**：两台各自从真实 client acquire，经 broker/agent 到 stop/release；同一 handle 对账 PG/SSH/tmux/worktree。
 
 **验证命令**：
 
 ```bash
-START_EPOCH=$(date +%s)
-for HOST in xian-m1 xian-m4; do
-  OUT=$(bash packages/brain/scripts/smoke/codex-slot-host-smoke.sh "$HOST" --full)
-  echo "$OUT" | jq -e --arg host "$HOST" --argjson start "$START_EPOCH" '.ok == true and .agent_id == $host and .fixture_is_secret == false and .mmv_verified == true and .lifecycle == ["prepared","auth_accepted","running","stopped","released"] and .residue_count == 0 and .finished_at_epoch >= $start'
-done
+awk '/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh
 ```
 
-**硬阈值**：两台均 exit 0、完整 5 状态序列、`residue_count=0`、证据时间不早于本轮开始。
+**硬阈值**：xian-m1/xian-m4 各完整 5 事件；远端与 DB 零残留；审计绑定本轮 handle。
 
-### Step 11：防造假与安全回归
+### Step 11：防造假与交付安全复核
 
-**来源**：`[AI_ADDED]` — 防止只跑冷启动、文本自证或历史 smoke 产物冒充本轮。
+**来源**：`[AI_ADDED]` — 闭环 reviewer 指出的 schema、独立 oracle、测试只读与环境继承假绿面。
 
-**可观测行为**：所有合同测试真红→实现后真绿；日志/审计扫描无 auth/token/prompt/完整环境；多轮 reaper 与 broker restart 仍满足不变量。
+**可观测行为**：精确 schema/禁用字段、真实 task payload、Bash 双版本、allowlist 最小变更、合同测试只读均通过。
 
 **验证命令**：
 
 ```bash
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests --reporter=verbose
-bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh | jq -e '.ok == true and .secret_hits == 0 and .duplicate_blocking_leases == 0 and .state_oscillations == 0'
+npx vitest run sprints/07240705-relay-56bf3e23/tests --reporter=verbose
+node packages/brain/scripts/contract-gate-check.mjs sprints/07240705-relay-56bf3e23
 ```
 
-**硬阈值**：Vitest exit 0；security smoke 三个计数均为 0。
+**硬阈值**：全部 exit 0；未完成双机接缝不得标 done。
 
 ## E2E 验收
 
 **journey_type**：`agent_remote`
 
-**target_environment**：`local_api`（本地 evaluator 编排 xian-m1/xian-m4 真实 SSH 接缝）
+**target_environment**：`local_api`（本地 evaluator 编排真 PG 与两台真实 SSH 接缝）
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
 SPRINT_DIR="sprints/07240705-relay-56bf3e23"
+TASK_ID="${HARNESS_TASK_ID:-56bf3e23-1bba-4c6a-8d19-e32d5d746395}"
 DB_URL="${DB_URL:-postgresql://localhost/cecelia}"
+ACTOR_A_CONFIG="${CODEX_SLOT_ACTOR_A_SSH_CONFIG:-/etc/cecelia/codex-slot/actor_a_ssh_config}"
+ACTOR_B_CONFIG="${CODEX_SLOT_ACTOR_B_SSH_CONFIG:-/etc/cecelia/codex-slot/actor_b_ssh_config}"
+AUDIT_CONFIG="${CODEX_SLOT_AUDIT_SSH_CONFIG:-/etc/cecelia/codex-slot/audit_ssh_config}"
+RUN_ID="codex-slot-$(date +%s)-$$"
+EVIDENCE_DIR="${CODEX_SLOT_EVIDENCE_DIR:-${SPRINT_DIR}/evidence/${RUN_ID}}"
+mkdir -p "$EVIDENCE_DIR"
+exec > >(tee "$EVIDENCE_DIR/e2e.stdout") 2> >(tee "$EVIDENCE_DIR/e2e.stderr" >&2)
 export DB_URL
-START_EPOCH=$(date +%s)
 
 command -v jq >/dev/null
 command -v psql >/dev/null
 command -v ssh >/dev/null
-command -v tmux >/dev/null
-
-# 模式 A：真 Postgres + 真模块，不 mock 被改边。
-npx vitest run "${SPRINT_DIR}/tests" --reporter=verbose
-
-# 身份伪造、错误 host/容量/出口/SSH 未知结果 fail closed。
-SECURITY=$(bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh)
-echo "$SECURITY" | jq -e '.ok == true and .actor_spoof_rejected == true and .host_spoof_rejected == true and .missing_capacity_rejected == true and .bad_mmv_rejected == true and .unknown_ssh_quarantined == true and .secret_hits == 0'
-
-# rollout 必须已按 inventory_complete + legacy probe 原子切到 broker_only。
-ROLLOUT=$(node packages/brain/src/codex-slot/cli.js rollout-status)
-echo "$ROLLOUT" | jq -e '.ok == true and .operation == "rollout-status" and .state == "broker_only" and .inventory_complete == true and .legacy_write_probe_passed == true'
-
-# 两台分别生成专用非秘密 fixture，走真实 SSH/stdin/tmux/worktree。
-for HOST in xian-m1 xian-m4; do
-  OUT=$(bash packages/brain/scripts/smoke/codex-slot-host-smoke.sh "$HOST" --full)
-  echo "$OUT" | jq -e --arg host "$HOST" --argjson start "$START_EPOCH" '.ok == true and .agent_id == $host and .fixture_is_secret == false and .stdin_delivery == true and .mmv_verified == true and .lifecycle == ["prepared","auth_accepted","running","stopped","released"] and .residue_count == 0 and .finished_at_epoch >= $start'
+for FILE in "$ACTOR_A_CONFIG" "$ACTOR_B_CONFIG" "$AUDIT_CONFIG"; do
+  [ -r "$FILE" ] || { echo "FAIL: 缺受控 SSH 配置 $FILE"; exit 1; }
 done
 
-# 本轮审计须新鲜、sanitized，且不存在重复阻塞租约。
-AUDIT_COUNT=$(psql "$DB_URL" -Atc "SELECT count(*) FROM codex_slot_audit WHERE event IN ('prepared','auth_accepted','running','stopped','released') AND created_at > NOW() - interval '5 minutes'")
-[ "$AUDIT_COUNT" -ge 10 ] || { echo "FAIL: 本轮双机审计不足 count=${AUDIT_COUNT}"; exit 1; }
-DUP_COUNT=$(psql "$DB_URL" -Atc "SELECT count(*) FROM (SELECT account_key FROM codex_account_leases WHERE state IN ('active','quarantined','blocking') GROUP BY account_key HAVING count(*) > 1) d")
-[ "$DUP_COUNT" -eq 0 ] || { echo "FAIL: 存在重复 blocking lease count=${DUP_COUNT}"; exit 1; }
-SECRET_COUNT=$(psql "$DB_URL" -Atc "SELECT count(*) FROM codex_slot_audit WHERE created_at > NOW() - interval '5 minutes' AND metadata::text ~* '(access_token|refresh_token|auth_json|prompt|environment)'")
-[ "$SECRET_COUNT" -eq 0 ] || { echo "FAIL: 审计疑似泄密 count=${SECRET_COUNT}"; exit 1; }
+TASK_JSON=$(curl -sf "localhost:5221/api/brain/tasks/${TASK_ID}")
+echo "$TASK_JSON" | jq -e '.payload.target_environment == "local_api"'
 
-echo "Codex Slot Golden Path E2E PASS"
+npx vitest run "$SPRINT_DIR/tests" --reporter=verbose
+
+PROVISION=$(bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh provision-e2e --run-id "$RUN_ID")
+echo "$PROVISION" | tee "$EVIDENCE_DIR/provision.json" | jq -e --arg run "$RUN_ID" 'keys == ["fixture_sha256","ok","rollout_state","run_id"] and .ok == true and .run_id == $run and .rollout_state == "broker_only" and (.fixture_sha256 | test("^[0-9a-f]{64}$"))'
+FIXTURE_SHA=$(echo "$PROVISION" | jq -r '.fixture_sha256')
+
+for HOST in xian-m1 xian-m4; do
+  REQUEST_ID="${RUN_ID}-${HOST}"
+  bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh set-e2e-capacity --run-id "$RUN_ID" --only-agent "$HOST"
+
+  ACQUIRE=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh acquire --request-id "$REQUEST_ID" --repo "$PWD")
+  echo "$ACQUIRE" | tee "$EVIDENCE_DIR/${HOST}-acquire.json" | jq -e --arg req "$REQUEST_ID" --arg host "$HOST" '
+    keys == ["agent_id","lease_state","ok","operation","request_id","session_handle","slot","state"] and
+    .ok == true and .operation == "acquire" and .request_id == $req and
+    .agent_id == $host and (.slot | type == "number") and .slot > 0 and
+    (.state == "prepared" or .state == "auth_accepted" or .state == "running") and
+    (.lease_state == "blocking" or .lease_state == "active") and
+    (. as $o | ["actor","actor_id","account_key","token","access_token","refresh_token","auth","auth_json","environment","claimed_host"] | all(. as $k | $o | has($k) | not))'
+  HANDLE=$(echo "$ACQUIRE" | jq -er '.session_handle | select(type == "string" and length > 0)')
+
+  set +e
+  FORBIDDEN_STATUS=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_B_CONFIG" scripts/codex-slot-client.sh status --request-id "${REQUEST_ID}-b-status" --session-handle "$HANDLE" 2>&1)
+  STATUS_RC=$?
+  FORBIDDEN_STOP=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_B_CONFIG" scripts/codex-slot-client.sh stop --request-id "${REQUEST_ID}-b-stop" --session-handle "$HANDLE" 2>&1)
+  STOP_RC=$?
+  set -e
+  [ "$STATUS_RC" -ne 0 ] && [ "$STOP_RC" -ne 0 ]
+  printf '%s\n' "$FORBIDDEN_STATUS" > "$EVIDENCE_DIR/${HOST}-actor-b-status.json"
+  printf '%s\n' "$FORBIDDEN_STOP" > "$EVIDENCE_DIR/${HOST}-actor-b-stop.json"
+  for ERR in "$FORBIDDEN_STATUS" "$FORBIDDEN_STOP"; do
+    echo "$ERR" | jq -e 'keys == ["error_code","ok","operation","request_id","sanitized_reason"] and .ok == false and .error_code == "handle_forbidden" and (.sanitized_reason | type == "string")'
+  done
+
+  STATUS=""
+  for ATTEMPT in $(seq 1 60); do
+    STATUS=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh status --request-id "${REQUEST_ID}-status-${ATTEMPT}" --session-handle "$HANDLE")
+    STATE=$(echo "$STATUS" | jq -r '.state')
+    LEASE_STATE=$(echo "$STATUS" | jq -r '.lease_state')
+    [ "$STATE" = "running" ] && [ "$LEASE_STATE" = "active" ] && break
+    [ "$STATE" = "quarantined" ] && { echo "FAIL: handle quarantined ${HANDLE}"; exit 1; }
+    [ "$ATTEMPT" -eq 60 ] && { echo "FAIL: launch timeout handle=${HANDLE} state=${STATE}"; exit 1; }
+    sleep 1
+  done
+  echo "$STATUS" | tee "$EVIDENCE_DIR/${HOST}-status.json" | jq -e --arg handle "$HANDLE" --arg host "$HOST" '
+    keys == ["agent_id","lease_state","ok","operation","request_id","sanitized_reason","session_handle","slot","state"] and
+    .ok == true and .operation == "status" and .session_handle == $handle and .agent_id == $host and
+    .state == "running" and .lease_state == "active"'
+
+  LIVE=$(ssh -F "$AUDIT_CONFIG" "codex-slot-audit@${HOST}" codex-slot-audit status "$HANDLE")
+  echo "$LIVE" | tee "$EVIDENCE_DIR/${HOST}-live-audit.json" | jq -e --arg handle "$HANDLE" --arg host "$HOST" '
+    keys == ["agent_id","auth_exists","auth_mode","auth_owner","backend","mmv_ip","mmv_online","peer","process_alive","sampled_at_epoch","session_handle","stable_node_id","tmux_alive","worktree_exists"] and
+    .agent_id == $host and .session_handle == $handle and .auth_exists == true and
+    .auth_mode == "0600" and .auth_owner == "codex-slot-agent" and
+    .tmux_alive == true and .process_alive == true and .worktree_exists == true and
+    .mmv_online == true and (.stable_node_id | type == "string" and length > 0) and
+    (.peer | type == "string" and length > 0) and (.mmv_ip | type == "string" and length > 0) and
+    (.backend | type == "string" and length > 0) and .sampled_at_epoch >= (now - 60)'
+
+  REAPER_ALIVE=$(node packages/brain/src/codex-slot/cli.js reaper-once --run-id "$RUN_ID" --session-handle "$HANDLE")
+  echo "$REAPER_ALIVE" | tee "$EVIDENCE_DIR/${HOST}-reaper-alive.json" | jq -e --arg handle "$HANDLE" '.session_handle == $handle and .classification == "alive" and .action == "heartbeat"'
+  STOP=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh stop --request-id "${REQUEST_ID}-stop" --session-handle "$HANDLE")
+  echo "$STOP" | tee "$EVIDENCE_DIR/${HOST}-stop.json" | jq -e --arg handle "$HANDLE" '.operation == "stop" and .session_handle == $handle and .state == "stopped" and .lease_state == "active"'
+  REAPER_STOPPED=$(node packages/brain/src/codex-slot/cli.js reaper-once --run-id "$RUN_ID" --session-handle "$HANDLE")
+  echo "$REAPER_STOPPED" | tee "$EVIDENCE_DIR/${HOST}-reaper-stopped.json" | jq -e --arg handle "$HANDLE" '.session_handle == $handle and .classification == "stopped" and .action == "released"'
+  RELEASE=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh release --request-id "${REQUEST_ID}-release" --session-handle "$HANDLE")
+  echo "$RELEASE" | tee "$EVIDENCE_DIR/${HOST}-release.json" | jq -e --arg handle "$HANDLE" '.operation == "release" and .session_handle == $handle and .state == "released" and .lease_state == "released"'
+
+  CLEAN=$(ssh -F "$AUDIT_CONFIG" "codex-slot-audit@${HOST}" codex-slot-audit cleanup "$HANDLE")
+  echo "$CLEAN" | tee "$EVIDENCE_DIR/${HOST}-cleanup-audit.json" | jq -e --arg handle "$HANDLE" '
+    .session_handle == $handle and .auth_exists == false and .tmux_alive == false and .process_alive == false and .worktree_exists == false'
+  SCAN=$(ssh -F "$AUDIT_CONFIG" "codex-slot-audit@${HOST}" codex-slot-audit scan "$HANDLE" "$FIXTURE_SHA")
+  echo "$SCAN" | tee "$EVIDENCE_DIR/${HOST}-scan.json" | jq -e '.fixture_fingerprint_hits == 0 and .forbidden_key_hits == 0 and .sandbox_residue_count == 0'
+
+  EVENTS=$(psql "$DB_URL" -Atc "SELECT string_agg(event, ',' ORDER BY created_at) FROM codex_slot_audit WHERE run_id='${RUN_ID}' AND session_handle='${HANDLE}' AND agent_id='${HOST}' AND event IN ('prepared','auth_accepted','running','stopped','released') AND created_at > NOW() - interval '5 minutes'")
+  [ "$EVENTS" = "prepared,auth_accepted,running,stopped,released" ] || { echo "FAIL: audit events=${EVENTS}"; exit 1; }
+  ACTIVE=$(psql "$DB_URL" -Atc "SELECT count(*) FROM codex_account_leases WHERE run_id='${RUN_ID}' AND session_handle='${HANDLE}' AND state IN ('active','blocking','quarantined')")
+  [ "$ACTIVE" -eq 0 ] || { echo "FAIL: handle 仍有阻塞租约 ${HANDLE}"; exit 1; }
+done
+
+if rg -n '(access_token|refresh_token|auth_json|\"tokens\"|prompt|environment)' "$EVIDENCE_DIR"; then
+  echo "FAIL: 本轮证据含禁止键"
+  exit 1
+fi
+DUP=$(psql "$DB_URL" -Atc "SELECT count(*) FROM (SELECT account_key FROM codex_account_leases WHERE run_id='${RUN_ID}' AND state IN ('active','blocking','quarantined') GROUP BY account_key HAVING count(*) > 1) d")
+[ "$DUP" -eq 0 ] || { echo "FAIL: 本轮重复租约 count=${DUP}"; exit 1; }
+
+echo "Codex Slot Golden Path E2E PASS run_id=${RUN_ID} evidence=${EVIDENCE_DIR}"
 ```
 
 ## Test Contract
 
-| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 受控身份与自动 slot | `sprints/07240705-relay-56bf3e23/tests/codex-slot-identity-routing.contract.test.ts` | `受控 SSH key 映射 actor 且忽略客户端 actor/host 自报`；`自动选择仅接纳身份、mmv、容量与新鲜度全部有效的 agent slot` | identity/selector 模块不存在，4 tests fail |
-| durable lease/session | `sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts` | `durable acquire 对同一公司账号只产生一个 blocking lease`；`未知投递结果只 quarantine`；`durable store 重建实例后仍可按 session handle readback` | 真 PG 表/registry 模块不存在，4 tests fail |
-| rollout/reaper/旧入口 | `sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts` | `rollout 在 inventory_complete 与旧入口禁写证据前拒绝 broker_only`；`旧 codex-request 入口硬失败且不创建 auth.json`；`reaper 两轮真实时间流逝不重置状态`；`scheduler JOBS 真实接线 codex-slot-reaper 且周期为 60 秒` | rollout/reaper 模块和 JOBS 接线不存在，旧入口 `--help` 仍 exit 0，4 tests fail |
+| WS1 | `tests/codex-slot-identity-routing.contract.test.ts` | `受控 SSH key 映射 actor` / `自动选择仅接纳身份` | identity/selector 模块不存在 |
+| WS2 | `tests/codex-slot-lifecycle.integration.contract.test.ts` | `单账号并发竞争` / `相同 request_id` / `actor B 对 actor A handle` / `未知投递结果` | migration/registry 模块不存在 |
+| WS3 | `tests/codex-slot-protocol-auth.contract.test.ts` | `acquire/status/error JSON` / `受控 credential store` / `snapshot Buffer` / `oversize、nonce replay` | protocol/credential-store/agent 模块不存在 |
+| WS4 | `tests/codex-slot-reaper-rollout.integration.contract.test.ts` | `rollout 成功` / `blocking lease` / `reaper 对` / `旧入口` / `Bash 3.2` / `scheduler JOBS` | rollout/reaper 未实现，两个旧入口仍 exit 0 |

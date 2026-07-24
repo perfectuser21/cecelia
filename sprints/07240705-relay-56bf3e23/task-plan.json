@@ -8,16 +8,15 @@
     {
       "task_id": "ws1",
       "title": "建立 Codex Slot durable registry 与数据库不变量",
-      "scope": "交付 company account、lease、session、audit、rollout durable schema 和真 Postgres registry；保证单账号单阻塞租约、request_id 幂等与重启可恢复。",
+      "scope": "交付 company account、lease、session、audit、rollout、agent observation durable schema 和真 Postgres registry；保证单账号单阻塞租约、request_id 幂等与重启可恢复。",
       "dod": [
         "[BEHAVIOR] 真 Postgres 并发 acquire 不产生重复 active/quarantined/blocking lease。",
-        "[BEHAVIOR] 相同 idempotency key 重放返回同一 session handle。",
+        "[BEHAVIOR] 相同 request_id 重放返回同一 session handle。",
         "[ARTIFACT] migration 与 registry 模块定义状态机和唯一约束。"
       ],
       "files": [
         "packages/brain/migrations/359_codex_slot_registry.sql",
-        "packages/brain/src/codex-slot/registry.js",
-        "sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts"
+        "packages/brain/src/codex-slot/registry.js"
       ],
       "depends_on": [],
       "complexity": "L",
@@ -37,16 +36,14 @@
         "packages/brain/src/codex-slot/identity.js",
         "packages/brain/src/codex-slot/selector.js"
       ],
-      "depends_on": [
-        "ws1"
-      ],
+      "depends_on": ["ws1"],
       "complexity": "L",
       "estimated_minutes": 105
     },
     {
       "task_id": "ws3",
       "title": "实现 xian agent prepare、mmv 双检、auth durable write 与 tmux 生命周期",
-      "scope": "交付 agent forced-command：主机锁、worktree、0700 私有目录、nonce、限长 stdin、实时 mmv stable node/peer/IP/online/backend 校验、0600 durable auth、launch/status/stop/cleanup。",
+      "scope": "交付 agent 与只读 audit forced-command：主机锁、worktree、0700 私有目录、nonce、限长 stdin、实时 mmv stable node/peer/IP/online/backend 校验、0600 durable auth、launch/status/stop/cleanup 及独立 stat/tmux/process oracle。",
       "dod": [
         "[BEHAVIOR] xian-m1/xian-m4 prepare 自证 root agent_id/max_slots 且持主机锁。",
         "[BEHAVIOR] launch 前后 mmv 任一信号失败即删除暂存 auth 且零 tmux。",
@@ -55,18 +52,17 @@
       "files": [
         "packages/brain/src/codex-slot/agent.js",
         "scripts/codex-slot-agent.sh",
+        "scripts/codex-slot-audit.sh",
         "packages/brain/src/codex-slot/protocol.js"
       ],
-      "depends_on": [
-        "ws2"
-      ],
+      "depends_on": ["ws2"],
       "complexity": "L",
       "estimated_minutes": 120
     },
     {
       "task_id": "ws4",
       "title": "实现 broker 唯一 issuer、client acquire/resume 与精确 readback",
-      "scope": "交付 client 与 broker CLI；actor、agent、slot、account 由 server 决定；broker 先 durable acquire，再经固定 SSH config/stdin 投递 auth；丢响应按 handle readback，未知只 quarantine。",
+      "scope": "交付 client 与 broker CLI；actor、agent、slot、account 由 server 决定；broker 从 root/service-account 受控 store 限长读取 auth，先 durable acquire，再经固定 SSH config/stdin 投递并 finally 清零 Buffer；丢响应按 handle readback，未知只 quarantine。",
       "dod": [
         "[BEHAVIOR] broker 是唯一 token issuer，snapshot 不出现在 argv/env/log。",
         "[BEHAVIOR] SSH 未知结果形成 quarantine，重放不重复租约/启动。",
@@ -75,11 +71,10 @@
       "files": [
         "packages/brain/src/codex-slot/cli.js",
         "packages/brain/src/codex-slot/broker.js",
+        "packages/brain/src/codex-slot/credential-store.js",
         "scripts/codex-slot-client.sh"
       ],
-      "depends_on": [
-        "ws3"
-      ],
+      "depends_on": ["ws3"],
       "complexity": "L",
       "estimated_minutes": 120
     },
@@ -97,9 +92,7 @@
         "packages/brain/src/codex-slot/reaper.js",
         "packages/brain/src/scheduler-jobs.js"
       ],
-      "depends_on": [
-        "ws4"
-      ],
+      "depends_on": ["ws4"],
       "complexity": "L",
       "estimated_minutes": 110
     },
@@ -115,11 +108,11 @@
       "files": [
         "scripts/codex-request.sh",
         "scripts/codex-remote-launch.sh",
+        "scripts/__tests__/codex-request.test.sh",
+        "scripts/__tests__/codex-remote-launch.test.sh",
         "packages/brain/scripts/install-codex-slot.sh"
       ],
-      "depends_on": [
-        "ws5"
-      ],
+      "depends_on": ["ws5"],
       "complexity": "M",
       "estimated_minutes": 90
     },
@@ -137,9 +130,7 @@
         "packages/brain/scripts/smoke/codex-slot-host-smoke.sh",
         "packages/quality/smoke-allowlist.txt"
       ],
-      "depends_on": [
-        "ws6"
-      ],
+      "depends_on": ["ws6"],
       "complexity": "L",
       "estimated_minutes": 120
     },
@@ -152,14 +143,8 @@
         "[BEHAVIOR] final E2E 双机、真 PG、审计新鲜、秘密/重复 lease/残留计数均为 0。",
         "[ARTIFACT] 根 DEFINITION.md 与 packages/brain/VERSION 同步记录 Codex Slot。"
       ],
-      "files": [
-        "DEFINITION.md",
-        "packages/brain/VERSION",
-        "sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts"
-      ],
-      "depends_on": [
-        "ws7"
-      ],
+      "files": ["DEFINITION.md", "packages/brain/VERSION"],
+      "depends_on": ["ws7"],
       "complexity": "L",
       "estimated_minutes": 120
     }
