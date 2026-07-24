@@ -5,4 +5,4 @@
 2. Prove the test fails because the consumer cannot resolve the SHA locally.
 3. Add exact-SHA fetch-and-retry to `readGitArtifact`.
 4. Run the focused orchestrator tests and version gates.
-5. Bump Brain to 1.267.70, publish a hotfix PR, deploy, and rerun the fire drill.
+5. Bump Brain to 1.267.71, publish a hotfix PR, deploy, and rerun the fire drill.
