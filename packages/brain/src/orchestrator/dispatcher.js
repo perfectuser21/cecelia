@@ -358,6 +358,7 @@ export function createDetachedLauncher({
             ...roleEnv,
             CECELIA_EXECUTOR: spec.provider,
             CECELIA_TASK_ID: bundle.inputs.task_id,
+            HARNESS_TASK_ID: bundle.inputs.task_id,
             HARNESS_NODE: attempt.role,
             HARNESS_ATTEMPT_ID: attempt.id,
             HARNESS_CALLBACK_TOKEN: attempt.callbackSecret,
