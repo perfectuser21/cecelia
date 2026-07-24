@@ -342,4 +342,5 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       }),
     }), expect.objectContaining({ strict: true, dbPool: runtime.pool }));
   });
+
 });

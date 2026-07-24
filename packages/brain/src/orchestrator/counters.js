@@ -160,7 +160,8 @@ export function replayProductConvergence(
         continue;
       }
       if (
-        claimedSha !== currentHeadSha
+        claimedSha != null
+        && claimedSha !== currentHeadSha
         && currentHeadSha === observed.trigger_sha
       ) {
         if (index === modernIntents.length - 1) {

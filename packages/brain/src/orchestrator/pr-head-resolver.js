@@ -1,6 +1,8 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const FULL_GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
+const execFileAsync = promisify(execFile);
 
 export function normalizeGitSha(value) {
   if (typeof value !== 'string') return null;
@@ -8,11 +10,11 @@ export function normalizeGitSha(value) {
   return FULL_GIT_SHA_PATTERN.test(normalized) ? normalized : null;
 }
 
-export async function defaultPrHeadResolver(prUrl, execFile = execFileSync) {
-  const output = execFile(
+export async function defaultPrHeadResolver(prUrl, execute = execFileAsync) {
+  const { stdout } = await execute(
     'gh',
     ['pr', 'view', prUrl, '--json', 'headRefOid'],
-    { encoding: 'utf8', timeout: 15_000 },
+    { encoding: 'utf8', timeout: 8_000 },
   );
-  return JSON.parse(output).headRefOid ?? null;
+  return JSON.parse(stdout).headRefOid ?? null;
 }
