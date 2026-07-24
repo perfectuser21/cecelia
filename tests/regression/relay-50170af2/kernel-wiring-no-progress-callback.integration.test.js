@@ -29,7 +29,10 @@ vi.mock('../../../packages/brain/src/lib/harness-orphan-guard.js', () => ({
 }));
 
 import callbackRouter from '../../../packages/brain/src/routes/harness-callback.js';
-import { deriveCounters } from '../../../packages/brain/src/orchestrator/counters.js';
+import {
+  deriveCounters,
+  replayProductConvergence,
+} from '../../../packages/brain/src/orchestrator/counters.js';
 import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const RUN_ID = '80000000-0000-4000-8000-000000000008';
@@ -110,13 +113,17 @@ async function postCallback(app, result) {
     .send(result);
 }
 
-function installCallbackPersistence({ callbackRows }) {
+function installCallbackPersistence({
+  callbackRows,
+  prUrl = PR_URL,
+  triggerSha = SHA,
+}) {
   runtime.pool.query.mockImplementation(async (sql, params = []) => {
     if (sql.includes('initiative_runs') && sql.includes('pr_url')) {
       return {
         rows: [{
-          pr_url: PR_URL,
-          trigger_sha: SHA,
+          pr_url: prUrl,
+          trigger_sha: triggerSha,
         }],
         rowCount: 1,
       };
@@ -345,7 +352,7 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
 
   test('fake provider-metadata SHA becomes replayable unverified no-progress at the trigger SHA', async () => {
     const callbackRows = [];
-    const resolver = vi.fn(async () => VERIFIED_SHA);
+    const resolver = vi.fn(async () => SHA);
     installCallbackPersistence({ callbackRows });
     const app = mountCallbackRouter({ resolver });
 
@@ -369,6 +376,55 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
     });
     expect(JSON.stringify(callbackRows[0])).not.toContain(FAKE_SHA);
     expect(resolver).toHaveBeenCalledWith(PR_URL);
+  });
+
+  test('current head advanced beyond the trigger stores a lagging callback claim as pending', async () => {
+    const callbackRows = [];
+    const resolver = vi.fn(async () => VERIFIED_SHA);
+    installCallbackPersistence({ callbackRows });
+    const app = mountCallbackRouter({ resolver });
+
+    const response = await postCallback(
+      app,
+      callbackResult({ artifactSha: FAKE_SHA }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(callbackRows).toHaveLength(1);
+    expect(callbackRows[0]).toMatchObject({
+      observed: {
+        trigger_hop: runtime.attempt.hop,
+        pr_head_sha: SHA,
+      },
+      detail: {
+        pr_head_sha: SHA,
+        claimed_pr_head_sha: FAKE_SHA,
+        verification_status: 'verification_pending',
+      },
+    });
+    expect(callbackRows[0].detail).not.toHaveProperty('no_progress_reason');
+  });
+
+  test('missing run pr_url stores the first valid callback claim as verification_pending', async () => {
+    const callbackRows = [];
+    const resolver = vi.fn(async () => VERIFIED_SHA);
+    installCallbackPersistence({ callbackRows, prUrl: null });
+    const app = mountCallbackRouter({ resolver });
+
+    const response = await postCallback(
+      app,
+      callbackResult({ artifactSha: VERIFIED_SHA }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(callbackRows[0]).toMatchObject({
+      detail: {
+        claimed_pr_head_sha: VERIFIED_SHA,
+        verification_status: 'verification_pending',
+      },
+    });
+    expect(callbackRows[0].detail).not.toHaveProperty('no_progress_reason');
   });
 
   test('resolver transport failure is verification_pending and does not trip no-progress', async () => {
@@ -413,5 +469,72 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
     }], { proposeBranchMaxRn: 0 });
     expect(counters.noProgress).toBe(false);
     expect(counters.noProgressReason).toBeNull();
+  });
+
+  test('a verified callback followed by update-branch continues on the new current head', () => {
+    const callbackSha = '2222222222222222222222222222222222222222';
+    const currentHeadSha = '3333333333333333333333333333333333333333';
+    const result = replayProductConvergence([
+      {
+        hop: 1,
+        action: 'spawn:generator-fix',
+        observed: {
+          trigger_sha: SHA,
+          failure_class: 'product_failure',
+        },
+        detail: { reason: 'ci_fail' },
+      },
+      {
+        hop: 2,
+        action: 'verdict:generator-fix-callback',
+        observed: { trigger_hop: 1, pr_head_sha: callbackSha },
+        detail: {
+          pr_head_sha: callbackSha,
+          verification_status: 'verified',
+        },
+      },
+    ], {
+      currentFailureSet: null,
+      currentHeadSha,
+    });
+
+    expect(result).toEqual({
+      outcome: 'continue',
+      reason: 'verified_new_sha',
+    });
+  });
+
+  test('a pending intermediate claim continues when GitHub confirms a newer head', () => {
+    const claimedSha = '2222222222222222222222222222222222222222';
+    const currentHeadSha = '3333333333333333333333333333333333333333';
+    const result = replayProductConvergence([
+      {
+        hop: 1,
+        action: 'spawn:generator-fix',
+        observed: {
+          trigger_sha: SHA,
+          failure_class: 'product_failure',
+        },
+        detail: { reason: 'ci_fail' },
+      },
+      {
+        hop: 2,
+        action: 'verdict:generator-fix-callback',
+        observed: { trigger_hop: 1, pr_head_sha: SHA },
+        detail: {
+          pr_head_sha: SHA,
+          claimed_pr_head_sha: claimedSha,
+          verification_status: 'verification_pending',
+        },
+      },
+    ], {
+      currentFailureSet: null,
+      currentHeadSha,
+    });
+
+    expect(result).toEqual({
+      outcome: 'continue',
+      reason: 'verified_new_sha',
+    });
   });
 });
