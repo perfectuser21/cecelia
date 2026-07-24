@@ -362,6 +362,111 @@ describe('规则 4c：judge FAIL → 显式分支（P0-2）', () => {
   });
 });
 
+describe('规则 4c：unsigned evidence approval one-shot repair', () => {
+  const unsignedVerdict = {
+    hop: 3,
+    action: 'verdict:evaluate',
+    detail: {
+      verdict: 'FAIL',
+      failure_class: 'evidence_invalid',
+      pr_head_sha: 'sha-new',
+    },
+  };
+  const firstRepair = {
+    hop: 4,
+    action: 'spawn:evaluator-evidence-repair',
+    observed: {
+      pr: { head_sha: 'sha-new' },
+      failure_class: 'evidence_invalid',
+    },
+  };
+  const repeatedUnsignedVerdict = {
+    hop: 5,
+    action: 'verdict:evaluate',
+    detail: {
+      verdict: 'FAIL',
+      failure_class: 'evidence_invalid',
+      pr_head_sha: 'sha-new',
+    },
+  };
+  const reviewRequest = {
+    hop: 6,
+    action: 'effect:human_review_requested',
+    observed: {
+      pr: { head_sha: 'sha-new' },
+      failure_class: 'evidence_invalid',
+    },
+    detail: { review_reason: 'unknown:missing_failure_signature' },
+  };
+  const approval = {
+    hop: 7,
+    action: 'verdict:human_review',
+    detail: {
+      approved: true,
+      review_class: 'evidence_repair',
+      pr_head_sha: 'sha-new',
+      review_request_hop: 6,
+    },
+  };
+
+  it('approval unlocks exactly one unsigned evidence repair', () => {
+    const r = derive(baseObserved({
+      evaluateVerdict: repeatedUnsignedVerdict.detail,
+      decisionLog: [
+        unsignedVerdict,
+        firstRepair,
+        repeatedUnsignedVerdict,
+        reviewRequest,
+        approval,
+      ],
+    }));
+
+    expect(r).toMatchObject({
+      phase: 'evaluate',
+      action: 'spawn:evaluator-evidence-repair',
+      reason: 'evidence_invalid:approved_single_retry',
+    });
+  });
+
+  it('another unsigned verdict after the approved repair fails without a second review', () => {
+    const approvedRepair = {
+      hop: 8,
+      action: 'spawn:evaluator-evidence-repair',
+      observed: {
+        pr: { head_sha: 'sha-new' },
+        failure_class: 'evidence_invalid',
+      },
+    };
+    const postApprovalVerdict = {
+      hop: 9,
+      action: 'verdict:evaluate',
+      detail: {
+        verdict: 'FAIL',
+        failure_class: 'evidence_invalid',
+        pr_head_sha: 'sha-new',
+      },
+    };
+    const r = derive(baseObserved({
+      evaluateVerdict: postApprovalVerdict.detail,
+      decisionLog: [
+        unsignedVerdict,
+        firstRepair,
+        repeatedUnsignedVerdict,
+        reviewRequest,
+        approval,
+        approvedRepair,
+        postApprovalVerdict,
+      ],
+    }));
+
+    expect(r).toMatchObject({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'repeated_evidence_invalid_after_approval',
+    });
+  });
+});
+
 describe('规则 4d：human review', () => {
   it('双 PASS && review_required && 未批准 → wait:human_review', () => {
     const r = derive(baseObserved({

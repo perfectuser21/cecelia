@@ -22,7 +22,7 @@ function createApprovalDatabase() {
       hop: 3,
       action: 'effect:human_review_requested',
       observed: { pr: { head_sha: HEAD_SHA } },
-      detail: { dispatch_hop: 2 },
+      detail: { dispatch_hop: 2, review_reason: 'awaiting_human_review' },
       created_at: REVIEW_REQUESTED_AT,
     }],
     currentSha: HEAD_SHA,
@@ -200,6 +200,7 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
     expect(state.insertedDetail).toMatchObject({
       verdict: 'APPROVED',
       approved: true,
+      review_class: 'merge_gate',
       pr_head_sha: HEAD_SHA,
       review_request_hop: 3,
       approved_by: 'review-owner',
@@ -284,6 +285,10 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
     });
 
     expect((await approvalRequest(app, { reviewRequestHop: 5 })).status).toBe(202);
+    expect(state.insertedDetail).toMatchObject({
+      review_class: 'convergence',
+      review_request_hop: 5,
+    });
     expect((await approvalRequest(app, { reviewRequestHop: 5 })).status).toBe(409);
     expect(state.decisionLog.filter(
       (row) => row.action === 'verdict:human_review'
