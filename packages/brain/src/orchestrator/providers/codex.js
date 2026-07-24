@@ -29,12 +29,24 @@ function invocation({ bundle, execution = {}, sessionId = null, continuation = n
   const paths = outputPaths(bundle, execution);
   const args = sessionId ? ['exec', 'resume', sessionId] : ['exec'];
   commonArgs(args, execution, paths);
+  const slot = execution.codexSlot;
+  const required = ['agent_id', 'lease_id', 'private_home', 'receipt', 'session_id'];
+  if (!slot || required.some(key => typeof slot[key] !== 'string' || !slot[key])) {
+    throw new Error('codex-slot receipt envelope required');
+  }
   return Object.freeze({
     provider: 'codex',
     command: execution.command ?? 'codex',
     args,
     cwd: execution.cwd ?? bundle?.inputs?.worktree_path,
-    env: execution.codexHome ? { CODEX_HOME: execution.codexHome } : {},
+    env: {
+      CODEX_HOME: slot.private_home,
+      CODEX_SLOT_AGENT_ID: slot.agent_id,
+      CODEX_SLOT_HOME: slot.private_home,
+      CODEX_SLOT_LEASE_ID: slot.lease_id,
+      CODEX_SLOT_RECEIPT: slot.receipt,
+      CODEX_SLOT_SESSION_ID: slot.session_id,
+    },
     stdin: buildProviderPrompt(bundle, continuation),
     output: {
       format: 'jsonl',

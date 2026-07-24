@@ -150,60 +150,37 @@ check_claude_accounts() {
   done
 }
 
-# ─── 3. Codex 账号 (wham/usage) ──────────────────────────────────────────────
-
-check_codex_account() {
-  local team="$1"
-  local auth_path="${HOME}/.codex-${team}/auth.json"
-
-  if [[ ! -f "$auth_path" ]]; then
-    json_set "credentials.codex_${team}" '{"status":"missing","account":"'"$team"'"}'
-    echo "[codex] ❌ ${team}: auth.json 不存在" >&2
-    return
-  fi
-
-  local access_token account_id
-  access_token=$(python3 -c "
-import json
-d = json.load(open('${auth_path}'))
-print(d.get('tokens', {}).get('access_token', ''))
-" 2>/dev/null || echo "")
-
-  account_id=$(python3 -c "
-import json
-d = json.load(open('${auth_path}'))
-print(d.get('tokens', {}).get('account_id', ''))
-" 2>/dev/null || echo "")
-
-  if [[ -z "$access_token" ]]; then
-    json_set "credentials.codex_${team}" '{"status":"invalid","account":"'"$team"'","error":"no access_token"}'
-    echo "[codex] ⚠️  ${team}: auth.json 缺 access_token" >&2
-    return
-  fi
-
-  local http_status
-  http_status=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "Authorization: Bearer ${access_token}" \
-    -H "ChatGPT-Account-Id: ${account_id}" \
-    -H "Accept: application/json" \
-    --max-time 10 \
-    "$WHAM_USAGE_URL" 2>/dev/null || echo "000")
-
-  if [[ "$http_status" == "200" ]]; then
-    json_set "credentials.codex_${team}" '{"status":"ok","account":"'"$team"'"}'
-    echo "[codex] ✅ ${team}: token 有效" >&2
-  elif [[ "$http_status" == "401" ]]; then
-    json_set "credentials.codex_${team}" '{"status":"expired","account":"'"$team"'","http_status":401}'
-    echo "[codex] ❌ ${team}: token 已过期 (401)" >&2
-  else
-    json_set "credentials.codex_${team}" "{\"status\":\"error\",\"account\":\"${team}\",\"http_status\":${http_status}}"
-    echo "[codex] ⚠️  ${team}: API 返回 ${http_status}" >&2
-  fi
-}
+# ─── 3. Codex 账号（codex-slot broker health probe）──────────────────────────
 
 check_codex_accounts() {
+  local required=(CODEX_SLOT_HOME CODEX_SLOT_AGENT_ID CODEX_SLOT_LEASE_ID CODEX_SLOT_RECEIPT CODEX_SLOT_SESSION_ID)
+  local key
+  for key in "${required[@]}"; do
+    if [[ -z "${!key:-}" ]]; then
+      for team in team1 team2 team3 team4 team5; do
+        json_set "credentials.codex_${team}" '{"status":"broker_error","account":"'"$team"'","error":"missing codex-slot receipt"}'
+      done
+      return
+    fi
+  done
+
+  # 真触发一次 receipt 私有目录中的 Codex；公司 auth/home/API key 不进入本进程。
+  if ! env -u OPENAI_API_KEY -u CODEX_RELAY_HOME CODEX_HOME="$CODEX_SLOT_HOME" \
+      codex --version >/dev/null 2>&1; then
+    for team in team1 team2 team3 team4 team5; do
+      json_set "credentials.codex_${team}" '{"status":"broker_error","account":"'"$team"'","error":"codex-slot health probe failed"}'
+    done
+    return
+  fi
+
+  local snapshot
+  snapshot=$(curl -fsS --max-time 10 "${BRAIN_URL:-http://localhost:5221}/api/brain/codex-usage") || snapshot='{}'
   for team in team1 team2 team3 team4 team5; do
-    check_codex_account "$team"
+    if echo "$snapshot" | jq -e --arg team "$team" '.source=="account_usage_cache" and (.usage[$team] != null)' >/dev/null; then
+      json_set "credentials.codex_${team}" '{"status":"ok","account":"'"$team"'","source":"account_usage_cache"}'
+    else
+      json_set "credentials.codex_${team}" '{"status":"stale","account":"'"$team"'","source":"account_usage_cache"}'
+    fi
   done
 }
 

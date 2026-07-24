@@ -6,7 +6,7 @@
 #   1. 从 Brain API 预拉任务描述（目标操作 + 参数）
 #   2. 构建 Playwright 探索 prompt（含 CDP 连接地址、脚本保存路径、工作流指令）
 #   3. 调用 codex-bin exec 执行探索
-#   4. Quota 超限时自动切换账号（复用 codex runner.sh 模式）
+#   4. codex-slot receipt 私有目录运行；Quota 超限失败关闭
 #
 # 用途：crystallize 流水线的 Forge 阶段（第2步）：Codex 探索写 Playwright .cjs 脚本
 #
@@ -19,9 +19,7 @@
 #
 # 环境变量:
 #   CODEX_BIN          — codex-bin 路径（默认 /opt/homebrew/bin/codex-bin）
-#   CODEX_HOMES        — 冒号分隔的多账号路径（优先于 CODEX_HOME）
-#   CODEX_HOME         — 单账号配置目录（默认 ~/.codex）
-#   CODEX_API_KEY      — OpenAI API Key
+#   CODEX_HOME         — codex-slot receiver 准备的 receipt 私有目录
 #   CODEX_MODEL        — Codex 模型（默认 codex-mini-latest）
 #   CODEX_MAX_RETRIES  — 最大重试次数（默认 5）
 #   BRAIN_API_URL      — Brain API 地址（默认 http://localhost:5221）
@@ -60,34 +58,11 @@ BRAIN_API_URL="${BRAIN_API_URL:-http://localhost:5221}"
 PC_CDP_URL="${PC_CDP_URL:-http://100.97.242.124:19225}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-$HOME/playwright-scripts}"
 
-# ===== 账号列表初始化 =====
-# Phase 7.3: bash 3.2 set -u compat — CODEX_HOMES 为空字符串时 read -ra 会清空数组，
-# 后续 ${CODEX_ACCOUNT_LIST[0]} 会炸。空字符串降级到单账号模式
-CODEX_ACCOUNT_LIST=()
-if [[ -n "${CODEX_HOMES:-}" ]]; then
-    IFS=':' read -ra CODEX_ACCOUNT_LIST <<< "$CODEX_HOMES"
-fi
-if [[ ${#CODEX_ACCOUNT_LIST[@]} -eq 0 ]]; then
-    CODEX_ACCOUNT_LIST=("${CODEX_HOME:-$HOME/.codex}")
-    echo "🔑 单账号模式: ${CODEX_ACCOUNT_LIST[0]}"
-else
-    echo "🔑 多账号模式：${#CODEX_ACCOUNT_LIST[@]} 个账号"
-fi
-CURRENT_ACCOUNT_IDX=0
-export CODEX_HOME="${CODEX_ACCOUNT_LIST[0]}"
-
-# ===== 加载 API Key =====
-if [[ -z "${CODEX_API_KEY:-}" ]]; then
-    CREDENTIALS_FILE="$HOME/.credentials/openai.env"
-    if [[ -f "$CREDENTIALS_FILE" ]]; then
-        _raw_key=$(grep -E '^OPENAI_API_KEY=' "$CREDENTIALS_FILE" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')
-        if [[ -n "$_raw_key" ]]; then
-            export CODEX_API_KEY="$_raw_key"
-            echo "✅ 从 $CREDENTIALS_FILE 加载 CODEX_API_KEY"
-        fi
-        unset _raw_key
-    fi
-fi
+# ===== codex-slot receipt 门禁 =====
+for key in CODEX_HOME CODEX_SLOT_AGENT_ID CODEX_SLOT_LEASE_ID CODEX_SLOT_RECEIPT CODEX_SLOT_SESSION_ID; do
+    [[ -n "${!key:-}" ]] || { echo "❌ codex-slot ${key} 未注入" >&2; exit 78; }
+done
+unset OPENAI_API_KEY CODEX_API_KEY CODEX_RELAY_HOME
 
 # ===== 预拉任务描述 =====
 TASK_TITLE=""
@@ -240,9 +215,7 @@ fi
 RETRY_COUNT=0
 
 run_codex() {
-    local account_idx="$1"
-    export CODEX_HOME="${CODEX_ACCOUNT_LIST[$account_idx]}"
-    echo "🚀 调用 Codex（账号 $((account_idx + 1))/${#CODEX_ACCOUNT_LIST[@]}，模型: ${CODEX_MODEL}）..."
+    echo "🚀 调用 Codex（codex-slot session=${CODEX_SLOT_SESSION_ID}，模型: ${CODEX_MODEL}）..."
 
     local output
     output=$("$CODEX_BIN" exec \
@@ -260,17 +233,12 @@ run_codex() {
 
 while [[ $RETRY_COUNT -lt $CODEX_MAX_RETRIES ]]; do
     exit_code=0
-    run_codex "$CURRENT_ACCOUNT_IDX" || exit_code=$?
+    run_codex || exit_code=$?
 
     if [[ $exit_code -eq 2 ]]; then
-        echo "⚠️  Quota 超限，切换账号..."
-        CURRENT_ACCOUNT_IDX=$(( (CURRENT_ACCOUNT_IDX + 1) % ${#CODEX_ACCOUNT_LIST[@]} ))
-        if [[ $CURRENT_ACCOUNT_IDX -eq 0 ]]; then
-            echo "❌ 所有账号 Quota 超限" >&2
-            send_callback "AI Failed" "" "所有账号 Quota 超限"
-            exit 1
-        fi
-        continue
+        echo "❌ receipt Quota 超限；交还 codex-slot broker，禁止本地 fallback" >&2
+        send_callback "AI Failed" "" "codex-slot receipt quota exceeded"
+        exit 75
     fi
 
     if [[ $exit_code -eq 0 ]]; then

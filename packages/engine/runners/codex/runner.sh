@@ -13,13 +13,7 @@
 #   4. 调用 codex-bin exec 执行完整工作流
 #   5. 若 Codex 中途退出：以带上下文的恢复 prompt 重启（最多 MAX_RETRIES 次）
 #   6. [v2.6.0] 完成条件由 goal-based hook（--settings JSON）在 Codex 侧评估，不再轮询
-#   7. Quota 超限时自动切换账号（v2.3.0 新增）
-#
-# 设计原则（v2.3.0 新增账号轮换）：
-#   - CODEX_HOMES 支持冒号分隔的多个 CODEX_HOME 路径
-#   - 若某轮输出含 "Quota exceeded"，自动切换下一个账号继续（不计入重试次数）
-#   - 所有账号耗尽才真正失败
-#   - 未设置 CODEX_HOMES 时，降级使用单一 CODEX_HOME（向后兼容）
+#   7. codex-slot receipt 私有目录是唯一凭据入口；额度墙失败关闭，不本地轮换。
 #
 # 设计原则（v2.2.0 修复）：
 #   - PRD 内容在 US 侧预拉，嵌入 prompt（避免 Codex 在 M4 调 localhost:5221）
@@ -35,11 +29,9 @@
 #
 # 环境变量:
 #   CODEX_BIN          — codex-bin 路径（默认 /opt/homebrew/bin/codex-bin）
-#   CODEX_HOMES        — 冒号分隔的多账号路径（v2.3.0，优先于 CODEX_HOME）
-#                        例: /home/user/.codex-team1:/home/user/.codex-team2
-#   CODEX_HOME         — 单账号配置目录（CODEX_HOMES 未设置时使用，默认 ~/.codex）
+#   CODEX_HOME         — codex-slot receiver 准备的 receipt 私有目录（必填）
 #   CODEX_MODEL        — Codex 模型（默认 gpt-5.4）
-#   CODEX_MAX_RETRIES  — 最大重试次数（默认 10，账号切换不计入）
+#   CODEX_MAX_RETRIES  — 最大重试次数（默认 10）
 #   CECELIA_HEADLESS   — 设为 true 表示无头模式（自动设置）
 #   BRAIN_API_URL      — Brain API 地址（默认 http://localhost:5221，M4 需设置远程）
 #
@@ -81,28 +73,19 @@ CODEX_MAX_RETRIES="${CODEX_MAX_RETRIES:-10}"
 BRAIN_API_URL="${BRAIN_API_URL:-http://localhost:5221}"
 export CECELIA_HEADLESS=true
 
-# ===== 账号列表初始化（v2.3.0）=====
-# CODEX_HOMES 优先：冒号分隔的多账号路径
-# 未设置时降级到单一 CODEX_HOME（向后兼容）
-# Phase 7.3: bash 3.2 set -u compat — CODEX_HOMES 为空字符串时 read -ra 会清空数组，
-# 后续 ${CODEX_ACCOUNT_LIST[0]} 会炸。空字符串降级到单账号模式
-CODEX_ACCOUNT_LIST=()
-if [[ -n "${CODEX_HOMES:-}" ]]; then
-    IFS=':' read -ra CODEX_ACCOUNT_LIST <<< "$CODEX_HOMES"
+# ===== codex-slot receipt 门禁 =====
+if [[ "$DRY_RUN" == "true" ]]; then
+    export CODEX_HOME="${CODEX_HOME:-/tmp/codex-slot-dry-run}"
+    export CODEX_SLOT_AGENT_ID="${CODEX_SLOT_AGENT_ID:-dry-run}"
+    export CODEX_SLOT_LEASE_ID="${CODEX_SLOT_LEASE_ID:-00000000-0000-4000-8000-000000000000}"
+    export CODEX_SLOT_RECEIPT="${CODEX_SLOT_RECEIPT:-dry-run-receipt}"
+    export CODEX_SLOT_SESSION_ID="${CODEX_SLOT_SESSION_ID:-00000000-0000-4000-8000-000000000001}"
 fi
-if [[ ${#CODEX_ACCOUNT_LIST[@]} -eq 0 ]]; then
-    CODEX_ACCOUNT_LIST=("${CODEX_HOME:-$HOME/.codex}")
-    echo "🔑 单账号模式（向后兼容）: ${CODEX_ACCOUNT_LIST[0]}"
-else
-    echo "🔑 多账号模式：${#CODEX_ACCOUNT_LIST[@]} 个账号"
-    for i in "${!CODEX_ACCOUNT_LIST[@]}"; do
-        echo "   账号 $((i+1)): ${CODEX_ACCOUNT_LIST[$i]}"
-    done
-fi
-
-# 当前账号索引（从 0 开始）
-CURRENT_ACCOUNT_IDX=0
-export CODEX_HOME="${CODEX_ACCOUNT_LIST[0]}"
+for key in CODEX_HOME CODEX_SLOT_AGENT_ID CODEX_SLOT_LEASE_ID CODEX_SLOT_RECEIPT CODEX_SLOT_SESSION_ID; do
+    [[ -n "${!key:-}" ]] || { echo "❌ codex-slot ${key} 未注入" >&2; exit 78; }
+done
+export CODEX_HOME
+unset OPENAI_API_KEY CODEX_RELAY_HOME
 
 # ===== 预拉 PRD 内容（v2.2.0）=====
 # 在 US 侧（有 Brain）预拉 PRD，避免 Codex 在 M4 侧尝试访问 localhost:5221
@@ -293,19 +276,6 @@ ${prd_section}
 PROMPT
 }
 
-# ===== 账号切换函数（v2.3.0）=====
-# 返回 0：切换成功；返回 1：所有账号已耗尽
-switch_to_next_account() {
-    CURRENT_ACCOUNT_IDX=$((CURRENT_ACCOUNT_IDX + 1))
-    if [[ $CURRENT_ACCOUNT_IDX -ge ${#CODEX_ACCOUNT_LIST[@]} ]]; then
-        echo "❌ 所有账号（${#CODEX_ACCOUNT_LIST[@]} 个）均已耗尽，任务失败" >&2
-        return 1
-    fi
-    export CODEX_HOME="${CODEX_ACCOUNT_LIST[$CURRENT_ACCOUNT_IDX]}"
-    echo "🔄 账号切换：切换到账号 $((CURRENT_ACCOUNT_IDX + 1))/${#CODEX_ACCOUNT_LIST[@]}（${CODEX_HOME}）"
-    return 0
-}
-
 # ===== 主循环 =====
 echo "🚀 Codex Runner v2.5.0 启动"
 echo "   分支: $BRANCH"
@@ -313,7 +283,7 @@ echo "   Task: ${TASK_ID:-（无）}"
 echo "   Skill: $SKILL"
 echo "   MaxRetries: $CODEX_MAX_RETRIES"
 echo "   ProjectRoot: $PROJECT_ROOT"
-echo "   账号数: ${#CODEX_ACCOUNT_LIST[@]}"
+echo "   codex-slot agent: $CODEX_SLOT_AGENT_ID"
 echo "   当前账号: $CODEX_HOME"
 echo "   DryRun: $DRY_RUN"
 echo "   BrainAPI: $BRAIN_API_URL"
@@ -340,7 +310,7 @@ while true; do
     fi
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  [Codex Runner: 第 $RETRY_COUNT/$CODEX_MAX_RETRIES 轮 | 账号 $((CURRENT_ACCOUNT_IDX+1))/${#CODEX_ACCOUNT_LIST[@]}]"
+    echo "  [Codex Runner: 第 $RETRY_COUNT/$CODEX_MAX_RETRIES 轮 | receipt session=$CODEX_SLOT_SESSION_ID]"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # ===== v2.6.0: goal-based 完成判断 =====
@@ -389,25 +359,10 @@ while true; do
     # 输出到 stdout（让日志可见）
     echo "$CODEX_OUTPUT"
 
-    # ===== Quota 检测与账号切换（v2.3.0 / v2.5.0 退避优化）=====
+    # ===== Quota 检测：broker 是唯一 issuer，本 runner 禁止本地切换账号 =====
     if echo "$CODEX_OUTPUT" | grep -qi "Quota exceeded"; then
-        echo ""
-        echo "  ⚠️  检测到 Quota exceeded（账号 $((CURRENT_ACCOUNT_IDX+1)): ${CODEX_HOME}）"
-        if switch_to_next_account; then
-            echo "  ↩️  本轮不计入重试次数，等待 30s 后使用新账号（避免 rate limit）"
-            RETRY_COUNT=$((RETRY_COUNT - 1))
-            sleep 30
-            continue
-        else
-            # 所有账号耗尽：等待 60s 后重置账号列表重试（v2.5.0）
-            echo "  🔁 所有账号耗尽，等待 60s 后重置账号列表重试（rate limit 窗口恢复）"
-            sleep 60
-            CURRENT_ACCOUNT_IDX=0
-            export CODEX_HOME="${CODEX_ACCOUNT_LIST[0]}"
-            RETRY_COUNT=$((RETRY_COUNT - 1))
-            echo "  🔄 账号已重置为 账号 1/${#CODEX_ACCOUNT_LIST[@]}（${CODEX_HOME}）"
-            continue
-        fi
+        echo "  ❌ receipt 命中 Quota exceeded；交还 codex-slot broker，禁止本地 fallback" >&2
+        exit 75
     fi
 
     if [[ $CODEX_EXIT_CODE -ne 0 ]]; then

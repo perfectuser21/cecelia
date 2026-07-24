@@ -16,7 +16,7 @@
 import crypto from 'crypto';
 import { spawn, execSync, exec } from 'child_process';
 import { writeFile, mkdir, access } from 'fs/promises';
-import { readFileSync, readdirSync, unlinkSync } from 'fs';
+import { readFileSync, readdirSync, realpathSync, unlinkSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -37,6 +37,7 @@ import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import { EXECUTOR_KIND_FOR } from './executor-contracts.js';
+import { acquireCodexSlot } from './codex-slot-broker.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
   _resetCpuSampler as platformResetCpuSampler,
@@ -175,41 +176,17 @@ const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.8
 // 西安 Mac mini M1 Codex Bridge URL (via Tailscale)
 const XIAN_M1_BRIDGE_URL = process.env.XIAN_M1_BRIDGE_URL || 'http://100.88.166.55:3458';
 
-// 多机 Codex Bridge 列表（负载均衡）
-const CODEX_BRIDGES = (process.env.CODEX_BRIDGES || 'http://100.86.57.69:3458,http://100.88.166.55:3458')
-  .split(',').map(s => s.trim()).filter(Boolean);
-
 /**
- * 从多个 Codex Bridge 中选择最空闲的
+ * Codex Slot broker 是唯一选机者；executor 只把 receipt 指定的 agent 映射到 receiver。
  */
-async function selectBestBridge() {
-  const results = await Promise.allSettled(
-    CODEX_BRIDGES.map(async (url) => {
-      const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (!data.ok || data.status !== 'healthy') throw new Error('unhealthy');
-      const accounts = Array.isArray(data.accounts) ? data.accounts : [];
-      const available = accounts.filter(a => !a.tokenExpired);
-      if (available.length === 0) throw new Error('no available accounts');
-      const avgPct = available.reduce((sum, a) => sum + (a.primaryUsedPct || 0), 0) / available.length;
-      return { url, avgPct, accountCount: available.length };
-    })
-  );
-
-  const healthy = results
-    .map((r) => r.status === 'fulfilled' ? r.value : null)
-    .filter(Boolean)
-    .sort((a, b) => a.avgPct - b.avgPct);
-
-  if (healthy.length === 0) {
-    console.warn('[executor] 所有 Codex Bridge 不可用，降级到 XIAN_CODEX_BRIDGE_URL');
-    return XIAN_CODEX_BRIDGE_URL;
-  }
-
-  const selected = healthy[0];
-  console.log(`[executor] Bridge 选择: ${selected.url} (avgPct=${selected.avgPct.toFixed(1)}%, accounts=${selected.accountCount})`);
-  return selected.url;
+function selectBestBridge(agentId) {
+  const routes = {
+    'xian-m1': XIAN_M1_BRIDGE_URL,
+    'xian-m4': XIAN_CODEX_BRIDGE_URL,
+  };
+  const selected = routes[agentId];
+  if (!selected) throw new Error(`codex-slot receipt 指定未知 agent: ${agentId}`);
+  return selected;
 }
 
 // 静态机器注册表 + 选机函数已删除（phase 2 单元2，死代码：派发链从未调用，仅自引用）。
@@ -219,6 +196,23 @@ async function selectBestBridge() {
 
 const SAFE_ID_RE = /^[0-9a-zA-Z_-]+$/;
 const PID_RE = /^\d+$/;
+
+function isolatedCodexEnv(homeVariable, extra = {}) {
+  const configured = process.env[homeVariable];
+  if (!configured) throw new Error(`${homeVariable} 未配置`);
+  const resolved = realpathSync(configured);
+  const allowlist = (process.env.CODEX_ISOLATED_ROOT_ALLOWLIST || '')
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map(root => realpathSync(root));
+  if (!allowlist.some(root => resolved === root || resolved.startsWith(`${root}${path.sep}`))) {
+    throw new Error(`${homeVariable} realpath 不在 root allowlist`);
+  }
+  const env = { ...process.env, ...extra, CODEX_HOME: resolved };
+  delete env.CODEX_RELAY_HOME;
+  delete env.OPENAI_API_KEY;
+  return env;
+}
 
 /**
  * Validate that a value is a safe UUID/hex-dash identifier before shell use.
@@ -2425,7 +2419,11 @@ async function triggerCodexReview(task) {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: WORK_DIR,
-      env: { ...process.env, TASK_ID: task.id, RUN_ID: runId, BRAIN_URL: process.env.BRAIN_URL || 'http://localhost:5221' },
+      env: isolatedCodexEnv('CODEX_REVIEW_HOME', {
+        TASK_ID: task.id,
+        RUN_ID: runId,
+        BRAIN_URL: process.env.BRAIN_URL || 'http://localhost:5221',
+      }),
     });
 
     // 收集 stdout，解析审查结果后回调 Brain
@@ -2499,58 +2497,6 @@ async function triggerCodexReview(task) {
   }
 }
 
-/**
- * 从美国 M4 本地 auth.json 选出额度最低的 Codex 账号，用于注入到 Xi'an bridge。
- * 读取 ~/.codex-team{1-5}/auth.json，并发查询 wham/usage，按 5h 使用率升序排序。
- *
- * @param {number} maxAccounts - 最多返回账号数，默认 3
- * @returns {Promise<Array<{id: string, auth: object}>>}
- */
-export async function pickLocalAccountByDeficit(maxAccounts = 3) {
-  const teams = ['team1', 'team2', 'team3', 'team4', 'team5'];
-  const results = await Promise.all(teams.map(async (id) => {
-    try {
-      const authPath = path.join(os.homedir(), `.codex-${id}`, 'auth.json');
-      const auth = JSON.parse(readFileSync(authPath, 'utf8'));
-      const token = auth.tokens?.access_token;
-      const accountId = auth.tokens?.account_id;
-      if (!token) return null;
-
-      const res = await fetch('https://chatgpt.com/backend-api/wham/usage', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'ChatGPT-Account-Id': accountId,
-          'Accept': 'application/json',
-        },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) return null;
-      const data = await res.json();
-      const fiveHourPct = data.rate_limit?.primary_window?.used_percent ?? 100;
-      // 5h gate：超过 95% 直接跳过
-      if (fiveHourPct > 95) return null;
-      const sw = data.rate_limit?.secondary_window;
-      const sevenDayPct = sw?.used_percent ?? 0;
-      const resetAfterSecs = sw?.reset_after_seconds ?? 0;
-      // 进度对齐（deficit）：已过时间占比 - 实际使用率，值越大越落后于目标
-      const SEVEN_DAY_SECS = 7 * 24 * 3600;
-      const elapsedSecs = SEVEN_DAY_SECS - resetAfterSecs;
-      const targetPct = (elapsedSecs / SEVEN_DAY_SECS) * 100;
-      const deficit = targetPct - sevenDayPct;
-      return { id, auth, fiveHourPct, deficit };
-    } catch {
-      return null;
-    }
-  }));
-
-  return results
-    .filter(Boolean)
-    // deficit DESC（最落后先用）；同 deficit 时 5h 用量 ASC
-    .sort((a, b) => b.deficit - a.deficit || a.fiveHourPct - b.fiveHourPct)
-    .slice(0, maxAccounts)
-    .map(({ id, auth }) => ({ id, auth }));
-}
-
 /** Build prompt with decisions summary injection for Codex tasks. */
 async function buildCodexPromptContent(task) {
   let promptContent = task.description || task.title || '请执行此任务';
@@ -2591,7 +2537,7 @@ function buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize) {
 }
 
 /** Assemble the full request body for the Codex Bridge /run endpoint. */
-function buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize) {
+function buildCodexBridgePayload(task, promptContent, taskBranch, slot, isCodexDev, isCrystallize) {
   const { runner, runner_args } = buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize);
   const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
   return {
@@ -2604,25 +2550,30 @@ function buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccoun
     runner,
     runner_args,
     branch: taskBranch,
-    accounts: injectedAccounts.length > 0 ? injectedAccounts : undefined,
     callback_url: `${brainUrl}/api/brain/execution-callback`,
+    slot,
   };
 }
 
-/** Select best accounts from US local Brain; falls back to empty (Xi'an selects locally). */
-async function selectCodexAccounts() {
-  try {
-    const accounts = await pickLocalAccountByDeficit(3);
-    if (accounts.length > 0) {
-      console.log(`[executor] 账号注入: ${accounts.map(a => a.id).join(', ')}`);
-      return accounts;
-    }
-    console.warn('[executor] 账号注入失败（全部查询失败），降级到 Xi\'an 本地选账号');
-    return [];
-  } catch (err) {
-    console.warn(`[executor] 账号选择异常（降级）: ${err.message}`);
-    return [];
-  }
+async function acquireExecutionSlot(task, idempotencyKey) {
+  const identityRef = task.payload?.codex_slot_identity_ref
+    || process.env.CODEX_SLOT_EXECUTOR_IDENTITY_REF
+    || 'service:brain-executor';
+  const result = await acquireCodexSlot({
+    body: {
+      name: `task-${task.id.slice(0, 36)}`,
+      project: String(task.payload?.project || 'cecelia').slice(0, 64),
+    },
+    idempotencyKey,
+    identityKind: 'uid',
+    identityRef,
+  });
+  return {
+    agent_id: result.public.agent_id,
+    lease_id: result.public.lease_id,
+    receipt: result.receipt,
+    session_id: result.public.session_id,
+  };
 }
 
 /**
@@ -2645,13 +2596,29 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
 
     const promptContent = await buildCodexPromptContent(task);
     const taskBranch = buildCodexTaskBranch(task, isCodexDev);
-    const injectedAccounts = await selectCodexAccounts();
-
-    const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
-    const payload = buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize);
+    const slot = await acquireExecutionSlot(task, runId);
+    const brokerRoute = selectBestBridge(slot.agent_id);
+    if (forceBridgeUrl && forceBridgeUrl !== brokerRoute) {
+      throw new Error(`codex-slot receipt agent ${slot.agent_id} 与固定 receiver 不匹配`);
+    }
+    const bridgeUrl = forceBridgeUrl || brokerRoute;
+    const payload = buildCodexBridgePayload(
+      task,
+      promptContent,
+      taskBranch,
+      slot,
+      isCodexDev,
+      isCrystallize,
+    );
+    const receiverToken = process.env.CODEX_SLOT_RECEIVER_TOKEN;
+    if (!receiverToken) throw new Error('CODEX_SLOT_RECEIVER_TOKEN 未配置');
     const response = await fetch(`${bridgeUrl}/run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: `Bearer ${receiverToken}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': runId,
+      },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15000),
     });
@@ -2663,8 +2630,8 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
       return { success: false, taskId: task.id, error: result.error, executor: 'codex-bridge' };
     }
 
-    console.log(`[executor] Codex Bridge accepted task=${task.id} account=${result.account}`);
-    return { success: true, taskId: task.id, runId, executor: 'codex-bridge', account: result.account };
+    console.log(`[executor] Codex Bridge accepted task=${task.id} agent=${slot.agent_id}`);
+    return { success: true, taskId: task.id, runId, executor: 'codex-bridge', slot };
   } catch (err) {
     console.error(`[executor] Codex Bridge error: ${err.message}`);
     return { success: false, taskId: task.id, error: err.message, executor: 'codex-bridge' };
@@ -2756,13 +2723,14 @@ const MAX_REVIEW_SLOTS = 2;
  */
 async function triggerLocalCodexExec(task) {
   const CODEX_BIN = process.env.CODEX_BIN || '/opt/homebrew/bin/codex-bin';
-  const CODEX_HOME = process.env.CODEX_REVIEW_HOME || process.env.CODEX_HOME || '';
   const CODEX_MODEL = process.env.CODEX_REVIEW_MODEL || process.env.CODEX_MODEL || 'gpt-5.4';
   const REPO_ROOT = process.env.CECELIA_WORK_DIR || '/Users/administrator/perfect21/cecelia';
   const WEBHOOK_URL = process.env.CECELIA_WEBHOOK_URL || 'http://localhost:5221/api/brain/execution-callback';
   const runId = generateRunId(task.id);
 
   try {
+    const reviewEnv = isolatedCodexEnv('CODEX_REVIEW_HOME');
+    const reviewHome = reviewEnv.CODEX_HOME;
     console.log(`[executor] Local Codex CLI for task=${task.id} type=${task.task_type}`);
 
     // --- Acquire review slot (atomic mkdir) ---
@@ -2839,7 +2807,8 @@ async function triggerLocalCodexExec(task) {
     await writeFile(tmpPromptFile, promptContent);
     const scriptContent = [
       '#!/bin/bash',
-      `CODEX_HOME="${CODEX_HOME}" "${CODEX_BIN}" exec --model "${CODEX_MODEL}" --sandbox danger-full-access "$(cat '${tmpPromptFile}')" 2>&1`,
+      'unset CODEX_RELAY_HOME OPENAI_API_KEY',
+      `CODEX_HOME="${reviewHome}" "${CODEX_BIN}" exec --model "${CODEX_MODEL}" --sandbox danger-full-access "$(cat '${tmpPromptFile}')" 2>&1`,
       'EXIT=$?',
       `rm -f "${tmpPromptFile}" 2>/dev/null; rm -rf "${slotPath}" 2>/dev/null; rm -f "${tmpScriptFile}" 2>/dev/null`,
       `curl -s -X POST "${WEBHOOK_URL}" -H "Content-Type: application/json" \\`,

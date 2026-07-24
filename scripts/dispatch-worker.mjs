@@ -11,8 +11,7 @@ import { join } from 'node:path';
 export const USABLE_THRESHOLD = 90;
 
 export const ACCOUNT_POOL = [
-  { vendor: 'codex', name: 'team1', home: join(homedir(), '.codex-team1') },
-  { vendor: 'codex', name: 'team2', home: join(homedir(), '.codex-team2') },
+  { vendor: 'codex', name: 'codex-slot', home: process.env.CODEX_SLOT_HOME || '' },
   // account1 是 controller 主线账号，不下场当 worker
   { vendor: 'claude', name: 'account2', home: join(homedir(), '.claude-account2') },
   { vendor: 'grok', name: 'grok', home: join(homedir(), '.grok') },
@@ -27,7 +26,19 @@ export function detectQuotaWall(text) {
 
 export function buildCommand(vendor, account, brief, dir) {
   if (vendor === 'codex') {
-    return { cmd: 'codex', args: ['exec', '--cd', dir, '--sandbox', 'workspace-write', '--skip-git-repo-check', brief], env: { CODEX_HOME: account.home }, cwd: dir };
+    return {
+      cmd: 'codex',
+      args: ['exec', '--cd', dir, '--sandbox', 'workspace-write', '--skip-git-repo-check', brief],
+      env: {
+        CODEX_HOME: account.home,
+        CODEX_SLOT_AGENT_ID: process.env.CODEX_SLOT_AGENT_ID,
+        CODEX_SLOT_LEASE_ID: process.env.CODEX_SLOT_LEASE_ID,
+        CODEX_SLOT_RECEIPT: process.env.CODEX_SLOT_RECEIPT,
+        CODEX_SLOT_SESSION_ID: process.env.CODEX_SLOT_SESSION_ID,
+        OPENAI_API_KEY: undefined,
+      },
+      cwd: dir,
+    };
   }
   if (vendor === 'claude') {
     // 必须用真身：裸 claude 被 claude-launch.sh alias 劫持，headless 报 _claude_launch not found
@@ -68,13 +79,17 @@ export async function queryUsage(account) {
       return { account, usable: existsSync(join(account.home, 'auth.json')), usedPercent: Infinity };
     }
     if (account.vendor === 'codex') {
-      const a = JSON.parse(readFileSync(join(account.home, 'auth.json'), 'utf8'));
-      const r = await fetch('https://chatgpt.com/backend-api/wham/usage', {
-        headers: { Authorization: `Bearer ${a.tokens?.access_token}`, 'ChatGPT-Account-Id': a.tokens?.account_id },
+      if (!account.home || !process.env.CODEX_SLOT_RECEIPT) return fail;
+      const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
+      const r = await fetch(`${brainUrl}/api/brain/codex-usage`, {
+        headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(8000),
       });
       if (!r.ok) return fail;
-      const pct = (await r.json()).rate_limit?.primary_window?.used_percent ?? 100;
+      const rows = Object.values((await r.json()).usage || {});
+      const pct = rows.length > 0
+        ? Math.min(...rows.map(row => Number(row.five_hour_pct ?? 100)))
+        : 100;
       return { account, usable: pct < USABLE_THRESHOLD, usedPercent: pct };
     }
     if (account.vendor === 'claude') {
@@ -106,11 +121,24 @@ export function parseArgs(argv) {
 
 function makeRealRunWorker(logFile) {
   return (account, brief, dir) => new Promise((resolve) => {
+    if (account.vendor === 'codex') {
+      const required = ['CODEX_SLOT_AGENT_ID', 'CODEX_SLOT_LEASE_ID', 'CODEX_SLOT_RECEIPT', 'CODEX_SLOT_SESSION_ID'];
+      const missing = required.find(key => !process.env[key]);
+      if (missing || !account.home) {
+        resolve({ output: `codex-slot ${missing || 'CODEX_SLOT_HOME'} missing`, exitCode: 78 });
+        return;
+      }
+    }
     const { cmd, args, env, cwd } = buildCommand(account.vendor, account, brief, dir);
     const ws = createWriteStream(logFile, { flags: 'a' });
     ws.write(`\n===== worker ${account.vendor}:${account.name} @ ${new Date().toISOString()} =====\n`);
     // stdin 必须 ignore：codex exec 见 stdin 是 pipe 会停下等输入（冒烟实证挂死）
-    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const childEnv = { ...process.env, ...env };
+    if (account.vendor === 'codex') {
+      delete childEnv.OPENAI_API_KEY;
+      delete childEnv.CODEX_RELAY_HOME;
+    }
+    const child = spawn(cmd, args, { cwd, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     for (const s of [child.stdout, child.stderr]) s.on('data', (c) => { output += c; ws.write(c); });
     child.on('close', (code) => { ws.end(); resolve({ output, exitCode: code ?? 1 }); });

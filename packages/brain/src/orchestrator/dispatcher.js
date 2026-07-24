@@ -153,10 +153,16 @@ function buildBundle(action, spec, ctx, attemptId, skill) {
 function executionConfig(payload, { provider, accountHome } = {}) {
   const execution = {};
   if (payload.model && payload.model !== 'auto') execution.model = payload.model;
-  if (payload.codex_home) execution.codexHome = payload.codex_home;
   if (payload.claude_home) execution.claudeHome = payload.claude_home;
   if (payload.grok_home) execution.grokHome = payload.grok_home;
-  if (accountHome && provider === 'codex') execution.codexHome = accountHome;
+  if (provider === 'codex') {
+    const slot = payload.codex_slot;
+    const required = ['agent_id', 'lease_id', 'private_home', 'receipt', 'session_id'];
+    if (!slot || required.some(key => typeof slot[key] !== 'string' || !slot[key])) {
+      throw new Error('codex-slot receipt envelope required');
+    }
+    execution.codexSlot = Object.fromEntries(required.map(key => [key, slot[key]]));
+  }
   if (accountHome && provider === 'claude') execution.claudeHome = accountHome;
   if (accountHome && provider === 'grok') execution.grokHome = accountHome;
   return execution;
@@ -187,7 +193,10 @@ export function createDispatcher(deps) {
       provider: requestedProvider,
       requires: ['structured_output'],
     });
-    const accountHome = spec.role === 'judge' || !requestedAccount
+    if (adapter?.name === 'codex' && requestedAccount) {
+      throw new Error('codex-slot forbids executor_account authority');
+    }
+    const accountHome = spec.role === 'judge' || !requestedAccount || adapter?.name === 'codex'
       ? null
       : resolveAccountHome(adapter.name, requestedAccount);
 
@@ -308,8 +317,9 @@ export function createDetachedLauncher({
         roleEnv.CONTRACT_BRANCH = String(bundle.inputs.contract_branch);
       }
       const extraMounts = [];
-      if (spec.provider === 'codex' && providerEnv.CODEX_HOME) {
-        extraMounts.push(`${providerEnv.CODEX_HOME}:/home/cecelia/.codex:rw`);
+      if (spec.provider === 'codex' && providerEnv.CODEX_SLOT_HOME) {
+        extraMounts.push(`${providerEnv.CODEX_SLOT_HOME}:/home/cecelia/.codex:rw`);
+        providerEnv.CODEX_SLOT_HOME = '/home/cecelia/.codex';
         providerEnv.CODEX_HOME = '/home/cecelia/.codex';
       }
       if (spec.provider === 'claude') {

@@ -5,11 +5,11 @@
 # 信号处理：SIGABRT/134/137/143 → 重试（最多 MAX_RETRIES=3 次）
 #            exit 0 / SIGINT(130) → 正常退出，不重启
 #
-# INV-11: 使用凭据快照目录（CODEX_HOME 由调用方注入已快照的临时目录）
+# INV-11: 只使用 codex-slot receipt 私有目录
 # INV-12: 保留 TTY 兼容性，不强制去 TTY
 #
 # 使用方式：
-#   CODEX_HOME=/tmp/codex-relay-cred-<id> bash codex-launch.sh --task-id <tid> --prompt-file <file>
+#   CODEX_HOME=/var/run/... CODEX_SLOT_RECEIPT=... bash codex-launch.sh --task-id <tid> --prompt-file <file>
 
 set -uo pipefail
 
@@ -25,9 +25,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# INV-11: CODEX_HOME 由外部注入（凭据快照目录），不使用宿主真实目录
-# 若未注入，沿用已有 CODEX_HOME 环境变量（由调用方在 tmux 命令中 export）
-export CODEX_HOME="${CODEX_HOME:-}"
+# INV-11: broker/receiver 注入 exact receipt envelope；任何缺失都失败关闭。
+for key in CODEX_HOME CODEX_SLOT_AGENT_ID CODEX_SLOT_LEASE_ID CODEX_SLOT_RECEIPT CODEX_SLOT_SESSION_ID; do
+  [[ -n "${!key:-}" ]] || { echo "[codex-launch] codex-slot ${key} missing" >&2; exit 78; }
+done
+unset OPENAI_API_KEY CODEX_RELAY_HOME
 
 MAX_RETRIES="${MAX_RETRIES:-3}"
 RETRY_COUNT=0

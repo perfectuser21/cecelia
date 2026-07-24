@@ -14,7 +14,8 @@
  */
 
 import { execSync, spawnSync } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, realpathSync } from 'fs';
+import { delimiter, sep } from 'node:path';
 import { parseCodexDecision as parseDecision, extractCodexSessionId as extractSessionId } from './lib/supervisor-parse.mjs';
 
 // ─── 配置常量 ─────────────────────────────────────────────────────────────────
@@ -26,6 +27,24 @@ const SUPERVISOR_DEADLINE_SECONDS = parseInt(
 const BRAIN_URL = process.env.BRAIN_URL ?? 'http://host.docker.internal:5221';
 const TASK_ID = process.env.HARNESS_TASK_ID ?? process.argv[2] ?? '';
 const SPRINT_DIR = process.env.HARNESS_SPRINT_DIR ?? '';
+const CODEX_SUPERVISOR_HOME = process.env.CODEX_SUPERVISOR_HOME ?? '';
+
+function isolatedSupervisorEnv() {
+  if (!CODEX_SUPERVISOR_HOME) throw new Error('CODEX_SUPERVISOR_HOME is required');
+  const home = realpathSync(CODEX_SUPERVISOR_HOME);
+  const allowlist = (process.env.CODEX_ISOLATED_ROOT_ALLOWLIST || '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map(root => realpathSync(root));
+  if (!allowlist.some(root => home === root || home.startsWith(`${root}${sep}`))) {
+    throw new Error('CODEX_SUPERVISOR_HOME realpath is outside root allowlist');
+  }
+  const env = { ...process.env, CODEX_HOME: home };
+  delete env.CODEX_RELAY_HOME;
+  delete env.OPENAI_API_KEY;
+  delete env.CODEX_API_KEY;
+  return env;
+}
 
 if (!TASK_ID) {
   console.error('[codex-supervisor] HARNESS_TASK_ID is required');
@@ -116,6 +135,7 @@ function runCodexTurn(sessionId, promptFile) {
 
   const result = spawnSync('codex', args, {
     encoding: 'utf8',
+    env: isolatedSupervisorEnv(),
     input,
     timeout: SUPERVISOR_DEADLINE_SECONDS * 1000,
     maxBuffer: 50 * 1024 * 1024,

@@ -1,21 +1,11 @@
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { getAccountUsage } from './account-usage.js';
+import pool from './db.js';
 
 const CACHE_TTL_MS = 60 * 1000;
-const REQUEST_TIMEOUT_MS = 8_000;
 const USABLE_THRESHOLD = 90;
-const CODEX_USAGE_API = 'https://chatgpt.com/backend-api/wham/usage';
-
-// team1~5 auth.json 全在本机（07-21 拍板 a1c86e2e：t1=Pro 大池，跨机只发 token 不跨机执行）
-const CODEX_ACCOUNTS = [
-  { vendor: 'codex', name: 'team1', home: join(homedir(), '.codex-team1') },
-  { vendor: 'codex', name: 'team2', home: join(homedir(), '.codex-team2') },
-  { vendor: 'codex', name: 'team3', home: join(homedir(), '.codex-team3') },
-  { vendor: 'codex', name: 'team4', home: join(homedir(), '.codex-team4') },
-  { vendor: 'codex', name: 'team5', home: join(homedir(), '.codex-team5') },
-];
 
 const GROK_ACCOUNTS = [
   { vendor: 'grok', name: 'grok', home: join(homedir(), '.grok') },
@@ -48,37 +38,6 @@ function buildCapacityDigest(snapshot) {
   return digest;
 }
 
-async function pollCodexAccount(account) {
-  try {
-    const auth = JSON.parse(readFileSync(join(account.home, 'auth.json'), 'utf8'));
-    const accessToken = auth?.tokens?.access_token;
-    const accountId = auth?.tokens?.account_id;
-    if (!accessToken || !accountId) {
-      return { ...account, available: false, used_percent: 100, source: 'missing_access_token' };
-    }
-    const response = await fetch(CODEX_USAGE_API, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'ChatGPT-Account-Id': accountId,
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      return { ...account, available: false, used_percent: 100, source: `http_${response.status}` };
-    }
-    const payload = await response.json();
-    const usedPercent = payload?.rate_limit?.primary_window?.used_percent ?? 100;
-    return {
-      ...account,
-      available: usedPercent < USABLE_THRESHOLD,
-      used_percent: usedPercent,
-      source: 'usage_api',
-    };
-  } catch (error) {
-    return { ...account, available: false, used_percent: 100, source: `poll_error:${error.message}` };
-  }
-}
-
 async function pollClaudeLedger() {
   const usage = await getAccountUsage();
   const accounts = Object.values(usage).map((row) => ({
@@ -93,7 +52,21 @@ async function pollClaudeLedger() {
 }
 
 async function pollCodexLedger() {
-  const accounts = await Promise.all(CODEX_ACCOUNTS.map(pollCodexAccount));
+  // codex-slot-broker is the sole issuer; capacity reads its no-secret projection.
+  const result = await pool.query(
+    `SELECT account_id, five_hour_pct, seven_day_pct
+       FROM account_usage_cache
+      WHERE fetched_at > NOW() - INTERVAL '15 minutes'
+      ORDER BY account_id`,
+  );
+  const accounts = result.rows.map(row => ({
+    vendor: 'codex',
+    name: row.account_id,
+    available: Number(row.five_hour_pct) < USABLE_THRESHOLD,
+    used_percent: Number(row.five_hour_pct),
+    seven_day_pct: Number(row.seven_day_pct),
+    source: 'account_usage_cache',
+  }));
   return buildVendorLedger('codex', accounts);
 }
 

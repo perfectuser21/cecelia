@@ -37,7 +37,6 @@ export const TRIGGER_WINDOW_MINUTES = 5;
 // ── 服务地址 ──────────────────────────────────────────────────────────────────
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
-const CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
 
 // ── 账号列表 ──────────────────────────────────────────────────────────────────
 
@@ -148,43 +147,35 @@ export function checkClaudeCredentials() {
 }
 
 /**
- * 检查 Codex 账号 auth 状态（通过 Codex bridge /accounts）
+ * 检查 Codex 账号状态（只读 codex-slot broker 的 account_usage_cache）。
  * @returns {Promise<Array<{account: string, status: string, error?: string}>>}
  */
-export async function checkCodexAuth() {
+export async function checkCodexAuth(dbPool) {
   try {
-    const resp = await fetch(`${CODEX_BRIDGE_URL}/accounts`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!resp.ok) {
-      return CODEX_ACCOUNTS.map(a => ({
-        account: a,
-        status: 'bridge_error',
-        error: `HTTP ${resp.status}`,
-      }));
-    }
-    const data = await resp.json();
-
-    // bridge 返回格式：{ team1: { used_percent, auth_failed, ... }, ... } 或 数组
-    if (Array.isArray(data)) {
-      return data.map(item => ({
-        account: item.accountId || item.account || 'unknown',
-        status: item.auth_failed ? 'expired' : 'ok',
-        error: item.error,
-      }));
-    }
+    if (!dbPool || typeof dbPool.query !== 'function') throw new Error('database unavailable');
+    const result = await dbPool.query(
+      `SELECT account_id, fetched_at
+         FROM account_usage_cache
+        WHERE account_id = ANY($1::text[])`,
+      [CODEX_ACCOUNTS],
+    );
+    const fresh = new Map(result.rows.map(row => [
+      row.account_id,
+      Date.now() - new Date(row.fetched_at).getTime() < 15 * 60 * 1000,
+    ]));
     return CODEX_ACCOUNTS.map(account => {
-      const info = data[account] || {};
       return {
         account,
-        status: (info.auth_failed || info.error) ? 'expired' : 'ok',
-        error: info.error,
+        status: fresh.get(account) ? 'ok' : 'stale',
+        source: 'account_usage_cache',
+        error: fresh.has(account) ? undefined : 'missing broker usage projection',
       };
     });
   } catch (err) {
     return CODEX_ACCOUNTS.map(a => ({
       account: a,
-      status: 'bridge_unreachable',
+      status: 'cache_error',
+      source: 'account_usage_cache',
       error: err.message,
     }));
   }
@@ -308,7 +299,7 @@ export async function runCredentialsHealthCheck(pool, now = new Date()) {
 
   // ── 3. Codex 账号 ──────────────────────────────────────────────────────────
   try {
-    const codexResults = await checkCodexAuth();
+    const codexResults = await checkCodexAuth(pool);
     results.codex = codexResults;
 
     const allUnreachable = codexResults.every(a => a.status === 'bridge_unreachable');

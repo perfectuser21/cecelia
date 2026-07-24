@@ -1139,48 +1139,38 @@ router.get('/account/best', async (_req, res) => {
 
 /**
  * GET /api/brain/codex-usage
- * 代理西安 codex-bridge 的 /accounts 端点，返回 5 个 Codex 账号用量
+ * 只读 Codex Slot broker 写入的 account_usage_cache 无秘密投影。
  */
-let _codexUsageCache = null;
-let _codexUsageFetchedAt = 0;
-const CODEX_USAGE_TTL_MS = 3 * 60 * 1000; // 3 分钟缓存
-const CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
+async function readCodexUsageCache() {
+  const result = await pool.query(
+    `SELECT account_id, five_hour_pct, seven_day_pct, seven_day_resets_at, fetched_at
+       FROM account_usage_cache
+      WHERE fetched_at > NOW() - INTERVAL '15 minutes'
+      ORDER BY account_id`,
+  );
+  return Object.fromEntries(result.rows.map(row => [row.account_id, {
+    five_hour_pct: Number(row.five_hour_pct),
+    seven_day_pct: Number(row.seven_day_pct),
+    resets_at: row.seven_day_resets_at,
+    fetched_at: row.fetched_at,
+  }]));
+}
 
 router.get('/codex-usage', async (_req, res) => {
   try {
-    const now = Date.now();
-    if (_codexUsageCache && (now - _codexUsageFetchedAt) < CODEX_USAGE_TTL_MS) {
-      return res.json({ ok: true, usage: _codexUsageCache, cached: true });
-    }
-    const resp = await fetch(`${CODEX_BRIDGE_URL}/accounts`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!resp.ok) throw new Error(`codex-bridge returned ${resp.status}`);
-    const data = await resp.json();
-    _codexUsageCache = data.accounts || {};
-    _codexUsageFetchedAt = now;
-    res.json({ ok: true, usage: _codexUsageCache, cached: false });
+    const usage = await readCodexUsageCache();
+    res.json({ ok: true, source: 'account_usage_cache', usage });
   } catch (err) {
-    // 返回缓存（即使过期）或空对象
-    if (_codexUsageCache) {
-      return res.json({ ok: true, usage: _codexUsageCache, cached: true, stale: true });
-    }
-    res.status(502).json({ ok: false, error: `codex-bridge unreachable: ${err.message}` });
+    res.status(503).json({ ok: false, source: 'account_usage_cache', error: err.message });
   }
 });
 
 router.post('/codex-usage/refresh', async (_req, res) => {
   try {
-    const resp = await fetch(`${CODEX_BRIDGE_URL}/accounts`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!resp.ok) throw new Error(`codex-bridge returned ${resp.status}`);
-    const data = await resp.json();
-    _codexUsageCache = data.accounts || {};
-    _codexUsageFetchedAt = Date.now();
-    res.json({ ok: true, usage: _codexUsageCache });
+    const usage = await readCodexUsageCache();
+    res.json({ ok: true, source: 'account_usage_cache', usage });
   } catch (err) {
-    res.status(502).json({ ok: false, error: `codex-bridge unreachable: ${err.message}` });
+    res.status(503).json({ ok: false, source: 'account_usage_cache', error: err.message });
   }
 });
 

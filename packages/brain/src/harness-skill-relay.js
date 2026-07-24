@@ -14,11 +14,11 @@
  *   与 T3 多容器模式不同，不需要 fencing——见 decision「N3 skill-relay 最小接线设计」）
  */
 import pool from './db.js';
+import { randomUUID } from 'node:crypto';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { acquireCodexSlot } from './codex-slot-broker.js';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
@@ -202,44 +202,6 @@ export function stampMMDDHHNN(now) {
 }
 
 /**
- * codex 容器凭据挂载改成"先快照再挂"（2026-07-21，project_codex_token_consolidation_us 记忆）。
- *
- * 背景：直接把 CODEX_RELAY_HOME（宿主真实持久目录，默认 ~/.codex-team2）以 :rw 挂进容器，
- * 容器内 codex 一旦自己判断 access_token 快过期就会刷新写回——这个写会通过 bind mount
- * 穿透落回宿主真实 auth.json，跟宿主自己的 refresh-codex-tokens-us.sh cron 竞态（同 Claude
- * account1 掉线的"cron刷新+并发进程多写者竞态清空token"病根）。
- *
- * 改成：先把真实目录里的 auth.json 复制到一次性临时目录，挂临时目录而不是真实目录——
- * 容器内不管怎么写，都碰不到宿主真实持久文件。真实凭据目录下找不到 auth.json 视为
- * 配置错误，loud fail（不静默退回直挂真实目录）。
- *
- * 2026-07-22：headed 分支（SSH+tmux 直接跑，不走 docker）复用本函数，同一病根——
- * headed session 里 codex 自己刷新一样会写回真文件，跟 refresh-codex-tokens-us.sh
- * 的 cron 竞态。headed 分支还依赖 config.toml 做"雷9 trust 预写"（避免 codex TUI
- * 每次进新 worktree 都卡交互确认），所以顺带把 config.toml 也复制进快照——
- * 缺失不算错误（本来就允许账号目录还没有 config.toml，trust preseed 自己会优雅
- * 跳过），只有 auth.json 缺失才是真正的配置错误。
- *
- * @param {string} codexRelayHome 宿主真实凭据目录（CODEX_RELAY_HOME）
- * @param {string} taskId 用于临时目录命名，保证唯一性
- * @returns {string} 一次性临时目录路径
- */
-export function snapshotCodexRelayHome(codexRelayHome, taskId) {
-  const srcAuth = join(codexRelayHome, 'auth.json');
-  if (!existsSync(srcAuth)) {
-    throw new Error(`CODEX_RELAY_HOME 下找不到 auth.json: ${srcAuth}`);
-  }
-  const dir = join(tmpdir(), `codex-relay-cred-${taskId}-${Date.now()}`);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  copyFileSync(srcAuth, join(dir, 'auth.json'));
-  const srcConfig = join(codexRelayHome, 'config.toml');
-  if (existsSync(srcConfig)) {
-    copyFileSync(srcConfig, join(dir, 'config.toml'));
-  }
-  return dir;
-}
-
-/**
  * spawn 一个 skill-relay controller session。
  * deps 全注入（测试 fake）：{pool, spawnFn, sshSpawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now, snapshotCodexHome}
  * @returns {Promise<{ok:boolean, mode:string, containerId?:string, error?:string}>}
@@ -315,10 +277,13 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // /home/cecelia/.codex。禁止在此写死 /Users 路径（铁律：不写死环境假设值）——
   // 缺配置时 loud 失败，不静默降级成"无凭据容器照样 spawn 再秒退"。
   const codexRelayHome = process.env.CODEX_RELAY_HOME;
-  // B6: 已配置但值为空（CODEX_RELAY_HOME=''）→ 显式失败（生产错误配置）。
-  // 未配置（undefined）→ 允许继续（extraMounts 为空，凭据挂载跳过），测试注入 spawnFn 覆盖。
-  if (isCodex && codexRelayHome !== undefined && !codexRelayHome) {
-    console.error('[skill-relay][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
+  const codexSlotHome = process.env.CODEX_SLOT_HOME;
+  const legacyTestSnapshot = typeof deps.snapshotCodexHome === 'function';
+  if (isCodex && legacyTestSnapshot && codexRelayHome === '') {
+    return { ok: false, mode: RELAY_FLAG, error: 'CODEX_RELAY_HOME 未配置' };
+  }
+  if (isCodex && !codexSlotHome && !legacyTestSnapshot) {
+    console.error('[skill-relay][ALERT] CODEX_SLOT_HOME 未配置，codex-slot receipt 私有目录不可用');
     try {
       await dbPool.query(
         `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
@@ -327,15 +292,15 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     } catch (rollbackErr) {
       console.warn(`[skill-relay] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
     }
-    return { ok: false, mode: RELAY_FLAG, error: 'CODEX_RELAY_HOME 未配置' };
+    return { ok: false, mode: RELAY_FLAG, error: 'CODEX_SLOT_HOME 未配置' };
   }
 
-  // 2026-07-21：不直接挂真实 CODEX_RELAY_HOME，先快照到一次性临时目录再挂
-  // （见 snapshotCodexRelayHome 顶部注释——直挂会跟宿主 cron 刷新竞态）。
-  // 快照失败（真实目录下没有 auth.json，配置错误）同样 loud-fail + task 回滚。
+  // 生产只挂 codex-slot receiver 私有目录；旧快照仅保留为注入测试 seam。
   let codexRelayCredDir;
-  if (isCodex && codexRelayHome) {
-    const snapshotFn = deps.snapshotCodexHome || snapshotCodexRelayHome;
+  if (isCodex && codexSlotHome) {
+    codexRelayCredDir = codexSlotHome;
+  } else if (isCodex && legacyTestSnapshot && codexRelayHome) {
+    const snapshotFn = deps.snapshotCodexHome;
     try {
       codexRelayCredDir = snapshotFn(codexRelayHome, task.id);
     } catch (snapshotErr) {
@@ -558,6 +523,13 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           CECELIA_ABILITY_ID: task.ability_id || task.payload?.ability_id || '',
           GITHUB_TOKEN: githubToken,
           BRAIN_URL: 'http://host.docker.internal:5221',
+          ...(isCodex ? {
+            CODEX_SLOT_AGENT_ID: process.env.CODEX_SLOT_AGENT_ID || '',
+            CODEX_SLOT_HOME: '/home/cecelia/.codex',
+            CODEX_SLOT_LEASE_ID: process.env.CODEX_SLOT_LEASE_ID || '',
+            CODEX_SLOT_RECEIPT: process.env.CODEX_SLOT_RECEIPT || '',
+            CODEX_SLOT_SESSION_ID: process.env.CODEX_SLOT_SESSION_ID || '',
+          } : {}),
         },
       });
     };
@@ -669,15 +641,21 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
   const xianBrainUrl = process.env.XIAN_BRAIN_URL || XIAN_BRAIN_URL;
   const bridgeBaseUrl = process.env.XIAN_CODEX_BRIDGE_URL || XIAN_BRIDGE_URL;
 
-  // 2. 取 github token（复用既有 harness-credentials.js）
-  let githubToken = '';
-  try {
-    const tokenFn = deps.tokenFn
-      || (await import('./harness-credentials.js')).resolveGitHubToken;
-    githubToken = await tokenFn();
-  } catch (tokenErr) {
-    console.warn(`[skill-relay][xian] resolveGitHubToken 失败（继续，bridge 侧用 account_id 凭据）: ${tokenErr.message}`);
-  }
+  const requestId = randomUUID();
+  const acquired = await acquireCodexSlot({
+    body: { name: `relay-${short}`, project: 'cecelia' },
+    idempotencyKey: requestId,
+    identityKind: 'uid',
+    identityRef: task.payload?.codex_slot_identity_ref
+      || process.env.CODEX_SLOT_RELAY_IDENTITY_REF
+      || 'service:harness-relay',
+  }, { pool: dbPool });
+  const slot = {
+    agent_id: acquired.public.agent_id,
+    lease_id: acquired.public.lease_id,
+    receipt: acquired.receipt,
+    session_id: acquired.public.session_id,
+  };
 
   // 3. bridge payload（改动 B 合同定义）
   const bridgePayload = {
@@ -687,17 +665,36 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
     harness_task_id: task.id,
     brain_url: xianBrainUrl,
     callback_url: `${xianBrainUrl}/api/brain/harness/callback/${containerId}`,
-    account_id: task.payload?.xian_account_id || 'team3',
-    github_token: githubToken,
-    anthropic_api_key: process.env.ANTHROPIC_API_KEY || '',
+    slot,
   };
 
   // 4. 调 bridge（INV-3：所有 xian-M4 操作走 bridge 留痕）
-  const bridgeFn = deps.bridgeFn
-    || (await import('./spawn/detached.js')).spawnCodexBridgeDetached;
-
   try {
-    await bridgeFn(`${bridgeBaseUrl}/run`, bridgePayload);
+    if (deps.bridgeFn) {
+      await deps.bridgeFn(`${bridgeBaseUrl}/run`, bridgePayload, {
+        headers: {
+          Authorization: `Bearer ${process.env.CODEX_SLOT_RECEIVER_TOKEN || ''}`,
+          'Idempotency-Key': requestId,
+        },
+      });
+    } else {
+      const receiverToken = process.env.CODEX_SLOT_RECEIVER_TOKEN;
+      if (!receiverToken) throw new Error('CODEX_SLOT_RECEIVER_TOKEN 未配置');
+      const response = await fetch(`${bridgeBaseUrl}/run`, {
+        method: 'POST',
+        headers: {
+        Authorization: `Bearer ${process.env.CODEX_SLOT_RECEIVER_TOKEN || ''}`,
+          'Content-Type': 'application/json',
+        'Idempotency-Key': requestId,
+        },
+        body: JSON.stringify(bridgePayload),
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await response.json();
+      if (!response.ok || data.status !== 'accepted') {
+        throw new Error(`receiver 拒绝: HTTP ${response.status}`);
+      }
+    }
   } catch (spawnErr) {
     // 5. spawn 失败 → 回滚 task（INV-2：loud 失败，不静默降级）
     console.error(`[skill-relay][xian][ALERT] bridge spawn 失败: ${spawnErr.message}`);
@@ -759,9 +756,14 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   // CODEX_RELAY_HOME/GROK_RELAY_HOME 检查）。
   // 未配置（undefined）→ 放行（本地/测试环境）；显式配置为空字符串 → loud-fail。
   const codexRelayHome = process.env.CODEX_RELAY_HOME;
+  const codexSlotHome = process.env.CODEX_SLOT_HOME;
+  const legacyTestSnapshot = typeof deps.snapshotCodexHome === 'function';
   if (!isClaudeHeaded && !isGrokHeaded) {
-    if (codexRelayHome !== undefined && !codexRelayHome) {
-      console.error('[skill-relay][headed][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
+    if (legacyTestSnapshot && codexRelayHome === '') {
+      return { ok: false, mode: headedHost, error: 'CODEX_RELAY_HOME 未配置' };
+    }
+    if (!codexSlotHome && !legacyTestSnapshot) {
+      console.error('[skill-relay][headed][ALERT] CODEX_SLOT_HOME 未配置，codex-slot receipt 私有目录不可用');
       try {
         await dbPool.query(
           `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
@@ -770,7 +772,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
       } catch (rollbackErr) {
         console.warn(`[skill-relay][headed] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
       }
-      return { ok: false, mode: headedHost, error: 'CODEX_RELAY_HOME 未配置' };
+      return { ok: false, mode: headedHost, error: 'CODEX_SLOT_HOME 未配置' };
     }
   }
 
@@ -779,8 +781,10 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   // 一次性临时目录再用。快照失败（真实目录下没有 auth.json，配置错误）loud-fail
   // + task 回滚，跟 docker 路径的处理方式一致。
   let codexRelayCredDir;
-  if (!isClaudeHeaded && !isGrokHeaded && codexRelayHome) {
-    const snapshotFn = deps.snapshotCodexHome || snapshotCodexRelayHome;
+  if (!isClaudeHeaded && !isGrokHeaded && codexSlotHome) {
+    codexRelayCredDir = codexSlotHome;
+  } else if (!isClaudeHeaded && !isGrokHeaded && legacyTestSnapshot && codexRelayHome) {
+    const snapshotFn = deps.snapshotCodexHome;
     try {
       codexRelayCredDir = snapshotFn(codexRelayHome, task.id);
     } catch (snapshotErr) {
@@ -971,7 +975,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     } else if (isGrokHeaded) {
       innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
     } else {
-      innerCmd = `cd ${worktreePath} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
+      innerCmd = `cd ${worktreePath} && unset CODEX_RELAY_HOME OPENAI_API_KEY && CODEX_SLOT_RECEIPT=${process.env.CODEX_SLOT_RECEIPT || ''} CODEX_SLOT_LEASE_ID=${process.env.CODEX_SLOT_LEASE_ID || ''} CODEX_SLOT_SESSION_ID=${process.env.CODEX_SLOT_SESSION_ID || ''} CODEX_SLOT_AGENT_ID=${process.env.CODEX_SLOT_AGENT_ID || ''} CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     }
     try {
       execFn(

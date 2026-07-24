@@ -117,12 +117,21 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
   const adapter = registry.resolve({ provider: attempt.provider, requires: ['resume'] });
   const execution = {};
   if (task.payload?.model && task.payload.model !== 'auto') execution.model = task.payload.model;
-  if (task.payload?.codex_home) execution.codexHome = task.payload.codex_home;
   if (task.payload?.claude_home) execution.claudeHome = task.payload.claude_home;
   if (task.payload?.grok_home) execution.grokHome = task.payload.grok_home;
+  if (attempt.provider === 'codex') {
+    const slot = task.payload?.codex_slot;
+    const required = ['agent_id', 'lease_id', 'private_home', 'receipt', 'session_id'];
+    if (!slot || required.some(key => typeof slot[key] !== 'string' || !slot[key])) {
+      return { ok: false, reason: 'codex-slot_receipt_missing' };
+    }
+    execution.codexSlot = Object.fromEntries(required.map(key => [key, slot[key]]));
+  }
   if (attempt.account_id) {
+    if (attempt.provider === 'codex') {
+      return { ok: false, reason: 'codex-slot_account_authority_forbidden' };
+    }
     const accountHome = resolveProviderAccountHome(attempt.provider, attempt.account_id);
-    if (attempt.provider === 'codex') execution.codexHome = accountHome;
     if (attempt.provider === 'claude') execution.claudeHome = accountHome;
     if (attempt.provider === 'grok') execution.grokHome = accountHome;
   }
