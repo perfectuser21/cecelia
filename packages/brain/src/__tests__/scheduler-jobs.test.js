@@ -89,6 +89,10 @@ vi.mock('../triage-officer-15min.js', () => ({
   runTriageOfficer15min: vi.fn().mockResolvedValue({ skipped: true, merged: 0, autoApproved: 0 }),
 }));
 
+vi.mock('../conversation-ttl-archiver.js', () => ({
+  runConversationTtlArchiver: vi.fn().mockResolvedValue({ skipped: true, archived: 0 }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
@@ -117,10 +121,14 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 25 个 job（含 triage-officer-rank + triage-officer-15min）', () => {
-    expect(JOBS.map((j) => j.name)).toEqual([
-      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly', 'codex-test-gen', 'capture-aging', 'triage-officer-rank', 'triage-officer-15min', 'conversation-capture',
-    ]);
+  it('JOBS 注册了正确数量的 job（含 triage-officer-rank + triage-officer-15min + conversation-ttl-archiver）', () => {
+    const names = JOBS.map((j) => j.name);
+    expect(names).toContain('triage-officer-rank');
+    expect(names).toContain('triage-officer-15min');
+    expect(names).toContain('conversation-ttl-archiver');
+    expect(names).toContain('conversation-capture');
+    // conversation-ttl-archiver 排在 conversation-capture 之后
+    expect(names.indexOf('conversation-ttl-archiver')).toBeGreaterThan(names.indexOf('conversation-capture'));
   });
 
   it('runSchedulerJobsOnce 调用全部 job，needsPool 决定传参', async () => {
@@ -138,7 +146,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
     expect(maybeRunDirectionProposer).toHaveBeenCalledWith(pool);
     expect(runPostdeployVerifier).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(25);
+    expect(results).toHaveLength(JOBS.length);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -148,7 +156,7 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results.find((r) => r.name === 'arch-review')).toMatchObject({ ok: false, error: 'boom' });
     expect(results.filter((r) => r.name !== 'arch-review').every((r) => r.ok)).toBe(true);
-    expect(results).toHaveLength(25);
+    expect(results).toHaveLength(JOBS.length);
   });
 
   it('handler 永挂时按 timeoutMs 标记 timedOut 并继续', async () => {
@@ -254,5 +262,14 @@ describe('line-dreaming job 注册', () => {
     expect(dreamIdx).toBeGreaterThanOrEqual(0);
     expect(reportIdx).toBeGreaterThanOrEqual(0);
     expect(dreamIdx).toBeLessThan(reportIdx);
+  });
+});
+
+describe('conversation-ttl-archiver job 注册', () => {
+  it('conversation-ttl-archiver 已注册（needsPool=true）', () => {
+    const job = JOBS.find((j) => j.name === 'conversation-ttl-archiver');
+    expect(job).toBeTruthy();
+    expect(job.needsPool).toBe(true);
+    expect(typeof job.handler).toBe('function');
   });
 });

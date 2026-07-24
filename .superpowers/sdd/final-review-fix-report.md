@@ -1,85 +1,85 @@
-# 终审修复报告 — 协议卫生包（cp-07092001-protocol-hygiene-pack）
+# 终审修复报告 — 军师对话抽屉（cp-warroom-chat-panel）
 
-## Important 1：executor.js dedupe key 泄漏（server_overloaded 分支）
+## Finding 1（Important）：`e.message ||` 死代码前缀泄漏英文网络错误文案
 
-**问题**：DB 级 `claimDedupeKey('spawn', ...)` 在 DEDUP CHECK 之后、RESOURCE CHECK 之前被 claim。
-`checkServerResources()` 判定过载时直接 `return`，未 release，导致该 task_id 的 spawn dedupe key
-被占用 120s TTL，期间即使资源恢复也无法重新 spawn 同一 task。
+**问题**：4 处网络请求错误处理（`ConversationDrawer.fetchList`、`handleCreate`；
+`ConversationThread.fetchMessages`、`handleSend`）在 HTTP 错误路径上都是 `throw new Error()`
+（空 message），随后 `catch (e: any) { setXError(e.message || '<中文兜底>'); }`。因为 HTTP 错误
+路径抛出的 Error 恒无 message，`e.message ||` 前缀在这条路径上永远是死代码；它唯一还活着的效果
+是泄漏：一旦 `fetch()` 本身在网络层被拒绝（如 Brain API 重启期间的 `TypeError: Failed to fetch`，
+这在本项目里是常态）或 `res.json()` 抛出 JSON 解析错误，`e.message` 会变成非空英文字符串直接展示
+给用户，违反全局简体中文 UI 文案约束。
 
-**修法**：把整个 claim 块（含 `dedupeMod` 动态 import 与 `spawnClaim` 赋值）从 RESOURCE CHECK
-之前挪到之后、`checkpointId` 赋值之前（docker/bridge spawn 分支之前）。挪动后语义变为：
-内存 DEDUP CHECK → RESOURCE CHECK → DB claim → spawn。`server_overloaded` 分支现在完全走在
-claim 之前，不可能再泄漏 key。`spawnClaim`/`releaseDedupeKey`/`spawned` 三个变量声明位置
-（try 外）与 outer catch / bridge_error 分支的 release 逻辑未动。
+**修法**：4 处 catch 块统一去掉 `e.message ||` 前缀，改为固定中文兜底文案；由于 `e` 不再被使用，
+一并把 `catch (e: any)` 改成裸 `catch {`（TS/ESLint 均无异议，`tsc --noEmit` 验证通过）。
 
-文件：`packages/brain/src/executor.js`（约 L3405-3433）
+- `fetchList`：`catch { setListError('加载议题列表失败'); }`
+- `handleCreate`：`catch { setListError('创建议题失败'); }`
+- `fetchMessages`：`catch { setError('加载消息失败'); }`
+- `handleSend`：`catch { setError('发送失败'); }`
 
-## Important 2：dispatcher.js 把 spawn_deduplicated 误计入 cecelia-run 熔断
+文件：`apps/dashboard/src/pages/warroom/ConversationDrawer.tsx`
 
-**问题**：`!execResult.success` 分支里，`recordFailure('cecelia-run')` 对所有非 configError
-的失败原因都会调用，包括良性的 `spawn_deduplicated`（DB 级去重命中，属正常防重入，非执行故障）。
-抖动期正常去重会被计入熔断计数，可能误停派全系统。
+## Finding 2（Important）：`fetchMessages` 缺失设计文档规定的 404 处理
 
-**修法**：仿照现有 `configError` 的写法，给 `execResult.reason === 'spawn_deduplicated'` 加同等
-carve-out：任务照常回退 queued（不变），但跳过 `recordFailure('cecelia-run')`。
+**问题**：设计文档（`docs/superpowers/specs/2026-07-24-warroom-chat-panel-design.md` 错误处理节）
+明确要求 `conversation_id` 不存在（404）→ 提示"议题已归档或不存在"，回到列表视图。但原实现把
+404 和其它任意失败一视同仁，只是内联展示通用"加载消息失败"，用户被留在空的对话线程视图里，只能
+靠手动点返回箭头逃出。
 
-文件：`packages/brain/src/dispatcher.js`（约 L673-682）
+**修法**：
+1. `ConversationThread` 新增 `onNotFound: (message: string) => void` prop，与已有的 `onBack`
+   （挂在可见返回箭头按钮上的同一个语义）并列传入。
+2. `fetchMessages` 里在 `!res.ok` 判断之前先检查 `res.status === 404`：命中时调用
+   `onNotFound('议题已归档或不存在')` 并 `return`（不再走通用错误分支/不再 setMessages）。
+3. `ConversationDrawer` 新增 `handleThreadNotFound`：`setActiveId(null)` 切回列表视图 +
+   `setListError(message)` 把"议题已归档或不存在"展示在列表视图已有的错误提示区（复用
+   `ConversationList` 现有的 `AlertCircle` + 红色文案渲染路径，不新增 UI 结构）。
+4. `<ConversationThread ... onNotFound={handleThreadNotFound} />` 接线。
 
-## 测试更新：executor-spawn-dedupe.test.js
+端到端行为：用户点开一个已归档/不存在的议题 → 拉消息命中 404 → 自动切回议题列表 → 列表页顶部
+展示"议题已归档或不存在"错误提示，不再需要手动点返回箭头。
 
-- 新增断言：claim 出现在 `=== RESOURCE CHECK ===` 之后、`HARNESS_DOCKER_ENABLED`（docker/bridge
-  spawn 分支起点）之前。
-- 新增断言：`server_overloaded` 的 return 出现在 claim 之前（indexOf 顺序断言），验证资源过载
-  路径不可能泄漏 dedupe key。
-- 新增 `describe('dispatcher spawn_deduplicated carve-out（结构断言）')`：验证 dispatcher.js 中
-  `spawn_deduplicated` 分支出现在 `configError` 判断之后、`recordFailure('cecelia-run')` 调用之前
-  （即被排除在熔断计数之外）。
+文件：`apps/dashboard/src/pages/warroom/ConversationDrawer.tsx`
 
-文件：`packages/brain/src/__tests__/executor-spawn-dedupe.test.js`
+## 新增测试
 
-## Minor 3：actions.js createTask JSDoc 补全
+`apps/dashboard/src/pages/warroom/__tests__/ConversationDrawer.test.tsx`，"对话区" describe 块内
+新增用例「消息拉取404→提示"议题已归档或不存在"并自动回到议题列表」：mock 一个议题列表（1条）+
+mock `GET /api/brain/conversations/conv-1/messages` 返回 `{ ok: false, status: 404, json: async
+() => ({}) }`，点击该议题后断言 `screen.getByTestId('new-conversation-btn')` 重新可见（回到列表
+视图，与已有"点返回按钮回到议题列表"用例断言方式一致）且 `screen.getByText('议题已归档或不存在')`
+可见。
 
-补充 `@param {string} [params.dedupe_key]` 和 `@param {number} [params.dedupe_ttl_sec]`，说明
-dedupe_key 是 DB 级幂等键（≤255 字符，超长调用方自行 hash，超长会抛错），dedupe_ttl_sec 默认
-3600 秒。
+原有 15 个测试（含专门验证 Chinese 兜底文案的用例，如 500 响应 `json: async () => ({})` 场景）全部
+未改动断言，验证行为不变——因为这些用例走的本来就是 `!res.ok` 空 Error 路径，`e.message` 恒为空，
+去掉 `e.message ||` 前缀后展示的中文兜底文案与之前完全相同。
 
-文件：`packages/brain/src/actions.js`（约 L92-93 后）
-
-## Minor 4：account-usage.js 注释措辞修正
-
-原注释"去重完全交给 raise() 的 debounce（n:2 连续确认 + 2h 冷却），每个检查周期都调用"表述不够
-准确。改为说明：`proactiveTokenCheck` 每个 dispatch tick 都会执行到这里；`n:2` 表示连续 2 个 tick
-都确认过期才真正响铃，响铃后进入 2h 冷却，真正防止重复告警的是这个 2h 冷却而非 n:2 本身。
-
-文件：`packages/brain/src/account-usage.js`（约 L316）
-
-## 插曲：worktree 被外部进程清空需重建
-
-修复过程中，`/Users/administrator/worktrees/cecelia/session-1ff8b3c4` 整个工作目录被外部进程
-清空（`git worktree list` 显示该 worktree 已从注册表移除，与 memory 记录的"worktree 收割器"
-已知基础设施问题一致）。已用 `git worktree add` 在原路径重新检出 `cp-07092001-protocol-hygiene-pack`
-分支，重建 `.dev-mode.<branch>` 门禁文件，软链根 `node_modules` 到主仓（未在 worktree 内跑
-`npm install`，避免穿透软链污染主仓 node_modules），并重新应用全部四处代码修复 + 测试更新。
-最终验证结果如下。
-
-## 自测结果
+## 测试命令与结果
 
 ```
-npx vitest run src/__tests__/executor-spawn-dedupe.test.js --pool=forks
-→ 7 passed (7)
+cd apps/dashboard && npx vitest run src/pages/warroom/__tests__/ConversationDrawer.test.tsx
+→ ✓ 16 tests passed (15 原有 + 1 新增 404 用例)
 
-bash scripts/setup-test-db.sh  → cecelia_test 准备就绪（无新迁移需应用）
-NODE_ENV=test DB_NAME=cecelia_test npx vitest run src/__tests__/actions-dedupe-key.test.js --pool=forks
-→ 3 passed (3)
+cd apps/dashboard && npx vitest run \
+  src/pages/warroom/__tests__/WarRoomLineCommandPage.chat.test.tsx \
+  src/pages/warroom/__tests__/WarRoomPage.test.ts
+→ ✓ 2 files passed, 80 tests passed（无回归）
 
-npx vitest run src/__tests__/account-usage-proactive.test.js --pool=forks
-→ 8 passed (8)
+cd apps/dashboard && npx vitest run
+→ ✓ 30 files passed, 305 tests passed（全量套件零回归）
 
-NODE_ENV=test DB_NAME=cecelia_test npx vitest run <11 个 dispatcher*.test.js 文件> --pool=forks
-→ 11 files passed, 36 tests passed
-
-node --check src/executor.js && node --check src/dispatcher.js && node --check src/actions.js
-→ SYNTAX OK
+cd apps/dashboard && npx tsc --noEmit -p .
+→ ConversationDrawer.tsx 无类型错误
 ```
 
-无失败用例。
+## 改动文件
+
+- `apps/dashboard/src/pages/warroom/ConversationDrawer.tsx`
+- `apps/dashboard/src/pages/warroom/__tests__/ConversationDrawer.test.tsx`
+
+## 顾虑
+
+- 无。两处均为局部行为修正，未改变组件对外 props 签名（`ConversationDrawer` 本身签名不变，
+  `ConversationThread` 是模块内私有组件，新增的 `onNotFound` prop 由同文件内的父组件接线，不影响
+  外部消费方 `WarRoomLineCommandPage`）。

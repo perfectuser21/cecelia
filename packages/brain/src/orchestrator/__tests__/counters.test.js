@@ -7,7 +7,7 @@
  * - 同 hop 不重复计
  */
 import { describe, it, expect } from 'vitest';
-import { deriveCounters } from '../counters.js';
+import { deriveCounters, replayProductConvergence } from '../counters.js';
 
 /** 造一行决策日志 */
 function row(hop, action, observed = {}) {
@@ -23,6 +23,11 @@ describe('deriveCounters：空日志', () => {
       noPushStreak: 0,
       noVerdictStreak: 0,
       crossCheckMismatch: false,
+      pollCount: 0,
+      blockedStreak: 0,
+      blockedStatus: null,
+      noProgress: false,
+      noProgressReason: null,
     });
   });
 
@@ -42,7 +47,7 @@ describe('deriveCounters：hops 与 fixRound', () => {
     expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).hops).toBe(3);
   });
 
-  it('fixRound = COUNT(spawn:generator-fix)，其他 action 不计', () => {
+  it('没有 callback 证明 SHA 前进的 fix intent 不计 fixRound', () => {
     const rows = [
       row(1, 'spawn:generator'),
       row(2, 'spawn:generator-fix'),
@@ -50,7 +55,7 @@ describe('deriveCounters：hops 与 fixRound', () => {
       row(4, 'spawn:generator-fix'),
       row(5, 'spawn:evaluator'),
     ];
-    expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).fixRound).toBe(2);
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).fixRound).toBe(0);
   });
 
   it('同 hop 不重复计：重复 hop 行只算一次（hops 与 fixRound 都去重）', () => {
@@ -61,7 +66,7 @@ describe('deriveCounters：hops 与 fixRound', () => {
     ];
     const c = deriveCounters(rows, { proposeBranchMaxRn: 0 });
     expect(c.hops).toBe(2);
-    expect(c.fixRound).toBe(1);
+    expect(c.fixRound).toBe(0);
   });
 
   it('乱序输入按 hop 排序后推导（结果与有序输入一致）', () => {
@@ -202,5 +207,40 @@ describe('deriveCounters：入参防御', () => {
 
   it('logRows 非数组 → throw', () => {
     expect(() => deriveCounters(null, { proposeBranchMaxRn: 0 })).toThrow(/logRows/);
+  });
+});
+
+describe('replayProductConvergence：无 claimed SHA 的 pending callback', () => {
+  const triggerSha = 'a'.repeat(40);
+  const advancedSha = 'b'.repeat(40);
+
+  function unclaimedPendingRows() {
+    return [
+      row(1, 'spawn:generator-fix', {
+        trigger_sha: triggerSha,
+        failure_class: 'product_failure',
+      }),
+      {
+        ...row(2, 'verdict:generator-fix-callback', {
+          trigger_hop: 1,
+          pr_head_sha: triggerSha,
+        }),
+        detail: { verification_status: 'verification_pending' },
+      },
+    ];
+  }
+
+  it('服务端同 SHA 时将无 claimed pending callback 收敛为 no-progress', () => {
+    expect(replayProductConvergence(unclaimedPendingRows(), {
+      currentFailureSet: null,
+      currentHeadSha: triggerSha,
+    })).toEqual({ outcome: 'failed', reason: 'no_progress_same_sha' });
+  });
+
+  it('服务端 SHA 前进时将无 claimed pending callback 认定为 verified progress', () => {
+    expect(replayProductConvergence(unclaimedPendingRows(), {
+      currentFailureSet: null,
+      currentHeadSha: advancedSha,
+    })).toEqual({ outcome: 'continue', reason: 'verified_new_sha' });
   });
 });

@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { collectGroundTruth } from '../ground-truth.js';
+import { derive } from '../derive.js';
 
 const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
@@ -555,7 +556,25 @@ describe('collectGroundTruth：决策日志推导字段', () => {
       rows: {
         run: { pr_url: PR_URL },
         tasks: [{ id: TASK_ID, status: 'in_progress', payload: JSON.stringify({ review_required: true }) }],
-        log: [{ hop: 12, action: 'verdict:human_review', observed: {}, detail: { approved: true, pr_head_sha: 'sha-abc' } }],
+        log: [
+          {
+            hop: 11,
+            action: 'effect:human_review_requested',
+            observed: { pr: { head_sha: 'sha-abc' } },
+            detail: { review_reason: 'awaiting_human_review' },
+          },
+          {
+            hop: 12,
+            action: 'verdict:human_review',
+            observed: {},
+            detail: {
+              approved: true,
+              review_class: 'merge_gate',
+              pr_head_sha: 'sha-abc',
+              review_request_hop: 11,
+            },
+          },
+        ],
       },
       exec: {
         prView: JSON.stringify({
@@ -567,6 +586,81 @@ describe('collectGroundTruth：决策日志推导字段', () => {
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.reviewRequired).toBe(true);
     expect(o.reviewApproved).toBe(true);
+  });
+
+  it('same-SHA evidence approval cannot satisfy the later merge gate after evaluator and judge PASS', async () => {
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: PR_URL },
+        contracts: [{ id: CONTRACT_ID, status: 'approved' }],
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: { review_required: true },
+        }],
+        log: [
+          {
+            hop: 10,
+            action: 'effect:human_review_requested',
+            observed: { pr: { head_sha: 'sha-abc' } },
+            detail: { review_reason: 'evidence_invalid:repeated_signature' },
+          },
+          {
+            hop: 11,
+            action: 'verdict:human_review',
+            observed: {},
+            detail: {
+              approved: true,
+              review_class: 'evidence_repair',
+              pr_head_sha: 'sha-abc',
+              review_request_hop: 10,
+            },
+          },
+          {
+            hop: 12,
+            action: 'verdict:evaluate',
+            observed: {},
+            detail: { verdict: 'PASS', pr_head_sha: 'sha-abc' },
+          },
+          {
+            hop: 13,
+            action: 'verdict:judge',
+            observed: {},
+            detail: { verdict: 'PASS', pr_head_sha: 'sha-abc' },
+          },
+        ],
+      },
+      files: { 'sprint-prd.md': '# approved PRD' },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefOid: 'sha-abc',
+          statusCheckRollup: [{ state: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(
+      deps,
+      { taskId: TASK_ID, runId: RUN_ID },
+    );
+    expect(observed.reviewApproved).toBe(false);
+    expect(derive({
+      ...observed,
+      counters: {
+        hops: 13,
+        fixRound: 1,
+        pollCount: 0,
+        noPushStreak: 0,
+        noVerdictStreak: 0,
+        ganCostUsd: 0,
+      },
+    })).toMatchObject({
+      phase: 'review',
+      action: 'wait:human_review',
+      reason: 'awaiting_human_review',
+    });
   });
 
   it('reviewApproved：approved 记录是旧 sha → false（stale 批准不放行）', async () => {

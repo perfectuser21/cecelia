@@ -31,6 +31,7 @@ import previewRouter from './routes/preview.js';
 import kvRouter from './routes/kv.js';
 import guardDrillRouter from './routes/guard-drill.js';
 import releaseGateRouter from './routes/release-gate.js';
+import opsPanoramaRouter from './routes/ops-panorama.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -91,5 +92,8 @@ router.use('/guard-drill', guardDrillRouter);
 
 // 发布准入查账 — GET /release-gate/:pathId（只读，POST/PUT/PATCH → 405）
 router.use('/release-gate', releaseGateRouter);
+
+// 执行全景面板 — GET /ops-panorama
+router.use('/ops-panorama', opsPanoramaRouter);
 
 export default router;

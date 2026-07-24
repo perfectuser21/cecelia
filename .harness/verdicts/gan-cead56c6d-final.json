@@ -1,0 +1,20 @@
+{
+  "round": 3,
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "correctness": 8,
+    "completeness": 8,
+    "testability": 7,
+    "adversarial_coverage": 7,
+    "integration_chain": 6,
+    "clarity": 9,
+    "tdd_discipline": 8
+  },
+  "overall_score": 7.6,
+  "judgments_written": 0,
+  "c1_status": "FIXED",
+  "c2_status": "FIXED",
+  "c3_status": "FIXED",
+  "c4_status": "FIXED",
+  "concerns": []
+}

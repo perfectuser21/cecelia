@@ -33,6 +33,11 @@ const ACTION_SPECS = Object.freeze({
     role: 'evaluator', skill: 'harness-evaluator', readOnly: false,
     expectedOutput: 'harness-result/evaluator-v1',
   },
+  // Sprint 07231527 Blocking 3：evidence-repair 动作（INV-K6：修 attempt evidence，不走 generator-fix）
+  'spawn:evaluator-evidence-repair': {
+    role: 'evaluator', skill: 'harness-evaluator', readOnly: false,
+    expectedOutput: 'harness-result/evaluator-v1',
+  },
   'spawn:judge': {
     role: 'judge', skill: null, readOnly: true,
     expectedOutput: 'harness-result/judge-v1',
@@ -353,6 +358,7 @@ export function createDetachedLauncher({
             ...roleEnv,
             CECELIA_EXECUTOR: spec.provider,
             CECELIA_TASK_ID: bundle.inputs.task_id,
+            HARNESS_TASK_ID: bundle.inputs.task_id,
             HARNESS_NODE: attempt.role,
             HARNESS_ATTEMPT_ID: attempt.id,
             HARNESS_CALLBACK_TOKEN: attempt.callbackSecret,

@@ -391,6 +391,28 @@ describe('createDetachedLauncher', () => {
     expect(env.GIT_CONFIG_VALUE_0).toBeUndefined();
   });
 
+  it('把同一 bundle task_id 注入 generator 的 Cecelia 与 harness 任务环境', async () => {
+    const spawnDetached = vi.fn(async () => ({ containerId: 'generator-cx' }));
+    const launcher = createDetachedLauncher({
+      spawnDetached,
+      attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
+    });
+
+    await launcher.launch({
+      attempt: { id: attemptId, run_id: runId, hop: 8, role: 'generator' },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: false },
+      },
+      spec: { provider: 'codex', args: [], stdin: '{}', env: {} },
+      task: observed.task,
+    });
+
+    const { env } = spawnDetached.mock.calls[0][0];
+    expect(env.CECELIA_TASK_ID).toBe(taskId);
+    expect(env.HARNESS_TASK_ID).toBe(taskId);
+  });
+
   it('docker launch 失败只用当前 lease owner 标记 attempt failed', async () => {
     const attemptStore = {
       markStarting: vi.fn(async () => ({ status: 'starting' })),

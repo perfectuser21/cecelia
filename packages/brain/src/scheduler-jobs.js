@@ -32,6 +32,7 @@ import { runCaptureAging } from './capture-aging.js';
 import { runConversationCapture } from './conversation-capture.js';
 import { maybeRunTriageOfficerRank } from './triage-officer-rank.js';
 import { runTriageOfficer15min } from './triage-officer-15min.js';
+import { runConversationTtlArchiver } from './conversation-ttl-archiver.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -74,6 +75,7 @@ export const JOBS = [
     if (r?.errors > 0) throw new Error(`conversation-capture: ${r.errors} 条写入失败（已推送 ${r.pushed ?? 0} 条）`);
     return r;
   }, description: '对话原始捕获：机械过滤~/.claude/projects/*.jsonl真人文本写入captures(source=conversation)，自带10min间隔gate（decision f64adaaf/0c9e1652）' },
+  { name: 'conversation-ttl-archiver', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runConversationTtlArchiver, description: '主理人对话 TTL 归档：ttl_expires_at 到期的 active/suspended 对话软归档（10min 自gate，PR4/4 64b8c8d）' },
 ];
 
 function raceWithTimeout(promise, timeoutMs) {
