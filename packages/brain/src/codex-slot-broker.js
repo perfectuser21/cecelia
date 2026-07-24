@@ -62,6 +62,7 @@ export function codexSlotError(code, cause = null) {
 
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_SERIALIZATION_ATTEMPTS = 3;
 
 function exactKeys(value, expected) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -262,124 +263,137 @@ export async function acquireCodexSlot(input, dependencies = {}) {
   validateAcquireRequest(input);
   const database = dependencies.pool || pool;
   const client = await database.connect();
-  let committed = false;
   try {
-    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
-    const identity = await resolveIdentity(client, input.identityKind, input.identityRef);
-    await assertRolloutOpen(client, identity.tenant_id);
-
-    const replay = await loadReplay(
-      client,
-      identity.tenant_id,
-      identity.actor_id,
-      input.idempotencyKey,
-    );
-    if (replay) {
-      await client.query('COMMIT');
-      committed = true;
-      return { public: sessionResponse(replay), receipt: replay.receipt, replay: true };
-    }
-
-    const rankedAccounts = await selectAccountRef(client);
-    const agentId = await selectAgent(client, dependencies);
-    const leaseId = randomUUID();
-    const sessionId = randomUUID();
-    const receipt = randomUUID();
-    const handle = `${identity.actor_id}/${input.body.project}/${input.body.name}`;
-
-    let insertedLease = false;
-    let accountRef = null;
-    for (const account of rankedAccounts) {
-      const inserted = await client.query(
-        `INSERT INTO codex_slot_leases
-           (id, tenant_id, actor_id, identity_id, request_id, account_ref, agent_id, state)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
-         ON CONFLICT DO NOTHING
-         RETURNING id`,
-        [
-          leaseId,
-          identity.tenant_id,
-          identity.actor_id,
-          identity.id,
-          input.idempotencyKey,
-          account.account_ref,
-          agentId,
-        ],
-      );
-      if (inserted.rowCount === 1) {
-        insertedLease = true;
-        accountRef = account.account_ref;
-        break;
-      }
-    }
-    if (!insertedLease) throw codexSlotError('ACCOUNT_BUSY');
-    await runFaultHook(dependencies, 'after-lease-write', { leaseId, sessionId });
-
-    await client.query(
-      `INSERT INTO codex_slot_sessions
-         (id, lease_id, tenant_id, actor_id, request_id, agent_id, handle, receipt, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running')`,
-      [
-        sessionId,
-        leaseId,
-        identity.tenant_id,
-        identity.actor_id,
-        input.idempotencyKey,
-        agentId,
-        handle,
-        receipt,
-      ],
-    );
-    await runFaultHook(dependencies, 'after-session-write', { leaseId, sessionId });
-
-    await client.query(
-      `INSERT INTO codex_slot_audit_events
-         (tenant_id, actor_id, request_id, lease_id, session_id, event_type, payload)
-       VALUES ($1, $2, $3, $4, $5, 'acquired', $6::jsonb)`,
-      [
-        identity.tenant_id,
-        identity.actor_id,
-        input.idempotencyKey,
-        leaseId,
-        sessionId,
-        JSON.stringify({ account_ref: accountRef, agent_id: agentId }),
-      ],
-    );
-    await runFaultHook(dependencies, 'after-audit-write', { leaseId, sessionId });
-    await runFaultHook(dependencies, 'before-commit', { leaseId, sessionId });
-    await client.query('COMMIT');
-    committed = true;
-    await runFaultHook(dependencies, 'after-commit-before-response', { leaseId, sessionId });
-
-    return {
-      public: sessionResponse({
-        agent_id: agentId,
-        handle,
-        lease_id: leaseId,
-        session_id: sessionId,
-      }),
-      receipt,
-      replay: false,
-    };
-  } catch (error) {
-    if (!committed) await client.query('ROLLBACK').catch(() => {});
-    if (error?.code === '23505'
-        || error?.code === 'ACCOUNT_BUSY'
-        || error?.code === 'DURABILITY_FAILED') {
+    for (let attempt = 1; attempt <= MAX_SERIALIZATION_ATTEMPTS; attempt += 1) {
+      let committed = false;
       try {
+        await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
         const identity = await resolveIdentity(client, input.identityKind, input.identityRef);
+        await assertRolloutOpen(client, identity.tenant_id);
+
         const replay = await loadReplay(
           client,
           identity.tenant_id,
           identity.actor_id,
           input.idempotencyKey,
         );
-        if (replay) return { public: sessionResponse(replay), receipt: replay.receipt, replay: true };
-      } catch {
-        // Preserve the finite public error matrix below.
+        if (replay) {
+          await client.query('COMMIT');
+          committed = true;
+          return { public: sessionResponse(replay), receipt: replay.receipt, replay: true };
+        }
+
+        const rankedAccounts = await selectAccountRef(client);
+        const agentId = await selectAgent(client, dependencies);
+        const leaseId = randomUUID();
+        const sessionId = randomUUID();
+        const receipt = randomUUID();
+        const handle = `${identity.actor_id}/${input.body.project}/${input.body.name}`;
+
+        let insertedLease = false;
+        let accountRef = null;
+        for (const account of rankedAccounts) {
+          const inserted = await client.query(
+            `INSERT INTO codex_slot_leases
+               (id, tenant_id, actor_id, identity_id, request_id, account_ref, agent_id, state)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+             ON CONFLICT DO NOTHING
+             RETURNING id`,
+            [
+              leaseId,
+              identity.tenant_id,
+              identity.actor_id,
+              identity.id,
+              input.idempotencyKey,
+              account.account_ref,
+              agentId,
+            ],
+          );
+          if (inserted.rowCount === 1) {
+            insertedLease = true;
+            accountRef = account.account_ref;
+            break;
+          }
+        }
+        if (!insertedLease) throw codexSlotError('ACCOUNT_BUSY');
+        await runFaultHook(dependencies, 'after-lease-write', { leaseId, sessionId });
+
+        await client.query(
+          `INSERT INTO codex_slot_sessions
+             (id, lease_id, tenant_id, actor_id, request_id, agent_id, handle, receipt, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running')`,
+          [
+            sessionId,
+            leaseId,
+            identity.tenant_id,
+            identity.actor_id,
+            input.idempotencyKey,
+            agentId,
+            handle,
+            receipt,
+          ],
+        );
+        await runFaultHook(dependencies, 'after-session-write', { leaseId, sessionId });
+
+        await client.query(
+          `INSERT INTO codex_slot_audit_events
+             (tenant_id, actor_id, request_id, lease_id, session_id, event_type, payload)
+           VALUES ($1, $2, $3, $4, $5, 'acquired', $6::jsonb)`,
+          [
+            identity.tenant_id,
+            identity.actor_id,
+            input.idempotencyKey,
+            leaseId,
+            sessionId,
+            JSON.stringify({ account_ref: accountRef, agent_id: agentId }),
+          ],
+        );
+        await runFaultHook(dependencies, 'after-audit-write', { leaseId, sessionId });
+        await runFaultHook(dependencies, 'before-commit', { leaseId, sessionId });
+        await client.query('COMMIT');
+        committed = true;
+        await runFaultHook(dependencies, 'after-commit-before-response', { leaseId, sessionId });
+
+        return {
+          public: sessionResponse({
+            agent_id: agentId,
+            handle,
+            lease_id: leaseId,
+            session_id: sessionId,
+          }),
+          receipt,
+          replay: false,
+        };
+      } catch (error) {
+        if (!committed) await client.query('ROLLBACK').catch(() => {});
+        if (!committed
+            && error?.code === '40001'
+            && attempt < MAX_SERIALIZATION_ATTEMPTS) {
+          continue;
+        }
+        if (error?.code === '23505'
+            || error?.code === '40001'
+            || error?.code === 'ACCOUNT_BUSY'
+            || error?.code === 'DURABILITY_FAILED') {
+          try {
+            const identity = await resolveIdentity(client, input.identityKind, input.identityRef);
+            const replay = await loadReplay(
+              client,
+              identity.tenant_id,
+              identity.actor_id,
+              input.idempotencyKey,
+            );
+            if (replay) {
+              return { public: sessionResponse(replay), receipt: replay.receipt, replay: true };
+            }
+          } catch {
+            // Preserve the finite public error matrix below.
+          }
+        }
+        throw mapDurabilityError(error);
       }
     }
-    throw mapDurabilityError(error);
+    throw codexSlotError('DURABILITY_FAILED');
   } finally {
     client.release();
   }
