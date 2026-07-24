@@ -1,5 +1,6 @@
-# Sprint: sprints/07240616-relay-264b8c8d (264b8c8d-aad6-4f1c-84d1-274880beb3da)
-# 任务: 主理人对话回路——Dashboard对话栏+带工具agent+收敛后执行
-# 开始时间: 2026-07-23
-planner: done (sprint-prd.md@5f636f88b, invariants=7, fr=9)
-gan: done (contract-draft.md+dod@548355b5d, r1, verdict=APPROVED, 铁律覆盖=0/0, judgments_written=6, rubric=.harness/verdicts/gan-548355b5d.json)
+# Sprint: sprints/07240614-relay-137fea96 (137fea96-c596-4a34-b5ed-af8d2758ea6b)
+# 任务: [紧急][postdeploy-verifier] smoke 测试任务清理失败导致误触发 P1（DELETE /api/brain/tasks/:id 路由缺失）
+# 开始时间: 2026-07-24
+# 备注: 本 worktree 复用自旧任务 264b8c8d，其残留台账已归档为 progress-STALE-264b8c8d.md.bak，不代表本任务进度
+planner: done (sprint-prd.md@8b85fa97c, invariants=8, fr=0)
+gan: done (contract-draft.md+dod@e7e3a4e, r2, verdict=APPROVED, 铁律覆盖=8/8, judgments_written=2, rubric=.harness/verdicts/gan-e7e3a4e.json)
