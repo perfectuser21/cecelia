@@ -37,7 +37,7 @@ export function parseArgs(argv) {
   return args;
 }
 
-async function buildDefaultHandlers({ pool, execCmd, attemptStore }) {
+export async function buildDefaultHandlers({ pool, execCmd, attemptStore, judgeGate }) {
   const [
     judge,
     previewManager,
@@ -83,7 +83,7 @@ async function buildDefaultHandlers({ pool, execCmd, attemptStore }) {
     execCmd,
     attemptStore,
     promptDir: dockerExecutor.getHostPromptDir(),
-    judgeGate: judge.runJudgeGate,
+    judgeGate: judgeGate ?? judge.runJudgeGate,
     allocatePort: previewManager.allocatePort,
     spawnReviewPreview: staging.spawnReviewPreview,
     notifyReview: notifier.notifyHarnessReviewPending,

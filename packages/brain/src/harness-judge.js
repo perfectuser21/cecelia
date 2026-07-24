@@ -62,6 +62,9 @@ export function validateIndependentJudgeStageFacts(stageFacts) {
     return { pass: true, reasons: [] };
   }
   const reasons = [];
+  if (stageFacts.pr_state !== 'OPEN') {
+    reasons.push(`pr_state 必须为 "OPEN"，实际为 ${JSON.stringify(stageFacts.pr_state)}`);
+  }
   if (!String(stageFacts.head_sha || '').trim()) {
     reasons.push('head_sha 缺失');
   }
