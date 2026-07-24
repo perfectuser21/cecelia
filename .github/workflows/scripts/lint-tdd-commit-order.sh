@@ -51,12 +51,16 @@ FIRST_BAD_FILES=""
 while IFS= read -r sha; do
   [ -z "$sha" ] && continue
 
-  # GAN 阶段豁免：(Red) commit 之前的全部 commits 跳过 TDD 检查
+  # GAN 阶段豁免：(Red) commit 之前的 commits 只豁免 src 检查（合同修订轮可改 src），
+  # 测试文件仍照常计入 SEEN_TEST——proposer contract-import commit 可能已带真测试，
+  # (Red) commit 本身可能只改 DoD.md（137fea96 实证：原 continue 连测试计数一起跳过，
+  # 导致 Green commit 被误判"无前置测试"）
+  EXEMPT_SRC=0
   if [ "$SKIP_BEFORE_RED" -eq 1 ]; then
     if [ "$sha" = "$RED_SHA" ]; then
       SKIP_BEFORE_RED=0  # (Red) commit 本身开始接受检查
     else
-      continue
+      EXEMPT_SRC=1
     fi
   fi
 
@@ -108,7 +112,7 @@ while IFS= read -r sha; do
     SEEN_TEST=1
   fi
 
-  if [ -n "$HAS_SRC" ] && [ "$SEEN_TEST" -eq 0 ]; then
+  if [ -n "$HAS_SRC" ] && [ "$SEEN_TEST" -eq 0 ] && [ "$EXEMPT_SRC" -eq 0 ]; then
     FIRST_BAD_SHA="$sha"
     FIRST_BAD_FILES="$HAS_SRC"
     break
