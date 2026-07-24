@@ -56,3 +56,22 @@ JSON reporter 正常落盘并被 Node 解析；11 条均进入 assertion result�
 | `ws6` | lifecycle smoke、blocking invariants、最终 consumer/inventory oracle |
 
 本棒只建立全红共享棋盘证据，不包含 Green、stub 或任何产品实现。
+
+## ws4 Red 证据
+
+- rebase 后基线：`aaab1ea65f2deab7235d5746a5c70715013f7e3d`
+- workstream：`ws4`
+- 批准测试 blob：`5f009c2ab6cc3714ac161df88958def344aafece`
+- 实跑命令：
+
+```bash
+npx vitest run sprints/07240958-relay-1fd063d0/tests/codex-slot-contract.test.ts \
+  -t '全部生产 Codex credential consumer|bridge/消费者' \
+  --reporter=json \
+  --outputFile=/tmp/ws4-red-report.json
+```
+
+- 结果：`exit_code=1`，`numFailedTests=2`，两个 ws4 断言均因实现缺口失败：
+  1. `codex-account-usage.cjs` 缺少 `codex-slot` broker 接线；
+  2. `codex-bridge.cjs` 仍含 `loadRawAuth` / `injectLocalAccount` / `setupInjectedAccounts` raw-auth fallback。
+- 测试已正常收集并进入断言失败，不是 parser/import/runner 崩溃；其余 9 条当前为通过状态。
