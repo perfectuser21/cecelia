@@ -32,6 +32,7 @@ import kvRouter from './routes/kv.js';
 import guardDrillRouter from './routes/guard-drill.js';
 import releaseGateRouter from './routes/release-gate.js';
 import opsPanoramaRouter from './routes/ops-panorama.js';
+import codexSlotsRouter from './routes/codex-slots.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -95,5 +96,8 @@ router.use('/release-gate', releaseGateRouter);
 
 // 执行全景面板 — GET /ops-panorama
 router.use('/ops-panorama', opsPanoramaRouter);
+
+// Codex Slot broker — the only company Codex credential issuer.
+router.use('/codex-slots', codexSlotsRouter);
 
 export default router;
