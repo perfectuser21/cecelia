@@ -53,6 +53,7 @@ harness-stats-by-journey-smoke.sh
 healthz-smoke.sh
 initiative-lifecycle-smoke.sh
 journey-id-entry-points-smoke.sh
+independent-judge-stage-evidence-smoke.sh
 judge-api-smoke.sh
 kr1-kr2-updater-smoke.sh
 launchd-patrol-smoke.sh
