@@ -1,0 +1,13 @@
+{
+  "broker": "administrator@100.71.151.105",
+  "hosts": [
+    "xian-m4"
+  ],
+  "localHost": "xian-m4",
+  "brokerScript": "~/.local/lib/codex-slot/codex-slot-broker.mjs",
+  "agentScript": "~/.local/lib/codex-slot/codex-slot-agent.mjs",
+  "exitNode": "mmv",
+  "agentEnvironment": {
+    "CODEX_SLOT_EXIT_NODE": "mmv"
+  }
+}

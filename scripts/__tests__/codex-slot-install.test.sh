@@ -1148,7 +1148,13 @@ test_argument_rejection_before_side_effects() {
     if [[ -n "$item" ]]; then
       read -r -a args <<<"$item"
     fi
-    if run_install "$root" "${args[@]}" >"$root/out" 2>&1; then
+    local status=0
+    if [[ "${#args[@]}" -eq 0 ]]; then
+      run_install "$root" >"$root/out" 2>&1 || status=$?
+    else
+      run_install "$root" "${args[@]}" >"$root/out" 2>&1 || status=$?
+    fi
+    if [[ "$status" -eq 0 ]]; then
       fail "非法参数拒绝: ${item:-<empty>}" "installer unexpectedly succeeded"
     else
       pass "非法参数拒绝: ${item:-<empty>}"
@@ -1185,6 +1191,27 @@ test_example_config_has_safe_defaults() {
     "$(printf '%s' "$parsed" | tr '[:upper:]' '[:lower:]')"
 }
 
+test_xian_m4_config_uses_local_agent_and_explicit_broker_identity() {
+  local config="$REPO_ROOT/config/codex-slot/xian-m4.example.json"
+  if [[ ! -f "$config" ]]; then
+    fail "xian-m4.example.json 存在" "file missing"
+    return
+  fi
+  pass "xian-m4.example.json 存在"
+  if node -e '
+    const fs = require("fs");
+    const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (value.broker !== "administrator@100.71.151.105") process.exit(2);
+    if (JSON.stringify(value.hosts) !== JSON.stringify(["xian-m4"])) process.exit(3);
+    if (value.localHost !== "xian-m4") process.exit(4);
+    if (value.agentEnvironment?.CODEX_SLOT_EXIT_NODE !== "mmv") process.exit(5);
+  ' "$config"; then
+    pass "xian-m4 config 固定本地 agent 与美国 M4 broker"
+  else
+    fail "xian-m4 config 固定本地 agent 与美国 M4 broker" "JSON contract failed"
+  fi
+}
+
 printf '\n[codex-slot-install.test] idempotent and role-isolated installer\n\n'
 
 if [[ ! -f "$INSTALLER" ]]; then
@@ -1213,6 +1240,7 @@ test_remote_lock_owner_recovery_and_replacement_safety
 test_concurrent_client_never_leaves_partial_install
 test_argument_rejection_before_side_effects
 test_example_config_has_safe_defaults
+test_xian_m4_config_uses_local_agent_and_explicit_broker_identity
 
 printf '\nResult: %d PASS, %d FAIL\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -ne 0 ]]; then

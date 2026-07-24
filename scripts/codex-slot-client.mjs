@@ -62,6 +62,16 @@ function renderRemoteScript(script) {
   return quotePosix(script);
 }
 
+function resolveLocalScript(script, home) {
+  if (script.startsWith('~/')) {
+    return join(home, script.slice(2));
+  }
+  if (isAbsolute(script)) {
+    return script;
+  }
+  throw new Error('local agentScript 必须是绝对路径或 ~/ 路径');
+}
+
 function renderNodeRemoteCommand(script, args, logicalHost) {
   return [
     'env',
@@ -1054,6 +1064,15 @@ export async function runClient(argv, transport) {
     case 'list':
       result = await commandList(flags, positionals, transport, actor, hosts);
       break;
+    case 'status':
+      result = await commandList(
+        { ...flags, status: true },
+        positionals,
+        transport,
+        actor,
+        hosts
+      );
+      break;
     case 'resume':
       result = await commandResume(flags, positionals, transport, actor, hosts);
       break;
@@ -1085,6 +1104,12 @@ function normalizeConfig(raw) {
   config.hosts = config.hosts.map((host) => validateHost(host));
   if (new Set(config.hosts).size !== config.hosts.length) {
     throw new Error('config.hosts 不允许重复');
+  }
+  if (config.localHost !== undefined) {
+    config.localHost = validateHost(config.localHost, 'localHost');
+    if (!config.hosts.includes(config.localHost)) {
+      throw new Error('localHost 必须包含在 hosts 中');
+    }
   }
   validateRemoteScript(config.brokerScript, 'brokerScript');
   validateRemoteScript(config.agentScript, 'agentScript');
@@ -1225,6 +1250,7 @@ export async function createSshTransport(options = {}) {
   const config = options.config
     ? normalizeConfig(options.config)
     : await loadClientConfig(options);
+  const home = options.home ?? homedir();
   const runCommand = options.runCommand ?? runProcess;
   const runInteractive = options.runInteractive ?? runProcess;
   const command = async (host, script, args, broker = false) => {
@@ -1259,8 +1285,29 @@ export async function createSshTransport(options = {}) {
       process.stdout.write(text);
     }),
     broker: (args) => command(config.broker, config.brokerScript, args, true),
-    agent: (host, args) => {
+    agent: async (host, args) => {
       if (!config.hosts.includes(host)) throw new Error('agent host 不在配置中');
+      if (host === config.localHost) {
+        let result;
+        try {
+          result = await runCommand(
+            'node',
+            [resolveLocalScript(config.agentScript, home), ...args],
+            {
+              timeoutMs: NON_INTERACTIVE_TIMEOUT_MS,
+              shell: false,
+              env: {
+                ...process.env,
+                PATH: REMOTE_FIXED_PATH,
+                CODEX_SLOT_HOST: host,
+              },
+            }
+          );
+        } catch (error) {
+          throw new Error(sanitizeErrorText(error.message));
+        }
+        return parseStrictJson(result.stdout, `${host} ${args[0]}`);
+      }
       return command(host, config.agentScript, args, false);
     },
     attach: async (host, tmuxTarget) => {
@@ -1272,6 +1319,20 @@ export async function createSshTransport(options = {}) {
         throw new Error('tmux target 必须是精确 session 名');
       }
       try {
+        if (host === config.localHost) {
+          return await runInteractive(
+            'tmux',
+            ['attach-session', '-t', tmuxTarget],
+            {
+              shell: false,
+              stdio: 'inherit',
+              env: {
+                ...process.env,
+                PATH: REMOTE_FIXED_PATH,
+              },
+            }
+          );
+        }
         return await runInteractive(
           'ssh',
           ['-t', host, renderTmuxAttachRemoteCommand(tmuxTarget)],
