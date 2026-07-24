@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r3-892405df-a8
-sprint_dir: sprints/07242331-kernel-892405df
-
 ---
 skeleton: false
 journey_type: agent_remote
