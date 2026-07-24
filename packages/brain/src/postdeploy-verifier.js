@@ -98,6 +98,7 @@ async function fetchPendingBatch(dbPool) {
             COALESCE((payload->>'postdeploy_retry_count')::int, 0) AS retry_count
      FROM tasks
      WHERE status = 'pending_postdeploy'
+       AND title NOT LIKE 'smoke:%'
        AND (payload->>'postdeploy_retry_count' IS NULL
             OR (payload->>'postdeploy_retry_count')::int < $1)
      ORDER BY updated_at ASC

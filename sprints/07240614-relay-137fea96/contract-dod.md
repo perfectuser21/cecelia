@@ -9,15 +9,15 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `task-tasks.js` 新增 DELETE 路由，复用既有 `TERMINAL_STATUSES` 常量（不新建第二套终态定义）
+- [x] [ARTIFACT] `task-tasks.js` 新增 DELETE 路由，复用既有 `TERMINAL_STATUSES` 常量（不新建第二套终态定义）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/task-tasks.js','utf8'); if(!/router\.delete\(['\"]\/:id['\"]/.test(c)) process.exit(1); if(!/TERMINAL_STATUSES/.test(c)) process.exit(1);"
 
-- [ ] [ARTIFACT] `postdeploy-verifier.js` 的 `fetchPendingBatch` SQL 含 `smoke:` 前缀排除条件
+- [x] [ARTIFACT] `postdeploy-verifier.js` 的 `fetchPendingBatch` SQL 含 `smoke:` 前缀排除条件
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/postdeploy-verifier.js','utf8'); const m=c.match(/async function fetchPendingBatch[\s\S]*?\n}/); if(!m || !/NOT LIKE\s+'smoke:%'/.test(m[0])) process.exit(1);"
 
 ## BEHAVIOR 条目（内嵌可执行 manual:bash 命令，target_environment=local_api，真实 Brain + 真实 Postgres）
 
-- [ ] [BEHAVIOR] 存在的非终态任务发起 DELETE → HTTP 200，响应体 status=cancelled，且 DB 行 status 真实变为 cancelled（不信任响应体自证，双重校验）
+- [x] [BEHAVIOR] 存在的非终态任务发起 DELETE → HTTP 200，响应体 status=cancelled，且 DB 行 status 真实变为 cancelled（不信任响应体自证，双重校验）
   Test: manual:bash
   ```bash
   set -e
@@ -32,7 +32,7 @@ journey_type: autonomous
   ```
   期望: OK（且各处断言均未提前以非零 exit 中断）
 
-- [ ] [BEHAVIOR] 不存在的任务 id 发起 DELETE → HTTP 404，响应体含 error 字段 (string) 且 id 字段回显请求的任务 id，不产生任何 DB 变更
+- [x] [BEHAVIOR] 不存在的任务 id 发起 DELETE → HTTP 404，响应体含 error 字段 (string) 且 id 字段回显请求的任务 id，不产生任何 DB 变更
   Test: manual:bash
   ```bash
   set -e
@@ -44,7 +44,7 @@ journey_type: autonomous
   ```
   期望: OK
 
-- [ ] [BEHAVIOR] 已 completed 的任务发起 DELETE → HTTP 409，响应体含 error/details（均为 string），DB 行 status 保持 completed（未被误改，防误删历史记录）
+- [x] [BEHAVIOR] 已 completed 的任务发起 DELETE → HTTP 409，响应体含 error/details（均为 string），DB 行 status 保持 completed（未被误改，防误删历史记录）
   Test: manual:bash
   ```bash
   set -e
@@ -61,7 +61,7 @@ journey_type: autonomous
   ```
   期望: OK
 
-- [ ] [BEHAVIOR] 已 cancelled 的任务再次发起 DELETE → HTTP 409，响应体含 error/details（均为 string）（幂等边界，TERMINAL_STATUSES 同时覆盖 completed 与 cancelled）
+- [x] [BEHAVIOR] 已 cancelled 的任务再次发起 DELETE → HTTP 409，响应体含 error/details（均为 string）（幂等边界，TERMINAL_STATUSES 同时覆盖 completed 与 cancelled）
   Test: manual:bash
   ```bash
   set -e
@@ -76,7 +76,7 @@ journey_type: autonomous
   ```
   期望: OK
 
-- [ ] [BEHAVIOR] title 以 "smoke:" 开头的 pending_postdeploy 任务 → 真实调用 runPostdeployVerifier() 扫描后，status 仍为 pending_postdeploy（未被消费/未标 completed/failed，payload 无 postdeploy_retry_count 写入）
+- [x] [BEHAVIOR] title 以 "smoke:" 开头的 pending_postdeploy 任务 → 真实调用 runPostdeployVerifier() 扫描后，status 仍为 pending_postdeploy（未被消费/未标 completed/failed，payload 无 postdeploy_retry_count 写入）
   Test: manual:bash
   ```bash
   set -e
@@ -100,7 +100,7 @@ journey_type: autonomous
   ```
   期望: OK
 
-- [ ] [BEHAVIOR] 对照：不带 smoke: 前缀的同批次任务 → 正常被 runPostdeployVerifier() 消费，status 变为 completed（证明过滤是选择性排除，未打坏整个批次消费机制）
+- [x] [BEHAVIOR] 对照：不带 smoke: 前缀的同批次任务 → 正常被 runPostdeployVerifier() 消费，status 变为 completed（证明过滤是选择性排除，未打坏整个批次消费机制）
   Test: manual:bash
   ```bash
   set -e
@@ -122,7 +122,7 @@ journey_type: autonomous
   ```
   期望: OK
 
-- [ ] [BEHAVIOR] postdeploy-verifier-smoke.sh 全脚本回归 — Step 3 清理命中新 DELETE 路由（200），脚本创建的任务最终 DB status='cancelled'（PRD 背景段描述的根因链路已断开）
+- [x] [BEHAVIOR] postdeploy-verifier-smoke.sh 全脚本回归 — Step 3 清理命中新 DELETE 路由（200），脚本创建的任务最终 DB status='cancelled'（PRD 背景段描述的根因链路已断开）
   Test: manual:bash
   ```bash
   set -e
