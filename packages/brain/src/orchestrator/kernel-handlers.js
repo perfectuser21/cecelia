@@ -78,6 +78,14 @@ export function createKernelHandlers(deps) {
         sprintDir: ctx.bundle.inputs.sprint_dir,
         taskId: ctx.taskId,
         instanceLabel: `kernel-${String(ctx.attempt.id).slice(0, 8)}`,
+        promptDir: deps.promptDir,
+        stageFacts: {
+          current_stage: 'independent_judge',
+          pr_state: ctx.observed.pr?.state ?? null,
+          pr_merged: ctx.observed.pr?.merged === true,
+          head_sha: ctx.observed.pr?.head_sha ?? null,
+          merge_gate_approved: ctx.observed.reviewApproved === true,
+        },
       }, { strict: true, dbPool: deps.pool });
 
       if (result.judged !== true) {

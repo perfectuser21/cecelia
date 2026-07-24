@@ -47,6 +47,7 @@ async function buildDefaultHandlers({ pool, execCmd, attemptStore }) {
     handoff,
     okr,
     cleanup,
+    dockerExecutor,
   ] = await Promise.all([
     import('../harness-judge.js'),
     import('../preview-manager.js'),
@@ -56,6 +57,7 @@ async function buildDefaultHandlers({ pool, execCmd, attemptStore }) {
     import('../handoff.js'),
     import('../okr-initiative-sync.js'),
     import('../harness-container-cleanup.js'),
+    import('../docker-executor.js'),
   ]);
 
   const spawnStaging = async (payload) => {
@@ -80,6 +82,7 @@ async function buildDefaultHandlers({ pool, execCmd, attemptStore }) {
     pool,
     execCmd,
     attemptStore,
+    promptDir: dockerExecutor.getHostPromptDir(),
     judgeGate: judge.runJudgeGate,
     allocatePort: previewManager.allocatePort,
     spawnReviewPreview: staging.spawnReviewPreview,
