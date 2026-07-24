@@ -115,4 +115,33 @@ describe('ConversationDrawer — 议题列表', () => {
     fireEvent.click(screen.getByTestId('drawer-close-btn'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('新议题创建失败显示中文错误提示', async () => {
+    global.fetch = vi.fn().mockImplementation((url: string, opts?: any) => {
+      const method = (opts?.method || 'GET').toUpperCase();
+      if (method === 'POST' && url === '/api/brain/conversations') {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({}) }) as any;
+      }
+      if (url.includes('/api/brain/conversations')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ conversations: [], total: 0 }),
+        }) as any;
+      }
+      throw new Error(`no mock for ${method} ${url}`);
+    }) as any;
+
+    render(<ConversationDrawer journeyId={JOURNEY_ID} open={true} onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/暂无议题/)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('new-conversation-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByText('创建议题失败')).toBeInTheDocument();
+    });
+  });
 });

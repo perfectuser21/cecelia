@@ -146,10 +146,7 @@ export default function ConversationDrawer({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ journey_id: journeyId }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error();
       const conv = await res.json();
       await fetchList();
       setActiveId(conv.id);
