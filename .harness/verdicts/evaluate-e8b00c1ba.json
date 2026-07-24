@@ -1,0 +1,19 @@
+{
+  "verdict": "PASS",
+  "sha": "e8b00c1ba",
+  "pr": 4248,
+  "assertions": {
+    "B0": "pass",
+    "B0b": "pass",
+    "B0c": "pass",
+    "B0d": "pass",
+    "B1-B3,B5": "pass (smoke E2E all A1-A5 green)",
+    "B4": "pass",
+    "B6": "pass",
+    "B7": "pass"
+  },
+  "e2e_result": "PASS (7/7 local verified)",
+  "unverifiable": [],
+  "concerns": [],
+  "note": "test.sh /healthz probe 已修为 /api/brain/healthz，全部断言本地通过"
+}

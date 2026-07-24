@@ -1,0 +1,21 @@
+{
+  "verdict": "REVISION",
+  "round": 1,
+  "rubric_scores": {
+    "completeness": 8,
+    "correctness": 3,
+    "testability": 7,
+    "contract_format": 9,
+    "invariant_coverage": 5,
+    "test_quality": 6,
+    "risk_assessment": 5
+  },
+  "total_score": "43/70",
+  "judgments_written": 8,
+  "concerns": [
+    "A4/B4: executor_kind 由 executor.js 按 task_type 路由（非 mode=headless），B4 必然失败",
+    "A5/B5: cancelled 不在 PATCH allowedStatuses，应改用 failed 或 completed",
+    "DoD B6 与合同 B6 含义歧义"
+  ],
+  "blocking_issues": ["A4_technical_basis_invalid", "A5_cancelled_not_supported"]
+}

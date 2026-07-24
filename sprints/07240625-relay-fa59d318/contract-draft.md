@@ -10,6 +10,12 @@
 
 ## Test Contract
 
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| headless dispatch smoke A1-A5+sad path | `tests/headless-smoke.test.sh` | B1/B2/B3/B4/B5/B6/B7 | → 实现前 headless-smoke.sh 未就位时全部断言失败 |
+
+### BEHAVIOR 判定点明细
+
 | # | [BEHAVIOR] 判定点 | 验证方式 | 分类 | 预期结果 |
 |---|-----------------|---------|------|---------|
 | B1 | [BEHAVIOR] GET /healthz 返回 HTTP 200 | curl -s -o /dev/null -w "%{http_code}" | happy path | 200 |
