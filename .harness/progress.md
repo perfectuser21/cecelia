@@ -1,11 +1,27 @@
-# Sprint: sprints/07240614-relay-137fea96 (137fea96-c596-4a34-b5ed-af8d2758ea6b)
-# 任务: [紧急][postdeploy-verifier] smoke 测试任务清理失败导致误触发 P1（DELETE /api/brain/tasks/:id 路由缺失）
-# 开始时间: 2026-07-24
-# 备注: 本 worktree 复用自旧任务 264b8c8d，其残留台账已归档为 progress-STALE-264b8c8d.md.bak，不代表本任务进度
-planner: done (sprint-prd.md@8b85fa97c, invariants=8, fr=0)
-gan: done (contract-draft.md+dod@e7e3a4e, r2, verdict=APPROVED, 铁律覆盖=8/8, judgments_written=2, rubric=.harness/verdicts/gan-e7e3a4e.json)
-generator: pr_opened (#4273, red=4fc96dd)
-generator: done (pr=#4273, red=4fc96dd, green=14d130d, fix=202820d, CI required checks 全绿)
-judge: FAIL (round1, mechFail=theater_mismatch, 误判：contract-draft.md Invariant覆盖行INV-2误用[BEHAVIOR]标签命中"真机"关键词，非真实需求；已开 Notion issue c4993b81；回 GAN round3 做窄范围格式修订)
-gan: round3 done (contract-draft.md@efc9e2f77, 纯格式修订：Invariant覆盖8行去[BEHAVIOR]标签+INV-2真机→设备同义替换，reviewer CONFIRMED，之前APPROVED继续有效)
-judge: done (verdict=PASS, sha=7483a47ff, round2 通过：meta_verification_gap 也是误判，PRD标题/GP改写规避，已开issue 7f514a99)
+# Sprint: sprints/07231828-relay-97f490f5 (97f490f5-d3d0-499c-835b-b4558406e9d1)
+# thin_prd 由 controller 从 playground 模式推断（任务 payload 缺失，类比 17d5b58d headless-contract-test）
+# 选定端点：GET /sign（符号函数，第13个 playground 端点）
+planner: done (sprint-prd.md@629097b, invariants=0, fr=0, thin_prd=inferred/playground)
+gan: done (contract-draft.md+contract-dod.md+tests/@d586a9f, r1, verdict=APPROVED, 铁律覆盖=0/0, judgments_written=13, rubric=.harness/verdicts/gan-d586a9f.json)
+generator: pr_opened (#4230, red=0d7af07)
+generator: done (pr=#4230, red=0d7af07, green=8f9608e, ci=GREEN)
+evaluator: done (verdict=PASS, sha=8f9608e, verdict_file=.harness/verdicts/evaluate-8f9608e.json)
+judge: done (verdict=PASS, sha=8f9608e)
+review-prep: sha-reanchor (f3d1f0e, contract-draft fmt-fix=pure-metadata, eval verdict unchanged=PASS)
+review-prep: ci-green-pending (waiting Smoke Glob Runner)
+review-gate: bark-sent (PR #4230 CI=GREEN 0 failed, waiting human_review_approved)
+review-gate: blocking-poll (30min reminder interval, max 24h → blocked)
+
+## === Sprint fa59d318-89ca-4b13-bee5-93cdf8c4362e (headless-smoke) START 2026-07-23T22:30:07Z ===
+planner: done (sprint-prd.md@b533602, invariants=2, fr=5)
+gan: done (contract-draft.md+contract-dod.md+tests/@047884b, r1, verdict=APPROVED, behaviors=8, coverage=A1-A5+sad-path)
+generator: pr_opened (#4248, red=376a25a)
+generator: done (pr=#4248, red=376a25a, green=1f890dd, ci=GREEN)
+evaluator: done (verdict=PASS, sha=e8b00c1ba, verdict_file=.harness/verdicts/evaluate-e8b00c1ba.json)
+evaluator: re-anchor (e8b00c1ba = 1-line URL fix in test.sh, E2E 7/7 local verified)
+evaluator: done (verdict=PASS, sha=ce365b36, verdict_file=.harness/verdicts/evaluate-e8b00c1ba.json)
+judge: done (verdict=PASS, sha=ce365b36)
+review-gate: human_review_pending 已写入 task_events(id=3383), pending-reviews 列表登记 ✅
+review-gate: bark-sent (PR #4248 Judge=PASS, 等待 human_review_approved, approve命令=curl POST /api/brain/harness/pending-reviews/fa59d318.../approve)
+review-gate: blocking-poll-start (30min reminder interval, max 24h → blocked)
+conflict-fix: merge origin/main resolved (smoke-allowlist=合并4条, progress.md=保留HEAD版本)

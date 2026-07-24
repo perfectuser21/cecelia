@@ -1,0 +1,34 @@
+{
+  "verdict": "PASS",
+  "sha": "6de453c",
+  "pr": 4248,
+  "task_id": "fa59d318-89ca-4b13-bee5-93cdf8c4362e",
+  "evaluated_at": "2026-07-23",
+  "assertions": {
+    "B0": "pass",
+    "B0b": "pass",
+    "B0c": "pass",
+    "B0d": "pass",
+    "B1": "pass",
+    "B2": "pass",
+    "B3": "pass",
+    "B4": "pass",
+    "B5": "pass",
+    "B6": "pass",
+    "B7": "pass"
+  },
+  "e2e_result": "PASS",
+  "contract_test_result": "PASS",
+  "unverifiable": [],
+  "concerns": [
+    "headless-smoke.test.sh 的 Brain 可达性探测使用 /healthz（返回 404），而实际 Brain 健康端点为 /api/brain/healthz（200）。导致 contract test 对 B1-B3/B5 走 SKIP 分支而非 live 验证。但 smoke.sh 本体用正确路径，E2E 全通过。建议后续修正 test 脚本的探测路径。"
+  ],
+  "details": {
+    "smoke_script_lines": 51,
+    "smoke_script_path": "packages/brain/scripts/smoke/headless-smoke.sh",
+    "executor_contracts_mapping": "harness_initiative: 'relay-container' 已确认（packages/brain/src/executor-contracts.js 第 27 行）",
+    "allowlist_entry": "headless-smoke.sh 已登记 packages/quality/smoke-allowlist.txt",
+    "e2e_task_id_created": "329af973-43ed-4bda-8932-e37c1042a750",
+    "b7_exit_code": 1
+  }
+}
