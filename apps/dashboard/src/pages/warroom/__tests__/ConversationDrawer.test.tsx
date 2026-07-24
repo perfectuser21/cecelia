@@ -316,3 +316,60 @@ describe('ConversationDrawer — 对话区', () => {
     expect((screen.getByTestId('message-input') as HTMLInputElement).value).toBe('测试消息');
   });
 });
+
+describe('ConversationDrawer — 轮询生命周期', () => {
+  it('打开对话区后每5秒自动重拉消息', async () => {
+    vi.useFakeTimers();
+    let pollCount = 0;
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/messages')) {
+        pollCount += 1;
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ messages: [], has_more: false }) });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ conversations: [{ id: 'conv-1', title: '测试议题', status: 'active', last_message: null, last_message_at: null, updated_at: '2026-07-24T00:00:00Z', turn_count: 0 }], total: 1 }),
+      });
+    }) as any;
+
+    render(<ConversationDrawer journeyId={JOURNEY_ID} open={true} onClose={() => {}} />);
+    await vi.waitFor(() => expect(screen.getByText('测试议题')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('conversation-item-conv-1'));
+    await vi.waitFor(() => expect(pollCount).toBeGreaterThanOrEqual(1));
+
+    const before = pollCount;
+    await vi.advanceTimersByTimeAsync(5100);
+    expect(pollCount).toBeGreaterThan(before);
+
+    vi.useRealTimers();
+  });
+
+  it('关闭抽屉后停止轮询', async () => {
+    vi.useFakeTimers();
+    let pollCount = 0;
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/messages')) {
+        pollCount += 1;
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ messages: [], has_more: false }) });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ conversations: [{ id: 'conv-1', title: '测试议题', status: 'active', last_message: null, last_message_at: null, updated_at: '2026-07-24T00:00:00Z', turn_count: 0 }], total: 1 }),
+      });
+    }) as any;
+
+    const { rerender } = render(<ConversationDrawer journeyId={JOURNEY_ID} open={true} onClose={() => {}} />);
+    await vi.waitFor(() => expect(screen.getByText('测试议题')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('conversation-item-conv-1'));
+    await vi.waitFor(() => expect(pollCount).toBeGreaterThanOrEqual(1));
+
+    rerender(<ConversationDrawer journeyId={JOURNEY_ID} open={false} onClose={() => {}} />);
+    const afterClose = pollCount;
+    await vi.advanceTimersByTimeAsync(11000);
+    expect(pollCount).toBe(afterClose);
+
+    vi.useRealTimers();
+  });
+});
