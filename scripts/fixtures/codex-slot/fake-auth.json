@@ -1,0 +1,5 @@
+{
+  "fixture": true,
+  "authorization": "Bearer not.a.real.token",
+  "purpose": "Codex Slot fake-auth verification only; never accepted by production authentication"
+}

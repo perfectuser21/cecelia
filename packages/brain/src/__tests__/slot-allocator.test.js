@@ -78,6 +78,7 @@ vi.mock('../fleet-resource-cache.js', () => ({
 
 import { execSync } from 'child_process';
 import { checkServerResources, getEffectiveMaxSeats, getBudgetCap } from '../executor.js';
+import { getRemoteCapacity } from '../fleet-resource-cache.js';
 import pool from '../db.js';
 import {
   TOTAL_CAPACITY,
@@ -984,6 +985,7 @@ describe('calculateSlotBudget 三池模型完整性', () => {
     pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
     getEffectiveMaxSeats.mockReturnValue(12);
     getBudgetCap.mockReturnValue({ budget: null, physical: 12, effective: 12 });
+    getRemoteCapacity.mockReturnValue(null);
   });
 
   it('capacity 字段应包含 physical / budget / effective', async () => {
@@ -1046,21 +1048,39 @@ describe('calculateSlotBudget 三池模型完整性', () => {
     expect(poolSum).toBeLessThanOrEqual(budget.total);
   });
 
-  it('codex 字段包含 running/max/available', async () => {
+  it('codex 缺失容量 fail closed，fresh capacity 才恢复可用', async () => {
     // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countAutoDispatchInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '2' }] }); // countCodexInProgress
-    const budget = await calculateSlotBudget();
-    expect(budget.codex).toBeDefined();
-    expect(budget.codex.max).toBe(3);
-    expect(budget.codex.running).toBe(2);
-    expect(budget.codex.available).toBe(true); // 2 < 3
+    const missing = await calculateSlotBudget();
+    expect(missing.codex).toBeDefined();
+    expect(missing.codex.max).toBe(0);
+    expect(missing.codex.running).toBe(2);
+    expect(missing.codex.available).toBe(false);
+
+    getRemoteCapacity.mockImplementation(serverId => ({
+      online: true,
+      effectiveSlots: serverId === 'xian-mac-m4' ? 2 : 1,
+    }));
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '2' }] });
+    const fresh = await calculateSlotBudget();
+    expect(fresh.codex.max).toBe(3);
+    expect(fresh.codex.running).toBe(2);
+    expect(fresh.codex.available).toBe(true);
   });
 
   it('codex.available=false when running >= MAX_CODEX_CONCURRENT', async () => {
+    getRemoteCapacity.mockImplementation(serverId => ({
+      online: true,
+      effectiveSlots: serverId === 'xian-mac-m4' ? 2 : 1,
+    }));
     // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
