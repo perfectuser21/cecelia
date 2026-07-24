@@ -163,7 +163,7 @@ git commit -m "fix(brain): preserve legacy conversations in migration 359 (Green
 Update all Brain version sources together and verify:
 
 ```bash
-bash scripts/verify-brain-version.sh
+bash scripts/check-version-sync.sh
 ```
 
 Expected: version sources agree on `1.267.60`.
@@ -180,7 +180,7 @@ Expected: all selected tests pass.
 - [ ] **Step 3: Run DevGate/pre-push verification**
 
 ```bash
-bash scripts/devgate/pre-push.sh
+bash scripts/pre-push-check.sh
 ```
 
 Expected: exit 0. If the repository exposes a different canonical pre-push entrypoint, use the entrypoint printed by the script and record the exact result.
@@ -235,7 +235,7 @@ Fetch `origin/main`, integrate it using the branch's established update conventi
 
 - [ ] **Step 2: Bump #4226 Brain version if necessary**
 
-If hotfix main is `1.267.60`, advance #4226 to `1.267.61` across all synchronized version files and run `bash scripts/verify-brain-version.sh`.
+If hotfix main is `1.267.60`, advance #4226 to `1.267.61` across all synchronized version files and run `bash scripts/check-version-sync.sh`.
 
 - [ ] **Step 3: Rerun the #4226 focused verification**
 
