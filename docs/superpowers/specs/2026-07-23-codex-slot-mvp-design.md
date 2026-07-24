@@ -145,6 +145,15 @@ team1 至 team5 是公司共享账号池，不固定归属个人。
 
 ## CLI 行为
 
+### 西安 SSH 入口兼容
+
+Alex 和同事的实际入口是先 SSH/VSCode 进入西安执行机，再在该机运行
+`codex-slot`。客户端配置可声明唯一的 `localHost`；该 host 的 agent 与 tmux
+直接在本机执行，禁止再 SSH 回本机。broker 仍通过
+`administrator@100.71.151.105` 连接美国 M4，因此 token 与 registry 的控制面
+保持不变。`codex-slot status` 是 `list --status` 的兼容入口，用于显示当前
+actor 的稳定 handle、home host 和运行状态。
+
 ### `codex-slot start`
 
 默认从当前目录 basename 推导 project。也支持：

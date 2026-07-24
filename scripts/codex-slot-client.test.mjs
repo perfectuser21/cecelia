@@ -1087,6 +1087,22 @@ test('list --legacy calls every configured agent read-only and keeps output secr
   assert.doesNotMatch(JSON.stringify({ result, output: transport.output }), /team|token|lease/i);
 });
 
+test('status is a compatibility alias for the current actor session list', async () => {
+  const session = runningSession();
+  const transport = makeTransport({ sessions: [session] });
+
+  const result = await runClient(['status'], transport);
+
+  assert.equal(result.sessions.length, 1);
+  assert.equal(result.sessions[0].handle, session.handle);
+  assert.equal(result.sessions[0].status, 'running');
+  assert.deepEqual(transport.calls.map((call) => call.op), [
+    'identity',
+    'session-list',
+    'status:xian-m4',
+  ]);
+});
+
 test('stop releases current lease after confirmed stop, records stopped, and is idempotent', async () => {
   const session = runningSession();
   const transport = makeTransport({ sessions: [session] });
@@ -1437,6 +1453,32 @@ test('loadClientConfig honors env path, user path, then safe defaults', async ()
   );
 });
 
+test('loadClientConfig accepts one configured local agent host and validates membership', async () => {
+  const local = await loadClientConfig({
+    env: { CODEX_SLOT_CONFIG: '/config.json' },
+    home: '/Users/alex',
+    readFile: async () => JSON.stringify({
+      broker: 'administrator@100.71.151.105',
+      hosts: ['xian-m4'],
+      localHost: 'xian-m4',
+    }),
+  });
+  assert.equal(local.broker, 'administrator@100.71.151.105');
+  assert.equal(local.localHost, 'xian-m4');
+
+  await assert.rejects(
+    loadClientConfig({
+      env: { CODEX_SLOT_CONFIG: '/config.json' },
+      home: '/Users/alex',
+      readFile: async () => JSON.stringify({
+        hosts: ['xian-m4'],
+        localHost: 'xian-m1',
+      }),
+    }),
+    /localHost.*hosts/
+  );
+});
+
 test('real transport sends one POSIX-quoted remote command and preserves exact arguments', async () => {
   const calls = [];
   const runCommand = async (cmd, args, options) => {
@@ -1546,6 +1588,106 @@ test('real transport sends one POSIX-quoted remote command and preserves exact a
     runInteractive,
   });
   await assert.rejects(invalid.broker(['identity']), /JSON/);
+});
+
+test('real transport executes the configured local agent and tmux without self SSH', async () => {
+  const calls = [];
+  const detachedEnv = { ...process.env };
+  delete detachedEnv.TMUX;
+  delete detachedEnv.TMUX_PANE;
+  const runCommand = async (cmd, args, options) => {
+    calls.push({ kind: 'command', cmd, args, options });
+    return { stdout: '{"ok":true,"hostname":"xian-m4"}\n', stderr: '' };
+  };
+  const runInteractive = async (cmd, args, options) => {
+    calls.push({ kind: 'interactive', cmd, args, options });
+    return { ok: true };
+  };
+  const transport = await createSshTransport({
+    home: '/Users/alex',
+    env: detachedEnv,
+    config: {
+      broker: 'administrator@100.71.151.105',
+      hosts: ['xian-m4'],
+      localHost: 'xian-m4',
+      brokerScript: '~/.local/lib/codex-slot/codex-slot-broker.mjs',
+      agentScript: '~/.local/lib/codex-slot/codex-slot-agent.mjs',
+    },
+    runCommand,
+    runInteractive,
+  });
+
+  await transport.agent('xian-m4', ['health']);
+  await transport.attach('xian-m4', '=codex-slot-s-abc');
+
+  assert.deepEqual(calls[0], {
+    kind: 'command',
+    cmd: 'node',
+    args: [
+      '/Users/alex/.local/lib/codex-slot/codex-slot-agent.mjs',
+      'health',
+    ],
+    options: {
+      timeoutMs: 30_000,
+      shell: false,
+      env: {
+        ...detachedEnv,
+        PATH: REMOTE_FIXED_PATH,
+        CODEX_SLOT_HOST: 'xian-m4',
+      },
+    },
+  });
+  assert.deepEqual(calls[1], {
+    kind: 'interactive',
+    cmd: 'tmux',
+    args: ['attach-session', '-t', '=codex-slot-s-abc'],
+    options: {
+      shell: false,
+      stdio: 'inherit',
+      env: {
+        ...detachedEnv,
+        PATH: REMOTE_FIXED_PATH,
+      },
+    },
+  });
+  assert.equal(calls.some((call) => call.cmd === 'ssh'), false);
+
+  const nestedCalls = [];
+  const nestedTransport = await createSshTransport({
+    home: '/Users/alex',
+    env: {
+      ...process.env,
+      TMUX: '/private/tmp/tmux-501/default,123,0',
+    },
+    config: {
+      broker: 'administrator@100.71.151.105',
+      hosts: ['xian-m4'],
+      localHost: 'xian-m4',
+      brokerScript: '~/.local/lib/codex-slot/codex-slot-broker.mjs',
+      agentScript: '~/.local/lib/codex-slot/codex-slot-agent.mjs',
+    },
+    runCommand,
+    runInteractive: async (cmd, args, options) => {
+      nestedCalls.push({ cmd, args, options });
+      return { ok: true };
+    },
+  });
+
+  await nestedTransport.attach('xian-m4', '=codex-slot-s-abc');
+
+  assert.deepEqual(nestedCalls, [{
+    cmd: 'tmux',
+    args: ['switch-client', '-t', '=codex-slot-s-abc'],
+    options: {
+      shell: false,
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        TMUX: '/private/tmp/tmux-501/default,123,0',
+        PATH: REMOTE_FIXED_PATH,
+      },
+    },
+  }]);
 });
 
 test('remote env prefix lets fake node and tmux inherit fixed PATH with empty or minimal caller PATH', async (t) => {

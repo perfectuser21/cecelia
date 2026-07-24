@@ -6,6 +6,7 @@ umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_SOURCE="$REPO_ROOT/config/codex-slot/hosts.example.json"
+BROKER_HOSTS_SOURCE="$REPO_ROOT/config/codex-slot/broker-hosts.json"
 
 SSH_OPTIONS=(
   -o BatchMode=yes
@@ -887,7 +888,8 @@ REMOTE_INSTALL
 install_broker() {
   deploy_remote_role broker "$1" \
     "$SCRIPT_DIR/codex-slot-broker.mjs" \
-    "$SCRIPT_DIR/codex-slot-store.mjs"
+    "$SCRIPT_DIR/codex-slot-store.mjs" \
+    "$BROKER_HOSTS_SOURCE"
 }
 
 install_agent() {

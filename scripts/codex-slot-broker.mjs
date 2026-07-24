@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import {
+  dirname,
   isAbsolute,
   join,
   relative,
@@ -206,18 +207,60 @@ function defaultHostRegistry(home) {
   };
 }
 
-function resolveHostRegistry(deps, home) {
+function validateHostRegistry(registry, label) {
+  if (!registry || typeof registry !== 'object' || Array.isArray(registry)) {
+    throw new Error(`${label} must be a JSON object`);
+  }
+  for (const [host, entry] of Object.entries(registry)) {
+    validateSegment(host, 'host');
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`${label} entry must be a JSON object`);
+    }
+    if (typeof entry.slotRoot !== 'string' || !isAbsolute(entry.slotRoot)) {
+      throw new Error(`${label} slotRoot must be an absolute path`);
+    }
+    assertSafeRemoteSegment(entry.sshHost, `${label} sshHost`);
+  }
+  return registry;
+}
+
+async function readHostRegistryFile(path, deps, required) {
+  try {
+    const readFile = deps.readHostRegistryFile ?? fsReadFile;
+    const parsed = JSON.parse(await readFile(path, 'utf8'));
+    return validateHostRegistry(parsed, 'host registry file');
+  } catch (error) {
+    if (!required && error?.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function resolveHostRegistry(deps, home) {
   if (deps.hostRegistry) {
-    return deps.hostRegistry;
+    return validateHostRegistry(deps.hostRegistry, 'hostRegistry');
   }
   if (process.env.CODEX_SLOT_HOST_REGISTRY_JSON) {
     const parsed = JSON.parse(process.env.CODEX_SLOT_HOST_REGISTRY_JSON);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('CODEX_SLOT_HOST_REGISTRY_JSON must be a JSON object');
-    }
-    return parsed;
+    return validateHostRegistry(parsed, 'CODEX_SLOT_HOST_REGISTRY_JSON');
   }
-  return defaultHostRegistry(home);
+
+  const configuredPath = deps.hostRegistryPath
+    ?? process.env.CODEX_SLOT_HOST_REGISTRY_FILE;
+  if (configuredPath) {
+    return readHostRegistryFile(configuredPath, deps, true);
+  }
+
+  const bundledPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    'broker-hosts.json'
+  );
+  const bundledRegistry = await readHostRegistryFile(bundledPath, deps, false);
+  if (bundledRegistry) {
+    return bundledRegistry;
+  }
+  return validateHostRegistry(defaultHostRegistry(home), 'default host registry');
 }
 
 function authPathFor(home, team) {
@@ -538,6 +581,7 @@ export function buildDeliverCommands({ sshHost, source, path, mode }) {
       cmd: 'scp',
       args: [
         ...SSH_DELIVER_OPTIONS,
+        '-O',
         '-p',
         source,
         `${sshHost}:${quotedPath}`,
@@ -882,7 +926,7 @@ export async function runBroker(argv, deps = {}) {
   const { flags, positionals } = parseFlags(argv.slice(1));
   const home = resolveHome(deps);
   const root = resolveRoot(deps, home);
-  const hostRegistry = resolveHostRegistry(deps, home);
+  const hostRegistry = await resolveHostRegistry(deps, home);
   let result;
 
   if (command === 'identity') {

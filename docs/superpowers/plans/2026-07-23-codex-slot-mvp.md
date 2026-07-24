@@ -467,3 +467,37 @@ git push -u origin cp-07231220-codex-slot-mvp
 ```
 
 创建 Draft PR，正文包含架构边界、token 单写者、测试结果、部署状态，以及“磁盘未达 45 GiB 前 start 会 fail closed”的明确说明。
+
+### Task 7: 西安 SSH 入口兼容
+
+**Files:**
+- Modify: `scripts/codex-slot-client.mjs`
+- Modify: `scripts/codex-slot-client.test.mjs`
+- Modify: `scripts/__tests__/codex-slot-install.test.sh`
+- Create: `config/codex-slot/xian-m4.example.json`
+
+- [x] **Step 1: 增加红灯测试**
+
+覆盖 `status` 兼容命令、`localHost` 必须属于 `hosts`、本地 agent/tmux 不经
+SSH，以及西安配置固定连接美国 M4 broker。
+
+- [x] **Step 2: 验证红灯**
+
+Run:
+
+```bash
+node --test scripts/codex-slot-client.test.mjs
+bash scripts/__tests__/codex-slot-install.test.sh
+```
+
+Observed: client 3 failed；installer 219 passed, 1 failed。
+
+- [x] **Step 3: 实现本地执行 transport 与 status**
+
+`localHost` 的非交互 agent 使用本地 Node，attach 使用本地 tmux；远程 broker
+路径保持 SSH 安全参数和超时。`status` 强制执行带运行时探测的 session list。
+
+- [ ] **Step 4: 全量测试、部署和真实门禁验证**
+
+运行 Task 6 全量测试；部署 broker、xian-m4 agent/client 后，验证 `status`
+可运行且 `start` 在 45 GiB 门禁未满足时于租约和 token 复制前拒绝。
