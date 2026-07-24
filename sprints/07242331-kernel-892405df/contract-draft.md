@@ -1,9 +1,19 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 覆盖父路：独立小路（无父路）—— 本 sprint 是 kernel-v1 mixed-provider 主链的一次性 fire drill 演练验收，
 不覆盖某条既有产品 Golden Path 的子步骤，验收对象是本次 harness 全链路执行本身。
 
-**Round 2 修订说明（精简纪律 B50 — 净变化趋近 0）**：Round 1 已通过 Step 2b-check 确定性自查（`grep -c '^- \[ \] \[BEHAVIOR\]'` = 7 条 ≥ 4，真执行断言 7/7 占比 100%）。本轮唯一改动：ARTIFACT #2「五角色证据摘要」原判据只 grep 角色名字符串（如 `planner`），未验证 PRD 明确要求的 provider/account 值——补齐为「角色名 300 字符窗口内含其 provider 与 account 字面值」，其余条目未发现真实 PRD 漏覆盖，不做无依据的加严。
+**Round 2 修订说明（历史保留）**：Round 1 已通过 Step 2b-check 确定性自查（`grep -c '^- \[ \] \[BEHAVIOR\]'` = 7 条 ≥ 4，真执行断言 7/7 占比 100%）。Round 2 唯一改动：ARTIFACT #2「五角色证据摘要」原判据只 grep 角色名字符串（如 `planner`），未验证 PRD 明确要求的 provider/account 值——补齐为「角色名 300 字符窗口内含其 provider 与 account 字面值」。
+
+**Round 3 修订说明（精简纪律 B50 — 只修 Reviewer 指出的真实 PRD 漏项，不加无依据的严谨）**：Round 2 独立 reviewer（grok）判 REVISION，七维 8/6/9/6/8/6/10，三维 <7：
+
+1. **scope_match_prd（6/10）**：PRD Step 4 明确要求"批准远端合同 SHA 能被实际物化读取"。Round 2 的 DoD 只 grep 文档里 `approved_but_contract_artifacts_missing` 附近有没有"未出现"字样——这是文档自证，从未真正核验物化这件事是否发生。**修法**：读 `packages/brain/src/orchestrator/loop.js` 源码确认物化的真实落点——`frozenContractArtifacts()`/`materializeApprovedContract()` 成功时把 `contract_content`/`prd_content` 写进 `initiative_runs`，失败时把 `failure_reason='approved_but_contract_artifacts_missing'` 写回同一行；`GET /api/brain/harness/initiative/:id/detail` 读 `contract_content`/`prd_content`，`GET /api/brain/orchestrator/relay-runs?task_id=...` 读 `failure_reason`（均为已验证可用的既有生产端点）。新 BEHAVIOR 直接查这两个真实端点，不再信任文档文本。
+2. **internal_consistency（6/10）**：判定点登记表写"所选方法 B：实际尝试读取/checkout 该 SHA 对应的合同产物文件"，但 DoD 实现的是方法 A（只查文档字符串）——表里说的方法和真正验的方法对不上。**修法**：判定点登记表"所选方法"改写为与新 BEHAVIOR 实现逐字对齐的真实 API 核验描述，`no_progress_same_sha`（同样落在 `initiative_runs.failure_reason`，见 `derive.js:344`）合并进同一条真实核验，不再分开留两条各自独立的文档自证。
+3. **verification_oracle_completeness（6~7/10）**：PRD Golden Path Step 4 + NFR 明确要求 checks 逐条记录 `command`/`exit_code`/`log_tail` 三元组，Round 2 的目标文档里从未要求真正落这三个字段——只有标记字符串和"未出现"断言。**修法**：新增 `## Checks 记录规范` 段，要求目标文档对 PRD Step 4 六项 check 逐条记录 `command:`/`exit_code:`/`log_tail:`，新增 ARTIFACT 机检该结构存在。
+
+此外自查发现 Step 1 硬阈值声明了"delivery 分支名匹配 `^cp-[0-9]{8}-892405df` 模式"，但验证命令只查了 task id 一致性、未验证分支名模式——按"硬阈值 → 可执行验证命令转换规则（强制）"补齐，顺手复用在 Step 4b 的 PR headRefName 校验里（第三方视角更可信，不依赖 generator 自报环境变量）。
+
+净变化：新增 2 条 BEHAVIOR/ARTIFACT（真实物化核验 + checks 记录格式），删除 2 条弱文档自证断言（原 4e/4f 文本 grep），Step1/4b 各加一行模式匹配，其余条目未发现真实 PRD 漏覆盖，不做无依据的加严。
 
 ## 八要素需求规范
 
@@ -60,7 +70,7 @@
 | （示例：微信群是否发送成功） | A. 监听发送按钮变灰; B. 读取聊天记录 API | A. 监听按钮变灰 | 聊天记录 API 不稳定 | 静默丢消息，用户不知 |
 | ⚠️ 生产健康是否达标（是否可判定"当前部署包含本次修复"） | A. version 字符串硬编码相等; B. git_sha 是否以指定 commit 为祖先 | B. `git merge-base --is-ancestor` 谱系判据 | R6 因 A 方案（version 永远等于历史值）被诚实终局判定失败——version 会随后续发布演进，硬编码相等判据在下次发布后必然失败；祖先关系判据对后续发布仍然成立 | 若继续用方案 A，下次生产发布后本合同判据永久失效，且掩盖"到底有没有部署"这一真实问题 |
 | ⚠️ PR 是否已被提前合并（judge 阶段判据污染风险） | A. 只看 PR number 存在; B. `gh pr view --json state,mergedAt` 实时查询 + judge 执行时刻的 PR head SHA 快照比对 | B. 实时查询 state/mergedAt，judge 执行时若已 merge 或已存在人工批准记录直接判污染 | INV-22：should-auto-merge.sh 等 CI 侧兜底机制可能在 evaluator/judge 跑完前提前合并 PR | 若 PR 已被提前合并但 judge 仍判 PASS，等于用"未来才产生的批准"倒推通过，违反 PRD 显式禁止的判据 |
-| 批准远端合同 SHA 是否已物化（而非仅记录了 SHA 字符串） | A. 只检查 SHA 字段非空; B. 实际尝试读取/checkout 该 SHA 对应的合同产物文件，读取成功才算物化 | B. 实际物化读取 | 09ecc837 历史失败案例 `approved_but_contract_artifacts_missing` 表明"记录了 SHA 但产物缺失"是真实发生过的失败模式 | 若只检查字段非空，会把"SHA 记录了但产物拉不到"误判为成功，下游 generator 无合同可用却显示已批准 |
+| ⚠️ 批准远端合同 SHA 是否已物化（而非仅记录了 SHA 字符串或文档文本自称"未出现"） | A. 只检查 SHA 字段非空；B. 查文档文本是否写了"未出现"字样；C. 实查 Brain 真实落库结果——`GET /api/brain/harness/initiative/:id/detail` 的 `contract_content`/`prd_content` 非空，且 `GET /api/brain/orchestrator/relay-runs?task_id=...` 的 `failure_reason` 数组不含 `approved_but_contract_artifacts_missing`/`no_progress_same_sha` | C. 实查 Brain `initiative/:id/detail` + `relay-runs` 两个真实端点（Round 2 误标"方法 B"实际只做了 B，本轮改正标注并把 DoD 对齐到 C） | 源码核实：`packages/brain/src/orchestrator/loop.js` 的 `frozenContractArtifacts()`/`materializeApprovedContract()` 成功时把 `contract_content`/`prd_content` 写入 `initiative_runs`，失败时 `markRunFailed(...,'approved_but_contract_artifacts_missing')` 写 `failure_reason`；`no_progress_same_sha` 同样落在该列（`derive.js:344`）。两端点均为已验证可用的既有生产端点，非本 sprint 新增 | 若继续只查文档文本，generator 可以不触发任何真实物化、直接手写"未出现"四个字骗过验收——09ecc837 历史失败案例正是"记录了但产物缺失"没被真正堵住 |
 | independent judge 判 PASS 的时间是否早于人工批准/PR merge | A. 不记录时间戳，只看最终状态; B. 文档显式记录 judge_pass_at / human_review_created_at / human_approved_at / merged_at 四个时间戳并要求单调递增 | B. 显式记录四时间戳并断言顺序 | PRD 明确要求 judge 执行时刻"人工批准尚不存在、PR 尚未 merge"是 PASS 前置条件，禁止 judge 依赖未来才产生的批准 | 若不记录时间戳，无法事后证明 judge 判定时确实没有人工批准存在，无法排除"先人工批准/合并、judge 再补一个必然 PASS 的判定"这种倒因为果 |
 | 本轮是否相对上一轮产生了真实进展（而非 no_progress_same_sha） | A. 只看是否有新 commit; B. 比对本轮 PR head SHA 与上一轮/父分支 SHA 是否不同，且 diff 非空 | B. SHA 不同 + diff 非空 | 8c48781b 历史失败案例 `no_progress_same_sha` 表明"看似跑了一轮但实际没产生新内容"是真实发生过的失败模式 | 若不检查，无进展的重复提交会被当作正常一轮消耗掉 GAN 轮次预算 |
 
@@ -97,6 +107,8 @@ N/A——本 sprint 不新增/改动任何"设备/agent 调服务端"的 API 端
 - [packages/brain/src/orchestrator/derive.js:344] → `no_progress_same_sha` 判定逻辑存在于既有 orchestrator，本 sprint 不修改该文件，只在验收文档中引用其判定结果
 - [packages/brain/src/__tests__/relay-runs.test.js / relay-runs-create.test.js / relay-runs-filter.test.js] → relay-runs 记录的既有约定（run_id 归属、按 task_id 过滤）是本 sprint「relay-runs 记录归属正确」验收项的既有契约基础，本 sprint 不新增字段，只读取既有 API 验证归属
 - [packages/brain/src/harness-gan-graph.js / workflows/harness-gan.graph.js] → GAN 轮次循环与 propose_branch 命名约定（`cp-harness-propose-r{round}-{taskIdSlice}`）是既有实现，本 sprint 的 `${PROPOSE_BRANCH}` 直接复用 Brain 注入值，不自行推导
+- [packages/brain/src/orchestrator/loop.js:52-102,391-403] → `frozenContractArtifacts()`/`materializeApprovedContract()` 是"批准远端合同 SHA 物化"的真实实现：成功写 `initiative_runs.contract_content`/`prd_content`，失败 `markRunFailed(...,'approved_but_contract_artifacts_missing')` 写 `initiative_runs.failure_reason`（Round 3 新增依赖——修正 Round 2 文档文本自证的 scope_match_prd/internal_consistency 缺口）
+- [packages/brain/src/routes/harness.js:201-280 `GET /api/brain/harness/initiative/:id/detail`、packages/brain/src/routes/initiatives.js:216-325 `GET /api/brain/orchestrator/relay-runs`（含 `failure_reason` 列）] → 均为已验证可用的既有生产端点，本 sprint 不改动，只作为 Step 4/4e 的真实核验只读依据
 
 ## Response Schema（推导来源: PRD 字面 — 无 HTTP 响应）
 
@@ -119,9 +131,14 @@ N/A — 本 task 无 HTTP 响应端点交付。`docs/fire-drills/kernel-v1-mixed
 # HARNESS_TASK_ID / CECELIA_TASK_ID 一致性核对（Generator 自验，写入 checks 记录）
 [ -n "$HARNESS_TASK_ID" ] && [ "$HARNESS_TASK_ID" = "$CECELIA_TASK_ID" ] && [ "$HARNESS_TASK_ID" = "892405df-3dc3-4c44-9402-278c7d8d0bd3" ] || { echo "FAIL: HARNESS_TASK_ID/CECELIA_TASK_ID 不一致或不匹配当前 task"; exit 1; }
 echo "OK: task id 核对通过"
+
+# 分支名模式核对（Round 3 补齐——原硬阈值声明但无对应验证命令）
+CURRENT_BRANCH=$(git branch --show-current)
+echo "$CURRENT_BRANCH" | grep -Eq '^cp-[0-9]{8}-892405df$' || { echo "FAIL: 分支名 $CURRENT_BRANCH 不匹配 cp-MMDDHHMM-892405df 模式"; exit 1; }
+echo "OK: 分支名模式核对通过 branch=$CURRENT_BRANCH"
 ```
 
-**硬阈值**: `HARNESS_TASK_ID == CECELIA_TASK_ID == 892405df-3dc3-4c44-9402-278c7d8d0bd3`，delivery 分支名匹配 `^cp-[0-9]{8}-892405df` 模式
+**硬阈值**: `HARNESS_TASK_ID == CECELIA_TASK_ID == 892405df-3dc3-4c44-9402-278c7d8d0bd3`，delivery 分支名匹配 `^cp-[0-9]{8}-892405df$` 模式（generator 自验 + PR headRefName 交叉核对，见 Step 4b）
 
 ---
 
@@ -180,9 +197,9 @@ echo "OK: version=$VERSION git_sha=$GIT_SHA 满足祖先判据（禁止硬编码
 
 ### Step 4: 验收 checks 逐条记录 command/exit_code/log_tail，覆盖六项范围
 
-**来源**: `[FROM_PRD]` — PRD Golden Path Step 4 六个子项全部逐字对应
+**来源**: `[FROM_PRD]` — PRD Golden Path Step 4 六个子项全部逐字对应；批准 SHA 物化的真实核验方式为 `[AI_ADDED]`（Round 3 — Reviewer round2 REVISION 指出原实现是文档文本自证，理由：`approved_but_contract_artifacts_missing`/`no_progress_same_sha` 是 Brain `initiative_runs.failure_reason` 列的真实值，必须查该列而非查文档自己怎么说）
 
-**可观测行为**: 六项各自产出 `command`/`exit_code`/`log_tail` 三元组，且显式覆盖两个历史失败 reason（`no_progress_same_sha`、`approved_but_contract_artifacts_missing`）不再复现。
+**可观测行为**: 六项各自产出 `command`/`exit_code`/`log_tail` 三元组并记录进目标文档（见下方「Checks 记录规范」）；批准远端合同 SHA 物化与两个历史失败 reason（`no_progress_same_sha`、`approved_but_contract_artifacts_missing`）不再复现，均通过 Brain 真实 API 核验，不是文档文本自证。
 
 **验证命令**:
 ```bash
@@ -192,11 +209,12 @@ DIFF_LINES=$(git diff origin/main...HEAD --stat | grep -c "docs/fire-drills/kern
 DIFF_TOTAL=$(git diff origin/main...HEAD --stat | grep -c "|")
 [ "$DIFF_TOTAL" -eq 1 ] && [ "$DIFF_LINES" -eq 1 ] || { echo "FAIL: diff 应恰一行且为目标文档，实际 total=$DIFF_TOTAL match=$DIFF_LINES"; exit 1; }
 
-# 4b. PR head/OPEN/未merge/CI绿
-PR_JSON=$(gh pr view --json state,mergedAt,statusCheckRollup,headRefOid 2>/dev/null) || { echo "FAIL: 无法读取 PR 状态"; exit 1; }
+# 4b. PR head/OPEN/未merge/CI绿 + 分支名模式（第三方视角交叉核对 Step 1 的 generator 自报）
+PR_JSON=$(gh pr view --json state,mergedAt,statusCheckRollup,headRefOid,headRefName 2>/dev/null) || { echo "FAIL: 无法读取 PR 状态"; exit 1; }
 echo "$PR_JSON" | jq -e '.state == "OPEN"' >/dev/null || { echo "FAIL: PR 非 OPEN"; exit 1; }
 echo "$PR_JSON" | jq -e '.mergedAt == null' >/dev/null || { echo "FAIL: PR 已 merge"; exit 1; }
 echo "$PR_JSON" | jq -e '[.statusCheckRollup[]?.conclusion] | all(. == "SUCCESS" or . == null)' >/dev/null || { echo "FAIL: CI 非全绿"; exit 1; }
+echo "$PR_JSON" | jq -e '.headRefName | test("^cp-[0-9]{8}-892405df$")' >/dev/null || { echo "FAIL: PR headRefName 不匹配分支名模式"; exit 1; }
 
 # 4c. Brain task API 五角色分配
 TASK_JSON=$(curl -sf -m 10 "localhost:5221/api/brain/tasks/892405df-3dc3-4c44-9402-278c7d8d0bd3") || { echo "FAIL: task API 不可达"; exit 1; }
@@ -205,20 +223,43 @@ for ROLE in planner proposer reviewer evaluator generator; do
 done
 
 # 4d. relay-runs 记录归属正确（真实路由: /api/brain/orchestrator/relay-runs，按 current_task_id 过滤，响应为裸数组）
-RELAY_JSON=$(curl -sf -m 10 "localhost:5221/api/brain/orchestrator/relay-runs?task_id=892405df-3dc3-4c44-9402-278c7d8d0bd3") || { echo "FAIL: relay-runs API 不可达"; exit 1; }
+RELAY_JSON=$(curl -sf -m 10 "localhost:5221/api/brain/orchestrator/relay-runs?task_id=892405df-3dc3-4c44-9402-278c7d8d0bd3&limit=100") || { echo "FAIL: relay-runs API 不可达"; exit 1; }
 echo "$RELAY_JSON" | jq -e 'if length > 0 then all(.current_task_id == "892405df-3dc3-4c44-9402-278c7d8d0bd3") else true end' >/dev/null || { echo "FAIL: relay-runs 归属错误"; exit 1; }
 
-# 4e. 批准远端合同 SHA 能物化读取（未出现 approved_but_contract_artifacts_missing）
-DOC="docs/fire-drills/kernel-v1-mixed-20260724-r7.md"
-grep -q "approved_but_contract_artifacts_missing" "$DOC" && grep -A2 "approved_but_contract_artifacts_missing" "$DOC" | grep -qi "未出现\|not_present\|absent" || { echo "FAIL: 文档未显式记录 approved_but_contract_artifacts_missing 状态未出现"; exit 1; }
+# 4e. 批准远端合同 SHA 真实物化 + 两个历史失败 reason 未在本次 run 出现（Round 3 — 查 Brain 真实落库结果，不查文档文本）
+DETAIL_JSON=$(curl -sf -m 10 "localhost:5221/api/brain/harness/initiative/892405df-3dc3-4c44-9402-278c7d8d0bd3/detail") || { echo "FAIL: initiative detail API 不可达"; exit 1; }
+echo "$DETAIL_JSON" | jq -e '.contract_content != null and .prd_content != null' >/dev/null || { echo "FAIL: 批准合同未真实物化（contract_content/prd_content 为 null）"; exit 1; }
+echo "$RELAY_JSON" | jq -e '[.[].failure_reason] | (index("approved_but_contract_artifacts_missing") == null) and (index("no_progress_same_sha") == null)' >/dev/null || { echo "FAIL: 本次 run 的 failure_reason 命中 approved_but_contract_artifacts_missing 或 no_progress_same_sha"; exit 1; }
 
-# 4f. no_progress_same_sha 不复现（本轮 delivery 分支 head 与 origin/main 不同且 diff 非空，已由 4a 隐含非空验证；此处显式记录 reason 未复现）
-grep -q "no_progress_same_sha" "$DOC" && grep -A2 "no_progress_same_sha" "$DOC" | grep -qi "未出现\|not_present\|absent" || { echo "FAIL: 文档未显式记录 no_progress_same_sha 未复现"; exit 1; }
-
-echo "OK: 六项 checks 全部覆盖，两个历史失败 reason 显式记录未复现"
+echo "OK: 六项 checks 全部覆盖，批准合同真实物化，两个历史失败 reason 经 Brain API 真实核验未复现"
 ```
 
-**硬阈值**: 六个子项全部 exit 0；`no_progress_same_sha` 与 `approved_but_contract_artifacts_missing` 在文档中均被显式记录为"未出现"
+**硬阈值**: 六个子项全部 exit 0；`contract_content`/`prd_content` 非空；relay-runs `failure_reason` 数组不含 `no_progress_same_sha`/`approved_but_contract_artifacts_missing`；PR `headRefName` 匹配 `^cp-[0-9]{8}-892405df$`
+
+---
+
+### Step 4.1: 目标文档对六项 checks 逐条记录 command/exit_code/log_tail（Checks 记录规范）
+
+**来源**: `[FROM_PRD]` — PRD Golden Path Step 4 前导句"验收 checks 逐条记录 command / exit_code / log_tail" + NFR"可观测: checks 必须记录 command/exit_code/log_tail（PrepPRD 显式要求）"；本条为 `[AI_ADDED]`（Round 3 — Reviewer round2 REVISION 指出 verification_oracle_completeness 因文档从未真正落这三个字段而扣分，理由：PRD 要求的是"文档记录"这件事本身，需要独立于 Step 4 的实时验证之外单独机检文档结构）
+
+**可观测行为**: `docs/fire-drills/kernel-v1-mixed-20260724-r7.md` 含 `## Checks` 段，对以下 6 个 check id 各自记录 `command:`/`exit_code:`/`log_tail:` 三字段：`doc-marks` / `diff-one-line` / `pr-state` / `task-roles` / `relay-attribution` / `contract-materialized`。
+
+**验证命令**:
+```bash
+DOC="docs/fire-drills/kernel-v1-mixed-20260724-r7.md"
+node -e '
+const fs=require("fs");
+const c=fs.readFileSync("'"$DOC"'","utf8");
+const ids=["doc-marks","diff-one-line","pr-state","task-roles","relay-attribution","contract-materialized"];
+for(const id of ids){
+  const re=new RegExp("check:\\s*"+id+"[\\s\\S]{0,600}?command:[\\s\\S]{0,600}?exit_code:[\\s\\S]{0,600}?log_tail:");
+  if(!re.test(c)){console.error("missing checks-record triple for: "+id);process.exit(1);}
+}
+' || { echo "FAIL: checks 记录格式不完整"; exit 1; }
+echo "OK: 六项 checks 均含 command/exit_code/log_tail 三元组记录"
+```
+
+**硬阈值**: 6 个 check id 各自的 command/exit_code/log_tail 三字段全部命中（顺序不限，窗口 600 字符内）
 
 ---
 
@@ -300,12 +341,13 @@ if ! echo "$GIT_SHA" | grep -Eq '^[0-9a-f]{40}$'; then echo "FAIL: git_sha 不�
   git merge-base --is-ancestor 2a96f975ecf1ce1ddfb818030f7642a08e2860b8 "$GIT_SHA" || { echo "FAIL: 2a96f975e 非祖先"; FAIL=1; }
 fi
 
-echo "== 4. PR head/OPEN/未merge/CI绿 =="
-PR_JSON=$(gh pr view --json state,mergedAt,statusCheckRollup,files 2>/dev/null) || { echo "FAIL: 无法读取 PR"; FAIL=1; PR_JSON='{}'; }
+echo "== 4. PR head/OPEN/未merge/CI绿 + headRefName 分支名模式 =="
+PR_JSON=$(gh pr view --json state,mergedAt,statusCheckRollup,files,headRefName 2>/dev/null) || { echo "FAIL: 无法读取 PR"; FAIL=1; PR_JSON='{}'; }
 echo "$PR_JSON" | jq -e '.state == "OPEN"' >/dev/null 2>&1 || { echo "FAIL: PR 非 OPEN"; FAIL=1; }
 echo "$PR_JSON" | jq -e '.mergedAt == null' >/dev/null 2>&1 || { echo "FAIL: PR 已 merge"; FAIL=1; }
 echo "$PR_JSON" | jq -e '[.statusCheckRollup[]?.conclusion] | all(. == "SUCCESS" or . == null)' >/dev/null 2>&1 || { echo "FAIL: CI 非全绿"; FAIL=1; }
 echo "$PR_JSON" | jq -e '(.files | length) == 1 and .files[0].path == "docs/fire-drills/kernel-v1-mixed-20260724-r7.md"' >/dev/null 2>&1 || { echo "FAIL: PR 文件范围不符"; FAIL=1; }
+echo "$PR_JSON" | jq -e '.headRefName | test("^cp-[0-9]{8}-892405df$")' >/dev/null 2>&1 || { echo "FAIL: PR headRefName 不匹配分支名模式"; FAIL=1; }
 
 echo "== 5. Brain task API 五角色分配 =="
 TASK_JSON=$(curl -sf -m 10 "localhost:5221/api/brain/tasks/$TASK_ID") || { echo "FAIL: task API 不可达"; FAIL=1; TASK_JSON='{}'; }
@@ -314,14 +356,33 @@ for ROLE in planner proposer reviewer evaluator generator; do
 done
 
 echo "== 6. relay-runs 归属正确 =="
-RELAY_JSON=$(curl -sf -m 10 "localhost:5221/api/brain/orchestrator/relay-runs?task_id=$TASK_ID") || { echo "FAIL: relay-runs 不可达"; FAIL=1; RELAY_JSON='[]'; }
+RELAY_JSON=$(curl -sf -m 10 "localhost:5221/api/brain/orchestrator/relay-runs?task_id=$TASK_ID&limit=100") || { echo "FAIL: relay-runs 不可达"; FAIL=1; RELAY_JSON='[]'; }
 echo "$RELAY_JSON" | jq -e 'if length > 0 then all(.current_task_id == "'"$TASK_ID"'") else true end' >/dev/null 2>&1 || { echo "FAIL: relay-runs 归属错误"; FAIL=1; }
 
-echo "== 7. 两个历史失败 reason 显式记录未复现 + judge/human 时间线顺序 =="
+echo "== 7. 批准合同真实物化 + 两个历史失败 reason 未在本次 run 出现（Brain API 真核验，非文档文本自证）=="
+DETAIL_JSON=$(curl -sf -m 10 "localhost:5221/api/brain/harness/initiative/$TASK_ID/detail") || { echo "FAIL: initiative detail 不可达"; FAIL=1; DETAIL_JSON='{}'; }
+echo "$DETAIL_JSON" | jq -e '.contract_content != null and .prd_content != null' >/dev/null 2>&1 || { echo "FAIL: 批准合同未真实物化"; FAIL=1; }
+echo "$RELAY_JSON" | jq -e '[.[].failure_reason] | (index("approved_but_contract_artifacts_missing") == null) and (index("no_progress_same_sha") == null)' >/dev/null 2>&1 || { echo "FAIL: failure_reason 命中两个历史失败 reason 之一"; FAIL=1; }
+
+echo "== 8. 目标文档六项 checks 均记录 command/exit_code/log_tail =="
 if [ -f "$DOC" ]; then
-  for REASON in "no_progress_same_sha" "approved_but_contract_artifacts_missing"; do
-    grep -q "$REASON" "$DOC" && grep -A2 "$REASON" "$DOC" | grep -qi "未出现\|not_present\|absent" || { echo "FAIL: 文档未显式记录 $REASON 未复现"; FAIL=1; }
-  done
+  DOC="$DOC" node -e '
+  const fs=require("fs");
+  const c=fs.readFileSync(process.env.DOC,"utf8");
+  const ids=["doc-marks","diff-one-line","pr-state","task-roles","relay-attribution","contract-materialized"];
+  let bad=0;
+  for(const id of ids){
+    const re=new RegExp("check:\\s*"+id+"[\\s\\S]{0,600}?command:[\\s\\S]{0,600}?exit_code:[\\s\\S]{0,600}?log_tail:");
+    if(!re.test(c)){console.error("missing checks-record triple for: "+id);bad=1;}
+  }
+  process.exit(bad);
+  ' || FAIL=1
+else
+  FAIL=1
+fi
+
+echo "== 9. judge/human 时间线顺序 =="
+if [ -f "$DOC" ]; then
   JUDGE_AT=$(grep -oE 'judge_pass_at:\s*[0-9T:.Z-]+' "$DOC" | head -1 | awk '{print $2}')
   HR_CREATED_AT=$(grep -oE 'human_review_created_at:\s*[0-9T:.Z-]+' "$DOC" | head -1 | awk '{print $2}')
   if [ -n "$JUDGE_AT" ] && [ -n "$HR_CREATED_AT" ]; then
@@ -351,3 +412,4 @@ fi
 | 五角色 provider/account 证据摘要 | `tests/kernel-v1-fire-drill-r7.test.ts` | 含五角色 planner/proposer/reviewer/evaluator/generator 的 provider/account 实际运行证据摘要 | → file not found，1 failure |
 | 历史失败 reason 显式记录未复现 | `tests/kernel-v1-fire-drill-r7.test.ts` | no_progress_same_sha 与 approved_but_contract_artifacts_missing 本轮未出现 | → file not found，1 failure |
 | judge/human 时间线顺序字段存在 | `tests/kernel-v1-fire-drill-r7.test.ts` | judge_pass_at <= human_review_created_at | → file not found，1 failure |
+| 六项 checks 均记录 command/exit_code/log_tail | `tests/kernel-v1-fire-drill-r7.test.ts` | 六项 checks 均以 command/exit_code/log_tail 三元组记录 | → file not found，1 failure |

@@ -21,6 +21,9 @@ journey_type: agent_remote
 - [ ] [ARTIFACT] 目标文档含 judge/human review 时间线四字段（judge_pass_at / human_review_created_at / human_approved_at / merged_at）
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('docs/fire-drills/kernel-v1-mixed-20260724-r7.md','utf8');for(const f of ['judge_pass_at','human_review_created_at','human_approved_at','merged_at']){if(!new RegExp(f+'\\\\s*:').test(c)){console.error('missing field:'+f);process.exit(1);}}"
 
+- [ ] [ARTIFACT] 目标文档六项 checks（doc-marks/diff-one-line/pr-state/task-roles/relay-attribution/contract-materialized）均以 command/exit_code/log_tail 三元组记录（PRD Golden Path Step 4 + NFR 可观测要求，Round 3 新增——原文档只含标记字符串，从未落这三个字段）
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('docs/fire-drills/kernel-v1-mixed-20260724-r7.md','utf8');const ids=['doc-marks','diff-one-line','pr-state','task-roles','relay-attribution','contract-materialized'];for(const id of ids){const re=new RegExp('check:\\\\s*'+id+'[\\\\s\\\\S]{0,600}?command:[\\\\s\\\\S]{0,600}?exit_code:[\\\\s\\\\S]{0,600}?log_tail:');if(!re.test(c)){console.error('missing checks-record triple for:'+id);process.exit(1);}}"
+
 - [ ] [ARTIFACT] 毕业 commit 前本地已跑通 lint-tdd-commit-order 与 check-test-coverage（INV-3 映射）
   Test: node -e "const {execSync}=require('child_process');try{execSync('bash scripts/lint-tdd-commit-order.sh',{stdio:'pipe'})}catch(e){console.error('lint-tdd-commit-order not runnable/failed (informational, script may not exist in this repo snapshot)')}"
 
@@ -38,10 +41,10 @@ journey_type: agent_remote
   验证命令: Test: manual:bash -c 'RESP=$(curl -sf -m 10 localhost:5221/api/brain/health) || exit 1; GIT_SHA=$(echo "$RESP" | jq -r ".git_sha"); echo "$GIT_SHA" | grep -Eq "^[0-9a-f]{40}$" || exit 1; git merge-base --is-ancestor 19887912bbb581597f12c714a9ed187f051e2850 "$GIT_SHA" || exit 1; git merge-base --is-ancestor 2a96f975ecf1ce1ddfb818030f7642a08e2860b8 "$GIT_SHA" || exit 1; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] [L2] [Golden Path Step 4b] PR 处于 head/OPEN/未merge，CI 全绿
-  动作: 对本次 delivery PR 执行 `gh pr view --json state,mergedAt,statusCheckRollup`
-  预期观察: state=OPEN，mergedAt=null，所有 statusCheckRollup 项 conclusion 为 SUCCESS 或缺省
-  验证命令: Test: manual:bash -c 'PR_JSON=$(gh pr view --json state,mergedAt,statusCheckRollup 2>/dev/null) || exit 1; echo "$PR_JSON" | jq -e ".state == \"OPEN\"" >/dev/null || exit 1; echo "$PR_JSON" | jq -e ".mergedAt == null" >/dev/null || exit 1; echo "$PR_JSON" | jq -e "[.statusCheckRollup[]?.conclusion] | all(. == \"SUCCESS\" or . == null)" >/dev/null || exit 1; echo OK'
+- [ ] [BEHAVIOR] [L2] [Golden Path Step 4b] PR 处于 head/OPEN/未merge，CI 全绿，headRefName 匹配分支名模式
+  动作: 对本次 delivery PR 执行 `gh pr view --json state,mergedAt,statusCheckRollup,headRefName`
+  预期观察: state=OPEN，mergedAt=null，所有 statusCheckRollup 项 conclusion 为 SUCCESS 或缺省，headRefName 匹配 `^cp-[0-9]{8}-892405df$`（第三方视角交叉核对 Step 1 generator 自报的分支名，Round 3 补齐——原硬阈值声明但无验证命令）
+  验证命令: Test: manual:bash -c 'PR_JSON=$(gh pr view --json state,mergedAt,statusCheckRollup,headRefName 2>/dev/null) || exit 1; echo "$PR_JSON" | jq -e ".state == \"OPEN\"" >/dev/null || exit 1; echo "$PR_JSON" | jq -e ".mergedAt == null" >/dev/null || exit 1; echo "$PR_JSON" | jq -e "[.statusCheckRollup[]?.conclusion] | all(. == \"SUCCESS\" or . == null)" >/dev/null || exit 1; echo "$PR_JSON" | jq -e ".headRefName | test(\"^cp-[0-9]{8}-892405df\$\")" >/dev/null || exit 1; echo OK'
   期望: OK
 
 - [ ] [BEHAVIOR] [L2] [Golden Path Step 4c] Brain task API 返回本 task 的五角色 provider/account 分配
@@ -56,12 +59,18 @@ journey_type: agent_remote
   验证命令: Test: manual:bash -c 'RELAY_JSON=$(curl -sf -m 10 "localhost:5221/api/brain/orchestrator/relay-runs?task_id=892405df-3dc3-4c44-9402-278c7d8d0bd3") || exit 1; echo "$RELAY_JSON" | jq -e "if length > 0 then all(.current_task_id == \"892405df-3dc3-4c44-9402-278c7d8d0bd3\") else true end" >/dev/null || exit 1; echo OK'
   期望: OK
 
+- [ ] [BEHAVIOR] [L2] [Golden Path Step 4e] 批准合同真实物化 + 两个历史失败 reason 未在本次 run 出现（Brain API 真核验，非文档文本自证，Round 3 — Reviewer round2 REVISION 修正）
+  动作: 对 `localhost:5221/api/brain/harness/initiative/892405df-3dc3-4c44-9402-278c7d8d0bd3/detail` 与 `localhost:5221/api/brain/orchestrator/relay-runs?task_id=892405df-3dc3-4c44-9402-278c7d8d0bd3&limit=100` 分别发起 GET 请求
+  预期观察: initiative detail 的 `contract_content`/`prd_content` 均非空（`packages/brain/src/orchestrator/loop.js` 的 `materializeApprovedContract()` 成功写入的落点）；relay-runs 各条记录的 `failure_reason` 不含 `approved_but_contract_artifacts_missing` 也不含 `no_progress_same_sha`
+  验证命令: Test: manual:bash -c 'DETAIL=$(curl -sf -m 10 localhost:5221/api/brain/harness/initiative/892405df-3dc3-4c44-9402-278c7d8d0bd3/detail) || exit 1; echo "$DETAIL" | jq -e ".contract_content != null and .prd_content != null" >/dev/null || exit 1; RELAY=$(curl -sf -m 10 "localhost:5221/api/brain/orchestrator/relay-runs?task_id=892405df-3dc3-4c44-9402-278c7d8d0bd3&limit=100") || exit 1; echo "$RELAY" | jq -e "[.[].failure_reason] | (index(\"approved_but_contract_artifacts_missing\") == null) and (index(\"no_progress_same_sha\") == null)" >/dev/null || exit 1; echo OK'
+  期望: OK
+
 - [ ] [BEHAVIOR] [L2] [Golden Path Step 5] judge PASS 时间早于 human review 创建时间（pre-human gate 顺序）
   动作: 从目标文档解析 `judge_pass_at` 与 `human_review_created_at` 两个 ISO8601 时间戳
   预期观察: `judge_pass_at` 的 epoch ≤ `human_review_created_at` 的 epoch，证明 judge 判定发生在人审创建之前
   验证命令: Test: manual:bash -c 'DOC=docs/fire-drills/kernel-v1-mixed-20260724-r7.md; JUDGE_AT=$(grep -oE "judge_pass_at:[[:space:]]*[0-9T:.Z-]+" "$DOC" | head -1 | awk "{print \$2}"); HR_AT=$(grep -oE "human_review_created_at:[[:space:]]*[0-9T:.Z-]+" "$DOC" | head -1 | awk "{print \$2}"); [ -n "$JUDGE_AT" ] && [ -n "$HR_AT" ] || exit 1; JE=$(date -d "$JUDGE_AT" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$JUDGE_AT" +%s); HE=$(date -d "$HR_AT" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$HR_AT" +%s); [ "$JE" -le "$HE" ] && echo OK || { echo FAIL; exit 1; }'
   期望: OK
 
-- [ ] [BEHAVIOR] [L1] [legacy] HARNESS_TASK_ID 与 CECELIA_TASK_ID 一致且匹配当前 task_id（generator 环境自验）
-  Test: manual:bash -c '[ -n "$HARNESS_TASK_ID" ] && [ "$HARNESS_TASK_ID" = "$CECELIA_TASK_ID" ] && [ "$HARNESS_TASK_ID" = "892405df-3dc3-4c44-9402-278c7d8d0bd3" ] && echo OK || exit 1'
+- [ ] [BEHAVIOR] [L1] [legacy] HARNESS_TASK_ID 与 CECELIA_TASK_ID 一致且匹配当前 task_id，delivery 分支名匹配模式（generator 环境自验，Round 3 补branch pattern）
+  Test: manual:bash -c '[ -n "$HARNESS_TASK_ID" ] && [ "$HARNESS_TASK_ID" = "$CECELIA_TASK_ID" ] && [ "$HARNESS_TASK_ID" = "892405df-3dc3-4c44-9402-278c7d8d0bd3" ] || exit 1; git branch --show-current | grep -Eq "^cp-[0-9]{8}-892405df$" && echo OK || exit 1'
   期望: OK

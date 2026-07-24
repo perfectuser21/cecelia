@@ -64,4 +64,13 @@ describe('kernel-v1 mixed provider fire drill R7 文档 [BEHAVIOR]', () => {
     // 红阶段占位：真实 diff 范围校验由 contract-draft.md ## E2E 验收 的 git diff 断言执行（evaluator/generator 阶段真跑）
     expect(fs.existsSync(DOC_PATH)).toBe(true);
   });
+
+  it('六项 checks 均以 command/exit_code/log_tail 三元组记录', () => {
+    const content = readDoc();
+    const ids = ['doc-marks', 'diff-one-line', 'pr-state', 'task-roles', 'relay-attribution', 'contract-materialized'];
+    for (const id of ids) {
+      const re = new RegExp(`check:\\s*${id}[\\s\\S]{0,600}?command:[\\s\\S]{0,600}?exit_code:[\\s\\S]{0,600}?log_tail:`);
+      expect(re.test(content)).toBe(true);
+    }
+  });
 });

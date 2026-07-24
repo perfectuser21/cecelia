@@ -6,16 +6,18 @@
     {
       "task_id": "ws1",
       "title": "新增 kernel-v1 mixed provider 主链验收 R7 fire drill 文档",
-      "scope": "在从 origin/main 新建的独立 delivery worktree 中创建分支 cp-MMDDHHMM-892405df，只新增 docs/fire-drills/kernel-v1-mixed-20260724-r7.md，文件含四项强制标记（KERNEL_V1_MIXED_FIRE_DRILL_PASS_R7 / 1.267.67 / 19887912bbb581597f12c714a9ed187f051e2850 / 2a96f975ecf1ce1ddfb818030f7642a08e2860b8）、五角色 provider/account 实际运行证据摘要、两个历史失败 reason 显式记录未复现、judge/human review 四时间戳字段（judge_pass_at ≤ human_review_created_at ≤ human_approved_at ≤ merged_at）。不修改 packages/brain、现有合同测试、迁移或产品逻辑；创建 PR 前机械核对 origin/main...HEAD diff 恰一行且仅为该文档。",
+      "scope": "在从 origin/main 新建的独立 delivery worktree 中创建分支 cp-MMDDHHMM-892405df，只新增 docs/fire-drills/kernel-v1-mixed-20260724-r7.md，文件含四项强制标记（KERNEL_V1_MIXED_FIRE_DRILL_PASS_R7 / 1.267.67 / 19887912bbb581597f12c714a9ed187f051e2850 / 2a96f975ecf1ce1ddfb818030f7642a08e2860b8）、五角色 provider/account 实际运行证据摘要、两个历史失败 reason 显式记录未复现、judge/human review 四时间戳字段（judge_pass_at ≤ human_review_created_at ≤ human_approved_at ≤ merged_at）、六项 checks 各自的 command/exit_code/log_tail 三元组记录（doc-marks/diff-one-line/pr-state/task-roles/relay-attribution/contract-materialized）。不修改 packages/brain、现有合同测试、迁移或产品逻辑；创建 PR 前机械核对 origin/main...HEAD diff 恰一行且仅为该文档；分支名匹配 cp-MMDDHHMM-892405df 模式。",
       "dod": [
         "[ARTIFACT] docs/fire-drills/kernel-v1-mixed-20260724-r7.md 存在且含四项强制标记",
         "[ARTIFACT] 文档含五角色（planner/proposer/reviewer/evaluator/generator）实际运行证据摘要",
         "[ARTIFACT] 文档显式记录 no_progress_same_sha / approved_but_contract_artifacts_missing 本轮未出现",
+        "[ARTIFACT] 文档六项 checks 均以 command/exit_code/log_tail 三元组记录",
         "[BEHAVIOR] origin/main...HEAD diff 恰一行且指向该文档",
         "[BEHAVIOR] 同一次 /api/brain/health 响应 git_sha 为40位小写SHA，且19887912b/2a96f975e均为其祖先",
-        "[BEHAVIOR] PR 处于 head/OPEN/未merge，CI 全绿",
+        "[BEHAVIOR] PR 处于 head/OPEN/未merge/CI 全绿，headRefName 匹配 cp-MMDDHHMM-892405df 模式",
         "[BEHAVIOR] Brain task API 返回本 task 五角色分配",
-        "[BEHAVIOR] /api/brain/orchestrator/relay-runs?task_id=... 归属正确（current_task_id 匹配）"
+        "[BEHAVIOR] /api/brain/orchestrator/relay-runs?task_id=... 归属正确（current_task_id 匹配）",
+        "[BEHAVIOR] /api/brain/harness/initiative/:id/detail 的 contract_content/prd_content 非空，且 relay-runs 的 failure_reason 不含 approved_but_contract_artifacts_missing/no_progress_same_sha（Brain API 真核验，非文档文本自证）"
       ],
       "files": ["docs/fire-drills/kernel-v1-mixed-20260724-r7.md"],
       "depends_on": [],
