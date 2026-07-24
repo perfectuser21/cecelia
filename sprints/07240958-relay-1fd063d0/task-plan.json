@@ -74,7 +74,7 @@
     {
       "task_id": "ws4",
       "title": "硬切全部生产 Codex credential consumer",
-      "scope": "以当前 main 的 17 路 exact inventory 收口公司账号：14 路接入 broker lease/session/receipt，3 路本机执行进入 root allowlisted 独立凭据域；保留四 caller、动态 agent、退役端点与 cache 的既有闭环。",
+      "scope": "以当前 main 的 17 路 exact inventory 收口公司账号：14 路接入 broker lease/session/receipt，3 路本机执行进入 root allowlisted 独立凭据域；保留四 caller、动态 agent、退役端点与 cache 的既有闭环。更新 6 个永久 CI 旧 oracle 为 broker/receipt/cache-only，禁止恢复 raw token/ACCOUNT_POOL；本段先在共享 smoke 落 `--case production-callers-broker-only --json`，逐路真触发 17 个 consumer，ws6 后续串行扩 final cases；唯一 issuer broker 维护 team1..5 无秘密 usage 投影，读侧使用参数化 exact 闭集，并以真 PostgreSQL + 本地 HTTP wham fixture 验证，无需 migration 362、routes 或 agent 扩权；isolated env 统一清理公司 CODEX_HOMES 等凭据变量。",
       "dod": [
         "[BEHAVIOR] B02 17/17 production credential paths 真触发且 unclassified=0；14 路 broker account_ref/lease/session/receipt/agent 对账，3 路隔离 root/FIFO canary 零触碰",
         "[BEHAVIOR] B02 4/4 caller 与 M1/M4 对账，/execute* 真 HTTP 410 零副作用，executor health-account/fixed-M4=0，两个 cache 消费者不断链"
@@ -98,7 +98,15 @@
         "scripts/codex-launch.sh",
         "scripts/codex-supervisor.mjs",
         "packages/engine/runners/codex/runner.sh",
-        "packages/engine/runners/codex/playwright-runner.sh"
+        "packages/engine/runners/codex/playwright-runner.sh",
+        "packages/brain/src/__tests__/codex-bridge-payload-callback-url.test.js",
+        "packages/brain/src/__tests__/codex-bridge-token-inject.test.js",
+        "packages/brain/src/__tests__/credentials-health-scheduler.test.js",
+        "packages/brain/src/__tests__/harness-skill-relay-xian.test.js",
+        "packages/brain/src/__tests__/llm-capacity-pool.test.js",
+        "scripts/dispatch-worker.test.mjs",
+        "packages/brain/src/__tests__/codex-slot-usage-projection.test.js",
+        "packages/brain/scripts/smoke/codex-slot-lifecycle-smoke.sh"
       ],
       "depends_on": [
         "ws3"
