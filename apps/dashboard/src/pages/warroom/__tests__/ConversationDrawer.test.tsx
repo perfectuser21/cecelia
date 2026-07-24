@@ -286,6 +286,32 @@ describe('ConversationDrawer — 对话区', () => {
     });
   });
 
+  it('消息拉取404→提示"议题已归档或不存在"并自动回到议题列表', async () => {
+    global.fetch = vi.fn().mockImplementation((url: string, opts?: any) => {
+      const method = (opts?.method || 'GET').toUpperCase();
+      if (url.includes('/api/brain/conversations/conv-1/messages')) {
+        return Promise.resolve({ ok: false, status: 404, json: async () => ({}) }) as any;
+      }
+      if (url.includes('/api/brain/conversations')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ conversations: [{ id: 'conv-1', title: '测试议题', status: 'active', last_message: null, last_message_at: null, updated_at: '2026-07-24T00:00:00Z', turn_count: 0 }], total: 1 }),
+        }) as any;
+      }
+      throw new Error(`no mock for ${method} ${url}`);
+    }) as any;
+
+    render(<ConversationDrawer journeyId={JOURNEY_ID} open={true} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText('测试议题')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('conversation-item-conv-1'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('new-conversation-btn')).toBeInTheDocument();
+    });
+    expect(screen.getByText('议题已归档或不存在')).toBeInTheDocument();
+  });
+
   it('消息发送失败无error字段→显示中文兜底文案"发送失败"', async () => {
     global.fetch = vi.fn().mockImplementation((url: string, opts?: any) => {
       const method = (opts?.method || 'GET').toUpperCase();

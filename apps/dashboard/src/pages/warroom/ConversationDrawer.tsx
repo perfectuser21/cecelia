@@ -130,7 +130,15 @@ function MessageBubble({ msg }: { msg: ConversationMessage }) {
   );
 }
 
-function ConversationThread({ conversationId, onBack }: { conversationId: string; onBack: () => void }) {
+function ConversationThread({
+  conversationId,
+  onBack,
+  onNotFound,
+}: {
+  conversationId: string;
+  onBack: () => void;
+  onNotFound: (message: string) => void;
+}) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,16 +149,20 @@ function ConversationThread({ conversationId, onBack }: { conversationId: string
   const fetchMessages = useCallback(async () => {
     try {
       const res = await fetch(`/api/brain/conversations/${encodeURIComponent(conversationId)}/messages?limit=50`);
+      if (res.status === 404) {
+        onNotFound('议题已归档或不存在');
+        return;
+      }
       if (!res.ok) throw new Error();
       const body = await res.json();
       setMessages(body.messages || []);
       setError(null);
-    } catch (e: any) {
-      setError(e.message || '加载消息失败');
+    } catch {
+      setError('加载消息失败');
     } finally {
       setLoading(false);
     }
-  }, [conversationId]);
+  }, [conversationId, onNotFound]);
 
   useEffect(() => {
     setLoading(true);
@@ -182,8 +194,8 @@ function ConversationThread({ conversationId, onBack }: { conversationId: string
       }
       setInput('');
       await fetchMessages();
-    } catch (e: any) {
-      setError(e.message || '发送失败');
+    } catch {
+      setError('发送失败');
     } finally {
       setSending(false);
     }
@@ -256,8 +268,8 @@ export default function ConversationDrawer({
       const body = await res.json();
       setConversations(body.conversations || []);
       setListError(null);
-    } catch (e: any) {
-      setListError(e.message || '加载议题列表失败');
+    } catch {
+      setListError('加载议题列表失败');
     } finally {
       setListLoading(false);
     }
@@ -281,12 +293,17 @@ export default function ConversationDrawer({
       const conv = await res.json();
       await fetchList();
       setActiveId(conv.id);
-    } catch (e: any) {
-      setListError(e.message || '创建议题失败');
+    } catch {
+      setListError('创建议题失败');
     } finally {
       setCreating(false);
     }
   }, [journeyId, fetchList]);
+
+  const handleThreadNotFound = useCallback((message: string) => {
+    setActiveId(null);
+    setListError(message);
+  }, []);
 
   if (!open) return null;
 
@@ -306,7 +323,7 @@ export default function ConversationDrawer({
         </div>
         <div className="flex-1 min-h-0">
           {activeId ? (
-            <ConversationThread conversationId={activeId} onBack={() => setActiveId(null)} />
+            <ConversationThread conversationId={activeId} onBack={() => setActiveId(null)} onNotFound={handleThreadNotFound} />
           ) : (
             <ConversationList
               conversations={conversations}
