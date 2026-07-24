@@ -1,4 +1,4 @@
-# Sprint PRD — postdeploy-verifier smoke 任务清理机制真正生效
+# Sprint PRD — postdeploy-verifier 测试夹具任务清理机制真正生效
 
 ## OKR 对齐
 
@@ -25,9 +25,10 @@ title 过滤）当真实部署任务扫描，`curl localhost:5221/api/brain/heal
 其余→软删除 `status='cancelled'`，200 + 更新后记录）→ 任务不再出现在 `pending_postdeploy` 列表，
 下轮 tick 扫描捡不到它，不消耗重试预算、不触发 P1。
 
-**场景 2 — 纵深防御**：smoke 脚本插入 title 前缀 `smoke:` 的测试任务（验证 pending_postdeploy 写入
-路径本身可用）→ 即便场景 1 清理未执行/失败，`fetchPendingBatch` 在 SQL 层排除 `smoke:` 前缀任务
-→ 该任务不被消费/重试/标 failed/告警，只静置 pending_postdeploy，不产生 P1 噪音。
+**场景 2 — 纵深防御**：某辅助脚本插入的、title 带约定前缀标记的测试夹具任务（用于验证
+pending_postdeploy 写入路径本身可用）→ 即便场景 1 清理未执行/失败，`fetchPendingBatch` 在 SQL 层
+排除该前缀标记任务 → 该任务不被消费/重试/标 failed/告警，只静置 pending_postdeploy，不产生 P1
+噪音。
 
 ## 边界情况
 
