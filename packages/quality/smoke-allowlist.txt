@@ -166,3 +166,4 @@ review-approve-auth-smoke.sh
 triage-officer-smoke.sh
 conversations-smoke.sh
 conversation-agent-smoke.sh
+conversation-ttl-archiver-smoke.sh
