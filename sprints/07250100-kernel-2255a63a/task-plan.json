@@ -1,0 +1,28 @@
+{
+  "initiative_id": "2255a63a-2152-47c3-aa89-301cae2445ad",
+  "journey_type": "autonomous",
+  "journey_type_reason": "无 apps/dashboard、无远端 agent 协议改动、无 packages/engine 改动，纯 packages/brain harness 内部流程验证（gh CLI + Brain API + git 只读核验），落入默认 autonomous（PRD 字面声明）。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "复用 PR #4317 修正 delivery 文档 pr-state 占位与 R9 事实证据",
+      "scope": "在独立 delivery worktree fetch/checkout 远端分支 cp-07250025-892405df，只修正 docs/fire-drills/kernel-v1-mixed-20260724-r7.md 中 pr-state check 的 command（显式带 PR 号 4317）/exit_code（0）/log_tail（真实值），新增 R9 task/run/prior_task/prior_run 四值证据段，补齐 CI 结构化判据三态枚举文本，推新 SHA；保留已有 Red 50291fbba314a3fd736249b4cb2014277dccff41 与 Green d6fce4971c40b67c2fb793290949fc1b2a664ae7；origin/main...HEAD diff 必须且只能包含该目标文档，不改动 packages/brain、sprints/**、.harness/**、合同产物、合同测试、迁移或产品逻辑；不新开 PR。",
+      "dod": [
+        "[BEHAVIOR] pr-state 真实核验：gh pr view 4317 --json state,mergedAt,headRefName,headRefOid,statusCheckRollup exit_code=0，state=OPEN，mergedAt=null，headRefName 匹配",
+        "[BEHAVIOR] CI 结构化判据三态分类：failed=0 且 pending=0，SKIPPED/NEUTRAL 计入成功集合",
+        "[BEHAVIOR] 生产 health 祖先判据：同一次响应 git_sha 满足两个历史 SHA 祖先关系",
+        "[BEHAVIOR] delivery diff 仅含目标文档一个文件（origin/main...origin/cp-07250025-892405df）",
+        "[BEHAVIOR] Red/Green 历史 SHA 在提交历史中仍可解析",
+        "[ARTIFACT] 目标文档 pr-state 占位已替换为真实 command/exit_code=0/log_tail",
+        "[ARTIFACT] 目标文档新增 R9 续跑证据段（当前+prior 的 task_id/run_id 四值）",
+        "[ARTIFACT] 目标文档历史四项强制标记仍完整保留"
+      ],
+      "files": [
+        "docs/fire-drills/kernel-v1-mixed-20260724-r7.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
