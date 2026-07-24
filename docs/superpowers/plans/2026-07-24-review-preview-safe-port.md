@@ -19,8 +19,8 @@
 
 Create a Vitest test that starts a real detached Node HTTP server on an unused
 port outside `5300-5399`, removes the corresponding review PID file, runs the
-real `scripts/review-preview.sh`, and asserts both that the script exits nonzero
-and that the unrelated server remains alive.
+real `scripts/review-preview.sh`, and asserts that the unrelated server remains
+alive regardless of whether the platform permits both address families to bind.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -74,7 +74,9 @@ Expected: both files pass; the unrelated listener survives.
 Run:
 
 ```bash
-bash scripts/devgate/devgate.sh
+node scripts/facts-check.mjs
+bash scripts/check-version-sync.sh
+bash scripts/pre-push-check.sh
 ```
 
 Expected: exit 0.
@@ -112,4 +114,3 @@ Approve the exact request hop and current PR head through
 `POST /api/brain/harness/kernel-reviews/:runId/approve`, then allow kernel
 derive/dispatch to continue to its next gate. Never insert approval rows
 directly.
-

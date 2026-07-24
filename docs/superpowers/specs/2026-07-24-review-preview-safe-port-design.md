@@ -21,8 +21,8 @@ Brain 和正在运行的 kernel orchestrator，使
 
 保留 `/tmp/review-preview-${PORT}.pid` 的定向回收逻辑，删除按端口
 枚举并 `kill -9` 所有 PID 的兜底。旧 preview 仍由 PID 文件先行
-终止；如果端口被其他进程占用，新 `dashboard-slot-server` 会退出，
-现有 readiness 检查返回非零并保留未知进程。
+终止；如果端口被其他进程占用，脚本绝不主动清理未知进程，由操作
+系统的地址族/bind 语义和现有 readiness 检查决定新 preview 能否启动。
 
 不采用按命令名过滤，因为命令行匹配存在竞态且仍可能误杀；不改端口
 池，因为这会同时扩大 preview-manager、Docker 映射和容量管理的
@@ -34,7 +34,8 @@ Brain 和正在运行的 kernel orchestrator，使
 再执行真实 `review-preview.sh`：
 
 - 修复前，脚本按端口杀死该进程，测试失败；
-- 修复后，脚本因端口占用安全失败，未知进程仍存活，测试通过。
+- 修复后，未知进程仍存活，测试通过；测试不假定不同地址族的 bind
+  是否可以并存。
 
 测试使用 `5300-5399` 之外的临时端口，避免测试自身触碰生产
 OrbStack 代理。
@@ -46,4 +47,3 @@ OrbStack 代理。
 3. DevGate 与 GitHub CI 全绿。
 4. hotfix 合入部署后，同一个 fire-drill run 产生
    `effect:human_review_requested`，OrbStack 与 Brain 保持在线。
-

@@ -48,6 +48,7 @@ describe('review-preview process ownership', () => {
     const port = Number(String(chunk).trim());
     const pidFile = `/tmp/review-preview-${port}.pid`;
     if (existsSync(pidFile)) unlinkSync(pidFile);
+    const unrelatedExit = once(unrelated, 'exit').then(() => 'exited');
 
     let spawnedPreviewPid = null;
     try {
@@ -60,8 +61,12 @@ describe('review-preview process ownership', () => {
         spawnedPreviewPid = Number(readFileSync(pidFile, 'utf8').trim());
       }
 
-      expect(result.status, result.stderr).not.toBe(0);
-      expect(isAlive(unrelated.pid)).toBe(true);
+      expect(result.error).toBeUndefined();
+      const lifecycle = await Promise.race([
+        unrelatedExit,
+        new Promise((resolveDelay) => setTimeout(() => resolveDelay('alive'), 250)),
+      ]);
+      expect(lifecycle).toBe('alive');
     } finally {
       stopIfAlive(spawnedPreviewPid);
       stopIfAlive(unrelated.pid);

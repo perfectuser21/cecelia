@@ -29,9 +29,6 @@ if [[ -f "$PID_FILE" ]]; then
   fi
   rm -f "$PID_FILE"
 fi
-# 也清掉占用同端口的其他进程
-lsof -ti ":${PORT}" 2>/dev/null | xargs kill -9 2>/dev/null || true
-
 COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 DIST_DIR="$DIST_DIR" \
