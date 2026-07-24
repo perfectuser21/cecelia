@@ -1,165 +1,75 @@
 #!/usr/bin/env bash
-# codex-remote-launch.test.sh — 白名单 + 核心流程单元自测（mock ssh/scp）
+# codex-remote-launch.test.sh — 退役入口回归测试
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="${SCRIPT_DIR}/../codex-remote-launch.sh"
-PASS=0; FAIL=0
+PASS=0
+FAIL=0
 
-pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
-fail() { echo "  FAIL: $1 — $2"; FAIL=$((FAIL + 1)); }
+pass() {
+  echo "  PASS: $1"
+  PASS=$((PASS + 1))
+}
 
-setup() {
-  TMP=$(mktemp -d)
-  HOME="$TMP/home"
-  mkdir -p "$HOME"
-  BIN="$TMP/bin"
-  mkdir -p "$BIN"
-  LOG="$TMP/calls.log"
+fail() {
+  echo "  FAIL: $1 — $2"
+  FAIL=$((FAIL + 1))
+}
 
-  cat >"$BIN/ssh" <<SH
-#!/bin/bash
-echo "ssh \$*" >> "$LOG"
-if [[ "\$*" == *"echo ok"* ]]; then echo ok; exit 0; fi
-if [[ "\$*" == *"mkdir -p"* ]]; then exit 0; fi
-if [[ "\$*" == *"chmod 600"* ]]; then exit 0; fi
-if [[ "\$*" == *"tmux new-session"* ]]; then exit 0; fi
-if [[ "\$*" == *"tmux ls"* ]]; then echo "mock-session: 1 windows"; exit 0; fi
-if [[ "\$*" == *"cat >"* ]]; then exit 0; fi
-exit 0
-SH
-  chmod +x "$BIN/ssh"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+HOME_DIR="$TMP/home"
+BIN="$TMP/bin"
+TRACE="$TMP/child-network.trace"
+STDOUT="$TMP/stdout"
+STDERR="$TMP/stderr"
+mkdir -p "$HOME_DIR" "$BIN"
+: >"$TRACE"
 
-  cat >"$BIN/scp" <<SH
-#!/bin/bash
-echo "scp \$*" >> "$LOG"
-dest="\${@: -1}"
-if [[ "\$dest" != *":"* ]]; then
-  echo '{"mock":"auth"}' > "\$dest"
+# 任何旧入口可能触发的 child/network 命令都变成确定性 tripwire。
+for command_name in ssh scp codex tmux curl wget nc socat; do
+  cat >"$BIN/$command_name" <<EOF
+#!/bin/sh
+printf 'called:%s\n' "\${0##*/}" >> "$TRACE"
+exit 97
+EOF
+  chmod +x "$BIN/$command_name"
+done
+
+set +e
+HOME="$HOME_DIR" \
+PATH="$BIN" \
+CODEX_BIN=codex \
+CODEX_REMOTE_HOST=forbidden \
+/bin/bash "$TARGET" --team team3 >"$STDOUT" 2>"$STDERR"
+RC=$?
+set -e
+
+if [[ "$RC" -eq 64 ]]; then
+  pass "合法旧参数以 exit 64 硬退役"
+else
+  fail "合法旧参数必须以 exit 64 硬退役" "实际 rc=$RC"
 fi
-exit 0
-SH
-  chmod +x "$BIN/scp"
 
-  export PATH="$BIN:$PATH"
-  export HOME
-  mkdir -p "$HOME/.codex-team1" "$HOME/.codex-team2" "$HOME/.codex-team3" "$HOME/.codex-team4" "$HOME/.codex-team5"
-  echo '{"mock":"team1"}' > "$HOME/.codex-team1/auth.json"
-  echo '{"mock":"team2"}' > "$HOME/.codex-team2/auth.json"
-  echo '{"mock":"team3"}' > "$HOME/.codex-team3/auth.json"
-  echo '{"mock":"team4"}' > "$HOME/.codex-team4/auth.json"
-  echo '{"mock":"team5"}' > "$HOME/.codex-team5/auth.json"
-}
+EXPECTED='codex-remote-launch is retired; use: codex-slot start [--project <project>] [--name <name>]'
+if [[ ! -s "$STDOUT" && "$(cat "$STDERR")" == "$EXPECTED" ]]; then
+  pass "唯一输出是指向 codex-slot start 的退役提示"
+else
+  fail "唯一输出必须是指向 codex-slot start 的退役提示" "stdout=$(cat "$STDOUT") stderr=$(cat "$STDERR")"
+fi
 
-teardown() { rm -rf "$TMP"; }
+if [[ ! -s "$TRACE" ]]; then
+  pass "退役发生在 ssh/scp/codex/tmux/网络 child 之前"
+else
+  fail "退役入口不得触发 child/network" "$(cat "$TRACE")"
+fi
 
-test_team1_now_allowed() {
-  setup
-  if bash "$TARGET" --team team1 --dry-run >/tmp/out.$$ 2>&1; then
-    pass "team1 现在被 --dry-run 接受（此前应被拒绝）"
-  else
-    fail "team1 现在被 --dry-run 接受（此前应被拒绝）" "$(cat /tmp/out.$$)"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_team2_now_allowed() {
-  setup
-  if bash "$TARGET" --team team2 --dry-run >/tmp/out.$$ 2>&1; then
-    pass "team2 现在被 --dry-run 接受（此前应被拒绝）"
-  else
-    fail "team2 现在被 --dry-run 接受（此前应被拒绝）" "$(cat /tmp/out.$$)"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_team6_still_rejected() {
-  setup
-  if bash "$TARGET" --team team6 --dry-run >/tmp/out.$$ 2>&1; then
-    fail "team6（非法账号）应被拒绝" "脚本却成功退出"
-  else
-    pass "team6（非法账号）仍被拒绝"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_team3_unaffected() {
-  setup
-  if bash "$TARGET" --team team3 --dry-run >/tmp/out.$$ 2>&1; then
-    pass "team3（原有白名单成员）行为不受影响"
-  else
-    fail "team3（原有白名单成员）行为不受影响" "$(cat /tmp/out.$$)"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_team4_team5_unaffected() {
-  setup
-  if bash "$TARGET" --team team4 --dry-run >/tmp/out.$$ 2>&1; then
-    pass "team4（原有白名单成员）行为不受影响"
-  else
-    fail "team4（原有白名单成员）行为不受影响" "$(cat /tmp/out.$$)"
-  fi
-  rm -f /tmp/out.$$
-  if bash "$TARGET" --team team5 --dry-run >/tmp/out.$$ 2>&1; then
-    pass "team5（原有白名单成员）行为不受影响"
-  else
-    fail "team5（原有白名单成员）行为不受影响" "$(cat /tmp/out.$$)"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_help_mentions_team1_team2() {
-  setup
-  out="$(bash "$TARGET" --help 2>&1)"
-  if [[ "$out" == *"team1"* && "$out" == *"team2"* ]]; then
-    pass "--help 输出包含 team1/team2（白名单扩容对外可见）"
-  else
-    fail "--help 输出包含 team1/team2（白名单扩容对外可见）" "$out"
-  fi
-  teardown
-}
-
-test_remote_session_without_brief_uses_full_access() {
-  setup
-  if bash "$TARGET" --team team1 >/tmp/out.$$ 2>&1 && \
-    grep -Fqx 'exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox' "$LOG"; then
-    pass "无 brief 的远程 Codex 会话使用 Full access"
-  else
-    fail "无 brief 的远程 Codex 会话使用 Full access" "$(cat "$LOG")"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_remote_session_with_brief_uses_full_access_before_prompt() {
-  setup
-  brief="$TMP/brief.txt"
-  echo 'mock task' > "$brief"
-  if bash "$TARGET" --team team1 --brief "$brief" >/tmp/out.$$ 2>&1 && \
-    grep -Eq '^exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox "\$\(cat /tmp/codex-brief-team1-[0-9]{14}\.txt\)"$' "$LOG"; then
-    pass "有 brief 的远程 Codex 会话在 prompt 前使用 Full access"
-  else
-    fail "有 brief 的远程 Codex 会话在 prompt 前使用 Full access" "$(cat "$LOG")"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-echo "=== codex-remote-launch.sh 白名单扩容测试 ==="
-test_team1_now_allowed
-test_team2_now_allowed
-test_team6_still_rejected
-test_team3_unaffected
-test_team4_team5_unaffected
-test_help_mentions_team1_team2
-test_remote_session_without_brief_uses_full_access
-test_remote_session_with_brief_uses_full_access_before_prompt
+if [[ -z "$(find "$HOME_DIR" -mindepth 1 -print -quit)" ]]; then
+  pass "退役入口未创建或改写 auth/用户目录"
+else
+  fail "退役入口不得产生 auth 落盘副作用" "$(find "$HOME_DIR" -mindepth 1 -print)"
+fi
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"

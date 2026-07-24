@@ -1,264 +1,75 @@
 #!/usr/bin/env bash
-# codex-request.test.sh — 西安侧只读借用脚本单元自测（mock ssh/scp/codex）
-#
-# 单一写者模型：美国侧 crontab 是唯一负责刷新+持久化的角色，本脚本只读借用，
-# 用完不回传、不覆盖美国侧。详见 codex-request.sh 顶部注释里的红线说明。
+# codex-request.test.sh — 退役入口回归测试
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="${SCRIPT_DIR}/../codex-request.sh"
-PASS=0; FAIL=0
+PASS=0
+FAIL=0
 
-pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
-fail() { echo "  FAIL: $1 — $2"; FAIL=$((FAIL + 1)); }
-
-# 生成一个 exp 声明在 offset_seconds 之后的假 JWT（payload 是唯一被脚本解析的部分，
-# header/signature 内容无所谓）。offset_seconds 可以是负数，模拟已过期的 token。
-make_fake_jwt() {
-  local offset_seconds="$1"
-  python3 -c "
-import json, base64, time
-payload = json.dumps({'exp': int(time.time()) + $offset_seconds}).encode()
-b64 = base64.urlsafe_b64encode(payload).rstrip(b'=').decode()
-print('header.' + b64 + '.signature')
-"
+pass() {
+  echo "  PASS: $1"
+  PASS=$((PASS + 1))
 }
 
-setup() {
-  TMP=$(mktemp -d)
-  HOME="$TMP/home"
-  mkdir -p "$HOME"
-  BIN="$TMP/bin"
-  mkdir -p "$BIN"
-  LOG="$TMP/calls.log"
-  touch "$LOG"
+fail() {
+  echo "  FAIL: $1 — $2"
+  FAIL=$((FAIL + 1))
+}
 
-  # 默认拉到手的 token 剩余有效期 9 天（跟生产实测数值同量级），远高于 48h 阈值
-  FAKE_AT_FRESH="$(make_fake_jwt 777600)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+HOME_DIR="$TMP/home"
+BIN="$TMP/bin"
+TRACE="$TMP/child-network.trace"
+STDOUT="$TMP/stdout"
+STDERR="$TMP/stderr"
+mkdir -p "$HOME_DIR" "$BIN"
+: >"$TRACE"
 
-  cat >"$BIN/ssh" <<SH
-#!/bin/bash
-echo "ssh \$*" >> "$LOG"
-if [[ "\$*" == *"echo ok"* ]]; then echo ok; exit 0; fi
-exit 0
-SH
-  chmod +x "$BIN/ssh"
+# 任何旧入口可能触发的 child/network 命令都变成确定性 tripwire。
+for command_name in ssh scp codex tmux curl wget nc socat; do
+  cat >"$BIN/$command_name" <<EOF
+#!/bin/sh
+printf 'called:%s\n' "\${0##*/}" >> "$TRACE"
+exit 97
+EOF
+  chmod +x "$BIN/$command_name"
+done
 
-  cat >"$BIN/scp" <<SH
-#!/bin/bash
-echo "scp \$*" >> "$LOG"
-dest="\${@: -1}"
-if [[ "\$dest" != *":"* ]]; then
-  printf '{"tokens":{"access_token":"%s","refresh_token":"mock_rt"}}' "$FAKE_AT_FRESH" > "\$dest"
+set +e
+HOME="$HOME_DIR" \
+PATH="$BIN" \
+CODEX_BIN=codex \
+CODEX_US_HOST=forbidden \
+/bin/bash "$TARGET" --team team1 >"$STDOUT" 2>"$STDERR"
+RC=$?
+set -e
+
+if [[ "$RC" -eq 64 ]]; then
+  pass "合法旧参数以 exit 64 硬退役"
+else
+  fail "合法旧参数必须以 exit 64 硬退役" "实际 rc=$RC"
 fi
-exit 0
-SH
-  chmod +x "$BIN/scp"
 
-  cat >"$BIN/codex" <<SH
-#!/bin/bash
-echo "codex ran with CODEX_HOME=\$CODEX_HOME" >> "$LOG"
-exit "\${CODEX_MOCK_EXIT_CODE:-0}"
-SH
-  chmod +x "$BIN/codex"
-
-  export PATH="$BIN:$PATH"
-  export HOME
-}
-
-teardown() { rm -rf "$TMP"; }
-
-test_invalid_team_rejected() {
-  setup
-  if bash "$TARGET" --team team6 >/tmp/out.$$ 2>&1; then
-    fail "非法 team（team6）应被拒绝" "脚本却成功退出"
-  else
-    pass "非法 team（team6）被拒绝"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_missing_team_rejected() {
-  setup
-  if bash "$TARGET" >/tmp/out.$$ 2>&1; then
-    fail "缺少 --team 参数应报错" "脚本却成功退出"
-  else
-    pass "缺少 --team 参数报错"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_pull_then_run_no_pushback_on_success() {
-  setup
-  set +e
-  CODEX_MOCK_EXIT_CODE=0 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
-  local rc=$?
-  set -e
-  if [[ "$rc" -ne 0 ]]; then
-    fail "codex 正常退出(0)时脚本应以 0 退出" "实际 rc=$rc, 输出: $(cat /tmp/out.$$)"
-  elif ! grep -q "codex ran with CODEX_HOME=$HOME/.codex-team3" "$LOG"; then
-    fail "应以正确 CODEX_HOME 前台运行 codex" "$(cat "$LOG")"
-  elif [[ "$(grep -c '^scp ' "$LOG")" -ne 1 ]]; then
-    fail "只读模式下应且只应发生 1 次 scp（拉取），不应有回传" "$(cat "$LOG")"
-  else
-    pass "正常退出：拉取→跑codex→结束，全程只有 1 次 scp（无回传）"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_no_pushback_even_on_nonzero_exit() {
-  setup
-  set +e
-  CODEX_MOCK_EXIT_CODE=7 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
-  local rc=$?
-  set -e
-  if [[ "$rc" -ne 7 ]]; then
-    fail "脚本应透传 codex 的非零退出码(7)" "实际 rc=$rc"
-  elif [[ "$(grep -c '^scp ' "$LOG")" -ne 1 ]]; then
-    fail "codex 异常退出(7)时也不应回传，只应有拉取那 1 次 scp" "$(cat "$LOG")"
-  else
-    pass "codex 非零退出(7)时依然不回传，且退出码透传"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_no_exec_removed_the_old_constraint() {
-  # 旧版本刻意不用 exec，是为了保留 trap EXIT 回传的能力。
-  # 现在没有回传逻辑了，用 exec 交出进程、原样透传退出码是更干净的做法，
-  # 所以这里反过来验证：脚本应该用 exec 启动 codex（不再有 trap 需要保留）。
-  if grep -qE '^\s*exec\s+env\s+CODEX_HOME' "$TARGET"; then
-    pass "已改用 exec 启动 codex（不再需要为 trap 回传保留额外进程）"
-  else
-    fail "预期用 exec 启动 codex" "$(grep -n 'CODEX_HOME=.*CODEX_BIN\|CODEX_BIN"' "$TARGET")"
-  fi
-}
-
-test_no_trap_registered() {
-  if grep -qE '^\s*trap\s' "$TARGET"; then
-    fail "不应再注册任何 trap（回传逻辑已删除）" "$(grep -nE '^\s*trap\s' "$TARGET")"
-  else
-    pass "未注册任何 trap（回传逻辑已彻底删除）"
-  fi
-}
-
-test_no_push_function_defined() {
-  if grep -qE 'push_token_back|scp.*REMOTE_AUTH' "$TARGET"; then
-    fail "脚本不应再包含任何往回推的 scp 调用" "$(grep -nE 'push_token_back|scp.*REMOTE_AUTH' "$TARGET")"
-  else
-    pass "脚本内无任何回传相关代码"
-  fi
-}
-
-test_no_token_content_printed() {
-  if grep -nE 'cat[[:space:]]+.*auth\.json|echo.*auth_token|print.*refresh_token|print.*access_token' "$TARGET"; then
-    fail "脚本疑似打印 token 内容" "命中上面 grep 结果"
-  else
-    pass "grep 确认脚本无打印 token 内容语句"
-  fi
-}
-
-test_no_login_command() {
-  if grep -qE 'codex[[:space:]]+login' "$TARGET"; then
-    fail "西安侧脚本绝不能调用 codex login" "命中"
-  else
-    pass "脚本未调用 codex login（红线遵守）"
-  fi
-}
-
-test_chmod_600_on_pull() {
-  setup
-  set +e
-  CODEX_MOCK_EXIT_CODE=0 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
-  set -e
-  if [[ -f "$HOME/.codex-team3/auth.json" ]]; then
-    local mode
-    if stat --version >/dev/null 2>&1; then
-      mode=$(stat -c "%a" "$HOME/.codex-team3/auth.json")   # GNU coreutils (Linux CI)
-    else
-      mode=$(stat -f "%Lp" "$HOME/.codex-team3/auth.json")  # BSD stat (macOS)
-    fi
-    if [[ "$mode" == "600" ]]; then
-      pass "本地 auth.json 落盘后 mode 为 600"
-    else
-      fail "本地 auth.json 落盘后 mode 为 600" "实际 mode=$mode"
-    fi
-  else
-    fail "本地 auth.json 落盘后 mode 为 600" "文件不存在"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_rejects_when_remaining_below_48h() {
-  setup
-  # 覆盖默认的新鲜 mock scp：这次拉到手的 token 只剩 1 小时（3600秒）就过期
-  local stale_jwt
-  stale_jwt="$(make_fake_jwt 3600)"
-  cat >"$BIN/scp" <<SH
-#!/bin/bash
-echo "scp \$*" >> "$LOG"
-dest="\${@: -1}"
-if [[ "\$dest" != *":"* ]]; then
-  printf '{"tokens":{"access_token":"%s","refresh_token":"mock_rt"}}' "$stale_jwt" > "\$dest"
+EXPECTED='codex-request is retired; use: codex-slot start [--project <project>] [--name <name>]'
+if [[ ! -s "$STDOUT" && "$(cat "$STDERR")" == "$EXPECTED" ]]; then
+  pass "唯一输出是指向 codex-slot start 的退役提示"
+else
+  fail "唯一输出必须是指向 codex-slot start 的退役提示" "stdout=$(cat "$STDOUT") stderr=$(cat "$STDERR")"
 fi
-exit 0
-SH
-  chmod +x "$BIN/scp"
 
-  set +e
-  bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
-  local rc=$?
-  set -e
+if [[ ! -s "$TRACE" ]]; then
+  pass "退役发生在 ssh/scp/codex/tmux/网络 child 之前"
+else
+  fail "退役入口不得触发 child/network" "$(cat "$TRACE")"
+fi
 
-  if [[ "$rc" -eq 0 ]]; then
-    fail "剩余有效期不足 48h 时应拒绝运行（非 0 退出）" "实际 rc=0, 输出: $(cat /tmp/out.$$)"
-  elif grep -q "codex ran with CODEX_HOME" "$LOG"; then
-    fail "剩余有效期不足 48h 时不应该跑 codex" "$(cat "$LOG")"
-  elif ! grep -qE "剩余有效期不足" /tmp/out.$$; then
-    fail "应打印说明剩余有效期不足而拒绝运行的错误信息" "$(cat /tmp/out.$$)"
-  else
-    pass "剩余有效期不足 48h（模拟美国侧 cron 掉线）时正确拒绝运行，且不调用 codex"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-test_allows_when_remaining_above_48h() {
-  setup
-  # 默认 mock 已经是 9 天有效期（远高于 48h），直接复用 setup 里的默认值
-  set +e
-  bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
-  local rc=$?
-  set -e
-
-  if [[ "$rc" -ne 0 ]]; then
-    fail "剩余有效期充足（9天）时应正常运行" "实际 rc=$rc, 输出: $(cat /tmp/out.$$)"
-  elif ! grep -q "codex ran with CODEX_HOME=$HOME/.codex-team3" "$LOG"; then
-    fail "剩余有效期充足时应正常跑 codex" "$(cat "$LOG")"
-  else
-    pass "剩余有效期充足（9天 >= 48h）时正常放行运行 codex"
-  fi
-  rm -f /tmp/out.$$
-  teardown
-}
-
-echo "=== codex-request.sh 单元测试 ==="
-test_invalid_team_rejected
-test_missing_team_rejected
-test_pull_then_run_no_pushback_on_success
-test_no_pushback_even_on_nonzero_exit
-test_no_exec_removed_the_old_constraint
-test_no_trap_registered
-test_no_push_function_defined
-test_no_token_content_printed
-test_no_login_command
-test_chmod_600_on_pull
-test_rejects_when_remaining_below_48h
-test_allows_when_remaining_above_48h
+if [[ -z "$(find "$HOME_DIR" -mindepth 1 -print -quit)" ]]; then
+  pass "退役入口未创建或改写 auth/用户目录"
+else
+  fail "退役入口不得产生 auth 落盘副作用" "$(find "$HOME_DIR" -mindepth 1 -print)"
+fi
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"
