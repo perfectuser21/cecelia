@@ -13,7 +13,7 @@ KERNEL_V1_MIXED_FIRE_DRILL_PASS_R7
 
 ## Provider / Account Evidence
 
-- planner：provider=`claude`，account=`account1`；`/api/brain/tasks/892405df-3dc3-4c44-9402-278c7d8d0bd3` 返回 `payload.role_assignments.planner={provider:"claude",account:"account1"}`。
+- planner：provider=`claude`，account=`account1`；`/api/brain/tasks/2255a63a-2152-47c3-aa89-301cae2445ad` 返回 `payload.role_assignments.planner={provider:"claude",account:"account1"}`。
 - proposer：provider=`claude`，account=`account1`；同一 task API 返回 `payload.role_assignments.proposer={provider:"claude",account:"account1"}`。
 - reviewer：provider=`grok`，account=`grok`；同一 task API 返回独立 reviewer 分配 `payload.role_assignments.reviewer={provider:"grok",account:"grok"}`。
 - evaluator：provider=`claude`，account=`account1`；同一 task API 返回 `payload.role_assignments.evaluator={provider:"claude",account:"account1"}`。
@@ -69,9 +69,9 @@ exit_code: 0
 log_tail: `state=OPEN mergedAt=null headRefName=cp-07250025-892405df headRefOid=d6fce4971c40b67c2fb793290949fc1b2a664ae7 completed_checks=65 success=45 skipped=20 neutral=0`
 
 check: task-roles
-command: `curl -sf http://host.docker.internal:5221/api/brain/tasks/892405df-3dc3-4c44-9402-278c7d8d0bd3 | jq '.payload.role_assignments'`
+command: `curl -sf http://host.docker.internal:5221/api/brain/tasks/2255a63a-2152-47c3-aa89-301cae2445ad | jq '.payload.role_assignments'`
 exit_code: 0
-log_tail: `planner/proposer/evaluator=claude/account1, reviewer=grok/grok, generator=codex/team3`
+log_tail: `task_id=2255a63a-2152-47c3-aa89-301cae2445ad planner/proposer/evaluator=claude/account1, reviewer=grok/grok, generator=codex/team3`
 
 check: relay-attribution
 command: `curl -sf 'http://host.docker.internal:5221/api/brain/orchestrator/relay-runs?task_id=2255a63a-2152-47c3-aa89-301cae2445ad&limit=100' | jq '.'`
