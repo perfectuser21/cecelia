@@ -141,7 +141,7 @@ function ConversationThread({ conversationId, onBack }: { conversationId: string
   const fetchMessages = useCallback(async () => {
     try {
       const res = await fetch(`/api/brain/conversations/${encodeURIComponent(conversationId)}/messages?limit=50`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error();
       const body = await res.json();
       setMessages(body.messages || []);
       setError(null);
@@ -178,8 +178,7 @@ function ConversationThread({ conversationId, onBack }: { conversationId: string
         body: JSON.stringify({ role: 'user', content }),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
+        throw new Error();
       }
       setInput('');
       await fetchMessages();

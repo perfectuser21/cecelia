@@ -239,7 +239,7 @@ describe('ConversationDrawer — 对话区', () => {
     fireEvent.change(screen.getByTestId('message-input'), { target: { value: '测试内容' } });
     fireEvent.click(screen.getByTestId('message-send-btn'));
 
-    await waitFor(() => expect(screen.getByText('服务异常')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('发送失败')).toBeInTheDocument());
     expect((screen.getByTestId('message-input') as HTMLInputElement).value).toBe('测试内容');
   });
 
@@ -259,5 +259,60 @@ describe('ConversationDrawer — 对话区', () => {
 
     fireEvent.click(screen.getByTestId('thread-back-btn'));
     await waitFor(() => expect(screen.getByTestId('new-conversation-btn')).toBeInTheDocument());
+  });
+
+  it('消息加载失败→显示中文兜底文案"加载消息失败"', async () => {
+    global.fetch = vi.fn().mockImplementation((url: string, opts?: any) => {
+      const method = (opts?.method || 'GET').toUpperCase();
+      if (url.includes('/api/brain/conversations/conv-1/messages')) {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({}) }) as any;
+      }
+      if (url.includes('/api/brain/conversations')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ conversations: [{ id: 'conv-1', title: '测试议题', status: 'active', last_message: null, last_message_at: null, updated_at: '2026-07-24T00:00:00Z', turn_count: 0 }], total: 1 }),
+        }) as any;
+      }
+      throw new Error(`no mock for ${method} ${url}`);
+    }) as any;
+
+    render(<ConversationDrawer journeyId={JOURNEY_ID} open={true} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText('测试议题')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('conversation-item-conv-1'));
+
+    await waitFor(() => {
+      expect(screen.getByText('加载消息失败')).toBeInTheDocument();
+    });
+  });
+
+  it('消息发送失败无error字段→显示中文兜底文案"发送失败"', async () => {
+    global.fetch = vi.fn().mockImplementation((url: string, opts?: any) => {
+      const method = (opts?.method || 'GET').toUpperCase();
+      if (method === 'POST' && url.includes('/messages')) {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({}) }) as any;
+      }
+      if (url.includes('/messages')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ messages: [], has_more: false }) });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ conversations: [{ id: 'conv-1', title: '测试议题', status: 'active', last_message: null, last_message_at: null, updated_at: '2026-07-24T00:00:00Z', turn_count: 0 }], total: 1 }),
+      });
+    }) as any;
+
+    render(<ConversationDrawer journeyId={JOURNEY_ID} open={true} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText('测试议题')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('conversation-item-conv-1'));
+    await waitFor(() => expect(screen.getByText(/还没有消息/)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByTestId('message-input'), { target: { value: '测试消息' } });
+    fireEvent.click(screen.getByTestId('message-send-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByText('发送失败')).toBeInTheDocument();
+    });
+    expect((screen.getByTestId('message-input') as HTMLInputElement).value).toBe('测试消息');
   });
 });
