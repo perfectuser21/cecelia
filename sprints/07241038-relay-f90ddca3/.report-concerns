@@ -1,0 +1,6 @@
+CONCERN: Step3.5:prep-prd.md不存在跳过归档
+CONCERN: Step2:harness/complete首轮被拒(phase=evaluate),run收口done后重试过闸但rowsAffected=0(无关联dashboard行)
+CONCERN: Step4:派发时task.ability_id为空无feature可翻,Phase B已补建journey_feature f7ab3e65并置done
+CONCERN: Step5:飞书notify返回sent=false未真实送达
+CONCERN: Step8f:capture_atoms未写入(HTTP 404)
+CONCERN: PhaseB:notes本地表无行(POST /api/brain/notes直写Notion,3个page已真实创建,核验假设与实现不符)
