@@ -21,4 +21,3 @@ Do not fall back to a moving branch or working-tree file.
 - Fetch uses `execFileSync`, not a shell.
 - A real missing remote SHA still fails closed.
 - Locally present SHAs do not perform network I/O.
-
