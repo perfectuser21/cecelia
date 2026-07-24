@@ -1,7 +1,9 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 覆盖父路：独立小路（无父路）—— 本 sprint 是 kernel-v1 mixed-provider 主链的一次性 fire drill 演练验收，
 不覆盖某条既有产品 Golden Path 的子步骤，验收对象是本次 harness 全链路执行本身。
+
+**Round 2 修订说明（精简纪律 B50 — 净变化趋近 0）**：Round 1 已通过 Step 2b-check 确定性自查（`grep -c '^- \[ \] \[BEHAVIOR\]'` = 7 条 ≥ 4，真执行断言 7/7 占比 100%）。本轮唯一改动：ARTIFACT #2「五角色证据摘要」原判据只 grep 角色名字符串（如 `planner`），未验证 PRD 明确要求的 provider/account 值——补齐为「角色名 300 字符窗口内含其 provider 与 account 字面值」，其余条目未发现真实 PRD 漏覆盖，不做无依据的加严。
 
 ## 八要素需求规范
 
@@ -127,7 +129,7 @@ echo "OK: task id 核对通过"
 
 **来源**: `[FROM_PRD]` — PRD Golden Path Step 2 直接定义标记 `KERNEL_V1_MIXED_FIRE_DRILL_PASS_R7`、历史版本 `1.267.67`、`19887912bbb581597f12c714a9ed187f051e2850`、`2a96f975ecf1ce1ddfb818030f7642a08e2860b8`
 
-**可观测行为**: `docs/fire-drills/kernel-v1-mixed-20260724-r7.md` 存在，文件内容含以上四个标记字符串，且含五个角色（planner/proposer/reviewer/evaluator/generator）各自的 provider/account 运行证据摘要。
+**可观测行为**: `docs/fire-drills/kernel-v1-mixed-20260724-r7.md` 存在，文件内容含以上四个标记字符串，且含五个角色（planner/proposer/reviewer/evaluator/generator）各自的 provider/account 运行证据摘要——角色名附近必须能读到该角色实际的 provider 与 account 字面值（来自本 task payload.role_assignments），不是只出现角色名字符串。
 
 **验证命令**:
 ```bash
@@ -136,13 +138,22 @@ DOC="docs/fire-drills/kernel-v1-mixed-20260724-r7.md"
 for MARK in "KERNEL_V1_MIXED_FIRE_DRILL_PASS_R7" "1.267.67" "19887912bbb581597f12c714a9ed187f051e2850" "2a96f975ecf1ce1ddfb818030f7642a08e2860b8"; do
   grep -qF -- "$MARK" "$DOC" || { echo "FAIL: 缺少标记 $MARK"; exit 1; }
 done
-for ROLE in planner proposer reviewer evaluator generator; do
-  grep -qi -- "$ROLE" "$DOC" || { echo "FAIL: 缺少角色证据摘要 $ROLE"; exit 1; }
-done
-echo "OK: 目标文档标记与角色证据摘要齐全"
+node -e '
+const fs=require("fs");
+const c=fs.readFileSync("'"$DOC"'","utf8").toLowerCase();
+const roles={planner:["claude","account1"],proposer:["claude","account1"],reviewer:["grok","grok"],evaluator:["claude","account1"],generator:["codex","team3"]};
+for(const [role,[provider,account]] of Object.entries(roles)){
+  const idx=c.indexOf(role);
+  if(idx<0){console.error("missing role:"+role);process.exit(1);}
+  const win=c.slice(idx,idx+300);
+  if(!win.includes(provider)){console.error("missing provider near "+role+": "+provider);process.exit(1);}
+  if(!win.includes(account)){console.error("missing account near "+role+": "+account);process.exit(1);}
+}
+' || exit 1
+echo "OK: 目标文档标记与角色 provider/account 证据摘要齐全"
 ```
 
-**硬阈值**: 四个标记字符串全部命中（grep -qF exit 0），五个角色名字符串全部命中
+**硬阈值**: 四个标记字符串全部命中（grep -qF exit 0）；五个角色名附近 300 字符窗口内各自的 provider 与 account 字面值全部命中
 
 ---
 
@@ -334,9 +345,9 @@ fi
 
 ## Test Contract
 
-| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| 功能 | Test File | BEHAVIOR 覆盖（it() 名字面子串，v9.5 死规则） | 预期红证据 |
 |---|---|---|---|
 | 目标文档标记完整性 | `tests/kernel-v1-fire-drill-r7.test.ts` | 文档存在且含四项强制标记 | → file not found，1 failure |
-| 五角色证据摘要 | `tests/kernel-v1-fire-drill-r7.test.ts` | 文档含 planner/proposer/reviewer/evaluator/generator 证据摘要 | → file not found，1 failure |
-| 历史失败 reason 显式记录未复现 | `tests/kernel-v1-fire-drill-r7.test.ts` | 文档显式记录 no_progress_same_sha / approved_but_contract_artifacts_missing 未出现 | → file not found，1 failure |
-| judge/human 时间线顺序字段存在 | `tests/kernel-v1-fire-drill-r7.test.ts` | 文档含 judge_pass_at ≤ human_review_created_at 时间戳字段 | → file not found，1 failure |
+| 五角色 provider/account 证据摘要 | `tests/kernel-v1-fire-drill-r7.test.ts` | 含五角色 planner/proposer/reviewer/evaluator/generator 的 provider/account 实际运行证据摘要 | → file not found，1 failure |
+| 历史失败 reason 显式记录未复现 | `tests/kernel-v1-fire-drill-r7.test.ts` | no_progress_same_sha 与 approved_but_contract_artifacts_missing 本轮未出现 | → file not found，1 failure |
+| judge/human 时间线顺序字段存在 | `tests/kernel-v1-fire-drill-r7.test.ts` | judge_pass_at <= human_review_created_at | → file not found，1 failure |

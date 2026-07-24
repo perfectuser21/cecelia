@@ -17,10 +17,21 @@ describe('kernel-v1 mixed provider fire drill R7 文档 [BEHAVIOR]', () => {
     expect(content).toContain('2a96f975ecf1ce1ddfb818030f7642a08e2860b8');
   });
 
-  it('目标文档含五角色 planner/proposer/reviewer/evaluator/generator 实际运行证据摘要', () => {
+  it('目标文档含五角色 planner/proposer/reviewer/evaluator/generator 的 provider/account 实际运行证据摘要（非仅角色名）', () => {
     const content = readDoc().toLowerCase();
-    for (const role of ['planner', 'proposer', 'reviewer', 'evaluator', 'generator']) {
-      expect(content).toContain(role);
+    const roles: Record<string, [string, string]> = {
+      planner: ['claude', 'account1'],
+      proposer: ['claude', 'account1'],
+      reviewer: ['grok', 'grok'],
+      evaluator: ['claude', 'account1'],
+      generator: ['codex', 'team3'],
+    };
+    for (const [role, [provider, account]] of Object.entries(roles)) {
+      const idx = content.indexOf(role);
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const window = content.slice(idx, idx + 300);
+      expect(window).toContain(provider);
+      expect(window).toContain(account);
     }
   });
 
