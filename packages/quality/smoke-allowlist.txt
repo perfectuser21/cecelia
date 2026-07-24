@@ -89,6 +89,7 @@ t6-ability-progress-smoke.sh
 t6-battle-command-smoke.sh
 t6-dev-dispatch-migration-smoke.sh
 task-tasks-dedup-smoke.sh
+task-delete-postdeploy-filter-smoke.sh
 tasks-ability-id-smoke.sh
 version-endpoint-smoke.sh
 warroom-line-command-smoke.sh
