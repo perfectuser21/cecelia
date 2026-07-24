@@ -18,12 +18,21 @@
  *   counters:{hops,fixRound,pollCount,noPushStreak,noVerdictStreak,ganCostUsd}
  */
 import { caps, isPassVerdict } from './gates.js';
-import { ACTION } from './constants.js';
+import { ACTION, LOG_ACTION } from './constants.js';
+import { replayProductConvergence } from './counters.js';
+import {
+  asStructuredJson,
+  crashSignatureKey,
+  failureSignatureKey,
+  generatorCrashSignature,
+  normalizeFailureSignature,
+} from './convergence-signatures.js';
 
 const REQUIRED_FIELDS = [
   'run', 'task', 'prdExists', 'contract', 'pr', 'inflight', 'lastAgentExit',
   'proposeBranchRn', 'ganLatestRoundVerdict', 'generatorSpawned',
   'evaluateVerdict', 'judgeVerdict', 'reviewRequired', 'reviewApproved', 'counters',
+  // noProgress / noProgressReason 可选（ground-truth 从 decisionLog 推导注入，测试可手动注入）
 ];
 
 function assertObservedShape(observed) {
@@ -39,13 +48,265 @@ function verdictForSha(verdictRow, headSha) {
   return verdictRow && verdictRow.pr_head_sha === headSha ? verdictRow : null;
 }
 
-/** fix 分路统一出口：fix_round < MAX_FIX_ROUNDS → spawn:generator-fix，否则 failed */
-function fixOrFail(counters, reason) {
-  // routeAfterFix 语义：error→end(超 MAX_FIX_ROUNDS=20)；否则回 spawn
-  if (caps.fixExceeded(counters.fixRound)) {
-    return { phase: 'failed', action: 'mark_failed', reason: 'fix_cap' };
-  }
+/** fix 分路统一出口；fixRound 只作观测，终止由结构化收敛探测器决定。 */
+function fixRoute(reason) {
   return { phase: 'generate', action: 'spawn:generator-fix', reason };
+}
+
+function currentProductFailureSet(observed) {
+  if (observed.pr?.ci === 'fail') {
+    return normalizeFailureSignature(observed.pr.failed_checks);
+  }
+  const currentHeadSha = observed.pr?.head_sha ?? null;
+  const productVerdict = [observed.judgeVerdict, observed.evaluateVerdict]
+    .find((verdict) => (
+      verdict?.pr_head_sha === currentHeadSha
+      && !isPassVerdict(verdict.verdict)
+      && (verdict.failure_class === 'product_failure'
+        || verdict.failure_class == null)
+    ));
+  return normalizeFailureSignature(productVerdict?.failure_signature);
+}
+
+function productFixRoute(observed, reason) {
+  const convergence = replayProductConvergence(observed.decisionLog ?? [], {
+    currentFailureSet: currentProductFailureSet(observed),
+    currentHeadSha: observed.pr?.head_sha ?? null,
+  });
+  if (convergence.outcome === 'failed') {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: convergence.reason,
+    };
+  }
+  if (convergence.outcome === 'review') {
+    return {
+      phase: 'review',
+      action: ACTION.WAIT_HUMAN_REVIEW,
+      reason: convergence.reason,
+    };
+  }
+  if (convergence.outcome === 'pending') {
+    return {
+      phase: 'generate',
+      action: ACTION.WAIT_GENERATOR_FIX_CALLBACK,
+      reason: convergence.reason,
+    };
+  }
+  return fixRoute(reason);
+}
+
+function applyHopFence(decision, counters) {
+  // Convergence and escalation routes are the primary stop condition. The hop
+  // budget is only a wide fallback for otherwise continuing automation.
+  if ([
+    ACTION.MARK_FAILED,
+    ACTION.WAIT_HUMAN_REVIEW,
+    ACTION.WAIT_GENERATOR_FIX_CALLBACK,
+  ].includes(decision.action)) {
+    return decision;
+  }
+  if (caps.hopsExceeded(counters.hops)) {
+    return { phase: 'failed', action: ACTION.MARK_FAILED, reason: 'hop_cap' };
+  }
+  return decision;
+}
+
+function sortedLogRows(decisionLog) {
+  return Array.isArray(decisionLog)
+    ? [...decisionLog].sort((a, b) => Number(a.hop) - Number(b.hop))
+    : [];
+}
+
+function currentHumanReviewRejection(decisionLog, currentHeadSha) {
+  const rows = sortedLogRows(decisionLog);
+  return rows.find((row) => {
+    if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+    const detail = asStructuredJson(row.detail) ?? {};
+    if (detail.rejected !== true && detail.verdict !== 'REJECTED') return false;
+    if (detail.pr_head_sha !== currentHeadSha) return false;
+    return rows.some((request) => (
+      request.action === LOG_ACTION.HUMAN_REVIEW_REQUESTED
+      && Number(request.hop) < Number(row.hop)
+      && String(request.hop) === String(detail.review_request_hop)
+      && (asStructuredJson(request.observed) ?? {}).pr?.head_sha === currentHeadSha
+    ));
+  }) ?? null;
+}
+
+function evidenceReplayRoute(decisionLog, currentHeadSha, currentVerdict) {
+  const signature = normalizeFailureSignature(currentVerdict?.failure_signature);
+  const signatureKey = failureSignatureKey(signature);
+  if (signatureKey == null) {
+    const rows = sortedLogRows(decisionLog);
+    const unsignedVerdicts = rows.filter((row) => {
+      if (![LOG_ACTION.VERDICT_EVALUATE, LOG_ACTION.VERDICT_JUDGE].includes(row.action)) {
+        return false;
+      }
+      const detail = asStructuredJson(row.detail) ?? {};
+      return detail.failure_class === 'evidence_invalid'
+        && detail.pr_head_sha === currentHeadSha
+        && failureSignatureKey(detail.failure_signature) == null;
+    });
+    const unsignedRepairs = rows.filter((row) => {
+      if (row.action !== ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR) return false;
+      const snapshot = asStructuredJson(row.observed) ?? {};
+      return snapshot.pr?.head_sha === currentHeadSha
+        && snapshot.failure_class === 'evidence_invalid'
+        && failureSignatureKey(snapshot.failure_signature) == null;
+    });
+    const latestVerdict = unsignedVerdicts.at(-1) ?? null;
+    const latestRepair = unsignedRepairs.at(-1) ?? null;
+    const reviewRequests = rows.filter((row) => {
+      if (row.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
+      const snapshot = asStructuredJson(row.observed) ?? {};
+      const detail = asStructuredJson(row.detail) ?? {};
+      return snapshot.pr?.head_sha === currentHeadSha
+        && detail.review_reason === 'unknown:missing_failure_signature';
+    });
+    const request = reviewRequests.at(-1) ?? null;
+    const approval = request == null
+      ? null
+      : rows.find((row) => {
+          if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+          const detail = asStructuredJson(row.detail) ?? {};
+          return detail.approved === true
+            && detail.pr_head_sha === currentHeadSha
+            && Number(row.hop) > Number(request.hop)
+            && String(detail.review_request_hop) === String(request.hop);
+        }) ?? null;
+    if (approval) {
+      const postApprovalRepair = unsignedRepairs.find(
+        (row) => Number(row.hop) > Number(approval.hop),
+      ) ?? null;
+      if (!postApprovalRepair) {
+        return {
+          phase: 'evaluate',
+          action: ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR,
+          reason: 'evidence_invalid:approved_single_retry',
+        };
+      }
+      if (latestVerdict && Number(latestVerdict.hop) > Number(postApprovalRepair.hop)) {
+        return {
+          phase: 'failed',
+          action: ACTION.MARK_FAILED,
+          reason: 'repeated_evidence_invalid_after_approval',
+        };
+      }
+      return {
+        phase: 'evaluate',
+        action: ACTION.WAIT_RUNNING,
+        reason: 'evidence_repair_awaiting_verdict',
+      };
+    }
+    if (latestRepair && latestVerdict
+        && Number(latestVerdict.hop) > Number(latestRepair.hop)) {
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'unknown:missing_failure_signature',
+      };
+    }
+    if (latestRepair) {
+      return {
+        phase: 'evaluate',
+        action: ACTION.WAIT_RUNNING,
+        reason: 'evidence_repair_awaiting_verdict',
+      };
+    }
+    return {
+      phase: 'evaluate',
+      action: ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR,
+      reason: 'evidence_invalid',
+    };
+  }
+
+  const rows = sortedLogRows(decisionLog);
+  const matchesSignature = (value) => failureSignatureKey(value) === signatureKey;
+  const sameHead = (value) => value === currentHeadSha;
+  const matchingVerdicts = rows.filter((row) => {
+    if (![LOG_ACTION.VERDICT_EVALUATE, LOG_ACTION.VERDICT_JUDGE].includes(row.action)) {
+      return false;
+    }
+    const detail = asStructuredJson(row.detail) ?? {};
+    return detail.failure_class === 'evidence_invalid'
+      && sameHead(detail.pr_head_sha)
+      && matchesSignature(detail.failure_signature);
+  });
+  const matchingRepairs = rows.filter((row) => {
+    if (row.action !== ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR) return false;
+    const snapshot = asStructuredJson(row.observed) ?? {};
+    return sameHead(snapshot.pr?.head_sha)
+      && snapshot.failure_class === 'evidence_invalid'
+      && matchesSignature(snapshot.failure_signature);
+  });
+  const reviewRequests = rows.filter((row) => {
+    if (row.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
+    const snapshot = asStructuredJson(row.observed) ?? {};
+    const detail = asStructuredJson(row.detail) ?? {};
+    return sameHead(snapshot.pr?.head_sha)
+      && detail.review_reason === 'evidence_invalid:repeated_signature'
+      && matchesSignature(detail.failure_signature);
+  });
+  const request = reviewRequests.at(-1) ?? null;
+  const approval = request == null
+    ? null
+    : rows.find((row) => {
+        if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+        const detail = asStructuredJson(row.detail) ?? {};
+        return detail.approved === true
+          && sameHead(detail.pr_head_sha)
+          && Number(row.hop) > Number(request.hop)
+          && String(detail.review_request_hop) === String(request.hop);
+      }) ?? null;
+
+  const latestVerdict = matchingVerdicts.at(-1) ?? null;
+  const latestRepair = matchingRepairs.at(-1) ?? null;
+  if (approval) {
+    const postApprovalRepair = matchingRepairs.find(
+      (row) => Number(row.hop) > Number(approval.hop),
+    ) ?? null;
+    if (!postApprovalRepair) {
+      return {
+        phase: 'evaluate',
+        action: ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR,
+        reason: 'evidence_invalid:approved_single_retry',
+      };
+    }
+    if (latestVerdict && Number(latestVerdict.hop) > Number(postApprovalRepair.hop)) {
+      return {
+        phase: 'failed',
+        action: ACTION.MARK_FAILED,
+        reason: 'repeated_evidence_invalid_after_approval',
+      };
+    }
+    return {
+      phase: 'evaluate',
+      action: ACTION.WAIT_RUNNING,
+      reason: 'evidence_repair_awaiting_verdict',
+    };
+  }
+
+  if (!latestRepair) {
+    return {
+      phase: 'evaluate',
+      action: ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR,
+      reason: 'evidence_invalid',
+    };
+  }
+  if (latestVerdict && Number(latestVerdict.hop) > Number(latestRepair.hop)) {
+    return {
+      phase: 'review',
+      action: ACTION.WAIT_HUMAN_REVIEW,
+      reason: 'evidence_invalid:repeated_signature',
+    };
+  }
+  return {
+    phase: 'evaluate',
+    action: ACTION.WAIT_RUNNING,
+    reason: 'evidence_repair_awaiting_verdict',
+  };
 }
 
 export function derive(observed) {
@@ -60,33 +321,54 @@ export function derive(observed) {
     return { phase: 'terminal', action: 'exit', reason: `task_${task.status}` };
   }
 
+  // merged 短路：GitHub merged 是外部终态真相，必须先于所有 fence / 在途观测。
+  if (pr && pr.merged) {
+    return { phase: 'done', action: 'report', reason: 'pr_merged' };
+  }
+
+  if (currentHumanReviewRejection(observed.decisionLog, pr?.head_sha ?? null)) {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: 'human_review_rejected',
+    };
+  }
+
+  // 0.4 no-progress terminal（Sprint 07231527 Blocking 4）：
+  // generator-fix callback SHA === trigger_sha → 无进展，立即终局
+  // INV-K4：no-progress 后禁止对相同 (run_id, failure_class, trigger_sha, role) 再派 generator-fix
+  if (observed.noProgress === true) {
+    const noProgressReason = String(observed.noProgressReason ?? '');
+    const terminalReason = noProgressReason.startsWith('callback_sha_')
+      ? noProgressReason
+      : 'no_progress_same_sha';
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: terminalReason,
+    };
+  }
+
   // 0.5 在途观测（P0-1）：有在途容器/主机 pid → 只写心跳不派发，杜绝崩溃重拉双 spawn
   if (inflight.containers.length > 0 || inflight.host_pids.length > 0) {
     return { phase: run.phase, action: 'wait:running', reason: 'agent_inflight' };
   }
 
-  // 0.6 hop 硬上限（P2）
-  if (caps.hopsExceeded(counters.hops)) {
-    return { phase: 'failed', action: 'mark_failed', reason: 'hop_cap' };
-  }
-
-  // merged 短路：任何时刻 pr.merged=true → 跳过所有 spawn 直入 5（routeAfterPoll merged 语义）
-  if (pr && pr.merged) {
-    return { phase: 'done', action: 'report', reason: 'pr_merged' };
-  }
-
   // 1. planning：sprint-prd.md 落盘即真相，丢失重跑 planner（D2，plannerOutput 不持久化）
   if (!prdExists) {
-    return { phase: 'planning', action: 'spawn:planner', reason: 'no_prd' };
+    return applyHopFence(
+      { phase: 'planning', action: 'spawn:planner', reason: 'no_prd' },
+      counters,
+    );
   }
 
   // 2. GAN：prd 存在 && contract 未 approved
   if (!contract.approved) {
-    return deriveGan(observed);
+    return applyHopFence(deriveGan(observed), counters);
   }
 
   // 3/4/5. contract approved 之后的单 sub-task 主线
-  return deriveTask(observed);
+  return applyHopFence(deriveTask(observed), counters);
 }
 
 /**
@@ -125,16 +407,35 @@ function deriveGan(observed) {
  * 规则 3/4/5：contract approved 后的 generate → evaluate → judge → review → merge 主线。
  */
 function deriveTask(observed) {
-  const { pr, lastAgentExit, generatorSpawned, counters } = observed;
+  const {
+    pr,
+    lastAgentExit,
+    generatorSpawned,
+    counters,
+    decisionLog,
+  } = observed;
 
   // 3a. !pr
   if (!pr) {
     if (!generatorSpawned) {
       return { phase: 'generate', action: 'spawn:generator', reason: 'contract_approved' };
     }
+    const crashSignature = generatorCrashSignature(lastAgentExit);
+    const currentCrashKey = crashSignatureKey(crashSignature);
+    if (currentCrashKey != null && sortedLogRows(decisionLog).some((row) => {
+      if (row.action !== ACTION.SPAWN_GENERATOR_FIX) return false;
+      const snapshot = asStructuredJson(row.observed) ?? {};
+      return crashSignatureKey(snapshot.crash_signature) === currentCrashKey;
+    })) {
+      return {
+        phase: 'failed',
+        action: ACTION.MARK_FAILED,
+        reason: 'repeated_generator_crash_signature',
+      };
+    }
     // generator 已退出且无 PR（no_pr）→ 计入 fix_round
     // （修订声明：旧图 routeAfterParse !pr_url→no_pr(END) 直接终局，新语义=可重试入 fix 上限）
-    return fixOrFail(counters, 'no_pr');
+    return fixRoute('no_pr');
   }
 
   // 3d. exit/auth 观测分路（P0-3）——优先于 CI 状态判定：
@@ -150,7 +451,7 @@ function deriveTask(observed) {
     exitBelongsToGenerator &&
     (lastAgentExit.auth_failed || (lastAgentExit.code != null && lastAgentExit.code !== 0))
   ) {
-    return fixOrFail(counters, lastAgentExit.auth_failed ? 'auth_failed' : 'container_exit');
+    return fixRoute(lastAgentExit.auth_failed ? 'auth_failed' : 'container_exit');
   }
 
   // 3b. ci pending → poll；超限（20×90s）→ failed
@@ -164,11 +465,69 @@ function deriveTask(observed) {
 
   // 3c. ci fail → fix loop（routeAfterPoll fail→fix；fix 同 PR，不 reset pr_url/pr_branch）
   if (pr.ci === 'fail') {
-    return fixOrFail(counters, 'ci_fail');
+    return productFixRoute(observed, 'ci_fail');
   }
 
   // 4. ci pass —— verdict 全部锚定当前 head SHA（P0-2）
   return deriveVerdictChain(observed);
+}
+
+/**
+ * failure_class 路由矩阵（Sprint 07231527 Blocking 3）：
+ * evaluate/judge FAIL 时根据 failure_class 分差异路由，而非统一 fixOrFail。
+ *
+ * | failure_class           | 路由动作                        |
+ * |------------------------|--------------------------------|
+ * | product_failure（或null）| spawn:generator-fix             |
+ * | evidence_invalid        | spawn:evaluator-evidence-repair |
+ * | environment_recovery    | 首次 generator-fix；第二次相同签名 mark_failed |
+ * | needs_context           | wait:human_review（保守）        |
+ * | contract_invalid        | mark_failed                     |
+ * | unknown                 | wait:human_review（INV-K3）      |
+ */
+function deriveFailureClassRoute(
+  failureClass,
+  counters,
+  decisionLog,
+  currentHeadSha,
+  currentVerdict = null,
+  observed = null,
+) {
+  const fc = failureClass ?? null;
+
+  if (fc === 'contract_invalid') {
+    return { phase: 'failed', action: 'mark_failed', reason: 'contract_invalid' };
+  }
+
+  if (fc === 'evidence_invalid') {
+    // INV-K6：只按 SHA + 结构化签名回放。第二次同签名停在人审；
+    // 人工批准只解锁一次，批准后的 repair 再产出同签名即终局。
+    return evidenceReplayRoute(decisionLog, currentHeadSha, currentVerdict);
+  }
+
+  if (fc === 'needs_context' || fc === 'unknown') {
+    // INV-K3：不确定原因不应默认归为产品代码失败 → 等人工介入
+    return { phase: 'review', action: 'wait:human_review', reason: `${fc}:awaiting_human_review` };
+  }
+
+  if (fc === 'environment_recovery') {
+    // 首次 environment_recovery → generator-fix；相同签名第二次 → terminal
+    const prevEnvRecovery = (decisionLog ?? []).some(
+      (r) => r.action === 'spawn:generator-fix'
+        && (r.observed?.failure_class === 'environment_recovery')
+        && (r.observed?.trigger_sha === currentHeadSha),
+    );
+    if (prevEnvRecovery) {
+      return { phase: 'failed', action: 'mark_failed', reason: 'repeated_environment_recovery' };
+    }
+    return fixRoute('environment_recovery');
+  }
+
+  // product_failure / null / 任何其他 → 保守路由 generator-fix
+  if (observed != null) {
+    return productFixRoute(observed, fc ?? 'evaluate_fail');
+  }
+  return fixRoute(fc ?? 'evaluate_fail');
 }
 
 /**
@@ -184,11 +543,16 @@ function deriveVerdictChain(observed) {
     return { phase: 'evaluate', action: 'spawn:evaluator', reason: 'no_evaluate_verdict_for_head_sha' };
   }
   if (!isPassVerdict(evalRow.verdict)) {
-    // routeAfterEvaluate 语义：failure_class==='contract_invalid'→end（责任在 GAN，不入 fix loop）；否则 fix
-    if (evalRow.failure_class === 'contract_invalid') {
-      return { phase: 'failed', action: 'mark_failed', reason: 'contract_invalid' };
-    }
-    return fixOrFail(counters, 'evaluate_fail');
+    // routeAfterEvaluate 语义：failure_class 差异路由矩阵（Sprint 07231527 Blocking 3）
+    // INV-K3：Judge 缺 failure_class → unknown，禁止默认归为产品代码失败
+    return deriveFailureClassRoute(
+      evalRow.failure_class,
+      counters,
+      observed.decisionLog,
+      pr.head_sha,
+      evalRow,
+      observed,
+    );
   }
 
   // 4b. evaluate PASS(本 sha) && 无 judge 记录(本 sha) → judge（硬门禁，代码强制）
@@ -196,9 +560,26 @@ function deriveVerdictChain(observed) {
     return { phase: 'evaluate', action: 'spawn:judge', reason: 'evaluate_passed_awaiting_judge' };
   }
 
-  // 4c. judge FAIL(本 sha) → generator-fix（P0-2 显式分支；新 commit 改 SHA，旧 verdict 天然作废）
+  // 4c. judge FAIL(本 sha) → 按 failure_class 显式分支；缺失分类归 unknown 等人工。
   if (!isPassVerdict(judgeRow.verdict)) {
-    return fixOrFail(counters, 'judge_fail');
+    if (judgeRow.failure_class == null) {
+      return deriveFailureClassRoute(
+        'unknown',
+        counters,
+        observed.decisionLog,
+        pr.head_sha,
+        judgeRow,
+        observed,
+      );
+    }
+    return deriveFailureClassRoute(
+      judgeRow.failure_class,
+      counters,
+      observed.decisionLog,
+      pr.head_sha,
+      judgeRow,
+      observed,
+    );
   }
 
   // 4d. 双 PASS && review_required && 未批准 → 等人工（Bark/预览副作用归 T3）

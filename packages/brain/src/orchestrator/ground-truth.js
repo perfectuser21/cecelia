@@ -14,6 +14,12 @@
  */
 import { ACTION, LOG_ACTION } from './constants.js';
 import { discoverPrFromGithub } from './github-pr-discovery.js';
+import { deriveCounters } from './counters.js';
+import {
+  HUMAN_REVIEW_CLASS,
+  reviewClassForReason,
+} from './human-review-class.js';
+import { normalizeFailureSet } from './convergence-signatures.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -35,9 +41,23 @@ function mapCiStatus(checkRows) {
  */
 function normalizeStatusCheckRollup(checkRows) {
   if (!Array.isArray(checkRows)) return [];
-  return checkRows.map((check) => ({
-    state: String(check?.state || check?.conclusion || check?.status || '').toUpperCase(),
-  }));
+  return checkRows.map((check) => {
+    const name = [check?.name, check?.context]
+      .find((value) => typeof value === 'string' && value.trim().length > 0);
+    return {
+      state: String(check?.state || check?.conclusion || check?.status || '').toUpperCase(),
+      name: typeof name === 'string' ? name.trim() : '',
+    };
+  });
+}
+
+function failedCheckNames(checkRows) {
+  return normalizeFailureSet(
+    checkRows
+      .filter((check) => CI_FAIL_STATES.has(check.state))
+      .map((check) => check.name)
+      .filter(Boolean),
+  );
 }
 
 /** execCmd 容忍可解析的非零退出，用 err.stdout 兜底 */
@@ -137,7 +157,7 @@ export async function collectGroundTruth(deps, opts) {
   if (!task) throw new Error(`collectGroundTruth: tasks 无此 task 行: ${taskId}`);
 
   const logRes = await pool.query(
-    'SELECT hop, action, observed, derived_phase, gate_verdict, detail FROM orchestrator_decision_log WHERE run_id = $1 ORDER BY hop',
+    'SELECT hop, action, observed, derived_phase, gate_verdict, detail, created_at FROM orchestrator_decision_log WHERE run_id = $1 ORDER BY hop',
     [runId],
   );
   const decisionLog = logRes.rows;
@@ -207,6 +227,7 @@ export async function collectGroundTruth(deps, opts) {
       merged: view.state === 'MERGED',
       head_sha: view.headRefOid ?? null,
       ci: mapCiStatus(checks),
+      failed_checks: failedCheckNames(checks),
     };
   }
 
@@ -275,11 +296,34 @@ export async function collectGroundTruth(deps, opts) {
   // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
   const payload = asJson(task.payload) ?? {};
   const reviewRequired = payload.review_required === true;
-  const hrRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_HUMAN_REVIEW);
-  const hrDetail = hrRow ? asJson(hrRow.detail) : null;
-  const reviewApproved = Boolean(
-    hrDetail && hrDetail.approved === true && pr && hrDetail.pr_head_sha === pr.head_sha,
-  );
+  const mergeApproval = latestRow(decisionLog, (row) => {
+    if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW || !pr) return false;
+    const detail = asJson(row.detail);
+    if (
+      detail?.approved !== true
+      || detail.review_class !== HUMAN_REVIEW_CLASS.MERGE_GATE
+      || detail.pr_head_sha !== pr.head_sha
+    ) {
+      return false;
+    }
+    const request = decisionLog.find((candidate) => (
+      candidate.action === LOG_ACTION.HUMAN_REVIEW_REQUESTED
+      && String(candidate.hop) === String(detail.review_request_hop)
+    ));
+    if (!request) return false;
+    const requestObserved = asJson(request.observed);
+    const requestDetail = asJson(request.detail);
+    return requestObserved?.pr?.head_sha === pr.head_sha
+      && reviewClassForReason(requestDetail?.review_reason)
+        === HUMAN_REVIEW_CLASS.MERGE_GATE;
+  });
+  const reviewApproved = Boolean(mergeApproval);
+
+  // Sprint 07231527 Blocking 4：noProgress 从 decision log 推导（INV-K4）
+  // deriveCounters 的 noProgress 字段：spawn:generator-fix trigger_sha === callback pr_head_sha
+  const countersForNp = deriveCounters(decisionLog, { proposeBranchMaxRn: proposeBranchRn });
+  const noProgress = countersForNp.noProgress ?? false;
+  const noProgressReason = countersForNp.noProgressReason ?? null;
 
   return {
     run,
@@ -303,5 +347,7 @@ export async function collectGroundTruth(deps, opts) {
     decisionLog,
     authCircuit,
     callbackResult,
+    noProgress,
+    noProgressReason,
   };
 }
