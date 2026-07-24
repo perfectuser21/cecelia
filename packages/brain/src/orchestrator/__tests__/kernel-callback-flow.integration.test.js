@@ -66,6 +66,7 @@ vi.mock('../../lib/harness-orphan-guard.js', () => ({
 }));
 
 import callbackRouter from '../../routes/harness-callback.js';
+import { deriveCounters } from '../counters.js';
 import { createDispatcher } from '../dispatcher.js';
 import { createKernelHandlers } from '../kernel-handlers.js';
 import { runLoop } from '../loop.js';
@@ -341,5 +342,71 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
         behavior_tests: behaviorTests,
       }),
     }), expect.objectContaining({ strict: true, dbPool: runtime.pool }));
+  });
+
+  it('generator-fix callback 经真实路由写入同 SHA verdict 后触发 no-progress', async () => {
+    const generatorAttemptId = '77777777-7777-4777-8777-777777777777';
+    const callbackToken = 'generator-fix-callback-token';
+    const leaseOwner = 'integration-host:4242';
+    const triggerSha = 'a'.repeat(40);
+    const decisionLog = [{
+      hop: 8,
+      action: 'spawn:generator-fix',
+      observed: { trigger_sha: triggerSha },
+      detail: { reason: 'ci_fail' },
+    }];
+    runtime.attempts.set(generatorAttemptId, {
+      id: generatorAttemptId,
+      run_id: RUN_ID,
+      hop: 8,
+      role: 'generator',
+      provider: 'codex',
+      status: 'running',
+      lease_owner: leaseOwner,
+      callback_secret_hash: createHash('sha256').update(callbackToken).digest('hex'),
+      task_bundle: { inputs: {} },
+      result: null,
+    });
+    runtime.pool.query.mockImplementation(async (sql, params = []) => {
+      if (sql.includes('SELECT r.pr_url')) {
+        return { rows: [{ pr_url: 'https://github.com/acme/repo/pull/42', trigger_sha: triggerSha }] };
+      }
+      if (sql.includes('verdict:generator-fix-callback')) {
+        decisionLog.push({
+          hop: 9,
+          action: 'verdict:generator-fix-callback',
+          observed: JSON.parse(params[5]),
+          detail: JSON.parse(params[6]),
+        });
+      }
+      return { rows: [], rowCount: 1 };
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.set('kernelPrHeadResolver', async () => triggerSha);
+    app.use('/api/brain', callbackRouter);
+    const callback = await request(app)
+      .post(`/api/brain/harness/attempts/${generatorAttemptId}/callback`)
+      .set('Authorization', `Bearer ${callbackToken}`)
+      .set('X-Harness-Lease-Owner', leaseOwner)
+      .send({
+        contract_version: '1.0',
+        attempt_id: generatorAttemptId,
+        status: 'completed',
+        summary: 'Codex completed the requested fix.',
+        artifacts: ['Codex completed the requested fix.'],
+        checks: [],
+        decision: null,
+        error: null,
+        provider_metadata: { provider: 'codex', session_id: 'thread-generator-fix' },
+      });
+
+    expect(callback.status).toBe(200);
+    expect(decisionLog).toHaveLength(2);
+    expect(deriveCounters(decisionLog, { proposeBranchMaxRn: 0 })).toMatchObject({
+      noProgress: true,
+      noProgressReason: 'no_progress_same_sha',
+    });
   });
 });
