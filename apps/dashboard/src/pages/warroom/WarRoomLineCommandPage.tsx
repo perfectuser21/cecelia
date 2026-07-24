@@ -17,7 +17,6 @@ import {
   CheckCircle2, XCircle, Clock, GitPullRequest, AlertCircle,
   Zap, FileText, ChevronRight, TrendingUp, Plus, MessageSquare,
 } from 'lucide-react';
-import ConversationDrawer from './ConversationDrawer';
 
 // ── 类型 ────────────────────────────────────────────────────────────────────
 
@@ -658,7 +657,6 @@ export default function WarRoomLineCommandPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
 
   const fetchData = useCallback(async (silent = false) => {
     if (!id) return;
@@ -737,13 +735,6 @@ export default function WarRoomLineCommandPage() {
             {new Date(data.generated_at).toLocaleTimeString('zh-CN')}
           </span>
           <button
-            onClick={() => setChatOpen(true)}
-            data-testid="open-chat-btn"
-            className="p-1.5 rounded hover:bg-slate-700/50 text-slate-400 hover:text-slate-200 transition-colors"
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-          </button>
-          <button
             onClick={() => fetchData(true)}
             disabled={refreshing}
             className="p-1.5 rounded hover:bg-slate-700/50 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
@@ -820,7 +811,6 @@ export default function WarRoomLineCommandPage() {
           </div>
         </div>
       </div>
-      <ConversationDrawer journeyId={id!} open={chatOpen} onClose={() => setChatOpen(false)} />
     </div>
   );
 }

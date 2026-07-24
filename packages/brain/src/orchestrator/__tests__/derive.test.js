@@ -5,14 +5,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import { derive } from '../derive.js';
-import {
-  MAX_FIX_ROUNDS,
+import * as constants from '../constants.js';
+
+const {
   MAX_POLL_COUNT,
   MAX_HOPS,
   MAX_NO_PUSH_STREAK,
   MAX_NO_VERDICT_STREAK,
   BUDGET_CAP_USD,
-} from '../constants.js';
+} = constants;
 
 function baseObserved(overrides = {}) {
   return {
@@ -77,8 +78,8 @@ describe('规则 0.5：在途观测（P0-1）', () => {
   });
 });
 
-describe('规则 0.6：MAX_HOPS（P2）', () => {
-  it('hops >= 200 → failed reason=hop_cap', () => {
+describe('规则 0.6：MAX_HOPS 宽兜底（P2）', () => {
+  it('hops >= 4096 → failed reason=hop_cap', () => {
     const r = derive(baseObserved({
       counters: { hops: MAX_HOPS, fixRound: 0, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     }));
@@ -103,6 +104,45 @@ describe('merged 短路（routeAfterPoll merged 语义）', () => {
       counters: { hops: 1, fixRound: 3, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     }));
     expect(r.action).toBe('report');
+  });
+
+  it('no-progress 已落库后 PR 被 merge，merged 仍优先收敛为 done', () => {
+    const r = derive(baseObserved({
+      pr: { url: 'u', state: 'MERGED', ci: 'fail', merged: true, head_sha: 's' },
+      noProgress: true,
+      noProgressReason: 'no_progress_same_sha',
+    }));
+    expect(r).toEqual({ phase: 'done', action: 'report', reason: 'pr_merged' });
+  });
+});
+
+describe('human review rejection', () => {
+  it('a rejection for the current SHA and request hop terminates the run', () => {
+    const r = derive(baseObserved({
+      decisionLog: [{
+        hop: 7,
+        action: 'effect:human_review_requested',
+        observed: { pr: { head_sha: 'sha-new' } },
+        detail: { review_reason: 'failure_set_repeated' },
+      }, {
+        hop: 8,
+        action: 'verdict:human_review',
+        observed: { pr: { head_sha: 'sha-new' } },
+        detail: {
+          verdict: 'REJECTED',
+          approved: false,
+          rejected: true,
+          pr_head_sha: 'sha-new',
+          review_request_hop: 7,
+        },
+      }],
+    }));
+
+    expect(r).toEqual({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'human_review_rejected',
+    });
   });
 });
 
@@ -173,19 +213,18 @@ describe('规则 3a：contract approved && !pr', () => {
     expect(r.action).toBe('spawn:generator');
   });
 
-  it('generator 已退出且无 PR（no_pr）→ 计入 fix_round，<20 → spawn:generator-fix（偏离旧图 no_pr 直接终局，声明为可重试入上限）', () => {
+  it('generator 已退出且无 PR（no_pr）→ spawn:generator-fix，fixRound 仅观测', () => {
     const r = derive(baseObserved({ pr: null, generatorSpawned: true, lastAgentExit: { code: 0, auth_failed: false } }));
     expect(r.action).toBe('spawn:generator-fix');
   });
 
-  it('no_pr && fix_round >= 20 → failed', () => {
+  it('no_pr && 任意高 fixRound 仍由收敛探测决定，不能命中固定轮次 cap', () => {
     const r = derive(baseObserved({
       pr: null,
       generatorSpawned: true,
-      counters: { hops: 1, fixRound: MAX_FIX_ROUNDS, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
+      counters: { hops: 1, fixRound: 10000, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     }));
-    expect(r.phase).toBe('failed');
-    expect(r.reason).toBe('fix_cap');
+    expect(r).toMatchObject({ phase: 'generate', action: 'spawn:generator-fix', reason: 'no_pr' });
   });
 });
 
@@ -216,13 +255,13 @@ describe('规则 3d：exit/auth 观测分路（P0-3，routeAfterCallback ci_fail
     expect(r.action).toBe('spawn:generator-fix');
   });
 
-  it('auth_failed && fix_round >= 20 → failed', () => {
+  it('auth_failed && 任意高 fixRound 仍可按真实故障路由 fix', () => {
     const r = derive(baseObserved({
       pr: { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' },
       lastAgentExit: { code: 1, auth_failed: true },
-      counters: { hops: 1, fixRound: MAX_FIX_ROUNDS, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
+      counters: { hops: 1, fixRound: 10000, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     }));
-    expect(r.phase).toBe('failed');
+    expect(r).toMatchObject({ phase: 'generate', action: 'spawn:generator-fix', reason: 'auth_failed' });
   });
 });
 
@@ -242,19 +281,18 @@ describe('规则 3b：ci pending → poll', () => {
   });
 });
 
-describe('规则 3c：ci fail → fix loop（routeAfterPoll fail→fix + routeAfterFix 超 MAX_FIX_ROUNDS→end）', () => {
-  it('ci fail && fix_round < 20 → spawn:generator-fix', () => {
+describe('规则 3c：ci fail → 收敛驱动 fix loop', () => {
+  it('ci fail → spawn:generator-fix', () => {
     const r = derive(baseObserved({ pr: { url: 'u', state: 'OPEN', ci: 'fail', merged: false, head_sha: 's' } }));
     expect(r.action).toBe('spawn:generator-fix');
   });
 
-  it('ci fail && fix_round >= 20 → failed', () => {
+  it('ci fail && 任意高 fixRound 仍继续，禁止固定轮次终局', () => {
     const r = derive(baseObserved({
       pr: { url: 'u', state: 'OPEN', ci: 'fail', merged: false, head_sha: 's' },
-      counters: { hops: 1, fixRound: MAX_FIX_ROUNDS, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
+      counters: { hops: 1, fixRound: 10000, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     }));
-    expect(r.phase).toBe('failed');
-    expect(r.reason).toBe('fix_cap');
+    expect(r).toMatchObject({ phase: 'generate', action: 'spawn:generator-fix', reason: 'ci_fail' });
   });
 });
 
@@ -311,13 +349,121 @@ describe('规则 4b：judge 硬门禁', () => {
 });
 
 describe('规则 4c：judge FAIL → 显式分支（P0-2）', () => {
-  it('judge FAIL（本 sha）→ phase=generate, action=spawn:generator-fix（新 commit 改 SHA，旧 verdict 天然作废）', () => {
+  it('judge FAIL（本 sha）且 failure_class 字段缺失 → unknown human review', () => {
     const r = derive(baseObserved({
       evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
       judgeVerdict: { verdict: 'FAIL', pr_head_sha: 'sha-new' },
     }));
-    expect(r.phase).toBe('generate');
-    expect(r.action).toBe('spawn:generator-fix');
+    expect(r).toMatchObject({
+      phase: 'review',
+      action: 'wait:human_review',
+      reason: 'unknown:awaiting_human_review',
+    });
+  });
+});
+
+describe('规则 4c：unsigned evidence approval one-shot repair', () => {
+  const unsignedVerdict = {
+    hop: 3,
+    action: 'verdict:evaluate',
+    detail: {
+      verdict: 'FAIL',
+      failure_class: 'evidence_invalid',
+      pr_head_sha: 'sha-new',
+    },
+  };
+  const firstRepair = {
+    hop: 4,
+    action: 'spawn:evaluator-evidence-repair',
+    observed: {
+      pr: { head_sha: 'sha-new' },
+      failure_class: 'evidence_invalid',
+    },
+  };
+  const repeatedUnsignedVerdict = {
+    hop: 5,
+    action: 'verdict:evaluate',
+    detail: {
+      verdict: 'FAIL',
+      failure_class: 'evidence_invalid',
+      pr_head_sha: 'sha-new',
+    },
+  };
+  const reviewRequest = {
+    hop: 6,
+    action: 'effect:human_review_requested',
+    observed: {
+      pr: { head_sha: 'sha-new' },
+      failure_class: 'evidence_invalid',
+    },
+    detail: { review_reason: 'unknown:missing_failure_signature' },
+  };
+  const approval = {
+    hop: 7,
+    action: 'verdict:human_review',
+    detail: {
+      approved: true,
+      review_class: 'evidence_repair',
+      pr_head_sha: 'sha-new',
+      review_request_hop: 6,
+    },
+  };
+
+  it('approval unlocks exactly one unsigned evidence repair', () => {
+    const r = derive(baseObserved({
+      evaluateVerdict: repeatedUnsignedVerdict.detail,
+      decisionLog: [
+        unsignedVerdict,
+        firstRepair,
+        repeatedUnsignedVerdict,
+        reviewRequest,
+        approval,
+      ],
+    }));
+
+    expect(r).toMatchObject({
+      phase: 'evaluate',
+      action: 'spawn:evaluator-evidence-repair',
+      reason: 'evidence_invalid:approved_single_retry',
+    });
+  });
+
+  it('another unsigned verdict after the approved repair fails without a second review', () => {
+    const approvedRepair = {
+      hop: 8,
+      action: 'spawn:evaluator-evidence-repair',
+      observed: {
+        pr: { head_sha: 'sha-new' },
+        failure_class: 'evidence_invalid',
+      },
+    };
+    const postApprovalVerdict = {
+      hop: 9,
+      action: 'verdict:evaluate',
+      detail: {
+        verdict: 'FAIL',
+        failure_class: 'evidence_invalid',
+        pr_head_sha: 'sha-new',
+      },
+    };
+    const r = derive(baseObserved({
+      evaluateVerdict: postApprovalVerdict.detail,
+      decisionLog: [
+        unsignedVerdict,
+        firstRepair,
+        repeatedUnsignedVerdict,
+        reviewRequest,
+        approval,
+        approvedRepair,
+        postApprovalVerdict,
+      ],
+    }));
+
+    expect(r).toMatchObject({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'repeated_evidence_invalid_after_approval',
+    });
   });
 });
 

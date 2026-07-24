@@ -35,9 +35,13 @@ import { handleRelayExitConsistency } from '../lib/harness-orphan-guard.js';
 import { createAttemptStore } from '../orchestrator/attempt-store.js';
 import { parseHarnessResult } from '../orchestrator/execution-contract.js';
 import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
+import {
+  defaultPrHeadResolver,
+  normalizeGitSha,
+} from '../orchestrator/pr-head-resolver.js';
+import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
 
 const router = Router();
-const attemptStore = createAttemptStore(pool);
 const SUCCESS_TERMINAL_STATUSES = new Set([
   'completed',
   'completed_with_concerns',
@@ -77,6 +81,10 @@ function callbackAuthorized(req, attempt) {
   return verifyCallbackSecret(bearerToken(req), attempt?.callback_secret_hash);
 }
 
+function requestDatabase(req) {
+  return req.app.get('pool') || pool;
+}
+
 function normalizeVerdict(role, outcome) {
   const value = String(outcome ?? '').trim().toUpperCase();
   if (role === 'reviewer') {
@@ -94,6 +102,7 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
 
   const action = attempt.role === 'reviewer' ? 'verdict:reviewer' : 'verdict:evaluate';
   const inputs = attempt.task_bundle?.inputs ?? {};
+  const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
   const detail = attempt.role === 'reviewer'
     ? {
         attempt_id: attempt.id,
@@ -107,6 +116,7 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
         verdict: normalizeVerdict(attempt.role, result.decision.outcome),
         pr_head_sha: inputs.pull_request?.head_sha ?? null,
         failure_class: result.decision.failure_class ?? null,
+        ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         feedback: result.decision.reason,
       };
 
@@ -141,6 +151,143 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
   );
 }
 
+export async function appendGeneratorFixCallback(
+  attempt,
+  result,
+  db = pool,
+  resolvePrHead = defaultPrHeadResolver,
+) {
+  if (attempt.role !== 'generator') return;
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
+
+  const { rows: contextRows } = await db.query(
+    `SELECT r.pr_url, fix_intent.observed->>'trigger_sha' AS trigger_sha
+       FROM initiative_runs r
+       JOIN LATERAL (
+         SELECT observed
+           FROM orchestrator_decision_log
+          WHERE run_id=r.id
+            AND hop=$2
+            AND action='spawn:generator-fix'
+          LIMIT 1
+       ) fix_intent ON TRUE
+      WHERE r.id=$1::uuid`,
+    [attempt.run_id, attempt.hop],
+  );
+  const context = contextRows[0];
+  if (!context) return;
+
+  const triggerSha = normalizeGitSha(context.trigger_sha)
+    ?? (typeof context.trigger_sha === 'string' ? context.trigger_sha.trim() : null);
+  const pullRequest = result.artifacts.find(
+    (artifact) => artifact?.type === 'pull_request' && artifact.head_sha,
+  );
+  const claimedSha = pullRequest?.head_sha
+    ?? result.decision?.pr_head_sha
+    ?? result.provider_metadata?.pr_head_sha
+    ?? null;
+  const normalizedClaimedSha = normalizeGitSha(claimedSha);
+  let prHeadSha = triggerSha;
+  let verificationStatus;
+  let noProgressReason;
+
+  if (!claimedSha) {
+    let resolvedSha = null;
+    try {
+      resolvedSha = context.pr_url
+        ? normalizeGitSha(await resolvePrHead(context.pr_url))
+        : null;
+    } catch {
+      // The callback is still durable with the trigger SHA; the next ground-truth
+      // read can verify the PR head once GitHub is available again.
+    }
+    if (resolvedSha) {
+      prHeadSha = resolvedSha;
+      verificationStatus = 'verified';
+    } else {
+      verificationStatus = 'verification_pending';
+    }
+  } else if (!normalizedClaimedSha) {
+    verificationStatus = 'invalid';
+    noProgressReason = 'callback_sha_invalid';
+  } else {
+    let resolvedSha = null;
+    let resolutionPending = !context.pr_url;
+    try {
+      resolvedSha = context.pr_url
+        ? normalizeGitSha(await resolvePrHead(context.pr_url))
+        : null;
+    } catch {
+      resolutionPending = true;
+    }
+    if (resolvedSha && resolvedSha === normalizedClaimedSha) {
+      prHeadSha = resolvedSha;
+      verificationStatus = 'verified';
+    } else if (
+      resolutionPending
+      || !resolvedSha
+      || (triggerSha != null && resolvedSha !== triggerSha)
+    ) {
+      verificationStatus = 'verification_pending';
+    } else {
+      verificationStatus = 'unverified';
+      noProgressReason = 'callback_sha_unverified';
+    }
+  }
+
+  const observed = {
+    attempt_id: attempt.id,
+    trigger_hop: attempt.hop,
+    pr_head_sha: prHeadSha,
+    provider: result.provider_metadata?.provider ?? attempt.provider ?? null,
+  };
+  const detail = {
+    attempt_id: attempt.id,
+    pr_head_sha: prHeadSha,
+    status: result.status,
+    verification_status: verificationStatus,
+    ...(verificationStatus === 'verification_pending' && normalizedClaimedSha
+      ? { claimed_pr_head_sha: normalizedClaimedSha }
+      : {}),
+    ...(noProgressReason ? { no_progress_reason: noProgressReason } : {}),
+  };
+  await db.query(
+    `WITH lock AS (
+       SELECT pg_advisory_xact_lock(hashtext($1::text)),
+              $4::text AS callback_sha,
+              $5::text AS callback_provider
+     ), fix_intent AS (
+       SELECT 1
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid AND hop=$2 AND action='spawn:generator-fix'
+     ), next_hop AS (
+       SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid
+     )
+     INSERT INTO orchestrator_decision_log
+       (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+     SELECT $1::uuid, next_hop.hop, $6::jsonb, 'generate', 'allow',
+            'verdict:generator-fix-callback', $7::jsonb
+       FROM lock, fix_intent, next_hop
+      WHERE NOT EXISTS (
+        SELECT 1 FROM orchestrator_decision_log
+         WHERE run_id=$1::uuid
+           AND action='verdict:generator-fix-callback'
+           AND detail->>'attempt_id'=$3::text
+      )`,
+    [
+      attempt.run_id,
+      attempt.hop,
+      attempt.id,
+      prHeadSha,
+      observed.provider,
+      JSON.stringify(observed),
+      JSON.stringify(detail),
+    ],
+  );
+}
+
 function resultError(result) {
   if (typeof result.error === 'string') return { code: 'provider_failed', message: result.error };
   return {
@@ -150,6 +297,8 @@ function resultError(result) {
 }
 
 router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async (req, res) => {
+  const db = requestDatabase(req);
+  const attemptStore = createAttemptStore(db);
   const attempt = await attemptStore.getById(req.params.attemptId);
   if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
   if (!callbackAuthorized(req, attempt)) {
@@ -180,6 +329,8 @@ router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async 
 
 router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (req, res) => {
   const { attemptId } = req.params;
+  const db = requestDatabase(req);
+  const attemptStore = createAttemptStore(db);
   const attempt = await attemptStore.getById(attemptId);
   if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
   if (!callbackAuthorized(req, attempt)) {
@@ -249,14 +400,16 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
         completedAttempt = current;
         persistedResult = current.result ?? result;
       }
-      await appendAttemptVerdict(attempt, persistedResult);
+      await appendAttemptVerdict(attempt, persistedResult, db);
+      const resolver = req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver;
+      await appendGeneratorFixCallback(attempt, persistedResult, db, resolver);
 
       if (attempt.role === 'generator') {
         const pullRequest = persistedResult.artifacts.find(
           (artifact) => artifact?.type === 'pull_request' && artifact.url,
         );
         if (pullRequest) {
-          await pool.query(
+          await db.query(
             'UPDATE initiative_runs SET pr_url=$2, updated_at=NOW() WHERE id=$1',
             [attempt.run_id, pullRequest.url],
           );

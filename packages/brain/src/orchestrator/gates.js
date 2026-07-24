@@ -3,7 +3,6 @@
  * 对齐：routing-extraction.md「merge gate 三道」+ spec P0-2（verdict 锚定 SHA）。
  */
 import {
-  MAX_FIX_ROUNDS,
   MAX_POLL_COUNT,
   MAX_HOPS,
   MAX_NO_PUSH_STREAK,
@@ -67,10 +66,8 @@ export function mergeGate(input) {
  * caps —— 各上限判断（数值出处 routing-extraction.md，达到即超限）。
  */
 export const caps = {
-  // 新增 P2：整条 run hop 硬上限
+  // 宽兜底；repair 收敛判据必须在 derive 中先于此项执行。
   hopsExceeded: (hops) => hops >= MAX_HOPS,
-  // routeAfterFix：超 MAX_FIX_ROUNDS=20 → end
-  fixExceeded: (fixRound) => fixRound >= MAX_FIX_ROUNDS,
   // routeAfterPoll：pending 回环超 20×90s → timeout
   pollExceeded: (pollCount) => pollCount >= MAX_POLL_COUNT,
   // GAN 硬保护

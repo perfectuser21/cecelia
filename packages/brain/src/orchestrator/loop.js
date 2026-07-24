@@ -14,13 +14,20 @@
  *        collectGroundTruth?, appendHop?, nextHop?, writeHeartbeat?}（后四者可注入 fake）
  */
 import { derive } from './derive.js';
-import { mergeGate } from './gates.js';
+import { isPassVerdict, mergeGate } from './gates.js';
 import { deriveCounters } from './counters.js';
 import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
 import { ACTION, LOG_ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
+import {
+  asStructuredJson,
+  failureSetKey,
+  generatorCrashSignature,
+  normalizeFailureSet,
+  normalizeFailureSignature,
+} from './convergence-signatures.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -82,7 +89,41 @@ async function resolveGroundTruthPaths(pool, taskId) {
  * counters 的 streak 契约（spec 决策 5）：proposer/reviewer intent 行必须带
  * "上一跳产物出现与否"——propose_branch_advanced / verdict_parsed，从上一同类 intent 对比现查真相得出。
  */
-function buildSnapshot(observed, counters, action) {
+function structuredEvidenceVerdict(observed) {
+  return [observed.judgeVerdict, observed.evaluateVerdict]
+    .find((verdict) => (
+      verdict?.pr_head_sha === observed.pr?.head_sha
+      && verdict?.failure_class === 'evidence_invalid'
+    )) ?? null;
+}
+
+function currentFailureVerdict(observed) {
+  return [observed.judgeVerdict, observed.evaluateVerdict]
+    .find((verdict) => (
+      verdict?.pr_head_sha === observed.pr?.head_sha
+      && !isPassVerdict(verdict?.verdict)
+    )) ?? null;
+}
+
+function currentProductFailureSet(observed) {
+  if (observed.pr?.ci === 'fail') {
+    return normalizeFailureSet(observed.pr.failed_checks);
+  }
+  const verdict = currentFailureVerdict(observed);
+  if (verdict?.failure_class === 'product_failure' || verdict?.failure_class == null) {
+    return normalizeFailureSet(verdict?.failure_signature);
+  }
+  return null;
+}
+
+function isFailureSetReview(reason) {
+  return [
+    'failure_set_repeated',
+    'failure_set_patience_exhausted',
+  ].includes(reason);
+}
+
+function buildSnapshot(observed, counters, action, reason = null) {
   const snapshot = {
     prdExists: observed.prdExists,
     contractApproved: observed.contract.approved,
@@ -94,6 +135,7 @@ function buildSnapshot(observed, counters, action) {
           ci: observed.pr.ci,
           merged: observed.pr.merged,
           head_sha: observed.pr.head_sha,
+          failed_checks: normalizeFailureSet(observed.pr.failed_checks),
         }
       : null,
     inflightContainers: observed.inflight.containers.length,
@@ -124,14 +166,121 @@ function buildSnapshot(observed, counters, action) {
       );
     }
   }
+  if (action === ACTION.SPAWN_GENERATOR_FIX) {
+    snapshot.trigger_sha = observed.pr?.head_sha ?? null;
+    const failureVerdict = currentFailureVerdict(observed);
+    snapshot.failure_class = observed.pr?.ci === 'fail'
+      ? 'product_failure'
+      : failureVerdict?.failure_class
+        ?? (failureVerdict ? 'product_failure' : null);
+    if (snapshot.failure_class === 'product_failure') {
+      snapshot.failure_set = currentProductFailureSet(observed);
+      snapshot.failure_set_key = failureSetKey(snapshot.failure_set);
+    }
+    if (!observed.pr) {
+      const crashSignature = generatorCrashSignature(observed.lastAgentExit);
+      if (crashSignature != null) snapshot.crash_signature = crashSignature;
+    }
+  }
+  if (action === ACTION.WAIT_GENERATOR_FIX_CALLBACK) {
+    const latestIntent = prev(ACTION.SPAWN_GENERATOR_FIX);
+    snapshot.trigger_hop = latestIntent?.hop ?? null;
+  }
+  if (
+    isFailureSetReview(reason)
+    && [ACTION.WAIT_HUMAN_REVIEW, LOG_ACTION.HUMAN_REVIEW_REQUESTED].includes(action)
+  ) {
+    const failureSet = currentProductFailureSet(observed);
+    snapshot.review_reason = reason;
+    snapshot.failure_set = failureSet;
+    snapshot.failure_set_key = failureSetKey(failureSet);
+  }
+  const evidenceVerdict = structuredEvidenceVerdict(observed);
+  if (evidenceVerdict && [
+    ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR,
+    ACTION.WAIT_HUMAN_REVIEW,
+    LOG_ACTION.HUMAN_REVIEW_REQUESTED,
+  ].includes(action)) {
+    snapshot.failure_class = 'evidence_invalid';
+    snapshot.failure_signature = normalizeFailureSignature(
+      evidenceVerdict.failure_signature,
+    );
+    if ([ACTION.WAIT_HUMAN_REVIEW, LOG_ACTION.HUMAN_REVIEW_REQUESTED].includes(action)) {
+      snapshot.review_reason = reason;
+    }
+  }
+  if ([ACTION.WAIT_HUMAN_REVIEW, LOG_ACTION.HUMAN_REVIEW_REQUESTED].includes(action)) {
+    snapshot.review_reason = reason;
+  }
   return snapshot;
+}
+
+function humanReviewDetail(observed, reason) {
+  if ([
+    'evidence_invalid:repeated_signature',
+    'unknown:missing_failure_signature',
+  ].includes(reason)) {
+    const verdict = structuredEvidenceVerdict(observed);
+    if (!verdict) return { review_reason: reason };
+    return {
+      review_reason: reason,
+      failure_signature: normalizeFailureSignature(verdict.failure_signature),
+    };
+  }
+  if (isFailureSetReview(reason)) {
+    const failureSet = currentProductFailureSet(observed);
+    return {
+      review_reason: reason,
+      failure_set: failureSet,
+      failure_set_key: failureSetKey(failureSet),
+    };
+  }
+  return { review_reason: reason };
 }
 
 async function markRunFailed(pool, runId, reason) {
   await pool.query(
-    `UPDATE initiative_runs SET phase = 'failed', failure_reason = $2, updated_at = NOW() WHERE id = $1`,
+    `UPDATE initiative_runs
+        SET phase = 'failed', failure_reason = $2, updated_at = NOW()
+      WHERE id = $1
+        AND phase NOT IN ('done', 'failed')`,
     [runId, reason],
   );
+}
+
+async function loadRunDeadlineState(pool, runId) {
+  const deadlineResult = await pool.query(
+    'SELECT deadline_at FROM initiative_runs WHERE id = $1',
+    [runId],
+  );
+  const reviewResult = await pool.query(
+    `SELECT request.hop AS review_request_hop,
+            request.observed,
+            request.observed #>> '{pr,head_sha}' AS review_head_sha,
+            request.created_at
+       FROM orchestrator_decision_log request
+      WHERE request.run_id = $1
+        AND request.action = 'effect:human_review_requested'
+        AND NOT EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log approval
+           WHERE approval.run_id = request.run_id
+             AND approval.action = 'verdict:human_review'
+             AND approval.detail->>'review_request_hop' = request.hop::text
+        )
+      ORDER BY request.hop DESC
+      LIMIT 1`,
+    [runId],
+  );
+  const deadline = deadlineResult.rows[0] ?? {};
+  const review = reviewResult.rows[0] ?? {};
+  const reviewObserved = asPayload(review.observed);
+  return {
+    deadline_at: deadline.deadline_at ?? null,
+    review_request_hop: review.review_request_hop ?? null,
+    review_head_sha: review.review_head_sha ?? reviewObserved.pr?.head_sha ?? null,
+    open_human_review: review.review_request_hop != null,
+  };
 }
 
 /**
@@ -141,7 +290,10 @@ async function markRunFailed(pool, runId, reason) {
  */
 export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   const collect = deps.collectGroundTruth ?? defaultCollect;
-  const append = deps.appendHop ?? defaultAppendHop;
+  // DI 包装：fake（测试）注入 appendHop(opts) 单对象接口；默认实现是 (pool, opts) 两参数接口
+  const append = deps.appendHop
+    ? (_pool, opts) => deps.appendHop(opts)
+    : defaultAppendHop;
   const next = deps.nextHop ?? defaultNextHop;
   const heartbeat = deps.writeHeartbeat ?? defaultWriteHeartbeat;
   const sleep = deps.sleep ?? defaultSleep;
@@ -156,21 +308,60 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     : {};
 
   let hops = 0;
-  let pollCount = 0; // 进程内计数：wait:poll_ci 不落日志，poll 上限只约束本进程连续等待
-  let blockedState = null;
-  let blockedStreak = 0;
-
   const beat = () => heartbeat(deps.pool, { runId: resolvedRunId, host, pid, now: now() });
 
+  // deadline fence 辅助：检查 run.deadline_at 是否已超过当前时间
+  function deadlineExceeded(run) {
+    if (!run || !run.deadline_at) return false;
+    return now() >= new Date(run.deadline_at);
+  }
+
   while (true) {
+    // ---- Deadline fence 1：collect 前 ----
+    // collect 会调用 git/gh/docker，过期 run 不应再触发任何外部观测。
+    const deadlineState = await loadRunDeadlineState(deps.pool, resolvedRunId);
+    const hasOpenHumanReview = deadlineState.open_human_review === true
+      || deadlineState.open_human_review === 'true'
+      || deadlineState.review_request_hop != null;
+    if (deadlineExceeded(deadlineState) && !hasOpenHumanReview) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
+    }
+
     const observed = await collect(deps, {
       taskId,
       runId: resolvedRunId,
       ...groundTruthPaths,
     });
+
     const counters = deriveCounters(observed.decisionLog, { proposeBranchMaxRn: observed.proposeBranchRn });
+    // pollCount 从 DB 持久化推导（Sprint 07231527 Blocking 2：进程内变量改为 DB 推导）
+    const pollCount = counters.pollCount;
     const fullCounters = { ...counters, pollCount, ganCostUsd: Number(observed.run.cost_usd ?? 0) };
-    const decision = derive({ ...observed, counters: fullCounters });
+    const decision = derive({
+      ...observed,
+      noProgress: counters.noProgress,
+      noProgressReason: counters.noProgressReason,
+      counters: fullCounters,
+    });
+    // collect 前只凭“有开放 request”允许进行一次外部对账；collect 后必须确认
+    // request 仍锚定当前 GitHub head，旧 SHA 的人审不能暂停新 SHA 的活动时钟。
+    let deadlinePaused = decision.action === ACTION.WAIT_HUMAN_REVIEW
+      && hasOpenHumanReview
+      && Boolean(observed.pr?.head_sha)
+      && deadlineState.review_head_sha === observed.pr.head_sha;
+    const decisionIsTerminal = [
+      ACTION.EXIT,
+      ACTION.MARK_FAILED,
+      ACTION.REPORT,
+    ].includes(decision.action);
+
+    // ---- Deadline fence 2：derive 后 ----
+    // wait/control 分支都在此 fence 之后，不能绕开硬上限。
+    if (deadlineExceeded(observed.run) && !deadlinePaused && !decisionIsTerminal) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
+    }
 
     if (dryRun) {
       log(`[orchestrator][dry-run] run=${resolvedRunId} phase=${decision.phase} action=${decision.action} reason=${decision.reason}`);
@@ -227,28 +418,108 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       continue;
     }
 
-    // ---- 纯轮询 wait：只心跳+sleep，不 append（日志不灌水）、不派发 ----
+    // ---- 纯轮询 wait：只心跳+sleep（部分需 append 持久化计数）、不派发 ----
     // wait:human_review 首次必须经过 dispatcher，才能真正创建预览并通知人；同一
     // PR SHA 已写过 intent 后才转为纯等待，避免每 90s 重复通知。
     if (decision.action === ACTION.WAIT_HUMAN_REVIEW) {
       const reviewAlreadyRequested = observed.decisionLog.some(
-        (row) => row.action === LOG_ACTION.HUMAN_REVIEW_REQUESTED
-          && row.observed?.pr?.head_sha === observed.pr?.head_sha,
+        (row) => {
+          if (row.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
+          const snapshot = asStructuredJson(row.observed) ?? {};
+          const detail = asStructuredJson(row.detail) ?? {};
+          if (snapshot.pr?.head_sha !== observed.pr?.head_sha) return false;
+          if ([
+            'evidence_invalid:repeated_signature',
+            'unknown:missing_failure_signature',
+          ].includes(decision.reason)) {
+            const evidenceVerdict = structuredEvidenceVerdict(observed);
+            return detail.review_reason === decision.reason
+              && JSON.stringify(normalizeFailureSignature(detail.failure_signature))
+                === JSON.stringify(
+                  normalizeFailureSignature(evidenceVerdict?.failure_signature),
+                );
+          }
+          if (isFailureSetReview(decision.reason)) {
+            const currentSet = currentProductFailureSet(observed);
+            return detail.review_reason === decision.reason
+              && failureSetKey(detail.failure_set) === failureSetKey(currentSet);
+          }
+          return detail.review_reason === decision.reason
+            || (
+              detail.review_reason == null
+              && decision.reason === 'awaiting_human_review'
+            );
+        },
       );
       if (reviewAlreadyRequested) {
-        pollCount = 0;
         await beat();
         await sleep(POLL_INTERVAL_MS);
         continue;
       }
     }
-    if (decision.action === ACTION.WAIT_RUNNING || decision.action === ACTION.WAIT_POLL_CI) {
-      pollCount = decision.action === ACTION.WAIT_POLL_CI ? pollCount + 1 : 0;
+    if (decision.action === ACTION.WAIT_RUNNING) {
       await beat();
       await sleep(POLL_INTERVAL_MS);
       continue;
     }
-    pollCount = 0; // 离开 poll 环即重置（下一轮 pending 从头计）
+    if (decision.action === ACTION.WAIT_GENERATOR_FIX_CALLBACK) {
+      const callbackWaitHop = await next(deps.pool, resolvedRunId);
+      const snapshot = buildSnapshot(
+        observed,
+        fullCounters,
+        ACTION.WAIT_GENERATOR_FIX_CALLBACK,
+      );
+      try {
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: callbackWaitHop,
+          observed: snapshot,
+          derivedPhase: decision.phase,
+          gateVerdict: null,
+          action: ACTION.WAIT_GENERATOR_FIX_CALLBACK,
+          detail: {
+            reason: decision.reason,
+            trigger_hop: snapshot.trigger_hop,
+          },
+        });
+        hops++;
+      } catch (err) {
+        if (err instanceof SingletonConflictError) {
+          log(`[orchestrator] singleton conflict on generator callback wait ${resolvedRunId} hop ${callbackWaitHop}, exiting`);
+          return { exitReason: 'singleton_conflict', hops };
+        }
+        throw err;
+      }
+      await beat();
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
+    if (decision.action === ACTION.WAIT_POLL_CI) {
+      // Sprint 07231527 Blocking 2：wait:poll_ci 必须写 decision log，持久化计数跨重启不归零
+      // pollCount 从 deriveCounters 推导，appendHop 后重启恢复正确值
+      const pollHop = await next(deps.pool, resolvedRunId);
+      try {
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: pollHop,
+          observed: buildSnapshot(observed, fullCounters, ACTION.WAIT_POLL_CI),
+          derivedPhase: decision.phase,
+          gateVerdict: null,
+          action: ACTION.WAIT_POLL_CI,
+          detail: { reason: decision.reason, ci: observed.pr?.ci ?? 'pending' },
+        });
+        hops++;
+      } catch (err) {
+        if (err instanceof SingletonConflictError) {
+          log(`[orchestrator] singleton conflict on poll_ci ${resolvedRunId} hop ${pollHop}, exiting`);
+          return { exitReason: 'singleton_conflict', hops };
+        }
+        throw err;
+      }
+      await beat();
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
 
     // ---- 派发 action：intent-log-before-dispatch ----
     const hop = await next(deps.pool, resolvedRunId);
@@ -269,7 +540,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       await beat();
       continue;
     }
-    let gateVerdict = null;
+    let gateVerdict = 'allow';
     if (decision.action === ACTION.MERGE_PR) {
       // F6 双保险：derive 说 merge，仍过一遍 mergeGate（唯一 merge 权威）
       const gate = mergeGate({
@@ -286,11 +557,20 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       await append(deps.pool, {
         runId: resolvedRunId,
         hop,
-        observed: buildSnapshot(observed, fullCounters, decision.action),
+        observed: buildSnapshot(
+          observed,
+          fullCounters,
+          decision.action,
+          decision.reason,
+        ),
         derivedPhase: decision.phase,
         gateVerdict,
         action: decision.action,
-        detail: { reason: decision.reason, crossCheckMismatch: counters.crossCheckMismatch },
+        detail: {
+          reason: decision.reason,
+          crossCheckMismatch: counters.crossCheckMismatch,
+          ...humanReviewDetail(observed, decision.reason),
+        },
       });
     } catch (err) {
       if (err instanceof SingletonConflictError) {
@@ -302,10 +582,36 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     }
     hops++;
 
+    // ---- Deadline fence 3：dispatch 前 ----
+    // intent 持久化与真实副作用之间仍可能跨过 deadline；此时保留审计 intent，但不派发。
+    if (deadlineExceeded(observed.run) && !deadlinePaused) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
+    }
+
     // gateVerdict deny（derive 与 mergeGate 意见不一致 = 观测竞态）→ 不派发，按 BLOCKED 同态处理
     const result = gateVerdict?.startsWith('deny:')
       ? { status: 'BLOCKED', detail: gateVerdict }
       : await deps.dispatch(decision.action, { taskId, runId: resolvedRunId, hop, observed, decision });
+
+    if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
+      const resultHop = await next(deps.pool, resolvedRunId);
+      await append(deps.pool, {
+        runId: resolvedRunId,
+        hop: resultHop,
+        observed: buildSnapshot(observed, fullCounters, LOG_ACTION.DISPATCH_RESULT),
+        derivedPhase: decision.phase,
+        gateVerdict: `deny:${result.status}`,
+        action: LOG_ACTION.DISPATCH_RESULT,
+        detail: {
+          dispatch_hop: hop,
+          dispatch_action: decision.action,
+          status: result.status,
+          result: result.detail ?? null,
+        },
+      });
+      hops++;
+    }
 
     // Intent 只能证明“准备通知”，不能证明 preview/通知副作用成功。成功后追加独立
     // effect marker；若首次派发失败，下一轮看不到 marker，仍会重试而不是永久空等。
@@ -315,28 +621,46 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       await append(deps.pool, {
         runId: resolvedRunId,
         hop: effectHop,
-        observed: buildSnapshot(observed, fullCounters, LOG_ACTION.HUMAN_REVIEW_REQUESTED),
+        observed: buildSnapshot(
+          observed,
+          fullCounters,
+          LOG_ACTION.HUMAN_REVIEW_REQUESTED,
+          decision.reason,
+        ),
         derivedPhase: decision.phase,
         gateVerdict: null,
         action: LOG_ACTION.HUMAN_REVIEW_REQUESTED,
-        detail: { dispatch_hop: hop, result: result.detail ?? null },
+        detail: {
+          dispatch_hop: hop,
+          result: result.detail ?? null,
+          ...humanReviewDetail(observed, decision.reason),
+        },
       });
       hops++;
+      // effect 已持久化且 snapshot 锚定当前 SHA；从这一刻起人审等待停表。
+      deadlinePaused = Boolean(observed.pr?.head_sha);
     }
 
     if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
-      if (blockedState === result.status) blockedStreak++;
-      else { blockedState = result.status; blockedStreak = 1; }
-      log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status} (streak ${blockedStreak}): ${result.detail ?? ''}`);
-      if (blockedStreak >= BLOCKED_SAME_STATE_CAP) {
+      const currentBlockedStreak = counters.blockedStatus === result.status
+        ? counters.blockedStreak
+        : 0;
+      const streak = currentBlockedStreak + 1; // 本轮实际 streak
+      log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status} (streak ${streak}): ${result.detail ?? ''}`);
+      if (streak >= BLOCKED_SAME_STATE_CAP) {
         await markRunFailed(deps.pool, resolvedRunId, `blocked_same_state:${result.status}`);
         return { exitReason: 'blocked_same_state', hops };
       }
     } else {
       // DONE / DONE_WITH_CONCERNS：记 detail 继续
-      blockedState = null;
-      blockedStreak = 0;
       log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status}${result.detail ? `: ${result.detail}` : ''}`);
+    }
+
+    // ---- Deadline fence 3：DONE 心跳后检查（崩溃窗口补丁）----
+    // INV-K1：三道 fence，防止在 deadline 后派遣下一轮 intent（即使 dispatch 已返回 DONE）
+    if (deadlineExceeded(observed.run) && !deadlinePaused) {
+      await markRunFailed(deps.pool, resolvedRunId, 'automation_deadline_exceeded');
+      return { exitReason: 'automation_deadline_exceeded', hops };
     }
 
     await beat();

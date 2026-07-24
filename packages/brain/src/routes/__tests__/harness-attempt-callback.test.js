@@ -177,6 +177,75 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(verdictCall[1].join(' ')).not.toContain('b'.repeat(40));
   });
 
+  it('generator-fix 未声明 SHA 时以 trigger SHA 写入已验证 callback', async () => {
+    const triggerSha = 'a'.repeat(40);
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
+    mocks.store.complete.mockReset().mockResolvedValue({
+      attempt: { ...attempt, role: 'generator', status: 'completed' },
+      deduped: false,
+    });
+    mocks.pool.query.mockImplementation(async (sql) => {
+      if (sql.includes('SELECT r.pr_url')) {
+        return { rows: [{ pr_url: 'https://github.com/acme/repo/pull/42', trigger_sha: triggerSha }] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    app.set('kernelPrHeadResolver', vi.fn(async () => triggerSha));
+
+    const response = await postCallback(app, {
+      ...validResult,
+      artifacts: ['Codex completed the requested fix.'],
+      checks: [],
+      decision: null,
+    });
+
+    expect(response.status).toBe(200);
+    const callbackCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
+      sql.includes('verdict:generator-fix-callback')
+    ));
+    expect(callbackCalls).toHaveLength(1);
+    const detail = JSON.parse(callbackCalls[0][1][6]);
+    expect(detail).toMatchObject({
+      verification_status: 'verified',
+      pr_head_sha: triggerSha,
+    });
+  });
+
+  it('generator-fix 未声明 SHA 且 resolver 失败时以 trigger SHA 写 pending callback', async () => {
+    const triggerSha = 'a'.repeat(40);
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
+    mocks.store.complete.mockReset().mockResolvedValue({
+      attempt: { ...attempt, role: 'generator', status: 'completed' },
+      deduped: false,
+    });
+    mocks.pool.query.mockImplementation(async (sql) => {
+      if (sql.includes('SELECT r.pr_url')) {
+        return { rows: [{ pr_url: 'https://github.com/acme/repo/pull/42', trigger_sha: triggerSha }] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    app.set('kernelPrHeadResolver', vi.fn(async () => { throw new Error('GitHub unavailable'); }));
+
+    const response = await postCallback(app, {
+      ...validResult,
+      artifacts: ['Codex completed the requested fix.'],
+      checks: [],
+      decision: null,
+    });
+
+    expect(response.status).toBe(200);
+    const callbackCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
+      sql.includes('verdict:generator-fix-callback')
+    ));
+    expect(callbackCalls).toHaveLength(1);
+    const detail = JSON.parse(callbackCalls[0][1][6]);
+    expect(detail).toMatchObject({
+      verification_status: 'verification_pending',
+      pr_head_sha: triggerSha,
+    });
+    expect(detail.no_progress_reason).not.toBe('callback_sha_unverified');
+  });
+
   it('跨角色/attempt session 复用冲突返回 409，且不完成 attempt', async () => {
     mocks.store.assertFreshRoleSession.mockRejectedValueOnce(new Error('role_session_reuse'));
     const response = await postCallback(app);

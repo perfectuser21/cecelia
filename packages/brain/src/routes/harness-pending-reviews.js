@@ -168,3 +168,4 @@ router.post('/:taskId/reject', approvalRateLimit, async (req, res) => {
 });
 
 export default router;
+export { authenticateApprover };

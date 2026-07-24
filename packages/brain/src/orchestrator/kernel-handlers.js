@@ -1,3 +1,5 @@
+import { normalizeFailureSignature } from './convergence-signatures.js';
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
@@ -18,7 +20,21 @@ function evaluatorBrainResult(result) {
   };
 }
 
-async function appendJudgeVerdict(pool, ctx, verdict, feedback) {
+async function appendJudgeVerdict(
+  pool,
+  ctx,
+  verdict,
+  feedback,
+  judgeFailureClass,
+  judgeFailureSignature,
+) {
+  const evaluateVerdict = ctx.observed.evaluateVerdict ?? {};
+  const evaluatorFailureClass = evaluateVerdict.failure_class ?? null;
+  // Judge classification is an independent contract field. Missing means
+  // unknown and must not be silently filled from the evaluator verdict.
+  const failureClass = judgeFailureClass ?? null;
+  const failureSignature = normalizeFailureSignature(judgeFailureSignature);
+
   await pool.query(
     `INSERT INTO orchestrator_decision_log
        (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
@@ -39,6 +55,9 @@ async function appendJudgeVerdict(pool, ctx, verdict, feedback) {
         verdict,
         pr_head_sha: ctx.observed.pr?.head_sha ?? null,
         feedback: feedback ?? null,
+        failure_class: failureClass,
+        ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+        evaluator_failure_class: evaluatorFailureClass,
       }),
     ],
   );
@@ -76,7 +95,15 @@ export function createKernelHandlers(deps) {
         return { status: 'NEEDS_CONTEXT', detail: 'independent judge did not run' };
       }
 
-      await appendJudgeVerdict(deps.pool, ctx, result.verdict, result.feedback);
+      await appendJudgeVerdict(
+        deps.pool,
+        ctx,
+        result.verdict,
+        result.feedback,
+        result.failure_class ?? null,
+        result.failure_signature ?? null,
+      );
+      const failureSignature = normalizeFailureSignature(result.failure_signature);
       await deps.attemptStore.complete(ctx.attempt.id, {
         contract_version: '1.0',
         attempt_id: ctx.attempt.id,
@@ -84,7 +111,12 @@ export function createKernelHandlers(deps) {
         summary: result.feedback ?? `Independent judge: ${result.verdict}`,
         artifacts: [],
         checks: [],
-        decision: { outcome: result.verdict, reason: 'independent judge verdict' },
+        decision: {
+          outcome: result.verdict,
+          reason: 'independent judge verdict',
+          ...(result.failure_class == null ? {} : { failure_class: result.failure_class }),
+          ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+        },
         error: null,
         provider_metadata: { provider: 'independent-judge', session_id: null },
       });
