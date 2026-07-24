@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "冻结旧入口并建立公司账号全局 durable 租约",
-      "scope": "让两个旧 token 入口在任何网络/auth 动作前硬停；建立 mapped UID/forced-command SSH key identity 与 tenant-scoped rollout/lease/session/audit，并以 account_ref 全局约束 blocking lease。",
+      "scope": "让两个旧 token 入口在任何网络/auth 动作前硬停；将两个历史 CI 测试改写为退役回归 oracle，合法旧参数必须 exit 64、提示含 codex-slot start、不得触发 ssh/scp/codex/tmux/auth 落盘；建立 mapped UID/forced-command SSH key identity 与 tenant-scoped rollout/lease/session/audit，并以 account_ref 全局约束 blocking lease。",
       "dod": [
         "[BEHAVIOR] B01 两个旧脚本合法旧参数均在 child/network 前 exit 64",
         "[BEHAVIOR] B06 mapped UID/key 成功，未知/伪造 identity 与客户端 authority 在副作用前拒绝",
@@ -16,7 +16,9 @@
       "files": [
         "packages/brain/migrations/360_codex_slot.sql",
         "scripts/codex-request.sh",
-        "scripts/codex-remote-launch.sh"
+        "scripts/codex-remote-launch.sh",
+        "scripts/__tests__/codex-request.test.sh",
+        "scripts/__tests__/codex-remote-launch.test.sh"
       ],
       "depends_on": [],
       "complexity": "L",
