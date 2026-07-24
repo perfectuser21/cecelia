@@ -29,7 +29,7 @@
       "dod": [
         "[BEHAVIOR] B03 inventory/cutover 任一失败保持 durable frozen",
         "[BEHAVIOR] B05 每个 durable fault 重启后只有一份 lease/session/audit",
-        "[BEHAVIOR] B06-B07 七类 error 映射逐真请求且 acquire 重放 IDs/副作用相同"
+        "[BEHAVIOR] B06-B07 七类 error 逐真实 HTTP response 验顶层/error exact keys/type/value，且 acquire 重放 IDs/副作用相同"
       ],
       "files": [
         "packages/brain/src/routes/codex-slots.js",
@@ -68,11 +68,11 @@
     },
     {
       "task_id": "ws4",
-      "title": "硬切所有生产 caller、bridge fallback 与 `/accounts` 消费旁路",
-      "scope": "让三路 executor、harness relay 与用户 adapter 都先获得 broker lease；bridge /run 只接 receiver token + opaque slot receipt；brain-meta/credentials-health 改读安全 cache。",
+      "title": "硬切所有生产 caller、bridge fallback 与账号/选机消费旁路",
+      "scope": "四路 caller 先获 broker lease；location=xian 按 receipt agent_id 选 receiver；退役 /execute* 与 /accounts；executor 删除 /health.accounts 选机和固定 M4 fallback；其余消费者改读安全 cache。",
       "dod": [
-        "[BEHAVIOR] B02 4/4 生产 caller 的 broker IDs/receipt 与 /run slot 相同，raw auth/account_id=0",
-        "[BEHAVIOR] B02 bridge fallback=0、/accounts=410，两个既有消费者不断链且不成为 issuer"
+        "[BEHAVIOR] B02 4/4 caller 且 broker 分别选 M1/M4 时 receipt、/run slot、receiver agent_id 相同",
+        "[BEHAVIOR] B02 /execute* 真 HTTP 410 零副作用，executor health-account/fixed-M4=0，两个 cache 消费者不断链"
       ],
       "files": [
         "packages/brain/src/executor.js",
@@ -93,9 +93,9 @@
     {
       "task_id": "ws5",
       "title": "收口 mmv、幂等 stop 与 reaper 死亡告警",
-      "scope": "双机先证明正常 receive 私有 durable 落盘并启动 fixture，再验证 mmv 竞态清理；stop 核 exact 类型/幂等副作用；reaper 保留不确定租约并告警。",
+      "scope": "双机先证明正常 receive 私有 durable 落盘并启动 fixture，再以不同 run 分验 prepare→receive 零读写与 receive→launch 已写后拒绝清理；stop/reaper 精确收口。",
       "dod": [
-        "[BEHAVIOR] B09 双机 fake auth 0700/0600+fsync、fixture/tmux running、stop clean，并保留 race fail closed",
+        "[BEHAVIOR] B09 双机正常 0700/0600+fsync/launch/stop，prepare→receive 与 receive→launch 两支独立 fail closed",
         "[BEHAVIOR] B10 重复 stop body 相同、ok/UUID/handle 类型 exact 且 release/audit 各一次",
         "[BEHAVIOR] B11 summary 全非负 integer 且连续失败写唯一 P0 Bark receipt"
       ],
@@ -117,7 +117,7 @@
       "scope": "把所有真实 caller/PG/restart/SSOT/auth/双机 lifecycle oracle 收进单一 smoke，登记 allowlist，并完成 Brain 版本同步。",
       "dod": [
         "[BEHAVIOR] B12 两 tenant 不串且近 5 分钟 audit 无 secret",
-        "[BEHAVIOR] Final E2E 4 caller broker-only、identity/error exact、双机正常 launch+cleanup 与 P0 receipt 全通过",
+        "[BEHAVIOR] Final E2E INV-19 全 consumer、七类 raw Error exact、双机正常链+两支 mmv 变化与 P0 receipt 全通过",
         "[ARTIFACT] A05 smoke/allowlist/版本四件套一致"
       ],
       "files": [
