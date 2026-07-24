@@ -15,6 +15,10 @@
 import { ACTION, LOG_ACTION } from './constants.js';
 import { discoverPrFromGithub } from './github-pr-discovery.js';
 import { deriveCounters } from './counters.js';
+import {
+  HUMAN_REVIEW_CLASS,
+  reviewClassForReason,
+} from './human-review-class.js';
 import { normalizeFailureSet } from './convergence-signatures.js';
 
 /** gh check state → 三态 ci 映射 */
@@ -292,11 +296,28 @@ export async function collectGroundTruth(deps, opts) {
   // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
   const payload = asJson(task.payload) ?? {};
   const reviewRequired = payload.review_required === true;
-  const hrRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_HUMAN_REVIEW);
-  const hrDetail = hrRow ? asJson(hrRow.detail) : null;
-  const reviewApproved = Boolean(
-    hrDetail && hrDetail.approved === true && pr && hrDetail.pr_head_sha === pr.head_sha,
-  );
+  const mergeApproval = latestRow(decisionLog, (row) => {
+    if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW || !pr) return false;
+    const detail = asJson(row.detail);
+    if (
+      detail?.approved !== true
+      || detail.review_class !== HUMAN_REVIEW_CLASS.MERGE_GATE
+      || detail.pr_head_sha !== pr.head_sha
+    ) {
+      return false;
+    }
+    const request = decisionLog.find((candidate) => (
+      candidate.action === LOG_ACTION.HUMAN_REVIEW_REQUESTED
+      && String(candidate.hop) === String(detail.review_request_hop)
+    ));
+    if (!request) return false;
+    const requestObserved = asJson(request.observed);
+    const requestDetail = asJson(request.detail);
+    return requestObserved?.pr?.head_sha === pr.head_sha
+      && reviewClassForReason(requestDetail?.review_reason)
+        === HUMAN_REVIEW_CLASS.MERGE_GATE;
+  });
+  const reviewApproved = Boolean(mergeApproval);
 
   // Sprint 07231527 Blocking 4：noProgress 从 decision log 推导（INV-K4）
   // deriveCounters 的 noProgress 字段：spawn:generator-fix trigger_sha === callback pr_head_sha

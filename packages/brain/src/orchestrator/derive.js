@@ -158,6 +158,48 @@ function evidenceReplayRoute(decisionLog, currentHeadSha, currentVerdict) {
     });
     const latestVerdict = unsignedVerdicts.at(-1) ?? null;
     const latestRepair = unsignedRepairs.at(-1) ?? null;
+    const reviewRequests = rows.filter((row) => {
+      if (row.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
+      const snapshot = asStructuredJson(row.observed) ?? {};
+      const detail = asStructuredJson(row.detail) ?? {};
+      return snapshot.pr?.head_sha === currentHeadSha
+        && detail.review_reason === 'unknown:missing_failure_signature';
+    });
+    const request = reviewRequests.at(-1) ?? null;
+    const approval = request == null
+      ? null
+      : rows.find((row) => {
+          if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+          const detail = asStructuredJson(row.detail) ?? {};
+          return detail.approved === true
+            && detail.pr_head_sha === currentHeadSha
+            && Number(row.hop) > Number(request.hop)
+            && String(detail.review_request_hop) === String(request.hop);
+        }) ?? null;
+    if (approval) {
+      const postApprovalRepair = unsignedRepairs.find(
+        (row) => Number(row.hop) > Number(approval.hop),
+      ) ?? null;
+      if (!postApprovalRepair) {
+        return {
+          phase: 'evaluate',
+          action: ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR,
+          reason: 'evidence_invalid:approved_single_retry',
+        };
+      }
+      if (latestVerdict && Number(latestVerdict.hop) > Number(postApprovalRepair.hop)) {
+        return {
+          phase: 'failed',
+          action: ACTION.MARK_FAILED,
+          reason: 'repeated_evidence_invalid_after_approval',
+        };
+      }
+      return {
+        phase: 'evaluate',
+        action: ACTION.WAIT_RUNNING,
+        reason: 'evidence_repair_awaiting_verdict',
+      };
+    }
     if (latestRepair && latestVerdict
         && Number(latestVerdict.hop) > Number(latestRepair.hop)) {
       return {

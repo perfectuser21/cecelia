@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { defaultPrHeadResolver } from '../orchestrator/pr-head-resolver.js';
+import { reviewClassForReason } from '../orchestrator/human-review-class.js';
 import { authenticateApprover } from './harness-pending-reviews.js';
 
 const router = Router();
@@ -73,9 +74,11 @@ async function handleReviewDecision(req, res, { approved }) {
     );
     const requestRow = requestResult.rows[0];
     const requestObserved = asJson(requestRow?.observed);
+    const requestDetail = asJson(requestRow?.detail);
     if (!requestRow || requestObserved.pr?.head_sha !== currentSha) {
       return res.status(409).json({ error: 'human_review_request_not_found_for_sha' });
     }
+    const reviewClass = reviewClassForReason(requestDetail.review_reason);
 
     const transactional = typeof dbPool.connect === 'function';
     const client = transactional ? await dbPool.connect() : dbPool;
@@ -137,6 +140,7 @@ async function handleReviewDecision(req, res, { approved }) {
         ? {
             verdict: 'APPROVED',
             approved: true,
+            review_class: reviewClass,
             pr_head_sha: currentSha,
             review_request_hop: reviewRequestHop,
             approved_by: auth.approvedBy,
@@ -146,6 +150,7 @@ async function handleReviewDecision(req, res, { approved }) {
             verdict: 'REJECTED',
             approved: false,
             rejected: true,
+            review_class: reviewClass,
             pr_head_sha: currentSha,
             review_request_hop: reviewRequestHop,
             rejected_by: auth.approvedBy,
@@ -174,6 +179,7 @@ async function handleReviewDecision(req, res, { approved }) {
         task_id: taskId,
         pr_head_sha: currentSha,
         review_request_hop: reviewRequestHop,
+        review_class: reviewClass,
       };
       if (approved) {
         response.approved_by = auth.approvedBy;
