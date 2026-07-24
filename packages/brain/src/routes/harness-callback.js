@@ -159,14 +159,6 @@ export async function appendGeneratorFixCallback(
 ) {
   if (attempt.role !== 'generator') return;
   if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
-  const pullRequest = result.artifacts.find(
-    (artifact) => artifact?.type === 'pull_request' && artifact.head_sha,
-  );
-  const claimedSha = pullRequest?.head_sha
-    ?? result.decision?.pr_head_sha
-    ?? result.provider_metadata?.pr_head_sha
-    ?? null;
-  if (!claimedSha) return;
 
   const { rows: contextRows } = await db.query(
     `SELECT r.pr_url, fix_intent.observed->>'trigger_sha' AS trigger_sha
@@ -187,12 +179,35 @@ export async function appendGeneratorFixCallback(
 
   const triggerSha = normalizeGitSha(context.trigger_sha)
     ?? (typeof context.trigger_sha === 'string' ? context.trigger_sha.trim() : null);
+  const pullRequest = result.artifacts.find(
+    (artifact) => artifact?.type === 'pull_request' && artifact.head_sha,
+  );
+  const claimedSha = pullRequest?.head_sha
+    ?? result.decision?.pr_head_sha
+    ?? result.provider_metadata?.pr_head_sha
+    ?? null;
   const normalizedClaimedSha = normalizeGitSha(claimedSha);
   let prHeadSha = triggerSha;
   let verificationStatus;
   let noProgressReason;
 
-  if (!normalizedClaimedSha) {
+  if (!claimedSha) {
+    let resolvedSha = null;
+    try {
+      resolvedSha = context.pr_url
+        ? normalizeGitSha(await resolvePrHead(context.pr_url))
+        : null;
+    } catch {
+      // The callback is still durable with the trigger SHA; the next ground-truth
+      // read can verify the PR head once GitHub is available again.
+    }
+    if (resolvedSha) {
+      prHeadSha = resolvedSha;
+      verificationStatus = 'verified';
+    } else {
+      verificationStatus = 'verification_pending';
+    }
+  } else if (!normalizedClaimedSha) {
     verificationStatus = 'invalid';
     noProgressReason = 'callback_sha_invalid';
   } else {
@@ -231,7 +246,7 @@ export async function appendGeneratorFixCallback(
     pr_head_sha: prHeadSha,
     status: result.status,
     verification_status: verificationStatus,
-    ...(verificationStatus === 'verification_pending'
+    ...(verificationStatus === 'verification_pending' && normalizedClaimedSha
       ? { claimed_pr_head_sha: normalizedClaimedSha }
       : {}),
     ...(noProgressReason ? { no_progress_reason: noProgressReason } : {}),
