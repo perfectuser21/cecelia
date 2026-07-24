@@ -299,6 +299,7 @@ describe('independent judge stage facts — fail-closed 时序闸', () => {
 
   it.each([
     [{ ...validStageFacts, head_sha: null }, 'head_sha'],
+    [{ ...validStageFacts, pr_state: 'CLOSED' }, 'pr_state'],
     [{ ...validStageFacts, pr_merged: true }, 'pr_merged'],
     [{ ...validStageFacts, merge_gate_approved: true }, 'merge_gate_approved'],
   ])('非法阶段事实 %j 在调用模型前终局 FAIL', async (stageFacts, reason) => {
