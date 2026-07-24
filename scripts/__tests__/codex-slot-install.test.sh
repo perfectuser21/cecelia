@@ -648,6 +648,8 @@ test_role_isolation_and_all_defaults() {
     "$broker_log"
   assert_contains "broker 上传 store" "mmv:.local/lib/codex-slot/codex-slot-store.mjs.new." \
     "$broker_log"
+  assert_contains "broker 上传主机路径表" \
+    "mmv:.local/lib/codex-slot/broker-hosts.json.new." "$broker_log"
   assert_not_contains "broker 不上传 agent" "codex-slot-agent.mjs" "$broker_log"
   assert_not_contains "broker 不上传 client" "codex-slot-client.mjs" "$broker_log"
   assert_contains "broker 创建 registry 根并设 700" \
@@ -659,6 +661,9 @@ test_role_isolation_and_all_defaults() {
     "$(mode_of "$broker_root/remotes/mmv/.codex-slot")"
   assert_eq "broker 文件实际 mode 755" "755" \
     "$(mode_of "$broker_root/remotes/mmv/.local/lib/codex-slot/codex-slot-broker.mjs")"
+  assert_true "broker 主机路径表内容与版本库一致" \
+    cmp -s "$REPO_ROOT/config/codex-slot/broker-hosts.json" \
+      "$broker_root/remotes/mmv/.local/lib/codex-slot/broker-hosts.json"
   if ! run_install "$broker_root" --broker-host mmv \
       >"$broker_root/second.out" 2>&1; then
     fail "broker-host 第二次覆盖成功" "$(cat "$broker_root/second.out")"

@@ -148,6 +148,31 @@ test('acquire rejects forged actor and manually selected team', async (t) => {
   );
 });
 
+test('acquire loads the broker-owned host registry file', async (t) => {
+  const root = await tempRoot(t);
+  const home = join(root, 'home');
+  const registryPath = join(root, 'broker-hosts.json');
+  await writeAuth(home, 'team1');
+  await writeFile(
+    registryPath,
+    `${JSON.stringify({
+      'custom-xian': {
+        slotRoot: '/Users/remote-operator/.codex-slots',
+        sshHost: 'custom-xian',
+      },
+    })}\n`,
+    'utf8'
+  );
+
+  const result = await runBroker(
+    ['acquire', '--session', 'alex-infra-main', '--host', 'custom-xian'],
+    brokerDeps(root, home, { hostRegistryPath: registryPath })
+  );
+
+  assert.equal(result.host, 'custom-xian');
+  assert.equal(result.actor, 'alex');
+});
+
 test('acquire filters auth sources and leases the lowest usage valid team without leaking tokens', async (t) => {
   const root = await tempRoot(t);
   const home = join(root, 'home');

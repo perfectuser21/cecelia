@@ -1,0 +1,10 @@
+{
+  "xian-m4": {
+    "slotRoot": "/Users/jinnuoshengyuan/.codex-slots",
+    "sshHost": "xian-m4"
+  },
+  "xian-m1": {
+    "slotRoot": "/Users/xx-macmini/.codex-slots",
+    "sshHost": "xian-m1"
+  }
+}
