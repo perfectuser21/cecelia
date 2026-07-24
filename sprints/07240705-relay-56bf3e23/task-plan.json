@@ -8,7 +8,7 @@
     {
       "task_id": "ws1",
       "title": "建立 Codex Slot durable registry 与数据库不变量",
-      "scope": "交付 company account、lease、session、audit、rollout、agent observation durable schema 和真 Postgres registry；保证单账号单阻塞租约、request_id 幂等与重启可恢复。",
+      "scope": "交付 company account、lease、session、audit、rollout、agent observation durable schema 和真 Postgres registry；evidence 持久化 source/details，observation 持久化 production probe source/raw facts；保证单账号单阻塞租约、request_id 幂等与重启可恢复。",
       "dod": [
         "[BEHAVIOR] 真 Postgres 并发 acquire 不产生重复 active/quarantined/blocking lease。",
         "[BEHAVIOR] 相同 request_id 重放返回同一 session handle。",
@@ -45,10 +45,10 @@
     {
       "task_id": "ws3",
       "title": "实现 xian agent prepare、mmv 双检、auth durable write 与 tmux 生命周期",
-      "scope": "交付 agent 与只读 audit forced-command：主机锁、worktree、0700 私有目录、nonce、限长 stdin、实时 mmv stable node/peer/IP/online/backend 校验、0600 durable auth、launch/status/stop/cleanup 及独立 stat/tmux/process oracle。",
+      "scope": "交付 agent 与只读 audit forced-command：主机锁、worktree、0700 私有目录、跨进程 durable nonce、精确 JSON-line+raw+EOF accept-auth framing、三 key env allowlist、agent ingress transport capture、实时 mmv stable node/peer/IP/online/backend 校验、0600 durable auth、launch/status/stop/cleanup 及独立 stat/tmux/process oracle。",
       "dod": [
         "[BEHAVIOR] xian-m1/xian-m4 prepare 自证 root agent_id/max_slots 且持主机锁。",
-        "[BEHAVIOR] launch 前后 mmv 任一信号失败即删除暂存 auth 且零 tmux。",
+        "[BEHAVIOR] metadata keys/types/length、snapshot_bytes/SHA/EOF/零尾随与跨 PID nonce replay 均精确 fail closed。",
         "[ARTIFACT] agent stdout 仅为限长 sanitized JSON，不记录 auth。"
       ],
       "files": [
@@ -65,7 +65,7 @@
     {
       "task_id": "ws4",
       "title": "实现 broker 唯一 issuer、client acquire/resume 与精确 readback",
-      "scope": "交付 client 与 broker CLI；actor、agent、slot、account 由 server 决定；全部 operation 的 request/response 精确 schema 和跨 actor auth 由真实 forced-command 观察；broker 从 root/service-account 受控 store 限长读取 auth，先 durable acquire，再经固定 SSH config/stdin 投递并 finally 清零 Buffer；丢响应按 handle readback，未知只 quarantine。",
+      "scope": "交付 client 与 broker CLI；actor、agent、slot、account 由 server 决定；全部 operation 的 request/response 精确 schema 和跨 actor auth 由真实 forced-command 观察；broker 从 root/service-account 受控 store 限长读取 auth，先 durable acquire，再按合同 JSON-line+raw+EOF 帧经固定 SSH config/stdin 投递并 finally 清零 Buffer；丢响应按 handle readback，未知只 quarantine。",
       "dod": [
         "[BEHAVIOR] broker 是唯一 token issuer，snapshot 不出现在 argv/env/stdout/audit。",
         "[BEHAVIOR] SSH 未知结果形成 quarantine，重放不重复租约/启动。",
@@ -85,16 +85,17 @@
     {
       "task_id": "ws5",
       "title": "实现 rollout gate、reaper 与 60 秒权威调度",
-      "scope": "实现 frozen→inventory_complete→broker_only 原子状态机，evidence 必须绑定同 run、新鲜、passed 的真实 inventory/legacy probe；reaper 从独立 reachability/identity/tmux/process/state facts 计算分类并由 client status readback，对终态二轮 no-op，接入 scheduler JOBS。",
+      "scope": "实现 frozen→inventory_complete→broker_only 原子状态机：inventory 真扫跨 run lease/session/observation 并记录 counts/blockers，legacy probe 记录真实 argv/exit/residue；reaper 每轮经 production SSH/audit probe 新写新鲜 raw observation 后分类并由 client status readback，对终态二轮 no-op，接入 scheduler JOBS。",
       "dod": [
-        "[BEHAVIOR] inventory/legacy evidence 为垃圾、跨 run、过期、failed 或不全时拒绝 broker_only。",
-        "[BEHAVIOR] reaper 真实多轮不重置状态，client readback 消费终态且 quarantine/released 不振荡。",
+        "[BEHAVIOR] 跨 run alive/unknown/blocking 被 inventory 扫出并形成 failed evidence；legacy 双 argv/exit/residue 内容持久化。",
+        "[BEHAVIOR] reaper 经 production SSH/audit probe 产生 observed_at 晚于 trigger 的 raw observation，client readback 消费终态且 quarantine/released 不振荡。",
         "[ARTIFACT] scheduler-jobs.js 注册 codex-slot-reaper intervalMs=60000。"
       ],
       "files": [
         "packages/brain/src/codex-slot/rollout.js",
         "packages/brain/src/codex-slot/reaper.js",
         "packages/brain/src/scheduler-jobs.js",
+        "packages/brain/src/__tests__/fixtures/codex-slot-probe-sshd.sh",
         "packages/brain/src/__tests__/integration/codex-slot-reaper-rollout.integration.test.js"
       ],
       "depends_on": ["ws4"],
@@ -104,11 +105,12 @@
     {
       "task_id": "ws6",
       "title": "硬禁用旧 token 入口并交付角色安装运维",
-      "scope": "让 codex-request 与 codex-remote-launch 对真实历史参数不再直接读取/推送 auth，只返回稳定 broker-only 指引；交付 broker/client/agent 安装、权限与 Mac Bash 3.2/现代 Bash 持续回归。",
+      "scope": "让 codex-request 与 codex-remote-launch 对真实历史参数不再直接读取/推送 auth，只返回稳定 broker-only 指引；交付 broker/client/agent 安装与权限；在仓库现有 ci.yml 增加 Mac Bash 3.2/现代 Bash required job，并接入 ci-passed，failure/cancelled/skipped 均阻断。",
       "dod": [
         "[BEHAVIOR] 以 --team team1 与 --team team3 --brief fixture 真运行旧入口，非零且 broker-only 指引稳定、零 auth/tmux。",
         "[BEHAVIOR] 安装失败非零并告警，不 warning 降级。",
-        "[ARTIFACT] installer 配置 fixed SSH、forced-command、0600 root config。"
+        "[BEHAVIOR] 同一 SHA 的 Mac job 真运行 BEH-11 并 success 后 ci-passed 才 success。",
+        "[ARTIFACT] installer 配置 fixed SSH、forced-command、0600 root config；ci.yml 是 Mac required job 唯一 workflow owner。"
       ],
       "files": [
         "scripts/codex-request.sh",
@@ -116,7 +118,7 @@
         "scripts/__tests__/codex-request.test.sh",
         "scripts/__tests__/codex-remote-launch.test.sh",
         "packages/brain/scripts/install-codex-slot.sh",
-        ".github/workflows/codex-slot-bash-compat.yml"
+        ".github/workflows/ci.yml"
       ],
       "depends_on": ["ws5"],
       "complexity": "M",
@@ -125,7 +127,7 @@
     {
       "task_id": "ws7",
       "title": "交付 Ubuntu security smoke 与 xian 双主机真接缝 smoke",
-      "scope": "实现 Ubuntu CI-safe security smoke 与独立 real-machine host smoke；后者由 nightly-real-machine Tailscale job 在 xian-m1/xian-m4 用专用非秘密 auth fixture跑真 SSH/stdin/tmux/worktree 生命周期，证据带本轮时间并证明零秘密、零重复租约、零残留。",
+      "scope": "实现 Ubuntu CI-safe security smoke 与独立 real-machine host smoke；后者提供 production SSH/audit probe fixture 与 nightly Tailscale 双机生命周期，使用专用非秘密 auth fixture，证据带本轮时间并证明零秘密、零重复租约、零残留。",
       "dod": [
         "[BEHAVIOR] security smoke 覆盖 actor/host/容量/mmv/SSH/durable 故障 fail closed。",
         "[BEHAVIOR] 两台主机均输出完整生命周期并 residue_count=0。",
@@ -144,7 +146,7 @@
     {
       "task_id": "ws8",
       "title": "完成全量回归、Brain 定义版本与 final E2E 留证",
-      "scope": "运行批准后只读合同 tests 与 task-plan 指定的长期 Brain 回归、Ubuntu security smoke、Mac Bash workflow、双真机 smoke 和 DevGate；更新 Brain 版本/DEFINITION，汇总 logic 与接缝证据，未双机通过不得标 done。",
+      "scope": "运行批准后只读合同 tests 与 task-plan 指定的长期 Brain 回归、Ubuntu security smoke、ci.yml required Mac job、双真机 smoke 和 DevGate；final E2E 成功与 provision/acquire 后故意失败两路都经幂等 EXIT trap 证明 broker/双机/PG 零残留；更新 Brain 版本/DEFINITION，未双机通过不得标 done。",
       "dod": [
         "[BEHAVIOR] 合同 tests 全绿且被改边零 mock。",
         "[BEHAVIOR] final E2E 双机、真 PG、审计新鲜、秘密/重复 lease/残留计数均为 0。",

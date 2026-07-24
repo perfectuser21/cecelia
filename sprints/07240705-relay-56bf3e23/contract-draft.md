@@ -1,8 +1,8 @@
-# Sprint Contract Draft（Round 3）— Codex Slot 安全硬切换
+# Sprint Contract Draft（Round 4）— Codex Slot 安全硬切换
 
 ## 合同边界
 
-- 修订基线：`b6d034188c21e636e7a1fed650b267e1d48e30d7`；合同分支：`cp-07240705-ws-56bf3e23`。
+- 修订基线：`90f3df1ca7634efe1d2a371bb4630a7f59dd1193`；合同分支：`cp-07240705-ws-56bf3e23`。
 - 交付档位：`segmented`，保留 ws1→ws8 串行链；8 段对应 durable store、身份路由、agent、broker/client、reaper/rollout、旧入口/安装、smoke、版本/终验，均有唯一实现 owner。
 - 合同测试是批准后只读法律，不得出现在任何 workstream 的 `files` 写集。
 - 在范围内：PRD 10 步、Bash 3.2/现代 Bash、真 PostgreSQL、受控 SSH forced-command、xian-m1/xian-m4 非秘密 fixture 真机接缝。
@@ -25,8 +25,8 @@
 
 | 宿主 | 只负责 | 持续回归入口 | 明确不负责 |
 |------|--------|--------------|------------|
-| Ubuntu PR CI | 真 PostgreSQL registry/reaper/rollout、进程级 protocol/auth、CI-safe security smoke | 既有 `ci.yml` 的 `brain-unit`/`brain-integration` + `ci-smoke-glob-runner.yml`；长期测试必须落 `packages/brain/src/__tests__/`，不可依赖 sprint tests | 不运行 host smoke，不伪造 xian SSH/root config，不宣称 Bash 3.2 |
-| macOS Bash | client/agent/installer 在 `/bin/bash` 3.2 与 Homebrew 现代 Bash 的语法和零参数失败语义 | `[CI_GAP]` 新增 `.github/workflows/codex-slot-bash-compat.yml` 的 `macos-13` PR/push job；shell 路径从 `command -v`/`brew --prefix bash` 推导 | 不验证 xian `mmv`/tmux，也不替代 Ubuntu 真 PG |
+| Ubuntu PR CI | 真 PostgreSQL registry/reaper/rollout、进程级 protocol/auth、隔离 real sshd + production audit forced-command probe、CI-safe security smoke | 既有 `ci.yml` 的 `brain-unit`/`brain-integration` + `ci-smoke-glob-runner.yml`；长期测试与 sshd fixture 落 `packages/brain/src/__tests__/`，不可依赖 sprint tests | 不运行 xian host smoke，不伪造 xian root/`mmv`，不宣称 Bash 3.2 |
+| macOS Bash | client/agent/installer 在 `/bin/bash` 3.2 与 Homebrew 现代 Bash 的语法和零参数失败语义 | `[CI_GAP]` 在仓库现有 `.github/workflows/ci.yml` 增加必跑 `codex-slot-bash-compat`（`macos-13`）job，执行 BEH-11；`ci-passed.needs` 必须包含该 job，且 result 为 failure/cancelled/skipped 时均阻断 | 不验证 xian `mmv`/tmux，也不替代 Ubuntu 真 PG |
 | xian-m1 + xian-m4 真机 | 固定 host key/root identity、真实 `mmv` trust root、stdin/auth/tmux/worktree/cleanup | `[CI_GAP]` 既有 `nightly-real-machine.yml` 增加 Tailscale 双机 job，运行 `packages/brain/scripts/real-machine/codex-slot-host-smoke.sh` 并上传逐 host evidence；也支持 release 前 `workflow_dispatch` | 不进入 Ubuntu `packages/brain/scripts/smoke/*.sh` glob/allowlist；凭据不可达即 hard fail，不能 skip 当绿 |
 
 批准后四份 `sprints/.../tests/*.test.ts` 只读；Generator 必须把等价长期回归分别落入 task-plan 指定的 `packages/brain/src/__tests__/` owner 文件，避免 PR CI 永久漏跑。
@@ -79,16 +79,18 @@
 
 - transport：固定 `/etc/cecelia/codex-slot/agent_ssh_config`、固定 host key、broker 专用 key；命令仅为 `codex-slot-agent <prepare|accept-auth|launch|status|stop|cleanup>`。
 - agent 身份与 `max_slots` 只读 root-owned 配置；broker 不能通过 argv 传入 agent 身份。
-- `accept-auth` 元数据仅含 `operation,session_handle,slot,nonce,snapshot_bytes,snapshot_sha256`；snapshot 原始字节只走 stdin，绝不进 argv/env/stdout/audit。
+- `accept-auth` stdin 是唯一帧：第一段为不超过 1024 bytes、以单个 LF 结束的 UTF-8 JSON metadata；随后恰好读取 `snapshot_bytes` 个 raw bytes，下一次 1-byte read 必须返回 EOF。短读、CR/NUL、重复/额外 key、SHA 不符或 EOF 前任何尾随字节均稳定拒绝 `snapshot_frame_invalid`，且不得写 auth/启动 tmux。
+- metadata keys 精确为 `["nonce","operation","session_handle","slot","snapshot_bytes","snapshot_sha256"]`：`operation` 只能是 `"accept-auth"`；`session_handle` 为 1..128-byte string；`slot` 为 `1..root max_slots` integer；`nonce` 为恰 32 个 lowercase hex（128 bit）；`snapshot_bytes` 为 `1..262144` integer；`snapshot_sha256` 为恰 64 个 lowercase hex。snapshot 原始字节只走 stdin，绝不进 argv/env/stdout/audit。
+- agent forced-command 进程以 `env -i` 启动，实际 env keys 必须精确等于 `["LANG","LC_ALL","PATH"]`，值固定为 `LANG=C`、`LC_ALL=C`、`PATH=/usr/bin:/bin`；metadata、nonce、hash、handle 与 snapshot 不得复制到 env。
 - 独立验收 principal 使用 `/etc/cecelia/codex-slot/audit_ssh_config` 与 forced `codex-slot-audit`，只允许按 handle 读取 `stat/tmux/process/mmv/cleanup` 非秘密事实，不能读取 auth 内容。
-- transport audit 必须观察真实 `accept-auth` argv、env key 集合、元数据 keys、stdin byte count/SHA；`argv/env/stdout/audit` 的 fixture fingerprint 命中数全部为 0。
+- `codex-slot-audit transport-capture <handle>` 必须从 agent ingress 的 root-owned capture 读取实际 argv/env keys/framing counters/SHA，返回 `source="agent_ingress_capture"`；broker 自己的 `audit-transport` 输出不算 oracle。capture 必须证明 metadata line 长度、raw byte 数、metadata SHA=raw SHA、EOF=true、trailing_bytes=0，且 `argv/env/stdout/audit` 的 fixture fingerprint 命中数全部为 0。
 
 ## Auth snapshot 安全合同
 
 - 受控来源：`/var/lib/cecelia/codex-slot/accounts/<account_key>/auth.json`；父目录 `0710 root:codex-slot-broker`，文件 `0600 codex-slot-broker:codex-slot-broker`。测试的 expected UID/GID 必须来自 root 配置，不得从被测文件 `stat` 结果反推。broker service account 只能读取已租账号文件，员工/agent 无源 store 权限。
 - 最大长度：`MAX_AUTH_SNAPSHOT_BYTES=262144`；读取前先 `lstat` 拒绝 symlink/非 regular/非 0600/owner/group 不符，再以限长 read 拒绝竞态放大的 oversize。超限稳定拒绝 `snapshot_too_large`。
 - 内存生命周期：每次读取复制到独立 Buffer；完成、失败、timeout 均在 `finally` 以 `buffer.fill(0)` 清零，不缓存、不入 DB。
-- 完整性与重放：SHA-256 在 broker 计算、agent 写盘前复算；不一致拒绝 `snapshot_hash_mismatch`。oversize/hash 失败后立即由独立 stat/tmux oracle 证明零 auth/零 tmux，不能被后续成功写入掩盖。目标 auth owner=`codex-slot-agent`、mode=`0600`。nonce 至少 128 bit、与 session 绑定、durable 单次消费；agent 模块/进程重建后重放仍拒绝 `nonce_replayed`。
+- 完整性与重放：SHA-256 在 broker 计算、agent 写盘前复算；不一致拒绝 `snapshot_hash_mismatch`。oversize/hash/frame 失败后立即由独立 stat/tmux oracle 证明零 auth/零 tmux，不能被后续成功写入掩盖。目标 auth owner=`codex-slot-agent`、mode=`0600`。nonce 为 128 bit lowercase hex、与 session 绑定、durable 单次消费；合同测试必须由两个不同 PID 的真实 Node OS 进程共享 nonce store，第二进程模拟 agent restart 并稳定拒绝 `nonce_replayed`，禁止用 `vi.resetModules()` 代替。
 - 测试只用字面非秘密 fixture；spawn 旧脚本时环境为 `HOME/PATH/TMPDIR/LC_ALL/LANG` allowlist，禁止 `{...process.env}`，避免遗留脚本读取真实 token。
 
 ## 八要素需求规范
@@ -143,11 +145,12 @@ notes:
 | 风险 | 影响 | Mitigation / 可执行 oracle |
 |------|------|----------------------------|
 | broker 误读个人/测试环境真实凭据 | 真实 token 泄漏 | 固定受控 store 权限；合同测试 spawn env allowlist；fixture SHA 扫描 stdout/stderr/audit/sandbox。 |
-| snapshot 超限、hash 被换或 nonce 重放 | 内存/写盘滥用、重复授权 | 262144-byte 上限与三个稳定错误码；写盘前无 auth/tmux。 |
+| snapshot 帧超限、短读/尾随、hash 被换或 nonce 重放 | 内存/写盘滥用、metadata 与 raw 错配、重复授权 | 1024-byte metadata + 262144-byte snapshot 双上限；精确 EOF；跨 PID nonce；失败前无 auth/tmux。 |
 | smoke 自报成功但远端事实错误 | 假绿 | evaluator 直接用独立 audit SSH 查 owner/mode/tmux/process/mmv/cleanup，不采信 smoke 布尔值。 |
 | 并发/历史 audit 冒充本轮 | 假绿或串会话 | 所有查询同时绑定 `run_id + session_handle + agent_id`，时间仅作附加约束。 |
-| 旧入口或 rollout 非原子 | 第二 issuer/部分开放 | 两个旧脚本用历史真实参数真执行并匹配稳定 broker-only 错误；evidence 外键绑定本 run、新鲜、passed 的 inventory/legacy probe；真 PG 读回原子状态。 |
-| CI 宿主混用 | Ubuntu 假装 Bash 3.2 或 host smoke 永久红/假绿 | Ubuntu/Mac/xian 三类入口分离；host smoke 位于 `scripts/real-machine/`，不进入 Ubuntu glob；长期 Brain tests 落 `src/__tests__`。 |
+| 旧入口或 rollout 非原子 | 第二 issuer/部分开放 | inventory evidence 必须含跨 run registry 扫描内容；legacy evidence 必须含两次真实 argv/exit/residue；真 PG 读回原子状态。 |
+| E2E 中途失败 | broker source fixture、nonce、远端 auth/tmux/process/worktree 或 lease 遗留 | provision 前注册幂等 EXIT trap；成功/失败都执行双机 audit cleanup、broker deprovision 与独立 stat/PG/audit 零残留复核，仅保留无秘密 evidence。 |
+| Mac 回归未进 required gate | Bash 3.2 失败仍可 merge | Mac job 直接定义在 `ci.yml`，由 `ci-passed.needs` 依赖；failure/cancelled/skipped 全部阻断，并回读同一 SHA 的真实 job/step conclusion。 |
 | 真机不可达 | 无法证明接缝 | 保持 `logic-done-pending`，不得将本地绿标 done。 |
 
 ## 禁 mock 边清单
@@ -234,15 +237,15 @@ awk '/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```
 
 **来源**：`[FROM_PRD]` — Golden Path 5。
 
-**可观测行为**：snapshot 只从 0710 root/service-group store 的 0600 固定 owner regular file 读、仅 stdin 投递、最大 262144 bytes、nonce 跨重启单次、hash 匹配、Buffer 清零。
+**可观测行为**：snapshot 只从 0710 root/service-group store 的 0600 固定 owner regular file 读；accept-auth 采用“≤1024-byte JSON+LF、恰 `snapshot_bytes` raw bytes、立即 EOF”帧；agent env 精确三 key；最大 262144 bytes；nonce 跨两个真实 OS 进程重启只消费一次；hash 匹配、Buffer 清零。
 
 **验证命令**：
 
 ```bash
-npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t '受控 credential store|snapshot Buffer|snapshot oversize/hash mismatch|nonce durable' --reporter=verbose
+npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t 'accept-auth framing|受控 credential store|snapshot Buffer|snapshot oversize/hash mismatch|nonce durable 消费跨两个真实 OS 进程' --reporter=verbose
 ```
 
-**硬阈值**：symlink/non-regular/read-side oversize 拒绝；目标 0600；三个错误码逐字匹配；每个失败当场零 auth/tmux。
+**硬阈值**：metadata keys/types/length、raw byte count/SHA/EOF 精确；尾随或短读拒绝；symlink/non-regular/read-side oversize 拒绝；目标 0600；两个 PID 不同且 replay 文件不存在；每个失败当场零 auth/tmux。
 
 ### Step 6：0600 durable auth 与 launch 前二次 `mmv`
 
@@ -276,21 +279,21 @@ DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/072407
 
 **来源**：`[FROM_PRD]` — Golden Path 8。
 
-**可观测行为**：classifier 从独立 reachability/identity/tmux/process/agent state facts 推导 alive/stopped/unreachable/mismatch/unknown；client status 读回结果；终态第二轮为 no-op，不振荡。
+**可观测行为**：production reaper 通过真实 SSH forced `codex-slot-audit` 主动采样，每轮先新写 `source=production_ssh_audit` 且 `observed_at >= trigger_time` 的 raw reachability/identity/tmux/process/agent-state observation；合同测试另用 `/usr/bin/ssh` 直连同一 audit principal 对账 raw facts，再验证 alive/stopped/unreachable/mismatch/unknown 分类、client readback 与终态第二轮 no-op。
 
 **验证命令**：
 
 ```bash
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t 'reaper 从独立事实计算' --reporter=verbose
+DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t 'reaper 经 production SSH/audit probe 新写 raw observation' --reporter=verbose
 ```
 
-**硬阈值**：alive 两轮 heartbeat；其余分支首轮 release/quarantine、次轮 no-op；client readback 与 lease 终态一致；JOBS=60000 ms。
+**硬阈值**：五分支各有本轮新 observation，source/raw facts 与真实 probe 回执一致；alive 两轮 heartbeat；其余首轮 release/quarantine、次轮 no-op；client readback 与 lease 终态一致；JOBS=60000 ms。
 
 ### Step 9：rollout 原子硬切并禁用双旧入口
 
 **来源**：`[FROM_PRD]` — Golden Path 9。
 
-**可观测行为**：成功链 frozen→inventory_complete→broker_only；evidence 必须查询到同 run、5 分钟内、passed、正确 kind 的 inventory/legacy probe；blocking lease/垃圾证据均阻断。旧脚本以 `--team team1`、`--team team3 --brief <fixture>` 真执行，匹配稳定 broker-only 语义且零 auth/tmux。
+**可观测行为**：成功链 frozen→inventory_complete→broker_only。inventory evidence 必须由 `source=registry_scan` 扫描 leases/sessions/observations 的跨 run 内容并记录 counts、observed run ids 与 blocker handles；历史 alive/unknown/blocking 任一存在只能 failed。legacy evidence 必须由 `source=isolated_process_exec` 逐条记录两个真实历史 argv、非零 exit、`broker_only` error 与 auth/tmux residue=0；只有同 run、5 分钟内、passed、内容完整的两类 evidence 可推进。
 
 **验证命令**：
 
@@ -298,7 +301,7 @@ DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/072407
 DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t 'rollout|旧入口' --reporter=verbose
 ```
 
-**硬阈值**：成功链完整；缺失/垃圾/跨 run/过期/failed evidence 与 blocking lease 均保持 frozen；两个入口非零且 stdout/stderr 含 `broker-only` 和 `codex-slot-client`，隔离 HOME 与真机已知旧路径零 auth/tmux。
+**硬阈值**：成功 evidence 含真实 source/details；跨 run alive/unknown/blocking 的 inventory result=failed 且 blocker handle 逐项可回读；缺失/垃圾/跨 run/过期/failed evidence 均保持 frozen；两个入口 argv 精确、非零且 `error_code=broker_only`、residue 均为 0。
 
 ### Step 10：双主机生产调用链安全释放
 
@@ -318,7 +321,7 @@ awk '/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```
 
 **来源**：`[AI_ADDED]` — 闭环 reviewer 指出的 schema、独立 oracle、测试只读与环境继承假绿面。
 
-**可观测行为**：精确 request/response/transport schema、真实 task payload、Ubuntu 长期回归、Mac Bash 双版本、xian nightly 真机与合同测试只读均通过。
+**可观测行为**：精确 request/response/transport schema、真实 task payload、Ubuntu 长期回归、`ci.yml:codex-slot-bash-compat → ci-passed` required Mac Bash 双版本、xian nightly 真机与合同测试只读均通过。
 
 **验证命令**：
 
@@ -347,6 +350,15 @@ ACTOR_B_CONFIG="${CODEX_SLOT_ACTOR_B_SSH_CONFIG:-/etc/cecelia/codex-slot/actor_b
 AUDIT_CONFIG="${CODEX_SLOT_AUDIT_SSH_CONFIG:-/etc/cecelia/codex-slot/audit_ssh_config}"
 RUN_ID="codex-slot-$(date +%s)-$$"
 EVIDENCE_DIR="${CODEX_SLOT_EVIDENCE_DIR:-${SPRINT_DIR}/evidence/${RUN_ID}}"
+E2E_FAIL_AFTER="${CODEX_SLOT_E2E_FAIL_AFTER:-}"
+HANDLE_XIAN_M1=""
+HANDLE_XIAN_M4=""
+FIXTURE_SHA=""
+SOURCE_FIXTURE_PATH=""
+NONCE_STORE_PATH=""
+SANDBOX_PATH=""
+LEGACY_HOME=""
+E2E_OPERATIONS_COMPLETE=0
 mkdir -p "$EVIDENCE_DIR"
 exec > >(tee "$EVIDENCE_DIR/e2e.stdout") 2> >(tee "$EVIDENCE_DIR/e2e.stderr" >&2)
 export DB_URL
@@ -357,6 +369,100 @@ command -v ssh >/dev/null
 for FILE in "$ACTOR_A_CONFIG" "$ACTOR_B_CONFIG" "$AUDIT_CONFIG"; do
   [ -r "$FILE" ] || { echo "FAIL: 缺受控 SSH 配置 $FILE"; exit 1; }
 done
+
+cleanup_e2e() {
+  ORIGINAL_RC=$?
+  trap - EXIT INT TERM
+  set +e
+  CLEANUP_FAILED=0
+
+  for HOST in xian-m1 xian-m4; do
+    if [ "$HOST" = "xian-m1" ]; then
+      CLEAN_HANDLE="$HANDLE_XIAN_M1"
+    else
+      CLEAN_HANDLE="$HANDLE_XIAN_M4"
+    fi
+    if [ -n "$CLEAN_HANDLE" ]; then
+      CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh stop \
+        --request-id "${RUN_ID}-${HOST}-trap-stop" --session-handle "$CLEAN_HANDLE" >/dev/null 2>&1
+      CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh release \
+        --request-id "${RUN_ID}-${HOST}-trap-release" --session-handle "$CLEAN_HANDLE" >/dev/null 2>&1
+    fi
+    REMOTE_CLEAN=$(ssh -F "$AUDIT_CONFIG" "codex-slot-audit@${HOST}" \
+      codex-slot-audit cleanup-run "$RUN_ID" 2>&1)
+    REMOTE_CLEAN_RC=$?
+    printf '%s\n' "$REMOTE_CLEAN" > "$EVIDENCE_DIR/${HOST}-trap-cleanup.json"
+    if [ "$REMOTE_CLEAN_RC" -ne 0 ] || ! printf '%s\n' "$REMOTE_CLEAN" | jq -e --arg run "$RUN_ID" '
+      .source == "audit_principal" and .run_id == $run and .cleanup_idempotent == true' >/dev/null; then
+      CLEANUP_FAILED=1
+    fi
+    REMOTE_RESIDUE=$(ssh -F "$AUDIT_CONFIG" "codex-slot-audit@${HOST}" \
+      codex-slot-audit scan-run "$RUN_ID" "$FIXTURE_SHA" 2>&1)
+    REMOTE_RESIDUE_RC=$?
+    printf '%s\n' "$REMOTE_RESIDUE" > "$EVIDENCE_DIR/${HOST}-trap-residue.json"
+    if [ "$REMOTE_RESIDUE_RC" -ne 0 ] || ! printf '%s\n' "$REMOTE_RESIDUE" | jq -e --arg run "$RUN_ID" '
+      .source == "audit_principal" and .run_id == $run and
+      .auth_files == 0 and .tmux_sessions == 0 and .processes == 0 and
+      .worktrees == 0 and .nonce_entries == 0 and .sandbox_residue_count == 0 and
+      .fixture_fingerprint_hits == 0' >/dev/null; then
+      CLEANUP_FAILED=1
+    fi
+  done
+
+  DEPROVISION=$(bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh \
+    deprovision-e2e --run-id "$RUN_ID" 2>&1)
+  DEPROVISION_RC=$?
+  printf '%s\n' "$DEPROVISION" > "$EVIDENCE_DIR/deprovision.json"
+  if [ "$DEPROVISION_RC" -ne 0 ] || ! printf '%s\n' "$DEPROVISION" | jq -e --arg run "$RUN_ID" '
+    .ok == true and .run_id == $run and .idempotent == true' >/dev/null; then
+    CLEANUP_FAILED=1
+  fi
+  for FIXTURE_PATH in "$SOURCE_FIXTURE_PATH" "$NONCE_STORE_PATH" "$SANDBOX_PATH"; do
+    if [ -n "$FIXTURE_PATH" ] && [ -e "$FIXTURE_PATH" ]; then
+      echo "FAIL: broker fixture residue $FIXTURE_PATH"
+      CLEANUP_FAILED=1
+    fi
+  done
+
+  DB_RESIDUE=$(psql "$DB_URL" -Atc "SELECT json_build_object(
+    'accounts',(SELECT count(*) FROM codex_company_accounts WHERE run_id='${RUN_ID}'),
+    'leases',(SELECT count(*) FROM codex_account_leases WHERE run_id='${RUN_ID}'),
+    'sessions',(SELECT count(*) FROM codex_slot_sessions WHERE run_id='${RUN_ID}'),
+    'nonterminal_leases',(SELECT count(*) FROM codex_account_leases WHERE run_id='${RUN_ID}' AND state IN ('active','blocking','quarantined')),
+    'audit_evidence',(SELECT count(*) FROM codex_slot_audit WHERE run_id='${RUN_ID}')
+  )" 2>&1)
+  DB_RESIDUE_RC=$?
+  printf '%s\n' "$DB_RESIDUE" > "$EVIDENCE_DIR/db-residue.json"
+  REQUIRE_AUDIT=0
+  if [ -n "$HANDLE_XIAN_M1" ] || [ -n "$HANDLE_XIAN_M4" ]; then
+    REQUIRE_AUDIT=1
+  fi
+  if [ "$DB_RESIDUE_RC" -ne 0 ] || ! printf '%s\n' "$DB_RESIDUE" | jq -e --argjson require_audit "$REQUIRE_AUDIT" '
+    .accounts == 0 and .leases == 0 and .sessions == 0 and .nonterminal_leases == 0 and
+    ($require_audit == 0 or .audit_evidence >= 1)' >/dev/null; then
+    CLEANUP_FAILED=1
+  fi
+
+  if [ -n "$LEGACY_HOME" ]; then
+    rm -rf -- "$LEGACY_HOME"
+  fi
+  if rg -n '(access_token|refresh_token|auth_json|"tokens"|prompt|environment)' "$EVIDENCE_DIR"; then
+    echo "FAIL: 本轮 evidence 含禁止键"
+    CLEANUP_FAILED=1
+  fi
+
+  FINAL_RC=$ORIGINAL_RC
+  if [ "$CLEANUP_FAILED" -ne 0 ] && [ "$FINAL_RC" -eq 0 ]; then
+    FINAL_RC=1
+  fi
+  if [ "$FINAL_RC" -eq 0 ] && [ "$E2E_OPERATIONS_COMPLETE" -eq 1 ]; then
+    echo "Codex Slot Golden Path E2E PASS run_id=${RUN_ID} evidence=${EVIDENCE_DIR}"
+  fi
+  exit "$FINAL_RC"
+}
+trap cleanup_e2e EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 assert_session_response() {
   OP="$1"
@@ -380,8 +486,17 @@ echo "$TASK_JSON" | jq -e '.payload.target_environment == "local_api"'
 npx vitest run "$SPRINT_DIR/tests" --reporter=verbose
 
 PROVISION=$(bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh provision-e2e --run-id "$RUN_ID")
-echo "$PROVISION" | tee "$EVIDENCE_DIR/provision.json" | jq -e --arg run "$RUN_ID" 'keys == ["fixture_sha256","ok","rollout_state","run_id"] and .ok == true and .run_id == $run and .rollout_state == "broker_only" and (.fixture_sha256 | test("^[0-9a-f]{64}$"))'
+echo "$PROVISION" | tee "$EVIDENCE_DIR/provision.json" | jq -e --arg run "$RUN_ID" '
+  keys == ["fixture_sha256","nonce_store_path","ok","rollout_state","run_id","sandbox_path","source_fixture_path"] and
+  .ok == true and .run_id == $run and .rollout_state == "broker_only" and
+  (.fixture_sha256 | test("^[0-9a-f]{64}$")) and
+  (.source_fixture_path | type == "string" and startswith("/")) and
+  (.nonce_store_path | type == "string" and startswith("/")) and
+  (.sandbox_path | type == "string" and startswith("/"))'
 FIXTURE_SHA=$(echo "$PROVISION" | jq -r '.fixture_sha256')
+SOURCE_FIXTURE_PATH=$(echo "$PROVISION" | jq -r '.source_fixture_path')
+NONCE_STORE_PATH=$(echo "$PROVISION" | jq -r '.nonce_store_path')
+SANDBOX_PATH=$(echo "$PROVISION" | jq -r '.sandbox_path')
 SOURCE_STORE=$(bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh source-store-stat --run-id "$RUN_ID")
 echo "$SOURCE_STORE" | tee "$EVIDENCE_DIR/source-store.json" | jq -e '
   .parent_owner == "root" and .parent_group == "codex-slot-broker" and .parent_mode == "0710" and
@@ -390,13 +505,35 @@ echo "$SOURCE_STORE" | tee "$EVIDENCE_DIR/source-store.json" | jq -e '
 FAIL_CLEANUP=$(bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh snapshot-failures --run-id "$RUN_ID")
 echo "$FAIL_CLEANUP" | tee "$EVIDENCE_DIR/snapshot-failures.json" | jq -e '
   [.cases[] | select((.error_code == "snapshot_too_large" or .error_code == "snapshot_hash_mismatch") and .auth_exists == false and .tmux_alive == false)] | length == 2 and
-  .restart_nonce_replay.error_code == "nonce_replayed" and .fixture_fingerprint_hits == 0'
+  .restart_nonce_replay.error_code == "nonce_replayed" and
+  (.restart_nonce_replay.first_pid | type == "number") and
+  (.restart_nonce_replay.replay_pid | type == "number") and
+  .restart_nonce_replay.first_pid != .restart_nonce_replay.replay_pid and
+  .restart_nonce_replay.replay_auth_exists == false and .fixture_fingerprint_hits == 0'
 
-ROLLOUT_ROW=$(psql "$DB_URL" -Atc "SELECT json_build_object('state',r.state,'inventory_run',i.run_id,'inventory_kind',i.evidence_kind,'inventory_result',i.result,'inventory_created_at',extract(epoch FROM i.created_at),'legacy_run',l.run_id,'legacy_kind',l.evidence_kind,'legacy_result',l.result,'legacy_created_at',extract(epoch FROM l.created_at)) FROM codex_slot_rollout r JOIN codex_slot_audit i ON i.evidence_id=r.inventory_evidence_id JOIN codex_slot_audit l ON l.evidence_id=r.legacy_probe_evidence_id WHERE r.run_id='${RUN_ID}'")
+ROLLOUT_ROW=$(psql "$DB_URL" -Atc "SELECT json_build_object(
+  'state',r.state,
+  'inventory_run',i.run_id,'inventory_kind',i.evidence_kind,'inventory_result',i.result,
+  'inventory_source',i.source,'inventory_details',i.details,'inventory_created_at',extract(epoch FROM i.created_at),
+  'legacy_run',l.run_id,'legacy_kind',l.evidence_kind,'legacy_result',l.result,
+  'legacy_source',l.source,'legacy_details',l.details,'legacy_created_at',extract(epoch FROM l.created_at)
+) FROM codex_slot_rollout r JOIN codex_slot_audit i ON i.evidence_id=r.inventory_evidence_id JOIN codex_slot_audit l ON l.evidence_id=r.legacy_probe_evidence_id WHERE r.run_id='${RUN_ID}'")
 echo "$ROLLOUT_ROW" | tee "$EVIDENCE_DIR/rollout-evidence.json" | jq -e --arg run "$RUN_ID" '
   .state == "broker_only" and .inventory_run == $run and .legacy_run == $run and
   .inventory_kind == "inventory" and .legacy_kind == "legacy_probe" and
   .inventory_result == "passed" and .legacy_result == "passed" and
+  .inventory_source == "registry_scan" and .legacy_source == "isolated_process_exec" and
+  .inventory_details.scan_scope == "all_runs" and
+  .inventory_details.scanned_tables == ["codex_account_leases","codex_slot_sessions","codex_slot_agent_observations"] and
+  .inventory_details.blockers == [] and
+  (.legacy_details.probes | length == 2) and
+  .legacy_details.probes[0].argv == ["scripts/codex-request.sh","--team","team1"] and
+  .legacy_details.probes[0].exit_code != 0 and .legacy_details.probes[0].error_code == "broker_only" and
+  .legacy_details.probes[0].auth_residue_count == 0 and .legacy_details.probes[0].tmux_residue_count == 0 and
+  .legacy_details.probes[1].argv[0:3] == ["scripts/codex-remote-launch.sh","--team","team3"] and
+  .legacy_details.probes[1].argv[3] == "--brief" and .legacy_details.probes[1].exit_code != 0 and
+  .legacy_details.probes[1].error_code == "broker_only" and
+  .legacy_details.probes[1].auth_residue_count == 0 and .legacy_details.probes[1].tmux_residue_count == 0 and
   .inventory_created_at >= (now - 300) and .legacy_created_at >= (now - 300)'
 
 for HOST in xian-m1 xian-m4; do
@@ -412,6 +549,15 @@ for HOST in xian-m1 xian-m4; do
     (.lease_state == "blocking" or .lease_state == "active") and
     (. as $o | ["actor","actor_id","account_key","token","access_token","refresh_token","auth","auth_json","environment","claimed_host"] | all(. as $k | $o | has($k) | not))'
   HANDLE=$(echo "$ACQUIRE" | jq -er '.session_handle | select(type == "string" and length > 0)')
+  if [ "$HOST" = "xian-m1" ]; then
+    HANDLE_XIAN_M1="$HANDLE"
+  else
+    HANDLE_XIAN_M4="$HANDLE"
+  fi
+  if [ "$E2E_FAIL_AFTER" = "${HOST}-acquire" ]; then
+    echo "INTENTIONAL FAIL: 验证 provision/acquire 后 EXIT trap，host=${HOST}"
+    exit 97
+  fi
 
   set +e
   RAW_EXTRA=$(printf '%s\n' "{\"operation\":\"status\",\"request_id\":\"${REQUEST_ID}-raw-extra\",\"session_handle\":\"${HANDLE}\",\"actor_id\":\"forged\"}" | ssh -F "$ACTOR_A_CONFIG" codex-slot@broker codex-slot-broker 2>&1)
@@ -471,30 +617,86 @@ for HOST in xian-m1 xian-m4; do
     $live.stable_node_id == $trust.stable_node_id and $live.peer == $trust.peer and
     $live.mmv_ip == $trust.allowed_ip and $live.backend == $trust.backend' | jq -e '. == true'
 
-  REAPER_ALIVE=$(node packages/brain/src/codex-slot/cli.js reaper-once --run-id "$RUN_ID" --session-handle "$HANDLE")
-  echo "$REAPER_ALIVE" | tee "$EVIDENCE_DIR/${HOST}-reaper-alive.json" | jq -e --arg handle "$HANDLE" '.session_handle == $handle and .classification == "alive" and .action == "heartbeat"'
+  REAPER_ALIVE_TRIGGER=$(date +%s)
+  REAPER_ALIVE=$(node packages/brain/src/codex-slot/cli.js reaper-once --run-id "$RUN_ID" --session-handle "$HANDLE" --audit-ssh-config "$AUDIT_CONFIG")
+  echo "$REAPER_ALIVE" | tee "$EVIDENCE_DIR/${HOST}-reaper-alive.json" | jq -e --arg handle "$HANDLE" '
+    .session_handle == $handle and .classification == "alive" and .action == "heartbeat" and
+    .observation_source == "production_ssh_audit"'
+  ALIVE_OBSERVATION=$(psql "$DB_URL" -Atc "SELECT json_build_object(
+    'source',source,'session_handle',session_handle,'expected_agent_id',expected_agent_id,
+    'reported_agent_id',reported_agent_id,'reachable',reachable,'response_complete',response_complete,
+    'tmux_alive',tmux_alive,'process_alive',process_alive,'agent_state',agent_state,
+    'observed_at_epoch',extract(epoch FROM observed_at)
+  ) FROM codex_slot_agent_observations WHERE run_id='${RUN_ID}' AND session_handle='${HANDLE}' AND observed_at >= to_timestamp(${REAPER_ALIVE_TRIGGER}) ORDER BY observed_at DESC LIMIT 1")
+  echo "$ALIVE_OBSERVATION" | tee "$EVIDENCE_DIR/${HOST}-reaper-alive-observation.json" | jq -e --arg handle "$HANDLE" --arg host "$HOST" --argjson trigger "$REAPER_ALIVE_TRIGGER" '
+    keys == ["agent_state","expected_agent_id","observed_at_epoch","process_alive","reachable","reported_agent_id","response_complete","session_handle","source","tmux_alive"] and
+    .source == "production_ssh_audit" and .session_handle == $handle and
+    .expected_agent_id == $host and .reported_agent_id == $host and
+    .reachable == true and .response_complete == true and
+    .tmux_alive == true and .process_alive == true and .agent_state == "running" and
+    .observed_at_epoch >= $trigger'
+  jq -n --argjson audit "$LIVE" --argjson observation "$ALIVE_OBSERVATION" '
+    $observation.reported_agent_id == $audit.agent_id and
+    $observation.tmux_alive == $audit.tmux_alive and
+    $observation.process_alive == $audit.process_alive' | jq -e '. == true'
   READBACK_ALIVE=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh status --request-id "${REQUEST_ID}-readback-alive" --session-handle "$HANDLE")
   assert_session_response status "$READBACK_ALIVE" "${REQUEST_ID}-readback-alive" "$HANDLE" "$HOST" running active
   STOP=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh stop --request-id "${REQUEST_ID}-stop" --session-handle "$HANDLE")
   echo "$STOP" | tee "$EVIDENCE_DIR/${HOST}-stop.json" >/dev/null
   assert_session_response stop "$STOP" "${REQUEST_ID}-stop" "$HANDLE" "$HOST" stopped active
-  REAPER_STOPPED=$(node packages/brain/src/codex-slot/cli.js reaper-once --run-id "$RUN_ID" --session-handle "$HANDLE")
-  echo "$REAPER_STOPPED" | tee "$EVIDENCE_DIR/${HOST}-reaper-stopped.json" | jq -e --arg handle "$HANDLE" '.session_handle == $handle and .classification == "stopped" and .action == "released"'
+  STOPPED_AUDIT=$(ssh -F "$AUDIT_CONFIG" "codex-slot-audit@${HOST}" codex-slot-audit status "$HANDLE")
+  REAPER_STOPPED_TRIGGER=$(date +%s)
+  REAPER_STOPPED=$(node packages/brain/src/codex-slot/cli.js reaper-once --run-id "$RUN_ID" --session-handle "$HANDLE" --audit-ssh-config "$AUDIT_CONFIG")
+  echo "$REAPER_STOPPED" | tee "$EVIDENCE_DIR/${HOST}-reaper-stopped.json" | jq -e --arg handle "$HANDLE" '
+    .session_handle == $handle and .classification == "stopped" and .action == "released" and
+    .observation_source == "production_ssh_audit"'
+  STOPPED_OBSERVATION=$(psql "$DB_URL" -Atc "SELECT json_build_object(
+    'source',source,'session_handle',session_handle,'expected_agent_id',expected_agent_id,
+    'reported_agent_id',reported_agent_id,'reachable',reachable,'response_complete',response_complete,
+    'tmux_alive',tmux_alive,'process_alive',process_alive,'agent_state',agent_state,
+    'observed_at_epoch',extract(epoch FROM observed_at)
+  ) FROM codex_slot_agent_observations WHERE run_id='${RUN_ID}' AND session_handle='${HANDLE}' AND observed_at >= to_timestamp(${REAPER_STOPPED_TRIGGER}) ORDER BY observed_at DESC LIMIT 1")
+  echo "$STOPPED_OBSERVATION" | tee "$EVIDENCE_DIR/${HOST}-reaper-stopped-observation.json" | jq -e --arg handle "$HANDLE" --arg host "$HOST" --argjson trigger "$REAPER_STOPPED_TRIGGER" '
+    .source == "production_ssh_audit" and .session_handle == $handle and
+    .expected_agent_id == $host and .reported_agent_id == $host and
+    .reachable == true and .response_complete == true and
+    .tmux_alive == false and .process_alive == false and .agent_state == "stopped" and
+    .observed_at_epoch >= $trigger'
+  jq -n --argjson audit "$STOPPED_AUDIT" --argjson observation "$STOPPED_OBSERVATION" '
+    $observation.reported_agent_id == $audit.agent_id and
+    $observation.tmux_alive == $audit.tmux_alive and
+    $observation.process_alive == $audit.process_alive' | jq -e '. == true'
   READBACK_RELEASED=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh status --request-id "${REQUEST_ID}-readback-released" --session-handle "$HANDLE")
   assert_session_response status "$READBACK_RELEASED" "${REQUEST_ID}-readback-released" "$HANDLE" "$HOST" released released
   RELEASE=$(CODEX_SLOT_SSH_CONFIG="$ACTOR_A_CONFIG" scripts/codex-slot-client.sh release --request-id "${REQUEST_ID}-release" --session-handle "$HANDLE")
   echo "$RELEASE" | tee "$EVIDENCE_DIR/${HOST}-release.json" >/dev/null
   assert_session_response release "$RELEASE" "${REQUEST_ID}-release" "$HANDLE" "$HOST" released released
-  TRANSPORT=$(node packages/brain/src/codex-slot/cli.js audit-transport --run-id "$RUN_ID" --session-handle "$HANDLE")
-  echo "$TRANSPORT" | tee "$EVIDENCE_DIR/${HOST}-transport.json" | jq -e '
-    .client_stdin_keys.acquire == ["operation","repo","request_id"] and
-    .client_stdin_keys.status == ["operation","request_id","session_handle"] and
-    .client_stdin_keys.stop == ["operation","request_id","session_handle"] and
-    .client_stdin_keys.release == ["operation","request_id","session_handle"] and
+  TRANSPORT=$(ssh -F "$AUDIT_CONFIG" "codex-slot-audit@${HOST}" codex-slot-audit transport-capture "$HANDLE")
+  echo "$TRANSPORT" | tee "$EVIDENCE_DIR/${HOST}-transport.json" | jq -e --arg handle "$HANDLE" --argjson slot "$(echo "$ACQUIRE" | jq '.slot')" --arg fixture_sha "$FIXTURE_SHA" '
+    keys == ["accept_auth","argv_fixture_hits","audit_fixture_hits","env_fixture_hits","source","stdout_fixture_hits"] and
+    .source == "agent_ingress_capture" and
+    (.accept_auth | keys) == ["argv","env","env_keys","eof_seen","frame_format","metadata","metadata_line_bytes","raw_snapshot_bytes","raw_snapshot_sha256","stdin_bytes","trailing_bytes"] and
     .accept_auth.argv == ["codex-slot-agent","accept-auth"] and
-    .accept_auth.metadata_keys == ["nonce","operation","session_handle","slot","snapshot_bytes","snapshot_sha256"] and
-    .accept_auth.snapshot_channel == "stdin" and .accept_auth.stdin_bytes > 0 and .accept_auth.stdin_bytes <= 262144 and
-    (.accept_auth.stdin_sha256 | test("^[0-9a-f]{64}$")) and
+    .accept_auth.env_keys == ["LANG","LC_ALL","PATH"] and
+    .accept_auth.env == {"LANG":"C","LC_ALL":"C","PATH":"/usr/bin:/bin"} and
+    .accept_auth.frame_format == "json-line+raw+eof" and
+    (.accept_auth.metadata_line_bytes | type == "number") and
+    .accept_auth.metadata_line_bytes > 0 and .accept_auth.metadata_line_bytes <= 1024 and
+    (.accept_auth.metadata | keys) == ["nonce","operation","session_handle","slot","snapshot_bytes","snapshot_sha256"] and
+    .accept_auth.metadata.operation == "accept-auth" and
+    .accept_auth.metadata.session_handle == $handle and
+    (.accept_auth.metadata.session_handle | utf8bytelength) >= 1 and
+    (.accept_auth.metadata.session_handle | utf8bytelength) <= 128 and
+    .accept_auth.metadata.slot == $slot and (.accept_auth.metadata.slot | type == "number") and
+    (.accept_auth.metadata.nonce | type == "string" and test("^[0-9a-f]{32}$")) and
+    (.accept_auth.metadata.snapshot_bytes | type == "number") and
+    .accept_auth.metadata.snapshot_bytes >= 1 and .accept_auth.metadata.snapshot_bytes <= 262144 and
+    (.accept_auth.metadata.snapshot_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    .accept_auth.raw_snapshot_bytes == .accept_auth.metadata.snapshot_bytes and
+    .accept_auth.raw_snapshot_sha256 == .accept_auth.metadata.snapshot_sha256 and
+    .accept_auth.raw_snapshot_sha256 == $fixture_sha and
+    .accept_auth.stdin_bytes == (.accept_auth.metadata_line_bytes + 1 + .accept_auth.raw_snapshot_bytes) and
+    .accept_auth.eof_seen == true and .accept_auth.trailing_bytes == 0 and
     .argv_fixture_hits == 0 and .env_fixture_hits == 0 and .stdout_fixture_hits == 0 and .audit_fixture_hits == 0'
 
   CLEAN=$(ssh -F "$AUDIT_CONFIG" "codex-slot-audit@${HOST}" codex-slot-audit cleanup "$HANDLE")
@@ -531,16 +733,11 @@ for HOST in xian-m1 xian-m4; do
   echo "$LEGACY_REMOTE" | tee "$EVIDENCE_DIR/${HOST}-legacy-residue.json" | jq -e '
     .legacy_auth_files == 0 and .legacy_tmux_sessions == 0 and .legacy_launcher_files == 0'
 done
-rm -rf "$LEGACY_HOME"
-
-if rg -n '(access_token|refresh_token|auth_json|\"tokens\"|prompt|environment)' "$EVIDENCE_DIR"; then
-  echo "FAIL: 本轮证据含禁止键"
-  exit 1
-fi
 DUP=$(psql "$DB_URL" -Atc "SELECT count(*) FROM (SELECT account_key FROM codex_account_leases WHERE run_id='${RUN_ID}' AND state IN ('active','blocking','quarantined') GROUP BY account_key HAVING count(*) > 1) d")
 [ "$DUP" -eq 0 ] || { echo "FAIL: 本轮重复租约 count=${DUP}"; exit 1; }
 
-echo "Codex Slot Golden Path E2E PASS run_id=${RUN_ID} evidence=${EVIDENCE_DIR}"
+E2E_OPERATIONS_COMPLETE=1
+echo "Golden Path 操作完成，等待 EXIT trap 独立清理复核"
 ```
 
 ## Test Contract
@@ -549,5 +746,5 @@ echo "Codex Slot Golden Path E2E PASS run_id=${RUN_ID} evidence=${EVIDENCE_DIR}"
 |---|---|---|---|
 | WS1 | `tests/codex-slot-identity-routing.contract.test.ts` | `受控 SSH key 映射 actor` / `自动选择仅接纳身份` | identity/selector 模块不存在 |
 | WS2 | `tests/codex-slot-lifecycle.integration.contract.test.ts` | `单账号并发竞争` / `相同 request_id` / `actor B 对 actor A handle` / `未知投递结果` | migration/registry 模块不存在 |
-| WS3 | `tests/codex-slot-protocol-auth.contract.test.ts` | `acquire/status/stop/release/error JSON` / `受控 credential store` / `snapshot Buffer` / `snapshot oversize/hash mismatch` / `nonce durable` | protocol/credential-store/agent 模块不存在 |
-| WS4 | `tests/codex-slot-reaper-rollout.integration.contract.test.ts` | `rollout 只接受本 run` / `blocking lease` / `reaper 从独立事实计算` / `旧入口` / `Bash 3.2` / `scheduler JOBS` | rollout/reaper 未实现，两个旧入口仍执行旧 token 路径 |
+| WS3 | `tests/codex-slot-protocol-auth.contract.test.ts` | `acquire/status/stop/release/error JSON` / `accept-auth framing` / `受控 credential store` / `snapshot Buffer` / `snapshot oversize/hash mismatch` / `nonce durable 消费跨两个真实 OS 进程` | protocol/credential-store/agent 模块不存在 |
+| WS4 | `tests/codex-slot-reaper-rollout.integration.contract.test.ts` | `rollout 只接受本 run` / `inventory 真实扫描跨 run` / `reaper 经 production SSH/audit probe` / `旧入口` / `Bash 3.2` / `scheduler JOBS` | rollout/reaper 未实现，两个旧入口仍执行旧 token 路径 |

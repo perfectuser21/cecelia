@@ -17,8 +17,8 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] migration 定义 account/lease/session/audit/rollout/observation，audit evidence 含 id/kind/result/run/freshness，rollout 双 evidence 引用真实行；路径列为 TEXT，单账号阻塞租约有唯一约束。
-  Test: manual:node -e "const fs=require('fs');const p=fs.readdirSync('packages/brain/migrations').find(x=>x.includes('codex_slot'));if(!p)process.exit(1);const s=fs.readFileSync('packages/brain/migrations/'+p,'utf8');for(const k of ['codex_company_accounts','codex_account_leases','codex_slot_sessions','codex_slot_audit','codex_slot_rollout','codex_slot_agent_observations','evidence_id','evidence_kind','result','repo_path TEXT','worktree_path TEXT','UNIQUE','REFERENCES'])if(!s.includes(k))process.exit(1)"
+- [ ] [ARTIFACT] migration 定义 account/lease/session/audit/rollout/observation；audit evidence 含 id/kind/result/run/source/details/freshness，observation 含 production probe source/raw facts；路径列为 TEXT，单账号阻塞租约有唯一约束。
+  Test: manual:node -e "const fs=require('fs');const p=fs.readdirSync('packages/brain/migrations').find(x=>x.includes('codex_slot'));if(!p)process.exit(1);const s=fs.readFileSync('packages/brain/migrations/'+p,'utf8');for(const k of ['codex_company_accounts','codex_account_leases','codex_slot_sessions','codex_slot_audit','codex_slot_rollout','codex_slot_agent_observations','evidence_id','evidence_kind','source','details JSONB','observed_at','repo_path TEXT','worktree_path TEXT','UNIQUE','REFERENCES'])if(!s.includes(k))process.exit(1)"
 
 - [ ] [ARTIFACT] root config schema 包含 actor key/UID、xian-m1/xian-m4、max_slots、credential store、固定 agent/audit SSH config 与 `mmv` trust 字段。
   Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/src/codex-slot/config.js','utf8');for(const k of ['actors','uid','ssh_key','xian-m1','xian-m4','max_slots','credential_store','agent_ssh_config','audit_ssh_config','stable_node_id','peer','allowed_ip','backend'])if(!s.includes(k))process.exit(1);if(/38\\.23\\.47\\.81/.test(s))process.exit(1)"
@@ -41,8 +41,8 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
 - [ ] [ARTIFACT] 长期回归位于 Brain unit/integration 目录且分别覆盖 identity、agent auth、transport/auth、lifecycle、reaper/rollout；不依赖批准后只读 sprint tests。
   Test: manual:node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/codex-slot-identity-routing.test.js','packages/brain/src/__tests__/codex-slot-agent-auth.test.js','packages/brain/src/__tests__/codex-slot-protocol-auth.test.js','packages/brain/src/__tests__/integration/codex-slot-lifecycle.integration.test.js','packages/brain/src/__tests__/integration/codex-slot-reaper-rollout.integration.test.js']){const s=fs.readFileSync(p,'utf8');if(!/describe|test|it/.test(s))process.exit(1)}"
 
-- [ ] [ARTIFACT] Mac Bash 双版本与 xian 双真机分别有持续 workflow，宿主/脚本路径不混用。
-  Test: manual:node -e "const fs=require('fs');const m=fs.readFileSync('.github/workflows/codex-slot-bash-compat.yml','utf8'),x=fs.readFileSync('.github/workflows/nightly-real-machine.yml','utf8');for(const k of ['macos-13','/bin/bash','brew --prefix bash'])if(!m.includes(k))process.exit(1);for(const k of ['xian-m1','xian-m4','packages/brain/scripts/real-machine/codex-slot-host-smoke.sh','workflow_dispatch'])if(!x.includes(k))process.exit(1);if(x.includes('packages/brain/scripts/smoke/codex-slot-host-smoke.sh'))process.exit(1)"
+- [ ] [ARTIFACT] Mac Bash required job 直接位于 `ci.yml`，真执行 BEH-11 并由 `ci-passed.needs` 依赖；failure/cancelled/skipped 均阻断。xian 双真机仍由 nightly workflow 独立运行。
+  Test: manual:node -e "const fs=require('fs');const c=fs.readFileSync('.github/workflows/ci.yml','utf8'),x=fs.readFileSync('.github/workflows/nightly-real-machine.yml','utf8');const m=c.match(/\\n  codex-slot-bash-compat:\\n([\\s\\S]*?)(?=\\n  [a-zA-Z0-9_-]+:\\n)/),g=c.match(/\\n  ci-passed:\\n([\\s\\S]*?)(?=\\n  [a-zA-Z0-9_-]+:\\n)/);if(!m||!g)process.exit(1);for(const k of ['runs-on: macos-13','/bin/bash','brew --prefix bash','codex-slot-reaper-rollout.integration.contract.test.ts','Bash 3.2'])if(!m[1].includes(k))process.exit(1);if(!/needs:[^\\n]*codex-slot-bash-compat/.test(g[1])||!g[1].includes('needs.codex-slot-bash-compat.result')||!g[1].includes('!= \"success\"'))process.exit(1);for(const k of ['xian-m1','xian-m4','packages/brain/scripts/real-machine/codex-slot-host-smoke.sh','workflow_dispatch'])if(!x.includes(k))process.exit(1);if(x.includes('packages/brain/scripts/smoke/codex-slot-host-smoke.sh')||fs.existsSync('.github/workflows/codex-slot-bash-compat.yml'))process.exit(1)"
 
 - [ ] [ARTIFACT] DEFINITION 与 Brain VERSION 同步记录 Codex Slot，版本不是 Round 1 基线值。
   Test: manual:node -e "const fs=require('fs');const d=fs.readFileSync('DEFINITION.md','utf8'),v=fs.readFileSync('packages/brain/VERSION','utf8').trim();if(!/Codex Slot|codex slot/i.test(d)||!new RegExp(v.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')).test(d))process.exit(1)"
@@ -69,33 +69,33 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
   Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "acquire/status/stop/release/error JSON" --reporter=verbose'
   期望：1 test pass；真实 forced-command stdin/argv/env 在 BEH-12 E2E 独立复验。
 
-- [ ] [BEHAVIOR] BEH-06 [GP-5/6] 受控 store owner/mode、symlink/non-regular/read-side oversize、hash、跨重启 nonce replay、失败即零 auth/tmux 与目标 0600。
-  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "受控 credential store|snapshot Buffer|snapshot oversize/hash mismatch|nonce durable" --reporter=verbose'
-  期望：4 tests pass；expected UID/GID 不从被测文件反推，错误码逐字匹配。
+- [ ] [BEHAVIOR] BEH-06 [GP-5/6] accept-auth 精确 JSON-line+raw+EOF framing、三 key env allowlist、受控 store、hash、跨两个真实 OS 进程 nonce replay、失败零 auth/tmux 与目标 0600。
+  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "accept-auth framing|受控 credential store|snapshot Buffer|snapshot oversize/hash mismatch|nonce durable 消费跨两个真实 OS 进程" --reporter=verbose'
+  期望：5 tests pass；metadata keys/types/length、snapshot_bytes/SHA/EOF/零尾随均精确，两个 PID 不同且 replay 文件不存在。
 
 - [ ] [BEHAVIOR] BEH-07 [GP-7] 未知结果只 quarantine，broker 重建后同 handle 可 readback。
   Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts -t "未知投递结果|重建实例" --reporter=verbose'
   期望：2 tests pass。
 
-- [ ] [BEHAVIOR] BEH-08 [GP-8] reaper 从独立 reachability/identity/tmux/process/state facts 计算五分类，client status readback 消费结果且终态第二轮 no-op。
-  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "reaper 从独立事实计算" --reporter=verbose'
-  期望：5 cases pass；测试输入无最终 classification 字段。
+- [ ] [BEHAVIOR] BEH-08 [GP-8] production reaper 经真实 SSH/audit probe 新写本轮 raw observation 后计算五分类，client readback 消费结果且终态第二轮 no-op。
+  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "reaper 经 production SSH/audit probe 新写 raw observation" --reporter=verbose'
+  期望：5 cases pass；每例 source=production_ssh_audit、observed_at>=trigger、raw facts 与 probe 一致。
 
-- [ ] [BEHAVIOR] BEH-09 [GP-9] rollout 只接受同 run、5 分钟内、passed、kind 正确的 inventory/legacy probe evidence；垃圾/跨 run/过期/failed/缺失与 blocking lease 均阻断。
+- [ ] [BEHAVIOR] BEH-09 [GP-9] inventory 真扫跨 run lease/session/observation 内容，legacy evidence 真记两条 argv/exit/residue；只接受同 run、新鲜、passed 且 source/details 完整的 evidence。
   Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "rollout" --reporter=verbose'
-  期望：成功链与 blocking/缺失/垃圾/跨 run/过期/failed 阻断全部 pass。
+  期望：跨 run alive/unknown/blocking 进入 blockers 且 inventory failed；双旧 argv、非零 exit、broker_only 与 residue=0 持久化。
 
 - [ ] [BEHAVIOR] BEH-10 [GP-9] 两个旧入口以历史真实参数 `--team team1` 与 `--team team3 --brief <fixture>` 真执行，稳定 broker-only 非零语义，隔离 HOME 与真机旧路径零 auth/tmux。
   Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "旧入口" --reporter=verbose'
   期望：2 parameterized cases pass。
 
-- [ ] [BEHAVIOR] BEH-11 [GP-9/11] Mac host 上 client/agent/installer 通过真实 Bash 3.2 与现代 Bash，零参数均非零；对应 macos-13 workflow 持续回归。
-  Test: manual:bash -lc 'BASH_32_BIN="${BASH_32_BIN:-/bin/bash}" BASH_MODERN_BIN="${BASH_MODERN_BIN:-/opt/homebrew/bin/bash}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "Bash 3.2" --reporter=verbose'
-  期望：两个 shell version 互异且均通过。
+- [ ] [BEHAVIOR] BEH-11 [GP-9/11] 同一 commit 的真实 `CI` run 中，Mac job 真执行 Bash 3.2/现代 Bash test 并成功，随后 `ci-passed` 成功；job skipped 也不得放行。
+  Test: manual:bash -lc 'SHA=$(git rev-parse HEAD); RUN_ID=$(gh run list --workflow ci.yml --commit "$SHA" --limit 20 --json databaseId,status,conclusion --jq '"'"'[.[]|select(.status=="completed" and .conclusion=="success")][0].databaseId'"'"'); [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; gh run view "$RUN_ID" --json jobs | jq -e '"'"'[.jobs[]|select(.name=="Codex Slot Bash 3.2 + modern (required)")][0] as $m | [.jobs[]|select(.name=="ci-passed")][0] as $g | $m.conclusion=="success" and any($m.steps[]; .name=="Run BEH-11 on Bash 3.2 and modern Bash" and .conclusion=="success") and $g.conclusion=="success'"'"''
+  期望：真实 workflow/job/step/ci-passed 四层 conclusion 均 success。
 
 - [ ] [BEHAVIOR] BEH-12 [GP-1→10] 真 client→broker→agent 双机链，逐 handle 独立查 request/auth transport、源/目标权限、root trust 对比、SSH/PG/tmux/process/reaper readback/清理。
   Test: manual:bash -lc 'awk '"'"'/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'"'"' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh'
-  期望：exit 0；两个 host 各 5 个绑定本轮 handle 的 audit 事件。
+  期望：exit 0；agent ingress capture 精确 framing/env，reaper observation 新鲜，两个 host 各 5 事件；EXIT trap 后 source/nonce/sandbox、双机资源与 DB fixture 均为 0。
 
 - [ ] [BEHAVIOR] BEH-13 [GP-11] Brain 实际 task payload 的 target_environment 为 local_api。
   Test: manual:bash -lc 'TASK_ID="${HARNESS_TASK_ID:-56bf3e23-1bba-4c6a-8d19-e32d5d746395}"; curl -sf "localhost:5221/api/brain/tasks/${TASK_ID}" | jq -e '"'"'.payload.target_environment == "local_api"'"'"''
@@ -105,13 +105,17 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
   Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}"; psql "$DB_URL" -Atc "SELECT column_name||'"'"'"'"'"':'"'"'"'"'"'||data_type FROM information_schema.columns WHERE table_name='"'"'"'"'"'codex_slot_sessions'"'"'"'"'"' AND column_name IN ('"'"'"'"'"'repo_path'"'"'"'"'"','"'"'"'"'"'worktree_path'"'"'"'"'"','"'"'"'"'"'session_handle'"'"'"'"'"') ORDER BY column_name" | jq -Rsc '"'"'split("\n")[:-1] | sort == ["repo_path:text","session_handle:text","worktree_path:text"] or sort == ["repo_path:text","session_handle:uuid","worktree_path:text"]'"'"''
   期望：exit 0，无 varchar 截断。
 
+- [ ] [BEHAVIOR] BEH-15 [GP-10] provision 与 xian-m1 真 acquire 后故意失败，幂等 EXIT trap 仍清 broker source/nonce/sandbox、双机 auth/tmux/process/worktree 与本轮 account/session/lease。
+  Test: manual:bash -lc 'E="sprints/07240705-relay-56bf3e23/evidence/fail-cleanup-$(date +%s)-$$"; awk '"'"'/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'"'"' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh; set +e; CODEX_SLOT_E2E_FAIL_AFTER=xian-m1-acquire CODEX_SLOT_EVIDENCE_DIR="$E" bash /tmp/codex-slot-e2e.sh; RC=$?; set -e; [ "$RC" -eq 97 ]; jq -e '"'"'.accounts==0 and .leases==0 and .sessions==0 and .nonterminal_leases==0 and .audit_evidence>=1'"'"' "$E/db-residue.json"; for H in xian-m1 xian-m4; do jq -e '"'"'.auth_files==0 and .tmux_sessions==0 and .processes==0 and .worktrees==0 and .nonce_entries==0 and .sandbox_residue_count==0'"'"' "$E/${H}-trap-residue.json"; done; jq -e '"'"'.ok==true and .idempotent==true'"'"' "$E/deprovision.json"'
+  期望：故意失败保留 exit 97；cleanup evidence 保留但 credential/resource 计数全部为 0。
+
 ## Invariant 约束逐条映射
 
 - [ ] [BEHAVIOR] INV-01 [GP-11] 冒烟铁律：security smoke 真执行并带本轮 run_id。
   Test: manual:bash -lc 'RUN_ID="inv01-$(date +%s)-$$"; bash packages/brain/scripts/smoke/codex-slot-security-smoke.sh full --run-id "$RUN_ID" | jq -e --arg r "$RUN_ID" ".ok == true and .run_id == \$r"'
 - INV-02 — N/A：与 INV-01 字面重复，由 INV-01 单一真实 oracle 覆盖。
 - [ ] [BEHAVIOR] INV-03 [GP-8] reaper 状态不重置并真实等待两轮。
-  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "reaper 从独立事实计算" --reporter=verbose'
+  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "reaper 经 production SSH/audit probe 新写 raw observation" --reporter=verbose'
 - INV-04 — N/A：reaper 无 LLM/付费第三方调用。
 - [ ] [BEHAVIOR] INV-05 [GP-2/8] freshness 常数满足 `0 < freshness <= 60000`。
   Test: manual:bash -lc 'node -e "Promise.all([import(\"./packages/brain/src/codex-slot/config.js\"),import(\"./packages/brain/src/codex-slot/reaper.js\")]).then(([c,r])=>{if(!(c.MMV_FRESHNESS_MS>0&&c.CAPACITY_FRESHNESS_MS>0&&c.MMV_FRESHNESS_MS<=60000&&c.CAPACITY_FRESHNESS_MS<=60000&&r.REAPER_INTERVAL_MS===60000))process.exit(1)})"'
@@ -124,7 +128,7 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
 - [ ] [BEHAVIOR] INV-10 [GP-11] 新 Codex Slot 路径不复活未审 death history。
   Test: manual:bash -lc 'LOG=$(git log --all --diff-filter=D --format= --name-only -- packages/brain/src/codex-slot scripts/codex-slot-client.sh scripts/codex-slot-agent.sh | sed "/^$/d"); [ -z "$LOG" ] || { echo "FAIL: 新路径命中 deleted history: $LOG"; exit 1; }'
 - [ ] [BEHAVIOR] INV-11 [GP-5/6] false/error 返回路径显式拒绝，不靠异常兜底。
-  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "snapshot oversize/hash mismatch|nonce durable" --reporter=verbose'
+  Test: manual:bash -lc 'npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-protocol-auth.contract.test.ts -t "accept-auth framing|snapshot oversize/hash mismatch|nonce durable 消费跨两个真实 OS 进程" --reporter=verbose'
 - INV-12 — N/A：与 INV-01 重复的冒烟条目。
 - INV-13 — N/A：不改 journey_features/report pipeline。
 - INV-14 — N/A：不改 harness-controller finalize/report。
@@ -141,7 +145,7 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
   Test: manual:bash -lc 'awk '"'"'/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'"'"' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh'
 - INV-21 — N/A：无 UI；设备差异通过 agent_id 字段对外可见。
 - [ ] [BEHAVIOR] INV-22 [GP-7/8] broker/reaper/final E2E 对 unknown 一致为 quarantine。
-  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "未知投递结果|reaper 从独立事实计算 unknown" --reporter=verbose'
+  Test: manual:bash -lc 'DB_URL="${DB_URL:-postgresql://localhost/cecelia}" npx vitest run sprints/07240705-relay-56bf3e23/tests/codex-slot-lifecycle.integration.contract.test.ts sprints/07240705-relay-56bf3e23/tests/codex-slot-reaper-rollout.integration.contract.test.ts -t "未知投递结果|production SSH/audit probe 新写 raw observation 后计算 unknown" --reporter=verbose'
 - [ ] [BEHAVIOR] INV-23 [GP-4] worktree ref 必须用 `git rev-parse --verify <ref>^{commit}`。
   Test: manual:bash -lc 'node -e "const s=require(\"fs\").readFileSync(\"packages/brain/src/codex-slot/agent.js\",\"utf8\");if(!/rev-parse[\\s\\S]{0,80}--verify[\\s\\S]{0,80}\\^\\{commit\\}/.test(s))process.exit(1)"'
 - [ ] [BEHAVIOR] INV-24 [GP-10] 真机使用 run-scoped sandbox，独立 audit 证实零残留。
@@ -173,7 +177,7 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
 - INV-42 — N/A：不新增 launchd 常驻服务。
 - INV-43 — N/A：与 INV-01 重复的冒烟条目。
 - [ ] [BEHAVIOR] INV-44 [GP-11] segmented 恰 8 段串行且实现 files 不含合同 tests。
-  Test: manual:bash -lc 'node -e "const p=require(\"./sprints/07240705-relay-56bf3e23/task-plan.json\"),t=p.tasks;if(p.harness_gear!==\"segmented\"||t.length!==8)process.exit(1);t.forEach((x,i)=>{const w=i? [t[i-1].task_id]:[];if(JSON.stringify(x.depends_on)!==JSON.stringify(w)||x.files.some(f=>f.includes(\"/tests/\")&&f.includes(\"contract\")))process.exit(1)})"'
+  Test: manual:bash -lc 'node -e "const p=require(\"./sprints/07240705-relay-56bf3e23/task-plan.json\"),t=p.tasks,owners=new Map;if(p.harness_gear!==\"segmented\"||t.length!==8)process.exit(1);t.forEach((x,i)=>{const w=i?[t[i-1].task_id]:[];if(JSON.stringify(x.depends_on)!==JSON.stringify(w)||x.files.some(f=>f.includes(\"/tests/\")&&f.includes(\"contract\")))process.exit(1);for(const f of x.files){if(owners.has(f))process.exit(1);owners.set(f,x.task_id)}});if(owners.get(\".github/workflows/ci.yml\")!==\"ws6\"||owners.has(\".github/workflows/codex-slot-bash-compat.yml\"))process.exit(1)"'
 - [ ] [BEHAVIOR] INV-45 [GP-2/6/10] `mmv` trust 只从 root config 读取并在双机实时校准。
   Test: manual:bash -lc 'awk '"'"'/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'"'"' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh'
 - [ ] [BEHAVIOR] INV-46 [GP-10] 两台真目标都通过后才 done。
@@ -191,4 +195,4 @@ gate-allow: domain/db-no-time-window `information_schema.columns` 是无 `create
 
 - [ ] [BEHAVIOR:E2E] [GP-1→10] local_api evaluator 从真实 client 进入 broker forced-command，再到 xian-m1/xian-m4 agent；同一 run/request/handle 绑定真 PG 与独立远端 oracle。
   Test: manual:bash -lc 'awk '"'"'/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'"'"' sprints/07240705-relay-56bf3e23/contract-draft.md >/tmp/codex-slot-e2e.sh && bash /tmp/codex-slot-e2e.sh'
-  期望：script exit 0；精确 schema/auth、双 host、双旧入口、reaper/rollout、秘密与零残留全部成立。
+  期望：script exit 0；精确 framing/env/schema/auth、双 host、双旧入口、reaper/rollout 均来自真实 source/details；成功 EXIT trap 后 credential/resource/lease 全为 0。

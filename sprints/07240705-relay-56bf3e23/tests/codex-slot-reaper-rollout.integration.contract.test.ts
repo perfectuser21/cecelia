@@ -75,9 +75,107 @@ async function assertMissingRolloutEvidence(
   expect(row.legacy_probe_evidence_id).toBeNull();
 }
 
-async function captureValidRolloutEvidence(runId: string) {
+async function readEvidence(evidenceId: string) {
+  const row = await client.query(
+    `SELECT evidence_id, evidence_kind, result, run_id, source, details, created_at
+       FROM codex_slot_audit
+      WHERE evidence_id = $1`,
+    [evidenceId],
+  );
+  expect(row.rowCount).toBe(1);
+  return row.rows[0];
+}
+
+async function seedHistoricalInventory(
+  evidenceRunId: string,
+  categories: Array<"released" | "alive" | "unknown" | "blocking">,
+) {
+  const { CodexSlotRegistry } =
+    await import("../../../packages/brain/src/codex-slot/registry.js");
+  const registry = new CodexSlotRegistry(client);
+  const historicalRunId = `${evidenceRunId}-historical`;
+  const handles: Record<string, string> = {};
+  for (const category of categories) {
+    const accountKey = `${historicalRunId}-${category}-account`;
+    await client.query(
+      `INSERT INTO codex_company_accounts(account_key, enabled, run_id)
+       VALUES ($1, true, $2)`,
+      [accountKey, historicalRunId],
+    );
+    const acquired = await registry.acquire({
+      actor_id: `${historicalRunId}-${category}-actor`,
+      agent_id: "xian-m1",
+      slot: 1,
+      request_id: `${historicalRunId}-${category}-request`,
+      run_id: historicalRunId,
+    });
+    handles[category] = acquired.session_handle;
+    if (category === "blocking") continue;
+    if (category === "alive") {
+      await client.query(
+        "UPDATE codex_account_leases SET state='active' WHERE session_handle=$1",
+        [acquired.session_handle],
+      );
+      await client.query(
+        "UPDATE codex_slot_sessions SET state='running' WHERE session_handle=$1",
+        [acquired.session_handle],
+      );
+      await registry.recordAgentObservation(acquired.session_handle, {
+        source: "historical_fixture",
+        expected_agent_id: "xian-m1",
+        reported_agent_id: "xian-m1",
+        reachable: true,
+        response_complete: true,
+        tmux_alive: true,
+        process_alive: true,
+        agent_state: "running",
+        observed_at: new Date(),
+        run_id: historicalRunId,
+      });
+    } else if (category === "unknown") {
+      await client.query(
+        "UPDATE codex_account_leases SET state='quarantined' WHERE session_handle=$1",
+        [acquired.session_handle],
+      );
+      await client.query(
+        "UPDATE codex_slot_sessions SET state='quarantined' WHERE session_handle=$1",
+        [acquired.session_handle],
+      );
+      await registry.recordAgentObservation(acquired.session_handle, {
+        source: "historical_fixture",
+        expected_agent_id: "xian-m1",
+        reported_agent_id: null,
+        reachable: true,
+        response_complete: false,
+        tmux_alive: null,
+        process_alive: null,
+        agent_state: null,
+        observed_at: new Date(),
+        run_id: historicalRunId,
+      });
+    } else {
+      await client.query(
+        "UPDATE codex_account_leases SET state='released' WHERE session_handle=$1",
+        [acquired.session_handle],
+      );
+      await client.query(
+        "UPDATE codex_slot_sessions SET state='released' WHERE session_handle=$1",
+        [acquired.session_handle],
+      );
+    }
+  }
+  return { historicalRunId, handles };
+}
+
+async function captureRolloutEvidence(
+  runId: string,
+  inventoryCategories: Array<
+    "released" | "alive" | "unknown" | "blocking"
+  > = ["released"],
+) {
   const { captureInventoryEvidence, captureLegacyProbeEvidence } =
     await import("../../../packages/brain/src/codex-slot/rollout.js");
+  const historical = await seedHistoricalInventory(runId, inventoryCategories);
   const evidenceHome = await mkdtemp(join(tmpdir(), `${runId}-evidence-`));
   const brief = join(evidenceHome, "task.md");
   await mkdir(join(evidenceHome, "tmp"));
@@ -102,9 +200,88 @@ async function captureValidRolloutEvidence(runId: string) {
         },
       ],
     });
+    const expectedPassed =
+      !inventoryCategories.includes("alive") &&
+      !inventoryCategories.includes("unknown") &&
+      !inventoryCategories.includes("blocking");
+    expect(inventory).toMatchObject({
+      source: "registry_scan",
+      result: expectedPassed ? "passed" : "failed",
+      details: {
+        scan_scope: "all_runs",
+        scanned_tables: [
+          "codex_account_leases",
+          "codex_slot_sessions",
+          "codex_slot_agent_observations",
+        ],
+      },
+    });
+    expect(inventory.details.observed_run_ids).toContain(
+      historical.historicalRunId,
+    );
+    for (const category of inventoryCategories) {
+      expect(inventory.details.counts[category]).toBeGreaterThanOrEqual(1);
+    }
+    if (expectedPassed) {
+      expect(inventory.details.blockers).toEqual([]);
+    } else {
+      for (const category of ["alive", "unknown", "blocking"]) {
+        if (
+          inventoryCategories.includes(
+            category as "alive" | "unknown" | "blocking",
+          )
+        ) {
+          expect(inventory.details.blockers).toContain(
+            historical.handles[category],
+          );
+        }
+      }
+    }
+    expect(legacy).toMatchObject({
+      source: "isolated_process_exec",
+      result: "passed",
+    });
+    expect(legacy.details.probes).toHaveLength(2);
+    expect(legacy.details.probes[0]).toMatchObject({
+      argv: ["scripts/codex-request.sh", "--team", "team1"],
+      exit_code: expect.any(Number),
+      error_code: "broker_only",
+      auth_residue_count: 0,
+      tmux_residue_count: 0,
+    });
+    expect(legacy.details.probes[0].exit_code).not.toBe(0);
+    expect(legacy.details.probes[1].argv).toEqual([
+      "scripts/codex-remote-launch.sh",
+      "--team",
+      "team3",
+      "--brief",
+      brief,
+    ]);
+    expect(legacy.details.probes[1]).toMatchObject({
+      error_code: "broker_only",
+      auth_residue_count: 0,
+      tmux_residue_count: 0,
+    });
+    expect(legacy.details.probes[1].exit_code).not.toBe(0);
+    expect(await readEvidence(inventory.evidence_id)).toMatchObject({
+      evidence_kind: "inventory",
+      result: inventory.result,
+      run_id: runId,
+      source: "registry_scan",
+      details: inventory.details,
+    });
+    expect(await readEvidence(legacy.evidence_id)).toMatchObject({
+      evidence_kind: "legacy_probe",
+      result: "passed",
+      run_id: runId,
+      source: "isolated_process_exec",
+      details: legacy.details,
+    });
     return {
       inventoryEvidenceId: inventory.evidence_id,
       legacyEvidenceId: legacy.evidence_id,
+      inventory,
+      legacy,
     };
   } finally {
     await rm(evidenceHome, { recursive: true, force: true });
@@ -113,7 +290,6 @@ async function captureValidRolloutEvidence(runId: string) {
 
 async function assertReaperClassification(
   expectedClassification: string,
-  facts: Record<string, unknown>,
   expectedFirst: string,
   expectedSecond: string,
 ) {
@@ -135,51 +311,183 @@ async function assertReaperClassification(
     request_id: `${RUN}-${suffix}-request`,
     run_id: RUN,
   });
-  await registry.recordAgentObservation(acquired.session_handle, {
-    expected_agent_id: "xian-m1",
-    reported_agent_id: "xian-m1",
-    reachable: true,
-    response_complete: true,
-    tmux_alive: true,
-    process_alive: true,
-    agent_state: "running",
-    observed_at: new Date(),
-    run_id: RUN,
-    ...facts,
-  });
-
-  const first = await runCodexSlotReaper(client, { run_id: RUN });
-  await new Promise((resolve) => setTimeout(resolve, 1_100));
-  const second = await runCodexSlotReaper(client, { run_id: RUN });
-  const statusAfterFirst = await registry.status(
-    acquired.session_handle,
-    `${RUN}-${suffix}-actor`,
+  const fixtureRoot = await mkdtemp(
+    join(tmpdir(), `${RUN}-${expectedClassification}-probe-`),
   );
-  expect(
-    first.find(
-      (x: { session_handle: string }) =>
-        x.session_handle === acquired.session_handle,
-    ),
-  ).toMatchObject({
-    classification: expectedClassification,
-    action: expectedFirst,
-  });
-  expect(
-    second.find(
-      (x: { session_handle: string }) =>
-        x.session_handle === acquired.session_handle,
-    ),
-  ).toMatchObject({
-    classification: expectedClassification,
-    action: expectedSecond,
-  });
-  expect(statusAfterFirst.lease_state).toBe(
-    expectedFirst === "released"
-      ? "released"
-      : expectedFirst === "quarantined"
-        ? "quarantined"
-        : "active",
-  );
+  try {
+    const fixture = await execFileAsync(
+      "/bin/bash",
+      [
+        "packages/brain/src/__tests__/fixtures/codex-slot-probe-sshd.sh",
+        "prepare-reaper-probe-fixture",
+        "--case",
+        expectedClassification,
+        "--root",
+        fixtureRoot,
+        "--session-handle",
+        acquired.session_handle,
+        "--expected-agent",
+        "xian-m1",
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          HOME: fixtureRoot,
+          PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+          TMPDIR: fixtureRoot,
+          LC_ALL: "C",
+          LANG: "C",
+        },
+      },
+    );
+    const fixtureInfo = JSON.parse(fixture.stdout);
+    expect(fixtureInfo).toMatchObject({
+      transport: "ssh",
+      audit_principal: "codex-slot-audit",
+      real_sshd: true,
+    });
+    const directProbeResult = await execFileAsync(
+      "/usr/bin/ssh",
+      [
+        "-F",
+        fixtureInfo.audit_ssh_config,
+        `codex-slot-audit@${fixtureInfo.host_alias}`,
+        "codex-slot-audit",
+        "status",
+        acquired.session_handle,
+      ],
+      { cwd: process.cwd() },
+    ).then(
+      ({ stdout }) => ({ code: 0, stdout }),
+      (error: { code?: number; stdout?: string }) => ({
+        code: error.code ?? 1,
+        stdout: error.stdout ?? "",
+      }),
+    );
+    let directRawFacts: Record<string, unknown>;
+    if (directProbeResult.code !== 0) {
+      directRawFacts = {
+        expected_agent_id: "xian-m1",
+        reported_agent_id: null,
+        reachable: false,
+        response_complete: false,
+        tmux_alive: null,
+        process_alive: null,
+        agent_state: null,
+      };
+    } else {
+      try {
+        const raw = JSON.parse(directProbeResult.stdout);
+        directRawFacts = {
+          expected_agent_id: "xian-m1",
+          reported_agent_id: raw.agent_id,
+          reachable: true,
+          response_complete: true,
+          tmux_alive: raw.tmux_alive,
+          process_alive: raw.process_alive,
+          agent_state: raw.agent_state,
+        };
+      } catch {
+        directRawFacts = {
+          expected_agent_id: "xian-m1",
+          reported_agent_id: null,
+          reachable: true,
+          response_complete: false,
+          tmux_alive: null,
+          process_alive: null,
+          agent_state: null,
+        };
+      }
+    }
+    const triggerTime = new Date();
+    const first = await runCodexSlotReaper(client, {
+      run_id: RUN,
+      audit_ssh_config: fixtureInfo.audit_ssh_config,
+    });
+    const observation = await client.query(
+      `SELECT source, expected_agent_id, reported_agent_id, reachable,
+              response_complete, tmux_alive, process_alive, agent_state,
+              observed_at, run_id
+         FROM codex_slot_agent_observations
+        WHERE session_handle=$1 AND run_id=$2 AND observed_at >= $3
+        ORDER BY observed_at DESC
+        LIMIT 1`,
+      [acquired.session_handle, RUN, triggerTime],
+    );
+    expect(observation.rowCount).toBe(1);
+    expect(observation.rows[0]).toMatchObject({
+      source: "production_ssh_audit",
+      expected_agent_id: "xian-m1",
+      run_id: RUN,
+    });
+    expect(observation.rows[0].observed_at.getTime()).toBeGreaterThanOrEqual(
+      triggerTime.getTime(),
+    );
+    expect(directRawFacts).toMatchObject({
+      expected_agent_id: observation.rows[0].expected_agent_id,
+      reported_agent_id: observation.rows[0].reported_agent_id,
+      reachable: observation.rows[0].reachable,
+      response_complete: observation.rows[0].response_complete,
+      tmux_alive: observation.rows[0].tmux_alive,
+      process_alive: observation.rows[0].process_alive,
+      agent_state: observation.rows[0].agent_state,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const second = await runCodexSlotReaper(client, {
+      run_id: RUN,
+      audit_ssh_config: fixtureInfo.audit_ssh_config,
+    });
+    const statusAfterFirst = await registry.status(
+      acquired.session_handle,
+      `${RUN}-${suffix}-actor`,
+    );
+    expect(
+      first.find(
+        (x: { session_handle: string }) =>
+          x.session_handle === acquired.session_handle,
+      ),
+    ).toMatchObject({
+      classification: expectedClassification,
+      action: expectedFirst,
+    });
+    expect(
+      second.find(
+        (x: { session_handle: string }) =>
+          x.session_handle === acquired.session_handle,
+      ),
+    ).toMatchObject({
+      classification: expectedClassification,
+      action: expectedSecond,
+    });
+    expect(statusAfterFirst.lease_state).toBe(
+      expectedFirst === "released"
+        ? "released"
+        : expectedFirst === "quarantined"
+          ? "quarantined"
+          : "active",
+    );
+  } finally {
+    await execFileAsync(
+      "/bin/bash",
+      [
+        "packages/brain/src/__tests__/fixtures/codex-slot-probe-sshd.sh",
+        "teardown-reaper-probe-fixture",
+        "--root",
+        fixtureRoot,
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          HOME: fixtureRoot,
+          PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+          TMPDIR: fixtureRoot,
+          LC_ALL: "C",
+          LANG: "C",
+        },
+      },
+    ).catch(() => undefined);
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
 }
 
 async function assertLegacyDisabled(script: string) {
@@ -225,7 +533,7 @@ describe("Codex Slot rollout、旧入口与 reaper 真接缝 [BEHAVIOR]", () => 
     const { transitionRollout, readRollout } =
       await import("../../../packages/brain/src/codex-slot/rollout.js");
     const runId = `${RUN}-success`;
-    const evidence = await captureValidRolloutEvidence(runId);
+    const evidence = await captureRolloutEvidence(runId);
     await transitionRollout(client, {
       run_id: runId,
       from: "frozen",
@@ -249,28 +557,16 @@ describe("Codex Slot rollout、旧入口与 reaper 真接缝 [BEHAVIOR]", () => 
     });
   });
 
-  it("rollout 有 blocking lease 时拒绝 inventory_complete 并保持 frozen", async () => {
+  it("rollout inventory 真实扫描跨 run alive/unknown/blocking 并拒绝产生 passed evidence", async () => {
     const { transitionRollout, readRollout } =
       await import("../../../packages/brain/src/codex-slot/rollout.js");
     const runId = `${RUN}-blocking`;
-    const evidence = await captureValidRolloutEvidence(runId);
-    await client.query(
-      `INSERT INTO codex_company_accounts(account_key, enabled, run_id)
-       VALUES ($1, true, $2)`,
-      [`${runId}-account`, runId],
-    );
-    await client.query(
-      `INSERT INTO codex_account_leases
-         (account_key, actor_id, session_handle, request_id, state, run_id)
-       VALUES ($1, $2, $3, $4, 'blocking', $5)`,
-      [
-        `${runId}-account`,
-        `${runId}-actor`,
-        `${runId}-handle`,
-        `${runId}-request`,
-        runId,
-      ],
-    );
+    const evidence = await captureRolloutEvidence(runId, [
+      "alive",
+      "unknown",
+      "blocking",
+    ]);
+    expect(evidence.inventory.result).toBe("failed");
     await expect(
       transitionRollout(client, {
         run_id: runId,
@@ -279,7 +575,7 @@ describe("Codex Slot rollout、旧入口与 reaper 真接缝 [BEHAVIOR]", () => 
         inventory_evidence_id: evidence.inventoryEvidenceId,
         legacy_probe_evidence_id: evidence.legacyEvidenceId,
       }),
-    ).rejects.toThrow(/blocking|lease/i);
+    ).rejects.toThrow(/inventory|evidence|blocking|unknown|alive/i);
     expect((await readRollout(client, runId)).state).toBe("frozen");
   });
 
@@ -307,14 +603,14 @@ describe("Codex Slot rollout、旧入口与 reaper 真接缝 [BEHAVIOR]", () => 
     const failedRun = `${RUN}-validation-failed`;
     await client.query(
       `INSERT INTO codex_slot_audit
-         (evidence_id, evidence_kind, result, run_id, event, created_at)
+         (evidence_id, evidence_kind, result, run_id, source, details, event, created_at)
        VALUES
-         ($1, 'inventory', 'passed', $2, 'rollout_evidence', NOW()),
-         ($3, 'legacy_probe', 'passed', $2, 'rollout_evidence', NOW()),
-         ($4, 'inventory', 'passed', $5, 'rollout_evidence', NOW() - interval '10 minutes'),
-         ($6, 'legacy_probe', 'passed', $5, 'rollout_evidence', NOW()),
-         ($7, 'inventory', 'passed', $8, 'rollout_evidence', NOW()),
-         ($9, 'legacy_probe', 'failed', $8, 'rollout_evidence', NOW())`,
+         ($1, 'inventory', 'passed', $2, 'test_fixture', '{}'::jsonb, 'rollout_evidence', NOW()),
+         ($3, 'legacy_probe', 'passed', $2, 'test_fixture', '{}'::jsonb, 'rollout_evidence', NOW()),
+         ($4, 'inventory', 'passed', $5, 'test_fixture', '{}'::jsonb, 'rollout_evidence', NOW() - interval '10 minutes'),
+         ($6, 'legacy_probe', 'passed', $5, 'test_fixture', '{}'::jsonb, 'rollout_evidence', NOW()),
+         ($7, 'inventory', 'passed', $8, 'test_fixture', '{}'::jsonb, 'rollout_evidence', NOW()),
+         ($9, 'legacy_probe', 'failed', $8, 'test_fixture', '{}'::jsonb, 'rollout_evidence', NOW())`,
       [
         `${RUN}-other-run-inventory`,
         `${RUN}-different-run`,
@@ -361,52 +657,37 @@ describe("Codex Slot rollout、旧入口与 reaper 真接缝 [BEHAVIOR]", () => 
     }
   });
 
-  it("reaper 从独立事实计算 alive，client status readback 为 active 且第二轮 heartbeat", async () => {
-    await assertReaperClassification("alive", {}, "heartbeat", "heartbeat");
+  it("reaper 经 production SSH/audit probe 新写 raw observation 后计算 alive 并 readback active", async () => {
+    await assertReaperClassification("alive", "heartbeat", "heartbeat");
   });
 
-  it("reaper 从独立事实计算 stopped，client status readback 为 released 且第二轮 no-op", async () => {
+  it("reaper 经 production SSH/audit probe 新写 raw observation 后计算 stopped 并 readback released", async () => {
     await assertReaperClassification(
       "stopped",
-      { tmux_alive: false, process_alive: false, agent_state: "stopped" },
       "released",
       "noop",
     );
   });
 
-  it("reaper 从独立事实计算 unreachable，client status readback 为 quarantined 且第二轮 no-op", async () => {
+  it("reaper 经 production SSH/audit probe 新写 raw observation 后计算 unreachable 并 readback quarantined", async () => {
     await assertReaperClassification(
       "unreachable",
-      {
-        reachable: false,
-        response_complete: false,
-        tmux_alive: null,
-        process_alive: null,
-        agent_state: null,
-      },
       "quarantined",
       "noop",
     );
   });
 
-  it("reaper 从独立事实计算 mismatch，client status readback 为 quarantined 且第二轮 no-op", async () => {
+  it("reaper 经 production SSH/audit probe 新写 raw observation 后计算 mismatch 并 readback quarantined", async () => {
     await assertReaperClassification(
       "mismatch",
-      { reported_agent_id: "xian-m4" },
       "quarantined",
       "noop",
     );
   });
 
-  it("reaper 从独立事实计算 unknown，client status readback 为 quarantined 且第二轮 no-op", async () => {
+  it("reaper 经 production SSH/audit probe 新写 raw observation 后计算 unknown 并 readback quarantined", async () => {
     await assertReaperClassification(
       "unknown",
-      {
-        response_complete: false,
-        tmux_alive: null,
-        process_alive: null,
-        agent_state: null,
-      },
       "quarantined",
       "noop",
     );

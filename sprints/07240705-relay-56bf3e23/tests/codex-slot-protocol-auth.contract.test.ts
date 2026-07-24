@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -191,6 +191,91 @@ describe("Codex Slot CLI schema 与 auth snapshot 安全边界 [BEHAVIOR]", () =
         assertClientResponse("error", { ...error, actor_id: "leak" }),
       ).toThrow(/schema|field|forbidden|unexpected|禁用/i);
     }
+  });
+
+  it("accept-auth framing 精确解析 metadata、snapshot_bytes、SHA、EOF 并拒绝尾随字节", async () => {
+    const { parseAcceptAuthFrame } =
+      await import("../../../packages/brain/src/codex-slot/protocol.js");
+    const snapshot = Buffer.from('{"fixture":"codex-slot-non-secret"}');
+    const metadata = {
+      operation: "accept-auth",
+      session_handle: "session-framing",
+      slot: 1,
+      nonce: "a".repeat(32),
+      snapshot_bytes: snapshot.length,
+      snapshot_sha256: createHash("sha256").update(snapshot).digest("hex"),
+    };
+    const makeFrame = (
+      value: Record<string, unknown>,
+      bytes = snapshot,
+      trailing = Buffer.alloc(0),
+    ) =>
+      Buffer.concat([
+        Buffer.from(`${JSON.stringify(value)}\n`, "utf8"),
+        bytes,
+        trailing,
+      ]);
+    const parse = (frame: Buffer) =>
+      Promise.resolve().then(() =>
+        parseAcceptAuthFrame(frame, {
+          maxMetadataBytes: 1024,
+          maxSnapshotBytes: MAX_AUTH_SNAPSHOT_BYTES,
+        }),
+      );
+
+    const parsed = await parse(makeFrame(metadata));
+    expect(Object.keys(parsed.metadata).sort()).toEqual([
+      "nonce",
+      "operation",
+      "session_handle",
+      "slot",
+      "snapshot_bytes",
+      "snapshot_sha256",
+    ]);
+    expect(parsed.metadata).toEqual(metadata);
+    expect(parsed.snapshot).toEqual(snapshot);
+    expect(parsed.eofSeen).toBe(true);
+    expect(parsed.trailingBytes).toBe(0);
+
+    for (const invalidMetadata of [
+      { ...metadata, debug: "forbidden" },
+      { ...metadata, operation: "deliver" },
+      { ...metadata, session_handle: 42 },
+      { ...metadata, session_handle: "x".repeat(129) },
+      { ...metadata, slot: "1" },
+      { ...metadata, slot: 1.5 },
+      { ...metadata, nonce: "not-128-bit-hex" },
+      { ...metadata, snapshot_bytes: `${snapshot.length}` },
+      { ...metadata, snapshot_bytes: 0 },
+      { ...metadata, snapshot_bytes: MAX_AUTH_SNAPSHOT_BYTES + 1 },
+      { ...metadata, snapshot_sha256: "0".repeat(63) },
+    ]) {
+      await expect(parse(makeFrame(invalidMetadata))).rejects.toMatchObject({
+        code: "snapshot_frame_invalid",
+      });
+    }
+    await expect(
+      parse(
+        Buffer.concat([
+          Buffer.from(`${JSON.stringify(metadata)}${" ".repeat(1024)}\n`),
+          snapshot,
+        ]),
+      ),
+    ).rejects.toMatchObject({ code: "snapshot_frame_invalid" });
+    await expect(
+      parse(
+        Buffer.concat([
+          Buffer.from(`${JSON.stringify(metadata)}\r\n`),
+          snapshot,
+        ]),
+      ),
+    ).rejects.toMatchObject({ code: "snapshot_frame_invalid" });
+    await expect(
+      parse(makeFrame(metadata, snapshot.subarray(0, snapshot.length - 1))),
+    ).rejects.toMatchObject({ code: "snapshot_frame_invalid" });
+    await expect(
+      parse(makeFrame(metadata, snapshot, Buffer.from("trailing"))),
+    ).rejects.toMatchObject({ code: "snapshot_frame_invalid" });
   });
 
   it("受控 credential store 验证 0710 受控父目录、0600 固定 owner、symlink/non-regular/read-side oversize", async () => {
@@ -393,36 +478,72 @@ describe("Codex Slot CLI schema 与 auth snapshot 安全边界 [BEHAVIOR]", () =
     });
   });
 
-  it("nonce durable 消费在模块重载后仍拒绝 replay", async () => {
+  it("nonce durable 消费跨两个真实 OS 进程与 agent restart 后仍拒绝 replay", async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), "codex-slot-agent-nonce-"));
     const nonceStorePath = join(fixtureRoot, "consumed-nonces.json");
-    const authPath = join(fixtureRoot, "auth.json");
-    const bytes = Buffer.from('{"fixture":"codex-slot-non-secret"}');
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
-    const firstAgent =
-      await import("../../../packages/brain/src/codex-slot/agent.js");
-    await firstAgent.acceptAuthSnapshot({
-      sessionHandle: "session-replay",
-      nonce: "nonce-replay",
-      bytes,
-      sha256,
-      authPath,
-      nonceStorePath,
-      maxBytes: MAX_AUTH_SNAPSHOT_BYTES,
-    });
-    vi.resetModules();
-    const reloadedAgent =
-      await import("../../../packages/brain/src/codex-slot/agent.js");
-    await expect(
-      reloadedAgent.acceptAuthSnapshot({
-        sessionHandle: "session-replay",
-        nonce: "nonce-replay",
-        bytes,
-        sha256,
-        authPath,
+    const firstAuthPath = join(fixtureRoot, "first-auth.json");
+    const replayAuthPath = join(fixtureRoot, "replay-auth.json");
+    const childProgram = `
+      import { createHash } from "node:crypto";
+      import { pathToFileURL } from "node:url";
+      import { resolve } from "node:path";
+      const [mode, authPath, nonceStorePath] = process.argv.slice(1);
+      const agentUrl = pathToFileURL(resolve("packages/brain/src/codex-slot/agent.js")).href;
+      const { acceptAuthSnapshot } = await import(agentUrl);
+      const bytes = Buffer.from('{"fixture":"codex-slot-non-secret"}');
+      try {
+        await acceptAuthSnapshot({
+          sessionHandle: "session-replay",
+          nonce: "a".repeat(32),
+          bytes,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          authPath,
+          nonceStorePath,
+          maxBytes: ${MAX_AUTH_SNAPSHOT_BYTES},
+        });
+        if (mode === "replay") process.exit(5);
+        process.stdout.write(JSON.stringify({ result: "accepted", pid: process.pid }));
+      } catch (error) {
+        if (mode !== "replay" || error?.code !== "nonce_replayed") throw error;
+        process.stdout.write(JSON.stringify({ result: error.code, pid: process.pid }));
+      }
+    `;
+    const childEnv = {
+      HOME: fixtureRoot,
+      PATH: "/usr/bin:/bin",
+      LC_ALL: "C",
+      LANG: "C",
+    };
+    const first = await execFileAsync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        childProgram,
+        "first",
+        firstAuthPath,
         nonceStorePath,
-        maxBytes: MAX_AUTH_SNAPSHOT_BYTES,
-      }),
-    ).rejects.toMatchObject({ code: "nonce_replayed" });
+      ],
+      { cwd: process.cwd(), env: childEnv },
+    );
+    const replay = await execFileAsync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        childProgram,
+        "replay",
+        replayAuthPath,
+        nonceStorePath,
+      ],
+      { cwd: process.cwd(), env: childEnv },
+    );
+    const firstResult = JSON.parse(first.stdout);
+    const replayResult = JSON.parse(replay.stdout);
+    expect(firstResult.result).toBe("accepted");
+    expect(replayResult.result).toBe("nonce_replayed");
+    expect(firstResult.pid).not.toBe(replayResult.pid);
+    expect((await stat(firstAuthPath)).mode & 0o777).toBe(0o600);
+    await expect(stat(replayAuthPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
