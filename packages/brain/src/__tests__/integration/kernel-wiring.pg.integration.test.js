@@ -747,7 +747,10 @@ describe('Kernel approval HTTP route on real PostgreSQL', () => {
       action: 'effect:human_review_requested',
       observed: { pr: { head_sha: HEAD_SHA } },
       phase: 'review',
-      detail: { dispatch_hop: 2 },
+      detail: {
+        dispatch_hop: 2,
+        review_reason: 'awaiting_human_review',
+      },
     });
     // Deterministically widen the existing check-then-insert race. Both HTTP
     // requests can pass the duplicate SELECT before either INSERT commits.
@@ -801,6 +804,7 @@ describe('Kernel approval HTTP route on real PostgreSQL', () => {
     expect(approvals.rows[0].detail).toMatchObject({
       verdict: 'APPROVED',
       approved: true,
+      review_class: 'merge_gate',
       pr_head_sha: HEAD_SHA,
       review_request_hop: 3,
       approved_by: 'alex',
