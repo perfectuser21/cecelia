@@ -1,2 +1,0 @@
-[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
-JSON report written to /tmp/red-report-892405df.json
