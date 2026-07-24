@@ -7,3 +7,4 @@ gan: done (contract-draft.md+dod@e7e3a4e, r2, verdict=APPROVED, 铁律覆盖=8/8
 generator: pr_opened (#4273, red=4fc96dd)
 generator: done (pr=#4273, red=4fc96dd, green=14d130d, fix=202820d, CI required checks 全绿)
 judge: FAIL (round1, mechFail=theater_mismatch, 误判：contract-draft.md Invariant覆盖行INV-2误用[BEHAVIOR]标签命中"真机"关键词，非真实需求；已开 Notion issue c4993b81；回 GAN round3 做窄范围格式修订)
+gan: round3 done (contract-draft.md@efc9e2f77, 纯格式修订：Invariant覆盖8行去[BEHAVIOR]标签+INV-2真机→设备同义替换，reviewer CONFIRMED，之前APPROVED继续有效)
