@@ -1,0 +1,44 @@
+{
+  "phase": "gan",
+  "round": 5,
+  "verdict": "APPROVED",
+  "contract_sha": "b6824f952e1624b41000abf7da7b00dd29beec6d",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 10,
+    "internal_consistency": 9,
+    "risk_registered": 9,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 5,
+  "invariant_coverage": {
+    "covered": 53,
+    "total": 53
+  },
+  "consumer_inventory": {
+    "total": 17,
+    "broker_integrated": 14,
+    "mechanically_isolated": 3,
+    "unclassified": 0
+  },
+  "artifact_preflight": {
+    "commands_executed": 17,
+    "expected_red": 17,
+    "unexpected_green": 0,
+    "timeouts": 0,
+    "shell_parse_errors": 0,
+    "bad_substitutions": 0,
+    "command_not_found": 0
+  },
+  "vitest_red": {
+    "tests_failed": 11,
+    "tests_total": 11,
+    "runner_started": true
+  },
+  "segmented_plan": {
+    "workstreams": 6,
+    "linear_dependencies": true
+  }
+}
