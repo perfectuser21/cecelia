@@ -14,6 +14,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { invokeAgent } from '../lib/conversation-agent.js';
 
 const router = Router();
 
@@ -273,14 +274,15 @@ router.post('/:id/messages', async (req, res) => {
       return res.status(400).json({ error: 'content 为必填字段' });
     }
 
-    // 检查 conversation 存在
+    // 检查 conversation 存在（顺带取锚点坐标 + 已有 session_id，供 agent 调用）
     const convCheck = await pool.query(
-      'SELECT id FROM conversations WHERE id = $1',
+      'SELECT id, journey_id, gp_id, current_session_id FROM conversations WHERE id = $1',
       [id]
     );
     if (convCheck.rows.length === 0) {
       return res.status(404).json({ error: `conversation ${id} 不存在` });
     }
+    const conv = convCheck.rows[0];
 
     // 插入消息
     const msgResult = await pool.query(
@@ -290,7 +292,7 @@ router.post('/:id/messages', async (req, res) => {
       [id, role, content, turn_marker || null]
     );
 
-    // role=user 时 turn_count 自增
+    // role=user 时 turn_count 自增 + 触发 agent 调用（spawn 首轮/resume 续接）
     if (role === 'user') {
       await pool.query(
         `UPDATE conversations
@@ -298,6 +300,24 @@ router.post('/:id/messages', async (req, res) => {
          WHERE id = $1
          RETURNING turn_count`,
         [id]
+      );
+
+      const agentOut = invokeAgent({
+        content,
+        sessionId: conv.current_session_id,
+        journeyId: conv.journey_id,
+        gpId: conv.gp_id,
+      });
+
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, role, content, turn_marker)
+         VALUES ($1, 'assistant', $2, $3)`,
+        [id, agentOut.reply, agentOut.turnMarker]
+      );
+
+      await pool.query(
+        `UPDATE conversations SET current_session_id = $1, updated_at = NOW() WHERE id = $2`,
+        [agentOut.sessionId, id]
       );
     }
 
