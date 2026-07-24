@@ -1,0 +1,21 @@
+{
+  "phase": "gan",
+  "round": 1,
+  "verdict": "APPROVED",
+  "anchored_commit": "979e4b181891e3b7e3d0a1162f08db137de8594b",
+  "propose_branch": "cp-07241038-harness-propose-r1-f90ddca3",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 10,
+    "internal_consistency": 8,
+    "risk_registered": 9,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 4,
+  "behavior_count": 25,
+  "inv_coverage": "53/53",
+  "uncovered_real_links": "N/A（无 mock 豁免）",
+  "notes": "首轮 APPROVED；判定点登记表 5 行，1 行含转义管道符被解析器跳过（reviewer 已留 NOTE 非静默）；test 真红 5/5 FAIL 实证"
+}

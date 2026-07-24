@@ -1,6 +1,3 @@
-contract_branch: cp-07241038-harness-propose-r1-f90ddca3
-sprint_dir: sprints/07241038-relay-f90ddca3
-
 ---
 skeleton: false
 journey_type: autonomous
