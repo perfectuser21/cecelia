@@ -1,0 +1,49 @@
+{
+  "phase": "gan",
+  "round": 4,
+  "contract_sha": "992456f4be7702126c31d7f2be2210ab2490b638",
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 10,
+    "internal_consistency": 8,
+    "risk_registered": 9,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "iron_law_coverage": {
+    "covered": 51,
+    "total": 51,
+    "active_behavior": 28,
+    "explicit_na": 23
+  },
+  "segmented_plan": {
+    "workstreams": 8,
+    "dependency_order": [
+      "ws1",
+      "ws2",
+      "ws3",
+      "ws4",
+      "ws5",
+      "ws6",
+      "ws7",
+      "ws8"
+    ],
+    "contract_tests_in_implementation_write_set": 0
+  },
+  "gates": {
+    "contract_is_law": "PASS",
+    "invariant_mapping": "PASS",
+    "golden_path_behavior_e2e": "PASS",
+    "segmented_plan_and_security": "PASS"
+  },
+  "judgments_written": 5,
+  "concerns": [],
+  "unverifiable": [
+    "xian-m1/xian-m4 受控 SSH/root/mmv 真接缝尚未执行",
+    "Codex Slot 实现、ci.yml Mac job 与 nightly xian job 尚不存在，当前保持预期 Red",
+    "同 SHA GHA conclusion 与双真机 success/fail cleanup evidence 待 Generator/Evaluator 产生"
+  ],
+  "feedback_file": ".harness/reviewer-feedback-r4.md"
+}
