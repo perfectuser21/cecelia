@@ -1,0 +1,24 @@
+{
+  "initiative_id": "b932ad01-5e1b-4d11-ae7d-ab9c179d2700",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物为 docs 文档、流程为后台接力链自证，无 dashboard/engine 代码路径，与 PRD journey_type 一致",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 kernel v1 mixed-provider fire drill 演练文档并通过全部合同断言",
+      "scope": "仅新增 docs/fire-drills/kernel-v1-mixed-20260724.md（目录一并创建）：含三个字面量（KERNEL_V1_MIXED_FIRE_DRILL_PASS / 1.267.65 / 4ff4112ae55bbab9467dcecff6be0ba222a67cd8）、5 条 role_assignments 计划分配对照字面、六角色 `## role: <name>` 证据段（每段 - provider: / - account: / - evidence: 行，角色不可用时如实记录失败/替补，不得编造全绿）。禁改 packages/brain、migrations、.github/workflows、任何现有测试。",
+      "dod": [
+        "[BEHAVIOR] 任务最低验收命令通过：test -f docs/fire-drills/kernel-v1-mixed-20260724.md && grep -q KERNEL_V1_MIXED_FIRE_DRILL_PASS docs/fire-drills/kernel-v1-mixed-20260724.md",
+        "[BEHAVIOR] 版本与 merge commit 字面存在：grep -q '1\\.267\\.65' 与 grep -q 4ff4112ae55bbab9467dcecff6be0ba222a67cd8",
+        "[BEHAVIOR] node sprints/07241410-kernel-fire-drill-mixed/tests/check-roles.cjs 输出 OK（六角色证据段 + 对照字面）",
+        "[BEHAVIOR] node sprints/07241410-kernel-fire-drill-mixed/tests/check-scope.cjs 输出 OK（越界零改动）",
+        "[BEHAVIOR] npx vitest run sprints/07241410-kernel-fire-drill-mixed/tests/ 4 条全绿（TDD red→green）",
+        "[ARTIFACT] docs/fire-drills/kernel-v1-mixed-20260724.md 存在且非空"
+      ],
+      "files": ["docs/fire-drills/kernel-v1-mixed-20260724.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
