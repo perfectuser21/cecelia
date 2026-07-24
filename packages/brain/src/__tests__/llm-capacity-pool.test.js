@@ -9,18 +9,40 @@ vi.mock('fs', () => ({
 vi.mock('../account-usage.js', () => ({
   getAccountUsage: vi.fn().mockResolvedValue({}),
 }));
+const poolQuery = vi.fn().mockResolvedValue({
+  rows: ['team1', 'team2', 'team3', 'team4', 'team5'].map((account_id, index) => ({
+    account_id,
+    five_hour_pct: index * 10,
+    seven_day_pct: index * 12,
+  })),
+});
+vi.mock('../db.js', () => ({
+  default: { query: (...args) => poolQuery(...args) },
+}));
 
 describe('llm-capacity codex 池', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    poolQuery.mockResolvedValue({
+      rows: ['team1', 'team2', 'team3', 'team4', 'team5'].map((account_id, index) => ({
+        account_id,
+        five_hour_pct: index * 10,
+        seven_day_pct: index * 12,
+      })),
+    });
   });
 
-  it('codex 账本 total_count=5（team1~team5 全在本机）', async () => {
+  it('codex 账本只消费 broker cache exact team1~team5', async () => {
     const { getLlmCapacitySnapshot } = await import('../llm-capacity.js');
-    const snapshot = await getLlmCapacitySnapshot({ force: true });
+    const snapshot = await getLlmCapacitySnapshot({ forceRefresh: true });
     const codex = (snapshot.snapshot ?? snapshot).vendors.codex;
     expect(codex.total_count).toBe(5);
     const names = codex.accounts.map((a) => a.name).sort();
     expect(names).toEqual(['team1', 'team2', 'team3', 'team4', 'team5']);
+    expect(poolQuery).toHaveBeenCalledWith(
+      expect.stringContaining('account_id = ANY($1::text[])'),
+      [['team1', 'team2', 'team3', 'team4', 'team5']],
+    );
+    expect(codex.accounts.every(account => account.source === 'account_usage_cache')).toBe(true);
   });
 });

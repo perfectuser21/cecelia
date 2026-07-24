@@ -62,7 +62,7 @@ SCRIPTS_DIR="${SCRIPTS_DIR:-$HOME/playwright-scripts}"
 for key in CODEX_HOME CODEX_SLOT_AGENT_ID CODEX_SLOT_LEASE_ID CODEX_SLOT_RECEIPT CODEX_SLOT_SESSION_ID; do
     [[ -n "${!key:-}" ]] || { echo "❌ codex-slot ${key} 未注入" >&2; exit 78; }
 done
-unset OPENAI_API_KEY CODEX_API_KEY CODEX_RELAY_HOME
+unset CODEX_HOMES CODEX_RELAY_HOME CODEX_REVIEW_HOME OPENAI_API_KEY CODEX_API_KEY
 
 # ===== 预拉任务描述 =====
 TASK_TITLE=""

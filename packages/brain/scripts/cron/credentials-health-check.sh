@@ -165,7 +165,8 @@ check_codex_accounts() {
   done
 
   # 真触发一次 receipt 私有目录中的 Codex；公司 auth/home/API key 不进入本进程。
-  if ! env -u OPENAI_API_KEY -u CODEX_RELAY_HOME CODEX_HOME="$CODEX_SLOT_HOME" \
+  if ! env -u CODEX_HOMES -u CODEX_RELAY_HOME -u CODEX_REVIEW_HOME \
+      -u OPENAI_API_KEY -u CODEX_API_KEY CODEX_HOME="$CODEX_SLOT_HOME" \
       codex --version >/dev/null 2>&1; then
     for team in team1 team2 team3 team4 team5; do
       json_set "credentials.codex_${team}" '{"status":"broker_error","account":"'"$team"'","error":"codex-slot health probe failed"}'

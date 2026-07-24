@@ -8,6 +8,7 @@
 
 const BRAIN_URL = process.env.BRAIN_URL || 'http://100.71.151.105:5221';
 const CACHE_TTL_MS = 30_000;
+const CODEX_ACCOUNTS = new Set(['team1', 'team2', 'team3', 'team4', 'team5']);
 let cached = null;
 let fetchedAt = 0;
 
@@ -17,7 +18,9 @@ function normalizeUsageSnapshot(payload) {
   if (source !== 'account_usage_cache' || !usage || typeof usage !== 'object' || Array.isArray(usage)) {
     throw new Error('invalid codex-slot usage snapshot');
   }
-  return Object.fromEntries(Object.entries(usage).map(([accountRef, row]) => [
+  return Object.fromEntries(Object.entries(usage)
+    .filter(([accountRef]) => CODEX_ACCOUNTS.has(accountRef))
+    .map(([accountRef, row]) => [
     accountRef,
     {
       primaryUsedPct: Number(row.five_hour_pct),
@@ -25,7 +28,7 @@ function normalizeUsageSnapshot(payload) {
       resetsAt: row.resets_at || null,
       source: 'account_usage_cache',
     },
-  ]));
+    ]));
 }
 
 async function getAllAccountUsage(forceRefresh = false) {

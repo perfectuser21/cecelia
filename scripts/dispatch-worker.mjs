@@ -35,7 +35,6 @@ export function buildCommand(vendor, account, brief, dir) {
         CODEX_SLOT_LEASE_ID: process.env.CODEX_SLOT_LEASE_ID,
         CODEX_SLOT_RECEIPT: process.env.CODEX_SLOT_RECEIPT,
         CODEX_SLOT_SESSION_ID: process.env.CODEX_SLOT_SESSION_ID,
-        OPENAI_API_KEY: undefined,
       },
       cwd: dir,
     };
@@ -135,8 +134,11 @@ function makeRealRunWorker(logFile) {
     // stdin 必须 ignore：codex exec 见 stdin 是 pipe 会停下等输入（冒烟实证挂死）
     const childEnv = { ...process.env, ...env };
     if (account.vendor === 'codex') {
+      delete childEnv.CODEX_HOMES;
       delete childEnv.OPENAI_API_KEY;
+      delete childEnv.CODEX_API_KEY;
       delete childEnv.CODEX_RELAY_HOME;
+      delete childEnv.CODEX_REVIEW_HOME;
     }
     const child = spawn(cmd, args, { cwd, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';

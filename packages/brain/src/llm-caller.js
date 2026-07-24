@@ -605,9 +605,11 @@ async function callCodexHeadless(prompt, model, options = {}) {
     CODEX_SLOT_RECEIPT: slot.receipt,
     CODEX_SLOT_SESSION_ID: slot.session_id,
   };
+  delete env.CODEX_HOMES;
   delete env.OPENAI_API_KEY;
   delete env.CODEX_API_KEY;
   delete env.CODEX_RELAY_HOME;
+  delete env.CODEX_REVIEW_HOME;
 
   return new Promise((resolve, reject) => {
     // --skip-git-repo-check: brain 进程 cwd 不是 git 仓库（容器内 /app），

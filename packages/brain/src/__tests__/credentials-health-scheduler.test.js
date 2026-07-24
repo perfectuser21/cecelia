@@ -55,7 +55,7 @@ import {
 
 // ── 测试工具 ──────────────────────────────────────────────────────────────────
 
-function makePool({ hasToday = false, insertOk = true } = {}) {
+function makePool({ hasToday = false, insertOk = true, codexRows = [] } = {}) {
   return {
     query: vi.fn().mockImplementation(async (sql) => {
       if (sql.includes('SELECT id FROM tasks') && sql.includes('credentials_health')) {
@@ -64,6 +64,9 @@ function makePool({ hasToday = false, insertOk = true } = {}) {
       if (sql.includes('INSERT INTO tasks')) {
         if (!insertOk) throw new Error('DB insert failed');
         return { rows: [] };
+      }
+      if (sql.includes('FROM account_usage_cache')) {
+        return { rows: codexRows };
       }
       return { rows: [] };
     }),
@@ -223,46 +226,26 @@ describe('checkNotebookLmAuth', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('checkCodexAuth', () => {
-  it('bridge 返回正常数据 → 所有账号 ok', async () => {
-    const mockData = {
-      team1: { used_percent: 30 },
-      team2: { used_percent: 10 },
-      team3: { used_percent: 50 },
-      team4: { used_percent: 5 },
-      team5: { used_percent: 20 },
-    };
-    global.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(mockData),
-    });
+  const freshRows = () => ['team1', 'team2', 'team3', 'team4', 'team5']
+    .map(account_id => ({ account_id, fetched_at: new Date() }));
 
-    const results = await checkCodexAuth();
+  it('broker cache exact team1..5 新鲜 → 所有账号 ok', async () => {
+    const results = await checkCodexAuth(makePool({ codexRows: freshRows() }));
     expect(results.every(r => r.status === 'ok')).toBe(true);
+    expect(results.every(r => r.source === 'account_usage_cache')).toBe(true);
   });
 
-  it('bridge 返回 auth_failed → 对应账号 status=expired', async () => {
-    const mockData = {
-      team1: { auth_failed: true },
-      team2: { used_percent: 10 },
-      team3: { used_percent: 50 },
-      team4: { used_percent: 5 },
-      team5: { used_percent: 20 },
-    };
-    global.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(mockData),
-    });
-
-    const results = await checkCodexAuth();
-    expect(results.find(r => r.account === 'team1')?.status).toBe('expired');
+  it('broker 本轮排除失败账号 → 缺失账号 status=stale', async () => {
+    const results = await checkCodexAuth(makePool({ codexRows: freshRows().slice(1) }));
+    expect(results.find(r => r.account === 'team1')?.status).toBe('stale');
     expect(results.find(r => r.account === 'team2')?.status).toBe('ok');
   });
 
-  it('bridge 不可达 → 所有账号 status=bridge_unreachable', async () => {
-    global.fetch.mockRejectedValue(new Error('ECONNREFUSED'));
-
-    const results = await checkCodexAuth();
-    expect(results.every(r => r.status === 'bridge_unreachable')).toBe(true);
+  it('cache 不可达 → 所有账号 status=cache_error', async () => {
+    const results = await checkCodexAuth({
+      query: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+    });
+    expect(results.every(r => r.status === 'cache_error')).toBe(true);
   });
 });
 
@@ -402,28 +385,29 @@ describe('runCredentialsHealthCheck', () => {
     expect(p2Task).toBeTruthy();
   });
 
-  it('Codex token 过期 → P0 告警 + P0 task', async () => {
-    const pool = makePool();
+  it('Codex 失败账号由 broker 从 cache 排除，health 标 stale 且不触碰 raw token', async () => {
+    const rows = ['team2', 'team3', 'team4', 'team5']
+      .map(account_id => ({ account_id, fetched_at: new Date() }));
+    const pool = makePool({ codexRows: rows });
     const now = utcDate(TRIGGER_HOUR_UTC, 1);
 
     global.fetch.mockImplementation((url) => {
       if (url.includes('auth-check')) {
         return Promise.resolve({ json: () => Promise.resolve({ ok: true }) });
       }
-      // Codex bridge: team1 auth failed
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ team1: { auth_failed: true }, team2: {}, team3: {}, team4: {}, team5: {} }),
+        json: () => Promise.resolve({}),
       });
     });
 
     existsSync.mockReturnValue(true);
     readFileSync.mockReturnValue(makeCredJson(Date.now() + 60 * DAY_MS));
 
-    await runCredentialsHealthCheck(pool, now);
-
-    expect(raise).toHaveBeenCalledWith('P0', 'cred_health_codex', expect.stringContaining('team1'));
-    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ priority: 'P0' }));
+    const result = await runCredentialsHealthCheck(pool, now);
+    expect(result.results.codex.find(r => r.account === 'team1')?.status).toBe('stale');
+    expect(raise.mock.calls.some(call => call[1] === 'cred_health_codex')).toBe(false);
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('wham/usage'))).toBe(false);
   });
 
   it('所有凭据健康 → 只有 P2 发布器提醒，不创建 task', async () => {

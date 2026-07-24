@@ -1142,11 +1142,14 @@ router.get('/account/best', async (_req, res) => {
  * 只读 Codex Slot broker 写入的 account_usage_cache 无秘密投影。
  */
 async function readCodexUsageCache() {
+  const codexAccounts = ['team1', 'team2', 'team3', 'team4', 'team5'];
   const result = await pool.query(
     `SELECT account_id, five_hour_pct, seven_day_pct, seven_day_resets_at, fetched_at
        FROM account_usage_cache
-      WHERE fetched_at > NOW() - INTERVAL '15 minutes'
+      WHERE account_id = ANY($1::text[])
+        AND fetched_at > NOW() - INTERVAL '15 minutes'
       ORDER BY account_id`,
+    [codexAccounts],
   );
   return Object.fromEntries(result.rows.map(row => [row.account_id, {
     five_hour_pct: Number(row.five_hour_pct),

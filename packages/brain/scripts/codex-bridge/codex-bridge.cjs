@@ -131,6 +131,7 @@ function receiptEnv(slot, home, extra = {}) {
   delete env.CODEX_RELAY_HOME;
   delete env.CODEX_REVIEW_HOME;
   delete env.OPENAI_API_KEY;
+  delete env.CODEX_API_KEY;
   return env;
 }
 

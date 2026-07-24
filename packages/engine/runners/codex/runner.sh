@@ -85,7 +85,7 @@ for key in CODEX_HOME CODEX_SLOT_AGENT_ID CODEX_SLOT_LEASE_ID CODEX_SLOT_RECEIPT
     [[ -n "${!key:-}" ]] || { echo "❌ codex-slot ${key} 未注入" >&2; exit 78; }
 done
 export CODEX_HOME
-unset OPENAI_API_KEY CODEX_RELAY_HOME
+unset CODEX_HOMES CODEX_RELAY_HOME CODEX_REVIEW_HOME OPENAI_API_KEY CODEX_API_KEY
 
 # ===== 预拉 PRD 内容（v2.2.0）=====
 # 在 US 侧（有 Brain）预拉 PRD，避免 Codex 在 M4 侧尝试访问 localhost:5221

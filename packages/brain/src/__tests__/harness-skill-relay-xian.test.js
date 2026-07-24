@@ -21,6 +21,7 @@ describe('spawnSkillRelaySession xian 派发路径', () => {
   let mockBridgeFn;
   let mockDockerFn;
   let mockExecFn;
+  let acquireSlotFn;
 
   beforeEach(() => {
     mockPool = makeMockPool(vi.fn().mockResolvedValue({ rows: [] }));
@@ -28,6 +29,14 @@ describe('spawnSkillRelaySession xian 派发路径', () => {
     mockDockerFn = vi.fn().mockResolvedValue({ ok: true });
     // execFn: docker ps 去重守卫 → 返回空（无已有容器）
     mockExecFn = vi.fn().mockReturnValue('');
+    acquireSlotFn = vi.fn().mockResolvedValue({
+      public: {
+        agent_id: 'xian-m1',
+        lease_id: '11111111-1111-4111-8111-111111111111',
+        session_id: '22222222-2222-4222-8222-222222222222',
+      },
+      receipt: 'broker-receipt-fixture',
+    });
   });
 
   it('BEHAVIOR-2: task.location=xian 但 allow_xian 缺失 → loud 失败，不调 bridgeFn', async () => {
@@ -45,6 +54,7 @@ describe('spawnSkillRelaySession xian 派发路径', () => {
       loadSkill: () => 'skill content',
       ensureWt: async () => '/tmp/wt',
       tokenFn: async () => 'gh-token',
+      acquireSlotFn,
     });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/allow_xian/);
@@ -70,6 +80,7 @@ describe('spawnSkillRelaySession xian 派发路径', () => {
       loadSkill: () => 'skill content',
       ensureWt: async () => '/tmp/wt',
       tokenFn: async () => 'gh-token',
+      acquireSlotFn,
     });
     // bridge 应被调用，docker 不应被调用
     expect(mockBridgeFn).toHaveBeenCalledWith(
@@ -77,7 +88,16 @@ describe('spawnSkillRelaySession xian 派发路径', () => {
       expect.objectContaining({
         task_type: 'harness_relay',
         brain_url: expect.stringContaining('5221'),
-      })
+        slot: expect.objectContaining({
+          agent_id: 'xian-m1',
+          receipt: 'broker-receipt-fixture',
+        }),
+      }),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'Idempotency-Key': expect.any(String),
+        }),
+      }),
     );
     expect(mockDockerFn).not.toHaveBeenCalled();
     // 当前 failing：xian 分支尚未实现
@@ -110,6 +130,7 @@ describe('spawnSkillRelaySession xian 派发路径', () => {
       loadSkill: () => 'skill content',
       ensureWt: async () => '/tmp/wt',
       tokenFn: async () => 'gh-token',
+      acquireSlotFn,
     });
     // 确认 initiative_runs 插入包含 skill-relay-xian
     expect(insertCalls.length).toBeGreaterThan(0);
@@ -147,6 +168,7 @@ describe('spawnSkillRelaySession xian 派发路径', () => {
       loadSkill: () => 'skill content',
       ensureWt: async () => '/tmp/wt',
       tokenFn: async () => 'gh-token',
+      acquireSlotFn,
     });
     expect(result.ok).toBe(false);
     expect(rollbackCalls.length).toBeGreaterThan(0);

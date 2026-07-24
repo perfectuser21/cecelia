@@ -127,9 +127,11 @@ test('dispatchWithRotation: maxRetries 限制尝试次数（maxRetries+1 家）'
   assert.equal(r.reason, 'pool_exhausted');
 });
 
-test('ACCOUNT_POOL: 含本机四账号，claude 只有 account2（account1 是 controller 主线）', () => {
+test('ACCOUNT_POOL: Codex 只有 broker slot，不暴露 team/raw home authority', () => {
   const names = ACCOUNT_POOL.map((a) => `${a.vendor}:${a.name}`);
-  assert.deepEqual(names, ['codex:team1', 'codex:team2', 'claude:account2', 'grok:grok']);
+  assert.deepEqual(names, ['codex:codex-slot', 'claude:account2', 'grok:grok']);
+  assert.equal(ACCOUNT_POOL.filter((a) => a.vendor === 'codex').length, 1);
+  assert.equal(ACCOUNT_POOL[0].home, process.env.CODEX_SLOT_HOME || '');
   assert.equal(USABLE_THRESHOLD, 90);
 });
 

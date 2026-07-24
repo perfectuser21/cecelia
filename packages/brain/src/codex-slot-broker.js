@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import pool from './db.js';
 import { getCodexSlotTtls } from './fleet-resource-cache.js';
 
@@ -63,6 +66,19 @@ export function codexSlotError(code, cause = null) {
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_SERIALIZATION_ATTEMPTS = 3;
+export const CODEX_USAGE_ACCOUNTS = Object.freeze([
+  'team1',
+  'team2',
+  'team3',
+  'team4',
+  'team5',
+]);
+export const CODEX_USAGE_REFRESH_TTL_MS = 3 * 60 * 1000;
+const WHAM_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+
+let usageRefreshPromise = null;
+let usageRefreshedAt = 0;
+let usageProjection = Object.freeze({});
 
 function exactKeys(value, expected) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -180,6 +196,157 @@ function usageDeficit(row, now = Date.now()) {
   return (elapsed / sevenDaysMs) * 100 - sevenDayUsed;
 }
 
+function parseWhamUsage(data, now = Date.now()) {
+  const primary = data?.rate_limit?.primary_window;
+  const secondary = data?.rate_limit?.secondary_window;
+  const fiveHourPct = Number(primary?.used_percent);
+  const sevenDayPct = Number(secondary?.used_percent);
+  if (!Number.isFinite(fiveHourPct) || !Number.isFinite(sevenDayPct)) return null;
+  const resetSeconds = Number(secondary?.reset_after_seconds);
+  return {
+    five_hour_pct: Math.max(0, Math.min(100, fiveHourPct)),
+    seven_day_pct: Math.max(0, Math.min(100, sevenDayPct)),
+    seven_day_resets_at: Number.isFinite(resetSeconds)
+      ? new Date(now + Math.max(0, resetSeconds) * 1000)
+      : null,
+  };
+}
+
+async function loadBrokerAuth(accountRef, root = homedir()) {
+  const raw = await readFile(join(root, `.codex-${accountRef}`, 'auth.json'), 'utf8');
+  const auth = JSON.parse(raw);
+  const accessToken = auth?.tokens?.access_token;
+  const accountId = auth?.tokens?.account_id;
+  if (typeof accessToken !== 'string' || !accessToken
+      || typeof accountId !== 'string' || !accountId) {
+    throw new Error(`Codex auth incomplete for ${accountRef}`);
+  }
+  return { accessToken, accountId };
+}
+
+async function fetchWhamUsage(accountRef, {
+  fetchImpl,
+  loadAuth,
+  now,
+  whamUrl,
+}) {
+  try {
+    const auth = await loadAuth(accountRef);
+    const response = await fetchImpl(whamUrl, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${auth.accessToken}`,
+        'ChatGPT-Account-Id': auth.accountId,
+        'User-Agent': 'cecelia-codex-slot-broker/1.0',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return null;
+    return parseWhamUsage(await response.json(), now);
+  } catch {
+    return null;
+  }
+}
+
+async function writeUsageProjection(database, rows, now) {
+  const client = await database.connect();
+  const succeeded = rows.map(row => row.account_ref);
+  try {
+    await client.query('BEGIN');
+    for (const row of rows) {
+      await client.query(
+        `INSERT INTO account_usage_cache
+           (account_id, five_hour_pct, seven_day_pct, seven_day_resets_at, fetched_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (account_id) DO UPDATE SET
+           five_hour_pct = EXCLUDED.five_hour_pct,
+           seven_day_pct = EXCLUDED.seven_day_pct,
+           seven_day_resets_at = EXCLUDED.seven_day_resets_at,
+           fetched_at = EXCLUDED.fetched_at`,
+        [
+          row.account_ref,
+          row.five_hour_pct,
+          row.seven_day_pct,
+          row.seven_day_resets_at,
+          new Date(now),
+        ],
+      );
+    }
+    await client.query(
+      `DELETE FROM account_usage_cache
+        WHERE account_id = ANY($1::text[])
+          AND NOT (account_id = ANY($2::text[]))`,
+      [CODEX_USAGE_ACCOUNTS, succeeded],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * 唯一 issuer 的无秘密 usage 投影。
+ *
+ * broker 独占 auth/wham 边；消费者只读 account_usage_cache。失败账号在本轮从
+ * team1..5 投影中删除，不会用旧快照继续参与分配。三分钟 singleflight 同时抑制
+ * 并发 acquire 的重复 wham 请求。
+ */
+export async function refreshCodexUsageProjection(dependencies = {}) {
+  const now = Number(dependencies.now ?? Date.now());
+  const force = dependencies.force === true;
+  if (!force && usageRefreshedAt > 0
+      && now - usageRefreshedAt < CODEX_USAGE_REFRESH_TTL_MS) {
+    return usageProjection;
+  }
+  if (usageRefreshPromise) return usageRefreshPromise;
+
+  const database = dependencies.pool || pool;
+  const fetchImpl = dependencies.fetchImpl || globalThis.fetch;
+  const loadAuth = dependencies.loadAuth
+    || (accountRef => loadBrokerAuth(accountRef, dependencies.authRoot));
+  const whamUrl = dependencies.whamUrl || WHAM_USAGE_URL;
+
+  usageRefreshPromise = (async () => {
+    const snapshots = await Promise.all(CODEX_USAGE_ACCOUNTS.map(async accountRef => {
+      const usage = await fetchWhamUsage(accountRef, {
+        fetchImpl,
+        loadAuth,
+        now,
+        whamUrl,
+      });
+      return usage ? { account_ref: accountRef, ...usage } : null;
+    }));
+    const rows = snapshots.filter(Boolean);
+    await writeUsageProjection(database, rows, now);
+    usageRefreshedAt = now;
+    usageProjection = Object.freeze(Object.fromEntries(rows.map(row => [
+      row.account_ref,
+      Object.freeze({
+        five_hour_pct: row.five_hour_pct,
+        seven_day_pct: row.seven_day_pct,
+        seven_day_resets_at: row.seven_day_resets_at,
+        fetched_at: new Date(now),
+      }),
+    ])));
+    return usageProjection;
+  })();
+
+  try {
+    return await usageRefreshPromise;
+  } finally {
+    usageRefreshPromise = null;
+  }
+}
+
+export function resetCodexUsageRefreshForTests() {
+  usageRefreshPromise = null;
+  usageRefreshedAt = 0;
+  usageProjection = Object.freeze({});
+}
+
 export function rankAccountUsage(rows, now = Date.now()) {
   return rows
     .map(row => ({
@@ -199,7 +366,9 @@ async function selectAccountRef(client) {
   const usage = await client.query(
     `SELECT account_id, five_hour_pct, seven_day_pct, seven_day_resets_at
        FROM account_usage_cache
-      WHERE fetched_at > NOW() - INTERVAL '15 minutes'`,
+      WHERE account_id = ANY($1::text[])
+        AND fetched_at > NOW() - INTERVAL '15 minutes'`,
+    [CODEX_USAGE_ACCOUNTS],
   );
   const ranked = rankAccountUsage(usage.rows);
   if (ranked.length === 0) throw codexSlotError('AGENT_UNAVAILABLE');
@@ -273,6 +442,10 @@ function mapDurabilityError(error) {
 export async function acquireCodexSlot(input, dependencies = {}) {
   validateAcquireRequest(input);
   const database = dependencies.pool || pool;
+  await refreshCodexUsageProjection({
+    ...dependencies,
+    pool: database,
+  });
   const client = await database.connect();
   try {
     for (let attempt = 1; attempt <= MAX_SERIALIZATION_ATTEMPTS; attempt += 1) {

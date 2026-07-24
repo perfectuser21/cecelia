@@ -6,6 +6,7 @@ import pool from './db.js';
 
 const CACHE_TTL_MS = 60 * 1000;
 const USABLE_THRESHOLD = 90;
+const CODEX_ACCOUNTS = Object.freeze(['team1', 'team2', 'team3', 'team4', 'team5']);
 
 const GROK_ACCOUNTS = [
   { vendor: 'grok', name: 'grok', home: join(homedir(), '.grok') },
@@ -56,8 +57,10 @@ async function pollCodexLedger() {
   const result = await pool.query(
     `SELECT account_id, five_hour_pct, seven_day_pct
        FROM account_usage_cache
-      WHERE fetched_at > NOW() - INTERVAL '15 minutes'
+      WHERE account_id = ANY($1::text[])
+        AND fetched_at > NOW() - INTERVAL '15 minutes'
       ORDER BY account_id`,
+    [CODEX_ACCOUNTS],
   );
   const accounts = result.rows.map(row => ({
     vendor: 'codex',

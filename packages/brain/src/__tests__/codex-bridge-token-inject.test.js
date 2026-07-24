@@ -1,165 +1,126 @@
 /**
- * codex-bridge token 注入模式测试
- * 验证 setupInjectedAccounts / cleanupTmpDir / loadRawAuth / injectLocalAccount 逻辑
+ * Codex bridge receipt-only 回归。
  *
- * 2026-07-21：codex-bridge.cjs 加了 require.main===module 守卫 + module.exports，
- * 现在直接 require() 真实文件测真实函数，不再内联复刻（旧注释说"避免 require CJS
- * 在 ESM 测试中的问题"已不成立——用 createRequire 从 ESM 测试文件里 require CJS
- * 完全没问题，之前是文件本身顶层直接 listen 端口/可能 process.exit 导致不敢 require）。
+ * 旧 setupInjectedAccounts/loadRawAuth oracle 已退役；receiver 不得再读取或复制
+ * 公司 auth。这里只验证真实 receipt record、私有 CODEX_HOME 与凭据环境清理。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createRequire } from 'module';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { setupInjectedAccounts, cleanupTmpDir, loadRawAuth, injectLocalAccount } =
-  require('../../scripts/codex-bridge/codex-bridge.cjs');
+const {
+  exactSlot,
+  receiptEnv,
+  resolveReceiptHome,
+  validateRunRequest,
+} = require('../../scripts/codex-bridge/codex-bridge.cjs');
 
-const MOCK_AUTH = {
-  auth_mode: 'chatgpt',
-  tokens: {
-    access_token: 'mock_access_token_for_testing',
-    id_token: 'mock_id',
-    refresh_token: 'mock_refresh',
-    account_id: 'org-test123',
-  },
-  last_refresh: '2026-03-26T00:00:00Z',
-};
-
-describe('setupInjectedAccounts', () => {
-  let tmpDir = null;
-
-  afterEach(() => {
-    cleanupTmpDir(tmpDir);
-    tmpDir = null;
-  });
-
-  it('有 accounts 时写临时目录，primaryHome 为第一个账号', () => {
-    const accounts = [
-      { id: 'team1', auth: MOCK_AUTH },
-      { id: 'team2', auth: MOCK_AUTH },
-    ];
-    const result = setupInjectedAccounts('task-abc123', accounts);
-    tmpDir = result.tmpDir;
-
-    expect(result.primaryHome).toContain('team1');
-    expect(result.allHomes).toContain('team1');
-    expect(result.allHomes).toContain('team2');
-    expect(result.allHomes).toContain(':');
-    expect(fs.existsSync(result.tmpDir)).toBe(true);
-  });
-
-  it('auth.json 写入正确内容', () => {
-    const accounts = [{ id: 'team1', auth: MOCK_AUTH }];
-    const result = setupInjectedAccounts('task-write-test', accounts);
-    tmpDir = result.tmpDir;
-
-    const authFile = path.join(result.primaryHome, 'auth.json');
-    expect(fs.existsSync(authFile)).toBe(true);
-    const written = JSON.parse(fs.readFileSync(authFile, 'utf8'));
-    expect(written.auth_mode).toBe('chatgpt');
-    expect(written.tokens.account_id).toBe('org-test123');
-  });
-
-  it('目录权限为 700', () => {
-    const accounts = [{ id: 'team3', auth: MOCK_AUTH }];
-    const result = setupInjectedAccounts('task-perm-test', accounts);
-    tmpDir = result.tmpDir;
-
-    const stat = fs.statSync(result.primaryHome);
-    const mode = stat.mode & 0o777;
-    expect(mode).toBe(0o700);
-  });
-
-  it('单账号时 allHomes 无冒号', () => {
-    const accounts = [{ id: 'team1', auth: MOCK_AUTH }];
-    const result = setupInjectedAccounts('task-single', accounts);
-    tmpDir = result.tmpDir;
-
-    expect(result.allHomes).not.toContain(':');
-    expect(result.primaryHome).toBe(result.allHomes);
-  });
+const slot = Object.freeze({
+  agent_id: 'xian-m1',
+  lease_id: '11111111-1111-4111-8111-111111111111',
+  receipt: 'fixture-receipt-not-a-secret-token',
+  session_id: '22222222-2222-4222-8222-222222222222',
 });
 
-describe('cleanupTmpDir', () => {
-  it('执行后目录不存在', () => {
-    const accounts = [{ id: 'team1', auth: MOCK_AUTH }];
-    const { tmpDir: dir } = setupInjectedAccounts('task-cleanup', accounts);
-    expect(fs.existsSync(dir)).toBe(true);
+let root;
+let privateHome;
+const oldRoot = process.env.CODEX_SLOT_RECEIPT_ROOT;
 
-    cleanupTmpDir(dir);
-    expect(fs.existsSync(dir)).toBe(false);
-  });
-
-  it('null 时不报错', () => {
-    expect(() => cleanupTmpDir(null)).not.toThrow();
-  });
-
-  it('不存在的目录不报错', () => {
-    expect(() => cleanupTmpDir('/tmp/nonexistent-codex-dir-xyz')).not.toThrow();
-  });
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-slot-receipt-'));
+  privateHome = path.join(root, 'private', slot.session_id);
+  fs.mkdirSync(privateHome, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    path.join(root, `${slot.session_id}.json`),
+    JSON.stringify({ ...slot, private_home: privateHome }),
+    { mode: 0o600 },
+  );
+  process.env.CODEX_SLOT_RECEIPT_ROOT = root;
 });
 
-describe('降级模式改走注入（loadRawAuth + injectLocalAccount，2026-07-21）', () => {
-  let fakeHome = null;
-  let tmpDir = null;
+afterEach(() => {
+  fs.rmSync(root, { recursive: true, force: true });
+  if (oldRoot === undefined) delete process.env.CODEX_SLOT_RECEIPT_ROOT;
+  else process.env.CODEX_SLOT_RECEIPT_ROOT = oldRoot;
+});
 
-  beforeEach(() => {
-    fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-bridge-fakehome-'));
+describe('receipt envelope', () => {
+  it('只接受 agent/lease/receipt/session exact 四字段', () => {
+    expect(exactSlot(slot)).toBe(true);
+    expect(exactSlot({ ...slot, account_ref: 'team1' })).toBe(false);
   });
 
-  afterEach(() => {
-    cleanupTmpDir(tmpDir);
-    tmpDir = null;
-    if (fakeHome) fs.rmSync(fakeHome, { recursive: true, force: true });
-    fakeHome = null;
+  it('拒绝未知 agent', () => {
+    expect(exactSlot({ ...slot, agent_id: 'xian-m9' })).toBe(false);
   });
 
-  it('loadRawAuth 读到真实 auth.json 的完整原始内容（不是 getCodexAuth 那种精简形状）', () => {
-    const dir = path.join(fakeHome, '.codex-team3');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify(MOCK_AUTH));
-
-    const raw = loadRawAuth('team3', fakeHome);
-    expect(raw.auth_mode).toBe('chatgpt');
-    expect(raw.tokens.access_token).toBe('mock_access_token_for_testing');
-    expect(raw.last_refresh).toBe('2026-03-26T00:00:00Z');
+  it('拒绝非 UUID lease', () => {
+    expect(exactSlot({ ...slot, lease_id: 'lease-1' })).toBe(false);
   });
 
-  it('injectLocalAccount 把真实 auth.json 快照进临时目录，不是直接返回真实路径', () => {
-    const realDir = path.join(fakeHome, '.codex-team3');
-    fs.mkdirSync(realDir, { recursive: true });
-    fs.writeFileSync(path.join(realDir, 'auth.json'), JSON.stringify(MOCK_AUTH));
-
-    const result = injectLocalAccount('task-fallback-test', 'team3', fakeHome);
-    tmpDir = result.tmpDir;
-
-    // 返回的 primaryHome 必须是临时目录，不能等于真实持久目录
-    expect(result.primaryHome).not.toBe(realDir);
-    expect(result.primaryHome.startsWith(os.tmpdir())).toBe(true);
-    // 但内容跟真实文件一致（快照，不是伪造数据）
-    const injectedAuth = JSON.parse(fs.readFileSync(path.join(result.primaryHome, 'auth.json'), 'utf8'));
-    expect(injectedAuth.tokens.access_token).toBe('mock_access_token_for_testing');
+  it('真实 receipt record 解析到 root 内私有 HOME', () => {
+    expect(resolveReceiptHome(slot)).toBe(fs.realpathSync(privateHome));
   });
 
-  it('临时目录清理后，真实的 auth.json 原封不动（验证隔离，不是同一份文件）', () => {
-    const realDir = path.join(fakeHome, '.codex-team3');
-    fs.mkdirSync(realDir, { recursive: true });
-    const realAuthPath = path.join(realDir, 'auth.json');
-    fs.writeFileSync(realAuthPath, JSON.stringify(MOCK_AUTH));
+  it('record 字段不匹配时失败关闭', () => {
+    expect(() => resolveReceiptHome({ ...slot, receipt: 'different-receipt-value' }))
+      .toThrow(/mismatch/);
+  });
 
-    const result = injectLocalAccount('task-isolation-test', 'team3', fakeHome);
-    // 改一下临时目录里的内容，模拟容器内 codex 自刷新写了新 token
+  it('record private_home 逃逸 root 时失败关闭', () => {
     fs.writeFileSync(
-      path.join(result.primaryHome, 'auth.json'),
-      JSON.stringify({ ...MOCK_AUTH, tokens: { ...MOCK_AUTH.tokens, access_token: 'refreshed_in_container' } })
+      path.join(root, `${slot.session_id}.json`),
+      JSON.stringify({ ...slot, private_home: os.tmpdir() }),
     );
-    cleanupTmpDir(result.tmpDir);
+    expect(() => resolveReceiptHome(slot)).toThrow(/escapes/);
+  });
+});
 
-    // 真实文件必须还是原始内容——容器内的"刷新"从未触达它
-    const realAfter = JSON.parse(fs.readFileSync(realAuthPath, 'utf8'));
-    expect(realAfter.tokens.access_token).toBe('mock_access_token_for_testing');
+describe('receiver child environment', () => {
+  it('注入 receipt 五字段', () => {
+    const env = receiptEnv(slot, privateHome);
+    expect(env.CODEX_HOME).toBe(privateHome);
+    expect(env.CODEX_SLOT_AGENT_ID).toBe(slot.agent_id);
+    expect(env.CODEX_SLOT_LEASE_ID).toBe(slot.lease_id);
+    expect(env.CODEX_SLOT_RECEIPT).toBe(slot.receipt);
+    expect(env.CODEX_SLOT_SESSION_ID).toBe(slot.session_id);
+  });
+
+  it('统一删除公司 home 与 API key 环境', () => {
+    const env = receiptEnv(slot, privateHome, {
+      CODEX_HOMES: '/company',
+      CODEX_RELAY_HOME: '/relay',
+      CODEX_REVIEW_HOME: '/review',
+      OPENAI_API_KEY: 'openai-secret',
+      CODEX_API_KEY: 'codex-secret',
+    });
+    for (const key of [
+      'CODEX_HOMES',
+      'CODEX_RELAY_HOME',
+      'CODEX_REVIEW_HOME',
+      'OPENAI_API_KEY',
+      'CODEX_API_KEY',
+    ]) {
+      expect(env).not.toHaveProperty(key);
+    }
+  });
+
+  it('run body 禁止 raw credential/account 字段', () => {
+    const req = { headers: { 'idempotency-key': '33333333-3333-4333-8333-333333333333' } };
+    expect(() => validateRunRequest({
+      task_id: 'task',
+      prompt: 'p',
+      slot,
+      token: 'raw',
+    }, req)).toThrow(/forbidden credential field/);
+  });
+
+  it('合法 run body 只由 receipt 授权', () => {
+    const requestId = '33333333-3333-4333-8333-333333333333';
+    const req = { headers: { 'idempotency-key': requestId } };
+    expect(validateRunRequest({ task_id: 'task', prompt: 'p', slot }, req)).toBe(requestId);
   });
 });

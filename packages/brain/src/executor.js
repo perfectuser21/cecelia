@@ -209,8 +209,11 @@ function isolatedCodexEnv(homeVariable, extra = {}) {
     throw new Error(`${homeVariable} realpath 不在 root allowlist`);
   }
   const env = { ...process.env, ...extra, CODEX_HOME: resolved };
+  delete env.CODEX_HOMES;
   delete env.CODEX_RELAY_HOME;
+  delete env.CODEX_REVIEW_HOME;
   delete env.OPENAI_API_KEY;
+  delete env.CODEX_API_KEY;
   return env;
 }
 
@@ -2807,7 +2810,7 @@ async function triggerLocalCodexExec(task) {
     await writeFile(tmpPromptFile, promptContent);
     const scriptContent = [
       '#!/bin/bash',
-      'unset CODEX_RELAY_HOME OPENAI_API_KEY',
+      'unset CODEX_HOMES CODEX_RELAY_HOME CODEX_REVIEW_HOME OPENAI_API_KEY CODEX_API_KEY',
       `CODEX_HOME="${reviewHome}" "${CODEX_BIN}" exec --model "${CODEX_MODEL}" --sandbox danger-full-access "$(cat '${tmpPromptFile}')" 2>&1`,
       'EXIT=$?',
       `rm -f "${tmpPromptFile}" 2>/dev/null; rm -rf "${slotPath}" 2>/dev/null; rm -f "${tmpScriptFile}" 2>/dev/null`,
@@ -4272,6 +4275,8 @@ export {
   triggerCeceliaRun,
   triggerCodexBridge,
   triggerCodexReview,
+  buildCodexBridgePayload,
+  isolatedCodexEnv,
   triggerMiniMaxExecutor,
   checkCeceliaRunAvailable,
   getTaskExecutionStatus,

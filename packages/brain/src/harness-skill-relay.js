@@ -642,7 +642,8 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
   const bridgeBaseUrl = process.env.XIAN_CODEX_BRIDGE_URL || XIAN_BRIDGE_URL;
 
   const requestId = randomUUID();
-  const acquired = await acquireCodexSlot({
+  const acquireSlot = deps.acquireSlotFn || acquireCodexSlot;
+  const acquired = await acquireSlot({
     body: { name: `relay-${short}`, project: 'cecelia' },
     idempotencyKey: requestId,
     identityKind: 'uid',
@@ -975,7 +976,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     } else if (isGrokHeaded) {
       innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
     } else {
-      innerCmd = `cd ${worktreePath} && unset CODEX_RELAY_HOME OPENAI_API_KEY && CODEX_SLOT_RECEIPT=${process.env.CODEX_SLOT_RECEIPT || ''} CODEX_SLOT_LEASE_ID=${process.env.CODEX_SLOT_LEASE_ID || ''} CODEX_SLOT_SESSION_ID=${process.env.CODEX_SLOT_SESSION_ID || ''} CODEX_SLOT_AGENT_ID=${process.env.CODEX_SLOT_AGENT_ID || ''} CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
+      innerCmd = `cd ${worktreePath} && unset CODEX_HOMES CODEX_RELAY_HOME CODEX_REVIEW_HOME OPENAI_API_KEY CODEX_API_KEY && CODEX_SLOT_RECEIPT=${process.env.CODEX_SLOT_RECEIPT || ''} CODEX_SLOT_LEASE_ID=${process.env.CODEX_SLOT_LEASE_ID || ''} CODEX_SLOT_SESSION_ID=${process.env.CODEX_SLOT_SESSION_ID || ''} CODEX_SLOT_AGENT_ID=${process.env.CODEX_SLOT_AGENT_ID || ''} CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     }
     try {
       execFn(
