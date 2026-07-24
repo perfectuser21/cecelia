@@ -5,3 +5,4 @@
 planner: done (sprint-prd.md@8b85fa97c, invariants=8, fr=0)
 gan: done (contract-draft.md+dod@e7e3a4e, r2, verdict=APPROVED, 铁律覆盖=8/8, judgments_written=2, rubric=.harness/verdicts/gan-e7e3a4e.json)
 generator: pr_opened (#4273, red=4fc96dd)
+generator: done (pr=#4273, red=4fc96dd, green=14d130d, fix=202820d, CI required checks 全绿)
