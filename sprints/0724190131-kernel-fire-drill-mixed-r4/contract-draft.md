@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > Sprint: [FIRE DRILL 0724190131] Kernel v1 mixed provider 主链验收（r4）
 > task_id: 91db186d-e6ba-4099-bcf1-0e1c4ec0625c ｜ journey_type: autonomous ｜ target_environment: local_api
@@ -256,14 +256,17 @@ echo "OK: fire drill r4 文档四要素 + 无旧轮次残渣 + 分支纪律恰�
 
 - contract-gate: packages/brain/src/lib/contract-gate.js 存在（cecelia repo），走正常代码层 gate，无跳过。
 - judgment-pending-user: 无（判定点登记表无 ⚠️ 级未拍板项；两项判定的兜底方式均为 PRD 显式拍板的 judge 复核 + human review 出口）。
-- oracle 留痕表（[oracle留痕] 铁律，GAN 批准前真跑，红阶段预期全非 0）：见下表，由 proposer 在 Round 1 于 propose 分支工作区真实执行并记录：
+- round-2 说明（Step 1.5 精简纪律）：本轮为 kernel 重驱动 propose（attempt a2→a5，run 无 gan_rounds 记录），非 REVISION 修订轮——已核查远端分支（无 cp-harness-review-*-91db186d）、.harness/verdicts、Brain API detail（gan_rounds=null）三处均无 Reviewer 反馈。合同实质内容相对 Round 1 净变化 = 0（仅轮次标头 + 本 notes + oracle 留痕表更新），无 scope 蔓延。
+- 红证据环境说明：propose 容器 repo 根无 node_modules（vitest 不可跑），tests/ 的 4 条红以 node 直接核验等价证明（readFile/accessSync 目标文档 → ENOENT，真实非 0 exit），CI 侧 Sprint Tests（根 vitest.config.js include sprints/**）为最终执行体。DoD 的 evaluator oracle 是 manual:bash 命令，已全部真跑（见下表），不依赖 vitest。
+- oracle 留痕表（[oracle留痕] 铁律，GAN 批准前真跑，红阶段预期全非 0）：下表为 Round 2 于 propose 分支工作区（origin/main 已 fetch）逐条真实执行的记录：
 
 | 命令 | 真实 exit code（红阶段） | 解释器确认 |
 |---|---|---|
 | DoD B1 manual:bash | 1 | bash 启动，test -f 失败（文档未创建，真红） |
-| DoD B2 manual:bash | 1 | bash 启动，grep 无文件（真红） |
-| DoD B3 manual:bash | 1 | bash 启动，首个关键词即 FAIL（真红） |
+| DoD B2 manual:bash | 1 | bash 启动，grep: No such file or directory（真红） |
+| DoD B3 manual:bash | 1 | bash 启动，stdout「FAIL: 缺 planner」（真红） |
 | DoD B4 manual:bash | 1 | bash 启动，test -f 失败（真红，防「无文件=无残渣」假绿） |
-| DoD B5 manual:bash | 1 | bash 启动，propose 分支 diff 含 sprints/**（真红；generator 合规分支上应转绿） |
+| DoD B5 manual:bash | 1 | bash 启动，stdout「FAIL: diff=sprints/...」5 个合同产物文件（真红；generator 合规分支上应转绿） |
 | DoD B6 manual:bash | 1 | bash 启动，test -f 失败（真红） |
-| E2E 脚本整体 | 1 | bash -n 语法通过后真跑，Step 1a 即 FAIL（真红） |
+| E2E 脚本整体 | 1 | bash -n 语法通过后真跑，stdout「FAIL: 目标文档不存在」（Step 1a 即 FAIL，真红） |
+| ARTIFACT-1 node accessSync | 1 | node 启动，ENOENT（真红） |
