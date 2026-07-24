@@ -581,6 +581,7 @@ export function buildDeliverCommands({ sshHost, source, path, mode }) {
       cmd: 'scp',
       args: [
         ...SSH_DELIVER_OPTIONS,
+        '-O',
         '-p',
         source,
         `${sshHost}:${quotedPath}`,

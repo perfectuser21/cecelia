@@ -786,6 +786,7 @@ test('default deliverAuth hardens ssh commands and POSIX-quotes remote paths', a
         'ServerAliveInterval=15',
         '-o',
         'ServerAliveCountMax=2',
+        '-O',
         '-p',
         '/local/auth.json',
         `xian-m4.example:${quotedRemotePath}`,
