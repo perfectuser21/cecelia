@@ -199,6 +199,30 @@ if [[ "$DRY_RUN" == "1" ]]; then
     exit 0
 fi
 
+# 启动端是唯一知道 session 出处的地方。派发标记优先于 TTY；无法确定出处时不登记，
+# 让采集端按未登记 session 失败关闭。登记失败不能阻塞 Claude，但连接等待最多 2 秒。
+_register_session_provenance() {
+    local kind launched_by task_id
+    if [[ "${CECELIA_DISPATCH:-0}" == "1" ]]; then
+        kind="machine"
+        launched_by="${CECELIA_LAUNCHED_BY:-cecelia-dispatch}"
+    elif [[ -t 0 && -t 1 ]]; then
+        kind="human"
+        launched_by="claude-launch-interactive"
+    else
+        return 0
+    fi
+
+    task_id="${HARNESS_TASK_ID:-}"
+    PGCONNECT_TIMEOUT=2 psql cecelia -v ON_ERROR_STOP=1 \
+        -v sid="$SID" -v kind="$kind" -v launched_by="$launched_by" -v task_id="$task_id" -c \
+        "INSERT INTO session_provenance(session_id,kind,launched_by,task_id)
+         VALUES (:'sid', :'kind', :'launched_by', NULLIF(:'task_id','')::uuid)
+         ON CONFLICT (session_id) DO NOTHING" >/dev/null 2>&1 || true
+}
+
+_register_session_provenance
+
 # 真实执行：交互模式 + 主仓工作树 → 建立/复用 per-session worktree 并 cd 进去
 if [[ "$AUTO_WORKTREE" == "1" ]]; then
     _sweep_orphan_wt_project_dirs || true

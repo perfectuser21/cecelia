@@ -57,9 +57,11 @@ for _arg in "$@"; do
   fi
 done
 if [[ "$_DRY_RUN" == "1" ]]; then
+  _TASK_ID="${1:-}"
+  [[ "$_TASK_ID" == "--dry-run" ]] && _TASK_ID="${2:-}"
   _SID=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' || python3 -c 'import uuid; print(uuid.uuid4())')
   _LAUNCHER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/claude-launch.sh"
-  echo "bash $_LAUNCHER --session-id $_SID -p <prompt>"
+  echo "CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=cecelia-run HARNESS_TASK_ID=$_TASK_ID CLAUDE_SESSION_ID=$_SID bash $_LAUNCHER -p <prompt>"
   exit 0
 fi
 
@@ -635,7 +637,7 @@ main() {
       # Phase 7.1: 走统一 claude-launch.sh（从 script 路径推算到 scripts/claude-launch.sh）
       local _launcher
       _launcher="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/claude-launch.sh"
-      CLAUDE_INVOKE="CLAUDE_SESSION_ID=$SESSION_UUID bash $_launcher -p \"\$1\""
+      CLAUDE_INVOKE="CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=cecelia-run HARNESS_TASK_ID=$TASK_ID CLAUDE_SESSION_ID=$SESSION_UUID bash $_launcher -p \"\$1\""
     else
       echo "[cecelia-run] 🔄 从 checkpoint resume (attempt=$attempt, session=$SESSION_UUID)" >&2
       CLAUDE_INVOKE="claude --resume $SESSION_UUID -p \"继续执行，上次因超时/中断未完成，请从中断处继续\""

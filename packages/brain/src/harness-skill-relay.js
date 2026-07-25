@@ -967,7 +967,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // 三分支路由（INV-1 + FR-R1/R3/R4）：claude / grok / codex 各占一条独立分支
     let innerCmd;
     if (isClaudeHeaded) {
-      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`;
+      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=skill-relay-claude-headed && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`;
     } else if (isGrokHeaded) {
       innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
     } else {

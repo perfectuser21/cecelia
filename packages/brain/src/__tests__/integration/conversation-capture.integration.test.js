@@ -10,11 +10,17 @@ function makeFixtureHome() {
   return root;
 }
 
-function writeClaudeSession(homeRoot, projectSlug, fileName, entries) {
+async function writeClaudeSession(homeRoot, projectSlug, fileName, entries) {
   const dir = path.join(homeRoot, '.claude', 'projects', projectSlug);
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, fileName);
   fs.writeFileSync(filePath, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  await pool.query(
+    `INSERT INTO session_provenance(session_id, kind, launched_by)
+     VALUES ($1, 'human', 'conversation-capture-integration')
+     ON CONFLICT (session_id) DO NOTHING`,
+    [fileName.replace(/\.jsonl$/, '')]
+  );
   return filePath;
 }
 
@@ -26,12 +32,14 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
 
   beforeAll(async () => {
     pool = (await import('../../db.js')).default;
+    await pool.query(fs.readFileSync(new URL('../../../migrations/360_session_provenance.sql', import.meta.url), 'utf8'));
     originalHomedir = os.homedir;
   });
 
   afterEach(async () => {
     await pool.query(`DELETE FROM captures WHERE repo LIKE 'itest-mt-%'`);
     await pool.query(`DELETE FROM working_memory WHERE key = 'conversation_capture_last_scan'`);
+    await pool.query(`DELETE FROM session_provenance WHERE launched_by = 'conversation-capture-integration'`);
     if (homeRoot && fs.existsSync(homeRoot)) fs.rmSync(homeRoot, { recursive: true, force: true });
     homeRoot = null;
     os.homedir = originalHomedir;
@@ -41,12 +49,13 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
   afterAll(async () => {
     await pool.query(`DELETE FROM captures WHERE repo LIKE 'itest-mt-%'`);
     await pool.query(`DELETE FROM working_memory WHERE key = 'conversation_capture_last_scan'`);
+    await pool.query(`DELETE FROM session_provenance WHERE launched_by = 'conversation-capture-integration'`);
   });
 
   it('已闲置≥15分钟的 session 产生原始文本+摘要两条 capture', async () => {
     homeRoot = makeFixtureHome();
     const oldTs = new Date(Date.now() - 20 * 60 * 1000).toISOString(); // 20分钟前，超过15分钟闲置阈值
-    writeClaudeSession(homeRoot, 'itest-mt-proj', 'session1.jsonl', [
+    await writeClaudeSession(homeRoot, 'itest-mt-proj', 'session1.jsonl', [
       { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: '闲置会话测试内容' } },
     ]);
     vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
@@ -72,7 +81,7 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
   it('未闲置（最后消息在15分钟内）的 session 不产生 capture', async () => {
     homeRoot = makeFixtureHome();
     const recentTs = new Date(Date.now() - 60 * 1000).toISOString(); // 1分钟前
-    writeClaudeSession(homeRoot, 'itest-mt-active', 'session2.jsonl', [
+    await writeClaudeSession(homeRoot, 'itest-mt-active', 'session2.jsonl', [
       { type: 'user', uuid: 'u1', timestamp: recentTs, message: { role: 'user', content: '还在继续聊' } },
     ]);
     vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
@@ -90,7 +99,7 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
   it('同一 session 重复扫描不重复写入（dedupeKey 幂等）', async () => {
     homeRoot = makeFixtureHome();
     const oldTs = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-    writeClaudeSession(homeRoot, 'itest-mt-dedup', 'session3.jsonl', [
+    await writeClaudeSession(homeRoot, 'itest-mt-dedup', 'session3.jsonl', [
       { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: '去重测试' } },
     ]);
     vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
@@ -109,7 +118,7 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
   it('LLM 摘要失败不影响原始文本正常写入', async () => {
     homeRoot = makeFixtureHome();
     const oldTs = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-    writeClaudeSession(homeRoot, 'itest-mt-llmfail', 'session4.jsonl', [
+    await writeClaudeSession(homeRoot, 'itest-mt-llmfail', 'session4.jsonl', [
       { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: 'LLM失败测试' } },
     ]);
     vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
@@ -142,7 +151,7 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
     const longSuffix = 'x'.repeat(90);
     const projectSlug = `itest-mt-trunc-${longSuffix}`;
     expect(projectSlug.length).toBeGreaterThan(100);
-    writeClaudeSession(homeRoot, projectSlug, 'session5.jsonl', [
+    await writeClaudeSession(homeRoot, projectSlug, 'session5.jsonl', [
       { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: '目录名超长场景下应该正常写入' } },
     ]);
     vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
@@ -177,7 +186,7 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
     homeRoot = makeFixtureHome();
     const idleMs = 20 * 60 * 1000; // 20分钟前，越过15分钟闲置阈值
     const oldTs = new Date(Date.now() - idleMs).toISOString();
-    const filePath = writeClaudeSession(homeRoot, 'itest-mt-lookback', 'session-lookback.jsonl', [
+    const filePath = await writeClaudeSession(homeRoot, 'itest-mt-lookback', 'session-lookback.jsonl', [
       { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: '跨扫描周期闲置捕获测试' } },
     ]);
     // 模拟"文件写完后再没被碰过"：mtime 固定钉在 20 分钟前，不会随扫描推进而改变。
@@ -225,7 +234,7 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
   it('同一已闲置 session 连续两次扫描只调用一次 LLM，不重复计费（回归 Critical #2）', async () => {
     homeRoot = makeFixtureHome();
     const oldTs = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-    writeClaudeSession(homeRoot, 'itest-mt-llmonce', 'session-llmonce.jsonl', [
+    await writeClaudeSession(homeRoot, 'itest-mt-llmonce', 'session-llmonce.jsonl', [
       { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: 'LLM只调用一次测试' } },
     ]);
     vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
@@ -250,7 +259,7 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
   it('同一 session 复聊后再次闲置：更新已有 capture 内容而不新增行（dedupeKey 从绑 lastEntryId 改为只绑 sessionId 后的回归测试）', async () => {
     homeRoot = makeFixtureHome();
     const oldTs = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-    const filePath = writeClaudeSession(homeRoot, 'itest-mt-resume', 'session-resume.jsonl', [
+    const filePath = await writeClaudeSession(homeRoot, 'itest-mt-resume', 'session-resume.jsonl', [
       { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: '第一轮内容' } },
     ]);
     vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));
@@ -288,7 +297,7 @@ describe('conversation-capture 多工具集成（真 DB）', () => {
     // { errors++ }` 分支）真的把它计入 errors，不是静默吞掉。
     homeRoot = makeFixtureHome();
     const oldTs = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-    writeClaudeSession(homeRoot, 'itest-mt-pushfail', 'session6.jsonl', [
+    await writeClaudeSession(homeRoot, 'itest-mt-pushfail', 'session6.jsonl', [
       { type: 'user', uuid: 'u1', timestamp: oldTs, message: { role: 'user', content: '这条会被模拟成 pushCapture 内部失败' } },
     ]);
     vi.stubEnv('CLAUDE_PROJECTS_DIR', path.join(homeRoot, '.claude', 'projects'));

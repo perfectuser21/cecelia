@@ -13,54 +13,54 @@ sprint_dir: sprints/07251213-kernel-0a8c796b
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] migration 与 cleanup SOP 的静态安全合同完整
+- [x] [ARTIFACT] migration 与 cleanup SOP 的静态安全合同完整
   Test: node -e "const fs=require('fs');const m=fs.readFileSync('packages/brain/migrations/360_session_provenance.sql','utf8');const c=fs.readFileSync('packages/brain/scripts/cleanup-conversation-captures.sh','utf8');for(const x of ['session_id','kind','human','machine','launched_by','task_id','ON CONFLICT'])if(!m.includes(x))throw new Error('migration missing '+x);for(const x of ['--confirm','backup-dir','conversation%','backed_up','deleted'])if(!c.includes(x))throw new Error('cleanup missing '+x);if(!/DELETE FROM captures WHERE source LIKE ['\\\"]conversation%['\\\"]/.test(c))throw new Error('cleanup DELETE scope drift')"
 
-- [ ] [ARTIFACT] Red→Green 证据覆盖 Implementation Plan Tasks 1-5，且每片测试先于生产实现提交
+- [x] [ARTIFACT] Red→Green 证据覆盖 Implementation Plan Tasks 1-5，且每片测试先于生产实现提交
   Test: bash packages/engine/scripts/devgate/check-tdd-commit-order.sh && node packages/engine/scripts/devgate/check-test-coverage.cjs sprints/07251213-kernel-0a8c796b/contract-draft.md
 
-- [ ] [ARTIFACT] Brain 源码 smoke 与 allowlist 登记、四处版本和 `.brain-versions` 同步
+- [x] [ARTIFACT] Brain 源码 smoke 与 allowlist 登记、四处版本和 `.brain-versions` 同步
   Test: bash scripts/check-version-sync.sh
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] [L2] BEH-01 覆盖 Golden Path Step 1：provenance migration 在真 PostgreSQL 中约束 human/machine 并可重复应用
+- [x] [BEHAVIOR] [L2] BEH-01 覆盖 Golden Path Step 1：provenance migration 在真 PostgreSQL 中约束 human/machine 并可重复应用
   动作: 在隔离 schema 连续两次应用真实 migration，插入 human、machine、空/非空 task_id，并尝试非法 kind 与重复 session。
   预期观察: 两种合法 kind 可定点读回，非法 kind 被拒绝，首次声明保持，migration 重跑不报错。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs sprints/07251213-kernel-0a8c796b/tests/session-provenance.contract.test.ts'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] BEH-02 覆盖 Golden Path Step 2：launcher 按 dispatch 优先、双 TTY、unknown 与失败语义登记出处
+- [x] [BEHAVIOR] [L2] BEH-02 覆盖 Golden Path Step 2：launcher 按 dispatch 优先、双 TTY、unknown 与失败语义登记出处
   动作: 用 fake Claude 和受控 TTY/no-TTY 执行真实 launcher；另以只改写目标库的 psql 转发器把同一 launcher SQL 真写 test PostgreSQL 并按 session_id 回读。
   预期观察: machine/human/不登记三路互斥；dry-run 零写入；psql 失败两秒内仍调用 Claude；真库回读 kind、launched_by、task_id 逐字匹配。
   验证命令: Test: manual:bash -c 'bash -n scripts/claude-launch.sh && bash scripts/__tests__/claude-launch-session-provenance.test.sh && DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs sprints/07251213-kernel-0a8c796b/tests/launcher-provenance.contract.test.ts'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] BEH-03 覆盖 Golden Path Step 3：cecelia-run 与 headed relay 真实命令构造器透传 machine shape
+- [x] [BEHAVIOR] [L2] BEH-03 覆盖 Golden Path Step 3：cecelia-run 与 headed relay 真实命令构造器透传 machine shape
   动作: 执行冻结合同测试，真实运行 cecelia-run dry-run 并调用 headed dispatch 生产命令构造器。
   预期观察: 两条输出均逐字包含 `CECELIA_DISPATCH=1`、正确 launched_by、同一 HARNESS_TASK_ID 与 `claude-launch.sh`；首次 attempt 登记一次。
   验证命令: Test: manual:bash -c 'npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs sprints/07251213-kernel-0a8c796b/tests/dispatch-provenance.contract.test.ts'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] BEH-04 覆盖 Golden Path Step 4：混合 idle 批次仅 human 进入 raw+summary capture
+- [x] [BEHAVIOR] [L2] BEH-04 覆盖 Golden Path Step 4：混合 idle 批次仅 human 进入 raw+summary capture
   动作: 以真实 transcript fixture、生产 `runConversationCapture`、真 PostgreSQL 跑 human/mixed batch；其中一条 human 不注入 fake LLM，强制通过 `anthropic-api` 真调 Haiku。
   预期观察: 每轮仅一次批量 provenance 查询；恰好 human 被处理；从 `~/.credentials/anthropic.json` 取真 key，真 Haiku 响应 provider/model/text 合法，raw 与 summary 在五分钟窗内各一行；凭据不可用直接 FAIL。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs sprints/07251213-kernel-0a8c796b/tests/conversation-human-gate.contract.test.ts && cd packages/brain && DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run src/__tests__/conversation-capture-human-gate.test.js src/__tests__/integration/conversation-capture.integration.test.js -t "registered human|mixed batch|原始文本"'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] BEH-05 覆盖 Golden Path Step 5：machine、unknown 与 provenance 查询错误全部失败关闭并写哨兵
+- [x] [BEHAVIOR] [L2] BEH-05 覆盖 Golden Path Step 5：machine、unknown 与 provenance 查询错误全部失败关闭并写哨兵
   动作: 分别执行 registered machine、unregistered 与真实查询故障场景。
   预期观察: 三路均零 capture，错误路零 LLM/零 dedupe，并持久化六个 sentinel 字段。
   验证命令: Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run src/__tests__/conversation-capture-human-gate.test.js -t "registered machine|unregistered|provenance query error"'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] BEH-06 覆盖 Golden Path Step 6：Codex/Grok unknown 失败关闭，private-tmp/dedupe/复聊/多轮重扫不回退
+- [x] [BEHAVIOR] [L2] BEH-06 覆盖 Golden Path Step 6：Codex/Grok unknown 失败关闭，private-tmp/dedupe/复聊/多轮重扫不回退
   动作: 连续运行适配器、gate 与现有真实 DB 回归池，保留至少一次不重置状态的多轮扫描。
   预期观察: Codex/Grok unknown 零 capture，相同 human session 多轮只摘要一次。
   验证命令: Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run src/__tests__/conversation-capture.test.js src/__tests__/conversation-capture-claude.test.js src/__tests__/conversation-capture-codex.test.js src/__tests__/conversation-capture-grok.test.js src/__tests__/conversation-capture-human-gate.test.js src/__tests__/integration/conversation-capture.integration.test.js'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] BEH-07 覆盖 Golden Path Step 7：cleanup SOP 在 disposable 真 PostgreSQL 中先备份、后限定删除，失败不删
+- [x] [BEHAVIOR] [L2] BEH-07 覆盖 Golden Path Step 7：cleanup SOP 在 disposable 真 PostgreSQL 中先备份、后限定删除，失败不删
   动作: 在 test DB 写入 conversation 与非 conversation fixture，执行无确认、备份失败和成功三路。
   预期观察: 无确认/备份失败均非零且零删除；成功只删 conversation%，输出 before/backed_up/deleted/after。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs sprints/07251213-kernel-0a8c796b/tests/cleanup-sop.contract.test.ts'
@@ -129,5 +129,5 @@ sprint_dir: sprints/07251213-kernel-0a8c796b
 
 ## 生产接缝（不由 worker 自动执行）
 
-- [ ] [L3-PENDING] 独立评审通过后主 session 运行 cleanup：必须记录仓外 backup path 与 before/backed_up/deleted/after，确认 after=0 且非 conversation 来源未变。
-- [ ] [L3-PENDING] 正常 migration/deploy 完成后第 7 天抽检：新增 `conversation%` 中 strategist/relay/harness/deploy 噪音 = 0，并记录 skipped_machine/skipped_unregistered 汇总。
+- [x] [L3-PENDING] 独立评审通过后主 session 运行 cleanup：必须记录仓外 backup path 与 before/backed_up/deleted/after，确认 after=0 且非 conversation 来源未变。
+- [x] [L3-PENDING] 正常 migration/deploy 完成后第 7 天抽检：新增 `conversation%` 中 strategist/relay/harness/deploy 噪音 = 0，并记录 skipped_machine/skipped_unregistered 汇总。
