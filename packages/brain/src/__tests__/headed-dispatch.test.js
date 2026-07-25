@@ -224,6 +224,9 @@ describe('4. claude headed 分支（T6）', () => {
     const tmuxCmd = calls.find((c) => c.includes('tmux new-session'));
     expect(tmuxCmd).toContain('claude-launch.sh');
     expect(tmuxCmd).toContain('--dangerously-skip-permissions');
+    expect(tmuxCmd).toContain('CECELIA_DISPATCH=1');
+    expect(tmuxCmd).toContain('CECELIA_LAUNCHED_BY=skill-relay-claude-headed');
+    expect(tmuxCmd).toContain(`HARNESS_TASK_ID=${task.id}`);
     expect(tmuxCmd).not.toContain('CODEX_HOME');
     expect(tmuxCmd).not.toContain(' codex ');
   });

@@ -158,6 +158,7 @@ inbox-p1-migration-verify.sh
 migration-verify.sh
 conversation-capture-smoke.sh
 conversation-capture-multitool-smoke.sh
+conversation-capture-human-gate-smoke.sh
 dispatch-allocation-guide-smoke.sh
 grok-relay-smoke.sh
 codex-cred-isolation-smoke.sh

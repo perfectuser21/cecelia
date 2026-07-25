@@ -113,8 +113,36 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
   );
 
   let pushed = 0;
+  let skippedMachine = 0;
+  let skippedUnregistered = 0;
+  let provenanceLookupFailed = false;
+  let humanSessions = [];
 
-  for (const session of idleSessions) {
+  if (idleSessions.length > 0) {
+    const sessionIds = [...new Set(idleSessions.map((session) => session.sessionId))];
+    try {
+      const { rows } = await pool.query(
+        `SELECT session_id, kind
+         FROM session_provenance
+         WHERE session_id = ANY($1::text[])`,
+        [sessionIds]
+      );
+      const provenance = new Map(rows.map((row) => [row.session_id, row.kind]));
+      humanSessions = idleSessions.filter((session) => {
+        const kind = provenance.get(session.sessionId);
+        if (kind === 'human') return true;
+        if (kind === 'machine') skippedMachine++;
+        else skippedUnregistered++;
+        return false;
+      });
+    } catch (e) {
+      errors++;
+      provenanceLookupFailed = true;
+      console.warn(`[conversation-capture] provenance lookup failed; fail-closed for this scan: ${e.message}`);
+    }
+  }
+
+  for (const session of humanSessions) {
     const rawText = joinTurns(session.turns);
     const dedupeKey = sessionDedupeKey(session);
 
@@ -178,7 +206,11 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
     last_scan_at: new Date(now).toISOString(),
     pushed,
     errors,
-    sessions_processed: idleSessions.length,
+    sessions_seen: idleSessions.length,
+    sessions_processed: humanSessions.length,
+    skipped_machine: skippedMachine,
+    skipped_unregistered: skippedUnregistered,
+    provenance_lookup_failed: provenanceLookupFailed,
     adapter_failures: adapterFailures,
   };
   try {
@@ -192,5 +224,14 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
     console.warn(`[conversation-capture] sentinel write failed: ${e.message}`);
   }
 
-  return { ok: true, pushed, errors };
+  return {
+    ok: true,
+    pushed,
+    errors,
+    sessions_seen: idleSessions.length,
+    sessions_processed: humanSessions.length,
+    skipped_machine: skippedMachine,
+    skipped_unregistered: skippedUnregistered,
+    provenance_lookup_failed: provenanceLookupFailed,
+  };
 }
