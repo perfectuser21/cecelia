@@ -1,0 +1,32 @@
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "autonomous",
+  "journey_type_reason": "该 sprint 只改 Brain orchestrator 的派发前 preflight、路由与结构化失败分类，不涉及前端交互。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Kernel capability gate 与 dispatcher preflight 接线",
+      "scope": "新增 server-owned capability snapshot、ExecutionTarget 路由、canonical machine identity 与 infrastructure/product failure 分流，并保持版本账本同步。",
+      "dod": [
+        "[BEHAVIOR] dispatcher 在 createAttempt 前执行 preflight 并写 capability_snapshot_id",
+        "[BEHAVIOR] team4 503 后同 cycle 最多重试一次且切换同 provider 健康账号 team1",
+        "[BEHAVIOR] 全池失败或 contract capability mismatch 返回 infrastructure_blocked 且不创建 attempt",
+        "[ARTIFACT] preflight / capability-gate / canonical-machine 模块落到 packages/brain/src/orchestrator/"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/preflight/capability-gate.js",
+        "packages/brain/src/orchestrator/preflight/execution-targets.js",
+        "packages/brain/src/orchestrator/preflight/canonical-machine-id.js",
+        "packages/brain/src/orchestrator/__tests__/",
+        "packages/brain/src/__tests__/",
+        "DEFINITION.md",
+        "VERSION",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 90
+    }
+  ]
+}
