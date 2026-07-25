@@ -190,7 +190,13 @@ export async function collectGroundTruth(deps, opts) {
   }
 
   // ---- 文件通道 ----
-  const prdExists = Boolean(fileExists(prdPath));
+  // PRD 完成是单调里程碑：一旦服务端曾在 append-only 决策日志中观测为 true，
+  // Brain 重启/容器切换后即使看不到宿主机 task worktree，也不得倒退回 planner。
+  // 复用既有回放源，不新增第二本状态账。
+  const prdObservedInLog = decisionLog.some(
+    (row) => asJson(row.observed)?.prdExists === true,
+  );
+  const prdExists = Boolean(fileExists(prdPath)) || prdObservedInLog;
   let callbackResult = null;
   if (fileExists(callbackResultPath)) {
     try {
