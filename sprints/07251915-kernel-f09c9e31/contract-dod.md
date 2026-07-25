@@ -5,7 +5,7 @@ target_environment: local_api
 ---
 # Contract DoD — Sprint: Kernel durable resume：跨 run 去重与恢复
 
-**范围**: Kernel Harness 后端恢复正确性 hotfix；只改 `packages/brain/src/` 内 run bootstrap、contract-store、ground-truth、reconcile/derive/counters、attempt resume 相关实现与对应测试/版本账本。
+**范围**: Kernel Harness 后端恢复正确性 hotfix；只改 `packages/brain/src/` 内稳定导出 `durable-resume`、run bootstrap、contract-store、ground-truth、reconcile/derive/counters、attempt resume 相关实现与对应测试/版本账本。
 **大小**: L
 
 ## ARTIFACT 条目
@@ -14,7 +14,10 @@ target_environment: local_api
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07251915-kernel-f09c9e31/contract-draft.md','utf8');for(const s of ['## Golden Path','## 禁 mock 边清单','## E2E 验收'])if(!c.includes(s))process.exit(1)"
 
 - [ ] [ARTIFACT] Sprint 红测文件存在且测试名可被 Test Contract 字面匹配。
-  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts','utf8');for(const s of ['后续 run 继承 latest approved contract','ground truth 从历史 approved contract 恢复当前 run','Brain restart 后 PRD/PR/合同里程碑单调恢复','跨 run 同结构化 failure signature','expired lease 有 provider session 时恢复原 attempt','无 provider session 时先结构化终结 orphan attempt'])if(!c.includes(s))process.exit(1)"
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts','utf8');for(const s of ['后续 run 继承 latest approved contract','ground truth 从历史 approved contract 恢复当前 run','Brain restart 后 PRD/PR/合同里程碑单调恢复','跨 run 同结构化 failure signature','跨 run 不同 failure signature 首次出现','稳定恢复原语：expired lease 有 provider session','稳定恢复原语：无 provider session'])if(!c.includes(s))process.exit(1)"
+
+- [ ] [ARTIFACT] Commander Phase 1/2 可复用稳定恢复原语，且未复制第二状态机。
+  Test: node -e "import('./packages/brain/src/orchestrator/durable-resume.js').then(m=>{if(typeof m.recoverDurableRun!=='function')process.exit(1)})"
 
 - [ ] [ARTIFACT] Brain 源码变更同步版本账本。
   Test: bash scripts/check-version-sync.sh && node -e "const fs=require('fs');const pkg=require('./packages/brain/package.json').version;const v=fs.readFileSync('packages/brain/VERSION','utf8').trim();if(v!==pkg)process.exit(1)"
@@ -39,22 +42,28 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "Brain restart 后 PRD/PR/合同里程碑单调恢复" --reporter=verbose'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] expired lease 有 provider session 时恢复原 attempt，不创建新 attempt
-  动作: 在真实 PostgreSQL 测试事务中插入过期 running attempt 与 provider_session_id，然后触发恢复路径。
-  预期观察: 测试命令退出时，原 attempt 被 reclaim/resume；同一 run 的 `harness_attempts` 行数不增加。
-  验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "expired lease 有 provider session 时恢复原 attempt" --reporter=verbose'
+- [ ] [BEHAVIOR] [L2] 稳定恢复原语：expired lease 有 provider session 时调用真实 provider resume 并恢复原 attempt
+  动作: 真实 import/use `recoverDurableRun`，在 PostgreSQL 事务中插入过期 running attempt 与 provider_session_id，并传入既有 Codex adapter 与捕获型 launcher。
+  预期观察: 测试命令退出时，原 attempt 被 reclaim，真实 adapter 生成 `exec resume <session>` spec 并交给 launcher；attempt_id/provider_session_id 不变且行数不增加。
+  验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "稳定恢复原语：expired lease 有 provider session" --reporter=verbose'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] 无 provider session 时先结构化终结 orphan attempt，再从 DB/GitHub 真相推导
-  动作: 插入无 provider_session_id 的过期 orphan running attempt 并触发恢复。
-  预期观察: 测试命令退出时，原 attempt 写入终态与 error_code；下一 decision 不直接新建 attempt。
-  验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "无 provider session 时先结构化终结 orphan attempt" --reporter=verbose'
+- [ ] [BEHAVIOR] [L2] 稳定恢复原语：无 provider session 时自动终结 orphan 后从 DB/GitHub 真相推导
+  动作: 真实 import/use `recoverDurableRun`，插入无 provider_session_id 的过期 orphan running attempt，并提供真实 PostgreSQL 与结构化 GitHub PR 响应。
+  预期观察: 测试命令退出时，恢复入口自动写 `failed + orphan_without_provider_session`，随后返回既有 derive 的 `spawn:generator-fix`；attempt 行数仍为 1。
+  验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "稳定恢复原语：无 provider session" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] 跨 run 同结构化 failure signature 重现时不再派 generator
   动作: 构造同一 task 的旧 run 已记录 product failure signature，新 run 同一 failure_set 再现。
   预期观察: 测试命令退出时，derive action 为 `wait:human_review` 或 `mark_failed`，不是 `spawn:generator` 或 `spawn:generator-fix`。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "跨 run 同结构化 failure signature" --reporter=verbose'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] 跨 run 不同 failure signature 首次出现时仍派 generator-fix
+  动作: 旧 run 写入结构化 signature A，当前 run 由 GitHub CI 真相观测到不同 signature B，再调用 `recoverDurableRun` reconcile。
+  预期观察: 测试命令退出时，旧 signature A 不会误杀首次出现的 B，结构化 decision.action 字面等于 `spawn:generator-fix`。
+  验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "跨 run 不同 failure signature 首次出现" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] Brain restart 回归池全量通过，既有合同测试未被削弱

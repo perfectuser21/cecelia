@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 23)
+# Sprint Contract Draft (Round 24)
 
 ## Notes
 
@@ -6,27 +6,7 @@
 - Registry scan: api/db/test registry reachable but stale by about 167h; contract uses PRD literal scope plus current source/tests as authority.
 - context-manifest: unavailable (`GET /api/brain/line/741d4acc-9ca8-4545-a971-efa12fce8150/context-manifest` returned HTML 404), so no cumulative FR beyond PRD text.
 - 本 sprint 是 Kernel Harness hotfix；不得创建第二账本，不得写生产数据库，不得自动 merge。
-- Round 2 revision: 补齐 Brain restart 的 PRD/PR/合同三里程碑单调恢复红测、GitHub PR 真调用 E2E oracle、Test Contract 全行为映射与版本同步脚本断言。
-- Round 3 refresh: 保持 Round 2 APPROVED 合同范围不扩张；重新跑确定性格式自查与 Contract Gate，确认可交付给 evaluator。
-- Round 4 refresh: 本轮未收到新的 reviewer 反馈 artifact；继续保留 PRD 字面范围与现有 Red 测试池，不扩张 scope，仅刷新 proposer 分支与结果协议。
-- Round 5 refresh: 本轮仍未收到新的 reviewer 反馈 artifact；继续复用 Round 4 合同范围，已重新跑确定性格式自查与 Contract Gate。Red 证据受本地 PostgreSQL 未启动影响为 `ECONNREFUSED 127.0.0.1:5432`，说明合同红测依赖真实 PG 边且未 mock。
-- Round 6 refresh: 本轮 artifacts 仍为空；继续复用已批准合同的 PRD 字面范围与真实 PG/GitHub 接缝，不扩张 scope，仅刷新 proposer 分支与结果协议。确定性自查与 Contract Gate 均通过；Red 证据仍为本地 PostgreSQL 未启动导致的 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。
-- Round 7 refresh: 本轮 task_bundle artifacts 为空且无新增 reviewer 反馈；继续复用 Round 6 的 PRD 字面覆盖、真实 PG 接缝、GitHub PR 真调用补位与单 workstream task-plan，不扩张 scope，仅刷新 proposer 分支与结果协议。registry/context-manifest 状态重新核对：registry 可达但 stale，context-manifest 仍为 404；DoD 中同步 vitest/gh/源码扫描断言的预期观察改为“命令退出时”，避免把非异步断言误写成 `within` 等待预算。确定性自查与 Contract Gate 均通过；Red 证据仍为本地 PostgreSQL 未启动导致的 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。
-- Round 8 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 7 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位与单 workstream task-plan，不扩张 scope。重新核对 registry/context-manifest：registry 可达但 stale，context-manifest 仍为 404；确定性自查与 Contract Gate 均通过；Red 证据仍为本地 PostgreSQL 未启动导致的 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议。
-- Round 9 refresh: 本轮 task_bundle artifacts 为空且未提供新的 reviewer 反馈；继续保持 Round 8 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不新增 PRD 外场景。重新核对 registry/context-manifest：registry 可达但 stale，context-manifest 仍为 404；确定性自查与 Contract Gate 均通过；Red 证据仍为本地 PostgreSQL 未启动导致 6 个测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议。
-- Round 10 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 9 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：registry 可达但 stale，context-manifest 仍为 404；确定性自查与 Contract Gate 均通过；Red 证据仍为本地 PostgreSQL 未启动导致 6 个测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议。
-- Round 11 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 10 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：registry 可达但 stale，context-manifest 仍为 404；确定性自查与 Contract Gate 均通过；Red 证据仍为本地 PostgreSQL 未启动导致 6 个测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议。
-- Round 12 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 11 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry 已重新核对：api/db/test registry 可达但 `scanned_at=2026-07-18T15:50Z` 仍 stale，context-manifest 仍为 HTML 404；本轮仅刷新 proposer 分支与结果协议。
-- Round 13 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 12 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry 已重新核对：api/db/test registry 可达但 `scanned_at=2026-07-18T15:50Z` 仍 stale，context-manifest 仍为 HTML 404；本轮仅刷新 proposer 分支与结果协议。
-- Round 14 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 13 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。本轮修正 Step 6 验证命令引用的本仓库真实 quickcheck 路径为 `scripts/quickcheck.sh`，避免旧 devgate quick-check 别名不存在造成假失败；结果协议刷新到 `cp-harness-propose-r14-f09c9e31-a43`。
-- Round 15 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 14 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但 `scanned_at=2026-07-18T15:50Z` 仍 stale，context-manifest 仍为 HTML 404；本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r15-f09c9e31-a46`。
-- Round 16 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 15 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但 `scanned_at=2026-07-18T15:50Z` 仍 stale，context-manifest 仍为 HTTP 404 不可用；本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r16-f09c9e31-a4`。
-- Round 17 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 16 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale，context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致 6 个测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r17-f09c9e31-a7`。
-- Round 19 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 18 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位与单 workstream task-plan，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r19-f09c9e31-a13`。
-- Round 20 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 19 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r20-f09c9e31-a16`。
-- Round 21 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 20 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致 6 个测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r21-f09c9e31-a19`。
-- Round 22 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 21 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r22-f09c9e31-a22`。
-- Round 23 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 22 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r23-f09c9e31-a25`。
+- Round 24 revision: 按 reviewer r23 的三个 PRD 真漏项最小收敛：定义并 Red 验证稳定导出 `recoverDurableRun`；两种 provider-session 分支都经该真实恢复入口；增加“旧签名 A、新签名 B 仍派 generator-fix”的反例。删除重复轮次流水账，scope 不扩张。
 
 ## Response Schema（推导来源: N/A）
 
@@ -50,7 +30,7 @@ N/A - 任务无新增 HTTP 响应。验收对象是 Kernel run bootstrap、DB �
 
 | 要素 | 说明 | 本次答案（必填，可 N/A） |
 |------|------|--------------------------|
-| **FR（做什么）** | 功能需求 | 同一 initiative/task 的后续 Kernel run 从 DB/GitHub 结构化真相继承 approved contract、PRD/PR/合同里程碑、attempt 与失败签名，避免重复 Planner/Reviewer/Generator。 |
+| **FR（做什么）** | 功能需求 | 同一 initiative/task 的后续 Kernel run 通过稳定导出 `recoverDurableRun` 从 DB/GitHub 结构化真相继承 approved contract、PRD/PR/合同里程碑、attempt 与失败签名，避免重复 Planner/Reviewer/Generator。 |
 | **NFR（做得多好）** | 非功能需求 | approved contract 继承与 run bootstrap 在一个事务内完成；恢复必须幂等；两 run、Brain restart、orphan running、跨 run 同签名回归均可复跑。 |
 | **Invariant（永不违反）** | 不变量 | 不新增第二账本；只复用 `initiative_contracts`、`harness_attempts`、`orchestrator_decision_log`；不从 Agent 自然语言猜状态；不削弱既有合同测试。 |
 | **判定点（怎么知道）** | 判断假设 | 见下方登记表。 |
@@ -78,6 +58,7 @@ N/A - 任务无新增 HTTP 响应。验收对象是 Kernel run bootstrap、DB �
 | expired lease 有 provider session | reclaim 原 attempt 并 resume 原 provider session | 是，attempt_id/provider_session 唯一 | 不创建新 attempt |
 | expired lease 无 provider session | 先结构化终结原 attempt，再从 DB/GitHub 真相推导下一状态 | 是，终态写入幂等 | 不能确认则 wait:human_review 或 FAILED |
 | 跨 run 同结构化根因再现 | 不再派 generator | 是，failure_signature key 去重 | wait:human_review 或 FAILED |
+| 跨 run 首次出现不同结构化根因 | 保留现有首次修复路径 | 是，新 signature 只允许一次 `spawn:generator-fix` | 不得被旧 signature 去重门误杀 |
 
 ### 输入对抗面（对外暴露 agent 必填）
 
@@ -98,6 +79,15 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 - DB 真相来源: `initiative_contracts`、`harness_attempts`、`orchestrator_decision_log`、`initiative_runs`、GitHub PR state/head_sha/statusCheckRollup。
 - 禁止替代 shape: body 传 `tenant_id`、自然语言状态总结、或新增 `contract_branch` ledger。
 
+## 稳定恢复原语
+
+- **模块/导出**: `packages/brain/src/orchestrator/durable-resume.js` 的命名导出 `recoverDurableRun(input)`；Commander Phase 1/2 只能复用该入口，不复制恢复状态机。
+- **结构化输入**: `{ pool, taskId, runId, leaseOwner, leaseSeconds, providerRegistry, launchResume, execCmd, fileExists, readFile, readAuthCircuit }`。`pool` 是既有 PostgreSQL 连接；`providerRegistry` 必须解析既有 adapter；`launchResume({ attempt, spec })` 只负责执行 adapter 生成的 resume spec。
+- **结构化输出**:
+  - 有 session: `{ outcome: "resumed", attempt_id, provider_session_id, launch_result }`，其中 `attempt_id/provider_session_id` 与原行一致；
+  - 无 session 或无 orphan: `{ outcome: "reconciled", terminated_attempt_id, error_code, decision: { phase, action, reason } }`，`terminated_attempt_id/error_code` 无需终结时可为 `null`。
+- **失败语义**: DB 事务、provider 解析、adapter resume 或 launcher 失败必须 reject 并保留结构化错误；不得吞错、不得插入替代 attempt、不得新增账本。无 session 时必须先幂等写 `failed + orphan_without_provider_session`，再调用既有 `collectGroundTruth + derive`。
+
 ## 未覆盖真实链路清单
 
 | 链路点 | 当前合同处理 | 真验证补位计划 |
@@ -109,7 +99,7 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 - `harness-skill-relay` run bootstrap ↔ `initiative_runs` / `initiative_contracts`（本单改 run 创建时的合同继承，测试必须真 Postgres 事务验证）。
 - `ground-truth` ↔ `initiative_contracts` / `harness_attempts` / `orchestrator_decision_log`（本单改跨 run 恢复真相，测试必须真表读取，不 mock 被改 DB 边）。
 - `derive` / `counters` ↔ append-only `orchestrator_decision_log` 回放（本单改跨 run 去重，测试必须用结构化 decision log 行，不用自然语言）。
-- `attempt-store` / watchdog resume ↔ `harness_attempts.provider_session_id`（本单改 expired lease/orphan running 恢复，测试必须真唯一约束与 lease 字段）。
+- `durable-resume` ↔ `attempt-store` / provider adapter / launcher / `harness_attempts.provider_session_id`（本单改 expired lease/orphan running 恢复，测试必须从公开入口真调 store 与真实 adapter；只允许用捕获型 launcher 避免测试启动真实容器）。
 
 ## 接缝清单
 
@@ -121,7 +111,7 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 
 独立小路（无父路）
 
-[后续 run/Brain restart] -> [事务继承 approved contract] -> [单调恢复 PRD/PR/合同里程碑] -> [reclaim/resume 原 attempt 或结构化终结] -> [跨 run 同签名去重] -> [唯一出口：继续执行 / wait:human_review / FAILED]
+[后续 run/Brain restart] -> [recoverDurableRun 读取既有账本] -> [事务继承 approved contract] -> [单调恢复 PRD/PR/合同里程碑] -> [真实 adapter resume 原 attempt 或结构化终结] -> [按失败签名去重] -> [唯一出口：继续执行 / wait:human_review / FAILED]
 
 ### Step 1: 后续 run 事务继承最新 approved contract
 
@@ -155,49 +145,50 @@ DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915
 
 **来源**: `[FROM_PRD]` - PRD Golden Path 第 3 步。
 
-**可观测行为**: `harness_attempts.status in ('starting','running')` 且 lease 过期、有 `provider_session_id` 时，watchdog 只 reclaim 原 attempt 并 resume 同 provider session；不得插入新 attempt。
+**可观测行为**: `harness_attempts.status in ('starting','running')` 且 lease 过期、有 `provider_session_id` 时，`recoverDurableRun` 只 reclaim 原 attempt，经既有 provider registry 调真实 adapter `resume`，再调用 launcher；不得插入新 attempt。
 
 **验证命令**:
 
 ```bash
-DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "expired lease 有 provider session 时恢复原 attempt" --reporter=verbose
+DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "稳定恢复原语：expired lease 有 provider session" --reporter=verbose
 ```
 
-**硬阈值**: 测试 exit 0；同一 run 的 `harness_attempts` 行数不增加；原 attempt lease_owner 更新且 provider_session_id 不变。
+**硬阈值**: 测试 exit 0；真实 import/use 命中 `recoverDurableRun`；同一 run 的 `harness_attempts` 行数不增加；原 attempt/provider_session_id 不变；Codex adapter 生成含 `exec resume provider-session-1` 的 spec，launcher 收到该原 attempt。
 
 ### Step 4: 无 provider session 时先结构化终结再推导
 
 **来源**: `[FROM_PRD]` - PRD Golden Path 第 4 步。
 
-**可观测行为**: 原 attempt 没有 provider session 时，系统先写结构化终态 `failed/cancelled` 与 error_code，再从 DB/GitHub 真相推导下一状态；不得直接开新 attempt 掩盖 orphan。
+**可观测行为**: 原 attempt 没有 provider session 时，`recoverDurableRun` 自动写结构化终态 `failed` 与 `orphan_without_provider_session`，再从 DB/GitHub 真相调用既有 ground truth + derive；不得由调用方手工 fail，也不得直接开新 attempt掩盖 orphan。
 
 **验证命令**:
 
 ```bash
-DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "无 provider session 时先结构化终结 orphan attempt" --reporter=verbose
+DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "稳定恢复原语：无 provider session" --reporter=verbose
 ```
 
-**硬阈值**: 测试 exit 0；orphan attempt 有终态和 error_code；后续 decision 来自 DB/GitHub 结构化字段。
+**硬阈值**: 测试 exit 0；真实 import/use 命中 `recoverDurableRun`；orphan attempt 有终态和 error_code；attempt 行数仍为 1；输出 `outcome=reconciled` 且后续 decision 为结构化 `spawn:generator-fix`。
 
 ### Step 5: 跨 run 同结构化根因去重
 
 **来源**: `[FROM_PRD]` - PRD Golden Path 第 5 步。
 
-**可观测行为**: 同一 task/initiative 的相同 `failure_signature` 或 failure_set 跨 run 再现时，derive 不再派 generator/generator-fix；出口为 `wait:human_review` 或 `mark_failed`。
+**可观测行为**: 同一 task/initiative 的相同 `failure_signature` 或 failure_set 跨 run 再现时，derive 不再派 generator/generator-fix；出口为 `wait:human_review` 或 `mark_failed`。旧 run 为签名 A、当前 run 首次出现不同签名 B 时，`recoverDurableRun` 必须保留一次 `spawn:generator-fix`。
 
 **验证命令**:
 
 ```bash
 DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "跨 run 同结构化 failure signature" --reporter=verbose
+DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "跨 run 不同 failure signature 首次出现" --reporter=verbose
 ```
 
-**硬阈值**: 测试 exit 0；重复签名场景 dispatch 计数中 generator 不增加；decision action 为 `wait:human_review` 或 `mark_failed`。
+**硬阈值**: 两条测试均 exit 0；重复签名场景 dispatch 计数中 generator 不增加且 action 为 `wait:human_review` 或 `mark_failed`；不同签名场景 action 字面等于 `spawn:generator-fix`。
 
 ### Step 6: 只复用既有账本并保持版本账本同步
 
 **来源**: `[FROM_PRD]` - PRD Golden Path 第 6 步、范围限定与 NFR。
 
-**可观测行为**: 实现只触达既有表；Brain 源码变化同步 `DEFINITION.md` 与四处版本账本；既有合同测试未削弱。
+**可观测行为**: 稳定恢复原语由 `durable-resume.js` 命名导出且被 Sprint Red 测试真实 import/use；实现只触达既有表；Brain 源码变化同步 `DEFINITION.md` 与四处版本账本；既有合同测试未削弱。
 
 **验证命令**:
 
@@ -249,6 +240,7 @@ echo "${PR_JSON}" | jq -e '.state == "OPEN" and (.url | type == "string" and sta
 node - <<'NODE'
 const fs = require('fs');
 const paths = [
+  'packages/brain/src/orchestrator/durable-resume.js',
   'packages/brain/src/orchestrator/contract-store.js',
   'packages/brain/src/orchestrator/ground-truth.js',
   'packages/brain/src/orchestrator/counters.js',
@@ -287,5 +279,6 @@ echo "OK kernel durable resume E2E"
 | Kernel durable resume | ground truth 从历史 approved contract 恢复当前 run | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前 `collectGroundTruth` 在 run.contract_id 为空时返回 approved:false，测试失败 |
 | Kernel durable resume | Brain restart 后 PRD/PR/合同里程碑单调恢复 | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前 `collectGroundTruth` 不从结构化 decision log 恢复 PR URL 与 approved contract，决策会降级 |
 | Kernel durable resume | 跨 run 同结构化 failure signature | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前 derive 只看当前 run，仍会派 generator-fix，测试失败 |
-| Kernel durable resume | expired lease 有 provider session 时恢复原 attempt | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前合同锁定不得插入新 attempt，防止未来恢复逻辑回归 |
-| Kernel durable resume | 无 provider session 时先结构化终结 orphan attempt | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前合同锁定无 session 失败语义，防止直接新建 attempt |
+| Kernel durable resume | 跨 run 不同 failure signature 首次出现 | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前缺稳定恢复入口，无法从跨 run 真相返回 `spawn:generator-fix`，import 即 Red |
+| Kernel durable resume | 稳定恢复原语：expired lease 有 provider session | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | `durable-resume.js` 与 `recoverDurableRun` 尚不存在，真实 import/use Red |
+| Kernel durable resume | 稳定恢复原语：无 provider session | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | `durable-resume.js` 与自动终结后 derive 编排尚不存在，真实 import/use Red |

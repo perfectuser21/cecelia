@@ -6,6 +6,9 @@ import { spawnSkillRelaySession } from '../../../packages/brain/src/harness-skil
 import { collectGroundTruth } from '../../../packages/brain/src/orchestrator/ground-truth.js';
 import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
 import { deriveCounters } from '../../../packages/brain/src/orchestrator/counters.js';
+import { recoverDurableRun } from '../../../packages/brain/src/orchestrator/durable-resume.js';
+import { createProviderRegistry } from '../../../packages/brain/src/orchestrator/provider-registry.js';
+import { codexAdapter } from '../../../packages/brain/src/orchestrator/providers/codex.js';
 
 const { Pool } = pg;
 const pool = new Pool(DB_DEFAULTS);
@@ -156,19 +159,42 @@ async function insertApprovedContracts() {
   );
 }
 
+function execCmdForFailedPr(failureName) {
+  return (cmd) => {
+    if (cmd.startsWith('gh pr view')) {
+      return JSON.stringify({
+        state: 'OPEN',
+        mergeStateStatus: 'DIRTY',
+        headRefName: 'kernel-durable-resume',
+        headRefOid: 'sha-repeat',
+        statusCheckRollup: [
+          { name: failureName, conclusion: 'FAILURE' },
+        ],
+      });
+    }
+    return '';
+  };
+}
+
 function execCmdForOpenPr(cmd) {
-  if (cmd.startsWith('gh pr view')) {
-    return JSON.stringify({
-      state: 'OPEN',
-      mergeStateStatus: 'DIRTY',
-      headRefName: 'kernel-durable-resume',
-      headRefOid: 'sha-repeat',
-      statusCheckRollup: [
-        { name: 'kernel:duplicate-generator-signature', conclusion: 'FAILURE' },
-      ],
-    });
-  }
-  return '';
+  return execCmdForFailedPr('kernel:duplicate-generator-signature')(cmd);
+}
+
+function durableRecoveryInput(overrides = {}) {
+  return {
+    pool: client,
+    taskId: TASK_ID,
+    runId: CURRENT_RUN_ID,
+    leaseOwner: 'watchdog:test',
+    leaseSeconds: 180,
+    providerRegistry: createProviderRegistry([codexAdapter]),
+    launchResume: async () => ({ pid: 4242 }),
+    execCmd: execCmdForFailedPr('kernel:orphan-recovery'),
+    fileExists: () => true,
+    readFile: () => '{}',
+    readAuthCircuit: async () => [],
+    ...overrides,
+  };
 }
 
 async function observedFor(runId, execCmd = () => '') {
@@ -370,7 +396,46 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
     expect(decision.action).not.toBe('spawn:generator-fix');
   });
 
-  it('expired lease 有 provider session 时恢复原 attempt，不创建新 attempt', async () => {
+  it('跨 run 不同 failure signature 首次出现时仍派 generator-fix', async () => {
+    await insertTask();
+    await insertApprovedContracts();
+    await client.query(
+      `INSERT INTO initiative_runs
+         (id, initiative_id, contract_id, phase, current_task_id, orchestrator_version, pr_url, completed_at)
+       VALUES
+         ($1::uuid, $3::uuid, $4::uuid, 'failed', $5::uuid, 'v2', 'https://github.com/perfectuser21/cecelia/pull/100', now() - interval '1 hour'),
+         ($2::uuid, $3::uuid, $4::uuid, 'generate', $5::uuid, 'v2', 'https://github.com/perfectuser21/cecelia/pull/101', NULL)`,
+      [OLD_RUN_ID, CURRENT_RUN_ID, INITIATIVE_ID, APPROVED_V2, TASK_ID],
+    );
+    await client.query(
+      `INSERT INTO orchestrator_decision_log (run_id, hop, observed, derived_phase, action, detail)
+       VALUES ($1::uuid, 10, $2::jsonb, 'generate', 'spawn:generator-fix', $3::jsonb)`,
+      [
+        OLD_RUN_ID,
+        JSON.stringify({
+          pr: { head_sha: 'sha-old-a' },
+          failure_class: 'product_failure',
+          failure_set: ['kernel:signature-a'],
+          failure_set_key: 'kernel:signature-a',
+        }),
+        JSON.stringify({ reason: 'ci_fail' }),
+      ],
+    );
+
+    const recovery = await recoverDurableRun(durableRecoveryInput({
+      execCmd: execCmdForFailedPr('kernel:signature-b'),
+    }));
+
+    expect(recovery).toMatchObject({
+      outcome: 'reconciled',
+      terminated_attempt_id: null,
+      decision: {
+        action: 'spawn:generator-fix',
+      },
+    });
+  });
+
+  it('稳定恢复原语：expired lease 有 provider session 时调用真实 provider resume 并恢复原 attempt', async () => {
     await insertTask();
     await client.query(
       `INSERT INTO initiative_runs
@@ -392,28 +457,44 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
       [CURRENT_RUN_ID],
     );
 
-    const resume = await import('../../../packages/brain/src/orchestrator/attempt-store.js')
-      .then(({ createAttemptStore }) => createAttemptStore(client).reclaim(
-        '30000000-0000-4000-8000-000000000001',
-        { leaseOwner: 'watchdog:test', leaseSeconds: 180 },
-      ));
+    let launched = null;
+    const recovery = await recoverDurableRun(durableRecoveryInput({
+      launchResume: async ({ attempt, spec }) => {
+        launched = { attempt, spec };
+        return { pid: 4242 };
+      },
+    }));
 
     const after = await client.query(
       'SELECT count(*)::int AS n, max(provider_session_id) AS session_id FROM harness_attempts WHERE run_id=$1::uuid',
       [CURRENT_RUN_ID],
     );
-    expect(resume).toMatchObject({ id: '30000000-0000-4000-8000-000000000001' });
+    expect(recovery).toMatchObject({
+      outcome: 'resumed',
+      attempt_id: '30000000-0000-4000-8000-000000000001',
+      provider_session_id: 'provider-session-1',
+      launch_result: { pid: 4242 },
+    });
+    expect(launched.attempt).toMatchObject({
+      id: '30000000-0000-4000-8000-000000000001',
+      provider_session_id: 'provider-session-1',
+    });
+    expect(launched.spec).toMatchObject({ provider: 'codex', command: 'codex' });
+    expect(launched.spec.args).toEqual(expect.arrayContaining([
+      'exec', 'resume', 'provider-session-1',
+    ]));
     expect(after.rows[0].n).toBe(before.rows[0].n);
     expect(after.rows[0].session_id).toBe('provider-session-1');
   });
 
-  it('无 provider session 时先结构化终结 orphan attempt，再从 DB/GitHub 真相推导', async () => {
+  it('稳定恢复原语：无 provider session 时自动终结 orphan 后从 DB/GitHub 真相推导', async () => {
     await insertTask();
+    await insertApprovedContracts();
     await client.query(
       `INSERT INTO initiative_runs
-         (id, initiative_id, phase, current_task_id, orchestrator_version)
-       VALUES ($1::uuid, $2::uuid, 'generate', $3::uuid, 'v2')`,
-      [CURRENT_RUN_ID, INITIATIVE_ID, TASK_ID],
+         (id, initiative_id, contract_id, phase, current_task_id, orchestrator_version, pr_url)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, 'generate', $4::uuid, 'v2', $5)`,
+      [CURRENT_RUN_ID, INITIATIVE_ID, APPROVED_V2, TASK_ID, PR_URL],
     );
     await client.query(
       `INSERT INTO harness_attempts
@@ -424,11 +505,7 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
       [CURRENT_RUN_ID],
     );
 
-    const { createAttemptStore } = await import('../../../packages/brain/src/orchestrator/attempt-store.js');
-    await createAttemptStore(client).fail(
-      '30000000-0000-4000-8000-000000000002',
-      { code: 'orphan_without_provider_session', message: 'no provider session to resume' },
-    );
+    const recovery = await recoverDurableRun(durableRecoveryInput());
 
     const { rows } = await client.query(
       'SELECT status, error_code, completed_at IS NOT NULL AS terminal FROM harness_attempts WHERE id=$1::uuid',
@@ -439,6 +516,19 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
       status: 'failed',
       error_code: 'orphan_without_provider_session',
       terminal: true,
+    });
+    const count = await client.query(
+      'SELECT count(*)::int AS n FROM harness_attempts WHERE run_id=$1::uuid',
+      [CURRENT_RUN_ID],
+    );
+    expect(count.rows[0].n).toBe(1);
+    expect(recovery).toMatchObject({
+      outcome: 'reconciled',
+      terminated_attempt_id: '30000000-0000-4000-8000-000000000002',
+      error_code: 'orphan_without_provider_session',
+      decision: {
+        action: 'spawn:generator-fix',
+      },
     });
   });
 });

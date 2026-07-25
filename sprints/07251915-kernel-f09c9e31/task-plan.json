@@ -6,17 +6,19 @@
     {
       "task_id": "ws1",
       "title": "Kernel durable resume 跨 run 去重与恢复 hotfix",
-      "scope": "实现同一 initiative/task 后续 run 的 approved contract 事务继承、PRD/PR/合同里程碑单调恢复、expired lease/orphan attempt 恢复、跨 run 同结构化根因去重，并同步 Brain 版本账本与回归测试。",
+      "scope": "导出 Commander 可复用的 recoverDurableRun，并实现同一 initiative/task 后续 run 的 approved contract 事务继承、PRD/PR/合同里程碑单调恢复、expired lease/orphan attempt 恢复、跨 run 同结构化根因去重与不同根因首次修复，并同步 Brain 版本账本与回归测试。",
       "dod": [
         "[BEHAVIOR] 后续 run 继承 latest approved contract id/version/branch，derive 不再派 proposer/reviewer",
         "[BEHAVIOR] Brain restart 后 PRD/PR/合同里程碑单调恢复，下一角色与不中断基线一致",
-        "[BEHAVIOR] expired lease 有 provider session 时恢复原 attempt，无 session 时结构化终结",
+        "[BEHAVIOR] recoverDurableRun 有 provider session 时经真实 adapter/launcher 恢复原 attempt，无 session 时自动结构化终结后 derive",
         "[BEHAVIOR] 跨 run 同结构化 failure signature 重现时进入 wait:human_review 或 FAILED",
+        "[BEHAVIOR] 跨 run 不同 failure signature 首次出现时仍进入 spawn:generator-fix",
         "[BEHAVIOR] Final E2E 对实现 PR 真调 GitHub PR state/head_sha/statusCheckRollup",
         "[ARTIFACT] Brain 源码变化同步 DEFINITION.md、.brain-versions、packages/brain/package.json、packages/brain/package-lock.json、packages/brain/VERSION 与回归池"
       ],
       "files": [
         "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/durable-resume.js",
         "packages/brain/src/orchestrator/contract-store.js",
         "packages/brain/src/orchestrator/ground-truth.js",
         "packages/brain/src/orchestrator/loop.js",
