@@ -1,0 +1,35 @@
+{
+  "initiative_id": "f09c9e31-ed78-4af4-a1b6-88241bc486c5",
+  "journey_type": "autonomous",
+  "journey_type_reason": "PRD 目标是本地 Brain Kernel 后端恢复与调度正确性，不含 UI 或真机 RPA。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Kernel durable resume 跨 run 去重与恢复 hotfix",
+      "scope": "实现同一 initiative/task 后续 run 的 approved contract 事务继承、PRD/PR/合同里程碑单调恢复、expired lease/orphan attempt 恢复、跨 run 同结构化根因去重，并同步 Brain 版本账本与回归测试。",
+      "dod": [
+        "[BEHAVIOR] 后续 run 继承 latest approved contract id/version/branch，derive 不再派 proposer/reviewer",
+        "[BEHAVIOR] expired lease 有 provider session 时恢复原 attempt，无 session 时结构化终结",
+        "[BEHAVIOR] 跨 run 同结构化 failure signature 重现时进入 wait:human_review 或 FAILED",
+        "[ARTIFACT] Brain 源码变化同步 DEFINITION.md、.brain-versions、packages/brain/VERSION 与回归池"
+      ],
+      "files": [
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/contract-store.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/counters.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/__tests__/",
+        "packages/brain/src/__tests__/",
+        "DEFINITION.md",
+        ".brain-versions",
+        "packages/brain/VERSION"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
