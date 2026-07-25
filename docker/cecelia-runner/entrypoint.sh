@@ -176,6 +176,110 @@ fi
 PROVIDER_CONTRACT=0
 NORMALIZED_RESULT_FILE=""
 
+# proposer-finalizer:start
+# Proposer 的合同判断仍由 LLM + Reviewer 负责，但 branch/commit/push 是确定性运输效果。
+# 生产 run 466971c2 实证：完整合同已连续三次落在本地，Codex 却停在 mandatory Step 4
+# 之前，Kernel 只能重复派同一 LLM，最终 gan_no_push_streak。这里用 Brain 注入的
+# PROPOSE_BRANCH/SPRINT_DIR 收口该效果；不信 provider 自报 branch，不 push 半成品，
+# 不 force-push，任何校验失败仍交给 Kernel 现有 no-push 探测器判定。
+finalize_proposer_output() {
+  [[ "${HARNESS_NODE:-}" == "proposer" ]] || return 0
+
+  local workspace="${WORKTREE_PATH:-$PWD}"
+  local task_id="${CECELIA_TASK_ID:-}"
+  local branch="${PROPOSE_BRANCH:-}"
+  local sprint_dir="${SPRINT_DIR:-}"
+  local task_short=""
+  local round=""
+  local workspace_abs=""
+  local sprint_abs=""
+  local brain_result_file=""
+  local normalized_result_tmp=""
+
+  if [[ ! "$task_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+    echo "[entrypoint] proposer finalizer rejected invalid task id" >&2
+    return 1
+  fi
+  task_short="${task_id:0:8}"
+  if [[ ! "$branch" =~ ^cp-harness-propose-r([0-9]+)-${task_short}-a[0-9]+$ ]]; then
+    echo "[entrypoint] proposer finalizer rejected branch outside task scope: $branch" >&2
+    return 1
+  fi
+  round="${BASH_REMATCH[1]}"
+
+  if [[ "$sprint_dir" != sprints/* || "$sprint_dir" == *".."* \
+      || "$sprint_dir" == *$'\n'* || "$sprint_dir" == *$'\r'* ]]; then
+    echo "[entrypoint] proposer finalizer rejected sprint path: $sprint_dir" >&2
+    return 1
+  fi
+  workspace_abs="$(cd "$workspace" 2>/dev/null && pwd -P)" || {
+    echo "[entrypoint] proposer finalizer workspace is unavailable" >&2
+    return 1
+  }
+  sprint_abs="$(cd "$workspace_abs/$sprint_dir" 2>/dev/null && pwd -P)" || {
+    echo "[entrypoint] proposer finalizer sprint is unavailable: $sprint_dir" >&2
+    return 1
+  }
+  if [[ "$sprint_abs" != "$workspace_abs"/sprints/* ]]; then
+    echo "[entrypoint] proposer finalizer sprint escaped workspace" >&2
+    return 1
+  fi
+
+  local required
+  for required in contract-draft.md contract-dod.md task-plan.json; do
+    if [[ ! -f "$sprint_abs/$required" ]]; then
+      echo "[entrypoint] proposer finalizer missing artifact: $sprint_dir/$required" >&2
+      return 1
+    fi
+  done
+  if [[ ! -d "$sprint_abs/tests" ]] \
+      || [[ -z "$(find "$sprint_abs/tests" -type f -print -quit 2>/dev/null)" ]]; then
+    echo "[entrypoint] proposer finalizer missing contract tests: $sprint_dir/tests" >&2
+    return 1
+  fi
+  git -C "$workspace_abs" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+    echo "[entrypoint] proposer finalizer workspace is not a git worktree" >&2
+    return 1
+  }
+
+  git -C "$workspace_abs" checkout -B "$branch" >/dev/null || return 1
+  git -C "$workspace_abs" add -- \
+    "$sprint_dir/contract-draft.md" \
+    "$sprint_dir/contract-dod.md" \
+    "$sprint_dir/tests" \
+    "$sprint_dir/task-plan.json" || return 1
+  if ! git -C "$workspace_abs" diff --cached --quiet; then
+    git -C "$workspace_abs" commit \
+      -m "feat(contract): round-${round} Golden Path draft + DoD + tests + task-plan" \
+      >/dev/null || return 1
+  fi
+
+  git -C "$workspace_abs" push origin "HEAD:refs/heads/$branch" >/dev/null || return 1
+  git -C "$workspace_abs" ls-remote --exit-code --heads origin "refs/heads/$branch" \
+    >/dev/null || return 1
+
+  brain_result_file="$workspace_abs/.brain-result.json"
+  normalized_result_tmp="${brain_result_file}.proposer-finalizer.$$"
+  if [[ -f "$brain_result_file" ]] && jq -e 'type == "object"' "$brain_result_file" >/dev/null 2>&1; then
+    jq \
+      --arg branch "$branch" \
+      --arg task_plan_path "$sprint_dir/task-plan.json" \
+      '.propose_branch = $branch
+       | .workstream_count = 1
+       | .task_plan_path = $task_plan_path' \
+      "$brain_result_file" > "$normalized_result_tmp" || return 1
+  else
+    jq -n \
+      --arg branch "$branch" \
+      --arg task_plan_path "$sprint_dir/task-plan.json" \
+      '{propose_branch:$branch,workstream_count:1,task_plan_path:$task_plan_path}' \
+      > "$normalized_result_tmp" || return 1
+  fi
+  mv "$normalized_result_tmp" "$brain_result_file"
+  echo "[entrypoint] proposer finalizer pushed branch=$branch sprint=$sprint_dir"
+}
+# proposer-finalizer:end
+
 # evaluator-evidence-bridge:start
 EVALUATOR_EVIDENCE_PREPARED=0
 
@@ -387,6 +491,9 @@ run_provider_contract() {
   fi
 
   if [[ $provider_exit -eq 0 ]] && jq -e 'type == "object" and .status' "$result_file" >/dev/null 2>&1; then
+    finalize_proposer_output || {
+      echo "[entrypoint] proposer finalizer did not establish remote branch; Kernel no-push detector remains authoritative" >&2
+    }
     jq \
       --arg attempt "$HARNESS_ATTEMPT_ID" \
       --arg provider "$provider" \

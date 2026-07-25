@@ -56,6 +56,7 @@ git init --bare "$FINALIZER_REMOTE" >/dev/null
 git init -b main "$FINALIZER_REPO" >/dev/null
 git -C "$FINALIZER_REPO" config user.name 'Runner Contract Test'
 git -C "$FINALIZER_REPO" config user.email 'runner-contract@example.invalid'
+git -C "$FINALIZER_REPO" config core.hooksPath /dev/null
 git -C "$FINALIZER_REPO" remote add origin "$FINALIZER_REMOTE"
 printf '%s\n' 'base' > "$FINALIZER_REPO/README.md"
 git -C "$FINALIZER_REPO" add README.md
