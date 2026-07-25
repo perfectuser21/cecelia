@@ -1,0 +1,33 @@
+{
+  "phase": "gan",
+  "task_id": "f09c9e31-ed78-4af4-a1b6-88241bc486c5",
+  "sprint_dir": "sprints/07251915-kernel-f09c9e31",
+  "contract_sha": "da8ca17de78add966b6ab6ab48498977e513fd07",
+  "round": 26,
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 8,
+    "test_is_red": 8,
+    "internal_consistency": 9,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "golden_path_coverage": {
+    "same_task_latest_approved_contract_atomic_inheritance": "covered",
+    "milestone_monotonic_resume_after_restart": "covered",
+    "provider_session_reclaim_and_resume": "covered",
+    "orphan_without_session_terminate_then_derive": "covered",
+    "same_signature_dedupe_and_new_signature_first_fix": "covered",
+    "first_run_and_cross_task_isolation": "covered",
+    "stable_recovery_primitive_export": "covered"
+  },
+  "invariants_covered": 58,
+  "invariants_total": 58,
+  "judgments_written": 4,
+  "concerns": [],
+  "unverifiable": [
+    "本地 PostgreSQL localhost:5432 无响应；数据库行为留给 Generator/Evaluator 的真环境验证"
+  ]
+}
