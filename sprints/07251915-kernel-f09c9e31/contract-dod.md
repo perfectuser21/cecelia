@@ -26,7 +26,7 @@ target_environment: local_api
 
 - [ ] [BEHAVIOR] [L2] 后续 run 继承 latest approved contract id/version/branch，且 derive 不再派 proposer/reviewer
   动作: 在真实 PostgreSQL temp schema 中创建当前 `TASK_ID` 的 v1/v2 approved contract、另一个 task/initiative 的 v99 decoy，再调用生产 `spawnSkillRelaySession`。
-  预期观察: 测试命令退出时，生产 bootstrap 自己 acquire client 并按 CONNECT/BEGIN/scoped SELECT/INSERT/COMMIT 原子执行；新 run 的 `initiative_id=TASK_ID`、`journey_id=JOURNEY_ID`、`contract_id` 指向当前 task v2 而非 decoy，derive action 进入 generator 主线。
+  预期观察: 测试命令退出时，生产 bootstrap 自己 acquire client，并由同一个 `txClient` 按 CONNECT/BEGIN/scoped SELECT/task milestone UPDATE/initiative_run INSERT/COMMIT 原子执行；探针逐条记录 `channel/clientId`，任一业务 SQL 走 `pool.query` 都失败。新 run 的 `initiative_id=TASK_ID`、`journey_id=JOURNEY_ID`、`contract_id` 指向当前 task v2 而非 decoy，derive action 进入 generator 主线。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "后续 run 继承 latest approved contract" --reporter=verbose'
   期望: exit 0
 
@@ -37,8 +37,8 @@ target_environment: local_api
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] run bootstrap 中途失败时生产事务回滚且不留半写
-  动作: 当前 `TASK_ID` 有 approved contract，在 scoped contract 选择后向 run INSERT 注入确定性失败。
-  预期观察: 生产 bootstrap 自己执行 ROLLBACK；无 COMMIT、无新 initiative_runs 行，tasks.payload 与调用前字面相同。
+  动作: 当前 `TASK_ID` 有 approved contract，在同一 `txClient` 的 scoped contract 选择与 task milestone UPDATE 后，向该 client 的 run INSERT 注入确定性失败。
+  预期观察: 生产 bootstrap 在同一 `txClient` 执行 ROLLBACK；三类业务 SQL 均记录为 `channel=txClient` 且位于 BEGIN/ROLLBACK 内，无 COMMIT、无新 initiative_runs 行，tasks.payload 与调用前字面相同；错误的 `pool.query` 业务 SQL 必须直接令测试失败。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "run bootstrap 中途失败" --reporter=verbose'
   期望: exit 0
 

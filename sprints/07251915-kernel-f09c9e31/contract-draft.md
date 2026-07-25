@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 25)
+# Sprint Contract Draft (Round 26)
 
 ## Notes
 
@@ -6,7 +6,7 @@
 - Registry scan: api/db/test registry reachable but stale by about 167h; contract uses PRD literal scope plus current source/tests as authority.
 - context-manifest: unavailable (`GET /api/brain/line/741d4acc-9ca8-4545-a971-efa12fce8150/context-manifest` returned HTML 404), so no cumulative FR beyond PRD text.
 - 本 sprint 是 Kernel Harness hotfix；不得创建第二账本，不得写生产数据库，不得自动 merge。
-- Round 25 revision: 按 reviewer r24 的三个阻塞项最小收敛：固定 `initiative_id=task.id`、`journey_id` 独立并增加跨 task/首轮负例；由生产 bootstrap 自己取得连接并用 `BEGIN/COMMIT|ROLLBACK` 包住 approved 选择与 run 写入，重启用例令 `fileExists=false`；provider-session 分支断言 reclaim 后 lease 状态且增加未过期反例。稳定 `recoverDurableRun`、真实 adapter/自动终结、不同签名反例保持不变。
+- Round 26 revision: 只修 reviewer r25 唯一阻塞；transaction probe 逐条记录 `pool` / `txClient` channel 与 client identity，强制 approved SELECT、task milestone UPDATE、initiative_run INSERT 全部通过同一个 `connect()` 返回 client 且位于其 BEGIN/COMMIT 或 BEGIN/ROLLBACK 内。错误的 `pool.query` 业务 SQL 立即令 Red 测试失败；其余合同范围与断言保持不变。
 
 ## Response Schema（推导来源: N/A）
 
@@ -105,7 +105,7 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 
 ## 接缝清单
 
-- DB 事务接缝: 后续 run 创建与 approved contract 继承必须由生产 bootstrap 自己 acquire client/BEGIN/COMMIT 完成；用真实 Postgres temp schema + 查询事件探针断言只选 `task.id` scope，注入 run INSERT 失败时生产路径 ROLLBACK 且无半写。
+- DB 事务接缝: 后续 run 创建与 approved contract 继承必须由生产 bootstrap 自己 acquire client；查询事件探针逐条区分 `pool` / `txClient` channel，并断言 approved SELECT、task milestone UPDATE、initiative_run INSERT 全部由同一个 txClient 在 BEGIN/COMMIT 内执行。注入该 txClient 的 run INSERT 失败时，生产路径必须在同一 client 上 ROLLBACK 且无半写；任一业务 SQL 走 `pool.query` 都立即失败。
 - Worktree 重启接缝: Brain restart 用例显式 `fileExists=false`，只能从 `initiative_contracts`、append-only decision log 与 GitHub 结构化响应恢复 PRD/PR/合同里程碑。
 - Provider session 接缝: expired lease 有 session 时必须 CAS reclaim 原 attempt；用真实 `harness_attempts` 断言 `status=starting`、`lease_owner=watchdog:test`、expiry 未来化及原 attempt/session 不变，未过期 running 行不得被本 worker resume。
 - GitHub/PR 真相接缝: PR head_sha、CI rollup 与 decision log 必须逐字段对齐；Sprint 红测可注入隔离 `execCmd`，最终 E2E 必须真跑 `gh pr view`，不从 callback 文本猜。
@@ -120,7 +120,7 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 
 **来源**: `[FROM_PRD]` - PRD Golden Path 第 1 步。
 
-**可观测行为**: 新 run 的 `initiative_id` 字面等于 `task.id`，`journey_id` 独立保留；生产 bootstrap 自己 acquire PostgreSQL client，并在同一 `BEGIN/COMMIT` 中按该 `initiative_id` 选择 latest approved contract 与 INSERT run。其他 task 的更高版本 approved contract 是 decoy、不得继承；当前 task 无 approved contract 时 `contract_id=NULL` 并进入首轮 GAN。注入 run INSERT 失败时必须 `ROLLBACK`，不得留下 run 或 task payload 半写。
+**可观测行为**: 新 run 的 `initiative_id` 字面等于 `task.id`，`journey_id` 独立保留；生产 bootstrap 自己 acquire PostgreSQL client，并用该同一 txClient 在 `BEGIN/COMMIT` 内按该 `initiative_id` 选择 latest approved contract、更新 task milestone payload、INSERT run；`pool.query` 仅允许 connect 前的 active-run 查询。其他 task 的更高版本 approved contract 是 decoy、不得继承；当前 task 无 approved contract 时 `contract_id=NULL` 并进入首轮 GAN。注入 txClient 的 run INSERT 失败时必须由同一 client `ROLLBACK`，不得留下 run 或 task payload 半写。
 
 **验证命令**:
 
@@ -130,7 +130,7 @@ DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915
 DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "run bootstrap 中途失败" --reporter=verbose
 ```
 
-**硬阈值**: 三条测试均 exit 0；approved 场景事件顺序为 CONNECT -> BEGIN -> scoped approved SELECT -> run INSERT -> COMMIT，`initiative_id=TASK_ID`、`journey_id=JOURNEY_ID`、contract_id 等于当前 task 的 v2 而非 decoy v99；首轮场景 `contract_id=NULL` 且 action=`spawn:proposer`；失败注入事件终点为 ROLLBACK 且 run 数为 0、task payload 未变化。
+**硬阈值**: 三条测试均 exit 0；approved 场景事件顺序为 CONNECT -> BEGIN -> scoped approved SELECT -> task milestone UPDATE -> initiative_run INSERT -> COMMIT，五条事务事件的 `channel=txClient` 且 `clientId` 全等，三条业务 SQL 的 `inTransaction=true`，不存在 `channel=pool` 的 SELECT_APPROVED/UPDATE_TASK/INSERT_RUN；`initiative_id=TASK_ID`、`journey_id=JOURNEY_ID`、contract_id 等于当前 task 的 v2 而非 decoy v99。首轮场景 `contract_id=NULL` 且 action=`spawn:proposer`；失败注入只发生在同一 txClient 的 INSERT 上，事件终点为同一 client 的 ROLLBACK 且 run 数为 0、task payload 未变化。
 
 ### Step 2: 已确认 PRD/PR/合同里程碑单调恢复
 

@@ -196,39 +196,61 @@ async function insertDecoyTaskAndContract() {
 
 function createBootstrapTransactionProbe({ failRunInsert = false } = {}) {
   const events = [];
-  let inTransaction = false;
+  let connected = false;
+  let connectCount = 0;
+  let transactionClientId = null;
 
-  const runQuery = async (text, params) => {
+  const runQuery = (channel, clientId) => async (text, params) => {
     const sql = String(text);
     const normalized = sql.replace(/\s+/g, ' ').trim();
+    const eventBase = { sql: normalized, channel, clientId };
     if (/^BEGIN\b/i.test(normalized)) {
-      inTransaction = true;
-      events.push({ type: 'BEGIN', sql: normalized });
+      events.push({ type: 'BEGIN', ...eventBase });
+      if (channel !== 'txClient') {
+        throw new Error('bootstrap_transaction_control_must_use_txClient');
+      }
+      transactionClientId = clientId;
       return client.query(text, params);
     }
     if (/^COMMIT\b/i.test(normalized)) {
-      events.push({ type: 'COMMIT', sql: normalized });
+      events.push({ type: 'COMMIT', ...eventBase });
+      if (channel !== 'txClient' || transactionClientId !== clientId) {
+        throw new Error('bootstrap_transaction_control_changed_txClient');
+      }
       const result = await client.query(text, params);
-      inTransaction = false;
+      transactionClientId = null;
       return result;
     }
     if (/^ROLLBACK\b/i.test(normalized)) {
-      events.push({ type: 'ROLLBACK', sql: normalized });
+      events.push({ type: 'ROLLBACK', ...eventBase });
+      if (channel !== 'txClient' || transactionClientId !== clientId) {
+        throw new Error('bootstrap_transaction_control_changed_txClient');
+      }
       const result = await client.query(text, params);
-      inTransaction = false;
+      transactionClientId = null;
       return result;
     }
 
     const selectsApproved = /initiative_contracts/i.test(normalized) && /approved/i.test(normalized);
     const insertsRun = /INSERT INTO initiative_runs/i.test(normalized);
     const updatesTask = /UPDATE tasks/i.test(normalized);
-    if (selectsApproved) events.push({ type: 'SELECT_APPROVED', sql: normalized, inTransaction });
-    if (insertsRun) events.push({ type: 'INSERT_RUN', sql: normalized, inTransaction });
-    if (updatesTask) events.push({ type: 'UPDATE_TASK', sql: normalized, inTransaction });
+    const selectsActiveRun = /^SELECT\b/i.test(normalized)
+      && /FROM initiative_runs/i.test(normalized)
+      && /phase NOT IN/i.test(normalized);
+    const inTransaction = channel === 'txClient' && transactionClientId === clientId;
+    if (selectsApproved) events.push({ type: 'SELECT_APPROVED', ...eventBase, inTransaction });
+    if (insertsRun) events.push({ type: 'INSERT_RUN', ...eventBase, inTransaction });
+    if (updatesTask) events.push({ type: 'UPDATE_TASK', ...eventBase, inTransaction });
     if (!selectsApproved && !insertsRun && !updatesTask) {
-      events.push({ type: 'QUERY', sql: normalized, inTransaction });
+      events.push({ type: 'QUERY', ...eventBase, inTransaction });
     }
-    if (failRunInsert && insertsRun) {
+    if (channel === 'pool' && (!selectsActiveRun || connected)) {
+      throw new Error('bootstrap_pool_query_only_allows_pre_transaction_active_run_check');
+    }
+    if ((selectsApproved || insertsRun || updatesTask) && !inTransaction) {
+      throw new Error('bootstrap_business_sql_must_use_same_txClient');
+    }
+    if (failRunInsert && insertsRun && channel === 'txClient') {
       throw new Error('injected_bootstrap_run_insert_failure');
     }
     return client.query(text, params);
@@ -236,13 +258,15 @@ function createBootstrapTransactionProbe({ failRunInsert = false } = {}) {
 
   return {
     events,
-    query: runQuery,
+    query: runQuery('pool', 'pool'),
     async connect() {
-      events.push({ type: 'CONNECT' });
+      connected = true;
+      const clientId = `txClient-${++connectCount}`;
+      events.push({ type: 'CONNECT', channel: 'txClient', clientId });
       return {
-        query: runQuery,
+        query: runQuery('txClient', clientId),
         release() {
-          events.push({ type: 'RELEASE' });
+          events.push({ type: 'RELEASE', channel: 'txClient', clientId });
         },
       };
     },
@@ -254,16 +278,30 @@ function expectAtomicBootstrap(events, terminalType = 'COMMIT') {
   const connect = indexOf('CONNECT');
   const begin = indexOf('BEGIN');
   const selectApproved = indexOf('SELECT_APPROVED');
+  const updateTask = indexOf('UPDATE_TASK');
   const insertRun = indexOf('INSERT_RUN');
   const terminal = indexOf(terminalType);
 
   expect(connect).toBeGreaterThanOrEqual(0);
   expect(begin).toBeGreaterThan(connect);
   expect(selectApproved).toBeGreaterThan(begin);
-  expect(insertRun).toBeGreaterThan(selectApproved);
+  expect(updateTask).toBeGreaterThan(selectApproved);
+  expect(insertRun).toBeGreaterThan(updateTask);
   expect(terminal).toBeGreaterThan(insertRun);
-  expect(events[selectApproved].inTransaction).toBe(true);
-  expect(events[insertRun].inTransaction).toBe(true);
+  const txClientId = events[connect].clientId;
+  for (const eventIndex of [begin, selectApproved, updateTask, insertRun, terminal]) {
+    expect(events[eventIndex]).toMatchObject({
+      channel: 'txClient',
+      clientId: txClientId,
+    });
+  }
+  for (const eventIndex of [selectApproved, updateTask, insertRun]) {
+    expect(events[eventIndex].inTransaction).toBe(true);
+  }
+  expect(events.some((event) => (
+    event.channel === 'pool'
+      && ['SELECT_APPROVED', 'UPDATE_TASK', 'INSERT_RUN'].includes(event.type)
+  ))).toBe(false);
 }
 
 function execCmdForFailedPr(failureName) {
