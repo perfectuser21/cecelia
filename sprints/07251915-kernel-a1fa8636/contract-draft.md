@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 contract-gate: active
 覆盖父路 Kernel telemetry 账本 第 1-5 步
@@ -45,6 +45,7 @@ contract-gate: active
       "run_id": "uuid",
       "hop": 9,
       "role": "generator",
+      "status": "completed",
       "logical_cycle_id": "cycle-2",
       "attempt_kind": "retry",
       "retry_of_attempt_id": "uuid-or-null",
@@ -64,6 +65,7 @@ contract-gate: active
 - `role_metrics` (array, 必填): 来源——PRD 第 4 步“按 role 与 workstream 拆分”
 - `attempts` (array, 必填): 来源——PRD 第 1-3 步“attempt lineage + orphan 收口”
 - `attempts[].logical_cycle_id` (string, 必填): 来源——PRD 第 1 步
+- `attempts[].status` (string, 必填): 来源——PRD 第 2-3 步，区分 `starting|running|completed|failed|blocked|needs_context|cancelled`
 - `attempts[].attempt_kind` (string, 必填): 来源——PRD 第 1 步；允许值 `initial|fix|retry|resume|recovery`
 - `attempts[].retry_of_attempt_id` (string|null, 必填): 来源——PRD 第 1 步
 - `attempts[].restart_reason` (string|null, 必填): 来源——PRD 第 1 步
@@ -264,6 +266,7 @@ echo "$RESP" | jq -e '
     and (.run_id | type == "string")
     and (.hop | type == "number")
     and (.role | type == "string")
+    and (.status | type == "string")
     and (.logical_cycle_id | type == "string")
     and (.attempt_kind | type == "string")
     and ((.retry_of_attempt_id == null) or (.retry_of_attempt_id | type == "string"))
