@@ -1,0 +1,25 @@
+{
+  "initiative_id": "6449cebb-8f6f-4561-ba5f-350691bd6cec",
+  "journey_type": "autonomous",
+  "journey_type_reason": "本 sprint 验证 Kernel Harness/Brain attempts、PR diff 和裁决链，无 UI 或真机操作。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "交付 Kernel v1 GPT-5.5 team4 canary fire-drill 文档并保持非破坏性边界",
+      "scope": "只新增或修改 docs/fire-drills/kernel-v1-gpt55-team4-20260725.md，记录 task/run/model/五角色 provider-account/PR URL/verdict 字段；不得修改产品代码、配置、migration、CI 或生产数据。",
+      "dod": [
+        "[BEHAVIOR] 真实 Brain task payload 显示 model=gpt-5.5 且五角色 role_assignments 均为 codex/team4",
+        "[BEHAVIOR] 真实 harness_attempts 显示五个执行角色均为 codex/team4 且 provider_session_id 五个互异",
+        "[BEHAVIOR] fire-drill 文档存在并记录 task/run/model/roles/PR/verdict 字段且无 secret",
+        "[BEHAVIOR] PR diff 仅包含唯一 fire-drill 文档和本 sprint Harness 产物",
+        "[ARTIFACT] docs/fire-drills/kernel-v1-gpt55-team4-20260725.md"
+      ],
+      "files": [
+        "docs/fire-drills/kernel-v1-gpt55-team4-20260725.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
