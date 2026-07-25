@@ -7,8 +7,34 @@ DOCKERFILE="$SCRIPT_DIR/Dockerfile"
 EVALUATOR_SKILL="$SCRIPT_DIR/../../packages/workflows/skills/harness-evaluator/SKILL.md"
 SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
 GROK_SECTION="$(sed -n '/elif \[\[ "$provider" == "grok" \]\]/,/^  else$/p' <<<"$SECTION")"
+GIT_AUTH_SECTION="$(sed -n '/git-auth-setup:start/,/git-auth-setup:end/p' "$ENTRYPOINT")"
 
 [[ -n "$SECTION" ]] || { echo 'missing provider-neutral runner section' >&2; exit 1; }
+[[ -n "$GIT_AUTH_SECTION" ]] || {
+  echo 'missing runner git credential setup section' >&2
+  exit 1
+}
+
+# A host-only credential helper copied into the Linux runner must be replaced
+# with the gh binary that actually exists inside the runner.
+GIT_AUTH_TMP="$(mktemp -d)"
+printf '%s\n' \
+  '[credential "https://github.com"]' \
+  '  helper = /usr/local/bin/git-credential-gh-token' \
+  > "$GIT_AUTH_TMP/gitconfig"
+GIT_CONFIG_GLOBAL="$GIT_AUTH_TMP/gitconfig" GH_TOKEN=ghp_runner_contract_test \
+  eval "$GIT_AUTH_SECTION"
+if git config --file "$GIT_AUTH_TMP/gitconfig" --get-all credential.https://github.com.helper \
+  | grep -q '/usr/local/bin/git-credential-gh-token'; then
+  echo 'runner retained the host-only GitHub credential helper' >&2
+  exit 1
+fi
+git config --file "$GIT_AUTH_TMP/gitconfig" --get-all credential.https://github.com.helper \
+  | grep -q 'gh auth git-credential' || {
+  echo 'runner did not install the in-container gh credential helper' >&2
+  exit 1
+}
+rm -rf "$GIT_AUTH_TMP"
 
 grep -q 'HARNESS_TASK_BUNDLE_FILE:-\$PROMPT_FILE' <<<"$SECTION"
 grep -q -- '--json' <<<"$SECTION"

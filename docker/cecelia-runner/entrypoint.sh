@@ -6,8 +6,8 @@
 #     会报 ENOENT: mkdir session-env。此处把只读挂载的 /host-claude-config 复制
 #     到 /home/cecelia/.claude（可写），再把 CLAUDE_CONFIG_DIR 指向副本。
 #  2. Generator 需要 git push / gh pr create —— 挂载宿主的 ~/.gitconfig 和
-#     ~/.config/gh 进来就够，这里只需 git config --global safe.directory '*'
-#     让 git 信任 /workspace 上 detached worktree。
+#     ~/.config/gh 后，用容器内 gh 重建 credential helper，再设置 safe.directory，
+#     避免复制进来的宿主专用 helper 在 Linux Runner 内不存在。
 #  3. ENTRYPOINT 之前是 ["claude", "-p", ...]，docker-executor 把 prompt 作为
 #     末尾参数传入；改到 entrypoint.sh 后同样把 "$@" 透传给 claude。
 #
@@ -67,6 +67,19 @@ else
   touch "$WRITABLE_GIT_CONFIG"
 fi
 export GIT_CONFIG_GLOBAL="$WRITABLE_GIT_CONFIG"
+
+# git-auth-setup:start
+# 宿主 gitconfig 可能引用只在 macOS 宿主存在的 credential helper。Runner 已只读挂载
+# ~/.config/gh，因此让容器内 gh 在可写副本中安装自身 helper；不把 token 放进 docker
+# argv/日志。无有效 gh 登录时保留原失败语义，由 capability gate 结构化拦截。
+if command -v gh >/dev/null 2>&1; then
+  if gh auth setup-git >/dev/null 2>&1; then
+    echo "[entrypoint] in-container GitHub credential helper configured"
+  else
+    echo "[entrypoint] GitHub credential helper unavailable; git push may fail" >&2
+  fi
+fi
+# git-auth-setup:end
 
 # 3. git 信任 /workspace（detached worktree 场景下 git 会拒绝执行命令）
 # 不再用 `|| true` 静默失败——现在 gitconfig 可写，这条必须真正成功
