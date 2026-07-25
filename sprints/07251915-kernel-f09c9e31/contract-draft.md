@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 13)
+# Sprint Contract Draft (Round 14)
 
 ## Notes
 
@@ -18,6 +18,7 @@
 - Round 11 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 10 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：registry 可达但 stale，context-manifest 仍为 404；确定性自查与 Contract Gate 均通过；Red 证据仍为本地 PostgreSQL 未启动导致 6 个测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议。
 - Round 12 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 11 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry 已重新核对：api/db/test registry 可达但 `scanned_at=2026-07-18T15:50Z` 仍 stale，context-manifest 仍为 HTML 404；本轮仅刷新 proposer 分支与结果协议。
 - Round 13 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 12 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry 已重新核对：api/db/test registry 可达但 `scanned_at=2026-07-18T15:50Z` 仍 stale，context-manifest 仍为 HTML 404；本轮仅刷新 proposer 分支与结果协议。
+- Round 14 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 13 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。本轮修正 Step 6 验证命令引用的本仓库真实 quickcheck 路径为 `scripts/quickcheck.sh`，避免旧 devgate quick-check 别名不存在造成假失败；结果协议刷新到 `cp-harness-propose-r14-f09c9e31-a43`。
 
 ## Response Schema（推导来源: N/A）
 
@@ -193,7 +194,7 @@ DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915
 **验证命令**:
 
 ```bash
-bash scripts/devgate/quick-check.sh || exit 1
+bash scripts/quickcheck.sh || exit 1
 bash scripts/check-version-sync.sh || exit 1
 node -e "const fs=require('fs');const pkg=require('./packages/brain/package.json').version;const v=fs.readFileSync('packages/brain/VERSION','utf8').trim();if(v!==pkg){console.error('FAIL: packages/brain/VERSION mismatch');process.exit(1)}"
 BAD_DIFF="$(git diff --name-only origin/main...HEAD | awk '!/^(packages\/brain\/src\/|packages\/brain\/VERSION$|packages\/brain\/package\.json$|packages\/brain\/package-lock\.json$|DEFINITION.md$|\\.brain-versions$|sprints\/07251915-kernel-f09c9e31\/|packages\/brain\/src\/orchestrator\/__tests__\/|packages\/brain\/src\/__tests__\/)/ { print }')"
