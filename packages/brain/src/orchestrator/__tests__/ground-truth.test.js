@@ -231,6 +231,29 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     expect(deps.execCmd.calls.some((cmd) => cmd.includes('statusCheckRollup'))).toBe(true);
   });
 
+  it('把 GitHub headRefName 作为 evaluator checkout 的结构化真相返回', async () => {
+    const deps = makeDeps({
+      rows: { run: { pr_url: PR_URL } },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefName: 'cp-07251603-kernel-evaluator-pr-branch',
+          headRefOid: 'sha-evaluator-head',
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.pr).toMatchObject({
+      head_ref: 'cp-07251603-kernel-evaluator-pr-branch',
+      head_sha: 'sha-evaluator-head',
+    });
+    expect(deps.execCmd.calls.some((cmd) => cmd.includes('headRefName'))).toBe(true);
+  });
+
   it('模型漏填 pr_url 时按 task 分支标识从 GitHub 反查 PR', async () => {
     const deps = makeDeps({
       rows: {
