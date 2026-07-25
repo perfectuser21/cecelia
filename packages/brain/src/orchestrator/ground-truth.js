@@ -223,7 +223,7 @@ export async function collectGroundTruth(deps, opts) {
   if (prUrl) {
     const view = asJson(execTolerant(
       execCmd,
-      `gh pr view ${prUrl} --json state,mergeStateStatus,headRefOid,statusCheckRollup`,
+      `gh pr view ${prUrl} --json state,mergeStateStatus,headRefName,headRefOid,statusCheckRollup`,
     )) ?? {};
     const checks = normalizeStatusCheckRollup(view.statusCheckRollup);
     pr = {
@@ -231,6 +231,7 @@ export async function collectGroundTruth(deps, opts) {
       state: view.state ?? null,
       mergeStateStatus: view.mergeStateStatus ?? null,
       merged: view.state === 'MERGED',
+      head_ref: view.headRefName ?? null,
       head_sha: view.headRefOid ?? null,
       ci: mapCiStatus(checks),
       failed_checks: failedCheckNames(checks),
