@@ -148,6 +148,13 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.6.1"
+    date: "2026-07-25"
+    change: "[CONFIG] Test Contract 表按表头解析列顺序"
+    description: "check-test-coverage 不再把 Test File/BEHAVIOR 覆盖列位置写死，兼容 proposer 已存在的两种合法列序；新增 swapped-column 回归测试，避免已批准合同被 CI 误报为空表。"
+    files:
+      - packages/engine/scripts/devgate/check-test-coverage.cjs
+      - packages/engine/tests/devgate/check-test-coverage-ext.test.ts
   - version: "19.4.4"
     date: "2026-07-09"
     change: '[CONFIG] pre-commit hook zenithjoy-skills 豁免收紧 + 测试接入CI'
