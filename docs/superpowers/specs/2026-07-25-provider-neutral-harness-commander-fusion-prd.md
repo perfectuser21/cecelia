@@ -2,9 +2,10 @@
 
 日期：2026-07-25
 优先级：P0
-状态：设计已确认，交下一 Session 制定实施计划
+状态：设计已确认；2026-07-25 完成 Phase 0 融合修订，交下一 Session 制定实施计划
 适用仓库：Cecelia
-目标设备：US M4、`xian-m4`、后续新 M1
+目标设备：`us-mac-m4`（US M4）、`xian-mac-m4`（xian-m4/CM4）、
+`xian-mac-m1`（M1/CM1）
 目标 Provider：Claude、Codex、Grok
 
 ## 0. 给下一 Session 的任务说明
@@ -18,10 +19,27 @@
 
 目标产物是一套混合架构：
 
-> 每条 Harness Run 保留一个独立、Provider-neutral、全程可见的 LLM Commander；L0 Safety Kernel 保有最终执行权；Fleet Supervisor 将每个 Attempt 独立调度到 US M4、`xian-m4` 或 M1。
+> 每条 Harness Run 保留一个独立、Provider-neutral、全程可见的 LLM Commander；
+> US M4 上的 Kernel Run Controller 保有最终执行权；Fleet Supervisor 将 Commander
+> Attempt 和 Role Attempt 独立调度到 `us-mac-m4`、`xian-mac-m4` 或 `xian-mac-m1`。
 
 下一 Session 必须先核对本文所列事实与当前代码，再编写实施计划。禁止直接把旧
 `harness-controller` Prompt 塞入 Kernel，禁止为 Claude、Codex、Grok 复制三套状态机。
+
+### 0.1 与三项在途 Kernel hotfix 的融合边界
+
+本 PRD 是 Commander/Fleet 的上位架构，不取消、不吞并以下三项在途任务。三者组成
+**Phase 0 稳定底座**，必须以三个独立 PR 交付、复审和回滚：
+
+| Phase 0 | Brain Task | 职责 | 本 PRD 消费点 |
+|---|---|---|---|
+| 0A Durable Resume | `f09c9e31-ed78-4af4-a1b6-88241bc486c5` | approved contract、PRD/PR 里程碑、Attempt 和失败签名跨 Run 恢复 | FR-1、FR-11 |
+| 0B Capability Gate | `ed561be4-940a-4c26-844c-e3c5a5a3f7c8` | `ExecutionTarget`、能力快照、账号/机器健康、确定性故障转移 | FR-4、FR-6～FR-9 |
+| 0C Attempt Telemetry | `a1fa8636-2ad4-41b4-8de3-8609af83daec` | logical cycle、retry/resume/recovery lineage、耗时与无效 Attempt | FR-13、Phase 1 事件基础 |
+
+Phase 0 不实现 LLM Commander、Commander Memory 或 CommanderDirective。Commander
+五个 Phase 必须复用 Phase 0 的恢复、路由和遥测原语，不得另建同义状态机、账号选择器
+或第二流程账本。
 
 ## 1. 背景与问题
 
@@ -33,7 +51,10 @@ Cecelia Brain 当前运行在 US M4，包含三层认知架构：
 - L1 丘脑：LLM，负责快速语义判断与事件路由。
 - L2 皮层：LLM，负责深度分析、RCA 和战略调整。
 
-Harness Controller 不是 Brain 之外的第四层。它属于 L0 所管理的 Run 级控制能力。
+旧文档中的 “Harness Controller” 不是一个可继续沿用的精确组件名。本文将它拆成：
+
+- `Kernel Run Controller`：Brain 内的 L0 确定性控制组件；
+- `LLM Commander`：每 Run 独立、可换 Provider/设备的 LLM 角色。
 
 当前又存在两种 Harness 控制形态：
 
@@ -62,7 +83,7 @@ L1/L2 当前是 Brain 的全局认知能力，不等价于“每条 Harness 一�
 8. `xian-m4` Worker `/health` 报 `docker_available=false`，但 SSH 上 Docker Server
    实际可用，说明健康探测可能存在启动时缓存不刷新问题。
 
-以上问题说明机器、账号、模型、Provider、Controller Session 和 Run 状态尚未彻底解耦。
+以上问题说明机器、账号、模型、Provider、LLM Session 和 Run 状态尚未彻底解耦。
 
 ## 2. 产品目标
 
@@ -71,11 +92,11 @@ L1/L2 当前是 Brain 的全局认知能力，不等价于“每条 Harness 一�
 1. 每条 Harness Run 都有一个逻辑独立的 LLM Commander。
 2. Commander 可由 Claude、Codex 或 Grok 承担，不绑定某一家 Provider。
 3. Commander 能看到该 Run 从开始到结束的完整事件和决策历史。
-4. L0 Safety Kernel 继续拥有状态推进、幂等、租约、预算和安全门禁的最终权力。
+4. Kernel Run Controller 继续拥有状态推进、幂等、租约、预算和安全门禁的最终权力。
 5. 每个 Planner、Proposer、Reviewer、Generator、Evaluator、Judge 或 Commander Attempt
    都可以独立选择执行机器。
-6. 显式指定 `xian-m4` 的 Attempt 必须实际落在 `xian-m4`；不可静默回落 US M4。
-7. Controller、Provider、模型、账号和机器成为五个相互独立的轴。
+6. 显式指定 `xian-mac-m4` 的 Attempt 必须实际落在该机器；不可静默回落 US M4。
+7. Role、Provider、模型、账号和机器成为五个相互独立的轴。
 8. Commander 或 Worker Session 丢失后，可从 DB、Git、PR 和事件日志恢复。
 
 ### 2.2 成功定义
@@ -111,20 +132,25 @@ Run 创建
 
 | 名称 | 范围 | 是否 LLM | 职责 |
 |---|---|---:|---|
-| Brain | 全局 | 混合 | Cecelia 总体调度、认知、记忆和保护 |
+| Brain Control Plane | 全局，固定 US M4 | 混合 | Cecelia 总体调度、认知、记忆和保护 |
 | Fleet Supervisor | 全局 | 否 | 设备健康、容量、公平性、机器选择 |
-| Run Safety Kernel | 单 Run | 否 | 状态机、门禁、幂等、租约、预算、恢复 |
-| LLM Commander | 单 Run | 是 | 理解全程、制定策略、指导角色、处理未知异常 |
+| Kernel Run Controller | 单 Run，固定 US M4 | 否 | Brain 内的 L0 状态机、门禁、幂等、租约、预算、恢复 |
+| LLM Commander | 单 Run、单次唤醒为 Attempt | 是 | 理解全程、制定策略、指导角色、处理未知异常；可按能力矩阵跨设备 |
 | Attempt Supervisor | 单 Attempt | 否 | 启动、心跳、超时、回调、恢复和证据 |
-| Role Worker | 单 Attempt | 是 | Planner、Reviewer、Generator 等具体工作 |
+| Role Worker | 单 Attempt | 是 | Planner、Reviewer、Generator 等具体工作；可按能力矩阵跨设备 |
 
-“一个 Active Controller”必须拆成两个不变量：
+本文禁止单独使用含糊的 `Controller` 指代运行组件；必须写出 `Brain Control Plane`、
+`Kernel Run Controller`、`LLM Commander` 或 `Role Worker`。旧 One-session
+Harness 的 LLM Controller 能力迁入 `LLM Commander`，控制权迁入
+`Kernel Run Controller`。
+
+“一个 Active Controller”必须进一步拆成两个不变量：
 
 1. 全局同一时刻只有一个 Active Fleet Supervisor/Brain Leader。
-2. 每个 `run_id` 同一时刻只有一个 Active Run Safety Kernel。
+2. 每个 `run_id` 同一时刻只有一个 Active Kernel Run Controller。
 
-物理上可以只有一个 Brain 服务；逻辑上每条 Run 必须拥有隔离的 Controller 状态和
-Commander Memory。
+物理上可以只有一个 Brain 服务；逻辑上每条 Run 必须拥有隔离的 Kernel Controller
+状态和 Commander Memory。
 
 ## 5. 目标架构
 
@@ -136,27 +162,29 @@ US M4
     └── L0 控制层
         ├── Fleet Supervisor
         │   ├── US M4 health/capacity
-        │   ├── xian-m4 health/capacity
-        │   └── M1 health/capacity
+        │   ├── xian-mac-m4 health/capacity
+        │   └── xian-mac-m1 health/capacity
         │
         ├── Run A
-        │   ├── Run Safety Kernel A
-        │   ├── LLM Commander A
+        │   ├── Kernel Run Controller A
+        │   ├── Commander State/Memory A
         │   └── Attempt Supervisors
         │
         └── Run B
-            ├── Run Safety Kernel B
-            ├── LLM Commander B
+            ├── Kernel Run Controller B
+            ├── Commander State/Memory B
             └── Attempt Supervisors
 
-Workers
-├── US M4：Claude/Codex/Grok Role Attempts
-├── xian-m4：Claude/Codex/Grok Role Attempts
-└── M1：Claude/Codex/Grok Role Attempts
+Attempt 执行面
+├── US M4：Claude/Codex/Grok Commander + Role Attempts
+├── xian-mac-m4：仅 Codex Commander + Role Attempts（当前已验证矩阵）
+└── xian-mac-m1：仅 Codex Commander + Role Attempts（当前已验证矩阵）
 ```
 
-Brain 默认继续部署在 US M4。跨设备扩容通过 Worker 完成，不要求把 Brain 搬到
-`xian-m4`。未来可增加备用 Brain，但不属于本 PRD。
+Brain Control Plane、Fleet Supervisor 和所有 Kernel Run Controller 固定部署在 US M4。
+跨设备扩容通过 Commander/Role Attempt 完成，不要求把 Brain 搬到 `xian-mac-m4`。
+未来可增加备用 Brain，但不属于本 PRD。Claude Code 与 Grok 当前只在 US M4 验证；
+禁止因架构图或 fallback 配置把它们静默派到 Xian 设备。
 
 ## 6. 核心产品需求
 
@@ -224,6 +252,10 @@ Commander，但事件仍必须可追溯。
 - `request_human`
 - `abort_run`
 
+`retry_attempt` 表示创建一个带 `retry_of_attempt_id`、保持原
+`logical_cycle_id` 的新 Attempt。终态 Attempt 不得复活；跨 Provider 或跨机器时不得复用
+旧 Session ID。
+
 示例：
 
 ```json
@@ -236,7 +268,7 @@ Commander，但事件仍必须可追溯。
   "reason": "The reviewer failed in the runner sandbox before producing a verdict.",
   "guidance": "Keep the approved contract unchanged and repair only the execution environment.",
   "route": {
-    "machine": "xian-m4",
+    "machine": "xian-mac-m4",
     "provider": "codex",
     "account": "team4",
     "model": "GPT-5.5"
@@ -251,9 +283,58 @@ Commander，但事件仍必须可追溯。
 自由文本不得直接触发副作用。缺少 schema、证据引用、当前游标或合法 action 的结果，
 只能记录为无效建议。
 
-### FR-4：L0 Safety Kernel 保有最终执行权
+### FR-3A：Harness Actor Inbox 与角色间通信
 
-L0 必须验证 CommanderDirective：
+LLM Commander、Planner、Proposer、Reviewer、Generator、Evaluator 和 Judge 之间允许
+**语义上直达、传输上经 Kernel** 的定向通信：
+
+```text
+Commander Inbox ◄─────────────────────────────► Planner Inbox
+       ▲                                              │
+       │                                              ▼
+Reviewer Inbox ◄────── Kernel Message Spine ──────► Generator Inbox
+```
+
+每个 `run_id + actor_key` 拥有一个逻辑独立的 `Harness Actor Inbox`。`actor_key` 首版为
+`commander/planner/proposer/reviewer/generator/evaluator/judge`；它标识可恢复的逻辑角色，
+而不是某个短命 Attempt。新 Attempt 必须从该角色的持久游标继续消费未处理消息。
+
+每条定向消息至少包含：
+
+- `message_id`
+- `sender_role`
+- `recipient_role`
+- `thread_id`
+- `correlation_id`
+- `source_attempt_id`
+- `run_id`
+- `event_cursor`
+- `message_type`
+- `payload`
+- `evidence_refs`
+- `dedupe_key`
+
+首版消息类型至少支持 `instruction/question/answer/review_feedback/evidence_request/escalation`。
+Kernel Run Controller 作为可靠 Message Spine，负责鉴权、持久化、去重、投递、游标、
+ack 和消息预算，但不改写发送者的业务含义。接收者在下一份 `CommanderBundle` 或
+`TaskBundle` 中看到地址明确的原消息和线程上下文，不需要靠摘要猜测发送者意图。
+
+Agent 可以直接回复另一 Agent，也可以在同一 `thread_id` 下追问；但任何 LLM 角色都不能
+绕过 Kernel 直接启动另一角色、修改 Run 状态、共享隐藏 Session 或建立不可回放的
+点对点网络通道。需要副作用的消息必须转换为 Directive，再由 Kernel 执行 FR-4 校验。
+
+Actor Inbox 使用 FR-11 既有权威记录的事务性 audit/outbox 定向视图，不得新增第三套
+mailbox 流程真相。投影可以重建；`ack/read cursor` 只表示交付状态，不表示 Run 业务状态。
+Kernel 拒绝投递时必须记录结构化原因，并把拒绝反馈给原发送者。每条线程受 Run 的消息数、
+token、deadline 和收敛预算约束，防止多个 Agent 无界互聊。
+
+`Harness Actor Inbox` 与 Cecelia 接收人类话语、机器 Signal 和 Learning 的全局 Capture
+Inbox 是两个作用域：前者只服务一条 Harness Run 内部协作，后者服务全局信息采集，二者
+不得共表或共消费游标。
+
+### FR-4：Kernel Run Controller 保有最终执行权
+
+Kernel Run Controller 必须验证 CommanderDirective：
 
 1. `run_id` 与当前 Run 一致。
 2. `event_cursor` 未过期；过期建议必须重新观测。
@@ -265,7 +346,8 @@ L0 必须验证 CommanderDirective：
 8. 证据引用属于当前 Run。
 9. Merge、生产放行等高风险动作继续经过现有硬门禁。
 
-L0 可以拒绝 Commander 建议，但必须写结构化拒绝原因，并将拒绝事件反馈给同一 Commander。
+Kernel Run Controller 可以拒绝 Commander 建议，但必须写结构化拒绝原因，并将拒绝事件
+反馈给同一 Commander。
 
 ### FR-5：Provider-neutral Commander
 
@@ -299,7 +381,7 @@ commander:
     model: GPT-5.5
   fallbacks:
     - provider: claude
-      account: team2
+      account: account1
     - provider: grok
       account: grok
 ```
@@ -317,6 +399,18 @@ commander:
 跨 Provider 接管必须创建新 Commander Attempt，不复制不兼容的 Session ID；新 Provider 从
 `CommanderBundle + Run Event Log + Commander Memory` 恢复。
 
+已知基础设施故障首先由 L0 使用 Phase 0B 的确定性策略处理，不为普通瞬时错误白烧一次
+Commander 调用：
+
+1. 当前 `ExecutionTarget` 对单次 5xx 做最多一次有界恢复重试；
+2. 同签名再次失败，短时熔断该账号并在同 Provider、同机器选择其他健康账号；
+3. Codex 在 `strict_affinity=false` 时可选择另一台已验证机器；
+4. 仅 US M4 允许按 RunProfile 声明跨 Provider 降级到 Claude Code 或 Grok；
+5. 合法目标全部耗尽、错误未知或策略冲突时，才唤醒 Commander 或请求人工。
+
+Commander 可以建议改变 fallback 策略，但不能接管上述确定性账号轮换，也不能绕过
+能力矩阵、显式机器强绑定或 L0 熔断状态。
+
 ### FR-7：五轴彻底分离
 
 每个 Commander/Role Assignment 必须独立表达：
@@ -326,12 +420,12 @@ role: reviewer
 provider: codex
 model: GPT-5.5
 account: team4
-machine: xian-m4
+machine: xian-mac-m4
 ```
 
 约束：
 
-- `team4` 不能推导出 `xian-m4`。
+- `team4` 不能推导出 `xian-mac-m4`。
 - `codex` 不能推导出 US 或 Xian。
 - `GPT-5.5` 不能推导账号或机器。
 - `location=xian` 不能只作为 Prompt 文本；必须进入真实 RoutingDecision。
@@ -348,6 +442,17 @@ Attempt 落库前必须持久化最终解析结果：
 - `route_reason`
 - `strict_affinity`
 
+上述字段必须来自结构化 `ExecutionTarget`。当前允许矩阵是声明制白名单：
+
+| Provider | Account | Canonical Machine ID |
+|---|---|---|
+| Claude Code | `account1`, `account2` | `us-mac-m4` |
+| Codex | `team1`～`team5` | `us-mac-m4`, `xian-mac-m4`, `xian-mac-m1` |
+| Grok | `grok` | `us-mac-m4` |
+
+未列出或未实机验证的 Provider × Account × Machine 组合一律不可选。禁止静默复制凭据，
+禁止把账号名、容器 hostname、Prompt 文本或 `location` 别名当作物理机器证据。
+
 ### FR-8：Attempt 级跨设备调度
 
 最小调度单元是 Attempt，不是整个 Harness Run。
@@ -356,11 +461,11 @@ Attempt 落库前必须持久化最终解析结果：
 
 ```text
 Commander  → US M4
-Planner    → M1
-Proposer   → xian-m4
+Planner    → xian-mac-m1
+Proposer   → xian-mac-m4
 Reviewer   → US M4
-Generator  → xian-m4
-Evaluator  → M1
+Generator  → xian-mac-m4
+Evaluator  → xian-mac-m1
 ```
 
 显式机器要求：
@@ -370,19 +475,29 @@ Evaluator  → M1
   保存原失败和新 RoutingDecision。
 - 未指定机器：Fleet Supervisor 按能力、健康、空闲 Slot、资源压力和公平性选择。
 
+Codex 跨机器恢复必须保持同一 `logical_cycle_id`，关闭旧 Attempt 后从 DB、Git、PR 和
+事件证据创建 fresh Attempt；不得复制本地 thread/session 文件冒充跨机器 resume。
+Claude Code/Grok 在 Xian 机器上未验证，因此 Xian 上 Codex 池耗尽时只能在非 strict
+模式迁回 US M4，或进入 `infrastructure_blocked`，不得当地启动 Claude Code/Grok。
+
 ### FR-9：Fleet Supervisor
 
 Fleet Supervisor 只管理全局资源，不介入某条 Run 的业务策略。
 
 它必须：
 
-1. 周期性刷新 US M4、`xian-m4`、M1 的真实健康与容量。
+1. 周期性刷新 `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` 的真实健康与容量。
 2. 健康状态必须有 TTL；启动时失败不可永久缓存。
 3. 区分 Worker HTTP 健康、Docker 可用、Runner 镜像版本、Provider 凭据可用和剩余 Slot。
 4. 对候选机器先过滤 capability，再评分。
 5. 预留 Slot 后再落 RoutingDecision，避免并发超卖。
 6. 全局公平性不得覆盖显式机器强绑定。
 7. 路由失败必须给出逐候选机器的拒绝原因。
+
+Fleet Supervisor 使用 Fleet Registry 的 canonical machine ID。`os.hostname()`、Docker
+container ID（实弹曾写成 `79f7d974a2ce`）和展示别名不得落入
+`actual_machine_id`。机器身份由受控注册或 `CECELIA_MACHINE_ID` 注入并校验；未知身份
+fail-closed。
 
 ### FR-10：统一 Runner Contract
 
@@ -406,10 +521,20 @@ Reviewer 只读必须通过外层执行边界实现。若 Worktree 已只读挂�
 
 流程真相只能来自：
 
-- PostgreSQL Run/Attempt/Decision/Event 数据；
+- PostgreSQL Run/Attempt/Decision 权威数据，以及可重建的 Event audit/outbox；
 - Git commit/branch；
 - GitHub PR 和 CI；
 - 已落库合同、verdict 和证据。
+
+`initiative_contracts`、`harness_attempts`、`orchestrator_decision_log` 和 GitHub
+结构化真相继续是 L0 恢复依据。Commander 所需 Run Event 可以新增事务性
+audit/outbox 投影，但不得成为与这些表竞争的第二流程账本：
+
+- 每条投影事件必须带唯一 `source_type/source_id/source_version`；
+- 重放不得产生重复事件；
+- L0 `derive` 不读取 Commander Memory 或事件摘要决定既有硬门；
+- Commander 的 `event_cursor` 只表示已消费到哪个审计事件，不表示流程状态；
+- 投影丢失时可以从权威表重建，不能反向覆盖权威表。
 
 以下内容只能作为优化，不能作为真相：
 
@@ -437,20 +562,30 @@ objective: 海外不同机型与模型组合适配
 workflow: gan-development
 priority: P0
 commander:
-  primary: { provider: codex, account: team4, model: GPT-5.5 }
+  primary: { provider: codex, account: team4, model: GPT-5.5, machine: xian-mac-m4 }
   fallbacks:
-    - { provider: claude, account: team2 }
+    - { provider: codex, account: team1, machine: xian-mac-m4 }
+    - { provider: claude, account: account1, machine: us-mac-m4 }
 roles:
-  planner: { provider: codex, account: team4, model: GPT-5.5 }
+  planner: { provider: codex, account: team2, model: GPT-5.5 }
   proposer: { provider: codex, account: team4, model: GPT-5.5 }
-  reviewer: { provider: codex, account: team4, model: GPT-5.5 }
+  reviewer: { provider: codex, account: team1, model: GPT-5.5 }
 routing:
-  preferred_machine: xian-m4
-  strict_affinity: true
+  preferred_machine: xian-mac-m4
+  fallback_machines: [us-mac-m4]
+  strict_affinity: false
 budget:
   max_usd: 10
-  max_hops: 200
+  safety_max_hops: 4096
 ```
+
+`safety_max_hops` 只是防止控制器失控的宽兜底，不是业务轮次上限。它不得先于进展驱动
+收敛探测器终止健康 Run；到达兜底只能 `FAILED + 人工升级`，绝不能 PASS 或 merge。
+等待 `human_review` 的时间不计入自动化活动 deadline。
+
+Writer 与 Reviewer/Evaluator 必须是不同 Attempt 和 fresh session；默认还应选择不同账号
+或 Provider。明确配置同一账号时也不得复用 Session，且必须在 RoutingDecision 中披露
+独立性降级。
 
 CommanderBundle 必须包含该 Run 的：
 
@@ -480,6 +615,8 @@ Dashboard/API 至少可以回答：
 6. 失败属于业务、Provider、Runner、机器、路由还是控制面？
 7. 是否发生过跨 Provider 或跨机器接管？
 8. 当前谁持有 Run lease 和 Attempt lease？
+9. 每个 Actor Inbox 有多少 unread/acked/rejected 消息，最长等待多久？
+10. 一条 `thread_id` 经历了哪些发送者、Attempt 和设备？
 
 所有自动改派必须写事件，禁止只出现在日志字符串中。
 
@@ -512,7 +649,7 @@ Dashboard/API 至少可以回答：
   "schema": "routing-decision/v1",
   "run_id": "run-uuid",
   "attempt_id": "attempt-uuid",
-  "requested_machine": "xian-m4",
+  "requested_machine": "xian-mac-m4",
   "actual_machine_id": "registry-machine-id",
   "strict_affinity": true,
   "provider": "codex",
@@ -524,7 +661,30 @@ Dashboard/API 至少可以回答：
 }
 ```
 
-### 7.3 事件最小集合
+### 7.3 ActorMessage
+
+```json
+{
+  "schema": "harness-actor-message/v1",
+  "message_id": "message-uuid",
+  "run_id": "run-uuid",
+  "sender_role": "commander",
+  "recipient_role": "planner",
+  "thread_id": "thread-uuid",
+  "correlation_id": "directive-or-message-uuid",
+  "source_attempt_id": "attempt-uuid",
+  "event_cursor": 42,
+  "message_type": "question",
+  "payload": {},
+  "evidence_refs": ["event:41"],
+  "dedupe_key": "run:thread:sender:sequence"
+}
+```
+
+消息消费状态必须通过独立 delivery/ack 投影表达，禁止覆写原始消息；同一
+`message_id/dedupe_key` 重放只能产生一条逻辑消息。
+
+### 7.4 事件最小集合
 
 - `run.created`
 - `commander.started`
@@ -542,6 +702,10 @@ Dashboard/API 至少可以回答：
 - `attempt.completed`
 - `attempt.failed`
 - `attempt.expired`
+- `actor_message.accepted`
+- `actor_message.delivered`
+- `actor_message.acked`
+- `actor_message.rejected`
 - `run.phase_changed`
 - `run.paused`
 - `run.failed`
@@ -553,11 +717,11 @@ Dashboard/API 至少可以回答：
 
 | 故障 | 默认处理 | 是否唤醒 Commander | 是否允许自动换 Provider/机器 |
 |---|---|---:|---|
-| 单次 Provider 503 | L0 有界退避 | 否 | 阈值前否 |
-| 连续 Provider 5xx 达阈值 | 记录 Provider 故障 | 是 | 按 fallback 配置允许 |
+| 单次 Provider 503 | 当前目标最多一次有界恢复重试 | 否 | 同签名再次失败即换账号 |
+| 连续 Provider 5xx 达阈值 | 熔断账号；同 Provider 换账号/合法机器 | 已知策略耗尽后是 | 按能力矩阵与 fallback 配置允许 |
 | 认证失败/账号熔断 | 禁止继续使用账号 | 是 | 允许换合法账号/Provider |
 | Worker health 过期 | 停止新派发 | 是 | 非 strict 可换机器 |
-| 显式 `xian-m4` 不可用 | loud-fail 或等待 | 是 | strict 时禁止 |
+| 显式 `xian-mac-m4` 不可用 | loud-fail 或等待 | 是 | strict 时禁止 |
 | Docker/Runner 启动失败 | 基础设施失败 | 是 | 非 strict 可重路由 |
 | Reviewer 无 verdict | 先区分 Runner 与语义原因 | 是 | 不得直接归类语义失败 |
 | Reviewer 拒绝合同 | 进入业务反馈循环 | 是 | 不自动换 Provider |
@@ -609,10 +773,13 @@ Dashboard/API 至少可以回答：
 ### 11.1 架构验收
 
 - [ ] 每个 `run_id` 有独立 Commander 状态、事件游标和 Memory。
-- [ ] Run Safety Kernel 与 LLM Commander 是两个清晰组件。
+- [ ] Brain Control Plane、Kernel Run Controller、LLM Commander、Role Worker 是四个清晰组件。
+- [ ] Brain Control Plane 与 Kernel Run Controller 固定在 US M4；Commander/Role Attempt
+  可按能力矩阵跨设备。
 - [ ] Fleet Supervisor 不读取或决定 Run 业务策略。
 - [ ] `derive.js` 不出现 Claude/Codex/Grok 分支。
 - [ ] Provider 专属逻辑只在 Adapter/credential/CLI 边界。
+- [ ] 文档、schema 和 API 中不使用无类型限定的 `Controller` 表达运行组件。
 
 ### 11.2 Provider 验收
 
@@ -624,11 +791,11 @@ Dashboard/API 至少可以回答：
 
 ### 11.3 跨设备验收
 
-- [ ] `strict_affinity=true + machine=xian-m4` 的真实 Attempt 只在 `xian-m4` 执行。
-- [ ] 数据库同时记录 `requested_machine=xian-m4` 与真实 `actual_machine_id`。
+- [ ] `strict_affinity=true + machine=xian-mac-m4` 的真实 Attempt 只在该机器执行。
+- [ ] 数据库同时记录 `requested_machine=xian-mac-m4` 与真实 `actual_machine_id`。
 - [ ] `team4` 不被用作机器选择依据。
 - [ ] Kernel v1 不再因提前本机 return 绕过 Xian 路由。
-- [ ] US M4、`xian-m4`、M1 使用同一 Runner Contract 版本，并记录可验证的
+- [ ] `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` 使用同一 Runner Contract 版本，并记录可验证的
   multi-arch manifest 或 per-platform runner digest。
 - [ ] Worker Docker 健康状态会重新探测，不永久缓存启动时失败。
 
@@ -639,6 +806,10 @@ Dashboard/API 至少可以回答：
 - [ ] 普通 heartbeat 不产生无意义 LLM 调用。
 - [ ] Commander Session 被杀后，新 Session 能恢复策略摘要和事件游标。
 - [ ] Run A 的上下文不会进入 Run B 的 CommanderBundle。
+- [ ] 每个逻辑角色拥有独立 Harness Actor Inbox；Attempt 重启或换机后继续原消费游标。
+- [ ] Agent 可用 `thread_id` 定向追问/回答，接收方看到未经摘要改写的原消息。
+- [ ] Inbox 消息不能直接产生副作用，所有动作仍经过 Kernel Directive 校验。
+- [ ] Capture Inbox 与 Harness Actor Inbox 不共表、不共游标。
 
 ### 11.5 安全与故障验收
 
@@ -659,6 +830,7 @@ Dashboard/API 至少可以回答：
 4. Provider capability 与 fallback 解析。
 5. Machine/Provider/account/model 五轴独立解析。
 6. Health TTL 与重新探测。
+7. Actor Inbox 地址、线程、去重、ack、消息预算与跨 Attempt 游标恢复。
 
 ### 12.2 集成测试
 
@@ -667,7 +839,9 @@ Dashboard/API 至少可以回答：
 3. Codex Commander 503 达阈值 → Claude Commander 接管。
 4. `location=xian` + Kernel v1 → 真实 remote launcher，而非 US 本地 Docker。
 5. Reviewer 外层只读运行成功且不调用嵌套 read-only sandbox。
-6. Controller/Worker 崩溃后从 DB/Git/PR 重建下一 hop。
+6. Kernel/Worker 崩溃后从 DB/Git/PR 重建下一 hop。
+7. Commander → Planner 提问 → Planner 回复 → Commander 消费同一线程的完整闭环。
+8. Agent 定向消息请求副作用时，Kernel 拒绝非法动作并把原因回送发送者。
 
 ### 12.3 三机实弹
 
@@ -675,11 +849,11 @@ Dashboard/API 至少可以回答：
 
 ```text
 Commander → US M4 / Codex
-Planner   → M1 / Claude 或 Codex
-Proposer  → xian-m4 / Codex
+Planner   → xian-mac-m1 / Codex
+Proposer  → xian-mac-m4 / Codex
 Reviewer  → US M4 / Grok 或 Claude
-Generator → xian-m4 / Codex
-Evaluator → M1 / Claude 或 Codex
+Generator → xian-mac-m4 / Codex
+Evaluator → xian-mac-m1 / Codex
 ```
 
 验收证据必须包含：
@@ -698,7 +872,7 @@ Evaluator → M1 / Claude 或 Codex
 
 ```text
 commander_mode=hybrid
-machine=xian-m4
+machine=xian-mac-m4
 strict_affinity=true
 provider=codex
 account=team4
@@ -711,14 +885,17 @@ model=GPT-5.5
 
 ### Phase 1：契约与持久状态
 
+- 前置：Phase 0A/0C 已合入并通过独立复审；
 - CommanderBundle/Directive schema；
 - Run Commander 状态与事件游标；
+- Harness Actor Inbox message schema、定向 outbox、actor cursor 与消息预算；
 - Directive validator；
-- 事件集合和可观测字段；
+- 基于既有权威表的事务性事件 outbox 与可观测字段；
 - 不接真实 LLM 副作用。
 
 ### Phase 2：Provider-neutral Commander
 
+- 前置：Phase 0B 提供 Provider/account capability snapshot 与确定性 fallback 原语；
 - 将 Commander 作为正式 role 接入现有 Provider Registry；
 - Claude/Codex/Grok Adapter 合同测试；
 - 关键节点唤醒与 event-driven memory；
@@ -726,6 +903,7 @@ model=GPT-5.5
 
 ### Phase 3：Attempt 级 Fleet Routing
 
+- 复用 Phase 0B 的 `ExecutionTarget`、canonical machine ID 和健康池；
 - Kernel Dispatcher 接机器解析与 Slot reservation；
 - 修复 Kernel v1 绕过 `location=xian`；
 - Requested/actual machine 证据；
@@ -733,7 +911,7 @@ model=GPT-5.5
 
 ### Phase 4：统一 Runner 与故障闭环
 
-- US M4、`xian-m4`、M1 Runner Contract 对齐；
+- `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` Runner Contract 对齐；
 - Reviewer 外层只读；
 - Worker health TTL；
 - 统一 failure classification。
@@ -747,6 +925,8 @@ model=GPT-5.5
 - 形成是否把 `hybrid` 设为默认的独立决策。
 
 每个 Phase 必须可以单独回滚。不要用一个超大 PR 同时完成五个 Phase。
+Phase 0 三个 hotfix 也必须保持独立 PR；因此整个计划最多形成三个前置 PR 加五个
+Commander Phase PR，而不是一个八块合一的巨型改动。
 
 ## 14. 代码导航
 
@@ -793,7 +973,7 @@ model=GPT-5.5
 - 旧 LLM Commander 的灵活指挥能力；
 - Kernel L0 的确定性、安全和可恢复性；
 - Claude、Codex、Grok 的可替换性；
-- US M4、`xian-m4`、M1 的细粒度算力调度；
+- `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` 的细粒度算力调度；
 - 每条 Pipeline 的独立上下文和个性化指导；
 - 从事件日志可完整解释“谁在什么时候，为什么，把什么任务派到哪台机器”。
 
