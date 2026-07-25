@@ -60,6 +60,7 @@ journey_type: autonomous
         and (.run_id | type == "string")
         and (.hop | type == "number")
         and (.role | type == "string")
+        and (.status | type == "string")
         and has("logical_cycle_id")
         and has("attempt_kind")
         and has("retry_of_attempt_id")

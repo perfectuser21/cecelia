@@ -20,6 +20,7 @@ describe('kernel attempt telemetry contract [BEHAVIOR]', () => {
     expect(typeof res.body.totals?.active_time_ms).toBe('number');
     expect(Array.isArray(res.body.role_metrics)).toBe(true);
     expect(Array.isArray(res.body.attempts)).toBe(true);
+    expect(typeof res.body.attempts?.[0]?.status).toBe('string');
   });
 
   it('GET /api/brain/harness/tasks/:task_id/attempt-telemetry response keys 精确等于 telemetry 合同 keys', async () => {
