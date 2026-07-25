@@ -20,11 +20,7 @@ const SCRIPT = resolve(__dirname, '../../scripts/devgate/check-test-coverage.cjs
  * 在临时目录里造一个最小 sprint：合同 + 同步副本测试文件，
  * 然后用指定扩展名的 testFile 跑 gate，返回 exit code（0=通过）。
  */
-function runGate(
-  testFileRel: string,
-  swappedColumns = false,
-  repoRelative = false
-): number {
+function runGate(testFileRel: string): number {
   const tmp = mkdtempSync(join(tmpdir(), 'ctc-'));
   const sprintDir = join(tmp, 'sprints', 'sprint-x');
   const subDir = testFileRel.split('/').slice(0, -1).join('/') || '.';
@@ -37,21 +33,14 @@ function runGate(
       `describe('x', () => { it('渲染 PrepPRD 全文', () => { expect(1).toBe(1); }); });\n`
   );
 
-  const contractTestPath = repoRelative
-    ? `sprints/sprint-x/${testFileRel}`
-    : testFileRel;
   const contract = [
     '# Contract',
     '',
     '## Test Contract',
     '',
-    swappedColumns
-      ? '| 功能 | BEHAVIOR 覆盖 | Test File | 预期红证据 |'
-      : '| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |',
+    '| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |',
     '|---|---|---|---|',
-    swappedColumns
-      ? `| 组件层 | 渲染 | \`${contractTestPath}\` | 当前实现缺失 → 断言 FAIL |`
-      : `| 组件层 | \`${contractTestPath}\` | 渲染 | 当前实现缺失 → 断言 FAIL |`,
+    `| 组件层 | \`${testFileRel}\` | 渲染 | 当前实现缺失 → 断言 FAIL |`,
     '',
   ].join('\n');
   const contractPath = join(sprintDir, 'contract-draft.md');
@@ -59,10 +48,7 @@ function runGate(
 
   let exitCode = 0;
   try {
-    execSync(`node "${SCRIPT}" "${contractPath}"`, {
-      cwd: repoRelative ? tmp : undefined,
-      encoding: 'utf8',
-    });
+    execSync(`node "${SCRIPT}" "${contractPath}"`, { encoding: 'utf8' });
   } catch (e: any) {
     exitCode = e.status || 1;
   } finally {
@@ -82,13 +68,5 @@ describe('check-test-coverage 测试文件扩展名', () => {
 
   it('不回归：仍接受 .test.ts', () => {
     expect(runGate('tests/Foo.test.ts')).toBe(0);
-  });
-
-  it('按表头定位列，接受 BEHAVIOR 覆盖位于 Test File 之前', () => {
-    expect(runGate('tests/Foo.test.ts', true)).toBe(0);
-  });
-
-  it('接受从仓库根开始的 Test File 路径', () => {
-    expect(runGate('tests/Foo.test.ts', false, true)).toBe(0);
   });
 });

@@ -55,7 +55,6 @@ function parseTestContract(content) {
   const lines = content.split("\n");
   const rows = [];
   let inSection = false;
-  let columns = null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^##+\s*(?:§\d+\s+)?Test Contract/.test(line)) {
@@ -64,35 +63,14 @@ function parseTestContract(content) {
     }
     if (inSection && /^##+\s/.test(line)) break; // 下一个 section 开始
     if (!inSection) continue;
-    const cells = line
-      .trim()
-      .replace(/^\|/, "")
-      .replace(/\|$/, "")
-      .split("|")
-      .map((s) => s.trim());
-    if (cells.length < 3) continue;
-
-    // 以表头名称定位列，不假设 proposer 永远输出同一列序。
-    // 历史合同两种合法格式都存在：
-    //   | 功能 | Test File | BEHAVIOR 覆盖 | ... |
-    //   | 功能 | BEHAVIOR 覆盖 | Test File | ... |
-    if (columns === null) {
-      const testFile = cells.findIndex((cell) => cell === "Test File");
-      const behaviors = cells.findIndex((cell) => /BEHAVIOR\s*覆盖/i.test(cell));
-      if (testFile >= 0 && behaviors >= 0) {
-        const ws = cells.findIndex((cell) =>
-          /^(?:WS|Workstream|功能)$/i.test(cell)
-        );
-        columns = { ws: ws >= 0 ? ws : 0, testFile, behaviors };
-      }
-      continue;
-    }
-
-    if (cells.every((cell) => /^-+$/.test(cell))) continue;
-    const ws = cells[columns.ws];
-    const testFileRaw = cells[columns.testFile];
-    const behaviorsRaw = cells[columns.behaviors];
+    // 表格数据行：| WS1 | `tests/ws1/retry.test.ts` | ... | ... |
+    const cells = line.split("|").map((s) => s.trim());
+    if (cells.length < 5) continue;
+    const ws = cells[1];
+    const testFileRaw = cells[2];
+    const behaviorsRaw = cells[3];
     if (!ws || !testFileRaw) continue;
+    if (ws === "Workstream" || ws.startsWith("-")) continue; // 表头 / 分隔行
     // 取 backtick 里的路径
     const m = testFileRaw.match(/`([^`]+)`/);
     const testFile = m ? m[1] : testFileRaw;
@@ -121,11 +99,8 @@ function checkContract(contractPath) {
   }
 
   for (const row of rows) {
-    // 兼容两种合同路径：相对 sprint 目录，或从仓库根开始的 repo-relative 路径。
-    const testFilePath =
-      path.isAbsolute(row.testFile) || fs.existsSync(row.testFile)
-        ? row.testFile
-        : path.join(sprintDir, row.testFile);
+    // 测试文件路径：相对 sprint 目录
+    const testFilePath = path.join(sprintDir, row.testFile);
     if (!fs.existsSync(testFilePath)) {
       violations.push(
         `${row.ws}: 声明的测试文件不存在 — ${testFilePath}`
