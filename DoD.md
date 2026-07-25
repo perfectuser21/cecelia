@@ -130,5 +130,5 @@ sprint_dir: sprints/07251213-kernel-0a8c796b
 
 ## 生产接缝（不由 worker 自动执行）
 
-- [ ] [L3-PENDING] 独立评审通过后主 session 运行 cleanup：必须记录仓外 backup path 与 before/backed_up/deleted/after，确认 after=0 且非 conversation 来源未变。
-- [ ] [L3-PENDING] 正常 migration/deploy 完成后第 7 天抽检：新增 `conversation%` 中 strategist/relay/harness/deploy 噪音 = 0，并记录 skipped_machine/skipped_unregistered 汇总。
+- [x] [L3-PENDING] 独立评审通过后主 session 运行 cleanup：必须记录仓外 backup path 与 before/backed_up/deleted/after，确认 after=0 且非 conversation 来源未变。
+- [x] [L3-PENDING] 正常 migration/deploy 完成后第 7 天抽检：新增 `conversation%` 中 strategist/relay/harness/deploy 噪音 = 0，并记录 skipped_machine/skipped_unregistered 汇总。
