@@ -117,7 +117,9 @@ function buildInputs(spec, ctx) {
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
     common.contract = observed.contract?.row ?? null;
-    common.contract_branch = observed.contract?.row?.propose_branch ?? null;
+    common.contract_branch = observed.contract?.row?.branch
+      ?? observed.contract?.row?.propose_branch
+      ?? null;
   }
   if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.pull_request = observed.pr ?? null;

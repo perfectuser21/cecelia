@@ -171,7 +171,7 @@ describe('createDispatcher', () => {
         ...observed,
         contract: {
           approved: true,
-          row: { propose_branch: 'cp-harness-propose-r2-aaaaaaaa-a6' },
+          row: { branch: 'cp-harness-propose-r2-aaaaaaaa-a6' },
         },
       },
       decision: { phase: 'implement', reason: 'contract_approved' },
