@@ -183,6 +183,29 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('generator bundle 从生产合同 schema 的 row.branch 导出 contract_branch', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-harness-propose-r2-production-schema' },
+        },
+      },
+      decision: { phase: 'implement', reason: 'contract_approved' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).toMatchObject({
+      contract_branch: 'cp-harness-propose-r2-production-schema',
+    });
+  });
+
   it('proposer bundle 指定下一轮规范分支，避免产物落到共享任务分支', async () => {
     const deps = makeDeps();
 
