@@ -228,7 +228,15 @@ grep -q 'Authorization: Bearer' <<<"$SECTION"
 grep -q 'provider_session_id:\$session' <<<"$SECTION"
 grep -q -- '--session-id' <<<"$SECTION"
 grep -q 'HARNESS_READ_ONLY' <<<"$SECTION"
-grep -q -- '--sandbox read-only' <<<"$SECTION"
+# The Runner container is already the external sandbox. Asking Codex to add its
+# own read-only bubblewrap sandbox fails inside Docker because unprivileged user
+# namespaces are unavailable. Read-only roles are enforced by the /workspace:ro
+# bind mount, so Codex must bypass its nested sandbox for every Kernel attempt.
+grep -q -- '--dangerously-bypass-approvals-and-sandbox' <<<"$SECTION"
+if grep -q -- '--sandbox read-only' <<<"$SECTION"; then
+  echo 'Codex reviewer must rely on the read-only worktree mount, not nested bwrap' >&2
+  exit 1
+fi
 grep -q -- '--permission-mode plan' <<<"$SECTION"
 grep -q 'provider" == "grok' <<<"$SECTION"
 grep -q 'grok_args' <<<"$SECTION"
