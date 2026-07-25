@@ -14,7 +14,6 @@ const migration = path.join(
 const testPrefix = `contract-human-gate-${process.pid}-`;
 let pool: any;
 let fixtureRoot: string | null = null;
-const liveHaiku = process.env.RUN_LIVE_HAIKU === '1' ? it : it.skip;
 
 function writeClaudeSession(sessionId: string, repo: string, text: string) {
   fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), testPrefix));
@@ -100,7 +99,12 @@ describe('conversation capture human allowlist（真相邻模块 + 真 PostgreSQ
     expect(rows[1].content).toContain('真实人声主题');
   });
 
-  liveHaiku('registered human 经真 Haiku 请求后 summary capture 在五分钟窗内落库', async () => {
+  it('registered human 经真 Haiku 请求后 summary capture 在五分钟窗内落库', async (context) => {
+    if (process.env.RUN_LIVE_HAIKU !== '1') {
+      context.skip();
+      return;
+    }
+
     const liveProvider = process.env.LIVE_HAIKU_PROVIDER || 'anthropic';
     const credentialPaths = liveProvider === 'anthropic-api'
       ? [path.join(os.homedir(), '.credentials', 'anthropic.json')]
