@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## 合同边界
 
@@ -151,7 +151,7 @@ DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run \
   -t "registered human|mixed batch|原始文本"
 ```
 
-**硬阈值**: 测试 exit code = 0；混合批次 `sessions_processed=human 数`；human 产生 nature=NULL 与 `session_summary` 各 1 行；provenance SELECT 每轮 = 1 次；至少一次从 `~/.credentials/anthropic.json` 读取真 key，通过 `anthropic-api` 请求 `claude-haiku-4-5-20251001`，响应 `text` 非空且五分钟窗内 summary capture 内容匹配 `^1\.\s+\S+`；凭据不可用直接 FAIL，不 SKIP。
+**硬阈值**: 测试 exit code = 0；混合批次 `sessions_processed=human 数`；human 产生 nature=NULL 与 `session_summary` 各 1 行；provenance SELECT 每轮 = 1 次；`local_api` 终验必须设置 `RUN_LIVE_HAIKU=1`，通过生产 `callLLM` 的真实 Anthropic transport 请求 `claude-haiku-4-5-20251001`（默认 Claude Code 订阅 bridge；可显式选择 `anthropic-api`），响应 `text` 非空且五分钟窗内 summary capture 内容匹配 `^1\.\s+\S+`；终验凭据不可用直接 FAIL，不 SKIP。PRD 只要求真 Haiku 摘要，不授权把直付 API 运输层写成唯一合同。
 
 ### Step 5: machine、unknown 与查询故障失败关闭且可观测
 
@@ -209,14 +209,14 @@ bash scripts/check-version-sync.sh
 - `cecelia-run.sh` / `harness-skill-relay.js` ↔ `claude-launch.sh` 的环境透传（执行生产命令构造器；不得只做 `source.includes()`）。
 - `claude-launch.sh` ↔ `session_provenance`（fake psql 只覆盖分支；冻结合同测试另以 psql 转发器执行真 test DB INSERT/回读，不得以 fake 取代真接缝）。
 - `extractClaude/Codex/GrokSessions` ↔ `runConversationCapture` ↔ `session_provenance/captures/working_memory`（真实 fixture、生产函数、真 PostgreSQL；不得 mock 被改的 allowlist 或 DB 查询）。
-- `runConversationCapture` ↔ `callLLM` ↔ Anthropic Haiku（至少一条冻结合同测试使用真实 `anthropic-api`，不得用 fake LLM 替代）。
+- `runConversationCapture` ↔ `callLLM` ↔ Anthropic Haiku（至少一条冻结合同测试使用真实 Anthropic transport，不得用 fake LLM 替代；默认订阅 bridge，直付 API 可显式选择）。
 - `cleanup-conversation-captures.sh` ↔ disposable test PostgreSQL（真备份/真限定 DELETE；生产库仅主 session执行）。
 
 ## 未覆盖真实链路清单
 
 | 未覆盖点 | 原因 | 补位计划 |
 |---|---|---|
-| human gate 其余错误/混合批次用例中的确定性 LLM 替身 | 控制调用次数并验证零调用失败语义；不能替代真实摘要链路 | BEH-04 同轮另跑冻结合同的真 `anthropic-api` Haiku 请求、响应字段和 summary 落库断言 |
+| human gate 其余错误/混合批次用例中的确定性 LLM 替身 | 控制调用次数并验证零调用失败语义；不能替代真实摘要链路 | BEH-04 同轮另跑冻结合同的真 Anthropic Haiku 请求、响应字段和 summary 落库断言 |
 | 生产 `conversation%` 备份与删除 | 冻结 PRD 明禁 worker 执行生产清库 | 独立评审通过后主 session 按 SOP 执行并记录 backup path 与四组计数 |
 | 部署后第 7 天机器噪音抽检 | 必须等待真实时间窗 | 主 session 在 day 7 记录新增量、machine-noise=0 与两类 skipped 汇总 |
 
@@ -236,6 +236,15 @@ case "$DB_NAME" in
   *_test|*_scratch) ;;
   *) echo "FAIL: E2E 只允许测试库，当前 DB_NAME=$DB_NAME"; exit 1 ;;
 esac
+
+# local_api evaluator 在容器中运行时使用宿主测试库与订阅 bridge；宿主直跑保持 localhost。
+if [[ -f /.dockerenv ]]; then
+  export DB_HOST="${DB_HOST:-host.docker.internal}"
+  export PGHOST="${PGHOST:-host.docker.internal}"
+  export EXECUTOR_BRIDGE_URL="${EXECUTOR_BRIDGE_URL:-http://host.docker.internal:3457}"
+fi
+export RUN_LIVE_HAIKU=1
+export LIVE_HAIKU_PROVIDER="${LIVE_HAIKU_PROVIDER:-anthropic}"
 
 npx vitest run \
   --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs \
@@ -276,4 +285,4 @@ echo "OK: 非破坏性 Golden Path 验收通过；生产接缝保持 logic-done-
 - 当前 migration 最大编号为 359，合同指定候选 `360_session_provenance.sql`；若生成时 main 已推进，必须使用下一个空闲编号并同步测试，禁止抢号。
 - PRD 预期路径写 `packages/brain/DEFINITION.md`，当前仓库实际版本定义文件是根目录 `DEFINITION.md`；Generator 必须按现有 `scripts/check-version-sync.sh`/facts-check 的真实版本合同更新，不得新建伪定义文件。
 - 本合同不批准共享 CI 基础设施变更；若 CI 自身故障，另立 sprint。
-- Round 2 仅修 Reviewer 三个阻塞项：dry-run/launcher 真接缝、真 Haiku 链路、Tasks 2-5 Red 合同登记；不扩展 PRD scope。
+- Round 3 响应 evaluator 真跑反馈：永久测试路径与获批 DoD 统一；`local_api` E2E 强制真 Haiku；运输层回到 PRD 边界（真实 Anthropic 即可，默认订阅 bridge，直付 API 可选）；容器测试库/bridge 地址只在 `.dockerenv` 下改写。
