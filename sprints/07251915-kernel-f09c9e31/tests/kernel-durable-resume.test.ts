@@ -16,6 +16,7 @@ const APPROVED_V1 = '10000000-0000-4000-8000-000000000001';
 const APPROVED_V2 = '10000000-0000-4000-8000-000000000002';
 const OLD_RUN_ID = '20000000-0000-4000-8000-000000000001';
 const CURRENT_RUN_ID = '20000000-0000-4000-8000-000000000002';
+const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/102';
 
 let client;
 
@@ -280,6 +281,60 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
     });
     expect(decision.action).not.toBe('spawn:proposer');
     expect(decision.action).not.toBe('spawn:reviewer');
+  });
+
+  it('Brain restart 后 PRD/PR/合同里程碑单调恢复，下一角色与不中断基线一致', async () => {
+    await insertTask();
+    await insertApprovedContracts();
+    await client.query(
+      `INSERT INTO initiative_runs
+         (id, initiative_id, contract_id, phase, current_task_id, orchestrator_version, pr_url)
+       VALUES
+         ($1::uuid, $3::uuid, $4::uuid, 'generate', $5::uuid, 'v2', $6),
+         ($2::uuid, $3::uuid, NULL, 'generate', $5::uuid, 'v2', NULL)`,
+      [OLD_RUN_ID, CURRENT_RUN_ID, INITIATIVE_ID, APPROVED_V2, TASK_ID, PR_URL],
+    );
+    await client.query(
+      `INSERT INTO orchestrator_decision_log (run_id, hop, observed, derived_phase, action)
+       VALUES ($1::uuid, 3, $2::jsonb, 'generate', 'spawn:evaluator')`,
+      [CURRENT_RUN_ID, JSON.stringify({
+        prdExists: true,
+        pr: { url: PR_URL, head_sha: 'sha-restored' },
+        contract: { approved: true, id: APPROVED_V2 },
+      })],
+    );
+
+    const execCmd = (cmd) => {
+      if (cmd.startsWith('gh pr view')) {
+        return JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'DIRTY',
+          headRefName: 'kernel-durable-resume',
+          headRefOid: 'sha-restored',
+          statusCheckRollup: [
+            { name: 'kernel:durable-resume', conclusion: 'SUCCESS' },
+          ],
+        });
+      }
+      return '';
+    };
+
+    const uninterrupted = await observedFor(OLD_RUN_ID, execCmd);
+    const resumed = await observedFor(CURRENT_RUN_ID, execCmd);
+
+    expect(resumed.observed.prdExists).toBe(true);
+    expect(resumed.observed.contract.approved).toBe(true);
+    expect(resumed.observed.contract.id).toBe(APPROVED_V2);
+    expect(resumed.observed.pr).toMatchObject({
+      url: PR_URL,
+      state: 'OPEN',
+      head_sha: 'sha-restored',
+      ci: 'pass',
+    });
+    expect(resumed.decision.action).toBe(uninterrupted.decision.action);
+    expect(resumed.decision.action).not.toBe('spawn:planner');
+    expect(resumed.decision.action).not.toBe('spawn:proposer');
+    expect(resumed.decision.action).not.toBe('spawn:reviewer');
   });
 
   it('跨 run 同结构化 failure signature 重现时不再派 generator', async () => {

@@ -1,6 +1,7 @@
 ---
 skeleton: false
 journey_type: autonomous
+target_environment: local_api
 ---
 # Contract DoD — Sprint: Kernel durable resume：跨 run 去重与恢复
 
@@ -13,10 +14,10 @@ journey_type: autonomous
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07251915-kernel-f09c9e31/contract-draft.md','utf8');for(const s of ['## Golden Path','## 禁 mock 边清单','## E2E 验收'])if(!c.includes(s))process.exit(1)"
 
 - [ ] [ARTIFACT] Sprint 红测文件存在且测试名可被 Test Contract 字面匹配。
-  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts','utf8');for(const s of ['后续 run 继承 latest approved contract','ground truth 从历史 approved contract 恢复当前 run','跨 run 同结构化 failure signature'])if(!c.includes(s))process.exit(1)"
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts','utf8');for(const s of ['后续 run 继承 latest approved contract','ground truth 从历史 approved contract 恢复当前 run','Brain restart 后 PRD/PR/合同里程碑单调恢复','跨 run 同结构化 failure signature','expired lease 有 provider session 时恢复原 attempt','无 provider session 时先结构化终结 orphan attempt'])if(!c.includes(s))process.exit(1)"
 
 - [ ] [ARTIFACT] Brain 源码变更同步版本账本。
-  Test: node -e "const fs=require('fs');for(const p of ['DEFINITION.md','.brain-versions','packages/brain/VERSION']){if(!fs.existsSync(p))process.exit(1)}"
+  Test: bash scripts/check-version-sync.sh && node -e "const fs=require('fs');const pkg=require('./packages/brain/package.json').version;const v=fs.readFileSync('packages/brain/VERSION','utf8').trim();if(v!==pkg)process.exit(1)"
 
 ## BEHAVIOR 条目（内嵌可执行 manual 命令）
 
@@ -30,6 +31,12 @@ journey_type: autonomous
   动作: 构造当前 run `contract_id IS NULL` 但同 initiative/task 已有 approved contract 的 Brain restart 窗口。
   预期观察: within 20s `collectGroundTruth` 返回 `contract.approved=true`，且合同 id/version/branch 来自最新 approved row。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "ground truth 从历史 approved contract 恢复当前 run" --reporter=verbose'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] Brain restart 后 PRD/PR/合同里程碑单调恢复，下一角色与不中断基线一致
+  动作: 构造一个不中断基线 run 与一个 Brain restart 后当前 run；当前 run 缺 `contract_id/pr_url`，只保留 append-only decision log 的结构化 PRD/PR/contract 观测。
+  预期观察: within 20s 当前 run 恢复 `prdExists=true`、latest approved contract、真实 PR URL/head_sha/CI 状态，derive action 与不中断基线一致且不退回 planner/proposer/reviewer。
+  验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "Brain restart 后 PRD/PR/合同里程碑单调恢复" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] expired lease 有 provider session 时恢复原 attempt，不创建新 attempt
@@ -54,6 +61,12 @@ journey_type: autonomous
   动作: 运行 sprint 红测与现有 orchestrator 合同回归池。
   预期观察: within 120s 所有相关 vitest exit 0。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test bash -c "npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts --reporter=verbose && cd packages/brain && npx vitest run src/orchestrator/__tests__/contract-store.test.js src/orchestrator/__tests__/attempt-store.test.js src/orchestrator/__tests__/ground-truth.test.js src/orchestrator/__tests__/derive.test.js src/orchestrator/__tests__/counters.test.js src/orchestrator/__tests__/loop.test.js src/__tests__/harness-kernel-resume-secret.test.js --reporter=verbose"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] Final E2E 对实现 PR 真调 GitHub PR state/head_sha/statusCheckRollup
+  动作: 在 generator 实现 PR 分支执行 `gh pr view` 读取当前分支对应 PR 的结构化状态。
+  预期观察: within 15s GitHub 返回 OPEN PR、非空 head SHA 与 statusCheckRollup 数组；该真相用于 Kernel 恢复，不从 agent 文本猜。
+  验证命令: Test: manual:bash -c 'CURRENT_BRANCH=$(git branch --show-current); PR_JSON=$(gh pr view "$CURRENT_BRANCH" --json url,state,headRefOid,statusCheckRollup); echo "$PR_JSON" | jq -e ".state == \"OPEN\" and (.url | type == \"string\") and (.headRefOid | type == \"string\" and length >= 7) and (.statusCheckRollup | type == \"array\")"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] INV-01 不新增第二账本，branch 只在 initiative_contracts.branch
@@ -82,7 +95,7 @@ journey_type: autonomous
 - INV-10 区域10: 覆盖于两 run/Brain restart 回归，明确多轮状态不重置。
 - INV-11 区域11: N/A - 不引入外部付费调用。
 - INV-12 区域12: 覆盖于 lease/deadline 不变量，不写死跨模块时间关系。
-- INV-13 区域13: N/A - target_environment 为 local_api，无 Android/agent-offline-alert。
+- INV-13 区域13: N/A - target_environment 为 local_api，不含移动端或 agent-offline-alert 路由。
 - INV-14 区域14: N/A - 不改 task 注册 target_environment。
 - INV-15 区域15: N/A - 不改 judge API schema。
 - INV-16 区域16: N/A - 不新增无界字符串字段。
@@ -131,4 +144,6 @@ journey_type: autonomous
 
 ## 未覆盖真实链路清单
 
-（本合同无 mock 豁免，N/A。）测试允许替换更外层 `execCmd` 的 GitHub/Docker 命令为隔离输出，但不得 mock 被改的 DB/Kernel 模块边。
+| 链路点 | 当前合同处理 | 真验证补位计划 |
+|--------|--------------|----------------|
+| GitHub PR state/head_sha/statusCheckRollup | Sprint 红测用注入的 `execCmd` 返回隔离 PR JSON，避免 Red 阶段依赖真实 PR；该 mock 只覆盖更外层 GitHub CLI，不覆盖被改 DB/Kernel 边。 | `Final E2E 对实现 PR 真调 GitHub PR state/head_sha/statusCheckRollup` 这条 BEHAVIOR 与 contract-draft E2E 必须真跑 `gh pr view`。 |

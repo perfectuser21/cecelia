@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Notes
 
@@ -6,6 +6,7 @@
 - Registry scan: api/db/test registry reachable but stale by about 164h; contract uses PRD literal scope plus current source/tests as authority.
 - context-manifest: unavailable (`GET /api/brain/line/741d4acc-9ca8-4545-a971-efa12fce8150/context-manifest` returned HTML 404), so no cumulative FR beyond PRD text.
 - 本 sprint 是 Kernel Harness hotfix；不得创建第二账本，不得写生产数据库，不得自动 merge。
+- Round 2 revision: 补齐 Brain restart 的 PRD/PR/合同三里程碑单调恢复红测、GitHub PR 真调用 E2E oracle、Test Contract 全行为映射与版本同步脚本断言。
 
 ## Response Schema（推导来源: N/A）
 
@@ -18,7 +19,7 @@ N/A - 任务无新增 HTTP 响应。验收对象是 Kernel run bootstrap、DB �
 - [packages/brain/src/orchestrator/__tests__/contract-store.test.js] -> `upserts the approved version, supersedes older versions, and attaches the run atomically`
 - [packages/brain/src/orchestrator/__tests__/attempt-store.test.js] -> `watchdog 只能 reclaim 已过期的同一个非终态 attempt`
 - [packages/brain/src/orchestrator/__tests__/attempt-store.test.js] -> `resume 只允许同一个 attempt；同角色的新 attempt 也不能偷用旧 session`
-- [packages/brain/src/orchestrator/__tests__/ground-truth.test.js] -> `contract status=draft -> approved:false；contract_id 为空 -> 不查 contracts、approved:false`
+- [packages/brain/src/orchestrator/__tests__/ground-truth.test.js] -> `contract status=draft -> approved:false；contract_id 为空且无同 initiative/task approved contract 时 approved:false`；本 sprint 新增跨 run approved contract 继承后不得回退旧语义。
 - [packages/brain/src/orchestrator/__tests__/derive.test.js] -> `双 PASS && review_required && 未批准 -> wait:human_review`
 - [packages/brain/src/orchestrator/__tests__/counters.test.js] -> counters 从 append-only decision log 推导，不使用进程内计数作为恢复真相
 - [packages/brain/src/orchestrator/__tests__/loop.test.js] -> `persist_contract_approval 落库 initiative_contracts`
@@ -79,7 +80,9 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 
 ## 未覆盖真实链路清单
 
-（本合同无第三方 API mock 豁免，N/A。）GitHub PR 查询在最终 E2E 用真实 `gh pr view` 或测试隔离仓库替身命令封装；被改的 DB/Kernel 接缝不得 mock。
+| 链路点 | 当前合同处理 | 真验证补位计划 |
+|--------|--------------|----------------|
+| GitHub PR state/head_sha/statusCheckRollup | Sprint 红测用注入的 `execCmd` 返回隔离 PR JSON，避免 Red 阶段依赖真实 PR；该 mock 只覆盖更外层 GitHub CLI，不覆盖被改 DB/Kernel 边。 | DoD 与 final E2E 必须在实现 PR 分支执行真实 `gh pr view "$CURRENT_BRANCH" --json url,state,headRefOid,statusCheckRollup`，断言 PR 为 OPEN、head SHA 与 CI rollup 可解析。 |
 
 ## 禁 mock 边清单
 
@@ -92,7 +95,7 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 
 - DB 事务接缝: 后续 run 创建与 approved contract 继承必须同事务完成；用真实 Postgres temp schema 断言 `initiative_runs.contract_id` 指向最新 approved row。
 - Provider session 接缝: expired lease 有 session 时必须 resume 原 attempt；用真实 `harness_attempts` lease/session 行和 launcher 结果断言无新 attempt。
-- GitHub/PR 真相接缝: PR head_sha、CI rollup 与 decision log 必须逐字段对齐；最终 E2E 用 `gh pr view` 或隔离 repo 真命令封装，不从 callback 文本猜。
+- GitHub/PR 真相接缝: PR head_sha、CI rollup 与 decision log 必须逐字段对齐；Sprint 红测可注入隔离 `execCmd`，最终 E2E 必须真跑 `gh pr view`，不从 callback 文本猜。
 
 ## Golden Path
 
@@ -123,10 +126,10 @@ DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915
 **验证命令**:
 
 ```bash
-DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "ground truth 从历史 approved contract 恢复当前 run" --reporter=verbose
+DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "Brain restart 后 PRD/PR/合同里程碑单调恢复" --reporter=verbose
 ```
 
-**硬阈值**: 测试 exit 0；`observed.contract.approved=true`；缺本地 PRD 文件时仍可从 decision log 已观测 PRD 真相恢复。
+**硬阈值**: 测试 exit 0；`observed.contract.approved=true`；`observed.pr.url/head_sha/ci` 来自结构化 PR URL + GitHub 真相；恢复后的 decision.action 与不中断基线一致且不为 `spawn:planner/proposer/reviewer`。
 
 ### Step 3: expired lease/orphan running 优先 reclaim+resume 原 attempt
 
@@ -180,11 +183,13 @@ DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915
 
 ```bash
 bash scripts/devgate/quick-check.sh || exit 1
-BAD_DIFF="$(git diff --name-only origin/main...HEAD | awk '!/^(packages\/brain\/src\/|packages\/brain\/VERSION$|DEFINITION.md$|\\.brain-versions$|sprints\/07251915-kernel-f09c9e31\/|packages\/brain\/src\/orchestrator\/__tests__\/|packages\/brain\/src\/__tests__\/)/ { print }')"
+bash scripts/check-version-sync.sh || exit 1
+node -e "const fs=require('fs');const pkg=require('./packages/brain/package.json').version;const v=fs.readFileSync('packages/brain/VERSION','utf8').trim();if(v!==pkg){console.error('FAIL: packages/brain/VERSION mismatch');process.exit(1)}"
+BAD_DIFF="$(git diff --name-only origin/main...HEAD | awk '!/^(packages\/brain\/src\/|packages\/brain\/VERSION$|packages\/brain\/package\.json$|packages\/brain\/package-lock\.json$|DEFINITION.md$|\\.brain-versions$|sprints\/07251915-kernel-f09c9e31\/|packages\/brain\/src\/orchestrator\/__tests__\/|packages\/brain\/src\/__tests__\/)/ { print }')"
 [ -z "$BAD_DIFF" ] || { echo "FAIL: scope drift"; echo "$BAD_DIFF"; exit 1; }
 ```
 
-**硬阈值**: quick-check exit 0；diff 不出现第二账本/metrics UI/provider capability 相关文件；Brain 版本账本随源码变更同步。
+**硬阈值**: quick-check exit 0；`scripts/check-version-sync.sh` exit 0；`packages/brain/VERSION` 等于 `packages/brain/package.json`；diff 不出现第二账本/metrics UI/provider capability 相关文件。
 
 ## E2E 验收
 
@@ -203,6 +208,10 @@ START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "kernel durable resume E2E start ${START_TS}"
 
 npx vitest run "${SPRINT_DIR}/tests/kernel-durable-resume.test.ts" --reporter=verbose
+
+CURRENT_BRANCH="$(git branch --show-current)"
+PR_JSON="$(gh pr view "${CURRENT_BRANCH}" --json url,state,headRefOid,statusCheckRollup)"
+echo "${PR_JSON}" | jq -e '.state == "OPEN" and (.url | type == "string" and startswith("https://github.com/")) and (.headRefOid | type == "string" and length >= 7) and (.statusCheckRollup | type == "array")'
 
 (
   cd packages/brain
@@ -244,6 +253,9 @@ for (const token of forbidden) {
 console.log('OK: existing Kernel modules present and no forbidden ledger token');
 NODE
 
+bash scripts/check-version-sync.sh
+node -e "const fs=require('fs');const pkg=require('./packages/brain/package.json').version;const v=fs.readFileSync('packages/brain/VERSION','utf8').trim();if(v!==pkg)process.exit(1);console.log('OK: Brain VERSION sync')"
+
 echo "OK kernel durable resume E2E"
 ```
 
@@ -253,4 +265,7 @@ echo "OK kernel durable resume E2E"
 |---|---|---|---|
 | Kernel durable resume | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 后续 run 继承 latest approved contract | 当前实现新 run `contract_id` 为空，测试失败 |
 | Kernel durable resume | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | ground truth 从历史 approved contract 恢复当前 run | 当前 `collectGroundTruth` 在 run.contract_id 为空时返回 approved:false，测试失败 |
+| Kernel durable resume | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | Brain restart 后 PRD/PR/合同里程碑单调恢复 | 当前 `collectGroundTruth` 不从结构化 decision log 恢复 PR URL 与 approved contract，决策会降级 |
 | Kernel durable resume | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 跨 run 同结构化 failure signature | 当前 derive 只看当前 run，仍会派 generator-fix，测试失败 |
+| Kernel durable resume | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | expired lease 有 provider session 时恢复原 attempt | 当前合同锁定不得插入新 attempt，防止未来恢复逻辑回归 |
+| Kernel durable resume | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 无 provider session 时先结构化终结 orphan attempt | 当前合同锁定无 session 失败语义，防止直接新建 attempt |
