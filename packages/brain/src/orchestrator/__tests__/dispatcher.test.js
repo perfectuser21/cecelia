@@ -158,6 +158,31 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {
+    const deps = makeDeps();
+
+    // Regression: the approved row used to be nested under inputs.contract only,
+    // so the detached launcher could not populate CONTRACT_BRANCH for the worker.
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { propose_branch: 'cp-harness-propose-r2-aaaaaaaa-a6' },
+        },
+      },
+      decision: { phase: 'implement', reason: 'contract_approved' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).toMatchObject({
+      contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a6',
+    });
+  });
+
   it('proposer bundle 指定下一轮规范分支，避免产物落到共享任务分支', async () => {
     const deps = makeDeps();
 
