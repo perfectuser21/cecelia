@@ -23,61 +23,61 @@ target_environment: local_api
 
 - [ ] [BEHAVIOR] [L2] 后续 run 继承 latest approved contract id/version/branch，且 derive 不再派 proposer/reviewer
   动作: 在真实 PostgreSQL 测试事务中创建同一 task 的历史 approved contract 与后续 kernel run。
-  预期观察: within 20s 新 run 的 `contract_id` 指向最新 approved contract，derive action 进入 generator 主线。
+  预期观察: 测试命令退出时，新 run 的 `contract_id` 指向最新 approved contract，derive action 进入 generator 主线。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "后续 run 继承 latest approved contract" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] ground truth 从历史 approved contract 恢复当前 run，已确认合同里程碑不降级
   动作: 构造当前 run `contract_id IS NULL` 但同 initiative/task 已有 approved contract 的 Brain restart 窗口。
-  预期观察: within 20s `collectGroundTruth` 返回 `contract.approved=true`，且合同 id/version/branch 来自最新 approved row。
+  预期观察: 测试命令退出时，`collectGroundTruth` 返回 `contract.approved=true`，且合同 id/version/branch 来自最新 approved row。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "ground truth 从历史 approved contract 恢复当前 run" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] Brain restart 后 PRD/PR/合同里程碑单调恢复，下一角色与不中断基线一致
   动作: 构造一个不中断基线 run 与一个 Brain restart 后当前 run；当前 run 缺 `contract_id/pr_url`，只保留 append-only decision log 的结构化 PRD/PR/contract 观测。
-  预期观察: within 20s 当前 run 恢复 `prdExists=true`、latest approved contract、真实 PR URL/head_sha/CI 状态，derive action 与不中断基线一致且不退回 planner/proposer/reviewer。
+  预期观察: 测试命令退出时，当前 run 恢复 `prdExists=true`、latest approved contract、真实 PR URL/head_sha/CI 状态，derive action 与不中断基线一致且不退回 planner/proposer/reviewer。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "Brain restart 后 PRD/PR/合同里程碑单调恢复" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] expired lease 有 provider session 时恢复原 attempt，不创建新 attempt
   动作: 在真实 PostgreSQL 测试事务中插入过期 running attempt 与 provider_session_id，然后触发恢复路径。
-  预期观察: within 20s 原 attempt 被 reclaim/resume；同一 run 的 `harness_attempts` 行数不增加。
+  预期观察: 测试命令退出时，原 attempt 被 reclaim/resume；同一 run 的 `harness_attempts` 行数不增加。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "expired lease 有 provider session 时恢复原 attempt" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] 无 provider session 时先结构化终结 orphan attempt，再从 DB/GitHub 真相推导
   动作: 插入无 provider_session_id 的过期 orphan running attempt 并触发恢复。
-  预期观察: within 20s 原 attempt 写入终态与 error_code；下一 decision 不直接新建 attempt。
+  预期观察: 测试命令退出时，原 attempt 写入终态与 error_code；下一 decision 不直接新建 attempt。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "无 provider session 时先结构化终结 orphan attempt" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] 跨 run 同结构化 failure signature 重现时不再派 generator
   动作: 构造同一 task 的旧 run 已记录 product failure signature，新 run 同一 failure_set 再现。
-  预期观察: within 20s derive action 为 `wait:human_review` 或 `mark_failed`，不是 `spawn:generator` 或 `spawn:generator-fix`。
+  预期观察: 测试命令退出时，derive action 为 `wait:human_review` 或 `mark_failed`，不是 `spawn:generator` 或 `spawn:generator-fix`。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "跨 run 同结构化 failure signature" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] Brain restart 回归池全量通过，既有合同测试未被削弱
   动作: 运行 sprint 红测与现有 orchestrator 合同回归池。
-  预期观察: within 120s 所有相关 vitest exit 0。
+  预期观察: 测试命令退出时，所有相关 vitest exit 0。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test bash -c "npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts --reporter=verbose && cd packages/brain && npx vitest run src/orchestrator/__tests__/contract-store.test.js src/orchestrator/__tests__/attempt-store.test.js src/orchestrator/__tests__/ground-truth.test.js src/orchestrator/__tests__/derive.test.js src/orchestrator/__tests__/counters.test.js src/orchestrator/__tests__/loop.test.js src/__tests__/harness-kernel-resume-secret.test.js --reporter=verbose"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] Final E2E 对实现 PR 真调 GitHub PR state/head_sha/statusCheckRollup
   动作: 在 generator 实现 PR 分支执行 `gh pr view` 读取当前分支对应 PR 的结构化状态。
-  预期观察: within 15s GitHub 返回 OPEN PR、非空 head SHA 与 statusCheckRollup 数组；该真相用于 Kernel 恢复，不从 agent 文本猜。
+  预期观察: `gh pr view` 命令退出时，GitHub 返回 OPEN PR、非空 head SHA 与 statusCheckRollup 数组；该真相用于 Kernel 恢复，不从 agent 文本猜。
   验证命令: Test: manual:bash -c 'CURRENT_BRANCH=$(git branch --show-current); PR_JSON=$(gh pr view "$CURRENT_BRANCH" --json url,state,headRefOid,statusCheckRollup); echo "$PR_JSON" | jq -e ".state == \"OPEN\" and (.url | type == \"string\") and (.headRefOid | type == \"string\" and length >= 7) and (.statusCheckRollup | type == \"array\")"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] INV-01 不新增第二账本，branch 只在 initiative_contracts.branch
   动作: 扫描本 PR diff 与源码。
-  预期观察: within 10s 不出现新增 `contract_branch` 存储或新 ledger 表。
+  预期观察: 源码扫描命令退出时，不出现新增 `contract_branch` 存储或新 ledger 表。
   验证命令: Test: manual:bash -c 'node -e "const fs=require(\"fs\");const files=[\"packages/brain/src/orchestrator/contract-store.js\",\"packages/brain/src/orchestrator/ground-truth.js\",\"packages/brain/src/harness-skill-relay.js\"];const s=files.filter(fs.existsSync).map(f=>fs.readFileSync(f,\"utf8\")).join(\"\\n\");if(s.includes(\"contract_branch\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
 - [ ] [BEHAVIOR] [L2] INV-02 禁 mock 被改 DB 边，sprint 红测使用真实 PostgreSQL temp schema
   动作: 运行 sprint 红测。
-  预期观察: within 20s 测试通过真实 `pg.Pool(DB_DEFAULTS)` 建 temp tables；无 `vi.mock` mock `contract-store/ground-truth/attempt-store/derive/counters` 被改边。
+  预期观察: 源码扫描命令退出时，测试使用真实 `pg.Pool(DB_DEFAULTS)` 建 temp tables；无 `vi.mock` mock `contract-store/ground-truth/attempt-store/derive/counters` 被改边。
   验证命令: Test: manual:bash -c 'node -e "const fs=require(\"fs\");const c=fs.readFileSync(\"sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts\",\"utf8\");if(!c.includes(\"new Pool(DB_DEFAULTS)\"))process.exit(1);if(/vi\\.mock\\([^\\n]*(contract-store|ground-truth|attempt-store|derive|counters)/.test(c))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
