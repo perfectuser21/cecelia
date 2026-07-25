@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 contract-gate: active
 覆盖父路 Kernel telemetry 账本 第 1-5 步
@@ -8,6 +8,7 @@ contract-gate: active
 - context-manifest: unavailable
 - registry freshness: api/db/test registry 最新扫描于 2026-07-18，已过期 166.2h；命名风格仅作参考，PRD 仍为法律。
 - judgment-pending-user: ⚠️orphan attempt 在 lease 过期后优先 resume 还是优先结构化终结
+- initiative_id: unavailable in proposer inputs，本轮 task-plan.json 以 `pending` 占位，待上游注入后可无语义冲突替换
 - red-evidence: sprint 契约测试需从仓库根 `npx vitest run sprints/...` 执行；`packages/brain/vitest.config.js` 已明确不再 include `sprints/**`
 
 ## Response Schema（推导来源: [api_registry推导/PRD字面]）
