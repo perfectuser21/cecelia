@@ -1,0 +1,34 @@
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "autonomous",
+  "journey_type_reason": "任务只涉及 Brain 后端 attempt telemetry、watchdog、PG 聚合与只读查询 API。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Kernel attempt telemetry 账本与查询 API",
+      "scope": "以 additive 方式补齐 harness_attempts lineage/时间字段、orphan 收口、task 聚合 telemetry API 与 4-run fixture 回归，不改 Kernel 路由决策和合同冻结语义。",
+      "dod": [
+        "[BEHAVIOR] GET /api/brain/harness/tasks/:task_id/attempt-telemetry 返回 telemetry schema 与 logical cycle / retry / recovery / invalid 计数",
+        "[BEHAVIOR] expired running attempt is resumed or structurally closed instead of hanging forever",
+        "[ARTIFACT] harness_attempts additive migration 包含 logical_cycle_id/attempt_kind/retry_of_attempt_id/restart_reason/workstream_key"
+      ],
+      "files": [
+        "packages/brain/migrations/357_harness_provider_attempts.sql",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
+        "packages/brain/src/routes/harness.routes.js",
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/orchestrator/__tests__/attempt-store.test.js",
+        "packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js",
+        "packages/brain/src/routes/__tests__/harness.routes.test.js",
+        "packages/brain/src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js",
+        "DEFINITION.md",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
