@@ -1,9 +1,9 @@
-# Sprint Contract Draft (Round 22)
+# Sprint Contract Draft (Round 23)
 
 ## Notes
 
 - contract-gate: present at `packages/brain/src/lib/contract-gate.js`.
-- Registry scan: api/db/test registry reachable but stale by about 165h; contract uses PRD literal scope plus current source/tests as authority.
+- Registry scan: api/db/test registry reachable but stale by about 167h; contract uses PRD literal scope plus current source/tests as authority.
 - context-manifest: unavailable (`GET /api/brain/line/741d4acc-9ca8-4545-a971-efa12fce8150/context-manifest` returned HTML 404), so no cumulative FR beyond PRD text.
 - 本 sprint 是 Kernel Harness hotfix；不得创建第二账本，不得写生产数据库，不得自动 merge。
 - Round 2 revision: 补齐 Brain restart 的 PRD/PR/合同三里程碑单调恢复红测、GitHub PR 真调用 E2E oracle、Test Contract 全行为映射与版本同步脚本断言。
@@ -26,6 +26,7 @@
 - Round 20 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 19 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r20-f09c9e31-a16`。
 - Round 21 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 20 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致 6 个测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r21-f09c9e31-a19`。
 - Round 22 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 21 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r22-f09c9e31-a22`。
+- Round 23 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 22 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r23-f09c9e31-a25`。
 
 ## Response Schema（推导来源: N/A）
 
