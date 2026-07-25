@@ -1,5 +1,5 @@
 {
-  "initiative_id": "${INITIATIVE_ID}",
+  "initiative_id": "pending",
   "journey_type": "autonomous",
   "journey_type_reason": "任务只涉及 Brain 后端 attempt telemetry、watchdog、PG 聚合与只读查询 API。",
   "tasks": [
