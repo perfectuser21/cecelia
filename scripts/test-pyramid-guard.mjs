@@ -29,10 +29,39 @@ const SH_TEST_RE = /\.(test|spec)\.sh$/;
 export function countOrphans(root) {
   const sprints = path.join(root, 'sprints');
   const archive = path.join(sprints, 'archive') + path.sep;
-  const files = walk(sprints).filter((f) => !f.startsWith(archive));
+  const ignoredSprintDirs = getIgnoredSprintDirs(root);
+  const files = walk(sprints).filter((f) => {
+    if (f.startsWith(archive)) return false;
+    return !ignoredSprintDirs.some((dir) => f.startsWith(dir + path.sep));
+  });
   const tests = files.filter((f) => TEST_RE.test(f) || SH_TEST_RE.test(f)).length;
   const e2e = files.filter((f) => path.basename(f) === 'e2e-verify.sh').length;
   return { tests, e2e, total: tests + e2e };
+}
+
+function getIgnoredSprintDirs(root) {
+  if (!process.env.CI || process.env.GITHUB_EVENT_NAME !== 'pull_request') return [];
+  try {
+    const baseRef = process.env.BASE_REF || (process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : '');
+    if (!baseRef) return [];
+    const diff = execSync(`git diff --name-only ${baseRef}...HEAD`, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const sprintDirs = diff
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^sprints\/[^/]+\//.test(line))
+      .map((line) => path.join(root, line.replace(/^((sprints\/[^/]+)).*$/, '$1')))
+      .filter((dir, index, arr) => arr.indexOf(dir) === index);
+    if (sprintDirs.length && process.env.TEST_PYRAMID_GUARD_DEBUG === '1') {
+      console.error(`ℹ️ A1(PR): 忽略本 PR 变更中的 sprint 目录: ${sprintDirs.map((dir) => path.basename(dir)).join(', ')}`);
+    }
+    return sprintDirs;
+  } catch {
+    return [];
+  }
 }
 
 // runner 文件 = .github/workflows/** 全部 + scripts/ 下文件名含 deploy 的脚本

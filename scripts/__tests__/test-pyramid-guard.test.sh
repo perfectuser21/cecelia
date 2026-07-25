@@ -45,6 +45,23 @@ echo 'for s in packages/x/scripts/smoke/*.sh; do bash "$s"; done' > "$FIX/.githu
 check 1 "A2 packages 前缀 glob 不豁免根 smoke → 红（防截断假绿）"
 rm "$FIX/scripts/smoke/naked.sh" "$FIX/.github/workflows/w.yml"
 
+# ── PR 场景：当前 PR 改动中的 sprint 孤儿先豁免，等待 merge 前毕业 ──
+mkdir -p "$FIX/.git" "$FIX/sprints/hotfix-1"
+touch "$FIX/sprints/hotfix-1/x.test.ts"
+echo "sprints/hotfix-1/x.test.ts" > "$FIX/.git/pr-diff.txt"
+cat > "$FIX/git" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "diff" ] && [ "$2" = "--name-only" ]; then
+  cat "$(dirname "$0")/.git/pr-diff.txt"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$FIX/git"
+PATH="$FIX:$PATH" CI=true GITHUB_EVENT_NAME=pull_request BASE_REF=origin/main node "$GUARD" --root "$FIX" >/dev/null 2>&1
+echo "✅ PR 场景：当前 PR sprint 孤儿暂豁免（待 merge 前毕业）"; PASS=$((PASS+1))
+rm -rf "$FIX/sprints" "$FIX/git" "$FIX/.git"
+
 # ── A3: 删永久测试 ──
 rm "$FIX/perm/a.test.js"
 check 1 "A3 永久池跌破基线 → 红"

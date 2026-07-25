@@ -108,8 +108,8 @@ jobs:
         image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
-          POSTGRES_PASSWORD: cecelia
-          POSTGRES_DB: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_DB: cecelia_test
         ports:
           - 5432:5432
         options: >-
@@ -171,19 +171,20 @@ jobs:
         env:
           DB_HOST: localhost
           DB_PORT: '5432'
-          DB_NAME: cecelia
+          DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: cd packages/brain && node src/migrate.js
       - name: Start Brain server
         if: steps.check-tests.outputs.has_tests == 'true'
         env:
           DB_HOST: localhost
           DB_PORT: '5432'
-          DB_NAME: cecelia
+          DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           BRAIN_PORT: 5221
+          NODE_ENV: test
           CECELIA_TICK_ENABLED: 'false'
         run: |
           cd packages/brain && node server.js &
@@ -199,7 +200,7 @@ jobs:
       - name: Seed smoke task for sprint tests
         if: steps.check-tests.outputs.has_tests == 'true'
         env:
-          DB: postgresql://cecelia:cecelia@localhost:5432/cecelia
+          DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
         run: |
           # claude-headed relay 精确判定优先（镜像 ci.yml dod-behavior-dynamic 的既有 seed 逻辑，
           # #3965 实证：该类 sprint 测试对固定 task_id 做 execSync 真实执行，
@@ -307,7 +308,14 @@ jobs:
       - name: Run sprint tests
         if: steps.check-tests.outputs.has_tests == 'true'
         env:
-          DB: postgresql://cecelia:cecelia@localhost:5432/cecelia
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          PGPASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          NODE_ENV: test
+          DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
         run: |
           set -euo pipefail
           # Capture test file list (GHA template expansion produces multiline string)
