@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 contract-gate: active
 覆盖父路 Kernel telemetry 账本 第 1-5 步
@@ -8,6 +8,7 @@ contract-gate: active
 - context-manifest: unavailable
 - registry freshness: api/db/test registry 最新扫描于 2026-07-18，已过期 166.2h；命名风格仅作参考，PRD 仍为法律。
 - judgment-pending-user: ⚠️orphan attempt 在 lease 过期后优先 resume 还是优先结构化终结
+- red-evidence: sprint 契约测试需从仓库根 `npx vitest run sprints/...` 执行；`packages/brain/vitest.config.js` 已明确不再 include `sprints/**`
 
 ## Response Schema（推导来源: [api_registry推导/PRD字面]）
 
@@ -233,7 +234,7 @@ echo "OK: within 60s orphan 收口"
 ### Step 4: task 聚合 API 返回 role/workstream 时间账本与损耗计数
 **来源**: `[FROM_PRD]` — PRD 核心场景第 4 步与第 21、30 行。
 
-**可观测行为**: 查询 API 能按 task 聚合多 run，返回 `active_time_ms`、`wall_time_ms`、`wait_time_ms`、`retry_count`、`recovery_count`、`invalid_count`，并保留 role/workstream 视角。
+**可观测行为**: 查询 API 能按 task 聚合多 run，返回 `active_time_ms`、`wall_time_ms`、`wait_time_ms`、`retry_count`、`recovery_count`、`invalid_count`，并保留 role/workstream 视角与 attempt 级 lineage 明细。
 
 **验证命令**:
 ```bash
@@ -249,6 +250,28 @@ echo "$RESP" | jq -e '
   and (.totals.recovery_count | type == "number")
   and (.totals.invalid_count | type == "number")
   and (.role_metrics | type == "array")
+  and all(.role_metrics[]?; (.role | type == "string")
+    and (.workstream_key | type == "string")
+    and (.active_time_ms | type == "number")
+    and (.wall_time_ms | type == "number")
+    and (.wait_time_ms | type == "number")
+    and (.retry_count | type == "number")
+    and (.recovery_count | type == "number")
+    and (.invalid_count | type == "number"))
+  and (.attempts | type == "array")
+  and all(.attempts[]?;
+    (.attempt_id | type == "string")
+    and (.run_id | type == "string")
+    and (.hop | type == "number")
+    and (.role | type == "string")
+    and (.logical_cycle_id | type == "string")
+    and (.attempt_kind | type == "string")
+    and ((.retry_of_attempt_id == null) or (.retry_of_attempt_id | type == "string"))
+    and ((.restart_reason == null) or (.restart_reason | type == "string"))
+    and (.workstream_key | type == "string")
+    and ((.started_at == null) or (.started_at | type == "string"))
+    and ((.completed_at == null) or (.completed_at | type == "string"))
+    and (.derived | type == "boolean"))
 ' >/dev/null
 echo "$RESP" | jq -e 'keys == ["attempts","logical_cycle_count","role_metrics","run_count","task_id","totals"]' >/dev/null
 echo "$RESP" | jq -e 'has("attempt_count") | not' >/dev/null
@@ -262,7 +285,7 @@ echo "$RESP" | jq -e 'has("cycle_id") | not' >/dev/null
 ### Step 5: 4-run fixture 能把原始 4/2/5/9/5 计数还原为 logical cycle 与系统损耗
 **来源**: `[FROM_PRD]` — PRD 核心场景第 5 步与第 22、32、94 行。
 
-**可观测行为**: 固定 fixture 在多 run 场景下能区分 logical cycle、retry 损耗、recovery 损耗与 invalid evaluation，而不是只显示 raw role counts。
+**可观测行为**: 固定 fixture 在多 run 场景下能区分 logical cycle、retry 损耗、recovery 损耗与 invalid evaluation，而不是只显示 raw role counts；并能从结构化 attempts 还原 `4/2/5/9/5` 原始角色计数。
 
 **验证命令**:
 ```bash
@@ -273,12 +296,16 @@ echo "$RESP" | jq -e '
   and .totals.retry_count == 2
   and .totals.recovery_count == 1
   and .totals.invalid_count == 1
-  and ([.role_metrics[] | select(.role=="planner")] | length) >= 1
+  and ([.attempts[] | select(.role=="planner")] | length) == 4
+  and ([.attempts[] | select(.role=="proposer")] | length) == 2
+  and ([.attempts[] | select(.role=="reviewer")] | length) == 5
+  and ([.attempts[] | select(.role=="generator")] | length) == 9
+  and ([.attempts[] | select(.role=="judge")] | length) == 5
   and ([.attempts[] | select(.attempt_kind=="retry")] | length) >= 1
 ' >/dev/null
 ```
 
-**硬阈值**: fixture 中 `run_count=4`、`logical_cycle_count=2`，且 retry/recovery/invalid 可分离统计。
+**硬阈值**: fixture 中 `run_count=4`、`logical_cycle_count=2`，且 `4/2/5/9/5` 原始角色计数与 retry/recovery/invalid 可分离统计。
 
 ---
 
@@ -300,7 +327,7 @@ npx vitest run packages/brain/src/__tests__/integration/kernel-wiring.pg.integra
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| attempt lineage + query API + orphan 收口 | `sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts` | `GET /api/brain/harness/tasks/:task_id/attempt-telemetry 返回 telemetry schema`、`GET /api/brain/harness/tasks/:task_id/attempt-telemetry response keys 精确等于 telemetry 合同 keys`、`migration 360 adds lineage telemetry columns to harness_attempts`、`expired running attempt is resumed or structurally closed instead of hanging forever` | 当前 `harness.routes.js` 无新端点、`357_harness_provider_attempts.sql` 无新增字段，vitest 应出现 4 个失败用例 |
+| attempt lineage + query API + orphan 收口 | `sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts` | `GET /api/brain/harness/tasks/:task_id/attempt-telemetry 返回 telemetry schema`、`GET /api/brain/harness/tasks/:task_id/attempt-telemetry response keys 精确等于 telemetry 合同 keys`、`migration 358 adds lineage telemetry columns to harness_attempts`、`expired running attempt is resumed or structurally closed instead of hanging forever` | 当前 `harness.routes.js` 无新端点、`358_kernel_attempt_telemetry.sql` 尚不存在，仓库根 `npx vitest run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts` 应出现 4 个失败用例 |
 
 ## E2E 验收
 
@@ -322,7 +349,9 @@ cd /workspace/packages/brain
 npx vitest run src/__tests__/migration-357-harness-attempts.test.js src/orchestrator/__tests__/attempt-store.test.js
 npx vitest run src/__tests__/integration/kernel-wiring.pg.integration.test.js
 npx vitest run src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js src/routes/__tests__/harness.routes.test.js
-npx vitest run /workspace/sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts
+cd /workspace
+npx vitest run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts
+cd /workspace/packages/brain
 
 RESP=$(curl -sf "http://localhost:5221/api/brain/harness/tasks/${FIXTURE_TASK_ID}/attempt-telemetry?include_attempts=true")
 echo "$RESP" | jq -e '
@@ -344,6 +373,6 @@ WHERE id='${ORPHAN_ATTEMPT_ID}'
   );
 " | grep -q '^[1-9]'
 
-bash scripts/devgate/check-version-sync.sh
+bash /workspace/scripts/check-version-sync.sh
 echo "✅ Kernel telemetry Golden Path 验证通过"
 ```

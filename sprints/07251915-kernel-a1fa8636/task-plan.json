@@ -13,7 +13,7 @@
         "[ARTIFACT] harness_attempts additive migration 包含 logical_cycle_id/attempt_kind/retry_of_attempt_id/restart_reason/workstream_key"
       ],
       "files": [
-        "packages/brain/migrations/357_harness_provider_attempts.sql",
+        "packages/brain/migrations/358_kernel_attempt_telemetry.sql",
         "packages/brain/src/orchestrator/attempt-store.js",
         "packages/brain/src/harness-relay-watchdog.js",
         "packages/brain/src/orchestrator/kernel-handlers.js",

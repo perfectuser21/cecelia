@@ -10,14 +10,14 @@ journey_type: autonomous
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] additive migration 定义 telemetry 所需字段与索引
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/357_harness_provider_attempts.sql','utf8');['logical_cycle_id','attempt_kind','retry_of_attempt_id','restart_reason','workstream_key'].forEach((k)=>{if(!c.includes(k))process.exit(1);});"
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/358_kernel_attempt_telemetry.sql','utf8');['logical_cycle_id','attempt_kind','retry_of_attempt_id','restart_reason','workstream_key'].forEach((k)=>{if(!c.includes(k))process.exit(1);});"
 
 - [ ] [ARTIFACT] attempt-store 暴露 lineage/收口相关写入路径
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/attempt-store.js','utf8');['logical_cycle_id','attempt_kind','retry_of_attempt_id','restart_reason','workstream_key'].forEach((k)=>{if(!c.includes(k))process.exit(1);});"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [ ] [BEHAVIOR] [L2] migration 360 adds lineage telemetry columns to harness_attempts
+- [ ] [BEHAVIOR] [L2] migration 358 adds lineage telemetry columns to harness_attempts
   动作: 在真实 PostgreSQL 上执行 migration 后查询 `information_schema.columns`
   预期观察: `harness_attempts` 可读到 `logical_cycle_id`、`attempt_kind`、`retry_of_attempt_id`、`restart_reason`、`workstream_key`
   验证命令: Test: manual:bash
@@ -45,8 +45,29 @@ journey_type: autonomous
       and (.totals.recovery_count | type == "number")
       and (.totals.invalid_count | type == "number")
       and (.role_metrics | type == "array")
+      and (all(.role_metrics[]?;
+        (.role | type == "string")
+        and (.workstream_key | type == "string")
+        and (.active_time_ms | type == "number")
+        and (.wall_time_ms | type == "number")
+        and (.wait_time_ms | type == "number")
+        and (.retry_count | type == "number")
+        and (.recovery_count | type == "number")
+        and (.invalid_count | type == "number")))
       and (.attempts | type == "array")
-      and (all(.attempts[]?; has("logical_cycle_id") and has("attempt_kind") and has("retry_of_attempt_id") and has("restart_reason") and has("workstream_key") and has("started_at") and has("completed_at") and has("derived")))
+      and (all(.attempts[]?;
+        (.attempt_id | type == "string")
+        and (.run_id | type == "string")
+        and (.hop | type == "number")
+        and (.role | type == "string")
+        and has("logical_cycle_id")
+        and has("attempt_kind")
+        and has("retry_of_attempt_id")
+        and has("restart_reason")
+        and has("workstream_key")
+        and has("started_at")
+        and has("completed_at")
+        and has("derived")))
     ' >/dev/null
 
 - [ ] [BEHAVIOR] [L2] GET /api/brain/harness/tasks/:task_id/attempt-telemetry response keys 精确等于 telemetry 合同 keys
@@ -91,9 +112,9 @@ journey_type: autonomous
     done
     echo "OK: within 60s orphan 被收口"
 
-- [ ] [BEHAVIOR] [L2] fixture 4-run raw counts 还原为 logical cycle 与损耗
+- [ ] [BEHAVIOR] [L2] fixture 4-run raw counts 4/2/5/9/5 还原为 logical cycle 与损耗
   动作: 调用 fixture task 的 telemetry API
-  预期观察: `run_count=4`、`logical_cycle_count=2`，并分离 `retry_count`、`recovery_count`、`invalid_count`
+  预期观察: `run_count=4`、`logical_cycle_count=2`，并从 `attempts[]` 还原 planner/proposer/reviewer/generator/judge 的 `4/2/5/9/5` 原始角色计数，同时分离 `retry_count`、`recovery_count`、`invalid_count`
   验证命令: Test: manual:bash
     curl -sf "http://localhost:5221/api/brain/harness/tasks/${FIXTURE_TASK_ID}/attempt-telemetry?include_attempts=true" \
       | jq -e '
@@ -102,6 +123,11 @@ journey_type: autonomous
         and .totals.retry_count == 2
         and .totals.recovery_count == 1
         and .totals.invalid_count == 1
+        and ([.attempts[] | select(.role=="planner")] | length) == 4
+        and ([.attempts[] | select(.role=="proposer")] | length) == 2
+        and ([.attempts[] | select(.role=="reviewer")] | length) == 5
+        and ([.attempts[] | select(.role=="generator")] | length) == 9
+        and ([.attempts[] | select(.role=="judge")] | length) == 5
       ' >/dev/null
 
 - [ ] [BEHAVIOR] [L2] invalid task id returns 404 with error string
@@ -191,4 +217,3 @@ journey_type: autonomous
   验证命令: Test: manual:bash
     curl -sf "http://localhost:5221/api/brain/harness/tasks/${TEST_TASK_ID}/attempt-telemetry?include_attempts=true" \
       | jq -e 'tostring | contains("callback_secret_hash") | not' >/dev/null
-
