@@ -10,7 +10,7 @@
       "dod": [
         "[BEHAVIOR] 真 PostgreSQL migration 支持 human/machine、拒绝非法 kind、保持首次声明并可重复应用",
         "[BEHAVIOR] launcher、cecelia-run 与 headed relay 按真实调用 shape 声明出处且登记失败不阻塞 Claude",
-        "[BEHAVIOR] runConversationCapture 每轮一次批量查询且只有 human 产生 raw+summary，machine/unknown/查询失败全部可观测地失败关闭",
+        "[BEHAVIOR] runConversationCapture 每轮一次批量查询且只有 human 产生 raw+summary，含一次真 Anthropic Haiku 请求与五分钟窗落库验证；machine/unknown/查询失败全部可观测地失败关闭",
         "[BEHAVIOR] Codex/Grok unknown、private-tmp、dedupe、复聊与多轮扫描回归全绿",
         "[BEHAVIOR] cleanup SOP 在 test DB 证明先备份后限定删除，生产执行权保留给主 session",
         "[ARTIFACT] migration、生产代码、回归测试、cleanup SOP、版本与 Red→Green 证据齐全"
@@ -22,11 +22,13 @@
         "packages/brain/scripts/cecelia-run.sh",
         "packages/brain/src/harness-skill-relay.js",
         "packages/brain/src/conversation-capture.js",
+        "packages/brain/src/__tests__/headed-dispatch.test.js",
         "packages/brain/src/__tests__/conversation-capture-human-gate.test.js",
         "packages/brain/src/__tests__/integration/session-provenance.integration.test.js",
         "packages/brain/src/__tests__/integration/conversation-capture.integration.test.js",
         "packages/brain/scripts/cleanup-conversation-captures.sh",
         "packages/brain/scripts/__tests__/cleanup-conversation-captures.test.sh",
+        "packages/brain/scripts/smoke/conversation-capture-human-gate-smoke.sh",
         "sprints/07251213-kernel-0a8c796b/vitest.config.mjs",
         "DEFINITION.md",
         "packages/brain/package.json",

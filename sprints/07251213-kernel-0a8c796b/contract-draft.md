@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## 合同边界
 
@@ -9,6 +9,8 @@
 ## Response Schema（推导来源: PRD字面）
 
 N/A — 本任务无 HTTP 响应。对外可观测契约是 PostgreSQL 表、启动命令环境、capture/working_memory 数据和脚本退出码。
+
+Registry 非空但无本任务 HTTP schema；`db_schema` 已确认现有 `captures`，`test` registry 未提供比冻结 PRD 更高优先级的字段约束，因此字段继续逐字采用 PRD。
 
 ## 已知约束（来自回归测试与累积 FR）
 
@@ -102,9 +104,12 @@ DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run src/__tests__/integration/sess
 ```bash
 bash -n scripts/claude-launch.sh
 bash scripts/__tests__/claude-launch-session-provenance.test.sh
+DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run \
+  --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs \
+  sprints/07251213-kernel-0a8c796b/tests/launcher-provenance.contract.test.ts
 ```
 
-**硬阈值**: 两条命令 exit code = 0；每次可判定启动至多一次 INSERT；连接上限 `PGCONNECT_TIMEOUT=2`；失败路径 fake Claude 调用次数 = 1。
+**硬阈值**: 三条命令 exit code = 0；fake-psql 分支覆盖 machine/human/unknown/dry-run/失败继续启动；真 PostgreSQL 回读必须逐字等于 `session_id|machine|cecelia-run|task_id`；每次可判定启动至多一次 INSERT；连接上限 `PGCONNECT_TIMEOUT=2`。
 
 ### Step 3: 所有已知 Claude 派发路径透传 machine 声明
 
@@ -114,13 +119,19 @@ bash scripts/__tests__/claude-launch-session-provenance.test.sh
 
 **验证命令**:
 ```bash
-cd packages/brain
-npx vitest run src/__tests__/headed-dispatch.test.js
-cd ../..
-bash packages/brain/scripts/cecelia-run.sh --dry-run
+TEST_TASK_ID="00000000-0000-4000-8000-00000000cafe"
+DRY_OUTPUT=$(bash packages/brain/scripts/cecelia-run.sh --dry-run \
+  "$TEST_TASK_ID" checkpoint-contract /tmp/prompt-contract)
+printf '%s\n' "$DRY_OUTPUT" | grep -Fq 'CECELIA_DISPATCH=1'
+printf '%s\n' "$DRY_OUTPUT" | grep -Fq 'CECELIA_LAUNCHED_BY=cecelia-run'
+printf '%s\n' "$DRY_OUTPUT" | grep -Fq "HARNESS_TASK_ID=$TEST_TASK_ID"
+printf '%s\n' "$DRY_OUTPUT" | grep -Fq 'claude-launch.sh'
+npx vitest run \
+  --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs \
+  sprints/07251213-kernel-0a8c796b/tests/dispatch-provenance.contract.test.ts
 ```
 
-**硬阈值**: 命令 exit code = 0；headed `innerCmd` 三个 env 字段逐字相等；首次 attempt 仅一次声明；既有 HARNESS_NODE/evaluator gate 环境不回退。
+**硬阈值**: 每条 grep 与 Vitest exit code = 0；dry-run 和 headed `innerCmd` 均逐字包含三个 provenance env 字段及真实 launcher；首次 attempt 仅一次声明；既有 HARNESS_NODE/evaluator gate 环境不回退。
 
 ### Step 4: 闲置批次只放行 human 并保持原始+摘要
 
@@ -130,11 +141,17 @@ bash packages/brain/scripts/cecelia-run.sh --dry-run
 
 **验证命令**:
 ```bash
+DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run \
+  --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs \
+  sprints/07251213-kernel-0a8c796b/tests/conversation-human-gate.contract.test.ts
 cd packages/brain
-DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run src/__tests__/conversation-capture-human-gate.test.js src/__tests__/integration/conversation-capture.integration.test.js -t "registered human|mixed batch|原始文本"
+DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run \
+  src/__tests__/conversation-capture-human-gate.test.js \
+  src/__tests__/integration/conversation-capture.integration.test.js \
+  -t "registered human|mixed batch|原始文本"
 ```
 
-**硬阈值**: 测试 exit code = 0；混合批次 `sessions_processed=human 数`；human 产生 nature=NULL 与 `session_summary` 各 1 行；provenance SELECT 每轮 = 1 次。
+**硬阈值**: 测试 exit code = 0；混合批次 `sessions_processed=human 数`；human 产生 nature=NULL 与 `session_summary` 各 1 行；provenance SELECT 每轮 = 1 次；至少一次从 `~/.credentials/anthropic.json` 读取真 key，通过 `anthropic-api` 请求 `claude-haiku-4-5-20251001`，响应 `text` 非空且五分钟窗内 summary capture 内容匹配 `^1\.\s+\S+`；凭据不可用直接 FAIL，不 SKIP。
 
 ### Step 5: machine、unknown 与查询故障失败关闭且可观测
 
@@ -180,24 +197,26 @@ bash scripts/check-version-sync.sh
 
 ## 接缝清单
 
-1. launcher/派发脚本 ↔ 真 PostgreSQL `session_provenance`：自动验收在 `cecelia_test` 真库执行 migration 与登记集成测试；未过不得 done。
-2. 三适配器真实 transcript fixture ↔ `runConversationCapture` ↔ 真 PostgreSQL `captures/working_memory`：自动验收调用生产入口与真实相邻模块，不 mock allowlist、dedupe 或 DB。
-3. cleanup SOP ↔ 生产 `captures`：自动阶段只在 disposable test DB 验逻辑；生产备份/删除由主 session 验，完成前状态为 `logic-done-pending`。
-4. 部署后 7 天真实内容质量：必须人工抽检生产新增行；到期前状态为 `logic-done-pending`。
+1. launcher/派发脚本 ↔ 真 PostgreSQL `session_provenance`：自动验收以 psql 转发器改写目标库但执行真实 SQL，并回读完整行；未过不得 done。
+2. 三适配器真实 transcript fixture ↔ `runConversationCapture` ↔ `session_provenance/captures/working_memory`：自动验收调用生产入口与真 PostgreSQL，不 mock allowlist、dedupe 或 DB。
+3. `runConversationCapture` ↔ Anthropic Haiku ↔ summary capture：自动验收必须真 key、真请求、真响应并在五分钟窗内查到落库摘要。
+4. cleanup SOP ↔ 生产 `captures`：自动阶段只在 disposable test DB 验逻辑；生产备份/删除由主 session 验，完成前状态为 `logic-done-pending`。
+5. 部署后 7 天真实内容质量：必须人工抽检生产新增行；到期前状态为 `logic-done-pending`。
 
 ## 禁 mock 边清单
 
 - `360_session_provenance.sql` ↔ 真 PostgreSQL（schema、CHECK、UUID、幂等均在隔离 schema 真执行）。
 - `cecelia-run.sh` / `harness-skill-relay.js` ↔ `claude-launch.sh` 的环境透传（执行生产命令构造器；不得只做 `source.includes()`）。
-- `claude-launch.sh` ↔ `session_provenance`（fake psql 可覆盖 launcher 分支，但必须另有真 test DB roundtrip，不得以 fake 取代真接缝）。
+- `claude-launch.sh` ↔ `session_provenance`（fake psql 只覆盖分支；冻结合同测试另以 psql 转发器执行真 test DB INSERT/回读，不得以 fake 取代真接缝）。
 - `extractClaude/Codex/GrokSessions` ↔ `runConversationCapture` ↔ `session_provenance/captures/working_memory`（真实 fixture、生产函数、真 PostgreSQL；不得 mock 被改的 allowlist 或 DB 查询）。
+- `runConversationCapture` ↔ `callLLM` ↔ Anthropic Haiku（至少一条冻结合同测试使用真实 `anthropic-api`，不得用 fake LLM 替代）。
 - `cleanup-conversation-captures.sh` ↔ disposable test PostgreSQL（真备份/真限定 DELETE；生产库仅主 session执行）。
 
 ## 未覆盖真实链路清单
 
 | 未覆盖点 | 原因 | 补位计划 |
 |---|---|---|
-| Haiku 第三方真实摘要调用 | 本单不改 LLM API，自动测试为避免费用注入确定性 LLM；被改的 human gate、DB 与适配器不 mock | evaluator 跑既有摘要契约；上线后首个 human capture 由主 session核对 raw+summary |
+| human gate 其余错误/混合批次用例中的确定性 LLM 替身 | 控制调用次数并验证零调用失败语义；不能替代真实摘要链路 | BEH-04 同轮另跑冻结合同的真 `anthropic-api` Haiku 请求、响应字段和 summary 落库断言 |
 | 生产 `conversation%` 备份与删除 | 冻结 PRD 明禁 worker 执行生产清库 | 独立评审通过后主 session 按 SOP 执行并记录 backup path 与四组计数 |
 | 部署后第 7 天机器噪音抽检 | 必须等待真实时间窗 | 主 session 在 day 7 记录新增量、machine-noise=0 与两类 skipped 汇总 |
 
@@ -217,6 +236,14 @@ case "$DB_NAME" in
   *_test|*_scratch) ;;
   *) echo "FAIL: E2E 只允许测试库，当前 DB_NAME=$DB_NAME"; exit 1 ;;
 esac
+
+npx vitest run \
+  --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs \
+  sprints/07251213-kernel-0a8c796b/tests/session-provenance.contract.test.ts \
+  sprints/07251213-kernel-0a8c796b/tests/launcher-provenance.contract.test.ts \
+  sprints/07251213-kernel-0a8c796b/tests/dispatch-provenance.contract.test.ts \
+  sprints/07251213-kernel-0a8c796b/tests/conversation-human-gate.contract.test.ts \
+  sprints/07251213-kernel-0a8c796b/tests/cleanup-sop.contract.test.ts
 
 cd packages/brain
 npx vitest run src/__tests__/integration/session-provenance.integration.test.js
@@ -239,9 +266,14 @@ echo "OK: 非破坏性 Golden Path 验收通过；生产接缝保持 logic-done-
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | provenance 真 PostgreSQL schema | `tests/session-provenance.contract.test.ts` | session_provenance migration 在真 PostgreSQL 中约束 human/machine 并可重复应用 | migration 文件不存在，测试在任何 schema 断言前 FAIL |
+| launcher 真登记接缝 | `tests/launcher-provenance.contract.test.ts` | claude launcher 在真 PostgreSQL 写入 machine provenance 并回读 | migration/launcher 登记尚不存在，按 session_id 回读为空而 FAIL |
+| 两条机器派发命令 shape | `tests/dispatch-provenance.contract.test.ts` | cecelia-run dry-run 输出 machine provenance 三字段并调用 launcher / headed Claude 生产命令构造器透传 machine provenance 三字段 | dry-run 与 headed tmux 命令均缺 `CECELIA_DISPATCH`/`CECELIA_LAUNCHED_BY`，值断言 FAIL |
+| human allowlist + 真 Haiku | `tests/conversation-human-gate.contract.test.ts` | runConversationCapture 只让 registered human 产生原始与摘要两条 capture / registered human 经真 Haiku 请求后 summary capture 在五分钟窗内落库 | migration/allowlist 尚不存在；未登记 fixture 仍会进入旧采集路径，新的 provenance 与 live-summary 断言 FAIL |
+| 受保护清理 SOP | `tests/cleanup-sop.contract.test.ts` | cleanup SOP 真执行先备份后限定删除且备份失败零删除 | shell test/cleanup SOP 尚不存在，真实执行 exit 非 0 |
 
 ## Notes
 
 - 当前 migration 最大编号为 359，合同指定候选 `360_session_provenance.sql`；若生成时 main 已推进，必须使用下一个空闲编号并同步测试，禁止抢号。
 - PRD 预期路径写 `packages/brain/DEFINITION.md`，当前仓库实际版本定义文件是根目录 `DEFINITION.md`；Generator 必须按现有 `scripts/check-version-sync.sh`/facts-check 的真实版本合同更新，不得新建伪定义文件。
 - 本合同不批准共享 CI 基础设施变更；若 CI 自身故障，另立 sprint。
+- Round 2 仅修 Reviewer 三个阻塞项：dry-run/launcher 真接缝、真 Haiku 链路、Tasks 2-5 Red 合同登记；不扩展 PRD scope。
