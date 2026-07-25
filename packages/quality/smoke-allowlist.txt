@@ -171,3 +171,4 @@ triage-officer-smoke.sh
 conversations-smoke.sh
 conversation-agent-smoke.sh
 conversation-ttl-archiver-smoke.sh
+kernel-durable-resume-smoke.sh

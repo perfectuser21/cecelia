@@ -77,10 +77,15 @@ describe('spawnSkillRelaySession', () => {
 
   it('kernel-v1 启动确定性 orchestrator，不加载或 spawn harness-controller', async () => {
     const runId = '11111111-1111-4111-8111-111111111111';
-    const pool = { query: vi.fn(async (sql) => {
+    const query = vi.fn(async (sql) => {
       if (/INSERT INTO initiative_runs/.test(sql)) return { rows: [{ id: runId }], rowCount: 1 };
       return { rows: [], rowCount: 1 };
-    }) };
+    });
+    const release = vi.fn();
+    const pool = {
+      query,
+      connect: vi.fn(async () => ({ query, release })),
+    };
     const deps = makeDeps({
       pool,
       launchKernel: vi.fn(async () => ({ pid: 4242 })),
@@ -100,6 +105,12 @@ describe('spawnSkillRelaySession', () => {
     }));
     expect(deps.loadSkill).not.toHaveBeenCalled();
     expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(pool.connect).toHaveBeenCalledOnce();
+    expect(query.mock.calls.map(([sql]) => String(sql).trim())).toEqual(expect.arrayContaining([
+      'BEGIN',
+      'COMMIT',
+    ]));
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it('P0: heartbeat 覆写 orchestrator_host 后再派发仍命中同任务 kernel run，不 INSERT 第二条', async () => {

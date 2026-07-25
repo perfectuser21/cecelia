@@ -62,7 +62,7 @@ function fakeExecCmd(handlers = {}) {
 
 function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
   const runRow = {
-    id: RUN_ID, contract_id: CONTRACT_ID, phase: 'generate', pr_url: null,
+    id: RUN_ID, initiative_id: TASK_ID, contract_id: CONTRACT_ID, phase: 'generate', pr_url: null,
     cost_usd: '1.50', current_task_id: TASK_ID,
     ...(rows.run ?? {}),
   };
@@ -105,7 +105,7 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(o.authCircuit).toEqual([{ account_id: 'account2', is_auth_failed: true, auth_fail_count: 2 }]);
   });
 
-  it('contract status=draft → approved:false；contract_id 为空 → 不查 contracts、approved:false', async () => {
+  it('contract status=draft → approved:false；contract_id 为空 → scoped 查历史 approved、无命中仍 false', async () => {
     const deps1 = makeDeps();
     const o1 = await collectGroundTruth(deps1, { taskId: TASK_ID, runId: RUN_ID });
     expect(o1.contract.approved).toBe(false);
@@ -113,7 +113,12 @@ describe('collectGroundTruth：DB 通道组装', () => {
     const deps2 = makeDeps({ rows: { run: { contract_id: null } } });
     const o2 = await collectGroundTruth(deps2, { taskId: TASK_ID, runId: RUN_ID });
     expect(o2.contract.approved).toBe(false);
-    expect(deps2.pool.calls.some(([sql]) => sql.includes('FROM initiative_contracts'))).toBe(false);
+    expect(deps2.pool.calls.some(([sql, params]) => (
+      sql.includes('FROM initiative_contracts')
+      && sql.includes("status='approved'")
+      && sql.includes('initiative_id=$1')
+      && params[0] === o2.run.initiative_id
+    ))).toBe(true);
   });
 
   it('run 行不存在 → fail-fast throw', async () => {

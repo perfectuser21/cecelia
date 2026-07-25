@@ -19,7 +19,10 @@ import {
   HUMAN_REVIEW_CLASS,
   reviewClassForReason,
 } from './human-review-class.js';
-import { normalizeFailureSet } from './convergence-signatures.js';
+import {
+  failureSetKey,
+  normalizeFailureSet,
+} from './convergence-signatures.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -149,8 +152,26 @@ export async function collectGroundTruth(deps, opts) {
   if (run.contract_id) {
     const cRes = await pool.query('SELECT * FROM initiative_contracts WHERE id = $1', [run.contract_id]);
     contractRow = cRes.rows[0] ?? null;
+  } else {
+    // run bootstrap 与 contract approval 之间可能因 Brain restart 留下 contract_id
+    // 空窗。approved contract 是 initiative/task 级单调里程碑，按同一
+    // initiative 的最高版本回放，绝不跨 task/journey 取全局 latest。
+    const cRes = await pool.query(
+      `SELECT *
+         FROM initiative_contracts
+        WHERE initiative_id=$1
+          AND status='approved'
+        ORDER BY version DESC, approved_at DESC NULLS LAST, created_at DESC
+        LIMIT 1`,
+      [run.initiative_id],
+    );
+    contractRow = cRes.rows[0] ?? null;
   }
-  const contract = { approved: contractRow?.status === 'approved', id: run.contract_id ?? null, row: contractRow };
+  const contract = {
+    approved: contractRow?.status === 'approved',
+    id: contractRow?.id ?? run.contract_id ?? null,
+    row: contractRow,
+  };
 
   const tRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
   const task = tRes.rows[0] ?? null;
@@ -161,6 +182,30 @@ export async function collectGroundTruth(deps, opts) {
     [runId],
   );
   const decisionLog = logRes.rows;
+  const historicalLogRes = await pool.query(
+    `SELECT log.observed, log.detail
+       FROM orchestrator_decision_log AS log
+       JOIN initiative_runs AS historical_run ON historical_run.id = log.run_id
+      WHERE historical_run.initiative_id=$1
+        AND historical_run.current_task_id=$2
+        AND historical_run.id<>$3
+      ORDER BY historical_run.started_at, log.hop`,
+    [run.initiative_id, taskId, runId],
+  );
+  const historicalFailureSetKeys = [
+    ...new Set((historicalLogRes.rows ?? [])
+      .map((row) => {
+        const observed = asJson(row.observed) ?? {};
+        const detail = asJson(row.detail) ?? {};
+        return failureSetKey(
+          observed.failure_set
+          ?? observed.failure_signature
+          ?? detail.failure_set
+          ?? detail.failure_signature,
+        );
+      })
+      .filter(Boolean)),
+  ];
 
   // evaluator 的完整机械证据存于 attempt.result；decision_log 只承载 SHA 锚定 verdict。
   // 旧 controller 的 .brain-result.json 仍在文件通道读取，供兼容路径兜底。
@@ -209,6 +254,14 @@ export async function collectGroundTruth(deps, opts) {
   // ---- PR 状态（gh 封装）----
   let pr = null;
   let prUrl = run.pr_url;
+  const replayedPr = latestRow(
+    decisionLog,
+    (row) => typeof asJson(row.observed)?.pr?.url === 'string',
+  );
+  const replayedPrSnapshot = asJson(replayedPr?.observed)?.pr ?? null;
+  if (!prUrl) {
+    prUrl = replayedPrSnapshot?.url ?? null;
+  }
   if (!prUrl) {
     try {
       prUrl = discoverPrFromGithub(
@@ -232,7 +285,7 @@ export async function collectGroundTruth(deps, opts) {
       mergeStateStatus: view.mergeStateStatus ?? null,
       merged: view.state === 'MERGED',
       head_ref: view.headRefName ?? null,
-      head_sha: view.headRefOid ?? null,
+      head_sha: view.headRefOid ?? replayedPrSnapshot?.head_sha ?? null,
       ci: mapCiStatus(checks),
       failed_checks: failedCheckNames(checks),
     };
@@ -356,5 +409,6 @@ export async function collectGroundTruth(deps, opts) {
     callbackResult,
     noProgress,
     noProgressReason,
+    historicalFailureSetKeys,
   };
 }

@@ -198,6 +198,19 @@ export function createAttemptStore(pool) {
       ));
     },
 
+    async getActiveByRun(runId) {
+      return firstRow(await pool.query(
+        `SELECT *,
+                (lease_expires_at IS NULL OR lease_expires_at < NOW()) AS lease_expired
+           FROM harness_attempts
+          WHERE run_id=$1
+            AND status IN ('starting','running')
+          ORDER BY hop DESC, created_at DESC
+          LIMIT 1`,
+        [runId],
+      ));
+    },
+
     async assertFreshRoleSession({ runId, attemptId, role, sessionId }) {
       if (!sessionId) throw new Error('sessionId is required for isolation check');
       const result = await pool.query(

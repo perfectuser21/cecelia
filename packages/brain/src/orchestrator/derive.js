@@ -69,6 +69,18 @@ function currentProductFailureSet(observed) {
 }
 
 function productFixRoute(observed, reason) {
+  const currentFailureKey = failureSignatureKey(currentProductFailureSet(observed));
+  if (
+    currentFailureKey != null
+    && Array.isArray(observed.historicalFailureSetKeys)
+    && observed.historicalFailureSetKeys.includes(currentFailureKey)
+  ) {
+    return {
+      phase: 'review',
+      action: ACTION.WAIT_HUMAN_REVIEW,
+      reason: 'cross_run_failure_signature_repeated',
+    };
+  }
   const convergence = replayProductConvergence(observed.decisionLog ?? [], {
     currentFailureSet: currentProductFailureSet(observed),
     currentHeadSha: observed.pr?.head_sha ?? null,

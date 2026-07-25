@@ -15,6 +15,7 @@
  */
 import pool from './db.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -117,7 +118,10 @@ export async function launchKernelProcess({ taskId, runId, worktreePath }) {
   return { pid: child.pid };
 }
 
-async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
+async function _spawnKernelRuntime(task, { dbPool, now, deps }) {
+  // Kernel 的 initiative 作用域由 tasks.id 唯一定义。journey_id 只是归属字段，
+  // 不能参与 approved contract 隔离，也不能让 payload 中的旧 initiative_id 覆盖。
+  const kernelInitiativeId = task.id;
   // harness_runtime 由 tasks.payload 持久化，current_task_id + 非终态才是 run 身份。
   // orchestrator_host 是活性观测字段，heartbeat 会把它改成实际 hostname，
   // 不得用它做去重键，否则每次重派都会再建一条 run。
@@ -136,41 +140,65 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     || (await import('./harness-worktree.js')).ensureHarnessWorktree;
   const worktreePath = await ensureWt({
     taskId: task.id,
-    initiativeId,
+    initiativeId: kernelInitiativeId,
     baseRepo: task.payload?.base_repo,
   });
   const sprintDir = task.payload?.sprint_dir
     || `sprints/${stampMMDDHHNN(now())}-kernel-${shortId(task.id)}`;
   const reviewRequired = deriveReviewRequired(task);
+  const txClient = await dbPool.connect();
+  let runId;
+  try {
+    await txClient.query('BEGIN');
+    const approved = await txClient.query(
+      `SELECT id
+         FROM initiative_contracts
+        WHERE initiative_id=$1
+          AND status='approved'
+        ORDER BY version DESC, approved_at DESC NULLS LAST, created_at DESC
+        LIMIT 1`,
+      [kernelInitiativeId],
+    );
+    const contractId = approved.rows?.[0]?.id ?? null;
 
-  await dbPool.query(
-    `UPDATE tasks
-        SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
-            updated_at=NOW()
-      WHERE id=$1`,
-    [task.id, JSON.stringify({
-      harness_runtime: 'kernel-v1',
-      sprint_dir: sprintDir,
-      worktree_path: worktreePath,
-      review_required: reviewRequired,
-    })],
-  );
+    await txClient.query(
+      `UPDATE tasks
+          SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+              updated_at=NOW()
+        WHERE id=$1`,
+      [task.id, JSON.stringify({
+        harness_runtime: 'kernel-v1',
+        sprint_dir: sprintDir,
+        worktree_path: worktreePath,
+        review_required: reviewRequired,
+      })],
+    );
 
-  const inserted = await dbPool.query(
-    `INSERT INTO initiative_runs
-       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
-        deadline_at, ability_id, current_task_id)
-     VALUES ($1, 'planning', $2, 'v2', 'kernel-v1', NOW() + INTERVAL '8 hours', $3, $4)
-     RETURNING id`,
-    [
-      initiativeId,
-      task.payload?.journey_id || null,
-      task.ability_id || task.payload?.ability_id || null,
-      task.id,
-    ],
-  );
-  const runId = inserted.rows?.[0]?.id;
-  if (!runId) throw new Error('kernel-v1 initiative_runs INSERT returned no id');
+    const inserted = await txClient.query(
+      `INSERT INTO initiative_runs
+         (id, initiative_id, contract_id, phase, journey_id, orchestrator_version,
+          orchestrator_host, deadline_at, ability_id, current_task_id)
+       VALUES ($1, $2, $3, 'planning', $4, 'v2', 'kernel-v1',
+               NOW() + INTERVAL '8 hours', $5, $6)
+       RETURNING id`,
+      [
+        deps.runId?.() ?? randomUUID(),
+        kernelInitiativeId,
+        contractId,
+        task.payload?.journey_id || null,
+        task.ability_id || task.payload?.ability_id || null,
+        task.id,
+      ],
+    );
+    runId = inserted.rows?.[0]?.id;
+    if (!runId) throw new Error('kernel-v1 initiative_runs INSERT returned no id');
+    await txClient.query('COMMIT');
+  } catch (error) {
+    await txClient.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    txClient.release();
+  }
 
   const launchKernel = deps.launchKernel || launchKernelProcess;
   try {
@@ -256,7 +284,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
   // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
   if (task.payload?.harness_runtime === 'kernel-v1') {
-    return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
+    return _spawnKernelRuntime(task, { dbPool, now, deps });
   }
 
   // INV-8: unsupported executor loud-fail（三处文件 —— harness-skill-relay.js 这处）
