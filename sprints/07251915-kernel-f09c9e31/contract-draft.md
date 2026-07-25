@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## Notes
 
@@ -8,6 +8,7 @@
 - 本 sprint 是 Kernel Harness hotfix；不得创建第二账本，不得写生产数据库，不得自动 merge。
 - Round 2 revision: 补齐 Brain restart 的 PRD/PR/合同三里程碑单调恢复红测、GitHub PR 真调用 E2E oracle、Test Contract 全行为映射与版本同步脚本断言。
 - Round 3 refresh: 保持 Round 2 APPROVED 合同范围不扩张；重新跑确定性格式自查与 Contract Gate，确认可交付给 evaluator。
+- Round 4 refresh: 本轮未收到新的 reviewer 反馈 artifact；继续保留 PRD 字面范围与现有 Red 测试池，不扩张 scope，仅刷新 proposer 分支与结果协议。
 
 ## Response Schema（推导来源: N/A）
 

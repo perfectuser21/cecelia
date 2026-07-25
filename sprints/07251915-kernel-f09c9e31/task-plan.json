@@ -1,5 +1,5 @@
 {
-  "initiative_id": "f09c9e31-ed78-4af4-a1b6-88241bc486c5",
+  "initiative_id": "741d4acc-9ca8-4545-a971-efa12fce8150",
   "journey_type": "autonomous",
   "journey_type_reason": "PRD 目标是本地 Brain Kernel 后端恢复与调度正确性，不含 UI 或真机 RPA。",
   "tasks": [
