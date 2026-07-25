@@ -115,9 +115,19 @@ describe('conversation capture human allowlist（真相邻模块 + 真 PostgreSQ
           path.join(os.homedir(), '.claude-account1', '.credentials.json'),
           path.join(os.homedir(), '.claude-account2', '.credentials.json'),
         ];
+    let bridgeAvailable = false;
+    if (liveProvider === 'anthropic' && process.env.EXECUTOR_BRIDGE_URL) {
+      try {
+        const healthUrl = `${process.env.EXECUTOR_BRIDGE_URL.replace(/\/$/, '')}/health`;
+        const health = await fetch(healthUrl, { signal: AbortSignal.timeout(2000) });
+        bridgeAvailable = health.ok;
+      } catch {
+        bridgeAvailable = false;
+      }
+    }
     expect(
-      credentialPaths.some((credentialPath) => fs.existsSync(credentialPath)),
-      `RUN_LIVE_HAIKU=1 requires a real ${liveProvider} credential in the local_api theater`
+      credentialPaths.some((credentialPath) => fs.existsSync(credentialPath)) || bridgeAvailable,
+      `RUN_LIVE_HAIKU=1 requires a real ${liveProvider} credential or healthy executor bridge in the local_api theater`
     ).toBe(true);
 
     const sid = randomUUID();
