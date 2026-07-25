@@ -109,6 +109,9 @@ describe('conversation capture human allowlist（真相邻模块 + 真 PostgreSQ
     const credentialPaths = liveProvider === 'anthropic-api'
       ? [path.join(os.homedir(), '.credentials', 'anthropic.json')]
       : [
+          ...(process.env.CLAUDE_CONFIG_DIR
+            ? [path.join(process.env.CLAUDE_CONFIG_DIR, '.credentials.json')]
+            : []),
           path.join(os.homedir(), '.claude-account1', '.credentials.json'),
           path.join(os.homedir(), '.claude-account2', '.credentials.json'),
         ];
