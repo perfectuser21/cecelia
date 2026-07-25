@@ -285,10 +285,14 @@ run_provider_contract() {
 
   if [[ "$provider" == "codex" ]]; then
     local codex_args=(exec)
-    local codex_permission_args=(-c 'approval_policy="never"' -c 'sandbox_mode="danger-full-access"')
-    if [[ "${HARNESS_READ_ONLY:-false}" == "true" ]]; then
-      codex_permission_args=(--sandbox read-only -c 'approval_policy="never"')
-    fi
+    # The Runner container is the external sandbox. In particular, reviewer and
+    # judge workspaces are already mounted /workspace:ro by docker-executor.
+    # Starting Codex's nested bubblewrap sandbox inside this unprivileged
+    # container fails before the first command with:
+    #   bwrap: No permissions to create a new namespace
+    # Bypass only the inner Codex sandbox; Docker keeps the role's filesystem
+    # boundary authoritative for both read-only and writable attempts.
+    local codex_permission_args=(--dangerously-bypass-approvals-and-sandbox)
     if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
       codex_args+=(resume "$HARNESS_RESUME_SESSION_ID")
     fi
