@@ -161,6 +161,8 @@ describe('createDispatcher', () => {
   it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {
     const deps = makeDeps();
 
+    // Regression: the approved row used to be nested under inputs.contract only,
+    // so the detached launcher could not populate CONTRACT_BRANCH for the worker.
     await createDispatcher(deps)('spawn:generator', {
       taskId,
       runId,
