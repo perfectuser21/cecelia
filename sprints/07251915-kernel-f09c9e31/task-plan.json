@@ -1,5 +1,5 @@
 {
-  "initiative_id": "741d4acc-9ca8-4545-a971-efa12fce8150",
+  "initiative_id": "f09c9e31-ed78-4af4-a1b6-88241bc486c5",
   "journey_type": "autonomous",
   "journey_type_reason": "PRD 目标是本地 Brain Kernel 后端恢复与调度正确性，不含 UI 或真机 RPA。",
   "tasks": [
@@ -8,9 +8,10 @@
       "title": "Kernel durable resume 跨 run 去重与恢复 hotfix",
       "scope": "导出 Commander 可复用的 recoverDurableRun，并实现同一 initiative/task 后续 run 的 approved contract 事务继承、PRD/PR/合同里程碑单调恢复、expired lease/orphan attempt 恢复、跨 run 同结构化根因去重与不同根因首次修复，并同步 Brain 版本账本与回归测试。",
       "dod": [
-        "[BEHAVIOR] 后续 run 继承 latest approved contract id/version/branch，derive 不再派 proposer/reviewer",
-        "[BEHAVIOR] Brain restart 后 PRD/PR/合同里程碑单调恢复，下一角色与不中断基线一致",
-        "[BEHAVIOR] recoverDurableRun 有 provider session 时经真实 adapter/launcher 恢复原 attempt，无 session 时自动结构化终结后 derive",
+        "[BEHAVIOR] initiative_id 字面等于 task.id、journey_id 独立；后续 run 只继承同 task latest approved contract，首轮不误继承跨 task decoy",
+        "[BEHAVIOR] 生产 bootstrap 自己用事务原子执行 approved 选择与 run INSERT，中途失败回滚无半写",
+        "[BEHAVIOR] Brain restart 且 worktree fileExists=false 时从 DB/GitHub 真相恢复 PRD/PR/合同里程碑，下一角色与不中断基线一致",
+        "[BEHAVIOR] recoverDurableRun 有 provider session 时先 reclaim 为 starting/新 owner/未来 expiry，再经真实 adapter/launcher 恢复原 attempt；未过期 attempt 不抢，无 session 自动结构化终结后 derive",
         "[BEHAVIOR] 跨 run 同结构化 failure signature 重现时进入 wait:human_review 或 FAILED",
         "[BEHAVIOR] 跨 run 不同 failure signature 首次出现时仍进入 spawn:generator-fix",
         "[BEHAVIOR] Final E2E 对实现 PR 真调 GitHub PR state/head_sha/statusCheckRollup",

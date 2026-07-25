@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 24)
+# Sprint Contract Draft (Round 25)
 
 ## Notes
 
@@ -6,7 +6,7 @@
 - Registry scan: api/db/test registry reachable but stale by about 167h; contract uses PRD literal scope plus current source/tests as authority.
 - context-manifest: unavailable (`GET /api/brain/line/741d4acc-9ca8-4545-a971-efa12fce8150/context-manifest` returned HTML 404), so no cumulative FR beyond PRD text.
 - 本 sprint 是 Kernel Harness hotfix；不得创建第二账本，不得写生产数据库，不得自动 merge。
-- Round 24 revision: 按 reviewer r23 的三个 PRD 真漏项最小收敛：定义并 Red 验证稳定导出 `recoverDurableRun`；两种 provider-session 分支都经该真实恢复入口；增加“旧签名 A、新签名 B 仍派 generator-fix”的反例。删除重复轮次流水账，scope 不扩张。
+- Round 25 revision: 按 reviewer r24 的三个阻塞项最小收敛：固定 `initiative_id=task.id`、`journey_id` 独立并增加跨 task/首轮负例；由生产 bootstrap 自己取得连接并用 `BEGIN/COMMIT|ROLLBACK` 包住 approved 选择与 run 写入，重启用例令 `fileExists=false`；provider-session 分支断言 reclaim 后 lease 状态且增加未过期反例。稳定 `recoverDurableRun`、真实 adapter/自动终结、不同签名反例保持不变。
 
 ## Response Schema（推导来源: N/A）
 
@@ -30,7 +30,7 @@ N/A - 任务无新增 HTTP 响应。验收对象是 Kernel run bootstrap、DB �
 
 | 要素 | 说明 | 本次答案（必填，可 N/A） |
 |------|------|--------------------------|
-| **FR（做什么）** | 功能需求 | 同一 initiative/task 的后续 Kernel run 通过稳定导出 `recoverDurableRun` 从 DB/GitHub 结构化真相继承 approved contract、PRD/PR/合同里程碑、attempt 与失败签名，避免重复 Planner/Reviewer/Generator。 |
+| **FR（做什么）** | 功能需求 | 同一 initiative/task（本任务中 `initiative_id=task.id`，`journey_id` 仅是独立归属字段）的后续 Kernel run 通过稳定导出 `recoverDurableRun` 从 DB/GitHub 结构化真相继承 approved contract、PRD/PR/合同里程碑、attempt 与失败签名，避免重复 Planner/Reviewer/Generator。 |
 | **NFR（做得多好）** | 非功能需求 | approved contract 继承与 run bootstrap 在一个事务内完成；恢复必须幂等；两 run、Brain restart、orphan running、跨 run 同签名回归均可复跑。 |
 | **Invariant（永不违反）** | 不变量 | 不新增第二账本；只复用 `initiative_contracts`、`harness_attempts`、`orchestrator_decision_log`；不从 Agent 自然语言猜状态；不削弱既有合同测试。 |
 | **判定点（怎么知道）** | 判断假设 | 见下方登记表。 |
@@ -44,7 +44,7 @@ N/A - 任务无新增 HTTP 响应。验收对象是 Kernel run bootstrap、DB �
 | 判定点 | 候选方法 | 所选方法 | 依据 | 误判后果 |
 |--------|----------|----------|------|----------|
 | （示例：微信群是否发送成功） | A. 监听发送按钮变灰; B. 读取聊天记录 API | A. 监听按钮变灰 | 聊天记录 API 不稳定 | 静默丢消息，用户不知 |
-| approved contract 是否可继承 | A. 最新 `initiative_contracts.status='approved'` + version 最大; B. 当前 run 自带 contract_id | A 优先并在事务内写回当前 run | PRD 要求后续 run 继承最新 approved contract | 重复 proposer/reviewer，GAN 烧轮次 |
+| approved contract 是否可继承 | A. 当前 `task.id` 对应 initiative 下最新 `initiative_contracts.status='approved'` + version 最大; B. 全局或 journey 下最新合同 | A 并在生产 bootstrap 自有事务内写回当前 run | 仓库 SSOT 定义 `initiative_id=task.id`，`journey_id` 不参与合同 scope | 跨任务误继承或重复 proposer/reviewer |
 | PRD/PR/合同里程碑是否已确认 | A. 文件/PR 当前可见; B. `orchestrator_decision_log.observed` 与 GitHub 真相回放 | B + GitHub 真相 | Brain restart 可能看不到本地 worktree，但日志是 append-only | 已确认里程碑降级，重复派 planner/generator |
 | expired lease 是否应 resume | A. provider session 存在即 resume 原 attempt; B. 直接开新 attempt | A | `harness_attempts.provider_session_id` 是 provider 续会话结构化真相 | 同一角色双 attempt、回调乱序 |
 | ⚠️ 跨 run 同根因是否可再派 generator | A. 只看当前 run; B. 同 task/initiative 历史结构化 failure_signature 回放 | B | PRD 明确跨 run 去重 | Generator 反复重派、成本失控、隐藏真实阻塞 |
@@ -53,8 +53,8 @@ N/A - 任务无新增 HTTP 响应。验收对象是 Kernel run bootstrap、DB �
 
 | 场景 | 失败行为 | 重试幂等？ | 降级策略 |
 |------|----------|-----------|----------|
-| 后续 run 找不到 approved contract | 不标 approved，不派 generator；保持 GAN 正常路径或等待人工核查 | 是，按 run/task 重读 DB | 不猜成功 |
-| run bootstrap 事务失败 | 不创建半截 run；回滚 task claim 或结构化失败 | 是，重试同 task 不增加重复角色派发 | 写 failure_reason |
+| 后续 run 找不到当前 task 的 approved contract | `contract_id` 保持 NULL，首轮继续既有 GAN 路径；其他 task/journey 的合同不得继承 | 是，按 `task.id` 重读 DB | 不猜成功、不跨 scope |
+| run bootstrap 事务失败 | 生产函数自己 `ROLLBACK` approved 选择、task payload 更新与 run INSERT，不留下半截 run/半写 payload | 是，重试同 task 不增加重复角色派发 | 原错误向上抛出 |
 | expired lease 有 provider session | reclaim 原 attempt 并 resume 原 provider session | 是，attempt_id/provider_session 唯一 | 不创建新 attempt |
 | expired lease 无 provider session | 先结构化终结原 attempt，再从 DB/GitHub 真相推导下一状态 | 是，终态写入幂等 | 不能确认则 wait:human_review 或 FAILED |
 | 跨 run 同结构化根因再现 | 不再派 generator | 是，failure_signature key 去重 | wait:human_review 或 FAILED |
@@ -76,6 +76,8 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 
 - `taskId`: CLI 参数 `--task-id`，来自 `tasks.id`。
 - `runId`: CLI 参数 `--run-id`，来自 `initiative_runs.id`。
+- `initiativeId`: 字面等于当前 `tasks.id`（`f09c9e31-ed78-4af4-a1b6-88241bc486c5`），不得用 `journey_id` 或全局 latest contract 替代。
+- `journeyId`: 来自 `tasks.payload.journey_id`（`741d4acc-9ca8-4545-a971-efa12fce8150`），只写入 `initiative_runs.journey_id`，不作为合同隔离键。
 - DB 真相来源: `initiative_contracts`、`harness_attempts`、`orchestrator_decision_log`、`initiative_runs`、GitHub PR state/head_sha/statusCheckRollup。
 - 禁止替代 shape: body 传 `tenant_id`、自然语言状态总结、或新增 `contract_branch` ledger。
 
@@ -103,8 +105,9 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 
 ## 接缝清单
 
-- DB 事务接缝: 后续 run 创建与 approved contract 继承必须同事务完成；用真实 Postgres temp schema 断言 `initiative_runs.contract_id` 指向最新 approved row。
-- Provider session 接缝: expired lease 有 session 时必须 resume 原 attempt；用真实 `harness_attempts` lease/session 行和 launcher 结果断言无新 attempt。
+- DB 事务接缝: 后续 run 创建与 approved contract 继承必须由生产 bootstrap 自己 acquire client/BEGIN/COMMIT 完成；用真实 Postgres temp schema + 查询事件探针断言只选 `task.id` scope，注入 run INSERT 失败时生产路径 ROLLBACK 且无半写。
+- Worktree 重启接缝: Brain restart 用例显式 `fileExists=false`，只能从 `initiative_contracts`、append-only decision log 与 GitHub 结构化响应恢复 PRD/PR/合同里程碑。
+- Provider session 接缝: expired lease 有 session 时必须 CAS reclaim 原 attempt；用真实 `harness_attempts` 断言 `status=starting`、`lease_owner=watchdog:test`、expiry 未来化及原 attempt/session 不变，未过期 running 行不得被本 worker resume。
 - GitHub/PR 真相接缝: PR head_sha、CI rollup 与 decision log 必须逐字段对齐；Sprint 红测可注入隔离 `execCmd`，最终 E2E 必须真跑 `gh pr view`，不从 callback 文本猜。
 
 ## Golden Path
@@ -117,21 +120,23 @@ node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
 
 **来源**: `[FROM_PRD]` - PRD Golden Path 第 1 步。
 
-**可观测行为**: 同一 initiative/task 的新 run 创建后，`initiative_runs.contract_id` 指向 version 最大的 approved `initiative_contracts.id`，`initiative_contracts.branch` 保留 approved propose branch；derive 看到 `contract.approved=true`，不再派 proposer/reviewer。
+**可观测行为**: 新 run 的 `initiative_id` 字面等于 `task.id`，`journey_id` 独立保留；生产 bootstrap 自己 acquire PostgreSQL client，并在同一 `BEGIN/COMMIT` 中按该 `initiative_id` 选择 latest approved contract 与 INSERT run。其他 task 的更高版本 approved contract 是 decoy、不得继承；当前 task 无 approved contract 时 `contract_id=NULL` 并进入首轮 GAN。注入 run INSERT 失败时必须 `ROLLBACK`，不得留下 run 或 task payload 半写。
 
 **验证命令**:
 
 ```bash
 DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "后续 run 继承 latest approved contract" --reporter=verbose
+DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "首个 run 无 approved contract" --reporter=verbose
+DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "run bootstrap 中途失败" --reporter=verbose
 ```
 
-**硬阈值**: 测试 exit 0；新 run contract_id 等于最新 approved contract id；derive action 不属于 `spawn:proposer` 或 `spawn:reviewer`。
+**硬阈值**: 三条测试均 exit 0；approved 场景事件顺序为 CONNECT -> BEGIN -> scoped approved SELECT -> run INSERT -> COMMIT，`initiative_id=TASK_ID`、`journey_id=JOURNEY_ID`、contract_id 等于当前 task 的 v2 而非 decoy v99；首轮场景 `contract_id=NULL` 且 action=`spawn:proposer`；失败注入事件终点为 ROLLBACK 且 run 数为 0、task payload 未变化。
 
 ### Step 2: 已确认 PRD/PR/合同里程碑单调恢复
 
 **来源**: `[FROM_PRD]` - PRD Golden Path 第 2 步与 Brain restart 边界情况。
 
-**可观测行为**: Brain restart 或 worktree 暂不可见时，不把已确认 PRD/PR/contract 降级；恢复结果与不中断基线一致。
+**可观测行为**: Brain restart 用例强制 `fileExists=false`，worktree 中 PRD 文件不可见；系统只能从同 task 的 approved contract、append-only decision log 与 GitHub 结构化响应恢复 `prdExists/contract/pr`，不得把已确认里程碑降级；恢复结果与 `fileExists=true` 的不中断基线一致。
 
 **验证命令**:
 
@@ -139,21 +144,22 @@ DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915
 DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "Brain restart 后 PRD/PR/合同里程碑单调恢复" --reporter=verbose
 ```
 
-**硬阈值**: 测试 exit 0；`observed.contract.approved=true`；`observed.pr.url/head_sha/ci` 来自结构化 PR URL + GitHub 真相；恢复后的 decision.action 与不中断基线一致且不为 `spawn:planner/proposer/reviewer`。
+**硬阈值**: 测试 exit 0；重启路径明确收到 `fileExists=false` 仍有 `prdExists=true`、`observed.contract.approved=true`；`observed.pr.url/head_sha/ci` 来自 DB decision log + GitHub 真相；恢复后的 decision.action 与不中断基线一致且不为 `spawn:planner/proposer/reviewer`。
 
 ### Step 3: expired lease/orphan running 优先 reclaim+resume 原 attempt
 
 **来源**: `[FROM_PRD]` - PRD Golden Path 第 3 步。
 
-**可观测行为**: `harness_attempts.status in ('starting','running')` 且 lease 过期、有 `provider_session_id` 时，`recoverDurableRun` 只 reclaim 原 attempt，经既有 provider registry 调真实 adapter `resume`，再调用 launcher；不得插入新 attempt。
+**可观测行为**: `harness_attempts.status in ('starting','running')` 且 lease 过期、有 `provider_session_id` 时，`recoverDurableRun` 先通过 `attempt-store.reclaim` 的 CAS 将原行变成 `status='starting'`、`lease_owner='watchdog:test'`、`lease_expires_at > NOW()`，再把 reclaim 返回的同一行交给既有 provider registry、真实 adapter `resume` 与 launcher；attempt id/provider session 不变且不得插入新 attempt。未过期 running attempt 必须保持原 owner/status/expiry，不得被本 worker resume。
 
 **验证命令**:
 
 ```bash
 DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "稳定恢复原语：expired lease 有 provider session" --reporter=verbose
+DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "稳定恢复原语：未过期 running attempt" --reporter=verbose
 ```
 
-**硬阈值**: 测试 exit 0；真实 import/use 命中 `recoverDurableRun`；同一 run 的 `harness_attempts` 行数不增加；原 attempt/provider_session_id 不变；Codex adapter 生成含 `exec resume provider-session-1` 的 spec，launcher 收到该原 attempt。
+**硬阈值**: 两条测试均 exit 0；expired 场景真实 import/use 命中 `recoverDurableRun`，同一 run 的行数不增加，DB 与 launcher 都看到同一 attempt/session 及 reclaim 后 `starting/watchdog:test/future expiry`，Codex adapter 生成含 `exec resume provider-session-1` 的 spec；未过期场景 launcher 调用数为 0，原 `running/active-worker/provider-session-live/future expiry` 全部不变。
 
 ### Step 4: 无 provider session 时先结构化终结再推导
 
@@ -276,9 +282,12 @@ echo "OK kernel durable resume E2E"
 | 功能 | BEHAVIOR 覆盖 | Test File | 预期红证据 |
 |---|---|---|---|
 | Kernel durable resume | 后续 run 继承 latest approved contract | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前实现新 run `contract_id` 为空，测试失败 |
+| Kernel durable resume | 首个 run 无 approved contract 时维持首次 GAN 路径 | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 错误的全局 latest 查询会继承其他 task 的 v99 decoy，测试失败 |
+| Kernel durable resume | run bootstrap 中途失败时生产事务回滚 | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前 bootstrap 不自建事务且会留下 task payload 半写，事务事件/回滚断言失败 |
 | Kernel durable resume | ground truth 从历史 approved contract 恢复当前 run | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前 `collectGroundTruth` 在 run.contract_id 为空时返回 approved:false，测试失败 |
-| Kernel durable resume | Brain restart 后 PRD/PR/合同里程碑单调恢复 | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前 `collectGroundTruth` 不从结构化 decision log 恢复 PR URL 与 approved contract，决策会降级 |
+| Kernel durable resume | Brain restart 后 PRD/PR/合同里程碑单调恢复 | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | `fileExists=false` 时当前 `collectGroundTruth` 不从结构化 decision log 恢复 PRD/PR 与 approved contract，决策会降级 |
 | Kernel durable resume | 跨 run 同结构化 failure signature | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前 derive 只看当前 run，仍会派 generator-fix，测试失败 |
 | Kernel durable resume | 跨 run 不同 failure signature 首次出现 | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 当前缺稳定恢复入口，无法从跨 run 真相返回 `spawn:generator-fix`，import 即 Red |
 | Kernel durable resume | 稳定恢复原语：expired lease 有 provider session | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | `durable-resume.js` 与 `recoverDurableRun` 尚不存在，真实 import/use Red |
+| Kernel durable resume | 稳定恢复原语：未过期 running attempt | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | 缺稳定恢复入口与 lease CAS 保护，真实 import/use Red |
 | Kernel durable resume | 稳定恢复原语：无 provider session | `sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts` | `durable-resume.js` 与自动终结后 derive 编排尚不存在，真实 import/use Red |

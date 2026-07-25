@@ -14,7 +14,10 @@ const { Pool } = pg;
 const pool = new Pool(DB_DEFAULTS);
 
 const TASK_ID = 'f09c9e31-ed78-4af4-a1b6-88241bc486c5';
-const INITIATIVE_ID = '741d4acc-9ca8-4545-a971-efa12fce8150';
+const INITIATIVE_ID = TASK_ID;
+const JOURNEY_ID = '741d4acc-9ca8-4545-a971-efa12fce8150';
+const DECOY_TASK_ID = 'f09c9e31-ed78-4af4-a1b6-88241bc486c6';
+const DECOY_APPROVED_ID = '10000000-0000-4000-8000-000000000099';
 const APPROVED_V1 = '10000000-0000-4000-8000-000000000001';
 const APPROVED_V2 = '10000000-0000-4000-8000-000000000002';
 const OLD_RUN_ID = '20000000-0000-4000-8000-000000000001';
@@ -34,6 +37,7 @@ function taskRow(payload = {}) {
       harness_runtime: 'kernel-v1',
       sprint_dir: 'sprints/07251915-kernel-f09c9e31',
       review_required: false,
+      journey_id: JOURNEY_ID,
       ...payload,
     },
   };
@@ -53,7 +57,7 @@ async function createKernelTempSchema() {
       claimed_by text,
       claimed_at timestamptz,
       updated_at timestamptz DEFAULT now()
-    ) ON COMMIT DROP;
+    );
 
     CREATE TEMP TABLE initiative_contracts (
       id uuid PRIMARY KEY,
@@ -67,7 +71,7 @@ async function createKernelTempSchema() {
       branch text,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
-    ) ON COMMIT DROP;
+    );
 
     CREATE TEMP TABLE initiative_runs (
       id uuid PRIMARY KEY DEFAULT (
@@ -94,7 +98,7 @@ async function createKernelTempSchema() {
       started_at timestamptz DEFAULT now(),
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
-    ) ON COMMIT DROP;
+    );
 
     CREATE TEMP TABLE orchestrator_decision_log (
       id bigserial PRIMARY KEY,
@@ -106,7 +110,7 @@ async function createKernelTempSchema() {
       action text NOT NULL,
       detail jsonb,
       created_at timestamptz DEFAULT now()
-    ) ON COMMIT DROP;
+    );
 
     CREATE TEMP TABLE harness_attempts (
       id uuid PRIMARY KEY,
@@ -134,7 +138,18 @@ async function createKernelTempSchema() {
       error_message text,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
-    ) ON COMMIT DROP;
+    );
+  `);
+}
+
+async function dropKernelTempSchema() {
+  await client.query(`
+    DROP TABLE IF EXISTS harness_attempts;
+    DROP TABLE IF EXISTS orchestrator_decision_log;
+    DROP TABLE IF EXISTS initiative_runs;
+    DROP TABLE IF EXISTS initiative_contracts;
+    DROP TABLE IF EXISTS tasks;
+    DROP SEQUENCE IF EXISTS kernel_run_seq;
   `);
 }
 
@@ -157,6 +172,98 @@ async function insertApprovedContracts() {
        ($2::uuid, $3::uuid, 2, 'approved', 'cp-harness-propose-r2-f09c9e31-a1', now() - interval '1 hour', '# prd', '# contract')`,
     [APPROVED_V1, APPROVED_V2, INITIATIVE_ID],
   );
+}
+
+async function insertDecoyTaskAndContract() {
+  await client.query(
+    `INSERT INTO tasks (id, title, task_type, status, payload)
+     VALUES ($1::uuid, 'decoy task', 'harness_initiative', 'queued',
+             $2::jsonb)`,
+    [DECOY_TASK_ID, JSON.stringify({
+      harness_runtime: 'kernel-v1',
+      journey_id: JOURNEY_ID,
+    })],
+  );
+  await client.query(
+    `INSERT INTO initiative_contracts
+       (id, initiative_id, version, status, branch, approved_at, prd_content, contract_content)
+     VALUES
+       ($1::uuid, $2::uuid, 99, 'approved', 'cp-harness-propose-r99-decoy',
+        now(), '# decoy prd', '# decoy contract')`,
+    [DECOY_APPROVED_ID, DECOY_TASK_ID],
+  );
+}
+
+function createBootstrapTransactionProbe({ failRunInsert = false } = {}) {
+  const events = [];
+  let inTransaction = false;
+
+  const runQuery = async (text, params) => {
+    const sql = String(text);
+    const normalized = sql.replace(/\s+/g, ' ').trim();
+    if (/^BEGIN\b/i.test(normalized)) {
+      inTransaction = true;
+      events.push({ type: 'BEGIN', sql: normalized });
+      return client.query(text, params);
+    }
+    if (/^COMMIT\b/i.test(normalized)) {
+      events.push({ type: 'COMMIT', sql: normalized });
+      const result = await client.query(text, params);
+      inTransaction = false;
+      return result;
+    }
+    if (/^ROLLBACK\b/i.test(normalized)) {
+      events.push({ type: 'ROLLBACK', sql: normalized });
+      const result = await client.query(text, params);
+      inTransaction = false;
+      return result;
+    }
+
+    const selectsApproved = /initiative_contracts/i.test(normalized) && /approved/i.test(normalized);
+    const insertsRun = /INSERT INTO initiative_runs/i.test(normalized);
+    const updatesTask = /UPDATE tasks/i.test(normalized);
+    if (selectsApproved) events.push({ type: 'SELECT_APPROVED', sql: normalized, inTransaction });
+    if (insertsRun) events.push({ type: 'INSERT_RUN', sql: normalized, inTransaction });
+    if (updatesTask) events.push({ type: 'UPDATE_TASK', sql: normalized, inTransaction });
+    if (!selectsApproved && !insertsRun && !updatesTask) {
+      events.push({ type: 'QUERY', sql: normalized, inTransaction });
+    }
+    if (failRunInsert && insertsRun) {
+      throw new Error('injected_bootstrap_run_insert_failure');
+    }
+    return client.query(text, params);
+  };
+
+  return {
+    events,
+    query: runQuery,
+    async connect() {
+      events.push({ type: 'CONNECT' });
+      return {
+        query: runQuery,
+        release() {
+          events.push({ type: 'RELEASE' });
+        },
+      };
+    },
+  };
+}
+
+function expectAtomicBootstrap(events, terminalType = 'COMMIT') {
+  const indexOf = (type) => events.findIndex((event) => event.type === type);
+  const connect = indexOf('CONNECT');
+  const begin = indexOf('BEGIN');
+  const selectApproved = indexOf('SELECT_APPROVED');
+  const insertRun = indexOf('INSERT_RUN');
+  const terminal = indexOf(terminalType);
+
+  expect(connect).toBeGreaterThanOrEqual(0);
+  expect(begin).toBeGreaterThan(connect);
+  expect(selectApproved).toBeGreaterThan(begin);
+  expect(insertRun).toBeGreaterThan(selectApproved);
+  expect(terminal).toBeGreaterThan(insertRun);
+  expect(events[selectApproved].inTransaction).toBe(true);
+  expect(events[insertRun].inTransaction).toBe(true);
 }
 
 function execCmdForFailedPr(failureName) {
@@ -197,11 +304,11 @@ function durableRecoveryInput(overrides = {}) {
   };
 }
 
-async function observedFor(runId, execCmd = () => '') {
+async function observedFor(runId, execCmd = () => '', overrides = {}) {
   const observed = await collectGroundTruth({
     pool: client,
     execCmd,
-    fileExists: () => true,
+    fileExists: overrides.fileExists ?? (() => true),
     readFile: () => '{}',
     readAuthCircuit: async () => [],
   }, {
@@ -229,13 +336,13 @@ async function observedFor(runId, execCmd = () => '') {
 describe('Kernel durable resume [BEHAVIOR]', () => {
   beforeEach(async () => {
     client = await pool.connect();
-    await client.query('BEGIN');
     await createKernelTempSchema();
   });
 
   afterEach(async () => {
     if (client) {
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK').catch(() => {});
+      await dropKernelTempSchema();
       client.release();
       client = null;
     }
@@ -248,6 +355,7 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
   it('后续 run 继承 latest approved contract id/version/branch 且 derive 不再派 proposer/reviewer', async () => {
     const task = await insertTask();
     await insertApprovedContracts();
+    await insertDecoyTaskAndContract();
     await client.query(
       `INSERT INTO initiative_runs
          (id, initiative_id, contract_id, phase, current_task_id, orchestrator_version, completed_at)
@@ -255,8 +363,9 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
       [OLD_RUN_ID, INITIATIVE_ID, APPROVED_V2, TASK_ID],
     );
 
+    const bootstrapPool = createBootstrapTransactionProbe();
     const result = await spawnSkillRelaySession(task, {
-      pool: client,
+      pool: bootstrapPool,
       now: () => new Date('2026-07-25T19:15:00Z'),
       ensureWt: async () => '/tmp/kernel-durable-resume-worktree',
       launchKernel: async () => ({ pid: 4242 }),
@@ -264,22 +373,88 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
 
     expect(result).toMatchObject({ ok: true, mode: 'kernel-v1' });
     const { rows } = await client.query(
-      `SELECT r.contract_id, c.version, c.branch
+      `SELECT r.initiative_id, r.journey_id, r.contract_id, c.version, c.branch
          FROM initiative_runs r
          LEFT JOIN initiative_contracts c ON c.id = r.contract_id
         WHERE r.id = $1::uuid`,
       [result.runId],
     );
     expect(rows[0]).toMatchObject({
+      initiative_id: TASK_ID,
+      journey_id: JOURNEY_ID,
       contract_id: APPROVED_V2,
       version: 2,
       branch: 'cp-harness-propose-r2-f09c9e31-a1',
     });
+    expect(rows[0].contract_id).not.toBe(DECOY_APPROVED_ID);
+    expectAtomicBootstrap(bootstrapPool.events);
 
     const { decision } = await observedFor(result.runId);
     expect(decision.action).not.toBe('spawn:proposer');
     expect(decision.action).not.toBe('spawn:reviewer');
     expect(decision.action).toBe('spawn:generator');
+  });
+
+  it('首个 run 无 approved contract 时维持首次 GAN 路径且不继承其他 task 合同', async () => {
+    const task = await insertTask();
+    await insertDecoyTaskAndContract();
+
+    const bootstrapPool = createBootstrapTransactionProbe();
+    const result = await spawnSkillRelaySession(task, {
+      pool: bootstrapPool,
+      now: () => new Date('2026-07-25T19:16:00Z'),
+      ensureWt: async () => '/tmp/kernel-durable-resume-first-run',
+      launchKernel: async () => ({ pid: 4243 }),
+    });
+
+    expect(result).toMatchObject({ ok: true, mode: 'kernel-v1' });
+    const { rows } = await client.query(
+      `SELECT initiative_id, journey_id, contract_id
+         FROM initiative_runs
+        WHERE id=$1::uuid`,
+      [result.runId],
+    );
+    expect(rows[0]).toMatchObject({
+      initiative_id: TASK_ID,
+      journey_id: JOURNEY_ID,
+      contract_id: null,
+    });
+    expectAtomicBootstrap(bootstrapPool.events);
+
+    const { observed, decision } = await observedFor(result.runId);
+    expect(observed.contract.approved).toBe(false);
+    expect(observed.contract.id).toBeNull();
+    expect(decision.action).toBe('spawn:proposer');
+  });
+
+  it('run bootstrap 中途失败时生产事务回滚且不留下半写', async () => {
+    const task = await insertTask();
+    await insertApprovedContracts();
+    const beforeTask = await client.query(
+      'SELECT payload FROM tasks WHERE id=$1::uuid',
+      [TASK_ID],
+    );
+    const bootstrapPool = createBootstrapTransactionProbe({ failRunInsert: true });
+
+    await expect(spawnSkillRelaySession(task, {
+      pool: bootstrapPool,
+      now: () => new Date('2026-07-25T19:17:00Z'),
+      ensureWt: async () => '/tmp/kernel-durable-resume-rollback',
+      launchKernel: async () => ({ pid: 4244 }),
+    })).rejects.toThrow('injected_bootstrap_run_insert_failure');
+
+    expectAtomicBootstrap(bootstrapPool.events, 'ROLLBACK');
+    expect(bootstrapPool.events.some((event) => event.type === 'COMMIT')).toBe(false);
+    const runs = await client.query(
+      'SELECT count(*)::int AS n FROM initiative_runs WHERE current_task_id=$1::uuid',
+      [TASK_ID],
+    );
+    expect(runs.rows[0].n).toBe(0);
+    const afterTask = await client.query(
+      'SELECT payload FROM tasks WHERE id=$1::uuid',
+      [TASK_ID],
+    );
+    expect(afterTask.rows[0].payload).toEqual(beforeTask.rows[0].payload);
   });
 
   it('ground truth 从历史 approved contract 恢复当前 run，已确认合同里程碑不降级', async () => {
@@ -345,8 +520,12 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
       return '';
     };
 
-    const uninterrupted = await observedFor(OLD_RUN_ID, execCmd);
-    const resumed = await observedFor(CURRENT_RUN_ID, execCmd);
+    const uninterrupted = await observedFor(OLD_RUN_ID, execCmd, {
+      fileExists: () => true,
+    });
+    const resumed = await observedFor(CURRENT_RUN_ID, execCmd, {
+      fileExists: () => false,
+    });
 
     expect(resumed.observed.prdExists).toBe(true);
     expect(resumed.observed.contract.approved).toBe(true);
@@ -466,7 +645,9 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
     }));
 
     const after = await client.query(
-      'SELECT count(*)::int AS n, max(provider_session_id) AS session_id FROM harness_attempts WHERE run_id=$1::uuid',
+      `SELECT id, status, lease_owner, lease_expires_at, provider_session_id
+         FROM harness_attempts
+        WHERE run_id=$1::uuid`,
       [CURRENT_RUN_ID],
     );
     expect(recovery).toMatchObject({
@@ -477,14 +658,69 @@ describe('Kernel durable resume [BEHAVIOR]', () => {
     });
     expect(launched.attempt).toMatchObject({
       id: '30000000-0000-4000-8000-000000000001',
+      status: 'starting',
+      lease_owner: 'watchdog:test',
       provider_session_id: 'provider-session-1',
     });
+    expect(new Date(launched.attempt.lease_expires_at).getTime()).toBeGreaterThan(Date.now());
     expect(launched.spec).toMatchObject({ provider: 'codex', command: 'codex' });
     expect(launched.spec.args).toEqual(expect.arrayContaining([
       'exec', 'resume', 'provider-session-1',
     ]));
-    expect(after.rows[0].n).toBe(before.rows[0].n);
-    expect(after.rows[0].session_id).toBe('provider-session-1');
+    expect(after.rows).toHaveLength(before.rows[0].n);
+    expect(after.rows[0]).toMatchObject({
+      id: '30000000-0000-4000-8000-000000000001',
+      status: 'starting',
+      lease_owner: 'watchdog:test',
+      provider_session_id: 'provider-session-1',
+    });
+    expect(new Date(after.rows[0].lease_expires_at).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('稳定恢复原语：未过期 running attempt 不被本 worker reclaim 或 resume', async () => {
+    await insertTask();
+    await client.query(
+      `INSERT INTO initiative_runs
+         (id, initiative_id, phase, current_task_id, orchestrator_version)
+       VALUES ($1::uuid, $2::uuid, 'generate', $3::uuid, 'v2')`,
+      [CURRENT_RUN_ID, INITIATIVE_ID, TASK_ID],
+    );
+    await client.query(
+      `INSERT INTO harness_attempts
+         (id, run_id, hop, phase, role, status, provider_session_id, lease_owner, lease_expires_at, task_bundle)
+       VALUES
+         ('30000000-0000-4000-8000-000000000003'::uuid, $1::uuid, 9, 'generate', 'generator',
+          'running', 'provider-session-live', 'active-worker', now() + interval '5 minutes', '{}'::jsonb)`,
+      [CURRENT_RUN_ID],
+    );
+
+    let launches = 0;
+    const recovery = await recoverDurableRun(durableRecoveryInput({
+      launchResume: async () => {
+        launches += 1;
+        return { pid: 4245 };
+      },
+    }));
+
+    expect(recovery).toMatchObject({
+      outcome: 'reconciled',
+      terminated_attempt_id: null,
+    });
+    expect(launches).toBe(0);
+    const { rows } = await client.query(
+      `SELECT id, status, lease_owner, lease_expires_at, provider_session_id
+         FROM harness_attempts
+        WHERE run_id=$1::uuid`,
+      [CURRENT_RUN_ID],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: '30000000-0000-4000-8000-000000000003',
+      status: 'running',
+      lease_owner: 'active-worker',
+      provider_session_id: 'provider-session-live',
+    });
+    expect(new Date(rows[0].lease_expires_at).getTime()).toBeGreaterThan(Date.now());
   });
 
   it('稳定恢复原语：无 provider session 时自动终结 orphan 后从 DB/GitHub 真相推导', async () => {

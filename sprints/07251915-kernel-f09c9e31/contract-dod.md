@@ -14,7 +14,7 @@ target_environment: local_api
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07251915-kernel-f09c9e31/contract-draft.md','utf8');for(const s of ['## Golden Path','## 禁 mock 边清单','## E2E 验收'])if(!c.includes(s))process.exit(1)"
 
 - [ ] [ARTIFACT] Sprint 红测文件存在且测试名可被 Test Contract 字面匹配。
-  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts','utf8');for(const s of ['后续 run 继承 latest approved contract','ground truth 从历史 approved contract 恢复当前 run','Brain restart 后 PRD/PR/合同里程碑单调恢复','跨 run 同结构化 failure signature','跨 run 不同 failure signature 首次出现','稳定恢复原语：expired lease 有 provider session','稳定恢复原语：无 provider session'])if(!c.includes(s))process.exit(1)"
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts','utf8');for(const s of ['后续 run 继承 latest approved contract','首个 run 无 approved contract','run bootstrap 中途失败','ground truth 从历史 approved contract 恢复当前 run','Brain restart 后 PRD/PR/合同里程碑单调恢复','跨 run 同结构化 failure signature','跨 run 不同 failure signature 首次出现','稳定恢复原语：expired lease 有 provider session','稳定恢复原语：未过期 running attempt','稳定恢复原语：无 provider session'])if(!c.includes(s))process.exit(1)"
 
 - [ ] [ARTIFACT] Commander Phase 1/2 可复用稳定恢复原语，且未复制第二状态机。
   Test: node -e "import('./packages/brain/src/orchestrator/durable-resume.js').then(m=>{if(typeof m.recoverDurableRun!=='function')process.exit(1)})"
@@ -25,9 +25,21 @@ target_environment: local_api
 ## BEHAVIOR 条目（内嵌可执行 manual 命令）
 
 - [ ] [BEHAVIOR] [L2] 后续 run 继承 latest approved contract id/version/branch，且 derive 不再派 proposer/reviewer
-  动作: 在真实 PostgreSQL 测试事务中创建同一 task 的历史 approved contract 与后续 kernel run。
-  预期观察: 测试命令退出时，新 run 的 `contract_id` 指向最新 approved contract，derive action 进入 generator 主线。
+  动作: 在真实 PostgreSQL temp schema 中创建当前 `TASK_ID` 的 v1/v2 approved contract、另一个 task/initiative 的 v99 decoy，再调用生产 `spawnSkillRelaySession`。
+  预期观察: 测试命令退出时，生产 bootstrap 自己 acquire client 并按 CONNECT/BEGIN/scoped SELECT/INSERT/COMMIT 原子执行；新 run 的 `initiative_id=TASK_ID`、`journey_id=JOURNEY_ID`、`contract_id` 指向当前 task v2 而非 decoy，derive action 进入 generator 主线。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "后续 run 继承 latest approved contract" --reporter=verbose'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] 首个 run 无 approved contract 时维持首次 GAN 路径并隔离其他 task
+  动作: 当前 `TASK_ID` 不种 approved contract，只为另一个 task/initiative 种 v99 decoy，再调用生产 bootstrap。
+  预期观察: 新 run 的 `initiative_id=TASK_ID`、`journey_id=JOURNEY_ID`、`contract_id=NULL`，derive action 字面等于 `spawn:proposer`；不得继承 decoy。
+  验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "首个 run 无 approved contract" --reporter=verbose'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] run bootstrap 中途失败时生产事务回滚且不留半写
+  动作: 当前 `TASK_ID` 有 approved contract，在 scoped contract 选择后向 run INSERT 注入确定性失败。
+  预期观察: 生产 bootstrap 自己执行 ROLLBACK；无 COMMIT、无新 initiative_runs 行，tasks.payload 与调用前字面相同。
+  验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "run bootstrap 中途失败" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] ground truth 从历史 approved contract 恢复当前 run，已确认合同里程碑不降级
@@ -37,15 +49,21 @@ target_environment: local_api
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] Brain restart 后 PRD/PR/合同里程碑单调恢复，下一角色与不中断基线一致
-  动作: 构造一个不中断基线 run 与一个 Brain restart 后当前 run；当前 run 缺 `contract_id/pr_url`，只保留 append-only decision log 的结构化 PRD/PR/contract 观测。
-  预期观察: 测试命令退出时，当前 run 恢复 `prdExists=true`、latest approved contract、真实 PR URL/head_sha/CI 状态，derive action 与不中断基线一致且不退回 planner/proposer/reviewer。
+  动作: 构造一个 `fileExists=true` 的不中断基线 run 与一个 `fileExists=false` 的 Brain restart 当前 run；当前 run 缺 `contract_id/pr_url`，只保留同 task approved contract、append-only decision log 和 GitHub 结构化响应。
+  预期观察: 测试命令退出时，即使 worktree 文件不可见，当前 run 仍从 DB/GitHub 真相恢复 `prdExists=true`、latest approved contract、PR URL/head_sha/CI 状态，derive action 与不中断基线一致且不退回 planner/proposer/reviewer。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "Brain restart 后 PRD/PR/合同里程碑单调恢复" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] 稳定恢复原语：expired lease 有 provider session 时调用真实 provider resume 并恢复原 attempt
   动作: 真实 import/use `recoverDurableRun`，在 PostgreSQL 事务中插入过期 running attempt 与 provider_session_id，并传入既有 Codex adapter 与捕获型 launcher。
-  预期观察: 测试命令退出时，原 attempt 被 reclaim，真实 adapter 生成 `exec resume <session>` spec 并交给 launcher；attempt_id/provider_session_id 不变且行数不增加。
+  预期观察: 测试命令退出时，`attempt-store.reclaim` 的 CAS 把原行更新为 `status=starting`、`lease_owner=watchdog:test`、`lease_expires_at > NOW()`；launcher 收到该 reclaim 返回行，真实 adapter 生成 `exec resume <session>` spec；attempt_id/provider_session_id 不变且行数不增加。
   验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "稳定恢复原语：expired lease 有 provider session" --reporter=verbose'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] 稳定恢复原语：未过期 running attempt 不被本 worker reclaim 或 resume
+  动作: 真实 import/use `recoverDurableRun`，插入 lease 仍在未来、owner 为 `active-worker` 的 running attempt 并提供计数型 launcher。
+  预期观察: launcher 调用数为 0；原 attempt 的 id/status/lease_owner/provider_session_id/future expiry 全部不变，且无新 attempt。
+  验证命令: Test: manual:bash -c 'DB_NAME="${DB_NAME:-cecelia_test}" NODE_ENV=test npx vitest run sprints/07251915-kernel-f09c9e31/tests/kernel-durable-resume.test.ts -t "稳定恢复原语：未过期 running attempt" --reporter=verbose'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] 稳定恢复原语：无 provider session 时自动终结 orphan 后从 DB/GitHub 真相推导
