@@ -214,11 +214,17 @@ _register_session_provenance() {
     fi
 
     task_id="${HARNESS_TASK_ID:-}"
-    PGCONNECT_TIMEOUT=2 psql cecelia -v ON_ERROR_STOP=1 \
-        -v sid="$SID" -v kind="$kind" -v launched_by="$launched_by" -v task_id="$task_id" -c \
-        "INSERT INTO session_provenance(session_id,kind,launched_by,task_id)
-         VALUES (:'sid', :'kind', :'launched_by', NULLIF(:'task_id','')::uuid)
-         ON CONFLICT (session_id) DO NOTHING" >/dev/null 2>&1 || true
+    # psql does not perform variable interpolation inside a -c argument. Feed the
+    # statement over stdin so :'name' is resolved client-side before PostgreSQL
+    # sees it; otherwise registration silently fails (failure is intentionally
+    # non-blocking for Claude startup).
+    PGCONNECT_TIMEOUT=2 psql cecelia -X -v ON_ERROR_STOP=1 \
+        -v sid="$SID" -v kind="$kind" -v launched_by="$launched_by" -v task_id="$task_id" \
+        >/dev/null 2>&1 <<'PROVENANCE_SQL' || true
+INSERT INTO session_provenance(session_id,kind,launched_by,task_id)
+VALUES (:'sid', :'kind', :'launched_by', NULLIF(:'task_id','')::uuid)
+ON CONFLICT (session_id) DO NOTHING;
+PROVENANCE_SQL
 }
 
 _register_session_provenance

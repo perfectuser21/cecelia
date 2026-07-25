@@ -101,9 +101,16 @@ describe('conversation capture human allowlist（真相邻模块 + 真 PostgreSQ
   });
 
   liveHaiku('registered human 经真 Haiku 请求后 summary capture 在五分钟窗内落库', async () => {
+    const liveProvider = process.env.LIVE_HAIKU_PROVIDER || 'anthropic';
+    const credentialPaths = liveProvider === 'anthropic-api'
+      ? [path.join(os.homedir(), '.credentials', 'anthropic.json')]
+      : [
+          path.join(os.homedir(), '.claude-account1', '.credentials.json'),
+          path.join(os.homedir(), '.claude-account2', '.credentials.json'),
+        ];
     expect(
-      fs.existsSync(path.join(os.homedir(), '.credentials', 'anthropic.json')),
-      'RUN_LIVE_HAIKU=1 requires ~/.credentials/anthropic.json in the local_api theater'
+      credentialPaths.some((credentialPath) => fs.existsSync(credentialPath)),
+      `RUN_LIVE_HAIKU=1 requires a real ${liveProvider} credential in the local_api theater`
     ).toBe(true);
 
     const sid = randomUUID();
@@ -115,11 +122,11 @@ describe('conversation capture human allowlist（真相邻模块 + 真 PostgreSQ
     const liveAnthropic = async (agent: string, prompt: string, options: object) => {
       const response = await callLLM(agent, prompt, {
         ...options,
-        provider: 'anthropic-api',
+        provider: liveProvider,
         model: 'claude-haiku-4-5-20251001',
         timeout: 60000,
       });
-      expect(response.provider).toBe('anthropic-api');
+      expect(response.provider).toBe(liveProvider);
       expect(response.model).toBe('claude-haiku-4-5-20251001');
       expect(response.text.length).toBeGreaterThan(0);
       return response;
@@ -140,5 +147,5 @@ describe('conversation capture human allowlist（真相邻模块 + 真 PostgreSQ
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].content).toMatch(/^1\.\s+\S+/m);
-  });
+  }, 90000);
 });
