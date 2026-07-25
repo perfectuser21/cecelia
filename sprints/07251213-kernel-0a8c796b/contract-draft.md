@@ -106,7 +106,7 @@ bash -n scripts/claude-launch.sh
 bash scripts/__tests__/claude-launch-session-provenance.test.sh
 DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run \
   --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs \
-  sprints/07251213-kernel-0a8c796b/tests/launcher-provenance.contract.test.ts
+  tests/regression/kernel-0a8c796b/launcher-provenance.contract.test.ts
 ```
 
 **硬阈值**: 三条命令 exit code = 0；fake-psql 分支覆盖 machine/human/unknown/dry-run/失败继续启动；真 PostgreSQL 回读必须逐字等于 `session_id|machine|cecelia-run|task_id`；每次可判定启动至多一次 INSERT；连接上限 `PGCONNECT_TIMEOUT=2`。
@@ -128,7 +128,7 @@ printf '%s\n' "$DRY_OUTPUT" | grep -Fq "HARNESS_TASK_ID=$TEST_TASK_ID"
 printf '%s\n' "$DRY_OUTPUT" | grep -Fq 'claude-launch.sh'
 npx vitest run \
   --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs \
-  sprints/07251213-kernel-0a8c796b/tests/dispatch-provenance.contract.test.ts
+  tests/regression/kernel-0a8c796b/dispatch-provenance.contract.test.ts
 ```
 
 **硬阈值**: 每条 grep 与 Vitest exit code = 0；dry-run 和 headed `innerCmd` 均逐字包含三个 provenance env 字段及真实 launcher；首次 attempt 仅一次声明；既有 HARNESS_NODE/evaluator gate 环境不回退。
@@ -143,7 +143,7 @@ npx vitest run \
 ```bash
 DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run \
   --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs \
-  sprints/07251213-kernel-0a8c796b/tests/conversation-human-gate.contract.test.ts
+  tests/regression/kernel-0a8c796b/conversation-human-gate.contract.test.ts
 cd packages/brain
 DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run \
   src/__tests__/conversation-capture-human-gate.test.js \
@@ -239,11 +239,11 @@ esac
 
 npx vitest run \
   --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs \
-  sprints/07251213-kernel-0a8c796b/tests/session-provenance.contract.test.ts \
-  sprints/07251213-kernel-0a8c796b/tests/launcher-provenance.contract.test.ts \
-  sprints/07251213-kernel-0a8c796b/tests/dispatch-provenance.contract.test.ts \
-  sprints/07251213-kernel-0a8c796b/tests/conversation-human-gate.contract.test.ts \
-  sprints/07251213-kernel-0a8c796b/tests/cleanup-sop.contract.test.ts
+  tests/regression/kernel-0a8c796b/session-provenance.contract.test.ts \
+  tests/regression/kernel-0a8c796b/launcher-provenance.contract.test.ts \
+  tests/regression/kernel-0a8c796b/dispatch-provenance.contract.test.ts \
+  tests/regression/kernel-0a8c796b/conversation-human-gate.contract.test.ts \
+  tests/regression/kernel-0a8c796b/cleanup-sop.contract.test.ts
 
 cd packages/brain
 npx vitest run src/__tests__/integration/session-provenance.integration.test.js
@@ -265,11 +265,11 @@ echo "OK: 非破坏性 Golden Path 验收通过；生产接缝保持 logic-done-
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| provenance 真 PostgreSQL schema | `tests/session-provenance.contract.test.ts` | session_provenance migration 在真 PostgreSQL 中约束 human/machine 并可重复应用 | migration 文件不存在，测试在任何 schema 断言前 FAIL |
-| launcher 真登记接缝 | `tests/launcher-provenance.contract.test.ts` | claude launcher 在真 PostgreSQL 写入 machine provenance 并回读 | migration/launcher 登记尚不存在，按 session_id 回读为空而 FAIL |
-| 两条机器派发命令 shape | `tests/dispatch-provenance.contract.test.ts` | cecelia-run dry-run 输出 machine provenance 三字段并调用 launcher / headed Claude 生产命令构造器透传 machine provenance 三字段 | dry-run 与 headed tmux 命令均缺 `CECELIA_DISPATCH`/`CECELIA_LAUNCHED_BY`，值断言 FAIL |
-| human allowlist + 真 Haiku | `tests/conversation-human-gate.contract.test.ts` | runConversationCapture 只让 registered human 产生原始与摘要两条 capture / registered human 经真 Haiku 请求后 summary capture 在五分钟窗内落库 | migration/allowlist 尚不存在；未登记 fixture 仍会进入旧采集路径，新的 provenance 与 live-summary 断言 FAIL |
-| 受保护清理 SOP | `tests/cleanup-sop.contract.test.ts` | cleanup SOP 真执行先备份后限定删除且备份失败零删除 | shell test/cleanup SOP 尚不存在，真实执行 exit 非 0 |
+| provenance 真 PostgreSQL schema | `../../tests/regression/kernel-0a8c796b/session-provenance.contract.test.ts` | session_provenance migration 在真 PostgreSQL 中约束 human/machine 并可重复应用 | migration 文件不存在，测试在任何 schema 断言前 FAIL |
+| launcher 真登记接缝 | `../../tests/regression/kernel-0a8c796b/launcher-provenance.contract.test.ts` | claude launcher 在真 PostgreSQL 写入 machine provenance 并回读 | migration/launcher 登记尚不存在，按 session_id 回读为空而 FAIL |
+| 两条机器派发命令 shape | `../../tests/regression/kernel-0a8c796b/dispatch-provenance.contract.test.ts` | cecelia-run dry-run 输出 machine provenance 三字段并调用 launcher / headed Claude 生产命令构造器透传 machine provenance 三字段 | dry-run 与 headed tmux 命令均缺 `CECELIA_DISPATCH`/`CECELIA_LAUNCHED_BY`，值断言 FAIL |
+| human allowlist + 真 Haiku | `../../tests/regression/kernel-0a8c796b/conversation-human-gate.contract.test.ts` | runConversationCapture 只让 registered human 产生原始与摘要两条 capture / registered human 经真 Haiku 请求后 summary capture 在五分钟窗内落库 | migration/allowlist 尚不存在；未登记 fixture 仍会进入旧采集路径，新的 provenance 与 live-summary 断言 FAIL |
+| 受保护清理 SOP | `../../tests/regression/kernel-0a8c796b/cleanup-sop.contract.test.ts` | cleanup SOP 真执行先备份后限定删除且备份失败零删除 | shell test/cleanup SOP 尚不存在，真实执行 exit 非 0 |
 
 ## Notes
 
