@@ -1,0 +1,33 @@
+{
+  "initiative_id": "74d3dbc0-7f36-4422-9f7a-138cc66c0174",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端 Kernel 派发/预检/分流 hotfix，无前端或真机链路。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Kernel capability gate 与结构化预检分流",
+      "scope": "新增 server-owned capability snapshot、attempt 前 preflight 门、capability mismatch 与 product failure 分流、瞬断重试收敛闸、注入依赖回归测试，并同步 Brain 版本账本。",
+      "dod": [
+        "[BEHAVIOR] createAttempt 前阻断 provider/GitHub/PostgreSQL/模型 capability 缺失并返回 infrastructure_blocked 或 capability mismatch",
+        "[BEHAVIOR] capability mismatch 转人审与告警，不进入 generator-fix；product failure 维持 generator-fix",
+        "[BEHAVIOR] 同签名网络瞬断有限重试且达到阈值后阻断",
+        "[ARTIFACT] 不修改跨 run contract 继承和 telemetry schema，Brain 版本账本同步"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/capability-gate.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/__tests__/capability-gate.test.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher-capability-gate.test.js",
+        "packages/brain/src/orchestrator/__tests__/derive-capability-routing.test.js",
+        "DEFINITION.md",
+        ".brain-versions",
+        "VERSION"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 90
+    }
+  ]
+}
