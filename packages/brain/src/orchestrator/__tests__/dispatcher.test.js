@@ -233,13 +233,22 @@ describe('createDispatcher', () => {
       hop: 7,
       observed: {
         ...observed,
-        pr: { url: 'https://github.com/o/r/pull/42', head_sha: 'sha-1', ci: 'pass' },
+        pr: {
+          url: 'https://github.com/o/r/pull/42',
+          head_ref: 'cp-evaluator-target',
+          head_sha: 'sha-1',
+          ci: 'pass',
+        },
       },
       decision: { phase: 'evaluate', reason: 'ci_pass' },
     });
 
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
     expect(created.bundle.constraints).toMatchObject({ fresh_session: true, read_only: false });
+    expect(created.bundle.inputs).toMatchObject({
+      pr_branch: 'cp-evaluator-target',
+      pr_head_sha: 'sha-1',
+    });
     expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
       bundle: expect.objectContaining({ constraints: expect.objectContaining({ read_only: false }) }),
     }));
@@ -398,7 +407,12 @@ describe('createDetachedLauncher', () => {
     await launcher.launch({
       attempt: { id: attemptId, run_id: runId, hop: 7, role: 'evaluator' },
       bundle: {
-        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        inputs: {
+          task_id: taskId,
+          worktree_path: '/tmp/worktree',
+          pr_branch: 'cp-evaluator-target',
+          pr_head_sha: 'sha-1',
+        },
         constraints: { read_only: false },
       },
       spec: { provider: 'claude', args: [], stdin: '{}', env: {} },
@@ -412,6 +426,8 @@ describe('createDetachedLauncher', () => {
         GIT_CONFIG_COUNT: '1',
         GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
         GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
+        PR_BRANCH: 'cp-evaluator-target',
+        PR_HEAD_SHA: 'sha-1',
       }),
     }));
   });

@@ -124,6 +124,10 @@ function buildInputs(spec, ctx) {
   if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.pull_request = observed.pr ?? null;
   }
+  if (spec.role === 'evaluator') {
+    common.pr_branch = observed.pr?.head_ref ?? null;
+    common.pr_head_sha = observed.pr?.head_sha ?? null;
+  }
   if (spec.role === 'judge') {
     common.evaluator_result = observed.evaluateVerdict ?? observed.callbackResult ?? null;
   }
@@ -309,6 +313,12 @@ export function createDetachedLauncher({
       }
       if (bundle.inputs.contract_branch) {
         roleEnv.CONTRACT_BRANCH = String(bundle.inputs.contract_branch);
+      }
+      if (attempt.role === 'evaluator' && bundle.inputs.pr_branch) {
+        roleEnv.PR_BRANCH = String(bundle.inputs.pr_branch);
+      }
+      if (attempt.role === 'evaluator' && bundle.inputs.pr_head_sha) {
+        roleEnv.PR_HEAD_SHA = String(bundle.inputs.pr_head_sha);
       }
       const extraMounts = [];
       if (spec.provider === 'codex' && providerEnv.CODEX_HOME) {
