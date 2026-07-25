@@ -36,8 +36,11 @@ describe('kernel attempt telemetry contract [BEHAVIOR]', () => {
     ]);
   });
 
-  it('migration 360 adds lineage telemetry columns to harness_attempts', () => {
-    const sql = readFileSync('packages/brain/migrations/357_harness_provider_attempts.sql', 'utf8');
+  it('migration 358 adds lineage telemetry columns to harness_attempts', () => {
+    const sql = readFileSync(
+      new URL('../../../packages/brain/migrations/358_kernel_attempt_telemetry.sql', import.meta.url),
+      'utf8',
+    );
     expect(sql).toMatch(/logical_cycle_id/);
     expect(sql).toMatch(/attempt_kind/);
     expect(sql).toMatch(/retry_of_attempt_id/);
@@ -60,4 +63,3 @@ describe('kernel attempt telemetry contract [BEHAVIOR]', () => {
     ).toBe(true);
   });
 });
-
