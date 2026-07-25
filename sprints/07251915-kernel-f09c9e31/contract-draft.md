@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Notes
 
@@ -7,6 +7,7 @@
 - context-manifest: unavailable (`GET /api/brain/line/741d4acc-9ca8-4545-a971-efa12fce8150/context-manifest` returned HTML 404), so no cumulative FR beyond PRD text.
 - 本 sprint 是 Kernel Harness hotfix；不得创建第二账本，不得写生产数据库，不得自动 merge。
 - Round 2 revision: 补齐 Brain restart 的 PRD/PR/合同三里程碑单调恢复红测、GitHub PR 真调用 E2E oracle、Test Contract 全行为映射与版本同步脚本断言。
+- Round 3 refresh: 保持 Round 2 APPROVED 合同范围不扩张；重新跑确定性格式自查与 Contract Gate，确认可交付给 evaluator。
 
 ## Response Schema（推导来源: N/A）
 
