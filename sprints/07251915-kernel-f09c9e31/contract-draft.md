@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 5)
+# Sprint Contract Draft (Round 6)
 
 ## Notes
 
@@ -10,6 +10,7 @@
 - Round 3 refresh: 保持 Round 2 APPROVED 合同范围不扩张；重新跑确定性格式自查与 Contract Gate，确认可交付给 evaluator。
 - Round 4 refresh: 本轮未收到新的 reviewer 反馈 artifact；继续保留 PRD 字面范围与现有 Red 测试池，不扩张 scope，仅刷新 proposer 分支与结果协议。
 - Round 5 refresh: 本轮仍未收到新的 reviewer 反馈 artifact；继续复用 Round 4 合同范围，已重新跑确定性格式自查与 Contract Gate。Red 证据受本地 PostgreSQL 未启动影响为 `ECONNREFUSED 127.0.0.1:5432`，说明合同红测依赖真实 PG 边且未 mock。
+- Round 6 refresh: 本轮 artifacts 仍为空；继续复用已批准合同的 PRD 字面范围与真实 PG/GitHub 接缝，不扩张 scope，仅刷新 proposer 分支与结果协议。确定性自查与 Contract Gate 均通过；Red 证据仍为本地 PostgreSQL 未启动导致的 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。
 
 ## Response Schema（推导来源: N/A）
 
