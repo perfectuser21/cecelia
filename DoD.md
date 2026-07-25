@@ -27,13 +27,13 @@ sprint_dir: sprints/07251213-kernel-0a8c796b
 - [x] [BEHAVIOR] [L2] BEH-01 覆盖 Golden Path Step 1：provenance migration 在真 PostgreSQL 中约束 human/machine 并可重复应用
   动作: 在隔离 schema 连续两次应用真实 migration，插入 human、machine、空/非空 task_id，并尝试非法 kind 与重复 session。
   预期观察: 两种合法 kind 可定点读回，非法 kind 被拒绝，首次声明保持，migration 重跑不报错。
-  Test: manual:bash -c 'PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/regression/kernel-0a8c796b/session-provenance.contract.test.ts'
+  Test: manual:bash -c 'PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/live/kernel-0a8c796b/session-provenance.contract.test.ts'
   期望: exit 0
 
 - [x] [BEHAVIOR] [L2] BEH-02 覆盖 Golden Path Step 2：launcher 按 dispatch 优先、双 TTY、unknown 与失败语义登记出处
   动作: 用 fake Claude 和受控 TTY/no-TTY 执行真实 launcher；另以只改写目标库的 psql 转发器把同一 launcher SQL 真写 test PostgreSQL 并按 session_id 回读。
   预期观察: machine/human/不登记三路互斥；dry-run 零写入；psql 失败两秒内仍调用 Claude；真库回读 kind、launched_by、task_id 逐字匹配。
-  Test: manual:bash -c 'bash -n scripts/claude-launch.sh && bash scripts/__tests__/claude-launch-session-provenance.test.sh </dev/null && PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/regression/kernel-0a8c796b/launcher-provenance.contract.test.ts'
+  Test: manual:bash -c 'bash -n scripts/claude-launch.sh && bash scripts/__tests__/claude-launch-session-provenance.test.sh </dev/null && PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/live/kernel-0a8c796b/launcher-provenance.contract.test.ts'
   期望: exit 0
 
 - [x] [BEHAVIOR] [L2] BEH-03 覆盖 Golden Path Step 3：cecelia-run 与 headed relay 真实命令构造器透传 machine shape
@@ -45,7 +45,7 @@ sprint_dir: sprints/07251213-kernel-0a8c796b
 - [x] [BEHAVIOR] [L2] BEH-04 覆盖 Golden Path Step 4：混合 idle 批次仅 human 进入 raw+summary capture
   动作: 以真实 transcript fixture、生产 `runConversationCapture`、真 PostgreSQL 跑 human/mixed batch；其中一条 human 不注入 fake LLM，强制通过 `anthropic-api` 真调 Haiku。
   预期观察: 每轮仅一次批量 provenance 查询；恰好 human 被处理；从 `~/.credentials/anthropic.json` 取真 key，真 Haiku 响应 provider/model/text 合法，raw 与 summary 在五分钟窗内各一行；凭据不可用直接 FAIL。
-  Test: manual:bash -c 'PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/regression/kernel-0a8c796b/conversation-human-gate.contract.test.ts && cd packages/brain && PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run src/__tests__/conversation-capture-human-gate.test.js src/__tests__/integration/conversation-capture.integration.test.js -t "registered human|mixed batch|原始文本"'
+  Test: manual:bash -c 'PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/live/kernel-0a8c796b/conversation-human-gate.contract.test.ts && cd packages/brain && PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run src/__tests__/conversation-capture-human-gate.test.js src/__tests__/integration/conversation-capture.integration.test.js -t "registered human|mixed batch|原始文本"'
   期望: exit 0
 
 - [x] [BEHAVIOR] [L2] BEH-05 覆盖 Golden Path Step 5：machine、unknown 与 provenance 查询错误全部失败关闭并写哨兵
@@ -63,7 +63,7 @@ sprint_dir: sprints/07251213-kernel-0a8c796b
 - [x] [BEHAVIOR] [L2] BEH-07 覆盖 Golden Path Step 7：cleanup SOP 在 disposable 真 PostgreSQL 中先备份、后限定删除，失败不删
   动作: 在 test DB 写入 conversation 与非 conversation fixture，执行无确认、备份失败和成功三路。
   预期观察: 无确认/备份失败均非零且零删除；成功只删 conversation%，输出 before/backed_up/deleted/after。
-  Test: manual:bash -c 'PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/regression/kernel-0a8c796b/cleanup-sop.contract.test.ts'
+  Test: manual:bash -c 'PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/live/kernel-0a8c796b/cleanup-sop.contract.test.ts'
   期望: exit 0
 
 ## Invariant 铁律逐条映射
