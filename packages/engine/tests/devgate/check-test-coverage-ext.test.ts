@@ -58,6 +58,41 @@ function runGate(testFileRel: string): number {
 }
 
 describe('check-test-coverage 测试文件扩展名', () => {
+  it('接受 Test Contract 列序为 功能 / BEHAVIOR 覆盖 / Test File / 预期红证据', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'ctc-cols-'));
+    const sprintDir = join(tmp, 'sprints', 'sprint-x');
+    mkdirSync(join(sprintDir, 'tests'), { recursive: true });
+    writeFileSync(
+      join(sprintDir, 'tests/Foo.test.ts'),
+      `import { describe, it, expect } from 'vitest';\n` +
+        `describe('x', () => { it('渲染 PrepPRD 全文', () => { expect(1).toBe(1); }); });\n`
+    );
+    writeFileSync(
+      join(sprintDir, 'contract-draft.md'),
+      [
+        '# Contract',
+        '',
+        '## Test Contract',
+        '',
+        '| 功能 | BEHAVIOR 覆盖 | Test File | 预期红证据 |',
+        '|---|---|---|---|',
+        '| Kernel durable resume | 渲染 | `tests/Foo.test.ts` | 当前实现缺失 → 断言 FAIL |',
+        '',
+      ].join('\n')
+    );
+
+    let exitCode = 0;
+    try {
+      execSync(`node "${SCRIPT}" "${join(sprintDir, 'contract-draft.md')}"`, { encoding: 'utf8' });
+    } catch (e: any) {
+      exitCode = e.status || 1;
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+
+    expect(exitCode).toBe(0);
+  });
+
   it('接受 .test.tsx（React 组件测试）', () => {
     expect(runGate('tests/Foo.test.tsx')).toBe(0);
   });

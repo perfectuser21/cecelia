@@ -46,31 +46,58 @@ function listContracts() {
   }
 }
 
+function normalizeHeaderCell(cell) {
+  return String(cell).replace(/`/g, "").replace(/\s+/g, "").toLowerCase();
+}
+
+function detectColumnMap(cells) {
+  const normalized = cells.map(normalizeHeaderCell);
+  const testFileIdx = normalized.findIndex((cell) =>
+    cell === "testfile" || cell === "testfilepath"
+  );
+  const behaviorIdx = normalized.findIndex((cell) =>
+    cell === "behavior覆盖" || cell === "behavior" || cell === "behaviorcoverage"
+  );
+  if (testFileIdx === -1 || behaviorIdx === -1) return null;
+  const wsIdx = normalized.findIndex((cell) =>
+    cell === "workstream" || cell === "ws" || cell === "功能" || cell === "feature"
+  );
+  return { wsIdx, testFileIdx, behaviorIdx };
+}
+
 /**
  * 从合同内容里提取 Test Contract 表的行
- * 表格式：| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+ * 表格式允许列序调整，只要求表头能识别 `Test File` 与 `BEHAVIOR 覆盖`
  * @returns {Array<{ws: string, testFile: string, behaviors: string[]}>}
  */
 function parseTestContract(content) {
   const lines = content.split("\n");
   const rows = [];
   let inSection = false;
+  let columnMap = null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^##+\s*(?:§\d+\s+)?Test Contract/.test(line)) {
       inSection = true;
+      columnMap = null;
       continue;
     }
     if (inSection && /^##+\s/.test(line)) break; // 下一个 section 开始
     if (!inSection) continue;
-    // 表格数据行：| WS1 | `tests/ws1/retry.test.ts` | ... | ... |
+    if (!line.trim().startsWith("|")) continue;
     const cells = line.split("|").map((s) => s.trim());
     if (cells.length < 5) continue;
-    const ws = cells[1];
-    const testFileRaw = cells[2];
-    const behaviorsRaw = cells[3];
-    if (!ws || !testFileRaw) continue;
-    if (ws === "Workstream" || ws.startsWith("-")) continue; // 表头 / 分隔行
+    const contentCells = cells.slice(1, -1);
+    if (!columnMap) {
+      columnMap = detectColumnMap(contentCells);
+      if (columnMap) continue;
+    }
+    if (!columnMap) continue;
+    if (contentCells.every((cell) => /^:?-{3,}:?$/.test(cell) || cell === "")) continue;
+    const ws = columnMap.wsIdx >= 0 ? contentCells[columnMap.wsIdx] : `row-${rows.length + 1}`;
+    const testFileRaw = contentCells[columnMap.testFileIdx];
+    const behaviorsRaw = contentCells[columnMap.behaviorIdx];
+    if (!testFileRaw) continue;
     // 取 backtick 里的路径
     const m = testFileRaw.match(/`([^`]+)`/);
     const testFile = m ? m[1] : testFileRaw;
@@ -81,7 +108,7 @@ function parseTestContract(content) {
       .split(/[/,、]/)
       .map((s) => s.trim().replace(/^`|`$/g, ""))
       .filter((s) => s.length > 0);
-    rows.push({ ws, testFile, behaviors });
+    rows.push({ ws: ws || `row-${rows.length + 1}`, testFile, behaviors });
   }
   return rows;
 }
