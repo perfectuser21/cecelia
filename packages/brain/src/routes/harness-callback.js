@@ -158,7 +158,9 @@ export async function appendGeneratorFixCallback(
   resolvePrHead = defaultPrHeadResolver,
 ) {
   if (attempt.role !== 'generator') return;
-  if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
+  // blocked / needs_context are terminal, received callbacks too. Dropping them
+  // makes convergence replay misclassify a durable callback as HTTP loss.
+  if (!SUCCESS_TERMINAL_STATUSES.has(result.status)) return;
 
   const { rows: contextRows } = await db.query(
     `SELECT r.pr_url, fix_intent.observed->>'trigger_sha' AS trigger_sha

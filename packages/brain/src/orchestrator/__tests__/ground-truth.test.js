@@ -158,6 +158,36 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
     expect(o.prdExists).toBe(true);
   });
 
+  it('Brain 容器重启后看不到 task worktree，沿用 append-only 决策日志中已观测的 PRD 里程碑', async () => {
+    const deps = makeDeps({
+      rows: {
+        log: [
+          {
+            hop: 2,
+            action: 'spawn:planner',
+            observed: { prdExists: false },
+            detail: { reason: 'no_prd' },
+          },
+          {
+            hop: 3,
+            action: 'spawn:proposer',
+            observed: { prdExists: true },
+            detail: { reason: 'no_contract_yet' },
+          },
+        ],
+      },
+    });
+
+    const o = await collectGroundTruth(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      prdPath: '/host-only-worktree/sprint-prd.md',
+    });
+
+    expect(deps.fileExists).toHaveBeenCalledWith('/host-only-worktree/sprint-prd.md');
+    expect(o.prdExists).toBe(true);
+  });
+
   it('.brain-result.json 存在 → 解析进 callbackResult；不存在 → null', async () => {
     const deps1 = makeDeps({ files: { '/wt/.brain-result.json': '{"status":"DONE","pr_url":"u"}' } });
     const o1 = await collectGroundTruth(deps1, { taskId: TASK_ID, runId: RUN_ID, callbackResultPath: '/wt/.brain-result.json' });
