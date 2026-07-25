@@ -26,7 +26,7 @@ function psql(sql: string) {
       'ON_ERROR_STOP=1',
       '-d',
       database,
-      '-tA',
+      '-qAt',
       '-c',
       sql,
     ],
@@ -96,4 +96,3 @@ describe('session provenance contract（真 PostgreSQL，不 mock DB 边）', ()
     expect(invalid.stderr).toContain('session_provenance_kind_check');
   });
 });
-

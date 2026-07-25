@@ -14,7 +14,7 @@ const migration = path.join(
 const testPrefix = `contract-human-gate-${process.pid}-`;
 let pool: any;
 let fixtureRoot: string | null = null;
-let originalHomedir: typeof os.homedir;
+const liveHaiku = process.env.RUN_LIVE_HAIKU === '1' ? it : it.skip;
 
 function writeClaudeSession(sessionId: string, repo: string, text: string) {
   fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), testPrefix));
@@ -33,7 +33,6 @@ function writeClaudeSession(sessionId: string, repo: string, text: string) {
   const idleTime = new Date(Date.now() - 20 * 60 * 1000);
   fs.utimesSync(file, idleTime, idleTime);
   vi.stubEnv('CLAUDE_PROJECTS_DIR', projects);
-  os.homedir = () => fixtureRoot as string;
 }
 
 async function registerHuman(sessionId: string) {
@@ -52,7 +51,6 @@ beforeAll(async () => {
   ).toBe(true);
   pool = (await import('../../../packages/brain/src/db.js')).default;
   await pool.query(fs.readFileSync(migration, 'utf8'));
-  originalHomedir = os.homedir;
 });
 
 afterEach(async () => {
@@ -61,7 +59,6 @@ afterEach(async () => {
   await pool.query(`DELETE FROM working_memory WHERE key = 'conversation_capture_last_scan'`);
   if (fixtureRoot) fs.rmSync(fixtureRoot, { recursive: true, force: true });
   fixtureRoot = null;
-  os.homedir = originalHomedir;
   vi.unstubAllEnvs();
   vi.resetModules();
 });
@@ -103,7 +100,12 @@ describe('conversation capture human allowlist（真相邻模块 + 真 PostgreSQ
     expect(rows[1].content).toContain('真实人声主题');
   });
 
-  it('registered human 经真 Haiku 请求后 summary capture 在五分钟窗内落库', async () => {
+  liveHaiku('registered human 经真 Haiku 请求后 summary capture 在五分钟窗内落库', async () => {
+    expect(
+      fs.existsSync(path.join(os.homedir(), '.credentials', 'anthropic.json')),
+      'RUN_LIVE_HAIKU=1 requires ~/.credentials/anthropic.json in the local_api theater'
+    ).toBe(true);
+
     const sid = randomUUID();
     const repo = `${testPrefix}live-haiku`;
     writeClaudeSession(sid, repo, '我决定 conversation capture 只允许登记为 human 的会话。');

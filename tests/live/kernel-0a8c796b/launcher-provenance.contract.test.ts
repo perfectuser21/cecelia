@@ -24,7 +24,7 @@ if (!/_test$|_scratch$/.test(database)) {
 function psql(sql: string) {
   return spawnSync(
     'psql',
-    ['-X', '-v', 'ON_ERROR_STOP=1', '-d', database, '-tA', '-c', sql],
+    ['-X', '-v', 'ON_ERROR_STOP=1', '-d', database, '-qAt', '-c', sql],
     { encoding: 'utf8', env: process.env }
   );
 }

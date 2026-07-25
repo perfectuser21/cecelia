@@ -43,9 +43,10 @@ sprint_dir: sprints/07251213-kernel-0a8c796b
   期望: exit 0
 
 - [x] [BEHAVIOR] [L2] BEH-04 覆盖 Golden Path Step 4：混合 idle 批次仅 human 进入 raw+summary capture
-  动作: 以真实 transcript fixture、生产 `runConversationCapture`、真 PostgreSQL 跑 human/mixed batch；其中一条 human 不注入 fake LLM，强制通过 `anthropic-api` 真调 Haiku。
-  预期观察: 每轮仅一次批量 provenance 查询；恰好 human 被处理；从 `~/.credentials/anthropic.json` 取真 key，真 Haiku 响应 provider/model/text 合法，raw 与 summary 在五分钟窗内各一行；凭据不可用直接 FAIL。
+  动作: 通用 CI 以真实 transcript fixture、生产 `runConversationCapture`、真 PostgreSQL 跑 human/mixed batch；`local_api` 终验额外设置 `RUN_LIVE_HAIKU=1`，不注入 fake LLM，强制通过 `anthropic-api` 真调 Haiku。
+  预期观察: 每轮仅一次批量 provenance 查询；恰好 human 被处理；`local_api` 终验从 `~/.credentials/anthropic.json` 取真 key，真 Haiku 响应 provider/model/text 合法，raw 与 summary 在五分钟窗内各一行；显式启用真 Haiku 时凭据不可用直接 FAIL。通用 GitHub runner 不持有个人凭据，因此只跳过这一条外部供应商子测试，其余真 PostgreSQL 链路必须通过。
   Test: manual:bash -c 'PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/live/kernel-0a8c796b/conversation-human-gate.contract.test.ts && cd packages/brain && PGHOST=localhost PGPORT=5432 PGUSER=cecelia PGPASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME:-cecelia_test}" npx vitest run src/__tests__/conversation-capture-human-gate.test.js src/__tests__/integration/conversation-capture.integration.test.js -t "registered human|mixed batch|原始文本"'
+  local_api 终验（通用 CI 不执行）: `RUN_LIVE_HAIKU=1 PGHOST=localhost PGPORT=5432 PGUSER=cecelia DB_NAME=cecelia_test npx vitest run --config sprints/07251213-kernel-0a8c796b/vitest.config.mjs tests/live/kernel-0a8c796b/conversation-human-gate.contract.test.ts`
   期望: exit 0
 
 - [x] [BEHAVIOR] [L2] BEH-05 覆盖 Golden Path Step 5：machine、unknown 与 provenance 查询错误全部失败关闭并写哨兵
