@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 20)
+# Sprint Contract Draft (Round 21)
 
 ## Notes
 
@@ -24,6 +24,7 @@
 - Round 17 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 16 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale，context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致 6 个测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r17-f09c9e31-a7`。
 - Round 19 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 18 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位与单 workstream task-plan，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r19-f09c9e31-a13`。
 - Round 20 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 19 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r20-f09c9e31-a16`。
+- Round 21 refresh: 本轮 task_bundle artifacts 仍为空且未提供新的 reviewer 修订点；继续保持 Round 20 合同的 PRD 字面覆盖、真实 PostgreSQL 被改边、GitHub PR 真调用补位、单 workstream task-plan 与失败语义，不扩张 scope。registry/context-manifest 已重新核对：api/db/test registry 可达但仍 stale（latest_scan=2026-07-18T15:50Z），context-manifest 仍为 HTTP 404 不可用；确定性格式自查与 Contract Gate 均通过。Red 证据仍为本地 PostgreSQL 未启动导致 6 个测试 `ECONNREFUSED 127.0.0.1:5432`，证明红测未 mock 被改 DB 边。本轮仅刷新 proposer 分支与结果协议到 `cp-harness-propose-r21-f09c9e31-a19`。
 
 ## Response Schema（推导来源: N/A）
 
