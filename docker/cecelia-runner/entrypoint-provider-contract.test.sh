@@ -8,10 +8,15 @@ EVALUATOR_SKILL="$SCRIPT_DIR/../../packages/workflows/skills/harness-evaluator/S
 SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
 GROK_SECTION="$(sed -n '/elif \[\[ "$provider" == "grok" \]\]/,/^  else$/p' <<<"$SECTION")"
 GIT_AUTH_SECTION="$(sed -n '/git-auth-setup:start/,/git-auth-setup:end/p' "$ENTRYPOINT")"
+PROPOSER_FINALIZER_SECTION="$(sed -n '/proposer-finalizer:start/,/proposer-finalizer:end/p' "$ENTRYPOINT")"
 
 [[ -n "$SECTION" ]] || { echo 'missing provider-neutral runner section' >&2; exit 1; }
 [[ -n "$GIT_AUTH_SECTION" ]] || {
   echo 'missing runner git credential setup section' >&2
+  exit 1
+}
+[[ -n "$PROPOSER_FINALIZER_SECTION" ]] || {
+  echo 'missing proposer finalizer' >&2
   exit 1
 }
 
@@ -35,6 +40,86 @@ git config --file "$GIT_AUTH_TMP/gitconfig" --get-all credential.https://github.
   exit 1
 }
 rm -rf "$GIT_AUTH_TMP"
+
+# A successful Proposer may finish the reasoning work before the mandatory Git
+# transport step. The Runner must finalize only complete, server-addressed
+# artifacts and must not trust a stale branch reported by the provider.
+eval "$PROPOSER_FINALIZER_SECTION"
+type finalize_proposer_output >/dev/null 2>&1 || {
+  echo 'missing finalize_proposer_output function' >&2
+  exit 1
+}
+FINALIZER_TMP="$(mktemp -d)"
+FINALIZER_REMOTE="$FINALIZER_TMP/remote.git"
+FINALIZER_REPO="$FINALIZER_TMP/workspace"
+git init --bare "$FINALIZER_REMOTE" >/dev/null
+git init -b main "$FINALIZER_REPO" >/dev/null
+git -C "$FINALIZER_REPO" config user.name 'Runner Contract Test'
+git -C "$FINALIZER_REPO" config user.email 'runner-contract@example.invalid'
+git -C "$FINALIZER_REPO" remote add origin "$FINALIZER_REMOTE"
+printf '%s\n' 'base' > "$FINALIZER_REPO/README.md"
+git -C "$FINALIZER_REPO" add README.md
+git -C "$FINALIZER_REPO" commit -m 'base' >/dev/null
+
+FINALIZER_SPRINT='sprints/07251915-kernel-a1fa8636'
+mkdir -p "$FINALIZER_REPO/$FINALIZER_SPRINT/tests"
+printf '%s\n' '# contract' > "$FINALIZER_REPO/$FINALIZER_SPRINT/contract-draft.md"
+printf '%s\n' '# dod' > "$FINALIZER_REPO/$FINALIZER_SPRINT/contract-dod.md"
+printf '%s\n' '{"tasks":[]}' > "$FINALIZER_REPO/$FINALIZER_SPRINT/task-plan.json"
+printf '%s\n' 'test("red", () => {});' > "$FINALIZER_REPO/$FINALIZER_SPRINT/tests/kernel-telemetry.contract.test.ts"
+printf '%s\n' '{"propose_branch":"stale-provider-branch"}' > "$FINALIZER_REPO/.brain-result.json"
+
+HARNESS_NODE=proposer \
+CECELIA_TASK_ID=a1fa8636-2ad4-41b4-8de3-8609af83daec \
+PROPOSE_BRANCH=cp-harness-propose-r1-a1fa8636-a4 \
+PROPOSE_ROUND=1 \
+SPRINT_DIR="$FINALIZER_SPRINT" \
+WORKTREE_PATH="$FINALIZER_REPO" \
+  finalize_proposer_output
+
+git --git-dir="$FINALIZER_REMOTE" rev-parse --verify \
+  refs/heads/cp-harness-propose-r1-a1fa8636-a4 >/dev/null
+for artifact in contract-draft.md contract-dod.md task-plan.json tests/kernel-telemetry.contract.test.ts; do
+  git --git-dir="$FINALIZER_REMOTE" show \
+    "refs/heads/cp-harness-propose-r1-a1fa8636-a4:$FINALIZER_SPRINT/$artifact" >/dev/null
+done
+jq -e \
+  '.propose_branch == "cp-harness-propose-r1-a1fa8636-a4"
+   and .workstream_count == 1
+   and .task_plan_path == "sprints/07251915-kernel-a1fa8636/task-plan.json"' \
+  "$FINALIZER_REPO/.brain-result.json" >/dev/null
+
+if HARNESS_NODE=proposer \
+  CECELIA_TASK_ID=a1fa8636-2ad4-41b4-8de3-8609af83daec \
+  PROPOSE_BRANCH=cp-harness-propose-r2-wrongid0-a5 \
+  SPRINT_DIR="$FINALIZER_SPRINT" \
+  WORKTREE_PATH="$FINALIZER_REPO" \
+    finalize_proposer_output; then
+  echo 'proposer finalizer accepted a branch for another task' >&2
+  exit 1
+fi
+if git --git-dir="$FINALIZER_REMOTE" show-ref --verify --quiet \
+  refs/heads/cp-harness-propose-r2-wrongid0-a5; then
+  echo 'proposer finalizer pushed an invalid branch' >&2
+  exit 1
+fi
+
+rm "$FINALIZER_REPO/$FINALIZER_SPRINT/contract-dod.md"
+if HARNESS_NODE=proposer \
+  CECELIA_TASK_ID=a1fa8636-2ad4-41b4-8de3-8609af83daec \
+  PROPOSE_BRANCH=cp-harness-propose-r2-a1fa8636-a6 \
+  SPRINT_DIR="$FINALIZER_SPRINT" \
+  WORKTREE_PATH="$FINALIZER_REPO" \
+    finalize_proposer_output; then
+  echo 'proposer finalizer accepted incomplete contract artifacts' >&2
+  exit 1
+fi
+if git --git-dir="$FINALIZER_REMOTE" show-ref --verify --quiet \
+  refs/heads/cp-harness-propose-r2-a1fa8636-a6; then
+  echo 'proposer finalizer pushed incomplete contract artifacts' >&2
+  exit 1
+fi
+rm -rf "$FINALIZER_TMP"
 
 grep -q 'HARNESS_TASK_BUNDLE_FILE:-\$PROMPT_FILE' <<<"$SECTION"
 grep -q -- '--json' <<<"$SECTION"
