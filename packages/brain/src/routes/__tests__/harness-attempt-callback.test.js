@@ -246,6 +246,43 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(detail.no_progress_reason).not.toBe('callback_sha_unverified');
   });
 
+  it('generator-fix blocked 也是已收到的终态 callback，必须持久化供收敛回放', async () => {
+    const triggerSha = 'a'.repeat(40);
+    const advancedSha = 'b'.repeat(40);
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
+    mocks.store.complete.mockReset().mockResolvedValue({
+      attempt: { ...attempt, role: 'generator', status: 'blocked' },
+      deduped: false,
+    });
+    mocks.pool.query.mockImplementation(async (sql) => {
+      if (sql.includes('SELECT r.pr_url')) {
+        return { rows: [{ pr_url: 'https://github.com/acme/repo/pull/42', trigger_sha: triggerSha }] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    app.set('kernelPrHeadResolver', vi.fn(async () => advancedSha));
+
+    const response = await postCallback(app, {
+      ...validResult,
+      status: 'blocked',
+      summary: 'contract environment unavailable',
+      artifacts: [],
+      checks: [],
+      decision: null,
+    });
+
+    expect(response.status).toBe(200);
+    const callbackCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
+      sql.includes('verdict:generator-fix-callback')
+    ));
+    expect(callbackCalls).toHaveLength(1);
+    expect(JSON.parse(callbackCalls[0][1][6])).toMatchObject({
+      status: 'blocked',
+      verification_status: 'verified',
+      pr_head_sha: advancedSha,
+    });
+  });
+
   it('跨角色/attempt session 复用冲突返回 409，且不完成 attempt', async () => {
     mocks.store.assertFreshRoleSession.mockRejectedValueOnce(new Error('role_session_reuse'));
     const response = await postCallback(app);
