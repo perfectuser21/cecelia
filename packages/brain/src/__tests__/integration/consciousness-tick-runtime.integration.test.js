@@ -57,6 +57,35 @@ const hostMutationMocks = vi.hoisted(() => ({
     labeled: 0,
     closed: 0,
     skipped: 0,
+    details: [],
+  }),
+  shepherdOpenPRs: vi.fn().mockResolvedValue({
+    processed: 0,
+    merged: 0,
+    failed: 0,
+    pending: 0,
+  }),
+  pipelinePatrolTick: vi.fn().mockResolvedValue({
+    skipped: true,
+    reason: 'test_noop',
+  }),
+  evaluateAlertness: vi.fn().mockResolvedValue({
+    level: 1,
+    levelName: 'CALM',
+    score: 100,
+    reasons: [],
+  }),
+  canDispatch: vi.fn().mockReturnValue(true),
+  canPlan: vi.fn().mockReturnValue(true),
+  getDispatchRate: vi.fn().mockReturnValue(1),
+  getCurrentAlertness: vi.fn().mockReturnValue(1),
+  getRecoveryStatus: vi.fn().mockReturnValue({
+    isRecovering: false,
+    phase: 0,
+  }),
+  runDriftSentinel: vi.fn().mockResolvedValue({
+    skipped: true,
+    reason: 'test_noop',
   }),
 }));
 
@@ -84,6 +113,34 @@ vi.mock('../../emergency-cleanup.js', () => ({
 }));
 vi.mock('../../orphan-pr-worker.js', () => ({
   scanOrphanPrs: hostMutationMocks.scanOrphanPrs,
+}));
+vi.mock('../../shepherd.js', () => ({
+  shepherdOpenPRs: hostMutationMocks.shepherdOpenPRs,
+}));
+vi.mock('../../pipeline-patrol-plugin.js', () => ({
+  tick: hostMutationMocks.pipelinePatrolTick,
+}));
+vi.mock('../../alertness/index.js', () => ({
+  evaluateAlertness: hostMutationMocks.evaluateAlertness,
+  canDispatch: hostMutationMocks.canDispatch,
+  canPlan: hostMutationMocks.canPlan,
+  getDispatchRate: hostMutationMocks.getDispatchRate,
+  getCurrentAlertness: hostMutationMocks.getCurrentAlertness,
+  ALERTNESS_LEVELS: {
+    SLEEPING: 0,
+    CALM: 1,
+    AWARE: 2,
+    ALERT: 3,
+    PANIC: 4,
+  },
+  LEVEL_NAMES: ['SLEEPING', 'CALM', 'AWARE', 'ALERT', 'PANIC'],
+}));
+vi.mock('../../alertness/healing.js', () => ({
+  getRecoveryStatus: hostMutationMocks.getRecoveryStatus,
+}));
+vi.mock('../../cron/drift-sentinel.js', () => ({
+  runDriftSentinel: hostMutationMocks.runDriftSentinel,
+  DRIFT_SENTINEL_INTERVAL_MS: 30 * 60 * 1000,
 }));
 
 // ========== 意识模块 mocks（要断言调用次数）==========
@@ -245,6 +302,11 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
       expect(hostMutationMocks.checkRunaways).toHaveBeenCalledTimes(1);
       expect(hostMutationMocks.checkIdleSessions).toHaveBeenCalledTimes(1);
       expect(hostMutationMocks.scanOrphanPrs).toHaveBeenCalledTimes(1);
+      expect(hostMutationMocks.shepherdOpenPRs).toHaveBeenCalledTimes(1);
+      expect(hostMutationMocks.pipelinePatrolTick).toHaveBeenCalledTimes(1);
+      expect(hostMutationMocks.evaluateAlertness).toHaveBeenCalledTimes(1);
+      expect(hostMutationMocks.getRecoveryStatus).toHaveBeenCalledTimes(1);
+      expect(hostMutationMocks.runDriftSentinel).toHaveBeenCalledTimes(1);
       expect(hostMutationMocks.cleanupMetrics).not.toHaveBeenCalled();
       expect(hostMutationMocks.emergencyCleanup).not.toHaveBeenCalled();
       expect(hostMutationMocks.checkRunaways.mock.results[0].value).toEqual({ actions: [] });
@@ -255,6 +317,7 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
         labeled: 0,
         closed: 0,
         skipped: 0,
+        details: [],
       });
       const { killProcessTwoStage } = await import('../../executor.js');
       expect(killProcessTwoStage).not.toHaveBeenCalled();
@@ -269,16 +332,31 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
       { checkRunaways, checkIdleSessions },
       { emergencyCleanup },
       { scanOrphanPrs },
+      { shepherdOpenPRs },
+      { tick: pipelinePatrolTick },
+      { evaluateAlertness },
+      { getRecoveryStatus },
+      { runDriftSentinel },
     ] = await Promise.all([
       import('../../watchdog.js'),
       import('../../emergency-cleanup.js'),
       import('../../orphan-pr-worker.js'),
+      import('../../shepherd.js'),
+      import('../../pipeline-patrol-plugin.js'),
+      import('../../alertness/index.js'),
+      import('../../alertness/healing.js'),
+      import('../../cron/drift-sentinel.js'),
     ]);
 
     expect(vi.isMockFunction(checkRunaways)).toBe(true);
     expect(vi.isMockFunction(checkIdleSessions)).toBe(true);
     expect(vi.isMockFunction(emergencyCleanup)).toBe(true);
     expect(vi.isMockFunction(scanOrphanPrs)).toBe(true);
+    expect(vi.isMockFunction(shepherdOpenPRs)).toBe(true);
+    expect(vi.isMockFunction(pipelinePatrolTick)).toBe(true);
+    expect(vi.isMockFunction(evaluateAlertness)).toBe(true);
+    expect(vi.isMockFunction(getRecoveryStatus)).toBe(true);
+    expect(vi.isMockFunction(runDriftSentinel)).toBe(true);
     expect(checkRunaways()).toEqual({ actions: [] });
     expect(checkIdleSessions()).toEqual({ actions: [] });
     expect(emergencyCleanup('test-task', 'test-slot')).toEqual({
@@ -293,6 +371,7 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
       labeled: 0,
       closed: 0,
       skipped: 0,
+      details: [],
     });
   });
 
