@@ -6,6 +6,16 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+
+const require = createRequire(import.meta.url);
+const {
+  createKernelHandlerFromEnvironment,
+  kernelHealthEvidence,
+} = require('../../scripts/codex-bridge/codex-bridge.cjs');
 
 vi.mock('node:child_process', () => ({
   execSync: vi.fn(),
@@ -56,5 +66,31 @@ describe('codex-bridge /health docker_available BEHAVIOR-5', () => {
     );
     expect(bridgeSrc).toContain('docker_available');
     expect(bridgeSrc).toContain('execSync(\'docker info\'');
+  });
+
+  it('enabled Kernel Harness health exposes protocol and canonical machine identity', () => {
+    expect(kernelHealthEvidence('xian-mac-m4')).toMatchObject({
+      kernel_harness_protocol: 'v1',
+      canonical_machine_id: 'xian-mac-m4',
+    });
+  });
+
+  it('rejects a Kernel Bridge token file with owner execute permission', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kernel-token-mode-'));
+    const tokenFile = path.join(tempDir, 'bridge.token');
+    fs.writeFileSync(tokenFile, 'x'.repeat(32), { mode: 0o700 });
+    try {
+      expect(() => createKernelHandlerFromEnvironment({
+        KERNEL_MACHINE_ID: 'xian-mac-m4',
+        KERNEL_BRIDGE_TOKEN_FILE: tokenFile,
+        KERNEL_BRIDGE_STATE_DIR: path.join(tempDir, 'state'),
+        CODEX_ACCOUNT_ALLOWLIST: 'team3',
+        BRAIN_URL: 'https://brain.example',
+        CODEX_BIN: '/opt/homebrew/bin/codex',
+        WORK_DIR: tempDir,
+      })).toThrow('kernel_bridge_token_file_permissions');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

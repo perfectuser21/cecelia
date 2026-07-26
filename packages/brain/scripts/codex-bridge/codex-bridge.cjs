@@ -14,6 +14,9 @@ const path = require('path');
 const os = require('os');
 
 const { selectBestCodexAccount, getAllAccountUsage, ACCOUNTS } = require('./codex-account-usage.cjs');
+const {
+  createKernelAttemptHandler,
+} = require('./kernel-attempt-handler.cjs');
 
 const PORT = process.env.CODEX_BRIDGE_PORT || 3458;
 // macOS + Tailscale bug: 绑定 0.0.0.0 时，Tailscale utun 进来的连接会被 RST
@@ -30,6 +33,65 @@ const RUNNER_SH = process.env.RUNNER_SH
 // 默认工作目录 — codex_dev 的 cwd
 const WORK_DIR = process.env.WORK_DIR
   || path.join(os.homedir(), 'repos/cecelia');
+
+function kernelHealthEvidence(machineId) {
+  return machineId
+    ? {
+        kernel_harness_protocol: 'v1',
+        canonical_machine_id: machineId,
+      }
+    : {
+        kernel_harness_protocol: 'disabled',
+        canonical_machine_id: null,
+      };
+}
+
+function createKernelHandlerFromEnvironment(env = process.env) {
+  const enabled = Boolean(
+    env.KERNEL_MACHINE_ID
+    || env.KERNEL_BRIDGE_TOKEN_FILE
+    || env.KERNEL_BRIDGE_STATE_DIR,
+  );
+  if (!enabled) return null;
+
+  if (
+    !env.KERNEL_MACHINE_ID
+    || !env.KERNEL_BRIDGE_TOKEN_FILE
+    || !env.KERNEL_BRIDGE_STATE_DIR
+  ) {
+    throw new Error('kernel_harness_configuration_incomplete');
+  }
+  const tokenStat = fs.lstatSync(env.KERNEL_BRIDGE_TOKEN_FILE);
+  if (!tokenStat.isFile() || (tokenStat.mode & 0o177) !== 0) {
+    throw new Error('kernel_bridge_token_file_permissions');
+  }
+  const bridgeToken = fs.readFileSync(env.KERNEL_BRIDGE_TOKEN_FILE, 'utf8').trim();
+  if (bridgeToken.length < 32) {
+    throw new Error('kernel_bridge_token_too_short');
+  }
+  const allowedAccounts = String(env.CODEX_ACCOUNT_ALLOWLIST ?? '')
+    .split(',')
+    .map(account => account.trim())
+    .filter(Boolean);
+  if (allowedAccounts.length === 0) {
+    throw new Error('kernel_codex_account_allowlist_empty');
+  }
+
+  return createKernelAttemptHandler({
+    stateDir: env.KERNEL_BRIDGE_STATE_DIR,
+    machineId: env.KERNEL_MACHINE_ID,
+    bridgeToken,
+    brainUrl: env.BRAIN_URL || BRAIN_URL,
+    allowedAccounts,
+    codexBin: env.CODEX_BIN || CODEX_BIN,
+    workDir: env.WORK_DIR || WORK_DIR,
+    spawnFn: spawn,
+    loadAccountAuth: account => loadRawAuth(account),
+  });
+}
+
+const kernelAttemptHandler = createKernelHandlerFromEnvironment();
+const KERNEL_MACHINE_ID = process.env.KERNEL_MACHINE_ID || null;
 
 /**
  * 将 US Brain 注入的 accounts 写入临时目录，返回 { primaryHome, allHomes, tmpDir }。
@@ -355,10 +417,49 @@ function executeCodexReview(codexHome, options = {}) {
 
 // ─── HTTP 服务 ────────────────────────────────────────────────────────────────
 
-const server = http.createServer(async (req, res) => {
+async function handleBridgeRequest(
+  req,
+  res,
+  {
+    kernelHandler = kernelAttemptHandler,
+    kernelMachineId = KERNEL_MACHINE_ID,
+  } = {},
+) {
   try {
+    const inspectMatch = req.url?.match(/^\/harness\/attempts\/([0-9a-f-]+)$/i);
+    const cancelMatch = req.url?.match(/^\/harness\/attempts\/([0-9a-f-]+)\/cancel$/i);
+    const authContext = { authorization: req.headers.authorization };
+
+    if (req.method === 'POST' && req.url === '/harness/attempts') {
+      if (!kernelHandler) {
+        sendJSON(res, 503, { ok: false, error: 'kernel_harness_disabled' });
+        return;
+      }
+      const receipt = await kernelHandler.accept(await parseBody(req), authContext);
+      sendJSON(res, 202, receipt);
+
+    } else if (req.method === 'GET' && inspectMatch) {
+      if (!kernelHandler) {
+        sendJSON(res, 503, { ok: false, error: 'kernel_harness_disabled' });
+        return;
+      }
+      const status = await kernelHandler.inspect(inspectMatch[1], authContext);
+      sendJSON(res, 200, status);
+
+    } else if (req.method === 'POST' && cancelMatch) {
+      if (!kernelHandler) {
+        sendJSON(res, 503, { ok: false, error: 'kernel_harness_disabled' });
+        return;
+      }
+      const status = await kernelHandler.cancel(
+        cancelMatch[1],
+        await parseBody(req),
+        authContext,
+      );
+      sendJSON(res, 200, status);
+
     // POST /run — 通用执行端点（Brain executor 路由入口）
-    if (req.method === 'POST' && req.url === '/run') {
+    } else if (req.method === 'POST' && req.url === '/run') {
       const { task_id, checkpoint_id, prompt, work_dir, sandbox, timeout_ms, task_type, accounts } = await parseBody(req);
 
       if (!task_id || !prompt) {
@@ -563,6 +664,7 @@ const server = http.createServer(async (req, res) => {
         port: PORT,
         docker_available: dockerAvailable,
         accounts: accountSummary,
+        ...kernelHealthEvidence(kernelHandler ? kernelMachineId : null),
       });
 
     // GET /accounts — 详细账号用量
@@ -579,11 +681,25 @@ const server = http.createServer(async (req, res) => {
     }
   } catch (err) {
     console.error(`[codex-bridge] 未处理错误: ${err.message}`);
-    sendJSON(res, 500, { ok: false, error: err.message });
+    sendJSON(res, err.statusCode || 500, { ok: false, error: err.message });
   }
-});
+}
 
-module.exports = { loadRawAuth, injectLocalAccount, setupInjectedAccounts, cleanupTmpDir };
+function createBridgeServer(options = {}) {
+  return http.createServer((req, res) => handleBridgeRequest(req, res, options));
+}
+
+const server = createBridgeServer();
+
+module.exports = {
+  cleanupTmpDir,
+  createBridgeServer,
+  createKernelHandlerFromEnvironment,
+  injectLocalAccount,
+  kernelHealthEvidence,
+  loadRawAuth,
+  setupInjectedAccounts,
+};
 
 // require.main===module 守卫：只有直接 `node codex-bridge.cjs` 运行时才真正
 // listen 端口。这样 smoke test 可以安全 require() 这个文件去调纯函数，不会

@@ -239,6 +239,20 @@ function failedHarnessResult(attemptId, message) {
   };
 }
 
+function cancelledHarnessResult(attemptId) {
+  return {
+    contract_version: '1.0',
+    attempt_id: attemptId,
+    status: 'cancelled',
+    summary: 'Codex execution cancelled',
+    artifacts: [],
+    checks: [],
+    decision: null,
+    error: null,
+    provider_metadata: {},
+  };
+}
+
 async function deliverCallback({
   fetchFn,
   sleep,
@@ -310,6 +324,9 @@ function startProvider({
   const complete = async (result) => {
     if (settled) return;
     settled = true;
+    if (configuration.isCancelled?.(claim.attempt_id, child)) {
+      result = cancelledHarnessResult(request.attempt_id);
+    }
     result.attempt_id = request.attempt_id;
     result.provider_metadata = {
       ...(result.provider_metadata ?? {}),
@@ -323,6 +340,10 @@ function startProvider({
         claim.job_id,
       ),
     };
+    const persistedStatus = result.status === 'failed' ? 'failed'
+      : result.status === 'cancelled' ? 'cancelled'
+        : 'completed';
+    configuration.onSettled?.(claim.attempt_id, child, persistedStatus);
     try {
       await deliverCallback({
         fetchFn: configuration.fetchFn,
@@ -367,6 +388,7 @@ function createKernelAttemptHandler({
   loadAccountAuth,
   fetchFn = globalThis.fetch,
   sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  cancelSleep,
   logger = console,
   runtimeRoot = os.tmpdir(),
 }) {
@@ -394,15 +416,38 @@ function createKernelAttemptHandler({
     loadAccountAuth,
     fetchFn,
     sleep,
+    cancelSleep: cancelSleep ?? sleep,
     logger,
     runtimeRoot,
+  };
+  const liveChildren = new Map();
+
+  function authenticate(headers) {
+    if (!secureTokenEqual(bridgeToken, headers?.authorization)) {
+      throw new KernelAttemptError('unauthorized', 401);
+    }
+  }
+
+  configuration.isCancelled = (attemptId, child) => {
+    const live = liveChildren.get(attemptId);
+    return live?.child === child && live.cancelRequested === true;
+  };
+  configuration.onSettled = (attemptId, child, status) => {
+    const filePath = claimPath(stateDir, attemptId);
+    const claim = readClaim(filePath);
+    if (claim && claim.status !== 'cancelled') {
+      writeClaimAtomic(filePath, { ...claim, status });
+    }
+    const live = liveChildren.get(attemptId);
+    if (live?.child === child) {
+      live.exited = true;
+      liveChildren.delete(attemptId);
+    }
   };
 
   return {
     async accept(request, headers = {}) {
-      if (!secureTokenEqual(bridgeToken, headers?.authorization)) {
-        throw new KernelAttemptError('unauthorized', 401);
-      }
+      authenticate(headers);
       validateRequest(request, configuration);
       const filePath = claimPath(stateDir, request?.attempt_id);
       const existing = readClaim(filePath);
@@ -430,7 +475,12 @@ function createKernelAttemptHandler({
         status: 'accepted',
       };
       writeClaimAtomic(filePath, claim);
-      startProvider({ configuration, request, claim });
+      const child = startProvider({ configuration, request, claim });
+      liveChildren.set(request.attempt_id, {
+        child,
+        cancelRequested: false,
+        exited: false,
+      });
       return {
         actual_machine_id: claim.machine_id,
         job_id: claim.job_id,
@@ -442,6 +492,35 @@ function createKernelAttemptHandler({
           claim.job_id,
         ),
       };
+    },
+
+    async inspect(attemptId, headers = {}) {
+      authenticate(headers);
+      const claim = readClaim(claimPath(stateDir, attemptId));
+      if (!claim) throw new KernelAttemptError('attempt_not_found', 404);
+      return { ...claim };
+    },
+
+    async cancel(attemptId, lease, headers = {}) {
+      authenticate(headers);
+      const filePath = claimPath(stateDir, attemptId);
+      const claim = readClaim(filePath);
+      if (!claim) throw new KernelAttemptError('attempt_not_found', 404);
+      assertMatchingClaim(claim, lease);
+      if (claim.status === 'cancelled') return { ...claim };
+
+      const cancelled = { ...claim, status: 'cancelled' };
+      writeClaimAtomic(filePath, cancelled);
+      const live = liveChildren.get(attemptId);
+      if (!live) return cancelled;
+
+      live.cancelRequested = true;
+      live.child.kill('SIGTERM');
+      await configuration.cancelSleep(5000);
+      if (liveChildren.get(attemptId) === live && !live.exited) {
+        live.child.kill('SIGKILL');
+      }
+      return cancelled;
     },
   };
 }

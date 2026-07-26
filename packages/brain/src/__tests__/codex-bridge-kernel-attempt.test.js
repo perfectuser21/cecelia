@@ -1,10 +1,14 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createKernelAttemptHandler } from '../../scripts/codex-bridge/kernel-attempt-handler.cjs';
+
+const require = createRequire(import.meta.url);
+const { createBridgeServer } = require('../../scripts/codex-bridge/codex-bridge.cjs');
 
 const ATTEMPT_ID = '11111111-1111-4111-8111-111111111111';
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
@@ -61,6 +65,24 @@ function request(overrides = {}) {
 
 function auth() {
   return { authorization: `Bearer ${BRIDGE_TOKEN}` };
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+}
+
+function close(server) {
+  if (!server?.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve());
+    server.closeAllConnections?.();
+  });
 }
 
 describe('kernel attempt durable claims', () => {
@@ -356,5 +378,150 @@ describe('kernel attempt security and Codex execution', () => {
 
     expect(spawnFn).toHaveBeenCalledOnce();
     expect(deps.sleep).toHaveBeenCalledOnce();
+  });
+
+  it('inspects persisted terminal state after the provider exits', async () => {
+    const handler = createKernelAttemptHandler(deps);
+    await handler.accept(request(), auth());
+    const accepted = await handler.inspect(ATTEMPT_ID, auth());
+    const args = spawnFn.mock.calls[0][1];
+    const resultPath = args[args.indexOf('--output-last-message') + 1];
+    fs.writeFileSync(resultPath, JSON.stringify({
+      contract_version: '1.0',
+      attempt_id: ATTEMPT_ID,
+      status: 'completed',
+      summary: 'done',
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    }));
+    child.emit('close', 0);
+
+    await vi.waitFor(async () => {
+      await expect(handler.inspect(ATTEMPT_ID, auth()))
+        .resolves.toMatchObject({ status: 'completed' });
+    });
+    expect(accepted).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      job_id: JOB_ID,
+      status: 'accepted',
+    });
+    await expect(handler.inspect(ATTEMPT_ID, auth()))
+      .resolves.not.toMatchObject({ status: 'accepted' });
+  });
+
+  it('lease-fences cancellation, terminates the live child and makes repeat cancellation idempotent', async () => {
+    const handler = createKernelAttemptHandler(deps);
+    await handler.accept(request(), auth());
+
+    await expect(handler.cancel(ATTEMPT_ID, {
+      lease_owner: 'attacker',
+      lease_generation: 0,
+    }, auth())).rejects.toMatchObject({
+      message: 'attempt_claim_conflict',
+      statusCode: 409,
+    });
+    await expect(handler.cancel(ATTEMPT_ID, {
+      lease_owner: 'dispatcher:test',
+      lease_generation: 1,
+    }, auth())).rejects.toMatchObject({
+      message: 'attempt_claim_conflict',
+      statusCode: 409,
+    });
+    expect(child.kill).not.toHaveBeenCalled();
+
+    await expect(handler.cancel(ATTEMPT_ID, {
+      lease_owner: 'dispatcher:test',
+      lease_generation: 0,
+    }, auth())).resolves.toMatchObject({ status: 'cancelled' });
+    expect(child.kill.mock.calls.map(([signal]) => signal))
+      .toEqual(['SIGTERM', 'SIGKILL']);
+    await expect(handler.inspect(ATTEMPT_ID, auth()))
+      .resolves.toMatchObject({ status: 'cancelled' });
+
+    await handler.cancel(ATTEMPT_ID, {
+      lease_owner: 'dispatcher:test',
+      lease_generation: 0,
+    }, auth());
+    expect(child.kill).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('kernel attempt HTTP routes', () => {
+  it('mounts launch, inspect and cancel with authenticated request context', async () => {
+    const kernelHandler = {
+      accept: vi.fn(async () => ({
+        actual_machine_id: 'xian-mac-m4',
+        job_id: JOB_ID,
+        status: 'accepted',
+        attestation: 'a'.repeat(64),
+      })),
+      inspect: vi.fn(async () => ({
+        attempt_id: ATTEMPT_ID,
+        status: 'accepted',
+      })),
+      cancel: vi.fn(async () => ({
+        attempt_id: ATTEMPT_ID,
+        status: 'cancelled',
+      })),
+    };
+    const server = createBridgeServer({
+      kernelHandler,
+      kernelMachineId: 'xian-mac-m4',
+    });
+    const baseUrl = await listen(server);
+    try {
+      const launch = await fetch(`${baseUrl}/harness/attempts`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${BRIDGE_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request()),
+      });
+      expect(launch.status).toBe(202);
+      await expect(launch.json()).resolves.toMatchObject({
+        actual_machine_id: 'xian-mac-m4',
+        status: 'accepted',
+      });
+      expect(kernelHandler.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ attempt_id: ATTEMPT_ID }),
+        { authorization: `Bearer ${BRIDGE_TOKEN}` },
+      );
+
+      const inspect = await fetch(`${baseUrl}/harness/attempts/${ATTEMPT_ID}`, {
+        headers: { Authorization: `Bearer ${BRIDGE_TOKEN}` },
+      });
+      expect(inspect.status).toBe(200);
+      expect(kernelHandler.inspect).toHaveBeenCalledWith(
+        ATTEMPT_ID,
+        { authorization: `Bearer ${BRIDGE_TOKEN}` },
+      );
+
+      const cancelResponse = await fetch(
+        `${baseUrl}/harness/attempts/${ATTEMPT_ID}/cancel`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${BRIDGE_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            lease_owner: 'dispatcher:test',
+            lease_generation: 0,
+          }),
+        },
+      );
+      expect(cancelResponse.status).toBe(200);
+      expect(kernelHandler.cancel).toHaveBeenCalledWith(
+        ATTEMPT_ID,
+        { lease_owner: 'dispatcher:test', lease_generation: 0 },
+        { authorization: `Bearer ${BRIDGE_TOKEN}` },
+      );
+    } finally {
+      await close(server);
+    }
   });
 });
