@@ -226,7 +226,13 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     const parentId = await seedExpiredKernelAttempt(run);
     const resumeAttempt = vi.fn(async (child, context) => {
       expect(child.id).not.toBe(parentId);
-      expect(context.parentAttempt.id).toBe(parentId);
+      expect(context.originalParentAttempt.id).toBe(parentId);
+      expect(context.reclaimedParentAttempt).toMatchObject({
+        id: parentId,
+        lease_owner: expect.stringMatching(/^watchdog:/),
+      });
+      expect(context.reclaimedParentAttempt.lease_generation)
+        .toBeGreaterThan(context.originalParentAttempt.lease_generation);
       expect(context.callbackSecret).toEqual(expect.any(String));
       return { ok: true, provider_session_id: 'provider-thread-resumed' };
     });
