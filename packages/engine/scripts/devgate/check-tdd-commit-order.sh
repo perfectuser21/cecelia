@@ -92,7 +92,7 @@ if [ $RED_IDX -eq -1 ]; then
   RED_IDX=0
 fi
 
-# ── Check 1: Red commit 只能 touch tests/ + DoD.md + contract-dod-ws ────
+# ── Check 1: Red commit 只能 touch tests/ + DoD.md + red evidence ───────
 RED_COMMIT=${COMMIT_ARR[$RED_IDX]}
 RED_COMMIT_MSG=$(git log -1 --format=%s "$RED_COMMIT")
 RED_COMMIT_FILES=$(git show --name-only --format= "$RED_COMMIT")
@@ -100,9 +100,13 @@ RED_COMMIT_FILES=$(git show --name-only --format= "$RED_COMMIT")
 echo "🔴 Red commit detected at position $((RED_IDX + 1)): $RED_COMMIT"
 echo "  message: $RED_COMMIT_MSG"
 
-BAD_FILES_RED=$(echo "$RED_COMMIT_FILES" | grep -vE '^(sprints/[^/]+/tests/.*\.test\.ts|DoD\.md|sprints/[^/]+/contract-dod-ws[0-9]+\.md|)$' || true)
+BAD_FILES_RED=$(
+  printf '%s\n' "$RED_COMMIT_FILES" |
+    grep -vE '^(sprints/[^/]+/tests/.*\.test\.ts|DoD\.md|sprints/[^/]+/contract-dod-ws[0-9]+\.md|sprints/[^/]+/red-evidence\.md)$' |
+    grep -v '^$' || true
+)
 if [ -n "$BAD_FILES_RED" ]; then
-  echo -e "  ${RED}❌ Red commit 含非测试/DoD 的文件（应只含 tests + DoD.md）：${RESET}"
+  echo -e "  ${RED}❌ Red commit 含非测试/DoD/结构化红证据文件：${RESET}"
   echo "$BAD_FILES_RED" | sed 's/^/      /'
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
@@ -159,7 +163,7 @@ else
   echo -e "${RED}❌ TDD Commit Order 检查失败${RESET} ($VIOLATIONS 处违规)"
   echo ""
   echo "  TDD 规则："
-  echo "    Red commit: 只含 tests/ + DoD.md + contract-dod-ws，message 含 (Red)"
+  echo "    Red commit: 只含 tests/ + DoD.md + contract-dod-ws + red-evidence.md，message 含 (Red)"
   echo "    Red 之后: 含实现代码，测试文件不许改，至少一个 message 含 (Green)"
   echo "    允许 Red 前有 chore(harness): import contract 预提交（可含 sprint-prd 等）"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
