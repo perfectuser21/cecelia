@@ -41,6 +41,25 @@ const cleanupMocks = vi.hoisted(() => ({
   }),
 }));
 
+const hostMutationMocks = vi.hoisted(() => ({
+  checkRunaways: vi.fn().mockReturnValue({ actions: [] }),
+  cleanupMetrics: vi.fn(),
+  checkIdleSessions: vi.fn().mockReturnValue({ actions: [] }),
+  emergencyCleanup: vi.fn().mockReturnValue({
+    worktree: false,
+    lock: false,
+    devMode: false,
+    errors: [],
+  }),
+  scanOrphanPrs: vi.fn().mockResolvedValue({
+    scanned: 0,
+    merged: 0,
+    labeled: 0,
+    closed: 0,
+    skipped: 0,
+  }),
+}));
+
 // executeTick owns destructive host cleanup edges. This integration test exercises
 // consciousness wiring only, so every cleanup boundary must remain an explicit noop.
 vi.mock('../../zombie-sweep.js', () => ({
@@ -54,6 +73,17 @@ vi.mock('../../zombie-cleaner.js', () => ({
 }));
 vi.mock('../../harness-worktree.js', () => ({
   cleanupStaleHarnessWorktrees: cleanupMocks.cleanupStaleHarnessWorktrees,
+}));
+vi.mock('../../watchdog.js', () => ({
+  checkRunaways: hostMutationMocks.checkRunaways,
+  cleanupMetrics: hostMutationMocks.cleanupMetrics,
+  checkIdleSessions: hostMutationMocks.checkIdleSessions,
+}));
+vi.mock('../../emergency-cleanup.js', () => ({
+  emergencyCleanup: hostMutationMocks.emergencyCleanup,
+}));
+vi.mock('../../orphan-pr-worker.js', () => ({
+  scanOrphanPrs: hostMutationMocks.scanOrphanPrs,
 }));
 
 // ========== 意识模块 mocks（要断言调用次数）==========
@@ -87,7 +117,10 @@ vi.mock('../../executor.js', () => ({
   }),
   probeTaskLiveness: vi.fn(),
   syncOrphanTasksOnStartup: vi.fn(),
-  killProcessTwoStage: vi.fn(),
+  killProcessTwoStage: vi.fn().mockResolvedValue({
+    killed: false,
+    stage: 'test_noop',
+  }),
   requeueTask: vi.fn(),
   MAX_SEATS: 3,
   INTERACTIVE_RESERVE: 1,
@@ -133,6 +166,7 @@ import { resetTickStateForTests } from '../../tick-state.js';
 
 const CONSCIOUSNESS_MOCKS = [runRumination, generateDailyDiaryIfNeeded, runDesireSystem];
 const CLEANUP_MOCKS = Object.values(cleanupMocks);
+const HOST_MUTATION_MOCKS = Object.values(hostMutationMocks);
 
 describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
   let pool;
@@ -155,6 +189,7 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     resetTickStateForTests();
     CONSCIOUSNESS_MOCKS.forEach((m) => m.mockClear());
     CLEANUP_MOCKS.forEach((m) => m.mockClear());
+    HOST_MUTATION_MOCKS.forEach((m) => m.mockClear());
     delete process.env.CONSCIOUSNESS_ENABLED;
     delete process.env.BRAIN_QUIET_MODE;
   });
@@ -186,26 +221,89 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
   test('executeTick keeps every host cleanup boundary mocked', async () => {
     await initConsciousnessGuard(pool);
     await setConsciousnessEnabled(pool, false);
+    const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
 
-    await executeTick();
+    try {
+      await executeTick();
 
-    for (const cleanupMock of CLEANUP_MOCKS) {
-      expect(vi.isMockFunction(cleanupMock)).toBe(true);
-      expect(cleanupMock).toHaveBeenCalledTimes(1);
+      for (const cleanupMock of CLEANUP_MOCKS) {
+        expect(vi.isMockFunction(cleanupMock)).toBe(true);
+        expect(cleanupMock).toHaveBeenCalledTimes(1);
+      }
+      expect(await cleanupMocks.zombieSweep.mock.results[0].value).toMatchObject({
+        worktrees: { removed: 0 },
+        processes: { killed: 0 },
+        lock_slots: { removed: 0 },
+      });
+      expect(await cleanupMocks.runZombieCleanup.mock.results[0].value).toMatchObject({
+        slotsReclaimed: 0,
+        worktreesRemoved: 0,
+      });
+      expect(
+        await cleanupMocks.cleanupStaleHarnessWorktrees.mock.results[0].value,
+      ).toEqual({ cleaned: 0, errors: 0 });
+      expect(hostMutationMocks.checkRunaways).toHaveBeenCalledTimes(1);
+      expect(hostMutationMocks.checkIdleSessions).toHaveBeenCalledTimes(1);
+      expect(hostMutationMocks.scanOrphanPrs).toHaveBeenCalledTimes(1);
+      expect(hostMutationMocks.cleanupMetrics).not.toHaveBeenCalled();
+      expect(hostMutationMocks.emergencyCleanup).not.toHaveBeenCalled();
+      expect(hostMutationMocks.checkRunaways.mock.results[0].value).toEqual({ actions: [] });
+      expect(hostMutationMocks.checkIdleSessions.mock.results[0].value).toEqual({ actions: [] });
+      expect(await hostMutationMocks.scanOrphanPrs.mock.results[0].value).toEqual({
+        scanned: 0,
+        merged: 0,
+        labeled: 0,
+        closed: 0,
+        skipped: 0,
+      });
+      const { killProcessTwoStage } = await import('../../executor.js');
+      expect(killProcessTwoStage).not.toHaveBeenCalled();
+      expect(processKillSpy).not.toHaveBeenCalled();
+    } finally {
+      processKillSpy.mockRestore();
     }
-    expect(await cleanupMocks.zombieSweep.mock.results[0].value).toMatchObject({
-      worktrees: { removed: 0 },
-      processes: { killed: 0 },
-      lock_slots: { removed: 0 },
-    });
-    expect(await cleanupMocks.runZombieCleanup.mock.results[0].value).toMatchObject({
-      slotsReclaimed: 0,
-      worktreesRemoved: 0,
-    });
-    expect(
-      await cleanupMocks.cleanupStaleHarnessWorktrees.mock.results[0].value,
-    ).toEqual({ cleaned: 0, errors: 0 });
   }, 60000);
+
+  test('host mutation modules stay behind explicit test doubles', async () => {
+    const [
+      { checkRunaways, checkIdleSessions },
+      { emergencyCleanup },
+      { scanOrphanPrs },
+    ] = await Promise.all([
+      import('../../watchdog.js'),
+      import('../../emergency-cleanup.js'),
+      import('../../orphan-pr-worker.js'),
+    ]);
+
+    expect(vi.isMockFunction(checkRunaways)).toBe(true);
+    expect(vi.isMockFunction(checkIdleSessions)).toBe(true);
+    expect(vi.isMockFunction(emergencyCleanup)).toBe(true);
+    expect(vi.isMockFunction(scanOrphanPrs)).toBe(true);
+    expect(checkRunaways()).toEqual({ actions: [] });
+    expect(checkIdleSessions()).toEqual({ actions: [] });
+    expect(emergencyCleanup('test-task', 'test-slot')).toEqual({
+      worktree: false,
+      lock: false,
+      devMode: false,
+      errors: [],
+    });
+    await expect(scanOrphanPrs(pool)).resolves.toEqual({
+      scanned: 0,
+      merged: 0,
+      labeled: 0,
+      closed: 0,
+      skipped: 0,
+    });
+  });
+
+  test('two-stage kill test double preserves the executor result contract', async () => {
+    const { killProcessTwoStage } = await import('../../executor.js');
+
+    await expect(killProcessTwoStage('test-task', 12345)).resolves.toEqual({
+      killed: false,
+      stage: 'test_noop',
+    });
+  });
 
   test('env override can force-enable: env=true + memory=false → guard returns true', async () => {
     // tick 正路径在完整 mock 环境下仍可能 timeout（内部有很多真实 DB 查询未 mock）；
