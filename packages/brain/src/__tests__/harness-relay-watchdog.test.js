@@ -168,6 +168,50 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
       ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
     )).toBe(false);
   });
+
+  function terminalCleanupPool(rowCount) {
+    const overdueRun = {
+      id: '11111111-1111-4111-8111-111111111111',
+      initiative_id: TASK_ID,
+      orchestrator_host: 'skill-relay-codex',
+      phase: 'generate',
+      deadline_at: new Date(Date.now() - 1000).toISOString(),
+      pr_url: null,
+    };
+    return {
+      query: vi.fn(async (sql) => {
+        if (/SELECT id, initiative_id, orchestrator_host, phase, deadline_at/.test(sql)) {
+          return { rows: [overdueRun] };
+        }
+        if (/FROM orchestrator_decision_log review_request/.test(sql)) {
+          return { rows: [] };
+        }
+        if (/UPDATE initiative_runs/.test(sql)) {
+          return { rows: [], rowCount };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+  }
+
+  it('Codex run 真正转 failed 后按当前 task 清理 no-callback snapshots', async () => {
+    const pool = terminalCleanupPool(1);
+    const cleanupCodexSnapshotsForTask = vi.fn();
+
+    await scanStuckHarness({ pool, cleanupCodexSnapshotsForTask });
+
+    expect(cleanupCodexSnapshotsForTask).toHaveBeenCalledOnce();
+    expect(cleanupCodexSnapshotsForTask).toHaveBeenCalledWith(TASK_ID);
+  });
+
+  it('终态 UPDATE rowCount=0 表示丢失竞态，不清任何 snapshot', async () => {
+    const pool = terminalCleanupPool(0);
+    const cleanupCodexSnapshotsForTask = vi.fn();
+
+    await scanStuckHarness({ pool, cleanupCodexSnapshotsForTask });
+
+    expect(cleanupCodexSnapshotsForTask).not.toHaveBeenCalled();
+  });
 });
 
 describe('resumeStalledRelayRuns', () => {
