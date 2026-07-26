@@ -35,16 +35,13 @@ const RELAY_DEADLINE_HOURS = 6;
 const CODEX_RELAY_DEADLINE_HOURS = 8; // B5: codex 路径用 8h
 const GROK_RELAY_DEADLINE_HOURS = 8;  // grok 路径对齐 codex 等级
 
-// P0: 只保护同一 Brain 进程内的点火竞态；运行期真相由 initiative_runs 持久计数。
+// P0: reservation 保护同一 Brain 进程内的点火竞态；Docker live + initiative_runs
+// 分别作为跨重启外部真相，两道守门均不能超过硬上限。
 const MAX_CODEX_RELAYS = 4;
 let _codexLaunchReservations = 0;
-const _unconfirmedCodexContainers = new Set();
-const _reconcilingCodexContainers = new Set();
 /** 仅供测试注入/复位。 */
 export function _setActiveCodexRelays(n) {
   _codexLaunchReservations = Number.isInteger(n) && n >= 0 ? n : 0;
-  _unconfirmedCodexContainers.clear();
-  _reconcilingCodexContainers.clear();
 }
 
 async function removeCodexContainer(containerId, deps) {
@@ -53,30 +50,39 @@ async function removeCodexContainer(containerId, deps) {
   try {
     return await removeContainer(containerId) === true;
   } catch (err) {
-    console.warn(`[skill-relay] codex 孤儿容器清理失败（保留并发槽）: container=${containerId} error=${err.message}`);
+    console.warn(`[skill-relay] codex 孤儿容器清理失败（后续由 Docker 守门）: container=${containerId} error=${err.message}`);
     return false;
   }
 }
 
-async function reconcileUnconfirmedCodexContainers(deps) {
-  for (const containerId of [..._unconfirmedCodexContainers]) {
-    // 多个并行点火只能有一个负责同一孤儿；其他点火仍看到其保留槽位。
-    if (_reconcilingCodexContainers.has(containerId)) continue;
-    _reconcilingCodexContainers.add(containerId);
-    try {
-      if (!await removeCodexContainer(containerId, deps)) continue;
-      _unconfirmedCodexContainers.delete(containerId);
-      _codexLaunchReservations = Math.max(0, _codexLaunchReservations - 1);
-      const cleanupSnapshot = deps.cleanupCodexHome || cleanupCodexRelayHome;
-      try {
-        cleanupSnapshot(containerId);
-      } catch (cleanupErr) {
-        console.warn(`[skill-relay] codex 凭据快照清理失败（non-fatal）: ${cleanupErr.message}`);
-      }
-    } finally {
-      _reconcilingCodexContainers.delete(containerId);
+async function getCodexContainerState(containerId, deps, execFn) {
+  try {
+    if (typeof deps.containerStateFn === 'function') {
+      const state = await deps.containerStateFn(containerId);
+      return ['present', 'absent', 'unknown'].includes(state) ? state : 'unknown';
     }
+    if (!/^cecelia-relay-[a-f0-9]{8}-cx-[a-f0-9]{8}$/.test(containerId)) {
+      return 'unknown';
+    }
+    const output = execFn(
+      `docker ps -a --filter "name=^/${containerId}$" --format "{{.Names}}"`,
+    );
+    const exactMatch = String(output || '')
+      .split('\n')
+      .some((name) => name.trim() === containerId);
+    return exactMatch ? 'present' : 'absent';
+  } catch (err) {
+    console.warn(`[skill-relay] codex 容器状态确认失败（保留凭据快照）: container=${containerId} error=${err.message}`);
+    return 'unknown';
   }
+}
+
+function countLiveCodexRelayContainers(output) {
+  return String(output || '')
+    .split('\n')
+    .map((name) => name.trim())
+    .filter((name) => /^cecelia-relay-[a-f0-9]{8}-cx-[a-f0-9]{8}$/.test(name))
+    .length;
 }
 
 /**
@@ -385,10 +391,6 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   };
 
   if (isCodex) {
-    // INSERT 失败后若精确删容器未确认，原 reservation 会一直占位。后续点火先重试；
-    // 只有 docker rm -f 明确成功才释放该槽和对应凭据快照。
-    await reconcileUnconfirmedCodexContainers(deps);
-
     // B2 层 1：进程内点火预留。只覆盖尚未持久化到 initiative_runs 的窗口。
     if (_codexLaunchReservations >= MAX_CODEX_RELAYS) {
       return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
@@ -396,7 +398,23 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     _codexLaunchReservations++;
     codexReservationHeld = true;
 
-    // B2 层 2：DB 是运行期持久真相。DB 不可用时 fail-closed，不能突破硬上限。
+    // B2 层 2：Docker 是跨 Brain 重启的存活真相。只数完整命名的 headless Codex
+    // controller；查询失败必须 fail-closed，避免 DB INSERT 失败留下的活容器被漏算。
+    try {
+      const dockerOutput = execFn('docker ps --format "{{.Names}}"');
+      const liveCount = countLiveCodexRelayContainers(dockerOutput);
+      if (liveCount + _codexLaunchReservations > MAX_CODEX_RELAYS) {
+        releaseCodexReservation();
+        return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
+      }
+    } catch (err) {
+      console.warn(`[skill-relay] codex Docker 守门查询失败（保守阻断）: ${err.message}`);
+      releaseCodexReservation();
+      return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
+    }
+
+    // B2 层 3：DB 是持久运行状态真相。与 Docker 分别加 reservation 守门，
+    // 不把同一个已持久化容器在两边重复相加。
     try {
       const concQ = await dbPool.query(
         `SELECT COUNT(*) FROM initiative_runs
@@ -608,6 +626,8 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     try {
       await doSpawn();
       codexSpawned = isCodex;
+      // docker run -d 返回后，容器已进入上面的外部存活真相；INSERT 前即可释放点火窗口。
+      if (isCodex) releaseCodexReservation();
     } catch (spawnErr) {
       // grok 路径：检测额度撞墙，命中时降级 claude 重试一次
       if (isGrok && detectQuotaWall(spawnErr.message)) {
@@ -678,11 +698,15 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       if (removed) {
         cleanupCodexSnapshot();
       } else {
-        // 容器仍可能存活但没有 initiative_runs 行，DB 无法计数。保留当前 reservation，
-        // 直到后续点火确认精确删除，避免实际运行数突破硬上限。
-        _unconfirmedCodexContainers.add(codexContainerId);
-        codexReservationHeld = false;
-        console.error(`[skill-relay][ALERT] codex 孤儿容器删除未确认，保留并发槽: container=${codexContainerId}`);
+        const containerState = await getCodexContainerState(codexContainerId, deps, execFn);
+        if (containerState === 'absent') {
+          cleanupCodexSnapshot();
+        }
+        // 无论是容器仍存活还是已先行消失，都不靠进程内永久槽推断；下一次 admission
+        // fail-closed 查询 Docker。存活者跨重启继续计数，已消失者自然不占容量。
+        if (containerState !== 'absent') {
+          console.error(`[skill-relay][ALERT] codex 孤儿容器删除未确认，后续由 Docker 守门计数: container=${codexContainerId} state=${containerState}`);
+        }
       }
     } else {
       cleanupCodexSnapshot();
