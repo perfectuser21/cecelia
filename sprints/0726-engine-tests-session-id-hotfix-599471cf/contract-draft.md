@@ -43,12 +43,10 @@ Contract status: controller 依据 `sprint-prd.md` 的只读「锚定声明」�
 
 ## Test Contract
 
-| 功能 | BEHAVIOR 覆盖 | Test File | 预期红证据 |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| dry-run CLI 参数 | `dry-run 输出含 --session-id UUID` | `sprints/0726-engine-tests-session-id-hotfix-599471cf/tests/cecelia-run-session-id.test.ts` | 最新 main 输出只有 `CLAUDE_SESSION_ID=<uuid>`，launcher CLI 无 `--session-id`，断言失败 |
-| session id 一致性 | `session id 单次生成且环境变量与 CLI 同值` | `sprints/0726-engine-tests-session-id-hotfix-599471cf/tests/cecelia-run-session-id.test.ts` | CLI 侧无法提取 session id，环境变量值与 CLI 值相等断言失败 |
-| 既有 launcher 回归 | `launcher-dry-run 既有回归通过` | `packages/engine/tests/launcher/launcher-dry-run.test.ts` | 既有 `cecelia-run.sh --dry-run 输出含 --session-id <uuid>` 用例在 main 失败 |
-| engine 回归池 | `packages/engine 全量测试与 GitHub engine-tests 全绿` | `sprints/0726-engine-tests-session-id-hotfix-599471cf/tests/cecelia-run-session-id.test.ts` | Red 阶段定向用例失败，阻断全量 engine 测试与 GitHub `engine-tests` |
+| ws1 | `../../tests/regression/engine-tests-session-id-hotfix-599471cf/cecelia-run-session-id.test.ts` | `dry-run 输出含 --session-id UUID` / `session id 单次生成且环境变量与 CLI 同值` | 最新 main 的 CLI 缺 `--session-id`，两条目标断言失败 |
+| ws1 | `../../packages/engine/tests/launcher/launcher-dry-run.test.ts` | `cecelia-run.sh --dry-run 输出含 --session-id <uuid>` | 既有 launcher 回归在最新 main 失败 |
 
 ## TDD 纪律
 
@@ -63,7 +61,7 @@ Contract status: controller 依据 `sprint-prd.md` 的只读「锚定声明」�
 generator 必须生成并真跑：
 
 ```bash
-bash sprints/0726-engine-tests-session-id-hotfix-599471cf/e2e-verify.sh
+bash scripts/smoke/e2e/engine-tests-session-id-hotfix-599471cf.sh
 ```
 
 脚本必须：
@@ -76,8 +74,8 @@ bash sprints/0726-engine-tests-session-id-hotfix-599471cf/e2e-verify.sh
 
 持续回归宿主：
 
-- sprint test 由 `.github/workflows/harness-v5-checks.yml` 的 `Sprint Tests 实跑 (v5.0)` 收集。
-- `e2e-verify.sh` 在 merge 前经 `scripts/graduate-sprint-tests.mjs` 入册到 `scripts/smoke/e2e/`，由 nightly E2E glob 持续收集。
+- 合同测试已由 `scripts/graduate-sprint-tests.mjs` 纯 rename 入册到 `tests/regression/`，由根 `vitest.config.js` 持续收集。
+- E2E wrapper 已入册到 `scripts/smoke/e2e/`，由 nightly E2E glob 持续收集。
 
 ## 风险与护栏
 
@@ -92,4 +90,3 @@ bash sprints/0726-engine-tests-session-id-hotfix-599471cf/e2e-verify.sh
 ## 未覆盖真实链路清单
 
 N/A。本 sprint 的真实链路是本地 shell dry-run + vitest + GitHub Actions `engine-tests`；三层均纳入验收。
-
