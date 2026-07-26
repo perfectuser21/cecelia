@@ -27,8 +27,27 @@ case "$machine_id" in
     ;;
 esac
 
+plist_token_file="$canonical_token_file"
+test_canonical_root="${KERNEL_BRIDGE_TEST_CANONICAL_ROOT:-}"
+if [[ -n "$test_canonical_root" ]]; then
+  if [[ "${NODE_ENV:-}" != 'test' || "${KERNEL_BRIDGE_TEST_ONLY:-}" != '1' ]]; then
+    echo "test canonical root requires NODE_ENV=test and KERNEL_BRIDGE_TEST_ONLY=1" >&2
+    exit 65
+  fi
+  if [[ "$test_canonical_root" != /* \
+    || "$test_canonical_root" =~ [^A-Za-z0-9_./-] ]]; then
+    echo "test canonical root must be an absolute path without shell metacharacters" >&2
+    exit 65
+  fi
+  canonical_token_file="${test_canonical_root%/}${canonical_token_file}"
+fi
+
 if [[ "$token_file" != /* || "$token_file" =~ [^A-Za-z0-9_./-] ]]; then
   echo "token file must be an absolute path without shell metacharacters" >&2
+  exit 65
+fi
+if [[ "$token_file" != "$canonical_token_file" ]]; then
+  echo "token file does not match the canonical path for $machine_id" >&2
   exit 65
 fi
 if [[ ! -f "$token_file" || -L "$token_file" ]]; then
@@ -59,7 +78,7 @@ escaped_token_file="${escaped_token_file//&/\\&}"
 escaped_token_file="${escaped_token_file//|/\\|}"
 temporary_plist="$(mktemp "$install_dir/.codex-bridge.XXXXXX")"
 trap 'rm -f "$temporary_plist"' EXIT
-sed "s|<string>${canonical_token_file}</string>|<string>${escaped_token_file}</string>|" \
+sed "s|<string>${plist_token_file}</string>|<string>${escaped_token_file}</string>|" \
   "$source_plist" > "$temporary_plist"
 chmod 600 "$temporary_plist"
 
