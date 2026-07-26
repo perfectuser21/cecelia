@@ -19,6 +19,10 @@ const migration363 = readFileSync(
   new URL('../../../migrations/363_kernel_fleet_execution_receipts.sql', import.meta.url),
   'utf8',
 );
+const migration364 = readFileSync(
+  new URL('../../../migrations/364_kernel_local_container_naming.sql', import.meta.url),
+  'utf8',
+);
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const databaseName = testDatabaseUrl
@@ -111,6 +115,8 @@ beforeAll(async () => {
 
   await client.query(migration363);
   await client.query(migration363);
+  await client.query(migration364);
+  await client.query(migration364);
   await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [oldBinaryRunId]);
   await client.query(
     `INSERT INTO harness_attempts (
@@ -145,6 +151,9 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
     expect(byId[preservedTargetId]).toBe('chosen-worker');
     expect((await client.query(
       `SELECT COUNT(*)::int AS count FROM schema_version WHERE version = '363'`,
+    )).rows[0].count).toBe(1);
+    expect((await client.query(
+      `SELECT COUNT(*)::int AS count FROM schema_version WHERE version = '364'`,
     )).rows[0].count).toBe(1);
   });
 

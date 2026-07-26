@@ -15,7 +15,6 @@ describe('kernel fleet execution receipt migration', () => {
       ['remote_job_id', 'TEXT'],
       ['machine_attestation_status', 'TEXT'],
       ['lease_generation', 'INTEGER NOT NULL DEFAULT 0'],
-      ['local_container_naming', "TEXT NOT NULL DEFAULT 'legacy-unsuffixed'"],
     ]) {
       expect(sql).toMatch(new RegExp(`ADD COLUMN IF NOT EXISTS ${column}\\s+${type}`, 'i'));
     }
@@ -25,10 +24,7 @@ describe('kernel fleet execution receipt migration', () => {
     );
     expect(sql).toMatch(/execution_transport IS NULL\s+OR execution_transport IN \('local-docker','remote-bridge'\)/i);
     expect(sql).toMatch(/machine_attestation_status IS NULL\s+OR machine_attestation_status IN \('local','verified','rejected','pending'\)/i);
-    expect(sql).toMatch(
-      /local_container_naming IN \('legacy-unsuffixed','generation-v1'\)/i,
-    );
-    expect(sql.match(/pg_constraint/gi)).toHaveLength(3);
+    expect(sql.match(/pg_constraint/gi)).toHaveLength(2);
     expect(sql).toMatch(/VALUES\s*\(\s*'363'/);
   });
 });

@@ -6,8 +6,7 @@ ALTER TABLE harness_attempts
   ADD COLUMN IF NOT EXISTS execution_transport TEXT,
   ADD COLUMN IF NOT EXISTS remote_job_id TEXT,
   ADD COLUMN IF NOT EXISTS machine_attestation_status TEXT,
-  ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS local_container_naming TEXT NOT NULL DEFAULT 'legacy-unsuffixed';
+  ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 0;
 
 UPDATE harness_attempts
 SET requested_machine_id = machine_id
@@ -41,19 +40,6 @@ BEGIN
       CHECK (
         machine_attestation_status IS NULL
         OR machine_attestation_status IN ('local','verified','rejected','pending')
-      );
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'harness_attempts_local_container_naming_check'
-      AND conrelid = 'harness_attempts'::regclass
-  ) THEN
-    ALTER TABLE harness_attempts
-      ADD CONSTRAINT harness_attempts_local_container_naming_check
-      CHECK (
-        local_container_naming IN ('legacy-unsuffixed','generation-v1')
       );
   END IF;
 END $$;
