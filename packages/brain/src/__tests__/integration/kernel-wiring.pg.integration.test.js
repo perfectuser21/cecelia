@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import pg from 'pg';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { deriveCounters } from '../../orchestrator/counters.js';
 import { derive } from '../../orchestrator/derive.js';
@@ -12,6 +12,7 @@ import { collectGroundTruth } from '../../orchestrator/ground-truth.js';
 import { createKernelHandlers } from '../../orchestrator/kernel-handlers.js';
 import { runLoop } from '../../orchestrator/loop.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
+import { resumeStalledRelayRuns } from '../../harness-relay-watchdog.js';
 import callbackRouter, {
   appendAttemptVerdict,
   appendGeneratorFixCallback,
@@ -197,6 +198,93 @@ beforeAll(createIsolatedDatabase, 30_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
 describe('Kernel restart recovery on real PostgreSQL decision log', () => {
+  async function seedExpiredKernelAttempt(run, hop = 1) {
+    await testPool.query(
+      `UPDATE tasks
+          SET payload = payload || '{"orchestrator":"skill-relay"}'::jsonb
+        WHERE id=$1`,
+      [run.taskId],
+    );
+    const attemptId = randomUUID();
+    await testPool.query(
+      `INSERT INTO harness_attempts (
+         id, run_id, hop, phase, role, provider, task_bundle,
+         callback_secret_hash, status, lease_owner, lease_expires_at,
+         provider_session_id, logical_cycle_id, attempt_kind, workstream_key
+       ) VALUES (
+         $1,$2,$3,'generate','generator','codex','{}'::jsonb,
+         'old-hash','running','old-owner',NOW()-INTERVAL '1 minute',
+         'provider-thread','task-cycle','initial','ws1'
+       )`,
+      [attemptId, run.runId, hop],
+    );
+    return attemptId;
+  }
+
+  it('public watchdog success resumes a new lineage child, never the expired parent', async () => {
+    const run = await seedRun();
+    const parentId = await seedExpiredKernelAttempt(run);
+    const resumeAttempt = vi.fn(async (child, context) => {
+      expect(child.id).not.toBe(parentId);
+      expect(context.parentAttempt.id).toBe(parentId);
+      expect(context.callbackSecret).toEqual(expect.any(String));
+      return { ok: true, provider_session_id: 'provider-thread-resumed' };
+    });
+
+    const result = await resumeStalledRelayRuns({
+      pool: testPool,
+      resumeAttempt,
+      launchKernel: vi.fn(),
+    });
+
+    expect(result.resumed).toBe(1);
+    expect(resumeAttempt).toHaveBeenCalledOnce();
+    const lineage = await testPool.query(
+      `SELECT parent.status AS parent_status,
+              parent.error_code AS parent_error_code,
+              child.id AS child_id,
+              child.attempt_kind,
+              child.retry_of_attempt_id,
+              child.callback_secret_hash
+         FROM harness_attempts parent
+         JOIN harness_attempts child ON child.retry_of_attempt_id=parent.id
+        WHERE parent.id=$1`,
+      [parentId],
+    );
+    expect(lineage.rows).toHaveLength(1);
+    expect(lineage.rows[0]).toMatchObject({
+      parent_status: 'failed',
+      parent_error_code: 'resumed_as_child',
+      attempt_kind: 'resume',
+      retry_of_attempt_id: parentId,
+    });
+    expect(lineage.rows[0].child_id).not.toBe(parentId);
+    expect(lineage.rows[0].callback_secret_hash).not.toBe('old-hash');
+    await setTaskStatus(run.taskId, 'completed');
+  });
+
+  it('public watchdog structurally terminates a false resume instead of leaving it running', async () => {
+    const run = await seedRun();
+    const parentId = await seedExpiredKernelAttempt(run);
+
+    await resumeStalledRelayRuns({
+      pool: testPool,
+      resumeAttempt: vi.fn(async () => false),
+      launchKernel: vi.fn(),
+    });
+
+    const terminal = await testPool.query(
+      'SELECT status, error_code, completed_at FROM harness_attempts WHERE id=$1',
+      [parentId],
+    );
+    expect(terminal.rows[0]).toMatchObject({
+      status: 'failed',
+      error_code: 'resume_returned_false',
+    });
+    expect(terminal.rows[0].completed_at).not.toBeNull();
+    await setTaskStatus(run.taskId, 'completed');
+  });
+
   function persistedStatusCase(status) {
     return async () => {
       const run = await seedRun();

@@ -46,7 +46,10 @@ const postHandler = findPostHandler();
 
 // Mock req/res factory
 function mockReqRes(body) {
-  const req = { body };
+  const req = {
+    body,
+    get: vi.fn(() => undefined),
+  };
   const res = {
     _status: 200,
     _json: null,

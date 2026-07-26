@@ -15,6 +15,7 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
 ]);
 
 const TERMINAL_SQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
+const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
 
 function firstRow(queryResult) {
   return queryResult.rows?.[0] ?? null;
@@ -32,8 +33,13 @@ export function createAttemptStore(pool) {
         `WITH inserted AS (
            INSERT INTO harness_attempts (
              id, run_id, hop, phase, role, provider, account_id, machine_id,
-             skill_name, skill_version, skill_digest, task_bundle, callback_secret_hash
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             skill_name, skill_version, skill_digest, task_bundle, callback_secret_hash,
+             logical_cycle_id, attempt_kind, retry_of_attempt_id, restart_reason,
+             workstream_key, time_derived
+           ) VALUES (
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+             $14,$15,$16,$17,$18,$19
+           )
            ON CONFLICT (run_id, hop) DO NOTHING
            RETURNING *
          )
@@ -55,6 +61,12 @@ export function createAttemptStore(pool) {
           skill?.digest ?? null,
           input.bundle,
           input.callbackSecretHash,
+          input.logicalCycleId ?? `intent:${input.runId}:${input.hop}`,
+          input.attemptKind ?? 'initial',
+          input.retryOfAttemptId ?? null,
+          input.restartReason ?? null,
+          input.workstreamKey ?? 'ws1',
+          input.timeDerived ?? DERIVED_TIME_ROLES.has(input.role),
         ],
       );
       return firstRow(result);
@@ -66,6 +78,7 @@ export function createAttemptStore(pool) {
             SET status = 'starting',
                 lease_owner = $2,
                 lease_expires_at = NOW() + ($3 * INTERVAL '1 second'),
+                started_at = COALESCE(started_at, NOW()),
                 updated_at = NOW()
           WHERE id = $1 AND status = 'queued'
           RETURNING *`,
@@ -222,4 +235,8 @@ export function createAttemptStore(pool) {
   });
 }
 
-export const __test__ = { TERMINAL_STATUSES, SUCCESS_TERMINAL_STATUSES };
+export const __test__ = {
+  TERMINAL_STATUSES,
+  SUCCESS_TERMINAL_STATUSES,
+  DERIVED_TIME_ROLES,
+};

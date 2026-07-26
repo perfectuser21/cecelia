@@ -50,7 +50,7 @@ function makeWatchdogDeps(overrides = {}) {
   const pool = {
     query: vi.fn().mockImplementation((sql) => {
       // initiative_runs 查询
-      if (/SELECT DISTINCT ON.*initiative_runs/.test(sql)) {
+      if (/SELECT DISTINCT ON[\s\S]*FROM initiative_runs/.test(sql)) {
         return Promise.resolve({ rows: [run] });
       }
       // task 查询
@@ -137,7 +137,7 @@ describe('watchdog headed 分支', () => {
       const task = makeHeadedTask();
       const pool = {
         query: vi.fn().mockImplementation((sql) => {
-          if (/SELECT DISTINCT ON.*initiative_runs/.test(sql)) return Promise.resolve({ rows: [run] });
+          if (/SELECT DISTINCT ON[\s\S]*FROM initiative_runs/.test(sql)) return Promise.resolve({ rows: [run] });
           if (/SELECT.*FROM tasks WHERE id/.test(sql)) return Promise.resolve({ rows: [task] });
           return Promise.resolve({ rows: [] });
         }),
@@ -171,7 +171,7 @@ describe('watchdog headed 分支', () => {
 
       const pool = {
         query: vi.fn().mockImplementation((sql) => {
-          if (/SELECT DISTINCT ON.*initiative_runs/.test(sql)) {
+          if (/SELECT DISTINCT ON[\s\S]*FROM initiative_runs/.test(sql)) {
             return Promise.resolve({ rows: [doneRun] });
           }
           if (/SELECT.*FROM tasks WHERE id/.test(sql)) {
@@ -211,7 +211,7 @@ describe('watchdog headed 分支', () => {
 
       const pool = {
         query: vi.fn().mockImplementation((sql) => {
-          if (/SELECT DISTINCT ON.*initiative_runs/.test(sql)) {
+          if (/SELECT DISTINCT ON[\s\S]*FROM initiative_runs/.test(sql)) {
             return Promise.resolve({ rows: [alreadyKilledRun] });
           }
           if (/SELECT.*FROM tasks WHERE id/.test(sql)) {
@@ -259,7 +259,7 @@ describe('watchdog headed 分支', () => {
 
       const pool = {
         query: vi.fn().mockImplementation((sql) => {
-          if (/SELECT DISTINCT ON.*initiative_runs/.test(sql)) {
+          if (/SELECT DISTINCT ON[\s\S]*FROM initiative_runs/.test(sql)) {
             return Promise.resolve({ rows: [doneClaudeRun] });
           }
           if (/SELECT.*FROM tasks WHERE id/.test(sql)) {
@@ -296,7 +296,7 @@ describe('watchdog headed 分支', () => {
 
       const pool = {
         query: vi.fn().mockImplementation((sql) => {
-          if (/SELECT DISTINCT ON.*initiative_runs/.test(sql)) {
+          if (/SELECT DISTINCT ON[\s\S]*FROM initiative_runs/.test(sql)) {
             return Promise.resolve({ rows: [doneRun] });
           }
           if (/SELECT.*FROM tasks WHERE id/.test(sql)) {
@@ -341,7 +341,7 @@ describe('watchdog headed 分支', () => {
 
       const pool = {
         query: vi.fn().mockImplementation((sql) => {
-          if (/SELECT DISTINCT ON.*initiative_runs/.test(sql)) {
+          if (/SELECT DISTINCT ON[\s\S]*FROM initiative_runs/.test(sql)) {
             return Promise.resolve({ rows: [claudeRun] });
           }
           if (/SELECT.*FROM tasks WHERE id/.test(sql)) {

@@ -1,6 +1,3 @@
-contract_branch: cp-harness-approved-a1fa8636
-sprint_dir: sprints/07251915-kernel-a1fa8636
-
 ---
 skeleton: false
 journey_type: autonomous

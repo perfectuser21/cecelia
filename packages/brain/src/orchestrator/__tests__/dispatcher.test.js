@@ -93,6 +93,27 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('logical cycle 锚定 durable intent，并与 bundle metadata 逐字一致', async () => {
+    const deps = makeDeps();
+    const dispatch = createDispatcher(deps);
+
+    await dispatch('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 2,
+      observed,
+      decision: { phase: 'gan', reason: 'awaiting_review' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.logicalCycleId).toBe(`intent:${runId}:2`);
+    expect(created.bundle.inputs).toMatchObject({
+      logical_cycle_id: `intent:${runId}:2`,
+      attempt_kind: 'initial',
+      workstream_key: 'ws1',
+    });
+  });
+
   it('先持久化 attempt，再生成 adapter spec，最后 launch', async () => {
     const order = [];
     const deps = makeDeps(order);
