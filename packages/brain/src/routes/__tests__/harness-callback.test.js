@@ -10,9 +10,12 @@
  *
  * 通过 vi.mock 隔离 db pool / lookup / langgraph，避免起真服务。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Mock @langchain/langgraph 的 Command 构造函数（验证调用即可）
 vi.mock('@langchain/langgraph', () => ({
@@ -44,6 +47,10 @@ describe('routes/harness-callback (LangGraph Stream 1)', () => {
     app = express();
     app.use(express.json());
     app.use('/api/brain', routerMod.default);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('POST /:containerId 200 + 调用 graph resume（成功路径）', async () => {
@@ -108,6 +115,46 @@ describe('routes/harness-callback (LangGraph Stream 1)', () => {
     expect(res.status).toBe(400);
     expect(res.body.ok).toBe(false);
     expect(res.body.error).toMatch(/result/i);
+  });
+
+  it('headless Codex relay callback removes only its exact credential snapshot', async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'codex-callback-cleanup-'));
+    const snapshotRoot = join(sandbox, 'snapshots');
+    const containerId = 'cecelia-relay-deadbeef-cx-1234abcd';
+    const snapshot = join(snapshotRoot, containerId);
+    mkdirSync(snapshot, { recursive: true });
+    writeFileSync(join(snapshot, 'auth.json'), 'ephemeral');
+    vi.stubEnv('CODEX_RELAY_SNAPSHOT_ROOT', snapshotRoot);
+
+    try {
+      const res = await request(app)
+        .post(`/api/brain/harness/callback/${containerId}`)
+        .send({ result: 'completed', exit_code: 0 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.relayAck).toBe(true);
+      expect(existsSync(snapshot)).toBe(false);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it('credential cleanup failure never prevents relay callback ack', async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'codex-callback-cleanup-failure-'));
+    const invalidRoot = join(sandbox, 'not-a-directory');
+    writeFileSync(invalidRoot, 'file');
+    vi.stubEnv('CODEX_RELAY_SNAPSHOT_ROOT', invalidRoot);
+
+    try {
+      const res = await request(app)
+        .post('/api/brain/harness/callback/cecelia-relay-deadbeef-cx-1234abcd')
+        .send({ result: 'completed', exit_code: 0 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.relayAck).toBe(true);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 
   it('exports default Router', async () => {

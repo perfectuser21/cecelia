@@ -18,6 +18,7 @@ import {
   discoverPrFromGithub as _discoverPrFromGithub,
 } from './orchestrator/github-pr-discovery.js';
 import { defaultPrHeadResolver } from './orchestrator/pr-head-resolver.js';
+import { cleanupCodexRelaySnapshotsForTask } from './codex-relay-credentials.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
 
@@ -817,6 +818,8 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
 export async function scanStuckHarness(opts = {}) {
   const dbPool = opts.pool || pool;
   const resolvePrHead = opts.resolvePrHead || defaultPrHeadResolver;
+  const cleanupCodexSnapshots = opts.cleanupCodexSnapshotsForTask
+    || cleanupCodexRelaySnapshotsForTask;
 
   const overdueQ = await dbPool.query(
     `SELECT id, initiative_id, orchestrator_host, phase, deadline_at, pr_url
@@ -887,6 +890,16 @@ export async function scanStuckHarness(opts = {}) {
       // SELECT 与 UPDATE 之间可能已完成/失败；终态 guard 未命中时，不得继续
       // 把关联 task 标 failed 或关闭已经完成的 spawn events。
       if (failedRun?.rowCount === 0) continue;
+      if (row.orchestrator_host === 'skill-relay-codex') {
+        try {
+          cleanupCodexSnapshots(row.initiative_id);
+        } catch (cleanupErr) {
+          console.warn(
+            `[relay-watchdog] codex 凭据快照清理失败（non-fatal） ` +
+            `initiative=${row.initiative_id}: ${cleanupErr.message}`,
+          );
+        }
+      }
       await dbPool.query(
         `UPDATE tasks SET status = 'failed', completed_at = NOW()
           WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled')`,

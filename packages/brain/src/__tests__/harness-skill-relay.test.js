@@ -287,7 +287,11 @@ describe('codex executor 凭据挂载（extraMounts 接线，demo task a150998c 
     const r = await spawnSkillRelaySession(task, deps);
 
     expect(r.ok).toBe(true);
-    expect(deps.snapshotCodexHome).toHaveBeenCalledWith('/tmp/fake-codex-home', task.id);
+    expect(deps.snapshotCodexHome).toHaveBeenCalledWith(
+      '/tmp/fake-codex-home',
+      r.containerId,
+    );
+    expect(r.containerId).toMatch(/^cecelia-relay-[a-f0-9]{8}-cx-[a-f0-9]{8}$/);
     expect(deps.spawnFn).toHaveBeenCalledOnce();
     const spawnOpts = deps.spawnFn.mock.calls[0][0];
     // 挂的必须是快照函数返回的临时目录，不能是真实 CODEX_RELAY_HOME 本身——
