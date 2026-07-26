@@ -415,6 +415,20 @@ run_provider_contract() {
         --disable plugins
         --disable image_generation
         --disable standalone_web_search
+        --disable computer_use
+        --disable in_app_browser
+        --disable multi_agent
+        --disable multi_agent_v2
+        --disable hooks
+        --disable auth_elicitation
+        --disable plugin_sharing
+        --disable remote_plugin
+        --disable skill_mcp_dependency_install
+        --disable skill_search
+        --disable tool_call_mcp_elicitation
+        --disable tool_suggest
+        --disable request_permissions_tool
+        --disable workspace_dependencies
       )
       codex_command=(
         env

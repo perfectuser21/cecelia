@@ -178,8 +178,14 @@ describe('HarnessResult contract', () => {
     }
   });
 
-  it.each(['failed', 'cancelled'])(
-    'lets a %s canary reach the failure persistence path',
+  it.each([
+    'completed_with_concerns',
+    'needs_context',
+    'blocked',
+    'failed',
+    'cancelled',
+  ])(
+    'lets a non-success %s canary reach terminal persistence',
     (status) => {
       expect(parseHarnessResult(
         validResult({

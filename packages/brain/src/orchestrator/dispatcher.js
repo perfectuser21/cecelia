@@ -573,6 +573,9 @@ export function createDispatcher(deps) {
       detail: `attempt ${attempt.id} launched as ${launched.containerId ?? launched.jobId ?? 'worker job'}`,
       attemptId: attempt.id,
       provider: adapter.name,
+      leaseOwner: attempt.lease_owner,
+      leaseGeneration: attempt.lease_generation,
+      localContainerNaming: attempt.local_container_naming ?? null,
     };
   };
 }

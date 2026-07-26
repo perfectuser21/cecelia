@@ -331,6 +331,7 @@ describe('kernel attempt durable claims', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
@@ -469,6 +470,7 @@ describe('kernel attempt security and Codex execution', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
@@ -576,6 +578,9 @@ describe('kernel attempt security and Codex execution', () => {
   });
 
   it('runs a legal canary in a Bridge-owned disposable workspace', async () => {
+    vi.stubEnv('BRAIN_URL', 'https://must-not-reach-provider.example');
+    vi.stubEnv('KERNEL_BRIDGE_TOKEN_FILE', '/must/not/reach/provider');
+    vi.stubEnv('KERNEL_BRIDGE_STATE_DIR', '/must/not/reach/provider-state');
     const fixedWorkDir = path.join(stateDir, 'real-repository');
     fs.mkdirSync(fixedWorkDir);
     const handler = createKernelAttemptHandler({
@@ -596,8 +601,16 @@ describe('kernel attempt security and Codex execution', () => {
     expect(spawnFn.mock.calls[0][1]).toEqual(expect.arrayContaining([
       '--disable', 'shell_tool',
       '--disable', 'unified_exec',
+      '--disable', 'computer_use',
+      '--disable', 'in_app_browser',
+      '--disable', 'multi_agent',
+      '--disable', 'multi_agent_v2',
+      '--disable', 'hooks',
       '--ignore-user-config',
     ]));
+    expect(spawnFn.mock.calls[0][2].env).not.toHaveProperty('BRAIN_URL');
+    expect(spawnFn.mock.calls[0][2].env).not.toHaveProperty('KERNEL_BRIDGE_TOKEN_FILE');
+    expect(spawnFn.mock.calls[0][2].env).not.toHaveProperty('KERNEL_BRIDGE_STATE_DIR');
   });
 
   it('fails closed when a disposable workspace cannot be created', async () => {

@@ -483,11 +483,169 @@ describe('createLiveDispatch', () => {
     })).rejects.toThrow(`canary_callback_timeout:${ATTEMPT_IDS['us-mac-m4']}`);
 
     expect(removeContainerFn).toHaveBeenCalledOnce();
-    expect(cancelAttemptFn).toHaveBeenCalledWith(expect.objectContaining({
-      attempt_id: ATTEMPT_IDS['us-mac-m4'],
-      lease_owner: 'canary:test',
-      lease_generation: 0,
-    }));
+    expect(cancelAttemptFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt_id: ATTEMPT_IDS['us-mac-m4'],
+        lease_owner: 'canary:test',
+        lease_generation: 0,
+      }),
+      'us-mac-m4',
+    );
+    await dispatch.close();
+  });
+
+  it('cancels a remote attempt when its callback times out', async () => {
+    const cancelAttemptFn = vi.fn(async () => true);
+    liveMocks.pool.query.mockImplementation(async (sql) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) {
+        return { rows: [{ id: RUN_ID }], rowCount: 1 };
+      }
+      if (/FROM harness_attempts/.test(sql)) {
+        return {
+          rows: [{
+            ...completedEvidence('xian-mac-m4', { status: 'running' }),
+            lease_owner: 'canary:test',
+            lease_generation: 2,
+          }],
+        };
+      }
+      if (/UPDATE harness_attempts/.test(sql)) return { rows: [], rowCount: 0 };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    liveMocks.buildRealDeps.mockResolvedValue({
+      dispatch: vi.fn(async () => ({ attemptId: ATTEMPT_IDS['xian-mac-m4'] })),
+    });
+    const dispatch = await createLiveDispatch({
+      runId: RUN_ID,
+      brainUrl: 'http://localhost:5221',
+      fetchFn: vi.fn(async () => ({ ok: true, status: 200 })),
+      timeoutMs: 5,
+      pollMs: 1,
+      cancelAttemptFn,
+    });
+
+    await expect(dispatch({
+      machine: 'xian-mac-m4',
+      attemptNumber: 1,
+    })).rejects.toThrow(`canary_callback_timeout:${ATTEMPT_IDS['xian-mac-m4']}`);
+
+    expect(cancelAttemptFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt_id: ATTEMPT_IDS['xian-mac-m4'],
+        lease_owner: 'canary:test',
+        lease_generation: 2,
+      }),
+      'xian-mac-m4',
+    );
+    await dispatch.close();
+  });
+
+  it('uses the authenticated production Bridge cancel path and fences the DB row', async () => {
+    const fetchFn = vi.fn(async (url) => {
+      if (url === 'http://localhost:5221/api/brain/health') {
+        return { ok: true, status: 200 };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: vi.fn(async () => ({ status: 'cancelled' })),
+      };
+    });
+    liveMocks.pool.query.mockImplementation(async (sql) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) {
+        return { rows: [{ id: RUN_ID }], rowCount: 1 };
+      }
+      if (/FROM harness_attempts/.test(sql)) {
+        return {
+          rows: [{
+            ...completedEvidence('xian-mac-m1', { status: 'running' }),
+            lease_owner: 'canary:test',
+            lease_generation: 3,
+          }],
+        };
+      }
+      if (/UPDATE harness_attempts/.test(sql)) {
+        return { rows: [{ id: ATTEMPT_IDS['xian-mac-m1'], status: 'cancelled' }], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    liveMocks.buildRealDeps.mockResolvedValue({
+      dispatch: vi.fn(async () => ({ attemptId: ATTEMPT_IDS['xian-mac-m1'] })),
+    });
+    const dispatch = await createLiveDispatch({
+      runId: RUN_ID,
+      brainUrl: 'http://localhost:5221',
+      env: {
+        KERNEL_FLEET_BRIDGE_TOKEN: 'shared-secret-at-least-thirty-two-characters',
+        XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      },
+      fetchFn,
+      timeoutMs: 5,
+      pollMs: 1,
+    });
+
+    await expect(dispatch({
+      machine: 'xian-mac-m1',
+      attemptNumber: 1,
+    })).rejects.toThrow(`canary_callback_timeout:${ATTEMPT_IDS['xian-mac-m1']}`);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      `http://xian-m1.internal:3458/harness/attempts/${ATTEMPT_IDS['xian-mac-m1']}/cancel`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer shared-secret-at-least-thirty-two-characters',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          lease_owner: 'canary:test',
+          lease_generation: 3,
+        }),
+      }),
+    );
+    expect(liveMocks.pool.query.mock.calls.some(([sql]) => (
+      /UPDATE harness_attempts/.test(sql)
+    ))).toBe(true);
+    await dispatch.close();
+  });
+
+  it('cleans up the launched attempt when polling the database fails', async () => {
+    const cancelAttemptFn = vi.fn(async () => true);
+    liveMocks.pool.query.mockImplementation(async (sql) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) {
+        return { rows: [{ id: RUN_ID }], rowCount: 1 };
+      }
+      if (/FROM harness_attempts/.test(sql)) throw new Error('postgres unavailable');
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    liveMocks.buildRealDeps.mockResolvedValue({
+      dispatch: vi.fn(async () => ({
+        attemptId: ATTEMPT_IDS['xian-mac-m1'],
+        leaseOwner: 'canary:test',
+        leaseGeneration: 0,
+        localContainerNaming: 'generation-v1',
+      })),
+    });
+    const dispatch = await createLiveDispatch({
+      runId: RUN_ID,
+      brainUrl: 'http://localhost:5221',
+      fetchFn: vi.fn(async () => ({ ok: true, status: 200 })),
+      cancelAttemptFn,
+    });
+
+    await expect(dispatch({
+      machine: 'xian-mac-m1',
+      attemptNumber: 1,
+    })).rejects.toThrow(/canary_poll_failed.*postgres unavailable/);
+
+    expect(cancelAttemptFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt_id: ATTEMPT_IDS['xian-mac-m1'],
+        lease_owner: 'canary:test',
+        lease_generation: 0,
+      }),
+      'xian-mac-m1',
+    );
     await dispatch.close();
   });
 

@@ -85,8 +85,10 @@ export function parseTaskBundle(value) {
 export function parseHarnessResult(value, role, expectedOutput = null) {
   const parsed = harnessResultSchema.parse(value);
   if (expectedOutput === 'harness-result/canary-v1') {
-    if (['failed', 'cancelled'].includes(parsed.status)) return parsed;
-    if (parsed.status !== 'completed' || parsed.decision?.outcome !== 'CANARY_OK') {
+    // Every executor terminal state must reach persistence. Only the exact
+    // successful state is subject to the stricter canary proof envelope.
+    if (parsed.status !== 'completed') return parsed;
+    if (parsed.decision?.outcome !== 'CANARY_OK') {
       throw new Error('canary result requires status completed and decision outcome CANARY_OK');
     }
     if (parsed.artifacts.length !== 0 || parsed.checks.length !== 0 || parsed.error !== null) {

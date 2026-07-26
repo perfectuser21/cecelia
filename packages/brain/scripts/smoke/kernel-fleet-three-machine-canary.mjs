@@ -463,6 +463,8 @@ export async function createLiveDispatch({
   await ensureSyntheticRun(pool, runId);
 
   const dispatchers = new Map();
+  let attemptStore = null;
+  let remoteCancellationTransport = null;
   let localWorkspace = null;
   let nextHop = 0;
   const accountByMachine = {
@@ -535,46 +537,124 @@ export async function createLiveDispatch({
       }
     };
 
-    const deadline = Date.now() + timeoutMs;
-    let latestRow = null;
-    while (Date.now() < deadline) {
-      const result = await pool.query(
-        `SELECT id AS attempt_id, run_id, requested_machine_id, actual_machine_id,
-                execution_transport, remote_job_id, machine_attestation_status,
-                lease_owner, lease_generation, local_container_naming,
-                status, started_at, completed_at, result
-           FROM harness_attempts
-          WHERE id=$1::uuid`,
-        [launched.attemptId],
-      );
-      const row = result.rows[0];
-      if (row) latestRow = row;
-      if (row && TERMINAL_STATUSES.has(row.status)) {
-        if (machine === 'us-mac-m4') await removeLocalContainer(row);
-        return row;
+    const initialRow = {
+      attempt_id: launched.attemptId,
+      lease_owner: launched.leaseOwner ?? null,
+      lease_generation: launched.leaseGeneration ?? null,
+      local_container_naming: launched.localContainerNaming ?? null,
+    };
+    const cancelAndFence = async (row) => {
+      const cleanupErrors = [];
+      if (machine === 'us-mac-m4') {
+        try {
+          await removeLocalContainer(row);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
-    }
-    if (machine === 'us-mac-m4' && latestRow) {
-      await removeLocalContainer(latestRow);
       if (cancelAttemptFn) {
-        await cancelAttemptFn(latestRow);
+        try {
+          await cancelAttemptFn(row, machine);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       } else {
-        const { createAttemptStore } = await import('../../src/orchestrator/attempt-store.js');
-        await createAttemptStore(pool).fail(
-          launched.attemptId,
-          {
-            code: 'canary_callback_timeout',
-            message: 'local canary callback timed out and its container was removed',
-            status: 'cancelled',
-          },
-          {
-            leaseOwner: latestRow.lease_owner ?? null,
-            leaseGeneration: latestRow.lease_generation ?? null,
-          },
+        if (machine !== 'us-mac-m4') {
+          try {
+            if (!remoteCancellationTransport) {
+              const { createRemoteBridgeTransport } = await import(
+                '../../src/orchestrator/remote-bridge-transport.js'
+              );
+              remoteCancellationTransport = createRemoteBridgeTransport({
+                enabled: true,
+                bridgeUrls: {
+                  'xian-mac-m4': env.XIAN_M4_KERNEL_BRIDGE_URL,
+                  'xian-mac-m1': env.XIAN_M1_KERNEL_BRIDGE_URL,
+                },
+                sharedSecret: env.KERNEL_FLEET_BRIDGE_TOKEN,
+                brainUrl: env.KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL,
+                fetchFn,
+                timeoutMs: 8_000,
+              });
+            }
+            await remoteCancellationTransport.cancel({
+              attempt: {
+                id: row.attempt_id,
+                lease_owner: row.lease_owner,
+                lease_generation: row.lease_generation,
+              },
+              target: { machine },
+            });
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        }
+        try {
+          if (!attemptStore) {
+            const { createAttemptStore } = await import(
+              '../../src/orchestrator/attempt-store.js'
+            );
+            attemptStore = createAttemptStore(pool);
+          }
+          await attemptStore.fail(
+            launched.attemptId,
+            {
+              code: 'canary_callback_timeout',
+              message: `canary ${machine} callback timed out or polling failed; execution was cancelled`,
+              status: 'cancelled',
+            },
+            {
+              leaseOwner: row.lease_owner ?? null,
+              leaseGeneration: row.lease_generation ?? null,
+            },
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(
+          cleanupErrors,
+          `canary_cleanup_failed:${launched.attemptId}`,
         );
       }
+    };
+
+    const deadline = Date.now() + timeoutMs;
+    let latestRow = initialRow;
+    try {
+      while (Date.now() < deadline) {
+        const result = await pool.query(
+          `SELECT id AS attempt_id, run_id, requested_machine_id, actual_machine_id,
+                  execution_transport, remote_job_id, machine_attestation_status,
+                  lease_owner, lease_generation, local_container_naming,
+                  status, started_at, completed_at, result
+             FROM harness_attempts
+            WHERE id=$1::uuid`,
+          [launched.attemptId],
+        );
+        const row = result.rows[0];
+        if (row) latestRow = row;
+        if (row && TERMINAL_STATUSES.has(row.status)) {
+          if (machine === 'us-mac-m4') await removeLocalContainer(row);
+          return row;
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+    } catch (error) {
+      try {
+        await cancelAndFence(latestRow);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `canary_poll_failed:${launched.attemptId}:${error.message}`,
+        );
+      }
+      throw new Error(`canary_poll_failed:${launched.attemptId}:${error.message}`, {
+        cause: error,
+      });
     }
+    await cancelAndFence(latestRow);
     throw new Error(`canary_callback_timeout:${launched.attemptId}`);
   };
   dispatch.close = async () => {

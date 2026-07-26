@@ -321,7 +321,49 @@ const CANARY_NO_TOOL_ARGS = Object.freeze([
   '--disable', 'plugins',
   '--disable', 'image_generation',
   '--disable', 'standalone_web_search',
+  '--disable', 'computer_use',
+  '--disable', 'in_app_browser',
+  '--disable', 'multi_agent',
+  '--disable', 'multi_agent_v2',
+  '--disable', 'hooks',
+  '--disable', 'auth_elicitation',
+  '--disable', 'plugin_sharing',
+  '--disable', 'remote_plugin',
+  '--disable', 'skill_mcp_dependency_install',
+  '--disable', 'skill_search',
+  '--disable', 'tool_call_mcp_elicitation',
+  '--disable', 'tool_suggest',
+  '--disable', 'request_permissions_tool',
+  '--disable', 'workspace_dependencies',
 ]);
+
+const DISPOSABLE_PROVIDER_ENV_KEYS = Object.freeze([
+  'PATH',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+]);
+
+function providerEnvironment(codexHome, disposableWorkspace) {
+  if (!disposableWorkspace) return { ...process.env, CODEX_HOME: codexHome };
+  const environment = {
+    HOME: codexHome,
+    CODEX_HOME: codexHome,
+  };
+  for (const key of DISPOSABLE_PROVIDER_ENV_KEYS) {
+    if (typeof process.env[key] === 'string' && process.env[key]) {
+      environment[key] = process.env[key];
+    }
+  }
+  return environment;
+}
 
 function validateDisposableWorkspace(workspace, attemptId) {
   if (workspace === undefined) return false;
@@ -558,7 +600,7 @@ function startProvider({
     );
     child = configuration.spawnFn(configuration.codexBin, args, {
       cwd: providerWorkDir,
-      env: { ...process.env, CODEX_HOME: codexHome },
+      env: providerEnvironment(codexHome, execution.disposableWorkspace),
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
