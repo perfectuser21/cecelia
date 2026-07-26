@@ -33,6 +33,46 @@ function createApp() {
   return app;
 }
 
+describe('task-tasks routes — tenant scope at ingress', () => {
+  let app;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    app = createApp();
+  });
+
+  it('x-tenant-id 由服务端写入 payload，忽略 body 内伪造 tenant', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'tenant-task', title: 'Tenant task', status: 'queued' }],
+    });
+
+    const res = await request(app)
+      .post('/tasks')
+      .set('x-tenant-id', 'tenant-a')
+      .send({ title: 'Tenant task', payload: { tenant_id: 'spoofed', sprint_dir: 'sprints/t' } });
+
+    expect(res.status).toBe(201);
+    expect(JSON.parse(mockPool.query.mock.calls[1][1][9])).toMatchObject({
+      tenant_id: 'tenant-a',
+      sprint_dir: 'sprints/t',
+    });
+  });
+
+  it('legacy caller 未带 tenant header 时归入 default tenant', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'default-task', title: 'Default task', status: 'queued' }],
+    });
+
+    const res = await request(app).post('/tasks').send({ title: 'Default task' });
+
+    expect(res.status).toBe(201);
+    expect(JSON.parse(mockPool.query.mock.calls[1][1][9])).toMatchObject({
+      tenant_id: 'default',
+    });
+  });
+});
+
 describe('task-tasks routes — B51 journey_id warning', () => {
   let app;
   beforeEach(() => {

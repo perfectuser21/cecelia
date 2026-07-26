@@ -142,8 +142,10 @@ describe('attempt-telemetry', () => {
   });
 
   it('legacy null logical_cycle_id 的计数与响应 fallback 使用同一口径', async () => {
+    const sqls = [];
     const db = {
       query: async (sql) => {
+        sqls.push(sql);
         if (sql.includes('JOIN initiative_runs')) return { rows: [{ id: 'run-legacy' }] };
         return {
           rows: [{
@@ -174,5 +176,6 @@ describe('attempt-telemetry', () => {
 
     expect(telemetry.logical_cycle_count).toBe(1);
     expect(telemetry.attempts[0].logical_cycle_id).toBe('intent:run-legacy:1');
+    expect(sqls[0]).toMatch(/COALESCE\([^)]*tenant_id[^)]]*'default'/);
   });
 });
