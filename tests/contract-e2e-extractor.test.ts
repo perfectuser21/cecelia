@@ -164,7 +164,7 @@ describe('harness-evaluator Step B-1', () => {
     const verdictLiterals = skill
       .split('\n')
       .map((line, index) => ({ line: line.trim(), number: index + 1 }))
-      .filter(({ line }) => line.startsWith('{"verdict":'));
+      .filter(({ line }) => line.includes('{"verdict":'));
     const unbound = verdictLiterals.filter(
       ({ line }) => !line.includes('"attempt_id"'),
     );
