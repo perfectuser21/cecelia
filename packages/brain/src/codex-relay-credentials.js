@@ -40,6 +40,9 @@ export function snapshotCodexRelayHome(codexHome, snapshotKey, env = process.env
   mkdirSync(target, { mode: 0o700 });
 
   try {
+    // mkdir mode is filtered by process umask; force the contract before any
+    // credential copy so even a restrictive service umask cannot create 000.
+    chmodSync(target, 0o700);
     copyFileSync(srcAuth, join(target, 'auth.json'));
     chmodSync(join(target, 'auth.json'), 0o600);
     const srcConfig = join(codexHome, 'config.toml');
@@ -49,6 +52,7 @@ export function snapshotCodexRelayHome(codexHome, snapshotKey, env = process.env
     }
     return target;
   } catch (error) {
+    try { chmodSync(target, 0o700); } catch { /* best-effort before cleanup */ }
     rmSync(target, { recursive: true, force: true });
     throw error;
   }
