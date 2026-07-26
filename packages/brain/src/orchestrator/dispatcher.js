@@ -233,7 +233,7 @@ export function createDispatcher(deps) {
       const taskBundle = {
         ...bundle,
         task_id: ctx.observed.task.id ?? ctx.taskId,
-        logical_cycle: payload.logical_cycle ?? ctx.hop,
+        logical_cycle: attemptMetadata.logicalCycleId,
       };
       const preflight = await deps.preflightGate.evaluate({
         preferred_target: {
