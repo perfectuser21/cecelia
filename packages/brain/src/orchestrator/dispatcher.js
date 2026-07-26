@@ -281,15 +281,21 @@ export function createDispatcher(deps) {
       provider: requestedProvider,
       requires: ['structured_output'],
     });
-    let selectedAccount = requestedAccount;
-    let selectedMachine = machineId;
-    let selectedTarget = spec.role === 'judge'
+    const preferredTarget = spec.role === 'judge'
       ? null
       : {
-          provider: adapter.name,
-          account: requestedAccount,
-          machine: machineId,
+          provider: roleAssignment.provider ?? adapter.name,
+          account: roleAssignment.account ?? requestedAccount,
+          machine: roleAssignment.machine ?? machineId,
         };
+    const candidateTargets = spec.role === 'judge'
+      ? []
+      : roleAssignment.strict_affinity === true
+        ? [preferredTarget]
+        : [preferredTarget, ...(roleAssignment.fallback_targets ?? [])];
+    let selectedAccount = requestedAccount;
+    let selectedMachine = preferredTarget?.machine ?? machineId;
+    let selectedTarget = preferredTarget;
     let accountHome = null;
     const rawCapabilityRequirements = payload.contract_requirements
       ?? payload.capability_requirements
@@ -320,12 +326,14 @@ export function createDispatcher(deps) {
         task_id: ctx.observed.task.id ?? ctx.taskId,
         logical_cycle: attemptMetadata.logicalCycleId,
       };
+      const failedTargets = await deps.attemptStore.listFailedExecutionTargets?.(
+        ctx.runId,
+        spec.role,
+      ) ?? [];
       const preflight = await deps.preflightGate.evaluate({
-        preferred_target: {
-          provider: adapter.name,
-          account: requestedAccount,
-          machine: machineId,
-        },
+        preferred_target: preferredTarget,
+        candidate_targets: candidateTargets,
+        failed_targets: failedTargets,
         requirements: capabilityRequirements ?? {},
         task_bundle: taskBundle,
       });

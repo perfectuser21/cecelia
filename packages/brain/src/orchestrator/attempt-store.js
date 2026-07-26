@@ -282,6 +282,21 @@ export function createAttemptStore(pool) {
       ));
     },
 
+    async listFailedExecutionTargets(runId, role) {
+      const result = await pool.query(
+        `SELECT provider, account_id, requested_machine_id
+           FROM harness_attempts
+          WHERE run_id=$1 AND role=$2 AND status IN ('failed','cancelled')
+          ORDER BY hop`,
+        [runId, role],
+      );
+      return result.rows.map((row) => ({
+        provider: row.provider,
+        account: row.account_id,
+        machine: row.requested_machine_id,
+      }));
+    },
+
     async assertFreshRoleSession({ runId, attemptId, role, sessionId }) {
       if (!sessionId) throw new Error('sessionId is required for isolation check');
       const result = await pool.query(

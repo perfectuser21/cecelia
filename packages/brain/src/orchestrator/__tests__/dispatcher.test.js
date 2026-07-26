@@ -5,12 +5,23 @@ import {
   createDispatcher,
   resolveAction,
 } from '../dispatcher.js';
+import { createCapabilityGate } from '../preflight/capability-gate.js';
 
 const { buildDockerArgs } = (await import('../../docker-executor.js')).__test__;
 
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const runId = '11111111-1111-4111-8111-111111111111';
 const attemptId = '22222222-2222-4222-8222-222222222222';
+const recoveryRoleAssignment = Object.freeze({
+  provider: 'codex',
+  account: 'team3',
+  machine: 'xian-mac-m4',
+  strict_affinity: false,
+  fallback_targets: [
+    { provider: 'codex', account: 'team5', machine: 'xian-mac-m1' },
+    { provider: 'codex', account: 'team1', machine: 'us-mac-m4' },
+  ],
+});
 
 const observed = {
   task: {
@@ -71,6 +82,7 @@ function makeDeps(order = []) {
         return { id, status: 'starting', ...receipt };
       }),
       fail: vi.fn(),
+      listFailedExecutionTargets: vi.fn(async () => []),
     },
     registry: {
       resolve: vi.fn(() => adapter),
@@ -465,6 +477,144 @@ describe('createDispatcher', () => {
 
     expect(deps.launcher.launch).not.toHaveBeenCalled();
     expect(deps.attemptStore.fail).not.toHaveBeenCalled();
+  });
+
+  it('strict affinity with a failed Xi’an M4 target never probes or launches another machine', async () => {
+    const deps = makeDeps();
+    const gateDeps = {
+      resolveCanonicalMachineId: vi.fn(async ({ machine }) => machine),
+      getMachineHealth: vi.fn(async () => ({ ok: true })),
+      getMachineCapacity: vi.fn(async () => ({ ok: true, available: 1 })),
+      listProviderAccounts: vi.fn(async () => ['team5', 'team1']),
+      probeProviderAuth: vi.fn(async () => ({ ok: true })),
+      probeGitHub: vi.fn(async () => ({ ok: true })),
+      probePostgres: vi.fn(async () => ({ ok: true })),
+      probeModelCapability: vi.fn(async () => ({ ok: true })),
+    };
+    deps.preflightGate = createCapabilityGate(gateDeps);
+    deps.attemptStore.listFailedExecutionTargets.mockResolvedValueOnce([
+      {
+        provider: 'codex',
+        account: 'team3',
+        machine: 'xian-mac-m4',
+      },
+    ]);
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: {
+        ...observed,
+        task: {
+          ...observed.task,
+          payload: {
+            ...observed.task.payload,
+            role_assignments: {
+              generator: {
+                ...recoveryRoleAssignment,
+                strict_affinity: true,
+              },
+            },
+          },
+        },
+      },
+      decision: { phase: 'generate' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      control_status: 'BLOCKED',
+      failure_class: 'infrastructure_blocked',
+    });
+    expect(deps.attemptStore.listFailedExecutionTargets)
+      .toHaveBeenCalledWith(runId, 'generator');
+    expect(gateDeps.resolveCanonicalMachineId).not.toHaveBeenCalled();
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
+  it('a later non-strict hop creates a new Attempt on the next ordered machine', async () => {
+    const firstAttemptId = '33333333-3333-4333-8333-333333333333';
+    const secondAttemptId = '44444444-4444-4444-8444-444444444444';
+    const ids = [firstAttemptId, secondAttemptId];
+    const deps = makeDeps();
+    deps.randomUUID = () => ids.shift();
+    deps.attemptStore.listFailedExecutionTargets
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        provider: 'codex',
+        account: 'team3',
+        machine: 'xian-mac-m4',
+      }]);
+    const gateDeps = {
+      resolveCanonicalMachineId: vi.fn(async ({ machine }) => machine),
+      getMachineHealth: vi.fn(async ({ machine }) => ({ ok: true, machine })),
+      getMachineCapacity: vi.fn(async () => ({ ok: true, available: 1 })),
+      listProviderAccounts: vi.fn(async () => []),
+      probeProviderAuth: vi.fn(async () => ({ ok: true })),
+      probeGitHub: vi.fn(async () => ({ ok: true })),
+      probePostgres: vi.fn(async () => ({ ok: true })),
+      probeModelCapability: vi.fn(async () => ({ ok: true })),
+    };
+    deps.preflightGate = createCapabilityGate(gateDeps);
+    deps.launcher.launch
+      .mockRejectedValueOnce(new Error('xian M4 launch failed'))
+      .mockImplementationOnce(async ({ target }) => ({
+        actualMachineId: target.machine,
+        executionTransport: 'remote-bridge',
+        remoteJobId: 'remote-job-recovery',
+        attestationStatus: 'verified',
+        containerId: null,
+        jobId: 'remote-job-recovery',
+      }));
+    const recoveryObserved = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: {
+          ...observed.task.payload,
+          role_assignments: { generator: recoveryRoleAssignment },
+        },
+      },
+    };
+    const dispatch = createDispatcher(deps);
+
+    await expect(dispatch('spawn:generator', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: recoveryObserved,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('xian M4 launch failed');
+
+    await expect(dispatch('spawn:generator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: recoveryObserved,
+      decision: { phase: 'generate' },
+    })).resolves.toMatchObject({
+      status: 'DONE',
+      attemptId: secondAttemptId,
+    });
+
+    expect(deps.attemptStore.createAttempt.mock.calls.map(([created]) => ({
+      id: created.id,
+      hop: created.hop,
+      machineId: created.machineId,
+    }))).toEqual([
+      { id: firstAttemptId, hop: 6, machineId: 'xian-mac-m4' },
+      { id: secondAttemptId, hop: 7, machineId: 'xian-mac-m1' },
+    ]);
+    expect(deps.launcher.launch.mock.calls[1][0]).toMatchObject({
+      attempt: { id: secondAttemptId, hop: 7 },
+      target: {
+        provider: 'codex',
+        account: 'team5',
+        machine: 'xian-mac-m1',
+      },
+    });
   });
 
   it('把 preflight 选中的 target、machine 与同一 fenced receipt 贯穿真实 dispatch 链', async () => {
