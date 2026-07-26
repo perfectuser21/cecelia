@@ -4,7 +4,7 @@
 
 **Goal:** Safely run four simultaneous headless One Session Codex controllers on US M4 using the same team1 credentials, with independent host-visible credential snapshots and exact cleanup.
 
-**Architecture:** Keep `initiative_runs` as the durable total-active ledger and replace the broken permanent scalar with a transient total launch reservation. Add a small credential-snapshot module keyed by unique container ID, then invoke its exact cleanup on launch failure and relay callback.
+**Architecture:** Replace the broken permanent scalar with a transient launch reservation held only until detached spawn succeeds. Admission independently checks exact live Docker relays and active `initiative_runs` rows, with each external count plus reservations capped at four and both queries fail-closed. A live container becomes the restart-safe capacity truth before DB insert. Credential snapshots remain keyed by unique container ID and are cleaned only after exact removal/confirmed absence, callback, or guarded watchdog terminal cleanup.
 
 **Tech Stack:** Node.js ESM, Vitest, Express, PostgreSQL, Docker Compose, shell smoke tests.
 
@@ -13,7 +13,7 @@
 ## File Map
 
 - Create `packages/brain/src/codex-relay-credentials.js`: host-visible snapshot root, isolated copy, and validated exact cleanup.
-- Modify `packages/brain/src/harness-skill-relay.js`: total-four reservation/DB gate, unique Codex run identity, snapshot lifecycle integration.
+- Modify `packages/brain/src/harness-skill-relay.js`: total-four reservation/Docker/DB gate, unique Codex run identity, snapshot lifecycle integration.
 - Modify `packages/brain/src/routes/harness-callback.js`: exact per-container snapshot cleanup before relay acknowledgement.
 - Modify `packages/brain/src/harness-relay-watchdog.js`: exact no-callback cleanup after a successful overdue-to-failed transition.
 - Replace `packages/brain/src/__tests__/harness-skill-relay-codex-four-way.test.js`: approved same-team1 total-four contract.
@@ -64,6 +64,20 @@ it.each([
   expect(result.ok).toBe(allowed);
 });
 ```
+
+Add Docker boundary and restart cases:
+
+- DB zero plus four complete live Codex relay names defers.
+- DB zero plus one Docker-only orphan permits only three simultaneous launch
+  reservations.
+- Docker query failure defers fail-closed.
+- Partial, malformed, or prefix/suffix-expanded names do not count.
+- After spawn succeeds, DB insert fails, exact removal fails, and process
+  reservations are reset, one still-live Docker orphan continues to consume
+  one of the four slots.
+- If exact removal returns false but exact `docker ps -a` confirms absence,
+  capacity recovers and the exact credential snapshot is cleaned.
+- If post-remove state is `present` or `unknown`, the snapshot remains.
 
 Assert four successful runs have four distinct `containerId` values, callback
 URLs, snapshot keys, and `ensureWt` task inputs. Assert compose contains only
@@ -210,7 +224,7 @@ git add packages/brain/src/codex-relay-credentials.js \
 git commit -m "fix(brain): isolate codex relay credentials on host"
 ```
 
-### Task 3: Implement total-four launch reservation and DB guard
+### Task 3: Implement total-four reservation, Docker, and DB guards
 
 **Files:**
 - Modify: `packages/brain/src/harness-skill-relay.js`
@@ -238,9 +252,20 @@ _codexLaunchReservations += 1;
 let codexReservationHeld = true;
 ```
 
-Run the DB query and fail closed:
+Query Docker live state and DB active state independently:
 
 ```js
+const dockerOutput = execFn('docker ps --format "{{.Names}}"');
+const dockerLive = dockerOutput
+  .split('\n')
+  .map((name) => name.trim())
+  .filter((name) =>
+    /^cecelia-relay-[a-f0-9]{8}-cx-[a-f0-9]{8}$/.test(name))
+  .length;
+if (dockerLive + _codexLaunchReservations > MAX_CODEX_RELAYS) {
+  return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
+}
+
 const concQ = await dbPool.query(
   `SELECT COUNT(*) FROM initiative_runs
     WHERE orchestrator_host = 'skill-relay-codex'
@@ -255,7 +280,12 @@ if (active + _codexLaunchReservations > MAX_CODEX_RELAYS) {
 }
 ```
 
-Release in the function's outer `finally`:
+Run the Docker and DB queries in separate `try/catch` blocks. Each query
+failure releases the current reservation and returns the same fail-closed
+deferred result. Do not add Docker and DB counts together: a healthy relay is
+normally present in both.
+
+Release in the function's outer `finally` for every pre-spawn return/error:
 
 ```js
 if (codexReservationHeld) {
@@ -277,10 +307,51 @@ const containerId = isCodex
   : existingNonCodexId;
 ```
 
-Pass `containerId` to `snapshotCodexRelayHome()` and cleanup that same ID on
-every error after snapshot creation.
+Pass `containerId` to `snapshotCodexRelayHome()`. Before detached spawn
+succeeds, cleanup that same ID on every error after snapshot creation. After
+spawn succeeds, follow the exact remove/confirmed-absence lifecycle in Step 3;
+do not delete credentials from a container that may still be live.
 
-- [ ] **Step 3: Fix production team1 default without adding mounts**
+- [ ] **Step 3: Hand capacity to Docker before DB insert**
+
+Immediately after `await doSpawn()` succeeds, mark the container as spawned and
+release the launch reservation before inserting `initiative_runs`:
+
+```js
+await doSpawn();
+codexSpawned = true;
+releaseCodexReservation();
+await dbPool.query(`INSERT INTO initiative_runs ...`);
+```
+
+This ordering has no uncounted gap: before spawn resolves the reservation is
+held; after it resolves `docker ps` sees the detached container. If Brain
+restarts or the insert fails, Docker still exposes the live orphan.
+
+On insert failure, invoke `removeDockerContainer(containerId)` (or injected
+`removeContainerFn`) for the exact full ID before snapshot cleanup. If removal
+returns false, perform an exact all-container state query:
+
+```bash
+docker ps -a \
+  --filter "name=^/<container-id>$" \
+  --format "{{.Names}}"
+```
+
+Treat the result as `present`, `absent`, or `unknown`:
+
+- removed or confirmed `absent`: cleanup the exact snapshot;
+- `present`: preserve the snapshot; Docker live admission continues counting
+  it across Brain restart;
+- `unknown` (including daemon/query failure): preserve the snapshot and rely
+  on the next fail-closed Docker admission query.
+
+Callback or watchdog later cleans a preserved snapshot. This explicitly
+supersedes holding the reservation through INSERT and always cleaning the
+snapshot on insert failure: the former is process-local and restart-unsafe,
+while the latter can remove credentials from a live controller.
+
+- [ ] **Step 4: Fix production team1 default without adding mounts**
 
 Change only:
 
@@ -290,7 +361,7 @@ Change only:
 
 Keep the single existing team1 read-only volume. Do not add team2–5 volumes.
 
-- [ ] **Step 4: Run the approved contract**
+- [ ] **Step 5: Run the approved contract**
 
 ```bash
 cd packages/brain
@@ -301,7 +372,7 @@ npx vitest run src/__tests__/harness-skill-relay-codex-four-way.test.js \
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/brain/src/harness-skill-relay.js docker-compose.yml

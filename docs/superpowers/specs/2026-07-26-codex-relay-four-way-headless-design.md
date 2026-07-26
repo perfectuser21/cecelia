@@ -3,7 +3,9 @@
 ## Status
 
 Approved by the principal on 2026-07-26. This supersedes the rejected
-per-account bucket design in commit `aca0527ed`.
+per-account bucket design in commit `aca0527ed`. The durable Docker-truth
+lifecycle below incorporates the final restart-safety and credential-cleanup
+review.
 
 ## Goal
 
@@ -21,8 +23,8 @@ path and its callback cleanup:
 - concurrency is not partitioned by account;
 - all relays use the existing `team1` mount;
 - snapshots move from Brain container `/tmp` to a host-visible directory;
-- each snapshot is deleted by its exact container identity on launch failure
-  or controller callback;
+- each snapshot is deleted by its exact container identity when no live
+  container can still consume it, or later by controller callback/watchdog;
 - Brain version metadata is synchronized across the four version files plus
   the append-only `.brain-versions` DevGate ledger.
 
@@ -60,18 +62,32 @@ runtime active count.
 For a Codex headless launch:
 
 1. Reject immediately when four launch reservations already exist.
-2. Increment the reservation before the first asynchronous DB gate.
-3. Query the total number of non-terminal, non-expired
+2. Increment the reservation before the first asynchronous capacity gate.
+3. Query `docker ps` and count only complete live names matching
+   `cecelia-relay-<8 hex>-cx-<8 hex>`.
+4. Query the total number of non-terminal, non-expired
    `skill-relay-codex` rows, excluding the current initiative.
-4. Allow only when `dbActive + launchReservations <= 4`.
-5. Keep the reservation through snapshot, detached spawn, and
-   `initiative_runs` insert.
-6. Release it in `finally` on every return or error.
+5. Evaluate the two external truths independently: both
+   `dockerLive + launchReservations <= 4` and
+   `dbActive + launchReservations <= 4` must hold. Docker and DB counts are
+   not added together because a healthy relay appears in both.
+6. Keep the reservation through snapshot creation and detached spawn.
+7. As soon as detached spawn succeeds, release the reservation before the
+   `initiative_runs` insert. The live Docker container has taken over as the
+   capacity truth for that launch.
+8. On all pre-spawn returns or errors, release the reservation in `finally`.
 
-The DB query remains the durable runtime truth across Brain restarts. The
-short-lived reservation closes the same-process check-then-insert race. A DB
-query failure is fail-closed and returns a deferred result because fail-open
-could exceed the hard limit.
+The short-lived reservation closes same-process races before Docker can
+observe a new container. Docker live state is the restart-safe truth for
+actual detached containers, including a container whose `initiative_runs`
+insert failed. The DB query independently protects persisted active-run
+state. Docker and DB query failures are both fail-closed and return a deferred
+result because either fail-open path could exceed the hard limit.
+
+Holding the reservation through the DB insert was superseded because an insert
+failure can leave a successfully detached container with no DB row. A
+process-local reservation cannot survive Brain restart, while the exact live
+Docker container does.
 
 There is no account dimension. Four relays using `team1` are valid.
 
@@ -113,11 +129,22 @@ or arbitrary paths.
 
 Cleanup happens:
 
-- immediately when detached spawn or later launch setup fails;
-- on every relay callback, before returning the existing 200 acknowledgement.
+- immediately when snapshot/setup or detached spawn fails before a container
+  exists;
+- after an `initiative_runs` insert failure, only after exact
+  `docker rm -f <container-id>` succeeds or an exact `docker ps -a` check
+  confirms that container is absent;
+- on every relay callback, before returning the existing 200 acknowledgement;
 - when `scanStuckHarness` successfully transitions an overdue Codex relay to
   `failed`, covering the case where the container exited without delivering
   its callback.
+
+If exact removal fails and the container is confirmed present, or Docker
+cannot confirm its state, the snapshot is preserved because that container
+may still be using it. A present container remains counted by the Docker
+admission gate across Brain restarts; callback/watchdog later performs exact
+cleanup. This supersedes the earlier “always cleanup after insert failure”
+wording, which could revoke credentials from a still-live controller.
 
 Callback cleanup is best-effort so filesystem trouble cannot change the
 existing acknowledgement contract.
@@ -139,13 +166,16 @@ mounted read-write into a relay.
 - Four active/reserved relays: return
   `{ok:false,deferred:true,reason:'codex_concurrent_limit'}` without consuming
   task attempts.
-- DB concurrency query failure: return the same deferred result and log the DB
-  error.
+- Docker or DB concurrency query failure: return the same deferred result and
+  log the failing external truth.
 - Missing team1 `auth.json`: preserve the current loud failure and task
   rollback.
 - Snapshot creation failure: rollback the task and do not spawn.
-- Spawn or insert failure after snapshot creation: remove the exact snapshot
-  and preserve existing task rollback behavior.
+- Spawn failure after snapshot creation: remove the exact snapshot and
+  preserve existing task rollback behavior.
+- Insert failure after successful spawn: exact-remove the container first.
+  Cleanup the snapshot only when removal succeeds or exact inspection confirms
+  absence; preserve it for `present` or `unknown`.
 - Callback cleanup failure: warn and still return HTTP 200.
 - Watchdog terminal cleanup failure: warn after the durable failed transition;
   do not undo or repeat the terminal DB update.
@@ -158,9 +188,18 @@ The permanent regression suite proves:
 
 - zero through three total active rows allow launch;
 - four total active rows defer;
+- four exact live Docker relays defer even when DB active is zero;
+- one Docker-only orphan leaves exactly three launch slots;
+- malformed or partial Docker names do not count;
+- Docker capacity query failure defers fail-closed;
 - four simultaneous launch reservations using the same team1 may progress;
 - a fifth simultaneous launch is deferred;
-- reservations release after success and failure;
+- reservations release after detached spawn success and on pre-spawn failure;
+- an insert-failure orphan remains capacity-visible after simulated Brain
+  process state reset;
+- failed removal plus confirmed absence cleans the exact snapshot and does not
+  strand capacity;
+- failed removal plus present/unknown state preserves the snapshot;
 - each of four runs has a distinct container ID, callback URL, worktree input,
   and snapshot directory;
 - snapshots live under the configured host-visible root with `0700`
@@ -195,10 +234,12 @@ mounted read-only.
 ### DB-only gate
 
 Rejected because concurrent requests in one Brain process can all read the
-same pre-insert count and oversubscribe the limit.
+same pre-insert count and oversubscribe the limit. It also cannot see a
+successfully detached container whose DB insert failed.
 
 ### Database migration for leases
 
 Rejected for this hotfix. The existing `initiative_runs` table already
-contains the durable active-run truth; a transient in-process reservation is
-enough to close the local race.
+contains persisted active-run truth, Docker already exposes restart-safe live
+container truth, and a transient in-process reservation closes the remaining
+pre-spawn local race.
