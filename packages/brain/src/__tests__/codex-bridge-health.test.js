@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 const {
   createKernelHandlerFromEnvironment,
   kernelHealthEvidence,
+  normalizeExecutionTimeoutMs,
 } = require('../../scripts/codex-bridge/codex-bridge.cjs');
 
 vi.mock('node:child_process', () => ({
@@ -93,4 +94,15 @@ describe('codex-bridge /health docker_available BEHAVIOR-5', () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+});
+describe('codex-bridge execution timeout budget', () => {
+  it.each([
+    [30_000, 300_000, 30_000], [600_000, 300_000, 600_000],
+    [1_500_000, 300_000, 1_500_000], [Number.MAX_SAFE_INTEGER, 300_000, 1_500_000],
+    [undefined, 300_000, 300_000], [null, 300_000, 300_000],
+    ['30000', 300_000, 300_000], [Number.NaN, 300_000, 300_000],
+    [Number.POSITIVE_INFINITY, 300_000, 300_000], [-1, 300_000, 300_000],
+    [1.5, 300_000, 300_000], [undefined, 1_500_000, 1_500_000], [1, 300_000, 1_000],
+  ])('normalizes timeout %s with default %s to %s',
+    (value, fallback, expected) => expect(normalizeExecutionTimeoutMs(value, fallback)).toBe(expected));
 });

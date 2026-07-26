@@ -55,9 +55,11 @@ if [[ ! -f "$token_file" || -L "$token_file" ]]; then
   exit 65
 fi
 
-token_mode="$(stat -f '%Lp' "$token_file" 2>/dev/null \
-  || stat -c '%a' "$token_file" 2>/dev/null \
-  || true)"
+case "$(uname -s)" in
+  Darwin) token_mode="$(stat -f '%Lp' "$token_file" 2>/dev/null || true)" ;;
+  Linux) token_mode="$(stat -c '%a' "$token_file" 2>/dev/null || true)" ;;
+  *) echo "unsupported operating system for token permission check" >&2; exit 69 ;;
+esac
 if [[ "$token_mode" != '600' ]]; then
   echo "token file mode must be 0600" >&2
   exit 65

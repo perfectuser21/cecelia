@@ -96,6 +96,16 @@ if FAKE_HEALTH_MACHINE_ID=xian-mac-m1 \
   fail "installer returned success for mismatched canonical health"
 fi
 
+if ! (
+  uname() { printf '%s\n' Linux; }
+  stat() { [[ "$1" == '-c' && "$2" == '%a' ]] && printf '%s\n' 600 || printf '%s\n' 'GNU -f report'; }
+  export -f uname stat
+  FAKE_HEALTH_MACHINE_ID=xian-mac-m4 \
+    bash "$INSTALLER" xian-mac-m4 "$m4_token_file" >/dev/null 2>&1
+); then
+  fail "installer did not select GNU stat syntax on Linux"
+fi
+
 FAKE_HEALTH_MACHINE_ID=xian-mac-m4 \
   bash "$INSTALLER" xian-mac-m4 "$m4_token_file" >/dev/null
 installed="$install_dir/com.perfect21.codex-bridge.plist"

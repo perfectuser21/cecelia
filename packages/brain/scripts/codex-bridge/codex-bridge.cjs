@@ -26,6 +26,15 @@ const BRAIN_URL = process.env.BRAIN_URL || 'http://100.71.151.105:5221';
 const CODEX_BIN = process.env.CODEX_BIN || '/opt/homebrew/bin/codex-bin';
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const RUNNER_TIMEOUT_MS = 25 * 60 * 1000; // 25 minutes for full /dev loop
+const MAX_EXECUTION_TIMEOUT_MS = RUNNER_TIMEOUT_MS;
+const MIN_EXECUTION_TIMEOUT_MS = 1000;
+
+function normalizeExecutionTimeoutMs(requestedTimeoutMs, pathDefaultMs) {
+  if (!Number.isSafeInteger(requestedTimeoutMs) || requestedTimeoutMs <= 0) return pathDefaultMs;
+  if (requestedTimeoutMs < MIN_EXECUTION_TIMEOUT_MS) return MIN_EXECUTION_TIMEOUT_MS;
+  if (requestedTimeoutMs > MAX_EXECUTION_TIMEOUT_MS) return MAX_EXECUTION_TIMEOUT_MS;
+  return requestedTimeoutMs;
+}
 const KERNEL_ATTEMPT_BODY_MAX_BYTES = 1024 * 1024;
 
 // runner.sh 位置（cecelia monorepo）— 不同机器用户名不同，通过环境变量配置
@@ -266,7 +275,9 @@ async function callbackBrain(taskId, checkpointId, status, output, durationMs) {
  *   codexHomes: 冒号分隔的所有账号路径（传给 runner.sh CODEX_HOMES，支持轮换）
  */
 function executeRunner(codexHome, taskId, branch, workDir, options = {}) {
-  const { timeoutMs = RUNNER_TIMEOUT_MS, codexHomes } = options;
+  const { codexHomes } = options;
+  const timeoutMs = normalizeExecutionTimeoutMs(options.timeoutMs, RUNNER_TIMEOUT_MS);
+  if (timeoutMs > MAX_EXECUTION_TIMEOUT_MS) throw new RangeError('execution_timeout_exceeds_server_budget');
 
   return new Promise((resolve, reject) => {
     const args = [RUNNER_SH, '--task-id', taskId, '--branch', branch];
@@ -333,7 +344,9 @@ function executeRunner(codexHome, taskId, branch, workDir, options = {}) {
  * 执行 codex exec 命令
  */
 function executeCodex(codexHome, prompt, options = {}) {
-  const { workDir, sandbox = 'read-only', timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const { workDir, sandbox = 'read-only' } = options;
+  const timeoutMs = normalizeExecutionTimeoutMs(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  if (timeoutMs > MAX_EXECUTION_TIMEOUT_MS) throw new RangeError('execution_timeout_exceeds_server_budget');
 
   return new Promise((resolve, reject) => {
     const args = ['exec', prompt, '-s', sandbox];
@@ -390,7 +403,9 @@ function executeCodex(codexHome, prompt, options = {}) {
  * 执行 codex exec review 命令
  */
 function executeCodexReview(codexHome, options = {}) {
-  const { workDir, baseBranch = 'main', timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const { workDir, baseBranch = 'main' } = options;
+  const timeoutMs = normalizeExecutionTimeoutMs(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  if (timeoutMs > MAX_EXECUTION_TIMEOUT_MS) throw new RangeError('execution_timeout_exceeds_server_budget');
 
   return new Promise((resolve, reject) => {
     const args = ['exec', 'review', '--base', baseBranch, '--json'];
@@ -731,6 +746,7 @@ module.exports = {
   injectLocalAccount,
   kernelHealthEvidence,
   loadRawAuth,
+  normalizeExecutionTimeoutMs,
   setupInjectedAccounts,
 };
 
