@@ -4,9 +4,12 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
+import { once } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createKernelAttemptHandler } from '../../scripts/codex-bridge/kernel-attempt-handler.cjs';
+import { codexAdapter } from '../orchestrator/providers/codex.js';
 
 const require = createRequire(import.meta.url);
 const { createBridgeServer } = require('../../scripts/codex-bridge/codex-bridge.cjs');
@@ -19,6 +22,7 @@ const CALLBACK_TOKEN = 'callback-token-that-must-never-leak';
 const BRAIN_URL = 'https://brain.example';
 const SCHEMA_PATH = `/tmp/harness-${ATTEMPT_ID}.schema.json`;
 const RESULT_PATH = `/tmp/harness-${ATTEMPT_ID}.result.json`;
+const SESSION_ID = '55555555-5555-4555-8555-555555555555';
 
 function fakeChild() {
   const child = new EventEmitter();
@@ -529,6 +533,111 @@ describe('kernel attempt security and Codex execution', () => {
 
     expect(spawnFn).toHaveBeenCalledOnce();
     expect(deps.sleep).toHaveBeenCalledOnce();
+  });
+
+  it('drains large provider stdout and stderr so process close remains reachable', async () => {
+    child.stdout = new PassThrough({ highWaterMark: 1024 });
+    child.stderr = new PassThrough({ highWaterMark: 1024 });
+    const handler = createKernelAttemptHandler(deps);
+    await handler.accept(request(), auth());
+    const args = spawnFn.mock.calls[0][1];
+    const resultPath = args[args.indexOf('--output-last-message') + 1];
+    fs.writeFileSync(resultPath, JSON.stringify({
+      contract_version: '1.0',
+      attempt_id: ATTEMPT_ID,
+      status: 'completed',
+      summary: 'large output drained',
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    }));
+
+    const writeMegabyte = async (stream, byte) => {
+      const chunk = Buffer.alloc(16 * 1024, byte);
+      for (let index = 0; index < 64; index += 1) {
+        if (!stream.write(chunk)) await once(stream, 'drain');
+      }
+      stream.end();
+    };
+    await Promise.all([
+      writeMegabyte(child.stdout, 65),
+      writeMegabyte(child.stderr, 66),
+    ]);
+    child.emit('close', 0);
+
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body))
+      .toMatchObject({ status: 'completed', summary: 'large output drained' });
+  });
+
+  it('accepts a real codexAdapter resume spec and rebuilds its allowlisted args', async () => {
+    const resumeSpec = codexAdapter.resume({
+      attempt: {
+        id: ATTEMPT_ID,
+        provider: 'codex',
+        provider_session_id: SESSION_ID,
+        task_bundle: {
+          attempt_id: ATTEMPT_ID,
+          objective: 'continue safely',
+          inputs: { worktree_path: stateDir },
+        },
+      },
+      input: 'continue',
+      execution: {
+        resultSchemaPath: SCHEMA_PATH,
+        resultPath: RESULT_PATH,
+      },
+    });
+    const handler = createKernelAttemptHandler(deps);
+
+    await expect(handler.accept(request({ provider_spec: resumeSpec }), auth()))
+      .resolves.toMatchObject({ status: 'accepted' });
+    expect(spawnFn.mock.calls[0][1]).toEqual([
+      'exec',
+      'resume',
+      SESSION_ID,
+      '--json',
+      '--output-schema', expect.stringContaining('.schema.json'),
+      '--output-last-message', expect.stringContaining('.result.json'),
+      '--skip-git-repo-check',
+      '-',
+    ]);
+  });
+
+  it('rejects resume specs with invalid session IDs or extra arguments', async () => {
+    const baseArgs = [
+      'exec',
+      'resume',
+      SESSION_ID,
+      '--json',
+      '--output-schema', SCHEMA_PATH,
+      '--output-last-message', RESULT_PATH,
+      '--skip-git-repo-check',
+      '-',
+    ];
+    const handler = createKernelAttemptHandler(deps);
+
+    await expect(handler.accept(request({
+      provider_spec: {
+        ...request().provider_spec,
+        args: baseArgs.map(value => value === SESSION_ID ? '$(touch /tmp/pwned)' : value),
+      },
+    }), auth())).rejects.toMatchObject({
+      message: 'codex_resume_session_not_allowed',
+      statusCode: 422,
+    });
+    await expect(handler.accept(request({
+      provider_spec: {
+        ...request().provider_spec,
+        args: [...baseArgs, '--model', 'attacker-model'],
+      },
+    }), auth())).rejects.toMatchObject({
+      message: 'codex_args_not_allowed',
+      statusCode: 422,
+    });
+    expect(spawnFn).not.toHaveBeenCalled();
   });
 
   it('inspects persisted terminal state after the provider exits', async () => {

@@ -207,24 +207,34 @@ function validateRequest(request, configuration) {
   if (output?.schema_path !== schemaPath || output?.result_path !== resultPath) {
     throw new KernelAttemptError('codex_output_path_not_allowed', 422);
   }
-  const expectedArgs = [
-    'exec',
+  const commonArgs = [
     '--json',
     '--output-schema', schemaPath,
     '--output-last-message', resultPath,
     '--skip-git-repo-check',
     '-',
   ];
+  const suppliedArgs = request.provider_spec.args;
+  let resumeSessionId = null;
+  let expectedArgs = ['exec', ...commonArgs];
+  if (Array.isArray(suppliedArgs) && suppliedArgs[0] === 'exec' && suppliedArgs[1] === 'resume') {
+    resumeSessionId = suppliedArgs[2];
+    if (!UUID_PATTERN.test(String(resumeSessionId ?? ''))) {
+      throw new KernelAttemptError('codex_resume_session_not_allowed', 422);
+    }
+    expectedArgs = ['exec', 'resume', resumeSessionId, ...commonArgs];
+  }
   if (
-    !Array.isArray(request.provider_spec.args)
-    || request.provider_spec.args.length !== expectedArgs.length
-    || request.provider_spec.args.some((value, index) => value !== expectedArgs[index])
+    !Array.isArray(suppliedArgs)
+    || suppliedArgs.length !== expectedArgs.length
+    || suppliedArgs.some((value, index) => value !== expectedArgs[index])
   ) {
     throw new KernelAttemptError('codex_args_not_allowed', 422);
   }
   requireString(request.provider_spec.stdin, 'codex_stdin_required');
   requireString(request.callback_token, 'callback_token_required');
   validateCallbackUrl(request.callback_url, configuration.brainUrl, request.attempt_id);
+  return { resumeSessionId };
 }
 
 const HARNESS_RESULT_SCHEMA = Object.freeze({
@@ -341,6 +351,7 @@ function startProvider({
   configuration,
   request,
   claim,
+  execution,
 }) {
   const runtimeDir = fs.mkdtempSync(path.join(
     configuration.runtimeRoot,
@@ -366,14 +377,16 @@ function startProvider({
       { mode: 0o600 },
     );
 
-    const args = [
-      'exec',
+    const args = execution.resumeSessionId
+      ? ['exec', 'resume', execution.resumeSessionId]
+      : ['exec'];
+    args.push(
       '--json',
       '--output-schema', schemaPath,
       '--output-last-message', resultPath,
       '--skip-git-repo-check',
       '-',
-    ];
+    );
     child = configuration.spawnFn(configuration.codexBin, args, {
       cwd: configuration.workDir,
       env: { ...process.env, CODEX_HOME: codexHome },
@@ -521,7 +534,7 @@ function createKernelAttemptHandler({
   return {
     async accept(request, headers = {}) {
       authenticate(headers);
-      validateRequest(request, configuration);
+      const execution = validateRequest(request, configuration);
       const filePath = claimPath(stateDir, request?.attempt_id);
       const existing = readClaim(filePath);
       if (existing) {
@@ -564,7 +577,7 @@ function createKernelAttemptHandler({
       }
       let child;
       try {
-        child = startProvider({ configuration, request, claim });
+        child = startProvider({ configuration, request, claim, execution });
       } catch {
         writeClaimAtomic(filePath, { ...claim, status: 'failed' });
         logger.error?.('kernel attempt provider start failed');
