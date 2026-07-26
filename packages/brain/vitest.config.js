@@ -4,6 +4,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/migration-333.test.js',
   'src/__tests__/autoblock-sql-integration.test.js',
   'src/__tests__/integration/capacity-gate.test.js',
+  'src/__tests__/integration/preview-destroyer.test.js',
   'src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js',
   '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
 ];

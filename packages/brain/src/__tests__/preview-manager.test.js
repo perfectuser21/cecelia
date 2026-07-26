@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const mockPool = {
@@ -6,7 +8,14 @@ const mockPool = {
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
-const { allocatePreview, allocatePort, stopPreview, markPreviewInactive, getPreview } = await import('../preview-manager.js');
+const {
+  allocatePreview,
+  allocatePort,
+  stopPreview,
+  markPreviewActive,
+  markPreviewInactive,
+  getPreview,
+} = await import('../preview-manager.js');
 
 describe('allocatePreview', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -39,7 +48,17 @@ describe('allocatePreview', () => {
     await allocatePreview(1, 'test-branch', 'cecelia');
     const updateCall = mockPool.query.mock.calls[1];
     expect(updateCall[0]).toMatch(/UPDATE preview_environments SET status = 'starting'/);
+    expect(updateCall[0]).toMatch(/status != 'inactive'/);
     expect(updateCall[1]).toEqual([1]);
+  });
+
+  it('preserves inactive history when reusing the live row for the same PR', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ port: 5342, db_name: 'cecelia_preview_1' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    await allocatePreview(1, 'test-branch', 'cecelia');
+    const updateSql = mockPool.query.mock.calls[1][0];
+    expect(updateSql).toMatch(/pr_number = \$1[\s\S]*status != 'inactive'/);
   });
 
   it('skips used ports', async () => {
@@ -95,6 +114,25 @@ describe('markPreviewInactive', () => {
     expect(mockPool.query).toHaveBeenCalledWith(
       expect.stringMatching(/UPDATE preview_environments SET status = 'inactive'/i),
       [5],
+    );
+  });
+});
+
+describe('live-row status transitions', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('markPreviewActive never reactivates inactive history rows', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    await markPreviewActive(5);
+    expect(mockPool.query.mock.calls[0][0]).toMatch(
+      /WHERE pr_number = \$1[\s\S]*status != 'inactive'/,
+    );
+  });
+
+  it('preview-env-start.sh only activates the current live row', () => {
+    const script = readFileSync(resolve(process.cwd(), '../../scripts/preview-env-start.sh'), 'utf8');
+    expect(script).toMatch(
+      /UPDATE preview_environments SET status='active'[\s\S]*WHERE pr_number=\$\{PR_NUMBER\} AND status<>'inactive'/,
     );
   });
 });

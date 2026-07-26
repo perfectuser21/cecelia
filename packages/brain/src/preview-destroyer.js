@@ -91,8 +91,8 @@ export async function destroyPreview(prNumber, reason, executionId, dbPool = poo
     }
 
     await client.query(
-      `UPDATE preview_environments SET status = 'cleaning', updated_at = NOW() WHERE pr_number = $1`,
-      [prNumber],
+      `UPDATE preview_environments SET status = 'cleaning', updated_at = NOW() WHERE id = $1`,
+      [row.id],
     );
 
     const dbName = row.db_name;
@@ -200,15 +200,15 @@ export async function destroyPreview(prNumber, reason, executionId, dbPool = poo
         residual,
       };
       await client.query(
-        `UPDATE preview_environments SET status = 'cleanup_failed', updated_at = NOW(), cleanup_detail = $2 WHERE pr_number = $1`,
-        [prNumber, JSON.stringify(cleanupDetail)],
+        `UPDATE preview_environments SET status = 'cleanup_failed', updated_at = NOW(), cleanup_detail = $2 WHERE id = $1`,
+        [row.id, JSON.stringify(cleanupDetail)],
       );
       return { destroyed: false, status: 'cleanup_failed', cleanup_detail: cleanupDetail };
     }
 
     await client.query(
-      `UPDATE preview_environments SET status = 'inactive', updated_at = NOW(), cleanup_detail = NULL WHERE pr_number = $1`,
-      [prNumber],
+      `UPDATE preview_environments SET status = 'inactive', updated_at = NOW(), cleanup_detail = NULL WHERE id = $1`,
+      [row.id],
     );
     return { destroyed: true, status: 'inactive' };
   } finally {

@@ -135,7 +135,10 @@ export async function admitPreview(prNumber, branchName, baseRepo, dbPool = pool
     );
     if (existing.rows.length > 0) {
       await client.query(
-        `UPDATE preview_environments SET status = 'starting', updated_at = NOW() WHERE pr_number = $1`,
+        `UPDATE preview_environments
+            SET status = 'starting', updated_at = NOW()
+          WHERE pr_number = $1
+            AND status != 'inactive'`,
         [prNumber],
       );
       await client.query('COMMIT');

@@ -155,10 +155,20 @@ describe('admitPreview [BEHAVIOR] — 四层判定 + 并发串行化', () => {
     seededPrs.push(pr);
     await pool.query(
       `INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status)
+       VALUES ($1, 'cp-old', 'cecelia', 5389, $2, 'inactive')`,
+      [pr, `cecelia_preview_${pr}_old`],
+    );
+    await pool.query(
+      `INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status)
        VALUES ($1, 'cp-existing', 'cecelia', 5390, $2, 'active')`,
       [pr, `cecelia_preview_${pr}`],
     );
     const r = await admitPreview(pr, 'cp-existing', 'cecelia', pool, { samplePath });
     expect(r.admitted).toBe(true);
+    const rows = await pool.query(
+      `SELECT status FROM preview_environments WHERE pr_number = $1 ORDER BY created_at`,
+      [pr],
+    );
+    expect(rows.rows.map((row) => row.status)).toEqual(['inactive', 'starting']);
   });
 });
