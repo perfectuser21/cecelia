@@ -1,6 +1,10 @@
 "use strict";
 
+const fs = require("node:fs");
 const path = require("node:path");
+
+const TEST_ARTIFACT_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$|(?:test|spec)\.sh$/;
+const CONTRACT_FILENAMES = ["contract-draft.md", "sprint-contract.md"];
 
 /**
  * Parse rows from a Harness v5 Test Contract table.
@@ -233,8 +237,79 @@ function resolveContractTestFile({
   };
 }
 
+function isSprintArtifact(candidate) {
+  return (
+    TEST_ARTIFACT_RE.test(path.basename(candidate)) ||
+    path.basename(candidate) === "e2e-verify.sh"
+  );
+}
+
+/**
+ * List live sprint test artifacts registered by their own sprint's canonical
+ * Test Contract. Unsafe, missing, graduated, and cross-sprint declarations are
+ * ignored so callers fail closed by treating those artifacts as unregistered.
+ *
+ * @param {string} root
+ * @returns {string[]}
+ */
+function listRegisteredSprintArtifacts(root) {
+  const repositoryRoot = path.resolve(root);
+  const sprintsRoot = path.join(repositoryRoot, "sprints");
+  let sprintEntries;
+  try {
+    sprintEntries = fs.readdirSync(sprintsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const registered = new Set();
+  for (const entry of sprintEntries) {
+    if (!entry.isDirectory() || entry.name === "archive") continue;
+    const sprintDir = path.join(sprintsRoot, entry.name);
+
+    for (const contractFilename of CONTRACT_FILENAMES) {
+      const contractPath = path.join(sprintDir, contractFilename);
+      let content;
+      try {
+        content = fs.readFileSync(contractPath, "utf8");
+      } catch {
+        continue;
+      }
+
+      for (const row of parseTestContract(content)) {
+        const resolution = resolveContractTestFile({
+          root: repositoryRoot,
+          contractPath,
+          testFile: row.testFile,
+          existsSync: fs.existsSync,
+        });
+        if (resolution.error || !resolution.resolvedPath) continue;
+
+        const relativeToSprint = path.relative(
+          sprintDir,
+          resolution.resolvedPath
+        );
+        const belongsToSprint =
+          relativeToSprint.length > 0 &&
+          !path.isAbsolute(relativeToSprint) &&
+          relativeToSprint !== ".." &&
+          !relativeToSprint.startsWith(`..${path.sep}`);
+        if (
+          belongsToSprint &&
+          isSprintArtifact(resolution.resolvedPath)
+        ) {
+          registered.add(resolution.resolvedPath);
+        }
+      }
+    }
+  }
+
+  return [...registered].sort();
+}
+
 module.exports = {
   parseTestContract,
   inferRepositoryRoot,
   resolveContractTestFile,
+  listRegisteredSprintArtifacts,
 };

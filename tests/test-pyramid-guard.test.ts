@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  countOrphans, checkSmokeWiring, countPermanent, checkPanelFreshness, runGuard,
+  countOrphans, classifySprintArtifacts, checkSmokeWiring, countPermanent,
+  checkPanelFreshness, runGuard,
 } from '../scripts/test-pyramid-guard.mjs';
 
 let root: string;
@@ -47,6 +48,104 @@ describe('countOrphans', () => {
   });
   it('sprints 不存在 → 0', () => {
     expect(countOrphans('/nonexistent-root')).toEqual({ tests: 0, e2e: 0, total: 0 });
+  });
+});
+
+function writeContract(
+  fixtureRoot: string,
+  sprint: string,
+  testFiles: string[],
+): void {
+  const sprintDir = path.join(fixtureRoot, 'sprints', sprint);
+  mkdirSync(sprintDir, { recursive: true });
+  const rows = testFiles.map(
+    (testFile, index) =>
+      `| WS${index + 1} | \`${testFile}\` | B-${index + 1} | expected red |`,
+  );
+  writeFileSync(
+    path.join(sprintDir, 'contract-draft.md'),
+    [
+      '# Contract',
+      '',
+      '## Test Contract',
+      '',
+      '| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |',
+      '|---|---|---|---|',
+      ...rows,
+      '',
+    ].join('\n'),
+  );
+}
+
+describe('classifySprintArtifacts', () => {
+  it('registers existing tests and e2e only through their own sprint contract', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-registered-'));
+    mkdirSync(path.join(fixture, 'sprints/s1/tests'), { recursive: true });
+    writeFileSync(path.join(fixture, 'sprints/s1/tests/registered.test.ts'), '');
+    writeFileSync(path.join(fixture, 'sprints/s1/tests/orphan.test.ts'), '');
+    writeFileSync(path.join(fixture, 'sprints/s1/e2e-verify.sh'), '');
+    writeContract(fixture, 's1', [
+      'tests/registered.test.ts',
+      'e2e-verify.sh',
+    ]);
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { tests: 2, e2e: 1, total: 3 },
+      registered: { tests: 1, e2e: 1, total: 2 },
+      unregistered: { tests: 1, e2e: 0, total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('does not let one sprint register an artifact owned by another sprint', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-cross-sprint-'));
+    mkdirSync(path.join(fixture, 'sprints/s2/tests'), { recursive: true });
+    writeFileSync(path.join(fixture, 'sprints/s2/tests/cross.test.ts'), '');
+    writeContract(fixture, 's1', [
+      'sprints/s2/tests/cross.test.ts',
+    ]);
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { total: 1 },
+      registered: { total: 0 },
+      unregistered: { total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['a missing reference', 'tests/missing.test.ts'],
+    ['an unsafe traversal reference', 'tests/../tests/orphan.test.ts'],
+  ])('keeps an artifact unregistered for %s', (_label, declaredPath) => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-invalid-contract-'));
+    mkdirSync(path.join(fixture, 'sprints/s1/tests'), { recursive: true });
+    writeFileSync(path.join(fixture, 'sprints/s1/tests/orphan.test.ts'), '');
+    writeContract(fixture, 's1', [declaredPath]);
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { total: 1 },
+      registered: { total: 0 },
+      unregistered: { total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('keeps artifacts unregistered when the sprint has no parseable contract', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-no-contract-'));
+    mkdirSync(path.join(fixture, 'sprints/s1/tests'), { recursive: true });
+    writeFileSync(path.join(fixture, 'sprints/s1/tests/orphan.test.ts'), '');
+    writeFileSync(path.join(fixture, 'sprints/s1/contract-draft.md'), '# no table\n');
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { total: 1 },
+      registered: { total: 0 },
+      unregistered: { total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
   });
 });
 
@@ -109,6 +208,30 @@ describe('runGuard', () => {
     // 永久池基线调高（模拟有人删测试）→ A3 fail
     const r4 = runGuard(root, { ...baseline, orphans: 1, permanent: 99 }, { ci: true });
     expect(r4.failures.some((f: string) => f.startsWith('A3'))).toBe(true);
+  });
+
+  it('applies A1 to unregistered artifacts while returning raw observability', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-run-guard-'));
+    mkdirSync(path.join(fixture, 'sprints/s1/tests'), { recursive: true });
+    writeFileSync(path.join(fixture, 'sprints/s1/tests/registered.test.ts'), '');
+    writeContract(fixture, 's1', ['tests/registered.test.ts']);
+    mkdirSync(path.join(fixture, 'scripts/smoke'), { recursive: true });
+    mkdirSync(path.join(fixture, 'perm/unit'), { recursive: true });
+    writeFileSync(path.join(fixture, 'perm/unit/x.test.js'), '');
+
+    const result = runGuard(fixture, {
+      orphans: 0,
+      permanent: 1,
+      permanent_roots: [{ path: 'perm/unit', layer: 'unit' }],
+      smoke_dir: 'scripts/smoke',
+    }, { ci: true });
+
+    expect(result.pass).toBe(true);
+    expect(result.orphans).toMatchObject({ total: 1 });
+    expect(result.registered_transitional).toMatchObject({ total: 1 });
+    expect(result.unregistered_orphans).toMatchObject({ total: 0 });
+
+    rmSync(fixture, { recursive: true, force: true });
   });
 });
 
