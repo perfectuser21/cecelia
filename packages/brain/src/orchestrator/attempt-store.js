@@ -33,12 +33,12 @@ export function createAttemptStore(pool) {
         `WITH inserted AS (
            INSERT INTO harness_attempts (
              id, run_id, hop, phase, role, provider, account_id, machine_id,
-             skill_name, skill_version, skill_digest, task_bundle, callback_secret_hash,
-             logical_cycle_id, attempt_kind, retry_of_attempt_id, restart_reason,
-             workstream_key, time_derived
+             requested_machine_id, skill_name, skill_version, skill_digest, task_bundle,
+             callback_secret_hash, logical_cycle_id, attempt_kind, retry_of_attempt_id,
+             restart_reason, workstream_key, time_derived
            ) VALUES (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-             $14,$15,$16,$17,$18,$19
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+             $15,$16,$17,$18,$19,$20
            )
            ON CONFLICT (run_id, hop) DO NOTHING
            RETURNING *
@@ -55,6 +55,7 @@ export function createAttemptStore(pool) {
           input.role,
           input.provider ?? 'auto',
           input.accountId ?? null,
+          input.machineId ?? null,
           input.machineId ?? null,
           skill?.name ?? null,
           skill?.version ?? null,
@@ -120,12 +121,43 @@ export function createAttemptStore(pool) {
       return firstRow(result);
     },
 
+    async recordLaunchReceipt(id, {
+      leaseOwner,
+      actualMachineId,
+      executionTransport,
+      remoteJobId = null,
+      attestationStatus,
+    }) {
+      const result = await pool.query(
+        `UPDATE harness_attempts
+            SET actual_machine_id = $3,
+                execution_transport = $4,
+                remote_job_id = $5,
+                machine_attestation_status = $6,
+                updated_at = NOW()
+          WHERE id = $1
+            AND lease_owner = $2
+            AND status IN ('starting','running')
+          RETURNING *`,
+        [
+          id,
+          leaseOwner,
+          actualMachineId,
+          executionTransport,
+          remoteJobId,
+          attestationStatus,
+        ],
+      );
+      return firstRow(result);
+    },
+
     async reclaim(id, { leaseOwner, leaseSeconds }) {
       const result = await pool.query(
         `UPDATE harness_attempts
             SET status = 'starting',
                 lease_owner = $2,
                 lease_expires_at = NOW() + ($3 * INTERVAL '1 second'),
+                lease_generation = lease_generation + 1,
                 updated_at = NOW()
           WHERE id = $1
             AND status IN ('starting','running')
