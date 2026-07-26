@@ -19,7 +19,9 @@ describe('kernel fleet execution receipt migration', () => {
       expect(sql).toMatch(new RegExp(`ADD COLUMN IF NOT EXISTS ${column}\\s+${type}`, 'i'));
     }
 
-    expect(sql).toMatch(/SET requested_machine_id = machine_id/i);
+    expect(sql).toMatch(
+      /WHERE requested_machine_id IS NULL\s+AND machine_id IS NOT NULL/i,
+    );
     expect(sql).toMatch(/execution_transport IS NULL\s+OR execution_transport IN \('local-docker','remote-bridge'\)/i);
     expect(sql).toMatch(/machine_attestation_status IS NULL\s+OR machine_attestation_status IN \('local','verified','rejected','pending'\)/i);
     expect(sql.match(/pg_constraint/gi)).toHaveLength(2);
