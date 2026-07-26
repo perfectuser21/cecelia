@@ -752,8 +752,16 @@ jobs:
           DB_NAME: cecelia_test
           DB_USER: cecelia
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           NODE_ENV: test
-        run: cd packages/brain && npx vitest run src/__tests__/integration/ --reporter=verbose
+        run: |
+          cd packages/brain
+          npx vitest run \
+            --config vitest.integration.config.js \
+            src/__tests__/integration/ \
+            src/__tests__/migration-333.test.js \
+            ../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts \
+            --reporter=verbose
       - name: Provider-neutral Kernel Spawn Callback Progression
         run: >-
           cd packages/brain && npx vitest run
