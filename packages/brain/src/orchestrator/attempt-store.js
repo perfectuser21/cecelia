@@ -50,12 +50,13 @@ export function createAttemptStore(pool) {
         `WITH inserted AS (
            INSERT INTO harness_attempts (
              id, run_id, hop, phase, role, provider, account_id, machine_id,
-             requested_machine_id, skill_name, skill_version, skill_digest, task_bundle,
+             requested_machine_id, local_container_naming,
+             skill_name, skill_version, skill_digest, task_bundle,
              callback_secret_hash, logical_cycle_id, attempt_kind, retry_of_attempt_id,
              restart_reason, workstream_key, time_derived
            ) VALUES (
              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-             $15,$16,$17,$18,$19,$20
+             $15,$16,$17,$18,$19,$20,$21
            )
            ON CONFLICT (run_id, hop) DO NOTHING
            RETURNING *
@@ -74,6 +75,7 @@ export function createAttemptStore(pool) {
           input.accountId ?? null,
           input.machineId ?? null,
           input.machineId ?? null,
+          'generation-v1',
           skill?.name ?? null,
           skill?.version ?? null,
           skill?.digest ?? null,

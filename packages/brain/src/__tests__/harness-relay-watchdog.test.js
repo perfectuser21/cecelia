@@ -59,11 +59,12 @@ function makeDeps({
           run_id: params[1],
           hop: params[2],
           status: 'queued',
-          task_bundle: params[12],
-          callback_secret_hash: params[13],
-          logical_cycle_id: params[14],
-          attempt_kind: params[15],
-          retry_of_attempt_id: params[16],
+          local_container_naming: params[9],
+          task_bundle: params[13],
+          callback_secret_hash: params[14],
+          logical_cycle_id: params[15],
+          attempt_kind: params[16],
+          retry_of_attempt_id: params[17],
         }],
       };
     }

@@ -29,7 +29,14 @@ function poolWith(...results) {
 
 describe('attempt store', () => {
   it('按 run/hop 幂等创建 attempt，并持久化冻结 Skill 元数据', async () => {
-    const pool = poolWith({ rows: [{ id: input.id, status: 'queued' }], rowCount: 1 });
+    const pool = poolWith({
+      rows: [{
+        id: input.id,
+        status: 'queued',
+        local_container_naming: 'generation-v1',
+      }],
+      rowCount: 1,
+    });
     const store = createAttemptStore(pool);
 
     const result = await store.createAttempt(input);
@@ -39,7 +46,10 @@ describe('attempt store', () => {
     expect(sql).toMatch(/INSERT INTO harness_attempts/i);
     expect(sql).toMatch(/ON CONFLICT \(run_id, hop\)/i);
     expect(sql).toMatch(/machine_id,\s*requested_machine_id/i);
+    expect(sql).toMatch(/requested_machine_id,\s*local_container_naming/i);
     expect(values.slice(7, 9)).toEqual([input.machineId, input.machineId]);
+    expect(values).toContain('generation-v1');
+    expect(result.local_container_naming).toBe('generation-v1');
     expect(values).toEqual(expect.arrayContaining([
       input.id,
       input.runId,
