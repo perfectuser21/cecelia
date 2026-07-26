@@ -534,7 +534,7 @@ function createKernelAttemptHandler({
       const claim = readClaim(filePath);
       if (!claim) throw new KernelAttemptError('attempt_not_found', 404);
       assertMatchingClaim(claim, lease);
-      if (claim.status === 'cancelled') return { ...claim };
+      if (['cancelled', 'completed', 'failed'].includes(claim.status)) return { ...claim };
 
       const cancelled = { ...claim, status: 'cancelled' };
       writeClaimAtomic(filePath, cancelled);

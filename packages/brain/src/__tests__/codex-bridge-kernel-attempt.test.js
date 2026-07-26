@@ -467,6 +467,37 @@ describe('kernel attempt security and Codex execution', () => {
     expect(child.kill).toHaveBeenCalledTimes(2);
   });
 
+  it('does not rewrite a completed claim when cancellation arrives after process exit', async () => {
+    const handler = createKernelAttemptHandler(deps);
+    await handler.accept(request(), auth());
+    const args = spawnFn.mock.calls[0][1];
+    const resultPath = args[args.indexOf('--output-last-message') + 1];
+    fs.writeFileSync(resultPath, JSON.stringify({
+      contract_version: '1.0',
+      attempt_id: ATTEMPT_ID,
+      status: 'completed',
+      summary: 'done',
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    }));
+    child.emit('close', 0);
+    await vi.waitFor(async () => {
+      await expect(handler.inspect(ATTEMPT_ID, auth()))
+        .resolves.toMatchObject({ status: 'completed' });
+    });
+
+    await expect(handler.cancel(ATTEMPT_ID, {
+      lease_owner: 'dispatcher:test',
+      lease_generation: 0,
+    }, auth())).resolves.toMatchObject({ status: 'completed' });
+    await expect(handler.inspect(ATTEMPT_ID, auth()))
+      .resolves.toMatchObject({ status: 'completed' });
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
 });
 
 describe('kernel attempt HTTP routes', () => {
