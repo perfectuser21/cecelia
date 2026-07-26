@@ -4,7 +4,7 @@ import {
   isVerifiedExecutionTarget,
 } from './execution-targets.js';
 
-const SECRET_KEYS = /^(authorization|token|password|cookie)$/i;
+const SECRET_KEYS = /(?:^|_)(?:authorization|token|password|cookie)(?:$|_)/i;
 const TRANSIENT_HTTP_STATUSES = new Set([500, 502, 503, 504]);
 const TRANSIENT_SIGNATURE = /^(?:http_)?(?:500|502|503|504)$|^high_demand$|^biscuit_baker_.*_circuit_open$/;
 
