@@ -134,6 +134,14 @@ describe('remote Bridge launch', () => {
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).lease_generation).toBe(0);
   });
 
+  it('freezes a successful launch receipt', async () => {
+    const transport = createTransport();
+
+    const result = await transport.launch(launchInput());
+
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
   it('copies and freezes URL routing at construction instead of trusting later mutations', async () => {
     const bridgeUrls = { [MACHINE]: BRIDGE_URL };
     const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
