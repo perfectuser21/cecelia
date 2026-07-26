@@ -55,6 +55,29 @@ afterEach(async () => {
 });
 
 describe('destroyPreview [BEHAVIOR] — 7 步流程 / 安全防护 / 幂等 / 并发去重', () => {
+  it('同 PR 有 inactive 历史行时只销毁最新 live 行，不把历史行改回非终态', async () => {
+    previewBaseDir = mkdtempSync(join(tmpdir(), 'destroyer-history-'));
+    const pr = testPr();
+    seededPrs.push(pr);
+    await insertRow(pr, `cecelia_preview_${pr}_old`, join(previewBaseDir, `preview-${pr}`), 'inactive');
+    await insertRow(pr, `cecelia_preview_${pr}`, join(previewBaseDir, `preview-${pr}`), 'active');
+
+    const result = await destroyPreview(
+      pr,
+      'test-history',
+      'exec-history',
+      pool,
+      { previewBaseDir, repoRoot: REPO_ROOT },
+    );
+
+    expect(result).toEqual(expect.objectContaining({ destroyed: true, status: 'inactive' }));
+    const { rows } = await pool.query(
+      'SELECT status FROM preview_environments WHERE pr_number = $1 ORDER BY created_at',
+      [pr],
+    );
+    expect(rows.map(({ status }) => status)).toEqual(['inactive', 'inactive']);
+  });
+
   it('7 步流程完整执行：DB 已删 + worktree 已删 + 进程已杀 + 临时文件已清 + 终态 inactive', async () => {
     previewBaseDir = mkdtempSync(join(tmpdir(), 'destroyer-red-'));
     const pr = testPr();
