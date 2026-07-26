@@ -195,6 +195,34 @@ describe('Codex credential snapshot lifecycle', () => {
     }
   });
 
+  it('snapshot forces 0700 before copy even under a restrictive process umask', () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'codex-relay-umask-contract-'));
+    const source = join(sandbox, 'source');
+    const hostVisibleRoot = join(sandbox, 'host-visible');
+    const containerId = 'cecelia-relay-deadbeef-cx-87654321';
+    mkdirSync(source, { recursive: true });
+    mkdirSync(hostVisibleRoot, { recursive: true });
+    chmodSync(hostVisibleRoot, 0o700);
+    writeFileSync(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}');
+    vi.stubEnv('CODEX_RELAY_SNAPSHOT_ROOT', hostVisibleRoot);
+
+    try {
+      let snapshot;
+      const previousUmask = process.umask(0o777);
+      try {
+        snapshot = snapshotCodexRelayHome(source, containerId);
+      } finally {
+        process.umask(previousUmask);
+      }
+      expect(statSync(snapshot).mode & 0o777).toBe(0o700);
+      expect(statSync(join(snapshot, 'auth.json')).mode & 0o777).toBe(0o600);
+    } finally {
+      const partial = join(hostVisibleRoot, containerId);
+      if (existsSync(partial)) chmodSync(partial, 0o700);
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
   it('spawn failure cleans the exact snapshot identity', async () => {
     const snapshotCodexHome = vi.fn((_home, containerId) =>
       `/Users/administrator/claude-output/codex-relay-credentials/${containerId}`);
