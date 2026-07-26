@@ -158,4 +158,18 @@ describe('harness-evaluator Step B-1', () => {
     expect(result.stderr).toBe('');
     expect(result.stdout).toBe('echo third-party\n');
   });
+
+  it('binds every literal final verdict to the current kernel attempt', () => {
+    const skill = readFileSync(SKILL, 'utf8');
+    const verdictLiterals = skill
+      .split('\n')
+      .map((line, index) => ({ line: line.trim(), number: index + 1 }))
+      .filter(({ line }) => line.startsWith('{"verdict":'));
+    const unbound = verdictLiterals.filter(
+      ({ line }) => !line.includes('"attempt_id"'),
+    );
+
+    expect(verdictLiterals.length).toBeGreaterThan(0);
+    expect(unbound).toEqual([]);
+  });
 });
