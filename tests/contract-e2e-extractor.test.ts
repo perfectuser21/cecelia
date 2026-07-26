@@ -123,8 +123,8 @@ describe('harness-evaluator Step B-1', () => {
       'node "/tmp/cecelia-extract-contract-e2e.cjs" "$CONTRACT" > /tmp/e2e-verify.sh',
     );
     expect(nonWindows).not.toMatch(/awk [^\n]*```bash/);
-    expect(skill).toContain('version: 1.32.1');
-    expect(skill).toContain('- 1.32.1:');
+    expect(skill).toContain('version: 1.32.2');
+    expect(skill).toContain('- 1.32.2:');
   });
 
   it('bundles the canonical extractor byte-for-byte for a third-party workspace', () => {
