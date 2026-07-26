@@ -109,6 +109,8 @@ export async function queryAttemptTelemetry(db, {
   const attemptsResult = await db.query(
     `SELECT id, run_id, hop, role, status, logical_cycle_id, attempt_kind,
             retry_of_attempt_id, restart_reason, workstream_key, time_derived,
+            requested_machine_id, actual_machine_id, execution_transport,
+            remote_job_id, machine_attestation_status,
             created_at, started_at, completed_at, updated_at, result
        FROM harness_attempts
       WHERE run_id = ANY($1::uuid[])
@@ -173,6 +175,11 @@ export async function queryAttemptTelemetry(db, {
           retry_of_attempt_id: row.retry_of_attempt_id ?? null,
           restart_reason: row.restart_reason ?? null,
           workstream_key: row.workstream_key ?? 'ws1',
+          requested_machine_id: row.requested_machine_id ?? null,
+          actual_machine_id: row.actual_machine_id ?? null,
+          execution_transport: row.execution_transport ?? null,
+          remote_job_id: row.remote_job_id ?? null,
+          machine_attestation_status: row.machine_attestation_status ?? null,
           started_at: row.started_at == null ? null : new Date(row.started_at).toISOString(),
           completed_at: row.completed_at == null ? null : new Date(row.completed_at).toISOString(),
           derived: row.time_derived === true,
