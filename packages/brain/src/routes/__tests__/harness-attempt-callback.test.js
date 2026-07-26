@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { signMachineAttestation } from '../../orchestrator/machine-attestation.js';
 
 const mocks = vi.hoisted(() => ({
   store: {
@@ -29,6 +31,10 @@ const attemptId = '22222222-2222-4222-8222-222222222222';
 const runId = '11111111-1111-4111-8111-111111111111';
 const callbackToken = 'attempt-callback-secret';
 const leaseOwner = 'brain-1:123';
+const fleetSecret = 'kernel-fleet-bridge-secret-at-least-32-bytes';
+const localMachineId = 'us-mac-m4';
+const remoteMachineId = 'xian-mac-m4';
+const remoteJobId = 'xian-job-7';
 
 const attempt = {
   id: attemptId,
@@ -38,6 +44,11 @@ const attempt = {
   provider: 'codex',
   status: 'running',
   lease_owner: leaseOwner,
+  requested_machine_id: localMachineId,
+  actual_machine_id: localMachineId,
+  execution_transport: 'local-docker',
+  remote_job_id: null,
+  machine_attestation_status: 'local',
   callback_secret_hash: createHash('sha256').update(callbackToken).digest('hex'),
   task_bundle: {
     inputs: {
@@ -59,6 +70,37 @@ const validResult = {
   provider_metadata: { provider: 'codex', session_id: 'thread-1' },
 };
 
+function remoteAttempt(overrides = {}) {
+  return {
+    ...attempt,
+    requested_machine_id: remoteMachineId,
+    actual_machine_id: remoteMachineId,
+    execution_transport: 'remote-bridge',
+    remote_job_id: remoteJobId,
+    machine_attestation_status: 'verified',
+    ...overrides,
+  };
+}
+
+function remoteResult(overrides = {}) {
+  const machineId = overrides.machine_id ?? remoteMachineId;
+  const jobId = overrides.job_id ?? remoteJobId;
+  const attestation = overrides.machine_attestation ?? signMachineAttestation({
+    secret: fleetSecret,
+    attemptId,
+    machineId,
+    jobId,
+  });
+  return {
+    ...validResult,
+    provider_metadata: {
+      ...validResult.provider_metadata,
+      machine_id: machineId,
+      machine_attestation: attestation,
+    },
+  };
+}
+
 function postCallback(app, body = validResult, token = callbackToken, owner = leaseOwner) {
   let call = request(app)
     .post(`/api/brain/harness/attempts/${attemptId}/callback`)
@@ -67,11 +109,23 @@ function postCallback(app, body = validResult, token = callbackToken, owner = le
   return call.send(body);
 }
 
+it('production server 从环境注入 bridge token 且不记录 secret', () => {
+  const serverSource = readFileSync(new URL('../../../server.js', import.meta.url), 'utf8');
+
+  expect(serverSource).toContain(
+    "app.set('kernelFleetBridgeToken', process.env.KERNEL_FLEET_BRIDGE_TOKEN);",
+  );
+  expect(serverSource).not.toMatch(
+    /console\.(?:log|warn|error)\([\s\S]{0,200}process\.env\.KERNEL_FLEET_BRIDGE_TOKEN/,
+  );
+});
+
 describe('POST /harness/attempts/:attemptId/callback', () => {
   let app;
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    vi.resetModules();
     mocks.store.getById.mockResolvedValue(attempt);
     mocks.store.assertFreshRoleSession.mockResolvedValue(true);
     mocks.store.complete
@@ -84,8 +138,104 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     const { default: router } = await import('../harness-callback.js');
     app = express();
+    app.set('kernelFleetBridgeToken', fleetSecret);
     app.use(express.json());
     app.use('/api/brain', router);
+  });
+
+  it('接受 machine attestation 与 launch receipt 一致的 xian callback', async () => {
+    mocks.store.getById.mockResolvedValue(remoteAttempt());
+
+    const response = await postCallback(app, remoteResult());
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ ok: true, deduped: false });
+    expect(mocks.store.complete).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [
+      'requested machine',
+      remoteAttempt({ requested_machine_id: 'xian-mac-m1' }),
+      remoteResult(),
+    ],
+    [
+      'actual machine',
+      remoteAttempt({ actual_machine_id: 'xian-mac-m1' }),
+      remoteResult(),
+    ],
+  ])('拒绝 callback machine_id 与 %s receipt 不一致', async (_label, receipt, body) => {
+    mocks.store.getById.mockResolvedValue(receipt);
+
+    const response = await postCallback(app, body);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('machine_attestation_mismatch');
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'copied from another attempt',
+      signMachineAttestation({
+        secret: fleetSecret,
+        attemptId: '33333333-3333-4333-8333-333333333333',
+        machineId: remoteMachineId,
+        jobId: remoteJobId,
+      }),
+    ],
+    ['invalid', '0'.repeat(64)],
+  ])('拒绝 %s machine attestation', async (_label, machineAttestation) => {
+    mocks.store.getById.mockResolvedValue(remoteAttempt());
+
+    const response = await postCallback(app, remoteResult({
+      machine_attestation: machineAttestation,
+    }));
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('machine_attestation_mismatch');
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
+  it('local receipt 无 remote attestation 时仍可完成 callback', async () => {
+    mocks.store.getById.mockResolvedValue(attempt);
+
+    const response = await postCallback(app);
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.complete).toHaveBeenCalledOnce();
+  });
+
+  it('remote receipt 无 machine attestation 时拒绝 callback', async () => {
+    mocks.store.getById.mockResolvedValue(remoteAttempt());
+
+    const response = await postCallback(app);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('machine_attestation_mismatch');
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
+  it('重复的 verified xian callback 保持幂等', async () => {
+    const runningAttempt = remoteAttempt();
+    const completedAttempt = {
+      ...runningAttempt,
+      status: 'completed',
+      result: remoteResult(),
+    };
+    mocks.store.getById
+      .mockReset()
+      .mockResolvedValueOnce(runningAttempt)
+      .mockResolvedValueOnce(completedAttempt)
+      .mockResolvedValueOnce(completedAttempt);
+
+    const first = await postCallback(app, remoteResult());
+    const second = await postCallback(app, remoteResult());
+
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ ok: true, deduped: false });
+    expect(second.status).toBe(200);
+    expect(second.body).toMatchObject({ ok: true, deduped: true });
   });
 
   it('校验、完成 attempt，并让重复 callback 幂等返回 deduped', async () => {
