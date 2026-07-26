@@ -148,6 +148,38 @@ function ownerProcessState(claim, readProcessIdentity) {
   return 'dead';
 }
 
+function callbackOwnerProcessState(claim, readProcessIdentity) {
+  return ownerProcessState({
+    bridge_instance_id: claim?.callback_owner_instance_id,
+    owner_pid: claim?.callback_owner_pid,
+    owner_process_identity: claim?.callback_owner_process_identity,
+  }, readProcessIdentity);
+}
+
+function callbackOwnerPath(stateDir, attemptId) {
+  return `${claimPath(stateDir, attemptId)}.callback-owner`;
+}
+
+function sameCallbackOwner(left, right) {
+  return (
+    left?.callback_delivery_id === right?.callback_delivery_id
+    && left?.bridge_instance_id === right?.bridge_instance_id
+  );
+}
+
+function releaseCallbackOwner(filePath, owner) {
+  const current = readClaim(filePath);
+  if (!sameCallbackOwner(current, owner)) return false;
+  try {
+    fs.unlinkSync(filePath);
+    fsyncDirectory(path.dirname(filePath));
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 function reconcileRestartOrphans(stateDir, readProcessIdentity) {
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   for (const entry of fs.readdirSync(stateDir)) {
@@ -163,13 +195,29 @@ function reconcileRestartOrphans(stateDir, readProcessIdentity) {
         status: 'failed',
         failure_reason: 'bridge_restart_orphaned',
       });
-    } else if (claim?.callback_delivery === 'pending' && claim.callback_result) {
-      writeClaimAtomic(filePath, {
+    } else if (
+      claim?.callback_delivery === 'pending'
+      && claim.callback_result
+      && ['dead', 'unrecoverable'].includes(
+        callbackOwnerProcessState(claim, readProcessIdentity),
+      )
+    ) {
+      const callbackOwner = {
+        callback_delivery_id: claim.callback_delivery_id,
+        bridge_instance_id: claim.callback_owner_instance_id,
+      };
+      const reconciled = {
         ...claim,
         status: 'callback_pending',
         provider_status: claim.provider_status ?? claim.status,
         callback_delivery: 'failed',
-      });
+      };
+      delete reconciled.callback_delivery_id;
+      delete reconciled.callback_owner_instance_id;
+      delete reconciled.callback_owner_pid;
+      delete reconciled.callback_owner_process_identity;
+      writeClaimAtomic(filePath, reconciled);
+      releaseCallbackOwner(callbackOwnerPath(stateDir, claim.attempt_id), callbackOwner);
     }
   }
 }
@@ -475,14 +523,14 @@ function startProvider({
       : result.status === 'cancelled' ? 'cancelled'
         : 'completed';
     try {
-      const settlementAccepted = configuration.onProviderSettled?.(
+      const callbackOwner = configuration.onProviderSettled?.(
         claim.attempt_id,
         child,
         persistedStatus,
         result,
         request.callback_url,
       );
-      if (settlementAccepted === false) return;
+      if (!callbackOwner) return;
       const delivered = await deliverCallback({
         fetchFn: configuration.fetchFn,
         sleep: configuration.sleep,
@@ -495,6 +543,7 @@ function startProvider({
         claim.attempt_id,
         persistedStatus,
         delivered,
+        callbackOwner,
       );
     } finally {
       fs.rmSync(runtimeDir, { recursive: true, force: true });
@@ -600,6 +649,29 @@ function createKernelAttemptHandler({
     const live = liveChildren.get(attemptId);
     return live?.child === child && live.cancelRequested === true;
   };
+
+  function acquireCallbackOwner(attemptId) {
+    const filePath = callbackOwnerPath(stateDir, attemptId);
+    const candidate = {
+      attempt_id: attemptId,
+      callback_delivery_id: nodeRandomUUID(),
+      bridge_instance_id: configuration.bridgeInstanceId,
+      owner_pid: configuration.ownerPid,
+      owner_process_identity: configuration.ownerProcessIdentity,
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const publication = publishClaimExclusive(filePath, candidate);
+      if (publication.published) return candidate;
+      const winnerState = ownerProcessState(
+        publication.claim,
+        configuration.readProcessIdentity,
+      );
+      if (['alive', 'unknown'].includes(winnerState)) return null;
+      if (!releaseCallbackOwner(filePath, publication.claim)) return null;
+    }
+    return null;
+  }
+
   configuration.onProviderSettled = (
     attemptId,
     child,
@@ -615,6 +687,8 @@ function createKernelAttemptHandler({
     const transitionAllowed = claim?.status === 'accepted'
       || (claim?.status === 'cancelled' && status === 'cancelled');
     if (!ownedByCurrentInstance || !transitionAllowed) return false;
+    const callbackOwner = acquireCallbackOwner(attemptId);
+    if (!callbackOwner) return false;
     writeClaimAtomic(filePath, {
       ...claim,
       status,
@@ -622,25 +696,47 @@ function createKernelAttemptHandler({
       callback_delivery: 'pending',
       callback_url: callbackUrl,
       callback_result: result,
+      callback_delivery_id: callbackOwner.callback_delivery_id,
+      callback_owner_instance_id: callbackOwner.bridge_instance_id,
+      callback_owner_pid: callbackOwner.owner_pid,
+      callback_owner_process_identity: callbackOwner.owner_process_identity,
     });
     const live = liveChildren.get(attemptId);
     if (live?.child === child) {
       live.exited = true;
       liveChildren.delete(attemptId);
     }
-    return true;
+    return callbackOwner;
   };
-  configuration.onCallbackDelivery = (attemptId, providerStatus, delivered) => {
+  configuration.onCallbackDelivery = (
+    attemptId,
+    providerStatus,
+    delivered,
+    callbackOwner,
+  ) => {
     const filePath = claimPath(stateDir, attemptId);
     const claim = readClaim(filePath);
     if (!claim) return;
+    if (claim.callback_delivery === 'delivered') return;
+    if (
+      claim.callback_delivery_id !== callbackOwner.callback_delivery_id
+      || claim.callback_owner_instance_id !== callbackOwner.bridge_instance_id
+    ) return;
+    const ownerFilePath = callbackOwnerPath(stateDir, attemptId);
+    if (!sameCallbackOwner(readClaim(ownerFilePath), callbackOwner)) return;
     if (!delivered) {
-      writeClaimAtomic(filePath, {
+      const pending = {
         ...claim,
         status: 'callback_pending',
         provider_status: providerStatus,
         callback_delivery: 'failed',
-      });
+      };
+      delete pending.callback_delivery_id;
+      delete pending.callback_owner_instance_id;
+      delete pending.callback_owner_pid;
+      delete pending.callback_owner_process_identity;
+      writeClaimAtomic(filePath, pending);
+      releaseCallbackOwner(ownerFilePath, callbackOwner);
       return;
     }
 
@@ -652,11 +748,39 @@ function createKernelAttemptHandler({
     delete finalized.provider_status;
     delete finalized.callback_url;
     delete finalized.callback_result;
+    delete finalized.callback_delivery_id;
+    delete finalized.callback_owner_instance_id;
+    delete finalized.callback_owner_pid;
+    delete finalized.callback_owner_process_identity;
     writeClaimAtomic(filePath, finalized);
+    releaseCallbackOwner(ownerFilePath, callbackOwner);
   };
 
   function redeliverPendingClaim(claim, request) {
     if (callbackDeliveries.has(claim.attempt_id)) return;
+    const callbackOwner = acquireCallbackOwner(claim.attempt_id);
+    if (!callbackOwner) return;
+    const filePath = claimPath(stateDir, claim.attempt_id);
+    const current = readClaim(filePath);
+    if (
+      current?.status !== 'callback_pending'
+      || current.callback_delivery === 'delivered'
+      || current.callback_url !== request.callback_url
+      || !current.callback_result
+      || !['completed', 'failed', 'cancelled'].includes(current.provider_status)
+    ) {
+      releaseCallbackOwner(callbackOwnerPath(stateDir, claim.attempt_id), callbackOwner);
+      return;
+    }
+    const owned = {
+      ...current,
+      callback_delivery: 'pending',
+      callback_delivery_id: callbackOwner.callback_delivery_id,
+      callback_owner_instance_id: callbackOwner.bridge_instance_id,
+      callback_owner_pid: callbackOwner.owner_pid,
+      callback_owner_process_identity: callbackOwner.owner_process_identity,
+    };
+    writeClaimAtomic(filePath, owned);
     const delivery = (async () => {
       const delivered = await deliverCallback({
         fetchFn: configuration.fetchFn,
@@ -664,15 +788,16 @@ function createKernelAttemptHandler({
         logger: configuration.logger,
         request: {
           ...request,
-          callback_url: claim.callback_url,
+          callback_url: current.callback_url,
         },
-        result: claim.callback_result,
+        result: current.callback_result,
         callbackTimeoutMs: configuration.callbackTimeoutMs,
       });
       configuration.onCallbackDelivery(
-        claim.attempt_id,
-        claim.provider_status,
+        current.attempt_id,
+        current.provider_status,
         delivered,
+        callbackOwner,
       );
     })().finally(() => {
       callbackDeliveries.delete(claim.attempt_id);

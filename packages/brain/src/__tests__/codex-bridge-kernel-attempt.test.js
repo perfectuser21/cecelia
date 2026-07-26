@@ -621,6 +621,116 @@ describe('kernel attempt security and Codex execution', () => {
     expect(persisted).not.toContain('callback_result');
   });
 
+  it('does not let a peer handler take over callback delivery while the owner is alive', async () => {
+    let resolveOwnerCallback;
+    const ownerCallback = new Promise(resolve => {
+      resolveOwnerCallback = resolve;
+    });
+    const ownerFetch = vi.fn(() => ownerCallback);
+    const owner = createKernelAttemptHandler({ ...deps, fetchFn: ownerFetch });
+    await owner.accept(request(), auth());
+    const args = spawnFn.mock.calls[0][1];
+    const resultPath = args[args.indexOf('--output-last-message') + 1];
+    fs.writeFileSync(resultPath, JSON.stringify({
+      contract_version: '1.0',
+      attempt_id: ATTEMPT_ID,
+      status: 'completed',
+      summary: 'owner callback pending',
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    }));
+    child.emit('close', 0);
+    await vi.waitFor(() => expect(ownerFetch).toHaveBeenCalledOnce());
+
+    await expect(owner.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+      status: 'completed',
+      callback_delivery: 'pending',
+      callback_delivery_id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      callback_owner_instance_id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      callback_owner_pid: process.pid,
+      callback_result: expect.objectContaining({ summary: 'owner callback pending' }),
+    });
+    const peerFetch = vi.fn(async () => ({ ok: false, status: 503 }));
+    const peer = createKernelAttemptHandler({ ...deps, fetchFn: peerFetch });
+    await peer.accept(request(), auth());
+
+    await expect(owner.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+      status: 'completed',
+      callback_delivery: 'pending',
+      callback_result: expect.objectContaining({ summary: 'owner callback pending' }),
+    });
+    expect(peerFetch).not.toHaveBeenCalled();
+
+    resolveOwnerCallback({ ok: true, status: 200 });
+    await vi.waitFor(async () => {
+      await expect(owner.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+        status: 'completed',
+        callback_delivery: 'delivered',
+      });
+    });
+    const persisted = fs.readFileSync(path.join(stateDir, `${ATTEMPT_ID}.json`), 'utf8');
+    expect(persisted).not.toContain('callback_result');
+    expect(persisted).not.toContain('callback_delivery_id');
+    expect(persisted).not.toContain('callback_owner_instance_id');
+    expect(persisted).not.toContain(CALLBACK_TOKEN);
+    expect(spawnFn).toHaveBeenCalledOnce();
+  });
+
+  it('allows only one persisted callback owner across competing reload handlers', async () => {
+    fetchFn.mockResolvedValue({ ok: false, status: 503 });
+    const owner = createKernelAttemptHandler(deps);
+    await owner.accept(request(), auth());
+    const args = spawnFn.mock.calls[0][1];
+    const resultPath = args[args.indexOf('--output-last-message') + 1];
+    fs.writeFileSync(resultPath, JSON.stringify({
+      contract_version: '1.0',
+      attempt_id: ATTEMPT_ID,
+      status: 'completed',
+      summary: 'one redelivery owner',
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    }));
+    child.emit('close', 0);
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(3));
+
+    let resolveFirst;
+    let resolveSecond;
+    const firstFetch = vi.fn(() => new Promise(resolve => {
+      resolveFirst = resolve;
+    }));
+    const secondFetch = vi.fn(() => new Promise(resolve => {
+      resolveSecond = resolve;
+    }));
+    const firstReload = createKernelAttemptHandler({ ...deps, fetchFn: firstFetch });
+    const secondReload = createKernelAttemptHandler({ ...deps, fetchFn: secondFetch });
+
+    await firstReload.accept(request(), auth());
+    await secondReload.accept(request(), auth());
+    expect(firstFetch.mock.calls.length + secondFetch.mock.calls.length).toBe(1);
+    await expect(firstReload.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+      status: 'callback_pending',
+      callback_delivery: 'pending',
+      callback_delivery_id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      callback_owner_instance_id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
+
+    resolveFirst?.({ ok: true, status: 200 });
+    resolveSecond?.({ ok: true, status: 200 });
+    await vi.waitFor(async () => {
+      await expect(firstReload.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+        status: 'completed',
+        callback_delivery: 'delivered',
+      });
+    });
+    expect(spawnFn).toHaveBeenCalledOnce();
+  });
+
   it('drains large provider stdout and stderr so process close remains reachable', async () => {
     child.stdout = new PassThrough({ highWaterMark: 1024 });
     child.stderr = new PassThrough({ highWaterMark: 1024 });
