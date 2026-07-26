@@ -1,0 +1,51 @@
+{
+  "phase": "evaluate",
+  "sha": "cdac2d86c9e2f84c72bceb0cddd4b4af077c9897",
+  "verdict": "FAIL",
+  "deterministic_gates": {
+    "artifact": "PASS",
+    "contract_anti_cheat": "PASS"
+  },
+  "behavior_results": [
+    {
+      "id": 1,
+      "name": "dry-run 输出含 --session-id UUID",
+      "result": "PASS"
+    },
+    {
+      "id": 2,
+      "name": "session id 单次生成且环境变量与 CLI 同值",
+      "result": "PASS"
+    },
+    {
+      "id": 3,
+      "name": "launcher-dry-run 既有回归通过",
+      "result": "PASS",
+      "evidence": "launcher 9/9"
+    },
+    {
+      "id": 4,
+      "name": "packages/engine 全量测试与 GitHub engine-tests 全绿",
+      "result": "FAIL",
+      "evidence": "GitHub engine-tests=SKIPPED；本宿主 engine 全量 exit 1（414 pass, 2 fail）"
+    }
+  ],
+  "golden_path": {
+    "dry_run_session_id": "PASS",
+    "env_cli_same_uuid": "PASS",
+    "launcher_regression": "PASS",
+    "engine_full_and_github_engine_tests": "FAIL"
+  },
+  "unverifiable": [
+    {
+      "item": "本宿主 engine 全量的 2 条失败",
+      "reason": "外部文件 /home/cecelia/.claude/skills/dev/SKILL.md 缺失；不能据此证明仓库逻辑失败，但合同仍要求 GitHub engine-tests 明确成功"
+    }
+  ],
+  "scope_check": {
+    "tdd_order": "PASS",
+    "contract_test_immutable": "PASS",
+    "pr_4339_files_untouched": "PASS",
+    "preview_failure": "OUT_OF_SCOPE_NON_REQUIRED"
+  }
+}
