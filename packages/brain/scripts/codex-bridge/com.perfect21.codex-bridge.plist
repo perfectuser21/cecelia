@@ -16,11 +16,19 @@
         <key>BRAIN_URL</key>
         <string>http://100.71.151.105:5221</string>
         <key>CODEX_BIN</key>
-        <string>/opt/homebrew/bin/codex-bin</string>
+        <string>/opt/homebrew/bin/codex</string>
         <key>BRIDGE_HOST</key>
         <string>100.86.57.69</string>
         <key>BRIDGE_ACCOUNTS</key>
-        <string>team3,team4</string>
+        <string>team1,team2,team3,team4,team5</string>
+        <key>CODEX_ACCOUNT_ALLOWLIST</key>
+        <string>team1,team2,team3,team4,team5</string>
+        <key>KERNEL_MACHINE_ID</key>
+        <string>xian-mac-m4</string>
+        <key>KERNEL_BRIDGE_TOKEN_FILE</key>
+        <string>/Users/jinnuoshengyuan/.config/cecelia/kernel-fleet-bridge.token</string>
+        <key>KERNEL_BRIDGE_STATE_DIR</key>
+        <string>/Users/jinnuoshengyuan/.config/cecelia/kernel-fleet-bridge-state</string>
         <key>WORK_DIR</key>
         <string>/Users/jinnuoshengyuan/repos/cecelia</string>
     </dict>

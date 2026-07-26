@@ -14,6 +14,9 @@ const path = require('path');
 const os = require('os');
 
 const { selectBestCodexAccount, getAllAccountUsage, ACCOUNTS } = require('./codex-account-usage.cjs');
+const {
+  createKernelAttemptHandler,
+} = require('./kernel-attempt-handler.cjs');
 
 const PORT = process.env.CODEX_BRIDGE_PORT || 3458;
 // macOS + Tailscale bug: 绑定 0.0.0.0 时，Tailscale utun 进来的连接会被 RST
@@ -23,6 +26,16 @@ const BRAIN_URL = process.env.BRAIN_URL || 'http://100.71.151.105:5221';
 const CODEX_BIN = process.env.CODEX_BIN || '/opt/homebrew/bin/codex-bin';
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const RUNNER_TIMEOUT_MS = 25 * 60 * 1000; // 25 minutes for full /dev loop
+const MAX_EXECUTION_TIMEOUT_MS = RUNNER_TIMEOUT_MS;
+const MIN_EXECUTION_TIMEOUT_MS = 1000;
+
+function normalizeExecutionTimeoutMs(requestedTimeoutMs, pathDefaultMs) {
+  if (!Number.isSafeInteger(requestedTimeoutMs) || requestedTimeoutMs <= 0) return pathDefaultMs;
+  if (requestedTimeoutMs < MIN_EXECUTION_TIMEOUT_MS) return MIN_EXECUTION_TIMEOUT_MS;
+  if (requestedTimeoutMs > MAX_EXECUTION_TIMEOUT_MS) return MAX_EXECUTION_TIMEOUT_MS;
+  return requestedTimeoutMs;
+}
+const KERNEL_ATTEMPT_BODY_MAX_BYTES = 1024 * 1024;
 
 // runner.sh 位置（cecelia monorepo）— 不同机器用户名不同，通过环境变量配置
 const RUNNER_SH = process.env.RUNNER_SH
@@ -30,6 +43,65 @@ const RUNNER_SH = process.env.RUNNER_SH
 // 默认工作目录 — codex_dev 的 cwd
 const WORK_DIR = process.env.WORK_DIR
   || path.join(os.homedir(), 'repos/cecelia');
+
+function kernelHealthEvidence(machineId) {
+  return machineId
+    ? {
+        kernel_harness_protocol: 'v1',
+        canonical_machine_id: machineId,
+      }
+    : {
+        kernel_harness_protocol: 'disabled',
+        canonical_machine_id: null,
+      };
+}
+
+function createKernelHandlerFromEnvironment(env = process.env) {
+  const enabled = Boolean(
+    env.KERNEL_MACHINE_ID
+    || env.KERNEL_BRIDGE_TOKEN_FILE
+    || env.KERNEL_BRIDGE_STATE_DIR,
+  );
+  if (!enabled) return null;
+
+  if (
+    !env.KERNEL_MACHINE_ID
+    || !env.KERNEL_BRIDGE_TOKEN_FILE
+    || !env.KERNEL_BRIDGE_STATE_DIR
+  ) {
+    throw new Error('kernel_harness_configuration_incomplete');
+  }
+  const tokenStat = fs.lstatSync(env.KERNEL_BRIDGE_TOKEN_FILE);
+  if (!tokenStat.isFile() || (tokenStat.mode & 0o177) !== 0) {
+    throw new Error('kernel_bridge_token_file_permissions');
+  }
+  const bridgeToken = fs.readFileSync(env.KERNEL_BRIDGE_TOKEN_FILE, 'utf8').trim();
+  if (bridgeToken.length < 32) {
+    throw new Error('kernel_bridge_token_too_short');
+  }
+  const allowedAccounts = String(env.CODEX_ACCOUNT_ALLOWLIST ?? '')
+    .split(',')
+    .map(account => account.trim())
+    .filter(Boolean);
+  if (allowedAccounts.length === 0) {
+    throw new Error('kernel_codex_account_allowlist_empty');
+  }
+
+  return createKernelAttemptHandler({
+    stateDir: env.KERNEL_BRIDGE_STATE_DIR,
+    machineId: env.KERNEL_MACHINE_ID,
+    bridgeToken,
+    brainUrl: env.BRAIN_URL || BRAIN_URL,
+    allowedAccounts,
+    codexBin: env.CODEX_BIN || CODEX_BIN,
+    workDir: env.WORK_DIR || WORK_DIR,
+    spawnFn: spawn,
+    loadAccountAuth: account => loadRawAuth(account),
+  });
+}
+
+const kernelAttemptHandler = createKernelHandlerFromEnvironment();
+const KERNEL_MACHINE_ID = process.env.KERNEL_MACHINE_ID || null;
 
 /**
  * 将 US Brain 注入的 accounts 写入临时目录，返回 { primaryHome, allHomes, tmpDir }。
@@ -100,17 +172,47 @@ function injectLocalAccount(taskId, accountId, homeDir = os.homedir()) {
 /**
  * 解析 HTTP 请求 body
  */
-function parseBody(req) {
+function parseBody(req, maxBytes = KERNEL_ATTEMPT_BODY_MAX_BYTES) {
+  const contentLength = Number(req.headers['content-length']);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    req.resume();
+    return Promise.reject(Object.assign(
+      new Error('request_body_too_large'),
+      { statusCode: 413 },
+    ));
+  }
+
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
+    let receivedBytes = 0;
+    let settled = false;
+    const onData = (chunk) => {
+      if (settled) return;
+      receivedBytes += Buffer.byteLength(chunk);
+      if (receivedBytes > maxBytes) {
+        settled = true;
+        req.off('data', onData);
+        req.off('end', onEnd);
+        req.resume();
+        reject(Object.assign(
+          new Error('request_body_too_large'),
+          { statusCode: 413 },
+        ));
+        return;
+      }
+      body += chunk;
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
       try {
         resolve(JSON.parse(body));
       } catch (err) {
         reject(new Error(`JSON 解析失败: ${err.message}`));
       }
-    });
+    };
+    req.on('data', onData);
+    req.on('end', onEnd);
     req.on('error', reject);
   });
 }
@@ -173,7 +275,9 @@ async function callbackBrain(taskId, checkpointId, status, output, durationMs) {
  *   codexHomes: 冒号分隔的所有账号路径（传给 runner.sh CODEX_HOMES，支持轮换）
  */
 function executeRunner(codexHome, taskId, branch, workDir, options = {}) {
-  const { timeoutMs = RUNNER_TIMEOUT_MS, codexHomes } = options;
+  const { codexHomes } = options;
+  const timeoutMs = normalizeExecutionTimeoutMs(options.timeoutMs, RUNNER_TIMEOUT_MS);
+  if (timeoutMs > MAX_EXECUTION_TIMEOUT_MS) throw new RangeError('execution_timeout_exceeds_server_budget');
 
   return new Promise((resolve, reject) => {
     const args = [RUNNER_SH, '--task-id', taskId, '--branch', branch];
@@ -240,7 +344,9 @@ function executeRunner(codexHome, taskId, branch, workDir, options = {}) {
  * 执行 codex exec 命令
  */
 function executeCodex(codexHome, prompt, options = {}) {
-  const { workDir, sandbox = 'read-only', timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const { workDir, sandbox = 'read-only' } = options;
+  const timeoutMs = normalizeExecutionTimeoutMs(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  if (timeoutMs > MAX_EXECUTION_TIMEOUT_MS) throw new RangeError('execution_timeout_exceeds_server_budget');
 
   return new Promise((resolve, reject) => {
     const args = ['exec', prompt, '-s', sandbox];
@@ -297,7 +403,9 @@ function executeCodex(codexHome, prompt, options = {}) {
  * 执行 codex exec review 命令
  */
 function executeCodexReview(codexHome, options = {}) {
-  const { workDir, baseBranch = 'main', timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const { workDir, baseBranch = 'main' } = options;
+  const timeoutMs = normalizeExecutionTimeoutMs(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  if (timeoutMs > MAX_EXECUTION_TIMEOUT_MS) throw new RangeError('execution_timeout_exceeds_server_budget');
 
   return new Promise((resolve, reject) => {
     const args = ['exec', 'review', '--base', baseBranch, '--json'];
@@ -355,10 +463,51 @@ function executeCodexReview(codexHome, options = {}) {
 
 // ─── HTTP 服务 ────────────────────────────────────────────────────────────────
 
-const server = http.createServer(async (req, res) => {
+async function handleBridgeRequest(
+  req,
+  res,
+  {
+    kernelHandler = kernelAttemptHandler,
+    kernelMachineId = KERNEL_MACHINE_ID,
+  } = {},
+) {
   try {
+    const inspectMatch = req.url?.match(/^\/harness\/attempts\/([0-9a-f-]+)$/i);
+    const cancelMatch = req.url?.match(/^\/harness\/attempts\/([0-9a-f-]+)\/cancel$/i);
+    const authContext = { authorization: req.headers.authorization };
+
+    if (req.method === 'POST' && req.url === '/harness/attempts') {
+      if (!kernelHandler) {
+        sendJSON(res, 503, { ok: false, error: 'kernel_harness_disabled' });
+        return;
+      }
+      kernelHandler.authorize?.(authContext);
+      const receipt = await kernelHandler.accept(await parseBody(req), authContext);
+      sendJSON(res, 202, receipt);
+
+    } else if (req.method === 'GET' && inspectMatch) {
+      if (!kernelHandler) {
+        sendJSON(res, 503, { ok: false, error: 'kernel_harness_disabled' });
+        return;
+      }
+      const status = await kernelHandler.inspect(inspectMatch[1], authContext);
+      sendJSON(res, 200, status);
+
+    } else if (req.method === 'POST' && cancelMatch) {
+      if (!kernelHandler) {
+        sendJSON(res, 503, { ok: false, error: 'kernel_harness_disabled' });
+        return;
+      }
+      kernelHandler.authorize?.(authContext);
+      const status = await kernelHandler.cancel(
+        cancelMatch[1],
+        await parseBody(req),
+        authContext,
+      );
+      sendJSON(res, 200, status);
+
     // POST /run — 通用执行端点（Brain executor 路由入口）
-    if (req.method === 'POST' && req.url === '/run') {
+    } else if (req.method === 'POST' && req.url === '/run') {
       const { task_id, checkpoint_id, prompt, work_dir, sandbox, timeout_ms, task_type, accounts } = await parseBody(req);
 
       if (!task_id || !prompt) {
@@ -563,6 +712,7 @@ const server = http.createServer(async (req, res) => {
         port: PORT,
         docker_available: dockerAvailable,
         accounts: accountSummary,
+        ...kernelHealthEvidence(kernelHandler ? kernelMachineId : null),
       });
 
     // GET /accounts — 详细账号用量
@@ -579,11 +729,26 @@ const server = http.createServer(async (req, res) => {
     }
   } catch (err) {
     console.error(`[codex-bridge] 未处理错误: ${err.message}`);
-    sendJSON(res, 500, { ok: false, error: err.message });
+    sendJSON(res, err.statusCode || 500, { ok: false, error: err.message });
   }
-});
+}
 
-module.exports = { loadRawAuth, injectLocalAccount, setupInjectedAccounts, cleanupTmpDir };
+function createBridgeServer(options = {}) {
+  return http.createServer((req, res) => handleBridgeRequest(req, res, options));
+}
+
+const server = createBridgeServer();
+
+module.exports = {
+  cleanupTmpDir,
+  createBridgeServer,
+  createKernelHandlerFromEnvironment,
+  injectLocalAccount,
+  kernelHealthEvidence,
+  loadRawAuth,
+  normalizeExecutionTimeoutMs,
+  setupInjectedAccounts,
+};
 
 // require.main===module 守卫：只有直接 `node codex-bridge.cjs` 运行时才真正
 // listen 端口。这样 smoke test 可以安全 require() 这个文件去调纯函数，不会
