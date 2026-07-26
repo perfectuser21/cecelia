@@ -42,6 +42,26 @@ describe('execution transport dependency validation', () => {
 });
 
 describe('execution transport routing', () => {
+  it('routes an injected canonical local machine identity to local transport', async () => {
+    const local = createTransport('local');
+    const remote = createTransport('remote');
+    const router = createExecutionTransportRouter({
+      local,
+      remote,
+      localMachineId: 'env-worker',
+    });
+
+    await expect(router.launch({
+      target: { machine: 'env-worker' },
+    })).resolves.toMatchObject({
+      source: 'local',
+      actualMachineId: 'env-worker',
+      executionTransport: 'local-docker',
+    });
+    expect(local.launch).toHaveBeenCalledOnce();
+    expect(remote.launch).not.toHaveBeenCalled();
+  });
+
   it('routes a US launch only to local and enriches its result without losing fields', async () => {
     const { local, remote, router } = createRouter();
     const input = {

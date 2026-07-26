@@ -29,6 +29,12 @@ import {
   DEFAULT_WORKER_BRAIN_URL,
 } from './production-transport.js';
 
+const CANONICAL_MACHINE_IDS = new Set([
+  'us-mac-m4',
+  'xian-mac-m4',
+  'xian-mac-m1',
+]);
+
 /** 解析 --task-id / --run-id / --dry-run */
 export function parseArgs(argv) {
   const args = { taskId: null, runId: null, dryRun: false };
@@ -114,6 +120,9 @@ export async function buildRealDeps(overrides = {}) {
   const leaseOwner = overrides.leaseOwner ?? `${os.hostname()}:${process.pid}`;
   const brainUrl = overrides.brainUrl ?? env.BRAIN_URL ?? DEFAULT_WORKER_BRAIN_URL;
   const machineId = overrides.machineId ?? env.CECELIA_MACHINE_ID ?? DEFAULT_LOCAL_MACHINE_ID;
+  if (!CANONICAL_MACHINE_IDS.has(machineId)) {
+    throw new Error(`invalid_kernel_machine_id:${String(machineId)}`);
+  }
   let dispatch = overrides.dispatch;
   if (!dispatch) {
     const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
@@ -145,7 +154,6 @@ export async function buildRealDeps(overrides = {}) {
         attemptStore,
         brainUrl,
         leaseOwner,
-        localMachineId: machineId,
         fetchFn: overrides.fetchFn,
         remoteBridgeTimeoutMs: overrides.remoteBridgeTimeoutMs,
       });

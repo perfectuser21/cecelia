@@ -12,12 +12,16 @@ function validateTransport(name, transport) {
   }
 }
 
-export function createExecutionTransportRouter({ local, remote } = {}) {
+export function createExecutionTransportRouter({
+  local,
+  remote,
+  localMachineId = LOCAL_MACHINE_ID,
+} = {}) {
   validateTransport('local', local);
   validateTransport('remote', remote);
 
   const transportFor = (machine) => {
-    if (machine === LOCAL_MACHINE_ID) return local;
+    if (machine === localMachineId) return local;
     if (REMOTE_MACHINE_SET.has(machine)) return remote;
     throw new Error(`execution_transport_unavailable:${String(machine)}`);
   };
@@ -26,10 +30,10 @@ export function createExecutionTransportRouter({ local, remote } = {}) {
     async launch(input) {
       const machine = input?.target?.machine;
       const launched = await transportFor(machine).launch(input);
-      if (machine !== LOCAL_MACHINE_ID) return launched;
+      if (machine !== localMachineId) return launched;
       return {
         ...launched,
-        actualMachineId: LOCAL_MACHINE_ID,
+        actualMachineId: localMachineId,
         executionTransport: 'local-docker',
         remoteJobId: null,
         attestationStatus: 'local',
