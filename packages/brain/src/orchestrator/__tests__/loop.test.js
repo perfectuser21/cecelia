@@ -273,7 +273,8 @@ describe('runLoop：四态返回控制流', () => {
     const { deps, appended } = makeEnv({
       observedSeq,
       dispatch: async () => ({
-        status: 'BLOCKED',
+        status: 'DONE_WITH_CONCERNS',
+        control_status: 'BLOCKED',
         detail: 'dispatch preflight blocked: postgres_unreachable',
         action: 'wait:human_review',
         failure_class: 'infrastructure_blocked',
@@ -293,6 +294,7 @@ describe('runLoop：四态返回控制流', () => {
       expect(row.detail).toMatchObject({
         dispatch_action: 'spawn:generator',
         status: 'BLOCKED',
+        transport_status: 'DONE_WITH_CONCERNS',
         redirect_action: 'wait:human_review',
         failure_class: 'infrastructure_blocked',
         fallback_reason: 'postgres_unreachable',

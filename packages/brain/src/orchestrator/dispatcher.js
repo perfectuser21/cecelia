@@ -208,7 +208,8 @@ export function createDispatcher(deps) {
 
     if (rawCapabilityRequirements && !deps.preflightGate && spec.role !== 'judge') {
       const blocked = {
-        status: 'BLOCKED',
+        status: 'DONE_WITH_CONCERNS',
+        control_status: 'BLOCKED',
         detail: 'dispatch preflight blocked: capability_gate_unavailable',
         action: 'wait:human_review',
         failure_class: 'infrastructure_blocked',
@@ -238,7 +239,8 @@ export function createDispatcher(deps) {
       if (preflight.status !== 'ok') {
         const blocked = {
           ...preflight,
-          status: 'BLOCKED',
+          status: 'DONE_WITH_CONCERNS',
+          control_status: 'BLOCKED',
           detail: `dispatch preflight blocked: ${preflight.fallback_reason}`,
         };
         await deps.onPreflightBlocked?.(blocked, { action, ctx });
@@ -252,7 +254,8 @@ export function createDispatcher(deps) {
       if (freshness.status !== 'ok') {
         const blocked = {
           ...freshness,
-          status: 'BLOCKED',
+          status: 'DONE_WITH_CONCERNS',
+          control_status: 'BLOCKED',
           detail: `dispatch preflight blocked: ${freshness.fallback_reason}`,
         };
         await deps.onPreflightBlocked?.(blocked, { action, ctx });

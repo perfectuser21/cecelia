@@ -361,7 +361,8 @@ describe('production capability wiring', () => {
     });
 
     expect(result).toMatchObject({
-      status: 'BLOCKED',
+      status: 'DONE_WITH_CONCERNS',
+      control_status: 'BLOCKED',
       action: 'wait:human_review',
       failure_class: 'infrastructure_blocked',
       fallback_reason: 'ECONNREFUSED',
