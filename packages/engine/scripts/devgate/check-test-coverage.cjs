@@ -19,6 +19,7 @@
 
 const fs = require("fs");
 const { execSync } = require("child_process");
+const path = require("node:path");
 const {
   parseTestContract,
   inferRepositoryRoot,
@@ -51,10 +52,11 @@ function listContracts() {
 }
 
 function checkContract(contractPath) {
-  const content = fs.readFileSync(contractPath, "utf-8");
+  const absoluteContractPath = path.resolve(contractPath);
+  const content = fs.readFileSync(absoluteContractPath, "utf-8");
   const rows = parseTestContract(content);
   const violations = [];
-  const root = inferRepositoryRoot(contractPath);
+  const root = inferRepositoryRoot(absoluteContractPath);
 
   if (rows.length === 0) {
     return [
@@ -65,7 +67,7 @@ function checkContract(contractPath) {
   for (const row of rows) {
     const resolution = resolveContractTestFile({
       root,
-      contractPath,
+      contractPath: absoluteContractPath,
       testFile: row.testFile,
       existsSync: fs.existsSync,
     });

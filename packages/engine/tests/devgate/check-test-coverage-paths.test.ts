@@ -24,6 +24,8 @@ const temporaryDirectories: string[] = [];
 type GateFixture = {
   declaredPath: string;
   existingPaths?: string[];
+  checkerCwd?: string;
+  contractArgument?: string;
 };
 
 function writeTestFile(filePath: string): void {
@@ -43,6 +45,8 @@ function writeTestFile(filePath: string): void {
 function runGate({
   declaredPath,
   existingPaths = [],
+  checkerCwd,
+  contractArgument,
 }: GateFixture): {
   status: number | null;
   output: string;
@@ -77,10 +81,18 @@ function runGate({
     ].join('\n')
   );
 
-  const result = spawnSync(process.execPath, [CHECKER, contractPath], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-  });
+  const executionDirectory = checkerCwd
+    ? join(repoRoot, checkerCwd)
+    : repoRoot;
+  mkdirSync(executionDirectory, { recursive: true });
+  const result = spawnSync(
+    process.execPath,
+    [CHECKER, contractArgument || contractPath],
+    {
+      cwd: executionDirectory,
+      encoding: 'utf8',
+    }
+  );
 
   return {
     status: result.status,
@@ -160,6 +172,18 @@ describe('check-test-coverage contract path resolution', () => {
     const result = runGate({
       declaredPath: 'sprints/demo/tests/path.test.ts',
       existingPaths: ['sprints/demo/tests/path.test.ts'],
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain('Test Coverage 检查通过');
+  });
+
+  it('preserves a cwd-relative contract path outside the repository root cwd', () => {
+    const result = runGate({
+      declaredPath: 'tests/path.test.ts',
+      existingPaths: ['sprints/demo/tests/path.test.ts'],
+      checkerCwd: 'packages/engine',
+      contractArgument: '../../sprints/demo/contract-draft.md',
     });
 
     expect(result.status, result.output).toBe(0);
@@ -265,4 +289,51 @@ describe('check-test-coverage contract path resolution', () => {
     );
     expect(result.output).toMatch(/候选|尝试/);
   });
+
+  it.each([
+    [
+      'packages/feature/path.test.ts',
+      'packages/feature/path.test.ts',
+      ['packages/feature/path.test.ts'],
+    ],
+    [
+      'scripts/feature/path.test.js',
+      'scripts/feature/path.test.js',
+      ['scripts/feature/path.test.js'],
+    ],
+    [
+      'tests/regression/demo/path.test.ts',
+      'tests/regression/demo/path.test.ts',
+      ['tests/regression/demo/path.test.ts'],
+    ],
+    [
+      'e2e-verify.sh',
+      'scripts/smoke/e2e/demo.sh',
+      ['sprints/demo/e2e-verify.sh', 'scripts/smoke/e2e/demo.sh'],
+    ],
+    [
+      'sprints/demo/e2e-verify.sh',
+      'scripts/smoke/e2e/demo.sh',
+      ['sprints/demo/e2e-verify.sh', 'scripts/smoke/e2e/demo.sh'],
+    ],
+  ])(
+    'resolves public helper branch %s',
+    (testFile, existingRelative, expectedCandidates) => {
+      const helpers = require(PATH_HELPERS);
+      const root = resolve('/tmp/resolver-branches');
+      const resolvedPath = join(root, existingRelative);
+      const resolution = helpers.resolveContractTestFile({
+        root,
+        contractPath: 'sprints/demo/contract-draft.md',
+        testFile,
+        existsSync: (candidate: string) => candidate === resolvedPath,
+      });
+
+      expect(resolution.resolvedPath).toBe(resolvedPath);
+      expect(resolution.candidates).toEqual(
+        expectedCandidates.map((candidate) => join(root, candidate))
+      );
+      expect(resolution.error).toBeNull();
+    }
+  );
 });
