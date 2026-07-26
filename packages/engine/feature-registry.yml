@@ -4,7 +4,7 @@
 # - changelog: 每次改动追加（细粒度变更历史）
 
 version: "1.3.0"
-updated: "2026-07-17"
+updated: "2026-07-26"
 
 # ============================================================================
 # Features 注册（v18.22.2 新增）
@@ -1239,3 +1239,15 @@ changelog:
     files:
       - "../../scripts/claude-launch.sh (建链门禁解耦/软链只建不删/key 算法/root 派生)"
       - "packages/engine/tests/launcher/claude-launch.test.ts (加 6 case，含真实执行路径守卫与 lossy key 碰撞自指软链；改判「干净退出→软链被删除」旧预期)"
+  - version: "19.6.1"
+    date: "2026-07-26"
+    type: "fix"
+    description: "[CONFIG] Harness gate bootstrap：统一 Test Contract 路径解析、canonical sprint/E2E 过渡登记与 pyramid/ratchet orphan 口径；默认非 Windows Evaluator 通过 Skill 内嵌且逐字节锁定的共享 extractor 真执行，跨仓库不依赖目标 worktree 工具文件。"
+    files:
+      - "scripts/devgate/check-test-coverage.cjs"
+      - "src/harness/evaluate.js"
+      - "../../scripts/lib/test-contract-paths.cjs"
+      - "../../scripts/extract-contract-e2e.cjs"
+      - "../../scripts/test-pyramid-guard.mjs"
+      - "../../scripts/ratchet-guard.mjs"
+      - "../workflows/skills/harness-evaluator/SKILL.md"

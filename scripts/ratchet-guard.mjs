@@ -5,12 +5,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
-import { countOrphans, countPermanent } from './test-pyramid-guard.mjs';
+import {
+  classifySprintArtifacts,
+  countPermanent,
+} from './test-pyramid-guard.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..');
-const REGISTRY_PATH = path.join(__dirname, 'ratchet-registry.json');
-const BASELINE_PATH = path.join(__dirname, 'test-pyramid-baseline.json');
+const DEFAULT_ROOT = path.resolve(__dirname, '..');
 
 // ── 辅助 ────────────────────────────────────────────────────────────────────
 
@@ -36,17 +37,45 @@ function walkSh(dir, out = []) {
   return out;
 }
 
+function resolveRootArg(args) {
+  const inlineArg = args.find((arg) => arg.startsWith('--root='));
+  const spacedIndex = args.indexOf('--root');
+  if (inlineArg === undefined && spacedIndex === -1) return DEFAULT_ROOT;
+
+  const declared = inlineArg !== undefined
+    ? inlineArg.slice('--root='.length)
+    : args[spacedIndex + 1];
+  if (!declared || declared.startsWith('--')) {
+    throw new Error('缺少目录值');
+  }
+
+  const root = path.resolve(declared);
+  let stats;
+  try {
+    stats = fs.statSync(root);
+  } catch {
+    throw new Error(`目录不存在或不可访问: ${root}`);
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`不是目录: ${root}`);
+  }
+  return root;
+}
+
 // ── 指标测量 ─────────────────────────────────────────────────────────────────
 
-async function measure(metric, baseline, brainBase) {
+async function measure(metric, baseline, brainBase, root) {
   switch (metric.name) {
     case 'orphans': {
-      const r = countOrphans(ROOT);
-      return { value: r.total, detail: `tests=${r.tests} e2e=${r.e2e}` };
+      const classification = classifySprintArtifacts(root);
+      return {
+        value: classification.unregistered.total,
+        detail: `raw=${classification.raw.total} registered=${classification.registered.total} unregistered=${classification.unregistered.total}`,
+      };
     }
     case 'permanent_tests': {
       const roots = baseline?.permanent_roots ?? [];
-      const r = countPermanent(ROOT, roots);
+      const r = countPermanent(root, roots);
       return { value: r.total, detail: `layers=${JSON.stringify(r.layers)}` };
     }
     case 'bare_fr': {
@@ -62,7 +91,7 @@ async function measure(metric, baseline, brainBase) {
       return { value: hard_flaws, detail: `audited_at=${d.value_json.audited_at ?? '?'}` };
     }
     case 'smoke_pool': {
-      const files = walkSh(path.join(ROOT, 'scripts', 'smoke'));
+      const files = walkSh(path.join(root, 'scripts', 'smoke'));
       return { value: files.length, detail: `scripts/smoke/ .sh 脚本数` };
     }
     default:
@@ -76,9 +105,19 @@ async function main() {
   const args = process.argv.slice(2);
   const jsonMode = args.includes('--json');
   const brainBase = args.find(a => a.startsWith('--brain='))?.slice(8) ?? 'http://localhost:5221';
+  let root;
+  try {
+    root = resolveRootArg(args);
+  } catch (error) {
+    console.error(`❌ 无效 --root: ${error.message}`);
+    process.exit(1);
+  }
   const registryArg = args.find(a => a.startsWith('--registry='))?.slice(11)
     ?? (args.includes('--registry') ? args[args.indexOf('--registry') + 1] : null);
-  const registryPath = registryArg ? path.resolve(registryArg) : REGISTRY_PATH;
+  const registryPath = registryArg
+    ? path.resolve(registryArg)
+    : path.join(root, 'scripts', 'ratchet-registry.json');
+  const baselinePath = path.join(root, 'scripts', 'test-pyramid-baseline.json');
 
   let registry;
   try {
@@ -89,13 +128,13 @@ async function main() {
   }
 
   let baseline = null;
-  try { baseline = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8')); } catch { /* ok */ }
+  try { baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8')); } catch { /* ok */ }
 
   const results = [];
   const failures = [];
 
   for (const metric of registry) {
-    const r = await measure(metric, baseline, brainBase);
+    const r = await measure(metric, baseline, brainBase, root);
 
     if (r.skipped) {
       results.push({ name: metric.name, label: metric.label, direction: metric.direction, watermark: metric.watermark, value: null, status: 'skipped', reason: r.reason ?? 'Brain 不可达' });

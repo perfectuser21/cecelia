@@ -19,7 +19,12 @@
 
 const fs = require("fs");
 const { execSync } = require("child_process");
-const path = require("path");
+const path = require("node:path");
+const {
+  parseTestContract,
+  inferRepositoryRoot,
+  resolveContractTestFile,
+} = require("../../../../scripts/lib/test-contract-paths.cjs");
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -46,51 +51,12 @@ function listContracts() {
   }
 }
 
-/**
- * 从合同内容里提取 Test Contract 表的行
- * 表格式：| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
- * @returns {Array<{ws: string, testFile: string, behaviors: string[]}>}
- */
-function parseTestContract(content) {
-  const lines = content.split("\n");
-  const rows = [];
-  let inSection = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^##+\s*(?:§\d+\s+)?Test Contract/.test(line)) {
-      inSection = true;
-      continue;
-    }
-    if (inSection && /^##+\s/.test(line)) break; // 下一个 section 开始
-    if (!inSection) continue;
-    // 表格数据行：| WS1 | `tests/ws1/retry.test.ts` | ... | ... |
-    const cells = line.split("|").map((s) => s.trim());
-    if (cells.length < 5) continue;
-    const ws = cells[1];
-    const testFileRaw = cells[2];
-    const behaviorsRaw = cells[3];
-    if (!ws || !testFileRaw) continue;
-    if (ws === "Workstream" || ws.startsWith("-")) continue; // 表头 / 分隔行
-    // 取 backtick 里的路径
-    const m = testFileRaw.match(/`([^`]+)`/);
-    const testFile = m ? m[1] : testFileRaw;
-    // 接受 .test.* / .spec.* / .e2e.*（含 tsx/jsx）及 .sh 合同测试
-    if (!/\.(test|spec|e2e)\.[cm]?[jt]sx?$|\.sh$/.test(testFile)) continue;
-    // behavior 覆盖用 '/' 分割
-    const behaviors = behaviorsRaw
-      .split(/[/,、]/)
-      .map((s) => s.trim().replace(/^`|`$/g, ""))
-      .filter((s) => s.length > 0);
-    rows.push({ ws, testFile, behaviors });
-  }
-  return rows;
-}
-
 function checkContract(contractPath) {
-  const sprintDir = path.dirname(contractPath);
-  const content = fs.readFileSync(contractPath, "utf-8");
+  const absoluteContractPath = path.resolve(contractPath);
+  const content = fs.readFileSync(absoluteContractPath, "utf-8");
   const rows = parseTestContract(content);
   const violations = [];
+  const root = inferRepositoryRoot(absoluteContractPath);
 
   if (rows.length === 0) {
     return [
@@ -99,14 +65,29 @@ function checkContract(contractPath) {
   }
 
   for (const row of rows) {
-    // 测试文件路径：相对 sprint 目录
-    const testFilePath = path.join(sprintDir, row.testFile);
-    if (!fs.existsSync(testFilePath)) {
+    const resolution = resolveContractTestFile({
+      root,
+      contractPath: absoluteContractPath,
+      testFile: row.testFile,
+      existsSync: fs.existsSync,
+    });
+    const attempted =
+      resolution.candidates.length > 0
+        ? resolution.candidates.join(", ")
+        : "（无，路径在解析前被拒绝）";
+    if (resolution.error) {
       violations.push(
-        `${row.ws}: 声明的测试文件不存在 — ${testFilePath}`
+        `${row.ws}: 声明的测试路径不安全 — ${row.testFile}；${resolution.error}；尝试候选: ${attempted}`
       );
       continue;
     }
+    if (!resolution.resolvedPath) {
+      violations.push(
+        `${row.ws}: 声明的测试文件不存在 — ${row.testFile}；尝试候选: ${attempted}`
+      );
+      continue;
+    }
+    const testFilePath = resolution.resolvedPath;
     // .sh 合同测试：可执行验收脚本，无 it()/test() 结构，跳过 behavior 匹配
     if (row.testFile.endsWith(".sh")) continue;
     const testContent = fs.readFileSync(testFilePath, "utf-8");
