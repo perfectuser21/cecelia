@@ -306,6 +306,66 @@ function expectedProviderPaths(attemptId) {
   };
 }
 
+const CANARY_NO_TOOL_ARGS = Object.freeze([
+  '--ignore-user-config',
+  '--ignore-rules',
+  '--ephemeral',
+  '--disable', 'shell_tool',
+  '--disable', 'unified_exec',
+  '--disable', 'code_mode_host',
+  '--disable', 'browser_use',
+  '--disable', 'browser_use_external',
+  '--disable', 'browser_use_full_cdp_access',
+  '--disable', 'apps',
+  '--disable', 'enable_mcp_apps',
+  '--disable', 'plugins',
+  '--disable', 'image_generation',
+  '--disable', 'standalone_web_search',
+  '--disable', 'computer_use',
+  '--disable', 'in_app_browser',
+  '--disable', 'multi_agent',
+  '--disable', 'multi_agent_v2',
+  '--disable', 'hooks',
+  '--disable', 'auth_elicitation',
+  '--disable', 'plugin_sharing',
+  '--disable', 'remote_plugin',
+  '--disable', 'skill_mcp_dependency_install',
+  '--disable', 'skill_search',
+  '--disable', 'tool_call_mcp_elicitation',
+  '--disable', 'tool_suggest',
+  '--disable', 'request_permissions_tool',
+  '--disable', 'workspace_dependencies',
+  '--disable', 'goals',
+]);
+
+const DISPOSABLE_PROVIDER_ENV_KEYS = Object.freeze([
+  'PATH',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+]);
+
+function providerEnvironment(codexHome, disposableWorkspace) {
+  if (!disposableWorkspace) return { ...process.env, CODEX_HOME: codexHome };
+  const environment = {
+    HOME: codexHome,
+    CODEX_HOME: codexHome,
+  };
+  for (const key of DISPOSABLE_PROVIDER_ENV_KEYS) {
+    if (typeof process.env[key] === 'string' && process.env[key]) {
+      environment[key] = process.env[key];
+    }
+  }
+  return environment;
+}
+
 function validateDisposableWorkspace(workspace, attemptId) {
   if (workspace === undefined) return false;
   if (
@@ -341,12 +401,17 @@ function validateRequest(request, configuration) {
     throw new KernelAttemptError('codex_command_not_allowed', 422);
   }
 
+  const disposableWorkspace = validateDisposableWorkspace(
+    request.provider_spec.workspace,
+    request.attempt_id,
+  );
   const { schemaPath, resultPath } = expectedProviderPaths(request.attempt_id);
   const output = request.provider_spec.output;
   if (output?.schema_path !== schemaPath || output?.result_path !== resultPath) {
     throw new KernelAttemptError('codex_output_path_not_allowed', 422);
   }
   const commonArgs = [
+    ...(disposableWorkspace ? CANARY_NO_TOOL_ARGS : []),
     '--json',
     '--output-schema', schemaPath,
     '--output-last-message', resultPath,
@@ -375,10 +440,7 @@ function validateRequest(request, configuration) {
   validateCallbackUrl(request.callback_url, configuration.brainUrl, request.attempt_id);
   return {
     resumeSessionId,
-    disposableWorkspace: validateDisposableWorkspace(
-      request.provider_spec.workspace,
-      request.attempt_id,
-    ),
+    disposableWorkspace,
   };
 }
 
@@ -530,6 +592,7 @@ function startProvider({
       ? ['exec', 'resume', execution.resumeSessionId]
       : ['exec'];
     args.push(
+      ...(execution.disposableWorkspace ? CANARY_NO_TOOL_ARGS : []),
       '--json',
       '--output-schema', schemaPath,
       '--output-last-message', resultPath,
@@ -538,7 +601,7 @@ function startProvider({
     );
     child = configuration.spawnFn(configuration.codexBin, args, {
       cwd: providerWorkDir,
-      env: { ...process.env, CODEX_HOME: codexHome },
+      env: providerEnvironment(codexHome, execution.disposableWorkspace),
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
     });

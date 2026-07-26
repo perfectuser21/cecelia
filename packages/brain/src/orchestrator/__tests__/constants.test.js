@@ -25,7 +25,7 @@ describe('constants', () => {
   });
 
   it('ACTION 枚举含全部派发与控制 action，ACTIONS 派生一致', () => {
-    for (const a of ['spawn:planner', 'spawn:proposer', 'spawn:reviewer', 'spawn:generator',
+    for (const a of ['spawn:planner', 'spawn:proposer', 'spawn:reviewer', 'spawn:canary', 'spawn:generator',
       'spawn:generator-fix', 'spawn:evaluator', 'spawn:judge', 'persist_contract_approval',
       'mark_failed', 'exit']) {
       expect(ACTIONS, `缺 action ${a}`).toContain(a);

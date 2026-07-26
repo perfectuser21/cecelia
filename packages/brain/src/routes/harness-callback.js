@@ -86,6 +86,17 @@ function requestDatabase(req) {
   return req.app.get('pool') || pool;
 }
 
+function attemptExpectedOutput(attempt) {
+  const value = attempt?.task_bundle;
+  if (value && typeof value === 'object') return value.expected_output ?? null;
+  if (typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value)?.expected_output ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeVerdict(role, outcome) {
   const value = String(outcome ?? '').trim().toUpperCase();
   if (role === 'reviewer') {
@@ -346,7 +357,11 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
 
   let result;
   try {
-    result = parseHarnessResult(req.body, attempt.role);
+    result = parseHarnessResult(
+      req.body,
+      attempt.role,
+      attemptExpectedOutput(attempt),
+    );
     if (result.attempt_id !== attemptId) {
       throw new Error(`attempt_id mismatch: body=${result.attempt_id} path=${attemptId}`);
     }

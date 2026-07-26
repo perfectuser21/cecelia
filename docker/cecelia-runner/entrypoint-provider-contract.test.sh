@@ -329,6 +329,17 @@ grep -q 'HARNESS_READ_ONLY' <<<"$SECTION"
 # namespaces are unavailable. Read-only roles are enforced by the /workspace:ro
 # bind mount, so Codex must bypass its nested sandbox for every Kernel attempt.
 grep -q -- '--dangerously-bypass-approvals-and-sandbox' <<<"$SECTION"
+grep -q 'HARNESS_CANARY' <<<"$SECTION"
+grep -q -- '--disable shell_tool' <<<"$SECTION"
+grep -q -- '--disable unified_exec' <<<"$SECTION"
+grep -q -- '--disable computer_use' <<<"$SECTION"
+grep -q -- '--disable in_app_browser' <<<"$SECTION"
+grep -q -- '--disable multi_agent' <<<"$SECTION"
+grep -q -- '--disable multi_agent_v2' <<<"$SECTION"
+grep -q -- '--disable hooks' <<<"$SECTION"
+grep -q -- '--disable goals' <<<"$SECTION"
+grep -q -- '--ignore-user-config' <<<"$SECTION"
+grep -q -- '-u HARNESS_CALLBACK_TOKEN' <<<"$SECTION"
 if grep -q -- '--sandbox read-only' <<<"$SECTION"; then
   echo 'Codex reviewer must rely on the read-only worktree mount, not nested bwrap' >&2
   exit 1

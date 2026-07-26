@@ -377,12 +377,13 @@ export function buildDockerArgs(opts, ctx = {}) {
       extraVolumes.push('-v', `${workflowsDir}:${workflowsDir}:ro`);
     }
   }
+  const minimalHostMounts = opts.minimalHostMounts === true;
   const hostGitConfig = path.join(homedir, '.gitconfig');
-  if (existsFn(hostGitConfig)) {
+  if (!minimalHostMounts && existsFn(hostGitConfig)) {
     extraVolumes.push('-v', `${hostGitConfig}:/home/cecelia/.gitconfig:ro`);
   }
   const hostGhDir = path.join(homedir, '.config', 'gh');
-  if (existsFn(hostGhDir)) {
+  if (!minimalHostMounts && existsFn(hostGhDir)) {
     extraVolumes.push('-v', `${hostGhDir}:/home/cecelia/.config/gh:ro`);
   }
   // 挂载 content pipeline 产物目录（双向 rw），让节点间共享文件产物。
@@ -390,13 +391,13 @@ export function buildDockerArgs(opts, ctx = {}) {
   // 下一个节点（copywrite/copy_review）读不到 findings.json / copy.md 一路 REVISION。
   // Harness 节点产物是 PR URL 走 state 传递，不需要此挂载；content pipeline 必须。
   const hostContentOutput = path.join(homedir, 'content-output');
-  if (existsFn(hostContentOutput)) {
+  if (!minimalHostMounts && existsFn(hostContentOutput)) {
     extraVolumes.push('-v', `${hostContentOutput}:/home/cecelia/content-output:rw`);
   }
   // 挂载 ~/claude-output 让 V6 图生成脚本（gen-v6-person.mjs）及其他卡片生成脚本可用。
   // @resvg/resvg-js 本身已由 Dockerfile 全局装 linux 版；此挂载提供脚本源码 + 卡片 HTML 模板。
   const hostClaudeOutput = path.join(homedir, 'claude-output');
-  if (existsFn(hostClaudeOutput)) {
+  if (!minimalHostMounts && existsFn(hostClaudeOutput)) {
     extraVolumes.push('-v', `${hostClaudeOutput}:/home/cecelia/claude-output:rw`);
   }
   // 挂载 ~/.ssh（只读）让 pipeline-export.sh 能 ssh "$NAS_SSH_ALIAS" 上传 tar。
@@ -404,7 +405,7 @@ export function buildDockerArgs(opts, ctx = {}) {
   // :ro 防容器写坏宿主 ssh 目录。macOS Docker Desktop osxfs 绕过 UID enforcement，
   // 容器内 cecelia 用户可读宿主 0600 文件。
   const hostSshDir = path.join(homedir, '.ssh');
-  if (existsFn(hostSshDir)) {
+  if (!minimalHostMounts && existsFn(hostSshDir)) {
     extraVolumes.push('-v', `${hostSshDir}:/home/cecelia/.ssh:ro`);
   }
   // caller 透传的额外挂载（如 codex relay 凭据目录：harness-skill-relay.js 传

@@ -29,6 +29,7 @@ export const BLOCKED_SAME_STATE_CAP = 2;
  * - spawn:planner
  * - spawn:proposer
  * - spawn:reviewer            —— GAN feedback 随 propose 分支 push（决策 10，重拉可能换主机）
+ * - spawn:canary              —— 合成只读 fleet 运输探针，无 Skill/工作区依赖
  * - spawn:generator
  * - spawn:generator-fix       —— fix 同 PR（fixDispatch 不 reset pr_url/pr_branch）
  * - spawn:evaluator           —— 前置 ARTIFACT 门 + Contract Gate，归 T3
@@ -49,6 +50,7 @@ export const ACTION = Object.freeze({
   SPAWN_PLANNER: 'spawn:planner',
   SPAWN_PROPOSER: 'spawn:proposer',
   SPAWN_REVIEWER: 'spawn:reviewer',
+  SPAWN_CANARY: 'spawn:canary',
   SPAWN_GENERATOR: 'spawn:generator',
   SPAWN_GENERATOR_FIX: 'spawn:generator-fix',
   SPAWN_EVALUATOR: 'spawn:evaluator',

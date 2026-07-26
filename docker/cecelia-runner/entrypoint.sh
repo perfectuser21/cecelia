@@ -72,7 +72,7 @@ export GIT_CONFIG_GLOBAL="$WRITABLE_GIT_CONFIG"
 # 宿主 gitconfig 可能引用只在 macOS 宿主存在的 credential helper。Runner 已只读挂载
 # ~/.config/gh，因此让容器内 gh 在可写副本中安装自身 helper；不把 token 放进 docker
 # argv/日志。无有效 gh 登录时保留原失败语义，由 capability gate 结构化拦截。
-if command -v gh >/dev/null 2>&1; then
+if [[ "${HARNESS_CANARY:-false}" != "true" ]] && command -v gh >/dev/null 2>&1; then
   if gh auth setup-git >/dev/null 2>&1; then
     echo "[entrypoint] in-container GitHub credential helper configured"
   else
@@ -91,7 +91,8 @@ git config --global --add safe.directory '*'
 # 此处把容器内 127.0.0.1:5221 转发到宿主（--add-host host.docker.internal:host-gateway
 # 由 docker-executor 注入）。host.docker.internal 不可解析时跳过（非 Brain 派发场景）。
 # 转发目标端口跟随 BRAIN_URL（staging 5222 / 预览 brain 派发时不得把硬编码流量倒进生产 5221）。
-if getent hosts host.docker.internal >/dev/null 2>&1; then
+if [[ "${HARNESS_CANARY:-false}" != "true" ]] \
+    && getent hosts host.docker.internal >/dev/null 2>&1; then
   BRAIN_TARGET_PORT=5221
   if [[ -n "${BRAIN_URL:-}" ]]; then
     _brain_port="${BRAIN_URL##*:}"
@@ -397,6 +398,48 @@ run_provider_contract() {
     # Bypass only the inner Codex sandbox; Docker keeps the role's filesystem
     # boundary authoritative for both read-only and writable attempts.
     local codex_permission_args=(--dangerously-bypass-approvals-and-sandbox)
+    local codex_command=(codex)
+    if [[ "${HARNESS_CANARY:-false}" == "true" ]]; then
+      codex_permission_args+=(
+        --ignore-user-config
+        --ignore-rules
+        --ephemeral
+        --disable shell_tool
+        --disable unified_exec
+        --disable code_mode_host
+        --disable browser_use
+        --disable browser_use_external
+        --disable browser_use_full_cdp_access
+        --disable apps
+        --disable enable_mcp_apps
+        --disable plugins
+        --disable image_generation
+        --disable standalone_web_search
+        --disable computer_use
+        --disable in_app_browser
+        --disable multi_agent
+        --disable multi_agent_v2
+        --disable hooks
+        --disable auth_elicitation
+        --disable plugin_sharing
+        --disable remote_plugin
+        --disable skill_mcp_dependency_install
+        --disable skill_search
+        --disable tool_call_mcp_elicitation
+        --disable tool_suggest
+        --disable request_permissions_tool
+        --disable workspace_dependencies
+        --disable goals
+      )
+      codex_command=(
+        env
+        -u BRAIN_URL
+        -u HARNESS_CALLBACK_URL
+        -u HARNESS_CALLBACK_TOKEN
+        -u HARNESS_LEASE_OWNER
+        codex
+      )
+    fi
     if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
       codex_args+=(resume "$HARNESS_RESUME_SESSION_ID")
     fi
@@ -410,7 +453,7 @@ run_provider_contract() {
       -
     )
     : > "$STDOUT_FILE"
-    codex "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
+    "${codex_command[@]}" "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
           printf '%s\n' "$line" | tee -a "$STDOUT_FILE"
           live_session=$(printf '%s\n' "$line" \

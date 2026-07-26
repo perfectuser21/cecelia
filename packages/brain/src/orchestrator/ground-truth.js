@@ -37,6 +37,7 @@ const SPAWN_ROLE_BY_ACTION = Object.freeze({
   [ACTION.SPAWN_PLANNER]: 'planner',
   [ACTION.SPAWN_PROPOSER]: 'proposer',
   [ACTION.SPAWN_REVIEWER]: 'reviewer',
+  [ACTION.SPAWN_CANARY]: 'reporter',
   [ACTION.SPAWN_GENERATOR]: 'generator',
   [ACTION.SPAWN_GENERATOR_FIX]: 'generator',
   [ACTION.SPAWN_EVALUATOR]: 'evaluator',

@@ -67,6 +67,15 @@ describe('TaskBundle contract', () => {
     });
   });
 
+  it('accepts a skill-free read-only canary bundle', () => {
+    expect(parseTaskBundle(validBundle({
+      role: 'reporter',
+      skill: null,
+      constraints: { read_only: true, fresh_session: true, timeout_seconds: 600 },
+      expected_output: 'harness-result/canary-v1',
+    }))).toMatchObject({ role: 'reporter', skill: null });
+  });
+
   it.each([
     '调用 Skill(foo)',
     'Use the Task tool to delegate',
@@ -134,6 +143,61 @@ describe('HarnessResult contract', () => {
       decision: { branch: 'cp-no-verdict' },
     }), 'reviewer')).toThrow(/outcome/);
   });
+
+  it('requires CANARY_OK for the dedicated canary output contract', () => {
+    expect(() => parseHarnessResult(
+      validResult({ decision: null }),
+      'reporter',
+      'harness-result/canary-v1',
+    )).toThrow(/CANARY_OK/);
+
+    expect(() => parseHarnessResult(
+      validResult({ decision: { outcome: 'NOT_OK' } }),
+      'reporter',
+      'harness-result/canary-v1',
+    )).toThrow(/CANARY_OK/);
+
+    expect(parseHarnessResult(
+      validResult({ decision: { outcome: 'CANARY_OK' } }),
+      'reporter',
+      'harness-result/canary-v1',
+    ).decision.outcome).toBe('CANARY_OK');
+  });
+
+  it('requires an empty side-effect envelope for a successful canary', () => {
+    for (const dirty of [
+      { artifacts: ['unexpected'] },
+      { checks: ['unexpected'] },
+      { error: { code: 'unexpected' } },
+    ]) {
+      expect(() => parseHarnessResult(
+        validResult({ decision: { outcome: 'CANARY_OK' }, ...dirty }),
+        'reporter',
+        'harness-result/canary-v1',
+      )).toThrow(/empty artifacts, empty checks, and null error/);
+    }
+  });
+
+  it.each([
+    'completed_with_concerns',
+    'needs_context',
+    'blocked',
+    'failed',
+    'cancelled',
+  ])(
+    'lets a non-success %s canary reach terminal persistence',
+    (status) => {
+      expect(parseHarnessResult(
+        validResult({
+          status,
+          decision: null,
+          error: { code: 'provider_exit', message: 'failed safely' },
+        }),
+        'reporter',
+        'harness-result/canary-v1',
+      ).status).toBe(status);
+    },
+  );
 
   it.each([
     ['completed', 'DONE'],

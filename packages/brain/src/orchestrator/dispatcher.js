@@ -21,6 +21,12 @@ const ACTION_SPECS = Object.freeze({
     role: 'reviewer', skill: 'harness-contract-reviewer', readOnly: true,
     expectedOutput: 'harness-result/reviewer-v1',
   },
+  'spawn:canary': {
+    role: 'reporter', skill: null, readOnly: true,
+    canary: true,
+    objective: 'Perform no filesystem or network work. Return status completed with empty artifacts and checks, decision outcome CANARY_OK, and null error.',
+    expectedOutput: 'harness-result/canary-v1',
+  },
   'spawn:generator': {
     role: 'generator', skill: 'harness-generator', readOnly: false,
     expectedOutput: 'harness-result/generator-v1',
@@ -59,6 +65,11 @@ export function resolveAction(action) {
   const spec = ACTION_SPECS[action];
   if (!spec) throw new Error(`unsupported action: ${action}`);
   return Object.freeze({ ...spec });
+}
+
+export function localContainerIdForAttempt(attemptId, generation) {
+  if (!attemptId || !Number.isInteger(generation) || generation < 0) return null;
+  return `cecelia-harness-${String(attemptId).slice(0, 8)}-g${generation}`;
 }
 
 function asObject(value) {
@@ -150,7 +161,7 @@ function buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata) {
     role: spec.role,
     objective: action === 'spawn:generator-fix'
       ? `${OBJECTIVES.generator} This is a repair attempt; preserve the current pull request.`
-      : OBJECTIVES[spec.role],
+      : spec.objective ?? OBJECTIVES[spec.role],
     skill,
     inputs,
     constraints: {
@@ -162,8 +173,9 @@ function buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata) {
   });
 }
 
-function executionConfig(payload, { provider, accountHome } = {}) {
+function executionConfig(payload, { provider, accountHome, canary = false } = {}) {
   const execution = {};
+  if (canary) execution.canary = true;
   if (payload.model && payload.model !== 'auto') execution.model = payload.model;
   if (payload.codex_home) execution.codexHome = payload.codex_home;
   if (payload.claude_home) execution.claudeHome = payload.claude_home;
@@ -460,7 +472,11 @@ export function createDispatcher(deps) {
     try {
       const adapterSpec = adapter.start({
         bundle,
-        execution: executionConfig(payload, { provider: adapter.name, accountHome }),
+        execution: executionConfig(payload, {
+          provider: adapter.name,
+          accountHome,
+          canary: spec.canary === true,
+        }),
       });
       rawReceipt = await deps.launcher.launch({
         attempt,
@@ -557,6 +573,9 @@ export function createDispatcher(deps) {
       detail: `attempt ${attempt.id} launched as ${launched.containerId ?? launched.jobId ?? 'worker job'}`,
       attemptId: attempt.id,
       provider: adapter.name,
+      leaseOwner: attempt.lease_owner,
+      leaseGeneration: attempt.lease_generation,
+      localContainerNaming: attempt.local_container_naming ?? null,
     };
   };
 }
@@ -573,10 +592,9 @@ export function createDetachedLauncher({
   ensureDir = mkdirSync,
   machineId = 'us-mac-m4',
 }) {
-  const requestedContainerId = (attempt, generation = attempt?.lease_generation) => {
-    if (!attempt?.id || !Number.isInteger(generation) || generation < 0) return null;
-    return `cecelia-harness-${String(attempt.id).slice(0, 8)}-g${generation}`;
-  };
+  const requestedContainerId = (attempt, generation = attempt?.lease_generation) => (
+    localContainerIdForAttempt(attempt?.id, generation)
+  );
   const removeCandidates = async (containerIds) => {
     const results = [];
     for (const containerId of [...new Set(containerIds.filter(Boolean))]) {
@@ -683,6 +701,7 @@ export function createDetachedLauncher({
           prompt: spec.stdin,
           worktreePath: bundle.inputs.worktree_path,
           readOnlyWorktree: bundle.constraints.read_only,
+          minimalHostMounts: spec.canary === true,
           labels,
           extraMounts,
           env: {
@@ -698,6 +717,7 @@ export function createDetachedLauncher({
             HARNESS_RUN_ID: attempt.run_id,
             HARNESS_HOP: String(attempt.hop),
             HARNESS_READ_ONLY: String(bundle.constraints.read_only),
+            HARNESS_CANARY: String(spec.canary === true),
             HARNESS_CALLBACK_URL: `${brainUrl}/api/brain/harness/attempts/${attempt.id}/callback`,
             BRAIN_URL: brainUrl,
           },

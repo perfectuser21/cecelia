@@ -59,4 +59,24 @@ describe('codexAdapter', () => {
       provider_metadata: { provider: 'codex', session_id: 'thread-42' },
     });
   });
+
+  it('disables every execution tool and user extension for a canary invocation', () => {
+    const spec = codexAdapter.start({
+      bundle,
+      execution: { canary: true },
+    });
+
+    expect(spec.canary).toBe(true);
+    expect(spec.args).toEqual(expect.arrayContaining([
+      '--ignore-user-config',
+      '--ignore-rules',
+      '--ephemeral',
+      '--disable', 'shell_tool',
+      '--disable', 'unified_exec',
+      '--disable', 'code_mode_host',
+      '--disable', 'browser_use',
+      '--disable', 'apps',
+      '--disable', 'plugins',
+    ]));
+  });
 });

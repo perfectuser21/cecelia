@@ -82,8 +82,20 @@ export function parseTaskBundle(value) {
   return parsed;
 }
 
-export function parseHarnessResult(value, role) {
+export function parseHarnessResult(value, role, expectedOutput = null) {
   const parsed = harnessResultSchema.parse(value);
+  if (expectedOutput === 'harness-result/canary-v1') {
+    // Every executor terminal state must reach persistence. Only the exact
+    // successful state is subject to the stricter canary proof envelope.
+    if (parsed.status !== 'completed') return parsed;
+    if (parsed.decision?.outcome !== 'CANARY_OK') {
+      throw new Error('canary result requires status completed and decision outcome CANARY_OK');
+    }
+    if (parsed.artifacts.length !== 0 || parsed.checks.length !== 0 || parsed.error !== null) {
+      throw new Error('canary result requires empty artifacts, empty checks, and null error');
+    }
+    return parsed;
+  }
   const decisionRequired = ['completed', 'completed_with_concerns'].includes(parsed.status);
   const adversarialRole = ['reviewer', 'evaluator', 'judge'].includes(role);
   if (decisionRequired && adversarialRole && !parsed.decision) {

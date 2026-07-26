@@ -51,6 +51,7 @@ describe('createLiveDispatch production probe wiring', () => {
           return { rows: [] };
         }
         if (/INSERT INTO harness_attempts/.test(sql)) {
+          expect(params[4]).toBe('reporter');
           throw new Error(`probe_selected_machine:${params[7]}`);
         }
         throw new Error(`unexpected query: ${sql}`);

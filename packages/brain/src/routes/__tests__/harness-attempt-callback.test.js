@@ -153,6 +153,26 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.complete).toHaveBeenCalledOnce();
   });
 
+  it('拒绝 dedicated canary contract 缺少 CANARY_OK 的 completed callback', async () => {
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      role: 'reporter',
+      task_bundle: {
+        ...attempt.task_bundle,
+        expected_output: 'harness-result/canary-v1',
+      },
+    });
+
+    const response = await postCallback(app, {
+      ...validResult,
+      decision: null,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/CANARY_OK/);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       'requested machine',

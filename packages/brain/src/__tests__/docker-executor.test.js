@@ -146,6 +146,26 @@ describe('buildDockerArgs read-only worktree', () => {
     expect(built.args).toEqual(expect.arrayContaining(['-v', '/tmp/worktree:/workspace:ro']));
     expect(built.args).not.toContain('/tmp/worktree:/workspace');
   });
+
+  it('minimal canary mount mode excludes host GitHub, SSH, and output directories', () => {
+    const built = __test__.buildDockerArgs({
+      task: { id: 'task-canary', task_type: 'harness_reporter' },
+      prompt: '{}',
+      worktreePath: '/tmp/private-canary',
+      readOnlyWorktree: true,
+      minimalHostMounts: true,
+    }, {
+      homedir: '/Users/operator',
+      existsSyncFn: () => true,
+    });
+
+    const rendered = built.args.join(' ');
+    expect(rendered).not.toContain('/Users/operator/.config/gh');
+    expect(rendered).not.toContain('/Users/operator/.ssh');
+    expect(rendered).not.toContain('/Users/operator/.gitconfig');
+    expect(rendered).not.toContain('/Users/operator/content-output');
+    expect(rendered).not.toContain('/Users/operator/claude-output');
+  });
 });
 
 describe('writePromptFile', () => {
