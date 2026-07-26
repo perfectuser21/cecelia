@@ -167,6 +167,16 @@ function sameCallbackOwner(left, right) {
   );
 }
 
+function sameCallbackDeliveryGeneration(left, right) {
+  return (
+    left?.callback_delivery === right?.callback_delivery
+    && left?.callback_delivery_id === right?.callback_delivery_id
+    && left?.callback_owner_instance_id === right?.callback_owner_instance_id
+    && left?.callback_owner_pid === right?.callback_owner_pid
+    && left?.callback_owner_process_identity === right?.callback_owner_process_identity
+  );
+}
+
 function releaseCallbackOwner(filePath, owner) {
   const current = readClaim(filePath);
   if (!sameCallbackOwner(current, owner)) return false;
@@ -180,7 +190,7 @@ function releaseCallbackOwner(filePath, owner) {
   }
 }
 
-function reconcileRestartOrphans(stateDir, readProcessIdentity) {
+function reconcileRestartOrphans(stateDir, readProcessIdentity, acquireCallbackOwner) {
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   for (const entry of fs.readdirSync(stateDir)) {
     if (!UUID_PATTERN.test(entry.replace(/\.json$/, '')) || !entry.endsWith('.json')) continue;
@@ -202,22 +212,35 @@ function reconcileRestartOrphans(stateDir, readProcessIdentity) {
         callbackOwnerProcessState(claim, readProcessIdentity),
       )
     ) {
-      const callbackOwner = {
-        callback_delivery_id: claim.callback_delivery_id,
-        bridge_instance_id: claim.callback_owner_instance_id,
-      };
-      const reconciled = {
-        ...claim,
-        status: 'callback_pending',
-        provider_status: claim.provider_status ?? claim.status,
-        callback_delivery: 'failed',
-      };
-      delete reconciled.callback_delivery_id;
-      delete reconciled.callback_owner_instance_id;
-      delete reconciled.callback_owner_pid;
-      delete reconciled.callback_owner_process_identity;
-      writeClaimAtomic(filePath, reconciled);
-      releaseCallbackOwner(callbackOwnerPath(stateDir, claim.attempt_id), callbackOwner);
+      const reconciliationOwner = acquireCallbackOwner(claim.attempt_id);
+      if (!reconciliationOwner) continue;
+      try {
+        const current = readClaim(filePath);
+        if (
+          !current
+          || current.callback_delivery === 'delivered'
+          || !sameCallbackDeliveryGeneration(current, claim)
+          || !['dead', 'unrecoverable'].includes(
+            callbackOwnerProcessState(current, readProcessIdentity),
+          )
+        ) continue;
+        const reconciled = {
+          ...current,
+          status: 'callback_pending',
+          provider_status: current.provider_status ?? current.status,
+          callback_delivery: 'failed',
+        };
+        delete reconciled.callback_delivery_id;
+        delete reconciled.callback_owner_instance_id;
+        delete reconciled.callback_owner_pid;
+        delete reconciled.callback_owner_process_identity;
+        writeClaimAtomic(filePath, reconciled);
+      } finally {
+        releaseCallbackOwner(
+          callbackOwnerPath(stateDir, claim.attempt_id),
+          reconciliationOwner,
+        );
+      }
     }
   }
 }
@@ -637,7 +660,6 @@ function createKernelAttemptHandler({
   };
   const liveChildren = new Map();
   const callbackDeliveries = new Map();
-  reconcileRestartOrphans(stateDir, readProcessIdentity);
 
   function authenticate(headers) {
     if (!secureTokenEqual(bridgeToken, headers?.authorization)) {
@@ -671,6 +693,8 @@ function createKernelAttemptHandler({
     }
     return null;
   }
+
+  reconcileRestartOrphans(stateDir, readProcessIdentity, acquireCallbackOwner);
 
   configuration.onProviderSettled = (
     attemptId,

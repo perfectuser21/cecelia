@@ -180,6 +180,105 @@ function runClaimWorker({
   });
 }
 
+function runCallbackReconcileWorker({
+  handlerPath,
+  stateDir,
+  barrierDir,
+  resultPath,
+  role,
+}) {
+  const script = String.raw`
+    const fs = require('fs');
+    const path = require('path');
+    const [handlerPath, stateDir, barrierDir, resultPath, role] = process.argv.slice(1);
+    const attemptId = '${ATTEMPT_ID}';
+    const targetPath = path.join(stateDir, attemptId + '.json');
+    const waitArray = new Int32Array(new SharedArrayBuffer(4));
+    const waitFor = (marker) => {
+      const deadline = Date.now() + 5000;
+      while (!fs.existsSync(path.join(barrierDir, marker))) {
+        if (Date.now() > deadline) throw new Error('callback reconcile barrier timeout: ' + marker);
+        Atomics.wait(waitArray, 0, 0, 10);
+      }
+    };
+    if (role === 'reconciler') {
+      const readFileSync = fs.readFileSync;
+      let paused = false;
+      fs.readFileSync = (filePath, ...args) => {
+        const value = readFileSync(filePath, ...args);
+        if (!paused && filePath === targetPath) {
+          paused = true;
+          fs.writeFileSync(resultPath + '.captured', value);
+          fs.writeFileSync(path.join(barrierDir, 'reconciler-read'), '');
+          waitFor('owner-acquired');
+        }
+        return value;
+      };
+    } else {
+      waitFor('reconciler-read');
+    }
+    const { createKernelAttemptHandler } = require(handlerPath);
+    const handler = createKernelAttemptHandler({
+      stateDir,
+      machineId: 'xian-mac-m4',
+      spawnFn: () => { throw new Error('callback redelivery must not respawn'); },
+      bridgeToken: '${BRIDGE_TOKEN}',
+      brainUrl: '${BRAIN_URL}',
+      allowedAccounts: ['team3'],
+      codexBin: '/opt/homebrew/bin/codex',
+      workDir: stateDir,
+      loadAccountAuth: () => ({ tokens: { access_token: 'provider-secret' } }),
+      fetchFn: async () => {
+        fs.writeFileSync(path.join(barrierDir, 'owner-acquired'), '');
+        waitFor('reconciler-finished');
+        return { ok: true, status: 200 };
+      },
+      runtimeRoot: stateDir,
+    });
+    if (role === 'reconciler') {
+      fs.writeFileSync(
+        resultPath + '.reconciler',
+        fs.readFileSync(targetPath, 'utf8'),
+      );
+      fs.writeFileSync(path.join(barrierDir, 'reconciler-finished'), '');
+      process.exit(0);
+    }
+    handler.accept(${JSON.stringify(request())}, {
+      authorization: 'Bearer ${BRIDGE_TOKEN}',
+    }).then(() => new Promise(resolve => setImmediate(resolve)))
+      .then(() => handler.inspect(attemptId, {
+        authorization: 'Bearer ${BRIDGE_TOKEN}',
+      }))
+      .then(claim => {
+        fs.writeFileSync(resultPath, JSON.stringify(claim));
+        process.exit(0);
+      })
+      .catch(error => {
+        process.stderr.write(error.stack || error.message);
+        process.exit(1);
+      });
+  `;
+
+  return new Promise((resolve, reject) => {
+    const child = spawnProcess(process.execPath, [
+      '-e',
+      script,
+      handlerPath,
+      stateDir,
+      barrierDir,
+      resultPath,
+      role,
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`callback reconcile ${role} failed: ${stderr}`));
+    });
+  });
+}
+
 describe('kernel attempt durable claims', () => {
   let stateDir;
   let spawnFn;
@@ -729,6 +828,84 @@ describe('kernel attempt security and Codex execution', () => {
       });
     });
     expect(spawnFn).toHaveBeenCalledOnce();
+  });
+
+  it('does not let stale restart reconciliation erase a newer callback owner generation', async () => {
+    const barrierDir = path.join(stateDir, 'callback-reconcile-barrier');
+    const resultPath = path.join(barrierDir, 'owner-result.json');
+    fs.mkdirSync(barrierDir);
+    fs.writeFileSync(path.join(stateDir, `${ATTEMPT_ID}.json`), JSON.stringify({
+      attempt_id: ATTEMPT_ID,
+      lease_owner: request().lease_owner,
+      lease_generation: request().lease_generation,
+      job_id: JOB_ID,
+      machine_id: 'xian-mac-m4',
+      status: 'callback_pending',
+      provider_status: 'completed',
+      callback_delivery: 'pending',
+      callback_delivery_id: '66666666-6666-4666-8666-666666666666',
+      callback_owner_instance_id: '77777777-7777-4777-8777-777777777777',
+      callback_owner_pid: 2147483647,
+      callback_owner_process_identity: 'dead-owner-process',
+      callback_url: request().callback_url,
+      callback_result: {
+        contract_version: '1.0',
+        attempt_id: ATTEMPT_ID,
+        status: 'completed',
+        summary: 'restart reconciliation race',
+        artifacts: [],
+        checks: [],
+        decision: null,
+        error: null,
+        provider_metadata: { provider: 'codex' },
+      },
+    }));
+    const handlerPath = require.resolve(
+      '../../scripts/codex-bridge/kernel-attempt-handler.cjs',
+    );
+
+    await Promise.all([
+      runCallbackReconcileWorker({
+        handlerPath,
+        stateDir,
+        barrierDir,
+        resultPath,
+        role: 'reconciler',
+      }),
+      runCallbackReconcileWorker({
+        handlerPath,
+        stateDir,
+        barrierDir,
+        resultPath,
+        role: 'owner',
+      }),
+    ]);
+
+    const capturedClaim = JSON.parse(fs.readFileSync(`${resultPath}.captured`, 'utf8'));
+    expect(capturedClaim).toMatchObject({
+      status: 'callback_pending',
+      callback_delivery: 'pending',
+      callback_delivery_id: '66666666-6666-4666-8666-666666666666',
+      callback_owner_instance_id: '77777777-7777-4777-8777-777777777777',
+    });
+    const reconcilerClaim = JSON.parse(fs.readFileSync(`${resultPath}.reconciler`, 'utf8'));
+    expect(reconcilerClaim).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      status: 'callback_pending',
+      callback_delivery: 'pending',
+      callback_delivery_id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      callback_owner_instance_id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
+    const finalClaim = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
+    expect(finalClaim).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      status: 'completed',
+      callback_delivery: 'delivered',
+    });
+    expect(finalClaim).not.toHaveProperty('callback_result');
+    expect(finalClaim).not.toHaveProperty('callback_delivery_id');
+    expect(fs.existsSync(`${path.join(stateDir, `${ATTEMPT_ID}.json`)}.callback-owner`))
+      .toBe(false);
   });
 
   it('drains large provider stdout and stderr so process close remains reachable', async () => {
