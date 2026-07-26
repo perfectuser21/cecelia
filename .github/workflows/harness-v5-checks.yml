@@ -175,6 +175,14 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: cecelia
         run: cd packages/brain && node src/migrate.js
+      - name: Create isolated sprint test database
+        if: steps.check-tests.outputs.has_tests == 'true'
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: cecelia
+          PGPASSWORD: cecelia
+        run: createdb cecelia_test
       - name: Start Brain server
         if: steps.check-tests.outputs.has_tests == 'true'
         env:
@@ -308,6 +316,13 @@ jobs:
         if: steps.check-tests.outputs.has_tests == 'true'
         env:
           DB: postgresql://cecelia:cecelia@localhost:5432/cecelia
+          TEST_DATABASE_URL: postgresql://cecelia:cecelia@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia
+          CONTRACT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           # Capture test file list (GHA template expansion produces multiline string)
