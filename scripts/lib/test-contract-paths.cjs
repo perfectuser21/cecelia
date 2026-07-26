@@ -90,7 +90,7 @@ function normalizeE2EScript(script) {
     .split("\n")
     .map((line) => line.replace(/[ \t]+$/g, ""))
     .join("\n")
-    .replace(/\s+$/g, "");
+    .replace(/\n+$/g, "");
 }
 
 /**
@@ -355,9 +355,12 @@ function listRegisteredSprintArtifacts(root) {
       const e2ePath = path.join(sprintDir, "e2e-verify.sh");
       try {
         const script = fs.readFileSync(e2ePath, "utf8");
+        const normalizedScript = normalizeE2EScript(script);
+        const normalizedContractE2e = normalizeE2EScript(contractE2e);
         if (
-          normalizeE2EScript(script) ===
-          normalizeE2EScript(contractE2e)
+          normalizedScript.length > 0 &&
+          normalizedContractE2e.length > 0 &&
+          normalizedScript === normalizedContractE2e
         ) {
           registered.add(e2ePath);
         }

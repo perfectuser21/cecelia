@@ -282,7 +282,7 @@ describe('classifySprintArtifacts', () => {
     rmSync(fixture, { recursive: true, force: true });
   });
 
-  it('normalizes CRLF, line-end horizontal whitespace, and final whitespace only', () => {
+  it('normalizes CRLF, line-end horizontal whitespace, and final newlines only', () => {
     const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-whitespace-'));
     const sprintDir = path.join(fixture, 'sprints/s1');
     mkdirSync(sprintDir, { recursive: true });
@@ -299,6 +299,51 @@ describe('classifySprintArtifacts', () => {
     expect(classifySprintArtifacts(fixture)).toMatchObject({
       registered: { e2e: 1, total: 1 },
       unregistered: { total: 0 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['non-breaking space', '\u00a0'],
+    ['vertical tab', '\u000b'],
+    ['form feed', '\u000c'],
+    ['semantic character', '#'],
+  ])('preserves a trailing %s as meaningful e2e content', (_label, suffix) => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-semantic-tail-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(sprintDir, { recursive: true });
+    writeFileSync(path.join(sprintDir, 'e2e-verify.sh'), `echo ok${suffix}\n`);
+    writeE2EContract(
+      fixture,
+      's1',
+      '## E2E 验收\n\n```bash\necho ok\n```',
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { e2e: 1, total: 1 },
+      registered: { total: 0 },
+      unregistered: { e2e: 1, total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('rejects empty e2e evidence after permitted normalization', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-empty-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(sprintDir, { recursive: true });
+    writeFileSync(path.join(sprintDir, 'e2e-verify.sh'), ' \t\r\n\t\r\n');
+    writeE2EContract(
+      fixture,
+      's1',
+      '## E2E 验收\n\n```bash\n \t\n\t\n```',
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { e2e: 1, total: 1 },
+      registered: { total: 0 },
+      unregistered: { e2e: 1, total: 1 },
     });
 
     rmSync(fixture, { recursive: true, force: true });
