@@ -51,6 +51,11 @@ describe('attempt-telemetry', () => {
               retry_of_attempt_id: 'attempt-parent',
               restart_reason: 'evaluator_failed',
               workstream_key: 'ws2',
+              requested_machine_id: 'xian-mac-m4',
+              actual_machine_id: 'xian-mac-m4',
+              execution_transport: 'remote-bridge',
+              remote_job_id: 'xian-job-7',
+              machine_attestation_status: 'verified',
               time_derived: false,
               created_at: '2026-07-26T00:00:00.000Z',
               started_at: '2026-07-26T00:00:00.500Z',
@@ -89,6 +94,15 @@ describe('attempt-telemetry', () => {
 
     expect(calls[0].params).toEqual(['task-a', 'tenant-a']);
     expect(calls[1].params).toEqual([['run-a']]);
+    for (const field of [
+      'requested_machine_id',
+      'actual_machine_id',
+      'execution_transport',
+      'remote_job_id',
+      'machine_attestation_status',
+    ]) {
+      expect(calls[1].sql).toContain(field);
+    }
     expect(telemetry).toMatchObject({
       task_id: 'task-a',
       run_count: 1,
@@ -118,6 +132,11 @@ describe('attempt-telemetry', () => {
         attempt_id: 'attempt-a',
         logical_cycle_id: 'cycle-a',
         workstream_key: 'ws2',
+        requested_machine_id: 'xian-mac-m4',
+        actual_machine_id: 'xian-mac-m4',
+        execution_transport: 'remote-bridge',
+        remote_job_id: 'xian-job-7',
+        machine_attestation_status: 'verified',
       }),
       expect.objectContaining({
         attempt_id: 'attempt-b',
