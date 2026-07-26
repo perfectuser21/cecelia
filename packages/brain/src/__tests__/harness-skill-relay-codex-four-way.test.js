@@ -128,6 +128,24 @@ describe('One Session Codex total concurrency is four on the same team1 account'
     expect(deps.spawnFn).not.toHaveBeenCalled();
   });
 
+  it('Docker capacity counts only complete headless Codex relay names', async () => {
+    const malformedNames = [
+      'cecelia-relay-deadbeef-cx-11111111-extra',
+      'prefix-cecelia-relay-deadbeef-cx-22222222',
+      'cecelia-relay-short-cx-33333333',
+      'cecelia-relay-deadbeef-cx-nothex00',
+    ].join('\n');
+    const deps = makeDeps({
+      pool: poolWithActiveCount(3),
+      execFn: vi.fn((cmd) => cmd.includes('--format') ? malformedNames : ''),
+    });
+
+    const result = await spawnSkillRelaySession(codexTask(17), deps);
+
+    expect(result.ok).toBe(true);
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+  });
+
   it('one Docker-only orphan leaves exactly three launch reservations', async () => {
     let release;
     const launchBarrier = new Promise((resolve) => { release = resolve; });
@@ -354,6 +372,7 @@ describe('Codex credential snapshot lifecycle', () => {
     const failedDeps = makeDeps({
       pool: insertFailurePool,
       removeContainerFn,
+      containerStateFn: vi.fn().mockResolvedValue('present'),
       cleanupCodexHome,
     });
 
@@ -405,7 +424,12 @@ describe('Codex credential snapshot lifecycle', () => {
       removeContainerFn: vi.fn().mockResolvedValue(false),
     });
     const failed = await spawnSkillRelaySession(codexTask(47), failedDeps);
+    const containerId = failedDeps.snapshotCodexHome.mock.calls[0][1];
     expect(failed.ok).toBe(false);
+    expect(failedDeps.execFn).toHaveBeenCalledWith(
+      `docker ps -a --filter "name=^/${containerId}$" --format "{{.Names}}"`,
+    );
+    expect(failedDeps.cleanupCodexHome).toHaveBeenCalledWith(containerId);
 
     _setActiveCodexRelays(0);
     const recoveredDeps = makeDeps({
@@ -415,6 +439,30 @@ describe('Codex credential snapshot lifecycle', () => {
     const recovered = await spawnSkillRelaySession(codexTask(48), recoveredDeps);
 
     expect(recovered.ok).toBe(true);
+  });
+
+  it('unknown container state after rm failure preserves the exact snapshot', async () => {
+    const insertFailurePool = {
+      query: vi.fn(async (sql) => {
+        if (/SELECT COUNT\(\*\)/.test(sql)) {
+          return { rows: [{ count: '0' }] };
+        }
+        if (/INSERT INTO initiative_runs/.test(sql)) {
+          throw new Error('initiative_runs unavailable');
+        }
+        return { rows: [] };
+      }),
+    };
+    const deps = makeDeps({
+      pool: insertFailurePool,
+      removeContainerFn: vi.fn().mockResolvedValue(false),
+      containerStateFn: vi.fn().mockRejectedValue(new Error('docker daemon unavailable')),
+    });
+
+    const failed = await spawnSkillRelaySession(codexTask(49), deps);
+
+    expect(failed.ok).toBe(false);
+    expect(deps.cleanupCodexHome).not.toHaveBeenCalled();
   });
 
   it('terminal fallback removes only complete matching IDs for this task', () => {
