@@ -47,6 +47,27 @@ describe('buildRealDeps', () => {
       attemptStore,
       launcher,
       handlers: {},
+      machineId: 'us-mac-m4',
+      preflightGate: {
+        evaluate: vi.fn(async ({ preferred_target: preferredTarget }) => ({
+          status: 'ok',
+          snapshot: {
+            ...preferredTarget,
+            verified: true,
+            capability_snapshot_id: 'run-test-snapshot',
+            expires_at: Date.now() + 1_000,
+          },
+          evidence: {
+            capability_snapshot_id: 'run-test-snapshot',
+            from_target: preferredTarget,
+            to_target: preferredTarget,
+            fallback_reason: 'preferred_target_healthy',
+            failure_class: 'none',
+          },
+          to_target: preferredTarget,
+        })),
+        validateSnapshotForDispatch: vi.fn(async (snapshot) => ({ status: 'ok', snapshot })),
+      },
       loadSkill: vi.fn(() => ({
         name: 'harness-evaluator', version: '1.0.0', digest: `sha256:${'a'.repeat(64)}`, content: 'evaluate',
       })),

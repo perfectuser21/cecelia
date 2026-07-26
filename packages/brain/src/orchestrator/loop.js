@@ -593,21 +593,29 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     const result = gateVerdict?.startsWith('deny:')
       ? { status: 'BLOCKED', detail: gateVerdict }
       : await deps.dispatch(decision.action, { taskId, runId: resolvedRunId, hop, observed, decision });
+    const controlStatus = result.control_status ?? result.status;
 
-    if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
+    if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {
       const resultHop = await next(deps.pool, resolvedRunId);
       await append(deps.pool, {
         runId: resolvedRunId,
         hop: resultHop,
         observed: buildSnapshot(observed, fullCounters, LOG_ACTION.DISPATCH_RESULT),
         derivedPhase: decision.phase,
-        gateVerdict: `deny:${result.status}`,
+        gateVerdict: `deny:${controlStatus}`,
         action: LOG_ACTION.DISPATCH_RESULT,
         detail: {
           dispatch_hop: hop,
           dispatch_action: decision.action,
-          status: result.status,
+          status: controlStatus,
+          transport_status: result.status,
           result: result.detail ?? null,
+          redirect_action: result.action ?? null,
+          failure_class: result.failure_class ?? null,
+          fallback_reason: result.fallback_reason ?? null,
+          should_create_attempt: result.should_create_attempt ?? null,
+          should_enter_generator_fix: result.should_enter_generator_fix ?? null,
+          evidence: result.evidence ?? null,
         },
       });
       hops++;
@@ -641,14 +649,14 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       deadlinePaused = Boolean(observed.pr?.head_sha);
     }
 
-    if (result.status === 'NEEDS_CONTEXT' || result.status === 'BLOCKED') {
-      const currentBlockedStreak = counters.blockedStatus === result.status
+    if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {
+      const currentBlockedStreak = counters.blockedStatus === controlStatus
         ? counters.blockedStreak
         : 0;
       const streak = currentBlockedStreak + 1; // 本轮实际 streak
-      log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status} (streak ${streak}): ${result.detail ?? ''}`);
+      log(`[orchestrator] hop ${hop} ${decision.action} → ${controlStatus} (streak ${streak}): ${result.detail ?? ''}`);
       if (streak >= BLOCKED_SAME_STATE_CAP) {
-        await markRunFailed(deps.pool, resolvedRunId, `blocked_same_state:${result.status}`);
+        await markRunFailed(deps.pool, resolvedRunId, `blocked_same_state:${controlStatus}`);
         return { exitReason: 'blocked_same_state', hops };
       }
     } else {

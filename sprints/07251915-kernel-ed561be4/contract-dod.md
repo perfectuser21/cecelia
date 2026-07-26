@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r4-ed561be4-a4
-sprint_dir: sprints/07251915-kernel-ed561be4
-
 ---
 skeleton: false
 journey_type: autonomous

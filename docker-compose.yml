@@ -38,8 +38,14 @@ services:
       - /Users/administrator/.claude-account1:/Users/administrator/.claude-account1:ro
       - /Users/administrator/.claude-account2:/Users/administrator/.claude-account2:ro
       - /Users/administrator/.claude-account3:/Users/administrator/.claude-account3:ro
-      # Codex CLI auth (~/.codex-team1/auth.json)：容器内 triggerCodexReview spawn 时需要凭据
+      # Provider-neutral Kernel preflight 需要看到本机已验证的全部账号状态。
+      # 只读挂载：Brain 只探测；attempt launcher 再把选中的 home 挂入独立 worker。
       - /Users/administrator/.codex-team1:/Users/administrator/.codex-team1:ro
+      - /Users/administrator/.codex-team2:/Users/administrator/.codex-team2:ro
+      - /Users/administrator/.codex-team3:/Users/administrator/.codex-team3:ro
+      - /Users/administrator/.codex-team4:/Users/administrator/.codex-team4:ro
+      - /Users/administrator/.codex-team5:/Users/administrator/.codex-team5:ro
+      - /Users/administrator/.grok:/Users/administrator/.grok:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
       - /Users/administrator/perfect21/cecelia/packages/workflows:/Users/administrator/perfect21/cecelia/packages/workflows:ro
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
@@ -76,6 +82,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - ENV_REGION=${ENV_REGION:-us}
+      # Kernel controller 固定留在 US M4；Docker hostname 不是可调度机器身份。
+      - CECELIA_MACHINE_ID=${CECELIA_MACHINE_ID:-us-mac-m4}
       # host.docker.internal: OrbStack 原生支持，容器内此地址到宿主 127.0.0.1
       - DB_HOST=${DB_HOST:-host.docker.internal}
       - DB_PORT=${DB_PORT:-5432}

@@ -172,3 +172,4 @@ triage-officer-smoke.sh
 conversations-smoke.sh
 conversation-agent-smoke.sh
 conversation-ttl-archiver-smoke.sh
+kernel-capability-gate-smoke.sh

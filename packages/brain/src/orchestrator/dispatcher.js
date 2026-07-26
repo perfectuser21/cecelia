@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { parseTaskBundle } from './execution-contract.js';
 import { generateCallbackSecret, hashCallbackSecret } from './callback-auth.js';
+import { deriveCapabilityRequirements } from './preflight/requirements.js';
 
 const ACTION_SPECS = Object.freeze({
   'spawn:planner': {
@@ -174,7 +175,7 @@ function executionConfig(payload, { provider, accountHome } = {}) {
 
 export function createDispatcher(deps) {
   const randomUUID = deps.randomUUID ?? nodeRandomUUID;
-  const machineId = deps.machineId ?? os.hostname();
+  const machineId = deps.machineId ?? process.env.CECELIA_MACHINE_ID ?? os.hostname();
   const handlers = deps.handlers ?? {};
   const createCallbackSecret = deps.createCallbackSecret ?? generateCallbackSecret;
   const resolveAccountHome = deps.resolveAccountHome ?? resolveProviderAccountHome;
@@ -194,27 +195,114 @@ export function createDispatcher(deps) {
       attemptKind: action === 'spawn:generator-fix' ? 'fix' : 'initial',
       workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
     };
-    const bundle = buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata);
+    let bundle = buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata);
     const roleAssignment = asObject(asObject(payload.role_assignments)[spec.role]);
     const requestedProvider = roleAssignment.provider ?? payload.executor ?? payload.provider ?? 'auto';
     const requestedAccount = roleAssignment.account ?? payload.executor_account ?? null;
-    const adapter = spec.role === 'judge' ? null : deps.registry.resolve({
+    let adapter = spec.role === 'judge' ? null : deps.registry.resolve({
       provider: requestedProvider,
       requires: ['structured_output'],
     });
-    const accountHome = spec.role === 'judge' || !requestedAccount
-      ? null
-      : resolveAccountHome(adapter.name, requestedAccount);
+    let selectedAccount = requestedAccount;
+    let selectedMachine = machineId;
+    let accountHome = null;
+    const rawCapabilityRequirements = payload.contract_requirements
+      ?? payload.capability_requirements
+      ?? null;
+    const capabilityRequirements = deriveCapabilityRequirements({
+      role: spec.role,
+      requirements: rawCapabilityRequirements,
+    });
+
+    if (rawCapabilityRequirements && !deps.preflightGate && spec.role !== 'judge') {
+      const blocked = {
+        status: 'DONE_WITH_CONCERNS',
+        control_status: 'BLOCKED',
+        detail: 'dispatch preflight blocked: capability_gate_unavailable',
+        action: 'wait:human_review',
+        failure_class: 'infrastructure_blocked',
+        fallback_reason: 'capability_gate_unavailable',
+        should_create_attempt: false,
+        should_enter_generator_fix: false,
+      };
+      await deps.onPreflightBlocked?.(blocked, { action, ctx });
+      return blocked;
+    }
+
+    if (deps.preflightGate && spec.role !== 'judge') {
+      const taskBundle = {
+        ...bundle,
+        task_id: ctx.observed.task.id ?? ctx.taskId,
+        logical_cycle: attemptMetadata.logicalCycleId,
+      };
+      const preflight = await deps.preflightGate.evaluate({
+        preferred_target: {
+          provider: adapter.name,
+          account: requestedAccount,
+          machine: machineId,
+        },
+        requirements: capabilityRequirements ?? {},
+        task_bundle: taskBundle,
+      });
+      if (preflight.status !== 'ok') {
+        const blocked = {
+          ...preflight,
+          status: 'DONE_WITH_CONCERNS',
+          control_status: 'BLOCKED',
+          detail: `dispatch preflight blocked: ${preflight.fallback_reason}`,
+        };
+        await deps.onPreflightBlocked?.(blocked, { action, ctx });
+        return blocked;
+      }
+
+      const freshness = await deps.preflightGate.validateSnapshotForDispatch(
+        preflight.snapshot,
+        taskBundle,
+      );
+      if (freshness.status !== 'ok') {
+        const blocked = {
+          ...freshness,
+          status: 'DONE_WITH_CONCERNS',
+          control_status: 'BLOCKED',
+          detail: `dispatch preflight blocked: ${freshness.fallback_reason}`,
+        };
+        await deps.onPreflightBlocked?.(blocked, { action, ctx });
+        return blocked;
+      }
+      const selectedTarget = preflight.to_target ?? {
+        provider: preflight.snapshot.provider,
+        account: preflight.snapshot.account,
+        machine: preflight.snapshot.machine,
+      };
+      adapter = deps.registry.resolve({
+        provider: selectedTarget.provider,
+        requires: ['structured_output'],
+      });
+      selectedAccount = selectedTarget.account;
+      selectedMachine = selectedTarget.machine;
+      bundle = {
+        ...bundle,
+        inputs: {
+          ...bundle.inputs,
+          capability_snapshot_id: preflight.snapshot.capability_snapshot_id,
+          capability_evidence: preflight.evidence,
+        },
+      };
+    }
+    if (spec.role !== 'judge' && selectedAccount) {
+      accountHome = resolveAccountHome(adapter.name, selectedAccount);
+    }
 
     const persisted = await deps.attemptStore.createAttempt({
       id: attemptId,
       runId: ctx.runId,
+      run_id: ctx.runId,
       hop: ctx.hop,
       phase: bundle.phase,
       role: spec.role,
       provider: spec.role === 'judge' ? 'independent-judge' : adapter.name,
-      accountId: requestedAccount,
-      machineId,
+      accountId: selectedAccount,
+      machineId: selectedMachine,
       bundle,
       callbackSecretHash: hashCallbackSecret(callbackSecret),
       logicalCycleId: attemptMetadata.logicalCycleId,
