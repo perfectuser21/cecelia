@@ -153,11 +153,8 @@ export function createCapabilityGate(deps = {}) {
         capacity = await probe(() => deps.getMachineCapacity({ machine, task_bundle: taskBundle }));
       } catch (error) {
         if (error.message === 'preflight_timeout') {
-          return blockedResult({
-            snapshotId,
-            fromTarget: preferredTarget,
-            fallbackReason: 'preflight_timeout',
-          });
+          fallbackReason = 'preflight_timeout';
+          continue;
         }
         continue;
       }
@@ -180,11 +177,8 @@ export function createCapabilityGate(deps = {}) {
           : { ok: true, skipped: true };
       } catch (error) {
         if (error.message === 'preflight_timeout') {
-          return blockedResult({
-            snapshotId,
-            fromTarget: preferredTarget,
-            fallbackReason: 'preflight_timeout',
-          });
+          fallbackReason = 'preflight_timeout';
+          continue;
         }
         providerAuth = { ok: false, signature: 'provider_probe_error' };
       }
@@ -216,11 +210,8 @@ export function createCapabilityGate(deps = {}) {
             }));
           } catch (error) {
             if (error.message === 'preflight_timeout') {
-              return blockedResult({
-                snapshotId,
-                fromTarget: preferredTarget,
-                fallbackReason: 'preflight_timeout',
-              });
+              fallbackReason = 'preflight_timeout';
+              continue;
             }
             retry = { ok: false, signature: 'provider_probe_error' };
           }
@@ -243,7 +234,9 @@ export function createCapabilityGate(deps = {}) {
     if (!selectedTarget) {
       const reason = failureSignature(lastProviderProbe) === 'credential_missing'
         ? 'credential_probe_mismatch'
-        : 'all_execution_targets_exhausted';
+        : fallbackReason === 'preflight_timeout'
+          ? 'preflight_timeout'
+          : 'all_execution_targets_exhausted';
       const blocked = blockedResult({
         snapshotId,
         fromTarget: preferredTarget,

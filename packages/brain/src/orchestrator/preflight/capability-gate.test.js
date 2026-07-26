@@ -1,4 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import {
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import {
   buildCapabilityEvidence,
@@ -29,6 +35,16 @@ function healthyGateDeps() {
     probeModelCapability: vi.fn(async () => ({ ok: true })),
   };
 }
+
+async function evaluateAfterProbeTimeout(gate, input) {
+  const result = gate.evaluate(input);
+  await vi.advanceTimersByTimeAsync(11);
+  return result;
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('capability gate stable helpers', () => {
   it('解析冻结 requirements 并递归脱敏结构化 evidence', () => {
@@ -68,6 +84,122 @@ describe('capability gate stable helpers', () => {
 });
 
 describe('capability gate deterministic target recovery', () => {
+  it.each(['health', 'capacity'])(
+    'non-strict recovery continues to Xi’an M1 when preferred Xi’an M4 %s probe times out',
+    async (timedOutProbe) => {
+      vi.useFakeTimers();
+      const deps = healthyGateDeps();
+      if (timedOutProbe === 'health') {
+        deps.getMachineHealth.mockImplementation(async ({ machine }) => (
+          machine === 'xian-mac-m4'
+            ? new Promise(() => {})
+            : { ok: true, machine }
+        ));
+      } else {
+        deps.getMachineCapacity.mockImplementation(async ({ machine }) => (
+          machine === 'xian-mac-m4'
+            ? new Promise(() => {})
+            : { ok: true, available: 1 }
+        ));
+      }
+      const gate = createCapabilityGate({ ...deps, probeTimeoutMs: 10 });
+
+      const result = await evaluateAfterProbeTimeout(gate, {
+        preferred_target: preferredTarget,
+        candidate_targets: [preferredTarget, fallbackTargets[0]],
+        failed_targets: [],
+        requirements: { provider_auth: true },
+        task_bundle: { logical_cycle: `intent:run-timeout:${timedOutProbe}` },
+      });
+
+      expect(result).toMatchObject({
+        status: 'ok',
+        to_target: fallbackTargets[0],
+      });
+      expect(deps.getMachineHealth).toHaveBeenCalledWith(expect.objectContaining({
+        machine: 'xian-mac-m1',
+      }));
+    },
+  );
+
+  it('non-strict recovery continues to Xi’an M1 when preferred provider auth times out', async () => {
+    vi.useFakeTimers();
+    const deps = healthyGateDeps();
+    deps.probeProviderAuth.mockImplementation(async ({ machine }) => (
+      machine === 'xian-mac-m4'
+        ? new Promise(() => {})
+        : { ok: true }
+    ));
+    const gate = createCapabilityGate({ ...deps, probeTimeoutMs: 10 });
+
+    const result = await evaluateAfterProbeTimeout(gate, {
+      preferred_target: preferredTarget,
+      candidate_targets: [preferredTarget, fallbackTargets[0]],
+      failed_targets: [],
+      requirements: { provider_auth: true },
+      task_bundle: { logical_cycle: 'intent:run-timeout:provider-auth' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'ok',
+      to_target: fallbackTargets[0],
+    });
+    expect(deps.probeProviderAuth).toHaveBeenCalledWith(expect.objectContaining({
+      ...fallbackTargets[0],
+    }));
+  });
+
+  it('non-strict recovery continues after the preferred transient auth retry times out', async () => {
+    vi.useFakeTimers();
+    const deps = healthyGateDeps();
+    deps.probeProviderAuth.mockImplementation(async ({ machine, recovery_retry: recoveryRetry }) => {
+      if (machine !== 'xian-mac-m4') return { ok: true };
+      if (recoveryRetry) return new Promise(() => {});
+      return { ok: false, transient: true, signature: 'http_503' };
+    });
+    const gate = createCapabilityGate({ ...deps, probeTimeoutMs: 10 });
+
+    const result = await evaluateAfterProbeTimeout(gate, {
+      preferred_target: preferredTarget,
+      candidate_targets: [preferredTarget, fallbackTargets[0]],
+      failed_targets: [],
+      requirements: { provider_auth: true },
+      task_bundle: { logical_cycle: 'intent:run-timeout:provider-auth-retry' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'ok',
+      to_target: fallbackTargets[0],
+    });
+    expect(deps.probeProviderAuth).toHaveBeenCalledWith(expect.objectContaining({
+      ...fallbackTargets[0],
+    }));
+  });
+
+  it('strict single-candidate timeout remains blocked and bounded', async () => {
+    vi.useFakeTimers();
+    const deps = healthyGateDeps();
+    deps.getMachineHealth.mockImplementation(async () => new Promise(() => {}));
+    const gate = createCapabilityGate({ ...deps, probeTimeoutMs: 10 });
+
+    const result = await evaluateAfterProbeTimeout(gate, {
+      preferred_target: preferredTarget,
+      candidate_targets: [preferredTarget],
+      failed_targets: [],
+      requirements: { provider_auth: true },
+      task_bundle: { logical_cycle: 'intent:run-timeout:strict' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'blocked',
+      failure_class: 'infrastructure_blocked',
+      fallback_reason: 'preflight_timeout',
+      should_create_attempt: false,
+    });
+    expect(deps.getMachineHealth).toHaveBeenCalledOnce();
+    expect(deps.getMachineCapacity).not.toHaveBeenCalled();
+  });
+
   it('probes the explicit remote tuple rather than replacing it with the Brain machine', async () => {
     const deps = healthyGateDeps();
     deps.resolveCanonicalMachineId.mockResolvedValue('us-mac-m4');
