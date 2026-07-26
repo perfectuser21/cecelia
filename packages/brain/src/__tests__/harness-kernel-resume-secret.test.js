@@ -1,69 +1,103 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  killAttemptContainers: vi.fn(),
-  launch: vi.fn(),
   adapter: { name: 'codex', resume: vi.fn() },
 }));
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../notifier.js', () => ({ sendBark: vi.fn() }));
-vi.mock('../orchestrator/attempt-store.js', () => ({
-  createAttemptStore: () => ({}),
-}));
 vi.mock('../orchestrator/provider-registry.js', () => ({
   createProviderRegistry: () => ({ resolve: () => mocks.adapter }),
 }));
 vi.mock('../orchestrator/providers/claude.js', () => ({ claudeAdapter: {} }));
 vi.mock('../orchestrator/providers/codex.js', () => ({ codexAdapter: {} }));
+vi.mock('../orchestrator/providers/grok.js', () => ({ grokAdapter: {} }));
 vi.mock('../orchestrator/dispatcher.js', () => ({
-  createDetachedLauncher: () => ({ launch: mocks.launch }),
   resolveProviderAccountHome: vi.fn(),
-}));
-vi.mock('../spawn/detached.js', () => ({
-  spawnDockerDetached: vi.fn(),
-  removeDockerContainer: vi.fn(),
-}));
-vi.mock('../orchestrator/callback-auth.js', () => ({
-  generateCallbackSecret: () => 'rotated-raw-secret',
-  hashCallbackSecret: (value) => `hash:${value}`,
-}));
-vi.mock('../harness-container-cleanup.js', () => ({
-  killAttemptContainers: mocks.killAttemptContainers,
 }));
 
 import { resumeKernelAttempt } from '../harness-relay-watchdog.js';
 
-describe('resumeKernelAttempt callback fencing', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.killAttemptContainers.mockResolvedValue({ ok: true, matched: 1, killed: 1 });
-    mocks.adapter.resume.mockReturnValue({ provider: 'codex', args: ['exec', 'resume', 'thread-1'], env: {} });
-    mocks.launch.mockResolvedValue({ containerId: 'resumed-container' });
-  });
-
-  it('轮换 hash 后只把新明文交给恢复容器', async () => {
-    const child = {
+function makeAttemptContext() {
+  const originalParentAttempt = {
+    id: 'attempt-parent',
+    run_id: 'run-1',
+    provider: 'codex',
+    provider_session_id: 'thread-1',
+    account_id: null,
+    machine_id: 'us-mac-m4',
+    requested_machine_id: 'us-mac-m4',
+    task_bundle: { inputs: {} },
+    lease_owner: 'dispatcher-parent',
+    lease_generation: 6,
+  };
+  return {
+    child: {
       id: 'attempt-child',
       run_id: 'run-1',
       provider: 'codex',
+      account_id: null,
+      machine_id: 'us-mac-m4',
+      requested_machine_id: 'us-mac-m4',
       task_bundle: { inputs: {} },
-      updated_at: '2026-07-22T01:02:03.000Z',
-    };
-    const parentAttempt = {
-      id: 'attempt-parent',
-      run_id: 'run-1',
+      lease_owner: 'watchdog:test',
+      lease_generation: 0,
+    },
+    originalParentAttempt,
+    reclaimedParentAttempt: {
+      ...originalParentAttempt,
+      lease_owner: 'watchdog:test',
+      lease_generation: 7,
+    },
+  };
+}
+
+function makeDeps(overrides = {}) {
+  const launcher = {
+    inspect: vi.fn(async () => ({ status: 'unsupported' })),
+    cancel: vi.fn(async () => ({ status: 'cancelled' })),
+    launch: vi.fn(async () => ({
+      containerId: 'cecelia-harness-attempt-g0',
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+    })),
+  };
+  const attemptStore = {
+    recordLaunchReceipt: vi.fn(async () => ({ id: 'attempt-child' })),
+    fail: vi.fn(async () => ({ deduped: false })),
+  };
+  return {
+    launcher,
+    attemptStore,
+    task: { payload: {} },
+    dbPool: { query: vi.fn() },
+    callbackSecret: 'rotated-raw-secret',
+    leaseOwner: 'watchdog:test',
+    onRecoveryAlert: vi.fn(async () => {}),
+    ...overrides,
+  };
+}
+
+describe('resumeKernelAttempt callback fencing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.adapter.resume.mockReturnValue({
       provider: 'codex',
-      provider_session_id: 'thread-1',
-      task_bundle: { inputs: {} },
-    };
+      args: ['exec', 'resume', 'thread-1'],
+      env: {},
+    });
+  });
+
+  it('轮换 hash 后只把新明文交给恢复容器，并先按旧 claim 精确取消 parent', async () => {
+    const { child, originalParentAttempt, reclaimedParentAttempt } = makeAttemptContext();
+    const deps = makeDeps();
 
     await resumeKernelAttempt(child, {
-      parentAttempt,
-      task: { payload: {} },
-      dbPool: { query: vi.fn() },
-      callbackSecret: 'rotated-raw-secret',
-      leaseOwner: 'watchdog:test',
+      ...deps,
+      originalParentAttempt,
+      reclaimedParentAttempt,
     });
 
     expect(mocks.adapter.resume).toHaveBeenCalledWith(expect.objectContaining({
@@ -72,39 +106,47 @@ describe('resumeKernelAttempt callback fencing', () => {
         provider_session_id: 'thread-1',
       }),
     }));
-    expect(mocks.killAttemptContainers).toHaveBeenCalledWith('attempt-parent');
-    expect(mocks.killAttemptContainers.mock.invocationCallOrder[0])
-      .toBeLessThan(mocks.launch.mock.invocationCallOrder[0]);
-    expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deps.launcher.cancel).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({
+        id: 'attempt-parent',
+        lease_owner: 'dispatcher-parent',
+        lease_generation: 6,
+      }),
+      target: expect.objectContaining({ machine: 'us-mac-m4' }),
+    });
+    expect(deps.launcher.cancel.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.launcher.launch.mock.invocationCallOrder[0]);
+    expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
       attempt: expect.objectContaining({
         id: 'attempt-child',
         callbackSecret: 'rotated-raw-secret',
+        lease_owner: 'watchdog:test',
+        lease_generation: 0,
       }),
-      generation: new Date('2026-07-22T01:02:03.000Z').getTime(),
+      leaseClaimed: true,
     }));
   });
 
-  it('旧 attempt 容器无法确认清除时不启动恢复容器', async () => {
-    mocks.killAttemptContainers.mockResolvedValueOnce({ ok: false, matched: 1, killed: 0 });
-    const result = await resumeKernelAttempt({
-      id: 'attempt-child',
-      run_id: 'run-1',
-      provider: 'codex',
-      task_bundle: { inputs: {} },
-    }, {
-      parentAttempt: {
-        id: 'attempt-parent',
-        run_id: 'run-1',
-        provider: 'codex',
-        provider_session_id: 'thread-1',
-        task_bundle: { inputs: {} },
-      },
-      task: { payload: {} },
-      dbPool: { query: vi.fn() },
-      callbackSecret: 'rotated-raw-secret',
+  it('旧 attempt 无法确认清除时不启动恢复容器并发出安全告警', async () => {
+    const { child, originalParentAttempt, reclaimedParentAttempt } = makeAttemptContext();
+    const deps = makeDeps();
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'missing' });
+
+    const result = await resumeKernelAttempt(child, {
+      ...deps,
+      originalParentAttempt,
+      reclaimedParentAttempt,
     });
 
-    expect(result).toMatchObject({ ok: false, reason: 'attempt_container_cleanup_failed' });
-    expect(mocks.launch).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      failure_code: 'resume_parent_cleanup_unconfirmed',
+      cleanup_status: 'missing',
+    });
+    expect(deps.onRecoveryAlert).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: 'attempt-parent',
+      kind: 'cleanup_unconfirmed',
+    }));
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
   });
 });
