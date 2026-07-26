@@ -3,7 +3,7 @@
 #
 # 背景：codex-request.sh 单一写者改造(PR #4159)只堵住了西安交互式借用 team1 这条路径。
 # Brain 自己派发任务时还有两条内部路径会直接对真实 ~/.codex-teamN/auth.json 写：
-#   ① harness-skill-relay.js 把 CODEX_RELAY_HOME 以 :rw 挂进 codex 容器（team2）
+#   ① harness-skill-relay.js 把 CODEX_RELAY_HOME 以 :rw 挂进 codex 容器（team1）
 #   ② codex-bridge.cjs 降级模式直接用真实 codexHome 跑 codex（team3/4/5）
 # 两处都改成"先快照到一次性临时目录再用"，本 smoke 用真实文件系统操作验证隔离
 # 效果确实成立：容器/进程内不管怎么写临时目录，都碰不到真实持久文件。
@@ -39,16 +39,19 @@ echo "🔍 codex-cred-isolation smoke — REPO_ROOT=$REPO_ROOT"
 
 # ① harness-skill-relay.js: snapshotCodexRelayHome 真实隔离验证
 node --experimental-vm-modules -e "
+process.env.CODEX_RELAY_SNAPSHOT_ROOT = '$FAKE_HOME/relay-snapshots';
 import('$RELAY').then(async (m) => {
-  if (typeof m.snapshotCodexRelayHome !== 'function') {
-    console.error('FAIL: snapshotCodexRelayHome 未导出，实际类型:', typeof m.snapshotCodexRelayHome);
+  if (typeof m.snapshotCodexRelayHome !== 'function' || typeof m.cleanupCodexRelayHome !== 'function') {
+    console.error('FAIL: snapshot/cleanup helper 未导出');
     process.exit(1);
   }
   const fs = require('fs');
   const realDir = '$FAKE_HOME/fake-relay-home';
-  const dir = m.snapshotCodexRelayHome(realDir, 'smoke-task-relay');
-  if (dir === realDir) {
-    console.error('FAIL: 快照目录不能等于真实目录');
+  const containerId = 'cecelia-relay-deadbeef-cx-1234abcd';
+  const expectedDir = process.env.CODEX_RELAY_SNAPSHOT_ROOT + '/' + containerId;
+  const dir = m.snapshotCodexRelayHome(realDir, containerId);
+  if (dir !== expectedDir) {
+    console.error('FAIL: 快照目录没有使用宿主可见根或完整 container ID:', dir);
     process.exit(1);
   }
   const snapshotAuth = JSON.parse(fs.readFileSync(dir + '/auth.json', 'utf8'));
@@ -58,7 +61,10 @@ import('$RELAY').then(async (m) => {
   }
   // 模拟容器内 codex 自刷新，写坏快照
   fs.writeFileSync(dir + '/auth.json', JSON.stringify({tokens:{access_token:'refreshed_in_container'}}));
-  fs.rmSync(dir, { recursive: true, force: true });
+  if (!m.cleanupCodexRelayHome(containerId) || fs.existsSync(dir)) {
+    console.error('FAIL: exact cleanup 没有删除当前 run 快照');
+    process.exit(1);
+  }
   const realAfter = JSON.parse(fs.readFileSync(realDir + '/auth.json', 'utf8'));
   if (realAfter.tokens.access_token !== 'smoke_original_token') {
     console.error('FAIL: 真实文件被污染了，隔离失败');

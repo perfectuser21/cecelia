@@ -113,7 +113,7 @@ services:
       # 读取拼 extraMounts=[`${CODEX_RELAY_HOME}:/home/cecelia/.codex:rw`]。
       # compose 在宿主插值 ${HOME}，容器内拿到的是宿主绝对路径字符串——语义正确，
       # 因为 docker -v 的 source 路径由宿主 docker daemon 解析，不是容器内路径。
-      - CODEX_RELAY_HOME=${CODEX_RELAY_HOME:-${HOME}/.codex-team2}
+      - CODEX_RELAY_HOME=${CODEX_RELAY_HOME:-${HOME}/.codex-team1}
       # Brain 容器里 /tmp/cecelia-prompts 对应的宿主路径（docker-executor 用它构造子容器 mount 源）
       - HOST_PROMPT_DIR=/Users/administrator/claude-output/cecelia-prompts
       # ZenithJoy API — harness-sprint-state skill 写 sprint_states/journey_steps 用

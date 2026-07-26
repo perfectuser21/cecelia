@@ -15,20 +15,75 @@
  */
 import pool from './db.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  cleanupCodexRelayHome,
+  cleanupCodexRelaySnapshotsForTask,
+  snapshotCodexRelayHome,
+} from './codex-relay-credentials.js';
+
+export {
+  cleanupCodexRelayHome,
+  cleanupCodexRelaySnapshotsForTask,
+  snapshotCodexRelayHome,
+};
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
 const CODEX_RELAY_DEADLINE_HOURS = 8; // B5: codex 路径用 8h
 const GROK_RELAY_DEADLINE_HOURS = 8;  // grok 路径对齐 codex 等级
 
-// B2: 进程内并发守门（MAX=1）
-let _activeCodexRelays = 0;
-/** 仅供测试注入（_setActiveCodexRelays(1) 模拟已有活跃 relay）*/
-export function _setActiveCodexRelays(n) { _activeCodexRelays = n; }
+// P0: reservation 保护同一 Brain 进程内的点火竞态；Docker live + initiative_runs
+// 分别作为跨重启外部真相，两道守门均不能超过硬上限。
+const MAX_CODEX_RELAYS = 4;
+let _codexLaunchReservations = 0;
+/** 仅供测试注入/复位。 */
+export function _setActiveCodexRelays(n) {
+  _codexLaunchReservations = Number.isInteger(n) && n >= 0 ? n : 0;
+}
+
+async function removeCodexContainer(containerId, deps) {
+  const removeContainer = deps.removeContainerFn
+    || (await import('./spawn/detached.js')).removeDockerContainer;
+  try {
+    return await removeContainer(containerId) === true;
+  } catch (err) {
+    console.warn(`[skill-relay] codex 孤儿容器清理失败（后续由 Docker 守门）: container=${containerId} error=${err.message}`);
+    return false;
+  }
+}
+
+async function getCodexContainerState(containerId, deps, execFn) {
+  try {
+    if (typeof deps.containerStateFn === 'function') {
+      const state = await deps.containerStateFn(containerId);
+      return ['present', 'absent', 'unknown'].includes(state) ? state : 'unknown';
+    }
+    if (!/^cecelia-relay-[a-f0-9]{8}-cx-[a-f0-9]{8}$/.test(containerId)) {
+      return 'unknown';
+    }
+    const output = execFn(
+      `docker ps -a --filter "name=^/${containerId}$" --format "{{.Names}}"`,
+    );
+    const exactMatch = String(output || '')
+      .split('\n')
+      .some((name) => name.trim() === containerId);
+    return exactMatch ? 'present' : 'absent';
+  } catch (err) {
+    console.warn(`[skill-relay] codex 容器状态确认失败（保留凭据快照）: container=${containerId} error=${err.message}`);
+    return 'unknown';
+  }
+}
+
+function countLiveCodexRelayContainers(output) {
+  return String(output || '')
+    .split('\n')
+    .map((name) => name.trim())
+    .filter((name) => /^cecelia-relay-[a-f0-9]{8}-cx-[a-f0-9]{8}$/.test(name))
+    .length;
+}
 
 /**
  * detectQuotaWall — 检测 grok 输出是否命中额度/速率撞墙。
@@ -202,44 +257,6 @@ export function stampMMDDHHNN(now) {
 }
 
 /**
- * codex 容器凭据挂载改成"先快照再挂"（2026-07-21，project_codex_token_consolidation_us 记忆）。
- *
- * 背景：直接把 CODEX_RELAY_HOME（宿主真实持久目录，默认 ~/.codex-team2）以 :rw 挂进容器，
- * 容器内 codex 一旦自己判断 access_token 快过期就会刷新写回——这个写会通过 bind mount
- * 穿透落回宿主真实 auth.json，跟宿主自己的 refresh-codex-tokens-us.sh cron 竞态（同 Claude
- * account1 掉线的"cron刷新+并发进程多写者竞态清空token"病根）。
- *
- * 改成：先把真实目录里的 auth.json 复制到一次性临时目录，挂临时目录而不是真实目录——
- * 容器内不管怎么写，都碰不到宿主真实持久文件。真实凭据目录下找不到 auth.json 视为
- * 配置错误，loud fail（不静默退回直挂真实目录）。
- *
- * 2026-07-22：headed 分支（SSH+tmux 直接跑，不走 docker）复用本函数，同一病根——
- * headed session 里 codex 自己刷新一样会写回真文件，跟 refresh-codex-tokens-us.sh
- * 的 cron 竞态。headed 分支还依赖 config.toml 做"雷9 trust 预写"（避免 codex TUI
- * 每次进新 worktree 都卡交互确认），所以顺带把 config.toml 也复制进快照——
- * 缺失不算错误（本来就允许账号目录还没有 config.toml，trust preseed 自己会优雅
- * 跳过），只有 auth.json 缺失才是真正的配置错误。
- *
- * @param {string} codexRelayHome 宿主真实凭据目录（CODEX_RELAY_HOME）
- * @param {string} taskId 用于临时目录命名，保证唯一性
- * @returns {string} 一次性临时目录路径
- */
-export function snapshotCodexRelayHome(codexRelayHome, taskId) {
-  const srcAuth = join(codexRelayHome, 'auth.json');
-  if (!existsSync(srcAuth)) {
-    throw new Error(`CODEX_RELAY_HOME 下找不到 auth.json: ${srcAuth}`);
-  }
-  const dir = join(tmpdir(), `codex-relay-cred-${taskId}-${Date.now()}`);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  copyFileSync(srcAuth, join(dir, 'auth.json'));
-  const srcConfig = join(codexRelayHome, 'config.toml');
-  if (existsSync(srcConfig)) {
-    copyFileSync(srcConfig, join(dir, 'config.toml'));
-  }
-  return dir;
-}
-
-/**
  * spawn 一个 skill-relay controller session。
  * deps 全注入（测试 fake）：{pool, spawnFn, sshSpawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now, snapshotCodexHome}
  * @returns {Promise<{ok:boolean, mode:string, containerId?:string, error?:string}>}
@@ -252,6 +269,10 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isCodex = task.payload?.executor === 'codex';
   const isGrok = task.payload?.executor === 'grok';
   const isHeaded = task.payload?.mode === 'headed';
+  const codexContainerId = isCodex && !isHeaded
+    ? `cecelia-relay-${short}-cx-${Number(deps.randomFn?.() ?? Math.random())
+      .toString(16).slice(2, 10).padEnd(8, '0')}`
+    : null;
 
   // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
   // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
@@ -310,7 +331,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // ─── end xian ────────────────────────────────────────────────────────────────
 
   // B6: codex 容器凭据挂载（demo task a150998c 实证：容器内无任何凭据，
-  // codex CLI `401 Unauthorized: Missing bearer` 秒退）。宿主 team2 codex 凭据目录
+  // codex CLI `401 Unauthorized: Missing bearer` 秒退）。宿主 team1 codex 凭据目录
   // 由 CODEX_RELAY_HOME 指定（docker-compose 注入），挂到容器内 codex 默认读取路径
   // /home/cecelia/.codex。禁止在此写死 /Users 路径（铁律：不写死环境假设值）——
   // 缺配置时 loud 失败，不静默降级成"无凭据容器照样 spawn 再秒退"。
@@ -330,27 +351,17 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     return { ok: false, mode: RELAY_FLAG, error: 'CODEX_RELAY_HOME 未配置' };
   }
 
-  // 2026-07-21：不直接挂真实 CODEX_RELAY_HOME，先快照到一次性临时目录再挂
-  // （见 snapshotCodexRelayHome 顶部注释——直挂会跟宿主 cron 刷新竞态）。
-  // 快照失败（真实目录下没有 auth.json，配置错误）同样 loud-fail + task 回滚。
   let codexRelayCredDir;
-  if (isCodex && codexRelayHome) {
-    const snapshotFn = deps.snapshotCodexHome || snapshotCodexRelayHome;
+  const cleanupCodexSnapshot = () => {
+    if (!isCodex || !codexRelayCredDir) return;
+    const cleanupFn = deps.cleanupCodexHome || cleanupCodexRelayHome;
     try {
-      codexRelayCredDir = snapshotFn(codexRelayHome, task.id);
-    } catch (snapshotErr) {
-      console.error(`[skill-relay][ALERT] codex 凭据快照失败: ${snapshotErr.message}`);
-      try {
-        await dbPool.query(
-          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
-          [task.id]
-        );
-      } catch (rollbackErr) {
-        console.warn(`[skill-relay] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
-      }
-      return { ok: false, mode: RELAY_FLAG, error: `codex 凭据快照失败: ${snapshotErr.message}` };
+      cleanupFn(codexContainerId);
+    } catch (cleanupErr) {
+      console.warn(`[skill-relay] codex 凭据快照清理失败（non-fatal）: ${cleanupErr.message}`);
     }
-  }
+    codexRelayCredDir = undefined;
+  };
 
   // ─── grok 凭据门禁：GROK_RELAY_HOME='' → loud-fail + task 回滚 ─────────────
   // 对齐 codex 的 CODEX_RELAY_HOME 设计（B6）：
@@ -372,13 +383,38 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // ─── end grok 凭据门禁 ────────────────────────────────────────────────────
 
   // ─── B2+B3: codex 路径守门（在 try 外，defer 不抛异常）─────────────────
+  let codexReservationHeld = false;
+  const releaseCodexReservation = () => {
+    if (!codexReservationHeld) return;
+    _codexLaunchReservations = Math.max(0, _codexLaunchReservations - 1);
+    codexReservationHeld = false;
+  };
+
   if (isCodex) {
-    // B2 层 1：进程内守门
-    if (_activeCodexRelays > 0) {
+    // B2 层 1：进程内点火预留。只覆盖尚未持久化到 initiative_runs 的窗口。
+    if (_codexLaunchReservations >= MAX_CODEX_RELAYS) {
+      return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
+    }
+    _codexLaunchReservations++;
+    codexReservationHeld = true;
+
+    // B2 层 2：Docker 是跨 Brain 重启的存活真相。只数完整命名的 headless Codex
+    // controller；查询失败必须 fail-closed，避免 DB INSERT 失败留下的活容器被漏算。
+    try {
+      const dockerOutput = execFn('docker ps --format "{{.Names}}"');
+      const liveCount = countLiveCodexRelayContainers(dockerOutput);
+      if (liveCount + _codexLaunchReservations > MAX_CODEX_RELAYS) {
+        releaseCodexReservation();
+        return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
+      }
+    } catch (err) {
+      console.warn(`[skill-relay] codex Docker 守门查询失败（保守阻断）: ${err.message}`);
+      releaseCodexReservation();
       return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
     }
 
-    // B2 层 2：DB 守门
+    // B2 层 3：DB 是持久运行状态真相。与 Docker 分别加 reservation 守门，
+    // 不把同一个已持久化容器在两边重复相加。
     try {
       const concQ = await dbPool.query(
         `SELECT COUNT(*) FROM initiative_runs
@@ -389,18 +425,22 @@ export async function spawnSkillRelaySession(task, deps = {}) {
         [initiativeId]
       );
       const count = parseInt(concQ.rows[0]?.count ?? '0', 10);
-      if (count > 0) {
+      if (count + _codexLaunchReservations > MAX_CODEX_RELAYS) {
+        releaseCodexReservation();
         return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
       }
     } catch (err) {
-      console.warn(`[skill-relay] codex DB 守门查询失败（保守通过）: ${err.message}`);
+      console.warn(`[skill-relay] codex DB 守门查询失败（保守阻断）: ${err.message}`);
+      releaseCodexReservation();
+      return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
     }
 
-    // B3: 额度软闸（team2 quota < 30%）
+    // B3: 额度软闸（team1 quota < 30%）
     if (typeof deps.quotaFn === 'function') {
       try {
         const quota = await deps.quotaFn();
         if (quota?.remaining_pct !== undefined && quota.remaining_pct < 0.30) {
+          releaseCodexReservation();
           return { ok: false, deferred: true, reason: 'codex_quota_low' };
         }
       } catch (err) {
@@ -410,7 +450,28 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   }
   // ─── end B2+B3 ────────────────────────────────────────────────────────
 
+  let codexSpawned = false;
   try {
+    // 不直接挂真实 CODEX_RELAY_HOME：每个 headless run 用唯一 container/callback ID
+    // 在宿主可见目录创建独立快照，避免跟宿主凭据刷新及其他 relay 竞态。
+    if (isCodex && codexRelayHome) {
+      const snapshotFn = deps.snapshotCodexHome || snapshotCodexRelayHome;
+      try {
+        codexRelayCredDir = snapshotFn(codexRelayHome, codexContainerId);
+      } catch (snapshotErr) {
+        console.error(`[skill-relay][ALERT] codex 凭据快照失败: ${snapshotErr.message}`);
+        try {
+          await dbPool.query(
+            `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+            [task.id]
+          );
+        } catch (rollbackErr) {
+          console.warn(`[skill-relay] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+        }
+        return { ok: false, mode: RELAY_FLAG, error: `codex 凭据快照失败: ${snapshotErr.message}` };
+      }
+    }
+
     // 1. skill 全文（skill 未部署 = 硬失败，不 spawn 半截 session）
     const loadSkill = deps.loadSkill
       || (await import('./harness-shared.js')).loadSkillContent;
@@ -501,7 +562,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     // 7. spawn detached session
     // B5: codex 路径容器名用 -cx 后缀；grok 路径用 -gk 后缀（对齐命名规约）
     const containerId = isCodex
-      ? `cecelia-relay-${short}-cx`
+      ? codexContainerId
       : isGrok
         ? `cecelia-relay-${short}-gk`
         : `cecelia-relay-${short}-${Math.random().toString(16).slice(2, 10)}`;
@@ -564,6 +625,9 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
     try {
       await doSpawn();
+      codexSpawned = isCodex;
+      // docker run -d 返回后，容器已进入上面的外部存活真相；INSERT 前即可释放点火窗口。
+      if (isCodex) releaseCodexReservation();
     } catch (spawnErr) {
       // grok 路径：检测额度撞墙，命中时降级 claude 重试一次
       if (isGrok && detectQuotaWall(spawnErr.message)) {
@@ -594,6 +658,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       } catch (rollbackErr) {
         console.warn(`[skill-relay] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
       }
+      cleanupCodexSnapshot();
       return { ok: false, mode: RELAY_FLAG, error: spawnErr.message };
     }
 
@@ -617,9 +682,6 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
     );
 
-    // 进程内守门计数
-    if (isCodex) _activeCodexRelays++;
-
     console.log(`[skill-relay] session spawned: container=${containerId} sprint=${sprintDir} executor=${effectiveExecutor}`);
     return { ok: true, mode: RELAY_FLAG, containerId, sprintDir, worktreePath };
   } catch (err) {
@@ -631,7 +693,27 @@ export async function spawnSkillRelaySession(task, deps = {}) {
         [task.id]
       );
     } catch { /* non-fatal */ }
+    if (codexSpawned) {
+      const removed = await removeCodexContainer(codexContainerId, deps);
+      if (removed) {
+        cleanupCodexSnapshot();
+      } else {
+        const containerState = await getCodexContainerState(codexContainerId, deps, execFn);
+        if (containerState === 'absent') {
+          cleanupCodexSnapshot();
+        }
+        // 无论是容器仍存活还是已先行消失，都不靠进程内永久槽推断；下一次 admission
+        // fail-closed 查询 Docker。存活者跨重启继续计数，已消失者自然不占容量。
+        if (containerState !== 'absent') {
+          console.error(`[skill-relay][ALERT] codex 孤儿容器删除未确认，后续由 Docker 守门计数: container=${codexContainerId} state=${containerState}`);
+        }
+      }
+    } else {
+      cleanupCodexSnapshot();
+    }
     return { ok: false, mode: RELAY_FLAG, error: err.message };
+  } finally {
+    releaseCodexReservation();
   }
 }
 

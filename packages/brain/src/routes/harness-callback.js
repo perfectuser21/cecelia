@@ -40,6 +40,7 @@ import {
   normalizeGitSha,
 } from '../orchestrator/pr-head-resolver.js';
 import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
+import { cleanupCodexRelayHome } from '../codex-relay-credentials.js';
 
 const router = Router();
 const SUCCESS_TERMINAL_STATUSES = new Set([
@@ -475,6 +476,14 @@ router.post('/harness/callback/:containerId', async (req, res) => {
   // stdout 落盘由 entrypoint tee 完成，状态回写由 controller 的 report 步骤走 PATCH relay-runs。
   if (containerId.startsWith('cecelia-relay-')) {
     console.log(`[harness-callback] relay 容器 ${containerId} 回调 ack（exit=${exit_code ?? '?'}，无 resume）`);
+
+    // Headless Codex snapshot 以完整 container/callback ID 为唯一键。helper 自身只接受
+    // 完整 cx-<8hex> ID，并且只删除宿主快照根的这个直接子目录。
+    try {
+      cleanupCodexRelayHome(containerId);
+    } catch (err) {
+      console.warn(`[harness-callback] codex 凭据快照清理失败（不影响 ack）: ${err.message}`);
+    }
 
     // 刀A7：exit_code 落库 → last_container_exit_code（watchdog OOM 感知重试用）
     // 仅在 exit_code 存在且可解析时写入，不影响 200 ack 行为（best-effort）
