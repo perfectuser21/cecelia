@@ -299,6 +299,8 @@ describe('kernel attempt security and Codex execution', () => {
     expect(options.env.CODEX_HOME).toContain('codex-home');
     expect(authMode).toBe(0o600);
     expect(child.stdin.end).toHaveBeenCalledWith(request().provider_spec.stdin);
+    expect(child.stdout.listenerCount('data')).toBeGreaterThan(0);
+    expect(child.stderr.listenerCount('data')).toBeGreaterThan(0);
 
     const [callbackUrl, callbackOptions] = fetchFn.mock.calls[0];
     const callback = JSON.parse(callbackOptions.body);
@@ -315,6 +317,7 @@ describe('kernel attempt security and Codex execution', () => {
       'X-Harness-Lease-Owner': 'dispatcher:test',
     });
     expect(callbackOptions.redirect).toBe('error');
+    expect(callbackOptions.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('never persists or logs the per-attempt callback token', async () => {
@@ -351,6 +354,22 @@ describe('kernel attempt security and Codex execution', () => {
       status: 'failed',
       error: { code: 'provider_result_invalid' },
     });
+  });
+
+  it('persists a failed claim and cleans runtime files when provider startup throws', async () => {
+    deps.loadAccountAuth.mockImplementationOnce(() => {
+      throw new Error(`provider auth unavailable ${CALLBACK_TOKEN}`);
+    });
+    const handler = createKernelAttemptHandler(deps);
+
+    await expect(handler.accept(request(), auth()))
+      .rejects.toMatchObject({ message: 'provider_start_failed', statusCode: 503 });
+    await expect(handler.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+      status: 'failed',
+      job_id: JOB_ID,
+    });
+    expect(fs.readdirSync(stateDir)).toEqual([`${ATTEMPT_ID}.json`]);
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(CALLBACK_TOKEN);
   });
 
   it('retries callback delivery without spawning a second provider process', async () => {
@@ -447,6 +466,7 @@ describe('kernel attempt security and Codex execution', () => {
     }, auth());
     expect(child.kill).toHaveBeenCalledTimes(2);
   });
+
 });
 
 describe('kernel attempt HTTP routes', () => {

@@ -259,6 +259,7 @@ async function deliverCallback({
   logger,
   request,
   result,
+  callbackTimeoutMs,
 }) {
   const delays = [250, 500];
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -266,6 +267,7 @@ async function deliverCallback({
       const response = await fetchFn(request.callback_url, {
         method: 'POST',
         redirect: 'error',
+        signal: AbortSignal.timeout(callbackTimeoutMs),
         headers: {
           Authorization: `Bearer ${request.callback_token}`,
           'Content-Type': 'application/json',
@@ -292,33 +294,44 @@ function startProvider({
     configuration.runtimeRoot,
     `kernel-bridge-${claim.job_id}-`,
   ));
-  fs.chmodSync(runtimeDir, 0o700);
-  const codexHome = path.join(runtimeDir, 'codex-home');
-  fs.mkdirSync(codexHome, { mode: 0o700 });
-  const authPath = path.join(codexHome, 'auth.json');
-  fs.writeFileSync(
-    authPath,
-    `${JSON.stringify(configuration.loadAccountAuth(request.target.account))}\n`,
-    { mode: 0o600 },
-  );
-  const schemaPath = path.join(runtimeDir, `${claim.attempt_id}.schema.json`);
-  const resultPath = path.join(runtimeDir, `${claim.attempt_id}.result.json`);
-  fs.writeFileSync(schemaPath, `${JSON.stringify(HARNESS_RESULT_SCHEMA)}\n`, { mode: 0o600 });
+  let child;
+  let resultPath;
+  try {
+    fs.chmodSync(runtimeDir, 0o700);
+    const codexHome = path.join(runtimeDir, 'codex-home');
+    fs.mkdirSync(codexHome, { mode: 0o700 });
+    const authPath = path.join(codexHome, 'auth.json');
+    fs.writeFileSync(
+      authPath,
+      `${JSON.stringify(configuration.loadAccountAuth(request.target.account))}\n`,
+      { mode: 0o600 },
+    );
+    const schemaPath = path.join(runtimeDir, `${claim.attempt_id}.schema.json`);
+    resultPath = path.join(runtimeDir, `${claim.attempt_id}.result.json`);
+    fs.writeFileSync(
+      schemaPath,
+      `${JSON.stringify(HARNESS_RESULT_SCHEMA)}\n`,
+      { mode: 0o600 },
+    );
 
-  const args = [
-    'exec',
-    '--json',
-    '--output-schema', schemaPath,
-    '--output-last-message', resultPath,
-    '--skip-git-repo-check',
-    '-',
-  ];
-  const child = configuration.spawnFn(configuration.codexBin, args, {
-    cwd: configuration.workDir,
-    env: { ...process.env, CODEX_HOME: codexHome },
-    shell: false,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+    const args = [
+      'exec',
+      '--json',
+      '--output-schema', schemaPath,
+      '--output-last-message', resultPath,
+      '--skip-git-repo-check',
+      '-',
+    ];
+    child = configuration.spawnFn(configuration.codexBin, args, {
+      cwd: configuration.workDir,
+      env: { ...process.env, CODEX_HOME: codexHome },
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+    throw error;
+  }
 
   let settled = false;
   const complete = async (result) => {
@@ -351,6 +364,7 @@ function startProvider({
         logger: configuration.logger,
         request,
         result,
+        callbackTimeoutMs: configuration.callbackTimeoutMs,
       });
     } finally {
       fs.rmSync(runtimeDir, { recursive: true, force: true });
@@ -360,6 +374,8 @@ function startProvider({
   child.once('error', () => {
     void complete(failedHarnessResult(request.attempt_id, 'provider_spawn_failed'));
   });
+  child.stdout.on('data', () => {});
+  child.stderr.on('data', () => {});
   child.once('close', (code) => {
     let result;
     try {
@@ -389,6 +405,7 @@ function createKernelAttemptHandler({
   fetchFn = globalThis.fetch,
   sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds)),
   cancelSleep,
+  callbackTimeoutMs = 10000,
   logger = console,
   runtimeRoot = os.tmpdir(),
 }) {
@@ -401,6 +418,8 @@ function createKernelAttemptHandler({
     || typeof brainUrl !== 'string'
     || typeof loadAccountAuth !== 'function'
     || typeof fetchFn !== 'function'
+    || !Number.isFinite(callbackTimeoutMs)
+    || callbackTimeoutMs <= 0
   ) {
     throw new Error('kernel_attempt_handler_invalid_dependencies');
   }
@@ -417,6 +436,7 @@ function createKernelAttemptHandler({
     fetchFn,
     sleep,
     cancelSleep: cancelSleep ?? sleep,
+    callbackTimeoutMs,
     logger,
     runtimeRoot,
   };
@@ -475,7 +495,14 @@ function createKernelAttemptHandler({
         status: 'accepted',
       };
       writeClaimAtomic(filePath, claim);
-      const child = startProvider({ configuration, request, claim });
+      let child;
+      try {
+        child = startProvider({ configuration, request, claim });
+      } catch {
+        writeClaimAtomic(filePath, { ...claim, status: 'failed' });
+        logger.error?.('kernel attempt provider start failed');
+        throw new KernelAttemptError('provider_start_failed', 503);
+      }
       liveChildren.set(request.attempt_id, {
         child,
         cancelRequested: false,
