@@ -251,3 +251,91 @@ describe('BEHAVIOR-6（扩展）: 多文件部分修改 → exit 1，只列被�
     // 注：若脚本打印"检查文件 bar.test.ts → OK"等日志，此断言可能误判，暂按严格语义
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BEHAVIOR-7: GAN 提案轮可在最终 Red 前迭代测试；最终 Red 后仍严格冻结
+// ─────────────────────────────────────────────────────────────────────────────
+describe('BEHAVIOR-7: 最终 Red commit 是不可变锚点', () => {
+  let repoDir: string;
+
+  beforeEach(() => {
+    repoDir = makeFixtureRepo();
+    fs.mkdirSync(path.join(repoDir, 'sprints/test-sprint/tests'), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, 'sprints/test-sprint/tests/foo.test.ts'), 'proposal v1\n');
+    execSync('git add .', { cwd: repoDir });
+    execSync('git commit -q -m "feat(contract): proposal round 1"', { cwd: repoDir });
+
+    fs.writeFileSync(path.join(repoDir, 'sprints/test-sprint/tests/foo.test.ts'), 'approved contract\n');
+    fs.writeFileSync(path.join(repoDir, 'sprints/test-sprint/tests/later.test.ts'), 'approved later contract\n');
+    execSync('git add .', { cwd: repoDir });
+    execSync('git commit -q -m "feat(contract): proposal round 2"', { cwd: repoDir });
+
+    fs.writeFileSync(path.join(repoDir, 'sprints/test-sprint/red-evidence.md'), 'red proof\n');
+    execSync('git add .', { cwd: repoDir });
+    execSync('git commit -q -m "test(harness): sprint failing tests (Red)"', { cwd: repoDir });
+  });
+
+  afterEach(() => cleanup(repoDir));
+
+  it('最终 Red 前的提案轮测试修改不误报', () => {
+    const result = runScript(repoDir, 'test-sprint');
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('最终 Red 后修改测试仍被阻断', () => {
+    fs.writeFileSync(path.join(repoDir, 'sprints/test-sprint/tests/foo.test.ts'), 'mutated after red\n');
+    execSync('git add .', { cwd: repoDir });
+    execSync('git commit -q -m "feat: illegal post-red mutation"', { cwd: repoDir });
+
+    const result = runScript(repoDir, 'test-sprint');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('foo.test.ts');
+  });
+
+  it('最终 Red 后新增测试仍被阻断', () => {
+    fs.writeFileSync(path.join(repoDir, 'sprints/test-sprint/tests/bar.test.ts'), 'late test\n');
+    execSync('git add .', { cwd: repoDir });
+    execSync('git commit -q -m "test: illegal post-red addition"', { cwd: repoDir });
+
+    const result = runScript(repoDir, 'test-sprint');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('bar.test.ts');
+  });
+
+  it('最终 Red 后删除测试仍被阻断', () => {
+    fs.rmSync(path.join(repoDir, 'sprints/test-sprint/tests/foo.test.ts'));
+    execSync('git add .', { cwd: repoDir });
+    execSync('git commit -q -m "test: illegal post-red deletion"', { cwd: repoDir });
+
+    const result = runScript(repoDir, 'test-sprint');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('foo.test.ts');
+  });
+
+  it('test(...) subject 但没有明确 (Red) label 的 marker fail-closed', () => {
+    execSync('git commit --amend -q -m "test(harness): evidence without Red label"', { cwd: repoDir });
+    const result = runScript(repoDir, 'test-sprint');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('不是 Red commit');
+  });
+
+  it('最终 Red 后删除唯一测试且 clean checkout 不再有 tests 目录仍被阻断', () => {
+    fs.rmSync(path.join(repoDir, 'sprints/test-sprint/tests'), { recursive: true });
+    execSync('git add . && git commit -q -m "test: delete complete frozen test tree"', { cwd: repoDir });
+
+    const result = runScript(repoDir, 'test-sprint');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('foo.test.ts');
+  });
+
+  it('marker 删除后重加造成多个 add commit 时 fail-closed', () => {
+    fs.rmSync(path.join(repoDir, 'sprints/test-sprint/red-evidence.md'));
+    execSync('git add . && git commit -q -m "chore: delete marker"', { cwd: repoDir });
+    fs.writeFileSync(path.join(repoDir, 'sprints/test-sprint/red-evidence.md'), 'replacement\n');
+    execSync('git add . && git commit -q -m "test(harness): second marker (Red)"', { cwd: repoDir });
+
+    const result = runScript(repoDir, 'test-sprint');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('只能有一个 add commit');
+  });
+});
