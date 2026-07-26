@@ -436,9 +436,13 @@ export async function createLiveDispatch({
 
   async function dispatcherFor(machine) {
     if (!dispatchers.has(machine)) {
+      const targetEnv = {
+        ...env,
+        CECELIA_MACHINE_ID: machine,
+      };
       const deps = await buildRealDeps({
         pool,
-        env,
+        env: targetEnv,
         machineId: machine,
       });
       dispatchers.set(machine, deps.dispatch);
