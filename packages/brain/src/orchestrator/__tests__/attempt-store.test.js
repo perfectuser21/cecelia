@@ -38,6 +38,8 @@ describe('attempt store', () => {
     const [sql, values] = pool.query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO harness_attempts/i);
     expect(sql).toMatch(/ON CONFLICT \(run_id, hop\)/i);
+    expect(sql).toMatch(/machine_id,\s*requested_machine_id/i);
+    expect(values.slice(7, 9)).toEqual([input.machineId, input.machineId]);
     expect(values).toEqual(expect.arrayContaining([
       input.id,
       input.runId,
@@ -74,7 +76,50 @@ describe('attempt store', () => {
     const [sql, values] = pool.query.mock.calls[0];
     expect(sql).toMatch(/lease_expires_at < NOW\(\)/i);
     expect(sql).toMatch(/status IN \('starting','running'\)/i);
+    expect(sql).toMatch(/lease_generation\s*=\s*lease_generation\s*\+\s*1/i);
     expect(values).toEqual([input.id, 'watchdog-1', 180]);
+  });
+
+  it('launch receipt 只由同一个 lease owner 写入 starting/running attempt', async () => {
+    const receipt = {
+      leaseOwner: 'brain-1',
+      actualMachineId: 'worker-2',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'remote-job-7',
+      attestationStatus: 'verified',
+    };
+    const pool = poolWith({
+      rows: [{
+        id: input.id,
+        actual_machine_id: receipt.actualMachineId,
+        execution_transport: receipt.executionTransport,
+      }],
+      rowCount: 1,
+    });
+    const store = createAttemptStore(pool);
+
+    const result = await store.recordLaunchReceipt(input.id, receipt);
+
+    expect(result).toMatchObject({
+      id: input.id,
+      actual_machine_id: receipt.actualMachineId,
+      execution_transport: receipt.executionTransport,
+    });
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/actual_machine_id\s*=\s*\$3/i);
+    expect(sql).toMatch(/execution_transport\s*=\s*\$4/i);
+    expect(sql).toMatch(/remote_job_id\s*=\s*\$5/i);
+    expect(sql).toMatch(/machine_attestation_status\s*=\s*\$6/i);
+    expect(sql).toMatch(/lease_owner\s*=\s*\$2/i);
+    expect(sql).toMatch(/status IN \('starting','running'\)/i);
+    expect(values).toEqual([
+      input.id,
+      receipt.leaseOwner,
+      receipt.actualMachineId,
+      receipt.executionTransport,
+      receipt.remoteJobId,
+      receipt.attestationStatus,
+    ]);
   });
 
   it('reclaim 后按 lease fencing 原子轮换 callback secret hash', async () => {
