@@ -198,6 +198,9 @@ it('routes US to local and xian to remote without silent fallback', async () => 
 });
 ```
 
+Add the same routing assertions for `inspect()` and `cancel()`, including a negative
+case proving an unknown machine throws without calling either transport.
+
 - [ ] **Step 2: Verify Red**
 
 Run:
@@ -224,6 +227,11 @@ Require a secret of at least 32 characters, require a 64-character lowercase hex
 
 ```js
 export function createExecutionTransportRouter({ local, remote }) {
+  const transportFor = (machine) => {
+    if (machine === 'us-mac-m4') return local;
+    if (machine === 'xian-mac-m4' || machine === 'xian-mac-m1') return remote;
+    throw new Error(`execution_transport_unavailable:${String(machine)}`);
+  };
   return Object.freeze({
     async launch(input) {
       const machine = input.target?.machine;
@@ -241,6 +249,12 @@ export function createExecutionTransportRouter({ local, remote }) {
         return remote.launch(input);
       }
       throw new Error(`execution_transport_unavailable:${String(machine)}`);
+    },
+    inspect(input) {
+      return transportFor(input.target?.machine).inspect(input);
+    },
+    cancel(input) {
+      return transportFor(input.target?.machine).cancel(input);
     },
   });
 }
