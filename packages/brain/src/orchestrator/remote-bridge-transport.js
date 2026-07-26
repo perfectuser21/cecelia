@@ -144,6 +144,7 @@ export function createRemoteBridgeTransport({
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      controller.abort();
     }
   }
 
