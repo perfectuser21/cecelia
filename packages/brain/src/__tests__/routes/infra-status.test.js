@@ -71,4 +71,14 @@ describe('infra-status routes', () => {
       expect(content).toContain(`'${id}'`);
     }
   });
+
+  it('uses the deployed M1 Bridge host identity for fleet probes', async () => {
+    const { SERVERS } = await import('../../routes/infra-status.js');
+    const m1 = SERVERS.find((server) => server.id === 'xian-mac-m1');
+
+    expect(m1).toMatchObject({
+      tailscaleIp: '100.88.166.55',
+      sshUser: 'xx-macmini',
+    });
+  });
 });

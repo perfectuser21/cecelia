@@ -52,9 +52,9 @@ export const SERVERS = [
     id: 'xian-mac-m1',
     name: '西安 Mac mini M1',
     location: '西安',
-    tailscaleIp: '100.103.88.66',
+    tailscaleIp: '100.88.166.55',
     role: 'L4 E2E CI 测试',
-    sshUser: 'xu xiao',
+    sshUser: 'xx-macmini',
   },
   {
     id: 'xian-mac-m4',
@@ -548,4 +548,3 @@ router.post('/check', async (_req, res) => {
 });
 
 export default router;
-
