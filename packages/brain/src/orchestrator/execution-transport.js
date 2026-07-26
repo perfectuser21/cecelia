@@ -31,10 +31,10 @@ export function createExecutionTransportRouter({ local, remote } = {}) {
         attestationStatus: 'local',
       };
     },
-    inspect(input) {
+    async inspect(input) {
       return transportFor(input?.target?.machine).inspect(input);
     },
-    cancel(input) {
+    async cancel(input) {
       return transportFor(input?.target?.machine).cancel(input);
     },
   });
