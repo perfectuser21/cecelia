@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { parseTaskBundle } from './execution-contract.js';
 import { generateCallbackSecret, hashCallbackSecret } from './callback-auth.js';
+import { deriveCapabilityRequirements } from './preflight/requirements.js';
 
 const ACTION_SPECS = Object.freeze({
   'spawn:planner': {
@@ -197,11 +198,15 @@ export function createDispatcher(deps) {
     const accountHome = spec.role === 'judge' || !requestedAccount
       ? null
       : resolveAccountHome(adapter.name, requestedAccount);
-    const capabilityRequirements = payload.contract_requirements
+    const rawCapabilityRequirements = payload.contract_requirements
       ?? payload.capability_requirements
       ?? null;
+    const capabilityRequirements = deriveCapabilityRequirements({
+      role: spec.role,
+      requirements: rawCapabilityRequirements,
+    });
 
-    if (capabilityRequirements && !deps.preflightGate && spec.role !== 'judge') {
+    if (rawCapabilityRequirements && !deps.preflightGate && spec.role !== 'judge') {
       return {
         status: 'DONE_WITH_CONCERNS',
         detail: 'dispatch preflight blocked: capability_gate_unavailable',
