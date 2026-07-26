@@ -207,6 +207,11 @@ describe('kernel attempt durable claims', () => {
         error: vi.fn(),
       },
       runtimeRoot: stateDir,
+      ownerPid: 4101,
+      ownerProcessIdentity: 'process-4101-start-a',
+      readProcessIdentity: vi.fn(pid => (
+        pid === 4101 ? 'process-4101-start-a' : null
+      )),
     };
   });
 
@@ -214,13 +219,14 @@ describe('kernel attempt durable claims', () => {
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it('returns the same job for the same attempt and lease generation after reload', async () => {
+  it('keeps the same accepted job when another handler proves the owner process is alive', async () => {
     const firstHandler = createKernelAttemptHandler(deps);
     const first = await firstHandler.accept(request(), auth());
     const reloaded = createKernelAttemptHandler(deps);
     const second = await reloaded.accept(request(), auth());
 
     expect(second.job_id).toBe(first.job_id);
+    expect(second.status).toBe('accepted');
     expect(spawnFn).toHaveBeenCalledOnce();
     expect(JSON.parse(fs.readFileSync(path.join(stateDir, `${ATTEMPT_ID}.json`), 'utf8')))
       .toMatchObject({
@@ -229,9 +235,31 @@ describe('kernel attempt durable claims', () => {
         lease_generation: 0,
         job_id: JOB_ID,
         machine_id: 'xian-mac-m4',
-        status: 'failed',
-        failure_reason: 'bridge_restart_orphaned',
+        status: 'accepted',
+        bridge_instance_id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+        owner_pid: 4101,
+        owner_process_identity: 'process-4101-start-a',
       });
+  });
+
+  it('keeps an accepted claim when owner liveness is temporarily unknown', async () => {
+    const firstHandler = createKernelAttemptHandler(deps);
+    await firstHandler.accept(request(), auth());
+    const reloaded = createKernelAttemptHandler({
+      ...deps,
+      ownerPid: 4102,
+      ownerProcessIdentity: 'process-4102-start-b',
+      readProcessIdentity: vi.fn(pid => (
+        pid === 4102 ? 'process-4102-start-b' : undefined
+      )),
+    });
+
+    await expect(reloaded.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+      status: 'accepted',
+      owner_pid: 4101,
+      owner_process_identity: 'process-4101-start-a',
+    });
+    expect(spawnFn).toHaveBeenCalledOnce();
   });
 
   it('rejects the same attempt with a different lease owner or generation', async () => {
@@ -271,7 +299,14 @@ describe('kernel attempt durable claims', () => {
   it('marks an accepted claim without a live child as a restart orphan after reload', async () => {
     const firstHandler = createKernelAttemptHandler(deps);
     const first = await firstHandler.accept(request(), auth());
-    const reloaded = createKernelAttemptHandler(deps);
+    const reloaded = createKernelAttemptHandler({
+      ...deps,
+      ownerPid: 4102,
+      ownerProcessIdentity: 'process-4102-start-b',
+      readProcessIdentity: vi.fn(pid => (
+        pid === 4102 ? 'process-4102-start-b' : null
+      )),
+    });
 
     await expect(reloaded.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
       job_id: first.job_id,

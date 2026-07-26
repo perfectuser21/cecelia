@@ -3,6 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const {
   createHmac,
   randomUUID: nodeRandomUUID,
@@ -106,13 +107,57 @@ function publishClaimExclusive(filePath, claim) {
   }
 }
 
-function reconcileRestartOrphans(stateDir) {
+function readProcessIdentityDefault(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if (error.code === 'ESRCH') return null;
+    if (error.code !== 'EPERM') return undefined;
+  }
+  try {
+    const startedAt = execFileSync(
+      'ps',
+      ['-p', String(pid), '-o', 'lstart='],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    return startedAt || null;
+  } catch {
+    return undefined;
+  }
+}
+
+function ownerProcessState(claim, readProcessIdentity) {
+  if (
+    !UUID_PATTERN.test(String(claim?.bridge_instance_id ?? ''))
+    || !Number.isInteger(claim?.owner_pid)
+    || claim.owner_pid <= 0
+    || typeof claim?.owner_process_identity !== 'string'
+    || claim.owner_process_identity.length === 0
+  ) {
+    return 'unrecoverable';
+  }
+  let observedIdentity;
+  try {
+    observedIdentity = readProcessIdentity(claim.owner_pid);
+  } catch {
+    return 'unknown';
+  }
+  if (observedIdentity === undefined) return 'unknown';
+  if (observedIdentity === claim.owner_process_identity) return 'alive';
+  return 'dead';
+}
+
+function reconcileRestartOrphans(stateDir, readProcessIdentity) {
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   for (const entry of fs.readdirSync(stateDir)) {
     if (!UUID_PATTERN.test(entry.replace(/\.json$/, '')) || !entry.endsWith('.json')) continue;
     const filePath = path.join(stateDir, entry);
     const claim = readClaim(filePath);
-    if (claim?.status === 'accepted') {
+    if (
+      claim?.status === 'accepted'
+      && ['dead', 'unrecoverable'].includes(ownerProcessState(claim, readProcessIdentity))
+    ) {
       writeClaimAtomic(filePath, {
         ...claim,
         status: 'failed',
@@ -480,6 +525,10 @@ function createKernelAttemptHandler({
   machineId,
   spawnFn,
   randomUUID = nodeRandomUUID,
+  bridgeInstanceId = nodeRandomUUID(),
+  ownerPid = process.pid,
+  ownerProcessIdentity,
+  readProcessIdentity = readProcessIdentityDefault,
   bridgeToken,
   brainUrl,
   allowedAccounts = [],
@@ -493,10 +542,18 @@ function createKernelAttemptHandler({
   logger = console,
   runtimeRoot = os.tmpdir(),
 }) {
+  const resolvedOwnerProcessIdentity = ownerProcessIdentity
+    ?? readProcessIdentity(ownerPid);
   if (
     !stateDir
     || !machineId
     || typeof spawnFn !== 'function'
+    || !UUID_PATTERN.test(String(bridgeInstanceId ?? ''))
+    || !Number.isInteger(ownerPid)
+    || ownerPid <= 0
+    || typeof resolvedOwnerProcessIdentity !== 'string'
+    || resolvedOwnerProcessIdentity.length === 0
+    || typeof readProcessIdentity !== 'function'
     || typeof bridgeToken !== 'string'
     || bridgeToken.length < 32
     || typeof brainUrl !== 'string'
@@ -511,6 +568,10 @@ function createKernelAttemptHandler({
     stateDir,
     machineId,
     spawnFn,
+    bridgeInstanceId,
+    ownerPid,
+    ownerProcessIdentity: resolvedOwnerProcessIdentity,
+    readProcessIdentity,
     bridgeToken,
     brainUrl,
     allowedAccounts: new Set(allowedAccounts),
@@ -526,7 +587,7 @@ function createKernelAttemptHandler({
   };
   const liveChildren = new Map();
   const callbackDeliveries = new Map();
-  reconcileRestartOrphans(stateDir);
+  reconcileRestartOrphans(stateDir, readProcessIdentity);
 
   function authenticate(headers) {
     if (!secureTokenEqual(bridgeToken, headers?.authorization)) {
@@ -667,6 +728,9 @@ function createKernelAttemptHandler({
         job_id: randomUUID(),
         machine_id: machineId,
         status: 'accepted',
+        bridge_instance_id: configuration.bridgeInstanceId,
+        owner_pid: configuration.ownerPid,
+        owner_process_identity: configuration.ownerProcessIdentity,
       };
       const publication = publishClaimExclusive(filePath, claim);
       if (!publication.published) {
