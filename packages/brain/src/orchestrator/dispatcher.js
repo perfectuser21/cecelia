@@ -209,6 +209,14 @@ export function createDispatcher(deps) {
       machineId,
       bundle,
       callbackSecretHash: hashCallbackSecret(callbackSecret),
+      logicalCycleId: ctx.decision?.logical_cycle_id
+        ?? ctx.observed.run?.logical_cycle_id
+        ?? `run:${ctx.runId}`,
+      attemptKind: action === 'spawn:generator-fix' ? 'fix' : 'initial',
+      retryOfAttemptId: null,
+      restartReason: action === 'spawn:generator-fix' ? 'evaluator_failed' : null,
+      workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
+      timeDerived: ['judge', 'reporter'].includes(spec.role),
     });
     if (persisted?.id && persisted.id !== attemptId) {
       return {

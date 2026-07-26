@@ -10,8 +10,11 @@
  * - task 状态 queued 的不管（dispatcher 自然路径会经 relay 分支重 spawn，防双 spawn）
  * - deadline 逾期的不管（scanStuckHarness 既有逻辑负责标 failed）
  */
-import pool from './db.js';
+import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
+
+import pool from './db.js';
+import { createAttemptStore } from './orchestrator/attempt-store.js';
 import { HEADED_HOSTS, HEADED_TMUX_PREFIXES } from './harness-skill-relay.js';
 import {
   parseBaseRepo as _parseBaseRepo,
@@ -60,6 +63,75 @@ export const MAX_CODEX_RELAY_ATTEMPTS = 2;
 // generator 完成后 6h 无 MERGED → failed（防 e90c0fbb pr_url 空永挂）
 export const GENERATOR_DONE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const KERNEL_RECONCILE_STALE_MS = 3 * 60 * 1000;
+
+export async function reconcileExpiredKernelAttempt({
+  db,
+  attemptId,
+  leaseOwner,
+  resumeAttempt,
+}) {
+  const store = createAttemptStore(db);
+  const attempt = await store.getById(attemptId);
+  if (!attempt || !['queued', 'starting', 'running'].includes(attempt.status)) {
+    return { ok: false, deduped: true };
+  }
+  if (attempt.lease_expires_at
+      && new Date(attempt.lease_expires_at).getTime() >= Date.now()) {
+    return { ok: false, deduped: true };
+  }
+
+  const reclaimed = await store.reclaim(attemptId, {
+    leaseOwner,
+    leaseSeconds: 300,
+  });
+  if (!reclaimed) return { ok: false, deduped: true };
+
+  const resumed = await resumeAttempt(reclaimed);
+  if (!resumed?.ok) {
+    const failureCode = resumed === null
+      ? 'resume_returned_null'
+      : resumed === false
+        ? 'resume_returned_false'
+        : resumed?.failure_code ?? 'resume_failed';
+    const failed = await store.fail(attemptId, {
+      code: failureCode,
+      message: `expired attempt resume failed: ${failureCode}`,
+    }, { leaseOwner });
+    return failed.deduped
+      ? { ok: false, deduped: true }
+      : { ok: false, terminal: true, failure_code: failureCode };
+  }
+
+  await store.fail(attemptId, {
+    code: 'resumed_as_child',
+    message: 'expired attempt resumed as a new lineage child',
+  }, { leaseOwner });
+  const childId = randomUUID();
+  const child = await store.createAttempt({
+    id: childId,
+    runId: attempt.run_id,
+    hop: Number(attempt.hop) + 1,
+    phase: attempt.phase,
+    role: attempt.role,
+    provider: attempt.provider,
+    accountId: attempt.account_id,
+    machineId: attempt.machine_id,
+    bundle: attempt.task_bundle,
+    callbackSecretHash: attempt.callback_secret_hash,
+    logicalCycleId: attempt.logical_cycle_id ?? `run:${attempt.run_id}`,
+    attemptKind: 'resume',
+    retryOfAttemptId: attempt.id,
+    restartReason: 'lease_expired',
+    workstreamKey: attempt.workstream_key ?? 'ws1',
+    timeDerived: attempt.time_derived === true,
+  });
+  return {
+    ok: true,
+    resumed: true,
+    attempt_id: child.id,
+    provider_session_id: resumed.provider_session_id ?? null,
+  };
+}
 
 /** C3：按 initiative 批量关闭 skill-relay-spawn 事件（写点在 executor.js spawn，写完即弃无 id 可用）。 */
 async function _closeSpawnEvents(dbPool, initiativeId, status) {
