@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { spawn as spawnProcess } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -85,6 +86,96 @@ function close(server) {
   });
 }
 
+function runClaimWorker({
+  handlerPath,
+  stateDir,
+  barrierDir,
+  spawnLog,
+  workerId,
+}) {
+  const script = String.raw`
+    const fs = require('fs');
+    const path = require('path');
+    const { EventEmitter } = require('events');
+    const [handlerPath, stateDir, barrierDir, spawnLog, workerId] = process.argv.slice(1);
+    const attemptId = '${ATTEMPT_ID}';
+    const targetPath = path.join(stateDir, attemptId + '.json');
+    const waitForPeer = (destination) => {
+      if (destination !== targetPath) return;
+      fs.writeFileSync(path.join(barrierDir, 'ready-' + workerId), '');
+      const waitArray = new Int32Array(new SharedArrayBuffer(4));
+      const deadline = Date.now() + 5000;
+      while (fs.readdirSync(barrierDir).filter(name => name.startsWith('ready-')).length < 2) {
+        if (Date.now() > deadline) throw new Error('claim barrier timeout');
+        Atomics.wait(waitArray, 0, 0, 10);
+      }
+    };
+    const renameSync = fs.renameSync;
+    fs.renameSync = (source, destination) => {
+      waitForPeer(destination);
+      return renameSync(source, destination);
+    };
+    const linkSync = fs.linkSync;
+    fs.linkSync = (source, destination) => {
+      waitForPeer(destination);
+      return linkSync(source, destination);
+    };
+    const { createKernelAttemptHandler } = require(handlerPath);
+    const fakeChild = () => {
+      const child = new EventEmitter();
+      child.stdin = { end() {} };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => {};
+      return child;
+    };
+    const handler = createKernelAttemptHandler({
+      stateDir,
+      machineId: 'xian-mac-m4',
+      spawnFn: () => {
+        fs.appendFileSync(spawnLog, workerId + '\n');
+        return fakeChild();
+      },
+      randomUUID: () => workerId === '1'
+        ? '33333333-3333-4333-8333-333333333333'
+        : '44444444-4444-4444-8444-444444444444',
+      bridgeToken: '${BRIDGE_TOKEN}',
+      brainUrl: '${BRAIN_URL}',
+      allowedAccounts: ['team3'],
+      codexBin: '/opt/homebrew/bin/codex',
+      workDir: stateDir,
+      loadAccountAuth: () => ({ tokens: { access_token: 'provider-secret' } }),
+      fetchFn: async () => ({ ok: true, status: 200 }),
+      runtimeRoot: stateDir,
+    });
+    handler.accept(${JSON.stringify(request())}, {
+      authorization: 'Bearer ${BRIDGE_TOKEN}',
+    }).then(() => process.exit(0)).catch(error => {
+      process.stderr.write(error.stack || error.message);
+      process.exit(1);
+    });
+  `;
+
+  return new Promise((resolve, reject) => {
+    const child = spawnProcess(process.execPath, [
+      '-e',
+      script,
+      handlerPath,
+      stateDir,
+      barrierDir,
+      spawnLog,
+      String(workerId),
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`claim worker ${workerId} failed: ${stderr}`));
+    });
+  });
+}
+
 describe('kernel attempt durable claims', () => {
   let stateDir;
   let spawnFn;
@@ -134,7 +225,8 @@ describe('kernel attempt durable claims', () => {
         lease_generation: 0,
         job_id: JOB_ID,
         machine_id: 'xian-mac-m4',
-        status: 'accepted',
+        status: 'failed',
+        failure_reason: 'bridge_restart_orphaned',
       });
   });
 
@@ -146,6 +238,46 @@ describe('kernel attempt durable claims', () => {
       .rejects.toMatchObject({ message: 'attempt_claim_conflict', statusCode: 409 });
     await expect(handler.accept(request({ lease_generation: 1 }), auth()))
       .rejects.toMatchObject({ message: 'attempt_claim_conflict', statusCode: 409 });
+    expect(spawnFn).toHaveBeenCalledOnce();
+  });
+
+  it('publishes one winner across concurrent Bridge processes and spawns exactly once', async () => {
+    const barrierDir = path.join(stateDir, 'barrier');
+    const spawnLog = path.join(stateDir, 'spawns.log');
+    fs.mkdirSync(barrierDir);
+    const handlerPath = path.resolve(
+      process.cwd(),
+      'scripts/codex-bridge/kernel-attempt-handler.cjs',
+    );
+
+    await Promise.all([
+      runClaimWorker({ handlerPath, stateDir, barrierDir, spawnLog, workerId: 1 }),
+      runClaimWorker({ handlerPath, stateDir, barrierDir, spawnLog, workerId: 2 }),
+    ]);
+
+    expect(fs.readFileSync(spawnLog, 'utf8').trim().split('\n')).toHaveLength(1);
+    expect(JSON.parse(
+      fs.readFileSync(path.join(stateDir, `${ATTEMPT_ID}.json`), 'utf8'),
+    )).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      status: 'accepted',
+    });
+  }, 15000);
+
+  it('marks an accepted claim without a live child as a restart orphan after reload', async () => {
+    const firstHandler = createKernelAttemptHandler(deps);
+    const first = await firstHandler.accept(request(), auth());
+    const reloaded = createKernelAttemptHandler(deps);
+
+    await expect(reloaded.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+      job_id: first.job_id,
+      status: 'failed',
+      failure_reason: 'bridge_restart_orphaned',
+    });
+    await expect(reloaded.accept(request(), auth())).resolves.toMatchObject({
+      job_id: first.job_id,
+      status: 'failed',
+    });
     expect(spawnFn).toHaveBeenCalledOnce();
   });
 });

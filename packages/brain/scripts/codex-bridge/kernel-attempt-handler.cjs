@@ -43,7 +43,7 @@ function readClaim(filePath) {
   }
 }
 
-function writeClaimAtomic(filePath, claim) {
+function createDurableTemporaryClaim(filePath, claim) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${filePath}.${process.pid}.${nodeRandomUUID()}.tmp`;
   let fileDescriptor;
@@ -53,19 +53,71 @@ function writeClaimAtomic(filePath, claim) {
     fs.fsyncSync(fileDescriptor);
     fs.closeSync(fileDescriptor);
     fileDescriptor = undefined;
-    fs.renameSync(temporaryPath, filePath);
-    const directoryDescriptor = fs.openSync(path.dirname(filePath), 'r');
-    try {
-      fs.fsyncSync(directoryDescriptor);
-    } finally {
-      fs.closeSync(directoryDescriptor);
-    }
-  } finally {
+    return temporaryPath;
+  } catch (error) {
     if (fileDescriptor !== undefined) fs.closeSync(fileDescriptor);
+    try {
+      fs.unlinkSync(temporaryPath);
+    } catch (unlinkError) {
+      if (unlinkError.code !== 'ENOENT') throw unlinkError;
+    }
+    throw error;
+  }
+}
+
+function fsyncDirectory(directoryPath) {
+  const directoryDescriptor = fs.openSync(directoryPath, 'r');
+  try {
+    fs.fsyncSync(directoryDescriptor);
+  } finally {
+    fs.closeSync(directoryDescriptor);
+  }
+}
+
+function writeClaimAtomic(filePath, claim) {
+  const temporaryPath = createDurableTemporaryClaim(filePath, claim);
+  try {
+    fs.renameSync(temporaryPath, filePath);
+    fsyncDirectory(path.dirname(filePath));
+  } finally {
     try {
       fs.unlinkSync(temporaryPath);
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
+    }
+  }
+}
+
+function publishClaimExclusive(filePath, claim) {
+  const temporaryPath = createDurableTemporaryClaim(filePath, claim);
+  try {
+    try {
+      fs.linkSync(temporaryPath, filePath);
+      fsyncDirectory(path.dirname(filePath));
+      return { published: true, claim };
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      const winner = readClaim(filePath);
+      if (!winner) throw new Error('attempt_claim_winner_missing');
+      return { published: false, claim: winner };
+    }
+  } finally {
+    fs.unlinkSync(temporaryPath);
+  }
+}
+
+function reconcileRestartOrphans(stateDir) {
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  for (const entry of fs.readdirSync(stateDir)) {
+    if (!UUID_PATTERN.test(entry.replace(/\.json$/, '')) || !entry.endsWith('.json')) continue;
+    const filePath = path.join(stateDir, entry);
+    const claim = readClaim(filePath);
+    if (claim?.status === 'accepted') {
+      writeClaimAtomic(filePath, {
+        ...claim,
+        status: 'failed',
+        failure_reason: 'bridge_restart_orphaned',
+      });
     }
   }
 }
@@ -441,6 +493,7 @@ function createKernelAttemptHandler({
     runtimeRoot,
   };
   const liveChildren = new Map();
+  reconcileRestartOrphans(stateDir);
 
   function authenticate(headers) {
     if (!secureTokenEqual(bridgeToken, headers?.authorization)) {
@@ -494,7 +547,21 @@ function createKernelAttemptHandler({
         machine_id: machineId,
         status: 'accepted',
       };
-      writeClaimAtomic(filePath, claim);
+      const publication = publishClaimExclusive(filePath, claim);
+      if (!publication.published) {
+        assertMatchingClaim(publication.claim, request);
+        return {
+          actual_machine_id: publication.claim.machine_id,
+          job_id: publication.claim.job_id,
+          status: publication.claim.status,
+          attestation: machineAttestation(
+            bridgeToken,
+            publication.claim.attempt_id,
+            publication.claim.machine_id,
+            publication.claim.job_id,
+          ),
+        };
+      }
       let child;
       try {
         child = startProvider({ configuration, request, claim });
