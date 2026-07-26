@@ -38,9 +38,45 @@ const GROK_RELAY_DEADLINE_HOURS = 8;  // grok 路径对齐 codex 等级
 // P0: 只保护同一 Brain 进程内的点火竞态；运行期真相由 initiative_runs 持久计数。
 const MAX_CODEX_RELAYS = 4;
 let _codexLaunchReservations = 0;
+const _unconfirmedCodexContainers = new Set();
+const _reconcilingCodexContainers = new Set();
 /** 仅供测试注入/复位。 */
 export function _setActiveCodexRelays(n) {
   _codexLaunchReservations = Number.isInteger(n) && n >= 0 ? n : 0;
+  _unconfirmedCodexContainers.clear();
+  _reconcilingCodexContainers.clear();
+}
+
+async function removeCodexContainer(containerId, deps) {
+  const removeContainer = deps.removeContainerFn
+    || (await import('./spawn/detached.js')).removeDockerContainer;
+  try {
+    return await removeContainer(containerId) === true;
+  } catch (err) {
+    console.warn(`[skill-relay] codex 孤儿容器清理失败（保留并发槽）: container=${containerId} error=${err.message}`);
+    return false;
+  }
+}
+
+async function reconcileUnconfirmedCodexContainers(deps) {
+  for (const containerId of [..._unconfirmedCodexContainers]) {
+    // 多个并行点火只能有一个负责同一孤儿；其他点火仍看到其保留槽位。
+    if (_reconcilingCodexContainers.has(containerId)) continue;
+    _reconcilingCodexContainers.add(containerId);
+    try {
+      if (!await removeCodexContainer(containerId, deps)) continue;
+      _unconfirmedCodexContainers.delete(containerId);
+      _codexLaunchReservations = Math.max(0, _codexLaunchReservations - 1);
+      const cleanupSnapshot = deps.cleanupCodexHome || cleanupCodexRelayHome;
+      try {
+        cleanupSnapshot(containerId);
+      } catch (cleanupErr) {
+        console.warn(`[skill-relay] codex 凭据快照清理失败（non-fatal）: ${cleanupErr.message}`);
+      }
+    } finally {
+      _reconcilingCodexContainers.delete(containerId);
+    }
+  }
 }
 
 /**
@@ -349,6 +385,10 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   };
 
   if (isCodex) {
+    // INSERT 失败后若精确删容器未确认，原 reservation 会一直占位。后续点火先重试；
+    // 只有 docker rm -f 明确成功才释放该槽和对应凭据快照。
+    await reconcileUnconfirmedCodexContainers(deps);
+
     // B2 层 1：进程内点火预留。只覆盖尚未持久化到 initiative_runs 的窗口。
     if (_codexLaunchReservations >= MAX_CODEX_RELAYS) {
       return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
@@ -392,6 +432,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   }
   // ─── end B2+B3 ────────────────────────────────────────────────────────
 
+  let codexSpawned = false;
   try {
     // 不直接挂真实 CODEX_RELAY_HOME：每个 headless run 用唯一 container/callback ID
     // 在宿主可见目录创建独立快照，避免跟宿主凭据刷新及其他 relay 竞态。
@@ -566,6 +607,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
     try {
       await doSpawn();
+      codexSpawned = isCodex;
     } catch (spawnErr) {
       // grok 路径：检测额度撞墙，命中时降级 claude 重试一次
       if (isGrok && detectQuotaWall(spawnErr.message)) {
@@ -631,7 +673,20 @@ export async function spawnSkillRelaySession(task, deps = {}) {
         [task.id]
       );
     } catch { /* non-fatal */ }
-    cleanupCodexSnapshot();
+    if (codexSpawned) {
+      const removed = await removeCodexContainer(codexContainerId, deps);
+      if (removed) {
+        cleanupCodexSnapshot();
+      } else {
+        // 容器仍可能存活但没有 initiative_runs 行，DB 无法计数。保留当前 reservation，
+        // 直到后续点火确认精确删除，避免实际运行数突破硬上限。
+        _unconfirmedCodexContainers.add(codexContainerId);
+        codexReservationHeld = false;
+        console.error(`[skill-relay][ALERT] codex 孤儿容器删除未确认，保留并发槽: container=${codexContainerId}`);
+      }
+    } else {
+      cleanupCodexSnapshot();
+    }
     return { ok: false, mode: RELAY_FLAG, error: err.message };
   } finally {
     releaseCodexReservation();
