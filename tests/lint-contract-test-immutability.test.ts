@@ -312,11 +312,20 @@ describe('BEHAVIOR-7: 最终 Red commit 是不可变锚点', () => {
     expect(result.stdout + result.stderr).toContain('foo.test.ts');
   });
 
-  it('marker 不是 Red commit 时 fail-closed', () => {
-    execSync('git commit --amend -q -m "docs: mislabeled evidence marker"', { cwd: repoDir });
+  it('test(...) subject 但没有明确 (Red) label 的 marker fail-closed', () => {
+    execSync('git commit --amend -q -m "test(harness): evidence without Red label"', { cwd: repoDir });
     const result = runScript(repoDir, 'test-sprint');
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout + result.stderr).toContain('不是 Red commit');
+  });
+
+  it('最终 Red 后删除唯一测试且 clean checkout 不再有 tests 目录仍被阻断', () => {
+    fs.rmSync(path.join(repoDir, 'sprints/test-sprint/tests'), { recursive: true });
+    execSync('git add . && git commit -q -m "test: delete complete frozen test tree"', { cwd: repoDir });
+
+    const result = runScript(repoDir, 'test-sprint');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('foo.test.ts');
   });
 
   it('marker 删除后重加造成多个 add commit 时 fail-closed', () => {
