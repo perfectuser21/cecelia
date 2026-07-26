@@ -407,7 +407,7 @@ describe('createDispatcher', () => {
     })).rejects.toThrow(/docker unavailable/);
     expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
       code: 'launch_failed',
-      message: 'docker unavailable',
+      message: 'docker unavailable; orphan cancellation unsafe: missing',
     }, {
       leaseOwner: 'dispatcher-test:4242',
       leaseGeneration: 0,
@@ -722,6 +722,48 @@ describe('createDispatcher', () => {
       }),
       target: selectedTarget,
       launchReceipt: undefined,
+    });
+  });
+
+  it('surfaces remote HTTP 404 missing as unconfirmed orphan cleanup', async () => {
+    const deps = makeDeps();
+    const selectedTarget = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m4',
+    };
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          ...selectedTarget,
+          capability_snapshot_id: 'snapshot-xian',
+        },
+        evidence: {},
+        to_target: selectedTarget,
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+    deps.launcher.launch.mockRejectedValueOnce(new Error('remote launch failed'));
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'missing',
+      httpStatus: 404,
+    });
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('remote launch failed');
+
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_failed',
+      message: 'remote launch failed; orphan cancellation unsafe: missing (HTTP 404)',
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 0,
     });
   });
 
