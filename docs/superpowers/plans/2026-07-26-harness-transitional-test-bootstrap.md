@@ -118,6 +118,11 @@ expect(classifySprintArtifacts(root)).toMatchObject({
 
 Cover a same-sprint contract registering one test and `e2e-verify.sh`, an unregistered test, a cross-sprint reference, and a nonexistent reference.
 
+Also cover the Harness-native E2E form used by live contracts: a canonical
+`## E2E 验收` fenced `bash` block registers the same sprint's
+`e2e-verify.sh` only when normalized contents match. Missing, duplicate, or
+drifted E2E blocks remain unregistered.
+
 - [ ] **Step 2: Verify RED**
 
 Run:

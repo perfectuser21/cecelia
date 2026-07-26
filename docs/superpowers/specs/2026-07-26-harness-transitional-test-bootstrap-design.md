@@ -43,13 +43,17 @@ PR #4342 与后续 Harness PR 能进入真实 Evaluator/Judge，而不放宽
 测试金字塔把 `sprints/` 文件分成两类：
 
 - **registered transitional**：被同 sprint 的 `Test Contract` 表引用，
-  文件真实存在，路径安全，且对应合同可被解析。
+  文件真实存在，路径安全，且对应合同可被解析；或同 sprint 的
+  `e2e-verify.sh` 与 canonical 合同 `## E2E 验收` 中的 `bash`
+  代码块内容一致（只归一化行尾空白与末尾换行）。
 - **unregistered orphan**：其余所有 sprint 测试和 `e2e-verify.sh`。
 
 棘轮的零水位只约束 `unregistered orphan`。登记中的过渡测试会被明确
 报告数量，但不触发 A1；因此它们可以先在 PR CI 运行，Judge PASS 后再按
 既有流程毕业。仅仅新建合同文件不能掩盖任意测试：引用必须解析到同一
-sprint 内的真实测试文件。
+sprint 内的真实测试文件。`e2e-verify.sh` 不能仅凭固定文件名登记：
+canonical 合同必须存在唯一可解析的 E2E bash 代码块，且脚本内容必须
+与代码块一致；缺段、多个代码块或内容漂移均 fail-closed。
 
 ### 3. 单一孤儿统计口径
 
@@ -77,9 +81,11 @@ sprint 内的真实测试文件。
 2. 传统 `tests/x.test.ts` 相对路径保持兼容。
 3. 毕业前源路径与毕业后永久路径都能被同一冻结合同验证。
 4. 合同登记的同 sprint 测试不会触发 A1。
-5. 未登记、跨 sprint、越界或不存在的测试仍触发 A1/合同检查失败。
-6. `test-pyramid-guard` 与 `ratchet-guard` 对 orphan 使用同一统计结果。
-7. 既有 checker、毕业脚本、金字塔和 ratchet 自测全部通过。
+5. 与 canonical E2E 代码块一致的同 sprint `e2e-verify.sh` 不触发 A1；
+   缺失或内容漂移的 E2E 仍触发 A1。
+6. 未登记、跨 sprint、越界或不存在的测试仍触发 A1/合同检查失败。
+7. `test-pyramid-guard` 与 `ratchet-guard` 对 orphan 使用同一统计结果。
+8. 既有 checker、毕业脚本、金字塔和 ratchet 自测全部通过。
 
 ## 恢复顺序
 
