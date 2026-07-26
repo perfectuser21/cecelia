@@ -210,13 +210,13 @@ export function createRemoteBridgeTransport({
         throw new Error('remote_bridge_attestation_invalid');
       }
 
-      return {
+      return Object.freeze({
         jobId: receipt.job_id,
         actualMachineId: receipt.actual_machine_id,
         executionTransport: 'remote-bridge',
         remoteJobId: receipt.job_id,
         attestationStatus: 'verified',
-      };
+      });
     },
 
     async inspect({ attempt, target } = {}) {
