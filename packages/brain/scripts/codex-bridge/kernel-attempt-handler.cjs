@@ -474,14 +474,15 @@ function startProvider({
     const persistedStatus = result.status === 'failed' ? 'failed'
       : result.status === 'cancelled' ? 'cancelled'
         : 'completed';
-    configuration.onProviderSettled?.(
-      claim.attempt_id,
-      child,
-      persistedStatus,
-      result,
-      request.callback_url,
-    );
     try {
+      const settlementAccepted = configuration.onProviderSettled?.(
+        claim.attempt_id,
+        child,
+        persistedStatus,
+        result,
+        request.callback_url,
+      );
+      if (settlementAccepted === false) return;
       const delivered = await deliverCallback({
         fetchFn: configuration.fetchFn,
         sleep: configuration.sleep,
@@ -608,21 +609,26 @@ function createKernelAttemptHandler({
   ) => {
     const filePath = claimPath(stateDir, attemptId);
     const claim = readClaim(filePath);
-    if (claim) {
-      writeClaimAtomic(filePath, {
-        ...claim,
-        status,
-        provider_status: status,
-        callback_delivery: 'pending',
-        callback_url: callbackUrl,
-        callback_result: result,
-      });
-    }
+    const ownedByCurrentInstance = (
+      claim?.bridge_instance_id === configuration.bridgeInstanceId
+    );
+    const transitionAllowed = claim?.status === 'accepted'
+      || (claim?.status === 'cancelled' && status === 'cancelled');
+    if (!ownedByCurrentInstance || !transitionAllowed) return false;
+    writeClaimAtomic(filePath, {
+      ...claim,
+      status,
+      provider_status: status,
+      callback_delivery: 'pending',
+      callback_url: callbackUrl,
+      callback_result: result,
+    });
     const live = liveChildren.get(attemptId);
     if (live?.child === child) {
       live.exited = true;
       liveChildren.delete(attemptId);
     }
+    return true;
   };
   configuration.onCallbackDelivery = (attemptId, providerStatus, delivered) => {
     const filePath = claimPath(stateDir, attemptId);
@@ -790,10 +796,15 @@ function createKernelAttemptHandler({
         ['cancelled', 'completed', 'failed', 'callback_pending'].includes(claim.status)
       ) return { ...claim };
 
+      const live = liveChildren.get(attemptId);
+      if (
+        claim.bridge_instance_id !== configuration.bridgeInstanceId
+        || !live
+      ) {
+        throw new KernelAttemptError('owner_process_mismatch', 409);
+      }
       const cancelled = { ...claim, status: 'cancelled' };
       writeClaimAtomic(filePath, cancelled);
-      const live = liveChildren.get(attemptId);
-      if (!live) return cancelled;
 
       live.cancelRequested = true;
       live.child.kill('SIGTERM');

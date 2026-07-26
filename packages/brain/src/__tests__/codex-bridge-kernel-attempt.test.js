@@ -864,6 +864,67 @@ describe('kernel attempt security and Codex execution', () => {
       .resolves.toMatchObject({ status: 'cancelled' });
   });
 
+  it('rejects non-owner cancellation without changing state, then lets the owner cancel', async () => {
+    child.kill.mockImplementationOnce(signal => {
+      expect(signal).toBe('SIGTERM');
+      child.emit('close', null, 'SIGTERM');
+    });
+    const owner = createKernelAttemptHandler(deps);
+    const peer = createKernelAttemptHandler(deps);
+    await owner.accept(request(), auth());
+
+    await expect(peer.cancel(ATTEMPT_ID, {
+      lease_owner: 'dispatcher:test',
+      lease_generation: 0,
+    }, auth())).rejects.toMatchObject({
+      message: 'owner_process_mismatch',
+      statusCode: 409,
+    });
+    await expect(owner.inspect(ATTEMPT_ID, auth()))
+      .resolves.toMatchObject({ status: 'accepted' });
+    expect(child.kill).not.toHaveBeenCalled();
+
+    await expect(owner.cancel(ATTEMPT_ID, {
+      lease_owner: 'dispatcher:test',
+      lease_generation: 0,
+    }, auth())).resolves.toMatchObject({ status: 'cancelled' });
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body))
+      .toMatchObject({ status: 'cancelled' });
+    await expect(owner.inspect(ATTEMPT_ID, auth()))
+      .resolves.toMatchObject({ status: 'cancelled' });
+  });
+
+  it('never lets a stale provider close overwrite a persisted cancelled terminal state', async () => {
+    const handler = createKernelAttemptHandler(deps);
+    await handler.accept(request(), auth());
+    const args = spawnFn.mock.calls[0][1];
+    const resultPath = args[args.indexOf('--output-last-message') + 1];
+    fs.writeFileSync(resultPath, JSON.stringify({
+      contract_version: '1.0',
+      attempt_id: ATTEMPT_ID,
+      status: 'completed',
+      summary: 'must not overwrite cancellation',
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    }));
+    const claimPath = path.join(stateDir, `${ATTEMPT_ID}.json`);
+    const claim = JSON.parse(fs.readFileSync(claimPath, 'utf8'));
+    fs.writeFileSync(claimPath, `${JSON.stringify({ ...claim, status: 'cancelled' })}\n`);
+
+    child.emit('close', 0);
+    await new Promise(resolve => setImmediate(resolve));
+
+    await expect(handler.inspect(ATTEMPT_ID, auth()))
+      .resolves.toMatchObject({ status: 'cancelled' });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
 });
 
 describe('kernel attempt HTTP routes', () => {
