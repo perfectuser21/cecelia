@@ -233,7 +233,17 @@ jq -e '.checks == ["current provider summary"]' "$EVIDENCE_TMP/result.json" >/de
   exit 1
 }
 
-grep -q '^version: 1\.31\.0$' "$EVALUATOR_SKILL" || {
+node - "$EVALUATOR_SKILL" <<'NODE' || {
+const fs = require('node:fs');
+const match = fs.readFileSync(process.argv[2], 'utf8').match(/^version:\s*(\d+)\.(\d+)\.(\d+)$/m);
+if (!match) process.exit(1);
+const actual = match.slice(1).map(Number);
+const minimum = [1, 31, 0];
+for (let index = 0; index < minimum.length; index += 1) {
+  if (actual[index] > minimum[index]) process.exit(0);
+  if (actual[index] < minimum[index]) process.exit(1);
+}
+NODE
   echo 'harness-evaluator skill version was not bumped for attempt-bound evidence' >&2
   exit 1
 }

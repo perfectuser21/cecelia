@@ -6,6 +6,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const {
+  listRegisteredSprintArtifacts,
+} = require('./lib/test-contract-paths.cjs');
 
 const TEST_RE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git']);
@@ -26,13 +32,40 @@ function walk(dir, out = []) {
 // bash 测试（*.test.sh/*.spec.sh）也算孤儿——刀1 审查发现的棘轮盲区
 const SH_TEST_RE = /\.(test|spec)\.sh$/;
 
-export function countOrphans(root) {
+function listSprintArtifacts(root) {
   const sprints = path.join(root, 'sprints');
   const archive = path.join(sprints, 'archive') + path.sep;
   const files = walk(sprints).filter((f) => !f.startsWith(archive));
+  return files.filter(
+    (f) =>
+      TEST_RE.test(f) ||
+      SH_TEST_RE.test(f) ||
+      path.basename(f) === 'e2e-verify.sh',
+  );
+}
+
+function summarizeArtifacts(files) {
   const tests = files.filter((f) => TEST_RE.test(f) || SH_TEST_RE.test(f)).length;
   const e2e = files.filter((f) => path.basename(f) === 'e2e-verify.sh').length;
   return { tests, e2e, total: tests + e2e };
+}
+
+export function countOrphans(root) {
+  return summarizeArtifacts(listSprintArtifacts(root));
+}
+
+export function classifySprintArtifacts(root) {
+  const normalizedRoot = path.resolve(root);
+  const rawFiles = listSprintArtifacts(normalizedRoot);
+  const registeredPaths = new Set(listRegisteredSprintArtifacts(normalizedRoot));
+  const registeredFiles = rawFiles.filter((file) => registeredPaths.has(file));
+  const unregisteredFiles = rawFiles.filter((file) => !registeredPaths.has(file));
+
+  return {
+    raw: summarizeArtifacts(rawFiles),
+    registered: summarizeArtifacts(registeredFiles),
+    unregistered: summarizeArtifacts(unregisteredFiles),
+  };
 }
 
 // runner 文件 = .github/workflows/** 全部 + scripts/ 下文件名含 deploy 的脚本
@@ -104,11 +137,13 @@ export function runGuard(root, baseline, { ci = false, panelRoot, bareFrCount = 
   }
   if (failures.length) return { pass: false, failures };
 
-  const orphans = countOrphans(root);
-  if (orphans.total > baseline.orphans) {
-    failures.push(`A1 孤儿棘轮: sprints 孤儿测试 ${orphans.total} > 基线 ${baseline.orphans}——新测试必须入册永久池，不准晾在 sprints/`);
-  } else if (orphans.total < baseline.orphans) {
-    console.error(`ℹ️ A1: 孤儿 ${orphans.total} < 基线 ${baseline.orphans}，请把 scripts/test-pyramid-baseline.json 的 orphans 下调锁住战果`);
+  const classification = classifySprintArtifacts(root);
+  const orphans = classification.raw;
+  const unregisteredOrphans = classification.unregistered;
+  if (unregisteredOrphans.total > baseline.orphans) {
+    failures.push(`A1 孤儿棘轮: sprints 未登记孤儿测试 ${unregisteredOrphans.total} > 基线 ${baseline.orphans}——新测试必须由同 sprint Test Contract 登记或入册永久池，不准晾在 sprints/`);
+  } else if (unregisteredOrphans.total < baseline.orphans) {
+    console.error(`ℹ️ A1: 未登记孤儿 ${unregisteredOrphans.total} < 基线 ${baseline.orphans}，请把 scripts/test-pyramid-baseline.json 的 orphans 下调锁住战果`);
   }
 
   const smoke = checkSmokeWiring(root, baseline.smoke_dir);
@@ -139,7 +174,17 @@ export function runGuard(root, baseline, { ci = false, panelRoot, bareFrCount = 
     }
   }
 
-  return { pass: failures.length === 0, failures, orphans, smoke, permanent, panel, bare_fr: bareFr };
+  return {
+    pass: failures.length === 0,
+    failures,
+    orphans,
+    registered_transitional: classification.registered,
+    unregistered_orphans: unregisteredOrphans,
+    smoke,
+    permanent,
+    panel,
+    bare_fr: bareFr,
+  };
 }
 
 async function fetchBareFrCount(brainUrl = 'http://localhost:5221') {
@@ -184,7 +229,9 @@ if (isMain) {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(`测试金字塔守卫 @ ${root}`);
-    if (result.orphans) console.log(`  孤儿: ${result.orphans.total}（tests ${result.orphans.tests} + e2e ${result.orphans.e2e}）/ 基线 ${baseline?.orphans}`);
+    if (result.orphans) console.log(`  sprint 原始产物: ${result.orphans.total}（tests ${result.orphans.tests} + e2e ${result.orphans.e2e}）`);
+    if (result.registered_transitional) console.log(`  已登记过渡测试: ${result.registered_transitional.total}（tests ${result.registered_transitional.tests} + e2e ${result.registered_transitional.e2e}）`);
+    if (result.unregistered_orphans) console.log(`  未登记孤儿: ${result.unregistered_orphans.total}（tests ${result.unregistered_orphans.tests} + e2e ${result.unregistered_orphans.e2e}）/ 基线 ${baseline?.orphans}`);
     if (result.smoke) console.log(`  smoke: ${result.smoke.total} 条，未挂跑道 ${result.smoke.unwired.length}`);
     if (result.permanent) console.log(`  永久池: ${result.permanent.total} / 基线 ${baseline?.permanent} ｜ 分层 ${JSON.stringify(result.permanent.layers)}`);
     if (result.panel) console.log(`  面板: generated=${result.panel.generated} fresh=${result.panel.fresh}`);
