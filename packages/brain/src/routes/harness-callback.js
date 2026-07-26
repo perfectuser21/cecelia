@@ -362,6 +362,10 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     });
   }
 
+  if (!['local-docker', 'remote-bridge'].includes(attempt.execution_transport)) {
+    return res.status(409).json({ ok: false, error: 'launch_receipt_unconfirmed' });
+  }
+
   if (attempt.execution_transport === 'remote-bridge') {
     const machineId = result.provider_metadata?.machine_id;
     let valid = false;
