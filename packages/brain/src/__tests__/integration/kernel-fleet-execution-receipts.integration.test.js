@@ -193,6 +193,7 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
 
     const queuedReceipt = {
       leaseOwner: 'brain-1',
+      leaseGeneration: 0,
       actualMachineId: 'queued-worker',
       executionTransport: 'local-docker',
       remoteJobId: 'queued-job',
@@ -237,6 +238,7 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
     });
     const runningReceipt = await store.recordLaunchReceipt(input.id, {
       leaseOwner: 'brain-1',
+      leaseGeneration: 0,
       actualMachineId: 'running-worker',
       executionTransport: 'remote-bridge',
       remoteJobId: 'remote-job',
@@ -289,5 +291,72 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
       lease_generation: 1,
     });
     expect((await loadReceipt(input.id)).lease_generation).toBe(1);
+  });
+
+  it('rejects stale receipt and failure writes from an older generation with the same owner', async () => {
+    const runId = randomUUID();
+    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    const input = attemptInput({ runId, hop: 1, machineId: 'reclaim-worker' });
+    await store.createAttempt(input);
+    await store.markStarting(input.id, { leaseOwner: 'same-owner', leaseSeconds: 90 });
+    await client.query(
+      `UPDATE harness_attempts SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`,
+      [input.id],
+    );
+    await store.reclaim(input.id, {
+      leaseOwner: 'same-owner',
+      leaseSeconds: 180,
+    });
+
+    expect(await store.recordLaunchReceipt(input.id, {
+      leaseOwner: 'same-owner',
+      leaseGeneration: 0,
+      actualMachineId: 'stale-worker',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'stale-job',
+      attestationStatus: 'verified',
+    })).toBeNull();
+    expect(await store.fail(input.id, {
+      code: 'stale_failure',
+      message: 'old generation must not terminate the attempt',
+    }, {
+      leaseOwner: 'same-owner',
+      leaseGeneration: 0,
+    })).toEqual({ attempt: null, deduped: true });
+    expect(await loadReceipt(input.id)).toMatchObject({
+      status: 'starting',
+      lease_owner: 'same-owner',
+      lease_generation: 1,
+      actual_machine_id: null,
+      execution_transport: null,
+      remote_job_id: null,
+    });
+
+    expect(await store.recordLaunchReceipt(input.id, {
+      leaseOwner: 'same-owner',
+      leaseGeneration: 1,
+      actualMachineId: 'current-worker',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'current-job',
+      attestationStatus: 'verified',
+    })).toMatchObject({
+      actual_machine_id: 'current-worker',
+      remote_job_id: 'current-job',
+      lease_generation: 1,
+    });
+    expect(await store.fail(input.id, {
+      code: 'current_failure',
+      message: 'current generation may terminate the attempt',
+    }, {
+      leaseOwner: 'same-owner',
+      leaseGeneration: 1,
+    })).toMatchObject({
+      deduped: false,
+      attempt: {
+        status: 'failed',
+        error_code: 'current_failure',
+        lease_generation: 1,
+      },
+    });
   });
 });

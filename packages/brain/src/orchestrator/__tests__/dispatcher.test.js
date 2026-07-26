@@ -88,7 +88,7 @@ function makeDeps(order = []) {
         });
       }),
       inspect: vi.fn(),
-      cancel: vi.fn(),
+      cancel: vi.fn(async () => ({ status: 'missing' })),
     },
     loadSkill: vi.fn(fakeSkill),
     randomUUID: () => attemptId,
@@ -408,7 +408,23 @@ describe('createDispatcher', () => {
     expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
       code: 'launch_failed',
       message: 'docker unavailable',
-    }, { leaseOwner: 'dispatcher-test:4242' });
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 0,
+    });
+    expect(deps.launcher.cancel).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({
+        id: attemptId,
+        lease_owner: 'dispatcher-test:4242',
+        lease_generation: 0,
+      }),
+      target: {
+        provider: 'codex',
+        account: null,
+        machine: 'brain-1',
+      },
+      launchReceipt: undefined,
+    });
   });
 
   it('lease claim 冲突时不以无 fence 的失败写覆盖其他 owner', async () => {
@@ -502,6 +518,7 @@ describe('createDispatcher', () => {
     }));
     expect(deps.attemptStore.recordLaunchReceipt).toHaveBeenCalledWith(attemptId, {
       leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 7,
       actualMachineId: 'xian-mac-m4',
       executionTransport: 'remote-bridge',
       remoteJobId: 'remote-job-7',
@@ -577,7 +594,10 @@ describe('createDispatcher', () => {
     expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
       code: 'launch_receipt_persist_failed',
       message: expect.stringContaining('launch receipt'),
-    }, { leaseOwner: 'dispatcher-test:4242' });
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 11,
+    });
   });
 
   it('rejects a remote receipt that omits verified actual-machine evidence', async () => {
@@ -599,13 +619,15 @@ describe('createDispatcher', () => {
       })),
       validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
     };
-    deps.launcher.launch.mockResolvedValueOnce(Object.freeze({
+    const invalidReceipt = Object.freeze({
       executionTransport: 'remote-bridge',
       remoteJobId: 'remote-job-unverified',
       attestationStatus: null,
       containerId: null,
       jobId: 'remote-job-unverified',
-    }));
+    });
+    deps.launcher.launch.mockResolvedValueOnce(invalidReceipt);
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
 
     await expect(createDispatcher(deps)('spawn:generator', {
       taskId,
@@ -619,19 +641,28 @@ describe('createDispatcher', () => {
     expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
       code: 'launch_failed',
       message: 'launch_receipt_invalid:remote_actual_machine',
-    }, { leaseOwner: 'dispatcher-test:4242' });
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 0,
+    });
+    expect(deps.launcher.cancel).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({ id: attemptId, lease_generation: 0 }),
+      target: selectedTarget,
+      launchReceipt: invalidReceipt,
+    });
   });
 
   it('rejects a local receipt without the exact launched container identity', async () => {
     const deps = makeDeps();
-    deps.launcher.launch.mockResolvedValueOnce(Object.freeze({
+    const invalidReceipt = Object.freeze({
       actualMachineId: 'brain-1',
       executionTransport: 'local-docker',
       remoteJobId: null,
       attestationStatus: 'local',
       containerId: null,
       jobId: null,
-    }));
+    });
+    deps.launcher.launch.mockResolvedValueOnce(invalidReceipt);
 
     await expect(createDispatcher(deps)('spawn:generator', {
       taskId,
@@ -642,6 +673,81 @@ describe('createDispatcher', () => {
     })).rejects.toThrow('launch_receipt_invalid:local_container_id');
 
     expect(deps.attemptStore.recordLaunchReceipt).not.toHaveBeenCalled();
+    expect(deps.launcher.cancel).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({ id: attemptId, lease_generation: 0 }),
+      target: {
+        provider: 'codex',
+        account: null,
+        machine: 'brain-1',
+      },
+      launchReceipt: invalidReceipt,
+    });
+  });
+
+  it('cancels by Attempt when remote transport validation rejects after Bridge acceptance', async () => {
+    const deps = makeDeps();
+    const selectedTarget = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m4',
+    };
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          ...selectedTarget,
+          capability_snapshot_id: 'snapshot-xian',
+        },
+        evidence: {},
+        to_target: selectedTarget,
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+    deps.launcher.launch.mockRejectedValueOnce(new Error('remote_bridge_attestation_invalid'));
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('remote_bridge_attestation_invalid');
+
+    expect(deps.launcher.cancel).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({
+        id: attemptId,
+        lease_owner: 'dispatcher-test:4242',
+        lease_generation: 0,
+      }),
+      target: selectedTarget,
+      launchReceipt: undefined,
+    });
+  });
+
+  it('surfaces a structured unsafe cancel outcome in the fenced failure diagnostic', async () => {
+    const deps = makeDeps();
+    deps.launcher.launch.mockRejectedValueOnce(new Error('remote launch failed'));
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'rejected',
+      httpStatus: 409,
+    });
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('remote launch failed');
+
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_failed',
+      message: expect.stringContaining('orphan cancellation unsafe: rejected'),
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 0,
+    });
   });
 
   it('createAttempt 命中同 run/hop 旧 attempt 时不拿新密钥重复 launch', async () => {
@@ -681,8 +787,80 @@ describe('createDispatcher', () => {
 });
 
 describe('createDetachedLauncher', () => {
+  it('removes the requested container and rejects when Docker returns no container identity', async () => {
+    const removeContainer = vi.fn(async () => true);
+    const attemptStore = {
+      markStarting: vi.fn(async () => ({
+        id: attemptId,
+        status: 'starting',
+        lease_owner: 'local-launcher:1',
+        lease_generation: 2,
+      })),
+      fail: vi.fn(async () => ({ deduped: false })),
+    };
+    const launcher = createDetachedLauncher({
+      spawnDetached: vi.fn(async () => ({})),
+      removeContainer,
+      attemptStore,
+      leaseOwner: 'local-launcher:1',
+    });
+
+    await expect(launcher.launch({
+      attempt: { id: attemptId, run_id: runId, hop: 2, role: 'generator' },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: false },
+      },
+      spec: { provider: 'codex', args: [], stdin: '{}', env: {} },
+      task: observed.task,
+    })).rejects.toThrow('local_launch_container_id_missing');
+
+    expect(removeContainer).toHaveBeenCalledTimes(1);
+    expect(removeContainer).toHaveBeenCalledWith('cecelia-harness-22222222');
+    expect(attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_failed',
+      message: expect.stringContaining('local_launch_container_id_missing'),
+    }, {
+      leaseOwner: 'local-launcher:1',
+      leaseGeneration: 2,
+    });
+  });
+
+  it('removes both requested and returned containers when Docker returns a mismatched identity', async () => {
+    const removeContainer = vi.fn(async () => true);
+    const launcher = createDetachedLauncher({
+      spawnDetached: vi.fn(async () => ({ containerId: 'unexpected-container' })),
+      removeContainer,
+      attemptStore: {
+        markStarting: vi.fn(async () => ({
+          id: attemptId,
+          status: 'starting',
+          lease_owner: 'local-launcher:1',
+          lease_generation: 0,
+        })),
+        fail: vi.fn(async () => ({ deduped: false })),
+      },
+      leaseOwner: 'local-launcher:1',
+    });
+
+    await expect(launcher.launch({
+      attempt: { id: attemptId, run_id: runId, hop: 2, role: 'generator' },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: false },
+      },
+      spec: { provider: 'codex', args: [], stdin: '{}', env: {} },
+      task: observed.task,
+    })).rejects.toThrow('local_launch_container_id_mismatch');
+
+    expect(removeContainer.mock.calls.map(([containerId]) => containerId)).toEqual([
+      'unexpected-container',
+      'cecelia-harness-22222222',
+    ]);
+  });
+
   it('uses the dispatcher-claimed lease owner when launcher construction has a different owner', async () => {
-    const spawnDetached = vi.fn(async () => ({ containerId: 'claimed-owner-container' }));
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const attemptStore = {
       markStarting: vi.fn(),
       fail: vi.fn(),
@@ -700,6 +878,7 @@ describe('createDetachedLauncher', () => {
         hop: 2,
         role: 'generator',
         lease_owner: 'dispatcher-claim:9',
+        lease_generation: 9,
       },
       bundle: {
         inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
@@ -721,7 +900,7 @@ describe('createDetachedLauncher', () => {
   it('returns a frozen local receipt and cancels its exact launched container', async () => {
     const removeContainer = vi.fn(async () => true);
     const launcher = createDetachedLauncher({
-      spawnDetached: vi.fn(async () => ({ containerId: 'local-container-1' })),
+      spawnDetached: vi.fn(async ({ containerId }) => ({ containerId })),
       removeContainer,
       attemptStore: {
         markStarting: vi.fn(async () => ({
@@ -750,7 +929,7 @@ describe('createDetachedLauncher', () => {
       executionTransport: 'local-docker',
       remoteJobId: null,
       attestationStatus: 'local',
-      containerId: 'local-container-1',
+      containerId: 'cecelia-harness-22222222',
       jobId: null,
     });
     expect(Object.isFrozen(receipt)).toBe(true);
@@ -760,9 +939,9 @@ describe('createDetachedLauncher', () => {
       launchReceipt: receipt,
     })).resolves.toEqual({
       status: 'cancelled',
-      containerId: 'local-container-1',
+      containerId: 'cecelia-harness-22222222',
     });
-    expect(removeContainer).toHaveBeenCalledWith('local-container-1');
+    expect(removeContainer).toHaveBeenCalledWith('cecelia-harness-22222222');
     await expect(launcher.inspect({
       attempt: input.attempt,
       target: { machine: 'us-mac-m4' },
@@ -773,7 +952,7 @@ describe('createDetachedLauncher', () => {
   });
 
   it('把 proposer/reviewer 的分支协议注入 runner env', async () => {
-    const spawnDetached = vi.fn(async () => ({ containerId: 'gan-cx' }));
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const launcher = createDetachedLauncher({
       spawnDetached,
       attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
@@ -808,7 +987,7 @@ describe('createDetachedLauncher', () => {
   });
 
   it('evaluator 以可写工作树进入 runner，但远端 Git 写入被执行层阻断', async () => {
-    const spawnDetached = vi.fn(async () => ({ containerId: 'eval-cx' }));
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const launcher = createDetachedLauncher({
       spawnDetached,
       attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
@@ -843,7 +1022,7 @@ describe('createDetachedLauncher', () => {
   });
 
   it('generator 保留 Git push 能力', async () => {
-    const spawnDetached = vi.fn(async () => ({ containerId: 'generator-cx' }));
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const launcher = createDetachedLauncher({
       spawnDetached,
       attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
@@ -866,7 +1045,7 @@ describe('createDetachedLauncher', () => {
   });
 
   it('把同一 bundle task_id 注入 generator 的 Cecelia 与 harness 任务环境', async () => {
-    const spawnDetached = vi.fn(async () => ({ containerId: 'generator-cx' }));
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const launcher = createDetachedLauncher({
       spawnDetached,
       attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
@@ -911,11 +1090,14 @@ describe('createDetachedLauncher', () => {
     expect(attemptStore.fail).toHaveBeenCalledWith(attemptId, {
       code: 'launch_failed',
       message: 'docker unavailable',
-    }, { leaseOwner: 'brain-1:123' });
+    }, {
+      leaseOwner: 'brain-1:123',
+      leaseGeneration: 0,
+    });
   });
 
   it('把 attempt/run/hop/role 作为 runner env 和 Docker labels 传递', async () => {
-    const spawnDetached = vi.fn(async () => ({ containerId: 'cx' }));
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const attemptStore = { markStarting: vi.fn(async () => ({ status: 'starting' })) };
     const launcher = createDetachedLauncher({ spawnDetached, attemptStore, brainUrl: 'http://brain:5221' });
     const attempt = {
@@ -973,7 +1155,7 @@ describe('createDetachedLauncher', () => {
   });
 
   it('Claude fresh/resume 共用 attempt 级宿主 session 目录，容器替换后仍可 resume', async () => {
-    const spawnDetached = vi.fn(async () => ({ containerId: 'claude-cx' }));
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const attemptStore = { markStarting: vi.fn(async () => ({ status: 'starting' })) };
     const ensureDir = vi.fn();
     const launcher = createDetachedLauncher({
@@ -1034,6 +1216,7 @@ describe('createDetachedLauncher', () => {
         hop: 2,
         role: 'evaluator',
         lease_owner: 'watchdog:test',
+        lease_generation: 3,
       },
       bundle: {
         inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
@@ -1052,7 +1235,7 @@ describe('createDetachedLauncher', () => {
   });
 
   it('launcher 只挂 Grok 认证与会话，不把宿主 Mach-O CLI 挂进 Linux 容器', async () => {
-    const spawnDetached = vi.fn(async () => ({ containerId: 'cx' }));
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const launcher = createDetachedLauncher({
       spawnDetached,
       attemptStore: { markStarting: vi.fn(async () => ({ status: 'starting' })) },
@@ -1101,7 +1284,7 @@ describe('createDetachedLauncher', () => {
         homedir: '/home/fake',
         existsSyncFn: () => false,
       });
-      return { containerId: 'cx' };
+      return { containerId: opts.containerId };
     });
     const launcher = createDetachedLauncher({
       spawnDetached,
