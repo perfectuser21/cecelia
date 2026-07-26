@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## 合同边界
 
@@ -105,10 +105,10 @@ npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.
 
 **验证命令**:
 ```bash
-npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "capability snapshot 包含 provider auth GitHub PostgreSQL 外部模型能力与 canonical machine_id"
+npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "capability snapshot 包含 provider auth GitHub PostgreSQL 外部模型能力与 canonical machine_id" -t "capacity cache 可用但宿主真实 credential probe 失败时 fail-safe"
 ```
 
-**硬阈值**: exit code = 0；snapshot 含 `provider/account/machine/capabilities/verified/health/capacity/capability_snapshot_id/logical_cycle/created_at/expires_at`；任一 required capability 缺失、probe 超时或 dispatch 前过期时 fail-closed。
+**硬阈值**: exit code = 0；snapshot 含 `provider/account/machine/capabilities.provider_auth/verified/health/capacity/capability_snapshot_id/logical_cycle/created_at/expires_at`；capacity cache 即使可用也不得覆盖宿主 credential probe 失败；任一 required capability 缺失、probe 超时或 dispatch 前过期时 fail-closed。
 
 ### Step 3: transient provider failure 先重试再确定性轮换
 
@@ -118,10 +118,10 @@ npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.
 
 **验证命令**:
 ```bash
-npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "team4 503 后同 cycle 最多重试一次且切换同 provider 健康账号 team1" -t "ExecutionTarget 完整矩阵逐项放行且未列组合 fail-closed" -t "CM1 CM4 禁 Claude Grok 且 USM4 Claude Grok 可确定性降级" -t "Codex 跨机 fresh recovery 保持 task bundle 并从 Git PR DB 真相恢复"
+npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "team4 503 后同 cycle 最多重试一次且切换同 provider 健康账号 team1" -t "同 failure signature 同 logical_cycle 跨调用首次最多恢复一次后直接熔断轮换" -t "ExecutionTarget 完整矩阵逐项放行且未列组合 fail-closed" -t "CM1 CM4 禁 Claude Grok 且 USM4 Claude Grok 可确定性降级" -t "Codex 跨机 fresh recovery 保持 task bundle 并从 Git PR DB 真相恢复"
 ```
 
-**硬阈值**: exit code = 0；矩阵恰好 18 项；`team4 -> team1` 顺序固定；CM4/CM1 永不选择 Claude/Grok；USM4 Claude/Grok 三个目标逐项可降级；跨机 `recovery_mode=fresh_attempt`、`resume_session=false`、`truth_sources=["git","pr","db"]`。
+**硬阈值**: exit code = 0；矩阵恰好 18 项；同一 `failure signature + logical_cycle` 首次调用序列为 `team4,team4,team1`，第二次直接跳过 team4 并轮换 team1；CM4/CM1 永不选择 Claude/Grok；USM4 Claude/Grok 三个目标逐项可降级；跨机 `recovery_mode=fresh_attempt`、`resume_session=false`、`truth_sources=["git","pr","db"]`。
 
 ### Step 4: mismatch / infra 故障阻断 attempt 并转人工
 
@@ -131,10 +131,10 @@ npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.
 
 **验证命令**:
 ```bash
-npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "全池失败返回人审基础设施阻塞并产出结构化告警与 evidence" -t "能力匹配后的 product failure 仍进入 generator-fix" && npx vitest run sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts -t "五个 Codex 账号全失败时 dispatcher 不建 attempt 并转人审告警"
+npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "全池失败返回人审基础设施阻塞并产出结构化告警与 evidence" -t "capacity cache 可用但宿主真实 credential probe 失败时 fail-safe" -t "能力匹配后的 product failure 仍进入 generator-fix" && npx vitest run sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts -t "五个 Codex 账号全失败时 dispatcher 不建 attempt 并转人审告警" -t "provider auth GitHub PostgreSQL 外部模型任一 required capability 缺失均阻断 attempt"
 ```
 
-**硬阈值**: exit code = 0；probe 顺序 `team1..team5`；`createAttempt/launch` 次数 = 0；infra 的 action=`wait:human_review` 且 `should_enter_generator_fix=false`；product 的 action=`generator-fix`。
+**硬阈值**: exit code = 0；provider auth、GitHub、PostgreSQL、外部模型四项逐项缺失均返回 `infrastructure_blocked|contract_capability_mismatch` 且 `createAttempt/launch` 次数 = 0；capacity cache/credential mismatch 同样不创建 attempt；infra 的 action=`wait:human_review` 且 `should_enter_generator_fix=false`；product 的 action=`generator-fix`。
 
 ### Step 5: 健康 snapshot 才允许落 attempt 与 decision log
 
@@ -206,5 +206,5 @@ bash scripts/check-version-sync.sh
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| capability snapshot / ExecutionTarget / failure classification | `sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts` | `capability snapshot 包含 provider auth GitHub PostgreSQL 外部模型能力与 canonical machine_id` / `capability parsing routing evidence 是 Commander 可消费的稳定导出且不依赖 Commander` / `ExecutionTarget 完整矩阵逐项放行且未列组合 fail-closed` / `team4 503 后同 cycle 最多重试一次且切换同 provider 健康账号 team1` / `CM1 CM4 禁 Claude Grok 且 USM4 Claude Grok 可确定性降级` / `Codex 跨机 fresh recovery 保持 task bundle 并从 Git PR DB 真相恢复` / `全池失败返回人审基础设施阻塞并产出结构化告警与 evidence` / `能力匹配后的 product failure 仍进入 generator-fix` / `canonical machine 仅接受 env 或受控 Fleet 且忽略 Docker hostname` / `preflight probe 有界 timeout 且过期 snapshot 竞态不得放行` / `结构化 evidence 脱敏凭据并保留路由审计字段` | 三个 preflight 模块及其稳定导出尚不存在，import 失败；实现空壳也会在矩阵/分流/竞态/脱敏断言处失败 |
-| dispatcher 接线 / 全池失败 / snapshot 竞态 | `sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts` | `dispatcher 真实调用 preflight 后才创建合法 UUID attempt 并写完整 evidence` / `五个 Codex 账号全失败时 dispatcher 不建 attempt 并转人审告警` / `过期 snapshot 在 createAttempt 前被竞态闸拒绝` | 当前 dispatcher 尚未调用真实 preflight，也不会做 snapshot 二次验鲜，目标行为断言失败 |
+| capability snapshot / ExecutionTarget / failure classification | `sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts` | `capability snapshot 包含 provider auth GitHub PostgreSQL 外部模型能力与 canonical machine_id` / `capacity cache 可用但宿主真实 credential probe 失败时 fail-safe` / `capability parsing routing evidence 是 Commander 可消费的稳定导出且不依赖 Commander` / `ExecutionTarget 完整矩阵逐项放行且未列组合 fail-closed` / `team4 503 后同 cycle 最多重试一次且切换同 provider 健康账号 team1` / `同 failure signature 同 logical_cycle 跨调用首次最多恢复一次后直接熔断轮换` / `CM1 CM4 禁 Claude Grok 且 USM4 Claude Grok 可确定性降级` / `Codex 跨机 fresh recovery 保持 task bundle 并从 Git PR DB 真相恢复` / `全池失败返回人审基础设施阻断并产出结构化告警与 evidence` / `能力匹配后的 product failure 仍进入 generator-fix` / `canonical machine 仅接受 env 或受控 Fleet 且忽略 Docker hostname` / `preflight probe 有界 timeout 且过期 snapshot 竞态不得放行` / `结构化 evidence 脱敏凭据并保留路由审计字段` | 三个 preflight 模块及其稳定导出尚不存在，import 失败；实现空壳也会在矩阵/分流/竞态/脱敏断言处失败 |
+| dispatcher 接线 / required capability / 全池失败 / snapshot 竞态 | `sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts` | `dispatcher 真实调用 preflight 后才创建合法 UUID attempt 并写完整 evidence` / `provider auth GitHub PostgreSQL 外部模型任一 required capability 缺失均阻断 attempt` / `五个 Codex 账号全失败时 dispatcher 不建 attempt 并转人审告警` / `过期 snapshot 在 createAttempt 前被竞态闸拒绝` | 当前 dispatcher 尚未调用真实 preflight，也不会逐项阻断 required capability 缺失或做 snapshot 二次验鲜，目标行为断言失败 |

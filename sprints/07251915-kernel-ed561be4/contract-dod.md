@@ -39,6 +39,12 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "capability snapshot 包含 provider auth GitHub PostgreSQL 外部模型能力与 canonical machine_id"'
   期望: exit 0
 
+- [ ] [BEHAVIOR] [L2] capacity cache 可用但宿主真实 credential probe 失败时 fail-safe
+  动作: 让容量缓存返回 available=9，同时让宿主 provider credential probe 返回 credential_missing。
+  预期观察: 真实 probe 覆盖缓存乐观值，返回 infrastructure_blocked/credential_probe_mismatch 且不创建 attempt。
+  验证命令: Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "capacity cache 可用但宿主真实 credential probe 失败时 fail-safe"'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] ExecutionTarget 完整矩阵逐项放行且未列组合 fail-closed
   动作: 表驱动逐项运行 Codex team1..team5×三机、Claude account1/account2×USM4、Grok grok×USM4 及反例。
   预期观察: 恰好 18 个组合通过；CM1/CM4 Claude/Grok、team6、Docker hostname 等未列组合全部拒绝。
@@ -51,10 +57,22 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "team4 503 后同 cycle 最多重试一次且切换同 provider 健康账号 team1|CM1 CM4 禁 Claude Grok 且 USM4 Claude Grok 可确定性降级|Codex 跨机 fresh recovery 保持 task bundle 并从 Git PR DB 真相恢复"'
   期望: exit 0
 
+- [ ] [BEHAVIOR] [L2] 同 failure signature 同 logical_cycle 跨调用首次最多恢复一次后直接熔断轮换
+  动作: 在同一 gate 上以相同 logical_cycle 和 http_503 signature 连续调用两次。
+  预期观察: 首次最多重试 team4 一次；后续调用不再 probe team4，直接以 logical_cycle_retry_exhausted 熔断并轮换 team1。
+  验证命令: Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "同 failure signature 同 logical_cycle 跨调用首次最多恢复一次后直接熔断轮换"'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] 五个 Codex 账号全失败时 dispatcher 不建 attempt 并转人审告警
   动作: 通过真实 gate↔dispatcher 依次让 team1..team5 probe 全失败。
   预期观察: 不创建 attempt、不 launch、不进 generator-fix；返回 wait:human_review/infrastructure_blocked，发带五字段 evidence 的结构化告警。
   验证命令: Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts -t "五个 Codex 账号全失败时 dispatcher 不建 attempt 并转人审告警"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] provider auth GitHub PostgreSQL 外部模型任一 required capability 缺失均阻断 attempt
+  动作: 表驱动逐项让 provider auth、GitHub、PostgreSQL、structured_output probe 缺失，其余 probe 保持健康。
+  预期观察: 每一项都返回 infrastructure_blocked/contract_capability_mismatch，createAttempt 与 launch 始终为 0。
+  验证命令: Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts -t "provider auth GitHub PostgreSQL 外部模型任一 required capability 缺失均阻断 attempt"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] 能力匹配后的 product failure 仍进入 generator-fix

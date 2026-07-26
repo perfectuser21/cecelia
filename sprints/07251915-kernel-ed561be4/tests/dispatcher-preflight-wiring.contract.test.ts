@@ -184,6 +184,71 @@ describe('dispatcher preflight wiring contract [BEHAVIOR]', () => {
     expect(emitAlert).toHaveBeenCalledTimes(1);
   });
 
+  it('provider auth GitHub PostgreSQL 外部模型任一 required capability 缺失均阻断 attempt', async () => {
+    const missingCapabilities = [
+      {
+        name: 'provider_auth',
+        overrides: {
+          probeProviderAuth: async () => ({
+            ok: false,
+            transient: false,
+            signature: 'auth_missing',
+          }),
+        },
+      },
+      {
+        name: 'github',
+        overrides: {
+          probeGitHub: async () => ({ ok: false, signature: 'github_credential_missing' }),
+        },
+      },
+      {
+        name: 'postgres',
+        overrides: {
+          probePostgres: async () => ({ ok: false, signature: 'postgres_unreachable' }),
+        },
+      },
+      {
+        name: 'structured_output',
+        overrides: {
+          probeModelCapability: async ({ capability }: { capability: string }) => ({
+            ok: false,
+            capability,
+            signature: 'model_capability_missing',
+          }),
+        },
+      },
+    ];
+
+    for (const missing of missingCapabilities) {
+      const gate = createRealGate({
+        listProviderAccounts: async () => ['team1'],
+        ...missing.overrides,
+      });
+      const { deps, createAttempt, launcher } = createDispatcherDeps(gate);
+      const dispatch = createDispatcher(deps);
+
+      const result = await dispatch('spawn:generator', {
+        taskId: TASK_ID,
+        runId: RUN_ID,
+        hop: 20,
+        observed: buildObserved({
+          role_assignments: { generator: { provider: 'codex', account: 'team1' } },
+        }),
+        decision: { phase: 'generate', reason: `missing-${missing.name}` },
+      });
+
+      expect(createAttempt, missing.name).not.toHaveBeenCalled();
+      expect(launcher.launch, missing.name).not.toHaveBeenCalled();
+      expect(result.status, missing.name).toBe('DONE_WITH_CONCERNS');
+      expect(
+        ['infrastructure_blocked', 'contract_capability_mismatch'],
+        missing.name,
+      ).toContain(result.failure_class);
+      expect(result.should_enter_generator_fix, missing.name).toBe(false);
+    }
+  });
+
   it('过期 snapshot 在 createAttempt 前被竞态闸拒绝', async () => {
     let now = 1_000;
     const gate = createRealGate({

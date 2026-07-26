@@ -73,6 +73,7 @@ describe('Kernel capability gate contract [BEHAVIOR]', () => {
       health: { ok: true, machine: 'us-mac-m4' },
       capacity: { ok: true, available: 3 },
       capabilities: {
+        provider_auth: { ok: true, provider: 'codex', account: 'team1' },
         github: { ok: true },
         postgres: { ok: true },
         model_capabilities: {
@@ -83,6 +84,39 @@ describe('Kernel capability gate contract [BEHAVIOR]', () => {
       logical_cycle: 7,
       created_at: 1_000,
       expires_at: 1_500,
+    });
+  });
+
+  it('capacity cache 可用但宿主真实 credential probe 失败时 fail-safe', async () => {
+    const probeProviderAuth = vi.fn(async () => ({
+      ok: false,
+      transient: false,
+      signature: 'credential_missing',
+    }));
+    const getMachineCapacity = vi.fn(async () => ({
+      ok: true,
+      available: 9,
+      source: 'cache',
+    }));
+    const gate = createCapabilityGate(healthyProbeDeps({
+      probeProviderAuth,
+      getMachineCapacity,
+      listProviderAccounts: async () => ['team1'],
+    }));
+
+    const result = await gate.evaluate({
+      preferred_target: { provider: 'codex', account: 'team1', machine: 'us-mac-m4' },
+      requirements: REQUIREMENTS,
+      task_bundle: TASK_BUNDLE,
+    });
+
+    expect(getMachineCapacity).toHaveBeenCalled();
+    expect(probeProviderAuth).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: 'blocked',
+      failure_class: 'infrastructure_blocked',
+      fallback_reason: 'credential_probe_mismatch',
+      should_create_attempt: false,
     });
   });
 
@@ -182,6 +216,47 @@ describe('Kernel capability gate contract [BEHAVIOR]', () => {
         failure_class: 'infrastructure_blocked',
       },
     });
+  });
+
+  it('同 failure signature 同 logical_cycle 跨调用首次最多恢复一次后直接熔断轮换', async () => {
+    const calls: string[] = [];
+    const gate = createCapabilityGate(healthyProbeDeps({
+      probeProviderAuth: async ({ provider, account }: { provider: string; account: string }) => {
+        calls.push(account);
+        if (account === 'team4') {
+          return {
+            ok: false,
+            provider,
+            account,
+            transient: true,
+            signature: 'http_503',
+            http_status: 503,
+          };
+        }
+        return { ok: true, provider, account };
+      },
+      listProviderAccounts: async () => ['team4', 'team1'],
+    }));
+    const input = {
+      preferred_target: { provider: 'codex', account: 'team4', machine: 'us-mac-m4' },
+      requirements: REQUIREMENTS,
+      task_bundle: TASK_BUNDLE,
+    };
+
+    const first = await gate.evaluate(input);
+    const second = await gate.evaluate(input);
+
+    expect(first).toMatchObject({
+      status: 'ok',
+      to_target: { provider: 'codex', account: 'team1', machine: 'us-mac-m4' },
+      fallback_reason: 'provider_transient_retry_exhausted',
+    });
+    expect(second).toMatchObject({
+      status: 'ok',
+      to_target: { provider: 'codex', account: 'team1', machine: 'us-mac-m4' },
+      fallback_reason: 'logical_cycle_retry_exhausted',
+    });
+    expect(calls).toEqual(['team4', 'team4', 'team1', 'team1']);
   });
 
   it('CM1 CM4 禁 Claude Grok 且 USM4 Claude Grok 可确定性降级', () => {
