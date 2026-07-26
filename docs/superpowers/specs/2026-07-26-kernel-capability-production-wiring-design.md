@@ -34,10 +34,12 @@ Ship a local-controller production closure in this PR:
 4. A successful account fallback changes the actual adapter/account-home,
    persisted `account_id`, capability evidence, and launcher input. Evidence
    alone is not a route.
-5. A preflight rejection returns `BLOCKED`, writes structured dispatch evidence,
-   emits an alert, creates no attempt, and is handled by the Kernel's existing
-   no-unchanged-state convergence fence. It must never be reported as a
-   successful `DONE_WITH_CONCERNS` launch.
+5. A preflight rejection preserves the frozen dispatch transport status
+   `DONE_WITH_CONCERNS`, but sets the independent control status to `BLOCKED`,
+   writes structured dispatch evidence, emits an alert, creates no attempt, and
+   is handled by the Kernel's existing no-unchanged-state convergence fence.
+   Consumers must use `control_status` for orchestration and must never treat
+   the transport-compatible status as a successful launch.
 6. The production compose definition declares the controller identity
    `us-mac-m4` and mounts the declared Codex team1-team5 and Grok credential
    homes read-only into Brain. Credentials are never copied into evidence.
@@ -102,7 +104,8 @@ must not inject `dispatch` or `preflightGate`.
 The dispatcher derives requirements before preflight. After a successful
 preflight it re-resolves the adapter and account home from `to_target`, persists
 the selected account/machine, and launches with that selected target. A rejected
-preflight returns `BLOCKED` with structured evidence.
+preflight returns transport status `DONE_WITH_CONCERNS`, control status
+`BLOCKED`, and structured evidence.
 
 ## Error Handling
 
@@ -129,7 +132,8 @@ The implementation is accepted only with these Red-to-Green proofs:
 2. team4 unavailable and team1 healthy persists and launches team1, including
    the team1 account home.
 3. Role baseline requirements cannot be disabled by payload `false`.
-4. PostgreSQL failure creates zero attempts and returns structured `BLOCKED`.
+4. PostgreSQL failure creates zero attempts and returns structured control
+   status `BLOCKED` while preserving the frozen transport status.
 5. Missing controller identity creates zero attempts.
 6. Compose exposes the canonical controller identity and all declared local
    credential homes.

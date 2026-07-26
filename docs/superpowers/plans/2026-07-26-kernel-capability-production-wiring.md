@@ -133,8 +133,8 @@ git commit -m "feat(kernel): add bounded production capability probes"
 
 Make team4 unavailable and team1 available. Assert persisted `accountId`,
 selected account home, adapter start, and launcher all use team1. Assert a
-required PostgreSQL failure returns `BLOCKED`, contains structured evidence, and
-creates no attempt.
+required PostgreSQL failure returns `control_status: BLOCKED`, preserves the
+frozen transport status, contains structured evidence, and creates no attempt.
 
 - [ ] **Step 2: Verify Red**
 
@@ -149,7 +149,9 @@ only, and rejection is reported as `DONE_WITH_CONCERNS`.
 
 Create production probes and a capability gate in `buildRealDeps()`. Pass
 `machineId`, gate, and selected target through dispatcher. Re-resolve adapter
-and account home after preflight. Return `BLOCKED` for preflight rejection.
+and account home after preflight. Preserve `DONE_WITH_CONCERNS` as the frozen
+transport status and return independent `control_status: BLOCKED` for preflight
+rejection.
 
 - [ ] **Step 4: Verify Green and commit**
 
