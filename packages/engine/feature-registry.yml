@@ -1251,3 +1251,12 @@ changelog:
       - "../../scripts/test-pyramid-guard.mjs"
       - "../../scripts/ratchet-guard.mjs"
       - "../workflows/skills/harness-evaluator/SKILL.md"
+  - version: "19.6.2"
+    date: "2026-07-26"
+    type: "fix"
+    description: "[CONFIG] Harness Red 锚点修复：TDD Red commit 精确允许 canonical red-evidence.md，移除 BSD grep 空分支假绿；合同测试不可变守卫改以唯一 Red evidence add commit 冻结整棵 tests 树，Red 后新增/修改/删除 fail-closed，无 marker 的 legacy sprint 保持首次引入锚点。"
+    files:
+      - "scripts/devgate/check-tdd-commit-order.sh"
+      - "../../scripts/lint-contract-test-immutability.sh"
+      - "tests/devgate/check-tdd-commit-order-red-evidence.test.ts"
+      - "../../tests/lint-contract-test-immutability.test.ts"
