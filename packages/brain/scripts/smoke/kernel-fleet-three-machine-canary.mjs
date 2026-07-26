@@ -10,6 +10,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { localContainerIdForAttempt } from '../../src/orchestrator/dispatcher.js';
 
 export const MACHINE_IDS = Object.freeze([
   'us-mac-m4',
@@ -435,6 +436,7 @@ export async function createLiveDispatch({
   createLocalWorkspace = createPrivateLocalWorkspace,
   removeLocalWorkspace = removePrivateLocalWorkspace,
   removeContainerFn = null,
+  cancelAttemptFn = null,
 } = {}) {
   if (brainUrl !== LIVE_BRAIN_URL) {
     throw new Error(`live canary refused: --brain-url must be ${LIVE_BRAIN_URL}`);
@@ -517,31 +519,61 @@ export async function createLiveDispatch({
       throw new Error(`canary_dispatch_failed:${machine}:${launched?.detail ?? launched?.status}`);
     }
 
+    const removeLocalContainer = async (row) => {
+      if (row?.local_container_naming !== 'generation-v1') {
+        throw new Error(`canary_local_container_missing:${launched.attemptId}`);
+      }
+      const containerId = localContainerIdForAttempt(
+        launched.attemptId,
+        row.lease_generation,
+      );
+      if (!containerId) throw new Error(`canary_local_container_missing:${launched.attemptId}`);
+      const removeContainer = removeContainerFn
+        ?? (await import('../../src/spawn/detached.js')).removeDockerContainer;
+      if (await removeContainer(containerId) !== true) {
+        throw new Error(`canary_local_container_cleanup_failed:${launched.attemptId}`);
+      }
+    };
+
     const deadline = Date.now() + timeoutMs;
+    let latestRow = null;
     while (Date.now() < deadline) {
       const result = await pool.query(
         `SELECT id AS attempt_id, run_id, requested_machine_id, actual_machine_id,
                 execution_transport, remote_job_id, machine_attestation_status,
-                local_container_id, status, started_at, completed_at, result
+                lease_owner, lease_generation, local_container_naming,
+                status, started_at, completed_at, result
            FROM harness_attempts
           WHERE id=$1::uuid`,
         [launched.attemptId],
       );
       const row = result.rows[0];
+      if (row) latestRow = row;
       if (row && TERMINAL_STATUSES.has(row.status)) {
-        if (machine === 'us-mac-m4') {
-          if (typeof row.local_container_id !== 'string' || row.local_container_id.length === 0) {
-            throw new Error(`canary_local_container_missing:${launched.attemptId}`);
-          }
-          const removeContainer = removeContainerFn
-            ?? (await import('../../src/spawn/detached.js')).removeDockerContainer;
-          if (await removeContainer(row.local_container_id) !== true) {
-            throw new Error(`canary_local_container_cleanup_failed:${launched.attemptId}`);
-          }
-        }
+        if (machine === 'us-mac-m4') await removeLocalContainer(row);
         return row;
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    if (machine === 'us-mac-m4' && latestRow) {
+      await removeLocalContainer(latestRow);
+      if (cancelAttemptFn) {
+        await cancelAttemptFn(latestRow);
+      } else {
+        const { createAttemptStore } = await import('../../src/orchestrator/attempt-store.js');
+        await createAttemptStore(pool).fail(
+          launched.attemptId,
+          {
+            code: 'canary_callback_timeout',
+            message: 'local canary callback timed out and its container was removed',
+            status: 'cancelled',
+          },
+          {
+            leaseOwner: latestRow.lease_owner ?? null,
+            leaseGeneration: latestRow.lease_generation ?? null,
+          },
+        );
+      }
     }
     throw new Error(`canary_callback_timeout:${launched.attemptId}`);
   };

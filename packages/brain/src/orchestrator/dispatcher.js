@@ -67,6 +67,11 @@ export function resolveAction(action) {
   return Object.freeze({ ...spec });
 }
 
+export function localContainerIdForAttempt(attemptId, generation) {
+  if (!attemptId || !Number.isInteger(generation) || generation < 0) return null;
+  return `cecelia-harness-${String(attemptId).slice(0, 8)}-g${generation}`;
+}
+
 function asObject(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
@@ -584,10 +589,9 @@ export function createDetachedLauncher({
   ensureDir = mkdirSync,
   machineId = 'us-mac-m4',
 }) {
-  const requestedContainerId = (attempt, generation = attempt?.lease_generation) => {
-    if (!attempt?.id || !Number.isInteger(generation) || generation < 0) return null;
-    return `cecelia-harness-${String(attempt.id).slice(0, 8)}-g${generation}`;
-  };
+  const requestedContainerId = (attempt, generation = attempt?.lease_generation) => (
+    localContainerIdForAttempt(attempt?.id, generation)
+  );
   const removeCandidates = async (containerIds) => {
     const results = [];
     for (const containerId of [...new Set(containerIds.filter(Boolean))]) {

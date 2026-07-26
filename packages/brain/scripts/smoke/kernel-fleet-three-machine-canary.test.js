@@ -46,7 +46,8 @@ function completedEvidence(machine, overrides = {}) {
     requested_machine_id: machine,
     actual_machine_id: machine,
     execution_transport: remote ? 'remote-bridge' : 'local-docker',
-    local_container_id: remote ? null : `cecelia-harness-${ATTEMPT_IDS[machine].slice(0, 8)}-g0`,
+    lease_generation: 0,
+    local_container_naming: 'generation-v1',
     machine_attestation_status: remote ? 'verified' : 'local',
     status: 'completed',
     started_at: '2026-07-26T01:00:00.000Z',
@@ -432,8 +433,62 @@ describe('createLiveDispatch', () => {
       ['xian-mac-m4', 'team2'],
       ['xian-mac-m1', 'team5'],
     ]);
-    expect(removeContainerFn).toHaveBeenCalledOnce();
+    expect(removeContainerFn).toHaveBeenCalledWith(
+      `cecelia-harness-${ATTEMPT_IDS['us-mac-m4'].slice(0, 8)}-g0`,
+    );
+    const pollSql = liveMocks.pool.query.mock.calls
+      .map(([sql]) => sql)
+      .find((sql) => /FROM harness_attempts/.test(sql));
+    expect(pollSql).toContain('local_container_naming');
+    expect(pollSql).not.toContain('local_container_id');
     expect(removeLocalWorkspace).toHaveBeenCalledWith('/tmp/private-kernel-canary');
+  });
+
+  it('cancels and removes the local container when its callback times out', async () => {
+    const removeContainerFn = vi.fn(async () => true);
+    const cancelAttemptFn = vi.fn(async () => true);
+    liveMocks.pool.query.mockImplementation(async (sql) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) {
+        return { rows: [{ id: RUN_ID }], rowCount: 1 };
+      }
+      if (/FROM harness_attempts/.test(sql)) {
+        return {
+          rows: [{
+            ...completedEvidence('us-mac-m4', { status: 'running' }),
+            lease_owner: 'canary:test',
+            lease_generation: 0,
+          }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    liveMocks.buildRealDeps.mockResolvedValue({
+      dispatch: vi.fn(async () => ({ attemptId: ATTEMPT_IDS['us-mac-m4'] })),
+    });
+    const dispatch = await createLiveDispatch({
+      runId: RUN_ID,
+      brainUrl: 'http://localhost:5221',
+      fetchFn: vi.fn(async () => ({ ok: true, status: 200 })),
+      timeoutMs: 5,
+      pollMs: 1,
+      createLocalWorkspace: vi.fn(() => '/tmp/private-kernel-canary'),
+      removeLocalWorkspace: vi.fn(),
+      removeContainerFn,
+      cancelAttemptFn,
+    });
+
+    await expect(dispatch({
+      machine: 'us-mac-m4',
+      attemptNumber: 1,
+    })).rejects.toThrow(`canary_callback_timeout:${ATTEMPT_IDS['us-mac-m4']}`);
+
+    expect(removeContainerFn).toHaveBeenCalledOnce();
+    expect(cancelAttemptFn).toHaveBeenCalledWith(expect.objectContaining({
+      attempt_id: ATTEMPT_IDS['us-mac-m4'],
+      lease_owner: 'canary:test',
+      lease_generation: 0,
+    }));
+    await dispatch.close();
   });
 
   it('bounds the local Brain health request with an abort timeout', async () => {
