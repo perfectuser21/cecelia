@@ -118,6 +118,13 @@ function reconcileRestartOrphans(stateDir) {
         status: 'failed',
         failure_reason: 'bridge_restart_orphaned',
       });
+    } else if (claim?.callback_delivery === 'pending' && claim.callback_result) {
+      writeClaimAtomic(filePath, {
+        ...claim,
+        status: 'callback_pending',
+        provider_status: claim.provider_status ?? claim.status,
+        callback_delivery: 'failed',
+      });
     }
   }
 }
@@ -337,7 +344,7 @@ async function deliverCallback({
         },
         body: JSON.stringify(result),
       });
-      if (response?.ok) return;
+      if (response?.ok) return true;
       logger.warn?.(`kernel attempt callback HTTP ${String(response?.status)}`);
     } catch {
       logger.warn?.('kernel attempt callback request failed');
@@ -345,6 +352,7 @@ async function deliverCallback({
     if (attempt < delays.length) await sleep(delays[attempt]);
   }
   logger.error?.('kernel attempt callback delivery exhausted');
+  return false;
 }
 
 function startProvider({
@@ -421,9 +429,15 @@ function startProvider({
     const persistedStatus = result.status === 'failed' ? 'failed'
       : result.status === 'cancelled' ? 'cancelled'
         : 'completed';
-    configuration.onSettled?.(claim.attempt_id, child, persistedStatus);
+    configuration.onProviderSettled?.(
+      claim.attempt_id,
+      child,
+      persistedStatus,
+      result,
+      request.callback_url,
+    );
     try {
-      await deliverCallback({
+      const delivered = await deliverCallback({
         fetchFn: configuration.fetchFn,
         sleep: configuration.sleep,
         logger: configuration.logger,
@@ -431,6 +445,11 @@ function startProvider({
         result,
         callbackTimeoutMs: configuration.callbackTimeoutMs,
       });
+      configuration.onCallbackDelivery?.(
+        claim.attempt_id,
+        persistedStatus,
+        delivered,
+      );
     } finally {
       fs.rmSync(runtimeDir, { recursive: true, force: true });
     }
@@ -506,6 +525,7 @@ function createKernelAttemptHandler({
     runtimeRoot,
   };
   const liveChildren = new Map();
+  const callbackDeliveries = new Map();
   reconcileRestartOrphans(stateDir);
 
   function authenticate(headers) {
@@ -518,11 +538,24 @@ function createKernelAttemptHandler({
     const live = liveChildren.get(attemptId);
     return live?.child === child && live.cancelRequested === true;
   };
-  configuration.onSettled = (attemptId, child, status) => {
+  configuration.onProviderSettled = (
+    attemptId,
+    child,
+    status,
+    result,
+    callbackUrl,
+  ) => {
     const filePath = claimPath(stateDir, attemptId);
     const claim = readClaim(filePath);
-    if (claim && claim.status !== 'cancelled') {
-      writeClaimAtomic(filePath, { ...claim, status });
+    if (claim) {
+      writeClaimAtomic(filePath, {
+        ...claim,
+        status,
+        provider_status: status,
+        callback_delivery: 'pending',
+        callback_url: callbackUrl,
+        callback_result: result,
+      });
     }
     const live = liveChildren.get(attemptId);
     if (live?.child === child) {
@@ -530,6 +563,55 @@ function createKernelAttemptHandler({
       liveChildren.delete(attemptId);
     }
   };
+  configuration.onCallbackDelivery = (attemptId, providerStatus, delivered) => {
+    const filePath = claimPath(stateDir, attemptId);
+    const claim = readClaim(filePath);
+    if (!claim) return;
+    if (!delivered) {
+      writeClaimAtomic(filePath, {
+        ...claim,
+        status: 'callback_pending',
+        provider_status: providerStatus,
+        callback_delivery: 'failed',
+      });
+      return;
+    }
+
+    const finalized = {
+      ...claim,
+      status: providerStatus,
+      callback_delivery: 'delivered',
+    };
+    delete finalized.provider_status;
+    delete finalized.callback_url;
+    delete finalized.callback_result;
+    writeClaimAtomic(filePath, finalized);
+  };
+
+  function redeliverPendingClaim(claim, request) {
+    if (callbackDeliveries.has(claim.attempt_id)) return;
+    const delivery = (async () => {
+      const delivered = await deliverCallback({
+        fetchFn: configuration.fetchFn,
+        sleep: configuration.sleep,
+        logger: configuration.logger,
+        request: {
+          ...request,
+          callback_url: claim.callback_url,
+        },
+        result: claim.callback_result,
+        callbackTimeoutMs: configuration.callbackTimeoutMs,
+      });
+      configuration.onCallbackDelivery(
+        claim.attempt_id,
+        claim.provider_status,
+        delivered,
+      );
+    })().finally(() => {
+      callbackDeliveries.delete(claim.attempt_id);
+    });
+    callbackDeliveries.set(claim.attempt_id, delivery);
+  }
 
   return {
     authorize(headers = {}) {
@@ -544,6 +626,27 @@ function createKernelAttemptHandler({
       const existing = readClaim(filePath);
       if (existing) {
         assertMatchingClaim(existing, request);
+        if (existing.status === 'callback_pending') {
+          if (
+            existing.callback_url !== request.callback_url
+            || !existing.callback_result
+            || !['completed', 'failed', 'cancelled'].includes(existing.provider_status)
+          ) {
+            throw new KernelAttemptError('callback_redelivery_state_invalid', 500);
+          }
+          redeliverPendingClaim(existing, request);
+          return {
+            actual_machine_id: existing.machine_id,
+            job_id: existing.job_id,
+            status: 'accepted',
+            attestation: machineAttestation(
+              bridgeToken,
+              existing.attempt_id,
+              existing.machine_id,
+              existing.job_id,
+            ),
+          };
+        }
         return {
           actual_machine_id: existing.machine_id,
           job_id: existing.job_id,
@@ -619,7 +722,9 @@ function createKernelAttemptHandler({
       const claim = readClaim(filePath);
       if (!claim) throw new KernelAttemptError('attempt_not_found', 404);
       assertMatchingClaim(claim, lease);
-      if (['cancelled', 'completed', 'failed'].includes(claim.status)) return { ...claim };
+      if (
+        ['cancelled', 'completed', 'failed', 'callback_pending'].includes(claim.status)
+      ) return { ...claim };
 
       const cancelled = { ...claim, status: 'cancelled' };
       writeClaimAtomic(filePath, cancelled);

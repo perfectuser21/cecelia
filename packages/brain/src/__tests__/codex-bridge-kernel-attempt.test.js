@@ -535,6 +535,57 @@ describe('kernel attempt security and Codex execution', () => {
     expect(deps.sleep).toHaveBeenCalledOnce();
   });
 
+  it('persists exhausted callback delivery and redelivers after reload without respawning', async () => {
+    fetchFn.mockResolvedValue({ ok: false, status: 503 });
+    const handler = createKernelAttemptHandler(deps);
+    const receipt = await handler.accept(request(), auth());
+    const args = spawnFn.mock.calls[0][1];
+    const resultPath = args[args.indexOf('--output-last-message') + 1];
+    fs.writeFileSync(resultPath, JSON.stringify({
+      contract_version: '1.0',
+      attempt_id: ATTEMPT_ID,
+      status: 'completed',
+      summary: 'callback needs redelivery',
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    }));
+    child.emit('close', 0);
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(3));
+
+    await expect(handler.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+      job_id: receipt.job_id,
+      status: 'callback_pending',
+      provider_status: 'completed',
+      callback_delivery: 'failed',
+      callback_result: expect.objectContaining({
+        attempt_id: ATTEMPT_ID,
+        summary: 'callback needs redelivery',
+      }),
+    });
+    expect(fs.readFileSync(path.join(stateDir, `${ATTEMPT_ID}.json`), 'utf8'))
+      .not.toContain(CALLBACK_TOKEN);
+
+    fetchFn.mockReset().mockResolvedValue({ ok: true, status: 200 });
+    const reloaded = createKernelAttemptHandler(deps);
+    await expect(reloaded.accept(request(), auth())).resolves.toMatchObject({
+      job_id: receipt.job_id,
+      status: 'accepted',
+    });
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+
+    await expect(reloaded.inspect(ATTEMPT_ID, auth())).resolves.toMatchObject({
+      status: 'completed',
+      callback_delivery: 'delivered',
+    });
+    expect(spawnFn).toHaveBeenCalledOnce();
+    const persisted = fs.readFileSync(path.join(stateDir, `${ATTEMPT_ID}.json`), 'utf8');
+    expect(persisted).not.toContain(CALLBACK_TOKEN);
+    expect(persisted).not.toContain('callback_result');
+  });
+
   it('drains large provider stdout and stderr so process close remains reachable', async () => {
     child.stdout = new PassThrough({ highWaterMark: 1024 });
     child.stderr = new PassThrough({ highWaterMark: 1024 });
