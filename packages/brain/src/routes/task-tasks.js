@@ -71,6 +71,17 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'title is required' });
     }
 
+    // Tenant scope is assigned at the server ingress. Body payload cannot
+    // impersonate a different tenant; legacy callers join the explicit
+    // `default` tenant so old tasks remain queryable without a data rewrite.
+    const tenantId = String(req.get('x-tenant-id') ?? 'default').trim() || 'default';
+    const suppliedPayload = payload && typeof payload === 'object'
+      ? payload
+      : metadata && typeof metadata === 'object'
+        ? metadata
+        : {};
+    payload = { ...suppliedPayload, tenant_id: tenantId };
+
     // ─── C2: Schema normalize at entry point ────────────────────────
     // 1. PRD fallback: description > payload.prd_summary > prd
     //    上游创建者（Brain scheduler / talk / 人工 / 外部 API）把 PRD 写在不同字段。
@@ -174,7 +185,7 @@ router.post('/', async (req, res) => {
         area_id,
         goal_id,
         location,
-        (payload ?? metadata) ? JSON.stringify(payload ?? metadata) : null,
+        JSON.stringify(payload),
         trigger_source,
         domain,
         okr_initiative_id,

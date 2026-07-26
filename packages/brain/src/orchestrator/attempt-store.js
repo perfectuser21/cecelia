@@ -61,7 +61,7 @@ export function createAttemptStore(pool) {
           skill?.digest ?? null,
           input.bundle,
           input.callbackSecretHash,
-          input.logicalCycleId ?? `run:${input.runId}`,
+          input.logicalCycleId ?? `intent:${input.runId}:${input.hop}`,
           input.attemptKind ?? 'initial',
           input.retryOfAttemptId ?? null,
           input.restartReason ?? null,

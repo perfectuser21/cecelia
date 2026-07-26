@@ -78,6 +78,12 @@ function telemetryNotFound() {
   return error;
 }
 
+function logicalCycleId(row) {
+  return row.logical_cycle_id == null
+    ? `intent:${row.run_id}:${row.hop}`
+    : String(row.logical_cycle_id);
+}
+
 export async function queryAttemptTelemetry(db, {
   taskId,
   tenantId,
@@ -93,7 +99,7 @@ export async function queryAttemptTelemetry(db, {
        FROM tasks t
        JOIN initiative_runs r ON r.current_task_id = t.id
       WHERE t.id = $1
-        AND t.payload->>'tenant_id' = $2
+        AND COALESCE(NULLIF(t.payload->>'tenant_id', ''), 'default') = $2
       ORDER BY r.id`,
     [taskId, tenantId],
   );
@@ -116,7 +122,7 @@ export async function queryAttemptTelemetry(db, {
 
   for (const row of rows) {
     rawCounts[row.role] = (rawCounts[row.role] ?? 0) + 1;
-    if (row.logical_cycle_id != null) logicalCycles.add(String(row.logical_cycle_id));
+    logicalCycles.add(logicalCycleId(row));
     if (!TERMINAL_STATUSES.has(row.status)) continue;
 
     const workstreamKey = row.workstream_key ?? 'ws1';
@@ -162,9 +168,7 @@ export async function queryAttemptTelemetry(db, {
           hop: row.hop,
           role: row.role,
           status: row.status,
-          logical_cycle_id: row.logical_cycle_id == null
-            ? `run:${row.run_id}`
-            : String(row.logical_cycle_id),
+          logical_cycle_id: logicalCycleId(row),
           attempt_kind: row.attempt_kind ?? 'initial',
           retry_of_attempt_id: row.retry_of_attempt_id ?? null,
           restart_reason: row.restart_reason ?? null,

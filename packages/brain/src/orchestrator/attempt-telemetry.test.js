@@ -176,6 +176,6 @@ describe('attempt-telemetry', () => {
 
     expect(telemetry.logical_cycle_count).toBe(1);
     expect(telemetry.attempts[0].logical_cycle_id).toBe('intent:run-legacy:1');
-    expect(sqls[0]).toMatch(/COALESCE\([^)]*tenant_id[^)]]*'default'/);
+    expect(sqls[0]).toMatch(/COALESCE[\s\S]*tenant_id[\s\S]*'default'/);
   });
 });
