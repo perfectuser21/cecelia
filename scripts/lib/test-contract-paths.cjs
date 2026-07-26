@@ -61,14 +61,14 @@ function parseCanonicalE2EScript(content) {
   if (typeof content !== "string") return null;
   const normalized = content.replace(/\r\n?/g, "\n");
   const headers = [
-    ...normalized.matchAll(/^##[ \t]+E2E 验收[ \t]*$/gm),
+    ...normalized.matchAll(/##\s*E2E[^\n]*\n/g),
   ];
   if (headers.length !== 1) return null;
 
   const header = headers[0];
   const sectionStart = header.index + header[0].length;
   const afterHeader = normalized.slice(sectionStart);
-  const nextSection = afterHeader.search(/\n##[ \t]+[^\n]+/);
+  const nextSection = afterHeader.search(/\n##\s+[^\n]/);
   const section =
     nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader;
   const bashBlocks = [
@@ -318,8 +318,11 @@ function listRegisteredSprintArtifacts(root) {
         content = fs.readFileSync(candidate, "utf8");
         contractPath = candidate;
         break;
-      } catch {
-        continue;
+      } catch (error) {
+        if (error && error.code === "ENOENT") continue;
+        contractPath = null;
+        content = null;
+        break;
       }
     }
     if (!contractPath || content === null) continue;

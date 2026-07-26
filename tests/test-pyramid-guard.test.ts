@@ -282,6 +282,68 @@ describe('classifySprintArtifacts', () => {
     rmSync(fixture, { recursive: true, force: true });
   });
 
+  it('fails closed when an earlier H3 E2E occurrence precedes an exact H2', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-ambiguous-heading-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(sprintDir, { recursive: true });
+    writeFileSync(path.join(sprintDir, 'e2e-verify.sh'), 'echo later\n');
+    writeFileSync(
+      path.join(sprintDir, 'contract-draft.md'),
+      [
+        '# Contract',
+        '',
+        '### E2E 验收',
+        '',
+        '```bash',
+        'echo earlier',
+        '```',
+        '',
+        '## E2E 验收',
+        '',
+        '```bash',
+        'echo later',
+        '```',
+        '',
+      ].join('\n'),
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { e2e: 1, total: 1 },
+      registered: { total: 0 },
+      unregistered: { e2e: 1, total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('registers the evaluator-supported broad single-heading family', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-broad-heading-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(sprintDir, { recursive: true });
+    writeFileSync(path.join(sprintDir, 'e2e-verify.sh'), 'echo broad\n');
+    writeFileSync(
+      path.join(sprintDir, 'contract-draft.md'),
+      [
+        '# Contract',
+        '',
+        '### E2E smoke suffix',
+        '',
+        '```bash',
+        'echo broad',
+        '```',
+        '',
+      ].join('\n'),
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { e2e: 1, total: 1 },
+      registered: { e2e: 1, total: 1 },
+      unregistered: { total: 0 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
   it('normalizes CRLF, line-end horizontal whitespace, and final newlines only', () => {
     const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-whitespace-'));
     const sprintDir = path.join(fixture, 'sprints/s1');
@@ -399,6 +461,29 @@ describe('classifySprintArtifacts', () => {
     expect(classifySprintArtifacts(fixture)).toMatchObject({
       registered: { total: 0 },
       unregistered: { e2e: 1, total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('fails closed on canonical read errors instead of using a stale secondary', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-contract-read-error-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(path.join(sprintDir, 'tests'), { recursive: true });
+    mkdirSync(path.join(sprintDir, 'contract-draft.md'));
+    writeFileSync(path.join(sprintDir, 'tests/stale.test.ts'), '');
+    writeFileSync(path.join(sprintDir, 'e2e-verify.sh'), 'echo stale\n');
+    writeContract(
+      fixture,
+      's1',
+      ['tests/stale.test.ts', 'e2e-verify.sh'],
+      'sprint-contract.md',
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { tests: 1, e2e: 1, total: 2 },
+      registered: { total: 0 },
+      unregistered: { tests: 1, e2e: 1, total: 2 },
     });
 
     rmSync(fixture, { recursive: true, force: true });

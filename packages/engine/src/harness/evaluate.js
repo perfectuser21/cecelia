@@ -22,6 +22,9 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { executeAndRecord } from './runner.js';
 import { judgeExecution } from './e2e-judge.js';
+import testContractPaths from '../../../../scripts/lib/test-contract-paths.cjs';
+
+const { parseCanonicalE2EScript } = testContractPaths;
 
 /**
  * 从合同 markdown 文件提取 ## E2E 验收 段落的 bash 脚本。
@@ -31,11 +34,7 @@ import { judgeExecution } from './e2e-judge.js';
  */
 export function parseE2EScript(contractFilePath) {
   const content = readFileSync(contractFilePath, 'utf8');
-  const sectionMatch = content.match(/##\s*E2E[^\n]*\n([\s\S]*?)(?=\n##\s+[^\n]|$)/);
-  if (!sectionMatch) return null;
-  const section = sectionMatch[1];
-  const codeMatch = section.match(/```bash\n([\s\S]*?)```/);
-  return codeMatch ? codeMatch[1] : null;
+  return parseCanonicalE2EScript(content);
 }
 
 /**
