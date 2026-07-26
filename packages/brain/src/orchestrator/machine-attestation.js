@@ -5,7 +5,7 @@ function validateSigningInput({ secret, attemptId, machineId, jobId }) {
     throw new Error('invalid_machine_attestation_secret');
   }
   for (const [name, value] of Object.entries({ attemptId, machineId, jobId })) {
-    if (typeof value !== 'string' || value.length === 0) {
+    if (typeof value !== 'string' || value.length === 0 || /[\r\n]/.test(value)) {
       throw new Error(`invalid_machine_attestation_${name}`);
     }
   }

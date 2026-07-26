@@ -65,10 +65,16 @@ describe('machine attestation', () => {
     ['secret', { ...SIGNING_INPUT, secret: Buffer.alloc(32) }],
     ['attemptId', { ...SIGNING_INPUT, attemptId: '' }],
     ['attemptId', { ...SIGNING_INPUT, attemptId: 42 }],
+    ['attemptId', { ...SIGNING_INPUT, attemptId: 'attempt\na' }],
+    ['attemptId', { ...SIGNING_INPUT, attemptId: 'attempt\ra' }],
     ['machineId', { ...SIGNING_INPUT, machineId: '' }],
     ['machineId', { ...SIGNING_INPUT, machineId: null }],
+    ['machineId', { ...SIGNING_INPUT, machineId: 'xian\nmac' }],
+    ['machineId', { ...SIGNING_INPUT, machineId: 'xian\rmac' }],
     ['jobId', { ...SIGNING_INPUT, jobId: '' }],
     ['jobId', { ...SIGNING_INPUT, jobId: {} }],
+    ['jobId', { ...SIGNING_INPUT, jobId: 'job\n1' }],
+    ['jobId', { ...SIGNING_INPUT, jobId: 'job\r1' }],
   ])('rejects invalid signing input for %s', (component, input) => {
     expect(() => signMachineAttestation(input)).toThrow(`invalid_machine_attestation_${component}`);
   });
@@ -76,12 +82,44 @@ describe('machine attestation', () => {
   it.each([
     ['secret', { ...SIGNING_INPUT, secret: 'short' }],
     ['attemptId', { ...SIGNING_INPUT, attemptId: '' }],
+    ['attemptId', { ...SIGNING_INPUT, attemptId: 'attempt\na' }],
+    ['attemptId', { ...SIGNING_INPUT, attemptId: 'attempt\ra' }],
     ['machineId', { ...SIGNING_INPUT, machineId: undefined }],
+    ['machineId', { ...SIGNING_INPUT, machineId: 'xian\nmac' }],
+    ['machineId', { ...SIGNING_INPUT, machineId: 'xian\rmac' }],
     ['jobId', { ...SIGNING_INPUT, jobId: [] }],
+    ['jobId', { ...SIGNING_INPUT, jobId: 'job\n1' }],
+    ['jobId', { ...SIGNING_INPUT, jobId: 'job\r1' }],
   ])('rejects invalid verification input for %s', (component, input) => {
     expect(() => verifyMachineAttestation({
       ...input,
       attestation: '0'.repeat(64),
     })).toThrow(`invalid_machine_attestation_${component}`);
+  });
+
+  it('rejects newline-shifted machine and job boundaries instead of signing colliding tuples', () => {
+    const shiftedIntoMachine = {
+      ...SIGNING_INPUT,
+      machineId: 'xian-mac-m4\njob-prefix',
+      jobId: 'job-suffix',
+    };
+    const shiftedIntoJob = {
+      ...SIGNING_INPUT,
+      machineId: 'xian-mac-m4',
+      jobId: 'job-prefix\njob-suffix',
+    };
+
+    expect(() => signMachineAttestation(shiftedIntoMachine))
+      .toThrow('invalid_machine_attestation_machineId');
+    expect(() => signMachineAttestation(shiftedIntoJob))
+      .toThrow('invalid_machine_attestation_jobId');
+    expect(() => verifyMachineAttestation({
+      ...shiftedIntoMachine,
+      attestation: '0'.repeat(64),
+    })).toThrow('invalid_machine_attestation_machineId');
+    expect(() => verifyMachineAttestation({
+      ...shiftedIntoJob,
+      attestation: '0'.repeat(64),
+    })).toThrow('invalid_machine_attestation_jobId');
   });
 });

@@ -129,12 +129,29 @@ describe('execution transport routing', () => {
   ) => {
     const { local, remote, router } = createRouter();
 
-    await expect(Promise.resolve().then(() => router[operation](input))).rejects.toThrow(
+    await expect(router[operation](input)).rejects.toThrow(
       `execution_transport_unavailable:${machine}`,
     );
     expect(local[operation]).not.toHaveBeenCalled();
     expect(remote[operation]).not.toHaveBeenCalled();
   });
+
+  it.each(['inspect', 'cancel'])(
+    '%s converts a synchronous selected-transport error into a rejected promise without fallback',
+    async (operation) => {
+      const { local, remote, router } = createRouter();
+      const transportFailure = new Error(`local-${operation}-sync-failed`);
+      local[operation].mockImplementationOnce(() => {
+        throw transportFailure;
+      });
+
+      await expect(router[operation]({
+        target: { machine: 'us-mac-m4' },
+      })).rejects.toBe(transportFailure);
+      expect(local[operation]).toHaveBeenCalledOnce();
+      expect(remote[operation]).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ['launch', 'us-mac-m4', 'local', 'remote'],
