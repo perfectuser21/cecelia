@@ -42,6 +42,14 @@ function poolWithActiveCount(count = 0) {
   };
 }
 
+function execWithLiveCodexCount(count) {
+  const names = Array.from(
+    { length: count },
+    (_, index) => `cecelia-relay-${(index + 100).toString(16).padStart(8, '0')}-cx-${(index + 200).toString(16).padStart(8, '0')}`,
+  ).join('\n');
+  return vi.fn((cmd) => cmd.includes('--format') ? names : '');
+}
+
 function makeDeps(overrides = {}) {
   return {
     pool: poolWithActiveCount(0),
@@ -95,6 +103,67 @@ describe('One Session Codex total concurrency is four on the same team1 account'
     const deps = makeDeps({ pool });
 
     const result = await spawnSkillRelaySession(codexTask(10), deps);
+
+    expect(result).toMatchObject({
+      ok: false,
+      deferred: true,
+      reason: 'codex_concurrent_limit',
+    });
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('four live exact-name Docker relays block launch even when DB has zero active rows', async () => {
+    const deps = makeDeps({
+      pool: poolWithActiveCount(0),
+      execFn: execWithLiveCodexCount(4),
+    });
+
+    const result = await spawnSkillRelaySession(codexTask(11), deps);
+
+    expect(result).toMatchObject({
+      ok: false,
+      deferred: true,
+      reason: 'codex_concurrent_limit',
+    });
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('one Docker-only orphan leaves exactly three launch reservations', async () => {
+    let release;
+    const launchBarrier = new Promise((resolve) => { release = resolve; });
+    const spawnFn = vi.fn(() => launchBarrier);
+    const deps = makeDeps({
+      pool: poolWithActiveCount(0),
+      execFn: execWithLiveCodexCount(1),
+      spawnFn,
+    });
+
+    const firstThree = [12, 13, 14].map((index) =>
+      spawnSkillRelaySession(codexTask(index), deps));
+    await vi.waitFor(() => expect(spawnFn).toHaveBeenCalledTimes(3));
+
+    const fourthPromise = spawnSkillRelaySession(codexTask(15), deps);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    release({ containerId: 'released' });
+    await Promise.all(firstThree);
+    const fourth = await fourthPromise;
+
+    expect(fourth).toMatchObject({
+      ok: false,
+      deferred: true,
+      reason: 'codex_concurrent_limit',
+    });
+    expect(spawnFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('Docker capacity query failure is fail-closed', async () => {
+    const deps = makeDeps({
+      execFn: vi.fn(() => {
+        throw new Error('docker unavailable');
+      }),
+    });
+
+    const result = await spawnSkillRelaySession(codexTask(16), deps);
 
     expect(result).toMatchObject({
       ok: false,
@@ -268,7 +337,7 @@ describe('Codex credential snapshot lifecycle', () => {
     expect(deps.cleanupCodexHome).toHaveBeenCalledWith(containerId);
   });
 
-  it('failed exact removal retains capacity until a later launch reconciles the orphan', async () => {
+  it('failed exact removal remains capacity-visible through Docker after process state resets', async () => {
     const insertFailurePool = {
       query: vi.fn(async (sql) => {
         if (/SELECT COUNT\(\*\)/.test(sql)) {
@@ -280,10 +349,7 @@ describe('Codex credential snapshot lifecycle', () => {
         return { rows: [] };
       }),
     };
-    const removeContainerFn = vi.fn()
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+    const removeContainerFn = vi.fn().mockResolvedValue(false);
     const cleanupCodexHome = vi.fn();
     const failedDeps = makeDeps({
       pool: insertFailurePool,
@@ -292,36 +358,63 @@ describe('Codex credential snapshot lifecycle', () => {
     });
 
     const failed = await spawnSkillRelaySession(codexTask(42), failedDeps);
-    const orphanContainerId = failedDeps.snapshotCodexHome.mock.calls[0][1];
-
     expect(failed.ok).toBe(false);
     expect(cleanupCodexHome).not.toHaveBeenCalled();
 
-    const blockedDeps = makeDeps({
-      pool: poolWithActiveCount(3),
-      removeContainerFn,
-      cleanupCodexHome,
+    // 模拟 Brain 重启：进程内 reservation 清零，但存活容器仍是外部真相。
+    _setActiveCodexRelays(0);
+    let release;
+    const launchBarrier = new Promise((resolve) => { release = resolve; });
+    const spawnFn = vi.fn(() => launchBarrier);
+    const restartDeps = makeDeps({
+      pool: poolWithActiveCount(0),
+      execFn: execWithLiveCodexCount(1),
+      spawnFn,
     });
-    const blocked = await spawnSkillRelaySession(codexTask(43), blockedDeps);
+    const firstThree = [43, 44, 45].map((index) =>
+      spawnSkillRelaySession(codexTask(index), restartDeps));
+    await vi.waitFor(() => expect(spawnFn).toHaveBeenCalledTimes(3));
+    const blockedPromise = spawnSkillRelaySession(codexTask(46), restartDeps);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    release({ containerId: 'released' });
+    await Promise.all(firstThree);
+    const blocked = await blockedPromise;
 
     expect(blocked).toMatchObject({
       ok: false,
       deferred: true,
       reason: 'codex_concurrent_limit',
     });
-    expect(blockedDeps.spawnFn).not.toHaveBeenCalled();
-    expect(cleanupCodexHome).not.toHaveBeenCalled();
+    expect(spawnFn).toHaveBeenCalledTimes(3);
+  });
 
+  it('an already-absent container never strands process capacity after rm returns false', async () => {
+    const insertFailurePool = {
+      query: vi.fn(async (sql) => {
+        if (/SELECT COUNT\(\*\)/.test(sql)) {
+          return { rows: [{ count: '0' }] };
+        }
+        if (/INSERT INTO initiative_runs/.test(sql)) {
+          throw new Error('initiative_runs unavailable');
+        }
+        return { rows: [] };
+      }),
+    };
+    const failedDeps = makeDeps({
+      pool: insertFailurePool,
+      removeContainerFn: vi.fn().mockResolvedValue(false),
+    });
+    const failed = await spawnSkillRelaySession(codexTask(47), failedDeps);
+    expect(failed.ok).toBe(false);
+
+    _setActiveCodexRelays(0);
     const recoveredDeps = makeDeps({
       pool: poolWithActiveCount(3),
-      removeContainerFn,
-      cleanupCodexHome,
+      execFn: execWithLiveCodexCount(0),
     });
-    const recovered = await spawnSkillRelaySession(codexTask(44), recoveredDeps);
+    const recovered = await spawnSkillRelaySession(codexTask(48), recoveredDeps);
 
     expect(recovered.ok).toBe(true);
-    expect(removeContainerFn).toHaveBeenCalledTimes(3);
-    expect(cleanupCodexHome).toHaveBeenCalledWith(orphanContainerId);
   });
 
   it('terminal fallback removes only complete matching IDs for this task', () => {
