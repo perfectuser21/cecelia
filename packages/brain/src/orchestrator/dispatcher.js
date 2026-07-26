@@ -191,13 +191,13 @@ export function createDispatcher(deps) {
     const roleAssignment = asObject(asObject(payload.role_assignments)[spec.role]);
     const requestedProvider = roleAssignment.provider ?? payload.executor ?? payload.provider ?? 'auto';
     const requestedAccount = roleAssignment.account ?? payload.executor_account ?? null;
-    const adapter = spec.role === 'judge' ? null : deps.registry.resolve({
+    let adapter = spec.role === 'judge' ? null : deps.registry.resolve({
       provider: requestedProvider,
       requires: ['structured_output'],
     });
-    const accountHome = spec.role === 'judge' || !requestedAccount
-      ? null
-      : resolveAccountHome(adapter.name, requestedAccount);
+    let selectedAccount = requestedAccount;
+    let selectedMachine = machineId;
+    let accountHome = null;
     const rawCapabilityRequirements = payload.contract_requirements
       ?? payload.capability_requirements
       ?? null;
@@ -207,8 +207,8 @@ export function createDispatcher(deps) {
     });
 
     if (rawCapabilityRequirements && !deps.preflightGate && spec.role !== 'judge') {
-      return {
-        status: 'DONE_WITH_CONCERNS',
+      const blocked = {
+        status: 'BLOCKED',
         detail: 'dispatch preflight blocked: capability_gate_unavailable',
         action: 'wait:human_review',
         failure_class: 'infrastructure_blocked',
@@ -216,6 +216,8 @@ export function createDispatcher(deps) {
         should_create_attempt: false,
         should_enter_generator_fix: false,
       };
+      await deps.onPreflightBlocked?.(blocked, { action, ctx });
+      return blocked;
     }
 
     if (deps.preflightGate && spec.role !== 'judge') {
@@ -234,11 +236,13 @@ export function createDispatcher(deps) {
         task_bundle: taskBundle,
       });
       if (preflight.status !== 'ok') {
-        return {
+        const blocked = {
           ...preflight,
-          status: 'DONE_WITH_CONCERNS',
+          status: 'BLOCKED',
           detail: `dispatch preflight blocked: ${preflight.fallback_reason}`,
         };
+        await deps.onPreflightBlocked?.(blocked, { action, ctx });
+        return blocked;
       }
 
       const freshness = await deps.preflightGate.validateSnapshotForDispatch(
@@ -246,12 +250,25 @@ export function createDispatcher(deps) {
         taskBundle,
       );
       if (freshness.status !== 'ok') {
-        return {
+        const blocked = {
           ...freshness,
-          status: 'DONE_WITH_CONCERNS',
+          status: 'BLOCKED',
           detail: `dispatch preflight blocked: ${freshness.fallback_reason}`,
         };
+        await deps.onPreflightBlocked?.(blocked, { action, ctx });
+        return blocked;
       }
+      const selectedTarget = preflight.to_target ?? {
+        provider: preflight.snapshot.provider,
+        account: preflight.snapshot.account,
+        machine: preflight.snapshot.machine,
+      };
+      adapter = deps.registry.resolve({
+        provider: selectedTarget.provider,
+        requires: ['structured_output'],
+      });
+      selectedAccount = selectedTarget.account;
+      selectedMachine = selectedTarget.machine;
       bundle = {
         ...bundle,
         inputs: {
@@ -260,6 +277,9 @@ export function createDispatcher(deps) {
           capability_evidence: preflight.evidence,
         },
       };
+    }
+    if (spec.role !== 'judge' && selectedAccount) {
+      accountHome = resolveAccountHome(adapter.name, selectedAccount);
     }
 
     const persisted = await deps.attemptStore.createAttempt({
@@ -270,8 +290,8 @@ export function createDispatcher(deps) {
       phase: bundle.phase,
       role: spec.role,
       provider: spec.role === 'judge' ? 'independent-judge' : adapter.name,
-      accountId: requestedAccount,
-      machineId,
+      accountId: selectedAccount,
+      machineId: selectedMachine,
       bundle,
       callbackSecretHash: hashCallbackSecret(callbackSecret),
     });

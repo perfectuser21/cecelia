@@ -21,6 +21,8 @@ import { grokAdapter } from './providers/grok.js';
 import { loadSkillBundle } from './skill-bundle.js';
 import { createKernelHandlers } from './kernel-handlers.js';
 import { readGitArtifact } from './git-artifact-reader.js';
+import { createCapabilityGate } from './preflight/capability-gate.js';
+import { createProductionCapabilityProbes } from './preflight/production-probes.js';
 
 /** 解析 --task-id / --run-id / --dry-run */
 export function parseArgs(argv) {
@@ -106,6 +108,22 @@ export async function buildRealDeps(overrides = {}) {
   let dispatch = overrides.dispatch;
   if (!dispatch) {
     const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
+    const productionProbes = overrides.productionProbes
+      ?? createProductionCapabilityProbes({
+        pool,
+        registry,
+        fetchFn: overrides.fetchFn,
+        resolveGitHubTokenFn: overrides.resolveGitHubToken,
+        brainUrl: overrides.brainUrl,
+        env: overrides.env,
+        requestTimeoutMs: overrides.preflightRequestTimeoutMs,
+      });
+    const preflightGate = overrides.preflightGate
+      ?? createCapabilityGate({
+        ...productionProbes,
+        probeTimeoutMs: overrides.preflightProbeTimeoutMs ?? 6_000,
+        snapshotTtlMs: overrides.preflightSnapshotTtlMs ?? 1_000,
+      });
     const detached = await import('../spawn/detached.js');
     const spawnDetached = overrides.spawnDetached ?? detached.spawnDockerDetached;
     const removeContainer = overrides.removeContainer ?? detached.removeDockerContainer;
@@ -116,12 +134,29 @@ export async function buildRealDeps(overrides = {}) {
     });
     const handlers = overrides.handlers
       ?? await buildDefaultHandlers({ pool, execCmd, attemptStore });
+    const onPreflightBlocked = overrides.onPreflightBlocked
+      ?? (async (blocked) => {
+        const { raise } = await import('../alerting.js');
+        const reason = blocked.fallback_reason ?? 'unknown';
+        const evidence = JSON.stringify(blocked.evidence ?? {}).slice(0, 2_000);
+        await raise(
+          'P1',
+          `kernel_capability_preflight_${reason}`,
+          `Kernel capability preflight blocked: ${reason} ${evidence}`,
+        );
+      });
     dispatch = createDispatcher({
       attemptStore,
       registry,
       launcher,
       loadSkill: overrides.loadSkill ?? loadSkillBundle,
       handlers,
+      preflightGate,
+      machineId: overrides.machineId ?? process.env.CECELIA_MACHINE_ID,
+      resolveAccountHome: overrides.resolveAccountHome,
+      randomUUID: overrides.randomUUID,
+      createCallbackSecret: overrides.createCallbackSecret,
+      onPreflightBlocked,
     });
   }
   return {
