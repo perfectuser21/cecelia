@@ -140,4 +140,39 @@ describe('attempt-telemetry', () => {
       code: 'telemetry_not_found',
     });
   });
+
+  it('legacy null logical_cycle_id 的计数与响应 fallback 使用同一口径', async () => {
+    const db = {
+      query: async (sql) => {
+        if (sql.includes('JOIN initiative_runs')) return { rows: [{ id: 'run-legacy' }] };
+        return {
+          rows: [{
+            id: 'attempt-legacy',
+            run_id: 'run-legacy',
+            hop: 1,
+            role: 'generator',
+            status: 'completed',
+            logical_cycle_id: null,
+            attempt_kind: null,
+            retry_of_attempt_id: null,
+            restart_reason: null,
+            workstream_key: null,
+            time_derived: false,
+            created_at: '2026-07-26T00:00:00.000Z',
+            started_at: '2026-07-26T00:00:00.500Z',
+            completed_at: '2026-07-26T00:00:01.500Z',
+            result: null,
+          }],
+        };
+      },
+    };
+
+    const telemetry = await queryAttemptTelemetry(db, {
+      taskId: 'task-legacy',
+      tenantId: 'tenant-a',
+    });
+
+    expect(telemetry.logical_cycle_count).toBe(1);
+    expect(telemetry.attempts[0].logical_cycle_id).toBe('run:run-legacy');
+  });
 });
