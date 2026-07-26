@@ -23,7 +23,8 @@ path and its callback cleanup:
 - snapshots move from Brain container `/tmp` to a host-visible directory;
 - each snapshot is deleted by its exact container identity on launch failure
   or controller callback;
-- Brain version metadata is bumped in the four repository SSOT files.
+- Brain version metadata is synchronized across the four version files plus
+  the append-only `.brain-versions` DevGate ledger.
 
 It does not add an account allocator, mount `team2` through `team5`, change
 headed relay behavior, stop existing containers, add a database migration, or

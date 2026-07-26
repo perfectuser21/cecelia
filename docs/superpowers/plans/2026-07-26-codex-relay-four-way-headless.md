@@ -16,17 +16,18 @@
 - Modify `packages/brain/src/harness-skill-relay.js`: total-four reservation/DB gate, unique Codex run identity, snapshot lifecycle integration.
 - Modify `packages/brain/src/routes/harness-callback.js`: exact per-container snapshot cleanup before relay acknowledgement.
 - Modify `packages/brain/src/harness-relay-watchdog.js`: exact no-callback cleanup after a successful overdue-to-failed transition.
-- Replace `packages/brain/src/__tests__/harness-skill-relay-account-buckets.test.js`: approved same-team1 total-four contract.
+- Replace `packages/brain/src/__tests__/harness-skill-relay-codex-four-way.test.js`: approved same-team1 total-four contract.
 - Modify `packages/brain/src/__tests__/harness-relay-watchdog.test.js`: task-scoped cleanup and lost-race regression.
 - Modify `packages/brain/src/routes/__tests__/harness-callback.test.js`: callback cleanup regression.
 - Modify `packages/brain/scripts/smoke/codex-cred-isolation-smoke.sh`: host-visible root and exact cleanup behavior.
 - Modify `docker-compose.yml`: change `CODEX_RELAY_HOME` default from team2 to the already mounted team1; do not add mounts.
 - Modify `DEFINITION.md`, `packages/brain/VERSION`, `packages/brain/package.json`, `packages/brain/package-lock.json`: synchronized Brain patch version.
+- Modify `.brain-versions`: append the same version as the DevGate ledger entry; preserve all prior lines.
 
 ### Task 1: Replace the rejected Red contract
 
 **Files:**
-- Modify: `packages/brain/src/__tests__/harness-skill-relay-account-buckets.test.js`
+- Modify: `packages/brain/src/__tests__/harness-skill-relay-codex-four-way.test.js`
 
 - [ ] **Step 1: Replace per-account and team2–5 tests with total-four tests**
 
@@ -93,7 +94,7 @@ Run:
 
 ```bash
 cd packages/brain
-npx vitest run src/__tests__/harness-skill-relay-account-buckets.test.js
+npx vitest run src/__tests__/harness-skill-relay-codex-four-way.test.js
 ```
 
 Expected: failures show the old `> 0` concurrency guard, container-local
@@ -103,7 +104,7 @@ team2 default.
 - [ ] **Step 4: Commit the approved Red contract**
 
 ```bash
-git add packages/brain/src/__tests__/harness-skill-relay-account-buckets.test.js
+git add packages/brain/src/__tests__/harness-skill-relay-codex-four-way.test.js
 git commit -m "test(brain): define four-way codex relay contract (red)"
 ```
 
@@ -192,7 +193,7 @@ unchanged.
 
 ```bash
 cd packages/brain
-npx vitest run src/__tests__/harness-skill-relay-account-buckets.test.js
+npx vitest run src/__tests__/harness-skill-relay-codex-four-way.test.js
 cd ../..
 bash packages/brain/scripts/smoke/codex-cred-isolation-smoke.sh
 ```
@@ -293,7 +294,7 @@ Keep the single existing team1 read-only volume. Do not add team2–5 volumes.
 
 ```bash
 cd packages/brain
-npx vitest run src/__tests__/harness-skill-relay-account-buckets.test.js \
+npx vitest run src/__tests__/harness-skill-relay-codex-four-way.test.js \
   src/__tests__/harness-skill-relay.test.js \
   src/__tests__/headed-dispatch.test.js
 ```
@@ -367,7 +368,7 @@ cd packages/brain
 npx vitest run src/routes/__tests__/harness-callback.test.js \
   src/routes/__tests__/harness-callback-auth-alert.test.js \
   src/__tests__/relay-v101.test.js \
-  src/__tests__/harness-skill-relay-account-buckets.test.js
+  src/__tests__/harness-skill-relay-codex-four-way.test.js
 ```
 
 Expected: all tests pass.
@@ -408,7 +409,7 @@ only the two complete current-task IDs are removed.
 ```bash
 cd packages/brain
 npx vitest run src/__tests__/harness-relay-watchdog.test.js \
-  src/__tests__/harness-skill-relay-account-buckets.test.js
+  src/__tests__/harness-skill-relay-codex-four-way.test.js
 ```
 
 Expected: watchdog cleanup injection has zero calls and the cleanup export is
@@ -447,7 +448,7 @@ matching container IDs. It never passes a filesystem prefix to `rmSync`.
 cd packages/brain
 npx vitest run src/__tests__/harness-relay-watchdog.test.js \
   src/__tests__/harness-relay-watchdog-gates.test.js \
-  src/__tests__/harness-skill-relay-account-buckets.test.js
+  src/__tests__/harness-skill-relay-codex-four-way.test.js
 ```
 
 Expected: all tests pass.
@@ -457,7 +458,7 @@ Expected: all tests pass.
 ```bash
 git add packages/brain/src/harness-relay-watchdog.js \
   packages/brain/src/__tests__/harness-relay-watchdog.test.js \
-  packages/brain/src/__tests__/harness-skill-relay-account-buckets.test.js
+  packages/brain/src/__tests__/harness-skill-relay-codex-four-way.test.js
 git commit -m "fix(brain): clean orphaned codex relay snapshots"
 ```
 
@@ -478,6 +479,7 @@ DEFINITION.md                       **Brain 版本**: 1.267.78
 packages/brain/VERSION              1.267.78
 packages/brain/package.json         "version": "1.267.78"
 packages/brain/package-lock.json    both top-level version fields
+.brain-versions                     append 1.267.78; never truncate history
 ```
 
 - [ ] **Step 2: Run version/facts verification**
@@ -508,7 +510,7 @@ git commit -m "chore(brain): bump version for codex relay hotfix"
 ```bash
 cd packages/brain
 npx vitest run \
-  src/__tests__/harness-skill-relay-account-buckets.test.js \
+  src/__tests__/harness-skill-relay-codex-four-way.test.js \
   src/__tests__/harness-skill-relay.test.js \
   src/__tests__/headed-dispatch.test.js \
   src/__tests__/harness-relay-watchdog.test.js \
