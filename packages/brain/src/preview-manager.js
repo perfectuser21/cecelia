@@ -49,7 +49,7 @@ export async function allocatePreview(prNumber, branchName, baseRepo = 'cecelia'
 export async function markPreviewActive(prNumber, dbPool = pool) {
   await dbPool.query(
     `UPDATE preview_environments SET status = 'active', updated_at = NOW()
-     WHERE pr_number = $1`,
+     WHERE pr_number = $1 AND status != 'inactive'`,
     [prNumber],
   );
 }
