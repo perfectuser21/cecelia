@@ -232,6 +232,26 @@ function freezeLaunchReceipt(receipt, target) {
   });
 }
 
+function errorMessage(error) {
+  return error?.message ?? String(error);
+}
+
+function unsafeCancelDiagnostic(result) {
+  if (result?.status === 'cancelled' || result?.status === 'missing') return null;
+  const status = result?.status ?? 'unknown';
+  const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
+  return `orphan cancellation unsafe: ${status}${httpStatus}`;
+}
+
+async function cancelAfterLaunch(launcher, { attempt, target, launchReceipt }) {
+  try {
+    const result = await launcher.cancel({ attempt, target, launchReceipt });
+    return unsafeCancelDiagnostic(result);
+  } catch (error) {
+    return `orphan cancellation failed: ${errorMessage(error)}`;
+  }
+}
+
 export function createDispatcher(deps) {
   const randomUUID = deps.randomUUID ?? nodeRandomUUID;
   const machineId = deps.machineId ?? process.env.CECELIA_MACHINE_ID ?? os.hostname();
@@ -430,13 +450,14 @@ export function createDispatcher(deps) {
       callbackSecret,
     };
 
+    let rawReceipt;
     let launched;
     try {
       const adapterSpec = adapter.start({
         bundle,
         execution: executionConfig(payload, { provider: adapter.name, accountHome }),
       });
-      launched = freezeLaunchReceipt(await deps.launcher.launch({
+      rawReceipt = await deps.launcher.launch({
         attempt,
         bundle,
         spec: adapterSpec,
@@ -444,15 +465,30 @@ export function createDispatcher(deps) {
         task: ctx.observed.task,
         target: selectedTarget,
         leaseClaimed: true,
-      }), selectedTarget);
+      });
+      launched = freezeLaunchReceipt(rawReceipt, selectedTarget);
     } catch (error) {
+      const cancelDiagnostic = await cancelAfterLaunch(deps.launcher, {
+        attempt,
+        target: selectedTarget,
+        launchReceipt: rawReceipt,
+      });
+      const message = [
+        errorMessage(error),
+        cancelDiagnostic,
+      ].filter(Boolean).join('; ');
       try {
         await deps.attemptStore.fail(attempt.id, {
           code: 'launch_failed',
-          message: error.message,
-        }, { leaseOwner: attempt.lease_owner });
+          message,
+        }, {
+          leaseOwner: attempt.lease_owner,
+          leaseGeneration: attempt.lease_generation,
+        });
       } catch (failError) {
-        error.failurePersistenceError = failError;
+        if (error && typeof error === 'object') {
+          error.failurePersistenceError = failError;
+        }
       }
       throw error;
     }
@@ -462,6 +498,7 @@ export function createDispatcher(deps) {
     try {
       receiptRow = await deps.attemptStore.recordLaunchReceipt(attempt.id, {
         leaseOwner: attempt.lease_owner,
+        leaseGeneration: attempt.lease_generation,
         actualMachineId: launched.actualMachineId,
         executionTransport: launched.executionTransport,
         remoteJobId: launched.remoteJobId,
@@ -475,27 +512,27 @@ export function createDispatcher(deps) {
     }
 
     if (receiptError) {
-      let cancelError = null;
-      try {
-        await deps.launcher.cancel({
-          attempt,
-          target: selectedTarget,
-          launchReceipt: launched,
-        });
-      } catch (error) {
-        cancelError = error;
-      }
+      const cancelDiagnostic = await cancelAfterLaunch(deps.launcher, {
+        attempt,
+        target: selectedTarget,
+        launchReceipt: launched,
+      });
       const message = [
-        `launch receipt persistence failed: ${receiptError.message}`,
-        cancelError ? `orphan cancellation failed: ${cancelError.message}` : null,
+        `launch receipt persistence failed: ${errorMessage(receiptError)}`,
+        cancelDiagnostic,
       ].filter(Boolean).join('; ');
       try {
         await deps.attemptStore.fail(attempt.id, {
           code: 'launch_receipt_persist_failed',
           message,
-        }, { leaseOwner: attempt.lease_owner });
+        }, {
+          leaseOwner: attempt.lease_owner,
+          leaseGeneration: attempt.lease_generation,
+        });
       } catch (failError) {
-        receiptError.failurePersistenceError = failError;
+        if (receiptError && typeof receiptError === 'object') {
+          receiptError.failurePersistenceError = failError;
+        }
       }
       const error = new Error(`launch_receipt_persist_failed: ${message}`);
       error.cause = receiptError;
@@ -523,18 +560,42 @@ export function createDetachedLauncher({
   ensureDir = mkdirSync,
   machineId = 'us-mac-m4',
 }) {
+  const requestedContainerId = (attempt, generation = null) => {
+    const generationSuffix = generation == null
+      ? ''
+      : `-g${String(generation).replace(/[^a-zA-Z0-9_-]/g, '') || '0'}`;
+    return `cecelia-harness-${String(attempt?.id).slice(0, 8)}${generationSuffix}`;
+  };
+  const removeCandidates = async (containerIds) => {
+    const results = [];
+    for (const containerId of [...new Set(containerIds.filter(Boolean))]) {
+      try {
+        results.push(await removeContainer(containerId));
+      } catch {
+        results.push(false);
+      }
+    }
+    return results;
+  };
+
   return Object.freeze({
     async launch({ attempt, bundle, spec, task, leaseClaimed = false, generation = null }) {
       let activeLeaseOwner = leaseOwner;
+      let activeLeaseGeneration = attempt?.lease_generation ?? 0;
       if (!leaseClaimed) {
         const starting = await attemptStore.markStarting(attempt.id, { leaseOwner, leaseSeconds });
         if (!starting) throw new Error(`attempt_lease_conflict: ${attempt.id}`);
         activeLeaseOwner = starting.lease_owner ?? leaseOwner;
+        activeLeaseGeneration = starting.lease_generation ?? 0;
       } else {
         if (!attempt?.lease_owner) {
           throw new Error(`attempt_lease_owner_missing: ${attempt?.id ?? 'unknown'}`);
         }
+        if (!Number.isInteger(attempt?.lease_generation) || attempt.lease_generation < 0) {
+          throw new Error(`attempt_lease_generation_missing: ${attempt?.id ?? 'unknown'}`);
+        }
         activeLeaseOwner = attempt.lease_owner;
+        activeLeaseGeneration = attempt.lease_generation;
       }
       try {
       const labels = {
@@ -603,10 +664,7 @@ export function createDetachedLauncher({
         ? spec.args[resumeFlagIndex + 1]
         : (resumeCommandIndex >= 0 ? spec.args[resumeCommandIndex + 1] : null);
       if (resumeSessionId) providerEnv.HARNESS_RESUME_SESSION_ID = resumeSessionId;
-      const generationSuffix = generation == null
-        ? ''
-        : `-g${String(generation).replace(/[^a-zA-Z0-9_-]/g, '') || '0'}`;
-      const containerId = `cecelia-harness-${String(attempt.id).slice(0, 8)}${generationSuffix}`;
+      const containerId = requestedContainerId(attempt, generation);
       if (generation != null) await removeContainer(containerId);
       const launched = await spawnDetached({
           containerId,
@@ -633,12 +691,22 @@ export function createDetachedLauncher({
             BRAIN_URL: brainUrl,
           },
         });
+        if (typeof launched?.containerId !== 'string' || launched.containerId.length === 0) {
+          await removeCandidates([containerId]);
+          throw new Error(`local_launch_container_id_missing: ${containerId}`);
+        }
+        if (launched.containerId !== containerId) {
+          await removeCandidates([launched.containerId, containerId]);
+          throw new Error(
+            `local_launch_container_id_mismatch: expected ${containerId}, got ${launched.containerId}`,
+          );
+        }
         return Object.freeze({
           actualMachineId: machineId,
           executionTransport: 'local-docker',
           remoteJobId: null,
           attestationStatus: 'local',
-          containerId: launched?.containerId ?? containerId,
+          containerId: launched.containerId,
           jobId: null,
         });
       } catch (error) {
@@ -646,7 +714,10 @@ export function createDetachedLauncher({
           await attemptStore.fail(attempt.id, {
             code: 'launch_failed',
             message: error.message,
-          }, { leaseOwner: activeLeaseOwner });
+          }, {
+            leaseOwner: activeLeaseOwner,
+            leaseGeneration: activeLeaseGeneration,
+          });
         }
         throw error;
       }
@@ -657,17 +728,18 @@ export function createDetachedLauncher({
         reason: 'local_inspection_unavailable',
       };
     },
-    async cancel({ launchReceipt } = {}) {
-      const containerId = launchReceipt?.containerId;
-      if (!containerId) {
+    async cancel({ attempt, launchReceipt } = {}) {
+      if (!attempt?.id && !launchReceipt?.containerId) {
         return {
           status: 'unavailable',
           reason: 'local_container_id_missing',
         };
       }
-      const removed = await removeContainer(containerId);
+      const containerId = launchReceipt?.containerId ?? requestedContainerId(attempt);
+      const requestedId = attempt?.id ? requestedContainerId(attempt) : null;
+      const removed = await removeCandidates([containerId, requestedId]);
       return {
-        status: removed ? 'cancelled' : 'missing',
+        status: removed.some(Boolean) ? 'cancelled' : 'missing',
         containerId,
       };
     },
