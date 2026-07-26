@@ -173,6 +173,6 @@ describe('attempt-telemetry', () => {
     });
 
     expect(telemetry.logical_cycle_count).toBe(1);
-    expect(telemetry.attempts[0].logical_cycle_id).toBe('run:run-legacy');
+    expect(telemetry.attempts[0].logical_cycle_id).toBe('intent:run-legacy:1');
   });
 });
