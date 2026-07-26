@@ -4,7 +4,7 @@
 
 **Goal:** Remove the Test Contract double-path bug and the CI-before-graduation deadlock without allowing unregistered sprint tests.
 
-**Architecture:** A shared CommonJS module owns Test Contract parsing, canonical E2E extraction, and safe path resolution so the CommonJS coverage checker, ESM evaluator, and ESM pyramid guard cannot drift. The pyramid guard retains raw artifact reporting but applies the zero orphan baseline only to artifacts registered by the same sprint contract; the ratchet imports that exact classification. Canonical contract fallback is allowed only when `contract-draft.md` is absent (`ENOENT`), never after other read errors.
+**Architecture:** A shared CommonJS module owns Test Contract parsing, canonical E2E extraction, and safe path resolution so the CommonJS coverage checker, ESM evaluator, default evaluator Skill, and ESM pyramid guard cannot drift. A repository CLI exposes that parser to the Skill's non-Windows Step B-1; one recognized H2+ E2E section may contain multiple bash fences, concatenated in order, and internal H3 subsections do not terminate the section before the next H2. The pyramid guard retains raw artifact reporting but applies the zero orphan baseline only to artifacts registered by the same sprint contract; the ratchet imports that exact classification. Canonical contract fallback is allowed only when `contract-draft.md` is absent (`ENOENT`), never after other read errors.
 
 **Tech Stack:** Node.js 22, CommonJS/ESM interop, Vitest, GitHub Actions shell gates.
 
@@ -120,9 +120,11 @@ Cover a same-sprint contract registering one test and `e2e-verify.sh`, an unregi
 
 Also cover the Harness-native E2E form used by live contracts: a canonical
 `## E2E 验收` fenced `bash` block registers the same sprint's
-`e2e-verify.sh` only when normalized contents match. Missing, duplicate, or
-drifted E2E blocks remain unregistered. Drive the real evaluator export through
-the same shared parser, reject ambiguous evaluator-recognized E2E headings, and
+`e2e-verify.sh` only when normalized contents match. Missing, empty, ambiguous,
+or drifted E2E evidence remains unregistered; multiple bash blocks in one E2E
+section are concatenated in document order. Drive the real evaluator export and
+default evaluator Skill CLI through the same shared parser, reject ambiguous
+evaluator-recognized E2E headings, and
 prove a non-`ENOENT` canonical read failure cannot fall back to a stale secondary
 contract.
 

@@ -326,7 +326,7 @@ describe('classifySprintArtifacts', () => {
       [
         '# Contract',
         '',
-        '### E2E smoke suffix',
+        '### E2E 验收 smoke suffix',
         '',
         '```bash',
         'echo broad',
@@ -339,6 +339,58 @@ describe('classifySprintArtifacts', () => {
       raw: { e2e: 1, total: 1 },
       registered: { e2e: 1, total: 1 },
       unregistered: { total: 0 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('registers matching concatenated bash fences from one E2E section', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-multi-block-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(sprintDir, { recursive: true });
+    writeFileSync(
+      path.join(sprintDir, 'e2e-verify.sh'),
+      'echo first\necho second\n',
+    );
+    writeFileSync(
+      path.join(sprintDir, 'contract-draft.md'),
+      [
+        '# Contract',
+        '',
+        '## E2E 验收',
+        '',
+        '```bash',
+        'echo first',
+        '```',
+        '',
+        '```bash',
+        'echo second',
+        '```',
+        '',
+      ].join('\n'),
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      registered: { e2e: 1, total: 1 },
+      unregistered: { total: 0 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('does not recognize an inline E2E pseudo-heading', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-inline-heading-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(sprintDir, { recursive: true });
+    writeFileSync(path.join(sprintDir, 'e2e-verify.sh'), 'echo inline\n');
+    writeFileSync(
+      path.join(sprintDir, 'contract-draft.md'),
+      'paragraph ## E2E 验收\n```bash\necho inline\n```\n',
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      registered: { total: 0 },
+      unregistered: { e2e: 1, total: 1 },
     });
 
     rmSync(fixture, { recursive: true, force: true });
@@ -414,11 +466,6 @@ describe('classifySprintArtifacts', () => {
   it.each([
     ['has no E2E section', '# Not E2E\n\n```bash\necho ok\n```', 'echo ok\n'],
     ['has no bash block', '## E2E 验收\n\nNo executable evidence.', 'echo ok\n'],
-    [
-      'has multiple bash blocks',
-      '## E2E 验收\n\n```bash\necho ok\n```\n\n```bash\necho ok\n```',
-      'echo ok\n',
-    ],
     [
       'changes a command',
       '## E2E 验收\n\n```bash\necho different\n```',

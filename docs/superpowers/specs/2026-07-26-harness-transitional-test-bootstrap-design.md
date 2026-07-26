@@ -35,9 +35,11 @@ PR #4342 与后续 Harness PR 能进入真实 Evaluator/Judge，而不放宽
   `tests/regression/<slug>/...` 或 `scripts/smoke/e2e/<slug>.sh`。
 - 候选必须位于仓库根内；绝对路径、`..` 越界和无法归一化的路径
   fail-closed。
-- E2E 登记与 `packages/engine/src/harness/evaluate.js` 必须调用同一个共享
-  parser；任何 evaluator 可识别的多个 E2E 段或多个 bash fence 都
-  fail-closed，避免登记口径与实际执行口径漂移。
+- E2E 登记、`packages/engine/src/harness/evaluate.js` 与默认
+  `harness-evaluator` Step B-1 必须调用同一个共享 parser；仅识别行首
+  H2+ `E2E 验收` 标题，多个 E2E 段 fail-closed；段落沿用 Skill 的下一个
+  H2 边界（内部 H3 不截断），多个 bash fence 按文档顺序拼接，保持
+  evaluator v1.22 兼容。
 
 `check-test-coverage.cjs` 和过渡测试登记器必须复用该解析器，避免双口径。
 
@@ -55,8 +57,9 @@ PR #4342 与后续 Harness PR 能进入真实 Evaluator/Judge，而不放宽
 报告数量，但不触发 A1；因此它们可以先在 PR CI 运行，Judge PASS 后再按
 既有流程毕业。仅仅新建合同文件不能掩盖任意测试：引用必须解析到同一
 sprint 内的真实测试文件。`e2e-verify.sh` 不能仅凭固定文件名登记：
-canonical 合同必须存在唯一可解析的 E2E bash 代码块，且脚本内容必须
-与代码块一致；缺段、多个代码块或内容漂移均 fail-closed。
+canonical 合同必须存在唯一可解析的 E2E 段且含至少一个 bash 代码块，
+脚本内容必须与该段全部 bash 代码块按顺序拼接后的内容一致；缺段、空段、
+段落歧义或内容/顺序漂移均 fail-closed。
 `contract-draft.md` 是 canonical 合同；仅当读取返回 `ENOENT` 时才可
 回退到 `sprint-contract.md`，权限、目录或其他 I/O 错误一律按该 sprint
 未登记处理。

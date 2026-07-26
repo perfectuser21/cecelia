@@ -46,7 +46,7 @@ describe('parseE2EScript shared canonical parser', () => {
     const contractPath = writeContract([
       '# Contract',
       '',
-      '### E2E smoke suffix',
+      '### E2E 验收 smoke suffix',
       '',
       '```bash',
       'echo broad',
@@ -55,5 +55,39 @@ describe('parseE2EScript shared canonical parser', () => {
     ].join('\n'));
 
     expect(parseE2EScript(contractPath)).toBe('echo broad\n');
+  });
+
+  it('concatenates all bash fences from one E2E section in order', () => {
+    const contractPath = writeContract([
+      '# Contract',
+      '',
+      '### E2E 验收',
+      '',
+      '```bash',
+      'echo first',
+      '```',
+      '',
+      '```bash',
+      'echo second',
+      '```',
+      '',
+    ].join('\n'));
+
+    expect(parseE2EScript(contractPath)).toBe('echo first\necho second\n');
+  });
+
+  it('does not recognize an inline E2E pseudo-heading', () => {
+    const contractPath = writeContract([
+      '# Contract',
+      '',
+      'paragraph ## E2E 验收',
+      '',
+      '```bash',
+      'echo inline',
+      '```',
+      '',
+    ].join('\n'));
+
+    expect(parseE2EScript(contractPath)).toBeNull();
   });
 });

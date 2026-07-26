@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.31.0
+version: 1.32.0
 created: 2026-05-06
-updated: 2026-07-23
+updated: 2026-07-26
 changelog:
+  - 1.32.0: 默认非 Windows Step B-1 改走仓库共享 `extract-contract-e2e.cjs`，与 evaluator/过渡登记共用唯一 parser；H2+ E2E 标题、多段歧义、空证据及多 bash block 顺序语义不再由 Skill 内 AWK 自建第二口径
   - 1.31.0: kernel evidence 绑定 attempt——注入 `HARNESS_ATTEMPT_ID` 时，`.brain-result.json` 顶层必须原样写入 `attempt_id`；runner 只桥接 task_id 与 attempt_id 均精确匹配的结构化 behavior_tests，禁止 checkout/reset 恢复的旧证据冒充当前 evaluator 结果
   - 1.30.0: evaluator 角色隔离——Step B-1 只把合同 E2E 提取到 /tmp 并执行，禁止 commit/push 或改写 PR；永久回归脚本由 Generator 在 evaluator 前入库，缺失或 CI 不接受时由 verdict/fix loop 反馈 Generator。配套 kernel launcher 用 remote.origin.pushurl 环境 fence 阻断 evaluator 远端 Git 写入，保留可写 worktree 供真实 package manager/E2E 使用
   - 1.29.0: MJ5 S3 联动清单（thin档，additive）——Step B-1.4 改用 payload.feature_id + GET /features/:id/blast-radius；评估可跑断言（tests/|manual:）并直接 PATCH cell_status=green；cascade_assertions 数组写入 verdict JSON 供 Brain execution.js Step 3.6 幂等备份；feature_id 缺失时跳过不 block（thin档不强制全跑）
@@ -332,10 +333,8 @@ BREOF
   # evaluator 只执行 /tmp 副本，不改写被评 PR。Windows workflow 需要的永久
   # e2e-verify.ps1 必须由 Generator 在进入 evaluator gate 前入库。
 else
-  # 提取 "## E2E 验收" 区块内全部 bash 代码块（拼接，直到下一个 ## 标题；修 a638f840 只取第一块 bug）
-  awk '/^##+[[:space:]]*E2E[[:space:]]*验收/{found=1; next} found && /^## /{exit} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
-    "$CONTRACT" > /tmp/e2e-verify.sh
-  if [[ ! -s /tmp/e2e-verify.sh ]]; then
+  # 与 evaluator/过渡登记复用同一 parser；保留 v1.22 多 bash block 按顺序拼接语义。
+  if ! node "$WORKSPACE/scripts/extract-contract-e2e.cjs" "$CONTRACT" > /tmp/e2e-verify.sh 2>/tmp/e2e-extract-error; then
     cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"合同中未找到 ## E2E 验收 区块或区块内无 bash 脚本"}
 BREOF

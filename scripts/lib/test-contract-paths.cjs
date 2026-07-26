@@ -50,9 +50,10 @@ function parseTestContract(content) {
 }
 
 /**
- * Extract the single executable bash block from the canonical E2E section.
- * This mirrors the Harness evaluator's section boundary and fenced-bash
- * semantics, while failing closed when the evidence is ambiguous.
+ * Extract every executable bash block from the one recognized E2E section.
+ * The heading grammar is the Harness skill's intended H2+ line-start family.
+ * Multiple sections fail closed; multiple bash blocks within the one section
+ * are concatenated in document order for v1.22 compatibility.
  *
  * @param {string} content
  * @returns {string | null}
@@ -61,20 +62,22 @@ function parseCanonicalE2EScript(content) {
   if (typeof content !== "string") return null;
   const normalized = content.replace(/\r\n?/g, "\n");
   const headers = [
-    ...normalized.matchAll(/##\s*E2E[^\n]*\n/g),
+    ...normalized.matchAll(/^##+[ \t]*E2E[ \t]*验收[^\n]*\n/gm),
   ];
   if (headers.length !== 1) return null;
 
   const header = headers[0];
   const sectionStart = header.index + header[0].length;
   const afterHeader = normalized.slice(sectionStart);
-  const nextSection = afterHeader.search(/\n##\s+[^\n]/);
+  const nextSection = afterHeader.search(/^##[ \t]+[^\n]/m);
   const section =
     nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader;
   const bashBlocks = [
     ...section.matchAll(/^```bash[ \t]*\n([\s\S]*?)^```[ \t]*$/gm),
   ];
-  return bashBlocks.length === 1 ? bashBlocks[0][1] : null;
+  return bashBlocks.length >= 1
+    ? bashBlocks.map((block) => block[1]).join("")
+    : null;
 }
 
 /**
