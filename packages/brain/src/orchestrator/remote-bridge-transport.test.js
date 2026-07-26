@@ -116,6 +116,16 @@ function closeServer(server) {
   });
 }
 
+function resolvesWithin(promise, timeoutMs) {
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => resolve(false), timeoutMs);
+    promise.then(() => {
+      clearTimeout(timeoutId);
+      resolve(true);
+    });
+  });
+}
+
 describe('remote Bridge launch', () => {
   it('posts the allowlisted payload with bearer authentication and verifies the receipt', async () => {
     const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
@@ -366,6 +376,77 @@ describe('remote Bridge operation deadlines', () => {
       expect(requestSignal.aborted).toBe(true);
       expect(outcome.message).not.toContain(SHARED_SECRET);
       expect(outcome.message).not.toContain(CALLBACK_TOKEN);
+    },
+  );
+});
+
+describe('remote Bridge unread response cleanup', () => {
+  it.each([
+    [
+      'launch',
+      409,
+      { status: 'rejected', message: 'remote_bridge_launch_conflict' },
+    ],
+    [
+      'launch',
+      503,
+      { status: 'rejected', message: 'remote_bridge_launch_http_503' },
+    ],
+    [
+      'inspect',
+      404,
+      { status: 'resolved', value: { status: 'missing', httpStatus: 404 } },
+    ],
+    [
+      'inspect',
+      503,
+      { status: 'rejected', message: 'remote_bridge_inspect_http_503' },
+    ],
+    [
+      'cancel',
+      404,
+      { status: 'resolved', value: { status: 'missing', httpStatus: 404 } },
+    ],
+    [
+      'cancel',
+      503,
+      { status: 'rejected', message: 'remote_bridge_cancel_http_503' },
+    ],
+  ])(
+    'closes an unread %s HTTP %s response without changing its outcome',
+    async (operation, httpStatus, expectedOutcome) => {
+      let resolveConnectionClosed;
+      const connectionClosed = new Promise((resolve) => {
+        resolveConnectionClosed = resolve;
+      });
+      const server = createServer((_request, response) => {
+        response.writeHead(httpStatus, { 'Content-Type': 'application/json' });
+        response.write('{"stream":"');
+        const streamInterval = setInterval(() => response.write('x'), 10);
+        response.once('close', () => {
+          clearInterval(streamInterval);
+          resolveConnectionClosed();
+        });
+      });
+
+      try {
+        const bridgeUrl = await listenOnLoopback(server);
+        const transport = createTransport({
+          bridgeUrls: { [MACHINE]: bridgeUrl },
+          fetchFn: globalThis.fetch,
+          timeoutMs: 1000,
+        });
+
+        const outcome = await transport[operation](operationInput(operation)).then(
+          (value) => ({ status: 'resolved', value }),
+          (error) => ({ status: 'rejected', message: error.message }),
+        );
+
+        expect(outcome).toEqual(expectedOutcome);
+        expect(await resolvesWithin(connectionClosed, 100)).toBe(true);
+      } finally {
+        await closeServer(server);
+      }
     },
   );
 });
