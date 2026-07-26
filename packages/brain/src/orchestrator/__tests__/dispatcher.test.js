@@ -427,6 +427,30 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('launch 失败后的 claimed fail 写入失败时聚合两段错误并触发告警', async () => {
+    const deps = makeDeps();
+    deps.launcher.launch.mockRejectedValueOnce(new Error('docker unavailable'));
+    deps.attemptStore.fail.mockRejectedValueOnce(new Error('postgres write denied'));
+    deps.onFailurePersistenceFailed = vi.fn(async () => {});
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow(
+      'docker unavailable; failure_persistence_failed: postgres write denied',
+    );
+
+    expect(deps.onFailurePersistenceFailed).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId,
+      lifecycleCode: 'launch_failed',
+      originalError: expect.objectContaining({ message: 'docker unavailable' }),
+      persistenceError: expect.objectContaining({ message: 'postgres write denied' }),
+    }));
+  });
+
   it('lease claim 冲突时不以无 fence 的失败写覆盖其他 owner', async () => {
     const deps = makeDeps();
     deps.attemptStore.markStarting.mockResolvedValueOnce(null);
@@ -598,6 +622,36 @@ describe('createDispatcher', () => {
       leaseOwner: 'dispatcher-test:4242',
       leaseGeneration: 11,
     });
+  });
+
+  it('receipt 失败后的 claimed fail 写入失败时聚合两段错误并触发告警', async () => {
+    const deps = makeDeps();
+    deps.onFailurePersistenceFailed = vi.fn(async () => {});
+    deps.attemptStore.recordLaunchReceipt.mockRejectedValueOnce(
+      new Error('receipt postgres unavailable'),
+    );
+    deps.attemptStore.fail.mockRejectedValueOnce(new Error('terminal postgres unavailable'));
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow(
+      'launch receipt persistence failed: receipt postgres unavailable; ' +
+      'failure_persistence_failed: terminal postgres unavailable',
+    );
+
+    expect(deps.onFailurePersistenceFailed).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId,
+      lifecycleCode: 'launch_receipt_persist_failed',
+      originalError: expect.objectContaining({
+        message: expect.stringContaining('launch receipt persistence failed'),
+      }),
+      persistenceError: expect.objectContaining({ message: 'terminal postgres unavailable' }),
+    }));
   });
 
   it('rejects a remote receipt that omits verified actual-machine evidence', async () => {
@@ -857,8 +911,11 @@ describe('createDetachedLauncher', () => {
       task: observed.task,
     })).rejects.toThrow('local_launch_container_id_missing');
 
-    expect(removeContainer).toHaveBeenCalledTimes(1);
-    expect(removeContainer).toHaveBeenCalledWith('cecelia-harness-22222222');
+    expect(removeContainer).toHaveBeenCalledTimes(2);
+    expect(removeContainer.mock.calls.map(([containerId]) => containerId)).toEqual([
+      'cecelia-harness-22222222-g2',
+      'cecelia-harness-22222222-g2',
+    ]);
     expect(attemptStore.fail).toHaveBeenCalledWith(attemptId, {
       code: 'launch_failed',
       message: expect.stringContaining('local_launch_container_id_missing'),
@@ -868,7 +925,7 @@ describe('createDetachedLauncher', () => {
     });
   });
 
-  it('removes both requested and returned containers when Docker returns a mismatched identity', async () => {
+  it('never removes an untrusted returned container when Docker returns a mismatched identity', async () => {
     const removeContainer = vi.fn(async () => true);
     const launcher = createDetachedLauncher({
       spawnDetached: vi.fn(async () => ({ containerId: 'unexpected-container' })),
@@ -895,10 +952,10 @@ describe('createDetachedLauncher', () => {
       task: observed.task,
     })).rejects.toThrow('local_launch_container_id_mismatch');
 
-    expect(removeContainer.mock.calls.map(([containerId]) => containerId)).toEqual([
-      'unexpected-container',
-      'cecelia-harness-22222222',
-    ]);
+    expect(new Set(removeContainer.mock.calls.map(([containerId]) => containerId))).toEqual(
+      new Set(['cecelia-harness-22222222-g0']),
+    );
+    expect(removeContainer).not.toHaveBeenCalledWith('unexpected-container');
   });
 
   it('uses the dispatcher-claimed lease owner when launcher construction has a different owner', async () => {
@@ -955,7 +1012,13 @@ describe('createDetachedLauncher', () => {
       leaseOwner: 'local-launcher:1',
     });
     const input = {
-      attempt: { id: attemptId, run_id: runId, hop: 2, role: 'generator' },
+      attempt: {
+        id: attemptId,
+        run_id: runId,
+        hop: 2,
+        role: 'generator',
+        lease_generation: 0,
+      },
       bundle: {
         inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
         constraints: { read_only: false },
@@ -971,7 +1034,7 @@ describe('createDetachedLauncher', () => {
       executionTransport: 'local-docker',
       remoteJobId: null,
       attestationStatus: 'local',
-      containerId: 'cecelia-harness-22222222',
+      containerId: 'cecelia-harness-22222222-g0',
       jobId: null,
     });
     expect(Object.isFrozen(receipt)).toBe(true);
@@ -981,9 +1044,9 @@ describe('createDetachedLauncher', () => {
       launchReceipt: receipt,
     })).resolves.toEqual({
       status: 'cancelled',
-      containerId: 'cecelia-harness-22222222',
+      containerId: 'cecelia-harness-22222222-g0',
     });
-    expect(removeContainer).toHaveBeenCalledWith('cecelia-harness-22222222');
+    expect(removeContainer).toHaveBeenCalledWith('cecelia-harness-22222222-g0');
     await expect(launcher.inspect({
       attempt: input.attempt,
       target: { machine: 'us-mac-m4' },
@@ -991,6 +1054,54 @@ describe('createDetachedLauncher', () => {
       status: 'unsupported',
       reason: 'local_inspection_unavailable',
     });
+  });
+
+  it('rejects a mismatched local receipt without deleting either untrusted or other-generation IDs', async () => {
+    const removeContainer = vi.fn(async () => true);
+    const launcher = createDetachedLauncher({
+      spawnDetached: vi.fn(),
+      removeContainer,
+      attemptStore: { markStarting: vi.fn() },
+    });
+
+    await expect(launcher.cancel({
+      attempt: {
+        id: attemptId,
+        lease_generation: 2,
+      },
+      launchReceipt: {
+        containerId: 'cecelia-harness-22222222-g3',
+      },
+    })).resolves.toEqual({
+      status: 'rejected',
+      reason: 'local_container_id_mismatch',
+      containerId: 'cecelia-harness-22222222-g2',
+    });
+    expect(removeContainer).not.toHaveBeenCalled();
+  });
+
+  it('an old generation cancel cannot delete the current generation container', async () => {
+    const removeContainer = vi.fn(async (containerId) => containerId.endsWith('-g1'));
+    const launcher = createDetachedLauncher({
+      spawnDetached: vi.fn(),
+      removeContainer,
+      attemptStore: { markStarting: vi.fn() },
+    });
+
+    await expect(launcher.cancel({
+      attempt: {
+        id: attemptId,
+        lease_generation: 0,
+      },
+      launchReceipt: {
+        containerId: 'cecelia-harness-22222222-g0',
+      },
+    })).resolves.toEqual({
+      status: 'missing',
+      containerId: 'cecelia-harness-22222222-g0',
+    });
+    expect(removeContainer).toHaveBeenCalledTimes(1);
+    expect(removeContainer).toHaveBeenCalledWith('cecelia-harness-22222222-g0');
   });
 
   it('把 proposer/reviewer 的分支协议注入 runner env', async () => {

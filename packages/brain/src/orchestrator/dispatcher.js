@@ -252,6 +252,28 @@ async function cancelAfterLaunch(launcher, { attempt, target, launchReceipt }) {
   }
 }
 
+async function failurePersistenceError(deps, {
+  attemptId,
+  lifecycleCode,
+  originalError,
+  persistenceError,
+}) {
+  try {
+    await deps.onFailurePersistenceFailed?.({
+      attemptId,
+      lifecycleCode,
+      originalError,
+      persistenceError,
+    });
+  } catch {
+    // The aggregate lifecycle error remains the primary signal if alert delivery also fails.
+  }
+  return new AggregateError(
+    [originalError, persistenceError],
+    `${errorMessage(originalError)}; failure_persistence_failed: ${errorMessage(persistenceError)}`,
+  );
+}
+
 export function createDispatcher(deps) {
   const randomUUID = deps.randomUUID ?? nodeRandomUUID;
   const machineId = deps.machineId ?? process.env.CECELIA_MACHINE_ID ?? os.hostname();
@@ -486,9 +508,12 @@ export function createDispatcher(deps) {
           leaseGeneration: attempt.lease_generation,
         });
       } catch (failError) {
-        if (error && typeof error === 'object') {
-          error.failurePersistenceError = failError;
-        }
+        throw await failurePersistenceError(deps, {
+          attemptId: attempt.id,
+          lifecycleCode: 'launch_failed',
+          originalError: error,
+          persistenceError: failError,
+        });
       }
       throw error;
     }
@@ -530,9 +555,14 @@ export function createDispatcher(deps) {
           leaseGeneration: attempt.lease_generation,
         });
       } catch (failError) {
-        if (receiptError && typeof receiptError === 'object') {
-          receiptError.failurePersistenceError = failError;
-        }
+        const lifecycleError = new Error(message);
+        lifecycleError.cause = receiptError;
+        throw await failurePersistenceError(deps, {
+          attemptId: attempt.id,
+          lifecycleCode: 'launch_receipt_persist_failed',
+          originalError: lifecycleError,
+          persistenceError: failError,
+        });
       }
       const error = new Error(`launch_receipt_persist_failed: ${message}`);
       error.cause = receiptError;
@@ -560,11 +590,9 @@ export function createDetachedLauncher({
   ensureDir = mkdirSync,
   machineId = 'us-mac-m4',
 }) {
-  const requestedContainerId = (attempt, generation = null) => {
-    const generationSuffix = generation == null
-      ? ''
-      : `-g${String(generation).replace(/[^a-zA-Z0-9_-]/g, '') || '0'}`;
-    return `cecelia-harness-${String(attempt?.id).slice(0, 8)}${generationSuffix}`;
+  const requestedContainerId = (attempt, generation = attempt?.lease_generation) => {
+    if (!attempt?.id || !Number.isInteger(generation) || generation < 0) return null;
+    return `cecelia-harness-${String(attempt.id).slice(0, 8)}-g${generation}`;
   };
   const removeCandidates = async (containerIds) => {
     const results = [];
@@ -579,7 +607,7 @@ export function createDetachedLauncher({
   };
 
   return Object.freeze({
-    async launch({ attempt, bundle, spec, task, leaseClaimed = false, generation = null }) {
+    async launch({ attempt, bundle, spec, task, leaseClaimed = false }) {
       let activeLeaseOwner = leaseOwner;
       let activeLeaseGeneration = attempt?.lease_generation ?? 0;
       if (!leaseClaimed) {
@@ -664,8 +692,8 @@ export function createDetachedLauncher({
         ? spec.args[resumeFlagIndex + 1]
         : (resumeCommandIndex >= 0 ? spec.args[resumeCommandIndex + 1] : null);
       if (resumeSessionId) providerEnv.HARNESS_RESUME_SESSION_ID = resumeSessionId;
-      const containerId = requestedContainerId(attempt, generation);
-      if (generation != null) await removeContainer(containerId);
+      const containerId = requestedContainerId(attempt, activeLeaseGeneration);
+      await removeContainer(containerId);
       const launched = await spawnDetached({
           containerId,
           task: { ...task, task_type: `harness_${attempt.role}` },
@@ -696,7 +724,7 @@ export function createDetachedLauncher({
           throw new Error(`local_launch_container_id_missing: ${containerId}`);
         }
         if (launched.containerId !== containerId) {
-          await removeCandidates([launched.containerId, containerId]);
+          await removeCandidates([containerId]);
           throw new Error(
             `local_launch_container_id_mismatch: expected ${containerId}, got ${launched.containerId}`,
           );
@@ -729,15 +757,21 @@ export function createDetachedLauncher({
       };
     },
     async cancel({ attempt, launchReceipt } = {}) {
-      if (!attempt?.id && !launchReceipt?.containerId) {
+      const containerId = requestedContainerId(attempt);
+      if (!containerId) {
         return {
           status: 'unavailable',
-          reason: 'local_container_id_missing',
+          reason: 'local_attempt_identity_missing',
         };
       }
-      const containerId = launchReceipt?.containerId ?? requestedContainerId(attempt);
-      const requestedId = attempt?.id ? requestedContainerId(attempt) : null;
-      const removed = await removeCandidates([containerId, requestedId]);
+      if (launchReceipt?.containerId && launchReceipt.containerId !== containerId) {
+        return {
+          status: 'rejected',
+          reason: 'local_container_id_mismatch',
+          containerId,
+        };
+      }
+      const removed = await removeCandidates([containerId]);
       return {
         status: removed.some(Boolean) ? 'cancelled' : 'missing',
         containerId,
