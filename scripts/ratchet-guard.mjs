@@ -37,6 +37,31 @@ function walkSh(dir, out = []) {
   return out;
 }
 
+function resolveRootArg(args) {
+  const inlineArg = args.find((arg) => arg.startsWith('--root='));
+  const spacedIndex = args.indexOf('--root');
+  if (inlineArg === undefined && spacedIndex === -1) return DEFAULT_ROOT;
+
+  const declared = inlineArg !== undefined
+    ? inlineArg.slice('--root='.length)
+    : args[spacedIndex + 1];
+  if (!declared || declared.startsWith('--')) {
+    throw new Error('缺少目录值');
+  }
+
+  const root = path.resolve(declared);
+  let stats;
+  try {
+    stats = fs.statSync(root);
+  } catch {
+    throw new Error(`目录不存在或不可访问: ${root}`);
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`不是目录: ${root}`);
+  }
+  return root;
+}
+
 // ── 指标测量 ─────────────────────────────────────────────────────────────────
 
 async function measure(metric, baseline, brainBase, root) {
@@ -80,9 +105,13 @@ async function main() {
   const args = process.argv.slice(2);
   const jsonMode = args.includes('--json');
   const brainBase = args.find(a => a.startsWith('--brain='))?.slice(8) ?? 'http://localhost:5221';
-  const rootArg = args.find(a => a.startsWith('--root='))?.slice(7)
-    ?? (args.includes('--root') ? args[args.indexOf('--root') + 1] : null);
-  const root = rootArg ? path.resolve(rootArg) : DEFAULT_ROOT;
+  let root;
+  try {
+    root = resolveRootArg(args);
+  } catch (error) {
+    console.error(`❌ 无效 --root: ${error.message}`);
+    process.exit(1);
+  }
   const registryArg = args.find(a => a.startsWith('--registry='))?.slice(11)
     ?? (args.includes('--registry') ? args[args.indexOf('--registry') + 1] : null);
   const registryPath = registryArg

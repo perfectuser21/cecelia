@@ -21,9 +21,13 @@ let root: string;
 let contractPath: string;
 
 function runGuard() {
+  return runCli(['--root', root, '--json']);
+}
+
+function runCli(args: string[]) {
   return spawnSync(
     process.execPath,
-    [GUARD, '--root', root, '--json'],
+    [GUARD, ...args],
     {
       cwd: REPO_ROOT,
       encoding: 'utf8',
@@ -101,5 +105,24 @@ describe('ratchet transitional orphan measurement', () => {
     expect(result.stdout + result.stderr).toContain('orphans');
     expect(result.stdout).toContain('"value": 1');
     expect(result.stdout).toContain('raw=1 registered=0 unregistered=1');
+  });
+});
+
+describe('ratchet root validation', () => {
+  it.each([
+    ['a missing value', () => ['--root']],
+    ['an empty equals value', () => ['--root=']],
+    ['a nonexistent path', () => ['--root', path.join(root, 'missing')]],
+    ['a non-directory path', () => {
+      const file = path.join(root, 'not-a-directory');
+      writeFileSync(file, '');
+      return ['--root', file];
+    }],
+  ])('fails closed for %s before reading registry or metrics', (_label, args) => {
+    const result = runCli(args());
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('无效 --root');
+    expect(result.stderr).not.toContain('ratchet-registry.json');
   });
 });
