@@ -50,6 +50,50 @@ function parseTestContract(content) {
 }
 
 /**
+ * Extract the single executable bash block from the canonical E2E section.
+ * This mirrors the Harness evaluator's section boundary and fenced-bash
+ * semantics, while failing closed when the evidence is ambiguous.
+ *
+ * @param {string} content
+ * @returns {string | null}
+ */
+function parseCanonicalE2EScript(content) {
+  if (typeof content !== "string") return null;
+  const normalized = content.replace(/\r\n?/g, "\n");
+  const headers = [
+    ...normalized.matchAll(/^##[ \t]+E2E 验收[ \t]*$/gm),
+  ];
+  if (headers.length !== 1) return null;
+
+  const header = headers[0];
+  const sectionStart = header.index + header[0].length;
+  const afterHeader = normalized.slice(sectionStart);
+  const nextSection = afterHeader.search(/\n##[ \t]+[^\n]+/);
+  const section =
+    nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader;
+  const bashBlocks = [
+    ...section.matchAll(/^```bash[ \t]*\n([\s\S]*?)^```[ \t]*$/gm),
+  ];
+  return bashBlocks.length === 1 ? bashBlocks[0][1] : null;
+}
+
+/**
+ * Normalize only representation-level whitespace. Leading whitespace,
+ * commands, arguments, content, and ordering remain significant.
+ *
+ * @param {string} script
+ * @returns {string}
+ */
+function normalizeE2EScript(script) {
+  return script
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .join("\n")
+    .replace(/\s+$/g, "");
+}
+
+/**
  * Infer a repository root from .../sprints/<sprint>/contract.md, unless an
  * explicit root is provided.
  *
@@ -305,6 +349,22 @@ function listRegisteredSprintArtifacts(root) {
         registered.add(resolution.resolvedPath);
       }
     }
+
+    const contractE2e = parseCanonicalE2EScript(content);
+    if (contractE2e !== null) {
+      const e2ePath = path.join(sprintDir, "e2e-verify.sh");
+      try {
+        const script = fs.readFileSync(e2ePath, "utf8");
+        if (
+          normalizeE2EScript(script) ===
+          normalizeE2EScript(contractE2e)
+        ) {
+          registered.add(e2ePath);
+        }
+      } catch {
+        // Missing/unreadable evidence stays unregistered.
+      }
+    }
   }
 
   return [...registered].sort();
@@ -312,6 +372,8 @@ function listRegisteredSprintArtifacts(root) {
 
 module.exports = {
   parseTestContract,
+  parseCanonicalE2EScript,
+  normalizeE2EScript,
   inferRepositoryRoot,
   resolveContractTestFile,
   listRegisteredSprintArtifacts,

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import {
+  cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -75,6 +77,26 @@ function writeContract(
       ...rows,
       '',
     ].join('\n'),
+  );
+}
+
+function prepareGuardFixture(fixture: string): void {
+  mkdirSync(path.join(fixture, 'scripts/smoke'), { recursive: true });
+  mkdirSync(path.join(fixture, 'perm/unit'), { recursive: true });
+  writeFileSync(path.join(fixture, 'perm/unit/x.test.js'), '');
+}
+
+function writeE2EContract(
+  fixtureRoot: string,
+  sprint: string,
+  section: string,
+  filename = 'contract-draft.md',
+): void {
+  const sprintDir = path.join(fixtureRoot, 'sprints', sprint);
+  mkdirSync(sprintDir, { recursive: true });
+  writeFileSync(
+    path.join(sprintDir, filename),
+    ['# Contract', '', section, '', '## Test Contract', ''].join('\n'),
   );
 }
 
@@ -226,6 +248,130 @@ describe('classifySprintArtifacts', () => {
     expect(guard.pass).toBe(true);
     expect(guard.registered_transitional).toMatchObject({ total: 1 });
     expect(guard.unregistered_orphans).toMatchObject({ total: 0 });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('registers the #4342-shaped e2e script from the canonical E2E bash block', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-live-shape-'));
+    const sprintDir = path.join(fixture, 'sprints/fixture-kernel');
+    mkdirSync(sprintDir, { recursive: true });
+    cpSync(
+      path.resolve('tests/fixtures/harness-e2e-registration/contract-draft.md'),
+      path.join(sprintDir, 'contract-draft.md'),
+    );
+    cpSync(
+      path.resolve('tests/fixtures/harness-e2e-registration/e2e-verify.sh'),
+      path.join(sprintDir, 'e2e-verify.sh'),
+    );
+    prepareGuardFixture(fixture);
+
+    const result = runGuard(fixture, {
+      orphans: 0,
+      permanent: 1,
+      permanent_roots: [{ path: 'perm/unit', layer: 'unit' }],
+      smoke_dir: 'scripts/smoke',
+    }, { ci: true });
+
+    expect(result.pass).toBe(true);
+    expect(result.registered_transitional).toMatchObject({
+      tests: 0, e2e: 1, total: 1,
+    });
+    expect(result.unregistered_orphans).toMatchObject({ total: 0 });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('normalizes CRLF, line-end horizontal whitespace, and final whitespace only', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-whitespace-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(sprintDir, { recursive: true });
+    writeFileSync(
+      path.join(sprintDir, 'e2e-verify.sh'),
+      '#!/bin/bash\r\nset -euo pipefail\t\r\necho ok  \r\n\r\n',
+    );
+    writeE2EContract(
+      fixture,
+      's1',
+      '## E2E 验收\n\n```bash\n#!/bin/bash\nset -euo pipefail\necho ok\n```',
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      registered: { e2e: 1, total: 1 },
+      unregistered: { total: 0 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['has no E2E section', '# Not E2E\n\n```bash\necho ok\n```', 'echo ok\n'],
+    ['has no bash block', '## E2E 验收\n\nNo executable evidence.', 'echo ok\n'],
+    [
+      'has multiple bash blocks',
+      '## E2E 验收\n\n```bash\necho ok\n```\n\n```bash\necho ok\n```',
+      'echo ok\n',
+    ],
+    [
+      'changes a command',
+      '## E2E 验收\n\n```bash\necho different\n```',
+      'echo ok\n',
+    ],
+    [
+      'changes command order',
+      '## E2E 验收\n\n```bash\necho second\necho first\n```',
+      'echo first\necho second\n',
+    ],
+  ])('keeps canonical e2e unregistered when it %s', (_label, section, script) => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-invalid-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(sprintDir, { recursive: true });
+    writeFileSync(path.join(sprintDir, 'e2e-verify.sh'), script);
+    writeE2EContract(fixture, 's1', section);
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { e2e: 1, total: 1 },
+      registered: { total: 0 },
+      unregistered: { e2e: 1, total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('does not let a stale secondary contract register canonical e2e evidence', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-precedence-'));
+    const sprintDir = path.join(fixture, 'sprints/s1');
+    mkdirSync(sprintDir, { recursive: true });
+    writeFileSync(path.join(sprintDir, 'e2e-verify.sh'), 'echo ok\n');
+    writeE2EContract(fixture, 's1', '## E2E 验收\n\nNo bash evidence.');
+    writeE2EContract(
+      fixture,
+      's1',
+      '## E2E 验收\n\n```bash\necho ok\n```',
+      'sprint-contract.md',
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      registered: { total: 0 },
+      unregistered: { e2e: 1, total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('does not invent a registration when the canonical e2e file is missing', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-e2e-missing-'));
+    writeE2EContract(
+      fixture,
+      's1',
+      '## E2E 验收\n\n```bash\necho ok\n```',
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { total: 0 },
+      registered: { total: 0 },
+      unregistered: { total: 0 },
+    });
 
     rmSync(fixture, { recursive: true, force: true });
   });
