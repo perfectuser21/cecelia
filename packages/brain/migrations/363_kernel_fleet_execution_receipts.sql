@@ -10,7 +10,8 @@ ALTER TABLE harness_attempts
 
 UPDATE harness_attempts
 SET requested_machine_id = machine_id
-WHERE requested_machine_id IS NULL;
+WHERE requested_machine_id IS NULL
+  AND machine_id IS NOT NULL;
 
 DO $$
 BEGIN
