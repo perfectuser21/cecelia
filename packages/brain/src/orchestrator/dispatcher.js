@@ -237,7 +237,7 @@ function errorMessage(error) {
 }
 
 function unsafeCancelDiagnostic(result) {
-  if (result?.status === 'cancelled' || result?.status === 'missing') return null;
+  if (result?.status === 'cancelled') return null;
   const status = result?.status ?? 'unknown';
   const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
   return `orphan cancellation unsafe: ${status}${httpStatus}`;
