@@ -208,6 +208,15 @@ countOrphans(root).total via test-pyramid-guard.mjs
 陈旧，不影响当前测量值或安全门；应以独立小改修正文案，不在 bootstrap
 终验阶段扩大实现 diff。
 
+## Engine 发布账本
+
+本分支修改 Engine runtime/DevGate，因此按模块规则完成：
+
+- Engine `19.6.0 → 19.6.1` 六处同步；
+- `packages/engine/feature-registry.yml` 追加 `19.6.1` changelog；
+- `check-engine-hygiene.cjs --verbose` 通过；
+- PR 标题必须包含 `[CONFIG]`，以触发 `engine-ci.yml`。
+
 ## 外部 Skill SSOT 同步要求
 
 `packages/workflows/skills/harness-evaluator/SKILL.md` 是 monorepo 快照，
