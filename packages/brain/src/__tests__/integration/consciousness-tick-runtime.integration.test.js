@@ -3,11 +3,6 @@
  *
  * 断言 executeTick 会根据 consciousness guard 的状态跳过或触发意识模块。
  * 用 vi.mock 真实 mock 意识模块（方便断言调用次数），其余重依赖 noop 防副作用。
- *
- * 注：executeTick 在 guard=false 分支末尾会抛 ReferenceError（源码里
- * `return { daily_review: dailyReviewResult, ... }` 用到未在跳过分支初始化的变量）——
- * 非本测试修复范围，用 try/catch 包住；断言关注点是意识模块 mock 的调用次数，
- * 这在异常抛出前就已确定。
  */
 
 import { describe, test, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
@@ -20,6 +15,46 @@ import { DB_DEFAULTS } from '../../db-config.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATION_240 = path.resolve(__dirname, '../../../migrations/240_consciousness_setting.sql');
 const MEMORY_KEY = 'consciousness_enabled';
+
+const cleanupMocks = vi.hoisted(() => ({
+  zombieSweep: vi.fn().mockResolvedValue({
+    started_at: '2026-07-27T00:00:00.000Z',
+    completed_at: '2026-07-27T00:00:00.000Z',
+    worktrees: { checked: 0, removed: 0, skipped: 0, errors: [] },
+    processes: { checked: 0, killed: 0, errors: [] },
+    lock_slots: { checked: 0, removed: 0, errors: [] },
+  }),
+  cleanupWorkerTick: vi.fn().mockResolvedValue({
+    success: true,
+    stdout: '',
+    stderr: '',
+  }),
+  runZombieCleanup: vi.fn().mockResolvedValue({
+    slotsReclaimed: 0,
+    worktreesRemoved: 0,
+    timestamp: '2026-07-27T00:00:00.000Z',
+    errors: [],
+  }),
+  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({
+    cleaned: 0,
+    errors: 0,
+  }),
+}));
+
+// executeTick owns destructive host cleanup edges. This integration test exercises
+// consciousness wiring only, so every cleanup boundary must remain an explicit noop.
+vi.mock('../../zombie-sweep.js', () => ({
+  zombieSweep: cleanupMocks.zombieSweep,
+}));
+vi.mock('../../cleanup-worker-plugin.js', () => ({
+  tick: cleanupMocks.cleanupWorkerTick,
+}));
+vi.mock('../../zombie-cleaner.js', () => ({
+  runZombieCleanup: cleanupMocks.runZombieCleanup,
+}));
+vi.mock('../../harness-worktree.js', () => ({
+  cleanupStaleHarnessWorktrees: cleanupMocks.cleanupStaleHarnessWorktrees,
+}));
 
 // ========== 意识模块 mocks（要断言调用次数）==========
 vi.mock('../../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({ accumulator: 0 }) }));
@@ -92,23 +127,12 @@ import {
 import { runRumination } from '../../rumination.js';
 import { generateDailyDiaryIfNeeded } from '../../diary-scheduler.js';
 import { runDesireSystem } from '../../desire/index.js';
+import { resetTickStateForTests } from '../../tick-state.js';
 // scanEvolutionIfNeeded 不在此列：已移出 consciousness 守护（纯 GitHub API 调用，不消耗 LLM），
 // consciousness=false 时仍正常运行，不应断言它被跳过。
 
 const CONSCIOUSNESS_MOCKS = [runRumination, generateDailyDiaryIfNeeded, runDesireSystem];
-
-/**
- * 跑 executeTick 并吞掉 ReferenceError（源码里 tick.js 在 guard=false 分支末尾 return 用到
- * 未定义的变量；断言关注点是意识模块 mock 调用次数，这在异常抛出前已经确定）。
- */
-async function runTickSwallowing() {
-  try {
-    await executeTick();
-  } catch (err) {
-    // 只吞 ReferenceError / Test-timeout 等非意识模块相关的错误；真出别的异常仍要暴露
-    if (!(err instanceof ReferenceError)) throw err;
-  }
-}
+const CLEANUP_MOCKS = Object.values(cleanupMocks);
 
 describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
   let pool;
@@ -128,7 +152,9 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     const sql = fs.readFileSync(MIGRATION_240, 'utf8');
     await pool.query(sql);
     _resetCacheForTest();
+    resetTickStateForTests();
     CONSCIOUSNESS_MOCKS.forEach((m) => m.mockClear());
+    CLEANUP_MOCKS.forEach((m) => m.mockClear());
     delete process.env.CONSCIOUSNESS_ENABLED;
     delete process.env.BRAIN_QUIET_MODE;
   });
@@ -141,7 +167,7 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
   test('memory=false: executeTick skips all consciousness modules', async () => {
     await initConsciousnessGuard(pool);
     await setConsciousnessEnabled(pool, false);
-    await runTickSwallowing();
+    await executeTick();
     for (const m of CONSCIOUSNESS_MOCKS) {
       expect(m).toHaveBeenCalledTimes(0);
     }
@@ -151,10 +177,34 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     await initConsciousnessGuard(pool);
     await setConsciousnessEnabled(pool, true);
     process.env.CONSCIOUSNESS_ENABLED = 'false';
-    await runTickSwallowing();
+    await executeTick();
     for (const m of CONSCIOUSNESS_MOCKS) {
       expect(m).toHaveBeenCalledTimes(0);
     }
+  }, 60000);
+
+  test('executeTick keeps every host cleanup boundary mocked', async () => {
+    await initConsciousnessGuard(pool);
+    await setConsciousnessEnabled(pool, false);
+
+    await executeTick();
+
+    for (const cleanupMock of CLEANUP_MOCKS) {
+      expect(vi.isMockFunction(cleanupMock)).toBe(true);
+      expect(cleanupMock).toHaveBeenCalledTimes(1);
+    }
+    expect(await cleanupMocks.zombieSweep.mock.results[0].value).toMatchObject({
+      worktrees: { removed: 0 },
+      processes: { killed: 0 },
+      lock_slots: { removed: 0 },
+    });
+    expect(await cleanupMocks.runZombieCleanup.mock.results[0].value).toMatchObject({
+      slotsReclaimed: 0,
+      worktreesRemoved: 0,
+    });
+    expect(
+      await cleanupMocks.cleanupStaleHarnessWorktrees.mock.results[0].value,
+    ).toEqual({ cleaned: 0, errors: 0 });
   }, 60000);
 
   test('env override can force-enable: env=true + memory=false → guard returns true', async () => {
