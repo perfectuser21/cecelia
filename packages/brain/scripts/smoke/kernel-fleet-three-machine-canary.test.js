@@ -1,11 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+/* global AbortSignal, setTimeout */
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   MACHINE_IDS,
   assertLiveSafety,
+  createLiveDispatch,
   parseCanaryArgs,
   runThreeMachineCanary,
 } from './kernel-fleet-three-machine-canary.mjs';
+
+const liveMocks = vi.hoisted(() => ({
+  pool: {
+    query: vi.fn(),
+    end: vi.fn(),
+  },
+  buildRealDeps: vi.fn(),
+}));
+
+vi.mock('../../src/db.js', () => ({ default: liveMocks.pool }));
+vi.mock('../../src/orchestrator/run.js', () => ({
+  buildRealDeps: liveMocks.buildRealDeps,
+}));
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_IDS = {
@@ -175,6 +191,50 @@ describe('runThreeMachineCanary', () => {
     expect(result.duplicate_callback_count).toBe(1);
     expect(result.evidence).toHaveLength(3);
   });
+
+  it.skip('parallel waits for every machine terminal and reports all evidence after an early failure', async () => {
+    const gates = {
+      'us-mac-m4': deferred(),
+      'xian-mac-m1': deferred(),
+    };
+    const starts = [];
+    const dispatch = vi.fn(async ({ machine }) => {
+      starts.push(machine);
+      if (machine === 'xian-mac-m4') {
+        return completedEvidence(machine, { actual_machine_id: 'us-mac-m4' });
+      }
+      await gates[machine].promise;
+      return completedEvidence(machine);
+    });
+
+    const observed = runThreeMachineCanary({
+      mode: 'parallel',
+      strict: true,
+      runId: RUN_ID,
+      dispatch,
+      clock: () => new Date('2026-07-26T01:00:00.000Z'),
+    }).then(
+      (value) => ({ status: 'fulfilled', value }),
+      (reason) => ({ status: 'rejected', reason }),
+    );
+
+    await vi.waitFor(() => expect(new Set(starts)).toEqual(new Set(MACHINE_IDS)));
+    const early = await Promise.race([
+      observed,
+      new Promise((resolve) => setTimeout(() => resolve('pending'), 10)),
+    ]);
+    gates['us-mac-m4'].resolve();
+    gates['xian-mac-m1'].resolve();
+    const settled = await observed;
+
+    expect(early).toBe('pending');
+    expect(settled.status).toBe('fulfilled');
+    expect(settled.value).toMatchObject({ passed: false, mode: 'parallel' });
+    expect(settled.value.machine_results).toHaveLength(3);
+    expect(settled.value.evidence).toHaveLength(3);
+    expect(settled.value.machine_results.every((row) => row.evidence?.status === 'completed'))
+      .toBe(true);
+  });
 });
 
 describe('canary CLI safety', () => {
@@ -204,5 +264,89 @@ describe('canary CLI safety', () => {
     ]) {
       expect(() => assertLiveSafety(parseCanaryArgs(argv))).toThrow(/live canary refused/);
     }
+  });
+});
+
+describe('createLiveDispatch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('creates a schema-valid synthetic initiative run with a non-null initiative_id', async () => {
+    liveMocks.pool.query.mockImplementation(async (sql, params) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) {
+        expect(sql).toMatch(/\(\s*id,\s*initiative_id,/);
+        expect(params).toEqual([RUN_ID, RUN_ID]);
+        return { rows: [{ id: RUN_ID }], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    await createLiveDispatch({
+      runId: RUN_ID,
+      brainUrl: 'http://localhost:5221',
+      fetchFn: vi.fn(async () => ({ ok: true, status: 200 })),
+    });
+
+    expect(liveMocks.pool.query).toHaveBeenCalledOnce();
+  });
+
+  it('uses each machine canonical account boundary through the real live dispatch adapter', async () => {
+    const attemptByMachine = {
+      'us-mac-m4': ATTEMPT_IDS['us-mac-m4'],
+      'xian-mac-m4': ATTEMPT_IDS['xian-mac-m4'],
+      'xian-mac-m1': ATTEMPT_IDS['xian-mac-m1'],
+    };
+    const dispatchCalls = [];
+    liveMocks.pool.query.mockImplementation(async (sql, params) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) return { rows: [{ id: RUN_ID }], rowCount: 1 };
+      if (/FROM harness_attempts/.test(sql)) {
+        const machine = Object.entries(attemptByMachine)
+          .find(([, attemptId]) => attemptId === params[0])?.[0];
+        return { rows: [completedEvidence(machine)] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    liveMocks.buildRealDeps.mockImplementation(async ({ machineId }) => ({
+      dispatch: vi.fn(async (_action, context) => {
+        dispatchCalls.push({ machine: machineId, context });
+        return { attemptId: attemptByMachine[machineId] };
+      }),
+    }));
+    const dispatch = await createLiveDispatch({
+      runId: RUN_ID,
+      brainUrl: 'http://localhost:5221',
+      fetchFn: vi.fn(async () => ({ ok: true, status: 200 })),
+    });
+
+    for (const machine of MACHINE_IDS) {
+      await dispatch({ machine, attemptNumber: 1 });
+    }
+
+    expect(dispatchCalls.map(({ machine, context }) => [
+      machine,
+      context.observed.task.payload.role_assignments.reviewer.account,
+    ])).toEqual([
+      ['us-mac-m4', 'team1'],
+      ['xian-mac-m4', 'team2'],
+      ['xian-mac-m1', 'team5'],
+    ]);
+  });
+
+  it('bounds the local Brain health request with an abort timeout', async () => {
+    const fetchFn = vi.fn((_url, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(options.signal.reason), {
+        once: true,
+      });
+    }));
+
+    await expect(createLiveDispatch({
+      runId: RUN_ID,
+      brainUrl: 'http://localhost:5221',
+      fetchFn,
+      healthTimeoutMs: 5,
+    })).rejects.toThrow(/health.*timed out/i);
+
+    expect(fetchFn.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

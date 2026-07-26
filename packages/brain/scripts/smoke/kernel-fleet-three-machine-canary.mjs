@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global console, process, setTimeout */
+/* global AbortSignal, console, process, setTimeout */
 
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -28,6 +28,7 @@ const TERMINAL_STATUSES = new Set([
 const LIVE_BRAIN_URL = 'http://localhost:5221';
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_POLL_MS = 1_000;
+const DEFAULT_HEALTH_TIMEOUT_MS = 3_000;
 
 function takeValue(argv, index, name) {
   const value = argv[index + 1];
@@ -321,19 +322,22 @@ export function createDryRunDispatch({
 async function ensureSyntheticRun(pool, runId) {
   const inserted = await pool.query(
     `INSERT INTO initiative_runs
-       (id, phase, orchestrator_version, orchestrator_host, started_at)
-     VALUES ($1::uuid, 'gan', 'v2', 'kernel-fleet-canary', NOW())
+       (id, initiative_id, phase, orchestrator_version, orchestrator_host, started_at)
+     VALUES ($1::uuid, $2::uuid, 'gan', 'v2', 'kernel-fleet-canary', NOW())
      ON CONFLICT (id) DO NOTHING
      RETURNING id`,
-    [runId],
+    [runId, runId],
   );
   if (inserted.rowCount > 0) return;
 
   const existing = await pool.query(
-    'SELECT orchestrator_host FROM initiative_runs WHERE id=$1::uuid',
+    'SELECT initiative_id, orchestrator_host FROM initiative_runs WHERE id=$1::uuid',
     [runId],
   );
-  if (existing.rows[0]?.orchestrator_host !== 'kernel-fleet-canary') {
+  if (
+    existing.rows[0]?.orchestrator_host !== 'kernel-fleet-canary'
+    || existing.rows[0]?.initiative_id !== runId
+  ) {
     throw new Error(`live canary refused: run id already belongs to non-canary data: ${runId}`);
   }
 }
@@ -345,11 +349,24 @@ export async function createLiveDispatch({
   fetchFn = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   pollMs = DEFAULT_POLL_MS,
+  healthTimeoutMs = DEFAULT_HEALTH_TIMEOUT_MS,
 } = {}) {
   if (brainUrl !== LIVE_BRAIN_URL) {
     throw new Error(`live canary refused: --brain-url must be ${LIVE_BRAIN_URL}`);
   }
-  const health = await fetchFn(`${brainUrl}/api/brain/health`);
+  if (!Number.isFinite(healthTimeoutMs) || healthTimeoutMs <= 0) {
+    throw new Error('live canary refused: invalid health timeout');
+  }
+  const healthSignal = AbortSignal.timeout(healthTimeoutMs);
+  let health;
+  try {
+    health = await fetchFn(`${brainUrl}/api/brain/health`, { signal: healthSignal });
+  } catch (error) {
+    if (healthSignal.aborted || error?.name === 'TimeoutError') {
+      throw new Error('live canary refused: local Brain health timed out');
+    }
+    throw new Error(`live canary refused: local Brain health check failed: ${error?.message}`);
+  }
   if (!health?.ok) throw new Error(`live canary refused: local Brain health=${health?.status}`);
 
   const [{ default: pool }, { buildRealDeps }] = await Promise.all([
@@ -363,7 +380,7 @@ export async function createLiveDispatch({
   const accountByMachine = {
     'us-mac-m4': env.KERNEL_FLEET_CANARY_US_ACCOUNT ?? 'team1',
     'xian-mac-m4': env.KERNEL_FLEET_CANARY_XIAN_M4_ACCOUNT ?? 'team2',
-    'xian-mac-m1': env.KERNEL_FLEET_CANARY_XIAN_M1_ACCOUNT ?? 'team3',
+    'xian-mac-m1': env.KERNEL_FLEET_CANARY_XIAN_M1_ACCOUNT ?? 'team5',
   };
 
   async function dispatcherFor(machine) {
