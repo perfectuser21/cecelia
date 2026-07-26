@@ -51,12 +51,15 @@ function copyBridgeUrls(bridgeUrls) {
   return Object.freeze(copy);
 }
 
-function parseJson(response, operation) {
-  return Promise.resolve()
-    .then(() => response.json())
-    .catch(() => {
-      throw new Error(`remote_bridge_${operation}_invalid_json`);
-    });
+async function parseJson(response, operation, signal) {
+  try {
+    return await response.json();
+  } catch {
+    if (signal.aborted) {
+      throw new Error(`remote_bridge_${operation}_timeout`);
+    }
+    throw new Error(`remote_bridge_${operation}_invalid_json`);
+  }
 }
 
 export function createRemoteBridgeTransport({
@@ -102,7 +105,7 @@ export function createRemoteBridgeTransport({
     };
   }
 
-  async function request(operation, url, options) {
+  async function request(operation, url, options, consumeResponse) {
     const controller = new AbortController();
     let timedOut = false;
     let timeoutId;
@@ -116,17 +119,29 @@ export function createRemoteBridgeTransport({
 
     try {
       return await Promise.race([
-        Promise.resolve().then(() => configuredFetch(url, {
-          ...options,
-          signal: controller.signal,
-        })),
+        Promise.resolve().then(async () => {
+          let response;
+          try {
+            response = await configuredFetch(url, {
+              ...options,
+              signal: controller.signal,
+              redirect: 'error',
+            });
+          } catch {
+            if (timedOut || controller.signal.aborted) {
+              throw new Error(`remote_bridge_${operation}_timeout`);
+            }
+            throw new Error(`remote_bridge_${operation}_request_failed`);
+          }
+          return consumeResponse(response, controller.signal);
+        }),
         timeout,
       ]);
-    } catch {
+    } catch (error) {
       if (timedOut || controller.signal.aborted) {
         throw new Error(`remote_bridge_${operation}_timeout`);
       }
-      throw new Error(`remote_bridge_${operation}_request_failed`);
+      throw error;
     } finally {
       clearTimeout(timeoutId);
     }
@@ -158,7 +173,7 @@ export function createRemoteBridgeTransport({
         configuredBrainUrl,
         'remote_bridge_invalid_brain_url',
       );
-      const response = await request(
+      return request(
         'launch',
         `${bridgeUrl}/harness/attempts`,
         {
@@ -181,66 +196,68 @@ export function createRemoteBridgeTransport({
             callback_token: attempt.callbackSecret,
           }),
         },
+        async (response, signal) => {
+          if (response?.status === 409) {
+            throw new Error('remote_bridge_launch_conflict');
+          }
+          if (response?.status !== 202) {
+            throw new Error(`remote_bridge_launch_http_${String(response?.status)}`);
+          }
+
+          const receipt = await parseJson(response, 'launch', signal);
+          if (receipt?.status !== 'accepted') {
+            throw new Error('remote_bridge_launch_not_accepted');
+          }
+          if (!isNonemptyString(receipt.job_id)) {
+            throw new Error('remote_bridge_launch_invalid_job_id');
+          }
+          if (receipt.actual_machine_id !== machine) {
+            throw new Error('remote_bridge_machine_mismatch');
+          }
+          if (!verifyMachineAttestation({
+            secret: configuredSecret,
+            attemptId: attempt.id,
+            machineId: receipt.actual_machine_id,
+            jobId: receipt.job_id,
+            attestation: receipt.attestation,
+          })) {
+            throw new Error('remote_bridge_attestation_invalid');
+          }
+
+          return Object.freeze({
+            jobId: receipt.job_id,
+            actualMachineId: receipt.actual_machine_id,
+            executionTransport: 'remote-bridge',
+            remoteJobId: receipt.job_id,
+            attestationStatus: 'verified',
+          });
+        },
       );
-
-      if (response?.status === 409) {
-        throw new Error('remote_bridge_launch_conflict');
-      }
-      if (response?.status !== 202) {
-        throw new Error(`remote_bridge_launch_http_${String(response?.status)}`);
-      }
-
-      const receipt = await parseJson(response, 'launch');
-      if (receipt?.status !== 'accepted') {
-        throw new Error('remote_bridge_launch_not_accepted');
-      }
-      if (!isNonemptyString(receipt.job_id)) {
-        throw new Error('remote_bridge_launch_invalid_job_id');
-      }
-      if (receipt.actual_machine_id !== machine) {
-        throw new Error('remote_bridge_machine_mismatch');
-      }
-      if (!verifyMachineAttestation({
-        secret: configuredSecret,
-        attemptId: attempt.id,
-        machineId: receipt.actual_machine_id,
-        jobId: receipt.job_id,
-        attestation: receipt.attestation,
-      })) {
-        throw new Error('remote_bridge_attestation_invalid');
-      }
-
-      return Object.freeze({
-        jobId: receipt.job_id,
-        actualMachineId: receipt.actual_machine_id,
-        executionTransport: 'remote-bridge',
-        remoteJobId: receipt.job_id,
-        attestationStatus: 'verified',
-      });
     },
 
     async inspect({ attempt, target } = {}) {
       const { bridgeUrl } = resolveBridge(target);
       requireNonempty(attempt?.id, 'attempt_id');
-      const response = await request(
+      return request(
         'inspect',
         `${bridgeUrl}/harness/attempts/${encodeURIComponent(attempt.id)}`,
         {
           method: 'GET',
           headers: authHeaders(),
         },
+        (response, signal) => {
+          if (response?.status === 404) {
+            return { status: 'missing', httpStatus: 404 };
+          }
+          if (response?.status === 409) {
+            return { status: 'conflict', httpStatus: 409 };
+          }
+          if (!response?.ok) {
+            throw new Error(`remote_bridge_inspect_http_${String(response?.status)}`);
+          }
+          return parseJson(response, 'inspect', signal);
+        },
       );
-
-      if (response?.status === 404) {
-        return { status: 'missing', httpStatus: 404 };
-      }
-      if (response?.status === 409) {
-        return { status: 'conflict', httpStatus: 409 };
-      }
-      if (!response?.ok) {
-        throw new Error(`remote_bridge_inspect_http_${String(response?.status)}`);
-      }
-      return parseJson(response, 'inspect');
     },
 
     async cancel({ attempt, target } = {}) {
@@ -251,7 +268,7 @@ export function createRemoteBridgeTransport({
         throw new Error('remote_bridge_invalid_lease_generation');
       }
 
-      const response = await request(
+      return request(
         'cancel',
         `${bridgeUrl}/harness/attempts/${encodeURIComponent(attempt.id)}/cancel`,
         {
@@ -262,18 +279,19 @@ export function createRemoteBridgeTransport({
             lease_generation: attempt.lease_generation,
           }),
         },
+        (response, signal) => {
+          if (response?.status === 404) {
+            return { status: 'missing', httpStatus: 404 };
+          }
+          if (response?.status === 409) {
+            return { status: 'rejected', httpStatus: 409 };
+          }
+          if (!response?.ok) {
+            throw new Error(`remote_bridge_cancel_http_${String(response?.status)}`);
+          }
+          return parseJson(response, 'cancel', signal);
+        },
       );
-
-      if (response?.status === 404) {
-        return { status: 'missing', httpStatus: 404 };
-      }
-      if (response?.status === 409) {
-        return { status: 'rejected', httpStatus: 409 };
-      }
-      if (!response?.ok) {
-        throw new Error(`remote_bridge_cancel_http_${String(response?.status)}`);
-      }
-      return parseJson(response, 'cancel');
     },
   });
 }
