@@ -187,6 +187,11 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
       provider: 'codex',
       status: 'running',
       lease_owner: LEASE_OWNER,
+      requested_machine_id: 'us-mac-m4',
+      actual_machine_id: 'us-mac-m4',
+      execution_transport: 'local-docker',
+      remote_job_id: null,
+      machine_attestation_status: 'local',
       callback_secret_hash: createHash('sha256').update(CALLBACK_TOKEN).digest('hex'),
       task_bundle: { inputs: {} },
     };

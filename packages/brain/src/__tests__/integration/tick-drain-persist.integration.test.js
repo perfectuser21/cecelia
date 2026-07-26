@@ -77,7 +77,7 @@ describe('Tick Drain 持久化跨重启存活', () => {
   it('cancelDrain() 后，重启不应再恢复出 draining=true', async () => {
     const drain1 = await freshDrainModule();
     await drain1.drainTick();
-    drain1.cancelDrain();
+    await drain1.cancelDrain();
 
     const drain2 = await freshDrainModule();
     await drain2.restoreDrainState();

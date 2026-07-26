@@ -22,7 +22,15 @@ function fakePool(rowsByTable = {}) {
       if (sql.includes('FROM initiative_runs')) return { rows: rowsByTable.initiative_runs ?? [] };
       if (sql.includes('FROM initiative_contracts')) return { rows: rowsByTable.initiative_contracts ?? [] };
       if (sql.includes('FROM tasks')) return { rows: rowsByTable.tasks ?? [] };
-      if (sql.includes('FROM harness_attempts')) return { rows: rowsByTable.harness_attempts ?? [] };
+      if (sql.includes('FROM harness_attempts')) {
+        if (sql.includes("role = 'evaluator'")) {
+          return { rows: rowsByTable.harness_evaluator_attempts ?? [] };
+        }
+        if ('harness_attempts_result' in rowsByTable) {
+          return rowsByTable.harness_attempts_result;
+        }
+        return { rows: rowsByTable.harness_attempts ?? [] };
+      }
       if (sql.includes('FROM orchestrator_decision_log')) return { rows: rowsByTable.orchestrator_decision_log ?? [] };
       if (sql.includes('FROM account_usage_cache')) return { rows: rowsByTable.account_usage_cache ?? [] };
       throw new Error(`unexpected sql: ${sql}`);
@@ -71,8 +79,12 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
     initiative_contracts: rows.contracts ?? [{ id: CONTRACT_ID, status: 'draft' }],
     tasks: rows.tasks ?? [{ id: TASK_ID, status: 'in_progress', payload: {} }],
     harness_attempts: rows.attempts ?? [],
+    harness_evaluator_attempts: rows.evaluatorAttempts ?? rows.attempts ?? [],
     orchestrator_decision_log: rows.log ?? [],
     account_usage_cache: rows.circuit ?? [],
+    ...(rows.attemptsQueryResult !== undefined
+      ? { harness_attempts_result: rows.attemptsQueryResult }
+      : {}),
     ...(rows.run === null ? { initiative_runs: [] } : {}),
   });
   return {
@@ -469,6 +481,63 @@ describe('collectGroundTruth：inflight（P0-1）', () => {
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.inflight.containers).toEqual([]);
   });
+
+  it('materializes starting/running Attempt lifecycle rows for the current run, regardless of transport receipt', async () => {
+    const startingRemote = {
+      id: '10000000-0000-4000-8000-000000000001',
+      run_id: RUN_ID,
+      hop: 5,
+      role: 'generator',
+      status: 'starting',
+      error_code: null,
+      execution_transport: 'remote-bridge',
+    };
+    const runningLocal = {
+      id: '10000000-0000-4000-8000-000000000002',
+      run_id: RUN_ID,
+      hop: 6,
+      role: 'evaluator',
+      status: 'running',
+      error_code: null,
+      execution_transport: 'local-docker',
+    };
+    const completedRemote = {
+      id: '10000000-0000-4000-8000-000000000003',
+      run_id: RUN_ID,
+      hop: 4,
+      role: 'reviewer',
+      status: 'completed',
+      error_code: null,
+      execution_transport: 'remote-bridge',
+    };
+    const deps = makeDeps({
+      rows: { attempts: [runningLocal, completedRemote, startingRemote] },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.inflight.attempts).toEqual([runningLocal, startingRemote]);
+    expect(observed.inflight.attempts).not.toContain(completedRemote);
+    expect(deps.pool.calls.some(([sql, params]) => (
+      sql.includes('FROM harness_attempts')
+      && !sql.includes("role = 'evaluator'")
+      && sql.includes('WHERE run_id = $1')
+      && sql.includes('ORDER BY hop DESC')
+      && params[0] === RUN_ID
+    ))).toBe(true);
+  });
+
+  it('empty Attempt query materializes attempts:[]', async () => {
+    const observed = await collectGroundTruth(makeDeps(), { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.inflight.attempts).toEqual([]);
+  });
+
+  it('malformed Attempt query results fail instead of erasing lifecycle truth', async () => {
+    const deps = makeDeps({ rows: { attemptsQueryResult: null } });
+    await expect(
+      collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID }),
+    ).rejects.toThrow();
+  });
 });
 
 describe('collectGroundTruth：lastAgentExit hop 作用域（P0-3 + derive 3d 契约）', () => {
@@ -553,6 +622,155 @@ describe('collectGroundTruth：lastAgentExit hop 作用域（P0-3 + derive 3d �
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.lastAgentExit.auth_failed).toBe(false);
   });
+
+  it.each([
+    ['failed', 'provider_exit', 1, false],
+    ['cancelled', 'auth_failed', 1, true],
+    ['completed', null, 0, false],
+    ['completed_with_concerns', null, 0, false],
+  ])(
+    'no scoped Docker container falls back to matching terminal Attempt status=%s',
+    async (status, errorCode, code, authFailed) => {
+      const deps = makeDeps({
+        rows: {
+          log: logWithSpawns,
+          attempts: [{
+            id: '20000000-0000-4000-8000-000000000001',
+            run_id: RUN_ID,
+            hop: 5,
+            role: 'generator',
+            status,
+            error_code: errorCode,
+            execution_transport: 'remote-bridge',
+          }],
+        },
+      });
+
+      const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+      expect(observed.lastAgentExit).toEqual({
+        code,
+        auth_failed: authFailed,
+        action: 'spawn:generator-fix',
+      });
+      expect(observed.inflight.attempts).toEqual([]);
+    },
+  );
+
+  it('a stale terminal Attempt from an older hop or wrong role cannot mask the latest spawn', async () => {
+    const deps = makeDeps({
+      rows: {
+        log: [
+          ...logWithSpawns,
+          { hop: 7, action: 'spawn:evaluator', observed: {}, detail: null },
+        ],
+        attempts: [{
+          id: '20000000-0000-4000-8000-000000000002',
+          run_id: RUN_ID,
+          hop: 5,
+          role: 'generator',
+          status: 'failed',
+          error_code: 'auth_failed',
+          execution_transport: 'remote-bridge',
+        }, {
+          id: '20000000-0000-4000-8000-000000000003',
+          run_id: RUN_ID,
+          hop: 7,
+          role: 'generator',
+          status: 'failed',
+          error_code: 'provider_exit',
+          execution_transport: 'local-docker',
+        }],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.lastAgentExit).toEqual({ code: null, auth_failed: false });
+  });
+
+  it('scoped Docker exit takes precedence over a conflicting terminal Attempt', async () => {
+    const deps = makeDeps({
+      rows: {
+        log: logWithSpawns,
+        attempts: [{
+          id: '20000000-0000-4000-8000-000000000004',
+          run_id: RUN_ID,
+          hop: 5,
+          role: 'generator',
+          status: 'failed',
+          error_code: 'auth_failed',
+          execution_transport: 'remote-bridge',
+        }],
+      },
+      exec: {
+        dockerPsExited: exitedContainers(),
+        dockerInspect: '{"ExitCode":0}',
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.lastAgentExit).toEqual({
+      code: 0,
+      auth_failed: false,
+      action: 'spawn:generator-fix',
+    });
+    expect(deps.execCmd.calls.some((cmd) => cmd.includes('docker inspect new1'))).toBe(true);
+  });
+
+  it.each([
+    ['provider_exit', 'container_exit'],
+    ['auth_failed', 'auth_failed'],
+  ])(
+    'a failed remote Attempt with %s takes the same derive failure route as a local exit',
+    async (errorCode, expectedReason) => {
+      const deps = makeDeps({
+        rows: {
+          run: { pr_url: PR_URL },
+          contracts: [{ id: CONTRACT_ID, status: 'approved' }],
+          log: logWithSpawns,
+          attempts: [{
+            id: '20000000-0000-4000-8000-000000000005',
+            run_id: RUN_ID,
+            hop: 5,
+            role: 'generator',
+            status: 'failed',
+            error_code: errorCode,
+            execution_transport: 'remote-bridge',
+          }],
+        },
+        exec: {
+          prView: JSON.stringify({
+            state: 'OPEN',
+            headRefName: 'feature',
+            headRefOid: 'sha-current',
+            statusCheckRollup: [{ state: 'PENDING', name: 'ci' }],
+          }),
+        },
+        files: { 'sprint-prd.md': '# frozen PRD' },
+      });
+
+      const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+      const decision = derive({
+        ...observed,
+        counters: {
+          hops: 5,
+          fixRound: 0,
+          pollCount: 0,
+          noPushStreak: 0,
+          noVerdictStreak: 0,
+          ganCostUsd: 0,
+        },
+      });
+
+      expect(decision).toEqual({
+        phase: 'generate',
+        action: 'spawn:generator-fix',
+        reason: expectedReason,
+      });
+    },
+  );
 });
 
 describe('collectGroundTruth：决策日志推导字段', () => {

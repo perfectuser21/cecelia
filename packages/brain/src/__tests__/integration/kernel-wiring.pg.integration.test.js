@@ -629,6 +629,7 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
           phase: 'generate',
           role: 'generator',
           provider: 'grok',
+          machineId: 'us-mac-m4',
           bundle: {
             inputs: {
               task_id: run.taskId,
@@ -641,6 +642,14 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
         await attemptStore.markStarting(attemptId, {
           leaseOwner: LEASE_OWNER,
           leaseSeconds: 180,
+        });
+        await attemptStore.recordLaunchReceipt(attemptId, {
+          leaseOwner: LEASE_OWNER,
+          leaseGeneration: 0,
+          actualMachineId: 'us-mac-m4',
+          executionTransport: 'local-docker',
+          remoteJobId: null,
+          attestationStatus: 'local',
         });
         await attemptStore.markRunning(attemptId, {
           leaseOwner: LEASE_OWNER,

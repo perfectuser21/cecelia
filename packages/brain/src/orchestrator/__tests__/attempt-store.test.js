@@ -295,4 +295,32 @@ describe('attempt store', () => {
     expect(await store.getById(input.id)).toMatchObject({ id: input.id });
     expect(await store.getByRunHop(input.runId, 3)).toMatchObject({ id: input.id, hop: 3 });
   });
+
+  it('按 hop 顺序暴露同 run/role 的终态失败执行目标', async () => {
+    const rows = [
+      {
+        provider: 'codex',
+        account_id: 'team3',
+        requested_machine_id: 'xian-mac-m4',
+      },
+      {
+        provider: 'codex',
+        account_id: 'team5',
+        requested_machine_id: 'xian-mac-m1',
+      },
+    ];
+    const pool = poolWith({ rows, rowCount: rows.length });
+    const store = createAttemptStore(pool);
+
+    await expect(store.listFailedExecutionTargets(input.runId, 'generator')).resolves.toEqual([
+      { provider: 'codex', account: 'team3', machine: 'xian-mac-m4' },
+      { provider: 'codex', account: 'team5', machine: 'xian-mac-m1' },
+    ]);
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /WHERE run_id=\$1 AND role=\$2 AND status IN \('failed','cancelled'\)\s+ORDER BY hop/i,
+      ),
+      [input.runId, 'generator'],
+    );
+  });
 });

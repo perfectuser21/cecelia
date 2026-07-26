@@ -35,6 +35,7 @@ import { handleRelayExitConsistency } from '../lib/harness-orphan-guard.js';
 import { createAttemptStore } from '../orchestrator/attempt-store.js';
 import { parseHarnessResult } from '../orchestrator/execution-contract.js';
 import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
+import { verifyMachineAttestation } from '../orchestrator/machine-attestation.js';
 import {
   defaultPrHeadResolver,
   normalizeGitSha,
@@ -359,6 +360,31 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
       ok: false,
       error: `provider_mismatch: attempt=${attempt.provider} callback=${result.provider_metadata.provider}`,
     });
+  }
+
+  if (!['local-docker', 'remote-bridge'].includes(attempt.execution_transport)) {
+    return res.status(409).json({ ok: false, error: 'launch_receipt_unconfirmed' });
+  }
+
+  if (attempt.execution_transport === 'remote-bridge') {
+    const machineId = result.provider_metadata?.machine_id;
+    let valid = false;
+    try {
+      valid = machineId === attempt.requested_machine_id
+        && machineId === attempt.actual_machine_id
+        && verifyMachineAttestation({
+          secret: req.app.get('kernelFleetBridgeToken'),
+          attemptId,
+          machineId,
+          jobId: attempt.remote_job_id,
+          attestation: result.provider_metadata?.machine_attestation,
+        });
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      return res.status(409).json({ ok: false, error: 'machine_attestation_mismatch' });
+    }
   }
 
   const sessionId = result.provider_metadata?.session_id ?? null;
