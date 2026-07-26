@@ -1218,6 +1218,7 @@ jobs:
           DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           BRAIN_URL: http://localhost:5221
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          TEST_DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           SPRINT_DIR: ${{ steps.detect.outputs.sprint_dir }}
           LOG_PATH: ${{ steps.detect.outputs.sprint_dir }}/tui.log
         run: |
@@ -1225,6 +1226,31 @@ jobs:
           FAILED=0
           PASSED=0
           SKIPPED=0
+          run_dynamic_command() {
+            local command="$1"
+            local command_log
+            local command_status
+            local clean_summary
+            local passed_count
+            command_log=$(mktemp)
+            set +e
+            eval "$command" 2>&1 | tee "$command_log"
+            command_status=${PIPESTATUS[0]}
+            set -e
+            if [ "$command_status" -eq 0 ] && [[ "$command" == *vitest* ]]; then
+              clean_summary=$(sed -E $'s/\x1B\\[[0-9;]*[mK]//g' "$command_log")
+              passed_count=$(printf '%s\n' "$clean_summary" \
+                | sed -nE 's/.*Tests[[:space:]]+([0-9]+)[[:space:]]+passed.*/\1/p' \
+                | tail -1)
+              VITEST_EXECUTED_COUNT=${passed_count:-0}
+              if [ "$VITEST_EXECUTED_COUNT" -eq 0 ]; then
+                echo "::error::Vitest command executed zero tests: $command"
+                command_status=1
+              fi
+            fi
+            rm -f "$command_log"
+            return "$command_status"
+          }
           echo "🔬 开始执行 DoD BEHAVIOR 动态命令: $TASK_CARD"
           while IFS= read -r line; do
             CMD="${line#*Test: manual:}"
@@ -1249,7 +1275,7 @@ jobs:
             fi
             echo "▶️  执行: $CMD"
             if printf '%s\n' "$CMD" | grep -F 'grep -F "psql \"$DB\""' >/dev/null; then
-              if DB='$DB' eval "$CMD"; then
+              if DB='$DB' run_dynamic_command "$CMD"; then
                 PASSED=$((PASSED + 1))
                 echo "    ✅ PASS"
               else
@@ -1257,7 +1283,7 @@ jobs:
                 echo "::error::❌ FAIL: $CMD"
               fi
             else
-              if eval "$CMD"; then
+              if run_dynamic_command "$CMD"; then
                 PASSED=$((PASSED + 1))
                 echo "    ✅ PASS"
               else
