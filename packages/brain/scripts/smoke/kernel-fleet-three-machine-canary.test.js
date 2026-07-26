@@ -331,6 +331,29 @@ describe('createLiveDispatch', () => {
     expect(liveMocks.pool.query).toHaveBeenCalledOnce();
   });
 
+  it('refuses an existing canary run id instead of replaying old completed attempts', async () => {
+    liveMocks.pool.query.mockImplementation(async (sql) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (/SELECT initiative_id, orchestrator_host/.test(sql)) {
+        return {
+          rows: [{
+            initiative_id: RUN_ID,
+            orchestrator_host: 'kernel-fleet-canary',
+          }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    await expect(createLiveDispatch({
+      runId: RUN_ID,
+      brainUrl: 'http://localhost:5221',
+      fetchFn: vi.fn(async () => ({ ok: true, status: 200 })),
+    })).rejects.toThrow(`live canary refused: run id already exists: ${RUN_ID}`);
+  });
+
   it('uses each machine canonical account boundary through the real live dispatch adapter', async () => {
     const attemptByMachine = {
       'us-mac-m4': ATTEMPT_IDS['us-mac-m4'],

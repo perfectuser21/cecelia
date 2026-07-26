@@ -392,17 +392,7 @@ async function ensureSyntheticRun(pool, runId) {
     [runId, runId],
   );
   if (inserted.rowCount > 0) return;
-
-  const existing = await pool.query(
-    'SELECT initiative_id, orchestrator_host FROM initiative_runs WHERE id=$1::uuid',
-    [runId],
-  );
-  if (
-    existing.rows[0]?.orchestrator_host !== 'kernel-fleet-canary'
-    || existing.rows[0]?.initiative_id !== runId
-  ) {
-    throw new Error(`live canary refused: run id already belongs to non-canary data: ${runId}`);
-  }
+  throw new Error(`live canary refused: run id already exists: ${runId}`);
 }
 
 export async function createLiveDispatch({
