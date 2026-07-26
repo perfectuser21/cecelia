@@ -23,6 +23,7 @@ const ACTION_SPECS = Object.freeze({
   },
   'spawn:canary': {
     role: 'reporter', skill: null, readOnly: true,
+    canary: true,
     objective: 'Perform no filesystem or network work. Return status completed with empty artifacts and checks, decision outcome CANARY_OK, and null error.',
     expectedOutput: 'harness-result/canary-v1',
   },
@@ -167,8 +168,9 @@ function buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata) {
   });
 }
 
-function executionConfig(payload, { provider, accountHome } = {}) {
+function executionConfig(payload, { provider, accountHome, canary = false } = {}) {
   const execution = {};
+  if (canary) execution.canary = true;
   if (payload.model && payload.model !== 'auto') execution.model = payload.model;
   if (payload.codex_home) execution.codexHome = payload.codex_home;
   if (payload.claude_home) execution.claudeHome = payload.claude_home;
@@ -465,7 +467,11 @@ export function createDispatcher(deps) {
     try {
       const adapterSpec = adapter.start({
         bundle,
-        execution: executionConfig(payload, { provider: adapter.name, accountHome }),
+        execution: executionConfig(payload, {
+          provider: adapter.name,
+          accountHome,
+          canary: spec.canary === true,
+        }),
       });
       rawReceipt = await deps.launcher.launch({
         attempt,
@@ -688,6 +694,7 @@ export function createDetachedLauncher({
           prompt: spec.stdin,
           worktreePath: bundle.inputs.worktree_path,
           readOnlyWorktree: bundle.constraints.read_only,
+          minimalHostMounts: spec.canary === true,
           labels,
           extraMounts,
           env: {
@@ -703,6 +710,7 @@ export function createDetachedLauncher({
             HARNESS_RUN_ID: attempt.run_id,
             HARNESS_HOP: String(attempt.hop),
             HARNESS_READ_ONLY: String(bundle.constraints.read_only),
+            HARNESS_CANARY: String(spec.canary === true),
             HARNESS_CALLBACK_URL: `${brainUrl}/api/brain/harness/attempts/${attempt.id}/callback`,
             BRAIN_URL: brainUrl,
           },

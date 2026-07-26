@@ -9,7 +9,10 @@ import { once } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createKernelAttemptHandler } from '../../scripts/codex-bridge/kernel-attempt-handler.cjs';
-import { codexAdapter } from '../orchestrator/providers/codex.js';
+import {
+  CANARY_NO_TOOL_ARGS,
+  codexAdapter,
+} from '../orchestrator/providers/codex.js';
 
 const require = createRequire(import.meta.url);
 const { createBridgeServer } = require('../../scripts/codex-bridge/codex-bridge.cjs');
@@ -64,6 +67,19 @@ function request(overrides = {}) {
     },
     callback_url: `${BRAIN_URL}/api/brain/harness/attempts/${ATTEMPT_ID}/callback`,
     callback_token: CALLBACK_TOKEN,
+    ...overrides,
+  };
+}
+
+function canaryProviderSpec(overrides = {}) {
+  const base = request().provider_spec;
+  return {
+    ...base,
+    args: [base.args[0], ...CANARY_NO_TOOL_ARGS, ...base.args.slice(1)],
+    workspace: {
+      kind: 'disposable-canary-v1',
+      attempt_id: ATTEMPT_ID,
+    },
     ...overrides,
   };
 }
@@ -568,13 +584,7 @@ describe('kernel attempt security and Codex execution', () => {
     });
 
     await handler.accept(request({
-      provider_spec: {
-        ...request().provider_spec,
-        workspace: {
-          kind: 'disposable-canary-v1',
-          attempt_id: ATTEMPT_ID,
-        },
-      },
+      provider_spec: canaryProviderSpec(),
     }), auth());
 
     const spawnedCwd = spawnFn.mock.calls[0][2].cwd;
@@ -583,6 +593,11 @@ describe('kernel attempt security and Codex execution', () => {
       /^kernel-bridge-[^/]+-[^/]+\/workspace$/,
     );
     expect(fs.statSync(spawnedCwd).mode & 0o777).toBe(0o700);
+    expect(spawnFn.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      '--disable', 'shell_tool',
+      '--disable', 'unified_exec',
+      '--ignore-user-config',
+    ]));
   });
 
   it('fails closed when a disposable workspace cannot be created', async () => {
@@ -595,13 +610,7 @@ describe('kernel attempt security and Codex execution', () => {
     });
 
     await expect(handler.accept(request({
-      provider_spec: {
-        ...request().provider_spec,
-        workspace: {
-          kind: 'disposable-canary-v1',
-          attempt_id: ATTEMPT_ID,
-        },
-      },
+      provider_spec: canaryProviderSpec(),
     }), auth())).rejects.toMatchObject({
       message: 'provider_start_failed',
       statusCode: 503,

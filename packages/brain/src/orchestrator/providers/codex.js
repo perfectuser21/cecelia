@@ -6,6 +6,23 @@ import {
   parseJsonValue,
 } from './shared.js';
 
+export const CANARY_NO_TOOL_ARGS = Object.freeze([
+  '--ignore-user-config',
+  '--ignore-rules',
+  '--ephemeral',
+  '--disable', 'shell_tool',
+  '--disable', 'unified_exec',
+  '--disable', 'code_mode_host',
+  '--disable', 'browser_use',
+  '--disable', 'browser_use_external',
+  '--disable', 'browser_use_full_cdp_access',
+  '--disable', 'apps',
+  '--disable', 'enable_mcp_apps',
+  '--disable', 'plugins',
+  '--disable', 'image_generation',
+  '--disable', 'standalone_web_search',
+]);
+
 function outputPaths(bundle, execution) {
   const attemptId = bundle?.attempt_id ?? 'attempt';
   return {
@@ -15,6 +32,7 @@ function outputPaths(bundle, execution) {
 }
 
 function commonArgs(args, execution, paths) {
+  if (execution.canary === true) args.push(...CANARY_NO_TOOL_ARGS);
   args.push(
     '--json',
     '--output-schema', paths.schemaPath,
@@ -31,6 +49,7 @@ function invocation({ bundle, execution = {}, sessionId = null, continuation = n
   commonArgs(args, execution, paths);
   return Object.freeze({
     provider: 'codex',
+    canary: execution.canary === true,
     command: execution.command ?? 'codex',
     args,
     cwd: execution.cwd ?? bundle?.inputs?.worktree_path,

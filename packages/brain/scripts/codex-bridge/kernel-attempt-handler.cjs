@@ -306,6 +306,23 @@ function expectedProviderPaths(attemptId) {
   };
 }
 
+const CANARY_NO_TOOL_ARGS = Object.freeze([
+  '--ignore-user-config',
+  '--ignore-rules',
+  '--ephemeral',
+  '--disable', 'shell_tool',
+  '--disable', 'unified_exec',
+  '--disable', 'code_mode_host',
+  '--disable', 'browser_use',
+  '--disable', 'browser_use_external',
+  '--disable', 'browser_use_full_cdp_access',
+  '--disable', 'apps',
+  '--disable', 'enable_mcp_apps',
+  '--disable', 'plugins',
+  '--disable', 'image_generation',
+  '--disable', 'standalone_web_search',
+]);
+
 function validateDisposableWorkspace(workspace, attemptId) {
   if (workspace === undefined) return false;
   if (
@@ -341,12 +358,17 @@ function validateRequest(request, configuration) {
     throw new KernelAttemptError('codex_command_not_allowed', 422);
   }
 
+  const disposableWorkspace = validateDisposableWorkspace(
+    request.provider_spec.workspace,
+    request.attempt_id,
+  );
   const { schemaPath, resultPath } = expectedProviderPaths(request.attempt_id);
   const output = request.provider_spec.output;
   if (output?.schema_path !== schemaPath || output?.result_path !== resultPath) {
     throw new KernelAttemptError('codex_output_path_not_allowed', 422);
   }
   const commonArgs = [
+    ...(disposableWorkspace ? CANARY_NO_TOOL_ARGS : []),
     '--json',
     '--output-schema', schemaPath,
     '--output-last-message', resultPath,
@@ -375,10 +397,7 @@ function validateRequest(request, configuration) {
   validateCallbackUrl(request.callback_url, configuration.brainUrl, request.attempt_id);
   return {
     resumeSessionId,
-    disposableWorkspace: validateDisposableWorkspace(
-      request.provider_spec.workspace,
-      request.attempt_id,
-    ),
+    disposableWorkspace,
   };
 }
 
@@ -530,6 +549,7 @@ function startProvider({
       ? ['exec', 'resume', execution.resumeSessionId]
       : ['exec'];
     args.push(
+      ...(execution.disposableWorkspace ? CANARY_NO_TOOL_ARGS : []),
       '--json',
       '--output-schema', schemaPath,
       '--output-last-message', resultPath,

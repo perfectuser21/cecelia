@@ -164,6 +164,35 @@ describe('HarnessResult contract', () => {
     ).decision.outcome).toBe('CANARY_OK');
   });
 
+  it('requires an empty side-effect envelope for a successful canary', () => {
+    for (const dirty of [
+      { artifacts: ['unexpected'] },
+      { checks: ['unexpected'] },
+      { error: { code: 'unexpected' } },
+    ]) {
+      expect(() => parseHarnessResult(
+        validResult({ decision: { outcome: 'CANARY_OK' }, ...dirty }),
+        'reporter',
+        'harness-result/canary-v1',
+      )).toThrow(/empty artifacts, empty checks, and null error/);
+    }
+  });
+
+  it.each(['failed', 'cancelled'])(
+    'lets a %s canary reach the failure persistence path',
+    (status) => {
+      expect(parseHarnessResult(
+        validResult({
+          status,
+          decision: null,
+          error: { code: 'provider_exit', message: 'failed safely' },
+        }),
+        'reporter',
+        'harness-result/canary-v1',
+      ).status).toBe(status);
+    },
+  );
+
   it.each([
     ['completed', 'DONE'],
     ['completed_with_concerns', 'DONE_WITH_CONCERNS'],

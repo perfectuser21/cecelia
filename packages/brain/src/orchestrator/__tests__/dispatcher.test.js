@@ -152,6 +152,10 @@ describe('createDispatcher', () => {
     });
     expect(created.bundle.objective).toContain('status completed');
     expect(deps.loadSkill).not.toHaveBeenCalled();
+    const adapter = deps.registry.resolve.mock.results[0].value;
+    expect(adapter.start).toHaveBeenCalledWith(expect.objectContaining({
+      execution: expect.objectContaining({ canary: true }),
+    }));
   });
 
   it('logical cycle 锚定 durable intent，并与 bundle metadata 逐字一致', async () => {

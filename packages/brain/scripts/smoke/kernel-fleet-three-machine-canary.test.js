@@ -46,12 +46,16 @@ function completedEvidence(machine, overrides = {}) {
     requested_machine_id: machine,
     actual_machine_id: machine,
     execution_transport: remote ? 'remote-bridge' : 'local-docker',
+    local_container_id: remote ? null : `cecelia-harness-${ATTEMPT_IDS[machine].slice(0, 8)}-g0`,
     machine_attestation_status: remote ? 'verified' : 'local',
     status: 'completed',
     started_at: '2026-07-26T01:00:00.000Z',
     completed_at: '2026-07-26T01:00:01.000Z',
     result: {
+      artifacts: [],
+      checks: [],
       decision: { outcome: 'CANARY_OK' },
+      error: null,
       provider_metadata: { provider: 'codex' },
     },
     ...overrides,
@@ -149,7 +153,10 @@ describe('runThreeMachineCanary', () => {
   it('rejects a completed callback without the canary decision', async () => {
     const dispatch = vi.fn(async ({ machine }) => completedEvidence(machine, {
       result: {
+        artifacts: [],
+        checks: [],
         decision: null,
+        error: null,
         provider_metadata: { provider: 'codex' },
       },
     }));
@@ -166,7 +173,10 @@ describe('runThreeMachineCanary', () => {
   it('rejects a completed callback that did not execute through Codex', async () => {
     const dispatch = vi.fn(async ({ machine }) => completedEvidence(machine, {
       result: {
+        artifacts: [],
+        checks: [],
         decision: { outcome: 'CANARY_OK' },
+        error: null,
         provider_metadata: { provider: 'claude' },
       },
     }));
@@ -179,6 +189,28 @@ describe('runThreeMachineCanary', () => {
       clock: () => new Date('2026-07-26T01:00:00.000Z'),
     })).rejects.toThrow(
       `canary_provider_mismatch:${ATTEMPT_IDS['us-mac-m4']}:claude`,
+    );
+  });
+
+  it('rejects a completed callback with a non-empty side-effect envelope', async () => {
+    const dispatch = vi.fn(async ({ machine }) => completedEvidence(machine, {
+      result: {
+        artifacts: ['unexpected'],
+        checks: [],
+        decision: { outcome: 'CANARY_OK' },
+        error: null,
+        provider_metadata: { provider: 'codex' },
+      },
+    }));
+
+    await expect(runThreeMachineCanary({
+      mode: 'serial',
+      strict: true,
+      runId: RUN_ID,
+      dispatch,
+      clock: () => new Date('2026-07-26T01:00:00.000Z'),
+    })).rejects.toThrow(
+      `canary_side_effect_envelope:${ATTEMPT_IDS['us-mac-m4']}`,
     );
   });
 
@@ -361,6 +393,8 @@ describe('createLiveDispatch', () => {
       'xian-mac-m1': ATTEMPT_IDS['xian-mac-m1'],
     };
     const dispatchCalls = [];
+    const removeContainerFn = vi.fn(async () => true);
+    const removeLocalWorkspace = vi.fn();
     liveMocks.pool.query.mockImplementation(async (sql, params) => {
       if (/INSERT INTO initiative_runs/.test(sql)) return { rows: [{ id: RUN_ID }], rowCount: 1 };
       if (/FROM harness_attempts/.test(sql)) {
@@ -380,11 +414,15 @@ describe('createLiveDispatch', () => {
       runId: RUN_ID,
       brainUrl: 'http://localhost:5221',
       fetchFn: vi.fn(async () => ({ ok: true, status: 200 })),
+      createLocalWorkspace: vi.fn(() => '/tmp/private-kernel-canary'),
+      removeLocalWorkspace,
+      removeContainerFn,
     });
 
     for (const machine of MACHINE_IDS) {
       await dispatch({ machine, attemptNumber: 1 });
     }
+    await dispatch.close();
 
     expect(dispatchCalls.map(({ machine, context }) => [
       machine,
@@ -394,6 +432,8 @@ describe('createLiveDispatch', () => {
       ['xian-mac-m4', 'team2'],
       ['xian-mac-m1', 'team5'],
     ]);
+    expect(removeContainerFn).toHaveBeenCalledOnce();
+    expect(removeLocalWorkspace).toHaveBeenCalledWith('/tmp/private-kernel-canary');
   });
 
   it('bounds the local Brain health request with an abort timeout', async () => {

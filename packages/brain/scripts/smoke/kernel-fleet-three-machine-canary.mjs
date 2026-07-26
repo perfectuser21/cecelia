@@ -2,6 +2,13 @@
 /* global AbortSignal, console, process, setTimeout */
 
 import { randomUUID } from 'node:crypto';
+import {
+  chmodSync,
+  mkdtempSync,
+  rmSync,
+} from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const MACHINE_IDS = Object.freeze([
@@ -30,6 +37,16 @@ const LIVE_BRAIN_URL = 'http://localhost:5221';
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_POLL_MS = 1_000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 3_000;
+
+function createPrivateLocalWorkspace() {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), 'kernel-fleet-canary-'));
+  chmodSync(workspace, 0o700);
+  return workspace;
+}
+
+function removePrivateLocalWorkspace(workspace) {
+  rmSync(workspace, { recursive: true, force: true });
+}
 
 function takeValue(argv, index, name) {
   const value = argv[index + 1];
@@ -150,6 +167,15 @@ export function validateMachineEvidence(evidence, machine) {
   }
   if (evidence.result?.decision?.outcome !== 'CANARY_OK') {
     throw new Error(`canary_decision_mismatch:${evidence.attempt_id}`);
+  }
+  if (
+    !Array.isArray(evidence.result?.artifacts)
+    || evidence.result.artifacts.length !== 0
+    || !Array.isArray(evidence.result?.checks)
+    || evidence.result.checks.length !== 0
+    || evidence.result?.error !== null
+  ) {
+    throw new Error(`canary_side_effect_envelope:${evidence.attempt_id}`);
   }
   const provider = evidence.result?.provider_metadata?.provider;
   if (provider !== 'codex') {
@@ -374,7 +400,10 @@ export function createDryRunDispatch({
       started_at: startedAt,
       completed_at: new Date(Date.parse(startedAt) + 1_000).toISOString(),
       result: {
+        artifacts: [],
+        checks: [],
         decision: { outcome: 'CANARY_OK' },
+        error: null,
         provider_metadata: { provider: 'codex' },
       },
       synthetic: true,
@@ -403,6 +432,9 @@ export async function createLiveDispatch({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   pollMs = DEFAULT_POLL_MS,
   healthTimeoutMs = DEFAULT_HEALTH_TIMEOUT_MS,
+  createLocalWorkspace = createPrivateLocalWorkspace,
+  removeLocalWorkspace = removePrivateLocalWorkspace,
+  removeContainerFn = null,
 } = {}) {
   if (brainUrl !== LIVE_BRAIN_URL) {
     throw new Error(`live canary refused: --brain-url must be ${LIVE_BRAIN_URL}`);
@@ -429,6 +461,7 @@ export async function createLiveDispatch({
   await ensureSyntheticRun(pool, runId);
 
   const dispatchers = new Map();
+  let localWorkspace = null;
   let nextHop = 0;
   const accountByMachine = {
     'us-mac-m4': env.KERNEL_FLEET_CANARY_US_ACCOUNT ?? 'team1',
@@ -468,7 +501,9 @@ export async function createLiveDispatch({
           description: READ_ONLY_OBJECTIVE,
           payload: {
             sprint_dir: '/var/empty/kernel-fleet-canary',
-            worktree_path: '/var/empty/kernel-fleet-canary',
+            worktree_path: machine === 'us-mac-m4'
+              ? (localWorkspace ??= createLocalWorkspace())
+              : '/var/empty/kernel-fleet-canary',
             role_assignments: {
               reporter: { provider: 'codex', account: accountByMachine[machine] },
             },
@@ -487,18 +522,36 @@ export async function createLiveDispatch({
       const result = await pool.query(
         `SELECT id AS attempt_id, run_id, requested_machine_id, actual_machine_id,
                 execution_transport, remote_job_id, machine_attestation_status,
-                status, started_at, completed_at, result
+                local_container_id, status, started_at, completed_at, result
            FROM harness_attempts
           WHERE id=$1::uuid`,
         [launched.attemptId],
       );
       const row = result.rows[0];
-      if (row && TERMINAL_STATUSES.has(row.status)) return row;
+      if (row && TERMINAL_STATUSES.has(row.status)) {
+        if (machine === 'us-mac-m4') {
+          if (typeof row.local_container_id !== 'string' || row.local_container_id.length === 0) {
+            throw new Error(`canary_local_container_missing:${launched.attemptId}`);
+          }
+          const removeContainer = removeContainerFn
+            ?? (await import('../../src/spawn/detached.js')).removeDockerContainer;
+          if (await removeContainer(row.local_container_id) !== true) {
+            throw new Error(`canary_local_container_cleanup_failed:${launched.attemptId}`);
+          }
+        }
+        return row;
+      }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
     throw new Error(`canary_callback_timeout:${launched.attemptId}`);
   };
-  dispatch.close = async () => pool.end?.();
+  dispatch.close = async () => {
+    try {
+      if (localWorkspace) removeLocalWorkspace(localWorkspace);
+    } finally {
+      await pool.end?.();
+    }
+  };
   return dispatch;
 }
 
