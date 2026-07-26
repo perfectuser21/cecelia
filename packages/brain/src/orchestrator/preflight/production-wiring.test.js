@@ -528,6 +528,7 @@ describe('production capability wiring', () => {
         XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
         XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
         KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+        KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
         BRAIN_URL: 'http://brain.internal:5221',
       },
     });
@@ -554,7 +555,7 @@ describe('production capability wiring', () => {
       lease_owner: LEASE_OWNER,
       lease_generation: 4,
       target,
-      callback_url: `http://brain.internal:5221/api/brain/harness/attempts/${ATTEMPT_ID}/callback`,
+      callback_url: `https://brain.public.example/api/brain/harness/attempts/${ATTEMPT_ID}/callback`,
     });
     expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'xian-mac-m4',
@@ -575,11 +576,26 @@ describe('production capability wiring', () => {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
       XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
       KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+      KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
     }],
     ['missing shared token', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
       XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
       XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
+    }],
+    ['missing remote callback base', {
+      KERNEL_FLEET_REMOTE_ENABLED: 'true',
+      XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
+      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+    }],
+    ['invalid remote callback base', {
+      KERNEL_FLEET_REMOTE_ENABLED: 'true',
+      XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
+      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+      KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'ftp://brain.public.example',
     }],
   ])('fails closed when remote transport is %s', async (_description, env) => {
     const target = {
@@ -680,6 +696,7 @@ describe('production capability wiring', () => {
         XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
         XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
         KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+        KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
       },
     });
 
@@ -740,6 +757,7 @@ describe('production capability wiring', () => {
         XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
         XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
         KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+        KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
       },
     });
 
