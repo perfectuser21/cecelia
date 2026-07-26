@@ -1,5 +1,14 @@
 import { defineConfig } from 'vitest/config';
 
+export const POSTGRES_INTEGRATION_TESTS = [
+  'src/__tests__/migration-333.test.js',
+  'src/__tests__/autoblock-sql-integration.test.js',
+  'src/__tests__/integration/capacity-gate.test.js',
+  'src/__tests__/integration/preview-destroyer.test.js',
+  'src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js',
+  '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
+];
+
 export default defineConfig({
   test: {
     globals: true,
@@ -172,9 +181,14 @@ export default defineConfig({
       // 报红；要不要真的接一条 playwright CI job 去跑它们是另一个问题，不在本次修复范围。
       '../../tests/regression/cockpit-route-wire/e2e-verify.spec.ts',
       '../../tests/regression/relay-07b2fd3b/inbox-e2e.spec.ts',
+      // Dashboard contract imports dashboard-only test dependencies. The broad
+      // regression glob must not select it in the Brain unit workspace.
+      '../../tests/regression/relay-28e7c41a/OpsPanoramaCard.test.tsx',
       // Pre-existing failure (PR #4109): 读取 sprints/07191312-relay-57e25e92/e2e-verify.sh，
       // 该文件已 rename 到 scripts/smoke/e2e/relay-57e25e92.sh，sprint 目录未提交 repo
       '../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts',
+      // 真 PostgreSQL 回归：brain-unit 无 DB；brain-integration 通过专用 config 显式运行
+      ...POSTGRES_INTEGRATION_TESTS,
     ],
     coverage: {
       provider: 'v8',

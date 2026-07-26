@@ -87,7 +87,7 @@ export function resolveProviderAccountHome(provider, account) {
   throw new Error(`invalid ${provider} account: ${value}`);
 }
 
-function buildInputs(spec, ctx) {
+function buildInputs(spec, ctx, attemptMetadata) {
   const { observed } = ctx;
   const task = observed.task;
   const payload = asObject(task.payload);
@@ -100,6 +100,9 @@ function buildInputs(spec, ctx) {
       title: task.title ?? '',
       description: task.description ?? '',
     },
+    logical_cycle_id: attemptMetadata.logicalCycleId,
+    attempt_kind: attemptMetadata.attemptKind,
+    workstream_key: attemptMetadata.workstreamKey,
   };
 
   if (spec.role !== 'planner') {
@@ -135,8 +138,8 @@ function buildInputs(spec, ctx) {
   return common;
 }
 
-function buildBundle(action, spec, ctx, attemptId, skill) {
-  const inputs = buildInputs(spec, ctx);
+function buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata) {
+  const inputs = buildInputs(spec, ctx, attemptMetadata);
   return parseTaskBundle({
     contract_version: '1.0',
     run_id: ctx.runId,
@@ -186,8 +189,13 @@ export function createDispatcher(deps) {
     const attemptId = randomUUID();
     const callbackSecret = createCallbackSecret();
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
-    let bundle = buildBundle(action, spec, ctx, attemptId, skill);
     const payload = asObject(ctx.observed.task.payload);
+    const attemptMetadata = {
+      logicalCycleId: `intent:${ctx.runId}:${ctx.hop}`,
+      attemptKind: action === 'spawn:generator-fix' ? 'fix' : 'initial',
+      workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
+    };
+    let bundle = buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata);
     const roleAssignment = asObject(asObject(payload.role_assignments)[spec.role]);
     const requestedProvider = roleAssignment.provider ?? payload.executor ?? payload.provider ?? 'auto';
     const requestedAccount = roleAssignment.account ?? payload.executor_account ?? null;
@@ -297,6 +305,12 @@ export function createDispatcher(deps) {
       machineId: selectedMachine,
       bundle,
       callbackSecretHash: hashCallbackSecret(callbackSecret),
+      logicalCycleId: attemptMetadata.logicalCycleId,
+      attemptKind: attemptMetadata.attemptKind,
+      retryOfAttemptId: null,
+      restartReason: action === 'spawn:generator-fix' ? 'evaluator_failed' : null,
+      workstreamKey: attemptMetadata.workstreamKey,
+      timeDerived: ['judge', 'reporter'].includes(spec.role),
     });
     if (persisted?.id && persisted.id !== attemptId) {
       return {

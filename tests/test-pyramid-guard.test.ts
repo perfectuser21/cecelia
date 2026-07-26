@@ -8,6 +8,7 @@ import {
   countOrphans, classifySprintArtifacts, checkSmokeWiring, countPermanent,
   checkPanelFreshness, runGuard,
 } from '../scripts/test-pyramid-guard.mjs';
+import { REPO_ROOT } from './helpers/repo-root.js';
 
 let root: string;
 
@@ -257,11 +258,17 @@ describe('classifySprintArtifacts', () => {
     const sprintDir = path.join(fixture, 'sprints/fixture-kernel');
     mkdirSync(sprintDir, { recursive: true });
     cpSync(
-      path.resolve('tests/fixtures/harness-e2e-registration/contract-draft.md'),
+      path.join(
+        REPO_ROOT,
+        'tests/fixtures/harness-e2e-registration/contract-draft.md',
+      ),
       path.join(sprintDir, 'contract-draft.md'),
     );
     cpSync(
-      path.resolve('tests/fixtures/harness-e2e-registration/e2e-verify.sh'),
+      path.join(
+        REPO_ROOT,
+        'tests/fixtures/harness-e2e-registration/e2e-verify.sh',
+      ),
       path.join(sprintDir, 'e2e-verify.sh'),
     );
     prepareGuardFixture(fixture);

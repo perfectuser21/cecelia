@@ -176,7 +176,11 @@ describe('task-tasks routes', () => {
       const [, params] = mockPool.query.mock.calls[1];
       const payloadParam = params.find(p => typeof p === 'string' && p.includes('depends_on'));
       expect(payloadParam).toBeDefined();
-      expect(JSON.parse(payloadParam)).toEqual({ depends_on: ['task-a', 'task-b'], architecture_ref: 'arch.md' });
+      expect(JSON.parse(payloadParam)).toEqual({
+        depends_on: ['task-a', 'task-b'],
+        architecture_ref: 'arch.md',
+        tenant_id: 'default',
+      });
     });
 
     it('[Bug2] 不传 location → INSERT params 第8个参数为 "us"（不是 null）', async () => {

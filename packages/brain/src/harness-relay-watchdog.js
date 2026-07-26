@@ -10,14 +10,21 @@
  * - task 状态 queued 的不管（dispatcher 自然路径会经 relay 分支重 spawn，防双 spawn）
  * - deadline 逾期的不管（scanStuckHarness 既有逻辑负责标 failed）
  */
-import pool from './db.js';
+import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
+
+import pool from './db.js';
+import { createAttemptStore } from './orchestrator/attempt-store.js';
 import { HEADED_HOSTS, HEADED_TMUX_PREFIXES } from './harness-skill-relay.js';
 import {
   parseBaseRepo as _parseBaseRepo,
   discoverPrFromGithub as _discoverPrFromGithub,
 } from './orchestrator/github-pr-discovery.js';
 import { defaultPrHeadResolver } from './orchestrator/pr-head-resolver.js';
+import {
+  generateCallbackSecret,
+  hashCallbackSecret,
+} from './orchestrator/callback-auth.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
 
@@ -61,6 +68,140 @@ export const MAX_CODEX_RELAY_ATTEMPTS = 2;
 export const GENERATOR_DONE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const KERNEL_RECONCILE_STALE_MS = 3 * 60 * 1000;
 
+async function reserveResumeIntent(db, attempt) {
+  const next = await db.query(
+    `SELECT GREATEST(
+              COALESCE(MAX(hop), 0),
+              $2::integer
+            ) + 1 AS next_hop
+       FROM orchestrator_decision_log
+      WHERE run_id=$1`,
+    [attempt.run_id, Number(attempt.hop)],
+  );
+  const hop = Number(next.rows?.[0]?.next_hop);
+  if (!Number.isInteger(hop) || hop <= Number(attempt.hop)) {
+    throw new Error(`invalid resume hop for attempt ${attempt.id}`);
+  }
+  try {
+    const inserted = await db.query(
+      `INSERT INTO orchestrator_decision_log
+         (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+       VALUES ($1,$2,$3::jsonb,$4,'allow','spawn:resume',$5::jsonb)
+       RETURNING hop`,
+      [
+        attempt.run_id,
+        hop,
+        JSON.stringify({
+          recovery_parent_attempt_id: attempt.id,
+          logical_cycle_id: attempt.logical_cycle_id ?? `intent:${attempt.run_id}:${attempt.hop}`,
+        }),
+        attempt.phase,
+        JSON.stringify({
+          reason: 'lease_expired',
+          retry_of_attempt_id: attempt.id,
+        }),
+      ],
+    );
+    return inserted.rows?.[0] ? hop : null;
+  } catch (error) {
+    if (error?.code === '23505') return null;
+    throw error;
+  }
+}
+
+export async function reconcileExpiredKernelAttempt({
+  db,
+  attemptId,
+  leaseOwner,
+  resumeAttempt,
+  reservedChildHop = null,
+}) {
+  const store = createAttemptStore(db);
+  const attempt = await store.getById(attemptId);
+  if (!attempt || !['queued', 'starting', 'running'].includes(attempt.status)) {
+    return { ok: false, deduped: true };
+  }
+  if (attempt.lease_expires_at
+      && new Date(attempt.lease_expires_at).getTime() >= Date.now()) {
+    return { ok: false, deduped: true };
+  }
+
+  const reclaimed = await store.reclaim(attemptId, {
+    leaseOwner,
+    leaseSeconds: 300,
+  });
+  if (!reclaimed) return { ok: false, deduped: true };
+
+  const childHop = reservedChildHop ?? (Number(attempt.hop) + 1);
+  const callbackSecret = generateCallbackSecret();
+  const childId = randomUUID();
+  const child = await store.createAttempt({
+    id: childId,
+    runId: attempt.run_id,
+    hop: childHop,
+    phase: attempt.phase,
+    role: attempt.role,
+    provider: attempt.provider,
+    accountId: attempt.account_id,
+    machineId: attempt.machine_id,
+    bundle: attempt.task_bundle,
+    callbackSecretHash: hashCallbackSecret(callbackSecret),
+    logicalCycleId: attempt.logical_cycle_id ?? `intent:${attempt.run_id}:${attempt.hop}`,
+    attemptKind: 'resume',
+    retryOfAttemptId: attempt.id,
+    restartReason: 'lease_expired',
+    workstreamKey: attempt.workstream_key ?? 'ws1',
+    timeDerived: attempt.time_derived === true,
+  });
+  if (!child || child.id !== childId) {
+    return { ok: false, deduped: true };
+  }
+
+  let resumed;
+  try {
+    resumed = await resumeAttempt(child, {
+      parentAttempt: reclaimed,
+      callbackSecret,
+      leaseOwner,
+    });
+  } catch (error) {
+    resumed = {
+      ok: false,
+      failure_code: 'resume_launch_failed',
+      error: error?.message ?? String(error),
+    };
+  }
+  if (!resumed?.ok) {
+    const failureCode = resumed === null
+      ? 'resume_returned_null'
+      : resumed === false
+        ? 'resume_returned_false'
+        : resumed?.failure_code ?? 'resume_failed';
+    await store.fail(childId, {
+      code: failureCode,
+      message: `resume child launch failed: ${failureCode}`,
+    });
+    const failed = await store.fail(attemptId, {
+      code: failureCode,
+      message: `expired attempt resume failed: ${failureCode}`,
+    }, { leaseOwner });
+    return failed.deduped
+      ? { ok: false, deduped: true }
+      : { ok: false, terminal: true, failure_code: failureCode };
+  }
+
+  await store.fail(attemptId, {
+    code: 'resumed_as_child',
+    message: 'expired attempt resumed as a new lineage child',
+  }, { leaseOwner });
+  return {
+    ok: true,
+    resumed: true,
+    attempt_id: child.id,
+    provider_session_id: resumed.provider_session_id ?? null,
+  };
+}
+
 /** C3：按 initiative 批量关闭 skill-relay-spawn 事件（写点在 executor.js spawn，写完即弃无 id 可用）。 */
 async function _closeSpawnEvents(dbPool, initiativeId, status) {
   try {
@@ -76,7 +217,13 @@ function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
-export async function resumeKernelAttempt(attempt, { task, dbPool }) {
+export async function resumeKernelAttempt(attempt, {
+  parentAttempt,
+  task,
+  dbPool,
+  callbackSecret,
+  leaseOwner = `watchdog:${process.pid}`,
+}) {
   const [
     { createAttemptStore },
     { createProviderRegistry },
@@ -85,7 +232,6 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     { grokAdapter },
     { createDetachedLauncher, resolveProviderAccountHome },
     { spawnDockerDetached, removeDockerContainer },
-    { generateCallbackSecret, hashCallbackSecret },
     { killAttemptContainers },
   ] = await Promise.all([
     import('./orchestrator/attempt-store.js'),
@@ -95,39 +241,35 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     import('./orchestrator/providers/grok.js'),
     import('./orchestrator/dispatcher.js'),
     import('./spawn/detached.js'),
-    import('./orchestrator/callback-auth.js'),
     import('./harness-container-cleanup.js'),
   ]);
   const store = createAttemptStore(dbPool);
-  const leaseOwner = `watchdog:${process.pid}`;
-  const reclaimed = await store.reclaim(attempt.id, { leaseOwner, leaseSeconds: 300 });
-  if (!reclaimed) return { ok: false, reason: 'attempt_lease_conflict' };
-  const callbackSecret = generateCallbackSecret();
-  const rotated = await store.rotateCallbackSecret(attempt.id, {
-    leaseOwner,
-    callbackSecretHash: hashCallbackSecret(callbackSecret),
-  });
-  if (!rotated) return { ok: false, reason: 'attempt_callback_secret_rotation_conflict' };
-  const cleanup = await killAttemptContainers(attempt.id);
+  if (!parentAttempt?.id || !callbackSecret) {
+    return { ok: false, reason: 'resume_child_context_missing' };
+  }
+  const cleanup = await killAttemptContainers(parentAttempt.id);
   if (!cleanup.ok) {
     return { ok: false, reason: 'attempt_container_cleanup_failed', cleanup };
   }
 
   const registry = createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
-  const adapter = registry.resolve({ provider: attempt.provider, requires: ['resume'] });
+  const adapter = registry.resolve({ provider: parentAttempt.provider, requires: ['resume'] });
   const execution = {};
   if (task.payload?.model && task.payload.model !== 'auto') execution.model = task.payload.model;
   if (task.payload?.codex_home) execution.codexHome = task.payload.codex_home;
   if (task.payload?.claude_home) execution.claudeHome = task.payload.claude_home;
   if (task.payload?.grok_home) execution.grokHome = task.payload.grok_home;
-  if (attempt.account_id) {
-    const accountHome = resolveProviderAccountHome(attempt.provider, attempt.account_id);
-    if (attempt.provider === 'codex') execution.codexHome = accountHome;
-    if (attempt.provider === 'claude') execution.claudeHome = accountHome;
-    if (attempt.provider === 'grok') execution.grokHome = accountHome;
+  if (parentAttempt.account_id) {
+    const accountHome = resolveProviderAccountHome(
+      parentAttempt.provider,
+      parentAttempt.account_id,
+    );
+    if (parentAttempt.provider === 'codex') execution.codexHome = accountHome;
+    if (parentAttempt.provider === 'claude') execution.claudeHome = accountHome;
+    if (parentAttempt.provider === 'grok') execution.grokHome = accountHome;
   }
   const spec = adapter.resume({
-    attempt: { ...attempt, task_bundle: attempt.task_bundle },
+    attempt: { ...parentAttempt, task_bundle: parentAttempt.task_bundle },
     input: 'Continue this same Harness attempt from its last durable checkpoint.',
     execution,
   });
@@ -138,13 +280,12 @@ export async function resumeKernelAttempt(attempt, { task, dbPool }) {
     leaseOwner,
   });
   const launched = await launcher.launch({
-    attempt: { ...attempt, ...reclaimed, callbackSecret },
+    attempt: { ...attempt, callbackSecret },
     bundle: attempt.task_bundle,
     spec,
     adapter,
     task,
-    leaseClaimed: true,
-    generation: new Date(reclaimed.updated_at ?? Date.now()).getTime(),
+    generation: new Date(attempt.updated_at ?? Date.now()).getTime(),
   });
   return { ok: true, resumed: true, ...launched };
 }
@@ -170,9 +311,22 @@ async function _recoverKernelRun(run, task, deps, out) {
   if (leaseLive) return;
 
   if (activeStatus && attempt.provider_session_id) {
-    const resumeAttempt = deps.resumeAttempt || resumeKernelAttempt;
-    const resumed = await resumeAttempt(attempt, { task, run, dbPool });
-    if (resumed?.ok) {
+    const lowerResume = deps.resumeAttempt || resumeKernelAttempt;
+    const reservedChildHop = await reserveResumeIntent(dbPool, attempt);
+    if (reservedChildHop == null) return;
+    const resumed = await reconcileExpiredKernelAttempt({
+      db: dbPool,
+      attemptId: attempt.id,
+      leaseOwner: `watchdog:${process.pid}`,
+      reservedChildHop,
+      resumeAttempt: (child, context) => lowerResume(child, {
+        ...context,
+        task,
+        run,
+        dbPool,
+      }),
+    });
+    if (resumed.ok) {
       out.resumed++;
       console.log(`[relay-watchdog][kernel-v1] resumed attempt=${attempt.id} session=${attempt.provider_session_id}`);
     }
@@ -305,7 +459,19 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT DISTINCT ON (initiative_id) id, initiative_id, phase, deadline_at, pr_url, orchestrator_host, orchestrator_heartbeat_at, completed_at, tmux_killed_at, started_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
+    `SELECT DISTINCT ON (initiative_id) id, initiative_id, current_task_id,
+            phase, deadline_at, pr_url, orchestrator_host,
+            orchestrator_heartbeat_at, completed_at, tmux_killed_at, started_at,
+            (SELECT COUNT(*) FROM initiative_runs r2
+              WHERE r2.initiative_id = r.initiative_id
+                AND r2.orchestrator_version = 'v2') AS attempts
+       FROM initiative_runs r
+      WHERE orchestrator_version = 'v2'
+        AND (phase NOT IN ('done', 'failed')
+          OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed')
+            AND phase = 'done' AND tmux_killed_at IS NULL))
+      ORDER BY initiative_id, started_at DESC
+      LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
   const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
@@ -315,7 +481,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
     try {
       const taskQ = await dbPool.query(
         `SELECT id, status, title, description, payload, pr_url FROM tasks WHERE id = $1`,
-        [run.initiative_id]
+        [run.current_task_id ?? run.initiative_id]
       );
       const task = taskQ.rows[0];
 

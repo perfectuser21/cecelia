@@ -1,0 +1,41 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "任务只涉及 Brain 后端 attempt telemetry、watchdog、PG 聚合与只读查询 API。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Kernel attempt telemetry 账本与查询 API",
+      "scope": "以 additive 方式补齐 harness_attempts lineage/时间字段、orphan 收口、task 聚合 telemetry API 与 4-run fixture 回归，不改 Kernel 路由决策和合同冻结语义。",
+      "dod": [
+        "[BEHAVIOR] 真 PostgreSQL 4-run/双租户 fixture 返回 exact 时间 totals，role/workstream 的 retry/recovery/invalid 分类计数分别精确求和，API attempts 六 role 逐一非空后 planner/generator/reviewer/evaluator derived=false 且 judge/reporter derived=true",
+        "[BEHAVIOR] 六 role 通过真实 attempt-store create→starting→running→terminal 锁定 started_at/completed_at 四时点与原生/derived 来源",
+        "[BEHAVIOR] 四个独立 orphan fixture 覆盖 null/false 精确 failure code + 二扫/callback dedupe、成功 resume 新 child id/合法 hop/retry_of/task/cycle/workstream lineage及 parent 无父 initial、live-owner initial 无父链 fencing",
+        "[BEHAVIOR] Kernel route/decision/contract frozen metadata 与 telemetry 改动前等价，Commander/Memory/Directive/Actor Inbox/唤醒/第二流程账本零触碰",
+        "[ARTIFACT] 361 additive migration 包含 logical_cycle_id/attempt_kind/retry_of_attempt_id/restart_reason/workstream_key/time_derived，生产库 fail-closed"
+      ],
+      "files": [
+        "packages/brain/migrations/361_kernel_attempt_telemetry.sql",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/attempt-telemetry.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
+        "packages/brain/src/routes/harness.routes.js",
+        "packages/brain/src/orchestrator/__tests__/attempt-store.test.js",
+        "packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js",
+        "packages/brain/src/routes/__tests__/harness.routes.test.js",
+        "packages/brain/src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js",
+        "sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts",
+        "sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        "packages/brain/DEFINITION.md",
+        "DEFINITION.md",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}

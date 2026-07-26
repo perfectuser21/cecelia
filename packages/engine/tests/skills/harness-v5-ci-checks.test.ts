@@ -42,6 +42,28 @@ describe('harness-v5 CI checks 结构', () => {
     expect(workflow).toMatch(/needs\.changes\.outputs\.contracts == 'true'/);
   });
 
+  it('Sprint Tests 使用隔离 test DB、完整连接参数与 PR base SHA', () => {
+    const sprintJob = workflow.match(
+      /^\s{2}tests-actually-pass:[\s\S]*?(?=^\s{2}skeleton-shape-check:)/m,
+    )?.[0] ?? '';
+    const runSprintStep = sprintJob.slice(sprintJob.indexOf('- name: Run sprint tests'));
+
+    expect(sprintJob).toMatch(
+      /- name: Create isolated sprint test database[\s\S]*?run:\s*createdb cecelia_test/,
+    );
+    expect(runSprintStep).toContain(
+      'TEST_DATABASE_URL: postgresql://cecelia:cecelia@localhost:5432/cecelia_test',
+    );
+    expect(runSprintStep).toContain('DB_HOST: localhost');
+    expect(runSprintStep).toContain("DB_PORT: '5432'");
+    expect(runSprintStep).toContain('DB_NAME: cecelia_test');
+    expect(runSprintStep).toContain('DB_USER: cecelia');
+    expect(runSprintStep).toContain('DB_PASSWORD: cecelia');
+    expect(runSprintStep).toContain(
+      'CONTRACT_BASE_SHA: ${{ github.event.pull_request.base.sha }}',
+    );
+  });
+
   it('check-dod-purity 脚本存在', () => {
     const p = join(REPO_ROOT, 'packages/engine/scripts/devgate/check-dod-purity.cjs');
     expect(existsSync(p)).toBe(true);

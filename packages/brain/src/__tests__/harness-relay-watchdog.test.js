@@ -35,12 +35,51 @@ function makeDeps({
   orchestratorHeartbeatAt = null,
 } = {}) {
   const pool = { query: vi.fn() };
-  pool.query.mockImplementation(async (sql) => {
+  pool.query.mockImplementation(async (sql, params = []) => {
     if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
       return { rows: [{ id: '11111111-1111-4111-8111-111111111111', initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator, ...(harnessRuntime ? { harness_runtime: harnessRuntime } : {}) } }] };
+    }
+    if (/SELECT GREATEST\(/.test(sql)) {
+      return { rows: [{ next_hop: Number(latestAttempt?.hop ?? 1) + 1 }] };
+    }
+    if (/INSERT INTO orchestrator_decision_log/.test(sql)) {
+      return { rows: [{ hop: params[1] }] };
+    }
+    if (/WITH inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)) {
+      return {
+        rows: [{
+          id: params[0],
+          run_id: params[1],
+          hop: params[2],
+          status: 'queued',
+          task_bundle: params[11],
+          callback_secret_hash: params[12],
+          logical_cycle_id: params[13],
+          attempt_kind: params[14],
+          retry_of_attempt_id: params[15],
+        }],
+      };
+    }
+    if (/UPDATE harness_attempts\s+SET status = 'starting'/.test(sql)) {
+      return {
+        rows: [{
+          ...latestAttempt,
+          status: 'starting',
+          lease_owner: params[1],
+        }],
+      };
+    }
+    if (/UPDATE harness_attempts\s+SET status = \$2/.test(sql)) {
+      return {
+        rows: [{
+          ...latestAttempt,
+          status: params[1],
+          error_code: params[2],
+        }],
+      };
     }
     if (/FROM harness_attempts/.test(sql)) {
       return { rows: latestAttempt ? [latestAttempt] : [] };
@@ -171,7 +210,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
 });
 
 describe('resumeStalledRelayRuns', () => {
-  it('kernel-v1 有可恢复 session 时只 resume 同一个 attempt', async () => {
+  it('kernel-v1 有可恢复 session 时启动继承 parent 的新 child attempt', async () => {
     const resumeAttempt = vi.fn(async () => ({ ok: true, resumed: true }));
     const deps = makeDeps({
       harnessRuntime: 'kernel-v1',
@@ -179,8 +218,14 @@ describe('resumeStalledRelayRuns', () => {
       latestAttempt: {
         id: '22222222-2222-4222-8222-222222222222',
         run_id: '11111111-1111-4111-8111-111111111111',
+        hop: 1,
+        phase: 'evaluate',
         role: 'evaluator',
         provider: 'codex',
+        task_bundle: {},
+        callback_secret_hash: 'old-hash',
+        logical_cycle_id: 'intent:11111111-1111-4111-8111-111111111111:1',
+        workstream_key: 'ws1',
         provider_session_id: 'thread-1',
         status: 'running',
         lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
@@ -191,10 +236,19 @@ describe('resumeStalledRelayRuns', () => {
 
     const result = await resumeStalledRelayRuns(deps);
 
-    expect(resumeAttempt).toHaveBeenCalledWith(expect.objectContaining({
-      id: '22222222-2222-4222-8222-222222222222',
-      provider_session_id: 'thread-1',
-    }), expect.any(Object));
+    expect(resumeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: expect.not.stringMatching(/^22222222/),
+        retry_of_attempt_id: '22222222-2222-4222-8222-222222222222',
+      }),
+      expect.objectContaining({
+        parentAttempt: expect.objectContaining({
+          id: '22222222-2222-4222-8222-222222222222',
+          provider_session_id: 'thread-1',
+        }),
+        callbackSecret: expect.any(String),
+      }),
+    );
     expect(deps.launchKernel).not.toHaveBeenCalled();
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(result.resumed).toBe(1);
