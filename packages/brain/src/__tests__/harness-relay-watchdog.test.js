@@ -172,7 +172,8 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
   function terminalCleanupPool(rowCount) {
     const overdueRun = {
       id: '11111111-1111-4111-8111-111111111111',
-      initiative_id: TASK_ID,
+      initiative_id: 'bbbbcccc-dddd-4eee-8fff-000000001111',
+      current_task_id: TASK_ID,
       orchestrator_host: 'skill-relay-codex',
       phase: 'generate',
       deadline_at: new Date(Date.now() - 1000).toISOString(),
@@ -180,7 +181,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     };
     return {
       query: vi.fn(async (sql) => {
-        if (/SELECT id, initiative_id, orchestrator_host, phase, deadline_at/.test(sql)) {
+        if (/SELECT id, initiative_id.*current_task_id/.test(sql)) {
           return { rows: [overdueRun] };
         }
         if (/FROM orchestrator_decision_log review_request/.test(sql)) {

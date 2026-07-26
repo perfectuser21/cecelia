@@ -213,6 +213,28 @@ describe('Codex credential snapshot lifecycle', () => {
     expect(cleanupCodexHome).toHaveBeenCalledWith(containerId);
   });
 
+  it('initiative_runs insert failure after spawn still cleans the exact snapshot identity', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/SELECT COUNT\(\*\)/.test(sql)) {
+          return { rows: [{ count: '0' }] };
+        }
+        if (/INSERT INTO initiative_runs/.test(sql)) {
+          throw new Error('initiative_runs unavailable');
+        }
+        return { rows: [] };
+      }),
+    };
+    const deps = makeDeps({ pool });
+
+    const result = await spawnSkillRelaySession(codexTask(41), deps);
+
+    expect(result.ok).toBe(false);
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    const containerId = deps.snapshotCodexHome.mock.calls[0][1];
+    expect(deps.cleanupCodexHome).toHaveBeenCalledWith(containerId);
+  });
+
   it('terminal fallback removes only complete matching IDs for this task', () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'codex-relay-terminal-contract-'));
     const snapshotRoot = join(sandbox, 'snapshots');
