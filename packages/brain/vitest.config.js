@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/migration-333.test.js',
+  'src/__tests__/integration/capacity-gate.test.js',
   '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
 ];
 

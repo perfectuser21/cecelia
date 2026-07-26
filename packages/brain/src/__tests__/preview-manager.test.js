@@ -39,7 +39,17 @@ describe('allocatePreview', () => {
     await allocatePreview(1, 'test-branch', 'cecelia');
     const updateCall = mockPool.query.mock.calls[1];
     expect(updateCall[0]).toMatch(/UPDATE preview_environments SET status = 'starting'/);
+    expect(updateCall[0]).toMatch(/status != 'inactive'/);
     expect(updateCall[1]).toEqual([1]);
+  });
+
+  it('preserves inactive history when reusing the live row for the same PR', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ port: 5342, db_name: 'cecelia_preview_1' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    await allocatePreview(1, 'test-branch', 'cecelia');
+    const updateSql = mockPool.query.mock.calls[1][0];
+    expect(updateSql).toMatch(/pr_number = \$1[\s\S]*status != 'inactive'/);
   });
 
   it('skips used ports', async () => {
