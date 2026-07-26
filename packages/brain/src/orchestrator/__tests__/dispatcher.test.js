@@ -95,6 +95,19 @@ describe('resolveAction', () => {
 describe('createDispatcher', () => {
   it('logical cycle 锚定 durable intent，并与 bundle metadata 逐字一致', async () => {
     const deps = makeDeps();
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          provider: 'codex',
+          account: null,
+          machine: 'brain-1',
+          capability_snapshot_id: 'snapshot-1',
+        },
+        evidence: {},
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
     const dispatch = createDispatcher(deps);
 
     await dispatch('spawn:reviewer', {
@@ -112,6 +125,9 @@ describe('createDispatcher', () => {
       attempt_kind: 'initial',
       workstream_key: 'ws1',
     });
+    const evaluatedBundle = deps.preflightGate.evaluate.mock.calls[0][0].task_bundle;
+    expect(evaluatedBundle.logical_cycle).toBe(created.logicalCycleId);
+    expect(evaluatedBundle.inputs.logical_cycle_id).toBe(created.logicalCycleId);
   });
 
   it('先持久化 attempt，再生成 adapter spec，最后 launch', async () => {
