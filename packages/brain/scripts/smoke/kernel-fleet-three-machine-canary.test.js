@@ -192,7 +192,7 @@ describe('runThreeMachineCanary', () => {
     expect(result.evidence).toHaveLength(3);
   });
 
-  it.skip('parallel waits for every machine terminal and reports all evidence after an early failure', async () => {
+  it('parallel waits for every machine terminal and reports all evidence after an early failure', async () => {
     const gates = {
       'us-mac-m4': deferred(),
       'xian-mac-m1': deferred(),

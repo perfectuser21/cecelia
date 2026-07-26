@@ -211,6 +211,7 @@ export async function runThreeMachineCanary({
   }
 
   const attempts = new Map();
+  const attemptMachines = new Map();
   let duplicateCallbackCount = 0;
 
   function recordCallback(callback, expectedMachine) {
@@ -229,6 +230,7 @@ export async function runThreeMachineCanary({
     }
     const frozen = Object.freeze({ ...callback });
     attempts.set(callback.attempt_id, frozen);
+    attemptMachines.set(callback.attempt_id, expectedMachine);
     return frozen;
   }
 
@@ -270,11 +272,59 @@ export async function runThreeMachineCanary({
     throw lastError ?? new Error(`canary_attempt_failed:${machine}`);
   }
 
-  const evidence = mode === 'parallel'
-    ? await Promise.all(MACHINE_IDS.map((machine) => runMachine(machine)))
-    : [];
+  let evidence = [];
+  let machineResults = [];
+  if (mode === 'parallel') {
+    const settled = await Promise.allSettled(
+      MACHINE_IDS.map((machine) => runMachine(machine)),
+    );
+    machineResults = settled.map((entry, index) => {
+      const machine = MACHINE_IDS[index];
+      if (entry.status === 'fulfilled') {
+        return Object.freeze({
+          machine,
+          status: 'fulfilled',
+          evidence: entry.value,
+          error: null,
+        });
+      }
+      const terminalEvidence = [...attempts.entries()]
+        .filter(([attemptId]) => attemptMachines.get(attemptId) === machine)
+        .map(([, row]) => row)
+        .at(-1) ?? null;
+      return Object.freeze({
+        machine,
+        status: 'rejected',
+        evidence: terminalEvidence,
+        error: entry.reason?.message ?? String(entry.reason),
+      });
+    });
+    evidence = machineResults
+      .map((entry) => entry.evidence)
+      .filter(Boolean);
+    if (machineResults.some((entry) => entry.status === 'rejected')) {
+      return Object.freeze({
+        passed: false,
+        mode,
+        strict,
+        run_id: runId,
+        evidence: Object.freeze(evidence),
+        machine_results: Object.freeze(machineResults),
+        attempts: Object.freeze([...attempts.values()]),
+        terminal_count: attempts.size,
+        duplicate_callback_count: duplicateCallbackCount,
+        overlapping_machine_count: 0,
+      });
+    }
+  }
   if (mode === 'serial') {
     for (const machine of MACHINE_IDS) evidence.push(await runMachine(machine));
+    machineResults = evidence.map((row, index) => Object.freeze({
+      machine: MACHINE_IDS[index],
+      status: 'fulfilled',
+      evidence: row,
+      error: null,
+    }));
   }
 
   if (new Set(evidence.map((row) => row.attempt_id)).size !== MACHINE_IDS.length) {
@@ -291,6 +341,7 @@ export async function runThreeMachineCanary({
     strict,
     run_id: runId,
     evidence: Object.freeze(evidence),
+    machine_results: Object.freeze(machineResults),
     attempts: Object.freeze([...attempts.values()]),
     terminal_count: attempts.size,
     duplicate_callback_count: duplicateCallbackCount,
