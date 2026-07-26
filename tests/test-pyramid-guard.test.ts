@@ -201,6 +201,34 @@ describe('classifySprintArtifacts', () => {
 
     rmSync(fixture, { recursive: true, force: true });
   });
+
+  it('normalizes a cwd-relative root for classification and A1', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-relative-root-'));
+    mkdirSync(path.join(fixture, 'sprints/s1/tests'), { recursive: true });
+    writeFileSync(path.join(fixture, 'sprints/s1/tests/registered.test.ts'), '');
+    writeContract(fixture, 's1', ['tests/registered.test.ts']);
+    mkdirSync(path.join(fixture, 'scripts/smoke'), { recursive: true });
+    mkdirSync(path.join(fixture, 'perm/unit'), { recursive: true });
+    writeFileSync(path.join(fixture, 'perm/unit/x.test.js'), '');
+    const relativeRoot = path.relative(process.cwd(), fixture);
+
+    expect(classifySprintArtifacts(relativeRoot)).toMatchObject({
+      raw: { total: 1 },
+      registered: { total: 1 },
+      unregistered: { total: 0 },
+    });
+    const guard = runGuard(relativeRoot, {
+      orphans: 0,
+      permanent: 1,
+      permanent_roots: [{ path: 'perm/unit', layer: 'unit' }],
+      smoke_dir: 'scripts/smoke',
+    }, { ci: true });
+    expect(guard.pass).toBe(true);
+    expect(guard.registered_transitional).toMatchObject({ total: 1 });
+    expect(guard.unregistered_orphans).toMatchObject({ total: 0 });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
 });
 
 describe('checkSmokeWiring', () => {

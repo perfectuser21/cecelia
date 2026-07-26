@@ -55,8 +55,9 @@ export function countOrphans(root) {
 }
 
 export function classifySprintArtifacts(root) {
-  const rawFiles = listSprintArtifacts(root);
-  const registeredPaths = new Set(listRegisteredSprintArtifacts(root));
+  const normalizedRoot = path.resolve(root);
+  const rawFiles = listSprintArtifacts(normalizedRoot);
+  const registeredPaths = new Set(listRegisteredSprintArtifacts(normalizedRoot));
   const registeredFiles = rawFiles.filter((file) => registeredPaths.has(file));
   const unregisteredFiles = rawFiles.filter((file) => !registeredPaths.has(file));
 
