@@ -606,6 +606,7 @@ describe('kernel attempt security and Codex execution', () => {
       '--disable', 'multi_agent',
       '--disable', 'multi_agent_v2',
       '--disable', 'hooks',
+      '--disable', 'goals',
       '--ignore-user-config',
     ]));
     expect(spawnFn.mock.calls[0][2].env).not.toHaveProperty('BRAIN_URL');

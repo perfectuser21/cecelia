@@ -460,6 +460,9 @@ describe('createLiveDispatch', () => {
           }],
         };
       }
+      if (/UPDATE harness_attempts/.test(sql)) {
+        return { rows: [{ id: ATTEMPT_IDS['us-mac-m4'], status: 'cancelled' }], rowCount: 1 };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     liveMocks.buildRealDeps.mockResolvedValue({
@@ -509,7 +512,9 @@ describe('createLiveDispatch', () => {
           }],
         };
       }
-      if (/UPDATE harness_attempts/.test(sql)) return { rows: [], rowCount: 0 };
+      if (/UPDATE harness_attempts/.test(sql)) {
+        return { rows: [{ id: ATTEMPT_IDS['xian-mac-m4'], status: 'cancelled' }], rowCount: 1 };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     liveMocks.buildRealDeps.mockResolvedValue({
@@ -537,6 +542,58 @@ describe('createLiveDispatch', () => {
       }),
       'xian-mac-m4',
     );
+    await dispatch.close();
+  });
+
+  it('fails cleanup when the remote Bridge rejects the lease-fenced cancel', async () => {
+    const fetchFn = vi.fn(async (url) => {
+      if (url === 'http://localhost:5221/api/brain/health') {
+        return { ok: true, status: 200 };
+      }
+      return {
+        ok: false,
+        status: 409,
+        json: vi.fn(async () => ({ status: 'rejected' })),
+      };
+    });
+    liveMocks.pool.query.mockImplementation(async (sql) => {
+      if (/INSERT INTO initiative_runs/.test(sql)) {
+        return { rows: [{ id: RUN_ID }], rowCount: 1 };
+      }
+      if (/FROM harness_attempts/.test(sql)) {
+        return {
+          rows: [{
+            ...completedEvidence('xian-mac-m4', { status: 'running' }),
+            lease_owner: 'stale-owner',
+            lease_generation: 1,
+          }],
+        };
+      }
+      if (/UPDATE harness_attempts/.test(sql)) return { rows: [], rowCount: 0 };
+      if (/SELECT \* FROM harness_attempts/.test(sql)) {
+        return { rows: [{ status: 'running' }], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    liveMocks.buildRealDeps.mockResolvedValue({
+      dispatch: vi.fn(async () => ({ attemptId: ATTEMPT_IDS['xian-mac-m4'] })),
+    });
+    const dispatch = await createLiveDispatch({
+      runId: RUN_ID,
+      brainUrl: 'http://localhost:5221',
+      env: {
+        KERNEL_FLEET_BRIDGE_TOKEN: 'shared-secret-at-least-thirty-two-characters',
+        XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
+      },
+      fetchFn,
+      timeoutMs: 5,
+      pollMs: 1,
+    });
+
+    await expect(dispatch({
+      machine: 'xian-mac-m4',
+      attemptNumber: 1,
+    })).rejects.toThrow(`canary_cleanup_failed:${ATTEMPT_IDS['xian-mac-m4']}`);
     await dispatch.close();
   });
 
@@ -616,6 +673,9 @@ describe('createLiveDispatch', () => {
         return { rows: [{ id: RUN_ID }], rowCount: 1 };
       }
       if (/FROM harness_attempts/.test(sql)) throw new Error('postgres unavailable');
+      if (/UPDATE harness_attempts/.test(sql)) {
+        return { rows: [{ id: ATTEMPT_IDS['xian-mac-m1'], status: 'cancelled' }], rowCount: 1 };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     liveMocks.buildRealDeps.mockResolvedValue({

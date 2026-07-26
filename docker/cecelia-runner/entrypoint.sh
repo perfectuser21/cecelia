@@ -429,6 +429,7 @@ run_provider_contract() {
         --disable tool_suggest
         --disable request_permissions_tool
         --disable workspace_dependencies
+        --disable goals
       )
       codex_command=(
         env

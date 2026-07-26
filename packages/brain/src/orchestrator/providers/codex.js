@@ -35,6 +35,7 @@ export const CANARY_NO_TOOL_ARGS = Object.freeze([
   '--disable', 'tool_suggest',
   '--disable', 'request_permissions_tool',
   '--disable', 'workspace_dependencies',
+  '--disable', 'goals',
 ]);
 
 function outputPaths(bundle, execution) {

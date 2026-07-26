@@ -335,6 +335,7 @@ const CANARY_NO_TOOL_ARGS = Object.freeze([
   '--disable', 'tool_suggest',
   '--disable', 'request_permissions_tool',
   '--disable', 'workspace_dependencies',
+  '--disable', 'goals',
 ]);
 
 const DISPOSABLE_PROVIDER_ENV_KEYS = Object.freeze([

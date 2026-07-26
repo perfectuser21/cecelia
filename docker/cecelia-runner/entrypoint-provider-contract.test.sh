@@ -337,6 +337,7 @@ grep -q -- '--disable in_app_browser' <<<"$SECTION"
 grep -q -- '--disable multi_agent' <<<"$SECTION"
 grep -q -- '--disable multi_agent_v2' <<<"$SECTION"
 grep -q -- '--disable hooks' <<<"$SECTION"
+grep -q -- '--disable goals' <<<"$SECTION"
 grep -q -- '--ignore-user-config' <<<"$SECTION"
 grep -q -- '-u HARNESS_CALLBACK_TOKEN' <<<"$SECTION"
 if grep -q -- '--sandbox read-only' <<<"$SECTION"; then

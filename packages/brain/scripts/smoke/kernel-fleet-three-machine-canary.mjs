@@ -34,6 +34,12 @@ const TERMINAL_STATUSES = new Set([
   'failed',
   'cancelled',
 ]);
+const SAFE_REMOTE_CANCELLATION_STATUSES = new Set([
+  'cancelled',
+  'completed',
+  'failed',
+  'callback_pending',
+]);
 const LIVE_BRAIN_URL = 'http://localhost:5221';
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_POLL_MS = 1_000;
@@ -554,7 +560,13 @@ export async function createLiveDispatch({
       }
       if (cancelAttemptFn) {
         try {
-          await cancelAttemptFn(row, machine);
+          const cancellation = await cancelAttemptFn(row, machine);
+          if (
+            cancellation !== true
+            && !SAFE_REMOTE_CANCELLATION_STATUSES.has(cancellation?.status)
+          ) {
+            throw new Error(`canary_cancel_not_confirmed:${String(cancellation?.status)}`);
+          }
         } catch (error) {
           cleanupErrors.push(error);
         }
@@ -577,7 +589,7 @@ export async function createLiveDispatch({
                 timeoutMs: 8_000,
               });
             }
-            await remoteCancellationTransport.cancel({
+            const cancellation = await remoteCancellationTransport.cancel({
               attempt: {
                 id: row.attempt_id,
                 lease_owner: row.lease_owner,
@@ -585,32 +597,41 @@ export async function createLiveDispatch({
               },
               target: { machine },
             });
+            if (!SAFE_REMOTE_CANCELLATION_STATUSES.has(cancellation?.status)) {
+              throw new Error(`canary_remote_cancel_not_confirmed:${String(cancellation?.status)}`);
+            }
           } catch (error) {
             cleanupErrors.push(error);
           }
         }
-        try {
-          if (!attemptStore) {
-            const { createAttemptStore } = await import(
-              '../../src/orchestrator/attempt-store.js'
-            );
-            attemptStore = createAttemptStore(pool);
-          }
-          await attemptStore.fail(
-            launched.attemptId,
-            {
-              code: 'canary_callback_timeout',
-              message: `canary ${machine} callback timed out or polling failed; execution was cancelled`,
-              status: 'cancelled',
-            },
-            {
-              leaseOwner: row.lease_owner ?? null,
-              leaseGeneration: row.lease_generation ?? null,
-            },
+      }
+      try {
+        if (!attemptStore) {
+          const { createAttemptStore } = await import(
+            '../../src/orchestrator/attempt-store.js'
           );
-        } catch (error) {
-          cleanupErrors.push(error);
+          attemptStore = createAttemptStore(pool);
         }
+        const fenced = await attemptStore.fail(
+          launched.attemptId,
+          {
+            code: 'canary_callback_timeout',
+            message: `canary ${machine} callback timed out or polling failed; execution was cancelled`,
+            status: 'cancelled',
+          },
+          {
+            leaseOwner: row.lease_owner ?? null,
+            leaseGeneration: row.lease_generation ?? null,
+          },
+        );
+        if (!fenced.attempt) {
+          const current = await attemptStore.getById(launched.attemptId);
+          if (!current || !TERMINAL_STATUSES.has(current.status)) {
+            throw new Error(`canary_db_fence_not_confirmed:${launched.attemptId}`);
+          }
+        }
+      } catch (error) {
+        cleanupErrors.push(error);
       }
       if (cleanupErrors.length > 0) {
         throw new AggregateError(
