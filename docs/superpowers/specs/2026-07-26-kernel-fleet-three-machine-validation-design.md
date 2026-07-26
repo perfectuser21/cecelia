@@ -1,7 +1,7 @@
 # Kernel Fleet 三机真实派发验证设计
 
-日期：2026-07-26  
-状态：设计已确认，待实施计划  
+日期：2026-07-26
+状态：设计已确认，待实施计划
 关联规格：`2026-07-25-provider-neutral-harness-commander-fusion-prd.md`
 
 ## 1. 目标
