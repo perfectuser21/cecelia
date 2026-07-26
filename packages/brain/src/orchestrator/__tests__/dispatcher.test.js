@@ -654,6 +654,36 @@ describe('createDispatcher', () => {
     }));
   });
 
+  it('does not swallow a failure-persistence alert rejection and sanitizes its diagnostic', async () => {
+    const deps = makeDeps();
+    deps.onFailurePersistenceFailed = vi.fn(async () => {
+      throw new Error('alert transport leaked bridge-secret-value');
+    });
+    deps.attemptStore.recordLaunchReceipt.mockRejectedValueOnce(
+      new Error('receipt postgres unavailable'),
+    );
+    deps.attemptStore.fail.mockRejectedValueOnce(new Error('terminal postgres unavailable'));
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+
+    let thrown;
+    try {
+      await createDispatcher(deps)('spawn:generator', {
+        taskId,
+        runId,
+        hop: 5,
+        observed,
+        decision: { phase: 'generate' },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(thrown.errors).toHaveLength(3);
+    expect(thrown.message).toContain('failure_persistence_alert_failed');
+    expect(thrown.message).not.toContain('bridge-secret-value');
+  });
+
   it('rejects a remote receipt that omits verified actual-machine evidence', async () => {
     const deps = makeDeps();
     const selectedTarget = {

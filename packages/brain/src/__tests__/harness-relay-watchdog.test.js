@@ -7,9 +7,13 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
+const { mockPool, mockRaise } = vi.hoisted(() => ({
+  mockPool: { query: vi.fn() },
+  mockRaise: vi.fn(),
+}));
 vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
+vi.mock('../alerting.js', () => ({ raise: mockRaise }));
 
 import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
 import { sendBark } from '../notifier.js';
@@ -135,6 +139,8 @@ function makeDeps({
 
 beforeEach(() => {
   mockPool.query.mockReset();
+  mockRaise.mockReset();
+  mockRaise.mockResolvedValue(undefined);
   sendBark.mockClear();
 });
 
@@ -233,7 +239,16 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
 
 describe('resumeStalledRelayRuns', () => {
   it('kernel-v1 有可恢复 session 时启动继承 parent 的新 child attempt', async () => {
-    const resumeAttempt = vi.fn(async () => ({ ok: true, resumed: true }));
+    const resumeAttempt = vi.fn(async (_child, context) => {
+      await context.onRecoveryAlert({
+        kind: 'cleanup_unconfirmed',
+        attemptId: 'child-alert-attempt',
+        lifecycleCode: 'resume_child_cleanup_unconfirmed',
+        cleanupStatus: 'missing',
+        diagnostic: 'exact cleanup not confirmed',
+      });
+      return { ok: true, resumed: true };
+    });
     const deps = makeDeps({
       harnessRuntime: 'kernel-v1',
       orchestratorHost: 'kernel-v1',
@@ -266,6 +281,11 @@ describe('resumeStalledRelayRuns', () => {
         retry_of_attempt_id: '22222222-2222-4222-8222-222222222222',
       }),
       expect.objectContaining({
+        parentAttempt: expect.objectContaining({
+          id: '22222222-2222-4222-8222-222222222222',
+          lease_owner: expect.stringMatching(/^watchdog:/),
+          lease_generation: 1,
+        }),
         originalParentAttempt: expect.objectContaining({
           id: '22222222-2222-4222-8222-222222222222',
           provider_session_id: 'thread-1',
@@ -279,11 +299,17 @@ describe('resumeStalledRelayRuns', () => {
           lease_generation: 1,
         }),
         callbackSecret: expect.any(String),
+        onRecoveryAlert: expect.any(Function),
       }),
     );
     expect(deps.launchKernel).not.toHaveBeenCalled();
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(result.resumed).toBe(1);
+    expect(mockRaise).toHaveBeenCalledWith(
+      'P1',
+      'kernel_recovery_cleanup_unconfirmed',
+      expect.stringContaining('attempt=child-alert-attempt'),
+    );
   });
 
   it('kernel-v1 无可恢复 session 时重启 reconcile，由外部真相推导新 hop', async () => {
