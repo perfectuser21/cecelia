@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { execSync } from 'child_process'
 import { resolve } from 'path'
 
-describe('claude-launch.sh / cecelia-run.sh dry-run 注入 session_id', () => {
+describe('claude-launch.sh / cecelia-run.sh dry-run 注入 session identity', () => {
   const claudeLaunch = resolve(__dirname, '../../../../scripts/claude-launch.sh')
   const ceceliaRun = resolve(__dirname, '../../../brain/scripts/cecelia-run.sh')
 
@@ -12,9 +12,11 @@ describe('claude-launch.sh / cecelia-run.sh dry-run 注入 session_id', () => {
     expect(out).toMatch(/--session-id\s+[a-f0-9-]{8,}/)
   })
 
-  it('cecelia-run.sh --dry-run 输出含 --session-id <uuid>', () => {
+  it('cecelia-run.sh --dry-run 通过 CLAUDE_SESSION_ID 把 UUID 交给统一 launcher', () => {
     const out = execSync(`bash ${ceceliaRun} --dry-run`, { encoding: 'utf8', timeout: 5000 })
-    expect(out).toMatch(/--session-id\s+[a-f0-9-]{8,}/)
+    expect(out).toMatch(/CECELIA_DISPATCH=1/)
+    expect(out).toMatch(/CLAUDE_SESSION_ID=[a-f0-9-]{8,}/)
+    expect(out).toMatch(/bash .*scripts\/claude-launch\.sh -p <prompt>/)
   })
 })
 
