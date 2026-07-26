@@ -173,9 +173,70 @@ function executionConfig(payload, { provider, accountHome } = {}) {
   return execution;
 }
 
+function freezeLaunchReceipt(receipt, target) {
+  if (!receipt || typeof receipt !== 'object') {
+    throw new Error('launch_receipt_invalid');
+  }
+  const remote = target?.machine === 'xian-mac-m4' || target?.machine === 'xian-mac-m1';
+  if (remote) {
+    if (receipt.actualMachineId !== target.machine) {
+      throw new Error('launch_receipt_invalid:remote_actual_machine');
+    }
+    if (receipt.executionTransport !== 'remote-bridge') {
+      throw new Error('launch_receipt_invalid:remote_transport');
+    }
+    if (receipt.attestationStatus !== 'verified') {
+      throw new Error('launch_receipt_invalid:remote_attestation');
+    }
+    if (typeof receipt.remoteJobId !== 'string' || receipt.remoteJobId.length === 0) {
+      throw new Error('launch_receipt_invalid:remote_job_id');
+    }
+    if (receipt.jobId !== receipt.remoteJobId) {
+      throw new Error('launch_receipt_invalid:remote_job_mismatch');
+    }
+    if (receipt.containerId != null) {
+      throw new Error('launch_receipt_invalid:remote_container_id');
+    }
+    return Object.freeze({
+      actualMachineId: receipt.actualMachineId,
+      executionTransport: receipt.executionTransport,
+      remoteJobId: receipt.remoteJobId,
+      attestationStatus: receipt.attestationStatus,
+      containerId: null,
+      jobId: receipt.jobId,
+    });
+  }
+
+  if (receipt.actualMachineId !== target?.machine) {
+    throw new Error('launch_receipt_invalid:local_actual_machine');
+  }
+  if (receipt.executionTransport !== 'local-docker') {
+    throw new Error('launch_receipt_invalid:local_transport');
+  }
+  if (receipt.attestationStatus !== 'local') {
+    throw new Error('launch_receipt_invalid:local_attestation');
+  }
+  if (typeof receipt.containerId !== 'string' || receipt.containerId.length === 0) {
+    throw new Error('launch_receipt_invalid:local_container_id');
+  }
+  if (receipt.remoteJobId != null || receipt.jobId != null) {
+    throw new Error('launch_receipt_invalid:local_remote_job');
+  }
+  return Object.freeze({
+    actualMachineId: receipt.actualMachineId,
+    executionTransport: receipt.executionTransport,
+    remoteJobId: null,
+    attestationStatus: receipt.attestationStatus,
+    containerId: receipt.containerId,
+    jobId: null,
+  });
+}
+
 export function createDispatcher(deps) {
   const randomUUID = deps.randomUUID ?? nodeRandomUUID;
   const machineId = deps.machineId ?? process.env.CECELIA_MACHINE_ID ?? os.hostname();
+  const leaseOwner = deps.leaseOwner ?? `${os.hostname()}:${process.pid}`;
+  const leaseSeconds = deps.leaseSeconds ?? 300;
   const handlers = deps.handlers ?? {};
   const createCallbackSecret = deps.createCallbackSecret ?? generateCallbackSecret;
   const resolveAccountHome = deps.resolveAccountHome ?? resolveProviderAccountHome;
@@ -205,6 +266,13 @@ export function createDispatcher(deps) {
     });
     let selectedAccount = requestedAccount;
     let selectedMachine = machineId;
+    let selectedTarget = spec.role === 'judge'
+      ? null
+      : {
+          provider: adapter.name,
+          account: requestedAccount,
+          machine: machineId,
+        };
     let accountHome = null;
     const rawCapabilityRequirements = payload.contract_requirements
       ?? payload.capability_requirements
@@ -269,10 +337,15 @@ export function createDispatcher(deps) {
         await deps.onPreflightBlocked?.(blocked, { action, ctx });
         return blocked;
       }
-      const selectedTarget = preflight.to_target ?? {
+      const preflightTarget = preflight.to_target ?? {
         provider: preflight.snapshot.provider,
         account: preflight.snapshot.account,
         machine: preflight.snapshot.machine,
+      };
+      selectedTarget = {
+        provider: preflightTarget.provider,
+        account: preflightTarget.account,
+        machine: preflightTarget.machine,
       };
       adapter = deps.registry.resolve({
         provider: selectedTarget.provider,
@@ -320,7 +393,7 @@ export function createDispatcher(deps) {
         provider: persisted.provider ?? (spec.role === 'judge' ? 'independent-judge' : adapter.name),
       };
     }
-    const attempt = {
+    let attempt = {
       ...persisted,
       id: persisted?.id ?? attemptId,
       run_id: persisted?.run_id ?? ctx.runId,
@@ -330,44 +403,111 @@ export function createDispatcher(deps) {
       callbackSecret,
     };
 
-    let handedToLauncher = false;
-    try {
-      if (spec.role === 'judge') {
+    if (spec.role === 'judge') {
+      try {
         const judge = handlers[action];
         if (!judge) throw new Error('spawn:judge requires an independent judge handler');
         return await judge({ ...ctx, attempt, bundle });
+      } catch (error) {
+        await deps.attemptStore.fail(attempt.id, {
+          code: 'judge_failed',
+          message: error.message,
+        });
+        throw error;
       }
+    }
 
+    const claimed = await deps.attemptStore.markStarting(attempt.id, {
+      leaseOwner,
+      leaseSeconds,
+    });
+    if (!claimed) {
+      throw new Error(`attempt_lease_conflict: ${attempt.id}`);
+    }
+    attempt = {
+      ...attempt,
+      ...claimed,
+      callbackSecret,
+    };
+
+    let launched;
+    try {
       const adapterSpec = adapter.start({
         bundle,
         execution: executionConfig(payload, { provider: adapter.name, accountHome }),
       });
-      handedToLauncher = true;
-      const launched = await deps.launcher.launch({
+      launched = freezeLaunchReceipt(await deps.launcher.launch({
         attempt,
         bundle,
         spec: adapterSpec,
         adapter,
         task: ctx.observed.task,
-      });
-      return {
-        status: 'DONE',
-        detail: `attempt ${attempt.id} launched as ${launched.containerId ?? launched.jobId ?? 'worker job'}`,
-        attemptId: attempt.id,
-        provider: adapter.name,
-      };
+        target: selectedTarget,
+        leaseClaimed: true,
+      }), selectedTarget);
     } catch (error) {
-      // Worker launcher owns the lease and performs its own fenced failure write.
-      // Fail here only before ownership transfers (adapter construction) or for
-      // the in-process judge, which never claims a worker lease.
-      if (!handedToLauncher || spec.role === 'judge') {
+      try {
         await deps.attemptStore.fail(attempt.id, {
-          code: spec.role === 'judge' ? 'judge_failed' : 'launch_failed',
+          code: 'launch_failed',
           message: error.message,
-        });
+        }, { leaseOwner: attempt.lease_owner });
+      } catch (failError) {
+        error.failurePersistenceError = failError;
       }
       throw error;
     }
+
+    let receiptRow = null;
+    let receiptError = null;
+    try {
+      receiptRow = await deps.attemptStore.recordLaunchReceipt(attempt.id, {
+        leaseOwner: attempt.lease_owner,
+        actualMachineId: launched.actualMachineId,
+        executionTransport: launched.executionTransport,
+        remoteJobId: launched.remoteJobId,
+        attestationStatus: launched.attestationStatus,
+      });
+      if (!receiptRow) {
+        receiptError = new Error('launch receipt was not persisted by the current lease owner');
+      }
+    } catch (error) {
+      receiptError = error;
+    }
+
+    if (receiptError) {
+      let cancelError = null;
+      try {
+        await deps.launcher.cancel({
+          attempt,
+          target: selectedTarget,
+          launchReceipt: launched,
+        });
+      } catch (error) {
+        cancelError = error;
+      }
+      const message = [
+        `launch receipt persistence failed: ${receiptError.message}`,
+        cancelError ? `orphan cancellation failed: ${cancelError.message}` : null,
+      ].filter(Boolean).join('; ');
+      try {
+        await deps.attemptStore.fail(attempt.id, {
+          code: 'launch_receipt_persist_failed',
+          message,
+        }, { leaseOwner: attempt.lease_owner });
+      } catch (failError) {
+        receiptError.failurePersistenceError = failError;
+      }
+      const error = new Error(`launch_receipt_persist_failed: ${message}`);
+      error.cause = receiptError;
+      throw error;
+    }
+
+    return {
+      status: 'DONE',
+      detail: `attempt ${attempt.id} launched as ${launched.containerId ?? launched.jobId ?? 'worker job'}`,
+      attemptId: attempt.id,
+      provider: adapter.name,
+    };
   };
 }
 
@@ -381,12 +521,20 @@ export function createDetachedLauncher({
   sessionRoot = process.env.CECELIA_HARNESS_SESSION_DIR
     ?? path.join(os.tmpdir(), 'cecelia-harness-sessions'),
   ensureDir = mkdirSync,
+  machineId = 'us-mac-m4',
 }) {
   return Object.freeze({
     async launch({ attempt, bundle, spec, task, leaseClaimed = false, generation = null }) {
+      let activeLeaseOwner = leaseOwner;
       if (!leaseClaimed) {
         const starting = await attemptStore.markStarting(attempt.id, { leaseOwner, leaseSeconds });
         if (!starting) throw new Error(`attempt_lease_conflict: ${attempt.id}`);
+        activeLeaseOwner = starting.lease_owner ?? leaseOwner;
+      } else {
+        if (!attempt?.lease_owner) {
+          throw new Error(`attempt_lease_owner_missing: ${attempt?.id ?? 'unknown'}`);
+        }
+        activeLeaseOwner = attempt.lease_owner;
       }
       try {
       const labels = {
@@ -460,7 +608,7 @@ export function createDetachedLauncher({
         : `-g${String(generation).replace(/[^a-zA-Z0-9_-]/g, '') || '0'}`;
       const containerId = `cecelia-harness-${String(attempt.id).slice(0, 8)}${generationSuffix}`;
       if (generation != null) await removeContainer(containerId);
-      return await spawnDetached({
+      const launched = await spawnDetached({
           containerId,
           task: { ...task, task_type: `harness_${attempt.role}` },
           prompt: spec.stdin,
@@ -477,7 +625,7 @@ export function createDetachedLauncher({
             HARNESS_NODE: attempt.role,
             HARNESS_ATTEMPT_ID: attempt.id,
             HARNESS_CALLBACK_TOKEN: attempt.callbackSecret,
-            HARNESS_LEASE_OWNER: leaseOwner,
+            HARNESS_LEASE_OWNER: activeLeaseOwner,
             HARNESS_RUN_ID: attempt.run_id,
             HARNESS_HOP: String(attempt.hop),
             HARNESS_READ_ONLY: String(bundle.constraints.read_only),
@@ -485,13 +633,43 @@ export function createDetachedLauncher({
             BRAIN_URL: brainUrl,
           },
         });
+        return Object.freeze({
+          actualMachineId: machineId,
+          executionTransport: 'local-docker',
+          remoteJobId: null,
+          attestationStatus: 'local',
+          containerId: launched?.containerId ?? containerId,
+          jobId: null,
+        });
       } catch (error) {
-        await attemptStore.fail(attempt.id, {
-          code: 'launch_failed',
-          message: error.message,
-        }, { leaseOwner });
+        if (!leaseClaimed) {
+          await attemptStore.fail(attempt.id, {
+            code: 'launch_failed',
+            message: error.message,
+          }, { leaseOwner: activeLeaseOwner });
+        }
         throw error;
       }
+    },
+    async inspect() {
+      return {
+        status: 'unsupported',
+        reason: 'local_inspection_unavailable',
+      };
+    },
+    async cancel({ launchReceipt } = {}) {
+      const containerId = launchReceipt?.containerId;
+      if (!containerId) {
+        return {
+          status: 'unavailable',
+          reason: 'local_container_id_missing',
+        };
+      }
+      const removed = await removeContainer(containerId);
+      return {
+        status: removed ? 'cancelled' : 'missing',
+        containerId,
+      };
     },
   });
 }

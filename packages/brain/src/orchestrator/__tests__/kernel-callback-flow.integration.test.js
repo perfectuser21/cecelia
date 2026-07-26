@@ -10,6 +10,10 @@ import { fileURLToPath } from 'node:url';
 
 const runtime = vi.hoisted(() => {
   const attempts = new Map();
+  const state = {
+    attempts,
+    afterReceipt: null,
+  };
   const store = {
     createAttempt: vi.fn(async (input) => {
       const attempt = {
@@ -24,9 +28,33 @@ const runtime = vi.hoisted(() => {
         callback_secret_hash: input.callbackSecretHash,
         task_bundle: input.bundle,
         status: 'queued',
+        lease_generation: 0,
         result: null,
       };
       attempts.set(attempt.id, attempt);
+      return attempt;
+    }),
+    markStarting: vi.fn(async (id, { leaseOwner }) => {
+      const attempt = attempts.get(id);
+      if (!attempt || attempt.status !== 'queued') return null;
+      Object.assign(attempt, {
+        status: 'starting',
+        lease_owner: leaseOwner,
+      });
+      return attempt;
+    }),
+    recordLaunchReceipt: vi.fn(async (id, receipt) => {
+      const attempt = attempts.get(id);
+      if (!attempt || attempt.lease_owner !== receipt.leaseOwner) return null;
+      Object.assign(attempt, {
+        actual_machine_id: receipt.actualMachineId,
+        execution_transport: receipt.executionTransport,
+        remote_job_id: receipt.remoteJobId,
+        machine_attestation_status: receipt.attestationStatus,
+      });
+      const afterReceipt = state.afterReceipt;
+      state.afterReceipt = null;
+      await afterReceipt?.();
       return attempt;
     }),
     getById: vi.fn(async (id) => attempts.get(id) ?? null),
@@ -48,11 +76,9 @@ const runtime = vi.hoisted(() => {
     heartbeat: vi.fn(),
     markRunning: vi.fn(),
   };
-  return {
-    attempts,
-    store,
-    pool: { query: vi.fn() },
-  };
+  state.store = store;
+  state.pool = { query: vi.fn() };
+  return state;
 });
 
 vi.mock('../../db.js', () => ({ default: runtime.pool }));
@@ -140,6 +166,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runtime.attempts.clear();
+    runtime.afterReceipt = null;
   });
 
   it('planner 写 sprint PRD 并回调后，attempt 落库且下一 hop 派 proposer', async () => {
@@ -183,32 +210,43 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
 
     let launchCount = 0;
     const launcher = {
-      launch: vi.fn(async ({ attempt, spec }) => {
+      launch: vi.fn(async ({ attempt, spec, target }) => {
         launchCount += 1;
         if (launchCount === 1) {
-          runtime.attempts.get(attempt.id).lease_owner = 'docker-stub-owner';
-          files.add(`${SPRINT_DIR}/sprint-prd.md`);
-          const callback = await request(app)
-            .post(`/api/brain/harness/attempts/${attempt.id}/callback`)
-            .set('Authorization', `Bearer ${attempt.callbackSecret}`)
-            .set('X-Harness-Lease-Owner', 'docker-stub-owner')
-            .send({
-              contract_version: '1.0',
-              attempt_id: attempt.id,
-              status: 'completed',
-              summary: 'planner wrote the sprint PRD',
-              artifacts: [{ type: 'file', path: `${SPRINT_DIR}/sprint-prd.md` }],
-              checks: [],
-              decision: null,
-              error: null,
-              provider_metadata: { provider: spec.provider, session_id: 'thread-planner' },
-            });
-          expect(callback.status).toBe(200);
+          runtime.afterReceipt = async () => {
+            files.add(`${SPRINT_DIR}/sprint-prd.md`);
+            const callback = await request(app)
+              .post(`/api/brain/harness/attempts/${attempt.id}/callback`)
+              .set('Authorization', `Bearer ${attempt.callbackSecret}`)
+              .set('X-Harness-Lease-Owner', attempt.lease_owner)
+              .send({
+                contract_version: '1.0',
+                attempt_id: attempt.id,
+                status: 'completed',
+                summary: 'planner wrote the sprint PRD',
+                artifacts: [{ type: 'file', path: `${SPRINT_DIR}/sprint-prd.md` }],
+                checks: [],
+                decision: null,
+                error: null,
+                provider_metadata: { provider: spec.provider, session_id: 'thread-planner' },
+              });
+            expect(callback.status).toBe(200);
+          };
         } else {
-          task.status = 'aborted';
+          runtime.afterReceipt = async () => {
+            task.status = 'aborted';
+          };
         }
-        return { containerId: `docker-stub-${attempt.id.slice(0, 8)}` };
+        return Object.freeze({
+          actualMachineId: target.machine,
+          executionTransport: 'local-docker',
+          remoteJobId: null,
+          attestationStatus: 'local',
+          containerId: `docker-stub-${attempt.id.slice(0, 8)}`,
+          jobId: null,
+        });
       }),
+      cancel: vi.fn(),
     };
 
     let uuidIndex = 0;
@@ -224,6 +262,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
         }),
       },
       launcher,
+      leaseOwner: 'integration-host:4242',
     });
     const dispatch = vi.fn(async (action, ctx) => {
       actions.push(action);
