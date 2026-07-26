@@ -19,7 +19,8 @@ export async function allocatePreview(prNumber, branchName, baseRepo = 'cecelia'
   );
   if (existing.rows.length > 0) {
     await dbPool.query(
-      `UPDATE preview_environments SET status = 'starting', updated_at = NOW() WHERE pr_number = $1`,
+      `UPDATE preview_environments SET status = 'starting', updated_at = NOW()
+       WHERE pr_number = $1 AND status != 'inactive'`,
       [prNumber],
     );
     return { port: existing.rows[0].port, db_name: existing.rows[0].db_name };
@@ -48,7 +49,7 @@ export async function allocatePreview(prNumber, branchName, baseRepo = 'cecelia'
 export async function markPreviewActive(prNumber, dbPool = pool) {
   await dbPool.query(
     `UPDATE preview_environments SET status = 'active', updated_at = NOW()
-     WHERE pr_number = $1`,
+     WHERE pr_number = $1 AND status != 'inactive'`,
     [prNumber],
   );
 }

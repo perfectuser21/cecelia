@@ -1,7 +1,7 @@
 // preview-destroyer.test.js [BEHAVIOR] — 模块3 统一销毁器
 // TDD Red 证据（vitest）。禁 mock 被测边：真连 cecelia_test Postgres，真 git worktree，真 createdb/dropdb。
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
-import { execSync, spawn } from 'child_process';
+import { execFileSync, execSync, spawn } from 'child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -11,7 +11,16 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const REPO_ROOT = execSync('git rev-parse --show-toplevel', { cwd: __dirname }).toString().trim();
-const PSQL = ['-h', 'localhost', '-U', 'cecelia'];
+const PG_ARGS = [
+  '-h', process.env.DB_HOST || 'localhost',
+  '-p', process.env.DB_PORT || '5432',
+  '-U', process.env.DB_USER || 'cecelia',
+];
+const MAINTENANCE_DB = process.env.DB_NAME || 'cecelia_test';
+const PG_ENV = {
+  ...process.env,
+  PGPASSWORD: process.env.DB_PASSWORD || process.env.PGPASSWORD || 'cecelia',
+};
 
 let pool;
 let destroyPreview;
@@ -24,7 +33,11 @@ function testPr() {
 }
 
 function dbExists(name) {
-  const out = execSync(`psql ${PSQL.join(' ')} -t -A -c "SELECT 1 FROM pg_database WHERE datname='${name}'"`).toString().trim();
+  const out = execFileSync(
+    'psql',
+    [...PG_ARGS, '-d', MAINTENANCE_DB, '-t', '-A', '-c', `SELECT 1 FROM pg_database WHERE datname='${name}'`],
+    { env: PG_ENV },
+  ).toString().trim();
   return out === '1';
 }
 
@@ -48,20 +61,53 @@ afterEach(async () => {
   }
   while (seededDbs.length) {
     const db = seededDbs.pop();
-    try { execSync(`dropdb ${PSQL.join(' ')} --if-exists ${db}`, { stdio: 'pipe' }); } catch { /* best-effort */ }
+    try {
+      execFileSync(
+        'dropdb',
+        [...PG_ARGS, `--maintenance-db=${MAINTENANCE_DB}`, '--if-exists', db],
+        { env: PG_ENV, stdio: 'pipe' },
+      );
+    } catch { /* best-effort */ }
   }
   try { execSync(`git -C "${REPO_ROOT}" worktree prune`, { stdio: 'pipe' }); } catch { /* best-effort */ }
   if (previewBaseDir) { rmSync(previewBaseDir, { recursive: true, force: true }); previewBaseDir = null; }
 });
 
 describe('destroyPreview [BEHAVIOR] — 7 步流程 / 安全防护 / 幂等 / 并发去重', () => {
+  it('同 PR 有 inactive 历史行时只销毁最新 live 行，不把历史行改回非终态', async () => {
+    previewBaseDir = mkdtempSync(join(tmpdir(), 'destroyer-history-'));
+    const pr = testPr();
+    seededPrs.push(pr);
+    await insertRow(pr, `cecelia_preview_${pr}_old`, join(previewBaseDir, `preview-${pr}`), 'inactive');
+    await insertRow(pr, `cecelia_preview_${pr}`, join(previewBaseDir, `preview-${pr}`), 'active');
+
+    const result = await destroyPreview(
+      pr,
+      'test-history',
+      'exec-history',
+      pool,
+      { previewBaseDir, repoRoot: REPO_ROOT },
+    );
+
+    expect(result).toEqual(expect.objectContaining({ destroyed: true, status: 'inactive' }));
+    const { rows } = await pool.query(
+      'SELECT status FROM preview_environments WHERE pr_number = $1 ORDER BY created_at',
+      [pr],
+    );
+    expect(rows.map(({ status }) => status)).toEqual(['inactive', 'inactive']);
+  });
+
   it('7 步流程完整执行：DB 已删 + worktree 已删 + 进程已杀 + 临时文件已清 + 终态 inactive', async () => {
     previewBaseDir = mkdtempSync(join(tmpdir(), 'destroyer-red-'));
     const pr = testPr();
     seededPrs.push(pr);
     const dbName = `cecelia_preview_${pr}`;
     seededDbs.push(dbName);
-    execSync(`createdb ${PSQL.join(' ')} ${dbName}`, { stdio: 'pipe' });
+    execFileSync(
+      'createdb',
+      [...PG_ARGS, `--maintenance-db=${MAINTENANCE_DB}`, dbName],
+      { env: PG_ENV, stdio: 'pipe' },
+    );
     const workDir = join(previewBaseDir, `preview-${pr}`);
     execSync(`git -C "${REPO_ROOT}" worktree add "${workDir}" HEAD --detach`, { stdio: 'pipe' });
     const child = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' });
@@ -88,7 +134,11 @@ describe('destroyPreview [BEHAVIOR] — 7 步流程 / 安全防护 / 幂等 / �
     seededPrs.push(decoyPr);
     const decoyDb = `cecelia_preview_${decoyPr}`;
     seededDbs.push(decoyDb);
-    execSync(`createdb ${PSQL.join(' ')} ${decoyDb}`, { stdio: 'pipe' });
+    execFileSync(
+      'createdb',
+      [...PG_ARGS, `--maintenance-db=${MAINTENANCE_DB}`, decoyDb],
+      { env: PG_ENV, stdio: 'pipe' },
+    );
     const maliciousDbName = `cecelia_preview_${pr}; DROP DATABASE ${decoyDb}`;
     await insertRow(pr, maliciousDbName, join(previewBaseDir, `preview-${pr}`), 'active');
 
@@ -106,7 +156,11 @@ describe('destroyPreview [BEHAVIOR] — 7 步流程 / 安全防护 / 幂等 / �
     seededPrs.push(pr);
     const dbName = `cecelia_preview_${pr}`;
     seededDbs.push(dbName);
-    execSync(`createdb ${PSQL.join(' ')} ${dbName}`, { stdio: 'pipe' });
+    execFileSync(
+      'createdb',
+      [...PG_ARGS, `--maintenance-db=${MAINTENANCE_DB}`, dbName],
+      { env: PG_ENV, stdio: 'pipe' },
+    );
 
     const escapeTarget = mkdtempSync(join(tmpdir(), 'escape-target-'));
     const sentinel = join(escapeTarget, 'sentinel.txt');
@@ -142,7 +196,11 @@ describe('destroyPreview [BEHAVIOR] — 7 步流程 / 安全防护 / 幂等 / �
     seededPrs.push(pr);
     const dbName = `cecelia_preview_${pr}`;
     seededDbs.push(dbName);
-    execSync(`createdb ${PSQL.join(' ')} ${dbName}`, { stdio: 'pipe' });
+    execFileSync(
+      'createdb',
+      [...PG_ARGS, `--maintenance-db=${MAINTENANCE_DB}`, dbName],
+      { env: PG_ENV, stdio: 'pipe' },
+    );
     const workDir = join(previewBaseDir, `preview-${pr}`);
     execSync(`git -C "${REPO_ROOT}" worktree add "${workDir}" HEAD --detach`, { stdio: 'pipe' });
     await insertRow(pr, dbName, workDir, 'active');
