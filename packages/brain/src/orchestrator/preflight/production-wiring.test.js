@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildRealDeps } from '../run.js';
+import { signMachineAttestation } from '../machine-attestation.js';
 import { createProviderRegistry } from '../provider-registry.js';
 
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
+const ATTEMPT_ID = '33333333-3333-4333-8333-333333333333';
+const LEASE_OWNER = 'production-wiring:4242';
+const SHARED_SECRET = 'production-wiring-secret-at-least-32-bytes';
 
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -36,6 +40,66 @@ function observed(payload = {}) {
     run: { id: RUN_ID, phase: 'generate' },
     contract: { row: {} },
     pr: null,
+  };
+}
+
+function selectedPreflight(target) {
+  return {
+    evaluate: vi.fn(async () => ({
+      status: 'ok',
+      snapshot: {
+        ...target,
+        capability_snapshot_id: 'production-wiring-snapshot',
+      },
+      evidence: {
+        from_target: target,
+        to_target: target,
+      },
+      to_target: target,
+    })),
+    validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+  };
+}
+
+function attemptStoreDouble() {
+  return {
+    createAttempt: vi.fn(async (input) => ({
+      ...input,
+      id: input.id,
+      run_id: input.runId,
+      task_bundle: input.bundle,
+      status: 'queued',
+    })),
+    markStarting: vi.fn(async (id) => ({
+      id,
+      status: 'starting',
+      lease_owner: LEASE_OWNER,
+      lease_generation: 4,
+    })),
+    recordLaunchReceipt: vi.fn(async (id, receipt) => ({
+      id,
+      status: 'starting',
+      ...receipt,
+    })),
+    fail: vi.fn(async () => ({ deduped: false })),
+  };
+}
+
+function codexAdapter() {
+  return {
+    name: 'codex',
+    capabilities: ['structured_output'],
+    start: vi.fn(() => ({
+      provider: 'codex',
+      command: 'codex',
+      args: ['exec'],
+      env: {},
+      stdin: '{}',
+    })),
+    resume: vi.fn(),
+    inspect: vi.fn(),
+    cancel: vi.fn(),
+    normalizeResult: vi.fn(),
   };
 }
 
@@ -96,6 +160,19 @@ describe('production capability wiring', () => {
         order.push('createAttempt');
         return { ...input, task_bundle: input.bundle };
       }),
+      markStarting: vi.fn(async (id) => {
+        order.push('claimAttempt');
+        return {
+          id,
+          status: 'starting',
+          lease_owner: LEASE_OWNER,
+          lease_generation: 0,
+        };
+      }),
+      recordLaunchReceipt: vi.fn(async (id, receipt) => {
+        order.push('recordReceipt');
+        return { id, status: 'starting', ...receipt };
+      }),
       fail: vi.fn(),
     };
     const adapter = {
@@ -113,8 +190,16 @@ describe('production capability wiring', () => {
     const launcher = {
       launch: vi.fn(async () => {
         order.push('launch');
-        return { containerId: 'worker-1' };
+        return Object.freeze({
+          actualMachineId: 'us-mac-m4',
+          executionTransport: 'local-docker',
+          remoteJobId: null,
+          attestationStatus: 'local',
+          containerId: 'worker-1',
+          jobId: null,
+        });
       }),
+      cancel: vi.fn(),
     };
 
     const deps = await buildRealDeps({
@@ -132,6 +217,7 @@ describe('production capability wiring', () => {
       fetchFn,
       resolveGitHubToken: vi.fn(async () => 'secret-token'),
       randomUUID: () => '33333333-3333-4333-8333-333333333333',
+      leaseOwner: LEASE_OWNER,
     });
 
     const result = await deps.dispatch('spawn:generator', {
@@ -168,7 +254,13 @@ describe('production capability wiring', () => {
       },
     });
     expect(order.indexOf('postgres')).toBeLessThan(order.indexOf('createAttempt'));
-    expect(order.slice(-3)).toEqual(['createAttempt', 'adapter.start', 'launch']);
+    expect(order.slice(-5)).toEqual([
+      'createAttempt',
+      'claimAttempt',
+      'adapter.start',
+      'launch',
+      'recordReceipt',
+    ]);
   });
 
   it('uses the healthy fallback account for persistence, account home, and launch', async () => {
@@ -207,6 +299,17 @@ describe('production capability wiring', () => {
     });
     const attemptStore = {
       createAttempt: vi.fn(async (input) => ({ ...input, task_bundle: input.bundle })),
+      markStarting: vi.fn(async (id) => ({
+        id,
+        status: 'starting',
+        lease_owner: LEASE_OWNER,
+        lease_generation: 0,
+      })),
+      recordLaunchReceipt: vi.fn(async (id, receipt) => ({
+        id,
+        status: 'starting',
+        ...receipt,
+      })),
       fail: vi.fn(),
     };
     const adapter = {
@@ -222,7 +325,15 @@ describe('production capability wiring', () => {
       normalizeResult: vi.fn(),
     };
     const launcher = {
-      launch: vi.fn(async (input) => ({ containerId: `worker-${input.attempt.accountId}` })),
+      launch: vi.fn(async (input) => Object.freeze({
+        actualMachineId: input.target.machine,
+        executionTransport: 'local-docker',
+        remoteJobId: null,
+        attestationStatus: 'local',
+        containerId: `worker-${input.attempt.accountId}`,
+        jobId: null,
+      })),
+      cancel: vi.fn(),
     };
     const deps = await buildRealDeps({
       pool: { query: vi.fn(async () => ({ rows: [{ ok: 1 }] })) },
@@ -242,6 +353,7 @@ describe('production capability wiring', () => {
         accountHomes.push(account);
         return `/accounts/${account}`;
       }),
+      leaseOwner: LEASE_OWNER,
     });
 
     const result = await deps.dispatch('spawn:generator', {
@@ -371,5 +483,197 @@ describe('production capability wiring', () => {
     });
     expect(attemptStore.createAttempt).not.toHaveBeenCalled();
     expect(launcher.launch).not.toHaveBeenCalled();
+  });
+
+  it('constructs the real remote router and persists its attested launch receipt', async () => {
+    const target = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m4',
+    };
+    const attemptStore = attemptStoreDouble();
+    const spawnDetached = vi.fn();
+    const fetchFn = vi.fn(async () => response({
+      status: 'accepted',
+      job_id: 'remote-job-production-1',
+      actual_machine_id: target.machine,
+      attestation: signMachineAttestation({
+        secret: SHARED_SECRET,
+        attemptId: ATTEMPT_ID,
+        machineId: target.machine,
+        jobId: 'remote-job-production-1',
+      }),
+    }, 202));
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      attemptStore,
+      registry: createProviderRegistry([codexAdapter()]),
+      preflightGate: selectedPreflight(target),
+      handlers: {},
+      loadSkill: vi.fn(() => ({
+        name: 'harness-generator',
+        version: '1.0.0',
+        digest: `sha256:${'d'.repeat(64)}`,
+        content: 'generate',
+      })),
+      spawnDetached,
+      removeContainer: vi.fn(),
+      fetchFn,
+      randomUUID: () => ATTEMPT_ID,
+      leaseOwner: LEASE_OWNER,
+      brainUrl: 'http://brain.internal:5221',
+      machineId: 'us-mac-m4',
+      env: {
+        KERNEL_FLEET_REMOTE_ENABLED: 'true',
+        XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
+        XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+        KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+        BRAIN_URL: 'http://brain.internal:5221',
+      },
+    });
+
+    await expect(deps.dispatch('spawn:generator', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 12,
+      observed: observed(),
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    })).resolves.toMatchObject({
+      status: 'DONE',
+      attemptId: ATTEMPT_ID,
+    });
+
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledWith(
+      'http://xian-m4.internal:3458/harness/attempts',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const bridgeRequest = JSON.parse(fetchFn.mock.calls[0][1].body);
+    expect(bridgeRequest).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      lease_owner: LEASE_OWNER,
+      lease_generation: 4,
+      target,
+      callback_url: `http://brain.internal:5221/api/brain/harness/attempts/${ATTEMPT_ID}/callback`,
+    });
+    expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'xian-mac-m4',
+    }));
+    expect(attemptStore.recordLaunchReceipt).toHaveBeenCalledWith(ATTEMPT_ID, {
+      leaseOwner: LEASE_OWNER,
+      actualMachineId: 'xian-mac-m4',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'remote-job-production-1',
+      attestationStatus: 'verified',
+    });
+  });
+
+  it.each([
+    ['disabled by default', {}],
+    ['missing selected bridge URL', {
+      KERNEL_FLEET_REMOTE_ENABLED: 'true',
+      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+    }],
+    ['missing shared token', {
+      KERNEL_FLEET_REMOTE_ENABLED: 'true',
+      XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
+      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+    }],
+  ])('fails closed when remote transport is %s', async (_description, env) => {
+    const target = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m4',
+    };
+    const attemptStore = attemptStoreDouble();
+    const spawnDetached = vi.fn();
+    const fetchFn = vi.fn();
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      attemptStore,
+      registry: createProviderRegistry([codexAdapter()]),
+      preflightGate: selectedPreflight(target),
+      handlers: {},
+      loadSkill: vi.fn(() => ({
+        name: 'harness-generator',
+        version: '1.0.0',
+        digest: `sha256:${'e'.repeat(64)}`,
+        content: 'generate',
+      })),
+      spawnDetached,
+      removeContainer: vi.fn(),
+      fetchFn,
+      randomUUID: () => ATTEMPT_ID,
+      leaseOwner: LEASE_OWNER,
+      brainUrl: 'http://brain.internal:5221',
+      machineId: 'us-mac-m4',
+      env,
+    });
+
+    await expect(deps.dispatch('spawn:generator', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 13,
+      observed: observed(),
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('execution_transport_unavailable:xian-mac-m4');
+
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(attemptStore.fail).toHaveBeenCalledWith(ATTEMPT_ID, {
+      code: 'launch_failed',
+      message: 'execution_transport_unavailable:xian-mac-m4',
+    }, { leaseOwner: LEASE_OWNER });
+  });
+
+  it('never falls back to local Docker when an enabled remote launch fails', async () => {
+    const target = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m1',
+    };
+    const attemptStore = attemptStoreDouble();
+    const spawnDetached = vi.fn();
+    const fetchFn = vi.fn(async () => {
+      throw new Error('bridge offline');
+    });
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      attemptStore,
+      registry: createProviderRegistry([codexAdapter()]),
+      preflightGate: selectedPreflight(target),
+      handlers: {},
+      loadSkill: vi.fn(() => ({
+        name: 'harness-generator',
+        version: '1.0.0',
+        digest: `sha256:${'f'.repeat(64)}`,
+        content: 'generate',
+      })),
+      spawnDetached,
+      removeContainer: vi.fn(),
+      fetchFn,
+      randomUUID: () => ATTEMPT_ID,
+      leaseOwner: LEASE_OWNER,
+      brainUrl: 'http://brain.internal:5221',
+      machineId: 'us-mac-m4',
+      env: {
+        KERNEL_FLEET_REMOTE_ENABLED: 'true',
+        XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
+        XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+        KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+      },
+    });
+
+    await expect(deps.dispatch('spawn:generator', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 14,
+      observed: observed(),
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('remote_bridge_launch_request_failed');
+
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(spawnDetached).not.toHaveBeenCalled();
   });
 });

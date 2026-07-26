@@ -23,6 +23,44 @@ import { createKernelHandlers } from './kernel-handlers.js';
 import { readGitArtifact } from './git-artifact-reader.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
+import { createExecutionTransportRouter } from './execution-transport.js';
+import { createRemoteBridgeTransport } from './remote-bridge-transport.js';
+
+const DEFAULT_WORKER_BRAIN_URL = 'http://host.docker.internal:5221';
+
+function guardRemoteConfiguration(remote, {
+  enabled,
+  bridgeUrls,
+  sharedSecret,
+}) {
+  const assertAvailable = (input) => {
+    const machine = input?.target?.machine;
+    const bridgeUrl = bridgeUrls?.[machine];
+    if (
+      enabled !== true
+      || typeof bridgeUrl !== 'string'
+      || bridgeUrl.trim().length === 0
+      || typeof sharedSecret !== 'string'
+      || sharedSecret.length < 32
+    ) {
+      throw new Error(`execution_transport_unavailable:${String(machine)}`);
+    }
+  };
+  return Object.freeze({
+    async launch(input) {
+      assertAvailable(input);
+      return remote.launch(input);
+    },
+    async inspect(input) {
+      assertAvailable(input);
+      return remote.inspect(input);
+    },
+    async cancel(input) {
+      assertAvailable(input);
+      return remote.cancel(input);
+    },
+  });
+}
 
 /** 解析 --task-id / --run-id / --dry-run */
 export function parseArgs(argv) {
@@ -105,6 +143,9 @@ export async function buildRealDeps(overrides = {}) {
   const execCmd = overrides.execCmd
     ?? ((cmd) => execSync(cmd, { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 60_000 }));
   const attemptStore = overrides.attemptStore ?? createAttemptStore(pool);
+  const env = overrides.env ?? process.env;
+  const leaseOwner = overrides.leaseOwner ?? `${os.hostname()}:${process.pid}`;
+  const brainUrl = overrides.brainUrl ?? env.BRAIN_URL ?? DEFAULT_WORKER_BRAIN_URL;
   let dispatch = overrides.dispatch;
   if (!dispatch) {
     const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
@@ -115,7 +156,7 @@ export async function buildRealDeps(overrides = {}) {
         fetchFn: overrides.fetchFn,
         resolveGitHubTokenFn: overrides.resolveGitHubToken,
         brainUrl: overrides.brainUrl,
-        env: overrides.env,
+        env,
         requestTimeoutMs: overrides.preflightRequestTimeoutMs,
       });
     const preflightGate = overrides.preflightGate
@@ -127,11 +168,40 @@ export async function buildRealDeps(overrides = {}) {
     const detached = await import('../spawn/detached.js');
     const spawnDetached = overrides.spawnDetached ?? detached.spawnDockerDetached;
     const removeContainer = overrides.removeContainer ?? detached.removeDockerContainer;
-    const launcher = overrides.launcher ?? createDetachedLauncher({
-      spawnDetached,
-      removeContainer,
-      attemptStore,
-    });
+    let launcher = overrides.launcher;
+    if (!launcher) {
+      const localLauncher = createDetachedLauncher({
+        spawnDetached,
+        removeContainer,
+        attemptStore,
+        brainUrl,
+        leaseOwner,
+        machineId: 'us-mac-m4',
+      });
+      const remoteEnabled = env.KERNEL_FLEET_REMOTE_ENABLED === 'true';
+      const bridgeUrls = {
+        'xian-mac-m4': env.XIAN_M4_KERNEL_BRIDGE_URL,
+        'xian-mac-m1': env.XIAN_M1_KERNEL_BRIDGE_URL,
+      };
+      const sharedSecret = env.KERNEL_FLEET_BRIDGE_TOKEN;
+      const remoteBridge = createRemoteBridgeTransport({
+        enabled: remoteEnabled,
+        bridgeUrls,
+        sharedSecret,
+        brainUrl,
+        fetchFn: overrides.fetchFn,
+        timeoutMs: overrides.remoteBridgeTimeoutMs,
+      });
+      const remoteLauncher = guardRemoteConfiguration(remoteBridge, {
+        enabled: remoteEnabled,
+        bridgeUrls,
+        sharedSecret,
+      });
+      launcher = createExecutionTransportRouter({
+        local: localLauncher,
+        remote: remoteLauncher,
+      });
+    }
     const handlers = overrides.handlers
       ?? await buildDefaultHandlers({ pool, execCmd, attemptStore });
     const onPreflightBlocked = overrides.onPreflightBlocked
@@ -157,6 +227,8 @@ export async function buildRealDeps(overrides = {}) {
       randomUUID: overrides.randomUUID,
       createCallbackSecret: overrides.createCallbackSecret,
       onPreflightBlocked,
+      leaseOwner,
+      leaseSeconds: overrides.leaseSeconds,
     });
   }
   return {

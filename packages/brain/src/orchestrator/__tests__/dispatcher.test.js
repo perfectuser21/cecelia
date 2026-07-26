@@ -43,6 +43,7 @@ function fakeSkill(name) {
 }
 
 function makeDeps(order = []) {
+  const leaseOwner = 'dispatcher-test:4242';
   const adapter = {
     name: 'codex',
     start: vi.fn(() => {
@@ -56,6 +57,19 @@ function makeDeps(order = []) {
         order.push('attempt.create');
         return { id: input.id, ...input, task_bundle: input.bundle };
       }),
+      markStarting: vi.fn(async (id) => {
+        order.push('attempt.claim');
+        return {
+          id,
+          status: 'starting',
+          lease_owner: leaseOwner,
+          lease_generation: 0,
+        };
+      }),
+      recordLaunchReceipt: vi.fn(async (id, receipt) => {
+        order.push('attempt.receipt');
+        return { id, status: 'starting', ...receipt };
+      }),
       fail: vi.fn(),
     },
     registry: {
@@ -64,13 +78,23 @@ function makeDeps(order = []) {
     launcher: {
       launch: vi.fn(async () => {
         order.push('launcher.launch');
-        return { containerId: 'container-1' };
+        return Object.freeze({
+          actualMachineId: 'brain-1',
+          executionTransport: 'local-docker',
+          remoteJobId: null,
+          attestationStatus: 'local',
+          containerId: 'container-1',
+          jobId: null,
+        });
       }),
+      inspect: vi.fn(),
+      cancel: vi.fn(),
     },
     loadSkill: vi.fn(fakeSkill),
     randomUUID: () => attemptId,
     createCallbackSecret: () => 'attempt-secret',
     machineId: 'brain-1',
+    leaseOwner,
   };
 }
 
@@ -143,7 +167,13 @@ describe('createDispatcher', () => {
       decision: { phase: 'gan', reason: 'awaiting_review' },
     });
 
-    expect(order).toEqual(['attempt.create', 'adapter.start', 'launcher.launch']);
+    expect(order).toEqual([
+      'attempt.create',
+      'attempt.claim',
+      'adapter.start',
+      'launcher.launch',
+      'attempt.receipt',
+    ]);
     expect(result).toMatchObject({ status: 'DONE', attemptId, provider: 'codex' });
     expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
       callbackSecretHash: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -299,9 +329,26 @@ describe('createDispatcher', () => {
     }]));
     const attemptStore = {
       createAttempt: vi.fn(async (input) => ({ id: input.id, ...input, task_bundle: input.bundle })),
+      markStarting: vi.fn(async (id) => ({
+        id,
+        status: 'starting',
+        lease_owner: 'dispatcher-test:4242',
+        lease_generation: 0,
+      })),
+      recordLaunchReceipt: vi.fn(async (id) => ({ id, status: 'starting' })),
       fail: vi.fn(),
     };
-    const launcher = { launch: vi.fn(async () => ({ containerId: 'cx' })) };
+    const launcher = {
+      launch: vi.fn(async ({ target }) => Object.freeze({
+        actualMachineId: target.machine,
+        executionTransport: 'local-docker',
+        remoteJobId: null,
+        attestationStatus: 'local',
+        containerId: 'cx',
+        jobId: null,
+      })),
+      cancel: vi.fn(),
+    };
     const payload = {
       executor: 'grok',
       sprint_dir: 'sprints/provider-neutral',
@@ -319,6 +366,7 @@ describe('createDispatcher', () => {
       randomUUID: () => attempts.shift(),
       createCallbackSecret: () => 'secret',
       resolveAccountHome: (provider, account) => `/accounts/${provider}/${account}`,
+      leaseOwner: 'dispatcher-test:4242',
     });
     const baseCtx = {
       taskId,
@@ -345,7 +393,7 @@ describe('createDispatcher', () => {
     }));
   });
 
-  it('launch 失败会把 attempt 记为 failed 后再抛出', async () => {
+  it('launch 失败由 dispatcher 用唯一 lease owner fenced-fail 后再抛出', async () => {
     const deps = makeDeps();
     deps.launcher.launch.mockRejectedValueOnce(new Error('docker unavailable'));
     const dispatch = createDispatcher(deps);
@@ -357,9 +405,243 @@ describe('createDispatcher', () => {
       observed,
       decision: { phase: 'generate', reason: 'approved' },
     })).rejects.toThrow(/docker unavailable/);
-    // launcher 持有 lease owner，只有 launcher 能做带 fence 的失败落库；
-    // dispatcher 不得用无 lease 的 fail 覆盖已被接管的 attempt。
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_failed',
+      message: 'docker unavailable',
+    }, { leaseOwner: 'dispatcher-test:4242' });
+  });
+
+  it('lease claim 冲突时不以无 fence 的失败写覆盖其他 owner', async () => {
+    const deps = makeDeps();
+    deps.attemptStore.markStarting.mockResolvedValueOnce(null);
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow(`attempt_lease_conflict: ${attemptId}`);
+
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
     expect(deps.attemptStore.fail).not.toHaveBeenCalled();
+  });
+
+  it('把 preflight 选中的 target、machine 与同一 fenced receipt 贯穿真实 dispatch 链', async () => {
+    const order = [];
+    const deps = makeDeps(order);
+    const selectedTarget = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m4',
+    };
+    const remoteReceipt = Object.freeze({
+      actualMachineId: 'xian-mac-m4',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'remote-job-7',
+      attestationStatus: 'verified',
+      containerId: null,
+      jobId: 'remote-job-7',
+    });
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          ...selectedTarget,
+          capability_snapshot_id: 'snapshot-xian',
+        },
+        evidence: {},
+        to_target: {
+          ...selectedTarget,
+          untrusted_field: 'must-not-cross-transport-boundary',
+        },
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+    deps.attemptStore.markStarting.mockResolvedValueOnce({
+      id: attemptId,
+      status: 'starting',
+      lease_owner: 'dispatcher-test:4242',
+      lease_generation: 7,
+    });
+    deps.launcher.launch.mockResolvedValueOnce(remoteReceipt);
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed: {
+        ...observed,
+        task: {
+          ...observed.task,
+          payload: {
+            ...observed.task.payload,
+            role_assignments: {
+              generator: { provider: 'codex', account: 'team1' },
+            },
+          },
+        },
+      },
+      decision: { phase: 'generate' },
+    })).resolves.toMatchObject({
+      status: 'DONE',
+      attemptId,
+    });
+
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'xian-mac-m4',
+    }));
+    expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: expect.objectContaining({
+        id: attemptId,
+        lease_owner: 'dispatcher-test:4242',
+        lease_generation: 7,
+      }),
+      target: selectedTarget,
+      leaseClaimed: true,
+    }));
+    expect(deps.attemptStore.recordLaunchReceipt).toHaveBeenCalledWith(attemptId, {
+      leaseOwner: 'dispatcher-test:4242',
+      actualMachineId: 'xian-mac-m4',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'remote-job-7',
+      attestationStatus: 'verified',
+    });
+    expect(order.indexOf('launcher.launch')).toBeLessThan(order.indexOf('attempt.receipt'));
+  });
+
+  it.each([
+    ['returns null', null],
+    ['throws', new Error('database unavailable')],
+  ])('cancels the exact launched job and fenced-fails when receipt persistence %s', async (
+    _description,
+    receiptFailure,
+  ) => {
+    const deps = makeDeps();
+    const selectedTarget = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m1',
+    };
+    const remoteReceipt = Object.freeze({
+      actualMachineId: 'xian-mac-m1',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'remote-job-orphan',
+      attestationStatus: 'verified',
+      containerId: null,
+      jobId: 'remote-job-orphan',
+    });
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          ...selectedTarget,
+          capability_snapshot_id: 'snapshot-xian',
+        },
+        evidence: {},
+        to_target: selectedTarget,
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+    deps.attemptStore.markStarting.mockResolvedValueOnce({
+      id: attemptId,
+      status: 'starting',
+      lease_owner: 'dispatcher-test:4242',
+      lease_generation: 11,
+    });
+    deps.launcher.launch.mockResolvedValueOnce(remoteReceipt);
+    if (receiptFailure instanceof Error) {
+      deps.attemptStore.recordLaunchReceipt.mockRejectedValueOnce(receiptFailure);
+    } else {
+      deps.attemptStore.recordLaunchReceipt.mockResolvedValueOnce(receiptFailure);
+    }
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('launch_receipt_persist_failed');
+
+    expect(deps.launcher.cancel).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({
+        id: attemptId,
+        lease_owner: 'dispatcher-test:4242',
+        lease_generation: 11,
+      }),
+      target: selectedTarget,
+      launchReceipt: remoteReceipt,
+    });
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_receipt_persist_failed',
+      message: expect.stringContaining('launch receipt'),
+    }, { leaseOwner: 'dispatcher-test:4242' });
+  });
+
+  it('rejects a remote receipt that omits verified actual-machine evidence', async () => {
+    const deps = makeDeps();
+    const selectedTarget = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m4',
+    };
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          ...selectedTarget,
+          capability_snapshot_id: 'snapshot-xian',
+        },
+        evidence: {},
+        to_target: selectedTarget,
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+    deps.launcher.launch.mockResolvedValueOnce(Object.freeze({
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'remote-job-unverified',
+      attestationStatus: null,
+      containerId: null,
+      jobId: 'remote-job-unverified',
+    }));
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('launch_receipt_invalid:remote_actual_machine');
+
+    expect(deps.attemptStore.recordLaunchReceipt).not.toHaveBeenCalled();
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_failed',
+      message: 'launch_receipt_invalid:remote_actual_machine',
+    }, { leaseOwner: 'dispatcher-test:4242' });
+  });
+
+  it('rejects a local receipt without the exact launched container identity', async () => {
+    const deps = makeDeps();
+    deps.launcher.launch.mockResolvedValueOnce(Object.freeze({
+      actualMachineId: 'brain-1',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+      containerId: null,
+      jobId: null,
+    }));
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('launch_receipt_invalid:local_container_id');
+
+    expect(deps.attemptStore.recordLaunchReceipt).not.toHaveBeenCalled();
   });
 
   it('createAttempt 命中同 run/hop 旧 attempt 时不拿新密钥重复 launch', async () => {
@@ -399,6 +681,97 @@ describe('createDispatcher', () => {
 });
 
 describe('createDetachedLauncher', () => {
+  it('uses the dispatcher-claimed lease owner when launcher construction has a different owner', async () => {
+    const spawnDetached = vi.fn(async () => ({ containerId: 'claimed-owner-container' }));
+    const attemptStore = {
+      markStarting: vi.fn(),
+      fail: vi.fn(),
+    };
+    const launcher = createDetachedLauncher({
+      spawnDetached,
+      attemptStore,
+      leaseOwner: 'launcher-constructor:1',
+    });
+
+    await launcher.launch({
+      attempt: {
+        id: attemptId,
+        run_id: runId,
+        hop: 2,
+        role: 'generator',
+        lease_owner: 'dispatcher-claim:9',
+      },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: false },
+      },
+      spec: { provider: 'codex', args: [], stdin: '{}', env: {} },
+      task: observed.task,
+      leaseClaimed: true,
+    });
+
+    expect(attemptStore.markStarting).not.toHaveBeenCalled();
+    expect(spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
+      env: expect.objectContaining({
+        HARNESS_LEASE_OWNER: 'dispatcher-claim:9',
+      }),
+    }));
+  });
+
+  it('returns a frozen local receipt and cancels its exact launched container', async () => {
+    const removeContainer = vi.fn(async () => true);
+    const launcher = createDetachedLauncher({
+      spawnDetached: vi.fn(async () => ({ containerId: 'local-container-1' })),
+      removeContainer,
+      attemptStore: {
+        markStarting: vi.fn(async () => ({
+          id: attemptId,
+          status: 'starting',
+          lease_owner: 'local-launcher:1',
+          lease_generation: 0,
+        })),
+      },
+      leaseOwner: 'local-launcher:1',
+    });
+    const input = {
+      attempt: { id: attemptId, run_id: runId, hop: 2, role: 'generator' },
+      bundle: {
+        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        constraints: { read_only: false },
+      },
+      spec: { provider: 'codex', args: [], stdin: '{}', env: {} },
+      task: observed.task,
+    };
+
+    const receipt = await launcher.launch(input);
+
+    expect(receipt).toEqual({
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+      containerId: 'local-container-1',
+      jobId: null,
+    });
+    expect(Object.isFrozen(receipt)).toBe(true);
+    await expect(launcher.cancel({
+      attempt: input.attempt,
+      target: { provider: 'codex', account: 'team1', machine: 'us-mac-m4' },
+      launchReceipt: receipt,
+    })).resolves.toEqual({
+      status: 'cancelled',
+      containerId: 'local-container-1',
+    });
+    expect(removeContainer).toHaveBeenCalledWith('local-container-1');
+    await expect(launcher.inspect({
+      attempt: input.attempt,
+      target: { machine: 'us-mac-m4' },
+    })).resolves.toEqual({
+      status: 'unsupported',
+      reason: 'local_inspection_unavailable',
+    });
+  });
+
   it('把 proposer/reviewer 的分支协议注入 runner env', async () => {
     const spawnDetached = vi.fn(async () => ({ containerId: 'gan-cx' }));
     const launcher = createDetachedLauncher({
@@ -651,10 +1024,17 @@ describe('createDetachedLauncher', () => {
       spawnDetached,
       removeContainer,
       attemptStore: { markStarting: vi.fn() },
+      leaseOwner: 'watchdog:test',
     });
 
     await launcher.launch({
-      attempt: { id: attemptId, run_id: runId, hop: 2, role: 'evaluator' },
+      attempt: {
+        id: attemptId,
+        run_id: runId,
+        hop: 2,
+        role: 'evaluator',
+        lease_owner: 'watchdog:test',
+      },
       bundle: {
         inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
         constraints: { read_only: true },

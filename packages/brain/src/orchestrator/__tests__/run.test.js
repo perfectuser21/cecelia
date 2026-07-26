@@ -39,9 +39,30 @@ describe('buildRealDeps', () => {
   it('默认 registry 注册 Grok，可把 evaluator 派给不同厂商', async () => {
     const attemptStore = {
       createAttempt: vi.fn(async (input) => ({ id: input.id, ...input, task_bundle: input.bundle })),
+      markStarting: vi.fn(async (id, { leaseOwner }) => ({
+        id,
+        status: 'starting',
+        lease_owner: leaseOwner,
+        lease_generation: 0,
+      })),
+      recordLaunchReceipt: vi.fn(async (id, receipt) => ({
+        id,
+        status: 'starting',
+        ...receipt,
+      })),
       fail: vi.fn(),
     };
-    const launcher = { launch: vi.fn(async () => ({ containerId: 'grok-worker' })) };
+    const launcher = {
+      launch: vi.fn(async ({ target }) => Object.freeze({
+        actualMachineId: target.machine,
+        executionTransport: 'local-docker',
+        remoteJobId: null,
+        attestationStatus: 'local',
+        containerId: 'grok-worker',
+        jobId: null,
+      })),
+      cancel: vi.fn(),
+    };
     const deps = await buildRealDeps({
       pool: { query: vi.fn() },
       attemptStore,
@@ -71,6 +92,7 @@ describe('buildRealDeps', () => {
       loadSkill: vi.fn(() => ({
         name: 'harness-evaluator', version: '1.0.0', digest: `sha256:${'a'.repeat(64)}`, content: 'evaluate',
       })),
+      leaseOwner: 'run-test:4242',
     });
 
     await deps.dispatch('spawn:evaluator', {
