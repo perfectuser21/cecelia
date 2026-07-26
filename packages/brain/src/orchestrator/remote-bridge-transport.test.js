@@ -186,6 +186,58 @@ describe('remote Bridge launch', () => {
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).lease_generation).toBe(0);
   });
 
+  it('converts only the server-owned canary sentinel into a path-free workspace capability', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const transport = createTransport({ fetchFn });
+
+    await transport.launch(launchInput({
+      bundle: {
+        inputs: {
+          worktree_path: '/var/empty/kernel-fleet-canary',
+        },
+      },
+      spec: {
+        cwd: '/Users/attacker/repos/cecelia',
+        workspace: {
+          kind: 'disposable-canary-v1',
+          path: '/Users/attacker/repos/cecelia',
+        },
+      },
+    }));
+
+    const requestBody = JSON.parse(fetchFn.mock.calls[0][1].body);
+    expect(requestBody.provider_spec.workspace).toEqual({
+      kind: 'disposable-canary-v1',
+      attempt_id: 'attempt-1',
+    });
+    expect(JSON.stringify(requestBody.provider_spec)).not.toContain('/Users/attacker');
+    expect(requestBody.provider_spec).not.toHaveProperty('cwd');
+  });
+
+  it('does not trust a provider cwd or workspace when the bundle is not a canary', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const transport = createTransport({ fetchFn });
+
+    await transport.launch(launchInput({
+      bundle: {
+        inputs: {
+          worktree_path: '/Users/operator/repos/cecelia',
+        },
+      },
+      spec: {
+        cwd: '/var/empty/kernel-fleet-canary',
+        workspace: {
+          kind: 'disposable-canary-v1',
+          attempt_id: 'attempt-1',
+        },
+      },
+    }));
+
+    const providerSpec = JSON.parse(fetchFn.mock.calls[0][1].body).provider_spec;
+    expect(providerSpec).not.toHaveProperty('workspace');
+    expect(providerSpec).not.toHaveProperty('cwd');
+  });
+
   it('freezes a successful launch receipt', async () => {
     const transport = createTransport();
 

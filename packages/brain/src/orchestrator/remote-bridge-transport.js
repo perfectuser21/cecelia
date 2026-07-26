@@ -3,6 +3,8 @@ import { verifyMachineAttestation } from './machine-attestation.js';
 const JSON_HEADERS = Object.freeze({
   'Content-Type': 'application/json',
 });
+const CANARY_WORKSPACE_SENTINEL = '/var/empty/kernel-fleet-canary';
+const DISPOSABLE_CANARY_WORKSPACE_KIND = 'disposable-canary-v1';
 
 function isNonemptyString(value) {
   return typeof value === 'string' && value.trim().length > 0 && !/[\r\n]/.test(value);
@@ -49,6 +51,14 @@ function copyBridgeUrls(bridgeUrls) {
     copy[machine] = url;
   }
   return Object.freeze(copy);
+}
+
+function disposableCanaryWorkspace(bundle, attemptId) {
+  if (bundle?.inputs?.worktree_path !== CANARY_WORKSPACE_SENTINEL) return null;
+  return Object.freeze({
+    kind: DISPOSABLE_CANARY_WORKSPACE_KIND,
+    attempt_id: attemptId,
+  });
 }
 
 async function parseJson(response, operation, signal) {
@@ -158,7 +168,12 @@ export function createRemoteBridgeTransport({
   }
 
   return Object.freeze({
-    async launch({ attempt, spec, target } = {}) {
+    async launch({
+      attempt,
+      bundle,
+      spec,
+      target,
+    } = {}) {
       const { machine, bridgeUrl } = resolveBridge(target);
       requireNonempty(attempt?.id, 'attempt_id');
       requireNonempty(attempt?.run_id, 'run_id');
@@ -174,6 +189,7 @@ export function createRemoteBridgeTransport({
         configuredBrainUrl,
         'remote_bridge_invalid_brain_url',
       );
+      const workspace = disposableCanaryWorkspace(bundle, attempt.id);
       return request(
         'launch',
         `${bridgeUrl}/harness/attempts`,
@@ -192,6 +208,7 @@ export function createRemoteBridgeTransport({
               args: spec?.args,
               stdin: spec?.stdin,
               output: spec?.output,
+              ...(workspace ? { workspace } : {}),
             },
             callback_url: `${normalizedBrainUrl}/api/brain/harness/attempts/${encodeURIComponent(attempt.id)}/callback`,
             callback_token: attempt.callbackSecret,

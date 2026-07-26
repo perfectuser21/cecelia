@@ -19,6 +19,7 @@ const HARNESS_STATUSES = new Set([
   'failed',
   'cancelled',
 ]);
+const DISPOSABLE_CANARY_WORKSPACE_KIND = 'disposable-canary-v1';
 
 class KernelAttemptError extends Error {
   constructor(message, statusCode) {
@@ -305,6 +306,21 @@ function expectedProviderPaths(attemptId) {
   };
 }
 
+function validateDisposableWorkspace(workspace, attemptId) {
+  if (workspace === undefined) return false;
+  if (
+    !workspace
+    || typeof workspace !== 'object'
+    || Array.isArray(workspace)
+    || Object.keys(workspace).sort().join(',') !== 'attempt_id,kind'
+    || workspace.kind !== DISPOSABLE_CANARY_WORKSPACE_KIND
+    || workspace.attempt_id !== attemptId
+  ) {
+    throw new KernelAttemptError('disposable_workspace_not_allowed', 422);
+  }
+  return true;
+}
+
 function validateRequest(request, configuration) {
   claimPath(configuration.stateDir, request?.attempt_id);
   requireString(request?.run_id, 'invalid_run_id');
@@ -357,7 +373,13 @@ function validateRequest(request, configuration) {
   requireString(request.provider_spec.stdin, 'codex_stdin_required');
   requireString(request.callback_token, 'callback_token_required');
   validateCallbackUrl(request.callback_url, configuration.brainUrl, request.attempt_id);
-  return { resumeSessionId };
+  return {
+    resumeSessionId,
+    disposableWorkspace: validateDisposableWorkspace(
+      request.provider_spec.workspace,
+      request.attempt_id,
+    ),
+  };
 }
 
 const HARNESS_RESULT_SCHEMA = Object.freeze({
@@ -485,6 +507,9 @@ function startProvider({
   let resultPath;
   try {
     fs.chmodSync(runtimeDir, 0o700);
+    const providerWorkDir = execution.disposableWorkspace
+      ? configuration.createDisposableWorkspace(runtimeDir)
+      : configuration.workDir;
     const codexHome = path.join(runtimeDir, 'codex-home');
     fs.mkdirSync(codexHome, { mode: 0o700 });
     const authPath = path.join(codexHome, 'auth.json');
@@ -512,7 +537,7 @@ function startProvider({
       '-',
     );
     child = configuration.spawnFn(configuration.codexBin, args, {
-      cwd: configuration.workDir,
+      cwd: providerWorkDir,
       env: { ...process.env, CODEX_HOME: codexHome },
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -614,6 +639,11 @@ function createKernelAttemptHandler({
   callbackTimeoutMs = 10000,
   logger = console,
   runtimeRoot = os.tmpdir(),
+  createDisposableWorkspace = (runtimeDir) => {
+    const workspaceDir = path.join(runtimeDir, 'workspace');
+    fs.mkdirSync(workspaceDir, { mode: 0o700 });
+    return workspaceDir;
+  },
 }) {
   const resolvedOwnerProcessIdentity = ownerProcessIdentity
     ?? readProcessIdentity(ownerPid);
@@ -632,6 +662,7 @@ function createKernelAttemptHandler({
     || typeof brainUrl !== 'string'
     || typeof loadAccountAuth !== 'function'
     || typeof fetchFn !== 'function'
+    || typeof createDisposableWorkspace !== 'function'
     || !Number.isFinite(callbackTimeoutMs)
     || callbackTimeoutMs <= 0
   ) {
@@ -657,6 +688,7 @@ function createKernelAttemptHandler({
     callbackTimeoutMs,
     logger,
     runtimeRoot,
+    createDisposableWorkspace,
   };
   const liveChildren = new Map();
   const callbackDeliveries = new Map();

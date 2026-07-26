@@ -523,6 +523,96 @@ describe('kernel attempt security and Codex execution', () => {
     expect(fs.readdirSync(stateDir)).toEqual([]);
   });
 
+  it.each([
+    ['an arbitrary cwd', {
+      kind: 'disposable-canary-v1',
+      attempt_id: ATTEMPT_ID,
+      cwd: '/Users/operator/repos/cecelia',
+    }],
+    ['an arbitrary path', {
+      kind: 'disposable-canary-v1',
+      attempt_id: ATTEMPT_ID,
+      path: '/Users/operator/repos/cecelia',
+    }],
+    ['the real repository as a workspace string', '/Users/operator/repos/cecelia'],
+    ['an unknown workspace kind', {
+      kind: 'real-repository',
+      attempt_id: ATTEMPT_ID,
+    }],
+    ['a different Attempt identity', {
+      kind: 'disposable-canary-v1',
+      attempt_id: '99999999-9999-4999-8999-999999999999',
+    }],
+  ])('rejects %s instead of spawning in a client-selected directory', async (_case, workspace) => {
+    const handler = createKernelAttemptHandler(deps);
+
+    await expect(handler.accept(request({
+      provider_spec: {
+        ...request().provider_spec,
+        workspace,
+      },
+    }), auth())).rejects.toMatchObject({
+      message: 'disposable_workspace_not_allowed',
+      statusCode: 422,
+    });
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(fs.readdirSync(stateDir)).toEqual([]);
+  });
+
+  it('runs a legal canary in a Bridge-owned disposable workspace', async () => {
+    const fixedWorkDir = path.join(stateDir, 'real-repository');
+    fs.mkdirSync(fixedWorkDir);
+    const handler = createKernelAttemptHandler({
+      ...deps,
+      workDir: fixedWorkDir,
+    });
+
+    await handler.accept(request({
+      provider_spec: {
+        ...request().provider_spec,
+        workspace: {
+          kind: 'disposable-canary-v1',
+          attempt_id: ATTEMPT_ID,
+        },
+      },
+    }), auth());
+
+    const spawnedCwd = spawnFn.mock.calls[0][2].cwd;
+    expect(spawnedCwd).not.toBe(fixedWorkDir);
+    expect(path.relative(stateDir, spawnedCwd)).toMatch(
+      /^kernel-bridge-[^/]+-[^/]+\/workspace$/,
+    );
+    expect(fs.statSync(spawnedCwd).mode & 0o777).toBe(0o700);
+  });
+
+  it('fails closed when a disposable workspace cannot be created', async () => {
+    const createDisposableWorkspace = vi.fn(() => {
+      throw new Error('workspace_create_denied');
+    });
+    const handler = createKernelAttemptHandler({
+      ...deps,
+      createDisposableWorkspace,
+    });
+
+    await expect(handler.accept(request({
+      provider_spec: {
+        ...request().provider_spec,
+        workspace: {
+          kind: 'disposable-canary-v1',
+          attempt_id: ATTEMPT_ID,
+        },
+      },
+    }), auth())).rejects.toMatchObject({
+      message: 'provider_start_failed',
+      statusCode: 503,
+    });
+    expect(createDisposableWorkspace).toHaveBeenCalledOnce();
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(JSON.parse(
+      fs.readFileSync(path.join(stateDir, `${ATTEMPT_ID}.json`), 'utf8'),
+    )).toMatchObject({ status: 'failed' });
+  });
+
   it('runs frozen Codex arguments in an isolated account home and normalizes the callback', async () => {
     const handler = createKernelAttemptHandler(deps);
     const receipt = await handler.accept(request(), auth());
