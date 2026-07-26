@@ -31,17 +31,17 @@ TESTS_PATH="sprints/${SPRINT_DIR}/tests"
 # 切换到仓库根目录进行 git 操作
 cd "$REPO_ROOT"
 
-# 检查 tests 目录是否存在
-if [ ! -d "$TESTS_PATH" ]; then
-  echo "INFO: tests 目录不存在: $TESTS_PATH — 跳过检查 (exit 0)"
-  exit 0
-fi
-
 # canonical Red：Generator 在最终 Red commit 首次写入本 sprint 的 red-evidence.md。
 RED_EVIDENCE_PATH="sprints/${SPRINT_DIR}/red-evidence.md"
-RED_HISTORY=$(git log --format=%H -- "$RED_EVIDENCE_PATH" 2>/dev/null || true)
+if ! RED_HISTORY=$(git log --format=%H -- "$RED_EVIDENCE_PATH" 2>/dev/null); then
+  echo "ERROR: 无法读取 canonical red-evidence 历史" >&2
+  exit 1
+fi
 if [ -n "$RED_HISTORY" ]; then
-  RED_ADDS=$(git log --diff-filter=A --format=%H -- "$RED_EVIDENCE_PATH" 2>/dev/null || true)
+  if ! RED_ADDS=$(git log --diff-filter=A --format=%H -- "$RED_EVIDENCE_PATH" 2>/dev/null); then
+    echo "ERROR: 无法读取 canonical red-evidence add 历史" >&2
+    exit 1
+  fi
   RED_ADD_COUNT=$(printf '%s\n' "$RED_ADDS" | grep -cE '^[0-9a-f]{40}$' || true)
   if [ "$RED_ADD_COUNT" -ne 1 ]; then
     echo "ERROR: canonical red-evidence 必须且只能有一个 add commit，实际 ${RED_ADD_COUNT}" >&2
@@ -49,13 +49,28 @@ if [ -n "$RED_HISTORY" ]; then
   fi
 
   RED_COMMIT="$RED_ADDS"
-  RED_SUBJECT=$(git log -1 --format=%s "$RED_COMMIT" 2>/dev/null || true)
-  if [[ ! "$RED_SUBJECT" =~ \(Red\) ]] && [[ ! "$RED_SUBJECT" =~ ^test\( ]]; then
+  if ! RED_SUBJECT=$(git log -1 --format=%s "$RED_COMMIT" 2>/dev/null); then
+    echo "ERROR: 无法读取 canonical Red commit subject" >&2
+    exit 1
+  fi
+  if [[ ! "$RED_SUBJECT" =~ \(Red\) ]]; then
     echo "ERROR: canonical red-evidence add commit 不是 Red commit: ${RED_COMMIT} ${RED_SUBJECT}" >&2
     exit 1
   fi
 
-  TREE_CHANGES=$(git diff --name-status "$RED_COMMIT" HEAD -- "$TESTS_PATH" 2>/dev/null || true)
+  if ! RED_TEST_TREE=$(git ls-tree -r --name-only "$RED_COMMIT" -- "$TESTS_PATH" 2>/dev/null); then
+    echo "ERROR: 无法读取 canonical Red commit 的测试树" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$RED_TEST_TREE" | grep -qE '\.(test|spec)\.(ts|js)$'; then
+    echo "ERROR: canonical Red commit 不含测试文件" >&2
+    exit 1
+  fi
+
+  if ! TREE_CHANGES=$(git diff --name-status "$RED_COMMIT" HEAD -- "$TESTS_PATH" 2>/dev/null); then
+    echo "ERROR: 无法比较 canonical Red 测试树与 HEAD" >&2
+    exit 1
+  fi
   if [ -n "$TREE_CHANGES" ]; then
     echo "ERROR: 以下测试树变更发生在最终 Red commit 之后:" >&2
     echo "$TREE_CHANGES" | sed 's/^/  /' >&2
@@ -66,6 +81,12 @@ if [ -n "$RED_HISTORY" ]; then
 fi
 
 echo "WARN: 未找到 canonical red-evidence Red commit，按 legacy 首次引入锚点检查"
+
+# 只有完全没有 marker 历史的 legacy sprint 才允许按旧规则跳过空目录。
+if [ ! -d "$TESTS_PATH" ]; then
+  echo "INFO: legacy tests 目录不存在: $TESTS_PATH — 跳过检查 (exit 0)"
+  exit 0
+fi
 
 # legacy fallback：收集测试文件列表（.test.ts 和 .test.js）
 TEST_FILES=$(find "$TESTS_PATH" -maxdepth 1 \( -name "*.test.ts" -o -name "*.test.js" \) 2>/dev/null || true)
