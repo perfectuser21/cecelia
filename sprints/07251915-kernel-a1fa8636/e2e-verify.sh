@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 : "${TEST_DATABASE_URL:?必须由 evaluator 显式注入 _test/_scratch，禁止生产 fallback}"
