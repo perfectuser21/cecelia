@@ -1,10 +1,23 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { randomUUID: nodeRandomUUID } = require('crypto');
+const {
+  createHmac,
+  randomUUID: nodeRandomUUID,
+  timingSafeEqual,
+} = require('crypto');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HARNESS_STATUSES = new Set([
+  'completed',
+  'completed_with_concerns',
+  'needs_context',
+  'blocked',
+  'failed',
+  'cancelled',
+]);
 
 class KernelAttemptError extends Error {
   constructor(message, statusCode) {
@@ -66,18 +79,331 @@ function assertMatchingClaim(claim, request) {
   }
 }
 
+function secureTokenEqual(expected, authorization) {
+  const supplied = typeof authorization === 'string' && authorization.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : '';
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  const suppliedBuffer = Buffer.from(supplied, 'utf8');
+  return suppliedBuffer.length === expectedBuffer.length
+    && timingSafeEqual(suppliedBuffer, expectedBuffer);
+}
+
+function machineAttestation(secret, attemptId, machineId, jobId) {
+  return createHmac('sha256', secret)
+    .update(`${attemptId}\n${machineId}\n${jobId}`, 'utf8')
+    .digest('hex');
+}
+
+function requireString(value, errorCode) {
+  if (typeof value !== 'string' || value.length === 0 || /[\r\n]/.test(value)) {
+    throw new KernelAttemptError(errorCode, 422);
+  }
+}
+
+function validateCallbackUrl(callbackUrl, brainUrl, attemptId) {
+  let callback;
+  let brain;
+  try {
+    callback = new URL(callbackUrl);
+    brain = new URL(brainUrl);
+  } catch {
+    throw new KernelAttemptError('callback_url_not_allowed', 422);
+  }
+  const expectedPath = `/api/brain/harness/attempts/${encodeURIComponent(attemptId)}/callback`;
+  if (
+    callback.origin !== brain.origin
+    || callback.pathname !== expectedPath
+    || callback.username
+    || callback.password
+    || callback.search
+    || callback.hash
+  ) {
+    throw new KernelAttemptError('callback_url_not_allowed', 422);
+  }
+}
+
+function expectedProviderPaths(attemptId) {
+  return {
+    schemaPath: `/tmp/harness-${attemptId}.schema.json`,
+    resultPath: `/tmp/harness-${attemptId}.result.json`,
+  };
+}
+
+function validateRequest(request, configuration) {
+  claimPath(configuration.stateDir, request?.attempt_id);
+  requireString(request?.run_id, 'invalid_run_id');
+  requireString(request?.lease_owner, 'invalid_lease_owner');
+  if (!Number.isInteger(request?.lease_generation) || request.lease_generation < 0) {
+    throw new KernelAttemptError('invalid_lease_generation', 422);
+  }
+  if (request?.target?.machine !== configuration.machineId) {
+    throw new KernelAttemptError('target_machine_mismatch', 409);
+  }
+  if (request?.target?.provider !== 'codex' || request?.provider_spec?.provider !== 'codex') {
+    throw new KernelAttemptError('provider_not_allowed', 422);
+  }
+  if (!configuration.allowedAccounts.has(request?.target?.account)) {
+    throw new KernelAttemptError('codex_account_not_allowed', 422);
+  }
+  if (!['codex', '/opt/homebrew/bin/codex'].includes(request?.provider_spec?.command)) {
+    throw new KernelAttemptError('codex_command_not_allowed', 422);
+  }
+
+  const { schemaPath, resultPath } = expectedProviderPaths(request.attempt_id);
+  const output = request.provider_spec.output;
+  if (output?.schema_path !== schemaPath || output?.result_path !== resultPath) {
+    throw new KernelAttemptError('codex_output_path_not_allowed', 422);
+  }
+  const expectedArgs = [
+    'exec',
+    '--json',
+    '--output-schema', schemaPath,
+    '--output-last-message', resultPath,
+    '--skip-git-repo-check',
+    '-',
+  ];
+  if (
+    !Array.isArray(request.provider_spec.args)
+    || request.provider_spec.args.length !== expectedArgs.length
+    || request.provider_spec.args.some((value, index) => value !== expectedArgs[index])
+  ) {
+    throw new KernelAttemptError('codex_args_not_allowed', 422);
+  }
+  requireString(request.provider_spec.stdin, 'codex_stdin_required');
+  requireString(request.callback_token, 'callback_token_required');
+  validateCallbackUrl(request.callback_url, configuration.brainUrl, request.attempt_id);
+}
+
+const HARNESS_RESULT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: true,
+  required: [
+    'contract_version',
+    'attempt_id',
+    'status',
+    'summary',
+    'artifacts',
+    'checks',
+    'decision',
+    'error',
+    'provider_metadata',
+  ],
+  properties: {
+    contract_version: { const: '1.0' },
+    attempt_id: { type: 'string', format: 'uuid' },
+    status: {
+      enum: [...HARNESS_STATUSES],
+    },
+    summary: { type: 'string' },
+    artifacts: { type: 'array' },
+    checks: { type: 'array' },
+    decision: {},
+    error: {},
+    provider_metadata: { type: 'object' },
+  },
+});
+
+function parseHarnessResult(resultPath) {
+  const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
+  if (
+    !result
+    || typeof result !== 'object'
+    || result.contract_version !== '1.0'
+    || !UUID_PATTERN.test(String(result.attempt_id ?? ''))
+    || !HARNESS_STATUSES.has(result.status)
+    || typeof result.summary !== 'string'
+    || !Array.isArray(result.artifacts)
+    || !Array.isArray(result.checks)
+    || !Object.hasOwn(result, 'decision')
+    || !Object.hasOwn(result, 'error')
+    || !result.provider_metadata
+    || typeof result.provider_metadata !== 'object'
+  ) {
+    throw new Error('invalid_harness_result');
+  }
+  return result;
+}
+
+function failedHarnessResult(attemptId, message) {
+  return {
+    contract_version: '1.0',
+    attempt_id: attemptId,
+    status: 'failed',
+    summary: 'Codex execution failed',
+    artifacts: [],
+    checks: [],
+    decision: null,
+    error: { code: message },
+    provider_metadata: {},
+  };
+}
+
+async function deliverCallback({
+  fetchFn,
+  sleep,
+  logger,
+  request,
+  result,
+}) {
+  const delays = [250, 500];
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetchFn(request.callback_url, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          Authorization: `Bearer ${request.callback_token}`,
+          'Content-Type': 'application/json',
+          'X-Harness-Lease-Owner': request.lease_owner,
+        },
+        body: JSON.stringify(result),
+      });
+      if (response?.ok) return;
+      logger.warn?.(`kernel attempt callback HTTP ${String(response?.status)}`);
+    } catch {
+      logger.warn?.('kernel attempt callback request failed');
+    }
+    if (attempt < delays.length) await sleep(delays[attempt]);
+  }
+  logger.error?.('kernel attempt callback delivery exhausted');
+}
+
+function startProvider({
+  configuration,
+  request,
+  claim,
+}) {
+  const runtimeDir = fs.mkdtempSync(path.join(
+    configuration.runtimeRoot,
+    `kernel-bridge-${claim.job_id}-`,
+  ));
+  fs.chmodSync(runtimeDir, 0o700);
+  const codexHome = path.join(runtimeDir, 'codex-home');
+  fs.mkdirSync(codexHome, { mode: 0o700 });
+  const authPath = path.join(codexHome, 'auth.json');
+  fs.writeFileSync(
+    authPath,
+    `${JSON.stringify(configuration.loadAccountAuth(request.target.account))}\n`,
+    { mode: 0o600 },
+  );
+  const schemaPath = path.join(runtimeDir, `${claim.attempt_id}.schema.json`);
+  const resultPath = path.join(runtimeDir, `${claim.attempt_id}.result.json`);
+  fs.writeFileSync(schemaPath, `${JSON.stringify(HARNESS_RESULT_SCHEMA)}\n`, { mode: 0o600 });
+
+  const args = [
+    'exec',
+    '--json',
+    '--output-schema', schemaPath,
+    '--output-last-message', resultPath,
+    '--skip-git-repo-check',
+    '-',
+  ];
+  const child = configuration.spawnFn(configuration.codexBin, args, {
+    cwd: configuration.workDir,
+    env: { ...process.env, CODEX_HOME: codexHome },
+    shell: false,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  let settled = false;
+  const complete = async (result) => {
+    if (settled) return;
+    settled = true;
+    result.attempt_id = request.attempt_id;
+    result.provider_metadata = {
+      ...(result.provider_metadata ?? {}),
+      provider: 'codex',
+      machine_id: configuration.machineId,
+      remote_job_id: claim.job_id,
+      machine_attestation: machineAttestation(
+        configuration.bridgeToken,
+        request.attempt_id,
+        configuration.machineId,
+        claim.job_id,
+      ),
+    };
+    try {
+      await deliverCallback({
+        fetchFn: configuration.fetchFn,
+        sleep: configuration.sleep,
+        logger: configuration.logger,
+        request,
+        result,
+      });
+    } finally {
+      fs.rmSync(runtimeDir, { recursive: true, force: true });
+    }
+  };
+
+  child.once('error', () => {
+    void complete(failedHarnessResult(request.attempt_id, 'provider_spawn_failed'));
+  });
+  child.once('close', (code) => {
+    let result;
+    try {
+      result = code === 0
+        ? parseHarnessResult(resultPath)
+        : failedHarnessResult(request.attempt_id, `provider_exit_${String(code)}`);
+    } catch {
+      result = failedHarnessResult(request.attempt_id, 'provider_result_invalid');
+    }
+    void complete(result);
+  });
+  child.stdin.end(request.provider_spec.stdin);
+  return child;
+}
+
 function createKernelAttemptHandler({
   stateDir,
   machineId,
   spawnFn,
   randomUUID = nodeRandomUUID,
+  bridgeToken,
+  brainUrl,
+  allowedAccounts = [],
+  codexBin = '/opt/homebrew/bin/codex',
+  workDir,
+  loadAccountAuth,
+  fetchFn = globalThis.fetch,
+  sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  logger = console,
+  runtimeRoot = os.tmpdir(),
 }) {
-  if (!stateDir || !machineId || typeof spawnFn !== 'function') {
+  if (
+    !stateDir
+    || !machineId
+    || typeof spawnFn !== 'function'
+    || typeof bridgeToken !== 'string'
+    || bridgeToken.length < 32
+    || typeof brainUrl !== 'string'
+    || typeof loadAccountAuth !== 'function'
+    || typeof fetchFn !== 'function'
+  ) {
     throw new Error('kernel_attempt_handler_invalid_dependencies');
   }
+  const configuration = {
+    stateDir,
+    machineId,
+    spawnFn,
+    bridgeToken,
+    brainUrl,
+    allowedAccounts: new Set(allowedAccounts),
+    codexBin,
+    workDir,
+    loadAccountAuth,
+    fetchFn,
+    sleep,
+    logger,
+    runtimeRoot,
+  };
 
   return {
-    async accept(request) {
+    async accept(request, headers = {}) {
+      if (!secureTokenEqual(bridgeToken, headers?.authorization)) {
+        throw new KernelAttemptError('unauthorized', 401);
+      }
+      validateRequest(request, configuration);
       const filePath = claimPath(stateDir, request?.attempt_id);
       const existing = readClaim(filePath);
       if (existing) {
@@ -86,6 +412,12 @@ function createKernelAttemptHandler({
           actual_machine_id: existing.machine_id,
           job_id: existing.job_id,
           status: existing.status,
+          attestation: machineAttestation(
+            bridgeToken,
+            existing.attempt_id,
+            existing.machine_id,
+            existing.job_id,
+          ),
         };
       }
 
@@ -98,11 +430,17 @@ function createKernelAttemptHandler({
         status: 'accepted',
       };
       writeClaimAtomic(filePath, claim);
-      spawnFn();
+      startProvider({ configuration, request, claim });
       return {
         actual_machine_id: claim.machine_id,
         job_id: claim.job_id,
         status: claim.status,
+        attestation: machineAttestation(
+          bridgeToken,
+          claim.attempt_id,
+          claim.machine_id,
+          claim.job_id,
+        ),
       };
     },
   };
