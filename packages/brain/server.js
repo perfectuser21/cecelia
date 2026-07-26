@@ -126,6 +126,7 @@ setupGitCredentials({
 
 const app = express();
 app.locals.pool = pool;
+app.set('kernelFleetBridgeToken', process.env.KERNEL_FLEET_BRIDGE_TOKEN);
 const server = createServer(app);
 const PORT = process.env.PORT || process.env.BRAIN_PORT || 5221;
 
