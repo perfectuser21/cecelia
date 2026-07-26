@@ -19,6 +19,10 @@ const migration363 = readFileSync(
   new URL('../../../migrations/363_kernel_fleet_execution_receipts.sql', import.meta.url),
   'utf8',
 );
+const migration364 = readFileSync(
+  new URL('../../../migrations/364_kernel_local_container_naming.sql', import.meta.url),
+  'utf8',
+);
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const databaseName = testDatabaseUrl
@@ -39,7 +43,9 @@ const schemaName = `kernel_fleet_receipts_${process.pid}_${randomUUID().replaceA
 const quotedSchema = `"${schemaName}"`;
 const legacyBackfillId = randomUUID();
 const preservedTargetId = randomUUID();
+const oldBinaryInsertId = randomUUID();
 const legacyRunId = randomUUID();
+const oldBinaryRunId = randomUUID();
 let client;
 let store;
 
@@ -109,6 +115,16 @@ beforeAll(async () => {
 
   await client.query(migration363);
   await client.query(migration363);
+  await client.query(migration364);
+  await client.query(migration364);
+  await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [oldBinaryRunId]);
+  await client.query(
+    `INSERT INTO harness_attempts (
+       id, run_id, hop, phase, role, provider, machine_id,
+       task_bundle, callback_secret_hash
+     ) VALUES ($1,$2,1,'generate','generator','codex','us-mac-m4','{}','old-binary-hash')`,
+    [oldBinaryInsertId, oldBinaryRunId],
+  );
   store = createAttemptStore(client);
 }, 15_000);
 
@@ -136,6 +152,26 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
     expect((await client.query(
       `SELECT COUNT(*)::int AS count FROM schema_version WHERE version = '363'`,
     )).rows[0].count).toBe(1);
+    expect((await client.query(
+      `SELECT COUNT(*)::int AS count FROM schema_version WHERE version = '364'`,
+    )).rows[0].count).toBe(1);
+  });
+
+  it('backfills existing rows and old-binary omitted inserts as durable legacy naming', async () => {
+    const rows = await client.query(
+      `SELECT id, local_container_naming
+         FROM harness_attempts
+        WHERE id = ANY($1::uuid[])
+        ORDER BY id`,
+      [[legacyBackfillId, preservedTargetId, oldBinaryInsertId]],
+    );
+
+    expect(rows.rows).toHaveLength(3);
+    expect(rows.rows).toEqual(expect.arrayContaining([
+      { id: legacyBackfillId, local_container_naming: 'legacy-unsuffixed' },
+      { id: preservedTargetId, local_container_naming: 'legacy-unsuffixed' },
+      { id: oldBinaryInsertId, local_container_naming: 'legacy-unsuffixed' },
+    ]));
   });
 
   it('accepts every fleet receipt enum value and rejects values outside the contract', async () => {
@@ -170,13 +206,15 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
     await store.createAttempt(input);
 
     const row = await client.query(
-      'SELECT machine_id, requested_machine_id, lease_generation FROM harness_attempts WHERE id = $1',
+      `SELECT machine_id, requested_machine_id, lease_generation, local_container_naming
+         FROM harness_attempts WHERE id = $1`,
       [input.id],
     );
     expect(row.rows[0]).toEqual({
       machine_id: 'verified-worker',
       requested_machine_id: 'verified-worker',
       lease_generation: 0,
+      local_container_naming: 'generation-v1',
     });
   });
 

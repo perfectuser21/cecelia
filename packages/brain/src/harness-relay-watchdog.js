@@ -25,6 +25,12 @@ import {
   generateCallbackSecret,
   hashCallbackSecret,
 } from './orchestrator/callback-auth.js';
+import {
+  aggregateFailureEvidence,
+  buildFailurePersistenceEvidence,
+  errorMessage,
+  sanitizeDiagnostic,
+} from './orchestrator/failure-persistence.js';
 import { createProductionExecutionTransport } from './orchestrator/production-transport.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
@@ -118,6 +124,7 @@ export async function reconcileExpiredKernelAttempt({
   resumeAttempt,
   reservedChildHop = null,
   randomUUIDFn = randomUUID,
+  onRecoveryAlert,
 }) {
   const store = injectedAttemptStore ?? createAttemptStore(db);
   const originalParentAttempt = await store.getById(attemptId);
@@ -185,18 +192,24 @@ export async function reconcileExpiredKernelAttempt({
   };
 
   let resumed;
+  let resumeAggregateError = null;
   try {
     resumed = await resumeAttempt(resumableChild, {
+      parentAttempt: reclaimed,
       originalParentAttempt,
       reclaimedParentAttempt: reclaimed,
       callbackSecret,
       leaseOwner,
       attemptStore: store,
+      onRecoveryAlert,
     });
   } catch (error) {
+    if (error instanceof AggregateError || error?.code === 'kernel_recovery_alert_failed') {
+      resumeAggregateError = error;
+    }
     resumed = {
       ok: false,
-      failure_code: 'resume_launch_failed',
+      failure_code: error?.failureCode ?? 'resume_launch_failed',
       error: error?.message ?? String(error),
     };
   }
@@ -206,32 +219,50 @@ export async function reconcileExpiredKernelAttempt({
       : resumed === false
         ? 'resume_returned_false'
         : resumed?.failure_code ?? 'resume_failed';
-    await store.fail(childId, {
+    const lifecycleDetail = resumed?.lifecycle_detail
+      ? `; ${sanitizeDiagnostic(resumed.lifecycle_detail)}`
+      : '';
+    const childFailure = await tryFailClaimedAttempt(store, childId, {
       code: failureCode,
-      message: `resume child launch failed: ${failureCode}`,
+      message: `resume child launch failed: ${failureCode}${lifecycleDetail}`,
     }, {
       leaseOwner: resumableChild.lease_owner,
       leaseGeneration: resumableChild.lease_generation,
     });
-    const failed = await store.fail(attemptId, {
+    const parentFailure = await tryFailClaimedAttempt(store, attemptId, {
       code: failureCode,
-      message: `expired attempt resume failed: ${failureCode}`,
+      message: `expired attempt resume failed: ${failureCode}${lifecycleDetail}`,
     }, {
       leaseOwner: reclaimed.lease_owner,
       leaseGeneration: reclaimed.lease_generation,
     });
-    return failed.deduped
+    const persistenceEvidence = [
+      childFailure.evidence,
+      parentFailure.evidence,
+    ].filter(Boolean);
+    const alertErrors = await deliverRecoveryAlerts(onRecoveryAlert, [
+      ...persistenceEvidence.map((entry) => entry.alert),
+      resumed?.recovery_alert,
+    ].filter(Boolean));
+    const additionalErrors = [
+      ...alertErrors,
+      resumeAggregateError,
+    ].filter(Boolean);
+    if (persistenceEvidence.length > 0 || additionalErrors.length > 0) {
+      throw aggregateFailureEvidence(persistenceEvidence, additionalErrors);
+    }
+    return parentFailure.result?.deduped
       ? { ok: false, deduped: true }
       : { ok: false, terminal: true, failure_code: failureCode };
   }
 
-  await store.fail(attemptId, {
+  await failClaimedAttempt(store, attemptId, {
     code: 'resumed_as_child',
     message: 'expired attempt resumed as a new lineage child',
   }, {
     leaseOwner: reclaimed.lease_owner,
     leaseGeneration: reclaimed.lease_generation,
-  });
+  }, onRecoveryAlert);
   return {
     ok: true,
     resumed: true,
@@ -253,6 +284,80 @@ async function _closeSpawnEvents(dbPool, initiativeId, status) {
 
 function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
+}
+
+function isProvableLegacyLocalParent(attempt, target) {
+  return (
+    target?.machine === 'us-mac-m4'
+    && attempt?.local_container_naming === 'legacy-unsuffixed'
+  );
+}
+
+function unsafeCleanupDiagnostic(result) {
+  if (result?.status === 'cancelled') return null;
+  const status = result?.status ?? 'unknown';
+  const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
+  return `orphan cancellation unsafe: ${status}${httpStatus}`;
+}
+
+async function deliverRecoveryAlerts(onRecoveryAlert, alerts) {
+  if (typeof onRecoveryAlert !== 'function') return [];
+  const failures = [];
+  for (const detail of alerts) {
+    try {
+      await onRecoveryAlert(detail);
+    } catch {
+      const error = new Error(
+        `kernel_recovery_alert_failed:${sanitizeDiagnostic(detail.lifecycleCode)}`,
+      );
+      error.code = 'kernel_recovery_alert_failed';
+      failures.push(error);
+    }
+  }
+  return failures;
+}
+
+async function tryFailClaimedAttempt(store, attemptId, failure, claim) {
+  try {
+    return {
+      result: await store.fail(attemptId, failure, claim),
+      evidence: null,
+    };
+  } catch (persistenceError) {
+    const lifecycleError = new Error(failure.message);
+    lifecycleError.code = failure.code;
+    return {
+      result: null,
+      evidence: buildFailurePersistenceEvidence({
+        attemptId,
+        lifecycleCode: failure.code,
+        originalError: lifecycleError,
+        persistenceError,
+      }),
+    };
+  }
+}
+
+async function failClaimedAttempt(store, attemptId, failure, claim, onRecoveryAlert) {
+  const failed = await tryFailClaimedAttempt(store, attemptId, failure, claim);
+  if (!failed.evidence) return failed.result;
+  const alertErrors = await deliverRecoveryAlerts(onRecoveryAlert, [failed.evidence.alert]);
+  throw aggregateFailureEvidence([failed.evidence], alertErrors);
+}
+
+function deferredRecoveryAlert({
+  attemptId,
+  lifecycleCode,
+  cleanupStatus,
+  diagnostic,
+}) {
+  return {
+    kind: 'cleanup_unconfirmed',
+    attemptId,
+    lifecycleCode,
+    cleanupStatus,
+    diagnostic,
+  };
 }
 
 export async function resumeKernelAttempt(attempt, {
@@ -285,7 +390,7 @@ export async function resumeKernelAttempt(attempt, {
     import('./orchestrator/providers/codex.js'),
     import('./orchestrator/providers/grok.js'),
     import('./orchestrator/dispatcher.js'),
-    injectedLauncher
+    injectedLauncher && injectedRemoveContainer
       ? Promise.resolve({})
       : import('./spawn/detached.js'),
   ]);
@@ -343,36 +448,71 @@ export async function resumeKernelAttempt(attempt, {
     machine: originalParentAttempt.requested_machine_id ?? originalParentAttempt.machine_id,
   };
 
-  try {
-    await launcher.inspect({
-      attempt: originalParentAttempt,
-      target,
-    });
-  } catch (error) {
-    return {
-      ok: false,
-      failure_code: 'resume_parent_cleanup_unconfirmed',
-      error: error?.message ?? String(error),
-    };
-  }
   let parentCleanup;
-  try {
-    parentCleanup = await launcher.cancel({
-      attempt: originalParentAttempt,
-      target,
-    });
-  } catch (error) {
-    return {
-      ok: false,
-      failure_code: 'resume_parent_cleanup_unconfirmed',
-      error: error?.message ?? String(error),
-    };
+  if (isProvableLegacyLocalParent(originalParentAttempt, target)) {
+    const legacyContainerId = `cecelia-harness-${shortId(originalParentAttempt.id)}`;
+    try {
+      const removeContainer = injectedRemoveContainer ?? detached.removeDockerContainer;
+      const removed = await removeContainer(legacyContainerId);
+      parentCleanup = {
+        status: removed ? 'cancelled' : 'missing',
+        containerId: legacyContainerId,
+      };
+    } catch (error) {
+      parentCleanup = {
+        status: 'unavailable',
+        reason: `legacy local cleanup failed: ${errorMessage(error)}`,
+      };
+    }
+  } else {
+    try {
+      await launcher.inspect({
+        attempt: originalParentAttempt,
+        target,
+      });
+    } catch (error) {
+      const errorDetail = errorMessage(error);
+      const diagnostic = `parent inspection failed: ${errorDetail}`;
+      const recoveryAlert = deferredRecoveryAlert({
+        attemptId: originalParentAttempt.id,
+        lifecycleCode: 'resume_parent_cleanup_unconfirmed',
+        cleanupStatus: 'unavailable',
+        diagnostic,
+      });
+      return {
+        ok: false,
+        failure_code: 'resume_parent_cleanup_unconfirmed',
+        cleanup_status: 'unavailable',
+        error: errorDetail,
+        recovery_alert: recoveryAlert,
+      };
+    }
+    try {
+      parentCleanup = await launcher.cancel({
+        attempt: originalParentAttempt,
+        target,
+      });
+    } catch (error) {
+      parentCleanup = {
+        status: 'unavailable',
+        reason: `parent cancellation failed: ${errorMessage(error)}`,
+      };
+    }
   }
   if (parentCleanup?.status !== 'cancelled') {
+    const diagnostic = parentCleanup?.reason ?? unsafeCleanupDiagnostic(parentCleanup);
+    const recoveryAlert = deferredRecoveryAlert({
+      attemptId: originalParentAttempt.id,
+      lifecycleCode: 'resume_parent_cleanup_unconfirmed',
+      cleanupStatus: parentCleanup?.status ?? 'unknown',
+      diagnostic,
+    });
     return {
       ok: false,
       failure_code: 'resume_parent_cleanup_unconfirmed',
       cleanup_status: parentCleanup?.status ?? 'unknown',
+      error: diagnostic,
+      recovery_alert: recoveryAlert,
     };
   }
 
@@ -388,10 +528,43 @@ export async function resumeKernelAttempt(attempt, {
       leaseClaimed: true,
     });
   } catch (error) {
+    let childCleanup;
+    try {
+      childCleanup = await launcher.cancel({
+        attempt,
+        target,
+      });
+    } catch (cleanupError) {
+      childCleanup = {
+        status: 'unavailable',
+        reason: `orphan cancellation failed: ${errorMessage(cleanupError)}`,
+      };
+    }
+    const cleanupDiagnostic = childCleanup?.reason ?? unsafeCleanupDiagnostic(childCleanup);
+    if (childCleanup?.status !== 'cancelled') {
+      const diagnostic = [
+        errorMessage(error),
+        cleanupDiagnostic,
+      ].filter(Boolean).join('; ');
+      const recoveryAlert = deferredRecoveryAlert({
+        attemptId: attempt.id,
+        lifecycleCode: 'resume_launch_failed',
+        cleanupStatus: childCleanup?.status ?? 'unknown',
+        diagnostic,
+      });
+      return {
+        ok: false,
+        failure_code: 'resume_child_cleanup_unconfirmed',
+        cleanup_status: childCleanup?.status ?? 'unknown',
+        error: diagnostic,
+        recovery_alert: recoveryAlert,
+      };
+    }
     return {
       ok: false,
       failure_code: 'resume_launch_failed',
-      error: error?.message ?? String(error),
+      cleanup_status: 'cancelled',
+      error: errorMessage(error),
     };
   }
 
@@ -412,30 +585,42 @@ export async function resumeKernelAttempt(attempt, {
   }
   if (receiptError) {
     let cleanupStatus = 'unknown';
+    let cleanupDiagnostic = null;
     try {
-      cleanupStatus = (await launcher.cancel({
+      const cleanup = await launcher.cancel({
         attempt,
         target,
         launchReceipt: launched,
-      }))?.status ?? 'unknown';
-    } catch {
+      });
+      cleanupStatus = cleanup?.status ?? 'unknown';
+      cleanupDiagnostic = unsafeCleanupDiagnostic(cleanup);
+    } catch (error) {
       cleanupStatus = 'unavailable';
+      cleanupDiagnostic = `orphan cancellation failed: ${errorMessage(error)}`;
     }
-    const message = [
-      receiptError.message,
+    const sanitizedCleanupDiagnostic = cleanupDiagnostic == null
+      ? null
+      : sanitizeDiagnostic(cleanupDiagnostic);
+    const recoveryAlert = cleanupStatus === 'cancelled'
+      ? null
+      : deferredRecoveryAlert({
+        attemptId: attempt.id,
+        lifecycleCode: 'resume_receipt_persist_failed',
+        cleanupStatus,
+        diagnostic: sanitizedCleanupDiagnostic,
+      });
+    const lifecycleDetail = sanitizeDiagnostic([
+      `resume receipt persistence failed: ${errorMessage(receiptError)}`,
       `child cleanup ${cleanupStatus}`,
-    ].join('; ');
-    await store.fail(attempt.id, {
-      code: 'resume_receipt_persist_failed',
-      message,
-    }, {
-      leaseOwner: attempt.lease_owner,
-      leaseGeneration: attempt.lease_generation,
-    });
+      sanitizedCleanupDiagnostic,
+    ].filter(Boolean).join('; '));
     return {
       ok: false,
       failure_code: 'resume_receipt_persist_failed',
       cleanup_status: cleanupStatus,
+      cleanup_diagnostic: sanitizedCleanupDiagnostic,
+      lifecycle_detail: lifecycleDetail,
+      recovery_alert: recoveryAlert,
     };
   }
   return {
@@ -447,6 +632,25 @@ export async function resumeKernelAttempt(attempt, {
 
 async function _recoverKernelRun(run, task, deps, out) {
   const dbPool = deps.pool || deps.dbPool || pool;
+  const onRecoveryAlert = deps.onRecoveryAlert ?? (async (detail) => {
+    const { raise } = await import('./alerting.js');
+    const alertCode = detail.kind === 'failure_persistence'
+      ? 'kernel_failure_persistence_failed'
+      : 'kernel_recovery_cleanup_unconfirmed';
+    await raise(
+      'P1',
+      alertCode,
+      [
+        `attempt=${sanitizeDiagnostic(detail.attemptId)}`,
+        `lifecycle=${sanitizeDiagnostic(detail.lifecycleCode)}`,
+        `cleanup=${sanitizeDiagnostic(detail.cleanupStatus)}`,
+        `diagnostic=${sanitizeDiagnostic(
+          detail.diagnostic ?? detail.originalError?.message ?? 'unknown',
+        )}`,
+        `persistence=${sanitizeDiagnostic(detail.persistenceError?.message ?? 'none')}`,
+      ].join('; '),
+    );
+  });
   const heartbeatAt = run.orchestrator_heartbeat_at
     ? new Date(run.orchestrator_heartbeat_at).getTime()
     : 0;
@@ -474,6 +678,7 @@ async function _recoverKernelRun(run, task, deps, out) {
       attemptId: attempt.id,
       leaseOwner: `watchdog:${process.pid}`,
       reservedChildHop,
+      onRecoveryAlert,
       resumeAttempt: (child, context) => lowerResume(child, {
         ...context,
         task,
