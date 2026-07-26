@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { parseTaskBundle } from './execution-contract.js';
 import { generateCallbackSecret, hashCallbackSecret } from './callback-auth.js';
+import { errorMessage, failurePersistenceError } from './failure-persistence.js';
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
 
 const ACTION_SPECS = Object.freeze({
@@ -232,10 +233,6 @@ function freezeLaunchReceipt(receipt, target) {
   });
 }
 
-function errorMessage(error) {
-  return error?.message ?? String(error);
-}
-
 function unsafeCancelDiagnostic(result) {
   if (result?.status === 'cancelled') return null;
   const status = result?.status ?? 'unknown';
@@ -250,28 +247,6 @@ async function cancelAfterLaunch(launcher, { attempt, target, launchReceipt }) {
   } catch (error) {
     return `orphan cancellation failed: ${errorMessage(error)}`;
   }
-}
-
-async function failurePersistenceError(deps, {
-  attemptId,
-  lifecycleCode,
-  originalError,
-  persistenceError,
-}) {
-  try {
-    await deps.onFailurePersistenceFailed?.({
-      attemptId,
-      lifecycleCode,
-      originalError,
-      persistenceError,
-    });
-  } catch {
-    // The aggregate lifecycle error remains the primary signal if alert delivery also fails.
-  }
-  return new AggregateError(
-    [originalError, persistenceError],
-    `${errorMessage(originalError)}; failure_persistence_failed: ${errorMessage(persistenceError)}`,
-  );
 }
 
 export function createDispatcher(deps) {
