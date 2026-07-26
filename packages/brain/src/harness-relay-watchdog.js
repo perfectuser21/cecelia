@@ -822,7 +822,7 @@ export async function scanStuckHarness(opts = {}) {
     || cleanupCodexRelaySnapshotsForTask;
 
   const overdueQ = await dbPool.query(
-    `SELECT id, initiative_id, orchestrator_host, phase, deadline_at, pr_url
+    `SELECT id, initiative_id, orchestrator_host, phase, deadline_at, pr_url, current_task_id
        FROM initiative_runs
       WHERE orchestrator_host LIKE 'skill-relay%'
         AND deadline_at < NOW()
@@ -892,11 +892,11 @@ export async function scanStuckHarness(opts = {}) {
       if (failedRun?.rowCount === 0) continue;
       if (row.orchestrator_host === 'skill-relay-codex') {
         try {
-          cleanupCodexSnapshots(row.initiative_id);
+          cleanupCodexSnapshots(row.current_task_id);
         } catch (cleanupErr) {
           console.warn(
             `[relay-watchdog] codex 凭据快照清理失败（non-fatal） ` +
-            `initiative=${row.initiative_id}: ${cleanupErr.message}`,
+            `task=${row.current_task_id}: ${cleanupErr.message}`,
           );
         }
       }

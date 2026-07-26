@@ -310,7 +310,6 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   }
 
   let codexRelayCredDir;
-  let codexSpawned = false;
   const cleanupCodexSnapshot = () => {
     if (!isCodex || !codexRelayCredDir) return;
     const cleanupFn = deps.cleanupCodexHome || cleanupCodexRelayHome;
@@ -567,7 +566,6 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
     try {
       await doSpawn();
-      codexSpawned = true;
     } catch (spawnErr) {
       // grok 路径：检测额度撞墙，命中时降级 claude 重试一次
       if (isGrok && detectQuotaWall(spawnErr.message)) {
@@ -633,7 +631,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
         [task.id]
       );
     } catch { /* non-fatal */ }
-    if (!codexSpawned) cleanupCodexSnapshot();
+    cleanupCodexSnapshot();
     return { ok: false, mode: RELAY_FLAG, error: err.message };
   } finally {
     releaseCodexReservation();
