@@ -206,6 +206,24 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.complete).toHaveBeenCalledOnce();
   });
 
+  it('launch receipt 尚未确认时拒绝 callback，避免远端先回调绕过验签', async () => {
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      requested_machine_id: remoteMachineId,
+      actual_machine_id: null,
+      execution_transport: null,
+      remote_job_id: null,
+      machine_attestation_status: null,
+    });
+
+    const response = await postCallback(app, remoteResult());
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('launch_receipt_unconfirmed');
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.fail).not.toHaveBeenCalled();
+  });
+
   it('remote receipt 无 machine attestation 时拒绝 callback', async () => {
     mocks.store.getById.mockResolvedValue(remoteAttempt());
 
