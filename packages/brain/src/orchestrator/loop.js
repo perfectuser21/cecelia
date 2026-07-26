@@ -608,6 +608,12 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
           dispatch_action: decision.action,
           status: result.status,
           result: result.detail ?? null,
+          redirect_action: result.action ?? null,
+          failure_class: result.failure_class ?? null,
+          fallback_reason: result.fallback_reason ?? null,
+          should_create_attempt: result.should_create_attempt ?? null,
+          should_enter_generator_fix: result.should_enter_generator_fix ?? null,
+          evidence: result.evidence ?? null,
         },
       });
       hops++;
