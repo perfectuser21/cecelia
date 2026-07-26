@@ -15,7 +15,9 @@
 - Create `packages/brain/src/codex-relay-credentials.js`: host-visible snapshot root, isolated copy, and validated exact cleanup.
 - Modify `packages/brain/src/harness-skill-relay.js`: total-four reservation/DB gate, unique Codex run identity, snapshot lifecycle integration.
 - Modify `packages/brain/src/routes/harness-callback.js`: exact per-container snapshot cleanup before relay acknowledgement.
+- Modify `packages/brain/src/harness-relay-watchdog.js`: exact no-callback cleanup after a successful overdue-to-failed transition.
 - Replace `packages/brain/src/__tests__/harness-skill-relay-account-buckets.test.js`: approved same-team1 total-four contract.
+- Modify `packages/brain/src/__tests__/harness-relay-watchdog.test.js`: task-scoped cleanup and lost-race regression.
 - Modify `packages/brain/src/routes/__tests__/harness-callback.test.js`: callback cleanup regression.
 - Modify `packages/brain/scripts/smoke/codex-cred-isolation-smoke.sh`: host-visible root and exact cleanup behavior.
 - Modify `docker-compose.yml`: change `CODEX_RELAY_HOME` default from team2 to the already mounted team1; do not add mounts.
@@ -160,6 +162,19 @@ export function cleanupCodexRelayHome(containerId, env = process.env) {
   if (dirname(target) !== root || basename(target) !== containerId) return false;
   rmSync(target, { recursive: true, force: true });
   return true;
+}
+
+export function cleanupCodexRelaySnapshotsForTask(taskId, env = process.env) {
+  const short = String(taskId).replaceAll('-', '').slice(0, 8);
+  const matcher = new RegExp(`^cecelia-relay-${short}-cx-[a-f0-9]{8}$`);
+  const root = codexRelaySnapshotRoot(env);
+  if (!existsSync(root)) return [];
+  const removed = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !matcher.test(entry.name)) continue;
+    if (cleanupCodexRelayHome(entry.name, env)) removed.push(entry.name);
+  }
+  return removed;
 }
 ```
 
@@ -365,7 +380,88 @@ git add packages/brain/src/routes/harness-callback.js \
 git commit -m "fix(brain): clean codex relay snapshots on callback"
 ```
 
-### Task 5: Synchronize version and verification contracts
+### Task 5: Add watchdog cleanup when callback is lost
+
+**Files:**
+- Modify: `packages/brain/src/harness-relay-watchdog.js`
+- Modify: `packages/brain/src/__tests__/harness-relay-watchdog.test.js`
+
+- [ ] **Step 1: Write watchdog cleanup Red tests**
+
+Inject `cleanupCodexSnapshotsForTask` into `scanStuckHarness`. For a Codex
+overdue row whose terminal update returns `rowCount: 1`, assert exactly:
+
+```js
+expect(cleanupCodexSnapshotsForTask).toHaveBeenCalledOnce();
+expect(cleanupCodexSnapshotsForTask).toHaveBeenCalledWith(TASK_ID);
+```
+
+Repeat with `rowCount: 0` and assert it was not called.
+
+In the credential lifecycle suite, create two matching directories, an
+other-task directory, a malformed directory, and a real home outside the
+snapshot root. Invoke `cleanupCodexRelaySnapshotsForTask(TASK_ID)` and assert
+only the two complete current-task IDs are removed.
+
+- [ ] **Step 2: Run watchdog tests and verify Red**
+
+```bash
+cd packages/brain
+npx vitest run src/__tests__/harness-relay-watchdog.test.js \
+  src/__tests__/harness-skill-relay-account-buckets.test.js
+```
+
+Expected: watchdog cleanup injection has zero calls and the cleanup export is
+absent.
+
+- [ ] **Step 3: Implement cleanup after the durable terminal transition**
+
+Resolve the dependency once:
+
+```js
+const cleanupCodexSnapshotsForTask = opts.cleanupCodexSnapshotsForTask
+  || cleanupCodexRelaySnapshotsForTask;
+```
+
+Immediately after `if (failedRun?.rowCount === 0) continue;`:
+
+```js
+if (row.orchestrator_host === 'skill-relay-codex') {
+  try {
+    cleanupCodexSnapshotsForTask(row.initiative_id);
+  } catch (error) {
+    console.warn(
+      `[relay-watchdog] codex snapshot terminal cleanup failed ` +
+      `initiative=${row.initiative_id}: ${error.message}`,
+    );
+  }
+}
+```
+
+The helper enumerates only direct children and calls exact cleanup for complete
+matching container IDs. It never passes a filesystem prefix to `rmSync`.
+
+- [ ] **Step 4: Run watchdog and credential tests**
+
+```bash
+cd packages/brain
+npx vitest run src/__tests__/harness-relay-watchdog.test.js \
+  src/__tests__/harness-relay-watchdog-gates.test.js \
+  src/__tests__/harness-skill-relay-account-buckets.test.js
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/brain/src/harness-relay-watchdog.js \
+  packages/brain/src/__tests__/harness-relay-watchdog.test.js \
+  packages/brain/src/__tests__/harness-skill-relay-account-buckets.test.js
+git commit -m "fix(brain): clean orphaned codex relay snapshots"
+```
+
+### Task 6: Synchronize version and verification contracts
 
 **Files:**
 - Modify: `DEFINITION.md`
@@ -402,7 +498,7 @@ git add DEFINITION.md packages/brain/VERSION \
 git commit -m "chore(brain): bump version for codex relay hotfix"
 ```
 
-### Task 6: Full verification, review, DevGate, and draft PR
+### Task 7: Full verification, review, DevGate, and draft PR
 
 **Files:**
 - No new production files.
@@ -415,6 +511,8 @@ npx vitest run \
   src/__tests__/harness-skill-relay-account-buckets.test.js \
   src/__tests__/harness-skill-relay.test.js \
   src/__tests__/headed-dispatch.test.js \
+  src/__tests__/harness-relay-watchdog.test.js \
+  src/__tests__/harness-relay-watchdog-gates.test.js \
   src/__tests__/relay-v101.test.js \
   src/routes/__tests__/harness-callback.test.js \
   src/routes/__tests__/harness-callback-auth-alert.test.js

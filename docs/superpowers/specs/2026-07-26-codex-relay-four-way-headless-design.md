@@ -114,9 +114,21 @@ Cleanup happens:
 
 - immediately when detached spawn or later launch setup fails;
 - on every relay callback, before returning the existing 200 acknowledgement.
+- when `scanStuckHarness` successfully transitions an overdue Codex relay to
+  `failed`, covering the case where the container exited without delivering
+  its callback.
 
 Callback cleanup is best-effort so filesystem trouble cannot change the
 existing acknowledgement contract.
+
+The watchdog fallback never performs a prefix delete. After the guarded
+terminal `UPDATE`, and only when `rowCount > 0`, it enumerates direct children
+of the snapshot root. It accepts only complete IDs matching
+`cecelia-relay-<current-task-short-id>-cx-<8 hex>` and passes each accepted ID
+to the same exact-child cleanup function. Directories for other tasks,
+malformed names, and the real team1 credential home are untouched. A lost
+terminal race (`rowCount === 0`) performs no cleanup because another owner may
+have advanced the run.
 
 The real `~/.codex-team1` directory remains read-only and is never deleted or
 mounted read-write into a relay.
@@ -134,6 +146,8 @@ mounted read-write into a relay.
 - Spawn or insert failure after snapshot creation: remove the exact snapshot
   and preserve existing task rollback behavior.
 - Callback cleanup failure: warn and still return HTTP 200.
+- Watchdog terminal cleanup failure: warn after the durable failed transition;
+  do not undo or repeat the terminal DB update.
 
 ## Test Strategy
 
@@ -152,6 +166,9 @@ The permanent regression suite proves:
   directories and `0600` files;
 - spawn failure removes only that run's snapshot;
 - relay callback removes only the callback container's snapshot;
+- watchdog terminal cleanup removes only complete matching IDs for its task;
+- watchdog `UPDATE rowCount=0` removes no snapshot;
+- watchdog cleanup leaves other-task snapshots and the real team1 home intact;
 - the existing team1-only compose mount remains the account contract.
 
 ### Regression and operational gates
