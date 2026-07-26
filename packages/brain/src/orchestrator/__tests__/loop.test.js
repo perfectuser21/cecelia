@@ -261,6 +261,48 @@ describe('runLoop：四态返回控制流', () => {
     expect(failSql[1]).toContain(RUN_ID);
   });
 
+  it('capability BLOCKED persists structured evidence before the convergence fence', async () => {
+    const evidence = {
+      capability_snapshot_id: 'snapshot-blocked',
+      from_target: { provider: 'codex', account: 'team4', machine: 'us-mac-m4' },
+      to_target: null,
+      fallback_reason: 'postgres_unreachable',
+      failure_class: 'infrastructure_blocked',
+    };
+    const observedSeq = [obs({ generatorSpawned: false })];
+    const { deps, appended } = makeEnv({
+      observedSeq,
+      dispatch: async () => ({
+        status: 'BLOCKED',
+        detail: 'dispatch preflight blocked: postgres_unreachable',
+        action: 'wait:human_review',
+        failure_class: 'infrastructure_blocked',
+        fallback_reason: 'postgres_unreachable',
+        should_create_attempt: false,
+        should_enter_generator_fix: false,
+        evidence,
+      }),
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('blocked_same_state');
+    const dispatchResults = appended.filter((entry) => entry.action === 'result:dispatch');
+    expect(dispatchResults).toHaveLength(2);
+    for (const row of dispatchResults) {
+      expect(row.detail).toMatchObject({
+        dispatch_action: 'spawn:generator',
+        status: 'BLOCKED',
+        redirect_action: 'wait:human_review',
+        failure_class: 'infrastructure_blocked',
+        fallback_reason: 'postgres_unreachable',
+        should_create_attempt: false,
+        should_enter_generator_fix: false,
+        evidence,
+      });
+    }
+  });
+
   it('NEEDS_CONTEXT 后 DONE → 同态 streak 清零，不 failed', async () => {
     const observedSeq = [
       obs({ generatorSpawned: false }),
