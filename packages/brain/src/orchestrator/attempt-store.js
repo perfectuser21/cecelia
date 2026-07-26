@@ -123,11 +123,15 @@ export function createAttemptStore(pool) {
 
     async recordLaunchReceipt(id, {
       leaseOwner,
+      leaseGeneration,
       actualMachineId,
       executionTransport,
       remoteJobId = null,
       attestationStatus,
     }) {
+      if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
+        throw new Error('recordLaunchReceipt requires leaseGeneration');
+      }
       const result = await pool.query(
         `UPDATE harness_attempts
             SET actual_machine_id = $3,
@@ -137,6 +141,7 @@ export function createAttemptStore(pool) {
                 updated_at = NOW()
           WHERE id = $1
             AND lease_owner = $2
+            AND lease_generation = $7
             AND status IN ('starting','running')
           RETURNING *`,
         [
@@ -146,6 +151,7 @@ export function createAttemptStore(pool) {
           executionTransport,
           remoteJobId,
           attestationStatus,
+          leaseGeneration,
         ],
       );
       return firstRow(result);
@@ -210,7 +216,11 @@ export function createAttemptStore(pool) {
       return { attempt, deduped: attempt === null };
     },
 
-    async fail(id, { code, message, status = 'failed' }, { leaseOwner = null } = {}) {
+    async fail(
+      id,
+      { code, message, status = 'failed' },
+      { leaseOwner = null, leaseGeneration = null } = {},
+    ) {
       if (!['failed', 'cancelled'].includes(status)) {
         throw new Error(`invalid failure status: ${status}`);
       }
@@ -225,8 +235,9 @@ export function createAttemptStore(pool) {
           WHERE id = $1
             AND status NOT IN (${TERMINAL_SQL})
             AND ($5::text IS NULL OR lease_owner = $5)
+            AND ($6::integer IS NULL OR lease_generation = $6)
           RETURNING *`,
-        [id, status, code ?? null, message ?? null, leaseOwner],
+        [id, status, code ?? null, message ?? null, leaseOwner, leaseGeneration],
       );
       const attempt = firstRow(result);
       return { attempt, deduped: attempt === null };
