@@ -70,6 +70,10 @@ function failureSignature(result) {
   return String(result?.signature ?? result?.http_status ?? 'unknown_provider_failure');
 }
 
+function targetKey(target) {
+  return `${target?.provider ?? ''}:${target?.account ?? ''}:${target?.machine ?? ''}`;
+}
+
 function withTimeout(operation, timeoutMs) {
   let timer;
   return Promise.race([
@@ -119,69 +123,52 @@ export function createCapabilityGate(deps = {}) {
 
   async function evaluate({
     preferred_target: preferredTarget,
+    candidate_targets: candidateTargets,
+    failed_targets: failedTargets = [],
     requirements: rawRequirements,
     task_bundle: taskBundle,
   }) {
     const requirements = parseCapabilityRequirements({ requirements: rawRequirements });
     const snapshotId = randomUUID();
     const logicalCycle = taskBundle?.logical_cycle ?? null;
+    const candidates = Array.isArray(candidateTargets) && candidateTargets.length > 0
+      ? candidateTargets
+      : [preferredTarget];
+    const failedTargetKeys = new Set(failedTargets.map(targetKey));
     let machine;
     let health;
     let capacity;
-
-    try {
-      machine = await probe(() => deps.resolveCanonicalMachineId({
-        machine: preferredTarget?.machine,
-        envMachineId: preferredTarget?.machine,
-        task_bundle: taskBundle,
-      }));
-      health = await probe(() => deps.getMachineHealth({ machine, task_bundle: taskBundle }));
-      capacity = await probe(() => deps.getMachineCapacity({ machine, task_bundle: taskBundle }));
-    } catch (error) {
-      return blockedResult({
-        snapshotId,
-        fromTarget: preferredTarget,
-        fallbackReason: error.message === 'preflight_timeout'
-          ? 'preflight_timeout'
-          : 'canonical_machine_unverified',
-      });
-    }
-
-    if (!health?.ok || !capacity?.ok || Number(capacity?.available ?? 0) < 1) {
-      return blockedResult({
-        snapshotId,
-        fromTarget: preferredTarget,
-        fallbackReason: !health?.ok ? 'machine_unhealthy' : 'machine_capacity_unavailable',
-      });
-    }
-
-    if (!isVerifiedExecutionTarget({ ...preferredTarget, machine })) {
-      return blockedResult({
-        snapshotId,
-        fromTarget: preferredTarget,
-        fallbackReason: 'execution_target_unverified',
-      });
-    }
-
-    const accounts = await probe(() => deps.listProviderAccounts({
-      provider: preferredTarget.provider,
-      machine,
-      task_bundle: taskBundle,
-    })).catch(() => []);
-    const orderedAccounts = [
-      preferredTarget.account,
-      ...accounts.filter((account) => account !== preferredTarget.account),
-    ].filter(Boolean);
-
-    let fallbackReason = 'preferred_target_healthy';
+    let fallbackReason = 'all_execution_targets_exhausted';
     let lastProviderProbe = null;
     let selectedTarget = null;
     let providerAuth = null;
 
-    for (const account of orderedAccounts) {
-      const candidate = { provider: preferredTarget.provider, account, machine };
+    for (const candidate of candidates) {
+      if (failedTargetKeys.has(targetKey(candidate))) continue;
       if (!isVerifiedExecutionTarget(candidate)) continue;
-      const accountCycleKey = `${logicalCycle}:${candidate.provider}:${candidate.account}`;
+
+      machine = candidate.machine;
+      try {
+        health = await probe(() => deps.getMachineHealth({ machine, task_bundle: taskBundle }));
+        capacity = await probe(() => deps.getMachineCapacity({ machine, task_bundle: taskBundle }));
+      } catch (error) {
+        if (error.message === 'preflight_timeout') {
+          return blockedResult({
+            snapshotId,
+            fromTarget: preferredTarget,
+            fallbackReason: 'preflight_timeout',
+          });
+        }
+        continue;
+      }
+      if (!health?.ok || !capacity?.ok || Number(capacity?.available ?? 0) < 1) continue;
+
+      const accountCycleKey = [
+        logicalCycle,
+        candidate.provider,
+        candidate.account,
+        candidate.machine,
+      ].join(':');
       if (exhaustedAccounts.has(accountCycleKey)) {
         fallbackReason = 'logical_cycle_retry_exhausted';
         continue;
@@ -203,15 +190,21 @@ export function createCapabilityGate(deps = {}) {
       }
       lastProviderProbe = providerAuth;
       if (providerAuth?.ok) {
-        selectedTarget = candidate;
-        if (account !== preferredTarget.account && fallbackReason === 'preferred_target_healthy') {
-          fallbackReason = 'provider_account_fallback';
-        }
+        selectedTarget = { ...candidate };
+        fallbackReason = targetKey(candidate) === targetKey(preferredTarget)
+          ? 'preferred_target_healthy'
+          : 'execution_target_fallback';
         break;
       }
 
       if (transientProbeFailure(providerAuth)) {
-        const retryKey = `${logicalCycle}:${candidate.provider}:${candidate.account}:${failureSignature(providerAuth)}`;
+        const retryKey = [
+          logicalCycle,
+          candidate.provider,
+          candidate.account,
+          candidate.machine,
+          failureSignature(providerAuth),
+        ].join(':');
         if (!retryExhausted.has(retryKey)) {
           retryExhausted.add(retryKey);
           let retry;
@@ -233,7 +226,7 @@ export function createCapabilityGate(deps = {}) {
           }
           lastProviderProbe = retry;
           if (retry?.ok) {
-            selectedTarget = candidate;
+            selectedTarget = { ...candidate };
             fallbackReason = 'provider_transient_recovered';
             providerAuth = retry;
             break;
@@ -248,8 +241,7 @@ export function createCapabilityGate(deps = {}) {
     }
 
     if (!selectedTarget) {
-      const reason = capacity?.ok && Number(capacity?.available) > 0
-        && failureSignature(lastProviderProbe) === 'credential_missing'
+      const reason = failureSignature(lastProviderProbe) === 'credential_missing'
         ? 'credential_probe_mismatch'
         : 'all_execution_targets_exhausted';
       const blocked = blockedResult({
@@ -366,7 +358,9 @@ export function createCapabilityGate(deps = {}) {
       from_target: preferredTarget,
       to_target: selectedTarget,
       fallback_reason: fallbackReason,
-      failure_class: selectedTarget.account === preferredTarget.account ? 'none' : 'infrastructure_blocked',
+      failure_class: targetKey(selectedTarget) === targetKey(preferredTarget)
+        ? 'none'
+        : 'infrastructure_blocked',
     });
     return {
       status: 'ok',
