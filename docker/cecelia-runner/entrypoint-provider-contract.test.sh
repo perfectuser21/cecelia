@@ -233,7 +233,7 @@ jq -e '.checks == ["current provider summary"]' "$EVIDENCE_TMP/result.json" >/de
   exit 1
 }
 
-grep -q '^version: 1\.31\.0$' "$EVALUATOR_SKILL" || {
+grep -q '^version: 1\.32\.2$' "$EVALUATOR_SKILL" || {
   echo 'harness-evaluator skill version was not bumped for attempt-bound evidence' >&2
   exit 1
 }
