@@ -168,6 +168,7 @@ review-approve-auth-smoke.sh
 kernel-bounded-run-smoke.sh
 kernel-attempt-telemetry-smoke.sh
 kernel-fleet-receipts-smoke.sh
+kernel-fleet-transport-smoke.sh
 ops-panorama-smoke.sh
 triage-officer-smoke.sh
 conversations-smoke.sh
