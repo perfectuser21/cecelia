@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 4)
+# Sprint Contract Draft (Round 5)
 
 contract-gate: active
 覆盖父路 Kernel telemetry 账本 第 1-5 步
@@ -9,7 +9,8 @@ contract-gate: active
 - registry freshness: api/db/test registry 最新扫描于 2026-07-18，已过期 166.2h；命名风格仅作参考，PRD 仍为法律。
 - judgment-pending-user: ⚠️orphan attempt 在 lease 过期后优先 resume 还是优先结构化终结
 - initiative_id: unavailable in proposer inputs，本轮 task-plan.json 以 `pending` 占位，待上游注入后可无语义冲突替换
-- red-evidence: sprint 契约测试需从仓库根 `npx vitest run sprints/...` 执行；`packages/brain/vitest.config.js` 已明确不再 include `sprints/**`
+- red-evidence: 两份 sprint 契约测试必须从仓库根显式执行；Red 是缺 migration/query/orphan 收口能力导致的 `expect` 断言失败，不接受连接生产库、测试 runner 启动失败或 import collection error 伪装 Red
+- database-safety: 只允许显式 `TEST_DATABASE_URL` 且数据库名以 `_test|_scratch` 结尾；禁止 `DB_URL` / `DATABASE_URL` / `postgresql://localhost/cecelia` fallback
 
 ## Response Schema（推导来源: [api_registry推导/PRD字面]）
 
@@ -20,6 +21,12 @@ contract-gate: active
   "task_id": "uuid",
   "run_count": 4,
   "logical_cycle_count": 2,
+  "raw_counts": {
+    "planner": 4,
+    "reviewer": 5,
+    "generator": 9,
+    "judge": 5
+  },
   "totals": {
     "active_time_ms": 1200,
     "wall_time_ms": 1800,
@@ -62,6 +69,7 @@ contract-gate: active
 - `task_id` (string, 必填): 来源——api_registry 既有 `GET /runs/:id` / `GET /initiative-runs/:id` 的 UUID 风格 + PRD 任务聚合语义
 - `run_count` (number, 必填): 来源——PRD 第 4 步“按 task 聚合多个 run”
 - `logical_cycle_count` (number, 必填): 来源——PRD 第 4-5 步“恢复 logical cycle 视角”
+- `raw_counts` (object, 必填): 来源——PRD 第 5 步“4-run fixture 中 4/2/5/9/5 raw counts 可还原”；至少包含 `planner/reviewer/generator/judge`
 - `totals` (object, 必填): 来源——PRD 第 4 步的 `active_time_ms` / `wall_time_ms` / `wait_time_ms` / `retry_count` / `recovery_count` / `invalid_count`
 - `role_metrics` (array, 必填): 来源——PRD 第 4 步“按 role 与 workstream 拆分”
 - `attempts` (array, 必填): 来源——PRD 第 1-3 步“attempt lineage + orphan 收口”
@@ -73,7 +81,7 @@ contract-gate: active
 - `attempts[].workstream_key` (string, 必填): 来源——PRD 第 1 步
 - `attempts[].started_at` / `attempts[].completed_at` (string|null, 必填): 来源——PRD 第 2 步
 - `attempts[].derived` (boolean, 必填): 来源——PRD 第 2 步“无法原生记录者必须明确 derived 标志”
-**禁用字段名**: `attempt_count`, `cycle_id`, `kind`, `time_ms`, `run_total`
+**禁用字段名**: `attempt_count`, `cycle_id`, `kind`, `time_ms`, `run_total`, `secret`, `token`, `callback_secret_hash`, `error_message`, `task_bundle`, `result`
 **Error (HTTP 4xx)**:
 ```json
 {"error":"<string>"}
@@ -90,6 +98,38 @@ contract-gate: active
 - [packages/brain/src/orchestrator/__tests__/attempt-store.test.js] → `resume 只允许同一个 attempt；同角色的新 attempt 也不能偷用旧 session`
 - [packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js] → `persisted BLOCKED/NEEDS_CONTEXT streak`、`same SHA no-progress`、`failure-set recurrence requests human review`
 - [累积FR] context-manifest: unavailable
+
+## 账本语义冻结（计算来源、边界与聚合等式）
+
+### 时间字段来源
+
+- `effective_start_at = started_at`。若 role 缺原生 start 事件，写入方可从该 attempt 的结构化 `created_at` 投影到 `started_at`，但必须同时持久化 `time_derived=true`；禁止从日志或 agent 文本提取时间。
+- `effective_end_at = completed_at`。本 sprint 的固定 fixture 只聚合终态 attempt；非终态只返回明细，不进入已完成 totals，避免查询时钟导致不可复现。缺原生 end 事件时允许以同一结构化终态事务的 `updated_at` 投影到 `completed_at`，并置 `time_derived=true`。
+- `active_time_ms = max(0, effective_end_at - effective_start_at)`。
+- `wait_time_ms = max(0, effective_start_at - created_at)`。
+- `wall_time_ms = max(0, effective_end_at - created_at)`；对合法时间序列必须机械满足 `wall_time_ms = active_time_ms + wait_time_ms`。
+- 负区间一律归零且三者同时为 0，不得回传负耗时；`NULL` 不能被静默当 0，只有上述结构化投影补齐后才参与 totals。
+
+### 六类 role 与 derived
+
+- PRD 要求的计时 role 全集固定为 `planner/generator/reviewer/evaluator/judge/reporter`；fixture 六类必须全部出现，禁止 `all([])` 或空 `role_metrics` 假绿。
+- `judge`、`reporter` fixture 明确 `time_derived=true`，API 对应 attempt 必须 `derived=true`；其余 role fixture 为原生时间，`derived=false`。
+- `role_metrics` 以 `(role, workstream_key)` 分组；每个组分别满足 wall 等式。所有组的 active/wait/wall/retry/recovery/invalid 之和必须逐字段等于 `totals`。
+- 固定 4-run fixture 共 25 个终态 attempt，每个 attempt 的 `created_at=00:00:00.000Z`、`started_at=00:00:00.500Z`、`completed_at=00:00:01.500Z`，因此每条为 active=1000、wait=500、wall=1500，totals 必须精确为 `25000/12500/37500`，禁止“number 即可”或任意填 0。
+
+### 分类与 lineage
+
+- `retry_count` 只统计结构化 `attempt_kind='retry'`。
+- `recovery_count` 只统计结构化 `attempt_kind IN ('resume','recovery')`。
+- `invalid_count` 只统计结构化 `result.evaluation.valid=false`；禁止从 `result.agent_text`、`error_message`、stdout 或日志中搜索 `invalid/retry/recovery`。
+- `attempt_kind IN ('retry','resume','recovery')` 时 `retry_of_attempt_id` 必须非空并指向同 task lineage 的旧 attempt；`initial|fix` 不得凭自然语言升级为 retry/recovery。
+- 固定 fixture 在 agent 文本与错误消息中放入相反噪声 `retry recovery invalid watchdog_overdue`，结构化字段为 normal 时三个计数仍为 0。
+
+### 租户与脱敏
+
+- query 必须同时以 `tenant_id + task_id` 约束 `initiative_runs` 后再关联 `harness_attempts`；只按 task/run 查不合格。
+- 双租户 fixture 在同一隔离 schema 真写 tenant-a/tenant-b。tenant-a 查询 tenant-b task 必须返回结构化 `telemetry_not_found`，不能回空的成功响应泄露“存在性”。
+- 响应采用字段白名单，绝不返回 `callback_secret_hash/task_bundle/result/error_message`；fixture 把 `SUPER-SECRET-TOKEN`、bearer、原始 agent 内容写入这些列，序列化响应仍不得命中敏感串。
 
 ## 八要素需求规范
 
@@ -117,8 +157,9 @@ contract-gate: active
 
 | 场景 | 失败行为 | 重试幂等？ | 降级策略 |
 |------|----------|-----------|----------|
-| additive migration 失败 | 中止迁移，保持旧 schema 不变 | 是 | 不执行生产写入，仅在测试库 Red→Green |
-| orphan reclaim 发现 lease 已被新 owner 接管 | 不重复终结旧 attempt，返回 no-op | 是 | 保留旧 attempt，交给新 owner/后续 reconcile |
+| additive migration 失败或 URL 非 `_test/_scratch` | 在首次连接/SQL 前中止，保持旧 schema 不变 | 是 | 无生产 fallback；仅隔离 test schema Red→Green |
+| orphan reclaim 发现 lease 已被新 owner 接管 | 旧 owner fenced，不能改状态/时间/secret，返回结构化 no-op | 是 | 保留新 owner 的 live attempt，交给后续 reconcile |
+| orphan resume 回执为 `null`/`false` | 本轮结构化终结一次并记录 failure code，不当作成功 | 是 | 第二次扫描与重复 callback 必须 dedupe |
 | telemetry API 参数缺失或 task 不存在 | 返回 400/404 + `error` | 是 | 不返回猜测值 |
 | judge/reporter 无原生起止事件 | 返回 `derived=true` 的时间字段 | N/A | 不伪造原始时间戳 |
 
@@ -126,15 +167,25 @@ contract-gate: active
 
 N/A — 本 sprint 为 Brain 内部 attempt/telemetry 热修复，不新增对外可写 agent 输入面。
 
+## Risks
+
+| 风险 | 机械缓解 | 验收证据 |
+|---|---|---|
+| 生产库被测试误触 | `TEST_DATABASE_URL` 必填且库名仅 `_test/_scratch`；连接前 fail-closed；无任何生产默认值 | PG contract 的安全测试用 `cecelia` / `cecelia_dev` 负例，测试查询 `current_database()` |
+| orphan 重复收口或旧 owner 覆盖新 owner | lease owner fencing + 终态单写 + 同一 fixture 连续扫描两次 + 旧 callback 重放 | 真调用 `reconcileExpiredKernelAttempt` 后查真实 PG，终结行严格 1 条，live 新 owner 保持 running |
+| 跨租户聚合 | 查询入口强制 `tenant_id + task_id`，双租户同 schema 交叉查询 | tenant-a 无法读取 tenant-b task/attempt，返回 `telemetry_not_found` |
+| judge/reporter derived 误分类 | 时间来源与公式冻结；六 role 非空全集；judge/reporter 必为 `derived=true` | 固定 25-attempt fixture 验 exact totals + role 总和 + derived |
+| agent 自然语言污染分类或泄密 | 仅使用 `attempt_kind` / `result.evaluation.valid`；响应字段白名单 | 相反文本噪声不改变计数，secret/token/raw content 不出现在 JSON |
+
 ## 真实调用方请求 shape
 
 ### Query caller: `GET /api/brain/harness/tasks/:task_id/attempt-telemetry`
-- 认证方式: 复用现有 Brain harness 只读路由风格，本合同不新增 body 认证字段
+- 作用域方式: trusted Brain caller 必须带 `x-tenant-id` header；服务端以该值匹配 `tasks.payload.tenant_id` 后再关联 `initiative_runs.current_task_id`，不得只按 run/task 扫全表
 - 路径参数: `task_id`（UUID）
 - Query 参数: `include_attempts=true|false`（可选，默认 `true`）
 - Content-Type: 无请求体
 - 响应: `application/json`
-- 契约要求: 不允许把 `task_id` 换到 body；不允许把 `logical_cycle_id` 缩写为 `cycle_id`
+- 契约要求: 不允许把 `task_id`/`tenant_id` 换到 body；不允许把 `logical_cycle_id` 缩写为 `cycle_id`；缺 tenant header 返回 400，tenant/task 不匹配返回 404 `telemetry_not_found`
 
 ## 接缝清单
 
@@ -164,22 +215,13 @@ N/A — 本 sprint 为 Brain 内部 attempt/telemetry 热修复，不新增对�
 
 **验证命令**:
 ```bash
-psql "${DB_URL:-postgresql://localhost/cecelia}" -Atc "
-SELECT column_name
-FROM information_schema.columns
-WHERE table_name='harness_attempts'
-  AND column_name IN (
-    'logical_cycle_id',
-    'attempt_kind',
-    'retry_of_attempt_id',
-    'restart_reason',
-    'workstream_key'
-  )
-ORDER BY column_name;
-" | tr '\n' ',' | grep -q 'attempt_kind,logical_cycle_id,restart_reason,retry_of_attempt_id,workstream_key,' || exit 1
+: "${TEST_DATABASE_URL:?必须显式指向 _test/_scratch 测试库}"
+node -e 'const d=new URL(process.env.TEST_DATABASE_URL).pathname.slice(1);if(!/(_test|_scratch)$/.test(d)||d==="cecelia")process.exit(1)'
+npx vitest run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts \
+  -t '真实隔离 PG 执行 additive migration 两次且不改写 357 既有列' --reporter=verbose
 ```
 
-**硬阈值**: 五个新增字段全部存在；不删除或改名既有字段。
+**硬阈值**: migration 文件为当前 next `361_kernel_attempt_telemetry.sql`；隔离 schema 先执行真实 357，再执行 361 两次；六个新增字段（含 `time_derived`）存在，357 的既有列名/类型/nullability 前缀逐项等价；任何非测试库在连接或 SQL 前失败。
 
 ---
 
@@ -190,15 +232,14 @@ ORDER BY column_name;
 
 **验证命令**:
 ```bash
-RESP=$(curl -sf "http://localhost:5221/api/brain/harness/tasks/${TEST_TASK_ID}/attempt-telemetry?include_attempts=true")
-echo "$RESP" | jq -e '
-  .attempts
-  | length >= 1
-  and all(.[]; has("started_at") and has("completed_at") and has("derived"))
-' >/dev/null
+npx vitest run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts \
+  -t '时间公式冻结|六类计时 role' --reporter=verbose
+TEST_DATABASE_URL="$TEST_DATABASE_URL" npx vitest run \
+  sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts \
+  -t '4-run fixture 锁定时间公式' --reporter=verbose
 ```
 
-**硬阈值**: 所有返回的 attempt 都含 `started_at`、`completed_at`、`derived` 三字段；judge/reporter 无原生时间时必须 `derived=true`。
+**硬阈值**: 六 role 全部非空；25 条固定 fixture exact totals = active `25000` / wait `12500` / wall `37500`；所有 role/workstream sum 与 totals 对齐；每组 wall=active+wait；judge/reporter `derived=true`，负时间 fixture 三值全为 0。
 
 ---
 
@@ -209,28 +250,12 @@ echo "$RESP" | jq -e '
 
 **验证命令**:
 ```bash
-DEADLINE=$((SECONDS + 60))
-until psql "${DB_URL:-postgresql://localhost/cecelia}" -Atc "
-SELECT COUNT(*)
-FROM harness_attempts
-WHERE run_id='${TEST_RUN_ID}'
-  AND created_at > NOW() - interval '5 minutes'
-  AND (
-    attempt_kind IN ('resume','recovery')
-    OR (
-      id='${ORPHAN_ATTEMPT_ID}'
-      AND status IN ('failed','cancelled','blocked','needs_context')
-      AND completed_at IS NOT NULL
-    )
-  );
-" | grep -q '^[1-9]'; do
-  [ $SECONDS -lt $DEADLINE ] || { echo 'FAIL: within 60s orphan 未收口'; exit 1; }
-  sleep 2
-done
-echo "OK: within 60s orphan 收口"
+TEST_DATABASE_URL="$TEST_DATABASE_URL" npx vitest run \
+  sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts \
+  -t '真调用 orphan 收口入口' --reporter=verbose
 ```
 
-**硬阈值**: 60s 内 orphan 完成 resume/recovery 或结构化终结；旧 attempt 不得永久 `running`。
+**硬阈值**: 测试显式真写 expired running fixture 并调用生产收口入口；`null` 与 `false` 回执均结构化失败；同 fixture 连扫两次 + 旧 callback 重放后只有一次终结；已有 live 新 owner 时旧 owner fenced，状态仍 running；产生新 attempt 时 `retry_of_attempt_id` 必须严格等于 orphan id。
 
 ---
 
@@ -246,6 +271,7 @@ echo "$RESP" | jq -e '
   .task_id == "'"${TEST_TASK_ID}"'"
   and (.run_count | type == "number")
   and (.logical_cycle_count | type == "number")
+  and (.raw_counts | type == "object")
   and (.totals.active_time_ms | type == "number")
   and (.totals.wall_time_ms | type == "number")
   and (.totals.wait_time_ms | type == "number")
@@ -253,6 +279,7 @@ echo "$RESP" | jq -e '
   and (.totals.recovery_count | type == "number")
   and (.totals.invalid_count | type == "number")
   and (.role_metrics | type == "array")
+  and (.role_metrics | length >= 6)
   and all(.role_metrics[]?; (.role | type == "string")
     and (.workstream_key | type == "string")
     and (.active_time_ms | type == "number")
@@ -277,12 +304,16 @@ echo "$RESP" | jq -e '
     and ((.completed_at == null) or (.completed_at | type == "string"))
     and (.derived | type == "boolean"))
 ' >/dev/null
-echo "$RESP" | jq -e 'keys == ["attempts","logical_cycle_count","role_metrics","run_count","task_id","totals"]' >/dev/null
+echo "$RESP" | jq -e 'keys == ["attempts","logical_cycle_count","raw_counts","role_metrics","run_count","task_id","totals"]' >/dev/null
+echo "$RESP" | jq -e '
+  . as $root
+  | ([.role_metrics[].active_time_ms] | add) == $root.totals.active_time_ms
+' >/dev/null
 echo "$RESP" | jq -e 'has("attempt_count") | not' >/dev/null
 echo "$RESP" | jq -e 'has("cycle_id") | not' >/dev/null
 ```
 
-**硬阈值**: top-level keys 精确等于 `["attempts","logical_cycle_count","role_metrics","run_count","task_id","totals"]`；禁用字段名不得出现。
+**硬阈值**: top-level keys 精确等于 `["attempts","logical_cycle_count","raw_counts","role_metrics","run_count","task_id","totals"]`；`logical_cycle_id` 必须 string；六类 role 都出现；role/workstream 合计逐字段等于 totals；禁用与敏感字段不得出现。
 
 ---
 
@@ -297,19 +328,24 @@ RESP=$(curl -sf "http://localhost:5221/api/brain/harness/tasks/${FIXTURE_TASK_ID
 echo "$RESP" | jq -e '
   .run_count == 4
   and .logical_cycle_count == 2
+  and .raw_counts.planner == 4
+  and .raw_counts.reviewer == 5
+  and .raw_counts.generator == 9
+  and .raw_counts.judge == 5
+  and .totals.active_time_ms == 25000
+  and .totals.wait_time_ms == 12500
+  and .totals.wall_time_ms == 37500
   and .totals.retry_count == 2
   and .totals.recovery_count == 1
   and .totals.invalid_count == 1
-  and ([.attempts[] | select(.role=="planner")] | length) == 4
-  and ([.attempts[] | select(.role=="proposer")] | length) == 2
-  and ([.attempts[] | select(.role=="reviewer")] | length) == 5
-  and ([.attempts[] | select(.role=="generator")] | length) == 9
-  and ([.attempts[] | select(.role=="judge")] | length) == 5
-  and ([.attempts[] | select(.attempt_kind=="retry")] | length) >= 1
+  and ([.role_metrics[].role] | unique
+       | sort == ["evaluator","generator","judge","planner","reporter","reviewer"])
+  and ([.attempts[] | select(.role=="judge" or .role=="reporter")]
+       | length > 0 and all(.[]; .derived == true))
 ' >/dev/null
 ```
 
-**硬阈值**: fixture 中 `run_count=4`、`logical_cycle_count=2`，且 `4/2/5/9/5` 原始角色计数与 retry/recovery/invalid 可分离统计。
+**硬阈值**: fixture 中 `run_count=4`、`logical_cycle_count=2`，`planner/reviewer/generator/judge=4/5/9/5`，六计时 role 全集出现；agent 文本放入反向分类噪声仍只有结构化 `retry=2/recovery=1/invalid=1`；exact totals 为 `25000/12500/37500`。
 
 ---
 
@@ -320,10 +356,18 @@ echo "$RESP" | jq -e '
 
 **验证命令**:
 ```bash
-npx vitest run packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js --reporter=dot
+CONTRACT_BASE_SHA="${CONTRACT_BASE_SHA:?}" npx vitest run \
+  sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts \
+  -t 'Kernel action 路由元数据|合同冻结|scope guard' --reporter=verbose
+(cd packages/brain && ../../node_modules/.bin/vitest run \
+  src/orchestrator/__tests__/derive.test.js \
+  src/orchestrator/__tests__/contract-store.test.js \
+  src/orchestrator/__tests__/kernel-handlers.test.js \
+  src/orchestrator/__tests__/kernel-callback-flow.integration.test.js \
+  --reporter=dot)
 ```
 
-**硬阈值**: 既有 Kernel wiring PG 集成回归继续通过，不因 telemetry 热修复改变 merge/approval/contract freeze 语义。
+**硬阈值**: action→role/skill/readOnly/expectedOutput 快照逐字段等价；derive/contract-store/kernel callback 回归全绿；diff 不含 Commander/Memory/Directive/Actor Inbox/唤醒/第二流程账本，migration 不创建相关表。
 
 ---
 
@@ -331,7 +375,8 @@ npx vitest run packages/brain/src/__tests__/integration/kernel-wiring.pg.integra
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| attempt lineage + query API + orphan 收口 | `sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts` | `GET /api/brain/harness/tasks/:task_id/attempt-telemetry 返回 telemetry schema`、`GET /api/brain/harness/tasks/:task_id/attempt-telemetry response keys 精确等于 telemetry 合同 keys`、`migration 358 adds lineage telemetry columns to harness_attempts`、`expired running attempt is resumed or structurally closed instead of hanging forever` | 当前 `harness.routes.js` 无新端点、`358_kernel_attempt_telemetry.sql` 尚不存在，仓库根 `npx vitest run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts` 应出现 4 个失败用例 |
+| 时间公式 + Kernel/合同冻结边界 | `sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts` | `GET /tasks/:task_id/attempt-telemetry 已注册到真实 harness router`、`GET telemetry 缺 x-tenant-id 时返回 400 + error string 而非通用 404`、`时间公式冻结为 wall = active + wait`、`Kernel action 路由元数据与 telemetry 改动前完全等价`、`合同冻结、Kernel 决策与 callback 路径既有回归继续通过`、`scope guard 禁止触碰 Commander/Memory/Directive/Actor Inbox/唤醒/第二流程账本`、`六类计时 role 常量冻结且 judge/reporter 必须有 derived oracle` | 当前缺 `attempt-telemetry.js`，对应 it() 以 `expect.fail` 产生断言 Red；既有冻结回归仍能独立启动，不接受 collection error |
+| 真 PG migration + lineage + orphan + 聚合/租户 | `sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts` | `真实隔离 PG 执行 additive migration 两次且不改写 357 既有列`、`attempt-store 真写 lineage，新 attempt 严格绑定 retry_of_attempt_id`、`真调用 orphan 收口入口：新 owner fencing、多轮、重复 callback、null/false 只终结一次`、`4-run fixture 锁定时间公式、六 role、derived、结构化分类与 totals 对齐`、`双租户真实 PG fixture 不可交叉读取，文本噪声不改变 retry/recovery/invalid 分类` | 当前缺 migration 361/query module/生产收口 export；在显式 `_test` DB 的唯一隔离 schema 内执行，Red 为 expect 断言失败并在 afterEach DROP SCHEMA 清理 |
 
 ## E2E 验收
 
@@ -342,41 +387,31 @@ npx vitest run packages/brain/src/__tests__/integration/kernel-wiring.pg.integra
 #!/bin/bash
 set -euo pipefail
 
-export DB_URL="${DB_URL:-postgresql://localhost/cecelia}"
-export TEST_TASK_ID="${TEST_TASK_ID:-11111111-1111-4111-8111-111111111111}"
-export FIXTURE_TASK_ID="${FIXTURE_TASK_ID:-22222222-2222-4222-8222-222222222222}"
-export TEST_RUN_ID="${TEST_RUN_ID:-33333333-3333-4333-8333-333333333333}"
-export ORPHAN_ATTEMPT_ID="${ORPHAN_ATTEMPT_ID:-44444444-4444-4444-8444-444444444444}"
+: "${TEST_DATABASE_URL:?必须由 evaluator 显式注入 _test/_scratch，禁止生产 fallback}"
+: "${CONTRACT_BASE_SHA:?必须锚定 generator 开始前合同 commit}"
+DB_NAME=$(node -e 'const d=new URL(process.env.TEST_DATABASE_URL).pathname.slice(1);if(!/(_test|_scratch)$/.test(d)||d==="cecelia")process.exit(1);process.stdout.write(d)')
+export DB_NAME
+export NODE_ENV=test
 
-cd /workspace/packages/brain
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
 
-npx vitest run src/__tests__/migration-357-harness-attempts.test.js src/orchestrator/__tests__/attempt-store.test.js
-npx vitest run src/__tests__/integration/kernel-wiring.pg.integration.test.js
-npx vitest run src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js src/routes/__tests__/harness.routes.test.js
-cd /workspace
-npx vitest run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts
-cd /workspace/packages/brain
+TEST_DATABASE_URL="$TEST_DATABASE_URL" CONTRACT_BASE_SHA="$CONTRACT_BASE_SHA" \
+  npx vitest run \
+    sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts \
+    sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts \
+    --reporter=verbose
 
-RESP=$(curl -sf "http://localhost:5221/api/brain/harness/tasks/${FIXTURE_TASK_ID}/attempt-telemetry?include_attempts=true")
-echo "$RESP" | jq -e '
-  .run_count == 4
-  and .logical_cycle_count == 2
-  and .totals.retry_count == 2
-  and .totals.recovery_count == 1
-  and .totals.invalid_count == 1
-' >/dev/null
+(cd packages/brain && ../../node_modules/.bin/vitest run \
+  src/__tests__/migration-357-harness-attempts.test.js \
+  src/orchestrator/__tests__/attempt-store.test.js \
+  src/orchestrator/__tests__/derive.test.js \
+  src/orchestrator/__tests__/contract-store.test.js \
+  src/orchestrator/__tests__/kernel-handlers.test.js \
+  src/orchestrator/__tests__/kernel-callback-flow.integration.test.js \
+  src/__tests__/integration/kernel-wiring.pg.integration.test.js \
+  --reporter=dot)
 
-psql "$DB_URL" -Atc "
-SELECT COUNT(*)
-FROM harness_attempts
-WHERE id='${ORPHAN_ATTEMPT_ID}'
-  AND created_at > NOW() - interval '5 minutes'
-  AND (
-    attempt_kind IN ('resume','recovery')
-    OR (status IN ('failed','cancelled','blocked','needs_context') AND completed_at IS NOT NULL)
-  );
-" | grep -q '^[1-9]'
-
-bash /workspace/scripts/check-version-sync.sh
+bash scripts/check-version-sync.sh
 echo "✅ Kernel telemetry Golden Path 验证通过"
 ```

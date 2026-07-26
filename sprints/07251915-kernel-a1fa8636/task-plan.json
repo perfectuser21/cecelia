@@ -8,21 +8,27 @@
       "title": "实现 Kernel attempt telemetry 账本与查询 API",
       "scope": "以 additive 方式补齐 harness_attempts lineage/时间字段、orphan 收口、task 聚合 telemetry API 与 4-run fixture 回归，不改 Kernel 路由决策和合同冻结语义。",
       "dod": [
-        "[BEHAVIOR] GET /api/brain/harness/tasks/:task_id/attempt-telemetry 返回 telemetry schema 与 logical cycle / retry / recovery / invalid 计数",
-        "[BEHAVIOR] expired running attempt is resumed or structurally closed instead of hanging forever",
-        "[ARTIFACT] harness_attempts additive migration 包含 logical_cycle_id/attempt_kind/retry_of_attempt_id/restart_reason/workstream_key"
+        "[BEHAVIOR] 真 PostgreSQL 4-run/双租户 fixture 返回 exact 时间 totals、六 role/derived、raw counts 与结构化 retry/recovery/invalid 计数",
+        "[BEHAVIOR] 真实 orphan 收口入口覆盖 old-owner fencing、连续两轮、重复 callback 与 null/false 失败且只终结一次",
+        "[BEHAVIOR] Kernel route/decision/contract frozen metadata 与 telemetry 改动前等价，Commander/Memory/Directive/Actor Inbox/唤醒/第二流程账本零触碰",
+        "[ARTIFACT] 361 additive migration 包含 logical_cycle_id/attempt_kind/retry_of_attempt_id/restart_reason/workstream_key/time_derived，生产库 fail-closed"
       ],
       "files": [
-        "packages/brain/migrations/358_kernel_attempt_telemetry.sql",
+        "packages/brain/migrations/361_kernel_attempt_telemetry.sql",
         "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/attempt-telemetry.js",
         "packages/brain/src/harness-relay-watchdog.js",
         "packages/brain/src/orchestrator/kernel-handlers.js",
         "packages/brain/src/routes/harness.routes.js",
-        "packages/brain/src/routes/harness.js",
         "packages/brain/src/orchestrator/__tests__/attempt-store.test.js",
         "packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js",
         "packages/brain/src/routes/__tests__/harness.routes.test.js",
         "packages/brain/src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js",
+        "sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts",
+        "sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        "packages/brain/DEFINITION.md",
         "DEFINITION.md",
         ".brain-versions"
       ],
