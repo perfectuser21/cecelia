@@ -55,6 +55,7 @@ function writeContract(
   fixtureRoot: string,
   sprint: string,
   testFiles: string[],
+  filename = 'contract-draft.md',
 ): void {
   const sprintDir = path.join(fixtureRoot, 'sprints', sprint);
   mkdirSync(sprintDir, { recursive: true });
@@ -63,7 +64,7 @@ function writeContract(
       `| WS${index + 1} | \`${testFile}\` | B-${index + 1} | expected red |`,
   );
   writeFileSync(
-    path.join(sprintDir, 'contract-draft.md'),
+    path.join(sprintDir, filename),
     [
       '# Contract',
       '',
@@ -143,6 +144,59 @@ describe('classifySprintArtifacts', () => {
       raw: { total: 1 },
       registered: { total: 0 },
       unregistered: { total: 1 },
+    });
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('does not let a stale secondary contract override the canonical draft', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-contract-precedence-'));
+    mkdirSync(path.join(fixture, 'sprints/s1/tests'), { recursive: true });
+    writeFileSync(path.join(fixture, 'sprints/s1/tests/stale.test.ts'), '');
+    writeContract(fixture, 's1', []);
+    writeContract(
+      fixture,
+      's1',
+      ['tests/stale.test.ts'],
+      'sprint-contract.md',
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { total: 1 },
+      registered: { total: 0 },
+      unregistered: { total: 1 },
+    });
+    mkdirSync(path.join(fixture, 'scripts/smoke'), { recursive: true });
+    mkdirSync(path.join(fixture, 'perm/unit'), { recursive: true });
+    writeFileSync(path.join(fixture, 'perm/unit/x.test.js'), '');
+    const guard = runGuard(fixture, {
+      orphans: 0,
+      permanent: 1,
+      permanent_roots: [{ path: 'perm/unit', layer: 'unit' }],
+      smoke_dir: 'scripts/smoke',
+    }, { ci: true });
+    expect(guard.pass).toBe(false);
+    expect(guard.failures.some((failure: string) => failure.startsWith('A1')))
+      .toBe(true);
+
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it('uses sprint-contract when no contract draft exists', () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'pyramid-contract-fallback-'));
+    mkdirSync(path.join(fixture, 'sprints/s1/tests'), { recursive: true });
+    writeFileSync(path.join(fixture, 'sprints/s1/tests/fallback.test.ts'), '');
+    writeContract(
+      fixture,
+      's1',
+      ['tests/fallback.test.ts'],
+      'sprint-contract.md',
+    );
+
+    expect(classifySprintArtifacts(fixture)).toMatchObject({
+      raw: { total: 1 },
+      registered: { total: 1 },
+      unregistered: { total: 0 },
     });
 
     rmSync(fixture, { recursive: true, force: true });

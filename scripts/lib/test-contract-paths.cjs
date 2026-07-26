@@ -266,40 +266,43 @@ function listRegisteredSprintArtifacts(root) {
   for (const entry of sprintEntries) {
     if (!entry.isDirectory() || entry.name === "archive") continue;
     const sprintDir = path.join(sprintsRoot, entry.name);
-
+    let contractPath = null;
+    let content = null;
     for (const contractFilename of CONTRACT_FILENAMES) {
-      const contractPath = path.join(sprintDir, contractFilename);
-      let content;
+      const candidate = path.join(sprintDir, contractFilename);
       try {
-        content = fs.readFileSync(contractPath, "utf8");
+        content = fs.readFileSync(candidate, "utf8");
+        contractPath = candidate;
+        break;
       } catch {
         continue;
       }
+    }
+    if (!contractPath || content === null) continue;
 
-      for (const row of parseTestContract(content)) {
-        const resolution = resolveContractTestFile({
-          root: repositoryRoot,
-          contractPath,
-          testFile: row.testFile,
-          existsSync: fs.existsSync,
-        });
-        if (resolution.error || !resolution.resolvedPath) continue;
+    for (const row of parseTestContract(content)) {
+      const resolution = resolveContractTestFile({
+        root: repositoryRoot,
+        contractPath,
+        testFile: row.testFile,
+        existsSync: fs.existsSync,
+      });
+      if (resolution.error || !resolution.resolvedPath) continue;
 
-        const relativeToSprint = path.relative(
-          sprintDir,
-          resolution.resolvedPath
-        );
-        const belongsToSprint =
-          relativeToSprint.length > 0 &&
-          !path.isAbsolute(relativeToSprint) &&
-          relativeToSprint !== ".." &&
-          !relativeToSprint.startsWith(`..${path.sep}`);
-        if (
-          belongsToSprint &&
-          isSprintArtifact(resolution.resolvedPath)
-        ) {
-          registered.add(resolution.resolvedPath);
-        }
+      const relativeToSprint = path.relative(
+        sprintDir,
+        resolution.resolvedPath
+      );
+      const belongsToSprint =
+        relativeToSprint.length > 0 &&
+        !path.isAbsolute(relativeToSprint) &&
+        relativeToSprint !== ".." &&
+        !relativeToSprint.startsWith(`..${path.sep}`);
+      if (
+        belongsToSprint &&
+        isSprintArtifact(resolution.resolvedPath)
+      ) {
+        registered.add(resolution.resolvedPath);
       }
     }
   }
