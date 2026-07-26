@@ -855,4 +855,58 @@ describe('kernel attempt HTTP routes', () => {
       await close(server);
     }
   });
+
+  it('rejects an unauthenticated oversized body before parsing it', async () => {
+    const unauthorized = Object.assign(new Error('unauthorized'), { statusCode: 401 });
+    const kernelHandler = {
+      authorize: vi.fn(() => { throw unauthorized; }),
+      accept: vi.fn(),
+    };
+    const server = createBridgeServer({
+      kernelHandler,
+      kernelMachineId: 'xian-mac-m4',
+    });
+    const baseUrl = await listen(server);
+    try {
+      const response = await fetch(`${baseUrl}/harness/attempts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload: 'x'.repeat(1024 * 1024 + 1) }),
+      });
+
+      expect(response.status).toBe(401);
+      expect(kernelHandler.authorize).toHaveBeenCalledOnce();
+      expect(kernelHandler.accept).not.toHaveBeenCalled();
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('returns 413 for an authenticated Harness body over the strict byte limit', async () => {
+    const kernelHandler = {
+      authorize: vi.fn(),
+      accept: vi.fn(async () => ({ status: 'accepted' })),
+    };
+    const server = createBridgeServer({
+      kernelHandler,
+      kernelMachineId: 'xian-mac-m4',
+    });
+    const baseUrl = await listen(server);
+    try {
+      const response = await fetch(`${baseUrl}/harness/attempts`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${BRIDGE_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ payload: 'x'.repeat(1024 * 1024 + 1) }),
+      });
+
+      expect(response.status).toBe(413);
+      expect(kernelHandler.authorize).toHaveBeenCalledOnce();
+      expect(kernelHandler.accept).not.toHaveBeenCalled();
+    } finally {
+      await close(server);
+    }
+  });
 });

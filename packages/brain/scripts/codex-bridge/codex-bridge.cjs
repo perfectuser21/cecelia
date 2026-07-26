@@ -26,6 +26,7 @@ const BRAIN_URL = process.env.BRAIN_URL || 'http://100.71.151.105:5221';
 const CODEX_BIN = process.env.CODEX_BIN || '/opt/homebrew/bin/codex-bin';
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const RUNNER_TIMEOUT_MS = 25 * 60 * 1000; // 25 minutes for full /dev loop
+const KERNEL_ATTEMPT_BODY_MAX_BYTES = 1024 * 1024;
 
 // runner.sh 位置（cecelia monorepo）— 不同机器用户名不同，通过环境变量配置
 const RUNNER_SH = process.env.RUNNER_SH
@@ -162,17 +163,47 @@ function injectLocalAccount(taskId, accountId, homeDir = os.homedir()) {
 /**
  * 解析 HTTP 请求 body
  */
-function parseBody(req) {
+function parseBody(req, maxBytes = KERNEL_ATTEMPT_BODY_MAX_BYTES) {
+  const contentLength = Number(req.headers['content-length']);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    req.resume();
+    return Promise.reject(Object.assign(
+      new Error('request_body_too_large'),
+      { statusCode: 413 },
+    ));
+  }
+
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
+    let receivedBytes = 0;
+    let settled = false;
+    const onData = (chunk) => {
+      if (settled) return;
+      receivedBytes += Buffer.byteLength(chunk);
+      if (receivedBytes > maxBytes) {
+        settled = true;
+        req.off('data', onData);
+        req.off('end', onEnd);
+        req.resume();
+        reject(Object.assign(
+          new Error('request_body_too_large'),
+          { statusCode: 413 },
+        ));
+        return;
+      }
+      body += chunk;
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
       try {
         resolve(JSON.parse(body));
       } catch (err) {
         reject(new Error(`JSON 解析失败: ${err.message}`));
       }
-    });
+    };
+    req.on('data', onData);
+    req.on('end', onEnd);
     req.on('error', reject);
   });
 }
@@ -435,6 +466,7 @@ async function handleBridgeRequest(
         sendJSON(res, 503, { ok: false, error: 'kernel_harness_disabled' });
         return;
       }
+      kernelHandler.authorize?.(authContext);
       const receipt = await kernelHandler.accept(await parseBody(req), authContext);
       sendJSON(res, 202, receipt);
 
@@ -451,6 +483,7 @@ async function handleBridgeRequest(
         sendJSON(res, 503, { ok: false, error: 'kernel_harness_disabled' });
         return;
       }
+      kernelHandler.authorize?.(authContext);
       const status = await kernelHandler.cancel(
         cancelMatch[1],
         await parseBody(req),

@@ -532,6 +532,11 @@ function createKernelAttemptHandler({
   };
 
   return {
+    authorize(headers = {}) {
+      authenticate(headers);
+      return true;
+    },
+
     async accept(request, headers = {}) {
       authenticate(headers);
       const execution = validateRequest(request, configuration);
