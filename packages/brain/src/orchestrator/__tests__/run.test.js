@@ -120,4 +120,94 @@ describe('buildRealDeps', () => {
       role: 'evaluator', provider: 'grok', accountId: 'grok',
     }));
   });
+
+  it.each([
+    ['injected env machine', { CECELIA_MACHINE_ID: 'env-worker' }, 'env-worker'],
+    ['canonical default', {}, 'us-mac-m4'],
+  ])('uses %s instead of ambient process.env identity', async (_case, env, expectedMachine) => {
+    const previous = process.env.CECELIA_MACHINE_ID;
+    process.env.CECELIA_MACHINE_ID = 'ambient-host-must-not-leak';
+    const attemptStore = {
+      createAttempt: vi.fn(async (input) => ({
+        ...input,
+        id: input.id,
+        run_id: input.runId,
+        task_bundle: input.bundle,
+      })),
+      markStarting: vi.fn(async (id, { leaseOwner }) => ({
+        id,
+        status: 'starting',
+        lease_owner: leaseOwner,
+        lease_generation: 0,
+      })),
+      recordLaunchReceipt: vi.fn(async (id) => ({ id })),
+      fail: vi.fn(),
+    };
+    const preflightGate = {
+      evaluate: vi.fn(async ({ preferred_target: target }) => ({
+        status: 'ok',
+        snapshot: { ...target, capability_snapshot_id: 'canonical-machine' },
+        evidence: {},
+        to_target: target,
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+    try {
+      const deps = await buildRealDeps({
+        pool: { query: vi.fn() },
+        attemptStore,
+        env,
+        handlers: {},
+        preflightGate,
+        launcher: {
+          launch: vi.fn(async ({ target }) => ({
+            actualMachineId: target.machine,
+            executionTransport: 'local-docker',
+            remoteJobId: null,
+            attestationStatus: 'local',
+            containerId: 'canonical-worker',
+          })),
+          cancel: vi.fn(),
+        },
+        loadSkill: vi.fn(() => ({
+          name: 'harness-generator',
+          version: '1.0.0',
+          digest: `sha256:${'b'.repeat(64)}`,
+          content: 'generate',
+        })),
+        randomUUID: () => '33333333-3333-4333-8333-333333333333',
+        leaseOwner: 'run-test:canonical',
+      });
+
+      await deps.dispatch('spawn:generator', {
+        taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        runId: '11111111-1111-4111-8111-111111111111',
+        hop: 8,
+        decision: { phase: 'generate' },
+        observed: {
+          task: {
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            title: 'canonical machine',
+            payload: {
+              sprint_dir: 'sprints/canonical-machine',
+              worktree_path: '/tmp/wt',
+            },
+          },
+          run: { phase: 'generate' },
+          contract: { row: {} },
+          pr: null,
+        },
+      });
+
+      expect(preflightGate.evaluate).toHaveBeenCalledWith(expect.objectContaining({
+        preferred_target: expect.objectContaining({ machine: expectedMachine }),
+      }));
+      expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
+        machineId: expectedMachine,
+      }));
+    } finally {
+      if (previous === undefined) delete process.env.CECELIA_MACHINE_ID;
+      else process.env.CECELIA_MACHINE_ID = previous;
+    }
+  });
 });

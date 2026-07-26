@@ -21,6 +21,23 @@ function firstRow(queryResult) {
   return queryResult.rows?.[0] ?? null;
 }
 
+const CREATE_ATTEMPT_WINNER_READ_ATTEMPTS = 3;
+const CREATE_ATTEMPT_WINNER_READ_DELAY_MS = 5;
+
+async function readConcurrentAttemptWinner(pool, runId, hop) {
+  for (let attempt = 0; attempt < CREATE_ATTEMPT_WINNER_READ_ATTEMPTS; attempt += 1) {
+    const winner = firstRow(await pool.query(
+      'SELECT * FROM harness_attempts WHERE run_id=$1 AND hop=$2',
+      [runId, hop],
+    ));
+    if (winner) return winner;
+    if (attempt + 1 < CREATE_ATTEMPT_WINNER_READ_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, CREATE_ATTEMPT_WINNER_READ_DELAY_MS));
+    }
+  }
+  return null;
+}
+
 export function createAttemptStore(pool) {
   if (!pool || typeof pool.query !== 'function') {
     throw new Error('createAttemptStore requires a PostgreSQL pool');
@@ -70,7 +87,8 @@ export function createAttemptStore(pool) {
           input.timeDerived ?? DERIVED_TIME_ROLES.has(input.role),
         ],
       );
-      return firstRow(result);
+      return firstRow(result)
+        ?? readConcurrentAttemptWinner(pool, input.runId, input.hop);
     },
 
     async markStarting(id, { leaseOwner, leaseSeconds }) {

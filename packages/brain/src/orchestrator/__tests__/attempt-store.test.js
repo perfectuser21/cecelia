@@ -50,6 +50,29 @@ describe('attempt store', () => {
     ]));
   });
 
+  it('并发冲突语句看不到 winner 时用新语句重读现有 attempt', async () => {
+    const winner = {
+      id: '33333333-3333-4333-8333-333333333333',
+      run_id: input.runId,
+      hop: input.hop,
+      status: 'queued',
+    };
+    const pool = poolWith(
+      { rows: [], rowCount: 0 },
+      { rows: [winner], rowCount: 1 },
+    );
+
+    await expect(createAttemptStore(pool).createAttempt(input)).resolves.toEqual(winner);
+
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(pool.query.mock.calls[0][0]).toMatch(/ON CONFLICT \(run_id, hop\) DO NOTHING/i);
+    expect(pool.query.mock.calls[0][0]).not.toMatch(/DO UPDATE/i);
+    expect(pool.query.mock.calls[1]).toEqual([
+      expect.stringMatching(/SELECT \* FROM harness_attempts WHERE run_id=\$1 AND hop=\$2/i),
+      [input.runId, input.hop],
+    ]);
+  });
+
   it('starting/running/heartbeat 都使用 lease owner fencing', async () => {
     const pool = poolWith(
       { rows: [{ id: input.id, status: 'starting' }], rowCount: 1 },

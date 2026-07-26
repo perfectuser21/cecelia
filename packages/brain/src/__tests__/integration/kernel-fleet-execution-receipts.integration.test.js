@@ -31,8 +31,8 @@ if (!/_test$|_scratch$/.test(databaseName || '')) {
 }
 
 const pool = new pg.Pool(testDatabaseUrl
-  ? { connectionString: testDatabaseUrl, max: 1 }
-  : { ...DB_DEFAULTS, max: 1 });
+  ? { connectionString: testDatabaseUrl, max: 4 }
+  : { ...DB_DEFAULTS, max: 4 });
 
 const schemaName = `kernel_fleet_receipts_${process.pid}_${randomUUID().replaceAll('-', '')}`;
 const quotedSchema = `"${schemaName}"`;
@@ -69,20 +69,18 @@ async function loadReceipt(attemptId) {
 }
 
 async function expectCheckViolation(sql, values) {
-  await client.query('SAVEPOINT fleet_receipt_check_violation');
+  await client.query('BEGIN');
   try {
     await expect(client.query(sql, values)).rejects.toMatchObject({ code: '23514' });
   } finally {
-    await client.query('ROLLBACK TO SAVEPOINT fleet_receipt_check_violation');
-    await client.query('RELEASE SAVEPOINT fleet_receipt_check_violation');
+    await client.query('ROLLBACK');
   }
 }
 
 beforeAll(async () => {
   client = await pool.connect();
-  await client.query('BEGIN');
   await client.query(`CREATE SCHEMA ${quotedSchema}`);
-  await client.query(`SET LOCAL search_path TO ${quotedSchema}, public`);
+  await client.query(`SET search_path TO ${quotedSchema}, public`);
   await client.query(`
     CREATE TABLE schema_version (
       version TEXT PRIMARY KEY,
@@ -115,7 +113,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (client) {
-    await client.query('ROLLBACK').catch(() => {});
+    await client.query(`DROP SCHEMA IF EXISTS ${quotedSchema} CASCADE`).catch(() => {});
     client.release();
   }
   await pool.end();
@@ -179,6 +177,70 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
       requested_machine_id: 'verified-worker',
       lease_generation: 0,
     });
+  });
+
+  it('returns the committed winner after a concurrent ON CONFLICT snapshot sees zero rows', async () => {
+    const runId = randomUUID();
+    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    const winnerInput = attemptInput({ runId, hop: 41, machineId: 'us-mac-m4' });
+    const duplicateInput = {
+      ...attemptInput({ runId, hop: 41, machineId: 'xian-mac-m4' }),
+      id: randomUUID(),
+    };
+    const winnerClient = await pool.connect();
+    const duplicateClient = await pool.connect();
+    let winnerCommitted = false;
+    try {
+      await winnerClient.query(`SET search_path TO ${quotedSchema}, public`);
+      await duplicateClient.query(`SET search_path TO ${quotedSchema}, public`);
+      const duplicatePid = (await duplicateClient.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      await winnerClient.query('BEGIN');
+      await duplicateClient.query('BEGIN');
+
+      const winner = await createAttemptStore(winnerClient).createAttempt(winnerInput);
+      expect(winner.id).toBe(winnerInput.id);
+
+      const duplicatePromise = createAttemptStore(duplicateClient).createAttempt(duplicateInput);
+      let observedConflictWait = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const activity = await client.query(
+          `SELECT wait_event_type, wait_event
+             FROM pg_stat_activity
+            WHERE pid = $1`,
+          [duplicatePid],
+        );
+        if (activity.rows[0]?.wait_event_type === 'Lock'
+            && activity.rows[0]?.wait_event === 'transactionid') {
+          observedConflictWait = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(observedConflictWait).toBe(true);
+
+      await winnerClient.query('COMMIT');
+      winnerCommitted = true;
+      await expect(duplicatePromise).resolves.toMatchObject({
+        id: winnerInput.id,
+        run_id: runId,
+        hop: 41,
+      });
+      await duplicateClient.query('COMMIT');
+
+      const rows = await client.query(
+        'SELECT id, requested_machine_id FROM harness_attempts WHERE run_id=$1 AND hop=$2',
+        [runId, 41],
+      );
+      expect(rows.rows).toEqual([{
+        id: winnerInput.id,
+        requested_machine_id: 'us-mac-m4',
+      }]);
+    } finally {
+      if (!winnerCommitted) await winnerClient.query('ROLLBACK').catch(() => {});
+      await duplicateClient.query('ROLLBACK').catch(() => {});
+      winnerClient.release();
+      duplicateClient.release();
+    }
   });
 
   it('fences launch receipts by lease owner and active status without mutating rejected writes', async () => {
