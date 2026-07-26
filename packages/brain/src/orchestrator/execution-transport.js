@@ -1,4 +1,8 @@
+import { listCanonicalMachineIds } from './preflight/canonical-machine-id.js';
+
 const TRANSPORT_METHODS = ['launch', 'inspect', 'cancel'];
+const [LOCAL_MACHINE_ID, ...REMOTE_MACHINE_IDS] = listCanonicalMachineIds();
+const REMOTE_MACHINE_SET = new Set(REMOTE_MACHINE_IDS);
 
 function validateTransport(name, transport) {
   for (const method of TRANSPORT_METHODS) {
@@ -13,8 +17,8 @@ export function createExecutionTransportRouter({ local, remote } = {}) {
   validateTransport('remote', remote);
 
   const transportFor = (machine) => {
-    if (machine === 'us-mac-m4') return local;
-    if (machine === 'xian-mac-m4' || machine === 'xian-mac-m1') return remote;
+    if (machine === LOCAL_MACHINE_ID) return local;
+    if (REMOTE_MACHINE_SET.has(machine)) return remote;
     throw new Error(`execution_transport_unavailable:${String(machine)}`);
   };
 
@@ -22,10 +26,10 @@ export function createExecutionTransportRouter({ local, remote } = {}) {
     async launch(input) {
       const machine = input?.target?.machine;
       const launched = await transportFor(machine).launch(input);
-      if (machine !== 'us-mac-m4') return launched;
+      if (machine !== LOCAL_MACHINE_ID) return launched;
       return {
         ...launched,
-        actualMachineId: 'us-mac-m4',
+        actualMachineId: LOCAL_MACHINE_ID,
         executionTransport: 'local-docker',
         remoteJobId: null,
         attestationStatus: 'local',
