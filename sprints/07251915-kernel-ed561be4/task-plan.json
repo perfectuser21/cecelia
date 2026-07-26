@@ -1,16 +1,17 @@
 {
-  "initiative_id": "${INITIATIVE_ID}",
+  "initiative_id": "ed561be4-940a-4c26-844c-e3c5a5a3f7c8",
   "journey_type": "autonomous",
   "journey_type_reason": "该 sprint 只改 Brain orchestrator 的派发前 preflight、路由与结构化失败分类，不涉及前端交互。",
   "tasks": [
     {
       "task_id": "ws1",
       "title": "实现 Kernel capability gate 与 dispatcher preflight 接线",
-      "scope": "新增 server-owned capability snapshot、ExecutionTarget 路由、canonical machine identity 与 infrastructure/product failure 分流，并保持版本账本同步。",
+      "scope": "新增 server-owned capability snapshot、完整 ExecutionTarget 矩阵、canonical machine identity、infra/product failure 分流、结构化 evidence 与稳定 parsing/routing/evidence 接口；不实现 Commander，不修改 telemetry schema/跨 run inheritance。",
       "dod": [
-        "[BEHAVIOR] dispatcher 在 createAttempt 前执行 preflight 并写 capability_snapshot_id",
-        "[BEHAVIOR] team4 503 后同 cycle 最多重试一次且切换同 provider 健康账号 team1",
-        "[BEHAVIOR] 全池失败或 contract capability mismatch 返回 infrastructure_blocked 且不创建 attempt",
+        "[BEHAVIOR] dispatcher 真实调用 preflight 后才创建合法 UUID attempt 并写完整 evidence",
+        "[BEHAVIOR] ExecutionTarget 完整矩阵逐项放行且未列组合 fail-closed",
+        "[BEHAVIOR] 五个 Codex 账号全失败时 dispatcher 不建 attempt并转人审告警",
+        "[BEHAVIOR] preflight probe 有界 timeout 且过期 snapshot 竞态不得放行",
         "[ARTIFACT] preflight / capability-gate / canonical-machine 模块落到 packages/brain/src/orchestrator/"
       ],
       "files": [
