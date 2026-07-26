@@ -13,6 +13,7 @@ export const MACHINE_IDS = Object.freeze([
 export const READ_ONLY_OBJECTIVE = [
   'Kernel fleet synthetic canary.',
   'Return only structured execution evidence.',
+  'Return decision outcome CANARY_OK after successful execution.',
   'Do not merge, push, modify a worktree, or write business data.',
 ].join(' ');
 
@@ -146,6 +147,13 @@ export function validateMachineEvidence(evidence, machine) {
   }
   if (evidence.status !== 'completed') {
     throw new Error(`canary_attempt_failed:${evidence.attempt_id}:${evidence.status}`);
+  }
+  if (evidence.result?.decision?.outcome !== 'CANARY_OK') {
+    throw new Error(`canary_decision_mismatch:${evidence.attempt_id}`);
+  }
+  const provider = evidence.result?.provider_metadata?.provider;
+  if (provider !== 'codex') {
+    throw new Error(`canary_provider_mismatch:${evidence.attempt_id}:${String(provider)}`);
   }
 
   const remote = machine !== 'us-mac-m4';
@@ -365,6 +373,10 @@ export function createDryRunDispatch({
       status: 'completed',
       started_at: startedAt,
       completed_at: new Date(Date.parse(startedAt) + 1_000).toISOString(),
+      result: {
+        decision: { outcome: 'CANARY_OK' },
+        provider_metadata: { provider: 'codex' },
+      },
       synthetic: true,
     });
   };
@@ -454,7 +466,7 @@ export async function createLiveDispatch({
     const kernelDispatch = await dispatcherFor(machine);
     nextHop += 1;
     const hop = nextHop;
-    const launched = await kernelDispatch('spawn:reviewer', {
+    const launched = await kernelDispatch('spawn:canary', {
       taskId: runId,
       runId,
       hop,
@@ -468,7 +480,7 @@ export async function createLiveDispatch({
             sprint_dir: '/var/empty/kernel-fleet-canary',
             worktree_path: '/var/empty/kernel-fleet-canary',
             role_assignments: {
-              reviewer: { provider: 'codex', account: accountByMachine[machine] },
+              reporter: { provider: 'codex', account: accountByMachine[machine] },
             },
           },
         },
@@ -485,7 +497,7 @@ export async function createLiveDispatch({
       const result = await pool.query(
         `SELECT id AS attempt_id, run_id, requested_machine_id, actual_machine_id,
                 execution_transport, remote_job_id, machine_attestation_status,
-                status, started_at, completed_at
+                status, started_at, completed_at, result
            FROM harness_attempts
           WHERE id=$1::uuid`,
         [launched.attemptId],

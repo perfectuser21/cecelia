@@ -50,6 +50,10 @@ function completedEvidence(machine, overrides = {}) {
     status: 'completed',
     started_at: '2026-07-26T01:00:00.000Z',
     completed_at: '2026-07-26T01:00:01.000Z',
+    result: {
+      decision: { outcome: 'CANARY_OK' },
+      provider_metadata: { provider: 'codex' },
+    },
     ...overrides,
   };
 }
@@ -140,6 +144,42 @@ describe('runThreeMachineCanary', () => {
       dispatch,
       clock: () => new Date('2026-07-26T01:00:00.000Z'),
     })).rejects.toThrow('machine_receipt_mismatch:xian-mac-m4:us-mac-m4');
+  });
+
+  it('rejects a completed callback without the canary decision', async () => {
+    const dispatch = vi.fn(async ({ machine }) => completedEvidence(machine, {
+      result: {
+        decision: null,
+        provider_metadata: { provider: 'codex' },
+      },
+    }));
+
+    await expect(runThreeMachineCanary({
+      mode: 'serial',
+      strict: true,
+      runId: RUN_ID,
+      dispatch,
+      clock: () => new Date('2026-07-26T01:00:00.000Z'),
+    })).rejects.toThrow(`canary_decision_mismatch:${ATTEMPT_IDS['us-mac-m4']}`);
+  });
+
+  it('rejects a completed callback that did not execute through Codex', async () => {
+    const dispatch = vi.fn(async ({ machine }) => completedEvidence(machine, {
+      result: {
+        decision: { outcome: 'CANARY_OK' },
+        provider_metadata: { provider: 'claude' },
+      },
+    }));
+
+    await expect(runThreeMachineCanary({
+      mode: 'serial',
+      strict: true,
+      runId: RUN_ID,
+      dispatch,
+      clock: () => new Date('2026-07-26T01:00:00.000Z'),
+    })).rejects.toThrow(
+      `canary_provider_mismatch:${ATTEMPT_IDS['us-mac-m4']}:claude`,
+    );
   });
 
   it('non-strict failure creates a new Attempt instead of mutating the failed one', async () => {
@@ -325,7 +365,7 @@ describe('createLiveDispatch', () => {
 
     expect(dispatchCalls.map(({ machine, context }) => [
       machine,
-      context.observed.task.payload.role_assignments.reviewer.account,
+      context.observed.task.payload.role_assignments.reporter.account,
     ])).toEqual([
       ['us-mac-m4', 'team1'],
       ['xian-mac-m4', 'team2'],

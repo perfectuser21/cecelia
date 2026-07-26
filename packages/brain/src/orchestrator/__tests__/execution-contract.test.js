@@ -67,6 +67,15 @@ describe('TaskBundle contract', () => {
     });
   });
 
+  it('accepts a skill-free read-only canary bundle', () => {
+    expect(parseTaskBundle(validBundle({
+      role: 'reporter',
+      skill: null,
+      constraints: { read_only: true, fresh_session: true, timeout_seconds: 600 },
+      expected_output: 'harness-result/canary-v1',
+    }))).toMatchObject({ role: 'reporter', skill: null });
+  });
+
   it.each([
     '调用 Skill(foo)',
     'Use the Task tool to delegate',
@@ -133,6 +142,26 @@ describe('HarnessResult contract', () => {
     expect(() => parseHarnessResult(validResult({
       decision: { branch: 'cp-no-verdict' },
     }), 'reviewer')).toThrow(/outcome/);
+  });
+
+  it('requires CANARY_OK for the dedicated canary output contract', () => {
+    expect(() => parseHarnessResult(
+      validResult({ decision: null }),
+      'reporter',
+      'harness-result/canary-v1',
+    )).toThrow(/CANARY_OK/);
+
+    expect(() => parseHarnessResult(
+      validResult({ decision: { outcome: 'NOT_OK' } }),
+      'reporter',
+      'harness-result/canary-v1',
+    )).toThrow(/CANARY_OK/);
+
+    expect(parseHarnessResult(
+      validResult({ decision: { outcome: 'CANARY_OK' } }),
+      'reporter',
+      'harness-result/canary-v1',
+    ).decision.outcome).toBe('CANARY_OK');
   });
 
   it.each([

@@ -115,6 +115,7 @@ describe('resolveAction', () => {
     ['spawn:planner', 'planner', 'harness-planner'],
     ['spawn:proposer', 'proposer', 'harness-contract-proposer'],
     ['spawn:reviewer', 'reviewer', 'harness-contract-reviewer'],
+    ['spawn:canary', 'reporter', null],
     ['spawn:generator', 'generator', 'harness-generator'],
     ['spawn:generator-fix', 'generator', 'harness-generator'],
     ['spawn:evaluator', 'evaluator', 'harness-evaluator'],
@@ -129,6 +130,30 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('dispatches the fleet canary without a role Skill or workspace dependency', async () => {
+    const deps = makeDeps();
+    const dispatch = createDispatcher(deps);
+
+    await dispatch('spawn:canary', {
+      taskId,
+      runId,
+      hop: 1,
+      observed,
+      decision: { phase: 'canary', reason: 'fleet_transport_probe' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created).toMatchObject({ role: 'reporter' });
+    expect(created.bundle).toMatchObject({
+      role: 'reporter',
+      skill: null,
+      constraints: { fresh_session: true, read_only: true },
+      expected_output: 'harness-result/canary-v1',
+    });
+    expect(created.bundle.objective).toContain('status completed');
+    expect(deps.loadSkill).not.toHaveBeenCalled();
+  });
+
   it('logical cycle 锚定 durable intent，并与 bundle metadata 逐字一致', async () => {
     const deps = makeDeps();
     deps.preflightGate = {

@@ -82,8 +82,14 @@ export function parseTaskBundle(value) {
   return parsed;
 }
 
-export function parseHarnessResult(value, role) {
+export function parseHarnessResult(value, role, expectedOutput = null) {
   const parsed = harnessResultSchema.parse(value);
+  if (expectedOutput === 'harness-result/canary-v1') {
+    if (parsed.status !== 'completed' || parsed.decision?.outcome !== 'CANARY_OK') {
+      throw new Error('canary result requires status completed and decision outcome CANARY_OK');
+    }
+    return parsed;
+  }
   const decisionRequired = ['completed', 'completed_with_concerns'].includes(parsed.status);
   const adversarialRole = ['reviewer', 'evaluator', 'judge'].includes(role);
   if (decisionRequired && adversarialRole && !parsed.decision) {

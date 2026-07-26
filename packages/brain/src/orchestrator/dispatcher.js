@@ -21,6 +21,11 @@ const ACTION_SPECS = Object.freeze({
     role: 'reviewer', skill: 'harness-contract-reviewer', readOnly: true,
     expectedOutput: 'harness-result/reviewer-v1',
   },
+  'spawn:canary': {
+    role: 'reporter', skill: null, readOnly: true,
+    objective: 'Perform no filesystem or network work. Return status completed with empty artifacts and checks, decision outcome CANARY_OK, and null error.',
+    expectedOutput: 'harness-result/canary-v1',
+  },
   'spawn:generator': {
     role: 'generator', skill: 'harness-generator', readOnly: false,
     expectedOutput: 'harness-result/generator-v1',
@@ -150,7 +155,7 @@ function buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata) {
     role: spec.role,
     objective: action === 'spawn:generator-fix'
       ? `${OBJECTIVES.generator} This is a repair attempt; preserve the current pull request.`
-      : OBJECTIVES[spec.role],
+      : spec.objective ?? OBJECTIVES[spec.role],
     skill,
     inputs,
     constraints: {
