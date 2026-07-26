@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { signMachineAttestation } from './machine-attestation.js';
@@ -71,6 +73,46 @@ function createTransport(overrides = {}) {
     brainUrl: BRAIN_URL,
     fetchFn: vi.fn(async () => jsonResponse(202, acceptedLaunchResponse())),
     ...overrides,
+  });
+}
+
+function operationInput(operation) {
+  if (operation === 'launch') return launchInput();
+  if (operation === 'inspect') {
+    return {
+      attempt: { id: 'attempt-1' },
+      target: { machine: MACHINE },
+    };
+  }
+  return {
+    attempt: {
+      id: 'attempt-1',
+      lease_owner: 'dispatcher-1',
+      lease_generation: 3,
+    },
+    target: { machine: MACHINE },
+  };
+}
+
+function listenOnLoopback(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      const address = server.address();
+      resolve(`http://127.0.0.1:${address.port}`);
+    });
+  });
+}
+
+function closeServer(server) {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+    server.closeAllConnections?.();
   });
 }
 
@@ -199,6 +241,10 @@ describe('remote Bridge launch', () => {
 
   it.each([
     [200, 'remote_bridge_launch_http_200'],
+    [301, 'remote_bridge_launch_http_301'],
+    [302, 'remote_bridge_launch_http_302'],
+    [307, 'remote_bridge_launch_http_307'],
+    [308, 'remote_bridge_launch_http_308'],
     [409, 'remote_bridge_launch_conflict'],
     [500, 'remote_bridge_launch_http_500'],
   ])('accepts only HTTP 202 (received %s)', async (status, errorCode) => {
@@ -284,6 +330,112 @@ describe('remote Bridge launch', () => {
   });
 });
 
+describe('remote Bridge operation deadlines', () => {
+  it.each(['launch', 'inspect', 'cancel'])(
+    'keeps the %s deadline active while consuming the response body',
+    async (operation) => {
+      let requestSignal;
+      const fetchFn = vi.fn(async (_url, options) => {
+        requestSignal = options.signal;
+        return {
+          ok: true,
+          status: operation === 'launch' ? 202 : 200,
+          json: () => new Promise((_resolve, reject) => {
+            requestSignal.addEventListener('abort', () => {
+              reject(new Error(`body exposed ${SHARED_SECRET} ${CALLBACK_TOKEN}`));
+            }, { once: true });
+          }),
+        };
+      });
+      const transport = createTransport({ fetchFn, timeoutMs: 5 });
+
+      const outcome = await Promise.race([
+        transport[operation](operationInput(operation)).then(
+          () => ({ status: 'resolved' }),
+          (error) => ({ status: 'rejected', message: error.message }),
+        ),
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ status: 'hung' }), 50);
+        }),
+      ]);
+
+      expect(outcome).toEqual({
+        status: 'rejected',
+        message: `remote_bridge_${operation}_timeout`,
+      });
+      expect(requestSignal.aborted).toBe(true);
+      expect(outcome.message).not.toContain(SHARED_SECRET);
+      expect(outcome.message).not.toContain(CALLBACK_TOKEN);
+    },
+  );
+});
+
+describe('remote Bridge redirect policy', () => {
+  it.each(['launch', 'inspect', 'cancel'])(
+    'locks %s requests to redirect:error',
+    async (operation) => {
+      const fetchFn = vi.fn(async () => jsonResponse(
+        operation === 'launch' ? 202 : 200,
+        operation === 'launch'
+          ? acceptedLaunchResponse()
+          : { status: 'running' },
+      ));
+      const transport = createTransport({ fetchFn });
+
+      await transport[operation](operationInput(operation));
+
+      expect(fetchFn.mock.calls[0][1].redirect).toBe('error');
+    },
+  );
+
+  it('does not send sensitive launch JSON to a 307 redirect target', async () => {
+    let redirectedBody = '';
+    let targetUrl;
+    const targetServer = createServer(async (request, response) => {
+      request.setEncoding('utf8');
+      for await (const chunk of request) {
+        redirectedBody += chunk;
+      }
+      response.writeHead(500, { 'Content-Type': 'application/json' });
+      response.end('{}');
+    });
+    const redirectServer = createServer((request, response) => {
+      request.resume();
+      response.writeHead(307, { Location: `${targetUrl}/capture` });
+      response.end();
+    });
+
+    try {
+      targetUrl = await listenOnLoopback(targetServer);
+      const redirectUrl = await listenOnLoopback(redirectServer);
+      const transport = createTransport({
+        bridgeUrls: { [MACHINE]: redirectUrl },
+        fetchFn: globalThis.fetch,
+        timeoutMs: 1000,
+      });
+
+      let launchError;
+      try {
+        await transport.launch(launchInput());
+      } catch (error) {
+        launchError = error;
+      }
+
+      expect(launchError?.message).toBe('remote_bridge_launch_request_failed');
+      expect(launchError?.message).not.toContain(SHARED_SECRET);
+      expect(launchError?.message).not.toContain(CALLBACK_TOKEN);
+      expect(redirectedBody).toBe('');
+      expect(redirectedBody).not.toContain(CALLBACK_TOKEN);
+      expect(redirectedBody).not.toContain('do the work');
+    } finally {
+      await Promise.all([
+        closeServer(redirectServer),
+        closeServer(targetServer),
+      ]);
+    }
+  });
+});
+
 describe('remote Bridge inspect', () => {
   it('gets the allowlisted attempt URL with bearer authentication and returns JSON', async () => {
     const responseBody = { status: 'running', job_id: 'job-1' };
@@ -300,6 +452,7 @@ describe('remote Bridge inspect', () => {
         method: 'GET',
         headers: { Authorization: `Bearer ${SHARED_SECRET}` },
         signal: expect.any(AbortSignal),
+        redirect: 'error',
       },
     );
   });
@@ -356,6 +509,7 @@ describe('remote Bridge cancel', () => {
           lease_generation: 3,
         }),
         signal: expect.any(AbortSignal),
+        redirect: 'error',
       },
     );
   });
