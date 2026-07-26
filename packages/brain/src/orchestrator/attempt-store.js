@@ -192,16 +192,24 @@ export function createAttemptStore(pool) {
       return firstRow(result);
     },
 
-    async rotateCallbackSecret(id, { leaseOwner, callbackSecretHash }) {
+    async rotateCallbackSecret(id, {
+      leaseOwner,
+      leaseGeneration,
+      callbackSecretHash,
+    }) {
+      if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
+        throw new Error('rotateCallbackSecret requires leaseGeneration');
+      }
       const result = await pool.query(
         `UPDATE harness_attempts
             SET callback_secret_hash = $3,
                 updated_at = NOW()
           WHERE id = $1
             AND lease_owner = $2
+            AND lease_generation = $4
             AND status IN ('starting','running')
           RETURNING *`,
-        [id, leaseOwner, callbackSecretHash],
+        [id, leaseOwner, callbackSecretHash, leaseGeneration],
       );
       return firstRow(result);
     },

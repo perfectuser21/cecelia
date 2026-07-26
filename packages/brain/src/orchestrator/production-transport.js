@@ -67,6 +67,9 @@ export function createProductionExecutionTransport({
   fetchFn,
   remoteBridgeTimeoutMs,
 } = {}) {
+  if (localMachineId !== DEFAULT_LOCAL_MACHINE_ID) {
+    throw new Error(`invalid_local_execution_machine_id:${String(localMachineId)}`);
+  }
   const local = createDetachedLauncher({
     spawnDetached,
     removeContainer,
@@ -93,6 +96,7 @@ export function createProductionExecutionTransport({
 
   return createExecutionTransportRouter({
     local,
+    localMachineId,
     remote: guardRemoteConfiguration(remote, {
       enabled,
       bridgeUrls,
