@@ -1,0 +1,56 @@
+{
+  "phase": "evaluate",
+  "task_id": "58b733b8-ff1f-4120-a394-5bf8e38d4049",
+  "pr": 4341,
+  "sha": "54559589d98d36e15fb8fd515eb63ef1f71407e5",
+  "verdict": "FAIL",
+  "failed_step": "contract_invalid",
+  "merge_allowed": false,
+  "judge_should_run": false,
+  "four_state": "DONE_WITH_CONCERNS",
+  "deterministic_gates": {
+    "artifact": "PASS",
+    "contract_gate": "FAIL"
+  },
+  "contract_gate": {
+    "command": "node packages/brain/scripts/contract-gate-check.mjs sprints/0726-engine-tests-session-id-hotfix-599471cf",
+    "exit_code": 1,
+    "hits": [
+      {
+        "rule": "weak-oracle/file-existence-only",
+        "file": "sprints/0726-engine-tests-session-id-hotfix-599471cf/contract-dod.md",
+        "line": 30
+      },
+      {
+        "rule": "missing-no-mock-boundary-list",
+        "file": "sprints/0726-engine-tests-session-id-hotfix-599471cf/contract-draft.md"
+      }
+    ]
+  },
+  "golden_path": {
+    "red_reproduction": "PASS",
+    "single_uuid_env_cli": "PASS",
+    "launcher_regression": "PASS",
+    "github_engine_tests": "PASS"
+  },
+  "github": {
+    "engine_tests_run": 30184323456,
+    "engine_tests_job": 89746198287,
+    "engine_tests_conclusion": "SUCCESS",
+    "required_checks": "PASS",
+    "preview_deploy": "FAIL_NON_REQUIRED"
+  },
+  "tdd": {
+    "red": "1dd640504",
+    "green": "9d9887c11",
+    "test_immutable": true,
+    "graduation_pure_rename": true
+  },
+  "unverifiable": [
+    {
+      "item": "当前宿主 packages/engine 全量绿",
+      "reason": "本宿主缺仓库外 /home/cecelia/.claude/skills/dev/SKILL.md，最终 414 passed / 2 failed；同 SHA GitHub engine-tests 414 passed。"
+    }
+  ],
+  "feedback": "合同层终局：未豁免 weak oracle 且缺跨模块禁 mock 边清单。禁止让 Generator 修改已批准合同；需新全流程 GAN sprint。"
+}
