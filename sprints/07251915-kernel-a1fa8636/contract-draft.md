@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 6)
+# Sprint Contract Draft (Round 7)
 
 contract-gate: active
 覆盖父路 Kernel telemetry 账本 第 1-5 步
@@ -11,7 +11,7 @@ contract-gate: active
 - initiative_id: unavailable in proposer inputs，本轮 task-plan.json 以 `pending` 占位，待上游注入后可无语义冲突替换
 - red-evidence: 两份 sprint 契约测试必须从仓库根显式执行；Red 是缺 migration/query/orphan 收口能力导致的 `expect` 断言失败，不接受连接生产库、测试 runner 启动失败或 import collection error 伪装 Red
 - database-safety: 只允许显式 `TEST_DATABASE_URL` 且数据库名以 `_test|_scratch` 结尾；禁止 `DB_URL` / `DATABASE_URL` / `postgresql://localhost/cecelia` fallback
-- round-6-delta: 仅闭合 reviewer r5 指定的四点——orphan `null`/`false`/成功 resume/live-owner 独立 fixture、attempt-store 三态时间写路径、分类分组精确求和、六 role derived 精确真假；r5 其余合同边界不扩张
+- round-7-delta: 仅闭合 reviewer r6 指定的三点——成功 resume 同时读取 parent/child 并锁定新 id、递增 hop 与 parent 无父 initial；attempt-store 锁定 create/starting/running/complete 四时点；API attempts 对六 role 逐一先验非空再验 derived；r6 已闭合项不退化且合同边界不扩张
 
 ## Response Schema（推导来源: [api_registry推导/PRD字面]）
 
@@ -115,7 +115,7 @@ contract-gate: active
 
 - PRD 要求的计时 role 全集固定为 `planner/generator/reviewer/evaluator/judge/reporter`；fixture 六类必须全部出现，禁止 `all([])` 或空 `role_metrics` 假绿。
 - `planner`、`generator`、`reviewer`、`evaluator` 必须逐 role 明确 `time_derived=false`，API 对应 attempt 必须 `derived=false`；`judge`、`reporter` fixture 明确 `time_derived=true`，API 对应 attempt 必须 `derived=true`。禁止只断言 derived=true 的两类而漏验四个原生 role。
-- 另设真实 `attempt-store` 生命周期 fixture：六 role 都必须经 `createAttempt → markStarting → markRunning → complete`，逐状态读取真实 PG；`starting` 即写入非空 `started_at`，`running` 保持同一 `started_at`，终态写入非空且不早于 `started_at` 的 `completed_at`。25-attempt 聚合 fixture 的直接 INSERT 只用于冻结 exact 算术，不能替代该写路径 oracle。
+- 另设真实 `attempt-store` 生命周期 fixture：六 role 都必须经 `createAttempt → markStarting → markRunning → complete`，逐状态读取真实 PG；create 后 `started_at/completed_at` 均为空，starting 写入非空 `started_at` 且 `completed_at` 仍为空，running 精确保留同一 `started_at` 且 `completed_at` 仍为空，只有 complete 后 `completed_at` 才可非空且不得早于 `started_at`。25-attempt 聚合 fixture 的直接 INSERT 只用于冻结 exact 算术，不能替代该写路径 oracle。
 - `role_metrics` 以 `(role, workstream_key)` 分组；每个组分别满足 wall 等式。所有组的 active/wait/wall/retry/recovery/invalid 之和必须逐字段等于 `totals`。
 - 固定 4-run fixture 共 25 个终态 attempt，每个 attempt 的 `created_at=00:00:00.000Z`、`started_at=00:00:00.500Z`、`completed_at=00:00:01.500Z`，因此每条为 active=1000、wait=500、wall=1500，totals 必须精确为 `25000/12500/37500`，禁止“number 即可”或任意填 0。
 
@@ -241,7 +241,7 @@ TEST_DATABASE_URL="$TEST_DATABASE_URL" npx vitest run \
   -t 'attempt-store 真写 starting/running/terminal 时间|4-run fixture 锁定时间公式' --reporter=verbose
 ```
 
-**硬阈值**: 六 role 真实经 attempt-store `starting→running→completed`；starting 写 `started_at`、running 不改该值、terminal 写 `completed_at`；planner/generator/reviewer/evaluator `derived=false`，judge/reporter `derived=true`。另以 25 条固定 fixture 冻结 exact totals = active `25000` / wait `12500` / wall `37500`；所有 role/workstream 的 active/wait/wall/retry/recovery/invalid 六字段分别求和精确等于 totals；每组 wall=active+wait；负时间 fixture 三值全为 0。
+**硬阈值**: 六 role 真实经 attempt-store `create→starting→running→completed`；create 后 `started_at/completed_at=null`，starting 后 started 非空且 completed 仍空，running 精确保留 started 且 completed 仍空，只有 terminal 后 completed 才非空；planner/generator/reviewer/evaluator `derived=false`，judge/reporter `derived=true`。另以 25 条固定 fixture 冻结 exact totals = active `25000` / wait `12500` / wall `37500`；所有 role/workstream 的 active/wait/wall/retry/recovery/invalid 六字段分别求和精确等于 totals；每组 wall=active+wait；负时间 fixture 三值全为 0。
 
 ---
 
@@ -258,7 +258,7 @@ TEST_DATABASE_URL="$TEST_DATABASE_URL" npx vitest run \
   --reporter=verbose
 ```
 
-**硬阈值**: 四个 fixture 互不共享 task/run/orphan。expired `starting→null` 与 expired `running→false` 各自结构化终结为 `failed`，`completed_at` 非空，failure code 分别精确为 `resume_returned_null` / `resume_returned_false`，各自第二轮 `{deduped:true}` 且旧 callback 同样 dedupe、不得篡改终态。成功 resume 必须新建且仅新建一个 `attempt_kind='resume'` child，`retry_of_attempt_id` 精确等于原 orphan，`run_id/logical_cycle_id/workstream_key` 与原 orphan 完全相同，`restart_reason='lease_expired'`。live new-owner fixture 必须是合法无父链 `attempt_kind='initial'`，调用后仍为 `running/new-owner/completed_at=null`。
+**硬阈值**: 四个 fixture 互不共享 task/run/orphan。expired `starting→null` 与 expired `running→false` 各自结构化终结为 `failed`，`completed_at` 非空，failure code 分别精确为 `resume_returned_null` / `resume_returned_false`，各自第二轮 `{deduped:true}` 且旧 callback 同样 dedupe、不得篡改终态。成功 resume 必须在同一次 parent↔child 查询中证明仅有一个新 child：`child.id !== orphanId`、`child.hop = parent.hop + 1`、`attempt_kind='resume'`、`retry_of_attempt_id=orphanId`，且 `run_id/logical_cycle_id/workstream_key` 与 parent 完全相同、`restart_reason='lease_expired'`；parent 自身仍为 `attempt_kind='initial'`、`retry_of_attempt_id=null`，禁止 self-loop。live new-owner fixture 必须是合法无父链 `attempt_kind='initial'`，调用后仍为 `running/new-owner/completed_at=null`。
 
 ---
 
@@ -317,9 +317,17 @@ echo "$RESP" | jq -e '
   and ([.role_metrics[].retry_count] | add) == $root.totals.retry_count
   and ([.role_metrics[].recovery_count] | add) == $root.totals.recovery_count
   and ([.role_metrics[].invalid_count] | add) == $root.totals.invalid_count
-  and ([.attempts[] | select(.role=="planner" or .role=="generator" or .role=="reviewer" or .role=="evaluator")]
+  and ([.attempts[] | select(.role=="planner")]
        | length > 0 and all(.[]; .derived == false))
-  and ([.attempts[] | select(.role=="judge" or .role=="reporter")]
+  and ([.attempts[] | select(.role=="generator")]
+       | length > 0 and all(.[]; .derived == false))
+  and ([.attempts[] | select(.role=="reviewer")]
+       | length > 0 and all(.[]; .derived == false))
+  and ([.attempts[] | select(.role=="evaluator")]
+       | length > 0 and all(.[]; .derived == false))
+  and ([.attempts[] | select(.role=="judge")]
+       | length > 0 and all(.[]; .derived == true))
+  and ([.attempts[] | select(.role=="reporter")]
        | length > 0 and all(.[]; .derived == true))
 ' >/dev/null
 echo "$RESP" | jq -e 'has("attempt_count") | not' >/dev/null
@@ -357,9 +365,17 @@ echo "$RESP" | jq -e '
   and ([.role_metrics[].invalid_count] | add) == .totals.invalid_count
   and ([.role_metrics[].role] | unique
        | sort == ["evaluator","generator","judge","planner","reporter","reviewer"])
-  and ([.attempts[] | select(.role=="planner" or .role=="generator" or .role=="reviewer" or .role=="evaluator")]
+  and ([.attempts[] | select(.role=="planner")]
        | length > 0 and all(.[]; .derived == false))
-  and ([.attempts[] | select(.role=="judge" or .role=="reporter")]
+  and ([.attempts[] | select(.role=="generator")]
+       | length > 0 and all(.[]; .derived == false))
+  and ([.attempts[] | select(.role=="reviewer")]
+       | length > 0 and all(.[]; .derived == false))
+  and ([.attempts[] | select(.role=="evaluator")]
+       | length > 0 and all(.[]; .derived == false))
+  and ([.attempts[] | select(.role=="judge")]
+       | length > 0 and all(.[]; .derived == true))
+  and ([.attempts[] | select(.role=="reporter")]
        | length > 0 and all(.[]; .derived == true))
 ' >/dev/null
 ```

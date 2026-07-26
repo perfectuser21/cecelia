@@ -380,7 +380,7 @@ describe.sequential.runIf(hasSafeTestDatabase)(
     for (const [index, role] of roles.entries()) {
       const id = randomUUID();
       const timeDerived = derivedRoles.includes(role);
-      await store.createAttempt({
+      const created = await store.createAttempt({
         id,
         runId,
         hop: index + 1,
@@ -396,6 +396,9 @@ describe.sequential.runIf(hasSafeTestDatabase)(
         workstreamKey: 'ws-time',
         timeDerived,
       });
+      expect(created).toMatchObject({ status: 'queued' });
+      expect(created.started_at).toBeNull();
+      expect(created.completed_at).toBeNull();
 
       const starting = await store.markStarting(id, {
         leaseOwner: `owner-${role}`,
@@ -403,6 +406,7 @@ describe.sequential.runIf(hasSafeTestDatabase)(
       });
       expect(starting).toMatchObject({ status: 'starting', time_derived: timeDerived });
       expect(starting.started_at).not.toBeNull();
+      expect(starting.completed_at).toBeNull();
 
       const running = await store.markRunning(id, {
         leaseOwner: `owner-${role}`,
@@ -413,6 +417,7 @@ describe.sequential.runIf(hasSafeTestDatabase)(
       expect(new Date(running.started_at).getTime()).toBe(
         new Date(starting.started_at).getTime(),
       );
+      expect(running.completed_at).toBeNull();
 
       const terminal = await store.complete(id, {
         status: 'completed',
@@ -423,6 +428,9 @@ describe.sequential.runIf(hasSafeTestDatabase)(
         status: 'completed',
         time_derived: timeDerived,
       });
+      expect(new Date(terminal.attempt.started_at).getTime()).toBe(
+        new Date(running.started_at).getTime(),
+      );
       expect(terminal.attempt.completed_at).not.toBeNull();
       expect(new Date(terminal.attempt.completed_at).getTime()).toBeGreaterThanOrEqual(
         new Date(terminal.attempt.started_at).getTime(),
@@ -502,17 +510,40 @@ describe.sequential.runIf(hasSafeTestDatabase)(
     });
     expect(outcome).toMatchObject({ ok: true, resumed: true });
 
-    const child = await client.query(
-      `SELECT a.run_id, r.current_task_id AS task_id, a.logical_cycle_id,
-              a.workstream_key, a.attempt_kind, a.retry_of_attempt_id,
-              a.restart_reason
-         FROM harness_attempts a
-         JOIN initiative_runs r ON r.id=a.run_id
-        WHERE a.retry_of_attempt_id=$1`,
+    const lineage = await client.query(
+      `SELECT child.id AS child_id,
+              child.hop AS child_hop,
+              child.run_id,
+              r.current_task_id AS task_id,
+              child.logical_cycle_id,
+              child.workstream_key,
+              child.attempt_kind,
+              child.retry_of_attempt_id,
+              child.restart_reason,
+              parent.id AS parent_id,
+              parent.hop AS parent_hop,
+              parent.run_id AS parent_run_id,
+              parent.logical_cycle_id AS parent_logical_cycle_id,
+              parent.workstream_key AS parent_workstream_key,
+              parent.attempt_kind AS parent_attempt_kind,
+              parent.retry_of_attempt_id AS parent_retry_of_attempt_id
+         FROM harness_attempts parent
+         JOIN harness_attempts child ON child.retry_of_attempt_id=parent.id
+         JOIN initiative_runs r ON r.id=child.run_id
+        WHERE parent.id=$1`,
       [orphanId],
     );
-    expect(child.rows).toHaveLength(1);
-    expect(child.rows[0]).toEqual({
+    expect(lineage.rows).toHaveLength(1);
+    expect(lineage.rows[0].child_id).not.toBe(orphanId);
+    expect(lineage.rows[0].child_hop).toBe(lineage.rows[0].parent_hop + 1);
+    expect(lineage.rows[0].run_id).toBe(lineage.rows[0].parent_run_id);
+    expect(lineage.rows[0].logical_cycle_id).toBe(
+      lineage.rows[0].parent_logical_cycle_id,
+    );
+    expect(lineage.rows[0].workstream_key).toBe(lineage.rows[0].parent_workstream_key);
+    expect(lineage.rows[0]).toEqual({
+      child_id: lineage.rows[0].child_id,
+      child_hop: 2,
       run_id: runId,
       task_id: taskId,
       logical_cycle_id: 'cycle-orphan',
@@ -520,6 +551,13 @@ describe.sequential.runIf(hasSafeTestDatabase)(
       attempt_kind: 'resume',
       retry_of_attempt_id: orphanId,
       restart_reason: 'lease_expired',
+      parent_id: orphanId,
+      parent_hop: 1,
+      parent_run_id: runId,
+      parent_logical_cycle_id: 'cycle-orphan',
+      parent_workstream_key: 'ws-orphan',
+      parent_attempt_kind: 'initial',
+      parent_retry_of_attempt_id: null,
     });
   });
 
@@ -671,12 +709,16 @@ describe.sequential.runIf(hasSafeTestDatabase)(
       (sum: number, metric: any) => sum + metric.invalid_count,
       0,
     )).toBe(telemetry.totals.invalid_count);
-    expect(telemetry.attempts.filter(
-      (attempt: any) => ['planner', 'generator', 'reviewer', 'evaluator'].includes(attempt.role),
-    ).every((attempt: any) => attempt.derived === false)).toBe(true);
-    expect(telemetry.attempts.filter(
-      (attempt: any) => ['judge', 'reporter'].includes(attempt.role),
-    ).every((attempt: any) => attempt.derived === true)).toBe(true);
+    for (const role of ['planner', 'generator', 'reviewer', 'evaluator']) {
+      const roleAttempts = telemetry.attempts.filter((attempt: any) => attempt.role === role);
+      expect(roleAttempts.length, `${role} attempts 不得为空`).toBeGreaterThan(0);
+      expect(roleAttempts.every((attempt: any) => attempt.derived === false)).toBe(true);
+    }
+    for (const role of ['judge', 'reporter']) {
+      const roleAttempts = telemetry.attempts.filter((attempt: any) => attempt.role === role);
+      expect(roleAttempts.length, `${role} attempts 不得为空`).toBeGreaterThan(0);
+      expect(roleAttempts.every((attempt: any) => attempt.derived === true)).toBe(true);
+    }
     expect(telemetry.attempts.every(
       (attempt: any) => typeof attempt.logical_cycle_id === 'string',
     )).toBe(true);

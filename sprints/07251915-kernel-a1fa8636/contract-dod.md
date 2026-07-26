@@ -46,7 +46,7 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] [L2] attempt-store 真写 starting/running/terminal 时间与六 role derived 来源
   动作: 六个 role 分别通过真实 `createAttemptStore(client)` 执行 create→markStarting→markRunning→complete
-  预期观察: starting 写 started_at，running 保持同一 started_at，terminal 写 completed_at；planner/generator/reviewer/evaluator 为 derived=false，judge/reporter 为 derived=true
+  预期观察: create 后 started/completed 均空；starting 后 started 非空、completed 仍空；running 精确保留 started、completed 仍空；complete 后 completed 才非空；planner/generator/reviewer/evaluator 为 derived=false，judge/reporter 为 derived=true
   验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'attempt-store 真写 starting/running/terminal 时间' --reporter=verbose
   期望: exit 0
 
@@ -64,7 +64,7 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] [L2] expired running orphan 成功 resume 创建合法 child lineage
   动作: 独立真写 expired running orphan，让生产收口入口收到结构化成功 resume 回执
-  预期观察: 仅一个新 resume attempt；retry_of_attempt_id 精确等于原 orphan，task/run、logical cycle、workstream 保持一致
+  预期观察: 同查 parent/child 后仅一个新 resume child；child id 不等于 orphan、hop 精确递增一、retry_of 精确等于 orphan，task/run、logical cycle、workstream 保持一致；parent 仍为无父 initial，禁止 self-loop
   验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'expired running orphan 成功 resume' --reporter=verbose
   期望: exit 0
 
@@ -76,7 +76,7 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] [L2] 4-run fixture 锁定时间公式、六 role、derived 与 exact totals
   动作: 在真实 PG 写 4 run / 25 attempt / 2 logical cycle fixture 并调用生产 query
-  预期观察: 六 role 全集；四个原生 role derived=false、judge/reporter derived=true；每条 active=1000/wait=500/wall=1500；role/workstream 的六个 totals 字段分别精确求和
+  预期观察: API attempts 对 planner/generator/reviewer/evaluator/judge/reporter 逐 role 至少一条；非空后再断言四个原生 role derived=false、judge/reporter derived=true；每条 active=1000/wait=500/wall=1500；role/workstream 的六个 totals 字段分别精确求和
   验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '4-run fixture 锁定时间公式' --reporter=verbose
   期望: exit 0；禁止任意填 0、空数组 `all()` 或只验 number 类型
 
