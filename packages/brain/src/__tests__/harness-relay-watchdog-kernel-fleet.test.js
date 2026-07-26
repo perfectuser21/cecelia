@@ -384,8 +384,9 @@ describe('kernel fleet watchdog recovery', () => {
     expect(onRecoveryAlert).not.toHaveBeenCalled();
   });
 
-  it('cancels and exact-fails the child when its launch receipt cannot be persisted', async () => {
+  it('returns deferred receipt-failure evidence without terminal or alert side effects', async () => {
     const store = resumeStore(null);
+    const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
         return response(200, { status: 'running' });
@@ -415,10 +416,14 @@ describe('kernel fleet watchdog recovery', () => {
     await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
       attemptStore: store,
       fetchFn,
+      onRecoveryAlert,
     }))).resolves.toMatchObject({
       ok: false,
       failure_code: 'resume_receipt_persist_failed',
       cleanup_status: 'cancelled',
+      cleanup_diagnostic: null,
+      lifecycle_detail: expect.stringContaining('launch receipt was not persisted'),
+      recovery_alert: null,
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
@@ -427,13 +432,8 @@ describe('kernel fleet watchdog recovery', () => {
       `${BRIDGE_URL}/harness/attempts`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
     ]);
-    expect(store.fail).toHaveBeenCalledWith(CHILD_ID, {
-      code: 'resume_receipt_persist_failed',
-      message: expect.stringContaining('launch receipt was not persisted'),
-    }, {
-      leaseOwner: 'watchdog:test',
-      leaseGeneration: 0,
-    });
+    expect(store.fail).not.toHaveBeenCalled();
+    expect(onRecoveryAlert).not.toHaveBeenCalled();
   });
 
   it('cancels the exact claimed child after the Bridge accepts but returns invalid attestation', async () => {
@@ -736,8 +736,26 @@ describe('kernel fleet watchdog recovery', () => {
     );
   });
 
-  it('persists the receipt-failed child before delivering an unconfirmed-cleanup P1', async () => {
-    const store = resumeStore(null);
+  it('orders production receipt recovery as child fail, parent fail, then deferred cleanup P1', async () => {
+    const events = [];
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      recordLaunchReceipt: vi.fn(async () => null),
+      fail: vi.fn(async (attemptId) => {
+        events.push(attemptId === CHILD_ID ? 'fail-child' : 'fail-parent');
+        return { attempt: {}, deduped: false };
+      }),
+    };
     const launcher = {
       inspect: vi.fn(async () => ({ status: 'running' })),
       cancel: vi.fn()
@@ -752,26 +770,47 @@ describe('kernel fleet watchdog recovery', () => {
       })),
     };
     const onRecoveryAlert = vi.fn(async () => {
+      events.push('alert');
       throw new Error('cleanup P1 rejected callback_token=raw-callback-secret');
     });
 
     let thrown;
     try {
-      await resumeKernelAttempt(childAttempt(), resumeOptions({
+      await reconcileExpiredKernelAttempt({
+        db: { query: vi.fn() },
         attemptStore: store,
-        launcher,
+        attemptId: PARENT_ID,
+        leaseOwner: 'watchdog:test',
+        resumeAttempt: (child, context) => resumeKernelAttempt(child, {
+          ...context,
+          task: { id: 'task-1', payload: {} },
+          dbPool: { query: vi.fn() },
+          launcher,
+        }),
+        reservedChildHop: 8,
+        randomUUIDFn: () => CHILD_ID,
         onRecoveryAlert,
-      }));
+      });
     } catch (error) {
       thrown = error;
     }
 
-    expect(store.fail).toHaveBeenCalledWith(CHILD_ID, expect.any(Object), {
+    expect(events).toEqual(['fail-child', 'fail-parent', 'alert']);
+    expect(store.fail).toHaveBeenCalledTimes(2);
+    expect(store.fail).toHaveBeenNthCalledWith(1, CHILD_ID, expect.objectContaining({
+      code: 'resume_receipt_persist_failed',
+      message: expect.stringContaining('resume receipt persistence failed'),
+    }), {
       leaseOwner: 'watchdog:test',
       leaseGeneration: 0,
     });
-    expect(store.fail.mock.invocationCallOrder[0])
-      .toBeLessThan(onRecoveryAlert.mock.invocationCallOrder[0]);
+    expect(store.fail).toHaveBeenNthCalledWith(2, PARENT_ID, expect.objectContaining({
+      code: 'resume_receipt_persist_failed',
+      message: expect.stringContaining('resume receipt persistence failed'),
+    }), {
+      leaseOwner: 'watchdog:test',
+      leaseGeneration: 4,
+    });
     expect(thrown).toBeInstanceOf(AggregateError);
     expect(thrown.message).toContain(
       'kernel_recovery_alert_failed:resume_receipt_persist_failed',
@@ -779,10 +818,15 @@ describe('kernel fleet watchdog recovery', () => {
     expect(thrown.message).not.toContain('raw-callback-secret');
   });
 
-  it('throws the shared aggregate and alerts when receipt failure cannot exact-fail the child', async () => {
+  it('sanitizes deferred receipt evidence without consulting terminal persistence', async () => {
     const store = resumeStore(null);
+    store.recordLaunchReceipt.mockRejectedValueOnce(
+      new Error('HARNESS_CALLBACK_TOKEN=raw-receipt-secret'),
+    );
     store.fail.mockRejectedValueOnce(new Error('child terminal write rejected'));
-    const onRecoveryAlert = vi.fn(async () => {});
+    const onRecoveryAlert = vi.fn(async () => {
+      throw new Error('must remain deferred');
+    });
     const fetchFn = vi.fn(async (url) => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
         return response(200, { status: 'running' });
@@ -804,30 +848,32 @@ describe('kernel fleet watchdog recovery', () => {
         });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(404, { status: 'missing' });
       }
       throw new Error(`unexpected request ${url}`);
     });
 
-    let thrown;
-    try {
-      await resumeKernelAttempt(childAttempt(), resumeOptions({
-        attemptStore: store,
-        fetchFn,
-        onRecoveryAlert,
-      }));
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBeInstanceOf(AggregateError);
-    expect(thrown.message).toContain('resume receipt persistence failed');
-    expect(thrown.message).toContain('failure_persistence_failed: child terminal write rejected');
-    expect(onRecoveryAlert).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'failure_persistence',
-      attemptId: CHILD_ID,
-      lifecycleCode: 'resume_receipt_persist_failed',
+    const result = await resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      fetchFn,
+      onRecoveryAlert,
     }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      failure_code: 'resume_receipt_persist_failed',
+      cleanup_status: 'missing',
+      cleanup_diagnostic: 'orphan cancellation unsafe: missing (HTTP 404)',
+      lifecycle_detail: expect.stringContaining('[REDACTED]'),
+      recovery_alert: expect.objectContaining({
+        kind: 'cleanup_unconfirmed',
+        attemptId: CHILD_ID,
+        lifecycleCode: 'resume_receipt_persist_failed',
+      }),
+    });
+    expect(result.lifecycle_detail).not.toContain('raw-receipt-secret');
+    expect(store.fail).not.toHaveBeenCalled();
+    expect(onRecoveryAlert).not.toHaveBeenCalled();
   });
 
   it('passes immutable original and reclaimed parent claims and exact-fails both generations', async () => {
