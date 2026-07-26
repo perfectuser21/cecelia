@@ -36,6 +36,21 @@ function fakeChild() {
   return child;
 }
 
+function expectOpenAiStrictSchema(schema) {
+  if (!schema || typeof schema !== 'object') return;
+  if (schema.type === 'object') {
+    expect(schema.additionalProperties).toBe(false);
+    const propertyNames = Object.keys(schema.properties ?? {}).sort();
+    expect([...(schema.required ?? [])].sort()).toEqual(propertyNames);
+  }
+  for (const child of Object.values(schema.properties ?? {})) {
+    expectOpenAiStrictSchema(child);
+  }
+  for (const child of schema.anyOf ?? []) {
+    expectOpenAiStrictSchema(child);
+  }
+}
+
 function request(overrides = {}) {
   return {
     attempt_id: ATTEMPT_ID,
@@ -612,6 +627,9 @@ describe('kernel attempt security and Codex execution', () => {
     expect(spawnFn.mock.calls[0][2].env).not.toHaveProperty('BRAIN_URL');
     expect(spawnFn.mock.calls[0][2].env).not.toHaveProperty('KERNEL_BRIDGE_TOKEN_FILE');
     expect(spawnFn.mock.calls[0][2].env).not.toHaveProperty('KERNEL_BRIDGE_STATE_DIR');
+    const args = spawnFn.mock.calls[0][1];
+    const schemaPath = args[args.indexOf('--output-schema') + 1];
+    expectOpenAiStrictSchema(JSON.parse(fs.readFileSync(schemaPath, 'utf8')));
   });
 
   it('fails closed when a disposable workspace cannot be created', async () => {

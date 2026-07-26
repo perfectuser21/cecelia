@@ -446,7 +446,7 @@ function validateRequest(request, configuration) {
 
 const HARNESS_RESULT_SCHEMA = Object.freeze({
   type: 'object',
-  additionalProperties: true,
+  additionalProperties: false,
   required: [
     'contract_version',
     'attempt_id',
@@ -459,17 +459,49 @@ const HARNESS_RESULT_SCHEMA = Object.freeze({
     'provider_metadata',
   ],
   properties: {
-    contract_version: { const: '1.0' },
-    attempt_id: { type: 'string', format: 'uuid' },
+    contract_version: { type: 'string', const: '1.0' },
+    attempt_id: { type: 'string' },
     status: {
+      type: 'string',
       enum: [...HARNESS_STATUSES],
     },
     summary: { type: 'string' },
-    artifacts: { type: 'array' },
-    checks: { type: 'array' },
-    decision: {},
-    error: {},
-    provider_metadata: { type: 'object' },
+    artifacts: { type: 'array', items: { type: 'string' } },
+    checks: { type: 'array', items: { type: 'string' } },
+    decision: {
+      anyOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['outcome', 'reason'],
+          properties: {
+            outcome: { type: 'string' },
+            reason: { type: 'string' },
+          },
+        },
+        { type: 'null' },
+      ],
+    },
+    error: {
+      anyOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['code', 'message'],
+          properties: {
+            code: { type: 'string' },
+            message: { type: 'string' },
+          },
+        },
+        { type: 'null' },
+      ],
+    },
+    provider_metadata: {
+      type: 'object',
+      additionalProperties: false,
+      required: [],
+      properties: {},
+    },
   },
 });
 
