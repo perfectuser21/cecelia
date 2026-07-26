@@ -362,7 +362,16 @@ describe('production capability wiring', () => {
       hop: 10,
       observed: observed({
         role_assignments: {
-          generator: { provider: 'codex', account: 'team4' },
+          generator: {
+            provider: 'codex',
+            account: 'team4',
+            machine: 'us-mac-m4',
+            fallback_targets: [{
+              provider: 'codex',
+              account: 'team1',
+              machine: 'us-mac-m4',
+            }],
+          },
         },
         contract_requirements: {
           provider_auth: true,
