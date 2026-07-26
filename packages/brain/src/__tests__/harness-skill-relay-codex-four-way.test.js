@@ -52,6 +52,7 @@ function makeDeps(overrides = {}) {
     snapshotCodexHome: vi.fn((_home, containerId) =>
       `/Users/administrator/claude-output/codex-relay-credentials/${containerId}`),
     cleanupCodexHome: vi.fn(),
+    removeContainerFn: vi.fn().mockResolvedValue(true),
     tokenFn: vi.fn().mockResolvedValue('gh-token'),
     execFn: vi.fn().mockReturnValue(''),
     randomFn: vi.fn().mockReturnValue(0.123456789),
@@ -241,7 +242,7 @@ describe('Codex credential snapshot lifecycle', () => {
     expect(cleanupCodexHome).toHaveBeenCalledWith(containerId);
   });
 
-  it('initiative_runs insert failure after spawn still cleans the exact snapshot identity', async () => {
+  it('initiative_runs insert failure removes the exact spawned container before cleanup', async () => {
     const pool = {
       query: vi.fn(async (sql) => {
         if (/SELECT COUNT\(\*\)/.test(sql)) {
@@ -260,7 +261,67 @@ describe('Codex credential snapshot lifecycle', () => {
     expect(result.ok).toBe(false);
     expect(deps.spawnFn).toHaveBeenCalledOnce();
     const containerId = deps.snapshotCodexHome.mock.calls[0][1];
+    expect(deps.removeContainerFn).toHaveBeenCalledWith(containerId);
+    expect(deps.removeContainerFn.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.cleanupCodexHome.mock.invocationCallOrder[0],
+    );
     expect(deps.cleanupCodexHome).toHaveBeenCalledWith(containerId);
+  });
+
+  it('failed exact removal retains capacity until a later launch reconciles the orphan', async () => {
+    const insertFailurePool = {
+      query: vi.fn(async (sql) => {
+        if (/SELECT COUNT\(\*\)/.test(sql)) {
+          return { rows: [{ count: '0' }] };
+        }
+        if (/INSERT INTO initiative_runs/.test(sql)) {
+          throw new Error('initiative_runs unavailable');
+        }
+        return { rows: [] };
+      }),
+    };
+    const removeContainerFn = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const cleanupCodexHome = vi.fn();
+    const failedDeps = makeDeps({
+      pool: insertFailurePool,
+      removeContainerFn,
+      cleanupCodexHome,
+    });
+
+    const failed = await spawnSkillRelaySession(codexTask(42), failedDeps);
+    const orphanContainerId = failedDeps.snapshotCodexHome.mock.calls[0][1];
+
+    expect(failed.ok).toBe(false);
+    expect(cleanupCodexHome).not.toHaveBeenCalled();
+
+    const blockedDeps = makeDeps({
+      pool: poolWithActiveCount(3),
+      removeContainerFn,
+      cleanupCodexHome,
+    });
+    const blocked = await spawnSkillRelaySession(codexTask(43), blockedDeps);
+
+    expect(blocked).toMatchObject({
+      ok: false,
+      deferred: true,
+      reason: 'codex_concurrent_limit',
+    });
+    expect(blockedDeps.spawnFn).not.toHaveBeenCalled();
+    expect(cleanupCodexHome).not.toHaveBeenCalled();
+
+    const recoveredDeps = makeDeps({
+      pool: poolWithActiveCount(3),
+      removeContainerFn,
+      cleanupCodexHome,
+    });
+    const recovered = await spawnSkillRelaySession(codexTask(44), recoveredDeps);
+
+    expect(recovered.ok).toBe(true);
+    expect(removeContainerFn).toHaveBeenCalledTimes(3);
+    expect(cleanupCodexHome).toHaveBeenCalledWith(orphanContainerId);
   });
 
   it('terminal fallback removes only complete matching IDs for this task', () => {
