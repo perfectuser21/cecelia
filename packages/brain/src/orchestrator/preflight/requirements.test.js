@@ -34,6 +34,17 @@ function dispatcherWithCapturedPreflight() {
     },
     attemptStore: {
       createAttempt: vi.fn(async (input) => ({ ...input, task_bundle: input.bundle })),
+      markStarting: vi.fn(async (id, { leaseOwner }) => ({
+        id,
+        status: 'starting',
+        lease_owner: leaseOwner,
+        lease_generation: 0,
+      })),
+      recordLaunchReceipt: vi.fn(async (id, receipt) => ({
+        id,
+        status: 'starting',
+        ...receipt,
+      })),
       fail: vi.fn(),
     },
     registry: {
@@ -43,7 +54,15 @@ function dispatcherWithCapturedPreflight() {
       })),
     },
     launcher: {
-      launch: vi.fn(async () => ({ containerId: 'worker-1' })),
+      launch: vi.fn(async ({ target }) => Object.freeze({
+        actualMachineId: target.machine,
+        executionTransport: 'local-docker',
+        remoteJobId: null,
+        attestationStatus: 'local',
+        containerId: 'worker-1',
+        jobId: null,
+      })),
+      cancel: vi.fn(),
     },
     loadSkill: vi.fn((name) => ({
       name,
@@ -51,6 +70,7 @@ function dispatcherWithCapturedPreflight() {
       digest: `sha256:${'a'.repeat(64)}`,
       content: name,
     })),
+    leaseOwner: 'requirements-test:4242',
   };
   return { dispatch: createDispatcher(deps), evaluate };
 }
