@@ -63,12 +63,34 @@ function makeDeps({
         }],
       };
     }
-    if (/UPDATE harness_attempts\s+SET status = 'starting'/.test(sql)) {
+    if (/UPDATE harness_attempts\s+SET callback_secret_hash/.test(sql)) {
       return {
         rows: [{
           ...latestAttempt,
           status: 'starting',
           lease_owner: params[1],
+          lease_generation: params[3],
+          callback_secret_hash: params[2],
+        }],
+      };
+    }
+    if (/UPDATE harness_attempts\s+SET status = 'starting'/.test(sql)) {
+      if (/lease_generation = lease_generation \+ 1/.test(sql)) {
+        return {
+          rows: [{
+            ...latestAttempt,
+            status: 'starting',
+            lease_owner: params[1],
+            lease_generation: Number(latestAttempt?.lease_generation ?? 0) + 1,
+          }],
+        };
+      }
+      return {
+        rows: [{
+          id: params[0],
+          status: 'starting',
+          lease_owner: params[1],
+          lease_generation: 0,
         }],
       };
     }
@@ -224,6 +246,8 @@ describe('resumeStalledRelayRuns', () => {
         provider: 'codex',
         task_bundle: {},
         callback_secret_hash: 'old-hash',
+        lease_owner: 'dispatcher-parent',
+        lease_generation: 0,
         logical_cycle_id: 'intent:11111111-1111-4111-8111-111111111111:1',
         workstream_key: 'ws1',
         provider_session_id: 'thread-1',
@@ -242,9 +266,17 @@ describe('resumeStalledRelayRuns', () => {
         retry_of_attempt_id: '22222222-2222-4222-8222-222222222222',
       }),
       expect.objectContaining({
-        parentAttempt: expect.objectContaining({
+        originalParentAttempt: expect.objectContaining({
           id: '22222222-2222-4222-8222-222222222222',
           provider_session_id: 'thread-1',
+          lease_owner: 'dispatcher-parent',
+          lease_generation: 0,
+        }),
+        reclaimedParentAttempt: expect.objectContaining({
+          id: '22222222-2222-4222-8222-222222222222',
+          provider_session_id: 'thread-1',
+          lease_owner: expect.stringMatching(/^watchdog:/),
+          lease_generation: 1,
         }),
         callbackSecret: expect.any(String),
       }),
@@ -392,7 +424,7 @@ describe('resumeStalledRelayRuns', () => {
 
   it('task queued → 跳过（dispatcher 自然路径负责，防双 spawn）', async () => {
     const deps = makeDeps({ taskStatus: 'queued' });
-    const r = await resumeStalledRelayRuns(deps);
+    await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
   });
 
@@ -478,7 +510,7 @@ describe('resumeStalledRelayRuns', () => {
 
   it('容器消失 + pr_url 为 null → 直接走重点火（不调 gh pr view）', async () => {
     const deps = makeDeps({ prUrl: null });
-    const r = await resumeStalledRelayRuns(deps);
+    await resumeStalledRelayRuns(deps);
     const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
     expect(ghCall).toBeFalsy();
     expect(deps.spawnFn).toHaveBeenCalledOnce();
@@ -571,7 +603,7 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
     const TASK_PR = 'https://github.com/owner/repo/pull/42';
     const updates = [];
     const pool = {
-      query: vi.fn(async (sql, params) => {
+      query: vi.fn(async (sql, _params) => {
         if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
           return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
         }
@@ -604,7 +636,7 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
     const PAYLOAD_PR = 'https://github.com/owner/repo/pull/99';
     const updates = [];
     const pool = {
-      query: vi.fn(async (sql, params) => {
+      query: vi.fn(async (sql, _params) => {
         if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
           return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
         }
@@ -713,8 +745,6 @@ describe('_finalizeMergedRun', () => {
       return { rows: [] };
     });
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
-    // promoteRegressionOnHarnessMerged 在 dynamic import 里，直接 mock 模块
-    const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js').catch(() => null) || {};
     await _finalizeMergedRun(pool, 'init-1', 'https://github.com/x/y/pull/3', out);
     expect(out.mergedPr).toBe(1);
     const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));

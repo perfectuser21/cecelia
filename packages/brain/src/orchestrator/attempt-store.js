@@ -21,6 +21,23 @@ function firstRow(queryResult) {
   return queryResult.rows?.[0] ?? null;
 }
 
+const CREATE_ATTEMPT_WINNER_READ_ATTEMPTS = 3;
+const CREATE_ATTEMPT_WINNER_READ_DELAY_MS = 5;
+
+async function readConcurrentAttemptWinner(pool, runId, hop) {
+  for (let attempt = 0; attempt < CREATE_ATTEMPT_WINNER_READ_ATTEMPTS; attempt += 1) {
+    const winner = firstRow(await pool.query(
+      'SELECT * FROM harness_attempts WHERE run_id=$1 AND hop=$2',
+      [runId, hop],
+    ));
+    if (winner) return winner;
+    if (attempt + 1 < CREATE_ATTEMPT_WINNER_READ_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, CREATE_ATTEMPT_WINNER_READ_DELAY_MS));
+    }
+  }
+  return null;
+}
+
 export function createAttemptStore(pool) {
   if (!pool || typeof pool.query !== 'function') {
     throw new Error('createAttemptStore requires a PostgreSQL pool');
@@ -70,7 +87,8 @@ export function createAttemptStore(pool) {
           input.timeDerived ?? DERIVED_TIME_ROLES.has(input.role),
         ],
       );
-      return firstRow(result);
+      return firstRow(result)
+        ?? readConcurrentAttemptWinner(pool, input.runId, input.hop);
     },
 
     async markStarting(id, { leaseOwner, leaseSeconds }) {
@@ -123,11 +141,15 @@ export function createAttemptStore(pool) {
 
     async recordLaunchReceipt(id, {
       leaseOwner,
+      leaseGeneration,
       actualMachineId,
       executionTransport,
       remoteJobId = null,
       attestationStatus,
     }) {
+      if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
+        throw new Error('recordLaunchReceipt requires leaseGeneration');
+      }
       const result = await pool.query(
         `UPDATE harness_attempts
             SET actual_machine_id = $3,
@@ -137,6 +159,7 @@ export function createAttemptStore(pool) {
                 updated_at = NOW()
           WHERE id = $1
             AND lease_owner = $2
+            AND lease_generation = $7
             AND status IN ('starting','running')
           RETURNING *`,
         [
@@ -146,6 +169,7 @@ export function createAttemptStore(pool) {
           executionTransport,
           remoteJobId,
           attestationStatus,
+          leaseGeneration,
         ],
       );
       return firstRow(result);
@@ -168,16 +192,24 @@ export function createAttemptStore(pool) {
       return firstRow(result);
     },
 
-    async rotateCallbackSecret(id, { leaseOwner, callbackSecretHash }) {
+    async rotateCallbackSecret(id, {
+      leaseOwner,
+      leaseGeneration,
+      callbackSecretHash,
+    }) {
+      if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
+        throw new Error('rotateCallbackSecret requires leaseGeneration');
+      }
       const result = await pool.query(
         `UPDATE harness_attempts
             SET callback_secret_hash = $3,
                 updated_at = NOW()
           WHERE id = $1
             AND lease_owner = $2
+            AND lease_generation = $4
             AND status IN ('starting','running')
           RETURNING *`,
-        [id, leaseOwner, callbackSecretHash],
+        [id, leaseOwner, callbackSecretHash, leaseGeneration],
       );
       return firstRow(result);
     },
@@ -210,7 +242,11 @@ export function createAttemptStore(pool) {
       return { attempt, deduped: attempt === null };
     },
 
-    async fail(id, { code, message, status = 'failed' }, { leaseOwner = null } = {}) {
+    async fail(
+      id,
+      { code, message, status = 'failed' },
+      { leaseOwner = null, leaseGeneration = null } = {},
+    ) {
       if (!['failed', 'cancelled'].includes(status)) {
         throw new Error(`invalid failure status: ${status}`);
       }
@@ -225,8 +261,9 @@ export function createAttemptStore(pool) {
           WHERE id = $1
             AND status NOT IN (${TERMINAL_SQL})
             AND ($5::text IS NULL OR lease_owner = $5)
+            AND ($6::integer IS NULL OR lease_generation = $6)
           RETURNING *`,
-        [id, status, code ?? null, message ?? null, leaseOwner],
+        [id, status, code ?? null, message ?? null, leaseOwner, leaseGeneration],
       );
       const attempt = firstRow(result);
       return { attempt, deduped: attempt === null };

@@ -50,6 +50,29 @@ describe('attempt store', () => {
     ]));
   });
 
+  it('并发冲突语句看不到 winner 时用新语句重读现有 attempt', async () => {
+    const winner = {
+      id: '33333333-3333-4333-8333-333333333333',
+      run_id: input.runId,
+      hop: input.hop,
+      status: 'queued',
+    };
+    const pool = poolWith(
+      { rows: [], rowCount: 0 },
+      { rows: [winner], rowCount: 1 },
+    );
+
+    await expect(createAttemptStore(pool).createAttempt(input)).resolves.toEqual(winner);
+
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(pool.query.mock.calls[0][0]).toMatch(/ON CONFLICT \(run_id, hop\) DO NOTHING/i);
+    expect(pool.query.mock.calls[0][0]).not.toMatch(/DO UPDATE/i);
+    expect(pool.query.mock.calls[1]).toEqual([
+      expect.stringMatching(/SELECT \* FROM harness_attempts WHERE run_id=\$1 AND hop=\$2/i),
+      [input.runId, input.hop],
+    ]);
+  });
+
   it('starting/running/heartbeat 都使用 lease owner fencing', async () => {
     const pool = poolWith(
       { rows: [{ id: input.id, status: 'starting' }], rowCount: 1 },
@@ -83,6 +106,7 @@ describe('attempt store', () => {
   it('launch receipt 只由同一个 lease owner 写入 starting/running attempt', async () => {
     const receipt = {
       leaseOwner: 'brain-1',
+      leaseGeneration: 3,
       actualMachineId: 'worker-2',
       executionTransport: 'remote-bridge',
       remoteJobId: 'remote-job-7',
@@ -111,6 +135,7 @@ describe('attempt store', () => {
     expect(sql).toMatch(/remote_job_id\s*=\s*\$5/i);
     expect(sql).toMatch(/machine_attestation_status\s*=\s*\$6/i);
     expect(sql).toMatch(/lease_owner\s*=\s*\$2/i);
+    expect(sql).toMatch(/lease_generation\s*=\s*\$7/i);
     expect(sql).toMatch(/status IN \('starting','running'\)/i);
     expect(values).toEqual([
       input.id,
@@ -119,7 +144,22 @@ describe('attempt store', () => {
       receipt.executionTransport,
       receipt.remoteJobId,
       receipt.attestationStatus,
+      receipt.leaseGeneration,
     ]);
+  });
+
+  it('launch receipt requires an explicit non-negative lease generation', async () => {
+    const pool = poolWith();
+    const store = createAttemptStore(pool);
+
+    await expect(store.recordLaunchReceipt(input.id, {
+      leaseOwner: 'brain-1',
+      actualMachineId: 'worker-2',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'remote-job-7',
+      attestationStatus: 'verified',
+    })).rejects.toThrow('recordLaunchReceipt requires leaseGeneration');
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   it('reclaim 后按 lease fencing 原子轮换 callback secret hash', async () => {
@@ -128,14 +168,16 @@ describe('attempt store', () => {
 
     await store.rotateCallbackSecret(input.id, {
       leaseOwner: 'watchdog-1',
+      leaseGeneration: 5,
       callbackSecretHash: 'c'.repeat(64),
     });
 
     const [sql, values] = pool.query.mock.calls[0];
     expect(sql).toMatch(/callback_secret_hash\s*=\s*\$3/i);
     expect(sql).toMatch(/lease_owner\s*=\s*\$2/i);
+    expect(sql).toMatch(/lease_generation\s*=\s*\$4/i);
     expect(sql).toMatch(/status IN \('starting','running'\)/i);
-    expect(values).toEqual([input.id, 'watchdog-1', 'c'.repeat(64)]);
+    expect(values).toEqual([input.id, 'watchdog-1', 'c'.repeat(64), 5]);
   });
 
   it('终态写入只接受一次，重复 callback 返回 deduped', async () => {
@@ -162,6 +204,31 @@ describe('attempt store', () => {
     expect(outcome.deduped).toBe(false);
     expect(pool.query.mock.calls[0][0]).toMatch(/error_code.*error_message/is);
     expect(pool.query.mock.calls[0][0]).toMatch(/status NOT IN \(/i);
+  });
+
+  it('claimed failure optionally fences the exact lease generation', async () => {
+    const pool = poolWith({ rows: [{ id: input.id, status: 'failed' }], rowCount: 1 });
+    const store = createAttemptStore(pool);
+
+    await store.fail(input.id, {
+      code: 'launch_failed',
+      message: 'boom',
+    }, {
+      leaseOwner: 'brain-1',
+      leaseGeneration: 4,
+    });
+
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/\$5::text IS NULL OR lease_owner = \$5/i);
+    expect(sql).toMatch(/\$6::integer IS NULL OR lease_generation = \$6/i);
+    expect(values).toEqual([
+      input.id,
+      'failed',
+      'launch_failed',
+      'boom',
+      'brain-1',
+      4,
+    ]);
   });
 
   it('拒绝 proposer session 被 reviewer 复用', async () => {

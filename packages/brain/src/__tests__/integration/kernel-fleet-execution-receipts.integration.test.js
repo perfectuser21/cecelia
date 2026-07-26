@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
+import { createDispatcher } from '../../orchestrator/dispatcher.js';
 
 const migration357 = readFileSync(
   new URL('../../../migrations/357_harness_provider_attempts.sql', import.meta.url),
@@ -31,8 +32,8 @@ if (!/_test$|_scratch$/.test(databaseName || '')) {
 }
 
 const pool = new pg.Pool(testDatabaseUrl
-  ? { connectionString: testDatabaseUrl, max: 1 }
-  : { ...DB_DEFAULTS, max: 1 });
+  ? { connectionString: testDatabaseUrl, max: 4 }
+  : { ...DB_DEFAULTS, max: 4 });
 
 const schemaName = `kernel_fleet_receipts_${process.pid}_${randomUUID().replaceAll('-', '')}`;
 const quotedSchema = `"${schemaName}"`;
@@ -69,20 +70,18 @@ async function loadReceipt(attemptId) {
 }
 
 async function expectCheckViolation(sql, values) {
-  await client.query('SAVEPOINT fleet_receipt_check_violation');
+  await client.query('BEGIN');
   try {
     await expect(client.query(sql, values)).rejects.toMatchObject({ code: '23514' });
   } finally {
-    await client.query('ROLLBACK TO SAVEPOINT fleet_receipt_check_violation');
-    await client.query('RELEASE SAVEPOINT fleet_receipt_check_violation');
+    await client.query('ROLLBACK');
   }
 }
 
 beforeAll(async () => {
   client = await pool.connect();
-  await client.query('BEGIN');
   await client.query(`CREATE SCHEMA ${quotedSchema}`);
-  await client.query(`SET LOCAL search_path TO ${quotedSchema}, public`);
+  await client.query(`SET search_path TO ${quotedSchema}, public`);
   await client.query(`
     CREATE TABLE schema_version (
       version TEXT PRIMARY KEY,
@@ -115,7 +114,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (client) {
-    await client.query('ROLLBACK').catch(() => {});
+    await client.query(`DROP SCHEMA IF EXISTS ${quotedSchema} CASCADE`).catch(() => {});
     client.release();
   }
   await pool.end();
@@ -181,6 +180,118 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
     });
   });
 
+  it('returns the committed winner after a concurrent ON CONFLICT snapshot sees zero rows', async () => {
+    const runId = randomUUID();
+    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    const winnerInput = attemptInput({ runId, hop: 41, machineId: 'us-mac-m4' });
+    const duplicateInput = {
+      ...attemptInput({ runId, hop: 41, machineId: 'xian-mac-m4' }),
+      id: randomUUID(),
+    };
+    const winnerClient = await pool.connect();
+    const duplicateClient = await pool.connect();
+    let winnerCommitted = false;
+    try {
+      await winnerClient.query(`SET search_path TO ${quotedSchema}, public`);
+      await duplicateClient.query(`SET search_path TO ${quotedSchema}, public`);
+      const duplicatePid = (await duplicateClient.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      await winnerClient.query('BEGIN');
+      await duplicateClient.query('BEGIN');
+
+      const winner = await createAttemptStore(winnerClient).createAttempt(winnerInput);
+      expect(winner.id).toBe(winnerInput.id);
+
+      const duplicatePromise = createAttemptStore(duplicateClient).createAttempt(duplicateInput);
+      let observedConflictWait = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const activity = await client.query(
+          `SELECT wait_event_type, wait_event
+             FROM pg_stat_activity
+            WHERE pid = $1`,
+          [duplicatePid],
+        );
+        if (activity.rows[0]?.wait_event_type === 'Lock'
+            && activity.rows[0]?.wait_event === 'transactionid') {
+          observedConflictWait = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(observedConflictWait).toBe(true);
+
+      await winnerClient.query('COMMIT');
+      winnerCommitted = true;
+      await expect(duplicatePromise).resolves.toMatchObject({
+        id: winnerInput.id,
+        run_id: runId,
+        hop: 41,
+      });
+      await duplicateClient.query('COMMIT');
+
+      const rows = await client.query(
+        'SELECT id, requested_machine_id FROM harness_attempts WHERE run_id=$1 AND hop=$2',
+        [runId, 41],
+      );
+      expect(rows.rows).toEqual([{
+        id: winnerInput.id,
+        requested_machine_id: 'us-mac-m4',
+      }]);
+
+      const launch = vi.fn();
+      const start = vi.fn();
+      const duplicateDispatch = createDispatcher({
+        attemptStore: createAttemptStore(client),
+        registry: {
+          resolve: vi.fn(() => ({
+            name: 'codex',
+            capabilities: ['structured_output'],
+            start,
+          })),
+        },
+        launcher: { launch, cancel: vi.fn() },
+        handlers: {},
+        loadSkill: vi.fn(() => ({
+          name: 'harness-generator',
+          version: '1.0.0',
+          digest: `sha256:${'d'.repeat(64)}`,
+          content: 'generate',
+        })),
+        machineId: 'us-mac-m4',
+        randomUUID: () => duplicateInput.id,
+        createCallbackSecret: () => 'duplicate-callback-secret',
+      });
+      await expect(duplicateDispatch('spawn:generator', {
+        taskId: 'task-concurrent-duplicate',
+        runId,
+        hop: 41,
+        decision: { phase: 'generate' },
+        observed: {
+          task: {
+            id: 'task-concurrent-duplicate',
+            title: 'duplicate dispatch suppression',
+            payload: {
+              sprint_dir: 'sprints/concurrent-dispatch',
+              worktree_path: '/workspace',
+            },
+          },
+          run: { id: runId, phase: 'generate' },
+          contract: { row: {} },
+          pr: null,
+        },
+      })).resolves.toMatchObject({
+        status: 'DONE_WITH_CONCERNS',
+        attemptId: winnerInput.id,
+      });
+      expect(start).not.toHaveBeenCalled();
+      expect(launch).not.toHaveBeenCalled();
+    } finally {
+      if (!winnerCommitted) await winnerClient.query('ROLLBACK').catch(() => {});
+      await duplicateClient.query('ROLLBACK').catch(() => {});
+      winnerClient.release();
+      duplicateClient.release();
+    }
+  });
+
   it('fences launch receipts by lease owner and active status without mutating rejected writes', async () => {
     const runId = randomUUID();
     await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
@@ -193,6 +304,7 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
 
     const queuedReceipt = {
       leaseOwner: 'brain-1',
+      leaseGeneration: 0,
       actualMachineId: 'queued-worker',
       executionTransport: 'local-docker',
       remoteJobId: 'queued-job',
@@ -237,6 +349,7 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
     });
     const runningReceipt = await store.recordLaunchReceipt(input.id, {
       leaseOwner: 'brain-1',
+      leaseGeneration: 0,
       actualMachineId: 'running-worker',
       executionTransport: 'remote-bridge',
       remoteJobId: 'remote-job',
@@ -289,5 +402,72 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
       lease_generation: 1,
     });
     expect((await loadReceipt(input.id)).lease_generation).toBe(1);
+  });
+
+  it('rejects stale receipt and failure writes from an older generation with the same owner', async () => {
+    const runId = randomUUID();
+    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    const input = attemptInput({ runId, hop: 1, machineId: 'reclaim-worker' });
+    await store.createAttempt(input);
+    await store.markStarting(input.id, { leaseOwner: 'same-owner', leaseSeconds: 90 });
+    await client.query(
+      `UPDATE harness_attempts SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`,
+      [input.id],
+    );
+    await store.reclaim(input.id, {
+      leaseOwner: 'same-owner',
+      leaseSeconds: 180,
+    });
+
+    expect(await store.recordLaunchReceipt(input.id, {
+      leaseOwner: 'same-owner',
+      leaseGeneration: 0,
+      actualMachineId: 'stale-worker',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'stale-job',
+      attestationStatus: 'verified',
+    })).toBeNull();
+    expect(await store.fail(input.id, {
+      code: 'stale_failure',
+      message: 'old generation must not terminate the attempt',
+    }, {
+      leaseOwner: 'same-owner',
+      leaseGeneration: 0,
+    })).toEqual({ attempt: null, deduped: true });
+    expect(await loadReceipt(input.id)).toMatchObject({
+      status: 'starting',
+      lease_owner: 'same-owner',
+      lease_generation: 1,
+      actual_machine_id: null,
+      execution_transport: null,
+      remote_job_id: null,
+    });
+
+    expect(await store.recordLaunchReceipt(input.id, {
+      leaseOwner: 'same-owner',
+      leaseGeneration: 1,
+      actualMachineId: 'current-worker',
+      executionTransport: 'remote-bridge',
+      remoteJobId: 'current-job',
+      attestationStatus: 'verified',
+    })).toMatchObject({
+      actual_machine_id: 'current-worker',
+      remote_job_id: 'current-job',
+      lease_generation: 1,
+    });
+    expect(await store.fail(input.id, {
+      code: 'current_failure',
+      message: 'current generation may terminate the attempt',
+    }, {
+      leaseOwner: 'same-owner',
+      leaseGeneration: 1,
+    })).toMatchObject({
+      deduped: false,
+      attempt: {
+        status: 'failed',
+        error_code: 'current_failure',
+        lease_generation: 1,
+      },
+    });
   });
 });

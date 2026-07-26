@@ -528,6 +528,7 @@ describe('production capability wiring', () => {
         XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
         XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
         KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+        KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
         BRAIN_URL: 'http://brain.internal:5221',
       },
     });
@@ -554,13 +555,14 @@ describe('production capability wiring', () => {
       lease_owner: LEASE_OWNER,
       lease_generation: 4,
       target,
-      callback_url: `http://brain.internal:5221/api/brain/harness/attempts/${ATTEMPT_ID}/callback`,
+      callback_url: `https://brain.public.example/api/brain/harness/attempts/${ATTEMPT_ID}/callback`,
     });
     expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'xian-mac-m4',
     }));
     expect(attemptStore.recordLaunchReceipt).toHaveBeenCalledWith(ATTEMPT_ID, {
       leaseOwner: LEASE_OWNER,
+      leaseGeneration: 4,
       actualMachineId: 'xian-mac-m4',
       executionTransport: 'remote-bridge',
       remoteJobId: 'remote-job-production-1',
@@ -574,11 +576,26 @@ describe('production capability wiring', () => {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
       XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
       KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+      KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
     }],
     ['missing shared token', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
       XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
       XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
+    }],
+    ['missing remote callback base', {
+      KERNEL_FLEET_REMOTE_ENABLED: 'true',
+      XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
+      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+    }],
+    ['invalid remote callback base', {
+      KERNEL_FLEET_REMOTE_ENABLED: 'true',
+      XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
+      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+      KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'ftp://brain.public.example',
     }],
   ])('fails closed when remote transport is %s', async (_description, env) => {
     const target = {
@@ -623,8 +640,133 @@ describe('production capability wiring', () => {
     expect(fetchFn).not.toHaveBeenCalled();
     expect(attemptStore.fail).toHaveBeenCalledWith(ATTEMPT_ID, {
       code: 'launch_failed',
-      message: 'execution_transport_unavailable:xian-mac-m4',
-    }, { leaseOwner: LEASE_OWNER });
+      message: [
+        'execution_transport_unavailable:xian-mac-m4',
+        'orphan cancellation failed: execution_transport_unavailable:xian-mac-m4',
+      ].join('; '),
+    }, {
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 4,
+    });
+  });
+
+  it('never treats an injected xian controller identity as local Docker', async () => {
+    const target = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m4',
+    };
+    const attemptStore = attemptStoreDouble();
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      attemptStore,
+      registry: createProviderRegistry([codexAdapter()]),
+      preflightGate: selectedPreflight(target),
+      handlers: {},
+      loadSkill: vi.fn(() => ({
+        name: 'harness-generator',
+        version: '1.0.0',
+        digest: `sha256:${'9'.repeat(64)}`,
+        content: 'generate',
+      })),
+      spawnDetached,
+      removeContainer: vi.fn(),
+      randomUUID: () => ATTEMPT_ID,
+      leaseOwner: LEASE_OWNER,
+      env: {
+        CECELIA_MACHINE_ID: 'xian-mac-m4',
+      },
+    });
+
+    await expect(deps.dispatch('spawn:generator', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 15,
+      observed: observed(),
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('execution_transport_unavailable:xian-mac-m4');
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-canonical controller machine identity during assembly', async () => {
+    await expect(buildRealDeps({
+      pool: { query: vi.fn() },
+      dispatch: vi.fn(),
+      env: { CECELIA_MACHINE_ID: 'moon-base' },
+    })).rejects.toThrow('invalid_kernel_machine_id:moon-base');
+  });
+
+  it('cancels by Attempt when Bridge accepts but remote attestation validation fails', async () => {
+    const target = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m4',
+    };
+    const attemptStore = attemptStoreDouble();
+    const spawnDetached = vi.fn();
+    const fetchFn = vi.fn(async (url) => {
+      if (String(url).endsWith('/harness/attempts')) {
+        return response({
+          status: 'accepted',
+          job_id: 'unverified-remote-job',
+          actual_machine_id: target.machine,
+          attestation: '0'.repeat(64),
+        }, 202);
+      }
+      if (String(url).endsWith(`/harness/attempts/${ATTEMPT_ID}/cancel`)) {
+        return response({ status: 'cancelled', job_id: 'unverified-remote-job' });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      attemptStore,
+      registry: createProviderRegistry([codexAdapter()]),
+      preflightGate: selectedPreflight(target),
+      handlers: {},
+      loadSkill: vi.fn(() => ({
+        name: 'harness-generator',
+        version: '1.0.0',
+        digest: `sha256:${'1'.repeat(64)}`,
+        content: 'generate',
+      })),
+      spawnDetached,
+      removeContainer: vi.fn(),
+      fetchFn,
+      randomUUID: () => ATTEMPT_ID,
+      leaseOwner: LEASE_OWNER,
+      brainUrl: 'http://brain.internal:5221',
+      machineId: 'us-mac-m4',
+      env: {
+        KERNEL_FLEET_REMOTE_ENABLED: 'true',
+        XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
+        XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+        KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+        KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
+      },
+    });
+
+    await expect(deps.dispatch('spawn:generator', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 14,
+      observed: observed(),
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('remote_bridge_attestation_invalid');
+
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      'http://xian-m4.internal:3458/harness/attempts',
+      `http://xian-m4.internal:3458/harness/attempts/${ATTEMPT_ID}/cancel`,
+    ]);
+    expect(attemptStore.fail).toHaveBeenCalledWith(ATTEMPT_ID, {
+      code: 'launch_failed',
+      message: 'remote_bridge_attestation_invalid',
+    }, {
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 4,
+    });
+    expect(spawnDetached).not.toHaveBeenCalled();
   });
 
   it('never falls back to local Docker when an enabled remote launch fails', async () => {
@@ -662,6 +804,7 @@ describe('production capability wiring', () => {
         XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
         XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
         KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
+        KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
       },
     });
 
@@ -673,7 +816,10 @@ describe('production capability wiring', () => {
       decision: { phase: 'generate' },
     })).rejects.toThrow('remote_bridge_launch_request_failed');
 
-    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      'http://xian-m1.internal:3458/harness/attempts',
+      `http://xian-m1.internal:3458/harness/attempts/${ATTEMPT_ID}/cancel`,
+    ]);
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 });

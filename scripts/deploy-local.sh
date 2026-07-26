@@ -109,12 +109,13 @@ fi
 # G1 版本号兜底在 squash merge 不 bump version 时失效（#4024 webhook 假跳过实证）。
 # 真正的判变真相：origin/main HEAD SHA vs 生产容器构建期烙入的 GIT_SHA。
 # 不等 = main 有新代码、生产跑旧镜像 → 必须部署；SHA 相等 = 幂等跳过。
-# 测试钩子：CECELIA_PROD_GIT_SHA 注入生产 SHA（跳过真实 curl）。
+# SHA 来源优先级：显式 CECELIA_PROD_GIT_SHA > webhook 容器继承的 GIT_SHA > curl。
+# host 手动执行没有前两者时仍通过 curl 查询生产。
 # 隔离守卫：CECELIA_DEPLOY_ROOT 测试模式禁 curl 真生产——否则真生产落后 main 时
 # NEED_BRAIN=true 会在隔离根真点火 brain-deploy.sh（staging-gate smoke 实证）。
 SHA_MISMATCH=false
 ORIGIN_SHA=$(git -C "$MAIN_ROOT" rev-parse --verify "origin/$BASE_BRANCH^{commit}" 2>/dev/null || echo "")
-PROD_SHA="${CECELIA_PROD_GIT_SHA:-}"
+PROD_SHA="${CECELIA_PROD_GIT_SHA:-${GIT_SHA:-}}"
 if [[ -z "$PROD_SHA" && -z "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     PROD_SHA=$(curl -sf --max-time 5 \
         "http://localhost:${BRAIN_PORT:-5221}/api/brain/health" 2>/dev/null \

@@ -13,7 +13,7 @@ import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { runLoop } from './loop.js';
 import { createAttemptStore } from './attempt-store.js';
-import { createDispatcher, createDetachedLauncher } from './dispatcher.js';
+import { createDispatcher } from './dispatcher.js';
 import { createProviderRegistry } from './provider-registry.js';
 import { claudeAdapter } from './providers/claude.js';
 import { codexAdapter } from './providers/codex.js';
@@ -23,44 +23,17 @@ import { createKernelHandlers } from './kernel-handlers.js';
 import { readGitArtifact } from './git-artifact-reader.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
-import { createExecutionTransportRouter } from './execution-transport.js';
-import { createRemoteBridgeTransport } from './remote-bridge-transport.js';
+import {
+  createProductionExecutionTransport,
+  DEFAULT_LOCAL_MACHINE_ID,
+  DEFAULT_WORKER_BRAIN_URL,
+} from './production-transport.js';
 
-const DEFAULT_WORKER_BRAIN_URL = 'http://host.docker.internal:5221';
-
-function guardRemoteConfiguration(remote, {
-  enabled,
-  bridgeUrls,
-  sharedSecret,
-}) {
-  const assertAvailable = (input) => {
-    const machine = input?.target?.machine;
-    const bridgeUrl = bridgeUrls?.[machine];
-    if (
-      enabled !== true
-      || typeof bridgeUrl !== 'string'
-      || bridgeUrl.trim().length === 0
-      || typeof sharedSecret !== 'string'
-      || sharedSecret.length < 32
-    ) {
-      throw new Error(`execution_transport_unavailable:${String(machine)}`);
-    }
-  };
-  return Object.freeze({
-    async launch(input) {
-      assertAvailable(input);
-      return remote.launch(input);
-    },
-    async inspect(input) {
-      assertAvailable(input);
-      return remote.inspect(input);
-    },
-    async cancel(input) {
-      assertAvailable(input);
-      return remote.cancel(input);
-    },
-  });
-}
+const CANONICAL_MACHINE_IDS = new Set([
+  'us-mac-m4',
+  'xian-mac-m4',
+  'xian-mac-m1',
+]);
 
 /** 解析 --task-id / --run-id / --dry-run */
 export function parseArgs(argv) {
@@ -146,6 +119,10 @@ export async function buildRealDeps(overrides = {}) {
   const env = overrides.env ?? process.env;
   const leaseOwner = overrides.leaseOwner ?? `${os.hostname()}:${process.pid}`;
   const brainUrl = overrides.brainUrl ?? env.BRAIN_URL ?? DEFAULT_WORKER_BRAIN_URL;
+  const machineId = overrides.machineId ?? env.CECELIA_MACHINE_ID ?? DEFAULT_LOCAL_MACHINE_ID;
+  if (!CANONICAL_MACHINE_IDS.has(machineId)) {
+    throw new Error(`invalid_kernel_machine_id:${String(machineId)}`);
+  }
   let dispatch = overrides.dispatch;
   if (!dispatch) {
     const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
@@ -170,36 +147,15 @@ export async function buildRealDeps(overrides = {}) {
     const removeContainer = overrides.removeContainer ?? detached.removeDockerContainer;
     let launcher = overrides.launcher;
     if (!launcher) {
-      const localLauncher = createDetachedLauncher({
+      launcher = createProductionExecutionTransport({
+        env,
         spawnDetached,
         removeContainer,
         attemptStore,
         brainUrl,
         leaseOwner,
-        machineId: 'us-mac-m4',
-      });
-      const remoteEnabled = env.KERNEL_FLEET_REMOTE_ENABLED === 'true';
-      const bridgeUrls = {
-        'xian-mac-m4': env.XIAN_M4_KERNEL_BRIDGE_URL,
-        'xian-mac-m1': env.XIAN_M1_KERNEL_BRIDGE_URL,
-      };
-      const sharedSecret = env.KERNEL_FLEET_BRIDGE_TOKEN;
-      const remoteBridge = createRemoteBridgeTransport({
-        enabled: remoteEnabled,
-        bridgeUrls,
-        sharedSecret,
-        brainUrl,
         fetchFn: overrides.fetchFn,
-        timeoutMs: overrides.remoteBridgeTimeoutMs,
-      });
-      const remoteLauncher = guardRemoteConfiguration(remoteBridge, {
-        enabled: remoteEnabled,
-        bridgeUrls,
-        sharedSecret,
-      });
-      launcher = createExecutionTransportRouter({
-        local: localLauncher,
-        remote: remoteLauncher,
+        remoteBridgeTimeoutMs: overrides.remoteBridgeTimeoutMs,
       });
     }
     const handlers = overrides.handlers
@@ -215,6 +171,19 @@ export async function buildRealDeps(overrides = {}) {
           `Kernel capability preflight blocked: ${reason} ${evidence}`,
         );
       });
+    const onFailurePersistenceFailed = overrides.onFailurePersistenceFailed
+      ?? (async ({ attemptId, lifecycleCode, originalError, persistenceError }) => {
+        const { raise } = await import('../alerting.js');
+        await raise(
+          'P1',
+          'kernel_failure_persistence_failed',
+          [
+            `Kernel attempt ${attemptId} could not persist ${lifecycleCode}`,
+            `lifecycle=${originalError?.message ?? String(originalError)}`,
+            `persistence=${persistenceError?.message ?? String(persistenceError)}`,
+          ].join('; '),
+        );
+      });
     dispatch = createDispatcher({
       attemptStore,
       registry,
@@ -222,11 +191,12 @@ export async function buildRealDeps(overrides = {}) {
       loadSkill: overrides.loadSkill ?? loadSkillBundle,
       handlers,
       preflightGate,
-      machineId: overrides.machineId ?? process.env.CECELIA_MACHINE_ID,
+      machineId,
       resolveAccountHome: overrides.resolveAccountHome,
       randomUUID: overrides.randomUUID,
       createCallbackSecret: overrides.createCallbackSecret,
       onPreflightBlocked,
+      onFailurePersistenceFailed,
       leaseOwner,
       leaseSeconds: overrides.leaseSeconds,
     });
