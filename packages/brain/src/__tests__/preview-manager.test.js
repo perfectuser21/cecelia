@@ -6,7 +6,14 @@ const mockPool = {
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
-const { allocatePreview, allocatePort, stopPreview, markPreviewInactive, getPreview } = await import('../preview-manager.js');
+const {
+  allocatePreview,
+  allocatePort,
+  stopPreview,
+  markPreviewActive,
+  markPreviewInactive,
+  getPreview,
+} = await import('../preview-manager.js');
 
 describe('allocatePreview', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -38,7 +45,9 @@ describe('allocatePreview', () => {
       .mockResolvedValueOnce({ rows: [] }); // UPDATE
     await allocatePreview(1, 'test-branch', 'cecelia');
     const updateCall = mockPool.query.mock.calls[1];
-    expect(updateCall[0]).toMatch(/UPDATE preview_environments SET status = 'starting'/);
+    expect(updateCall[0]).toMatch(/WITH latest AS/);
+    expect(updateCall[0]).toMatch(/status = 'starting'/);
+    expect(updateCall[0]).toMatch(/WHERE pr_number = \$1 AND status != 'inactive'/);
     expect(updateCall[1]).toEqual([1]);
   });
 
@@ -96,6 +105,21 @@ describe('markPreviewInactive', () => {
       expect.stringMatching(/UPDATE preview_environments SET status = 'inactive'/i),
       [5],
     );
+  });
+});
+
+describe('markPreviewActive', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('updates only the latest non-inactive row to active', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    await markPreviewActive(4164);
+    expect(mockPool.query).toHaveBeenCalledWith(
+      expect.stringMatching(/WITH latest AS/i),
+      [4164],
+    );
+    expect(mockPool.query.mock.calls[0][0]).toMatch(/WHERE pr_number = \$1 AND status != 'inactive'/);
+    expect(mockPool.query.mock.calls[0][0]).toMatch(/SET status = 'active'/);
   });
 });
 

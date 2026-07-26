@@ -270,7 +270,16 @@ log "Step 7: Brain 健康，回写 preview 状态为 active..."
 # 直接用 DB 更新（比 API 更可靠，避免同一机器上不同 Brain 实例的 5221 响应问题）
 PGPASSWORD="${DB_PASSWORD:-cecelia}" psql \
   -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" cecelia \
-  -c "UPDATE preview_environments SET status='active', updated_at=NOW() WHERE pr_number=${PR_NUMBER};" \
+  -c "WITH latest AS (
+        SELECT id
+        FROM preview_environments
+        WHERE pr_number=${PR_NUMBER} AND status != 'inactive'
+        ORDER BY created_at DESC
+        LIMIT 1
+      )
+      UPDATE preview_environments
+      SET status='active', updated_at=NOW()
+      WHERE id IN (SELECT id FROM latest);" \
   2>>"$LOG_FILE" || log "⚠ DB 状态更新失败（非致命）"
 
 log "✅ 预览环境启动完成: http://localhost:${PORT}/"

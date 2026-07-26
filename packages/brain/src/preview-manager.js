@@ -19,7 +19,16 @@ export async function allocatePreview(prNumber, branchName, baseRepo = 'cecelia'
   );
   if (existing.rows.length > 0) {
     await dbPool.query(
-      `UPDATE preview_environments SET status = 'starting', updated_at = NOW() WHERE pr_number = $1`,
+      `WITH latest AS (
+         SELECT id
+         FROM preview_environments
+         WHERE pr_number = $1 AND status != 'inactive'
+         ORDER BY created_at DESC
+         LIMIT 1
+       )
+       UPDATE preview_environments
+       SET status = 'starting', updated_at = NOW()
+       WHERE id IN (SELECT id FROM latest)`,
       [prNumber],
     );
     return { port: existing.rows[0].port, db_name: existing.rows[0].db_name };
@@ -47,8 +56,16 @@ export async function allocatePreview(prNumber, branchName, baseRepo = 'cecelia'
 /** 将 preview 标记为 active（Brain 进程已就绪）。 */
 export async function markPreviewActive(prNumber, dbPool = pool) {
   await dbPool.query(
-    `UPDATE preview_environments SET status = 'active', updated_at = NOW()
-     WHERE pr_number = $1`,
+    `WITH latest AS (
+       SELECT id
+       FROM preview_environments
+       WHERE pr_number = $1 AND status != 'inactive'
+       ORDER BY created_at DESC
+       LIMIT 1
+     )
+     UPDATE preview_environments
+     SET status = 'active', updated_at = NOW()
+     WHERE id IN (SELECT id FROM latest)`,
     [prNumber],
   );
 }
