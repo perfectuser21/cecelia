@@ -739,6 +739,45 @@ describe('kernel attempt security and Codex execution', () => {
     expect(child.kill).not.toHaveBeenCalled();
   });
 
+  it('does not rewrite a failed claim when cancellation arrives after process exit', async () => {
+    const handler = createKernelAttemptHandler(deps);
+    await handler.accept(request(), auth());
+    child.emit('close', 23);
+    await vi.waitFor(async () => {
+      await expect(handler.inspect(ATTEMPT_ID, auth()))
+        .resolves.toMatchObject({ status: 'failed' });
+    });
+
+    await expect(handler.cancel(ATTEMPT_ID, {
+      lease_owner: 'dispatcher:test',
+      lease_generation: 0,
+    }, auth())).resolves.toMatchObject({ status: 'failed' });
+    await expect(handler.inspect(ATTEMPT_ID, auth()))
+      .resolves.toMatchObject({ status: 'failed' });
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it('records cancel intent before SIGTERM so a synchronous close reports cancelled once', async () => {
+    child.kill.mockImplementationOnce(signal => {
+      expect(signal).toBe('SIGTERM');
+      child.emit('close', null, 'SIGTERM');
+    });
+    const handler = createKernelAttemptHandler(deps);
+    await handler.accept(request(), auth());
+
+    await expect(handler.cancel(ATTEMPT_ID, {
+      lease_owner: 'dispatcher:test',
+      lease_generation: 0,
+    }, auth())).resolves.toMatchObject({ status: 'cancelled' });
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body))
+      .toMatchObject({ status: 'cancelled' });
+    await expect(handler.inspect(ATTEMPT_ID, auth()))
+      .resolves.toMatchObject({ status: 'cancelled' });
+  });
+
 });
 
 describe('kernel attempt HTTP routes', () => {
