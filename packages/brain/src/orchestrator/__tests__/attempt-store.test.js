@@ -168,14 +168,16 @@ describe('attempt store', () => {
 
     await store.rotateCallbackSecret(input.id, {
       leaseOwner: 'watchdog-1',
+      leaseGeneration: 5,
       callbackSecretHash: 'c'.repeat(64),
     });
 
     const [sql, values] = pool.query.mock.calls[0];
     expect(sql).toMatch(/callback_secret_hash\s*=\s*\$3/i);
     expect(sql).toMatch(/lease_owner\s*=\s*\$2/i);
+    expect(sql).toMatch(/lease_generation\s*=\s*\$4/i);
     expect(sql).toMatch(/status IN \('starting','running'\)/i);
-    expect(values).toEqual([input.id, 'watchdog-1', 'c'.repeat(64)]);
+    expect(values).toEqual([input.id, 'watchdog-1', 'c'.repeat(64), 5]);
   });
 
   it('终态写入只接受一次，重复 callback 返回 deduped', async () => {

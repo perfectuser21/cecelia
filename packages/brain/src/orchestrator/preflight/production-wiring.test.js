@@ -650,6 +650,53 @@ describe('production capability wiring', () => {
     });
   });
 
+  it('never treats an injected xian controller identity as local Docker', async () => {
+    const target = {
+      provider: 'codex',
+      account: 'team3',
+      machine: 'xian-mac-m4',
+    };
+    const attemptStore = attemptStoreDouble();
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      attemptStore,
+      registry: createProviderRegistry([codexAdapter()]),
+      preflightGate: selectedPreflight(target),
+      handlers: {},
+      loadSkill: vi.fn(() => ({
+        name: 'harness-generator',
+        version: '1.0.0',
+        digest: `sha256:${'9'.repeat(64)}`,
+        content: 'generate',
+      })),
+      spawnDetached,
+      removeContainer: vi.fn(),
+      randomUUID: () => ATTEMPT_ID,
+      leaseOwner: LEASE_OWNER,
+      env: {
+        CECELIA_MACHINE_ID: 'xian-mac-m4',
+      },
+    });
+
+    await expect(deps.dispatch('spawn:generator', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 15,
+      observed: observed(),
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('execution_transport_unavailable:xian-mac-m4');
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-canonical controller machine identity during assembly', async () => {
+    await expect(buildRealDeps({
+      pool: { query: vi.fn() },
+      dispatch: vi.fn(),
+      env: { CECELIA_MACHINE_ID: 'moon-base' },
+    })).rejects.toThrow('invalid_kernel_machine_id:moon-base');
+  });
+
   it('cancels by Attempt when Bridge accepts but remote attestation validation fails', async () => {
     const target = {
       provider: 'codex',

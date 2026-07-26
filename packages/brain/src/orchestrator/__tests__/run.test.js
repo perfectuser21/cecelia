@@ -122,7 +122,7 @@ describe('buildRealDeps', () => {
   });
 
   it.each([
-    ['injected env machine', { CECELIA_MACHINE_ID: 'env-worker' }, 'env-worker'],
+    ['injected env machine', { CECELIA_MACHINE_ID: 'xian-mac-m1' }, 'xian-mac-m1'],
     ['canonical default', {}, 'us-mac-m4'],
   ])('uses %s instead of ambient process.env identity', async (_case, env, expectedMachine) => {
     const previous = process.env.CECELIA_MACHINE_ID;
@@ -160,13 +160,21 @@ describe('buildRealDeps', () => {
         handlers: {},
         preflightGate,
         launcher: {
-          launch: vi.fn(async ({ target }) => ({
-            actualMachineId: target.machine,
-            executionTransport: 'local-docker',
-            remoteJobId: null,
-            attestationStatus: 'local',
-            containerId: 'canonical-worker',
-          })),
+          launch: vi.fn(async ({ target }) => target.machine === 'us-mac-m4'
+            ? {
+                actualMachineId: target.machine,
+                executionTransport: 'local-docker',
+                remoteJobId: null,
+                attestationStatus: 'local',
+                containerId: 'canonical-worker',
+              }
+            : {
+                actualMachineId: target.machine,
+                executionTransport: 'remote-bridge',
+                remoteJobId: 'canonical-remote-job',
+                attestationStatus: 'verified',
+                jobId: 'canonical-remote-job',
+              }),
           cancel: vi.fn(),
         },
         loadSkill: vi.fn(() => ({

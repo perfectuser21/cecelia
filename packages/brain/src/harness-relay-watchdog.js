@@ -25,6 +25,7 @@ import {
   generateCallbackSecret,
   hashCallbackSecret,
 } from './orchestrator/callback-auth.js';
+import { createProductionExecutionTransport } from './orchestrator/production-transport.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
 
@@ -111,18 +112,25 @@ async function reserveResumeIntent(db, attempt) {
 
 export async function reconcileExpiredKernelAttempt({
   db,
+  attemptStore: injectedAttemptStore,
   attemptId,
   leaseOwner,
   resumeAttempt,
   reservedChildHop = null,
+  randomUUIDFn = randomUUID,
 }) {
-  const store = createAttemptStore(db);
-  const attempt = await store.getById(attemptId);
-  if (!attempt || !['queued', 'starting', 'running'].includes(attempt.status)) {
+  const store = injectedAttemptStore ?? createAttemptStore(db);
+  const originalParentAttempt = await store.getById(attemptId);
+  if (
+    !originalParentAttempt
+    || !['queued', 'starting', 'running'].includes(originalParentAttempt.status)
+  ) {
     return { ok: false, deduped: true };
   }
-  if (attempt.lease_expires_at
-      && new Date(attempt.lease_expires_at).getTime() >= Date.now()) {
+  if (
+    originalParentAttempt.lease_expires_at
+    && new Date(originalParentAttempt.lease_expires_at).getTime() >= Date.now()
+  ) {
     return { ok: false, deduped: true };
   }
 
@@ -132,37 +140,58 @@ export async function reconcileExpiredKernelAttempt({
   });
   if (!reclaimed) return { ok: false, deduped: true };
 
-  const childHop = reservedChildHop ?? (Number(attempt.hop) + 1);
+  const rotatedParent = await store.rotateCallbackSecret(attemptId, {
+    leaseOwner: reclaimed.lease_owner,
+    leaseGeneration: reclaimed.lease_generation,
+    callbackSecretHash: hashCallbackSecret(generateCallbackSecret()),
+  });
+  if (!rotatedParent) return { ok: false, deduped: true };
+
+  const childHop = reservedChildHop ?? (Number(originalParentAttempt.hop) + 1);
   const callbackSecret = generateCallbackSecret();
-  const childId = randomUUID();
+  const childId = randomUUIDFn();
   const child = await store.createAttempt({
     id: childId,
-    runId: attempt.run_id,
+    runId: originalParentAttempt.run_id,
     hop: childHop,
-    phase: attempt.phase,
-    role: attempt.role,
-    provider: attempt.provider,
-    accountId: attempt.account_id,
-    machineId: attempt.machine_id,
-    bundle: attempt.task_bundle,
+    phase: originalParentAttempt.phase,
+    role: originalParentAttempt.role,
+    provider: originalParentAttempt.provider,
+    accountId: originalParentAttempt.account_id,
+    machineId: originalParentAttempt.requested_machine_id ?? originalParentAttempt.machine_id,
+    bundle: originalParentAttempt.task_bundle,
     callbackSecretHash: hashCallbackSecret(callbackSecret),
-    logicalCycleId: attempt.logical_cycle_id ?? `intent:${attempt.run_id}:${attempt.hop}`,
+    logicalCycleId: originalParentAttempt.logical_cycle_id
+      ?? `intent:${originalParentAttempt.run_id}:${originalParentAttempt.hop}`,
     attemptKind: 'resume',
-    retryOfAttemptId: attempt.id,
+    retryOfAttemptId: originalParentAttempt.id,
     restartReason: 'lease_expired',
-    workstreamKey: attempt.workstream_key ?? 'ws1',
-    timeDerived: attempt.time_derived === true,
+    workstreamKey: originalParentAttempt.workstream_key ?? 'ws1',
+    timeDerived: originalParentAttempt.time_derived === true,
   });
   if (!child || child.id !== childId) {
     return { ok: false, deduped: true };
   }
+  const claimedChild = await store.markStarting(child.id, {
+    leaseOwner,
+    leaseSeconds: 300,
+  });
+  if (!claimedChild) return { ok: false, deduped: true };
+  const resumableChild = {
+    ...child,
+    ...claimedChild,
+    task_bundle: child.task_bundle ?? originalParentAttempt.task_bundle,
+    callbackSecret,
+  };
 
   let resumed;
   try {
-    resumed = await resumeAttempt(child, {
-      parentAttempt: reclaimed,
+    resumed = await resumeAttempt(resumableChild, {
+      originalParentAttempt,
+      reclaimedParentAttempt: reclaimed,
       callbackSecret,
       leaseOwner,
+      attemptStore: store,
     });
   } catch (error) {
     resumed = {
@@ -180,11 +209,17 @@ export async function reconcileExpiredKernelAttempt({
     await store.fail(childId, {
       code: failureCode,
       message: `resume child launch failed: ${failureCode}`,
+    }, {
+      leaseOwner: resumableChild.lease_owner,
+      leaseGeneration: resumableChild.lease_generation,
     });
     const failed = await store.fail(attemptId, {
       code: failureCode,
       message: `expired attempt resume failed: ${failureCode}`,
-    }, { leaseOwner });
+    }, {
+      leaseOwner: reclaimed.lease_owner,
+      leaseGeneration: reclaimed.lease_generation,
+    });
     return failed.deduped
       ? { ok: false, deduped: true }
       : { ok: false, terminal: true, failure_code: failureCode };
@@ -193,7 +228,10 @@ export async function reconcileExpiredKernelAttempt({
   await store.fail(attemptId, {
     code: 'resumed_as_child',
     message: 'expired attempt resumed as a new lineage child',
-  }, { leaseOwner });
+  }, {
+    leaseOwner: reclaimed.lease_owner,
+    leaseGeneration: reclaimed.lease_generation,
+  });
   return {
     ok: true,
     resumed: true,
@@ -218,76 +256,193 @@ function shortId(id) {
 }
 
 export async function resumeKernelAttempt(attempt, {
-  parentAttempt,
+  originalParentAttempt,
+  reclaimedParentAttempt,
   task,
   dbPool,
   callbackSecret,
   leaseOwner = `watchdog:${process.pid}`,
+  attemptStore: injectedAttemptStore,
+  launcher: injectedLauncher,
+  transportFactory = createProductionExecutionTransport,
+  env = process.env,
+  fetchFn,
+  spawnDetached: injectedSpawnDetached,
+  removeContainer: injectedRemoveContainer,
+  brainUrl,
+  remoteBridgeTimeoutMs,
 }) {
   const [
-    { createAttemptStore },
     { createProviderRegistry },
     { claudeAdapter },
     { codexAdapter },
     { grokAdapter },
-    { createDetachedLauncher, resolveProviderAccountHome },
-    { spawnDockerDetached, removeDockerContainer },
-    { killAttemptContainers },
+    { resolveProviderAccountHome },
+    detached,
   ] = await Promise.all([
-    import('./orchestrator/attempt-store.js'),
     import('./orchestrator/provider-registry.js'),
     import('./orchestrator/providers/claude.js'),
     import('./orchestrator/providers/codex.js'),
     import('./orchestrator/providers/grok.js'),
     import('./orchestrator/dispatcher.js'),
-    import('./spawn/detached.js'),
-    import('./harness-container-cleanup.js'),
+    injectedLauncher
+      ? Promise.resolve({})
+      : import('./spawn/detached.js'),
   ]);
-  const store = createAttemptStore(dbPool);
-  if (!parentAttempt?.id || !callbackSecret) {
+  const store = injectedAttemptStore ?? createAttemptStore(dbPool);
+  if (
+    !originalParentAttempt?.id
+    || !reclaimedParentAttempt?.id
+    || !callbackSecret
+    || !attempt?.lease_owner
+    || !Number.isInteger(attempt?.lease_generation)
+  ) {
     return { ok: false, reason: 'resume_child_context_missing' };
-  }
-  const cleanup = await killAttemptContainers(parentAttempt.id);
-  if (!cleanup.ok) {
-    return { ok: false, reason: 'attempt_container_cleanup_failed', cleanup };
   }
 
   const registry = createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
-  const adapter = registry.resolve({ provider: parentAttempt.provider, requires: ['resume'] });
+  const adapter = registry.resolve({
+    provider: originalParentAttempt.provider,
+    requires: ['resume'],
+  });
   const execution = {};
   if (task.payload?.model && task.payload.model !== 'auto') execution.model = task.payload.model;
   if (task.payload?.codex_home) execution.codexHome = task.payload.codex_home;
   if (task.payload?.claude_home) execution.claudeHome = task.payload.claude_home;
   if (task.payload?.grok_home) execution.grokHome = task.payload.grok_home;
-  if (parentAttempt.account_id) {
+  if (originalParentAttempt.account_id) {
     const accountHome = resolveProviderAccountHome(
-      parentAttempt.provider,
-      parentAttempt.account_id,
+      originalParentAttempt.provider,
+      originalParentAttempt.account_id,
     );
-    if (parentAttempt.provider === 'codex') execution.codexHome = accountHome;
-    if (parentAttempt.provider === 'claude') execution.claudeHome = accountHome;
-    if (parentAttempt.provider === 'grok') execution.grokHome = accountHome;
+    if (originalParentAttempt.provider === 'codex') execution.codexHome = accountHome;
+    if (originalParentAttempt.provider === 'claude') execution.claudeHome = accountHome;
+    if (originalParentAttempt.provider === 'grok') execution.grokHome = accountHome;
   }
   const spec = adapter.resume({
-    attempt: { ...parentAttempt, task_bundle: parentAttempt.task_bundle },
+    attempt: {
+      ...originalParentAttempt,
+      task_bundle: originalParentAttempt.task_bundle,
+    },
     input: 'Continue this same Harness attempt from its last durable checkpoint.',
     execution,
   });
-  const launcher = createDetachedLauncher({
-    spawnDetached: spawnDockerDetached,
-    removeContainer: removeDockerContainer,
+  const launcher = injectedLauncher ?? transportFactory({
+    env,
     attemptStore: store,
+    spawnDetached: injectedSpawnDetached ?? detached.spawnDockerDetached,
+    removeContainer: injectedRemoveContainer ?? detached.removeDockerContainer,
+    brainUrl,
     leaseOwner,
+    fetchFn,
+    remoteBridgeTimeoutMs,
   });
-  const launched = await launcher.launch({
-    attempt: { ...attempt, callbackSecret },
-    bundle: attempt.task_bundle,
-    spec,
-    adapter,
-    task,
-    generation: new Date(attempt.updated_at ?? Date.now()).getTime(),
-  });
-  return { ok: true, resumed: true, ...launched };
+  const target = {
+    provider: originalParentAttempt.provider,
+    account: originalParentAttempt.account_id ?? null,
+    machine: originalParentAttempt.requested_machine_id ?? originalParentAttempt.machine_id,
+  };
+
+  try {
+    await launcher.inspect({
+      attempt: originalParentAttempt,
+      target,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      failure_code: 'resume_parent_cleanup_unconfirmed',
+      error: error?.message ?? String(error),
+    };
+  }
+  let parentCleanup;
+  try {
+    parentCleanup = await launcher.cancel({
+      attempt: originalParentAttempt,
+      target,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      failure_code: 'resume_parent_cleanup_unconfirmed',
+      error: error?.message ?? String(error),
+    };
+  }
+  if (parentCleanup?.status !== 'cancelled') {
+    return {
+      ok: false,
+      failure_code: 'resume_parent_cleanup_unconfirmed',
+      cleanup_status: parentCleanup?.status ?? 'unknown',
+    };
+  }
+
+  let launched;
+  try {
+    launched = await launcher.launch({
+      attempt: { ...attempt, callbackSecret },
+      bundle: attempt.task_bundle,
+      spec,
+      adapter,
+      task,
+      target,
+      leaseClaimed: true,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      failure_code: 'resume_launch_failed',
+      error: error?.message ?? String(error),
+    };
+  }
+
+  let receiptRow;
+  let receiptError;
+  try {
+    receiptRow = await store.recordLaunchReceipt(attempt.id, {
+      leaseOwner: attempt.lease_owner,
+      leaseGeneration: attempt.lease_generation,
+      actualMachineId: launched.actualMachineId,
+      executionTransport: launched.executionTransport,
+      remoteJobId: launched.remoteJobId ?? null,
+      attestationStatus: launched.attestationStatus,
+    });
+    if (!receiptRow) receiptError = new Error('launch receipt was not persisted');
+  } catch (error) {
+    receiptError = error;
+  }
+  if (receiptError) {
+    let cleanupStatus = 'unknown';
+    try {
+      cleanupStatus = (await launcher.cancel({
+        attempt,
+        target,
+        launchReceipt: launched,
+      }))?.status ?? 'unknown';
+    } catch {
+      cleanupStatus = 'unavailable';
+    }
+    const message = [
+      receiptError.message,
+      `child cleanup ${cleanupStatus}`,
+    ].join('; ');
+    await store.fail(attempt.id, {
+      code: 'resume_receipt_persist_failed',
+      message,
+    }, {
+      leaseOwner: attempt.lease_owner,
+      leaseGeneration: attempt.lease_generation,
+    });
+    return {
+      ok: false,
+      failure_code: 'resume_receipt_persist_failed',
+      cleanup_status: cleanupStatus,
+    };
+  }
+  return {
+    ok: true,
+    resumed: true,
+    ...launched,
+  };
 }
 
 async function _recoverKernelRun(run, task, deps, out) {
@@ -324,6 +479,14 @@ async function _recoverKernelRun(run, task, deps, out) {
         task,
         run,
         dbPool,
+        launcher: deps.launcher,
+        transportFactory: deps.transportFactory,
+        env: deps.env,
+        fetchFn: deps.fetchFn,
+        spawnDetached: deps.spawnDetached,
+        removeContainer: deps.removeContainer,
+        brainUrl: deps.brainUrl,
+        remoteBridgeTimeoutMs: deps.remoteBridgeTimeoutMs,
       }),
     });
     if (resumed.ok) {

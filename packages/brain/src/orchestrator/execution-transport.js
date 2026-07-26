@@ -8,12 +8,16 @@ function validateTransport(name, transport) {
   }
 }
 
-export function createExecutionTransportRouter({ local, remote } = {}) {
+export function createExecutionTransportRouter({
+  local,
+  remote,
+  localMachineId = 'us-mac-m4',
+} = {}) {
   validateTransport('local', local);
   validateTransport('remote', remote);
 
   const transportFor = (machine) => {
-    if (machine === 'us-mac-m4') return local;
+    if (machine === localMachineId) return local;
     if (machine === 'xian-mac-m4' || machine === 'xian-mac-m1') return remote;
     throw new Error(`execution_transport_unavailable:${String(machine)}`);
   };
@@ -22,10 +26,10 @@ export function createExecutionTransportRouter({ local, remote } = {}) {
     async launch(input) {
       const machine = input?.target?.machine;
       const launched = await transportFor(machine).launch(input);
-      if (machine !== 'us-mac-m4') return launched;
+      if (machine !== localMachineId) return launched;
       return {
         ...launched,
-        actualMachineId: 'us-mac-m4',
+        actualMachineId: localMachineId,
         executionTransport: 'local-docker',
         remoteJobId: null,
         attestationStatus: 'local',
