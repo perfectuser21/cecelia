@@ -58,6 +58,7 @@ function parentAttempt() {
     provider_session_id: 'thread-parent',
     remote_job_id: 'parent-job',
     execution_transport: 'remote-bridge',
+    local_container_naming: 'generation-v1',
     task_bundle: bundle(),
     status: 'running',
     lease_owner: 'dispatcher-parent',
@@ -83,6 +84,7 @@ function childAttempt() {
     status: 'starting',
     lease_owner: 'watchdog:test',
     lease_generation: 0,
+    local_container_naming: 'generation-v1',
   };
 }
 
@@ -205,6 +207,7 @@ describe('kernel fleet watchdog recovery', () => {
       requested_machine_id: 'us-mac-m4',
       remote_job_id: null,
       execution_transport: 'local-docker',
+      local_container_naming: 'generation-v1',
       lease_generation: 2,
     };
     const reclaimedParentAttempt = {
@@ -248,11 +251,12 @@ describe('kernel fleet watchdog recovery', () => {
       machine_id: 'us-mac-m4',
       requested_machine_id: 'us-mac-m4',
       lease_generation: 0,
-      actual_machine_id: null,
-      execution_transport: null,
-      remote_job_id: null,
-      machine_attestation_status: null,
-      attestation_status: null,
+      actual_machine_id: 'us-mac-m4',
+      execution_transport: 'local-docker',
+      remote_job_id: 'legacy-container-receipt',
+      machine_attestation_status: 'local',
+      attestation_status: 'local',
+      local_container_naming: 'legacy-unsuffixed',
     };
     const reclaimedParentAttempt = {
       ...originalParentAttempt,
@@ -284,6 +288,50 @@ describe('kernel fleet watchdog recovery', () => {
     ]);
     expect(removeContainer.mock.calls.flat()).not.toContain('cecelia-harness-11111111-g0');
     expect(removeContainer.mock.calls.flat()).not.toContain('cecelia-harness-11111111-g1');
+  });
+
+  it('cleans a receipt-null modern g0 parent only by its durable generation-v1 identity', async () => {
+    const originalParentAttempt = {
+      ...parentAttempt(),
+      machine_id: 'us-mac-m4',
+      requested_machine_id: 'us-mac-m4',
+      lease_generation: 0,
+      actual_machine_id: null,
+      execution_transport: null,
+      remote_job_id: null,
+      machine_attestation_status: null,
+      attestation_status: null,
+      local_container_naming: 'generation-v1',
+    };
+    const reclaimedParentAttempt = {
+      ...originalParentAttempt,
+      lease_owner: 'watchdog:test',
+      lease_generation: 1,
+    };
+    const child = {
+      ...childAttempt(),
+      machine_id: 'us-mac-m4',
+      requested_machine_id: 'us-mac-m4',
+    };
+    const removeContainer = vi.fn(async () => true);
+    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
+
+    await expect(resumeKernelAttempt(child, resumeOptions({
+      originalParentAttempt,
+      reclaimedParentAttempt,
+      env: {},
+      spawnDetached,
+      removeContainer,
+    }))).resolves.toMatchObject({
+      ok: true,
+      containerId: 'cecelia-harness-22222222-g0',
+    });
+
+    expect(removeContainer.mock.calls.map(([containerId]) => containerId)).toEqual([
+      'cecelia-harness-11111111-g0',
+      'cecelia-harness-22222222-g0',
+    ]);
+    expect(removeContainer.mock.calls.flat()).not.toContain('cecelia-harness-11111111');
   });
 
   it('fails closed before cleanup or launch when remote callback config is absent', async () => {
@@ -325,16 +373,15 @@ describe('kernel fleet watchdog recovery', () => {
       ok: false,
       failure_code: 'resume_parent_cleanup_unconfirmed',
       cleanup_status: 'missing',
+      recovery_alert: expect.objectContaining({
+        kind: 'cleanup_unconfirmed',
+        attemptId: PARENT_ID,
+      }),
     });
 
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
-    expect(onRecoveryAlert).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'cleanup_unconfirmed',
-      attemptId: PARENT_ID,
-      lifecycleCode: 'resume_parent_cleanup_unconfirmed',
-      cleanupStatus: 'missing',
-    }));
+    expect(onRecoveryAlert).not.toHaveBeenCalled();
   });
 
   it('cancels and exact-fails the child when its launch receipt cannot be persisted', async () => {
@@ -510,41 +557,226 @@ describe('kernel fleet watchdog recovery', () => {
       failure_code: 'resume_child_cleanup_unconfirmed',
       cleanup_status: 'missing',
       error: expect.stringContaining('orphan cancellation unsafe: missing'),
+      recovery_alert: expect.objectContaining({
+        kind: 'cleanup_unconfirmed',
+        attemptId: CHILD_ID,
+      }),
     });
 
-    expect(onRecoveryAlert).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'cleanup_unconfirmed',
-      attemptId: CHILD_ID,
-      lifecycleCode: 'resume_launch_failed',
-      cleanupStatus: 'missing',
-    }));
+    expect(onRecoveryAlert).not.toHaveBeenCalled();
   });
 
   it('surfaces a sanitized error when an unconfirmed-cleanup alert itself is rejected', async () => {
-    const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
-      }
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(404, { status: 'missing' });
-      }
-      throw new Error(`unexpected request ${url}`);
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      fail: vi.fn(async () => ({ attempt: {}, deduped: false })),
+    };
+    const onRecoveryAlert = vi.fn(async () => {
+      throw new Error('alert transport leaked fleet-secret-value');
     });
 
-    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
-      fetchFn,
-      onRecoveryAlert: vi.fn(async () => {
-        throw new Error('alert transport leaked fleet-secret-value');
-      }),
-    }))).rejects.toThrow(
+    let thrown;
+    try {
+      await reconcileExpiredKernelAttempt({
+        db: { query: vi.fn() },
+        attemptStore: store,
+        attemptId: PARENT_ID,
+        leaseOwner: 'watchdog:test',
+        resumeAttempt: vi.fn(async () => ({
+          ok: false,
+          failure_code: 'resume_parent_cleanup_unconfirmed',
+          recovery_alert: {
+            kind: 'cleanup_unconfirmed',
+            attemptId: PARENT_ID,
+            lifecycleCode: 'resume_parent_cleanup_unconfirmed',
+            cleanupStatus: 'missing',
+            diagnostic: 'orphan cancellation unsafe: missing',
+          },
+        })),
+        reservedChildHop: 8,
+        randomUUIDFn: () => CHILD_ID,
+        onRecoveryAlert,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(thrown.message).toContain(
       'kernel_recovery_alert_failed:resume_parent_cleanup_unconfirmed',
     );
-    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
-      fetchFn,
-      onRecoveryAlert: vi.fn(async () => {
-        throw new Error('alert transport leaked fleet-secret-value');
+    expect(thrown.message).not.toContain('fleet-secret-value');
+    expect(store.fail).toHaveBeenCalledTimes(2);
+    expect(store.fail.mock.invocationCallOrder[0])
+      .toBeLessThan(onRecoveryAlert.mock.invocationCallOrder[0]);
+    expect(store.fail.mock.invocationCallOrder[1])
+      .toBeLessThan(onRecoveryAlert.mock.invocationCallOrder[0]);
+  });
+
+  it('attempts both terminal writes before cleanup P1 when persistence and alert both reject', async () => {
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      fail: vi.fn(async (attemptId) => {
+        if (attemptId === CHILD_ID) throw new Error('child terminal persistence rejected');
+        return { attempt: {}, deduped: false };
       }),
-    }))).rejects.not.toThrow('fleet-secret-value');
+    };
+    const onRecoveryAlert = vi.fn(async () => {
+      throw new Error('alert rejected with HARNESS_CALLBACK_TOKEN=raw-secret');
+    });
+
+    let thrown;
+    try {
+      await reconcileExpiredKernelAttempt({
+        db: { query: vi.fn() },
+        attemptStore: store,
+        attemptId: PARENT_ID,
+        leaseOwner: 'watchdog:test',
+        resumeAttempt: vi.fn(async () => ({
+          ok: false,
+          failure_code: 'resume_child_cleanup_unconfirmed',
+          recovery_alert: {
+            kind: 'cleanup_unconfirmed',
+            attemptId: CHILD_ID,
+            lifecycleCode: 'resume_child_cleanup_unconfirmed',
+            cleanupStatus: 'missing',
+            diagnostic: 'child cleanup missing',
+          },
+        })),
+        reservedChildHop: 8,
+        randomUUIDFn: () => CHILD_ID,
+        onRecoveryAlert,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(store.fail).toHaveBeenCalledTimes(2);
+    expect(store.fail.mock.calls.map(([attemptId]) => attemptId)).toEqual([
+      CHILD_ID,
+      PARENT_ID,
+    ]);
+    expect(store.fail.mock.invocationCallOrder[1])
+      .toBeLessThan(onRecoveryAlert.mock.invocationCallOrder[0]);
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(thrown.message).toContain(
+      'failure_persistence_failed: child terminal persistence rejected',
+    );
+    expect(thrown.message).toContain(
+      'kernel_recovery_alert_failed:resume_child_cleanup_unconfirmed',
+    );
+    expect(thrown.message).not.toContain('raw-secret');
+  });
+
+  it('terminalizes both claims before preserving an aggregate raised inside resume', async () => {
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      fail: vi.fn(async () => ({ attempt: {}, deduped: false })),
+    };
+    const resumeError = new AggregateError(
+      [new Error('cleanup alert delivery rejected')],
+      'kernel_recovery_alert_failed:resume_receipt_persist_failed',
+    );
+    resumeError.failureCode = 'resume_receipt_persist_failed';
+
+    let thrown;
+    try {
+      await reconcileExpiredKernelAttempt({
+        db: { query: vi.fn() },
+        attemptStore: store,
+        attemptId: PARENT_ID,
+        leaseOwner: 'watchdog:test',
+        resumeAttempt: vi.fn(async () => {
+          throw resumeError;
+        }),
+        reservedChildHop: 8,
+        randomUUIDFn: () => CHILD_ID,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(store.fail.mock.calls.map(([attemptId]) => attemptId)).toEqual([
+      CHILD_ID,
+      PARENT_ID,
+    ]);
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(thrown.message).toContain(
+      'kernel_recovery_alert_failed:resume_receipt_persist_failed',
+    );
+  });
+
+  it('persists the receipt-failed child before delivering an unconfirmed-cleanup P1', async () => {
+    const store = resumeStore(null);
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'running' })),
+      cancel: vi.fn()
+        .mockResolvedValueOnce({ status: 'cancelled' })
+        .mockResolvedValueOnce({ status: 'missing' }),
+      launch: vi.fn(async () => ({
+        jobId: 'child-job',
+        actualMachineId: 'xian-mac-m4',
+        executionTransport: 'remote-bridge',
+        remoteJobId: 'child-job',
+        attestationStatus: 'verified',
+      })),
+    };
+    const onRecoveryAlert = vi.fn(async () => {
+      throw new Error('cleanup P1 rejected callback_token=raw-callback-secret');
+    });
+
+    let thrown;
+    try {
+      await resumeKernelAttempt(childAttempt(), resumeOptions({
+        attemptStore: store,
+        launcher,
+        onRecoveryAlert,
+      }));
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(store.fail).toHaveBeenCalledWith(CHILD_ID, expect.any(Object), {
+      leaseOwner: 'watchdog:test',
+      leaseGeneration: 0,
+    });
+    expect(store.fail.mock.invocationCallOrder[0])
+      .toBeLessThan(onRecoveryAlert.mock.invocationCallOrder[0]);
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(thrown.message).toContain(
+      'kernel_recovery_alert_failed:resume_receipt_persist_failed',
+    );
+    expect(thrown.message).not.toContain('raw-callback-secret');
   });
 
   it('throws the shared aggregate and alerts when receipt failure cannot exact-fail the child', async () => {

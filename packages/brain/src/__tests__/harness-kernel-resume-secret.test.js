@@ -30,6 +30,7 @@ function makeAttemptContext() {
     task_bundle: { inputs: {} },
     lease_owner: 'dispatcher-parent',
     lease_generation: 6,
+    local_container_naming: 'generation-v1',
   };
   return {
     child: {
@@ -42,6 +43,7 @@ function makeAttemptContext() {
       task_bundle: { inputs: {} },
       lease_owner: 'watchdog:test',
       lease_generation: 0,
+      local_container_naming: 'generation-v1',
     },
     originalParentAttempt,
     reclaimedParentAttempt: {
@@ -142,11 +144,12 @@ describe('resumeKernelAttempt callback fencing', () => {
       ok: false,
       failure_code: 'resume_parent_cleanup_unconfirmed',
       cleanup_status: 'missing',
+      recovery_alert: expect.objectContaining({
+        attemptId: 'attempt-parent',
+        kind: 'cleanup_unconfirmed',
+      }),
     });
-    expect(deps.onRecoveryAlert).toHaveBeenCalledWith(expect.objectContaining({
-      attemptId: 'attempt-parent',
-      kind: 'cleanup_unconfirmed',
-    }));
+    expect(deps.onRecoveryAlert).not.toHaveBeenCalled();
     expect(deps.launcher.launch).not.toHaveBeenCalled();
   });
 });
