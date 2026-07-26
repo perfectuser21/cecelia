@@ -76,9 +76,12 @@ const hostMutationMocks = vi.hoisted(() => ({
     reasons: [],
   }),
   canDispatch: vi.fn().mockReturnValue(true),
-  canPlan: vi.fn().mockReturnValue(true),
+  canPlan: vi.fn().mockReturnValue(false),
   getDispatchRate: vi.fn().mockReturnValue(1),
-  getCurrentAlertness: vi.fn().mockReturnValue(1),
+  getCurrentAlertness: vi.fn().mockReturnValue({
+    level: 1,
+    levelName: 'CALM',
+  }),
   getRecoveryStatus: vi.fn().mockReturnValue({
     isRecovering: false,
     phase: 0,
@@ -87,6 +90,77 @@ const hostMutationMocks = vi.hoisted(() => ({
     skipped: true,
     reason: 'test_noop',
   }),
+}));
+
+const externalBoundaryMocks = vi.hoisted(() => ({
+  calculateSlotBudget: vi.fn().mockResolvedValue({
+    total: 0,
+    capacity: { physical: 0, budget: 0, effective: 0 },
+    user: { budget: 0, used: 0, mode: 'absent', headroom: 0 },
+    cecelia: { budget: 0, used: 0 },
+    taskPool: { budget: 0, used: 0, available: 0 },
+    codex: { running: 0, max: 0, available: 0 },
+    fleet: {},
+    pressure: 0,
+    resources: { effectiveSlots: 0, maxPressure: 0 },
+    tokenPressure: { token_pressure: 0, available_accounts: 3 },
+    budgetState: null,
+    dispatchAllowed: false,
+    backpressure: { override_burst_limit: null },
+  }),
+  shouldBypassBackpressure: vi.fn().mockReturnValue(false),
+  dispatchNextTask: vi.fn().mockResolvedValue({
+    dispatched: false,
+    actions: [],
+    reason: 'test_noop',
+  }),
+  triggerDailyReview: vi.fn().mockResolvedValue({
+    triggered: 0,
+    skipped: 0,
+    skipped_window: true,
+    results: [],
+  }),
+  triggerArchReview: vi.fn().mockResolvedValue({
+    triggered: false,
+    skipped_window: true,
+    skipped_recent: false,
+    skipped_guard: false,
+  }),
+  triggerContractScan: vi.fn().mockResolvedValue({
+    skipped_window: true,
+    skipped_today: false,
+    triggered: false,
+  }),
+  runCanaryDrillIfNeeded: vi.fn().mockResolvedValue({
+    triggered: false,
+    skipped: true,
+    reason: 'test_noop',
+  }),
+  runCredentialsHealthCheck: vi.fn().mockResolvedValue({
+    skipped_window: true,
+    skipped_today: false,
+  }),
+  syncSocialMediaData: vi.fn().mockResolvedValue({
+    synced: 0,
+    skipped: 0,
+    source_count: 0,
+  }),
+  routeDailyReport: vi.fn().mockResolvedValue({
+    skipped: true,
+    reason: 'test_noop',
+  }),
+  sendFeishu: vi.fn().mockResolvedValue(false),
+  sendBark: vi.fn().mockResolvedValue(false),
+  triggerCodeQualityScan: vi.fn().mockResolvedValue({
+    triggered: false,
+    skipped: true,
+    reason: 'test_noop',
+  }),
+  checkAndAlertExpiringCredentials: vi.fn().mockResolvedValue({ alerted: 0 }),
+  recoverAuthQuarantinedTasks: vi.fn().mockResolvedValue({ recovered: 0 }),
+  scanAuthLayerHealth: vi.fn().mockResolvedValue({ alerted: 0 }),
+  cleanupDuplicateRescueTasks: vi.fn().mockResolvedValue({ cancelled: 0, branches: 0 }),
+  cancelCredentialAlertTasks: vi.fn().mockResolvedValue({ cancelled: 0 }),
 }));
 
 // executeTick owns destructive host cleanup edges. This integration test exercises
@@ -141,6 +215,44 @@ vi.mock('../../alertness/healing.js', () => ({
 vi.mock('../../cron/drift-sentinel.js', () => ({
   runDriftSentinel: hostMutationMocks.runDriftSentinel,
   DRIFT_SENTINEL_INTERVAL_MS: 30 * 60 * 1000,
+}));
+vi.mock('../../slot-allocator.js', () => ({
+  calculateSlotBudget: externalBoundaryMocks.calculateSlotBudget,
+  shouldBypassBackpressure: externalBoundaryMocks.shouldBypassBackpressure,
+}));
+vi.mock('../../dispatcher.js', () => ({
+  dispatchNextTask: externalBoundaryMocks.dispatchNextTask,
+}));
+vi.mock('../../daily-review-scheduler.js', () => ({
+  triggerDailyReview: externalBoundaryMocks.triggerDailyReview,
+  triggerArchReview: externalBoundaryMocks.triggerArchReview,
+  triggerContractScan: externalBoundaryMocks.triggerContractScan,
+}));
+vi.mock('../../canary-drill-scheduler.js', () => ({
+  runCanaryDrillIfNeeded: externalBoundaryMocks.runCanaryDrillIfNeeded,
+}));
+vi.mock('../../credentials-health-scheduler.js', () => ({
+  runCredentialsHealthCheck: externalBoundaryMocks.runCredentialsHealthCheck,
+}));
+vi.mock('../../social-media-sync.js', () => ({
+  syncSocialMediaData: externalBoundaryMocks.syncSocialMediaData,
+}));
+vi.mock('../../durable/daily-report-router.js', () => ({
+  routeDailyReport: externalBoundaryMocks.routeDailyReport,
+}));
+vi.mock('../../notifier.js', () => ({
+  sendFeishu: externalBoundaryMocks.sendFeishu,
+  sendBark: externalBoundaryMocks.sendBark,
+}));
+vi.mock('../../task-generator-scheduler.js', () => ({
+  triggerCodeQualityScan: externalBoundaryMocks.triggerCodeQualityScan,
+}));
+vi.mock('../../credential-expiry-checker.js', () => ({
+  checkAndAlertExpiringCredentials: externalBoundaryMocks.checkAndAlertExpiringCredentials,
+  recoverAuthQuarantinedTasks: externalBoundaryMocks.recoverAuthQuarantinedTasks,
+  scanAuthLayerHealth: externalBoundaryMocks.scanAuthLayerHealth,
+  cleanupDuplicateRescueTasks: externalBoundaryMocks.cleanupDuplicateRescueTasks,
+  cancelCredentialAlertTasks: externalBoundaryMocks.cancelCredentialAlertTasks,
 }));
 
 // ========== 意识模块 mocks（要断言调用次数）==========
@@ -224,9 +336,12 @@ import { resetTickStateForTests } from '../../tick-state.js';
 const CONSCIOUSNESS_MOCKS = [runRumination, generateDailyDiaryIfNeeded, runDesireSystem];
 const CLEANUP_MOCKS = Object.values(cleanupMocks);
 const HOST_MUTATION_MOCKS = Object.values(hostMutationMocks);
+const EXTERNAL_BOUNDARY_MOCKS = Object.values(externalBoundaryMocks);
 
 describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
   let pool;
+  let processKillSpy;
+  let fetchSpy;
 
   beforeAll(async () => {
     pool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
@@ -239,6 +354,8 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
   });
 
   beforeEach(async () => {
+    processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected real fetch'));
     await pool.query('DELETE FROM working_memory WHERE key = $1', [MEMORY_KEY]);
     const sql = fs.readFileSync(MIGRATION_240, 'utf8');
     await pool.query(sql);
@@ -247,13 +364,21 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     CONSCIOUSNESS_MOCKS.forEach((m) => m.mockClear());
     CLEANUP_MOCKS.forEach((m) => m.mockClear());
     HOST_MUTATION_MOCKS.forEach((m) => m.mockClear());
+    EXTERNAL_BOUNDARY_MOCKS.forEach((m) => m.mockClear());
     delete process.env.CONSCIOUSNESS_ENABLED;
     delete process.env.BRAIN_QUIET_MODE;
   });
 
   afterEach(() => {
-    delete process.env.CONSCIOUSNESS_ENABLED;
-    delete process.env.BRAIN_QUIET_MODE;
+    try {
+      expect(processKillSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      processKillSpy.mockRestore();
+      fetchSpy.mockRestore();
+      delete process.env.CONSCIOUSNESS_ENABLED;
+      delete process.env.BRAIN_QUIET_MODE;
+    }
   });
 
   test('memory=false: executeTick skips all consciousness modules', async () => {
@@ -278,53 +403,65 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
   test('executeTick keeps every host cleanup boundary mocked', async () => {
     await initConsciousnessGuard(pool);
     await setConsciousnessEnabled(pool, false);
-    const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    await executeTick();
 
-    try {
-      await executeTick();
-
-      for (const cleanupMock of CLEANUP_MOCKS) {
-        expect(vi.isMockFunction(cleanupMock)).toBe(true);
-        expect(cleanupMock).toHaveBeenCalledTimes(1);
-      }
-      expect(await cleanupMocks.zombieSweep.mock.results[0].value).toMatchObject({
-        worktrees: { removed: 0 },
-        processes: { killed: 0 },
-        lock_slots: { removed: 0 },
-      });
-      expect(await cleanupMocks.runZombieCleanup.mock.results[0].value).toMatchObject({
-        slotsReclaimed: 0,
-        worktreesRemoved: 0,
-      });
-      expect(
-        await cleanupMocks.cleanupStaleHarnessWorktrees.mock.results[0].value,
-      ).toEqual({ cleaned: 0, errors: 0 });
-      expect(hostMutationMocks.checkRunaways).toHaveBeenCalledTimes(1);
-      expect(hostMutationMocks.checkIdleSessions).toHaveBeenCalledTimes(1);
-      expect(hostMutationMocks.scanOrphanPrs).toHaveBeenCalledTimes(1);
-      expect(hostMutationMocks.shepherdOpenPRs).toHaveBeenCalledTimes(1);
-      expect(hostMutationMocks.pipelinePatrolTick).toHaveBeenCalledTimes(1);
-      expect(hostMutationMocks.evaluateAlertness).toHaveBeenCalledTimes(1);
-      expect(hostMutationMocks.getRecoveryStatus).toHaveBeenCalledTimes(1);
-      expect(hostMutationMocks.runDriftSentinel).toHaveBeenCalledTimes(1);
-      expect(hostMutationMocks.cleanupMetrics).not.toHaveBeenCalled();
-      expect(hostMutationMocks.emergencyCleanup).not.toHaveBeenCalled();
-      expect(hostMutationMocks.checkRunaways.mock.results[0].value).toEqual({ actions: [] });
-      expect(hostMutationMocks.checkIdleSessions.mock.results[0].value).toEqual({ actions: [] });
-      expect(await hostMutationMocks.scanOrphanPrs.mock.results[0].value).toEqual({
-        scanned: 0,
-        merged: 0,
-        labeled: 0,
-        closed: 0,
-        skipped: 0,
-        details: [],
-      });
-      const { killProcessTwoStage } = await import('../../executor.js');
-      expect(killProcessTwoStage).not.toHaveBeenCalled();
-      expect(processKillSpy).not.toHaveBeenCalled();
-    } finally {
-      processKillSpy.mockRestore();
+    for (const cleanupMock of CLEANUP_MOCKS) {
+      expect(vi.isMockFunction(cleanupMock)).toBe(true);
+      expect(cleanupMock).toHaveBeenCalledTimes(1);
     }
+    expect(await cleanupMocks.zombieSweep.mock.results[0].value).toMatchObject({
+      worktrees: { removed: 0 },
+      processes: { killed: 0 },
+      lock_slots: { removed: 0 },
+    });
+    expect(await cleanupMocks.runZombieCleanup.mock.results[0].value).toMatchObject({
+      slotsReclaimed: 0,
+      worktreesRemoved: 0,
+    });
+    expect(
+      await cleanupMocks.cleanupStaleHarnessWorktrees.mock.results[0].value,
+    ).toEqual({ cleaned: 0, errors: 0 });
+    expect(hostMutationMocks.checkRunaways).toHaveBeenCalledTimes(1);
+    expect(hostMutationMocks.checkIdleSessions).toHaveBeenCalledTimes(1);
+    expect(hostMutationMocks.scanOrphanPrs).toHaveBeenCalledTimes(1);
+    expect(hostMutationMocks.shepherdOpenPRs).toHaveBeenCalledTimes(1);
+    expect(hostMutationMocks.pipelinePatrolTick).toHaveBeenCalledTimes(1);
+    expect(hostMutationMocks.evaluateAlertness).toHaveBeenCalledTimes(1);
+    expect(hostMutationMocks.getRecoveryStatus).toHaveBeenCalledTimes(1);
+    expect(hostMutationMocks.runDriftSentinel).toHaveBeenCalledTimes(1);
+    expect(hostMutationMocks.cleanupMetrics).not.toHaveBeenCalled();
+    expect(hostMutationMocks.emergencyCleanup).not.toHaveBeenCalled();
+    expect(hostMutationMocks.checkRunaways.mock.results[0].value).toEqual({ actions: [] });
+    expect(hostMutationMocks.checkIdleSessions.mock.results[0].value).toEqual({ actions: [] });
+    expect(await hostMutationMocks.scanOrphanPrs.mock.results[0].value).toEqual({
+      scanned: 0,
+      merged: 0,
+      labeled: 0,
+      closed: 0,
+      skipped: 0,
+      details: [],
+    });
+    expect(externalBoundaryMocks.calculateSlotBudget).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.dispatchNextTask).not.toHaveBeenCalled();
+    expect(externalBoundaryMocks.triggerDailyReview).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.triggerArchReview).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.triggerContractScan).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.runCanaryDrillIfNeeded).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.runCredentialsHealthCheck).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.syncSocialMediaData).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.routeDailyReport).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.checkAndAlertExpiringCredentials).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.recoverAuthQuarantinedTasks).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.scanAuthLayerHealth).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.cleanupDuplicateRescueTasks).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.cancelCredentialAlertTasks).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.sendFeishu).not.toHaveBeenCalled();
+    expect(externalBoundaryMocks.sendBark).not.toHaveBeenCalled();
+    expect(externalBoundaryMocks.triggerCodeQualityScan).not.toHaveBeenCalled();
+    const { killProcessTwoStage } = await import('../../executor.js');
+    expect(killProcessTwoStage).not.toHaveBeenCalled();
+    expect(processKillSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   }, 60000);
 
   test('host mutation modules stay behind explicit test doubles', async () => {
