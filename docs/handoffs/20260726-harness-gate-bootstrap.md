@@ -4,7 +4,9 @@
 
 本分支完成 Harness Test Contract 路径解析、sprint 过渡测试登记、
 canonical E2E 证据解析，以及 pyramid/ratchet 单一统计口径的 bootstrap
-修复。当前保持未 push、未建 PR、未 merge、未部署，等待独立复审。
+修复。当前保持未 push、未建 PR、未 merge、未部署。Cecelia 逻辑终审已
+APPROVE；外部 Skill SSOT 首轮复审发现 attempt 归属缺口后已按
+Red→Green 修复到 evaluator 1.32.2，等待聚焦复验。
 
 ## 精确版本
 
@@ -101,7 +103,8 @@ npx vitest run \
   tests/contract-e2e-extractor.test.ts
 ```
 
-结果：`3 passed` files，`54 passed` tests。这里包含：
+结果：首轮 `3 passed` files，`54 passed` tests；attempt 归属补丁后复跑为
+`3 passed` files，`55 passed` tests。这里包含：
 
 - evaluator Skill 内嵌 extractor 与 canonical 文件逐字节相等；
 - 在不含 Cecelia `scripts/` 的第三方临时 workspace 内落地并真实执行，
@@ -227,7 +230,7 @@ countOrphans(root).total via test-pyramid-guard.mjs
 ```
 
 在合并/部署本 bootstrap 前，必须通过 zenithjoy-skills 的正常
-skill-creator → PR 流程把 evaluator `1.32.1` 与内嵌 canonical extractor
+skill-creator → PR 流程把 evaluator `1.32.2` 与内嵌 canonical extractor
 同步到外部 SSOT；随后用：
 
 ```bash
@@ -257,7 +260,7 @@ SKILLS_SSOT_DIR=/Users/administrator/perfect21/zenithjoy-skills \
 
 ## 合入后的恢复顺序
 
-1. **先完成外部 Skill SSOT 同步**，确认 evaluator 1.32.1 与本分支
+1. **先完成外部 Skill SSOT 同步**，确认 evaluator 1.32.2 与本分支
    byte-for-byte 契约一致。
 2. bootstrap PR 独立复审通过后合入 `main`。
 3. **#4342**：update-branch；修正其产品合同 `阻断/阻塞` 行为名不一致，
