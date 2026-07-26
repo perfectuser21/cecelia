@@ -93,52 +93,25 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
-  it('跨 run 的同一结构化工件共享 logical cycle，工件前进才换 cycle', async () => {
-    const ids = [
-      '22222222-2222-4222-8222-222222222222',
-      '33333333-3333-4333-8333-333333333333',
-      '44444444-4444-4444-8444-444444444444',
-    ];
+  it('logical cycle 锚定 durable intent，并与 bundle metadata 逐字一致', async () => {
     const deps = makeDeps();
-    deps.randomUUID = () => ids.shift();
     const dispatch = createDispatcher(deps);
-    const firstObserved = {
-      ...observed,
-      proposeBranchRn: 1,
-      proposeBranch: 'cp-harness-propose-r1-aaaaaaaa-a3',
-    };
 
     await dispatch('spawn:reviewer', {
       taskId,
       runId,
       hop: 2,
-      observed: firstObserved,
+      observed,
       decision: { phase: 'gan', reason: 'awaiting_review' },
     });
-    await dispatch('spawn:reviewer', {
-      taskId,
-      runId: '55555555-5555-4555-8555-555555555555',
-      hop: 3,
-      observed: firstObserved,
-      decision: { phase: 'gan', reason: 'watchdog_restart' },
-    });
-    await dispatch('spawn:reviewer', {
-      taskId,
-      runId: '66666666-6666-4666-8666-666666666666',
-      hop: 4,
-      observed: {
-        ...firstObserved,
-        proposeBranchRn: 2,
-        proposeBranch: 'cp-harness-propose-r2-aaaaaaaa-a4',
-      },
-      decision: { phase: 'gan', reason: 'revision_ready' },
-    });
 
-    const cycleIds = deps.attemptStore.createAttempt.mock.calls
-      .map(([input]) => input.logicalCycleId);
-    expect(cycleIds[0]).toBe(cycleIds[1]);
-    expect(cycleIds[0]).not.toMatch(/^run:/);
-    expect(cycleIds[2]).not.toBe(cycleIds[0]);
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.logicalCycleId).toBe(`intent:${runId}:2`);
+    expect(created.bundle.inputs).toMatchObject({
+      logical_cycle_id: `intent:${runId}:2`,
+      attempt_kind: 'initial',
+      workstream_key: 'ws1',
+    });
   });
 
   it('先持久化 attempt，再生成 adapter spec，最后 launch', async () => {
