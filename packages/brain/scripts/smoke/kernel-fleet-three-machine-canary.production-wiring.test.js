@@ -47,6 +47,9 @@ describe('createLiveDispatch production probe wiring', () => {
         if (/INSERT INTO initiative_runs/.test(sql)) {
           return { rows: [{ id: RUN_ID }], rowCount: 1 };
         }
+        if (/SELECT provider, account_id, requested_machine_id/.test(sql)) {
+          return { rows: [] };
+        }
         if (/INSERT INTO harness_attempts/.test(sql)) {
           throw new Error(`probe_selected_machine:${params[7]}`);
         }
