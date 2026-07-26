@@ -24,6 +24,25 @@ import { normalizeFailureSet } from './convergence-signatures.js';
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
 const CI_PASS_STATES = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
+const INFLIGHT_ATTEMPT_STATUSES = new Set(['starting', 'running']);
+const TERMINAL_ATTEMPT_STATUSES = new Set([
+  'completed',
+  'completed_with_concerns',
+  'needs_context',
+  'blocked',
+  'failed',
+  'cancelled',
+]);
+const SPAWN_ROLE_BY_ACTION = Object.freeze({
+  [ACTION.SPAWN_PLANNER]: 'planner',
+  [ACTION.SPAWN_PROPOSER]: 'proposer',
+  [ACTION.SPAWN_REVIEWER]: 'reviewer',
+  [ACTION.SPAWN_GENERATOR]: 'generator',
+  [ACTION.SPAWN_GENERATOR_FIX]: 'generator',
+  [ACTION.SPAWN_EVALUATOR]: 'evaluator',
+  [ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR]: 'evaluator',
+  [ACTION.SPAWN_JUDGE]: 'judge',
+});
 
 function mapCiStatus(checkRows) {
   if (!Array.isArray(checkRows) || checkRows.length === 0) return 'pending'; // CI 尚未挂上 → 视为 pending
@@ -112,23 +131,44 @@ function latestRow(logRows, predicate) {
  * 只取本 run 最新 spawn intent hop 对应容器（label cecelia.hop=<hop>）的 ExitCode；
  * 同时保留该 intent 的 action，避免 evaluator/reviewer 等基础设施退出被误判为 generator 代码失败；
  * fix 后新 intent hop 无对应已退容器 → {code:null}，旧 exit 不残留、不会反复命中 3d 白吃 fix round。
- * auth_failed 同作用域：仅当作用域容器存在时才采信 callback 文件的 auth 标记。
+ * auth_failed 同作用域：作用域容器存在时采信 callback 文件；否则回放同 hop/role
+ * 的 terminal harness_attempt（Attempt lifecycle 是远端和本地 transport 的 canonical 状态）。
  */
-function scopeLastAgentExit({ execCmd, exitedContainers, logRows, callbackResult }) {
+function scopeLastAgentExit({
+  execCmd,
+  exitedContainers,
+  logRows,
+  callbackResult,
+  attemptRows,
+}) {
   const lastSpawn = latestRow(logRows, (r) => typeof r.action === 'string' && r.action.startsWith('spawn:'));
   if (!lastSpawn) return { code: null, auth_failed: false };
 
   const scoped = exitedContainers.find(
     (c) => parseLabels(c.Labels)['cecelia.hop'] === String(lastSpawn.hop),
   );
-  if (!scoped) return { code: null, auth_failed: false };
+  if (scoped) {
+    const stateJson = execTolerant(execCmd, `docker inspect ${scoped.ID} --format "{{json .State}}"`);
+    const state = asJson(stateJson) ?? {};
+    const authFailed =
+      callbackResult != null &&
+      (callbackResult.ci_fail_type === 'auth_failed' || callbackResult.auth_failed === true);
+    return { code: state.ExitCode ?? null, auth_failed: authFailed, action: lastSpawn.action };
+  }
 
-  const stateJson = execTolerant(execCmd, `docker inspect ${scoped.ID} --format "{{json .State}}"`);
-  const state = asJson(stateJson) ?? {};
-  const authFailed =
-    callbackResult != null &&
-    (callbackResult.ci_fail_type === 'auth_failed' || callbackResult.auth_failed === true);
-  return { code: state.ExitCode ?? null, auth_failed: authFailed, action: lastSpawn.action };
+  const expectedRole = SPAWN_ROLE_BY_ACTION[lastSpawn.action];
+  const attempt = attemptRows.find((row) => (
+    String(row.hop) === String(lastSpawn.hop)
+    && row.role === expectedRole
+    && TERMINAL_ATTEMPT_STATUSES.has(row.status)
+  ));
+  if (!attempt) return { code: null, auth_failed: false };
+
+  return {
+    code: ['failed', 'cancelled'].includes(attempt.status) ? 1 : 0,
+    auth_failed: attempt.error_code === 'auth_failed',
+    action: lastSpawn.action,
+  };
 }
 
 /**
@@ -176,6 +216,17 @@ export async function collectGroundTruth(deps, opts) {
     [runId],
   );
   const evaluateResult = asJson(evaluatorAttemptRes.rows[0]?.result);
+  const attemptRes = await pool.query(
+    `SELECT id, run_id, hop, phase, role, provider, account_id, machine_id,
+            requested_machine_id, actual_machine_id, execution_transport,
+            remote_job_id, machine_attestation_status, lease_generation,
+            status, error_code, error_message, created_at, updated_at, completed_at
+       FROM harness_attempts
+      WHERE run_id = $1
+      ORDER BY hop DESC, created_at DESC, id DESC`,
+    [runId],
+  );
+  const attemptRows = attemptRes.rows;
 
   // 熔断状态（P0-3 通道②）：markAuthFailure 写 account_usage_cache（src/account-usage.js:194-202）。
   // derive 不读——熔断换号分路归 T3 dispatcher；这里只透传观测。
@@ -273,7 +324,13 @@ export async function collectGroundTruth(deps, opts) {
     `docker ps -a --filter "label=cecelia.run_id=${runId}" --filter "status=exited" --format "{{json .}}"`,
   );
   const exitedContainers = parseJsonLines(psExitedOut);
-  const lastAgentExit = scopeLastAgentExit({ execCmd, exitedContainers, logRows: decisionLog, callbackResult });
+  const lastAgentExit = scopeLastAgentExit({
+    execCmd,
+    exitedContainers,
+    logRows: decisionLog,
+    callbackResult,
+    attemptRows,
+  });
 
   // ---- 决策日志推导字段（verdict 权威 = 决策日志行，P0-2；initiative_runs 的 verdict 列只是展示缓存）----
   const generatorSpawned = decisionLog.some(
@@ -338,7 +395,11 @@ export async function collectGroundTruth(deps, opts) {
     prdExists,
     contract,
     pr,
-    inflight: { containers, host_pids: hostPids },
+    inflight: {
+      containers,
+      host_pids: hostPids,
+      attempts: attemptRows.filter((row) => INFLIGHT_ATTEMPT_STATUSES.has(row.status)),
+    },
     lastAgentExit,
     proposeBranchRn,
     proposeBranch,

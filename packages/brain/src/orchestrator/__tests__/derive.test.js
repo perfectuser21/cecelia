@@ -22,7 +22,7 @@ function baseObserved(overrides = {}) {
     prdExists: true,
     contract: { approved: true },
     pr: { url: 'https://github.com/x/y/pull/1', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-new' },
-    inflight: { containers: [], host_pids: [] },
+    inflight: { containers: [], host_pids: [], attempts: [] },
     lastAgentExit: { code: 0, auth_failed: false },
     proposeBranchRn: 0,
     ganLatestRoundVerdict: null,
@@ -66,16 +66,38 @@ describe('规则 0.5：在途观测（P0-1）', () => {
       run: { phase: 'generate' },
       pr: null,
       generatorSpawned: true,
-      inflight: { containers: ['abc123'], host_pids: [] },
+      inflight: { containers: ['abc123'], host_pids: [], attempts: [] },
     }));
     expect(r.action).toBe('wait:running');
     expect(r.phase).toBe('generate');
   });
 
   it('inflight 主机 pid 非空 → wait:running', () => {
-    const r = derive(baseObserved({ inflight: { containers: [], host_pids: [12345] } }));
+    const r = derive(baseObserved({ inflight: { containers: [], host_pids: [12345], attempts: [] } }));
     expect(r.action).toBe('wait:running');
   });
+
+  it.each(['starting', 'running'])(
+    'inflight remote Attempt status=%s → wait:running without a container or host pid',
+    (status) => {
+      const r = derive(baseObserved({
+        inflight: {
+          containers: [],
+          host_pids: [],
+          attempts: [{
+            id: '30000000-0000-4000-8000-000000000001',
+            status,
+            execution_transport: 'remote-bridge',
+          }],
+        },
+      }));
+      expect(r).toEqual({
+        phase: 'generate',
+        action: 'wait:running',
+        reason: 'agent_inflight',
+      });
+    },
+  );
 });
 
 describe('规则 0.6：MAX_HOPS 宽兜底（P2）', () => {

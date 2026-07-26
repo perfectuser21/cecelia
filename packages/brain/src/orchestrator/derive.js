@@ -8,7 +8,7 @@
  * observed schema（键必须存在，值可为 null）：
  *   run:{phase} / task:{status} / prdExists / contract:{approved}
  *   pr:{url,state,ci,merged,head_sha}|null
- *   inflight:{containers[],host_pids[]}          —— P0-1 在途观测
+ *   inflight:{containers[],host_pids[],attempts[]} —— P0-1 在途观测
  *   lastAgentExit:{code,auth_failed,action?}     —— P0-3 exit/auth 观测；action 标识退出 worker 的 intent
  *   proposeBranchRn（propose 分支现查的最大 rN，0=无）
  *   ganLatestRoundVerdict（最新 rN 的 reviewer verdict，null=无本轮 verdict）
@@ -349,8 +349,12 @@ export function derive(observed) {
     };
   }
 
-  // 0.5 在途观测（P0-1）：有在途容器/主机 pid → 只写心跳不派发，杜绝崩溃重拉双 spawn
-  if (inflight.containers.length > 0 || inflight.host_pids.length > 0) {
+  // 0.5 在途观测（P0-1）：有在途容器/主机 pid/Attempt → 只写心跳不派发，杜绝崩溃重拉双 spawn
+  if (
+    inflight.containers.length > 0
+    || inflight.host_pids.length > 0
+    || (inflight.attempts?.length ?? 0) > 0
+  ) {
     return { phase: run.phase, action: 'wait:running', reason: 'agent_inflight' };
   }
 
