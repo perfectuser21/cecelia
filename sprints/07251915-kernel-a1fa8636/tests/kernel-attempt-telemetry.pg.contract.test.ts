@@ -161,6 +161,86 @@ async function insertAttempt({
   );
 }
 
+async function insertExpiredOrphan({
+  runId,
+  hop,
+  status,
+}: {
+  runId: string;
+  hop: number;
+  status: 'starting' | 'running';
+}) {
+  const id = randomUUID();
+  await client.query(
+    `INSERT INTO harness_attempts (
+       id, run_id, hop, phase, role, provider, task_bundle, callback_secret_hash,
+       status, lease_owner, lease_expires_at, provider_session_id,
+       logical_cycle_id, attempt_kind, retry_of_attempt_id, restart_reason, workstream_key
+     ) VALUES (
+       $1,$2,$3,'generate','generator','codex','{}',$4,
+       $5,'old-owner',NOW()-INTERVAL '1 minute',$6,
+       'cycle-orphan','initial',NULL,NULL,'ws-orphan'
+     )`,
+    [id, runId, hop, `hash-${id}`, status, `session-${id}`],
+  );
+  return id;
+}
+
+async function assertStructuredOrphanFailure({
+  watchdog,
+  orphanId,
+  resumeValue,
+  failureCode,
+}: {
+  watchdog: any;
+  orphanId: string;
+  resumeValue: null | false;
+  failureCode: 'resume_returned_null' | 'resume_returned_false';
+}) {
+  const first = await watchdog.reconcileExpiredKernelAttempt({
+    db: client,
+    attemptId: orphanId,
+    leaseOwner: 'watchdog-owner',
+    resumeAttempt: async () => resumeValue,
+  });
+  expect(first).toMatchObject({
+    ok: false,
+    terminal: true,
+    failure_code: failureCode,
+  });
+
+  const terminal = await client.query(
+    `SELECT status, completed_at, error_code
+       FROM harness_attempts WHERE id=$1`,
+    [orphanId],
+  );
+  expect(terminal.rows[0].status).toBe('failed');
+  expect(terminal.rows[0].completed_at).not.toBeNull();
+  expect(terminal.rows[0].error_code).toBe(failureCode);
+
+  const second = await watchdog.reconcileExpiredKernelAttempt({
+    db: client,
+    attemptId: orphanId,
+    leaseOwner: 'watchdog-owner',
+    resumeAttempt: async () => resumeValue,
+  });
+  expect(second).toMatchObject({ ok: false, deduped: true });
+
+  const store = createAttemptStore(client);
+  const callbackReplay = await store.complete(orphanId, {
+    status: 'completed',
+    provider_metadata: { session_id: 'late-old-callback' },
+  }, { leaseOwner: 'old-owner' });
+  expect(callbackReplay).toEqual({ attempt: null, deduped: true });
+
+  const afterReplay = await client.query(
+    `SELECT status, completed_at, error_code
+       FROM harness_attempts WHERE id=$1`,
+    [orphanId],
+  );
+  expect(afterReplay.rows[0]).toEqual(terminal.rows[0]);
+}
+
 describe('kernel telemetry PostgreSQL safety contract', () => {
   it('显式 TEST_DATABASE_URL 指向 _test/_scratch，绝不 fallback 到生产库', () => {
     expect(() => assertSafeTestDatabaseUrl(TEST_DATABASE_URL)).not.toThrow();
@@ -285,7 +365,84 @@ describe.sequential.runIf(hasSafeTestDatabase)(
     ]);
   });
 
-  it('真调用 orphan 收口入口：新 owner fencing、多轮、重复 callback、null/false 只终结一次', async () => {
+  it('attempt-store 真写 starting/running/terminal 时间与六 role derived 来源', async () => {
+    await applyMigration361Twice();
+    if (!existsSync(MIGRATION_361_PATH)) return;
+
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await insertRun(runId, taskId, 'tenant-a');
+    const store = createAttemptStore(client);
+    const nativeRoles = ['planner', 'generator', 'reviewer', 'evaluator'];
+    const derivedRoles = ['judge', 'reporter'];
+    const roles = [...nativeRoles, ...derivedRoles];
+
+    for (const [index, role] of roles.entries()) {
+      const id = randomUUID();
+      const timeDerived = derivedRoles.includes(role);
+      await store.createAttempt({
+        id,
+        runId,
+        hop: index + 1,
+        phase: role,
+        role,
+        provider: 'codex',
+        bundle: { objective: `lifecycle-${role}` },
+        callbackSecretHash: `hash-${id}`,
+        logicalCycleId: `cycle-${role}`,
+        attemptKind: 'initial',
+        retryOfAttemptId: null,
+        restartReason: null,
+        workstreamKey: 'ws-time',
+        timeDerived,
+      });
+
+      const starting = await store.markStarting(id, {
+        leaseOwner: `owner-${role}`,
+        leaseSeconds: 90,
+      });
+      expect(starting).toMatchObject({ status: 'starting', time_derived: timeDerived });
+      expect(starting.started_at).not.toBeNull();
+
+      const running = await store.markRunning(id, {
+        leaseOwner: `owner-${role}`,
+        providerSessionId: `session-${role}`,
+        leaseSeconds: 90,
+      });
+      expect(running).toMatchObject({ status: 'running', time_derived: timeDerived });
+      expect(new Date(running.started_at).getTime()).toBe(
+        new Date(starting.started_at).getTime(),
+      );
+
+      const terminal = await store.complete(id, {
+        status: 'completed',
+        provider_metadata: { session_id: `session-${role}` },
+      }, { leaseOwner: `owner-${role}` });
+      expect(terminal.deduped).toBe(false);
+      expect(terminal.attempt).toMatchObject({
+        status: 'completed',
+        time_derived: timeDerived,
+      });
+      expect(terminal.attempt.completed_at).not.toBeNull();
+      expect(new Date(terminal.attempt.completed_at).getTime()).toBeGreaterThanOrEqual(
+        new Date(terminal.attempt.started_at).getTime(),
+      );
+    }
+
+    const roleSources = await client.query(
+      `SELECT role, time_derived
+         FROM harness_attempts
+        WHERE run_id=$1
+        ORDER BY role`,
+      [runId],
+    );
+    expect(roleSources.rows.filter((row) => nativeRoles.includes(row.role))
+      .every((row) => row.time_derived === false)).toBe(true);
+    expect(roleSources.rows.filter((row) => derivedRoles.includes(row.role))
+      .every((row) => row.time_derived === true)).toBe(true);
+  });
+
+  it('expired starting orphan 的 resumeAttempt null 独立结构化终结且幂等', async () => {
     await applyMigration361Twice();
     if (!existsSync(MIGRATION_361_PATH)) return;
     const watchdog = await import(WATCHDOG_MODULE);
@@ -294,78 +451,121 @@ describe.sequential.runIf(hasSafeTestDatabase)(
 
     const taskId = randomUUID();
     const runId = randomUUID();
-    const orphanId = randomUUID();
     await insertRun(runId, taskId, 'tenant-a');
-    await client.query(
-      `INSERT INTO harness_attempts (
-         id, run_id, hop, phase, role, provider, task_bundle, callback_secret_hash,
-         status, lease_owner, lease_expires_at, provider_session_id,
-         logical_cycle_id, attempt_kind, workstream_key
-       ) VALUES (
-         $1,$2,1,'generate','generator','codex','{}','hash',
-         'running','old-owner',NOW()-INTERVAL '1 minute','session-orphan',
-         'cycle-a','initial','ws1'
-       )`,
-      [orphanId, runId],
-    );
+    const orphanId = await insertExpiredOrphan({ runId, hop: 1, status: 'starting' });
+    await assertStructuredOrphanFailure({
+      watchdog,
+      orphanId,
+      resumeValue: null,
+      failureCode: 'resume_returned_null',
+    });
+  });
 
-    const resumeAttempt = async () => null;
-    await watchdog.reconcileExpiredKernelAttempt({
+  it('expired running orphan 的 resumeAttempt false 独立结构化终结且幂等', async () => {
+    await applyMigration361Twice();
+    if (!existsSync(MIGRATION_361_PATH)) return;
+    const watchdog = await import(WATCHDOG_MODULE);
+    expect(typeof watchdog.reconcileExpiredKernelAttempt).toBe('function');
+    if (typeof watchdog.reconcileExpiredKernelAttempt !== 'function') return;
+
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await insertRun(runId, taskId, 'tenant-a');
+    const orphanId = await insertExpiredOrphan({ runId, hop: 1, status: 'running' });
+    await assertStructuredOrphanFailure({
+      watchdog,
+      orphanId,
+      resumeValue: false,
+      failureCode: 'resume_returned_false',
+    });
+  });
+
+  it('expired running orphan 成功 resume 创建合法 child lineage', async () => {
+    await applyMigration361Twice();
+    if (!existsSync(MIGRATION_361_PATH)) return;
+    const watchdog = await import(WATCHDOG_MODULE);
+    expect(typeof watchdog.reconcileExpiredKernelAttempt).toBe('function');
+    if (typeof watchdog.reconcileExpiredKernelAttempt !== 'function') return;
+
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await insertRun(runId, taskId, 'tenant-a');
+    const orphanId = await insertExpiredOrphan({ runId, hop: 1, status: 'running' });
+    const outcome = await watchdog.reconcileExpiredKernelAttempt({
       db: client,
       attemptId: orphanId,
       leaseOwner: 'watchdog-owner',
-      resumeAttempt,
+      resumeAttempt: async () => ({
+        ok: true,
+        provider_session_id: 'session-resumed',
+      }),
     });
-    await watchdog.reconcileExpiredKernelAttempt({
-      db: client,
-      attemptId: orphanId,
-      leaseOwner: 'watchdog-owner',
-      resumeAttempt: async () => false,
-    });
+    expect(outcome).toMatchObject({ ok: true, resumed: true });
 
-    const afterTwoScans = await client.query(
-      `SELECT id, status, lease_owner, completed_at, retry_of_attempt_id, attempt_kind
-       FROM harness_attempts WHERE id=$1 OR retry_of_attempt_id=$1 ORDER BY created_at`,
+    const child = await client.query(
+      `SELECT a.run_id, r.current_task_id AS task_id, a.logical_cycle_id,
+              a.workstream_key, a.attempt_kind, a.retry_of_attempt_id,
+              a.restart_reason
+         FROM harness_attempts a
+         JOIN initiative_runs r ON r.id=a.run_id
+        WHERE a.retry_of_attempt_id=$1`,
       [orphanId],
     );
-    expect(afterTwoScans.rows.filter((row) => row.completed_at !== null)).toHaveLength(1);
-    expect(afterTwoScans.rows.filter((row) =>
-      ['resume', 'recovery'].includes(row.attempt_kind))).toHaveLength(0);
+    expect(child.rows).toHaveLength(1);
+    expect(child.rows[0]).toEqual({
+      run_id: runId,
+      task_id: taskId,
+      logical_cycle_id: 'cycle-orphan',
+      workstream_key: 'ws-orphan',
+      attempt_kind: 'resume',
+      retry_of_attempt_id: orphanId,
+      restart_reason: 'lease_expired',
+    });
+  });
 
-    const store = createAttemptStore(client);
-    const repeated = await store.complete(orphanId, {
-      status: 'completed',
-      provider_metadata: { session_id: 'late-old-callback' },
-    }, { leaseOwner: 'old-owner' });
-    expect(repeated).toEqual({ attempt: null, deduped: true });
+  it('live new-owner initial attempt 无父链且绝不被 orphan 收口', async () => {
+    await applyMigration361Twice();
+    if (!existsSync(MIGRATION_361_PATH)) return;
+    const watchdog = await import(WATCHDOG_MODULE);
+    expect(typeof watchdog.reconcileExpiredKernelAttempt).toBe('function');
+    if (typeof watchdog.reconcileExpiredKernelAttempt !== 'function') return;
 
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await insertRun(runId, taskId, 'tenant-a');
     const liveAttemptId = randomUUID();
     await client.query(
       `INSERT INTO harness_attempts (
          id, run_id, hop, phase, role, provider, task_bundle, callback_secret_hash,
          status, lease_owner, lease_expires_at, provider_session_id,
-         logical_cycle_id, attempt_kind, workstream_key
+         logical_cycle_id, attempt_kind, retry_of_attempt_id, restart_reason, workstream_key
        ) VALUES (
-         $1,$2,2,'generate','generator','codex','{}','hash-live',
+         $1,$2,1,'generate','generator','codex','{}','hash-live',
          'running','new-owner',NOW()+INTERVAL '5 minutes','session-new-owner',
-         'cycle-a','recovery','ws1'
+         'cycle-live','initial',NULL,NULL,'ws-live'
        )`,
       [liveAttemptId, runId],
     );
-    await watchdog.reconcileExpiredKernelAttempt({
+    const outcome = await watchdog.reconcileExpiredKernelAttempt({
       db: client,
       attemptId: liveAttemptId,
       leaseOwner: 'watchdog-owner',
       resumeAttempt: async () => false,
     });
+    expect(outcome).toMatchObject({ ok: false, deduped: true });
     const live = await client.query(
-      'SELECT status, lease_owner, completed_at FROM harness_attempts WHERE id=$1',
+      `SELECT status, lease_owner, completed_at, attempt_kind,
+              retry_of_attempt_id, restart_reason
+         FROM harness_attempts WHERE id=$1`,
       [liveAttemptId],
     );
     expect(live.rows[0]).toEqual({
       status: 'running',
       lease_owner: 'new-owner',
       completed_at: null,
+      attempt_kind: 'initial',
+      retry_of_attempt_id: null,
+      restart_reason: null,
     });
   });
 
@@ -459,6 +659,21 @@ describe.sequential.runIf(hasSafeTestDatabase)(
       (sum: number, metric: any) => sum + metric.wall_time_ms,
       0,
     )).toBe(telemetry.totals.wall_time_ms);
+    expect(telemetry.role_metrics.reduce(
+      (sum: number, metric: any) => sum + metric.retry_count,
+      0,
+    )).toBe(telemetry.totals.retry_count);
+    expect(telemetry.role_metrics.reduce(
+      (sum: number, metric: any) => sum + metric.recovery_count,
+      0,
+    )).toBe(telemetry.totals.recovery_count);
+    expect(telemetry.role_metrics.reduce(
+      (sum: number, metric: any) => sum + metric.invalid_count,
+      0,
+    )).toBe(telemetry.totals.invalid_count);
+    expect(telemetry.attempts.filter(
+      (attempt: any) => ['planner', 'generator', 'reviewer', 'evaluator'].includes(attempt.role),
+    ).every((attempt: any) => attempt.derived === false)).toBe(true);
     expect(telemetry.attempts.filter(
       (attempt: any) => ['judge', 'reporter'].includes(attempt.role),
     ).every((attempt: any) => attempt.derived === true)).toBe(true);
