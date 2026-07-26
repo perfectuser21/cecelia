@@ -40,6 +40,9 @@ PR #4342 与后续 Harness PR 能进入真实 Evaluator/Judge，而不放宽
   H2+ `E2E 验收` 标题，多个 E2E 段 fail-closed；段落沿用 Skill 的下一个
   H2 边界（内部 H3 不截断），多个 bash fence 按文档顺序拼接，保持
   evaluator v1.22 兼容。
+- `scripts/extract-contract-e2e.cjs` 是 parser 的唯一自包含实现；
+  `test-contract-paths.cjs` 只导入/转出。Skill 以逐字节锁定的 quoted
+  here-doc 携带同一 runtime，确保第三方仓库无需 Cecelia `scripts/`。
 
 `check-test-coverage.cjs` 和过渡测试登记器必须复用该解析器，避免双口径。
 

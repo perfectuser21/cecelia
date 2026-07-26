@@ -115,15 +115,47 @@ describe('harness-evaluator Step B-1', () => {
   it('uses the shared CLI in the non-Windows branch and retires its bash AWK', () => {
     const skill = readFileSync(SKILL, 'utf8');
     const nonWindows = skill.match(
-      /else\n  # 与 evaluator[\s\S]*?  chmod \+x \/tmp\/e2e-verify\.sh/,
+      /else\n  # 自包含 runtime[\s\S]*?  chmod \+x \/tmp\/e2e-verify\.sh/,
     )?.[0];
 
     expect(nonWindows).toBeDefined();
     expect(nonWindows).toContain(
-      'node "$WORKSPACE/scripts/extract-contract-e2e.cjs" "$CONTRACT" > /tmp/e2e-verify.sh',
+      'node "/tmp/cecelia-extract-contract-e2e.cjs" "$CONTRACT" > /tmp/e2e-verify.sh',
     );
     expect(nonWindows).not.toMatch(/awk [^\n]*```bash/);
-    expect(skill).toContain('version: 1.32.0');
-    expect(skill).toContain('- 1.32.0:');
+    expect(skill).toContain('version: 1.32.1');
+    expect(skill).toContain('- 1.32.1:');
+  });
+
+  it('bundles the canonical extractor byte-for-byte for a third-party workspace', () => {
+    const skill = readFileSync(SKILL, 'utf8');
+    const canonical = readFileSync(CLI, 'utf8');
+    const payload = skill.match(
+      /<<'CECELIA_E2E_EXTRACTOR'\n([\s\S]*?)(?=^CECELIA_E2E_EXTRACTOR$)/m,
+    )?.[1];
+
+    expect(payload).toBeDefined();
+    expect(payload).toBe(canonical);
+    expect(skill).not.toContain(
+      '$WORKSPACE/scripts/extract-contract-e2e.cjs',
+    );
+
+    const thirdParty = mkdtempSync(path.join(tmpdir(), 'third-party-evaluator-'));
+    fixtures.push(thirdParty);
+    const embeddedCli = path.join(thirdParty, 'cecelia-extract-contract-e2e.cjs');
+    const contract = path.join(thirdParty, 'contract-draft.md');
+    writeFileSync(embeddedCli, payload!);
+    writeFileSync(
+      contract,
+      '## E2E 验收\n```bash\necho third-party\n```\n',
+    );
+
+    const result = spawnSync(process.execPath, [embeddedCli, contract], {
+      cwd: thirdParty,
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toBe('echo third-party\n');
   });
 });
