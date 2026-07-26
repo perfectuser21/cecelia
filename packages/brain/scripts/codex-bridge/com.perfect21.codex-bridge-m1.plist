@@ -18,9 +18,17 @@
         <key>CODEX_BIN</key>
         <string>/opt/homebrew/bin/codex</string>
         <key>BRIDGE_HOST</key>
-        <string>100.103.88.66</string>
+        <string>100.88.166.55</string>
         <key>BRIDGE_ACCOUNTS</key>
         <string>team5</string>
+        <key>CODEX_ACCOUNT_ALLOWLIST</key>
+        <string>team5</string>
+        <key>KERNEL_MACHINE_ID</key>
+        <string>xian-mac-m1</string>
+        <key>KERNEL_BRIDGE_TOKEN_FILE</key>
+        <string>/Users/xx-macmini/.config/cecelia/kernel-fleet-bridge.token</string>
+        <key>KERNEL_BRIDGE_STATE_DIR</key>
+        <string>/Users/xx-macmini/.config/cecelia/kernel-fleet-bridge-state</string>
         <key>WORK_DIR</key>
         <string>/Users/xx-macmini/repos/cecelia</string>
     </dict>
