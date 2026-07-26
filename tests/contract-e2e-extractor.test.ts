@@ -5,8 +5,9 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { REPO_ROOT } from './helpers/repo-root.js';
 
-const ROOT = path.resolve('.');
+const ROOT = REPO_ROOT;
 const CLI = path.join(ROOT, 'scripts/extract-contract-e2e.cjs');
 const SKILL = path.join(
   ROOT,

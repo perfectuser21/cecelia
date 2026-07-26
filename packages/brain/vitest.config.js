@@ -1,5 +1,10 @@
 import { defineConfig } from 'vitest/config';
 
+export const POSTGRES_INTEGRATION_TESTS = [
+  'src/__tests__/migration-333.test.js',
+  '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
+];
+
 export default defineConfig({
   test: {
     globals: true,
@@ -175,6 +180,8 @@ export default defineConfig({
       // Pre-existing failure (PR #4109): 读取 sprints/07191312-relay-57e25e92/e2e-verify.sh，
       // 该文件已 rename 到 scripts/smoke/e2e/relay-57e25e92.sh，sprint 目录未提交 repo
       '../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts',
+      // 真 PostgreSQL 回归：brain-unit 无 DB；brain-integration 通过专用 config 显式运行
+      ...POSTGRES_INTEGRATION_TESTS,
     ],
     coverage: {
       provider: 'v8',
