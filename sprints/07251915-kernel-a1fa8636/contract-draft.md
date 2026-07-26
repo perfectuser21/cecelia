@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 5)
+# Sprint Contract Draft (Round 6)
 
 contract-gate: active
 覆盖父路 Kernel telemetry 账本 第 1-5 步
@@ -11,6 +11,7 @@ contract-gate: active
 - initiative_id: unavailable in proposer inputs，本轮 task-plan.json 以 `pending` 占位，待上游注入后可无语义冲突替换
 - red-evidence: 两份 sprint 契约测试必须从仓库根显式执行；Red 是缺 migration/query/orphan 收口能力导致的 `expect` 断言失败，不接受连接生产库、测试 runner 启动失败或 import collection error 伪装 Red
 - database-safety: 只允许显式 `TEST_DATABASE_URL` 且数据库名以 `_test|_scratch` 结尾；禁止 `DB_URL` / `DATABASE_URL` / `postgresql://localhost/cecelia` fallback
+- round-6-delta: 仅闭合 reviewer r5 指定的四点——orphan `null`/`false`/成功 resume/live-owner 独立 fixture、attempt-store 三态时间写路径、分类分组精确求和、六 role derived 精确真假；r5 其余合同边界不扩张
 
 ## Response Schema（推导来源: [api_registry推导/PRD字面]）
 
@@ -113,7 +114,8 @@ contract-gate: active
 ### 六类 role 与 derived
 
 - PRD 要求的计时 role 全集固定为 `planner/generator/reviewer/evaluator/judge/reporter`；fixture 六类必须全部出现，禁止 `all([])` 或空 `role_metrics` 假绿。
-- `judge`、`reporter` fixture 明确 `time_derived=true`，API 对应 attempt 必须 `derived=true`；其余 role fixture 为原生时间，`derived=false`。
+- `planner`、`generator`、`reviewer`、`evaluator` 必须逐 role 明确 `time_derived=false`，API 对应 attempt 必须 `derived=false`；`judge`、`reporter` fixture 明确 `time_derived=true`，API 对应 attempt 必须 `derived=true`。禁止只断言 derived=true 的两类而漏验四个原生 role。
+- 另设真实 `attempt-store` 生命周期 fixture：六 role 都必须经 `createAttempt → markStarting → markRunning → complete`，逐状态读取真实 PG；`starting` 即写入非空 `started_at`，`running` 保持同一 `started_at`，终态写入非空且不早于 `started_at` 的 `completed_at`。25-attempt 聚合 fixture 的直接 INSERT 只用于冻结 exact 算术，不能替代该写路径 oracle。
 - `role_metrics` 以 `(role, workstream_key)` 分组；每个组分别满足 wall 等式。所有组的 active/wait/wall/retry/recovery/invalid 之和必须逐字段等于 `totals`。
 - 固定 4-run fixture 共 25 个终态 attempt，每个 attempt 的 `created_at=00:00:00.000Z`、`started_at=00:00:00.500Z`、`completed_at=00:00:01.500Z`，因此每条为 active=1000、wait=500、wall=1500，totals 必须精确为 `25000/12500/37500`，禁止“number 即可”或任意填 0。
 
@@ -172,7 +174,7 @@ N/A — 本 sprint 为 Brain 内部 attempt/telemetry 热修复，不新增对�
 | 风险 | 机械缓解 | 验收证据 |
 |---|---|---|
 | 生产库被测试误触 | `TEST_DATABASE_URL` 必填且库名仅 `_test/_scratch`；连接前 fail-closed；无任何生产默认值 | PG contract 的安全测试用 `cecelia` / `cecelia_dev` 负例，测试查询 `current_database()` |
-| orphan 重复收口或旧 owner 覆盖新 owner | lease owner fencing + 终态单写 + 同一 fixture 连续扫描两次 + 旧 callback 重放 | 真调用 `reconcileExpiredKernelAttempt` 后查真实 PG，终结行严格 1 条，live 新 owner 保持 running |
+| orphan 出口互相遮蔽或旧 owner 覆盖新 owner | `null`、`false`、成功 resume、live-owner 各自独立 task/run/orphan fixture；每个失败出口单独二扫 + 旧 callback 重放 | 真调用 `reconcileExpiredKernelAttempt` 后查真实 PG：失败码分别精确为 `resume_returned_null`/`resume_returned_false`；成功 child lineage 精确；live initial 保持 running |
 | 跨租户聚合 | 查询入口强制 `tenant_id + task_id`，双租户同 schema 交叉查询 | tenant-a 无法读取 tenant-b task/attempt，返回 `telemetry_not_found` |
 | judge/reporter derived 误分类 | 时间来源与公式冻结；六 role 非空全集；judge/reporter 必为 `derived=true` | 固定 25-attempt fixture 验 exact totals + role 总和 + derived |
 | agent 自然语言污染分类或泄密 | 仅使用 `attempt_kind` / `result.evaluation.valid`；响应字段白名单 | 相反文本噪声不改变计数，secret/token/raw content 不出现在 JSON |
@@ -236,10 +238,10 @@ npx vitest run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.c
   -t '时间公式冻结|六类计时 role' --reporter=verbose
 TEST_DATABASE_URL="$TEST_DATABASE_URL" npx vitest run \
   sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts \
-  -t '4-run fixture 锁定时间公式' --reporter=verbose
+  -t 'attempt-store 真写 starting/running/terminal 时间|4-run fixture 锁定时间公式' --reporter=verbose
 ```
 
-**硬阈值**: 六 role 全部非空；25 条固定 fixture exact totals = active `25000` / wait `12500` / wall `37500`；所有 role/workstream sum 与 totals 对齐；每组 wall=active+wait；judge/reporter `derived=true`，负时间 fixture 三值全为 0。
+**硬阈值**: 六 role 真实经 attempt-store `starting→running→completed`；starting 写 `started_at`、running 不改该值、terminal 写 `completed_at`；planner/generator/reviewer/evaluator `derived=false`，judge/reporter `derived=true`。另以 25 条固定 fixture 冻结 exact totals = active `25000` / wait `12500` / wall `37500`；所有 role/workstream 的 active/wait/wall/retry/recovery/invalid 六字段分别求和精确等于 totals；每组 wall=active+wait；负时间 fixture 三值全为 0。
 
 ---
 
@@ -252,10 +254,11 @@ TEST_DATABASE_URL="$TEST_DATABASE_URL" npx vitest run \
 ```bash
 TEST_DATABASE_URL="$TEST_DATABASE_URL" npx vitest run \
   sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts \
-  -t '真调用 orphan 收口入口' --reporter=verbose
+  -t 'expired starting orphan 的 resumeAttempt null|expired running orphan 的 resumeAttempt false|expired running orphan 成功 resume|live new-owner initial attempt' \
+  --reporter=verbose
 ```
 
-**硬阈值**: 测试显式真写 expired running fixture 并调用生产收口入口；`null` 与 `false` 回执均结构化失败；同 fixture 连扫两次 + 旧 callback 重放后只有一次终结；已有 live 新 owner 时旧 owner fenced，状态仍 running；产生新 attempt 时 `retry_of_attempt_id` 必须严格等于 orphan id。
+**硬阈值**: 四个 fixture 互不共享 task/run/orphan。expired `starting→null` 与 expired `running→false` 各自结构化终结为 `failed`，`completed_at` 非空，failure code 分别精确为 `resume_returned_null` / `resume_returned_false`，各自第二轮 `{deduped:true}` 且旧 callback 同样 dedupe、不得篡改终态。成功 resume 必须新建且仅新建一个 `attempt_kind='resume'` child，`retry_of_attempt_id` 精确等于原 orphan，`run_id/logical_cycle_id/workstream_key` 与原 orphan 完全相同，`restart_reason='lease_expired'`。live new-owner fixture 必须是合法无父链 `attempt_kind='initial'`，调用后仍为 `running/new-owner/completed_at=null`。
 
 ---
 
@@ -266,7 +269,8 @@ TEST_DATABASE_URL="$TEST_DATABASE_URL" npx vitest run \
 
 **验证命令**:
 ```bash
-RESP=$(curl -sf "http://localhost:5221/api/brain/harness/tasks/${TEST_TASK_ID}/attempt-telemetry?include_attempts=true")
+RESP=$(curl -sf -H "x-tenant-id: ${TEST_TENANT_ID}" \
+  "http://localhost:5221/api/brain/harness/tasks/${TEST_TASK_ID}/attempt-telemetry?include_attempts=true")
 echo "$RESP" | jq -e '
   .task_id == "'"${TEST_TASK_ID}"'"
   and (.run_count | type == "number")
@@ -308,6 +312,15 @@ echo "$RESP" | jq -e 'keys == ["attempts","logical_cycle_count","raw_counts","ro
 echo "$RESP" | jq -e '
   . as $root
   | ([.role_metrics[].active_time_ms] | add) == $root.totals.active_time_ms
+  and ([.role_metrics[].wall_time_ms] | add) == $root.totals.wall_time_ms
+  and ([.role_metrics[].wait_time_ms] | add) == $root.totals.wait_time_ms
+  and ([.role_metrics[].retry_count] | add) == $root.totals.retry_count
+  and ([.role_metrics[].recovery_count] | add) == $root.totals.recovery_count
+  and ([.role_metrics[].invalid_count] | add) == $root.totals.invalid_count
+  and ([.attempts[] | select(.role=="planner" or .role=="generator" or .role=="reviewer" or .role=="evaluator")]
+       | length > 0 and all(.[]; .derived == false))
+  and ([.attempts[] | select(.role=="judge" or .role=="reporter")]
+       | length > 0 and all(.[]; .derived == true))
 ' >/dev/null
 echo "$RESP" | jq -e 'has("attempt_count") | not' >/dev/null
 echo "$RESP" | jq -e 'has("cycle_id") | not' >/dev/null
@@ -324,7 +337,8 @@ echo "$RESP" | jq -e 'has("cycle_id") | not' >/dev/null
 
 **验证命令**:
 ```bash
-RESP=$(curl -sf "http://localhost:5221/api/brain/harness/tasks/${FIXTURE_TASK_ID}/attempt-telemetry?include_attempts=true")
+RESP=$(curl -sf -H "x-tenant-id: ${TEST_TENANT_ID}" \
+  "http://localhost:5221/api/brain/harness/tasks/${FIXTURE_TASK_ID}/attempt-telemetry?include_attempts=true")
 echo "$RESP" | jq -e '
   .run_count == 4
   and .logical_cycle_count == 2
@@ -338,8 +352,13 @@ echo "$RESP" | jq -e '
   and .totals.retry_count == 2
   and .totals.recovery_count == 1
   and .totals.invalid_count == 1
+  and ([.role_metrics[].retry_count] | add) == .totals.retry_count
+  and ([.role_metrics[].recovery_count] | add) == .totals.recovery_count
+  and ([.role_metrics[].invalid_count] | add) == .totals.invalid_count
   and ([.role_metrics[].role] | unique
        | sort == ["evaluator","generator","judge","planner","reporter","reviewer"])
+  and ([.attempts[] | select(.role=="planner" or .role=="generator" or .role=="reviewer" or .role=="evaluator")]
+       | length > 0 and all(.[]; .derived == false))
   and ([.attempts[] | select(.role=="judge" or .role=="reporter")]
        | length > 0 and all(.[]; .derived == true))
 ' >/dev/null
@@ -376,7 +395,7 @@ CONTRACT_BASE_SHA="${CONTRACT_BASE_SHA:?}" npx vitest run \
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | 时间公式 + Kernel/合同冻结边界 | `sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts` | `GET /tasks/:task_id/attempt-telemetry 已注册到真实 harness router`、`GET telemetry 缺 x-tenant-id 时返回 400 + error string 而非通用 404`、`时间公式冻结为 wall = active + wait`、`Kernel action 路由元数据与 telemetry 改动前完全等价`、`合同冻结、Kernel 决策与 callback 路径既有回归继续通过`、`scope guard 禁止触碰 Commander/Memory/Directive/Actor Inbox/唤醒/第二流程账本`、`六类计时 role 常量冻结且 judge/reporter 必须有 derived oracle` | 当前缺 `attempt-telemetry.js`，对应 it() 以 `expect.fail` 产生断言 Red；既有冻结回归仍能独立启动，不接受 collection error |
-| 真 PG migration + lineage + orphan + 聚合/租户 | `sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts` | `真实隔离 PG 执行 additive migration 两次且不改写 357 既有列`、`attempt-store 真写 lineage，新 attempt 严格绑定 retry_of_attempt_id`、`真调用 orphan 收口入口：新 owner fencing、多轮、重复 callback、null/false 只终结一次`、`4-run fixture 锁定时间公式、六 role、derived、结构化分类与 totals 对齐`、`双租户真实 PG fixture 不可交叉读取，文本噪声不改变 retry/recovery/invalid 分类` | 当前缺 migration 361/query module/生产收口 export；在显式 `_test` DB 的唯一隔离 schema 内执行，Red 为 expect 断言失败并在 afterEach DROP SCHEMA 清理 |
+| 真 PG migration + lineage + orphan + 聚合/租户 | `sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts` | `真实隔离 PG 执行 additive migration 两次且不改写 357 既有列`、`attempt-store 真写 lineage，新 attempt 严格绑定 retry_of_attempt_id`、`attempt-store 真写 starting/running/terminal 时间与六 role derived 来源`、`expired starting orphan 的 resumeAttempt null 独立结构化终结且幂等`、`expired running orphan 的 resumeAttempt false 独立结构化终结且幂等`、`expired running orphan 成功 resume 创建合法 child lineage`、`live new-owner initial attempt 无父链且绝不被 orphan 收口`、`4-run fixture 锁定时间公式、六 role、derived、结构化分类与 totals 对齐`、`双租户真实 PG fixture 不可交叉读取，文本噪声不改变 retry/recovery/invalid 分类` | 当前缺 migration 361/query module/生产收口 export；在显式 `_test` DB 的唯一隔离 schema 内执行，Red 为 expect 断言失败并在 afterEach DROP SCHEMA 清理 |
 
 ## E2E 验收
 

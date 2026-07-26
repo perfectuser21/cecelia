@@ -44,15 +44,39 @@ journey_type: autonomous
   验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'attempt-store 真写 lineage' --reporter=verbose
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] 真调用 orphan 收口入口覆盖 new owner fencing、多轮、重复 callback、null/false
-  动作: 真写 expired running orphan，调用生产 `reconcileExpiredKernelAttempt` 两轮，分别让 provider resume 回 `null`/`false`，再重放旧 owner callback
-  预期观察: orphan 只结构化终结一次；无重复 recovery；旧 callback deduped；另一个 live 新 owner attempt 保持 running
-  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '真调用 orphan 收口入口' --reporter=verbose
+- [ ] [BEHAVIOR] [L2] attempt-store 真写 starting/running/terminal 时间与六 role derived 来源
+  动作: 六个 role 分别通过真实 `createAttemptStore(client)` 执行 create→markStarting→markRunning→complete
+  预期观察: starting 写 started_at，running 保持同一 started_at，terminal 写 completed_at；planner/generator/reviewer/evaluator 为 derived=false，judge/reporter 为 derived=true
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'attempt-store 真写 starting/running/terminal 时间' --reporter=verbose
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] expired starting orphan 的 resumeAttempt null 独立结构化终结且幂等
+  动作: 独立真写一个 expired starting orphan，生产收口入口收到 null 后再扫第二轮并重放旧 callback
+  预期观察: status=failed、completed_at 非空、error_code=resume_returned_null；第二轮与 callback 均 deduped
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'expired starting orphan 的 resumeAttempt null' --reporter=verbose
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] expired running orphan 的 resumeAttempt false 独立结构化终结且幂等
+  动作: 另一个独立 task/run 中真写 expired running orphan，生产收口入口收到 false 后再扫第二轮并重放旧 callback
+  预期观察: status=failed、completed_at 非空、error_code=resume_returned_false；第二轮与 callback 均 deduped
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'expired running orphan 的 resumeAttempt false' --reporter=verbose
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] expired running orphan 成功 resume 创建合法 child lineage
+  动作: 独立真写 expired running orphan，让生产收口入口收到结构化成功 resume 回执
+  预期观察: 仅一个新 resume attempt；retry_of_attempt_id 精确等于原 orphan，task/run、logical cycle、workstream 保持一致
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'expired running orphan 成功 resume' --reporter=verbose
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] live new-owner initial attempt 无父链且绝不被 orphan 收口
+  动作: 独立创建 lease 未过期且 owner 已更新的 `attempt_kind=initial` attempt，不伪造无父 recovery，再调用收口入口
+  预期观察: status/lease_owner/completed_at 保持 running/new-owner/null，retry_of_attempt_id 与 restart_reason 仍为 null
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'live new-owner initial attempt' --reporter=verbose
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] 4-run fixture 锁定时间公式、六 role、derived 与 exact totals
   动作: 在真实 PG 写 4 run / 25 attempt / 2 logical cycle fixture 并调用生产 query
-  预期观察: 六 role 全集；judge/reporter derived；每条 active=1000/wait=500/wall=1500；totals=25000/12500/37500，role/workstream sum 对齐
+  预期观察: 六 role 全集；四个原生 role derived=false、judge/reporter derived=true；每条 active=1000/wait=500/wall=1500；role/workstream 的六个 totals 字段分别精确求和
   验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '4-run fixture 锁定时间公式' --reporter=verbose
   期望: exit 0；禁止任意填 0、空数组 `all()` 或只验 number 类型
 
@@ -97,27 +121,27 @@ journey_type: autonomous
 - [ ] [BEHAVIOR] [L2] INV-1 长等 attempt heartbeat 新鲜时不能被收口
   动作: 创建 lease 尚未过期、owner 已更新的 running attempt 并调用收口入口
   预期观察: status/lease_owner/completed_at 保持 `running/new-owner/null`
-  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '真调用 orphan 收口入口' --reporter=verbose
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'live new-owner initial attempt' --reporter=verbose
 
 - [ ] [BEHAVIOR] [L2] INV-2 watchdog_overdue 恢复 lineage 可追溯
   动作: 真写 retry/recovery attempt
   预期观察: 非 initial attempt 的 `retry_of_attempt_id` 指回同 task 旧 attempt，restart_reason 为结构化枚举
-  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'attempt-store 真写 lineage|真调用 orphan 收口入口' --reporter=verbose
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'attempt-store 真写 lineage|expired running orphan 成功 resume' --reporter=verbose
 
 - [ ] [BEHAVIOR] [L2] INV-3 lease/heartbeat/orphan 时间关系有明确边界
   动作: 同时测试 expired 与 live lease
   预期观察: 只收口 `lease_expires_at < NOW()`，等于或晚于 NOW 的 attempt 不收口
-  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '真调用 orphan 收口入口' --reporter=verbose
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'expired starting orphan|expired running orphan|live new-owner initial attempt' --reporter=verbose
 
 - [ ] [BEHAVIOR] [L2] INV-4 多轮扫描不重置状态
-  动作: 对同一个 orphan 连续调用两次生产收口入口
-  预期观察: 终结严格一次，第二轮 no-op
-  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '真调用 orphan 收口入口' --reporter=verbose
+  动作: 对 null 与 false 两个独立 orphan 各连续调用两次生产收口入口
+  预期观察: 各自终结严格一次，各自第二轮 no-op
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '独立结构化终结且幂等' --reporter=verbose
 
 - [ ] [BEHAVIOR] [L2] INV-5 `null`/`false` 失败分支不被 try/catch 吞掉
-  动作: provider resume 分别返回 null 与 false
-  预期观察: attempt 结构化终结且重复 callback deduped，不留下 running
-  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '真调用 orphan 收口入口' --reporter=verbose
+  动作: 两个独立 provider resume 分别返回 null 与 false
+  预期观察: 两个 attempt 分别以精确 failure code 结构化终结且重复 callback deduped，不留下 running
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t 'resumeAttempt null|resumeAttempt false' --reporter=verbose
 
 - [ ] [BEHAVIOR] [L2] INV-6 真实 PostgreSQL 接缝 Red→Green
   动作: 在隔离 schema 真跑 migration/store/query/orphan 全套
@@ -127,7 +151,7 @@ journey_type: autonomous
 - [ ] [BEHAVIOR] [L2] INV-7 时间窗口与 lease 不依赖自然语言或魔法兜底
   动作: 跑确定公式、负区间和 live/expired lease fixture
   预期观察: 时间 exact oracle 与 lease 边界同时通过
-  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '时间公式冻结|真调用 orphan 收口入口' --reporter=verbose
+  验证命令: Test: manual:bash node ./node_modules/vitest/vitest.mjs run sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.contract.test.ts sprints/07251915-kernel-a1fa8636/tests/kernel-attempt-telemetry.pg.contract.test.ts -t '时间公式冻结|attempt-store 真写 starting/running/terminal 时间|expired starting orphan|expired running orphan|live new-owner initial attempt' --reporter=verbose
 
 - [ ] [BEHAVIOR] [L2] INV-8 tenant_id + task_id 双作用域隔离
   动作: 用 tenant-a 交叉查询 tenant-b task
