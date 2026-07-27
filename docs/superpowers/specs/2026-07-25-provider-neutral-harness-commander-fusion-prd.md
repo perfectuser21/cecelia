@@ -28,18 +28,24 @@
 
 ### 0.1 与三项在途 Kernel hotfix 的融合边界
 
-本 PRD 是 Commander/Fleet 的上位架构，不取消、不吞并以下三项在途任务。三者组成
-**Phase 0 稳定底座**，必须以三个独立 PR 交付、复审和回滚：
+本 PRD 是 Commander/Fleet 的上位架构，不取消以下三项合同能力。三者组成
+**Phase 0 稳定底座**；实现载体可以被后续主线 PR supersede，但合同语义必须继续验收：
 
 | Phase 0 | Brain Task | 职责 | 本 PRD 消费点 |
 |---|---|---|---|
-| 0A Durable Resume | `f09c9e31-ed78-4af4-a1b6-88241bc486c5` | approved contract、PRD/PR 里程碑、Attempt 和失败签名跨 Run 恢复 | FR-1、FR-11 |
+| 0A Durable Resume | `f09c9e31-ed78-4af4-a1b6-88241bc486c5`（原载体 PR #4336，已 superseded） | approved contract、PRD/PR 里程碑、Attempt 和失败签名跨 Run 恢复 | FR-1、FR-11、Phase 4D |
 | 0B Capability Gate | `ed561be4-940a-4c26-844c-e3c5a5a3f7c8` | `ExecutionTarget`、能力快照、账号/机器健康、确定性故障转移 | FR-4、FR-6～FR-9 |
 | 0C Attempt Telemetry | `a1fa8636-2ad4-41b4-8de3-8609af83daec` | logical cycle、retry/resume/recovery lineage、耗时与无效 Attempt | FR-13、Phase 1 事件基础 |
 
 Phase 0 不实现 LLM Commander、Commander Memory 或 CommanderDirective。Commander
 五个 Phase 必须复用 Phase 0 的恢复、路由和遥测原语，不得另建同义状态机、账号选择器
 或第二流程账本。
+
+截至 2026-07-27，Durable Resume 的生产实现由已合入的 PR #4354/#4355 接管；PR #4336
+不再 rebase、不合并。#4336 中尚未确认由主线覆盖的独立语义仅保留为 Phase 4D 验收项：
+从既有权威账本恢复跨 Run 的结构化 failure-signature 集合，同一集合再次出现时转入
+`wait:human_review`。先核对 `main`，确认缺失后才允许做小型独立补丁，禁止复活
+`recoverDurableRun()` 整体实现。
 
 ### 0.2 2026-07-27 生产 as-built 对账
 
@@ -49,7 +55,7 @@ Fleet 运输层重写一遍。
 
 | 设计块 | 2026-07-27 状态 | 生产证据或缺口 |
 |---|---|---|
-| Phase 0A Durable Resume | 未完成 | PR #4336 仍为 OPEN，未进入 `main` |
+| Phase 0A Durable Resume | 已由后继恢复链接管；一项语义待核对 | PR #4354/#4355 已合入，覆盖过期 Attempt 回收、resume 子 Attempt、callback secret 轮换、Fleet 远端恢复与失败持久化；PR #4336 已 superseded，不进入 `main` |
 | Phase 0B Capability Gate | 已合入 | PR #4342 |
 | Phase 0C Attempt Telemetry | 已合入 | PR #4343 |
 | Phase 1 Commander 契约/状态 | 未开始 | `main` 无 CommanderBundle、Directive、Commander Memory 实现 |
@@ -1027,6 +1033,7 @@ Dashboard/API 至少可以回答：
 - [ ] Reviewer 在三台机器上均不会因嵌套 `bwrap/unshare` 失败。
 - [ ] Provider 503、Runner 失败、语义拒绝被分成不同 failure class。
 - [ ] 所有改派和接管都有结构化事件与证据。
+- [ ] 从既有权威账本重建跨 Run 的结构化 failure-signature 集合；后续 Run 重现同一规范化集合时，L0 必须进入 `wait:human_review`，且不得再创建或派发 `generator-fix` Attempt。先核对 `main`，确认缺失才拆小型独立 PR，不得恢复 PR #4336 的整包实现。
 
 ## 12. 测试与实弹
 
@@ -1059,6 +1066,8 @@ Dashboard/API 至少可以回答：
 11. 同一 Runner digest 在三机执行相同合同 fixture，输出通过同一 schema。
 12. 两个 Writer 同时落同一机器时拥有不同 worktree，不能互见未提交文件。
 13. remote Attempt 明确指定模型、角色环境和工具策略，Worker 不得回落宿主默认配置。
+14. Run A 持久化规范化 failure-signature 集合后重启 Kernel，Run B 重现同一集合时，
+    `derive` 返回 `wait:human_review`，并证明没有新增 `generator-fix` Attempt。
 
 ### 12.3 三机实弹
 
@@ -1111,7 +1120,8 @@ model=GPT-5.5
 
 ### Phase 1：契约与持久状态
 
-- 前置：Phase 0A/0C 已合入并通过独立复审；
+- 前置：PR #4354/#4355 的 Durable Resume 后继链与 Phase 0C 已合入并通过独立复审；
+  PR #4336 不是前置，跨 Run failure-signature 重现语义由 Phase 4D 核对；
 - CommanderBundle/Directive schema；
 - Run Commander 状态与事件游标；
 - Harness Actor Inbox message schema、定向 outbox、actor cursor 与消息预算；
@@ -1172,6 +1182,7 @@ Phase 4 拆成四个独立可回滚交付，不得合成一个大 PR：
 - 同机 SessionStore 与跨机 fresh recovery；
 - Worker health TTL；
 - 统一 failure classification；
+- 跨 Run failure-signature 集合恢复与同集合重现转 `wait:human_review`（§11.5、§12.2）；
 - Runner/Worker/Brain 任一重启后的恢复和清理实测。
 
 ### Phase 5：Canary 与默认策略
@@ -1184,9 +1195,9 @@ Phase 4 拆成四个独立可回滚交付，不得合成一个大 PR：
 - 形成是否把 `hybrid` 设为默认的独立决策。
 
 每个 Phase 必须可以单独回滚。不要用一个超大 PR 同时完成五个 Phase。
-Phase 0 三个 hotfix 必须保持独立；Phase 4 又明确拆成 4A～4D。PR 数量以可独立
-Red→Green、复审、部署和回滚为准，不再设置“最多八个”的人为上限，也不得把多个交付块
-压回一个巨型 PR。
+Phase 0 三项合同能力必须保持独立可复审；实现载体被后继主线 supersede 时不得为凑固定
+PR 数复活旧实现。Phase 4 又明确拆成 4A～4D，PR 数量以可独立 Red→Green、复审、部署
+和回滚为准，不再设置“最多八个”的人为上限，也不得把多个交付块压回一个巨型 PR。
 
 ## 14. 代码导航
 
