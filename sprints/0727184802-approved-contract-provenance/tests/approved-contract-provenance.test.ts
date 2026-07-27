@@ -91,22 +91,21 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
       sprint_dir: SPRINT_DIR,
       reviewer_verdict: expect.objectContaining({ verdict: 'APPROVED' }),
     });
-    expect(manifest.artifacts.map((a: { path: string }) => a.path)).toEqual([
-      'DoD.md',
-      'packages/brain/migrations/365_executor_kind_kernel_process.sql',
-      'sprints/fixtures/approved-contract/golden.json',
-      `${SPRINT_DIR}/contract-dod.md`,
-      `${SPRINT_DIR}/contract-draft.md`,
-      `${SPRINT_DIR}/sprint-prd.md`,
-      `${SPRINT_DIR}/task-plan.json`,
-      `${SPRINT_DIR}/tests/approved.test.ts`,
+    expect(manifest.artifacts.map((a: { path: string; kind: string }) => [a.path, a.kind])).toEqual([
+      ['DoD.md', 'root_dod'],
+      ['packages/brain/migrations/365_executor_kind_kernel_process.sql', 'migration'],
+      ['sprints/fixtures/approved-contract/golden.json', 'golden'],
+      [`${SPRINT_DIR}/contract-dod.md`, 'contract_dod'],
+      [`${SPRINT_DIR}/contract-draft.md`, 'contract_draft'],
+      [`${SPRINT_DIR}/sprint-prd.md`, 'prd'],
+      [`${SPRINT_DIR}/task-plan.json`, 'task_plan'],
+      [`${SPRINT_DIR}/tests/approved.test.ts`, 'test'],
     ]);
     expect(manifest.artifacts.every((a: { git_blob_oid: string; sha256: string; size: number; kind: string }) => (
       /^[a-f0-9]{40,64}$/.test(a.git_blob_oid)
       && /^[a-f0-9]{64}$/.test(a.sha256)
       && Number.isInteger(a.size)
       && a.size > 0
-      && typeof a.kind === 'string'
     ))).toBe(true);
     expect(manifest.manifest_digest).toMatch(/^[a-f0-9]{64}$/);
 
@@ -245,6 +244,7 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
       'Safety: fail-closed on approved contract drift',
       '',
     ].join('\n'));
+    sh(repo, 'git mv packages/brain/migrations/365_executor_kind_kernel_process.sql packages/brain/migrations/366_executor_kind_kernel_process.sql');
     write(repo, 'packages/brain/migrations/366_executor_kind_kernel_process.sql', '-- migration 366\n');
     sh(repo, 'git add . && git commit -qm drift-365-to-366');
     const driftSha = sh(repo, 'git rev-parse HEAD');
@@ -258,87 +258,147 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
       reason: 'approved_contract_drift',
       drift: expect.arrayContaining([
         expect.objectContaining({ path: 'DoD.md', change: 'semantic' }),
+        expect.objectContaining({ path: 'packages/brain/migrations/365_executor_kind_kernel_process.sql' }),
       ]),
     });
   });
 
-  it('checkbox evidence and provenance only root DoD edits are allowed', async () => {
+  it('checkbox-only evidence-only and provenance-only root DoD edits are allowed', async () => {
     const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
-    const { repo, approvedSha } = createApprovedRepo();
-    const manifest = await buildApprovedContractManifest({
-      repoRoot: repo,
-      runId: RUN_ID,
-      contractVersion: 6,
-      sourceCommitSha: approvedSha,
-      sprintDir: SPRINT_DIR,
-      approvedAt: '2026-07-27T00:00:00.000Z',
-      reviewerVerdict: { verdict: 'APPROVED' },
-    });
-
-    write(repo, 'DoD.md', [
+    const baseLines = [
       '# Root DoD',
-      '- [x] migration 365 stays approved',
+      '- [ ] migration 365 stays approved',
       'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version = \'365\'"',
       'Action: apply packages/brain/migrations/365_executor_kind_kernel_process.sql',
       'Expected: schema_version contains 365',
       'Environment: local_api',
       'Safety: fail-closed on approved contract drift',
-      'Evidence: CI run 123 passed at sha-current',
-      'Provenance: checked by approved-contract-provenance',
       '',
-    ].join('\n'));
-    sh(repo, 'git add DoD.md && git commit -qm checkbox-evidence-only');
-    const currentSha = sh(repo, 'git rev-parse HEAD');
+    ];
+    const cases = [
+      {
+        label: 'checkbox-only',
+        lines: [
+          '# Root DoD',
+          '- [x] migration 365 stays approved',
+          ...baseLines.slice(2),
+        ],
+      },
+      {
+        label: 'evidence-only',
+        lines: [
+          ...baseLines.slice(0, -1),
+          'Evidence: CI run 123 passed at sha-current',
+          '',
+        ],
+      },
+      {
+        label: 'provenance-only',
+        lines: [
+          ...baseLines.slice(0, -1),
+          'Provenance: checked by approved-contract-provenance',
+          '',
+        ],
+      },
+    ];
 
-    await expect(verifyApprovedContractManifest({
-      repoRoot: repo,
-      manifest,
-      currentCommitSha: currentSha,
-    })).resolves.toMatchObject({
-      ok: true,
-      allowed_mechanical_changes: expect.arrayContaining([
-        expect.objectContaining({ path: 'DoD.md' }),
-      ]),
-    });
+    for (const c of cases) {
+      const { repo, approvedSha } = createApprovedRepo();
+      const manifest = await buildApprovedContractManifest({
+        repoRoot: repo,
+        runId: RUN_ID,
+        contractVersion: 6,
+        sourceCommitSha: approvedSha,
+        sprintDir: SPRINT_DIR,
+        approvedAt: '2026-07-27T00:00:00.000Z',
+        reviewerVerdict: { verdict: 'APPROVED' },
+      });
+      write(repo, 'DoD.md', c.lines.join('\n'));
+      sh(repo, `git add DoD.md && git commit -qm ${c.label}`);
+      const currentSha = sh(repo, 'git rev-parse HEAD');
+
+      await expect(verifyApprovedContractManifest({
+        repoRoot: repo,
+        manifest,
+        currentCommitSha: currentSha,
+      })).resolves.toMatchObject({
+        ok: true,
+        allowed_mechanical_changes: expect.arrayContaining([
+          expect.objectContaining({ path: 'DoD.md' }),
+        ]),
+      });
+    }
   });
 
-  it('root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift', async () => {
+  it('root DoD Test command action expected environment and safety semantic edits are each rejected as approved_contract_drift', async () => {
     const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
-    const { repo, approvedSha } = createApprovedRepo();
-    const manifest = await buildApprovedContractManifest({
-      repoRoot: repo,
-      runId: RUN_ID,
-      contractVersion: 6,
-      sourceCommitSha: approvedSha,
-      sprintDir: SPRINT_DIR,
-      approvedAt: '2026-07-27T00:00:00.000Z',
-      reviewerVerdict: { verdict: 'APPROVED' },
-    });
-
-    write(repo, 'DoD.md', [
+    const baseLines = [
       '# Root DoD',
       '- [ ] migration 365 stays approved',
-      'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version IN (\'365\',\'366\')"',
-      'Action: apply packages/brain/migrations/365_executor_kind_kernel_process.sql with fallback rewrite',
-      'Expected: schema_version contains any approved-looking migration',
-      'Environment: developer_laptop',
-      'Safety: warn-only on approved contract drift',
+      'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version = \'365\'"',
+      'Action: apply packages/brain/migrations/365_executor_kind_kernel_process.sql',
+      'Expected: schema_version contains 365',
+      'Environment: local_api',
+      'Safety: fail-closed on approved contract drift',
       '',
-    ].join('\n'));
-    sh(repo, 'git add DoD.md && git commit -qm root-dod-semantic-drift');
-    const currentSha = sh(repo, 'git rev-parse HEAD');
+    ];
+    const cases = [
+      {
+        label: 'test-command',
+        index: 2,
+        line: 'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version IN (\'365\',\'366\')"',
+      },
+      {
+        label: 'action',
+        index: 3,
+        line: 'Action: apply packages/brain/migrations/365_executor_kind_kernel_process.sql with fallback rewrite',
+      },
+      {
+        label: 'expected',
+        index: 4,
+        line: 'Expected: schema_version contains any approved-looking migration',
+      },
+      {
+        label: 'environment',
+        index: 5,
+        line: 'Environment: developer_laptop',
+      },
+      {
+        label: 'safety',
+        index: 6,
+        line: 'Safety: warn-only on approved contract drift',
+      },
+    ];
 
-    await expect(verifyApprovedContractManifest({
-      repoRoot: repo,
-      manifest,
-      currentCommitSha: currentSha,
-    })).resolves.toMatchObject({
-      ok: false,
-      reason: 'approved_contract_drift',
-      drift: expect.arrayContaining([
-        expect.objectContaining({ path: 'DoD.md', change: 'semantic' }),
-      ]),
-    });
+    for (const c of cases) {
+      const { repo, approvedSha } = createApprovedRepo();
+      const manifest = await buildApprovedContractManifest({
+        repoRoot: repo,
+        runId: RUN_ID,
+        contractVersion: 6,
+        sourceCommitSha: approvedSha,
+        sprintDir: SPRINT_DIR,
+        approvedAt: '2026-07-27T00:00:00.000Z',
+        reviewerVerdict: { verdict: 'APPROVED' },
+      });
+      const lines = [...baseLines];
+      lines[c.index] = c.line;
+      write(repo, 'DoD.md', lines.join('\n'));
+      sh(repo, `git add DoD.md && git commit -qm root-dod-semantic-drift-${c.label}`);
+      const currentSha = sh(repo, 'git rev-parse HEAD');
+
+      await expect(verifyApprovedContractManifest({
+        repoRoot: repo,
+        manifest,
+        currentCommitSha: currentSha,
+      })).resolves.toMatchObject({
+        ok: false,
+        reason: 'approved_contract_drift',
+        drift: expect.arrayContaining([
+          expect.objectContaining({ path: 'DoD.md', change: 'semantic' }),
+        ]),
+      });
+    }
   });
 
   it('missing manifest unreachable stale sha and stale manifest digest fail closed', async () => {
@@ -776,44 +836,83 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     });
   });
 
-  it('approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift', async () => {
+  it('approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are each rejected as approved_contract_drift', async () => {
     const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
-    const { repo, approvedSha } = createApprovedRepo();
-    const manifest = await buildApprovedContractManifest({
-      repoRoot: repo,
-      runId: RUN_ID,
-      contractVersion: 6,
-      sourceCommitSha: approvedSha,
-      sprintDir: SPRINT_DIR,
-      approvedAt: '2026-07-27T00:00:00.000Z',
-      reviewerVerdict: { verdict: 'APPROVED' },
-    });
+    const cases = [
+      {
+        label: 'prd-content',
+        path: `${SPRINT_DIR}/sprint-prd.md`,
+        mutate: (repo: string) => {
+          write(repo, `${SPRINT_DIR}/sprint-prd.md`, '# PRD\nGolden Path: approved manifest changed\n');
+          sh(repo, `git add ${SPRINT_DIR}/sprint-prd.md`);
+        },
+      },
+      {
+        label: 'contract-draft-content',
+        path: `${SPRINT_DIR}/contract-draft.md`,
+        mutate: (repo: string) => {
+          write(repo, `${SPRINT_DIR}/contract-draft.md`, '# Sprint Contract Draft\nStep 1 changed\n');
+          sh(repo, `git add ${SPRINT_DIR}/contract-draft.md`);
+        },
+      },
+      {
+        label: 'contract-dod-content',
+        path: `${SPRINT_DIR}/contract-dod.md`,
+        mutate: (repo: string) => {
+          write(repo, `${SPRINT_DIR}/contract-dod.md`, '- [ ] [BEHAVIOR] [L2] approved path changed\n  Test: manual:bash echo changed\n');
+          sh(repo, `git add ${SPRINT_DIR}/contract-dod.md`);
+        },
+      },
+      {
+        label: 'task-plan-delete',
+        path: `${SPRINT_DIR}/task-plan.json`,
+        mutate: (repo: string) => {
+          sh(repo, `git rm -q ${SPRINT_DIR}/task-plan.json`);
+        },
+      },
+      {
+        label: 'test-rename',
+        path: `${SPRINT_DIR}/tests/approved.test.ts`,
+        mutate: (repo: string) => {
+          sh(repo, `git mv ${SPRINT_DIR}/tests/approved.test.ts ${SPRINT_DIR}/tests/renamed-approved.test.ts`);
+        },
+      },
+      {
+        label: 'fixture-golden-delete',
+        path: 'sprints/fixtures/approved-contract/golden.json',
+        mutate: (repo: string) => {
+          sh(repo, 'git rm -q sprints/fixtures/approved-contract/golden.json');
+        },
+      },
+    ];
 
-    write(repo, `${SPRINT_DIR}/sprint-prd.md`, '# PRD\nGolden Path: approved manifest changed\n');
-    write(repo, `${SPRINT_DIR}/contract-draft.md`, '# Sprint Contract Draft\nStep 1 changed\n');
-    write(repo, `${SPRINT_DIR}/contract-dod.md`, '- [ ] [BEHAVIOR] [L2] approved path changed\n  Test: manual:bash echo changed\n');
-    sh(repo, `git rm -q ${SPRINT_DIR}/task-plan.json`);
-    sh(repo, `git mv ${SPRINT_DIR}/tests/approved.test.ts ${SPRINT_DIR}/tests/renamed-approved.test.ts`);
-    sh(repo, 'git rm -q sprints/fixtures/approved-contract/golden.json');
-    sh(repo, `git add ${SPRINT_DIR}/sprint-prd.md ${SPRINT_DIR}/contract-draft.md ${SPRINT_DIR}/contract-dod.md && git commit -qm contract-artifact-drift`);
-    const driftSha = sh(repo, 'git rev-parse HEAD');
+    for (const c of cases) {
+      const { repo, approvedSha } = createApprovedRepo();
+      const manifest = await buildApprovedContractManifest({
+        repoRoot: repo,
+        runId: RUN_ID,
+        contractVersion: 6,
+        sourceCommitSha: approvedSha,
+        sprintDir: SPRINT_DIR,
+        approvedAt: '2026-07-27T00:00:00.000Z',
+        reviewerVerdict: { verdict: 'APPROVED' },
+      });
+      c.mutate(repo);
+      sh(repo, `git commit -qm contract-artifact-drift-${c.label}`);
+      const driftSha = sh(repo, 'git rev-parse HEAD');
 
-    await expect(verifyApprovedContractManifest({
-      repoRoot: repo,
-      manifest,
-      currentCommitSha: driftSha,
-    })).resolves.toMatchObject({
-      ok: false,
-      reason: 'approved_contract_drift',
-      drift: expect.arrayContaining([
-        expect.objectContaining({ path: `${SPRINT_DIR}/sprint-prd.md` }),
-        expect.objectContaining({ path: `${SPRINT_DIR}/contract-draft.md` }),
-        expect.objectContaining({ path: `${SPRINT_DIR}/contract-dod.md` }),
-        expect.objectContaining({ path: `${SPRINT_DIR}/task-plan.json` }),
-        expect.objectContaining({ path: `${SPRINT_DIR}/tests/approved.test.ts` }),
-        expect.objectContaining({ path: 'sprints/fixtures/approved-contract/golden.json' }),
-      ]),
-    });
+      await expect(verifyApprovedContractManifest({
+        repoRoot: repo,
+        manifest,
+        currentCommitSha: driftSha,
+      })).resolves.toMatchObject({
+        ok: false,
+        reason: 'approved_contract_drift',
+        drift: expect.arrayContaining([
+          expect.objectContaining({ path: c.path }),
+        ]),
+      });
+    }
   });
 
   it('main migration conflict after approval returns requires_re_gan', async () => {
