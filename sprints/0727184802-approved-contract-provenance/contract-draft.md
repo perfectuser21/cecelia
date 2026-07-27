@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 14)
+# Sprint Contract Draft (Round 15)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -484,3 +484,4 @@ echo "OK: approved contract provenance final e2e passed"
 - Round 12 修订：不扩 PRD scope；补齐 PRD 第 2 点里 callback 对 current PR SHA 的双角色覆盖，新增 evaluator callback stale PR SHA 在写 verdict 前 `stale_evaluate_pr_head_sha` fail-closed 断言。
 - Round 13 修订：不扩 PRD scope；把 callback 的 current PR SHA 校验补成 fail-closed 闭环，新增 evaluator/generator callback 缺 `provider_metadata.pr_head_sha` 时写 verdict 前 `current_pr_sha_missing` 拒绝。
 - Round 14 修订：仅补 Reviewer Round 13 指出的四个真实漏覆盖：append-only 批准事实独立账本与新 version 追加规则、引用 fixture/golden discovery 规则、Root DoD checkbox+evidence/provenance 组合机械变化归一化、Generator/Evaluator/CI/merge gate 节点级 manifest 不可达 fail-closed。
+- Round 15 修订：不扩 PRD scope；仅把 DoD manual 命令入口统一为 `manual:bash -lc`，让 Step 2b-check 的真执行断言启发式能识别真实 `bash` 入口，合同语义与 Golden Path 不变。
