@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync,
+  readdirSync,
   readFileSync,
 } from 'node:fs';
 import path from 'node:path';
@@ -11,43 +12,28 @@ import {
   classifyElementCell,
   ELEMENT_CELL_STATUSES,
 } from './eleven-elements-ledger.js';
-
 export const JOURNEY_ID = 'bb8cc561-b3ee-4fec-b74d-2255694bd963';
 export const ELEMENT_KEYS = Object.freeze([
-  'FR',
-  'NFR',
-  'Invariant',
-  '判定点',
-  '保质期',
-  '死亡告警',
-  '失败语义',
-  '效果确认',
-  '输入对抗面',
-  '账本保鲜',
-  '两轴衔接',
+  'FR', 'NFR', 'Invariant', '判定点', '保质期', '死亡告警',
+  '失败语义', '效果确认', '输入对抗面', '账本保鲜', '两轴衔接',
 ]);
-
 const MIGRATION_PATH = 'packages/brain/migrations/365_kernel_harness_f1_baseline.sql';
 const ROOT_CONTRACT_PATH = 'regression-contract.yaml';
 const ENGINE_CONTRACT_PATH = 'packages/engine/regression-contract.yaml';
 const CONTRACT_SOURCE = 'sprints/07271239-kernel-harness-11-elements-baseline/contract-draft.md';
 const probeCache = new Map();
-
 function sha256(content) {
   return `sha256:${createHash('sha256').update(content).digest('hex')}`;
 }
-
 function currentSha(repoRoot) {
   return execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: repoRoot,
     encoding: 'utf8',
   }).trim();
 }
-
 function readYaml(repoRoot, relativePath) {
   return yaml.load(readFileSync(path.join(repoRoot, relativePath), 'utf8'));
 }
-
 function baselineContract(repoRoot) {
   const parsed = readYaml(repoRoot, ROOT_CONTRACT_PATH);
   const baseline = parsed?.kernel_harness_f1_baseline;
@@ -56,11 +42,9 @@ function baselineContract(repoRoot) {
   }
   return { parsed, baseline };
 }
-
 function fileFromRef(sourceRef) {
   return sourceRef.split('#', 1)[0].replace(/:L\d+$/, '');
 }
-
 function executableAssertions(rootContract) {
   const found = new Map();
   function visit(value) {
@@ -79,7 +63,6 @@ function executableAssertions(rootContract) {
   visit(rootContract);
   return found;
 }
-
 function engineSeeds(engineContract) {
   const seeds = [];
   const seenObjects = new Set();
@@ -97,45 +80,6 @@ function engineSeeds(engineContract) {
   visit(engineContract);
   return [...new Map(seeds.map((seed) => [seed.id, seed])).values()];
 }
-
-function familyForSeed(seed) {
-  const text = JSON.stringify(seed).toLowerCase();
-  if (/credential|secret|bash.guard/.test(text)) return 'KH-F1-F02';
-  if (/push|precheck/.test(text)) return 'KH-F1-F03';
-  if (/stop|orphan|watchdog/.test(text)) return 'KH-F1-F05';
-  if (/evaluator|judge/.test(text)) return 'KH-F1-F06';
-  if (/staging|promote|rollback|release/.test(text)) return 'KH-F1-F08';
-  if (/github|branch protection/.test(text)) return 'KH-F1-F07';
-  if (/branch|main.repo|write.protect/.test(text)) return 'KH-F1-F01';
-  return 'KH-F1-F04';
-}
-
-function stageForFamily(familyId) {
-  return {
-    'KH-F1-F01': 'S4',
-    'KH-F1-F02': 'S4',
-    'KH-F1-F03': 'S5',
-    'KH-F1-F04': 'S5',
-    'KH-F1-F05': 'S12',
-    'KH-F1-F06': 'S7',
-    'KH-F1-F07': 'S9',
-    'KH-F1-F08': 'S11',
-  }[familyId];
-}
-
-function elementForFamily(familyId) {
-  return {
-    'KH-F1-F01': 'Invariant',
-    'KH-F1-F02': 'NFR',
-    'KH-F1-F03': '判定点',
-    'KH-F1-F04': '效果确认',
-    'KH-F1-F05': '死亡告警',
-    'KH-F1-F06': '判定点',
-    'KH-F1-F07': '输入对抗面',
-    'KH-F1-F08': '失败语义',
-  }[familyId];
-}
-
 const FAMILY_PROBE_RULES = Object.freeze({
   'KH-F1-F01': {
     path: 'packages/engine/hooks/branch-protect.sh',
@@ -170,7 +114,6 @@ const FAMILY_PROBE_RULES = Object.freeze({
     anchors: ['staging', 'promote'],
   },
 });
-
 export function probeRequiredFamily(familyId, { repoRoot = process.cwd() } = {}) {
   const rule = FAMILY_PROBE_RULES[familyId];
   if (!rule) return { ok: false, reason: `unknown family ${familyId}` };
@@ -190,7 +133,6 @@ export function probeRequiredFamily(familyId, { repoRoot = process.cwd() } = {})
     source_digest: sha256(source),
   };
 }
-
 function runProbe(command, repoRoot) {
   const cacheKey = `${repoRoot}:${command}`;
   if (probeCache.has(cacheKey)) return probeCache.get(cacheKey);
@@ -207,7 +149,54 @@ function runProbe(command, repoRoot) {
   probeCache.set(cacheKey, observed);
   return observed;
 }
-
+function engineSeedProbe(seed, repoRoot) {
+  const test = typeof seed.test === 'string' ? seed.test.trim() : '';
+  if (seed.method !== 'auto' || !test) {
+    return {
+      auto_decidable: false,
+      audit_status: 'unknown',
+      probe_command: null,
+      probe_started: false,
+      exit_code: null,
+      mismatch: null,
+      missing_evidence: ['executable_legacy_probe'],
+      source_digest: null,
+    };
+  }
+  const engineRoot = path.join(repoRoot, 'packages/engine');
+  let command;
+  let targetPath = null;
+  if (test.startsWith('manual:')) {
+    command = test.slice('manual:'.length);
+  } else {
+    targetPath = path.resolve(engineRoot, test);
+    if (/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(test)) {
+      command = `npx vitest run ${JSON.stringify(test)} --reporter=dot`;
+    } else {
+      command = `bash ${JSON.stringify(test)}`;
+    }
+  }
+  const result = runProbe(`cd packages/engine && ${command}`, repoRoot);
+  const sourceDigest = targetPath && existsSync(targetPath)
+    ? sha256(readFileSync(targetPath))
+    : sha256(JSON.stringify(seed));
+  const active = result.exit_code === 0 && !test.startsWith('manual:');
+  return {
+    auto_decidable: true,
+    audit_status: active ? 'active' : 'drifted',
+    probe_command: `cd packages/engine && ${command}`,
+    probe_started: true,
+    exit_code: result.exit_code,
+    mismatch: active
+      ? null
+      : (test.startsWith('manual:')
+        ? 'auto 条目错误使用 manual oracle，不能作为自动等价证据'
+        : `声明的自动测试未通过或不可执行: ${test}`),
+    missing_evidence: active ? [] : ['passing_automatic_legacy_probe'],
+    source_digest: sourceDigest,
+    log_tail: result.log_tail,
+  };
+}
 function hydrateFamilies(families, repoRoot, artifactSha) {
   return families.map((family) => ({
     ...family,
@@ -223,7 +212,6 @@ function hydrateFamilies(families, repoRoot, artifactSha) {
     }),
   }));
 }
-
 function cellEvidence(cell, artifactSha) {
   const common = { artifact_sha: artifactSha, current_sha: true, expired: false };
   if (cell.cell_status === 'gray') {
@@ -245,7 +233,6 @@ function cellEvidence(cell, artifactSha) {
   }
   return { ...common, probe_started: false, exit_code: null };
 }
-
 function invalidSourceRefs(items, repoRoot) {
   const invalid = [];
   for (const item of items) {
@@ -258,7 +245,61 @@ function invalidSourceRefs(items, repoRoot) {
   }
   return invalid;
 }
-
+function auditSourceInventory(repoRoot, families, seedCount) {
+  const includedPaths = new Set(families.flatMap((family) => (
+    family.wiring_refs.map((wiring) => wiring.path)
+  )));
+  const listFiles = (relativeDir, predicate = () => true) => {
+    const absoluteDir = path.join(repoRoot, relativeDir);
+    if (!existsSync(absoluteDir)) return [];
+    return readdirSync(absoluteDir)
+      .filter(predicate)
+      .map((name) => `${relativeDir}/${name}`);
+  };
+  const candidates = {
+    hook: listFiles(
+      'packages/engine/hooks',
+      (name) => /\.(?:sh|js|cjs|mjs)$/.test(name),
+    ),
+    devgate_ci: [
+      ...listFiles(
+        'packages/engine/scripts/devgate',
+        (name) => /\.(?:sh|js|cjs|mjs)$/.test(name),
+      ),
+      '.github/workflows/ci.yml',
+    ],
+    kernel_gate: listFiles(
+      'packages/brain/src',
+      (name) => /^harness.*\.js$/.test(name),
+    ),
+  };
+  const inventory = Object.entries(candidates).flatMap(([sourceKind, paths]) => (
+    paths.map((sourcePath) => ({
+      source_kind: sourceKind,
+      source_ref: `${sourcePath}#inventory`,
+      included: includedPaths.has(sourcePath),
+      reason_code: includedPaths.has(sourcePath)
+        ? null
+        : 'no_explicit_p0_p1_contract_edge',
+    }))
+  ));
+  const byKind = {
+    engine_contract: {
+      candidate_count: seedCount,
+      included_count: seedCount,
+      excluded_count: 0,
+    },
+  };
+  for (const sourceKind of Object.keys(candidates)) {
+    const items = inventory.filter((item) => item.source_kind === sourceKind);
+    byKind[sourceKind] = {
+      candidate_count: items.length,
+      included_count: items.filter((item) => item.included).length,
+      excluded_count: items.filter((item) => !item.included).length,
+    };
+  }
+  return { inventory, byKind };
+}
 export async function applyKernelHarnessF1Baseline(
   client,
   { repoRoot = process.cwd() } = {},
@@ -266,7 +307,6 @@ export async function applyKernelHarnessF1Baseline(
   const sql = readFileSync(path.join(repoRoot, MIGRATION_PATH), 'utf8');
   await client.query(sql);
 }
-
 export async function buildKernelHarnessF1BaselineReport(
   client,
   { repoRoot = process.cwd() } = {},
@@ -284,7 +324,6 @@ export async function buildKernelHarnessF1BaselineReport(
     WHERE s.journey_id=$1 AND s.is_backbone=TRUE AND l.cell_kind='element'
     ORDER BY s.step_number, l.cell_key
   `, [JOURNEY_ID]);
-
   const cells = rows.map((row) => {
     const evidenceEnvelope = cellEvidence(row, artifactSha);
     const withEvidence = { ...row, evidence_envelope: evidenceEnvelope };
@@ -306,70 +345,95 @@ export async function buildKernelHarnessF1BaselineReport(
     cell.cell_status === status
     && cell.matched_status_rules.join(',') !== status
   ));
-
   const families = hydrateFamilies(baseline.required_families, repoRoot, artifactSha);
   const familyById = new Map(families.map((family) => [family.family_id, family]));
   const engineContract = readYaml(repoRoot, ENGINE_CONTRACT_PATH);
   const engineSource = readFileSync(path.join(repoRoot, ENGINE_CONTRACT_PATH), 'utf8');
   const seeds = engineSeeds(engineContract);
+  const seedById = new Map(seeds.map((seed) => [seed.id, seed]));
+  const rootBehaviors = Array.isArray(baseline.behaviors) ? baseline.behaviors : [];
+  const rootBehaviorIds = rootBehaviors.map((item) => item.legacy_behavior_id);
+  const duplicateRootBehaviorIds = rootBehaviorIds.filter((
+    id,
+    index,
+    all,
+  ) => all.indexOf(id) !== index);
+  const unmappedSeeds = seeds.filter((seed) => !rootBehaviorIds.includes(seed.id));
   const checkedAt = new Date().toISOString();
-  const legacyBaseline = seeds.map((seed, index) => {
-    const family = familyById.get(familyForSeed(seed));
-    const wiring = family.wiring_refs[0];
+  const legacyBaseline = rootBehaviors.map((mapping) => {
+    const seed = seedById.get(mapping.legacy_behavior_id);
+    if (!seed) {
+      throw new Error(`根 baseline behavior 无对应 engine P0/P1 seed: ${mapping.legacy_behavior_id}`);
+    }
+    const family = familyById.get(mapping.required_family_id);
+    if (!family) {
+      throw new Error(`根 baseline behavior 引用未知 family: ${mapping.required_family_id}`);
+    }
+    const seedProbe = engineSeedProbe(seed, repoRoot);
+    const baseEvidence = {
+      artifact_sha: artifactSha,
+      checked_at: checkedAt,
+      source_digest: seedProbe.source_digest || sha256(engineSource),
+    };
+    let statusEvidence;
+    if (seedProbe.audit_status === 'active') {
+      statusEvidence = {
+        ...baseEvidence,
+        legacy_wiring_exists: true,
+        probe_command: seedProbe.probe_command,
+        probe_started: seedProbe.probe_started,
+        exit_code: seedProbe.exit_code,
+      };
+    } else if (seedProbe.audit_status === 'drifted') {
+      statusEvidence = {
+        ...baseEvidence,
+        environment_ready: true,
+        probe_command: seedProbe.probe_command,
+        probe_started: seedProbe.probe_started,
+        exit_code: seedProbe.exit_code,
+        expected_result: 'automatic probe exits 0',
+        observed_result: seedProbe.mismatch,
+        mismatch: seedProbe.mismatch,
+        log_tail: seedProbe.log_tail,
+      };
+    } else {
+      statusEvidence = {
+        ...baseEvidence,
+        missing_evidence: seedProbe.missing_evidence,
+      };
+    }
     return {
+      ...mapping,
       legacy_behavior_id: seed.id,
       priority: seed.priority,
-      selection_basis: {
-        kind: 'explicit_priority',
-        priority: seed.priority,
-        contract: ENGINE_CONTRACT_PATH,
-      },
-      journey_stage: stageForFamily(family.family_id),
-      element: elementForFamily(family.family_id),
-      required_family_id: family.family_id,
-      legacy_owner: family.legacy_owner,
-      audit_status: 'active',
-      unified_owner: family.unified_owner,
-      gap: family.gap,
-      next_knife_order: index + 1,
-      source_refs: [`${ENGINE_CONTRACT_PATH}#${seed.id}`],
-      wiring_ref_ids: [wiring.wiring_id],
-      assertion_ref: null,
-      auto_decidable: true,
-      status_evidence: {
-        artifact_sha: artifactSha,
-        checked_at: checkedAt,
-        source_digest: sha256(engineSource),
-        legacy_wiring_exists: true,
-        probe_command: wiring.probe_command,
-        probe_started: wiring.probe_started,
-        exit_code: wiring.exit_code,
-      },
+      audit_status: seedProbe.audit_status,
+      auto_decidable: seedProbe.auto_decidable,
+      status_evidence: statusEvidence,
     };
   });
-
-  const byKind = {
-    engine_contract: {
-      candidate_count: seeds.length,
-      included_count: seeds.length,
-      excluded_count: 0,
-    },
-    hook: { candidate_count: 2, included_count: 2, excluded_count: 0 },
-    devgate_ci: { candidate_count: 2, included_count: 2, excluded_count: 0 },
-    kernel_gate: { candidate_count: 3, included_count: 3, excluded_count: 0 },
-  };
+  const { inventory: sourceInventory, byKind } = auditSourceInventory(
+    repoRoot,
+    families,
+    seeds.length,
+  );
+  const legacyExclusions = sourceInventory
+    .filter((item) => !item.included)
+    .map(({ source_ref: sourceRef, reason_code: reasonCode, source_kind: sourceKind }) => ({
+      source_ref: sourceRef,
+      source_kind: sourceKind,
+      reason_code: reasonCode,
+    }));
   const includedSourceCount = Object.values(byKind)
     .reduce((sum, item) => sum + item.included_count, 0);
   const candidateSourceCount = Object.values(byKind)
     .reduce((sum, item) => sum + item.candidate_count, 0);
   const statusCounts = {
-    active: legacyBaseline.length,
+    active: legacyBaseline.filter((item) => item.audit_status === 'active').length,
     shadowed: 0,
     retired: 0,
-    drifted: 0,
-    unknown: 0,
+    drifted: legacyBaseline.filter((item) => item.audit_status === 'drifted').length,
+    unknown: legacyBaseline.filter((item) => item.audit_status === 'unknown').length,
   };
-
   return {
     authoritative: false,
     authoritative_source: 'regression-contract.yaml#kernel_harness_f1_baseline',
@@ -387,7 +451,8 @@ export async function buildKernelHarnessF1BaselineReport(
     ambiguous_cells: cells.filter((cell) => cell.matched_status_rules.length > 1),
     required_families: families,
     legacy_baseline: legacyBaseline,
-    legacy_exclusions: [],
+    legacy_source_inventory: sourceInventory,
+    legacy_exclusions: legacyExclusions,
     invalid_source_refs: invalidSourceRefs(legacyBaseline, repoRoot),
     invalid_cell_targets: legacyBaseline.filter((item) => (
       !ELEMENT_KEYS.includes(item.element)
@@ -397,23 +462,22 @@ export async function buildKernelHarnessF1BaselineReport(
     legacy_source_coverage: {
       candidate_source_count: candidateSourceCount,
       included_source_count: includedSourceCount,
-      excluded_source_count: 0,
+      excluded_source_count: legacyExclusions.length,
       selected_seed_count: seeds.length,
       mapped_behavior_count: legacyBaseline.length,
-      unmapped_count: 0,
-      duplicate_mapping_count: 0,
+      unmapped_count: unmappedSeeds.length,
+      duplicate_mapping_count: duplicateRootBehaviorIds.length,
       unknown_auto_decidable_count: 0,
       required_family_count: families.length,
       unwired_family_count: families.filter((family) => !family.wiring_refs.length).length,
       owner_mismatch_count: 0,
       empty_gap_count: families.filter((family) => !family.gap?.trim()).length,
-      proven_status_count: legacyBaseline.length,
+      proven_status_count: statusCounts.active + statusCounts.drifted,
       status_counts: statusCounts,
       by_kind: byKind,
     },
   };
 }
-
 async function main() {
   const args = process.argv.slice(2);
   const familyIndex = args.indexOf('--probe-family');
@@ -426,9 +490,7 @@ async function main() {
   process.stderr.write('usage: kernel-harness-f1-baseline.js --probe-family KH-F1-F0N\n');
   process.exitCode = 2;
 }
-
 const isMain = process.argv[1]
   && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (isMain) main();
-
 export { ELEMENT_CELL_STATUSES };
