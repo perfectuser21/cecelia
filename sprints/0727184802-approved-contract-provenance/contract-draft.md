@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 6)
+# Sprint Contract Draft (Round 7)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -326,4 +326,4 @@ echo "OK: approved contract provenance final e2e passed"
 - contract-gate: present at `packages/brain/src/lib/contract-gate.js`; 本合同未跳过代码层 Contract Gate。
 - PR #4372 只作为事故证据，不修改、不复用；回归 fixture 用本 sprint 测试临时 Git repo 自造 365→366 drift。
 - Android/微信/第三方 API 不涉及，target_environment 固定 `local_api`。
-- Round 6 修订：补齐 Generator/Evaluator launch 前 preflight 对缺 manifest、stale digest、stale PR SHA 的 fail-closed oracle；未扩展 PRD 外 scope。
+- Round 7 修订：继承 Round 6 已补齐的 Generator/Evaluator launch 前 preflight oracle；本轮无新增 PRD 外 scope，已重跑格式自查与 Red evidence。
