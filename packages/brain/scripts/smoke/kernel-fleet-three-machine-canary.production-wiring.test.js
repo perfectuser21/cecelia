@@ -98,7 +98,7 @@ describe('createLiveDispatch production probe wiring', () => {
   });
 
   it.each(MACHINE_IDS)(
-    'gives the real buildRealDeps probe the canonical %s identity',
+    'probes canonical %s identity and blocks Phase 4A before attempt creation',
     async (targetMachine) => {
       pool.query.mockImplementation(async (sql, params) => {
         if (/INSERT INTO initiative_runs/.test(sql)) {
@@ -108,8 +108,9 @@ describe('createLiveDispatch production probe wiring', () => {
           return { rows: [] };
         }
         if (/INSERT INTO harness_attempts/.test(sql)) {
-          expect(params[4]).toBe('reporter');
-          throw new Error(`probe_selected_machine:${params[7]}`);
+          throw new Error(
+            `attempt_creation_must_stay_blocked:${params[4]}:${params[7]}`,
+          );
         }
         throw new Error(`unexpected query: ${sql}`);
       });
@@ -163,15 +164,17 @@ describe('createLiveDispatch production probe wiring', () => {
         await expect(dispatch({
           machine: targetMachine,
           attemptNumber: 1,
-        })).rejects.toThrow(`probe_selected_machine:${targetMachine}`);
+        })).rejects.toThrow(
+          `canary_dispatch_failed:${targetMachine}:dispatch preflight blocked: `
+            + 'node_not_dispatch_ready',
+        );
       } finally {
         await dispatch.close();
       }
 
-      expect(fetchFn).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/brain\/capacity-budget$/),
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
+      expect(
+        pool.query.mock.calls.some(([sql]) => /INSERT INTO harness_attempts/.test(sql)),
+      ).toBe(false);
       expect(fetchFn).toHaveBeenCalledWith(
         `${WORKER_URLS[targetMachine]}/health`,
         expect.objectContaining({
