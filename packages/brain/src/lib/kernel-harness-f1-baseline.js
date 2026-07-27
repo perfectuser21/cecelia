@@ -13,10 +13,57 @@ import {
   ELEMENT_CELL_STATUSES,
 } from './eleven-elements-ledger.js';
 
-if (!process.env.HARNESS_TEST_DATABASE_URL) {
-  process.env.HARNESS_TEST_DATABASE_URL = (
-    process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
-  );
+if (!process.env.HARNESS_TEST_DATABASE_URL && process.env.TEST_DATABASE_URL) {
+  process.env.HARNESS_TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
+  try {
+    const databaseName = execFileSync(
+      'psql',
+      [
+        '-X',
+        '-qAt',
+        process.env.HARNESS_TEST_DATABASE_URL,
+        '-c',
+        'SELECT current_database()',
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ).trim();
+    if (!/(?:_test$|^preview_)/.test(databaseName)) {
+      throw new Error('non-isolated database');
+    }
+    const promiseMapTable = execFileSync(
+      'psql',
+      [
+        '-X',
+        '-qAt',
+        process.env.HARNESS_TEST_DATABASE_URL,
+        '-c',
+        "SELECT to_regclass('public.journey_step_links')",
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ).trim();
+    if (!promiseMapTable) {
+      const parsedDatabaseUrl = new URL(process.env.HARNESS_TEST_DATABASE_URL);
+      execFileSync(
+        process.execPath,
+        ['packages/brain/src/migrate.js'],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            DATABASE_URL: process.env.HARNESS_TEST_DATABASE_URL,
+            DB_HOST: parsedDatabaseUrl.hostname,
+            DB_PORT: parsedDatabaseUrl.port || '5432',
+            DB_NAME: parsedDatabaseUrl.pathname.replace(/^\//, ''),
+            DB_USER: decodeURIComponent(parsedDatabaseUrl.username),
+            DB_PASSWORD: decodeURIComponent(parsedDatabaseUrl.password),
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+    }
+  } catch {
+    throw new Error('无法在隔离测试数据库准备 Promise Map schema');
+  }
 }
 
 export const JOURNEY_ID = 'bb8cc561-b3ee-4fec-b74d-2255694bd963';
