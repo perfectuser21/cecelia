@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -9,6 +10,31 @@ const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const OTHER_ATTEMPT_ID = '33333333-3333-4333-8333-333333333333';
 const WORKER_ID = 'us-mac-m4';
 const IMAGE_DIGEST = `cecelia/runner@sha256:${'a'.repeat(64)}`;
+const CREDENTIAL_ENVELOPE = Object.freeze({
+  contract_version: 'credential-envelope/v1',
+  credential_ref: '33333333-3333-4333-8333-333333333333',
+  attempt_id: ATTEMPT_ID,
+  account_id: 'team1',
+  machine_id: WORKER_ID,
+  issued_at: '2026-07-27T12:00:00.000Z',
+  expires_at: '2026-07-27T14:00:00.000Z',
+  payload_hash: `sha256:${'b'.repeat(64)}`,
+  payload: 'sensitive-base64-payload',
+});
+const CREDENTIAL = Object.freeze({
+  credentialRef: CREDENTIAL_ENVELOPE.credential_ref,
+  accountId: 'team1',
+  authJson: '{"tokens":{"access_token":"sensitive-access-token"}}',
+  metadata: Object.freeze({
+    credential_ref: CREDENTIAL_ENVELOPE.credential_ref,
+    attempt_id: ATTEMPT_ID,
+    account_id: 'team1',
+    machine_id: WORKER_ID,
+    issued_at: CREDENTIAL_ENVELOPE.issued_at,
+    expires_at: CREDENTIAL_ENVELOPE.expires_at,
+    payload_hash: CREDENTIAL_ENVELOPE.payload_hash,
+  }),
+});
 
 function loadAttemptRunner() {
   return require('./attempt-runner.cjs');
@@ -43,6 +69,7 @@ function request(overrides = {}) {
       model: 'gpt-5',
       role: 'generator',
     },
+    credential_envelope: CREDENTIAL_ENVELOPE,
     callback_url: 'http://brain.internal:5221/api/brain/harness/callback',
     callback_token: 'callback-secret',
     ...overrides,
@@ -107,10 +134,17 @@ function dependencies(overrides = {}) {
     wait: vi.fn(async () => pendingWait),
     listOwned: vi.fn(async () => []),
   };
+  const credentialConsumer = {
+    consume: vi.fn(() => {
+      events.push('credential.consume');
+      return CREDENTIAL;
+    }),
+  };
   return {
     workspace,
     workspaceManager,
     docker,
+    credentialConsumer,
     stateStore: inMemoryStateStore(),
     events,
     ...overrides,
@@ -125,6 +159,7 @@ function createRunner(deps) {
     stateStore: deps.stateStore,
     workerId: WORKER_ID,
     runnerImageDigest: IMAGE_DIGEST,
+    credentialConsumer: deps.credentialConsumer,
   });
 }
 
@@ -153,7 +188,8 @@ describe('Fleet Worker Attempt runner', () => {
       },
     }));
 
-    expect(deps.events.slice(0, 2)).toEqual([
+    expect(deps.events.slice(0, 3)).toEqual([
+      'credential.consume',
       'workspace.prepare',
       'docker.launch',
     ]);
@@ -176,7 +212,43 @@ describe('Fleet Worker Attempt runner', () => {
       },
       role: 'generator',
       model: 'gpt-5',
+      credential: CREDENTIAL,
     }));
+  });
+
+  it('consumes and binds the credential before materializing a workspace', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await runner.launch(request());
+
+    expect(deps.credentialConsumer.consume).toHaveBeenCalledWith(
+      CREDENTIAL_ENVELOPE,
+      {
+        attemptId: ATTEMPT_ID,
+        accountId: 'team1',
+        machineId: WORKER_ID,
+      },
+    );
+    expect(deps.events.slice(0, 2)).toEqual([
+      'credential.consume',
+      'workspace.prepare',
+    ]);
+    const state = deps.stateStore.states.get(ATTEMPT_ID);
+    expect(state.credential).toEqual(CREDENTIAL.metadata);
+    expect(JSON.stringify(state)).not.toContain('sensitive');
+    expect(state.credential).not.toHaveProperty('payload');
+  });
+
+  it('rejects a Codex launch without an envelope before workspace or Docker side effects', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await expect(runner.launch(request({
+      credential_envelope: undefined,
+    }))).rejects.toThrow('credential_envelope_required');
+    expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+    expect(deps.docker.launch).not.toHaveBeenCalled();
   });
 
   it('rejects caller-owned cwd and mounts before Git or Docker side effects', async () => {
@@ -370,6 +442,36 @@ describe('Fleet Worker Attempt runner', () => {
 });
 
 describe('Fleet Worker durable runtime adapters', () => {
+  it('streams a bounded credential larger than one pipe buffer without truncation', async () => {
+    const { __test__ } = loadAttemptRunner();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-credential-fifo-'));
+    const fifo = path.join(root, 'credential.fifo');
+    execFileSync('mkfifo', [fifo]);
+    const authJson = JSON.stringify({
+      tokens: {
+        access_token: 'x'.repeat(100_000),
+      },
+    });
+    const received = [];
+    const reader = fs.createReadStream(fifo);
+    reader.on('data', (chunk) => received.push(chunk));
+    const readComplete = new Promise((resolve, reject) => {
+      reader.once('end', resolve);
+      reader.once('error', reject);
+    });
+
+    try {
+      await Promise.all([
+        __test__.defaultWriteCredential(fifo, authJson),
+        readComplete,
+      ]);
+      expect(Buffer.concat(received).toString('utf8')).toBe(authJson);
+    } finally {
+      reader.destroy();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('removes the container and runtime when Docker omits the created id', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
@@ -405,6 +507,7 @@ describe('Fleet Worker durable runtime adapters', () => {
           token: request().callback_token,
         },
         lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: CREDENTIAL,
       })).rejects.toThrow(/attempt_container_id_missing/);
 
       expect(runCommand).toHaveBeenCalledWith(
@@ -448,7 +551,12 @@ describe('Fleet Worker durable runtime adapters', () => {
       if (args[0] === 'create') return { stdout: 'container-created\n' };
       return { stdout: '' };
     });
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const writeCredential = vi.fn(async () => undefined);
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      writeCredential,
+    });
 
     try {
       await expect(docker.launch({
@@ -479,6 +587,7 @@ describe('Fleet Worker durable runtime adapters', () => {
           token: request().callback_token,
         },
         lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: CREDENTIAL,
       })).resolves.toEqual({ containerId: 'container-created' });
 
       const [command, createArgs] = runCommand.mock.calls[0];
@@ -493,17 +602,30 @@ describe('Fleet Worker durable runtime adapters', () => {
       );
       expect(createArgs.join(' ')).not.toContain('/Users/operator');
       expect(createArgs).toEqual(expect.arrayContaining([
+        '--tmpfs', '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700',
         '--label', `cecelia.fleet.attempt_id=${ATTEMPT_ID}`,
         '--label', `cecelia.fleet.run_id=${RUN_ID}`,
         '--label', `cecelia.fleet.worker_id=${WORKER_ID}`,
         '--env', 'HARNESS_NODE=generator',
         '--env', 'HARNESS_MODEL=gpt-5',
+        '--env', 'CECELIA_CREDENTIAL_FIFO=/tmp/cecelia-prompts/credential.fifo',
+        '--env', `CECELIA_CREDENTIAL_REF=${CREDENTIAL.credentialRef}`,
       ]));
+      expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
       expect(runCommand.mock.calls[1]).toEqual([
+        'mkfifo',
+        ['-m', '600', path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo')],
+        undefined,
+      ]);
+      expect(runCommand.mock.calls[2]).toEqual([
         'docker',
         ['start', 'cecelia-fleet-22222222-2222-4222-8222-222222222222'],
         undefined,
       ]);
+      expect(writeCredential).toHaveBeenCalledWith(
+        path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo'),
+        CREDENTIAL.authJson,
+      );
       const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
       expect(fs.existsSync(attemptRuntime)).toBe(true);
 

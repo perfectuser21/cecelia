@@ -35,6 +35,7 @@ const fleetSecret = 'kernel-fleet-bridge-secret-at-least-32-bytes';
 const localMachineId = 'us-mac-m4';
 const remoteMachineId = 'xian-mac-m4';
 const remoteJobId = 'xian-job-7';
+const credentialRef = '33333333-3333-4333-8333-333333333333';
 
 const attempt = {
   id: attemptId,
@@ -101,6 +102,30 @@ function remoteResult(overrides = {}) {
   };
 }
 
+function fleetAttempt(overrides = {}) {
+  return {
+    ...attempt,
+    requested_machine_id: remoteMachineId,
+    actual_machine_id: remoteMachineId,
+    execution_transport: 'fleet-worker',
+    remote_job_id: remoteJobId,
+    machine_attestation_status: 'verified',
+    ...overrides,
+  };
+}
+
+function fleetResult(overrides = {}) {
+  return {
+    ...validResult,
+    provider_metadata: {
+      ...validResult.provider_metadata,
+      credential_ref: credentialRef,
+      credential_copy_mutated: false,
+      ...overrides,
+    },
+  };
+}
+
 function postCallback(app, body = validResult, token = callbackToken, owner = leaseOwner) {
   let call = request(app)
     .post(`/api/brain/harness/attempts/${attemptId}/callback`)
@@ -151,6 +176,41 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ ok: true, deduped: false });
     expect(mocks.store.complete).toHaveBeenCalledOnce();
+  });
+
+  it('接受已确认 Fleet Worker receipt 的 bounded credential callback', async () => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt());
+
+    const response = await postCallback(app, fleetResult({
+      credential_copy_mutated: true,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.complete).toHaveBeenCalledWith(
+      attemptId,
+      expect.objectContaining({
+        provider_metadata: expect.objectContaining({
+          credential_ref: credentialRef,
+          credential_copy_mutated: true,
+        }),
+      }),
+      { leaseOwner },
+    );
+  });
+
+  it.each([
+    ['missing credential ref', { credential_ref: undefined }],
+    ['invalid credential ref', { credential_ref: 'not-a-uuid' }],
+    ['non-boolean mutation evidence', { credential_copy_mutated: 'false' }],
+    ['provider credential field', { access_token: 'must-not-persist' }],
+  ])('拒绝 Fleet Codex callback 的 %s', async (_case, metadata) => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt());
+
+    const response = await postCallback(app, fleetResult(metadata));
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('credential_callback_invalid');
+    expect(mocks.store.complete).not.toHaveBeenCalled();
   });
 
   it('拒绝 dedicated canary contract 缺少 CANARY_OK 的 completed callback', async () => {

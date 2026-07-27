@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.95
+**版本**: 1.267.96
 
 ## Kernel attempt telemetry
 
@@ -46,6 +46,13 @@
   独占 pinned OrbStack/Docker container、durable state、terminal
   cleanup、restart reconciliation 与 quarantine。Caller cwd/worktree path 不得
   跨越 Worker boundary。
+- Phase 4C 的 Codex Credential Broker 只在 `us-mac-m4` 从受保护的
+  `~/.codex-team1`～`~/.codex-team5/auth.json` 读取最终选中账号，签发绑定
+  Attempt/account/machine/deadline 的单账号 envelope。Worker 在 workspace 前
+  校验 hash/expiry/bindings 并用 durable ref marker 防重放；payload 仅在进程内存
+  与 FIFO 中短暂存在，容器通过 tmpfs `CODEX_HOME/auth.json`（0600）消费。
+  Attempt state 只保存七项 envelope metadata；callback 只允许 UUID
+  `credential_ref` 与 boolean `credential_copy_mutated`，不允许 token writeback。
 - Worker bearer token 只做节点 transport auth，由受保护文件读取，不是 provider
   credential。installer 为 `_cecelia` 准备 `/var/lib/cecelia` 下 canonical、
   mode 0700 data root，拒绝 traversal 与中间 symlink 逃逸；容器退出按
@@ -59,4 +66,4 @@
   不得降低准入阈值，也不得用 synthetic canary 代替真实任务验收。
 - 节点回退：
   `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`。
-  Brain 回退：`bash scripts/brain-rollback.sh 1.267.94`。
+  Brain 回退：`bash scripts/brain-rollback.sh 1.267.95`。

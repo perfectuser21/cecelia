@@ -1,17 +1,17 @@
-contract_branch: cp-07272050-fleet-worker-workspace-4b
-sprint_dir: docs/superpowers/plans/2026-07-27-fleet-worker-workspace-phase-4b.md
+contract_branch: cp-07272259-fleet-credential-envelope-4c
+sprint_dir: docs/superpowers/plans/2026-07-27-fleet-credential-envelope-phase-4c.md
 
 ---
 skeleton: false
 journey_type: autonomous
 target_environment: local
 ---
-# Contract DoD — Phase 4B Unified Fleet Worker and isolated Workspace
+# Contract DoD — Phase 4C Central CredentialEnvelope
 
-**范围**: 在已合并的 Phase 4A Fleet Node baseline 上，让三台 canonical
-machine 使用同一个 authenticated Worker Attempt API；Brain 只传递 path-free
-`WorkspaceSpec`，Worker 独占每个 Attempt 的 Git worktree、OrbStack/Docker
-container、状态、清理、重启 reconcile 与 quarantine 生命周期。
+**范围**: 在已合并的 Phase 4A～4B Fleet/Worker 基线上，由 US M4 为每个 Codex
+Attempt 签发最终选中单账号的 CredentialEnvelope；Worker 一次消费并只在
+OrbStack 容器 tmpfs 中创建 0600 `CODEX_HOME/auth.json`，全链路禁止认证材料落盘、
+日志、callback 或 writeback。
 
 **大小**: L
 
@@ -52,7 +52,7 @@ container、状态、清理、重启 reconcile 与 quarantine 生命周期。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh'
 
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
-  Brain `1.267.95` canonical version sources 已同步。
+  Brain `1.267.96` canonical version sources 已同步。
   Test: manual:bash -c 'bash scripts/check-version-sync.sh && node scripts/registry-lint.mjs && node -e "const fs=require(\"fs\"),yaml=require(\"js-yaml\");yaml.load(fs.readFileSync(\"regression-contract.yaml\",\"utf8\"));yaml.load(fs.readFileSync(\"docs/registry/features/orchestration.yml\",\"utf8\"));"'
 
 - [x] [ARTIFACT] strict `WorkspaceSpec`、Worker-owned Git workspace manager、
@@ -72,6 +72,18 @@ container、状态、清理、重启 reconcile 与 quarantine 生命周期。
   credential，值不进入 argv、日志或 Git。
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/production-transport.test.js src/orchestrator/remote-bridge-transport.test.js src/orchestrator/__tests__/dispatcher.test.js src/orchestrator/production-wiring.test.js src/__tests__/codex-bridge-kernel-attempt.test.js && cd ../.. && bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh'
 
+- [x] [ARTIFACT] US M4 Credential Broker 只接受 team1～team5、canonical machine
+  与 UUID Attempt，从 mode 0600/0400 regular `auth.json` 读取最终选中账号；token
+  lifetime 必须覆盖 Attempt deadline 与安全余量。Envelope 绑定 ref/Attempt/account/
+  machine/timestamps/hash，错误与日志不包含认证材料。
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/credential-broker.test.js src/orchestrator/remote-bridge-transport.test.js src/orchestrator/production-transport.test.js'
+
+- [x] [ARTIFACT] Fleet Worker 在建 workspace 前验证 envelope、hash、expiry 与三轴
+  binding，并以 durable 0600 ref marker 拒绝重放。宿主 Attempt state 只保存七项
+  metadata；Docker 通过 FIFO 把内存中的单账号 JSON 写入 tmpfs
+  `/home/cecelia/.codex/auth.json`，argv/env/runtime 普通文件均不含 payload。
+  Test: manual:bash -c 'bash packages/brain/scripts/smoke/fleet-credential-envelope-smoke.sh'
+
 ## BEHAVIOR 条目
 
 - [x] [BEHAVIOR] [L2] 每个 Fleet launch 必须携带 Attempt/Run 一致的
@@ -89,6 +101,12 @@ container、状态、清理、重启 reconcile 与 quarantine 生命周期。
   不匹配、stale lease cancel/terminal 及 Worker 未完成 startup reconcile 都
   fail closed。
   Test: manual:bash -c 'bash packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh'
+  期望: exit 0
+
+- [x] [BEHAVIOR] [L2] Codex Fleet callback 只有在 launch receipt 已确认且包含
+  UUID `credential_ref` 与 boolean `credential_copy_mutated` 时才能完成；Runner
+  比较临时 auth 副本前后 hash，只报告 mutation 布尔值，绝不回传修改后的 token。
+  Test: contract:KERNEL-FLEET-CREDENTIAL-01
   期望: exit 0
 
 - [x] [BEHAVIOR] [L2] 完整、匹配且新鲜的 report 只能得到

@@ -50,6 +50,13 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
   'blocked',
 ]);
 const FAILURE_TERMINAL_STATUSES = new Set(['failed', 'cancelled']);
+const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const FLEET_CODEX_METADATA_FIELDS = new Set([
+  'provider',
+  'session_id',
+  'credential_ref',
+  'credential_copy_mutated',
+]);
 
 function createAttemptCallbackRateLimit({ limit, identifier }) {
   return rateLimit({
@@ -377,8 +384,24 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     });
   }
 
-  if (!['local-docker', 'remote-bridge'].includes(attempt.execution_transport)) {
+  if (!['local-docker', 'remote-bridge', 'fleet-worker'].includes(
+    attempt.execution_transport,
+  )) {
     return res.status(409).json({ ok: false, error: 'launch_receipt_unconfirmed' });
+  }
+
+  if (
+    attempt.execution_transport === 'fleet-worker'
+    && attempt.provider === 'codex'
+    && (
+      !UUID_PATTERN.test(result.provider_metadata?.credential_ref ?? '')
+      || typeof result.provider_metadata?.credential_copy_mutated !== 'boolean'
+      || Object.keys(result.provider_metadata).some(
+        (field) => !FLEET_CODEX_METADATA_FIELDS.has(field),
+      )
+    )
+  ) {
+    return res.status(409).json({ ok: false, error: 'credential_callback_invalid' });
   }
 
   if (attempt.execution_transport === 'remote-bridge') {

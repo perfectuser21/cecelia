@@ -11,6 +11,17 @@ const SHARED_SECRET = 'fleet-worker-secret-at-least-32-bytes';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
+const ENVELOPE = Object.freeze({
+  contract_version: 'credential-envelope/v1',
+  credential_ref: '33333333-3333-4333-8333-333333333333',
+  attempt_id: ATTEMPT_ID,
+  account_id: 'team1',
+  machine_id: 'us-mac-m4',
+  issued_at: '2026-07-27T12:00:00.000Z',
+  expires_at: '2026-07-27T14:00:00.000Z',
+  payload_hash: `sha256:${'a'.repeat(64)}`,
+  payload: 'eyJ0b2tlbnMiOnsiYWNjZXNzX3Rva2VuIjoic2VjcmV0In19',
+});
 const MACHINE_URLS = {
   'us-mac-m4': 'http://us-worker.internal:5231',
   'xian-mac-m4': 'http://xian-m4-worker.internal:5231',
@@ -53,7 +64,7 @@ function launchInput(machine) {
           attempt_id: ATTEMPT_ID,
         },
       },
-      constraints: { read_only: false },
+      constraints: { read_only: false, timeout_seconds: 3600 },
     },
     spec: {
       provider: 'codex',
@@ -122,6 +133,12 @@ describe('production execution transport', () => {
         env: configuredEnv(),
         fetchFn,
         spawnDetached,
+        credentialBroker: {
+          issue: vi.fn(async ({ machineId }) => ({
+            ...ENVELOPE,
+            machine_id: machineId,
+          })),
+        },
       });
 
       await expect(transport.launch(launchInput(machine))).resolves.toEqual({
@@ -137,6 +154,10 @@ describe('production execution transport', () => {
       expect(body.workspace_spec).toEqual(
         launchInput(machine).bundle.inputs.workspace_spec,
       );
+      expect(body.credential_envelope).toEqual({
+        ...ENVELOPE,
+        machine_id: machine,
+      });
       expect(JSON.stringify(body)).not.toMatch(
         /worktree_path|workspace_path|\/Users\/operator/,
       );
@@ -169,5 +190,18 @@ describe('production execution transport', () => {
     );
     expect(fetchFn).not.toHaveBeenCalled();
     expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without a credential broker for configured Codex execution', async () => {
+    const fetchFn = vi.fn();
+    const transport = createProductionExecutionTransport({
+      env: configuredEnv(),
+      fetchFn,
+    });
+
+    await expect(transport.launch(launchInput(DEFAULT_LOCAL_MACHINE_ID))).rejects.toThrow(
+      'remote_bridge_credential_broker_unavailable',
+    );
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

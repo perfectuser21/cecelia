@@ -513,6 +513,17 @@ describe('Fleet Worker Attempt API', () => {
         stdin: 'perform the bounded task',
         output: 'jsonl',
       },
+      credential_envelope: {
+        contract_version: 'credential-envelope/v1',
+        credential_ref: '33333333-3333-4333-8333-333333333333',
+        attempt_id: attemptId,
+        account_id: 'team1',
+        machine_id: 'us-mac-m4',
+        issued_at: '2026-07-27T12:00:00.000Z',
+        expires_at: '2026-07-27T14:00:00.000Z',
+        payload_hash: `sha256:${'b'.repeat(64)}`,
+        payload: 'transient-base64-payload',
+      },
       callback_url: `http://brain.internal:5221/api/brain/harness/attempts/${attemptId}/callback`,
       callback_token: 'callback-token',
       ...overrides,
@@ -762,6 +773,7 @@ describe('Fleet Worker production runtime assembly', () => {
         quarantine: path.join(dataRoot, 'quarantine'),
         state: path.join(dataRoot, 'state'),
         runtime: path.join(dataRoot, 'runtime'),
+        credentials: path.join(dataRoot, 'credential-consumption'),
       });
       expect(JSON.stringify(runtime)).not.toContain(
         'https://github.com/perfectuser21/cecelia.git',

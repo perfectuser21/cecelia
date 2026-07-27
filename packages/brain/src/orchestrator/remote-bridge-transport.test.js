@@ -10,6 +10,18 @@ const CALLBACK_TOKEN = 'callback-token-that-must-never-leak';
 const BRIDGE_URL = 'http://100.86.57.69:3458';
 const BRAIN_URL = 'http://brain.internal:5221';
 const MACHINE = 'xian-mac-m4';
+const NOW_MS = Date.parse('2026-07-27T12:00:00.000Z');
+const ENVELOPE = Object.freeze({
+  contract_version: 'credential-envelope/v1',
+  credential_ref: '33333333-3333-4333-8333-333333333333',
+  attempt_id: 'attempt-1',
+  account_id: 'team3',
+  machine_id: MACHINE,
+  issued_at: '2026-07-27T12:00:00.000Z',
+  expires_at: '2026-07-27T14:00:00.000Z',
+  payload_hash: `sha256:${'a'.repeat(64)}`,
+  payload: 'eyJ0b2tlbnMiOnsiYWNjZXNzX3Rva2VuIjoic2VjcmV0In19',
+});
 
 function jsonResponse(status, body) {
   return {
@@ -43,6 +55,7 @@ function launchInput(overrides = {}) {
         attempt_id: 'attempt-1',
       },
     },
+    constraints: { timeout_seconds: 3600 },
     ...overrides.bundle,
   };
   const spec = {
@@ -88,6 +101,8 @@ function createTransport(overrides = {}) {
     sharedSecret: SHARED_SECRET,
     brainUrl: BRAIN_URL,
     fetchFn: vi.fn(async () => jsonResponse(202, acceptedLaunchResponse())),
+    credentialBroker: { issue: vi.fn(async () => ENVELOPE) },
+    now: () => NOW_MS,
     ...overrides,
   });
 }
@@ -194,11 +209,82 @@ describe('remote Bridge launch', () => {
         stdin: 'do the work',
         output: { format: 'jsonl' },
       },
+      credential_envelope: ENVELOPE,
       callback_url: `${BRAIN_URL}/api/brain/harness/attempts/attempt-1/callback`,
       callback_token: CALLBACK_TOKEN,
     });
     expect(requestBody).not.toHaveProperty('bundle');
     expect(requestBody.provider_spec).not.toHaveProperty('environment');
+  });
+
+  it('binds one Codex credential envelope to the selected attempt, account, machine, and deadline', async () => {
+    const issue = vi.fn(async () => ENVELOPE);
+    const transport = createTransport({ credentialBroker: { issue } });
+
+    await transport.launch(launchInput());
+
+    expect(issue).toHaveBeenCalledOnce();
+    expect(issue).toHaveBeenCalledWith({
+      attemptId: 'attempt-1',
+      accountId: 'team3',
+      machineId: MACHINE,
+      deadlineAt: '2026-07-27T13:00:00.000Z',
+    });
+  });
+
+  it('fails closed before contacting the Worker when a Codex broker is unavailable', async () => {
+    const fetchFn = vi.fn();
+    const transport = createTransport({ fetchFn, credentialBroker: undefined });
+
+    await expect(transport.launch(launchInput())).rejects.toThrow(
+      'remote_bridge_credential_broker_unavailable',
+    );
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before contacting the Worker when the broker returns no envelope', async () => {
+    const fetchFn = vi.fn();
+    const transport = createTransport({
+      fetchFn,
+      credentialBroker: { issue: vi.fn(async () => undefined) },
+    });
+
+    await expect(transport.launch(launchInput())).rejects.toThrow(
+      'remote_bridge_credential_envelope_invalid',
+    );
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before contacting the Worker when the computed deadline is outside the ISO date range', async () => {
+    const fetchFn = vi.fn();
+    const issue = vi.fn();
+    const transport = createTransport({
+      fetchFn,
+      credentialBroker: { issue },
+      now: () => 8_640_000_000_000_000 - 1000,
+    });
+
+    await expect(transport.launch(launchInput())).rejects.toThrow(
+      'remote_bridge_invalid_attempt_timeout',
+    );
+    expect(issue).not.toHaveBeenCalled();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('does not issue or send a Codex credential envelope for another provider', async () => {
+    const issue = vi.fn();
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const transport = createTransport({ fetchFn, credentialBroker: { issue } });
+
+    await transport.launch(launchInput({
+      spec: { provider: 'claude', command: 'claude' },
+      target: { provider: 'claude', account: 'claude-team1' },
+    }));
+
+    expect(issue).not.toHaveBeenCalled();
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).not.toHaveProperty(
+      'credential_envelope',
+    );
   });
 
   it('uses zero when lease generation is absent', async () => {

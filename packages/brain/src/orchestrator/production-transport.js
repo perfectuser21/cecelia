@@ -68,6 +68,7 @@ export function createProductionExecutionTransport({
   env = {},
   localMachineId = DEFAULT_LOCAL_MACHINE_ID,
   fetchFn,
+  credentialBroker,
   remoteBridgeTimeoutMs,
 } = {}) {
   if (localMachineId !== DEFAULT_LOCAL_MACHINE_ID) {
@@ -86,6 +87,7 @@ export function createProductionExecutionTransport({
     bridgeUrls: workerUrls,
     sharedSecret,
     brainUrl: callbackBaseUrl,
+    credentialBroker,
     fetchFn,
     timeoutMs: remoteBridgeTimeoutMs,
   });
