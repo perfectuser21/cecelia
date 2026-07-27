@@ -18,6 +18,9 @@ log_dir="$test_root/var/log/cecelia"
 launch_log="$test_root/launchctl.log"
 launch_state="$test_root/launchctl.state"
 launch_fail_once="$test_root/launchctl.fail-once"
+acl_log="$test_root/acl.log"
+acl_state="$test_root/acl.state"
+preflight_log="$test_root/preflight.log"
 mkdir -p "$install_dir" "$log_dir"
 
 run_installer() {
@@ -26,6 +29,9 @@ run_installer() {
     FLEET_WORKER_LOG_DIR="$log_dir" \
     FLEET_WORKER_LAUNCHCTL="$test_root/launchctl" \
     FLEET_WORKER_NODE_PROBE="$test_root/node-probe" \
+    FLEET_WORKER_READLINK="$test_root/readlink" \
+    FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
+    FLEET_WORKER_CHMOD="$test_root/chmod" \
     "$INSTALLER" "$@"
 }
 
@@ -37,6 +43,9 @@ run_installer_with_id() {
     FLEET_WORKER_LOG_DIR="$log_dir" \
     FLEET_WORKER_LAUNCHCTL="$test_root/launchctl" \
     FLEET_WORKER_NODE_PROBE="$test_root/node-probe" \
+    FLEET_WORKER_READLINK="$test_root/readlink" \
+    FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
+    FLEET_WORKER_CHMOD="$test_root/chmod" \
     "$INSTALLER" "$@"
 }
 
@@ -47,9 +56,42 @@ printf '%s\n' \
 chmod +x "$test_root/launchctl"
 export FLEET_WORKER_LAUNCH_LOG="$launch_log"
 export FLEET_WORKER_LAUNCH_STATE="$launch_state"
+export FLEET_WORKER_ACL_LOG="$acl_log"
+export FLEET_WORKER_ACL_STATE="$acl_state"
+export FLEET_WORKER_PREFLIGHT_LOG="$preflight_log"
+export FLEET_WORKER_SOCKET_TARGET='/Users/orbstack-owner/.orbstack/run/docker.sock'
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
+  '[[ "$*" == "/var/run/docker.sock" ]] || exit 90' \
+  'printf "%s\\n" "${FLEET_WORKER_SOCKET_TARGET:?}"' \
+  > "$test_root/readlink"
+chmod +x "$test_root/readlink"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [[ -e "${FLEET_WORKER_ACL_STATE:?}" ]]; then' \
+  '  printf "%s\\n" " 0: user:_cecelia allow search"' \
+  'fi' \
+  > "$test_root/acl-list"
+chmod +x "$test_root/acl-list"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\\n" "acl $*" >> "${FLEET_WORKER_ACL_LOG:?}"' \
+  'printf "%s\\n" "acl $1" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
+  'if [[ "$1" == "+a" ]]; then' \
+  '  [[ "${FLEET_WORKER_ACL_FAIL_ADD:-0}" != "1" ]] || exit 91' \
+  '  : > "${FLEET_WORKER_ACL_STATE:?}"' \
+  'elif [[ "$1" == "-a" ]]; then' \
+  '  rm -f "${FLEET_WORKER_ACL_STATE:?}"' \
+  'fi' \
+  > "$test_root/chmod"
+chmod +x "$test_root/chmod"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\\n" "probe" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
   'printf "%s\\n" "{\"ok\":true}"' \
   'exit 0' > "$test_root/node-probe"
 chmod +x "$test_root/node-probe"
@@ -121,6 +163,7 @@ keep_alive = plist.get('KeepAlive')
 user_name = plist.get('UserName')
 tool_path = plist.get('EnvironmentVariables', {}).get('PATH')
 worker_host = plist.get('EnvironmentVariables', {}).get('CECELIA_FLEET_WORKER_HOST')
+docker_host = plist.get('EnvironmentVariables', {}).get('DOCKER_HOST')
 print(
     ('true' if run_at_load is True else repr(run_at_load))
     + '|'
@@ -131,10 +174,12 @@ print(
     + str(tool_path)
     + '|'
     + str(worker_host)
+    + '|'
+    + str(docker_host)
 )
 PY
 )" || fail "rendered file is not a valid plist"
-[[ "$plist_contract" == 'true|true|_cecelia|/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|100.86.57.69' ]] \
+[[ "$plist_contract" == 'true|true|_cecelia|/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|100.86.57.69|unix:///var/run/docker.sock' ]] \
   || fail "plist contract drifted: $plist_contract"
 validated_plist="$test_root/validated-fleet-worker.plist"
 cp "$plist" "$validated_plist"
@@ -163,6 +208,13 @@ printf '%s\n' \
 chmod +x "$test_root/id-root"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
+  'if [[ "$1" == "-u" && $# -eq 1 ]]; then printf "%s\\n" 0; exit 0; fi' \
+  'if [[ "$1" == "-u" && "${2:-}" == "_cecelia" ]]; then exit 1; fi' \
+  'exec /usr/bin/id "$@"' \
+  > "$test_root/id-no-service"
+chmod +x "$test_root/id-no-service"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
   'command_line="$*"' \
   'if [[ "$1" == "print" ]]; then' \
   '  case "$(<"${FLEET_WORKER_LAUNCH_STATE:?}")" in' \
@@ -187,6 +239,66 @@ chmod +x "$test_root/launchctl"
 : > "$launch_log"
 printf 'absent\n' > "$launch_state"
 export FLEET_WORKER_LAUNCH_FAIL_ONCE="$launch_fail_once"
+
+: > "$acl_log"
+: > "$preflight_log"
+service_user_output=''
+if service_user_output="$(
+  run_installer_with_id "$test_root/id-no-service" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "missing _cecelia service user was accepted"
+fi
+grep -Fq 'prerequisite_service_user' <<<"$service_user_output" \
+  || fail "missing service user lacked a bounded refusal"
+[[ ! -s "$acl_log" ]] || fail "missing service user caused an ACL mutation"
+
+invalid_socket_output=''
+if invalid_socket_output="$(
+  FLEET_WORKER_SOCKET_TARGET='/tmp/docker.sock' \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "non-OrbStack Docker socket target was accepted"
+fi
+grep -Fq 'prerequisite_docker_socket_target' <<<"$invalid_socket_output" \
+  || fail "invalid Docker socket target lacked a bounded refusal"
+[[ ! -s "$acl_log" ]] || fail "invalid Docker socket target caused an ACL mutation"
+
+acl_failure_output=''
+if acl_failure_output="$(
+  FLEET_WORKER_ACL_FAIL_ADD=1 \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "failed ACL grant was accepted"
+fi
+grep -Fq 'prerequisite_docker_acl' <<<"$acl_failure_output" \
+  || fail "failed ACL grant lacked a bounded refusal"
+[[ ! -e "$acl_state" ]] || fail "failed ACL grant left ACL state behind"
+
+: > "$acl_log"
+: > "$preflight_log"
+rm -f "$acl_state" "$launch_fail_once"
+export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
+first_failure_output=''
+if first_failure_output="$(
+  run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+  fail "failed first install unexpectedly succeeded"
+fi
+unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+grep -Fq 'install_failed_rolled_back' <<<"$first_failure_output" \
+  || fail "failed first install lacked a bounded rollback signature"
+[[ "$(grep -Ec '^acl \\+a ' "$acl_log")" -eq 1 ]] \
+  || fail "failed first install did not add exactly one ACL"
+[[ "$(grep -Ec '^acl -a ' "$acl_log")" -eq 1 ]] \
+  || fail "failed first install did not remove its new ACL"
+[[ ! -e "$acl_state" ]] || fail "failed first install leaked its new ACL"
+
+: > "$acl_log"
+: > "$preflight_log"
+: > "$launch_log"
+rm -f "$launch_fail_once"
+printf 'absent\n' > "$launch_state"
 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null
 installed_plist="$install_dir/com.perfect21.fleet-worker.plist"
 runtime_dir="$test_root/usr/local/libexec/cecelia/fleet-worker"
@@ -205,6 +317,14 @@ cmp -s "$validated_plist" "$installed_plist" \
   || fail "--apply did not kickstart the installed system LaunchDaemon"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "first apply did not leave the service running"
+[[ "$(grep -Ec '^acl \\+a ' "$acl_log")" -eq 1 ]] \
+  || fail "first apply did not add exactly one minimal ACL"
+grep -Fxq 'acl +a _cecelia allow search /Users/orbstack-owner' "$acl_log" \
+  || fail "first apply granted more than owner-home search ACL"
+[[ "$(sed -n '1p' "$preflight_log")" == 'acl +a' ]] \
+  || fail "ACL was not granted before the low-privilege node probe"
+[[ "$(sed -n '2p' "$preflight_log")" == 'probe' ]] \
+  || fail "node probe did not run after the ACL grant"
 
 : > "$launch_log"
 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
@@ -219,6 +339,8 @@ run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
   || fail "repeat --apply did not kickstart the replacement service"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "repeat --apply left split service state"
+[[ "$(grep -Ec '^acl \\+a ' "$acl_log")" -eq 1 ]] \
+  || fail "repeat --apply duplicated the existing ACL"
 
 mode_of() {
   case "$(uname -s)" in
