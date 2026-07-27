@@ -162,6 +162,11 @@ describe('Fleet Worker Attempt runner', () => {
         target: '/workspace',
         readOnly,
       },
+      workspaceAdminMount: {
+        source: deps.workspace.mirror_path,
+        target: deps.workspace.mirror_path,
+        readOnly,
+      },
       labels: {
         'cecelia.fleet.attempt_id': ATTEMPT_ID,
         'cecelia.fleet.run_id': RUN_ID,
