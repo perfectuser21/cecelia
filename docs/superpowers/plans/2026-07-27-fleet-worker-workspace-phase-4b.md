@@ -120,6 +120,8 @@ Modify:
 - `packages/brain/src/orchestrator/execution-transport.test.js`
 - `packages/brain/src/orchestrator/remote-bridge-transport.js`
 - `packages/brain/src/orchestrator/remote-bridge-transport.test.js`
+- `packages/brain/src/orchestrator/providers/grok.js`
+- `packages/brain/src/orchestrator/providers/grok.test.js`
 - `packages/brain/scripts/fleet-worker/fleet-worker.cjs`
 - `packages/brain/scripts/fleet-worker/fleet-worker.test.js`
 - `packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker.plist.template`
@@ -142,6 +144,8 @@ Modify:
 - `package-lock.json`
 
 Any additional file is a scope exception and must be justified in the PR body.
+The Grok adapter pair is a review-closure exception: removing the caller
+worktree path otherwise serialized `null` into Grok's `--cwd` argument.
 
 ## Red oracle
 

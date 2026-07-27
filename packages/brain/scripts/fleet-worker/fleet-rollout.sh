@@ -13,7 +13,7 @@ SSH="${FLEET_ROLLOUT_SSH:-/usr/bin/ssh}"
 TAR="${FLEET_ROLLOUT_TAR:-/usr/bin/tar}"
 SUDO="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 ROLLOUT_TMPDIR="${FLEET_ROLLOUT_TMPDIR:-${TMPDIR:-/tmp}}"
-WORKER_TOKEN_SOURCE="${FLEET_ROLLOUT_WORKER_TOKEN_FILE:-/var/lib/cecelia/fleet-worker/worker-token}"
+WORKER_TOKEN_SOURCE="${FLEET_ROLLOUT_WORKER_TOKEN_FILE:-/var/lib/cecelia/fleet-worker/worker-auth}"
 
 TEMP_ROOT=''
 

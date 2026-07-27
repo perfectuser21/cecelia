@@ -65,6 +65,9 @@ container、状态、清理、重启 reconcile 与 quarantine 生命周期。
   server-owned Worker URL；旧 bridge 的 `/harness/attempts*` production 入口返回
   `410 fleet_worker_required`，不再承担 host Attempt 执行。installer 事务性安装完整
   Worker generation，并为 `_cecelia` 准备 mode 0700 data root 和受保护 token file。
+  US M4 的受保护 Worker transport auth 作为 golden baseline 工件进入 root-owned
+  rollout staging，再由 baseline reconciler 安装到三台节点；它不是 Codex/provider
+  credential，值不进入 argv、日志或 Git。
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/production-transport.test.js src/orchestrator/remote-bridge-transport.test.js src/orchestrator/__tests__/dispatcher.test.js src/orchestrator/production-wiring.test.js src/__tests__/codex-bridge-kernel-attempt.test.js && cd ../.. && bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh'
 
 ## BEHAVIOR 条目
@@ -80,7 +83,8 @@ container、状态、清理、重启 reconcile 与 quarantine 生命周期。
 - [x] [BEHAVIOR] [L2] Brain 继续决定 machine/provider/account/model/role，并通过
   同一 Worker client 传递这些选择；Worker 不接收或推导 host cwd，不读取用户
   Codex auth。无认证、body 越界、目标 machine 不匹配、Workspace expected head
-  不匹配及 Worker 未完成 startup reconcile 都 fail closed。
+  不匹配、stale lease cancel/terminal 及 Worker 未完成 startup reconcile 都
+  fail closed。
   Test: manual:bash -c 'bash packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh'
   期望: exit 0
 
