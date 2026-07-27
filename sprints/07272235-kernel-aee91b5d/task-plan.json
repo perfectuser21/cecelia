@@ -1,38 +1,34 @@
 {
-  "initiative_id": "pending",
+  "initiative_id": "intent:ff6b0d21-5d9b-4e04-89ab-c44c5443ebf0:5",
   "journey_type": "autonomous",
-  "journey_type_reason": "任务只涉及 Brain/engine 后端、git current-main、隔离 PostgreSQL、approval/judge/evaluator 同-SHA 收口，无前端 UI。",
+  "journey_type_reason": "任务只涉及 Brain/engine 后端、git current-main、隔离 PostgreSQL、同-SHA 审批链与 fail-closed smoke 套件，无前端 UI。",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "收口 PR #4372 的 F1 baseline、测试库护栏与同-SHA 审批链证明",
-      "scope": "以 current origin/main 为准重绑 PR #4372；新增/修复 migration 366、isolated DB 双跑稳定、evaluator 写前测试库护栏、F1 fail-closed suite、same-SHA evaluator/judge/human approval 只读证明，同时保持 PR Draft 与生产库零写入。",
+      "title": "收口 PR #4372 的 current-main 绑定、migration 366、测试库护栏与 same-SHA 审批链",
+      "scope": "以 current origin/main 为准收口 Draft PR #4372；实现 migration 366 与双跑稳定验证、evaluator HARNESS_TEST_DATABASE_URL 护栏、F1 fail-closed suite、same-SHA server-owned evidence，同时保持 PR Draft 与生产库零写入。",
       "dod": [
-        "[BEHAVIOR] current main 漂移时旧 merge-base/old 76 checks/old approval 全失效，PR #4372 仍 Draft 且 autoMergeRequest=null",
-        "[BEHAVIOR] migration 366 在同一个 isolated DB 双跑后 schema/data/index/constraint 快照完全等价，且 migration-365 语义引用改绑 366 但不误伤合法 363/364/365 历史文件",
-        "[BEHAVIOR] evaluator 只认 HARNESS_TEST_DATABASE_URL；拒绝 production-like/default/127.0.0.1；要求 host.docker.internal，并在任何写入前核对 current_database()/inet_server_addr()/白名单库名",
-        "[BEHAVIOR] F1 fail-closed suite 独立通过合同 oracle、真实集成测试、端点语义、运行时非回归、DevGate/current-SHA、七个 legacy smokes，并精确断言 1 journey、S0-S12、143 cells、11 elements、8 legacy families",
-        "[BEHAVIOR] evaluator PASS、judge PASS、human approval 都是 server-owned records 且绑定同一 final head SHA；新 commit 会使三者与 required checks 一起失效"
+        "[BEHAVIOR] current main 与 PR head SHA 的所有当前 required context 绑定同一 final SHA；old 76 checks/old approvals/head drift 全失效",
+        "[BEHAVIOR] migration 366 在同一 isolated DB 双跑后 schema/data/index/constraint 快照完全等价，且相关 365 语义引用改绑 366 但不误伤合法历史 363/364/365 文件",
+        "[BEHAVIOR] evaluator 只认 HARNESS_TEST_DATABASE_URL；拒绝 production-like/default/127.0.0.1；要求 host.docker.internal，并在写前核对 current_database()/inet_server_addr()/白名单库名",
+        "[BEHAVIOR] F1 fail-closed suite 串行通过合同 oracle、真实集成测试、端点语义、运行时非回归、DevGate/current-SHA、七个具名 legacy smokes，并精确断言 1 journey、S0-S12、143 cells、11 elements、8 legacy families",
+        "[BEHAVIOR] evaluator PASS、judge PASS、human approval 都是 server-owned records 且绑定同一 final head SHA；新 commit 会使三者与 required checks 一起失效；PR #4372 仍 Draft 且 autoMergeRequest=null"
       ],
       "files": [
         "packages/brain/migrations/366_kernel_harness_f1_baseline.sql",
-        "packages/brain/src/__tests__/integration/migration-365-executor-kind-kernel-process.integration.test.js",
+        "packages/brain/src/__tests__/integration/migration-366-kernel-harness-f1-baseline.integration.test.js",
+        "packages/brain/src/orchestrator/kernel-pr4372-current-main-surfaces.js",
         "packages/brain/src/routes/harness-kernel-approvals.js",
-        "packages/brain/src/harness-judge.js",
         "packages/brain/src/orchestrator/ground-truth.js",
         "packages/brain/src/orchestrator/derive.js",
         "packages/brain/src/orchestrator/gates.js",
         "packages/engine/src/harness/evaluate.js",
         "packages/brain/scripts/smoke/kernel-f1-equivalence-smoke.sh",
-        "packages/brain/scripts/smoke/git-sha-health-smoke.sh",
-        "packages/brain/scripts/smoke/review-gating-smoke.sh",
-        "packages/brain/scripts/smoke/harness-judge-smoke.sh",
-        "packages/brain/scripts/smoke/review-approve-auth-smoke.sh",
         "sprints/07272235-kernel-aee91b5d/tests/kernel-pr4372-f1-recovery.contract.test.ts"
       ],
       "depends_on": [],
       "complexity": "M",
-      "estimated_minutes": 60
+      "estimated_minutes": 90
     }
   ]
 }
