@@ -1,0 +1,39 @@
+{
+  "initiative_id": "8bb8252f-29b4-4c34-acb9-1accda7ddfcf",
+  "journey_type": "user_facing",
+  "journey_type_reason": "Dashboard UI 改动（status badge + 新页面 + ConversationsPanel 提取），用户在 Playwright 浏览器真实操作验收",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Dashboard 对话栏 UI 完整实现（status badge + ConversationsPanel 提取 + WarRoomGoldenPathPage）",
+      "scope": "1. 提取 ConversationsPanel 为独立模块（含 gpId? 接口）；2. 议题列表 status badge（active/resolved/suspended 三色）；3. 新建 WarRoomGoldenPathPage（双栏，GP 信息+对话）；4. 注册 /warroom/gp/:gpId 路由；5. App.tsx isFullHeightRoute 覆盖 /warroom/gp；6. Ability 卡片添加"对话"入口按钮",
+      "dod": [
+        "[BEHAVIOR] statusBadgeMeta active 返回 emerald 色彩类名，label='活跃'",
+        "[BEHAVIOR] statusBadgeMeta resolved 返回 slate 灰色，label='已解决'",
+        "[BEHAVIOR] statusBadgeMeta suspended 返回 amber 黄色，label='挂起'",
+        "[BEHAVIOR] ConversationsPanel 含 gpId 时 fetch URL 追加 gp_id 参数",
+        "[BEHAVIOR] POST /api/brain/conversations 含 gp_id 时成功落库",
+        "[BEHAVIOR] GET /api/brain/conversations 无 journey_id 返回 400",
+        "[BEHAVIOR] INV-1 伪造 journey_id 返回 404",
+        "[BEHAVIOR] INV-2 非 UUID gp_id 返回 400",
+        "[BEHAVIOR] INV-3 前端组件无 spawn/exec 调用",
+        "[ARTIFACT] ConversationsPanel.tsx 存在含 gpId 接口",
+        "[ARTIFACT] WarRoomGoldenPathPage.tsx 存在",
+        "[ARTIFACT] system-hub/index.ts 注册 GP 路由",
+        "[ARTIFACT] App.tsx isFullHeightRoute 覆盖 /warroom/gp"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/warroom/ConversationsPanel.tsx",
+        "apps/dashboard/src/pages/warroom/WarRoomLineCommandPage.tsx",
+        "apps/dashboard/src/pages/warroom/WarRoomGoldenPathPage.tsx",
+        "apps/api/features/system-hub/index.ts",
+        "apps/dashboard/src/App.tsx",
+        "apps/dashboard/src/pages/warroom/__tests__/WarRoomLineCommandPage.test.ts",
+        "apps/dashboard/src/pages/warroom/__tests__/ConversationsPanel.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
