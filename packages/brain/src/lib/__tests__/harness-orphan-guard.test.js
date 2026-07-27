@@ -174,3 +174,132 @@ describe('WAIT_SUICIDE_PATTERN 头号死因原句(终审 Minor1 回归锁)', () 
     expect(WAIT_SUICIDE_PATTERN.test('PR 已开出,等待 CI 结果通知。')).toBe(true);
   });
 });
+
+// ─── Kernel v1 判活闸（刀2，事故 51836fb2 回归锁）────────────────────────────
+// Kernel v1 执行体是 Brain 容器内的裸 Node 进程，既没有 cecelia-relay-* 容器，
+// 也从不写 initiative_run_events —— 旧守卫的两个信号同时返回"死"，
+// 于是活着的 controller 被 requeue 三次后烧成 failed。
+describe('Kernel v1 判活闸:活着的 kernel 绝不 requeue', () => {
+  const KERNEL_TASK_ID = '51836fb2-10ea-48eb-97b2-c324df32d147';
+
+  function sweepPool(taskPayload) {
+    const calls = [];
+    const pool = {
+      calls,
+      query: vi.fn(async (sql, params) => {
+        const s = String(sql);
+        calls.push({ sql: s, params });
+        if (s.includes("task_type LIKE 'harness%'")) {
+          return {
+            rows: [{
+              id: KERNEL_TASK_ID, title: 'kernel run', status: 'in_progress',
+              payload: taskPayload, initiative_id: KERNEL_TASK_ID,
+            }],
+          };
+        }
+        if (s.includes('initiative_run_events')) return { rows: [{ last_hb: 0 }] };
+        return { rows: [] };
+      }),
+    };
+    return pool;
+  }
+
+  const noContainers = () => '';
+
+  it('kernel 判活=alive → 不 requeue（事故主线）', async () => {
+    const pool = sweepPool({ harness_runtime: 'kernel-v1' });
+    const assessKernel = vi.fn(async () => ({ verdict: 'alive', reason: 'fresh_heartbeat' }));
+    const r = await sweepOrphanHarnessTasks({
+      pool, execFn: vi.fn(noContainers), idleMinutes: 15, assessKernel,
+    });
+    expect(assessKernel).toHaveBeenCalled();
+    expect(r.requeued).toBe(0);
+    expect(r.failed).toBe(0);
+    expect(r.kernelHeld).toBe(1);
+    expect(pool.calls.some((c) => c.sql.includes("status = 'queued'"))).toBe(false);
+  });
+
+  it('kernel 判活=unknown → 同样不 requeue（fail-open，未知不等于死亡）', async () => {
+    const pool = sweepPool({ harness_runtime: 'kernel-v1' });
+    const assessKernel = vi.fn(async () => ({ verdict: 'unknown', reason: 'no_kernel_run' }));
+    const r = await sweepOrphanHarnessTasks({
+      pool, execFn: vi.fn(noContainers), idleMinutes: 15, assessKernel,
+    });
+    expect(r.requeued).toBe(0);
+    expect(r.kernelHeld).toBe(1);
+  });
+
+  it('判活函数抛异常 → 仍不 requeue（fail-open）', async () => {
+    const pool = sweepPool({ harness_runtime: 'kernel-v1' });
+    const assessKernel = vi.fn(async () => { throw new Error('probe blew up'); });
+    const r = await sweepOrphanHarnessTasks({
+      pool, execFn: vi.fn(noContainers), idleMinutes: 15, assessKernel,
+    });
+    expect(r.requeued).toBe(0);
+  });
+
+  it('kernel 判活=dead（pid 确证消失）→ 才允许 requeue', async () => {
+    const pool = sweepPool({ harness_runtime: 'kernel-v1' });
+    const assessKernel = vi.fn(async () => ({ verdict: 'dead', reason: 'pid_gone' }));
+    const r = await sweepOrphanHarnessTasks({
+      pool, execFn: vi.fn(noContainers), idleMinutes: 15, assessKernel,
+    });
+    expect(r.requeued).toBe(1);
+  });
+
+  it('回归锁:旧 relay 任务（无 harness_runtime）行为一字不变 —— 判活返回 not_applicable 仍照旧 requeue', async () => {
+    const pool = sweepPool({});
+    const assessKernel = vi.fn(async () => ({ verdict: 'not_applicable' }));
+    const r = await sweepOrphanHarnessTasks({
+      pool, execFn: vi.fn(noContainers), idleMinutes: 15, assessKernel,
+    });
+    expect(r.requeued).toBe(1);
+    expect(r.kernelHeld).toBe(0);
+  });
+
+  it('callback 退出闸:kernel 活着 → noop，不 requeue', async () => {
+    const pool = mockPool({
+      id: KERNEL_TASK_ID, status: 'in_progress', task_type: 'harness_initiative',
+      payload: { harness_runtime: 'kernel-v1' },
+    });
+    const assessKernel = vi.fn(async () => ({ verdict: 'alive', reason: 'fresh_heartbeat' }));
+    const r = await handleRelayExitConsistency({
+      pool, execFn: vi.fn(noContainers), assessKernel,
+      containerId: `cecelia-relay-${KERNEL_TASK_ID.slice(0, 8)}-x`, exitCode: 1, resultText: '',
+    });
+    expect(r.action).toBe('noop');
+    expect(pool.calls.some((c) => c.sql.includes("status = 'queued'"))).toBe(false);
+  });
+});
+
+describe('心跳取 max:kernel 心跳与 initiative_run_events 任一新鲜即视为活', () => {
+  const KERNEL_TASK_ID = '51836fb2-10ea-48eb-97b2-c324df32d147';
+
+  it('run_events 心跳为 0 但 kernel 心跳新鲜 → 不 requeue', async () => {
+    const calls = [];
+    const pool = {
+      calls,
+      query: vi.fn(async (sql) => {
+        const s = String(sql);
+        calls.push({ sql: s });
+        if (s.includes("task_type LIKE 'harness%'")) {
+          return {
+            rows: [{
+              id: KERNEL_TASK_ID, title: 'k', status: 'in_progress',
+              payload: { harness_runtime: 'kernel-v1' }, initiative_id: KERNEL_TASK_ID,
+            }],
+          };
+        }
+        if (s.includes('initiative_run_events')) return { rows: [{ last_hb: 0 }] };
+        if (s.includes('FROM initiative_runs')) {
+          return { rows: [{ orchestrator_heartbeat_at: new Date().toISOString(), orchestrator_pid: null, orchestrator_host: null }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    // 不注入 assessKernel —— 走真实判活模块 + 真实 SQL 路径
+    const r = await sweepOrphanHarnessTasks({ pool, execFn: vi.fn(() => ''), idleMinutes: 15 });
+    expect(r.requeued).toBe(0);
+    expect(calls.some((c) => c.sql.includes('FROM initiative_runs'))).toBe(true);
+  });
+});

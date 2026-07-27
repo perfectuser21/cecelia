@@ -41,7 +41,8 @@ else
   skip "Brain 离线 — 跳过 API 检查（CI 无 DB 时正常）"
 fi
 
-# 静态检查：executor-contracts.js 五合同结构
+# 静态检查：executor-contracts.js 六合同结构
+# （2026-07-27 由五增六：kernel-process = Kernel v1 的裸 Node 进程，不是 docker 容器）
 REPO_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 CONTRACTS_JS="$REPO_ROOT/packages/brain/src/executor-contracts.js"
 
@@ -49,11 +50,11 @@ if [[ ! -f "$CONTRACTS_JS" ]]; then
   fail "executor-contracts.js 不存在: $CONTRACTS_JS"
 else
   node --input-type=module <<EOF 2>/dev/null \
-    && ok "EXECUTOR_CONTRACTS 五合同结构正确" \
+    && ok "EXECUTOR_CONTRACTS 六合同结构正确" \
     || fail "executor-contracts.js 导入/结构检查失败"
 import { EXECUTOR_CONTRACTS, VALID_EXECUTOR_KINDS, assessTaskLiveness } from '${CONTRACTS_JS}';
-const EXPECTED = ['brain-local','relay-container','headed-session','bridge','external-worker'];
-if (VALID_EXECUTOR_KINDS.length !== 5) throw new Error('VALID_EXECUTOR_KINDS 长度不对');
+const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker'];
+if (VALID_EXECUTOR_KINDS.length !== 6) throw new Error('VALID_EXECUTOR_KINDS 长度不对');
 for (const k of EXPECTED) {
   const c = EXECUTOR_CONTRACTS[k];
   if (!c) throw new Error('missing contract: ' + k);
@@ -98,6 +99,26 @@ const checks = {
 for (const [k,v] of Object.entries(checks)) {
   if (EXECUTOR_KIND_FOR[k] !== v) throw new Error(k + ' → ' + EXECUTOR_KIND_FOR[k] + ' (expected ' + v + ')');
 }
+EOF
+
+  # kernel-process：按 payload.harness_runtime 分派 + 判活 fail-open（事故 51836fb2）
+  node --input-type=module <<EOF 2>/dev/null \
+    && ok "kernel-v1 任务解析为 kernel-process 且判活 fail-open" \
+    || fail "kernel-process 分派/fail-open 异常"
+import { resolveExecutorKind, resolveLivenessKind, assessTaskLiveness, EXECUTOR_CONTRACTS } from '${CONTRACTS_JS}';
+const kt = { id: 'smoke-kernel', task_type: 'harness_initiative', payload: { harness_runtime: 'kernel-v1' } };
+if (resolveExecutorKind(kt) !== 'kernel-process') throw new Error('打标点未分派 kernel-process');
+if (resolveLivenessKind({ ...kt, executor_kind: 'relay-container' }) !== 'kernel-process') {
+  throw new Error('存量 relay-container 误标未被判活点纠正');
+}
+if (resolveExecutorKind({ task_type: 'harness_initiative', payload: {} }) !== 'relay-container') {
+  throw new Error('旧 relay 路径被改变');
+}
+const c = EXECUTOR_CONTRACTS['kernel-process'];
+if (c.onStale !== EXECUTOR_CONTRACTS['relay-container'].onStale) throw new Error('kernel-process 比 relay-container 更容易被杀');
+// 无 pool → 必须 unknown（fail-open），绝不能 dead
+const r = await assessTaskLiveness({ ...kt, executor_kind: 'relay-container' }, { pool: null, allowDefaultPool: false });
+if (r.verdict !== 'unknown') throw new Error('无 pool 时应 fail-open unknown，实际 ' + r.verdict);
 EOF
 fi
 

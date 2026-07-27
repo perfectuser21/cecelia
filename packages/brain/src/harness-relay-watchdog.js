@@ -864,8 +864,13 @@ export async function resumeStalledRelayRuns(deps = {}) {
         continue;
       }
       if (task.status === 'failed') {
+        // failure_reason 必写 —— 旁边四条同类 UPDATE 都写了，只有这条留空，
+        // 界面上这类 run 的失败原因永远是空的（事故 51836fb2 复盘卡在这）。
+        // COALESCE：kernel/上游已写过更具体的原因时不覆盖。
         await dbPool.query(
-          `UPDATE initiative_runs SET phase='failed', completed_at=NOW()
+          `UPDATE initiative_runs
+              SET phase='failed', completed_at=NOW(),
+                  failure_reason=COALESCE(failure_reason, 'task_failed_upstream')
             WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
           [run.initiative_id]
         );
