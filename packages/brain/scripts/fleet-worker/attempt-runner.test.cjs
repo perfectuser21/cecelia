@@ -244,6 +244,22 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('quarantined');
   });
 
+  it('rolls back the container and workspace when durable state persistence fails', async () => {
+    const deps = dependencies();
+    deps.stateStore.save.mockRejectedValueOnce(new Error('state write failed'));
+    const runner = createRunner(deps);
+
+    await expect(runner.launch(request())).rejects.toThrow(/state write failed/);
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+    });
+    expect(deps.events.slice(-2)).toEqual([
+      'docker.remove',
+      'workspace.cleanup',
+    ]);
+  });
+
   it('restart reconciliation cleans owned orphans without deleting another Attempt', async () => {
     const ownedOrphan = {
       attempt_id: ATTEMPT_ID,
@@ -311,6 +327,11 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalledWith(healthyAttempt.workspace);
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalledWith(foreignAttempt.workspace);
     expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'missing-owned-container',
+      attemptId: ATTEMPT_ID,
+      containerMissing: true,
+    });
+    expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'unrecorded-owned-container',
       attemptId: '55555555-5555-4555-8555-555555555555',
     });
@@ -361,6 +382,29 @@ describe('Fleet Worker durable runtime adapters', () => {
         undefined,
       );
       expect(fs.existsSync(path.join(runtimeRoot, ATTEMPT_ID))).toBe(false);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('removes an owned runtime without calling Docker when reconciliation proves the container missing', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
+    const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
+    fs.mkdirSync(attemptRuntime, { recursive: true });
+    fs.writeFileSync(path.join(attemptRuntime, 'task-bundle.json'), 'bounded prompt');
+    const runCommand = vi.fn();
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+
+    try {
+      await docker.remove({
+        containerId: 'already-missing',
+        attemptId: ATTEMPT_ID,
+        containerMissing: true,
+      });
+
+      expect(runCommand).not.toHaveBeenCalled();
+      expect(fs.existsSync(attemptRuntime)).toBe(false);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
