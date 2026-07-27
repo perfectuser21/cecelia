@@ -373,6 +373,18 @@ grep -Fq 'installer xian-mac-m1 --apply' "$mutation_log" \
   || fail "stable Node toolchain command was not installed"
 [[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/codex" ]] \
   || fail "stable Codex toolchain command was not installed"
+[[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/orbctl" ]] \
+  || fail "stable OrbStack control command was not installed"
+[[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/docker" ]] \
+  || fail "stable OrbStack Docker command was not installed"
+[[ "$(
+  readlink "$system_root/usr/local/libexec/cecelia/toolchain/bin/orbctl"
+)" == "$system_root/Applications/OrbStack.app/Contents/MacOS/bin/orbctl" ]] \
+  || fail "OrbStack control command does not target the pinned app"
+[[ "$(
+  readlink "$system_root/usr/local/libexec/cecelia/toolchain/bin/docker"
+)" == "$system_root/Applications/OrbStack.app/Contents/MacOS/xbin/docker" ]] \
+  || fail "Docker command does not target the pinned OrbStack app"
 git -C "$system_root/var/lib/cecelia/repository" rev-parse --verify HEAD >/dev/null \
   || fail "credential-free Git baseline was not imported"
 

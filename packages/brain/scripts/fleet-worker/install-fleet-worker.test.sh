@@ -186,6 +186,50 @@ grep -Fq 'root_required' <<<"$root_output" \
 [[ -z "$(find "$install_dir" -type f -print -quit)" ]] \
   || fail "non-root --apply wrote a plist"
 
+toolchain_bin="$test_root/usr/local/libexec/cecelia/toolchain/bin"
+default_probe_path_log="$test_root/default-probe.path"
+mkdir -p "$toolchain_bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$toolchain_bin/orbctl"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$toolchain_bin/docker"
+chmod +x "$toolchain_bin/orbctl" "$toolchain_bin/docker"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [[ "${1:-}" == "-" ]]; then' \
+  '  cat >/dev/null' \
+  '  printf "%s\n" "$PATH" > "${FLEET_WORKER_TEST_DEFAULT_PROBE_PATH:?}"' \
+  '  [[ "$(command -v orbctl || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/orbctl" ]] || { echo prerequisite_orbstack >&2; exit 1; }' \
+  '  [[ "$(command -v docker || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/docker" ]] || { echo prerequisite_docker >&2; exit 1; }' \
+  '  exit 0' \
+  'fi' \
+  'source="$(cat)"' \
+  'case "$source" in' \
+  '  *runner_image_digest*) printf "%s" "sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36" ;;' \
+  '  *worker_bind_host*) printf "%s" "100.86.57.69" ;;' \
+  '  *brain_health_url*) printf "%s" "http://100.71.151.105:5221/api/brain/health" ;;' \
+  '  *) exit 1 ;;' \
+  'esac' > "$test_root/default-probe-node"
+chmod +x "$test_root/default-probe-node"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [[ "$1" == "-u" && $# -eq 1 ]]; then echo 501; exit 0; fi' \
+  'if [[ "$1" == "-u" && "${2:-}" == "_cecelia" ]]; then echo 450; exit 0; fi' \
+  'if [[ "$1" == "-g" && "${2:-}" == "_cecelia" ]]; then echo 450; exit 0; fi' \
+  'exit 1' > "$test_root/id-default-probe"
+chmod +x "$test_root/id-default-probe"
+default_probe_plist="$test_root/default-probe.plist"
+FLEET_WORKER_TEST_DEFAULT_PROBE_PATH="$default_probe_path_log" \
+FLEET_WORKER_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
+FLEET_WORKER_INSTALL_DIR="$install_dir" \
+FLEET_WORKER_LOG_DIR="$log_dir" \
+FLEET_WORKER_NODE_EXECUTABLE="$test_root/default-probe-node" \
+FLEET_WORKER_ID="$test_root/id-default-probe" \
+FLEET_WORKER_PLUTIL="$test_root/plutil" \
+  env -u FLEET_WORKER_NODE_PROBE \
+  "$INSTALLER" xian-mac-m4 --render-to "$default_probe_plist" >/dev/null \
+  || fail "default preflight could not resolve reconciled OrbStack commands"
+[[ "$(<"$default_probe_path_log")" == "$toolchain_bin:"* ]] \
+  || fail "default preflight PATH did not begin with the reconciled toolchain"
+
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "%s\\n" "$*" >> "${FLEET_WORKER_LAUNCH_LOG:?}"' \
