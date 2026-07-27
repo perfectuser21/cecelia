@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.perfect21.fleet-worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@@NODE_EXECUTABLE@@</string>
+    <string>@@WORKER_SCRIPT@@</string>
+  </array>
+  <key>UserName</key>
+  <string>_cecelia</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CECELIA_MACHINE_ID</key>
+    <string>@@MACHINE_ID@@</string>
+    <key>CECELIA_RUNNER_DIGEST</key>
+    <string>@@RUNNER_DIGEST@@</string>
+    <key>CECELIA_FLEET_WORKER_HOST</key>
+    <string>127.0.0.1</string>
+    <key>CECELIA_FLEET_WORKER_PORT</key>
+    <string>5231</string>
+    <key>CECELIA_DRAIN_MARKER</key>
+    <string>@@DRAIN_MARKER@@</string>
+    <key>CECELIA_REPO_ROOT</key>
+    <string>@@REPO_ROOT@@</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>@@STDOUT_LOG@@</string>
+  <key>StandardErrorPath</key>
+  <string>@@STDERR_LOG@@</string>
+</dict>
+</plist>
