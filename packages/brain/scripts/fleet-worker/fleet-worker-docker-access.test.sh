@@ -97,7 +97,7 @@ fi
 [[ ! -s "$acl_log" ]] || fail "missing home ACL caused a socket mutation"
 
 : > "$home_acl_state"
-if FLEET_WORKER_SOCKET_TARGET='/tmp/docker.sock' run_helper >/dev/null 2>&1; then
+if socket_target='/tmp/docker.sock' run_helper >/dev/null 2>&1; then
   fail "refresher accepted a non-OrbStack socket target"
 fi
 [[ ! -s "$acl_log" ]] || fail "invalid target caused a socket mutation"

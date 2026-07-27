@@ -106,8 +106,22 @@ chmod +x "$test_root/chmod"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
+  '[[ "${FLEET_WORKER_STAT_FAIL:-0}" != "1" ]] || exit 96' \
   'printf "%s\\n" "Socket"' > "$test_root/stat"
 chmod +x "$test_root/stat"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'target="${@: -1}"' \
+  'if [[ -n "${FLEET_WORKER_MV_FAIL_TARGET:-}"' \
+  '  && "$target" == "${FLEET_WORKER_MV_FAIL_TARGET}"' \
+  '  && ! -e "${FLEET_WORKER_MV_FAIL_ONCE:?}" ]]; then' \
+  '  : > "${FLEET_WORKER_MV_FAIL_ONCE:?}"' \
+  '  exit 95' \
+  'fi' \
+  'exec /bin/mv "$@"' > "$test_root/mv"
+chmod +x "$test_root/mv"
+export FLEET_WORKER_MV_FAIL_ONCE="$test_root/mv.fail-once"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -302,6 +316,42 @@ grep -Fq 'acl -a _cecelia allow search /Users/orbstack-owner' "$acl_log" \
 
 : > "$acl_log"
 : > "$preflight_log"
+: > "$acl_state"
+rm -f "$socket_acl_state"
+socket_acl_failure_output=''
+if socket_acl_failure_output="$(
+  FLEET_WORKER_SOCKET_ACL_FAIL_ADD=1 \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "failed exact-socket ACL grant was accepted"
+fi
+grep -Fq 'prerequisite_docker_socket_acl' <<<"$socket_acl_failure_output" \
+  || fail "failed exact-socket ACL grant lacked a bounded refusal"
+[[ -e "$acl_state" ]] || fail "socket ACL failure removed a pre-existing home ACL"
+[[ ! -e "$socket_acl_state" ]] || fail "failed socket ACL grant left partial state"
+grep -Fq \
+  'acl -a _cecelia allow read,write /Users/orbstack-owner/.orbstack/run/docker.sock' \
+  "$acl_log" || fail "partial socket ACL grant was not rolled back"
+rm -f "$acl_state"
+
+: > "$acl_log"
+: > "$preflight_log"
+rm -f "$acl_state" "$socket_acl_state"
+socket_validation_output=''
+if socket_validation_output="$(
+  FLEET_WORKER_STAT_FAIL=1 \
+  FLEET_WORKER_SOCKET_ACL_FAIL_REMOVE=1 \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "non-socket Docker target unexpectedly passed preflight"
+fi
+grep -Fq 'prerequisite_docker_socket_acl' <<<"$socket_validation_output" \
+  || fail "non-socket target lacked a bounded refusal"
+grep -Fq 'docker_socket_acl_rollback_incomplete' <<<"$socket_validation_output" \
+  && fail "pre-ACL socket validation failure produced a false rollback warning"
+
+: > "$acl_log"
+: > "$preflight_log"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "%s\\n" "probe" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
@@ -316,7 +366,8 @@ if preflight_failure_output="$(
 fi
 grep -Fq 'prerequisite_docker' <<<"$preflight_failure_output" \
   || fail "failed low-privilege preflight lacked a bounded refusal"
-[[ ! -e "$acl_state" ]] || fail "failed low-privilege preflight leaked its new ACL"
+[[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+  || fail "failed low-privilege preflight leaked a new ACL"
 [[ ! -s "$launch_log" ]] || fail "failed low-privilege preflight mutated launchd"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -324,6 +375,21 @@ printf '%s\n' \
   'printf "%s\\n" "{\"ok\":true}"' \
   'exit 0' > "$test_root/node-probe"
 chmod +x "$test_root/node-probe"
+
+: > "$launch_log"
+root_log_target="$test_root/root-log-target"
+: > "$root_log_target"
+ln -s "$root_log_target" "$log_dir/fleet-worker-docker-access.stdout.log"
+root_log_output=''
+if root_log_output="$(
+  run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "root watcher accepted a symlink stdout path"
+fi
+grep -Fq 'log_path_invalid' <<<"$root_log_output" \
+  || fail "root watcher symlink refusal lacked a bounded signature"
+[[ ! -s "$launch_log" ]] || fail "invalid root log path mutated launchd"
+rm -f "$log_dir/fleet-worker-docker-access.stdout.log"
 
 : > "$acl_log"
 : > "$preflight_log"
@@ -364,6 +430,29 @@ grep -Fq 'docker_acl_rollback_incomplete' <<<"$acl_rollback_failure_output" \
   || fail "ACL rollback failure was silently swallowed"
 [[ -e "$acl_state" ]] || fail "ACL rollback failure fixture did not preserve evidence"
 rm -f "$acl_state"
+rm -f "$socket_acl_state"
+
+: > "$acl_log"
+: > "$preflight_log"
+: > "$launch_log"
+rm -f "$acl_state" "$socket_acl_state" "$launch_fail_once"
+export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
+socket_acl_rollback_failure_output=''
+if socket_acl_rollback_failure_output="$(
+  FLEET_WORKER_SOCKET_ACL_FAIL_REMOVE=1 \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+  fail "socket ACL rollback failure unexpectedly succeeded"
+fi
+unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+grep -Fq 'docker_socket_acl_rollback_incomplete' \
+  <<<"$socket_acl_rollback_failure_output" \
+  || fail "socket ACL rollback failure was silently swallowed"
+[[ -e "$socket_acl_state" ]] \
+  || fail "socket ACL rollback failure fixture did not preserve evidence"
+[[ ! -e "$acl_state" ]] \
+  || fail "socket ACL rollback failure prevented home ACL rollback"
 rm -f "$socket_acl_state"
 
 : > "$acl_log"
@@ -462,27 +551,95 @@ seed_prior_generation() {
   printf '%s\n' "prior-worker-$tag" > "$installed_worker"
   printf '%s\n' "prior-probe-$tag" > "$installed_probe"
   printf '%s\n' "prior-plist-$tag" > "$installed_plist"
+  printf '%s\n' "prior-access-helper-$tag" > "$installed_access_helper"
+  printf '%s\n' "prior-access-plist-$tag" > "$installed_access_plist"
   chmod 0711 "$installed_worker"
   chmod 0600 "$installed_probe"
   chmod 0640 "$installed_plist"
+  chmod 0700 "$installed_access_helper"
+  chmod 0600 "$installed_access_plist"
   printf 'running\n' > "$launch_state"
 }
+
+assert_support_placement_failure_rolled_back() {
+  local snapshot_dir="$test_root/snapshot-placement"
+  local worker_mode probe_mode plist_mode helper_mode access_plist_mode
+  local failure_output
+
+  seed_prior_generation placement
+  mkdir -p "$snapshot_dir"
+  cp "$installed_worker" "$snapshot_dir/worker"
+  cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_plist" "$snapshot_dir/plist"
+  cp "$installed_access_helper" "$snapshot_dir/access-helper"
+  cp "$installed_access_plist" "$snapshot_dir/access-plist"
+  worker_mode="$(mode_of "$installed_worker")"
+  probe_mode="$(mode_of "$installed_probe")"
+  plist_mode="$(mode_of "$installed_plist")"
+  helper_mode="$(mode_of "$installed_access_helper")"
+  access_plist_mode="$(mode_of "$installed_access_plist")"
+  : > "$launch_log"
+  rm -f \
+    "$acl_state" \
+    "$socket_acl_state" \
+    "$FLEET_WORKER_MV_FAIL_ONCE"
+
+  failure_output=''
+  if failure_output="$(
+    FLEET_WORKER_MV="$test_root/mv" \
+    FLEET_WORKER_MV_FAIL_TARGET="$installed_access_plist" \
+      run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+  )"; then
+    fail "support plist placement failure unexpectedly succeeded"
+  fi
+  grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
+    || fail "support plist placement failure lacked rollback signature"
+  cmp -s "$snapshot_dir/worker" "$installed_worker" \
+    || fail "placement failure did not restore Worker bytes"
+  cmp -s "$snapshot_dir/probe" "$installed_probe" \
+    || fail "placement failure did not restore probe bytes"
+  cmp -s "$snapshot_dir/plist" "$installed_plist" \
+    || fail "placement failure did not restore Worker plist bytes"
+  cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
+    || fail "placement failure did not restore access helper bytes"
+  cmp -s "$snapshot_dir/access-plist" "$installed_access_plist" \
+    || fail "placement failure did not restore access plist bytes"
+  [[ "$(mode_of "$installed_worker")" == "$worker_mode" \
+    && "$(mode_of "$installed_probe")" == "$probe_mode" \
+    && "$(mode_of "$installed_plist")" == "$plist_mode" \
+    && "$(mode_of "$installed_access_helper")" == "$helper_mode" \
+    && "$(mode_of "$installed_access_plist")" == "$access_plist_mode" ]] \
+    || fail "placement failure did not restore exact file modes"
+  [[ "$(<"$launch_state")" == 'running' ]] \
+    || fail "placement failure did not restore prior services"
+  [[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq 8 ]] \
+    || fail "placement rollback mutation sequence drifted"
+  [[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+    || fail "placement failure leaked a newly-added ACL"
+}
+
+assert_support_placement_failure_rolled_back
 
 assert_failed_upgrade_rolled_back() {
   local failure_match="$1"
   local expected_mutations="$2"
   local tag="$3"
   local snapshot_dir="$test_root/snapshot-$tag"
-  local worker_mode probe_mode plist_mode failure_output
+  local worker_mode probe_mode plist_mode access_helper_mode access_plist_mode
+  local failure_output
 
   seed_prior_generation "$tag"
   mkdir -p "$snapshot_dir"
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
   cp "$installed_plist" "$snapshot_dir/plist"
+  cp "$installed_access_helper" "$snapshot_dir/access-helper"
+  cp "$installed_access_plist" "$snapshot_dir/access-plist"
   worker_mode="$(mode_of "$installed_worker")"
   probe_mode="$(mode_of "$installed_probe")"
   plist_mode="$(mode_of "$installed_plist")"
+  access_helper_mode="$(mode_of "$installed_access_helper")"
+  access_plist_mode="$(mode_of "$installed_access_plist")"
   : > "$launch_log"
   rm -f "$launch_fail_once"
   export FLEET_WORKER_LAUNCH_FAIL_MATCH="$failure_match"
@@ -504,18 +661,29 @@ assert_failed_upgrade_rolled_back() {
     || fail "$tag failure did not restore exact probe bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "$tag failure did not restore exact plist bytes"
+  cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
+    || fail "$tag failure did not restore exact access helper bytes"
+  cmp -s "$snapshot_dir/access-plist" "$installed_access_plist" \
+    || fail "$tag failure did not restore exact access plist bytes"
   [[ "$(mode_of "$installed_worker")" == "$worker_mode" ]] \
     || fail "$tag failure did not restore the Worker mode"
   [[ "$(mode_of "$installed_probe")" == "$probe_mode" ]] \
     || fail "$tag failure did not restore the probe mode"
   [[ "$(mode_of "$installed_plist")" == "$plist_mode" ]] \
     || fail "$tag failure did not restore the plist mode"
+  [[ "$(mode_of "$installed_access_helper")" == "$access_helper_mode" ]] \
+    || fail "$tag failure did not restore the access helper mode"
+  [[ "$(mode_of "$installed_access_plist")" == "$access_plist_mode" ]] \
+    || fail "$tag failure did not restore the access plist mode"
   [[ "$(<"$launch_state")" == 'running' ]] \
     || fail "$tag failure did not best-effort restore the prior service"
   [[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq "$expected_mutations" ]] \
     || fail "$tag rollback performed an unexpected mutation sequence"
-  [[ "$(sed -n '1p' "$launch_log")" == 'bootout system/com.perfect21.fleet-worker' ]] \
-    || fail "$tag failure did not first stop the prior generation"
+  [[ "$(sed -n '1p' "$launch_log")" == \
+    'bootout system/com.perfect21.fleet-worker-docker-access' ]] \
+    || fail "$tag failure did not first stop the prior watcher"
+  [[ "$(sed -n '2p' "$launch_log")" == 'bootout system/com.perfect21.fleet-worker' ]] \
+    || fail "$tag failure did not stop the prior Worker"
   tail -n 2 "$launch_log" | grep -Fxq \
     "bootstrap system $installed_plist" \
     || fail "$tag rollback did not restore the prior plist service"
@@ -523,15 +691,16 @@ assert_failed_upgrade_rolled_back() {
     || fail "$tag rollback did not restart the prior service"
 }
 
-assert_failed_upgrade_rolled_back 'bootstrap system' 5 bootstrap
-assert_failed_upgrade_rolled_back 'kickstart -k' 6 kickstart
+assert_failed_upgrade_rolled_back 'bootstrap system' 9 bootstrap
+assert_failed_upgrade_rolled_back 'kickstart -k' 10 kickstart
 
 assert_stopped_upgrade_remains_stopped() {
   local failure_match="$1"
   local expected_mutations="$2"
   local tag="$3"
   local snapshot_dir="$test_root/snapshot-stopped-$tag"
-  local worker_mode probe_mode plist_mode failure_output
+  local worker_mode probe_mode plist_mode access_helper_mode access_plist_mode
+  local failure_output
 
   seed_prior_generation "stopped-$tag"
   printf 'stopped\n' > "$launch_state"
@@ -539,9 +708,13 @@ assert_stopped_upgrade_remains_stopped() {
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
   cp "$installed_plist" "$snapshot_dir/plist"
+  cp "$installed_access_helper" "$snapshot_dir/access-helper"
+  cp "$installed_access_plist" "$snapshot_dir/access-plist"
   worker_mode="$(mode_of "$installed_worker")"
   probe_mode="$(mode_of "$installed_probe")"
   plist_mode="$(mode_of "$installed_plist")"
+  access_helper_mode="$(mode_of "$installed_access_helper")"
+  access_plist_mode="$(mode_of "$installed_access_plist")"
   : > "$launch_log"
   rm -f "$launch_fail_once"
   export FLEET_WORKER_LAUNCH_FAIL_MATCH="$failure_match"
@@ -563,12 +736,20 @@ assert_stopped_upgrade_remains_stopped() {
     || fail "stopped $tag failure did not restore exact probe bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "stopped $tag failure did not restore exact plist bytes"
+  cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
+    || fail "stopped $tag failure did not restore exact access helper bytes"
+  cmp -s "$snapshot_dir/access-plist" "$installed_access_plist" \
+    || fail "stopped $tag failure did not restore exact access plist bytes"
   [[ "$(mode_of "$installed_worker")" == "$worker_mode" ]] \
     || fail "stopped $tag failure did not restore the Worker mode"
   [[ "$(mode_of "$installed_probe")" == "$probe_mode" ]] \
     || fail "stopped $tag failure did not restore the probe mode"
   [[ "$(mode_of "$installed_plist")" == "$plist_mode" ]] \
     || fail "stopped $tag failure did not restore the plist mode"
+  [[ "$(mode_of "$installed_access_helper")" == "$access_helper_mode" ]] \
+    || fail "stopped $tag failure did not restore the access helper mode"
+  [[ "$(mode_of "$installed_access_plist")" == "$access_plist_mode" ]] \
+    || fail "stopped $tag failure did not restore the access plist mode"
   [[ "$(<"$launch_state")" == 'stopped' ]] \
     || fail "stopped $tag rollback incorrectly started the prior service"
   [[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq "$expected_mutations" ]] \
@@ -584,8 +765,8 @@ assert_stopped_upgrade_remains_stopped() {
   fi
 }
 
-assert_stopped_upgrade_remains_stopped 'bootstrap system' 2 bootstrap
-assert_stopped_upgrade_remains_stopped 'kickstart -k' 3 kickstart
+assert_stopped_upgrade_remains_stopped 'bootstrap system' 3 bootstrap
+assert_stopped_upgrade_remains_stopped 'kickstart -k' 4 kickstart
 
 seed_prior_generation loaded-without-plist
 rm -f "$installed_plist"

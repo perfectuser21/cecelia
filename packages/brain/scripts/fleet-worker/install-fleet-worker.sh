@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker.plist.template"
 LABEL='com.perfect21.fleet-worker'
+ACCESS_LABEL='com.perfect21.fleet-worker-docker-access'
 INSTALL_DIR="${FLEET_WORKER_INSTALL_DIR:-/Library/LaunchDaemons}"
 LOG_DIR="${FLEET_WORKER_LOG_DIR:-/var/log/cecelia}"
 LAUNCHCTL="${FLEET_WORKER_LAUNCHCTL:-/bin/launchctl}"
@@ -13,12 +14,16 @@ ID_COMMAND="${FLEET_WORKER_ID:-/usr/bin/id}"
 READLINK="${FLEET_WORKER_READLINK:-/usr/bin/readlink}"
 ACL_LIST="${FLEET_WORKER_ACL_LIST:-/bin/ls}"
 CHMOD="${FLEET_WORKER_CHMOD:-/bin/chmod}"
+STAT="${FLEET_WORKER_STAT:-/usr/bin/stat}"
+MOVE="${FLEET_WORKER_MV:-/bin/mv}"
 DOCKER_SOCKET_LINK='/var/run/docker.sock'
 DEFAULT_NODE_PROBE="$SCRIPT_DIR/node-probe.cjs"
 NODE_PROBE="${FLEET_WORKER_NODE_PROBE:-$DEFAULT_NODE_PROBE}"
 NODE_EXECUTABLE="${FLEET_WORKER_NODE_EXECUTABLE:-$(command -v node || true)}"
 WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
+ACCESS_HELPER_SOURCE="$SCRIPT_DIR/refresh-fleet-worker-docker-access.sh"
+ACCESS_TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker-docker-access.plist.template"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
 RUNNER_DIGEST=''
 WORKER_BIND_HOST=''
@@ -28,8 +33,12 @@ BACKUP_DIR=''
 STAGED_WORKER=''
 STAGED_PROBE=''
 STAGED_PLIST=''
+STAGED_ACCESS_HELPER=''
+STAGED_ACCESS_PLIST=''
 ACL_ADDED=false
 ACL_HOME=''
+SOCKET_ACL_ADDED=false
+DOCKER_SOCKET_TARGET=''
 INSTALL_SUCCEEDED=false
 
 case "$INSTALL_DIR" in
@@ -42,6 +51,7 @@ case "$INSTALL_DIR" in
 esac
 RUNTIME_DIR="${FLEET_WORKER_RUNTIME_DIR:-$SYSTEM_ROOT/usr/local/libexec/cecelia/fleet-worker}"
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
+ACCESS_HELPER="$RUNTIME_DIR/refresh-fleet-worker-docker-access.sh"
 WORKTREE_ROOT="${FLEET_WORKER_REPO_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/repository}"
 
 usage() {
@@ -184,8 +194,33 @@ has_managed_orbstack_acl() {
     | /usr/bin/grep -Eq '^[[:space:]]*[0-9]+: user:_cecelia allow search$'
 }
 
+has_managed_orbstack_socket_acl() {
+  "$ACL_LIST" -lde "$DOCKER_SOCKET_TARGET" 2>/dev/null \
+    | /usr/bin/grep -Eq \
+      '^[[:space:]]*[0-9]+: user:_cecelia allow read,write$'
+}
+
+rollback_new_orbstack_socket_acl() {
+  if [[ "$SOCKET_ACL_ADDED" == true && "$INSTALL_SUCCEEDED" != true ]]; then
+    if ! has_managed_orbstack_socket_acl; then
+      SOCKET_ACL_ADDED=false
+      return
+    fi
+    if ! "$CHMOD" -a '_cecelia allow read,write' \
+      "$DOCKER_SOCKET_TARGET" >/dev/null 2>&1; then
+      echo "docker_socket_acl_rollback_incomplete" >&2
+      return 1
+    fi
+    SOCKET_ACL_ADDED=false
+  fi
+}
+
 rollback_new_orbstack_acl() {
   if [[ "$ACL_ADDED" == true && "$INSTALL_SUCCEEDED" != true ]]; then
+    if ! has_managed_orbstack_acl; then
+      ACL_ADDED=false
+      return
+    fi
     if ! "$CHMOD" -a '_cecelia allow search' "$ACL_HOME" >/dev/null 2>&1; then
       echo "docker_acl_rollback_incomplete" >&2
       return 1
@@ -195,31 +230,44 @@ rollback_new_orbstack_acl() {
 }
 
 prepare_orbstack_access() {
-  local socket_target owner_name
+  local owner_name
 
   "$ID_COMMAND" -u _cecelia >/dev/null 2>&1 || die "prerequisite_service_user"
-  socket_target="$("$READLINK" "$DOCKER_SOCKET_LINK" 2>/dev/null)" \
+  DOCKER_SOCKET_TARGET="$("$READLINK" "$DOCKER_SOCKET_LINK" 2>/dev/null)" \
     || die "prerequisite_docker_socket"
-  case "$socket_target" in
+  case "$DOCKER_SOCKET_TARGET" in
     /Users/*/.orbstack/run/docker.sock) ;;
     *) die "prerequisite_docker_socket_target" ;;
   esac
 
-  ACL_HOME="${socket_target%/.orbstack/run/docker.sock}"
+  ACL_HOME="${DOCKER_SOCKET_TARGET%/.orbstack/run/docker.sock}"
   owner_name="${ACL_HOME#/Users/}"
   if [[ -z "$owner_name" || "$owner_name" == */* || "$owner_name" == '.' \
     || "$owner_name" == '..' || ! "$owner_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
     die "prerequisite_docker_socket_target"
   fi
 
-  if has_managed_orbstack_acl; then
+  if ! has_managed_orbstack_acl; then
+    trap cleanup_transaction EXIT
+    ACL_ADDED=true
+    "$CHMOD" +a '_cecelia allow search' "$ACL_HOME" >/dev/null 2>&1 \
+      || die "prerequisite_docker_acl"
+  fi
+
+  [[ -x "$ACCESS_HELPER_SOURCE" ]] || die "prerequisite_docker_access_helper"
+  if has_managed_orbstack_socket_acl; then
     return
   fi
 
   trap cleanup_transaction EXIT
-  ACL_ADDED=true
-  "$CHMOD" +a '_cecelia allow search' "$ACL_HOME" >/dev/null 2>&1 \
-    || die "prerequisite_docker_acl"
+  SOCKET_ACL_ADDED=true
+  FLEET_WORKER_ID="$ID_COMMAND" \
+  FLEET_WORKER_READLINK="$READLINK" \
+  FLEET_WORKER_STAT="$STAT" \
+  FLEET_WORKER_ACL_LIST="$ACL_LIST" \
+  FLEET_WORKER_CHMOD="$CHMOD" \
+    "$ACCESS_HELPER_SOURCE" \
+    || die "prerequisite_docker_socket_acl"
 }
 
 render_plist() {
@@ -264,7 +312,35 @@ render_plist() {
     done < "$TEMPLATE" > "$temporary"
 
     chmod 0644 "$temporary"
-    mv "$temporary" "$target"
+    "$MOVE" "$temporary" "$target"
+  )
+}
+
+render_access_plist() {
+  local target="$1"
+  local target_dir temporary line
+  local escaped_helper escaped_socket escaped_stdout escaped_stderr
+
+  [[ -f "$ACCESS_TEMPLATE" ]] || die "access_plist_template_missing"
+  target_dir="$(dirname "$target")"
+  [[ -d "$target_dir" ]] || die "render_target_parent_missing"
+  temporary="$(mktemp "$target_dir/.fleet-worker-access.plist.XXXXXX")"
+  escaped_helper="$(xml_escape "$ACCESS_HELPER")"
+  escaped_socket="$(xml_escape "$DOCKER_SOCKET_TARGET")"
+  escaped_stdout="$(xml_escape "$LOG_DIR/fleet-worker-docker-access.stdout.log")"
+  escaped_stderr="$(xml_escape "$LOG_DIR/fleet-worker-docker-access.stderr.log")"
+
+  (
+    trap 'rm -f "$temporary"' EXIT
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line//@@ACCESS_HELPER@@/$escaped_helper}"
+      line="${line//@@DOCKER_SOCKET_TARGET@@/$escaped_socket}"
+      line="${line//@@ACCESS_STDOUT_LOG@@/$escaped_stdout}"
+      line="${line//@@ACCESS_STDERR_LOG@@/$escaped_stderr}"
+      printf '%s\n' "$line"
+    done < "$ACCESS_TEMPLATE" > "$temporary"
+    chmod 0644 "$temporary"
+    "$MOVE" "$temporary" "$target"
   )
 }
 
@@ -272,11 +348,19 @@ cleanup_transaction() {
   [[ -z "$STAGED_WORKER" ]] || rm -f "$STAGED_WORKER"
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
   [[ -z "$STAGED_PLIST" ]] || rm -f "$STAGED_PLIST"
+  [[ -z "$STAGED_ACCESS_HELPER" ]] || rm -f "$STAGED_ACCESS_HELPER"
+  [[ -z "$STAGED_ACCESS_PLIST" ]] || rm -f "$STAGED_ACCESS_PLIST"
   if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
-    rm -f "$BACKUP_DIR/worker" "$BACKUP_DIR/probe" "$BACKUP_DIR/plist"
+    rm -f \
+      "$BACKUP_DIR/worker" \
+      "$BACKUP_DIR/probe" \
+      "$BACKUP_DIR/plist" \
+      "$BACKUP_DIR/access-helper" \
+      "$BACKUP_DIR/access-plist"
     rmdir "$BACKUP_DIR" 2>/dev/null || true
   fi
   [[ -z "$LOCK_DIR" ]] || rmdir "$LOCK_DIR" 2>/dev/null || true
+  rollback_new_orbstack_socket_acl || true
   rollback_new_orbstack_acl || true
 }
 
@@ -294,16 +378,25 @@ prepare_transaction_paths() {
   STAGED_WORKER="$(mktemp "$RUNTIME_DIR/.fleet-worker.cjs.XXXXXX")"
   STAGED_PROBE="$(mktemp "$RUNTIME_DIR/.node-probe.cjs.XXXXXX")"
   STAGED_PLIST="$(mktemp "$INSTALL_DIR/.fleet-worker.plist.XXXXXX")"
+  STAGED_ACCESS_HELPER="$(mktemp "$RUNTIME_DIR/.docker-access.sh.XXXXXX")"
+  STAGED_ACCESS_PLIST="$(
+    mktemp "$INSTALL_DIR/.fleet-worker-docker-access.plist.XXXXXX"
+  )"
 }
 
 stage_generation() {
   cp "$WORKER_SOURCE" "$STAGED_WORKER"
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
+  cp "$ACCESS_HELPER_SOURCE" "$STAGED_ACCESS_HELPER"
   chmod 0755 "$STAGED_WORKER"
   chmod 0644 "$STAGED_PROBE"
+  chmod 0755 "$STAGED_ACCESS_HELPER"
   render_plist "$STAGED_PLIST"
+  render_access_plist "$STAGED_ACCESS_PLIST"
   "$PLUTIL" -lint "$STAGED_PLIST" >/dev/null 2>&1 \
     || die "plist_validation_failed"
+  "$PLUTIL" -lint "$STAGED_ACCESS_PLIST" >/dev/null 2>&1 \
+    || die "access_plist_validation_failed"
 }
 
 file_mode() {
@@ -345,22 +438,36 @@ restore_file() {
     rm -f "$temporary"
     return 1
   fi
-  mv "$temporary" "$target"
+  "$MOVE" "$temporary" "$target"
 }
 
 prepare_logs() {
   local stdout_log="$LOG_DIR/fleet-worker.stdout.log"
   local stderr_log="$LOG_DIR/fleet-worker.stderr.log"
+  local access_stdout_log="$LOG_DIR/fleet-worker-docker-access.stdout.log"
+  local access_stderr_log="$LOG_DIR/fleet-worker-docker-access.stderr.log"
 
+  [[ ! -L "$LOG_DIR" ]] || die "log_path_invalid"
   mkdir -p "$LOG_DIR"
   chmod 0755 "$LOG_DIR"
-  [[ ! -L "$stdout_log" && ! -L "$stderr_log" ]] || die "log_path_invalid"
+  [[ ! -L "$stdout_log" && ! -L "$stderr_log" \
+    && ! -L "$access_stdout_log" && ! -L "$access_stderr_log" ]] \
+    || die "log_path_invalid"
   [[ ! -e "$stdout_log" || -f "$stdout_log" ]] || die "log_path_invalid"
   [[ ! -e "$stderr_log" || -f "$stderr_log" ]] || die "log_path_invalid"
-  touch "$stdout_log" "$stderr_log"
-  chmod 0640 "$stdout_log" "$stderr_log"
+  [[ ! -e "$access_stdout_log" || -f "$access_stdout_log" ]] \
+    || die "log_path_invalid"
+  [[ ! -e "$access_stderr_log" || -f "$access_stderr_log" ]] \
+    || die "log_path_invalid"
+  touch "$stdout_log" "$stderr_log" "$access_stdout_log" "$access_stderr_log"
+  chmod 0640 \
+    "$stdout_log" \
+    "$stderr_log" \
+    "$access_stdout_log" \
+    "$access_stderr_log"
   if [[ "$(/usr/bin/id -u)" == '0' ]]; then
     /usr/sbin/chown _cecelia "$stdout_log" "$stderr_log"
+    /usr/sbin/chown root:wheel "$access_stdout_log" "$access_stderr_log"
   fi
 }
 
@@ -420,7 +527,9 @@ if [[ "$mode" == 'render' ]]; then
 fi
 
 installed_plist="$INSTALL_DIR/$LABEL.plist"
-[[ ! -L "$INSTALL_DIR" && ! -L "$installed_plist" ]] || die "install_path_invalid"
+installed_access_plist="$INSTALL_DIR/$ACCESS_LABEL.plist"
+[[ ! -L "$INSTALL_DIR" && ! -L "$installed_plist" \
+  && ! -L "$installed_access_plist" ]] || die "install_path_invalid"
 prior_files_complete=false
 if [[ -f "$installed_plist" && ! -L "$installed_plist" \
   && -f "$WORKER_SCRIPT" && ! -L "$WORKER_SCRIPT" \
@@ -428,12 +537,25 @@ if [[ -f "$installed_plist" && ! -L "$installed_plist" \
   && ! -L "$RUNTIME_DIR/node-probe.cjs" ]]; then
   prior_files_complete=true
 fi
+prior_access_files_complete=false
+if [[ -f "$installed_access_plist" && ! -L "$installed_access_plist" \
+  && -f "$ACCESS_HELPER" && ! -L "$ACCESS_HELPER" ]]; then
+  prior_access_files_complete=true
+fi
 prior_service_loaded=false
 if "$LAUNCHCTL" print "system/$LABEL" >/dev/null 2>&1; then
   prior_service_loaded=true
 fi
+prior_access_service_loaded=false
+if "$LAUNCHCTL" print "system/$ACCESS_LABEL" >/dev/null 2>&1; then
+  prior_access_service_loaded=true
+fi
 if [[ "$prior_service_loaded" == true && "$prior_files_complete" != true ]]; then
   die "prior_service_state_invalid"
+fi
+if [[ "$prior_access_service_loaded" == true \
+  && "$prior_access_files_complete" != true ]]; then
+  die "prior_access_service_state_invalid"
 fi
 
 mkdir -p "$INSTALL_DIR"
@@ -446,21 +568,44 @@ prior_probe_mode="$(
   snapshot_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe"
 )"
 prior_plist_mode="$(snapshot_file "$installed_plist" "$BACKUP_DIR/plist")"
+prior_access_helper_mode="$(
+  snapshot_file "$ACCESS_HELPER" "$BACKUP_DIR/access-helper"
+)"
+prior_access_plist_mode="$(
+  snapshot_file "$installed_access_plist" "$BACKUP_DIR/access-plist"
+)"
 
+if [[ "$prior_access_service_loaded" == true ]]; then
+  "$LAUNCHCTL" bootout "system/$ACCESS_LABEL" >/dev/null 2>&1 || true
+fi
 if [[ "$prior_service_loaded" == true ]]; then
   "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
 fi
 
 placement_ok=true
-mv "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
+"$MOVE" "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
 [[ "$placement_ok" == false ]] \
-  || mv "$STAGED_WORKER" "$WORKER_SCRIPT" \
+  || "$MOVE" "$STAGED_WORKER" "$WORKER_SCRIPT" \
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
-  || mv "$STAGED_PLIST" "$installed_plist" \
+  || "$MOVE" "$STAGED_ACCESS_HELPER" "$ACCESS_HELPER" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_ACCESS_PLIST" "$installed_access_plist" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_PLIST" "$installed_plist" \
   || placement_ok=false
 
 launch_ok="$placement_ok"
+if [[ "$launch_ok" == true ]]; then
+  "$LAUNCHCTL" bootstrap system "$installed_access_plist" >/dev/null 2>&1 \
+    || launch_ok=false
+fi
+if [[ "$launch_ok" == true ]]; then
+  "$LAUNCHCTL" kickstart -k "system/$ACCESS_LABEL" >/dev/null 2>&1 \
+    || launch_ok=false
+fi
 if [[ "$launch_ok" == true ]]; then
   "$LAUNCHCTL" bootstrap system "$installed_plist" >/dev/null 2>&1 \
     || launch_ok=false
@@ -471,6 +616,7 @@ if [[ "$launch_ok" == true ]]; then
 fi
 
 if [[ "$launch_ok" != true ]]; then
+  "$LAUNCHCTL" bootout "system/$ACCESS_LABEL" >/dev/null 2>&1 || true
   "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
   rollback_ok=true
   restore_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker" "$prior_worker_mode" \
@@ -479,6 +625,22 @@ if [[ "$launch_ok" != true ]]; then
     || rollback_ok=false
   restore_file "$installed_plist" "$BACKUP_DIR/plist" "$prior_plist_mode" \
     || rollback_ok=false
+  restore_file \
+    "$ACCESS_HELPER" \
+    "$BACKUP_DIR/access-helper" \
+    "$prior_access_helper_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$installed_access_plist" \
+    "$BACKUP_DIR/access-plist" \
+    "$prior_access_plist_mode" \
+    || rollback_ok=false
+  if [[ "$prior_access_service_loaded" == true ]]; then
+    "$LAUNCHCTL" bootstrap system "$installed_access_plist" >/dev/null 2>&1 \
+      || rollback_ok=false
+    "$LAUNCHCTL" kickstart -k "system/$ACCESS_LABEL" >/dev/null 2>&1 \
+      || rollback_ok=false
+  fi
   if [[ "$prior_service_loaded" == true ]]; then
     "$LAUNCHCTL" bootstrap system "$installed_plist" >/dev/null 2>&1 \
       || rollback_ok=false
