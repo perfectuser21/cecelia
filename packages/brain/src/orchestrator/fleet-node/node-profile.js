@@ -119,6 +119,7 @@ const ROLE_WEIGHTS = Object.freeze({
   generator: 4,
   evaluator: 4,
   judge: 4,
+  reporter: 1,
 });
 
 export function listNodeProfiles() {

@@ -1,5 +1,6 @@
 import { resolveGitHubToken } from '../../harness-credentials.js';
 import { createNodeAdmissionClient } from '../fleet-node/node-admission-client.js';
+import { getNodeProfile, getRoleCapacity } from '../fleet-node/node-profile.js';
 import { resolveCanonicalMachineId } from './canonical-machine-id.js';
 
 const DEFAULT_BRAIN_URL = 'http://127.0.0.1:5221';
@@ -14,6 +15,11 @@ function accountRows(snapshot, provider) {
 function boundedSignature(value, fallback) {
   const normalized = String(value ?? fallback).trim();
   return normalized.slice(0, 160) || fallback;
+}
+
+function boundedBaseSlots(value, canonicalCapacity) {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.min(canonicalCapacity, Math.floor(value));
 }
 
 /**
@@ -121,7 +127,7 @@ export function createProductionCapabilityProbes(deps = {}) {
       };
     },
 
-    async getMachineCapacity({ machine }) {
+    async getMachineCapacity({ machine, task_bundle: taskBundle }) {
       const admission = await admittedNode(machine);
       if (!admission.admitted) {
         return {
@@ -133,11 +139,52 @@ export function createProductionCapabilityProbes(deps = {}) {
           admission_reasons: admission.admissionReasons,
         };
       }
+
+      let profile;
+      let role;
+      try {
+        profile = getNodeProfile(machine);
+        role = getRoleCapacity({
+          baseCapacity: 0,
+          role: taskBundle?.role,
+        }).role;
+      } catch (error) {
+        return {
+          ok: false,
+          available: 0,
+          physical_capacity: 0,
+          pressure: 1,
+          signature: error?.message === 'unknown_fleet_node'
+            ? 'unknown_fleet_node'
+            : 'unknown_fleet_role',
+        };
+      }
+
       const row = await fleetRow(machine);
+      const effectiveBaseSlots = boundedBaseSlots(
+        row?.effective_slots,
+        profile.capacity,
+      );
+      const physicalBaseSlots = boundedBaseSlots(
+        row?.physical_capacity,
+        profile.capacity,
+      );
+      const availableCapacity = getRoleCapacity({
+        baseCapacity: effectiveBaseSlots,
+        role,
+      });
+      const physicalCapacity = getRoleCapacity({
+        baseCapacity: physicalBaseSlots,
+        role,
+      });
       return {
         ok: row?.online === true,
-        available: Math.max(0, Number(row?.effective_slots ?? 0)),
-        physical_capacity: Math.max(0, Number(row?.physical_capacity ?? 0)),
+        available: availableCapacity.capacity,
+        physical_capacity: physicalCapacity.capacity,
+        role,
+        role_weight: availableCapacity.weight,
+        effective_base_slots: effectiveBaseSlots,
+        physical_base_slots: physicalBaseSlots,
         pressure: Number(row?.pressure ?? 1),
         signature: row ? (row.online ? null : 'machine_offline') : 'machine_unregistered',
       };

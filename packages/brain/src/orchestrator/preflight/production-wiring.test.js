@@ -327,7 +327,7 @@ describe('production capability wiring', () => {
           fleet: [{
             id: 'us-mac-m4',
             online: true,
-            effective_slots: 3,
+            effective_slots: 4,
             physical_capacity: 8,
             pressure: 0.3,
           }],
@@ -472,7 +472,7 @@ describe('production capability wiring', () => {
           fleet: [{
             id: 'us-mac-m4',
             online: true,
-            effective_slots: 2,
+            effective_slots: 4,
             physical_capacity: 8,
             pressure: 0.4,
           }],
