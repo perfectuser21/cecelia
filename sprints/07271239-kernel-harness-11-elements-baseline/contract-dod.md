@@ -11,13 +11,13 @@ target_environment: local_api
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] 幂等 migration 365 存在，且只扩展既有 Journey/Step/Cell 模型
-  Test: node -e "const fs=require('fs');const p='packages/brain/migrations/365_kernel_harness_f1_baseline.sql';const s=fs.readFileSync(p,'utf8');for(const x of ['bb8cc561-b3ee-4fec-b74d-2255694bd963','lifecycle_stage','is_backbone','journey_step_links','Invariant','输入对抗面','reason_code','source_refs','missing_evidence',\"'na'\"])if(!s.includes(x))process.exit(1);for(const x of ['CREATE TABLE kernel_steps','CREATE TABLE behavior_ledger','Kernel Harness Delivery'])if(s.includes(x))process.exit(1)"
+  Test: node -e "const fs=require('fs');const p='packages/brain/migrations/365_kernel_harness_f1_baseline.sql';const s=fs.readFileSync(p,'utf8');for(const x of ['bb8cc561-b3ee-4fec-b74d-2255694bd963','lifecycle_stage','is_backbone','mapping_status','mapping_reason','mapping_evidence','journey_step_links','Invariant','输入对抗面','reason_code','source_refs','missing_evidence',\"'na'\"])if(!s.includes(x))process.exit(1);for(const x of ['CREATE TABLE kernel_steps','CREATE TABLE behavior_ledger','Kernel Harness Delivery'])if(s.includes(x))process.exit(1)"
 
 - [ ] [ARTIFACT] 真 PostgreSQL integration 与 smoke 均已入册
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/integration/migration-365-kernel-harness-f1-baseline.integration.test.js','packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh']){const s=fs.readFileSync(p,'utf8');if(!/HARNESS_TEST_DATABASE_URL|DATABASE_URL/.test(s))process.exit(1)}"
 
 - [ ] [ARTIFACT] 根 regression-contract.yaml 登记 F1 逐项权威映射，engine 合同只作 legacy source
-  Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');for(const x of ['kernel_harness_f1_baseline:','cells:','reason_code:','missing_evidence:','evidence_requirement:','legacy_behavior_id:','selection_basis:','journey_stage:','element:','source_refs:','assertion_ref:','status_evidence:'])if(!root.includes(x))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
+  Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');for(const x of ['kernel_harness_f1_baseline:','cells:','reason_code:','missing_evidence:','evidence_requirement:','required_families:','family_id:','legacy_owner:','unified_owner:','wiring_refs:','wiring_id:','legacy_behavior_id:','required_family_id:','wiring_ref_ids:','selection_basis:','journey_stage:','element:','source_refs:','assertion_ref:','status_evidence:'])if(!root.includes(x))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
 
 - [ ] [ARTIFACT] Brain 源码改动同步版本与 DEFINITION.md
   Test: node -e "const fs=require('fs');const d=fs.readFileSync('packages/brain/DEFINITION.md','utf8');const p=JSON.parse(fs.readFileSync('packages/brain/package.json','utf8'));if(!d.includes(p.version))process.exit(1)"
@@ -31,7 +31,7 @@ target_environment: local_api
 
 - [ ] [BEHAVIOR] [L2] B2 Golden Path Step 2 保留历史并补齐 S0-S12
   动作: 在同一未重置事务中连续应用两轮 baseline，再经真 PostgreSQL 与真实 Brain GET 读取 backbone 与 history alias。
-  预期观察: within 180s 六个历史 ID/Notion 关联不变，S0-S12 各一个 backbone，13 组稳定名称/promise 逐字匹配，Reviewer/Final E2E 仅为非 backbone 历史别名，第二轮无新增。
+  预期观察: within 180s 六个历史 ID/Notion 关联不变，S0-S12 各一个 backbone，13 组稳定名称/promise 逐字匹配；四个复用行 `mapping_status=exact`；Reviewer/Final E2E 为非 backbone 且 `mapping_status=gap`，原因码均为 `co_stage_historical_alias`，证据分别指向 GAN Proposer/Evaluator backbone；真库与 Brain GET 逐字段一致，第二轮无新增。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh history-and-backbone'
 
 - [ ] [BEHAVIOR] [L2] B3 Golden Path Step 3 每个 backbone Step 恰有精确 11 个 element cells
@@ -45,8 +45,8 @@ target_environment: local_api
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
 - [ ] [BEHAVIOR] [L2] B5 Golden Path Step 4 P0/P1 筛选与五态证据逐项机检
-  动作: 真解析 engine 结构化 priority，并枚举 hooks、DevGate/CI、Kernel gates；仅把显式 P0/P1 seed 及其可追踪引用边选入，其余带 reason_code 排除；对 selected 项真跑当前 SHA probe 后分类。
-  预期观察: within 180s candidate_source=included+excluded、selected_seed=mapped_behavior、unmapped/duplicate=0；auto 可判项 unknown=0，非 unknown 至少一项；active/shadowed/retired/drifted/unknown 分别满足合同事实门槛，任意分类或全部 unknown 会失败。
+  动作: 真解析 engine 结构化 priority，并枚举 hooks、DevGate/CI、Kernel/GitHub/release gates；先锁定批准设计稿八个 required family，再逐族真跑当前 SHA wiring probe；同时对 engine selected 项真跑 probe 后分类。
+  预期观察: within 180s `KH-F1-F01..F08` 精确齐全，族级 legacy/unified owner 逐字匹配、gap 非空、顺序 `1..8`，每族 wiring probe exit 0；每个 engine behavior 归属一族并精确继承 owner，gap 非空、wiring_ref_ids 有效，next_knife_order 唯一连续 `1..mapped_behavior_count`；candidate_source=included+excluded、selected_seed=mapped_behavior、unmapped/duplicate=0；auto 可判项 unknown=0，非 unknown 至少一项。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh legacy-baseline'
 
 - [ ] [BEHAVIOR] [L2] B6 Golden Path Step 5 非空 assertion_ref 全部可追到唯一根合同或真实测试
