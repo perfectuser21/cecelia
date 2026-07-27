@@ -414,6 +414,49 @@ grep -Eq '^sudo -n /bin/kill -s TERM [0-9]+$' "$transport_log" \
   || fail "public TERM was not forwarded across the sudo ownership boundary"
 
 : > "$node_log"
+rm -f "$admit_ready"
+CECELIA_MACHINE_ID=us-mac-m4 \
+FLEET_TEST_REAL_GIT=1 \
+FLEET_TEST_SSH_EXECUTE=1 \
+FLEET_TEST_SUDO_NOEXEC=1 \
+FLEET_TEST_SUDO_FAIL_KILL=1 \
+FLEET_TEST_NODE_LOG="$node_log" \
+FLEET_TEST_NODE_ADMIT_READY="$admit_ready" \
+FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
+FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+FLEET_TEST_ARTIFACT_LOG="$artifact_log" \
+FLEET_TEST_TRANSPORT_LOG="$transport_log" \
+FLEET_TEST_GIT_STATE="$test_root/git.state" \
+FLEET_ROLLOUT_GIT="$fake_bin/git" \
+FLEET_ROLLOUT_DOCKER="$fake_bin/docker" \
+FLEET_ROLLOUT_SSH="$fake_bin/ssh" \
+FLEET_ROLLOUT_TAR="$(command -v tar)" \
+FLEET_ROLLOUT_TMPDIR="$test_root/tmp" \
+  "$ROLLOUT" xian-mac-m4 --apply >"$test_root/public-remote-signal.out" 2>&1 &
+public_remote_pid=$!
+for _ in {1..600}; do
+  [[ -e "$admit_ready" ]] && break
+  kill -0 "$public_remote_pid" 2>/dev/null \
+    || fail "public remote rollout exited before reaching admission"
+  sleep 0.02
+done
+[[ -e "$admit_ready" ]] || fail "public remote rollout never reached admission"
+kill -TERM "$public_remote_pid"
+public_remote_status=0
+wait "$public_remote_pid" || public_remote_status=$?
+[[ "$public_remote_status" -ne 0 ]] \
+  || fail "TERM at the public SSH rollout entrypoint was reported as success"
+for _ in {1..150}; do
+  [[ "$(awk 'END {print NR}' "$node_log")" -ge 5 ]] && break
+  sleep 0.02
+done
+node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
+  || fail "public SSH TERM after undrain did not restore drain: $node_sequence"
+grep -Fq 'jinnuoshengyuan@100.86.57.69' "$transport_log" \
+  || fail "public SSH interruption did not exercise the remote path"
+
+: > "$node_log"
 if CECELIA_MACHINE_ID=us-mac-m4 \
   FLEET_TEST_REAL_GIT=1 \
   FLEET_TEST_SUDO_NOEXEC=1 \
