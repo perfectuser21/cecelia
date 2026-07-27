@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 12)
+# Sprint Contract Draft (Round 13)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -190,13 +190,14 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale manifest_digest before writing evaluator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "evaluator callback refuses stale pr_head_sha before writing evaluator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale pr_head_sha before writing generator verdict"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses missing pr_head_sha before writing evaluator or generator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator callback refuses stale manifest_digest before writing generator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "CI required check rejects missing stale digest and stale pr_head_sha fail closed"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses PASS verdicts that do not carry the approved manifest_digest"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses missing approved manifest_digest and stale judge manifest_digest"
 ```
 
-**硬阈值**: dispatch env 必须含 `APPROVED_CONTRACT_MANIFEST_DIGEST` 与 `APPROVED_CONTRACT_SOURCE_SHA`；Judge env 还必须含当前 `PR_HEAD_SHA`；Generator launch preflight 缺 manifest 返回 `approved_contract_manifest_missing`、stale digest 返回 `stale_manifest_digest`；Evaluator/Judge preflight 缺 current PR SHA 返回 `current_pr_sha_missing`、stale PR SHA 返回 `stale_pr_head_sha`；evaluator callback stale digest 在写 verdict 前返回 `stale_evaluate_manifest_digest`；evaluator callback stale PR SHA 在写 verdict 前返回 `stale_evaluate_pr_head_sha`；generator callback stale digest 在写 verdict 前返回 `stale_generator_manifest_digest`；callback stale generator PR SHA 在写 verdict 前返回 `stale_generator_pr_head_sha`；judge handler 写入 `verdict:judge` detail 前必须从 approved contract row 取 `manifest_digest` 并与 current PR SHA 同写；CI required check 缺 manifest 返回 `approved_contract_manifest_missing`、stale digest 返回 `stale_manifest_digest`、stale PR SHA 返回 `stale_pr_head_sha`；merge gate stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 approved digest 返回 `approved_contract_manifest_digest_missing`。
+**硬阈值**: dispatch env 必须含 `APPROVED_CONTRACT_MANIFEST_DIGEST` 与 `APPROVED_CONTRACT_SOURCE_SHA`；Judge env 还必须含当前 `PR_HEAD_SHA`；Generator launch preflight 缺 manifest 返回 `approved_contract_manifest_missing`、stale digest 返回 `stale_manifest_digest`；Evaluator/Judge preflight 缺 current PR SHA 返回 `current_pr_sha_missing`、stale PR SHA 返回 `stale_pr_head_sha`；evaluator callback stale digest 在写 verdict 前返回 `stale_evaluate_manifest_digest`；evaluator callback stale PR SHA 在写 verdict 前返回 `stale_evaluate_pr_head_sha`；generator callback stale digest 在写 verdict 前返回 `stale_generator_manifest_digest`；callback stale generator PR SHA 在写 verdict 前返回 `stale_generator_pr_head_sha`；evaluator/generator callback 缺 `provider_metadata.pr_head_sha` 时均在写 verdict 前返回 `current_pr_sha_missing`；judge handler 写入 `verdict:judge` detail 前必须从 approved contract row 取 `manifest_digest` 并与 current PR SHA 同写；CI required check 缺 manifest 返回 `approved_contract_manifest_missing`、stale digest 返回 `stale_manifest_digest`、stale PR SHA 返回 `stale_pr_head_sha`；merge gate stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 approved digest 返回 `approved_contract_manifest_digest_missing`。
 
 ---
 
@@ -404,6 +405,7 @@ echo "OK: approved contract provenance final e2e passed"
 | callback digest preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | callback refuses stale manifest_digest before writing evaluator verdict | 旧 callback 只落 verdict，不在写入前校验 digest → FAIL |
 | evaluator callback PR SHA preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | evaluator callback refuses stale pr_head_sha before writing evaluator verdict | evaluator callback stale PR SHA 被写入 verdict → FAIL |
 | callback PR SHA preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | callback refuses stale pr_head_sha before writing generator verdict | generator callback stale PR SHA 被写入 verdict → FAIL |
+| callback missing PR SHA preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | callback refuses missing pr_head_sha before writing evaluator or generator verdict | evaluator/generator callback 缺 `provider_metadata.pr_head_sha` 仍写入 verdict → FAIL |
 | generator callback digest preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | generator callback refuses stale manifest_digest before writing generator verdict | generator callback stale manifest_digest 被写入 verdict → FAIL |
 | CI required check digest/SHA | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | CI required check rejects missing stale digest and stale pr_head_sha fail closed | CI 脚本缺失、只看 env、不读真实 Git/DB 或 stale digest/SHA 放行 → FAIL |
 | merge gate digest | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | mergeGate refuses PASS verdicts that do not carry the approved manifest_digest | 现有 mergeGate 只看 pr_head_sha → FAIL |
@@ -437,3 +439,4 @@ echo "OK: approved contract provenance final e2e passed"
 - Round 10 修订：不扩 PRD scope；复核 api/db/test registry（registry 可达但扫描已 stale，字段仍以 PRD 字面为准），合同格式自查通过，Red evidence 为 missing `approved-contract-provenance.js` 与 mergeGate digest 漂移测试失败。
 - Round 11 修订：仅补 Reviewer Round 10 指出的两条 PRD 真漏覆盖：`approved_contract_drift` 必须 `requires_re_gan` 且不进 generator-fix；judge dispatch/handler/verdict detail 必须携带并持久化 approved `manifest_digest` + current PR SHA。
 - Round 12 修订：不扩 PRD scope；补齐 PRD 第 2 点里 callback 对 current PR SHA 的双角色覆盖，新增 evaluator callback stale PR SHA 在写 verdict 前 `stale_evaluate_pr_head_sha` fail-closed 断言。
+- Round 13 修订：不扩 PRD scope；把 callback 的 current PR SHA 校验补成 fail-closed 闭环，新增 evaluator/generator callback 缺 `provider_metadata.pr_head_sha` 时写 verdict 前 `current_pr_sha_missing` 拒绝。
