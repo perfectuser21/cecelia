@@ -1,0 +1,36 @@
+{
+  "initiative_id": "6fb65eb4-e640-4892-86b3-a2d779d0be38",
+  "journey_type": "autonomous",
+  "journey_type_reason": "本 sprint 只涉及 Brain/Kernel authority、route、DB 与 GitHub/CI 事实链路，不含前端操作。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Preview CI target-aware current-SHA authority recovery",
+      "scope": "把 Preview/required-context/blocker、workflow callback、ground truth、legacy adapter 与 Draft approval gate 统一改成 server-owned authority，并为每个负例提供独立可执行测试与真实证据链。",
+      "dod": [
+        "[BEHAVIOR] 每个负例单独返回唯一 blocker，stale SHA/wrong repo/wrong run-task/missing context/preview failure/local required-context failure/missing mapping/external infra failure 都有独立红绿证明",
+        "[BEHAVIOR] workflow callback 真实 POST 路由并记录 HTTP status + body + 服务端持久化证据，不再接受 caller-fed authority",
+        "[BEHAVIOR] 新 commit 让 evaluator PASS、judge PASS、human approval 三类 current-SHA authority 同时失效，PR 保持 Draft",
+        "[ARTIFACT] packages/brain/src/orchestrator/derive.js、ground-truth.js、routes/harness-callback.js、routes/harness-kernel-approvals.js、相关测试与版本文件完成同步"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/src/routes/harness-kernel-approvals.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js",
+        "packages/brain/src/orchestrator/__tests__/derive.test.js",
+        "packages/brain/src/orchestrator/__tests__/ground-truth.test.js",
+        "packages/brain/src/routes/__tests__/harness-attempt-callback.test.js",
+        "packages/brain/src/routes/__tests__/harness-kernel-approvals.test.js",
+        "packages/brain/DEFINITION.md",
+        "packages/brain/VERSION",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
