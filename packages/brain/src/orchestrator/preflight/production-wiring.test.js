@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildRealDeps } from '../run.js';
+import { getNodeProfile } from '../fleet-node/node-profile.js';
 import { signMachineAttestation } from '../machine-attestation.js';
 import { createProviderRegistry } from '../provider-registry.js';
 
@@ -9,12 +10,59 @@ const RUN_ID = '22222222-2222-4222-8222-222222222222';
 const ATTEMPT_ID = '33333333-3333-4333-8333-333333333333';
 const LEASE_OWNER = 'production-wiring:4242';
 const SHARED_SECRET = 'production-wiring-secret-at-least-32-bytes';
+const WORKER_URL = 'http://us-fleet-worker.internal:5231';
+const GIB = 1024 ** 3;
 
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function admittedHealth(machineId = 'us-mac-m4') {
+  const profile = getNodeProfile(machineId);
+  const observedAt = new Date().toISOString();
+  return {
+    schema_version: 'fleet-node-health/v1',
+    machine_id: machineId,
+    observed_at: observedAt,
+    worker: {
+      protocol_version: profile.version_policy.worker_protocol,
+      contract_version: profile.version_policy.worker_contract,
+      version: profile.version_policy.worker,
+    },
+    runner: {
+      version: profile.version_policy.runner,
+      image_digest: profile.runner_image_digest,
+    },
+    os: { version: profile.version_policy.os },
+    orbstack: { version: profile.version_policy.orbstack },
+    docker: { available: true, observed_at: observedAt },
+    resources: {
+      cpu_cores: profile.resources.cpu_cores,
+      memory_bytes: profile.resources.memory_gib * GIB,
+      disk_free_bytes: profile.resources.disk_min_free_gib * GIB,
+      disk_used_percent: profile.resources.disk_max_used_percent,
+      cpu_pressure_percent: 0,
+      memory_pressure_percent: 0,
+    },
+    git: { available: true, version: profile.version_policy.git },
+    node: { available: true, version: profile.version_policy.node },
+    codex: { available: true, version: profile.version_policy.codex },
+    tailscale: { connected: true },
+    callback: { reachable: true },
+    time_sync: { synchronized: true },
+    power: { sleep_disabled: true, auto_power_on: true },
+    launchd: {
+      loaded: true,
+      domain: profile.launchd.domain,
+      kind: profile.launchd.kind,
+    },
+    worktree: { root_ready: true },
+    container: { probe_succeeded: true },
+    drain: { active: false },
+  };
 }
 
 function observed(payload = {}) {
@@ -116,6 +164,7 @@ describe('production capability wiring', () => {
     const order = [];
     const fetchFn = vi.fn(async (url) => {
       order.push(`fetch:${url}`);
+      if (String(url) === `${WORKER_URL}/health`) return response(admittedHealth());
       if (String(url).endsWith('/api/brain/capacity-budget')) {
         return response({
           fleet: [{
@@ -218,6 +267,10 @@ describe('production capability wiring', () => {
       resolveGitHubToken: vi.fn(async () => 'secret-token'),
       randomUUID: () => '33333333-3333-4333-8333-333333333333',
       leaseOwner: LEASE_OWNER,
+      env: {
+        CECELIA_MACHINE_ID: 'us-mac-m4',
+        FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
+      },
     });
 
     const result = await deps.dispatch('spawn:generator', {
@@ -268,6 +321,7 @@ describe('production capability wiring', () => {
     const accountHomes = [];
     const startedExecutions = [];
     const fetchFn = vi.fn(async (url) => {
+      if (String(url) === `${WORKER_URL}/health`) return response(admittedHealth());
       if (String(url).endsWith('/api/brain/capacity-budget')) {
         return response({
           fleet: [{
@@ -354,6 +408,10 @@ describe('production capability wiring', () => {
         return `/accounts/${account}`;
       }),
       leaseOwner: LEASE_OWNER,
+      env: {
+        CECELIA_MACHINE_ID: 'us-mac-m4',
+        FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
+      },
     });
 
     const result = await deps.dispatch('spawn:generator', {
@@ -408,6 +466,7 @@ describe('production capability wiring', () => {
   it('PostgreSQL preflight failure is BLOCKED and creates no attempt', async () => {
     process.env.CECELIA_MACHINE_ID = 'us-mac-m4';
     const fetchFn = vi.fn(async (url) => {
+      if (String(url) === `${WORKER_URL}/health`) return response(admittedHealth());
       if (String(url).endsWith('/api/brain/capacity-budget')) {
         return response({
           fleet: [{
@@ -471,6 +530,10 @@ describe('production capability wiring', () => {
       })),
       fetchFn,
       resolveGitHubToken: vi.fn(async () => 'secret-token'),
+      env: {
+        CECELIA_MACHINE_ID: 'us-mac-m4',
+        FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
+      },
     });
 
     const result = await deps.dispatch('spawn:generator', {
