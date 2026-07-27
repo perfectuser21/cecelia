@@ -230,6 +230,8 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - installer 只为预先存在的 `_cecelia` 增加 owner-home `search` 与 exact
   `docker.sock` `read,write`；root-only WatchPaths helper 在 socket 重建后恢复
   exact ACL，不触碰 sibling sockets。本次安装新增 ACL 在失败时逆序撤销。
+  新 generation 只有在 launchd 保持 running 且 profile-owned `/health` 返回
+  匹配 machine identity 后才提交，否则恢复原文件与原服务状态。
 - 准入是强制、fail-closed 的派发前置条件。Worker URL 缺失、重定向、超时、
   非 2xx、超限/畸形响应、identity/版本/Runner digest/资源/新鲜度不匹配、显式
   drain，均关闭节点；不得回退为仅凭 `online` 或 `effective_slots` 放行。

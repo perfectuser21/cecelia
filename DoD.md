@@ -72,9 +72,11 @@ machine-health 的 mandatory fail-closed 接线。
   machine，并使用 system-owned target/launchctl（测试仅通过注入 seam 隔离）。
   `_cecelia` 不存在、socket target 越界或 ACL grant 失败均在 mutation 前关闭；
   本次新增的 home/socket ACL 在 preflight/install 失败时逆序撤销，撤销失败输出
-  稳定安全告警；root watcher 日志拒绝 symlink/non-file。
+  稳定安全告警；root watcher 日志拒绝 symlink/non-file。新 generation 在
+  `kickstart` 返回 0 后仍须通过 launchd running 与 profile-owned `/health`
+  identity 检查，启动即退出、listener bind 失败或 health 不可达均回滚。
   动作: 对 placement、bootstrap/kickstart 各失败阶段、stopped/running 原状态与
-  socket recreation 运行行为测试。
+  socket recreation、kickstart-success/health-failure 运行行为测试。
   预期观察: 文件/服务/ACL 恢复，helper 幂等且只触碰 docker.sock，跨机或非 root apply 拒绝。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh && bash packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'
   期望: exit 0

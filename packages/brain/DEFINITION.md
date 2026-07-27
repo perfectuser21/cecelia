@@ -20,6 +20,8 @@
 - installer 只为预先存在的 `_cecelia` 向 OrbStack owner home 授予 `search`，
   并向 exact `docker.sock` 授予 `read,write`；root-only WatchPaths helper 负责
   socket 重建后的恢复，不授权 sibling sockets。本次新增 ACL 在失败时逆序回退。
+  新 generation 只有在 launchd 持续为 running、且 profile-owned `/health`
+  返回匹配 machine identity 后才提交；否则恢复原文件与原服务状态。
 - 所有 production machine health 都必须经过该 gate。缺失、重定向、超时、
   malformed/stale evidence、显式 drain 或 policy/resource/digest 不匹配均
   fail-closed；不存在 `online`/`effective_slots` 回退。

@@ -792,6 +792,14 @@ git log --oneline --decorate origin/main..HEAD
 Expected: only the Phase 4A file set above. No WorkspaceSpec, credential, callback,
 receipt, attestation, watchdog, canary, or Commander state changes.
 
+- [x] **Independent review closure: post-start generation verification**
+
+The installer now commits a replacement generation only after launchd reports the
+Worker as running and the profile-owned `/health` endpoint returns the matching
+machine identity. A `kickstart` success followed by process exit, listener bind
+failure, or health failure takes the existing transactional rollback path. Red
+commit `e92e004db`; Green commit `4c333db64`.
+
 - [ ] **Step 4: Push and open an unmerged PR**
 
 ```bash
