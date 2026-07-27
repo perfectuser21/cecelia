@@ -127,6 +127,7 @@ describe('Fleet Worker health-only service', () => {
   it('freshly probes every command-backed fact and disposable Git/Docker check without a shell', async () => {
     const { probeFleetWorkerHealth } = await loadProbeContract();
     let tempSequence = 0;
+    const createdContainerNames = [];
     const makeTempDirFn = vi.fn(async () => `/private/tmp/fleet-node-probe-${++tempSequence}`);
     const removeTempDirFn = vi.fn(async () => undefined);
     const fetchFn = vi.fn(async (url, options) => {
@@ -148,8 +149,13 @@ describe('Fleet Worker health-only service', () => {
       if (file === 'orb') return { stdout: '{"version":"1.9.4"}' };
       if (file === 'docker' && args[0] === 'info') return { stdout: '{"ServerVersion":"27.5"}' };
       if (file === 'docker' && args[0] === 'image') return { stdout: JSON.stringify([`runner@${DIGEST}`]) };
-      if (file === 'docker' && args[0] === 'create') return { stdout: 'fleet-probe-container\n' };
-      if (file === 'docker' && args[0] === 'rm') return { stdout: 'fleet-probe-container\n' };
+      if (file === 'docker' && args[0] === 'create') {
+        const nameIndex = args.indexOf('--name');
+        if (nameIndex >= 0) createdContainerNames.push(args[nameIndex + 1]);
+        return { stdout: 'container-id\n' };
+      }
+      if (file === 'docker' && args[0] === 'start') return { stdout: '' };
+      if (file === 'docker' && args[0] === 'rm') return { stdout: '' };
       if (file === 'git') return { stdout: 'git version 2.50.1\n' };
       if (file === 'node') return { stdout: 'v22.17.0\n' };
       if (file === 'codex') return { stdout: 'codex-cli 0.40.0\n' };
@@ -252,10 +258,16 @@ describe('Fleet Worker health-only service', () => {
         && args.includes('--force')],
       ['docker', (args) => args[0] === 'create'
         && args.includes(DIGEST)
-        && args.some((arg) => arg.includes('type=bind'))],
+        && args.some((arg) => arg.includes('type=bind'))
+        && args.includes('--entrypoint')
+        && args.includes('/usr/bin/test')
+        && args.includes('/workspace/.git')],
+      ['docker', (args) => args[0] === 'start'
+        && args[1] === '--attach'
+        && createdContainerNames.includes(args[2])],
       ['docker', (args) => args[0] === 'rm'
         && args.includes('-f')
-        && args.includes('fleet-probe-container')],
+        && createdContainerNames.includes(args.at(-1))],
     ];
     for (const [file, matchesArgs] of requiredCommands) {
       const calls = execFileFn.mock.calls.filter(
@@ -272,6 +284,82 @@ describe('Fleet Worker health-only service', () => {
     expect(removeTempDirFn).toHaveBeenCalledTimes(2);
     expect(removeTempDirFn).toHaveBeenNthCalledWith(1, '/private/tmp/fleet-node-probe-1');
     expect(removeTempDirFn).toHaveBeenNthCalledWith(2, '/private/tmp/fleet-node-probe-2');
+    expect(createdContainerNames).toHaveLength(2);
+    expect(new Set(createdContainerNames).size).toBe(2);
+    for (const name of createdContainerNames) {
+      expect(name).toMatch(/^fleet-node-probe-[a-f0-9]{16}$/);
+      expect(execFileFn).toHaveBeenCalledWith(
+        'docker',
+        ['start', '--attach', name],
+        expect.objectContaining({ shell: false }),
+      );
+      expect(execFileFn).toHaveBeenCalledWith(
+        'docker',
+        ['rm', '-f', '--', name],
+        expect.objectContaining({ shell: false }),
+      );
+    }
+  });
+
+  it.each([
+    ['Git worktree add', 'git-add'],
+    ['Docker create', 'docker-create'],
+  ])('best-effort cleans deterministic targets after ambiguous %s failure', async (_label, failureAt) => {
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    const tempRoot = `/private/tmp/fleet-node-probe-${failureAt}`;
+    const worktreePath = `${tempRoot}/worktree`;
+    let containerName;
+    const removeTempDirFn = vi.fn(async () => undefined);
+    const missingDrainMarker = vi.fn(async () => {
+      const error = new Error('missing');
+      error.code = 'ENOENT';
+      throw error;
+    });
+    const execFileFn = vi.fn(async (file, args, options) => {
+      expect(args).toBeInstanceOf(Array);
+      expect(options).toMatchObject({ shell: false });
+      if (file === 'git' && args[0] === 'worktree' && args[1] === 'add') {
+        if (failureAt === 'git-add') throw new Error('timed out after worktree creation');
+        return { stdout: '' };
+      }
+      if (file === 'docker' && args[0] === 'create') {
+        containerName = args[args.indexOf('--name') + 1];
+        throw new Error('timed out after container creation');
+      }
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'us-mac-m4',
+      runnerImageDigest: DIGEST,
+      repoRoot: '/repo',
+      execFileFn,
+      fetchFn: vi.fn(async () => new Response('{}', { status: 200 })),
+      makeTempDirFn: vi.fn(async () => tempRoot),
+      removeTempDirFn,
+      statFn: missingDrainMarker,
+    });
+
+    expect(report.container).toEqual({ probe_succeeded: false });
+    expect(execFileFn).toHaveBeenCalledWith(
+      'git',
+      ['worktree', 'remove', '--force', worktreePath],
+      expect.objectContaining({ cwd: '/repo', shell: false }),
+    );
+    if (failureAt === 'docker-create') {
+      expect(containerName).toMatch(/^fleet-node-probe-[a-f0-9]{16}$/);
+      expect(execFileFn).toHaveBeenCalledWith(
+        'docker',
+        ['rm', '-f', '--', containerName],
+        expect.objectContaining({ shell: false }),
+      );
+    } else {
+      expect(execFileFn.mock.calls).not.toContainEqual(
+        expect.arrayContaining(['docker', expect.arrayContaining(['create'])]),
+      );
+    }
+    expect(removeTempDirFn).toHaveBeenCalledOnce();
+    expect(removeTempDirFn).toHaveBeenCalledWith(tempRoot);
   });
 
   it('returns only the health allowlist and strips authority, credentials, prompts, and local paths', async () => {
