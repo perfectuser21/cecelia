@@ -289,6 +289,35 @@ describe('Delivery Terminal Authority [BEHAVIOR]', () => {
     }
   });
 
+  it('staging FAIL 必须回传 parent 为非成功状态', async () => {
+    const authority = await loadAuthority();
+    const ctx = makeCtx('staging-fail');
+    seedParent(ctx);
+    try {
+      const deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge(mergeInput(ctx)));
+      await authority.applyStagingResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        verdict: 'FAIL',
+        reason: 'e2e_failed',
+        tested_sha: MERGED_SHA,
+        executor_success: false,
+        idempotency_key: 'staging-fail',
+      });
+      const row = psqlJson<{ delivery_status: string; task_status: string; failure_reason: string }>(`
+        SELECT d.status AS delivery_status, t.status AS task_status, COALESCE(d.failure_reason, '') AS failure_reason
+          FROM harness_deliveries d
+          JOIN tasks t ON t.id = d.task_id
+         WHERE d.id = '${deliveryId}'
+      `);
+      expect(row.delivery_status).toMatch(/staging_failed|failed/);
+      expect(row.task_status).not.toBe('completed');
+      expect(row.failure_reason).toMatch(/e2e_failed|fail/i);
+    } finally {
+      cleanup([ctx]);
+    }
+  });
+
   it('tested_sha 缺失或不等于 merged_sha 必须 fail-closed', async () => {
     const authority = await loadAuthority();
     const ctxs = [makeCtx('missing-sha'), makeCtx('mismatch-sha')];

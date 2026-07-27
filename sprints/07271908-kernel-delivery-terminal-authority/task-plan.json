@@ -13,6 +13,7 @@
         "[BEHAVIOR] delivery status invalid id error path 返回 400 + error 字段",
         "[BEHAVIOR] staging PASS 且 tested_sha 等于 merged_sha 后才可 promote",
         "[BEHAVIOR] staging SKIP(no_contract) 不得 success 且 parent 保持 blocked",
+        "[BEHAVIOR] staging FAIL 必须回传 parent 为非成功状态",
         "[BEHAVIOR] tested_sha 缺失或不等于 merged_sha 必须 fail-closed",
         "[BEHAVIOR] staging child completed+executor success 不得替代 PASS",
         "[BEHAVIOR] Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor",

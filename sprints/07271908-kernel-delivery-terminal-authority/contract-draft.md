@@ -1,9 +1,9 @@
-# Sprint Contract Draft (Round 4)
+# Sprint Contract Draft (Round 5)
 
-## Round 4 修订摘要
+## Round 5 修订摘要
 
-- 补齐 DoD 与 `tests/*.test.ts` 的 1:1 覆盖名：status schema、invalid id error path、staging PASS 正向 gate、Promote API auth 都新增红测。
-- Final E2E 在 happy path 之外增加 tested_sha mismatch fail-closed 与 report dispatch failure gate，避免只跑正向链路假绿。
+- 补齐 PRD Proven-to-fire 中独立的 staging FAIL 回传 parent 非成功路径，避免只用 SKIP 或 executor_success 变体代替 FAIL。
+- Final E2E 在 happy path 之外覆盖 SKIP(no_contract)、staging FAIL、tested_sha mismatch、internal rollback、customer confirm pending、customer signed attestation 与 report dispatch failure。
 - 保留 Round 3 已补强项：真实 Postgres/真实相邻模块边界、customer signed attestation oracle、replay 幂等 oracle、Promote API 认证后 DB 未突变断言。
 
 ## Response Schema（推导来源: PRD字面 + api_registry推导）
@@ -416,15 +416,52 @@ curl -sf "$BRAIN_URL/api/brain/harness/delivery/$DELIVERY_ID/status" \
 
 node --input-type=module <<'NODE'
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import {
   applyStagingResult,
   applyProductionResult,
+  applyCustomerConfirmation,
+  applyCustomerAttestation,
   persistFinalReportAndComplete,
   replayDeliveryEvent,
   createDeliveryFromMerge,
 } from './packages/brain/src/delivery-terminal-authority.js';
+
+function seedParent(label) {
+  const runId = randomUUID();
+  const taskId = randomUUID();
+  execFileSync('psql', [process.env.DB_URL, '-v', 'ON_ERROR_STOP=1', '-c', `
+    INSERT INTO tasks (id, title, description, task_type, status, payload)
+    VALUES ('${taskId}', 'delivery terminal authority ${label}', 'contract e2e negative', 'harness_initiative', 'in_progress', '{}'::jsonb);
+    INSERT INTO initiative_runs (id, initiative_id, phase, current_task_id)
+    VALUES ('${runId}', '${taskId}', 'B_task_loop', '${taskId}');
+  `], { stdio: 'inherit' });
+  return { runId, taskId };
+}
+
+async function createFixtureDelivery(label, baseRepo = 'perfectuser21/cecelia') {
+  const parent = seedParent(label);
+  const prNumberByLabel = {
+    'skip-no-contract': 4329,
+    'staging-fail': 4330,
+    rollback: 4331,
+    'customer-pending': 4332,
+    'customer-attested': 4333,
+  };
+  const created = await createDeliveryFromMerge({
+    dbUrl: process.env.DB_URL,
+    run_id: parent.runId,
+    task_id: parent.taskId,
+    pr_url: `https://github.com/${baseRepo}/pull/${prNumberByLabel[label] ?? 4399}`,
+    merged_sha: process.env.MERGED_SHA,
+    head_sha: process.env.MERGED_SHA,
+    contract_manifest_digest: process.env.DIGEST,
+    target_environment: 'local_api',
+    base_repo: baseRepo,
+  });
+  return created.delivery_id;
+}
 
 await applyStagingResult({
   dbUrl: process.env.DB_URL,
@@ -488,6 +525,94 @@ await applyStagingResult({
 });
 const badDeliveryId = bad.delivery_id;
 
+const skipDeliveryId = await createFixtureDelivery('skip-no-contract');
+await applyStagingResult({
+  dbUrl: process.env.DB_URL,
+  delivery_id: skipDeliveryId,
+  verdict: 'SKIP',
+  reason: 'no_contract',
+  tested_sha: process.env.MERGED_SHA,
+  executor_success: true,
+  idempotency_key: 'staging-skip-no-contract',
+});
+
+const stagingFailDeliveryId = await createFixtureDelivery('staging-fail');
+await applyStagingResult({
+  dbUrl: process.env.DB_URL,
+  delivery_id: stagingFailDeliveryId,
+  verdict: 'FAIL',
+  reason: 'e2e_failed',
+  tested_sha: process.env.MERGED_SHA,
+  executor_success: false,
+  idempotency_key: 'staging-fail',
+});
+
+const rollbackDeliveryId = await createFixtureDelivery('rollback');
+await applyStagingResult({
+  dbUrl: process.env.DB_URL,
+  delivery_id: rollbackDeliveryId,
+  verdict: 'PASS',
+  tested_sha: process.env.MERGED_SHA,
+  idempotency_key: 'staging-pass-rollback',
+});
+await applyProductionResult({
+  dbUrl: process.env.DB_URL,
+  delivery_id: rollbackDeliveryId,
+  line: 'internal',
+  tested_sha: process.env.MERGED_SHA,
+  health_ok: false,
+  fingerprint_sha: process.env.MERGED_SHA,
+  e2e_ok: true,
+  rollback_anchor: 'prod-before-rollback-fixture',
+  idempotency_key: 'promote-fail-health',
+});
+
+const customerPendingDeliveryId = await createFixtureDelivery('customer-pending', 'perfectuser21/zenithjoy-workspace');
+await applyStagingResult({
+  dbUrl: process.env.DB_URL,
+  delivery_id: customerPendingDeliveryId,
+  verdict: 'PASS',
+  tested_sha: process.env.MERGED_SHA,
+  idempotency_key: 'staging-pass-customer-pending',
+});
+await applyCustomerConfirmation({
+  dbUrl: process.env.DB_URL,
+  delivery_id: customerPendingDeliveryId,
+  confirmed_by: 'cecelia-operator',
+  idempotency_key: 'customer-confirm-pending',
+});
+
+const customerAttestedDeliveryId = await createFixtureDelivery('customer-attested', 'perfectuser21/zenithjoy-workspace');
+await applyStagingResult({
+  dbUrl: process.env.DB_URL,
+  delivery_id: customerAttestedDeliveryId,
+  verdict: 'PASS',
+  tested_sha: process.env.MERGED_SHA,
+  idempotency_key: 'staging-pass-customer-attested',
+});
+await applyCustomerConfirmation({
+  dbUrl: process.env.DB_URL,
+  delivery_id: customerAttestedDeliveryId,
+  confirmed_by: 'cecelia-operator',
+  idempotency_key: 'customer-confirm-attested',
+});
+const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+process.env.HARNESS_CUSTOMER_ATTESTATION_PUBLIC_KEY = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+const attestation = {
+  repo: 'perfectuser21/zenithjoy-workspace',
+  deployment_id: `deploy-${customerAttestedDeliveryId}`,
+  deployed_sha: process.env.MERGED_SHA,
+  verified_sha: process.env.MERGED_SHA,
+  verification_url: 'https://github.com/perfectuser21/zenithjoy-workspace/actions/runs/verified',
+};
+await applyCustomerAttestation({
+  dbUrl: process.env.DB_URL,
+  delivery_id: customerAttestedDeliveryId,
+  ...attestation,
+  attestation_signature: sign(null, Buffer.from(JSON.stringify(attestation), 'utf8'), privateKey).toString('base64'),
+  idempotency_key: 'customer-attestation-verified',
+});
+
 const reportRunId = randomUUID();
 const reportTaskId = randomUUID();
 execFileSync('psql', [process.env.DB_URL, '-v', 'ON_ERROR_STOP=1', '-c', `
@@ -531,7 +656,7 @@ await persistFinalReportAndComplete({
   dispatch_error: 'report dispatch failed',
   idempotency_key: 'report-fail',
 });
-writeFileSync('/tmp/delivery-terminal-authority-e2e.ids', `BAD_DELIVERY_ID=${badDeliveryId}\nREPORT_FAIL_DELIVERY_ID=${report.delivery_id}\n`);
+writeFileSync('/tmp/delivery-terminal-authority-e2e.ids', `BAD_DELIVERY_ID=${badDeliveryId}\nSKIP_DELIVERY_ID=${skipDeliveryId}\nSTAGING_FAIL_DELIVERY_ID=${stagingFailDeliveryId}\nROLLBACK_DELIVERY_ID=${rollbackDeliveryId}\nCUSTOMER_DELIVERY_ID=${customerPendingDeliveryId}\nCUSTOMER_ATTESTED_DELIVERY_ID=${customerAttestedDeliveryId}\nREPORT_FAIL_DELIVERY_ID=${report.delivery_id}\n`);
 NODE
 source /tmp/delivery-terminal-authority-e2e.ids
 
@@ -570,6 +695,55 @@ WHERE d.id = '$BAD_DELIVERY_ID'
 
 psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
 SELECT count(*) FROM harness_deliveries d
+JOIN tasks t ON t.id = d.task_id
+WHERE d.id = '$SKIP_DELIVERY_ID'
+  AND d.status IN ('staging_blocked','staging_failed','failed')
+  AND t.status <> 'completed'
+  AND d.updated_at > NOW() - interval '5 minutes';" \
+  | tr -d ' ' | grep -qx '1'
+
+psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
+SELECT count(*) FROM harness_deliveries d
+JOIN tasks t ON t.id = d.task_id
+WHERE d.id = '$STAGING_FAIL_DELIVERY_ID'
+  AND d.status IN ('staging_failed','failed')
+  AND t.status <> 'completed'
+  AND COALESCE(d.failure_reason, '') <> ''
+  AND d.updated_at > NOW() - interval '5 minutes';" \
+  | tr -d ' ' | grep -qx '1'
+
+psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
+SELECT count(*) FROM harness_deliveries d
+JOIN harness_delivery_events e ON e.delivery_id = d.id
+WHERE d.id = '$ROLLBACK_DELIVERY_ID'
+  AND d.status IN ('rollback_required','failed')
+  AND d.promote_status IS DISTINCT FROM 'promoted'
+  AND e.event_type = 'production_verify_failed'
+  AND e.detail ? 'rollback_anchor'
+  AND e.created_at > NOW() - interval '5 minutes';" \
+  | tr -d ' ' | grep -qx '1'
+
+psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
+SELECT count(*) FROM harness_deliveries
+WHERE id = '$CUSTOMER_DELIVERY_ID'
+  AND status = 'external_ack_pending'
+  AND promote_status IS DISTINCT FROM 'promoted'
+  AND updated_at > NOW() - interval '5 minutes';" \
+  | tr -d ' ' | grep -qx '1'
+
+psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
+SELECT count(*) FROM harness_deliveries d
+JOIN harness_delivery_events e ON e.delivery_id = d.id
+WHERE d.id = '$CUSTOMER_ATTESTED_DELIVERY_ID'
+  AND d.status = 'promoted'
+  AND d.promote_status = 'promoted'
+  AND e.event_type = 'external_attestation_verified'
+  AND e.detail->>'verified_sha' = d.merged_sha
+  AND e.created_at > NOW() - interval '5 minutes';" \
+  | tr -d ' ' | grep -qx '1'
+
+psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
+SELECT count(*) FROM harness_deliveries d
 JOIN initiative_runs r ON r.id = d.run_id
 JOIN tasks t ON t.id = d.task_id
 WHERE d.id = '$REPORT_FAIL_DELIVERY_ID'
@@ -591,6 +765,7 @@ echo "Golden Path local_api delivery terminal authority passed"
 | status error path | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | delivery status invalid id error path 返回 400 + error 字段 | 当前通用 404 或无 error schema |
 | staging positive gate | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging PASS 且 tested_sha 等于 merged_sha 后才可 promote | 当前 PASS 与 SHA 对账未成为唯一 promote 前置 |
 | staging fail-closed | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging SKIP(no_contract) 不得 success 且 parent 保持 blocked | 当前 SKIP 可被当作非失败 |
+| staging fail callback | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging FAIL 必须回传 parent 为非成功状态 | 当前 staging FAIL 可能只标 child completed 而不影响 parent |
 | SHA gate | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | tested_sha 缺失或不等于 merged_sha 必须 fail-closed | 当前缺失/漂移可能 pending/promote |
 | executor success false authority | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging child completed+executor success 不得替代 PASS | 当前 child completed+executor success 可被当交付成功 |
 | production rollback | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor | 当前 promote best-effort/report 仍可完成 |
