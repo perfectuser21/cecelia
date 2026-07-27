@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 9)
+# Sprint Contract Draft (Round 10)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -404,3 +404,4 @@ echo "OK: approved contract provenance final e2e passed"
 - PR #4372 只作为事故证据，不修改、不复用；回归 fixture 用本 sprint 测试临时 Git repo 自造 365→366 drift。
 - Android/微信/第三方 API 不涉及，target_environment 固定 `local_api`。
 - Round 9 修订：不扩 PRD scope；final-e2e 的 DB 验收改为脚本内真实 PostgreSQL temp table 写入与 5 分钟时间窗断言，避免依赖 GAN 批准记录的外部时序。
+- Round 10 修订：不扩 PRD scope；复核 api/db/test registry（registry 可达但扫描已 stale，字段仍以 PRD 字面为准），合同格式自查通过，Red evidence 为 missing `approved-contract-provenance.js` 与 mergeGate digest 漂移测试失败。
