@@ -23,7 +23,11 @@ acl_state="$test_root/acl.state"
 socket_acl_state="$test_root/socket-acl.state"
 preflight_log="$test_root/preflight.log"
 startup_probe_log="$test_root/startup-probe.log"
+worker_token_file="$test_root/worker-token"
+worker_data_root="$test_root/var/lib/cecelia/fleet-worker"
 mkdir -p "$install_dir" "$log_dir"
+printf '%s\n' 'fleet-worker-token-at-least-32-bytes' > "$worker_token_file"
+chmod 0600 "$worker_token_file"
 
 run_installer() {
   env -u FLEET_WORKER_ID \
@@ -40,6 +44,8 @@ run_installer() {
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
+    FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
+    FLEET_WORKER_DATA_ROOT="$worker_data_root" \
     "$INSTALLER" "$@"
 }
 
@@ -60,6 +66,8 @@ run_installer_with_id() {
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
+    FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
+    FLEET_WORKER_DATA_ROOT="$worker_data_root" \
     "$INSTALLER" "$@"
 }
 
@@ -305,7 +313,11 @@ for required in \
   '<key>UserName</key>' \
   '<key>CECELIA_MACHINE_ID</key>' \
   '<string>xian-mac-m4</string>' \
-  '<key>CECELIA_RUNNER_DIGEST</key>'; do
+  '<key>CECELIA_RUNNER_DIGEST</key>' \
+  '<key>CECELIA_FLEET_WORKER_TOKEN_FILE</key>' \
+  "<string>$worker_token_file</string>" \
+  '<key>CECELIA_FLEET_DATA_ROOT</key>' \
+  "<string>$worker_data_root</string>"; do
   grep -Fq "$required" <<<"$plist_body" || fail "plist missing $required"
 done
 grep -Eq '<string>sha256:[a-f0-9]{64}</string>' <<<"$plist_body" \
@@ -564,11 +576,15 @@ installed_plist="$install_dir/com.perfect21.fleet-worker.plist"
 runtime_dir="$test_root/usr/local/libexec/cecelia/fleet-worker"
 installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
+installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
+installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
 installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
+[[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
+  || fail "--apply omitted the Workspace/Attempt runtime modules"
 [[ -f "$installed_access_helper" && -f "$installed_access_plist" ]] \
   || fail "--apply did not install the socket ACL refresher generation"
 access_plist_contract="$(python3 - "$installed_access_plist" <<'PY'
