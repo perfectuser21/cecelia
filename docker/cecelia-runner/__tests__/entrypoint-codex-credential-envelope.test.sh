@@ -20,6 +20,15 @@ fi
 
 eval "$credential_block"
 
+file_mode() {
+  local file="$1"
+  if stat -f '%Lp' "$file" >/dev/null 2>&1; then
+    stat -f '%Lp' "$file"
+  else
+    stat -c '%a' "$file"
+  fi
+}
+
 credential_source="$TEST_ROOT/envelope-auth.json"
 codex_home="$TEST_ROOT/codex-home"
 printf '%s' \
@@ -36,8 +45,7 @@ prepare_codex_credential "$codex_home"
 test "$CODEX_HOME" = "$codex_home"
 test "$(cat "$codex_home/auth.json")" = \
   '{"tokens":{"access_token":"credential-secret","refresh_token":"refresh-secret"}}'
-test "$(stat -f '%Lp' "$codex_home/auth.json" 2>/dev/null \
-  || stat -c '%a' "$codex_home/auth.json")" = "600"
+test "$(file_mode "$codex_home/auth.json")" = "600"
 test "$CREDENTIAL_COPY_MUTATED" = "false"
 test "$(
   printf '%s\n' \
