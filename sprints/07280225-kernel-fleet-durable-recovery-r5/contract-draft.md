@@ -1,4 +1,4 @@
-# Sprint Contract Draft（Round 10）
+# Sprint Contract Draft（Round 11）
 
 ## 合同 Notes
 
@@ -9,14 +9,15 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
-- 先前 proposer heads 均仅作 Red 证据；Round 10 在 R21-R27 基础上关闭 R28：result channel 使用 TaskBundle `CURRENT_ROLE` 与当前 proof Agent Attempt，origin 由 verifier 独立查真 PG，activation required set 从 canonical manifest+具体 production entrypoint 独立生成，Kernel 同时绑定 image/commit/tree/run.js blob，S12 以 receipt IDs+receipt-set digest 绑定已验签 body，并把 final E2E 改为 owner pause 前后两阶段真实状态机。
-- runtime-result-channel-blocker: 本次 proposer TaskBundle 未注入非空 `BRAIN_RESULT_FILE`，因此当前运行时仍是 R28 的 operational Red；本合同产物可提交供 Reviewer 审查，但本轮 source `.brain-result.json` 不能作为 contract approval authority，必须由 Controller 另取 git head 并在修复后的 attempt-runtime channel 重跑 Reviewer。
-- lifecycle-ssot-provenance: 预期基线来自 Draft+CONFLICTING PR #4372 的 exact source `origin/cp-07271751-51836fb2@4dc3b69a`；它只是迁移输入，不是运行时真相，不得独立 merge。main 的 migration 366 已被 `366_kernel_harness_failure_class.sql` 占用，本合同使用新 migration `368_kernel_harness_lifecycle_ssot.sql`，保留 source provenance 并以一次性升级把既有 F1 六步行原位升级为 S0-S12，禁止复制第二条 journey。
+- 先前 proposer heads 均仅作 Red 证据；Round 11 以 R32/R33 为最高优先级纠正 authority、classification、lifecycle provenance、生产 schema oracle 与 result-channel Red，撤销所有与其冲突的固定 1161/18、短 SHA、13-stage 历史 parity 和 same-module 自证。
+- runtime-result-channel-blocker: 本次 TaskBundle 没有注入 `BRAIN_RESULT_FILE`；source checkout 的 `.brain-result.json` 不具 authority。本轮只提交合同 branch，不能凭 source result 授权 Generator；修复后必须由真实 Reviewer Attempt 产生 `attempt.result.result_channel_receipt` 且完成 durable ack。
+- inventory-authority: exact main `dd424a61926009ac85a915b31187124b85f0ca98:packages/engine/regression-contract.yaml` blob `7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3` 是唯一既有 P0/P1 source inventory，exact 129/P0=66/P1=63/digest=`4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f`；`packages/quality/contracts/` 是唯一 authority boundary。
+- lifecycle-proposal-provenance: Draft+CONFLICTING PR #4372 的 full source `4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13` 只是 proposed v1；分布 `0,2,2,8,6,0,1,110` 与 digest `be80793527a817611ba0698654ea858eda7c77ea9e63da937cba7b885a4d9363` 不 canonical。main migration 366 已占用；执行前重查 tree/DB 后选择未用 `>=368` 编号。
 - lifecycle-ssot-ref: `kernel_harness_f1_baseline/S0-S12@${PR_HEAD_SHA}`；F2 产品锚点仍是 `工厂 · F2 部署闭环/部署被证明没坏`，两者分别记录为 `product_anchor` 与 `lifecycle_ssot_ref`，F2 step 不得冒充 F1 全生命周期。
-- lifecycle-matrix invariant: 唯一 manifest 必须恰有 13 个 stage、11 个 canonical element、143 个 exact cross-product cell；终态 cell 只能是 `pass` 或有独立 review receipt 的 `na_with_reason`，`typed_pending|typed_blocked|stale|expired|gray|null` 计数必须全为 0。基线现状 `13 pending + 130 gray + 0 green` 是迁移 Red，不是等价完成证据。
-- terminal-accounting invariant: S12 是硬终态门；必须消费 `production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope` 八类结构化、签名、current-lineage receipt。legacy receipt bodies 恰有 1161、F01/F06 family receipt bodies 恰有 18、CredentialEnvelope receipt bodies 恰有 24；所有 required key 只能从 receipt body 派生后与 canonical required set 比较，missing/pending/blocked/stale/expired/inferred/duplicate 均为 0，Controller 才能在同一幂等事务中更新 task/run、Promise Map、regression contract/result、report、learning/handoff 与 external status。
-- proof-lineage invariant: 所有 receipt 共享 current `task_id/run_id/approved_contract_sha/exact_head_or_release_lineage`，但 `attempt_id/session/machine/lease_generation` 必须来自各自 originating Attempt。每条 receipt 都查询 durable Attempt 行验证 run/provider/session/machine/role/lease/contract/head；S6/S7 必须不同 Attempt/session，Claude/Codex/Grok receipt 必须源于 provider-matching Attempt。result-channel receipt 是例外中的精确绑定：它必须等于被验证的那个 proof Agent Attempt，不得自造 attempt/contract/role。
-- result-channel invariant: 每个 Attempt 的 TaskBundle 必须携带 runtime-root 内 immutable `callback_result_path`，Worker 以 `BRAIN_RESULT_FILE` 注入；每个 proof phase 另带 `CURRENT_ROLE` 并与 durable Attempt role 逐字相等，source checkout 中跟踪或陈旧 `.brain-result.json` 永不具有权威性。
+- lifecycle-matrix invariant: S0-S12 只有在 owner exact-head 批准 proposal v1 后才 canonical；同 Journey append-only projection 保留六历史行全部 legacy 列与时间戳 byte-for-byte，新增九行、4 backbone+2 alias+9 new、13 backbone×11=143 cells 初始均 `unverified`。authority approval 不等于行为 pass。
+- terminal-accounting invariant: S12 只消费从已批准 classification/applicability 动态派生且逐条验签的 exact obligations；`unreviewed=0`、rejected 已闭合、missing/pending/blocked/stale/expired/inferred/duplicate=0。固定 1161/18 已撤销，候选 unified IDs 只有 owner 冻结后才产生 obligation。
+- proof-origin invariant: stage receipt 按 `brain_task_event|signed_intent_snapshot|harness_attempt|harness_attempt_quorum|harness_attempt_with_pr|github_check_suite|github_owner_review|github_merge_event|deployment_receipt|brain_atomic_accounting` 分型直查真实源，禁止把非 Agent receipt 强制过通用 Attempt 校验。
+- result-channel invariant: TaskBundle 的 server-derived descriptor 由 Worker 解析为 runtime-root 内 mode-0600 路径并注入唯一 `BRAIN_RESULT_FILE`；role 直接来自 TaskBundle top-level 字段。生产尚无 `CURRENT_ROLE` env，缺该 env 不能作为 Red oracle。
 - release-order invariant: `Draft exact head → CI → Evaluator/Judge → owner exact-head approval → authorized merge → US staging real E2E → production canary`；生产验证绝不早于批准/合并。
 - semantic-anchor-resolved: 2026-07-28 生产只读 API 回读确认本任务 payload 已归属 `工厂 · F2 部署闭环` journey `2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6`、已交付 GP `环境模型三段常驻收尾（Cecelia+ZenithJoy）` `4e5fd7eb-3823-4c57-a817-081b7fdd2eed`、step `部署被证明没坏` `817f59f5-02ff-4a70-bd81-f7ae65f77e02`；GP 与 step 的 `journey_id` 均逐字等于该 journey。当前 TaskBundle task `4a530430-00c5-46bc-8a4f-c0ec38025391` 与 current run `fda8bfd7-fbbc-4260-a657-ea7f3b51bd16` 明确不同；historical failed run `4bbe35de-63c1-4cfe-9b55-fea8c01a0647` 只可出现在拒绝反事实。Generator 点火前必须从 TaskBundle 动态注入并再次从生产回读；迁移/回读失败即 fail closed，不得创建 Map 行。
 - authoritative-prd-corrected: 本轮已将权威 PRD 的顺序和锚点改成唯一可执行事实；合同不再解释或保留零行 placeholder。
@@ -24,7 +25,7 @@
 - cleanup-order invariant: `confirm container absent → reverse normalize exact Runner-writable descendants → host cleanup workspace/admin → runtime/secret cleanup → state delete`；container removal 未确认则原地 `cleanup_blocked`，不得移动挂载证据。
 - controller-ownership invariant: 每个 active `run_id` 只有一个通用 Kernel Controller owner；`owner_id+generation` CAS fence 覆盖 heartbeat/intent/dispatch/merge/control，PID/host 仅诊断。
 - required-check invariant: P0 分类来自不可伪造的 task/PR receipt，不信可变 title/label；required exact-head check、owner signature、真实 GitHub API 回读的 run ID/check-suite ID/actor 与签名 repository-rule snapshot 必须同 head，模块返回的合成数组/布尔值不是证据。
-- origin-proof invariant: receipt origin 不得由被测模块的 `exists:true` 等布尔自证；verifier 必须按 receipt.attempt_id 独立 `SELECT harness_attempts` 并核对 current run、provider、role、session、machine、lease、contract 与 head。
+- origin-proof invariant: Attempt origin 不得由 `exists:true` 自证；verifier 只查询现有列 `id,run_id,role,provider,provider_session_id,actual_machine_id,lease_generation,status,task_bundle,result`，contract/head 从 authenticated TaskBundle/result receipt 派生，禁止查询不存在的 `actual_machine/contract_sha/exact_head_sha`。
 - activation-proof invariant: canonical applicability manifest 必须列具体 production entrypoint 和 wiring hop；required keys 由 verifier 独立读取该 manifest 生成，observed keys 只从 authenticated fire receipt bodies 派生。installer source、installed/symlink target 与 provider-neutral Kernel dispatcher 都是实现文件，不得用符号标签代替。
 - aggregate-binding invariant: S12 的 legacy/family/activation/credential 聚合 receipt 必须包含原始 receipt IDs 与 canonical serialization 的 receipt-set digest；terminal verifier 从已独立验签 bodies 重算，任何 body 或 aggregate mutation 都保持 non-complete。
 
@@ -50,7 +51,7 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 - `[.github/workflows/deploy.yml]` → 当前 Fast Lane/定时/手动可直达 production；P0 必须禁旁路并依赖 staging receipt。
 - `[.github/workflows/ci.yml]` → 当前通用 CI 不产 P0 exact-head evidence receipt；本次补统一 gate 接线且禁止 title/label auto-merge。
 - `[packages/brain/src/orchestrator/loop.js]` → 当前 `callback_result_path` 缺失时回退 `.brain-result.json`；read-only Runner 会 EROFS，source 中陈旧结果还能跨轮污染，必须改为 pre-Agent fail-closed 的 attempt runtime channel。
-- `[PR #4372 / origin/cp-07271751-51836fb2@4dc3b69a]` → `kernel_harness_f1_baseline` 只定义了 ledger 形状；143 cells 当前为 13 pending + 130 gray + 0 green，且 legacy mappings 只覆盖 S4/S5/S9/S11/S12。它是带 provenance 的升级输入，不是 operational truth。
+- `[PR #4372 / origin/cp-07271751-51836fb2@4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13]` → proposal v1 只是待审批迁移输入；其 lifecycle/family mapping 不是历史或 canonical truth。
 - `[packages/brain/migrations/366_kernel_harness_failure_class.sql]` → main 已占用 migration 366；F1 baseline 必须 renumber 到 368+，执行 fresh/production-like upgrade+rollback，禁止覆盖或并行保留冲突的 366。
 - `[root regression-contract.yaml]` → `kernel_harness_f1_baseline` 必须与唯一 lifecycle manifest、DB rows、runtime API/report 同源 parity；不存在的 cell 不得由文档默认补绿。
 - `[累积FR]` → 本 line 暂无历史。
@@ -116,7 +117,7 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 | rollback image 仍缺 `/app/config` | rollback image 同样先做 built-image attestation；未证明自包含则保持 Kernel drained，不启动缺陷 Controller。 |
 | Xian 外部 blocker | machine-readable blocked evidence，不降 profile、不加 bypass。 |
 | read-only result path EROFS 或 stale source result 冒充 | pre-Agent 创建并探测 attempt-scoped runtime path；只验注入路径及绑定字段/hash，所有终态在 durable receipt 后清除。 |
-| F1 baseline Draft 分支冲突或 migration 366 重号 | 只按 exact `4dc3b69a` 读取 provenance；renumber 为 368+，fresh/production-like upgrade+rollback；#4372 保持 Draft 且禁止独立 auto-merge。 |
+| proposal Draft 分支冲突或 migration 366 重号 | 只按 full exact `4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13` 读取 proposed provenance；执行前重查 tree/DB 并选未用 368+；#4372 保持 Draft。 |
 | 143-cell matrix 被 gray/null 或重复 journey 假补全 | canonical manifest schema 禁 gray/null；每 cell 必有 typed state+reason/evidence；原位升级既有 F1 rows，journey count 不增。 |
 | S0/S1 或 S12 两端漏记导致中段假完成 | born/intent receipt 是 S2 前置；S12 统一事务在 production+rollback receipts 后执行，任一外部/账本/报告写缺失都保持 non-complete。 |
 
@@ -203,40 +204,54 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 | S11 | S11.FR | S11.NFR | S11.Invariant | S11.判定点 | S11.保质期 | S11.死亡告警 | S11.失败语义 | S11.效果确认 | S11.输入对抗面 | S11.账本保鲜 | S11.两轴衔接 |
 | S12 | S12.FR | S12.NFR | S12.Invariant | S12.判定点 | S12.保质期 | S12.死亡告警 | S12.失败语义 | S12.效果确认 | S12.输入对抗面 | S12.账本保鲜 | S12.两轴衔接 |
 
-**canonical legacy inventory（来自 4dc3b69a，禁止合成改名）**:
+**source inventory 与分类 authority**：
 
-| family_id | canonical name | baseline IDs | 必须覆盖的真实 seam |
-|---|---|---:|---|
-| KH-F1-F01 | branch-protect / main-repo-write | 0 | `branch-protect.sh` + `main-repo-write-guard.sh`；零映射保持 typed gap |
-| KH-F1-F02 | credential-guard / bash-guard | 2：`H1-017,H3-002` | 两个真实 hooks |
-| KH-F1-F03 | branch guard / push precheck | 2：`W1-005,C1-005` | `bash-guard.sh:93-114 → scripts/local-precheck.sh`，禁止沿用错误 branch-protect push anchor |
-| KH-F1-F04 | DevGate / TDD / DoD | 8：`C8-101,S1-007,S1-008,S1-009,S1-010,S2-001,S2-002,S2-003` | DevGate Red→Green、TDD order、DoD |
-| KH-F1-F05 | stop / orphan / watchdog | 6：`H7-002,H7-006,H7-009,H7-029,W1-004,S3-001` | `packages/engine/hooks/stop.sh` + Kernel watchdog resume/no-double-spawn/failure cap |
-| KH-F1-F06 | evaluator / judge | 0 | independent mechanical/theater Judge；零映射保持 typed gap |
-| KH-F1-F07 | GitHub branch protection | 1：`C4-001` | live repository rule snapshot 与 bypass actors |
-| KH-F1-F08 | staging / promote / rollback | 110：exact baseline inventory digest | `staging-e2e-runner.js`、`scripts/promote-dashboard.sh`、`scripts/rollback-cecelia.sh`；逐 ID 语义重分类，禁止 bulk inferred pass |
+- independent verifier 必须对 full exact commit/path/blob 做 Git object 校验并重算 exact set：
+  `dd424a61926009ac85a915b31187124b85f0ca98`、
+  `packages/engine/regression-contract.yaml`、
+  blob `7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3`、
+  129/P0=66/P1=63、digest
+  `4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f`。
+- `packages/quality/contracts/` 保存 append-only `source_inventory`、
+  `classification_decisions`、`equivalence_obligations`。后两层只能由 owner-signed
+  exact-head authority manifest 驱动。
+- imported proposal full SHA
+  `4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13` 的
+  `0,2,2,8,6,0,1,110`/`be8079...` 必须标
+  `imported_proposed_distribution`，不得成为 approved threshold。H1-001/H1-002→F08
+  必须保持 unreviewed/rejected，直到逐行 owner decision。
+- equivalence required exact set 仅从 `state=approved` classification 与 reviewed
+  provider applicability 动态派生。终态要求 `unreviewed=0` 且所有 rejected 已由
+  superseding approved 或 preserved non-equivalence 闭合；禁止固定 1161/18。
+  候选 F01/F06 unified IDs 只有 authority manifest 冻结后才生效。
 
-baseline 总数固定 129（P0=66、P1=63），分布固定 `0,2,2,8,6,0,1,110`。本 P0 合同把全部 129 行声明为 Claude、Codex、Grok 均适用，且每个 provider 必须分别从真实生产入口观察 normal、violation、recovery，因此 legacy required key exact-set 固定为 `129×3×3=1161`，不能按已有 receipt 循环或以 inventory parity 代替。`legacyReceipts.length` 必须恰为 1161，observed key 只能从每个已验签 receipt body 的 `legacy_behavior_id+provider+scenario` 派生，再与 canonical required set 精确比较；单独 summary array 不算证明。每个 legacy row 必须保留 `evidence_mode` 与 `assertion_ref`；`audit_status=active` 和 source-anchor 命中只算 declaration。统一 `KernelPolicyGate` receipt 至少包含 `task_id,run_id,origin_attempt_id,hop,contract_sha,artifact_sha,head_sha,provider,session_id,requested_machine,actual_machine,lease_generation,family_id,legacy_behavior_id,phase,subject,scenario,decision,reason_code,probe_command,exit_code,evidence_digest,observed_at,recovery_of_receipt_id,effect_receipt_id,signature`。normal 必须为真实 allow/effect，violation 必须 deny 且 no-effect，recovery 必须 recover 且 `recovery_of_receipt_id` 指向同 key 的 violation。terminal 要求 unique required keys=unique observed valid keys=1161，missing/pending/blocked/stale/expired/inferred/bulk-inferred/duplicate 全为 0。
+**lifecycle proposal 与安全 migration oracle**：
 
-F01/F06 仍保持 legacy mapping count=0 的事实，但另设 stable unified family-level behavior IDs；两 family × 三 provider × 三 scenario 精确生成 18 个 family-level keys。`familyReceipts.length` 必须恰为 18，observed key 只能从签名 receipt body 的 `unified_family_behavior_id+provider+scenario` 派生；每条保留与 legacy receipt 相同的 origin/effect/recovery 字段。`family_gap_closed=true` 且 unique required=observed=18 才能终态；这 18 个 key 不得计入或替代 legacy 1161。
-
-**运行时 activation 与 provider-neutral secret 边界**：activation required set 从 canonical F01-F08 construct + 真实 entrypoint 生成，必须覆盖 branch-protect、main-repo-write、credential guard、bash/local-precheck、DevGate Red→Green、DoD、stop/watchdog、Evaluator/Judge、live GitHub rules、staging/promote/rollback。fire receipt body 必须带 `construct_id,entrypoint,provider,scenario,actual_wiring_hop_chain,origin_attempt/session/machine/lease,decision,effect,evidence_digest`；observed key 只能从 receipt body 派生。root `.claude/settings.json`、真实 package seam `packages/engine/.claude/settings.json`、installer/symlink、Kernel provider-neutral dispatcher 任一 hop mutation 都必须使 production fire receipt 为 0；静态文件存在、grep 或 manual command 字符串不算 fire evidence。
-
-CredentialEnvelope 在 Runner 边界对 Claude/Codex/Grok 分别产生一条 normal、六条 violation（literal/replay/expired/wrong-attempt/wrong-account/wrong-machine）与一条 fresh recovery，receipt bodies 精确为 `3×8=24`。每条绑定 provider session/account/requested+actual machine/origin Attempt/contract/head/lease/decision/effect/evidence/signature；recovery 同时链接被拒 violation 与 fresh envelope，旧 envelope 永不可复用。secret bytes 在 argv/env/log/receipt/residual 中计数必须为 0。
-
-**originating Attempt lineage**：receipt 不得统一写 proposer `ATTEMPT_ID`。共享身份只有 current `task_id/run_id/approved_contract_sha/exact head or release lineage`；每条 receipt 的 `origin_attempt_id/provider/session/machine/role/lease_generation` 来自真实执行该 proof 的 durable Attempt 行。verifier 对每条 receipt 查询 Attempt 表，拒绝 wrong provider、wrong session、cross-run、stale lease、nonexistent attempt。S6 Evaluator 与 S7 Judge 的 Attempt 和 session 都必须不同；Claude/Codex/Grok legacy、activation、CredentialEnvelope receipt 必须由同 provider Attempt 产生。仅 result-channel receipt 强制等于正在验证的那个 proof Agent `ATTEMPT_ID/role/contract/head`。
-
-**迁移与 parity oracle**:
+S0-S12 是 proposed v1。生产历史六行保持 legacy 列和时间戳 byte-for-byte；仅增加
+projection 字段，在同一 Journey 上形成 4 historic backbones、2 aliases、9 new rows、
+13 backbones 与 143 初始 `unverified` cells。origin kind 按 stage 分型直证，不能由统一
+Attempt verifier 处理 GitHub/human/deployment/Controller receipt。
 
 ```bash
-DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-s0-s12.sh \
-  --manifest packages/brain/config/kernel-harness-lifecycle-s0-s12.json \
-  --provenance-sha 4dc3b69a \
-  --migration-min 368 \
-  --exact-head "${PR_HEAD_SHA:?}"
+bash scripts/kernel-fleet/verify-authority-inventory.sh \
+  --commit dd424a61926009ac85a915b31187124b85f0ca98 \
+  --path packages/engine/regression-contract.yaml \
+  --blob 7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3 \
+  --count 129 --p0 66 --p1 63 \
+  --digest 4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f
+DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-projection.sh \
+  --source-proposal 4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13 \
+  --migration-min 368 --recheck-tree-and-db \
+  --same-journey --preserve-six-history --logical-rollback \
+  --origin-kind-direct-proof --exact-head "${PR_HEAD_SHA:?}"
 ```
 
-**硬阈值**: stages=13、elements=11、cells=143、gray=0、null=0；既有 F1 journey count 不增、六步行原位升级；fresh 与 production-like upgrade/rollback 均通过；DB、root regression contract、runtime API/report、manifest SHA 全相等；rollback 恢复旧 rows/constraints/evidence 且不丢 provenance。
+**硬阈值**：inventory exact set/count/digest 全等且 verifier 不 import Brain Kernel；
+authority_status 非 owner-approved 时 runtime 不得声称 canonical；tree/DB migration number
+无碰撞；upgrade 与 rollback 前后六历史行完整 fingerprint/updated_at 不变，Journey=1，
+新增行=9、aliases=2、backbones=13、cells=143 初始 unverified；已有后续 evidence 时
+logical rollback 被拒。每个 named mutation 到达目标生产 seam 并返回结构化 reason code，
+SQL/config/env failure 不算产品 Red。
 
 ### 输入对抗面
 
@@ -345,9 +360,9 @@ bash scripts/kernel-fleet/run-real-attempt-proof.sh "$US_WORKER_URL" "$FLEET_TOK
 bash scripts/kernel-fleet/run-result-channel-proof.sh \
   "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" \
   "${TASK_ID:?}" "${RUN_ID:?}" "${ATTEMPT_ID:?}" "${CONTRACT_SHA:?}" \
-  "${PR_HEAD_SHA:?}" "${CURRENT_ROLE:?}"
+  "${PR_HEAD_SHA:?}"
 ```
-**硬阈值**: 当前 phase 的真 Runner（proposer/reviewer/generator/evaluator/judge 各用自己的 originating Attempt）写入成功，positive receipt 的 attempt/contract/`CURRENT_ROLE`/run/head 与调用输入逐字相等；verifier 独立查询 `harness_attempts` 核对 role/provider/session/machine/lease，source stale result ignored。missing、EROFS、wrong-attempt、wrong-run、wrong-role、wrong-contract/head、symlink、oversize、malformed 各自 pre-Agent 或 finalize fail closed；pre-Agent 不可写时 semantic/GAN budget delta=0；success/timeout/crash/cancel 在 durable hash receipt 后 result/credential residual=0。
+**硬阈值**: 当前 phase 的真 Runner 写入成功，positive receipt 的 attempt/contract/run/head 与调用输入逐字相等，role 必须等于 Controller-owned TaskBundle top-level `role`；verifier 独立查询 `harness_attempts` 的生产现有列并从 `task_bundle/result` 派生 contract/head。source stale result ignored。missing descriptor、EROFS、wrong-attempt/run/role/contract/head、symlink、oversize、malformed 各自 pre-Agent 或 finalize fail closed；pre-Agent 不可写时 Agent-start=0、semantic/GAN budget delta=0；success/timeout/crash/cancel 只有 durable hash ack 后才 cleanup。
 
 ### Step 8：Kernel launch 以 handshake+heartbeat 判 ready
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 8 步。
@@ -404,20 +419,25 @@ bash scripts/kernel-fleet/verify-p0-workflow-contract.sh post-merge-release "$PR
 ```
 **硬阈值**: event 顺序精确为 `merge,worker_admitted,brain_published,staging_passed,production_canary_started,production_canary_passed`；skipped/idle staging、Fast Lane、independent main push、missing receipt、remote-disabled、missing/unreachable callback 各自非零且 semantic Attempt allocated=0；replacement=1、Controller owner=1、resumed=1、provider_attempt=1、heartbeat age≤30s、next dispatch completed≤Attempt deadline、secret scan=0；cleanup/quarantine residual=0；rollback diff=0（drain marker 除外），unattested rollback target 不启动。
 
-### Step 12A：S0-S12 × 11 lifecycle equivalence 与终态收账
-**来源**: `[AI_ADDED]` — R16/R17 证明 #4372 baseline 只有 ledger shape、无全阶段等价证据；S0/S1 与 S12 两端缺口会让中段绿而生命周期仍不完整。
+### Step 12A：authority approval、S0-S12 projection、分类闭合与终态收账
+**来源**: `[AI_ADDED]` — R32/R33 证明 imported proposal 不是历史/canonical truth，旧合同固定 receipt 数与生产 schema SQL 会产生自证或配置假红。
 
-**可观测行为**: canonical manifest 驱动 migration 368+、F1 DevOps Map rows、root regression contract、runtime API/report 与本合同。所有 lifecycle receipt 绑定 current task/run/approved contract/exact head or release lineage，并由 verifier 独立查询 `harness_attempts` 验 originating Attempt 行、签名、owner、前序 receipt、effect 与 freshness；禁止接受被测模块的 origin 布尔自证或把所有 receipt 的 attempt 强制为 proposer Attempt。S0 born/S1 intent 是 S2 Planner 前置；S3 Contract GAN 独立消费 S2 PRD artifact；S4 Generator 消费批准的 contract SHA 并输出 Draft PR receipt；S5-S11 每段都消费上段 authenticated receipt，并为 11 elements 写 exact-head cell evidence。S6 Evaluator 与 S7 Judge 是不同 Attempt/session 的 non-mutating proof。activation required set 从 canonical applicability manifest+具体 production entrypoint 独立派生，observed 只从 fire receipt body 派生。S12 仅在八类结构化 receipt Green、143 cell 无 pending/blocked/stale/expired、1161 legacy body receipt、18 family body receipt 与 24 CredentialEnvelope body receipt exact-set 全部成立，并且四类聚合的 receipt IDs+receipt-set digest 与已独立验签 bodies 重算一致后，以一个幂等事务完成收账；任一缺失或 body/binding mutation 保持 non-complete。
+**可观测行为**: 独立 inventory verifier 从 exact main commit:path blob 重算 129/P0/P1/digest；authority manifest 逐行批准 classification/applicability 后才动态派生 obligations。S0-S12 作为 proposed v1 在同一 Journey append-only 投影，保留六历史行所有 legacy 列和时间戳，新增九行并把 143 cells 初始化为 unverified。owner approval 只冻结 authority，不补行为 pass。每 stage 按指定 origin_kind 直接查真实 event/Attempt/GitHub/review/merge/deployment/Controller transaction。S12 仅消费已批准 obligations 的 receipt bodies 与八类独立 Green obligation；固定 1161/18、imported family distribution、prefix unified ID、same-module required array 均被拒。H1-001/H1-002→F08 未审批时不得产生 pass。
 
 **验证命令**:
 ```bash
-DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-s0-s12.sh \
-  --manifest packages/brain/config/kernel-harness-lifecycle-s0-s12.json \
-  --provenance-sha 4dc3b69a \
-  --migration-min 368 \
-  --exact-head "${PR_HEAD_SHA:?}"
+DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-projection.sh \
+  --source-proposal 4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13 \
+  --migration-min 368 --recheck-tree-and-db --same-journey \
+  --preserve-six-history --logical-rollback \
+  --origin-kind-direct-proof --exact-head "${PR_HEAD_SHA:?}"
+DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-equivalence.sh \
+  --authority-manifest packages/quality/contracts/kernel-policy-authority.json \
+  --derive-obligations-from-approved-decisions \
+  --require-unreviewed-zero --reject-imported-distribution-as-canonical \
+  --reject-h1-001-h1-002-f08-without-owner-decision
 ```
-**硬阈值**: 13 stages、11 elements、143 exact cross-product cells，终态仅 `pass|na_with_reason+independent_review_receipt`，gray/null/pending/blocked/stale/expired=0；13 个 stable step ID/name/order/promise 与 4dc3b69a 精确 parity；stage mutation exact-set 必须且仅为 `rename,merge,split,shift,insert`。run-binding mutation exact-set 必须且仅为 `terminal_historical_run,task_id_as_run_id,taskbundle_receipt_run_mismatch,stale_contract_round,stale_head,cross_run_artifact,cross_run_result`。S12 obligation exact-set 必须且仅为 `production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope`；每项 missing/invalid-digest/wrong-identity/stale/non-Green 都使 proof 失败。legacy receipt bodies=1161、family receipt bodies=18、CredentialEnvelope receipt bodies=24，receipt-derived unique required=observed；四类 aggregate receipt IDs+digest 必须与原始 body 重算逐字一致。wrong-provider/session/role、cross-run/stale-lease/nonexistent-origin Attempt 均由独立 PG 查询拒绝。missing/pending/blocked/stale/expired/inferred/bulk-inferred/duplicate 全为 0，F01/F06 的 baseline legacy count 仍为 0 但 unified `family_gap_closed=true`；S12 产生恰一次 terminal receipt。
+**硬阈值**: source inventory=129、P0=66、P1=63、exact digest/commit/blob 全等；authority 未 owner-approved 时 canonical=false；六历史行 fingerprint/updated_at 前后与 rollback 后全等，Journey=1、new rows=9、aliases=2、backbones=13、cells=143 unverified；migration 366 collision mutation 稳定证明 skip 风险且所选 `>=368` tree/DB 未占。分类 `unreviewed=0`，rejected 全闭合，required exact set=从 approved decisions 派生的 observed valid set，所有 missing/pending/blocked/stale/expired/inferred/duplicate=0。origin_kind exact table逐项真查；八类 obligation 任一错误保持 terminal=false；S12 产生恰一次 controller-fenced transaction。
 
 ## E2E 验收（最终 final-e2e 跑）
 
@@ -433,7 +453,7 @@ set -euo pipefail
 : "${CANDIDATE_RUNNER_REF:?}" "${CANDIDATE_BUNDLE_REF:?}"
 : "${US_WORKER_URL:?}" "${US_WORKER_SSH:?}" "${FLEET_TOKEN_FILE:?}"
 : "${PROD_BRAIN_URL:?}" "${DB_URL:?}" "${TASK_ID:?}" "${RUN_ID:?}"
-: "${ATTEMPT_ID:?}" "${CURRENT_ROLE:?}" "${CONTRACT_SHA:?}"
+: "${ATTEMPT_ID:?}" "${CONTRACT_SHA:?}"
 : "${REAL_JOURNEY_ID:?}" "${REAL_GP_ID:?}" "${REAL_STEP_ID:?}"
 
 test "$TASK_ID" = "4a530430-00c5-46bc-8a4f-c0ec38025391"
@@ -450,12 +470,24 @@ if [ "$E2E_PHASE" = preapproval ]; then
     "$CANDIDATE_BRAIN_IMAGE_DIGEST" "$CANDIDATE_RUNNER_REF" "$CANDIDATE_BUNDLE_REF"
   bash scripts/kernel-fleet/run-result-channel-proof.sh \
     "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" \
-    "$TASK_ID" "$RUN_ID" "$ATTEMPT_ID" "$CONTRACT_SHA" "$PR_HEAD_SHA" "$CURRENT_ROLE"
+    "$TASK_ID" "$RUN_ID" "$ATTEMPT_ID" "$CONTRACT_SHA" "$PR_HEAD_SHA"
+  bash scripts/kernel-fleet/verify-authority-inventory.sh \
+    --commit dd424a61926009ac85a915b31187124b85f0ca98 \
+    --path packages/engine/regression-contract.yaml \
+    --blob 7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3 \
+    --count 129 --p0 66 --p1 63 \
+    --digest 4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f
+  DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-projection.sh \
+    --source-proposal 4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13 \
+    --migration-min 368 --recheck-tree-and-db --same-journey \
+    --preserve-six-history --logical-rollback \
+    --origin-kind-direct-proof --exact-head "$PR_HEAD_SHA"
   DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh \
     --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
     --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-    --legacy-receipt-bodies 1161 --family-receipt-bodies 18 \
-    --verify-origin-attempts-with-independent-pg-query
+    --authority-manifest packages/quality/contracts/kernel-policy-authority.json \
+    --derive-obligations-from-approved-decisions \
+    --require-unreviewed-zero --verify-origin-kinds-directly
   DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-provider-policy-activation.sh \
     --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
     --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
@@ -464,8 +496,8 @@ if [ "$E2E_PHASE" = preapproval ]; then
   DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-provider-credential-envelope.sh \
     --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
     --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-    --providers claude,codex,grok --receipt-bodies 24 \
-    --verify-origin-attempts-with-independent-pg-query
+    --authority-manifest packages/quality/contracts/kernel-policy-authority.json \
+    --derive-required-from-approved-applicability --verify-origin-kinds-directly
   DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh \
     --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
     --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
@@ -483,8 +515,8 @@ DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.
   --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
   --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
   --require-obligations production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope \
-  --require-legacy-receipt-bodies 1161 --require-family-receipt-bodies 18 \
-  --require-credential-receipt-bodies 24 --require-receipt-set-bindings \
+  --derive-required-from-approved-authority --require-unreviewed-zero \
+  --require-receipt-set-bindings \
   --expect-terminal-complete
 ```
 
@@ -498,16 +530,16 @@ US staging、production canary、rollback anchor 与 S12，且所有 origin Atte
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | `built image self-contained profiles`; `immutable per-attempt profile snapshot across concurrent upgrade`; `real Worker Runner seam before Agent execution`; `GitHub auth on success timeout crash and cancel`; `fleet-worker transport with production upgrade rollback and source enum parity`; `ownership frame plus persisted heartbeat`; `authenticated callback commit before Worker cleanup`; `reverse cleanup removes real Runner nested and ignored output`; `ESRCH-only local liveness death`; `CI-only authorization and stale exact-head owner approval`; `semantic anchor resolves journey golden-path step ownership`; `P0 workflows enforce owner merge staging production order`; `attempt scoped result channel`; `canonical S0-S12 by eleven elements manifest`; `lifecycle migration upgrades existing F1 rows in place`; `S0 born through S12 terminal accounting`; `canonical legacy behavior families preserve exact inventory`; `provider policy activation inventory fires real production entries`; `provider-neutral CredentialEnvelope denies and recovers` | 19 个唯一 `it()`；每个覆盖名都是对应 `it()` 名的字面子串。collector 按 realpath 去重后文件数必须为 1。全部针对真实模块/进程/PG/Worker/Runner/Git/workflow seam 产生 Red。 |
+| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | `built image self-contained profiles`; `immutable per-attempt profile snapshot across concurrent upgrade`; `real Worker Runner seam before Agent execution`; `GitHub auth on success timeout crash and cancel`; `fleet-worker transport with production upgrade rollback and source enum parity`; `ownership frame plus persisted heartbeat`; `authenticated callback commit before Worker cleanup`; `reverse cleanup removes real Runner nested and ignored output`; `ESRCH-only local liveness death`; `CI-only authorization and stale exact-head owner approval`; `semantic anchor resolves journey golden-path step ownership`; `P0 workflows enforce owner merge staging production order`; `attempt scoped result channel`; `authority inventory exact commit path blob and digest`; `classification authority rejects imported family proposal`; `lifecycle migration preserves six historical rows in same Journey`; `origin kind uses direct production evidence and existing Attempt columns`; `owner approval freezes authority but does not infer behavioral pass`; `approved decisions derive exact obligations without fixed cardinality`; `S12 terminal accounting consumes dynamic obligations and direct origins` | 20 个唯一 `it()`；每个覆盖名都是对应 `it()` 名的字面子串。collector 按 realpath 去重后文件数必须为 1。全部针对真实模块/进程/PG/Worker/Runner/Git/workflow seam 产生 Red。 |
 
-**测试库存硬阈值**: 唯一文件数 = 1；上述覆盖名各自只映射一个唯一 `it()`，总数 = 19；不得重复收集。migration `fleet-worker` enum parity、workflow bypass、result channel、legacy exact-set/provider activation 与 lifecycle matrix/terminal Red 必须保留。
+**测试库存硬阈值**: 唯一文件数 = 1；上述覆盖名各自只映射一个唯一 `it()`，总数 = 20；不得重复收集。migration parity、workflow bypass、result channel、authority/classification/projection/origin-kind 与 terminal Red 必须保留。
 
 **测试库存验证命令**:
 ```bash
 TEST_ROOT="sprints/07280225-kernel-fleet-durable-recovery-r5/tests"
 UNIQUE_FILES=$(find "$TEST_ROOT" -name '*.test.ts' -print0 | xargs -0 realpath | sort -u | wc -l | tr -d ' ')
 IT_COUNT=$(rg -c '^[[:space:]]*it\(' "$TEST_ROOT/durable-recovery.contract.test.ts")
-[ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 19 ]
+[ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 20 ]
 # packages/brain/sprints 是指向根 sprints 的 symlink；真实 collector 必须显式排除，
 # 否则同一 realpath 会被 Vitest 以两个逻辑路径执行两次。
 npx vitest run --exclude 'packages/brain/sprints/**' \

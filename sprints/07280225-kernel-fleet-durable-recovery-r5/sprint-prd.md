@@ -94,33 +94,101 @@
 
 Controller 必须从本次不可变 TaskBundle 把 `TASK_ID`、`RUN_ID`、`ATTEMPT_ID`、`CONTRACT_SHA`、`PR_HEAD_SHA`、`REAL_JOURNEY_ID`、`REAL_GP_ID`、`REAL_STEP_ID` 分别注入 CI/Evaluator/Judge 与合并后 controller job；脚本以 `${VAR:?}` fail closed，不使用历史 UUID 或源码默认值。本次 `TASK_ID=4a530430-00c5-46bc-8a4f-c0ec38025391`、`RUN_ID=fda8bfd7-fbbc-4260-a657-ea7f3b51bd16`，两者必须不同；已终态失败的 run `4bbe35de-63c1-4cfe-9b55-fea8c01a0647` 仅是不可变 Red evidence，永远不能授权当前 Generator、review、merge 或 release。语义锚点固定为生产既有且 ownership 一致的 journey `2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6`、golden path `4e5fd7eb-3823-4c57-a817-081b7fdd2eed`、step `817f59f5-02ff-4a70-bd81-f7ae65f77e02`；不得创建占位行。terminal historical run、task-as-run、TaskBundle/receipt run mismatch、stale contract round/head、cross-run artifact/result 全部 fail closed，且不消耗当前 semantic/GAN budget。
 
-## F1 生命周期 SSOT 与 legacy 行为库存
+## 权威库存、分类决策与生命周期投影（R32-R33）
 
-本 sprint 只把 Draft+CONFLICTING PR #4372 的 `origin/cp-07271751-51836fb2@4dc3b69a` 当作带 provenance 的迁移输入，不把它当 operational truth，也不允许它独立 merge。唯一 F1 Journey 是 `bb8cc561-b3ee-4fec-b74d-2255694bd963`。S0-S12 的 stage ID、名称、顺序、promise 与稳定 step ID 必须逐字继承该 intended baseline；尤其：
+唯一已建立的 legacy P0/P1 库存权威是 exact main
+`dd424a61926009ac85a915b31187124b85f0ca98:packages/engine/regression-contract.yaml`，
+其 Git blob 必须为 `7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3`。独立 verifier
+递归提取具有字符串 `id` 且 `priority ∈ {P0,P1}` 的对象、按 ID 去重后，必须得到
+129 个 ID（P0=66、P1=63），排序后的 `"id:priority\n"` SHA-256 必须为
+`4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f`。
+verifier 禁止 import 任何 `packages/brain` Kernel Harness 实现。权威边界只在
+`packages/quality/contracts/`；Brain runtime/config/report 均为 `authoritative=false`
+投影，authority manifest 的每次变更都要 exact-head owner 签名。
 
-- S2 `Planner` = `c5bae104-da5e-483d-b5ea-c295c90a3f28`
-- S3 `Contract GAN` = `d6dcdfaf-4b98-4717-bbe3-522f03f70757`
-- S4 `Generator` = `0cdadc1a-e3a0-46a1-8333-ebbc102883f7`，Draft PR 是其输出 receipt，不是新 stage
-- S6 `Evaluator` = `1a738e05-99a7-421c-a52d-c2bb80bf19be`
+11 元素的来源是 exact main
+`dd424a61926009ac85a915b31187124b85f0ca98:packages/brain/src/lib/eleven-elements-ledger.js`
+blob `e4e3bb5b4b5cbbf26ad16b4048b2c3e6228f3d09`，顺序严格为：
+`FR,NFR,Invariant,判定点,保质期,死亡告警,失败语义,效果确认,输入对抗面,账本保鲜,两轴衔接`。
+测试 oracle 必须从冻结 authority fixture 独立读取，禁止一边 import 被测模块一边复制相同 literal 自证。
 
-任一 rename、merge、split、shift 或新增 stage 都必须使 manifest/migration/regression/runtime parity fail。产品 F2 step 仍只作 `product_anchor`，另行绑定 `lifecycle_ssot_ref=kernel_harness_f1_baseline/S0-S12`，不得冒充整个 F1 生命周期。
+Draft+CONFLICTING PR #4372 的 full exact proposal
+`4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13` 只是一份待审批迁移输入。
+其 family 分布 `0,2,2,8,6,0,1,110` 与 mapping digest
+`be80793527a817611ba0698654ea858eda7c77ea9e63da937cba7b885a4d9363`
+是 `imported_proposed_distribution`，不是 canonical/approved invariant 或终态阈值。
+已知 H1-001/H1-002 被错误提议映射到 F08；在逐行审批前它们必须保持
+`unreviewed|rejected`，绝不能产生 F08 pass。
 
-legacy 库存固定为 `KH-F1-F01..F08`，baseline 总计 129 个行为（P0=66、P1=63），family 分布严格为 `F01=0,F02=2,F03=2,F04=8,F05=6,F06=0,F07=1,F08=110`。F01/F06 的零 legacy 映射与 F08 的 110 偏斜必须保留为 baseline provenance；它们不能被改写成 legacy 行，也不能在终态继续 pending/blocked。F01/F06 必须另以 18 个 unified family receipt 关闭，禁止用合成 8×3×3 receipt 数宣称等价。每个 legacy behavior 保留 `evidence_mode` 与 `assertion_ref`；源码 anchor 或 `audit_status=active` 不是 proven-to-fire evidence。统一 `KernelPolicyGate` receipt 必须按 canonical `family_id+legacy_behavior_id+provider+phase+subject` 建键，并包含 run/attempt/hop/head/provider/machine/lease/scenario/decision/reason/probe/exit/evidence/freshness/recovery binding。
+权威数据分三层 append-only 保存：
 
-## R21-R27 终态证明合同（权威）
+1. `source_inventory`：原始 ID、priority、source commit/blob/path、extraction 与 digest。
+2. `classification_decisions`：每个 legacy ID 的 proposal revision、proposed family、
+   `unreviewed|approved|rejected|superseded`、approved family、逐 provider applicability、
+   basis refs 与 owner review receipt。
+3. `equivalence_obligations`：只能从已批准分类与已审 provider applicability 派生。
 
-1. 全部 129 个 legacy 行对 Claude、Codex、Grok 的 normal/violation/recovery 均适用，canonical required exact-set 固定为 `129×3×3=1161`。`legacyReceipts.length=1161`，observed key 只能从逐条验签 receipt body 的 `legacy_behavior_id+provider+scenario` 派生，不能信独立 summary array。F01/F06 保持 legacy count=0，另以 stable unified family behavior ID 产生 `2×3×3=18` 个 family receipt bodies；不得替代或膨胀 1161。
-2. runtime activation required set 必须从 canonical F01-F08 construct 与实际 production entrypoint 生成，覆盖 branch-protect/main-repo-write、credential/bash/local-precheck、DevGate Red→Green/DoD、stop/watchdog、Evaluator/Judge、GitHub rules、staging/promote/rollback。observed set 只从 authenticated fire receipt body 派生；root `.claude/settings.json`、`packages/engine/.claude/settings.json`、installer/symlink、Kernel provider-neutral dispatcher 任一 hop 被删都必须 fail closed。
-3. CredentialEnvelope 必须产生恰好 24 个 receipt-derived keys：三个 provider 各一 normal、literal/replay/expired/wrong-attempt/wrong-account/wrong-machine 六 violation、fresh-envelope recovery 一条。每条绑定 provider/session/account/requested+actual machine/origin Attempt/contract/head/lease/decision/effect/evidence/signature；recovery 链接 violation 与 fresh envelope，旧 envelope 不可复用，secret 在 argv/env/log/receipt/residual 为 0。
-4. 每个 receipt 共享 current `task_id/run_id/approved_contract_sha/exact head or release lineage`，但拥有自己的 originating `attempt_id/provider/session/machine/role/lease_generation`。verifier 必须查询 durable Attempt row；wrong provider/session、cross-run、stale lease、nonexistent attempt 全拒绝。S6 Evaluator 与 S7 Judge 使用不同 Attempt 和 session；Claude/Codex/Grok receipt 来自 provider-matching Attempt。不得把所有 receipt 强制绑定本次 Codex proposer Attempt。
-5. result-channel 正控是精确例外：real Worker 调用必须显式获得当前 proof Agent 的 `ATTEMPT_ID/CONTRACT_SHA/role/RUN_ID/PR_HEAD_SHA`，positive receipt 必须逐字等于这些输入，不能接受模块返回的自洽 ID。missing/EROFS/source-stale/wrong-binding/symlink/oversize/malformed/crash/cancel 均在真实 Runner seam fail closed并保留 durable hash receipt。
-6. Kernel readiness 正控必须启动 built image 或 exact `packages/brain/src/orchestrator/run.js`，child 真获取 Controller lease/generation、构造真实依赖并持久化首个 fenced heartbeat；parent 独立查 PG 后才成功。只发 `kernel-ready` frame 而无 DB lease/dependency/heartbeat 的 child 必须失败；同时保留 early exit、timeout、async spawn error、lease busy、stale generation。
-7. workflow authority 只能由真实 GitHub API 回读的 run ID、check-suite ID、exact head、actor、签名 owner receipt 与 repository-rule snapshot证明。JS 模块返回预期数组/布尔值不是证据。
-8. S12 的 143 个 canonical stage×element exact keys 终态只能是 `pass` 或具独立 review receipt 的 `na_with_reason`；pending/blocked/stale/expired/gray/null 均为 0。S12 必须消费八类结构化 Green receipt：`production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope`。八类任一 missing、partial、invalid digest、wrong identity、stale 或 non-Green 均保持 `terminalComplete=false`；终态还要求 legacy receipt bodies=1161、family receipt bodies=18、CredentialEnvelope receipt bodies=24，required=receipt-derived observed，所有 missing/pending/blocked/stale/expired/inferred/duplicate=0。
-9. Result channel 的 authority 只来自当前不可变 TaskBundle 注入的 `callback_result_path`/`BRAIN_RESULT_FILE`。每个 phase 使用自己的 durable Attempt 与 `CURRENT_ROLE`；proposer 不得冒充 reviewer，Evaluator/Judge 也不得复用 proposer Attempt。finalizer 在 cleanup 前把 result body hash、attempt/run/role/contract/head 绑定写入真 PG；source checkout 的 `.brain-result.json` 即使字段看似当前也必须拒绝。
-10. origin Attempt 校验必须由 verifier 独立查询 `harness_attempts`，不能接受被测模块返回的 `exists:true` 等布尔自证。S6/S7 与三 provider 的 origin row 必须分别匹配 role/provider/session/machine/lease/current run/contract/head。
-11. activation required exact-set 由 canonical applicability manifest 的 F01-F08 constructs 与具体 production entrypoint 行独立生成，覆盖 root/engine settings、installer source+installed/symlink target、branch-protect、main-repo-write、credential/bash/local-precheck、DevGate Red→Green/DoD、stop/watchdog、Evaluator/Judge、GitHub rules、staging/promote/rollback 与 provider-neutral Kernel dispatcher；observed exact-set 只能从验签 fire receipt body 派生。
-12. Kernel startup 同时绑定候选 image digest、git commit/tree 与 `packages/brain/src/orchestrator/run.js` blob digest，三者不得混用一个 SHA 字段。S12 的四类聚合证明必须携带 receipt IDs + receipt-set digest，并由八类 terminal obligation 对已独立验签的原始 body 重新计算；任一 body 或聚合 binding mutation 均使 `terminalComplete=false`。
+终态前 `unreviewed_count=0`；rejected 必须由 superseding approved decision 或显式保留
+non-equivalence 关闭。固定 1161/18 阈值已撤销：只有在 129 行分类与适用性获 exact-head
+owner 批准后，才从 authority manifest 动态派生 obligation exact set。F01/F06 仍保留
+零 legacy mapping 的来源事实，但 unified behavior IDs 尚未建立；候选
+`KH-F1-F01-U-001`、`KH-F1-F06-U-001` 只有在 owner 冻结 manifest 后才生效，禁止 prefix
+regex 或预设 18 条。CredentialEnvelope 的 provider/scenario obligations 同样从已批准
+manifest 派生，不信 summary count。
+
+S0-S12 是 proposal v1，不是历史真相。main `dd424a...` 的生产历史是同一 Journey 的六行：
+Planner `c5bae104-da5e-483d-b5ea-c295c90a3f28`、GAN Proposer
+`d6dcdfaf-4b98-4717-bbe3-522f03f70757`、GAN Reviewer
+`e2bd9263-3f03-410f-bbcd-8fe72075dde2`、Generator
+`0cdadc1a-e3a0-46a1-8333-ebbc102883f7`、Evaluator
+`1a738e05-99a7-421c-a52d-c2bb80bf19be`、Final E2E
+`a6888ef3-1f8b-4490-b134-d3ddc5b6d528`。新 migration 必须在执行前同时重查 origin/main
+与 production，选择未被 tree/DB 使用的编号 `>=368`；不得复用已被
+`366_kernel_harness_failure_class.sql` 占用且 migrate.js 会静默跳过的 366。
+
+升级在同一 Journey 上追加 lifecycle projection，不重写历史。六行的
+`id,notion_id,name,description,step_number,status,promise,backbone_version,created_at,updated_at`
+逐字节不变，只允许新增
+`lifecycle_stage,lifecycle_order,lifecycle_name,lifecycle_promise,lifecycle_status,
+is_backbone,mapping_status,mapping_reason,canonical_step_id,projection_version`。
+Planner/GAN Proposer/Generator/Evaluator 可投影为 S2/S3/S4/S6 backbone；
+GAN Reviewer 与 Final E2E 是绑定 S3/S6 的 legacy alias。新增恰九个缺失 canonical rows，
+技术 step number 不冲突；API 按 `lifecycle_order 0..12` 排序。只有 13 backbone
+projections 生成 143 cells，全部初始 `unverified`，不得冒充完成。
+
+upgrade precondition 与 pre-commit oracle 必须在一个真 PG transaction 内验证：
+Journey=1、六 UUID 全在、所有保留列的独立 baseline hash 匹配、九新 UUID 不在、
+migration 编号 tree/DB 均未占；提交前历史 fingerprint 和 `updated_at` 不变、Journey=1、
+13 backbones/order 0..12、4 historic backbones+2 aliases+9 new rows、143 unique cells、
+endpoint 不变。logical rollback 若已有后续 evidence 必须拒绝自动回滚；否则只删除九个
+exact projection rows/links、清空六旧行的本 migration projection 字段并复核完整历史 hash。
+fresh DB、production-like upgrade、failure rollback 与 logical rollback 都必须真跑。
+
+owner exact-head approval 只能把 proposed stage manifest 提升为 canonical v1，不能替代
+行为等价证明。每 stage 的 `origin_kind` 严格为：
+S0 `brain_task_event`；S1 `signed_intent_snapshot`；S2 `harness_attempt`；
+S3 `harness_attempt_quorum`；S4 `harness_attempt_with_pr`；S5 `github_check_suite`；
+S6/S7 `harness_attempt`；S8 `github_owner_review`；S9 `github_merge_event`；
+S10/S11 `deployment_receipt`；S12 `brain_atomic_accounting`。
+验证器须按 kind 直接查真实 Attempt 行、GitHub API、deployment receipt 或 Controller
+generation/transaction；禁止通用 `exists/*Matches/*Verified` 布尔自证。
+
+Result channel 必须由 server-derived TaskBundle descriptor 贯穿
+`execution-contract → dispatcher → remote transport → Worker → attempt-runner →
+docker/cecelia-runner/entrypoint.sh → callback → attempt-store`。Worker 只在 exact attempt
+runtime root 解析路径，创建 mode-0600 non-symlink bounded file，验证 Runner UID 可写后才
+启动 Agent，并注入唯一 `BRAIN_RESULT_FILE`；角色来自 TaskBundle top-level `role`，当前生产
+尚无 `CURRENT_ROLE` env，因此不得把缺 env 的 module-load error 当产品 Red。callback 在清理
+前校验 task/run/attempt/role/contract/head/lease/hash、持久化
+`attempt.result.result_channel_receipt` 并返回同 hash ack；same-hash retry 幂等，
+different-hash replay 冲突。缺 descriptor、EROFS、wrong binding、symlink、oversize、
+malformed 时给结构化 reason code，Agent-start=0、semantic/GAN budget delta=0。
+
+origin verifier 只查询生产现有 `harness_attempts` 列：
+`id,run_id,role,provider,provider_session_id,actual_machine_id,lease_generation,status,task_bundle,result`。
+contract/head 必须从 independently authenticated TaskBundle/result-channel lineage 派生；
+不得查询不存在的 `actual_machine/contract_sha/exact_head_sha`。每种 Red 必须先完成依赖与
+DB 初始化并到达目标生产 seam，SQL/config/env/重复收集错误不算行为 Red。
 
 ## NFR 约束
 
@@ -204,7 +272,7 @@ legacy 库存固定为 `KH-F1-F01..F08`，baseline 总计 129 个行为（P0=66�
 #!/bin/bash
 set -euo pipefail
 : "${E2E_PHASE:?preapproval|postapproval}" "${TASK_ID:?}" "${RUN_ID:?}"
-: "${ATTEMPT_ID:?}" "${CURRENT_ROLE:?}" "${CONTRACT_SHA:?}" "${PR_HEAD_SHA:?}"
+: "${ATTEMPT_ID:?}" "${CONTRACT_SHA:?}" "${PR_HEAD_SHA:?}"
 : "${PR_NUMBER:?}" "${US_WORKER_URL:?}" "${FLEET_TOKEN_FILE:?}"
 : "${CANDIDATE_BRAIN_IMAGE:?}" "${CANDIDATE_BRAIN_IMAGE_DIGEST:?}"
 : "${CANDIDATE_RUNNER_REF:?}" "${CANDIDATE_BUNDLE_REF:?}" "${DB_URL:?}"
@@ -219,11 +287,24 @@ if [ "$E2E_PHASE" = preapproval ]; then
     "$CANDIDATE_BRAIN_IMAGE_DIGEST" "$CANDIDATE_RUNNER_REF" "$CANDIDATE_BUNDLE_REF"
   bash scripts/kernel-fleet/run-result-channel-proof.sh \
     "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" \
-    "$TASK_ID" "$RUN_ID" "$ATTEMPT_ID" "$CONTRACT_SHA" "$PR_HEAD_SHA" "$CURRENT_ROLE"
+    "$TASK_ID" "$RUN_ID" "$ATTEMPT_ID" "$CONTRACT_SHA" "$PR_HEAD_SHA"
+  bash scripts/kernel-fleet/verify-authority-inventory.sh \
+    --commit dd424a61926009ac85a915b31187124b85f0ca98 \
+    --path packages/engine/regression-contract.yaml \
+    --blob 7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3 \
+    --count 129 --p0 66 --p1 63 \
+    --digest 4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f
+  DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-projection.sh \
+    --source-proposal 4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13 \
+    --migration-min 368 --preserve-six-history --same-journey \
+    --origin-kind-direct-proof --exact-head "$PR_HEAD_SHA"
   DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh \
     --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
     --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-    --legacy-receipt-bodies 1161 --family-receipt-bodies 18 --verify-origin-attempts
+    --authority-manifest packages/quality/contracts/kernel-policy-authority.json \
+    --derive-obligations-from-approved-decisions \
+    --require-unreviewed-zero --reject-imported-distribution-as-canonical \
+    --verify-origin-kinds-directly
   DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-provider-policy-activation.sh \
     --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
     --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
@@ -232,7 +313,8 @@ if [ "$E2E_PHASE" = preapproval ]; then
   DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-provider-credential-envelope.sh \
     --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
     --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-    --providers claude,codex,grok --receipt-bodies 24 --verify-origin-attempts
+    --authority-manifest packages/quality/contracts/kernel-policy-authority.json \
+    --derive-required-from-approved-applicability --verify-origin-kinds-directly
   bash scripts/kernel-fleet/verify-p0-workflow-contract.sh \
     preapproval-pause "$PR_NUMBER" "$PR_HEAD_SHA"
   DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh \
