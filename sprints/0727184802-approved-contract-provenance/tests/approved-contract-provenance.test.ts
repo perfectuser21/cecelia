@@ -655,6 +655,36 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     })).toMatchObject({ ok: true });
   });
 
+  it('evaluator callback refuses stale pr_head_sha before writing evaluator verdict', async () => {
+    const { verifyAttemptCallbackApprovedContract } = await subject();
+    const attempt = {
+      id: 'attempt-evaluator-2',
+      role: 'evaluator',
+      task_bundle: {
+        inputs: {
+          contract: {
+            manifest_digest: APPROVED_DIGEST,
+            approved_manifest: { manifest_digest: APPROVED_DIGEST },
+          },
+          pull_request: { head_sha: 'sha-current' },
+        },
+      },
+    };
+
+    expect(verifyAttemptCallbackApprovedContract(attempt, {
+      decision: { outcome: 'PASS', manifest_digest: APPROVED_DIGEST },
+      provider_metadata: { pr_head_sha: 'sha-old' },
+    })).toMatchObject({
+      ok: false,
+      reason: 'stale_evaluate_pr_head_sha',
+    });
+
+    expect(verifyAttemptCallbackApprovedContract(attempt, {
+      decision: { outcome: 'PASS', manifest_digest: APPROVED_DIGEST },
+      provider_metadata: { pr_head_sha: 'sha-current' },
+    })).toMatchObject({ ok: true });
+  });
+
   it('callback refuses stale pr_head_sha before writing generator verdict', async () => {
     const { verifyAttemptCallbackApprovedContract } = await subject();
     const attempt = {
