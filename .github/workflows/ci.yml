@@ -1841,7 +1841,7 @@ jobs:
   # ─── Auto-merge（所有 cp-* 分支 PR，CI 通过后自动合并）────────
   auto-merge:
     needs: [ci-passed]
-    if: needs.ci-passed.result == 'success' && github.event_name == 'pull_request'
+    if: always() && needs.ci-passed.result == 'success' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
