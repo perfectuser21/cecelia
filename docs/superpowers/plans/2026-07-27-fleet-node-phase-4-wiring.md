@@ -26,9 +26,10 @@
 
 The synthetic Fleet canary is transport evidence only. It is not a substitute for the
 Phase 5 real task that produces a code diff, Red/Green commits, PR, CI, and verdict.
-Phase 4A may return `base_admitted`; it must not return or imply final
-`dispatch_ready`. Credential-envelope acceptance, serial canary composition, and
-execution-equivalence evidence remain explicit closed gates for Phases 4C–4D.
+Phase 4A may return `base_admitted`, but it must always return
+`dispatch_ready=false`. Credential-envelope acceptance, serial canary composition, and
+execution-equivalence evidence remain explicit closed gates for Phases 4C–4D; Phase 4A
+cannot imply final dispatch readiness.
 
 ## Dependency graph
 
@@ -416,7 +417,8 @@ Roles map to weights:
 
 Unknown machine, malformed report, unknown role, missing evidence, stale observation,
 or any mismatched hard gate must return `base_admitted=false`; no permissive fallback
-is allowed. The Phase 4A evaluator never exposes `dispatch_ready`.
+is allowed. The Phase 4A evaluator always exposes `dispatch_ready=false` and cannot
+produce `true`.
 
 - [ ] **Step 5: Run Green**
 
