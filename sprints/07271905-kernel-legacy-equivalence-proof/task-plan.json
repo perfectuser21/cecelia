@@ -1,0 +1,44 @@
+{
+  "initiative_id": "128dcb6a-fdf1-44b1-8124-37993dbd922c",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是 Engine guards/hooks/DevGate/Evaluator/Judge/发布链与 GitHub CI protection 的全量行为等价门禁，PRD 指定 target_environment=local_api。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Legacy P0/P1 129 行等价证明矩阵与 fail-closed gate",
+      "scope": "把 packages/engine/regression-contract.yaml 的 66 条 P0 与 63 条 P1 逐行转换为稳定 unified mapping；实现真实 positive/violation/recovery oracle、Claude/Codex/Grok 支持/批准退役矩阵、Engine guards/全部 stop hooks/DevGate/Evaluator/Judge/staging-promote-rollback 真执行、GitHub main protection 真只读比较、current-SHA/24h TTL/assertion_ref/owner 校验、#4372 与指定 mutation proven-to-fire、13×11 逐行聚合；接入 CI required gate。不得修改生产 DB 或 PR #4372。",
+      "dod": [
+        "[BEHAVIOR] inventory 精确为 total=129/P0=66/P1=63，F01/F06 非空、F08 无 catch-all，129 行稳定字段与三态 oracle 齐全",
+        "[BEHAVIOR] Claude/Codex/Grok 支持项真跑 positive/violation/recovery，不支持项仅接受 approved retirement/supersession decision",
+        "[BEHAVIOR] Engine guards、全部 stop hooks、DevGate/TDD/DoD、Evaluator/Judge、staging/promote/rollback 真执行且 failed=0/skipped=0",
+        "[BEHAVIOR] GitHub main protection 真读 required checks/admin/linear history/force-push/delete/review policy，漂移或 API 失败均 fail-closed",
+        "[BEHAVIOR] PR #4372 固定 SHA 必须精确报告 unknown=100/drifted=5/missing assertion=129/green=0 且非零退出",
+        "[BEHAVIOR] credential/stop/branch removal、manual-as-auto、hardcoded zero、forged match_count 与八类接缝 mutation 全部 proven-to-fire",
+        "[BEHAVIOR] 仅当 current-SHA 129 proven active 且 unknown/drifted/missing assertion/owner mismatch=0 时 PASS，并由逐行证据聚合 143 green",
+        "[ARTIFACT] legacy-p0p1-inventory.json、legacy-equivalence-gate.ts/mjs、GitHub policy、smoke、permanent tests 与 CI 接线齐全"
+      ],
+      "files": [
+        "packages/engine/src/equivalence/legacy-p0p1-inventory.json",
+        "packages/engine/src/equivalence/legacy-equivalence-gate.ts",
+        "packages/engine/src/equivalence/github-main-protection-policy.json",
+        "packages/engine/scripts/legacy-equivalence-gate.mjs",
+        "packages/engine/scripts/smoke/legacy-equivalence-gate-smoke.sh",
+        "packages/engine/tests/equivalence/legacy-equivalence-gate.test.ts",
+        "packages/engine/tests/equivalence/github-protection.integration.test.ts",
+        "packages/engine/package.json",
+        "packages/engine/package-lock.json",
+        "packages/engine/VERSION",
+        "packages/engine/hooks/VERSION",
+        "packages/engine/.hook-core-version",
+        "packages/engine/regression-contract.yaml",
+        "packages/engine/feature-registry.yml",
+        ".github/workflows/ci.yml",
+        "sprints/07271905-kernel-legacy-equivalence-proof/tests/legacy-p0p1-equivalence.contract.test.ts",
+        "sprints/07271905-kernel-legacy-equivalence-proof/tests/github-protection-equivalence.integration.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
