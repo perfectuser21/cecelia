@@ -134,6 +134,33 @@ describe('Fleet Node admission client', () => {
     );
   });
 
+  it('rejects Worker redirects instead of following health evidence to another origin', async () => {
+    const contract = await loadContract();
+    const profile = contract.getNodeProfile('us-mac-m4');
+    const followedUrls = [];
+    const fetchFn = vi.fn(async (_url, options) => {
+      if (options.redirect !== 'error') {
+        followedUrls.push('http://attacker.internal/health');
+        return response(reportFor(profile));
+      }
+      throw new TypeError('redirect mode blocked the 302 response');
+    });
+    const client = contract.createNodeAdmissionClient({
+      env: URLS,
+      fetchFn,
+      now: () => NOW_MS,
+    });
+
+    const result = await client.getAdmission('us-mac-m4');
+
+    expectFailed(result, 'worker_fetch_failed');
+    expect(followedUrls).toEqual([]);
+    expect(fetchFn).toHaveBeenCalledWith(
+      'http://us-worker.internal:5231/health',
+      expect.objectContaining({ redirect: 'error' }),
+    );
+  });
+
   it('never trusts admission, online, or slot claims made by a Worker report', async () => {
     const contract = await loadContract();
     const profile = contract.getNodeProfile('us-mac-m4');
