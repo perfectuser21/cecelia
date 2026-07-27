@@ -1,0 +1,30 @@
+{
+  "initiative_id": "68bd49de-0109-4da0-96c1-74f3b640f518",
+  "journey_type": "autonomous",
+  "journey_type_reason": "本 sprint 只覆盖 Brain/Harness 后端 controller、runner、PG oracle 与 cleanup 链路，不含前端 UI。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Kernel Test Environment Controller 的 attempt 级 PG capability、oracle 与 cleanup",
+      "scope": "为 DB-backed proposer/reviewer/generator/evaluator 发放 attempt-scoped TEST_DATABASE_URL 与无凭据 receipt，打通 local/fleet runner 注入、pre-import oracle、terminal cleanup/reconcile 与 attested receipt。",
+      "dod": [
+        "[BEHAVIOR] local dispatcher 真链路给 DB-backed proposer 注入 TEST_DATABASE_URL 与无凭据 receipt",
+        "[BEHAVIOR] remote bridge -> fleet worker -> attempt runner 真链路把 TEST_DATABASE_URL 与 receipt 带进 docker create env",
+        "[BEHAVIOR] pre-import oracle 在真 PG 上证明 current_database/current_user/inet_server_addr 与 receipt 对齐，且非 attempt 数据库零 CONNECT 权限",
+        "[ARTIFACT] 红测文件、contract-draft.md、contract-dod.md 与 E2E 脚本齐备"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/remote-bridge-transport.js",
+        "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "packages/brain/src/orchestrator/preflight/production-probes.js",
+        "packages/brain/src/db-config.js",
+        "sprints/07280011-kernel-769cdf5b/tests/kernel-test-environment-controller.red.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
