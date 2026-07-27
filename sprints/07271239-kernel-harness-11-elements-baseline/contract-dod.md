@@ -11,13 +11,13 @@ target_environment: local_api
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] 幂等 migration 365 存在，且只扩展既有 Journey/Step/Cell 模型
-  Test: node -e "const fs=require('fs');const p='packages/brain/migrations/365_kernel_harness_f1_baseline.sql';const s=fs.readFileSync(p,'utf8');for(const x of ['bb8cc561-b3ee-4fec-b74d-2255694bd963','lifecycle_stage','is_backbone','journey_step_links'])if(!s.includes(x))process.exit(1);for(const x of ['CREATE TABLE kernel_steps','CREATE TABLE behavior_ledger','Kernel Harness Delivery'])if(s.includes(x))process.exit(1)"
+  Test: node -e "const fs=require('fs');const p='packages/brain/migrations/365_kernel_harness_f1_baseline.sql';const s=fs.readFileSync(p,'utf8');for(const x of ['bb8cc561-b3ee-4fec-b74d-2255694bd963','lifecycle_stage','is_backbone','journey_step_links','Invariant','输入对抗面','reason_code','source_refs','missing_evidence',\"'na'\"])if(!s.includes(x))process.exit(1);for(const x of ['CREATE TABLE kernel_steps','CREATE TABLE behavior_ledger','Kernel Harness Delivery'])if(s.includes(x))process.exit(1)"
 
 - [ ] [ARTIFACT] 真 PostgreSQL integration 与 smoke 均已入册
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/integration/migration-365-kernel-harness-f1-baseline.integration.test.js','packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh']){const s=fs.readFileSync(p,'utf8');if(!/HARNESS_TEST_DATABASE_URL|DATABASE_URL/.test(s))process.exit(1)}"
 
 - [ ] [ARTIFACT] 根 regression-contract.yaml 登记 F1 逐项权威映射，engine 合同只作 legacy source
-  Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');for(const x of ['kernel_harness_f1_baseline:','legacy_behavior_id:','selection_basis:','journey_stage:','element:','source_refs:','assertion_ref:','status_evidence:'])if(!root.includes(x))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
+  Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');for(const x of ['kernel_harness_f1_baseline:','cells:','reason_code:','missing_evidence:','evidence_requirement:','legacy_behavior_id:','selection_basis:','journey_stage:','element:','source_refs:','assertion_ref:','status_evidence:'])if(!root.includes(x))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
 
 - [ ] [ARTIFACT] Brain 源码改动同步版本与 DEFINITION.md
   Test: node -e "const fs=require('fs');const d=fs.readFileSync('packages/brain/DEFINITION.md','utf8');const p=JSON.parse(fs.readFileSync('packages/brain/package.json','utf8'));if(!d.includes(p.version))process.exit(1)"
@@ -34,14 +34,14 @@ target_environment: local_api
   预期观察: within 180s 六个历史 ID/Notion 关联不变，S0-S12 各一个 backbone，13 组稳定名称/promise 逐字匹配，Reviewer/Final E2E 仅为非 backbone 历史别名，第二轮无新增。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh history-and-backbone'
 
-- [ ] [BEHAVIOR] [L2] B3 Golden Path Step 3 每个 backbone Step 恰有 11 个合法 element cells
-  动作: 查询真 PostgreSQL 的 F1 backbone 与 element cells，并对 key、状态、重复行做聚合断言。
-  预期观察: within 180s 共 143 格；每步 11 格；状态仅 `gray|red|pending|green|na`。
+- [ ] [BEHAVIOR] [L2] B3 Golden Path Step 3 每个 backbone Step 恰有精确 11 个 element cells
+  动作: 查询真 PostgreSQL 与根合同 cell manifest，并逐项比对精确键 `FR/NFR/Invariant/判定点/保质期/死亡告警/失败语义/效果确认/输入对抗面/账本保鲜/两轴衔接`。
+  预期观察: within 180s manifest、DB、派生报告各 143 格且 1:1；每步 11 格；同义键为 0；状态仅 `gray|red|pending|green|na`。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
-- [ ] [BEHAVIOR] [L2] B4 Golden Path Step 3 静态声明不能把 cell 变 green
-  动作: 运行 baseline 审计器并把 green cells 与当前 SHA 的真实 PASS envelope、根合同 test_command 交叉核对。
-  预期观察: within 180s false-green 与 invalid assertion_ref 数组均为空；缺证据项保持 gray/red/pending。
+- [ ] [BEHAVIOR] [L2] B4 Golden Path Step 3 的 143 格状态依据逐格唯一命中五态事实门槛
+  动作: 对每个 `step_id+element` 读取 `cell_status/reason_code/source_refs/missing_evidence/assertion_ref/evidence_envelope`，运行互斥五态分类器；green 真跑 current-SHA assertion，gray 真跑 current-SHA 非空范围 inventory scan，red/pending/na 分别验证缺口、缺证据或不适用事实。
+  预期观察: within 180s 每格 `matched_status_rules` 恰为自身状态；13 个 FR 均有定义且非 gray；gray<143；false-green、unsupported-red/pending/na、unclassified、ambiguous 均为 0。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
 - [ ] [BEHAVIOR] [L2] B5 Golden Path Step 4 P0/P1 筛选与五态证据逐项机检
@@ -81,7 +81,7 @@ target_environment: local_api
 - INV-13 环境剧场 — 映射到 B1-B8：合同与 task payload 均为 `local_api`，真实服务为 Brain + PostgreSQL。
 - INV-14 环境真相 — 映射到 B1-B8：`target_environment=local_api` 已写入 task-plan 与 DoD frontmatter。
 - INV-15 判决格式 — N/A：不修改 Brain judge 输出协议。
-- INV-16 字段长度 — 映射到 ARTIFACT migration：新增 stage/status 使用 CHECK 枚举，文本审计字段不写入受限短列。
+- INV-16 字段长度 — 映射到 ARTIFACT migration：新增 stage/status 使用 CHECK 枚举，reason/source/missing evidence 使用 TEXT/JSONB，不截断写入受限短列。
 - INV-17 退役溯源 — N/A：不复活已退役功能；只按当前 legacy source 分类。
 - INV-18 失败分支 — 映射到 B4-B6：审计缺失/无效返回必须非零或 fail-closed，不能靠 try/catch 吞错。
 - INV-19 冒烟三 — N/A：decision 33ede9f1 未指向本单模块；本单另有真库 smoke。
@@ -110,9 +110,9 @@ target_environment: local_api
 - INV-27 消费闭环 — N/A：不新增后台任务。
 - INV-28 多端完整 — N/A：真实运行环境单一为 local_api，不涉及设备/OS 分支。
 
-- [ ] [BEHAVIOR] [L2] INV-29 cell 状态判定与终验采用同一五态策略
-  动作: 让 ledger classifier、DB CHECK 与 smoke 对同一 143 cells 执行一致状态校验。
-  预期观察: within 180s 三处均只接受 `gray|red|pending|green|na`，无别名状态漂移。
+- [ ] [BEHAVIOR] [L2] INV-29 精确 11 键与 cell 状态判定在落库和终验采用同一策略
+  动作: 让根合同 manifest、ledger classifier、DB CHECK 与 smoke 对同一 143 cells 执行精确键和互斥五态校验。
+  预期观察: within 180s 四处逐格一致，只接受精确 11 键与 `gray|red|pending|green|na`，无同义键或状态漂移。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
 - INV-30 引用验证 — N/A：本 sprint 不消费动态 git ref；证据 SHA 来自已解析的当前 commit，不接受用户传入 ref。

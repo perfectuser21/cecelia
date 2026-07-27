@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 4)
+# Sprint Contract Draft (Round 5)
 
 ## 锚定父路声明
 
@@ -10,8 +10,8 @@
 - Registry 已读取，但照相层已过期约 205 小时；字段与表约定以 PRD、当前源码、migration 348-350 和真实只读 Brain API 响应交叉确认。
 - context-manifest: unavailable（Brain 当前返回 `Cannot GET /api/brain/line/.../context-manifest`）。
 - judgment-resolved-by-prd: 历史步骤不能可靠一对一映射时，保留原 ID/Notion 关联并作为同一 lifecycle stage 的历史别名，禁止删除重建。
-- Round 4 收敛：legacy inventory 不再把所有 hook/DevGate/CI/Kernel 文件冒充 P0/P1；
-  只按显式 `priority: P0|P1` 与可追踪引用选入，并为五种 audit_status 固定事实证据门槛。
+- Round 5 收敛：11 要素键统一为批准设计稿的精确字面值；根合同新增 143 行 cell
+  evidence manifest，并以互斥五态事实门槛阻止全 gray/任意非 green 假基线。
 - 本轮只建立账本基线；所有接缝在 evaluator 使用隔离 PostgreSQL 真验前均为 `logic-done-pending`。
 - gate-allow: domain/db-no-time-window `SELECT current_database()` 读取无 `created_at` 的系统目录元数据，仅用于写前隔离库守卫，不是业务聚合/历史数据验收。
 
@@ -104,6 +104,7 @@ evidence 把 cell 推成 green：审计只认根合同、真实可执行测试�
 |---|---|---|
 | 把所有入口文件误升为 P0/P1 | scope 膨胀且基线失真 | Step 4 显式 priority/引用边筛选恒等式；无边入口必须 excluded+reason_code |
 | 仅填 audit_status 字符串 | 任意分类或全 unknown 假绿 | Step 4 五态条件证据 + auto 可判项不得 unknown + proven_status>0 |
+| 任意填写非 green cell 状态 | 全 gray 或无依据 red/pending/na 冒充当前基线 | Step 3 的 143 行 manifest + 五态互斥分类器 + 逐格 reason/source/missing evidence |
 | fixture 误连生产库 | 破坏真实承诺地图 | 所有写入前 `current_database()` 必须匹配 `_test|preview_`，否则非零且零写入 |
 
 ## Golden Path
@@ -163,23 +164,48 @@ HARNESS_TEST_DATABASE_URL="${HARNESS_TEST_DATABASE_URL:?}" timeout 180 bash pack
 **来源**: `[FROM_PRD]` — PRD「Golden Path」步骤 2-3 与 11 要素统一含义；
 `[AI_ADDED]` — 将“文档不能产生 green”具体化为 current-SHA PASS envelope 断言，防止历史/静态证据假绿。
 
-**可观测行为**: 每个 S0-S12 恰有以下 11 个 `cell_kind='element'`：
-`FR/NFR/不变量/判定点/保质期/死亡告警/失败语义/效果确认/对抗面/账本保鲜/两轴衔接`。
-状态只可能是 `gray/red/pending/green/na`。
+**可观测行为**: 每个 S0-S12 恰有以下 11 个 `cell_kind='element'`，键名逐字固定为：
+`FR/NFR/Invariant/判定点/保质期/死亡告警/失败语义/效果确认/输入对抗面/账本保鲜/两轴衔接`。
+根 `regression-contract.yaml#kernel_harness_f1_baseline.cells[]` 必须逐格登记 143 行当前基线；
+每行至少含稳定 `step_id`、`lifecycle_stage`、精确 `element`、`cell_status`、
+`reason_code`、`source_refs[]`、`missing_evidence[]`、`assertion_ref` 与
+`evidence_requirement`。DB cell 是该 manifest 的幂等投影；派生报告逐格输出相同字段，
+并在执行时追加 current-SHA `evidence_envelope` 与 `matched_status_rules`，不得把运行回执
+静态写入合同造成自引用 SHA，也不得另建 cell SSOT。
+`source_refs[]` 统一使用可解析的 `<仓库相对路径>#<anchor>`（或 `:L<行号>`）格式；
+去掉 anchor/行号后的文件必须在当前 worktree 真实存在。
+
+**cell_status 事实门槛（五态互斥；每格必须且只能命中一行）**：
+
+| cell_status | 当前仓库事实门槛 |
+|---|---|
+| `gray` | `reason_code=requirement_undefined`；`source_refs=[]`；`missing_evidence` 含 `requirement_definition`；current-SHA inventory scan 已启动、扫描范围非空且 `match_count=0`；无 assertion/PASS envelope |
+| `red` | `reason_code=known_gap|probe_failed`；`source_refs` 非空；known gap 指向当前仓库明确缺口，或 current-SHA probe 已启动且非零/结构化 mismatch；`missing_evidence` 非空 |
+| `pending` | `reason_code=awaiting_executable_evidence|evidence_expired`；定义来源非空，但缺 current-SHA 未过期 PASS；`missing_evidence` 非空 |
+| `green` | `reason_code=verified`；`source_refs` 非空；`assertion_ref` 唯一解析到根合同可执行命令/真实测试；current-SHA probe 已启动、`exit_code=0`、未过期；`missing_evidence=[]` |
+| `na` | `reason_code=not_applicable`；`na_reason` 非空；`source_refs` 指向当前 stage promise/批准规格中的不适用依据；无伪 PASS envelope |
+
+分类器必须返回 `matched_status_rules=[cell_status]`；0 个或多于 1 个匹配都失败。
+由于 13 个 stage 均已有 promise，至少 13 个 `FR` cell 必须有定义来源且不得为 gray；
+`status_counts.gray < 143`，从结构上禁止“全部 gray”假基线。
 
 **验证命令**:
 ```bash
 HARNESS_TEST_DATABASE_URL="${HARNESS_TEST_DATABASE_URL:?}" timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence
 ```
 
-**硬阈值**: element cell 总数=143；每 step=11；非法/重复 key=0；非法状态=0；
-`green AND (assertion_ref IS NULL OR current-SHA PASS envelope 缺失)` count=0。
+**硬阈值**: manifest、DB、派生报告各 143 行且按 `step_id+element` 1:1 相等；
+每 step 精确 11 键；同义键 `不变量/对抗面` count=0；每行字段齐全且
+`matched_status_rules=[cell_status]`；13 个 FR 均非 gray；gray 总数 <143；
+false-green、unsupported-red、unsupported-pending、unsupported-na、unclassified、
+ambiguous 各 count=0。以上均由同一 smoke 非零失败。
 
 ### Step 4: 审计 legacy P0/P1 并给出基线
 **来源**: `[FROM_PRD]` — PRD「Golden Path」步骤 4 与验收点 6。
 
 **可观测行为**: 根 `regression-contract.yaml` 的
-`kernel_harness_f1_baseline.behaviors[]` 是逐项归位的权威映射；派生 audit JSON 明确
+`kernel_harness_f1_baseline.behaviors[]` 是逐项归位的权威映射；同 section 的
+`cells[]` 是 Step 3 的 143 格权威证据 manifest；派生 audit JSON 明确
 `authoritative=false`。审计器先建立四类 candidate inventory，再按以下确定性规则分流；
 禁止按文件名、注释中的 “P0/P1”、目录位置或模型猜测定级：
 
@@ -237,7 +263,7 @@ unknown<mapped；非空 assertion_ref 唯一解析并真跑；所指 stage/eleme
 
 **可观测行为**: 非空 assertion_ref 可在根 `regression-contract.yaml` 的 `test_command`
 条目中唯一解析，且命令指向真实测试/脚本；engine 合同、hooks、DevGate、CI、Kernel gates
-只作为 `source_ref`，不能被当作第二权威映射。
+只作为 `source_refs[]`，不能被当作第二权威映射。
 
 **验证命令**:
 ```bash
@@ -323,15 +349,16 @@ echo "OK: Cecelia Harness Pipeline F1 账本归位与等价基线 Golden Path �
 |---|---|---|---|
 | 唯一 Journey 与幂等 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 唯一 F1 Journey 且二次应用不重复 | migration/module 未实现，测试收集或首个真库断言失败 |
 | 历史与 backbone | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 历史 ID 与 Notion 关联保留且 S0-S12 名称 promise 骨干完整 | S0-S12/历史映射当前不存在 |
-| 11 要素 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 每个 S0-S12 骨干 Step 恰有 11 个合法 element cells | 当前目标 Journey 无 element cells |
-| 证据可信 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | green 只接受真实 assertion_ref 且引用存在 | 当前 classifier 仍接受静态 smoke 文案 |
+| 11 要素 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 每个 S0-S12 骨干 Step 恰有精确 11 个 element cells | 当前目标 Journey 无精确 11 键 element cells |
+| 证据可信 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 143 格状态依据逐格唯一命中五态事实门槛 | 当前无逐格 evidence manifest 与互斥分类器 |
 | legacy 基线 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | P0/P1 筛选与五态证据逐项机检 | 审计器与根合同映射未实现 |
 | 完成语义 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | endpoint 延伸到 production verified 与 report learning | 现 endpoint 仍停在 PR 合并 |
 | 非目标护栏 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 不新增平行账本且运行时表状态不被迁移改写 | 新 migration 尚不存在，护栏先红 |
 
 ## 交付边界与版本纪律
 
-- 允许修改：幂等 migration、11 要素状态判定/审计模块、journeys additive 查询字段、
+- 允许修改：幂等 migration、现有 `journey_step_links` 的 cell 证据元数据列、
+  11 要素状态判定/审计模块、journeys additive 查询字段、
   根 regression contract、真 PostgreSQL integration/smoke、Brain 版本与 `DEFINITION.md`。
 - `packages/engine/regression-contract.yaml` 只能读取和审计；除明确 legacy-source 注释外不得改语义，
   不得成为第二份权威合同。
