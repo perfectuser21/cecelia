@@ -426,6 +426,27 @@ grep -Fq 'worker_data_root_invalid' <<<"$traversal_data_root_output" \
 [[ ! -s "$chown_log" ]] \
   || fail "traversal data root caused an ownership mutation"
 
+: > "$acl_log"
+: > "$chown_log"
+escaped_worker_root="$test_root/escaped-worker-root"
+mkdir -p "$escaped_worker_root" "$test_root/var/lib/cecelia"
+ln -s "$escaped_worker_root" "$test_root/var/lib/cecelia/escape"
+symlink_data_root_output=''
+if symlink_data_root_output="$(
+  FLEET_WORKER_TEST_DATA_ROOT="$test_root/var/lib/cecelia/escape/nested/data" \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "symlink-escaped data root was accepted"
+fi
+grep -Fq 'worker_data_root_invalid' <<<"$symlink_data_root_output" \
+  || fail "symlink-escaped data root refusal lacked a bounded signature"
+[[ ! -e "$escaped_worker_root/nested" ]] \
+  || fail "symlink-escaped data root created an external directory"
+[[ ! -s "$acl_log" ]] \
+  || fail "symlink-escaped data root caused a Docker ACL mutation"
+[[ ! -s "$chown_log" ]] \
+  || fail "symlink-escaped data root caused an ownership mutation"
+
 invalid_socket_output=''
 if invalid_socket_output="$(
   FLEET_WORKER_SOCKET_TARGET='/tmp/docker.sock' \
