@@ -25,6 +25,7 @@
         "packages/brain/src/routes/harness-kernel-approvals.js",
         "packages/brain/src/harness-ci-gate.js",
         "packages/brain/src/lib/harness-finalize.js",
+        "packages/brain/src/orchestrator/decision-log.js",
         "packages/brain/src/orchestrator/ground-truth.js",
         "packages/brain/src/orchestrator/gates.js",
         "packages/brain/src/orchestrator/kernel-handlers.js",
