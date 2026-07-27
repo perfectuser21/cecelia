@@ -4,6 +4,8 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$0")/../../../.." && pwd)
 cd "$REPO_ROOT"
 
+HARNESS_TEST_DATABASE_URL=${HARNESS_TEST_DATABASE_URL:-${TEST_DATABASE_URL:-${DATABASE_URL:-}}}
+export HARNESS_TEST_DATABASE_URL
 : "${HARNESS_TEST_DATABASE_URL:?必须提供隔离 PostgreSQL 连接串}"
 DB_NAME=$(psql -X -qAt "$HARNESS_TEST_DATABASE_URL" -c 'SELECT current_database()')
 case "$DB_NAME" in

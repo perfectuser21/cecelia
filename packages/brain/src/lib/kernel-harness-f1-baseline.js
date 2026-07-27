@@ -12,6 +12,13 @@ import {
   classifyElementCell,
   ELEMENT_CELL_STATUSES,
 } from './eleven-elements-ledger.js';
+
+if (!process.env.HARNESS_TEST_DATABASE_URL) {
+  process.env.HARNESS_TEST_DATABASE_URL = (
+    process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
+  );
+}
+
 export const JOURNEY_ID = 'bb8cc561-b3ee-4fec-b74d-2255694bd963';
 export const ELEMENT_KEYS = Object.freeze([
   'FR', 'NFR', 'Invariant', '判定点', '保质期', '死亡告警',
