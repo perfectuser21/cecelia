@@ -71,7 +71,13 @@ chmod +x "$test_root/launchctl"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
-  '[[ "$1" == "-lint" && -f "$2" ]]' > "$test_root/plutil"
+  '[[ "$1" == "-lint" && $# -eq 2 && -f "$2" ]] || exit 64' \
+  'exec python3 - "$2" <<PY' \
+  'import plistlib' \
+  'import sys' \
+  'with open(sys.argv[1], "rb") as handle:' \
+  '    plistlib.load(handle)' \
+  'PY' > "$test_root/plutil"
 chmod +x "$test_root/plutil"
 
 export FLEET_WORKER_LAUNCH_LOG="$launch_log"
