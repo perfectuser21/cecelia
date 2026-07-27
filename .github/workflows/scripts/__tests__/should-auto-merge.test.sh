@@ -7,6 +7,7 @@
 set -euo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/should-auto-merge.sh"
+WORKFLOW="$(cd "$(dirname "$0")/../.." && pwd)/ci.yml"
 PASS=0; FAIL=0
 
 # assert_decision <期望关键词> <描述> <head_branch> <pr_title>
@@ -41,6 +42,14 @@ assert_decision "MERGE" "普通 feat(dashboard) PR → 正常 auto-merge" \
 # 非 cp-* 分支 → 跳过（保留原有行为，stop hook 删除后统一由 cp-* 判据处理）。
 assert_decision "SKIP" "非 cp-* 分支 → 跳过 auto-merge" \
   "feature/manual-branch" "fix(brain): 随便改"
+
+# ci-passed 的依赖包含按路径跳过的 jobs。GitHub 会把 skip 沿 needs 链传播，
+# 所以下游 auto-merge 必须显式使用 always()，再自行检查 ci-passed 的结果。
+if grep -Fq "if: always() && needs.ci-passed.result == 'success' && github.event_name == 'pull_request'" "$WORKFLOW"; then
+  echo "PASS: auto-merge 可越过 needs 链中的 skipped jobs"; PASS=$((PASS+1))
+else
+  echo "FAIL: auto-merge 缺少 always()，会被 needs 链中的 skipped jobs 连带跳过"; FAIL=$((FAIL+1))
+fi
 
 echo ""
 echo "Results: PASS=$PASS FAIL=$FAIL"
