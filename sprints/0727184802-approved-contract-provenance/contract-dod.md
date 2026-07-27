@@ -135,7 +135,7 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR:E2E] local_api final-e2e 完整跑 manifest regression + CI required check + DB 时间窗
   动作: evaluator 在 current PR head 上执行 contract-draft.md 的 `## E2E 验收` bash 脚本。
-  预期观察: within 120s Vitest regression 通过；CI script 输出 `.ok==true` 且 digest 等于 approved digest；PostgreSQL 中 5 分钟内存在 approved manifest row。
+  预期观察: within 120s Vitest regression 通过；CI script 输出 `.ok==true` 且 digest 等于 approved digest；脚本内真实 PostgreSQL temp table 写入 approved manifest row，并以 `approved_at > NOW() - interval '5 minutes'` 断言本轮写路径。
   验证命令: Test: manual:bash -c 'set -euo pipefail; awk "/^## E2E 验收/{found=1; next} found && /^## /{exit} found && /^```bash/{b=1; next} b && /^```/{b=0; next} b{print}" sprints/0727184802-approved-contract-provenance/contract-draft.md > /tmp/approved-contract-provenance-e2e.sh; bash -n /tmp/approved-contract-provenance-e2e.sh; echo OK'
   期望: exit 0
 

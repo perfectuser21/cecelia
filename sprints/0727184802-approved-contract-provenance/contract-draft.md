@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 8)
+# Sprint Contract Draft (Round 9)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -279,9 +279,86 @@ CI_JSON="$(node scripts/ci/approved-contract-provenance-check.mjs \
   --json)"
 echo "$CI_JSON" | jq -e '.ok == true and .manifest_digest == env.APPROVED_CONTRACT_MANIFEST_DIGEST'
 
-echo "Step 4: approved manifest row is recently persisted"
-COUNT="$(psql "$DB" -t -c "SELECT count(*) FROM initiative_contracts WHERE manifest_digest = '$APPROVED_CONTRACT_MANIFEST_DIGEST' AND approved_manifest IS NOT NULL AND source_commit_sha IS NOT NULL AND approved_at > NOW() - interval '5 minutes'" | tr -d ' ')"
-[ "$COUNT" -ge 1 ] || { echo "FAIL: no recent approved manifest row since $START_TS"; exit 1; }
+echo "Step 4: append-only approved manifest DB write path uses real PostgreSQL"
+node --input-type=module <<'NODE'
+import pg from 'pg';
+import { randomUUID } from 'node:crypto';
+import { DB_DEFAULTS } from './packages/brain/src/db-config.js';
+import { materializeApprovedContractManifest } from './packages/brain/src/orchestrator/approved-contract-provenance.js';
+
+const pool = new pg.Pool(process.env.DB_URL ? { connectionString: process.env.DB_URL } : DB_DEFAULTS);
+const client = await pool.connect();
+const initiativeId = randomUUID();
+const runId = randomUUID();
+const manifestDigest = process.env.APPROVED_CONTRACT_MANIFEST_DIGEST;
+try {
+  await client.query('BEGIN');
+  await client.query(`
+    CREATE TEMP TABLE initiative_contracts (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      initiative_id uuid NOT NULL,
+      version integer NOT NULL,
+      status text NOT NULL DEFAULT 'draft',
+      prd_content text,
+      contract_content text,
+      review_rounds integer DEFAULT 0,
+      approved_at timestamptz,
+      branch text,
+      source_commit_sha text,
+      manifest_digest text,
+      approved_manifest jsonb,
+      reviewer_verdict jsonb,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      UNIQUE (initiative_id, version)
+    ) ON COMMIT DROP;
+    CREATE TEMP TABLE initiative_runs (
+      id uuid PRIMARY KEY,
+      initiative_id uuid NOT NULL,
+      contract_id uuid,
+      updated_at timestamptz DEFAULT now()
+    ) ON COMMIT DROP;
+  `);
+  await client.query(
+    'INSERT INTO initiative_runs (id, initiative_id) VALUES ($1::uuid, $2::uuid)',
+    [runId, initiativeId],
+  );
+  const manifest = {
+    run_id: runId,
+    contract_version: 9,
+    source_commit_sha: process.env.PR_HEAD_SHA,
+    sprint_dir: process.env.SPRINT_DIR || 'sprints/0727184802-approved-contract-provenance',
+    artifacts: [],
+    manifest_digest: manifestDigest,
+    approved_at: new Date().toISOString(),
+    reviewer_verdict: { verdict: 'APPROVED', reviewer: 'harness-contract-reviewer' },
+  };
+  await materializeApprovedContractManifest(client, {
+    runId,
+    version: 9,
+    branch: 'e2e-approved-contract-provenance',
+    manifest,
+    prdContent: '# PRD e2e',
+    contractContent: '# Contract e2e',
+  });
+  const res = await client.query(
+    `SELECT count(*)::int AS count
+       FROM initiative_contracts
+      WHERE manifest_digest = $1
+        AND approved_manifest IS NOT NULL
+        AND source_commit_sha = $2
+        AND approved_at > NOW() - interval '5 minutes'`,
+    [manifestDigest, process.env.PR_HEAD_SHA],
+  );
+  if (res.rows[0].count !== 1) {
+    throw new Error(`expected one recent approved manifest row, got ${res.rows[0].count}`);
+  }
+  await client.query('ROLLBACK');
+} finally {
+  client.release();
+  await pool.end();
+}
+NODE
 
 echo "OK: approved contract provenance final e2e passed"
 ```
@@ -326,4 +403,4 @@ echo "OK: approved contract provenance final e2e passed"
 - contract-gate: present at `packages/brain/src/lib/contract-gate.js`; 本合同未跳过代码层 Contract Gate。
 - PR #4372 只作为事故证据，不修改、不复用；回归 fixture 用本 sprint 测试临时 Git repo 自造 365→366 drift。
 - Android/微信/第三方 API 不涉及，target_environment 固定 `local_api`。
-- Round 8 修订：不扩 PRD scope，仅把三类弱 oracle 从“组合修改一次”收紧为“逐项单独证伪”：manifest artifact kind 字面映射、Root DoD checkbox/evidence/provenance 各自允许、Root DoD Test/Action/Expected/Environment/Safety 与冻结资产各自单独 drift 必须 fail。
+- Round 9 修订：不扩 PRD scope；final-e2e 的 DB 验收改为脚本内真实 PostgreSQL temp table 写入与 5 分钟时间窗断言，避免依赖 GAN 批准记录的外部时序。
