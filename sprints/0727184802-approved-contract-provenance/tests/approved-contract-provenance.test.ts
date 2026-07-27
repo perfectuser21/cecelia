@@ -473,6 +473,142 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     })).toMatchObject({ ok: true });
   });
 
+  it('generator callback refuses stale manifest_digest before writing generator verdict', async () => {
+    const { verifyAttemptCallbackApprovedContract } = await subject();
+    const attempt = {
+      id: 'attempt-generator-2',
+      role: 'generator',
+      task_bundle: {
+        inputs: {
+          contract: {
+            manifest_digest: APPROVED_DIGEST,
+            approved_manifest: { manifest_digest: APPROVED_DIGEST },
+          },
+          pull_request: { head_sha: 'sha-current' },
+        },
+      },
+    };
+
+    expect(verifyAttemptCallbackApprovedContract(attempt, {
+      decision: { outcome: 'completed', manifest_digest: STALE_DIGEST },
+      provider_metadata: { pr_head_sha: 'sha-current' },
+    })).toMatchObject({
+      ok: false,
+      reason: 'stale_generator_manifest_digest',
+    });
+
+    expect(verifyAttemptCallbackApprovedContract(attempt, {
+      decision: { outcome: 'completed', manifest_digest: APPROVED_DIGEST },
+      provider_metadata: { pr_head_sha: 'sha-current' },
+    })).toMatchObject({ ok: true });
+  });
+
+  it('CI required check rejects missing stale digest and stale pr_head_sha fail closed', async () => {
+    const { buildApprovedContractManifest } = await subject();
+    const { runApprovedContractProvenanceCheck } = await import('../../../scripts/ci/approved-contract-provenance-check.mjs');
+    const { repo, approvedSha } = createApprovedRepo();
+    const manifest = await buildApprovedContractManifest({
+      repoRoot: repo,
+      runId: RUN_ID,
+      contractVersion: 6,
+      sourceCommitSha: approvedSha,
+      sprintDir: SPRINT_DIR,
+      approvedAt: '2026-07-27T00:00:00.000Z',
+      reviewerVerdict: { verdict: 'APPROVED' },
+    });
+    write(repo, 'README.md', 'implementation commit that does not touch approved artifacts\n');
+    sh(repo, 'git add README.md && git commit -qm implementation-head');
+    const currentHeadSha = sh(repo, 'git rev-parse HEAD');
+
+    const pool = new pg.Pool(DB_DEFAULTS);
+    const client = await pool.connect();
+    const schema = `approved_contract_ci_${randomUUID().replace(/-/g, '')}`;
+    try {
+      await client.query(`CREATE SCHEMA ${schema}`);
+      await client.query(`
+        CREATE TABLE ${schema}.initiative_contracts (
+          id uuid,
+          initiative_id uuid,
+          version integer,
+          contract_version integer,
+          status text,
+          sprint_dir text,
+          source_commit_sha text,
+          manifest_digest text,
+          approved_manifest jsonb,
+          reviewer_verdict jsonb,
+          approved_at timestamptz,
+          created_at timestamptz DEFAULT now(),
+          updated_at timestamptz DEFAULT now()
+        );
+      `);
+      await client.query(
+        `INSERT INTO ${schema}.initiative_contracts
+          (id, initiative_id, version, contract_version, status, sprint_dir, source_commit_sha, manifest_digest, approved_manifest, reviewer_verdict, approved_at)
+         VALUES ($1::uuid, $2::uuid, $3, $3, 'approved', $4, $5, $6, $7::jsonb, $8::jsonb, now())`,
+        [
+          randomUUID(),
+          INITIATIVE_ID,
+          6,
+          SPRINT_DIR,
+          approvedSha,
+          manifest.manifest_digest,
+          JSON.stringify(manifest),
+          JSON.stringify({ verdict: 'APPROVED', reviewer: 'harness-contract-reviewer' }),
+        ],
+      );
+
+      const dbConfig = {
+        ...DB_DEFAULTS,
+        options: `-c search_path=${schema},public`,
+      };
+      await expect(runApprovedContractProvenanceCheck({
+        repoRoot: repo,
+        sprintDir: SPRINT_DIR,
+        manifestDigest: manifest.manifest_digest,
+        prHeadSha: currentHeadSha,
+        dbConfig,
+      })).resolves.toMatchObject({
+        ok: true,
+        manifest_digest: manifest.manifest_digest,
+      });
+      await expect(runApprovedContractProvenanceCheck({
+        repoRoot: repo,
+        sprintDir: SPRINT_DIR,
+        manifestDigest: STALE_DIGEST,
+        prHeadSha: currentHeadSha,
+        dbConfig,
+      })).resolves.toMatchObject({
+        ok: false,
+        reason: 'stale_manifest_digest',
+      });
+      await expect(runApprovedContractProvenanceCheck({
+        repoRoot: repo,
+        sprintDir: SPRINT_DIR,
+        manifestDigest: manifest.manifest_digest,
+        prHeadSha: approvedSha,
+        dbConfig,
+      })).resolves.toMatchObject({
+        ok: false,
+        reason: 'stale_pr_head_sha',
+      });
+      await expect(runApprovedContractProvenanceCheck({
+        repoRoot: repo,
+        sprintDir: `${SPRINT_DIR}-missing`,
+        manifestDigest: manifest.manifest_digest,
+        prHeadSha: currentHeadSha,
+        dbConfig,
+      })).resolves.toMatchObject({
+        ok: false,
+        reason: 'approved_contract_manifest_missing',
+      });
+    } finally {
+      await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      client.release();
+      await pool.end();
+    }
+  });
+
   it('mergeGate refuses PASS verdicts that do not carry the approved manifest_digest', async () => {
     const { mergeGate } = await import('../../../packages/brain/src/orchestrator/gates.js');
     const result = mergeGate({

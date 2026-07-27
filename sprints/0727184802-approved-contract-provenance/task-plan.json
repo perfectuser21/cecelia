@@ -17,6 +17,8 @@
         "[BEHAVIOR] generator and evaluator dispatch carry approved manifest digest and source sha",
         "[BEHAVIOR] callback refuses stale manifest_digest before writing evaluator verdict",
         "[BEHAVIOR] callback refuses stale pr_head_sha before writing generator verdict",
+        "[BEHAVIOR] generator callback refuses stale manifest_digest before writing generator verdict",
+        "[BEHAVIOR] CI required check rejects missing stale digest and stale pr_head_sha fail closed",
         "[BEHAVIOR] mergeGate refuses PASS verdicts that do not carry the approved manifest_digest",
         "[BEHAVIOR] mergeGate refuses missing approved manifest_digest and stale judge manifest_digest",
         "[BEHAVIOR] approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift",
