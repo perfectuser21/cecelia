@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 13)
+# Sprint Contract Draft (Round 14)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -31,6 +31,24 @@ N/A — 本任务不新增对外 HTTP response；核心输出是内部 canonical
 }
 ```
 
+### Internal Result Schema: ApprovedContractApprovalRecord
+
+```json
+{
+  "approval_id": "uuid",
+  "initiative_id": "uuid",
+  "run_id": "uuid",
+  "contract_version": "integer",
+  "source_commit_sha": "git sha",
+  "sprint_dir": "string",
+  "manifest_digest": "sha256",
+  "approved_manifest": "ApprovedContractManifest",
+  "reviewer_verdict": "object",
+  "approved_at": "ISO-8601",
+  "supersedes_approval_id": "uuid|null"
+}
+```
+
 - `run_id` (uuid, 必填): 来源 — PRD canonical manifest 字面要求。
 - `contract_version` (integer, 必填): 来源 — PRD 同一 version 覆写拒绝。
 - `source_commit_sha` (git sha, 必填): 来源 — PRD Reviewer 批准瞬间 Git 对象。
@@ -39,6 +57,8 @@ N/A — 本任务不新增对外 HTTP response；核心输出是内部 canonical
 - `manifest_digest` (sha256, 必填): 来源 — PRD Generator/Evaluator/CI/merge gate 共同可信输入。
 - `approved_at` (ISO-8601, 必填): 来源 — PRD approved_at。
 - `reviewer_verdict` (object, 必填): 来源 — PRD reviewer verdict identity。
+- `approval_id` (uuid, 必填): 来源 — append-only 批准事实账本主键。
+- `supersedes_approval_id` (uuid|null, 必填): 来源 — 新 `contract_version` 追加时指向上一条批准事实；同 digest 重放不新增。
 - **禁用字段名**: `approved_sha_only`, `contract_content_only`, `latest_branch`, `mutable_contract_branch`, `force_manifest_digest`。
 
 ## 已知约束（来自回归测试 / 累积FR）
@@ -57,14 +77,14 @@ N/A — 本任务不新增对外 HTTP response；核心输出是内部 canonical
 
 | 要素 | 说明 | 本次答案（必填，可 N/A） |
 |------|------|--------------------------|
-| **FR（做什么）** | 功能需求：系统对外承诺做什么 | 生成 approved contract canonical manifest；append-only 记录批准；Generator dispatch/callback、Evaluator、Judge、CI required check、merge gate 全部用同一 `manifest_digest` 与 current PR SHA 校验；approved artifact drift fail-closed 并回到 GAN。 |
+| **FR（做什么）** | 功能需求：系统对外承诺做什么 | 生成 approved contract canonical manifest；向 `initiative_contract_approvals` 追加不可变批准事实并维护 `initiative_contracts` current pointer；Generator dispatch/callback、Evaluator、Judge、CI required check、merge gate 全部用同一 `manifest_digest` 与 current PR SHA 校验；approved artifact drift fail-closed 并回到 GAN。 |
 | **NFR（做得多好）** | 非功能需求：性能/可靠性/并发阈值等 | 每次进入 Generator/Evaluator/Judge/CI/merge 前先验 manifest；缺失/不可达/stale 均 fail-closed；manifest canonical 序列稳定，重复生成 digest 一致。 |
 | **Invariant（永不违反）** | 任何情况下不得打破的不变量 | Reviewer 批准的 Git blob 集合不可被 Generator 改语义；同一 `contract_version` 不得用不同 `manifest_digest` 覆写；secrets 不进 manifest；租户/运行上下文不得跨 run 误用。 |
 | **判定点（怎么知道）** | 对模糊现实的判断假设（详见"判定点登记表"） | 见下方登记表。 |
 | **保质期（何时过期）** | 该能力/数据/token 何时失效，谁负责退役 | manifest 对应一次 approved contract version，直到重新 GAN 产生新 version/digest；callback token 仍按 attempt lease 生命周期失效。 |
 | **死亡告警（停了谁知道）** | 该功能停止工作后，谁在多久内会知道，用什么告警手段 | CI required check、mergeGate、Evaluator/Judge verdict 均输出结构化 reason；fail-closed reason 进入 orchestrator_decision_log 与 PR check。 |
 | **失败语义（挂了怎么办）** | 故障时放行还是拦截？重试幂等？降级策略？ | 缺 manifest/不可达/stale/digest mismatch → 拦截；approved artifact drift 与批准后 main migration 冲突 → `requires_re_gan`，不得进入普通 generator fix；同 digest 重放幂等。 |
-| **效果确认（已发≠已生效）** | 每个对外动作如何确认真实生效？回执方式/时限/拿不到算什么 | DB 中 `initiative_contracts.manifest_digest/source_commit_sha/approved_manifest` 可查且 `approved_at` 在 5 分钟内；attempt bundle、evaluate/judge verdict detail、CI output 与 DB digest 一致。 |
+| **效果确认（已发≠已生效）** | 每个对外动作如何确认真实生效？回执方式/时限/拿不到算什么 | DB 中 `initiative_contract_approvals.manifest_digest/source_commit_sha/approved_manifest/reviewer_verdict` 可查且 `approved_at` 在 5 分钟内；`initiative_contracts` 只作为 current pointer；attempt bundle、evaluate/judge verdict detail、CI output 与批准账本 digest 一致。 |
 
 ### 判定点登记表（对模糊现实的判断假设 — decisions e035dad8）
 
@@ -80,7 +100,7 @@ N/A — 本任务不新增对外 HTTP response；核心输出是内部 canonical
 
 | 场景 | 失败行为 | 重试幂等？ | 降级策略 |
 |------|----------|-----------|----------|
-| manifest 缺失/不可达 | 返回 `{ok:false, reason:"approved_contract_manifest_missing"}` 或 CI 非 0 | 是，同一输入重复同一 reason | 无降级，fail-closed |
+| manifest 缺失/不可达 | 缺失返回 `{ok:false, reason:"approved_contract_manifest_missing"}`；DB/Git/manifest row 不可读返回 `{ok:false, reason:"approved_contract_manifest_unreachable"}`；Generator/Evaluator/CI/merge gate 四个节点均不得继续 | 是，同一输入重复同一 reason | 无降级，fail-closed |
 | current PR SHA 缺失或与 verdict 不一致 | merge/evaluate/CI 拒绝，reason=`current_pr_sha_missing` 或 stale sha | 是 | 等待真实 PR SHA 后重跑 |
 | manifest_digest 与 approved digest 不一致 | 拒绝，reason=`stale_manifest_digest` / `stale_evaluate_manifest_digest` | 是 | 重新 GAN 或重新 evaluator/judge |
 | artifact 删除/重命名/修改 | 拒绝，reason=`approved_contract_drift`，列出 drift path，并路由 `requires_re_gan` | 是 | 重新 GAN；禁止普通 generator-fix |
@@ -119,7 +139,7 @@ Dispatcher 注入给真实 attempt 的 shape：
 ## 接缝清单
 
 - Git object store ↔ canonical manifest：批准 SHA 下每个 artifact 必须用真实 `git ls-tree/git cat-file/git show` 取 blob oid、sha256、size；不可从工作区当前文件或 branch tip 推断。
-- Brain orchestrator ↔ PostgreSQL `initiative_contracts` / `initiative_runs`：批准记录 append-only，DB 真写并由 dispatch/evaluator/merge gate 读取同一 row。
+- Brain orchestrator ↔ PostgreSQL `initiative_contract_approvals` / `initiative_contracts` / `initiative_runs`：批准事实必须 append-only 写入 `initiative_contract_approvals`，`initiative_contracts` 只维护 latest/current pointer；dispatch/evaluator/CI/merge gate 必须读同一批准事实 digest。
 - Attempt callback ↔ `orchestrator_decision_log` verdict：callback 上报的 manifest/pr SHA 必须服务端校验后才落 allow verdict。
 - Judge handler ↔ `orchestrator_decision_log` verdict：内部 judge 无外部 callback 时仍必须把 approved digest/current PR SHA 作为 verdict provenance 落库，供 ground-truth 与 merge gate 使用。
 - CI / merge gate ↔ current PR SHA：CI 和 merge gate 必须读取 current PR head 与 approved manifest digest，stale verdict/digest 拒绝。
@@ -127,8 +147,8 @@ Dispatcher 注入给真实 attempt 的 shape：
 
 ## 禁 mock 边清单
 
-- `harness-gan` APPROVED SHA ↔ `materializeApprovedContractManifest` ↔ PostgreSQL `initiative_contracts`（本单改批准记录写路径，测试必须真 PG temp table 验同 version 不同 digest 拒绝）。
-- `initiative_contracts.approved_manifest` ↔ dispatcher `buildBundle/buildInputs`（本单改跨模块数据传递，测试不得 mock contract row shape）。
+- `harness-gan` APPROVED SHA ↔ `materializeApprovedContractManifest` ↔ PostgreSQL `initiative_contract_approvals`（本单改批准记录写路径，测试必须真 PG temp table 验批准事实 append-only、同 digest 重放幂等、同 version 不同 digest 拒绝、新 version 追加）。
+- `initiative_contract_approvals.approved_manifest` / `initiative_contracts.current pointer` ↔ dispatcher `buildBundle/buildInputs`（本单改跨模块数据传递，测试不得 mock contract row shape）。
 - Attempt callback route ↔ `appendAttemptVerdict` / `appendGeneratorFixCallback` ↔ `orchestrator_decision_log`（本单改 callback lifecycle hook，测试不得 mock 掉 verdict 写入边）。
 - `spawn:judge` handler ↔ `appendJudgeVerdict` ↔ `orchestrator_decision_log`（本单改 judge verdict provenance，测试必须调真实 handler/写入函数，不得只 mock judge detail）。
 - `derive` failure_class router ↔ `approved_contract_drift`（本单改状态机分支，测试必须直接调用真实 `derive`，禁止用 fake route 表替代）。
@@ -152,12 +172,15 @@ Reviewer 批准合同资产 → canonical manifest 冻结 Git 对象与 append-o
 
 **可观测行为**: approved SHA 下的 `sprint-prd.md`、`contract-draft.md`、`contract-dod.md`、`task-plan.json`、`tests/**`、引用 fixture/golden、root `DoD.md`、批准时固定 migration 文件被排序写入 manifest；同输入重复生成 `manifest_digest` 完全一致。
 
+**引用 fixture/golden discovery 硬约束**: discovery 必须从 approved SHA 的合同与测试内容中解析引用关系，而不是只扫当前工作区。来源包括：`Fixture:` / `Golden:` 行、Markdown 链接/代码字面量、`tests/**` 内字符串字面量中匹配 `sprints/**/fixtures/**`、`sprints/**/golden/**`、`${SPRINT_DIR}/fixtures/**`、`${SPRINT_DIR}/golden/**` 的路径；路径归一化后按 canonical artifact 顺序纳入 manifest。引用资产内容 drift、删除、重命名均拒绝；未能解析引用来源不得静默跳过。
+
 **验证命令**:
 ```bash
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "referenced fixture and golden discovery freezes indirect assets and rejects their drift"
 ```
 
-**硬阈值**: artifacts `(path, kind)` 顺序字面等于测试期望（`root_dod/migration/golden/contract_dod/contract_draft/prd/task_plan/test`）；每项 `git_blob_oid` 非空、`sha256` 为 64 位 hex、`size > 0`；重复生成 digest 一致。
+**硬阈值**: artifacts `(path, kind)` 顺序字面等于测试期望（`root_dod/migration/golden/golden/contract_dod/contract_draft/prd/task_plan/test`）；每项 `git_blob_oid` 非空、`sha256` 为 64 位 hex、`size > 0`；重复生成 digest 一致；`${SPRINT_DIR}/fixtures/replay-golden.json` 由引用 discovery 纳入并在内容 drift 时返回 `approved_contract_drift`。
 
 ---
 
@@ -165,14 +188,14 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 1 点要求 append-only；第 6 点要求同一 `contract_version` 已有不同 manifest 时拒绝覆写。
 
-**可观测行为**: `initiative_contracts` 新增/扩展 `approved_manifest jsonb`、`manifest_digest text`、`source_commit_sha text`、`reviewer_verdict jsonb`；同一 version + 同 digest 重放幂等且不得覆写已批准正文；同一 version + 不同 digest 抛 `approved_contract_manifest_conflict`，不更新原批准记录。
+**可观测行为**: `initiative_contract_approvals` 是批准事实账本，append-only 记录 `initiative_id/run_id/contract_version/source_commit_sha/sprint_dir/manifest_digest/approved_manifest/reviewer_verdict/approved_at/supersedes_approval_id`；`initiative_contracts` 只保留 latest/current pointer 供旧调用方读取。同一 version + 同 digest 重放幂等且不得覆写首次批准正文或新增账本行；同一 version + 不同 digest 抛 `approved_contract_manifest_conflict`，不更新原批准事实；更高 `contract_version` 写入新账本行并以 `supersedes_approval_id` 指向上一条批准事实。
 
 **验证命令**:
 ```bash
-npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "append-only approval rejects same contract_version with a different manifest_digest"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "append-only approval ledger records immutable facts and rejects same contract_version with a different manifest_digest"
 ```
 
-**硬阈值**: 真 PostgreSQL temp table 中同 digest 重放后 row 数仍为 1 且 `prd_content/contract_content` 保持首次批准值；第二次不同 digest 写入必须 reject；原 row 的 `manifest_digest` 不变。
+**硬阈值**: 真 PostgreSQL temp table 中同 digest 重放后 `initiative_contracts` current row 数仍为 1 且 `prd_content/contract_content` 保持首次批准值；`initiative_contract_approvals` 对 version 6 仍只有 1 行且 `source_commit_sha/sprint_dir/approved_manifest/reviewer_verdict` 与首次批准一致；第二次不同 digest 写入必须 reject；version 7 新 digest 必须追加第二条批准事实并 `supersedes_approval_id = version 6 approval_id`。
 
 ---
 
@@ -187,6 +210,7 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator and evaluator dispatch carry approved manifest digest and source sha"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "judge dispatch handler and verdict persistence carry approved manifest_digest and current pr_head_sha"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator evaluator CI and merge gate reject unreachable approved manifest fail closed"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale manifest_digest before writing evaluator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "evaluator callback refuses stale pr_head_sha before writing evaluator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale pr_head_sha before writing generator verdict"
@@ -197,7 +221,7 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses missing approved manifest_digest and stale judge manifest_digest"
 ```
 
-**硬阈值**: dispatch env 必须含 `APPROVED_CONTRACT_MANIFEST_DIGEST` 与 `APPROVED_CONTRACT_SOURCE_SHA`；Judge env 还必须含当前 `PR_HEAD_SHA`；Generator launch preflight 缺 manifest 返回 `approved_contract_manifest_missing`、stale digest 返回 `stale_manifest_digest`；Evaluator/Judge preflight 缺 current PR SHA 返回 `current_pr_sha_missing`、stale PR SHA 返回 `stale_pr_head_sha`；evaluator callback stale digest 在写 verdict 前返回 `stale_evaluate_manifest_digest`；evaluator callback stale PR SHA 在写 verdict 前返回 `stale_evaluate_pr_head_sha`；generator callback stale digest 在写 verdict 前返回 `stale_generator_manifest_digest`；callback stale generator PR SHA 在写 verdict 前返回 `stale_generator_pr_head_sha`；evaluator/generator callback 缺 `provider_metadata.pr_head_sha` 时均在写 verdict 前返回 `current_pr_sha_missing`；judge handler 写入 `verdict:judge` detail 前必须从 approved contract row 取 `manifest_digest` 并与 current PR SHA 同写；CI required check 缺 manifest 返回 `approved_contract_manifest_missing`、stale digest 返回 `stale_manifest_digest`、stale PR SHA 返回 `stale_pr_head_sha`；merge gate stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 approved digest 返回 `approved_contract_manifest_digest_missing`。
+**硬阈值**: dispatch env 必须含 `APPROVED_CONTRACT_MANIFEST_DIGEST` 与 `APPROVED_CONTRACT_SOURCE_SHA`；Judge env 还必须含当前 `PR_HEAD_SHA`；Generator launch preflight 缺 manifest 返回 `approved_contract_manifest_missing`、manifest 不可达返回 `approved_contract_manifest_unreachable`、stale digest 返回 `stale_manifest_digest`；Evaluator/Judge preflight 缺 current PR SHA 返回 `current_pr_sha_missing`、manifest 不可达返回 `approved_contract_manifest_unreachable`、stale PR SHA 返回 `stale_pr_head_sha`；evaluator callback stale digest 在写 verdict 前返回 `stale_evaluate_manifest_digest`；evaluator callback stale PR SHA 在写 verdict 前返回 `stale_evaluate_pr_head_sha`；generator callback stale digest 在写 verdict 前返回 `stale_generator_manifest_digest`；callback stale generator PR SHA 在写 verdict 前返回 `stale_generator_pr_head_sha`；evaluator/generator callback 缺 `provider_metadata.pr_head_sha` 时均在写 verdict 前返回 `current_pr_sha_missing`；judge handler 写入 `verdict:judge` detail 前必须从 approved contract row 取 `manifest_digest` 并与 current PR SHA 同写；CI required check 缺 manifest 返回 `approved_contract_manifest_missing`、manifest 不可达返回 `approved_contract_manifest_unreachable`、stale digest 返回 `stale_manifest_digest`、stale PR SHA 返回 `stale_pr_head_sha`；merge gate manifest 不可达返回 `{allow:false, reason:"approved_contract_manifest_unreachable"}`；stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 approved digest 返回 `approved_contract_manifest_digest_missing`。
 
 ---
 
@@ -205,17 +229,17 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 3/4 点要求 sprint-prd、contract、DoD、task-plan、tests、fixture/golden 删除/重命名/修改均拒绝；Root DoD 只允许 checkbox/evidence/provenance 机械变化，artifact path、Test command、动作、预期、环境和安全语义不得漂移。
 
-**可观测行为**: `verifyApprovedContractManifest` 对当前 PR SHA 的 Git tree 与 manifest artifacts 逐项比对；`365 -> 366` 的 root DoD Test command/action 变化与 approved migration path 重命名返回 `approved_contract_drift`；Root DoD 的 Test command、动作、预期、环境、安全语义任一变化都返回 `approved_contract_drift`；checkbox-only、evidence-only、provenance-only 各自返回 ok 并列 `allowed_mechanical_changes`。
+**可观测行为**: `verifyApprovedContractManifest` 对当前 PR SHA 的 Git tree 与 manifest artifacts 逐项比对；`365 -> 366` 的 root DoD Test command/action 变化与 approved migration path 重命名返回 `approved_contract_drift`；Root DoD 的 Test command、动作、预期、环境、安全语义任一变化都返回 `approved_contract_drift`；Root DoD 归一化算法只忽略 checkbox 状态与 `Evidence:` / `Provenance:` 行，且 checkbox+evidence/provenance 组合机械变化仍返回 ok 并列 `allowed_mechanical_changes`。
 
 **验证命令**:
 ```bash
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved migration 365 changed to 366 is rejected as approved_contract_drift"
-npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "checkbox-only evidence-only and provenance-only root DoD edits are allowed"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "checkbox-only evidence-only provenance-only and combined root DoD edits are allowed"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "root DoD Test command action expected environment and safety semantic edits are each rejected as approved_contract_drift"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are each rejected as approved_contract_drift"
 ```
 
-**硬阈值**: `365->366` 必须 `ok:false reason=approved_contract_drift` 且 drift 覆盖 root `DoD.md` 与原 365 migration path；Root DoD Test command/Action/Expected/Environment/Safety 任一单独语义变化必须 `approved_contract_drift`；checkbox-only/evidence-only/provenance-only 各自必须 `ok:true`；sprint-prd、contract-draft、contract-dod、task-plan、tests/**、fixture/golden 的任一单独删除/重命名/内容修改均列 drift path，且不得把 rename 当新 artifact 放行。
+**硬阈值**: `365->366` 必须 `ok:false reason=approved_contract_drift` 且 drift 覆盖 root `DoD.md` 与原 365 migration path；Root DoD Test command/Action/Expected/Environment/Safety 任一单独语义变化必须 `approved_contract_drift`；checkbox-only/evidence-only/provenance-only/checkbox+evidence+provenance 组合机械变化均必须 `ok:true`；sprint-prd、contract-draft、contract-dod、task-plan、tests/**、fixture/golden 的任一单独删除/重命名/内容修改均列 drift path，且不得把 rename 当新 artifact 放行。
 
 ---
 
@@ -223,14 +247,15 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 
 **来源**: `[FROM_PRD]` — PRD 边界情况要求 manifest 缺失、不可读、digest 不匹配、source/current PR SHA 不一致均 fail-closed。
 
-**可观测行为**: validation helper、CI script、Evaluator preflight 与 merge gate 对缺 manifest、manifest digest mismatch、current PR SHA 缺失输出结构化拒绝 reason，不继续普通实现/修复流程。
+**可观测行为**: validation helper、Generator preflight、Evaluator preflight、CI script 与 merge gate 对缺 manifest、manifest 不可达、manifest digest mismatch、current PR SHA 缺失输出结构化拒绝 reason，不继续普通实现/修复流程。
 
 **验证命令**:
 ```bash
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "missing manifest unreachable stale sha and stale manifest digest fail closed"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator evaluator CI and merge gate reject unreachable approved manifest fail closed"
 ```
 
-**硬阈值**: manifest load error → `approved_contract_manifest_unreachable`；缺 manifest → `approved_contract_manifest_missing`；digest 不匹配 → `stale_manifest_digest`；current PR SHA 缺失 → `current_pr_sha_missing`；命令 exit 0 只在这些拒绝 reason 被断言命中时成立。
+**硬阈值**: helper/Generator/Evaluator/CI/merge gate 任一节点的 manifest load error → `approved_contract_manifest_unreachable`；缺 manifest → `approved_contract_manifest_missing`；digest 不匹配 → `stale_manifest_digest`；current PR SHA 缺失 → `current_pr_sha_missing`；命令 exit 0 只在这些拒绝 reason 被断言命中时成立。
 
 ---
 
@@ -338,6 +363,21 @@ try {
       updated_at timestamptz DEFAULT now(),
       UNIQUE (initiative_id, version)
     ) ON COMMIT DROP;
+    CREATE TEMP TABLE initiative_contract_approvals (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      initiative_id uuid NOT NULL,
+      run_id uuid NOT NULL,
+      contract_version integer NOT NULL,
+      source_commit_sha text NOT NULL,
+      sprint_dir text NOT NULL,
+      manifest_digest text NOT NULL,
+      approved_manifest jsonb NOT NULL,
+      reviewer_verdict jsonb NOT NULL,
+      approved_at timestamptz NOT NULL DEFAULT now(),
+      supersedes_approval_id uuid,
+      created_at timestamptz DEFAULT now(),
+      UNIQUE (initiative_id, contract_version, manifest_digest)
+    ) ON COMMIT DROP;
     CREATE TEMP TABLE initiative_runs (
       id uuid PRIMARY KEY,
       initiative_id uuid NOT NULL,
@@ -369,10 +409,11 @@ try {
   });
   const res = await client.query(
     `SELECT count(*)::int AS count
-       FROM initiative_contracts
+       FROM initiative_contract_approvals
       WHERE manifest_digest = $1
         AND approved_manifest IS NOT NULL
         AND source_commit_sha = $2
+        AND reviewer_verdict->>'verdict' = 'APPROVED'
         AND approved_at > NOW() - interval '5 minutes'`,
     [manifestDigest, process.env.PR_HEAD_SHA],
   );
@@ -394,11 +435,13 @@ echo "OK: approved contract provenance final e2e passed"
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | canonical manifest | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts | `approved-contract-provenance.js` 不存在或未生成 artifacts/digest → FAIL |
-| append-only DB approval | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | append-only approval rejects same contract_version with a different manifest_digest | 旧 `materializeApprovedContract` 覆写同 version 或同 digest 重放改正文 → FAIL |
+| append-only DB approval | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | append-only approval ledger records immutable facts and rejects same contract_version with a different manifest_digest | 旧 `materializeApprovedContract` 覆写同 version、同 digest 重放改正文或不写 `initiative_contract_approvals` append-only 账本 → FAIL |
 | 365→366 drift | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | approved migration 365 changed to 366 is rejected as approved_contract_drift | 旧系统不比较 approved root DoD 语义或 approved migration path → FAIL |
-| Root DoD 机械变化 | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | checkbox-only evidence-only and provenance-only root DoD edits are allowed | 任一 checkbox-only/evidence-only/provenance-only 机械变化被过严拒绝，或其他语义变化被误放行 → FAIL |
+| Root DoD 机械变化 | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | checkbox-only evidence-only provenance-only and combined root DoD edits are allowed | 任一 checkbox-only/evidence-only/provenance-only/组合机械变化被过严拒绝，或其他语义变化被误放行 → FAIL |
 | Root DoD 安全语义漂移 | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | root DoD Test command action expected environment and safety semantic edits are each rejected as approved_contract_drift | Test command/动作/预期/环境/安全任一单独漂移仍通过 → FAIL |
 | fail-closed reference | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | missing manifest unreachable stale sha and stale manifest digest fail closed | 缺 manifest/stale digest 被放行 → FAIL |
+| 引用 fixture/golden discovery | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | referenced fixture and golden discovery freezes indirect assets and rejects their drift | 只冻结显式文件清单而漏掉合同/测试引用的 fixture/golden → FAIL |
+| 节点级 manifest 不可达 | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | generator evaluator CI and merge gate reject unreachable approved manifest fail closed | manifest 不可达只在 helper 拒绝，Generator/Evaluator/CI/merge gate 仍继续 → FAIL |
 | dispatch digest propagation | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | generator and evaluator dispatch carry approved manifest digest and source sha | 现有 dispatch env 不注入 approved digest/source SHA → FAIL |
 | judge digest propagation | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | judge dispatch handler and verdict persistence carry approved manifest_digest and current pr_head_sha | judge dispatch/env 或 `verdict:judge` detail 缺 `manifest_digest` / current PR SHA → FAIL |
 | dispatch/evaluator preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch | launch/final-e2e 前未 fail-closed，缺 manifest 或 stale digest/SHA 仍创建 attempt/继续执行 → FAIL |
@@ -419,8 +462,8 @@ echo "OK: approved contract provenance final e2e passed"
 | 文件 | 要求 |
 |---|---|
 | `packages/brain/src/orchestrator/approved-contract-provenance.js` | 新增 manifest 构建、digest canonicalization、Git artifact drift 验证、Root DoD 机械变化归一化、manifest reference 校验、dispatch context 构建、execution preflight、callback digest preflight、main migration conflict 检测。 |
-| `packages/brain/src/orchestrator/contract-store.js` | `materializeApprovedContract` 升级或旁路到 `materializeApprovedContractManifest`；同 version 不同 digest 拒绝覆写。 |
-| `packages/brain/src/orchestrator/loop.js` | `persist_contract_approval` 用 approved SHA 生成 manifest，并冻结 `sprint-prd/contract-draft/contract-dod/task-plan/tests/**/fixtures/golden/DoD.md/migration`。 |
+| `packages/brain/src/orchestrator/contract-store.js` | `materializeApprovedContract` 升级或旁路到 `materializeApprovedContractManifest`；写 `initiative_contract_approvals` append-only 账本；同 version 不同 digest 拒绝覆写。 |
+| `packages/brain/src/orchestrator/loop.js` | `persist_contract_approval` 用 approved SHA 生成 manifest，并冻结 `sprint-prd/contract-draft/contract-dod/task-plan/tests/**/引用 fixture/golden/DoD.md/migration`。 |
 | `packages/brain/src/orchestrator/dispatcher.js` | generator/evaluator/judge bundle 与 env 注入 approved manifest digest/source SHA；缺 manifest fail-closed。 |
 | `packages/brain/src/routes/harness-callback.js` | evaluator/generator callback verdict 写入前核对 digest + PR SHA；decision_log detail 持久化 `manifest_digest`。 |
 | `packages/brain/src/orchestrator/kernel-handlers.js` | judge handler 调用 independent judge 时传入 approved manifest digest/current PR SHA，并在 `verdict:judge` detail 与 attempt result 中持久化 `manifest_digest`。 |
@@ -440,3 +483,4 @@ echo "OK: approved contract provenance final e2e passed"
 - Round 11 修订：仅补 Reviewer Round 10 指出的两条 PRD 真漏覆盖：`approved_contract_drift` 必须 `requires_re_gan` 且不进 generator-fix；judge dispatch/handler/verdict detail 必须携带并持久化 approved `manifest_digest` + current PR SHA。
 - Round 12 修订：不扩 PRD scope；补齐 PRD 第 2 点里 callback 对 current PR SHA 的双角色覆盖，新增 evaluator callback stale PR SHA 在写 verdict 前 `stale_evaluate_pr_head_sha` fail-closed 断言。
 - Round 13 修订：不扩 PRD scope；把 callback 的 current PR SHA 校验补成 fail-closed 闭环，新增 evaluator/generator callback 缺 `provider_metadata.pr_head_sha` 时写 verdict 前 `current_pr_sha_missing` 拒绝。
+- Round 14 修订：仅补 Reviewer Round 13 指出的四个真实漏覆盖：append-only 批准事实独立账本与新 version 追加规则、引用 fixture/golden discovery 规则、Root DoD checkbox+evidence/provenance 组合机械变化归一化、Generator/Evaluator/CI/merge gate 节点级 manifest 不可达 fail-closed。
