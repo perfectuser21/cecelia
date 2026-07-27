@@ -120,6 +120,7 @@ run_at_load = plist.get('RunAtLoad')
 keep_alive = plist.get('KeepAlive')
 user_name = plist.get('UserName')
 tool_path = plist.get('EnvironmentVariables', {}).get('PATH')
+worker_host = plist.get('EnvironmentVariables', {}).get('CECELIA_FLEET_WORKER_HOST')
 print(
     ('true' if run_at_load is True else repr(run_at_load))
     + '|'
@@ -128,10 +129,12 @@ print(
     + str(user_name)
     + '|'
     + str(tool_path)
+    + '|'
+    + str(worker_host)
 )
 PY
 )" || fail "rendered file is not a valid plist"
-[[ "$plist_contract" == 'true|true|_cecelia|/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' ]] \
+[[ "$plist_contract" == 'true|true|_cecelia|/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|100.86.57.69' ]] \
   || fail "plist contract drifted: $plist_contract"
 validated_plist="$test_root/validated-fleet-worker.plist"
 cp "$plist" "$validated_plist"

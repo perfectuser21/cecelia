@@ -6,6 +6,11 @@ const EXPECTED_CAPACITIES = {
   'xian-mac-m4': 8,
   'xian-mac-m1': 8,
 };
+const EXPECTED_WORKER_BIND_HOSTS = {
+  'us-mac-m4': '127.0.0.1',
+  'xian-mac-m4': '100.86.57.69',
+  'xian-mac-m1': '100.88.166.55',
+};
 
 async function loadContract() {
   const loaded = await import('./node-profile.js').catch(() => ({}));
@@ -82,6 +87,21 @@ describe('Fleet NodeProfile registry', () => {
         domain: 'system',
         kind: 'LaunchDaemon',
       });
+    }
+  });
+
+  it('pins a loopback US listener and exact Xian Tailscale listeners', async () => {
+    const { listNodeProfiles } = await loadContract();
+    const profiles = listNodeProfiles();
+
+    expect(Object.fromEntries(profiles.map((profile) => [
+      profile.machine_id,
+      profile.worker_bind_host,
+    ]))).toEqual(EXPECTED_WORKER_BIND_HOSTS);
+    expect(profiles[0].worker_bind_host).toBe('127.0.0.1');
+    for (const profile of profiles.slice(1)) {
+      expect(profile.worker_bind_host).not.toBe('127.0.0.1');
+      expect(profile.worker_bind_host).not.toBe('0.0.0.0');
     }
   });
 
