@@ -6,6 +6,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { runMigrations } from '../../migrate.js';
 import { createActorInbox } from '../../orchestrator/actor-inbox.js';
+import { createAttemptStore } from '../../orchestrator/attempt-store.js';
+import { appendHop } from '../../orchestrator/decision-log.js';
 
 const migrationsUrl = new URL('../../../migrations/', import.meta.url);
 const schemaName = `commander_367_${process.pid}_${randomUUID().replaceAll('-', '')}`;
@@ -230,6 +232,75 @@ describe('migration 367 through the real PostgreSQL migration runner', () => {
       message_count: 2,
       message_token_count: 20,
     });
+  });
+
+  it('projects the authoritative decision and Attempt lifecycle without JavaScript dual writes', async () => {
+    const runId = randomUUID();
+    const attemptId = randomUUID();
+    await migrationPool.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await appendHop(migrationPool, {
+      runId,
+      hop: 1,
+      observed: { phase: 'planning' },
+      derivedPhase: 'planning',
+      gateVerdict: null,
+      action: 'observe',
+      detail: null,
+    });
+    await appendHop(migrationPool, {
+      runId,
+      hop: 2,
+      observed: { phase: 'planning' },
+      derivedPhase: 'gan',
+      gateVerdict: null,
+      action: 'dispatch:planner',
+      detail: null,
+    });
+
+    const attempts = createAttemptStore(migrationPool);
+    await attempts.createAttempt({
+      id: attemptId,
+      runId,
+      hop: 1,
+      phase: 'planning',
+      role: 'planner',
+      provider: 'codex',
+      accountId: 'team1',
+      machineId: 'us-mac-m4',
+      bundle: { objective: 'bounded fixture' },
+      callbackSecretHash: 'a'.repeat(64),
+    });
+    await attempts.markStarting(attemptId, { leaseOwner: 'brain-1', leaseSeconds: 90 });
+    await attempts.markRunning(attemptId, {
+      leaseOwner: 'brain-1',
+      providerSessionId: 'session-private',
+      leaseSeconds: 90,
+    });
+    await attempts.heartbeat(attemptId, { leaseOwner: 'brain-1', leaseSeconds: 90 });
+    await attempts.complete(attemptId, {
+      status: 'completed',
+      summary: 'private result',
+      provider_metadata: { session_id: 'session-private' },
+    }, { leaseOwner: 'brain-1' });
+
+    const projected = await migrationPool.query(
+      `SELECT event_type,payload
+         FROM harness_run_events
+        WHERE run_id=$1
+        ORDER BY cursor`,
+      [runId],
+    );
+    expect(projected.rows.map(({ event_type }) => event_type)).toEqual([
+      'run.created',
+      'run.phase_changed',
+      'attempt.starting',
+      'attempt.running',
+      'attempt.heartbeat',
+      'attempt.completed',
+    ]);
+    expect(JSON.stringify(projected.rows)).not.toMatch(
+      /bounded fixture|private result|session-private|task_bundle|result|error_message/i,
+    );
   });
 
   it('is idempotent through the migration runner', async () => {

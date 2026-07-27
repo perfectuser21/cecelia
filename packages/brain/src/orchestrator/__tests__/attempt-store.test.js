@@ -44,6 +44,7 @@ describe('attempt store', () => {
     expect(result.id).toBe(input.id);
     const [sql, values] = pool.query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO harness_attempts/i);
+    expect(sql).not.toMatch(/INSERT INTO harness_run_events/i);
     expect(sql).toMatch(/ON CONFLICT \(run_id, hop\)/i);
     expect(sql).toMatch(/machine_id,\s*requested_machine_id/i);
     expect(sql).toMatch(/requested_machine_id,\s*local_container_naming/i);
@@ -98,6 +99,9 @@ describe('attempt store', () => {
     expect(pool.query.mock.calls[0][0]).toMatch(/status = 'starting'.*lease_owner =/is);
     expect(pool.query.mock.calls[1][0]).toMatch(/status = 'running'.*provider_session_id/is);
     expect(pool.query.mock.calls[2][0]).toMatch(/lease_owner = \$2.*status IN \('starting','running'\)/is);
+    for (const [sql] of pool.query.mock.calls) {
+      expect(sql).not.toMatch(/INSERT INTO harness_run_events/i);
+    }
   });
 
   it('watchdog 只能 reclaim 已过期的同一个非终态 attempt', async () => {

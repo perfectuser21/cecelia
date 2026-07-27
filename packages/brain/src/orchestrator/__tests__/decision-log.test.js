@@ -30,6 +30,7 @@ describe('appendHop', () => {
     expect(pool.query).toHaveBeenCalledTimes(1);
     const [sql, params] = pool.query.mock.calls[0];
     expect(sql).toContain('INSERT INTO orchestrator_decision_log');
+    expect(sql).not.toMatch(/INSERT INTO harness_run_events/i);
     for (const col of ['run_id', 'hop', 'observed', 'derived_phase', 'gate_verdict', 'action', 'detail']) {
       expect(sql).toContain(col);
     }
