@@ -1,0 +1,30 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "真实接缝集中在 preview workflow、Brain route、GitHub 只读真相与 isolated PostgreSQL 对账，无前端或真机交互。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "恢复 preview workflow-route-authorities current-SHA gate",
+      "scope": "修正 `.github/workflows/preview-deploy.yml` 与 `packages/brain/src/routes/preview.js`，让 workflow 真保存 HTTP status/body，route 只把 caller 字段当 identifier/equality claim，并以 isolated PG + GitHub 当前 head/draft/context + decision log 完成 authority gate、legacy/postmerge 三段独立记录与零生产 mutation 守卫；review_required=true。",
+      "dod": [
+        "[BEHAVIOR] workflow start step 保留原始 HTTP status/body 且逐项发送 authority identifiers",
+        "[BEHAVIOR] preview route 只把 caller 字段当 identifier claim 并写 authority-bound receipt",
+        "[BEHAVIOR] stable blocker: stale_check_sha / wrong_repo / wrong_run_task / missing_required_context / preview_required_failure / local_required_context_failure / missing_context_mapping / external_infrastructure_failure 各自独立",
+        "[BEHAVIOR] generator-fix uses the real preview seam，legacy adapter 原路径保持原 pass/fail 语义，postmerge staging / production promotion / final report 各自独立记录",
+        "[BEHAVIOR] TEST_DATABASE_URL safety gate：显式测试库、验证 current_database()+inet_server_addr()，禁止 fallback 与生产 mutation"
+      ],
+      "files": [
+        ".github/workflows/preview-deploy.yml",
+        "packages/brain/src/routes/preview.js",
+        "packages/brain/src/preview-manager.js",
+        "packages/brain/src/routes/__tests__/preview.test.js",
+        "sprints/07272326-kernel-d3b00fb0/tests/preview-workflow-route-authority.contract.test.ts",
+        "sprints/07272326-kernel-d3b00fb0/tests/preview-route-authority.pg.contract.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
