@@ -118,6 +118,30 @@ write_executable "$fake_bin/sudo" \
   '#!/usr/bin/env bash' \
   'printf "sudo %s\n" "$*" >> "${FLEET_TEST_TRANSPORT_LOG:?}"' \
   '[[ "${1:-}" == "-n" ]] && shift' \
+  'if [[ "${1:-}" == "/bin/kill" && "${FLEET_TEST_SUDO_FAIL_KILL:-0}" == 1 ]]; then exit 25; fi' \
+  'if [[ "${1:-}" == "/bin/mkdir" && "${*: -1}" == "/var/run/cecelia" ]]; then exit 0; fi' \
+  'if [[ "${1:-}" == "/usr/bin/touch" && "${2:-}" == "/var/run/cecelia/fleet-worker.drain" ]]; then' \
+  '  [[ -n "${FLEET_TEST_NODE_LOG:-}" ]] && printf "drain emergency\n" >> "$FLEET_TEST_NODE_LOG"' \
+  '  exit 0' \
+  'fi' \
+  'if [[ "${1:-}" == "/bin/launchctl" ]]; then exit 0; fi' \
+  'if [[ "${1:-}" == "/bin/rm" && "${FLEET_TEST_SUDO_PARTIAL_RM:-0}" == 1 ]]; then' \
+  '  target="${@: -1}"' \
+  '  case "$target" in' \
+  '    /var/tmp/cecelia-fleet-rollout.*)' \
+  '      /bin/rm -f -- "$target/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh" "$target/source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh"' \
+  '      exit 24' \
+  '      ;;' \
+  '  esac' \
+  'fi' \
+  'if [[ "${1:-}" == "/bin/rm" && "${FLEET_TEST_SUDO_SIGNAL_RM:-0}" == 1 ]]; then' \
+  '  target="${@: -1}"' \
+  '  if [[ "$target" == /var/tmp/cecelia-fleet-rollout.* && ! -e "${FLEET_TEST_RM_SIGNAL_STATE:?}" ]]; then' \
+  '    : > "$FLEET_TEST_RM_SIGNAL_STATE"' \
+  '    kill -TERM "$PPID"' \
+  '    sleep 0.1' \
+  '  fi' \
+  'fi' \
   'if [[ "${1:-}" == "/bin/rm" && "${FLEET_TEST_SUDO_FAIL_RM:-0}" == 1 ]]; then exit 24; fi' \
   'if [[ "${1:-}" == "/usr/bin/stat" ]]; then' \
   '  target="${@: -1}"' \
@@ -342,6 +366,7 @@ CECELIA_MACHINE_ID=us-mac-m4 \
 FLEET_TEST_REAL_GIT=1 \
 FLEET_TEST_SUDO_NOEXEC=1 \
 FLEET_TEST_SUDO_EXEC_NODE=1 \
+FLEET_TEST_SUDO_FAIL_KILL=1 \
 FLEET_TEST_NODE_LOG="$node_log" \
 FLEET_TEST_NODE_ADMIT_READY="$admit_ready" \
 FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
@@ -384,7 +409,7 @@ if CECELIA_MACHINE_ID=us-mac-m4 \
   FLEET_TEST_REAL_GIT=1 \
   FLEET_TEST_SUDO_NOEXEC=1 \
   FLEET_TEST_SUDO_EXEC_NODE=1 \
-  FLEET_TEST_SUDO_FAIL_RM=1 \
+  FLEET_TEST_SUDO_PARTIAL_RM=1 \
   FLEET_TEST_NODE_LOG="$node_log" \
   FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
   FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
@@ -394,6 +419,27 @@ fi
 node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
 [[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
   || fail "cleanup failure after admission did not restore drain: $node_sequence"
+
+: > "$node_log"
+rm_signal_state="$test_root/rm-signal.state"
+rm -f "$rm_signal_state"
+cleanup_signal_status=0
+CECELIA_MACHINE_ID=us-mac-m4 \
+FLEET_TEST_REAL_GIT=1 \
+FLEET_TEST_SUDO_NOEXEC=1 \
+FLEET_TEST_SUDO_EXEC_NODE=1 \
+FLEET_TEST_SUDO_SIGNAL_RM=1 \
+FLEET_TEST_RM_SIGNAL_STATE="$rm_signal_state" \
+FLEET_TEST_NODE_LOG="$node_log" \
+FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
+FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout us-mac-m4 --apply >"$test_root/cleanup-signal.out" 2>&1 \
+  || cleanup_signal_status=$?
+[[ "$cleanup_signal_status" -ne 0 ]] \
+  || fail "TERM during root staging cleanup was reported as success"
+node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
+  || fail "TERM during root staging cleanup did not restore drain: $node_sequence"
 
 payload_root="$test_root/payload"
 node_source="$payload_root/source/packages/brain/scripts/fleet-worker"
