@@ -373,10 +373,12 @@
     {
       "task_id": "ws18",
       "title": "Gate 18：R48 独立 authority observer 与 Contract Gate",
-      "scope": "将 verifier stdout/temp JSON 降为 diagnostic-only；由独立 trust-domain observer 从 append-only server/PG store 与 content-addressed artifact 回读重算 receipt/artifact/predecessor/effect；严格校验生产七维 rubric；Controller-owned Contract Gate 在冻结 SHA 拒绝 R14/R15 self-attestation、永久 failed_targets 与 exhausted hard-fail。",
+      "scope": "把 R48 oracle 纪律应用到全部 34 个 Red case：verifier stdout/temp JSON 仅 diagnostic；由独立 trust-domain observer 从 append-only server/PG store 与 content-addressed artifact 回读重算 receipt/artifact/predecessor/signature/effect；严格校验生产七维 rubric；以事故级 exact-set+签名 oracle 重放 execution-target cycle A/B/C；Controller-owned Contract Gate 在冻结 SHA 拒绝 R14/R15 self-attestation、永久 failed_targets 与 exhausted hard-fail。",
       "dod": [
         "[BEHAVIOR] fake temp JSON/stdout、duplicate/missing cell、binding mutation、same observer、predecessor reorder、invented/unknown/missing rubric 全部 non-authorizing",
         "[BEHAVIOR] positive authority receipt 由不同 principal 独立回读并重算完整 task/run/attempt/role/session/lease/intent/contract/head/skill/policy、raw artifact、predecessor 与 before/after effect",
+        "[BEHAVIOR] 全 34-case 禁止 expect(verifier stdout) 正控；静态 law/schema 不计 runtime pass；selection receipt 独立重算 canonical digest 并验公钥签名",
+        "[BEHAVIOR] cycle A team4 transport、cycle B team3 transport+team5 quota、cycle C team4 fresh recovery 的 exact set、TTL/reset/probe 与旧 failed-run before/after digest 全部逐字匹配",
         "[BEHAVIOR] R14/R15 self-attested、flat failed_targets、exhausted hard-fail 四 fixture 均被独立 Contract Gate 拒绝并持久化 content-addressed gate artifact digest",
         "[BEHAVIOR] BRAIN_RESULT_FILE/result-channel store 不可用时返回 infrastructure BLOCKED，source .brain-result.json 与 stdout authority=0"
       ],
@@ -390,6 +392,8 @@
         "packages/brain/src/routes/harness-callback.js",
         "packages/brain/src/lib/__tests__/fixtures/contract-gate/r14-self-attested/",
         "packages/brain/src/lib/__tests__/fixtures/contract-gate/r15-self-attested/",
+        "sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts",
+        "sprints/07280225-kernel-fleet-durable-recovery-r5/tests/vitest.config.ts",
         "scripts/kernel-fleet/verify-r48-independent-authority.sh",
         "scripts/kernel-fleet/verify-r48-contract-gate.sh"
       ],

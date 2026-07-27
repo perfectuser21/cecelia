@@ -492,6 +492,14 @@ Controller-owned Contract Gate 必须从冻结 contract SHA 读取精确 Red inv
 `BRAIN_RESULT_FILE` 或 durable callback/store readback 不成立，proposer/reviewer 只能返回
 基础设施 `BLOCKED`；禁止把 source checkout `.brain-result.json` 写回当权威结果。
 
+Red 测试必须把这条纪律用于全部 34 个 case，而不只新增一个 “independent observer” case：
+任何运行脚本 stdout、临时 `--evidence-dir` JSON、被测模块 summary 或同主体生成的
+before/after 都不得成为正控。脚本结束后由另一 principal 查询 append-only PG/API store，
+读取内容寻址原件并独立重算 canonical digest、predecessor、签名与 effect；静态
+manifest/migration 检查只证明 law/schema，不授权运行时 pass。execution-target incident
+case 还必须逐字断言 cycle A/B/C 的 target/failure/TTL/reset/probe exact set、签名和旧 failed
+run before/after digest，不允许 `arrayContaining` 或非空检查替代事故级 oracle。
+
 ## NFR 约束
 
 <!-- 来源: decisions 表 category=nfr，PrepPRD 显式值优先 -->

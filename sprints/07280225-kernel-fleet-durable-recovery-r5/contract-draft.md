@@ -1,4 +1,4 @@
-# Sprint Contract Draft（Round 16）
+# Sprint Contract Draft（Round 17）
 
 ## 合同 Notes
 
@@ -9,7 +9,8 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
-- 先前 proposer heads 均仅作 Red 证据；Round 16 保留 R32-R47 修正，并新增 R48：
+- 先前 proposer heads 均仅作 Red 证据；Round 17 保留 R32-R48 修正，并把 R48 从文字约束落实为
+  全 34-case 的统一 oracle 纪律：
   Reviewer 自报 APPROVED 不具权威，必须由 Controller 对 durable result-channel、七维评分、
   task-intent revision、skill/policy digest、Contract Gate 与 Red inventory 做确定性批准；
   Reviewer 无 mutation credential；当前 workstream 只能 serial single writer。
@@ -44,10 +45,17 @@
   第二 authority；first/new/high-risk/authority change 只能由 versioned Controller policy
   要求 exact-head owner receipt。
 - runtime-result-channel-blocker: 本次 TaskBundle 没有注入 `BRAIN_RESULT_FILE`；source checkout 的 `.brain-result.json` 不具 authority。本轮只提交合同 branch，不能凭 source result 授权 Generator；修复后必须由真实 Reviewer Attempt 产生 `attempt.result.result_channel_receipt` 且完成 durable ack。
-- red-execution: 当前 proposer checkout 未安装 root 可解析的 `vitest/config`，目标 Vitest
-  在 collection 前以 `MODULE_NOT_FOUND` 退出；按 R37/R48 这是 tooling BLOCKED，不记 product
-  Red。34-case TypeScript 已由 esbuild 静态转换并通过 `node --check`，待依赖准备、真 PG 与
-  authority store 可用后必须运行合同列出的唯一 product-level 命令并逐 case 到达目标 seam。
+- red-oracle-v17: 34 个 case 不再从 verifier stdout、`--evidence-dir` 或同模块 summary 读取
+  正向授权。脚本产生的临时 JSON 只验证 `count_toward_authorization=false`；正向判定统一由
+  不同 trust-domain reader 查询 append-only PG store、读取 content-addressed raw artifact，
+  独立重算 receipt/artifact/predecessor/signature 与 effect snapshot。静态 manifest/migration
+  case 只验证 law/schema，不能授权运行时 pass。缺依赖、真 PG、GitHub/deployment authority
+  store 或签名公钥时明确 BLOCKED，不得把 collection/config/SQL 错误记为 product Red。
+- red-execution-v17: `npm --prefix packages/brain ci --ignore-scripts` 后，用 sprint 自带
+  `tests/vitest.config.ts` 精确收集 1 个文件/34 个 case；实际结果 `33 failed | 1 passed`。
+  失败分别落在缺失的生产 verifier/store/migration/manifest 或现有 strict-staging
+  empty→pass 行为，未再发生 dynamic import、Vitest include、SQL column 或共享 helper
+  collection 错误；ESRCH 真子进程 liveness 正控已通过，保留为现有能力基线。
 - inventory-authority: exact main `dd424a61926009ac85a915b31187124b85f0ca98:packages/engine/regression-contract.yaml` blob `7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3` 是唯一既有 P0/P1 source inventory，exact 129/P0=66/P1=63/digest=`4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f`；`packages/quality/contracts/` 是唯一 authority boundary。
 - lifecycle-proposal-provenance: Draft+CONFLICTING PR #4372 的 full source `4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13` 只是 proposed v1；分布 `0,2,2,8,6,0,1,110` 与 digest `be80793527a817611ba0698654ea858eda7c77ea9e63da937cba7b885a4d9363` 不 canonical。main migration 366 已占用；执行前重查 tree/DB 后选择未用 `>=368` 编号。
 - migration-filename: 本轮 re-fetch exact origin/main `dd424a...` 确认 tree 最大编号为 366；
@@ -819,7 +827,7 @@ US staging、production canary、rollback anchor 与 S12，且所有 origin Atte
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | 34 个 `it()` 的字面测试名（由下方库存命令直接提取） | 34 个唯一 `it()`；授权正控必须由独立 observer 直接读 append-only authority store/raw artifact；禁止共享动态 import helper、proof summary boolean、temp JSON authority 与 duplicate collection。 |
+| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | 34 个 `it()` 的字面测试名（由下方库存命令直接提取） | 34 个唯一 `it()`；授权正控必须由独立 observer 直接读 append-only authority store/raw artifact 并重算 digest/signature/effect；禁止 verifier stdout、共享动态 import helper、proof summary boolean、temp JSON authority 与 duplicate collection。 |
 
 **测试库存硬阈值**: 唯一文件数 = 1；总数 = 34；不得重复收集。migration parity、
 workflow bypass、result channel、full fixture/advisory/classification、projection/direct origin、
@@ -827,6 +835,11 @@ manifest/evidence schema、strict staging、terminal-order、clean-home D/A/F/E�
 set、single merge authority、Reviewer-v2 approval、Reviewer effect isolation 与
 execution-target logical-cycle quarantine/recovery、
 serial-single-writer Red 必须保留。
+
+**R48 oracle 硬阈值**：`rg 'expect\\(out\\)|expect\\(run'` 在测试文件中必须 0 命中；
+任何 `--evidence-dir` 只允许传给 `readDiagnosticReceipts` 并逐条断言
+`count_toward_authorization=false`。每个运行时正控随后必须查询真实 append-only store；
+execution-target selection 还必须从 receipt body 独立重算 canonical digest 并用公钥验证签名。
 
 **测试库存验证命令**:
 ```bash
@@ -836,8 +849,10 @@ IT_COUNT=$(rg -c '^[[:space:]]*it\(' "$TEST_ROOT/durable-recovery.contract.test.
 [ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 34 ]
 # packages/brain/sprints 是指向根 sprints 的 symlink；真实 collector 必须显式排除，
 # 否则同一 realpath 会被 Vitest 以两个逻辑路径执行两次。
-npx vitest run --exclude 'packages/brain/sprints/**' \
-  "$TEST_ROOT/durable-recovery.contract.test.ts" --reporter=verbose
+npm --prefix packages/brain ci --ignore-scripts
+npx vitest run \
+  --config "$TEST_ROOT/vitest.config.ts" \
+  --reporter=verbose
 rg -q 'fleet-worker transport with production upgrade rollback and source enum parity' \
   "$TEST_ROOT/durable-recovery.contract.test.ts"
 for COVER in \

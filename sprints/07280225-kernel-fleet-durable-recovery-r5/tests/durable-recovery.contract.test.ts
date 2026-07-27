@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, verify as verifySignature } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import yaml from 'js-yaml';
 
 const BASE = 'dd424a61926009ac85a915b31187124b85f0ca98';
 const SOURCE_PATH = 'packages/engine/regression-contract.yaml';
@@ -66,6 +67,15 @@ function canonicalJson(value: any): string {
   return JSON.stringify(value);
 }
 
+function collectPriorityEntries(value: any, out: any[] = []) {
+  if (Array.isArray(value)) value.forEach((item) => collectPriorityEntries(item, out));
+  else if (value && typeof value === 'object') {
+    if (typeof value.id === 'string' && ['P0', 'P1'].includes(value.priority)) out.push(value);
+    Object.values(value).forEach((item) => collectPriorityEntries(item, out));
+  }
+  return out;
+}
+
 function queryPgJson(query: string) {
   const dbUrl = process.env.DB_URL;
   if (!dbUrl) throw new Error('R48_BLOCKED_DB_URL_REQUIRED');
@@ -94,6 +104,29 @@ function expectIndependentAuthorityReceipt(receipt: any) {
   expect(receipt.effect_after_digest).toMatch(/^[a-f0-9]{64}$/);
 }
 
+function readAuthoritativeScenario(scenario: string) {
+  for (const key of ['TASK_ID', 'RUN_ID', 'CONTRACT_SHA', 'PR_HEAD_SHA'])
+    if (!process.env[key]) throw new Error(`R48_BLOCKED_${key}_REQUIRED`);
+  const rows = queryPgJson(`
+    SELECT task_id, run_id, producer_attempt_id AS attempt_id, producer_role AS role,
+           producer_session_id AS session_id, lease_generation, task_intent_digest,
+           contract_sha, artifact_sha AS head_sha, skill_digest, policy_digest,
+           issuer_trust_domain, observer_trust_domain, raw_artifact_path,
+           raw_artifact_digest, predecessor_digest, receipt_digest,
+           effect_before_digest, effect_after_digest, payload
+    FROM kernel_harness_origin_receipts
+    WHERE task_id='${process.env.TASK_ID}' AND run_id='${process.env.RUN_ID}'
+      AND contract_sha='${process.env.CONTRACT_SHA}'
+      AND artifact_sha='${process.env.PR_HEAD_SHA}'
+      AND payload->>'scenario'='${scenario}'
+    ORDER BY occurred_at DESC, id DESC
+    LIMIT 1
+  `);
+  expect(rows, `缺少 authority-store scenario=${scenario}`).toHaveLength(1);
+  expectIndependentAuthorityReceipt(rows[0]);
+  return rows[0].payload;
+}
+
 function expectExecutable(path: string) {
   expect(existsSync(path), `缺少产品验证入口 ${path}`).toBe(true);
 }
@@ -108,62 +141,82 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
   it('built image self-contained profiles', () => {
     const script = 'scripts/ci/verify-brain-image-self-contained.sh';
     expectExecutable(script);
-    const out = run(script, ['--contract-red', '--network-none', '--read-only', '--no-mounts']);
-    expect(out).toContain('profiles=3');
-    expect(out).toContain('missing_config=denied');
+    run(script, ['--contract-red', '--network-none', '--read-only', '--no-mounts']);
+    const evidence = readAuthoritativeScenario('built_image_self_contained_profiles');
+    expect(evidence).toMatchObject({ profiles_loaded: 3, missing_config_decision: 'deny' });
+    expect(evidence.bind_mount_count).toBe(0);
   });
 
   it('immutable per-attempt profile snapshot across concurrent upgrade', () => {
     const script = 'scripts/kernel-fleet/verify-atomic-release.sh';
     expectExecutable(script);
-    expect(run(script, ['--real-pg', '--concurrent-upgrade'])).toContain('snapshot_drift=0');
+    run(script, ['--real-pg', '--concurrent-upgrade']);
+    const evidence = readAuthoritativeScenario('atomic_release_concurrent_upgrade');
+    expect(evidence).toMatchObject({ snapshot_drift_count: 0, dispatch_decision: 'allow' });
   });
 
   it('real Worker Runner seam before Agent execution', () => {
     const script = 'scripts/kernel-fleet/verify-worker-admission.sh';
     expectExecutable(script);
-    const out = run(script, ['--exact-runner', '--mutate-stdout-unwritable', '--mutate-private-root']);
-    expect(out).toMatch(/agent_start_count=0[\s\S]*diagnostic_bytes=([1-9]\d{0,2}|1\d{3}|20[0-3]\d|204[0-8])/);
+    run(script, ['--exact-runner', '--mutate-stdout-unwritable', '--mutate-private-root']);
+    const evidence = readAuthoritativeScenario('worker_runner_pre_agent_admission');
+    expect(evidence.agent_start_count).toBe(0);
+    expect(evidence.diagnostic_bytes).toBeGreaterThan(0);
+    expect(evidence.diagnostic_bytes).toBeLessThanOrEqual(2048);
+    expect(evidence.secret_scan_hits).toBe(0);
   });
 
   it('GitHub auth on success timeout crash and cancel', () => {
     const script = 'scripts/kernel-fleet/verify-github-broker.sh';
     expectExecutable(script);
-    expect(run(script, ['--real-runner', '--all-terminals'])).toContain('credential_residual=0');
+    run(script, ['--real-runner', '--all-terminals']);
+    const evidence = readAuthoritativeScenario('github_broker_all_terminals');
+    expect(evidence.terminal_paths).toEqual(['success', 'timeout', 'crash', 'cancel']);
+    expect(evidence.credential_residual_count).toBe(0);
   });
 
   it('fleet-worker transport with production upgrade rollback and source enum parity', () => {
     const script = 'scripts/kernel-fleet/verify-transport-migration.sh';
     expectExecutable(script);
-    const out = run(script, ['--real-pg', '--migration-min', '368', '--upgrade-rollback']);
-    expect(out).toContain('fleet-worker');
-    expect(out).toContain('schema_source_parity=1');
+    run(script, ['--real-pg', '--migration-min', '368', '--upgrade-rollback']);
+    const evidence = readAuthoritativeScenario('fleet_worker_transport_migration');
+    expect(evidence.transport_values).toEqual(expect.arrayContaining(['local-docker', 'remote-bridge', 'fleet-worker']));
+    expect(evidence.schema_source_parity).toBe(true);
+    expect(evidence.rollback_restored).toBe(true);
   });
 
   it('ownership frame plus persisted heartbeat', () => {
     const script = 'scripts/kernel-fleet/verify-real-kernel-startup.sh';
     expectExecutable(script);
-    const out = run(script, ['--entrypoint', 'packages/brain/src/orchestrator/run.js', '--real-pg']);
-    expect(out).toContain('parent_resolved_after_persisted_heartbeat=1');
-    for (const key of ['async_spawn_error', 'early_exit', 'handshake_timeout', 'lease_busy', 'spoof_ready_without_db'])
-      expect(out).toContain(`${key}=denied`);
+    run(script, ['--entrypoint', 'packages/brain/src/orchestrator/run.js', '--real-pg']);
+    const evidence = readAuthoritativeScenario('kernel_startup_persisted_heartbeat');
+    expect(evidence.parent_resolved_after_persisted_heartbeat).toBe(true);
+    expect(evidence.counterfactuals).toEqual({
+      async_spawn_error: 'deny', early_exit: 'deny', handshake_timeout: 'deny',
+      lease_busy: 'deny', spoof_ready_without_db: 'deny',
+    });
   });
 
   it('authenticated callback commit before Worker cleanup', () => {
     const script = 'scripts/kernel-fleet/verify-artifact-transfer.sh';
     expectExecutable(script);
-    const out = run(script, ['--real-git', '--authenticated-callback']);
-    expect(out).toContain('materialized_before_cleanup=1');
-    expect(out).toContain('cross_run=denied');
+    run(script, ['--real-git', '--authenticated-callback']);
+    const evidence = readAuthoritativeScenario('authenticated_artifact_transfer');
+    expect(evidence.materialized_before_cleanup).toBe(true);
+    expect(evidence.cross_run_decision).toBe('deny');
+    expect(evidence.materialized_commit_sha).toMatch(/^[a-f0-9]{40}$/);
   });
 
   it('reverse cleanup removes real Runner nested and ignored output', () => {
     const script = 'scripts/kernel-fleet/verify-reverse-cleanup.sh';
     expectExecutable(script);
-    const out = run(script, ['--real-runner', '--deep-umask-077', '--concurrent-cancel-wait-reconcile']);
-    expect(out).toContain('container_absent>normalize_descendants>workspace_admin>runtime_secret>state');
-    expect(out).toContain('residual_total=0');
-    expect(out).toContain('append_only_quarantine_duplicates=0');
+    run(script, ['--real-runner', '--deep-umask-077', '--concurrent-cancel-wait-reconcile']);
+    const evidence = readAuthoritativeScenario('reverse_cleanup_real_runner');
+    expect(evidence.cleanup_order).toEqual([
+      'container_absent', 'normalize_descendants', 'workspace_admin', 'runtime_secret', 'state',
+    ]);
+    expect(evidence.residual_total).toBe(0);
+    expect(evidence.append_only_quarantine_duplicate_count).toBe(0);
   });
 
   it('ESRCH-only local liveness death', async () => {
@@ -184,23 +237,37 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
   it('CI-only authorization and stale exact-head owner approval', () => {
     const script = 'scripts/kernel-fleet/verify-p0-workflow-contract.sh';
     expectExecutable(script);
-    const out = run(script, ['--github-api', '--mutate-all-merge-bypasses']);
-    expect(out).toContain('pre_owner_mutation_count=0');
-    expect(out).toContain('stale_head=denied');
+    run(script, ['--github-api', '--mutate-all-merge-bypasses']);
+    const evidence = readAuthoritativeScenario('p0_workflow_merge_authority');
+    expect(evidence.pre_owner_mutation_count).toBe(0);
+    expect(evidence.stale_head_decision).toBe('deny');
+    expect(evidence.github_run_id).toBeTruthy();
+    expect(evidence.repository_rule_snapshot_digest).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it('semantic anchor resolves journey golden-path step ownership', () => {
     const script = 'scripts/kernel-fleet/verify-semantic-anchor.sh';
     expectExecutable(script);
-    expect(run(script, ['--real-pg', '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '']))
-      .toContain('ownership_consistent=1');
+    run(script, ['--real-pg', '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '']);
+    const evidence = readAuthoritativeScenario('semantic_anchor_ownership');
+    expect(evidence).toMatchObject({
+      journey_id: '2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6',
+      golden_path_id: '4e5fd7eb-3823-4c57-a817-081b7fdd2eed',
+      step_id: '817f59f5-02ff-4a70-bd81-f7ae65f77e02',
+      ownership_consistent: true,
+    });
   });
 
   it('P0 workflows enforce owner merge staging production order', () => {
     const script = 'scripts/kernel-fleet/run-authoritative-final-e2e.sh';
     expectExecutable(script);
-    expect(run(script, ['--contract-red', '--assert-order-only']))
-      .toContain('draft>ci>evaluator>judge>owner>merge>staging>production>rollback>s12');
+    run(script, ['--contract-red', '--assert-order-only']);
+    const evidence = readAuthoritativeScenario('authoritative_release_order');
+    expect(evidence.observed_order).toEqual([
+      'draft', 'ci', 'evaluator', 'judge', 'owner', 'merge', 'staging',
+      'production', 'rollback', 's12',
+    ]);
+    expect(evidence.pre_owner_serving_mutation_count).toBe(0);
   });
 
   it('attempt scoped result channel', () => {
@@ -234,15 +301,43 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
 
   it('authority inventory full entry fixture and advisory partition', () => {
     expect(execFileSync('git', ['rev-parse', `${BASE}:${SOURCE_PATH}`], { encoding: 'utf8' }).trim()).toBe(SOURCE_BLOB);
+    const sourceYaml = execFileSync('git', ['show', `${BASE}:${SOURCE_PATH}`], { encoding: 'utf8' });
+    const extracted = collectPriorityEntries(yaml.load(sourceYaml));
+    const byId = new Map(extracted.map((row: any) => [row.id, row]));
+    expect(extracted).toHaveLength(129);
+    expect(byId.size).toBe(129);
+    const fullEntryKeys = ['id', 'priority', 'feature', 'name', 'scope', 'tags', 'method', 'test', 'steps', 'evidence'];
+    const canonicalEntries = [...byId.values()]
+      .sort((a: any, b: any) => a.id.localeCompare(b.id))
+      .map((row: any) => Object.fromEntries(
+        fullEntryKeys.filter((key) => row[key] !== undefined).map((key) => [key, row[key]])));
+    const independentlySerialized = canonicalJson(canonicalEntries);
+    expect(Buffer.byteLength(independentlySerialized)).toBe(56518);
+    expect(sha256(independentlySerialized)).toBe(FULL_ENTRY_DIGEST);
     const fixture = source('packages/quality/contracts/kernel-policy-source-inventory.json');
     expect(Buffer.byteLength(fixture)).toBe(56518);
     expect(sha256(fixture)).toBe(FULL_ENTRY_DIGEST);
+    expect(fixture).toBe(independentlySerialized);
     const advisory = JSON.parse(source('packages/quality/contracts/kernel-policy-classification-advisory.json'));
-    expect(sha256(JSON.stringify(advisory.rows))).toBe(ADVISORY_DIGEST);
-    expect(advisory.partition).toEqual({ machine_recommended: 76, needs_human_review: 53 });
-    expect(advisory.f08_partition).toEqual({ machine_recommended_elsewhere: 66, unreviewed_or_out_of_taxonomy: 44 });
-    expect(advisory.f08_semantic_staging_promote_rollback_hits).toBe(0);
-    expect(advisory.provider_independent_candidates).toEqual({ ci: 32, doc: 2, export: 5, infrastructure: 1, regression: 3 });
+    expect(sha256(canonicalJson(advisory.rows))).toBe(ADVISORY_DIGEST);
+    expect(new Set(advisory.rows.map((row: any) => row.legacy_id))).toEqual(new Set(byId.keys()));
+    expect(advisory.rows.filter((row: any) => row.machine_state === 'machine_recommended')).toHaveLength(76);
+    expect(advisory.rows.filter((row: any) => row.machine_state === 'needs_human_review')).toHaveLength(53);
+    const proposedF08 = advisory.rows.filter((row: any) => row.proposed_family === 'KH-F1-F08');
+    expect(proposedF08).toHaveLength(110);
+    expect(proposedF08.filter((row: any) => row.machine_state === 'machine_recommended' &&
+      row.machine_family !== 'KH-F1-F08')).toHaveLength(66);
+    expect(proposedF08.filter((row: any) => row.machine_state === 'needs_human_review')).toHaveLength(44);
+    const semanticHits = proposedF08.filter((row: any) =>
+      /staging|promote|rollback/i.test(canonicalJson(byId.get(row.legacy_id))));
+    expect(semanticHits).toHaveLength(0);
+    const independentScopes = canonicalEntries.reduce((counts: Record<string, number>, row: any) => {
+      const scope = String(row.scope ?? '');
+      if (['ci', 'doc', 'export', 'infrastructure', 'regression'].includes(scope))
+        counts[scope] = (counts[scope] ?? 0) + 1;
+      return counts;
+    }, {});
+    expect(independentScopes).toEqual({ ci: 32, doc: 2, export: 5, infrastructure: 1, regression: 3 });
   });
 
   it('classification decisions are append only and pre-authority creates zero obligations', () => {
@@ -251,14 +346,25 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
     expect(decisions.rows.every((r: any) => r.approved_family === null && r.state !== 'owner_approved')).toBe(true);
     expect(new Set(decisions.rows.map((r: any) => r.legacy_id)).size).toBe(129);
     expect(JSON.parse(source('packages/quality/contracts/kernel-policy-equivalence-obligations.json')).rows).toHaveLength(0);
+    const script = 'scripts/kernel-fleet/verify-classification-decision-store.sh';
+    expectExecutable(script);
+    run(script, ['--real-pg', '--attempt-update-delete', '--compile-pre-authority']);
+    const evidence = readAuthoritativeScenario('classification_append_only_pre_authority');
+    expect(evidence.update_decision).toBe('deny');
+    expect(evidence.delete_decision).toBe('deny');
+    expect(evidence.owner_approved_count).toBe(0);
+    expect(evidence.derived_obligation_count).toBe(0);
   });
 
   it('owner approval binds full proposal head manifest bytes and signature', () => {
     const script = 'scripts/kernel-fleet/verify-authority-owner-receipt.sh';
     expectExecutable(script);
-    const out = run(script, ['--proposal', PROPOSAL, '--github-api', '--allowlisted-owner', '--verify-signature']);
-    expect(out).toContain('manifest_bytes_bound=1');
-    expect(out).toContain('behavior_pass_inferred=0');
+    run(script, ['--proposal', PROPOSAL, '--github-api', '--allowlisted-owner', '--verify-signature']);
+    const evidence = readAuthoritativeScenario('authority_owner_receipt');
+    expect(evidence.proposal_sha).toBe(PROPOSAL);
+    expect(evidence.manifest_bytes_bound).toBe(true);
+    expect(evidence.behavior_pass_inferred_count).toBe(0);
+    expect(evidence.owner_allowlisted).toBe(true);
   });
 
   it('lifecycle migration preserves exact production history fixture', () => {
@@ -268,18 +374,24 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
     expect(sha256(JSON.stringify(fixture.rows))).toBe(HISTORY_DIGEST);
     const script = 'scripts/kernel-fleet/verify-lifecycle-projection.sh';
     expectExecutable(script);
-    const out = run(script, ['--real-pg', '--migration-min', '368', '--upgrade-failure-logical-rollback']);
-    expect(out).toContain('historical_fingerprint_unchanged=1');
-    expect(out).toContain('backbones=13 aliases=2 new_rows=9 cells=143');
+    run(script, ['--real-pg', '--migration-min', '368', '--upgrade-failure-logical-rollback']);
+    const evidence = readAuthoritativeScenario('lifecycle_projection_upgrade_rollback');
+    expect(evidence.historical_fingerprint_before).toBe(HISTORY_DIGEST);
+    expect(evidence.historical_fingerprint_after).toBe(HISTORY_DIGEST);
+    expect(evidence.historical_fingerprint_rollback).toBe(HISTORY_DIGEST);
+    expect(evidence).toMatchObject({ backbones: 13, aliases: 2, new_rows: 9, cells: 143 });
   });
 
   it('origin kind uses direct authority queries not module booleans', () => {
     const script = 'scripts/kernel-fleet/verify-stage-origin-receipts.sh';
     expectExecutable(script);
-    const out = run(script, ['--real-pg', '--github-api', '--deployment-store']);
-    expect(out).toContain('S3=proposer+reviewer+approved');
-    expect(out).toContain('S6_S7_distinct_attempt_session=1');
-    expect(out).toContain('self_asserted_boolean_accepted=0');
+    run(script, ['--real-pg', '--github-api', '--deployment-store']);
+    const evidence = readAuthoritativeScenario('direct_stage_origin_queries');
+    expect(evidence.s3_origin_attempt_roles).toEqual(['proposer', 'reviewer']);
+    expect(evidence.s3_final_verdict).toBe('APPROVED');
+    expect(evidence.s6_attempt_id).not.toBe(evidence.s7_attempt_id);
+    expect(evidence.s6_session_id).not.toBe(evidence.s7_session_id);
+    expect(evidence.self_asserted_boolean_accepted_count).toBe(0);
   });
 
   it('canonical manifest contains law only and exact 143 requirement cells', () => {
@@ -303,7 +415,10 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
   it('journey projection writes cannot satisfy canonical cell gates', () => {
     const script = 'scripts/kernel-fleet/verify-authority-write-isolation.sh';
     expectExecutable(script);
-    expect(run(script, ['--real-pg', '--patch-journey-green'])).toContain('canonical_satisfied_delta=0');
+    run(script, ['--real-pg', '--patch-journey-green']);
+    const evidence = readAuthoritativeScenario('journey_projection_write_isolation');
+    expect(evidence.projection_color_delta).toBeGreaterThan(0);
+    expect(evidence.canonical_satisfied_delta).toBe(0);
   });
 
   it('strict staging rejects empty skip and SHA drift', async () => {
@@ -314,22 +429,51 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       .resolves.toMatchObject({ allPass: false });
     await expect(staging.checkInitiativeAggregate(fakeDb([{ verdict: 'PASS', tested_sha: 'wrong' }]), 'i', BASE))
       .resolves.toMatchObject({ allPass: false });
+    const script = 'scripts/kernel-fleet/verify-strict-staging-receipt.sh';
+    expectExecutable(script);
+    run(script, ['--real-pg', '--deployment-store', '--all-counterfactuals']);
+    const evidence = readAuthoritativeScenario('strict_staging_real_environment');
+    expect(evidence.counterfactuals).toEqual({
+      empty: 'deny', all_skip: 'deny', required_skip: 'deny',
+      fail: 'deny', sha_drift: 'deny', unauthenticated_environment: 'deny',
+    });
+    expect(evidence.positive).toMatchObject({
+      required_test_count: expect.any(Number), fail_count: 0, required_skip_count: 0,
+    });
+    expect(evidence.positive.required_test_count).toBeGreaterThan(0);
+    expect(evidence.positive.deployed_sha).toBe(evidence.positive.merge_sha);
+    expect(evidence.positive.tested_sha).toBe(evidence.positive.merge_sha);
   });
 
   it('merge report cannot complete before staging production rollback and S12', () => {
-    const handlers = source('packages/brain/src/orchestrator/kernel-handlers.js');
-    expect(handlers).not.toContain("SET status='completed'");
-    expect(handlers).not.toContain("detail: 'report chain completed'");
+    const script = 'scripts/kernel-fleet/verify-terminal-order.sh';
+    expectExecutable(script);
+    run(script, ['--real-pg', '--merge-report-first', '--then-authenticated-s10-s11-s12']);
+    const evidence = readAuthoritativeScenario('terminal_order_real_transaction');
+    expect(evidence.after_merge_report).toMatchObject({
+      run_terminal: false, task_terminal: false, terminal_accounting_count: 0,
+    });
+    expect(evidence.after_authenticated_s10_s11_s12).toMatchObject({
+      run_terminal: true, task_terminal: true, terminal_accounting_count: 1,
+    });
+    expect(evidence.transaction_isolation).toBe('serializable');
   });
 
   it('S12 serializable accountant consumes exact current evidence chain', () => {
     const script = 'scripts/kernel-fleet/verify-terminal-accounting.sh';
     expectExecutable(script);
-    const out = run(script, ['--real-pg', '--serializable', '--all-counterfactuals']);
-    expect(out).toContain('stage_chain=S0>S1>S2>S3>S4>S5>S6>S7>S8>S9>S10>S11>S12');
-    for (const key of ['missing_cell', 'expired_without_scheduler', 'empty_staging', 'all_skip_staging', 'sha_drift', 'promoted_without_health', 'missing_rollback', 'missing_report_effect'])
-      expect(out).toContain(`${key}=blocked`);
-    expect(out).toContain('terminal_transaction_count=1');
+    run(script, ['--real-pg', '--serializable', '--all-counterfactuals']);
+    const evidence = readAuthoritativeScenario('s12_serializable_terminal_accounting');
+    expect(evidence.stage_chain).toEqual([
+      'S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10', 'S11', 'S12',
+    ]);
+    expect(evidence.counterfactuals).toEqual({
+      missing_cell: 'blocked', expired_without_scheduler: 'blocked',
+      empty_staging: 'blocked', all_skip_staging: 'blocked', sha_drift: 'blocked',
+      promoted_without_health: 'blocked', missing_rollback: 'blocked',
+      missing_report_effect: 'blocked',
+    });
+    expect(evidence.terminal_transaction_count).toBe(1);
   });
 
   it('guard manifest references approved source inventory without runtime state', () => {
@@ -518,14 +662,15 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
     ], { DB_URL: process.env.DB_URL ?? '' });
     const receipts = queryPgJson(`
       SELECT logical_cycle_id, considered_targets, excluded_targets, selected_target,
-             probe_snapshot, candidate_digest, signature, receipt_digest
+             probe_snapshot, candidate_digest, signed_payload, signature,
+             signature_key_id, public_key_pem, receipt_digest
       FROM execution_target_selection_receipts
       WHERE run_id='${process.env.RUN_ID}'
       ORDER BY created_at, id
     `);
     expect(receipts.length).toBeGreaterThanOrEqual(3);
-    expect(receipts.map((r: any) => r.logical_cycle_id)).toEqual(
-      expect.arrayContaining(['cycle-a', 'cycle-b', 'cycle-c']));
+    const incident = receipts.filter((r: any) => ['cycle-a', 'cycle-b', 'cycle-c'].includes(r.logical_cycle_id));
+    expect(incident.map((r: any) => r.logical_cycle_id)).toEqual(['cycle-a', 'cycle-b', 'cycle-c']);
     for (const receipt of receipts) {
       expect(receipt.considered_targets.length).toBeGreaterThan(0);
       expect(receipt.excluded_targets.length).toBeGreaterThan(0);
@@ -537,12 +682,39 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       }
       expect(receipt.probe_snapshot).toBeTruthy();
       expect(receipt.candidate_digest).toMatch(/^[a-f0-9]{64}$/);
-      expect(receipt.signature).toBeTruthy();
+      expect(sha256(canonicalJson(receipt.signed_payload))).toBe(receipt.receipt_digest);
+      expect(receipt.signature_key_id).toBeTruthy();
+      expect(verifySignature(
+        null,
+        Buffer.from(canonicalJson(receipt.signed_payload)),
+        receipt.public_key_pem,
+        Buffer.from(receipt.signature, 'base64'),
+      )).toBe(true);
     }
-    const recovered = receipts.find((r: any) => r.logical_cycle_id === 'cycle-c');
+    expect(incident[0].excluded_targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ account: 'team4', failure_class: 'execution_transport_unavailable' }),
+    ]));
+    expect(incident[1].excluded_targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ account: 'team3', failure_class: 'execution_transport_unavailable' }),
+      expect.objectContaining({ account: 'team5', failure_class: 'quota_unavailable' }),
+    ]));
+    const recovered = incident[2];
     expect(recovered.selected_target).toMatchObject({
       provider: 'codex', account: 'team4', machine: 'us-mac-m4',
     });
+    expect(recovered.probe_snapshot).toMatchObject({ account: 'team4', fresh: true, healthy: true });
+    const recovery = readAuthoritativeScenario('execution_target_recovery_counterfactuals');
+    expect(recovery.counterfactuals).toEqual({
+      ttl_not_elapsed: 'excluded', ttl_elapsed: 'reprobe',
+      auth_reset_not_elapsed: 'excluded', auth_reset_elapsed: 'reprobe',
+      machine_offline_ttl: 'reprobe', transient_probe_ttl: 'reprobe',
+      product_failure_health_delta: 0, restart_replay_duplicate_count: 0,
+      persistent_exhaustion_before_cap: 'infrastructure_blocked',
+      persistent_exhaustion_at_cap: 'terminal_failed',
+      owner_terminate: 'terminal_failed',
+    });
+    expect(recovery.old_failed_run_before_digest).toBe(recovery.old_failed_run_after_digest);
+    expect(recovery.new_recovery_run_contract_sha).toBe(process.env.CONTRACT_SHA);
   });
 
   it('independent authority observer rejects temp self attestation and malformed rubric evidence', () => {
@@ -623,7 +795,19 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       '--real-controller', '--plan', `${SPRINT}/task-plan.json`, '--all-counterfactuals',
       '--evidence-dir', evidenceDir,
     ]);
-    const receipts = readDiagnosticReceipts(evidenceDir);
+    readDiagnosticReceipts(evidenceDir);
+    const receipts = queryPgJson(`
+      SELECT scenario, decision, writer_allocated_count, global_state_delta,
+             draft_pr_count, merge_receipt_count, raw_artifact_path,
+             raw_artifact_digest, issuer_trust_domain, observer_trust_domain
+      FROM kernel_workstream_mode_receipts
+      WHERE run_id='${process.env.RUN_ID}' AND contract_sha='${process.env.CONTRACT_SHA}'
+      ORDER BY created_at, id
+    `);
+    expect(receipts.length).toBeGreaterThan(0);
+    expect(receipts.every((r: any) =>
+      r.issuer_trust_domain !== r.observer_trust_domain &&
+      sha256(readFileSync(r.raw_artifact_path)) === r.raw_artifact_digest)).toBe(true);
     expect(receipts.find((r) => r.scenario === 'four_ready_nodes').writer_allocated_count).toBe(1);
     for (const scenario of ['parallel_width_4', 'cycle', 'unknown_dep', 'overlap',
       'canonical_branch_writer', 'segment_global_pass']) {
