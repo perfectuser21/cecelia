@@ -31,6 +31,20 @@ write_executable() {
 write_executable "$fake_bin/git" \
   '#!/usr/bin/env bash' \
   'printf "git %s\n" "$*" >> "${FLEET_TEST_ARTIFACT_LOG:?}"' \
+  'if [[ "${FLEET_TEST_REAL_GIT:-0}" == 1 ]]; then' \
+  '  repo_root=""' \
+  '  [[ "${1:-}" == "-C" ]] && { repo_root="$2"; shift 2; }' \
+  '  if [[ "$*" == "status --porcelain --untracked-files=all" ]]; then exit 0; fi' \
+  '  if [[ "${1:-}" == "archive" ]]; then' \
+  '    output=""' \
+  '    while [[ $# -gt 0 ]]; do' \
+  '      if [[ "$1" == "--output" ]]; then output="$2"; shift 2; continue; fi' \
+  '      shift' \
+  '    done' \
+  '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/scripts/fleet-worker' \
+  '  fi' \
+  '  exec /usr/bin/git -C "$repo_root" "$@"' \
+  'fi' \
   'if [[ "$*" == *"status --porcelain"* ]]; then' \
   '  [[ "${FLEET_TEST_DIRTY:-0}" == 1 ]] && echo " M dirty-file"' \
   '  exit 0' \
@@ -67,6 +81,11 @@ write_executable "$fake_bin/docker" \
 write_executable "$fake_bin/ssh" \
   '#!/usr/bin/env bash' \
   'printf "ssh %s\n" "$*" >> "${FLEET_TEST_TRANSPORT_LOG:?}"' \
+  'if [[ "${FLEET_TEST_SSH_EXECUTE:-0}" == 1 ]]; then' \
+  '  while [[ "${1:-}" == "-o" ]]; do shift 2; done' \
+  '  shift' \
+  '  exec /bin/bash -c "$1"' \
+  'fi' \
   'cat >/dev/null' \
   '[[ "${FLEET_TEST_SSH_FAIL:-0}" != 1 ]]'
 
@@ -74,6 +93,13 @@ write_executable "$fake_bin/sudo" \
   '#!/usr/bin/env bash' \
   'printf "sudo %s\n" "$*" >> "${FLEET_TEST_TRANSPORT_LOG:?}"' \
   '[[ "${1:-}" == "-n" ]] && shift' \
+  'if [[ "${FLEET_TEST_SUDO_NOEXEC:-0}" == 1 ]]; then' \
+  '  case "${1:-}" in' \
+  '    /usr/bin/mktemp|/usr/bin/tar|/bin/mkdir|/bin/chmod|/bin/rm) exec "$@" ;;' \
+  '    */fleet-rollout.sh) exec "$@" ;;' \
+  '    *) exit 0 ;;' \
+  '  esac' \
+  'fi' \
   'exec "$@"'
 
 write_executable "$fake_bin/nodectl" \
@@ -156,6 +182,36 @@ if CECELIA_MACHINE_ID=us-mac-m4 \
   FLEET_TEST_SSH_FAIL=1 \
   run_rollout xian-mac-m4 --apply >"$test_root/ssh.out" 2>&1; then
   fail "SSH transport failure was hidden"
+fi
+
+: > "$transport_log"
+CECELIA_MACHINE_ID=us-mac-m4 \
+FLEET_TEST_REAL_GIT=1 \
+FLEET_TEST_SSH_EXECUTE=1 \
+FLEET_TEST_SUDO_NOEXEC=1 \
+FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout xian-mac-m4 --apply >/dev/null \
+  || fail "executable remote rollout contract failed"
+first_remote_sudo="$(grep '^sudo ' "$transport_log" | head -n 1)"
+[[ "$first_remote_sudo" == *'mktemp -d /var/tmp/cecelia-fleet-rollout.'* ]] \
+  || fail "remote payload was not staged into a root-owned directory first: $first_remote_sudo"
+if grep -Eq '^sudo .* /tmp/cecelia-fleet-rollout\..*/fleet-nodectl\.sh ' \
+  "$transport_log"; then
+  fail "sudo executed a Fleet script from the SSH user's writable /tmp"
+fi
+
+: > "$transport_log"
+CECELIA_MACHINE_ID=us-mac-m4 \
+FLEET_TEST_REAL_GIT=1 \
+FLEET_TEST_SUDO_NOEXEC=1 \
+FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout us-mac-m4 --apply >/dev/null \
+  || fail "executable local rollout contract failed"
+first_local_sudo="$(grep '^sudo ' "$transport_log" | head -n 1)"
+[[ "$first_local_sudo" == *'mktemp -d /var/tmp/cecelia-fleet-rollout.'* ]] \
+  || fail "local payload was not staged into a root-owned directory first: $first_local_sudo"
+if grep -Eq "^sudo .* $test_root/tmp/.*/fleet-nodectl\\.sh " "$transport_log"; then
+  fail "sudo executed a Fleet script from the controller user's writable temp directory"
 fi
 
 payload_root="$test_root/payload"
