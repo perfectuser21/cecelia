@@ -17,6 +17,8 @@ describe('Kernel failure terminalizer PG contract', () => {
       status_history_mode: 'single_append',
       idempotent: true,
       rollback_on_error: true,
+      supports_watchdog_deadline: true,
+      supports_launch_failure: true,
     }));
   });
 });

@@ -5,13 +5,13 @@ target_environment: local_api
 ---
 # Contract DoD — Kernel 原子失败终结器与槽位自愈
 
-**范围**: Kernel failure terminalizer、失败出口接线、infrastructure retry、窄 reconciler、slot allocator SSOT、防幽灵 task、正式 failed API `completed_at`、版本账本与回归合同。
+**范围**: Kernel failure terminalizer、失败出口接线、target exhaustion retry、窄 reconciler、slot allocator SSOT、防幽灵 task、正式 failed API `completed_at`、版本账本与回归合同。
 **大小**: L
 
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] failure terminalizer 模块与失败出口接线存在
-  Test: node -e "const fs=require('fs');const ps=['packages/brain/src/orchestrator/failure-terminalizer.js','packages/brain/src/orchestrator/loop.js','packages/brain/src/orchestrator/run.js'];for(const p of ps){if(!fs.existsSync(p))throw new Error('missing '+p)};const loop=fs.readFileSync('packages/brain/src/orchestrator/loop.js','utf8');if(!/failureTerminalizer/.test(loop))throw new Error('loop missing failureTerminalizer wiring');const run=fs.readFileSync('packages/brain/src/orchestrator/run.js','utf8');if(!/fatal catch|failureTerminalizer|kernel launch/i.test(run))throw new Error('run missing fatal catch wiring')"
+  Test: node -e "const fs=require('fs');const ps=['packages/brain/src/orchestrator/failure-terminalizer.js','packages/brain/src/orchestrator/loop.js','packages/brain/src/orchestrator/run.js','packages/brain/src/harness-relay-watchdog.js'];for(const p of ps){if(!fs.existsSync(p))throw new Error('missing '+p)};const loop=fs.readFileSync('packages/brain/src/orchestrator/loop.js','utf8');if(!/failureTerminalizer/.test(loop))throw new Error('loop missing failureTerminalizer wiring');const run=fs.readFileSync('packages/brain/src/orchestrator/run.js','utf8');if(!/failureTerminalizer/.test(run))throw new Error('run missing failureTerminalizer wiring');const watchdog=fs.readFileSync('packages/brain/src/harness-relay-watchdog.js','utf8');if(!/failureTerminalizer/.test(watchdog))throw new Error('watchdog missing failureTerminalizer wiring')"
 
 - [ ] [ARTIFACT] 版本账本与回归合同同步
   Test: bash -c 'node -e "const fs=require(\"fs\");const files=[\"DEFINITION.md\",\"packages/brain/package.json\",\"packages/brain/package-lock.json\",\".brain-versions\",\"regression-contract.yaml\"];for(const p of files){const c=fs.readFileSync(p,\"utf8\");if(!c.trim())throw new Error(`empty ${p}`)}" && bash scripts/check-version-sync.sh'
@@ -19,7 +19,7 @@ target_environment: local_api
 ## BEHAVIOR 条目
 
 - [ ] [BEHAVIOR] [L2] 统一失败出口接入 failure terminalizer
-  动作: 运行 contract 回归，分别触发 hop cap、`ACTION.MARK_FAILED`、approved-but-no-contract、`blocked_same_state`、`ci_timeout`、fatal catch、launch failure、watchdog deadline 路径。
+  动作: 运行 contract 回归，分别触发 hop cap、`ACTION.MARK_FAILED`、approved-but-no-contract、`blocked_same_state`、`ci_timeout`、fatal catch、launch failure、watchdog dead、watchdog deadline 路径。
   预期观察: 所有路径最终都走同一 `failureTerminalizer(runId, taskId, reason, failureClass)`，而不是各自散写 run/task SQL。
   验证命令: Test: manual:bash
     npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "统一失败出口接入 failure terminalizer"
@@ -32,11 +32,11 @@ target_environment: local_api
     npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.pg.contract.test.js -t "hard failure 原子终结 run task history claim 并保持幂等"
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] infrastructure_blocked 仅前 3 次 requeue 第 4 次 hard fail
-  动作: 以结构化 `failureClass==="infrastructure_blocked"` 连续触发 4 次 target exhaustion，并分别对合同/评测/用户拒绝失败做对照。
+- [ ] [BEHAVIOR] [L2] all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail
+  动作: 以结构化 `failureClass==="infrastructure_blocked"` 且 `fallback_reason==="all_execution_targets_exhausted"` 连续触发 4 次 target exhaustion，并分别对合同/评测/用户拒绝失败做对照。
   预期观察: 第 1/2/3 次 within 60s 将 task 清 claim、写 `retry_count/retry_after` 并回 `queued`；第 4 次 hard fail；合同/评测/用户拒绝不自动 retry。
   验证命令: Test: manual:bash
-    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "infrastructure_blocked 仅前 3 次 requeue 第 4 次 hard fail"
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail"
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] reconciler 仅处理 latest kernel v2 terminal run 的精确幽灵态
@@ -51,6 +51,13 @@ target_environment: local_api
   预期观察: slot used 从 1 降回 0；slot 查询不新增 `JOIN initiative_runs` 绕过；`routes/tasks.js` 正式 failed 更新后 `completed_at` 非空。
   验证命令: Test: manual:bash
     npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "slot allocator 继续以 task status 为 SSOT 且 failed API 补 completed_at"
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] ghost fixture 只读回归且 current SHA 证据已接线
+  动作: 运行 ghost fixture / current SHA 合同回归，并检查版本账本同步脚本。
+  预期观察: 两组生产 ghost fixture 只作为只读样本被引用，不会改写生产行；回归合同中存在 current SHA 绑定；版本同步脚本通过。
+  验证命令: Test: manual:bash
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "ghost fixture 只读回归且 current SHA 证据已接线" && bash scripts/check-version-sync.sh
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] 真 PG 聚合验证最新终结记录与单条 history
@@ -69,14 +76,14 @@ target_environment: local_api
   动作: 检查 retry/deadline 相关实现与合同测试。
   预期观察: 重试次数上限与 deadline 行为通过测试锁定，没有隐式大小关系遗漏。
   验证命令: Test: manual:bash
-    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "infrastructure_blocked 仅前 3 次 requeue 第 4 次 hard fail" && npx vitest run tests/regression/relay-50170af2/kernel-wiring-deadline.integration.test.js -t "deadline reached after intent persistence still blocks the actual dispatch"
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail" && npx vitest run tests/regression/relay-50170af2/kernel-wiring-deadline.integration.test.js -t "deadline reached after intent persistence still blocks the actual dispatch"
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] INV-2 错误码契约需显式 else
   动作: 触发 infra 与非 infra failureClass 分支。
   预期观察: 非 infra 失败不落入 retry 分支；缺失/未知 failureClass 直接 hard fail。
   验证命令: Test: manual:bash
-    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "infrastructure_blocked 仅前 3 次 requeue 第 4 次 hard fail"
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail"
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] INV-3 吞错 job 需失败计数告警
@@ -204,4 +211,5 @@ done
 psql "$DB_URL" -Atqc "SELECT count(*) FROM task_status_history WHERE created_at > NOW() - interval '5 minutes';" | grep -Eq '^[1-9][0-9]*$'
 
 bash scripts/check-version-sync.sh
+node -e "const fs=require('fs');const y=fs.readFileSync('regression-contract.yaml','utf8');if(!/current sha|current_sha|head sha/i.test(y))process.exit(1)"
 ```

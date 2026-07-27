@@ -11,20 +11,25 @@ describe('Kernel failure terminalizer contract', () => {
     const routes = mod.classifyFailureTerminalAction?.();
     expect(routes).toEqual(expect.objectContaining({
       hop_cap: 'failure_terminalizer',
+      mark_failed: 'failure_terminalizer',
       blocked_same_state: 'failure_terminalizer',
       ci_timeout: 'failure_terminalizer',
       approved_but_no_contract_sha: 'failure_terminalizer',
+      approved_but_no_contract_artifacts: 'failure_terminalizer',
+      approved_but_no_contract_rejected: 'failure_terminalizer',
       fatal_catch: 'failure_terminalizer',
       launch_failure: 'failure_terminalizer',
+      watchdog_dead: 'failure_terminalizer',
       watchdog_deadline: 'failure_terminalizer',
     }));
   });
 
-  it('infrastructure_blocked 仅前 3 次 requeue 第 4 次 hard fail', async () => {
+  it('all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail', async () => {
     const mod = await terminalizerModPromise;
     expect(typeof mod.planFailureDisposition).toBe('function');
     const outcomes = [0, 1, 2, 3].map((retryCount) => mod.planFailureDisposition({
       failureClass: 'infrastructure_blocked',
+      fallbackReason: 'all_execution_targets_exhausted',
       retryCount,
       currentTaskMatches: true,
       taskStatus: 'in_progress',
@@ -37,6 +42,14 @@ describe('Kernel failure terminalizer contract', () => {
     expect(outcomes[3]).toEqual(expect.objectContaining({ action: 'hard_fail' }));
     expect(mod.planFailureDisposition({
       failureClass: 'contract_invalid',
+      fallbackReason: 'all_execution_targets_exhausted',
+      retryCount: 0,
+      currentTaskMatches: true,
+      taskStatus: 'in_progress',
+    })).toEqual(expect.objectContaining({ action: 'hard_fail' }));
+    expect(mod.planFailureDisposition({
+      failureClass: 'infrastructure_blocked',
+      fallbackReason: 'judge_rejected',
       retryCount: 0,
       currentTaskMatches: true,
       taskStatus: 'in_progress',
@@ -62,15 +75,30 @@ describe('Kernel failure terminalizer contract', () => {
     expect(typeof mod.assertSlotAllocatorContract).toBe('function');
     expect(mod.assertSlotAllocatorContract({
       slot_sql: `SELECT count(*)::int AS n
-         FROM initiative_runs r
-         JOIN tasks t ON t.id = r.current_task_id
-        WHERE r.orchestrator_version = 'v2'
-          AND r.phase NOT IN ('done','failed')
-          AND t.status = 'in_progress'`,
+         FROM tasks t
+        WHERE t.status = 'in_progress'
+          AND coalesce(t.executor_kind, 'kernel') = 'kernel'`,
       failedRouteSql: `UPDATE tasks SET status='failed', completed_at=NOW(), updated_at=NOW() WHERE id=$1 AND status='in_progress'`,
     })).toEqual(expect.objectContaining({
       task_status_is_ssot: true,
       failed_route_sets_completed_at: true,
+    }));
+  });
+
+  it('ghost fixture 只读回归且 current SHA 证据已接线', async () => {
+    const mod = await terminalizerModPromise;
+    expect(typeof mod.assertGhostFixtureContract).toBe('function');
+    expect(mod.assertGhostFixtureContract({
+      productionGhosts: [
+        { task_id: '51836fb2', run_id: '13d41c64', writable: false },
+        { task_id: '05f41282', run_id: 'e2dad31b', writable: false },
+      ],
+      review_required: true,
+      current_sha_bound: true,
+    })).toEqual(expect.objectContaining({
+      ghosts_are_read_only: true,
+      review_required: true,
+      current_sha_bound: true,
     }));
   });
 });
