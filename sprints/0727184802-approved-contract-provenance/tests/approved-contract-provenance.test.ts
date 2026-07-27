@@ -745,6 +745,52 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     })).toMatchObject({ ok: true });
   });
 
+  it('callback refuses missing pr_head_sha before writing evaluator or generator verdict', async () => {
+    const { verifyAttemptCallbackApprovedContract } = await subject();
+    const evaluatorAttempt = {
+      id: 'attempt-evaluator-missing-sha',
+      role: 'evaluator',
+      task_bundle: {
+        inputs: {
+          contract: {
+            manifest_digest: APPROVED_DIGEST,
+            approved_manifest: { manifest_digest: APPROVED_DIGEST },
+          },
+          pull_request: { head_sha: 'sha-current' },
+        },
+      },
+    };
+    const generatorAttempt = {
+      id: 'attempt-generator-missing-sha',
+      role: 'generator',
+      task_bundle: {
+        inputs: {
+          contract: {
+            manifest_digest: APPROVED_DIGEST,
+            approved_manifest: { manifest_digest: APPROVED_DIGEST },
+          },
+          pull_request: { head_sha: 'sha-current' },
+        },
+      },
+    };
+
+    expect(verifyAttemptCallbackApprovedContract(evaluatorAttempt, {
+      decision: { outcome: 'PASS', manifest_digest: APPROVED_DIGEST },
+      provider_metadata: {},
+    })).toMatchObject({
+      ok: false,
+      reason: 'current_pr_sha_missing',
+    });
+
+    expect(verifyAttemptCallbackApprovedContract(generatorAttempt, {
+      decision: { outcome: 'completed', manifest_digest: APPROVED_DIGEST },
+      provider_metadata: {},
+    })).toMatchObject({
+      ok: false,
+      reason: 'current_pr_sha_missing',
+    });
+  });
+
   it('CI required check rejects missing stale digest and stale pr_head_sha fail closed', async () => {
     const { buildApprovedContractManifest } = await subject();
     const { runApprovedContractProvenanceCheck } = await import('../../../scripts/ci/approved-contract-provenance-check.mjs');
