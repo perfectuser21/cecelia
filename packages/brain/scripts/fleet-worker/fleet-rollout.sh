@@ -85,6 +85,31 @@ run_node_apply() {
   fi
 }
 
+run_root_staged_payload() {
+  local machine_id="$1"
+  local payload_tar="$2"
+  local staged_root controller status=0
+
+  staged_root="$("$SUDO" -n /usr/bin/mktemp \
+    -d /var/tmp/cecelia-fleet-rollout.XXXXXX)"
+  if ! "$SUDO" -n /usr/bin/tar -xf - -C "$staged_root" <"$payload_tar" \
+    || ! "$SUDO" -n /bin/mkdir -p "$staged_root/source" \
+    || ! "$SUDO" -n /usr/bin/tar \
+      -xf "$staged_root/source.tar" -C "$staged_root/source"; then
+    "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  controller="$staged_root/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh"
+  if ! "$SUDO" -n /bin/chmod \
+    +x "$staged_root/source/packages/brain/scripts/fleet-worker/"*.sh \
+    || ! "$SUDO" -n "$controller" __node-apply "$machine_id" "$staged_root"; then
+    status=1
+  fi
+  "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1 || status=1
+  return "$status"
+}
+
 if [[ "${1:-}" == '__node-apply' ]]; then
   [[ $# -eq 3 ]] || die "rollout_internal_usage" 64
   run_node_apply "$2" "$3"
@@ -150,30 +175,27 @@ payload_tar="$TEMP_ROOT/payload.tar"
 remote_program="$(cat <<'REMOTE'
 set -euo pipefail
 machine_id="$1"
-remote_root="$(mktemp -d /tmp/cecelia-fleet-rollout.XXXXXX)"
+sudo_command="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
+remote_root="$("$sudo_command" -n /usr/bin/mktemp \
+  -d /var/tmp/cecelia-fleet-rollout.XXXXXX)"
 cleanup_remote() {
-  /bin/rm -rf -- "$remote_root"
+  "$sudo_command" -n /bin/rm -rf -- "$remote_root"
 }
 trap cleanup_remote EXIT
-/usr/bin/tar -xf - -C "$remote_root"
-/bin/mkdir -p "$remote_root/source"
-/usr/bin/tar -xf "$remote_root/source.tar" -C "$remote_root/source"
+"$sudo_command" -n /usr/bin/tar -xf - -C "$remote_root"
+"$sudo_command" -n /bin/mkdir -p "$remote_root/source"
+"$sudo_command" -n /usr/bin/tar \
+  -xf "$remote_root/source.tar" -C "$remote_root/source"
 controller="$remote_root/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh"
-/bin/chmod +x "$remote_root/source/packages/brain/scripts/fleet-worker/"*.sh
-"$controller" __node-apply "$machine_id" "$remote_root"
+"$sudo_command" -n /bin/chmod \
+  +x "$remote_root/source/packages/brain/scripts/fleet-worker/"*.sh
+"$sudo_command" -n "$controller" __node-apply "$machine_id" "$remote_root"
 REMOTE
 )"
 
 for machine_id in "${targets[@]}"; do
   if [[ "$machine_id" == 'us-mac-m4' ]]; then
-    local_payload="$TEMP_ROOT/local-$machine_id"
-    /bin/mkdir -p "$local_payload/source"
-    /bin/cp "$repository_bundle" "$local_payload/repository.bundle"
-    /bin/cp "$runner_archive" "$local_payload/runner.tar"
-    "$TAR" -xf "$source_tar" -C "$local_payload/source"
-    local_controller="$local_payload/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh"
-    /bin/chmod +x "$local_payload/source/packages/brain/scripts/fleet-worker/"*.sh
-    "$local_controller" __node-apply "$machine_id" "$local_payload"
+    run_root_staged_payload "$machine_id" "$payload_tar"
     continue
   fi
 
