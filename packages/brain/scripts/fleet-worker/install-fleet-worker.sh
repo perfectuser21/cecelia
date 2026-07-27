@@ -324,6 +324,21 @@ fi
 
 installed_plist="$INSTALL_DIR/$LABEL.plist"
 [[ ! -L "$INSTALL_DIR" && ! -L "$installed_plist" ]] || die "install_path_invalid"
+prior_files_complete=false
+if [[ -f "$installed_plist" && ! -L "$installed_plist" \
+  && -f "$WORKER_SCRIPT" && ! -L "$WORKER_SCRIPT" \
+  && -f "$RUNTIME_DIR/node-probe.cjs" \
+  && ! -L "$RUNTIME_DIR/node-probe.cjs" ]]; then
+  prior_files_complete=true
+fi
+prior_service_loaded=false
+if "$LAUNCHCTL" print "system/$LABEL" >/dev/null 2>&1; then
+  prior_service_loaded=true
+fi
+if [[ "$prior_service_loaded" == true && "$prior_files_complete" != true ]]; then
+  die "prior_service_state_invalid"
+fi
+
 mkdir -p "$INSTALL_DIR"
 prepare_logs
 prepare_transaction_paths
@@ -334,10 +349,8 @@ prior_probe_mode="$(
   snapshot_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe"
 )"
 prior_plist_mode="$(snapshot_file "$installed_plist" "$BACKUP_DIR/plist")"
-had_prior_service=false
-[[ "$prior_plist_mode" == 'absent' ]] || had_prior_service=true
 
-if [[ "$had_prior_service" == true ]]; then
+if [[ "$prior_service_loaded" == true ]]; then
   "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
 fi
 
@@ -369,7 +382,7 @@ if [[ "$launch_ok" != true ]]; then
     || rollback_ok=false
   restore_file "$installed_plist" "$BACKUP_DIR/plist" "$prior_plist_mode" \
     || rollback_ok=false
-  if [[ "$had_prior_service" == true ]]; then
+  if [[ "$prior_service_loaded" == true ]]; then
     "$LAUNCHCTL" bootstrap system "$installed_plist" >/dev/null 2>&1 \
       || rollback_ok=false
     "$LAUNCHCTL" kickstart -k "system/$LABEL" >/dev/null 2>&1 \
