@@ -1346,6 +1346,41 @@ describe('kernel attempt security and Codex execution', () => {
 });
 
 describe('kernel attempt HTTP routes', () => {
+  it('keeps the legacy host-Codex Attempt routes closed after Fleet Worker cutover', async () => {
+    const kernelHandler = {
+      authorize: vi.fn(),
+      accept: vi.fn(),
+      inspect: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const server = createBridgeServer({
+      kernelHandler,
+      kernelMachineId: 'xian-mac-m4',
+      fleetWorkerCutover: true,
+    });
+    const baseUrl = await listen(server);
+    try {
+      const response = await fetch(`${baseUrl}/harness/attempts`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${BRIDGE_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request()),
+      });
+
+      expect(response.status).toBe(410);
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: 'fleet_worker_required',
+      });
+      expect(kernelHandler.authorize).not.toHaveBeenCalled();
+      expect(kernelHandler.accept).not.toHaveBeenCalled();
+    } finally {
+      await close(server);
+    }
+  });
+
   it('mounts launch, inspect and cancel with authenticated request context', async () => {
     const kernelHandler = {
       accept: vi.fn(async () => ({
