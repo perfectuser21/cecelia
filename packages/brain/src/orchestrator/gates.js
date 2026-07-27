@@ -25,8 +25,10 @@ export function isPassVerdict(verdict) {
  * 只有 evaluate_verdict==='PASS' 才自合）。
  * P0-2：verdict 对象 {verdict, pr_head_sha}，sha 与当前 PR head 不匹配 = stale，一律拒。
  *
- * @param {{evaluateVerdict:{verdict,pr_head_sha}|null, judgeVerdict:{verdict,pr_head_sha}|null,
- *          prHeadSha:string, reviewRequired:boolean, reviewApproved:boolean}} input
+ * @param {{evaluateVerdict:{verdict,pr_head_sha,manifest_digest?}|null,
+ *          judgeVerdict:{verdict,pr_head_sha,manifest_digest?}|null,
+ *          prHeadSha:string, approvedManifestDigest?:string,
+ *          reviewRequired:boolean, reviewApproved:boolean}} input
  * @returns {{allow:boolean, reason:string}}
  */
 export function mergeGate(input) {
@@ -35,7 +37,19 @@ export function mergeGate(input) {
       throw new Error(`mergeGate: missing required field "${field}"`);
     }
   }
-  const { evaluateVerdict, judgeVerdict, prHeadSha, reviewRequired, reviewApproved } = input;
+  const {
+    evaluateVerdict,
+    judgeVerdict,
+    prHeadSha,
+    approvedManifestDigest,
+    approvedManifestLoadError,
+    reviewRequired,
+    reviewApproved,
+  } = input;
+
+  if (approvedManifestLoadError) {
+    return { allow: false, reason: 'approved_contract_manifest_unreachable' };
+  }
 
   if (!evaluateVerdict) {
     return { allow: false, reason: 'evaluate_verdict_missing' };
@@ -43,6 +57,17 @@ export function mergeGate(input) {
   if (evaluateVerdict.pr_head_sha !== prHeadSha) {
     // gates 拒绝 "stale PASS + 新 commit"（P0-2）
     return { allow: false, reason: 'stale_evaluate_verdict' };
+  }
+  const manifestAware = Boolean(
+    approvedManifestDigest
+    || evaluateVerdict.manifest_digest
+    || judgeVerdict?.manifest_digest,
+  );
+  if (manifestAware && !approvedManifestDigest) {
+    return { allow: false, reason: 'approved_contract_manifest_digest_missing' };
+  }
+  if (approvedManifestDigest && evaluateVerdict.manifest_digest !== approvedManifestDigest) {
+    return { allow: false, reason: 'stale_evaluate_manifest_digest' };
   }
   if (!isPassVerdict(evaluateVerdict.verdict)) {
     return { allow: false, reason: 'evaluate_not_pass' };
@@ -52,6 +77,9 @@ export function mergeGate(input) {
   }
   if (judgeVerdict.pr_head_sha !== prHeadSha) {
     return { allow: false, reason: 'stale_judge_verdict' };
+  }
+  if (approvedManifestDigest && judgeVerdict.manifest_digest !== approvedManifestDigest) {
+    return { allow: false, reason: 'stale_judge_manifest_digest' };
   }
   if (!isPassVerdict(judgeVerdict.verdict)) {
     return { allow: false, reason: 'judge_not_pass' };

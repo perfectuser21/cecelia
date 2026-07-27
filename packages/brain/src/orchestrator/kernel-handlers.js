@@ -20,6 +20,18 @@ function evaluatorBrainResult(result) {
   };
 }
 
+function asObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return null; }
+}
+
+function approvedManifestDigest(ctx) {
+  const contract = ctx.observed.contract?.row ?? ctx.bundle.inputs.contract ?? {};
+  const manifest = asObject(contract.approved_manifest);
+  return contract.manifest_digest ?? manifest?.manifest_digest ?? null;
+}
+
 async function appendJudgeVerdict(
   pool,
   ctx,
@@ -34,6 +46,7 @@ async function appendJudgeVerdict(
   // unknown and must not be silently filled from the evaluator verdict.
   const failureClass = judgeFailureClass ?? null;
   const failureSignature = normalizeFailureSignature(judgeFailureSignature);
+  const manifestDigest = approvedManifestDigest(ctx);
 
   await pool.query(
     `INSERT INTO orchestrator_decision_log
@@ -54,6 +67,7 @@ async function appendJudgeVerdict(
       JSON.stringify({
         verdict,
         pr_head_sha: ctx.observed.pr?.head_sha ?? null,
+        ...(manifestDigest == null ? {} : { manifest_digest: manifestDigest }),
         feedback: feedback ?? null,
         failure_class: failureClass,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
@@ -86,6 +100,8 @@ export function createKernelHandlers(deps) {
           head_sha: ctx.observed.pr?.head_sha ?? null,
           merge_gate_approved: ctx.observed.reviewApproved === true,
         },
+        approvedManifestDigest: approvedManifestDigest(ctx),
+        currentPrHeadSha: ctx.observed.pr?.head_sha ?? null,
       }, { strict: true, dbPool: deps.pool });
 
       if (result.judged !== true) {
@@ -122,6 +138,9 @@ export function createKernelHandlers(deps) {
         decision: {
           outcome: result.verdict,
           reason: 'independent judge verdict',
+          ...(approvedManifestDigest(ctx) == null
+            ? {}
+            : { manifest_digest: approvedManifestDigest(ctx) }),
           ...(result.failure_class == null ? {} : { failure_class: result.failure_class }),
           ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         },

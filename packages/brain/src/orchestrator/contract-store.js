@@ -1,3 +1,7 @@
+import { materializeApprovedContractManifest } from './approved-contract-provenance.js';
+
+export { materializeApprovedContractManifest };
+
 /**
  * Atomically freeze an approved Git contract into DB and attach it to its run.
  * Git remains the source artifact; this row is the durable gate snapshot used by

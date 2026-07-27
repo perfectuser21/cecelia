@@ -499,6 +499,10 @@ function deriveFailureClassRoute(
 ) {
   const fc = failureClass ?? null;
 
+  if (fc === 'approved_contract_drift') {
+    return { phase: 'gan', action: ACTION.SPAWN_PROPOSER, reason: 'requires_re_gan' };
+  }
+
   if (fc === 'contract_invalid') {
     return { phase: 'failed', action: 'mark_failed', reason: 'contract_invalid' };
   }

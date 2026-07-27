@@ -41,6 +41,7 @@ import {
   normalizeGitSha,
 } from '../orchestrator/pr-head-resolver.js';
 import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
+import { verifyAttemptCallbackApprovedContract } from '../orchestrator/approved-contract-provenance.js';
 
 const router = Router();
 const SUCCESS_TERMINAL_STATUSES = new Set([
@@ -108,6 +109,12 @@ function normalizeVerdict(role, outcome) {
   return value;
 }
 
+function callbackManifestDigest(result) {
+  return result?.decision?.manifest_digest
+    ?? result?.provider_metadata?.manifest_digest
+    ?? null;
+}
+
 export async function appendAttemptVerdict(attempt, result, db = pool) {
   if (!result.decision || !['reviewer', 'evaluator'].includes(attempt.role)) return;
   if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
@@ -127,6 +134,10 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
         attempt_id: attempt.id,
         verdict: normalizeVerdict(attempt.role, result.decision.outcome),
         pr_head_sha: inputs.pull_request?.head_sha ?? null,
+        manifest_digest: callbackManifestDigest(result)
+          ?? inputs.contract?.manifest_digest
+          ?? inputs.contract?.approved_manifest?.manifest_digest
+          ?? null,
         failure_class: result.decision.failure_class ?? null,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         feedback: result.decision.reason,
@@ -258,6 +269,10 @@ export async function appendGeneratorFixCallback(
   const detail = {
     attempt_id: attempt.id,
     pr_head_sha: prHeadSha,
+    manifest_digest: callbackManifestDigest(result)
+      ?? attempt.task_bundle?.inputs?.contract?.manifest_digest
+      ?? attempt.task_bundle?.inputs?.contract?.approved_manifest?.manifest_digest
+      ?? null,
     status: result.status,
     verification_status: verificationStatus,
     ...(verificationStatus === 'verification_pending' && normalizedClaimedSha
@@ -432,6 +447,10 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
         }
       }
     } else {
+      const provenance = verifyAttemptCallbackApprovedContract(attempt, result);
+      if (!provenance.ok) {
+        return res.status(409).json({ ok: false, error: provenance.reason });
+      }
       outcome = await attemptStore.complete(attemptId, result, { leaseOwner });
       let completedAttempt = outcome.attempt;
       let persistedResult = completedAttempt?.result ?? result;

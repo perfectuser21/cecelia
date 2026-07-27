@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.94
+**版本**: 1.267.95
 
 ## Kernel attempt telemetry
 

@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r15-891b959f-a44
-sprint_dir: sprints/0727184802-approved-contract-provenance
-
 ---
 skeleton: false
 journey_type: autonomous
