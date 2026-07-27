@@ -245,6 +245,9 @@ function createDockerAdapter({
       let created;
       try {
         created = await runCommand('docker', createArgs);
+        if (!String(created?.stdout ?? '').trim()) {
+          throw new Error('attempt_container_id_missing');
+        }
         await runCommand('docker', ['start', containerName], undefined);
       } catch (error) {
         await runCommand('docker', ['rm', '-f', '--', containerName], undefined)
@@ -253,9 +256,6 @@ function createDockerAdapter({
         throw error;
       }
       const containerId = String(created?.stdout ?? '').trim();
-      if (!containerId) {
-        throw new Error('attempt_container_id_missing');
-      }
       return Object.freeze({ containerId });
     },
 
