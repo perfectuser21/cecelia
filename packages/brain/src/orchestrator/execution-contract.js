@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseWorkspaceSpec } from './workspace-spec.js';
 
 export const TASK_CONTRACT_VERSION = '1.0';
 export const RESULT_CONTRACT_VERSION = '1.0';
@@ -43,7 +44,9 @@ const taskBundleSchema = z.object({
   inputs: z.object({
     task_id: z.string().min(1),
     sprint_dir: z.string().min(1),
-    worktree_path: z.string().min(1),
+    worktree_path: z.string().min(1).optional(),
+    execution_surface: z.literal('fleet-worker').optional(),
+    workspace_spec: z.unknown().optional(),
     artifacts: z.array(z.unknown()).default([]),
   }).passthrough(),
   constraints: z.object({
@@ -76,6 +79,18 @@ const harnessResultSchema = z.object({
 
 export function parseTaskBundle(value) {
   const parsed = taskBundleSchema.parse(value);
+  if (parsed.inputs.execution_surface === 'fleet-worker') {
+    if (!parsed.inputs.workspace_spec) {
+      throw new Error('workspace_spec_required');
+    }
+    parsed.inputs.workspace_spec = parseWorkspaceSpec(parsed.inputs.workspace_spec, {
+      runId: parsed.run_id,
+      attemptId: parsed.attempt_id,
+      mode: parsed.constraints.read_only ? 'read-only' : 'read-write',
+    });
+  } else if (!parsed.inputs.worktree_path) {
+    throw new Error('worktree_path_required_for_legacy_execution');
+  }
   if (PROVIDER_NATIVE_INSTRUCTION.test(parsed.objective)) {
     throw new Error('provider_native_instruction: TaskBundle objective must not name provider tools');
   }

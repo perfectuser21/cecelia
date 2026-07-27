@@ -109,19 +109,23 @@ describe('TaskBundle contract', () => {
   it('accepts a path-free bundle carrying a canonical WorkspaceSpec', () => {
     const bundle = validBundle();
     delete bundle.inputs.worktree_path;
+    bundle.inputs.execution_surface = 'fleet-worker';
     bundle.inputs.workspace_spec = validWorkspaceSpec();
 
     expect(parseTaskBundle(bundle).inputs.workspace_spec).toEqual(validWorkspaceSpec());
   });
 
   it('rejects a Fleet bundle that only carries a caller-owned absolute worktree path', () => {
-    expect(() => parseTaskBundle(validBundle())).toThrow(/workspace_spec/);
+    const bundle = validBundle();
+    bundle.inputs.execution_surface = 'fleet-worker';
+    expect(() => parseTaskBundle(bundle)).toThrow(/workspace_spec/);
   });
 
   it('rejects a WorkspaceSpec whose mode disagrees with the read-only constraint', () => {
     const bundle = validBundle({
       inputs: {
         ...validBundle().inputs,
+        execution_surface: 'fleet-worker',
         workspace_spec: validWorkspaceSpec({ mode: 'read-only' }),
       },
     });
