@@ -161,6 +161,12 @@ chmod +x "$test_root/id-root"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'command_line="$*"' \
+  'if [[ "$1" == "print" ]]; then' \
+  '  case "$(<"${FLEET_WORKER_LAUNCH_STATE:?}")" in' \
+  '    loaded|running) exit 0 ;;' \
+  '    *) exit 113 ;;' \
+  '  esac' \
+  'fi' \
   'printf "%s\\n" "$command_line" >> "${FLEET_WORKER_LAUNCH_LOG:?}"' \
   'if [[ -n "${FLEET_WORKER_LAUNCH_FAIL_MATCH:-}"' \
   '  && "$command_line" == *"${FLEET_WORKER_LAUNCH_FAIL_MATCH}"*' \
@@ -287,5 +293,99 @@ assert_failed_upgrade_rolled_back() {
 
 assert_failed_upgrade_rolled_back 'bootstrap system' 5 bootstrap
 assert_failed_upgrade_rolled_back 'kickstart -k' 6 kickstart
+
+assert_stopped_upgrade_remains_stopped() {
+  local failure_match="$1"
+  local expected_mutations="$2"
+  local tag="$3"
+  local snapshot_dir="$test_root/snapshot-stopped-$tag"
+  local worker_mode probe_mode plist_mode failure_output
+
+  seed_prior_generation "stopped-$tag"
+  printf 'stopped\n' > "$launch_state"
+  mkdir -p "$snapshot_dir"
+  cp "$installed_worker" "$snapshot_dir/worker"
+  cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_plist" "$snapshot_dir/plist"
+  worker_mode="$(mode_of "$installed_worker")"
+  probe_mode="$(mode_of "$installed_probe")"
+  plist_mode="$(mode_of "$installed_plist")"
+  : > "$launch_log"
+  rm -f "$launch_fail_once"
+  export FLEET_WORKER_LAUNCH_FAIL_MATCH="$failure_match"
+
+  failure_output=''
+  if failure_output="$(
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+  )"; then
+    unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+    fail "stopped $tag failure unexpectedly succeeded"
+  fi
+  unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+
+  grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
+    || fail "stopped $tag failure lacked a bounded rollback signature"
+  cmp -s "$snapshot_dir/worker" "$installed_worker" \
+    || fail "stopped $tag failure did not restore exact Worker bytes"
+  cmp -s "$snapshot_dir/probe" "$installed_probe" \
+    || fail "stopped $tag failure did not restore exact probe bytes"
+  cmp -s "$snapshot_dir/plist" "$installed_plist" \
+    || fail "stopped $tag failure did not restore exact plist bytes"
+  [[ "$(mode_of "$installed_worker")" == "$worker_mode" ]] \
+    || fail "stopped $tag failure did not restore the Worker mode"
+  [[ "$(mode_of "$installed_probe")" == "$probe_mode" ]] \
+    || fail "stopped $tag failure did not restore the probe mode"
+  [[ "$(mode_of "$installed_plist")" == "$plist_mode" ]] \
+    || fail "stopped $tag failure did not restore the plist mode"
+  [[ "$(<"$launch_state")" == 'stopped' ]] \
+    || fail "stopped $tag rollback incorrectly started the prior service"
+  [[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq "$expected_mutations" ]] \
+    || fail "stopped $tag rollback performed an unexpected mutation sequence"
+  [[ "$(grep -Ec '^bootstrap ' "$launch_log")" -eq 1 ]] \
+    || fail "stopped $tag rollback bootstrapped the old stopped service"
+  if [[ "$failure_match" == 'bootstrap system' ]]; then
+    [[ "$(grep -Ec '^kickstart ' "$launch_log" 2>/dev/null || true)" -eq 0 ]] \
+      || fail "stopped bootstrap rollback kickstarted the old stopped service"
+  else
+    [[ "$(grep -Ec '^kickstart ' "$launch_log")" -eq 1 ]] \
+      || fail "stopped kickstart rollback retried the old stopped service"
+  fi
+}
+
+assert_stopped_upgrade_remains_stopped 'bootstrap system' 2 bootstrap
+assert_stopped_upgrade_remains_stopped 'kickstart -k' 3 kickstart
+
+seed_prior_generation loaded-without-plist
+rm -f "$installed_plist"
+orphan_worker="$test_root/orphan-worker"
+orphan_probe="$test_root/orphan-probe"
+cp "$installed_worker" "$orphan_worker"
+cp "$installed_probe" "$orphan_probe"
+orphan_worker_mode="$(mode_of "$installed_worker")"
+orphan_probe_mode="$(mode_of "$installed_probe")"
+printf 'running\n' > "$launch_state"
+: > "$launch_log"
+invalid_state_output=''
+if invalid_state_output="$(
+  run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "loaded service without an installed generation was accepted"
+fi
+grep -Fq 'prior_service_state_invalid' <<<"$invalid_state_output" \
+  || fail "loaded service without an installed generation lacked a bounded refusal"
+[[ ! -s "$launch_log" ]] \
+  || fail "invalid prior service state caused a launchd mutation"
+[[ ! -e "$installed_plist" ]] \
+  || fail "invalid prior service state installed a new plist"
+cmp -s "$orphan_worker" "$installed_worker" \
+  || fail "invalid prior service state changed Worker bytes"
+cmp -s "$orphan_probe" "$installed_probe" \
+  || fail "invalid prior service state changed probe bytes"
+[[ "$(mode_of "$installed_worker")" == "$orphan_worker_mode" ]] \
+  || fail "invalid prior service state changed the Worker mode"
+[[ "$(mode_of "$installed_probe")" == "$orphan_probe_mode" ]] \
+  || fail "invalid prior service state changed the probe mode"
+[[ "$(<"$launch_state")" == 'running' ]] \
+  || fail "invalid prior service state changed the loaded service"
 
 echo "PASS: Fleet Worker installer behavioral contract"
