@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 RUNNER_DIGEST='sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36'
+FLEET_WORKER_LABEL='com.perfect21.fleet-worker'
+FLEET_WORKER_DRAIN_MARKER='/var/run/cecelia/fleet-worker.drain'
 
 GIT="${FLEET_ROLLOUT_GIT:-$(command -v git || true)}"
 DOCKER="${FLEET_ROLLOUT_DOCKER:-$(command -v docker || true)}"
@@ -110,30 +112,6 @@ run_node_apply() {
   trap - EXIT HUP INT TERM
 }
 
-run_node_drain() {
-  local machine_id="$1"
-  local payload_root="$2"
-  local node_ctl
-
-  require_machine "$machine_id"
-  [[ -d "$payload_root" && ! -L "$payload_root" \
-    && -f "$payload_root/repository.bundle" \
-    && ! -L "$payload_root/repository.bundle" \
-    && -f "$payload_root/runner.tar" \
-    && ! -L "$payload_root/runner.tar" ]] \
-    || die "rollout_payload_invalid"
-
-  node_ctl="${NODECTL_OVERRIDE:-$payload_root/source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh}"
-  [[ -x "$node_ctl" && ! -L "$node_ctl" ]] || die "rollout_nodectl_invalid"
-  [[ -x "$SUDO" ]] || die "sudo_unavailable"
-
-  "$SUDO" -n env \
-    CECELIA_MACHINE_ID="$machine_id" \
-    FLEET_BASELINE_REPOSITORY_BUNDLE="$payload_root/repository.bundle" \
-    FLEET_BASELINE_RUNNER_ARCHIVE="$payload_root/runner.tar" \
-    "$node_ctl" drain "$machine_id" --apply
-}
-
 validate_root_staging() {
   local staged_root="$1"
   local relative_path path metadata owner mode canonical_root canonical_path
@@ -163,6 +141,13 @@ validate_root_staging() {
   done
 }
 
+emergency_drain_local() {
+  "$SUDO" -n /bin/mkdir -p /var/run/cecelia || return 1
+  "$SUDO" -n /usr/bin/touch "$FLEET_WORKER_DRAIN_MARKER" || return 1
+  "$SUDO" -n /bin/launchctl bootout \
+    "system/$FLEET_WORKER_LABEL" >/dev/null 2>&1 || true
+}
+
 run_root_staged_payload() {
   local machine_id="$1"
   local payload_tar="$2"
@@ -179,6 +164,7 @@ run_root_staged_payload() {
       wait "$controller_pid" >/dev/null 2>&1 || true
       controller_pid=''
     fi
+    emergency_drain_local >/dev/null 2>&1 || true
     "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1 || true
     exit "$signal_status"
   }
@@ -210,27 +196,18 @@ run_root_staged_payload() {
     controller_pid=$!
     wait "$controller_pid" || status=$?
     controller_pid=''
-    trap - HUP INT TERM
   fi
   if ! "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1; then
-    if [[ "$status" -eq 0 ]]; then
-      "$SUDO" -n "$controller" __node-drain \
-        "$machine_id" "$staged_root" >/dev/null 2>&1 || true
-    fi
+    emergency_drain_local >/dev/null 2>&1 || true
     status=1
   fi
+  trap - HUP INT TERM
   return "$status"
 }
 
 if [[ "${1:-}" == '__node-apply' ]]; then
   [[ $# -eq 3 ]] || die "rollout_internal_usage" 64
   run_node_apply "$2" "$3"
-  exit 0
-fi
-
-if [[ "${1:-}" == '__node-drain' ]]; then
-  [[ $# -eq 3 ]] || die "rollout_internal_usage" 64
-  run_node_drain "$2" "$3"
   exit 0
 fi
 
@@ -317,6 +294,13 @@ sudo_command="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 remote_root="$("$sudo_command" -n /usr/bin/mktemp \
   -d /var/tmp/cecelia-fleet-rollout.XXXXXX)"
 controller_pid=''
+emergency_drain_remote() {
+  "$sudo_command" -n /bin/mkdir -p /var/run/cecelia || return 1
+  "$sudo_command" -n /usr/bin/touch \
+    /var/run/cecelia/fleet-worker.drain || return 1
+  "$sudo_command" -n /bin/launchctl bootout \
+    system/com.perfect21.fleet-worker >/dev/null 2>&1 || true
+}
 validate_remote_staging() {
   staged_root="$1"
   canonical_root=''
@@ -353,6 +337,7 @@ interrupt_remote() {
       "$controller_pid" >/dev/null 2>&1 || true
     wait "$controller_pid" >/dev/null 2>&1 || true
   fi
+  emergency_drain_remote >/dev/null 2>&1 || true
   "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1 || true
   exit "$signal_status"
 }
@@ -376,14 +361,11 @@ status=0
 controller_pid=$!
 wait "$controller_pid" || status=$?
 controller_pid=''
-trap - HUP INT TERM
 if ! "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1; then
-  if [[ "$status" -eq 0 ]]; then
-    "$sudo_command" -n "$controller" __node-drain \
-      "$machine_id" "$remote_root" >/dev/null 2>&1 || true
-  fi
+  emergency_drain_remote >/dev/null 2>&1 || true
   status=1
 fi
+trap - HUP INT TERM
 exit "$status"
 REMOTE
 )"
