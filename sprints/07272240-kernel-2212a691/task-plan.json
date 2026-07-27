@@ -1,0 +1,37 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "需求集中在 Brain 后端 dispatcher、slot allocator、attempt-store 与 Kernel launch 链路，属于本地 API 真链路修复。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "恢复 Kernel provider-neutral 容量判定的真实 dispatch 链路",
+      "scope": "统一 active/terminal attempt 状态 SSOT，修正 selected provider/account 的 per-account free 与 dedup 账本，让 dispatcher 从服务端 run 状态和 role_assignments 解析 immutable target，在 provider-neutral 逻辑前切出 legacy adapter，并补齐双任务双 cycle 真链路验收；不做生产 DB 变更、不新增 recovered_at 或命令式 release helper。",
+      "dod": [
+        "[BEHAVIOR] active attempt 从 queued|starting|running 进入 terminal 后，真实 occupancy 查询自然释放容量，execution-contract/attempt-store/occupancy/harnessSlotCheck 四处状态字面一致",
+        "[BEHAVIOR] selected provider/account 未知、snapshot 缺失、snapshot stale、usage API failure、memory/disk/quota/global hard seats 各返回稳定 exact reason，且 unrelated unknown 不污染健康任务",
+        "[BEHAVIOR] 同一 selected target 满足 total=4 active=2 free=2 且独立硬闸通过时 allow，relay/inflight/kernel 三本账同一 dedup key 只扣一次",
+        "[BEHAVIOR] legacy 非 Kernel/relay 继续走独立 legacy admission adapter，不受 provider-neutral snapshot 异常影响",
+        "[BEHAVIOR] 双任务双 cycle 真链路里 Claude-pinned 满额任务被真实拒绝，Codex 或 Grok-pinned 空闲任务继续进入真实 launchKernelProcess 或 unified Controller，review_required=true gate 不回退",
+        "[ARTIFACT] 生成 contract-draft.md、contract-dod.md、Sprint 红测与 task-plan.json"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/slot-allocator.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/dispatcher.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/__tests__/harness-slot-check-kernel.test.js",
+        "packages/brain/src/__tests__/dispatcher-harness-concurrency-cap.test.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher.test.js",
+        "packages/brain/src/orchestrator/__tests__/ground-truth.test.js",
+        "sprints/07272240-kernel-2212a691/tests/kernel-capacity-recovery.contract.test.ts",
+        "sprints/07272240-kernel-2212a691/tests/kernel-capacity-recovery.pg.contract.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
