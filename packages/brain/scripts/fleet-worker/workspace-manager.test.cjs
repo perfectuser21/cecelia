@@ -149,6 +149,24 @@ describe('Fleet Worker workspace manager', () => {
     expect(fs.existsSync(workspace.path)).toBe(false);
   });
 
+  it('restart reconciliation removes an unretained owned worktree only', async () => {
+    const manager = createManager(fixture);
+    const orphan = await manager.prepare(spec(fixture));
+    const retained = await manager.prepare(spec(fixture, {
+      attempt_id: ATTEMPT_B,
+      branch: 'cp-07272050-retained',
+    }));
+
+    await expect(manager.reconcile({
+      retainedAttemptIds: [ATTEMPT_B],
+    })).resolves.toEqual({
+      cleaned_attempts: [ATTEMPT_A],
+    });
+    expect(fs.existsSync(orphan.path)).toBe(false);
+    expect(fs.existsSync(retained.path)).toBe(true);
+    expect(git(['rev-parse', 'HEAD'], retained.path)).toBe(fixture.sha);
+  });
+
   it('quarantines the workspace when Git cleanup fails', async () => {
     const manager = createManager(fixture);
     const workspace = await manager.prepare(spec(fixture));
