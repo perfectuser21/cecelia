@@ -1,0 +1,31 @@
+{
+  "initiative_id": "intent:9fea4e93-035e-4334-9209-bf82d154d452:2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "需求聚焦 Draft PR、真实 PostgreSQL、GitHub PR 元数据与审批 SHA 闸门，属于纯后端恢复链路。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "收敛既有 Draft PR #4372 的 current-main 恢复合同与验证骨架",
+      "scope": "在既有 PR #4372 上补齐 merge-base 证明、migration 366 基线、evaluator 容器 DB 预检、F1 当前主线等价回归与同 SHA 审批绑定的实现与验证。",
+      "dod": [
+        "[BEHAVIOR] merge-base 精确锚定 1dc9d4107cc14f9bc509c1ef285845f1dfb13838",
+        "[BEHAVIOR] migration 366 在同一隔离 PostgreSQL 数据库中连续两次执行成功且 schema_version 只落一行",
+        "[BEHAVIOR] evaluator DB preflight 只允许 host.docker.internal 与 _test|preview_*",
+        "[BEHAVIOR] PR #4372 保持 Draft 且 autoMergeRequest=null，并与最终同一 head SHA 绑定 approval/judge/evaluator",
+        "[ARTIFACT] packages/brain/migrations/366_pr4372_recovery_baseline.sql 与等价 smoke / integration 骨架存在"
+      ],
+      "files": [
+        "packages/brain/migrations/366_pr4372_recovery_baseline.sql",
+        "packages/brain/scripts/smoke/pr4372-db-preflight-smoke.sh",
+        "packages/brain/scripts/smoke/pr4372-current-main-equivalence-smoke.sh",
+        "packages/brain/src/__tests__/integration/pr4372-current-main-equivalence.integration.test.js",
+        "packages/brain/src/routes/harness-kernel-approvals.js",
+        "sprints/07272219-kernel-e1a3b055/contract-draft.md",
+        "sprints/07272219-kernel-e1a3b055/contract-dod.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
