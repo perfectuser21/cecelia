@@ -124,6 +124,40 @@ describe('Fleet Worker health-only service', () => {
     server.close();
   });
 
+  it('rejects concurrent expensive probes without queuing and reprobes after release', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    let releaseFirst;
+    const firstPending = new Promise((resolve) => { releaseFirst = resolve; });
+    let sequence = 0;
+    const probeHealth = vi.fn(async () => {
+      const current = ++sequence;
+      if (current === 1) await firstPending;
+      return safeHealth(current);
+    });
+    const server = createFleetWorkerServer({ probeHealth });
+
+    const firstPendingResponse = request(server, 'GET', '/health');
+    expect(probeHealth).toHaveBeenCalledTimes(1);
+
+    const busy = await request(server, 'GET', '/health');
+
+    expect(busy.statusCode).toBe(503);
+    expect(JSON.parse(busy.body)).toEqual({ error: 'health_probe_busy' });
+    expect(Buffer.byteLength(busy.body, 'utf8')).toBeLessThanOrEqual(1_024);
+    expect(probeHealth).toHaveBeenCalledTimes(1);
+
+    releaseFirst();
+    const first = await firstPendingResponse;
+    const next = await request(server, 'GET', '/health');
+
+    expect(first.statusCode).toBe(200);
+    expect(next.statusCode).toBe(200);
+    expect(JSON.parse(first.body).observed_at)
+      .not.toBe(JSON.parse(next.body).observed_at);
+    expect(probeHealth).toHaveBeenCalledTimes(2);
+    server.close();
+  });
+
   it('freshly probes every command-backed fact and disposable Git/Docker check without a shell', async () => {
     const { probeFleetWorkerHealth } = await loadProbeContract();
     let tempSequence = 0;
@@ -146,7 +180,7 @@ describe('Fleet Worker health-only service', () => {
       expect(args).toBeInstanceOf(Array);
       expect(options).toMatchObject({ shell: false });
       if (file === 'sw_vers') return { stdout: '15.5\n' };
-      if (file === 'orb') return { stdout: '{"version":"1.9.4"}' };
+      if (file === 'orbctl') return { stdout: '{"version":"1.9.4"}' };
       if (file === 'docker' && args[0] === 'info') return { stdout: '{"ServerVersion":"27.5"}' };
       if (file === 'docker' && args[0] === 'image') return { stdout: JSON.stringify([`runner@${DIGEST}`]) };
       if (file === 'docker' && args[0] === 'create') {
@@ -230,7 +264,7 @@ describe('Fleet Worker health-only service', () => {
     }
     const requiredCommands = [
       ['sw_vers', (args) => args.includes('-productVersion')],
-      ['orb', () => true],
+      ['orbctl', (args) => args.length === 1 && args[0] === 'version'],
       ['docker', (args) => args[0] === 'info'],
       ['docker', (args) => args[0] === 'image'
         && args[1] === 'inspect'
