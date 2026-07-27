@@ -65,8 +65,8 @@ container、状态、清理、重启 reconcile 与 quarantine 生命周期。
   server-owned Worker URL；旧 bridge 的 `/harness/attempts*` production 入口返回
   `410 fleet_worker_required`，不再承担 host Attempt 执行。installer 事务性安装完整
   Worker generation，并为 `_cecelia` 准备 mode 0700 data root 和受保护 token file。
-  data root 必须是 `/var/lib/cecelia` 下无 `.`/`..` 的 canonical child，任何宽泛
-  或 traversal 路径都在 ACL/chown 前拒绝。
+  data root 必须是 `/var/lib/cecelia` 下无 `.`/`..` 的 canonical child，任何宽泛、
+  traversal 或中间 symlink 逃逸都在 ACL/chown 前拒绝。
   US M4 的受保护 Worker transport auth 作为 golden baseline 工件进入 root-owned
   rollout staging，再由 baseline reconciler 安装到三台节点；它不是 Codex/provider
   credential，值不进入 argv、日志或 Git。

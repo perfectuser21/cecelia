@@ -256,7 +256,8 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   与 quarantine。Caller cwd/worktree path 不得跨过 Worker boundary。
 - Worker 使用受保护文件中的节点 bearer token；该 token 只做 transport auth，
   不是 Codex/provider credential。installer 为 `_cecelia` 准备
-  `/var/lib/cecelia` 下 canonical、mode 0700 data root，并拒绝 traversal；正常
+  `/var/lib/cecelia` 下 canonical、mode 0700 data root，并拒绝 traversal 与中间
+  symlink 逃逸；正常
   退出按 container（含 prompt runtime）→ worktree → state 回收。
   Legacy bridge 的 production `/harness/attempts*` 已关闭，返回
   `410 fleet_worker_required`。

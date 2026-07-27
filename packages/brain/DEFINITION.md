@@ -48,7 +48,7 @@
   跨越 Worker boundary。
 - Worker bearer token 只做节点 transport auth，由受保护文件读取，不是 provider
   credential。installer 为 `_cecelia` 准备 `/var/lib/cecelia` 下 canonical、
-  mode 0700 data root，拒绝 traversal；容器退出按
+  mode 0700 data root，拒绝 traversal 与中间 symlink 逃逸；容器退出按
   container（含 prompt runtime）→ worktree → state 回收。Legacy bridge 的
   production `/harness/attempts*` 返回 `410 fleet_worker_required`。
 - Phase 4A 仍返回 `dispatch_ready=false`；CredentialEnvelope、执行等价/恢复和

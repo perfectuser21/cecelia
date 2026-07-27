@@ -100,6 +100,8 @@ The controlled mirror is staging-only. Each Attempt clones an independent bare
 Git common-dir with `--no-hardlinks`; only that private admin directory is
 mounted at its identical absolute path in the container. A writer therefore
 cannot mutate shared refs, objects, or another Attempt's worktree metadata.
+The installer rejects broad, non-canonical, traversal, or symlink-escaped data
+roots before any Docker ACL, directory creation, chmod, or chown mutation.
 
 ## Phase 4B file boundary
 
