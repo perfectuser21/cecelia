@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import pg from 'pg';
 
 import { DB_DEFAULTS } from '../../../packages/brain/src/db-config.js';
@@ -15,6 +15,41 @@ const SPRINT_DIR = 'sprints/kernel-contract-fixture';
 const APPROVED_DIGEST = '1'.repeat(64);
 const STALE_DIGEST = '2'.repeat(64);
 const APPROVED_SOURCE_SHA = 'a'.repeat(40);
+
+function baseObserved(overrides = {}) {
+  return {
+    run: { phase: 'generate' },
+    task: { status: 'in_progress' },
+    prdExists: true,
+    contract: { approved: true },
+    pr: {
+      url: 'https://github.com/perfectuser21/cecelia/pull/9999',
+      state: 'OPEN',
+      ci: 'pass',
+      merged: false,
+      head_sha: 'sha-current',
+    },
+    inflight: { containers: [], host_pids: [], attempts: [] },
+    lastAgentExit: { code: 0, auth_failed: false },
+    proposeBranchRn: 10,
+    ganLatestRoundVerdict: 'APPROVED',
+    generatorSpawned: true,
+    evaluateVerdict: null,
+    judgeVerdict: null,
+    reviewRequired: false,
+    reviewApproved: false,
+    counters: {
+      hops: 12,
+      fixRound: 0,
+      pollCount: 0,
+      noPushStreak: 0,
+      noVerdictStreak: 0,
+      ganCostUsd: 0,
+    },
+    decisionLog: [],
+    ...overrides,
+  };
+}
 
 async function subject() {
   return import(MODULE_PATH);
@@ -833,6 +868,115 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     })).toEqual({
       allow: false,
       reason: 'stale_judge_manifest_digest',
+    });
+  });
+
+  it('approved_contract_drift routes to requires_re_gan and never generator-fix', async () => {
+    const { derive } = await import('../../../packages/brain/src/orchestrator/derive.js');
+    const result = derive(baseObserved({
+      evaluateVerdict: {
+        verdict: 'FAIL',
+        pr_head_sha: 'sha-current',
+        failure_class: 'approved_contract_drift',
+        failure_signature: 'DoD.md:365-to-366',
+      },
+    }));
+
+    expect(result).toMatchObject({
+      phase: 'gan',
+      action: 'spawn:proposer',
+      reason: 'requires_re_gan',
+    });
+    expect(result.action).not.toBe('spawn:generator-fix');
+  });
+
+  it('judge dispatch handler and verdict persistence carry approved manifest_digest and current pr_head_sha', async () => {
+    const { buildApprovedContractDispatchContext } = await subject();
+    const { createKernelHandlers } = await import('../../../packages/brain/src/orchestrator/kernel-handlers.js');
+    const approvedContract = {
+      branch: 'cp-harness-propose-r6-51836fb2-a17',
+      manifest_digest: APPROVED_DIGEST,
+      source_commit_sha: APPROVED_SOURCE_SHA,
+      approved_manifest: {
+        manifest_digest: APPROVED_DIGEST,
+        source_commit_sha: APPROVED_SOURCE_SHA,
+        sprint_dir: SPRINT_DIR,
+      },
+    };
+
+    const dispatchContext = buildApprovedContractDispatchContext({
+      role: 'judge',
+      contract: approvedContract,
+      currentPrSha: 'sha-current',
+    });
+    expect(dispatchContext.inputs.contract.manifest_digest).toBe(APPROVED_DIGEST);
+    expect(dispatchContext.env).toMatchObject({
+      APPROVED_CONTRACT_MANIFEST_DIGEST: APPROVED_DIGEST,
+      APPROVED_CONTRACT_SOURCE_SHA: APPROVED_SOURCE_SHA,
+      PR_HEAD_SHA: 'sha-current',
+    });
+
+    const pool = {
+      query: vi.fn(async () => ({ rows: [] })),
+    };
+    const attemptStore = {
+      complete: vi.fn(async () => {}),
+    };
+    const judgeGate = vi.fn(async () => ({
+      verdict: 'PASS',
+      feedback: 'grounded judge pass',
+      judged: true,
+    }));
+    const handlers = createKernelHandlers({
+      pool,
+      attemptStore,
+      judgeGate,
+      promptDir: '/tmp/approved-contract-provenance-prompts',
+    });
+
+    await handlers['spawn:judge']({
+      runId: RUN_ID,
+      taskId: INITIATIVE_ID,
+      attempt: { id: 'judge-attempt-1' },
+      bundle: {
+        inputs: {
+          worktree_path: '/tmp/repo',
+          sprint_dir: SPRINT_DIR,
+          contract: approvedContract,
+        },
+      },
+      observed: {
+        pr: { head_sha: 'sha-current', state: 'OPEN', merged: false },
+        contract: { row: approvedContract },
+        evaluateVerdict: {
+          verdict: 'PASS',
+          pr_head_sha: 'sha-current',
+          manifest_digest: APPROVED_DIGEST,
+        },
+        evaluateResult: {
+          decision: { outcome: 'PASS', manifest_digest: APPROVED_DIGEST },
+          checks: [],
+        },
+        callbackResult: null,
+        reviewApproved: false,
+      },
+    });
+
+    expect(judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      approvedManifestDigest: APPROVED_DIGEST,
+      currentPrHeadSha: 'sha-current',
+    }), expect.anything());
+    const verdictCall = pool.query.mock.calls.find(([sql]) => /verdict:judge/.test(sql));
+    expect(verdictCall).toBeTruthy();
+    const detail = JSON.parse(verdictCall[1][3]);
+    expect(detail).toMatchObject({
+      verdict: 'PASS',
+      pr_head_sha: 'sha-current',
+      manifest_digest: APPROVED_DIGEST,
+    });
+    expect(attemptStore.complete.mock.calls[0][1].decision).toMatchObject({
+      outcome: 'PASS',
+      manifest_digest: APPROVED_DIGEST,
     });
   });
 

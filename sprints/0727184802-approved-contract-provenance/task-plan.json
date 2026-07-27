@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "实现 Approved Contract Provenance Manifest 可信链路",
-      "scope": "从 Reviewer APPROVED 的 Git SHA 生成 canonical manifest，append-only 写入批准记录，并让 Generator dispatch/preflight/callback、Evaluator preflight、CI required check 与 merge gate 校验同一 manifest_digest 和 current PR SHA；approved artifact drift fail-closed，main migration 冲突 requires_re_gan。",
+      "scope": "从 Reviewer APPROVED 的 Git SHA 生成 canonical manifest，append-only 写入批准记录，并让 Generator dispatch/preflight/callback、Evaluator/Judge preflight 与 verdict、CI required check、merge gate 校验同一 manifest_digest 和 current PR SHA；approved artifact drift fail-closed 并重新 GAN，main migration 冲突 requires_re_gan。",
       "dod": [
         "[BEHAVIOR] canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts",
         "[BEHAVIOR] append-only approval rejects same contract_version with a different manifest_digest",
@@ -15,6 +15,7 @@
         "[BEHAVIOR] root DoD Test command action expected environment and safety semantic edits are each rejected as approved_contract_drift",
         "[BEHAVIOR] missing manifest unreachable stale sha and stale manifest digest fail closed",
         "[BEHAVIOR] generator and evaluator dispatch carry approved manifest digest and source sha",
+        "[BEHAVIOR] judge dispatch handler and verdict persistence carry approved manifest_digest and current pr_head_sha",
         "[BEHAVIOR] dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch",
         "[BEHAVIOR] callback refuses stale manifest_digest before writing evaluator verdict",
         "[BEHAVIOR] callback refuses stale pr_head_sha before writing generator verdict",
@@ -22,6 +23,7 @@
         "[BEHAVIOR] CI required check rejects missing stale digest and stale pr_head_sha fail closed",
         "[BEHAVIOR] mergeGate refuses PASS verdicts that do not carry the approved manifest_digest",
         "[BEHAVIOR] mergeGate refuses missing approved manifest_digest and stale judge manifest_digest",
+        "[BEHAVIOR] approved_contract_drift routes to requires_re_gan and never generator-fix",
         "[BEHAVIOR] approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are each rejected as approved_contract_drift",
         "[BEHAVIOR] main migration conflict after approval returns requires_re_gan",
         "[ARTIFACT] packages/brain/src/orchestrator/approved-contract-provenance.js",
@@ -33,6 +35,8 @@
         "packages/brain/src/orchestrator/contract-store.js",
         "packages/brain/src/orchestrator/loop.js",
         "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
         "packages/brain/src/routes/harness-callback.js",
         "packages/brain/src/orchestrator/ground-truth.js",
         "packages/brain/src/orchestrator/gates.js",
