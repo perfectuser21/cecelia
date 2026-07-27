@@ -34,6 +34,7 @@ write_executable "$fake_bin/git" \
   'if [[ "${FLEET_TEST_REAL_GIT:-0}" == 1 ]]; then' \
   '  repo_root=""' \
   '  [[ "${1:-}" == "-C" ]] && { repo_root="$2"; shift 2; }' \
+  '  if [[ "${1:-}" == "-c" && "${2:-}" == "tar.umask=0022" ]]; then shift 2; fi' \
   '  if [[ "$*" == "status --porcelain --untracked-files=all" ]]; then exit 0; fi' \
   '  if [[ "$*" == "rev-parse --verify HEAD^{commit}" ]]; then' \
   '    exec /usr/bin/git -C "$repo_root" "$@"' \

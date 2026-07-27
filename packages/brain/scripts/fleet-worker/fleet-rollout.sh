@@ -285,7 +285,8 @@ runner_archive="$TEMP_ROOT/runner.tar"
 payload_tar="$TEMP_ROOT/payload.tar"
 bundle_repository="$TEMP_ROOT/bundle.git"
 
-"$GIT" -C "$REPO_ROOT" archive --format=tar --output "$source_tar" "$rollout_commit" \
+"$GIT" -C "$REPO_ROOT" -c tar.umask=0022 \
+  archive --format=tar --output "$source_tar" "$rollout_commit" \
   packages/brain/package.json \
   packages/brain/config/fleet-node-profiles.json \
   packages/brain/src/orchestrator/fleet-node/node-profile.js \
