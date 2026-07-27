@@ -7,7 +7,7 @@
  * --dry-run：只观测+推导+打印（F5 前台雏形），零写入零派发。
  * 非 dry-run 组装 provider-neutral dispatcher；Brain tick 拉起/watchdog 重拉另行接线。
  */
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -28,6 +28,7 @@ import {
   DEFAULT_LOCAL_MACHINE_ID,
   DEFAULT_WORKER_BRAIN_URL,
 } from './production-transport.js';
+import { createWorkspaceSpecResolver } from './workspace-spec.js';
 
 const CANONICAL_MACHINE_IDS = new Set([
   'us-mac-m4',
@@ -160,6 +161,30 @@ export async function buildRealDeps(overrides = {}) {
     }
     const handlers = overrides.handlers
       ?? await buildDefaultHandlers({ pool, execCmd, attemptStore });
+    const shouldResolveWorkspace = overrides.resolveWorkspaceSpec !== undefined
+      || typeof overrides.resolveRepoHead === 'function'
+      || !overrides.launcher;
+    const resolveRepoHead = overrides.resolveRepoHead
+      ?? (async (repo) => {
+        if (repo !== 'perfectuser21/cecelia') {
+          throw new Error(`workspace_repo_not_supported:${String(repo)}`);
+        }
+        const repoRoot = env.CECELIA_REPO_ROOT ?? process.cwd();
+        return execFileSync(
+          'git',
+          ['rev-parse', '--verify', 'origin/main^{commit}'],
+          {
+            cwd: repoRoot,
+            encoding: 'utf8',
+            maxBuffer: 1024 * 1024,
+            timeout: 10_000,
+          },
+        ).trim();
+      });
+    const resolveWorkspaceSpec = overrides.resolveWorkspaceSpec
+      ?? (shouldResolveWorkspace
+        ? createWorkspaceSpecResolver({ resolveRepoHead })
+        : null);
     const onPreflightBlocked = overrides.onPreflightBlocked
       ?? (async (blocked) => {
         const { raise } = await import('../alerting.js');
@@ -199,6 +224,7 @@ export async function buildRealDeps(overrides = {}) {
       onFailurePersistenceFailed,
       leaseOwner,
       leaseSeconds: overrides.leaseSeconds,
+      ...(resolveWorkspaceSpec ? { resolveWorkspaceSpec } : {}),
     });
   }
   return {

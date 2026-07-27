@@ -23,7 +23,16 @@ acl_state="$test_root/acl.state"
 socket_acl_state="$test_root/socket-acl.state"
 preflight_log="$test_root/preflight.log"
 startup_probe_log="$test_root/startup-probe.log"
+chown_log="$test_root/chown.log"
+worker_token_file="$test_root/worker-token"
+worker_data_root="$test_root/var/lib/cecelia/fleet-worker"
 mkdir -p "$install_dir" "$log_dir"
+printf '%s\n' 'fleet-worker-token-at-least-32-bytes' > "$worker_token_file"
+chmod 0600 "$worker_token_file"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\\n" "$*" >> "${FLEET_WORKER_CHOWN_LOG:?}"' > "$test_root/chown"
+chmod +x "$test_root/chown"
 
 run_installer() {
   env -u FLEET_WORKER_ID \
@@ -35,11 +44,15 @@ run_installer() {
     FLEET_WORKER_READLINK="$test_root/readlink" \
     FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
     FLEET_WORKER_CHMOD="$test_root/chmod" \
+    FLEET_WORKER_CHOWN="$test_root/chown" \
+    FLEET_WORKER_CHOWN_LOG="$chown_log" \
     FLEET_WORKER_STAT="$test_root/stat" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
+    FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
+    FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
     "$INSTALLER" "$@"
 }
 
@@ -55,11 +68,15 @@ run_installer_with_id() {
     FLEET_WORKER_READLINK="$test_root/readlink" \
     FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
     FLEET_WORKER_CHMOD="$test_root/chmod" \
+    FLEET_WORKER_CHOWN="$test_root/chown" \
+    FLEET_WORKER_CHOWN_LOG="$chown_log" \
     FLEET_WORKER_STAT="$test_root/stat" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
+    FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
+    FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
     "$INSTALLER" "$@"
 }
 
@@ -224,6 +241,8 @@ FLEET_WORKER_LOG_DIR="$log_dir" \
 FLEET_WORKER_NODE_EXECUTABLE="$test_root/default-probe-node" \
 FLEET_WORKER_ID="$test_root/id-default-probe" \
 FLEET_WORKER_PLUTIL="$test_root/plutil" \
+FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
+FLEET_WORKER_DATA_ROOT="$worker_data_root" \
   env -u FLEET_WORKER_NODE_PROBE \
   "$INSTALLER" xian-mac-m4 --render-to "$default_probe_plist" >/dev/null \
   || fail "default preflight could not resolve reconciled OrbStack commands"
@@ -305,7 +324,11 @@ for required in \
   '<key>UserName</key>' \
   '<key>CECELIA_MACHINE_ID</key>' \
   '<string>xian-mac-m4</string>' \
-  '<key>CECELIA_RUNNER_DIGEST</key>'; do
+  '<key>CECELIA_RUNNER_DIGEST</key>' \
+  '<key>CECELIA_FLEET_WORKER_TOKEN_FILE</key>' \
+  "<string>$worker_token_file</string>" \
+  '<key>CECELIA_FLEET_DATA_ROOT</key>' \
+  "<string>$worker_data_root</string>"; do
   grep -Fq "$required" <<<"$plist_body" || fail "plist missing $required"
 done
 grep -Eq '<string>sha256:[a-f0-9]{64}</string>' <<<"$plist_body" \
@@ -314,8 +337,10 @@ grep -Fq "$log_dir/fleet-worker.stdout.log" <<<"$plist_body" \
   || fail "stdout log path is not bounded"
 grep -Fq "$log_dir/fleet-worker.stderr.log" <<<"$plist_body" \
   || fail "stderr log path is not bounded"
-grep -Eqi 'CODEX_ACCOUNT_ALLOWLIST|account|authorization|auth|token|prompt|credential' <<<"$plist_body" \
+grep -Eqi 'CODEX_ACCOUNT_ALLOWLIST|account|authorization|auth|prompt|credential' <<<"$plist_body" \
   && fail "plist contains local account or credential authority"
+grep -Fq 'fleet-worker-token-at-least-32-bytes' <<<"$plist_body" \
+  && fail "plist contains the Worker bearer secret instead of its protected file path"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -368,6 +393,59 @@ fi
 grep -Fq 'prerequisite_service_user' <<<"$service_user_output" \
   || fail "missing service user lacked a bounded refusal"
 [[ ! -s "$acl_log" ]] || fail "missing service user caused an ACL mutation"
+
+: > "$acl_log"
+: > "$chown_log"
+dangerous_data_root_output=''
+if dangerous_data_root_output="$(
+  FLEET_WORKER_TEST_DATA_ROOT='/' \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "filesystem root was accepted as the Worker data root"
+fi
+grep -Fq 'worker_data_root_invalid' <<<"$dangerous_data_root_output" \
+  || fail "filesystem root refusal lacked a bounded signature"
+[[ ! -s "$acl_log" ]] \
+  || fail "invalid data root caused a Docker ACL mutation"
+[[ ! -s "$chown_log" ]] \
+  || fail "invalid data root caused an ownership mutation"
+
+: > "$acl_log"
+: > "$chown_log"
+traversal_data_root_output=''
+if traversal_data_root_output="$(
+  FLEET_WORKER_TEST_DATA_ROOT="$test_root/var/lib/cecelia/../../.." \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "traversal data root was accepted as the Worker data root"
+fi
+grep -Fq 'worker_data_root_invalid' <<<"$traversal_data_root_output" \
+  || fail "traversal data root refusal lacked a bounded signature"
+[[ ! -s "$acl_log" ]] \
+  || fail "traversal data root caused a Docker ACL mutation"
+[[ ! -s "$chown_log" ]] \
+  || fail "traversal data root caused an ownership mutation"
+
+: > "$acl_log"
+: > "$chown_log"
+escaped_worker_root="$test_root/escaped-worker-root"
+mkdir -p "$escaped_worker_root" "$test_root/var/lib/cecelia"
+ln -s "$escaped_worker_root" "$test_root/var/lib/cecelia/escape"
+symlink_data_root_output=''
+if symlink_data_root_output="$(
+  FLEET_WORKER_TEST_DATA_ROOT="$test_root/var/lib/cecelia/escape/nested/data" \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "symlink-escaped data root was accepted"
+fi
+grep -Fq 'worker_data_root_invalid' <<<"$symlink_data_root_output" \
+  || fail "symlink-escaped data root refusal lacked a bounded signature"
+[[ ! -e "$escaped_worker_root/nested" ]] \
+  || fail "symlink-escaped data root created an external directory"
+[[ ! -s "$acl_log" ]] \
+  || fail "symlink-escaped data root caused a Docker ACL mutation"
+[[ ! -s "$chown_log" ]] \
+  || fail "symlink-escaped data root caused an ownership mutation"
 
 invalid_socket_output=''
 if invalid_socket_output="$(
@@ -557,6 +635,8 @@ rm -f "$socket_acl_state"
 : > "$acl_log"
 : > "$preflight_log"
 : > "$launch_log"
+: > "$chown_log"
+rm -rf "$worker_data_root"
 rm -f "$launch_fail_once"
 printf 'absent\n' > "$launch_state"
 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null
@@ -564,11 +644,21 @@ installed_plist="$install_dir/com.perfect21.fleet-worker.plist"
 runtime_dir="$test_root/usr/local/libexec/cecelia/fleet-worker"
 installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
+installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
+installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
 installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
+[[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
+  || fail "--apply omitted the Workspace/Attempt runtime modules"
+[[ -d "$worker_data_root" ]] \
+  || fail "--apply did not create the Worker-owned data root"
+grep -Fxq "_cecelia:_cecelia $worker_data_root" "$chown_log" \
+  || fail "--apply did not assign the data root to the Worker identity"
+grep -Fxq "_cecelia:_cecelia $worker_token_file" "$chown_log" \
+  || fail "--apply did not assign the token file to the Worker identity"
 [[ -f "$installed_access_helper" && -f "$installed_access_plist" ]] \
   || fail "--apply did not install the socket ACL refresher generation"
 access_plist_contract="$(python3 - "$installed_access_plist" <<'PY'

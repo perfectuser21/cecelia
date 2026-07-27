@@ -68,6 +68,14 @@ golden_paths:
     test_command: "bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'"
     must_never_break: true
 
+  - id: KERNEL-FLEET-WORKSPACE-01
+    name: "Unified Fleet Worker WorkspaceSpec and Attempt ownership remain fail-closed"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "bash packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh"
+    must_never_break: true
+
   # ── 五条 P0 铁律（主理人圈定，HANDOFF-cicd-closeloop.md PR-1）──────────────
   # DoD：故意破任一条 → core-regression job 必红
   #

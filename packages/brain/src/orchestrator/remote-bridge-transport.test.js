@@ -28,7 +28,23 @@ function launchInput(overrides = {}) {
     callbackSecret: CALLBACK_TOKEN,
     ...overrides.attempt,
   };
-  const bundle = { opaque: 'must-not-be-sent', ...overrides.bundle };
+  const bundle = {
+    opaque: 'must-not-be-sent',
+    role: 'generator',
+    inputs: {
+      execution_surface: 'fleet-worker',
+      workspace_spec: {
+        repo: 'perfectuser21/cecelia',
+        base_sha: '0123456789abcdef0123456789abcdef01234567',
+        branch: 'cp-07272050-remote-worker',
+        expected_head_sha: null,
+        mode: 'read-write',
+        run_id: 'run-1',
+        attempt_id: 'attempt-1',
+      },
+    },
+    ...overrides.bundle,
+  };
   const spec = {
     provider: 'codex',
     command: 'codex',
@@ -134,7 +150,7 @@ describe('remote Bridge launch', () => {
     await expect(transport.launch(launchInput())).resolves.toEqual({
       jobId: 'job-1',
       actualMachineId: MACHINE,
-      executionTransport: 'remote-bridge',
+      executionTransport: 'fleet-worker',
       remoteJobId: 'job-1',
       attestationStatus: 'verified',
     });
@@ -160,6 +176,16 @@ describe('remote Bridge launch', () => {
         provider: 'codex',
         account: 'team3',
         machine: MACHINE,
+        role: 'generator',
+      },
+      workspace_spec: {
+        repo: 'perfectuser21/cecelia',
+        base_sha: '0123456789abcdef0123456789abcdef01234567',
+        branch: 'cp-07272050-remote-worker',
+        expected_head_sha: null,
+        mode: 'read-write',
+        run_id: 'run-1',
+        attempt_id: 'attempt-1',
       },
       provider_spec: {
         provider: 'codex',

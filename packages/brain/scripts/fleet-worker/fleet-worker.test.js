@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Readable } from 'node:stream';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
 const ALLOWED_KEYS = [
@@ -68,9 +72,20 @@ function responseDouble() {
   };
 }
 
-async function request(server, method, url) {
+async function request(server, method, url, { headers = {}, body } = {}) {
   const response = responseDouble();
-  server.emit('request', { method, url, headers: {} }, response);
+  const input = new Readable({
+    read() {
+      if (body !== undefined) {
+        this.push(typeof body === 'string' ? body : JSON.stringify(body));
+      }
+      this.push(null);
+    },
+  });
+  input.method = method;
+  input.url = url;
+  input.headers = headers;
+  server.emit('request', input, response);
   await response.completed;
   return response;
 }
@@ -461,5 +476,337 @@ describe('Fleet Worker health-only service', () => {
     expect([404, 405]).toContain(response.statusCode);
     expect(probeHealth).not.toHaveBeenCalled();
     server.close();
+  });
+});
+
+describe('Fleet Worker Attempt API', () => {
+  const token = 'fleet-worker-token-at-least-32-bytes';
+  const auth = { authorization: `Bearer ${token}` };
+  const attemptId = '22222222-2222-4222-8222-222222222222';
+  const runId = '11111111-1111-4111-8111-111111111111';
+
+  function launchBody(overrides = {}) {
+    return {
+      attempt_id: attemptId,
+      run_id: runId,
+      lease_owner: 'dispatcher-1',
+      lease_generation: 0,
+      target: {
+        machine: 'us-mac-m4',
+        provider: 'codex',
+        account: 'team1',
+        model: 'gpt-5',
+      },
+      workspace_spec: {
+        repo: 'perfectuser21/cecelia',
+        base_sha: '0123456789abcdef0123456789abcdef01234567',
+        branch: 'cp-07272050-worker-api',
+        expected_head_sha: null,
+        mode: 'read-write',
+        run_id: runId,
+        attempt_id: attemptId,
+      },
+      provider_spec: {
+        provider: 'codex',
+        command: 'codex',
+        args: ['exec', '--json'],
+        stdin: 'perform the bounded task',
+        output: 'jsonl',
+      },
+      callback_url: `http://brain.internal:5221/api/brain/harness/attempts/${attemptId}/callback`,
+      callback_token: 'callback-token',
+      ...overrides,
+    };
+  }
+
+  function runnerDouble() {
+    return {
+      launch: vi.fn(async () => ({
+        attempt_id: attemptId,
+        actual_machine_id: 'us-mac-m4',
+        execution_transport: 'fleet-worker',
+        remote_job_id: 'container-1',
+      })),
+      inspect: vi.fn(async () => ({ attempt_id: attemptId, status: 'running' })),
+      cancel: vi.fn(async () => ({ attempt_id: attemptId, status: 'cleaned' })),
+      terminal: vi.fn(async () => ({ attempt_id: attemptId, status: 'cleaned' })),
+      reconcile: vi.fn(async () => ({
+        cleaned_attempts: [],
+        removed_orphan_containers: [],
+      })),
+    };
+  }
+
+  it('launches an authenticated path-free Attempt and returns a bounded receipt', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: launchBody(),
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(JSON.parse(response.body)).toMatchObject({
+      status: 'accepted',
+      job_id: 'container-1',
+      actual_machine_id: 'us-mac-m4',
+      attestation: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(attemptRunner.launch).toHaveBeenCalledWith(launchBody());
+    expect(response.body).not.toMatch(/callback-token|perform the bounded task/);
+    server.close();
+  });
+
+  it.each([
+    [{}, 401],
+    [{ authorization: 'Bearer wrong-token' }, 401],
+    [{ authorization: `Basic ${token}` }, 401],
+  ])('rejects unauthenticated Attempt launch before runner invocation', async (
+    headers,
+    status,
+  ) => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: launchBody(),
+    });
+
+    expect(response.statusCode).toBe(status);
+    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    server.close();
+  });
+
+  it.each([
+    { cwd: '/Users/operator/perfect21/cecelia' },
+    { worktree_path: '/tmp/operator-worktree' },
+    { workspace_path: '../operator-worktree' },
+  ])('rejects caller workspace coordinates before runner invocation: %j', async (
+    injected,
+  ) => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: launchBody(injected),
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body).error).toMatch(/untrusted_workspace_field/);
+    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    server.close();
+  });
+
+  it('rejects malformed and oversized JSON without invoking the runner', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+      maxRequestBytes: 256,
+    });
+
+    const malformed = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: '{"broken":',
+    });
+    const oversized = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ payload: 'x'.repeat(300) }),
+    });
+
+    expect(malformed.statusCode).toBe(400);
+    expect(oversized.statusCode).toBe(413);
+    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    server.close();
+  });
+
+  it('serves authenticated inspect, cancel, and terminal lifecycle routes', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const inspected = await request(
+      server,
+      'GET',
+      `/harness/attempts/${attemptId}`,
+      { headers: auth },
+    );
+    const cancelled = await request(
+      server,
+      'POST',
+      `/harness/attempts/${attemptId}/cancel`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
+    );
+    const terminal = await request(
+      server,
+      'POST',
+      `/harness/attempts/${attemptId}/terminal`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
+    );
+
+    expect(inspected.statusCode).toBe(200);
+    expect(cancelled.statusCode).toBe(200);
+    expect(terminal.statusCode).toBe(200);
+    expect(attemptRunner.inspect).toHaveBeenCalledWith(attemptId);
+    expect(attemptRunner.cancel).toHaveBeenCalledWith(attemptId, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    expect(attemptRunner.terminal).toHaveBeenCalledWith(attemptId, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    server.close();
+  });
+
+  it('keeps Attempt traffic closed until startup reconciliation completes', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    let release;
+    const reconciling = new Promise((resolve) => { release = resolve; });
+    const attemptRunner = runnerDouble();
+    attemptRunner.reconcile.mockImplementationOnce(async () => reconciling);
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const busy = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: launchBody(),
+    });
+    expect(busy.statusCode).toBe(503);
+    expect(JSON.parse(busy.body)).toEqual({ error: 'worker_reconciling' });
+    expect(attemptRunner.launch).not.toHaveBeenCalled();
+
+    release({
+      cleaned_attempts: [],
+      removed_orphan_containers: [],
+    });
+    await vi.waitFor(() => expect(attemptRunner.reconcile).toHaveBeenCalledOnce());
+    const accepted = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: launchBody(),
+    });
+    expect(accepted.statusCode).toBe(202);
+    server.close();
+  });
+});
+
+describe('Fleet Worker production runtime assembly', () => {
+  it('assembles durable Worker-owned roots and reads auth only from a protected file', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-runtime-'));
+    const tokenFile = path.join(root, 'worker-token');
+    const dataRoot = path.join(root, 'data');
+    fs.writeFileSync(tokenFile, 'fleet-worker-token-at-least-32-bytes\n', {
+      mode: 0o600,
+    });
+
+    try {
+      const runtime = createFleetWorkerRuntime({
+        env: {
+          CECELIA_MACHINE_ID: 'us-mac-m4',
+          CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+          CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
+          CECELIA_FLEET_DATA_ROOT: dataRoot,
+          CECELIA_FLEET_REPO_SOURCE: 'https://github.com/perfectuser21/cecelia.git',
+        },
+        runCommand: vi.fn(),
+      });
+
+      expect(runtime.attemptToken).toBe('fleet-worker-token-at-least-32-bytes');
+      expect(runtime.attemptRunner).toMatchObject({
+        launch: expect.any(Function),
+        reconcile: expect.any(Function),
+      });
+      expect(runtime.roots).toEqual({
+        mirrors: path.join(dataRoot, 'mirrors'),
+        worktrees: path.join(dataRoot, 'worktrees'),
+        quarantine: path.join(dataRoot, 'quarantine'),
+        state: path.join(dataRoot, 'state'),
+        runtime: path.join(dataRoot, 'runtime'),
+      });
+      expect(JSON.stringify(runtime)).not.toContain(
+        'https://github.com/perfectuser21/cecelia.git',
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not accept an inline long-lived Worker token in place of the token file', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+
+    expect(() => createFleetWorkerRuntime({
+      env: {
+        CECELIA_MACHINE_ID: 'us-mac-m4',
+        CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+        CECELIA_FLEET_DATA_ROOT: '/var/lib/cecelia/fleet-worker',
+        CECELIA_FLEET_WORKER_TOKEN: 'inline-token-must-not-be-trusted',
+      },
+      runCommand: vi.fn(),
+    })).toThrow(/fleet_worker_token_file_required/);
+  });
+
+  it('rejects a symlink in place of the protected Worker token file', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-token-'));
+    const target = path.join(root, 'token-target');
+    const tokenFile = path.join(root, 'worker-token');
+    fs.writeFileSync(target, 'fleet-worker-token-at-least-32-bytes\n', {
+      mode: 0o600,
+    });
+    fs.symlinkSync(target, tokenFile);
+
+    try {
+      expect(() => createFleetWorkerRuntime({
+        env: {
+          CECELIA_MACHINE_ID: 'us-mac-m4',
+          CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+          CECELIA_FLEET_DATA_ROOT: path.join(root, 'data'),
+          CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
+        },
+        runCommand: vi.fn(),
+      })).toThrow(/fleet_worker_token_file_permissions/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

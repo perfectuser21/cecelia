@@ -238,6 +238,7 @@ write_executable "$fake_bin/installer" \
 
 bundle="$test_root/repository.bundle"
 runner_archive="$test_root/runner.tar"
+worker_token="$test_root/worker-token"
 bundle_source="$test_root/bundle-source"
 mkdir -p "$bundle_source"
 git -C "$bundle_source" init -q
@@ -249,11 +250,14 @@ git -C "$bundle_source" add README.md
 git -C "$bundle_source" commit -q -m "test: seed fleet baseline"
 git -C "$bundle_source" bundle create "$bundle" HEAD
 printf 'runner archive\n' > "$runner_archive"
+printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
+chmod 0600 "$worker_token"
 
 run_reconciler() {
   local root="$1"
   local repository_bundle="${FLEET_TEST_REPOSITORY_BUNDLE-$bundle}"
   local runner_input="${FLEET_TEST_RUNNER_ARCHIVE-$runner_archive}"
+  local token_input="${FLEET_TEST_WORKER_TOKEN-$worker_token}"
   local docker_command="${FLEET_TEST_DOCKER_COMMAND-$fake_bin/docker}"
   shift
   FLEET_TEST_MUTATION_LOG="$mutation_log" \
@@ -286,6 +290,7 @@ run_reconciler() {
   FLEET_BASELINE_TMPDIR="$root/tmp" \
   FLEET_BASELINE_REPOSITORY_BUNDLE="$repository_bundle" \
   FLEET_BASELINE_RUNNER_ARCHIVE="$runner_input" \
+  FLEET_BASELINE_WORKER_TOKEN_FILE="$token_input" \
   "$RECONCILER" "$@"
 }
 
@@ -330,6 +335,14 @@ if FLEET_TEST_RUNNER_ARCHIVE='' \
 fi
 grep -Fq 'runner_archive_required' "$test_root/missing-runner.out" \
   || fail "missing Runner archive was not explicit"
+
+if FLEET_TEST_WORKER_TOKEN='' \
+  run_reconciler "$system_root" us-mac-m4 --apply \
+  >"$test_root/missing-worker-token.out" 2>&1; then
+  fail "apply accepted a missing Worker transport token"
+fi
+grep -Fq 'worker_token_file_required' "$test_root/missing-worker-token.out" \
+  || fail "missing Worker transport token was not explicit"
 
 rollback_root="$test_root/rollback-system"
 if FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
@@ -387,6 +400,8 @@ grep -Fq 'installer xian-mac-m1 --apply' "$mutation_log" \
   || fail "Docker command does not target the pinned OrbStack app"
 git -C "$system_root/var/lib/cecelia/repository" rev-parse --verify HEAD >/dev/null \
   || fail "credential-free Git baseline was not imported"
+cmp -s "$worker_token" "$system_root/var/lib/cecelia/fleet-worker/worker-auth" \
+  || fail "US M4 Worker transport token was not installed on the node"
 
 install_mutations_before="$(
   grep -Ec '^(curl|tar node|npm pinned-codex|ditto orbstack|docker load)' \
@@ -434,7 +449,7 @@ if run_reconciler "$system_root" moon-base --apply >/dev/null 2>&1; then
   fail "unknown machine was accepted"
 fi
 
-if rg -ni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt' \
+if grep -Eni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt' \
   "$mutation_log"; then
   fail "baseline mutation log contains credential or Prompt material"
 fi

@@ -469,12 +469,18 @@ async function handleBridgeRequest(
   {
     kernelHandler = kernelAttemptHandler,
     kernelMachineId = KERNEL_MACHINE_ID,
+    fleetWorkerCutover = false,
   } = {},
 ) {
   try {
     const inspectMatch = req.url?.match(/^\/harness\/attempts\/([0-9a-f-]+)$/i);
     const cancelMatch = req.url?.match(/^\/harness\/attempts\/([0-9a-f-]+)\/cancel$/i);
     const authContext = { authorization: req.headers.authorization };
+
+    if (fleetWorkerCutover && req.url?.startsWith('/harness/attempts')) {
+      sendJSON(res, 410, { ok: false, error: 'fleet_worker_required' });
+      return;
+    }
 
     if (req.method === 'POST' && req.url === '/harness/attempts') {
       if (!kernelHandler) {
@@ -734,7 +740,11 @@ async function handleBridgeRequest(
 }
 
 function createBridgeServer(options = {}) {
-  return http.createServer((req, res) => handleBridgeRequest(req, res, options));
+  const resolvedOptions = {
+    ...options,
+    fleetWorkerCutover: options.fleetWorkerCutover ?? require.main === module,
+  };
+  return http.createServer((req, res) => handleBridgeRequest(req, res, resolvedOptions));
 }
 
 const server = createBridgeServer();

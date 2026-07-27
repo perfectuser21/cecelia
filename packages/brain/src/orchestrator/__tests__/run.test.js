@@ -160,23 +160,16 @@ describe('buildRealDeps', () => {
         handlers: {},
         preflightGate,
         launcher: {
-          launch: vi.fn(async ({ target }) => target.machine === 'us-mac-m4'
-            ? {
-                actualMachineId: target.machine,
-                executionTransport: 'local-docker',
-                remoteJobId: null,
-                attestationStatus: 'local',
-                containerId: 'canonical-worker',
-              }
-            : {
-                actualMachineId: target.machine,
-                executionTransport: 'remote-bridge',
-                remoteJobId: 'canonical-remote-job',
-                attestationStatus: 'verified',
-                jobId: 'canonical-remote-job',
-              }),
+          launch: vi.fn(async ({ target }) => ({
+            actualMachineId: target.machine,
+            executionTransport: 'fleet-worker',
+            remoteJobId: 'canonical-worker-job',
+            attestationStatus: 'verified',
+            jobId: 'canonical-worker-job',
+          })),
           cancel: vi.fn(),
         },
+        resolveRepoHead: vi.fn(async () => 'c'.repeat(40)),
         loadSkill: vi.fn(() => ({
           name: 'harness-generator',
           version: '1.0.0',
@@ -213,6 +206,18 @@ describe('buildRealDeps', () => {
       expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
         machineId: expectedMachine,
       }));
+      const createdBundle = attemptStore.createAttempt.mock.calls[0][0].bundle;
+      expect(createdBundle.inputs).toMatchObject({
+        execution_surface: 'fleet-worker',
+        workspace_spec: {
+          repo: 'perfectuser21/cecelia',
+          base_sha: 'c'.repeat(40),
+          mode: 'read-write',
+          run_id: '11111111-1111-4111-8111-111111111111',
+          attempt_id: '33333333-3333-4333-8333-333333333333',
+        },
+      });
+      expect(createdBundle.inputs).not.toHaveProperty('worktree_path');
     } finally {
       if (previous === undefined) delete process.env.CECELIA_MACHINE_ID;
       else process.env.CECELIA_MACHINE_ID = previous;

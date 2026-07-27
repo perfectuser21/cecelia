@@ -130,6 +130,57 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('replaces caller paths with a resolved WorkspaceSpec before Fleet launch', async () => {
+    const deps = makeDeps();
+    deps.machineId = 'us-mac-m4';
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: observed.proposeBranch,
+      expected_head_sha: 'a'.repeat(40),
+      mode: 'read-only',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    deps.launcher.launch.mockResolvedValueOnce({
+      jobId: 'worker-job-1',
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'worker-job-1',
+      attestationStatus: 'verified',
+    });
+    const dispatch = createDispatcher(deps);
+
+    await expect(dispatch('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 2,
+      observed,
+      decision: { phase: 'gan', reason: 'awaiting_review' },
+    })).resolves.toMatchObject({ status: 'DONE', attemptId });
+
+    expect(deps.resolveWorkspaceSpec).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'reviewer',
+      readOnly: true,
+      attemptId,
+    }));
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).toMatchObject({
+      execution_surface: 'fleet-worker',
+      workspace_spec: {
+        repo: 'perfectuser21/cecelia',
+        base_sha: 'a'.repeat(40),
+        branch: observed.proposeBranch,
+        expected_head_sha: 'a'.repeat(40),
+        mode: 'read-only',
+        run_id: runId,
+        attempt_id: attemptId,
+      },
+    });
+    expect(created.bundle.inputs).not.toHaveProperty('worktree_path');
+    expect(deps.launcher.launch.mock.calls[0][0].bundle).toBe(created.bundle);
+  });
+
   it('dispatches the fleet canary without a role Skill or workspace dependency', async () => {
     const deps = makeDeps();
     const dispatch = createDispatcher(deps);
@@ -395,8 +446,8 @@ describe('createDispatcher', () => {
       sprint_dir: 'sprints/provider-neutral',
       worktree_path: '/tmp/worktree',
       role_assignments: {
-        generator: { provider: 'codex', account: 'team3' },
-        evaluator: { provider: 'claude', account: 'account2' },
+        generator: { provider: 'codex', account: 'team3', model: 'gpt-5.6-codex' },
+        evaluator: { provider: 'claude', account: 'account2', model: 'claude-opus-4-6' },
       },
     };
     const dispatch = createDispatcher({
@@ -430,8 +481,18 @@ describe('createDispatcher', () => {
       execution: expect.objectContaining({ codexHome: '/accounts/codex/team3' }),
     }));
     expect(adapters.claude.start).toHaveBeenCalledWith(expect.objectContaining({
-      execution: expect.objectContaining({ claudeHome: '/accounts/claude/account2' }),
+      execution: expect.objectContaining({
+        claudeHome: '/accounts/claude/account2',
+        model: 'claude-opus-4-6',
+      }),
     }));
+    expect(adapters.codex.start).toHaveBeenCalledWith(expect.objectContaining({
+      execution: expect.objectContaining({ model: 'gpt-5.6-codex' }),
+    }));
+    expect(launcher.launch.mock.calls.map(([input]) => input.target.model)).toEqual([
+      'gpt-5.6-codex',
+      'claude-opus-4-6',
+    ]);
   });
 
   it('launch 失败由 dispatcher 用唯一 lease owner fenced-fail 后再抛出', async () => {

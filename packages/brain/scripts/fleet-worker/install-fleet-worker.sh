@@ -14,6 +14,7 @@ ID_COMMAND="${FLEET_WORKER_ID:-/usr/bin/id}"
 READLINK="${FLEET_WORKER_READLINK:-/usr/bin/readlink}"
 ACL_LIST="${FLEET_WORKER_ACL_LIST:-/bin/ls}"
 CHMOD="${FLEET_WORKER_CHMOD:-/bin/chmod}"
+CHOWN="${FLEET_WORKER_CHOWN:-/usr/sbin/chown}"
 STAT="${FLEET_WORKER_STAT:-/usr/bin/stat}"
 MOVE="${FLEET_WORKER_MV:-/bin/mv}"
 SLEEP="${FLEET_WORKER_SLEEP:-/bin/sleep}"
@@ -25,6 +26,8 @@ NODE_PROBE="${FLEET_WORKER_NODE_PROBE:-$DEFAULT_NODE_PROBE}"
 NODE_EXECUTABLE="${FLEET_WORKER_NODE_EXECUTABLE:-$(command -v node || true)}"
 WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
+WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
+ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
 ACCESS_HELPER_SOURCE="$SCRIPT_DIR/refresh-fleet-worker-docker-access.sh"
 ACCESS_TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker-docker-access.plist.template"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
@@ -35,6 +38,8 @@ LOCK_DIR=''
 BACKUP_DIR=''
 STAGED_WORKER=''
 STAGED_PROBE=''
+STAGED_WORKSPACE_MANAGER=''
+STAGED_ATTEMPT_RUNNER=''
 STAGED_PLIST=''
 STAGED_ACCESS_HELPER=''
 STAGED_ACCESS_PLIST=''
@@ -56,8 +61,12 @@ RUNTIME_DIR="${FLEET_WORKER_RUNTIME_DIR:-$SYSTEM_ROOT/usr/local/libexec/cecelia/
 TOOLCHAIN_BIN="$SYSTEM_ROOT/usr/local/libexec/cecelia/toolchain/bin"
 COMMAND_PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
+WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
+ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
 ACCESS_HELPER="$RUNTIME_DIR/refresh-fleet-worker-docker-access.sh"
 WORKTREE_ROOT="${FLEET_WORKER_REPO_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/repository}"
+FLEET_DATA_ROOT="${FLEET_WORKER_DATA_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/fleet-worker}"
+WORKER_TOKEN_FILE="${FLEET_WORKER_TOKEN_FILE:-$FLEET_DATA_ROOT/worker-token}"
 
 usage() {
   echo "usage: $0 <us-mac-m4|xian-mac-m4|xian-mac-m1> [--render-to PATH|--apply]" >&2
@@ -361,11 +370,14 @@ render_plist() {
   local target_dir temporary line
   local escaped_machine escaped_digest escaped_bind_host escaped_brain_health
   local escaped_node escaped_worker
-  local escaped_marker escaped_root escaped_stdout escaped_stderr
+  local escaped_marker escaped_root escaped_token_file escaped_data_root
+  local escaped_stdout escaped_stderr
 
   [[ -f "$TEMPLATE" ]] || die "plist_template_missing"
   [[ -n "$NODE_EXECUTABLE" ]] || die "prerequisite_node"
-  [[ -f "$WORKER_SOURCE" && -f "$PROBE_SOURCE" ]] || die "worker_script_missing"
+  [[ -f "$WORKER_SOURCE" && -f "$PROBE_SOURCE" \
+    && -f "$WORKSPACE_MANAGER_SOURCE" && -f "$ATTEMPT_RUNNER_SOURCE" ]] \
+    || die "worker_script_missing"
   target_dir="$(dirname "$target")"
   [[ -d "$target_dir" ]] || die "render_target_parent_missing"
   temporary="$(mktemp "$target_dir/.fleet-worker.plist.XXXXXX")"
@@ -378,6 +390,8 @@ render_plist() {
   escaped_worker="$(xml_escape "$WORKER_SCRIPT")"
   escaped_marker="$(xml_escape "$DRAIN_MARKER")"
   escaped_root="$(xml_escape "$WORKTREE_ROOT")"
+  escaped_token_file="$(xml_escape "$WORKER_TOKEN_FILE")"
+  escaped_data_root="$(xml_escape "$FLEET_DATA_ROOT")"
   escaped_stdout="$(xml_escape "$LOG_DIR/fleet-worker.stdout.log")"
   escaped_stderr="$(xml_escape "$LOG_DIR/fleet-worker.stderr.log")"
 
@@ -392,6 +406,8 @@ render_plist() {
       line="${line//@@WORKER_SCRIPT@@/$escaped_worker}"
       line="${line//@@DRAIN_MARKER@@/$escaped_marker}"
       line="${line//@@REPO_ROOT@@/$escaped_root}"
+      line="${line//@@WORKER_TOKEN_FILE@@/$escaped_token_file}"
+      line="${line//@@FLEET_DATA_ROOT@@/$escaped_data_root}"
       line="${line//@@STDOUT_LOG@@/$escaped_stdout}"
       line="${line//@@STDERR_LOG@@/$escaped_stderr}"
       printf '%s\n' "$line"
@@ -433,6 +449,8 @@ render_access_plist() {
 cleanup_transaction() {
   [[ -z "$STAGED_WORKER" ]] || rm -f "$STAGED_WORKER"
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
+  [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
+  [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
   [[ -z "$STAGED_PLIST" ]] || rm -f "$STAGED_PLIST"
   [[ -z "$STAGED_ACCESS_HELPER" ]] || rm -f "$STAGED_ACCESS_HELPER"
   [[ -z "$STAGED_ACCESS_PLIST" ]] || rm -f "$STAGED_ACCESS_PLIST"
@@ -440,6 +458,8 @@ cleanup_transaction() {
     rm -f \
       "$BACKUP_DIR/worker" \
       "$BACKUP_DIR/probe" \
+      "$BACKUP_DIR/workspace-manager" \
+      "$BACKUP_DIR/attempt-runner" \
       "$BACKUP_DIR/plist" \
       "$BACKUP_DIR/access-helper" \
       "$BACKUP_DIR/access-plist"
@@ -463,6 +483,10 @@ prepare_transaction_paths() {
   BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleet-worker-backup.XXXXXX")"
   STAGED_WORKER="$(mktemp "$RUNTIME_DIR/.fleet-worker.cjs.XXXXXX")"
   STAGED_PROBE="$(mktemp "$RUNTIME_DIR/.node-probe.cjs.XXXXXX")"
+  STAGED_WORKSPACE_MANAGER="$(
+    mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
+  )"
+  STAGED_ATTEMPT_RUNNER="$(mktemp "$RUNTIME_DIR/.attempt-runner.cjs.XXXXXX")"
   STAGED_PLIST="$(mktemp "$INSTALL_DIR/.fleet-worker.plist.XXXXXX")"
   STAGED_ACCESS_HELPER="$(mktemp "$RUNTIME_DIR/.docker-access.sh.XXXXXX")"
   STAGED_ACCESS_PLIST="$(
@@ -473,9 +497,12 @@ prepare_transaction_paths() {
 stage_generation() {
   cp "$WORKER_SOURCE" "$STAGED_WORKER"
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
+  cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
+  cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
   cp "$ACCESS_HELPER_SOURCE" "$STAGED_ACCESS_HELPER"
   chmod 0755 "$STAGED_WORKER"
   chmod 0644 "$STAGED_PROBE"
+  chmod 0644 "$STAGED_WORKSPACE_MANAGER" "$STAGED_ATTEMPT_RUNNER"
   chmod 0755 "$STAGED_ACCESS_HELPER"
   render_plist "$STAGED_PLIST"
   render_access_plist "$STAGED_ACCESS_PLIST"
@@ -491,6 +518,63 @@ file_mode() {
     Linux) stat -c '%a' "$1" ;;
     *) return 1 ;;
   esac
+}
+
+validate_worker_token_file() {
+  local mode
+  [[ -f "$WORKER_TOKEN_FILE" && ! -L "$WORKER_TOKEN_FILE" ]] \
+    || die "worker_token_file_missing"
+  mode="$(file_mode "$WORKER_TOKEN_FILE")" || die "worker_token_file_invalid"
+  case "$mode" in
+    400|600) ;;
+    *) die "worker_token_file_permissions" ;;
+  esac
+  [[ "$(tr -d '\r\n' < "$WORKER_TOKEN_FILE" | wc -c | tr -d ' ')" -ge 32 ]] \
+    || die "worker_token_file_invalid"
+}
+
+validate_worker_data_root_path() {
+  local managed_parent="$SYSTEM_ROOT/var/lib/cecelia"
+  local remaining
+  local component
+  local candidate
+  case "$FLEET_DATA_ROOT" in
+    "$managed_parent"/*) ;;
+    *) die "worker_data_root_invalid" ;;
+  esac
+  [[ "$FLEET_DATA_ROOT" != "$managed_parent/" ]] \
+    || die "worker_data_root_invalid"
+  case "$FLEET_DATA_ROOT" in
+    *'//'*) die "worker_data_root_invalid" ;;
+    *'/./'*|*'/../'*|*'/.'|*'/..') die "worker_data_root_invalid" ;;
+    */) die "worker_data_root_invalid" ;;
+  esac
+  [[ ! -L "$managed_parent" ]] || die "worker_data_root_invalid"
+  remaining="${FLEET_DATA_ROOT#"$managed_parent"/}"
+  candidate="$managed_parent"
+  while [[ -n "$remaining" ]]; do
+    component="${remaining%%/*}"
+    candidate="$candidate/$component"
+    [[ ! -L "$candidate" ]] || die "worker_data_root_invalid"
+    if [[ "$remaining" == */* ]]; then
+      remaining="${remaining#*/}"
+    else
+      remaining=''
+    fi
+  done
+}
+
+prepare_worker_data_root() {
+  local data_parent
+  validate_worker_data_root_path
+  data_parent="$(dirname "$FLEET_DATA_ROOT")"
+  [[ ! -L "$data_parent" && ! -L "$FLEET_DATA_ROOT" ]] \
+    || die "worker_data_root_invalid"
+  mkdir -p "$data_parent" "$FLEET_DATA_ROOT"
+  [[ -d "$FLEET_DATA_ROOT" ]] || die "worker_data_root_invalid"
+  "$CHMOD" 0700 "$FLEET_DATA_ROOT"
+  "$CHOWN" _cecelia:_cecelia "$FLEET_DATA_ROOT"
+  "$CHOWN" _cecelia:_cecelia "$WORKER_TOKEN_FILE"
 }
 
 snapshot_file() {
@@ -552,8 +636,8 @@ prepare_logs() {
     "$access_stdout_log" \
     "$access_stderr_log"
   if [[ "$(/usr/bin/id -u)" == '0' ]]; then
-    /usr/sbin/chown _cecelia "$stdout_log" "$stderr_log"
-    /usr/sbin/chown root:wheel "$access_stdout_log" "$access_stderr_log"
+    "$CHOWN" _cecelia "$stdout_log" "$stderr_log"
+    "$CHOWN" root:wheel "$access_stdout_log" "$access_stderr_log"
   fi
 }
 
@@ -601,10 +685,15 @@ if [[ "$mode" == 'apply' && "$("$ID_COMMAND" -u)" != '0' ]]; then
   die "root_required" 77
 fi
 
+validate_worker_data_root_path
 if [[ "$mode" == 'apply' ]]; then
   prepare_orbstack_access
 fi
 run_preflight
+validate_worker_token_file
+if [[ "$mode" == 'apply' ]]; then
+  prepare_worker_data_root
+fi
 
 if [[ "$mode" == 'render' ]]; then
   render_plist "$render_target"
@@ -653,6 +742,12 @@ prior_worker_mode="$(snapshot_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker")"
 prior_probe_mode="$(
   snapshot_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe"
 )"
+prior_workspace_manager_mode="$(
+  snapshot_file "$WORKSPACE_MANAGER_SCRIPT" "$BACKUP_DIR/workspace-manager"
+)"
+prior_attempt_runner_mode="$(
+  snapshot_file "$ATTEMPT_RUNNER_SCRIPT" "$BACKUP_DIR/attempt-runner"
+)"
 prior_plist_mode="$(snapshot_file "$installed_plist" "$BACKUP_DIR/plist")"
 prior_access_helper_mode="$(
   snapshot_file "$ACCESS_HELPER" "$BACKUP_DIR/access-helper"
@@ -670,6 +765,12 @@ fi
 
 placement_ok=true
 "$MOVE" "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_WORKSPACE_MANAGER" "$WORKSPACE_MANAGER_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_ATTEMPT_RUNNER" "$ATTEMPT_RUNNER_SCRIPT" \
+  || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_WORKER" "$WORKER_SCRIPT" \
   || placement_ok=false
@@ -711,6 +812,16 @@ if [[ "$launch_ok" != true ]]; then
   restore_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker" "$prior_worker_mode" \
     || rollback_ok=false
   restore_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe" "$prior_probe_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$WORKSPACE_MANAGER_SCRIPT" \
+    "$BACKUP_DIR/workspace-manager" \
+    "$prior_workspace_manager_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$ATTEMPT_RUNNER_SCRIPT" \
+    "$BACKUP_DIR/attempt-runner" \
+    "$prior_attempt_runner_mode" \
     || rollback_ok=false
   restore_file "$installed_plist" "$BACKUP_DIR/plist" "$prior_plist_mode" \
     || rollback_ok=false

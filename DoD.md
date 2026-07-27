@@ -1,16 +1,17 @@
-contract_branch: cp-07271555-fleet-node-baseline-reconcile
-sprint_dir: docs/superpowers/plans/2026-07-27-fleet-node-phase-4-wiring.md
+contract_branch: cp-07272050-fleet-worker-workspace-4b
+sprint_dir: docs/superpowers/plans/2026-07-27-fleet-worker-workspace-phase-4b.md
 
 ---
 skeleton: false
 journey_type: autonomous
 target_environment: local
 ---
-# Contract DoD — Phase 4A Fleet Node Contract and base admission
+# Contract DoD — Phase 4B Unified Fleet Worker and isolated Workspace
 
-**范围**: 三台 canonical Fleet Node 的 immutable profile、system LaunchDaemon
-Worker 健康证据、本地基础准入计算、bootstrap/drain 工具，以及 production
-machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
+**范围**: 在已合并的 Phase 4A Fleet Node baseline 上，让三台 canonical
+machine 使用同一个 authenticated Worker Attempt API；Brain 只传递 path-free
+`WorkspaceSpec`，Worker 独占每个 Attempt 的 Git worktree、OrbStack/Docker
+container、状态、清理、重启 reconcile 与 quarantine 生命周期。
 
 **大小**: L
 
@@ -51,10 +52,44 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh'
 
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
-  Brain `1.267.94` canonical version sources 已同步。
+  Brain `1.267.95` canonical version sources 已同步。
   Test: manual:bash -c 'bash scripts/check-version-sync.sh && node scripts/registry-lint.mjs && node -e "const fs=require(\"fs\"),yaml=require(\"js-yaml\");yaml.load(fs.readFileSync(\"regression-contract.yaml\",\"utf8\"));yaml.load(fs.readFileSync(\"docs/registry/features/orchestration.yml\",\"utf8\"));"'
 
+- [x] [ARTIFACT] strict `WorkspaceSpec`、Worker-owned Git workspace manager、
+  durable Attempt state/container runner 与 authenticated Worker Attempt API
+  已落地；所有坐标由 server-owned resolver 产生，拒绝 caller cwd、worktree path、
+  非 canonical repo/SHA/branch、身份不一致及未知字段。
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/workspace-spec.test.js src/orchestrator/__tests__/execution-contract.test.js scripts/fleet-worker/workspace-manager.test.cjs scripts/fleet-worker/attempt-runner.test.cjs scripts/fleet-worker/fleet-worker.test.js'
+
+- [x] [ARTIFACT] US M4、Xian M4 与 Xian M1 的 production transport 均指向各自
+  server-owned Worker URL；旧 bridge 的 `/harness/attempts*` production 入口返回
+  `410 fleet_worker_required`，不再承担 host Attempt 执行。installer 事务性安装完整
+  Worker generation，并为 `_cecelia` 准备 mode 0700 data root 和受保护 token file。
+  data root 必须是 `/var/lib/cecelia` 下无 `.`/`..` 的 canonical child，任何宽泛、
+  traversal 或中间 symlink 逃逸都在 ACL/chown 前拒绝。
+  US M4 的受保护 Worker transport auth 作为 golden baseline 工件进入 root-owned
+  rollout staging，再由 baseline reconciler 安装到三台节点；它不是 Codex/provider
+  credential，值不进入 argv、日志或 Git。
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/production-transport.test.js src/orchestrator/remote-bridge-transport.test.js src/orchestrator/__tests__/dispatcher.test.js src/orchestrator/production-wiring.test.js src/__tests__/codex-bridge-kernel-attempt.test.js && cd ../.. && bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh'
+
 ## BEHAVIOR 条目
+
+- [x] [BEHAVIOR] [L2] 每个 Fleet launch 必须携带 Attempt/Run 一致的
+  `WorkspaceSpec`，Worker 从 controlled mirror 创建唯一 worktree，以显式
+  read-only/read-write outer mount 启动 pinned Runner；每个 Attempt 使用独立、
+  无 hardlink 的 private Git common-dir，容器不挂载共享 mirror。容器退出或 terminal/cancel
+  时按 container（含 prompt runtime）→ worktree → state 顺序回收；清理失败保留
+  quarantine evidence，重启只 reconcile 带本 Worker 三元 ownership labels 的资源。
+  Test: contract:KERNEL-FLEET-WORKSPACE-01
+  期望: exit 0
+
+- [x] [BEHAVIOR] [L2] Brain 继续决定 machine/provider/account/model/role，并通过
+  同一 Worker client 传递这些选择；Worker 不接收或推导 host cwd，不读取用户
+  Codex auth。无认证、body 越界、目标 machine 不匹配、Workspace expected head
+  不匹配、stale lease cancel/terminal 及 Worker 未完成 startup reconcile 都
+  fail closed。
+  Test: manual:bash -c 'bash packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh'
+  期望: exit 0
 
 - [x] [BEHAVIOR] [L2] 完整、匹配且新鲜的 report 只能得到
   `base_admitted=true` 与 `dispatch_ready=false`；M1 Docker 不可用、错误 Runner
@@ -113,16 +148,17 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
 
 ## 明确非声明与待复审项
 
-- Phase 4A 始终 `dispatch_ready=false`；本 DoD 不声明 WorkspaceSpec/Attempt API、
-  CredentialEnvelope、执行等价/恢复，也不声明 Phase 4B～4D 完成。
+- Phase 4B 已定义 WorkspaceSpec、Worker Attempt API 与统一 transport，但不改变
+  Phase 4A 的最终 `dispatch_ready=false` 安全门；CredentialEnvelope、执行等价、
+  failure-set recovery 与 dispatch readiness 分别留给 Phase 4C/4D。
 - 确定性单测与 contract smoke 是回归证据，不是 Phase 5 真实业务任务验收；
   synthetic canary 不得替代会产生代码 diff、Red/Green commits、PR、CI 与 verdict
   的真实任务。
-- 真实节点 evidence 与 self-deploy rollout 尚待本 PR 复审/merge，未在本分支执行。
+- 本 Phase 4B PR 不部署、不改真实节点，也不执行 self-deploy rollout。
   当前 `xian-mac-m1` 的 Docker 为 false，必须保持 drained；不得降低 policy 或
   resource threshold 来获取绿灯。
-- 本阶段不使用、复制或安装 Xian 本地长期 Codex 凭据；没有新增 credential、
-  auth、transport 或 canary 行为。
+- 本阶段不使用、复制或安装 Xian 本地长期 Codex 凭据；Worker bearer token 只是
+  节点 transport authentication，由受保护文件预置，不是 provider credential。
 
 ## 回退
 
@@ -131,8 +167,8 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
 CECELIA_MACHINE_ID=<machine-id> sudo -E \
   packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply
 
-# Brain 发布后的镜像回退锚点；Phase 4A 合并/发布前不执行。
-bash scripts/brain-rollback.sh 1.267.89
+# Brain 发布后的镜像回退锚点；Phase 4B 合并/发布前不执行。
+bash scripts/brain-rollback.sh 1.267.94
 ```
 
 恢复前必须重新取得真实 Worker health evidence 并通过准入；synthetic canary

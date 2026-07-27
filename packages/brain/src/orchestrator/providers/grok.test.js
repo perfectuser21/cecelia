@@ -25,6 +25,25 @@ describe('grokAdapter', () => {
     ]));
   });
 
+  it('uses the container workspace for a path-free Fleet bundle', () => {
+    const spec = grokAdapter.start({
+      bundle: {
+        ...bundle,
+        inputs: {
+          execution_surface: 'fleet-worker',
+          workspace_spec: {
+            mode: 'read-write',
+          },
+        },
+      },
+    });
+
+    expect(spec.cwd).toBe('/workspace');
+    expect(spec.args).toEqual(expect.arrayContaining(['--cwd', '/workspace']));
+    expect(spec.args).not.toContain(null);
+    expect(spec.args).not.toContain(undefined);
+  });
+
   it('resumes the original session and normalizes a Grok JSON wrapper', () => {
     const resumed = grokAdapter.resume({
       attempt: {

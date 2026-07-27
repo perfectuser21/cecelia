@@ -5,6 +5,15 @@ const JSON_HEADERS = Object.freeze({
 });
 const CANARY_WORKSPACE_SENTINEL = '/var/empty/kernel-fleet-canary';
 const DISPOSABLE_CANARY_WORKSPACE_KIND = 'disposable-canary-v1';
+const WORKSPACE_SPEC_FIELDS = Object.freeze([
+  'repo',
+  'base_sha',
+  'branch',
+  'expected_head_sha',
+  'mode',
+  'run_id',
+  'attempt_id',
+]);
 
 function isNonemptyString(value) {
   return typeof value === 'string' && value.trim().length > 0 && !/[\r\n]/.test(value);
@@ -59,6 +68,16 @@ function disposableCanaryWorkspace(bundle, attemptId) {
     kind: DISPOSABLE_CANARY_WORKSPACE_KIND,
     attempt_id: attemptId,
   });
+}
+
+function copyWorkspaceSpec(bundle) {
+  const source = bundle?.inputs?.workspace_spec;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+  const copy = {};
+  for (const field of WORKSPACE_SPEC_FIELDS) {
+    copy[field] = source[field];
+  }
+  return Object.freeze(copy);
 }
 
 async function parseJson(response, operation, signal) {
@@ -190,6 +209,7 @@ export function createRemoteBridgeTransport({
         'remote_bridge_invalid_brain_url',
       );
       const workspace = disposableCanaryWorkspace(bundle, attempt.id);
+      const workspaceSpec = copyWorkspaceSpec(bundle);
       return request(
         'launch',
         `${bridgeUrl}/harness/attempts`,
@@ -201,7 +221,14 @@ export function createRemoteBridgeTransport({
             run_id: attempt.run_id,
             lease_owner: attempt.lease_owner,
             lease_generation: leaseGeneration,
-            target,
+            target: {
+              provider: target?.provider,
+              account: target?.account,
+              model: target?.model,
+              machine: target?.machine,
+              role: bundle?.role,
+            },
+            ...(workspaceSpec ? { workspace_spec: workspaceSpec } : {}),
             provider_spec: {
               provider: spec?.provider,
               command: spec?.command,
@@ -245,7 +272,7 @@ export function createRemoteBridgeTransport({
           return Object.freeze({
             jobId: receipt.job_id,
             actualMachineId: receipt.actual_machine_id,
-            executionTransport: 'remote-bridge',
+            executionTransport: 'fleet-worker',
             remoteJobId: receipt.job_id,
             attestationStatus: 'verified',
           });

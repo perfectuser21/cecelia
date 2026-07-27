@@ -10,7 +10,9 @@ const DEFAULT_RESULT_SCHEMA = { type: 'object' };
 
 function invocation({ bundle, execution = {}, sessionId = null, continuation = null }) {
   const prompt = buildProviderPrompt(bundle, continuation);
-  const cwd = execution.cwd ?? bundle?.inputs?.worktree_path;
+  const cwd = bundle?.inputs?.execution_surface === 'fleet-worker'
+    ? '/workspace'
+    : execution.cwd ?? bundle?.inputs?.worktree_path;
   const args = [
     '-p', prompt,
     '--cwd', cwd,

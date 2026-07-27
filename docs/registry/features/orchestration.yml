@@ -311,6 +311,9 @@ features:
         - packages/brain/src/orchestrator/run.js
         - packages/brain/src/orchestrator/dispatcher.js
         - packages/brain/src/orchestrator/execution-contract.js
+        - packages/brain/src/orchestrator/workspace-spec.js
+        - packages/brain/src/orchestrator/production-transport.js
+        - packages/brain/src/orchestrator/remote-bridge-transport.js
         - packages/brain/src/harness-skill-relay.js
         - packages/brain/src/harness-relay-watchdog.js
         - packages/brain/config/fleet-node-profiles.json
@@ -321,6 +324,8 @@ features:
         - packages/brain/src/orchestrator/preflight/production-probes.js
         - packages/brain/scripts/fleet-worker/node-probe.cjs
         - packages/brain/scripts/fleet-worker/fleet-worker.cjs
+        - packages/brain/scripts/fleet-worker/workspace-manager.cjs
+        - packages/brain/scripts/fleet-worker/attempt-runner.cjs
         - packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker.plist.template
         - packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker-docker-access.plist.template
         - packages/brain/scripts/fleet-worker/refresh-fleet-worker-docker-access.sh
@@ -361,6 +366,10 @@ features:
         - packages/brain/src/orchestrator/providers/codex.test.js
         - packages/brain/src/orchestrator/providers/grok.test.js
         - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
+        - packages/brain/src/orchestrator/workspace-spec.test.js
+        - packages/brain/src/orchestrator/production-transport.test.js
+        - packages/brain/src/orchestrator/remote-bridge-transport.test.js
+        - packages/brain/src/orchestrator/providers/grok.test.js
         - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
         - packages/brain/src/__tests__/harness-relay-watchdog.test.js
         - packages/brain/src/orchestrator/fleet-node/node-profile.test.js
@@ -369,6 +378,8 @@ features:
         - packages/brain/src/orchestrator/preflight/production-probes.test.js
         - packages/brain/src/orchestrator/preflight/production-wiring.test.js
         - packages/brain/scripts/fleet-worker/fleet-worker.test.js
+        - packages/brain/scripts/fleet-worker/workspace-manager.test.cjs
+        - packages/brain/scripts/fleet-worker/attempt-runner.test.cjs
       integration:
         - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
         - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
@@ -379,8 +390,10 @@ features:
       e2e:
         - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
         - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
+        - packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh
       regression:
         - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
+        - packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh
     capabilities:
       - id: provider_neutral_harness_relay
         name: Provider-neutral Harness Relay
@@ -414,6 +427,23 @@ features:
             - packages/brain/scripts/fleet-worker/fleet-rollout.test.sh
           e2e:
             - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
+        status: active
+      - id: fleet_worker_workspace_attempts
+        name: Unified Fleet Worker Workspace Attempts
+        entry_file: packages/brain/scripts/fleet-worker/fleet-worker.cjs
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/orchestrator/workspace-spec.test.js
+            - packages/brain/scripts/fleet-worker/workspace-manager.test.cjs
+            - packages/brain/scripts/fleet-worker/attempt-runner.test.cjs
+            - packages/brain/scripts/fleet-worker/fleet-worker.test.js
+            - packages/brain/src/orchestrator/production-transport.test.js
+            - packages/brain/src/orchestrator/remote-bridge-transport.test.js
+          integration:
+            - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
+          e2e:
+            - packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh
         status: active
     ci:
       jobs:

@@ -12,7 +12,15 @@ const ATTEMPT_ID = '33333333-3333-4333-8333-333333333333';
 const LEASE_OWNER = 'production-wiring:4242';
 const SHARED_SECRET = 'production-wiring-secret-at-least-32-bytes';
 const WORKER_URL = 'http://us-fleet-worker.internal:5231';
+const BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
 const GIB = 1024 ** 3;
+
+function buildTestDeps(overrides = {}) {
+  return buildRealDeps({
+    resolveRepoHead: vi.fn(async () => BASE_SHA),
+    ...overrides,
+  });
+}
 
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -278,7 +286,7 @@ describe('production capability wiring', () => {
       cancel: vi.fn(),
     };
 
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool,
       attemptStore,
       registry: createProviderRegistry([adapter]),
@@ -388,11 +396,10 @@ describe('production capability wiring', () => {
     const launcher = {
       launch: vi.fn(async (input) => Object.freeze({
         actualMachineId: input.target.machine,
-        executionTransport: 'local-docker',
-        remoteJobId: null,
-        attestationStatus: 'local',
-        containerId: `worker-${input.attempt.accountId}`,
-        jobId: null,
+        executionTransport: 'fleet-worker',
+        remoteJobId: `worker-${input.attempt.accountId}`,
+        attestationStatus: 'verified',
+        jobId: `worker-${input.attempt.accountId}`,
       })),
       cancel: vi.fn(),
     };
@@ -403,7 +410,7 @@ describe('production capability wiring', () => {
       FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
     };
     const resolveGitHubToken = vi.fn(async () => 'secret-token');
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool,
       attemptStore,
       registry,
@@ -541,7 +548,7 @@ describe('production capability wiring', () => {
       FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
     };
     const resolveGitHubToken = vi.fn(async () => 'secret-token');
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool,
       attemptStore,
       registry,
@@ -605,7 +612,7 @@ describe('production capability wiring', () => {
         jobId: 'remote-job-production-1',
       }),
     }, 202));
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -626,8 +633,8 @@ describe('production capability wiring', () => {
       machineId: 'us-mac-m4',
       env: {
         KERNEL_FLEET_REMOTE_ENABLED: 'true',
-        XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
-        XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+        FLEET_WORKER_XIAN_MAC_M4_URL: 'http://xian-m4.internal:5231',
+        FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
         KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
         KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
         BRAIN_URL: 'http://brain.internal:5221',
@@ -647,7 +654,7 @@ describe('production capability wiring', () => {
 
     expect(spawnDetached).not.toHaveBeenCalled();
     expect(fetchFn).toHaveBeenCalledWith(
-      'http://xian-m4.internal:3458/harness/attempts',
+      'http://xian-m4.internal:5231/harness/attempts',
       expect.objectContaining({ method: 'POST' }),
     );
     const bridgeRequest = JSON.parse(fetchFn.mock.calls[0][1].body);
@@ -657,6 +664,10 @@ describe('production capability wiring', () => {
       lease_generation: 4,
       target,
       callback_url: `https://brain.public.example/api/brain/harness/attempts/${ATTEMPT_ID}/callback`,
+      workspace_spec: expect.objectContaining({
+        repo: 'perfectuser21/cecelia',
+        attempt_id: ATTEMPT_ID,
+      }),
     });
     expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'xian-mac-m4',
@@ -665,7 +676,7 @@ describe('production capability wiring', () => {
       leaseOwner: LEASE_OWNER,
       leaseGeneration: 4,
       actualMachineId: 'xian-mac-m4',
-      executionTransport: 'remote-bridge',
+      executionTransport: 'fleet-worker',
       remoteJobId: 'remote-job-production-1',
       attestationStatus: 'verified',
     });
@@ -675,26 +686,26 @@ describe('production capability wiring', () => {
     ['disabled by default', {}],
     ['missing selected bridge URL', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
-      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
       KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
       KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
     }],
     ['missing shared token', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
-      XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
-      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      FLEET_WORKER_XIAN_MAC_M4_URL: 'http://xian-m4.internal:5231',
+      FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
       KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
     }],
     ['missing remote callback base', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
-      XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
-      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      FLEET_WORKER_XIAN_MAC_M4_URL: 'http://xian-m4.internal:5231',
+      FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
       KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
     }],
     ['invalid remote callback base', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
-      XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
-      XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+      FLEET_WORKER_XIAN_MAC_M4_URL: 'http://xian-m4.internal:5231',
+      FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
       KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
       KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'ftp://brain.public.example',
     }],
@@ -707,7 +718,7 @@ describe('production capability wiring', () => {
     const attemptStore = attemptStoreDouble();
     const spawnDetached = vi.fn();
     const fetchFn = vi.fn();
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -759,7 +770,7 @@ describe('production capability wiring', () => {
     };
     const attemptStore = attemptStoreDouble();
     const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -791,7 +802,7 @@ describe('production capability wiring', () => {
   });
 
   it('rejects a non-canonical controller machine identity during assembly', async () => {
-    await expect(buildRealDeps({
+    await expect(buildTestDeps({
       pool: { query: vi.fn() },
       dispatch: vi.fn(),
       env: { CECELIA_MACHINE_ID: 'moon-base' },
@@ -820,7 +831,7 @@ describe('production capability wiring', () => {
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -841,8 +852,8 @@ describe('production capability wiring', () => {
       machineId: 'us-mac-m4',
       env: {
         KERNEL_FLEET_REMOTE_ENABLED: 'true',
-        XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
-        XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+        FLEET_WORKER_XIAN_MAC_M4_URL: 'http://xian-m4.internal:5231',
+        FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
         KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
         KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
       },
@@ -857,8 +868,8 @@ describe('production capability wiring', () => {
     })).rejects.toThrow('remote_bridge_attestation_invalid');
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      'http://xian-m4.internal:3458/harness/attempts',
-      `http://xian-m4.internal:3458/harness/attempts/${ATTEMPT_ID}/cancel`,
+      'http://xian-m4.internal:5231/harness/attempts',
+      `http://xian-m4.internal:5231/harness/attempts/${ATTEMPT_ID}/cancel`,
     ]);
     expect(attemptStore.fail).toHaveBeenCalledWith(ATTEMPT_ID, {
       code: 'launch_failed',
@@ -881,7 +892,7 @@ describe('production capability wiring', () => {
     const fetchFn = vi.fn(async () => {
       throw new Error('bridge offline');
     });
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -902,8 +913,8 @@ describe('production capability wiring', () => {
       machineId: 'us-mac-m4',
       env: {
         KERNEL_FLEET_REMOTE_ENABLED: 'true',
-        XIAN_M4_KERNEL_BRIDGE_URL: 'http://xian-m4.internal:3458',
-        XIAN_M1_KERNEL_BRIDGE_URL: 'http://xian-m1.internal:3458',
+        FLEET_WORKER_XIAN_MAC_M4_URL: 'http://xian-m4.internal:5231',
+        FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
         KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
         KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
       },
@@ -918,8 +929,8 @@ describe('production capability wiring', () => {
     })).rejects.toThrow('remote_bridge_launch_request_failed');
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      'http://xian-m1.internal:3458/harness/attempts',
-      `http://xian-m1.internal:3458/harness/attempts/${ATTEMPT_ID}/cancel`,
+      'http://xian-m1.internal:5231/harness/attempts',
+      `http://xian-m1.internal:5231/harness/attempts/${ATTEMPT_ID}/cancel`,
     ]);
     expect(spawnDetached).not.toHaveBeenCalled();
   });
@@ -968,7 +979,7 @@ describe('production capability wiring', () => {
       })),
       cancel: vi.fn(),
     };
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn(async () => ({ rows: [{ ok: 1 }] })) },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),

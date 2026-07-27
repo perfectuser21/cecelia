@@ -19,7 +19,11 @@ mkdir -p "$fake_bin"
 artifact_log="$test_root/artifacts.log"
 transport_log="$test_root/transport.log"
 node_log="$test_root/node.log"
+worker_token="$test_root/worker-token"
 touch "$artifact_log" "$transport_log" "$node_log"
+printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
+chmod 0600 "$worker_token"
+export FLEET_ROLLOUT_WORKER_TOKEN_FILE="$worker_token"
 
 write_executable() {
   local target="$1"
@@ -206,6 +210,7 @@ run_rollout() {
   FLEET_ROLLOUT_SSH="$fake_bin/ssh" \
   FLEET_ROLLOUT_TAR="$(command -v tar)" \
   FLEET_ROLLOUT_TMPDIR="$test_root/tmp" \
+  FLEET_ROLLOUT_WORKER_TOKEN_FILE="$worker_token" \
   "$ROLLOUT" "$@"
 }
 
@@ -537,6 +542,16 @@ run_node_apply_for_test() (
 
 : > "$node_log"
 if FLEET_TEST_NODE_LOG="$node_log" \
+  run_node_apply_for_test xian-mac-m4 "$payload_root" \
+    "$node_source/fleet-nodectl.sh" >/dev/null 2>&1; then
+  fail "node-local apply accepted a payload without Worker transport auth"
+fi
+
+cp "$worker_token" "$payload_root/worker-token"
+chmod 0600 "$payload_root/worker-token"
+
+: > "$node_log"
+if FLEET_TEST_NODE_LOG="$node_log" \
   FLEET_TEST_TRANSPORT_LOG="$transport_log" \
   FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
   FLEET_ROLLOUT_NODECTL="$node_source/fleet-nodectl.sh" \
@@ -598,7 +613,7 @@ if run_rollout moon-base --apply >/dev/null 2>&1; then
   fail "unknown rollout target was accepted"
 fi
 
-if rg -ni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt|bridge.*/run' \
+if grep -Eni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt|bridge.*/run' \
   "$artifact_log" "$transport_log" "$node_log"; then
   fail "rollout artifacts or transport contain account, Prompt, or Bridge authority"
 fi
