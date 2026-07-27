@@ -410,6 +410,22 @@ grep -Fq 'worker_data_root_invalid' <<<"$dangerous_data_root_output" \
 [[ ! -s "$chown_log" ]] \
   || fail "invalid data root caused an ownership mutation"
 
+: > "$acl_log"
+: > "$chown_log"
+traversal_data_root_output=''
+if traversal_data_root_output="$(
+  FLEET_WORKER_TEST_DATA_ROOT="$test_root/var/lib/cecelia/../../.." \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "traversal data root was accepted as the Worker data root"
+fi
+grep -Fq 'worker_data_root_invalid' <<<"$traversal_data_root_output" \
+  || fail "traversal data root refusal lacked a bounded signature"
+[[ ! -s "$acl_log" ]] \
+  || fail "traversal data root caused a Docker ACL mutation"
+[[ ! -s "$chown_log" ]] \
+  || fail "traversal data root caused an ownership mutation"
+
 invalid_socket_output=''
 if invalid_socket_output="$(
   FLEET_WORKER_SOCKET_TARGET='/tmp/docker.sock' \

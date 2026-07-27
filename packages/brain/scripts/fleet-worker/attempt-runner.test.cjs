@@ -69,6 +69,7 @@ function dependencies(overrides = {}) {
   const workspace = {
     path: '/controlled/worktrees/22222222-2222-4222-8222-222222222222',
     mirror_path: '/controlled/mirrors/perfectuser21__cecelia.git',
+    admin_path: '/controlled/worktrees/.admin/22222222-2222-4222-8222-222222222222.git',
     mode: 'read-write',
     head_sha: '0123456789abcdef0123456789abcdef01234567',
     owner: { run_id: RUN_ID, attempt_id: ATTEMPT_ID },
@@ -164,8 +165,8 @@ describe('Fleet Worker Attempt runner', () => {
         readOnly,
       },
       workspaceAdminMount: {
-        source: deps.workspace.mirror_path,
-        target: deps.workspace.mirror_path,
+        source: deps.workspace.admin_path,
+        target: deps.workspace.admin_path,
         readOnly,
       },
       labels: {

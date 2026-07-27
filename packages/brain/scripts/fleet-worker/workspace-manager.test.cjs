@@ -103,10 +103,25 @@ describe('Fleet Worker workspace manager', () => {
     ]);
 
     expect(first.path).not.toBe(second.path);
+    expect(first.admin_path).not.toBe(second.admin_path);
+    expect(first.admin_path).not.toBe(first.mirror_path);
+    expect(second.admin_path).not.toBe(second.mirror_path);
+    expect(first.admin_path.startsWith(
+      `${fixture.worktreeRoot}${path.sep}.admin${path.sep}`,
+    )).toBe(true);
+    expect(second.admin_path.startsWith(
+      `${fixture.worktreeRoot}${path.sep}.admin${path.sep}`,
+    )).toBe(true);
     expect(first.path.startsWith(`${fixture.worktreeRoot}${path.sep}`)).toBe(true);
     expect(second.path.startsWith(`${fixture.worktreeRoot}${path.sep}`)).toBe(true);
     expect(git(['rev-parse', 'HEAD'], first.path)).toBe(fixture.sha);
     expect(git(['rev-parse', 'HEAD'], second.path)).toBe(fixture.sha);
+    expect(git(['rev-parse', '--absolute-git-dir'], first.path)).toContain(
+      first.admin_path,
+    );
+    expect(git(['rev-parse', '--absolute-git-dir'], second.path)).toContain(
+      second.admin_path,
+    );
     expect(first.owner).toEqual({
       run_id: RUN_ID,
       attempt_id: ATTEMPT_A,
@@ -142,6 +157,7 @@ describe('Fleet Worker workspace manager', () => {
       status: 'cleaned',
       attempt_id: ATTEMPT_A,
     });
+    expect(fs.existsSync(workspace.admin_path)).toBe(false);
     await expect(manager.cleanup(workspace)).resolves.toMatchObject({
       status: 'already_clean',
       attempt_id: ATTEMPT_A,
@@ -163,7 +179,9 @@ describe('Fleet Worker workspace manager', () => {
       cleaned_attempts: [ATTEMPT_A],
     });
     expect(fs.existsSync(orphan.path)).toBe(false);
+    expect(fs.existsSync(orphan.admin_path)).toBe(false);
     expect(fs.existsSync(retained.path)).toBe(true);
+    expect(fs.existsSync(retained.admin_path)).toBe(true);
     expect(git(['rev-parse', 'HEAD'], retained.path)).toBe(fixture.sha);
   });
 
