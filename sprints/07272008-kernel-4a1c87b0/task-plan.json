@@ -1,0 +1,37 @@
+{
+  "initiative_id": "92df8334-1be4-41be-9a79-83e1f4596e72",
+  "journey_type": "autonomous",
+  "journey_type_reason": "本 sprint 只涉及 Brain Kernel 状态机、PostgreSQL 与本地 API/slot 计数验证，无 UI 或远端 agent 交互。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Kernel 原子失败终结器与槽位自愈闭环",
+      "scope": "建立唯一 failure terminalizer，统一失败出口接线，补 infrastructure_blocked 退避重试、窄 reconciler、slot SSOT 与正式 failed API completed_at，并同步回归测试与版本账本。",
+      "dod": [
+        "[BEHAVIOR] 统一失败出口接入 failure terminalizer，hard failure 原子写 run/task failed+completed_at+单条 history+claim 清空，重复调用保持幂等。",
+        "[BEHAVIOR] infrastructure_blocked 仅前 3 次将 task 清 claim、写 retry_count/retry_after 并回 queued，第 4 次 hard fail；非 infra 类失败不得自动重试。",
+        "[BEHAVIOR] reconciler 仅处理 latest Kernel v2 terminal run 与 current_task_id 精确匹配的 in_progress task；slot allocator 继续仅以 task.status 为 SSOT，正式 failed API 补 completed_at。",
+        "[ARTIFACT] 更新 DEFINITION.md、packages/brain/package.json、packages/brain/package-lock.json、.brain-versions、regression-contract.yaml，并补齐 contract 指定的 tests/smoke 证据。"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/run.js",
+        "packages/brain/src/orchestrator/failure-terminalizer.js",
+        "packages/brain/src/orchestrator/reconciler.js",
+        "packages/brain/src/routes/tasks.js",
+        "packages/brain/src/slot-allocator.js",
+        "packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js",
+        "tests/regression/relay-50170af2/kernel-wiring-persistent-blocked.integration.test.js",
+        "tests/regression/relay-50170af2/kernel-wiring-deadline.integration.test.js",
+        "DEFINITION.md",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "regression-contract.yaml"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
