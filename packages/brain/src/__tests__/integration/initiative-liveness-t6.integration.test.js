@@ -14,7 +14,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   triggerCeceliaRun: vi.fn(),
-  runWorkflow: vi.fn(),
   selectNextDispatchableTask: vi.fn(),
 }));
 
@@ -89,10 +88,6 @@ vi.mock('../../dispatch-helpers.js', () => ({
   selectNextDispatchableTask: mocks.selectNextDispatchableTask,
   processCortexTask: vi.fn().mockResolvedValue({ handled: false }),
 }));
-vi.mock('../../orchestrator/graph-runtime.js', () => ({
-  runWorkflow: mocks.runWorkflow,
-}));
-
 // ─── 顶层 import（在 vi.mock 之后）──────────────────────────────────────────
 import { dispatchNextTask } from '../../dispatcher.js';
 
@@ -167,7 +162,6 @@ describe('I1: dev task 集成派发路径（迁离 LangGraph）', () => {
   beforeEach(() => {
     mocks.query.mockReset();
     mocks.triggerCeceliaRun.mockReset();
-    mocks.runWorkflow.mockReset();
     mocks.selectNextDispatchableTask.mockReset();
     mocks.selectNextDispatchableTask.mockResolvedValue(null);
     mocks.triggerCeceliaRun.mockResolvedValue({ success: true, runId: 'run-i1-001' });
@@ -182,8 +176,6 @@ describe('I1: dev task 集成派发路径（迁离 LangGraph）', () => {
     expect(result.dispatched).toBe(true);
     expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
     expect(mocks.triggerCeceliaRun.mock.calls[0][0].task_type).toBe('dev');
-    // LangGraph 路径被删除：runWorkflow 永不被调
-    expect(mocks.runWorkflow).not.toHaveBeenCalled();
   });
 
   it('dev 派发 → triggerCeceliaRun 接收到正确的 task id', async () => {
@@ -277,18 +269,23 @@ describe('I2: Golden Path — 注册→认领→守护刀两轮不误杀→完�
     ).rejects.toThrow();
   });
 
-  it('workflows/index.js 不注册 dev-task（无 LangGraph 路由入口）', async () => {
+  it('workflow-registry 物理不存在（无 LangGraph 路由入口可供 dev-task 注册）', async () => {
+    await expect(
+      import('../../orchestrator/workflow-registry.js')
+    ).rejects.toThrow();
+    await expect(
+      import('../../orchestrator/graph-runtime.js')
+    ).rejects.toThrow();
+  });
+
+  it('workflows/index.js 只预热 consciousness，不做任何 workflow 注册', async () => {
     vi.mock('../../workflows/consciousness.graph.js', () => ({
       getCompiledConsciousnessGraph: vi.fn().mockResolvedValue({ invoke: vi.fn() }),
     }));
 
     const { initializeWorkflows, _resetInitializedForTests } = await import('../../workflows/index.js');
-    const { _clearRegistryForTests, listWorkflows } = await import('../../orchestrator/workflow-registry.js');
 
-    _clearRegistryForTests();
     _resetInitializedForTests();
-    await initializeWorkflows();
-
-    expect(listWorkflows()).not.toContain('dev-task');
+    await expect(initializeWorkflows()).resolves.not.toThrow();
   });
 });

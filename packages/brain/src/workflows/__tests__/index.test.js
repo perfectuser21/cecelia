@@ -2,42 +2,48 @@
  * Brain v2 Phase C2: workflows/index.js (initializeWorkflows) 单元测试。
  *
  * T6 更新：dev-task 已迁离 LangGraph，不再注册到 workflow registry。
- * 此测试验证 initializeWorkflows 只预热 consciousness graph，不注册 dev-task。
+ * 刀4a 更新：workflow registry 本身已随死码一起删除，initializeWorkflows
+ * 只剩「预热 consciousness graph」一件事，不存在任何注册动作。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock consciousness graph 避免真连 pg
-vi.mock('../consciousness.graph.js', () => ({
+const mocks = vi.hoisted(() => ({
   getCompiledConsciousnessGraph: vi.fn().mockResolvedValue({ invoke: vi.fn() }),
+}));
+
+vi.mock('../consciousness.graph.js', () => ({
+  getCompiledConsciousnessGraph: mocks.getCompiledConsciousnessGraph,
   _resetCompiledGraphForTests: vi.fn(),
 }));
 
-// 重置 registry 隔离每 test
-import {
-  _clearRegistryForTests,
-  listWorkflows,
-} from '../../orchestrator/workflow-registry.js';
 import { initializeWorkflows, _resetInitializedForTests } from '../index.js';
 
 describe('initializeWorkflows()', () => {
   beforeEach(() => {
-    _clearRegistryForTests();
+    mocks.getCompiledConsciousnessGraph.mockClear();
     _resetInitializedForTests();
   });
 
-  it('不注册 dev-task（已迁离 LangGraph，走 triggerCeceliaRun）', async () => {
+  it('只预热 consciousness graph', async () => {
     await initializeWorkflows();
-    expect(listWorkflows()).not.toContain('dev-task');
+    expect(mocks.getCompiledConsciousnessGraph).toHaveBeenCalledTimes(1);
   });
 
-  it('二次调幂等 — 不 throw', async () => {
+  it('workflow registry 已随死码删除 — import 必失败（无注册入口可复活）', async () => {
+    await expect(
+      import('../../orchestrator/workflow-registry.js')
+    ).rejects.toThrow();
+  });
+
+  it('二次调幂等 — 不 throw，且不重复预热', async () => {
     await initializeWorkflows();
     await expect(initializeWorkflows()).resolves.not.toThrow();
+    expect(mocks.getCompiledConsciousnessGraph).toHaveBeenCalledTimes(1);
   });
 
   it('reset 后重新调 initializeWorkflows 能成功', async () => {
     await initializeWorkflows();
-    _clearRegistryForTests();
     _resetInitializedForTests();
     await expect(initializeWorkflows()).resolves.not.toThrow();
   });

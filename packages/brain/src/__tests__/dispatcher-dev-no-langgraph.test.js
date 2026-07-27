@@ -5,6 +5,8 @@
  * - dev task 派发不再经 _dispatchViaWorkflowRuntime / runWorkflow('dev-task')
  * - dev task 走 triggerCeceliaRun，执行后 dispatched:true 且 runtime != 'v2'
  * - _dispatchViaWorkflowRuntime 不在 dispatcher 导出（函数已删除）
+ * - orchestrator/graph-runtime.js + orchestrator/workflow-registry.js 物理不存在
+ *   （刀4a 死码清理：LangGraph workflow runtime 整体移除，import 必失败）
  *
  * 回归防护：此测试永久留 CI，防止 LangGraph 路径被意外复活。
  */
@@ -15,7 +17,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   triggerCeceliaRun: vi.fn(),
-  runWorkflow: vi.fn(),
   selectNextDispatchableTask: vi.fn(),
   calculateSlotBudget: vi.fn(),
   shouldDowngrade: vi.fn(),
@@ -86,10 +87,6 @@ vi.mock('../dispatch-helpers.js', () => ({
   selectNextDispatchableTask: mocks.selectNextDispatchableTask,
   processCortexTask: vi.fn().mockResolvedValue({ handled: false }),
 }));
-vi.mock('../orchestrator/graph-runtime.js', () => ({
-  runWorkflow: mocks.runWorkflow,
-}));
-
 // 顶层 import（在 vi.mock 之后）
 import { dispatchNextTask } from '../dispatcher.js';
 
@@ -137,7 +134,6 @@ describe('F7: dev 派发迁离 LangGraph', () => {
   beforeEach(() => {
     mocks.query.mockReset();
     mocks.triggerCeceliaRun.mockReset();
-    mocks.runWorkflow.mockReset();
     mocks.selectNextDispatchableTask.mockReset();
     mocks.calculateSlotBudget.mockReset();
     mocks.shouldDowngrade.mockReset();
@@ -152,7 +148,7 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     mocks.shouldDowngrade.mockReturnValue(false);
   });
 
-  it('dev task 派发 → triggerCeceliaRun 被调，runWorkflow 不被调', async () => {
+  it('dev task 派发 → triggerCeceliaRun 被调', async () => {
     const task = makeDevTask();
     setupDispatch(task);
 
@@ -161,8 +157,15 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     expect(result.dispatched).toBe(true);
     expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
     expect(mocks.triggerCeceliaRun.mock.calls[0][0].id).toBe(task.id);
-    // LangGraph 路径被删除：runWorkflow 永不被调
-    expect(mocks.runWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('LangGraph workflow runtime 物理不存在（graph-runtime / workflow-registry 已删除）', async () => {
+    await expect(
+      import('../orchestrator/graph-runtime.js')
+    ).rejects.toThrow();
+    await expect(
+      import('../orchestrator/workflow-registry.js')
+    ).rejects.toThrow();
   });
 
   it('dev task 派发结果 runtime 不为 v2（已迁离 LangGraph）', async () => {
@@ -188,7 +191,6 @@ describe('F7: dev 派发迁离 LangGraph', () => {
 
     expect(result.dispatched).toBe(true);
     expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
-    expect(mocks.runWorkflow).not.toHaveBeenCalled();
   });
 
   it('budget_state=tight 且任务可降级时，传给 triggerCeceliaRun 的 payload.executor 必须是 codex', async () => {

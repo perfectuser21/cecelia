@@ -730,13 +730,13 @@ async function onBrainListening() {
     console.error('[Server] Callback Worker init failed (non-fatal):', cbWorkerErr.message);
   }
 
-  // v2 Phase C2: 集中注册 orchestrator workflows（pg pool ready 后、tick loop 前）
+  // 预热 consciousness graph 单例（pg pool ready 后、tick loop 前）
   try {
     const { initializeWorkflows } = await import('./src/workflows/index.js');
     await initializeWorkflows();
-    console.log('[Server] Workflows initialized (L2 Orchestrator ready)');
+    console.log('[Server] Workflows initialized (consciousness graph warmed)');
   } catch (wfErr) {
-    // 初始化失败不阻塞 Brain 启动（graph-runtime 调用时会 retry setup）
+    // 初始化失败不阻塞 Brain 启动（首次 consciousness tick 会自行 retry setup）
     console.warn('[Server] Workflows init failed (non-fatal):', wfErr.message);
   }
 
