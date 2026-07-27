@@ -311,6 +311,8 @@ describe('Fleet Worker durable runtime adapters', () => {
         workerId: WORKER_ID,
         image: IMAGE_DIGEST,
         providerSpec: request().provider_spec,
+        role: 'generator',
+        model: 'gpt-5',
         workspaceMount: {
           source: `/controlled/worktrees/${ATTEMPT_ID}`,
           target: '/workspace',

@@ -221,7 +221,13 @@ export function createRemoteBridgeTransport({
             run_id: attempt.run_id,
             lease_owner: attempt.lease_owner,
             lease_generation: leaseGeneration,
-            target,
+            target: {
+              provider: target?.provider,
+              account: target?.account,
+              model: target?.model,
+              machine: target?.machine,
+              role: bundle?.role,
+            },
             ...(workspaceSpec ? { workspace_spec: workspaceSpec } : {}),
             provider_spec: {
               provider: spec?.provider,

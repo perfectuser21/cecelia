@@ -232,6 +232,8 @@ function createDockerAdapter({
           HARNESS_LEASE_OWNER: input.lease.owner,
           HARNESS_LEASE_GENERATION: input.lease.generation,
           HARNESS_READ_ONLY: String(input.workspaceMount.readOnly),
+          HARNESS_NODE: input.role,
+          HARNESS_MODEL: input.model,
           HARNESS_TASK_BUNDLE_FILE: containerPrompt,
           CECELIA_PROMPT_FILE: containerPrompt,
           CECELIA_STDOUT_FILE: containerStdout,
@@ -359,7 +361,15 @@ function validateProviderSpec(value) {
   if (typeof value.stdin !== 'string') {
     throw new Error('attempt_provider_stdin_invalid');
   }
-  if (typeof value.output !== 'string' || value.output.length === 0) {
+  const validOutput = (
+    typeof value.output === 'string'
+    && value.output.length > 0
+  ) || (
+    value.output
+    && typeof value.output === 'object'
+    && !Array.isArray(value.output)
+  );
+  if (!validOutput) {
     throw new Error('attempt_provider_output_invalid');
   }
   return Object.freeze({
@@ -367,7 +377,42 @@ function validateProviderSpec(value) {
     command: value.command,
     args: Object.freeze([...value.args]),
     stdin: value.stdin,
-    output: value.output,
+    output: typeof value.output === 'string'
+      ? value.output
+      : Object.freeze({ ...value.output }),
+  });
+}
+
+function validateTarget(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('attempt_target_invalid');
+  }
+  if (!CANONICAL_MACHINE_IDS.has(value.machine)) {
+    throw new Error('attempt_target_machine_invalid');
+  }
+  if (!PROVIDER_PATTERN.test(value.provider ?? '')) {
+    throw new Error('attempt_target_provider_invalid');
+  }
+  if (
+    typeof value.role !== 'string'
+    || !/^(planner|proposer|reviewer|generator|evaluator|judge|reporter)$/
+      .test(value.role)
+  ) {
+    throw new Error('attempt_target_role_invalid');
+  }
+  if (value.model != null && (
+    typeof value.model !== 'string'
+    || value.model.length === 0
+    || /[\r\n]/.test(value.model)
+  )) {
+    throw new Error('attempt_target_model_invalid');
+  }
+  return Object.freeze({
+    machine: value.machine,
+    provider: value.provider,
+    account: value.account ?? null,
+    model: value.model ?? null,
+    role: value.role,
   });
 }
 
@@ -396,6 +441,7 @@ function validateLaunchRequest(value) {
   return {
     request: value,
     providerSpec: validateProviderSpec(value.provider_spec),
+    target: validateTarget(value.target),
   };
 }
 
@@ -466,7 +512,10 @@ function createAttemptRunner({
 
   const runner = {
     async launch(input) {
-      const { request, providerSpec } = validateLaunchRequest(input);
+      const { request, providerSpec, target } = validateLaunchRequest(input);
+      if (target.machine !== workerId) {
+        throw new Error('attempt_target_worker_mismatch');
+      }
       const existing = await stateStore.get(request.attempt_id);
       if (existing) {
         throw new Error('attempt_already_exists');
@@ -483,6 +532,8 @@ function createAttemptRunner({
           workerId,
           image: runnerImageDigest,
           providerSpec,
+          role: target.role,
+          model: target.model,
           workspaceMount: {
             source: workspace.path,
             target: '/workspace',
