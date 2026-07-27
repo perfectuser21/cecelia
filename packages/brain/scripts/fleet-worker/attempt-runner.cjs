@@ -345,7 +345,7 @@ function validateDependencies({
   workerId,
   runnerImageDigest,
 }) {
-  for (const method of ['prepare', 'verify', 'cleanup', 'quarantine']) {
+  for (const method of ['prepare', 'verify', 'cleanup', 'quarantine', 'reconcile']) {
     requireMethod(workspaceManager, method, 'workspace_manager');
   }
   for (const method of ['launch', 'inspect', 'wait', 'remove', 'listOwned']) {
@@ -696,6 +696,7 @@ function createAttemptRunner({
       const states = await stateStore.list();
       const ownedStates = states.filter((state) => state.worker_id === workerId);
       const knownAttemptIds = new Set(ownedStates.map((state) => state.attempt_id));
+      const retainedAttemptIds = new Set(states.map((state) => state.attempt_id));
       const cleanedAttempts = [];
 
       for (const state of ownedStates) {
@@ -712,7 +713,10 @@ function createAttemptRunner({
           continue;
         }
         const result = await cleanupWorkspaceState(state);
-        if (result.status === 'cleaned') cleanedAttempts.push(state.attempt_id);
+        if (result.status === 'cleaned') {
+          cleanedAttempts.push(state.attempt_id);
+          retainedAttemptIds.delete(state.attempt_id);
+        }
       }
 
       const removedOrphanContainers = [];
@@ -736,10 +740,16 @@ function createAttemptRunner({
         });
         removedOrphanContainers.push(container.containerId);
       }
+      const workspaceReconciliation = await workspaceManager.reconcile({
+        retainedAttemptIds: [...retainedAttemptIds],
+      });
 
       return Object.freeze({
         cleaned_attempts: Object.freeze(cleanedAttempts),
         removed_orphan_containers: Object.freeze(removedOrphanContainers),
+        cleaned_orphan_workspaces: Object.freeze(
+          workspaceReconciliation.cleaned_attempts ?? [],
+        ),
       });
     },
   };

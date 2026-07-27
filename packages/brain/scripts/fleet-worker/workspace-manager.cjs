@@ -104,6 +104,10 @@ function createWorkspaceManager({
   }
 
   const allowedRepos = Object.freeze({ ...repoAllowlist });
+  const ownershipRoot = path.join(worktrees, '.ownership');
+  const allowedMirrorPaths = new Set(
+    Object.keys(allowedRepos).map((repo) => path.join(mirrors, mirrorName(repo))),
+  );
   let mirrorQueue = Promise.resolve();
 
   async function git(args, options) {
@@ -176,6 +180,47 @@ function createWorkspaceManager({
     return { attemptId, expectedPath };
   }
 
+  function ownershipPath(attemptId) {
+    return path.join(ownershipRoot, `${attemptId}.json`);
+  }
+
+  function saveOwnership(workspace) {
+    fs.mkdirSync(ownershipRoot, { recursive: true, mode: 0o700 });
+    const target = ownershipPath(workspace.owner.attempt_id);
+    const temporary = `${target}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify(workspace)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    });
+    fs.renameSync(temporary, target);
+  }
+
+  function deleteOwnership(attemptId) {
+    fs.rmSync(ownershipPath(attemptId), { force: true });
+  }
+
+  function readOwnedWorkspace(attemptId) {
+    try {
+      const serialized = fs.readFileSync(ownershipPath(attemptId), 'utf8');
+      if (Buffer.byteLength(serialized, 'utf8') > 16_384) return null;
+      const workspace = JSON.parse(serialized);
+      const { expectedPath } = assertOwnedWorkspace(workspace);
+      if (
+        workspace.repo == null
+        || !Object.hasOwn(allowedRepos, workspace.repo)
+        || workspace.mirror_path !== path.join(mirrors, mirrorName(workspace.repo))
+        || !allowedMirrorPaths.has(workspace.mirror_path)
+        || workspace.path !== expectedPath
+      ) {
+        return null;
+      }
+      return workspace;
+    } catch {
+      return null;
+    }
+  }
+
   return Object.freeze({
     async prepare(input) {
       const spec = validateSpec(input, allowedRepos);
@@ -193,16 +238,31 @@ function createWorkspaceManager({
         throw new Error('workspace_attempt_already_exists');
       }
       const checkoutSha = spec.expected_head_sha ?? spec.base_sha;
-      await git([
-        '--git-dir',
-        mirrorPath,
-        'worktree',
-        'add',
-        '--detach',
-        workspacePath,
-        checkoutSha,
-      ]);
+      const workspace = {
+        repo: spec.repo,
+        branch: spec.branch,
+        base_sha: spec.base_sha,
+        expected_head_sha: spec.expected_head_sha,
+        head_sha: checkoutSha,
+        mode: spec.mode,
+        path: workspacePath,
+        mirror_path: mirrorPath,
+        owner: {
+          run_id: spec.run_id,
+          attempt_id: spec.attempt_id,
+        },
+      };
+      saveOwnership(workspace);
       try {
+        await git([
+          '--git-dir',
+          mirrorPath,
+          'worktree',
+          'add',
+          '--detach',
+          workspacePath,
+          checkoutSha,
+        ]);
         if (spec.mode === 'read-write') {
           await git(['switch', '-c', spec.branch], { cwd: workspacePath });
         }
@@ -215,18 +275,12 @@ function createWorkspaceManager({
           '--force',
           workspacePath,
         ]).catch(() => {});
+        deleteOwnership(spec.attempt_id);
         throw error;
       }
 
       return Object.freeze({
-        repo: spec.repo,
-        branch: spec.branch,
-        base_sha: spec.base_sha,
-        expected_head_sha: spec.expected_head_sha,
-        head_sha: checkoutSha,
-        mode: spec.mode,
-        path: workspacePath,
-        mirror_path: mirrorPath,
+        ...workspace,
         owner: Object.freeze({
           run_id: spec.run_id,
           attempt_id: spec.attempt_id,
@@ -268,6 +322,7 @@ function createWorkspaceManager({
         })}\n`,
         { mode: 0o600 },
       );
+      deleteOwnership(attemptId);
       return Object.freeze({
         status: 'quarantined',
         attempt_id: attemptId,
@@ -279,6 +334,7 @@ function createWorkspaceManager({
     async cleanup(workspace) {
       const { attemptId, expectedPath } = assertOwnedWorkspace(workspace);
       if (!fs.existsSync(expectedPath)) {
+        deleteOwnership(attemptId);
         return Object.freeze({
           status: 'already_clean',
           attempt_id: attemptId,
@@ -293,6 +349,7 @@ function createWorkspaceManager({
           '--force',
           expectedPath,
         ]);
+        deleteOwnership(attemptId);
         return Object.freeze({
           status: 'cleaned',
           attempt_id: attemptId,
@@ -302,10 +359,39 @@ function createWorkspaceManager({
       }
     },
 
+    async reconcile({ retainedAttemptIds = [] } = {}) {
+      if (
+        !Array.isArray(retainedAttemptIds)
+        || retainedAttemptIds.some((attemptId) => !UUID_PATTERN.test(attemptId))
+      ) {
+        throw new Error('workspace_reconcile_retained_attempts_invalid');
+      }
+      const retained = new Set(retainedAttemptIds);
+      if (!fs.existsSync(ownershipRoot)) {
+        return Object.freeze({ cleaned_attempts: Object.freeze([]) });
+      }
+      const cleaned = [];
+      for (const entry of fs.readdirSync(ownershipRoot, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+        const attemptId = entry.name.slice(0, -5);
+        if (!UUID_PATTERN.test(attemptId) || retained.has(attemptId)) continue;
+        const workspace = readOwnedWorkspace(attemptId);
+        if (!workspace) continue;
+        const result = await this.cleanup(workspace);
+        if (['cleaned', 'already_clean'].includes(result.status)) {
+          cleaned.push(attemptId);
+        }
+      }
+      return Object.freeze({
+        cleaned_attempts: Object.freeze(cleaned),
+      });
+    },
+
     roots: Object.freeze({
       mirrors,
       worktrees,
       quarantine,
+      ownership: ownershipRoot,
     }),
   });
 }
