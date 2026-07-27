@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 13)
+# Sprint Contract Draft (Round 14)
 
 ## 合同边界
 
@@ -136,7 +136,7 @@ N/A — 本任务不新增对外 agent；外部输入仅为受控 approve/reject
 
 **来源**: `[FROM_PRD]` — Golden Path 第 1 步、边界情况第 2/3 条、范围限定。
 
-**可观测行为**: Kernel-owned 判定来自 run/task/PR 当前 head 的四元组；一旦 `tasks.payload.review_required=true`，系统进入必须人工审核的 merge gate。标题大小写、空格、改名、branch 前缀、body 改动、PR 内脚本修改都不再改变 merge authority。
+**可观测行为**: Kernel-owned 判定来自 run/task/PR 当前 head 的四元组；一旦 `tasks.payload.review_required=true`，系统进入必须人工审核的 merge gate。标题大小写、空格、改名、branch 前缀、body 改动、PR 内脚本修改都不再改变 merge authority；缺失四元组时即使标题写成 `feat(harness):`、分支写成 `cp-*` 也必须 fail-closed。
 
 **验证命令**:
 ```bash
@@ -273,11 +273,20 @@ CURRENT_SHA=$(gh pr view "$PR_URL" --json headRefOid --jq '.headRefOid')
 [ -n "$CURRENT_SHA" ] || { echo "FAIL: gh 未返回 headRefOid"; exit 1; }
 
 node ./node_modules/vitest/vitest.mjs run \
+DEADLINE=$((SECONDS + 60))
+until node ./node_modules/vitest/vitest.mjs run \
   sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts \
   packages/brain/src/routes/__tests__/harness-kernel-approvals.test.js \
   packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js \
   packages/brain/src/orchestrator/__tests__/ground-truth.test.js \
   packages/brain/src/orchestrator/__tests__/kernel-handlers.test.js
+do
+  [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: within 60s 关键红测未转绿"; exit 1; }
+  sleep 2
+done
+
+CI_OUT=$(bash .github/workflows/scripts/should-auto-merge.sh "cp-07271848-ws-deadbeef" "feat(harness): demo")
+echo "$CI_OUT" | grep -q 'FAIL_CLOSED' || { echo "FAIL: should-auto-merge 未 fail-closed"; echo "$CI_OUT"; exit 1; }
 
 RESP_CODE=$(curl -s -o /tmp/kernel-approve-resp.json -w "%{http_code}" \
   -X POST "http://localhost:5221/api/brain/harness/kernel-reviews/11111111-1111-4111-8111-111111111111/approve" \
@@ -295,4 +304,4 @@ COUNT=$(psql "$DB_URL" -t -c "SELECT count(*) FROM orchestrator_decision_log WHE
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| ownership tuple、approve/reject、legacy finalize、merge lock、CI fail-closed | `sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts` | `标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority` / `resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组` / `approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict` / `approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `approve route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class approved_by timestamp source` / `approve route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict` / `reject route 记录含 rejected_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `reject route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class rejected_by timestamp source` / `reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict` / `review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并` / `merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha` / `finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed` | 实测红证据（2026-07-27 本轮）：`merge_pr` 仍发 `gh pr merge ... --squash --delete-branch` 且缺 `--match-head-commit`；`.github/workflows/scripts/should-auto-merge.sh` 仍输出 `SKIP: harness-owned PR...` 而非明确 deny；`packages/brain/src/harness-ci-gate.js` 尚未导出 `resolveKernelMergeAuthority`；approve/reject route 现响应仍返回 `approved_at/rejected_at` 且缺 `repo/pr_number/source/timestamp`，也未对 `repo/pr_number` 做原子匹配；`finalizeHarnessTask` 目前只看 `PR MERGED + evaluator gate`，未绑定当前 SHA 的 `human_review/judge`；本地未起 Postgres 时真实 PG 红测会以 `ECONNREFUSED 127.0.0.1:5432` 直接失败，说明接缝测试没有被 mock 掩盖 |
+| ownership tuple、approve/reject、legacy finalize、merge lock、CI fail-closed | `sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts` | `标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority` / `resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组` / `approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict` / `approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `approve route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class approved_by timestamp source` / `approve route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict` / `reject route 记录含 rejected_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `reject route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class rejected_by timestamp source` / `reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict` / `review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并` / `merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha` / `finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed` | 实测红证据（2026-07-27 本轮）：`merge_pr` 仍发 `gh pr merge ... --squash --delete-branch` 且缺 `--match-head-commit`；`.github/workflows/scripts/should-auto-merge.sh` 仍输出 `SKIP: harness-owned PR...` 而非明确 deny；`packages/brain/src/harness-ci-gate.js` 尚未导出 `resolveKernelMergeAuthority`，且缺四元组时仍无 title/branch 伪证据 fail-closed 解析器；approve/reject route 现响应仍返回 `approved_at/rejected_at` 且缺 `repo/pr_number/source/timestamp`，也未对 `repo/pr_number` 做原子匹配；`finalizeHarnessTask` 目前只看 `PR MERGED + evaluator gate`，未绑定当前 SHA 的 `human_review/judge`；本地未起 Postgres 时真实 PG 红测会以 `ECONNREFUSED 127.0.0.1:5432` 直接失败，说明接缝测试没有被 mock 掩盖 |

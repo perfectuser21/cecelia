@@ -85,8 +85,8 @@ target_environment: local_api
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组
-  动作: 调用 server-owned ownership resolver，对缺字段与完整 tuple 分别判定。
-  预期观察: 缺字段/普通 PR fail-closed，只有完整 tuple 才返回 `{ kernelOwned: true }`。
+  动作: 调用 server-owned ownership resolver，对完整 tuple、缺 `head_sha`，以及只提供 `feat(harness)` 标题与 `cp-*` branch 的伪证据三种输入分别判定。
+  预期观察: 缺字段/普通 PR fail-closed，标题与 branch 伪证据单独出现也 fail-closed，只有完整 tuple 才返回 `{ kernelOwned: true }`。
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组"'
   期望: exit 0
 

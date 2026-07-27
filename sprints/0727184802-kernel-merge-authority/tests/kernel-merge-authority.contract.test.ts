@@ -470,6 +470,11 @@ describe('kernel merge authority contract red tests', () => {
       pr_number: PR_NUMBER,
       run_id: randomUUID(),
     })).toEqual({ kernelOwned: false, reason: 'missing_head_sha' });
+
+    expect(resolver({
+      title: 'feat(harness): fake authority',
+      head_branch: 'cp-07271848-fake',
+    })).toEqual({ kernelOwned: false, reason: 'missing_repo' });
   });
 
   it('finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed', async () => {
