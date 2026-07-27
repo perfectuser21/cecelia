@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const terminalizerModPromise = import('../../../packages/brain/src/orchestrator/failure-terminalizer.js').catch(() => ({}));
@@ -9,19 +10,25 @@ describe('Kernel failure terminalizer contract', () => {
     expect(typeof mod.failureTerminalizer).toBe('function');
     expect(typeof mod.classifyFailureTerminalAction).toBe('function');
     const routes = mod.classifyFailureTerminalAction?.();
+    const loopSource = readFileSync('packages/brain/src/orchestrator/loop.js', 'utf8');
     expect(routes).toEqual(expect.objectContaining({
       hop_cap: 'failure_terminalizer',
       mark_failed: 'failure_terminalizer',
       blocked_same_state: 'failure_terminalizer',
       ci_timeout: 'failure_terminalizer',
+      automation_deadline_exceeded: 'failure_terminalizer',
+      approved_but_no_contract_branch: 'failure_terminalizer',
       approved_but_no_contract_sha: 'failure_terminalizer',
-      approved_but_no_contract_artifacts: 'failure_terminalizer',
-      approved_but_no_contract_rejected: 'failure_terminalizer',
+      approved_but_contract_artifacts_missing: 'failure_terminalizer',
       fatal_catch: 'failure_terminalizer',
       launch_failure: 'failure_terminalizer',
       watchdog_dead: 'failure_terminalizer',
       watchdog_deadline: 'failure_terminalizer',
     }));
+    expect(loopSource).toContain('approved_but_no_contract_branch');
+    expect(loopSource).toContain('approved_but_no_contract_sha');
+    expect(loopSource).toContain('approved_but_contract_artifacts_missing');
+    expect(loopSource).toContain('automation_deadline_exceeded');
   });
 
   it('all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail', async () => {

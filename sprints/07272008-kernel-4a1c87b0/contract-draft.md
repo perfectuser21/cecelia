@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## 合同边界
 
@@ -7,6 +7,7 @@
 - retry 分类只接受结构化 `failureClass === "infrastructure_blocked"`；`all_execution_targets_exhausted` 只是 fallback reason/target exhaustion 语义，不得按 `failure_reason` 子串猜测。
 - `contract-gate`: enabled（`packages/brain/src/lib/contract-gate.js` 存在）。
 - 根 `RCI` 文件在当前仓库中未发现；本次合同以根 `DEFINITION.md`、`packages/brain/package.json`、`packages/brain/package-lock.json`、`.brain-versions`、`regression-contract.yaml` 为版本/回归 SSOT，并在实现阶段显式说明 `RCI` 缺失。
+- `context-manifest` 于 2026-07-27 实测 `GET /api/brain/line/bb8cc561-b3ee-4fec-b74d-2255694bd963/context-manifest` 返回 `Cannot GET ...`，因此累积 FR 来源显式登记为 unavailable，而不是静默留空。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -22,7 +23,7 @@ N/A — 任务无新增 HTTP 响应。对外可观测契约是 `initiative_runs`
 - `[packages/brain/src/orchestrator/__tests__/loop.test.js]` → `连续 wait:poll_ci 累积 pollCount → 超限时 derive 判 ci_timeout（mark_failed）`
 - `[packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js]` → `public watchdog success resumes a new lineage child, never the expired parent`
 - `[packages/brain/src/__tests__/harness-slot-check-kernel.test.js]` → `slot 计数以 in_progress task / kernel_active 为真相，不靠 run join 绕过`
-- `[累积FR] context-manifest: unavailable`
+- `[累积FR] 2026-07-27 实测 `GET /api/brain/line/bb8cc561-b3ee-4fec-b74d-2255694bd963/context-manifest` 返回 `Cannot GET ...`，因此本轮无可加载累积 FR 清单`
 
 ## 真实调用方请求 shape
 
@@ -93,7 +94,7 @@ N/A — 本任务不新增对外暴露 agent；输入仅来自 Kernel 内部状�
 npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "统一失败出口接入 failure terminalizer"
 ```
 
-**硬阈值**: exit code = 0；断言命中的出口至少覆盖 `hop_cap`、`mark_failed`、`blocked_same_state`、`ci_timeout`、`approved_but_no_contract_sha`、`approved_but_no_contract_artifacts`、`approved_but_no_contract_rejected`、`fatal_catch`、`launch_failure`、`watchdog_dead`、`watchdog_deadline`。
+**硬阈值**: exit code = 0；断言命中的出口至少覆盖 `hop_cap`、`mark_failed`、`blocked_same_state`、`ci_timeout`、`automation_deadline_exceeded`、`approved_but_no_contract_branch`、`approved_but_no_contract_sha`、`approved_but_contract_artifacts_missing`、`fatal_catch`、`launch_failure`、`watchdog_dead`、`watchdog_deadline`。
 
 ---
 
