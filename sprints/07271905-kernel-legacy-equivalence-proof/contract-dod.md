@@ -29,17 +29,17 @@ target_environment: local_api
   Test: node -e "const fs=require('fs');for(const p of ['packages/engine/tests/equivalence/legacy-equivalence-gate.test.ts','packages/engine/tests/equivalence/github-protection.integration.test.ts']){const s=fs.readFileSync(p,'utf8');if(/vi\\.mock|jest\\.mock|sinon\\.stub/.test(s))process.exit(1)}"
 
 - [ ] [ARTIFACT] `.github/workflows/ci.yml` 真执行等价 gate 并将结果纳入 `ci-passed`，不是文件存在性检查。
-  Test: node -e "const fs=require('fs');const s=fs.readFileSync('.github/workflows/ci.yml','utf8');if(!s.includes('legacy-equivalence-gate.mjs')||!s.includes('Legacy P0/P1 Equivalence'))process.exit(1)"
+  Test: node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --verify-ci-workflow .github/workflows/ci.yml --output /tmp/legacy-ci-artifact.json
 
 - [ ] [ARTIFACT] Engine 版本、hook 版本、回归契约与 feature registry 按既有六文件同步规则更新。
   Test: node packages/engine/scripts/devgate/check-engine-hygiene.cjs
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] [L2] GP Step 1 — 129 条 inventory 精确载入且 F01/F06 非空、F08 无 catch-all
+- [ ] [BEHAVIOR] [L2] GP Step 1 — 129 行必填字段、family 派生计数与 F01/F06/F08 规则全部成立
   动作: evaluator 对真实 `packages/engine/regression-contract.yaml` 运行 inventory-only。
-  预期观察: 立即得到 total=129、P0=66、P1=63、ID 唯一，F01/F06>0 且 F08 只含发布链。
-  验证命令: Test: manual:bash -c 'node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --inventory-only --output /tmp/legacy-inventory.json && jq -e '"'"'.inventory_counts=={"total":129,"P0":66,"P1":63} and ([.behaviors[].behavior_id]|unique|length)==129 and ([.behaviors[]|select(.family_id=="F01")]|length)>0 and ([.behaviors[]|select(.family_id=="F06")]|length)>0 and ([.behaviors[]|select(.family_id=="F08" and (.unified_construct|test("staging|promote|rollback")|not))]|length)==0'"'"' /tmp/legacy-inventory.json'
+  预期观察: total=129、P0=66、P1=63、ID 唯一；129/129 行字段非空；八个 family_counts 由逐行重算且总和 129；F01/F06>0、F08 只含发布链。
+  验证命令: Test: manual:bash -c 'node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --inventory-only --output /tmp/legacy-inventory.json && jq -e '"'"'def ne:type=="string" and length>0; .inventory_counts=={"total":129,"P0":66,"P1":63} and (.behaviors|length)==129 and ([.behaviors[].behavior_id]|unique|length)==129 and all(.behaviors[];(.behavior_id|ne) and (.severity|test("^P[01]$")) and (.legacy_source|ne) and (.family_id|test("^F0[1-8]$")) and (.unified_owner|ne) and (.unified_construct|ne) and (.assertion_ref|ne) and (.checked_at|ne) and (.expires_at|ne) and (.fail_semantics|ne)) and .family_counts==(reduce .behaviors[] as $b ({"F01":0,"F02":0,"F03":0,"F04":0,"F05":0,"F06":0,"F07":0,"F08":0};.[$b.family_id]+=1)) and ([.family_counts[]]|add)==129 and .family_counts.F01>0 and .family_counts.F06>0 and ([.behaviors[]|select(.family_id=="F08" and (.unified_construct|test("staging|promote|rollback")|not))]|length)==0'"'"' /tmp/legacy-inventory.json'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] GP Step 2 — 每行 owner/construct 与三态 oracle 完整且真实启动
@@ -48,10 +48,10 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-oracles --output /tmp/legacy-oracles.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'[.behaviors[]|select((.unified_owner|length)==0 or (.unified_construct|length)==0 or (.assertion_ref|length)==0 or ([.oracles.positive,.oracles.violation,.oracles.recovery]|any(.started!=true or .passed!=true or .exit_code==null or (.log_tail|length)==0 or .assertion_ref==null)))]|length==0'"'"' /tmp/legacy-oracles.json'
   期望: within 600s exit 0
 
-- [ ] [BEHAVIOR] [L2] GP Step 2 — provider supported 真三态，unsupported 必须 approved decision
+- [ ] [BEHAVIOR] [L2] GP Step 2 — provider 3×8 family 覆盖无缺格，supported 真三态，unsupported 有批准 decision
   动作: evaluator 运行 Claude/Codex/Grok × F01..F08 provider matrix。
-  预期观察: within 600s 支持项均有三态 exit/assertion；不支持项只有批准的 retirement/supersession。
-  验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-providers --output /tmp/legacy-providers.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'[.provider_matrix[]|select(if .support=="supported" then ([.positive,.violation,.recovery]|any(.started!=true or .passed!=true or .exit_code==null or .assertion_ref==null)) else (.decision.status!="approved" or (.decision.kind!="retirement" and .decision.kind!="supersession")) end)]|length==0'"'"' /tmp/legacy-providers.json'
+  预期观察: within 600s 精确得到 24 个唯一 provider×family 格；支持项均有三态 exit/assertion，不支持项只有批准的 retirement/supersession。
+  验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-providers --output /tmp/legacy-providers.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'(.provider_matrix|length)==24 and ([.provider_matrix[]|[.provider,.family_id]]|unique|length)==24 and ([.provider_matrix[].provider]|unique|sort)==["claude","codex","grok"] and ([.provider_matrix[].family_id]|unique|sort)==["F01","F02","F03","F04","F05","F06","F07","F08"] and all(.provider_matrix[];if .support=="supported" then ([.positive,.violation,.recovery]|all(.started==true and .passed==true and .exit_code!=null and (.assertion_ref|type=="string" and length>0))) else (.support=="unsupported" and .decision.status=="approved" and (.decision.kind=="retirement" or .decision.kind=="supersession")) end)'"'"' /tmp/legacy-providers.json'
   期望: within 600s exit 0
 
 - [ ] [BEHAVIOR] [L2] GP Step 3 — guards、全部 stop hooks、DevGate、Evaluator/Judge 与发布链真执行且 skipped=0
@@ -60,10 +60,16 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-engine --output /tmp/legacy-engine.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'.engine_test_summary.started==true and .engine_test_summary.failed==0 and .engine_test_summary.skipped==0'"'"' /tmp/legacy-engine.json'
   期望: within 600s exit 0
 
+- [ ] [BEHAVIOR] [L2] GP Step 3 — CI workflow 独立 gate job 强制进入 ci-passed
+  动作: evaluator 用等价 CLI 结构化解析实际 `.github/workflows/ci.yml`，不以 grep/字符串存在代替。
+  预期观察: job id/name 固定，真实 run step 调 gate；`ci-passed.needs` 含该 job 且非 success 必须失败。
+  验证命令: Test: manual:bash -c 'node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --verify-ci-workflow .github/workflows/ci.yml --output /tmp/legacy-ci.json && jq -e '"'"'.ci_workflow.job_id=="legacy-equivalence" and .ci_workflow.job_name=="Legacy P0/P1 Equivalence" and .ci_workflow.job_runs_gate==true and .ci_workflow.ci_passed_needs==true and .ci_workflow.ci_passed_requires_success==true'"'"' /tmp/legacy-ci.json'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] GP Step 4 — current SHA、24h TTL、assertion_ref 与 owner 全部逐行有效
   动作: evaluator 在当前 checkout 运行 final gate。
   预期观察: 报告 SHA 等于 `HEAD^{commit}`，expired/missing assertion/owner mismatch 均为 0。
-  验证命令: Test: manual:bash -c 'SHA=$(git rev-parse --verify "HEAD^{commit}") && node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --output /tmp/legacy-current.json && jq -e --arg sha "$SHA" '"'"'.artifact_sha==$sha and .evidence_ttl_hours==24 and .status_counts.missing_assertion==0 and .status_counts.owner_mismatch==0 and ([.behaviors[]|select(.artifact_sha!=$sha or (.assertion_ref|length)==0)]|length)==0'"'"' /tmp/legacy-current.json'
+  验证命令: Test: manual:bash -c 'SHA=$(git rev-parse --verify "HEAD^{commit}") && NOW=$(date +%s) && node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --output /tmp/legacy-current.json && jq -e --arg sha "$SHA" --argjson now "$NOW" '"'"'.artifact_sha==$sha and .evidence_ttl_hours==24 and .status_counts.missing_assertion==0 and .status_counts.owner_mismatch==0 and ([.behaviors[]|select(.artifact_sha!=$sha or (.assertion_ref|length)==0 or (.checked_at|type!="string") or (.expires_at|fromdateiso8601)<=$now)]|length)==0'"'"' /tmp/legacy-current.json'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L3] GP Step 5 — GitHub main protection 真实只读 API 六类 policy 逐字段匹配

@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## 合同边界与证据基线
 
@@ -8,7 +8,7 @@
 - 当前候选 SHA：执行时由 `git rev-parse --verify "HEAD^{commit}"` 取得；报告中的每条证据必须逐行携带该 SHA。
 - 证据保质期：自动 oracle 与 GitHub protection 证据统一为 24 小时；`checked_at + 24h <= now` 即过期并 fail-closed。
 - 本任务不得连接或修改生产数据库；所有 mutation 必须在临时目录或内存副本进行。
-- PRD 显式授权修改 Engine 与 `.github/` 的等价门禁接线；不得顺带改动其他共享 CI 行为。
+- PRD 显式授权修改 Engine 与 `.github/` 等价门禁接线；Round 2 仅收敛 reviewer 指出的逐行字段/family 计数、3×8 provider 覆盖、CI job→`ci-passed`→branch protection 真接线，不顺带改其他共享 CI。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -20,50 +20,28 @@ N/A — 本任务无 HTTP 响应。验收入口是本地 CLI，输出 JSON 证�
 
 ```jsonc
 {
-  "schema_version": "legacy-equivalence-v1",
-  "artifact_sha": "<40-char sha>",
-  "generated_at": "<ISO-8601>",
-  "evidence_ttl_hours": 24,
-  "result": "pass|fail",
+  "schema_version": "legacy-equivalence-v1", "artifact_sha": "<40-char sha>",
+  "generated_at": "<ISO-8601>", "evidence_ttl_hours": 24, "result": "pass|fail",
   "inventory_counts": {"total": 129, "P0": 66, "P1": 63},
-  "status_counts": {
-    "proven_active": 129,
-    "unknown": 0,
-    "drifted": 0,
-    "missing_assertion": 0,
-    "owner_mismatch": 0
-  },
-  "family_counts": {
-    "F01": "<derived count>",
-    "F02": "<derived count>",
-    "F03": "<derived count>",
-    "F04": "<derived count>",
-    "F05": "<derived count>",
-    "F06": "<derived count>",
-    "F07": "<derived count>",
-    "F08": "<derived count>"
-  },
-  "behaviors": [],
-  "provider_matrix": [],
+  "status_counts": {"proven_active": 129, "unknown": 0, "drifted": 0,
+    "missing_assertion": 0, "owner_mismatch": 0},
+  "family_counts": {"F01": "<derived>", "F02": "<derived>", "F03": "<derived>",
+    "F04": "<derived>", "F05": "<derived>", "F06": "<derived>", "F07": "<derived>", "F08": "<derived>"},
+  "behaviors": [], "provider_matrix": [],
   "matrix": {"stage_count": 13, "element_count": 11, "cell_count": 143, "green": 143},
-  "github_protection": {},
-  "engine_test_summary": {},
-  "violations": []
+  "github_protection": {}, "engine_test_summary": {}, "violations": []
 }
 ```
 
 每个 `behaviors[]` 行必须含：
 
-- `behavior_id`：与 inventory 稳定 ID 逐字一致且全局唯一。
-- `severity`：只允许 `P0|P1`。
-- `legacy_source`：仓库相对路径与可解析锚点。
+- `behavior_id` 全局唯一；`severity` 只允许 `P0|P1`；`legacy_source` 是仓库相对路径与可解析锚点。
 - `family_id`：只允许 `F01..F08`；F01/F06 必须非空，F08 仅允许 staging/promote/rollback。
 - `unified_owner` 与 `unified_construct`：均非空，且 owner registry 校验一致。
 - `oracles.positive|violation|recovery`：每项均含真实 `command`、`exit_code`、`log_tail`、`observed_at`、`assertion_ref`。
 - `artifact_sha`、`checked_at`、`expires_at`、`fail_semantics`、`proven_status`。
 - `assertion_ref`：非空、唯一解析到一个自动测试/脚本；`manual:` 不得用于 `method=auto`。
-- `matrix.cells[]`：每格含 `stage_id`、`element_id`、非空 `behavior_ids`、`artifact_sha`、
-  `all_behaviors_proven` 与 `status`；只有 `all_behaviors_proven=true` 才可 green。
+- `matrix.cells[]` 每格含 `stage_id`、`element_id`、非空 `behavior_ids`、`artifact_sha`、`all_behaviors_proven` 与 `status`；只有 `all_behaviors_proven=true` 才可 green。
 
 禁用的伪造汇总字段或语义：硬编码 `mismatch=0`、硬编码 `match_count`、把 `active+drifted` 计入 `proven_status_count`、无逐行证据直接写 green。
 `family_counts` 的八项必须由 129 行逐行重算且总和=129；F01/F06>0；F08<110 且 F08 每行只允许 staging/promote/rollback。
@@ -80,30 +58,20 @@ N/A — 本任务无 HTTP 响应。验收入口是本地 CLI，输出 JSON 证�
 - `[packages/engine/tests/integration/worktree-checkout-guard.test.sh]` → checkout guard 必须由 shell job真执行，不能只做文件扫描。
 - `[.github/workflows/ci.yml]` → `engine-tests` 跑 TypeCheck/Vitest，`engine-tests-shell` glob 跑全部 shell tests；等价证明不得接受 skipped。
 - `[累积FR]` 本 line 暂无已验收历史行为。
-- `context-manifest: unavailable`：`GET /api/brain/line/128dcb6a-fdf1-44b1-8124-37993dbd922c/context-manifest` 当前返回 404 HTML。
+- `context-manifest: unavailable`：`GET /api/brain/line/bb8cc561-b3ee-4fec-b74d-2255694bd963/context-manifest` 当前返回 404 HTML。
 
 ## 真实调用方请求 shape
 
-N/A — 本任务不新增设备/agent 调服务端接口。唯一第三方调用为 CLI 通过 `gh api` 对 GitHub REST
-`GET /repos/perfectuser21/cecelia/branches/main/protection` 发起只读请求；认证沿用 `gh` 的安全 credential store，
-不在 body、参数、日志或产物中传 token。必须读取并校验：
-`required_status_checks.strict/contexts`、`enforce_admins.enabled`、
-`required_pull_request_reviews`、`required_linear_history.enabled`、
-`allow_force_pushes.enabled`、`allow_deletions.enabled`。
+N/A — 不新增设备/agent 接口。唯一第三方调用是 CLI 通过 `gh` credential store 真读
+`GET /repos/perfectuser21/cecelia/branches/main/protection`；token 不进 body、参数、日志或产物。必须校验
+`required_status_checks.strict/contexts`、admin、review、linear history、force-push 与 delete policy。
 
 ### GitHub main protection 版本化政策（本轮真实只读基线）
 
-- `required_status_checks.strict=true`
-- `required_status_checks.contexts` 精确集合：
-  `ci-passed`、`Harness V5 Gate Passed`、`Smoke Glob Runner Passed`
+- `required_status_checks.strict=true`；contexts 精确为 `ci-passed`、`Harness V5 Gate Passed`、`Smoke Glob Runner Passed`
 - `enforce_admins.enabled=true`
-- `required_pull_request_reviews.dismiss_stale_reviews=false`
-- `required_pull_request_reviews.require_code_owner_reviews=false`
-- `required_pull_request_reviews.require_last_push_approval=false`
-- `required_pull_request_reviews.required_approving_review_count=0`
-- `required_linear_history.enabled=true`
-- `allow_force_pushes.enabled=false`
-- `allow_deletions.enabled=false`
+- review policy：`dismiss_stale_reviews=false`、`require_code_owner_reviews=false`、`require_last_push_approval=false`、`required_approving_review_count=0`
+- `required_linear_history.enabled=true`；`allow_force_pushes.enabled=false`；`allow_deletions.enabled=false`
 
 该政策必须写入版本化 JSON 并与 live API 逐字段比较；禁止从 live 响应自动覆写政策以消除 drift。
 
@@ -169,6 +137,14 @@ notes:
 | current SHA/TTL/assertion_ref 不符 | CLI exit 1 | 重新生成证据 | 旧证据不得复用 |
 | mutation/fixture 被错误接受 | 测试与 gate exit 1 | 是 | 禁止继续标 green |
 
+### 风险→缓解映射
+
+| 风险 | 缓解与可执行证据 |
+|------|------------------|
+| GitHub 凭据不可用、限流或 protection 漂移 | `gh api` 失败即非零；不得缓存 PASS；E2E 真读六类 policy |
+| provider capability 行缺失被真空 `all()` 放过 | 强制 Claude/Codex/Grok × F01..F08 精确 24 个唯一格；unsupported 只认批准 decision |
+| CI job 只写文本或未绑定 required 聚合 | 结构化解析 workflow，强制独立 job 真跑 gate、`ci-passed.needs` 依赖并要求 success；E2E 再查当前 PR 两个 check 真为 pass |
+
 ### 输入对抗面
 
 | 输入来源 | 信任等级 | Prompt Injection 防护 | 越权指令拒绝策略 |
@@ -194,13 +170,21 @@ notes:
 
 ```bash
 node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --inventory-only --output /tmp/legacy-inventory.json
-jq -e '.inventory_counts == {"total":129,"P0":66,"P1":63}
-  and ([.behaviors[].behavior_id] | length)==129
-  and ([.behaviors[].behavior_id] | unique | length)==129
-  and ([.behaviors[] | select(.family_id=="F01")] | length > 0)
-  and ([.behaviors[] | select(.family_id=="F06")] | length > 0)
-  and ([.behaviors[] | select(.family_id=="F08" and
-       (.unified_construct|test("staging|promote|rollback")|not))] | length == 0)' /tmp/legacy-inventory.json
+jq -e '
+  def nonempty: type=="string" and length>0;
+  .inventory_counts=={"total":129,"P0":66,"P1":63} and (.behaviors|length)==129 and
+  ([.behaviors[].behavior_id]|unique|length)==129 and
+  all(.behaviors[];
+    (.behavior_id|nonempty) and (.severity|test("^P[01]$")) and
+    (.legacy_source|nonempty) and (.family_id|test("^F0[1-8]$")) and
+    (.unified_owner|nonempty) and (.unified_construct|nonempty) and
+    (.assertion_ref|nonempty) and (.checked_at|nonempty) and
+    (.expires_at|nonempty) and (.fail_semantics|nonempty))
+  and .family_counts==(reduce .behaviors[] as $b
+    ({"F01":0,"F02":0,"F03":0,"F04":0,"F05":0,"F06":0,"F07":0,"F08":0};.[$b.family_id]+=1))
+  and ([.family_counts[]]|add)==129 and .family_counts.F01>0 and .family_counts.F06>0 and
+  ([.behaviors[]|select(.family_id=="F08" and
+    (.unified_construct|test("staging|promote|rollback")|not))]|length)==0' /tmp/legacy-inventory.json
 ```
 
 **硬阈值**: 129=66+63；重复/空字段=0；F01>0、F06>0、F08 catch-all=0。上述 `jq -e` 非零即 FAIL。
@@ -225,19 +209,20 @@ jq -e '
             (.log_tail|length)==0 or .assertion_ref==null))
   )] | length == 0
 ' /tmp/legacy-oracles.json
+node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-providers --output /tmp/legacy-providers.json
 jq -e '
-  [.provider_matrix[] | select(
-    if .support=="supported"
-    then ([.positive,.violation,.recovery] |
-          any(.started!=true or .passed!=true or .exit_code==null or .assertion_ref==null))
-    else (.decision.status!="approved" or
-          (.decision.kind!="retirement" and .decision.kind!="supersession"))
-    end
-  )] | length == 0
-' /tmp/legacy-oracles.json
+  (.provider_matrix|length)==24 and ([.provider_matrix[]|[.provider,.family_id]]|unique|length)==24 and
+  ([.provider_matrix[].provider]|unique|sort)==["claude","codex","grok"] and
+  ([.provider_matrix[].family_id]|unique|sort)==["F01","F02","F03","F04","F05","F06","F07","F08"] and
+  all(.provider_matrix[];
+    if .support=="supported" then ([.positive,.violation,.recovery] |
+      all(.started==true and .passed==true and .exit_code!=null and (.assertion_ref|type=="string" and length>0)))
+    else (.support=="unsupported" and .decision.status=="approved" and
+      (.decision.kind=="retirement" or .decision.kind=="supersession")) end)
+ ' /tmp/legacy-providers.json
 ```
 
-**硬阈值**: owner/construct/assertion_ref 缺失=0；129×3 oracle 均实际启动；支持矩阵缺口=0；未批准 unsupported=0。
+**硬阈值**: owner/construct/assertion_ref 缺失=0；129×3 oracle 均实际启动；provider×family=24 个唯一格；未批准 unsupported=0。
 
 ### Step 3: 真执行 guards、全部 stop hooks、DevGate、Evaluator/Judge 与发布链
 
@@ -259,9 +244,15 @@ jq -e '.engine_test_summary.started == true
       "devgate-dod","devgate-tdd","evaluator","github-branch-protection","judge",
       "main-repo-write-guard","pre-push","rollback","staging","stop-architect",
       "stop-conversation","stop-decomp","stop-router","worktree-checkout-guard"] | sort))' /tmp/legacy-engine.json
+node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" \
+  --verify-ci-workflow .github/workflows/ci.yml --output /tmp/legacy-ci.json
+jq -e '.ci_workflow.job_id=="legacy-equivalence" and
+  .ci_workflow.job_name=="Legacy P0/P1 Equivalence" and .ci_workflow.job_runs_gate==true and
+  .ci_workflow.ci_passed_needs==true
+  and .ci_workflow.ci_passed_requires_success==true' /tmp/legacy-ci.json
 ```
 
-**硬阈值**: required construct 缺失=0；started=true；failed=0；skipped=0。
+**硬阈值**: required construct 缺失=0；started=true；failed=0；skipped=0；独立 CI job 真跑 gate 且 `ci-passed` 强制依赖 success。
 
 ### Step 4: 在 current SHA 重算证据与时效
 
@@ -482,6 +473,15 @@ jq -e '
   (.allow_deletions.enabled|type)=="boolean"
 ' /tmp/github-main-protection.json
 
+# CI 接线双验：结构化解析 workflow，再查当前 PR 上两个 check 已真实执行成功。
+node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$REPO_ROOT" \
+  --verify-ci-workflow .github/workflows/ci.yml --output /tmp/legacy-ci.json
+jq -e '.ci_workflow.job_runs_gate and .ci_workflow.ci_passed_needs and .ci_workflow.ci_passed_requires_success' /tmp/legacy-ci.json
+PR_NUMBER=${PR_NUMBER:-$(gh pr view --json number --jq .number)}
+gh pr checks "$PR_NUMBER" --json name,bucket > /tmp/legacy-pr-checks.json
+jq -e 'any(.[];.name=="Legacy P0/P1 Equivalence" and .bucket=="pass") and
+  any(.[];.name=="ci-passed" and .bucket=="pass")' /tmp/legacy-pr-checks.json
+
 # 固定 #4372 反例必须精确 FAIL。
 if node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$REPO_ROOT" \
   --counterexample-ref "$FIXTURE_REF" --output /tmp/pr4372-counterexample.json; then
@@ -537,13 +537,13 @@ echo "Legacy P0/P1 全量行为等价证明通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| inventory/三态/provider/矩阵/fixture/mutation | `sprints/07271905-kernel-legacy-equivalence-proof/tests/legacy-p0p1-equivalence.contract.test.ts` | `129 条 P0/P1 inventory`；`#4372 反例精确报告`；`credential guard 缺失`；`stop hook 缺失`；`branch guard 缺失`；`manual oracle 填入 auto 行`；`hardcoded mismatch zero`；`伪造 match_count`；`current SHA 与证据时效`；`proven_status_count 只数真实 proven active`；`provider unsupported 必须 approved retirement 或 supersession decision`；`13×11 cell 仅由 current-SHA proven active 行聚合为 green` | CLI/fixture/policy artifacts 尚不存在，测试失败 |
+| inventory/三态/provider/矩阵/fixture/mutation/CI | `sprints/07271905-kernel-legacy-equivalence-proof/tests/legacy-p0p1-equivalence.contract.test.ts` | `129 条 P0/P1 inventory`；`provider 3×8 family 覆盖无缺格`；`CI workflow 独立 gate job 强制进入 ci-passed`；`#4372 反例精确报告`；`credential guard 缺失`；`stop hook 缺失`；`branch guard 缺失`；`manual oracle 填入 auto 行`；`hardcoded mismatch zero`；`伪造 match_count`；`current SHA 与证据时效`；`proven_status_count 只数真实 proven active`；`13×11 cell 仅由 current-SHA proven active 行聚合为 green` | CLI/fixture/policy/CI job 尚不存在，测试失败 |
 | 真 GitHub/Engine 接缝 | `sprints/07271905-kernel-legacy-equivalence-proof/tests/github-protection-equivalence.integration.test.ts` | `GitHub main protection 真实只读 API`；`Engine shell 与 stop hook 全量真跑且 skipped=0` | equivalence CLI 尚不存在，真实接缝测试失败 |
 
 ## CI 接线合同
 
-- `.github/workflows/ci.yml` 的 `engine-tests` 或独立 required job 必须真执行
-  `legacy-equivalence-gate.mjs`，并纳入 `ci-passed` needs/check；不能只验证文件存在。
+- `.github/workflows/ci.yml` 必须有 `legacy-equivalence` 独立 job（name=`Legacy P0/P1 Equivalence`）真执行
+  `legacy-equivalence-gate.mjs`；`ci-passed.needs` 必须包含该 job，且其 result 非 `success` 必须令聚合失败。
 - GitHub 分支保护版本化 policy 必须是只读比较基准；更新 policy 需独立批准 decision，不能由 live 响应自学习覆盖。
 - Engine 版本同步按 `packages/engine/AGENTS` 既有规则更新 package/version/feature registry；不修改 Brain 源码，因此无需 Brain DEFINITION bump。
 

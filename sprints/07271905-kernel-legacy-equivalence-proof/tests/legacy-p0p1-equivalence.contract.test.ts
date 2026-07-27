@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -50,7 +50,6 @@ function expectMutationFailure(result: CliResult, mutation: string): void {
 }
 
 beforeAll(async () => {
-  await access(CLI);
   let ref = spawnSync('git', ['rev-parse', '--verify', `${FIXTURE_REF}^{commit}`], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
@@ -75,15 +74,23 @@ afterEach(async () => {
 });
 
 describe('Legacy P0/P1 equivalence contract', () => {
-  it('129 条 P0/P1 inventory 精确映射且 F01/F06 非空、F08 无 catch-all', async () => {
+  it('129 条 P0/P1 inventory 逐行字段完整、family 派生计数准确且 F01/F06 非空、F08 无 catch-all', async () => {
     const { status, report } = await runCli(['--inventory-only']);
     expect(status).toBe(0);
     expect(report?.inventory_counts).toEqual({ total: 129, P0: 66, P1: 63 });
     const behaviors = report?.behaviors as Array<Record<string, any>>;
     expect(behaviors).toHaveLength(129);
     expect(new Set(behaviors.map((row) => row.behavior_id)).size).toBe(129);
-    expect(behaviors.filter((row) => row.family_id === 'F01').length).toBeGreaterThan(0);
-    expect(behaviors.filter((row) => row.family_id === 'F06').length).toBeGreaterThan(0);
+    const derivedFamilyCounts = Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => [`F${String(index + 1).padStart(2, '0')}`, 0]),
+    ) as Record<string, number>;
+    for (const row of behaviors) {
+      derivedFamilyCounts[row.family_id] = (derivedFamilyCounts[row.family_id] ?? 0) + 1;
+    }
+    expect(report?.family_counts).toEqual(derivedFamilyCounts);
+    expect(Object.values(derivedFamilyCounts).reduce((sum, count) => sum + count, 0)).toBe(129);
+    expect(derivedFamilyCounts.F01).toBeGreaterThan(0);
+    expect(derivedFamilyCounts.F06).toBeGreaterThan(0);
     expect(
       behaviors.filter(
         (row) =>
@@ -97,12 +104,27 @@ describe('Legacy P0/P1 equivalence contract', () => {
           behavior_id: expect.any(String),
           severity: expect.stringMatching(/^P[01]$/),
           legacy_source: expect.any(String),
+          family_id: expect.stringMatching(/^F0[1-8]$/),
           unified_owner: expect.any(String),
           unified_construct: expect.any(String),
           assertion_ref: expect.any(String),
+          checked_at: expect.any(String),
+          expires_at: expect.any(String),
           fail_semantics: expect.any(String),
         }),
       );
+      for (const field of [
+        'behavior_id',
+        'legacy_source',
+        'unified_owner',
+        'unified_construct',
+        'assertion_ref',
+        'checked_at',
+        'expires_at',
+        'fail_semantics',
+      ]) {
+        expect(row[field].length, `${row.behavior_id}.${field} 不得为空`).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -200,13 +222,18 @@ describe('Legacy P0/P1 equivalence contract', () => {
     expect(report?.proven_status_count).toBe(derived);
   });
 
-  it('provider unsupported 必须 approved retirement 或 supersession decision', async () => {
+  it('provider 3×8 family 覆盖无缺格且 unsupported 必须 approved retirement 或 supersession decision', async () => {
     const { status, report } = await runCli(['--run-providers']);
     expect(status).toBe(0);
     const matrix = report?.provider_matrix as Array<Record<string, any>>;
+    expect(matrix).toHaveLength(24);
     expect(new Set(matrix.map((row) => row.provider))).toEqual(
       new Set(['claude', 'codex', 'grok']),
     );
+    expect(new Set(matrix.map((row) => row.family_id))).toEqual(
+      new Set(['F01', 'F02', 'F03', 'F04', 'F05', 'F06', 'F07', 'F08']),
+    );
+    expect(new Set(matrix.map((row) => `${row.provider}:${row.family_id}`)).size).toBe(24);
     for (const row of matrix) {
       if (row.support === 'supported') {
         for (const phase of ['positive', 'violation', 'recovery']) {
@@ -228,6 +255,23 @@ describe('Legacy P0/P1 equivalence contract', () => {
         );
       }
     }
+  });
+
+  it('CI workflow 独立 gate job 强制进入 ci-passed', async () => {
+    const { status, report } = await runCli([
+      '--verify-ci-workflow',
+      '.github/workflows/ci.yml',
+    ]);
+    expect(status).toBe(0);
+    expect(report?.ci_workflow).toEqual(
+      expect.objectContaining({
+        job_id: 'legacy-equivalence',
+        job_name: 'Legacy P0/P1 Equivalence',
+        job_runs_gate: true,
+        ci_passed_needs: true,
+        ci_passed_requires_success: true,
+      }),
+    );
   });
 
   it('13×11 cell 仅由 current-SHA proven active 行聚合为 green', async () => {

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -32,7 +32,6 @@ async function runCli(args: string[]): Promise<Record<string, any>> {
 }
 
 beforeAll(async () => {
-  await access(CLI);
   const auth = spawnSync('gh', ['auth', 'status'], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
