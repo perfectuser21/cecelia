@@ -205,7 +205,7 @@ function protectedTokenFromFile(tokenFile) {
   }
   let stat;
   try {
-    stat = fs.statSync(tokenFile);
+    stat = fs.lstatSync(tokenFile);
   } catch {
     throw new Error('fleet_worker_token_file_unreadable');
   }
