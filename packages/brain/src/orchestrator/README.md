@@ -119,77 +119,46 @@ provider_session_id、error_code，再查 `orchestrator_decision_log`。不要�
 4. 禁止把 LangGraph checkpoint、thread resume 或 provider session 当成流程真相。
    session resume 只是在同一 attempt、同一 role、同一 provider 下的执行优化，缺失时
    必须回到 Git/PR/DB 重推，绝不能用 checkpoint 猜阶段。
-5. Kernel 不得重新引入 LangGraph 状态机。下方“既有 Brain v2 编排模块”仅记录旧模块，
-   不适用于 Provider-neutral Harness Kernel，也不得成为它的依赖。
+5. Kernel 不得重新引入 LangGraph 状态机。本目录不再存在任何 workflow runtime /
+   registry；见下方「目录边界」。
 
-## 既有 Brain v2 编排模块
+## 目录边界
 
-**位置**：Brain v2 三层架构中间层 L2（L1 Scheduler → L2 Orchestrator → L3 Executor）。
-**spec**：`docs/design/brain-orchestrator-v2.md` §6。
+**本目录 = Provider-neutral Harness Kernel，只此一套流程状态机。**
+
+上一代 Brain v2「L2 Orchestrator」（LangGraph `runWorkflow` + workflow registry）曾住在
+这里。它的两个模块 `graph-runtime.js` 与 `workflow-registry.js` 已在死码清理中物理删除
+（注册数恒为 0、无任何调用方），Phase C 路线图随之作废。**不要按旧文档或旧 spec
+（`docs/design/brain-orchestrator-v2.md` §6）在这里重建它们** —— 那份 spec 只作历史归档，
+不是本目录的施工图。
+
+结构性判据，新增文件前先自查：
+
+| 判据 | 结论 |
+|---|---|
+| 文件是否服务 `run.js` / `loop.js` / `derive.js` 这条 Kernel 主链？ | 是 → 属于本目录 |
+| 文件是否引入 `@langchain/langgraph` 的图/状态机/注册表语义？ | 是 → **不属于本目录**，也不得被 Kernel import |
+| 文件是否只被 `packages/brain/src/workflows/**` 使用？ | 是 → 归属 `workflows/`，除非落在下方例外 |
+
+### 唯一例外：`pg-checkpointer.js`
+
+`pg-checkpointer.js` 留在本目录，但**它不是 Kernel 的组件，Kernel 任何代码都不得 import 它**。
+
+- 真实归属：它是 LangGraph `PostgresSaver` 的进程单例工厂。全仓真实 import 方只有三处，
+  没有一处属于 Kernel：`workflows/consciousness.graph.js`（意识循环在跑）、
+  `lib/harness-thread-lookup.js`、`routes/walking-skeleton.js`。
+- 为什么不搬到 `workflows/`：路径 `orchestrator/pg-checkpointer.js` 被 20+ 个文件以
+  `vi.mock('.../orchestrator/pg-checkpointer.js')` 硬编码引用（含 `tests/integration/**`
+  与 `tests/regression/**` 的跨包相对路径）。挪动收益是"位置更贴切"，代价是一次性改
+  20+ 处 mock 路径并承担 mock 静默失效（mock 路径写错不报错，只会让测试真连 PG）的风险。
+  **稳妥优先：不挪，靠本节说明划清归属。**
+- 若将来 consciousness graph 也迁离 LangGraph，本文件应随之删除，而不是被 Kernel 接管。
 
 ## 模块
 
 | 文件 | 责任 |
 |---|---|
-| `graph-runtime.js` | `runWorkflow(workflowName, taskId, attemptN, input?)` 统一入口；thread_id 格式强制 `{taskId}:{attemptN}`；has-thread 预检 resume/fresh 分流 |
-| `pg-checkpointer.js` | `PostgresSaver` 进程单例工厂；所有 workflow 共用（禁 MemorySaver）|
-| `workflow-registry.js` | `registerWorkflow / getWorkflow / listWorkflows`；空启动，C2+ 填充 |
-
-## 使用
-
-```js
-import { runWorkflow } from './orchestrator/graph-runtime.js';
-import { registerWorkflow } from './orchestrator/workflow-registry.js';
-import { myGraph } from './workflows/my-flow.graph.js';
-
-// 启动时注册一次（Phase C2 起 workflows/index.js 集中注册）
-registerWorkflow('my-flow', myGraph);
-
-// tick 分派
-await runWorkflow('my-flow', task.id, task.attempt_n ?? 1, task);
-```
-
-## Phase C 路线图
-
-| Phase | 本目录变化 |
-|---|---|
-| **C1（本 PR）** | 建 3 个模块 + 测试，不接线任何调用方 |
-| C2 | 新 `workflows/dev-task.graph.js`；tick.js 加 `WORKFLOW_RUNTIME=v2` 灰度 |
-| C3 | 搬 `harness-gan-graph.js` → `workflows/harness-gan.graph.js` subgraph |
-| C4 | 搬 `harness-initiative-runner.js` → `workflows/harness-initiative.graph.js`（组合 C3 subgraph）|
-| C5 | 搬 `content-pipeline-graph.js` → `workflows/content-pipeline.graph.js` |
-| C6 | tick.js 瘦身到 ≤ 200 行，路由表 `taskTypeToWorkflow` |
-| C7 | 清老 runner + 清 WORKFLOW_RUNTIME flag | ✅ 完成（PR flip-default-langgraph-flags） |
-
-## 硬约束（spec §6，每 PR 必守）
-
-- **thread_id = `{taskId}:{attemptN}`**：retry 递增 attemptN 开新 thread，不复用老 checkpoint
-- **PgCheckpointer 单例**：所有 graph 共用；禁 MemorySaver（C2 起 CI grep 守门）
-- **graph node 内禁同步 >50ms**：只允许 `spawn()` / 异步 DB / 轻 transform；禁 `execSync` / 大 JSON.parse / 同步 IO
-- **每 Phase 末崩溃重启 resume 验证**（spec §6.5）：C2 起每次合前必跑
-
-## 调用链
-
-```
-tick.js (L1 Scheduler)
-  ↓ selectNextDispatchableTask → task
-  ↓ runWorkflow(workflowName, task.id, attemptN, task).catch(logError)   ← fire-and-forget
-  ↓
-graph-runtime.runWorkflow
-  ├─ getWorkflow(name)           ← workflow-registry
-  ├─ checkpointerHasThread()     ← pg-checkpointer
-  └─ graph.invoke(input, config) ← LangGraph compiled graph
-      ↓ node-1 → node-2 → ...
-      ↓ spawn(opts)  ← L3 Executor（packages/brain/src/spawn/）
-      ↓ runDocker → agent
-```
-
-## 测试
-
-`__tests__/graph-runtime.test.js` 覆盖：
-1. thread_id 格式正确（taskId + attemptN 拼接）
-2. 非法参数 throws（空 taskId / attemptN 非正整数）
-3. 未注册 workflow 抛 `workflow not found`
-4. has-checkpoint 时传 null（resume），无时传 input（fresh）
-
-Mock 策略：`vi.mock('@langchain/langgraph-checkpoint-postgres')` 返回 stub `PostgresSaver.fromConnString`；每个 it 前 `_clearRegistryForTests()` + `_resetPgCheckpointerForTests()`。
+| `run.js` | Kernel 入口；`--dry-run` 只观测推导 |
+| `loop.js` / `derive.js` / `ground-truth.js` | 主循环、纯函数推导、外部真相读取 |
+| `execution-contract.js` / `skill-bundle.js` / `provider-registry.js` / `providers/` | TaskBundle 契约、Skill 取证、provider 解析与调用描述 |
+| `pg-checkpointer.js` | **非 Kernel**：LangGraph `PostgresSaver` 单例工厂，服务 `workflows/`（见上方例外说明）|
