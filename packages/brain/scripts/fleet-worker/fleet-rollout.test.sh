@@ -223,6 +223,8 @@ CECELIA_MACHINE_ID=us-mac-m4 \
   || fail "valid Xian M4 rollout transport failed"
 grep -Fq 'archive --format=tar --output' "$artifact_log" \
   || fail "rollout did not archive committed source"
+grep -Fq -- '-c tar.umask=0022 archive --format=tar' "$artifact_log" \
+  || fail "rollout source archive did not remove group/world write bits"
 grep -Eq 'archive --format=tar --output .* 0000000000000000000000000000000000000001 ' \
   "$artifact_log" \
   || fail "rollout archive did not use the frozen commit"
