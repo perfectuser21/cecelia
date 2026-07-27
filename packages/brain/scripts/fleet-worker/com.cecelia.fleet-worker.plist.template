@@ -35,6 +35,10 @@
     <string>@@DRAIN_MARKER@@</string>
     <key>CECELIA_REPO_ROOT</key>
     <string>@@REPO_ROOT@@</string>
+    <key>CECELIA_FLEET_WORKER_TOKEN_FILE</key>
+    <string>@@WORKER_TOKEN_FILE@@</string>
+    <key>CECELIA_FLEET_DATA_ROOT</key>
+    <string>@@FLEET_DATA_ROOT@@</string>
   </dict>
   <key>StandardOutPath</key>
   <string>@@STDOUT_LOG@@</string>

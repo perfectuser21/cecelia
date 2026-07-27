@@ -232,6 +232,8 @@ FLEET_WORKER_LOG_DIR="$log_dir" \
 FLEET_WORKER_NODE_EXECUTABLE="$test_root/default-probe-node" \
 FLEET_WORKER_ID="$test_root/id-default-probe" \
 FLEET_WORKER_PLUTIL="$test_root/plutil" \
+FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
+FLEET_WORKER_DATA_ROOT="$worker_data_root" \
   env -u FLEET_WORKER_NODE_PROBE \
   "$INSTALLER" xian-mac-m4 --render-to "$default_probe_plist" >/dev/null \
   || fail "default preflight could not resolve reconciled OrbStack commands"
@@ -326,8 +328,10 @@ grep -Fq "$log_dir/fleet-worker.stdout.log" <<<"$plist_body" \
   || fail "stdout log path is not bounded"
 grep -Fq "$log_dir/fleet-worker.stderr.log" <<<"$plist_body" \
   || fail "stderr log path is not bounded"
-grep -Eqi 'CODEX_ACCOUNT_ALLOWLIST|account|authorization|auth|token|prompt|credential' <<<"$plist_body" \
+grep -Eqi 'CODEX_ACCOUNT_ALLOWLIST|account|authorization|auth|prompt|credential' <<<"$plist_body" \
   && fail "plist contains local account or credential authority"
+grep -Fq 'fleet-worker-token-at-least-32-bytes' <<<"$plist_body" \
+  && fail "plist contains the Worker bearer secret instead of its protected file path"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
