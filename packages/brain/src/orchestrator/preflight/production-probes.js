@@ -84,17 +84,32 @@ export function createProductionCapabilityProbes(deps = {}) {
       const admission = await nodeAdmissionClient.getAdmission(machine, {
         forceFresh: true,
       });
-      const admitted = admission?.base_admitted === true
+      const baseAdmitted = admission?.base_admitted === true
         && admission?.state === 'base_admitted';
+      const dispatchReady = admission?.dispatch_ready === true;
+      const admitted = baseAdmitted && dispatchReady;
       const admissionReasons = Array.isArray(admission?.reasons)
         ? admission.reasons
           .map((reason) => String(reason?.code ?? '').slice(0, 64))
           .filter(Boolean)
           .slice(0, 16)
         : [];
-      return { admitted, admissionReasons };
+      if (baseAdmitted && !dispatchReady) {
+        admissionReasons.unshift('node_not_dispatch_ready');
+      }
+      return {
+        admitted,
+        admissionReasons,
+        signature: baseAdmitted
+          ? 'node_not_dispatch_ready'
+          : 'node_not_base_admitted',
+      };
     } catch {
-      return { admitted: false, admissionReasons: ['node_admission_probe_failed'] };
+      return {
+        admitted: false,
+        admissionReasons: ['node_admission_probe_failed'],
+        signature: 'node_not_base_admitted',
+      };
     }
   }
 
@@ -115,7 +130,7 @@ export function createProductionCapabilityProbes(deps = {}) {
         return {
           ok: false,
           machine,
-          signature: 'node_not_base_admitted',
+          signature: admission.signature,
           admission_reasons: admission.admissionReasons,
         };
       }
@@ -135,7 +150,7 @@ export function createProductionCapabilityProbes(deps = {}) {
           available: 0,
           physical_capacity: 0,
           pressure: 1,
-          signature: 'node_not_base_admitted',
+          signature: admission.signature,
           admission_reasons: admission.admissionReasons,
         };
       }

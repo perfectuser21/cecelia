@@ -4,6 +4,7 @@ import { buildRealDeps } from '../run.js';
 import { getNodeProfile } from '../fleet-node/node-profile.js';
 import { signMachineAttestation } from '../machine-attestation.js';
 import { createProviderRegistry } from '../provider-registry.js';
+import { createProductionCapabilityProbes } from './production-probes.js';
 
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
@@ -109,6 +110,32 @@ function selectedPreflight(target) {
   };
 }
 
+function dispatchReadyProductionProbes({
+  pool,
+  registry,
+  fetchFn,
+  resolveGitHubTokenFn,
+  env,
+}) {
+  return createProductionCapabilityProbes({
+    pool,
+    registry,
+    fetchFn,
+    resolveGitHubTokenFn,
+    env,
+    requestTimeoutMs: 100,
+    nodeAdmissionClient: {
+      getAdmission: vi.fn(async (machine) => ({
+        machine_id: machine,
+        state: 'base_admitted',
+        base_admitted: true,
+        dispatch_ready: true,
+        reasons: [],
+      })),
+    },
+  });
+}
+
 function attemptStoreDouble() {
   return {
     createAttempt: vi.fn(async (input) => ({
@@ -159,7 +186,7 @@ describe('production capability wiring', () => {
     else process.env.CECELIA_MACHINE_ID = previousMachineId;
   });
 
-  it('buildRealDeps runs server-owned preflight before the real attempt and launcher', async () => {
+  it('buildRealDeps keeps Phase 4A closed before the real attempt and launcher', async () => {
     process.env.CECELIA_MACHINE_ID = 'us-mac-m4';
     const order = [];
     const fetchFn = vi.fn(async (url) => {
@@ -281,39 +308,19 @@ describe('production capability wiring', () => {
       decision: { phase: 'generate', reason: 'contract_approved' },
     });
 
-    expect(result.status).toBe('DONE');
-    expect(fetchFn).toHaveBeenCalledWith(
-      'https://api.github.com/user',
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer secret-token',
-        }),
-      }),
-    );
-    expect(attemptStore.createAttempt).toHaveBeenCalledTimes(1);
-    expect(attemptStore.createAttempt.mock.calls[0][0].bundle.inputs).toMatchObject({
-      capability_snapshot_id: expect.any(String),
-      capability_evidence: {
-        from_target: {
-          provider: 'codex',
-          account: 'team1',
-          machine: 'us-mac-m4',
-        },
-        to_target: {
-          provider: 'codex',
-          account: 'team1',
-          machine: 'us-mac-m4',
-        },
-      },
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      control_status: 'BLOCKED',
+      should_create_attempt: false,
     });
-    expect(order.indexOf('postgres')).toBeLessThan(order.indexOf('createAttempt'));
-    expect(order.slice(-5)).toEqual([
-      'createAttempt',
-      'claimAttempt',
-      'adapter.start',
-      'launch',
-      'recordReceipt',
-    ]);
+    expect(fetchFn).toHaveBeenCalledWith(
+      `${WORKER_URL}/health`,
+      expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) }),
+    );
+    expect(attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(adapter.start).not.toHaveBeenCalled();
+    expect(launcher.launch).not.toHaveBeenCalled();
+    expect(order).not.toContain('createAttempt');
   });
 
   it('uses the healthy fallback account for persistence, account home, and launch', async () => {
@@ -389,10 +396,17 @@ describe('production capability wiring', () => {
       })),
       cancel: vi.fn(),
     };
+    const pool = { query: vi.fn(async () => ({ rows: [{ ok: 1 }] })) };
+    const registry = createProviderRegistry([adapter]);
+    const env = {
+      CECELIA_MACHINE_ID: 'us-mac-m4',
+      FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
+    };
+    const resolveGitHubToken = vi.fn(async () => 'secret-token');
     const deps = await buildRealDeps({
-      pool: { query: vi.fn(async () => ({ rows: [{ ok: 1 }] })) },
+      pool,
       attemptStore,
-      registry: createProviderRegistry([adapter]),
+      registry,
       launcher,
       handlers: {},
       loadSkill: vi.fn(() => ({
@@ -402,16 +416,20 @@ describe('production capability wiring', () => {
         content: 'generate',
       })),
       fetchFn,
-      resolveGitHubToken: vi.fn(async () => 'secret-token'),
+      resolveGitHubToken,
+      productionProbes: dispatchReadyProductionProbes({
+        pool,
+        registry,
+        fetchFn,
+        resolveGitHubTokenFn: resolveGitHubToken,
+        env,
+      }),
       resolveAccountHome: vi.fn((_provider, account) => {
         accountHomes.push(account);
         return `/accounts/${account}`;
       }),
       leaseOwner: LEASE_OWNER,
-      env: {
-        CECELIA_MACHINE_ID: 'us-mac-m4',
-        FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
-      },
+      env,
     });
 
     const result = await deps.dispatch('spawn:generator', {
@@ -507,19 +525,26 @@ describe('production capability wiring', () => {
       normalizeResult: vi.fn(),
     };
     const launcher = { launch: vi.fn() };
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (String(sql).includes('SELECT 1')) {
+          const error = new Error('connection refused');
+          error.code = 'ECONNREFUSED';
+          throw error;
+        }
+        return { rows: [] };
+      }),
+    };
+    const registry = createProviderRegistry([adapter]);
+    const env = {
+      CECELIA_MACHINE_ID: 'us-mac-m4',
+      FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
+    };
+    const resolveGitHubToken = vi.fn(async () => 'secret-token');
     const deps = await buildRealDeps({
-      pool: {
-        query: vi.fn(async (sql) => {
-          if (String(sql).includes('SELECT 1')) {
-            const error = new Error('connection refused');
-            error.code = 'ECONNREFUSED';
-            throw error;
-          }
-          return { rows: [] };
-        }),
-      },
+      pool,
       attemptStore,
-      registry: createProviderRegistry([adapter]),
+      registry,
       launcher,
       handlers: {},
       loadSkill: vi.fn(() => ({
@@ -529,11 +554,15 @@ describe('production capability wiring', () => {
         content: 'generate',
       })),
       fetchFn,
-      resolveGitHubToken: vi.fn(async () => 'secret-token'),
-      env: {
-        CECELIA_MACHINE_ID: 'us-mac-m4',
-        FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
-      },
+      resolveGitHubToken,
+      productionProbes: dispatchReadyProductionProbes({
+        pool,
+        registry,
+        fetchFn,
+        resolveGitHubTokenFn: resolveGitHubToken,
+        env,
+      }),
+      env,
     });
 
     const result = await deps.dispatch('spawn:generator', {
