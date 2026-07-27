@@ -23,11 +23,16 @@ acl_state="$test_root/acl.state"
 socket_acl_state="$test_root/socket-acl.state"
 preflight_log="$test_root/preflight.log"
 startup_probe_log="$test_root/startup-probe.log"
+chown_log="$test_root/chown.log"
 worker_token_file="$test_root/worker-token"
 worker_data_root="$test_root/var/lib/cecelia/fleet-worker"
 mkdir -p "$install_dir" "$log_dir"
 printf '%s\n' 'fleet-worker-token-at-least-32-bytes' > "$worker_token_file"
 chmod 0600 "$worker_token_file"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\\n" "$*" >> "${FLEET_WORKER_CHOWN_LOG:?}"' > "$test_root/chown"
+chmod +x "$test_root/chown"
 
 run_installer() {
   env -u FLEET_WORKER_ID \
@@ -39,6 +44,8 @@ run_installer() {
     FLEET_WORKER_READLINK="$test_root/readlink" \
     FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
     FLEET_WORKER_CHMOD="$test_root/chmod" \
+    FLEET_WORKER_CHOWN="$test_root/chown" \
+    FLEET_WORKER_CHOWN_LOG="$chown_log" \
     FLEET_WORKER_STAT="$test_root/stat" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
@@ -61,6 +68,8 @@ run_installer_with_id() {
     FLEET_WORKER_READLINK="$test_root/readlink" \
     FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
     FLEET_WORKER_CHMOD="$test_root/chmod" \
+    FLEET_WORKER_CHOWN="$test_root/chown" \
+    FLEET_WORKER_CHOWN_LOG="$chown_log" \
     FLEET_WORKER_STAT="$test_root/stat" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
@@ -573,6 +582,8 @@ rm -f "$socket_acl_state"
 : > "$acl_log"
 : > "$preflight_log"
 : > "$launch_log"
+: > "$chown_log"
+rm -rf "$worker_data_root"
 rm -f "$launch_fail_once"
 printf 'absent\n' > "$launch_state"
 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null
@@ -589,6 +600,12 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
   || fail "--apply did not install a stable Worker runtime"
 [[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
   || fail "--apply omitted the Workspace/Attempt runtime modules"
+[[ -d "$worker_data_root" ]] \
+  || fail "--apply did not create the Worker-owned data root"
+grep -Fxq "_cecelia:_cecelia $worker_data_root" "$chown_log" \
+  || fail "--apply did not assign the data root to the Worker identity"
+grep -Fxq "_cecelia:_cecelia $worker_token_file" "$chown_log" \
+  || fail "--apply did not assign the token file to the Worker identity"
 [[ -f "$installed_access_helper" && -f "$installed_access_plist" ]] \
   || fail "--apply did not install the socket ACL refresher generation"
 access_plist_contract="$(python3 - "$installed_access_plist" <<'PY'
