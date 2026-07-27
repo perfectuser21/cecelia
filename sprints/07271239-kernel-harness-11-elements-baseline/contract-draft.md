@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## 锚定父路声明
 
@@ -10,9 +10,10 @@
 - Registry 已读取，但照相层已过期约 205 小时；字段与表约定以 PRD、当前源码、migration 348-350 和真实只读 Brain API 响应交叉确认。
 - context-manifest: unavailable（Brain 当前返回 `Cannot GET /api/brain/line/.../context-manifest`）。
 - judgment-resolved-by-prd: 历史步骤不能可靠一对一映射时，保留原 ID/Notion 关联并作为同一 lifecycle stage 的历史别名，禁止删除重建。
-- Round 3 收敛：补齐 S0-S12 稳定名称/promise 的逐项 oracle，并把 legacy P0/P1
-  逐项映射的权威落点固定为根 `regression-contract.yaml`；派生 audit JSON 仍非权威。
+- Round 4 收敛：legacy inventory 不再把所有 hook/DevGate/CI/Kernel 文件冒充 P0/P1；
+  只按显式 `priority: P0|P1` 与可追踪引用选入，并为五种 audit_status 固定事实证据门槛。
 - 本轮只建立账本基线；所有接缝在 evaluator 使用隔离 PostgreSQL 真验前均为 `logic-done-pending`。
+- gate-allow: domain/db-no-time-window `SELECT current_database()` 读取无 `created_at` 的系统目录元数据，仅用于写前隔离库守卫，不是业务聚合/历史数据验收。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -97,6 +98,14 @@ evidence 把 cell 推成 green：审计只认根合同、真实可执行测试�
 
 （本合同无 mock 豁免，N/A；所有被改接缝在隔离真 PostgreSQL 与真实 Brain 上验证。生产库按 PRD 禁止写入。）
 
+## 风险登记
+
+| 风险 | 后果 | 缓解与可执行 gate |
+|---|---|---|
+| 把所有入口文件误升为 P0/P1 | scope 膨胀且基线失真 | Step 4 显式 priority/引用边筛选恒等式；无边入口必须 excluded+reason_code |
+| 仅填 audit_status 字符串 | 任意分类或全 unknown 假绿 | Step 4 五态条件证据 + auto 可判项不得 unknown + proven_status>0 |
+| fixture 误连生产库 | 破坏真实承诺地图 | 所有写入前 `current_database()` 必须匹配 `_test|preview_`，否则非零且零写入 |
+
 ## Golden Path
 
 审计者进入现有 F1 → 确认唯一 Journey → 保留历史并补齐 S0-S12 → 落 11 要素可信状态
@@ -171,29 +180,57 @@ HARNESS_TEST_DATABASE_URL="${HARNESS_TEST_DATABASE_URL:?}" timeout 180 bash pack
 
 **可观测行为**: 根 `regression-contract.yaml` 的
 `kernel_harness_f1_baseline.behaviors[]` 是逐项归位的权威映射；派生 audit JSON 明确
-`authoritative=false`。审计输入集合为以下四类的去重并集，不能只数 engine YAML：
+`authoritative=false`。审计器先建立四类 candidate inventory，再按以下确定性规则分流；
+禁止按文件名、注释中的 “P0/P1”、目录位置或模型猜测定级：
 
-1. `packages/engine/regression-contract.yaml` 中全部 P0/P1 条目；
-2. `packages/engine/hooks/` 下现存 guard/hook 入口；
-3. `scripts/devgate/` 下现存 check 入口与 `.github/workflows/` 中 DevGate/CI gate job；
-4. 根合同与 `packages/brain/src/orchestrator/gates.js` 暴露的 Kernel gate。
+1. `engine_contract`：解析 `packages/engine/regression-contract.yaml` 的结构化条目；仅
+   `priority` 字面为 `P0` 或 `P1` 的条目进入 selected seed，P2/缺 priority 进入 excluded。
+2. `hook`、`devgate_ci`、`kernel_gate`：枚举现存入口，但仅当 selected seed 自身的
+   `test`、`evidence.file`、`evidence.run`，或该 seed 已登记 `assertion_ref` 所指根合同
+   `test_command` 对它形成可解析引用边时，作为同一 behavior 的 source/enforcer 证据选入；
+   无引用入口进入 excluded，`reason_code=no_explicit_p0_p1_contract_edge`，不得被硬升为 P0/P1。
+3. 根合同既有 P0/P1 条目只提供 assertion/unified-owner 证据；没有
+   `legacy_behavior_id` 对应 selected seed 时，不凭自身优先级扩张“旧 Claude 行为”全集。
+4. 去重键固定为 engine `id`；同一 behavior 引用多个入口仍只映射一条，入口列表放
+   `source_refs[]`。source inventory 满足
+   `candidate_source_count=included_source_count+excluded_source_count`；behavior 层满足
+   `selected_seed_count=mapped_behavior_count`，且 unmapped/duplicate 均为 0。
 
-每个发现项必须有且只有一个 `behaviors[]` 映射，字段为 `legacy_behavior_id`、`priority`、
-`journey_stage(S0-S12)`、`element(11 要素之一)`、`legacy_owner`、
+每个 selected seed 必须有且只有一个 `behaviors[]` 映射，字段为
+`legacy_behavior_id`、`priority`、`selection_basis`、`journey_stage(S0-S12)`、
+`element(11 要素之一)`、`legacy_owner`、
 `audit_status(active|shadowed|retired|drifted|unknown)`、`unified_owner`、`gap`、
-`next_knife_order`、`source_ref`、`assertion_ref`。`source_ref` 必须指向上述 legacy source；
-非空 `assertion_ref` 必须指向根合同内带真实 `test_command` 的条目。没有足够事实的发现项
-仍必须归位，但状态为 `unknown` 或 `drifted`，禁止丢弃或乐观标 active。
+`next_knife_order`、`source_refs[]`、`assertion_ref`、`status_evidence`。
+`selection_basis` 必须回指 engine 条目的显式 priority；非空 `assertion_ref` 必须指向
+根合同内带真实 `test_command` 的唯一条目。
+
+**audit_status 事实门槛（条件式硬规则）**：
+
+| audit_status | 必须由审计器实际采集并写入 `status_evidence` 的事实 |
+|---|---|
+| `active` | legacy wiring/source 均存在；在当前 `artifact_sha` 真跑其声明的自动测试，`probe_started=true` 且 `exit_code=0` |
+| `shadowed` | legacy source 仍存在；`replacement_ref` 指向不同 unified owner/根合同条目，replacement 的当前 SHA `test_command` 真跑 `exit_code=0` |
+| `retired` | `retirement_ref` 可由 `git rev-parse --verify "<sha>^{commit}"` 解析；consumer scan 真跑 `exit_code=0` 且 `consumer_count=0` |
+| `drifted` | 声明的 probe 确实启动且得到与合同相反的机器结果（`exit_code!=0` 或结构化 mismatch）；`mismatch` 非空，不能用环境未就绪冒充 drift |
+| `unknown` | 仅在没有可判定 probe/replacement/retirement 事实时允许；`missing_evidence[]` 非空，并保留 gap + next knife |
+
+所有证据 envelope 均须含当前 `artifact_sha`、`checked_at`、`source_digest`。对
+`method:auto` 且 test 路径可解析的 selected seed 必须实际真跑并归为
+active 或 drifted，`unknown_auto_decidable_count=0`；只要存在这种 seed，
+`proven_status_count(active+shadowed+retired+drifted)>0` 且 `unknown_count<mapped_count`，
+从而“任意乱分”或“全部 unknown”不能通过。
 
 **验证命令**:
 ```bash
 HARNESS_TEST_DATABASE_URL="${HARNESS_TEST_DATABASE_URL:?}" timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh legacy-baseline
 ```
 
-**硬阈值**: 四类 source inventory 的 `discovered_count=mapped_count` 且
-`unmapped_count=0`、`duplicate_mapping_count=0`；每条 11 字段齐全；stage/element/status
-枚举合法；`source_ref` 存在；非空 `assertion_ref` 在根合同唯一解析且其 `test_command`
-目标真实存在；所指 stage/element 在真库 143 cells 中存在；`next_knife_order` 为正整数且排序确定。
+**硬阈值**: 四类 candidate inventory 均非空且 candidate=included+excluded；
+selected_seed=mapped_behavior 且
+unmapped/duplicate=0；excluded 全有 reason_code；每条字段、stage/element/status 合法；
+每个 audit_status 按上表条件式验证证据；unknown_auto_decidable=0，proven_status>0，
+unknown<mapped；非空 assertion_ref 唯一解析并真跑；所指 stage/element 存在于 143 cells；
+`next_knife_order` 为正整数且排序确定。任一不满足时 smoke 非零。
 
 ### Step 5: assertion_ref 只指向唯一根合同或真实可执行测试
 **来源**: `[FROM_PRD]` — PRD「Golden Path」步骤 5 与边界情况。
@@ -257,6 +294,11 @@ esac
 export DATABASE_URL="$HARNESS_TEST_DATABASE_URL"
 node packages/brain/src/migrate.js
 
+HARNESS_TEST_DATABASE_URL="$HARNESS_TEST_DATABASE_URL" \
+  npx vitest run \
+  sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts \
+  --reporter=verbose
+
 for CASE_NAME in \
   unique-journey \
   history-and-backbone \
@@ -283,7 +325,7 @@ echo "OK: Cecelia Harness Pipeline F1 账本归位与等价基线 Golden Path �
 | 历史与 backbone | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 历史 ID 与 Notion 关联保留且 S0-S12 名称 promise 骨干完整 | S0-S12/历史映射当前不存在 |
 | 11 要素 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 每个 S0-S12 骨干 Step 恰有 11 个合法 element cells | 当前目标 Journey 无 element cells |
 | 证据可信 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | green 只接受真实 assertion_ref 且引用存在 | 当前 classifier 仍接受静态 smoke 文案 |
-| legacy 基线 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | legacy P0/P1 四类来源逐项归位且权威映射完整 | 审计器与根合同映射未实现 |
+| legacy 基线 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | P0/P1 筛选与五态证据逐项机检 | 审计器与根合同映射未实现 |
 | 完成语义 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | endpoint 延伸到 production verified 与 report learning | 现 endpoint 仍停在 PR 合并 |
 | 非目标护栏 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 不新增平行账本且运行时表状态不被迁移改写 | 新 migration 尚不存在，护栏先红 |
 
