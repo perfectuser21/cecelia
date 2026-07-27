@@ -23,7 +23,7 @@ describe('production capability probes', () => {
         machine_id: machine,
         state: 'base_admitted',
         base_admitted: true,
-        dispatch_ready: false,
+        dispatch_ready: true,
         reasons: [],
       })),
     };
@@ -153,6 +153,7 @@ describe('production capability probes', () => {
         getAdmission: vi.fn(async () => ({
           state: 'base_admitted',
           base_admitted: true,
+          dispatch_ready: true,
           reasons: [],
         })),
       },
@@ -183,6 +184,7 @@ describe('production capability probes', () => {
           getAdmission: vi.fn(async () => ({
             state: 'base_admitted',
             base_admitted: true,
+            dispatch_ready: true,
             reasons: [],
           })),
         },
@@ -220,6 +222,7 @@ describe('production capability probes', () => {
         getAdmission: vi.fn(async () => ({
           state: 'base_admitted',
           base_admitted: true,
+          dispatch_ready: true,
           reasons: [],
         })),
       },
@@ -350,6 +353,46 @@ describe('production capability probes', () => {
       ok: false,
       available: 0,
       signature,
+    });
+  });
+
+  it('keeps Phase 4A base-admitted nodes closed until final dispatch readiness exists', async () => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const probes = createProductionCapabilityProbes({
+      pool: { query: vi.fn() },
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(async () => response({
+        fleet: [{
+          id: 'us-mac-m4',
+          online: true,
+          effective_slots: 8,
+          physical_capacity: 8,
+          pressure: 0,
+        }],
+      })),
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      nodeAdmissionClient: {
+        getAdmission: vi.fn(async () => ({
+          machine_id: 'us-mac-m4',
+          state: 'base_admitted',
+          base_admitted: true,
+          dispatch_ready: false,
+          reasons: [],
+        })),
+      },
+    });
+
+    await expect(probes.getMachineHealth({ machine: 'us-mac-m4' })).resolves.toMatchObject({
+      ok: false,
+      signature: 'node_not_dispatch_ready',
+    });
+    await expect(probes.getMachineCapacity({
+      machine: 'us-mac-m4',
+      task_bundle: { role: 'generator' },
+    })).resolves.toMatchObject({
+      ok: false,
+      available: 0,
+      signature: 'node_not_dispatch_ready',
     });
   });
 });
