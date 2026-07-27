@@ -226,6 +226,195 @@ describe('防重逻辑', () => {
   });
 });
 
+// ─── 刀3：Kernel v1 GAN 轮次可见性 ────────────────────────────────────────
+// Kernel v1（tasks.payload.harness_runtime='kernel-v1'）每个 planner/proposer/reviewer/
+// generator/evaluator/judge 写一条 harness_attempts 行（唯一键 run_id+hop），
+// 对 initiative_run_events 零引用。巡检若只查 initiative_run_events，
+// 对 Kernel run 就是永久退化 → GAN 轮次卡死无人管（2026-07-26 实证）。
+describe('Kernel v1 GAN 轮次卡死检测（harness_attempts）', () => {
+  const kernelRun = (over = {}) => ({
+    id: 'run-k1',
+    initiative_id: 'init-k1',
+    phase: 'planning', // kernel run 全程 phase='planning'，phase 判据对它恒不触发
+    started_at: agoIso(90 * MIN),
+    updated_at: agoIso(1 * MIN),
+    completed_at: null,
+    harness_runtime: 'kernel-v1',
+    ...over,
+  });
+
+  function routeKernel({ run, attempt = null, dedupRows = [], insertId = 'task-k', attemptsError = null }) {
+    mockQuery.mockImplementation((sql) => {
+      if (typeof sql !== 'string') return Promise.resolve({ rows: [] });
+      if (sql.includes('INSERT INTO tasks')) return Promise.resolve({ rows: [{ id: insertId }] });
+      if (sql.includes('harness_attempts')) {
+        if (attemptsError) return Promise.reject(new Error(attemptsError));
+        return Promise.resolve({ rows: attempt ? [attempt] : [] });
+      }
+      if (sql.includes('walking_skeleton_thread_lookup')) return Promise.resolve({ rows: [] });
+      if (sql.includes('initiative_run_events')) return Promise.resolve({ rows: [] });
+      if (sql.includes('harness_intervention')) return Promise.resolve({ rows: dedupRows });
+      if (sql.includes('completed_at IS NULL')) return Promise.resolve({ rows: [run] });
+      return Promise.resolve({ rows: [] });
+    });
+  }
+
+  const attemptsCalls = () =>
+    mockQuery.mock.calls.filter((c) => typeof c[0] === 'string' && c[0].includes('harness_attempts'));
+  const eventCalls = () =>
+    mockQuery.mock.calls.filter((c) => typeof c[0] === 'string' && c[0].includes('initiative_run_events'));
+
+  beforeEach(() => mockQuery.mockReset());
+
+  it('主扫描 SQL 纳管 kernel-v1 run（不被 v2 过滤器整体排除）', async () => {
+    routeKernel({ run: kernelRun() });
+    const r = await runHarnessInitiativePatrol();
+    expect(r.scanned).toBe(1);
+
+    const scanSql = mockQuery.mock.calls.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('FROM initiative_runs')
+    )?.[0];
+    expect(scanSql).toContain('completed_at IS NULL');
+    expect(scanSql).toContain('harness_runtime');
+    expect(scanSql).toContain('kernel-v1');
+  });
+
+  it('最新 hop 是 reviewer/running 且超 20min → gan_round 卡死 + 建 intervention 任务', async () => {
+    routeKernel({
+      run: kernelRun(),
+      attempt: {
+        hop: 18,
+        role: 'reviewer',
+        status: 'running',
+        created_at: agoIso(26 * MIN),
+        started_at: agoIso(25 * MIN),
+      },
+      insertId: 'task-kernel-gan',
+    });
+
+    const r = await runHarnessInitiativePatrol();
+    expect(r.stuck).toBe(1);
+    expect(r.intervened).toBe(1);
+    expect(r.details[0].kind).toBe('gan_round');
+
+    // 用 run_id（不是 initiative_id）查 harness_attempts
+    const call = attemptsCalls()[0];
+    expect(call).toBeTruthy();
+    expect(call[1]).toContain('run-k1');
+
+    // intervention payload 带 kind=gan_round
+    const insertCall = mockQuery.mock.calls.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks')
+    );
+    const payloadJson = insertCall[1].find((p) => typeof p === 'string' && p.includes('initiative_id'));
+    expect(JSON.parse(payloadJson).kind).toBe('gan_round');
+    expect(JSON.parse(payloadJson).initiative_id).toBe('init-k1');
+  });
+
+  it('kernel run 的 GAN 活性只从 harness_attempts 推导，不查 initiative_run_events', async () => {
+    routeKernel({
+      run: kernelRun(),
+      attempt: { hop: 18, role: 'reviewer', status: 'running', created_at: agoIso(26 * MIN), started_at: agoIso(25 * MIN) },
+    });
+    await runHarnessInitiativePatrol();
+    expect(attemptsCalls().length).toBeGreaterThan(0);
+    expect(eventCalls().length).toBe(0);
+  });
+
+  it('最新 hop 已终态（completed_with_concerns）→ 不算卡住', async () => {
+    routeKernel({
+      run: kernelRun(),
+      attempt: {
+        hop: 15,
+        role: 'reviewer',
+        status: 'completed_with_concerns',
+        created_at: agoIso(60 * MIN),
+        started_at: agoIso(60 * MIN),
+      },
+    });
+    const r = await runHarnessInitiativePatrol();
+    expect(r.stuck).toBe(0);
+    expect(r.intervened).toBe(0);
+  });
+
+  it('最新 hop 是 generator（长跑合法）→ 超 20min 也不误报', async () => {
+    routeKernel({
+      run: kernelRun(),
+      attempt: {
+        hop: 20,
+        role: 'generator',
+        status: 'running',
+        created_at: agoIso(120 * MIN),
+        started_at: agoIso(120 * MIN),
+      },
+    });
+    const r = await runHarnessInitiativePatrol();
+    expect(r.stuck).toBe(0);
+    expect(r.intervened).toBe(0);
+  });
+
+  it('最新 hop 是 planner/running 超 15min → planner 卡死（沿用 PLANNER_STUCK_MS）', async () => {
+    routeKernel({
+      run: kernelRun(),
+      attempt: {
+        hop: 1,
+        role: 'planner',
+        status: 'running',
+        created_at: agoIso(18 * MIN),
+        started_at: agoIso(18 * MIN),
+      },
+      insertId: 'task-kernel-planner',
+    });
+    const r = await runHarnessInitiativePatrol();
+    expect(r.stuck).toBe(1);
+    expect(r.details[0].kind).toBe('planner');
+    expect(r.details[0].elapsedMs).toBeGreaterThan(PLANNER_STUCK_MS);
+  });
+
+  it('planner running 未超 15min → 不算卡住', async () => {
+    routeKernel({
+      run: kernelRun(),
+      attempt: {
+        hop: 1,
+        role: 'planner',
+        status: 'running',
+        created_at: agoIso(5 * MIN),
+        started_at: agoIso(5 * MIN),
+      },
+    });
+    const r = await runHarnessInitiativePatrol();
+    expect(r.stuck).toBe(0);
+  });
+
+  it('harness_attempts 查询异常 → 吞掉不冒泡（失败非致命不变量）', async () => {
+    routeKernel({ run: kernelRun(), attemptsError: 'relation "harness_attempts" does not exist' });
+    const r = await runHarnessInitiativePatrol();
+    expect(r.scanned).toBe(1);
+    expect(r.stuck).toBe(0);
+    expect(r.intervened).toBe(0);
+  });
+
+  it('旧 relay 路径回归：非 kernel run 仍走 initiative_run_events，不碰 harness_attempts', async () => {
+    routeKernel({
+      run: {
+        id: 'run-legacy',
+        initiative_id: 'init-legacy',
+        phase: 'A_contract',
+        started_at: agoIso(30 * MIN),
+        updated_at: agoIso(30 * MIN),
+        completed_at: null,
+        harness_runtime: null,
+      },
+      insertId: 'task-legacy',
+    });
+    const r = await runHarnessInitiativePatrol();
+    expect(r.stuck).toBe(1);
+    expect(r.details[0].kind).toBe('planner');
+    expect(eventCalls().length).toBeGreaterThan(0);
+    expect(attemptsCalls().length).toBe(0);
+  });
+});
+
 describe('plugin 集成', () => {
   it('pipeline-patrol-plugin.js 调用 harnessInitiativePatrol', () => {
     const fs = require('fs');
