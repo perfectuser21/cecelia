@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 contract-gate: active
 覆盖父路 Kernel required-context gate 第 1-5 步
@@ -152,11 +152,13 @@ N/A — 本 sprint 为 Brain 内部 gate / preview route / approval 逻辑修复
 
 **验证命令**:
 ```bash
-npx vitest run sprints/07272237-kernel-226fda26/tests/required-context-gate.contract.test.ts \
+cd packages/brain
+npx vitest run ../../sprints/07272237-kernel-226fda26/tests/required-context-gate.contract.test.ts \
+  --config ../../sprints/07272237-kernel-226fda26/tests/vitest.contract.config.mjs \
   -t 'server-owned facts derive target_environment and required contexts' --reporter=verbose
 ```
 
-**硬阈值**: wrong repo、wrong run/task、missing mapping、stale tested_sha 分别返回独立稳定 reason；任何 caller-owned expected_* 参数不影响结果。
+**硬阈值**: `kernelReleaseGateTruth` 必须直接给出 `run_id/task_id/base_repo/target_environment/current_head_sha`；任何 caller-owned expected_* 参数只可进入 ignored hints，不得成为 authority。
 
 ---
 
@@ -167,11 +169,13 @@ npx vitest run sprints/07272237-kernel-226fda26/tests/required-context-gate.cont
 
 **验证命令**:
 ```bash
-npx vitest run sprints/07272237-kernel-226fda26/tests/required-context-gate.contract.test.ts \
-  -t 'independent blocker reasons stay exact' --reporter=verbose
+cd packages/brain
+npx vitest run ../../sprints/07272237-kernel-226fda26/tests/required-context-gate.contract.test.ts \
+  --config ../../sprints/07272237-kernel-226fda26/tests/vitest.contract.config.mjs \
+  -t 'independent blocker reason stays exact' --reporter=verbose
 ```
 
-**硬阈值**: 八类 blocker 全部独立命名；任一 case 失败不能因为另一个 case 的 success path 通过。
+**硬阈值**: 八类 blocker 全部独立命名；任一 case 失败不能因为另一个 case 的 success path 通过；每条负例都有独立 `it()` 与稳定 reason。
 
 ---
 
@@ -182,7 +186,9 @@ npx vitest run sprints/07272237-kernel-226fda26/tests/required-context-gate.cont
 
 **验证命令**:
 ```bash
-npx vitest run sprints/07272237-kernel-226fda26/tests/required-context-gate.contract.test.ts \
+cd packages/brain
+npx vitest run ../../sprints/07272237-kernel-226fda26/tests/required-context-gate.contract.test.ts \
+  --config ../../sprints/07272237-kernel-226fda26/tests/vitest.contract.config.mjs \
   -t 'local_api preview neutral only after local contexts pass|preview-dependent targets hard fail without preview' --reporter=verbose
 ```
 
@@ -197,11 +203,13 @@ npx vitest run sprints/07272237-kernel-226fda26/tests/required-context-gate.cont
 
 **验证命令**:
 ```bash
-npx vitest run sprints/07272237-kernel-226fda26/tests/preview-route-evidence.contract.test.ts \
+cd packages/brain
+npx vitest run ../../sprints/07272237-kernel-226fda26/tests/preview-route-evidence.contract.test.ts \
+  --config ../../sprints/07272237-kernel-226fda26/tests/vitest.contract.config.mjs \
   -t 'preview failure persists http status response body and error|preview success path stays separate' --reporter=verbose
 ```
 
-**硬阈值**: 失败断言三字段均非空；成功断言不得命中 failure evidence case；workflow 文本仍包含真实 `curl -sf ... /api/brain/preview/start`。
+**硬阈值**: 失败断言三字段均非空且落 `preview_failure_evidence`；成功断言不得命中 failure evidence case；workflow 文本仍包含真实 `curl -sf ... /api/brain/preview/start`，且无 `|| true`。
 
 ---
 
@@ -212,11 +220,13 @@ npx vitest run sprints/07272237-kernel-226fda26/tests/preview-route-evidence.con
 
 **验证命令**:
 ```bash
-npx vitest run sprints/07272237-kernel-226fda26/tests/kernel-release-gate.contract.test.ts \
-  -t 'ground truth derive gate decision-log close the loop on current sha|post-merge gates stay independent|stale approval invalidated by new commit' --reporter=verbose
+cd packages/brain
+npx vitest run ../../sprints/07272237-kernel-226fda26/tests/kernel-release-gate.contract.test.ts \
+  --config ../../sprints/07272237-kernel-226fda26/tests/vitest.contract.config.mjs \
+  -t 'ground truth derive gate decision-log close the loop on current sha|post-merge gate stays independent|stale approval invalidated by new commit' --reporter=verbose
 ```
 
-**硬阈值**: post-merge blocker 至少七项逐个独立；`review_required=true` 不得在 evaluator/judge PASS 但 approval 旧 SHA 时放行。
+**硬阈值**: post-merge blocker 至少八项逐个独立；`review_required=true` 不得在 evaluator/judge PASS 但 approval 旧 SHA 时放行；generator-fix 的闭环证明必须经真实 `collectGroundTruth -> derive`。
 
 ---
 
@@ -239,12 +249,14 @@ grep -F 'curl -sf' "$WORKFLOW" >/dev/null || { echo "FAIL: workflow 未使用真
 
 # 2. 逐个运行 Red-first 合同测试；当前缺行为时必须失败在 expect，而非配置错误
 set +e
-npx vitest run "$SPRINT_DIR/tests/required-context-gate.contract.test.ts" --reporter=verbose
+cd packages/brain
+npx vitest run "../../$SPRINT_DIR/tests/required-context-gate.contract.test.ts" --config "../../$SPRINT_DIR/tests/vitest.contract.config.mjs" --reporter=verbose
 REQ_EXIT=$?
-npx vitest run "$SPRINT_DIR/tests/preview-route-evidence.contract.test.ts" --reporter=verbose
+npx vitest run "../../$SPRINT_DIR/tests/preview-route-evidence.contract.test.ts" --config "../../$SPRINT_DIR/tests/vitest.contract.config.mjs" --reporter=verbose
 PREVIEW_EXIT=$?
-npx vitest run "$SPRINT_DIR/tests/kernel-release-gate.contract.test.ts" --reporter=verbose
+npx vitest run "../../$SPRINT_DIR/tests/kernel-release-gate.contract.test.ts" --config "../../$SPRINT_DIR/tests/vitest.contract.config.mjs" --reporter=verbose
 GATE_EXIT=$?
+cd ../..
 set -e
 
 # 3. 当前 proposer 阶段要求 Red evidence：至少一个合同测试因为目标行为缺失而失败
@@ -264,6 +276,6 @@ echo "OK: proposer contract 产出了面向 exact-SHA required-context gate 的 
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| server-owned required-context 推导与独立 blocker | `sprints/07272237-kernel-226fda26/tests/required-context-gate.contract.test.ts` | `server-owned facts derive target_environment and required contexts`; `independent blocker reasons stay exact`; `local_api preview neutral only after local contexts pass`; `preview-dependent targets hard fail without preview` | 当前缺少 exact-SHA target-aware gate 统一实现时，至少一条 `expect(...).toEqual(...)` 失败 |
-| preview workflow → route failure evidence seam | `sprints/07272237-kernel-226fda26/tests/preview-route-evidence.contract.test.ts` | `preview failure persists http status response body and error`; `preview success path stays separate` | 当前 preview route 未持久化三字段 evidence 或 workflow/route 接缝未闭合时失败 |
-| ground-truth→derive/gate→decision-log 与 post-merge 独立硬闸 | `sprints/07272237-kernel-226fda26/tests/kernel-release-gate.contract.test.ts` | `ground truth derive gate decision-log close the loop on current sha`; `post-merge gates stay independent`; `stale approval invalidated by new commit` | 当前若仍能复用旧 SHA approval、合并 blocker 或缺 post-merge 独立 reason，则失败 |
+| server-owned required-context 推导与独立 blocker | `sprints/07272237-kernel-226fda26/tests/required-context-gate.contract.test.ts` | `server-owned facts derive target_environment and required contexts`; `independent blocker reason stays exact`; `local_api preview neutral only after local contexts pass`; `preview-dependent targets hard fail without preview`; `legacy rollout stays explicit and does not weaken target-aware semantics` | 当前缺少 `kernelReleaseGateTruth` 与 exact-SHA target-aware gate 分支时，至少一条 `expect(...).toMatchObject(...)` 失败 |
+| preview workflow → route failure evidence seam | `sprints/07272237-kernel-226fda26/tests/preview-route-evidence.contract.test.ts` | `preview workflow uses real curl to POST /api/brain/preview/start without swallowing failure`; `preview failure persists http status response body and error`; `preview success path stays separate` | 当前 preview route 未持久化三字段 evidence 或 workflow/route 接缝未闭合时失败 |
+| ground-truth→derive/gate→decision-log 与 post-merge 独立硬闸 | `sprints/07272237-kernel-226fda26/tests/kernel-release-gate.contract.test.ts` | `ground truth derive gate decision-log close the loop on current sha`; `post-merge gate stays independent`; `stale approval invalidated by new commit` | 当前若仍能复用旧 SHA approval、merged 后短路 report、或忽略 post-merge 独立 blocker，则失败 |
