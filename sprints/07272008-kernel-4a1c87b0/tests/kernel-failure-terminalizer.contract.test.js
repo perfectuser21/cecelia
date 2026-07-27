@@ -11,6 +11,8 @@ describe('Kernel failure terminalizer contract', () => {
     expect(typeof mod.classifyFailureTerminalAction).toBe('function');
     const routes = mod.classifyFailureTerminalAction?.();
     const loopSource = readFileSync('packages/brain/src/orchestrator/loop.js', 'utf8');
+    const runSource = readFileSync('packages/brain/src/orchestrator/run.js', 'utf8');
+    const watchdogSource = readFileSync('packages/brain/src/harness-relay-watchdog.js', 'utf8');
     expect(routes).toEqual(expect.objectContaining({
       hop_cap: 'failure_terminalizer',
       mark_failed: 'failure_terminalizer',
@@ -29,6 +31,8 @@ describe('Kernel failure terminalizer contract', () => {
     expect(loopSource).toContain('approved_but_no_contract_sha');
     expect(loopSource).toContain('approved_but_contract_artifacts_missing');
     expect(loopSource).toContain('automation_deadline_exceeded');
+    expect(runSource).toContain('failureTerminalizer');
+    expect(watchdogSource).toContain('failureTerminalizer');
   });
 
   it('all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail', async () => {
@@ -80,6 +84,7 @@ describe('Kernel failure terminalizer contract', () => {
   it('slot allocator 继续以 task status 为 SSOT 且 failed API 补 completed_at', async () => {
     const mod = await terminalizerModPromise;
     expect(typeof mod.assertSlotAllocatorContract).toBe('function');
+    const routeSource = readFileSync('packages/brain/src/routes/tasks.js', 'utf8');
     expect(mod.assertSlotAllocatorContract({
       slot_sql: `SELECT count(*)::int AS n
          FROM tasks t
@@ -90,6 +95,8 @@ describe('Kernel failure terminalizer contract', () => {
       task_status_is_ssot: true,
       failed_route_sets_completed_at: true,
     }));
+    expect(routeSource).toContain("status === 'failed'");
+    expect(routeSource).toContain('completed_at = NOW()');
   });
 
   it('ghost fixture 只读回归且 current SHA 证据已接线', async () => {

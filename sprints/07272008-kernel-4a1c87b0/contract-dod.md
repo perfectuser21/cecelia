@@ -27,7 +27,7 @@ target_environment: local_api
 
 - [ ] [BEHAVIOR] [L2] hard failure 原子终结 run task history claim 并保持幂等
   动作: 在真 PG 上构造 latest Kernel v2 run 与其 `current_task_id`，对同一 hard failure 连续调用 terminalizer 两次。
-  预期观察: 第一次在单事务内写 `initiative_runs.phase='failed'`、`failure_reason`、`completed_at`，task 写 `failed`、`completed_at`、`error/result`、claim 清空，且 `task_status_history` 只新增 1 条；第二次不重复 history、不覆盖已终态。
+  预期观察: 第一次在单事务内写 `initiative_runs.phase='failed'`、`failure_reason`、`completed_at`，task 写 `failed`、`completed_at`、`error/result`、claim 清空，且 `tasks.status_history` 只新增 1 条；第二次不重复 history、不覆盖已终态。
   验证命令: Test: manual:bash
     npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.pg.contract.test.js -t "hard failure 原子终结 run task history claim 并保持幂等"
   期望: exit 0
@@ -62,14 +62,14 @@ target_environment: local_api
 
 - [ ] [BEHAVIOR] [L2] 真 PG 聚合验证本轮终结记录与单条 history
   动作: 跑完 PG 集成回归后，用真实 Postgres 轮询本轮新增的 failed run 与 history。
-  预期观察: within 60s 至少 1 条本轮 `initiative_runs.completed_at` 与 1 条本轮 `task_status_history` 命中；历史数据不能冒充本轮结果。
+  预期观察: within 60s 至少 1 条本轮 `initiative_runs.completed_at` 与 1 条本轮 `tasks.status_history` 命中；历史数据不能冒充本轮结果。
   验证命令: Test: manual:bash
     DEADLINE=$((SECONDS + 60))
     until psql "${DB_URL:-postgresql://localhost/cecelia}" -Atqc "SELECT count(*) FROM initiative_runs WHERE phase='failed' AND completed_at > NOW() - interval '5 minutes';" | grep -Eq '^[1-9][0-9]*$'; do
       [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: within 60s 未出现本轮 failed run completed_at"; exit 1; }
       sleep 2
     done
-    psql "${DB_URL:-postgresql://localhost/cecelia}" -Atqc "SELECT count(*) FROM task_status_history WHERE created_at > NOW() - interval '5 minutes';" | grep -Eq '^[1-9][0-9]*$'
+    psql "${DB_URL:-postgresql://localhost/cecelia}" -Atqc "SELECT count(*) FROM tasks WHERE status='failed' AND completed_at > NOW() - interval '5 minutes' AND jsonb_array_length(COALESCE(status_history, '[]'::jsonb)) >= 1;" | grep -Eq '^[1-9][0-9]*$'
   期望: exit 0
 
 ## Invariant 覆盖映射
@@ -131,7 +131,7 @@ until psql "$DB_URL" -Atqc "SELECT count(*) FROM initiative_runs WHERE phase='fa
   [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: timeout after 60s"; exit 1; }
   sleep 2
 done
-psql "$DB_URL" -Atqc "SELECT count(*) FROM task_status_history WHERE created_at > NOW() - interval '5 minutes';" | grep -Eq '^[1-9][0-9]*$'
+psql "$DB_URL" -Atqc "SELECT count(*) FROM tasks WHERE status='failed' AND completed_at > NOW() - interval '5 minutes' AND jsonb_array_length(COALESCE(status_history, '[]'::jsonb)) >= 1;" | grep -Eq '^[1-9][0-9]*$'
 
 bash scripts/check-version-sync.sh
 node -e "const fs=require('fs');const y=fs.readFileSync('regression-contract.yaml','utf8');if(!/current sha|current_sha|head sha/i.test(y))process.exit(1)"

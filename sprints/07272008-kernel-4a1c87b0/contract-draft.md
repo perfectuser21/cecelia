@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 9)
+# Sprint Contract Draft (Round 10)
 
 ## 合同边界
 
@@ -13,7 +13,7 @@
 
 ## Response Schema（推导来源: PRD字面）
 
-N/A — 本任务无新增 HTTP 响应。对外可观测契约是 `initiative_runs`、`tasks`、`task_status_history`、slot 计数与既有 `PATCH /api/brain/tasks/:task_id` failed 路径的 `completed_at` 语义。
+N/A — 本任务无新增 HTTP 响应。对外可观测契约是 `initiative_runs`、`tasks.status/status_history/retry_count/retry_after/claimed_by/claimed_at`、slot 计数与既有 `PATCH /api/brain/tasks/:task_id` failed 路径的 `completed_at` 语义。
 
 ## 已知约束（来自回归测试）
 
@@ -111,7 +111,7 @@ npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalize
 npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.pg.contract.test.js -t "hard failure 原子终结 run task history claim 并保持幂等"
 ```
 
-**硬阈值**: exit code = 0；run/task/history 要么全部提交，要么全部回滚；重复调用后新增 `task_status_history` 数 = 1。
+**硬阈值**: exit code = 0；run/task/history 要么全部提交，要么全部回滚；重复调用后 `jsonb_array_length(tasks.status_history)` = 1。
 
 ---
 
@@ -176,7 +176,7 @@ npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalize
 ## 接缝清单
 
 1. `loop.js` / fatal catch / launch failure / watchdog ↔ `failureTerminalizer`：所有失败出口必须收敛到同一真实代码路径。
-2. `failureTerminalizer` ↔ `initiative_runs/tasks/task_status_history`：本单改 DB 写路径，必须真 PG 验证原子性、回滚、幂等与 claim 清理。
+2. `failureTerminalizer` ↔ `initiative_runs/tasks.status_history`：本单改 DB 写路径，必须真 PG 验证原子性、回滚、幂等与 claim 清理。
 3. `reconciler` ↔ latest Kernel v2 terminal run 查询：只能命中 latest/current_task_id 精确接缝，不能猜历史 run。
 4. `slot-allocator.js` ↔ `tasks.status`：slot 使用量必须继续以 `task.status` 为唯一 SSOT。
 5. `routes/tasks.js` failed 更新 ↔ 正式 API 写路径：需要与 terminalizer 语义对齐补 `completed_at`。
@@ -187,7 +187,7 @@ npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalize
 - `packages/brain/src/orchestrator/loop.js` ↔ `packages/brain/src/orchestrator/failure-terminalizer.js`
 - `packages/brain/src/orchestrator/run.js` ↔ fatal catch / launch failure 路径
 - `packages/brain/src/harness-relay-watchdog.js` ↔ `packages/brain/src/orchestrator/failure-terminalizer.js`
-- `packages/brain/src/orchestrator/failure-terminalizer.js` ↔ `initiative_runs / tasks / task_status_history`
+- `packages/brain/src/orchestrator/failure-terminalizer.js` ↔ `initiative_runs / tasks.status_history`
 - `packages/brain/src/orchestrator/reconciler.js` ↔ latest Kernel v2 run 查询
 - `packages/brain/src/slot-allocator.js` ↔ `tasks.status` 计数逻辑
 - `packages/brain/src/routes/tasks.js` ↔ 正式 failed 路径更新 SQL
@@ -228,7 +228,7 @@ until psql "$DB_URL" -Atqc "SELECT count(*) FROM initiative_runs WHERE phase='fa
   [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: timeout after 60s"; exit 1; }
   sleep 2
 done
-psql "$DB_URL" -Atqc "SELECT count(*) FROM task_status_history WHERE created_at > NOW() - interval '5 minutes';" | grep -Eq '^[1-9][0-9]*$'
+psql "$DB_URL" -Atqc "SELECT count(*) FROM tasks WHERE status='failed' AND completed_at > NOW() - interval '5 minutes' AND jsonb_array_length(COALESCE(status_history, '[]'::jsonb)) >= 1;" | grep -Eq '^[1-9][0-9]*$'
 
 bash scripts/check-version-sync.sh
 node -e "const fs=require('fs');const y=fs.readFileSync('regression-contract.yaml','utf8');if(!/current sha|current_sha|head sha/i.test(y))process.exit(1)"
