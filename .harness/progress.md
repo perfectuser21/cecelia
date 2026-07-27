@@ -9,3 +9,5 @@ generator: fix — TDD commit 구조 재조립 + 테스트 경로 수정 (../../
 generator: done (pr=#4374, red=c0ef032, green=fa0eb71, fix=path_fix+tdd_restructure, CI_ALL_GREEN sha=fa0eb71)
 evaluator: done (verdict=PASS, sha=fa0eb71, unverifiable=[E2E-mac_web:env_constraint], verdict_file=.harness/verdicts/evaluate-fa0eb71.json)
 judge: done (verdict=PASS, sha=fa0eb71, playwright=11/11, agent_reply=78chars, judged=true)
+review_gate: done (pr=MERGED, sha=1c10f4919, auto-merged)
+report: done (task=completed, pr=MERGED #4374 sha=1c10f4919, judge=PASS playwright=11/11)
