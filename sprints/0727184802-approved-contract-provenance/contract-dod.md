@@ -10,10 +10,10 @@ journey_type: autonomous
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] sprint regression test 存在且覆盖 manifest/drift/gate/re-GAN
-  Test: node -e "const c=require('fs').readFileSync('sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts','utf8'); for (const s of ['canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts','approved migration 365 changed to 366 is rejected as approved_contract_drift','mergeGate refuses PASS verdicts that do not carry the approved manifest_digest']) { if (!c.includes(s)) process.exit(1); }"
+  Test: node -e "const c=require('fs').readFileSync('sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts','utf8'); for (const s of ['canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts','approved migration 365 changed to 366 is rejected as approved_contract_drift','generator and evaluator dispatch carry approved manifest digest and source sha','callback refuses stale manifest_digest before writing evaluator verdict','approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift']) { if (!c.includes(s)) process.exit(1); }"
 
 - [ ] [ARTIFACT] approved provenance module 必须新增
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/approved-contract-provenance.js','utf8'); for (const s of ['buildApprovedContractManifest','verifyApprovedContractManifest','verifyApprovedContractReference','detectApprovedContractMainConflict']) { if (!c.includes(s)) process.exit(1); }"
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/approved-contract-provenance.js','utf8'); for (const s of ['buildApprovedContractManifest','verifyApprovedContractManifest','verifyApprovedContractReference','buildApprovedContractDispatchContext','verifyAttemptCallbackApprovedContract','detectApprovedContractMainConflict']) { if (!c.includes(s)) process.exit(1); }"
 
 - [ ] [ARTIFACT] CI required check 脚本必须新增
   Test: node -e "const c=require('fs').readFileSync('scripts/ci/approved-contract-provenance-check.mjs','utf8'); for (const s of ['manifest_digest','pr-head-sha','approved_contract_drift','requires_re_gan']) { if (!c.includes(s)) process.exit(1); }"
@@ -53,10 +53,34 @@ journey_type: autonomous
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "missing manifest unreachable stale sha and stale manifest digest fail closed"'
   期望: exit 0
 
+- [ ] [BEHAVIOR] [L2] generator and evaluator dispatch carry approved manifest digest and source sha
+  动作: 用真实 approved contract row 调用 dispatch context 构建逻辑，分别生成 generator 与 evaluator 输入。
+  预期观察: task_bundle.inputs.contract 与 env 同时携带 `manifest_digest`、`approved_manifest.manifest_digest`、`source_commit_sha`；evaluator 保留 current `PR_HEAD_SHA`。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator and evaluator dispatch carry approved manifest digest and source sha"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] callback refuses stale manifest_digest before writing evaluator verdict
+  动作: 构造真实 attempt task_bundle.contract 中 approved digest，再用 evaluator callback 上报 stale digest、缺 digest、正确 digest 三种结果。
+  预期观察: stale digest 返回 `stale_evaluate_manifest_digest`，缺 digest 返回 `approved_contract_manifest_digest_missing`，正确 digest 才允许写 verdict。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale manifest_digest before writing evaluator verdict"'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] mergeGate refuses PASS verdicts that do not carry the approved manifest_digest
   动作: 调用真实 `mergeGate`，evaluate/judge 均 PASS 且 PR SHA 匹配，但 evaluator digest 与 approved digest 不一致。
   预期观察: merge gate 拒绝，返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`。
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses PASS verdicts that do not carry the approved manifest_digest"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] mergeGate refuses missing approved manifest_digest and stale judge manifest_digest
+  动作: 调用真实 `mergeGate`，一次缺 approved digest，一次 judge digest 与 approved digest 不一致。
+  预期观察: 缺 approved digest 返回 `approved_contract_manifest_digest_missing`；stale judge digest 返回 `stale_judge_manifest_digest`。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses missing approved manifest_digest and stale judge manifest_digest"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift
+  动作: 在真实临时 Git repo 中批准 sprint PRD/contract/task-plan/test 后，修改 contract-draft、删除 task-plan、rename test 并提交 current PR SHA。
+  预期观察: `verifyApprovedContractManifest` 返回 `approved_contract_drift`，drift path 同时包含 contract-draft、task-plan、原 test path。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] main migration conflict after approval returns requires_re_gan
