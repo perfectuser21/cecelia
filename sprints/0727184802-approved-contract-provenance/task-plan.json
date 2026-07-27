@@ -18,6 +18,7 @@
         "[BEHAVIOR] judge dispatch handler and verdict persistence carry approved manifest_digest and current pr_head_sha",
         "[BEHAVIOR] dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch",
         "[BEHAVIOR] callback refuses stale manifest_digest before writing evaluator verdict",
+        "[BEHAVIOR] evaluator callback refuses stale pr_head_sha before writing evaluator verdict",
         "[BEHAVIOR] callback refuses stale pr_head_sha before writing generator verdict",
         "[BEHAVIOR] generator callback refuses stale manifest_digest before writing generator verdict",
         "[BEHAVIOR] CI required check rejects missing stale digest and stale pr_head_sha fail closed",
