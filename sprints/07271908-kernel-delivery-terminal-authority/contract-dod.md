@@ -24,7 +24,7 @@ journey_type: autonomous
 - [ ] [ARTIFACT] Contract red tests 不 mock 本单禁 mock 边。
   Test: node -e "const fs=require('fs');const p='sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts';const c=fs.readFileSync(p,'utf8');if(/\\bvi\\.mock\\b|\\bjest\\.mock\\b|sinon\\.stub|\\bstub\\(/.test(c))process.exit(1);for(const s of ['psql','harness_deliveries','harness_delivery_events','initiative_runs']){if(!c.includes(s))process.exit(1)}"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令）
+## BEHAVIOR 条目（内嵌可执行 manual:bash 命令）
 
 - [ ] [BEHAVIOR] [L2] INV-14 INV-23 INV-43 Merge 后 parent 进入 delivery/staging_pending 且 staging child 绑定 merge manifest
   动作: 以 merged PR 的 delivery_id 查询真实 Brain delivery status。
@@ -47,31 +47,31 @@ journey_type: autonomous
 - [ ] [BEHAVIOR] [L2] staging PASS 且 tested_sha 等于 merged_sha 后才可 promote
   动作: 在真 Postgres 查询本轮 delivery 与 staging_e2e_results 的绑定行。
   预期观察: 出现 exactly one promote_pending 行，verdict=PASS，tested_sha=merged_sha，created_at 在 5 分钟内。
-  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN staging_e2e_results s ON s.id=d.staging_result_id WHERE d.id='${DELIVERY_ID}' AND d.status='promote_pending' AND s.verdict='PASS' AND s.tested_sha=d.merged_sha AND s.created_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
+  验证命令: Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN staging_e2e_results s ON s.id=d.staging_result_id WHERE d.id='\''${DELIVERY_ID:?set DELIVERY_ID}'\'' AND d.status='\''promote_pending'\'' AND s.verdict='\''PASS'\'' AND s.tested_sha=d.merged_sha AND s.created_at > NOW() - interval '\''5 minutes'\'';" | tr -d " " | grep -qx "1"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] staging SKIP(no_contract) 不得 success 且 parent 保持 blocked
   动作: 回放 SKIP(no_contract) staging result fixture。
   预期观察: delivery 进入 staging_blocked/staging_failed，parent task 不为 completed。
-  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN tasks t ON t.id=d.task_id WHERE d.id='${SKIP_DELIVERY_ID:?set SKIP_DELIVERY_ID}' AND d.status IN ('staging_blocked','staging_failed','failed') AND t.status <> 'completed' AND d.updated_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
+  验证命令: Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN tasks t ON t.id=d.task_id WHERE d.id='\''${SKIP_DELIVERY_ID:?set SKIP_DELIVERY_ID}'\'' AND d.status IN ('\''staging_blocked'\'','\''staging_failed'\'','\''failed'\'') AND t.status <> '\''completed'\'' AND d.updated_at > NOW() - interval '\''5 minutes'\'';" | tr -d " " | grep -qx "1"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] tested_sha 缺失或不等于 merged_sha 必须 fail-closed
   动作: 回放 tested_sha missing/mismatch 两个 staging result fixture。
   预期观察: 两个 fixture 均进入 failed/staging_failed，promote_status 不为 promoted/auto_promoted。
-  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries WHERE id IN ('${MISSING_SHA_DELIVERY_ID:?set MISSING_SHA_DELIVERY_ID}','${MISMATCH_SHA_DELIVERY_ID:?set MISMATCH_SHA_DELIVERY_ID}') AND status IN ('staging_failed','failed') AND COALESCE(promote_status,'') NOT IN ('promoted','auto_promoted') AND updated_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '2'
+  验证命令: Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries WHERE id IN ('\''${MISSING_SHA_DELIVERY_ID:?set MISSING_SHA_DELIVERY_ID}'\'','\''${MISMATCH_SHA_DELIVERY_ID:?set MISMATCH_SHA_DELIVERY_ID}'\'') AND status IN ('\''staging_failed'\'','\''failed'\'') AND promote_status IS DISTINCT FROM '\''promoted'\'' AND promote_status IS DISTINCT FROM '\''auto_promoted'\'' AND updated_at > NOW() - interval '\''5 minutes'\'';" | tr -d " " | grep -qx "2"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] staging child completed+executor success 不得替代 PASS
   动作: 回放 verdict=FAIL 但 child task completed 且 executor_success=true 的 staging result fixture。
   预期观察: delivery 仍为 staging_failed/failed，parent task 不 completed，promote_status 不为 promoted/auto_promoted。
-  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN tasks t ON t.id=d.task_id WHERE d.id='${EXECUTOR_SUCCESS_FAIL_DELIVERY_ID:?set EXECUTOR_SUCCESS_FAIL_DELIVERY_ID}' AND d.status IN ('staging_failed','failed') AND t.status <> 'completed' AND COALESCE(d.promote_status,'') NOT IN ('promoted','auto_promoted') AND d.updated_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
+  验证命令: Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN tasks t ON t.id=d.task_id WHERE d.id='\''${EXECUTOR_SUCCESS_FAIL_DELIVERY_ID:?set EXECUTOR_SUCCESS_FAIL_DELIVERY_ID}'\'' AND d.status IN ('\''staging_failed'\'','\''failed'\'') AND t.status <> '\''completed'\'' AND d.promote_status IS DISTINCT FROM '\''promoted'\'' AND d.promote_status IS DISTINCT FROM '\''auto_promoted'\'' AND d.updated_at > NOW() - interval '\''5 minutes'\'';" | tr -d " " | grep -qx "1"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor
   动作: 对 internal delivery 回放 production health/fingerprint/E2E 任一失败。
   预期观察: delivery 不 promoted，状态为 rollback_required/failed，delivery_events 写 production_verify_failed 且 detail.rollback_anchor 非空。
-  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN harness_delivery_events e ON e.delivery_id=d.id WHERE d.id='${ROLLBACK_DELIVERY_ID:?set ROLLBACK_DELIVERY_ID}' AND d.status IN ('rollback_required','failed') AND COALESCE(d.promote_status,'') NOT IN ('promoted','auto_promoted') AND e.event_type='production_verify_failed' AND e.detail ? 'rollback_anchor' AND e.created_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
+  验证命令: Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN harness_delivery_events e ON e.delivery_id=d.id WHERE d.id='\''${ROLLBACK_DELIVERY_ID:?set ROLLBACK_DELIVERY_ID}'\'' AND d.status IN ('\''rollback_required'\'','\''failed'\'') AND d.promote_status IS DISTINCT FROM '\''promoted'\'' AND d.promote_status IS DISTINCT FROM '\''auto_promoted'\'' AND e.event_type='\''production_verify_failed'\'' AND e.detail ? '\''rollback_anchor'\'' AND e.created_at > NOW() - interval '\''5 minutes'\'';" | tr -d " " | grep -qx "1"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] INV-06 INV-55 INV-57 Promote API 必须认证 approver，body.promoted_by 不可冒充
@@ -83,31 +83,37 @@ journey_type: autonomous
 - [ ] [BEHAVIOR] [L2] customer confirm 无签名 attestation 不得 promoted
   动作: 对 customer delivery 只执行 Cecelia confirm，不提交客户 repo 签名 attestation。
   预期观察: delivery.status=external_ack_pending 或 pending_external_attestation，promote_status 不为 promoted。
-  验证命令: Test: manual:curl -sf "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/${CUSTOMER_DELIVERY_ID:?set CUSTOMER_DELIVERY_ID}/status" | jq -e '(.status=="external_ack_pending" or .promote_status=="pending_external_attestation") and .promote_status!="promoted"'
+  验证命令: Test: manual:bash -c 'curl -sf "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/${CUSTOMER_DELIVERY_ID:?set CUSTOMER_DELIVERY_ID}/status" | jq -e '\''(.status=="external_ack_pending" or .promote_status=="pending_external_attestation") and .promote_status!="promoted"'\'' >/dev/null'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] customer repo 签名 deployment attestation verified 后才 promoted
+  动作: 带 x-approver-token 调用真实 external-attestation API，提交客户 repo 签名 deployment/verification attestation。
+  预期观察: HTTP 202，响应 attestation_status=verified/promote_status=promoted；status endpoint 显示 external_attestation.verified_sha 等于 merged_sha；delivery_events 在 5 分钟内出现 external_attestation_verified。
+  验证命令: Test: manual:bash -c 'BODY=/tmp/customer-attestation-response.json; CODE=$(curl -s -o "$BODY" -w "%{http_code}" -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/${CUSTOMER_ATTESTED_DELIVERY_ID:?set CUSTOMER_ATTESTED_DELIVERY_ID}/external-attestation" -H "Content-Type: application/json" -H "x-approver-token: ${HARNESS_REVIEW_APPROVER_TOKEN:?set HARNESS_REVIEW_APPROVER_TOKEN}" -d "{\"repo\":\"${CUSTOMER_REPO:-perfectuser21/zenithjoy-workspace}\",\"deployment_id\":\"deploy-${CUSTOMER_ATTESTED_DELIVERY_ID}\",\"deployed_sha\":\"${MERGED_SHA:?set MERGED_SHA}\",\"verified_sha\":\"${MERGED_SHA}\",\"verification_url\":\"${CUSTOMER_VERIFICATION_URL:-https://github.com/perfectuser21/zenithjoy-workspace/actions/runs/e2e}\",\"attestation_signature\":\"${CUSTOMER_ATTESTATION_SIGNATURE:?set CUSTOMER_ATTESTATION_SIGNATURE}\"}"); [ "$CODE" = "202" ]; jq -e ".attestation_status==\"verified\" and .promote_status==\"promoted\"" "$BODY" >/dev/null; curl -sf "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/${CUSTOMER_ATTESTED_DELIVERY_ID}/status" | jq -e ".status==\"promoted\" and .external_attestation.attestation_status==\"verified\" and .external_attestation.verified_sha==.merged_sha" >/dev/null; COUNT=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_delivery_events WHERE delivery_id='\''${CUSTOMER_ATTESTED_DELIVERY_ID}'\'' AND event_type='\''external_attestation_verified'\'' AND detail->>'\''verified_sha'\''=(SELECT merged_sha FROM harness_deliveries WHERE id='\''${CUSTOMER_ATTESTED_DELIVERY_ID}'\'') AND created_at > NOW() - interval '\''5 minutes'\'';" | tr -d " "); [ "$COUNT" -eq 1 ]'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] INV-20 INV-21 report dispatch 失败不得 parent complete
   动作: 回放 report dispatch/persist 失败 fixture。
   预期观察: delivery.status=report_pending/report_failed，parent run 不 done，parent task 不 completed。
-  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN initiative_runs r ON r.id=d.run_id JOIN tasks t ON t.id=d.task_id WHERE d.id='${REPORT_FAIL_DELIVERY_ID:?set REPORT_FAIL_DELIVERY_ID}' AND d.status IN ('report_pending','report_failed') AND r.phase <> 'done' AND t.status <> 'completed' AND d.updated_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
+  验证命令: Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN initiative_runs r ON r.id=d.run_id JOIN tasks t ON t.id=d.task_id WHERE d.id='\''${REPORT_FAIL_DELIVERY_ID:?set REPORT_FAIL_DELIVERY_ID}'\'' AND d.status IN ('\''report_pending'\'','\''report_failed'\'') AND r.phase <> '\''done'\'' AND t.status <> '\''completed'\'' AND d.updated_at > NOW() - interval '\''5 minutes'\'';" | tr -d " " | grep -qx "1"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] final report persisted 前 parent 不得 completed; persisted 后 atomically complete
   动作: 查询同一 delivery 的 final report 与 parent 状态。
   预期观察: report persisted 后 delivery.status=completed，initiative_runs.phase=done，tasks.status=completed 同时成立；report 缺失 fixture 中 parent 不 completed。
-  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN initiative_runs r ON r.id=d.run_id JOIN tasks t ON t.id=d.task_id WHERE d.id='${DELIVERY_ID}' AND d.status='completed' AND d.final_report_id IS NOT NULL AND r.phase='done' AND t.status='completed' AND d.completed_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
+  验证命令: Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN initiative_runs r ON r.id=d.run_id JOIN tasks t ON t.id=d.task_id WHERE d.id='\''${DELIVERY_ID:?set DELIVERY_ID}'\'' AND d.status='\''completed'\'' AND d.final_report_id IS NOT NULL AND r.phase='\''done'\'' AND t.status='\''completed'\'' AND d.completed_at > NOW() - interval '\''5 minutes'\'';" | tr -d " " | grep -qx "1"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] 重放同一 staging/promote/report 事件不重复
   动作: 使用相同 idempotency_key 重放 staging/pass、promote/pass、report/pass。
   预期观察: append-only events 表中每个 idempotency_key 最多一行。
-  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM (SELECT idempotency_key FROM harness_delivery_events WHERE delivery_id='${DELIVERY_ID}' AND idempotency_key IN ('staging-pass','promote-pass','report-pass') GROUP BY idempotency_key HAVING count(*) > 1) dup;" | tr -d ' ' | grep -qx '0'
+  验证命令: Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM (SELECT idempotency_key FROM harness_delivery_events WHERE delivery_id='\''${DELIVERY_ID:?set DELIVERY_ID}'\'' AND idempotency_key IN ('\''staging-pass'\'','\''promote-pass'\'','\''report-pass'\'') GROUP BY idempotency_key HAVING count(*) > 1) dup;" | tr -d " " | grep -qx "0"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] PR4327 PR4317 parent completed + staging queued fixture 在审计中 FAIL
   动作: 执行合同红测中的只读生产快照 audit fixture。
   预期观察: auditLegacyCompletionFixture 返回 FAIL，原因含 parent_completed_before_staging。
-  验证命令: Test: manual:node --input-type=module -e "import('./packages/brain/src/delivery-terminal-authority.js').then(m=>m.auditLegacyCompletionFixture({pr_number:4327,parent_task_status:'completed',run_phase:'done',staging_task_status:'queued',staging_result:null})).then(r=>{if(r.verdict!=='FAIL'||!/parent_completed_before_staging/.test(r.reason||''))process.exit(1)})"
+  验证命令: Test: manual:bash -c "node --input-type=module -e \"import('./packages/brain/src/delivery-terminal-authority.js').then(m=>m.auditLegacyCompletionFixture({pr_number:4327,parent_task_status:'completed',run_phase:'done',staging_task_status:'queued',staging_result:null})).then(r=>{if(r.verdict!=='FAIL'||!/parent_completed_before_staging/.test(r.reason||''))process.exit(1)})\""
   期望: exit 0
 
 ## DoD Invariant 覆盖条目

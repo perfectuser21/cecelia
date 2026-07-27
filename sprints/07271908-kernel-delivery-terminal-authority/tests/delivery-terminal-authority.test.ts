@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -331,6 +331,80 @@ describe('Delivery Terminal Authority [BEHAVIOR]', () => {
       `);
       expect(row.promote_status).not.toBe('promoted');
     } finally {
+      cleanup([ctx]);
+    }
+  });
+
+  it('customer repo 签名 deployment attestation verified 后才 promoted', async () => {
+    const authority = await loadAuthority();
+    const ctx = makeCtx('customer-signed');
+    const previousPublicKey = process.env.HARNESS_CUSTOMER_ATTESTATION_PUBLIC_KEY;
+    seedParent(ctx);
+    try {
+      const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+      process.env.HARNESS_CUSTOMER_ATTESTATION_PUBLIC_KEY = publicKey
+        .export({ type: 'spki', format: 'pem' })
+        .toString();
+
+      const deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge({ ...mergeInput(ctx), base_repo: 'perfectuser21/zenithjoy-workspace' }));
+      await authority.applyStagingResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        verdict: 'PASS',
+        tested_sha: MERGED_SHA,
+        idempotency_key: 'staging-pass',
+      });
+      await authority.applyCustomerConfirmation({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        confirmed_by: 'cecelia-operator',
+        idempotency_key: 'customer-confirm',
+      });
+
+      const attestation = {
+        repo: 'perfectuser21/zenithjoy-workspace',
+        deployment_id: 'deploy-verified-4327',
+        deployed_sha: MERGED_SHA,
+        verified_sha: MERGED_SHA,
+        verification_url: 'https://github.com/perfectuser21/zenithjoy-workspace/actions/runs/verified',
+      };
+      const signedPayload = JSON.stringify(attestation);
+      const attestationSignature = sign(null, Buffer.from(signedPayload, 'utf8'), privateKey).toString('base64');
+      await authority.applyCustomerAttestation({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        ...attestation,
+        attestation_signature: attestationSignature,
+        idempotency_key: 'customer-attestation-verified',
+      });
+
+      const row = psqlJson<{ status: string; promote_status: string; verified_sha: string; event_count: number }>(`
+        SELECT d.status,
+               COALESCE(d.promote_status, '') AS promote_status,
+               (
+                 SELECT e.detail->>'verified_sha'
+                   FROM harness_delivery_events e
+                  WHERE e.delivery_id = d.id
+                    AND e.event_type = 'external_attestation_verified'
+                  ORDER BY e.created_at DESC
+                  LIMIT 1
+               ) AS verified_sha,
+               (
+                 SELECT count(*)::int
+                   FROM harness_delivery_events e
+                  WHERE e.delivery_id = d.id
+                    AND e.event_type = 'external_attestation_verified'
+               ) AS event_count
+          FROM harness_deliveries d
+         WHERE d.id = '${deliveryId}'
+      `);
+      expect(row.status).toBe('promoted');
+      expect(row.promote_status).toBe('promoted');
+      expect(row.verified_sha).toBe(MERGED_SHA);
+      expect(row.event_count).toBe(1);
+    } finally {
+      if (previousPublicKey === undefined) delete process.env.HARNESS_CUSTOMER_ATTESTATION_PUBLIC_KEY;
+      else process.env.HARNESS_CUSTOMER_ATTESTATION_PUBLIC_KEY = previousPublicKey;
       cleanup([ctx]);
     }
   });

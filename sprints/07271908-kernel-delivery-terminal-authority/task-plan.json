@@ -15,6 +15,7 @@
         "[BEHAVIOR] staging child completed+executor success 不得替代 PASS",
         "[BEHAVIOR] Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor",
         "[BEHAVIOR] customer confirm 无签名 attestation 不得 promoted",
+        "[BEHAVIOR] customer repo 签名 deployment attestation verified 后才 promoted",
         "[BEHAVIOR] report dispatch失败不得 parent complete; persisted 后 atomically complete",
         "[BEHAVIOR] 重放同一 staging/promote/report 事件不重复",
         "[ARTIFACT] 新增 delivery authority 模块、phase CHECK migration、route wiring 与真实 PG 回归测试"

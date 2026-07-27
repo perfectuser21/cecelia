@@ -1,11 +1,10 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
-## Round 2 修订摘要
+## Round 3 修订摘要
 
-- 补强真实 Postgres/真实相邻模块边界：红测改为 integration 形态，禁止用纯对象替代 delivery -> DB -> parent completion 接缝。
-- 补齐 `initiative_runs.phase` CHECK 约束变更要求，否则 `delivery/staging_pending` 无法真实落库。
-- 修正 replay 幂等 oracle：用子查询计数重复 idempotency_key，避免 `GROUP BY HAVING` 无行时假失败。
-- 补齐 Promote API 认证后的 DB 未突变断言与 status endpoint schema/error path 断言。
+- 统一 DoD 中所有 BEHAVIOR 为 `Test: manual:bash` 可执行形态，删除非 bash 执行缩写，避免 evaluator 执行器解析分叉。
+- 补齐 customer line 的正向签名 attestation oracle：只有签名 deployment/verification attestation verified 且 SHA 精确匹配后才允许 `promoted`。
+- 保留 Round 2 已补强项：真实 Postgres/真实相邻模块边界、`initiative_runs.phase` CHECK 约束、replay 幂等 oracle、Promote API 认证后 DB 未突变断言。
 
 ## Response Schema（推导来源: PRD字面 + api_registry推导）
 
@@ -84,6 +83,7 @@
 **Request Shape**:
 - Header `x-approver-token`: 必填。
 - Body `repo` (string), `deployment_id` (string), `deployed_sha` (string), `verified_sha` (string), `verification_url` (string), `attestation_signature` (string)。
+- `attestation_signature` 必须覆盖 canonical JSON: `repo/deployment_id/deployed_sha/verified_sha/verification_url`，验签公钥来自 Brain env `HARNESS_CUSTOMER_ATTESTATION_PUBLIC_KEY` 或同等客户 repo 配置源；body 字段不得自带 public key 冒充信任根。
 
 **Success (HTTP 202)**:
 ```json
@@ -261,9 +261,27 @@ WHERE delivery_id = '$DELIVERY_ID'
 **验证命令**:
 ```bash
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
-DELIVERY_ID="${DELIVERY_ID:?set DELIVERY_ID from E2E setup}"
-curl -sf "$BRAIN_URL/api/brain/harness/delivery/$DELIVERY_ID/status" \
-  | jq -e 'if (.status=="promoted" or .promote_status=="promoted") then (.external_attestation.attestation_status=="verified" and .external_attestation.verified_sha==.tested_sha) else (.status=="external_ack_pending" or .promote_status=="pending_external_attestation") end'
+DB_URL="${DB_URL:-postgresql://localhost/cecelia}"
+CUSTOMER_DELIVERY_ID="${CUSTOMER_DELIVERY_ID:?set CUSTOMER_DELIVERY_ID}"
+HARNESS_REVIEW_APPROVER_TOKEN="${HARNESS_REVIEW_APPROVER_TOKEN:?set HARNESS_REVIEW_APPROVER_TOKEN}"
+CUSTOMER_ATTESTATION_SIGNATURE="${CUSTOMER_ATTESTATION_SIGNATURE:?set CUSTOMER_ATTESTATION_SIGNATURE}"
+MERGED_SHA="${MERGED_SHA:?set MERGED_SHA}"
+BODY="/tmp/customer-attestation-${CUSTOMER_DELIVERY_ID}.json"
+CODE=$(curl -s -o "$BODY" -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/delivery/$CUSTOMER_DELIVERY_ID/external-attestation" \
+  -H "Content-Type: application/json" \
+  -H "x-approver-token: $HARNESS_REVIEW_APPROVER_TOKEN" \
+  -d "{\"repo\":\"${CUSTOMER_REPO:-perfectuser21/zenithjoy-workspace}\",\"deployment_id\":\"deploy-$CUSTOMER_DELIVERY_ID\",\"deployed_sha\":\"$MERGED_SHA\",\"verified_sha\":\"$MERGED_SHA\",\"verification_url\":\"${CUSTOMER_VERIFICATION_URL:-https://github.com/perfectuser21/zenithjoy-workspace/actions/runs/e2e}\",\"attestation_signature\":\"$CUSTOMER_ATTESTATION_SIGNATURE\"}")
+[ "$CODE" = "202" ]
+jq -e '.attestation_status=="verified" and .promote_status=="promoted"' "$BODY" >/dev/null
+curl -sf "$BRAIN_URL/api/brain/harness/delivery/$CUSTOMER_DELIVERY_ID/status" \
+  | jq -e '.status=="promoted" and .external_attestation.attestation_status=="verified" and .external_attestation.verified_sha==.merged_sha' >/dev/null
+COUNT=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
+SELECT count(*) FROM harness_delivery_events
+WHERE delivery_id = '$CUSTOMER_DELIVERY_ID'
+  AND event_type = 'external_attestation_verified'
+  AND detail->>'verified_sha' = (SELECT merged_sha FROM harness_deliveries WHERE id = '$CUSTOMER_DELIVERY_ID')
+  AND created_at > NOW() - interval '5 minutes';" | tr -d ' ')
+[ "$COUNT" -eq 1 ]
 ```
 
 **硬阈值**: body.promoted_by 或 confirm:true 不足以 promoted；签名/sha 任一不合法返回 409 或保持 pending。
@@ -475,6 +493,7 @@ echo "Golden Path local_api delivery terminal authority passed"
 | executor success false authority | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging child completed+executor success 不得替代 PASS | 当前 child completed+executor success 可被当交付成功 |
 | production rollback | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor | 当前 promote best-effort/report 仍可完成 |
 | customer attestation | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | customer confirm 无签名 attestation 不得 promoted | 当前 body promoted_by 可标 promoted |
+| customer attestation positive | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | customer repo 签名 deployment attestation verified 后才 promoted | 当前缺少客户 repo 签名验真链路 |
 | report gate | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | report dispatch失败不得 parent complete; persisted 后 atomically complete | 当前 report dispatch best-effort 后 parent 仍可 completed |
 | replay idempotency | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | 重放同一 staging/promote/report 事件不重复 | 当前 staging/promote/report 幂等粒度不足 |
 | fixture audit | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | PR4327 PR4317 parent completed + staging queued fixture 在审计中 FAIL | 当前生产快照会被视为已完成 |
