@@ -13,56 +13,56 @@ target_environment: local_api
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 幂等 migration 365 存在，且只扩展既有 Journey/Step/Cell 模型
+- [x] [ARTIFACT] 幂等 migration 365 存在，且只扩展既有 Journey/Step/Cell 模型
   Test: node -e "const fs=require('fs');const p='packages/brain/migrations/365_kernel_harness_f1_baseline.sql';const s=fs.readFileSync(p,'utf8');for(const x of ['bb8cc561-b3ee-4fec-b74d-2255694bd963','lifecycle_stage','is_backbone','mapping_status','mapping_reason','mapping_evidence','journey_step_links','Invariant','输入对抗面','reason_code','source_refs','missing_evidence',\"'na'\"])if(!s.includes(x))process.exit(1);for(const x of ['CREATE TABLE kernel_steps','CREATE TABLE behavior_ledger','Kernel Harness Delivery'])if(s.includes(x))process.exit(1)"
 
-- [ ] [ARTIFACT] 真 PostgreSQL integration 与 smoke 均已入册
+- [x] [ARTIFACT] 真 PostgreSQL integration 与 smoke 均已入册
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/integration/migration-365-kernel-harness-f1-baseline.integration.test.js','packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh']){const s=fs.readFileSync(p,'utf8');if(!/HARNESS_TEST_DATABASE_URL|DATABASE_URL/.test(s))process.exit(1)}"
 
-- [ ] [ARTIFACT] 根 regression-contract.yaml 登记 F1 逐项权威映射，engine 合同只作 legacy source
+- [x] [ARTIFACT] 根 regression-contract.yaml 登记 F1 逐项权威映射，engine 合同只作 legacy source
   Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');for(const x of ['kernel_harness_f1_baseline:','cells:','reason_code:','missing_evidence:','evidence_requirement:','required_families:','family_id:','legacy_owner:','unified_owner:','wiring_refs:','wiring_id:','legacy_behavior_id:','required_family_id:','wiring_ref_ids:','selection_basis:','journey_stage:','element:','source_refs:','assertion_ref:','status_evidence:'])if(!root.includes(x))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
 
-- [ ] [ARTIFACT] Brain 源码改动同步版本与 DEFINITION.md
+- [x] [ARTIFACT] Brain 源码改动同步版本与 DEFINITION.md
   Test: node -e "const fs=require('fs');const d=fs.readFileSync('packages/brain/DEFINITION.md','utf8');const p=JSON.parse(fs.readFileSync('packages/brain/package.json','utf8'));if(!d.includes(p.version))process.exit(1)"
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] [L2] B1 Golden Path Step 1 只识别原 Cecelia Harness Pipeline
+- [x] [BEHAVIOR] [L2] B1 Golden Path Step 1 只识别原 Cecelia Harness Pipeline
   动作: 在隔离 PostgreSQL 中以六个真实历史 ID 建 fixture，执行 migration 两次并查询同域 Journey。
   预期观察: within 180s 仅返回固定 Journey ID；`Kernel Harness Delivery` 与平行账本表均为 0。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh unique-journey'
 
-- [ ] [BEHAVIOR] [L2] B2 Golden Path Step 2 保留历史并补齐 S0-S12
+- [x] [BEHAVIOR] [L2] B2 Golden Path Step 2 保留历史并补齐 S0-S12
   动作: 在同一未重置事务中连续应用两轮 baseline，再经真 PostgreSQL 与真实 Brain GET 读取 backbone 与 history alias。
   预期观察: within 180s 六个历史 ID/Notion 关联不变，S0-S12 各一个 backbone，13 组稳定名称/promise 逐字匹配；四个复用行 `mapping_status=exact`；Reviewer/Final E2E 为非 backbone 且 `mapping_status=gap`，原因码均为 `co_stage_historical_alias`，证据分别指向 GAN Proposer/Evaluator backbone；真库与 Brain GET 逐字段一致，第二轮无新增。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh history-and-backbone'
 
-- [ ] [BEHAVIOR] [L2] B3 Golden Path Step 3 每个 backbone Step 恰有精确 11 个 element cells
+- [x] [BEHAVIOR] [L2] B3 Golden Path Step 3 每个 backbone Step 恰有精确 11 个 element cells
   动作: 查询真 PostgreSQL 与根合同 cell manifest，并逐项比对精确键 `FR/NFR/Invariant/判定点/保质期/死亡告警/失败语义/效果确认/输入对抗面/账本保鲜/两轴衔接`。
   预期观察: within 180s manifest、DB、派生报告各 143 格且 1:1；每步 11 格；同义键为 0；状态仅 `gray|red|pending|green|na`。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
-- [ ] [BEHAVIOR] [L2] B4 Golden Path Step 3 的 143 格状态依据逐格唯一命中五态事实门槛
+- [x] [BEHAVIOR] [L2] B4 Golden Path Step 3 的 143 格状态依据逐格唯一命中五态事实门槛
   动作: 对每个 `step_id+element` 读取 `cell_status/reason_code/source_refs/missing_evidence/assertion_ref/evidence_envelope`，运行互斥五态分类器；green 真跑 current-SHA assertion，gray 真跑 current-SHA 非空范围 inventory scan，red/pending/na 分别验证缺口、缺证据或不适用事实。
   预期观察: within 180s 每格 `matched_status_rules` 恰为自身状态；13 个 FR 均有定义且非 gray；gray<143；false-green、unsupported-red/pending/na、unclassified、ambiguous 均为 0。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
-- [ ] [BEHAVIOR] [L2] B5 Golden Path Step 4 P0/P1 筛选与五态证据逐项机检
+- [x] [BEHAVIOR] [L2] B5 Golden Path Step 4 P0/P1 筛选与五态证据逐项机检
   动作: 真解析 engine 结构化 priority，并枚举 hooks、DevGate/CI、Kernel/GitHub/release gates；先锁定批准设计稿八个 required family，再逐族真跑当前 SHA wiring probe；同时对 engine selected 项真跑 probe 后分类。
   预期观察: within 180s `KH-F1-F01..F08` 精确齐全，族级 legacy/unified owner 逐字匹配、gap 非空、顺序 `1..8`，每族 wiring probe exit 0；每个 engine behavior 归属一族并精确继承 owner，gap 非空、wiring_ref_ids 有效，next_knife_order 唯一连续 `1..mapped_behavior_count`；candidate_source=included+excluded、selected_seed=mapped_behavior、unmapped/duplicate=0；auto 可判项 unknown=0，非 unknown 至少一项。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh legacy-baseline'
 
-- [ ] [BEHAVIOR] [L2] B6 Golden Path Step 5 非空 assertion_ref 全部可追到唯一根合同或真实测试
+- [x] [BEHAVIOR] [L2] B6 Golden Path Step 5 非空 assertion_ref 全部可追到唯一根合同或真实测试
   动作: 对 F1 cells 与根 baseline behaviors 的 assertion_ref 逐条解析唯一根 regression entry，并检查 test_command 目标真实存在。
   预期观察: within 180s 悬空/重复/静态文档引用均为 0；source_ref 与 assertion_ref 分工明确；engine YAML 未成为第二 SSOT。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh assertion-refs'
 
-- [ ] [BEHAVIOR] [L2] B7 Golden Path Step 6 真实 Brain endpoint 显示 merge 不等于 completed
+- [x] [BEHAVIOR] [L2] B7 Golden Path Step 6 真实 Brain endpoint 显示 merge 不等于 completed
   动作: 用隔离数据库启动真实 Brain 到独立端口，curl 固定 Journey，并用 jq 检查 endpoint。
   预期观察: within 180s HTTP 200，endpoint 同时表达 production verified、rollback anchor、report/learning。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh endpoint-semantics'
 
-- [ ] [BEHAVIOR] [L2] B8 Golden Path Step 7 既有 merge staging production 行为零回退
+- [x] [BEHAVIOR] [L2] B8 Golden Path Step 7 既有 merge staging production 行为零回退
   动作: 执行 baseline smoke 与现有 completion/finalize/staging 回归，比较 migration 前后运行时表 fingerprint。
   预期观察: within 240s 运行时表 fingerprint 相同、既有回归 exit 0、派生报告声明 authoritative=false。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 240 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh runtime-nonregression'
@@ -90,7 +90,7 @@ target_environment: local_api
 - INV-19 冒烟三 — N/A：decision 33ede9f1 未指向本单模块；本单另有真库 smoke。
 - INV-20 收账探针 — N/A：本刀只建基线，不实现 report freshness patrol。
 
-- [ ] [BEHAVIOR] [L2] INV-21 完成核验要求外部产出而非容器 exit 0
+- [x] [BEHAVIOR] [L2] INV-21 完成核验要求外部产出而非容器 exit 0
   动作: 执行 Golden Path Step 6 的真实 Brain GET 和 Step 7 的审计/回归校验。
   预期观察: within 240s 只有 endpoint、rollback/report 证据和全部真实断言通过才 exit 0。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 240 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh runtime-nonregression'
@@ -98,14 +98,14 @@ target_environment: local_api
 - INV-22 场景核对 — N/A：不增加 host 白名单或 headed 人工接管场景。
 - INV-23 点火锚点 — N/A：不改 headed relay 点火。
 
-- [ ] [BEHAVIOR] [L2] INV-24 退役事实来自真实 legacy source
+- [x] [BEHAVIOR] [L2] INV-24 退役事实来自真实 legacy source
   动作: 真读 engine 合同、根合同和测试路径生成 Step 4 基线，不使用记忆或硬编码乐观状态。
   预期观察: within 180s 无证据条目为 unknown/drifted，不会被默认归为 retired/active。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh legacy-baseline'
 
 - INV-25 吞错告警 — N/A：不新增后台常驻任务；审计 CLI 失败直接非零。
 
-- [ ] [BEHAVIOR] [L2] INV-26 复用共享表前核对全部写入方且不建同义表
+- [x] [BEHAVIOR] [L2] INV-26 复用共享表前核对全部写入方且不建同义表
   动作: 运行唯一 Journey/禁表断言，并执行 journeys 现有 route/integration 回归。
   预期观察: within 180s 只复用 journeys/journey_steps/journey_step_links，平行表计数为 0。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh unique-journey'
@@ -113,14 +113,14 @@ target_environment: local_api
 - INV-27 消费闭环 — N/A：不新增后台任务。
 - INV-28 多端完整 — N/A：真实运行环境单一为 local_api，不涉及设备/OS 分支。
 
-- [ ] [BEHAVIOR] [L2] INV-29 精确 11 键与 cell 状态判定在落库和终验采用同一策略
+- [x] [BEHAVIOR] [L2] INV-29 精确 11 键与 cell 状态判定在落库和终验采用同一策略
   动作: 让根合同 manifest、ledger classifier、DB CHECK 与 smoke 对同一 143 cells 执行精确键和互斥五态校验。
   预期观察: within 180s 四处逐格一致，只接受精确 11 键与 `gray|red|pending|green|na`，无同义键或状态漂移。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
 - INV-30 引用验证 — N/A：本 sprint 不消费动态 git ref；证据 SHA 来自已解析的当前 commit，不接受用户传入 ref。
 
-- [ ] [BEHAVIOR] [L2] INV-31 真 worktree 测试必须隔离生产资源
+- [x] [BEHAVIOR] [L2] INV-31 真 worktree 测试必须隔离生产资源
   动作: 在任何写入前查询 `current_database()` 并执行 `_test|preview_` guard。
   预期观察: within 10s 非隔离库立即非零且零写入；隔离库才继续 baseline。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; DB=$(psql -X -qAt "$HARNESS_TEST_DATABASE_URL" -c "SELECT current_database()"); case "$DB" in *_test|preview_*) exit 0;; *) echo "FAIL: non-isolated db=$DB"; exit 1;; esac'
@@ -139,7 +139,7 @@ target_environment: local_api
 - INV-43 合并漂移 — N/A：不改 CI/merge gate。
 - INV-44 冒烟四 — N/A：decision 552520d0 未指向本单模块；本单另有真库 smoke。
 
-- [ ] [BEHAVIOR] [L2] INV-45 Brain 源码改动同时提供 smoke 与现有门禁登记
+- [x] [BEHAVIOR] [L2] INV-45 Brain 源码改动同时提供 smoke 与现有门禁登记
   动作: 执行 F1 baseline smoke，并从根 regression contract 运行对应 KH-F1 条目。
   预期观察: within 240s smoke exit 0，根合同存在可运行 test_command，Brain 版本/DEFINITION 同步。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 240 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh runtime-nonregression'
@@ -151,12 +151,12 @@ target_environment: local_api
 - INV-50 冒烟五 — N/A：decision 4b73376c 未指向本单模块；本单另有真库 smoke。
 - INV-51 单槽串行 — N/A：由 Harness controller 执法；task-plan 仅 ws1。
 
-- [ ] [BEHAVIOR] [L2] INV-52 数据库与 Brain 端口必须从环境推导
+- [x] [BEHAVIOR] [L2] INV-52 数据库与 Brain 端口必须从环境推导
   动作: smoke 从 `HARNESS_TEST_DATABASE_URL` 读取数据库，并动态选择独立 Brain 端口，禁止写死生产连接。
   预期观察: within 180s 缺变量或目标非测试库立即失败；合法环境完成真实查询。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh unique-journey'
 
-- [ ] [BEHAVIOR] [L2] INV-53 接缝仅在真实 local_api 目标验过后才可 done
+- [x] [BEHAVIOR] [L2] INV-53 接缝仅在真实 local_api 目标验过后才可 done
   动作: 在隔离真 PostgreSQL应用 migration，并启动真实 Brain 运行 Step 1-7。
   预期观察: within 240s 真 DB/API 全过才 exit 0；否则保持 logic-done-pending。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 240 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh runtime-nonregression'
@@ -169,5 +169,5 @@ target_environment: local_api
 
 ## BEHAVIOR:E2E 条目
 
-- [ ] [BEHAVIOR:E2E] local_api evaluator 在隔离 PostgreSQL + 真实 Brain 上走完七步
+- [x] [BEHAVIOR:E2E] local_api evaluator 在隔离 PostgreSQL + 真实 Brain 上走完七步
   期望: `.brain-result` 记录每条 behavior 的真实 exit_code/log_tail；七步全过后才 PASS。

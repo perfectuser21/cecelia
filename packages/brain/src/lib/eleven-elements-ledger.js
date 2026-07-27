@@ -8,6 +8,80 @@ export function daysSince(isoStr, now = Date.now()) {
   return Math.floor((now - new Date(isoStr).getTime()) / 86400000);
 }
 
+export const ELEMENT_CELL_STATUSES = Object.freeze([
+  'gray',
+  'red',
+  'pending',
+  'green',
+  'na',
+]);
+
+/**
+ * 对 F1 承诺地图格子执行五态互斥事实分类。
+ * 调用方提供已采集的 evidence_envelope；本函数不把静态文档当作 PASS。
+ */
+export function classifyElementCell(cell) {
+  const sourceRefs = Array.isArray(cell.source_refs) ? cell.source_refs : [];
+  const missingEvidence = Array.isArray(cell.missing_evidence)
+    ? cell.missing_evidence
+    : [];
+  const envelope = cell.evidence_envelope;
+  const currentPass = Boolean(
+    envelope
+    && envelope.current_sha === true
+    && envelope.probe_started === true
+    && envelope.exit_code === 0
+    && envelope.expired !== true,
+  );
+  const currentFailure = Boolean(
+    envelope
+    && envelope.current_sha === true
+    && envelope.probe_started === true
+    && (
+      envelope.exit_code !== 0
+      || envelope.observed_result !== envelope.expected_result
+    ),
+  );
+  const currentScanNoMatch = Boolean(
+    envelope
+    && envelope.current_sha === true
+    && envelope.inventory_scan_started === true
+    && Array.isArray(envelope.searched_paths)
+    && envelope.searched_paths.length > 0
+    && envelope.match_count === 0,
+  );
+
+  return [
+    cell.reason_code === 'requirement_undefined'
+      && sourceRefs.length === 0
+      && missingEvidence.includes('requirement_definition')
+      && !cell.assertion_ref
+      && currentScanNoMatch
+      ? 'gray' : null,
+    ['known_gap', 'probe_failed'].includes(cell.reason_code)
+      && sourceRefs.length > 0
+      && missingEvidence.length > 0
+      && (cell.reason_code === 'known_gap' ? Boolean(cell.known_gap_ref) : currentFailure)
+      ? 'red' : null,
+    ['awaiting_executable_evidence', 'evidence_expired'].includes(cell.reason_code)
+      && sourceRefs.length > 0
+      && missingEvidence.length > 0
+      && !currentPass
+      ? 'pending' : null,
+    cell.reason_code === 'verified'
+      && sourceRefs.length > 0
+      && Boolean(cell.assertion_ref)
+      && missingEvidence.length === 0
+      && currentPass
+      ? 'green' : null,
+    cell.reason_code === 'not_applicable'
+      && Boolean(cell.na_reason)
+      && sourceRefs.length > 0
+      && !currentPass
+      ? 'na' : null,
+  ].filter(Boolean);
+}
+
 /**
  * @param {object} feature  - brain_modules 或 journey_features 行（需含相关字段）
  * @param {object} nfrMap   - { [id]: count } decisions category='nfr' 按 target_id 聚合
