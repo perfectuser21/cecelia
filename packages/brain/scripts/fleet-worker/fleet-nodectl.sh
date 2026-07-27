@@ -54,20 +54,21 @@ import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/nod
 
 const machineId = process.env.FLEET_NODECTL_ADMIT_MACHINE;
 const healthFile = process.env.FLEET_NODECTL_ADMIT_HEALTH_FILE;
+const profile = getNodeProfile(machineId);
 let report;
 
 try {
   if (healthFile) {
     report = JSON.parse(await readFile(healthFile, 'utf8'));
   } else {
-    const response = await fetch('http://127.0.0.1:5231/health', {
+    const response = await fetch(`http://${profile.worker_bind_host}:5231/health`, {
       signal: AbortSignal.timeout(5_000),
     });
     if (!response.ok) throw new Error('health_unavailable');
     report = await response.json();
   }
   const result = evaluateBaseAdmission(report, {
-    profile: getNodeProfile(machineId),
+    profile,
     nowMs: Date.now(),
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
