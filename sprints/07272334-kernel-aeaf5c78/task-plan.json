@@ -1,0 +1,36 @@
+{
+  "initiative_id": "6d84e9da-4556-4180-86f7-fc2eaf701de7",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 Kernel 后端 dispatcher、local/fleet runner、callback、PostgreSQL、feedback lineage 与人工批准门禁",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "恢复 worker-local result sink 与 Round 2 feedback lineage",
+      "scope": "在 current-main 的真实 local-docker/fleet-worker、callback、ground-truth、dispatcher 与 approval gate 上实现合同恰好 B1-B5，复用 HarnessResult 1.0 并停在人工批准前",
+      "dod": [
+        "[BEHAVIOR] B1-B5 五个真实链命令在同一 fail-closed TEST_DATABASE_URL preflight 后通过",
+        "[BEHAVIOR] 每个 B1-B5 counterfactual mutation 产生合同指定的具名失败且 restore 后重新 Green",
+        "[ARTIFACT] Brain DEFINITION/package 版本同步且 HarnessResult 仍为 1.0"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/orchestrator/remote-bridge-transport.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/src/__tests__/harness-kernel-feedback-lineage.real.test.js",
+        "packages/brain/DEFINITION.md",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
