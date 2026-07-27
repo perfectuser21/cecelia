@@ -134,6 +134,8 @@ set -euo pipefail
 
 cd /workspace
 
+DB_URL="${DB_URL:-postgresql://localhost/cecelia}"
+
 TASK_ID="${HARNESS_TASK_ID:-ea7f6b59-b2fd-48a4-940f-e267c9898889}"
 TASK_JSON=$(curl -fsS --max-time 10 "http://localhost:5221/api/brain/tasks/$TASK_ID")
 echo "$TASK_JSON" | jq -e --arg id "$TASK_ID" '
@@ -141,11 +143,16 @@ echo "$TASK_JSON" | jq -e --arg id "$TASK_ID" '
   and ((.payload.sprint_dir // .task.payload.sprint_dir) == "sprints/0727184802-kernel-merge-authority")
 ' >/dev/null
 
+psql "$DB_URL" -c 'select 1' >/dev/null
+
 DEADLINE=$((SECONDS + 60))
 until node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts >/tmp/kernel-merge-authority-e2e.log 2>&1; do
   [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: within 60s contract tests still red"; cat /tmp/kernel-merge-authority-e2e.log; exit 1; }
   sleep 2
 done
+
+CI_OUT=$(bash .github/workflows/scripts/should-auto-merge.sh "cp-07271848-ws-deadbeef" "feat(harness): demo")
+echo "$CI_OUT" | grep -q 'FAIL_CLOSED' || { echo "FAIL: should-auto-merge 未 fail-closed"; echo "$CI_OUT"; exit 1; }
 
 RESP_CODE=$(curl -s -o /tmp/kernel-approve-e2e.json -w "%{http_code}" \
   -X POST "http://localhost:5221/api/brain/harness/kernel-reviews/11111111-1111-4111-8111-111111111111/approve" \
@@ -154,7 +161,6 @@ RESP_CODE=$(curl -s -o /tmp/kernel-approve-e2e.json -w "%{http_code}" \
 [ "$RESP_CODE" = "401" ] || [ "$RESP_CODE" = "503" ] || { echo "FAIL: unauthenticated approve must fail-closed"; cat /tmp/kernel-approve-e2e.json; exit 1; }
 cat /tmp/kernel-approve-e2e.json | jq -e '.error | type == "string"' >/dev/null
 
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}"
 COUNT=$(psql "$DB_URL" -t -c "SELECT count(*) FROM orchestrator_decision_log WHERE run_id='11111111-1111-4111-8111-111111111111' AND action='verdict:human_review' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
 [ "$COUNT" = "0" ] || { echo "FAIL: unauthenticated approve inserted verdict"; exit 1; }
 ```
