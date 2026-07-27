@@ -364,4 +364,87 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
     expect(pass.production_health_sha).toBe(pass.merge_sha);
     expect(pass.rollback_receipt_id).toBeTruthy();
   });
+
+  it('deterministic reviewer v2 approval rejects advisory outcomes and stale intent', () => {
+    const script = 'scripts/kernel-fleet/verify-contract-approval-v2.sh';
+    expectExecutable(script);
+    const evidenceDir = mkdtempSync(join(tmpdir(), 'kernel-contract-approval-v2-'));
+    run(script, [
+      '--real-pg', '--real-result-channel', '--controller-gate', '--all-counterfactuals',
+      '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '',
+      '--head', process.env.PR_HEAD_SHA ?? '', '--evidence-dir', evidenceDir,
+    ], { DB_URL: process.env.DB_URL ?? '' });
+    const receipts = readJsonReceipts(evidenceDir);
+    const denied = new Set(receipts.filter((r) => r.authorizing === false).map((r) => r.scenario));
+    expect(denied).toEqual(new Set([
+      'completed_with_concerns', 'score_6', 'missing_dimension', 'prose_only',
+      'no_result_file', 'source_result', 'callback_before_ack', 'task_addendum',
+      'contract_or_skill_drift', 'conflicting_hash', 'stale_lease',
+    ]));
+    const approved = receipts.filter((r) => r.authorizing === true);
+    expect(approved).toHaveLength(1);
+    expect(approved[0].scenario).toBe('clean_completed_all_seven_gte_7');
+    expect(Object.keys(approved[0].scores).sort()).toEqual([
+      'ci_workflow_alignment', 'dod_machine_checkability', 'golden_path_completeness',
+      'prd_scope_fidelity', 'red_test_validity', 'target_environment_alignment',
+      'verification_oracle_completeness',
+    ]);
+    expect(Object.values(approved[0].scores).every((score) =>
+      Number.isInteger(score) && Number(score) >= 7 && Number(score) <= 10)).toBe(true);
+    expect(approved[0].result_channel_receipt_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(approved[0].task_intent_digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(approved[0].gate_artifact_digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(approved[0].red_inventory_digest).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('reviewer mutation surface is denied before verified approval', () => {
+    const script = 'scripts/kernel-fleet/verify-reviewer-effect-isolation.sh';
+    expectExecutable(script);
+    const evidenceDir = mkdtempSync(join(tmpdir(), 'kernel-reviewer-isolation-'));
+    run(script, [
+      '--real-runner', '--brain-api', '--github-api', '--deployment-api',
+      '--controlled-posts', 'registry,decision,task,pr,merge,deploy,staging,production',
+      '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '',
+      '--head', process.env.PR_HEAD_SHA ?? '', '--evidence-dir', evidenceDir,
+    ]);
+    const receipts = readJsonReceipts(evidenceDir);
+    const denied = receipts.filter((r) => r.kind === 'reviewer_mutation_denied');
+    expect(new Set(denied.map((r) => r.surface))).toEqual(new Set([
+      'registry', 'decision', 'task', 'pr', 'merge', 'deploy', 'staging', 'production',
+    ]));
+    expect(denied.every((r) => r.effect_delta === 0 && r.mutation_credential_count === 0)).toBe(true);
+    expect(receipts.filter((r) => ['revision', 'stale'].includes(r.approval_state))
+      .every((r) => r.outbox_write_count === 0)).toBe(true);
+    const verified = receipts.find((r) => r.approval_state === 'verified');
+    expect(verified.outbox_write_count).toBe(1);
+    expect(verified.retry_outbox_write_count).toBe(1);
+    expect(verified.secret_scan_hits).toBe(0);
+  });
+
+  it('current controller remains serial single writer', () => {
+    const plan = JSON.parse(source(`${SPRINT}/task-plan.json`));
+    expect(plan.execution_mode).toBe('serial_single_writer');
+    expect(plan.parallel_width).toBe(1);
+    expect(plan.canonical_pr_writer).toBe('controller_integrator');
+    for (const [index, task] of plan.tasks.entries()) {
+      expect(task.depends_on).toHaveLength(index === 0 ? 0 : 1);
+    }
+    const script = 'scripts/kernel-fleet/verify-workstream-execution-mode.sh';
+    expectExecutable(script);
+    const evidenceDir = mkdtempSync(join(tmpdir(), 'kernel-workstream-mode-'));
+    run(script, [
+      '--real-controller', '--plan', `${SPRINT}/task-plan.json`, '--all-counterfactuals',
+      '--evidence-dir', evidenceDir,
+    ]);
+    const receipts = readJsonReceipts(evidenceDir);
+    expect(receipts.find((r) => r.scenario === 'four_ready_nodes').writer_allocated_count).toBe(1);
+    for (const scenario of ['parallel_width_4', 'cycle', 'unknown_dep', 'overlap',
+      'canonical_branch_writer', 'segment_global_pass']) {
+      const receipt = receipts.find((r) => r.scenario === scenario);
+      expect(receipt.decision).toBe('deny');
+      expect(receipt.global_state_delta).toBe(0);
+    }
+    expect(receipts.find((r) => r.scenario === 'normal').draft_pr_count).toBe(1);
+    expect(receipts.find((r) => r.scenario === 'normal').merge_receipt_count).toBeLessThanOrEqual(1);
+  });
 });

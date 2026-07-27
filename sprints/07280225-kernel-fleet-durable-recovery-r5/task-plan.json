@@ -1,6 +1,10 @@
 {
   "initiative_id": "4a530430-00c5-46bc-8a4f-c0ec38025391",
-  "harness_gear": "segmented",
+  "harness_gear": "contract_segmented_serial",
+  "execution_mode": "serial_single_writer",
+  "parallel_width": 1,
+  "canonical_pr_writer": "controller_integrator",
+  "parallel_claim": false,
   "anchor": {
     "journey_id": "2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6",
     "gp_id": "4e5fd7eb-3823-4c57-a817-081b7fdd2eed",
@@ -44,7 +48,7 @@
     "guard_summary_boolean_is_authority": false
   },
   "journey_type": "agent_remote",
-  "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；12 个产品 gate 后依次追加 provider-neutral Guard Ledger 与 F1 S0-S12×11 lifecycle/terminal-accounting gate，保持线性依赖。",
+  "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；16 个合同 gate 通过显式 depends_on 构成 serial_single_writer 单链，不声称当前 Controller 支持并行。",
   "tasks": [
     {
       "task_id": "ws1",
@@ -142,7 +146,7 @@
       "scope": "用签名 task/PR receipt 做 P0 分类，把 built-image smoke、隔离 Worker candidate、CI、Evaluator、Judge 接入 required exact-head check；真实 GitHub API 回读 run/check-suite/head/actor/rules snapshot，合成模块返回不算 evidence；三者只产证据且 serving state 不变。",
       "dod": ["[BEHAVIOR] ci→evaluator→judge 后 Draft=true、auto-merge off、merge/staging/production mutation=0", "[BEHAVIOR] required check 绑定 authenticated GitHub run/check-suite/actor/head 与签名 rules snapshot", "[BEHAVIOR] title/label/old-green/合成 evidence 不改变 P0 required check", "[BEHAVIOR] built image smoke 在四个发布消费点同脚本执行", "[BEHAVIOR] Worker/config admission 失败时 Brain candidate receipt=0"],
       "files": [".github/workflows/ci.yml", ".github/workflows/kernel-fleet-p0-gate.yml", ".github/workflows/scripts/should-auto-merge.sh", "packages/brain/scripts/fleet-worker/fleet-rollout.sh", "scripts/ci/verify-brain-image-self-contained.sh", "scripts/kernel-fleet/run-p0-preapproval-e2e.sh", "scripts/kernel-fleet/verify-p0-workflow-contract.sh"],
-      "depends_on": ["ws9"],
+      "depends_on": ["ws16"],
       "complexity": "M",
       "estimated_minutes": 45
     },
@@ -215,7 +219,7 @@
         "scripts/kernel-fleet/verify-guard-vectors.sh",
         "scripts/kernel-fleet/verify-single-release-authority.sh"
       ],
-      "depends_on": ["ws12"],
+      "depends_on": ["ws9"],
       "complexity": "L",
       "estimated_minutes": 60
     },
@@ -284,6 +288,56 @@
         "regression-contract.yaml"
       ],
       "depends_on": ["ws13"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws15",
+      "title": "Gate 15：Reviewer-v2 确定性合同批准",
+      "scope": "以 Controller-owned policy 归一化 Reviewer 七维 envelope，绑定 task-intent revision、skill/policy digest、R31 durable result-channel、exact contract/head，并独立重跑 Contract Gate 与 Red inventory；所有 stale/concerns/低分/非权威结果 fail closed。",
+      "dod": [
+        "[BEHAVIOR] completed_with_concerns、score=6、缺维度、prose-only、无 file ack、source result、task addendum、contract/head/skill drift、conflicting hash、stale lease 全部 non-authorizing 且 budget delta=0",
+        "[BEHAVIOR] 仅 clean completed+七维全>=7+同一 intent/head/result/gate/test snapshot 写一份 append-only approval，same-hash retry 幂等",
+        "[BEHAVIOR] cost/hop/deadline/no-push/no-verdict run failure 永不转换为 approval"
+      ],
+      "files": [
+        "packages/quality/contracts/kernel-contract-approval-v2.json",
+        "packages/brain/src/orchestrator/contract-approval-v2.js",
+        "packages/brain/src/orchestrator/task-intent-revision.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/src/lib/contract-gate.js",
+        "scripts/kernel-fleet/verify-contract-approval-v2.sh"
+      ],
+      "depends_on": ["ws14"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws16",
+      "title": "Gate 16：Reviewer effect isolation 与 serial execution fence",
+      "scope": "移除 skill/code force-approval drift，为 Reviewer 去除 mutation credential并加 egress deny；verified approval 后 Controller outbox 恰一次写 judgment。明确当前 multi-gate plan 仅 serial_single_writer/parallel_width=1，未部署 FrozenWorkstreamPlan/IntegrationLease 时拒绝任何 parallel/global segment claim。",
+      "dod": [
+        "[BEHAVIOR] Reviewer 对 registry/decision/task/PR/merge/deploy/staging/production 的受控 POST 全部 deny、effect=0、secret=0",
+        "[BEHAVIOR] REVISION/stale judgment write=0；verified approval Controller outbox write=1 且 retry 后仍 1",
+        "[BEHAVIOR] 四 ready nodes 同时只分配一个 writer；parallel_width>1、cycle、unknown dep、file overlap、canonical branch writer、segment-global-pass 均拒绝",
+        "[BEHAVIOR] Draft PR count=1、canonical writer=controller、merge receipt count<=1"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/reviewer-effect-policy.js",
+        "packages/brain/src/orchestrator/approval-effects-outbox.js",
+        "packages/brain/src/orchestrator/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/workspace-spec.js",
+        "docker/cecelia-runner/entrypoint.sh",
+        "scripts/kernel-fleet/verify-reviewer-effect-isolation.sh",
+        "scripts/kernel-fleet/verify-workstream-execution-mode.sh",
+        "sprints/07280225-kernel-fleet-durable-recovery-r5/task-plan.json"
+      ],
+      "depends_on": ["ws15"],
       "complexity": "L",
       "estimated_minutes": 60
     }

@@ -1,4 +1,4 @@
-# Sprint Contract Draft（Round 13）
+# Sprint Contract Draft（Round 14）
 
 ## 合同 Notes
 
@@ -9,9 +9,10 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
-- 先前 proposer heads 均仅作 Red 证据；Round 13 在保留 R32-R39 修正的基础上纳入
-  R40-R42：Claude hook/手工 settings/通用 action receipt 只算 declaration，不算 activation
-  或 fire proof；统一权威改为 provider-neutral guard broker + append-only D/A/F/E receipts。
+- 先前 proposer heads 均仅作 Red 证据；Round 14 保留 R32-R42 修正，并新增 R43-R45：
+  Reviewer 自报 APPROVED 不具权威，必须由 Controller 对 durable result-channel、七维评分、
+  task-intent revision、skill/policy digest、Contract Gate 与 Red inventory 做确定性批准；
+  Reviewer 无 mutation credential；当前 workstream 只能 serial single writer。
 - R41-test-oracle: verifier stdout、fixture 自带 summary、被测模块返回 boolean/array/count/hash
   均不可单独证明 P0。每个 planned verifier 必须调用真实生产 seam，测试随后从独立
   Git object/PG/GitHub/deployment/effect store 重算；缺 planned module 只允许产生该模块一条
@@ -49,6 +50,17 @@
 - origin-proof invariant: Attempt origin 不得由 `exists:true` 自证；verifier 只查询现有列 `id,run_id,role,provider,provider_session_id,actual_machine_id,lease_generation,status,task_bundle,result`，contract/head 从 authenticated TaskBundle/result receipt 派生，禁止查询不存在的 `actual_machine/contract_sha/exact_head_sha`。
 - activation-proof invariant: canonical applicability manifest 必须列具体 production entrypoint 和 wiring hop；required keys 由 verifier 独立读取该 manifest 生成，observed keys 只从 authenticated fire receipt bodies 派生。installer source、installed/symlink target 与 provider-neutral Kernel dispatcher 都是实现文件，不得用符号标签代替。
 - aggregate-binding invariant: S12 的 legacy/family/activation/credential 聚合 receipt 必须包含原始 receipt IDs 与 canonical serialization 的 receipt-set digest；terminal verifier 从已独立验签 bodies 重算，任何 body 或 aggregate mutation 都保持 non-complete。
+- contract-approval-v2 invariant: 只有 clean completed Reviewer Attempt、七个固定 rubric
+  dimension 均为整数且 `>=7`、R31 durable result-channel ack、同一 frozen task-intent
+  revision/digest 与 Controller 独立 Contract Gate/Red evidence 全绿，确定性 policy 才能写
+  approval；model outcome/prose、completed_with_concerns、stale intent/head/skill/lease 均为拒绝。
+- reviewer-effect-isolation invariant: Reviewer 无 Brain/GitHub/deploy mutation credential；
+  registry/decision/task/PR/merge/deploy/staging/production POST 均由 egress policy 拒绝并留
+  deny receipt。judgment/outbox 仅在 verified approval 后由 Controller 恰一次写入。
+- execution-mode invariant: 本合同 task-plan 虽按 gate 分段，但当前明确
+  `serial_single_writer/parallel_width=1`，全部 `depends_on` 构成一条链。没有
+  FrozenWorkstreamPlan/WorkstreamState/IntegrationLease 前，segment PASS、空闲 slot 与多 task
+  不得声称并行或 global PASS。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -327,11 +339,38 @@ SQL/config/env failure 不算产品 Red。
 | GitHub PR/approval/CI payload | 外部已认证但需绑定 head | 用 GitHub API 的 immutable head SHA 与 actor permission 校验，不信 PR 文本 | 非授权 actor、过期 head、非 Draft 顺序全部 fail closed |
 | Worker HTTP request/receipt | 双向认证后有限信任 | Bearer/attestation/callback token；字段白名单；禁止 secret 回显 | machine/generation/digest/lease 不匹配则拒绝并 cleanup |
 
+## Reviewer 批准权威与当前执行模式
+
+Reviewer v2 payload 的七个固定评分键由 Controller policy manifest 冻结；Controller
+拒绝 unknown/missing/non-integer/out-of-range/`<7`，并独立重跑 Contract Gate 与本合同
+测试库存。approval receipt 必须绑定 task/run、reviewer/proposer Attempt、result-channel
+hash/ack、contract branch/full SHA/content、exact head、task-intent revision/digest、
+skill digest、policy version、七分 canonical JSON/digest 与 gate/test artifact digest。
+任务 addendum、contract/head/skill/policy/lease 任一变化即撤销；same receipt retry 幂等，
+conflicting replay 只写 non-authorizing rejection receipt。
+
+Reviewer 运行时为 source read-only 且 network effect deny：没有 mutation credential，
+受控 registry/decision/task/PR/merge/deploy/staging/production POST 的 effect delta 必须为 0。
+skill 中任何 force-APPROVED、oscillation default 或批准前写 judgment 指令都使 preflight
+失败。verified approval 后才由 Controller-owned idempotent outbox 写 judgment，恰一次。
+
+本 task-plan 的 gate 数量不代表 runtime parallelism：
+
+```json
+{"execution_mode":"serial_single_writer","parallel_width":1,"canonical_pr_writers":["controller_integrator"]}
+```
+
+当前每个 writer 必须等前一 `depends_on` 完成，同 base 上只存在一个 canonical Draft writer。
+若请求 `parallel_width>1` 而 FrozenWorkstreamPlan、append-only WorkstreamState、文件冲突锁、
+private writer commit receipt、Controller IntegrationLease/CAS 与 final-head global recheck
+任一缺失，返回 `SERIAL_SINGLE_WRITER_REQUIRED`。segment receipt 不得改变 global
+evaluate/judge/approval/merge 状态。
+
 ## Golden Path
 
 覆盖父路 `Durable Fleet Worker bootstrap 与 Kernel 恢复闭环` 第 1-12 步
 
-`exact Draft head` → `immutable image/release` → `Mac transaction` → `Worker admission` → `phase-aware Attempt` → `secret+artifact handoff` → `Kernel ready/recovery` → `Worker-first candidate gate` → `CI+Evaluator+Judge` → `owner exact-head approval` → `authorized merge` → `US staging` → `production canary/rollback`
+`exact Draft head` → `immutable image/release` → `Mac transaction` → `Worker admission` → `phase-aware Attempt` → `secret+artifact handoff` → `Kernel ready/recovery` → `Worker-first candidate gate` → `CI+Evaluator+Judge` → `Controller reviewer-v2 approval normalization` → `Reviewer effect isolation` → `owner exact-head approval` → `authorized merge` → `US staging` → `production canary/rollback`
 
 ### Step 1：候选 Brain image 自包含三个 immutable profile
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 1 步。
@@ -462,6 +501,49 @@ DB_URL="${DB_URL:?}" npx vitest run packages/brain/src/__tests__/kernel-durable-
 bash scripts/kernel-fleet/verify-p0-workflow-contract.sh draft-evidence "$PR_NUMBER" "$PR_HEAD_SHA"
 ```
 **硬阈值**: 事件精确为 `ci,evaluator,judge`；PR 仍 Draft、auto-merge off；merge/staging/production mutation count=0；title 改名/移除 label/旧 Harness green/伪造 run ID/未 attested rollback image 均 required check 非绿；candidate proof 前后 serving state byte-identical；Worker admission 或 built-config remote/callback 缺失时 Brain candidate receipt count=0。
+
+### Step 10A：Controller 确定性归一化 Reviewer 合同批准
+**来源**: `[AI_ADDED]` — R43 发现 Reviewer outcome/prose、concerns 状态、stale task intent 与
+非权威 result path 可错误授权 Generator，必须在 owner merge gate 之前先闭合合同批准本身。
+
+**可观测行为**: Controller 只接收 versioned reviewer-v2 envelope，验证 clean completed
+Attempt、七个固定 rubric score、validation evidence、judgments_written、R31 durable
+result-channel、task-intent revision/digest、contract/head、skill/policy version；锁住并重读 task，
+在 frozen head 独立运行 Contract Gate 与 Red inventory 后由代码计算 verdict。任何 addendum
+或 digest 漂移重派 proposer/reviewer，绝不把 run failure/concerns/低分/prose 转成批准。
+
+**验证命令**:
+```bash
+DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-contract-approval-v2.sh \
+  --real-pg --real-result-channel --controller-gate --all-counterfactuals \
+  --task "${TASK_ID:?}" --run "${RUN_ID:?}" --head "${PR_HEAD_SHA:?}"
+```
+**硬阈值**: 12 个 exact cases 中前 11 个
+`completed_with_concerns,score_6,missing_dimension,prose_only,no_result_file,source_result,
+callback_before_ack,task_addendum,contract_or_skill_drift,conflicting_hash,stale_lease`
+全部 non-authorizing 且 semantic/GAN success delta=0；仅
+`clean_completed_all_seven_gte_7` 写一份 approval。same-hash retry approval count 仍为 1；
+approval receipt 的 intent/head/skill/gate/test digest 任一 bit mutation 立即 stale。
+
+### Step 10B：Reviewer read-only 还包括 network effect isolation
+**来源**: `[AI_ADDED]` — R44 证明 source readOnly 不能阻止 Reviewer 用 Brain/GitHub/deploy
+credential 改 registry、decision、task、PR 或环境，skill/code approval law 也可能漂移。
+
+**可观测行为**: Reviewer TaskBundle 不含 mutation credential，egress policy 对八类 mutation
+端点做 fail-closed deny；Reviewer skill/output schema、shared Runner callback 与 Controller
+policy 使用同一 versioned approval law。REVISION/stale 不写 judgment；verified approval 后
+Controller outbox 恰一次写入，Reviewer 本身永不写。
+
+**验证命令**:
+```bash
+bash scripts/kernel-fleet/verify-reviewer-effect-isolation.sh \
+  --real-runner --brain-api --github-api --deployment-api \
+  --controlled-posts registry,decision,task,pr,merge,deploy,staging,production \
+  --task "${TASK_ID:?}" --run "${RUN_ID:?}" --head "${PR_HEAD_SHA:?}"
+```
+**硬阈值**: Reviewer mutation credential count=0；八类 POST 全部 exact deny receipt 且 effect
+delta=0；secret scan=0；legacy force-approval/default-APPROVED/pre-verification judgment 指令任一
+出现即 preflight 非零；REVISION/stale outbox writes=0，verified approval writes=1，retry 后仍 1。
 
 ### Step 11：exact-head owner approval 后仅 controller 可 merge
 **来源**: `[FROM_PRD]` — 修订后 PRD Golden Path 第 11 步与 Human authority。
@@ -601,10 +683,14 @@ if [ "$E2E_PHASE" = preapproval ]; then
     --brain-digest "$CANDIDATE_BRAIN_IMAGE_DIGEST" \
     --runner "$CANDIDATE_RUNNER_REF" --bundle "$CANDIDATE_BUNDLE_REF" \
     --worker "$US_WORKER_URL" --token-file "$FLEET_TOKEN_FILE" \
-    --authority packages/quality/contracts/kernel-harness-authority-manifest.json \
-    --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
-    --guard-providers claude,codex,grok --guard-vectors V01-V13 \
-    --expect-order draft,ci,evaluator,judge --expect-serving-mutations 0 \
+  --authority packages/quality/contracts/kernel-harness-authority-manifest.json \
+  --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
+  --guard-providers claude,codex,grok --guard-vectors V01-V13 \
+  --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
+  --require-reviewer-result-channel --require-reviewer-effect-isolation \
+  --execution-mode serial_single_writer --parallel-width 1 \
+  --expect-order draft,ci,evaluator,judge,reviewer_v2_verified \
+  --expect-serving-mutations 0 \
     --expect-terminal false
   exit 75
 fi
@@ -620,6 +706,8 @@ bash scripts/kernel-fleet/run-authoritative-final-e2e.sh \
   --production "$PROD_BRAIN_URL" --db "$DB_URL" \
   --authority packages/quality/contracts/kernel-harness-authority-manifest.json \
   --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
+  --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
+  --require-verified-reviewer-v2 --execution-mode serial_single_writer \
   --expect-order owner,merge,staging,production,rollback,s12 \
   --strict-staging --require-production-health --require-rollback-anchor \
   --require-guard-proof proven,fresh --reject-second-merge-authority \
@@ -636,19 +724,20 @@ US staging、production canary、rollback anchor 与 S12，且所有 origin Atte
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | 28 个 `it()` 的字面测试名（由下方库存命令直接提取） | 28 个唯一 `it()`；每条直接读 authority fixture/store 或执行具体生产 seam；禁止共享动态 import helper、proof summary boolean 与 duplicate collection。 |
+| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | 31 个 `it()` 的字面测试名（由下方库存命令直接提取） | 31 个唯一 `it()`；每条直接读 authority fixture/store 或执行具体生产 seam；禁止共享动态 import helper、proof summary boolean 与 duplicate collection。 |
 
-**测试库存硬阈值**: 唯一文件数 = 1；总数 = 28；不得重复收集。migration parity、
+**测试库存硬阈值**: 唯一文件数 = 1；总数 = 31；不得重复收集。migration parity、
 workflow bypass、result channel、full fixture/advisory/classification、projection/direct origin、
 manifest/evidence schema、strict staging、terminal-order、clean-home D/A/F/E、V01-V13 exact
-set 与 single merge authority Red 必须保留。
+set、single merge authority、Reviewer-v2 approval、Reviewer effect isolation 与
+serial-single-writer Red 必须保留。
 
 **测试库存验证命令**:
 ```bash
 TEST_ROOT="sprints/07280225-kernel-fleet-durable-recovery-r5/tests"
 UNIQUE_FILES=$(find "$TEST_ROOT" -name '*.test.ts' -print0 | xargs -0 realpath | sort -u | wc -l | tr -d ' ')
 IT_COUNT=$(rg -c '^[[:space:]]*it\(' "$TEST_ROOT/durable-recovery.contract.test.ts")
-[ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 28 ]
+[ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 31 ]
 # packages/brain/sprints 是指向根 sprints 的 symlink；真实 collector 必须显式排除，
 # 否则同一 realpath 会被 Vitest 以两个逻辑路径执行两次。
 npx vitest run --exclude 'packages/brain/sprints/**' \
@@ -683,7 +772,10 @@ for COVER in \
   'guard manifest references approved source inventory without runtime state' \
   'clean home official installer activates provider neutral guard for three providers' \
   'V01 through V13 produce append only D A F E receipts with independent effects' \
-  'single merge staging production authority cannot be bypassed'
+  'single merge staging production authority cannot be bypassed' \
+  'deterministic reviewer v2 approval rejects advisory outcomes and stale intent' \
+  'reviewer mutation surface is denied before verified approval' \
+  'current controller remains serial single writer'
 do
   grep -F "$COVER" "$TEST_ROOT/durable-recovery.contract.test.ts" >/dev/null
 done

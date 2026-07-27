@@ -5,10 +5,11 @@ target_environment: linux_server
 ---
 # Contract DoD — Durable Fleet Worker bootstrap 与 Kernel 恢复闭环
 
-**范围**: PRD Golden Path 第 1-12 步 + R32-R42 exact inventory/advisory、append-only
+**范围**: PRD Golden Path 第 1-12 步 + R32-R45 exact inventory/advisory、append-only
 classification/manifest/origin/cell evidence、同 Journey lifecycle projection、strict
 staging/production/rollback、provider-neutral Guard Ledger D/A/F/E、独立 S12 accountant、
-attempt-runtime result channel 与两阶段 final E2E。
+attempt-runtime result channel、Reviewer-v2 确定性批准/效果隔离、serial-single-writer
+执行声明与两阶段 final E2E。
 **大小**: L
 
 ## ARTIFACT 条目
@@ -23,10 +24,10 @@ attempt-runtime result channel 与两阶段 final E2E。
   Test: node -e "const c=require('fs').readFileSync('packages/brain/DEFINITION.md','utf8');if(!/ready.*heartbeat|heartbeat.*ready/i.test(c)||!/Worker-first/i.test(c)||!/drain/i.test(c))process.exit(1)"
 - [ ] [ARTIFACT] 真实 US E2E、mutation、rollback 脚本及两个 integration test 在合同路径落地。
   Test: node -e "const fs=require('fs');for(const p of ['scripts/kernel-fleet/run-real-attempt-proof.sh','scripts/kernel-fleet/run-us-durable-recovery-canary.sh','scripts/kernel-fleet/verify-owner-gate-and-rollback.sh','packages/brain/src/__tests__/kernel-launch-readiness.integration.test.js','packages/brain/src/__tests__/kernel-durable-recovery.integration.test.js'])fs.accessSync(p)"
-- [ ] [ARTIFACT] Sprint Red 测试库存按 realpath 去重后恰好一个文件、28 个唯一 `it()`；
+- [ ] [ARTIFACT] Sprint Red 测试库存按 realpath 去重后恰好一个文件、31 个唯一 `it()`；
   无共享 `loadProof` 动态 import，保留 migration/workflow/result-channel/full-fixture/
   classification/direct-origin/strict-staging/terminal-order Red。
-  Test: node -e "const fs=require('fs');const p='sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8');if((c.match(/^  it\\(/gm)||[]).length!==28||c.includes('loadProof(')||!c.includes('authority inventory full entry fixture and advisory partition')||!c.includes('strict staging rejects empty skip and SHA drift')||!c.includes('S12 serializable accountant consumes exact current evidence chain')||!c.includes('V01 through V13 produce append only D A F E receipts with independent effects'))process.exit(1)"
+  Test: node -e "const fs=require('fs');const p='sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8');if((c.match(/^  it\\(/gm)||[]).length!==31||c.includes('loadProof(')||!c.includes('authority inventory full entry fixture and advisory partition')||!c.includes('strict staging rejects empty skip and SHA drift')||!c.includes('deterministic reviewer v2 approval rejects advisory outcomes and stale intent')||!c.includes('reviewer mutation surface is denied before verified approval')||!c.includes('current controller remains serial single writer'))process.exit(1)"
 - [ ] [ARTIFACT] P0 统一 gate 与四个现有 workflow 的 fail-closed 接线均在实现范围。
   Test: node -e "const fs=require('fs');for(const p of ['.github/workflows/kernel-fleet-p0-gate.yml','.github/workflows/ci.yml','.github/workflows/brain-ci-deploy.yml','.github/workflows/auto-staging-deploy.yml','.github/workflows/deploy.yml'])fs.accessSync(p)"
 - [ ] [ARTIFACT] title heuristic auto-merge 脚本、branch protection/ruleset reconciliation 与 built-image smoke 四消费方均有 machine contract。
@@ -53,6 +54,12 @@ attempt-runtime result channel 与两阶段 final E2E。
 - [ ] [ARTIFACT] Guard law、官方 clean-home installer、provider-neutral broker、append-only
   receipt migration/view 与独立 observer 入口均为具体文件，禁止以 direct hook verifier 替代。
   Test: node -e "const fs=require('fs');for(const p of ['packages/quality/contracts/kernel-guard-manifest.json','packages/engine/install/install-kernel-policy-guards.sh','packages/brain/src/orchestrator/kernel-guard-broker.js','scripts/kernel-fleet/run-clean-home-guard-proof.sh','scripts/kernel-fleet/verify-guard-proof.sh'])fs.accessSync(p)"
+- [ ] [ARTIFACT] Reviewer-v2 approval law、Controller normalizer、Task intent revision producer、
+  effect-isolation policy 与 exactly-once outbox 是具体生产文件，skill/code version 同源。
+  Test: node -e "const fs=require('fs');for(const p of ['packages/quality/contracts/kernel-contract-approval-v2.json','packages/brain/src/orchestrator/contract-approval-v2.js','packages/brain/src/orchestrator/task-intent-revision.js','packages/brain/src/orchestrator/reviewer-effect-policy.js','packages/brain/src/orchestrator/approval-effects-outbox.js','scripts/kernel-fleet/verify-contract-approval-v2.sh','scripts/kernel-fleet/verify-reviewer-effect-isolation.sh'])fs.accessSync(p)"
+- [ ] [ARTIFACT] task-plan 明确 serial single writer；未部署 FrozenWorkstreamPlan/IntegrationLease
+  时不得宣称并行，所有 task 依赖构成单链。
+  Test: node -e "const p=require('./sprints/07280225-kernel-fleet-durable-recovery-r5/task-plan.json');if(p.execution_mode!=='serial_single_writer'||p.parallel_width!==1)process.exit(1);for(const [i,t] of p.tasks.entries()){if(i===0&&t.depends_on.length!==0)process.exit(1);if(i>0&&t.depends_on.length<1)process.exit(1)}"
 
 ## BEHAVIOR 条目
 
@@ -187,6 +194,30 @@ attempt-runtime result channel 与两阶段 final E2E。
   预期观察: 只有 exact-head Controller policy 可 merge；S10 必须 required>0/FAIL=0/SKIP=0 且 merge=deployed=tested SHA；S11 必须 deploy+production self-reported health SHA+rollback drill；所有旁路 effect=0 且 S12 non-complete。
   验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-single-release-authority.sh --github-api --deployment-store --all-bypasses --task "$TASK_ID" --run "$RUN_ID" --head "$PR_HEAD_SHA"
   期望: exit 0；单一 merge mutation、单一 staging consumer、单一 production authority 与真实 effect receipt。
+
+- [ ] [BEHAVIOR] [L2] Golden Path Step 10A — deterministic Reviewer-v2 approval
+  动作: 用真 PG、真实 attempt-runtime result channel 与 Controller-owned Contract Gate 运行 clean
+  正控及 concerns/低分/缺维度/prose/source result/no ack/task addendum/head-skill drift/hash replay/stale lease。
+  预期观察: 前 11 个 mutation 全部 non-authorizing、budget delta=0；仅 clean completed 且七维
+  都≥7、intent/head/result/gate/test 同一 frozen snapshot 时写一份 approval，same-hash 重试不增量。
+  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-contract-approval-v2.sh --real-pg --real-result-channel --controller-gate --all-counterfactuals --task "${TASK_ID:?}" --run "${RUN_ID:?}" --head "${PR_HEAD_SHA:?}"
+  期望: exit 0；每个拒绝有独立 reason code 与 durable non-authorizing receipt。
+
+- [ ] [BEHAVIOR] [L3] Golden Path Step 10B — Reviewer network effect isolation
+  动作: 在真实 read-only Reviewer Runner 对 registry/decision/task/PR/merge/deploy/staging/production
+  发受控 mutation POST，并分别运行 REVISION、stale 与 verified approval outbox。
+  预期观察: Reviewer mutation credential=0，八类 effect delta=0 且有 deny receipt；前两种
+  outbox write=0，verified approval 恰一次；skill 含 force-approve/default 或 pre-verify write 即 preflight fail。
+  验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-reviewer-effect-isolation.sh --real-runner --brain-api --github-api --deployment-api --controlled-posts registry,decision,task,pr,merge,deploy,staging,production --task "${TASK_ID:?}" --run "${RUN_ID:?}" --head "${PR_HEAD_SHA:?}"
+  期望: exit 0；secret scan=0，retry 后 outbox count=1。
+
+- [ ] [BEHAVIOR] [L2] Golden Path contract execution — current Controller stays serial single writer
+  动作: 把本合同 task-plan 交给真实 Controller scheduler preflight，注入四个 ready label、
+  `parallel_width=4`、cycle、unknown dep、overlap、canonical-branch writer 与 segment global-pass mutation。
+  预期观察: 当前能力广告固定 `serial_single_writer/1`，同时只分配一个 writer；所有并行/计划
+  mutation 返回 `SERIAL_SINGLE_WRITER_REQUIRED` 或结构化 plan error；segment PASS 不改变 global state。
+  验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-workstream-execution-mode.sh --real-controller --plan sprints/07280225-kernel-fleet-durable-recovery-r5/task-plan.json --all-counterfactuals
+  期望: exit 0；Draft PR count=1、canonical writer=controller、merge receipt count≤1。
 
 ## Invariant 覆盖映射
 

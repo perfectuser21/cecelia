@@ -367,6 +367,67 @@ environment/log/artifact digest 与 freshness。S11 只接受 Controller-governe
 receipt、production health self-reported exact build SHA、rollback anchor/drill receipt。
 任何 merge/staging/production guard 缺 D/A/F/E 或真实 effect receipt，S12 保持 non-complete。
 
+## R43-R44 合同批准归一化与 Reviewer 只读效果隔离
+
+Reviewer 的 `decision.outcome`、PASS/APPROVED prose 与 `completed_with_concerns` 都不是批准权威。
+Controller 必须接收 versioned reviewer-v2 envelope，完整包含七个固定 rubric dimension、
+每项 `0..10` 整数分、validation evidence、`judgments_written`、task-intent revision/digest、
+contract branch/full SHA/content digest、exact head、reviewer skill digest 与 approval-policy
+version。只有 clean `completed` Attempt、七项都 `>=7`、Controller 在 frozen exact head
+独立重跑 Contract Gate 与完整 Red inventory 后，确定性代码才可写 append-only approval
+receipt；模型不得选择最终 approval enum。
+
+Reviewer 结果必须来自 R31 attempt-scoped `result_channel_receipt`，精确绑定
+task/run/attempt/role=reviewer/session/lease/contract/head/intent/file hash，且 durable ack
+先于 cleanup。source `.brain-result.json`、`/tmp`、stdout prose、provider native structured
+output 或无 file receipt 的 callback 全部计零。Controller 在写 verdict/approval 前锁住并
+重读 task；任何新 addendum、intent revision/digest、contract/head、skill digest、gate
+artifact 或 Red inventory 漂移都返回 `STALE_INTENT_REVISION` 并重派 proposer/reviewer。
+same-hash retry 幂等，different-hash、cross-role/session/task/run/head/lease replay 冲突且不
+消费 semantic/GAN success budget。
+
+批准 receipt 至少绑定 reviewer/proposer Attempt、contract/head/content、task intent、
+七分 JSON+digest、Controller-owned Contract Gate artifact、Red inventory/evidence digest、
+skill/policy version、result-channel receipt 与时间。以下反事实必须逐一拒绝并给结构化
+reason：`completed_with_concerns+APPROVED`、任一 6 分、缺维度、prose-only、无
+`BRAIN_RESULT_FILE`、source result、callback-before-file-ack、dispatch 后任务 addendum、
+contract/head/skill 漂移、different-hash duplicate、stale lease；只有 clean completed 且
+七项全 `>=7` 的同一 frozen intent/head 可批准。hop/deadline/no-push/no-verdict/cost failure
+只能使 run 失败，永不转换为批准；`cost_usd` 没有权威 writer 时不得宣称为安全上限。
+
+Reviewer execution surface 除 source checkout 只读外，还必须无 Brain/GitHub/deploy mutation
+credential，并由 egress/API policy 拒绝 registry、decision、task、PR、merge、deploy、
+staging、production mutation；受控 POST probe 必须产 deny receipt。Reviewer skill 中
+force-APPROVED/oscillation default、legacy graph default 与“批准前写 registry/decision”
+语义必须删除；skill、Controller policy 与 tests 共享一个 versioned approval law。
+judgment/registry/outbox 只能在 verified v2 approval 后由 Controller-owned idempotent outbox
+写入，REVISION/stale 写入数为 0，成功恰一次。直到本 gate 与 result-channel 在生产独立
+smoke Green，当前 broad Generator 只能由一次性 bootstrap owner release 放行；该 release
+精确绑定 task/Reviewer/contract/intent/head、任何变化即失效，且绝不能授权 merge/deploy。
+
+## R45 当前执行模式与未来多 workstream 权威
+
+本 sprint 的 task-plan 可按产品 gate 分段，但当前 Controller 没有 DAG scheduler、
+namespaced segment verdict 或 single-PR integrator，因此本轮必须声明
+`execution_mode=serial_single_writer`、`parallel_width=1`。所有 workstream 形成一条显式
+`depends_on` 链；除只读审计外，同一时刻只允许一个代码 writer。不得把多 task JSON、
+可用 slot 或 segment PASS 描述成 runtime parallel/global PASS。
+
+任何未来把 `parallel_width` 提升到 `>1` 的变更，必须先交付并重新获批：
+FrozenWorkstreamPlan（绑定 run/task/approved contract/intent/base SHA 的 DAG、文件 allowlist、
+resource/provider/machine 与 plan digest）；append-only WorkstreamState 和
+`(run,workstream,attempt_kind,generation)` exactly-once identity；ready-set scheduler、
+file-conflict lock/capacity/restart reconciliation；同 base 的 isolated private writer；
+Controller-only IntegrationLease/CAS 按 DAG 确定序集成 immutable commit/parent/tree/patch/
+touched-files/test evidence；final head 冻结后重新跑一次完整 CI→Evaluator→Judge→owner→merge。
+共享高冲突文件必须有 serial edge；segment receipt 只能释放依赖，不能替代 global gate。
+
+本轮机器反事实必须证明：plan 有 cycle/unknown dep/duplicate ID/重叠 writable files 或 writer
+尝试 canonical Draft branch 时拒绝；当前 advertised width 始终 1；四个 ready labels 仍只
+分配一个 writer；restart 不重复；segment PASS 不变 global state；final-head drift 使
+Evaluator/Judge/owner receipts 全失效；始终只有一个 Draft PR 与一个 merge receipt。若这些
+并行构件尚未部署，验证器必须返回 `SERIAL_SINGLE_WRITER_REQUIRED`，而不是模拟并行成功。
+
 ## NFR 约束
 
 <!-- 来源: decisions 表 category=nfr，PrepPRD 显式值优先 -->
@@ -470,7 +531,11 @@ if [ "$E2E_PHASE" = preapproval ]; then
     --authority packages/quality/contracts/kernel-harness-authority-manifest.json \
     --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
     --guard-providers claude,codex,grok --guard-vectors V01-V13 \
-    --expect-order draft,ci,evaluator,judge --expect-serving-mutations 0 \
+    --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
+    --require-reviewer-result-channel --require-reviewer-effect-isolation \
+    --execution-mode serial_single_writer --parallel-width 1 \
+    --expect-order draft,ci,evaluator,judge,reviewer_v2_verified \
+    --expect-serving-mutations 0 \
     --expect-terminal false
   exit 75
 fi
@@ -486,6 +551,8 @@ bash scripts/kernel-fleet/run-authoritative-final-e2e.sh \
   --production "$PROD_BRAIN_URL" --db "$DB_URL" \
   --authority packages/quality/contracts/kernel-harness-authority-manifest.json \
   --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
+  --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
+  --require-verified-reviewer-v2 --execution-mode serial_single_writer \
   --expect-order owner,merge,staging,production,rollback,s12 \
   --strict-staging --require-production-health --require-rollback-anchor \
   --require-guard-proof proven,fresh --reject-second-merge-authority \
