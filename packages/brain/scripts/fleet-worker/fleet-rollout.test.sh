@@ -93,10 +93,12 @@ write_executable "$fake_bin/sudo" \
   '#!/usr/bin/env bash' \
   'printf "sudo %s\n" "$*" >> "${FLEET_TEST_TRANSPORT_LOG:?}"' \
   '[[ "${1:-}" == "-n" ]] && shift' \
+  'if [[ "${1:-}" == "/bin/rm" && "${FLEET_TEST_SUDO_FAIL_RM:-0}" == 1 ]]; then exit 24; fi' \
   'if [[ "${FLEET_TEST_SUDO_NOEXEC:-0}" == 1 ]]; then' \
   '  case "${1:-}" in' \
   '    /usr/bin/mktemp|/usr/bin/tar|/bin/mkdir|/bin/chmod|/bin/rm) exec "$@" ;;' \
   '    */fleet-rollout.sh) exec "$@" ;;' \
+  '    env) [[ "${FLEET_TEST_SUDO_EXEC_NODE:-0}" == 1 ]] && exec "$@"; exit 0 ;;' \
   '    *) exit 0 ;;' \
   '  esac' \
   'fi' \
@@ -109,6 +111,10 @@ write_executable "$fake_bin/nodectl" \
   'if [[ "$command_name" == "admit" && "${FLEET_TEST_NODE_SIGNAL_PARENT:-0}" == 1 ]]; then' \
   '  kill -TERM "$PPID"' \
   '  exit 143' \
+  'fi' \
+  'if [[ "$command_name" == "admit" && -n "${FLEET_TEST_NODE_ADMIT_READY:-}" ]]; then' \
+  '  : > "$FLEET_TEST_NODE_ADMIT_READY"' \
+  '  sleep 2' \
   'fi' \
   'if [[ "$command_name" == "${FLEET_TEST_NODE_FAIL:-}" ]]; then exit 23; fi' \
   'if [[ "$command_name" == "admit" ]]; then' \
@@ -217,6 +223,55 @@ first_local_sudo="$(grep '^sudo ' "$transport_log" | head -n 1)"
 if grep -Eq "^sudo .* $test_root/tmp/.*/fleet-nodectl\\.sh " "$transport_log"; then
   fail "sudo executed a Fleet script from the controller user's writable temp directory"
 fi
+
+admit_ready="$test_root/public-admit.ready"
+: > "$node_log"
+rm -f "$admit_ready"
+CECELIA_MACHINE_ID=us-mac-m4 \
+FLEET_TEST_REAL_GIT=1 \
+FLEET_TEST_SUDO_NOEXEC=1 \
+FLEET_TEST_SUDO_EXEC_NODE=1 \
+FLEET_TEST_NODE_LOG="$node_log" \
+FLEET_TEST_NODE_ADMIT_READY="$admit_ready" \
+FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
+FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout us-mac-m4 --apply >"$test_root/public-signal.out" 2>&1 &
+public_rollout_pid=$!
+for _ in {1..100}; do
+  [[ -e "$admit_ready" ]] && break
+  kill -0 "$public_rollout_pid" 2>/dev/null \
+    || fail "public rollout exited before reaching admission"
+  sleep 0.02
+done
+[[ -e "$admit_ready" ]] || fail "public rollout never reached admission"
+kill -TERM "$public_rollout_pid"
+public_signal_status=0
+wait "$public_rollout_pid" || public_signal_status=$?
+[[ "$public_signal_status" -ne 0 ]] \
+  || fail "TERM at the public rollout entrypoint was reported as success"
+for _ in {1..150}; do
+  [[ "$(awk 'END {print NR}' "$node_log")" -ge 5 ]] && break
+  sleep 0.02
+done
+node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
+  || fail "public TERM after undrain did not restore drain: $node_sequence"
+
+: > "$node_log"
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_TEST_REAL_GIT=1 \
+  FLEET_TEST_SUDO_NOEXEC=1 \
+  FLEET_TEST_SUDO_EXEC_NODE=1 \
+  FLEET_TEST_SUDO_FAIL_RM=1 \
+  FLEET_TEST_NODE_LOG="$node_log" \
+  FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
+  FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout us-mac-m4 --apply >"$test_root/cleanup-failure.out" 2>&1; then
+  fail "root staging cleanup failure was reported as success"
+fi
+node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
+  || fail "cleanup failure after admission did not restore drain: $node_sequence"
 
 payload_root="$test_root/payload"
 node_source="$payload_root/source/packages/brain/scripts/fleet-worker"
