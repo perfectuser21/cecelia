@@ -1,0 +1,35 @@
+{
+  "initiative_id": "aca9fb2e-dbb9-4c26-af75-efba5ba9fdab",
+  "journey_type": "agent_remote",
+  "journey_type_reason": "核心 Golden Path 跨 Brain、真实 Fleet Worker、exact Runner、OrbStack/macOS、Postgres、GitHub exact-head 与 Kernel 子进程接缝。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "交付 P0 Kernel Fleet durable bootstrap recovery 闭环",
+      "scope": "在冻结基线 dd424a619 上完成 Brain image 自包含、原子 Runner/Profile/Worker/schema、Mac 安装事务、phase-aware transport、canonical artifact transfer、Kernel truthful readiness/watchdog、Worker-first rollout、US canary、owner gate 与 rollback drain。",
+      "dod": [
+        "[BEHAVIOR] built image 在无 worktree mount 下导入 orchestrator 并加载三个 immutable profile，missing-config mutation 必须失败",
+        "[BEHAVIOR] 真实 US Attempt 完成 single-use secret、Git auth、stdout、callback、canonical commit transfer 与 residue=0",
+        "[BEHAVIOR] Kernel 初启与 watchdog 只在 ready ownership handshake + 真 Postgres heartbeat 后成功，恢复严格一次",
+        "[BEHAVIOR] Worker admission 失败阻断 Brain publication；exact-head owner approval 前 PR 保持 Draft 且 auto-merge off",
+        "[ARTIFACT] migration 367+、Brain 版本/DEFINITION、真实 integration/mutation/canary/rollback 脚本"
+      ],
+      "files": [
+        "packages/brain/Dockerfile",
+        "packages/brain/config/fleet-node-profiles.json",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/orchestrator/",
+        "packages/brain/migrations/367+",
+        "packages/brain/scripts/fleet-worker/",
+        "packages/engine/runners/codex/runner.sh",
+        "packages/brain/DEFINITION.md",
+        "scripts/kernel-fleet/",
+        "scripts/ci/"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
