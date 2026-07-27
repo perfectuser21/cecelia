@@ -10,10 +10,10 @@ journey_type: autonomous
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] sprint regression test 存在且覆盖 manifest/drift/gate/re-GAN
-  Test: node -e "const c=require('fs').readFileSync('sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts','utf8'); for (const s of ['canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts','approved migration 365 changed to 366 is rejected as approved_contract_drift','root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift','generator and evaluator dispatch carry approved manifest digest and source sha','callback refuses stale manifest_digest before writing evaluator verdict','callback refuses stale pr_head_sha before writing generator verdict','approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift']) { if (!c.includes(s)) process.exit(1); }"
+  Test: node -e "const c=require('fs').readFileSync('sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts','utf8'); for (const s of ['canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts','approved migration 365 changed to 366 is rejected as approved_contract_drift','root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift','generator and evaluator dispatch carry approved manifest digest and source sha','dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch','callback refuses stale manifest_digest before writing evaluator verdict','callback refuses stale pr_head_sha before writing generator verdict','approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift']) { if (!c.includes(s)) process.exit(1); }"
 
 - [ ] [ARTIFACT] approved provenance module 必须新增
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/approved-contract-provenance.js','utf8'); for (const s of ['buildApprovedContractManifest','verifyApprovedContractManifest','verifyApprovedContractReference','buildApprovedContractDispatchContext','verifyAttemptCallbackApprovedContract','detectApprovedContractMainConflict']) { if (!c.includes(s)) process.exit(1); }"
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/approved-contract-provenance.js','utf8'); for (const s of ['buildApprovedContractManifest','verifyApprovedContractManifest','verifyApprovedContractReference','buildApprovedContractDispatchContext','verifyApprovedContractExecutionPreflight','verifyAttemptCallbackApprovedContract','detectApprovedContractMainConflict']) { if (!c.includes(s)) process.exit(1); }"
 
 - [ ] [ARTIFACT] CI required check 脚本必须新增
   Test: node -e "const c=require('fs').readFileSync('scripts/ci/approved-contract-provenance-check.mjs','utf8'); for (const s of ['runApprovedContractProvenanceCheck','manifest_digest','pr-head-sha','repo-root','approved_contract_drift','requires_re_gan']) { if (!c.includes(s)) process.exit(1); }"
@@ -63,6 +63,12 @@ journey_type: autonomous
   动作: 用真实 approved contract row 调用 dispatch context 构建逻辑，分别生成 generator 与 evaluator 输入。
   预期观察: task_bundle.inputs.contract 与 env 同时携带 `manifest_digest`、`approved_manifest.manifest_digest`、`source_commit_sha`；evaluator 保留 current `PR_HEAD_SHA`。
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator and evaluator dispatch carry approved manifest digest and source sha"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch
+  动作: 在真实 PostgreSQL temp table 中物化 approved manifest row，再分别用缺 manifest、stale digest、缺 current PR SHA、stale current PR SHA 调用 launch 前 preflight。
+  预期观察: 缺 manifest 返回 `approved_contract_manifest_missing`；stale digest 返回 `stale_manifest_digest`；缺 current PR SHA 返回 `current_pr_sha_missing`；stale current PR SHA 返回 `stale_pr_head_sha`；正确 digest/SHA 才返回 ok。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] callback refuses stale manifest_digest before writing evaluator verdict
@@ -167,7 +173,7 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] [L2] INV-6 回归测试必须覆盖真实调度接线。
   动作: 跑 dispatcher/gate/ground-truth 真实模块测试与 sprint regression。
-  预期观察: dispatcher 注入、verdict 观测、merge gate 三处 digest 链路均被测试覆盖。
+  预期观察: dispatcher 注入、launch preflight、verdict 观测、merge gate 四处 digest 链路均被测试覆盖。
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run packages/brain/src/orchestrator/__tests__/dispatcher.test.js packages/brain/src/orchestrator/__tests__/ground-truth.test.js packages/brain/src/orchestrator/__tests__/gates.test.js sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --reporter=verbose'
   期望: exit 0
 

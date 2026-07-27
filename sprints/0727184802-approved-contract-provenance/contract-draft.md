@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 5)
+# Sprint Contract Draft (Round 6)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -174,11 +174,12 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 2 点要求这些节点都验证 current PR SHA + `manifest_digest`，缺 manifest、不可达、stale SHA/digest fail-closed。
 
-**可观测行为**: dispatcher 将 approved manifest digest/source SHA 注入 task_bundle 与 env；callback 上报 verdict 时先服务端校验 `manifest_digest` 与 current PR SHA，校验通过才写 verdict；ground-truth 读取 verdict 时保留 digest；merge gate 只有 evaluate/judge 均 PASS 且 `pr_head_sha == current PR SHA` 且 `manifest_digest == approved digest` 才 allow；CI required check 脚本同样校验。
+**可观测行为**: dispatcher 在 launch 前对 approved manifest row 做 fail-closed preflight，缺 manifest 或 stale digest 不创建 attempt；dispatcher 将 approved manifest digest/source SHA 注入 task_bundle 与 env；Evaluator preflight 在跑 final-e2e 前校验 current PR SHA + manifest digest；callback 上报 verdict 时先服务端校验 `manifest_digest` 与 current PR SHA，校验通过才写 verdict；ground-truth 读取 verdict 时保留 digest；merge gate 只有 evaluate/judge 均 PASS 且 `pr_head_sha == current PR SHA` 且 `manifest_digest == approved digest` 才 allow；CI required check 脚本同样校验。
 
 **验证命令**:
 ```bash
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator and evaluator dispatch carry approved manifest digest and source sha"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale manifest_digest before writing evaluator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale pr_head_sha before writing generator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator callback refuses stale manifest_digest before writing generator verdict"
@@ -187,7 +188,7 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses missing approved manifest_digest and stale judge manifest_digest"
 ```
 
-**硬阈值**: dispatch env 必须含 `APPROVED_CONTRACT_MANIFEST_DIGEST` 与 `APPROVED_CONTRACT_SOURCE_SHA`；evaluator callback stale digest 在写 verdict 前返回 `stale_evaluate_manifest_digest`；generator callback stale digest 在写 verdict 前返回 `stale_generator_manifest_digest`；callback stale generator PR SHA 在写 verdict 前返回 `stale_generator_pr_head_sha`；CI required check 缺 manifest 返回 `approved_contract_manifest_missing`、stale digest 返回 `stale_manifest_digest`、stale PR SHA 返回 `stale_pr_head_sha`；merge gate stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 approved digest 返回 `approved_contract_manifest_digest_missing`。
+**硬阈值**: dispatch env 必须含 `APPROVED_CONTRACT_MANIFEST_DIGEST` 与 `APPROVED_CONTRACT_SOURCE_SHA`；Generator launch preflight 缺 manifest 返回 `approved_contract_manifest_missing`、stale digest 返回 `stale_manifest_digest`；Evaluator preflight 缺 current PR SHA 返回 `current_pr_sha_missing`、stale PR SHA 返回 `stale_pr_head_sha`；evaluator callback stale digest 在写 verdict 前返回 `stale_evaluate_manifest_digest`；generator callback stale digest 在写 verdict 前返回 `stale_generator_manifest_digest`；callback stale generator PR SHA 在写 verdict 前返回 `stale_generator_pr_head_sha`；CI required check 缺 manifest 返回 `approved_contract_manifest_missing`、stale digest 返回 `stale_manifest_digest`、stale PR SHA 返回 `stale_pr_head_sha`；merge gate stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 approved digest 返回 `approved_contract_manifest_digest_missing`。
 
 ---
 
@@ -296,6 +297,7 @@ echo "OK: approved contract provenance final e2e passed"
 | Root DoD 安全语义漂移 | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift | Test command/动作/预期/环境/安全语义被改后仍通过 → FAIL |
 | fail-closed reference | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | missing manifest unreachable stale sha and stale manifest digest fail closed | 缺 manifest/stale digest 被放行 → FAIL |
 | dispatch digest propagation | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | generator and evaluator dispatch carry approved manifest digest and source sha | 现有 dispatch env 不注入 approved digest/source SHA → FAIL |
+| dispatch/evaluator preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch | launch/final-e2e 前未 fail-closed，缺 manifest 或 stale digest/SHA 仍创建 attempt/继续执行 → FAIL |
 | callback digest preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | callback refuses stale manifest_digest before writing evaluator verdict | 旧 callback 只落 verdict，不在写入前校验 digest → FAIL |
 | callback PR SHA preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | callback refuses stale pr_head_sha before writing generator verdict | generator callback stale PR SHA 被写入 verdict → FAIL |
 | generator callback digest preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | generator callback refuses stale manifest_digest before writing generator verdict | generator callback stale manifest_digest 被写入 verdict → FAIL |
@@ -309,7 +311,7 @@ echo "OK: approved contract provenance final e2e passed"
 
 | 文件 | 要求 |
 |---|---|
-| `packages/brain/src/orchestrator/approved-contract-provenance.js` | 新增 manifest 构建、digest canonicalization、Git artifact drift 验证、Root DoD 机械变化归一化、manifest reference 校验、dispatch context 构建、callback digest preflight、main migration conflict 检测。 |
+| `packages/brain/src/orchestrator/approved-contract-provenance.js` | 新增 manifest 构建、digest canonicalization、Git artifact drift 验证、Root DoD 机械变化归一化、manifest reference 校验、dispatch context 构建、execution preflight、callback digest preflight、main migration conflict 检测。 |
 | `packages/brain/src/orchestrator/contract-store.js` | `materializeApprovedContract` 升级或旁路到 `materializeApprovedContractManifest`；同 version 不同 digest 拒绝覆写。 |
 | `packages/brain/src/orchestrator/loop.js` | `persist_contract_approval` 用 approved SHA 生成 manifest，并冻结 `sprint-prd/contract-draft/contract-dod/task-plan/tests/**/fixtures/golden/DoD.md/migration`。 |
 | `packages/brain/src/orchestrator/dispatcher.js` | generator/evaluator/judge bundle 与 env 注入 approved manifest digest/source SHA；缺 manifest fail-closed。 |
@@ -324,4 +326,4 @@ echo "OK: approved contract provenance final e2e passed"
 - contract-gate: present at `packages/brain/src/lib/contract-gate.js`; 本合同未跳过代码层 Contract Gate。
 - PR #4372 只作为事故证据，不修改、不复用；回归 fixture 用本 sprint 测试临时 Git repo 自造 365→366 drift。
 - Android/微信/第三方 API 不涉及，target_environment 固定 `local_api`。
-- Round 5 修订：补齐 CI required check 对真实 DB manifest 与真实 Git HEAD 的 stale digest/SHA fail-closed oracle，并补 generator callback stale digest 写 verdict 前拒绝；未扩展 PRD 外 scope。
+- Round 6 修订：补齐 Generator/Evaluator launch 前 preflight 对缺 manifest、stale digest、stale PR SHA 的 fail-closed oracle；未扩展 PRD 外 scope。
