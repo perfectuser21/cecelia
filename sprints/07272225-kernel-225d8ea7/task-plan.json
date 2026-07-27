@@ -1,0 +1,38 @@
+{
+  "initiative_id": "ce50e10d-667b-4ad4-9311-3fa8a3a9dcf4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "任务只修改 Kernel/Brain 后台 attempt result、callback、PostgreSQL authority、feedback lineage 与 release gate。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "恢复 Kernel reviewer 结果通道与反馈血缘",
+      "scope": "为 read-only Harness role 提供 attempt-scoped 结果通道，持久化绑定 reviewer 结果，将精确 prior_review 与 resolution_map 注入后续 fresh session，并保持现有 final-SHA 人工审批门。",
+      "dod": [
+        "[BEHAVIOR] result channel 在 workspace 只读时仅允许当前 attempt 固定路径写入",
+        "[BEHAVIOR] callback 对合法结果原子持久化，对所有拒绝返回精确稳定 error shape",
+        "[BEHAVIOR] 后续 proposer/reviewer 获得精确 prior_review 与一一对应 resolution_map",
+        "[BEHAVIOR] replay/recovery/resume、相邻 round 与并发 run 隔离幂等",
+        "[BEHAVIOR] APPROVED 不绕过 review_required 与 current-head 人工批准",
+        "[ARTIFACT] scripts/harness/rci-reviewer-feedback-lineage.sh 通过 bash -n 并在隔离测试库真执行"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/result-channel.js",
+        "packages/brain/src/orchestrator/reviewer-result-errors.js",
+        "packages/brain/src/orchestrator/feedback-lineage.js",
+        "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/src/docker-executor.js",
+        "packages/brain/scripts/codex-bridge/kernel-attempt-handler.cjs",
+        "docker/cecelia-runner/entrypoint.sh",
+        "scripts/harness/rci-reviewer-feedback-lineage.sh",
+        "packages/brain/DEFINITION.md",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
