@@ -150,9 +150,17 @@ function buildInputs(spec, ctx, attemptMetadata) {
   return common;
 }
 
-function buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata) {
+function buildBundle(
+  action,
+  spec,
+  ctx,
+  attemptId,
+  skill,
+  attemptMetadata,
+  { deferWorkspaceValidation = false } = {},
+) {
   const inputs = buildInputs(spec, ctx, attemptMetadata);
-  return parseTaskBundle({
+  const bundle = {
     contract_version: '1.0',
     run_id: ctx.runId,
     attempt_id: attemptId,
@@ -170,7 +178,8 @@ function buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata) {
       timeout_seconds: Number(asObject(ctx.observed.task.payload).timeout_seconds ?? 5400),
     },
     expected_output: spec.expectedOutput,
-  });
+  };
+  return deferWorkspaceValidation ? bundle : parseTaskBundle(bundle);
 }
 
 function executionConfig(payload, { provider, accountHome, canary = false } = {}) {
@@ -186,9 +195,37 @@ function executionConfig(payload, { provider, accountHome, canary = false } = {}
   return execution;
 }
 
-function freezeLaunchReceipt(receipt, target) {
+function freezeLaunchReceipt(receipt, target, executionSurface = null) {
   if (!receipt || typeof receipt !== 'object') {
     throw new Error('launch_receipt_invalid');
+  }
+  if (executionSurface === 'fleet-worker') {
+    if (receipt.actualMachineId !== target?.machine) {
+      throw new Error('launch_receipt_invalid:fleet_actual_machine');
+    }
+    if (receipt.executionTransport !== 'fleet-worker') {
+      throw new Error('launch_receipt_invalid:fleet_transport');
+    }
+    if (receipt.attestationStatus !== 'verified') {
+      throw new Error('launch_receipt_invalid:fleet_attestation');
+    }
+    if (typeof receipt.remoteJobId !== 'string' || receipt.remoteJobId.length === 0) {
+      throw new Error('launch_receipt_invalid:fleet_job_id');
+    }
+    if (receipt.jobId !== receipt.remoteJobId) {
+      throw new Error('launch_receipt_invalid:fleet_job_mismatch');
+    }
+    if (receipt.containerId != null) {
+      throw new Error('launch_receipt_invalid:fleet_container_id');
+    }
+    return Object.freeze({
+      actualMachineId: receipt.actualMachineId,
+      executionTransport: receipt.executionTransport,
+      remoteJobId: receipt.remoteJobId,
+      attestationStatus: receipt.attestationStatus,
+      containerId: null,
+      jobId: receipt.jobId,
+    });
   }
   const remote = target?.machine === 'xian-mac-m4' || target?.machine === 'xian-mac-m1';
   if (remote) {
@@ -285,7 +322,37 @@ export function createDispatcher(deps) {
       attemptKind: action === 'spawn:generator-fix' ? 'fix' : 'initial',
       workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
     };
-    let bundle = buildBundle(action, spec, ctx, attemptId, skill, attemptMetadata);
+    let bundle = buildBundle(
+      action,
+      spec,
+      ctx,
+      attemptId,
+      skill,
+      attemptMetadata,
+      { deferWorkspaceValidation: typeof deps.resolveWorkspaceSpec === 'function' },
+    );
+    if (typeof deps.resolveWorkspaceSpec === 'function') {
+      const workspaceSpec = await deps.resolveWorkspaceSpec({
+        action,
+        role: spec.role,
+        readOnly: spec.readOnly,
+        attemptId,
+        ctx,
+        bundle,
+      });
+      const {
+        worktree_path: _discardedCallerPath,
+        ...pathFreeInputs
+      } = bundle.inputs;
+      bundle = parseTaskBundle({
+        ...bundle,
+        inputs: {
+          ...pathFreeInputs,
+          execution_surface: 'fleet-worker',
+          workspace_spec: workspaceSpec,
+        },
+      });
+    }
     const roleAssignment = asObject(asObject(payload.role_assignments)[spec.role]);
     const requestedProvider = roleAssignment.provider ?? payload.executor ?? payload.provider ?? 'auto';
     const requestedAccount = roleAssignment.account ?? payload.executor_account ?? null;
@@ -487,7 +554,11 @@ export function createDispatcher(deps) {
         target: selectedTarget,
         leaseClaimed: true,
       });
-      launched = freezeLaunchReceipt(rawReceipt, selectedTarget);
+      launched = freezeLaunchReceipt(
+        rawReceipt,
+        selectedTarget,
+        bundle.inputs.execution_surface,
+      );
     } catch (error) {
       const cancelDiagnostic = await cancelAfterLaunch(deps.launcher, {
         attempt,
