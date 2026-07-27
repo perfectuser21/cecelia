@@ -553,9 +553,10 @@ describe('Fleet Worker Attempt API', () => {
 
     expect(response.statusCode).toBe(202);
     expect(JSON.parse(response.body)).toMatchObject({
-      attempt_id: attemptId,
+      status: 'accepted',
+      job_id: 'container-1',
       actual_machine_id: 'us-mac-m4',
-      execution_transport: 'fleet-worker',
+      attestation: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(attemptRunner.launch).toHaveBeenCalledWith(launchBody());
     expect(response.body).not.toMatch(/callback-token|perform the bounded task/);

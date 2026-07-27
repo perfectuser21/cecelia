@@ -2,10 +2,18 @@
 'use strict';
 
 const { Buffer } = require('node:buffer');
-const { timingSafeEqual } = require('node:crypto');
+const { createHmac, timingSafeEqual } = require('node:crypto');
+const fs = require('node:fs');
 const http = require('node:http');
+const path = require('node:path');
 const process = require('node:process');
+const {
+  createAttemptRunner,
+  createDockerAdapter,
+  createFileAttemptStateStore,
+} = require('./attempt-runner.cjs');
 const { probeFleetWorkerHealth } = require('./node-probe.cjs');
+const { createWorkspaceManager } = require('./workspace-manager.cjs');
 
 const MAX_STRING_LENGTH = 1_024;
 const MAX_RESPONSE_BYTES = 65_536;
@@ -19,6 +27,12 @@ const UNTRUSTED_WORKSPACE_FIELDS = new Set([
   'worktree_path',
   'workspace_path',
 ]);
+const CANONICAL_MACHINE_IDS = new Set([
+  'us-mac-m4',
+  'xian-mac-m4',
+  'xian-mac-m1',
+]);
+const RUNNER_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 function safeString(value, fallback = 'unavailable') {
   if (typeof value !== 'string' || value.length === 0) return fallback;
@@ -157,6 +171,111 @@ function validBearer(request, token) {
   const expected = Buffer.from(`Bearer ${token}`, 'utf8');
   const actual = Buffer.from(String(request.headers?.authorization ?? ''), 'utf8');
   return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function signAttestation(secret, attemptId, machineId, jobId) {
+  return createHmac('sha256', secret)
+    .update(`${attemptId}\n${machineId}\n${jobId}`, 'utf8')
+    .digest('hex');
+}
+
+function acceptedReceipt(receipt, secret) {
+  const attemptId = receipt?.attempt_id;
+  const machineId = receipt?.actual_machine_id;
+  const jobId = receipt?.remote_job_id ?? receipt?.container_id;
+  if (
+    typeof attemptId !== 'string'
+    || typeof machineId !== 'string'
+    || typeof jobId !== 'string'
+    || jobId.length === 0
+  ) {
+    throw new Error('attempt_launch_receipt_invalid');
+  }
+  return Object.freeze({
+    status: 'accepted',
+    job_id: jobId,
+    actual_machine_id: machineId,
+    attestation: signAttestation(secret, attemptId, machineId, jobId),
+  });
+}
+
+function protectedTokenFromFile(tokenFile) {
+  if (typeof tokenFile !== 'string' || !path.isAbsolute(tokenFile)) {
+    throw new Error('fleet_worker_token_file_required');
+  }
+  let stat;
+  try {
+    stat = fs.statSync(tokenFile);
+  } catch {
+    throw new Error('fleet_worker_token_file_unreadable');
+  }
+  if (!stat.isFile() || (stat.mode & 0o077) !== 0) {
+    throw new Error('fleet_worker_token_file_permissions');
+  }
+  const token = fs.readFileSync(tokenFile, 'utf8').trim();
+  if (token.length < 32 || /[\r\n]/.test(token)) {
+    throw new Error('fleet_worker_token_invalid');
+  }
+  return token;
+}
+
+function createFleetWorkerRuntime({
+  env = {},
+  runCommand,
+} = {}) {
+  const workerId = env.CECELIA_MACHINE_ID;
+  if (!CANONICAL_MACHINE_IDS.has(workerId)) {
+    throw new Error('fleet_worker_machine_id_invalid');
+  }
+  const digest = env.CECELIA_RUNNER_DIGEST;
+  if (!RUNNER_DIGEST_PATTERN.test(digest ?? '')) {
+    throw new Error('fleet_worker_runner_digest_invalid');
+  }
+  const dataRoot = path.resolve(
+    env.CECELIA_FLEET_DATA_ROOT ?? '/var/lib/cecelia/fleet-worker',
+  );
+  if (!path.isAbsolute(dataRoot) || dataRoot === path.parse(dataRoot).root) {
+    throw new Error('fleet_worker_data_root_invalid');
+  }
+  const attemptToken = protectedTokenFromFile(
+    env.CECELIA_FLEET_WORKER_TOKEN_FILE,
+  );
+  const roots = Object.freeze({
+    mirrors: path.join(dataRoot, 'mirrors'),
+    worktrees: path.join(dataRoot, 'worktrees'),
+    quarantine: path.join(dataRoot, 'quarantine'),
+    state: path.join(dataRoot, 'state'),
+    runtime: path.join(dataRoot, 'runtime'),
+  });
+  const workspaceManager = createWorkspaceManager({
+    mirrorRoot: roots.mirrors,
+    worktreeRoot: roots.worktrees,
+    quarantineRoot: roots.quarantine,
+    repoAllowlist: {
+      'perfectuser21/cecelia': env.CECELIA_FLEET_REPO_SOURCE
+        ?? 'https://github.com/perfectuser21/cecelia.git',
+    },
+    ...(runCommand ? { runCommand } : {}),
+  });
+  const docker = createDockerAdapter({
+    runtimeRoot: roots.runtime,
+    ...(runCommand ? { runCommand } : {}),
+  });
+  const stateStore = createFileAttemptStateStore({ stateRoot: roots.state });
+  const runnerImageDigest = env.CECELIA_RUNNER_IMAGE
+    ?? `cecelia/runner@${digest}`;
+  const attemptRunner = createAttemptRunner({
+    workspaceManager,
+    docker,
+    stateStore,
+    workerId,
+    runnerImageDigest,
+  });
+  return Object.freeze({
+    attemptRunner,
+    attemptToken,
+    roots,
+  });
 }
 
 function findUntrustedWorkspaceField(value) {
@@ -298,7 +417,7 @@ function createFleetWorkerServer(options = {}) {
           throw error;
         }
         const receipt = await attemptRunner.launch(body);
-        writeJson(response, 202, receipt);
+        writeJson(response, 202, acceptedReceipt(receipt, attemptToken));
         return;
       }
 
@@ -338,8 +457,11 @@ function parsePort(value) {
 function main(env = process.env) {
   const host = safeString(env.CECELIA_FLEET_WORKER_HOST, DEFAULT_HOST);
   const port = parsePort(env.CECELIA_FLEET_WORKER_PORT);
+  const runtime = createFleetWorkerRuntime({ env });
   const server = createFleetWorkerServer({
     env,
+    attemptRunner: runtime.attemptRunner,
+    attemptToken: runtime.attemptToken,
     machineId: env.CECELIA_MACHINE_ID,
     runnerImageDigest: env.CECELIA_RUNNER_DIGEST,
     repoRoot: env.CECELIA_REPO_ROOT,
@@ -355,5 +477,6 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createFleetWorkerRuntime,
   createFleetWorkerServer,
 };
