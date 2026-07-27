@@ -1,5 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Client } from 'pg';
 import {
   ELEMENT_KEYS,
@@ -31,6 +33,11 @@ const STAGES = [
   ['S10', 'Staging', '部署并验证刚合并的精确 artifact'],
   ['S11', 'Production', '按发布策略 promote、验活并留回滚锚点'],
   ['S12', 'Report / Learning / Complete', '更新承诺地图、回归、学习和外部状态后才收账'],
+] as const;
+
+const EXACT_ELEMENTS = [
+  'FR', 'NFR', 'Invariant', '判定点', '保质期', '死亡告警',
+  '失败语义', '效果确认', '输入对抗面', '账本保鲜', '两轴衔接',
 ] as const;
 
 const BACKBONE_HISTORY = new Map([
@@ -151,11 +158,8 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
     })));
   });
 
-  it('每个 S0-S12 骨干 Step 恰有 11 个合法 element cells', async () => {
-    expect(ELEMENT_KEYS).toEqual([
-      'FR', 'NFR', '不变量', '判定点', '保质期', '死亡告警',
-      '失败语义', '效果确认', '对抗面', '账本保鲜', '两轴衔接',
-    ]);
+  it('每个 S0-S12 骨干 Step 恰有精确 11 个 element cells', async () => {
+    expect(ELEMENT_KEYS).toEqual(EXACT_ELEMENTS);
     const { rows } = await client.query(`
       SELECT s.lifecycle_stage,
              COUNT(*)::int AS count,
@@ -169,15 +173,124 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
     expect(rows).toHaveLength(13);
     expect(rows.every((row) => row.count === 11 && row.statuses_ok)).toBe(true);
     expect(rows.flatMap((row) => row.keys)).toHaveLength(143);
+    const expectedKeys = [...EXACT_ELEMENTS].sort();
+    expect(rows.every((row) => JSON.stringify(row.keys) === JSON.stringify(expectedKeys)))
+      .toBe(true);
   });
 
-  it('green 只接受真实 assertion_ref 且引用存在', async () => {
+  it('143 格状态依据逐格唯一命中五态事实门槛', async () => {
     const report = await buildKernelHarnessF1BaselineReport(client, { repoRoot: process.cwd() });
+    const currentSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim();
     expect(report.invalid_assertion_refs).toEqual([]);
+    expect(report.invalid_cell_source_refs).toEqual([]);
     expect(report.false_green_cells).toEqual([]);
-    expect(report.cells.every((cell) =>
-      ['gray', 'red', 'pending', 'green', 'na'].includes(cell.cell_status),
-    )).toBe(true);
+    expect(report.unsupported_red_cells).toEqual([]);
+    expect(report.unsupported_pending_cells).toEqual([]);
+    expect(report.unsupported_na_cells).toEqual([]);
+    expect(report.unclassified_cells).toEqual([]);
+    expect(report.ambiguous_cells).toEqual([]);
+    expect(report.cell_manifest).toHaveLength(143);
+    expect(report.cells).toHaveLength(143);
+
+    const manifestByKey = new Map(report.cell_manifest.map((cell) => [
+      `${cell.step_id}:${cell.element}`, cell,
+    ]));
+    expect(manifestByKey.size).toBe(143);
+    let grayCount = 0;
+    let nonGrayFrCount = 0;
+
+    for (const cell of report.cells) {
+      expect(EXACT_ELEMENTS).toContain(cell.element);
+      expect(cell.step_id).toBeTruthy();
+      expect(STAGES.map(([stage]) => stage)).toContain(cell.lifecycle_stage);
+      expect(['gray', 'red', 'pending', 'green', 'na']).toContain(cell.cell_status);
+      expect(typeof cell.reason_code).toBe('string');
+      expect(Array.isArray(cell.source_refs)).toBe(true);
+      expect(Array.isArray(cell.missing_evidence)).toBe(true);
+      for (const sourceRef of cell.source_refs) {
+        expect(typeof sourceRef).toBe('string');
+        const repoPath = sourceRef.split('#', 1)[0].replace(/:L\d+$/, '');
+        expect(repoPath).not.toBe('');
+        expect(existsSync(resolve(process.cwd(), repoPath))).toBe(true);
+      }
+      expect(manifestByKey.get(`${cell.step_id}:${cell.element}`)).toEqual(
+        expect.objectContaining({
+          lifecycle_stage: cell.lifecycle_stage,
+          element: cell.element,
+          cell_status: cell.cell_status,
+          reason_code: cell.reason_code,
+          source_refs: cell.source_refs,
+          missing_evidence: cell.missing_evidence,
+          assertion_ref: cell.assertion_ref,
+          evidence_requirement: cell.evidence_requirement,
+          na_reason: cell.na_reason,
+        }),
+      );
+
+      const envelope = cell.evidence_envelope;
+      const currentPass = Boolean(
+        envelope
+        && envelope.artifact_sha === currentSha
+        && envelope.probe_started === true
+        && envelope.exit_code === 0
+        && envelope.expired !== true,
+      );
+      const currentFailure = Boolean(
+        envelope
+        && envelope.artifact_sha === currentSha
+        && envelope.probe_started === true
+        && (
+          envelope.exit_code !== 0
+          || envelope.observed_result !== envelope.expected_result
+        ),
+      );
+      const currentScanNoMatch = Boolean(
+        envelope
+        && envelope.artifact_sha === currentSha
+        && envelope.inventory_scan_started === true
+        && Array.isArray(envelope.searched_paths)
+        && envelope.searched_paths.length > 0
+        && envelope.match_count === 0,
+      );
+      const matchedRules = [
+        cell.reason_code === 'requirement_undefined'
+          && cell.source_refs.length === 0
+          && cell.missing_evidence.includes('requirement_definition')
+          && !cell.assertion_ref
+          && currentScanNoMatch
+          ? 'gray' : null,
+        ['known_gap', 'probe_failed'].includes(cell.reason_code)
+          && cell.source_refs.length > 0
+          && cell.missing_evidence.length > 0
+          && (cell.reason_code === 'known_gap' ? Boolean(cell.known_gap_ref) : currentFailure)
+          ? 'red' : null,
+        ['awaiting_executable_evidence', 'evidence_expired'].includes(cell.reason_code)
+          && cell.source_refs.length > 0
+          && cell.missing_evidence.length > 0
+          && !currentPass
+          ? 'pending' : null,
+        cell.reason_code === 'verified'
+          && cell.source_refs.length > 0
+          && Boolean(cell.assertion_ref)
+          && cell.missing_evidence.length === 0
+          && currentPass
+          ? 'green' : null,
+        cell.reason_code === 'not_applicable'
+          && Boolean(cell.na_reason)
+          && cell.source_refs.length > 0
+          && !currentPass
+          ? 'na' : null,
+      ].filter(Boolean);
+
+      expect(cell.matched_status_rules).toEqual(matchedRules);
+      expect(matchedRules).toEqual([cell.cell_status]);
+      if (cell.cell_status === 'gray') grayCount += 1;
+      if (cell.element === 'FR' && cell.cell_status !== 'gray') nonGrayFrCount += 1;
+    }
+    expect(grayCount).toBeLessThan(143);
+    expect(nonGrayFrCount).toBe(13);
   });
 
   it('P0/P1 筛选与五态证据逐项机检', async () => {
@@ -226,10 +339,7 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
     const actualStatusCounts = Object.fromEntries(
       statuses.map((status) => [status, 0]),
     ) as Record<string, number>;
-    const elements = [
-      'FR', 'NFR', '不变量', '判定点', '保质期', '死亡告警',
-      '失败语义', '效果确认', '对抗面', '账本保鲜', '两轴衔接',
-    ];
+    const elements = EXACT_ELEMENTS;
     const seenIds = new Set<string>();
     for (const item of report.legacy_baseline) {
       expect(item.legacy_behavior_id).toBeTruthy();

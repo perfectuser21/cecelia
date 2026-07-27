@@ -6,9 +6,10 @@
     {
       "task_id": "ws1",
       "title": "原位建立 Cecelia Harness Pipeline F1 的 S0-S12 × 11 要素与 legacy 等价基线",
-      "scope": "保留现有 Journey 与全部历史关联，通过幂等 migration 建立 S0-S12 稳定名称/promise 和 143 格；以 engine 合同显式 P0/P1 为旧行为 seed，审计其对 hooks、DevGate/CI、Kernel gates 的可追踪引用并排除无定级边入口；以当前 SHA 真 probe 证据分类五态，用隔离 PostgreSQL 验收；派生报告非权威，不修改 merge/staging/production 行为。",
+      "scope": "保留现有 Journey 与全部历史关联，通过幂等 migration 建立 S0-S12 稳定名称/promise 和精确 11 键的 143 格；在唯一根合同逐格登记 reason/source/missing evidence 并以互斥事实门槛分类五态；以 engine 合同显式 P0/P1 为旧行为 seed，审计其对 hooks、DevGate/CI、Kernel gates 的可追踪引用并排除无定级边入口；以当前 SHA 真 probe 证据分类，用隔离 PostgreSQL 验收；派生报告非权威，不修改 merge/staging/production 行为。",
       "dod": [
-        "[BEHAVIOR] 隔离真 PostgreSQL 重放两次后仍只有原 Journey，历史 ID/Notion 不变，13 个 backbone stage 的稳定名称/promise 与 143 个 element cells 完整",
+        "[BEHAVIOR] 隔离真 PostgreSQL 重放两次后仍只有原 Journey，历史 ID/Notion 不变，13 个 backbone stage 的稳定名称/promise 与精确键 FR/NFR/Invariant/判定点/保质期/死亡告警/失败语义/效果确认/输入对抗面/账本保鲜/两轴衔接的 143 个 cells 完整",
+        "[BEHAVIOR] 143 格逐格具有 reason_code、source_refs、missing_evidence 与条件证据，且每格唯一命中自身 gray/red/pending/green/na 事实门槛；13 个 FR 非 gray，禁止全 gray 或任意非 green 假基线",
         "[BEHAVIOR] 四类 source inventory 满足 candidate=included+excluded，behavior 层 selected_seed=mapped_behavior；只有 engine 显式 P0/P1 seed 及其引用边入选，无定级边入口带 reason_code 排除",
         "[BEHAVIOR] active/shadowed/retired/drifted/unknown 均按当前 SHA 事实 envelope 条件式验证，auto 可判项不得 unknown 且全部 unknown 失败",
         "[BEHAVIOR] 非空 assertion_ref 只解析到根合同唯一可执行 entry，静态文档不能产生 green",
