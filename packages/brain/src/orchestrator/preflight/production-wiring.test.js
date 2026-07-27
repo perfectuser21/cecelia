@@ -924,10 +924,12 @@ describe('production capability wiring', () => {
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 
-  it('buildRealDeps reaches mandatory admission through the canonical Worker URL environment', async () => {
+  it('buildRealDeps preserves final dispatch-readiness failure from the canonical Worker URL', async () => {
     const workerUrl = 'http://us-fleet-worker.internal:5231';
     const fetchFn = vi.fn(async (url) => {
-      if (String(url) === `${workerUrl}/health`) return response(null);
+      if (String(url) === `${workerUrl}/health`) {
+        return response(admittedHealth());
+      }
       if (String(url).endsWith('/api/brain/capacity-budget')) {
         return response({
           fleet: [{
@@ -1002,7 +1004,7 @@ describe('production capability wiring', () => {
     expect(result).toMatchObject({
       status: 'DONE_WITH_CONCERNS',
       control_status: 'BLOCKED',
-      fallback_reason: 'node_not_base_admitted',
+      fallback_reason: 'node_not_dispatch_ready',
       should_create_attempt: false,
     });
     expect(attemptStore.createAttempt).not.toHaveBeenCalled();
