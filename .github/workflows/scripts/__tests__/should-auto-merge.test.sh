@@ -8,6 +8,11 @@ set -euo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/should-auto-merge.sh"
 WORKFLOW="$(cd "$(dirname "$0")/../.." && pwd)/ci.yml"
+AUTO_MERGE_JOB="$(awk '
+  /^  auto-merge:/ { capture=1; next }
+  capture && /^  [a-zA-Z0-9_-]+:/ { exit }
+  capture { print }
+' "$WORKFLOW")"
 PASS=0; FAIL=0
 
 # assert_decision <期望关键词> <描述> <head_branch> <pr_title>
@@ -49,6 +54,21 @@ if grep -Fq "if: always() && needs.ci-passed.result == 'success' && github.event
   echo "PASS: auto-merge 可越过 needs 链中的 skipped jobs"; PASS=$((PASS+1))
 else
   echo "FAIL: auto-merge 缺少 always()，会被 needs 链中的 skipped jobs 连带跳过"; FAIL=$((FAIL+1))
+fi
+
+# ci-passed 只覆盖本 workflow；Smoke Glob、CodeQL 等必需检查可能仍在运行。
+# 必须启用 GitHub 原生 auto-merge 排队，不能用短重试赌其他 workflow 已结束。
+if echo "$AUTO_MERGE_JOB" | grep -Fq 'gh pr merge "$PR_NUMBER" --auto --squash --delete-branch'; then
+  echo "PASS: auto-merge 排队等待全部分支保护条件"; PASS=$((PASS+1))
+else
+  echo "FAIL: auto-merge 未使用 --auto，会在其他 workflow 尚未完成时失败"; FAIL=$((FAIL+1))
+fi
+
+if echo "$AUTO_MERGE_JOB" | grep -Fq "contents: write" \
+  && echo "$AUTO_MERGE_JOB" | grep -Fq "pull-requests: write"; then
+  echo "PASS: auto-merge job 具备最小写权限"; PASS=$((PASS+1))
+else
+  echo "FAIL: auto-merge job 缺少启用原生 auto-merge 所需的写权限"; FAIL=$((FAIL+1))
 fi
 
 echo ""
