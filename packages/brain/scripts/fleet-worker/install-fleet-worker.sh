@@ -8,6 +8,7 @@ LABEL='com.perfect21.fleet-worker'
 INSTALL_DIR="${FLEET_WORKER_INSTALL_DIR:-/Library/LaunchDaemons}"
 LOG_DIR="${FLEET_WORKER_LOG_DIR:-/var/log/cecelia}"
 LAUNCHCTL="${FLEET_WORKER_LAUNCHCTL:-/bin/launchctl}"
+PLUTIL="${FLEET_WORKER_PLUTIL:-/usr/bin/plutil}"
 ID_COMMAND="${FLEET_WORKER_ID:-/usr/bin/id}"
 DEFAULT_NODE_PROBE="$SCRIPT_DIR/node-probe.cjs"
 NODE_PROBE="${FLEET_WORKER_NODE_PROBE:-$DEFAULT_NODE_PROBE}"
@@ -16,6 +17,11 @@ WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
 RUNNER_DIGEST=''
+LOCK_DIR=''
+BACKUP_DIR=''
+STAGED_WORKER=''
+STAGED_PROBE=''
+STAGED_PLIST=''
 
 case "$INSTALL_DIR" in
   */Library/LaunchDaemons)
@@ -175,24 +181,83 @@ render_plist() {
   )
 }
 
-install_runtime() {
-  local worker_temporary probe_temporary runtime_parent
+cleanup_transaction() {
+  [[ -z "$STAGED_WORKER" ]] || rm -f "$STAGED_WORKER"
+  [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
+  [[ -z "$STAGED_PLIST" ]] || rm -f "$STAGED_PLIST"
+  if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
+    rm -f "$BACKUP_DIR/worker" "$BACKUP_DIR/probe" "$BACKUP_DIR/plist"
+    rmdir "$BACKUP_DIR" 2>/dev/null || true
+  fi
+  [[ -z "$LOCK_DIR" ]] || rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+prepare_transaction_paths() {
+  local runtime_parent
 
   [[ ! -L "$RUNTIME_DIR" ]] || die "runtime_path_invalid"
   runtime_parent="$(dirname "$RUNTIME_DIR")"
   mkdir -p "$RUNTIME_DIR"
   chmod 0755 "$runtime_parent" "$RUNTIME_DIR"
-  worker_temporary="$(mktemp "$RUNTIME_DIR/.fleet-worker.cjs.XXXXXX")"
-  probe_temporary="$(mktemp "$RUNTIME_DIR/.node-probe.cjs.XXXXXX")"
-  (
-    trap 'rm -f "$worker_temporary" "$probe_temporary"' EXIT
-    cp "$WORKER_SOURCE" "$worker_temporary"
-    cp "$PROBE_SOURCE" "$probe_temporary"
-    chmod 0755 "$worker_temporary"
-    chmod 0644 "$probe_temporary"
-    mv "$probe_temporary" "$RUNTIME_DIR/node-probe.cjs"
-    mv "$worker_temporary" "$WORKER_SCRIPT"
-  )
+  LOCK_DIR="$INSTALL_DIR/.fleet-worker.install.lock"
+  mkdir "$LOCK_DIR" 2>/dev/null || die "install_locked"
+  trap cleanup_transaction EXIT
+  BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleet-worker-backup.XXXXXX")"
+  STAGED_WORKER="$(mktemp "$RUNTIME_DIR/.fleet-worker.cjs.XXXXXX")"
+  STAGED_PROBE="$(mktemp "$RUNTIME_DIR/.node-probe.cjs.XXXXXX")"
+  STAGED_PLIST="$(mktemp "$INSTALL_DIR/.fleet-worker.plist.XXXXXX")"
+}
+
+stage_generation() {
+  cp "$WORKER_SOURCE" "$STAGED_WORKER"
+  cp "$PROBE_SOURCE" "$STAGED_PROBE"
+  chmod 0755 "$STAGED_WORKER"
+  chmod 0644 "$STAGED_PROBE"
+  render_plist "$STAGED_PLIST"
+  "$PLUTIL" -lint "$STAGED_PLIST" >/dev/null 2>&1 \
+    || die "plist_validation_failed"
+}
+
+file_mode() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    Linux) stat -c '%a' "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+snapshot_file() {
+  local source="$1"
+  local backup="$2"
+
+  [[ ! -L "$source" ]] || die "install_path_invalid"
+  if [[ -e "$source" ]]; then
+    [[ -f "$source" ]] || die "install_path_invalid"
+    cp "$source" "$backup"
+    file_mode "$source"
+  else
+    printf 'absent'
+  fi
+}
+
+restore_file() {
+  local target="$1"
+  local backup="$2"
+  local mode="$3"
+  local temporary
+
+  if [[ "$mode" == 'absent' ]]; then
+    rm -f "$target"
+    return
+  fi
+
+  temporary="$(mktemp "$(dirname "$target")/.fleet-worker.rollback.XXXXXX")" \
+    || return 1
+  if ! cp "$backup" "$temporary" || ! chmod "$mode" "$temporary"; then
+    rm -f "$temporary"
+    return 1
+  fi
+  mv "$temporary" "$target"
 }
 
 prepare_logs() {
@@ -260,13 +325,60 @@ fi
 installed_plist="$INSTALL_DIR/$LABEL.plist"
 [[ ! -L "$INSTALL_DIR" && ! -L "$installed_plist" ]] || die "install_path_invalid"
 mkdir -p "$INSTALL_DIR"
-install_runtime
 prepare_logs
-staged="$(mktemp "${TMPDIR:-/tmp}/fleet-worker.plist.XXXXXX")"
-trap 'rm -f "$staged"' EXIT
-render_plist "$staged"
-cp "$staged" "$installed_plist"
-chmod 0644 "$installed_plist"
-"$LAUNCHCTL" bootstrap system "$installed_plist"
-"$LAUNCHCTL" kickstart -k "system/$LABEL"
+prepare_transaction_paths
+stage_generation
+
+prior_worker_mode="$(snapshot_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker")"
+prior_probe_mode="$(
+  snapshot_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe"
+)"
+prior_plist_mode="$(snapshot_file "$installed_plist" "$BACKUP_DIR/plist")"
+had_prior_service=false
+[[ "$prior_plist_mode" == 'absent' ]] || had_prior_service=true
+
+if [[ "$had_prior_service" == true ]]; then
+  "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
+fi
+
+placement_ok=true
+mv "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || mv "$STAGED_WORKER" "$WORKER_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || mv "$STAGED_PLIST" "$installed_plist" \
+  || placement_ok=false
+
+launch_ok="$placement_ok"
+if [[ "$launch_ok" == true ]]; then
+  "$LAUNCHCTL" bootstrap system "$installed_plist" >/dev/null 2>&1 \
+    || launch_ok=false
+fi
+if [[ "$launch_ok" == true ]]; then
+  "$LAUNCHCTL" kickstart -k "system/$LABEL" >/dev/null 2>&1 \
+    || launch_ok=false
+fi
+
+if [[ "$launch_ok" != true ]]; then
+  "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
+  rollback_ok=true
+  restore_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker" "$prior_worker_mode" \
+    || rollback_ok=false
+  restore_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe" "$prior_probe_mode" \
+    || rollback_ok=false
+  restore_file "$installed_plist" "$BACKUP_DIR/plist" "$prior_plist_mode" \
+    || rollback_ok=false
+  if [[ "$had_prior_service" == true ]]; then
+    "$LAUNCHCTL" bootstrap system "$installed_plist" >/dev/null 2>&1 \
+      || rollback_ok=false
+    "$LAUNCHCTL" kickstart -k "system/$LABEL" >/dev/null 2>&1 \
+      || rollback_ok=false
+  fi
+  if [[ "$rollback_ok" == true ]]; then
+    die "install_failed_rolled_back"
+  fi
+  die "install_failed_rollback_incomplete"
+fi
+
 echo "installed: system/$LABEL for $machine_id"
