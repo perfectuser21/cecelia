@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 6)
+# Sprint Contract Draft (Round 7)
 
 ## 合同边界
 
@@ -7,9 +7,9 @@
 - 优先复用现有 `initiative_runs`、`tasks.payload`、`orchestrator_decision_log` 字段；除非生成器证明现有结构无法承载 `approved_by/pr_head_sha/source/timestamp/repo/pr_number`，否则禁止新增 migration。
 - `contract-gate`: enabled（`packages/brain/src/lib/contract-gate.js` 存在）。
 
-## Response Schema（推导来源: NEW_PATTERN）
+## Response Schema（推导来源: PRD字面 + api_registry对齐）
 
-补充说明：registry 当前可读，但未发现可直接复用的 Kernel approvals endpoint 定义，因此本 sprint 的 approve/reject response schema 以 PRD 字面约束为准，并保持现有 snake_case 风格。
+补充说明：`/api/brain/registry` 当前可读但照相层已陈旧（最近扫描时间 2026-07-18，距今约 212 小时），且未发现可直接复用的 Kernel approvals endpoint 定义，因此本 sprint 的 approve/reject response schema 以 PRD 字面约束为准，并仅对齐现有 snake_case 风格。
 
 ### Endpoint: POST /api/brain/harness/kernel-reviews/:runId/approve
 **Success (HTTP 202)**:
