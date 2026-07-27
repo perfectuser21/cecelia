@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
 import { runMigrations } from '../../migrate.js';
+import { createActorInbox } from '../../orchestrator/actor-inbox.js';
 
 const migrationsUrl = new URL('../../../migrations/', import.meta.url);
 const schemaName = `commander_367_${process.pid}_${randomUUID().replaceAll('-', '')}`;
@@ -162,6 +163,73 @@ describe('migration 367 through the real PostgreSQL migration runner', () => {
     );
     expect(cursors.rows.filter((row) => row.run_id === runA).map((row) => row.cursor)).toEqual(['1', '2']);
     expect(cursors.rows.filter((row) => row.run_id === runB).map((row) => row.cursor)).toEqual(['1']);
+  });
+
+  it('persists immutable Actor messages, delivery state, budgets, and resumable actor cursors', async () => {
+    const runId = randomUUID();
+    await migrationPool.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await migrationPool.query(
+      `INSERT INTO harness_commander_state (
+         run_id,message_budget,message_token_budget
+       ) VALUES ($1,2,1000)`,
+      [runId],
+    );
+
+    const message = {
+      schema: 'harness-actor-message/v1',
+      message_id: randomUUID(),
+      run_id: runId,
+      sender_role: 'commander',
+      recipient_role: 'planner',
+      thread_id: randomUUID(),
+      correlation_id: randomUUID(),
+      source_attempt_id: null,
+      event_cursor: 1,
+      message_type: 'instruction',
+      payload: { guidance: 'Preserve the approved contract.' },
+      evidence_refs: ['event:1'],
+      dedupe_key: 'commander:planner:1',
+    };
+    const inbox = createActorInbox(migrationPool, { estimateTokens: () => 10 });
+    const first = await inbox.send(message);
+    const replay = await inbox.send(message);
+    expect(replay.message_id).toBe(first.message_id);
+    expect(await inbox.list({
+      runId,
+      actorKey: 'planner',
+      afterCursor: 0,
+      limit: 100,
+    })).toHaveLength(1);
+
+    await inbox.markDelivered({ runId, actorKey: 'planner', messageId: first.message_id });
+    await inbox.ack({ runId, actorKey: 'planner', messageId: first.message_id });
+    expect(await createActorInbox(migrationPool).getCursor(runId, 'planner')).toBe(
+      first.message_cursor,
+    );
+
+    await inbox.send({
+      ...message,
+      message_id: randomUUID(),
+      correlation_id: randomUUID(),
+      dedupe_key: 'commander:planner:2',
+    });
+    await expect(inbox.send({
+      ...message,
+      message_id: randomUUID(),
+      correlation_id: randomUUID(),
+      dedupe_key: 'commander:planner:3',
+    })).rejects.toThrow('actor_message_budget_exceeded');
+
+    const persisted = await migrationPool.query(
+      `SELECT message_count,message_token_count
+         FROM harness_commander_state
+        WHERE run_id=$1`,
+      [runId],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      message_count: 2,
+      message_token_count: 20,
+    });
   });
 
   it('is idempotent through the migration runner', async () => {
