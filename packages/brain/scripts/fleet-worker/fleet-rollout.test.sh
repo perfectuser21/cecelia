@@ -373,6 +373,8 @@ done
 node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
 [[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
   || fail "public TERM after undrain did not restore drain: $node_sequence"
+grep -Eq '^sudo -n /bin/kill -s TERM [0-9]+$' "$transport_log" \
+  || fail "public TERM was not forwarded across the sudo ownership boundary"
 
 : > "$node_log"
 if CECELIA_MACHINE_ID=us-mac-m4 \
