@@ -1,35 +1,127 @@
 {
   "initiative_id": "aca9fb2e-dbb9-4c26-af75-efba5ba9fdab",
   "journey_type": "agent_remote",
-  "journey_type_reason": "核心 Golden Path 跨 Brain、真实 Fleet Worker、exact Runner、OrbStack/macOS、Postgres、GitHub exact-head 与 Kernel 子进程接缝。",
+  "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；按 R7 审计将 12 个 gate 串成线性依赖。",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "交付 P0 Kernel Fleet durable bootstrap recovery 闭环",
-      "scope": "在冻结基线 dd424a619 上完成 Brain image 自包含、原子 Runner/Profile/Worker/schema、Mac 安装事务、phase-aware transport、canonical artifact transfer、Kernel truthful readiness/watchdog、Worker-first rollout、US canary、owner gate 与 rollback drain。",
-      "dod": [
-        "[BEHAVIOR] built image 在无 worktree mount 下导入 orchestrator 并加载三个 immutable profile，missing-config mutation 必须失败",
-        "[BEHAVIOR] 真实 US Attempt 完成 single-use secret、Git auth、stdout、callback、canonical commit transfer 与 residue=0",
-        "[BEHAVIOR] Kernel 初启与 watchdog 只在 ready ownership handshake + 真 Postgres heartbeat 后成功，恢复严格一次",
-        "[BEHAVIOR] Worker admission 失败阻断 Brain publication；exact-head owner approval 前 PR 保持 Draft 且 auto-merge off",
-        "[ARTIFACT] migration 367+、Brain 版本/DEFINITION、真实 integration/mutation/canary/rollback 脚本"
-      ],
-      "files": [
-        "packages/brain/Dockerfile",
-        "packages/brain/config/fleet-node-profiles.json",
-        "packages/brain/src/harness-skill-relay.js",
-        "packages/brain/src/harness-relay-watchdog.js",
-        "packages/brain/src/orchestrator/",
-        "packages/brain/migrations/367+",
-        "packages/brain/scripts/fleet-worker/",
-        "packages/engine/runners/codex/runner.sh",
-        "packages/brain/DEFINITION.md",
-        "scripts/kernel-fleet/",
-        "scripts/ci/"
-      ],
+      "title": "Gate 1：Brain image 自包含",
+      "scope": "构建 immutable Brain image，并在无 worktree mount 时导入 orchestrator、加载三个 profile。",
+      "dod": ["[BEHAVIOR] built image 加载 3/3 profile，missing-config 反事实非零", "[ARTIFACT] Dockerfile 与 built-image smoke"],
+      "files": ["packages/brain/Dockerfile", "scripts/ci/verify-brain-image-self-contained.sh"],
       "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws2",
+      "title": "Gate 2：原子 release 与 per-attempt snapshot",
+      "scope": "锁定 Runner digest、profile、Worker generation、runtime UID/GID、协议能力和 transport schema，并冻结每个 Attempt 的 immutable snapshot。",
+      "dod": ["[BEHAVIOR] concurrent profile upgrade 不改变已创建 Attempt snapshot", "[BEHAVIOR] migration 367+ 真 PG upgrade/rollback parity"],
+      "files": ["packages/brain/config/fleet-node-profiles.json", "packages/brain/migrations/", "packages/brain/src/orchestrator/fleet-release-contract.js"],
+      "depends_on": ["ws1"],
       "complexity": "L",
-      "estimated_minutes": 120
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws3",
+      "title": "Gate 3：macOS installer 可回滚事务",
+      "scope": "在真实 macOS/OrbStack 身份边界交付 Docker-visible root、最小 ACL、身份、TMPDIR、plist/scripts/toolchain/credential-envelope 的 journaled transaction。",
+      "dod": ["[BEHAVIOR] 每个 mutation 独立失败且 rollback 仅撤销本次变更"],
+      "files": ["packages/brain/scripts/fleet-worker/install-fleet-worker.sh", "packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh"],
+      "depends_on": ["ws2"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws4",
+      "title": "Gate 4：真实 Worker admission",
+      "scope": "使 authenticated health 使用真实 Attempt 的 root/mount/ACL/UID/GID/secret/cleanup 合同，并在 Agent 前验证 stdout 可写和 GitHub auth。",
+      "dod": ["[BEHAVIOR] base_admitted 与 dispatch_ready 匹配 exact generation/digest", "[BEHAVIOR] stdout 或 GitHub auth 不可用时 Agent 未启动"],
+      "files": ["packages/brain/scripts/fleet-worker/fleet-worker.cjs", "packages/brain/scripts/fleet-worker/attempt-runner.cjs"],
+      "depends_on": ["ws3"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws5",
+      "title": "Gate 5：生产 preflight 与语义锚点",
+      "scope": "fail closed 校验 remote/callback、URL 可达、immutable profile 及真实 DevOps Map journey/golden-path/step existence 和 ownership。",
+      "dod": ["[BEHAVIOR] 虚构 UUID、ownership 错误、task_id 等于 run_id、不可达 URL 均失败"],
+      "files": ["packages/brain/src/anchor-check.js", "scripts/kernel-fleet/verify-production-preflight.sh"],
+      "depends_on": ["ws4"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws6",
+      "title": "Gate 6：phase-aware transport",
+      "scope": "实现 accepted/startup lease、分阶段预算、idempotency、cancel 和 truthful timeout evidence。",
+      "dod": ["[BEHAVIOR] slow mirror/image/secret 各有独立 code，active Attempt/provider/container 至多一个"],
+      "files": ["packages/brain/src/orchestrator/remote-bridge-transport.js", "packages/brain/scripts/fleet-worker/fleet-worker.cjs"],
+      "depends_on": ["ws5"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws7",
+      "title": "Gate 7：secret、Git auth、artifact handoff 与反向 cleanup",
+      "scope": "完成 Docker-mediated single-use secret、attempt-scoped brokered GitHub auth、stdout、authenticated callback/commit transfer，并在真实 Runner 写嵌套 ignored 内容后 residual zero。",
+      "dod": ["[BEHAVIOR] callback artifact SHA/branch/task ownership 真验后才 cleanup", "[BEHAVIOR] reverse cleanup 无 quarantine、无残留、无 shared-root 广泛权限变更"],
+      "files": ["packages/brain/scripts/fleet-worker/attempt-runner.cjs", "packages/brain/src/orchestrator/canonical-artifact-transfer.js", "packages/engine/runners/codex/runner.sh"],
+      "depends_on": ["ws6"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws8",
+      "title": "Gate 8：Kernel truthful readiness",
+      "scope": "在 spawn 前拒绝坏 worktree，并以真实 child ownership frame 与真 PG initial heartbeat 判 ready，提供有界脱敏诊断。",
+      "dod": ["[BEHAVIOR] real child+PG 正控通过，early exit/no-ready/spawn-error/timeout 失败"],
+      "files": ["packages/brain/src/harness-skill-relay.js", "packages/brain/src/kernel-launch-readiness.js"],
+      "depends_on": ["ws7"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws9",
+      "title": "Gate 9：Watchdog truthful recovery",
+      "scope": "初启与 watchdog 复用 readiness；补 ESRCH-only local liveness 和 live/unknown fail-open；恢复严格一次。",
+      "dod": ["[BEHAVIOR] 失败轮 resumed=0，成功轮 resumed=1 且 replacement/provider/event 各一", "[BEHAVIOR] same-host live PID 与 unknown host 不被判死"],
+      "files": ["packages/brain/src/harness-relay-watchdog.js", "packages/brain/src/orchestrator/kernel-liveness.js"],
+      "depends_on": ["ws8"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws10",
+      "title": "Gate 10：Worker-first publication gate",
+      "scope": "强制 Worker install/health/admission 完成后才生成可发布 Brain candidate；失败 publication count=0。",
+      "dod": ["[BEHAVIOR] worker_admitted 严格早于 brain_candidate_publishable"],
+      "files": ["packages/brain/scripts/fleet-worker/fleet-rollout.sh", "scripts/kernel-fleet/verify-worker-first-rollout.sh"],
+      "depends_on": ["ws9"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws11",
+      "title": "Gate 11：exact-head 人工授权与严格发布顺序",
+      "scope": "统一 Draft-before-evaluation、CI→Evaluator/Judge→exact-head owner approval→merge 门；禁止 auto-merge、stale-head 与生产抢跑。",
+      "dod": ["[BEHAVIOR] CI-only/non-owner/stale-head 均保持 Draft 且 merge count=0", "[BEHAVIOR] staging 与 production 在 authorized merge 后才能开始"],
+      "files": ["packages/brain/src/orchestrator/exact-head-owner-gate.js", "scripts/kernel-fleet/verify-owner-gate-and-rollback.sh"],
+      "depends_on": ["ws10"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws12",
+      "title": "Gate 12：merge 后 staging、production canary 与 rollback drain",
+      "scope": "authorized merge 后先真实 US staging recovery，再 production canary；rollback 精确恢复旧构件并 drain Kernel 至 roll-forward。",
+      "dod": ["[BEHAVIOR] merge→staging E2E→production canary 严格有序且唯一 replacement/heartbeat/resumed/dispatch 成功", "[BEHAVIOR] rollback diff=0 且 Kernel dispatch 保持 drained"],
+      "files": ["scripts/kernel-fleet/run-us-durable-recovery-canary.sh", "packages/brain/DEFINITION.md", "packages/brain/package.json"],
+      "depends_on": ["ws11"],
+      "complexity": "L",
+      "estimated_minutes": 60
     }
   ]
 }
