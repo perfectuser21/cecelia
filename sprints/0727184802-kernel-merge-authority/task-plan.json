@@ -10,21 +10,25 @@
       "dod": [
         "[BEHAVIOR] approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict",
         "[BEHAVIOR] approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail",
+        "[BEHAVIOR] reject route 记录含 rejected_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail",
         "[BEHAVIOR] reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict",
         "[BEHAVIOR] review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并",
         "[BEHAVIOR] mergeGate 对 stale human approval fail-closed 并要求重跑证据链",
         "[BEHAVIOR] merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha",
         "[BEHAVIOR] 标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority",
+        "[BEHAVIOR] finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed",
         "[ARTIFACT] 合同测试文件覆盖 approve/reject、ownership resolver、merge lock、旧 CI 脚本"
       ],
       "files": [
         "packages/brain/src/routes/harness-kernel-approvals.js",
         "packages/brain/src/harness-ci-gate.js",
+        "packages/brain/src/lib/harness-finalize.js",
         "packages/brain/src/orchestrator/ground-truth.js",
         "packages/brain/src/orchestrator/gates.js",
         "packages/brain/src/orchestrator/kernel-handlers.js",
         ".github/workflows/scripts/should-auto-merge.sh",
         "packages/brain/src/routes/__tests__/harness-kernel-approvals.test.js",
+        "packages/brain/src/lib/__tests__/harness-finalize.test.js",
         "packages/brain/src/orchestrator/__tests__/kernel-handlers.test.js",
         "packages/brain/src/orchestrator/__tests__/ground-truth.test.js",
         "sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts"

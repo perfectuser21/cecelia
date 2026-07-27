@@ -10,6 +10,7 @@ import { DB_DEFAULTS } from '../../../packages/brain/src/db-config.js';
 import approvalRouter from '../../../packages/brain/src/routes/harness-kernel-approvals.js';
 import { mergeGate } from '../../../packages/brain/src/orchestrator/gates.js';
 import { createKernelHandlers } from '../../../packages/brain/src/orchestrator/kernel-handlers.js';
+import { finalizeHarnessTask } from '../../../packages/brain/src/lib/harness-finalize.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../packages/brain/', import.meta.url));
@@ -234,6 +235,38 @@ describe('kernel merge authority contract red tests', () => {
       expect(mismatch.status).toBe(409);
       expect(await approvalRows(mismatchRun.runId)).toHaveLength(0);
     });
+
+    it('reject route 记录含 rejected_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+      const run = await seedRun();
+      await appendReviewRequest(run.runId, HEAD_SHA);
+      const app = createApp(HEAD_SHA);
+
+      const response = await request(app)
+        .post(`/api/brain/harness/kernel-reviews/${run.runId}/reject`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          rejected_by: 'alex',
+        });
+
+      expect(response.status).toBe(202);
+      const approvals = await approvalRows(run.runId);
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0].detail).toMatchObject({
+        rejected_by: 'alex',
+        pr_head_sha: HEAD_SHA,
+        source: 'authenticated_route',
+        timestamp: expect.any(String),
+        repo: REPO,
+        pr_number: PR_NUMBER,
+        run_id: run.runId,
+      });
+    });
   });
 
   it('review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并', () => {
@@ -323,5 +356,45 @@ describe('kernel merge authority contract red tests', () => {
       pr_number: PR_NUMBER,
       run_id: randomUUID(),
     })).toEqual({ kernelOwned: false, reason: 'missing_head_sha' });
+  });
+
+  it('finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed', async () => {
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM tasks')) {
+          return {
+            rows: [{
+              id: randomUUID(),
+              status: 'in_progress',
+              task_type: 'harness_initiative',
+              pr_url: PR_URL,
+              payload: {
+                orchestrator: 'skill-relay',
+                base_repo: 'https://github.com/perfectuser21/cecelia',
+                review_required: true,
+              },
+            }],
+          };
+        }
+        if (sql.includes('FROM initiative_run_events')) {
+          return { rows: [{ x: 1 }] };
+        }
+        if (sql.includes('UPDATE tasks') && sql.includes('generator_done')) {
+          return { rowCount: 1, rows: [] };
+        }
+        return { rows: [] };
+      }),
+    };
+
+    const result = await finalizeHarnessTask('task-finalize-red', {
+      pool,
+      ghFn: vi.fn(async (args: string[]) => {
+        if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ state: 'MERGED' });
+        throw new Error(`unexpected gh args: ${args.join(' ')}`);
+      }),
+    });
+
+    expect(result).toMatchObject({ applies: true, allow: false });
+    expect(String(result.reason)).toMatch(/human_review|review|judge/i);
   });
 });

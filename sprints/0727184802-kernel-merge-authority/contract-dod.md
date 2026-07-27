@@ -30,6 +30,12 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail"'
   期望: exit 0
 
+- [ ] [BEHAVIOR] [L2] reject route 记录含 rejected_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail
+  动作: 对 reject route 发送完整 `task_id/repo/pr_number/pr_head_sha/review_request_hop` 请求。
+  预期观察: 返回 202，并写入 `rejected_by/pr_head_sha/source/timestamp/repo/pr_number/run_id` 完整 detail。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route 记录含 rejected_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail"'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict
   动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/reject` 先发送过期 `pr_head_sha`，再发送 `repo/pr_number` 不匹配的 authenticated 请求。
   预期观察: 两次请求都返回 409，`orchestrator_decision_log` 不新增 reject verdict。
@@ -64,6 +70,12 @@ target_environment: local_api
   动作: 调用 server-owned ownership resolver，对缺字段与完整 tuple 分别判定。
   预期观察: 缺字段/普通 PR fail-closed，只有完整 tuple 才返回 `{ kernelOwned: true }`。
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed
+  动作: 调用 legacy finalize caller，构造 `PR MERGED + evaluator gate 已过` 但 `review_required=true` 且缺当前 SHA `human_review/judge` 的输入。
+  预期观察: finalize 返回 `allow=false`，并记录必须回到当前 head 证据链。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed"'
   期望: exit 0
 
 ## 铁律映射（Step 1.3）
