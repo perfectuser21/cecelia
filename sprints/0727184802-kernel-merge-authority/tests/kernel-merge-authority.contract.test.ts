@@ -161,6 +161,24 @@ describe('kernel merge authority contract red tests', () => {
 
     expect(response.status).toBe(409);
     expect(state.insertedDetail).toBeNull();
+
+    const { database: mismatchDb, state: mismatchState } = createApprovalDatabase();
+    (mismatchDb as { state?: unknown }).state = mismatchState;
+    const mismatchApp = createApp(mismatchDb);
+    const mismatch = await request(mismatchApp)
+      .post(`/api/brain/harness/kernel-reviews/${RUN_ID}/reject`)
+      .set('x-approver-token', APPROVER_TOKEN)
+      .send({
+        task_id: TASK_ID,
+        repo: 'perfectuser21/other-repo',
+        pr_number: PR_NUMBER,
+        pr_head_sha: HEAD_SHA,
+        review_request_hop: 3,
+        rejected_by: 'alex',
+      });
+
+    expect(mismatch.status).toBe(409);
+    expect(mismatchState.insertedDetail).toBeNull();
   });
 
   it('review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并', () => {
