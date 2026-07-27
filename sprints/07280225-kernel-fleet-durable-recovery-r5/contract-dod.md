@@ -5,7 +5,7 @@ target_environment: linux_server
 ---
 # Contract DoD — Durable Fleet Worker bootstrap 与 Kernel 恢复闭环
 
-**范围**: PRD Golden Path 第 1-12 步 + R15 result channel + R16-R23 F1 S0-S12×11 lifecycle/current-run/canonical legacy exact-set/provider activation SSOT；一个 Draft PR、一个 immutable exact head、一个 fail-safe release boundary。
+**范围**: PRD Golden Path 第 1-12 步 + R15 result channel + R16-R27 F1 S0-S12×11 lifecycle、receipt-derived exact-set、originating-attempt lineage、真实 startup/GitHub authority SSOT；一个 Draft PR、一个 immutable exact head、一个 fail-safe release boundary。
 **大小**: L
 
 ## ARTIFACT 条目
@@ -31,8 +31,10 @@ target_environment: linux_server
 - [ ] [ARTIFACT] TaskBundle/Worker/Runner/callback finalizer 共享 attempt-scoped result-channel schema，且不再把 source `.brain-result.json` 作为权威 fallback。
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/scripts/fleet-worker/result-channel-proof.cjs','scripts/kernel-fleet/run-result-channel-proof.sh'])fs.accessSync(p)"
 
-- [ ] [ARTIFACT] lifecycle legacy exact-set 与 provider activation 共用 canonical applicability manifest，固定 1161 legacy keys 和 18 F01/F06 family-level keys。
-  Test: node -e "const fs=require('fs');for(const p of ['packages/brain/config/kernel-policy-applicability.json','scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh','scripts/kernel-fleet/verify-provider-policy-activation.sh'])fs.accessSync(p)"
+- [ ] [ARTIFACT] lifecycle legacy exact-set、provider activation 与 CredentialEnvelope 共用 canonical applicability manifest，固定 1161 legacy receipt bodies、18 F01/F06 family receipt bodies、24 credential receipt bodies。
+  Test: node -e "const fs=require('fs');for(const p of ['packages/brain/config/kernel-policy-applicability.json','scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh','scripts/kernel-fleet/verify-provider-policy-activation.sh','scripts/kernel-fleet/verify-provider-credential-envelope.sh'])fs.accessSync(p)"
+- [ ] [ARTIFACT] Claude、Codex、Grok Runner/adapter 均接入同一 provider-neutral CredentialEnvelope 边界。
+  Test: node -e "const fs=require('fs');for(const p of ['packages/engine/runners/claude/runner.sh','packages/engine/runners/codex/runner.sh','packages/engine/runners/grok/runner.sh'])fs.accessSync(p)"
 
 ## BEHAVIOR 条目
 
@@ -78,9 +80,9 @@ target_environment: linux_server
   验证命令: Test: manual:bash bash scripts/kernel-fleet/run-real-attempt-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
   期望: exit 0；private `/var/lib`、missing ACL、RO/RW、symlink/out-of-root/wrong UUID/group mismatch、absent reader、bad auth、cleanup-before-transfer、legacy/concurrency/failure-forensics counterfactual 全部有独立非零/预期 receipt。
 
-- [ ] [BEHAVIOR] [L2] Golden Path Step 8 — rejects invalid worktree before spawn
-  动作: 在真 Postgres migration 367+ 上并发创建 active run，并从 startup/watchdog/manual 同时调用同一 ensureKernelController；对坏 worktree 调真实 launcher，运行 real child lease+dependency+ownership+fenced heartbeat 正控，再让旧 generation 写入。
-  预期观察: 每个 run 仅一个 owner/generation；坏路径在 spawn 前拒绝；async error/early exit/no-ready/timeout/lease_busy 失败；正控只在 heartbeat 持久化后 resolve；旧 generation 的 heartbeat/intent/dispatch/merge/control 全拒绝。
+- [ ] [BEHAVIOR] [L2] Golden Path Step 8 — exact orchestrator entrypoint owns lease and heartbeat
+  动作: 在真 Postgres migration 367+ 上并发创建 isolated active run，并从 startup/watchdog/manual 同时调用同一 ensureKernelController；坏 worktree 调真实 launcher；正控启动 built image 或 exact `packages/brain/src/orchestrator/run.js`，让 child 真构造依赖、拿 owner/generation lease、写 fenced heartbeat；parent 独立查 PG。另启动只发 ready frame、无 DB lease/heartbeat 的 spoof child。
+  预期观察: 每个 run 仅一个 owner/generation；坏路径在 spawn 前拒绝；async error/early exit/no-ready/timeout/lease_busy/spoof frame 失败；正控只在 DB owner/generation/ready_at/heartbeat 与 child 匹配后 resolve；旧 generation 的 heartbeat/intent/dispatch/merge/control 全拒绝。
   验证命令: Test: manual:bash bash -c 'DB_URL="${DB_URL:?}" npx vitest run packages/brain/src/__tests__/kernel-launch-readiness.integration.test.js --reporter=verbose'
   期望: exit 0；诊断≤2048 bytes 且 secret sentinel 不出现。
 
@@ -91,8 +93,8 @@ target_environment: linux_server
   期望: exit 0；不重置状态且时间真实流逝。
 
 - [ ] [BEHAVIOR] [L3] Golden Path Step 10 — Draft CI Evaluator Judge are evidence-only
-  动作: 用签名 task/PR P0 classification 在真实 Draft exact head 运行 unified workflow、built-image smoke 四消费方与隔离 candidate Worker；修改 title/label、提供旧 Harness green、缺 remote/callback config、未 attested rollback image。
-  预期观察: 事件仅为 `ci,evaluator,judge`；required check 绑定 run/check-suite/head/actor/repository-rule snapshot；PR 仍 Draft、auto-merge off；candidate proof 前后 serving state byte-identical；所有 mutation 无 merge/staging/production/semantic Attempt。
+  动作: 用签名 task/PR P0 classification 在真实 Draft exact head 运行 unified workflow、built-image smoke 四消费方与隔离 candidate Worker；通过 GitHub API 回读真实 run/check-suite/head/actor/签名 rules snapshot；修改 title/label、提供旧 Harness green、缺 remote/callback config、未 attested rollback image。
+  预期观察: 事件仅为 `ci,evaluator,judge`；required check 的 run/check-suite/head/actor/rules snapshot 均经 GitHub API 验证，合成 JS array/boolean 被拒；PR 仍 Draft、auto-merge off；candidate proof 前后 serving state byte-identical；所有 mutation 无 merge/staging/production/semantic Attempt。
   验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-p0-workflow-contract.sh draft-evidence "$PR_NUMBER" "$PR_HEAD_SHA"
   期望: exit 0；Evaluator/Judge 不读取 owner approval、不 merge、不 deploy。
 
@@ -109,34 +111,34 @@ target_environment: linux_server
   期望: exit 0；合并前为 `logic-done-pending`，合并后真实目标通过才 done。
 
 - [ ] [BEHAVIOR] [L3] Golden Path Step 7A — read-only Runner result channel
-  动作: 在 exact pinned Runner 以 read-only source checkout 启动 reviewer，TaskBundle 指定 attempt runtime 内 immutable `callback_result_path`，Worker 在 Agent 前创建空路径、探测可写 mount 并注入同一路径的 `BRAIN_RESULT_FILE`；source 中预置一个旧 `.brain-result.json`，并逐个运行 missing/EROFS/source-stale/wrong-attempt/wrong-run/wrong-role/wrong-contract/head/symlink/oversize/malformed mutation。
-  预期观察: 正控 within Attempt deadline 只向注入路径写入并由 callback finalizer 验 schema+task/attempt/run/role/contract/head/hash；receipt 在 cleanup 前持久化。旧 source result、stdout prose 与其他路径被忽略。所有 mutation fail closed、diagnostic≤2048 bytes，pre-Agent 不可写时 Agent-start=0、semantic/GAN budget delta=0。
-  验证命令: Test: manual:bash bash scripts/kernel-fleet/run-result-channel-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
+  动作: 在 exact pinned Runner 以 read-only source checkout 启动 reviewer，把当前 proof Agent 的 TASK_ID/RUN_ID/ATTEMPT_ID/CONTRACT_SHA/role/head 传入 Worker；TaskBundle 指定 attempt runtime 内 immutable `callback_result_path`，Worker 在 Agent 前创建空路径、探测可写 mount 并注入 `BRAIN_RESULT_FILE`；source 中预置旧 `.brain-result.json`，运行全部 binding/path mutation。
+  预期观察: 正控 within Attempt deadline 只向注入路径写入且 receipt 的 attempt/contract/role/run/head 与调用输入逐字相等，不能接受模块自造自洽 ID；receipt 在 cleanup 前持久化。旧 source result、stdout prose与其他路径被忽略。所有 mutation fail closed、diagnostic≤2048 bytes，pre-Agent 不可写时 Agent-start=0、semantic/GAN budget delta=0。
+  验证命令: Test: manual:bash bash scripts/kernel-fleet/run-result-channel-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$TASK_ID" "$RUN_ID" "$ATTEMPT_ID" "$CONTRACT_SHA" "$PR_HEAD_SHA" reviewer
   期望: exit 0；success/timeout/crash/cancel 在 receipt 持久化后 result/credential residual=0。
 
 - [ ] [BEHAVIOR] [L2] Golden Path Step 12A — canonical S0-S12 x 11 manifest parity
   动作: 在 fresh 与 production-like 真 Postgres 对 migration 368+ upgrade/rollback，原位升级 F1 六步 rows；从同一 manifest 生成/回读 DB、root regression contract、runtime API/report，并运行 gray/null/second-journey/cell-missing mutations。
-  预期观察: stages=13、elements=11、cells=143、gray/null=0；existing F1 journey count 不增；manifest/DB/regression/API/report SHA 完全相同；每 cell 是 pass、na_with_reason、typed_pending 或 typed_blocked，缺 evidence 不得 pass。
+  预期观察: stages=13、elements=11、exact cross-product cells=143；existing F1 journey count 不增；manifest/DB/regression/API/report SHA 完全相同；终态每 cell 仅 pass 或带独立 review receipt 的 na_with_reason，gray/null/pending/blocked/stale/expired 全为 0。
   验证命令: Test: manual:bash bash -c 'DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-s0-s12.sh --manifest packages/brain/config/kernel-harness-lifecycle-s0-s12.json --provenance-sha 4dc3b69a --migration-min 368 --exact-head "${PR_HEAD_SHA:?}"'
   期望: exit 0；rollback 恢复 prior rows/constraints/provenance，evidence lost=0。
 
 - [ ] [BEHAVIOR] [L2] Golden Path Step 12A — authenticated S0-S12 receipts and hard terminal gate
-  动作: 由真实 Controller/PG/GitHub seam 从 S0 task-born、S1 intent、S2 Planner、S3 Contract GAN、S4 Generator（输出 Draft PR receipt）、S5 CI、独立 S6 Evaluator、独立 S7 Judge、S8 owner、S9 merge、S10 staging、S11 production/rollback 推进到 S12 accounting；每个调用与 receipt 注入并回验 TASK_ID/RUN_ID/ATTEMPT_ID/CONTRACT_SHA/PR_HEAD_SHA；要求 mutation exact-set 分别严格等于 stage `rename,merge,split,shift,insert`、run-binding 七项与 S12 `production,rollback,report,external_status`。
-  预期观察: 每 stage 只消费上段 exact-head authenticated receipt；S6/S7 attempt_id 不同且 mutation=0；空/少/重/改名 mutation set 使 verifier 自身失败；1161 legacy 与 18 family gap 任一缺失时 task/run 非 complete。恢复后 task/run、Promise Map、regression result、report、learning/handoff、external status 在一事务恰一次提交。
+  动作: 由真实 Controller/PG/GitHub seam 从 S0 推进到 S12；receipt 共享 current task/run/contract/head lineage，但逐条查询 originating Attempt 的 provider/session/machine/role/lease。要求 mutation exact-set 分别严格等于 stage 五项、run-binding 七项与 S12 八 obligation `production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope`，并对每 obligation 注入 invalid-digest/wrong-identity/stale/non-Green。
+  预期观察: 每 stage 只消费上段 exact-head authenticated receipt；S6/S7 originating Attempt/session 不同；Claude/Codex/Grok origin provider 匹配；wrong-provider/session、cross-run、stale-lease、nonexistent attempt 拒绝。S12 结构化 receipt 内含 1161/18/24 exact counts 与 zero-gap counters；任一 mutation 时 task/run 非 complete。恢复后所有 accounting 在一事务恰一次提交。
   验证命令: Test: manual:bash bash -c 'DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh "$TASK_ID" "$RUN_ID" "$PR_HEAD_SHA"'
   期望: exit 0；重复调用返回 already_complete 且无重复 ledger/report/external write。
 
 - [ ] [BEHAVIOR] [L3] Golden Path Step 12A — canonical KH-F1-F01..F08 legacy inventory
-  动作: 从 4dc3b69a provenance 读取 129 个 exact legacy IDs，把全部行声明为 Claude/Codex/Grok × normal/violation/recovery 适用，以 `KernelPolicyGate` 在真实 bash-guard/main-repo-write/local-precheck、DevGate、stop/watchdog、independent Judge、GitHub rule、staging/promote/rollback seams 触发 1161 个唯一 receipt；F01/F06 另触发 18 个 stable family-level receipt。删除任一 row/provider/scenario/attempt/lease/head/decision/no-effect/recovery-link/evidence-digest 后重验。
-  预期观察: required-key exact-set 与 observed-valid exact-set 都恰为 1161；F01/F06 legacy mapping 仍为 0，但 family-level required/observed 都恰为 18 且 `family_gap_closed=true`；missing/pending/blocked/stale/expired/inferred/bulk-inferred/duplicate 全为 0。violation 必须 deny+effect=0，recovery 必须指向 violation。
-  验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh --task "$TASK_ID" --run "$RUN_ID" --attempt "$ATTEMPT_ID" --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" --providers claude,codex,grok --scenarios normal,violation,recovery --legacy-required 1161 --family-required 18
+  动作: 从 4dc3b69a provenance 读取 129 个 exact legacy IDs，以真实生产 seam 触发 1161 个 legacy receipt bodies；F01/F06 另触发 18 个 stable family receipt bodies。observed key 只能从验签 body 派生；删除任一 row/provider/scenario/origin Attempt/session/lease/head/decision/no-effect/recovery-link/evidence-digest 后重验。
+  预期观察: `legacyReceipts.length=1161` 且 receipt-derived observed=required；F01/F06 legacy mapping 仍为 0，`familyReceipts.length=18` 且 receipt-derived observed=required、`family_gap_closed=true`；所有 zero-gap counter 为 0。violation deny+effect=0，recovery 指向 violation。
+  验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" --providers claude,codex,grok --scenarios normal,violation,recovery --legacy-receipt-bodies 1161 --family-receipt-bodies 18 --verify-origin-attempts
   期望: exit 0；exact cardinality、uniqueness、binding 与 anti-vacuity mutation 全通过。
 
 - [ ] [BEHAVIOR] [L3] Golden Path Step 12A — provider activation 与 CredentialEnvelope 等价
-  动作: 通过 root/package settings、installer/symlink 与 Kernel provider-neutral dispatcher 分别触发 Claude/Codex/Grok 的 credential/main-repo-write/local-precheck/stop/Judge/release 生产入口；在 exact Runner 对三 provider 运行 indirect envelope 正控、literal/replay/expired/wrong-attempt/wrong-account/wrong-machine denial 与 fresh recovery。
-  预期观察: activation inventory 每条入口都有真实 Attempt fire receipt；静态存在/grep/manual string 不计。三 provider 的 denial 均 redacted、effect=0，recovery 成功；secret bytes 在 argv/env/log/receipt/residual 全为 0。
-  验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-provider-policy-activation.sh --task "$TASK_ID" --run "$RUN_ID" --attempt "$ATTEMPT_ID" --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA"
-  期望: exit 0；provider required/observed activation exact-set 相等，credential mutation exact-set 完整且无 secret 泄露。
+  动作: 从 canonical F01-F08 constructs 生成 activation required set，经 root `.claude/settings.json`、`packages/engine/.claude/settings.json`、installer/symlink、Kernel dispatcher 触发 branch-protect/main-repo-write、credential/bash/local、DevGate/DoD、stop/watchdog、Evaluator/Judge、GitHub rules、release seams；observed key 从 fire receipt body 派生。在 exact Runner 为三 provider 各运行 normal+六 denial+fresh recovery。
+  预期观察: activation receipt 包含 entrypoint/wiring hops/origin/effect/evidence，任一 wiring hop mutation 使 fire receipt=0。CredentialEnvelope receipt bodies 恰为 24，origin provider 匹配；denial redacted+effect=0，recovery 链接 violation+fresh envelope，旧 envelope 不可复用；secret persistence=0。
+  验证命令: Test: manual:bash bash -c 'bash scripts/kernel-fleet/verify-provider-policy-activation.sh --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" --derive-keys-from-receipts && bash scripts/kernel-fleet/verify-provider-credential-envelope.sh --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" --providers claude,codex,grok --receipt-bodies 24 --verify-origin-attempts'
+  期望: exit 0；activation required=receipt-derived observed，credential required=receipt-derived observed=24，无 secret 泄露。
 
 ## Invariant 覆盖映射
 

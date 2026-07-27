@@ -58,6 +58,7 @@
 - `packages/brain/src/`: remote bridge、receipt persistence、版本与发布门
 - `packages/brain/migrations/`: execution transport CHECK 的向前/回滚兼容
 - `packages/engine/`: Fleet Worker、Runner 协议与安装/回滚事务
+- `packages/engine/runners/{claude,codex,grok}/`: provider-neutral CredentialEnvelope 与真实 originating Attempt 适配
 - `scripts/`: rollout、health、canary、mutation 与 rollback 验证
 - `.github/workflows/kernel-fleet-p0-gate.yml`: Draft exact-head CI/Evaluator/Judge 证据与 owner/controller merge gate
 - `.github/workflows/brain-ci-deploy.yml`: P0 Brain main-push 必须消费统一 gate receipt，禁止独立 production
@@ -105,6 +106,17 @@ Controller 必须从本次不可变 TaskBundle 把 `TASK_ID`、`RUN_ID`、`ATTEM
 任一 rename、merge、split、shift 或新增 stage 都必须使 manifest/migration/regression/runtime parity fail。产品 F2 step 仍只作 `product_anchor`，另行绑定 `lifecycle_ssot_ref=kernel_harness_f1_baseline/S0-S12`，不得冒充整个 F1 生命周期。
 
 legacy 库存固定为 `KH-F1-F01..F08`，baseline 总计 129 个行为（P0=66、P1=63），family 分布严格为 `F01=0,F02=2,F03=2,F04=8,F05=6,F06=0,F07=1,F08=110`。F01/F06 的零映射与 F08 的 110 偏斜必须保留为 typed audit gap，禁止用合成 8×3×3 receipt 数宣称等价。每个 legacy behavior 保留 `evidence_mode` 与 `assertion_ref`；源码 anchor 或 `audit_status=active` 不是 proven-to-fire evidence。统一 `KernelPolicyGate` receipt 必须按 canonical `family_id+legacy_behavior_id+provider+phase+subject` 建键，并包含 run/attempt/hop/head/provider/machine/lease/scenario/decision/reason/probe/exit/evidence/freshness/recovery binding。
+
+## R21-R27 终态证明合同（权威）
+
+1. 全部 129 个 legacy 行对 Claude、Codex、Grok 的 normal/violation/recovery 均适用，canonical required exact-set 固定为 `129×3×3=1161`。`legacyReceipts.length=1161`，observed key 只能从逐条验签 receipt body 的 `legacy_behavior_id+provider+scenario` 派生，不能信独立 summary array。F01/F06 保持 legacy count=0，另以 stable unified family behavior ID 产生 `2×3×3=18` 个 family receipt bodies；不得替代或膨胀 1161。
+2. runtime activation required set 必须从 canonical F01-F08 construct 与实际 production entrypoint 生成，覆盖 branch-protect/main-repo-write、credential/bash/local-precheck、DevGate Red→Green/DoD、stop/watchdog、Evaluator/Judge、GitHub rules、staging/promote/rollback。observed set 只从 authenticated fire receipt body 派生；root `.claude/settings.json`、`packages/engine/.claude/settings.json`、installer/symlink、Kernel provider-neutral dispatcher 任一 hop 被删都必须 fail closed。
+3. CredentialEnvelope 必须产生恰好 24 个 receipt-derived keys：三个 provider 各一 normal、literal/replay/expired/wrong-attempt/wrong-account/wrong-machine 六 violation、fresh-envelope recovery 一条。每条绑定 provider/session/account/requested+actual machine/origin Attempt/contract/head/lease/decision/effect/evidence/signature；recovery 链接 violation 与 fresh envelope，旧 envelope 不可复用，secret 在 argv/env/log/receipt/residual 为 0。
+4. 每个 receipt 共享 current `task_id/run_id/approved_contract_sha/exact head or release lineage`，但拥有自己的 originating `attempt_id/provider/session/machine/role/lease_generation`。verifier 必须查询 durable Attempt row；wrong provider/session、cross-run、stale lease、nonexistent attempt 全拒绝。S6 Evaluator 与 S7 Judge 使用不同 Attempt 和 session；Claude/Codex/Grok receipt 来自 provider-matching Attempt。不得把所有 receipt 强制绑定本次 Codex proposer Attempt。
+5. result-channel 正控是精确例外：real Worker 调用必须显式获得当前 proof Agent 的 `ATTEMPT_ID/CONTRACT_SHA/role/RUN_ID/PR_HEAD_SHA`，positive receipt 必须逐字等于这些输入，不能接受模块返回的自洽 ID。missing/EROFS/source-stale/wrong-binding/symlink/oversize/malformed/crash/cancel 均在真实 Runner seam fail closed并保留 durable hash receipt。
+6. Kernel readiness 正控必须启动 built image 或 exact `packages/brain/src/orchestrator/run.js`，child 真获取 Controller lease/generation、构造真实依赖并持久化首个 fenced heartbeat；parent 独立查 PG 后才成功。只发 `kernel-ready` frame 而无 DB lease/dependency/heartbeat 的 child 必须失败；同时保留 early exit、timeout、async spawn error、lease busy、stale generation。
+7. workflow authority 只能由真实 GitHub API 回读的 run ID、check-suite ID、exact head、actor、签名 owner receipt 与 repository-rule snapshot证明。JS 模块返回预期数组/布尔值不是证据。
+8. S12 的 143 个 canonical stage×element exact keys 终态只能是 `pass` 或具独立 review receipt 的 `na_with_reason`；pending/blocked/stale/expired/gray/null 均为 0。S12 必须消费八类结构化 Green receipt：`production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope`。八类任一 missing、partial、invalid digest、wrong identity、stale 或 non-Green 均保持 `terminalComplete=false`；终态还要求 legacy receipt bodies=1161、family receipt bodies=18、CredentialEnvelope receipt bodies=24，required=receipt-derived observed，所有 missing/pending/blocked/stale/expired/inferred/duplicate=0。
 
 ## NFR 约束
 
@@ -183,8 +195,25 @@ legacy 库存固定为 `KH-F1-F01..F08`，baseline 总计 129 个行为（P0=66�
 ## E2E 验收
 
 ```bash
-# 占位：proposer 将按 linux_server 模板产出可执行的真实 US Worker + Brain staging/production 脚本
-# 期望验收点（自然语言）：从 immutable 构件发布，经 Worker-first admission、Brain 重启和无会话 Kernel 恢复，到唯一 replacement heartbeat、resumed=1、正常下一次 dispatch；全过程 exact-head、无 secret、可回滚且 owner gate 未被绕过
+set -euo pipefail
+: "${TASK_ID:?}" "${RUN_ID:?}" "${ATTEMPT_ID:?}" "${CONTRACT_SHA:?}" "${PR_HEAD_SHA:?}"
+: "${US_WORKER_URL:?}" "${FLEET_TOKEN_FILE:?}" "${CANDIDATE_RUNNER_REF:?}" "${DB_URL:?}"
+bash scripts/kernel-fleet/run-result-channel-proof.sh \
+  "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" \
+  "$TASK_ID" "$RUN_ID" "$ATTEMPT_ID" "$CONTRACT_SHA" "$PR_HEAD_SHA" reviewer
+DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh \
+  --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
+  --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
+  --legacy-receipt-bodies 1161 --family-receipt-bodies 18 --verify-origin-attempts
+DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-provider-credential-envelope.sh \
+  --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
+  --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
+  --providers claude,codex,grok --receipt-bodies 24 --verify-origin-attempts
+DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh \
+  --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
+  --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
+  --require-obligations production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope \
+  --expect-premerge-noncomplete
 ```
 
 ## journey_type: agent_remote

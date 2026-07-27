@@ -1,4 +1,4 @@
-# Sprint Contract Draft（Round 8）
+# Sprint Contract Draft（Round 9）
 
 ## 合同 Notes
 
@@ -9,11 +9,12 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
-- 先前 proposer heads 均仅作 Red 证据；Round 8 在 R18-R20 基础上关闭 R21-R23：129 行 × 3 provider × 3 scenario 的 exact-set 终态门、F01/F06 独立 family gap、provider-neutral CredentialEnvelope、真实 activation inventory、反空集 counterfactual 与 attempt-runtime result channel。
+- 先前 proposer heads 均仅作 Red 证据；Round 9 在 R21-R24 基础上关闭 R25-R27：所有 exact-set 从 authenticated receipt body 派生，S12 扩为八类结构化前置 receipt，receipt 采用 originating Attempt lineage，result-channel 正控绑定当前 proof Agent，Kernel 正控启动真实 `orchestrator/run.js` 并独立查 PG，workflow 证据必须来自真实 GitHub run/check-suite/rules snapshot。
 - lifecycle-ssot-provenance: 预期基线来自 Draft+CONFLICTING PR #4372 的 exact source `origin/cp-07271751-51836fb2@4dc3b69a`；它只是迁移输入，不是运行时真相，不得独立 merge。main 的 migration 366 已被 `366_kernel_harness_failure_class.sql` 占用，本合同使用新 migration `368_kernel_harness_lifecycle_ssot.sql`，保留 source provenance 并以一次性升级把既有 F1 六步行原位升级为 S0-S12，禁止复制第二条 journey。
 - lifecycle-ssot-ref: `kernel_harness_f1_baseline/S0-S12@${PR_HEAD_SHA}`；F2 产品锚点仍是 `工厂 · F2 部署闭环/部署被证明没坏`，两者分别记录为 `product_anchor` 与 `lifecycle_ssot_ref`，F2 step 不得冒充 F1 全生命周期。
-- lifecycle-matrix invariant: 唯一 manifest 必须恰有 13 个 stage、11 个 canonical element、143 个 cell；每个 cell 只能是 `pass`、`na_with_reason` 或 `typed_pending|typed_blocked`，禁止 gray/null/隐式通过。基线现状 `13 pending + 130 gray + 0 green` 是迁移 Red，不是等价完成证据。
-- terminal-accounting invariant: S12 是硬终态门；除 production receipt 与 rollback anchor 外，legacy exact-set `required=observed=1161`、F01/F06 family-level `required=observed=18`、pending/blocked/stale/expired/inferred/duplicate 均为 0 后，Controller 才能在同一幂等事务中更新 task/run、Promise Map、regression contract/result、report、learning/handoff 与 external status。任一 receipt 缺失，task/run 都不得 complete。
+- lifecycle-matrix invariant: 唯一 manifest 必须恰有 13 个 stage、11 个 canonical element、143 个 exact cross-product cell；终态 cell 只能是 `pass` 或有独立 review receipt 的 `na_with_reason`，`typed_pending|typed_blocked|stale|expired|gray|null` 计数必须全为 0。基线现状 `13 pending + 130 gray + 0 green` 是迁移 Red，不是等价完成证据。
+- terminal-accounting invariant: S12 是硬终态门；必须消费 `production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope` 八类结构化、签名、current-lineage receipt。legacy receipt bodies 恰有 1161、F01/F06 family receipt bodies 恰有 18、CredentialEnvelope receipt bodies 恰有 24；所有 required key 只能从 receipt body 派生后与 canonical required set 比较，missing/pending/blocked/stale/expired/inferred/duplicate 均为 0，Controller 才能在同一幂等事务中更新 task/run、Promise Map、regression contract/result、report、learning/handoff 与 external status。
+- proof-lineage invariant: 所有 receipt 共享 current `task_id/run_id/approved_contract_sha/exact_head_or_release_lineage`，但 `attempt_id/session/machine/lease_generation` 必须来自各自 originating Attempt。每条 receipt 都查询 durable Attempt 行验证 run/provider/session/machine/role/lease/contract/head；S6/S7 必须不同 Attempt/session，Claude/Codex/Grok receipt 必须源于 provider-matching Attempt。result-channel receipt 是例外中的精确绑定：它必须等于被验证的那个 proof Agent Attempt，不得自造 attempt/contract/role。
 - result-channel invariant: 每个 Attempt 的 TaskBundle 必须携带 runtime-root 内 immutable `callback_result_path`，Worker 以 `BRAIN_RESULT_FILE` 注入；source checkout 中跟踪或陈旧 `.brain-result.json` 永不具有权威性。
 - release-order invariant: `Draft exact head → CI → Evaluator/Judge → owner exact-head approval → authorized merge → US staging real E2E → production canary`；生产验证绝不早于批准/合并。
 - semantic-anchor-resolved: 2026-07-28 生产只读 API 回读确认本任务 payload 已归属 `工厂 · F2 部署闭环` journey `2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6`、已交付 GP `环境模型三段常驻收尾（Cecelia+ZenithJoy）` `4e5fd7eb-3823-4c57-a817-081b7fdd2eed`、step `部署被证明没坏` `817f59f5-02ff-4a70-bd81-f7ae65f77e02`；GP 与 step 的 `journey_id` 均逐字等于该 journey。当前 TaskBundle task `4a530430-00c5-46bc-8a4f-c0ec38025391` 与 current run `fda8bfd7-fbbc-4260-a657-ea7f3b51bd16` 明确不同；historical failed run `4bbe35de-63c1-4cfe-9b55-fea8c01a0647` 只可出现在拒绝反事实。Generator 点火前必须从 TaskBundle 动态注入并再次从生产回读；迁移/回读失败即 fail closed，不得创建 Map 行。
@@ -21,7 +22,7 @@
 - release-workflow-closure: `.github/workflows/kernel-fleet-p0-gate.yml` 是 P0 唯一授权 receipt 生产者；`brain-ci-deploy.yml`、`auto-staging-deploy.yml`、`deploy.yml`、`ci.yml` 必须消费它或 fail closed，不得保留 main-push/Fast Lane/skipped staging/title auto-merge 旁路。
 - cleanup-order invariant: `confirm container absent → reverse normalize exact Runner-writable descendants → host cleanup workspace/admin → runtime/secret cleanup → state delete`；container removal 未确认则原地 `cleanup_blocked`，不得移动挂载证据。
 - controller-ownership invariant: 每个 active `run_id` 只有一个通用 Kernel Controller owner；`owner_id+generation` CAS fence 覆盖 heartbeat/intent/dispatch/merge/control，PID/host 仅诊断。
-- required-check invariant: P0 分类来自不可伪造的 task/PR receipt，不信可变 title/label；required exact-head check、owner signature、GitHub run/check-suite 与 repository-rule snapshot 必须同 head。
+- required-check invariant: P0 分类来自不可伪造的 task/PR receipt，不信可变 title/label；required exact-head check、owner signature、真实 GitHub API 回读的 run ID/check-suite ID/actor 与签名 repository-rule snapshot 必须同 head，模块返回的合成数组/布尔值不是证据。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -178,7 +179,7 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 
 **canonical elements（字面、顺序固定）**: `FR`、`NFR`、`Invariant`、`判定点`、`保质期`、`死亡告警`、`失败语义`、`效果确认`、`输入对抗面`、`账本保鲜`、`两轴衔接`。
 
-每个 manifest cell 必须同时包含：`stage_id`、`element_key`、`owner`、`construct`、`positive_oracle`、`violation_oracle`、`recovery_oracle`、`freshness_expires_at`、`death_alert`、`failure_semantics`、`effect_confirmation`、`legacy_behavior_ids[]`、`unified_equivalent_ids[]`、`state`、`evidence_receipt_ids[]`。`state` 枚举仅允许 `pass|na_with_reason|typed_pending|typed_blocked`；`pass` 必须绑定 current exact head/release 的 authenticated receipt，`na_with_reason` 必须有非空 reason，缺 legacy 证据必须 `typed_pending`，不得等价推断。
+每个 manifest cell 必须同时包含：`stage_id`、`element_key`、`owner`、`construct`、`positive_oracle`、`violation_oracle`、`recovery_oracle`、`freshness_expires_at`、`death_alert`、`failure_semantics`、`effect_confirmation`、`legacy_behavior_ids[]`、`unified_equivalent_ids[]`、`state`、`evidence_receipt_ids[]`。迁移中允许 `typed_pending|typed_blocked` 表达 Red，但 S12 终态时 143 个 exact cross-product key 只能是 `pass|na_with_reason`；`pass` 必须绑定 current exact head/release 的 authenticated originating-attempt receipt，`na_with_reason` 必须有非空 reason 与独立 review receipt。终态 `typed_pending|typed_blocked|stale|expired|gray|null` 全为 0。
 
 **13×11 矩阵登记（每格引用 manifest cell，禁止隐式 gray）**:
 
@@ -211,11 +212,15 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 | KH-F1-F07 | GitHub branch protection | 1：`C4-001` | live repository rule snapshot 与 bypass actors |
 | KH-F1-F08 | staging / promote / rollback | 110：exact baseline inventory digest | `staging-e2e-runner.js`、`scripts/promote-dashboard.sh`、`scripts/rollback-cecelia.sh`；逐 ID 语义重分类，禁止 bulk inferred pass |
 
-baseline 总数固定 129（P0=66、P1=63），分布固定 `0,2,2,8,6,0,1,110`。本 P0 合同把全部 129 行声明为 Claude、Codex、Grok 均适用，且每个 provider 必须分别从真实生产入口观察 normal、violation、recovery，因此 legacy required key exact-set 固定为 `129×3×3=1161`，不能按已有 receipt 循环或以 inventory parity 代替。每个 legacy row 必须保留 `evidence_mode` 与 `assertion_ref`；`audit_status=active` 和 source-anchor 命中只算 declaration。统一 `KernelPolicyGate` 以 `legacy_behavior_id+provider+scenario` 构成终态唯一 key，并在 receipt 内保留 `family_id+phase+subject`，receipt 至少包含 `task_id,run_id,attempt_id,hop,contract_sha,artifact_sha,head_sha,provider,session_id,requested_machine,actual_machine,lease_generation,family_id,legacy_behavior_id,scenario,decision,reason_code,probe_command,exit_code,evidence_digest,observed_at,recovery_of_receipt_id,effect_receipt_id`。normal 必须为真实 allow/effect，violation 必须 deny 且 no-effect，recovery 必须 recover 且 `recovery_of_receipt_id` 指向同 key 的 violation。terminal 要求 unique required keys=unique observed valid keys=1161，missing/pending/blocked/stale/expired/inferred/bulk-inferred/duplicate 全为 0。
+baseline 总数固定 129（P0=66、P1=63），分布固定 `0,2,2,8,6,0,1,110`。本 P0 合同把全部 129 行声明为 Claude、Codex、Grok 均适用，且每个 provider 必须分别从真实生产入口观察 normal、violation、recovery，因此 legacy required key exact-set 固定为 `129×3×3=1161`，不能按已有 receipt 循环或以 inventory parity 代替。`legacyReceipts.length` 必须恰为 1161，observed key 只能从每个已验签 receipt body 的 `legacy_behavior_id+provider+scenario` 派生，再与 canonical required set 精确比较；单独 summary array 不算证明。每个 legacy row 必须保留 `evidence_mode` 与 `assertion_ref`；`audit_status=active` 和 source-anchor 命中只算 declaration。统一 `KernelPolicyGate` receipt 至少包含 `task_id,run_id,origin_attempt_id,hop,contract_sha,artifact_sha,head_sha,provider,session_id,requested_machine,actual_machine,lease_generation,family_id,legacy_behavior_id,phase,subject,scenario,decision,reason_code,probe_command,exit_code,evidence_digest,observed_at,recovery_of_receipt_id,effect_receipt_id,signature`。normal 必须为真实 allow/effect，violation 必须 deny 且 no-effect，recovery 必须 recover 且 `recovery_of_receipt_id` 指向同 key 的 violation。terminal 要求 unique required keys=unique observed valid keys=1161，missing/pending/blocked/stale/expired/inferred/bulk-inferred/duplicate 全为 0。
 
-F01/F06 仍保持 legacy mapping count=0 的事实，但另设 stable unified family-level behavior IDs；两 family × 三 provider × 三 scenario 精确生成 18 个 family-level keys。它们必须经过相同真实入口与 receipt 约束，`family_gap_closed=true` 且 unique required=observed=18 才能终态；这 18 个 key 不得计入或替代 legacy 1161。
+F01/F06 仍保持 legacy mapping count=0 的事实，但另设 stable unified family-level behavior IDs；两 family × 三 provider × 三 scenario 精确生成 18 个 family-level keys。`familyReceipts.length` 必须恰为 18，observed key 只能从签名 receipt body 的 `unified_family_behavior_id+provider+scenario` 派生；每条保留与 legacy receipt 相同的 origin/effect/recovery 字段。`family_gap_closed=true` 且 unique required=observed=18 才能终态；这 18 个 key 不得计入或替代 legacy 1161。
 
-**运行时 activation 与 provider-neutral secret 边界**：activation inventory 必须证明 root `.claude/settings.json`、package `.claude/settings.json`、installer/symlink 和 Kernel provider-neutral dispatcher 实际把 credential-guard、main-repo-write、bash/local-precheck、stop/watchdog、Judge、GitHub rule、staging/promote/rollback 接到生产入口；静态文件存在、grep 或 manual command 字符串不算 fire evidence。CredentialEnvelope 在 Runner 边界对 Claude/Codex/Grok 分别执行间接消费正控；literal、replay、expired、wrong-attempt、wrong-account、wrong-machine 均 deny、redacted、effect=0，随后 fresh-envelope recovery 成功。secret bytes 在 argv/env/log/receipt/residual 中计数必须为 0。
+**运行时 activation 与 provider-neutral secret 边界**：activation required set 从 canonical F01-F08 construct + 真实 entrypoint 生成，必须覆盖 branch-protect、main-repo-write、credential guard、bash/local-precheck、DevGate Red→Green、DoD、stop/watchdog、Evaluator/Judge、live GitHub rules、staging/promote/rollback。fire receipt body 必须带 `construct_id,entrypoint,provider,scenario,actual_wiring_hop_chain,origin_attempt/session/machine/lease,decision,effect,evidence_digest`；observed key 只能从 receipt body 派生。root `.claude/settings.json`、真实 package seam `packages/engine/.claude/settings.json`、installer/symlink、Kernel provider-neutral dispatcher 任一 hop mutation 都必须使 production fire receipt 为 0；静态文件存在、grep 或 manual command 字符串不算 fire evidence。
+
+CredentialEnvelope 在 Runner 边界对 Claude/Codex/Grok 分别产生一条 normal、六条 violation（literal/replay/expired/wrong-attempt/wrong-account/wrong-machine）与一条 fresh recovery，receipt bodies 精确为 `3×8=24`。每条绑定 provider session/account/requested+actual machine/origin Attempt/contract/head/lease/decision/effect/evidence/signature；recovery 同时链接被拒 violation 与 fresh envelope，旧 envelope 永不可复用。secret bytes 在 argv/env/log/receipt/residual 中计数必须为 0。
+
+**originating Attempt lineage**：receipt 不得统一写 proposer `ATTEMPT_ID`。共享身份只有 current `task_id/run_id/approved_contract_sha/exact head or release lineage`；每条 receipt 的 `origin_attempt_id/provider/session/machine/role/lease_generation` 来自真实执行该 proof 的 durable Attempt 行。verifier 对每条 receipt 查询 Attempt 表，拒绝 wrong provider、wrong session、cross-run、stale lease、nonexistent attempt。S6 Evaluator 与 S7 Judge 的 Attempt 和 session 都必须不同；Claude/Codex/Grok legacy、activation、CredentialEnvelope receipt 必须由同 provider Attempt 产生。仅 result-channel receipt 强制等于正在验证的那个 proof Agent `ATTEMPT_ID/role/contract/head`。
 
 **迁移与 parity oracle**:
 
@@ -329,25 +334,25 @@ bash scripts/kernel-fleet/run-real-attempt-proof.sh "$US_WORKER_URL" "$FLEET_TOK
 ### Step 7A：Attempt-scoped result channel 在 Agent 前 ready
 **来源**: `[AI_ADDED]` — R15 真 reviewer 在 read-only checkout 写默认 `/workspace/.brain-result.json` 得到 EROFS，且 branch 中陈旧文件可跨轮污染；必须把 verdict 交付纳入 Golden Path 接缝。
 
-**可观测行为**: TaskBundle 的 `callback_result_path` 是 exact Attempt runtime root 下由 Controller 生成的 immutable、no-symlink、有界路径；Worker 在 Agent 启动前创建/清空并以可写 mount + `BRAIN_RESULT_FILE` 注入。callback finalizer 只读取该路径，逐字段验证 `attempt_id/run_id/role/contract_sha/head_sha`，计算 hash 并在 cleanup 前持久化 receipt。source checkout 中 `.brain-result.json`、stdout prose 和其他路径全部忽略。
+**可观测行为**: TaskBundle 的 `callback_result_path` 是 exact Attempt runtime root 下由 Controller 生成的 immutable、no-symlink、有界路径；Worker 在 Agent 启动前创建/清空并以可写 mount + `BRAIN_RESULT_FILE` 注入。real proof 调用必须把当前 proof Agent 的 `ATTEMPT_ID`、`CONTRACT_SHA`、`role`、`RUN_ID`、`PR_HEAD_SHA` 明确传入 Worker，callback finalizer 只读取该路径并逐字段与这些输入比较，不能接受模块自己返回的 self-consistent ID。hash 在 cleanup 前持久化；source checkout 中 `.brain-result.json`、stdout prose 和其他路径全部忽略。
 
 **验证命令**:
 ```bash
 bash scripts/kernel-fleet/run-result-channel-proof.sh \
   "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
 ```
-**硬阈值**: read-only reviewer 真 Runner 写入成功且 source stale result ignored；missing、EROFS、wrong-attempt、wrong-run、wrong-role、wrong-contract/head、symlink、oversize、malformed 各自 pre-Agent 或 finalize fail closed；pre-Agent 不可写时 semantic/GAN budget delta=0；success/timeout/crash/cancel 在 durable hash receipt 后 result/credential residual=0。
+**硬阈值**: read-only reviewer 真 Runner 写入成功，positive receipt 的 attempt/contract/role/run/head 与调用输入逐字相等，source stale result ignored；missing、EROFS、wrong-attempt、wrong-run、wrong-role、wrong-contract/head、symlink、oversize、malformed 各自 pre-Agent 或 finalize fail closed；pre-Agent 不可写时 semantic/GAN budget delta=0；success/timeout/crash/cancel 在 durable hash receipt 后 result/credential residual=0。
 
 ### Step 8：Kernel launch 以 handshake+heartbeat 判 ready
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 8 步。
 
-**可观测行为**: active `run_id` 在真 Postgres 以唯一约束和 TOCTOU-safe insert/reuse 获得一个通用 Controller owner。migration 367+ 增加 `controller_owner_id`、`controller_generation`、`controller_lease_expires_at`、`controller_ready_at` 与 durable exit diagnostics；heartbeat/intent/dispatch/merge/control 写入全部由 owner+generation CAS fence。missing/relative/nonexistent/non-Git/unmounted worktree 在 spawn 前拒绝；async spawn error、early exit、no-ready、timeout/lease_busy 均结构化非成功。父进程只在 child 完成 lease acquisition、真实依赖构造、ownership ready frame 与真 PG 首个 fenced heartbeat 后 resolve；PID/host 仅诊断。
+**可观测行为**: active `run_id` 在真 Postgres 以唯一约束和 TOCTOU-safe insert/reuse 获得一个通用 Controller owner。migration 367+ 增加 `controller_owner_id`、`controller_generation`、`controller_lease_expires_at`、`controller_ready_at` 与 durable exit diagnostics；heartbeat/intent/dispatch/merge/control 写入全部由 owner+generation CAS fence。missing/relative/nonexistent/non-Git/unmounted worktree 在 spawn 前拒绝；async spawn error、early exit、no-ready、timeout/lease_busy 均结构化非成功。正控必须启动 built-image 或 exact `packages/brain/src/orchestrator/run.js`，让 child 真正获取 lease/generation、构造生产依赖并写入真 PG 首个 fenced heartbeat；父进程再独立查询 DB 核对 child-owned owner/generation/ready_at/heartbeat 后才 resolve。只发送 `kernel-ready` frame 但没有 DB lease/dependencies/heartbeat 的 spoof child 必须 fail closed；PID/host 仅诊断。
 
 **验证命令**:
 ```bash
 DB_URL="${DB_URL:?}" npx vitest run packages/brain/src/__tests__/kernel-launch-readiness.integration.test.js --reporter=verbose
 ```
-**硬阈值**: 正控真 child+真 PG 通过；并发 active run create 只得一个 run；watchdog+manual/startup race 只得一个 ready owner；pre-heartbeat crash、handshake timeout、lease_busy、old-generation write、PID reuse、7 类坏 worktree/spawn 负控均失败；诊断≤2048 bytes 且 secret sentinel 0 命中。
+**硬阈值**: 正控 exact entrypoint+真 PG 通过且独立 DB 查询 owner/generation/ready_at/heartbeat 全匹配；frame-only spoof fail；并发 active run create 只得一个 run；watchdog+manual/startup race 只得一个 ready owner；pre-heartbeat crash、handshake timeout、lease_busy、old-generation write、PID reuse、7 类坏 worktree/spawn 负控均失败；诊断≤2048 bytes 且 secret sentinel 0 命中。
 
 ### Step 9：Watchdog truthful recovery 严格一次
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 9 步。
@@ -363,7 +368,7 @@ DB_URL="${DB_URL:?}" npx vitest run packages/brain/src/__tests__/kernel-durable-
 ### Step 10：Draft exact-head CI/Evaluator/Judge 只产证据
 **来源**: `[FROM_PRD]` — 修订后 PRD Golden Path 第 10 步。
 
-**可观测行为**: 不可伪造的 task/PR P0 receipt 触发 `.github/workflows/ci.yml` 与 `.github/workflows/kernel-fleet-p0-gate.yml`；可变 title/label 不参与分类。required P0 exact-head check 绑定 GHA run/check-suite ID、head SHA、actor、候选 image/Worker/Runner/profile/schema attestations 与 repository-rule snapshot。built-image smoke 同一脚本同时接入 `Smoke Glob Runner Passed`、`ci-passed real-env-smoke`、brain-deploy pre-swap、brain-rollback pre-start。在隔离 candidate LaunchDaemon/port/data-root/router/generation 上先验证 Worker-first candidate，再运行非变更型 Evaluator/Judge；任何 job 都不读取 owner approval、不切 Ready、不 merge、不 deploy，serving staging/production 前后 byte-identical。
+**可观测行为**: 不可伪造的 task/PR P0 receipt 触发 `.github/workflows/ci.yml` 与 `.github/workflows/kernel-fleet-p0-gate.yml`；可变 title/label 不参与分类。required P0 exact-head check 必须经真实 GitHub API 回读并绑定 GHA run ID、check-suite ID、head SHA、actor、候选 image/Worker/Runner/profile/schema attestations与签名 repository-rule snapshot；新 JS 模块返回预期数组/布尔值不算 evidence。built-image smoke 同一脚本同时接入 `Smoke Glob Runner Passed`、`ci-passed real-env-smoke`、brain-deploy pre-swap、brain-rollback pre-start。在隔离 candidate LaunchDaemon/port/data-root/router/generation 上先验证 Worker-first candidate，再运行非变更型 Evaluator/Judge；任何 job 都不读取 owner approval、不切 Ready、不 merge、不 deploy，serving staging/production 前后 byte-identical。
 
 **验证命令**:
 ```bash
@@ -396,7 +401,7 @@ bash scripts/kernel-fleet/verify-p0-workflow-contract.sh post-merge-release "$PR
 ### Step 12A：S0-S12 × 11 lifecycle equivalence 与终态收账
 **来源**: `[AI_ADDED]` — R16/R17 证明 #4372 baseline 只有 ledger shape、无全阶段等价证据；S0/S1 与 S12 两端缺口会让中段绿而生命周期仍不完整。
 
-**可观测行为**: canonical manifest 驱动 migration 368+、F1 DevOps Map rows、root regression contract、runtime API/report 与本合同。所有 lifecycle proof/receipt 逐条绑定本次 `TASK_ID,RUN_ID,ATTEMPT_ID,CONTRACT_SHA,PR_HEAD_SHA`，并验证签名、owner、前序 receipt、effect 与 freshness。S0 born/S1 intent 是 S2 Planner 前置；S3 Contract GAN 独立消费 S2 PRD artifact；S4 Generator 消费批准的 contract SHA 并输出 Draft PR receipt；S5-S11 每段都消费上段 authenticated receipt，并为 11 elements 写 exact-head typed cell evidence。S6 Evaluator 与 S7 Judge 是两个独立 non-mutating Attempt。S12 仅在 production receipt、rollback anchor、1161 legacy exact-set receipt 与 18 family-gap receipt 全部 Green 后，以一个幂等事务完成 task/run、Promise Map、regression result、report、learning/handoff 与 external status；任一缺失保持 non-complete。
+**可观测行为**: canonical manifest 驱动 migration 368+、F1 DevOps Map rows、root regression contract、runtime API/report 与本合同。所有 lifecycle receipt 绑定 current task/run/approved contract/exact head or release lineage，并各自验证 originating Attempt 行、签名、owner、前序 receipt、effect 与 freshness；禁止把所有 receipt 的 attempt 强制为 proposer Attempt。S0 born/S1 intent 是 S2 Planner 前置；S3 Contract GAN 独立消费 S2 PRD artifact；S4 Generator 消费批准的 contract SHA 并输出 Draft PR receipt；S5-S11 每段都消费上段 authenticated receipt，并为 11 elements 写 exact-head cell evidence。S6 Evaluator 与 S7 Judge 是不同 Attempt/session 的 non-mutating proof。S12 仅在八类结构化 receipt Green、143 cell 无 pending/blocked/stale/expired、1161 legacy body receipt、18 family body receipt 与 24 CredentialEnvelope body receipt exact-set 全部成立后，以一个幂等事务完成收账；任一缺失保持 non-complete。
 
 **验证命令**:
 ```bash
@@ -406,7 +411,7 @@ DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-s0-s12.sh \
   --migration-min 368 \
   --exact-head "${PR_HEAD_SHA:?}"
 ```
-**硬阈值**: 13 stages、11 elements、143 typed cells、gray/null=0；13 个 stable step ID/name/order/promise 与 4dc3b69a 精确 parity；stage mutation exact-set 必须且仅为 `rename,merge,split,shift,insert`。run-binding mutation exact-set 必须且仅为 `terminal_historical_run,task_id_as_run_id,taskbundle_receipt_run_mismatch,stale_contract_round,stale_head,cross_run_artifact,cross_run_result`。S12 missing-receipt mutation exact-set 必须且仅为 `production,rollback,report,external_status`；空集、子集、重复、改名均使 proof 失败。legacy 总数=129、P0=66、P1=63、family counts=`0,2,2,8,6,0,1,110`；legacy unique required=observed=1161，family-gap unique required=observed=18，missing/pending/blocked/stale/expired/inferred/bulk-inferred/duplicate 全为 0，`family_gap_closed=true`；S12 只在两个 equivalence verifier Green 后恢复并产生恰一次 terminal receipt。
+**硬阈值**: 13 stages、11 elements、143 exact cross-product cells，终态仅 `pass|na_with_reason+independent_review_receipt`，gray/null/pending/blocked/stale/expired=0；13 个 stable step ID/name/order/promise 与 4dc3b69a 精确 parity；stage mutation exact-set 必须且仅为 `rename,merge,split,shift,insert`。run-binding mutation exact-set 必须且仅为 `terminal_historical_run,task_id_as_run_id,taskbundle_receipt_run_mismatch,stale_contract_round,stale_head,cross_run_artifact,cross_run_result`。S12 obligation exact-set 必须且仅为 `production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope`；每项 missing/invalid-digest/wrong-identity/stale/non-Green 都使 proof 失败。legacy receipt bodies=1161、family receipt bodies=18、CredentialEnvelope receipt bodies=24，receipt-derived unique required=observed；wrong-provider/session、cross-run/stale-lease/nonexistent-origin Attempt 均拒绝。missing/pending/blocked/stale/expired/inferred/bulk-inferred/duplicate 全为 0，`family_gap_closed=true`；S12 产生恰一次 terminal receipt。
 
 ## E2E 验收（最终 final-e2e 跑）
 
@@ -455,15 +460,22 @@ bash scripts/kernel-fleet/verify-run-binding-counterfactuals.sh \
   "4bbe35de-63c1-4cfe-9b55-fea8c01a0647"
 bash scripts/kernel-fleet/verify-phase-budgets.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" slow-mirror slow-image slow-secret
 bash scripts/kernel-fleet/run-real-attempt-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
-bash scripts/kernel-fleet/run-result-channel-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
+bash scripts/kernel-fleet/run-result-channel-proof.sh \
+  "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" \
+  "$TASK_ID" "$RUN_ID" "$ATTEMPT_ID" "$CONTRACT_SHA" "$PR_HEAD_SHA" reviewer
 DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh \
   --task "$TASK_ID" --run "$RUN_ID" --attempt "$ATTEMPT_ID" \
   --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
   --providers claude,codex,grok --scenarios normal,violation,recovery \
-  --legacy-required 1161 --family-required 18
+  --legacy-receipt-bodies 1161 --family-receipt-bodies 18 \
+  --verify-origin-attempts
 DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-provider-policy-activation.sh \
-  --task "$TASK_ID" --run "$RUN_ID" --attempt "$ATTEMPT_ID" \
-  --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA"
+  --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
+  --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" --derive-keys-from-receipts
+DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-provider-credential-envelope.sh \
+  --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
+  --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
+  --providers claude,codex,grok --receipt-bodies 24 --verify-origin-attempts
 DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-s0-s12.sh \
   --manifest packages/brain/config/kernel-harness-lifecycle-s0-s12.json \
   --provenance-sha 4dc3b69a \
@@ -487,7 +499,9 @@ bash scripts/kernel-fleet/verify-release-sequence.sh \
 DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh \
   --task "$TASK_ID" --run "$RUN_ID" --attempt "$ATTEMPT_ID" \
   --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-  --require-legacy-keys 1161 --require-family-gap-keys 18 --expect-premerge-noncomplete
+  --require-obligations production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope \
+  --require-legacy-receipt-bodies 1161 --require-family-receipt-bodies 18 \
+  --require-credential-receipt-bodies 24 --expect-premerge-noncomplete
 
 test "$(gh pr view "$PR_NUMBER" --json isDraft --jq .isDraft)" = "true"
 test "$(gh pr view "$PR_NUMBER" --json autoMergeRequest --jq '.autoMergeRequest == null')" = "true"

@@ -28,7 +28,10 @@ const EXACT_RUN_BINDING_MUTATIONS = [
   'cross_run_artifact',
   'cross_run_result',
 ];
-const EXACT_S12_MISSING_RECEIPTS = ['production', 'rollback', 'report', 'external_status'];
+const EXACT_S12_MISSING_RECEIPTS = [
+  'production', 'rollback', 'report', 'external_status',
+  'legacy_equivalence', 'family_gap', 'provider_activation', 'credential_envelope',
+];
 const EXACT_PROVIDERS = ['claude', 'codex', 'grok'];
 const EXACT_SCENARIOS = ['normal', 'violation', 'recovery'];
 const EXACT_CREDENTIAL_MUTATIONS = [
@@ -45,14 +48,43 @@ const expectExactUniqueSet = (actual: string[], expected: string[]): void => {
   expect([...actual].sort()).toEqual([...expected].sort());
 };
 
-const expectCurrentIdentity = (receipt: Record<string, unknown>): void => {
+const expectCurrentLineage = (receipt: Record<string, unknown>): void => {
   expect(receipt).toMatchObject({
     taskId: CURRENT_TASK_ID,
     runId: CURRENT_RUN_ID,
-    attemptId: CURRENT_ATTEMPT_ID,
     contractSha: CURRENT_CONTRACT_SHA,
     headSha: CURRENT_HEAD_SHA,
   });
+  expect(receipt.attemptId).toMatch(/^[0-9a-f-]{36}$/);
+};
+
+const expectValidOriginAttempt = async (
+  receipt: Record<string, unknown>,
+  expected: { provider?: string; role?: string } = {},
+): Promise<void> => {
+  const mod = await import(
+    '../../../packages/brain/src/orchestrator/kernel-harness-lifecycle.js'
+  );
+  const origin = await mod.verifyOriginatingAttempt({
+    databaseUrl: DB_URL,
+    receipt,
+    currentTaskId: CURRENT_TASK_ID,
+    currentRunId: CURRENT_RUN_ID,
+    approvedContractSha: CURRENT_CONTRACT_SHA,
+    exactHead: CURRENT_HEAD_SHA,
+  });
+  expect(origin).toMatchObject({
+    exists: true,
+    currentRunMember: true,
+    taskMatches: true,
+    contractMatches: true,
+    headMatches: true,
+    sessionMatches: true,
+    machineMatches: true,
+    leaseGenerationMatches: true,
+  });
+  if (expected.provider) expect(origin.provider).toBe(expected.provider);
+  if (expected.role) expect(origin.role).toBe(expected.role);
 };
 
 describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
@@ -161,49 +193,80 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     expect(proof.manualSchemaDriftRequired).toBe(false);
   });
 
-  it('ownership frame plus persisted heartbeat is required for a real child', async () => {
+  it('ownership frame plus persisted heartbeat is required from the real orchestrator entrypoint', async () => {
     const mod = await import(
       '../../../packages/brain/src/kernel-launch-readiness.js'
     );
     const ownerMod = await import(
       '../../../packages/brain/src/kernel-controller-ownership.js'
     );
-    const owner = await ownerMod.ensureKernelController({
+    const isolated = await ownerMod.createIsolatedControllerRun({
       databaseUrl: DB_URL,
-      runId: CURRENT_RUN_ID,
-      contender: 'contract-owner-a',
+      sourceRunId: CURRENT_RUN_ID,
+      worktreePath: process.cwd(),
     });
     const raced = await Promise.all([
-      ownerMod.ensureKernelController({ databaseUrl: DB_URL, runId: CURRENT_RUN_ID, contender: 'startup-sync' }),
-      ownerMod.ensureKernelController({ databaseUrl: DB_URL, runId: CURRENT_RUN_ID, contender: 'watchdog' }),
-      ownerMod.ensureKernelController({ databaseUrl: DB_URL, runId: CURRENT_RUN_ID, contender: 'manual' }),
+      ownerMod.ensureKernelController({ databaseUrl: DB_URL, runId: isolated.runId, contender: 'startup-sync' }),
+      ownerMod.ensureKernelController({ databaseUrl: DB_URL, runId: isolated.runId, contender: 'watchdog' }),
+      ownerMod.ensureKernelController({ databaseUrl: DB_URL, runId: isolated.runId, contender: 'manual' }),
     ]);
     expect(new Set(raced.map((x) => `${x.ownerId}:${x.generation}`)).size).toBe(1);
-    const child = spawn(process.execPath, [
-      '-e',
-      'process.send?.({type:"kernel-ready",ownership_nonce:process.env.NONCE});setInterval(()=>{},1000)',
-    ], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { ...process.env, NONCE: 'contract-real-child' } });
+    const launch = await mod.launchKernelProcess({
+      databaseUrl: DB_URL,
+      runId: isolated.runId,
+      worktreePath: process.cwd(),
+      entrypoint: 'packages/brain/src/orchestrator/run.js',
+      expectedEntrypointSha: CURRENT_HEAD_SHA,
+      timeoutMs: 15000,
+    });
     try {
-      const receipt = await mod.awaitKernelReadiness({
-        child,
-        ownershipNonce: 'contract-real-child',
+      const persisted = await ownerMod.readControllerStartupReceipt({
         databaseUrl: DB_URL,
-        controllerOwnerId: owner.ownerId,
-        controllerGeneration: owner.generation,
-        timeoutMs: 5000,
+        runId: isolated.runId,
       });
-      expect(receipt.ready).toBe(true);
-      expect(receipt.initialHeartbeatPersisted).toBe(true);
-      expect(receipt.pid).toBe(child.pid);
+      expect(launch.ready).toBe(true);
+      expect(launch.entrypoint).toBe('packages/brain/src/orchestrator/run.js');
+      expect(launch.dependenciesConstructed).toBe(true);
+      expect(persisted).toMatchObject({
+        ownerId: launch.controllerOwnerId,
+        generation: launch.controllerGeneration,
+        readyAt: expect.any(String),
+        heartbeatPersisted: true,
+        heartbeatWriterPid: launch.pid,
+      });
+      expect(new Date(persisted.heartbeatAt).getTime()).toBeGreaterThan(0);
       await expect(ownerMod.writeFencedHeartbeat({
         databaseUrl: DB_URL,
-        runId: CURRENT_RUN_ID,
-        ownerId: owner.ownerId,
-        generation: owner.generation - 1,
+        runId: isolated.runId,
+        ownerId: launch.controllerOwnerId,
+        generation: launch.controllerGeneration - 1,
       })).rejects.toThrow(/stale_controller_generation/);
+      const spoofRun = await ownerMod.createIsolatedControllerRun({
+        databaseUrl: DB_URL,
+        sourceRunId: CURRENT_RUN_ID,
+        worktreePath: process.cwd(),
+        acquireOwner: false,
+      });
+      const spoof = spawn(process.execPath, [
+        '-e',
+        'process.send?.({type:"kernel-ready",ownership_nonce:process.env.NONCE});setInterval(()=>{},1000)',
+      ], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { ...process.env, NONCE: 'spoof-only' } });
+      try {
+        await expect(mod.awaitKernelReadiness({
+          child: spoof,
+          ownershipNonce: 'spoof-only',
+          databaseUrl: DB_URL,
+          runId: spoofRun.runId,
+          controllerOwnerId: 'no-db-lease',
+          controllerGeneration: 1,
+          timeoutMs: 1000,
+        })).rejects.toThrow(/controller_lease_missing|heartbeat_not_persisted/);
+      } finally {
+        spoof.kill('SIGTERM');
+      }
       const blocked = await ownerMod.runRecoverableInfrastructureBlockProof({
         databaseUrl: DB_URL,
-        runId: CURRENT_RUN_ID,
+        runId: isolated.runId,
         reasons: ['node_not_base_admitted', 'execution_transport_unavailable'],
       });
       expect(blocked.semanticBlockedStreak).toBe(0);
@@ -211,7 +274,7 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       expect(blocked.runStatus).not.toBe('failed');
       expect(blocked.recoveredOwnerCount).toBe(1);
     } finally {
-      child.kill('SIGTERM');
+      await mod.terminateKernelProcessGroup(launch, { reason: 'contract-test-complete' });
     }
   });
 
@@ -342,7 +405,12 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       headSha: process.env.PR_HEAD_SHA,
       ownerSignatureVerified: true,
       repositoryRulesSnapshotVerified: true,
+      githubRunId: expect.any(Number),
+      checkSuiteId: expect.any(Number),
+      actor: expect.any(String),
     });
+    expect(audit.requiredCheck.githubApiVerified).toBe(true);
+    expect(audit.requiredCheck.syntheticEvidenceAccepted).toBe(false);
     expect(audit.branchProtection).toMatchObject({
       approvingReviewCount: 1,
       dismissStaleReviews: true,
@@ -359,6 +427,7 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       repository: process.env.GITHUB_REPOSITORY,
       prNumber: Number(process.env.PR_NUMBER),
       exactHead: process.env.PR_HEAD_SHA,
+      requireAuthenticatedGithubEvidence: true,
       workflowFiles: [
         '.github/workflows/ci.yml',
         '.github/workflows/kernel-fleet-p0-gate.yml',
@@ -399,6 +468,10 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       'production_canary_passed',
     ]);
     expect(proof.positive.mergeHead).toBe(process.env.PR_HEAD_SHA);
+    expect(proof.positive.githubRunId).toEqual(expect.any(Number));
+    expect(proof.positive.checkSuiteId).toEqual(expect.any(Number));
+    expect(proof.positive.actor).toEqual(expect.any(String));
+    expect(proof.positive.repositoryRuleSnapshot.signatureVerified).toBe(true);
     expect(proof.positive.candidateServingStateBefore)
       .toEqual(proof.positive.candidateServingStateAfter);
     expect(proof.positive.callbackValidatedFromRealRunner).toBe(true);
@@ -460,10 +533,13 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       tokenFile: process.env.FLEET_TOKEN_FILE,
       runnerDigest: process.env.CANDIDATE_RUNNER_REF,
       role: 'reviewer',
+      expectedRole: 'reviewer',
       workspaceMode: 'read-only',
       exactHead: CURRENT_HEAD_SHA,
       taskId: CURRENT_TASK_ID,
       runId: CURRENT_RUN_ID,
+      attemptId: CURRENT_ATTEMPT_ID,
+      contractSha: CURRENT_CONTRACT_SHA,
       mutations: EXACT_RESULT_MUTATIONS,
       terminalPaths: ['success', 'timeout', 'crash', 'cancel'],
     });
@@ -474,12 +550,15 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     expect(proof.positive.receiptPersistedBeforeCleanup).toBe(true);
     expect(proof.positive.receipt).toMatchObject({
       taskId: CURRENT_TASK_ID,
-      attemptId: proof.positive.attemptId,
+      attemptId: CURRENT_ATTEMPT_ID,
       runId: CURRENT_RUN_ID,
       role: 'reviewer',
       contractSha: CURRENT_CONTRACT_SHA,
       headSha: CURRENT_HEAD_SHA,
     });
+    expect(proof.positive.attemptId).toBe(CURRENT_ATTEMPT_ID);
+    expect(proof.positive.contractSha).toBe(CURRENT_CONTRACT_SHA);
+    expect(proof.positive.role).toBe('reviewer');
     expect(proof.positive.callbackResultPath).toBe(proof.positive.injectedBrainResultFile);
     expect(proof.positive.callbackResultPathUnderAttemptRuntime).toBe(true);
     expect(proof.positive.sourceResultAuthoritative).toBe(false);
@@ -515,7 +594,7 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       identity: {
         taskId: CURRENT_TASK_ID,
         runId: CURRENT_RUN_ID,
-        attemptId: CURRENT_ATTEMPT_ID,
+        requestingAttemptId: CURRENT_ATTEMPT_ID,
         contractSha: CURRENT_CONTRACT_SHA,
         headSha: CURRENT_HEAD_SHA,
       },
@@ -554,12 +633,25 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     expect(proof.cellCount).toBe(143);
     expect(proof.grayCount).toBe(0);
     expect(proof.nullStateCount).toBe(0);
+    expect(proof.typedPendingCount).toBe(0);
+    expect(proof.typedBlockedCount).toBe(0);
+    expect(proof.staleCount).toBe(0);
+    expect(proof.expiredCount).toBe(0);
+    const expectedCellKeys = proof.stageIds.flatMap((stageId) =>
+      proof.elementKeys.map((elementKey) => `${stageId}:${elementKey}`));
+    expectExactUniqueSet(
+      proof.cells.map((cell) => `${cell.stageId}:${cell.elementKey}`),
+      expectedCellKeys,
+    );
     expect(proof.manifestSha).toBe(proof.databaseManifestSha);
     expect(proof.manifestSha).toBe(proof.regressionContractManifestSha);
     expect(proof.manifestSha).toBe(proof.runtimeReportManifestSha);
     for (const cell of proof.cells) {
-      expect(['pass', 'na_with_reason', 'typed_pending', 'typed_blocked'])
-        .toContain(cell.state);
+      expect(['pass', 'na_with_reason']).toContain(cell.state);
+      if (cell.state === 'na_with_reason') {
+        expect(cell.naReason).toBeTruthy();
+        expect(cell.independentReviewReceiptId).toMatch(/^[0-9a-f-]{36}$/);
+      }
       expect(cell.owner).toBeTruthy();
       expect(cell.construct).toBeTruthy();
       expect(cell.positiveOracle).toBeTruthy();
@@ -567,7 +659,8 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       expect(cell.recoveryOracle).toBeTruthy();
       expect(cell.failureSemantics).toBeTruthy();
       expect(cell.effectConfirmation).toBeTruthy();
-      expectCurrentIdentity(cell.evidenceIdentity);
+      expectCurrentLineage(cell.evidenceIdentity);
+      await expectValidOriginAttempt(cell.evidenceIdentity);
     }
   });
 
@@ -579,7 +672,7 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       databaseUrl: DB_URL,
       taskId: CURRENT_TASK_ID,
       runId: CURRENT_RUN_ID,
-      attemptId: CURRENT_ATTEMPT_ID,
+      requestingAttemptId: CURRENT_ATTEMPT_ID,
       contractSha: CURRENT_CONTRACT_SHA,
       exactHead: CURRENT_HEAD_SHA,
       minimumMigration: 368,
@@ -602,8 +695,10 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     expect(proof.rollback.priorConstraintsRestored).toBe(true);
     expect(proof.rollback.evidenceLostCount).toBe(0);
     expect(proof.rollback.provenanceRestored).toBe(true);
-    expectCurrentIdentity(proof.upgradeReceipt);
-    expectCurrentIdentity(proof.rollbackReceipt);
+    expectCurrentLineage(proof.upgradeReceipt);
+    expectCurrentLineage(proof.rollbackReceipt);
+    await expectValidOriginAttempt(proof.upgradeReceipt);
+    await expectValidOriginAttempt(proof.rollbackReceipt);
   });
 
   it('S0 born through S12 terminal accounting consumes authenticated stage receipts', async () => {
@@ -616,7 +711,7 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       taskId: CURRENT_TASK_ID,
       runId: CURRENT_RUN_ID,
       exactHead: CURRENT_HEAD_SHA,
-      attemptId: CURRENT_ATTEMPT_ID,
+      requestingAttemptId: CURRENT_ATTEMPT_ID,
       contractSha: CURRENT_CONTRACT_SHA,
       productAnchor: {
         journeyId: REAL_JOURNEY_ID,
@@ -650,12 +745,48 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       'task', 'run', 'promise_map', 'regression_result',
       'report', 'learning_handoff', 'external_status',
     ]);
-    expect(proof.receipts.S12.legacyEquivalenceReceipt).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(proof.receipts.S12.familyGapReceipt).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(proof.receipts.S12.legacyEquivalenceReceipt).toMatchObject({
+      requiredKeyCount: 1161,
+      observedValidKeyCount: 1161,
+      missingCount: 0,
+      pendingCount: 0,
+      blockedCount: 0,
+      staleCount: 0,
+      expiredCount: 0,
+      inferredPassCount: 0,
+      duplicateCount: 0,
+      signatureVerified: true,
+    });
+    expect(proof.receipts.S12.familyGapReceipt).toMatchObject({
+      requiredKeyCount: 18,
+      observedValidKeyCount: 18,
+      missingCount: 0,
+      pendingCount: 0,
+      blockedCount: 0,
+      staleCount: 0,
+      expiredCount: 0,
+      inferredPassCount: 0,
+      duplicateCount: 0,
+      signatureVerified: true,
+    });
+    expect(proof.receipts.S12.providerActivationReceipt).toMatchObject({
+      requiredKeysEqualObservedReceiptDerivedKeys: true,
+      missingCount: 0,
+      duplicateCount: 0,
+      signatureVerified: true,
+    });
+    expect(proof.receipts.S12.credentialEnvelopeReceipt).toMatchObject({
+      requiredKeyCount: 24,
+      observedValidKeyCount: 24,
+      missingCount: 0,
+      duplicateCount: 0,
+      signatureVerified: true,
+    });
     expect(proof.receipts.S12.transactionCommittedOnce).toBe(true);
     expect(proof.terminalComplete).toBe(true);
     for (const receipt of Object.values(proof.receipts)) {
-      expectCurrentIdentity(receipt);
+      expectCurrentLineage(receipt);
+      await expectValidOriginAttempt(receipt);
       expect(receipt.signatureVerified).toBe(true);
       expect(receipt.ownerVerified).toBe(true);
       expect(receipt.predecessorVerified).toBe(true);
@@ -670,6 +801,16 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       expect(mutation.terminalComplete).toBe(false);
       expect(mutation.stageAdvanced).toBe(false);
     }
+    expectExactUniqueSet(
+      proof.invalidOrStaleReceiptCounterfactuals.map((mutation) => mutation.kind),
+      EXACT_S12_MISSING_RECEIPTS.flatMap((kind) => [
+        `${kind}_invalid_digest`, `${kind}_wrong_identity`, `${kind}_stale`, `${kind}_non_green`,
+      ]),
+    );
+    for (const mutation of proof.invalidOrStaleReceiptCounterfactuals) {
+      expect(mutation.terminalComplete).toBe(false);
+      expect(mutation.stageAdvanced).toBe(false);
+    }
   });
 
   it('canonical legacy behavior families preserve exact inventory and proven fire evidence', async () => {
@@ -680,7 +821,7 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       databaseUrl: DB_URL,
       taskId: CURRENT_TASK_ID,
       runId: CURRENT_RUN_ID,
-      attemptId: CURRENT_ATTEMPT_ID,
+      requestingAttemptId: CURRENT_ATTEMPT_ID,
       contractSha: CURRENT_CONTRACT_SHA,
       exactHead: CURRENT_HEAD_SHA,
       providers: EXACT_PROVIDERS,
@@ -720,15 +861,21 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     expect(proof.legacyObservedValidKeyCount).toBe(1161);
     expect(proof.legacyRequiredKeys).toHaveLength(1161);
     expect(new Set(proof.legacyRequiredKeys).size).toBe(1161);
-    expect(proof.legacyObservedValidKeys).toHaveLength(1161);
-    expect(new Set(proof.legacyObservedValidKeys).size).toBe(1161);
-    expect([...proof.legacyObservedValidKeys].sort())
+    expect(proof.legacyReceipts).toHaveLength(1161);
+    const legacyReceiptKeys = proof.legacyReceipts.map((receipt) =>
+      `${receipt.legacyBehaviorId}:${receipt.provider}:${receipt.scenario}`);
+    expect(new Set(legacyReceiptKeys).size).toBe(1161);
+    expect([...legacyReceiptKeys].sort())
       .toEqual([...proof.legacyRequiredKeys].sort());
     expect(proof.familyRequiredKeyCount).toBe(18);
     expect(proof.familyObservedValidKeyCount).toBe(18);
     expect(proof.familyRequiredKeys).toHaveLength(18);
     expect(new Set(proof.familyRequiredKeys).size).toBe(18);
-    expect([...proof.familyObservedValidKeys].sort())
+    expect(proof.familyReceipts).toHaveLength(18);
+    const familyReceiptKeys = proof.familyReceipts.map((receipt) =>
+      `${receipt.unifiedFamilyBehaviorId}:${receipt.provider}:${receipt.scenario}`);
+    expect(new Set(familyReceiptKeys).size).toBe(18);
+    expect([...familyReceiptKeys].sort())
       .toEqual([...proof.familyRequiredKeys].sort());
     expect(proof.familyGapClosed).toBe(true);
     expect(proof).toMatchObject({
@@ -743,15 +890,47 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     });
     expectExactUniqueSet(proof.providers, EXACT_PROVIDERS);
     expectExactUniqueSet(proof.scenarios, EXACT_SCENARIOS);
-    for (const receipt of proof.receipts) {
-      expectCurrentIdentity(receipt);
+    for (const receipt of proof.legacyReceipts) {
+      expectCurrentLineage(receipt);
+      await expectValidOriginAttempt(receipt, { provider: receipt.provider });
       expect(receipt.signatureVerified).toBe(true);
       expect(receipt.headSha).toBe(CURRENT_HEAD_SHA);
       expect(receipt.positiveOrViolationOrRecoveryFired).toBe(true);
       expect(receipt).toMatchObject({
         runId: CURRENT_RUN_ID,
+        attemptId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        providerSessionId: expect.any(String),
+        requestedMachine: expect.any(String),
+        actualMachine: expect.any(String),
+        leaseGeneration: expect.any(Number),
         familyId: expect.stringMatching(/^KH-F1-F0[1-8]$/),
         legacyBehaviorId: expect.any(String),
+        phase: expect.any(String),
+        subject: expect.any(String),
+        effectReceipt: expect.any(Object),
+        evidenceDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      });
+      if (receipt.scenario === 'violation') {
+        expect(receipt.decision).toBe('deny');
+        expect(receipt.effectCount).toBe(0);
+      }
+      if (receipt.scenario === 'recovery') {
+        expect(receipt.decision).toBe('recover');
+        expect(receipt.recoveryOfReceiptId).toMatch(/^[0-9a-f-]{36}$/);
+      }
+    }
+    for (const receipt of proof.familyReceipts) {
+      expectCurrentLineage(receipt);
+      await expectValidOriginAttempt(receipt, { provider: receipt.provider });
+      expect(receipt).toMatchObject({
+        familyId: expect.stringMatching(/^KH-F1-F0[16]$/),
+        unifiedFamilyBehaviorId: expect.stringMatching(/^KH-F1-F0[16]-U-/),
+        provider: expect.stringMatching(/^(claude|codex|grok)$/),
+        scenario: expect.stringMatching(/^(normal|violation|recovery)$/),
+        providerSessionId: expect.any(String),
+        actualMachine: expect.any(String),
+        leaseGeneration: expect.any(Number),
+        signatureVerified: true,
         evidenceDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
       });
       if (receipt.scenario === 'violation') {
@@ -770,6 +949,8 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       'missing_row', 'missing_provider', 'missing_scenario', 'missing_attempt',
       'missing_lease', 'stale_head', 'wrong_decision', 'missing_no_effect',
       'missing_recovery_link', 'missing_evidence_digest', 'duplicate_key',
+      'wrong_provider_origin', 'wrong_session_origin', 'cross_run_origin_attempt',
+      'stale_origin_lease', 'nonexistent_origin_attempt',
     ]);
   });
 
@@ -781,35 +962,67 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       databaseUrl: DB_URL,
       taskId: CURRENT_TASK_ID,
       runId: CURRENT_RUN_ID,
-      attemptId: CURRENT_ATTEMPT_ID,
+      requestingAttemptId: CURRENT_ATTEMPT_ID,
       contractSha: CURRENT_CONTRACT_SHA,
       headSha: CURRENT_HEAD_SHA,
       providers: EXACT_PROVIDERS,
       entries: [
+        'branch_protect',
         'credential_guard',
         'main_repo_write_guard',
         'bash_guard_local_precheck',
+        'devgate_red_green',
+        'dod_gate',
         'stop_watchdog',
-        'independent_judge',
+        'evaluator_independent_judge',
         'github_repository_rule',
         'staging_promote_rollback',
       ],
       wiringSources: [
         '.claude/settings.json',
-        'packages/brain/.claude/settings.json',
+        'packages/engine/.claude/settings.json',
         'installer_or_symlink',
         'kernel_provider_neutral_dispatch',
       ],
     });
     expectExactUniqueSet(proof.providers, EXACT_PROVIDERS);
-    expect(proof.requiredActivationKeys).toHaveLength(21);
-    expect(new Set(proof.requiredActivationKeys).size).toBe(21);
-    expect([...proof.observedFireKeys].sort()).toEqual([...proof.requiredActivationKeys].sort());
+    expect(proof.requiredActivationKeys.length).toBeGreaterThan(0);
+    expect(new Set(proof.requiredActivationKeys).size).toBe(proof.requiredActivationKeys.length);
+    expect(proof.fireReceipts).toHaveLength(proof.requiredActivationKeys.length);
+    const observedReceiptKeys = proof.fireReceipts.map((receipt) =>
+      `${receipt.constructId}:${receipt.entrypoint}:${receipt.provider}:${receipt.scenario}`);
+    expect(new Set(observedReceiptKeys).size).toBe(proof.requiredActivationKeys.length);
+    expect([...observedReceiptKeys].sort()).toEqual([...proof.requiredActivationKeys].sort());
     expect(proof.staticDeclarationAcceptedCount).toBe(0);
     for (const receipt of proof.fireReceipts) {
-      expectCurrentIdentity(receipt);
+      expectCurrentLineage(receipt);
+      await expectValidOriginAttempt(receipt, { provider: receipt.provider });
       expect(receipt.productionEntryObserved).toBe(true);
       expect(receipt.signatureVerified).toBe(true);
+      expect(receipt).toMatchObject({
+        entrypoint: expect.any(String),
+        constructId: expect.any(String),
+        provider: expect.stringMatching(/^(claude|codex|grok)$/),
+        actualWiringHopChain: expect.arrayContaining([
+          expect.stringMatching(/settings|installer|symlink|dispatcher/),
+        ]),
+        providerSessionId: expect.any(String),
+        actualMachine: expect.any(String),
+        leaseGeneration: expect.any(Number),
+        decision: expect.stringMatching(/^(allow|deny|recover)$/),
+        effectReceipt: expect.any(Object),
+        evidenceDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      });
+    }
+    expectExactUniqueSet(proof.mutatedWiringCounterfactuals.map((x) => x.kind), [
+      'root_settings_missing',
+      'engine_package_settings_missing',
+      'installer_or_symlink_missing',
+      'kernel_dispatch_missing',
+    ]);
+    for (const mutation of proof.mutatedWiringCounterfactuals) {
+      expect(mutation.accepted).toBe(false);
+      expect(mutation.productionFireReceiptCount).toBe(0);
     }
   });
 
@@ -823,7 +1036,7 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       runnerDigest: requireEnv('CANDIDATE_RUNNER_REF'),
       taskId: CURRENT_TASK_ID,
       runId: CURRENT_RUN_ID,
-      attemptId: CURRENT_ATTEMPT_ID,
+      requestingAttemptId: CURRENT_ATTEMPT_ID,
       contractSha: CURRENT_CONTRACT_SHA,
       headSha: CURRENT_HEAD_SHA,
       providers: EXACT_PROVIDERS,
@@ -831,6 +1044,39 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     });
     expectExactUniqueSet(proof.providers, EXACT_PROVIDERS);
     expectExactUniqueSet(proof.mutations, EXACT_CREDENTIAL_MUTATIONS);
+    expect(proof.receipts).toHaveLength(24);
+    const receiptKeys = proof.receipts.map((receipt) =>
+      `${receipt.provider}:${receipt.scenario}:${receipt.mutation ?? 'none'}`);
+    const requiredCredentialKeys = EXACT_PROVIDERS.flatMap((provider) => [
+      `${provider}:normal:none`,
+      ...EXACT_CREDENTIAL_MUTATIONS.map((mutation) => `${provider}:violation:${mutation}`),
+      `${provider}:recovery:none`,
+    ]);
+    expectExactUniqueSet(receiptKeys, requiredCredentialKeys);
+    for (const receipt of proof.receipts) {
+      expectCurrentLineage(receipt);
+      await expectValidOriginAttempt(receipt, { provider: receipt.provider });
+      expect(receipt).toMatchObject({
+        provider: expect.stringMatching(/^(claude|codex|grok)$/),
+        providerSessionId: expect.any(String),
+        account: expect.any(String),
+        requestedMachine: expect.any(String),
+        actualMachine: expect.any(String),
+        leaseGeneration: expect.any(Number),
+        decision: expect.stringMatching(/^(allow|deny|recover)$/),
+        effectReceipt: expect.any(Object),
+        evidenceDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+        signatureVerified: true,
+      });
+      if (receipt.scenario === 'violation') {
+        expect(receipt.effectCount).toBe(0);
+      }
+      if (receipt.scenario === 'recovery') {
+        expect(receipt.recoveryOfReceiptId).toMatch(/^[0-9a-f-]{36}$/);
+        expect(receipt.freshEnvelopeReceiptId).toMatch(/^[0-9a-f-]{36}$/);
+        expect(receipt.oldEnvelopeReusable).toBe(false);
+      }
+    }
     for (const provider of EXACT_PROVIDERS) {
       expect(proof.byProvider[provider].indirectConsumptionVerified).toBe(true);
       expect(proof.byProvider[provider].freshRecoveryVerified).toBe(true);
