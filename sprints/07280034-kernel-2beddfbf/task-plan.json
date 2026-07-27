@@ -1,0 +1,44 @@
+{
+  "initiative_id": "21ed0125-db9a-4200-9a3a-dc9fd9b6b15c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "核心路径是 Brain server-owned controller、dispatcher、真实 PostgreSQL、local/fleet runner 与终态 cleanup 的后台自主链路。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现可信 server-owned Test Environment Controller 与 real-PG/host-runner 证据闭环",
+      "scope": "按冻结合同为 DB-backed Harness attempt 提供唯一最小权限 PostgreSQL capability，完成严格 receipt/oracle、本地与 fleet 瞬态注入、V5/import purity、八终态 cleanup、结构化 callback 权威与同 SHA host operator gate；保持 PR Draft 且不 merge/deploy。",
+      "dod": [
+        "[BEHAVIOR] 真实 PostgreSQL 中 attempt 先持久化，资格只由冻结 server contract row 与 role command 决定，caller payload/TaskBundle/prompt/git/stdout 无权。",
+        "[BEHAVIOR] receipt 严格验签、绑定、过期、未知字段与 replay 反例逐项 fail-closed，所有持久化面无 URL/password/token。",
+        "[BEHAVIOR] local 与 authenticated fleet 生产链只在 actual runner 注入 TEST_DATABASE_URL/HARNESS_DB_RECEIPT，judge/无关命令无 capability。",
+        "[BEHAVIOR] pre-import oracle、V5 journey_step_links、baseline import purity 与八种终态 cleanup 在真实 PG 通过。",
+        "[BEHAVIOR] exact proposer SHA 的 host Docker receipt 覆盖 local/fleet/structured callback/all lifecycle modes，receipt 缺失前保持 logic-done-pending。",
+        "[ARTIFACT] Brain DEFINITION/version、A-F suites、operator bootstrap/host E2E/receipt verifier 脚本同步提交。"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/test-environment-controller.js",
+        "packages/brain/src/orchestrator/test-environment-receipt.js",
+        "packages/brain/src/orchestrator/test-environment-oracle.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/remote-bridge-transport.js",
+        "packages/brain/src/orchestrator/run.js",
+        "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "packages/brain/migrations/366_harness_test_environment_receipts.sql",
+        "packages/brain/src/__tests__/integration/test-environment-controller.pg.integration.test.js",
+        "packages/brain/src/__tests__/integration/test-environment-receipt.pg.integration.test.js",
+        "packages/brain/src/__tests__/integration/test-environment-oracle.pg.integration.test.js",
+        "packages/brain/src/__tests__/integration/test-environment-v5.pg.integration.test.js",
+        "packages/brain/src/__tests__/integration/test-environment-lifecycle.pg.integration.test.js",
+        "scripts/harness-test-environment/run-host-operator-e2e.sh",
+        "scripts/harness-test-environment/verify-host-receipt.mjs",
+        "scripts/harness-test-environment/assert-no-secret-evidence.mjs",
+        "packages/brain/DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
