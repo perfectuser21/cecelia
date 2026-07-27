@@ -13,7 +13,6 @@ SSH="${FLEET_ROLLOUT_SSH:-/usr/bin/ssh}"
 TAR="${FLEET_ROLLOUT_TAR:-/usr/bin/tar}"
 SUDO="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 ROLLOUT_TMPDIR="${FLEET_ROLLOUT_TMPDIR:-${TMPDIR:-/tmp}}"
-NODECTL_OVERRIDE="${FLEET_ROLLOUT_NODECTL:-}"
 
 TEMP_ROOT=''
 
@@ -50,6 +49,7 @@ cleanup() {
 run_node_apply() {
   local machine_id="$1"
   local payload_root="$2"
+  local node_ctl_override="${3:-}"
   local node_ctl
   local drain_guard_armed=false
 
@@ -61,12 +61,11 @@ run_node_apply() {
     && ! -L "$payload_root/runner.tar" ]] \
     || die "rollout_payload_invalid"
 
-  node_ctl="${NODECTL_OVERRIDE:-$payload_root/source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh}"
+  node_ctl="${node_ctl_override:-$payload_root/source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh}"
   [[ -x "$node_ctl" && ! -L "$node_ctl" ]] || die "rollout_nodectl_invalid"
-  [[ -x "$SUDO" ]] || die "sudo_unavailable"
 
   run_node_command() {
-    "$SUDO" -n env \
+    /usr/bin/env \
       CECELIA_MACHINE_ID="$machine_id" \
       FLEET_BASELINE_REPOSITORY_BUNDLE="$payload_root/repository.bundle" \
       FLEET_BASELINE_RUNNER_ARCHIVE="$payload_root/runner.tar" \
@@ -110,6 +109,30 @@ run_node_apply() {
   fi
   drain_guard_armed=false
   trap - EXIT HUP INT TERM
+}
+
+validate_internal_staging() {
+  local staged_root="$1"
+  local relative_path path metadata owner mode canonical_root canonical_path
+
+  [[ "$EUID" -eq 0 ]] || return 1
+  /bin/test -d "$staged_root" && /bin/test ! -L "$staged_root" || return 1
+  metadata="$(/usr/bin/stat -f '%u:%Lp' -- "$staged_root")" || return 1
+  [[ "$metadata" == '0:700' ]] || return 1
+  canonical_root="$(/bin/realpath -- "$staged_root")" || return 1
+
+  for relative_path in \
+    source/packages/brain/scripts/fleet-worker/fleet-rollout.sh \
+    source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh; do
+    path="$staged_root/$relative_path"
+    /bin/test -f "$path" && /bin/test ! -L "$path" || return 1
+    canonical_path="$(/bin/realpath -- "$path")" || return 1
+    [[ "$canonical_path" == "$canonical_root/$relative_path" ]] || return 1
+    metadata="$(/usr/bin/stat -f '%u:%Lp' -- "$path")" || return 1
+    IFS=: read -r owner mode <<<"$metadata"
+    [[ "$owner" == 0 && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#$mode & 8#022) == 0 )) || return 1
+  done
 }
 
 validate_root_staging() {
@@ -205,8 +228,14 @@ run_root_staged_payload() {
   return "$status"
 }
 
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 if [[ "${1:-}" == '__node-apply' ]]; then
   [[ $# -eq 3 ]] || die "rollout_internal_usage" 64
+  [[ "$EUID" -eq 0 ]] || die "rollout_internal_root_required" 77
+  validate_internal_staging "$3" || die "rollout_staging_invalid"
   run_node_apply "$2" "$3"
   exit 0
 fi

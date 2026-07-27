@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2016
+# shellcheck disable=SC1090,SC2016
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -162,7 +162,12 @@ write_executable "$fake_bin/sudo" \
   'if [[ "${FLEET_TEST_SUDO_NOEXEC:-0}" == 1 ]]; then' \
   '  case "${1:-}" in' \
   '    /usr/bin/mktemp|/usr/bin/tar|/bin/mkdir|/bin/chmod|/bin/rm|/bin/kill|/bin/test|/bin/realpath) exec "$@" ;;' \
-  '    */fleet-rollout.sh) exec "$@" ;;' \
+  '    */fleet-rollout.sh)' \
+  '      if [[ "${2:-}" == "__node-apply" ]]; then' \
+  '        exec /bin/bash -c '"'"'source "$1"; run_node_apply "$2" "$3" "${FLEET_ROLLOUT_NODECTL:-}"'"'"' -- "$1" "$3" "$4"' \
+  '      fi' \
+  '      exec "$@"' \
+  '      ;;' \
   '    env) [[ "${FLEET_TEST_SUDO_EXEC_NODE:-0}" == 1 ]] && exec "$@"; exit 0 ;;' \
   '    *) exit 0 ;;' \
   '  esac' \
@@ -285,6 +290,8 @@ CECELIA_MACHINE_ID=us-mac-m4 \
 FLEET_TEST_REAL_GIT=1 \
 FLEET_TEST_SSH_EXECUTE=1 \
 FLEET_TEST_SUDO_NOEXEC=1 \
+FLEET_TEST_NODE_LOG="$node_log" \
+FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
 FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
   run_rollout xian-mac-m4 --apply >/dev/null \
   || fail "executable remote rollout contract failed"
@@ -319,6 +326,8 @@ fi
 CECELIA_MACHINE_ID=us-mac-m4 \
 FLEET_TEST_REAL_GIT=1 \
 FLEET_TEST_SUDO_NOEXEC=1 \
+FLEET_TEST_NODE_LOG="$node_log" \
+FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
 FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
   run_rollout us-mac-m4 --apply >/dev/null \
   || fail "executable local rollout contract failed"
@@ -448,6 +457,11 @@ cp "$fake_bin/nodectl" "$node_source/fleet-nodectl.sh"
 printf 'bundle\n' > "$payload_root/repository.bundle"
 printf 'runner\n' > "$payload_root/runner.tar"
 
+run_node_apply_for_test() (
+  source "$ROLLOUT"
+  run_node_apply "$1" "$2" "$3"
+)
+
 : > "$node_log"
 if FLEET_TEST_NODE_LOG="$node_log" \
   FLEET_TEST_TRANSPORT_LOG="$transport_log" \
@@ -467,7 +481,8 @@ FLEET_TEST_NODE_LOG="$node_log" \
 FLEET_TEST_TRANSPORT_LOG="$transport_log" \
 FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
 FLEET_ROLLOUT_NODECTL="$node_source/fleet-nodectl.sh" \
-  "$ROLLOUT" __node-apply xian-mac-m4 "$payload_root" >/dev/null \
+  run_node_apply_for_test xian-mac-m4 "$payload_root" \
+    "$node_source/fleet-nodectl.sh" >/dev/null \
   || fail "node-local apply sequence failed"
 node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
 [[ "$node_sequence" == 'drain,bootstrap,undrain,admit' ]] \
@@ -481,7 +496,8 @@ if FLEET_TEST_NODE_LOG="$node_log" \
   FLEET_TEST_NODE_FAIL=admit \
   FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
   FLEET_ROLLOUT_NODECTL="$node_source/fleet-nodectl.sh" \
-  "$ROLLOUT" __node-apply xian-mac-m4 "$payload_root" \
+  run_node_apply_for_test xian-mac-m4 "$payload_root" \
+    "$node_source/fleet-nodectl.sh" \
   >"$test_root/admit.out" 2>&1; then
   fail "failed admission was hidden"
 fi
@@ -496,7 +512,8 @@ FLEET_TEST_TRANSPORT_LOG="$transport_log" \
 FLEET_TEST_NODE_SIGNAL_PARENT=1 \
 FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
 FLEET_ROLLOUT_NODECTL="$node_source/fleet-nodectl.sh" \
-  "$ROLLOUT" __node-apply xian-mac-m4 "$payload_root" \
+  run_node_apply_for_test xian-mac-m4 "$payload_root" \
+    "$node_source/fleet-nodectl.sh" \
   >"$test_root/signal.out" 2>&1 \
   || signal_status=$?
 [[ "$signal_status" -ne 0 ]] || fail "TERM during admission was reported as success"
