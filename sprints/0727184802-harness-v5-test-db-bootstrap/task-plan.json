@@ -1,0 +1,30 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "任务只涉及 Kernel/Engine/Brain 的后端执行能力、测试数据库与 receipt/cleanup 合同，不涉及前端 UI。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "统一 Harness V5 的 attempt 级测试数据库 capability、bootstrap 与 cleanup receipt 合同",
+      "scope": "把 TEST_DATABASE_URL 收敛为唯一测试连接串，增加 attempt 级 capability 发放/白名单校验/fail-closed/import-purity/cleanup receipt/local-fleet parity，并补齐对应回归测试。",
+      "dod": [
+        "[BEHAVIOR] DB capability 只发给声明 DB-backed B1-B5 的角色，judge 与无关角色无 capability",
+        "[BEHAVIOR] bootstrap/migration/seed/Brain/Vitest 全部严格命中 TEST_DATABASE_URL 白名单测试库，journey_step_links 存在",
+        "[BEHAVIOR] import kernel-harness-f1-baseline 不改 env、不 spawn psql、不隐式迁移；非法 capability 在 Brain import 前 fail closed",
+        "[BEHAVIOR] success/failure/cancel/kill/recovery 后 cleanup 执行，receipt 证明 local-docker 与 fleet-worker parity 且不含凭据",
+        "[ARTIFACT] 新增 sprint contract tests 与 bootstrap/receipt 契约实现入口"
+      ],
+      "files": [
+        "packages/brain/src/db-config.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/preflight/requirements.js",
+        "packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js",
+        "packages/brain/src/__tests__/integration/kernel-fleet-execution-receipts.integration.test.js",
+        "packages/engine/tests/skills/harness-v5-ci-checks.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
