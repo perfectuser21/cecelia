@@ -423,4 +423,40 @@ describe('pure Fleet Node base admission', () => {
 
     expectDraining(result, 'admission_profile_invalid');
   });
+
+  it.each([
+    ...[
+      'os',
+      'orbstack',
+      'worker_protocol',
+      'worker_contract',
+      'worker',
+      'runner',
+      'git',
+      'node',
+      'codex',
+    ].map((key) => [
+      `noncanonical ${key} policy`,
+      (profile) => { profile.version_policy[key] = `${key}-noncanonical`; },
+    ]),
+    ['alternate valid Runner digest', (profile) => {
+      profile.runner_image_digest = `sha256:${'0'.repeat(64)}`;
+    }],
+    ['alternate valid CPU pressure ceiling', (profile) => {
+      profile.resources.cpu_pressure_max_percent = 80;
+    }],
+    ['alternate valid memory pressure ceiling', (profile) => {
+      profile.resources.memory_pressure_max_percent = 75;
+    }],
+  ])('rejects a schema-valid profile with %s', async (_name, weaken) => {
+    const contract = await loadContract();
+    const profile = structuredClone(contract.getNodeProfile('xian-mac-m4'));
+    weaken(profile);
+    const report = completeReport(profile);
+
+    const result = contract.evaluateBaseAdmission(report, { profile, nowMs: NOW_MS });
+
+    expectDraining(result, 'admission_profile_invalid');
+    expect(contract.validateNodeProfile(profile)).toBe(false);
+  });
 });
