@@ -450,7 +450,7 @@ async function probeFleetWorkerHealth(options = {}) {
       disposable,
     ] = await Promise.all([
       run('sw_vers', ['-productVersion']),
-      run('orb', ['--version']),
+      run('orbctl', ['version']),
       run('docker', ['info', '--format', '{{json .}}']),
       run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', commandDigest]),
       run('git', ['--version']),

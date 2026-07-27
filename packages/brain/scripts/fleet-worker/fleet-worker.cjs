@@ -142,6 +142,7 @@ function createFleetWorkerServer(options = {}) {
   const probeHealth = typeof options.probeHealth === 'function'
     ? options.probeHealth
     : () => probeFleetWorkerHealth(options);
+  let probeInFlight = false;
 
   return http.createServer(async (request, response) => {
     if (request.url !== '/health') {
@@ -152,12 +153,19 @@ function createFleetWorkerServer(options = {}) {
       writeJson(response, 405, { error: 'method_not_allowed' });
       return;
     }
+    if (probeInFlight) {
+      writeJson(response, 503, { error: 'health_probe_busy' });
+      return;
+    }
 
+    probeInFlight = true;
     try {
       const health = await probeHealth();
       writeJson(response, 200, projectHealth(health));
     } catch {
       writeJson(response, 503, { error: 'health_probe_failed' });
+    } finally {
+      probeInFlight = false;
     }
   });
 }
