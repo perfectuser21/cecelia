@@ -249,6 +249,19 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('quarantined');
   });
 
+  it('rejects stale external cancellation without touching the owned Attempt', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.launch(request());
+
+    await expect(runner.cancel(ATTEMPT_ID, {
+      owner: 'stale-dispatcher',
+      generation: 0,
+    })).rejects.toThrow(/attempt_lease_conflict/);
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+  });
+
   it('rolls back the container and workspace when durable state persistence fails', async () => {
     const deps = dependencies();
     deps.stateStore.save.mockRejectedValueOnce(new Error('state write failed'));

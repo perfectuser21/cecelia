@@ -659,21 +659,39 @@ describe('Fleet Worker Attempt API', () => {
       server,
       'POST',
       `/harness/attempts/${attemptId}/cancel`,
-      { headers: auth },
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
     );
     const terminal = await request(
       server,
       'POST',
       `/harness/attempts/${attemptId}/terminal`,
-      { headers: auth },
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
     );
 
     expect(inspected.statusCode).toBe(200);
     expect(cancelled.statusCode).toBe(200);
     expect(terminal.statusCode).toBe(200);
     expect(attemptRunner.inspect).toHaveBeenCalledWith(attemptId);
-    expect(attemptRunner.cancel).toHaveBeenCalledWith(attemptId);
-    expect(attemptRunner.terminal).toHaveBeenCalledWith(attemptId);
+    expect(attemptRunner.cancel).toHaveBeenCalledWith(attemptId, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    expect(attemptRunner.terminal).toHaveBeenCalledWith(attemptId, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
     server.close();
   });
 
