@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## 合同边界
 
@@ -147,12 +147,25 @@ npx vitest run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-auth
 
 **验证命令**:
 ```bash
-npx vitest run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict" -t "approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail"
+node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict" -t "approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail" -t "reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict"
 ```
 
-**硬阈值**: 缺 token/缺 repo/缺 pr_number/缺 SHA/不匹配时分别返回 401/400/409 且 `orchestrator_decision_log` 不新增 verdict；成功时 detail 必含 `approved_by/pr_head_sha/source/timestamp/repo/pr_number/run_id`。
+**硬阈值**: 缺 token/缺 repo/缺 pr_number/缺 SHA/不匹配时分别返回 401/400/409 且 `orchestrator_decision_log` 不新增 verdict；approve/reject 成功时 detail 必含调用人、`pr_head_sha`、`source`、`timestamp`、`repo`、`pr_number`、`run_id`。
 
-### Step 3: stale SHA 使既有 evaluator/judge/human_review 全失效
+### Step 3: review_required=true 且无当前 SHA 批准时任何 merge caller 都不能合并
+
+**来源**: `[FROM_PRD]` — Golden Path 第 1/3 步、边界情况第 2/4 条。
+
+**可观测行为**: 只要 `review_required=true` 且当前 head 没有有效 `human_review` 批准，Kernel、CI、legacy caller 一律不能 merge。
+
+**验证命令**:
+```bash
+node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并"
+```
+
+**硬阈值**: `mergeGate(...).allow == false`；不存在“review_required=true 但 caller 换条路径就能 merge”。
+
+### Step 4: stale SHA 使既有 evaluator/judge/human_review 全失效
 
 **来源**: `[FROM_PRD]` — Golden Path 第 3 步、边界情况第 4 条。
 
@@ -160,12 +173,12 @@ npx vitest run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-auth
 
 **验证命令**:
 ```bash
-npx vitest run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "mergeGate 对 stale human approval fail-closed 并要求重跑证据链"
+node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "mergeGate 对 stale human approval fail-closed 并要求重跑证据链"
 ```
 
 **硬阈值**: `mergeGate(...).allow == false` 且 reason 指向 stale review/head mismatch；不存在“批准 A 合并 B”。
 
-### Step 4: merge 只接受当前 head 的全量证据并原子锁头
+### Step 5: merge 只接受当前 head 的全量证据并原子锁头
 
 **来源**: `[FROM_PRD]` — Golden Path 第 3 步、边界情况第 4/5 条。
 
@@ -173,12 +186,12 @@ npx vitest run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-auth
 
 **验证命令**:
 ```bash
-npx vitest run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha"
+node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha"
 ```
 
 **硬阈值**: 生成的 merge 命令必须显式含当前 `head_sha` 锁；无锁头参数视为 FAIL。
 
-### Step 5: CI 与 legacy merge caller 一律 fail-closed
+### Step 6: CI 与 legacy merge caller 一律 fail-closed
 
 **来源**: `[AI_ADDED]` — Reviewer/Proposer 防造假补充，理由：PRD 明示“CI 和 legacy merge caller 必须 fail-closed”，但现状证据显示 `.github/workflows/scripts/should-auto-merge.sh` 仍可被标题与 PR 内容绕开，需要把这一点机械化。
 
@@ -186,7 +199,7 @@ npx vitest run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-auth
 
 **验证命令**:
 ```bash
-npx vitest run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "标题 feat\\(harness\\) 或 cp- branch 本身不能决定 Harness merge authority"
+node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "标题 feat\\(harness\\) 或 cp- branch 本身不能决定 Harness merge authority"
 ```
 
 **硬阈值**: 对只给 `branch/title` 的脚本调用不再输出可直接授权 merge 的结果；普通 PR 不因标题误入 Harness 通道。
@@ -237,7 +250,7 @@ PR_URL=$(echo "$TASK_JSON" | jq -r '.pr_url // .payload.pr_url // .task.pr_url /
 CURRENT_SHA=$(gh pr view "$PR_URL" --json headRefOid --jq '.headRefOid')
 [ -n "$CURRENT_SHA" ] || { echo "FAIL: gh 未返回 headRefOid"; exit 1; }
 
-npx vitest run \
+node ./node_modules/vitest/vitest.mjs run \
   sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts \
   packages/brain/src/routes/__tests__/harness-kernel-approvals.test.js \
   packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js \
@@ -256,4 +269,4 @@ cat /tmp/kernel-approve-resp.json | jq -e '.error | type == "string"' >/dev/null
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| ownership tuple、approve/reject、merge lock、CI fail-closed | `sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts` | `标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority` / `resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组` / `approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict` / `approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `mergeGate 对 stale human approval fail-closed 并要求重跑证据链` / `merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha` | 当前脚本仍按标题 skip，`harness-ci-gate.js` 无 ownership resolver，approve route 不要求 repo/pr_number 且 detail 缺 `source/timestamp/repo/pr_number/run_id`，merge handler 也未传 `--match-head-commit` |
+| ownership tuple、approve/reject、merge lock、CI fail-closed | `sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts` | `标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority` / `resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组` / `approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict` / `approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict` / `review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并` / `mergeGate 对 stale human approval fail-closed 并要求重跑证据链` / `merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha` | 当前脚本仍按标题 skip，`harness-ci-gate.js` 无 ownership resolver，approve/reject route 不要求完整 tuple 且 detail 缺 `source/timestamp/repo/pr_number/run_id`，`review_required=true` 时 merge gate 仍可被绕开，merge handler 也未传 `--match-head-commit` |

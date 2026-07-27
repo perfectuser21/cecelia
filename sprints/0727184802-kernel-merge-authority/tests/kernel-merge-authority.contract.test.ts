@@ -11,20 +11,27 @@ const APPROVER_TOKEN = 'kernel-contract-token';
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
 const HEAD_SHA = 'a'.repeat(40);
+const NEXT_HEAD_SHA = 'b'.repeat(40);
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4379';
 const REPO = 'perfectuser21/cecelia';
 const PR_NUMBER = 4379;
 
-function createApprovalDatabase() {
+function createApprovalDatabase(options: {
+  currentSha?: string;
+  reviewRequestSha?: string;
+  runExists?: boolean;
+} = {}) {
   const state = {
     insertedDetail: null as null | Record<string, unknown>,
     decisionLog: [{
       hop: 3,
-      action: 'effect:human_review_requested',
-      observed: { pr: { head_sha: HEAD_SHA } },
+      action: 'effect:human_review_requested' as const,
+      observed: { pr: { head_sha: options.reviewRequestSha ?? HEAD_SHA } },
       detail: { dispatch_hop: 2, review_reason: 'awaiting_human_review' },
       created_at: new Date('2026-07-27T18:48:02.000Z'),
     }],
+    currentSha: options.currentSha ?? HEAD_SHA,
+    runExists: options.runExists ?? true,
   };
 
   const client = {
@@ -54,6 +61,7 @@ function createApprovalDatabase() {
     async query(sql: string, params: unknown[] = []) {
       const normalized = String(sql).trim();
       if (normalized.includes('FROM initiative_runs r')) {
+        if (!state.runExists) return { rows: [], rowCount: 0 };
         return { rows: [{ run_id: RUN_ID, task_id: TASK_ID, pr_url: PR_URL }], rowCount: 1 };
       }
       if (normalized.includes("action='effect:human_review_requested'")) {
@@ -73,7 +81,7 @@ function createApp(database: unknown) {
   const app = express();
   app.use(express.json());
   app.set('pool', database);
-  app.set('kernelPrHeadResolver', async () => HEAD_SHA);
+  app.set('kernelPrHeadResolver', async () => (database as { state?: { currentSha?: string } }).state?.currentSha ?? HEAD_SHA);
   app.use('/api/brain/harness/kernel-reviews', approvalRouter);
   return app;
 }
@@ -86,6 +94,7 @@ describe('kernel merge authority contract red tests', () => {
   it('approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict', async () => {
     process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
     const { database, state } = createApprovalDatabase();
+    (database as { state?: unknown }).state = state;
     const app = createApp(database);
 
     const response = await request(app)
@@ -105,6 +114,7 @@ describe('kernel merge authority contract red tests', () => {
   it('approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail', async () => {
     process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
     const { database, state } = createApprovalDatabase();
+    (database as { state?: unknown }).state = state;
     const app = createApp(database);
 
     const response = await request(app)
@@ -129,6 +139,41 @@ describe('kernel merge authority contract red tests', () => {
       pr_number: PR_NUMBER,
       run_id: RUN_ID,
     });
+  });
+
+  it('reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    const { database, state } = createApprovalDatabase({ currentSha: NEXT_HEAD_SHA });
+    (database as { state?: unknown }).state = state;
+    const app = createApp(database);
+
+    const response = await request(app)
+      .post(`/api/brain/harness/kernel-reviews/${RUN_ID}/reject`)
+      .set('x-approver-token', APPROVER_TOKEN)
+      .send({
+        task_id: TASK_ID,
+        repo: REPO,
+        pr_number: PR_NUMBER,
+        pr_head_sha: HEAD_SHA,
+        review_request_hop: 3,
+        rejected_by: 'alex',
+      });
+
+    expect(response.status).toBe(409);
+    expect(state.insertedDetail).toBeNull();
+  });
+
+  it('review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并', () => {
+    const result = mergeGate({
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: HEAD_SHA },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: HEAD_SHA },
+      prHeadSha: HEAD_SHA,
+      reviewRequired: true,
+      reviewApproved: false,
+      reviewVerdict: null,
+    } as never);
+
+    expect(result.allow).toBe(false);
   });
 
   it('mergeGate 对 stale human approval fail-closed 并要求重跑证据链', () => {
