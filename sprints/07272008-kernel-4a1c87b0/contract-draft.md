@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 8)
+# Sprint Contract Draft (Round 9)
 
 ## 合同边界
 
@@ -9,6 +9,7 @@
 - `contract-gate`: enabled（`packages/brain/src/lib/contract-gate.js` 存在）。
 - 根 `RCI` 文件当前未发现；本轮以根 `DEFINITION.md`、`packages/brain/package.json`、`packages/brain/package-lock.json`、`.brain-versions`、`regression-contract.yaml` 为可执行版本/回归账本，并显式记录 `RCI: file not found`。
 - `context-manifest` 于 2026-07-27 实测 `GET /api/brain/line/bb8cc561-b3ee-4fec-b74d-2255694bd963/context-manifest` 返回 `Cannot GET ...`，因此累积 FR 明确登记为 unavailable。
+- registry 快照于 2026-07-27 实测为 stale（最新扫描 2026-07-18，约 214h 前）；本轮字段与状态值以 PRD 字面、现有源码与回归测试为准，不引入新的 registry 推导字段。
 
 ## Response Schema（推导来源: PRD字面）
 
