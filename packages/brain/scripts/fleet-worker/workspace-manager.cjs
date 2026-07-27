@@ -274,6 +274,14 @@ function createWorkspaceManager({
         await git([
           '--git-dir',
           adminPath,
+          'remote',
+          'set-url',
+          'origin',
+          allowedRepos[spec.repo],
+        ]);
+        await git([
+          '--git-dir',
+          adminPath,
           'worktree',
           'add',
           '--detach',
