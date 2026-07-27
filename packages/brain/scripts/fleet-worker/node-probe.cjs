@@ -2,6 +2,7 @@
 
 const { Buffer } = require('node:buffer');
 const { execFile } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const { access, mkdtemp, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
@@ -210,6 +211,14 @@ async function probeDrainMarker(statFn, markerPath) {
   }
 }
 
+function disposableContainerName(tempRoot) {
+  const suffix = createHash('sha256')
+    .update(tempRoot)
+    .digest('hex')
+    .slice(0, 16);
+  return `fleet-node-probe-${suffix}`;
+}
+
 async function probeDisposableResources({
   run,
   repoRoot,
@@ -219,9 +228,12 @@ async function probeDisposableResources({
 }) {
   let tempRoot = null;
   let worktreePath = null;
+  let worktreeAddAttempted = false;
   let worktreeAdded = false;
-  let containerId = null;
+  let containerName = null;
+  let containerCreateAttempted = false;
   let containerCreated = false;
+  let containerStarted = false;
   let worktreeCleanupSucceeded = true;
   let containerCleanupSucceeded = true;
   let tempCleanupSucceeded = true;
@@ -229,6 +241,8 @@ async function probeDisposableResources({
   try {
     tempRoot = await makeTempDirFn();
     worktreePath = path.join(tempRoot, 'worktree');
+    containerName = disposableContainerName(tempRoot);
+    worktreeAddAttempted = true;
     const addResult = await run(
       'git',
       ['worktree', 'add', '--detach', worktreePath, 'HEAD'],
@@ -237,25 +251,41 @@ async function probeDisposableResources({
     worktreeAdded = addResult.ok;
 
     if (worktreeAdded) {
+      containerCreateAttempted = true;
       const createResult = await run('docker', [
         'create',
+        '--name',
+        containerName,
         '--mount',
         `type=bind,src=${worktreePath},dst=/workspace,readonly`,
+        '--entrypoint',
+        '/usr/bin/test',
         runnerImageDigest,
-        'true',
+        '-e',
+        '/workspace/.git',
       ]);
-      containerId = boundedString(createResult.stdout, '');
-      containerCreated = createResult.ok && containerId.length > 0;
+      containerCreated = createResult.ok;
+      if (containerCreated) {
+        const startResult = await run(
+          'docker',
+          ['start', '--attach', containerName],
+        );
+        containerStarted = startResult.ok;
+      }
     }
   } catch {
     worktreeAdded = false;
     containerCreated = false;
+    containerStarted = false;
   } finally {
-    if (containerId) {
-      const removeContainer = await run('docker', ['rm', '-f', '--', containerId]);
+    if (containerCreateAttempted && containerName) {
+      const removeContainer = await run(
+        'docker',
+        ['rm', '-f', '--', containerName],
+      );
       containerCleanupSucceeded = removeContainer.ok;
     }
-    if (worktreeAdded && worktreePath) {
+    if (worktreeAddAttempted && worktreePath) {
       const removeWorktree = await run(
         'git',
         ['worktree', 'remove', '--force', worktreePath],
@@ -277,6 +307,7 @@ async function probeDisposableResources({
       && worktreeCleanupSucceeded
       && tempCleanupSucceeded,
     containerSucceeded: containerCreated
+      && containerStarted
       && containerCleanupSucceeded
       && tempCleanupSucceeded,
   };
