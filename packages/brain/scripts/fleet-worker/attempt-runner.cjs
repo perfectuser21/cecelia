@@ -287,9 +287,11 @@ function createDockerAdapter({
       });
     },
 
-    async remove({ containerId, attemptId } = {}) {
+    async remove({ containerId, attemptId, containerMissing = false } = {}) {
       assertAttemptId(attemptId);
-      await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
+      if (!containerMissing) {
+        await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
+      }
       fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
       return Object.freeze({ removed: true });
     },
@@ -586,7 +588,21 @@ function createAttemptRunner({
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      await stateStore.save(state);
+      try {
+        await stateStore.save(state);
+      } catch (error) {
+        try {
+          await docker.remove({
+            containerId: launched.containerId,
+            attemptId: request.attempt_id,
+          });
+        } catch (cleanupError) {
+          await workspaceManager.quarantine(workspace, cleanupError);
+          throw error;
+        }
+        await workspaceManager.cleanup(workspace);
+        throw error;
+      }
       void docker.wait({ containerId: launched.containerId })
         .then(() => runner.terminal(request.attempt_id))
         .catch(() => {});
@@ -649,16 +665,15 @@ function createAttemptRunner({
       for (const state of ownedStates) {
         const inspected = await docker.inspect({ containerId: state.container_id });
         if (!isTerminalContainerStatus(inspected.status)) continue;
-        if (inspected.status !== 'missing') {
-          try {
-            await docker.remove({
-              containerId: state.container_id,
-              attemptId: state.attempt_id,
-            });
-          } catch (error) {
-            await quarantineState(state, error);
-            continue;
-          }
+        try {
+          await docker.remove({
+            containerId: state.container_id,
+            attemptId: state.attempt_id,
+            ...(inspected.status === 'missing' ? { containerMissing: true } : {}),
+          });
+        } catch (error) {
+          await quarantineState(state, error);
+          continue;
         }
         const result = await cleanupWorkspaceState(state);
         if (result.status === 'cleaned') cleanedAttempts.push(state.attempt_id);
