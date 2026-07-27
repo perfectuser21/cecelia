@@ -1,7 +1,5 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { once } from 'node:events';
 import { describe, expect, it } from 'vitest';
 
 const DB_URL = process.env.DB_URL;
@@ -42,21 +40,60 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     });
   });
 
-  it('rejects unwritable stdout before Agent execution', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'fleet-stdout-'));
-    try {
-      const mod = await import(
-        '../../../packages/brain/scripts/fleet-worker/attempt-runner.cjs'
-      );
-      await expect(mod.preflightAttemptRuntime({
-        runtimeDir: root,
-        stdoutPath: join(root, 'missing-parent', 'stdout.jsonl'),
-        agentCommand: ['/bin/sh', '-c', 'touch agent-started'],
-      })).rejects.toMatchObject({ code: 'attempt_stdout_not_writable' });
-      await expect(stat(join(root, 'agent-started'))).rejects.toBeDefined();
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+  it('rejects unwritable stdout at the real Worker Runner seam before Agent execution', async () => {
+    const mod = await import(
+      '../../../packages/brain/scripts/fleet-worker/real-runner-preflight-proof.cjs'
+    );
+    const proof = await mod.runRealWorkerStdoutPreflightProof({
+      workerUrl: process.env.US_WORKER_URL,
+      tokenFile: process.env.FLEET_TOKEN_FILE,
+      runnerDigest: process.env.CANDIDATE_RUNNER_REF,
+      mutation: 'runtime_stdout_unwritable',
+      secretSentinel: process.env.SECRET_SENTINEL,
+    });
+    expect(proof.machineCode).toBe('attempt_stdout_not_writable');
+    expect(proof.agentStartedCount).toBe(0);
+    expect(proof.durableDiagnosticBytes).toBeGreaterThan(0);
+    expect(proof.durableDiagnosticBytes).toBeLessThanOrEqual(2048);
+    expect(proof.durableDiagnostic).not.toContain(process.env.SECRET_SENTINEL);
+    expect(proof.runtimeResidualCount).toBe(0);
+  });
+
+  it('revokes attempt-scoped GitHub auth on success timeout crash and cancel', async () => {
+    const mod = await import(
+      '../../../packages/brain/scripts/fleet-worker/github-auth-lifecycle-proof.cjs'
+    );
+    const proof = await mod.runAttemptScopedGitHubAuthLifecycleProof({
+      workerUrl: process.env.US_WORKER_URL,
+      tokenFile: process.env.FLEET_TOKEN_FILE,
+      runnerDigest: process.env.CANDIDATE_RUNNER_REF,
+      terminalPaths: ['success', 'timeout', 'crash', 'cancel'],
+    });
+    expect(proof.preAgentDeliveryVerified).toBe(true);
+    expect(proof.ghAuthAndPushFetchVerified).toBe(true);
+    expect(proof.terminalPaths).toEqual({
+      success: { revoked: true, attemptCopyDeleted: true, residueCount: 0 },
+      timeout: { revoked: true, attemptCopyDeleted: true, residueCount: 0 },
+      crash: { revoked: true, attemptCopyDeleted: true, residueCount: 0 },
+      cancel: { revoked: true, attemptCopyDeleted: true, residueCount: 0 },
+    });
+    expect(proof.secretInEnvArgvLogCount).toBe(0);
+  });
+
+  it('adds fleet-worker transport with production upgrade rollback and source enum parity', async () => {
+    const mod = await import(
+      '../../../packages/brain/src/orchestrator/fleet-release-contract.js'
+    );
+    const proof = await mod.verifyFleetWorkerTransportMigration({
+      databaseUrl: DB_URL,
+      minimumMigration: 367,
+      preserveExisting: ['local-docker', 'remote-bridge'],
+      add: 'fleet-worker',
+    });
+    expect(proof.productionUpgradeAccepted).toBe(true);
+    expect(proof.rollbackRestoredPreviousConstraint).toBe(true);
+    expect(proof.sourceSchemaEnumParity).toBe(true);
+    expect(proof.manualSchemaDriftRequired).toBe(false);
   });
 
   it('launches a real child and requires ownership frame plus persisted heartbeat', async () => {
@@ -121,14 +158,14 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       '../../../packages/brain/src/orchestrator/kernel-liveness.js'
     );
     const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)']);
-    try {
-      await expect(mod.classifyProcessLiveness({ pid: child.pid, host: mod.localHostId() }))
-        .resolves.toEqual({ dead: false, reason: 'same_host_pid_live' });
-      await expect(mod.classifyProcessLiveness({ pid: child.pid, host: 'unknown-remote-host' }))
-        .resolves.toEqual({ dead: false, reason: 'liveness_unknown_fail_open' });
-    } finally {
-      child.kill('SIGTERM');
-    }
+    await expect(mod.classifyProcessLiveness({ pid: child.pid, host: mod.localHostId() }))
+      .resolves.toEqual({ dead: false, reason: 'same_host_pid_live' });
+    await expect(mod.classifyProcessLiveness({ pid: child.pid, host: 'unknown-remote-host' }))
+      .resolves.toEqual({ dead: false, reason: 'liveness_unknown_fail_open' });
+    child.kill('SIGTERM');
+    await once(child, 'exit');
+    await expect(mod.classifyProcessLiveness({ pid: child.pid, host: mod.localHostId() }))
+      .resolves.toEqual({ dead: true, reason: 'same_host_pid_esrch' });
   });
 
   it('rejects CI-only authorization and stale exact-head owner approval', async () => {
@@ -158,5 +195,9 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     });
     expect(result).toMatchObject({ exists: true, ownershipMatches: true });
     expect(result.taskId).not.toBe(result.runId);
+    expect(result.taskId).toBe('4a530430-00c5-46bc-8a4f-c0ec38025391');
+    expect(result.journeyId).toBe('2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6');
+    expect(result.goldenPathId).toBe('4e5fd7eb-3823-4c57-a817-081b7fdd2eed');
+    expect(result.stepId).toBe('817f59f5-02ff-4a70-bd81-f7ae65f77e02');
   });
 });

@@ -1,4 +1,4 @@
-# Sprint Contract Draft（Round 1）
+# Sprint Contract Draft（Round 2）
 
 ## 合同 Notes
 
@@ -9,9 +9,10 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
-- R6 proposer exact SHA `e1d2c5bd370892fe70517f1137c4a3f8483c5dfb` 仅作 Red 证据；本合同以 R7 audit 修正后的 12 gate 线性链为准。
+- R6 proposer exact SHA `e1d2c5bd370892fe70517f1137c4a3f8483c5dfb` 与 R7 exact SHA `a613ea5f0d2e931966f0064cb347b74e38a66ca2` 仅作 Red 证据；本轮逐项修复 R8 audit。
 - release-order invariant: `Draft exact head → CI → Evaluator/Judge → owner exact-head approval → authorized merge → US staging real E2E → production canary`；生产验证绝不早于批准/合并。
-- semantic-anchor-pending: PRD 注入的 journey/step UUID 仅通过语法检查但在生产无对应行；Generator 必须通过真实 DevOps Map 查询选取已有且 ownership 匹配的 journey/golden-path/step，不得 fabricate row。
+- semantic-anchor-resolved: 生产只读查询确认本任务归属 `工厂 · F2 部署闭环` journey `2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6`、已交付 GP `环境模型三段常驻收尾（Cecelia+ZenithJoy）` `4e5fd7eb-3823-4c57-a817-081b7fdd2eed`、step `部署被证明没坏` `817f59f5-02ff-4a70-bd81-f7ae65f77e02`；三者真实存在且 journey ownership 一致。当前 task `4a530430-00c5-46bc-8a4f-c0ec38025391` 的零行 placeholder payload 必须在 Generator 点火前原子迁移到该三元组，迁移失败即 fail closed，不得创建新 Map 行。
+- frozen-PRD-order interpretation: PRD 入口段、Human authority 与 task 的 Golden-path authority 明确 owner gate 在 merge 之前；PRD 第 10 步只允许候选 admission/blocked evidence，不是 staging/production mutation。唯一可执行顺序固定为 `CI → Evaluator/Judge → owner → merge → staging → production`。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -50,7 +51,7 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 - `Fleet Worker callback/artifact transfer ↔ Controller ground-truth/Git`：必须传真实 commit/bundle、验 SHA/branch/task ownership 并在 cleanup 前物化。
 - `migration 367+ ↔ production-shaped Postgres harness_attempts CHECK ↔ attempt-store`：真 Postgres upgrade/rollback，禁止内存 schema。
 - `fleet-rollout.sh/CD ↔ Worker admission ↔ Brain publication`：必须用真实 rollout plan 和 publication gate，禁模拟 health JSON。
-- `anchor-check ↔ DevOps Map DB`：真 Postgres semantic existence/ownership 校验，禁语法 UUID 替身。
+- `anchor-check/current task payload ↔ DevOps Map DB`：真 Postgres semantic existence/ownership 校验，并把当前 task 从零行 placeholder 原子迁移到上列既有三元组；禁语法 UUID 替身或造新行。
 - `Attempt 创建 ↔ immutable profile snapshot ↔ concurrent profile upgrade`：真 Postgres 中 Attempt 必须持久化精确 profile/Runner/Worker/schema generation，运行中升级不得改变既有 Attempt。
 - `Runner stdout/runtime/GitHub auth preflight ↔ Agent process spawn`：真 Runner 必须先证明 stdout 可写且 attempt-scoped GitHub auth 可用；失败时 Agent 进程必须从未启动。
 - `Runner 写入的 nested/ignored/node_modules output ↔ Worker terminal cleanup`：必须由 exact Runner 真写，再由 Worker 反向删除 container/runtime/worktree/admin/ACL/secret；禁用 quarantine 充当成功。
@@ -154,24 +155,28 @@ ssh "$US_WORKER_SSH" "sudo -n /usr/local/libexec/cecelia/kernel-fleet-transactio
 ### Step 4：Worker-first admission 使用真实 Attempt 合同
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 4 步。
 
-**可观测行为**: 鉴权 `/health` 返回与候选 exact ref 对齐的 `base_admitted=true`、`dispatch_ready=true`；health 实跑与 Attempt 相同 root/mount/ACL/UID/GID/secret/cleanup，而非模拟 JSON。stdout.jsonl 与 attempt-scoped GitHub auth 必须在 Agent spawn 前通过真实 write/gh auth probe；任一失败返回有界 machine code 且 Agent 未启动。
+**可观测行为**: 鉴权 `/health` 返回与候选 exact ref 对齐的 `base_admitted=true`、`dispatch_ready=true`；health 实跑与 Attempt 相同 root/mount/ACL/UID/GID/secret/cleanup，而非模拟 JSON。stdout.jsonl 与 attempt-scoped GitHub auth 必须在 Agent spawn 前通过真实 Worker→exact Runner write/gh auth probe；任一失败返回有界 machine code、持久化 `1..2048` bytes 脱敏诊断且 Agent 未启动。
 
 **验证命令**:
 ```bash
 bash scripts/kernel-fleet/verify-worker-admission.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
 ```
-**硬阈值**: authenticated semantic fields 全匹配；bad token/stale digest/private root/missing ACL/unwritable stdout/missing GitHub auth mutation 全部 fail closed；Agent-start counter=0；一次 disposable container 后 residue=0。
+**硬阈值**: authenticated semantic fields 全匹配；bad token/stale digest/private root/missing ACL/unwritable stdout/missing GitHub auth mutation 全部 fail closed；Agent-start counter=0；unwritable stdout diagnostic 为 1..2048 bytes 且 secret sentinel 0 命中；一次 disposable container 后 residue=0。
 
 ### Step 5：生产 transport 与 DevOps Map anchor 预检 fail closed
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 5、10 步及 R5 live Red。
 
-**可观测行为**: remote-enabled、callback、US/Xian URL DNS/连通、immutable profiles、真实 journey/golden-path/step existence 与 ownership 全部校验；`task_id` 与 `run_id` 是不同构造且分别解析。Xian 不满足时输出 blocked evidence，但不降低 profile；语法合法但零生产行的 UUID 必须失败。
+**可观测行为**: remote-enabled、callback、US/Xian URL DNS/连通、immutable profiles、真实 journey/golden-path/step existence 与 ownership 全部校验；当前 task 必须原子迁移到 Notes 中的既有三元组并回读，`task_id=4a530430-00c5-46bc-8a4f-c0ec38025391` 与 `run_id` 是不同构造且分别解析。Xian 不满足时输出 blocked evidence，但不降低 profile；语法合法但零生产行的 UUID 必须失败。
 
 **验证命令**:
 ```bash
-bash scripts/kernel-fleet/verify-production-preflight.sh "${PROD_BRAIN_URL:?}" "${REAL_JOURNEY_ID:?}" "${REAL_GP_ID:?}" "${REAL_STEP_ID:?}"
+bash scripts/kernel-fleet/verify-production-preflight.sh "${PROD_BRAIN_URL:?}" \
+  "4a530430-00c5-46bc-8a4f-c0ec38025391" \
+  "2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6" \
+  "4e5fd7eb-3823-4c57-a817-081b7fdd2eed" \
+  "817f59f5-02ff-4a70-bd81-f7ae65f77e02"
 ```
-**硬阈值**: US path ready；虚构 UUID、零行 UUID、错误 ownership、task/run 混用、不可达 URL、remote-disabled 各自非零；Xian 维护差距 machine-readable `blocked_external`。
+**硬阈值**: US path ready；当前 task 回读的 anchor 精确等于既有三元组；虚构 UUID、零行 UUID、错误 ownership、task/run 混用、不可达 URL、remote-disabled 各自非零；Xian 维护差距 machine-readable `blocked_external`。
 
 ### Step 6：phase-aware transport 只创建一个 Attempt
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 6 步与 addendum 02:15/02:17。
@@ -187,13 +192,13 @@ bash scripts/kernel-fleet/verify-phase-budgets.sh "$US_WORKER_URL" "$FLEET_TOKEN
 ### Step 7：Mac-compatible secret、Git auth、stdout 与 canonical artifact handoff
 **来源**: `[FROM_PRD]` — PRD 第 7 步与 addendum 02:22、R5 live Red。
 
-**可观测行为**: Docker-mediated single-use secret 在 Runner 自有 tmpfs 生成 0600 auth，brokered attempt-scoped GitHub auth 在 Agent 前验证并可 push/fetch；Runner 可写 attempt 三目录和 stdout，但 shared roots 只读；callback 前将签名 commit/bundle 以真实 SHA/branch/task ownership 物化至 Controller，之后才 cleanup。exact Runner 再创建 nested ignored/node_modules/untracked output，Worker 必须反向清除 container/runtime/worktree/admin/ACL/secret，残留或 quarantine 都是失败。
+**可观测行为**: Docker-mediated single-use secret 在 Runner 自有 tmpfs 生成 0600 auth，brokered attempt-scoped GitHub auth 在 Agent 前验证并可 push/fetch；auth 的 attempt copy 在 `success|timeout|crash|cancel` 四种终态都必须 revoke+delete。Runner 可写 attempt 三目录和 stdout，但 shared roots 只读；callback 前将签名 commit/bundle 以真实 SHA/branch/task ownership 物化至 Controller，之后才 cleanup。exact Runner 再创建 nested ignored/node_modules/untracked output，Worker 必须反向清除 container/runtime/worktree/admin/ACL/secret，残留或 quarantine 都是失败。
 
 **验证命令**:
 ```bash
 bash scripts/kernel-fleet/run-real-attempt-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
 ```
-**硬阈值**: 真实 Attempt accepted→ready→callback→canonical commit；`gh auth`/push/fetch 成功；secret/residue/quarantine count=0；shared-root write ACL=0；missing read ACL/private `/var/lib`/absent reader/bad auth/unwritable stdout/cleanup-before-transfer/reverse-delete-denied 各自非零且可重试。
+**硬阈值**: 真实 Attempt accepted→ready→callback→canonical commit；`gh auth`/push/fetch 成功；`success|timeout|crash|cancel` 四路 `revoked=true && attempt_copy_deleted=true && residue=0`；secret/residue/quarantine count=0；shared-root write ACL=0；missing read ACL/private `/var/lib`/absent reader/bad auth/unwritable stdout/cleanup-before-transfer/reverse-delete-denied 各自非零且可重试。
 
 ### Step 8：Kernel launch 以 handshake+heartbeat 判 ready
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 8 步。
@@ -209,7 +214,7 @@ DB_URL="${DB_URL:?}" npx vitest run packages/brain/src/__tests__/kernel-launch-r
 ### Step 9：Watchdog truthful recovery 严格一次
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 9 步。
 
-**可观测行为**: 初启与 watchdog 共用 Step 8 contract；失败不递增 `resumed`/不发 `reconcile-restarted`，仍可恢复；成功后才 `resumed=1`，仅一个 replacement/provider Attempt。仅本机 `kill(pid,0)` 返回 ESRCH 才判 dead；同机 live PID 与远端/未知 liveness 均 fail-open，不得误杀。
+**可观测行为**: 初启与 watchdog 共用 Step 8 contract；失败不递增 `resumed`/不发 `reconcile-restarted`，仍可恢复；成功后才 `resumed=1`，仅一个 replacement/provider Attempt。测试必须真实 spawn child，先验证同机 live，再 kill+await exit 后由真实 `kill(pid,0)` 的 ESRCH 判 dead；远端/未知 liveness fail-open，不得误杀。
 
 **验证命令**:
 ```bash
@@ -271,9 +276,11 @@ set -euo pipefail
 : "${FLEET_TOKEN_FILE:?}"
 : "${PROD_BRAIN_URL:?}"
 : "${DB_URL:?}"
-: "${REAL_JOURNEY_ID:?}"
-: "${REAL_GP_ID:?}"
-: "${REAL_STEP_ID:?}"
+
+CURRENT_TASK_ID="4a530430-00c5-46bc-8a4f-c0ec38025391"
+REAL_JOURNEY_ID="2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6"
+REAL_GP_ID="4e5fd7eb-3823-4c57-a817-081b7fdd2eed"
+REAL_STEP_ID="817f59f5-02ff-4a70-bd81-f7ae65f77e02"
 
 test "$(git rev-parse HEAD)" = "$PR_HEAD_SHA"
 test "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$PR_HEAD_SHA"
@@ -284,7 +291,8 @@ bash scripts/ci/verify-brain-image-self-contained.sh "$CANDIDATE_BRAIN_IMAGE" "$
 bash scripts/ci/verify-fleet-release-atomic.sh "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA" "$DB_URL"
 ssh "$US_WORKER_SSH" "sudo -n /usr/local/libexec/cecelia/kernel-fleet-transaction-verify --candidate '$CANDIDATE_BUNDLE_REF' --mutations all --rollback"
 bash scripts/kernel-fleet/verify-worker-admission.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
-bash scripts/kernel-fleet/verify-production-preflight.sh "$PROD_BRAIN_URL" "$REAL_JOURNEY_ID" "$REAL_GP_ID" "$REAL_STEP_ID"
+bash scripts/kernel-fleet/verify-production-preflight.sh \
+  "$PROD_BRAIN_URL" "$CURRENT_TASK_ID" "$REAL_JOURNEY_ID" "$REAL_GP_ID" "$REAL_STEP_ID"
 bash scripts/kernel-fleet/verify-phase-budgets.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" slow-mirror slow-image slow-secret
 bash scripts/kernel-fleet/run-real-attempt-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
 DB_URL="$DB_URL" npx vitest run packages/brain/src/__tests__/kernel-launch-readiness.integration.test.js packages/brain/src/__tests__/kernel-durable-recovery.integration.test.js --reporter=verbose
@@ -317,14 +325,16 @@ echo "OK: CI→Evaluator/Judge→owner→merge→staging→production exact-head
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| Brain image | `tests/durable-recovery.contract.test.ts` | built image self-contained profiles | Dockerfile 未复制 config，失败 |
-| Atomic release/schema | `tests/durable-recovery.contract.test.ts` | fleet-worker transport migration parity | migration 363 缺 `fleet-worker`，失败 |
-| Kernel readiness | `tests/durable-recovery.contract.test.ts` | rejects invalid worktree before spawn | readiness validator 未实现，失败 |
-| Watchdog truth | `tests/durable-recovery.contract.test.ts` | records resumed only after ready heartbeat | shared readiness receipt 未实现，失败 |
-| Artifact handoff | `tests/durable-recovery.contract.test.ts` | materializes authenticated commit before cleanup | canonical transfer 未实现，失败 |
-| Attempt snapshot | `tests/durable-recovery.contract.test.ts` | immutable per-attempt profile snapshot across concurrent upgrade | snapshot 未冻结，失败 |
-| stdout preflight | `tests/durable-recovery.contract.test.ts` | rejects unwritable stdout before Agent execution | readiness 前置未实现，失败 |
-| Reverse cleanup | `tests/durable-recovery.contract.test.ts` | reverse cleanup removes real Runner nested and ignored output | quarantine/残留仍存在，失败 |
-| P1 liveness | `tests/durable-recovery.contract.test.ts` | ESRCH-only local liveness death | live/unknown 可能误判，失败 |
-| Owner gate | `tests/durable-recovery.contract.test.ts` | rejects CI-only authorization and stale exact-head owner approval | unified ordered gate 未实现，失败 |
-| Semantic anchor | `tests/durable-recovery.contract.test.ts` | semantic anchor resolves journey golden-path step ownership | 仅语法 UUID 校验，失败 |
+| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | `built image self-contained profiles`; `immutable per-attempt profile snapshot across concurrent upgrade`; `real Worker Runner seam before Agent execution`; `GitHub auth on success timeout crash and cancel`; `fleet-worker transport with production upgrade rollback and source enum parity`; `ownership frame plus persisted heartbeat`; `authenticated callback commit before Worker cleanup`; `reverse cleanup removes real Runner nested and ignored output`; `ESRCH-only local liveness death`; `CI-only authorization and stale exact-head owner approval`; `semantic anchor resolves journey golden-path step ownership` | 11 个唯一 `it()`；collector 按 realpath 去重后文件数必须为 1。现状分别缺 built-image contract、snapshot、真实 stdout seam、四终态 auth cleanup、migration 367+ parity、readiness、artifact transfer、reverse cleanup、ESRCH dead、owner gate、semantic anchor，因此产生 Red。 |
+
+**测试库存硬阈值**: `find tests -name '*.test.ts' -print0 | xargs -0 realpath | sort -u` 的唯一文件数 = 1；上述覆盖名各自只映射一个唯一 `it()`，总数 = 11；不得把同一路径通过 sprint glob 与显式路径重复计数。migration `fleet-worker` enum parity Red 必须保留。
+
+**测试库存验证命令**:
+```bash
+TEST_ROOT="sprints/07280225-kernel-fleet-durable-recovery-r5/tests"
+UNIQUE_FILES=$(find "$TEST_ROOT" -name '*.test.ts' -print0 | xargs -0 realpath | sort -u | wc -l | tr -d ' ')
+IT_COUNT=$(rg -c '^[[:space:]]*it\(' "$TEST_ROOT/durable-recovery.contract.test.ts")
+[ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 11 ]
+rg -q 'fleet-worker transport with production upgrade rollback and source enum parity' \
+  "$TEST_ROOT/durable-recovery.contract.test.ts"
+```

@@ -1,7 +1,14 @@
 {
-  "initiative_id": "aca9fb2e-dbb9-4c26-af75-efba5ba9fdab",
+  "initiative_id": "4a530430-00c5-46bc-8a4f-c0ec38025391",
+  "harness_gear": "segmented",
+  "anchor": {
+    "journey_id": "2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6",
+    "gp_id": "4e5fd7eb-3823-4c57-a817-081b7fdd2eed",
+    "step_id": "817f59f5-02ff-4a70-bd81-f7ae65f77e02",
+    "ownership_basis": "生产 DevOps Map 只读查询确认 GP 与 step 均属于 journey 工厂 · F2 部署闭环；复用既有行，不创建占位行。"
+  },
   "journey_type": "agent_remote",
-  "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；按 R7 审计将 12 个 gate 串成线性依赖。",
+  "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；按 R7/R8 审计将 12 个 gate 串成线性依赖。",
   "tasks": [
     {
       "task_id": "ws1",
@@ -36,9 +43,9 @@
     {
       "task_id": "ws4",
       "title": "Gate 4：真实 Worker admission",
-      "scope": "使 authenticated health 使用真实 Attempt 的 root/mount/ACL/UID/GID/secret/cleanup 合同，并在 Agent 前验证 stdout 可写和 GitHub auth。",
-      "dod": ["[BEHAVIOR] base_admitted 与 dispatch_ready 匹配 exact generation/digest", "[BEHAVIOR] stdout 或 GitHub auth 不可用时 Agent 未启动"],
-      "files": ["packages/brain/scripts/fleet-worker/fleet-worker.cjs", "packages/brain/scripts/fleet-worker/attempt-runner.cjs"],
+      "scope": "使 authenticated health 使用真实 Attempt 的 root/mount/ACL/UID/GID/secret/cleanup 合同，并在 Worker→exact Runner seam 的 Agent 前验证 stdout 可写和 GitHub auth。",
+      "dod": ["[BEHAVIOR] base_admitted 与 dispatch_ready 匹配 exact generation/digest", "[BEHAVIOR] stdout 不可写时 Agent 未启动，持久化 1..2048 bytes 脱敏诊断"],
+      "files": ["packages/brain/scripts/fleet-worker/fleet-worker.cjs", "packages/brain/scripts/fleet-worker/attempt-runner.cjs", "packages/brain/scripts/fleet-worker/real-runner-preflight-proof.cjs"],
       "depends_on": ["ws3"],
       "complexity": "L",
       "estimated_minutes": 60
@@ -46,8 +53,8 @@
     {
       "task_id": "ws5",
       "title": "Gate 5：生产 preflight 与语义锚点",
-      "scope": "fail closed 校验 remote/callback、URL 可达、immutable profile 及真实 DevOps Map journey/golden-path/step existence 和 ownership。",
-      "dod": ["[BEHAVIOR] 虚构 UUID、ownership 错误、task_id 等于 run_id、不可达 URL 均失败"],
+      "scope": "fail closed 校验 remote/callback、URL 可达、immutable profile；把当前 task 从零行 placeholder 原子迁移并回读既有 DevOps Map journey/golden-path/step existence 和 ownership。",
+      "dod": ["[BEHAVIOR] task 4a530430... 回读的 anchor 精确等于合同既有三元组", "[BEHAVIOR] 虚构 UUID、ownership 错误、task_id 等于 run_id、不可达 URL 均失败"],
       "files": ["packages/brain/src/anchor-check.js", "scripts/kernel-fleet/verify-production-preflight.sh"],
       "depends_on": ["ws4"],
       "complexity": "M",
@@ -67,8 +74,8 @@
       "task_id": "ws7",
       "title": "Gate 7：secret、Git auth、artifact handoff 与反向 cleanup",
       "scope": "完成 Docker-mediated single-use secret、attempt-scoped brokered GitHub auth、stdout、authenticated callback/commit transfer，并在真实 Runner 写嵌套 ignored 内容后 residual zero。",
-      "dod": ["[BEHAVIOR] callback artifact SHA/branch/task ownership 真验后才 cleanup", "[BEHAVIOR] reverse cleanup 无 quarantine、无残留、无 shared-root 广泛权限变更"],
-      "files": ["packages/brain/scripts/fleet-worker/attempt-runner.cjs", "packages/brain/src/orchestrator/canonical-artifact-transfer.js", "packages/engine/runners/codex/runner.sh"],
+      "dod": ["[BEHAVIOR] brokered GitHub auth 在 Agent 前验证且 success/timeout/crash/cancel 四终态 revoke+delete", "[BEHAVIOR] callback artifact SHA/branch/task ownership 真验后才 cleanup", "[BEHAVIOR] reverse cleanup 无 quarantine、无残留、无 shared-root 广泛权限变更"],
+      "files": ["packages/brain/scripts/fleet-worker/attempt-runner.cjs", "packages/brain/scripts/fleet-worker/github-auth-lifecycle-proof.cjs", "packages/brain/src/orchestrator/canonical-artifact-transfer.js", "packages/engine/runners/codex/runner.sh"],
       "depends_on": ["ws6"],
       "complexity": "L",
       "estimated_minutes": 60
@@ -87,7 +94,7 @@
       "task_id": "ws9",
       "title": "Gate 9：Watchdog truthful recovery",
       "scope": "初启与 watchdog 复用 readiness；补 ESRCH-only local liveness 和 live/unknown fail-open；恢复严格一次。",
-      "dod": ["[BEHAVIOR] 失败轮 resumed=0，成功轮 resumed=1 且 replacement/provider/event 各一", "[BEHAVIOR] same-host live PID 与 unknown host 不被判死"],
+      "dod": ["[BEHAVIOR] 失败轮 resumed=0，成功轮 resumed=1 且 replacement/provider/event 各一", "[BEHAVIOR] real child kill+await 后 ESRCH 判 dead；kill 前 live PID 与 unknown host 不被判死"],
       "files": ["packages/brain/src/harness-relay-watchdog.js", "packages/brain/src/orchestrator/kernel-liveness.js"],
       "depends_on": ["ws8"],
       "complexity": "L",
