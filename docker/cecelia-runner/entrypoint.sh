@@ -344,6 +344,7 @@ persist_provider_session() {
 CREDENTIAL_REF=""
 CREDENTIAL_INITIAL_HASH=""
 CREDENTIAL_COPY_MUTATED=false
+MAX_CODEX_CREDENTIAL_BYTES=196608
 
 credential_file_hash() {
   local file="$1"
@@ -354,22 +355,39 @@ credential_file_hash() {
   fi
 }
 
+credential_file_mode() {
+  local file="$1"
+  local mode
+  if mode="$(stat -c '%a' "$file" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  elif mode="$(stat -f '%Lp' "$file" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  else
+    return 1
+  fi
+}
+
+credential_file_size() {
+  local file="$1"
+  local size
+  size="$(wc -c < "$file" | tr -d '[:space:]')" || return 1
+  [[ "$size" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$size"
+}
+
 redact_codex_credential_text() {
   local auth_file="${CODEX_HOME:-/home/cecelia/.codex}/auth.json"
   local redacted
   if [[ ! -f "$auth_file" ]] || ! redacted="$(
     jq -Rr --slurpfile credential "$auth_file" '
       ($credential[0] // {}) as $auth
-      | reduce [
-          $auth.tokens.access_token?,
-          $auth.tokens.refresh_token?,
-          $auth.tokens.id_token?,
-          $auth.OPENAI_API_KEY?
-        ][] as $secret (.;
-          if (($secret | type) == "string" and ($secret | length) > 0)
-          then split($secret) | join("***REDACTED***")
-          else .
-          end
+      | reduce (
+          $auth
+          | ..
+          | strings
+          | select(length >= 8)
+        ) as $secret (.;
+          split($secret) | join("***REDACTED***")
         )
     '
   )"; then
@@ -399,6 +417,7 @@ redact_codex_credential_file() {
 prepare_codex_credential() {
   local codex_home="${1:-/home/cecelia/.codex}"
   local fifo="${CECELIA_CREDENTIAL_FIFO:-}"
+  local credential_size=""
   CREDENTIAL_REF="${CECELIA_CREDENTIAL_REF:-}"
   if [[ -z "$fifo" ]] \
       || [[ ! "$fifo" = /* ]] \
@@ -416,6 +435,14 @@ prepare_codex_credential() {
   fi
   chmod 600 "$CODEX_HOME/auth.json"
   unset CECELIA_CREDENTIAL_FIFO
+  credential_size="$(credential_file_size "$CODEX_HOME/auth.json")" || {
+    rm -f "$CODEX_HOME/auth.json"
+    return 1
+  }
+  if (( credential_size > MAX_CODEX_CREDENTIAL_BYTES )); then
+    rm -f "$CODEX_HOME/auth.json"
+    return 1
+  fi
   if ! jq -e \
       'type == "object"
        and (.tokens | type == "object")
@@ -432,6 +459,7 @@ record_codex_credential_mutation() {
   CREDENTIAL_COPY_MUTATED=false
   if [[ -z "$CREDENTIAL_INITIAL_HASH" ]] \
       || [[ ! -f "${CODEX_HOME:-/home/cecelia/.codex}/auth.json" ]] \
+      || [[ "$(credential_file_mode "${CODEX_HOME:-/home/cecelia/.codex}/auth.json")" != "600" ]] \
       || [[ "$(credential_file_hash "${CODEX_HOME:-/home/cecelia/.codex}/auth.json")" != "$CREDENTIAL_INITIAL_HASH" ]]; then
     CREDENTIAL_COPY_MUTATED=true
   fi

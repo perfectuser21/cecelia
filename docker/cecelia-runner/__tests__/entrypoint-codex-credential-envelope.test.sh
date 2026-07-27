@@ -32,7 +32,7 @@ file_mode() {
 credential_source="$TEST_ROOT/envelope-auth.json"
 codex_home="$TEST_ROOT/codex-home"
 printf '%s' \
-  '{"tokens":{"access_token":"credential-secret","refresh_token":"refresh-secret"}}' \
+  '{"tokens":{"access_token":"credential-secret","refresh_token":"refresh-secret"},"api_key":"api-secret-value","password":"password-secret-value"}' \
   > "$credential_source"
 
 export CECELIA_EXECUTOR=codex
@@ -44,25 +44,33 @@ prepare_codex_credential "$codex_home"
 
 test "$CODEX_HOME" = "$codex_home"
 test "$(cat "$codex_home/auth.json")" = \
-  '{"tokens":{"access_token":"credential-secret","refresh_token":"refresh-secret"}}'
+  '{"tokens":{"access_token":"credential-secret","refresh_token":"refresh-secret"},"api_key":"api-secret-value","password":"password-secret-value"}'
 test "$(file_mode "$codex_home/auth.json")" = "600"
 test "$CREDENTIAL_COPY_MUTATED" = "false"
 test "$(
   printf '%s\n' \
-    'provider said credential-secret and refresh-secret' \
+    'provider said credential-secret refresh-secret api-secret-value password-secret-value' \
     | redact_codex_credential_text
-)" = 'provider said ***REDACTED*** and ***REDACTED***'
+)" = 'provider said ***REDACTED*** ***REDACTED*** ***REDACTED*** ***REDACTED***'
 
 provider_result="$codex_home/provider-result.json"
 printf '%s\n' \
-  '{"summary":"credential-secret refresh-secret","status":"completed"}' \
+  '{"summary":"credential-secret refresh-secret api-secret-value password-secret-value","status":"completed"}' \
   > "$provider_result"
 redact_codex_credential_file "$provider_result"
 grep -q '\*\*\*REDACTED\*\*\*' "$provider_result"
-if grep -qE 'credential-secret|refresh-secret' "$provider_result"; then
+if grep -qE 'credential-secret|refresh-secret|api-secret-value|password-secret-value' \
+  "$provider_result"; then
   echo "credential bytes survived result redaction" >&2
   exit 1
 fi
+
+chmod 644 "$codex_home/auth.json"
+record_codex_credential_mutation
+test "$CREDENTIAL_COPY_MUTATED" = "true"
+chmod 600 "$codex_home/auth.json"
+record_codex_credential_mutation
+test "$CREDENTIAL_COPY_MUTATED" = "false"
 
 printf '\n' >> "$codex_home/auth.json"
 record_codex_credential_mutation
@@ -78,5 +86,18 @@ if prepare_codex_credential "$TEST_ROOT/invalid-home" >/dev/null 2>&1; then
   echo "invalid Codex auth payload was accepted" >&2
   exit 1
 fi
+
+oversized_source="$TEST_ROOT/oversized-auth.json"
+{
+  printf '%s' '{"tokens":{"access_token":"credential-secret"},"padding":"'
+  head -c 196609 /dev/zero | tr '\0' x
+  printf '%s' '"}'
+} > "$oversized_source"
+export CECELIA_CREDENTIAL_FIFO="$oversized_source"
+if prepare_codex_credential "$TEST_ROOT/oversized-home" >/dev/null 2>&1; then
+  echo "oversized Codex auth payload was accepted" >&2
+  exit 1
+fi
+test ! -e "$TEST_ROOT/oversized-home/auth.json"
 
 echo "entrypoint Codex CredentialEnvelope tests passed"
