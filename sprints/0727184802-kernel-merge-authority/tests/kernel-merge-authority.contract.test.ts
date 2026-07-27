@@ -1,89 +1,137 @@
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
+import pg from 'pg';
 import request from 'supertest';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { DB_DEFAULTS } from '../../../packages/brain/src/db-config.js';
 import approvalRouter from '../../../packages/brain/src/routes/harness-kernel-approvals.js';
 import { mergeGate } from '../../../packages/brain/src/orchestrator/gates.js';
 import { createKernelHandlers } from '../../../packages/brain/src/orchestrator/kernel-handlers.js';
 
+const { Pool } = pg;
+const BRAIN_ROOT = fileURLToPath(new URL('../../../packages/brain/', import.meta.url));
 const APPROVER_TOKEN = 'kernel-contract-token';
-const RUN_ID = '11111111-1111-4111-8111-111111111111';
-const TASK_ID = '22222222-2222-4222-8222-222222222222';
-const HEAD_SHA = 'a'.repeat(40);
-const NEXT_HEAD_SHA = 'b'.repeat(40);
-const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4379';
 const REPO = 'perfectuser21/cecelia';
 const PR_NUMBER = 4379;
+const PR_URL = `https://github.com/${REPO}/pull/${PR_NUMBER}`;
+const HEAD_SHA = 'a'.repeat(40);
+const NEXT_HEAD_SHA = 'b'.repeat(40);
 
-function createApprovalDatabase(options: {
-  currentSha?: string;
-  reviewRequestSha?: string;
-  runExists?: boolean;
-} = {}) {
-  const state = {
-    insertedDetail: null as null | Record<string, unknown>,
-    decisionLog: [{
-      hop: 3,
-      action: 'effect:human_review_requested' as const,
-      observed: { pr: { head_sha: options.reviewRequestSha ?? HEAD_SHA } },
-      detail: { dispatch_hop: 2, review_reason: 'awaiting_human_review' },
-      created_at: new Date('2026-07-27T18:48:02.000Z'),
-    }],
-    currentSha: options.currentSha ?? HEAD_SHA,
-    runExists: options.runExists ?? true,
-  };
+let adminPool: InstanceType<typeof Pool> | null = null;
+let testPool: InstanceType<typeof Pool> | null = null;
+let databaseName = '';
 
-  const client = {
-    async query(sql: string, params: unknown[] = []) {
-      const normalized = String(sql).trim();
-      if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(normalized)) return { rows: [], rowCount: 0 };
-      if (normalized.includes('pg_advisory_xact_lock')) return { rows: [{}], rowCount: 1 };
-      if (normalized.includes("action='verdict:human_review'") && normalized.includes('SELECT 1')) {
-        return { rows: [], rowCount: 0 };
-      }
-      if (normalized.includes('SELECT COALESCE(MAX(hop), 0) + 1 AS next_hop')) {
-        return { rows: [{ next_hop: 4 }], rowCount: 1 };
-      }
-      if (normalized.includes('UPDATE initiative_runs') && normalized.includes('deadline_at')) {
-        return { rows: [], rowCount: 1 };
-      }
-      if (normalized.includes('INSERT INTO orchestrator_decision_log')) {
-        state.insertedDetail = JSON.parse(String(params[4]));
-        return { rows: [], rowCount: 1 };
-      }
-      throw new Error(`unexpected transaction query: ${normalized}`);
-    },
-    release() {},
-  };
-
-  const database = {
-    async query(sql: string, params: unknown[] = []) {
-      const normalized = String(sql).trim();
-      if (normalized.includes('FROM initiative_runs r')) {
-        if (!state.runExists) return { rows: [], rowCount: 0 };
-        return { rows: [{ run_id: RUN_ID, task_id: TASK_ID, pr_url: PR_URL }], rowCount: 1 };
-      }
-      if (normalized.includes("action='effect:human_review_requested'")) {
-        return { rows: [state.decisionLog[0]], rowCount: 1 };
-      }
-      throw new Error(`unexpected pool query: ${normalized}`);
-    },
-    async connect() {
-      return client;
-    },
-  };
-
-  return { database, state };
+function quotedIdentifier(value: string) {
+  if (!/^kernel_wiring_[a-z0-9_]+$/.test(value)) {
+    throw new Error(`unsafe test database identifier: ${value}`);
+  }
+  return `"${value}"`;
 }
 
-function createApp(database: unknown) {
+async function createIsolatedDatabase() {
+  databaseName = `kernel_wiring_${process.pid}_${randomUUID().replaceAll('-', '')}`;
+  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1 });
+  await adminPool.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
+  execFileSync(process.execPath, ['src/migrate.js'], {
+    cwd: BRAIN_ROOT,
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      DB_HOST: DB_DEFAULTS.host,
+      DB_PORT: String(DB_DEFAULTS.port),
+      DB_USER: DB_DEFAULTS.user,
+      DB_PASSWORD: DB_DEFAULTS.password,
+      DB_NAME: databaseName,
+    },
+    stdio: 'pipe',
+  });
+  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 });
+}
+
+async function dropIsolatedDatabase() {
+  if (testPool) await testPool.end();
+  testPool = null;
+  if (adminPool && databaseName) {
+    await adminPool.query(`DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)} WITH (FORCE)`);
+  }
+  if (adminPool) await adminPool.end();
+  adminPool = null;
+}
+
+async function seedRun({ reviewRequired = true } = {}) {
+  if (!testPool) throw new Error('testPool unavailable');
+  const initiativeId = randomUUID();
+  const contractId = randomUUID();
+  const taskId = randomUUID();
+  const runId = randomUUID();
+  await testPool.query(
+    `INSERT INTO initiative_contracts
+       (id, initiative_id, version, status, prd_content, contract_content, approved_at)
+     VALUES ($1, $2, 1, 'approved', 'prd', 'contract', NOW())`,
+    [contractId, initiativeId],
+  );
+  await testPool.query(
+    `INSERT INTO tasks
+       (id, title, status, priority, task_type, trigger_source, payload)
+     VALUES ($1, $2, 'in_progress', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
+    [
+      taskId,
+      `kernel-contract-${taskId}`,
+      JSON.stringify({
+        harness_runtime: 'kernel-v1',
+        sprint_dir: 'sprints/0727184802-kernel-merge-authority',
+        worktree_path: '/workspace',
+        review_required: reviewRequired,
+      }),
+    ],
+  );
+  await testPool.query(
+    `INSERT INTO initiative_runs
+       (id, initiative_id, contract_id, phase, current_task_id, pr_url,
+        orchestrator_version, deadline_at)
+     VALUES ($1, $2, $3, 'evaluate', $4, $5, 'v2', NOW() + INTERVAL '120 minutes')`,
+    [runId, initiativeId, contractId, taskId, PR_URL],
+  );
+  return { runId, taskId };
+}
+
+async function appendReviewRequest(runId: string, sha: string, hop = 3) {
+  if (!testPool) throw new Error('testPool unavailable');
+  await testPool.query(
+    `INSERT INTO orchestrator_decision_log
+       (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+     VALUES ($1, $2, $3::jsonb, 'review', null, 'effect:human_review_requested', $4::jsonb)`,
+    [
+      runId,
+      hop,
+      JSON.stringify({ pr: { head_sha: sha } }),
+      JSON.stringify({ dispatch_hop: 2, review_reason: 'awaiting_human_review' }),
+    ],
+  );
+}
+
+function createApp(currentSha: string) {
   const app = express();
   app.use(express.json());
-  app.set('pool', database);
-  app.set('kernelPrHeadResolver', async () => (database as { state?: { currentSha?: string } }).state?.currentSha ?? HEAD_SHA);
+  app.set('pool', testPool);
+  app.set('kernelPrHeadResolver', async () => currentSha);
   app.use('/api/brain/harness/kernel-reviews', approvalRouter);
   return app;
+}
+
+async function approvalRows(runId: string) {
+  if (!testPool) throw new Error('testPool unavailable');
+  const result = await testPool.query(
+    `SELECT detail
+       FROM orchestrator_decision_log
+      WHERE run_id=$1 AND action='verdict:human_review'
+      ORDER BY hop`,
+    [runId],
+  );
+  return result.rows;
 }
 
 afterEach(() => {
@@ -91,94 +139,101 @@ afterEach(() => {
 });
 
 describe('kernel merge authority contract red tests', () => {
-  it('approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict', async () => {
-    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
-    const { database, state } = createApprovalDatabase();
-    (database as { state?: unknown }).state = state;
-    const app = createApp(database);
+  describe('Kernel approval route on real PostgreSQL', () => {
+    beforeAll(createIsolatedDatabase, 30_000);
+    afterAll(dropIsolatedDatabase, 30_000);
 
-    const response = await request(app)
-      .post(`/api/brain/harness/kernel-reviews/${RUN_ID}/approve`)
-      .set('x-approver-token', APPROVER_TOKEN)
-      .send({
-        task_id: TASK_ID,
-        pr_head_sha: HEAD_SHA,
-        review_request_hop: 3,
-        approved_by: 'alex',
-      });
+    it('approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+      const run = await seedRun();
+      await appendReviewRequest(run.runId, HEAD_SHA);
+      const app = createApp(HEAD_SHA);
 
-    expect(response.status).toBe(400);
-    expect(state.insertedDetail).toBeNull();
-  });
+      const response = await request(app)
+        .post(`/api/brain/harness/kernel-reviews/${run.runId}/approve`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          approved_by: 'alex',
+        });
 
-  it('approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail', async () => {
-    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
-    const { database, state } = createApprovalDatabase();
-    (database as { state?: unknown }).state = state;
-    const app = createApp(database);
-
-    const response = await request(app)
-      .post(`/api/brain/harness/kernel-reviews/${RUN_ID}/approve`)
-      .set('x-approver-token', APPROVER_TOKEN)
-      .send({
-        task_id: TASK_ID,
-        repo: REPO,
-        pr_number: PR_NUMBER,
-        pr_head_sha: HEAD_SHA,
-        review_request_hop: 3,
-        approved_by: 'alex',
-      });
-
-    expect(response.status).toBe(202);
-    expect(state.insertedDetail).toMatchObject({
-      approved_by: 'alex',
-      pr_head_sha: HEAD_SHA,
-      source: 'authenticated_route',
-      timestamp: expect.any(String),
-      repo: REPO,
-      pr_number: PR_NUMBER,
-      run_id: RUN_ID,
+      expect(response.status).toBe(400);
+      expect(await approvalRows(run.runId)).toHaveLength(0);
     });
-  });
 
-  it('reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
-    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
-    const { database, state } = createApprovalDatabase({ currentSha: NEXT_HEAD_SHA });
-    (database as { state?: unknown }).state = state;
-    const app = createApp(database);
+    it('approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+      const run = await seedRun();
+      await appendReviewRequest(run.runId, HEAD_SHA);
+      const app = createApp(HEAD_SHA);
 
-    const response = await request(app)
-      .post(`/api/brain/harness/kernel-reviews/${RUN_ID}/reject`)
-      .set('x-approver-token', APPROVER_TOKEN)
-      .send({
-        task_id: TASK_ID,
+      const response = await request(app)
+        .post(`/api/brain/harness/kernel-reviews/${run.runId}/approve`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          approved_by: 'alex',
+        });
+
+      expect(response.status).toBe(202);
+      const approvals = await approvalRows(run.runId);
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0].detail).toMatchObject({
+        approved_by: 'alex',
+        pr_head_sha: HEAD_SHA,
+        source: 'authenticated_route',
+        timestamp: expect.any(String),
         repo: REPO,
         pr_number: PR_NUMBER,
-        pr_head_sha: HEAD_SHA,
-        review_request_hop: 3,
-        rejected_by: 'alex',
+        run_id: run.runId,
       });
+    });
 
-    expect(response.status).toBe(409);
-    expect(state.insertedDetail).toBeNull();
+    it('reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
 
-    const { database: mismatchDb, state: mismatchState } = createApprovalDatabase();
-    (mismatchDb as { state?: unknown }).state = mismatchState;
-    const mismatchApp = createApp(mismatchDb);
-    const mismatch = await request(mismatchApp)
-      .post(`/api/brain/harness/kernel-reviews/${RUN_ID}/reject`)
-      .set('x-approver-token', APPROVER_TOKEN)
-      .send({
-        task_id: TASK_ID,
-        repo: 'perfectuser21/other-repo',
-        pr_number: PR_NUMBER,
-        pr_head_sha: HEAD_SHA,
-        review_request_hop: 3,
-        rejected_by: 'alex',
-      });
+      const staleRun = await seedRun();
+      await appendReviewRequest(staleRun.runId, HEAD_SHA);
+      const staleApp = createApp(NEXT_HEAD_SHA);
+      const stale = await request(staleApp)
+        .post(`/api/brain/harness/kernel-reviews/${staleRun.runId}/reject`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: staleRun.taskId,
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          rejected_by: 'alex',
+        });
 
-    expect(mismatch.status).toBe(409);
-    expect(mismatchState.insertedDetail).toBeNull();
+      expect(stale.status).toBe(409);
+      expect(await approvalRows(staleRun.runId)).toHaveLength(0);
+
+      const mismatchRun = await seedRun();
+      await appendReviewRequest(mismatchRun.runId, HEAD_SHA);
+      const mismatchApp = createApp(HEAD_SHA);
+      const mismatch = await request(mismatchApp)
+        .post(`/api/brain/harness/kernel-reviews/${mismatchRun.runId}/reject`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: mismatchRun.taskId,
+          repo: 'perfectuser21/other-repo',
+          pr_number: PR_NUMBER + 1,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          rejected_by: 'alex',
+        });
+
+      expect(mismatch.status).toBe(409);
+      expect(await approvalRows(mismatchRun.runId)).toHaveLength(0);
+    });
   });
 
   it('review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并', () => {
@@ -188,7 +243,6 @@ describe('kernel merge authority contract red tests', () => {
       prHeadSha: HEAD_SHA,
       reviewRequired: true,
       reviewApproved: false,
-      reviewVerdict: null,
     } as never);
 
     expect(result.allow).toBe(false);
@@ -196,15 +250,16 @@ describe('kernel merge authority contract red tests', () => {
 
   it('mergeGate 对 stale human approval fail-closed 并要求重跑证据链', () => {
     const result = mergeGate({
-      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
-      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
-      prHeadSha: 'sha-new',
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: NEXT_HEAD_SHA },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: NEXT_HEAD_SHA },
+      prHeadSha: NEXT_HEAD_SHA,
       reviewRequired: true,
       reviewApproved: true,
-      reviewVerdict: { approved: true, pr_head_sha: 'sha-old' },
+      reviewVerdict: { approved: true, pr_head_sha: HEAD_SHA },
     } as never);
 
     expect(result.allow).toBe(false);
+    expect(result.reason).toMatch(/stale|review/i);
   });
 
   it('merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha', async () => {
@@ -255,11 +310,18 @@ describe('kernel merge authority contract red tests', () => {
     const mod = await import('../../../packages/brain/src/harness-ci-gate.js');
     expect(typeof (mod as Record<string, unknown>).resolveKernelMergeAuthority).toBe('function');
     const resolver = (mod as Record<string, Function>).resolveKernelMergeAuthority;
+
     expect(resolver({
       repo: REPO,
       pr_number: PR_NUMBER,
-      run_id: RUN_ID,
+      run_id: randomUUID(),
       head_sha: HEAD_SHA,
     })).toEqual({ kernelOwned: true });
+
+    expect(resolver({
+      repo: REPO,
+      pr_number: PR_NUMBER,
+      run_id: randomUUID(),
+    })).toEqual({ kernelOwned: false, reason: 'missing_head_sha' });
   });
 });

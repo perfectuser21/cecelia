@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 4)
+# Sprint Contract Draft (Round 5)
 
 ## 合同边界
 
@@ -9,7 +9,7 @@
 
 ## Response Schema（推导来源: NEW_PATTERN）
 
-补充说明：`api_registry` / `db_schema` / `test_registry` 于 2026-07-18 扫描，当前快照已陈旧（约 211h）；未发现可直接复用的 Kernel approvals endpoint 定义，因此本 sprint 的 approve/reject response schema 以 PRD 字面约束为准，并保持现有 snake_case 风格。
+补充说明：registry 当前可读，但未发现可直接复用的 Kernel approvals endpoint 定义，因此本 sprint 的 approve/reject response schema 以 PRD 字面约束为准，并保持现有 snake_case 风格。
 
 ### Endpoint: POST /api/brain/harness/kernel-reviews/:runId/approve
 **Success (HTTP 202)**:
@@ -289,4 +289,4 @@ COUNT=$(psql "$DB_URL" -t -c "SELECT count(*) FROM orchestrator_decision_log WHE
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| ownership tuple、approve/reject、merge lock、CI fail-closed | `sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts` | `标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority` / `resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组` / `approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict` / `approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict` / `review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并` / `mergeGate 对 stale human approval fail-closed 并要求重跑证据链` / `merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha` | 当前脚本仍按标题 skip 而非 fail-closed，`harness-ci-gate.js` 无 ownership resolver，approve/reject route 不要求完整 tuple 且 detail 缺 `source/timestamp/repo/pr_number/run_id`，`review_required=true` 时 merge gate 仍接受 stale human approval，merge handler 也未传 `--match-head-commit` |
+| ownership tuple、approve/reject、merge lock、CI fail-closed | `sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts` | `标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority` / `resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组` / `approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict` / `approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict` / `review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并` / `mergeGate 对 stale human approval fail-closed 并要求重跑证据链` / `merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha` | 红测已改成真实 PostgreSQL + 真实 route/decision_log 接缝验证；当前实现仍忽略 `repo/pr_number`、detail 缺 `source/timestamp/repo/pr_number/run_id`，`harness-ci-gate.js` 无 ownership resolver，CI 脚本仍按标题 skip，merge handler 也未传 `--match-head-commit` |
