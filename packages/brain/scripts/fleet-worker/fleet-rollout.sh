@@ -165,10 +165,17 @@ validate_root_staging() {
 }
 
 emergency_drain_local() {
-  "$SUDO" -n /bin/mkdir -p /var/run/cecelia || return 1
-  "$SUDO" -n /usr/bin/touch "$FLEET_WORKER_DRAIN_MARKER" || return 1
+  local status=0
+
+  "$SUDO" -n /bin/mkdir -p /var/run/cecelia >/dev/null 2>&1 || status=1
+  "$SUDO" -n /usr/bin/touch \
+    "$FLEET_WORKER_DRAIN_MARKER" >/dev/null 2>&1 || status=1
   "$SUDO" -n /bin/launchctl bootout \
     "system/$FLEET_WORKER_LABEL" >/dev/null 2>&1 || true
+  if [[ "$status" -ne 0 ]]; then
+    echo "emergency_drain_failed" >&2
+    return 1
+  fi
 }
 
 run_root_staged_payload() {
@@ -187,7 +194,7 @@ run_root_staged_payload() {
       wait "$controller_pid" >/dev/null 2>&1 || true
       controller_pid=''
     fi
-    emergency_drain_local >/dev/null 2>&1 || true
+    emergency_drain_local || true
     "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1 || true
     exit "$signal_status"
   }
@@ -221,7 +228,7 @@ run_root_staged_payload() {
     controller_pid=''
   fi
   if ! "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1; then
-    emergency_drain_local >/dev/null 2>&1 || true
+    emergency_drain_local || true
     status=1
   fi
   trap - HUP INT TERM
@@ -324,11 +331,17 @@ remote_root="$("$sudo_command" -n /usr/bin/mktemp \
   -d /var/tmp/cecelia-fleet-rollout.XXXXXX)"
 controller_pid=''
 emergency_drain_remote() {
-  "$sudo_command" -n /bin/mkdir -p /var/run/cecelia || return 1
+  local status=0
+  "$sudo_command" -n /bin/mkdir \
+    -p /var/run/cecelia >/dev/null 2>&1 || status=1
   "$sudo_command" -n /usr/bin/touch \
-    /var/run/cecelia/fleet-worker.drain || return 1
+    /var/run/cecelia/fleet-worker.drain >/dev/null 2>&1 || status=1
   "$sudo_command" -n /bin/launchctl bootout \
     system/com.perfect21.fleet-worker >/dev/null 2>&1 || true
+  if [[ "$status" -ne 0 ]]; then
+    echo "emergency_drain_failed" >&2
+    return 1
+  fi
 }
 validate_remote_staging() {
   staged_root="$1"
@@ -366,7 +379,7 @@ interrupt_remote() {
       "$controller_pid" >/dev/null 2>&1 || true
     wait "$controller_pid" >/dev/null 2>&1 || true
   fi
-  emergency_drain_remote >/dev/null 2>&1 || true
+  emergency_drain_remote || true
   "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1 || true
   exit "$signal_status"
 }
@@ -391,7 +404,7 @@ controller_pid=$!
 wait "$controller_pid" || status=$?
 controller_pid=''
 if ! "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1; then
-  emergency_drain_remote >/dev/null 2>&1 || true
+  emergency_drain_remote || true
   status=1
 fi
 trap - HUP INT TERM
