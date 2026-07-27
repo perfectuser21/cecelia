@@ -1,0 +1,134 @@
+{
+  "initiative_id": "4a530430-00c5-46bc-8a4f-c0ec38025391",
+  "harness_gear": "segmented",
+  "anchor": {
+    "journey_id": "2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6",
+    "gp_id": "4e5fd7eb-3823-4c57-a817-081b7fdd2eed",
+    "step_id": "817f59f5-02ff-4a70-bd81-f7ae65f77e02",
+    "ownership_basis": "生产 DevOps Map 只读查询确认 GP 与 step 均属于 journey 工厂 · F2 部署闭环；复用既有行，不创建占位行。"
+  },
+  "journey_type": "agent_remote",
+  "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；按 R7/R8 审计将 12 个 gate 串成线性依赖。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Gate 1：Brain image 自包含",
+      "scope": "构建 immutable Brain image，并在无 worktree mount 时导入 orchestrator、加载三个 profile。",
+      "dod": ["[BEHAVIOR] built image 加载 3/3 profile，missing-config 反事实非零", "[ARTIFACT] Dockerfile 与 built-image smoke"],
+      "files": ["packages/brain/Dockerfile", "scripts/ci/verify-brain-image-self-contained.sh"],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws2",
+      "title": "Gate 2：原子 release 与 per-attempt snapshot",
+      "scope": "锁定 Runner digest、profile、Worker generation、runtime UID/GID、协议能力和 transport schema，并冻结每个 Attempt 的 immutable snapshot。",
+      "dod": ["[BEHAVIOR] concurrent profile upgrade 不改变已创建 Attempt snapshot", "[BEHAVIOR] migration 367+ 真 PG upgrade/rollback parity"],
+      "files": ["packages/brain/config/fleet-node-profiles.json", "packages/brain/migrations/", "packages/brain/src/orchestrator/fleet-release-contract.js"],
+      "depends_on": ["ws1"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws3",
+      "title": "Gate 3：macOS installer 可回滚事务",
+      "scope": "在真实 macOS/OrbStack 身份边界交付 Docker-visible root、最小 ACL、身份、TMPDIR、plist/scripts/toolchain/credential-envelope 的 journaled transaction。",
+      "dod": ["[BEHAVIOR] 每个 mutation 独立失败且 rollback 仅撤销本次变更"],
+      "files": ["packages/brain/scripts/fleet-worker/install-fleet-worker.sh", "packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh"],
+      "depends_on": ["ws2"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws4",
+      "title": "Gate 4：真实 Worker admission",
+      "scope": "使 authenticated health 使用真实 Attempt 的 root/mount/ACL/UID/GID/secret/cleanup 合同，并在 Worker→exact Runner seam 的 Agent 前验证 stdout 可写和 GitHub auth。",
+      "dod": ["[BEHAVIOR] base_admitted 与 dispatch_ready 匹配 exact generation/digest", "[BEHAVIOR] stdout 不可写时 Agent 未启动，持久化 1..2048 bytes 脱敏诊断"],
+      "files": ["packages/brain/scripts/fleet-worker/fleet-worker.cjs", "packages/brain/scripts/fleet-worker/attempt-runner.cjs", "packages/brain/scripts/fleet-worker/real-runner-preflight-proof.cjs"],
+      "depends_on": ["ws3"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws5",
+      "title": "Gate 5：生产 preflight 与语义锚点",
+      "scope": "fail closed 校验 remote/callback、URL 可达、immutable profile；把当前 task 从零行 placeholder 原子迁移并回读既有 DevOps Map journey/golden-path/step existence 和 ownership。",
+      "dod": ["[BEHAVIOR] task 4a530430... 回读的 anchor 精确等于合同既有三元组", "[BEHAVIOR] 虚构 UUID、ownership 错误、task_id 等于 run_id、不可达 URL 均失败"],
+      "files": ["packages/brain/src/anchor-check.js", "scripts/kernel-fleet/verify-production-preflight.sh"],
+      "depends_on": ["ws4"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws6",
+      "title": "Gate 6：phase-aware transport",
+      "scope": "实现 accepted/startup lease、分阶段预算、idempotency、cancel 和 truthful timeout evidence。",
+      "dod": ["[BEHAVIOR] slow mirror/image/secret 各有独立 code，active Attempt/provider/container 至多一个"],
+      "files": ["packages/brain/src/orchestrator/remote-bridge-transport.js", "packages/brain/scripts/fleet-worker/fleet-worker.cjs"],
+      "depends_on": ["ws5"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws7",
+      "title": "Gate 7：secret、Git auth、artifact handoff 与反向 cleanup",
+      "scope": "完成 Docker-mediated single-use secret、attempt-scoped brokered GitHub auth、stdout、authenticated callback/commit transfer；exact Runner 创建 nested ignored/node_modules/untracked output 后，仅协调当前 attempt workspace/admin/runtime 的权限，再由 Worker 删除全部路径且 quarantine/state/secret residual zero。",
+      "dod": ["[BEHAVIOR] brokered GitHub auth 在 Agent 前验证且 success/timeout/crash/cancel 四终态 revoke+delete", "[BEHAVIOR] callback artifact SHA/branch/task ownership 真验后才 cleanup", "[BEHAVIOR] reverse cleanup 无 quarantine、无残留、无 shared-root 广泛权限变更"],
+      "files": ["packages/brain/scripts/fleet-worker/attempt-runner.cjs", "packages/brain/scripts/fleet-worker/github-auth-lifecycle-proof.cjs", "packages/brain/scripts/fleet-worker/reverse-cleanup-proof.cjs", "packages/brain/src/orchestrator/canonical-artifact-transfer.js", "packages/engine/runners/codex/runner.sh"],
+      "depends_on": ["ws6"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws8",
+      "title": "Gate 8：Kernel truthful readiness",
+      "scope": "在 spawn 前拒绝坏 worktree，并以真实 child ownership frame 与真 PG initial heartbeat 判 ready，提供有界脱敏诊断。",
+      "dod": ["[BEHAVIOR] real child+PG 正控通过，early exit/no-ready/spawn-error/timeout 失败"],
+      "files": ["packages/brain/src/harness-skill-relay.js", "packages/brain/src/kernel-launch-readiness.js"],
+      "depends_on": ["ws7"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws9",
+      "title": "Gate 9：Watchdog truthful recovery",
+      "scope": "初启与 watchdog 复用 readiness；补 ESRCH-only local liveness 和 live/unknown fail-open；恢复严格一次。",
+      "dod": ["[BEHAVIOR] 失败轮 resumed=0，成功轮 resumed=1 且 replacement/provider/event 各一", "[BEHAVIOR] real child kill+await 后 ESRCH 判 dead；kill 前 live PID 与 unknown host 不被判死"],
+      "files": ["packages/brain/src/harness-relay-watchdog.js", "packages/brain/src/orchestrator/kernel-liveness.js"],
+      "depends_on": ["ws8"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws10",
+      "title": "Gate 10：Draft exact-head evidence-only workflow",
+      "scope": "把 Worker-first candidate、CI、Evaluator、Judge 接入 P0 统一 workflow；三者只产 exact-head 证据，保持 Draft 且不 merge/deploy。",
+      "dod": ["[BEHAVIOR] ci→evaluator→judge 后 Draft=true、auto-merge off、merge/staging/production mutation=0", "[BEHAVIOR] Worker admission 失败时 Brain candidate receipt=0"],
+      "files": [".github/workflows/ci.yml", ".github/workflows/kernel-fleet-p0-gate.yml", "packages/brain/scripts/fleet-worker/fleet-rollout.sh", "scripts/kernel-fleet/verify-p0-workflow-contract.sh"],
+      "depends_on": ["ws9"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws11",
+      "title": "Gate 11：exact-head 人工授权与严格发布顺序",
+      "scope": "统一 Draft-before-evaluation、CI→Evaluator/Judge→exact-head owner approval→merge 门；Evaluator 只产证据，禁止其消费 owner approval 或执行 merge；仅 controller 可在授权后 Draft→Ready/merge。",
+      "dod": ["[BEHAVIOR] CI-only/non-owner/stale-head 均保持 Draft 且 merge count=0", "[BEHAVIOR] evaluator 完成时 Draft=true、auto-merge off、staging/production mutation count=0"],
+      "files": [".github/workflows/kernel-fleet-p0-gate.yml", ".github/workflows/ci.yml", "packages/brain/src/orchestrator/exact-head-owner-gate.js", "packages/brain/src/orchestrator/workflow-release-gate.js", "scripts/kernel-fleet/verify-p0-workflow-contract.sh"],
+      "depends_on": ["ws10"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws12",
+      "title": "Gate 12：merge 后 staging、production canary 与 rollback drain",
+      "scope": "controller 验证 authorized exact-head merge 后先真实 US staging recovery，再 production canary；禁止 main-push production、Fast Lane、schedule、skipped/idle staging 与 missing receipt 旁路；rollback 精确恢复旧构件并 drain Kernel 至 roll-forward。",
+      "dod": ["[BEHAVIOR] merge→staging E2E→production canary 严格有序且唯一 replacement/heartbeat/resumed/dispatch 成功", "[BEHAVIOR] brain-ci-deploy/auto-staging-deploy/deploy 旁路 mutations 全部非零", "[BEHAVIOR] rollback diff=0 且 Kernel dispatch 保持 drained"],
+      "files": [".github/workflows/brain-ci-deploy.yml", ".github/workflows/auto-staging-deploy.yml", ".github/workflows/deploy.yml", ".github/workflows/kernel-fleet-p0-gate.yml", "scripts/kernel-fleet/run-us-durable-recovery-canary.sh", "scripts/kernel-fleet/verify-p0-workflow-contract.sh", "packages/brain/DEFINITION.md", "packages/brain/package.json"],
+      "depends_on": ["ws11"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    }
+  ]
+}
