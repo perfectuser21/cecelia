@@ -35,6 +35,9 @@ write_executable "$fake_bin/git" \
   '  repo_root=""' \
   '  [[ "${1:-}" == "-C" ]] && { repo_root="$2"; shift 2; }' \
   '  if [[ "$*" == "status --porcelain --untracked-files=all" ]]; then exit 0; fi' \
+  '  if [[ "$*" == "rev-parse --verify HEAD^{commit}" ]]; then' \
+  '    exec /usr/bin/git -C "$repo_root" "$@"' \
+  '  fi' \
   '  if [[ "${1:-}" == "archive" ]]; then' \
   '    output=""' \
   '    while [[ $# -gt 0 ]]; do' \
@@ -43,7 +46,20 @@ write_executable "$fake_bin/git" \
   '    done' \
   '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/scripts/fleet-worker' \
   '  fi' \
-  '  exec /usr/bin/git -C "$repo_root" "$@"' \
+  '  if [[ -n "$repo_root" ]]; then exec /usr/bin/git -C "$repo_root" "$@"; fi' \
+  '  exec /usr/bin/git "$@"' \
+  'fi' \
+  'if [[ "$*" == *"rev-parse --verify HEAD^{commit}"* ]]; then' \
+  '  count=0' \
+  '  [[ -f "${FLEET_TEST_GIT_STATE:?}" ]] && read -r count < "$FLEET_TEST_GIT_STATE"' \
+  '  count=$((count + 1))' \
+  '  printf "%s\n" "$count" > "$FLEET_TEST_GIT_STATE"' \
+  '  if [[ "${FLEET_TEST_HEAD_DRIFT:-0}" == 1 && "$count" -gt 1 ]]; then' \
+  '    printf "%040d\n" 2' \
+  '  else' \
+  '    printf "%040d\n" 1' \
+  '  fi' \
+  '  exit 0' \
   'fi' \
   'if [[ "$*" == *"status --porcelain"* ]]; then' \
   '  [[ "${FLEET_TEST_DIRTY:-0}" == 1 ]] && echo " M dirty-file"' \
@@ -124,6 +140,7 @@ write_executable "$fake_bin/nodectl" \
 run_rollout() {
   FLEET_TEST_ARTIFACT_LOG="$artifact_log" \
   FLEET_TEST_TRANSPORT_LOG="$transport_log" \
+  FLEET_TEST_GIT_STATE="$test_root/git.state" \
   FLEET_ROLLOUT_GIT="$fake_bin/git" \
   FLEET_ROLLOUT_DOCKER="$fake_bin/docker" \
   FLEET_ROLLOUT_SSH="$fake_bin/ssh" \
@@ -163,6 +180,18 @@ fi
 grep -Fq 'rollout_source_dirty' "$test_root/dirty.out" \
   || fail "dirty source failure was not explicit"
 
+rm -f "$test_root/git.state"
+: > "$transport_log"
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_TEST_HEAD_DRIFT=1 \
+  run_rollout xian-mac-m4 --apply >"$test_root/head-drift.out" 2>&1; then
+  fail "rollout accepted a source commit that changed during artifact creation"
+fi
+grep -Fq 'rollout_source_changed' "$test_root/head-drift.out" \
+  || fail "source commit drift failure was not explicit"
+[[ ! -s "$transport_log" ]] || fail "rollout transported artifacts after source drift"
+
+rm -f "$test_root/git.state"
 : > "$artifact_log"
 : > "$transport_log"
 CECELIA_MACHINE_ID=us-mac-m4 \
@@ -170,8 +199,14 @@ CECELIA_MACHINE_ID=us-mac-m4 \
   || fail "valid Xian M4 rollout transport failed"
 grep -Fq 'archive --format=tar --output' "$artifact_log" \
   || fail "rollout did not archive committed source"
+grep -Eq 'archive --format=tar --output .* 0000000000000000000000000000000000000001 ' \
+  "$artifact_log" \
+  || fail "rollout archive did not use the frozen commit"
 grep -Fq 'bundle create' "$artifact_log" \
   || fail "rollout did not create a Git bundle"
+grep -Eq 'fetch --no-tags .* 0000000000000000000000000000000000000001$' \
+  "$artifact_log" \
+  || fail "rollout bundle did not fetch the frozen commit"
 grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
 grep -Fq 'jinnuoshengyuan@100.86.57.69' "$transport_log" \
