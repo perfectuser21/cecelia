@@ -1,6 +1,21 @@
 # Brain 模块定义
 
-**版本**: 1.267.97
+**版本**: 1.267.98
+
+## Provider-neutral Harness Commander Phase 1
+
+- `initiative_runs.commander_mode` 默认保持 `kernel-only`；只有未来显式选择
+  `hybrid` 的 Run 才能进入 Commander 路径，现有 Kernel 控制流不改默认语义。
+- migration 367 新增 Run 隔离的 Commander state、递增事件投影、不可变 Actor
+  message、独立 delivery/ack 与逻辑角色游标。`initiative_runs`、
+  `harness_attempts` 和 `orchestrator_decision_log` 仍是进程真相；事件表是可重建投影。
+- CommanderBundle、CommanderDirective 和 ActorMessage 使用 provider-neutral
+  strict schema。Directive validator 只返回结构化接受/拒绝结果；Actor message
+  不能派发角色、修改 Run、执行命令或携带 credential/session 路径。
+- Phase 1 不调用 LLM/Provider、不创建 Commander Attempt、不执行 Directive，也不
+  部署或运行 canary。Phase 2 Provider 接入与 Phase 5 三机真实任务验收仍待后续独立 PR。
+- 回退：`bash scripts/brain-rollback.sh 1.267.97`。additive 表可保留不用；
+  将 Run 保持/恢复为 `commander_mode=kernel-only` 即禁用新读取面。
 
 ## Fleet execution equivalence and recovery
 
