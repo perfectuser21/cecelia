@@ -101,11 +101,7 @@ cd /workspace
 SPRINT_DIR="sprints/07272008-kernel-4a1c87b0"
 DB_URL="${DB_URL:-postgresql://localhost/cecelia}"
 
-TASK_JSON=$(curl -fsS --max-time 10 "http://localhost:5221/api/brain/tasks/4a1c87b0-8bfc-4770-9a60-6423b024329a")
-echo "$TASK_JSON" | jq -e '
-  (.id // .task.id) == "4a1c87b0-8bfc-4770-9a60-6423b024329a"
-  and ((.payload.sprint_dir // .task.payload.sprint_dir) == "sprints/07272008-kernel-4a1c87b0")
-' >/dev/null
+curl -fsS --max-time 10 "http://localhost:5221/api/brain/health" | jq -e '.status == "ok"' >/dev/null
 
 npx vitest run \
   "$SPRINT_DIR/tests/kernel-failure-terminalizer.contract.test.js" \

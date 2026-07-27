@@ -1,5 +1,5 @@
 {
-  "initiative_id": "intent:92df8334-1be4-41be-9a79-83e1f4596e72:17",
+  "initiative_id": "intent:92df8334-1be4-41be-9a79-83e1f4596e72:20",
   "journey_type": "autonomous",
   "journey_type_reason": "本 sprint 仅涉及 Brain Kernel 状态机、PostgreSQL、既有任务路由与 slot 计数校验，无 UI 或远端 agent 交互。",
   "tasks": [
@@ -27,6 +27,8 @@
         "packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js",
         "tests/regression/relay-50170af2/kernel-wiring-persistent-blocked.integration.test.js",
         "tests/regression/relay-50170af2/kernel-wiring-deadline.integration.test.js",
+        "sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js",
+        "sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.pg.contract.test.js",
         "DEFINITION.md",
         "packages/brain/package.json",
         "packages/brain/package-lock.json",
