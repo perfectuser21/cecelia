@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## 合同边界
 
@@ -57,9 +57,8 @@ N/A — 任务无新增公开 HTTP 响应；对外可观测契约是 `orchestrat
 - `[packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js]` → `approval 并发与 429: fails closed, writes once, and derives merge`
 - `[packages/brain/src/orchestrator/__tests__/ground-truth.test.js]` → `reviewRequired 从 tasks.payload.review_required（string payload 兼容）；reviewApproved 锚定当前 head_sha`
 - `[packages/brain/src/orchestrator/__tests__/ground-truth.test.js]` → `same-SHA evidence approval cannot satisfy the later merge gate after evaluator and judge PASS`
-- `[packages/brain/src/orchestrator/__tests__/ground-truth.test.js]` → `reviewRequired 从 tasks.payload.review_required（string payload 兼容）；reviewApproved 锚定当前 head_sha`
-- `[packages/brain/src/lib/__tests__/harness-finalize.test.js]` → `PR MERGED 但无 evaluator gate → allow:false 且 reason 含 evaluator`
 - `[packages/brain/src/orchestrator/__tests__/kernel-handlers.test.js]` → `merge 按 GitHub 真相处理 CLEAN / BEHIND / CONFLICTING`
+- `[packages/brain/src/lib/__tests__/harness-finalize.test.js]` → `PR MERGED 但无 evaluator gate → allow:false 且 reason 含 evaluator`
 - `[packages/brain/src/__tests__/harness-ci-gate.test.js]` → `gh 命令抛错 → FAIL`
 - `[.github/workflows/scripts/__tests__/should-auto-merge.test.sh]` → `harness PR（feat(harness):）→ 跳过 auto-merge`
 - `[累积FR] context-manifest: unavailable`（`GET /api/brain/line/bb8cc561-b3ee-4fec-b74d-2255694bd963/context-manifest` 返回 404）

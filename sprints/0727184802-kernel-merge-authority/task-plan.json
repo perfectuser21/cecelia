@@ -1,5 +1,5 @@
 {
-  "initiative_id": "39492cf9-bfc4-458f-b0fe-04643fae1f6d",
+  "initiative_id": "ea7f6b59-b2fd-48a4-940f-e267c9898889",
   "journey_type": "autonomous",
   "journey_type_reason": "任务聚焦 Brain 内部 merge authority、审批路由与 merge gate，验收以本地 API 和回归测试完成。",
   "tasks": [
