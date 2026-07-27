@@ -207,7 +207,7 @@ describe('production capability wiring', () => {
     else process.env.CECELIA_MACHINE_ID = previousMachineId;
   });
 
-  it('buildRealDeps keeps Phase 4A closed before the real attempt and launcher', async () => {
+  it('buildRealDeps admits a policy-matched Worker and launches through the Fleet receipt contract', async () => {
     process.env.CECELIA_MACHINE_ID = 'us-mac-m4';
     const order = [];
     const fetchFn = vi.fn(async (url) => {
@@ -289,11 +289,11 @@ describe('production capability wiring', () => {
         order.push('launch');
         return Object.freeze({
           actualMachineId: 'us-mac-m4',
-          executionTransport: 'local-docker',
-          remoteJobId: null,
-          attestationStatus: 'local',
-          containerId: 'worker-1',
-          jobId: null,
+          executionTransport: 'fleet-worker',
+          remoteJobId: 'worker-1',
+          attestationStatus: 'verified',
+          containerId: null,
+          jobId: 'worker-1',
         });
       }),
       cancel: vi.fn(),
@@ -330,18 +330,23 @@ describe('production capability wiring', () => {
     });
 
     expect(result).toMatchObject({
-      status: 'DONE_WITH_CONCERNS',
-      control_status: 'BLOCKED',
-      should_create_attempt: false,
+      status: 'DONE',
+      attemptId: '33333333-3333-4333-8333-333333333333',
     });
     expect(fetchFn).toHaveBeenCalledWith(
       `${WORKER_URL}/health`,
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) }),
     );
-    expect(attemptStore.createAttempt).not.toHaveBeenCalled();
-    expect(adapter.start).not.toHaveBeenCalled();
-    expect(launcher.launch).not.toHaveBeenCalled();
-    expect(order).not.toContain('createAttempt');
+    expect(attemptStore.createAttempt).toHaveBeenCalledOnce();
+    expect(adapter.start).toHaveBeenCalledOnce();
+    expect(launcher.launch).toHaveBeenCalledOnce();
+    expect(order).toEqual(expect.arrayContaining([
+      'createAttempt',
+      'claimAttempt',
+      'adapter.start',
+      'launch',
+      'recordReceipt',
+    ]));
   });
 
   it('uses the healthy fallback account for persistence, account home, and launch', async () => {
@@ -948,11 +953,18 @@ describe('production capability wiring', () => {
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 
-  it('buildRealDeps preserves final dispatch-readiness failure from the canonical Worker URL', async () => {
+  it('buildRealDeps still blocks before Attempt creation when canonical Worker evidence drifts', async () => {
     const workerUrl = 'http://us-fleet-worker.internal:5231';
     const fetchFn = vi.fn(async (url) => {
       if (String(url) === `${workerUrl}/health`) {
-        return response(admittedHealth());
+        const health = admittedHealth();
+        return response({
+          ...health,
+          runner: {
+            ...health.runner,
+            image_digest: `cecelia/runner@sha256:${'0'.repeat(64)}`,
+          },
+        });
       }
       if (String(url).endsWith('/api/brain/capacity-budget')) {
         return response({
@@ -1028,7 +1040,7 @@ describe('production capability wiring', () => {
     expect(result).toMatchObject({
       status: 'DONE_WITH_CONCERNS',
       control_status: 'BLOCKED',
-      fallback_reason: 'node_not_dispatch_ready',
+      fallback_reason: 'node_not_base_admitted',
       should_create_attempt: false,
     });
     expect(attemptStore.createAttempt).not.toHaveBeenCalled();

@@ -201,18 +201,51 @@ describe('attempt store', () => {
     expect(await store.complete(input.id, result, { leaseOwner: 'brain-1' })).toMatchObject({ deduped: false });
     expect(await store.complete(input.id, result, { leaseOwner: 'brain-1' })).toEqual({ attempt: null, deduped: true });
     expect(pool.query.mock.calls[0][0]).toMatch(/status NOT IN \(/i);
-    expect(pool.query.mock.calls[0][0]).toMatch(/lease_owner\s*=\s*\$5/i);
+    expect(pool.query.mock.calls[0][0]).toMatch(/lease_owner\s*=\s*\$6/i);
     expect(pool.query.mock.calls[0][0]).not.toMatch(/lease_owner\s*=\s*NULL/i);
+  });
+
+  it('semantic refusal 作为成功终态的规范化 failure class 持久化', async () => {
+    const pool = poolWith({ rows: [{ id: input.id, status: 'blocked' }], rowCount: 1 });
+    const store = createAttemptStore(pool);
+    const result = {
+      status: 'blocked',
+      summary: 'needs product context',
+      failure_class: 'semantic_refusal',
+    };
+
+    await expect(
+      store.complete(input.id, result, { leaseOwner: 'brain-1' }),
+    ).resolves.toMatchObject({ deduped: false });
+
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/failure_class\s*=\s*\$5/i);
+    expect(sql).toMatch(/lease_owner\s*=\s*\$6/i);
+    expect(values).toEqual([
+      input.id,
+      'blocked',
+      result,
+      null,
+      'semantic_refusal',
+      'brain-1',
+    ]);
   });
 
   it('失败也遵循终态幂等守卫', async () => {
     const pool = poolWith({ rows: [{ id: input.id, status: 'failed' }], rowCount: 1 });
     const store = createAttemptStore(pool);
 
-    const outcome = await store.fail(input.id, { code: 'launch_failed', message: 'boom' });
+    const outcome = await store.fail(input.id, {
+      code: 'launch_failed',
+      message: 'boom',
+      failureClass: 'runner_failure',
+    });
 
     expect(outcome.deduped).toBe(false);
-    expect(pool.query.mock.calls[0][0]).toMatch(/error_code.*error_message/is);
+    expect(pool.query.mock.calls[0][0]).toMatch(
+      /error_code.*error_message.*failure_class/is,
+    );
+    expect(pool.query.mock.calls[0][1]).toContain('runner_failure');
     expect(pool.query.mock.calls[0][0]).toMatch(/status NOT IN \(/i);
   });
 
@@ -223,19 +256,21 @@ describe('attempt store', () => {
     await store.fail(input.id, {
       code: 'launch_failed',
       message: 'boom',
+      failureClass: 'runner_failure',
     }, {
       leaseOwner: 'brain-1',
       leaseGeneration: 4,
     });
 
     const [sql, values] = pool.query.mock.calls[0];
-    expect(sql).toMatch(/\$5::text IS NULL OR lease_owner = \$5/i);
-    expect(sql).toMatch(/\$6::integer IS NULL OR lease_generation = \$6/i);
+    expect(sql).toMatch(/\$6::text IS NULL OR lease_owner = \$6/i);
+    expect(sql).toMatch(/\$7::integer IS NULL OR lease_generation = \$7/i);
     expect(values).toEqual([
       input.id,
       'failed',
       'launch_failed',
       'boom',
+      'runner_failure',
       'brain-1',
       4,
     ]);

@@ -485,6 +485,49 @@ describe('runLoop：dry-run（F5 前台雏形）', () => {
 });
 
 describe('runLoop：wait:* 不灌水', () => {
+  it('Run B sees Run A failure set and requests review without dispatching generator-fix', async () => {
+    const pr = {
+      url: 'u',
+      state: 'OPEN',
+      ci: 'fail',
+      merged: false,
+      head_sha: 'sha-run-b',
+      failed_checks: ['test:b', 'lint'],
+    };
+    const current = obs({
+      generatorSpawned: true,
+      pr,
+      historicalFailureSets: [['lint', 'test:b']],
+    });
+    const observedSeq = [
+      current,
+      current,
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.dispatch).toHaveBeenCalledWith(
+      'wait:human_review',
+      expect.any(Object),
+    );
+    expect(deps.dispatch).not.toHaveBeenCalledWith(
+      'spawn:generator-fix',
+      expect.any(Object),
+    );
+    expect(appended.map((entry) => entry.action)).toEqual([
+      'wait:human_review',
+      'effect:human_review_requested',
+    ]);
+    expect(appended[0].detail).toMatchObject({
+      review_reason: 'failure_set_repeated_across_runs',
+      failure_set: ['lint', 'test:b'],
+    });
+  });
+
   it('wait:human_review 首次派发预览/通知，随后同 SHA 只心跳等待', async () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-review' };
     const verdicts = {

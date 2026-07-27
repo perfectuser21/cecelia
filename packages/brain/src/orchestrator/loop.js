@@ -120,6 +120,7 @@ function isFailureSetReview(reason) {
   return [
     'failure_set_repeated',
     'failure_set_patience_exhausted',
+    'failure_set_repeated_across_runs',
   ].includes(reason);
 }
 

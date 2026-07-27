@@ -73,7 +73,7 @@ function workerHealthResponse(machine) {
     },
     git: { available: true, version: policy.git },
     node: { available: true, version: policy.node },
-    codex: { available: true, version: policy.codex },
+    codex: { available: true, version: `${policy.codex}-drift` },
     tailscale: { connected: true },
     callback: { reachable: true },
     time_sync: { synchronized: true },
@@ -98,7 +98,7 @@ describe('createLiveDispatch production probe wiring', () => {
   });
 
   it.each(MACHINE_IDS)(
-    'probes canonical %s identity and blocks Phase 4A before attempt creation',
+    'probes canonical %s identity and blocks a drifted node before attempt creation',
     async (targetMachine) => {
       pool.query.mockImplementation(async (sql, params) => {
         if (/INSERT INTO initiative_runs/.test(sql)) {
@@ -166,7 +166,7 @@ describe('createLiveDispatch production probe wiring', () => {
           attemptNumber: 1,
         })).rejects.toThrow(
           `canary_dispatch_failed:${targetMachine}:dispatch preflight blocked: `
-            + 'node_not_dispatch_ready',
+            + 'node_not_base_admitted',
         );
       } finally {
         await dispatch.close();

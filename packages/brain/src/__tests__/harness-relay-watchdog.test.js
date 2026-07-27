@@ -391,6 +391,7 @@ describe('resumeStalledRelayRuns', () => {
         id: '22222222-2222-4222-8222-222222222222',
         provider_session_id: 'thread-raced',
         provider: 'codex',
+        task_bundle: {},
         status: 'running',
         lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
       },

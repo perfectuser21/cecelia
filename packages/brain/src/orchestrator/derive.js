@@ -72,6 +72,7 @@ function productFixRoute(observed, reason) {
   const convergence = replayProductConvergence(observed.decisionLog ?? [], {
     currentFailureSet: currentProductFailureSet(observed),
     currentHeadSha: observed.pr?.head_sha ?? null,
+    historicalFailureSets: observed.historicalFailureSets ?? [],
   });
   if (convergence.outcome === 'failed') {
     return {

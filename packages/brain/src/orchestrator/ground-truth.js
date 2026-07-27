@@ -202,6 +202,26 @@ export async function collectGroundTruth(deps, opts) {
     [runId],
   );
   const decisionLog = logRes.rows;
+  const historicalFailureRes = await pool.query(
+    `SELECT fix.observed->'failure_set' AS failure_set
+       FROM orchestrator_decision_log fix
+       JOIN initiative_runs prior_run ON prior_run.id = fix.run_id
+      WHERE prior_run.current_task_id = $1
+        AND prior_run.id <> $2
+        AND fix.action = 'spawn:generator-fix'
+        AND fix.observed->>'failure_class' = 'product_failure'
+        AND jsonb_typeof(fix.observed->'failure_set') = 'array'
+      ORDER BY prior_run.created_at, fix.hop`,
+    [taskId, runId],
+  );
+  const historicalFailureSets = historicalFailureRes.rows
+    .map((row) => normalizeFailureSet(asJson(row.failure_set)))
+    .filter(Boolean)
+    .filter((failureSet, index, all) => (
+      all.findIndex((candidate) => (
+        JSON.stringify(candidate) === JSON.stringify(failureSet)
+      )) === index
+    ));
 
   // evaluator 的完整机械证据存于 attempt.result；decision_log 只承载 SHA 锚定 verdict。
   // 旧 controller 的 .brain-result.json 仍在文件通道读取，供兼容路径兜底。
@@ -414,6 +434,7 @@ export async function collectGroundTruth(deps, opts) {
     reviewRequired,
     reviewApproved,
     decisionLog,
+    historicalFailureSets,
     authCircuit,
     callbackResult,
     noProgress,

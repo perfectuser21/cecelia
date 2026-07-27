@@ -243,4 +243,46 @@ describe('replayProductConvergence：无 claimed SHA 的 pending callback', () =
       currentHeadSha: advancedSha,
     })).toEqual({ outcome: 'continue', reason: 'verified_new_sha' });
   });
+
+  it('Run B normalizes and stops on the same product-failure set persisted by Run A', () => {
+    expect(replayProductConvergence([], {
+      currentFailureSet: ['test:b', 'lint'],
+      currentHeadSha: advancedSha,
+      historicalFailureSets: [[' lint ', 'test:b', 'lint']],
+    })).toEqual({
+      outcome: 'review',
+      reason: 'failure_set_repeated_across_runs',
+      failureSet: ['lint', 'test:b'],
+      failureSetKey: '["lint","test:b"]',
+    });
+  });
+
+  it('an approval for a different failure set cannot unlock a repeated cross-Run set', () => {
+    const staleRequest = {
+      ...row(1, 'effect:human_review_requested', {
+        pr: { head_sha: advancedSha },
+      }),
+      detail: {
+        review_reason: 'failure_set_repeated',
+        failure_set: ['old-check'],
+      },
+    };
+    const staleApproval = {
+      ...row(2, 'verdict:human_review'),
+      detail: {
+        approved: true,
+        pr_head_sha: advancedSha,
+        review_request_hop: '1',
+      },
+    };
+
+    expect(replayProductConvergence([staleRequest, staleApproval], {
+      currentFailureSet: ['lint', 'test:b'],
+      currentHeadSha: advancedSha,
+      historicalFailureSets: [['test:b', 'lint']],
+    })).toMatchObject({
+      outcome: 'review',
+      reason: 'failure_set_repeated_across_runs',
+    });
+  });
 });

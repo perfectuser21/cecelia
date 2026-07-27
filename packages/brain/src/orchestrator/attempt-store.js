@@ -225,18 +225,20 @@ export function createAttemptStore(pool) {
             SET status = $2,
                 result = $3,
                 provider_session_id = COALESCE($4, provider_session_id),
+                failure_class = $5,
                 completed_at = NOW(),
                 lease_expires_at = NULL,
                 updated_at = NOW()
           WHERE id = $1
             AND status NOT IN (${TERMINAL_SQL})
-            AND ($5::text IS NULL OR lease_owner = $5)
+            AND ($6::text IS NULL OR lease_owner = $6)
           RETURNING *`,
         [
           id,
           resultPayload.status,
           resultPayload,
           resultPayload.provider_metadata?.session_id ?? null,
+          resultPayload.failure_class ?? null,
           leaseOwner,
         ],
       );
@@ -246,7 +248,7 @@ export function createAttemptStore(pool) {
 
     async fail(
       id,
-      { code, message, status = 'failed' },
+      { code, message, status = 'failed', failureClass = null },
       { leaseOwner = null, leaseGeneration = null } = {},
     ) {
       if (!['failed', 'cancelled'].includes(status)) {
@@ -257,15 +259,24 @@ export function createAttemptStore(pool) {
             SET status = $2,
                 error_code = $3,
                 error_message = $4,
+                failure_class = $5,
                 completed_at = NOW(),
                 lease_expires_at = NULL,
                 updated_at = NOW()
           WHERE id = $1
             AND status NOT IN (${TERMINAL_SQL})
-            AND ($5::text IS NULL OR lease_owner = $5)
-            AND ($6::integer IS NULL OR lease_generation = $6)
+            AND ($6::text IS NULL OR lease_owner = $6)
+            AND ($7::integer IS NULL OR lease_generation = $7)
           RETURNING *`,
-        [id, status, code ?? null, message ?? null, leaseOwner, leaseGeneration],
+        [
+          id,
+          status,
+          code ?? null,
+          message ?? null,
+          failureClass,
+          leaseOwner,
+          leaseGeneration,
+        ],
       );
       const attempt = firstRow(result);
       return { attempt, deduped: attempt === null };

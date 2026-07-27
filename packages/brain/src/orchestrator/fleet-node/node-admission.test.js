@@ -165,7 +165,7 @@ function expectInvalid(result, field) {
 }
 
 describe('pure Fleet Node base admission', () => {
-  it('base-admits one complete fresh report without ever declaring dispatch readiness', async () => {
+  it('declares a complete fresh report dispatch-ready from Brain-owned policy', async () => {
     const { contract, profile, report } = await fixture();
     const inputBefore = structuredClone(report);
 
@@ -175,7 +175,7 @@ describe('pure Fleet Node base admission', () => {
       machine_id: profile.machine_id,
       state: 'base_admitted',
       base_admitted: true,
-      dispatch_ready: false,
+      dispatch_ready: true,
       observed_at: report.observed_at,
       reasons: [],
     });

@@ -316,6 +316,26 @@ describe('规则 3c：ci fail → 收敛驱动 fix loop', () => {
     }));
     expect(r).toMatchObject({ phase: 'generate', action: 'spawn:generator-fix', reason: 'ci_fail' });
   });
+
+  it('Run B 重现 Run A 的规范化 failure set → human review，不创建 generator-fix', () => {
+    const r = derive(baseObserved({
+      pr: {
+        url: 'u',
+        state: 'OPEN',
+        ci: 'fail',
+        merged: false,
+        head_sha: 'sha-run-b',
+        failed_checks: ['test:b', 'lint'],
+      },
+      historicalFailureSets: [[' lint ', 'test:b', 'lint']],
+    }));
+
+    expect(r).toEqual({
+      phase: 'review',
+      action: 'wait:human_review',
+      reason: 'failure_set_repeated_across_runs',
+    });
+  });
 });
 
 describe('规则 4a：evaluate（verdict SHA 锚定，P0-2）', () => {

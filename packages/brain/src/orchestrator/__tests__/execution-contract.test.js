@@ -135,6 +135,39 @@ describe('TaskBundle contract', () => {
 });
 
 describe('HarnessResult contract', () => {
+  it.each([
+    [
+      'provider 503',
+      {
+        status: 'failed',
+        summary: 'provider unavailable',
+        error: { code: 'http_503', message: 'bounded diagnostic' },
+      },
+      'infrastructure_blocked',
+    ],
+    [
+      'runner failure',
+      {
+        status: 'failed',
+        summary: 'runner exited',
+        error: { code: 'runner_exit', message: 'bounded diagnostic' },
+      },
+      'runner_failure',
+    ],
+    [
+      'semantic refusal',
+      {
+        status: 'blocked',
+        summary: 'cannot proceed under the supplied contract',
+        error: null,
+      },
+      'semantic_refusal',
+    ],
+  ])('classifies %s without reading free-form messages', (_name, patch, failureClass) => {
+    expect(parseHarnessResult(validResult(patch), 'planner').failure_class)
+      .toBe(failureClass);
+  });
+
   it('accepts a planner result without a verdict decision', () => {
     expect(parseHarnessResult(validResult(), 'planner')).toMatchObject({
       contract_version: RESULT_CONTRACT_VERSION,

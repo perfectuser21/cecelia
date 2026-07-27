@@ -85,7 +85,7 @@ function boundedAdmission(machineId, evaluated) {
     machine_id: machineId,
     state: admitted ? 'base_admitted' : 'draining',
     base_admitted: admitted,
-    dispatch_ready: false,
+    dispatch_ready: admitted && evaluated?.dispatch_ready === true,
     observed_at: admitted
       && typeof evaluated?.observed_at === 'string'
       && Number.isFinite(Date.parse(evaluated.observed_at))

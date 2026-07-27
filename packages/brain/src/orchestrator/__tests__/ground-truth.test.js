@@ -31,7 +31,15 @@ function fakePool(rowsByTable = {}) {
         }
         return { rows: rowsByTable.harness_attempts ?? [] };
       }
-      if (sql.includes('FROM orchestrator_decision_log')) return { rows: rowsByTable.orchestrator_decision_log ?? [] };
+      if (
+        sql.includes('FROM orchestrator_decision_log')
+        && sql.includes('JOIN initiative_runs prior_run')
+      ) {
+        return { rows: rowsByTable.historical_failure_sets ?? [] };
+      }
+      if (sql.includes('FROM orchestrator_decision_log')) {
+        return { rows: rowsByTable.orchestrator_decision_log ?? [] };
+      }
       if (sql.includes('FROM account_usage_cache')) return { rows: rowsByTable.account_usage_cache ?? [] };
       throw new Error(`unexpected sql: ${sql}`);
     }),
@@ -81,6 +89,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
     harness_attempts: rows.attempts ?? [],
     harness_evaluator_attempts: rows.evaluatorAttempts ?? rows.attempts ?? [],
     orchestrator_decision_log: rows.log ?? [],
+    historical_failure_sets: rows.historicalFailureSets ?? [],
     account_usage_cache: rows.circuit ?? [],
     ...(rows.attemptsQueryResult !== undefined
       ? { harness_attempts_result: rows.attemptsQueryResult }
@@ -160,6 +169,40 @@ describe('collectGroundTruth：DB 通道组装', () => {
       && sql.includes("role = 'evaluator'")
       && params[0] === RUN_ID
     ))).toBe(true);
+  });
+
+  it('separately restores normalized product-failure sets from prior Runs of the same task', async () => {
+    const deps = makeDeps({
+      rows: {
+        log: [{ hop: 9, action: 'wait:poll_ci', observed: {} }],
+        historicalFailureSets: [
+          { failure_set: [' test:b ', 'lint', 'lint'] },
+          { failure_set: ['typecheck'] },
+          { failure_set: 'not-an-array' },
+        ],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+    });
+
+    expect(observed.decisionLog).toEqual([
+      { hop: 9, action: 'wait:poll_ci', observed: {} },
+    ]);
+    expect(observed.historicalFailureSets).toEqual([
+      ['lint', 'test:b'],
+      ['typecheck'],
+    ]);
+    const [sql, params] = deps.pool.calls.find(([query]) => (
+      query.includes('JOIN initiative_runs prior_run')
+    ));
+    expect(sql).toContain("fix.action = 'spawn:generator-fix'");
+    expect(sql).toContain("fix.observed->>'failure_class' = 'product_failure'");
+    expect(sql).toContain('prior_run.current_task_id = $1');
+    expect(sql).toContain('prior_run.id <> $2');
+    expect(params).toEqual([TASK_ID, RUN_ID]);
   });
 });
 

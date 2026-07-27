@@ -1,6 +1,25 @@
 # Brain 模块定义
 
-**版本**: 1.267.96
+**版本**: 1.267.97
+
+## Fleet execution equivalence and recovery
+
+- Brain-owned node admission now marks a clean, fresh, policy-matched report
+  dispatch-ready. Worker-supplied readiness, slot, and online claims remain
+  untrusted; any local admission failure still drains the node.
+- Same-machine provider resume is bound to the receipt-proven actual machine.
+  The child Attempt receives a new Attempt/workspace identity and an explicit
+  `fresh_session=false` bundle. Recovery without a provider session restarts
+  deterministic Kernel reconciliation, whose normal dispatcher creates a
+  `fresh_session=true` Attempt from DB/Git/PR evidence.
+- `harness_attempts.failure_class` records the canonical structured distinction
+  between `infrastructure_blocked`, `runner_failure`, and `semantic_refusal`;
+  classification uses status and bounded error codes, not free-form messages.
+- Ground truth reads normalized product-failure sets from prior Runs of the same
+  task without merging their hops into the current Run. Repeating the exact set
+  routes L0 to `wait:human_review` before any `generator-fix` Attempt is created.
+- Rollback: `bash scripts/brain-rollback.sh 1.267.96`. Phase 5 deployment and
+  real three-machine canary are intentionally not performed by this change.
 
 ## Kernel attempt telemetry
 

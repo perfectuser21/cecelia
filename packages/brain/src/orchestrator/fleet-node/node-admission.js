@@ -163,7 +163,7 @@ function resultFor(profile, report, reasons) {
     machine_id: typeof profile?.machine_id === 'string' ? profile.machine_id : null,
     state: admitted ? 'base_admitted' : 'draining',
     base_admitted: admitted,
-    dispatch_ready: false,
+    dispatch_ready: admitted,
     observed_at: typeof report?.observed_at === 'string'
       && report.observed_at.length <= 40
       ? report.observed_at

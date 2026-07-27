@@ -103,7 +103,7 @@ describe('Fleet Node admission client', () => {
       machine_id: profile.machine_id,
       state: 'base_admitted',
       base_admitted: true,
-      dispatch_ready: false,
+      dispatch_ready: true,
       observed_at: health.observed_at,
       reasons: [],
     }));
@@ -118,7 +118,7 @@ describe('Fleet Node admission client', () => {
     await expect(client.getAdmission('xian-mac-m4')).resolves.toMatchObject({
       state: 'base_admitted',
       base_admitted: true,
-      dispatch_ready: false,
+      dispatch_ready: true,
     });
     expect(fetchFn).toHaveBeenCalledWith(
       'http://xian-m4-worker.internal:5231/health',
