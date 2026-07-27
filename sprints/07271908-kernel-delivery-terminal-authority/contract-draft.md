@@ -1,10 +1,10 @@
-# Sprint Contract Draft (Round 5)
+# Sprint Contract Draft (Round 6)
 
-## Round 5 修订摘要
+## Round 6 续投摘要
 
-- 补齐 PRD Proven-to-fire 中独立的 staging FAIL 回传 parent 非成功路径，避免只用 SKIP 或 executor_success 变体代替 FAIL。
-- Final E2E 在 happy path 之外覆盖 SKIP(no_contract)、staging FAIL、tested_sha mismatch、internal rollback、customer confirm pending、customer signed attestation 与 report dispatch failure。
-- 保留 Round 3 已补强项：真实 Postgres/真实相邻模块边界、customer signed attestation oracle、replay 幂等 oracle、Promote API 认证后 DB 未突变断言。
+- Round 5 reviewer verdict 已 APPROVED（`.harness/verdicts/gan-f5dd614-round5.json`），本轮不扩 scope，仅重发到 Brain 指定 `cp-harness-propose-r6-ebd18bf7-a17` 分支并保持合同内容可回放。
+- 保留 Round 5 覆盖：staging FAIL 回传 parent 非成功路径；Final E2E 覆盖 SKIP(no_contract)、staging FAIL、tested_sha mismatch、internal rollback、customer confirm pending、customer signed attestation 与 report dispatch failure。
+- 保留真实 Postgres/真实相邻模块边界、customer signed attestation oracle、replay 幂等 oracle、Promote API 认证后 DB 未突变断言。
 
 ## Response Schema（推导来源: PRD字面 + api_registry推导）
 
