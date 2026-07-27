@@ -34,6 +34,16 @@ function bundle() {
       sprint_dir: 'sprints/watchdog-fleet',
       worktree_path: '/workspace',
       artifacts: [],
+      execution_surface: 'fleet-worker',
+      workspace_spec: {
+        repo: 'perfectuser21/cecelia',
+        base_sha: '0123456789abcdef0123456789abcdef01234567',
+        branch: 'cp-watchdog-fleet',
+        expected_head_sha: null,
+        mode: 'read-only',
+        run_id: RUN_ID,
+        attempt_id: CHILD_ID,
+      },
     },
     constraints: {
       read_only: true,
@@ -91,7 +101,9 @@ function childAttempt() {
 function remoteEnv(overrides = {}) {
   return {
     KERNEL_FLEET_REMOTE_ENABLED: 'true',
-    XIAN_M4_KERNEL_BRIDGE_URL: BRIDGE_URL,
+    FLEET_WORKER_US_MAC_M4_URL: BRIDGE_URL,
+    FLEET_WORKER_XIAN_MAC_M4_URL: BRIDGE_URL,
+    FLEET_WORKER_XIAN_MAC_M1_URL: BRIDGE_URL,
     KERNEL_FLEET_BRIDGE_TOKEN: SECRET,
     KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
     ...overrides,
@@ -125,6 +137,31 @@ function resumeOptions(overrides = {}) {
     onRecoveryAlert: vi.fn(async () => {}),
     ...overrides,
   };
+}
+
+function successfulWorkerFetch(machineId = 'us-mac-m4') {
+  return vi.fn(async (url, init) => {
+    if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      return response(200, { status: 'running', job_id: 'parent-job' });
+    }
+    if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
+      return response(200, { status: 'cancelled', job_id: 'parent-job' });
+    }
+    if (url === `${BRIDGE_URL}/harness/attempts`) {
+      return response(202, {
+        status: 'accepted',
+        job_id: 'child-job',
+        actual_machine_id: machineId,
+        attestation: signMachineAttestation({
+          secret: SECRET,
+          attemptId: CHILD_ID,
+          machineId,
+          jobId: 'child-job',
+        }),
+      });
+    }
+    throw new Error(`unexpected request ${init?.method} ${url}`);
+  });
 }
 
 describe('kernel fleet watchdog recovery', () => {
@@ -165,7 +202,7 @@ describe('kernel fleet watchdog recovery', () => {
       ok: true,
       resumed: true,
       remoteJobId: 'child-job',
-      executionTransport: 'remote-bridge',
+      executionTransport: 'fleet-worker',
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
@@ -192,7 +229,7 @@ describe('kernel fleet watchdog recovery', () => {
       leaseOwner: 'watchdog:test',
       leaseGeneration: 0,
       actualMachineId: 'xian-mac-m4',
-      executionTransport: 'remote-bridge',
+      executionTransport: 'fleet-worker',
       remoteJobId: 'child-job',
       attestationStatus: 'verified',
     });
@@ -200,7 +237,7 @@ describe('kernel fleet watchdog recovery', () => {
     expect(removeContainer).not.toHaveBeenCalled();
   });
 
-  it('cleans a local parent by its exact persisted generation before launching the child generation', async () => {
+  it('cleans a migrated local parent through the Worker Attempt API before launching the child', async () => {
     const originalParentAttempt = {
       ...parentAttempt(),
       machine_id: 'us-mac-m4',
@@ -221,31 +258,30 @@ describe('kernel fleet watchdog recovery', () => {
       requested_machine_id: 'us-mac-m4',
     };
     const removeContainer = vi.fn(async () => true);
-    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
+    const fetchFn = successfulWorkerFetch();
     const store = resumeStore();
 
     await expect(resumeKernelAttempt(child, resumeOptions({
       originalParentAttempt,
       reclaimedParentAttempt,
       attemptStore: store,
-      env: {},
-      spawnDetached,
+      fetchFn,
       removeContainer,
     }))).resolves.toMatchObject({
       ok: true,
-      executionTransport: 'local-docker',
-      containerId: 'cecelia-harness-22222222-g0',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'child-job',
     });
 
-    expect(removeContainer.mock.calls.map(([containerId]) => containerId)).toEqual([
-      'cecelia-harness-11111111-g2',
-      'cecelia-harness-22222222-g0',
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
+      `${BRIDGE_URL}/harness/attempts`,
     ]);
-    expect(removeContainer.mock.calls.flat()).not.toContain('cecelia-harness-11111111');
-    expect(removeContainer.mock.calls.flat()).not.toContain('cecelia-harness-11111111-g3');
+    expect(removeContainer).not.toHaveBeenCalled();
   });
 
-  it('cleans a provable rolling legacy local parent by its exact unsuffixed identity before modern g0 child launch', async () => {
+  it('cleans a provable rolling legacy local parent before launching its child through Worker', async () => {
     const originalParentAttempt = {
       ...parentAttempt(),
       machine_id: 'us-mac-m4',
@@ -269,28 +305,28 @@ describe('kernel fleet watchdog recovery', () => {
       requested_machine_id: 'us-mac-m4',
     };
     const removeContainer = vi.fn(async () => true);
-    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
+    const fetchFn = successfulWorkerFetch();
 
     await expect(resumeKernelAttempt(child, resumeOptions({
       originalParentAttempt,
       reclaimedParentAttempt,
-      env: {},
-      spawnDetached,
+      fetchFn,
       removeContainer,
     }))).resolves.toMatchObject({
       ok: true,
-      containerId: 'cecelia-harness-22222222-g0',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'child-job',
     });
 
     expect(removeContainer.mock.calls.map(([containerId]) => containerId)).toEqual([
       'cecelia-harness-11111111',
-      'cecelia-harness-22222222-g0',
     ]);
-    expect(removeContainer.mock.calls.flat()).not.toContain('cecelia-harness-11111111-g0');
-    expect(removeContainer.mock.calls.flat()).not.toContain('cecelia-harness-11111111-g1');
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      `${BRIDGE_URL}/harness/attempts`,
+    ]);
   });
 
-  it('cleans a receipt-null modern g0 parent only by its durable generation-v1 identity', async () => {
+  it('cleans a receipt-null modern parent through Worker ownership instead of guessing a container', async () => {
     const originalParentAttempt = {
       ...parentAttempt(),
       machine_id: 'us-mac-m4',
@@ -314,24 +350,25 @@ describe('kernel fleet watchdog recovery', () => {
       requested_machine_id: 'us-mac-m4',
     };
     const removeContainer = vi.fn(async () => true);
-    const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
+    const fetchFn = successfulWorkerFetch();
 
     await expect(resumeKernelAttempt(child, resumeOptions({
       originalParentAttempt,
       reclaimedParentAttempt,
-      env: {},
-      spawnDetached,
+      fetchFn,
       removeContainer,
     }))).resolves.toMatchObject({
       ok: true,
-      containerId: 'cecelia-harness-22222222-g0',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'child-job',
     });
 
-    expect(removeContainer.mock.calls.map(([containerId]) => containerId)).toEqual([
-      'cecelia-harness-11111111-g0',
-      'cecelia-harness-22222222-g0',
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
+      `${BRIDGE_URL}/harness/attempts`,
     ]);
-    expect(removeContainer.mock.calls.flat()).not.toContain('cecelia-harness-11111111');
+    expect(removeContainer).not.toHaveBeenCalled();
   });
 
   it('fails closed before cleanup or launch when remote callback config is absent', async () => {

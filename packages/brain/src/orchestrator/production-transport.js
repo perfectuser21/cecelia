@@ -66,7 +66,6 @@ function guardWorkerConfiguration(worker, {
 
 export function createProductionExecutionTransport({
   env = {},
-  brainUrl = env.BRAIN_URL ?? DEFAULT_WORKER_BRAIN_URL,
   localMachineId = DEFAULT_LOCAL_MACHINE_ID,
   fetchFn,
   remoteBridgeTimeoutMs,

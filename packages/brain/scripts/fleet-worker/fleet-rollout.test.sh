@@ -613,7 +613,7 @@ if run_rollout moon-base --apply >/dev/null 2>&1; then
   fail "unknown rollout target was accepted"
 fi
 
-if rg -ni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt|bridge.*/run' \
+if grep -Eni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt|bridge.*/run' \
   "$artifact_log" "$transport_log" "$node_log"; then
   fail "rollout artifacts or transport contain account, Prompt, or Bridge authority"
 fi

@@ -449,7 +449,7 @@ if run_reconciler "$system_root" moon-base --apply >/dev/null 2>&1; then
   fail "unknown machine was accepted"
 fi
 
-if rg -ni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt' \
+if grep -Eni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt' \
   "$mutation_log"; then
   fail "baseline mutation log contains credential or Prompt material"
 fi

@@ -12,7 +12,15 @@ const ATTEMPT_ID = '33333333-3333-4333-8333-333333333333';
 const LEASE_OWNER = 'production-wiring:4242';
 const SHARED_SECRET = 'production-wiring-secret-at-least-32-bytes';
 const WORKER_URL = 'http://us-fleet-worker.internal:5231';
+const BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
 const GIB = 1024 ** 3;
+
+function buildTestDeps(overrides = {}) {
+  return buildRealDeps({
+    resolveRepoHead: vi.fn(async () => BASE_SHA),
+    ...overrides,
+  });
+}
 
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -278,7 +286,7 @@ describe('production capability wiring', () => {
       cancel: vi.fn(),
     };
 
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool,
       attemptStore,
       registry: createProviderRegistry([adapter]),
@@ -388,11 +396,10 @@ describe('production capability wiring', () => {
     const launcher = {
       launch: vi.fn(async (input) => Object.freeze({
         actualMachineId: input.target.machine,
-        executionTransport: 'local-docker',
-        remoteJobId: null,
-        attestationStatus: 'local',
-        containerId: `worker-${input.attempt.accountId}`,
-        jobId: null,
+        executionTransport: 'fleet-worker',
+        remoteJobId: `worker-${input.attempt.accountId}`,
+        attestationStatus: 'verified',
+        jobId: `worker-${input.attempt.accountId}`,
       })),
       cancel: vi.fn(),
     };
@@ -403,7 +410,7 @@ describe('production capability wiring', () => {
       FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
     };
     const resolveGitHubToken = vi.fn(async () => 'secret-token');
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool,
       attemptStore,
       registry,
@@ -541,7 +548,7 @@ describe('production capability wiring', () => {
       FLEET_WORKER_US_MAC_M4_URL: WORKER_URL,
     };
     const resolveGitHubToken = vi.fn(async () => 'secret-token');
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool,
       attemptStore,
       registry,
@@ -605,7 +612,7 @@ describe('production capability wiring', () => {
         jobId: 'remote-job-production-1',
       }),
     }, 202));
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -711,7 +718,7 @@ describe('production capability wiring', () => {
     const attemptStore = attemptStoreDouble();
     const spawnDetached = vi.fn();
     const fetchFn = vi.fn();
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -763,7 +770,7 @@ describe('production capability wiring', () => {
     };
     const attemptStore = attemptStoreDouble();
     const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -795,7 +802,7 @@ describe('production capability wiring', () => {
   });
 
   it('rejects a non-canonical controller machine identity during assembly', async () => {
-    await expect(buildRealDeps({
+    await expect(buildTestDeps({
       pool: { query: vi.fn() },
       dispatch: vi.fn(),
       env: { CECELIA_MACHINE_ID: 'moon-base' },
@@ -824,7 +831,7 @@ describe('production capability wiring', () => {
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -885,7 +892,7 @@ describe('production capability wiring', () => {
     const fetchFn = vi.fn(async () => {
       throw new Error('bridge offline');
     });
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
@@ -972,7 +979,7 @@ describe('production capability wiring', () => {
       })),
       cancel: vi.fn(),
     };
-    const deps = await buildRealDeps({
+    const deps = await buildTestDeps({
       pool: { query: vi.fn(async () => ({ rows: [{ ok: 1 }] })) },
       attemptStore,
       registry: createProviderRegistry([codexAdapter()]),
