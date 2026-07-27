@@ -1,0 +1,29 @@
+{
+  "initiative_id": "f96afb28-9df6-47f9-a959-9e556c25e058",
+  "journey_type": "autonomous",
+  "journey_type_reason": "本 sprint 只改真实 preview workflow 与 Brain preview route 的后端门禁、PG 与 GitHub authority 链路，不涉及前端交互。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 preview current-SHA server-owned gate 与真实 workflow/PG/GitHub 存储链",
+      "scope": "让 `.github/workflows/preview-deploy.yml` 的真实调用方只通过 `packages/brain/src/routes/preview.js` 进入 server-owned current-SHA 门禁，接通隔离 PG、真实 GitHub PR #4372 只读真相、decision log、legacy adapter 与 B5 最终链记录，并冻结 10 个稳定 reason 与禁止真实 merge/deploy/human approval POST。",
+      "dod": [
+        "[BEHAVIOR] 真实 workflow start 成功时只返回 port/db_name/status，且 `/preview/status/:pr` 返回合同冻结的 exact status-route keys。",
+        "[BEHAVIOR] stale_check_sha、wrong_repo、wrong_pr、wrong_workflow_run、wrong_run_task、missing_required_context、preview_required_failure、local_required_context_failure、missing_context_mapping、external_infrastructure_failure 各自独立可执行并返回唯一稳定 reason。",
+        "[BEHAVIOR] TEST_DATABASE_URL 在任何 import/start/write 前完成隔离 PG 真连守卫；legacy allocate entry 与 B5 最终链记录走同一 current-SHA gate。",
+        "[ARTIFACT] `sprints/07272343-kernel-5d7ea601/tests/preview-current-sha-gate.test.js` 覆盖 exact shape、stable reasons、head change、legacy adapter、B5 存储链与 spy 约束。"
+      ],
+      "files": [
+        ".github/workflows/preview-deploy.yml",
+        "packages/brain/src/routes/preview.js",
+        "packages/brain/src/routes.js",
+        "packages/brain/src/orchestrator/decision-log.js",
+        "packages/brain/src/__tests__/integration/",
+        "sprints/07272343-kernel-5d7ea601/tests/preview-current-sha-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
