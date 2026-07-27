@@ -193,6 +193,13 @@ function createDockerAdapter({
       ) {
         throw new Error('attempt_workspace_mount_invalid');
       }
+      if (
+        typeof input.workspaceAdminMount?.source !== 'string'
+        || !path.isAbsolute(input.workspaceAdminMount.source)
+        || input.workspaceAdminMount.target !== input.workspaceAdminMount.source
+      ) {
+        throw new Error('attempt_workspace_admin_mount_invalid');
+      }
       const attemptRuntime = path.join(root, attemptId);
       fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
@@ -210,6 +217,10 @@ function createDockerAdapter({
         input.workspaceMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
       const runtimeMount = `type=bind,src=${attemptRuntime},dst=/tmp/cecelia-prompts`;
+      const workspaceAdminMount = [
+        `type=bind,src=${input.workspaceAdminMount.source},dst=${input.workspaceAdminMount.target}`,
+        input.workspaceAdminMount.readOnly ? 'readonly' : null,
+      ].filter(Boolean).join(',');
       const createArgs = [
         'create',
         '--name',
@@ -217,6 +228,8 @@ function createDockerAdapter({
         ...labelArgs(input.labels),
         '--mount',
         workspaceMount,
+        '--mount',
+        workspaceAdminMount,
         '--mount',
         runtimeMount,
         '--add-host',
@@ -553,6 +566,11 @@ function createAttemptRunner({
           workspaceMount: {
             source: workspace.path,
             target: '/workspace',
+            readOnly: workspace.mode === 'read-only',
+          },
+          workspaceAdminMount: {
+            source: workspace.mirror_path,
+            target: workspace.mirror_path,
             readOnly: workspace.mode === 'read-only',
           },
           labels,

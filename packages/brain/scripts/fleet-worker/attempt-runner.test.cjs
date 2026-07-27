@@ -369,6 +369,11 @@ describe('Fleet Worker durable runtime adapters', () => {
           target: '/workspace',
           readOnly: true,
         },
+        workspaceAdminMount: {
+          source: '/controlled/mirrors/perfectuser21__cecelia.git',
+          target: '/controlled/mirrors/perfectuser21__cecelia.git',
+          readOnly: true,
+        },
         labels: {
           'cecelia.fleet.attempt_id': ATTEMPT_ID,
           'cecelia.fleet.run_id': RUN_ID,
@@ -438,6 +443,11 @@ describe('Fleet Worker durable runtime adapters', () => {
           target: '/workspace',
           readOnly: true,
         },
+        workspaceAdminMount: {
+          source: '/controlled/mirrors/perfectuser21__cecelia.git',
+          target: '/controlled/mirrors/perfectuser21__cecelia.git',
+          readOnly: true,
+        },
         labels: {
           'cecelia.fleet.attempt_id': ATTEMPT_ID,
           'cecelia.fleet.run_id': RUN_ID,
@@ -456,6 +466,9 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(createArgs).toContain(IMAGE_DIGEST);
       expect(createArgs).toContain(
         `type=bind,src=/controlled/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`,
+      );
+      expect(createArgs).toContain(
+        'type=bind,src=/controlled/mirrors/perfectuser21__cecelia.git,dst=/controlled/mirrors/perfectuser21__cecelia.git,readonly',
       );
       expect(createArgs.join(' ')).not.toContain('/Users/operator');
       expect(createArgs).toEqual(expect.arrayContaining([
