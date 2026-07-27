@@ -1,0 +1,338 @@
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { describe, expect, it } from 'vitest';
+import pg from 'pg';
+
+import { DB_DEFAULTS } from '../../../packages/brain/src/db-config.js';
+
+const MODULE_PATH = '../../../packages/brain/src/orchestrator/approved-contract-provenance.js';
+const RUN_ID = '13d41c64-f5f1-4aaf-9487-c2608c3ec990';
+const INITIATIVE_ID = '891b959f-98e5-43be-8315-dd83dedf00c8';
+const SPRINT_DIR = 'sprints/kernel-contract-fixture';
+
+async function subject() {
+  return import(MODULE_PATH);
+}
+
+function sh(cwd: string, command: string) {
+  return execFileSync('bash', ['-lc', command], {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'Harness Test',
+      GIT_AUTHOR_EMAIL: 'harness-test@example.invalid',
+      GIT_COMMITTER_NAME: 'Harness Test',
+      GIT_COMMITTER_EMAIL: 'harness-test@example.invalid',
+    },
+  }).trim();
+}
+
+function write(repo: string, filePath: string, content: string) {
+  const abs = join(repo, filePath);
+  mkdirSync(dirname(abs), { recursive: true });
+  writeFileSync(abs, content);
+}
+
+function createApprovedRepo() {
+  const repo = mkdtempSync(join(tmpdir(), 'approved-contract-provenance-'));
+  sh(repo, 'git init -q');
+  write(repo, `${SPRINT_DIR}/sprint-prd.md`, '# PRD\nGolden Path: approved manifest\n');
+  write(repo, `${SPRINT_DIR}/contract-draft.md`, '# Sprint Contract Draft\nStep 1\n');
+  write(repo, `${SPRINT_DIR}/contract-dod.md`, '- [ ] [BEHAVIOR] [L2] approved path\n  Test: manual:bash npx vitest\n');
+  write(repo, `${SPRINT_DIR}/task-plan.json`, '{"tasks":[{"task_id":"ws1"}]}\n');
+  write(repo, `${SPRINT_DIR}/tests/approved.test.ts`, 'import { it } from "vitest"; it("approved", () => {});\n');
+  write(repo, 'DoD.md', [
+    '# Root DoD',
+    '- [ ] migration 365 stays approved',
+    'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version = \'365\'"',
+    'Action: apply packages/brain/migrations/365_executor_kind_kernel_process.sql',
+    'Expected: schema_version contains 365',
+    '',
+  ].join('\n'));
+  write(repo, 'packages/brain/migrations/365_executor_kind_kernel_process.sql', '-- migration 365\n');
+  write(repo, 'sprints/fixtures/approved-contract/golden.json', '{"migration":365}\n');
+  sh(repo, 'git add . && git commit -qm approved');
+  const approvedSha = sh(repo, 'git rev-parse HEAD');
+  return { repo, approvedSha };
+}
+
+describe('approved contract provenance manifest [BEHAVIOR]', () => {
+  it('canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts', async () => {
+    const { buildApprovedContractManifest } = await subject();
+    const { repo, approvedSha } = createApprovedRepo();
+
+    const manifest = await buildApprovedContractManifest({
+      repoRoot: repo,
+      runId: RUN_ID,
+      contractVersion: 6,
+      sourceCommitSha: approvedSha,
+      sprintDir: SPRINT_DIR,
+      approvedAt: '2026-07-27T00:00:00.000Z',
+      reviewerVerdict: {
+        attempt_id: 'reviewer-attempt-1',
+        verdict: 'APPROVED',
+        reviewer: 'harness-contract-reviewer',
+      },
+    });
+
+    expect(manifest).toMatchObject({
+      run_id: RUN_ID,
+      contract_version: 6,
+      source_commit_sha: approvedSha,
+      sprint_dir: SPRINT_DIR,
+      reviewer_verdict: expect.objectContaining({ verdict: 'APPROVED' }),
+    });
+    expect(manifest.artifacts.map((a: { path: string }) => a.path)).toEqual([
+      'DoD.md',
+      'packages/brain/migrations/365_executor_kind_kernel_process.sql',
+      'sprints/fixtures/approved-contract/golden.json',
+      `${SPRINT_DIR}/contract-dod.md`,
+      `${SPRINT_DIR}/contract-draft.md`,
+      `${SPRINT_DIR}/sprint-prd.md`,
+      `${SPRINT_DIR}/task-plan.json`,
+      `${SPRINT_DIR}/tests/approved.test.ts`,
+    ]);
+    expect(manifest.artifacts.every((a: { git_blob_oid: string; sha256: string; size: number; kind: string }) => (
+      /^[a-f0-9]{40,64}$/.test(a.git_blob_oid)
+      && /^[a-f0-9]{64}$/.test(a.sha256)
+      && Number.isInteger(a.size)
+      && a.size > 0
+      && typeof a.kind === 'string'
+    ))).toBe(true);
+    expect(manifest.manifest_digest).toMatch(/^[a-f0-9]{64}$/);
+
+    const rebuilt = await buildApprovedContractManifest({
+      repoRoot: repo,
+      runId: RUN_ID,
+      contractVersion: 6,
+      sourceCommitSha: approvedSha,
+      sprintDir: SPRINT_DIR,
+      approvedAt: '2026-07-27T00:00:00.000Z',
+      reviewerVerdict: {
+        attempt_id: 'reviewer-attempt-1',
+        verdict: 'APPROVED',
+        reviewer: 'harness-contract-reviewer',
+      },
+    });
+    expect(rebuilt.manifest_digest).toBe(manifest.manifest_digest);
+  });
+
+  it('append-only approval rejects same contract_version with a different manifest_digest', async () => {
+    const { materializeApprovedContractManifest } = await subject();
+    const pool = new pg.Pool(DB_DEFAULTS);
+    const client = await pool.connect();
+    const initiativeId = randomUUID();
+    const runId = randomUUID();
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        CREATE TEMP TABLE initiative_contracts (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          initiative_id uuid NOT NULL,
+          version integer NOT NULL,
+          status text NOT NULL DEFAULT 'draft',
+          prd_content text,
+          contract_content text,
+          review_rounds integer DEFAULT 0,
+          approved_at timestamptz,
+          branch text,
+          source_commit_sha text,
+          manifest_digest text,
+          approved_manifest jsonb,
+          reviewer_verdict jsonb,
+          created_at timestamptz DEFAULT now(),
+          updated_at timestamptz DEFAULT now(),
+          UNIQUE (initiative_id, version)
+        ) ON COMMIT DROP;
+        CREATE TEMP TABLE initiative_runs (
+          id uuid PRIMARY KEY,
+          initiative_id uuid NOT NULL,
+          contract_id uuid,
+          updated_at timestamptz DEFAULT now()
+        ) ON COMMIT DROP;
+      `);
+      await client.query(
+        'INSERT INTO initiative_runs (id, initiative_id) VALUES ($1::uuid, $2::uuid)',
+        [runId, initiativeId],
+      );
+
+      const manifestA = {
+        run_id: runId,
+        contract_version: 6,
+        source_commit_sha: 'a'.repeat(40),
+        sprint_dir: SPRINT_DIR,
+        artifacts: [],
+        manifest_digest: '1'.repeat(64),
+        approved_at: '2026-07-27T00:00:00.000Z',
+        reviewer_verdict: { verdict: 'APPROVED' },
+      };
+      const manifestB = { ...manifestA, manifest_digest: '2'.repeat(64) };
+
+      await materializeApprovedContractManifest(client, {
+        runId,
+        version: 6,
+        branch: 'cp-harness-propose-r6-51836fb2-a12',
+        manifest: manifestA,
+        prdContent: '# PRD',
+        contractContent: '# Contract',
+      });
+      await expect(materializeApprovedContractManifest(client, {
+        runId,
+        version: 6,
+        branch: 'cp-harness-propose-r6-51836fb2-a13',
+        manifest: manifestB,
+        prdContent: '# PRD changed',
+        contractContent: '# Contract changed',
+      })).rejects.toThrow(/approved_contract_manifest_conflict|same contract_version/i);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+      await pool.end();
+    }
+  });
+
+  it('approved migration 365 changed to 366 is rejected as approved_contract_drift', async () => {
+    const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
+    const { repo, approvedSha } = createApprovedRepo();
+    const manifest = await buildApprovedContractManifest({
+      repoRoot: repo,
+      runId: RUN_ID,
+      contractVersion: 6,
+      sourceCommitSha: approvedSha,
+      sprintDir: SPRINT_DIR,
+      approvedAt: '2026-07-27T00:00:00.000Z',
+      reviewerVerdict: { verdict: 'APPROVED' },
+    });
+
+    write(repo, 'DoD.md', [
+      '# Root DoD',
+      '- [ ] migration 366 stays approved',
+      'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version = \'366\'"',
+      'Action: apply packages/brain/migrations/366_executor_kind_kernel_process.sql',
+      'Expected: schema_version contains 366',
+      '',
+    ].join('\n'));
+    write(repo, 'packages/brain/migrations/366_executor_kind_kernel_process.sql', '-- migration 366\n');
+    sh(repo, 'git add . && git commit -qm drift-365-to-366');
+    const driftSha = sh(repo, 'git rev-parse HEAD');
+
+    await expect(verifyApprovedContractManifest({
+      repoRoot: repo,
+      manifest,
+      currentCommitSha: driftSha,
+    })).resolves.toMatchObject({
+      ok: false,
+      reason: 'approved_contract_drift',
+      drift: expect.arrayContaining([
+        expect.objectContaining({ path: 'DoD.md', change: 'semantic' }),
+      ]),
+    });
+  });
+
+  it('checkbox evidence and provenance only root DoD edits are allowed', async () => {
+    const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
+    const { repo, approvedSha } = createApprovedRepo();
+    const manifest = await buildApprovedContractManifest({
+      repoRoot: repo,
+      runId: RUN_ID,
+      contractVersion: 6,
+      sourceCommitSha: approvedSha,
+      sprintDir: SPRINT_DIR,
+      approvedAt: '2026-07-27T00:00:00.000Z',
+      reviewerVerdict: { verdict: 'APPROVED' },
+    });
+
+    write(repo, 'DoD.md', [
+      '# Root DoD',
+      '- [x] migration 365 stays approved',
+      'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version = \'365\'"',
+      'Action: apply packages/brain/migrations/365_executor_kind_kernel_process.sql',
+      'Expected: schema_version contains 365',
+      'Evidence: CI run 123 passed at sha-current',
+      'Provenance: checked by approved-contract-provenance',
+      '',
+    ].join('\n'));
+    sh(repo, 'git add DoD.md && git commit -qm checkbox-evidence-only');
+    const currentSha = sh(repo, 'git rev-parse HEAD');
+
+    await expect(verifyApprovedContractManifest({
+      repoRoot: repo,
+      manifest,
+      currentCommitSha: currentSha,
+    })).resolves.toMatchObject({
+      ok: true,
+      allowed_mechanical_changes: expect.arrayContaining([
+        expect.objectContaining({ path: 'DoD.md' }),
+      ]),
+    });
+  });
+
+  it('missing manifest unreachable stale sha and stale manifest digest fail closed', async () => {
+    const { verifyApprovedContractReference } = await subject();
+    const currentPrSha = 'b'.repeat(40);
+    const manifestDigest = 'c'.repeat(64);
+
+    expect(verifyApprovedContractReference({
+      manifest: null,
+      expectedManifestDigest: manifestDigest,
+      currentPrSha,
+    })).toMatchObject({ ok: false, reason: 'approved_contract_manifest_missing' });
+    expect(verifyApprovedContractReference({
+      manifest: { manifest_digest: manifestDigest, source_commit_sha: 'a'.repeat(40) },
+      expectedManifestDigest: 'd'.repeat(64),
+      currentPrSha,
+    })).toMatchObject({ ok: false, reason: 'stale_manifest_digest' });
+    expect(verifyApprovedContractReference({
+      manifest: { manifest_digest: manifestDigest, source_commit_sha: 'a'.repeat(40) },
+      expectedManifestDigest: manifestDigest,
+      currentPrSha: null,
+    })).toMatchObject({ ok: false, reason: 'current_pr_sha_missing' });
+  });
+
+  it('mergeGate refuses PASS verdicts that do not carry the approved manifest_digest', async () => {
+    const { mergeGate } = await import('../../../packages/brain/src/orchestrator/gates.js');
+    const result = mergeGate({
+      evaluateVerdict: {
+        verdict: 'PASS',
+        pr_head_sha: 'sha-current',
+        manifest_digest: 'stale-digest',
+      },
+      judgeVerdict: {
+        verdict: 'PASS',
+        pr_head_sha: 'sha-current',
+        manifest_digest: 'approved-digest',
+      },
+      prHeadSha: 'sha-current',
+      approvedManifestDigest: 'approved-digest',
+      reviewRequired: false,
+      reviewApproved: false,
+    });
+    expect(result).toEqual({
+      allow: false,
+      reason: 'stale_evaluate_manifest_digest',
+    });
+  });
+
+  it('main migration conflict after approval returns requires_re_gan', async () => {
+    const { detectApprovedContractMainConflict } = await subject();
+    const result = await detectApprovedContractMainConflict({
+      approvedSourceCommitSha: 'a'.repeat(40),
+      currentMainSha: 'b'.repeat(40),
+      approvedMigrationPath: 'packages/brain/migrations/366_approved_contract_provenance_manifest.sql',
+      currentMainMigrationPaths: [
+        'packages/brain/migrations/365_executor_kind_kernel_process.sql',
+        'packages/brain/migrations/366_unrelated_main_change.sql',
+      ],
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'requires_re_gan',
+      conflict: 'migration_number',
+      migration_number: 366,
+    });
+  });
+});
