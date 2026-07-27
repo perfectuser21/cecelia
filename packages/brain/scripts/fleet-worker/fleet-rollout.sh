@@ -49,6 +49,7 @@ run_node_apply() {
   local machine_id="$1"
   local payload_root="$2"
   local node_ctl
+  local drain_guard_armed=false
 
   require_machine "$machine_id"
   [[ -d "$payload_root" && ! -L "$payload_root" \
@@ -70,19 +71,42 @@ run_node_apply() {
       "$node_ctl" "$@"
   }
 
+  restore_drain_guard() {
+    if [[ "$drain_guard_armed" == true ]]; then
+      drain_guard_armed=false
+      run_node_command drain "$machine_id" --apply >/dev/null 2>&1 || true
+    fi
+  }
+
+  stop_with_drain() {
+    local status="$1"
+    restore_drain_guard
+    trap - EXIT HUP INT TERM
+    exit "$status"
+  }
+
   run_node_command drain "$machine_id" --apply
   if ! run_node_command bootstrap "$machine_id" --apply; then
     run_node_command drain "$machine_id" --apply >/dev/null 2>&1 || true
     return 1
   fi
+  drain_guard_armed=true
+  trap restore_drain_guard EXIT
+  trap 'stop_with_drain 129' HUP
+  trap 'stop_with_drain 130' INT
+  trap 'stop_with_drain 143' TERM
   if ! run_node_command undrain "$machine_id" --apply; then
-    run_node_command drain "$machine_id" --apply >/dev/null 2>&1 || true
+    restore_drain_guard
+    trap - EXIT HUP INT TERM
     return 1
   fi
   if ! run_node_command admit "$machine_id"; then
-    run_node_command drain "$machine_id" --apply >/dev/null 2>&1 || true
+    restore_drain_guard
+    trap - EXIT HUP INT TERM
     return 1
   fi
+  drain_guard_armed=false
+  trap - EXIT HUP INT TERM
 }
 
 run_root_staged_payload() {
