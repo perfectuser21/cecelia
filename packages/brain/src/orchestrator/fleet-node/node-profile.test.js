@@ -149,6 +149,29 @@ describe('Fleet NodeProfile registry', () => {
     }
   });
 
+  it('copies every shared baseline field from one golden profile and permits only node overlays', async () => {
+    const { listNodeProfiles } = await loadContract();
+    const profiles = listNodeProfiles();
+    const overlayKeys = new Set([
+      'machine_id',
+      'capacity',
+      'worker_bind_host',
+      'brain_health_url',
+    ]);
+    const shared = (profile) => Object.fromEntries(
+      Object.entries(profile).filter(([key]) => !overlayKeys.has(key)),
+    );
+
+    expect(profiles.map(shared)).toEqual([
+      shared(profiles[0]),
+      shared(profiles[0]),
+      shared(profiles[0]),
+    ]);
+    expect(
+      profiles.every((profile) => profile.version_policy.orbstack === '2.2.1'),
+    ).toBe(true);
+  });
+
   it('fails closed for unknown, empty, and non-string machine identities', async () => {
     const { getNodeProfile } = await loadContract();
 
