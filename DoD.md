@@ -18,7 +18,8 @@ machine-health 的 mandatory fail-closed 接线。
 
 - [x] [ARTIFACT] NodeProfile、纯基础准入 evaluator 与有界 Worker evidence client
   已落到 `packages/brain/src/orchestrator/fleet-node/`，canonical policy 固定三台
-  machine、Runner digest、Worker/OS/OrbStack/Git/Node/Codex 版本和资源阈值。
+  machine、Runner digest、Worker listener、Worker/OS/OrbStack/Git/Node/Codex
+  版本和资源阈值；US listener 为 loopback，Xian listener 为各自 Tailscale IP。
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/fleet-node/node-profile.test.js src/orchestrator/fleet-node/node-admission.test.js src/orchestrator/fleet-node/node-admission-client.test.js'
 
 - [x] [ARTIFACT] `fleet-worker.cjs` 与 `node-probe.cjs` 提供 system LaunchDaemon
@@ -27,7 +28,8 @@ machine-health 的 mandatory fail-closed 接线。
   Test: manual:bash -c 'cd packages/brain && npx vitest run scripts/fleet-worker/fleet-worker.test.js'
 
 - [x] [ARTIFACT] Worker plist、transactional installer 与 `fleet-nodectl.sh`
-  bootstrap/status/admit/drain/undrain 命令已冻结；远程 mutation 不在命令能力内。
+  bootstrap/status/admit/drain/undrain 命令已冻结；plist 固定 `/var/run/docker.sock`，
+  installer 为 `_cecelia` 管理最小 owner-home search ACL，远程 mutation 不在命令能力内。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'
 
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
@@ -45,6 +47,13 @@ machine-health 的 mandatory fail-closed 接线。
   Test: contract:KERNEL-FLEET-NODE-ADMISSION-01
   期望: exit 0
 
+- [x] [BEHAVIOR] production capacity 使用 `task_bundle.role` 将 canonical/live
+  较小值换算成角色单位：8 个 base slots 得到 planner/reporter 8、proposer 4、
+  generator 2；generator 只有 3 个 base slots 时 capability gate 必须阻断，
+  缺失或未知角色不得回退到 1:1。
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/fleet-node/node-profile.test.js src/orchestrator/preflight/production-probes.test.js src/orchestrator/preflight/capability-gate.test.js src/orchestrator/preflight/production-wiring.test.js'
+  期望: exit 0
+
 - [x] [BEHAVIOR] [L2] production machine health 必须取得 server-owned Worker URL
   的新鲜 evidence，再由 Brain immutable profile 计算准入；不存在
   `online`/`effective_slots` fallback 或 default-off enforcement flag。
@@ -58,6 +67,8 @@ machine-health 的 mandatory fail-closed 接线。
   先写本地 marker 再 bootout，undrain 失败恢复 marker；installer `--apply`
   有显式 root gate，nodectl mutation 只接受与本机 identity 相同的 canonical
   machine，并使用 system-owned target/launchctl（测试仅通过注入 seam 隔离）。
+  `_cecelia` 不存在、socket target 越界或 ACL grant 失败均在 mutation 前关闭；
+  本次新增 ACL 在 preflight/install 失败时撤销，撤销失败输出稳定安全告警。
   动作: 对 bootstrap/launchctl 各失败阶段与 stopped/running 原状态运行行为测试。
   预期观察: mutation 顺序确定、失败后状态恢复、跨机或非 root apply 拒绝。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'

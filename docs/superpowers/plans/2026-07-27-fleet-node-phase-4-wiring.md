@@ -522,7 +522,12 @@ The test must prove:
 - install target is `/Library/LaunchDaemons`;
 - launch domain is `system`;
 - the template includes `RunAtLoad`, `KeepAlive`, explicit `UserName`, bounded log paths,
-  `CECELIA_MACHINE_ID`, and pinned `CECELIA_RUNNER_DIGEST`;
+  `CECELIA_MACHINE_ID`, pinned `CECELIA_RUNNER_DIGEST`, the profile-owned Worker bind
+  host, and `DOCKER_HOST=unix:///var/run/docker.sock`;
+- US binds loopback while Xian M4/M1 bind only their exact Tailscale IPs;
+- `--apply` requires the pre-existing `_cecelia` user and grants only owner-home
+  `search` ACL for the strictly bounded OrbStack socket target; a newly granted ACL is
+  idempotent and rolls back with failed preflight/install;
 - no account directory, auth material, token, Prompt, or `CODEX_ACCOUNT_ALLOWLIST` appears;
 - `drain` creates the local drain marker before booting out the service;
 - `admit` exits non-zero unless the pure contract returns `base_admitted=true`.
@@ -549,8 +554,8 @@ fleet-nodectl.sh undrain --machine-id us-mac-m4 [--apply]
 
 `bootstrap` renders but does not silently install OrbStack or credentials. `--apply`
 installs the system LaunchDaemon only after OrbStack, Docker, runner digest, disk,
-memory, and service-user prerequisites pass. `drain` is local and reversible. No command
-contacts Xian or changes remote nodes implicitly.
+memory, service-user, and bounded socket-access prerequisites pass. `drain` is local and
+reversible. No command contacts Xian or changes remote nodes implicitly.
 
 - [ ] **Step 4: Run Green and commit**
 
@@ -643,6 +648,9 @@ URL, missing response, stale, malformed, mismatched, or drained evidence; there 
 online/slot-only fallback and no default-off enforcement switch. Compose provides only
 the three server-owned Worker URLs and the bounded TTL. Deployment order is Worker-first
 on all nodes, then Brain; if any Worker is absent, Brain keeps that node closed.
+Capacity probes must also require `task_bundle.role`, cap live effective/physical slots
+at the canonical NodeProfile capacity, then convert both to role units. Missing or
+unknown roles fail closed; the production-reachable reporter role is explicitly weight 1.
 
 - [ ] **Step 4: Run Green and commit**
 
