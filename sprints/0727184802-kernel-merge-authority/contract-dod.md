@@ -30,10 +30,22 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail"'
   期望: exit 0
 
+- [ ] [BEHAVIOR] [L2] approve route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class approved_by timestamp source
+  动作: 对 approve route 发送完整 `task_id/repo/pr_number/pr_head_sha/review_request_hop` 请求。
+  预期观察: 返回 202，响应顶层 keys 完全等于 `["approved_by","ok","pr_head_sha","pr_number","repo","review_class","review_request_hop","run_id","source","task_id","timestamp"]`，且不存在 `approved_at/runId/taskId/head_sha`。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class approved_by timestamp source"'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] reject route 记录含 rejected_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail
   动作: 对 reject route 发送完整 `task_id/repo/pr_number/pr_head_sha/review_request_hop` 请求。
   预期观察: 返回 202，并写入 `rejected_by/pr_head_sha/source/timestamp/repo/pr_number/run_id` 完整 detail。
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route 记录含 rejected_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] reject route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class rejected_by timestamp source
+  动作: 对 reject route 发送完整 `task_id/repo/pr_number/pr_head_sha/review_request_hop` 请求。
+  预期观察: 返回 202，响应顶层 keys 完全等于 `["ok","pr_head_sha","pr_number","rejected_by","repo","review_class","review_request_hop","run_id","source","task_id","timestamp"]`，且不存在 `rejected_at/runId/taskId/head_sha`。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class rejected_by timestamp source"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict

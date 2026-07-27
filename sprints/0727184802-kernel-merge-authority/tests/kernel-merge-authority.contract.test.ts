@@ -196,6 +196,40 @@ describe('kernel merge authority contract red tests', () => {
       });
     });
 
+    it('approve route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class approved_by timestamp source', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+      const run = await seedRun();
+      await appendReviewRequest(run.runId, HEAD_SHA);
+      const app = createApp(HEAD_SHA);
+
+      const response = await request(app)
+        .post(`/api/brain/harness/kernel-reviews/${run.runId}/approve`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          approved_by: 'alex',
+        });
+
+      expect(response.status).toBe(202);
+      expect(response.body).toEqual({
+        ok: true,
+        run_id: run.runId,
+        task_id: run.taskId,
+        repo: REPO,
+        pr_number: PR_NUMBER,
+        pr_head_sha: HEAD_SHA,
+        review_request_hop: 3,
+        review_class: 'merge_gate',
+        approved_by: 'alex',
+        timestamp: expect.any(String),
+        source: 'authenticated_route',
+      });
+    });
+
     it('reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
       process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
 
@@ -265,6 +299,40 @@ describe('kernel merge authority contract red tests', () => {
         repo: REPO,
         pr_number: PR_NUMBER,
         run_id: run.runId,
+      });
+    });
+
+    it('reject route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class rejected_by timestamp source', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+      const run = await seedRun();
+      await appendReviewRequest(run.runId, HEAD_SHA);
+      const app = createApp(HEAD_SHA);
+
+      const response = await request(app)
+        .post(`/api/brain/harness/kernel-reviews/${run.runId}/reject`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          rejected_by: 'alex',
+        });
+
+      expect(response.status).toBe(202);
+      expect(response.body).toEqual({
+        ok: true,
+        run_id: run.runId,
+        task_id: run.taskId,
+        repo: REPO,
+        pr_number: PR_NUMBER,
+        pr_head_sha: HEAD_SHA,
+        review_request_hop: 3,
+        review_class: 'merge_gate',
+        rejected_by: 'alex',
+        timestamp: expect.any(String),
+        source: 'authenticated_route',
       });
     });
   });
