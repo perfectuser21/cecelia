@@ -70,7 +70,7 @@ function evaluate(machineId, patch = {}) {
 const admitted = evaluate('xian-mac-m4');
 if (admitted.state !== 'base_admitted'
     || admitted.base_admitted !== true
-    || admitted.dispatch_ready !== false) {
+    || admitted.dispatch_ready !== true) {
   throw new Error(`valid report was not base-admitted: ${JSON.stringify(admitted)}`);
 }
 
