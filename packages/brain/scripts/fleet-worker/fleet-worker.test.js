@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable } from 'node:stream';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
@@ -704,5 +707,62 @@ describe('Fleet Worker Attempt API', () => {
     });
     expect(accepted.statusCode).toBe(202);
     server.close();
+  });
+});
+
+describe('Fleet Worker production runtime assembly', () => {
+  it('assembles durable Worker-owned roots and reads auth only from a protected file', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-runtime-'));
+    const tokenFile = path.join(root, 'worker-token');
+    const dataRoot = path.join(root, 'data');
+    fs.writeFileSync(tokenFile, 'fleet-worker-token-at-least-32-bytes\n', {
+      mode: 0o600,
+    });
+
+    try {
+      const runtime = createFleetWorkerRuntime({
+        env: {
+          CECELIA_MACHINE_ID: 'us-mac-m4',
+          CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+          CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
+          CECELIA_FLEET_DATA_ROOT: dataRoot,
+          CECELIA_FLEET_REPO_SOURCE: 'https://github.com/perfectuser21/cecelia.git',
+        },
+        runCommand: vi.fn(),
+      });
+
+      expect(runtime.attemptToken).toBe('fleet-worker-token-at-least-32-bytes');
+      expect(runtime.attemptRunner).toMatchObject({
+        launch: expect.any(Function),
+        reconcile: expect.any(Function),
+      });
+      expect(runtime.roots).toEqual({
+        mirrors: path.join(dataRoot, 'mirrors'),
+        worktrees: path.join(dataRoot, 'worktrees'),
+        quarantine: path.join(dataRoot, 'quarantine'),
+        state: path.join(dataRoot, 'state'),
+        runtime: path.join(dataRoot, 'runtime'),
+      });
+      expect(JSON.stringify(runtime)).not.toContain(
+        'https://github.com/perfectuser21/cecelia.git',
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not accept an inline long-lived Worker token in place of the token file', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+
+    expect(() => createFleetWorkerRuntime({
+      env: {
+        CECELIA_MACHINE_ID: 'us-mac-m4',
+        CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+        CECELIA_FLEET_DATA_ROOT: '/var/lib/cecelia/fleet-worker',
+        CECELIA_FLEET_WORKER_TOKEN: 'inline-token-must-not-be-trusted',
+      },
+      runCommand: vi.fn(),
+    })).toThrow(/fleet_worker_token_file_required/);
   });
 });
