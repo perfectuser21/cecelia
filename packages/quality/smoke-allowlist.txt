@@ -178,3 +178,4 @@ conversation-agent-smoke.sh
 conversation-ttl-archiver-smoke.sh
 kernel-capability-gate-smoke.sh
 kernel-fleet-node-admission-smoke.sh
+fleet-worker-workspace-smoke.sh

@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.94
+**版本**: 1.267.95
 
 ## Kernel attempt telemetry
 
@@ -10,7 +10,7 @@
 - orphan 的结构化收口区分 resume 返回 `null`、`false`、成功 child lineage 与 live lease owner fencing。
 - Kernel action 路由与批准合同冻结语义不变。
 
-## Fleet Node mandatory base admission
+## Fleet Node mandatory base admission and unified Worker
 
 - `fleet-node-profiles.json` 是三台 canonical 节点的 immutable policy；Brain 从
   Worker 的有界、新鲜、同身份健康报告本地计算 `base_admitted`。
@@ -39,12 +39,22 @@
 - production capacity 从 canonical capacity 与实时 effective/physical slots
   的较小值按 `task_bundle.role` 折算；缺失/未知角色 fail-closed，reporter
   作为生产可达的轻量角色使用权重 1。
-- Phase 4A 始终返回 `dispatch_ready=false`，不定义 WorkspaceSpec/Attempt API、
-  CredentialEnvelope、执行等价/恢复或 Phase 5 真实任务验收；production probes
+- Phase 4B 定义 strict、path-free `WorkspaceSpec` 与 authenticated Worker
+  Attempt API。三台 canonical machine 均使用 server-owned Worker URL；Brain
+  保留 ExecutionTarget 决策，Worker 从 controlled Git mirror 创建 Attempt-owned
+  worktree，并独占 pinned OrbStack/Docker container、durable state、terminal
+  cleanup、restart reconciliation 与 quarantine。Caller cwd/worktree path 不得
+  跨越 Worker boundary。
+- Worker bearer token 只做节点 transport auth，由受保护文件读取，不是 provider
+  credential。installer 为 `_cecelia` 准备 mode 0700 data root；容器退出按
+  container（含 prompt runtime）→ worktree → state 回收。Legacy bridge 的
+  production `/harness/attempts*` 返回 `410 fleet_worker_required`。
+- Phase 4A 仍返回 `dispatch_ready=false`；CredentialEnvelope、执行等价/恢复和
+  Phase 5 真实任务验收不属于 Phase 4B；production probes
   在最终 readiness 出现前不得创建 Attempt 或调用 launcher，并将
   `node_not_dispatch_ready` 原样写入阻断结果、告警和决策 evidence。
 - self-deploy 发布尚待复审与 merge；`xian-mac-m1` 在 Docker 不可用时必须保持 drained，
   不得降低准入阈值，也不得用 synthetic canary 代替真实任务验收。
 - 节点回退：
   `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`。
-  Brain 回退：`bash scripts/brain-rollback.sh 1.267.89`。
+  Brain 回退：`bash scripts/brain-rollback.sh 1.267.94`。

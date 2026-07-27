@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.267.94
+**Brain 版本**: 1.267.95
 
 **状态**: 生产运行中
 
@@ -219,7 +219,7 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - decision-executor.js 验证 action 在白名单内，然后在事务中执行
 - 危险 action（如 adjust_strategy）进入 pending_actions 表等人工审批
 
-### 2.3 Fleet Node 基础准入（Phase 4A）
+### 2.3 Fleet Node 基础准入与统一 Worker（Phase 4A～4B）
 
 - Brain 只接受 `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` 三个不可变
   `NodeProfile`，并从 system LaunchDaemon Worker 的有界 `/health` 报告重新计算
@@ -247,15 +247,26 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   drain，均关闭节点；不得回退为仅凭 `online` 或 `effective_slots` 放行。
 - production capacity 必须使用 `task_bundle.role`，先取 canonical capacity 与
   实时 effective/physical slots 的较小值，再按角色权重折算；缺失/未知角色关闭节点。
-- Phase 4A 的成功结果也固定为 `dispatch_ready=false`。WorkspaceSpec/Attempt API、
-  CredentialEnvelope、执行等价与恢复，以及 Phase 5 真实业务任务验收不属于本阶段；
+- Phase 4B 在 Phase 4A baseline 上定义 strict、path-free `WorkspaceSpec` 和
+  authenticated Worker Attempt API。三台 canonical machine 均通过各自的
+  server-owned Worker URL 执行；Brain 保留 machine/provider/account/model/role
+  决策，Worker 从 controlled Git mirror 创建 Attempt-owned worktree，并独占 pinned
+  OrbStack/Docker container、durable state、terminal cleanup、restart reconcile
+  与 quarantine。Caller cwd/worktree path 不得跨过 Worker boundary。
+- Worker 使用受保护文件中的节点 bearer token；该 token 只做 transport auth，
+  不是 Codex/provider credential。installer 为 `_cecelia` 准备 mode 0700 data
+  root；正常退出按 container（含 prompt runtime）→ worktree → state 回收。
+  Legacy bridge 的 production `/harness/attempts*` 已关闭，返回
+  `410 fleet_worker_required`。
+- Phase 4A 的成功结果仍固定为 `dispatch_ready=false`。CredentialEnvelope、
+  执行等价与恢复，以及 Phase 5 真实业务任务验收不属于 Phase 4B；
   production probes 必须在 `dispatch_ready=true` 前阻断 Attempt 创建与 launcher，
   并保留 `node_not_dispatch_ready` 阻断签名及其告警/决策 evidence。
 - 发布顺序固定为 Worker-first，待三台节点真实健康证据通过复审后再发布 Brain。
   当前 `xian-mac-m1` 的 Docker 不可用，必须保持 drained，不能降低阈值。
 - 节点紧急回退先在该节点执行
   `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`；
-  Brain 镜像回退执行 `bash scripts/brain-rollback.sh 1.267.89`。恢复前必须重新取得
+  Brain 镜像回退执行 `bash scripts/brain-rollback.sh 1.267.94`。恢复前必须重新取得
   真实 Worker 健康证据，不能用 synthetic canary 替代。
 
 ---
