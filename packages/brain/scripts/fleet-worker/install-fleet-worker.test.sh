@@ -52,7 +52,7 @@ run_installer() {
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
     FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
-    FLEET_WORKER_DATA_ROOT="$worker_data_root" \
+    FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
     "$INSTALLER" "$@"
 }
 
@@ -76,7 +76,7 @@ run_installer_with_id() {
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
     FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
-    FLEET_WORKER_DATA_ROOT="$worker_data_root" \
+    FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
     "$INSTALLER" "$@"
 }
 
@@ -393,6 +393,22 @@ fi
 grep -Fq 'prerequisite_service_user' <<<"$service_user_output" \
   || fail "missing service user lacked a bounded refusal"
 [[ ! -s "$acl_log" ]] || fail "missing service user caused an ACL mutation"
+
+: > "$acl_log"
+: > "$chown_log"
+dangerous_data_root_output=''
+if dangerous_data_root_output="$(
+  FLEET_WORKER_TEST_DATA_ROOT='/' \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "filesystem root was accepted as the Worker data root"
+fi
+grep -Fq 'worker_data_root_invalid' <<<"$dangerous_data_root_output" \
+  || fail "filesystem root refusal lacked a bounded signature"
+[[ ! -s "$acl_log" ]] \
+  || fail "invalid data root caused a Docker ACL mutation"
+[[ ! -s "$chown_log" ]] \
+  || fail "invalid data root caused an ownership mutation"
 
 invalid_socket_output=''
 if invalid_socket_output="$(
