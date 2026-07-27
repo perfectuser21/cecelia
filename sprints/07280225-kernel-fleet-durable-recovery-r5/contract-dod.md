@@ -5,9 +5,10 @@ target_environment: linux_server
 ---
 # Contract DoD — Durable Fleet Worker bootstrap 与 Kernel 恢复闭环
 
-**范围**: PRD Golden Path 第 1-12 步 + R32-R39 exact inventory/advisory、append-only
+**范围**: PRD Golden Path 第 1-12 步 + R32-R42 exact inventory/advisory、append-only
 classification/manifest/origin/cell evidence、同 Journey lifecycle projection、strict
-staging/production/rollback、独立 S12 accountant、attempt-runtime result channel 与两阶段 final E2E。
+staging/production/rollback、provider-neutral Guard Ledger D/A/F/E、独立 S12 accountant、
+attempt-runtime result channel 与两阶段 final E2E。
 **大小**: L
 
 ## ARTIFACT 条目
@@ -22,10 +23,10 @@ staging/production/rollback、独立 S12 accountant、attempt-runtime result cha
   Test: node -e "const c=require('fs').readFileSync('packages/brain/DEFINITION.md','utf8');if(!/ready.*heartbeat|heartbeat.*ready/i.test(c)||!/Worker-first/i.test(c)||!/drain/i.test(c))process.exit(1)"
 - [ ] [ARTIFACT] 真实 US E2E、mutation、rollback 脚本及两个 integration test 在合同路径落地。
   Test: node -e "const fs=require('fs');for(const p of ['scripts/kernel-fleet/run-real-attempt-proof.sh','scripts/kernel-fleet/run-us-durable-recovery-canary.sh','scripts/kernel-fleet/verify-owner-gate-and-rollback.sh','packages/brain/src/__tests__/kernel-launch-readiness.integration.test.js','packages/brain/src/__tests__/kernel-durable-recovery.integration.test.js'])fs.accessSync(p)"
-- [ ] [ARTIFACT] Sprint Red 测试库存按 realpath 去重后恰好一个文件、24 个唯一 `it()`；
+- [ ] [ARTIFACT] Sprint Red 测试库存按 realpath 去重后恰好一个文件、28 个唯一 `it()`；
   无共享 `loadProof` 动态 import，保留 migration/workflow/result-channel/full-fixture/
   classification/direct-origin/strict-staging/terminal-order Red。
-  Test: node -e "const fs=require('fs');const p='sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8');if((c.match(/^  it\\(/gm)||[]).length!==24||c.includes('loadProof(')||!c.includes('authority inventory full entry fixture and advisory partition')||!c.includes('strict staging rejects empty skip and SHA drift')||!c.includes('S12 serializable accountant consumes exact current evidence chain'))process.exit(1)"
+  Test: node -e "const fs=require('fs');const p='sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8');if((c.match(/^  it\\(/gm)||[]).length!==28||c.includes('loadProof(')||!c.includes('authority inventory full entry fixture and advisory partition')||!c.includes('strict staging rejects empty skip and SHA drift')||!c.includes('S12 serializable accountant consumes exact current evidence chain')||!c.includes('V01 through V13 produce append only D A F E receipts with independent effects'))process.exit(1)"
 - [ ] [ARTIFACT] P0 统一 gate 与四个现有 workflow 的 fail-closed 接线均在实现范围。
   Test: node -e "const fs=require('fs');for(const p of ['.github/workflows/kernel-fleet-p0-gate.yml','.github/workflows/ci.yml','.github/workflows/brain-ci-deploy.yml','.github/workflows/auto-staging-deploy.yml','.github/workflows/deploy.yml'])fs.accessSync(p)"
 - [ ] [ARTIFACT] title heuristic auto-merge 脚本、branch protection/ruleset reconciliation 与 built-image smoke 四消费方均有 machine contract。
@@ -37,7 +38,7 @@ staging/production/rollback、独立 S12 accountant、attempt-runtime result cha
   Test: node -e "const fs=require('fs'),c=require('crypto');const h=x=>c.createHash('sha256').update(x).digest('hex');const i=fs.readFileSync('packages/quality/contracts/kernel-policy-source-inventory.json');if(i.length!==56518||h(i)!=='bfcb7a7678d5a1e1e3076ca27e34f0b01978ca590780f33d7ddb551f9615914d')process.exit(1);const m=JSON.parse(fs.readFileSync('packages/quality/contracts/kernel-harness-authority-manifest.json'));if(m.current_colors||m.current_state||m.cells.length!==143)process.exit(1)"
 - [ ] [ARTIFACT] migration 新增四个 append-only authority/evidence/accounting 表与 derived views；
   Journey links/API/report 只作 authoritative=false projection。
-  Test: node -e "const fs=require('fs'),p='packages/brain/migrations/368_or_later_kernel_harness_authority.sql',s=fs.readFileSync(p,'utf8');for(const t of ['kernel_harness_manifest_versions','kernel_harness_origin_receipts','kernel_harness_cell_evidence','kernel_harness_terminal_accounting'])if(!s.includes('CREATE TABLE '+t))process.exit(1)"
+  Test: node -e "const fs=require('fs'),p='packages/brain/migrations/368_kernel_harness_authority.sql',s=fs.readFileSync(p,'utf8');for(const t of ['kernel_harness_manifest_versions','kernel_harness_origin_receipts','kernel_harness_cell_evidence','kernel_harness_terminal_accounting'])if(!s.includes('CREATE TABLE '+t))process.exit(1)"
 - [ ] [ARTIFACT] TaskBundle/Worker/Runner/callback finalizer 共享 attempt-scoped result-channel schema，且不再把 source `.brain-result.json` 作为权威 fallback。
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/scripts/fleet-worker/result-channel-proof.cjs','scripts/kernel-fleet/run-result-channel-proof.sh'])fs.accessSync(p)"
 
@@ -49,6 +50,9 @@ staging/production/rollback、独立 S12 accountant、attempt-runtime result cha
   Test: node -e "const fs=require('fs');for(const p of ['packages/engine/install/install-kernel-policy-hooks.sh','packages/engine/config/kernel-policy-installed-targets.json','packages/brain/src/orchestrator/kernel-policy-gate.js','packages/brain/scripts/fleet-worker/credential-envelope-broker.cjs','packages/brain/scripts/fleet-worker/credential-envelope-consumer.cjs'])fs.accessSync(p)"
 - [ ] [ARTIFACT] controller 驱动的 preapproval/postapproval final E2E 固定入口同时存在，preapproval 不 merge/deploy，postapproval 必须消费 owner receipt。
   Test: node -e "const fs=require('fs');for(const p of ['scripts/kernel-fleet/run-p0-preapproval-e2e.sh','scripts/kernel-fleet/run-p0-postapproval-e2e.sh'])fs.accessSync(p)"
+- [ ] [ARTIFACT] Guard law、官方 clean-home installer、provider-neutral broker、append-only
+  receipt migration/view 与独立 observer 入口均为具体文件，禁止以 direct hook verifier 替代。
+  Test: node -e "const fs=require('fs');for(const p of ['packages/quality/contracts/kernel-guard-manifest.json','packages/engine/install/install-kernel-policy-guards.sh','packages/brain/src/orchestrator/kernel-guard-broker.js','scripts/kernel-fleet/run-clean-home-guard-proof.sh','scripts/kernel-fleet/verify-guard-proof.sh'])fs.accessSync(p)"
 
 ## BEHAVIOR 条目
 
@@ -159,6 +163,30 @@ staging/production/rollback、独立 S12 accountant、attempt-runtime result cha
   预期观察: activation receipt 包含完整有序 wiring hops/origin/effect/evidence，任一 settings/installer/symlink/dispatcher mutation 使 exact-set mismatch。Credential obligations 只由 owner-approved provider applicability 派生；denial redacted+effect=0，recovery 链接 violation+fresh envelope，旧 envelope 不可复用；secret persistence=0。
   验证命令: Test: manual:bash bash -c 'bash scripts/kernel-fleet/verify-provider-policy-activation.sh --task "$TASK_ID" --run "$RUN_ID" --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" --authority-manifest packages/quality/contracts/kernel-policy-authority.json --derive-required-from-approved-applicability --derive-observed-from-fire-receipts && bash scripts/kernel-fleet/verify-provider-credential-envelope.sh --task "$TASK_ID" --run "$RUN_ID" --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" --authority-manifest packages/quality/contracts/kernel-policy-authority.json --derive-required-from-approved-applicability --verify-origin-kinds-directly'
   期望: exit 0；activation/credential required=receipt-derived observed，无 secret 泄露。
+
+- [ ] [BEHAVIOR] [L3] Golden Path Step 12B — clean-home 三 provider Guard activation
+  动作: 从 mktemp+env -i 的 HOME/XDG/GIT/Claude/Codex/Grok roots 与隔离 bare origin 出发，只运行官方 installer 和真实 Kernel launcher，分别通过三种 provider CLI 发送 V01-V13。
+  预期观察: effective config/argv/realpath/provider binary/launcher digest 的完整有序 hop 被 attested；手工 settings、direct hook、Codex disabled hooks、Grok always-approve 均不能产生 A/F/E；三 provider 同 vector decision/reason/effect 全等。
+  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/run-clean-home-guard-proof.sh --manifest packages/quality/contracts/kernel-guard-manifest.json --providers claude,codex,grok --vectors V01-V13 --official-installer packages/engine/install/install-kernel-policy-guards.sh --real-launcher docker/cecelia-runner/entrypoint.sh --require-stages D,A,F,E --independent-observer
+  期望: exit 0；clean-home 前后 Merkle、realpath/digest 与 provider version 均有独立原始证据。
+
+- [ ] [BEHAVIOR] [L2] Golden Path Step 12B — Guard receipts append-only 且 D/A/F/E 不可自证
+  动作: 在真 Postgres 写 deny/near-allow/recovery 的 D→A→F→E chain，尝试 UPDATE/DELETE、同 subject observer、自报 stdout、缺 predecessor、digest drift 与 receipt-store failure。
+  预期观察: UPDATE/DELETE 被 DB role/trigger 拒绝；F/E observer_class!=subject_class 且 E 引用同-vector F；receipt-store failure 阻断动作；classification 未 owner-approved coverage=0；drift 立即 stale。
+  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-guard-proof.sh --manifest packages/quality/contracts/kernel-guard-manifest.json --derive-required-from-approved-classification --derive-observed-from-append-only-receipts --require-proven-fresh --reject-summary-boolean --all-counterfactuals
+  期望: exit 0；guard_proof 仅为 SQL view/pure query，无持久化 pass boolean。
+
+- [ ] [BEHAVIOR] [L3] Golden Path Step 12B — V01-V13 deny nearby-allow recovery 与独立 effect
+  动作: 逐 exact vector 发 protected write/shell/checkout/secret input+output/push/PR/merge/Stop/staging/rollback 反事实，每个只修一个前置条件运行 nearby allow，再运行 exactly-once recovery。
+  预期观察: exact vector set=V01..V13；deny reason 为 R42 列出的 `KH_G01_*..KH_G08_*` 精确 enum；nearby allow 为 `KH_ALLOW_POLICY_SATISFIED`；recovery 为 `KH_RECOVERY_PRECONDITION_SATISFIED`；独立 observer 证明 refs/files/log/result/callback/DB/production SHA 符合 effect。
+  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-guard-vectors.sh --providers claude,codex,grok --vectors V01-V13 --deny --near-allow --recovery --independent-effect
+  期望: exit 0；缺/重/改名 vector、错误 reason、永久 deny、重复 recovery、secret egress、remote ref 前移或 production SHA 变化均失败。
+
+- [ ] [BEHAVIOR] [L3] Golden Path Step 12B — single merge staging production authority
+  动作: 在真实 GitHub/rules/deployment store 对 title-based auto-merge、alternate actor、main-push、scheduled、Fast-Lane/manual deploy、queued/empty/all-SKIP staging、Stop completion 和 Journey PATCH green 逐项尝试旁路。
+  预期观察: 只有 exact-head Controller policy 可 merge；S10 必须 required>0/FAIL=0/SKIP=0 且 merge=deployed=tested SHA；S11 必须 deploy+production self-reported health SHA+rollback drill；所有旁路 effect=0 且 S12 non-complete。
+  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-single-release-authority.sh --github-api --deployment-store --all-bypasses --task "$TASK_ID" --run "$RUN_ID" --head "$PR_HEAD_SHA"
+  期望: exit 0；单一 merge mutation、单一 staging consumer、单一 production authority 与真实 effect receipt。
 
 ## Invariant 覆盖映射
 

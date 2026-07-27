@@ -1,4 +1,4 @@
-# Sprint Contract Draft（Round 12）
+# Sprint Contract Draft（Round 13）
 
 ## 合同 Notes
 
@@ -9,13 +9,28 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
-- 先前 proposer heads 均仅作 Red 证据；Round 12 以 R32-R39 为最高优先级纠正
-  authority/classification/provenance、test self-oracle、append-only evidence SSOT、strict
-  staging/production 与 terminal order，撤销冲突的固定 receipt count、Journey color authority
-  与 report-before-staging completion。
+- 先前 proposer heads 均仅作 Red 证据；Round 13 在保留 R32-R39 修正的基础上纳入
+  R40-R42：Claude hook/手工 settings/通用 action receipt 只算 declaration，不算 activation
+  或 fire proof；统一权威改为 provider-neutral guard broker + append-only D/A/F/E receipts。
+- R41-test-oracle: verifier stdout、fixture 自带 summary、被测模块返回 boolean/array/count/hash
+  均不可单独证明 P0。每个 planned verifier 必须调用真实生产 seam，测试随后从独立
+  Git object/PG/GitHub/deployment/effect store 重算；缺 planned module 只允许产生该模块一条
+  精确 Red，不能由共享 dynamic import/config/SQL/env 错误把整套测试染红。
+- R42-guard-authority: `packages/quality/contracts/kernel-guard-manifest.json` 只存 law；
+  `guard_evidence_receipts` append-only 存 D/A/F/E。clean-home proof 只运行官方 installer
+  与真实 Kernel launcher，Claude/Codex/Grok 相同 V01-V13 vector 必须得到相同
+  decision/reason/effect，并由不同 observer 验 protected effect。
+- merge-authority: `ci.yml` auto-merge、main-push/scheduled/Fast-Lane/manual deploy 都不得成为
+  第二 authority；first/new/high-risk/authority change 只能由 versioned Controller policy
+  要求 exact-head owner receipt。
 - runtime-result-channel-blocker: 本次 TaskBundle 没有注入 `BRAIN_RESULT_FILE`；source checkout 的 `.brain-result.json` 不具 authority。本轮只提交合同 branch，不能凭 source result 授权 Generator；修复后必须由真实 Reviewer Attempt 产生 `attempt.result.result_channel_receipt` 且完成 durable ack。
 - inventory-authority: exact main `dd424a61926009ac85a915b31187124b85f0ca98:packages/engine/regression-contract.yaml` blob `7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3` 是唯一既有 P0/P1 source inventory，exact 129/P0=66/P1=63/digest=`4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f`；`packages/quality/contracts/` 是唯一 authority boundary。
 - lifecycle-proposal-provenance: Draft+CONFLICTING PR #4372 的 full source `4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13` 只是 proposed v1；分布 `0,2,2,8,6,0,1,110` 与 digest `be80793527a817611ba0698654ea858eda7c77ea9e63da937cba7b885a4d9363` 不 canonical。main migration 366 已占用；执行前重查 tree/DB 后选择未用 `>=368` 编号。
+- migration-filename: 本轮 re-fetch exact origin/main `dd424a...` 确认 tree 最大编号为 366；
+  依据 operator production evidence 也为 366，合同冻结候选文件
+  `368_kernel_harness_authority.sql`。当前 proposer 环境的 production DB 不可达，因此
+  Generator 在任何写入前必须再次同时查询 origin/main 与 production `schema_versions`；
+  若 368 已占用，必须返回 authority-manifest revision 重新签名，禁止静默改号或继续执行。
 - lifecycle-ssot-ref: `kernel_harness_f1_baseline/S0-S12@${PR_HEAD_SHA}`；F2 产品锚点仍是 `工厂 · F2 部署闭环/部署被证明没坏`，两者分别记录为 `product_anchor` 与 `lifecycle_ssot_ref`，F2 step 不得冒充 F1 全生命周期。
 - lifecycle-matrix invariant: S0-S12 只有在 owner exact-head 批准 proposal v1 后才 canonical；
   law manifest 定义 13×11=143 requirements 但不存 state/color；同 Journey projection 保留六历史
@@ -96,6 +111,8 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 - `KH-F1-F01..F08 legacy inventory ↔ KernelPolicyGate ↔ hooks/DevGate/watchdog/Judge/GitHub/release seams`：逐 exact legacy behavior ID 绑定真实 normal/violation/recovery fire receipt；禁 source-anchor、active declaration 或合成 receipt count 冒充等价。
 - `.github/workflows/{ci,kernel-fleet-p0-gate,brain-ci-deploy,auto-staging-deploy,deploy}.yml ↔ exact-head owner/controller release receipt`：必须执行真实 workflow contract/integration，禁止只 grep YAML 或伪造 success conclusion。
 - `.github/workflows/scripts/should-auto-merge.sh ↔ GitHub branch protection/ruleset/required check`：必须用真实 repository rules snapshot、run/check-suite/head/actor/signature 验证所有 merge actor，禁 title/label 分类替代。
+- `kernel-guard-manifest ↔ provider-neutral Runner broker ↔ Claude/Codex/Grok real CLI ↔ guard_evidence_receipts`：D/A/F/E 必须走 clean-home 官方 installer、真实 launcher/production seam 与独立 effect observer；禁直接调用 hook、复制 settings、summary stdout 或 subject self-attestation。
+- `guard_evidence_receipts ↔ guard_proof view ↔ S12 accountant`：真 Postgres append-only role/trigger 拒绝 UPDATE/DELETE；classification 未批准、receipt stale/missing/disproven、observer 与 subject 同类或缺 nearby-allow/recovery 时 coverage=0。
 
 ## 未覆盖真实链路清单
 
@@ -511,6 +528,45 @@ deploy+health+rollback receipts 全真。任一 Journey PATCH、expired cell、�
 promoted-without-health、SHA drift、缺 rollback/report/effect 时 terminal=false；S12 只产生
 一次 controller-fenced SERIALIZABLE transaction。
 
+### Step 12B：provider-neutral Guard Ledger 以 D/A/F/E 证明真实激活与效果
+**来源**: `[AI_ADDED]` — R40-R42 证明 exact main 的 Claude-only/手工 hook wiring、
+generic `action_receipts` 与 verifier stdout 不能证明 Claude/Codex/Grok 统一策略真的生效。
+
+**可观测行为**: authority manifest 引用已批准的 129-row classification，不复制 runtime
+状态。clean-home verifier 从 `mktemp`、`env -i`、隔离 HOME/XDG/GIT/provider roots 和 bare
+origin 出发，只运行官方 installer 与真实 Kernel launcher，然后通过三种 provider CLI
+分别发 V01-V13 deny、nearby allow、recovery。D 证明 source/manifest digest；A 证明实际
+settings/installer/installed realpath/launcher hop；F 由 production seam 发精确 policy
+reason；E 由不同 observer 验 bare refs/worktree/index/log/result/callback/DB effect。
+`guard_evidence_receipts` 拒绝 UPDATE/DELETE，raw artifact content-addressed；receipt 失败
+使受保护动作 fail closed。Stop、Journey PATCH green、CI-only merge、queued/empty/SKIP
+staging、无 health/rollback production 都不能产生通过证据。
+
+**验证命令**:
+```bash
+DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/run-clean-home-guard-proof.sh \
+  --manifest packages/quality/contracts/kernel-guard-manifest.json \
+  --providers claude,codex,grok --vectors V01-V13 \
+  --official-installer packages/engine/install/install-kernel-policy-guards.sh \
+  --real-launcher docker/cecelia-runner/entrypoint.sh \
+  --isolated-home --isolated-bare-origin \
+  --require-stages D,A,F,E --require-near-allow \
+  --require-exactly-once-recovery --independent-observer \
+  --task "${TASK_ID:?}" --run "${RUN_ID:?}" --head "${PR_HEAD_SHA:?}"
+DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-guard-proof.sh \
+  --manifest packages/quality/contracts/kernel-guard-manifest.json \
+  --derive-required-from-approved-classification \
+  --derive-observed-from-append-only-receipts \
+  --providers claude,codex,grok --vectors V01-V13 \
+  --require-proven-fresh --reject-summary-boolean --all-counterfactuals
+```
+**硬阈值**: exact vector set=`V01..V13`；每个适用 behavior/provider/vector 都有 D/A/F/E
+chain、deny+near-allow+exactly-once recovery，F/E 的 observer_class 与 subject_class 不同；
+三 provider 对同 vector 的 decision/reason/effect 全等；UPDATE/DELETE=denied；
+classification 未批准时 coverage=0；source/provider/launcher/manifest digest drift 即 stale；
+任一 `ORACLE_D_*|ORACLE_A_*|ORACLE_F_*|ORACLE_E_*` failure、second merge authority、
+required staging SKIP 或 production 缺 health/rollback 均使 S12 terminal=false。
+
 ## E2E 验收（最终 final-e2e 跑）
 
 **journey_type**: agent_remote
@@ -546,6 +602,8 @@ if [ "$E2E_PHASE" = preapproval ]; then
     --runner "$CANDIDATE_RUNNER_REF" --bundle "$CANDIDATE_BUNDLE_REF" \
     --worker "$US_WORKER_URL" --token-file "$FLEET_TOKEN_FILE" \
     --authority packages/quality/contracts/kernel-harness-authority-manifest.json \
+    --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
+    --guard-providers claude,codex,grok --guard-vectors V01-V13 \
     --expect-order draft,ci,evaluator,judge --expect-serving-mutations 0 \
     --expect-terminal false
   exit 75
@@ -561,8 +619,10 @@ bash scripts/kernel-fleet/run-authoritative-final-e2e.sh \
   --worker "$US_WORKER_URL" --worker-ssh "$US_WORKER_SSH" \
   --production "$PROD_BRAIN_URL" --db "$DB_URL" \
   --authority packages/quality/contracts/kernel-harness-authority-manifest.json \
+  --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
   --expect-order owner,merge,staging,production,rollback,s12 \
   --strict-staging --require-production-health --require-rollback-anchor \
+  --require-guard-proof proven,fresh --reject-second-merge-authority \
   --require-exact-cells 143 --expect-terminal true
 ```
 
@@ -576,18 +636,19 @@ US staging、production canary、rollback anchor 与 S12，且所有 origin Atte
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | 24 个 `it()` 的字面测试名（由下方库存命令直接提取） | 24 个唯一 `it()`；每条直接读 authority fixture/store 或执行具体生产 seam；禁止共享动态 import helper、proof summary boolean 与 duplicate collection。 |
+| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | 28 个 `it()` 的字面测试名（由下方库存命令直接提取） | 28 个唯一 `it()`；每条直接读 authority fixture/store 或执行具体生产 seam；禁止共享动态 import helper、proof summary boolean 与 duplicate collection。 |
 
-**测试库存硬阈值**: 唯一文件数 = 1；总数 = 24；不得重复收集。migration parity、
+**测试库存硬阈值**: 唯一文件数 = 1；总数 = 28；不得重复收集。migration parity、
 workflow bypass、result channel、full fixture/advisory/classification、projection/direct origin、
-manifest/evidence schema、strict staging 与 terminal-order Red 必须保留。
+manifest/evidence schema、strict staging、terminal-order、clean-home D/A/F/E、V01-V13 exact
+set 与 single merge authority Red 必须保留。
 
 **测试库存验证命令**:
 ```bash
 TEST_ROOT="sprints/07280225-kernel-fleet-durable-recovery-r5/tests"
 UNIQUE_FILES=$(find "$TEST_ROOT" -name '*.test.ts' -print0 | xargs -0 realpath | sort -u | wc -l | tr -d ' ')
 IT_COUNT=$(rg -c '^[[:space:]]*it\(' "$TEST_ROOT/durable-recovery.contract.test.ts")
-[ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 24 ]
+[ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 28 ]
 # packages/brain/sprints 是指向根 sprints 的 symlink；真实 collector 必须显式排除，
 # 否则同一 realpath 会被 Vitest 以两个逻辑路径执行两次。
 npx vitest run --exclude 'packages/brain/sprints/**' \
@@ -618,7 +679,11 @@ for COVER in \
   'journey projection writes cannot satisfy canonical cell gates' \
   'strict staging rejects empty skip and SHA drift' \
   'merge report cannot complete before staging production rollback and S12' \
-  'S12 serializable accountant consumes exact current evidence chain'
+  'S12 serializable accountant consumes exact current evidence chain' \
+  'guard manifest references approved source inventory without runtime state' \
+  'clean home official installer activates provider neutral guard for three providers' \
+  'V01 through V13 produce append only D A F E receipts with independent effects' \
+  'single merge staging production authority cannot be bypassed'
 do
   grep -F "$COVER" "$TEST_ROOT/durable-recovery.contract.test.ts" >/dev/null
 done
