@@ -143,4 +143,18 @@ describe('Fleet NodeProfile registry', () => {
       );
     }
   });
+
+  it('rejects duplicate identities in a candidate NodeProfile registry', async () => {
+    const loaded = await import('./node-profile.js');
+    expect(
+      loaded.validateNodeProfileRegistry,
+      'missing registry schema validator',
+    ).toBeTypeOf('function');
+    const profiles = structuredClone(loaded.listNodeProfiles());
+    profiles[2].machine_id = profiles[1].machine_id;
+
+    expect(() => loaded.validateNodeProfileRegistry(profiles)).toThrow(
+      /invalid_fleet_node_registry/,
+    );
+  });
 });

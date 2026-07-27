@@ -330,4 +330,97 @@ describe('pure Fleet Node base admission', () => {
       expect(JSON.stringify(reason)).not.toContain('x'.repeat(200));
     }
   });
+
+  it.each([
+    ['empty resources', (profile) => { profile.resources = {}; }],
+    ['missing resources', (profile) => { delete profile.resources; }],
+    ['non-finite CPU floor', (profile) => {
+      profile.resources.cpu_cores = Number.NaN;
+    }],
+    ['non-finite memory floor', (profile) => {
+      profile.resources.memory_gib = Number.POSITIVE_INFINITY;
+    }],
+    ['non-finite disk floor', (profile) => {
+      profile.resources.disk_min_free_gib = Number.NaN;
+    }],
+    ['non-finite disk ceiling', (profile) => {
+      profile.resources.disk_max_used_percent = Number.POSITIVE_INFINITY;
+    }],
+    ['non-finite CPU pressure ceiling', (profile) => {
+      profile.resources.cpu_pressure_max_percent = Number.NaN;
+    }],
+    ['non-finite memory pressure ceiling', (profile) => {
+      profile.resources.memory_pressure_max_percent = Number.POSITIVE_INFINITY;
+    }],
+    ['wrong CPU floor', (profile) => { profile.resources.cpu_cores = 5; }],
+    ['wrong memory floor', (profile) => { profile.resources.memory_gib = 7; }],
+    ['wrong disk floor', (profile) => {
+      profile.resources.disk_min_free_gib = 39;
+    }],
+    ['wrong disk ceiling', (profile) => {
+      profile.resources.disk_max_used_percent = 86;
+    }],
+    ['zero CPU pressure ceiling', (profile) => {
+      profile.resources.cpu_pressure_max_percent = 0;
+    }],
+    ['100 percent memory pressure ceiling', (profile) => {
+      profile.resources.memory_pressure_max_percent = 100;
+    }],
+    ['null Runner digest', (profile) => { profile.runner_image_digest = null; }],
+    ['malformed Runner digest', (profile) => {
+      profile.runner_image_digest = 'sha256:not-a-digest';
+    }],
+    ['floating Runner tag', (profile) => {
+      profile.runner_image_digest = 'runner:latest';
+    }],
+    ['missing version policy', (profile) => { delete profile.version_policy; }],
+    ['missing version policy key', (profile) => {
+      delete profile.version_policy.codex;
+    }],
+    ['empty version policy value', (profile) => {
+      profile.version_policy.worker = '';
+    }],
+    ['oversized version policy value', (profile) => {
+      profile.version_policy.worker = 'v'.repeat(200);
+    }],
+    ['unexpected version policy key', (profile) => {
+      profile.version_policy.extra = '1.0.0';
+    }],
+    ['missing launchd policy', (profile) => { delete profile.launchd; }],
+    ['wrong launchd domain', (profile) => {
+      profile.launchd.domain = 'gui/501';
+    }],
+    ['wrong launchd kind', (profile) => {
+      profile.launchd.kind = 'LaunchAgent';
+    }],
+    ['zero capacity', (profile) => { profile.capacity = 0; }],
+    ['fractional capacity', (profile) => { profile.capacity = 7.5; }],
+    ['wrong canonical capacity', (profile) => { profile.capacity = 99; }],
+    ['empty machine identity', (profile) => { profile.machine_id = ''; }],
+    ['unknown machine identity', (profile) => {
+      profile.machine_id = 'moon-base';
+    }],
+  ])('fails closed with admission_profile_invalid for a profile with %s', async (
+    _name,
+    corrupt,
+  ) => {
+    const contract = await loadContract();
+    const canonical = contract.getNodeProfile('xian-mac-m4');
+    const profile = structuredClone(canonical);
+    corrupt(profile);
+    const report = completeReport(canonical, {
+      resources: {
+        cpu_cores: 0,
+        memory_bytes: 0,
+        disk_free_bytes: 0,
+        disk_used_percent: 100,
+        cpu_pressure_percent: 100,
+        memory_pressure_percent: 100,
+      },
+    });
+
+    const result = contract.evaluateBaseAdmission(report, { profile, nowMs: NOW_MS });
+
+    expectDraining(result, 'admission_profile_invalid');
+  });
 });
