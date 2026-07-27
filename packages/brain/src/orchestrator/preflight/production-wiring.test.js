@@ -15,9 +15,22 @@ const WORKER_URL = 'http://us-fleet-worker.internal:5231';
 const BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
 const GIB = 1024 ** 3;
 
+function testCredentialPayload() {
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const claims = Buffer.from(JSON.stringify({
+    exp: Math.floor(Date.now() / 1000) + 3 * 60 * 60,
+  })).toString('base64url');
+  return JSON.stringify({
+    tokens: {
+      access_token: `${header}.${claims}.test-signature`,
+    },
+  });
+}
+
 function buildTestDeps(overrides = {}) {
   return buildRealDeps({
     resolveRepoHead: vi.fn(async () => BASE_SHA),
+    loadCredential: vi.fn(async () => testCredentialPayload()),
     ...overrides,
   });
 }
