@@ -1,5 +1,5 @@
 {
-  "initiative_id": "intent:92df8334-1be4-41be-9a79-83e1f4596e72:20",
+  "initiative_id": "intent:92df8334-1be4-41be-9a79-83e1f4596e72:23",
   "journey_type": "autonomous",
   "journey_type_reason": "本 sprint 仅涉及 Brain Kernel 状态机、PostgreSQL、既有任务路由与 slot 计数校验，无 UI 或远端 agent 交互。",
   "tasks": [

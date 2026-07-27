@@ -74,21 +74,33 @@ target_environment: local_api
 
 ## Invariant 覆盖映射
 
-- `INV-1 跨模块时间常数依赖` → 由 `all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail` 与 `kernel-wiring-deadline.integration.test.js` 锁定。
-- `INV-2 错误码契约需显式 else` → 由 `all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail` 锁定非 infra 不回队。
-- `INV-3 吞错 job 需失败计数告警` → 由 `统一失败出口接入 failure terminalizer` 保证 fatal/watchdog 不静默吞错。
-- `INV-4 后台 job 须声明消费方` → `N/A：本 sprint 不新增独立后台落库 job。`
-- `INV-5 git_sha语义跨脚本一致` → `ghost fixture 只读回归且 current SHA 证据已接线`。
-- `INV-6 共享 CI 文件默认禁区` → `N/A：本 sprint 不改共享 CI 文件。`
-- `INV-7 提前合并需核对 headSHA` → `N/A：本 sprint 不触达 merge 流程。`
-- `INV-8 PR需一次带齐smoke+allowlist` → `N/A：由实现阶段 DevGate/smoke 证据满足，本合同不新增 allowlist 逻辑。`
-- `INV-9 单slot串行任务` → `slot allocator 继续以 task status 为 SSOT 且 failed API 补 completed_at`。
-- `INV-10 真环境验证才算done` → `hard failure 原子终结 run task history claim 并保持幂等` 与 `真 PG 聚合验证本轮终结记录与单条 history`。
-- `INV-11 测试默认多租户` → `N/A：本 sprint 不新增租户维度读写逻辑。`
-- `INV-12 凭据安全` → `N/A：本 sprint 不新增 secret 落盘逻辑。`
-- `INV-13 日志脱敏` → `N/A：本 sprint 不新增 PII 日志输出。`
-- `INV-14 端点鉴权` → `N/A：本 sprint 不新增 API 端点。`
-- `INV-15 租户隔离` → `N/A：本 sprint 不触碰租户范围查询/写入。`
+- [ ] [BEHAVIOR] INV-1 `all_execution_targets_exhausted` 退避窗口与 terminal run deadline 关系可执行锁定
+  Test: manual:bash
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail" && npx vitest run packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js -t "deadline"
+- [ ] [BEHAVIOR] INV-2 非 `infrastructure_blocked` 失败必须显式走 hard fail，不能靠外层 try/catch 或 reason 子串兜底
+  Test: manual:bash
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail"
+- [ ] [BEHAVIOR] INV-3 fatal catch / watchdog 失败不得静默吞错，必须统一进入 terminalizer
+  Test: manual:bash
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "统一失败出口接入 failure terminalizer"
+- [ ] INV-4 N/A：本 sprint 不新增独立后台落库 job。
+- [ ] [BEHAVIOR] INV-5 current SHA 语义在 ghost fixture、版本账本与回归合同之间一致
+  Test: manual:bash
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "ghost fixture 只读回归且 current SHA 证据已接线" && bash scripts/check-version-sync.sh
+- [ ] INV-6 N/A：本 sprint 不改共享 CI 文件。
+- [ ] INV-7 N/A：本 sprint 不触达 merge 流程。
+- [ ] INV-8 N/A：实现阶段需要 DevGate/smoke 证据，但本合同不新增 allowlist 逻辑。
+- [ ] [BEHAVIOR] INV-9 单 slot 串行不变量继续仅由 `task.status` 驱动
+  Test: manual:bash
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js -t "slot allocator 继续以 task status 为 SSOT 且 failed API 补 completed_at"
+- [ ] [BEHAVIOR] INV-10 真 PG 原子性与本轮 `completed_at/history` 时间窗验证同时成立
+  Test: manual:bash
+    npx vitest run sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.pg.contract.test.js -t "hard failure 原子终结 run task history claim 并保持幂等" && DEADLINE=$((SECONDS + 60)) && until psql "${DB_URL:-postgresql://localhost/cecelia}" -Atqc "SELECT count(*) FROM initiative_runs WHERE phase='failed' AND completed_at > NOW() - interval '5 minutes';" | grep -Eq '^[1-9][0-9]*$'; do [ $SECONDS -lt $DEADLINE ] || exit 1; sleep 2; done
+- [ ] INV-11 N/A：本 sprint 不新增租户维度读写逻辑。
+- [ ] INV-12 N/A：本 sprint 不新增 secret 落盘逻辑。
+- [ ] INV-13 N/A：本 sprint 不新增 PII 日志输出。
+- [ ] INV-14 N/A：本 sprint 不新增 API 端点。
+- [ ] INV-15 N/A：本 sprint 不触碰租户范围查询/写入。
 
 ## E2E 验收
 
