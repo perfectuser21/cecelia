@@ -232,6 +232,10 @@ fi
 [[ -n "$DOCKER" && -x "$DOCKER" ]] || die "docker_unavailable"
 [[ -x "$SSH" && -x "$TAR" ]] || die "rollout_transport_unavailable"
 
+rollout_commit="$(
+  "$GIT" -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}'
+)"
+[[ "$rollout_commit" =~ ^[0-9a-f]{40}$ ]] || die "rollout_source_invalid"
 source_status="$(
   "$GIT" -C "$REPO_ROOT" status --porcelain --untracked-files=all
 )"
@@ -244,16 +248,31 @@ source_tar="$TEMP_ROOT/source.tar"
 repository_bundle="$TEMP_ROOT/repository.bundle"
 runner_archive="$TEMP_ROOT/runner.tar"
 payload_tar="$TEMP_ROOT/payload.tar"
+bundle_repository="$TEMP_ROOT/bundle.git"
 
-"$GIT" -C "$REPO_ROOT" archive --format=tar --output "$source_tar" HEAD \
+"$GIT" -C "$REPO_ROOT" archive --format=tar --output "$source_tar" "$rollout_commit" \
   packages/brain/package.json \
   packages/brain/config/fleet-node-profiles.json \
   packages/brain/src/orchestrator/fleet-node/node-profile.js \
   packages/brain/scripts/fleet-worker
-"$GIT" -C "$REPO_ROOT" bundle create "$repository_bundle" HEAD
+"$GIT" init --bare "$bundle_repository" >/dev/null
+"$GIT" --git-dir="$bundle_repository" fetch --no-tags \
+  "$REPO_ROOT" "$rollout_commit" >/dev/null
+"$GIT" --git-dir="$bundle_repository" update-ref \
+  refs/heads/fleet-rollout "$rollout_commit"
+"$GIT" --git-dir="$bundle_repository" bundle create \
+  "$repository_bundle" refs/heads/fleet-rollout
 "$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST"
 "$TAR" -cf "$payload_tar" -C "$TEMP_ROOT" \
   source.tar repository.bundle runner.tar
+rollout_commit_after="$(
+  "$GIT" -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}'
+)"
+source_status_after="$(
+  "$GIT" -C "$REPO_ROOT" status --porcelain --untracked-files=all
+)"
+[[ "$rollout_commit_after" == "$rollout_commit" && -z "$source_status_after" ]] \
+  || die "rollout_source_changed"
 
 remote_program="$(cat <<'REMOTE'
 set -euo pipefail

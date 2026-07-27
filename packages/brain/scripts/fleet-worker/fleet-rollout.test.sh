@@ -272,6 +272,7 @@ FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
 FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
 FLEET_TEST_ARTIFACT_LOG="$artifact_log" \
 FLEET_TEST_TRANSPORT_LOG="$transport_log" \
+FLEET_TEST_GIT_STATE="$test_root/git.state" \
 FLEET_ROLLOUT_GIT="$fake_bin/git" \
 FLEET_ROLLOUT_DOCKER="$fake_bin/docker" \
 FLEET_ROLLOUT_SSH="$fake_bin/ssh" \
@@ -279,13 +280,14 @@ FLEET_ROLLOUT_TAR="$(command -v tar)" \
 FLEET_ROLLOUT_TMPDIR="$test_root/tmp" \
   "$ROLLOUT" us-mac-m4 --apply >"$test_root/public-signal.out" 2>&1 &
 public_rollout_pid=$!
-for _ in {1..100}; do
+for _ in {1..600}; do
   [[ -e "$admit_ready" ]] && break
   kill -0 "$public_rollout_pid" 2>/dev/null \
     || fail "public rollout exited before reaching admission"
   sleep 0.02
 done
-[[ -e "$admit_ready" ]] || fail "public rollout never reached admission"
+[[ -e "$admit_ready" ]] \
+  || fail "public rollout never reached admission: $(<"$test_root/public-signal.out")"
 kill -TERM "$public_rollout_pid"
 public_signal_status=0
 wait "$public_rollout_pid" || public_signal_status=$?
