@@ -1,0 +1,31 @@
+{
+  "initiative_id": "a4d77c0e-8132-4933-aa1a-38d3101d2920",
+  "journey_type": "autonomous",
+  "journey_type_reason": "Brain 内部 dispatcher、callback、PostgreSQL、feedback lineage 与批准状态机闭环，无 UI。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "恢复 Reviewer Result Channel 与 Feedback Lineage 生产闭环",
+      "scope": "在 HarnessResult v1 内完成动态 read-only result channel、server-owned reviewer binding/digest、真实 callback 双层持久化、round 2 feedback/resolution lineage 与 final-SHA approval gate，并以显式隔离 PostgreSQL RCI 验证。",
+      "dod": [
+        "[BEHAVIOR] 五步 result-channel → callback HTTP → PostgreSQL → ground truth → round2 TaskBundle → final-SHA gate 全链通过",
+        "[ARTIFACT] Brain integration RCI、execution contract/dispatcher/callback/ground-truth 回归测试与 DEFINITION 版本同步"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/src/docker-executor.js",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/src/orchestrator/__tests__/",
+        "packages/brain/src/routes/__tests__/",
+        "packages/brain/DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
