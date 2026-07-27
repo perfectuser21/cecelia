@@ -31,7 +31,14 @@ import {
   errorMessage,
   sanitizeDiagnostic,
 } from './orchestrator/failure-persistence.js';
-import { createProductionExecutionTransport } from './orchestrator/production-transport.js';
+import {
+  createCredentialBroker,
+  createFileCredentialLoader,
+} from './orchestrator/credential-broker.js';
+import {
+  createProductionExecutionTransport,
+  DEFAULT_LOCAL_MACHINE_ID,
+} from './orchestrator/production-transport.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
 
@@ -370,6 +377,8 @@ export async function resumeKernelAttempt(attempt, {
   attemptStore: injectedAttemptStore,
   launcher: injectedLauncher,
   transportFactory = createProductionExecutionTransport,
+  credentialBroker: injectedCredentialBroker,
+  loadCredential: injectedLoadCredential,
   env = process.env,
   fetchFn,
   spawnDetached: injectedSpawnDetached,
@@ -432,6 +441,18 @@ export async function resumeKernelAttempt(attempt, {
     input: 'Continue this same Harness attempt from its last durable checkpoint.',
     execution,
   });
+  const credentialBroker = injectedCredentialBroker
+    ?? (originalParentAttempt.provider === 'codex'
+      ? createCredentialBroker({
+        controllerMachineId: env.CECELIA_MACHINE_ID ?? DEFAULT_LOCAL_MACHINE_ID,
+        loadCredential: injectedLoadCredential
+          ?? createFileCredentialLoader({
+            accountHomeResolver: (accountId) => (
+              resolveProviderAccountHome('codex', accountId)
+            ),
+          }),
+      })
+      : undefined);
   const launcher = injectedLauncher ?? transportFactory({
     env,
     attemptStore: store,
@@ -440,6 +461,7 @@ export async function resumeKernelAttempt(attempt, {
     brainUrl,
     leaseOwner,
     fetchFn,
+    credentialBroker,
     remoteBridgeTimeoutMs,
   });
   const target = {

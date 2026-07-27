@@ -53,6 +53,8 @@
   与 FIFO 中短暂存在，容器通过 tmpfs `CODEX_HOME/auth.json`（0600）消费。
   Attempt state 只保存七项 envelope metadata；callback 只允许 UUID
   `credential_ref` 与 boolean `credential_copy_mutated`，不允许 token writeback。
+  watchdog 恢复 Codex Attempt 时复用同一中央 Broker 签发新 envelope，禁止从
+  Xian 节点或测试主机的长期 Codex home 读取恢复凭据。
 - Worker bearer token 只做节点 transport auth，由受保护文件读取，不是 provider
   credential。installer 为 `_cecelia` 准备 `/var/lib/cecelia` 下 canonical、
   mode 0700 data root，拒绝 traversal 与中间 symlink 逃逸；容器退出按
