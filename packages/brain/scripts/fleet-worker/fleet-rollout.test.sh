@@ -106,6 +106,10 @@ write_executable "$fake_bin/nodectl" \
   '#!/usr/bin/env bash' \
   'command_name="$1"' \
   'printf "%s %s\n" "$*" "${CECELIA_MACHINE_ID:-missing}" >> "${FLEET_TEST_NODE_LOG:?}"' \
+  'if [[ "$command_name" == "admit" && "${FLEET_TEST_NODE_SIGNAL_PARENT:-0}" == 1 ]]; then' \
+  '  kill -TERM "$PPID"' \
+  '  exit 143' \
+  'fi' \
   'if [[ "$command_name" == "${FLEET_TEST_NODE_FAIL:-}" ]]; then exit 23; fi' \
   'if [[ "$command_name" == "admit" ]]; then' \
   '  printf "%s\n" '"'"'{"base_admitted":true,"dispatch_ready":false}'"'"'' \
@@ -247,6 +251,21 @@ fi
 node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
 [[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
   || fail "failed admission did not restore drain: $node_sequence"
+
+: > "$node_log"
+signal_status=0
+FLEET_TEST_NODE_LOG="$node_log" \
+FLEET_TEST_TRANSPORT_LOG="$transport_log" \
+FLEET_TEST_NODE_SIGNAL_PARENT=1 \
+FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+FLEET_ROLLOUT_NODECTL="$node_source/fleet-nodectl.sh" \
+  "$ROLLOUT" __node-apply xian-mac-m4 "$payload_root" \
+  >"$test_root/signal.out" 2>&1 \
+  || signal_status=$?
+[[ "$signal_status" -ne 0 ]] || fail "TERM during admission was reported as success"
+node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
+  || fail "TERM after undrain did not restore drain: $node_sequence"
 
 if run_rollout moon-base --apply >/dev/null 2>&1; then
   fail "unknown rollout target was accepted"
