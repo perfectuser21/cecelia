@@ -139,10 +139,10 @@ manifest 派生，不信 summary count。
 S0-S12 是 proposal v1，不是历史真相。main `dd424a...` 的生产历史是同一 Journey 的六行：
 Planner `c5bae104-da5e-483d-b5ea-c295c90a3f28`、GAN Proposer
 `d6dcdfaf-4b98-4717-bbe3-522f03f70757`、GAN Reviewer
-`e2bd9263-3f03-410f-bbcd-8fe72075dde2`、Generator
+`e2bd9263-87ef-4461-a1d5-5ff07a38b8a8`、Generator
 `0cdadc1a-e3a0-46a1-8333-ebbc102883f7`、Evaluator
 `1a738e05-99a7-421c-a52d-c2bb80bf19be`、Final E2E
-`a6888ef3-1f8b-4490-b134-d3ddc5b6d528`。新 migration 必须在执行前同时重查 origin/main
+`a6888ef3-2482-4655-8703-cf3b9f037cb9`。新 migration 必须在执行前同时重查 origin/main
 与 production，选择未被 tree/DB 使用的编号 `>=368`；不得复用已被
 `366_kernel_harness_failure_class.sql` 占用且 migrate.js 会静默跳过的 366。
 
@@ -189,6 +189,96 @@ origin verifier 只查询生产现有 `harness_attempts` 列：
 contract/head 必须从 independently authenticated TaskBundle/result-channel lineage 派生；
 不得查询不存在的 `actual_machine/contract_sha/exact_head_sha`。每种 Red 必须先完成依赖与
 DB 初始化并到达目标生产 seam，SQL/config/env/重复收集错误不算行为 Red。
+
+## R34-R39 权威修正：库存、证据 SSOT 与终态顺序
+
+以下条款覆盖本 PRD 中任何把 imported proposal、journey projection、summary boolean 或
+固定 receipt count 当成权威的旧表述。
+
+### 精确库存与 append-only 分类决策
+
+- 生产历史 Journey 固定为 `bb8cc561-b3ee-4fec-b74d-2255694bd963`。六行十个保留列按
+  `step_number,id` 排序、日期 ISO 化、固定 key 顺序 compact JSON 后 SHA-256 必须为
+  `d74103b146f2261c47c20ed1880830f8bd98adcdfee4c53854a9b9c5d2006cfd`；同时保存 exact
+  六行 fixture，hash 不可替代逐字段 diff。
+- legacy inventory 的 full 129-entry canonical JSON 必含
+  `id,priority,feature,name,scope,tags,method,test,steps,evidence`，按 id 排序且递归 key 排序，
+  字节数 `56518`、SHA-256
+  `bfcb7a7678d5a1e1e3076ca27e34f0b01978ca590780f33d7ddb551f9615914d`。
+- advisory classification digest 是
+  `a8e979f936ea1d5072d148cd3500c32231e9c3227f438d96bd4bd2258470e7b3`，只表示
+  `76 machine_recommended + 53 needs_human_review = 129`。proposal F08=110 中
+  `66` 行机器建议迁出、`44` 行仍 unreviewed/out-of-taxonomy；110 行完整语义字段中
+  `staging|promote|rollback` 命中数必须为 0。至少 43 个
+  `ci=32,doc=2,export=5,infrastructure=1,regression=3` scope 只是
+  provider-independent 候选，仍需 owner 审批适用性。
+- `classification_decisions` 只追加，字段至少含
+  `decision_id,legacy_id,priority,source_entry_sha256,proposed_family,proposal_commit,
+  proposal_state,machine_recommendation,machine_state,machine_family,confidence,
+  provider_applicability,evidence_refs,actor_kind,created_at,supersedes`。状态仅
+  `machine_recommended|needs_human_review|owner_approved|owner_rejected|superseded`；
+  禁 UPDATE/DELETE。只有最新有效 owner-approved decision 可派生 obligation。
+- owner 批准前每行 `approved_family=null` 且 derived obligation count=0。
+  pre-authority receipt 永久保存为 `inadmissible_pre_authority`,
+  `count_toward_terminal=false`，不得删除、重解释或批量转绿。
+
+### 权威 manifest 与 evidence storage
+
+Git 中 `packages/quality/contracts/kernel-harness-authority-manifest.json` 只保存 law：
+manifest schema/version/id/source SHA/owner approval/supersedes/digest；13 stage 的 predecessor、
+accepted origin、advancement；11 个 ASCII key 与中文 label；143 个 cell 的 requirement digest、
+正/反/恢复 oracle ID、required origin、TTL/grace/death/alert、NA policy。manifest 不保存
+current color/state。每次 manifest byte 变化都使旧 owner approval 失效。
+
+新增以下 append-only 表，`journey_step_links` 仅作 `authoritative=false` 投影：
+
+1. `kernel_harness_manifest_versions`
+2. `kernel_harness_origin_receipts`
+3. `kernel_harness_cell_evidence`
+4. `kernel_harness_terminal_accounting`
+
+cell event state 仅为
+`unproven|pending|blocked|failed|passed|na_requested|na_approved|expired|revoked`；
+只有当前且未过期的 `passed|na_approved` 满足 gate。expiry 必须由查询时
+`valid_until` 比较得出，不依赖 scheduler；scheduler 另发 death alert/revocation 并有
+dead-man heartbeat。NA 必须 manifest 允许，producer 只能请求，独立 reviewer 必须在
+attempt/session/principal/trust-domain 上不同并签名同 run/manifest/stage/cell/artifact/
+requirement/reason/scope/counterfactual/valid_until；P0 默认 `na_allowed=false`。
+
+### 直接 origin 与严格终态
+
+S0-S12 origin_kind 固定为：
+`brain_task_event,signed_intent_snapshot,harness_attempt,harness_attempt_quorum,
+harness_attempt_with_pr,github_check_suite,harness_attempt,harness_attempt,
+github_owner_review,github_merge_event,deployment_receipt,deployment_receipt,
+brain_atomic_accounting`。origin 与 receipt assembler/issuer 分离，验证器直接查询
+task event、真实 `harness_attempts`、GitHub API、deployment store 和 Controller transaction；
+不得信被测模块返回的 `exists/*Matches/*Verified`。
+
+现有 `journeys` PATCH/upsert、cascade green、eleven-elements regex、nightly “any green”、
+ledger aggregate 与 generic `action_receipts` 都不能满足 canonical cell。
+`staging_e2e_results` 的 S10 gate 必须有至少一个 required test、FAIL=0、required SKIP=0、
+deployed SHA 与 tested SHA 非空且都严格等于 merge SHA，并绑定 authenticated environment
+receipt。`promote_status=promoted` 与本地 version file 不能证明 S11；S11 必须有 production
+deploy receipt、真实 health/build SHA 与 rollback anchor。
+
+现有 `kernel-handlers report` 不得在 staging task 尚未执行时标 run done/task completed。
+唯一终态顺序是
+`Draft → CI → Evaluator → Judge → exact-head owner → merge → staging → production →
+rollback anchor → S12`。S12 由独立 accountant 在 `SERIALIZABLE` transaction 与 run
+advisory xact lock 下，直接验证 exact 143 current cells、S0-S11 连续 predecessor chain、
+merge=staging=production SHA、生产 health/rollback/report/learning/regression/external-effect
+receipts；随后在同一 transaction 插入 S12 evidence、terminal accounting 并完成 run/task。
+外部效果先走 idempotent outbox 并持久化 receipt。任何 missing/expired/blocked/failed cell、
+空或全 SKIP staging、SHA drift、promoted 无 health、缺 rollback/report/effect 均保持
+non-complete。
+
+### 安全启用
+
+owner 先审批 stage/family/classification authority；再加表/view 和 manifest compiler；
+origin adapters dual-write + shadow compare；S12 在 N 个真实 run shadow-run 并做 death-alert
+drill；之后才切 completion gate、Journey API 改读 projection，最后退役 legacy
+direct-green/self-oracle 写路。Draft #4372 仅是 provenance，不得 whole cherry-pick。
 
 ## NFR 约束
 

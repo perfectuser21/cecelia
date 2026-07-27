@@ -1,239 +1,251 @@
 import { describe, it, expect } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { existsSync, readFileSync } from 'node:fs';
 
 const BASE = 'dd424a61926009ac85a915b31187124b85f0ca98';
 const SOURCE_PATH = 'packages/engine/regression-contract.yaml';
 const SOURCE_BLOB = '7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3';
-const SOURCE_DIGEST = '4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f';
-const ELEMENT_SOURCE_PATH = 'packages/brain/src/lib/eleven-elements-ledger.js';
-const ELEMENT_SOURCE_BLOB = 'e4e3bb5b4b5cbbf26ad16b4048b2c3e6228f3d09';
+const FULL_ENTRY_DIGEST = 'bfcb7a7678d5a1e1e3076ca27e34f0b01978ca590780f33d7ddb551f9615914d';
+const ADVISORY_DIGEST = 'a8e979f936ea1d5072d148cd3500c32231e9c3227f438d96bd4bd2258470e7b3';
+const HISTORY_DIGEST = 'd74103b146f2261c47c20ed1880830f8bd98adcdfee4c53854a9b9c5d2006cfd';
+const JOURNEY = 'bb8cc561-b3ee-4fec-b74d-2255694bd963';
+const REVIEWER_ALIAS = 'e2bd9263-87ef-4461-a1d5-5ff07a38b8a8';
+const FINAL_E2E_ALIAS = 'a6888ef3-2482-4655-8703-cf3b9f037cb9';
 const PROPOSAL = '4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13';
-const IMPORTED_MAPPING_DIGEST = 'be80793527a817611ba0698654ea858eda7c77ea9e63da937cba7b885a4d9363';
-const ELEMENTS = [
-  'FR', 'NFR', 'Invariant', '判定点', '保质期', '死亡告警',
-  '失败语义', '效果确认', '输入对抗面', '账本保鲜', '两轴衔接',
-];
-const ORIGIN_KIND = {
-  S0: 'brain_task_event',
-  S1: 'signed_intent_snapshot',
-  S2: 'harness_attempt',
-  S3: 'harness_attempt_quorum',
-  S4: 'harness_attempt_with_pr',
-  S5: 'github_check_suite',
-  S6: 'harness_attempt',
-  S7: 'harness_attempt',
-  S8: 'github_owner_review',
-  S9: 'github_merge_event',
-  S10: 'deployment_receipt',
-  S11: 'deployment_receipt',
-  S12: 'brain_atomic_accounting',
-} as const;
-const RESULT_MUTATIONS = [
-  'missing_descriptor', 'absolute_path', 'dotdot', 'wrong_attempt', 'wrong_run',
-  'wrong_role', 'wrong_contract', 'wrong_head', 'erofs', 'symlink', 'oversize',
-  'malformed', 'callback_failure', 'hash_replay',
-];
-const STARTUP_MUTATIONS = [
-  'missing_worktree', 'relative_worktree', 'nonexistent_worktree', 'non_git_worktree',
-  'unmounted_worktree', 'async_spawn_error', 'early_exit', 'no_ready',
-  'handshake_timeout', 'lease_busy', 'stale_generation', 'spoof_ready_without_db',
-];
+const SPRINT = 'sprints/07280225-kernel-fleet-durable-recovery-r5';
 
 function sha256(value: string | Buffer) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-async function loadProof(name: string) {
-  // 该精确 planned module 尚未实现是本 Sprint 的产品 Red；依赖/DB/config 错误不得在模块加载前发生。
-  const moduleUrl = pathToFileURL(resolve('packages/brain/src/kernel-fleet-proof', `${name}.js`)).href;
-  return import(/* @vite-ignore */ moduleUrl);
+function run(script: string, args: string[] = [], env: Record<string, string> = {}) {
+  return execFileSync('bash', [script, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+function source(path: string) {
+  return readFileSync(path, 'utf8');
+}
+
+function expectExecutable(path: string) {
+  expect(existsSync(path), `缺少产品验证入口 ${path}`).toBe(true);
+}
+
+function waitForExit(child: ChildProcess) {
+  return new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once('exit', (code, signal) => resolve({ code, signal }));
+  });
 }
 
 describe('P0 durable recovery contract [BEHAVIOR]', () => {
-  it('built image self-contained profiles', async () => {
-    const { runBuiltImageProof } = await loadProof('built-image');
-    const proof = await runBuiltImageProof({ network: 'none', readOnly: true, mounts: [] });
-    expect(proof.loadedProfiles).toEqual(['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1']);
-    expect(proof.importedEntrypoint).toBe('/app/src/orchestrator/run.js');
-    expect(proof.missingConfig.reasonCode).toBe('brain_profile_config_missing');
+  it('built image self-contained profiles', () => {
+    const script = 'scripts/ci/verify-brain-image-self-contained.sh';
+    expectExecutable(script);
+    const out = run(script, ['--contract-red', '--network-none', '--read-only', '--no-mounts']);
+    expect(out).toContain('profiles=3');
+    expect(out).toContain('missing_config=denied');
   });
 
-  it('immutable per-attempt profile snapshot across concurrent upgrade', async () => {
-    const { runAtomicReleaseProof } = await loadProof('atomic-release');
-    const proof = await runAtomicReleaseProof({ realPostgres: true, exactRunnerDigest: true });
-    expect(proof.existingAttempt.snapshotDigest).toBe(proof.beforeUpgradeDigest);
-    expect(proof.newAttempt.snapshotDigest).toBe(proof.afterUpgradeDigest);
-    expect(proof.profileOnlyMutation.reasonCode).toBe('release_tuple_mismatch');
+  it('immutable per-attempt profile snapshot across concurrent upgrade', () => {
+    const script = 'scripts/kernel-fleet/verify-atomic-release.sh';
+    expectExecutable(script);
+    expect(run(script, ['--real-pg', '--concurrent-upgrade'])).toContain('snapshot_drift=0');
   });
 
-  it('real Worker Runner seam before Agent execution', async () => {
-    const { runWorkerRunnerProof } = await loadProof('worker-runner');
-    const proof = await runWorkerRunnerProof({ realDocker: true, realOrbStack: true });
-    expect(proof.positive.agentStarted).toBe(true);
-    for (const key of ['unwritable_stdout', 'missing_github_auth', 'private_bind_root'])
-      expect(proof.counterfactuals[key].agentStartCount).toBe(0);
-    expect(proof.counterfactuals.unwritable_stdout.diagnosticBytes).toBeLessThanOrEqual(2048);
+  it('real Worker Runner seam before Agent execution', () => {
+    const script = 'scripts/kernel-fleet/verify-worker-admission.sh';
+    expectExecutable(script);
+    const out = run(script, ['--exact-runner', '--mutate-stdout-unwritable', '--mutate-private-root']);
+    expect(out).toMatch(/agent_start_count=0[\s\S]*diagnostic_bytes=([1-9]\d{0,2}|1\d{3}|20[0-3]\d|204[0-8])/);
   });
 
-  it('GitHub auth on success timeout crash and cancel', async () => {
-    const { runGithubBrokerProof } = await loadProof('github-broker');
-    const proof = await runGithubBrokerProof({ realRunner: true });
-    expect(proof.ghAuthStatus).toBe('verified_before_agent');
-    expect(proof.pushFetchShaMatch).toBe(true);
-    for (const terminal of ['success', 'timeout', 'crash', 'cancel'])
-      expect(proof.terminals[terminal].credentialResidualCount).toBe(0);
+  it('GitHub auth on success timeout crash and cancel', () => {
+    const script = 'scripts/kernel-fleet/verify-github-broker.sh';
+    expectExecutable(script);
+    expect(run(script, ['--real-runner', '--all-terminals'])).toContain('credential_residual=0');
   });
 
-  it('fleet-worker transport with production upgrade rollback and source enum parity', async () => {
-    const { runTransportMigrationProof } = await loadProof('transport-migration');
-    const proof = await runTransportMigrationProof({ realPostgres: true, minimumMigration: 368 });
-    expect(proof.upgradeValues).toEqual(expect.arrayContaining(['local-docker', 'remote-bridge', 'fleet-worker']));
-    expect(proof.rollbackValues).toEqual(['local-docker', 'remote-bridge']);
-    expect(proof.sourceSchemaParity).toBe(true);
-    expect(proof.migration366Collision.reasonCode).toBe('numeric_prefix_already_applied');
+  it('fleet-worker transport with production upgrade rollback and source enum parity', () => {
+    const script = 'scripts/kernel-fleet/verify-transport-migration.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-pg', '--migration-min', '368', '--upgrade-rollback']);
+    expect(out).toContain('fleet-worker');
+    expect(out).toContain('schema_source_parity=1');
   });
 
-  it('ownership frame plus persisted heartbeat', async () => {
-    const { runKernelStartupProof } = await loadProof('kernel-startup');
-    const proof = await runKernelStartupProof({ realEntrypoint: 'packages/brain/src/orchestrator/run.js', realPostgres: true });
-    expect(proof.parentResolvedAfterDbHeartbeat).toBe(true);
-    expect(new Set(proof.counterfactualKeys)).toEqual(new Set(STARTUP_MUTATIONS));
-    expect(proof.counterfactuals.spoof_ready_without_db.reasonCode).toBe('controller_readiness_unpersisted');
+  it('ownership frame plus persisted heartbeat', () => {
+    const script = 'scripts/kernel-fleet/verify-real-kernel-startup.sh';
+    expectExecutable(script);
+    const out = run(script, ['--entrypoint', 'packages/brain/src/orchestrator/run.js', '--real-pg']);
+    expect(out).toContain('parent_resolved_after_persisted_heartbeat=1');
+    for (const key of ['async_spawn_error', 'early_exit', 'handshake_timeout', 'lease_busy', 'spoof_ready_without_db'])
+      expect(out).toContain(`${key}=denied`);
   });
 
-  it('authenticated callback commit before Worker cleanup', async () => {
-    const { runArtifactTransferProof } = await loadProof('artifact-transfer');
-    const proof = await runArtifactTransferProof({ authenticatedCallback: true, realGit: true });
-    expect(proof.materializedSha).toBe(proof.remoteSha);
-    expect(proof.cleanupStartedAt).toBeGreaterThan(proof.materializedAt);
-    expect(proof.crossRun.reasonCode).toBe('artifact_run_mismatch');
+  it('authenticated callback commit before Worker cleanup', () => {
+    const script = 'scripts/kernel-fleet/verify-artifact-transfer.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-git', '--authenticated-callback']);
+    expect(out).toContain('materialized_before_cleanup=1');
+    expect(out).toContain('cross_run=denied');
   });
 
-  it('reverse cleanup removes real Runner nested and ignored output', async () => {
-    const { runReverseCleanupProof } = await loadProof('reverse-cleanup');
-    const proof = await runReverseCleanupProof({ realRunner: true, deepUmask077: true });
-    expect(proof.order).toEqual(['container_absent', 'normalize_descendants', 'workspace_admin', 'runtime_secret', 'state']);
-    expect(proof.residual).toEqual({ workspace: 0, admin: 0, runtime: 0, secret: 0, state: 0, quarantine: 0 });
-    expect(proof.concurrent.outcomes.sort()).toEqual(['already_clean', 'clean']);
-    expect(proof.failureForensics.appendOnlyReceiptCount).toBe(1);
+  it('reverse cleanup removes real Runner nested and ignored output', () => {
+    const script = 'scripts/kernel-fleet/verify-reverse-cleanup.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-runner', '--deep-umask-077', '--concurrent-cancel-wait-reconcile']);
+    expect(out).toContain('container_absent>normalize_descendants>workspace_admin>runtime_secret>state');
+    expect(out).toContain('residual_total=0');
+    expect(out).toContain('append_only_quarantine_duplicates=0');
   });
 
   it('ESRCH-only local liveness death', async () => {
-    const { runLivenessProof } = await loadProof('kernel-liveness');
-    const proof = await runLivenessProof({ productionModule: 'packages/brain/src/lib/kernel-liveness.js', realChild: true });
-    expect(proof.killedLocal.reasonCode).toBe('esrch_dead');
-    expect(proof.liveLocal.alive).toBe(true);
-    expect(proof.unknownHost.failOpen).toBe(true);
+    const liveness = await import('../../../packages/brain/src/lib/kernel-liveness.js');
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)']);
+    const task = { id: 'real-child', payload: { harness_runtime: 'kernel-v1' } };
+    const runRow = { id: 'real-run', orchestrator_pid: child.pid, orchestrator_host: 'same-host', orchestrator_heartbeat_at: null };
+    await expect(liveness.assessKernelLiveness({ task, run: runRow, hostFn: () => 'same-host' }))
+      .resolves.toMatchObject({ verdict: 'alive', reason: 'pid_alive' });
+    child.kill('SIGKILL');
+    await waitForExit(child);
+    await expect(liveness.assessKernelLiveness({ task, run: runRow, hostFn: () => 'same-host' }))
+      .resolves.toMatchObject({ verdict: 'dead', reason: 'pid_gone' });
+    await expect(liveness.assessKernelLiveness({ task, run: runRow, hostFn: () => 'other-host' }))
+      .resolves.toMatchObject({ verdict: 'unknown', reason: 'host_mismatch' });
   });
 
-  it('CI-only authorization and stale exact-head owner approval', async () => {
-    const { runGithubAuthorityProof } = await loadProof('github-authority');
-    const proof = await runGithubAuthorityProof({ realGithubApi: true, exactHead: process.env.PR_HEAD_SHA });
-    expect(proof.normal.order).toEqual(['ci', 'evaluator', 'judge', 'owner', 'merge']);
-    for (const key of ['ci_only', 'stale_head', 'title_change', 'label_removal', 'alternate_actor'])
-      expect(proof.counterfactuals[key].mergeCount).toBe(0);
+  it('CI-only authorization and stale exact-head owner approval', () => {
+    const script = 'scripts/kernel-fleet/verify-p0-workflow-contract.sh';
+    expectExecutable(script);
+    const out = run(script, ['--github-api', '--mutate-all-merge-bypasses']);
+    expect(out).toContain('pre_owner_mutation_count=0');
+    expect(out).toContain('stale_head=denied');
   });
 
-  it('semantic anchor resolves journey golden-path step ownership', async () => {
-    const { runAnchorProof } = await loadProof('semantic-anchor');
-    const proof = await runAnchorProof({ realPostgres: true, taskId: process.env.TASK_ID, runId: process.env.RUN_ID });
-    expect(proof.exists).toBe(true);
-    expect(proof.ownershipConsistent).toBe(true);
-    expect(proof.taskId).not.toBe(proof.runId);
+  it('semantic anchor resolves journey golden-path step ownership', () => {
+    const script = 'scripts/kernel-fleet/verify-semantic-anchor.sh';
+    expectExecutable(script);
+    expect(run(script, ['--real-pg', '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '']))
+      .toContain('ownership_consistent=1');
   });
 
-  it('P0 workflows enforce owner merge staging production order', async () => {
-    const { runWorkflowProof } = await loadProof('workflow-authority');
-    const proof = await runWorkflowProof({ realGithubRuns: true });
-    expect(proof.order).toEqual(['draft', 'ci', 'evaluator', 'judge', 'owner', 'merge', 'staging', 'production']);
-    expect(proof.preOwnerServingMutationCount).toBe(0);
-    expect(proof.rollbackAnchorVerified).toBe(true);
+  it('P0 workflows enforce owner merge staging production order', () => {
+    const script = 'scripts/kernel-fleet/run-authoritative-final-e2e.sh';
+    expectExecutable(script);
+    expect(run(script, ['--contract-red', '--assert-order-only']))
+      .toContain('draft>ci>evaluator>judge>owner>merge>staging>production>rollback>s12');
   });
 
-  it('attempt scoped result channel', async () => {
-    const { runResultChannelProof } = await loadProof('result-channel');
-    const proof = await runResultChannelProof({ realWorkerRunner: true, roleFromTaskBundle: true });
-    expect(proof.positive.fileMode).toBe('0600');
-    expect(proof.positive.brainAckHash).toBe(proof.positive.resultHash);
-    expect(new Set(proof.counterfactualKeys)).toEqual(new Set(RESULT_MUTATIONS));
-    expect(proof.sourceWorkspaceResultAuthority).toBe(false);
-    expect(proof.preAgentFailures.every((x: any) => x.agentStartCount === 0 && x.semanticBudgetDelta === 0)).toBe(true);
+  it('attempt scoped result channel', () => {
+    const script = 'scripts/kernel-fleet/run-result-channel-proof.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-worker-runner', '--taskbundle-bindings', '--all-mutations']);
+    expect(out).toContain('durable_receipt_before_ack=1');
+    expect(out).toContain('workspace_result_authority=0');
+    expect(out).toContain('pre_agent_failure_budget_delta=0');
   });
 
-  it('authority inventory exact commit path blob and digest', async () => {
-    const { verifySourceInventory } = await loadProof('authority-inventory');
-    const blob = execFileSync('git', ['rev-parse', `${BASE}:${SOURCE_PATH}`], { encoding: 'utf8' }).trim();
-    expect(blob).toBe(SOURCE_BLOB);
-    const elementBlob = execFileSync('git', ['rev-parse', `${BASE}:${ELEMENT_SOURCE_PATH}`], { encoding: 'utf8' }).trim();
-    expect(elementBlob).toBe(ELEMENT_SOURCE_BLOB);
-    const proof = await verifySourceInventory({ commit: BASE, path: SOURCE_PATH, importBrainKernel: false });
-    expect(proof).toMatchObject({ count: 129, p0: 66, p1: 63, duplicateCount: 0, digest: SOURCE_DIGEST });
-    expect(proof.elevenElementsFromFrozenFixture).toEqual(ELEMENTS);
-    expect(proof.importedBrainKernelModules).toEqual([]);
+  it('authority inventory full entry fixture and advisory partition', () => {
+    expect(execFileSync('git', ['rev-parse', `${BASE}:${SOURCE_PATH}`], { encoding: 'utf8' }).trim()).toBe(SOURCE_BLOB);
+    const fixture = source('packages/quality/contracts/kernel-policy-source-inventory.json');
+    expect(Buffer.byteLength(fixture)).toBe(56518);
+    expect(sha256(fixture)).toBe(FULL_ENTRY_DIGEST);
+    const advisory = JSON.parse(source('packages/quality/contracts/kernel-policy-classification-advisory.json'));
+    expect(sha256(JSON.stringify(advisory.rows))).toBe(ADVISORY_DIGEST);
+    expect(advisory.partition).toEqual({ machine_recommended: 76, needs_human_review: 53 });
+    expect(advisory.f08_partition).toEqual({ machine_recommended_elsewhere: 66, unreviewed_or_out_of_taxonomy: 44 });
+    expect(advisory.f08_semantic_staging_promote_rollback_hits).toBe(0);
+    expect(advisory.provider_independent_candidates).toEqual({ ci: 32, doc: 2, export: 5, infrastructure: 1, regression: 3 });
   });
 
-  it('classification authority rejects imported family proposal', async () => {
-    const { runClassificationProof } = await loadProof('classification-authority');
-    const proof = await runClassificationProof({ proposalCommit: PROPOSAL, importedMappingDigest: IMPORTED_MAPPING_DIGEST });
-    expect(proof.importedDistribution).toEqual([0, 2, 2, 8, 6, 0, 1, 110]);
-    expect(proof.importedDistributionIsCanonical).toBe(false);
-    expect(proof.decisions['H1-001'].approvedFamily).not.toBe('KH-F1-F08');
-    expect(proof.decisions['H1-002'].approvedFamily).not.toBe('KH-F1-F08');
-    expect(proof.unapprovedCreatesPassCount).toBe(0);
+  it('classification decisions are append only and pre-authority creates zero obligations', () => {
+    const decisions = JSON.parse(source('packages/quality/contracts/kernel-policy-classification-decisions.json'));
+    expect(decisions.rows).toHaveLength(129);
+    expect(decisions.rows.every((r: any) => r.approved_family === null && r.state !== 'owner_approved')).toBe(true);
+    expect(new Set(decisions.rows.map((r: any) => r.legacy_id)).size).toBe(129);
+    expect(JSON.parse(source('packages/quality/contracts/kernel-policy-equivalence-obligations.json')).rows).toHaveLength(0);
   });
 
-  it('lifecycle migration preserves six historical rows in same Journey', async () => {
-    const { runLifecycleProjectionProof } = await loadProof('lifecycle-projection');
-    const proof = await runLifecycleProjectionProof({ realPostgres: true, minimumMigration: 368, proposalCommit: PROPOSAL });
-    expect(proof.journeyCountBefore).toBe(1);
-    expect(proof.journeyCountAfter).toBe(1);
-    expect(proof.historicalFingerprintAfter).toBe(proof.historicalFingerprintBefore);
-    expect(proof.historicalFingerprintAfterRollback).toBe(proof.historicalFingerprintBefore);
-    expect(proof).toMatchObject({ historicBackbones: 4, aliases: 2, newRows: 9, backbones: 13, cells: 143 });
-    expect(proof.initialCellStatuses).toEqual(['unverified']);
+  it('owner approval binds full proposal head manifest bytes and signature', () => {
+    const script = 'scripts/kernel-fleet/verify-authority-owner-receipt.sh';
+    expectExecutable(script);
+    const out = run(script, ['--proposal', PROPOSAL, '--github-api', '--allowlisted-owner', '--verify-signature']);
+    expect(out).toContain('manifest_bytes_bound=1');
+    expect(out).toContain('behavior_pass_inferred=0');
   });
 
-  it('origin kind uses direct production evidence and existing Attempt columns', async () => {
-    const { runOriginKindProof } = await loadProof('origin-kind');
-    const proof = await runOriginKindProof({ realPostgres: true, realGithubApi: true, realDeploymentReceipts: true });
-    expect(proof.originKind).toEqual(ORIGIN_KIND);
-    expect(proof.attemptQueryColumns).toEqual([
-      'id', 'run_id', 'role', 'provider', 'provider_session_id',
-      'actual_machine_id', 'lease_generation', 'status', 'task_bundle', 'result',
-    ]);
-    expect(proof.nonexistentColumnQueries).toEqual([]);
-    expect(proof.selfAssertedBooleanAccepted).toBe(false);
+  it('lifecycle migration preserves exact production history fixture', () => {
+    const fixture = JSON.parse(source('packages/quality/contracts/kernel-harness-production-history.json'));
+    expect(fixture.journey_id).toBe(JOURNEY);
+    expect(fixture.rows.map((r: any) => r.id)).toEqual(expect.arrayContaining([REVIEWER_ALIAS, FINAL_E2E_ALIAS]));
+    expect(sha256(JSON.stringify(fixture.rows))).toBe(HISTORY_DIGEST);
+    const script = 'scripts/kernel-fleet/verify-lifecycle-projection.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-pg', '--migration-min', '368', '--upgrade-failure-logical-rollback']);
+    expect(out).toContain('historical_fingerprint_unchanged=1');
+    expect(out).toContain('backbones=13 aliases=2 new_rows=9 cells=143');
   });
 
-  it('owner approval freezes authority but does not infer behavioral pass', async () => {
-    const { runAuthorityFreezeProof } = await loadProof('authority-freeze');
-    const proof = await runAuthorityFreezeProof({ exactHeadOwnerSignature: true });
-    expect(proof.stageManifestAuthority).toBe('canonical_v1');
-    expect(proof.behaviorPassInferredCount).toBe(0);
-    expect(proof.unreviewedClassificationCanComplete).toBe(false);
-    expect(proof.prefixUnifiedIdAccepted).toBe(false);
+  it('origin kind uses direct authority queries not module booleans', () => {
+    const script = 'scripts/kernel-fleet/verify-stage-origin-receipts.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-pg', '--github-api', '--deployment-store']);
+    expect(out).toContain('S3=proposer+reviewer+approved');
+    expect(out).toContain('S6_S7_distinct_attempt_session=1');
+    expect(out).toContain('self_asserted_boolean_accepted=0');
   });
 
-  it('approved decisions derive exact obligations without fixed cardinality', async () => {
-    const { runEquivalenceProof } = await loadProof('equivalence');
-    const proof = await runEquivalenceProof({ deriveFromApprovedDecisions: true });
-    expect(proof.requiredKeys).toEqual(proof.receiptDerivedObservedKeys);
-    expect(proof.fixed1161ThresholdUsed).toBe(false);
-    expect(proof.fixed18ThresholdUsed).toBe(false);
-    expect(proof).toMatchObject({ unreviewed: 0, missing: 0, stale: 0, inferred: 0, duplicate: 0 });
+  it('canonical manifest contains law only and exact 143 requirement cells', () => {
+    const manifest = JSON.parse(source('packages/quality/contracts/kernel-harness-authority-manifest.json'));
+    expect(manifest.stages).toHaveLength(13);
+    expect(manifest.elements).toHaveLength(11);
+    expect(manifest.cells).toHaveLength(143);
+    expect(manifest).not.toHaveProperty('current_colors');
+    expect(manifest.cells.every((c: any) => c.requirement_digest && c.positive_oracle_id && c.violation_oracle_id && c.recovery_oracle_id)).toBe(true);
   });
 
-  it('S12 terminal accounting consumes dynamic obligations and direct origins', async () => {
-    const { runTerminalAccountingProof } = await loadProof('terminal-accounting');
-    const proof = await runTerminalAccountingProof({ realPostgres: true, directOriginKinds: true });
-    expect(proof.consumedObligations).toEqual(proof.approvedAuthorityObligations);
-    expect(proof.controllerTransactionCount).toBe(1);
-    expect(proof.counterfactuals.unreviewed_authority.terminalComplete).toBe(false);
-    expect(proof.counterfactuals.imported_distribution_only.terminalComplete).toBe(false);
-    expect(proof.counterfactuals.wrong_origin_kind.terminalComplete).toBe(false);
+  it('append only evidence schema derives expiry and independent NA review', () => {
+    const migration = source('packages/brain/migrations/368_or_later_kernel_harness_authority.sql');
+    for (const table of ['kernel_harness_manifest_versions', 'kernel_harness_origin_receipts', 'kernel_harness_cell_evidence', 'kernel_harness_terminal_accounting'])
+      expect(migration).toContain(`CREATE TABLE ${table}`);
+    expect(migration).toContain('valid_until');
+    expect(migration).toContain('na_requested');
+    expect(migration).toContain('na_approved');
+  });
+
+  it('journey projection writes cannot satisfy canonical cell gates', () => {
+    const script = 'scripts/kernel-fleet/verify-authority-write-isolation.sh';
+    expectExecutable(script);
+    expect(run(script, ['--real-pg', '--patch-journey-green'])).toContain('canonical_satisfied_delta=0');
+  });
+
+  it('strict staging rejects empty skip and SHA drift', async () => {
+    const staging = await import('../../../packages/brain/src/staging-e2e-runner.js');
+    const fakeDb = (rows: any[]) => ({ query: async () => ({ rows }) });
+    await expect(staging.checkInitiativeAggregate(fakeDb([]), 'i')).resolves.toMatchObject({ allPass: false });
+    await expect(staging.checkInitiativeAggregate(fakeDb([{ verdict: 'SKIP', tested_sha: BASE }]), 'i'))
+      .resolves.toMatchObject({ allPass: false });
+    await expect(staging.checkInitiativeAggregate(fakeDb([{ verdict: 'PASS', tested_sha: 'wrong' }]), 'i', BASE))
+      .resolves.toMatchObject({ allPass: false });
+  });
+
+  it('merge report cannot complete before staging production rollback and S12', () => {
+    const handlers = source('packages/brain/src/orchestrator/kernel-handlers.js');
+    expect(handlers).not.toContain("SET status='completed'");
+    expect(handlers).not.toContain("detail: 'report chain completed'");
+  });
+
+  it('S12 serializable accountant consumes exact current evidence chain', () => {
+    const script = 'scripts/kernel-fleet/verify-terminal-accounting.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-pg', '--serializable', '--all-counterfactuals']);
+    expect(out).toContain('stage_chain=S0>S1>S2>S3>S4>S5>S6>S7>S8>S9>S10>S11>S12');
+    for (const key of ['missing_cell', 'expired_without_scheduler', 'empty_staging', 'all_skip_staging', 'sha_drift', 'promoted_without_health', 'missing_rollback', 'missing_report_effect'])
+      expect(out).toContain(`${key}=blocked`);
+    expect(out).toContain('terminal_transaction_count=1');
   });
 });

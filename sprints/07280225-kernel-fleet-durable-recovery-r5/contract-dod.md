@@ -5,7 +5,9 @@ target_environment: linux_server
 ---
 # Contract DoD — Durable Fleet Worker bootstrap 与 Kernel 恢复闭环
 
-**范围**: PRD Golden Path 第 1-12 步 + R32/R33 authority inventory、classification decisions、同 Journey lifecycle projection、生产 schema origin verifier、attempt-runtime result channel 与两阶段 final E2E。
+**范围**: PRD Golden Path 第 1-12 步 + R32-R39 exact inventory/advisory、append-only
+classification/manifest/origin/cell evidence、同 Journey lifecycle projection、strict
+staging/production/rollback、独立 S12 accountant、attempt-runtime result channel 与两阶段 final E2E。
 **大小**: L
 
 ## ARTIFACT 条目
@@ -20,14 +22,22 @@ target_environment: linux_server
   Test: node -e "const c=require('fs').readFileSync('packages/brain/DEFINITION.md','utf8');if(!/ready.*heartbeat|heartbeat.*ready/i.test(c)||!/Worker-first/i.test(c)||!/drain/i.test(c))process.exit(1)"
 - [ ] [ARTIFACT] 真实 US E2E、mutation、rollback 脚本及两个 integration test 在合同路径落地。
   Test: node -e "const fs=require('fs');for(const p of ['scripts/kernel-fleet/run-real-attempt-proof.sh','scripts/kernel-fleet/run-us-durable-recovery-canary.sh','scripts/kernel-fleet/verify-owner-gate-and-rollback.sh','packages/brain/src/__tests__/kernel-launch-readiness.integration.test.js','packages/brain/src/__tests__/kernel-durable-recovery.integration.test.js'])fs.accessSync(p)"
-- [ ] [ARTIFACT] Sprint Red 测试库存按 realpath 去重后恰好一个文件、20 个唯一 `it()`；collector 排除 symlink alias，保留 migration parity、workflow bypass、result channel、authority inventory/classification 与 origin-kind Red。
-  Test: node -e "const fs=require('fs');const p='sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8');if((c.match(/\\bit\\(/g)||[]).length!==20||!c.includes('authority inventory exact commit path blob and digest')||!c.includes('classification authority rejects imported family proposal')||!c.includes('origin kind uses direct production evidence and existing Attempt columns')||!c.includes('attempt scoped result channel'))process.exit(1)"
+- [ ] [ARTIFACT] Sprint Red 测试库存按 realpath 去重后恰好一个文件、24 个唯一 `it()`；
+  无共享 `loadProof` 动态 import，保留 migration/workflow/result-channel/full-fixture/
+  classification/direct-origin/strict-staging/terminal-order Red。
+  Test: node -e "const fs=require('fs');const p='sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8');if((c.match(/^  it\\(/gm)||[]).length!==24||c.includes('loadProof(')||!c.includes('authority inventory full entry fixture and advisory partition')||!c.includes('strict staging rejects empty skip and SHA drift')||!c.includes('S12 serializable accountant consumes exact current evidence chain'))process.exit(1)"
 - [ ] [ARTIFACT] P0 统一 gate 与四个现有 workflow 的 fail-closed 接线均在实现范围。
   Test: node -e "const fs=require('fs');for(const p of ['.github/workflows/kernel-fleet-p0-gate.yml','.github/workflows/ci.yml','.github/workflows/brain-ci-deploy.yml','.github/workflows/auto-staging-deploy.yml','.github/workflows/deploy.yml'])fs.accessSync(p)"
 - [ ] [ARTIFACT] title heuristic auto-merge 脚本、branch protection/ruleset reconciliation 与 built-image smoke 四消费方均有 machine contract。
   Test: node -e "const fs=require('fs');for(const p of ['.github/workflows/scripts/should-auto-merge.sh','scripts/kernel-fleet/reconcile-p0-repository-rules.sh','scripts/ci/verify-brain-image-self-contained.sh'])fs.accessSync(p)"
 - [ ] [ARTIFACT] `packages/quality/contracts/` authority manifest、inventory fixture、classification decisions、projection manifest 与 safe migration/parity smoke 同时存在，Brain 投影标 authoritative=false。
   Test: node -e "const fs=require('fs');for(const p of ['packages/quality/contracts/kernel-policy-source-inventory.json','packages/quality/contracts/kernel-policy-authority.json','packages/quality/contracts/kernel-lifecycle-proposal-v1.json','scripts/kernel-fleet/verify-authority-inventory.sh','scripts/kernel-fleet/verify-lifecycle-projection.sh'])fs.accessSync(p)"
+- [ ] [ARTIFACT] law-only manifest 与 exact fixtures 存在：full inventory=56518 bytes/
+  `bfcb7a...`，history=`d74103...`，advisory=`a8e979...`；manifest 不保存 current color/state。
+  Test: node -e "const fs=require('fs'),c=require('crypto');const h=x=>c.createHash('sha256').update(x).digest('hex');const i=fs.readFileSync('packages/quality/contracts/kernel-policy-source-inventory.json');if(i.length!==56518||h(i)!=='bfcb7a7678d5a1e1e3076ca27e34f0b01978ca590780f33d7ddb551f9615914d')process.exit(1);const m=JSON.parse(fs.readFileSync('packages/quality/contracts/kernel-harness-authority-manifest.json'));if(m.current_colors||m.current_state||m.cells.length!==143)process.exit(1)"
+- [ ] [ARTIFACT] migration 新增四个 append-only authority/evidence/accounting 表与 derived views；
+  Journey links/API/report 只作 authoritative=false projection。
+  Test: node -e "const fs=require('fs'),p='packages/brain/migrations/368_or_later_kernel_harness_authority.sql',s=fs.readFileSync(p,'utf8');for(const t of ['kernel_harness_manifest_versions','kernel_harness_origin_receipts','kernel_harness_cell_evidence','kernel_harness_terminal_accounting'])if(!s.includes('CREATE TABLE '+t))process.exit(1)"
 - [ ] [ARTIFACT] TaskBundle/Worker/Runner/callback finalizer 共享 attempt-scoped result-channel schema，且不再把 source `.brain-result.json` 作为权威 fallback。
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/scripts/fleet-worker/result-channel-proof.cjs','scripts/kernel-fleet/run-result-channel-proof.sh'])fs.accessSync(p)"
 
@@ -120,21 +130,27 @@ target_environment: linux_server
   验证命令: Test: manual:bash bash scripts/kernel-fleet/run-result-channel-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$TASK_ID" "$RUN_ID" "$ATTEMPT_ID" "$CONTRACT_SHA" "$PR_HEAD_SHA"
   期望: exit 0；same-hash retry 幂等，different-hash replay 冲突，durable ack 后才清理。
 
-- [ ] [BEHAVIOR] [L2] Golden Path Step 12A — exact authority inventory 与 safe lifecycle projection
-  动作: 独立从 exact main commit:path blob 重算 P0/P1 inventory；在 fresh 与 production-like 真 PG 验 366 collision 后动态选择未用 368+，对同一 Journey 投影 proposed S0-S12，运行 failure/logical rollback。
-  预期观察: inventory 129/P0=66/P1=63/digest 精确且 verifier 不 import Brain Kernel；六历史行所有 legacy 列及 updated_at 前后/rollback 后 byte-identical；4 backbones+2 aliases+9 new、13 backbones、143 unverified cells，Journey 不增；后续 evidence 存在时 rollback 被拒。
+- [ ] [BEHAVIOR] [L2] Golden Path Step 12A — exact authority inventory、advisory 与 safe lifecycle projection
+  动作: 独立从 exact main commit:path blob 与 full 56518-byte fixture 重算 P0/P1 inventory/full digest/advisory digest/partition；在 fresh 与 production-like 真 PG 验 366 collision 后动态选择未用 368+，对 Journey `bb8cc561-b3ee-4fec-b74d-2255694bd963` 投影 proposed S0-S12，运行 failure/logical rollback。
+  预期观察: inventory 129/P0=66/P1=63/full digest=`bfcb7a...`、advisory=`a8e979...`、76/53、F08=66/44 且 semantic hits=0；六历史行 fixture digest=`d74103...`，Reviewer/Final E2E alias 分别为 `e2bd9263-87ef-4461-a1d5-5ff07a38b8a8`/`a6888ef3-2482-4655-8703-cf3b9f037cb9`，所有 legacy 列及 updated_at 前后/rollback 后 byte-identical；4 backbones+2 aliases+9 new、13 backbones、143 law cells，Journey 不增。
   验证命令: Test: manual:bash bash -c 'bash scripts/kernel-fleet/verify-authority-inventory.sh --commit dd424a61926009ac85a915b31187124b85f0ca98 --path packages/engine/regression-contract.yaml --blob 7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3 --count 129 --p0 66 --p1 63 --digest 4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f && DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-projection.sh --source-proposal 4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13 --migration-min 368 --recheck-tree-and-db --same-journey --preserve-six-history --logical-rollback --origin-kind-direct-proof --exact-head "${PR_HEAD_SHA:?}"'
   期望: exit 0；短 SHA、自证 oracle、历史 rename/reorder/promise/status/timestamp mutation 全拒绝。
 
-- [ ] [BEHAVIOR] [L2] Golden Path Step 12A — authenticated S0-S12 receipts and hard terminal gate
-  动作: 由真实 Controller/PG/GitHub/deployment seam 从 S0 推进到 S12；按 stage 的 exact origin_kind 直接查询 task event、intent、Attempt/quorum/PR、GitHub checks/review/merge、deployment 与 Controller transaction。Attempt 查询只用生产现有列并从 task_bundle/result 派生 contract/head。
-  预期观察: S3 proposer+reviewer quorum、S6/S7 distinct Attempt/session；S5/S8/S9 真 GitHub API；S10/S11 真 deployment receipt；S12 controller owner+generation transaction。不存在列 SQL、缺 env、DB 未初始化、被测模块 exists/*Matches/*Verified 布尔均不算 Red。所有 named mutation 返回结构化目标 reason code。
-  验证命令: Test: manual:bash bash -c 'DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh --task "$TASK_ID" --run "$RUN_ID" --head "$PR_HEAD_SHA" --origin-kind-direct-proof --production-schema-only'
+- [ ] [BEHAVIOR] [L2] Golden Path Step 12A — authenticated append-only S0-S12 receipts and hard terminal gate
+  动作: 由真实 Controller/PG/GitHub/deployment seam 从 S0 推进到 S12；按 stage exact origin_kind 直接查询并写 append-only origin/cell evidence。对 Journey PATCH green、expired-without-scheduler、missing cell、空/all-SKIP staging、SHA drift、promoted-without-health、missing rollback/report/effect 逐项 mutation。
+  预期观察: S3 proposer+reviewer quorum、S6/S7 distinct Attempt/session；S5/S8/S9 真 GitHub API；S10 required test≥1/FAIL=0/required SKIP=0/merge=deployed=tested SHA；S11 真 deploy+health+rollback receipt；S12 SERIALIZABLE+run advisory xact lock 的一次 transaction。Journey projection、summary boolean 与 generic action receipt 不算 evidence。
+  验证命令: Test: manual:bash bash -c 'DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-terminal-accounting.sh --task "$TASK_ID" --run "$RUN_ID" --head "$PR_HEAD_SHA" --serializable --direct-origin-stores --exact-cells 143 --strict-staging --production-health --rollback-anchor --all-counterfactuals'
   期望: exit 0；重复调用返回 already_complete 且无重复 ledger/report/external write。
 
+- [ ] [BEHAVIOR] [L2] Golden Path Step 12A — projection 写入与 evidence expiry 不可绕权威门
+  动作: 对真实 Journey API PATCH/cascade green 后直接查 canonical evidence view；不运行 scheduler 而推进 DB clock 超过 valid_until；提交 na_requested 并尝试同 principal 自批。
+  预期观察: Journey/UI color 可变但 canonical satisfied delta=0；过期即时变 expired；同主体 NA 审批被拒，P0 na_allowed=false。
+  验证命令: Test: manual:bash bash -c 'DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-authority-write-isolation.sh --real-pg --patch-journey-green --expire-without-scheduler --self-approve-na'
+  期望: exit 0；三个 counterfactual 均 fail closed。
+
 - [ ] [BEHAVIOR] [L3] Golden Path Step 12A — approved classification-derived equivalence
-  动作: 将 immutable source inventory、append-only classification decisions 与 equivalence obligations 分层验证；对 imported proposal、H1-001/H1-002→F08、unreviewed/rejected、未冻结 unified ID、provider applicability mutation 逐项重验。
-  预期观察: imported `0,2,2,8,6,0,1,110` 不等于 approved distribution；无 owner exact-head approval 时 canonical=false 且不产生 pass。终态 `unreviewed=0`，rejected 由 superseding approval 或 preserved non-equivalence 闭合；required exact set 只从 approved decisions/applicability 动态派生，不接受固定 1161/18。
+  动作: 将 immutable source inventory、append-only classification decisions 与 equivalence obligations 分层验证；对 imported proposal、advisory 76/53、F08 66/44、H1-001/H1-002→F08、unreviewed/rejected、未冻结 unified ID、provider applicability mutation 逐项重验。
+  预期观察: imported `0,2,2,8,6,0,1,110` 与 advisory recommendation 都不等于 approved distribution；无 owner exact-head approval 时 129 行 `approved_family=null`、canonical=false、derived obligation=0，历史 receipt 标 inadmissible_pre_authority。终态 `unreviewed=0`，rejected 由 append-only superseding owner decision 或 preserved non-equivalence 闭合；required set 只从最新有效 approved decisions/applicability 动态派生。
   验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh --task "$TASK_ID" --run "$RUN_ID" --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" --authority-manifest packages/quality/contracts/kernel-policy-authority.json --derive-obligations-from-approved-decisions --require-unreviewed-zero --reject-imported-distribution-as-canonical --reject-h1-001-h1-002-f08-without-owner-decision
   期望: exit 0；required=receipt-derived observed，所有缺失/重复/推断/过期为 0。
 
