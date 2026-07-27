@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.267.96
+**Brain 版本**: 1.267.97
 
 **状态**: 生产运行中
 
@@ -219,7 +219,7 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - decision-executor.js 验证 action 在白名单内，然后在事务中执行
 - 危险 action（如 adjust_strategy）进入 pending_actions 表等人工审批
 
-### 2.3 Fleet Node 基础准入、统一 Worker 与中央凭据（Phase 4A～4C）
+### 2.3 Fleet Node 准入、统一 Worker、中央凭据与故障闭环（Phase 4A～4D）
 
 - Brain 只接受 `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` 三个不可变
   `NodeProfile`，并从 system LaunchDaemon Worker 的有界 `/health` 报告重新计算
@@ -267,15 +267,20 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   通过 FIFO 把 `auth.json` 写入容器 tmpfs `CODEX_HOME`（0600）。宿主状态只允许
   七项 envelope 元数据；callback 只增加 `credential_ref` 与
   `credential_copy_mutated`，不回传或回写认证材料。
-- Phase 4A 的基础成功结果仍固定为 `dispatch_ready=false`。Phase 4C 不宣称节点已
-  production-ready；执行等价与恢复以及 Phase 5 真实业务任务验收仍未完成；
-  production probes 必须在 `dispatch_ready=true` 前阻断 Attempt 创建与 launcher，
-  并保留 `node_not_dispatch_ready` 阻断签名及其告警/决策 evidence。
+- Phase 4D 由 Brain 对干净、新鲜、策略匹配的报告本地计算
+  `dispatch_ready=true`；Worker 自报 readiness、slot 或 online 仍不可信，任何本地
+  准入失败都会 drain 节点。same-machine resume 绑定 receipt 证明的真实机器，并为
+  child Attempt 创建独立 Attempt/workspace identity；没有 provider session 时从
+  DB/Git/PR 证据重新进入确定性 Kernel reconciliation。
+- `harness_attempts.failure_class` 区分 `infrastructure_blocked`、
+  `runner_failure` 与 `semantic_refusal`；同一任务的跨 Run 规范化产品失败集合重复时，
+  L0 在创建 `generator-fix` Attempt 前转入 `wait:human_review`。
+- Phase 4D 只完成代码侧执行等价与恢复闭环；Phase 5 真实业务任务验收仍未完成。
 - 发布顺序固定为 Worker-first，待三台节点真实健康证据通过复审后再发布 Brain。
   当前 `xian-mac-m1` 的 Docker 不可用，必须保持 drained，不能降低阈值。
 - 节点紧急回退先在该节点执行
   `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`；
-  Brain 镜像回退执行 `bash scripts/brain-rollback.sh 1.267.95`。恢复前必须重新取得
+  Brain 镜像回退执行 `bash scripts/brain-rollback.sh 1.267.96`。恢复前必须重新取得
   真实 Worker 健康证据，不能用 synthetic canary 替代。
 
 ---
