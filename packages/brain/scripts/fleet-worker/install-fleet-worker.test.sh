@@ -22,6 +22,7 @@ acl_log="$test_root/acl.log"
 acl_state="$test_root/acl.state"
 socket_acl_state="$test_root/socket-acl.state"
 preflight_log="$test_root/preflight.log"
+startup_probe_log="$test_root/startup-probe.log"
 mkdir -p "$install_dir" "$log_dir"
 
 run_installer() {
@@ -35,6 +36,9 @@ run_installer() {
     FLEET_WORKER_CHMOD="$test_root/chmod" \
     FLEET_WORKER_STAT="$test_root/stat" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
+    FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
+    FLEET_WORKER_STARTUP_ATTEMPTS=1 \
+    FLEET_WORKER_SLEEP="$test_root/sleep" \
     "$INSTALLER" "$@"
 }
 
@@ -51,6 +55,9 @@ run_installer_with_id() {
     FLEET_WORKER_CHMOD="$test_root/chmod" \
     FLEET_WORKER_STAT="$test_root/stat" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
+    FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
+    FLEET_WORKER_STARTUP_ATTEMPTS=1 \
+    FLEET_WORKER_SLEEP="$test_root/sleep" \
     "$INSTALLER" "$@"
 }
 
@@ -129,6 +136,19 @@ printf '%s\n' \
   'printf "%s\\n" "{\"ok\":true}"' \
   'exit 0' > "$test_root/node-probe"
 chmod +x "$test_root/node-probe"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s|%s\\n" "$1" "$2" >> "${FLEET_WORKER_STARTUP_PROBE_LOG:?}"' \
+  '[[ "${FLEET_WORKER_STARTUP_PROBE_FAIL:-0}" != "1" ]]' \
+  > "$test_root/startup-probe"
+chmod +x "$test_root/startup-probe"
+export FLEET_WORKER_STARTUP_PROBE_LOG="$startup_probe_log"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'exit 0' > "$test_root/sleep"
+chmod +x "$test_root/sleep"
 
 for machine in us-mac-m4 xian-mac-m4 xian-mac-m1; do
   output="$(run_installer "$machine")" || fail "dry-run rejected canonical ID $machine"
@@ -255,8 +275,9 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'command_line="$*"' \
   'if [[ "$1" == "print" ]]; then' \
-  '  case "$(<"${FLEET_WORKER_LAUNCH_STATE:?}")" in' \
-  '    loaded|running) exit 0 ;;' \
+  '  state="$(<"${FLEET_WORKER_LAUNCH_STATE:?}")"' \
+  '  case "$state" in' \
+  '    loaded|running) printf "state = %s\\n" "$state"; exit 0 ;;' \
   '    *) exit 113 ;;' \
   '  esac' \
   'fi' \
@@ -693,6 +714,50 @@ assert_failed_upgrade_rolled_back() {
 
 assert_failed_upgrade_rolled_back 'bootstrap system' 9 bootstrap
 assert_failed_upgrade_rolled_back 'kickstart -k' 10 kickstart
+
+assert_started_but_unhealthy_generation_rolled_back() {
+  local snapshot_dir="$test_root/snapshot-startup-health"
+  local failure_output
+
+  seed_prior_generation startup-health
+  mkdir -p "$snapshot_dir"
+  cp "$installed_worker" "$snapshot_dir/worker"
+  cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_plist" "$snapshot_dir/plist"
+  cp "$installed_access_helper" "$snapshot_dir/access-helper"
+  cp "$installed_access_plist" "$snapshot_dir/access-plist"
+  : > "$launch_log"
+  : > "$startup_probe_log"
+
+  failure_output=''
+  if failure_output="$(
+    FLEET_WORKER_STARTUP_PROBE_FAIL=1 \
+      run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+  )"; then
+    fail "kickstart-success/startup-health-failure unexpectedly committed"
+  fi
+
+  grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
+    || fail "startup health failure lacked rollback signature"
+  cmp -s "$snapshot_dir/worker" "$installed_worker" \
+    || fail "startup health failure did not restore Worker bytes"
+  cmp -s "$snapshot_dir/probe" "$installed_probe" \
+    || fail "startup health failure did not restore probe bytes"
+  cmp -s "$snapshot_dir/plist" "$installed_plist" \
+    || fail "startup health failure did not restore Worker plist bytes"
+  cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
+    || fail "startup health failure did not restore access helper bytes"
+  cmp -s "$snapshot_dir/access-plist" "$installed_access_plist" \
+    || fail "startup health failure did not restore access plist bytes"
+  [[ "$(<"$launch_state")" == 'running' ]] \
+    || fail "startup health failure did not restore the prior running service"
+  grep -Fxq \
+    'http://100.86.57.69:5231/health|xian-mac-m4' \
+    "$startup_probe_log" \
+    || fail "installer did not verify the profile-owned Worker health URL"
+}
+
+assert_started_but_unhealthy_generation_rolled_back
 
 assert_stopped_upgrade_remains_stopped() {
   local failure_match="$1"
