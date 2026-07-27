@@ -53,7 +53,21 @@ jobs:
           # brain=true 触发 brain-unit 等。sprints/ 的 test 文件不再触发（07-10 断源）：
           # 守活功能测试已升格进 src/__tests__/，sprints/** 已从 vitest include 移除。
           echo "brain=$(echo "$CHANGED" | grep -qE '^packages/brain/' && echo true || echo false)" >> $GITHUB_OUTPUT
-          echo "engine=$(echo "$CHANGED" | grep -q '^packages/engine/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          # cecelia-run 是 Engine launcher 的入口适配层；其参数转发契约由
+          # packages/engine 测试负责，改动该入口必须真实运行 engine-tests。
+          ENGINE_PATH_RE='^(packages/engine/|packages/brain/scripts/cecelia-run\.sh$)'
+          # 路径分类自测：守住 Engine 本体与跨包 launcher 入口，同时不把普通 Brain 改动扩成全量 Engine CI。
+          for ENGINE_FIXTURE in packages/engine/src/example.ts packages/brain/scripts/cecelia-run.sh; do
+            echo "$ENGINE_FIXTURE" | grep -qE "$ENGINE_PATH_RE" || {
+              echo "::error::engine path filter missed $ENGINE_FIXTURE"
+              exit 1
+            }
+          done
+          if echo packages/brain/src/server.js | grep -qE "$ENGINE_PATH_RE"; then
+            echo "::error::engine path filter unexpectedly matched ordinary Brain code"
+            exit 1
+          fi
+          echo "engine=$(echo "$CHANGED" | grep -qE "$ENGINE_PATH_RE" && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT

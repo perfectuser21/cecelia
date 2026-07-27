@@ -61,7 +61,7 @@ if [[ "$_DRY_RUN" == "1" ]]; then
   [[ "$_TASK_ID" == "--dry-run" ]] && _TASK_ID="${2:-}"
   _SID=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' || python3 -c 'import uuid; print(uuid.uuid4())')
   _LAUNCHER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/claude-launch.sh"
-  echo "CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=cecelia-run HARNESS_TASK_ID=$_TASK_ID CLAUDE_SESSION_ID=$_SID bash $_LAUNCHER -p <prompt>"
+  echo "CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=cecelia-run HARNESS_TASK_ID=$_TASK_ID CLAUDE_SESSION_ID=$_SID bash $_LAUNCHER --session-id $_SID -p <prompt>"
   exit 0
 fi
 
