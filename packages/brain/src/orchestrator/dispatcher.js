@@ -356,6 +356,8 @@ export function createDispatcher(deps) {
     const roleAssignment = asObject(asObject(payload.role_assignments)[spec.role]);
     const requestedProvider = roleAssignment.provider ?? payload.executor ?? payload.provider ?? 'auto';
     const requestedAccount = roleAssignment.account ?? payload.executor_account ?? null;
+    const requestedModel = roleAssignment.model
+      ?? (payload.model && payload.model !== 'auto' ? payload.model : null);
     let adapter = spec.role === 'judge' ? null : deps.registry.resolve({
       provider: requestedProvider,
       requires: ['structured_output'],
@@ -365,6 +367,7 @@ export function createDispatcher(deps) {
       : {
           provider: roleAssignment.provider ?? adapter.name,
           account: roleAssignment.account ?? requestedAccount,
+          ...(requestedModel ? { model: requestedModel } : {}),
           machine: roleAssignment.machine ?? machineId,
         };
     const candidateTargets = spec.role === 'judge'
@@ -449,6 +452,9 @@ export function createDispatcher(deps) {
       selectedTarget = {
         provider: preflightTarget.provider,
         account: preflightTarget.account,
+        ...((preflightTarget.model ?? preferredTarget.model)
+          ? { model: preflightTarget.model ?? preferredTarget.model }
+          : {}),
         machine: preflightTarget.machine,
       };
       adapter = deps.registry.resolve({
@@ -539,7 +545,10 @@ export function createDispatcher(deps) {
     try {
       const adapterSpec = adapter.start({
         bundle,
-        execution: executionConfig(payload, {
+        execution: executionConfig({
+          ...payload,
+          model: selectedTarget.model ?? payload.model,
+        }, {
           provider: adapter.name,
           accountHome,
           canary: spec.canary === true,
