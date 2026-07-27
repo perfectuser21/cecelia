@@ -1,4 +1,5 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { Client } from 'pg';
 import {
   ELEMENT_KEYS,
@@ -179,44 +180,129 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
     )).toBe(true);
   });
 
-  it('legacy P0/P1 四类来源逐项归位且权威映射完整', async () => {
+  it('P0/P1 筛选与五态证据逐项机检', async () => {
     const report = await buildKernelHarnessF1BaselineReport(client, { repoRoot: process.cwd() });
+    const currentSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim();
     expect(report.authoritative).toBe(false);
     expect(report.authoritative_source).toBe(
       'regression-contract.yaml#kernel_harness_f1_baseline',
     );
     expect(report.legacy_baseline.length).toBeGreaterThan(0);
-    expect(report.legacy_source_coverage).toMatchObject({
-      discovered_count: report.legacy_source_coverage.mapped_count,
+    const coverage = report.legacy_source_coverage;
+    expect(coverage).toMatchObject({
       unmapped_count: 0,
       duplicate_mapping_count: 0,
+      unknown_auto_decidable_count: 0,
     });
+    expect(coverage.candidate_source_count).toBe(
+      coverage.included_source_count + coverage.excluded_source_count,
+    );
+    expect(coverage.selected_seed_count).toBe(coverage.mapped_behavior_count);
+    expect(coverage.proven_status_count).toBeGreaterThan(0);
+    expect(coverage.status_counts.unknown).toBeLessThan(coverage.mapped_behavior_count);
     for (const sourceKind of ['engine_contract', 'hook', 'devgate_ci', 'kernel_gate']) {
-      expect(report.legacy_source_coverage.by_kind[sourceKind].discovered_count)
+      const sourceCoverage = coverage.by_kind[sourceKind];
+      expect(sourceCoverage.candidate_count)
         .toBeGreaterThan(0);
-      expect(report.legacy_source_coverage.by_kind[sourceKind].unmapped_count).toBe(0);
+      expect(sourceCoverage.candidate_count).toBe(
+        sourceCoverage.included_count + sourceCoverage.excluded_count,
+      );
+    }
+    expect(report.legacy_exclusions.length).toBe(coverage.excluded_source_count);
+    for (const excluded of report.legacy_exclusions) {
+      expect(excluded.source_ref).toBeTruthy();
+      expect([
+        'priority_not_p0_p1',
+        'priority_missing',
+        'no_explicit_p0_p1_contract_edge',
+      ]).toContain(excluded.reason_code);
     }
     expect(report.invalid_source_refs).toEqual([]);
     expect(report.invalid_cell_targets).toEqual([]);
     expect(report.invalid_root_assertion_refs).toEqual([]);
     const statuses = ['active', 'shadowed', 'retired', 'drifted', 'unknown'];
+    const actualStatusCounts = Object.fromEntries(
+      statuses.map((status) => [status, 0]),
+    ) as Record<string, number>;
     const elements = [
       'FR', 'NFR', '不变量', '判定点', '保质期', '死亡告警',
       '失败语义', '效果确认', '对抗面', '账本保鲜', '两轴衔接',
     ];
+    const seenIds = new Set<string>();
     for (const item of report.legacy_baseline) {
       expect(item.legacy_behavior_id).toBeTruthy();
+      expect(seenIds.has(item.legacy_behavior_id)).toBe(false);
+      seenIds.add(item.legacy_behavior_id);
       expect(['P0', 'P1']).toContain(item.priority);
+      expect(item.selection_basis).toMatchObject({
+        kind: 'explicit_priority',
+        priority: item.priority,
+        contract: 'packages/engine/regression-contract.yaml',
+      });
       expect(STAGES.map(([stage]) => stage)).toContain(item.journey_stage);
       expect(elements).toContain(item.element);
       expect(item.legacy_owner).toBeTruthy();
       expect(statuses).toContain(item.audit_status);
+      actualStatusCounts[item.audit_status] += 1;
       expect(item.unified_owner).toBeTruthy();
       expect(typeof item.gap).toBe('string');
       expect(item.next_knife_order).toBeGreaterThan(0);
-      expect(item.source_ref).toBeTruthy();
+      expect(item.source_refs.length).toBeGreaterThan(0);
       expect(Object.hasOwn(item, 'assertion_ref')).toBe(true);
+      expect(item.status_evidence).toMatchObject({
+        artifact_sha: currentSha,
+      });
+      expect(item.status_evidence.checked_at).toBeTruthy();
+      expect(Number.isNaN(Date.parse(item.status_evidence.checked_at))).toBe(false);
+      expect(item.status_evidence.source_digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+
+      if (item.audit_status === 'active') {
+        expect(item.status_evidence.legacy_wiring_exists).toBe(true);
+        expect(item.status_evidence.probe_command).toBeTruthy();
+        expect(item.status_evidence.probe_started).toBe(true);
+        expect(item.status_evidence.exit_code).toBe(0);
+      } else if (item.audit_status === 'shadowed') {
+        expect(item.status_evidence.legacy_source_exists).toBe(true);
+        expect(item.status_evidence.replacement_ref).toBeTruthy();
+        expect(item.status_evidence.replacement_probe_command).toBeTruthy();
+        expect(item.status_evidence.replacement_probe_started).toBe(true);
+        expect(item.status_evidence.replacement_exit_code).toBe(0);
+      } else if (item.audit_status === 'retired') {
+        expect(item.status_evidence.retirement_ref).toBeTruthy();
+        expect(item.status_evidence.retirement_ref_resolved).toBe(true);
+        expect(() => execFileSync(
+          'git',
+          ['rev-parse', '--verify', `${item.status_evidence.retirement_ref}^{commit}`],
+          { stdio: 'ignore' },
+        )).not.toThrow();
+        expect(item.status_evidence.consumer_scan_command).toBeTruthy();
+        expect(item.status_evidence.consumer_scan_started).toBe(true);
+        expect(item.status_evidence.consumer_scan_exit_code).toBe(0);
+        expect(item.status_evidence.consumer_count).toBe(0);
+      } else if (item.audit_status === 'drifted') {
+        expect(item.status_evidence.environment_ready).toBe(true);
+        expect(item.status_evidence.probe_command).toBeTruthy();
+        expect(item.status_evidence.probe_started).toBe(true);
+        expect(item.status_evidence.mismatch).toBeTruthy();
+        expect(
+          item.status_evidence.exit_code !== 0
+          || item.status_evidence.observed_result !== item.status_evidence.expected_result,
+        ).toBe(true);
+      } else {
+        expect(item.status_evidence.missing_evidence.length).toBeGreaterThan(0);
+        expect(item.auto_decidable).toBe(false);
+      }
     }
+    expect(seenIds.size).toBe(coverage.mapped_behavior_count);
+    expect(coverage.status_counts).toMatchObject(actualStatusCounts);
+    expect(coverage.proven_status_count).toBe(
+      actualStatusCounts.active
+      + actualStatusCounts.shadowed
+      + actualStatusCounts.retired
+      + actualStatusCounts.drifted,
+    );
   });
 
   it('endpoint 延伸到 production verified 与 report learning', async () => {

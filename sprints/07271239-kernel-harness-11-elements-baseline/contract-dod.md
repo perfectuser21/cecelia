@@ -17,7 +17,7 @@ target_environment: local_api
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/integration/migration-365-kernel-harness-f1-baseline.integration.test.js','packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh']){const s=fs.readFileSync(p,'utf8');if(!/HARNESS_TEST_DATABASE_URL|DATABASE_URL/.test(s))process.exit(1)}"
 
 - [ ] [ARTIFACT] 根 regression-contract.yaml 登记 F1 逐项权威映射，engine 合同只作 legacy source
-  Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');for(const x of ['kernel_harness_f1_baseline:','legacy_behavior_id:','journey_stage:','element:','source_ref:','assertion_ref:'])if(!root.includes(x))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
+  Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');for(const x of ['kernel_harness_f1_baseline:','legacy_behavior_id:','selection_basis:','journey_stage:','element:','source_refs:','assertion_ref:','status_evidence:'])if(!root.includes(x))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
 
 - [ ] [ARTIFACT] Brain 源码改动同步版本与 DEFINITION.md
   Test: node -e "const fs=require('fs');const d=fs.readFileSync('packages/brain/DEFINITION.md','utf8');const p=JSON.parse(fs.readFileSync('packages/brain/package.json','utf8'));if(!d.includes(p.version))process.exit(1)"
@@ -44,9 +44,9 @@ target_environment: local_api
   预期观察: within 180s false-green 与 invalid assertion_ref 数组均为空；缺证据项保持 gray/red/pending。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
-- [ ] [BEHAVIOR] [L2] B5 Golden Path Step 4 legacy P0/P1 四类来源逐项归位到根合同
-  动作: 真读 engine P0/P1、hooks、DevGate/CI 与 Kernel gates 的去重发现集，并与根 regression-contract 的权威 behaviors 映射和真库 143 cells 对账。
-  预期观察: within 180s discovered=mapped、unmapped=0、duplicate=0；每项含 legacy_behavior_id/priority/stage/element/双 owner/status/gap/order/source_ref/assertion_ref，派生 JSON authoritative=false。
+- [ ] [BEHAVIOR] [L2] B5 Golden Path Step 4 P0/P1 筛选与五态证据逐项机检
+  动作: 真解析 engine 结构化 priority，并枚举 hooks、DevGate/CI、Kernel gates；仅把显式 P0/P1 seed 及其可追踪引用边选入，其余带 reason_code 排除；对 selected 项真跑当前 SHA probe 后分类。
+  预期观察: within 180s candidate_source=included+excluded、selected_seed=mapped_behavior、unmapped/duplicate=0；auto 可判项 unknown=0，非 unknown 至少一项；active/shadowed/retired/drifted/unknown 分别满足合同事实门槛，任意分类或全部 unknown 会失败。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh legacy-baseline'
 
 - [ ] [BEHAVIOR] [L2] B6 Golden Path Step 5 非空 assertion_ref 全部可追到唯一根合同或真实测试
