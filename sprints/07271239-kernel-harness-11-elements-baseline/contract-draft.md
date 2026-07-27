@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## 锚定父路声明
 
@@ -10,6 +10,8 @@
 - Registry 已读取，但照相层已过期约 205 小时；字段与表约定以 PRD、当前源码、migration 348-350 和真实只读 Brain API 响应交叉确认。
 - context-manifest: unavailable（Brain 当前返回 `Cannot GET /api/brain/line/.../context-manifest`）。
 - judgment-resolved-by-prd: 历史步骤不能可靠一对一映射时，保留原 ID/Notion 关联并作为同一 lifecycle stage 的历史别名，禁止删除重建。
+- Round 3 收敛：补齐 S0-S12 稳定名称/promise 的逐项 oracle，并把 legacy P0/P1
+  逐项映射的权威落点固定为根 `regression-contract.yaml`；派生 audit JSON 仍非权威。
 - 本轮只建立账本基线；所有接缝在 evaluator 使用隔离 PostgreSQL 真验前均为 `logic-done-pending`。
 
 ## Response Schema（推导来源: PRD字面）
@@ -82,7 +84,7 @@ evidence 把 cell 推成 green：审计只认根合同、真实可执行测试�
 2. `审计器 ↔ 根 regression-contract.yaml/真实测试路径`：逐条解析并实际校验引用存在；
    green 还必须有当前 SHA 的真实 PASS envelope。
 3. `Brain journeys API ↔ 迁移后测试库`：真实启动 Brain 到独立端口，用 curl+jq 验证 endpoint
-   与 S0-S12 可观察字段；不得以 pool mock 或静态文件 grep 替代。
+   与 S0-S12 的 `lifecycle_stage/name/promise/is_backbone`；不得以 pool mock 或静态文件 grep 替代。
 
 ## 禁 mock 边清单
 
@@ -117,14 +119,36 @@ HARNESS_TEST_DATABASE_URL="${HARNESS_TEST_DATABASE_URL:?}" timeout 180 bash pack
 **来源**: `[FROM_PRD]` — PRD「Golden Path」步骤 1-2 与边界情况。
 
 **可观测行为**: 六个历史 Step ID 及 Notion 关联逐字保留；13 个 `is_backbone=true`
-的 stage 恰为 S0-S12。不能可靠合并的 GAN Reviewer/Final E2E 作为同 stage 历史别名保留。
+的 stage 使用以下稳定名称和 promise；不能可靠合并的 GAN Reviewer/Final E2E 作为同 stage
+历史别名保留，且 `is_backbone=false`。
+
+| Stage | 稳定名称 | promise |
+|---|---|---|
+| S0 | Task Born | 每个任务有稳定身份、来源、仓库、环境、风险和锚点 |
+| S1 | Intent / PrepPRD | 用户意图、成功标准、真实旅程和依赖被冻结 |
+| S2 | Planner | 计划覆盖 FR/NFR/Invariant/真实 E2E，范围足够薄 |
+| S3 | Contract GAN | 对抗审核后的合同可执行且批准后不可偷改 |
+| S4 | Generator | 在受控工作树先 Red 后 Green，创建 Harness-owned PR |
+| S5 | CI | 客观检查全绿，只产证据，不持有 Harness merge 权 |
+| S6 | Evaluator | 新 session 真跑合同、反作弊和真实 E2E |
+| S7 | Independent Judge | 独立复核 Evaluator 证据并给最终机器裁决 |
+| S8 | Risk-based Human Review | 首次/高风险变更在 merge 前由主理人查看 |
+| S9 | Merge | 只有唯一 Merge Authority 在全部门禁满足后合并 |
+| S10 | Staging | 部署并验证刚合并的精确 artifact |
+| S11 | Production | 按发布策略 promote、验活并留回滚锚点 |
+| S12 | Report / Learning / Complete | 更新承诺地图、回归、学习和外部状态后才收账 |
+
+历史 backbone 映射固定为 Planner→S2、GAN Proposer→S3、Generator→S4、Evaluator→S6；
+GAN Reviewer 是 S3 历史别名，Final E2E 是 S6 历史别名。六个历史行均不得删除或换 ID。
 
 **验证命令**:
 ```bash
 HARNESS_TEST_DATABASE_URL="${HARNESS_TEST_DATABASE_URL:?}" timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh history-and-backbone
 ```
 
-**硬阈值**: 6/6 历史 ID 与 notion_id 不变；13 个 backbone stage 无缺失、无重复；migration 二次应用前后行数与映射摘要一致。
+**硬阈值**: 6/6 历史 ID 与 notion_id 不变；13 个 backbone stage 的
+`lifecycle_stage/name/promise` 与上表逐字相等且无缺失/重复；Reviewer/Final E2E
+`is_backbone=false`；migration 二次应用前后行数与映射摘要一致。
 
 ### Step 3: 为每个 backbone Step 落可信的 11 要素
 **来源**: `[FROM_PRD]` — PRD「Golden Path」步骤 2-3 与 11 要素统一含义；
@@ -145,30 +169,46 @@ HARNESS_TEST_DATABASE_URL="${HARNESS_TEST_DATABASE_URL:?}" timeout 180 bash pack
 ### Step 4: 审计 legacy P0/P1 并给出基线
 **来源**: `[FROM_PRD]` — PRD「Golden Path」步骤 4 与验收点 6。
 
-**可观测行为**: 根脚本输出的每个 legacy P0/P1 条目都含 `legacy_owner`、
+**可观测行为**: 根 `regression-contract.yaml` 的
+`kernel_harness_f1_baseline.behaviors[]` 是逐项归位的权威映射；派生 audit JSON 明确
+`authoritative=false`。审计输入集合为以下四类的去重并集，不能只数 engine YAML：
+
+1. `packages/engine/regression-contract.yaml` 中全部 P0/P1 条目；
+2. `packages/engine/hooks/` 下现存 guard/hook 入口；
+3. `scripts/devgate/` 下现存 check 入口与 `.github/workflows/` 中 DevGate/CI gate job；
+4. 根合同与 `packages/brain/src/orchestrator/gates.js` 暴露的 Kernel gate。
+
+每个发现项必须有且只有一个 `behaviors[]` 映射，字段为 `legacy_behavior_id`、`priority`、
+`journey_stage(S0-S12)`、`element(11 要素之一)`、`legacy_owner`、
 `audit_status(active|shadowed|retired|drifted|unknown)`、`unified_owner`、`gap`、
-`next_knife_order`；冲突不被吞成 active，未知不乐观归类。
+`next_knife_order`、`source_ref`、`assertion_ref`。`source_ref` 必须指向上述 legacy source；
+非空 `assertion_ref` 必须指向根合同内带真实 `test_command` 的条目。没有足够事实的发现项
+仍必须归位，但状态为 `unknown` 或 `drifted`，禁止丢弃或乐观标 active。
 
 **验证命令**:
 ```bash
 HARNESS_TEST_DATABASE_URL="${HARNESS_TEST_DATABASE_URL:?}" timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh legacy-baseline
 ```
 
-**硬阈值**: 输出条目数等于 `packages/engine/regression-contract.yaml` 中 P0/P1 条目数；
-每条五字段齐全；状态枚举合法；ID 唯一；`next_knife_order` 为正整数且排序确定。
+**硬阈值**: 四类 source inventory 的 `discovered_count=mapped_count` 且
+`unmapped_count=0`、`duplicate_mapping_count=0`；每条 11 字段齐全；stage/element/status
+枚举合法；`source_ref` 存在；非空 `assertion_ref` 在根合同唯一解析且其 `test_command`
+目标真实存在；所指 stage/element 在真库 143 cells 中存在；`next_knife_order` 为正整数且排序确定。
 
 ### Step 5: assertion_ref 只指向唯一根合同或真实可执行测试
 **来源**: `[FROM_PRD]` — PRD「Golden Path」步骤 5 与边界情况。
 
 **可观测行为**: 非空 assertion_ref 可在根 `regression-contract.yaml` 的 `test_command`
-或真实测试/脚本中解析到；engine 合同、hooks、DevGate、CI、Kernel gates 只作为 legacy source。
+条目中唯一解析，且命令指向真实测试/脚本；engine 合同、hooks、DevGate、CI、Kernel gates
+只作为 `source_ref`，不能被当作第二权威映射。
 
 **验证命令**:
 ```bash
 HARNESS_TEST_DATABASE_URL="${HARNESS_TEST_DATABASE_URL:?}" timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh assertion-refs
 ```
 
-**硬阈值**: 悬空/静态文档 assertion_ref count=0；根回归 SSOT count=1；engine 合同未被改造成第二权威源。
+**硬阈值**: 悬空/静态文档 assertion_ref count=0；基线条目的非空 assertion_ref 全部解析到
+根合同中的唯一 entry + 可执行 `test_command`；根回归 SSOT count=1；engine 合同未被改造成第二权威源。
 
 ### Step 6: endpoint 明确 merge 不等于 completed
 **来源**: `[FROM_PRD]` — PRD「Golden Path」步骤 6 与 E2E 验收点 4。
@@ -240,10 +280,10 @@ echo "OK: Cecelia Harness Pipeline F1 账本归位与等价基线 Golden Path �
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | 唯一 Journey 与幂等 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 唯一 F1 Journey 且二次应用不重复 | migration/module 未实现，测试收集或首个真库断言失败 |
-| 历史与 backbone | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 历史 ID 与 Notion 关联保留且 S0-S12 骨干完整 | S0-S12/历史映射当前不存在 |
+| 历史与 backbone | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 历史 ID 与 Notion 关联保留且 S0-S12 名称 promise 骨干完整 | S0-S12/历史映射当前不存在 |
 | 11 要素 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 每个 S0-S12 骨干 Step 恰有 11 个合法 element cells | 当前目标 Journey 无 element cells |
 | 证据可信 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | green 只接受真实 assertion_ref 且引用存在 | 当前 classifier 仍接受静态 smoke 文案 |
-| legacy 基线 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | legacy P0/P1 基线字段完整且状态合法 | 审计器未实现 |
+| legacy 基线 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | legacy P0/P1 四类来源逐项归位且权威映射完整 | 审计器与根合同映射未实现 |
 | 完成语义 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | endpoint 延伸到 production verified 与 report learning | 现 endpoint 仍停在 PR 合并 |
 | 非目标护栏 | `sprints/07271239-kernel-harness-11-elements-baseline/tests/kernel-harness-f1-baseline.test.ts` | 不新增平行账本且运行时表状态不被迁移改写 | 新 migration 尚不存在，护栏先红 |
 
