@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 5)
+# Sprint Contract Draft (Round 6)
 
 ## 合同边界
 
@@ -140,9 +140,9 @@ N/A — 本任务不新增对外 agent；外部输入仅为受控 approve/reject
 ```bash
 node ./node_modules/vitest/vitest.mjs run \
   sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts \
+  -t "标题 feat\\(harness\\) 或 cp- branch 本身不能决定 Harness merge authority|resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组"
+node ./node_modules/vitest/vitest.mjs run \
   packages/brain/src/orchestrator/__tests__/ground-truth.test.js \
-  -t "标题 feat\\(harness\\) 或 cp- branch 本身不能决定 Harness merge authority" \
-  -t "resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组" \
   -t "reviewRequired 从 tasks.payload.review_required（string payload 兼容）；reviewApproved 锚定当前 head_sha"
 ```
 
@@ -156,10 +156,9 @@ node ./node_modules/vitest/vitest.mjs run \
 
 **验证命令**:
 ```bash
-node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts \
-  -t "approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict" \
-  -t "approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail" \
-  -t "reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict"
+node ./node_modules/vitest/vitest.mjs run \
+  sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts \
+  -t "approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict|approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail|reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict"
 ```
 
 **硬阈值**: 缺 token/缺 repo/缺 pr_number/缺 SHA/不匹配时分别返回 401/400/409 且 `orchestrator_decision_log` 不新增 verdict；approve/reject 成功时 detail 必含调用人、`pr_head_sha`、`source`、`timestamp`、`repo`、`pr_number`、`run_id`。
@@ -174,8 +173,9 @@ node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-author
 ```bash
 node ./node_modules/vitest/vitest.mjs run \
   sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts \
+  -t "review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并"
+node ./node_modules/vitest/vitest.mjs run \
   packages/brain/src/orchestrator/__tests__/ground-truth.test.js \
-  -t "review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并" \
   -t "reviewRequired 从 tasks.payload.review_required（string payload 兼容）；reviewApproved 锚定当前 head_sha"
 ```
 
@@ -289,4 +289,4 @@ COUNT=$(psql "$DB_URL" -t -c "SELECT count(*) FROM orchestrator_decision_log WHE
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| ownership tuple、approve/reject、merge lock、CI fail-closed | `sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts` | `标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority` / `resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组` / `approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict` / `approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict` / `review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并` / `mergeGate 对 stale human approval fail-closed 并要求重跑证据链` / `merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha` | 红测已改成真实 PostgreSQL + 真实 route/decision_log 接缝验证；当前实现仍忽略 `repo/pr_number`、detail 缺 `source/timestamp/repo/pr_number/run_id`，`harness-ci-gate.js` 无 ownership resolver，CI 脚本仍按标题 skip，merge handler 也未传 `--match-head-commit` |
+| ownership tuple、approve/reject、merge lock、CI fail-closed | `sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts` | `标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority` / `resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组` / `approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict` / `approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail` / `reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict` / `review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并` / `mergeGate 对 stale human approval fail-closed 并要求重跑证据链` / `merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha` | 实测红证据：`mergeGate` 仍允许 stale human approval；`merge_pr` 仍发 `gh pr merge ... --squash --delete-branch` 且缺 `--match-head-commit`；`.github/workflows/scripts/should-auto-merge.sh` 仍输出 `SKIP: harness-owned PR...` 而非 fail-closed；`packages/brain/src/harness-ci-gate.js` 尚未导出 `resolveKernelMergeAuthority`；本地未起 Postgres 时真实 PG 红测会以 `ECONNREFUSED 127.0.0.1:5432` 直接失败，说明接缝测试没有被 mock 掩盖 |
