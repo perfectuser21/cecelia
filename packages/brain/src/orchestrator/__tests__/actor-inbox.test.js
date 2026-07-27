@@ -22,7 +22,7 @@ const validMessage = {
 
 describe('Harness Actor Inbox boundaries', () => {
   it('rejects self-addressed and side-effect messages before opening a transaction', async () => {
-    const pool = { connect: vi.fn() };
+    const pool = { query: vi.fn(), connect: vi.fn() };
     const inbox = createActorInbox(pool);
 
     await expect(inbox.send({
