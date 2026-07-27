@@ -4,7 +4,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RECONCILER="$SCRIPT_DIR/reconcile-fleet-node-baseline.sh"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -239,7 +238,16 @@ write_executable "$fake_bin/installer" \
 
 bundle="$test_root/repository.bundle"
 runner_archive="$test_root/runner.tar"
-git -C "$REPO_ROOT" bundle create "$bundle" HEAD
+bundle_source="$test_root/bundle-source"
+mkdir -p "$bundle_source"
+git -C "$bundle_source" init -q
+git -C "$bundle_source" config core.hooksPath /dev/null
+git -C "$bundle_source" config user.name "Fleet Baseline Test"
+git -C "$bundle_source" config user.email "fleet-baseline-test@example.invalid"
+printf 'fleet baseline fixture\n' > "$bundle_source/README.md"
+git -C "$bundle_source" add README.md
+git -C "$bundle_source" commit -q -m "test: seed fleet baseline"
+git -C "$bundle_source" bundle create "$bundle" HEAD
 printf 'runner archive\n' > "$runner_archive"
 
 run_reconciler() {

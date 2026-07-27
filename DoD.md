@@ -43,7 +43,7 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh'
 
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
-  Brain `1.267.91` canonical version sources 已同步。
+  Brain `1.267.92` canonical version sources 已同步。
   Test: manual:bash -c 'bash scripts/check-version-sync.sh && node scripts/registry-lint.mjs && node -e "const fs=require(\"fs\"),yaml=require(\"js-yaml\");yaml.load(fs.readFileSync(\"regression-contract.yaml\",\"utf8\"));yaml.load(fs.readFileSync(\"docs/registry/features/orchestration.yml\",\"utf8\"));"'
 
 ## BEHAVIOR 条目
