@@ -1,0 +1,39 @@
+{
+  "initiative_id": "6c9e5540-8a1c-41e8-83ec-fed932039c34",
+  "journey_type": "autonomous",
+  "journey_type_reason": "任务只修改 Kernel/Brain 后台 attempt、callback、PostgreSQL 持久化与 dispatcher 反馈血缘。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "建立 reviewer 结果通道与 run/round/SHA 反馈血缘",
+      "scope": "为 read-only Harness 角色提供 attempt-scoped 可写结果通道，校验并持久化结构化 reviewer authority，将精确绑定反馈与 resolution map 注入 fresh-session 后续轮次，并以人工审批门保护首次 P0 Controller contract 发布。",
+      "dod": [
+        "[BEHAVIOR] read-only workspace 下固定结果通道可写，路径逃逸、软链接和跨 attempt 访问失败",
+        "[BEHAVIOR] callback 在真实 PostgreSQL 完整持久化 verdict/feedback/rubric/run/round/SHA/digest 且重放幂等",
+        "[BEHAVIOR] round 2 proposer/reviewer 收到精确 prior_review/resolution_map，stale/wrong/missing fail-closed",
+        "[BEHAVIOR] APPROVED 走同一 authority 链且首次 P0 人工批准前 merge/deploy 均被阻断",
+        "[ARTIFACT] execution contract、container mount/env、callback、dispatcher、ground-truth、decision log、DEFINITION/version、migration 与 RCI 同步"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/result-channel.js",
+        "packages/brain/src/orchestrator/feedback-lineage.js",
+        "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/remote-bridge-transport.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/src/docker-executor.js",
+        "packages/brain/migrations/",
+        "packages/brain/src/orchestrator/__tests__/",
+        "packages/brain/src/__tests__/integration/",
+        "scripts/devgate/kernel-result-feedback-lineage-rci.sh",
+        "packages/brain/DEFINITION.md",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
