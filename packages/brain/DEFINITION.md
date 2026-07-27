@@ -18,9 +18,11 @@
   M4/M1 listener 绑定各自 Tailscale IP，callback 指向 US Brain Tailscale health。
   system LaunchDaemon 固定 `DOCKER_HOST=unix:///var/run/docker.sock`。
 - US M4 的 `fleet-rollout.sh` 只从 committed Git、credential-free bundle 和
-  pinned Runner image 构建节点工件。本地与 BatchMode SSH 路径都先由 root
-  解包到 `/var/tmp` staging，再运行节点本地 reconciler；不执行用户可写临时目录
-  中的 root 脚本，也不读取或传输账号目录、Prompt、token 或 provider session。
+  pinned Runner image 构建节点工件。构建期间固定一个 commit OID，归档、bundle
+  和传输前复核必须属于同一 OID 且 worktree 仍干净。本地与 BatchMode SSH 路径
+  都先由 root 解包到 `/var/tmp` mode 0700 staging，并在执行前校验 controller
+  与 nodectl 为 root-owned、非 symlink、不可被 group/world 写入；不执行用户可写
+  临时目录中的 root 脚本，也不读取或传输账号目录、Prompt、token 或 provider session。
 - baseline reconciler 创建固定 UID/GID 450 的 `_cecelia` 服务身份，安装 pinned
   Node/Codex CLI 与 OrbStack 2.2.1，把 app 内 `orbctl/docker` 链接到 Cecelia
   toolchain PATH，导入 Git baseline/Runner，再调用 transactional installer。
@@ -37,7 +39,8 @@
   作为生产可达的轻量角色使用权重 1。
 - Phase 4A 始终返回 `dispatch_ready=false`，不定义 WorkspaceSpec/Attempt API、
   CredentialEnvelope、执行等价/恢复或 Phase 5 真实任务验收；production probes
-  在最终 readiness 出现前不得创建 Attempt 或调用 launcher。
+  在最终 readiness 出现前不得创建 Attempt 或调用 launcher，并将
+  `node_not_dispatch_ready` 原样写入阻断结果、告警和决策 evidence。
 - self-deploy 发布尚待复审与 merge；`xian-mac-m1` 在 Docker 不可用时必须保持 drained，
   不得降低准入阈值，也不得用 synthetic canary 代替真实任务验收。
 - 节点回退：

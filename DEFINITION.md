@@ -228,8 +228,10 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   Xian 指向 US Brain Tailscale health 的 callback。LaunchDaemon 固定通过
   `/var/run/docker.sock` 访问 OrbStack。
 - US M4 通过 `fleet-rollout.sh` 从 committed Git、credential-free bundle 与
-  pinned Runner image 构建工件。本地与远端 payload 均由 `sudo -n` 直接解包到
-  root-owned `/var/tmp` staging 后才执行节点本地 reconciler；不从用户可写临时目录
+  pinned Runner image 构建工件；构建开始固定 commit OID，归档、bundle 与传输前
+  复核必须保持同一 OID 且 worktree 干净。本地与远端 payload 均由 `sudo -n`
+  解包到 root-owned mode 0700 `/var/tmp` staging，controller/nodectl 经 root
+  owner、非 symlink、非 group/world writable 校验后才执行；不从用户可写临时目录
   执行 root 脚本，也不复制用户目录、Codex auth、Prompt、token 或 provider session。
 - baseline reconciler 固定创建 UID/GID 450 的 `_cecelia`，安装 pinned
   Node/Codex CLI 与 OrbStack 2.2.1，并把 app 内 `orbctl/docker` 固定暴露到
@@ -246,7 +248,8 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   实时 effective/physical slots 的较小值，再按角色权重折算；缺失/未知角色关闭节点。
 - Phase 4A 的成功结果也固定为 `dispatch_ready=false`。WorkspaceSpec/Attempt API、
   CredentialEnvelope、执行等价与恢复，以及 Phase 5 真实业务任务验收不属于本阶段；
-  production probes 必须在 `dispatch_ready=true` 前阻断 Attempt 创建与 launcher。
+  production probes 必须在 `dispatch_ready=true` 前阻断 Attempt 创建与 launcher，
+  并保留 `node_not_dispatch_ready` 阻断签名及其告警/决策 evidence。
 - 发布顺序固定为 Worker-first，待三台节点真实健康证据通过复审后再发布 Brain。
   当前 `xian-mac-m1` 的 Docker 不可用，必须保持 drained，不能降低阈值。
 - 节点紧急回退先在该节点执行

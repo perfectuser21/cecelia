@@ -89,6 +89,8 @@ Modify:
 
 - `packages/brain/src/orchestrator/preflight/production-probes.js`
 - `packages/brain/src/orchestrator/preflight/production-probes.test.js`
+- `packages/brain/src/orchestrator/preflight/capability-gate.js`
+- `packages/brain/src/orchestrator/preflight/capability-gate.test.js`
 - `packages/brain/src/orchestrator/preflight/production-wiring.test.js`
 - `docker-compose.yml`
 - `regression-contract.yaml`

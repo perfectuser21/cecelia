@@ -39,8 +39,11 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
   Codex CLI `0.145.0`、OrbStack `2.2.1`、UID/GID 450 `_cecelia`、credential-free
   Git baseline 与 pinned Runner，并把 app 内 `orbctl/docker` 暴露到 toolchain；
   `fleet-rollout.sh` 仅允许 US M4 从 committed Git 构建工件，本地与 BatchMode SSH
-  payload 都先进入 root-owned `/var/tmp` staging，再按 Xian M4→US M4→Xian M1
-  顺序调用节点本地 bootstrap。默认均为 dry-run，失败或 HUP/INT/TERM 恢复 drain。
+  payload 都先进入 root-owned mode 0700 `/var/tmp` staging；固定 commit OID，
+  传输前复核 HEAD/worktree，且校验 staged controller/nodectl 的 root owner、
+  非 symlink 与不可 group/world 写。再按 Xian M4→US M4→Xian M1 顺序调用节点
+  本地 bootstrap。默认均为 dry-run，公开入口 HUP/INT/TERM、admission 失败或
+  staging cleanup 失败均恢复 drain。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh'
 
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
@@ -72,8 +75,8 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
   malformed、stale、identity mismatch 和 drain 的 production probe tests。
   预期观察: 每种缺失/漂移均返回 `node_not_base_admitted`；即使
   `base_admitted=true`，`dispatch_ready=false` 仍在 Attempt/launcher 前返回
-  `node_not_dispatch_ready`，不以 slots 放行。
-  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/preflight/production-probes.test.js src/orchestrator/preflight/production-wiring.test.js'
+  `node_not_dispatch_ready`，并原样进入结果、告警和决策 evidence，不以 slots 放行。
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/preflight/production-probes.test.js src/orchestrator/preflight/capability-gate.test.js src/orchestrator/preflight/production-wiring.test.js'
   期望: exit 0
 
 - [x] [BEHAVIOR] [L2] 安装失败恢复原 plist 与原 launchd 状态；显式 drain
@@ -97,7 +100,8 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
   默认 PATH；checksum/签名/version/Runner digest 任一不匹配即失败。新 OrbStack
   首次安装失败会删除未完成 app，已有 app 升级失败会回滚；发现高于 baseline 的
   版本绝不静默 downgrade。rollout 不从用户可写 staging 执行 root 脚本，且
-  drain→bootstrap→undrain→admit 任一步失败或信号中断都会恢复 drain。
+  固定单一 commit OID、拒绝源码漂移及异常 owner/mode/symlink；公开入口的
+  drain→bootstrap→undrain→admit 任一步失败、信号中断或清理失败都会恢复 drain。
   Test: contract:KERNEL-FLEET-NODE-SELF-DEPLOY-01
   期望: exit 0
 

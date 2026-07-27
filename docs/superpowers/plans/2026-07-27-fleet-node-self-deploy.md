@@ -564,6 +564,12 @@ npm install --package-lock-only --ignore-scripts
 
 Review the lockfile diff and retain only the intended Brain version changes.
 
+The same unpublished `1.267.94` review closure also freezes one rollout commit
+OID across archive/bundle creation, rejects HEAD/worktree drift before transport,
+validates root staging ownership/mode/symlink boundaries, forwards public-entry
+signals to the node transaction, re-drains on cleanup failure, and preserves
+`node_not_dispatch_ready` through capability-gate alerts and decisions.
+
 - [ ] **Step 4: Run the focused Phase 4A suite**
 
 Run:

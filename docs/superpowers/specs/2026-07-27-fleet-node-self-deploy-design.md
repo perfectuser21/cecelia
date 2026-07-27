@@ -121,11 +121,19 @@ For each node it builds artifacts only from the committed Git object graph:
 - a Git bundle rooted at the rollout commit;
 - a Docker archive of the pinned Runner image.
 
+The controller resolves one immutable commit OID before artifact creation. Both
+the source archive and a temporary bare repository used to create the bundle
+are populated from that OID. It rechecks HEAD and the complete worktree before
+transport; any change aborts without contacting a node.
+
 It sends those files over SSH and streams them through `sudo -n` into a fresh,
 root-owned `/var/tmp` staging directory. The node-local reconciler and its input
 artifacts execute only from that root-owned staging directory, never from an SSH
-user-writable path. It never invokes Cecelia Bridge `/run` and never reads or
-sends a Codex account directory.
+user-writable path. Before execution, local and remote controllers require the
+staging directory to be root-owned mode 0700 and require the staged controller
+and nodectl to be root-owned regular non-symlink files with no group/world write
+bits. It never invokes Cecelia Bridge `/run` and never reads or sends a Codex
+account directory.
 
 Canonical targets:
 
@@ -145,8 +153,12 @@ The controller creates the drain marker before changing runtime state. After
 bootstrap it removes the marker only long enough to obtain fresh admission
 evidence. If admission fails, it immediately restores drain and exits non-zero.
 HUP, INT, TERM, or an unexpected exit after undrain also restores drain.
+The public local/SSH entrypoint forwards those signals to the node transaction;
+root staging cleanup failure after admission also re-drains before returning
+non-zero.
 Phase 4A still reports `dispatch_ready=false`; production probes require final
-dispatch readiness, so no Attempt becomes runnable.
+dispatch readiness, so no Attempt becomes runnable. The capability gate
+preserves `node_not_dispatch_ready` in its result, alert, and decision evidence.
 
 ## macOS maintenance boundary
 
@@ -187,7 +199,9 @@ Automated tests must prove:
 - rollout target mapping and `all` order are exact;
 - SSH or admission failure leaves the node drained;
 - local and remote privileged execution uses root-owned staging only;
-- interruption after undrain restores the node drain marker;
+- source commit/worktree drift stops before transport;
+- non-root, writable, or symlinked privileged staging stops before execution;
+- public-entry interruption or cleanup failure after undrain restores drain;
 - a successful Phase 4A rollout remains `dispatch_ready=false`;
 - existing Fleet Node admission and production wiring tests remain green.
 
