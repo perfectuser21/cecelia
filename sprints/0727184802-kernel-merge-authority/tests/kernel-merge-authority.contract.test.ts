@@ -230,6 +230,46 @@ describe('kernel merge authority contract red tests', () => {
       });
     });
 
+    it('approve route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+
+      const staleRun = await seedRun();
+      await appendReviewRequest(staleRun.runId, HEAD_SHA);
+      const staleApp = createApp(NEXT_HEAD_SHA);
+      const stale = await request(staleApp)
+        .post(`/api/brain/harness/kernel-reviews/${staleRun.runId}/approve`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: staleRun.taskId,
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          approved_by: 'alex',
+        });
+
+      expect(stale.status).toBe(409);
+      expect(await approvalRows(staleRun.runId)).toHaveLength(0);
+
+      const mismatchRun = await seedRun();
+      await appendReviewRequest(mismatchRun.runId, HEAD_SHA);
+      const mismatchApp = createApp(HEAD_SHA);
+      const mismatch = await request(mismatchApp)
+        .post(`/api/brain/harness/kernel-reviews/${mismatchRun.runId}/approve`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: mismatchRun.taskId,
+          repo: 'perfectuser21/other-repo',
+          pr_number: PR_NUMBER + 1,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          approved_by: 'alex',
+        });
+
+      expect(mismatch.status).toBe(409);
+      expect(await approvalRows(mismatchRun.runId)).toHaveLength(0);
+    });
+
     it('reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
       process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
 
@@ -347,20 +387,6 @@ describe('kernel merge authority contract red tests', () => {
     } as never);
 
     expect(result.allow).toBe(false);
-  });
-
-  it('mergeGate 对 stale human approval fail-closed 并要求重跑证据链', () => {
-    const result = mergeGate({
-      evaluateVerdict: { verdict: 'PASS', pr_head_sha: NEXT_HEAD_SHA },
-      judgeVerdict: { verdict: 'PASS', pr_head_sha: NEXT_HEAD_SHA },
-      prHeadSha: NEXT_HEAD_SHA,
-      reviewRequired: true,
-      reviewApproved: true,
-      reviewVerdict: { approved: true, pr_head_sha: HEAD_SHA },
-    } as never);
-
-    expect(result.allow).toBe(false);
-    expect(result.reason).toMatch(/stale|review/i);
   });
 
   it('merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha', async () => {

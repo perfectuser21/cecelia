@@ -48,6 +48,12 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class rejected_by timestamp source"'
   期望: exit 0
 
+- [ ] [BEHAVIOR] [L2] approve route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict
+  动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/approve` 先发送过期 `pr_head_sha`，再发送 `repo/pr_number` 不匹配的 authenticated 请求。
+  预期观察: 两次请求都返回 409，`orchestrator_decision_log` 不新增 approve verdict。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict"'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict
   动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/reject` 先发送过期 `pr_head_sha`，再发送 `repo/pr_number` 不匹配的 authenticated 请求。
   预期观察: 两次请求都返回 409，`orchestrator_decision_log` 不新增 reject verdict。
@@ -58,12 +64,6 @@ target_environment: local_api
   动作: 构造 `reviewRequired=true` 且 `reviewApproved=false` 的 merge gate 输入。
   预期观察: gate fail-closed，任何 caller 都拿不到 allow merge。
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并"'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] [L2] mergeGate 对 stale human approval fail-closed 并要求重跑证据链
-  动作: 构造 evaluator/judge 命中 `sha-new`、human approval 仍锚定 `sha-old` 的 gate 输入。
-  预期观察: gate 返回 `allow=false`，旧 approval 不能放行新 head。
-  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "mergeGate 对 stale human approval fail-closed 并要求重跑证据链"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha
@@ -95,7 +95,7 @@ target_environment: local_api
 - [ ] [BEHAVIOR] [L2] INV-1 SHA 锚定：旧 approval 不能放行新 head merge
   动作: approval 锚定 `sha-old`，当前 PR head 为 `sha-new`。
   预期观察: merge gate fail-closed。
-  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "mergeGate 对 stale human approval fail-closed 并要求重跑证据链"'
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed"'
   期望: exit 0
 
 - INV-2 任务锚定: N/A，本 sprint 不修改 relay payload 写入 `base_repo/pr_url` 逻辑。
