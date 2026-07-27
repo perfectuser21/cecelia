@@ -1,0 +1,32 @@
+{
+  "initiative_id": "13d41c64-f5f1-4aaf-9487-c2608c3ec990",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "本 Sprint 加厚现有 Cecelia Harness 开发闭环的承诺地图、回归证据与隔离真库验收，不改变生产运行时。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "原位建立 Cecelia Harness Pipeline F1 的 S0-S12 × 11 要素与 legacy 等价基线",
+      "scope": "保留现有 Journey 与全部历史关联，通过幂等 migration、可信状态计算、根回归引用审计和隔离 PostgreSQL 验收，形成非权威派生报告及下一刀顺序；不修改 merge/staging/production 行为。",
+      "dod": [
+        "[BEHAVIOR] 隔离真 PostgreSQL 重放两次后仍只有原 Journey，历史 ID/Notion 不变，13 个 backbone stage 与 143 个 element cells 完整",
+        "[BEHAVIOR] legacy P0/P1 审计输出五字段齐全，assertion_ref 无悬空且静态文档不能产生 green",
+        "[BEHAVIOR] 真实 Brain GET 显示 endpoint 延伸到 production verified、rollback anchor、report/learning",
+        "[BEHAVIOR] 既有 merge/staging/production 回归全绿且 migration 未写运行时状态表",
+        "[ARTIFACT] 根 regression-contract.yaml 仍为唯一权威回归 SSOT，engine 合同仅为 legacy source"
+      ],
+      "files": [
+        "packages/brain/migrations/365_kernel_harness_f1_baseline.sql",
+        "packages/brain/src/lib/kernel-harness-f1-baseline.js",
+        "packages/brain/src/lib/eleven-elements-ledger.js",
+        "packages/brain/src/routes/journeys.js",
+        "packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh",
+        "packages/brain/src/__tests__/integration/migration-365-kernel-harness-f1-baseline.integration.test.js",
+        "regression-contract.yaml",
+        "packages/brain/DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
