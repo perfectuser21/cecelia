@@ -18,6 +18,7 @@ function poolForReads() {
   return {
     connect: vi.fn(),
     query: vi.fn(async (sql) => {
+      if (sql.includes('SELECT 1 AS present')) return { rows: [{ present: 1 }] };
       if (sql.includes('harness_commander_state')) {
         return {
           rows: [{

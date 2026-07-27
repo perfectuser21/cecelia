@@ -7,6 +7,24 @@ function requireCursor(value, code) {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(code);
 }
 
+function actorMessageContract(message) {
+  return {
+    schema: 'harness-actor-message/v1',
+    message_id: message.message_id,
+    run_id: message.run_id,
+    sender_role: message.sender_role,
+    recipient_role: message.recipient_role,
+    thread_id: message.thread_id,
+    correlation_id: message.correlation_id,
+    source_attempt_id: message.source_attempt_id ?? null,
+    event_cursor: Number(message.event_cursor),
+    message_type: message.message_type,
+    payload: message.payload,
+    evidence_refs: message.evidence_refs,
+    dedupe_key: message.dedupe_key,
+  };
+}
+
 export function buildCommanderBundle({
   runId,
   commanderAttemptId,
@@ -44,6 +62,7 @@ export function buildCommanderBundle({
       throw new Error('commander_bundle_message_ahead_of_events');
     }
   }
+  const contractMessages = actorMessages.map(actorMessageContract);
 
   const bundle = {
     schema: 'commander-bundle/v1',
@@ -55,7 +74,7 @@ export function buildCommanderBundle({
     observed,
     history_summary: historySummary,
     new_events: newEvents,
-    actor_messages: actorMessages,
+    actor_messages: contractMessages,
     active_risks: activeRisks,
     budgets,
     allowed_actions: allowedActions,

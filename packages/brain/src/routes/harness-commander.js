@@ -7,7 +7,7 @@ import { createActorInbox } from '../orchestrator/actor-inbox.js';
 import { createRunEventStore } from '../orchestrator/run-event-store.js';
 
 const uuidSchema = z.uuid();
-const PRIVATE_RESPONSE_KEY = /^(?:provider_session_id|task_bundle|result|callback_secret_hash|error_message|credentials?|prompt|raw_prompt)$/i;
+const PRIVATE_RESPONSE_KEY = /token|secret|password|api[_-]?key|auth(?:entication|orization)?|credential|provider_session_id|task_bundle|callback_secret_hash|error_message|raw_prompt|prompt|^result$/i;
 
 function publicValue(value) {
   if (Array.isArray(value)) return value.map(publicValue);
@@ -34,6 +34,14 @@ function parsePage(query) {
     return null;
   }
   return { after, limit };
+}
+
+async function runExists(databasePool, runId) {
+  const { rows } = await databasePool.query(
+    'SELECT 1 AS present FROM initiative_runs WHERE id=$1',
+    [runId],
+  );
+  return rows.length > 0;
 }
 
 function commanderResponse(row) {
@@ -124,6 +132,9 @@ export function createHarnessCommanderRouter({ pool: databasePool }) {
     const page = parsePage(req.query);
     if (!runId || !page) return res.status(400).json({ error: 'commander_query_invalid' });
     try {
+      if (!await runExists(databasePool, runId)) {
+        return res.status(404).json({ error: 'run_not_found' });
+      }
       const events = await createRunEventStore(databasePool).list(runId, {
         afterCursor: page.after,
         limit: page.limit,
@@ -142,6 +153,9 @@ export function createHarnessCommanderRouter({ pool: databasePool }) {
       return res.status(400).json({ error: 'actor_inbox_query_invalid' });
     }
     try {
+      if (!await runExists(databasePool, runId)) {
+        return res.status(404).json({ error: 'run_not_found' });
+      }
       const messages = await createActorInbox(databasePool).list({
         runId,
         actorKey,
