@@ -207,6 +207,37 @@ Playwright 步骤（mac_web，localhost:5174）：
 
 ---
 
+## Invariant 约束
+
+来自 journey / ability / line 三源加载：
+
+1. **Journey 不变量**：`conversations.journey_id` 必须等于 `journeys.id`（外键约束，migration 359 已建）；ConversationsPanel 传入的 `journeyId` 必须来自真实存在的 journey 记录，不允许硬编码或前端伪造。
+2. **gp_id 约束**：GP 二级页创建对话时 `gp_id` 必须是真实存在的 `golden_path(id)`（注意：`golden_paths` 与 `golden_path` 是两张不同实体表；conversations.gp_id REFERENCES golden_path(id)，见 migration 359 第 67 行）；前端从 URL params 取 gpId 后需在 POST /api/brain/conversations 时由后端校验，API 已有 UUID 格式校验，不存在则 404。
+3. **Agent 调用不可在前端直接触发**：所有 agent 调用必须通过 `POST /api/brain/conversations/:id/messages` 在后端走 `conversation-agent.js`，前端不允许直接 spawn claude 进程。
+4. **turn_count 只增不减**：UI 展示的轮次数来自 `conversations.turn_count` 字段，该字段由后端写消息时递增，前端只读展示，不允许前端推算或覆盖。
+5. **Line 页 journey_id = line.id**：`WarRoomLineCommandPage` URL 参数 `:id` 即 `journeys.id`，`ConversationsPanel journeyId={line.id}` 已正确映射；此对应关系不能改动。
+
+---
+
+## 累积 FR
+
+累积 FR: 无
+
+（本任务为 PR3/4 UI 实现，无功能追加请求。PR4 的 Stop Hook + cron 归档已单独建任务，不计入本 FR 列表。）
+
+---
+
+## NFR
+
+1. **响应时间**：议题列表首屏加载 < 2s（本地 localhost:5174，Brain API localhost:5221 同机）；发消息后"军师思考中…"气泡出现延迟 < 300ms（乐观 UI）。
+2. **移动端可用（Tailscale）**：ConversationsPanel 在 375px 宽屏下单栏可操作，输入框可聚焦，气泡不溢出。
+3. **状态一致性**：`sending=true` 期间禁止重复提交（input disabled），避免重复消息。
+4. **错误展示**：网络错误 / API 非 2xx 必须在 UI 中以 `convError` 文字反馈，不得静默吞掉。
+5. **无 console.log 残留**：提交前清除所有调试用 `console.log`，保留 Brain 侧已有的 `[conversations]` 结构化日志。
+
+---
+
 ## target_environment: mac_web
+## journey_type: user_facing
 ## base_repo: cecelia
 ## journey_id: 8bb8252f-29b4-4c34-acb9-1accda7ddfcf
