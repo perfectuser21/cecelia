@@ -110,9 +110,25 @@ write_executable "$fake_bin/sudo" \
   'printf "sudo %s\n" "$*" >> "${FLEET_TEST_TRANSPORT_LOG:?}"' \
   '[[ "${1:-}" == "-n" ]] && shift' \
   'if [[ "${1:-}" == "/bin/rm" && "${FLEET_TEST_SUDO_FAIL_RM:-0}" == 1 ]]; then exit 24; fi' \
+  'if [[ "${1:-}" == "/usr/bin/stat" ]]; then' \
+  '  target="${@: -1}"' \
+  '  if [[ "${FLEET_TEST_STAGE_INVALID_OWNER:-0}" == 1 ]]; then' \
+  '    printf "501:755\n"' \
+  '  elif [[ "${FLEET_TEST_STAGE_WRITABLE:-0}" == 1 && "$target" == */fleet-rollout.sh ]]; then' \
+  '    printf "0:777\n"' \
+  '  elif [[ "$target" == */source/* ]]; then' \
+  '    printf "0:755\n"' \
+  '  else' \
+  '    printf "0:700\n"' \
+  '  fi' \
+  '  exit 0' \
+  'fi' \
+  'if [[ "${1:-}" == "/bin/test" && "${2:-}" == "!" && "${3:-}" == "-L" ]]; then' \
+  '  if [[ "${FLEET_TEST_STAGE_SYMLINK:-0}" == 1 && "${4:-}" == */fleet-nodectl.sh ]]; then exit 1; fi' \
+  'fi' \
   'if [[ "${FLEET_TEST_SUDO_NOEXEC:-0}" == 1 ]]; then' \
   '  case "${1:-}" in' \
-  '    /usr/bin/mktemp|/usr/bin/tar|/bin/mkdir|/bin/chmod|/bin/rm) exec "$@" ;;' \
+  '    /usr/bin/mktemp|/usr/bin/tar|/bin/mkdir|/bin/chmod|/bin/rm|/bin/test|/bin/realpath) exec "$@" ;;' \
   '    */fleet-rollout.sh) exec "$@" ;;' \
   '    env) [[ "${FLEET_TEST_SUDO_EXEC_NODE:-0}" == 1 ]] && exec "$@"; exit 0 ;;' \
   '    *) exit 0 ;;' \
@@ -258,6 +274,36 @@ first_local_sudo="$(grep '^sudo ' "$transport_log" | head -n 1)"
 if grep -Eq "^sudo .* $test_root/tmp/.*/fleet-nodectl\\.sh " "$transport_log"; then
   fail "sudo executed a Fleet script from the controller user's writable temp directory"
 fi
+grep -Fq 'sudo -n /usr/bin/stat -f %u:%Lp -- /var/tmp/cecelia-fleet-rollout.' \
+  "$transport_log" \
+  || fail "local rollout did not validate root staging ownership and mode"
+
+for invalid_stage in owner writable symlink; do
+  : > "$transport_log"
+  invalid_owner=0
+  invalid_writable=0
+  invalid_symlink=0
+  case "$invalid_stage" in
+    owner) invalid_owner=1 ;;
+    writable) invalid_writable=1 ;;
+    symlink) invalid_symlink=1 ;;
+  esac
+  if CECELIA_MACHINE_ID=us-mac-m4 \
+    FLEET_TEST_REAL_GIT=1 \
+    FLEET_TEST_SUDO_NOEXEC=1 \
+    FLEET_TEST_STAGE_INVALID_OWNER="$invalid_owner" \
+    FLEET_TEST_STAGE_WRITABLE="$invalid_writable" \
+    FLEET_TEST_STAGE_SYMLINK="$invalid_symlink" \
+    FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+    run_rollout us-mac-m4 --apply >"$test_root/invalid-$invalid_stage.out" 2>&1; then
+    fail "local rollout accepted invalid root staging: $invalid_stage"
+  fi
+  grep -Fq 'rollout_staging_invalid' "$test_root/invalid-$invalid_stage.out" \
+    || fail "invalid staging failure was not explicit: $invalid_stage"
+  if grep -Fq '__node-apply' "$transport_log"; then
+    fail "invalid staging reached privileged controller execution: $invalid_stage"
+  fi
+done
 
 admit_ready="$test_root/public-admit.ready"
 : > "$node_log"
