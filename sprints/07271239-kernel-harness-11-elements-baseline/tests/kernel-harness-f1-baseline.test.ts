@@ -47,9 +47,42 @@ const BACKBONE_HISTORY = new Map([
   ['1a738e05-99a7-421c-a52d-c2bb80bf19be', 'S6'],
 ]);
 const HISTORY_ALIASES = new Map([
-  ['e2bd9263-87ef-4461-a1d5-5ff07a38b8a8', 'S3'],
-  ['a6888ef3-2482-4655-8703-cf3b9f037cb9', 'S6'],
+  ['e2bd9263-87ef-4461-a1d5-5ff07a38b8a8', {
+    stage: 'S3',
+    backboneStepId: 'd6dcdfaf-4b98-4717-bbe3-522f03f70757',
+  }],
+  ['a6888ef3-2482-4655-8703-cf3b9f037cb9', {
+    stage: 'S6',
+    backboneStepId: '1a738e05-99a7-421c-a52d-c2bb80bf19be',
+  }],
 ]);
+
+const REQUIRED_FAMILIES = [
+  ['KH-F1-F01', 'branch-protect / main-repo-write',
+    'Claude Code branch-protect/main-repo-write hooks',
+    'Kernel policy + Runner + GitHub'],
+  ['KH-F1-F02', 'credential-guard / bash-guard',
+    'Claude Code credential-guard/bash-guard hooks',
+    'Runner enforcement + CI secret scan'],
+  ['KH-F1-F03', 'branch guard / push precheck',
+    'Claude Code branch/push precheck hooks',
+    'Runner + repository precheck + CI'],
+  ['KH-F1-F04', 'DevGate / TDD / DoD',
+    'Claude Code DevGate workflow',
+    'Contract/Generator/CI/Evaluator'],
+  ['KH-F1-F05', 'stop / orphan / watchdog',
+    'Claude Code stop/orphan/watchdog hooks',
+    'Attempt supervisor + Kernel reconcile'],
+  ['KH-F1-F06', 'evaluator / judge',
+    'Claude Code evaluator/judge chain',
+    'Kernel attempts + independent judge'],
+  ['KH-F1-F07', 'branch protection',
+    'GitHub branch protection',
+    'GitHub external final gate'],
+  ['KH-F1-F08', 'staging / promote / rollback',
+    'Legacy staging/promote/rollback path',
+    'Release state machine'],
+] as const;
 
 let client: Client;
 let runtimeBefore: unknown;
@@ -128,9 +161,10 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
     expect(duplicates).toEqual([]);
   });
 
-  it('历史 ID 与 Notion 关联保留且 S0-S12 名称 promise 骨干完整', async () => {
+  it('历史 ID 与 Notion 关联保留、别名缺口落库且 S0-S12 骨干完整', async () => {
     const { rows: history } = await client.query(
-      `SELECT id, notion_id, lifecycle_stage, is_backbone
+      `SELECT id, notion_id, lifecycle_stage, is_backbone,
+              mapping_status, mapping_reason, mapping_evidence
        FROM journey_steps WHERE id = ANY($1::uuid[]) ORDER BY id`,
       [HISTORY.map(([id]) => id)],
     );
@@ -140,12 +174,21 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
     }
     for (const [id, stage] of BACKBONE_HISTORY) {
       expect(history).toContainEqual(expect.objectContaining({
-        id, lifecycle_stage: stage, is_backbone: true,
+        id, lifecycle_stage: stage, is_backbone: true, mapping_status: 'exact',
       }));
     }
-    for (const [id, stage] of HISTORY_ALIASES) {
+    for (const [id, expected] of HISTORY_ALIASES) {
       expect(history).toContainEqual(expect.objectContaining({
-        id, lifecycle_stage: stage, is_backbone: false,
+        id,
+        lifecycle_stage: expected.stage,
+        is_backbone: false,
+        mapping_status: 'gap',
+        mapping_reason: 'co_stage_historical_alias',
+        mapping_evidence: expect.objectContaining({
+          decision_source: 'sprint-prd.md#边界情况',
+          mapped_stage: expected.stage,
+          backbone_step_id: expected.backboneStepId,
+        }),
       }));
     }
     const { rows: stages } = await client.query(
@@ -308,6 +351,10 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
       unmapped_count: 0,
       duplicate_mapping_count: 0,
       unknown_auto_decidable_count: 0,
+      required_family_count: 8,
+      unwired_family_count: 0,
+      owner_mismatch_count: 0,
+      empty_gap_count: 0,
     });
     expect(coverage.candidate_source_count).toBe(
       coverage.included_source_count + coverage.excluded_source_count,
@@ -335,12 +382,64 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
     expect(report.invalid_source_refs).toEqual([]);
     expect(report.invalid_cell_targets).toEqual([]);
     expect(report.invalid_root_assertion_refs).toEqual([]);
+    expect(report.required_families).toHaveLength(REQUIRED_FAMILIES.length);
+    const requiredById = new Map(
+      report.required_families.map((family) => [family.family_id, family]),
+    );
+    expect([...requiredById.keys()].sort()).toEqual(
+      REQUIRED_FAMILIES.map(([familyId]) => familyId),
+    );
+    const nextKnifeOrders: number[] = [];
+    for (const [familyId, name, legacyOwner, unifiedOwner] of REQUIRED_FAMILIES) {
+      const family = requiredById.get(familyId);
+      expect(family).toMatchObject({
+        family_id: familyId,
+        name,
+        legacy_owner: legacyOwner,
+        unified_owner: unifiedOwner,
+      });
+      expect(family.gap.trim().length).toBeGreaterThan(0);
+      expect(Number.isInteger(family.next_knife_order)).toBe(true);
+      nextKnifeOrders.push(family.next_knife_order);
+      expect(family.wiring_refs.length).toBeGreaterThan(0);
+      const wiringIds = new Set<string>();
+      for (const wiring of family.wiring_refs) {
+        expect(wiring.wiring_id).toBeTruthy();
+        expect(wiringIds.has(wiring.wiring_id)).toBe(false);
+        wiringIds.add(wiring.wiring_id);
+        expect([
+          'hook', 'devgate_ci', 'kernel_gate', 'github_gate', 'release_path',
+        ]).toContain(wiring.source_kind);
+        expect([
+          'invokes', 'imports', 'workflow_step', 'policy_gate',
+        ]).toContain(wiring.relation);
+        expect(wiring.path).toBeTruthy();
+        expect(existsSync(resolve(process.cwd(), wiring.path))).toBe(true);
+        expect(wiring.anchor).toBeTruthy();
+        expect(wiring.probe_command).toBeTruthy();
+        expect(wiring.probe_command).toMatch(
+          /^(?:npx vitest run\s+\S+|bash (?!-n\b)\S+|node (?!-e\b)\S+)/,
+        );
+        expect(wiring.artifact_sha).toBe(currentSha);
+        expect(wiring.source_digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+        expect(wiring.probe_started).toBe(true);
+        expect(wiring.exit_code).toBe(0);
+        expect(() => execFileSync('bash', ['-lc', wiring.probe_command], {
+          cwd: process.cwd(),
+          stdio: 'pipe',
+          timeout: 120_000,
+        })).not.toThrow();
+      }
+    }
+    expect(nextKnifeOrders.sort((left, right) => left - right))
+      .toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     const statuses = ['active', 'shadowed', 'retired', 'drifted', 'unknown'];
     const actualStatusCounts = Object.fromEntries(
       statuses.map((status) => [status, 0]),
     ) as Record<string, number>;
     const elements = EXACT_ELEMENTS;
     const seenIds = new Set<string>();
+    const behaviorOrders: number[] = [];
     for (const item of report.legacy_baseline) {
       expect(item.legacy_behavior_id).toBeTruthy();
       expect(seenIds.has(item.legacy_behavior_id)).toBe(false);
@@ -353,12 +452,22 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
       });
       expect(STAGES.map(([stage]) => stage)).toContain(item.journey_stage);
       expect(elements).toContain(item.element);
-      expect(item.legacy_owner).toBeTruthy();
+      const requiredFamily = requiredById.get(item.required_family_id);
+      expect(requiredFamily).toBeTruthy();
+      expect(item.legacy_owner).toBe(requiredFamily.legacy_owner);
       expect(statuses).toContain(item.audit_status);
       actualStatusCounts[item.audit_status] += 1;
-      expect(item.unified_owner).toBeTruthy();
-      expect(typeof item.gap).toBe('string');
-      expect(item.next_knife_order).toBeGreaterThan(0);
+      expect(item.unified_owner).toBe(requiredFamily.unified_owner);
+      expect(item.gap.trim().length).toBeGreaterThan(0);
+      expect(Number.isInteger(item.next_knife_order)).toBe(true);
+      behaviorOrders.push(item.next_knife_order);
+      expect(item.wiring_ref_ids.length).toBeGreaterThan(0);
+      const familyWiringIds = new Set(
+        requiredFamily.wiring_refs.map((wiring) => wiring.wiring_id),
+      );
+      for (const wiringId of item.wiring_ref_ids) {
+        expect(familyWiringIds.has(wiringId)).toBe(true);
+      }
       expect(item.source_refs.length).toBeGreaterThan(0);
       expect(Object.hasOwn(item, 'assertion_ref')).toBe(true);
       expect(item.status_evidence).toMatchObject({
@@ -412,6 +521,9 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
       + actualStatusCounts.shadowed
       + actualStatusCounts.retired
       + actualStatusCounts.drifted,
+    );
+    expect(behaviorOrders.sort((left, right) => left - right)).toEqual(
+      Array.from({ length: seenIds.size }, (_, index) => index + 1),
     );
   });
 
