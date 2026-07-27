@@ -48,7 +48,7 @@ run_installer_with_id() {
   shift
   FLEET_WORKER_ID="$id_path" \
     FLEET_WORKER_INSTALL_DIR="$install_dir" \
-    FLEET_WORKER_LOG_DIR="$log_dir" \
+    FLEET_WORKER_LOG_DIR="${FLEET_WORKER_TEST_LOG_DIR:-$log_dir}" \
     FLEET_WORKER_LAUNCHCTL="$test_root/launchctl" \
     FLEET_WORKER_PLUTIL="$test_root/plutil" \
     FLEET_WORKER_NODE_PROBE="$test_root/node-probe" \
@@ -404,6 +404,26 @@ printf '%s\n' \
   'printf "%s\\n" "{\"ok\":true}"' \
   'exit 0' > "$test_root/node-probe"
 chmod +x "$test_root/node-probe"
+
+: > "$acl_log"
+: > "$preflight_log"
+: > "$launch_log"
+rm -f "$acl_state" "$socket_acl_state"
+malformed_log_dir="$test_root/"$'invalid\001log'
+mkdir -p "$malformed_log_dir"
+malformed_plist_output=''
+if malformed_plist_output="$(
+  FLEET_WORKER_TEST_LOG_DIR="$malformed_log_dir" \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "malformed rendered plist unexpectedly passed validation"
+fi
+grep -Fq 'plist_validation_failed' <<<"$malformed_plist_output" \
+  || fail "malformed rendered plist lacked a bounded validation signature"
+[[ ! -s "$launch_log" ]] \
+  || fail "malformed rendered plist mutated launchd before validation"
+[[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+  || fail "malformed rendered plist leaked a newly-added ACL"
 
 : > "$launch_log"
 root_log_target="$test_root/root-log-target"
