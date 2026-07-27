@@ -54,6 +54,8 @@ function createApprovedRepo() {
     'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version = \'365\'"',
     'Action: apply packages/brain/migrations/365_executor_kind_kernel_process.sql',
     'Expected: schema_version contains 365',
+    'Environment: local_api',
+    'Safety: fail-closed on approved contract drift',
     '',
   ].join('\n'));
   write(repo, 'packages/brain/migrations/365_executor_kind_kernel_process.sql', '-- migration 365\n');
@@ -183,6 +185,28 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
         prdContent: '# PRD',
         contractContent: '# Contract',
       });
+      await materializeApprovedContractManifest(client, {
+        runId,
+        version: 6,
+        branch: 'cp-harness-propose-r6-51836fb2-a12',
+        manifest: manifestA,
+        prdContent: '# PRD replay attempted',
+        contractContent: '# Contract replay attempted',
+      });
+      const afterReplay = await client.query(
+        `SELECT count(*)::int AS count,
+                max(manifest_digest) AS manifest_digest,
+                max(prd_content) AS prd_content,
+                max(contract_content) AS contract_content
+           FROM initiative_contracts
+          WHERE version = 6`,
+      );
+      expect(afterReplay.rows[0]).toMatchObject({
+        count: 1,
+        manifest_digest: manifestA.manifest_digest,
+        prd_content: '# PRD',
+        contract_content: '# Contract',
+      });
       await expect(materializeApprovedContractManifest(client, {
         runId,
         version: 6,
@@ -217,6 +241,8 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
       'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version = \'366\'"',
       'Action: apply packages/brain/migrations/366_executor_kind_kernel_process.sql',
       'Expected: schema_version contains 366',
+      'Environment: local_api',
+      'Safety: fail-closed on approved contract drift',
       '',
     ].join('\n'));
     write(repo, 'packages/brain/migrations/366_executor_kind_kernel_process.sql', '-- migration 366\n');
@@ -255,6 +281,8 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
       'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version = \'365\'"',
       'Action: apply packages/brain/migrations/365_executor_kind_kernel_process.sql',
       'Expected: schema_version contains 365',
+      'Environment: local_api',
+      'Safety: fail-closed on approved contract drift',
       'Evidence: CI run 123 passed at sha-current',
       'Provenance: checked by approved-contract-provenance',
       '',
@@ -274,11 +302,55 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     });
   });
 
+  it('root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift', async () => {
+    const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
+    const { repo, approvedSha } = createApprovedRepo();
+    const manifest = await buildApprovedContractManifest({
+      repoRoot: repo,
+      runId: RUN_ID,
+      contractVersion: 6,
+      sourceCommitSha: approvedSha,
+      sprintDir: SPRINT_DIR,
+      approvedAt: '2026-07-27T00:00:00.000Z',
+      reviewerVerdict: { verdict: 'APPROVED' },
+    });
+
+    write(repo, 'DoD.md', [
+      '# Root DoD',
+      '- [ ] migration 365 stays approved',
+      'Test: psql "$DB_URL" -c "SELECT version FROM schema_version WHERE version IN (\'365\',\'366\')"',
+      'Action: apply packages/brain/migrations/365_executor_kind_kernel_process.sql with fallback rewrite',
+      'Expected: schema_version contains any approved-looking migration',
+      'Environment: developer_laptop',
+      'Safety: warn-only on approved contract drift',
+      '',
+    ].join('\n'));
+    sh(repo, 'git add DoD.md && git commit -qm root-dod-semantic-drift');
+    const currentSha = sh(repo, 'git rev-parse HEAD');
+
+    await expect(verifyApprovedContractManifest({
+      repoRoot: repo,
+      manifest,
+      currentCommitSha: currentSha,
+    })).resolves.toMatchObject({
+      ok: false,
+      reason: 'approved_contract_drift',
+      drift: expect.arrayContaining([
+        expect.objectContaining({ path: 'DoD.md', change: 'semantic' }),
+      ]),
+    });
+  });
+
   it('missing manifest unreachable stale sha and stale manifest digest fail closed', async () => {
     const { verifyApprovedContractReference } = await subject();
     const currentPrSha = 'b'.repeat(40);
     const manifestDigest = 'c'.repeat(64);
 
+    expect(verifyApprovedContractReference({
+      manifestLoadError: new Error('git object store unavailable'),
+      expectedManifestDigest: manifestDigest,
+      currentPrSha,
+    })).toMatchObject({ ok: false, reason: 'approved_contract_manifest_unreachable' });
     expect(verifyApprovedContractReference({
       manifest: null,
       expectedManifestDigest: manifestDigest,
@@ -367,6 +439,36 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
 
     expect(verifyAttemptCallbackApprovedContract(attempt, {
       decision: { outcome: 'PASS', manifest_digest: APPROVED_DIGEST },
+      provider_metadata: { pr_head_sha: 'sha-current' },
+    })).toMatchObject({ ok: true });
+  });
+
+  it('callback refuses stale pr_head_sha before writing generator verdict', async () => {
+    const { verifyAttemptCallbackApprovedContract } = await subject();
+    const attempt = {
+      id: 'attempt-generator-1',
+      role: 'generator',
+      task_bundle: {
+        inputs: {
+          contract: {
+            manifest_digest: APPROVED_DIGEST,
+            approved_manifest: { manifest_digest: APPROVED_DIGEST },
+          },
+          pull_request: { head_sha: 'sha-current' },
+        },
+      },
+    };
+
+    expect(verifyAttemptCallbackApprovedContract(attempt, {
+      decision: { outcome: 'completed', manifest_digest: APPROVED_DIGEST },
+      provider_metadata: { pr_head_sha: 'sha-old' },
+    })).toMatchObject({
+      ok: false,
+      reason: 'stale_generator_pr_head_sha',
+    });
+
+    expect(verifyAttemptCallbackApprovedContract(attempt, {
+      decision: { outcome: 'completed', manifest_digest: APPROVED_DIGEST },
       provider_metadata: { pr_head_sha: 'sha-current' },
     })).toMatchObject({ ok: true });
   });
