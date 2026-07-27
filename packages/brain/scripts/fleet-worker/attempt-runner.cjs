@@ -486,6 +486,16 @@ function isTerminalContainerStatus(status) {
   return ['missing', 'exited', 'dead', 'removed'].includes(status);
 }
 
+function assertLeaseFence(state, lease) {
+  if (
+    !lease
+    || lease.owner !== state.lease_owner
+    || lease.generation !== state.lease_generation
+  ) {
+    throw new Error('attempt_lease_conflict');
+  }
+}
+
 function createAttemptRunner({
   workspaceManager,
   docker,
@@ -651,13 +661,16 @@ function createAttemptRunner({
       });
     },
 
-    async terminal(attemptId) {
+    async terminal(attemptId, lease = null) {
       const state = await stateStore.get(attemptId);
       if (!state) {
         return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
       }
       if (state.worker_id !== workerId) {
         throw new Error('attempt_worker_owner_mismatch');
+      }
+      if (lease !== null) {
+        assertLeaseFence(state, lease);
       }
       try {
         await docker.remove({
@@ -670,8 +683,13 @@ function createAttemptRunner({
       return cleanupWorkspaceState(state);
     },
 
-    async cancel(attemptId) {
-      return this.terminal(attemptId);
+    async cancel(attemptId, lease) {
+      const state = await stateStore.get(attemptId);
+      if (!state) {
+        return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
+      }
+      assertLeaseFence(state, lease);
+      return this.terminal(attemptId, lease);
     },
 
     async reconcile() {

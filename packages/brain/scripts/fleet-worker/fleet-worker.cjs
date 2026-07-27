@@ -325,6 +325,7 @@ async function readJson(request, maximumBytes) {
 function requestErrorStatus(error) {
   if (Number.isInteger(error?.statusCode)) return error.statusCode;
   if (error?.message === 'attempt_already_exists') return 409;
+  if (error?.message === 'attempt_lease_conflict') return 409;
   if (
     /(?:invalid|required|mismatch|unknown_field|not_allowed|untrusted)/i
       .test(String(error?.message ?? ''))
@@ -431,7 +432,11 @@ function createFleetWorkerServer(options = {}) {
       const actionMatch = request.url.match(ATTEMPT_ACTION_PATH);
       if (request.method === 'POST' && actionMatch) {
         const [, attemptId, action] = actionMatch;
-        const result = await attemptRunner[action](attemptId);
+        const body = await readJson(request, maximumRequestBytes);
+        const result = await attemptRunner[action](attemptId, {
+          owner: body.lease_owner,
+          generation: body.lease_generation,
+        });
         writeJson(response, 200, result);
         return;
       }
