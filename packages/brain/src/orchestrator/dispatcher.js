@@ -7,6 +7,7 @@ import { parseTaskBundle } from './execution-contract.js';
 import { generateCallbackSecret, hashCallbackSecret } from './callback-auth.js';
 import { errorMessage, failurePersistenceError } from './failure-persistence.js';
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
+import { buildApprovedContractDispatchContext } from './approved-contract-provenance.js';
 
 const ACTION_SPECS = Object.freeze({
   'spawn:planner': {
@@ -132,7 +133,13 @@ function buildInputs(spec, ctx, attemptMetadata) {
     common.contract_sha = observed.proposeBranchSha ?? null;
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
-    common.contract = observed.contract?.row ?? null;
+    const contractRow = observed.contract?.row ?? null;
+    const provenance = buildApprovedContractDispatchContext({
+      role: spec.role,
+      contract: contractRow,
+      currentPrSha: observed.pr?.head_sha ?? null,
+    });
+    common.contract = contractRow ? provenance.inputs.contract : null;
     common.contract_branch = observed.contract?.row?.branch
       ?? observed.contract?.row?.propose_branch
       ?? null;
@@ -142,6 +149,8 @@ function buildInputs(spec, ctx, attemptMetadata) {
   }
   if (spec.role === 'evaluator') {
     common.pr_branch = observed.pr?.head_ref ?? null;
+  }
+  if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.pr_head_sha = observed.pr?.head_sha ?? null;
   }
   if (spec.role === 'judge') {
@@ -654,10 +663,16 @@ export function createDetachedLauncher({
       if (bundle.inputs.contract_branch) {
         roleEnv.CONTRACT_BRANCH = String(bundle.inputs.contract_branch);
       }
+      if (bundle.inputs.contract?.manifest_digest) {
+        roleEnv.APPROVED_CONTRACT_MANIFEST_DIGEST = String(bundle.inputs.contract.manifest_digest);
+      }
+      if (bundle.inputs.contract?.source_commit_sha) {
+        roleEnv.APPROVED_CONTRACT_SOURCE_SHA = String(bundle.inputs.contract.source_commit_sha);
+      }
       if (attempt.role === 'evaluator' && bundle.inputs.pr_branch) {
         roleEnv.PR_BRANCH = String(bundle.inputs.pr_branch);
       }
-      if (attempt.role === 'evaluator' && bundle.inputs.pr_head_sha) {
+      if (['evaluator', 'judge'].includes(attempt.role) && bundle.inputs.pr_head_sha) {
         roleEnv.PR_HEAD_SHA = String(bundle.inputs.pr_head_sha);
       }
       const extraMounts = [];

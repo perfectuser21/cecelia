@@ -14,6 +14,7 @@ export default defineConfig({
   test: {
     include: [
       'sprints/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      'packages/brain/src/orchestrator/__tests__/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'packages/brain/scripts/ci/__tests__/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'tests/regression/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'tests/**/*.{test,spec}.?(c|m)[jt]s?(x)',

@@ -19,7 +19,11 @@ import { deriveCounters } from './counters.js';
 import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
-import { materializeApprovedContract } from './contract-store.js';
+import {
+  materializeApprovedContract,
+  materializeApprovedContractManifest,
+} from './contract-store.js';
+import { buildApprovedContractManifest } from './approved-contract-provenance.js';
 import { ACTION, LOG_ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
 import {
   asStructuredJson,
@@ -398,14 +402,41 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
           await markRunFailed(deps.pool, resolvedRunId, 'approved_but_contract_artifacts_missing');
           return { exitReason: 'approved_but_contract_artifacts_missing', hops };
         }
-        await materializeApprovedContract(deps.pool, {
-          runId: resolvedRunId,
-          version: observed.proposeBranchRn,
-          branch: observed.proposeBranch,
-          prdContent: artifacts.prdContent,
-          contractContent: artifacts.contractContent,
-          approvedAt: now(),
-        });
+        const payload = asPayload(observed.task?.payload);
+        const repoRoot = payload.worktree_path ?? payload.repo_root ?? process.cwd();
+        const sprintDir = String(payload.sprint_dir ?? '').replace(/\/$/, '');
+        if (sprintDir && (deps.enableApprovedContractManifest === true || deps.buildApprovedContractManifest)) {
+          const manifest = await (deps.buildApprovedContractManifest ?? buildApprovedContractManifest)({
+            repoRoot,
+            runId: resolvedRunId,
+            contractVersion: observed.proposeBranchRn,
+            sourceCommitSha: approvedSha,
+            sprintDir,
+            approvedAt: now().toISOString(),
+            reviewerVerdict: {
+              verdict: 'APPROVED',
+              reviewer: 'harness-contract-reviewer',
+              rn: observed.proposeBranchRn,
+            },
+          });
+          await materializeApprovedContractManifest(deps.pool, {
+            runId: resolvedRunId,
+            version: observed.proposeBranchRn,
+            branch: observed.proposeBranch,
+            manifest,
+            prdContent: artifacts.prdContent,
+            contractContent: artifacts.contractContent,
+          });
+        } else {
+          await materializeApprovedContract(deps.pool, {
+            runId: resolvedRunId,
+            version: observed.proposeBranchRn,
+            branch: observed.proposeBranch,
+            prdContent: artifacts.prdContent,
+            contractContent: artifacts.contractContent,
+            approvedAt: now(),
+          });
+        }
         await beat();
         continue;
       }
@@ -547,6 +578,9 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         evaluateVerdict: observed.evaluateVerdict,
         judgeVerdict: observed.judgeVerdict,
         prHeadSha: observed.pr.head_sha,
+        approvedManifestDigest: observed.contract?.row?.manifest_digest
+          ?? observed.contract?.row?.approved_manifest?.manifest_digest
+          ?? null,
         reviewRequired: observed.reviewRequired,
         reviewApproved: observed.reviewApproved,
       });
