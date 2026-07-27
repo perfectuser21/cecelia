@@ -1,5 +1,9 @@
 'use strict';
 
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const OTHER_ATTEMPT_ID = '33333333-3333-4333-8333-333333333333';
@@ -278,5 +282,96 @@ describe('Fleet Worker Attempt runner', () => {
     });
     expect(stateStore.states.has(OTHER_ATTEMPT_ID)).toBe(true);
     expect(stateStore.states.has(foreignAttempt.attempt_id)).toBe(true);
+  });
+});
+
+describe('Fleet Worker durable runtime adapters', () => {
+  it('builds a pinned Docker launch with only Worker-owned mounts', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
+    const runCommand = vi.fn(async (_command, args) => {
+      if (args[0] === 'create') return { stdout: 'container-created\n' };
+      return { stdout: '' };
+    });
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+
+    try {
+      await expect(docker.launch({
+        attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        image: IMAGE_DIGEST,
+        providerSpec: request().provider_spec,
+        workspaceMount: {
+          source: `/controlled/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: true,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        callback: {
+          url: request().callback_url,
+          token: request().callback_token,
+        },
+        lease: { owner: 'dispatcher-1', generation: 0 },
+      })).resolves.toEqual({ containerId: 'container-created' });
+
+      const [command, createArgs] = runCommand.mock.calls[0];
+      expect(command).toBe('docker');
+      expect(createArgs[0]).toBe('create');
+      expect(createArgs).toContain(IMAGE_DIGEST);
+      expect(createArgs).toContain(
+        `type=bind,src=/controlled/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`,
+      );
+      expect(createArgs.join(' ')).not.toContain('/Users/operator');
+      expect(createArgs).toEqual(expect.arrayContaining([
+        '--label', `cecelia.fleet.attempt_id=${ATTEMPT_ID}`,
+        '--label', `cecelia.fleet.run_id=${RUN_ID}`,
+        '--label', `cecelia.fleet.worker_id=${WORKER_ID}`,
+      ]));
+      expect(runCommand.mock.calls[1]).toEqual([
+        'docker',
+        ['start', 'cecelia-fleet-22222222-2222-4222-8222-222222222222'],
+        undefined,
+      ]);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('persists bounded Attempt state atomically without execution secrets', async () => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-store-'));
+    const store = createFileAttemptStateStore({ stateRoot });
+    const state = {
+      attempt_id: ATTEMPT_ID,
+      run_id: RUN_ID,
+      worker_id: WORKER_ID,
+      container_id: 'container-1',
+      status: 'running',
+      workspace: {
+        path: `/controlled/worktrees/${ATTEMPT_ID}`,
+        owner: { run_id: RUN_ID, attempt_id: ATTEMPT_ID },
+      },
+    };
+
+    try {
+      await store.save(state);
+
+      await expect(store.get(ATTEMPT_ID)).resolves.toEqual(state);
+      await expect(store.list()).resolves.toEqual([state]);
+      const files = fs.readdirSync(stateRoot);
+      expect(files).toEqual([`${ATTEMPT_ID}.json`]);
+      const persisted = fs.readFileSync(path.join(stateRoot, files[0]), 'utf8');
+      expect(persisted).not.toMatch(/callback_token|authorization|stdin|prompt/i);
+
+      await store.delete(ATTEMPT_ID);
+      await expect(store.get(ATTEMPT_ID)).resolves.toBeNull();
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 });
