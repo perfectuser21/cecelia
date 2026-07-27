@@ -1,7 +1,7 @@
 # Fleet Node Self-Deploy Design
 
-**Date:** 2026-07-27  
-**Scope:** Phase 4A only  
+**Date:** 2026-07-27
+**Scope:** Phase 4A only
 **PR:** #4367
 
 ## Goal
