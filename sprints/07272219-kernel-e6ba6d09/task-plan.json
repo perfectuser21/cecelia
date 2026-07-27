@@ -9,8 +9,11 @@
       "scope": "基于服务端 target_environment 与当前 head SHA 计算 required contexts，令 local_api 对 preview 记 neutral、preview/staging/production fail-closed，并保留 preview 启动失败的 status/body/error evidence 与 single-SHA review gate。",
       "dod": [
         "[BEHAVIOR] local_api preview neutral 且仅 required contexts 全过才继续",
-        "[BEHAVIOR] preview 目标 preview failure 缺失 stale SHA 错 repo run 一律阻断",
+        "[BEHAVIOR] preview 目标 preview failure 时必须硬阻断",
+        "[BEHAVIOR] stale check SHA / wrong repo / wrong run / missing required context 全部阻断",
         "[BEHAVIOR] preview 启动失败保留 status body error evidence",
+        "[BEHAVIOR] legacy rollout 不得覆盖服务端 required context contract",
+        "[BEHAVIOR] generator fix 仅在真正 required failure 才触发",
         "[BEHAVIOR] post merge staging production hard gate 与 review_required 单 SHA 审批",
         "[ARTIFACT] packages/brain/src/orchestrator/required-context-contract.js 导出 createRequiredContextContract 与 evaluateTaskGate"
       ],

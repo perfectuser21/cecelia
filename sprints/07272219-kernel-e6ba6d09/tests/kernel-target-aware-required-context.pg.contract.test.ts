@@ -155,26 +155,57 @@ describe('Kernel target-aware required-context contract [BEHAVIOR]', () => {
     });
 
     expect(result.decision).toBe('continue');
-    expect(result.contexts.find((c) => c.name === 'Deploy Preview Environment')).toMatchObject({
+    expect(result.contexts.find((context) => context.name === 'Deploy Preview Environment')).toMatchObject({
       classification: 'neutral',
       required: false,
     });
-    expect(result.contexts.find((c) => c.name === 'brain-ci')).toMatchObject({
+    expect(result.contexts.find((context) => context.name === 'brain-ci')).toMatchObject({
       classification: 'pass',
       required: true,
     });
+    expect(result.generator_fix_required).toBe(false);
   });
 
-  it('preview 目标 preview failure 缺失 stale SHA 错 repo run 一律阻断', async () => {
+  it('preview 目标 preview failure 时必须硬阻断', async () => {
     const gate = await createGate({
       fetchStatusCheckRollup: async () => ({
-        repo: OTHER_REPO,
-        run_id: 9999,
-        head_sha: STALE_SHA,
-        checks: [{ name: 'Deploy Preview Environment', state: 'FAILURE' }],
+        repo: GOOD_REPO,
+        run_id: 1001,
+        head_sha: GOOD_SHA,
+        checks: [
+          { name: 'brain-ci', state: 'SUCCESS' },
+          { name: 'Deploy Preview Environment', state: 'FAILURE' },
+        ],
       }),
     });
     const seeded = await seedTask({ targetEnvironment: 'preview_env' });
+
+    const result = await gate.evaluateTaskGate({
+      taskId: seeded.taskId,
+      runId: seeded.runId,
+      prUrl: PR_URL,
+      mode: 'pre_merge',
+    });
+
+    expect(result.decision).toBe('block');
+    expect(result.reason).toBe('preview_failed');
+    expect(result.contexts.find((context) => context.name === 'Deploy Preview Environment')).toMatchObject({
+      classification: 'fail',
+      required: true,
+    });
+    expect(result.generator_fix_required).toBe(true);
+  });
+
+  it('stale check SHA 必须拒绝当前 gate', async () => {
+    const gate = await createGate({
+      fetchStatusCheckRollup: async () => ({
+        repo: GOOD_REPO,
+        run_id: 1001,
+        head_sha: STALE_SHA,
+        checks: [{ name: 'brain-ci', state: 'SUCCESS' }],
+      }),
+    });
+    const seeded = await seedTask({ targetEnvironment: 'local_api' });
 
     const result = await gate.evaluateTaskGate({
       taskId: seeded.taskId,
@@ -186,8 +217,78 @@ describe('Kernel target-aware required-context contract [BEHAVIOR]', () => {
     });
 
     expect(result.decision).toBe('block');
-    expect(result.reason).toMatch(/preview_failed|missing_required_context|stale_check_sha|repo_mismatch|run_mismatch/);
-    expect(result.contexts.find((c) => c.name === 'Deploy Preview Environment')?.required).toBe(true);
+    expect(result.reason).toBe('stale_check_sha');
+  });
+
+  it('wrong repo isolation 必须阻断', async () => {
+    const gate = await createGate({
+      fetchStatusCheckRollup: async () => ({
+        repo: OTHER_REPO,
+        run_id: 1001,
+        head_sha: GOOD_SHA,
+        checks: [{ name: 'brain-ci', state: 'SUCCESS' }],
+      }),
+    });
+    const seeded = await seedTask({ targetEnvironment: 'local_api' });
+
+    const result = await gate.evaluateTaskGate({
+      taskId: seeded.taskId,
+      runId: seeded.runId,
+      prUrl: PR_URL,
+      mode: 'pre_merge',
+      expectedRunId: 1001,
+      expectedRepo: GOOD_REPO,
+    });
+
+    expect(result.decision).toBe('block');
+    expect(result.reason).toBe('repo_mismatch');
+  });
+
+  it('wrong run isolation 必须阻断', async () => {
+    const gate = await createGate({
+      fetchStatusCheckRollup: async () => ({
+        repo: GOOD_REPO,
+        run_id: 9999,
+        head_sha: GOOD_SHA,
+        checks: [{ name: 'brain-ci', state: 'SUCCESS' }],
+      }),
+    });
+    const seeded = await seedTask({ targetEnvironment: 'local_api' });
+
+    const result = await gate.evaluateTaskGate({
+      taskId: seeded.taskId,
+      runId: seeded.runId,
+      prUrl: PR_URL,
+      mode: 'pre_merge',
+      expectedRunId: 1001,
+      expectedRepo: GOOD_REPO,
+    });
+
+    expect(result.decision).toBe('block');
+    expect(result.reason).toBe('run_mismatch');
+  });
+
+  it('缺失 required context 必须阻断并返回审计原因', async () => {
+    const gate = await createGate({
+      fetchStatusCheckRollup: async () => ({
+        repo: GOOD_REPO,
+        run_id: 1001,
+        head_sha: GOOD_SHA,
+        checks: [],
+      }),
+    });
+    const seeded = await seedTask({ targetEnvironment: 'local_api' });
+
+    const result = await gate.evaluateTaskGate({
+      taskId: seeded.taskId,
+      runId: seeded.runId,
+      prUrl: PR_URL,
+      mode: 'pre_merge',
+    });
+
+    expect(result.decision).toBe('block');
+    expect(result.reason).toBe('missing_required_context');
+    expect(result.missing_contexts).toContain('brain-ci');
   });
 
   it('preview 启动失败保留 status body error evidence', async () => {
@@ -218,29 +319,6 @@ describe('Kernel target-aware required-context contract [BEHAVIOR]', () => {
       response_body: '{"error":"upstream bad gateway"}',
       error: expect.stringContaining('curl: (22)'),
     });
-  });
-
-  it('缺失 required context 必须阻断并返回审计原因', async () => {
-    const gate = await createGate({
-      fetchStatusCheckRollup: async () => ({
-        repo: GOOD_REPO,
-        run_id: 1001,
-        head_sha: GOOD_SHA,
-        checks: [],
-      }),
-    });
-    const seeded = await seedTask({ targetEnvironment: 'local_api' });
-
-    const result = await gate.evaluateTaskGate({
-      taskId: seeded.taskId,
-      runId: seeded.runId,
-      prUrl: PR_URL,
-      mode: 'pre_merge',
-    });
-
-    expect(result.decision).toBe('block');
-    expect(result.reason).toBe('missing_required_context');
-    expect(result.missing_contexts).toContain('brain-ci');
   });
 
   it('legacy rollout 不得覆盖服务端 required context contract', async () => {
@@ -283,6 +361,7 @@ describe('Kernel target-aware required-context contract [BEHAVIOR]', () => {
 
     expect(localResult.generator_fix_required).toBe(false);
     expect(previewResult.generator_fix_required).toBe(true);
+    expect(previewResult.reason).toBe('preview_failed');
   });
 
   it('post merge staging production hard gate 与 review_required 单 SHA 审批', async () => {
