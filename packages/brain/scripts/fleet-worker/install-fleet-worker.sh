@@ -535,6 +535,9 @@ validate_worker_token_file() {
 
 validate_worker_data_root_path() {
   local managed_parent="$SYSTEM_ROOT/var/lib/cecelia"
+  local remaining
+  local component
+  local candidate
   case "$FLEET_DATA_ROOT" in
     "$managed_parent"/*) ;;
     *) die "worker_data_root_invalid" ;;
@@ -546,6 +549,19 @@ validate_worker_data_root_path() {
     *'/./'*|*'/../'*|*'/.'|*'/..') die "worker_data_root_invalid" ;;
     */) die "worker_data_root_invalid" ;;
   esac
+  [[ ! -L "$managed_parent" ]] || die "worker_data_root_invalid"
+  remaining="${FLEET_DATA_ROOT#"$managed_parent"/}"
+  candidate="$managed_parent"
+  while [[ -n "$remaining" ]]; do
+    component="${remaining%%/*}"
+    candidate="$candidate/$component"
+    [[ ! -L "$candidate" ]] || die "worker_data_root_invalid"
+    if [[ "$remaining" == */* ]]; then
+      remaining="${remaining#*/}"
+    else
+      remaining=''
+    fi
+  done
 }
 
 prepare_worker_data_root() {
