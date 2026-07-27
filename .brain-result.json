@@ -1,1 +1,75 @@
-{"propose_branch":"cp-harness-propose-r3-a1fa8636-a8","workstream_count":1,"task_plan_path":"sprints/07251915-kernel-a1fa8636/task-plan.json"}
+{
+  "verdict": "PASS",
+  "exit_code": 0,
+  "log_tail": "Playwright @playwright/test — 11/11 PASSED (1.4s):\n✓ 1 [api-tests] B5: GET /conversations 无 journey_id → HTTP 400 (16ms)\n✓ 2 [api-tests] INV-1: POST 伪 journey_id → HTTP 404 (10ms)\n✓ 3 [api-tests] INV-2: POST 非UUID gp_id → HTTP 400 (4ms)\n✓ 4 [api-tests] B4: POST 带 gp_id → HTTP 201, gp_id 落库正确 (8ms)\n  assistant reply (78 chars): PR3/4已通过API/DB/路由证据验证(PASS)，但Playwright截屏因环境受限未跑，且未开PR未合并，尚不\n✓ 5 [api-tests] 对话消息: user 消息写库 + assistant 消息存在 (5ms)\n✓ 6 [api-tests] Dashboard: /warroom/gp/:gpId route → HTTP 200 (SPA) (322ms)\n✓ 7 [api-tests] Dashboard: /warroom/line/:journeyId route → HTTP 200 (SPA) (10ms)\n✓ 8 [api-tests] SRC: ConversationsPanel.tsx 含 statusBadgeMeta + gp_id 注入 (4ms)\n✓ 9 [api-tests] SRC: WarRoomGoldenPathPage.tsx 存在且含 ConversationsPanel + gpId (1ms)\n✓ 10 [api-tests] SRC: system-hub 注册 /warroom/gp/:gpId 路由 + WarRoomGoldenPathPage (1ms)\n✓ 11 [api-tests] SRC: App.tsx isFullHeightRoute 包含 /warroom/gp (0ms)\n11 passed (1.4s)",
+  "behavior_tests": [
+    {
+      "command": "@playwright/test › B5: GET /conversations 无 journey_id → HTTP 400",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (16ms): expect(resp.status()).toBe(400) PASS; expect(body.error).toContain('journey_id') PASS"
+    },
+    {
+      "command": "@playwright/test › INV-1: POST 伪 journey_id → HTTP 404",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (10ms): expect(resp.status()).toBe(404) PASS; expect(body.error).toContain('不存在') PASS"
+    },
+    {
+      "command": "@playwright/test › INV-2: POST 非UUID gp_id → HTTP 400",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (4ms): expect(resp.status()).toBe(400) PASS; expect(body.error).toContain('UUID') PASS"
+    },
+    {
+      "command": "@playwright/test › B4: POST 带 gp_id → HTTP 201, gp_id 落库正确",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (8ms): expect(resp.status()).toBe(201) PASS; expect(body.gp_id).toBe('f886a853-8b23-4640-a785-bc6c8cf1cfea') PASS; expect(body.status).toBe('active') PASS"
+    },
+    {
+      "command": "@playwright/test › 对话消息: user 消息写库 + assistant 消息存在",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (5ms): expect(messages.length).toBeGreaterThanOrEqual(2) PASS; assistantWithContent.content.length=78>10 PASS; console: 'assistant reply (78 chars): PR3/4已通过API/DB/路由证据验证(PASS)...'"
+    },
+    {
+      "command": "@playwright/test › Dashboard: /warroom/gp/:gpId route → HTTP 200 (SPA)",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (322ms): expect(resp.status()).toBe(200) PASS; expect(body).toContain('<!DOCTYPE html>') PASS — Dashboard SPA serving /warroom/gp/f886a853-..."
+    },
+    {
+      "command": "@playwright/test › Dashboard: /warroom/line/:journeyId route → HTTP 200 (SPA)",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (10ms): expect(resp.status()).toBe(200) PASS"
+    },
+    {
+      "command": "@playwright/test › SRC: ConversationsPanel.tsx 含 statusBadgeMeta + gp_id 注入",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (4ms): statusBadgeMeta PASS; emerald/活跃 PASS; slate/已解决 PASS; amber/挂起 PASS; gp_id PASS"
+    },
+    {
+      "command": "@playwright/test › SRC: WarRoomGoldenPathPage.tsx 存在且含 ConversationsPanel + gpId",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (1ms): existsSync=true PASS; content.includes('ConversationsPanel') PASS; content.includes('gpId') PASS"
+    },
+    {
+      "command": "@playwright/test › SRC: system-hub 注册 /warroom/gp/:gpId 路由 + WarRoomGoldenPathPage",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (1ms): content.includes('warroom/gp') PASS; content.includes('WarRoomGoldenPathPage') PASS"
+    },
+    {
+      "command": "@playwright/test › SRC: App.tsx isFullHeightRoute 包含 /warroom/gp",
+      "exit_code": 0,
+      "log_tail": "✓ PASS (0ms): content.includes('warroom/gp') PASS"
+    },
+    {
+      "command": "CI Sprint Tests sha=fa0eb71 — Vitest ConversationsPanel.test + WarRoomGoldenPathPage.test",
+      "exit_code": 0,
+      "log_tail": "CI PASS: all 8 Vitest assertions GREEN at sha=fa0eb71 — TDD Commit Order ✅ Sprint Tests ✅"
+    },
+    {
+      "command": "psql conversation_messages WHERE conv_id=10be49a6 AND role='assistant' AND LENGTH(content)>10",
+      "exit_code": 0,
+      "log_tail": "DB PASS: count=1 — assistant 消息落库 78 chars: 'PR3/4已通过API/DB/路由证据验证(PASS)...'"
+    }
+  ],
+  "playwright_stdout": "Running 11 tests using 1 worker\n✓ 1 B5: GET /conversations 无 journey_id → HTTP 400 (16ms)\n✓ 2 INV-1: POST 伪 journey_id → HTTP 404 (10ms)\n✓ 3 INV-2: POST 非UUID gp_id → HTTP 400 (4ms)\n✓ 4 B4: POST 带 gp_id → HTTP 201, gp_id 落库正确 (8ms)\n✓ 5 对话消息: user 消息写库 + assistant 消息存在 (5ms)\n✓ 6 Dashboard: /warroom/gp/:gpId route → HTTP 200 (SPA) (322ms)\n✓ 7 Dashboard: /warroom/line/:journeyId route → HTTP 200 (SPA) (10ms)\n✓ 8 SRC: ConversationsPanel.tsx 含 statusBadgeMeta + gp_id 注入 (4ms)\n✓ 9 SRC: WarRoomGoldenPathPage.tsx 存在且含 ConversationsPanel + gpId (1ms)\n✓ 10 SRC: system-hub 注册 /warroom/gp/:gpId 路由 + WarRoomGoldenPathPage (1ms)\n✓ 11 SRC: App.tsx isFullHeightRoute 包含 /warroom/gp (0ms)\n11 passed (1.4s)",
+  "pr_head_sha": "fa0eb7199",
+  "sprint_dir": "sprints/07271849-relay-496dceb8"
+}

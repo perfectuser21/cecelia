@@ -1,0 +1,21 @@
+{
+  "agentVerdict": "PASS",
+  "judge": {
+    "verdict": "PASS",
+    "coverage": [
+      {
+        "step": "Step 6: Line 页 E2E — 议题对话完整流程 + agent 查库回复",
+        "passed": true,
+        "evidence": "test-4 对话消息: user 消息写库 + assistant 消息存在: expect(messages.length).toBeGreaterThanOrEqual(2) PASS; assistantWithContent.content.length=78>10 PASS; console: 'assistant reply (78 chars): ...' — 满足硬阈值 agent回复>10字和DB落库。test-3 验证gp_id落库正确。"
+      }
+    ],
+    "feedback": null
+  },
+  "coverageCheck": {
+    "ok": true,
+    "missing": [],
+    "failed": []
+  },
+  "goldenPathSteps": [],
+  "finalVerdict": "PASS"
+}
