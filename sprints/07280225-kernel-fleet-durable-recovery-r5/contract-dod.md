@@ -28,8 +28,8 @@ target_environment: linux_server
   期望: exit 0；正控与反事实均执行。
 
 - [ ] [BEHAVIOR] [L2] Golden Path Step 2 — fleet-worker transport migration parity
-  动作: 对 production-shaped 真 Postgres 执行 migration 367+ upgrade，持久化真实 `fleet-worker` receipt，再 rollback 并检查 source/schema enum parity。
-  预期观察: upgrade 保留旧值并接受 `fleet-worker`；rollback 恢复旧 constraint；遗漏 enum mutation 被拒。
+  动作: 对 production-shaped 真 Postgres 执行 migration 367+ upgrade，持久化真实 `fleet-worker` receipt，再 rollback 并检查 source/schema enum parity；创建 Attempt snapshot 后并发升级 profile generation。
+  预期观察: upgrade 保留旧值并接受 `fleet-worker`；rollback 恢复旧 constraint；遗漏 enum mutation 被拒；既有 Attempt 的 profile/Runner/Worker/schema snapshot 不漂移，新 Attempt 才看到新 generation。
   验证命令: Test: manual:bash scripts/ci/verify-fleet-release-atomic.sh "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA" "${DB_URL:?}"
   期望: exit 0；真 Postgres，非内存替身。
 
@@ -40,14 +40,14 @@ target_environment: linux_server
   期望: exit 0；无混合 generation。
 
 - [ ] [BEHAVIOR] [L3] Golden Path Step 4 — authenticated Worker admission
-  动作: 用 protected token 请求真实 US Worker health，并运行与真实 Attempt 相同 root/mount/ACL/UID/GID/secret/cleanup probe。
-  预期观察: `base_admitted=true`、`dispatch_ready=true`、source/profile/Runner digests 精确匹配；bad token、private root、missing ACL、stale digest 均失败。
+  动作: 用 protected token 请求真实 US Worker health，并运行与真实 Attempt 相同 root/mount/ACL/UID/GID/secret/cleanup probe；在 Agent spawn 前真写 stdout.jsonl 并验证 attempt-scoped brokered GitHub auth。
+  预期观察: `base_admitted=true`、`dispatch_ready=true`、source/profile/Runner digests 精确匹配；bad token、private root、missing ACL、stale digest、unwritable stdout 或 missing GitHub auth 均失败且 Agent-start counter=0。
   验证命令: Test: manual:bash scripts/kernel-fleet/verify-worker-admission.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
   期望: exit 0；cleanup residue=0。
 
 - [ ] [BEHAVIOR] [L3] Golden Path Step 5 — production preflight and semantic anchor
-  动作: 请求真实 Brain/Worker/Xian 网络探测并用真 Postgres 解析 journey/gp/step existence+ownership。
-  预期观察: US ready；虚构锚、错误 ownership、remote-disabled、不可达 URL fail closed；Xian 差距显示 `blocked_external` 而非降 profile。
+  动作: 请求真实 Brain/Worker/Xian 网络探测并用真 Postgres 解析 journey/golden-path/step existence+ownership，同时独立解析 task_id 与 run_id。
+  预期观察: US ready；语法合法但零行 UUID、虚构锚、错误 ownership、task/run 混用、remote-disabled、不可达 URL fail closed；Xian 差距显示 `blocked_external` 而非降 profile。
   验证命令: Test: manual:bash scripts/kernel-fleet/verify-production-preflight.sh "${PROD_BRAIN_URL:?}" "${REAL_JOURNEY_ID:?}" "${REAL_GP_ID:?}" "${REAL_STEP_ID:?}"
   期望: exit 0；blocked evidence 含真实探测时间与 profile requirement。
 
@@ -58,8 +58,8 @@ target_environment: linux_server
   期望: exit 0；三个 phase code 互不混淆。
 
 - [ ] [BEHAVIOR] [L3] Golden Path Step 7 — real Attempt secret and artifact transfer
-  动作: 在 exact pinned Runner 发起真实 Codex Attempt，先完成 Docker-mediated single-use secret receipt，再做 gh auth/push/fetch、stdout 写入、callback 与 canonical commit transfer。
-  预期观察: within Attempt deadline Controller 在 cleanup 前物化已认证 commit；mode-0600 auth 仅在 tmpfs；secret/env/argv/layer/log/payload/callback/worktree/git residue=0。
+  动作: 在 exact pinned Runner 发起真实 Codex Attempt，先完成 Docker-mediated single-use secret receipt，再做 gh auth/push/fetch、stdout 写入、authenticated callback 与 canonical commit transfer；Runner 创建 nested ignored/node_modules/untracked output 后由 Worker 反向 cleanup。
+  预期观察: within Attempt deadline Controller 在 cleanup 前物化 SHA/branch/task ownership 均已验证的 commit；mode-0600 auth 仅在 tmpfs；secret residue=0；container/runtime/worktree/admin/ACL/secret residual=0、quarantine=0，shared roots 无新增 write/chown/chmod。
   验证命令: Test: manual:bash scripts/kernel-fleet/run-real-attempt-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
   期望: exit 0；private `/var/lib`、missing ACL、absent reader、bad auth、cleanup-before-transfer counterfactual 全部非零。
 
@@ -70,28 +70,28 @@ target_environment: linux_server
   期望: exit 0；诊断≤2048 bytes 且 secret sentinel 不出现。
 
 - [ ] [BEHAVIOR] [L2] Golden Path Step 9 — records resumed only after ready heartbeat
-  动作: 用真 Postgres 连续运行 watchdog 多轮：先制造 early launch failure，再修复并允许真实 replacement ready。
-  预期观察: 失败轮 `resumed=0` 且无 `reconcile-restarted`；成功轮 `resumed=1`、一个 replacement/Attempt/event，下一次 dispatch 完成。
+  动作: 用真 Postgres 连续运行 watchdog 多轮：先制造 early launch failure，再修复并允许真实 replacement ready；另以真实同机 live child 与 unknown remote host 运行 liveness 反事实。
+  预期观察: 失败轮 `resumed=0` 且无 `reconcile-restarted`；成功轮 `resumed=1`、一个 replacement/Attempt/event，下一次 dispatch 完成；只有本机 ESRCH 判 dead，live/unknown 均 replacement=0。
   验证命令: Test: manual:bash DB_URL="${DB_URL:?}" npx vitest run packages/brain/src/__tests__/kernel-durable-recovery.integration.test.js --reporter=verbose
   期望: exit 0；不重置状态且时间真实流逝。
 
-- [ ] [BEHAVIOR] [L3] Golden Path Step 10 — Worker-first rollout blocks Brain publication
-  动作: 执行真实 rollout transaction，并在一轮 mutation 中让 Worker admission 失败。
-  预期观察: 正控 journal 为 worker installed→health→admitted→Brain published；反事实 Brain publication count=0。
+- [ ] [BEHAVIOR] [L3] Golden Path Step 10 — Worker-first gate blocks Brain candidate publication
+  动作: 执行真实 rollout transaction，并在一轮 mutation 中让 Worker admission 失败；检查 owner approval/merge 前无 staging/production mutation。
+  预期观察: 正控 journal 为 worker installed→health→admitted→Brain candidate publishable；反事实 publishable count=0，pre-merge staging/production count=0。
   验证命令: Test: manual:bash scripts/kernel-fleet/verify-worker-first-rollout.sh "$CANDIDATE_BUNDLE_REF" "$US_WORKER_URL" "$FLEET_TOKEN_FILE"
   期望: exit 0；失败不得 warning 降级。
 
-- [ ] [BEHAVIOR] [L3] Golden Path Step 11 — US canary durable restart recovery
-  动作: 在真实 US staging 发布 candidate，重启 Brain，触发 no-session Kernel recovery，等待 heartbeat 后再发一个正常 dispatch。
-  预期观察: within Attempt deadline 恰好一个 replacement，heartbeat age≤30s，`resumed=1`，无 config ENOENT/重复 provider Attempt，next dispatch completed。
-  验证命令: Test: manual:bash scripts/kernel-fleet/run-us-durable-recovery-canary.sh "$PROD_BRAIN_URL" "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$PR_HEAD_SHA"
-  期望: exit 0；exact source/profile/Runner digests；secret scan=0。
+- [ ] [BEHAVIOR] [L3] Golden Path Step 11 — exact-head owner authorization precedes merge
+  动作: 验 CI、Evaluator、Judge 证据均属于 Draft exact head，再运行 CI-only、non-owner、stale-head 与 missing-evidence mutations；最后消费授权 owner approval。
+  预期观察: mutations 均保持 Draft、auto-merge off、merge/staging/production count=0；仅完整 `CI→Evaluator/Judge→owner` 序列允许 exact-head merge。
+  验证命令: Test: manual:bash scripts/kernel-fleet/verify-owner-gate-and-rollback.sh gate-and-merge "$PR_NUMBER" "$PR_HEAD_SHA" "$OWNER_APPROVAL_ID" "$US_WORKER_SSH"
+  期望: exit 0；merge head 包含 exact Draft head。
 
-- [ ] [BEHAVIOR] [L3] Golden Path Step 12 — rejects CI-only merge authorization
-  动作: 对 Draft PR exact head 验 CI/Evaluator/Judge/owner evidence 与 actor 权限，运行 stale-head/non-owner/CI-only mutations，然后执行 rollback drill。
-  预期观察: 未授权始终 Draft、auto-merge off、merge count=0；授权 exact head 才允许 transition；rollback 恢复旧构件并保持 Kernel drain。
-  验证命令: Test: manual:bash scripts/kernel-fleet/verify-owner-gate-and-rollback.sh "$PR_NUMBER" "$PR_HEAD_SHA" "$OWNER_APPROVAL_ID" "$US_WORKER_SSH"
-  期望: exit 0；roll-forward 前 dispatch 必须 fail closed。
+- [ ] [BEHAVIOR] [L3] Golden Path Step 12 — merge 后 staging 再 production 与 rollback
+  动作: authorized merge 后先在真实 US staging 发布 candidate、重启 Brain、触发 no-session Kernel recovery并正常 dispatch；staging 成功后才跑 production canary，最后 rollback drill。
+  预期观察: event 顺序精确为 `merge→staging_passed→production_canary_started→production_canary_passed`；within Attempt deadline 恰好一个 replacement、heartbeat age≤30s、`resumed=1`，无 config ENOENT/重复 Attempt；rollback 恢复并保持 Kernel drained。
+  验证命令: Test: manual:bash scripts/kernel-fleet/run-us-durable-recovery-canary.sh post-merge "$PROD_BRAIN_URL" "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$PR_HEAD_SHA"
+  期望: exit 0；exact source/profile/Runner digests；secret scan=0；roll-forward 前 dispatch fail closed。
 
 ## Invariant 覆盖映射
 

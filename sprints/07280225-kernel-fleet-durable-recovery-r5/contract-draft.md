@@ -9,6 +9,9 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
+- R6 proposer exact SHA `e1d2c5bd370892fe70517f1137c4a3f8483c5dfb` 仅作 Red 证据；本合同以 R7 audit 修正后的 12 gate 线性链为准。
+- release-order invariant: `Draft exact head → CI → Evaluator/Judge → owner exact-head approval → authorized merge → US staging real E2E → production canary`；生产验证绝不早于批准/合并。
+- semantic-anchor-pending: PRD 注入的 journey/step UUID 仅通过语法检查但在生产无对应行；Generator 必须通过真实 DevOps Map 查询选取已有且 ownership 匹配的 journey/golden-path/step，不得 fabricate row。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -48,6 +51,9 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 - `migration 367+ ↔ production-shaped Postgres harness_attempts CHECK ↔ attempt-store`：真 Postgres upgrade/rollback，禁止内存 schema。
 - `fleet-rollout.sh/CD ↔ Worker admission ↔ Brain publication`：必须用真实 rollout plan 和 publication gate，禁模拟 health JSON。
 - `anchor-check ↔ DevOps Map DB`：真 Postgres semantic existence/ownership 校验，禁语法 UUID 替身。
+- `Attempt 创建 ↔ immutable profile snapshot ↔ concurrent profile upgrade`：真 Postgres 中 Attempt 必须持久化精确 profile/Runner/Worker/schema generation，运行中升级不得改变既有 Attempt。
+- `Runner stdout/runtime/GitHub auth preflight ↔ Agent process spawn`：真 Runner 必须先证明 stdout 可写且 attempt-scoped GitHub auth 可用；失败时 Agent 进程必须从未启动。
+- `Runner 写入的 nested/ignored/node_modules output ↔ Worker terminal cleanup`：必须由 exact Runner 真写，再由 Worker 反向删除 container/runtime/worktree/admin/ACL/secret；禁用 quarantine 充当成功。
 
 ## 未覆盖真实链路清单
 
@@ -67,7 +73,7 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 |---|---|---|
 | **FR（做什么）** | 功能需求 | 把 Brain image、Runner/Profile/Worker/schema、Mac 安装事务、remote transport、artifact handoff、Kernel readiness/watchdog、Worker-first rollout/rollback 收敛成单一 durable recovery 合同。 |
 | **NFR（做得多好）** | 性能/可靠性 | 每 phase 有独立有界预算，总 startup budget 小于 Attempt lease/deadline；同一 idempotency key 最多一个活跃 Attempt/Kernel/provider；错误码有界且无 secret。 |
-| **Invariant（永不违反）** | 安全/一致性 | secret 不进 env/argv/layer/log/payload/callback/worktree/git；profile/digest 不降级；CI Green 不授权 merge；失败不记 resumed/ready。 |
+| **Invariant（永不违反）** | 安全/一致性 | secret 不进 env/argv/layer/log/payload/callback/worktree/git；profile/digest 不降级；Attempt 的 release snapshot 创建后不可漂移；CI Green 不授权 merge；staging/production 不得早于 owner exact-head approval 与 merge；失败不记 resumed/ready。 |
 | **判定点（怎么知道）** | 模糊现实判断 | 见下表。 |
 | **保质期（何时过期）** | 版本/证据时效 | admission、owner approval、CI/Evaluator/Judge 证据绑定同一 Draft head；Runner/Profile/Worker generation 任一变化即整体过期。 |
 | **死亡告警（停了谁知道）** | 失效通知 | launch/recovery/publication/rollback 任一失败写结构化 P0/P1 evidence；owner 与 on-call 在一个 rollout phase 内获知，禁止 warning 降级。 |
@@ -95,7 +101,7 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 | callback/artifact transfer 失败 | 不接受 progress，保留可重试 artifact，禁止 cleanup canonical source 前完成交接 | 是，按 attempt+commit SHA | 无“completed 即通过” |
 | Kernel early exit/no-ready/heartbeat failure | task requeue 可恢复，结构化失败，不递增 resumed | 是，ownership fence | 无 PID fallback |
 | Worker admission/rollout 失败 | 阻断 Brain publication | 是，generation keyed | 保持旧 Brain；Kernel drain |
-| owner approval 缺失/head 漂移 | 保持 Draft/auto-merge off | 是，head 改变使旧批准失效 | 无自动批准 |
+| owner approval 缺失/head 漂移/顺序抢跑 | 保持 Draft/auto-merge off，拒绝 merge/staging/production | 是，head 改变使旧批准失效 | 无自动批准、无生产前置验证 |
 | rollback 子步骤失败 | 保持 drain，发 P0 evidence，拒绝混合 generation | 是，transaction journal | 手工接管但不恢复 dispatch |
 
 ### 输入对抗面
@@ -110,7 +116,7 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 
 覆盖父路 `Durable Fleet Worker bootstrap 与 Kernel 恢复闭环` 第 1-12 步
 
-`exact Draft head` → `immutable image/release` → `Mac transaction` → `Worker admission` → `phase-aware Attempt` → `secret+artifact handoff` → `Kernel ready/recovery` → `Worker-first Brain publication` → `US canary` → `owner gate` → `rollback`
+`exact Draft head` → `immutable image/release` → `Mac transaction` → `Worker admission` → `phase-aware Attempt` → `secret+artifact handoff` → `Kernel ready/recovery` → `Worker-first candidate gate` → `CI+Evaluator+Judge` → `owner exact-head approval` → `authorized merge` → `US staging` → `production canary/rollback`
 
 ### Step 1：候选 Brain image 自包含三个 immutable profile
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 1 步。
@@ -126,13 +132,13 @@ bash scripts/ci/verify-brain-image-self-contained.sh "$CANDIDATE_BRAIN_IMAGE" "$
 ### Step 2：Runner/Profile/Worker/schema 构成原子 release
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 2 步与 operator addendum 02:06/02:20/02:24。
 
-**可观测行为**: exact pinned digest 的 image `User`、entrypoint feature、tmpfs ownership、single-use secret receipt 与 Worker generation 对齐；migration 367+ 允许并只新增 `fleet-worker`，upgrade/rollback/source parity 通过。
+**可观测行为**: exact pinned digest 的 image `User`、entrypoint feature、tmpfs ownership、single-use secret receipt 与 Worker generation 对齐；migration 367+ 允许并只新增 `fleet-worker`，upgrade/rollback/source parity 通过。创建 Attempt 时把 profile generation、Runner digest、Worker generation、schema capability 持久化为 immutable snapshot；并发升级 profile 后既有 Attempt 仍消费原 snapshot，新 Attempt 才消费新 generation。
 
 **验证命令**:
 ```bash
 bash scripts/ci/verify-fleet-release-atomic.sh "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA" "${DB_URL:?}"
 ```
-**硬阈值**: exact digest 可复现；旧 digest/uid mutation/缺 feature/缺 enum/mismatched ref 各自非零；真 Postgres upgrade+rollback 通过。
+**硬阈值**: exact digest 可复现；旧 digest/uid mutation/缺 feature/缺 enum/mismatched ref 各自非零；真 Postgres upgrade+rollback 通过；concurrent-upgrade mutation 中旧 Attempt 的四元 snapshot 0 字段漂移。
 
 ### Step 3：macOS/OrbStack installer 是精确可回滚事务
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 3 步与 addendum 02:11/02:14。
@@ -148,24 +154,24 @@ ssh "$US_WORKER_SSH" "sudo -n /usr/local/libexec/cecelia/kernel-fleet-transactio
 ### Step 4：Worker-first admission 使用真实 Attempt 合同
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 4 步。
 
-**可观测行为**: 鉴权 `/health` 返回与候选 exact ref 对齐的 `base_admitted=true`、`dispatch_ready=true`；health 实跑与 Attempt 相同 root/mount/ACL/UID/GID/secret/cleanup，而非模拟 JSON。
+**可观测行为**: 鉴权 `/health` 返回与候选 exact ref 对齐的 `base_admitted=true`、`dispatch_ready=true`；health 实跑与 Attempt 相同 root/mount/ACL/UID/GID/secret/cleanup，而非模拟 JSON。stdout.jsonl 与 attempt-scoped GitHub auth 必须在 Agent spawn 前通过真实 write/gh auth probe；任一失败返回有界 machine code 且 Agent 未启动。
 
 **验证命令**:
 ```bash
 bash scripts/kernel-fleet/verify-worker-admission.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
 ```
-**硬阈值**: authenticated semantic fields 全匹配；bad token/stale digest/private root/missing ACL mutation 全部 fail closed；一次 disposable container 后 residue=0。
+**硬阈值**: authenticated semantic fields 全匹配；bad token/stale digest/private root/missing ACL/unwritable stdout/missing GitHub auth mutation 全部 fail closed；Agent-start counter=0；一次 disposable container 后 residue=0。
 
 ### Step 5：生产 transport 与 DevOps Map anchor 预检 fail closed
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 5、10 步及 R5 live Red。
 
-**可观测行为**: remote-enabled、callback、US/Xian URL DNS/连通、immutable profiles、真实 journey/gp/step ownership 全部校验；Xian 不满足时输出 blocked evidence，但不降低 profile。
+**可观测行为**: remote-enabled、callback、US/Xian URL DNS/连通、immutable profiles、真实 journey/golden-path/step existence 与 ownership 全部校验；`task_id` 与 `run_id` 是不同构造且分别解析。Xian 不满足时输出 blocked evidence，但不降低 profile；语法合法但零生产行的 UUID 必须失败。
 
 **验证命令**:
 ```bash
 bash scripts/kernel-fleet/verify-production-preflight.sh "${PROD_BRAIN_URL:?}" "${REAL_JOURNEY_ID:?}" "${REAL_GP_ID:?}" "${REAL_STEP_ID:?}"
 ```
-**硬阈值**: US path ready；虚构 UUID、错误 ownership、不可达 URL、remote-disabled 各自非零；Xian 维护差距 machine-readable `blocked_external`。
+**硬阈值**: US path ready；虚构 UUID、零行 UUID、错误 ownership、task/run 混用、不可达 URL、remote-disabled 各自非零；Xian 维护差距 machine-readable `blocked_external`。
 
 ### Step 6：phase-aware transport 只创建一个 Attempt
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 6 步与 addendum 02:15/02:17。
@@ -181,13 +187,13 @@ bash scripts/kernel-fleet/verify-phase-budgets.sh "$US_WORKER_URL" "$FLEET_TOKEN
 ### Step 7：Mac-compatible secret、Git auth、stdout 与 canonical artifact handoff
 **来源**: `[FROM_PRD]` — PRD 第 7 步与 addendum 02:22、R5 live Red。
 
-**可观测行为**: Docker-mediated single-use secret 在 Runner 自有 tmpfs 生成 0600 auth，Brokered GitHub auth 可 push/fetch；Runner 可写 attempt 三目录和 stdout，但 shared roots 只读；callback 前将签名 commit/bundle 物化至 Controller，之后才 cleanup。
+**可观测行为**: Docker-mediated single-use secret 在 Runner 自有 tmpfs 生成 0600 auth，brokered attempt-scoped GitHub auth 在 Agent 前验证并可 push/fetch；Runner 可写 attempt 三目录和 stdout，但 shared roots 只读；callback 前将签名 commit/bundle 以真实 SHA/branch/task ownership 物化至 Controller，之后才 cleanup。exact Runner 再创建 nested ignored/node_modules/untracked output，Worker 必须反向清除 container/runtime/worktree/admin/ACL/secret，残留或 quarantine 都是失败。
 
 **验证命令**:
 ```bash
 bash scripts/kernel-fleet/run-real-attempt-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
 ```
-**硬阈值**: 真实 Attempt accepted→ready→callback→canonical commit；`gh auth`/push/fetch 成功；secret/residue scan=0；missing read ACL/private `/var/lib`/absent reader/bad auth/cleanup-before-transfer 各自非零且可重试。
+**硬阈值**: 真实 Attempt accepted→ready→callback→canonical commit；`gh auth`/push/fetch 成功；secret/residue/quarantine count=0；shared-root write ACL=0；missing read ACL/private `/var/lib`/absent reader/bad auth/unwritable stdout/cleanup-before-transfer/reverse-delete-denied 各自非零且可重试。
 
 ### Step 8：Kernel launch 以 handshake+heartbeat 判 ready
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 8 步。
@@ -203,46 +209,47 @@ DB_URL="${DB_URL:?}" npx vitest run packages/brain/src/__tests__/kernel-launch-r
 ### Step 9：Watchdog truthful recovery 严格一次
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 9 步。
 
-**可观测行为**: 初启与 watchdog 共用 Step 8 contract；失败不递增 `resumed`/不发 `reconcile-restarted`，仍可恢复；成功后才 `resumed=1`，仅一个 replacement/provider Attempt。
+**可观测行为**: 初启与 watchdog 共用 Step 8 contract；失败不递增 `resumed`/不发 `reconcile-restarted`，仍可恢复；成功后才 `resumed=1`，仅一个 replacement/provider Attempt。仅本机 `kill(pid,0)` 返回 ESRCH 才判 dead；同机 live PID 与远端/未知 liveness 均 fail-open，不得误杀。
 
 **验证命令**:
 ```bash
 DB_URL="${DB_URL:?}" npx vitest run packages/brain/src/__tests__/kernel-durable-recovery.integration.test.js --reporter=verbose
 ```
-**硬阈值**: 真 PG 多轮扫描；失败轮 resumed=0、active=0/1 可恢复；成功轮 resumed=1、replacement=1、event=1、下一次 dispatch completed。
+**硬阈值**: 真 PG 多轮扫描；失败轮 resumed=0、active=0/1 可恢复；成功轮 resumed=1、replacement=1、event=1、下一次 dispatch completed；same-host-live 与 unknown-host 两个反事实 replacement=0。
 
-### Step 10：Worker admission 先于 Brain publication
+### Step 10：Worker admission 先于 Brain candidate 可发布状态
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 5、10 步。
 
-**可观测行为**: CD 在 Worker candidate admitted 前绝不发布依赖它的 Brain；ordering mutation 明确阻断。
+**可观测行为**: CD 在 Worker candidate admitted 前绝不把依赖它的 Brain 标为 publishable；该 gate 只准备合并后可发布候选，不得在 owner approval/merge 前触发 staging 或 production mutation。
 
 **验证命令**:
 ```bash
 bash scripts/kernel-fleet/verify-worker-first-rollout.sh "$CANDIDATE_BUNDLE_REF" "$US_WORKER_URL" "$FLEET_TOKEN_FILE"
 ```
-**硬阈值**: journal 中 `worker_admitted` 严格早于 `brain_published`；admission-failure counterfactual 的 publication count=0。
+**硬阈值**: journal 中 `worker_admitted` 严格早于 `brain_candidate_publishable`；admission-failure counterfactual 的 publishable count=0；pre-merge staging/production mutation count=0。
 
-### Step 11：真实 US staging + production canary 完成 restart/recovery/dispatch
-**来源**: `[FROM_PRD]` — PRD Golden Path 第 10 步及完成定义。
+### Step 11：CI、Evaluator、Judge 与 exact-head owner gate 后才可 merge
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 12 步与 Human authority。
 
-**可观测行为**: staged Brain restart 后无会话 Kernel 恰有一个 replacement、fresh heartbeat、`resumed=1`、无 `/app/config` ENOENT/重复 Attempt，随后正常 dispatch；证据绑定 exact head/digests。
-
-**验证命令**:
-```bash
-bash scripts/kernel-fleet/run-us-durable-recovery-canary.sh "$PROD_BRAIN_URL" "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$PR_HEAD_SHA"
-```
-**硬阈值**: replacement=1、resumed=1、provider_attempt=1、heartbeat age≤30s、next dispatch completed≤Attempt deadline、secret scan=0。
-
-### Step 12：Draft exact-head owner gate 与 rollback/drain
-**来源**: `[FROM_PRD]` — PRD Golden Path 第 11-12 步。
-
-**可观测行为**: PR 始终 Draft、auto-merge off；CI/Evaluator/Judge/owner approval 全绑定 exact head，授权 owner 才可 Ready/merge。rollback 恢复旧 Worker/Brain/ACL/toolchain 并保持 Kernel drained。
+**可观测行为**: PR 始终 Draft 且 auto-merge off；CI、Evaluator、Judge 证据全绑定 exact Draft head，之后授权 owner 才能作 exact-head approval 和 Draft→Ready/merge。CI-only、非 owner、stale head、缺任一评估证据均保持 Draft；审批前禁止 staging/production。
 
 **验证命令**:
 ```bash
-bash scripts/kernel-fleet/verify-owner-gate-and-rollback.sh "$PR_NUMBER" "$PR_HEAD_SHA" "$OWNER_APPROVAL_ID" "$US_WORKER_SSH"
+bash scripts/kernel-fleet/verify-owner-gate-and-rollback.sh gate-only "$PR_NUMBER" "$PR_HEAD_SHA" "$OWNER_APPROVAL_ID" "$US_WORKER_SSH"
 ```
-**硬阈值**: 非 owner/旧 head/仅 CI Green 均 merge count=0；rollback diff=0（预期 drain marker 除外），dispatch blocked，roll-forward 后才解除 drain。
+**硬阈值**: audit 顺序精确为 `ci,evaluator,judge,owner,merge`；反事实 merge count=0、staging count=0、production count=0；授权后 merge head 恰为 `$PR_HEAD_SHA`。
+
+### Step 12：authorized merge 后先 US staging，再 production canary 与 rollback/drain
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 10-11 步及完成定义。
+
+**可观测行为**: 仅在 Step 11 authorized merge 后，真实 US staging 发布 candidate，Brain restart 后无会话 Kernel 恰有一个 replacement、fresh heartbeat、`resumed=1`、无 `/app/config` ENOENT/重复 Attempt并正常 dispatch；staging 通过后才启动 production canary。rollback 恢复旧 Worker/Brain/ACL/toolchain并保持 Kernel drained。
+
+**验证命令**:
+```bash
+bash scripts/kernel-fleet/run-us-durable-recovery-canary.sh post-merge "$PROD_BRAIN_URL" "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$PR_HEAD_SHA"
+bash scripts/kernel-fleet/verify-owner-gate-and-rollback.sh rollback-only "$PR_NUMBER" "$PR_HEAD_SHA" "$OWNER_APPROVAL_ID" "$US_WORKER_SSH"
+```
+**硬阈值**: event 顺序精确为 `merge,staging_passed,production_canary_started,production_canary_passed`；replacement=1、resumed=1、provider_attempt=1、heartbeat age≤30s、next dispatch completed≤Attempt deadline、secret scan=0；rollback diff=0（预期 drain marker 除外），roll-forward 前 dispatch fail closed。
 
 ## E2E 验收（最终 final-e2e 跑）
 
@@ -282,10 +289,28 @@ bash scripts/kernel-fleet/verify-phase-budgets.sh "$US_WORKER_URL" "$FLEET_TOKEN
 bash scripts/kernel-fleet/run-real-attempt-proof.sh "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" "$PR_HEAD_SHA"
 DB_URL="$DB_URL" npx vitest run packages/brain/src/__tests__/kernel-launch-readiness.integration.test.js packages/brain/src/__tests__/kernel-durable-recovery.integration.test.js --reporter=verbose
 bash scripts/kernel-fleet/verify-worker-first-rollout.sh "$CANDIDATE_BUNDLE_REF" "$US_WORKER_URL" "$FLEET_TOKEN_FILE"
-bash scripts/kernel-fleet/run-us-durable-recovery-canary.sh "$PROD_BRAIN_URL" "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$PR_HEAD_SHA"
-bash scripts/kernel-fleet/verify-owner-gate-and-rollback.sh "$PR_NUMBER" "$PR_HEAD_SHA" "$OWNER_APPROVAL_ID" "$US_WORKER_SSH"
 
-echo "OK: exact-head durable recovery E2E completed; PR remains Draft pending authorized transition"
+# 严格发布门：以上只产生 CI/Evaluator/Judge 候选证据，不得触碰 staging/production。
+bash scripts/kernel-fleet/verify-exact-head-evidence.sh \
+  "$PR_NUMBER" "$PR_HEAD_SHA" ci evaluator judge
+bash scripts/kernel-fleet/verify-owner-gate-and-rollback.sh \
+  gate-and-merge "$PR_NUMBER" "$PR_HEAD_SHA" "$OWNER_APPROVAL_ID" "$US_WORKER_SSH"
+test "$(gh pr view "$PR_NUMBER" --json state,mergeCommit --jq .state)" = "MERGED"
+MERGE_SHA=$(gh pr view "$PR_NUMBER" --json mergeCommit --jq .mergeCommit.oid)
+git fetch origin "$MERGE_SHA"
+git merge-base --is-ancestor "$PR_HEAD_SHA" "$MERGE_SHA"
+
+# 只有 authorized exact-head merge 后，才能依次执行 staging 和 production。
+bash scripts/kernel-fleet/run-us-durable-recovery-canary.sh \
+  staging "$PROD_BRAIN_URL" "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$PR_HEAD_SHA"
+bash scripts/kernel-fleet/run-us-durable-recovery-canary.sh \
+  production "$PROD_BRAIN_URL" "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$PR_HEAD_SHA"
+bash scripts/kernel-fleet/verify-owner-gate-and-rollback.sh \
+  rollback-only "$PR_NUMBER" "$PR_HEAD_SHA" "$OWNER_APPROVAL_ID" "$US_WORKER_SSH"
+bash scripts/kernel-fleet/verify-release-sequence.sh \
+  "$PR_HEAD_SHA" ci evaluator judge owner merge staging production
+
+echo "OK: CI→Evaluator/Judge→owner→merge→staging→production exact-head durable recovery completed"
 ```
 
 ## Test Contract
@@ -297,5 +322,9 @@ echo "OK: exact-head durable recovery E2E completed; PR remains Draft pending au
 | Kernel readiness | `tests/durable-recovery.contract.test.ts` | rejects invalid worktree before spawn | readiness validator 未实现，失败 |
 | Watchdog truth | `tests/durable-recovery.contract.test.ts` | records resumed only after ready heartbeat | shared readiness receipt 未实现，失败 |
 | Artifact handoff | `tests/durable-recovery.contract.test.ts` | materializes authenticated commit before cleanup | canonical transfer 未实现，失败 |
-| Owner gate | `tests/durable-recovery.contract.test.ts` | rejects CI-only merge authorization | unified owner gate 未实现，失败 |
-
+| Attempt snapshot | `tests/durable-recovery.contract.test.ts` | immutable per-attempt profile snapshot across concurrent upgrade | snapshot 未冻结，失败 |
+| stdout preflight | `tests/durable-recovery.contract.test.ts` | rejects unwritable stdout before Agent execution | readiness 前置未实现，失败 |
+| Reverse cleanup | `tests/durable-recovery.contract.test.ts` | reverse cleanup removes real Runner nested and ignored output | quarantine/残留仍存在，失败 |
+| P1 liveness | `tests/durable-recovery.contract.test.ts` | ESRCH-only local liveness death | live/unknown 可能误判，失败 |
+| Owner gate | `tests/durable-recovery.contract.test.ts` | rejects CI-only authorization and stale exact-head owner approval | unified ordered gate 未实现，失败 |
+| Semantic anchor | `tests/durable-recovery.contract.test.ts` | semantic anchor resolves journey golden-path step ownership | 仅语法 UUID 校验，失败 |
