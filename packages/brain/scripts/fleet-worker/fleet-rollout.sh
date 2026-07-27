@@ -33,6 +33,14 @@ require_machine() {
   esac
 }
 
+local_file_mode() {
+  case "$(uname -s)" in
+    Darwin) /usr/bin/stat -f '%Lp' "$1" ;;
+    Linux) /usr/bin/stat -c '%a' "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
 ssh_target_for() {
   case "$1" in
     xian-mac-m4) echo 'jinnuoshengyuan@100.86.57.69' ;;
@@ -285,7 +293,7 @@ fi
 [[ -x "$SSH" && -x "$TAR" ]] || die "rollout_transport_unavailable"
 [[ -f "$WORKER_TOKEN_SOURCE" && ! -L "$WORKER_TOKEN_SOURCE" ]] \
   || die "worker_token_file_required"
-case "$(/usr/bin/stat -f '%Lp' "$WORKER_TOKEN_SOURCE")" in
+case "$(local_file_mode "$WORKER_TOKEN_SOURCE")" in
   400|600) ;;
   *) die "worker_token_file_permissions" ;;
 esac
