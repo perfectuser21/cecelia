@@ -533,12 +533,19 @@ validate_worker_token_file() {
     || die "worker_token_file_invalid"
 }
 
-prepare_worker_data_root() {
-  local data_parent
+validate_worker_data_root_path() {
+  local managed_parent="$SYSTEM_ROOT/var/lib/cecelia"
   case "$FLEET_DATA_ROOT" in
-    /*) ;;
+    "$managed_parent"/*) ;;
     *) die "worker_data_root_invalid" ;;
   esac
+  [[ "$FLEET_DATA_ROOT" != "$managed_parent/" ]] \
+    || die "worker_data_root_invalid"
+}
+
+prepare_worker_data_root() {
+  local data_parent
+  validate_worker_data_root_path
   data_parent="$(dirname "$FLEET_DATA_ROOT")"
   [[ ! -L "$data_parent" && ! -L "$FLEET_DATA_ROOT" ]] \
     || die "worker_data_root_invalid"
@@ -657,6 +664,7 @@ if [[ "$mode" == 'apply' && "$("$ID_COMMAND" -u)" != '0' ]]; then
   die "root_required" 77
 fi
 
+validate_worker_data_root_path
 if [[ "$mode" == 'apply' ]]; then
   prepare_orbstack_access
 fi
