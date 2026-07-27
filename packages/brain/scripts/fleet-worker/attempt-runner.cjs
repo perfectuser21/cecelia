@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 
+const { execFile } = require('node:child_process');
+const { randomBytes } = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const { promisify } = require('node:util');
+
+const execFileAsync = promisify(execFile);
 const CANONICAL_MACHINE_IDS = new Set([
   'us-mac-m4',
   'xian-mac-m4',
@@ -16,6 +23,283 @@ const PROVIDER_FIELDS = new Set([
   'output',
 ]);
 const PROVIDER_PATTERN = /^(codex|claude|grok)$/;
+const MAX_STATE_BYTES = 1_048_576;
+
+async function defaultRunCommand(command, args, options) {
+  const { stdout = '' } = await execFileAsync(command, args, {
+    cwd: options?.cwd,
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+  });
+  return { stdout: stdout.trim() };
+}
+
+function assertRuntimeRoot(value, name) {
+  if (
+    typeof value !== 'string'
+    || !path.isAbsolute(value)
+    || value === path.parse(value).root
+  ) {
+    throw new Error(`attempt_runner_invalid_${name}`);
+  }
+  return path.resolve(value);
+}
+
+function assertAttemptId(value) {
+  if (!UUID_PATTERN.test(value ?? '')) {
+    throw new Error('attempt_state_invalid_attempt_id');
+  }
+}
+
+function createFileAttemptStateStore({ stateRoot } = {}) {
+  const root = assertRuntimeRoot(stateRoot, 'state_root');
+
+  function fileFor(attemptId) {
+    assertAttemptId(attemptId);
+    return path.join(root, `${attemptId}.json`);
+  }
+
+  function parseState(serialized, attemptId) {
+    try {
+      const state = JSON.parse(serialized);
+      if (
+        !state
+        || typeof state !== 'object'
+        || Array.isArray(state)
+        || state.attempt_id !== attemptId
+      ) {
+        throw new Error('invalid shape');
+      }
+      return state;
+    } catch {
+      throw new Error(`attempt_state_corrupt:${attemptId}`);
+    }
+  }
+
+  return Object.freeze({
+    async save(state) {
+      assertAttemptId(state?.attempt_id);
+      const serialized = `${JSON.stringify(state)}\n`;
+      if (Buffer.byteLength(serialized, 'utf8') > MAX_STATE_BYTES) {
+        throw new Error('attempt_state_too_large');
+      }
+      fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+      const target = fileFor(state.attempt_id);
+      const temporary = `${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+      try {
+        fs.writeFileSync(temporary, serialized, {
+          encoding: 'utf8',
+          mode: 0o600,
+          flag: 'wx',
+        });
+        fs.renameSync(temporary, target);
+      } finally {
+        fs.rmSync(temporary, { force: true });
+      }
+      return state;
+    },
+
+    async get(attemptId) {
+      const target = fileFor(attemptId);
+      try {
+        return parseState(fs.readFileSync(target, 'utf8'), attemptId);
+      } catch (error) {
+        if (error?.code === 'ENOENT') return null;
+        throw error;
+      }
+    },
+
+    async delete(attemptId) {
+      fs.rmSync(fileFor(attemptId), { force: true });
+      return true;
+    },
+
+    async list() {
+      let entries;
+      try {
+        entries = fs.readdirSync(root, { withFileTypes: true });
+      } catch (error) {
+        if (error?.code === 'ENOENT') return [];
+        throw error;
+      }
+      return entries
+        .filter((entry) => entry.isFile() && UUID_PATTERN.test(entry.name.replace(/\.json$/, '')))
+        .filter((entry) => entry.name.endsWith('.json'))
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map((entry) => {
+          const attemptId = entry.name.slice(0, -'.json'.length);
+          return parseState(
+            fs.readFileSync(path.join(root, entry.name), 'utf8'),
+            attemptId,
+          );
+        });
+    },
+  });
+}
+
+function envArgs(values) {
+  const args = [];
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined || value === null) continue;
+    args.push('--env', `${key}=${String(value)}`);
+  }
+  return args;
+}
+
+function labelArgs(labels) {
+  const args = [];
+  for (const [key, value] of Object.entries(labels)) {
+    args.push('--label', `${key}=${value}`);
+  }
+  return args;
+}
+
+function callbackBrainUrl(callbackUrl) {
+  try {
+    const parsed = new URL(callbackUrl);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    throw new Error('attempt_callback_url_invalid');
+  }
+}
+
+function parseDockerLabels(serialized) {
+  const labels = {};
+  for (const pair of String(serialized ?? '').split(',')) {
+    const separator = pair.indexOf('=');
+    if (separator <= 0) continue;
+    labels[pair.slice(0, separator)] = pair.slice(separator + 1);
+  }
+  return labels;
+}
+
+function createDockerAdapter({
+  runCommand = defaultRunCommand,
+  runtimeRoot,
+} = {}) {
+  const root = assertRuntimeRoot(runtimeRoot, 'runtime_root');
+  if (typeof runCommand !== 'function') {
+    throw new Error('attempt_runner_invalid_docker_command_runner');
+  }
+
+  return Object.freeze({
+    async launch(input) {
+      const attemptId = input?.attemptId;
+      assertAttemptId(attemptId);
+      if (
+        input.workspaceMount?.target !== '/workspace'
+        || typeof input.workspaceMount?.source !== 'string'
+        || !path.isAbsolute(input.workspaceMount.source)
+      ) {
+        throw new Error('attempt_workspace_mount_invalid');
+      }
+      const attemptRuntime = path.join(root, attemptId);
+      fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
+      const promptFile = path.join(attemptRuntime, 'task-bundle.json');
+      const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
+      fs.writeFileSync(promptFile, input.providerSpec.stdin, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+
+      const containerName = `cecelia-fleet-${attemptId}`;
+      const containerPrompt = '/tmp/cecelia-prompts/task-bundle.json';
+      const containerStdout = '/tmp/cecelia-prompts/stdout.jsonl';
+      const workspaceMount = [
+        `type=bind,src=${input.workspaceMount.source},dst=/workspace`,
+        input.workspaceMount.readOnly ? 'readonly' : null,
+      ].filter(Boolean).join(',');
+      const runtimeMount = `type=bind,src=${attemptRuntime},dst=/tmp/cecelia-prompts`;
+      const createArgs = [
+        'create',
+        '--name',
+        containerName,
+        ...labelArgs(input.labels),
+        '--mount',
+        workspaceMount,
+        '--mount',
+        runtimeMount,
+        '--add-host',
+        'host.docker.internal:host-gateway',
+        ...envArgs({
+          CECELIA_EXECUTOR: input.providerSpec.provider,
+          CECELIA_TASK_ID: attemptId,
+          HARNESS_TASK_ID: attemptId,
+          HARNESS_ATTEMPT_ID: attemptId,
+          HARNESS_RUN_ID: input.runId,
+          HARNESS_CALLBACK_URL: input.callback.url,
+          HARNESS_CALLBACK_TOKEN: input.callback.token,
+          HARNESS_LEASE_OWNER: input.lease.owner,
+          HARNESS_LEASE_GENERATION: input.lease.generation,
+          HARNESS_READ_ONLY: String(input.workspaceMount.readOnly),
+          HARNESS_TASK_BUNDLE_FILE: containerPrompt,
+          CECELIA_PROMPT_FILE: containerPrompt,
+          CECELIA_STDOUT_FILE: containerStdout,
+          WORKTREE_PATH: '/workspace',
+          BRAIN_URL: callbackBrainUrl(input.callback.url),
+        }),
+        input.image,
+      ];
+      let created;
+      try {
+        created = await runCommand('docker', createArgs);
+        await runCommand('docker', ['start', containerName], undefined);
+      } catch (error) {
+        await runCommand('docker', ['rm', '-f', '--', containerName], undefined)
+          .catch(() => {});
+        fs.rmSync(attemptRuntime, { recursive: true, force: true });
+        throw error;
+      }
+      const containerId = String(created?.stdout ?? '').trim();
+      if (!containerId) {
+        throw new Error('attempt_container_id_missing');
+      }
+      return Object.freeze({ containerId });
+    },
+
+    async inspect({ containerId } = {}) {
+      try {
+        const result = await runCommand('docker', [
+          'inspect',
+          '--format',
+          '{{.State.Status}}',
+          containerId,
+        ]);
+        return Object.freeze({
+          status: String(result?.stdout ?? '').trim() || 'unknown',
+        });
+      } catch {
+        return Object.freeze({ status: 'missing' });
+      }
+    },
+
+    async remove({ containerId } = {}) {
+      await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
+      return Object.freeze({ removed: true });
+    },
+
+    async listOwned({ workerId } = {}) {
+      const result = await runCommand('docker', [
+        'ps',
+        '-a',
+        '--filter',
+        `label=cecelia.fleet.worker_id=${workerId}`,
+        '--format',
+        '{{json .}}',
+      ]);
+      return String(result?.stdout ?? '')
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((line) => {
+          const row = JSON.parse(line);
+          return {
+            containerId: row.ID,
+            labels: parseDockerLabels(row.Labels),
+          };
+        });
+    },
+  });
+}
 
 function requireMethod(value, method, name) {
   if (typeof value?.[method] !== 'function') {
@@ -337,4 +621,6 @@ function createAttemptRunner({
 
 module.exports = {
   createAttemptRunner,
+  createDockerAdapter,
+  createFileAttemptStateStore,
 };
