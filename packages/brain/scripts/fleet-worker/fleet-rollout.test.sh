@@ -46,6 +46,14 @@ write_executable "$fake_bin/git" \
   '    done' \
   '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/scripts/fleet-worker' \
   '  fi' \
+  '  if [[ "${1:-}" == "init" && "${2:-}" == "--bare" ]]; then mkdir -p "$3"; exit 0; fi' \
+  '  if [[ "$*" == *" fetch --no-tags "* || "$*" == *" update-ref "* ]]; then exit 0; fi' \
+  '  if [[ "$*" == *" bundle create "* ]]; then' \
+  '    while [[ $# -gt 0 && "$1" != "create" ]]; do shift; done' \
+  '    shift' \
+  '    printf "bundle\n" > "$1"' \
+  '    exit 0' \
+  '  fi' \
   '  if [[ -n "$repo_root" ]]; then exec /usr/bin/git -C "$repo_root" "$@"; fi' \
   '  exec /usr/bin/git "$@"' \
   'fi' \
@@ -260,6 +268,25 @@ if grep -Eq '^sudo .* /tmp/cecelia-fleet-rollout\..*/fleet-nodectl\.sh ' \
   "$transport_log"; then
   fail "sudo executed a Fleet script from the SSH user's writable /tmp"
 fi
+grep -Fq 'sudo -n /usr/bin/stat -f %u:%Lp -- /var/tmp/cecelia-fleet-rollout.' \
+  "$transport_log" \
+  || fail "remote rollout did not validate root staging ownership and mode"
+
+: > "$transport_log"
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_TEST_REAL_GIT=1 \
+  FLEET_TEST_SSH_EXECUTE=1 \
+  FLEET_TEST_SUDO_NOEXEC=1 \
+  FLEET_TEST_STAGE_INVALID_OWNER=1 \
+  FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout xian-mac-m4 --apply >"$test_root/remote-invalid-owner.out" 2>&1; then
+  fail "remote rollout accepted non-root staging"
+fi
+grep -Fq 'rollout_staging_invalid' "$test_root/remote-invalid-owner.out" \
+  || fail "remote invalid staging failure was not explicit"
+if grep -Eq '^sudo .*__node-apply' "$transport_log"; then
+  fail "remote invalid staging reached privileged controller execution"
+fi
 
 : > "$transport_log"
 CECELIA_MACHINE_ID=us-mac-m4 \
@@ -300,7 +327,7 @@ for invalid_stage in owner writable symlink; do
   fi
   grep -Fq 'rollout_staging_invalid' "$test_root/invalid-$invalid_stage.out" \
     || fail "invalid staging failure was not explicit: $invalid_stage"
-  if grep -Fq '__node-apply' "$transport_log"; then
+  if grep -Eq '^sudo .*__node-apply' "$transport_log"; then
     fail "invalid staging reached privileged controller execution: $invalid_stage"
   fi
 done

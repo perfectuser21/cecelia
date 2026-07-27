@@ -134,6 +134,35 @@ run_node_drain() {
     "$node_ctl" drain "$machine_id" --apply
 }
 
+validate_root_staging() {
+  local staged_root="$1"
+  local relative_path path metadata owner mode canonical_root canonical_path
+
+  "$SUDO" -n /bin/test -d "$staged_root" \
+    && "$SUDO" -n /bin/test ! -L "$staged_root" \
+    || return 1
+  metadata="$("$SUDO" -n /usr/bin/stat -f '%u:%Lp' -- "$staged_root")" \
+    || return 1
+  [[ "$metadata" == '0:700' ]] || return 1
+  canonical_root="$("$SUDO" -n /bin/realpath -- "$staged_root")" || return 1
+
+  for relative_path in \
+    source/packages/brain/scripts/fleet-worker/fleet-rollout.sh \
+    source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh; do
+    path="$staged_root/$relative_path"
+    "$SUDO" -n /bin/test -f "$path" \
+      && "$SUDO" -n /bin/test ! -L "$path" \
+      || return 1
+    canonical_path="$("$SUDO" -n /bin/realpath -- "$path")" || return 1
+    [[ "$canonical_path" == "$canonical_root/$relative_path" ]] || return 1
+    metadata="$("$SUDO" -n /usr/bin/stat -f '%u:%Lp' -- "$path")" \
+      || return 1
+    IFS=: read -r owner mode <<<"$metadata"
+    [[ "$owner" == 0 && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#$mode & 8#022) == 0 )) || return 1
+  done
+}
+
 run_root_staged_payload() {
   local machine_id="$1"
   local payload_tar="$2"
@@ -164,6 +193,11 @@ run_root_staged_payload() {
   fi
 
   controller="$staged_root/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh"
+  if ! validate_root_staging "$staged_root"; then
+    echo "rollout_staging_invalid" >&2
+    "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1 || true
+    return 1
+  fi
   if ! "$SUDO" -n /bin/chmod \
     +x "$staged_root/source/packages/brain/scripts/fleet-worker/"*.sh; then
     status=1
@@ -281,6 +315,33 @@ sudo_command="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 remote_root="$("$sudo_command" -n /usr/bin/mktemp \
   -d /var/tmp/cecelia-fleet-rollout.XXXXXX)"
 controller_pid=''
+validate_remote_staging() {
+  staged_root="$1"
+  canonical_root=''
+  "$sudo_command" -n /bin/test -d "$staged_root" \
+    && "$sudo_command" -n /bin/test ! -L "$staged_root" \
+    || return 1
+  metadata="$("$sudo_command" -n /usr/bin/stat -f '%u:%Lp' -- "$staged_root")" \
+    || return 1
+  [[ "$metadata" == '0:700' ]] || return 1
+  canonical_root="$("$sudo_command" -n /bin/realpath -- "$staged_root")" \
+    || return 1
+  for relative_path in \
+    source/packages/brain/scripts/fleet-worker/fleet-rollout.sh \
+    source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh; do
+    path="$staged_root/$relative_path"
+    "$sudo_command" -n /bin/test -f "$path" \
+      && "$sudo_command" -n /bin/test ! -L "$path" \
+      || return 1
+    canonical_path="$("$sudo_command" -n /bin/realpath -- "$path")" || return 1
+    [[ "$canonical_path" == "$canonical_root/$relative_path" ]] || return 1
+    metadata="$("$sudo_command" -n /usr/bin/stat -f '%u:%Lp' -- "$path")" \
+      || return 1
+    IFS=: read -r owner mode <<<"$metadata"
+    [[ "$owner" == 0 && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#$mode & 8#022) == 0 )) || return 1
+  done
+}
 interrupt_remote() {
   signal_name="$1"
   signal_status="$2"
@@ -297,6 +358,11 @@ interrupt_remote() {
 "$sudo_command" -n /usr/bin/tar \
   -xf "$remote_root/source.tar" -C "$remote_root/source"
 controller="$remote_root/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh"
+if ! validate_remote_staging "$remote_root"; then
+  echo "rollout_staging_invalid" >&2
+  "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1 || true
+  exit 1
+fi
 "$sudo_command" -n /bin/chmod \
   +x "$remote_root/source/packages/brain/scripts/fleet-worker/"*.sh
 trap 'interrupt_remote HUP 129' HUP
