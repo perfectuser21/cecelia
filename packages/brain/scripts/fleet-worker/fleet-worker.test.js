@@ -766,4 +766,29 @@ describe('Fleet Worker production runtime assembly', () => {
       runCommand: vi.fn(),
     })).toThrow(/fleet_worker_token_file_required/);
   });
+
+  it('rejects a symlink in place of the protected Worker token file', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-token-'));
+    const target = path.join(root, 'token-target');
+    const tokenFile = path.join(root, 'worker-token');
+    fs.writeFileSync(target, 'fleet-worker-token-at-least-32-bytes\n', {
+      mode: 0o600,
+    });
+    fs.symlinkSync(target, tokenFile);
+
+    try {
+      expect(() => createFleetWorkerRuntime({
+        env: {
+          CECELIA_MACHINE_ID: 'us-mac-m4',
+          CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+          CECELIA_FLEET_DATA_ROOT: path.join(root, 'data'),
+          CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
+        },
+        runCommand: vi.fn(),
+      })).toThrow(/fleet_worker_token_file_permissions/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
