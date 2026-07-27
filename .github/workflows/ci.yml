@@ -1841,13 +1841,16 @@ jobs:
   # ─── Auto-merge（所有 cp-* 分支 PR，CI 通过后自动合并）────────
   auto-merge:
     needs: [ci-passed]
-    if: needs.ci-passed.result == 'success' && github.event_name == 'pull_request'
+    if: always() && needs.ci-passed.result == 'success' && github.event_name == 'pull_request'
+    permissions:
+      contents: write
+      pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout（取 should-auto-merge.sh 决策脚本）
         uses: actions/checkout@v4
-      - name: Auto-merge cp-* PR（含重试 + Brain 失败回写）
+      - name: Auto-merge cp-* PR（排队等待分支保护 + Brain 失败回写）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRAIN_URL: ${{ vars.BRAIN_URL || 'http://localhost:5221' }}
@@ -1869,32 +1872,22 @@ jobs:
             exit 0
           fi
 
-          MERGED=false
-          MAX_RETRY=2
-          for attempt in 1 2; do
-            echo "Auto-merge attempt $attempt / $MAX_RETRY"
-            if gh pr merge "$PR_NUMBER" --squash --delete-branch --repo "$GITHUB_REPOSITORY"; then
-              MERGED=true
-              echo "✅ Auto-merge 成功（attempt $attempt）"
-              break
-            fi
-            echo "⚠️  Merge attempt $attempt 失败，重试..."
-            [ "$attempt" -lt "$MAX_RETRY" ] && sleep 10
-          done
-
-          if [ "$MERGED" != "true" ]; then
-            echo "❌ Auto-merge 失败（已重试 $MAX_RETRY 次）"
-            TASK_ID=$(echo "$PR_BODY" | grep -oE 'task[_-]id[: ]+[a-f0-9-]{36}' | head -1 | grep -oE '[a-f0-9-]{36}' || echo "")
-            if [ -n "$TASK_ID" ]; then
-              curl -s -X PATCH "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" \
-                -H "Content-Type: application/json" \
-                -d "{\"status\":\"failed\",\"result\":{\"error\":\"auto-merge failed after retry\",\"pr_number\":${PR_NUMBER}}}" || true
-              echo "已回写 Brain 任务 $TASK_ID 失败状态"
-            else
-              echo "⚠️  未能提取 task_id，跳过 Brain 回写"
-            fi
-            exit 1
+          if gh pr merge "$PR_NUMBER" --auto --squash --delete-branch --repo "$GITHUB_REPOSITORY"; then
+            echo "✅ Auto-merge 已排队；GitHub 将在全部分支保护条件满足后合并"
+            exit 0
           fi
+
+          echo "❌ Auto-merge 排队失败"
+          TASK_ID=$(echo "$PR_BODY" | grep -oE 'task[_-]id[: ]+[a-f0-9-]{36}' | head -1 | grep -oE '[a-f0-9-]{36}' || echo "")
+          if [ -n "$TASK_ID" ]; then
+            curl -s -X PATCH "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" \
+              -H "Content-Type: application/json" \
+              -d "{\"status\":\"failed\",\"result\":{\"error\":\"auto-merge enqueue failed\",\"pr_number\":${PR_NUMBER}}}" || true
+            echo "已回写 Brain 任务 $TASK_ID 失败状态"
+          else
+            echo "⚠️  未能提取 task_id，跳过 Brain 回写"
+          fi
+          exit 1
 
   # ─── dispatch-worker 纯函数层单测（scripts/ 测试无 glob 自动收集，不接=假绿）──────
   dispatch-worker-test:
