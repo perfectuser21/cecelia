@@ -46,17 +46,18 @@ async function runWithProbe(kind, probeResult, taskOverrides = {}) {
 // ─── VALID_EXECUTOR_KINDS ─────────────────────────────────────────────────────
 
 describe('VALID_EXECUTOR_KINDS', () => {
-  it('包含五个合法值', () => {
+  it('包含六个合法值（2026-07-27 增 kernel-process：Kernel v1 裸 Node 进程）', () => {
     expect(VALID_EXECUTOR_KINDS).toEqual(
       expect.arrayContaining([
         'brain-local',
         'relay-container',
+        'kernel-process',
         'headed-session',
         'bridge',
         'external-worker',
       ])
     );
-    expect(VALID_EXECUTOR_KINDS).toHaveLength(5);
+    expect(VALID_EXECUTOR_KINDS).toHaveLength(6);
   });
 });
 

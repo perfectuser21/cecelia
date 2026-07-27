@@ -18,6 +18,11 @@
 
 import { execSync } from 'child_process';
 import defaultPool from '../db.js';
+import {
+  assessKernelLiveness,
+  isKernelRuntimeTask,
+  latestKernelHeartbeatMs,
+} from './kernel-liveness.js';
 
 export const WAIT_SUICIDE_PATTERN = /等\s*(?:待)?.{0,10}(?:Monitor|监控|通知)|waiting\s+for\s+.{0,12}(?:Monitor|notification|CI\b)/i;
 
@@ -45,8 +50,15 @@ export function findLiveRelayContainers(execFn, shortId, excludeName = null) {
     .filter((n) => n !== excludeName);
 }
 
-/** 心跳新鲜度(phase-event 第二信号;查询失败按不新鲜处理,交给容器判活兜)。 */
-async function hasFreshHeartbeat(pool, initiativeId, idleMinutes) {
+/**
+ * 心跳新鲜度(第二信号)。两代运行时的心跳取 max —— 任一信号新鲜即视为活:
+ *   - 旧 relay：initiative_run_events.ts / ts_end
+ *   - Kernel v1：initiative_runs.orchestrator_heartbeat_at（orchestrator 全目录
+ *     对 initiative_run_events 零引用，只看旧表必然误判死）
+ * 单边查询失败不代表死亡，继续看另一边;两边都没有才按不新鲜处理,交给容器判活兜。
+ */
+async function hasFreshHeartbeat(pool, initiativeId, idleMinutes, task = null) {
+  let lastHbMs = 0;
   try {
     const { rows } = await pool.query(
       `SELECT GREATEST(COALESCE(MAX(ts), 0), COALESCE(MAX(ts_end), 0)) AS last_hb
@@ -54,10 +66,47 @@ async function hasFreshHeartbeat(pool, initiativeId, idleMinutes) {
       [initiativeId]
     );
     const lastHb = Number(rows?.[0]?.last_hb || 0);
-    return lastHb > 0 && Math.floor(Date.now() / 1000) - lastHb < idleMinutes * 60;
+    if (lastHb > 0) lastHbMs = lastHb * 1000;
   } catch {
-    return false;
+    /* 单信号失败 → 继续看 kernel 心跳 */
   }
+  if (isKernelRuntimeTask(task)) {
+    try {
+      const kernelMs = await latestKernelHeartbeatMs({ pool, task });
+      if (kernelMs && kernelMs > lastHbMs) lastHbMs = kernelMs;
+    } catch {
+      /* fail-open：拿不到不代表死 */
+    }
+  }
+  return lastHbMs > 0 && Date.now() - lastHbMs < idleMinutes * 60 * 1000;
+}
+
+/**
+ * Kernel v1 判活闸:旧守卫的两个信号(容器 + run_events)对 Kernel 恒返回"死",
+ * requeue 前必须再过一遍这道闸。alive / unknown 一律不动(fail-open);
+ * 只有 pid 确证消失(dead)才放行给旧的 requeue 逻辑;
+ * 非 kernel 任务返回 not_applicable —— 旧路径行为一字不变。
+ * @returns {Promise<boolean>} true = 该任务被 kernel 判活闸拦下,调用方必须 continue
+ */
+async function kernelGuardHolds(pool, task, assessKernel) {
+  let verdict;
+  try {
+    const r = await assessKernel({ pool, task });
+    verdict = r?.verdict;
+    if (verdict === 'alive' || verdict === 'unknown') {
+      console.warn(
+        `[orphan-guard][kernel-v1] task=${task.id} 判活=${verdict}(${r?.reason ?? '-'}) → 不 requeue`
+      );
+      return true;
+    }
+  } catch (err) {
+    // 判活自身炸了也算"不知道"——对 kernel 任务 fail-open
+    if (isKernelRuntimeTask(task)) {
+      console.warn(`[orphan-guard][kernel-v1] task=${task.id} 判活异常,fail-open: ${err.message}`);
+      return true;
+    }
+  }
+  return false;
 }
 
 /** 带封顶的孤儿 requeue。返回 {action: 'requeued'|'failed'} */
@@ -96,7 +145,10 @@ export async function requeueOrphanTask(pool, task, reason, extraPayloadJson = '
  * 件①:callback 一致性闸。容器退出回调到达时校验任务终态。
  * 返回 {action: 'noop'|'requeued'|'failed', suicide?: boolean}。全程不抛(供 callback 路由 best-effort 调用)。
  */
-export async function handleRelayExitConsistency({ pool, execFn = defaultExecFn, containerId, exitCode, resultText = '' }) {
+export async function handleRelayExitConsistency({
+  pool, execFn = defaultExecFn, containerId, exitCode, resultText = '',
+  assessKernel = assessKernelLiveness,
+}) {
   try {
     const shortId = shortIdOf(containerId);
     if (!shortId) return { action: 'noop' };
@@ -121,6 +173,9 @@ export async function handleRelayExitConsistency({ pool, execFn = defaultExecFn,
     }
     if (live.length > 0) return { action: 'noop' }; // 还有别的执行体在干,别抢
 
+    // Kernel v1 判活闸:kernel 没有容器,上面的"无活容器"对它恒真
+    if (await kernelGuardHolds(pool, task, assessKernel)) return { action: 'noop' };
+
     const suicide = WAIT_SUICIDE_PATTERN.test(resultText || '');
     const extra = suicide
       ? JSON.stringify({ wait_suicide_count: Number(task.payload?.wait_suicide_count || 0) + 1 })
@@ -141,8 +196,10 @@ export async function handleRelayExitConsistency({ pool, execFn = defaultExecFn,
  * 件②:定时兜底扫描(callback 丢失时的保险带)。
  * in_progress 的 harness% 任务,idle 超阈值 + 无活容器 + 无新鲜心跳 → requeue(同封顶)。
  */
-export async function sweepOrphanHarnessTasks({ pool, execFn = defaultExecFn, idleMinutes = 15 } = {}) {
-  const result = { scanned: 0, requeued: 0, failed: 0, errors: [] };
+export async function sweepOrphanHarnessTasks({
+  pool, execFn = defaultExecFn, idleMinutes = 15, assessKernel = assessKernelLiveness,
+} = {}) {
+  const result = { scanned: 0, requeued: 0, failed: 0, kernelHeld: 0, errors: [] };
   let rows;
   try {
     ({ rows } = await pool.query(
@@ -173,7 +230,12 @@ export async function sweepOrphanHarnessTasks({ pool, execFn = defaultExecFn, id
         continue; // fail-open
       }
       if (live.length > 0) continue;
-      if (await hasFreshHeartbeat(pool, task.initiative_id || task.id, idleMinutes)) continue;
+      // Kernel v1 判活闸(事故 51836fb2):kernel 是裸 Node 进程,"无活容器"对它恒真
+      if (await kernelGuardHolds(pool, task, assessKernel)) {
+        result.kernelHeld++;
+        continue;
+      }
+      if (await hasFreshHeartbeat(pool, task.initiative_id || task.id, idleMinutes, task)) continue;
       const r = await requeueOrphanTask(pool, task, `sweep-orphan(idle>${idleMinutes}min,无活容器)`);
       if (r.action === 'requeued') result.requeued++;
       else result.failed++;
@@ -182,7 +244,7 @@ export async function sweepOrphanHarnessTasks({ pool, execFn = defaultExecFn, id
     }
   }
   if (result.scanned > 0) {
-    console.log(`[orphan-guard] sweep done: scanned=${result.scanned} requeued=${result.requeued} failed=${result.failed}`);
+    console.log(`[orphan-guard] sweep done: scanned=${result.scanned} requeued=${result.requeued} failed=${result.failed} kernelHeld=${result.kernelHeld}`);
   }
   return result;
 }
