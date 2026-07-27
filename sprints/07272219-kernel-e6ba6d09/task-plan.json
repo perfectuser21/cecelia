@@ -1,0 +1,30 @@
+{
+  "initiative_id": "97d57ec3-37e8-461b-ad2f-c4801f918e2a",
+  "journey_type": "autonomous",
+  "journey_type_reason": "任务聚焦 Kernel/Brain 后端 gate 判定、preview 失败证据与审核硬闸，无前端或真机 UI。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 target-aware required-context contract 与 preview 失败证据保留",
+      "scope": "基于服务端 target_environment 与当前 head SHA 计算 required contexts，令 local_api 对 preview 记 neutral、preview/staging/production fail-closed，并保留 preview 启动失败的 status/body/error evidence 与 single-SHA review gate。",
+      "dod": [
+        "[BEHAVIOR] local_api preview neutral 且仅 required contexts 全过才继续",
+        "[BEHAVIOR] preview 目标 preview failure 缺失 stale SHA 错 repo run 一律阻断",
+        "[BEHAVIOR] preview 启动失败保留 status body error evidence",
+        "[BEHAVIOR] post merge staging production hard gate 与 review_required 单 SHA 审批",
+        "[ARTIFACT] packages/brain/src/orchestrator/required-context-contract.js 导出 createRequiredContextContract 与 evaluateTaskGate"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/required-context-contract.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/routes/preview.js",
+        "sprints/07272219-kernel-e6ba6d09/tests/kernel-target-aware-required-context.pg.contract.test.ts",
+        "packages/brain/src/routes/__tests__/tasks-completed-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 90
+    }
+  ]
+}
