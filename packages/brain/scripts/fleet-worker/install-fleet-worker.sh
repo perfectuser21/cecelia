@@ -16,6 +16,9 @@ ACL_LIST="${FLEET_WORKER_ACL_LIST:-/bin/ls}"
 CHMOD="${FLEET_WORKER_CHMOD:-/bin/chmod}"
 STAT="${FLEET_WORKER_STAT:-/usr/bin/stat}"
 MOVE="${FLEET_WORKER_MV:-/bin/mv}"
+SLEEP="${FLEET_WORKER_SLEEP:-/bin/sleep}"
+STARTUP_PROBE="${FLEET_WORKER_STARTUP_PROBE:-}"
+STARTUP_ATTEMPTS="${FLEET_WORKER_STARTUP_ATTEMPTS:-20}"
 DOCKER_SOCKET_LINK='/var/run/docker.sock'
 DEFAULT_NODE_PROBE="$SCRIPT_DIR/node-probe.cjs"
 NODE_PROBE="${FLEET_WORKER_NODE_PROBE:-$DEFAULT_NODE_PROBE}"
@@ -187,6 +190,87 @@ run_preflight() {
   else
     "$NODE_PROBE"
   fi
+}
+
+probe_started_worker_once() {
+  local health_url="http://$WORKER_BIND_HOST:5231/health"
+  if [[ -n "$STARTUP_PROBE" ]]; then
+    "$STARTUP_PROBE" "$health_url" "$machine_id"
+    return
+  fi
+
+  FLEET_WORKER_STARTUP_HEALTH_URL="$health_url" \
+  FLEET_WORKER_STARTUP_MACHINE="$machine_id" \
+    "$NODE_EXECUTABLE" --input-type=module <<'NODE'
+import { Buffer } from 'node:buffer';
+
+const MAX_BODY_BYTES = 64 * 1024;
+const healthUrl = process.env.FLEET_WORKER_STARTUP_HEALTH_URL;
+const machineId = process.env.FLEET_WORKER_STARTUP_MACHINE;
+
+try {
+  const response = await fetch(healthUrl, {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error('startup_health_http');
+
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    throw new Error('startup_health_too_large');
+  }
+
+  const reader = response.body?.getReader?.();
+  if (!reader) throw new Error('startup_health_body_missing');
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      total += chunk.length;
+      if (total > MAX_BODY_BYTES) {
+        await reader.cancel();
+        throw new Error('startup_health_too_large');
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+
+  const report = JSON.parse(Buffer.concat(chunks, total).toString('utf8'));
+  if (report?.schema_version !== 'fleet-node-health/v1'
+      || report?.machine_id !== machineId) {
+    throw new Error('startup_health_identity');
+  }
+} catch {
+  process.exitCode = 1;
+}
+NODE
+}
+
+verify_started_generation() {
+  local attempt launch_state
+  [[ "$STARTUP_ATTEMPTS" =~ ^[0-9]+$ ]] \
+    && (( STARTUP_ATTEMPTS >= 1 && STARTUP_ATTEMPTS <= 60 )) \
+    || return 1
+
+  for ((attempt = 1; attempt <= STARTUP_ATTEMPTS; attempt += 1)); do
+    launch_state="$("$LAUNCHCTL" print "system/$LABEL" 2>/dev/null)" || launch_state=''
+    if /usr/bin/grep -Eq \
+      'state[[:space:]]*=[[:space:]]*running' <<<"$launch_state" \
+      && probe_started_worker_once >/dev/null 2>&1; then
+      return 0
+    fi
+    if (( attempt < STARTUP_ATTEMPTS )); then
+      "$SLEEP" 0.5 || return 1
+    fi
+  done
+  return 1
 }
 
 has_managed_orbstack_acl() {
@@ -613,6 +697,9 @@ fi
 if [[ "$launch_ok" == true ]]; then
   "$LAUNCHCTL" kickstart -k "system/$LABEL" >/dev/null 2>&1 \
     || launch_ok=false
+fi
+if [[ "$launch_ok" == true ]]; then
+  verify_started_generation || launch_ok=false
 fi
 
 if [[ "$launch_ok" != true ]]; then
