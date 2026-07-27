@@ -16,7 +16,7 @@ journey_type: autonomous
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/approved-contract-provenance.js','utf8'); for (const s of ['buildApprovedContractManifest','verifyApprovedContractManifest','verifyApprovedContractReference','buildApprovedContractDispatchContext','verifyAttemptCallbackApprovedContract','detectApprovedContractMainConflict']) { if (!c.includes(s)) process.exit(1); }"
 
 - [ ] [ARTIFACT] CI required check 脚本必须新增
-  Test: node -e "const c=require('fs').readFileSync('scripts/ci/approved-contract-provenance-check.mjs','utf8'); for (const s of ['manifest_digest','pr-head-sha','approved_contract_drift','requires_re_gan']) { if (!c.includes(s)) process.exit(1); }"
+  Test: node -e "const c=require('fs').readFileSync('scripts/ci/approved-contract-provenance-check.mjs','utf8'); for (const s of ['runApprovedContractProvenanceCheck','manifest_digest','pr-head-sha','repo-root','approved_contract_drift','requires_re_gan']) { if (!c.includes(s)) process.exit(1); }"
 
 - [ ] [ARTIFACT] migration 366 必须固定为 approved contract provenance manifest
   Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/366_approved_contract_provenance_manifest.sql','utf8'); for (const s of ['approved_manifest','manifest_digest','source_commit_sha','reviewer_verdict']) { if (!c.includes(s)) process.exit(1); }"
@@ -75,6 +75,18 @@ journey_type: autonomous
   动作: 构造真实 attempt task_bundle.pull_request.head_sha，再用 generator callback 上报 stale `provider_metadata.pr_head_sha`。
   预期观察: stale PR SHA 返回 `stale_generator_pr_head_sha`，正确 PR SHA 才允许写 verdict。
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale pr_head_sha before writing generator verdict"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] generator callback refuses stale manifest_digest before writing generator verdict
+  动作: 构造真实 generator attempt task_bundle.contract 中 approved digest，再用 generator callback 上报 stale digest。
+  预期观察: stale digest 返回 `stale_generator_manifest_digest`，正确 digest 才允许写 verdict。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator callback refuses stale manifest_digest before writing generator verdict"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] CI required check rejects missing stale digest and stale pr_head_sha fail closed
+  动作: 在真实 PostgreSQL 隔离 schema 写入 approved manifest row，在真实临时 Git repo 提交 approved SHA 与 current PR HEAD 后调用 CI required check 入口。
+  预期观察: 正确 digest/SHA 返回 ok；缺 manifest 返回 `approved_contract_manifest_missing`；stale digest 返回 `stale_manifest_digest`；stale PR SHA 返回 `stale_pr_head_sha`。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "CI required check rejects missing stale digest and stale pr_head_sha fail closed"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] mergeGate refuses PASS verdicts that do not carry the approved manifest_digest
