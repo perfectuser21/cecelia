@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +19,7 @@ marker="$test_root/fleet-worker.drained"
 health="$test_root/health.json"
 mutation_log="$test_root/remote-mutation.log"
 launch_log="$test_root/launchctl.log"
+bootstrap_log="$test_root/bootstrap.log"
 mkdir -p "$test_root/bin"
 
 for remote_command in ssh scp curl; do
@@ -30,6 +32,7 @@ done
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
+  'if [[ -n "${FLEET_NODECTL_TEST_LAUNCH_FAIL:-}" && "$1" == "${FLEET_NODECTL_TEST_LAUNCH_FAIL}" ]]; then exit 19; fi' \
   'if [[ "$1" == "bootout" ]]; then' \
   '  [[ -f "${FLEET_NODECTL_DRAIN_MARKER:?}" ]] || exit 42' \
   '  printf "marker_before_bootout\\n" >> "${FLEET_NODECTL_TEST_LAUNCH_LOG:?}"' \
@@ -38,12 +41,32 @@ printf '%s\n' \
   'exit 0' > "$test_root/launchctl"
 chmod +x "$test_root/launchctl"
 
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "installer %s\n" "$*" >> "${FLEET_NODECTL_TEST_BOOTSTRAP_LOG:?}"' \
+  > "$test_root/installer"
+chmod +x "$test_root/installer"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "baseline %s\n" "$*" >> "${FLEET_NODECTL_TEST_BOOTSTRAP_LOG:?}"' \
+  '[[ "${FLEET_NODECTL_TEST_BASELINE_FAIL:-0}" != 1 ]] || exit 17' \
+  '"${FLEET_NODECTL_TEST_INSTALLER:?}" "$@"' \
+  > "$test_root/baseline"
+chmod +x "$test_root/baseline"
+
 run_nodectl() {
   CECELIA_MACHINE_ID=us-mac-m4 \
   FLEET_NODECTL_DRAIN_MARKER="$marker" \
   FLEET_NODECTL_HEALTH_FILE="$health" \
   FLEET_NODECTL_TEST_REMOTE_LOG="$mutation_log" \
   FLEET_NODECTL_LAUNCHCTL="$test_root/launchctl" \
+  FLEET_NODECTL_INSTALLER="$test_root/installer" \
+  FLEET_NODECTL_BASELINE_RECONCILER="$test_root/baseline" \
+  FLEET_NODECTL_TEST_INSTALLER="$test_root/installer" \
+  FLEET_NODECTL_TEST_BOOTSTRAP_LOG="$bootstrap_log" \
+  FLEET_NODECTL_TEST_BASELINE_FAIL="${FLEET_NODECTL_TEST_BASELINE_FAIL:-0}" \
+  FLEET_NODECTL_TEST_LAUNCH_FAIL="${FLEET_NODECTL_TEST_LAUNCH_FAIL:-}" \
   FLEET_NODECTL_TEST_LAUNCH_LOG="$launch_log" \
   PATH="$test_root/bin:$PATH" \
   "$NODECTL" "$@"
@@ -84,10 +107,34 @@ fi
 [[ ! -e "$marker" ]] || fail "bootstrap dry-run created a drain marker"
 [[ ! -s "$launch_log" ]] || fail "bootstrap dry-run mutated launchd"
 
+: > "$bootstrap_log"
+run_nodectl bootstrap us-mac-m4 --apply >/dev/null \
+  || fail "bootstrap --apply rejected the local machine"
+[[ "$(sed -n '1p' "$bootstrap_log")" == 'baseline us-mac-m4 --apply' ]] \
+  || fail "bootstrap did not reconcile the machine baseline first"
+[[ "$(sed -n '2p' "$bootstrap_log")" == 'installer us-mac-m4 --apply' ]] \
+  || fail "baseline reconciliation did not own Worker installation"
+[[ "$(wc -l < "$bootstrap_log" | tr -d ' ')" == 2 ]] \
+  || fail "bootstrap performed duplicate installation"
+
+: > "$bootstrap_log"
+if FLEET_NODECTL_TEST_BASELINE_FAIL=1 \
+  run_nodectl bootstrap us-mac-m4 --apply >/dev/null 2>&1; then
+  fail "bootstrap hid baseline reconciliation failure"
+fi
+[[ "$(cat "$bootstrap_log")" == 'baseline us-mac-m4 --apply' ]] \
+  || fail "failed baseline reconciliation still invoked the Worker installer"
+
 output="$(run_nodectl drain us-mac-m4)"
 grep -qi 'dry.run' <<<"$output" || fail "drain default is not dry-run"
 [[ ! -e "$marker" ]] || fail "dry-run created the drain marker"
 [[ ! -s "$launch_log" ]] || fail "drain dry-run mutated launchd"
+
+FLEET_NODECTL_TEST_LAUNCH_FAIL=bootout \
+  run_nodectl drain us-mac-m4 --apply >/dev/null \
+  || fail "drain rejected an absent Worker service"
+[[ -f "$marker" ]] || fail "absent-service drain did not keep the marker"
+/bin/rm -f "$marker"
 
 run_nodectl drain us-mac-m4 --apply >/dev/null
 [[ -f "$marker" ]] || fail "drain --apply did not create the marker"
@@ -111,16 +158,28 @@ grep -qi 'dry.run' <<<"$undrain_output" || fail "undrain default is not dry-run"
   || fail "undrain dry-run mutated launchd"
 
 service_start_before="$(count_launchctl '^(bootstrap|kickstart) ')"
+bootstrap_before_undrain="$(count_launchctl '^bootstrap ')"
 run_nodectl undrain us-mac-m4 --apply >/dev/null
 [[ ! -e "$marker" ]] || fail "undrain did not remove the marker"
 first_service_start_count="$(count_launchctl '^(bootstrap|kickstart) ')"
 [[ "$first_service_start_count" -gt "$service_start_before" ]] \
   || fail "first undrain did not bootstrap or kickstart the service"
+bootstrap_after_undrain="$(count_launchctl '^bootstrap ')"
+[[ "$bootstrap_after_undrain" -eq "$bootstrap_before_undrain" ]] \
+  || fail "undrain re-bootstrapped an already loaded service"
 run_nodectl undrain us-mac-m4 --apply >/dev/null \
   || fail "undrain of an absent marker was not idempotent"
 second_service_start_count="$(count_launchctl '^(bootstrap|kickstart) ')"
 [[ "$second_service_start_count" -eq "$first_service_start_count" ]] \
   || fail "second undrain performed an extra service mutation"
+
+printf '%s\n' 'us-mac-m4' > "$marker"
+if FLEET_NODECTL_TEST_LAUNCH_FAIL=kickstart \
+  run_nodectl undrain us-mac-m4 --apply >/dev/null 2>&1; then
+  fail "undrain hid a failed loaded-service kickstart"
+fi
+[[ -f "$marker" ]] || fail "failed loaded-service undrain did not restore marker"
+/bin/rm -f "$marker"
 
 printf '%s\n' '{"machine_id":"us-mac-m4","base_admitted":true,"dispatch_ready":true}' > "$health"
 if run_nodectl admit us-mac-m4 >/dev/null 2>&1; then

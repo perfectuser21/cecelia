@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-INSTALLER="${FLEET_NODECTL_INSTALLER:-$SCRIPT_DIR/install-fleet-worker.sh}"
+BASELINE_RECONCILER="${FLEET_NODECTL_BASELINE_RECONCILER:-$SCRIPT_DIR/reconcile-fleet-node-baseline.sh}"
 LAUNCHCTL="${FLEET_NODECTL_LAUNCHCTL:-/bin/launchctl}"
 DRAIN_MARKER="${FLEET_NODECTL_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
 HEALTH_FILE="${FLEET_NODECTL_HEALTH_FILE:-}"
@@ -156,7 +156,7 @@ case "$command_name" in
       echo "dry-run: would bootstrap system/$LABEL for $machine_id"
     else
       require_local_apply "$machine_id"
-      "$INSTALLER" "$machine_id" --apply
+      "$BASELINE_RECONCILER" "$machine_id" --apply
     fi
     ;;
   admit)
@@ -171,7 +171,7 @@ case "$command_name" in
       if [[ ! -f "$DRAIN_MARKER" ]]; then
         mkdir -p "$(dirname "$DRAIN_MARKER")"
         printf '%s\n' "$machine_id" > "$DRAIN_MARKER"
-        "$LAUNCHCTL" bootout "system/$LABEL"
+        "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
       fi
       echo "drained: $machine_id"
     fi
@@ -183,11 +183,16 @@ case "$command_name" in
       require_local_apply "$machine_id"
       if [[ -f "$DRAIN_MARKER" ]]; then
         rm -f "$DRAIN_MARKER"
-        if ! "$LAUNCHCTL" bootstrap system "$PLIST"; then
-          printf '%s\n' "$machine_id" > "$DRAIN_MARKER"
-          exit 1
+        if "$LAUNCHCTL" print "system/$LABEL" >/dev/null 2>&1; then
+          launch_ok=true
+        else
+          launch_ok=false
+          if "$LAUNCHCTL" bootstrap system "$PLIST"; then
+            launch_ok=true
+          fi
         fi
-        if ! "$LAUNCHCTL" kickstart -k "system/$LABEL"; then
+        if [[ "$launch_ok" != true ]] \
+          || ! "$LAUNCHCTL" kickstart -k "system/$LABEL"; then
           printf '%s\n' "$machine_id" > "$DRAIN_MARKER"
           exit 1
         fi
