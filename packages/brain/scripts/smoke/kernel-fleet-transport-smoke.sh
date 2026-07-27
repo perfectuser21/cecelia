@@ -72,14 +72,14 @@ try {
     spec: { provider: 'codex', args: [], stdin: 'remote smoke' },
     target: { machine },
   });
-  if (result.executionTransport !== 'remote-bridge'
+  if (result.executionTransport !== 'fleet-worker'
       || result.actualMachineId !== machine
       || result.remoteJobId !== jobId
       || result.attestationStatus !== 'verified'
       || requestCount !== 1) {
-    throw new Error(`remote Bridge route drifted: ${JSON.stringify({ result, requestCount })}`);
+    throw new Error(`Fleet Worker route drifted: ${JSON.stringify({ result, requestCount })}`);
   }
-  console.log('PASS: remote fleet transport is disabled by default and verifies an enabled Bridge receipt');
+  console.log('PASS: fleet transport is disabled by default and verifies an enabled Worker receipt');
 } finally {
   await new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
