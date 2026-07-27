@@ -277,6 +277,40 @@ describe('Fleet Node admission client', () => {
     expect(performance.now() - startedAt).toBeLessThan(500);
   });
 
+  it('aborts and cancels a stalled response body within the request timeout', async () => {
+    const contract = await loadContract();
+    let bodyCancelled = false;
+    const body = new ReadableStream({
+      pull() {
+        return new Promise(() => {});
+      },
+      cancel() {
+        bodyCancelled = true;
+      },
+    });
+    const client = contract.createNodeAdmissionClient({
+      env: URLS,
+      fetchFn: vi.fn(async () => new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })),
+      now: () => NOW_MS,
+      requestTimeoutMs: 10,
+    });
+    const startedAt = performance.now();
+
+    const result = await Promise.race([
+      client.getAdmission('us-mac-m4'),
+      new Promise((resolve) => {
+        setTimeout(() => resolve({ signature: 'test_deadline_exceeded' }), 250);
+      }),
+    ]);
+
+    expectFailed(result, 'worker_timeout');
+    expect(bodyCancelled).toBe(true);
+    expect(performance.now() - startedAt).toBeLessThan(500);
+  });
+
   it('fails closed when reading a nominally successful response body rejects', async () => {
     const contract = await loadContract();
     const body = new ReadableStream({
@@ -345,6 +379,35 @@ describe('Fleet Node admission client', () => {
 
     expectFailed(await client.getAdmission('moon-base'), 'unknown_fleet_node');
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['report', 89_900, 1_000],
+    ['Docker', 1_000, 89_900],
+  ])('does not cache past the absolute %s evidence freshness deadline', async (
+    _name,
+    reportAgeMs,
+    dockerAgeMs,
+  ) => {
+    const contract = await loadContract();
+    const profile = contract.getNodeProfile('us-mac-m4');
+    let nowMs = NOW_MS;
+    const fetchFn = vi.fn(async () => response(reportFor(profile, {
+      observed_at: new Date(nowMs - reportAgeMs).toISOString(),
+      docker: { observed_at: new Date(nowMs - dockerAgeMs).toISOString() },
+    })));
+    const client = contract.createNodeAdmissionClient({
+      env: URLS,
+      fetchFn,
+      now: () => nowMs,
+      cacheTtlMs: 90_000,
+    });
+
+    await client.getAdmission('us-mac-m4');
+    nowMs += 101;
+    await client.getAdmission('us-mac-m4');
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   it.each([
