@@ -10,7 +10,7 @@ journey_type: autonomous
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] sprint regression test 存在且覆盖 manifest/drift/gate/re-GAN
-  Test: node -e "const c=require('fs').readFileSync('sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts','utf8'); for (const s of ['canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts','approved migration 365 changed to 366 is rejected as approved_contract_drift','root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift','generator and evaluator dispatch carry approved manifest digest and source sha','callback refuses stale manifest_digest before writing evaluator verdict','callback refuses stale pr_head_sha before writing generator verdict','approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift']) { if (!c.includes(s)) process.exit(1); }"
+  Test: node -e "const c=require('fs').readFileSync('sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts','utf8'); for (const s of ['canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts','approved migration 365 changed to 366 is rejected as approved_contract_drift','root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift','generator and evaluator dispatch carry approved manifest digest and source sha','callback refuses stale manifest_digest before writing evaluator verdict','callback refuses stale pr_head_sha before writing generator verdict','approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift']) { if (!c.includes(s)) process.exit(1); }"
 
 - [ ] [ARTIFACT] approved provenance module 必须新增
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/approved-contract-provenance.js','utf8'); for (const s of ['buildApprovedContractManifest','verifyApprovedContractManifest','verifyApprovedContractReference','buildApprovedContractDispatchContext','verifyAttemptCallbackApprovedContract','detectApprovedContractMainConflict']) { if (!c.includes(s)) process.exit(1); }"
@@ -89,10 +89,10 @@ journey_type: autonomous
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses missing approved manifest_digest and stale judge manifest_digest"'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift
-  动作: 在真实临时 Git repo 中批准 sprint PRD/contract/task-plan/test 后，修改 contract-draft、删除 task-plan、rename test 并提交 current PR SHA。
-  预期观察: `verifyApprovedContractManifest` 返回 `approved_contract_drift`，drift path 同时包含 contract-draft、task-plan、原 test path。
-  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift"'
+- [ ] [BEHAVIOR] [L2] approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift
+  动作: 在真实临时 Git repo 中批准 sprint-prd、contract-draft、contract-dod、task-plan、tests/** 与 fixture/golden 后，分别做 PRD/DoD/contract 内容修改、task-plan 删除、test 重命名、fixture/golden 删除并提交 current PR SHA。
+  预期观察: `verifyApprovedContractManifest` 返回 `approved_contract_drift`，drift path 同时包含 sprint-prd、contract-draft、contract-dod、task-plan、原 test path、fixture/golden path。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] main migration conflict after approval returns requires_re_gan

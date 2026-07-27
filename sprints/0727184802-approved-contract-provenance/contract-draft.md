@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -200,10 +200,10 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved migration 365 changed to 366 is rejected as approved_contract_drift"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "checkbox evidence and provenance only root DoD edits are allowed"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift"
-npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift"
 ```
 
-**硬阈值**: `365->366` 必须 `ok:false reason=approved_contract_drift`；Root DoD Test command/Action/Expected/Environment/Safety 语义变化必须 `approved_contract_drift`；checkbox/evidence/provenance-only 必须 `ok:true`；删除/重命名/内容修改均列 drift path，且不得把 rename 当新 artifact 放行。
+**硬阈值**: `365->366` 必须 `ok:false reason=approved_contract_drift`；Root DoD Test command/Action/Expected/Environment/Safety 语义变化必须 `approved_contract_drift`；checkbox/evidence/provenance-only 必须 `ok:true`；sprint-prd、contract-draft、contract-dod、task-plan、tests/**、fixture/golden 的删除/重命名/内容修改均列 drift path，且不得把 rename 当新 artifact 放行。
 
 ---
 
@@ -297,7 +297,7 @@ echo "OK: approved contract provenance final e2e passed"
 | callback PR SHA preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | callback refuses stale pr_head_sha before writing generator verdict | generator callback stale PR SHA 被写入 verdict → FAIL |
 | merge gate digest | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | mergeGate refuses PASS verdicts that do not carry the approved manifest_digest | 现有 mergeGate 只看 pr_head_sha → FAIL |
 | merge gate missing/stale digest | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | mergeGate refuses missing approved manifest_digest and stale judge manifest_digest | 缺 approved digest 或 stale judge digest 被放行 → FAIL |
-| frozen artifact deletion/rename | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift | 删除 task-plan、rename test、改 contract-draft 被放行 → FAIL |
+| frozen artifact deletion/rename | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift | sprint-prd、contract-draft、contract-dod、task-plan、tests/**、fixture/golden 任一删除/重命名/内容修改被放行 → FAIL |
 | requires_re_gan | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | main migration conflict after approval returns requires_re_gan | migration 冲突进入普通 fix loop 或被改号 → FAIL |
 
 ## 预期实现边界
@@ -319,3 +319,4 @@ echo "OK: approved contract provenance final e2e passed"
 - contract-gate: present at `packages/brain/src/lib/contract-gate.js`; 本合同未跳过代码层 Contract Gate。
 - PR #4372 只作为事故证据，不修改、不复用；回归 fixture 用本 sprint 测试临时 Git repo 自造 365→366 drift。
 - Android/微信/第三方 API 不涉及，target_environment 固定 `local_api`。
+- Round 4 修订：补齐 frozen artifact 漂移 oracle，确保 sprint-prd、contract-draft、contract-dod、task-plan、tests/**、fixture/golden 都有删除/重命名/内容修改拒绝断言；未扩展 PRD 外 scope。
