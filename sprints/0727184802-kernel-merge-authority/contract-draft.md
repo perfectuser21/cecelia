@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 24)
+# Sprint Contract Draft (Round 25)
 
 ## 合同边界
 
@@ -67,7 +67,7 @@ N/A — 任务无新增公开 HTTP 响应；对外可观测契约是 `orchestrat
 
 ## 当前红证据（2026-07-27）
 
-- `node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts --reporter=verbose` 于 2026-07-27 实跑红：`.github/workflows/scripts/should-auto-merge.sh` 仍输出 `SKIP: harness-owned PR...` 而非 `FAIL_CLOSED`；`createKernelHandlers(...).merge_pr` 仍发 `gh pr merge ... --squash --delete-branch` 且缺 `--match-head-commit <head_sha>`；`finalizeHarnessTask` 在 `review_required=true` 且缺当前 SHA `human_review` 时仍返回 `allow:true`；`packages/brain/src/harness-ci-gate.js` 尚未导出 server-owned `resolveKernelMergeAuthority`，也没有拒绝 `title/body/branch/PR-owned script` 伪证据的统一入口。
+- `node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts --reporter=verbose` 于 2026-07-27 实跑红：16 条合同红测中 5 条失败、1 条通过；失败点集中在 `.github/workflows/scripts/should-auto-merge.sh` 仍输出 `SKIP: harness-owned PR...` 而非 `FAIL_CLOSED`、`createKernelHandlers(...).merge_pr` 仍发 `gh pr merge ... --squash --delete-branch` 且缺 `--match-head-commit <head_sha>`、`finalizeHarnessTask` 在 `review_required=true` 且缺当前 SHA `human_review` 时仍返回 `allow:true`，以及 `packages/brain/src/harness-ci-gate.js` 尚未导出 server-owned `resolveKernelMergeAuthority`，也没有拒绝 `title/body/branch/PR-owned script` 伪证据的统一入口。
 - 同一轮红测的明确失败名为：`merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha`、`标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority`、`resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组`、`resolveKernelMergeAuthority 拒绝 title body branch 与 PR-owned script 作为授权证据`、`finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed`。这五条直接锚定本轮合同的 Golden Path 步骤 1、3、5、6。
 - `cat .github/workflows/ci.yml` 与 `cat .github/workflows/scripts/should-auto-merge.sh` 于 2026-07-27 读取显示：`auto-merge` job 仍先 `actions/checkout@v4` 当前 PR，再执行工作区内的 `should-auto-merge.sh`；这意味着 merge 判据脚本本身仍可被 PR 修改，必须收归到 server-owned ownership resolver，不能继续让 PR 自带脚本充当授权证据。
 - 同一轮红测还命中了 `connect ECONNREFUSED 127.0.0.1:5432`；这说明 approve/reject 合同红测已经真实触达 Postgres 接缝，没有通过 mock 邻边造假，但 generator 转绿与 final-e2e 之前必须起真 PG。
