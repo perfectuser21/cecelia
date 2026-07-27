@@ -20,6 +20,7 @@ launch_state="$test_root/launchctl.state"
 launch_fail_once="$test_root/launchctl.fail-once"
 acl_log="$test_root/acl.log"
 acl_state="$test_root/acl.state"
+socket_acl_state="$test_root/socket-acl.state"
 preflight_log="$test_root/preflight.log"
 mkdir -p "$install_dir" "$log_dir"
 
@@ -32,6 +33,8 @@ run_installer() {
     FLEET_WORKER_READLINK="$test_root/readlink" \
     FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
     FLEET_WORKER_CHMOD="$test_root/chmod" \
+    FLEET_WORKER_STAT="$test_root/stat" \
+    FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     "$INSTALLER" "$@"
 }
 
@@ -46,6 +49,8 @@ run_installer_with_id() {
     FLEET_WORKER_READLINK="$test_root/readlink" \
     FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
     FLEET_WORKER_CHMOD="$test_root/chmod" \
+    FLEET_WORKER_STAT="$test_root/stat" \
+    FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     "$INSTALLER" "$@"
 }
 
@@ -70,8 +75,11 @@ chmod +x "$test_root/readlink"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
-  'if [[ -e "${FLEET_WORKER_ACL_STATE:?}" ]]; then' \
+  'target="${@: -1}"' \
+  'if [[ "$target" == "/Users/orbstack-owner" && -e "${FLEET_WORKER_ACL_STATE:?}" ]]; then' \
   '  printf "%s\\n" " 0: user:_cecelia allow search"' \
+  'elif [[ "$target" == */docker.sock && -e "${FLEET_WORKER_SOCKET_ACL_STATE:?}" ]]; then' \
+  '  printf "%s\\n" " 0: user:_cecelia allow read,write"' \
   'fi' \
   > "$test_root/acl-list"
 chmod +x "$test_root/acl-list"
@@ -80,15 +88,26 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "%s\\n" "acl $*" >> "${FLEET_WORKER_ACL_LOG:?}"' \
   'printf "%s\\n" "acl $1" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
-  'if [[ "$1" == "+a" ]]; then' \
+  'if [[ "$1" == "+a" && "$2" == "_cecelia allow search" ]]; then' \
   '  : > "${FLEET_WORKER_ACL_STATE:?}"' \
   '  [[ "${FLEET_WORKER_ACL_FAIL_ADD:-0}" != "1" ]] || exit 91' \
-  'elif [[ "$1" == "-a" ]]; then' \
+  'elif [[ "$1" == "-a" && "$2" == "_cecelia allow search" ]]; then' \
   '  [[ "${FLEET_WORKER_ACL_FAIL_REMOVE:-0}" != "1" ]] || exit 92' \
   '  rm -f "${FLEET_WORKER_ACL_STATE:?}"' \
+  'elif [[ "$1" == "+a" && "$2" == "_cecelia allow read,write" ]]; then' \
+  '  : > "${FLEET_WORKER_SOCKET_ACL_STATE:?}"' \
+  '  [[ "${FLEET_WORKER_SOCKET_ACL_FAIL_ADD:-0}" != "1" ]] || exit 93' \
+  'elif [[ "$1" == "-a" && "$2" == "_cecelia allow read,write" ]]; then' \
+  '  [[ "${FLEET_WORKER_SOCKET_ACL_FAIL_REMOVE:-0}" != "1" ]] || exit 94' \
+  '  rm -f "${FLEET_WORKER_SOCKET_ACL_STATE:?}"' \
   'fi' \
   > "$test_root/chmod"
 chmod +x "$test_root/chmod"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\\n" "Socket"' > "$test_root/stat"
+chmod +x "$test_root/stat"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -308,7 +327,7 @@ chmod +x "$test_root/node-probe"
 
 : > "$acl_log"
 : > "$preflight_log"
-rm -f "$acl_state" "$launch_fail_once"
+rm -f "$acl_state" "$socket_acl_state" "$launch_fail_once"
 export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
 first_failure_output=''
 if first_failure_output="$(
@@ -320,16 +339,17 @@ fi
 unset FLEET_WORKER_LAUNCH_FAIL_MATCH
 grep -Fq 'install_failed_rolled_back' <<<"$first_failure_output" \
   || fail "failed first install lacked a bounded rollback signature"
-[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 1 ]] \
-  || fail "failed first install did not add exactly one ACL"
-[[ "$(grep -Ec '^acl -a ' "$acl_log")" -eq 1 ]] \
-  || fail "failed first install did not remove its new ACL"
-[[ ! -e "$acl_state" ]] || fail "failed first install leaked its new ACL"
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 2 ]] \
+  || fail "failed first install did not add both minimal ACLs"
+[[ "$(grep -Ec '^acl -a ' "$acl_log")" -eq 2 ]] \
+  || fail "failed first install did not remove both new ACLs"
+[[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+  || fail "failed first install leaked a new ACL"
 
 : > "$acl_log"
 : > "$preflight_log"
 : > "$launch_log"
-rm -f "$acl_state" "$launch_fail_once"
+rm -f "$acl_state" "$socket_acl_state" "$launch_fail_once"
 export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
 acl_rollback_failure_output=''
 if acl_rollback_failure_output="$(
@@ -344,6 +364,7 @@ grep -Fq 'docker_acl_rollback_incomplete' <<<"$acl_rollback_failure_output" \
   || fail "ACL rollback failure was silently swallowed"
 [[ -e "$acl_state" ]] || fail "ACL rollback failure fixture did not preserve evidence"
 rm -f "$acl_state"
+rm -f "$socket_acl_state"
 
 : > "$acl_log"
 : > "$preflight_log"
@@ -355,43 +376,78 @@ installed_plist="$install_dir/com.perfect21.fleet-worker.plist"
 runtime_dir="$test_root/usr/local/libexec/cecelia/fleet-worker"
 installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
+installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
+installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
+[[ -f "$installed_access_helper" && -f "$installed_access_plist" ]] \
+  || fail "--apply did not install the socket ACL refresher generation"
+access_plist_contract="$(python3 - "$installed_access_plist" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], 'rb') as handle:
+    plist = plistlib.load(handle)
+
+print('|'.join([
+    str(plist.get('UserName')),
+    str(plist.get('RunAtLoad')),
+    str(plist.get('WatchPaths', [None])[0]),
+    str(plist.get('ProgramArguments', [None])[0]),
+]))
+PY
+)" || fail "socket ACL watcher is not a valid plist"
+[[ "$access_plist_contract" == "root|True|/Users/orbstack-owner/.orbstack/run/docker.sock|$installed_access_helper" ]] \
+  || fail "socket ACL watcher contract drifted: $access_plist_contract"
 cmp -s "$validated_plist" "$installed_plist" \
   || fail "installed plist differs from the validated staged plist"
-[[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq 2 ]] \
-  || fail "--apply must perform exactly two launchctl mutations"
-[[ "$(sed -n '1p' "$launch_log")" == "bootstrap system $installed_plist" ]] \
-  || fail "--apply did not bootstrap the installed system LaunchDaemon"
-[[ "$(sed -n '2p' "$launch_log")" == 'kickstart -k system/com.perfect21.fleet-worker' ]] \
+[[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq 4 ]] \
+  || fail "--apply must start exactly the watcher and Worker"
+[[ "$(sed -n '1p' "$launch_log")" == "bootstrap system $installed_access_plist" ]] \
+  || fail "--apply did not bootstrap the socket ACL watcher first"
+[[ "$(sed -n '2p' "$launch_log")" == 'kickstart -k system/com.perfect21.fleet-worker-docker-access' ]] \
+  || fail "--apply did not run the socket ACL refresher"
+[[ "$(sed -n '3p' "$launch_log")" == "bootstrap system $installed_plist" ]] \
+  || fail "--apply did not bootstrap the installed Worker LaunchDaemon"
+[[ "$(sed -n '4p' "$launch_log")" == 'kickstart -k system/com.perfect21.fleet-worker' ]] \
   || fail "--apply did not kickstart the installed system LaunchDaemon"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "first apply did not leave the service running"
-[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 1 ]] \
-  || fail "first apply did not add exactly one minimal ACL"
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 2 ]] \
+  || fail "first apply did not add exactly two minimal ACLs"
 grep -Fxq 'acl +a _cecelia allow search /Users/orbstack-owner' "$acl_log" \
   || fail "first apply granted more than owner-home search ACL"
+grep -Fxq 'acl +a _cecelia allow read,write /Users/orbstack-owner/.orbstack/run/docker.sock' \
+  "$acl_log" || fail "first apply did not grant exact socket read,write"
 [[ "$(sed -n '1p' "$preflight_log")" == 'acl +a' ]] \
-  || fail "ACL was not granted before the low-privilege node probe"
-[[ "$(sed -n '2p' "$preflight_log")" == 'probe' ]] \
-  || fail "node probe did not run after the ACL grant"
+  || fail "home ACL was not granted before the low-privilege node probe"
+[[ "$(sed -n '2p' "$preflight_log")" == 'acl +a' ]] \
+  || fail "socket ACL was not granted before the low-privilege node probe"
+[[ "$(sed -n '3p' "$preflight_log")" == 'probe' ]] \
+  || fail "node probe did not run after both ACL grants"
 
 : > "$launch_log"
 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
   || fail "repeat --apply was not an idempotent upgrade"
-[[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq 3 ]] \
-  || fail "repeat --apply did not replace one prior service generation"
-[[ "$(sed -n '1p' "$launch_log")" == 'bootout system/com.perfect21.fleet-worker' ]] \
-  || fail "repeat --apply did not boot out the prior service before bootstrap"
-[[ "$(sed -n '2p' "$launch_log")" == "bootstrap system $installed_plist" ]] \
-  || fail "repeat --apply did not bootstrap the replacement plist"
-[[ "$(sed -n '3p' "$launch_log")" == 'kickstart -k system/com.perfect21.fleet-worker' ]] \
+[[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq 6 ]] \
+  || fail "repeat --apply did not replace both prior service generations"
+[[ "$(sed -n '1p' "$launch_log")" == 'bootout system/com.perfect21.fleet-worker-docker-access' ]] \
+  || fail "repeat --apply did not boot out the prior watcher"
+[[ "$(sed -n '2p' "$launch_log")" == 'bootout system/com.perfect21.fleet-worker' ]] \
+  || fail "repeat --apply did not boot out the prior Worker"
+[[ "$(sed -n '3p' "$launch_log")" == "bootstrap system $installed_access_plist" ]] \
+  || fail "repeat --apply did not bootstrap the replacement watcher"
+[[ "$(sed -n '4p' "$launch_log")" == 'kickstart -k system/com.perfect21.fleet-worker-docker-access' ]] \
+  || fail "repeat --apply did not refresh socket access"
+[[ "$(sed -n '5p' "$launch_log")" == "bootstrap system $installed_plist" ]] \
+  || fail "repeat --apply did not bootstrap the replacement Worker"
+[[ "$(sed -n '6p' "$launch_log")" == 'kickstart -k system/com.perfect21.fleet-worker' ]] \
   || fail "repeat --apply did not kickstart the replacement service"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "repeat --apply left split service state"
-[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 1 ]] \
-  || fail "repeat --apply duplicated the existing ACL"
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 2 ]] \
+  || fail "repeat --apply duplicated an existing ACL"
 
 mode_of() {
   case "$(uname -s)" in
