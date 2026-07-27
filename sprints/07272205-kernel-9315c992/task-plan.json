@@ -1,0 +1,33 @@
+{
+  "initiative_id": "9315c992-7061-4d17-8c88-628ed0eb0be2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "该 sprint 只改 Brain/Kernel 后端 Harness capacity admission，不涉及 UI、真机 RPA 或远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 provider-neutral Harness capacity accounting",
+      "scope": "让 harnessSlotCheck 使用 provider/account-aware llm capacity snapshot 与真实 harness_attempts active occupancy 计算 acct_cap；支持 fixed role_assignments、candidate-aware admission、fail-closed、legacy relay 回归、版本/RCI/review_required 记录；不绕过 tick/dispatcher/harnessSlotCheck，不降低 reserve/quota/mem/disk/hard cap。",
+      "dod": [
+        "[BEHAVIOR] provider-neutral acct_cap 覆盖 Claude Codex Grok 且不固定为 4",
+        "[BEHAVIOR] 真实 harness_attempts 非终态占用按 provider account 计数且终态不占用",
+        "[BEHAVIOR] 缺快照 未知 provider 未知并发上限全部 fail-closed",
+        "[BEHAVIOR] harnessSlotCheck 叠加 provider-neutral acct_cap active attempts reserve 和 hard cap",
+        "[ARTIFACT] DEFINITION/version/RCI 写入 provider-neutral Harness capacity 且 review_required=true"
+      ],
+      "files": [
+        "packages/brain/src/slot-allocator.js",
+        "packages/brain/src/llm-capacity.js",
+        "packages/brain/src/harness-capacity-accounting.js",
+        "packages/brain/src/__tests__/",
+        "sprints/07272205-kernel-9315c992/tests/",
+        "packages/brain/DEFINITION.md",
+        "DEFINITION.md",
+        "VERSION",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 100
+    }
+  ]
+}
