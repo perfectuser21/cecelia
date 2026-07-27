@@ -11,7 +11,7 @@ target_environment: local_api
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] 合同红测文件覆盖真实 PostgreSQL approve/reject 接缝、缺 SHA、task/run/PR 失配、merge gate、lock-head、CI fail-closed
-  Test: node -e "const fs=require('fs');const p='sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts';const c=fs.readFileSync(p,'utf8');for(const s of ['createIsolatedDatabase','approve route 缺少 repo 或 pr_number','approve route 缺少 pr_head_sha','approve route stale SHA 或 task/run/PR 不匹配','reject route 缺少 pr_head_sha','reject route stale SHA 或 task/run/PR 不匹配','review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并','--match-head-commit','resolveKernelMergeAuthority','PR-owned script']){if(!c.includes(s))throw new Error('missing '+s)}"
+  Test: node -e "const fs=require('fs');const p='sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts';const c=fs.readFileSync(p,'utf8');for(const s of ['createIsolatedDatabase','approve route 缺少 repo 或 pr_number','approve route 缺少 pr_head_sha','approve route stale SHA 或 task/run/PR 不匹配','reject route 缺少 pr_head_sha','reject route stale SHA 或 task/run/PR 不匹配','review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并','--match-head-commit','resolveKernelMergeAuthority','PR-owned script','should-auto-merge.sh']){if(!c.includes(s))throw new Error('missing '+s)}"
 
 - [ ] [ARTIFACT] 合同草案声明真实调用方 shape、禁 mock 边、未覆盖真实链路清单
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/0727184802-kernel-merge-authority/contract-draft.md','utf8');for(const s of ['## 真实调用方请求 shape','## 禁 mock 边清单','## 未覆盖真实链路清单']){if(!c.includes(s))throw new Error('missing '+s)}"

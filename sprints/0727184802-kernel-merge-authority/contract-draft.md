@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 25)
+# Sprint Contract Draft (Round 26)
 
 ## 合同边界
 
@@ -223,7 +223,7 @@ node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-author
 
 **来源**: `[AI_ADDED]` — Reviewer/Proposer 防造假补充，理由：PRD 明示“CI 和 legacy merge caller 必须 fail-closed”，但现状证据显示 `.github/workflows/scripts/should-auto-merge.sh` 仍返回 `SKIP: harness-owned PR...`，语义上还是允许旁路 caller 自行判定，需要收敛为明确的 deny/authority-required 结果并把 legacy finalize 一并锁进同一 gate。
 
-**可观测行为**: 旧 should-auto-merge 标题逻辑不能再单独决定 merge；Kernel-owned PR 只能经 Kernel merge gate，普通 PR 即使标题写成 `feat(harness)`、body 混入 task/run 文本、branch 写成 `cp-*`、或直接改写 PR 内 `should-auto-merge.sh` 也不能被误分类。CI caller 的脚本输出必须是明确 deny 语义（例如 `FAIL_CLOSED: kernel_merge_authority_required` 或等价 machine-readable 字样），而不是“SKIP 后由调用方自行决定”；真正授权判断必须来自 server-owned `resolveKernelMergeAuthority`。legacy caller `finalizeHarnessTask` 即使看到 PR 已 MERGED，也必须额外校验当前 head 对应的 evaluator/judge/human_review 证据，否则拒绝放行终态。
+**可观测行为**: 旧 should-auto-merge 标题逻辑不能再单独决定 merge；Kernel-owned PR 只能经 Kernel merge gate，普通 PR 即使标题写成 `feat(harness)`、body 混入 task/run 文本、branch 写成 `cp-*`、或直接改写 PR 内 `should-auto-merge.sh` 也不能被误分类。CI caller 的脚本输出必须是明确 deny 语义（例如 `FAIL_CLOSED: kernel_merge_authority_required` 或等价 machine-readable 字样），而不是“SKIP 后由调用方自行决定”；真正授权判断必须来自 server-owned `resolveKernelMergeAuthority`。legacy caller `finalizeHarnessTask` 即使看到 PR 已 MERGED，也必须额外校验当前 head 对应的 evaluator/judge/human_review 证据，否则拒绝放行终态。`[CI_GAP: .github/workflows/ci.yml 当前仍 checkout PR 工作区并执行 PR-owned should-auto-merge.sh，Generator 必须把授权判定收归 Brain/Kernel 自有代码或受信脚本路径。]`
 
 **验证命令**:
 ```bash

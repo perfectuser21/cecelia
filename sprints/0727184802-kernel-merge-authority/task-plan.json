@@ -33,6 +33,7 @@
         "packages/brain/src/orchestrator/ground-truth.js",
         "packages/brain/src/orchestrator/gates.js",
         "packages/brain/src/orchestrator/kernel-handlers.js",
+        ".github/workflows/ci.yml",
         ".github/workflows/scripts/should-auto-merge.sh",
         "packages/brain/src/routes/__tests__/harness-kernel-approvals.test.js",
         "packages/brain/src/lib/__tests__/harness-finalize.test.js",
