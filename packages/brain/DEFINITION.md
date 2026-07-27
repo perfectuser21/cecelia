@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.90
+**版本**: 1.267.91
 
 ## Kernel attempt telemetry
 
@@ -17,7 +17,12 @@
 - NodeProfile 同时固定 Worker listener 与 Brain callback：US 使用回环，Xian
   M4/M1 listener 绑定各自 Tailscale IP，callback 指向 US Brain Tailscale health。
   system LaunchDaemon 固定 `DOCKER_HOST=unix:///var/run/docker.sock`。
-- installer 只为预先存在的 `_cecelia` 向 OrbStack owner home 授予 `search`，
+- US M4 的 `fleet-rollout.sh` 只从 committed Git、credential-free bundle 和
+  pinned Runner image 构建节点工件，经 BatchMode SSH 调用节点本地 reconciler；
+  不读取或传输账号目录、Prompt、token 或 provider session。
+- baseline reconciler 创建固定 UID/GID 450 的 `_cecelia` 服务身份，安装 pinned
+  Node/Codex CLI 与 OrbStack 2.2.1，导入 Git baseline/Runner，再调用 transactional
+  installer。installer 为 `_cecelia` 向 OrbStack owner home 授予 `search`，
   并向 exact `docker.sock` 授予 `read,write`；root-only WatchPaths helper 负责
   socket 重建后的恢复，不授权 sibling sockets。本次新增 ACL 在失败时逆序回退。
   新 generation 只有在 launchd 持续为 running、且 profile-owned `/health`
@@ -30,7 +35,7 @@
   作为生产可达的轻量角色使用权重 1。
 - Phase 4A 始终返回 `dispatch_ready=false`，不定义 WorkspaceSpec/Attempt API、
   CredentialEnvelope、执行等价/恢复或 Phase 5 真实任务验收。
-- Worker-first 发布尚待复审；`xian-mac-m1` 在 Docker 不可用时必须保持 drained，
+- self-deploy 发布尚待复审与 merge；`xian-mac-m1` 在 Docker 不可用时必须保持 drained，
   不得降低准入阈值，也不得用 synthetic canary 代替真实任务验收。
 - 节点回退：
   `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`。

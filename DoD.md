@@ -10,7 +10,7 @@ target_environment: local
 
 **范围**: 三台 canonical Fleet Node 的 immutable profile、system LaunchDaemon
 Worker 健康证据、本地基础准入计算、bootstrap/drain 工具，以及 production
-machine-health 的 mandatory fail-closed 接线。
+machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
 
 **大小**: L
 
@@ -32,11 +32,18 @@ machine-health 的 mandatory fail-closed 接线。
   bootstrap/status/admit/drain/undrain 命令已冻结；plist 固定 `/var/run/docker.sock`，
   installer 为 `_cecelia` 管理 owner-home search 与 exact docker socket read/write ACL；
   root-only WatchPaths helper 在 socket 重建后恢复 exact ACL，不授权 OrbStack run
-  目录或 sibling sockets。远程 mutation 不在命令能力内。
+  目录或 sibling sockets。nodectl mutation 仍然只接受本机 canonical identity。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh && bash packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'
 
+- [x] [ARTIFACT] `reconcile-fleet-node-baseline.sh` 固定安装 Node `25.8.0`、
+  Codex CLI `0.145.0`、OrbStack `2.2.1`、UID/GID 450 `_cecelia`、credential-free
+  Git baseline 与 pinned Runner；`fleet-rollout.sh` 仅允许 US M4 从 committed
+  Git 构建工件，以 BatchMode SSH + `sudo -n` 按 Xian M4→US M4→Xian M1 顺序
+  调用节点本地 bootstrap。默认均为 dry-run，任一失败恢复 drain。
+  Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh'
+
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
-  Brain `1.267.90` canonical version sources 已同步。
+  Brain `1.267.91` canonical version sources 已同步。
   Test: manual:bash -c 'bash scripts/check-version-sync.sh && node scripts/registry-lint.mjs && node -e "const fs=require(\"fs\"),yaml=require(\"js-yaml\");yaml.load(fs.readFileSync(\"regression-contract.yaml\",\"utf8\"));yaml.load(fs.readFileSync(\"docs/registry/features/orchestration.yml\",\"utf8\"));"'
 
 ## BEHAVIOR 条目
@@ -81,6 +88,15 @@ machine-health 的 mandatory fail-closed 接线。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh && bash packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'
   期望: exit 0
 
+- [x] [BEHAVIOR] [L2] US M4 自部署只传输 committed Git bundle 与 pinned Runner，
+  不传用户 home、Xian 长期 Codex 凭据或 provider session；缺 Docker CLI 的新节点
+  可由 OrbStack app 自带 CLI 完成 bootstrap，checksum/签名/version/Runner digest
+  任一不匹配即失败。新 OrbStack 首次安装失败会删除未完成 app，已有 app 升级失败
+  会回滚；发现高于 baseline 的版本绝不静默 downgrade。rollout 的
+  drain→bootstrap→undrain→admit 任一步失败都会恢复 drain。
+  Test: contract:KERNEL-FLEET-NODE-SELF-DEPLOY-01
+  期望: exit 0
+
 ## 明确非声明与待复审项
 
 - Phase 4A 始终 `dispatch_ready=false`；本 DoD 不声明 WorkspaceSpec/Attempt API、
@@ -88,7 +104,7 @@ machine-health 的 mandatory fail-closed 接线。
 - 确定性单测与 contract smoke 是回归证据，不是 Phase 5 真实业务任务验收；
   synthetic canary 不得替代会产生代码 diff、Red/Green commits、PR、CI 与 verdict
   的真实任务。
-- 真实节点 evidence 与 Worker-first rollout 尚待本 PR 复审，未在本分支执行。
+- 真实节点 evidence 与 self-deploy rollout 尚待本 PR 复审/merge，未在本分支执行。
   当前 `xian-mac-m1` 的 Docker 为 false，必须保持 drained；不得降低 policy 或
   resource threshold 来获取绿灯。
 - 本阶段不使用、复制或安装 Xian 本地长期 Codex 凭据；没有新增 credential、

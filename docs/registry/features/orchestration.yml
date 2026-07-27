@@ -326,6 +326,8 @@ features:
         - packages/brain/scripts/fleet-worker/refresh-fleet-worker-docker-access.sh
         - packages/brain/scripts/fleet-worker/install-fleet-worker.sh
         - packages/brain/scripts/fleet-worker/fleet-nodectl.sh
+        - packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.sh
+        - packages/brain/scripts/fleet-worker/fleet-rollout.sh
         - docker-compose.yml
       language: javascript
       runtime: node
@@ -372,6 +374,8 @@ features:
         - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
         - packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh
         - packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh
+        - packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh
+        - packages/brain/scripts/fleet-worker/fleet-rollout.test.sh
       e2e:
         - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
         - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
@@ -406,6 +410,8 @@ features:
           integration:
             - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
             - packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh
+            - packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh
+            - packages/brain/scripts/fleet-worker/fleet-rollout.test.sh
           e2e:
             - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
         status: active

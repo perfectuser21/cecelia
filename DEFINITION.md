@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.267.90
+**Brain 版本**: 1.267.91
 
 **状态**: 生产运行中
 
@@ -227,7 +227,12 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - NodeProfile 固定 US loopback、Xian 两台各自的 Tailscale listener，以及
   Xian 指向 US Brain Tailscale health 的 callback。LaunchDaemon 固定通过
   `/var/run/docker.sock` 访问 OrbStack。
-- installer 只为预先存在的 `_cecelia` 增加 owner-home `search` 与 exact
+- US M4 通过 `fleet-rollout.sh` 从 committed Git、credential-free bundle 与
+  pinned Runner image 构建工件，并以 BatchMode SSH + `sudo -n` 运行节点本地
+  reconciler；不复制用户目录、Codex auth、Prompt、token 或 provider session。
+- baseline reconciler 固定创建 UID/GID 450 的 `_cecelia`，安装 pinned
+  Node/Codex CLI 与 OrbStack 2.2.1，导入 Git baseline/Runner；installer 增加
+  owner-home `search` 与 exact
   `docker.sock` `read,write`；root-only WatchPaths helper 在 socket 重建后恢复
   exact ACL，不触碰 sibling sockets。本次安装新增 ACL 在失败时逆序撤销。
   新 generation 只有在 launchd 保持 running 且 profile-owned `/health` 返回
