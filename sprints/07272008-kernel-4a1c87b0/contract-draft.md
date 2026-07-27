@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 4)
+# Sprint Contract Draft (Round 5)
 
 ## 合同边界
 
@@ -238,5 +238,5 @@ node -e "const fs=require('fs');const y=fs.readFileSync('regression-contract.yam
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| failure terminalizer 出口收口 / target exhaustion retry / reconciler / slot / API completed_at / current SHA 守门 | `sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.contract.test.js` | `统一失败出口接入 failure terminalizer` / `all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail` / `reconciler 仅处理 latest kernel v2 terminal run 的精确幽灵态` / `slot allocator 继续以 task status 为 SSOT 且 failed API 补 completed_at` / `ghost fixture 只读回归且 current SHA 证据已接线` | 目标模块/导出尚不存在或未接线时 import/行为断言直接失败；即便存在空壳实现，也会在 failureClass/retry/latest/current_task_id/slot/current SHA 断言处失败 |
-| 真 PG 原子性 / 回滚 / 幂等 / claim / history | `sprints/07272008-kernel-4a1c87b0/tests/kernel-failure-terminalizer.pg.contract.test.js` | `hard failure 原子终结 run task history claim 并保持幂等` | 未实现事务与真实表写路径前，PG 集成测在 completed_at/history/claim/rollback 断言处失败 |
+| failure terminalizer 出口收口 / target exhaustion retry / reconciler / slot / API completed_at / current SHA 守门 | `tests/kernel-failure-terminalizer.contract.test.js` | `统一失败出口接入 failure terminalizer` / `all_execution_targets_exhausted 仅前 3 次回 queued 第 4 次 hard fail` / `reconciler 仅处理 latest kernel v2 terminal run 的精确幽灵态` / `slot allocator 继续以 task status 为 SSOT 且 failed API 补 completed_at` / `ghost fixture 只读回归且 current SHA 证据已接线` | 目标模块/导出尚不存在或未接线时 import/行为断言直接失败；即便存在空壳实现，也会在 failureClass/retry/latest/current_task_id/slot/current SHA 断言处失败 |
+| 真 PG 原子性 / 回滚 / 幂等 / claim / history | `tests/kernel-failure-terminalizer.pg.contract.test.js` | `hard failure 原子终结 run task history claim 并保持幂等` | 未实现事务与真实表写路径前，PG 集成测在 completed_at/history/claim/rollback 断言处失败 |

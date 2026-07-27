@@ -1,5 +1,5 @@
 {
-  "initiative_id": "4a1c87b0-8bfc-4770-9a60-6423b024329a",
+  "initiative_id": "pending",
   "journey_type": "autonomous",
   "journey_type_reason": "本 sprint 只涉及 Brain Kernel 状态机、PostgreSQL 与本地 API/slot 计数验证，无 UI 或远端 agent 交互。",
   "tasks": [
