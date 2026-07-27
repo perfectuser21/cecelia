@@ -81,9 +81,10 @@ printf '%s\n' \
   'printf "%s\\n" "acl $*" >> "${FLEET_WORKER_ACL_LOG:?}"' \
   'printf "%s\\n" "acl $1" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
   'if [[ "$1" == "+a" ]]; then' \
-  '  [[ "${FLEET_WORKER_ACL_FAIL_ADD:-0}" != "1" ]] || exit 91' \
   '  : > "${FLEET_WORKER_ACL_STATE:?}"' \
+  '  [[ "${FLEET_WORKER_ACL_FAIL_ADD:-0}" != "1" ]] || exit 91' \
   'elif [[ "$1" == "-a" ]]; then' \
+  '  [[ "${FLEET_WORKER_ACL_FAIL_REMOVE:-0}" != "1" ]] || exit 92' \
   '  rm -f "${FLEET_WORKER_ACL_STATE:?}"' \
   'fi' \
   > "$test_root/chmod"
@@ -142,6 +143,7 @@ done
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
+  'printf "%s\\n" "probe" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
   'printf "%s\\n" "{\"ok\":true}"' \
   'exit 0' > "$test_root/node-probe"
 chmod +x "$test_root/node-probe"
@@ -273,6 +275,33 @@ fi
 grep -Fq 'prerequisite_docker_acl' <<<"$acl_failure_output" \
   || fail "failed ACL grant lacked a bounded refusal"
 [[ ! -e "$acl_state" ]] || fail "failed ACL grant left ACL state behind"
+grep -Fq 'acl -a _cecelia allow search /Users/orbstack-owner' "$acl_log" \
+  || fail "partial ACL grant was not rolled back"
+
+: > "$acl_log"
+: > "$preflight_log"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\\n" "probe" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
+  'printf "%s\\n" "prerequisite_docker" >&2' \
+  'exit 1' > "$test_root/node-probe"
+chmod +x "$test_root/node-probe"
+preflight_failure_output=''
+if preflight_failure_output="$(
+  run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  fail "failed low-privilege preflight unexpectedly succeeded"
+fi
+grep -Fq 'prerequisite_docker' <<<"$preflight_failure_output" \
+  || fail "failed low-privilege preflight lacked a bounded refusal"
+[[ ! -e "$acl_state" ]] || fail "failed low-privilege preflight leaked its new ACL"
+[[ ! -s "$launch_log" ]] || fail "failed low-privilege preflight mutated launchd"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\\n" "probe" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
+  'printf "%s\\n" "{\"ok\":true}"' \
+  'exit 0' > "$test_root/node-probe"
+chmod +x "$test_root/node-probe"
 
 : > "$acl_log"
 : > "$preflight_log"
@@ -288,11 +317,30 @@ fi
 unset FLEET_WORKER_LAUNCH_FAIL_MATCH
 grep -Fq 'install_failed_rolled_back' <<<"$first_failure_output" \
   || fail "failed first install lacked a bounded rollback signature"
-[[ "$(grep -Ec '^acl \\+a ' "$acl_log")" -eq 1 ]] \
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 1 ]] \
   || fail "failed first install did not add exactly one ACL"
 [[ "$(grep -Ec '^acl -a ' "$acl_log")" -eq 1 ]] \
   || fail "failed first install did not remove its new ACL"
 [[ ! -e "$acl_state" ]] || fail "failed first install leaked its new ACL"
+
+: > "$acl_log"
+: > "$preflight_log"
+: > "$launch_log"
+rm -f "$acl_state" "$launch_fail_once"
+export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
+acl_rollback_failure_output=''
+if acl_rollback_failure_output="$(
+  FLEET_WORKER_ACL_FAIL_REMOVE=1 \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+)"; then
+  unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+  fail "ACL rollback failure unexpectedly succeeded"
+fi
+unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+grep -Fq 'docker_acl_rollback_incomplete' <<<"$acl_rollback_failure_output" \
+  || fail "ACL rollback failure was silently swallowed"
+[[ -e "$acl_state" ]] || fail "ACL rollback failure fixture did not preserve evidence"
+rm -f "$acl_state"
 
 : > "$acl_log"
 : > "$preflight_log"
@@ -317,7 +365,7 @@ cmp -s "$validated_plist" "$installed_plist" \
   || fail "--apply did not kickstart the installed system LaunchDaemon"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "first apply did not leave the service running"
-[[ "$(grep -Ec '^acl \\+a ' "$acl_log")" -eq 1 ]] \
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 1 ]] \
   || fail "first apply did not add exactly one minimal ACL"
 grep -Fxq 'acl +a _cecelia allow search /Users/orbstack-owner' "$acl_log" \
   || fail "first apply granted more than owner-home search ACL"
@@ -339,7 +387,7 @@ run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
   || fail "repeat --apply did not kickstart the replacement service"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "repeat --apply left split service state"
-[[ "$(grep -Ec '^acl \\+a ' "$acl_log")" -eq 1 ]] \
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 1 ]] \
   || fail "repeat --apply duplicated the existing ACL"
 
 mode_of() {

@@ -10,6 +10,10 @@ LOG_DIR="${FLEET_WORKER_LOG_DIR:-/var/log/cecelia}"
 LAUNCHCTL="${FLEET_WORKER_LAUNCHCTL:-/bin/launchctl}"
 PLUTIL="${FLEET_WORKER_PLUTIL:-/usr/bin/plutil}"
 ID_COMMAND="${FLEET_WORKER_ID:-/usr/bin/id}"
+READLINK="${FLEET_WORKER_READLINK:-/usr/bin/readlink}"
+ACL_LIST="${FLEET_WORKER_ACL_LIST:-/bin/ls}"
+CHMOD="${FLEET_WORKER_CHMOD:-/bin/chmod}"
+DOCKER_SOCKET_LINK='/var/run/docker.sock'
 DEFAULT_NODE_PROBE="$SCRIPT_DIR/node-probe.cjs"
 NODE_PROBE="${FLEET_WORKER_NODE_PROBE:-$DEFAULT_NODE_PROBE}"
 NODE_EXECUTABLE="${FLEET_WORKER_NODE_EXECUTABLE:-$(command -v node || true)}"
@@ -23,6 +27,9 @@ BACKUP_DIR=''
 STAGED_WORKER=''
 STAGED_PROBE=''
 STAGED_PLIST=''
+ACL_ADDED=false
+ACL_HOME=''
+INSTALL_SUCCEEDED=false
 
 case "$INSTALL_DIR" in
   */Library/LaunchDaemons)
@@ -95,11 +102,12 @@ run_default_preflight() {
   [[ -n "$NODE_EXECUTABLE" && -x "$NODE_EXECUTABLE" ]] \
     || die "prerequisite_node"
   [[ -f "$NODE_PROBE" ]] || die "prerequisite_probe"
-  /usr/bin/id -u _cecelia >/dev/null 2>&1 || die "prerequisite_service_user"
-  service_uid="$(/usr/bin/id -u _cecelia)"
-  service_gid="$(/usr/bin/id -g _cecelia)"
+  "$ID_COMMAND" -u _cecelia >/dev/null 2>&1 || die "prerequisite_service_user"
+  service_uid="$("$ID_COMMAND" -u _cecelia)"
+  service_gid="$("$ID_COMMAND" -g _cecelia)"
 
   PATH='/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' \
+  DOCKER_HOST='unix:///var/run/docker.sock' \
   CECELIA_MACHINE_ID="$machine_id" \
   CECELIA_RUNNER_DIGEST="$RUNNER_DIGEST" \
   CECELIA_REPO_ROOT="$WORKTREE_ROOT" \
@@ -155,6 +163,49 @@ run_preflight() {
   fi
 }
 
+has_managed_orbstack_acl() {
+  "$ACL_LIST" -lde "$ACL_HOME" 2>/dev/null \
+    | /usr/bin/grep -Eq '^[[:space:]]*[0-9]+: user:_cecelia allow search$'
+}
+
+rollback_new_orbstack_acl() {
+  if [[ "$ACL_ADDED" == true && "$INSTALL_SUCCEEDED" != true ]]; then
+    if ! "$CHMOD" -a '_cecelia allow search' "$ACL_HOME" >/dev/null 2>&1; then
+      echo "docker_acl_rollback_incomplete" >&2
+      return 1
+    fi
+    ACL_ADDED=false
+  fi
+}
+
+prepare_orbstack_access() {
+  local socket_target owner_name
+
+  "$ID_COMMAND" -u _cecelia >/dev/null 2>&1 || die "prerequisite_service_user"
+  socket_target="$("$READLINK" "$DOCKER_SOCKET_LINK" 2>/dev/null)" \
+    || die "prerequisite_docker_socket"
+  case "$socket_target" in
+    /Users/*/.orbstack/run/docker.sock) ;;
+    *) die "prerequisite_docker_socket_target" ;;
+  esac
+
+  ACL_HOME="${socket_target%/.orbstack/run/docker.sock}"
+  owner_name="${ACL_HOME#/Users/}"
+  if [[ -z "$owner_name" || "$owner_name" == */* || "$owner_name" == '.' \
+    || "$owner_name" == '..' || ! "$owner_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    die "prerequisite_docker_socket_target"
+  fi
+
+  if has_managed_orbstack_acl; then
+    return
+  fi
+
+  trap cleanup_transaction EXIT
+  ACL_ADDED=true
+  "$CHMOD" +a '_cecelia allow search' "$ACL_HOME" >/dev/null 2>&1 \
+    || die "prerequisite_docker_acl"
+}
+
 render_plist() {
   local target="$1"
   local target_dir temporary line
@@ -207,6 +258,7 @@ cleanup_transaction() {
     rmdir "$BACKUP_DIR" 2>/dev/null || true
   fi
   [[ -z "$LOCK_DIR" ]] || rmdir "$LOCK_DIR" 2>/dev/null || true
+  rollback_new_orbstack_acl || true
 }
 
 prepare_transaction_paths() {
@@ -334,6 +386,9 @@ if [[ "$mode" == 'apply' && "$("$ID_COMMAND" -u)" != '0' ]]; then
   die "root_required" 77
 fi
 
+if [[ "$mode" == 'apply' ]]; then
+  prepare_orbstack_access
+fi
 run_preflight
 
 if [[ "$mode" == 'render' ]]; then
@@ -414,4 +469,5 @@ if [[ "$launch_ok" != true ]]; then
   die "install_failed_rollback_incomplete"
 fi
 
+INSTALL_SUCCEEDED=true
 echo "installed: system/$LABEL for $machine_id"
