@@ -369,6 +369,7 @@ features:
         - packages/brain/src/orchestrator/workspace-spec.test.js
         - packages/brain/src/orchestrator/production-transport.test.js
         - packages/brain/src/orchestrator/remote-bridge-transport.test.js
+        - packages/brain/src/orchestrator/providers/grok.test.js
         - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
         - packages/brain/src/__tests__/harness-relay-watchdog.test.js
         - packages/brain/src/orchestrator/fleet-node/node-profile.test.js

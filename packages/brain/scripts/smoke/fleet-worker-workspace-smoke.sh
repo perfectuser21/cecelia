@@ -13,6 +13,8 @@ npx vitest run \
   scripts/fleet-worker/workspace-manager.test.cjs \
   scripts/fleet-worker/attempt-runner.test.cjs \
   scripts/fleet-worker/fleet-worker.test.js \
+  src/orchestrator/__tests__/dispatcher.test.js \
+  src/orchestrator/providers/grok.test.js \
   src/orchestrator/production-transport.test.js \
   src/orchestrator/remote-bridge-transport.test.js
 
