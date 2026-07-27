@@ -16,6 +16,8 @@ trap 'rm -rf "$test_root"' EXIT
 install_dir="$test_root/Library/LaunchDaemons"
 log_dir="$test_root/var/log/cecelia"
 launch_log="$test_root/launchctl.log"
+launch_state="$test_root/launchctl.state"
+launch_fail_once="$test_root/launchctl.fail-once"
 mkdir -p "$install_dir" "$log_dir"
 
 run_installer() {
@@ -44,6 +46,7 @@ printf '%s\n' \
   'exit 0' > "$test_root/launchctl"
 chmod +x "$test_root/launchctl"
 export FLEET_WORKER_LAUNCH_LOG="$launch_log"
+export FLEET_WORKER_LAUNCH_STATE="$launch_state"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -157,13 +160,32 @@ printf '%s\n' \
 chmod +x "$test_root/id-root"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
-  'printf "%s\\n" "$*" >> "${FLEET_WORKER_LAUNCH_LOG:?}"' \
+  'command_line="$*"' \
+  'printf "%s\\n" "$command_line" >> "${FLEET_WORKER_LAUNCH_LOG:?}"' \
+  'if [[ -n "${FLEET_WORKER_LAUNCH_FAIL_MATCH:-}"' \
+  '  && "$command_line" == *"${FLEET_WORKER_LAUNCH_FAIL_MATCH}"*' \
+  '  && ! -e "${FLEET_WORKER_LAUNCH_FAIL_ONCE:?}" ]]; then' \
+  '  : > "${FLEET_WORKER_LAUNCH_FAIL_ONCE:?}"' \
+  '  exit 99' \
+  'fi' \
+  'case "$1" in' \
+  '  bootout) printf "stopped\\n" > "${FLEET_WORKER_LAUNCH_STATE:?}" ;;' \
+  '  bootstrap) printf "loaded\\n" > "${FLEET_WORKER_LAUNCH_STATE:?}" ;;' \
+  '  kickstart) printf "running\\n" > "${FLEET_WORKER_LAUNCH_STATE:?}" ;;' \
+  'esac' \
   'exit 0' > "$test_root/launchctl"
 chmod +x "$test_root/launchctl"
 : > "$launch_log"
+printf 'absent\n' > "$launch_state"
+export FLEET_WORKER_LAUNCH_FAIL_ONCE="$launch_fail_once"
 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null
 installed_plist="$install_dir/com.perfect21.fleet-worker.plist"
+runtime_dir="$test_root/usr/local/libexec/cecelia/fleet-worker"
+installed_worker="$runtime_dir/fleet-worker.cjs"
+installed_probe="$runtime_dir/node-probe.cjs"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
+[[ -f "$installed_worker" && -f "$installed_probe" ]] \
+  || fail "--apply did not install a stable Worker runtime"
 cmp -s "$validated_plist" "$installed_plist" \
   || fail "installed plist differs from the validated staged plist"
 [[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq 2 ]] \
@@ -172,5 +194,98 @@ cmp -s "$validated_plist" "$installed_plist" \
   || fail "--apply did not bootstrap the installed system LaunchDaemon"
 [[ "$(sed -n '2p' "$launch_log")" == 'kickstart -k system/com.perfect21.fleet-worker' ]] \
   || fail "--apply did not kickstart the installed system LaunchDaemon"
+[[ "$(<"$launch_state")" == 'running' ]] \
+  || fail "first apply did not leave the service running"
+
+: > "$launch_log"
+run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
+  || fail "repeat --apply was not an idempotent upgrade"
+[[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq 3 ]] \
+  || fail "repeat --apply did not replace one prior service generation"
+[[ "$(sed -n '1p' "$launch_log")" == 'bootout system/com.perfect21.fleet-worker' ]] \
+  || fail "repeat --apply did not boot out the prior service before bootstrap"
+[[ "$(sed -n '2p' "$launch_log")" == "bootstrap system $installed_plist" ]] \
+  || fail "repeat --apply did not bootstrap the replacement plist"
+[[ "$(sed -n '3p' "$launch_log")" == 'kickstart -k system/com.perfect21.fleet-worker' ]] \
+  || fail "repeat --apply did not kickstart the replacement service"
+[[ "$(<"$launch_state")" == 'running' ]] \
+  || fail "repeat --apply left split service state"
+
+mode_of() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    Linux) stat -c '%a' "$1" ;;
+    *) fail "unsupported operating system for mode assertion" ;;
+  esac
+}
+
+seed_prior_generation() {
+  local tag="$1"
+  printf '%s\n' "prior-worker-$tag" > "$installed_worker"
+  printf '%s\n' "prior-probe-$tag" > "$installed_probe"
+  printf '%s\n' "prior-plist-$tag" > "$installed_plist"
+  chmod 0711 "$installed_worker"
+  chmod 0600 "$installed_probe"
+  chmod 0640 "$installed_plist"
+  printf 'running\n' > "$launch_state"
+}
+
+assert_failed_upgrade_rolled_back() {
+  local failure_match="$1"
+  local expected_mutations="$2"
+  local tag="$3"
+  local snapshot_dir="$test_root/snapshot-$tag"
+  local worker_mode probe_mode plist_mode failure_output
+
+  seed_prior_generation "$tag"
+  mkdir -p "$snapshot_dir"
+  cp "$installed_worker" "$snapshot_dir/worker"
+  cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_plist" "$snapshot_dir/plist"
+  worker_mode="$(mode_of "$installed_worker")"
+  probe_mode="$(mode_of "$installed_probe")"
+  plist_mode="$(mode_of "$installed_plist")"
+  : > "$launch_log"
+  rm -f "$launch_fail_once"
+  export FLEET_WORKER_LAUNCH_FAIL_MATCH="$failure_match"
+
+  failure_output=''
+  if failure_output="$(
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1
+  )"; then
+    unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+    fail "$tag failure unexpectedly succeeded"
+  fi
+  unset FLEET_WORKER_LAUNCH_FAIL_MATCH
+
+  grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
+    || fail "$tag failure lacked a bounded rollback signature"
+  cmp -s "$snapshot_dir/worker" "$installed_worker" \
+    || fail "$tag failure did not restore exact Worker bytes"
+  cmp -s "$snapshot_dir/probe" "$installed_probe" \
+    || fail "$tag failure did not restore exact probe bytes"
+  cmp -s "$snapshot_dir/plist" "$installed_plist" \
+    || fail "$tag failure did not restore exact plist bytes"
+  [[ "$(mode_of "$installed_worker")" == "$worker_mode" ]] \
+    || fail "$tag failure did not restore the Worker mode"
+  [[ "$(mode_of "$installed_probe")" == "$probe_mode" ]] \
+    || fail "$tag failure did not restore the probe mode"
+  [[ "$(mode_of "$installed_plist")" == "$plist_mode" ]] \
+    || fail "$tag failure did not restore the plist mode"
+  [[ "$(<"$launch_state")" == 'running' ]] \
+    || fail "$tag failure did not best-effort restore the prior service"
+  [[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq "$expected_mutations" ]] \
+    || fail "$tag rollback performed an unexpected mutation sequence"
+  [[ "$(sed -n '1p' "$launch_log")" == 'bootout system/com.perfect21.fleet-worker' ]] \
+    || fail "$tag failure did not first stop the prior generation"
+  tail -n 2 "$launch_log" | grep -Fxq \
+    "bootstrap system $installed_plist" \
+    || fail "$tag rollback did not restore the prior plist service"
+  [[ "$(tail -n 1 "$launch_log")" == 'kickstart -k system/com.perfect21.fleet-worker' ]] \
+    || fail "$tag rollback did not restart the prior service"
+}
+
+assert_failed_upgrade_rolled_back 'bootstrap system' 5 bootstrap
+assert_failed_upgrade_rolled_back 'kickstart -k' 6 kickstart
 
 echo "PASS: Fleet Worker installer behavioral contract"
