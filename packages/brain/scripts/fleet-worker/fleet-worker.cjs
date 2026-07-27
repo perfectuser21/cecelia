@@ -12,6 +12,9 @@ const {
   createDockerAdapter,
   createFileAttemptStateStore,
 } = require('./attempt-runner.cjs');
+const {
+  createCredentialEnvelopeConsumer,
+} = require('./credential-envelope.cjs');
 const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager } = require('./workspace-manager.cjs');
 
@@ -246,6 +249,7 @@ function createFleetWorkerRuntime({
     quarantine: path.join(dataRoot, 'quarantine'),
     state: path.join(dataRoot, 'state'),
     runtime: path.join(dataRoot, 'runtime'),
+    credentials: path.join(dataRoot, 'credential-consumption'),
   });
   const workspaceManager = createWorkspaceManager({
     mirrorRoot: roots.mirrors,
@@ -262,6 +266,9 @@ function createFleetWorkerRuntime({
     ...(runCommand ? { runCommand } : {}),
   });
   const stateStore = createFileAttemptStateStore({ stateRoot: roots.state });
+  const credentialConsumer = createCredentialEnvelopeConsumer({
+    consumptionRoot: roots.credentials,
+  });
   const runnerImageDigest = env.CECELIA_RUNNER_IMAGE
     ?? `cecelia/runner@${digest}`;
   const attemptRunner = createAttemptRunner({
@@ -270,6 +277,7 @@ function createFleetWorkerRuntime({
     stateStore,
     workerId,
     runnerImageDigest,
+    credentialConsumer,
   });
   return Object.freeze({
     attemptRunner,

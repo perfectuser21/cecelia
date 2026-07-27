@@ -314,6 +314,7 @@ features:
         - packages/brain/src/orchestrator/workspace-spec.js
         - packages/brain/src/orchestrator/production-transport.js
         - packages/brain/src/orchestrator/remote-bridge-transport.js
+        - packages/brain/src/orchestrator/credential-broker.js
         - packages/brain/src/harness-skill-relay.js
         - packages/brain/src/harness-relay-watchdog.js
         - packages/brain/config/fleet-node-profiles.json
@@ -326,6 +327,7 @@ features:
         - packages/brain/scripts/fleet-worker/fleet-worker.cjs
         - packages/brain/scripts/fleet-worker/workspace-manager.cjs
         - packages/brain/scripts/fleet-worker/attempt-runner.cjs
+        - packages/brain/scripts/fleet-worker/credential-envelope.cjs
         - packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker.plist.template
         - packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker-docker-access.plist.template
         - packages/brain/scripts/fleet-worker/refresh-fleet-worker-docker-access.sh
@@ -369,6 +371,7 @@ features:
         - packages/brain/src/orchestrator/workspace-spec.test.js
         - packages/brain/src/orchestrator/production-transport.test.js
         - packages/brain/src/orchestrator/remote-bridge-transport.test.js
+        - packages/brain/src/orchestrator/credential-broker.test.js
         - packages/brain/src/orchestrator/providers/grok.test.js
         - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
         - packages/brain/src/__tests__/harness-relay-watchdog.test.js
@@ -380,6 +383,7 @@ features:
         - packages/brain/scripts/fleet-worker/fleet-worker.test.js
         - packages/brain/scripts/fleet-worker/workspace-manager.test.cjs
         - packages/brain/scripts/fleet-worker/attempt-runner.test.cjs
+        - packages/brain/scripts/fleet-worker/credential-envelope.test.cjs
       integration:
         - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
         - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
@@ -391,9 +395,11 @@ features:
         - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
         - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
         - packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh
+        - packages/brain/scripts/smoke/fleet-credential-envelope-smoke.sh
       regression:
         - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
         - packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh
+        - packages/brain/scripts/smoke/fleet-credential-envelope-smoke.sh
     capabilities:
       - id: provider_neutral_harness_relay
         name: Provider-neutral Harness Relay
@@ -444,6 +450,22 @@ features:
             - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
           e2e:
             - packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh
+        status: active
+      - id: fleet_codex_credential_envelope
+        name: Central Fleet Codex CredentialEnvelope
+        entry_file: packages/brain/src/orchestrator/credential-broker.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/orchestrator/credential-broker.test.js
+            - packages/brain/src/orchestrator/remote-bridge-transport.test.js
+            - packages/brain/scripts/fleet-worker/credential-envelope.test.cjs
+            - packages/brain/scripts/fleet-worker/attempt-runner.test.cjs
+            - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
+          integration:
+            - docker/cecelia-runner/__tests__/entrypoint-codex-credential-envelope.test.sh
+          e2e:
+            - packages/brain/scripts/smoke/fleet-credential-envelope-smoke.sh
         status: active
     ci:
       jobs:

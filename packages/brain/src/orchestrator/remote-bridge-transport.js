@@ -96,13 +96,17 @@ export function createRemoteBridgeTransport({
   bridgeUrls,
   sharedSecret,
   brainUrl,
+  credentialBroker,
   fetchFn = globalThis.fetch,
+  now = Date.now,
   timeoutMs = 10000,
 } = {}) {
   const machineUrls = copyBridgeUrls(bridgeUrls);
   const configuredSecret = sharedSecret;
   const configuredBrainUrl = brainUrl;
+  const configuredCredentialBroker = credentialBroker;
   const configuredFetch = fetchFn;
+  const configuredNow = now;
   const configuredTimeout = timeoutMs;
 
   function resolveBridge(target) {
@@ -208,6 +212,40 @@ export function createRemoteBridgeTransport({
         configuredBrainUrl,
         'remote_bridge_invalid_brain_url',
       );
+      let credentialEnvelope;
+      if (target?.provider === 'codex') {
+        if (typeof configuredCredentialBroker?.issue !== 'function') {
+          throw new Error('remote_bridge_credential_broker_unavailable');
+        }
+        const timeoutSeconds = bundle?.constraints?.timeout_seconds;
+        if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+          throw new Error('remote_bridge_invalid_attempt_timeout');
+        }
+        const nowMs = configuredNow();
+        if (!Number.isFinite(nowMs)) {
+          throw new Error('remote_bridge_invalid_clock');
+        }
+        const deadlineMs = nowMs + timeoutSeconds * 1000;
+        if (
+          !Number.isFinite(deadlineMs)
+          || Math.abs(deadlineMs) > 8_640_000_000_000_000
+        ) {
+          throw new Error('remote_bridge_invalid_attempt_timeout');
+        }
+        credentialEnvelope = await configuredCredentialBroker.issue({
+          attemptId: attempt.id,
+          accountId: target?.account,
+          machineId: machine,
+          deadlineAt: new Date(deadlineMs).toISOString(),
+        });
+        if (
+          !credentialEnvelope
+          || typeof credentialEnvelope !== 'object'
+          || Array.isArray(credentialEnvelope)
+        ) {
+          throw new Error('remote_bridge_credential_envelope_invalid');
+        }
+      }
       const workspace = disposableCanaryWorkspace(bundle, attempt.id);
       const workspaceSpec = copyWorkspaceSpec(bundle);
       return request(
@@ -237,6 +275,9 @@ export function createRemoteBridgeTransport({
               output: spec?.output,
               ...(workspace ? { workspace } : {}),
             },
+            ...(credentialEnvelope
+              ? { credential_envelope: credentialEnvelope }
+              : {}),
             callback_url: `${normalizedBrainUrl}/api/brain/harness/attempts/${encodeURIComponent(attempt.id)}/callback`,
             callback_token: attempt.callbackSecret,
           }),

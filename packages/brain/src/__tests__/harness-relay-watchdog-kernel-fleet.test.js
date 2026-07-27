@@ -13,6 +13,18 @@ const SECRET = 'watchdog-fleet-secret-at-least-32-bytes';
 const CALLBACK_TOKEN = 'watchdog-child-callback-token';
 const BRIDGE_URL = 'http://xian-m4.internal:3458';
 
+function testCredentialPayload() {
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const claims = Buffer.from(JSON.stringify({
+    exp: Math.floor(Date.now() / 1000) + 60 * 60,
+  })).toString('base64url');
+  return JSON.stringify({
+    tokens: {
+      access_token: `${header}.${claims}.test-signature`,
+    },
+  });
+}
+
 function response(status, body) {
   return new Response(JSON.stringify(body), {
     status,
@@ -131,6 +143,7 @@ function resumeOptions(overrides = {}) {
     leaseOwner: 'watchdog:test',
     attemptStore: resumeStore(),
     env: remoteEnv(),
+    loadCredential: vi.fn(async () => testCredentialPayload()),
     fetchFn: vi.fn(),
     spawnDetached: vi.fn(),
     removeContainer: vi.fn(),

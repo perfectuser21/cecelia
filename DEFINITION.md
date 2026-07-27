@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.267.95
+**Brain 版本**: 1.267.96
 
 **状态**: 生产运行中
 
@@ -219,7 +219,7 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - decision-executor.js 验证 action 在白名单内，然后在事务中执行
 - 危险 action（如 adjust_strategy）进入 pending_actions 表等人工审批
 
-### 2.3 Fleet Node 基础准入与统一 Worker（Phase 4A～4B）
+### 2.3 Fleet Node 基础准入、统一 Worker 与中央凭据（Phase 4A～4C）
 
 - Brain 只接受 `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` 三个不可变
   `NodeProfile`，并从 system LaunchDaemon Worker 的有界 `/health` 报告重新计算
@@ -261,15 +261,21 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   退出按 container（含 prompt runtime）→ worktree → state 回收。
   Legacy bridge 的 production `/harness/attempts*` 已关闭，返回
   `410 fleet_worker_required`。
-- Phase 4A 的成功结果仍固定为 `dispatch_ready=false`。CredentialEnvelope、
-  执行等价与恢复，以及 Phase 5 真实业务任务验收不属于 Phase 4B；
+- Phase 4C 由 US M4 为最终选中的 team1～team5 单账号签发
+  Attempt/account/machine/deadline 绑定的 `CredentialEnvelope`。Brain 只经
+  authenticated Worker API 传输；Worker 在建 workspace 前校验并一次消费，
+  通过 FIFO 把 `auth.json` 写入容器 tmpfs `CODEX_HOME`（0600）。宿主状态只允许
+  七项 envelope 元数据；callback 只增加 `credential_ref` 与
+  `credential_copy_mutated`，不回传或回写认证材料。
+- Phase 4A 的基础成功结果仍固定为 `dispatch_ready=false`。Phase 4C 不宣称节点已
+  production-ready；执行等价与恢复以及 Phase 5 真实业务任务验收仍未完成；
   production probes 必须在 `dispatch_ready=true` 前阻断 Attempt 创建与 launcher，
   并保留 `node_not_dispatch_ready` 阻断签名及其告警/决策 evidence。
 - 发布顺序固定为 Worker-first，待三台节点真实健康证据通过复审后再发布 Brain。
   当前 `xian-mac-m1` 的 Docker 不可用，必须保持 drained，不能降低阈值。
 - 节点紧急回退先在该节点执行
   `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`；
-  Brain 镜像回退执行 `bash scripts/brain-rollback.sh 1.267.94`。恢复前必须重新取得
+  Brain 镜像回退执行 `bash scripts/brain-rollback.sh 1.267.95`。恢复前必须重新取得
   真实 Worker 健康证据，不能用 synthetic canary 替代。
 
 ---

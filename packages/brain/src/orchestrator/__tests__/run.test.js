@@ -3,6 +3,7 @@
  * buildRealDeps/main 组装真实 pg/execSync，不在单测覆盖（--dry-run 冒烟见 scripts/smoke/orchestrator-smoke.sh）。
  */
 import { describe, it, expect, vi } from 'vitest';
+import { signMachineAttestation } from '../machine-attestation.js';
 import { buildRealDeps, parseArgs } from '../run.js';
 
 describe('parseArgs', () => {
@@ -34,6 +35,132 @@ describe('buildRealDeps', () => {
 
     expect(deps.dispatch).toBe(dispatch);
     expect(String(deps.dispatch)).not.toContain('NotImplemented');
+  });
+
+  it('wires the central Credential Broker into the real Fleet Worker launcher', async () => {
+    const attemptId = '33333333-3333-4333-8333-333333333333';
+    const sharedSecret = 'run-test-fleet-secret-that-is-long-enough';
+    const credentialBroker = {
+      issue: vi.fn(async () => ({
+        contract_version: 'credential-envelope/v1',
+        credential_ref: '44444444-4444-4444-8444-444444444444',
+        attempt_id: attemptId,
+        account_id: 'team4',
+        machine_id: 'us-mac-m4',
+        issued_at: '2026-07-27T15:00:00.000Z',
+        expires_at: '2026-07-27T17:00:00.000Z',
+        payload_hash: `sha256:${'a'.repeat(64)}`,
+        payload: 'eyJ0b2tlbnMiOnsiYWNjZXNzX3Rva2VuIjoidGVzdCJ9fQ==',
+      })),
+    };
+    const fetchFn = vi.fn(async (_url, options) => {
+      const request = JSON.parse(options.body);
+      const jobId = 'run-test-fleet-job';
+      return {
+        ok: true,
+        status: 202,
+        json: vi.fn(async () => ({
+          status: 'accepted',
+          job_id: jobId,
+          actual_machine_id: 'us-mac-m4',
+          attestation: signMachineAttestation({
+            secret: sharedSecret,
+            attemptId: request.attempt_id,
+            machineId: 'us-mac-m4',
+            jobId,
+          }),
+        })),
+      };
+    });
+    const attemptStore = {
+      createAttempt: vi.fn(async (input) => ({
+        ...input,
+        id: input.id,
+        run_id: input.runId,
+        task_bundle: input.bundle,
+      })),
+      markStarting: vi.fn(async (id, { leaseOwner }) => ({
+        id,
+        status: 'starting',
+        lease_owner: leaseOwner,
+        lease_generation: 0,
+      })),
+      recordLaunchReceipt: vi.fn(async (id, receipt) => ({ id, ...receipt })),
+      fail: vi.fn(),
+    };
+    const preflightGate = {
+      evaluate: vi.fn(async ({ preferred_target: target }) => ({
+        status: 'ok',
+        snapshot: {
+          ...target,
+          verified: true,
+          capability_snapshot_id: 'run-test-credential-snapshot',
+          expires_at: Date.now() + 1000,
+        },
+        evidence: {},
+        to_target: target,
+      })),
+      validateSnapshotForDispatch: vi.fn(async (snapshot) => ({ status: 'ok', snapshot })),
+    };
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      env: {
+        KERNEL_FLEET_REMOTE_ENABLED: 'true',
+        FLEET_WORKER_US_MAC_M4_URL: 'http://worker.internal:3458',
+        KERNEL_FLEET_BRIDGE_TOKEN: sharedSecret,
+        KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'http://brain.internal:5221',
+      },
+      attemptStore,
+      credentialBroker,
+      fetchFn,
+      handlers: {},
+      machineId: 'us-mac-m4',
+      preflightGate,
+      resolveRepoHead: vi.fn(async () => 'c'.repeat(40)),
+      loadSkill: vi.fn(() => ({
+        name: 'harness-generator',
+        version: '1.0.0',
+        digest: `sha256:${'b'.repeat(64)}`,
+        content: 'generate',
+      })),
+      randomUUID: () => attemptId,
+      leaseOwner: 'run-test:credential-broker',
+    });
+
+    await deps.dispatch('spawn:generator', {
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      hop: 8,
+      decision: { phase: 'generate' },
+      observed: {
+        task: {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          title: 'central credential broker wiring',
+          payload: {
+            sprint_dir: 'sprints/credential-broker',
+            role_assignments: {
+              generator: {
+                provider: 'codex',
+                account: 'team4',
+                machine: 'us-mac-m4',
+              },
+            },
+          },
+        },
+        run: { phase: 'generate' },
+        contract: { row: {} },
+        pr: null,
+      },
+    });
+
+    expect(credentialBroker.issue).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId,
+      accountId: 'team4',
+      machineId: 'us-mac-m4',
+    }));
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).credential_envelope)
+      .toMatchObject({ credential_ref: '44444444-4444-4444-8444-444444444444' });
   });
 
   it('默认 registry 注册 Grok，可把 evaluator 派给不同厂商', async () => {

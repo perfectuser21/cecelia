@@ -340,6 +340,132 @@ persist_provider_session() {
     >/dev/null 2>&1
 }
 
+# codex-credential-envelope:start
+CREDENTIAL_REF=""
+CREDENTIAL_INITIAL_HASH=""
+CREDENTIAL_COPY_MUTATED=false
+MAX_CODEX_CREDENTIAL_BYTES=196608
+
+credential_file_hash() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    shasum -a 256 "$file" | awk '{print $1}'
+  fi
+}
+
+credential_file_mode() {
+  local file="$1"
+  local mode
+  if mode="$(stat -c '%a' "$file" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  elif mode="$(stat -f '%Lp' "$file" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  else
+    return 1
+  fi
+}
+
+credential_file_size() {
+  local file="$1"
+  local size
+  size="$(wc -c < "$file" | tr -d '[:space:]')" || return 1
+  [[ "$size" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$size"
+}
+
+redact_codex_credential_text() {
+  local auth_file="${CODEX_HOME:-/home/cecelia/.codex}/auth.json"
+  local redacted
+  if [[ ! -f "$auth_file" ]] || ! redacted="$(
+    jq -Rr --slurpfile credential "$auth_file" '
+      ($credential[0] // {}) as $auth
+      | reduce (
+          $auth
+          | ..
+          | strings
+          | select(length >= 8)
+        ) as $secret (.;
+          split($secret) | join("***REDACTED***")
+        )
+    '
+  )"; then
+    cat >/dev/null
+    printf '%s\n' '[provider output redaction failed]'
+    return 1
+  fi
+  printf '%s\n' "$redacted"
+}
+
+redact_codex_credential_file() {
+  local file="$1"
+  local redacted_file="${file}.redacted"
+  [[ -f "$file" ]] || return 0
+  : > "$redacted_file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    printf '%s\n' "$line" | redact_codex_credential_text \
+      >> "$redacted_file" || {
+        rm -f "$redacted_file"
+        return 1
+      }
+  done < "$file"
+  chmod 600 "$redacted_file"
+  mv "$redacted_file" "$file"
+}
+
+prepare_codex_credential() {
+  local codex_home="${1:-/home/cecelia/.codex}"
+  local fifo="${CECELIA_CREDENTIAL_FIFO:-}"
+  local credential_size=""
+  CREDENTIAL_REF="${CECELIA_CREDENTIAL_REF:-}"
+  if [[ -z "$fifo" ]] \
+      || [[ ! "$fifo" = /* ]] \
+      || [[ ! "$CREDENTIAL_REF" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]; then
+    return 1
+  fi
+
+  export CODEX_HOME="$codex_home"
+  umask 077
+  mkdir -p "$CODEX_HOME"
+  chmod 700 "$CODEX_HOME"
+  if ! cat -- "$fifo" > "$CODEX_HOME/auth.json"; then
+    rm -f "$CODEX_HOME/auth.json"
+    return 1
+  fi
+  chmod 600 "$CODEX_HOME/auth.json"
+  unset CECELIA_CREDENTIAL_FIFO
+  credential_size="$(credential_file_size "$CODEX_HOME/auth.json")" || {
+    rm -f "$CODEX_HOME/auth.json"
+    return 1
+  }
+  if (( credential_size > MAX_CODEX_CREDENTIAL_BYTES )); then
+    rm -f "$CODEX_HOME/auth.json"
+    return 1
+  fi
+  if ! jq -e \
+      'type == "object"
+       and (.tokens | type == "object")
+       and (.tokens.access_token | type == "string" and length > 0)' \
+      "$CODEX_HOME/auth.json" >/dev/null 2>&1; then
+    rm -f "$CODEX_HOME/auth.json"
+    return 1
+  fi
+  CREDENTIAL_INITIAL_HASH="$(credential_file_hash "$CODEX_HOME/auth.json")"
+  [[ "$CREDENTIAL_INITIAL_HASH" =~ ^[a-f0-9]{64}$ ]]
+}
+
+record_codex_credential_mutation() {
+  CREDENTIAL_COPY_MUTATED=false
+  if [[ -z "$CREDENTIAL_INITIAL_HASH" ]] \
+      || [[ ! -f "${CODEX_HOME:-/home/cecelia/.codex}/auth.json" ]] \
+      || [[ "$(credential_file_mode "${CODEX_HOME:-/home/cecelia/.codex}/auth.json")" != "600" ]] \
+      || [[ "$(credential_file_hash "${CODEX_HOME:-/home/cecelia/.codex}/auth.json")" != "$CREDENTIAL_INITIAL_HASH" ]]; then
+    CREDENTIAL_COPY_MUTATED=true
+  fi
+}
+# codex-credential-envelope:end
+
 run_provider_contract() {
   PROVIDER_CONTRACT=1
   local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-$PROMPT_FILE}"
@@ -351,6 +477,20 @@ run_provider_contract() {
   local provider_session_id=""
   local provider_exit=1
   local heartbeat_pid=""
+  local safe_line=""
+
+  if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
+    jq -n \
+      --arg attempt "$HARNESS_ATTEMPT_ID" \
+      --arg provider "$provider" \
+      --arg credential_ref "${CECELIA_CREDENTIAL_REF:-}" \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"CredentialEnvelope rejected",artifacts:[],checks:[],decision:null,error:{code:"credential_envelope_invalid",message:"runner rejected the bounded credential envelope"},provider_metadata:{provider:$provider,session_id:null,credential_ref:$credential_ref,credential_copy_mutated:false}}' \
+      > "$NORMALIZED_RESULT_FILE"
+    return 1
+  fi
+  if [[ "$provider" == "codex" ]]; then
+    result_file="$CODEX_HOME/harness-result.json"
+  fi
 
   if [[ ! -f "$task_bundle_file" ]] || ! jq -e '.task_bundle' "$task_bundle_file" >/dev/null 2>&1; then
     jq -n \
@@ -455,13 +595,15 @@ run_provider_contract() {
     : > "$STDOUT_FILE"
     "${codex_command[@]}" "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
-          printf '%s\n' "$line" | tee -a "$STDOUT_FILE"
-          live_session=$(printf '%s\n' "$line" \
+          safe_line=$(printf '%s\n' "$line" | redact_codex_credential_text)
+          printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
+          live_session=$(printf '%s\n' "$safe_line" \
             | jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' 2>/dev/null \
             || true)
           [[ -z "$live_session" ]] || persist_provider_session "$live_session" || true
         done
     provider_exit=${PIPESTATUS[0]}
+    redact_codex_credential_file "$result_file" || provider_exit=1
     provider_session_id=$(jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' "$STDOUT_FILE" 2>/dev/null | head -n 1)
   elif [[ "$provider" == "claude" ]]; then
     local claude_args=(-p --output-format json --json-schema "$result_schema_json")
@@ -533,6 +675,10 @@ run_provider_contract() {
     wait "$heartbeat_pid" 2>/dev/null || true
   fi
 
+  if [[ "$provider" == "codex" ]]; then
+    record_codex_credential_mutation
+  fi
+
   if [[ $provider_exit -eq 0 ]] && jq -e 'type == "object" and .status' "$result_file" >/dev/null 2>&1; then
     finalize_proposer_output || {
       echo "[entrypoint] proposer finalizer did not establish remote branch; Kernel no-push detector remains authoritative" >&2
@@ -541,12 +687,17 @@ run_provider_contract() {
       --arg attempt "$HARNESS_ATTEMPT_ID" \
       --arg provider "$provider" \
       --arg session "$provider_session_id" \
+      --arg credential_ref "$CREDENTIAL_REF" \
+      --argjson credential_copy_mutated "$CREDENTIAL_COPY_MUTATED" \
       '.contract_version = (.contract_version // "1.0")
        | .attempt_id = $attempt
        | .provider_metadata = ((.provider_metadata // {}) + {
            provider: $provider,
            session_id: (if $session == "" then null else $session end)
-         })' \
+         } + (if $credential_ref == "" then {} else {
+           credential_ref: $credential_ref,
+           credential_copy_mutated: $credential_copy_mutated
+         } end))' \
       "$result_file" > "$NORMALIZED_RESULT_FILE"
   else
     local stderr_tail
@@ -555,9 +706,11 @@ run_provider_contract() {
       --arg attempt "$HARNESS_ATTEMPT_ID" \
       --arg provider "$provider" \
       --arg session "$provider_session_id" \
+      --arg credential_ref "$CREDENTIAL_REF" \
+      --argjson credential_copy_mutated "$CREDENTIAL_COPY_MUTATED" \
       --arg message "$stderr_tail" \
       --argjson exit_code "$provider_exit" \
-      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:{provider:$provider,session_id:(if $session == "" then null else $session end)}}' \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
       > "$NORMALIZED_RESULT_FILE"
   fi
   merge_evaluator_evidence "$NORMALIZED_RESULT_FILE" || true

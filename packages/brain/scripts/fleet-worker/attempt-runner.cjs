@@ -34,6 +34,53 @@ async function defaultRunCommand(command, args, options) {
   return { stdout: stdout.trim() };
 }
 
+async function defaultWriteCredential(fifoPath, authJson) {
+  const deadline = Date.now() + 10_000;
+  let descriptor;
+  while (descriptor === undefined) {
+    try {
+      descriptor = fs.openSync(
+        fifoPath,
+        fs.constants.O_WRONLY | fs.constants.O_NONBLOCK,
+      );
+    } catch (error) {
+      if (error?.code !== 'ENXIO' || Date.now() >= deadline) {
+        throw new Error('attempt_credential_fifo_write_failed');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  try {
+    const content = Buffer.from(authJson, 'utf8');
+    let offset = 0;
+    while (offset < content.length) {
+      try {
+        const written = fs.writeSync(
+          descriptor,
+          content,
+          offset,
+          content.length - offset,
+        );
+        if (written > 0) {
+          offset += written;
+          continue;
+        }
+      } catch (error) {
+        if (error?.code !== 'EAGAIN') {
+          throw new Error('attempt_credential_fifo_write_failed');
+        }
+      }
+      if (Date.now() >= deadline) {
+        throw new Error('attempt_credential_fifo_write_failed');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 function assertRuntimeRoot(value, name) {
   if (
     typeof value !== 'string'
@@ -176,10 +223,14 @@ function parseDockerLabels(serialized) {
 function createDockerAdapter({
   runCommand = defaultRunCommand,
   runtimeRoot,
+  writeCredential = defaultWriteCredential,
 } = {}) {
   const root = assertRuntimeRoot(runtimeRoot, 'runtime_root');
   if (typeof runCommand !== 'function') {
     throw new Error('attempt_runner_invalid_docker_command_runner');
+  }
+  if (typeof writeCredential !== 'function') {
+    throw new Error('attempt_runner_invalid_credential_writer');
   }
 
   return Object.freeze({
@@ -204,6 +255,19 @@ function createDockerAdapter({
       fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
+      const isCodex = input.providerSpec?.provider === 'codex';
+      if (
+        isCodex
+        && (
+          !UUID_PATTERN.test(input.credential?.credentialRef ?? '')
+          || typeof input.credential?.authJson !== 'string'
+          || input.credential.authJson.length === 0
+          || Buffer.byteLength(input.credential.authJson, 'utf8') > 196_608
+        )
+      ) {
+        fs.rmSync(attemptRuntime, { recursive: true, force: true });
+        throw new Error('attempt_credential_invalid');
+      }
       fs.writeFileSync(promptFile, input.providerSpec.stdin, {
         encoding: 'utf8',
         mode: 0o600,
@@ -212,6 +276,8 @@ function createDockerAdapter({
       const containerName = `cecelia-fleet-${attemptId}`;
       const containerPrompt = '/tmp/cecelia-prompts/task-bundle.json';
       const containerStdout = '/tmp/cecelia-prompts/stdout.jsonl';
+      const credentialFifo = path.join(attemptRuntime, 'credential.fifo');
+      const containerCredentialFifo = '/tmp/cecelia-prompts/credential.fifo';
       const workspaceMount = [
         `type=bind,src=${input.workspaceMount.source},dst=/workspace`,
         input.workspaceMount.readOnly ? 'readonly' : null,
@@ -232,6 +298,12 @@ function createDockerAdapter({
         workspaceAdminMount,
         '--mount',
         runtimeMount,
+        ...(isCodex
+          ? [
+              '--tmpfs',
+              '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700',
+            ]
+          : []),
         '--add-host',
         'host.docker.internal:host-gateway',
         ...envArgs({
@@ -250,6 +322,12 @@ function createDockerAdapter({
           HARNESS_TASK_BUNDLE_FILE: containerPrompt,
           CECELIA_PROMPT_FILE: containerPrompt,
           CECELIA_STDOUT_FILE: containerStdout,
+          CECELIA_CREDENTIAL_FIFO: isCodex
+            ? containerCredentialFifo
+            : undefined,
+          CECELIA_CREDENTIAL_REF: isCodex
+            ? input.credential.credentialRef
+            : undefined,
           WORKTREE_PATH: '/workspace',
           BRAIN_URL: callbackBrainUrl(input.callback.url),
         }),
@@ -261,7 +339,17 @@ function createDockerAdapter({
         if (!String(created?.stdout ?? '').trim()) {
           throw new Error('attempt_container_id_missing');
         }
+        if (isCodex) {
+          await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
+        }
         await runCommand('docker', ['start', containerName], undefined);
+        if (isCodex) {
+          try {
+            await writeCredential(credentialFifo, input.credential.authJson);
+          } finally {
+            fs.rmSync(credentialFifo, { force: true });
+          }
+        }
       } catch (error) {
         await runCommand('docker', ['rm', '-f', '--', containerName], undefined)
           .catch(() => {});
@@ -344,6 +432,7 @@ function validateDependencies({
   stateStore,
   workerId,
   runnerImageDigest,
+  credentialConsumer,
 }) {
   for (const method of ['prepare', 'verify', 'cleanup', 'quarantine', 'reconcile']) {
     requireMethod(workspaceManager, method, 'workspace_manager');
@@ -354,6 +443,7 @@ function validateDependencies({
   for (const method of ['save', 'get', 'delete', 'list']) {
     requireMethod(stateStore, method, 'state_store');
   }
+  requireMethod(credentialConsumer, 'consume', 'credential_consumer');
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
     throw new Error('attempt_runner_invalid_worker_id');
   }
@@ -502,6 +592,7 @@ function createAttemptRunner({
   stateStore,
   workerId,
   runnerImageDigest,
+  credentialConsumer,
 } = {}) {
   validateDependencies({
     workspaceManager,
@@ -509,6 +600,7 @@ function createAttemptRunner({
     stateStore,
     workerId,
     runnerImageDigest,
+    credentialConsumer,
   });
 
   async function quarantineState(state, error) {
@@ -560,6 +652,21 @@ function createAttemptRunner({
         throw new Error('attempt_already_exists');
       }
 
+      let credential = null;
+      if (target.provider === 'codex') {
+        if (
+          !request.credential_envelope
+          || typeof request.credential_envelope !== 'object'
+          || Array.isArray(request.credential_envelope)
+        ) {
+          throw new Error('credential_envelope_required');
+        }
+        credential = credentialConsumer.consume(request.credential_envelope, {
+          attemptId: request.attempt_id,
+          accountId: target.account,
+          machineId: workerId,
+        });
+      }
       const workspace = await workspaceManager.prepare(request.workspace_spec);
       await workspaceManager.verify(workspace);
       const labels = labelsFor(request, workerId);
@@ -592,6 +699,7 @@ function createAttemptRunner({
             owner: request.lease_owner,
             generation: request.lease_generation,
           },
+          credential,
         });
       } catch (error) {
         await workspaceManager.cleanup(workspace);
@@ -609,6 +717,7 @@ function createAttemptRunner({
         lease_owner: request.lease_owner,
         lease_generation: request.lease_generation,
         provider: providerSpec.provider,
+        ...(credential ? { credential: credential.metadata } : {}),
         container_id: launched.containerId,
         workspace,
         labels,
@@ -758,6 +867,7 @@ function createAttemptRunner({
 }
 
 module.exports = {
+  __test__: Object.freeze({ defaultWriteCredential }),
   createAttemptRunner,
   createDockerAdapter,
   createFileAttemptStateStore,

@@ -13,7 +13,14 @@ import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { runLoop } from './loop.js';
 import { createAttemptStore } from './attempt-store.js';
-import { createDispatcher } from './dispatcher.js';
+import {
+  createDispatcher,
+  resolveProviderAccountHome,
+} from './dispatcher.js';
+import {
+  createCredentialBroker,
+  createFileCredentialLoader,
+} from './credential-broker.js';
 import { createProviderRegistry } from './provider-registry.js';
 import { claudeAdapter } from './providers/claude.js';
 import { codexAdapter } from './providers/codex.js';
@@ -148,6 +155,18 @@ export async function buildRealDeps(overrides = {}) {
     const removeContainer = overrides.removeContainer ?? detached.removeDockerContainer;
     let launcher = overrides.launcher;
     if (!launcher) {
+      const resolveAccountHome = overrides.resolveAccountHome
+        ?? resolveProviderAccountHome;
+      const credentialBroker = overrides.credentialBroker
+        ?? createCredentialBroker({
+          controllerMachineId: machineId,
+          loadCredential: overrides.loadCredential
+            ?? createFileCredentialLoader({
+              accountHomeResolver: (accountId) => (
+                resolveAccountHome('codex', accountId)
+              ),
+            }),
+        });
       launcher = createProductionExecutionTransport({
         env,
         spawnDetached,
@@ -156,6 +175,7 @@ export async function buildRealDeps(overrides = {}) {
         brainUrl,
         leaseOwner,
         fetchFn: overrides.fetchFn,
+        credentialBroker,
         remoteBridgeTimeoutMs: overrides.remoteBridgeTimeoutMs,
       });
     }
