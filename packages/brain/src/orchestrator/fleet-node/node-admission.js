@@ -1,3 +1,5 @@
+import { validateNodeProfile } from './node-profile.js';
+
 const GIB = 1024 ** 3;
 const MAX_REPORT_AGE_MS = 90_000;
 const MAX_FUTURE_SKEW_MS = 30_000;
@@ -193,9 +195,7 @@ export function evaluateBaseAdmission(report, options = {}) {
     collector.add('health_report_malformed', 'report', 'Fleet node health report must be an object.');
     return resultFor(profile, report, reasons);
   }
-  if (!isRecord(profile) || typeof profile.machine_id !== 'string'
-    || !isRecord(profile.resources) || !isRecord(profile.launchd)
-    || !isRecord(profile.version_policy)) {
+  if (!validateNodeProfile(profile)) {
     collector.add(
       'admission_profile_invalid',
       'profile',
