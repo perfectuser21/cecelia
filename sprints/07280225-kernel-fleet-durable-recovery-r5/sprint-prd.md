@@ -145,6 +145,9 @@ Planner `c5bae104-da5e-483d-b5ea-c295c90a3f28`、GAN Proposer
 `a6888ef3-2482-4655-8703-cf3b9f037cb9`。新 migration 必须在执行前同时重查 origin/main
 与 production，选择未被 tree/DB 使用的编号 `>=368`；不得复用已被
 `366_kernel_harness_failure_class.sql` 占用且 migrate.js 会静默跳过的 366。
+本合同依据 exact origin/main 与 operator production schema-version evidence 冻结候选
+`368_kernel_harness_authority.sql`；Generator 写入前必须再次查询两端。若 368 已占用，
+必须回到 authority-manifest/owner receipt 修订，禁止静默改号或让 migrate.js 跳过。
 
 升级在同一 Journey 上追加 lifecycle projection，不重写历史。六行的
 `id,notion_id,name,description,step_number,status,promise,backbone_version,created_at,updated_at`
@@ -280,6 +283,90 @@ origin adapters dual-write + shadow compare；S12 在 N 个真实 run shadow-run
 drill；之后才切 completion gate、Journey API 改读 projection，最后退役 legacy
 direct-green/self-oracle 写路。Draft #4372 仅是 provenance，不得 whole cherry-pick。
 
+## R40-R42 provider-neutral Guard Ledger 与 D/A/F/E 权威
+
+exact main 的 Claude 配置、用户目录手工 symlink、单独 hook 文件和 generic
+`action_receipts` 都不是统一 guard 权威。root `.claude/settings.json` 只接
+`dev-mode-tool-guard`，`packages/engine/.claude/settings.json` 仅在该目录作为 Claude
+project root 时接部分 hook；现有 installer 不安装完整 pre-push，Codex 明确禁 hooks，
+Grok 无等价 native hook。因此 Claude native hook 只可作早期反馈；V01-V07 的权威必须位于
+provider-neutral Runner 文件系统/命令/result/callback broker，V08-V13 位于
+Kernel/GitHub/release server gate。Stop 只做清理/协调，永远不能完成 run/task。
+
+### 静态 law 与 append-only fire evidence
+
+`packages/quality/contracts/kernel-guard-manifest.json` 只引用 R34 的 129-row source SSOT，
+不复制或预先转绿。每个 behavior 绑定 origin path/blob/row digest/priority、
+classification owner receipt、protected action/resource、deny/near-allow/recovery predicate、
+fail mode、精确 reason code、production seam component/path/symbol、provider binding、
+V01-V13 counterfactual vector、D/A/F/E oracle 与 supersedes。classification 未
+owner-approved 时 coverage=0；任何 source/provider binary/launcher/manifest digest 漂移
+使 proof stale。
+
+新增 append-only `guard_evidence_receipts`，至少包含
+`id,run_id,attempt_id,manifest_digest,behavior_id,behavior_digest,vector_id,provider,
+provider_build_digest,launcher_digest,environment_class,stage,polarity,observer_class,
+observer_identity,subject_class,occurred_at,reason_code,facts,raw_artifact_digest,
+predecessor_receipt_id,idempotency_key`。DB role/trigger 必须拒绝 UPDATE/DELETE；原始证据
+content-addressed；受保护动作写 receipt 失败即 fail closed。`guard_proof` 只能是 SQL
+view/纯查询，返回 `proven|disproven|incomplete|stale`、receipt IDs、missing stages 与
+reason，禁止持久化 summary boolean。
+
+- D：exact origin row 与 compiled manifest digest 一致。
+- A：从 `mktemp` + `env -i` 的 clean HOME/XDG/GIT/Claude/Codex/Grok root，只运行官方
+  installer 和真实 Kernel launcher；解析实际 effective config/argv/realpath/digest，
+  证明权威 seam 已加载。
+- F：真实 deny/near-allow/recovery vector 穿过 provider CLI/Runner production entry，
+  由 production seam 发出精确 decision/reason。
+- E：不同 observer process 独立读取 bare refs/worktree/index/log/result/callback/DB，
+  证明 protected effect 未发生或恢复恰一次。F/E 要求
+  `observer_class != subject_class`，E 引用同 vector F。
+
+每个适用 behavior 都必须有 deny、修复一个前置条件的 nearby allow、exactly-once recovery；
+永久拒绝不是通过。proof failure 使用 R42 的精确
+`ORACLE_D_*|ORACLE_A_*|ORACLE_F_*|ORACLE_E_*` enum，stderr prose、exit 0、hook 直接调用、
+手工复制 settings 或 subject self-attestation 均不是证据。
+
+### V01-V13 与生产 reason code
+
+exact vectors 为：
+V01 Write/Edit protected branch；V02 shell redirect/sed/rm protected mutation；
+V03 primary repo checkout/switch；V04 secret input 经 write/shell/copy/redirect；
+V05 secret output 经 stdout/stderr/result/artifact/callback；V06 failed/missing precheck push；
+V07 PR before TDD/DevGate；V08 merge without current-head Evaluator；V09 merge without current-head
+Judge/human policy；V10 merge without required checks 或 second merge authority；V11 Stop/complete
+while live/unknown；V12 promote on FAIL/SKIP/empty/SHA drift；V13 rollback without production anchor。
+
+reason code exact set 至少为
+`KH_G01_PROTECTED_BRANCH_WRITE,KH_G01_PRIMARY_REPO_CHECKOUT,
+KH_G02_SECRET_LITERAL_INPUT,KH_G02_SECRET_OUTPUT_EGRESS,KH_G03_PRECHECK_FAILED,
+KH_G03_REMOTE_REF_POLICY,KH_G04_TDD_ORDER_INVALID,KH_G04_DEVGATE_FAILED,
+KH_G05_ATTEMPT_STILL_LIVE,KH_G05_LIVENESS_UNKNOWN,
+KH_G06_EVALUATOR_MISSING_OR_STALE,KH_G06_JUDGE_MISSING_OR_STALE,
+KH_G06_HUMAN_REVIEW_REQUIRED,KH_G07_REQUIRED_CHECKS_UNSATISFIED,
+KH_G07_MERGE_AUTHORITY_CONFLICT,KH_G08_STAGING_NOT_PASS,KH_G08_SHA_DRIFT,
+KH_G08_PRODUCTION_RECEIPT_MISSING,KH_G08_ROLLBACK_ANCHOR_MISSING,
+KH_ALLOW_POLICY_SATISFIED,KH_RECOVERY_PRECONDITION_SATISFIED`。
+
+clean-home machine proof 必须从隔离 bare origin/clone/protected branch/task worktree，经真实
+Claude/Codex/Grok CLI 与 Kernel launcher 发 V01-V13，记录 executable realpath/digest、
+provider version、launcher argv 与 before/after Merkle；独立 observer 验证三 provider
+对相同 vector 得到相同 decision/reason/effect。必须覆盖 UserPromptSubmit secret、Write/Edit
+output secret、direct shell/git push、缺 precheck、stale CI/Evaluator/Judge/owner、CI-only
+merge、queued/empty/all-SKIP staging、production missing health/rollback、Stop completion 与
+Journey PATCH green。任何 activation/fire/expiry/death gap 阻断 S12。
+
+### 单一 merge、review、staging 与 production authority
+
+`ci.yml` 的 title-based auto-merge 和所有 main-push/scheduled/Fast-Lane/manual production
+旁路必须删除或被同一 Controller policy cryptographically fenced。风险策略由一个 versioned
+exact-head receipt-backed Controller policy 决定；first/new/high-risk/authority change 强制
+owner review。S10 live consumer 必须产生 authenticated
+`deployed_sha=tested_sha=merge_sha`、required tests>0、FAIL=0、required SKIP=0、
+environment/log/artifact digest 与 freshness。S11 只接受 Controller-governed production
+receipt、production health self-reported exact build SHA、rollback anchor/drill receipt。
+任何 merge/staging/production guard 缺 D/A/F/E 或真实 effect receipt，S12 保持 non-complete。
+
 ## NFR 约束
 
 <!-- 来源: decisions 表 category=nfr，PrepPRD 显式值优先 -->
@@ -363,66 +450,46 @@ direct-green/self-oracle 写路。Draft #4372 仅是 provenance，不得 whole c
 set -euo pipefail
 : "${E2E_PHASE:?preapproval|postapproval}" "${TASK_ID:?}" "${RUN_ID:?}"
 : "${ATTEMPT_ID:?}" "${CONTRACT_SHA:?}" "${PR_HEAD_SHA:?}"
-: "${PR_NUMBER:?}" "${US_WORKER_URL:?}" "${FLEET_TOKEN_FILE:?}"
+: "${PR_NUMBER:?}" "${US_WORKER_URL:?}" "${US_WORKER_SSH:?}" "${FLEET_TOKEN_FILE:?}"
 : "${CANDIDATE_BRAIN_IMAGE:?}" "${CANDIDATE_BRAIN_IMAGE_DIGEST:?}"
 : "${CANDIDATE_RUNNER_REF:?}" "${CANDIDATE_BUNDLE_REF:?}" "${DB_URL:?}"
+: "${PROD_BRAIN_URL:?}"
 
 test "$TASK_ID" = "4a530430-00c5-46bc-8a4f-c0ec38025391"
 test "$RUN_ID" = "fda8bfd7-fbbc-4260-a657-ea7f3b51bd16"
 test "$TASK_ID" != "$RUN_ID"
 
 if [ "$E2E_PHASE" = preapproval ]; then
-  bash scripts/kernel-fleet/run-p0-preapproval-e2e.sh \
-    "$PR_NUMBER" "$PR_HEAD_SHA" "$CANDIDATE_BRAIN_IMAGE" \
-    "$CANDIDATE_BRAIN_IMAGE_DIGEST" "$CANDIDATE_RUNNER_REF" "$CANDIDATE_BUNDLE_REF"
-  bash scripts/kernel-fleet/run-result-channel-proof.sh \
-    "$US_WORKER_URL" "$FLEET_TOKEN_FILE" "$CANDIDATE_RUNNER_REF" \
-    "$TASK_ID" "$RUN_ID" "$ATTEMPT_ID" "$CONTRACT_SHA" "$PR_HEAD_SHA"
-  bash scripts/kernel-fleet/verify-authority-inventory.sh \
-    --commit dd424a61926009ac85a915b31187124b85f0ca98 \
-    --path packages/engine/regression-contract.yaml \
-    --blob 7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3 \
-    --count 129 --p0 66 --p1 63 \
-    --digest 4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f
-  DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-projection.sh \
-    --source-proposal 4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13 \
-    --migration-min 368 --preserve-six-history --same-journey \
-    --origin-kind-direct-proof --exact-head "$PR_HEAD_SHA"
-  DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh \
-    --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
-    --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-    --authority-manifest packages/quality/contracts/kernel-policy-authority.json \
-    --derive-obligations-from-approved-decisions \
-    --require-unreviewed-zero --reject-imported-distribution-as-canonical \
-    --verify-origin-kinds-directly
-  DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-provider-policy-activation.sh \
-    --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
-    --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-    --applicability packages/brain/config/kernel-policy-applicability.json \
-    --derive-required-independently --derive-observed-from-fire-receipts
-  DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-provider-credential-envelope.sh \
-    --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
-    --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-    --authority-manifest packages/quality/contracts/kernel-policy-authority.json \
-    --derive-required-from-approved-applicability --verify-origin-kinds-directly
-  bash scripts/kernel-fleet/verify-p0-workflow-contract.sh \
-    preapproval-pause "$PR_NUMBER" "$PR_HEAD_SHA"
-  DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh \
-    --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
-    --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-    --expect-premerge-noncomplete
+  bash scripts/kernel-fleet/run-authoritative-final-e2e.sh \
+    --phase preapproval --pr "$PR_NUMBER" --head "$PR_HEAD_SHA" \
+    --task "$TASK_ID" --run "$RUN_ID" --attempt "$ATTEMPT_ID" \
+    --contract "$CONTRACT_SHA" --brain-image "$CANDIDATE_BRAIN_IMAGE" \
+    --brain-digest "$CANDIDATE_BRAIN_IMAGE_DIGEST" \
+    --runner "$CANDIDATE_RUNNER_REF" --bundle "$CANDIDATE_BUNDLE_REF" \
+    --worker "$US_WORKER_URL" --token-file "$FLEET_TOKEN_FILE" \
+    --authority packages/quality/contracts/kernel-harness-authority-manifest.json \
+    --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
+    --guard-providers claude,codex,grok --guard-vectors V01-V13 \
+    --expect-order draft,ci,evaluator,judge --expect-serving-mutations 0 \
+    --expect-terminal false
   exit 75
 fi
 
 test "$E2E_PHASE" = postapproval
 : "${OWNER_APPROVAL_RECEIPT:?}" "${MERGE_AUTHORITY_TOKEN_FILE:?}"
-bash scripts/kernel-fleet/run-p0-postapproval-e2e.sh \
-  "$PR_NUMBER" "$PR_HEAD_SHA" "$OWNER_APPROVAL_RECEIPT" "$MERGE_AUTHORITY_TOKEN_FILE"
-DB_URL="$DB_URL" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh \
-  --task "$TASK_ID" --run "$RUN_ID" --requesting-attempt "$ATTEMPT_ID" \
-  --contract "$CONTRACT_SHA" --head "$PR_HEAD_SHA" \
-  --require-obligations production,rollback,report,external_status,legacy_equivalence,family_gap,provider_activation,credential_envelope \
-  --require-receipt-set-bindings --expect-terminal-complete
+bash scripts/kernel-fleet/run-authoritative-final-e2e.sh \
+  --phase postapproval --pr "$PR_NUMBER" --head "$PR_HEAD_SHA" \
+  --task "$TASK_ID" --run "$RUN_ID" --attempt "$ATTEMPT_ID" \
+  --contract "$CONTRACT_SHA" --owner-receipt "$OWNER_APPROVAL_RECEIPT" \
+  --merge-token-file "$MERGE_AUTHORITY_TOKEN_FILE" \
+  --worker "$US_WORKER_URL" --worker-ssh "$US_WORKER_SSH" \
+  --production "$PROD_BRAIN_URL" --db "$DB_URL" \
+  --authority packages/quality/contracts/kernel-harness-authority-manifest.json \
+  --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
+  --expect-order owner,merge,staging,production,rollback,s12 \
+  --strict-staging --require-production-health --require-rollback-anchor \
+  --require-guard-proof proven,fresh --reject-second-merge-authority \
+  --require-exact-cells 143 --expect-terminal true
 ```
 
 ## journey_type: agent_remote

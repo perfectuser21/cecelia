@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const BASE = 'dd424a61926009ac85a915b31187124b85f0ca98';
 const SOURCE_PATH = 'packages/engine/regression-contract.yaml';
@@ -14,6 +16,21 @@ const REVIEWER_ALIAS = 'e2bd9263-87ef-4461-a1d5-5ff07a38b8a8';
 const FINAL_E2E_ALIAS = 'a6888ef3-2482-4655-8703-cf3b9f037cb9';
 const PROPOSAL = '4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13';
 const SPRINT = 'sprints/07280225-kernel-fleet-durable-recovery-r5';
+const PROVIDERS = ['claude', 'codex', 'grok'];
+const VECTORS = Array.from({ length: 13 }, (_, i) => `V${String(i + 1).padStart(2, '0')}`);
+const DAFE = ['D', 'A', 'F', 'E'];
+const DENY_REASONS = [
+  'KH_G01_PROTECTED_BRANCH_WRITE', 'KH_G01_PRIMARY_REPO_CHECKOUT',
+  'KH_G02_SECRET_LITERAL_INPUT', 'KH_G02_SECRET_OUTPUT_EGRESS',
+  'KH_G03_PRECHECK_FAILED', 'KH_G03_REMOTE_REF_POLICY',
+  'KH_G04_TDD_ORDER_INVALID', 'KH_G04_DEVGATE_FAILED',
+  'KH_G05_ATTEMPT_STILL_LIVE', 'KH_G05_LIVENESS_UNKNOWN',
+  'KH_G06_EVALUATOR_MISSING_OR_STALE', 'KH_G06_JUDGE_MISSING_OR_STALE',
+  'KH_G06_HUMAN_REVIEW_REQUIRED', 'KH_G07_REQUIRED_CHECKS_UNSATISFIED',
+  'KH_G07_MERGE_AUTHORITY_CONFLICT', 'KH_G08_STAGING_NOT_PASS',
+  'KH_G08_SHA_DRIFT', 'KH_G08_PRODUCTION_RECEIPT_MISSING',
+  'KH_G08_ROLLBACK_ANCHOR_MISSING',
+];
 
 function sha256(value: string | Buffer) {
   return createHash('sha256').update(value).digest('hex');
@@ -29,6 +46,12 @@ function run(script: string, args: string[] = [], env: Record<string, string> = 
 
 function source(path: string) {
   return readFileSync(path, 'utf8');
+}
+
+function readJsonReceipts(dir: string) {
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')));
 }
 
 function expectExecutable(path: string) {
@@ -209,7 +232,7 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
   });
 
   it('append only evidence schema derives expiry and independent NA review', () => {
-    const migration = source('packages/brain/migrations/368_or_later_kernel_harness_authority.sql');
+    const migration = source('packages/brain/migrations/368_kernel_harness_authority.sql');
     for (const table of ['kernel_harness_manifest_versions', 'kernel_harness_origin_receipts', 'kernel_harness_cell_evidence', 'kernel_harness_terminal_accounting'])
       expect(migration).toContain(`CREATE TABLE ${table}`);
     expect(migration).toContain('valid_until');
@@ -247,5 +270,98 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
     for (const key of ['missing_cell', 'expired_without_scheduler', 'empty_staging', 'all_skip_staging', 'sha_drift', 'promoted_without_health', 'missing_rollback', 'missing_report_effect'])
       expect(out).toContain(`${key}=blocked`);
     expect(out).toContain('terminal_transaction_count=1');
+  });
+
+  it('guard manifest references approved source inventory without runtime state', () => {
+    const manifest = JSON.parse(source('packages/quality/contracts/kernel-guard-manifest.json'));
+    expect(manifest.source.commit).toBe(BASE);
+    expect(manifest.source.path).toBe(SOURCE_PATH);
+    expect(manifest.source.blob).toBe(SOURCE_BLOB);
+    expect(manifest).not.toHaveProperty('passed');
+    expect(manifest).not.toHaveProperty('coverage');
+    expect(manifest.behaviors.every((b: any) =>
+      b.source_entry_sha256 && b.classification_decision_id && b.production_seam?.path &&
+      b.production_seam?.symbol && Array.isArray(b.vectors) && b.oracles?.D &&
+      b.oracles?.A && b.oracles?.F && b.oracles?.E)).toBe(true);
+  });
+
+  it('clean home official installer activates provider neutral guard for three providers', () => {
+    const script = 'scripts/kernel-fleet/run-clean-home-guard-proof.sh';
+    expectExecutable(script);
+    const evidenceDir = mkdtempSync(join(tmpdir(), 'kernel-guard-activation-'));
+    run(script, [
+      '--manifest', 'packages/quality/contracts/kernel-guard-manifest.json',
+      '--providers', PROVIDERS.join(','), '--vectors', VECTORS.join(','),
+      '--official-installer', 'packages/engine/install/install-kernel-policy-guards.sh',
+      '--real-launcher', 'docker/cecelia-runner/entrypoint.sh',
+      '--evidence-dir', evidenceDir,
+    ]);
+    const receipts = readJsonReceipts(evidenceDir);
+    const activation = receipts.filter((r) => r.stage === 'A');
+    expect(new Set(activation.map((r) => r.provider))).toEqual(new Set(PROVIDERS));
+    for (const receipt of activation) {
+      expect(receipt.official_installer_realpath).toMatch(/^\/.+/);
+      expect(receipt.official_installer_digest).toMatch(/^[a-f0-9]{64}$/);
+      expect(receipt.launcher_digest).toMatch(/^[a-f0-9]{64}$/);
+      expect(receipt.effective_hop_chain.map((h: any) => h.kind)).toEqual([
+        'settings_source', 'installer_source', 'installed_target', 'kernel_dispatcher',
+        'provider_adapter', 'production_entrypoint',
+      ]);
+      expect(receipt.manual_settings_copy).toBe(false);
+      expect(receipt.direct_hook_invocation).toBe(false);
+    }
+  });
+
+  it('V01 through V13 produce append only D A F E receipts with independent effects', () => {
+    const script = 'scripts/kernel-fleet/verify-guard-vectors.sh';
+    expectExecutable(script);
+    const evidenceDir = mkdtempSync(join(tmpdir(), 'kernel-guard-vectors-'));
+    run(script, [
+      '--providers', PROVIDERS.join(','), '--vectors', VECTORS.join(','),
+      '--deny', '--near-allow', '--recovery', '--independent-effect',
+      '--evidence-dir', evidenceDir,
+    ], { DB_URL: process.env.DB_URL ?? '' });
+    const receipts = readJsonReceipts(evidenceDir);
+    const exactKeys = new Set(receipts.map((r) => `${r.provider}:${r.vector_id}:${r.polarity}:${r.stage}`));
+    const required = new Set(PROVIDERS.flatMap((provider) =>
+      VECTORS.flatMap((vector) =>
+        ['deny', 'near_allow', 'recovery'].flatMap((polarity) =>
+          DAFE.map((stage) => `${provider}:${vector}:${polarity}:${stage}`)))));
+    expect(exactKeys).toEqual(required);
+    expect(receipts.every((r) => r.observer_class !== r.subject_class || !['F', 'E'].includes(r.stage))).toBe(true);
+    expect(receipts.filter((r) => r.stage === 'E').every((r) =>
+      r.predecessor_receipt_id && r.raw_artifact_digest?.match(/^[a-f0-9]{64}$/))).toBe(true);
+    expect(receipts.filter((r) => r.polarity === 'recovery' && r.stage === 'E')).toHaveLength(PROVIDERS.length * VECTORS.length);
+    expect(new Set(receipts.filter((r) => r.polarity === 'deny' && r.stage === 'F').map((r) => r.reason_code)))
+      .toEqual(new Set(DENY_REASONS));
+    expect(new Set(receipts.filter((r) => r.polarity === 'near_allow' && r.stage === 'F').map((r) => r.reason_code)))
+      .toEqual(new Set(['KH_ALLOW_POLICY_SATISFIED']));
+    expect(new Set(receipts.filter((r) => r.polarity === 'recovery' && r.stage === 'F').map((r) => r.reason_code)))
+      .toEqual(new Set(['KH_RECOVERY_PRECONDITION_SATISFIED']));
+  });
+
+  it('single merge staging production authority cannot be bypassed', () => {
+    const script = 'scripts/kernel-fleet/verify-single-release-authority.sh';
+    expectExecutable(script);
+    const evidenceDir = mkdtempSync(join(tmpdir(), 'kernel-release-authority-'));
+    run(script, [
+      '--github-api', '--deployment-store', '--all-bypasses',
+      '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '',
+      '--head', process.env.PR_HEAD_SHA ?? '', '--evidence-dir', evidenceDir,
+    ], { DB_URL: process.env.DB_URL ?? '' });
+    const receipts = readJsonReceipts(evidenceDir);
+    const bypasses = new Set(receipts.filter((r) => r.scenario === 'violation').map((r) => r.vector_id));
+    expect(bypasses).toEqual(new Set(['V08', 'V09', 'V10', 'V11', 'V12', 'V13']));
+    expect(receipts.filter((r) => r.scenario === 'violation').every((r) =>
+      r.decision === 'deny' && r.effect?.merge_delta === 0 &&
+      r.effect?.production_sha_delta === 0 && r.effect?.terminal_delta === 0)).toBe(true);
+    const pass = receipts.find((r) => r.scenario === 'normal' && r.stage === 'S11');
+    expect(pass.required_test_count).toBeGreaterThan(0);
+    expect(pass.fail_count).toBe(0);
+    expect(pass.required_skip_count).toBe(0);
+    expect(pass.merge_sha).toBe(pass.deployed_sha);
+    expect(pass.merge_sha).toBe(pass.tested_sha);
+    expect(pass.production_health_sha).toBe(pass.merge_sha);
+    expect(pass.rollback_receipt_id).toBeTruthy();
   });
 });
