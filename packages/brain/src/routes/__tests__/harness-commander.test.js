@@ -52,6 +52,7 @@ function poolForReads() {
             payload: {
               status: 'running',
               task_bundle: { prompt: 'private raw prompt' },
+              access_token: 'private-token',
             },
             occurred_at: new Date('2026-07-28T00:00:00.000Z'),
             created_at: new Date('2026-07-28T00:00:00.000Z'),
@@ -113,7 +114,7 @@ describe('Harness Commander read-only routes', () => {
     expect(events.body.events[0]).toMatchObject({ cursor: 9, event_type: 'attempt.running' });
     expect(inbox.body.messages[0]).toMatchObject({ message_cursor: 3, message_id: messageId });
     expect(JSON.stringify({ events: events.body, inbox: inbox.body })).not.toMatch(
-      /private-session|private raw prompt|task_bundle|provider_session_id/i,
+      /private-session|private raw prompt|private-token|task_bundle|provider_session_id|access_token/i,
     );
     expect(pool.query.mock.calls.some(([sql]) => sql.includes('ORDER BY cursor ASC'))).toBe(true);
     expect(pool.query.mock.calls.some(([sql]) => sql.includes('ORDER BY m.message_cursor ASC'))).toBe(true);
@@ -143,6 +144,20 @@ describe('Harness Commander read-only routes', () => {
     };
     await request(makeApp(pool))
       .get(`/api/brain/harness/runs/${runId}/commander`)
+      .expect(404);
+  });
+
+  it('returns 404 rather than an empty projection for a missing Run', async () => {
+    const pool = {
+      connect: vi.fn(),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const app = makeApp(pool);
+    await request(app)
+      .get(`/api/brain/harness/runs/${runId}/events`)
+      .expect(404);
+    await request(app)
+      .get(`/api/brain/harness/runs/${runId}/actors/planner/inbox`)
       .expect(404);
   });
 });

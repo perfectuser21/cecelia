@@ -119,12 +119,17 @@ describe('migration 367 through the real PostgreSQL migration runner', () => {
       /task_bundle|callback_secret|provider_session_id|error_message|auth|token/i,
     );
 
-    await migrationPool.query('BEGIN');
-    await migrationPool.query(
-      `UPDATE harness_attempts SET status='running', updated_at=NOW() WHERE id=$1`,
-      [attemptId],
-    );
-    await migrationPool.query('ROLLBACK');
+    const transaction = await migrationPool.connect();
+    try {
+      await transaction.query('BEGIN');
+      await transaction.query(
+        `UPDATE harness_attempts SET status='running', updated_at=NOW() WHERE id=$1`,
+        [attemptId],
+      );
+      await transaction.query('ROLLBACK');
+    } finally {
+      transaction.release();
+    }
     const afterRollback = await migrationPool.query(
       'SELECT event_type FROM harness_run_events WHERE run_id=$1 ORDER BY cursor',
       [runId],

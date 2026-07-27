@@ -80,4 +80,35 @@ describe('CommanderBundle builder', () => {
       objective: { access_token: 'secret' },
     })).toThrow('secret_material_forbidden');
   });
+
+  it('projects an Inbox persistence row back to the strict ActorMessage contract', () => {
+    const message = {
+      schema: 'harness-actor-message/v1',
+      message_cursor: 3,
+      message_id: randomUUID(),
+      run_id: runA,
+      sender_role: 'planner',
+      recipient_role: 'commander',
+      thread_id: randomUUID(),
+      correlation_id: randomUUID(),
+      source_attempt_id: randomUUID(),
+      event_cursor: 8,
+      message_type: 'answer',
+      payload: { answer: 'The contract is ready.' },
+      evidence_refs: ['event:8'],
+      dedupe_key: 'planner:commander:3',
+      token_estimate: 8,
+      delivery_status: 'delivered',
+      delivered_at: new Date('2026-07-28T00:00:00.000Z'),
+    };
+
+    const bundle = buildCommanderBundle({ ...fixture, actorMessages: [message] });
+    expect(bundle.actor_messages).toHaveLength(1);
+    expect(bundle.actor_messages[0]).toMatchObject({
+      message_id: message.message_id,
+      payload: message.payload,
+    });
+    expect(bundle.actor_messages[0]).not.toHaveProperty('delivery_status');
+    expect(bundle.actor_messages[0]).not.toHaveProperty('token_estimate');
+  });
 });
