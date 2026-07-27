@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createCapabilityGate } from '../../../packages/brain/src/orchestrator/preflight/capability-gate.js';
 
 const BASE = 'dd424a61926009ac85a915b31187124b85f0ca98';
 const SOURCE_PATH = 'packages/engine/regression-contract.yaml';
@@ -49,10 +48,50 @@ function source(path: string) {
   return readFileSync(path, 'utf8');
 }
 
-function readJsonReceipts(dir: string) {
-  return readdirSync(dir)
+function readDiagnosticReceipts(dir: string) {
+  const receipts = readdirSync(dir)
     .filter((name) => name.endsWith('.json'))
     .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')));
+  expect(receipts.every((receipt) =>
+    receipt.count_toward_authorization === false), '临时 JSON 必须显式 diagnostic-only').toBe(true);
+  return receipts;
+}
+
+function canonicalJson(value: any): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function queryPgJson(query: string) {
+  const dbUrl = process.env.DB_URL;
+  if (!dbUrl) throw new Error('R48_BLOCKED_DB_URL_REQUIRED');
+  const wrapped = `SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json)::text FROM (${query}) q`;
+  const out = execFileSync('psql', [dbUrl, '-v', 'ON_ERROR_STOP=1', '-At', '-c', wrapped], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+  return JSON.parse(out || '[]');
+}
+
+function expectIndependentAuthorityReceipt(receipt: any) {
+  for (const key of [
+    'task_id', 'run_id', 'attempt_id', 'role', 'session_id', 'lease_generation',
+    'task_intent_digest', 'contract_sha', 'head_sha', 'skill_digest', 'policy_digest',
+    'issuer_trust_domain', 'observer_trust_domain', 'raw_artifact_path',
+    'raw_artifact_digest', 'predecessor_digest', 'receipt_digest',
+  ]) expect(receipt[key], `authority receipt 缺 ${key}`).toBeTruthy();
+  expect(receipt.issuer_trust_domain).not.toBe(receipt.observer_trust_domain);
+  const raw = readFileSync(receipt.raw_artifact_path);
+  expect(sha256(raw)).toBe(receipt.raw_artifact_digest);
+  const body = { ...receipt };
+  delete body.receipt_digest;
+  expect(sha256(canonicalJson(body))).toBe(receipt.receipt_digest);
+  expect(receipt.effect_before_digest).toMatch(/^[a-f0-9]{64}$/);
+  expect(receipt.effect_after_digest).toMatch(/^[a-f0-9]{64}$/);
 }
 
 function expectExecutable(path: string) {
@@ -167,10 +206,30 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
   it('attempt scoped result channel', () => {
     const script = 'scripts/kernel-fleet/run-result-channel-proof.sh';
     expectExecutable(script);
-    const out = run(script, ['--real-worker-runner', '--taskbundle-bindings', '--all-mutations']);
-    expect(out).toContain('durable_receipt_before_ack=1');
-    expect(out).toContain('workspace_result_authority=0');
-    expect(out).toContain('pre_agent_failure_budget_delta=0');
+    for (const key of ['TASK_ID', 'RUN_ID', 'ATTEMPT_ID', 'CONTRACT_SHA', 'PR_HEAD_SHA', 'TASK_BUNDLE_PATH'])
+      if (!process.env[key]) throw new Error(`R48_BLOCKED_${key}_REQUIRED`);
+    const immutableBundle = JSON.parse(source(process.env.TASK_BUNDLE_PATH!));
+    expect(immutableBundle.role).toBeTruthy();
+    run(script, [
+      '--real-worker-runner', '--taskbundle-bindings', '--all-mutations',
+      '--task', process.env.TASK_ID!, '--run', process.env.RUN_ID!,
+      '--attempt', process.env.ATTEMPT_ID!, '--role', immutableBundle.role,
+      '--contract', process.env.CONTRACT_SHA!, '--head', process.env.PR_HEAD_SHA!,
+      '--require-durable-store-readback',
+    ]);
+    const receipts = queryPgJson(`
+      SELECT result->'result_channel_receipt' AS receipt
+      FROM harness_attempts
+      WHERE id='${process.env.ATTEMPT_ID}' AND run_id='${process.env.RUN_ID}'
+    `);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].receipt).toMatchObject({
+      task_id: process.env.TASK_ID, run_id: process.env.RUN_ID,
+      attempt_id: process.env.ATTEMPT_ID, role: immutableBundle.role,
+      contract_sha: process.env.CONTRACT_SHA, head_sha: process.env.PR_HEAD_SHA,
+    });
+    expect(receipts[0].receipt.durable_before_ack).toBe(true);
+    expect(receipts[0].receipt.source_workspace_result_authority).toBe(false);
   });
 
   it('authority inventory full entry fixture and advisory partition', () => {
@@ -297,7 +356,12 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       '--real-launcher', 'docker/cecelia-runner/entrypoint.sh',
       '--evidence-dir', evidenceDir,
     ]);
-    const receipts = readJsonReceipts(evidenceDir);
+    readDiagnosticReceipts(evidenceDir);
+    const receipts = queryPgJson(`
+      SELECT * FROM guard_evidence_receipts
+      WHERE run_id='${process.env.RUN_ID}' AND stage='A'
+      ORDER BY occurred_at, id
+    `);
     const activation = receipts.filter((r) => r.stage === 'A');
     expect(new Set(activation.map((r) => r.provider))).toEqual(new Set(PROVIDERS));
     for (const receipt of activation) {
@@ -322,7 +386,12 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       '--deny', '--near-allow', '--recovery', '--independent-effect',
       '--evidence-dir', evidenceDir,
     ], { DB_URL: process.env.DB_URL ?? '' });
-    const receipts = readJsonReceipts(evidenceDir);
+    readDiagnosticReceipts(evidenceDir);
+    const receipts = queryPgJson(`
+      SELECT * FROM guard_evidence_receipts
+      WHERE run_id='${process.env.RUN_ID}'
+      ORDER BY occurred_at, id
+    `);
     const exactKeys = new Set(receipts.map((r) => `${r.provider}:${r.vector_id}:${r.polarity}:${r.stage}`));
     const required = new Set(PROVIDERS.flatMap((provider) =>
       VECTORS.flatMap((vector) =>
@@ -350,7 +419,12 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '',
       '--head', process.env.PR_HEAD_SHA ?? '', '--evidence-dir', evidenceDir,
     ], { DB_URL: process.env.DB_URL ?? '' });
-    const receipts = readJsonReceipts(evidenceDir);
+    readDiagnosticReceipts(evidenceDir);
+    const receipts = queryPgJson(`
+      SELECT * FROM kernel_release_authority_receipts
+      WHERE run_id='${process.env.RUN_ID}' AND head_sha='${process.env.PR_HEAD_SHA}'
+      ORDER BY occurred_at, id
+    `);
     const bypasses = new Set(receipts.filter((r) => r.scenario === 'violation').map((r) => r.vector_id));
     expect(bypasses).toEqual(new Set(['V08', 'V09', 'V10', 'V11', 'V12', 'V13']));
     expect(receipts.filter((r) => r.scenario === 'violation').every((r) =>
@@ -375,7 +449,12 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '',
       '--head', process.env.PR_HEAD_SHA ?? '', '--evidence-dir', evidenceDir,
     ], { DB_URL: process.env.DB_URL ?? '' });
-    const receipts = readJsonReceipts(evidenceDir);
+    readDiagnosticReceipts(evidenceDir);
+    const receipts = queryPgJson(`
+      SELECT * FROM kernel_contract_approval_receipts
+      WHERE run_id='${process.env.RUN_ID}' AND head_sha='${process.env.PR_HEAD_SHA}'
+      ORDER BY created_at, id
+    `);
     const denied = new Set(receipts.filter((r) => r.authorizing === false).map((r) => r.scenario));
     expect(denied).toEqual(new Set([
       'completed_with_concerns', 'score_6', 'missing_dimension', 'prose_only',
@@ -408,7 +487,12 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '',
       '--head', process.env.PR_HEAD_SHA ?? '', '--evidence-dir', evidenceDir,
     ]);
-    const receipts = readJsonReceipts(evidenceDir);
+    readDiagnosticReceipts(evidenceDir);
+    const receipts = queryPgJson(`
+      SELECT * FROM reviewer_effect_receipts
+      WHERE run_id='${process.env.RUN_ID}' AND head_sha='${process.env.PR_HEAD_SHA}'
+      ORDER BY occurred_at, id
+    `);
     const denied = receipts.filter((r) => r.kind === 'reviewer_mutation_denied');
     expect(new Set(denied.map((r) => r.surface))).toEqual(new Set([
       'registry', 'decision', 'task', 'pr', 'merge', 'deploy', 'staging', 'production',
@@ -422,55 +506,106 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
     expect(verified.secret_scan_hits).toBe(0);
   });
 
-  it('execution target quarantine expires per logical cycle and writes complete selection receipts', async () => {
-    const decisions: any[] = [];
-    const probes: any[] = [];
-    const gate = createCapabilityGate({
-      now: () => Date.parse('2026-07-28T03:00:00Z'),
-      getMachineHealth: async ({ machine, task_bundle }: any) => {
-        probes.push({ kind: 'health', machine, cycle: task_bundle.logical_cycle_id });
-        return { ok: true, signature: 'healthy', observed_at: '2026-07-28T03:00:00Z' };
-      },
-      getMachineCapacity: async ({ machine, task_bundle }: any) => {
-        probes.push({ kind: 'capacity', machine, cycle: task_bundle.logical_cycle_id });
-        return { ok: true, available: 1, observed_at: '2026-07-28T03:00:00Z' };
-      },
-      probeProviderAuth: async ({ account, task_bundle }: any) => {
-        probes.push({ kind: 'provider_auth', account, cycle: task_bundle.logical_cycle_id });
-        return { ok: account === 'team4', signature: account === 'team4' ? 'ok' : 'quota_unavailable' };
-      },
-      recordDecision: async (receipt: any) => decisions.push(receipt),
+  it('execution target quarantine replays real PG cycles and writes complete selection receipts', () => {
+    const script = 'scripts/kernel-fleet/verify-execution-target-recovery.sh';
+    expectExecutable(script);
+    for (const key of ['TASK_ID', 'RUN_ID', 'CONTRACT_SHA', 'PR_HEAD_SHA'])
+      if (!process.env[key]) throw new Error(`R48_BLOCKED_${key}_REQUIRED`);
+    run(script, [
+      '--real-controller', '--real-pg', '--restart', '--all-counterfactuals',
+      '--task', process.env.TASK_ID!, '--run', process.env.RUN_ID!,
+      '--contract', process.env.CONTRACT_SHA!, '--head', process.env.PR_HEAD_SHA!,
+    ], { DB_URL: process.env.DB_URL ?? '' });
+    const receipts = queryPgJson(`
+      SELECT logical_cycle_id, considered_targets, excluded_targets, selected_target,
+             probe_snapshot, candidate_digest, signature, receipt_digest
+      FROM execution_target_selection_receipts
+      WHERE run_id='${process.env.RUN_ID}'
+      ORDER BY created_at, id
+    `);
+    expect(receipts.length).toBeGreaterThanOrEqual(3);
+    expect(receipts.map((r: any) => r.logical_cycle_id)).toEqual(
+      expect.arrayContaining(['cycle-a', 'cycle-b', 'cycle-c']));
+    for (const receipt of receipts) {
+      expect(receipt.considered_targets.length).toBeGreaterThan(0);
+      expect(receipt.excluded_targets.length).toBeGreaterThan(0);
+      for (const exclusion of receipt.excluded_targets) {
+        expect(exclusion.failure_class).toBeTruthy();
+        expect(exclusion.source_attempt_id).toBeTruthy();
+        expect(exclusion.observed_at).toBeTruthy();
+        expect(exclusion.expires_at || exclusion.reset_at).toBeTruthy();
+      }
+      expect(receipt.probe_snapshot).toBeTruthy();
+      expect(receipt.candidate_digest).toMatch(/^[a-f0-9]{64}$/);
+      expect(receipt.signature).toBeTruthy();
+    }
+    const recovered = receipts.find((r: any) => r.logical_cycle_id === 'cycle-c');
+    expect(recovered.selected_target).toMatchObject({
+      provider: 'codex', account: 'team4', machine: 'us-mac-m4',
     });
-    const team3 = { provider: 'codex', account: 'team3', machine: 'us-mac-m4' };
-    const team4 = { provider: 'codex', account: 'team4', machine: 'us-mac-m4' };
-    const team5 = { provider: 'codex', account: 'team5', machine: 'us-mac-m4' };
-    const result = await gate.evaluate({
-      preferred_target: team3,
-      candidate_targets: [team3, team4, team5],
-      failed_targets: [
-        { ...team3, run_id: 'run-current', role: 'proposer', logical_cycle_id: 'cycle-1',
-          failure_class: 'execution_transport_unavailable', source_attempt_id: 'attempt-team3',
-          expires_at: '2026-07-28T02:59:00Z' },
-        { ...team4, run_id: 'run-current', role: 'proposer', logical_cycle_id: 'cycle-1',
-          failure_class: 'execution_transport_unavailable', source_attempt_id: 'attempt-team4',
-          expires_at: '2026-07-28T02:59:00Z' },
-      ],
-      requirements: { provider_auth: true },
-      task_bundle: { run_id: 'run-current', role: 'proposer', logical_cycle_id: 'cycle-2' },
-    });
-    expect(result.status).toBe('ok');
-    expect(result.to_target).toEqual(team4);
-    expect(probes.some((probe) => probe.account === 'team4' && probe.cycle === 'cycle-2')).toBe(true);
-    expect(decisions).toHaveLength(1);
-    expect(decisions[0]).toMatchObject({
-      run_id: 'run-current',
-      role: 'proposer',
-      logical_cycle_id: 'cycle-2',
-      selected_target: team4,
-    });
-    expect(decisions[0].considered_targets).toHaveLength(3);
-    expect(decisions[0].excluded_targets.every((entry: any) =>
-      entry.failure_class && entry.source_attempt_id && (entry.expires_at || entry.reset_at))).toBe(true);
+  });
+
+  it('independent authority observer rejects temp self attestation and malformed rubric evidence', () => {
+    const script = 'scripts/kernel-fleet/verify-r48-independent-authority.sh';
+    expectExecutable(script);
+    run(script, [
+      '--controller-store', '--content-addressed-artifacts', '--independent-observer',
+      '--frozen-contract', process.env.CONTRACT_SHA ?? '', '--head', process.env.PR_HEAD_SHA ?? '',
+      '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '',
+      '--mutations', 'fake-temp-json,duplicate-cell,missing-cell,binding,same-observer,predecessor-order,invented-rubric,unknown-rubric,missing-rubric',
+    ], { DB_URL: process.env.DB_URL ?? '' });
+    const receipts = queryPgJson(`
+      SELECT * FROM kernel_authorization_receipts
+      WHERE run_id='${process.env.RUN_ID}' AND contract_sha='${process.env.CONTRACT_SHA}'
+      ORDER BY created_at, id
+    `);
+    const denied = new Set(receipts.filter((r: any) => !r.authorizing).map((r: any) => r.scenario));
+    expect(denied).toEqual(new Set([
+      'fake-temp-json', 'duplicate-cell', 'missing-cell', 'binding', 'same-observer',
+      'predecessor-order', 'invented-rubric', 'unknown-rubric', 'missing-rubric',
+    ]));
+    const positive = receipts.filter((r: any) => r.authorizing);
+    expect(positive.length).toBeGreaterThan(0);
+    positive.forEach(expectIndependentAuthorityReceipt);
+    const rubricKeys = [
+      'ci_workflow_alignment', 'dod_machineability', 'internal_consistency',
+      'risk_registered', 'scope_match_prd', 'test_is_red',
+      'verification_oracle_completeness',
+    ];
+    for (const receipt of positive) {
+      expect(Object.keys(receipt.rubric_scores).sort()).toEqual(rubricKeys);
+      expect(Object.values(receipt.rubric_scores).every((score) =>
+        Number.isInteger(score) && Number(score) >= 7 && Number(score) <= 10)).toBe(true);
+    }
+    expect(receipts.filter((r: any) => r.evidence_origin === 'temp_or_stdout')
+      .every((r: any) => r.count_toward_authorization === false)).toBe(true);
+  });
+
+  it('Controller Contract Gate rejects R14 R15 and permanent target poisoning fixtures', () => {
+    const script = 'scripts/kernel-fleet/verify-r48-contract-gate.sh';
+    expectExecutable(script);
+    run(script, [
+      '--frozen-contract', process.env.CONTRACT_SHA ?? '', '--head', process.env.PR_HEAD_SHA ?? '',
+      '--fixtures', 'r14-self-attested,r15-self-attested,flat-failed-targets,exhausted-hard-fail',
+      '--independent-store-readback',
+    ], { DB_URL: process.env.DB_URL ?? '' });
+    const gateReceipts = queryPgJson(`
+      SELECT fixture_id, decision, hit_count, reason_codes, artifact_path,
+             artifact_digest, issuer_trust_domain, observer_trust_domain
+      FROM kernel_contract_gate_receipts
+      WHERE contract_sha='${process.env.CONTRACT_SHA}'
+      ORDER BY fixture_id
+    `);
+    expect(new Set(gateReceipts.map((r: any) => r.fixture_id))).toEqual(new Set([
+      'r14-self-attested', 'r15-self-attested', 'flat-failed-targets', 'exhausted-hard-fail',
+    ]));
+    for (const receipt of gateReceipts) {
+      expect(receipt.decision).toBe('deny');
+      expect(receipt.hit_count).toBeGreaterThan(0);
+      expect(receipt.reason_codes.length).toBeGreaterThan(0);
+      expect(receipt.issuer_trust_domain).not.toBe(receipt.observer_trust_domain);
+      expect(sha256(readFileSync(receipt.artifact_path))).toBe(receipt.artifact_digest);
+    }
   });
 
   it('current controller remains serial single writer', () => {
@@ -479,7 +614,7 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
     expect(plan.parallel_width).toBe(1);
     expect(plan.canonical_pr_writer).toBe('controller_integrator');
     for (const [index, task] of plan.tasks.entries()) {
-      expect(task.depends_on).toHaveLength(index === 0 ? 0 : 1);
+      expect(task.depends_on).toEqual(index === 0 ? [] : [`ws${index}`]);
     }
     const script = 'scripts/kernel-fleet/verify-workstream-execution-mode.sh';
     expectExecutable(script);
@@ -488,7 +623,7 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       '--real-controller', '--plan', `${SPRINT}/task-plan.json`, '--all-counterfactuals',
       '--evidence-dir', evidenceDir,
     ]);
-    const receipts = readJsonReceipts(evidenceDir);
+    const receipts = readDiagnosticReceipts(evidenceDir);
     expect(receipts.find((r) => r.scenario === 'four_ready_nodes').writer_allocated_count).toBe(1);
     for (const scenario of ['parallel_width_4', 'cycle', 'unknown_dep', 'overlap',
       'canonical_branch_writer', 'segment_global_pass']) {

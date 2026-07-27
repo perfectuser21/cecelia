@@ -48,7 +48,7 @@
     "guard_summary_boolean_is_authority": false
   },
   "journey_type": "agent_remote",
-  "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；17 个合同 gate 通过显式 depends_on 构成 serial_single_writer 单链，不声称当前 Controller 支持并行。",
+  "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；18 个合同 gate 通过显式 depends_on 构成 serial_single_writer 单链，不声称当前 Controller 支持并行。",
   "tasks": [
     {
       "task_id": "ws1",
@@ -146,7 +146,7 @@
       "scope": "用签名 task/PR receipt 做 P0 分类，把 built-image smoke、隔离 Worker candidate、CI、Evaluator、Judge 接入 required exact-head check；真实 GitHub API 回读 run/check-suite/head/actor/rules snapshot，合成模块返回不算 evidence；三者只产证据且 serving state 不变。",
       "dod": ["[BEHAVIOR] ci→evaluator→judge 后 Draft=true、auto-merge off、merge/staging/production mutation=0", "[BEHAVIOR] required check 绑定 authenticated GitHub run/check-suite/actor/head 与签名 rules snapshot", "[BEHAVIOR] title/label/old-green/合成 evidence 不改变 P0 required check", "[BEHAVIOR] built image smoke 在四个发布消费点同脚本执行", "[BEHAVIOR] Worker/config admission 失败时 Brain candidate receipt=0"],
       "files": [".github/workflows/ci.yml", ".github/workflows/kernel-fleet-p0-gate.yml", ".github/workflows/scripts/should-auto-merge.sh", "packages/brain/scripts/fleet-worker/fleet-rollout.sh", "scripts/ci/verify-brain-image-self-contained.sh", "scripts/kernel-fleet/run-p0-preapproval-e2e.sh", "scripts/kernel-fleet/verify-p0-workflow-contract.sh"],
-      "depends_on": ["ws17"],
+      "depends_on": ["ws9"],
       "complexity": "M",
       "estimated_minutes": 45
     },
@@ -219,7 +219,7 @@
         "scripts/kernel-fleet/verify-guard-vectors.sh",
         "scripts/kernel-fleet/verify-single-release-authority.sh"
       ],
-      "depends_on": ["ws9"],
+      "depends_on": ["ws12"],
       "complexity": "L",
       "estimated_minutes": 60
     },
@@ -344,11 +344,11 @@
     {
       "task_id": "ws17",
       "title": "Gate 17：execution-target logical-cycle quarantine 与可恢复 exhaustion",
-      "scope": "把 target exclusion 收敛为 run/role/logical-cycle/target/failure-class 有界事实；为 transient/auth/quota 设置 TTL/reset 与 fresh reprobe；每次选择持久化完整 append-only receipt；all-targets exhausted 进入可恢复 backoff 而非字符串重复硬失败，并支持保留旧 failed run 后从 remote exact contract SHA 建新 recovery run。",
+      "scope": "把 target exclusion 收敛为 run/role/logical-cycle/target/failure-class 有界事实；用真 PG 重放 cycleA team4 transport fail、cycleB team3 transport fail+team5 quota、cycleC team4 fresh Green；为 transient/auth/quota 设置 TTL/reset 与 fresh reprobe；每次选择持久化完整 append-only receipt；all-targets exhausted 进入可恢复 backoff 而非字符串重复硬失败，并支持保留旧 failed run 后从 remote exact contract SHA 建新 recovery run。",
       "dod": [
-        "[BEHAVIOR] cycle1 team3/team4 transport unavailable、team5 quota unavailable 后，cycle2 team4 fresh probe Green 可在同一 run 重新被选中",
-        "[BEHAVIOR] TTL 未到、TTL 到期、auth reset、Brain restart/replay 与 persistent exhaustion termination limit 均有独立 reason/receipt，semantic/GAN budget 只由语义结果改变",
-        "[BEHAVIOR] selection receipt 完整包含 considered targets、逐项 exclusion class/source/expiry、fresh probe snapshot 与 selected target，缺字段 fail closed",
+        "[BEHAVIOR] cycleA team4 transport unavailable、cycleB team3 transport unavailable+team5 quota 后，cycleC team4 fresh probe Green 可在同一 run 重新被选中",
+        "[BEHAVIOR] TTL 未到/到期、auth reset、machine_offline/transient TTL、product failure、Brain restart/replay 与 persistent exhaustion termination cap/owner terminate 均有独立 reason/receipt",
+        "[BEHAVIOR] 真 PG selection receipt 的 considered/excluded 都非空且完整包含 class/source/expiry或reset/observed_at/fresh probe/candidate digest/signature，独立 reader 重算通过",
         "[BEHAVIOR] 历史 failed run/attempt/decision log byte-identical；新 recovery run 的 recovery_of 与远端 contract branch full SHA 精确匹配"
       ],
       "files": [
@@ -363,9 +363,37 @@
         "packages/brain/src/lib/contract-gate.js",
         "packages/brain/src/lib/__tests__/contract-gate-execution-target-quarantine.test.js",
         "packages/brain/src/lib/__tests__/fixtures/contract-gate/execution-target-quarantine/",
-        "packages/brain/src/orchestrator/preflight/execution-target-quarantine.integration.test.js"
+        "packages/brain/src/orchestrator/preflight/execution-target-quarantine.integration.test.js",
+        "scripts/kernel-fleet/verify-execution-target-recovery.sh"
       ],
       "depends_on": ["ws16"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws18",
+      "title": "Gate 18：R48 独立 authority observer 与 Contract Gate",
+      "scope": "将 verifier stdout/temp JSON 降为 diagnostic-only；由独立 trust-domain observer 从 append-only server/PG store 与 content-addressed artifact 回读重算 receipt/artifact/predecessor/effect；严格校验生产七维 rubric；Controller-owned Contract Gate 在冻结 SHA 拒绝 R14/R15 self-attestation、永久 failed_targets 与 exhausted hard-fail。",
+      "dod": [
+        "[BEHAVIOR] fake temp JSON/stdout、duplicate/missing cell、binding mutation、same observer、predecessor reorder、invented/unknown/missing rubric 全部 non-authorizing",
+        "[BEHAVIOR] positive authority receipt 由不同 principal 独立回读并重算完整 task/run/attempt/role/session/lease/intent/contract/head/skill/policy、raw artifact、predecessor 与 before/after effect",
+        "[BEHAVIOR] R14/R15 self-attested、flat failed_targets、exhausted hard-fail 四 fixture 均被独立 Contract Gate 拒绝并持久化 content-addressed gate artifact digest",
+        "[BEHAVIOR] BRAIN_RESULT_FILE/result-channel store 不可用时返回 infrastructure BLOCKED，source .brain-result.json 与 stdout authority=0"
+      ],
+      "files": [
+        "packages/brain/migrations/",
+        "packages/brain/src/orchestrator/authorization-receipt-store.js",
+        "packages/brain/src/orchestrator/authorization-observer.js",
+        "packages/brain/src/orchestrator/contract-approval-v2.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/lib/contract-gate.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/src/lib/__tests__/fixtures/contract-gate/r14-self-attested/",
+        "packages/brain/src/lib/__tests__/fixtures/contract-gate/r15-self-attested/",
+        "scripts/kernel-fleet/verify-r48-independent-authority.sh",
+        "scripts/kernel-fleet/verify-r48-contract-gate.sh"
+      ],
+      "depends_on": ["ws17"],
       "complexity": "L",
       "estimated_minutes": 60
     }

@@ -457,6 +457,41 @@ probe 恢复并在同一 run 被重新选择；Brain restart/replay、TTL 未到
 全部目标持续不可用达到 termination limit、旧 failed run 不可复活、新 run 从 exact contract
 SHA 接续。selection receipt 由测试独立查询并重算，模块返回 summary/temp JSON 不算证明。
 
+## R48 独立授权 oracle 与事故级 target 恢复证明
+
+R46/R47 的文字覆盖不能由被测 verifier 自己写 `--evidence-dir` JSON/stdout 后再自行解释为
+Green。所有 P0/P1 正向授权必须由独立 observer 在真实生产 seam 执行后，从 append-only
+server/API/PG store 回读 receipt body 和 content-addressed raw artifact，重新计算 canonical
+receipt、artifact 与 predecessor digest，并逐字验证
+`task/run/attempt/role/session/lease/intent/contract/head/skill/policy`。issuer 与 observer
+必须属于不同 trust domain，并由独立进程读取 before/after effect snapshot。verifier stdout、
+临时 JSON、同主体 self-attestation 与被测模块 summary 一律
+`count_toward_authorization=false`；缺真实环境只能 `BLOCKED`，不得 Green。
+
+Reviewer-v2 rubric key 集合必须严格等于生产七键
+`dod_machineability,scope_match_prd,test_is_red,internal_consistency,risk_registered,
+verification_oracle_completeness,ci_workflow_alignment`，每项只能是整数 `7..10`。永久反事实
+至少包括：伪造 exact temp JSON/stdout、13×11 cell duplicate/missing、任一 identity binding
+篡改、issuer/observer 同主体、predecessor reorder、invented/unknown/missing rubric key；
+六类都必须 non-authorizing 并产生独立 reason receipt。
+
+execution-target 恢复必须通过真实 PG append-only replay，而不是 mocked
+`decisions.push`：cycle A team4 transport unavailable、cycle B team3 transport unavailable、
+team5 quota unavailable，经过 TTL 后 cycle C 对 team4 fresh probe Green，并在同一 run
+重新选回 team4。另独立覆盖 TTL 未到/到期、auth reset、machine_offline/transient TTL、
+product failure 不污染 target health、重复 exhausted 的持久化 backoff 与 termination
+cap/owner terminate、Brain restart replay、历史 failed run byte-immutable、新 recovery run
+绑定 remote exact contract SHA。selection receipt 的 considered/excluded 集合都必须非空，
+逐项具有 reason/failure_class/source_attempt/expiry 或 reset/observed_at/fresh probe，
+并绑定 candidate digest/signature；禁止空数组 `every()` 假绿。
+
+Controller-owned Contract Gate 必须从冻结 contract SHA 读取精确 Red inventory，并独立查询
+上述 authority receipts。它必须明确拒绝 R14/R15 的 self-attestation、permanent flat
+`failed_targets` 与 exhausted→hard-failed 合同；`ok=true,hits=0` 对这些 fixture 是 Red。
+批准 receipt 必须绑定独立 gate artifact digest。若 TaskBundle 未注入可写
+`BRAIN_RESULT_FILE` 或 durable callback/store readback 不成立，proposer/reviewer 只能返回
+基础设施 `BLOCKED`；禁止把 source checkout `.brain-result.json` 写回当权威结果。
+
 ## NFR 约束
 
 <!-- 来源: decisions 表 category=nfr，PrepPRD 显式值优先 -->
@@ -563,7 +598,9 @@ if [ "$E2E_PHASE" = preapproval ]; then
     --guard-providers claude,codex,grok --guard-vectors V01-V13 \
     --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
     --require-reviewer-result-channel --require-reviewer-effect-isolation \
-    --require-target-quarantine-recovery --require-selection-receipts \
+    --require-target-quarantine-recovery --require-real-pg-selection-replay \
+    --require-selection-receipts --require-independent-authority-observer \
+    --reject-self-attested-evidence --require-independent-contract-gate \
     --execution-mode serial_single_writer --parallel-width 1 \
     --expect-order draft,ci,evaluator,judge,reviewer_v2_verified \
     --expect-serving-mutations 0 \
@@ -584,7 +621,9 @@ bash scripts/kernel-fleet/run-authoritative-final-e2e.sh \
   --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
   --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
   --require-verified-reviewer-v2 --execution-mode serial_single_writer \
-  --require-target-quarantine-recovery --require-selection-receipts \
+  --require-target-quarantine-recovery --require-real-pg-selection-replay \
+  --require-selection-receipts --require-independent-authority-observer \
+  --reject-self-attested-evidence --require-independent-contract-gate \
   --expect-order owner,merge,staging,production,rollback,s12 \
   --strict-staging --require-production-health --require-rollback-anchor \
   --require-guard-proof proven,fresh --reject-second-merge-authority \

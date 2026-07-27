@@ -5,7 +5,7 @@ target_environment: linux_server
 ---
 # Contract DoD — Durable Fleet Worker bootstrap 与 Kernel 恢复闭环
 
-**范围**: PRD Golden Path 第 1-12 步 + R32-R47 exact inventory/advisory、append-only
+**范围**: PRD Golden Path 第 1-12 步 + R32-R48 exact inventory/advisory、append-only
 classification/manifest/origin/cell evidence、同 Journey lifecycle projection、strict
 staging/production/rollback、provider-neutral Guard Ledger D/A/F/E、独立 S12 accountant、
 attempt-runtime result channel、Reviewer-v2 确定性批准/效果隔离、serial-single-writer
@@ -24,10 +24,10 @@ attempt-runtime result channel、Reviewer-v2 确定性批准/效果隔离、seri
   Test: node -e "const c=require('fs').readFileSync('packages/brain/DEFINITION.md','utf8');if(!/ready.*heartbeat|heartbeat.*ready/i.test(c)||!/Worker-first/i.test(c)||!/drain/i.test(c))process.exit(1)"
 - [ ] [ARTIFACT] 真实 US E2E、mutation、rollback 脚本及两个 integration test 在合同路径落地。
   Test: node -e "const fs=require('fs');for(const p of ['scripts/kernel-fleet/run-real-attempt-proof.sh','scripts/kernel-fleet/run-us-durable-recovery-canary.sh','scripts/kernel-fleet/verify-owner-gate-and-rollback.sh','packages/brain/src/__tests__/kernel-launch-readiness.integration.test.js','packages/brain/src/__tests__/kernel-durable-recovery.integration.test.js'])fs.accessSync(p)"
-- [ ] [ARTIFACT] Sprint Red 测试库存按 realpath 去重后恰好一个文件、32 个唯一 `it()`；
+- [ ] [ARTIFACT] Sprint Red 测试库存按 realpath 去重后恰好一个文件、34 个唯一 `it()`；
   无共享 `loadProof` 动态 import，保留 migration/workflow/result-channel/full-fixture/
   classification/direct-origin/strict-staging/terminal-order Red。
-  Test: node -e "const fs=require('fs');const p='sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8');if((c.match(/^  it\\(/gm)||[]).length!==32||c.includes('loadProof(')||!c.includes('authority inventory full entry fixture and advisory partition')||!c.includes('strict staging rejects empty skip and SHA drift')||!c.includes('deterministic reviewer v2 approval rejects advisory outcomes and stale intent')||!c.includes('reviewer mutation surface is denied before verified approval')||!c.includes('execution target quarantine expires per logical cycle and writes complete selection receipts')||!c.includes('current controller remains serial single writer'))process.exit(1)"
+  Test: node -e "const fs=require('fs');const p='sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8');if((c.match(/^  it\\(/gm)||[]).length!==34||c.includes('loadProof(')||c.includes('decisions.push')||!c.includes('authority inventory full entry fixture and advisory partition')||!c.includes('strict staging rejects empty skip and SHA drift')||!c.includes('deterministic reviewer v2 approval rejects advisory outcomes and stale intent')||!c.includes('reviewer mutation surface is denied before verified approval')||!c.includes('execution target quarantine replays real PG cycles and writes complete selection receipts')||!c.includes('independent authority observer rejects temp self attestation and malformed rubric evidence')||!c.includes('Controller Contract Gate rejects R14 R15 and permanent target poisoning fixtures')||!c.includes('current controller remains serial single writer'))process.exit(1)"
 - [ ] [ARTIFACT] P0 统一 gate 与四个现有 workflow 的 fail-closed 接线均在实现范围。
   Test: node -e "const fs=require('fs');for(const p of ['.github/workflows/kernel-fleet-p0-gate.yml','.github/workflows/ci.yml','.github/workflows/brain-ci-deploy.yml','.github/workflows/auto-staging-deploy.yml','.github/workflows/deploy.yml'])fs.accessSync(p)"
 - [ ] [ARTIFACT] title heuristic auto-merge 脚本、branch protection/ruleset reconciliation 与 built-image smoke 四消费方均有 machine contract。
@@ -211,11 +211,35 @@ attempt-runtime result channel、Reviewer-v2 确定性批准/效果隔离、seri
   验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-reviewer-effect-isolation.sh --real-runner --brain-api --github-api --deployment-api --controlled-posts registry,decision,task,pr,merge,deploy,staging,production --task "${TASK_ID:?}" --run "${RUN_ID:?}" --head "${PR_HEAD_SHA:?}"
   期望: exit 0；secret scan=0，retry 后 outbox count=1。
 
+- [ ] [BEHAVIOR] [L2] Golden Path Step 10C — 独立 authority observer 拒绝 verifier 自证
+  动作: 让 subject verifier 依次尝试伪造 exact temp JSON/stdout、duplicate/missing 13×11 cell、
+  篡改一项 binding、复用 issuer 作为 observer、重排 predecessor，并伪造 invented/unknown/missing
+  rubric key；随后由不同 principal 从 append-only server/PG store 回读原始 receipt 和内容寻址 artifact。
+  预期观察: verifier stdout/temp JSON 全部 count_toward_authorization=false；独立 observer
+  重算 receipt/artifact/predecessor digest 与 before/after effect；所有 mutation non-authorizing。
+  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-r48-independent-authority.sh --controller-store --content-addressed-artifacts --independent-observer --frozen-contract "${CONTRACT_SHA:?}" --head "${PR_HEAD_SHA:?}" --task "${TASK_ID:?}" --run "${RUN_ID:?}" --mutations fake-temp-json,duplicate-cell,missing-cell,binding,same-observer,predecessor-order,invented-rubric,unknown-rubric,missing-rubric
+  期望: exit 0；rubric exact production 七键且每项 integer 7..10；issuer/observer trust domain 不同；缺环境只能 BLOCKED。
+
+- [ ] [BEHAVIOR] [L2] Golden Path Step 10C — Controller Contract Gate 拒绝 R14/R15 假权威
+  动作: Controller 在冻结 SHA 独立读取 Red inventory 与 authority receipts，对
+  `r14-self-attested,r15-self-attested,flat-failed-targets,exhausted-hard-fail` 四个 fixture 执行 gate。
+  预期观察: 四个 fixture 均命中明确 rule/reason，不得再返回 ok=true,hits=0；gate artifact
+  content-addressed digest 持久化并绑定 approval receipt。
+  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-r48-contract-gate.sh --frozen-contract "${CONTRACT_SHA:?}" --head "${PR_HEAD_SHA:?}" --fixtures r14-self-attested,r15-self-attested,flat-failed-targets,exhausted-hard-fail --independent-store-readback
+  期望: exit 0；denied fixture exact set=4，gate receipt issuer/observer 分离且 artifact digest 重算一致。
+
 - [ ] [BEHAVIOR] [L2] Golden Path Step 9A — execution target quarantine 按 logical cycle 过期
-  动作: 在真 PG/生产 capability gate 中让 cycle1 的 team3/team4 分别返回 execution_transport_unavailable、team5 返回 quota unavailable；保存 Brain restart 后 replay，再进入 cycle2 对 team4 做 fresh Green probe，并覆盖 TTL 未到/到期、auth reset、persistent exhaustion termination 与 failed-run recovery。
-  预期观察: cycle1 只进入 recoverable infrastructure backoff；cycle2 同一 run 可重新选 team4；每轮 append-only receipt 包含完整 considered/excluded/probe/selected 事实。重复 exhausted 不消耗 semantic/GAN budget；历史 failed run 不变，新 recovery run 精确绑定 remote contract full SHA。
-  验证命令: Test: manual:bash bash -c 'DB_URL="${DB_URL:?}" npx vitest run packages/brain/src/orchestrator/preflight/execution-target-quarantine.integration.test.js --reporter=verbose && node packages/brain/scripts/contract-gate-check.mjs packages/brain/src/lib/__tests__/fixtures/contract-gate/execution-target-quarantine'
-  期望: exit 0；selection receipt exact-set/identity/expiry 独立重算通过，旧 cycle exclusion 不跨 cycle 毒化；Contract Gate 拒绝永久 flat failed_targets 与 exhausted→hard-failed。
+  动作: 在真 PG/生产 capability gate 中顺序注入 cycleA team4 transport unavailable、
+  cycleB team3 transport unavailable+team5 quota unavailable、Brain restart replay、TTL 后
+  cycleC team4 fresh Green；另跑 TTL 未到/到期、auth reset、machine_offline/transient TTL、
+  product failure、persistent exhaustion cap/owner terminate 与 failed-run recovery。
+  预期观察: cycleA/B 只进入 persisted recoverable backoff；cycleC 同一 run 重新选 team4；
+  每轮 append-only receipt 的 considered/excluded 都非空并含完整 reason/source/expiry/probe。
+  重复 exhausted 不消耗 semantic/GAN budget；历史 failed run byte-immutable，新 recovery run
+  精确绑定 remote contract full SHA。
+  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-execution-target-recovery.sh --real-controller --real-pg --restart --all-counterfactuals --task "${TASK_ID:?}" --run "${RUN_ID:?}" --contract "${CONTRACT_SHA:?}" --head "${PR_HEAD_SHA:?}"
+  期望: exit 0；测试由独立 PG reader 重算 selection receipt exact set、candidate digest/signature
+  与历史 run before/after digest；禁止 mocked decisions.push 与空数组 every()。
 
 - [ ] [BEHAVIOR] [L2] Golden Path contract execution — current Controller stays serial single writer
   动作: 把本合同 task-plan 交给真实 Controller scheduler preflight，注入四个 ready label、

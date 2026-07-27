@@ -1,4 +1,4 @@
-# Sprint Contract Draft（Round 15）
+# Sprint Contract Draft（Round 16）
 
 ## 合同 Notes
 
@@ -9,7 +9,7 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
-- 先前 proposer heads 均仅作 Red 证据；Round 15 保留 R32-R45 修正，并新增 R46-R47：
+- 先前 proposer heads 均仅作 Red 证据；Round 16 保留 R32-R47 修正，并新增 R48：
   Reviewer 自报 APPROVED 不具权威，必须由 Controller 对 durable result-channel、七维评分、
   task-intent revision、skill/policy digest、Contract Gate 与 Red inventory 做确定性批准；
   Reviewer 无 mutation credential；当前 workstream 只能 serial single writer。
@@ -20,6 +20,18 @@
   `run_id+role+logical_cycle_id+target+failure_class` 并带 TTL/reset；每次 selection 写完整
   append-only receipt。旧 cycle 的 transport failure 不得永久毒化恢复后的 target；
   `all_execution_targets_exhausted` 是可恢复基础设施阻塞，不因重复字符串硬失败 run。
+- R48-independent-oracle: verifier 自写 `--evidence-dir` JSON/stdout 一律
+  `count_toward_authorization=false`。P0/P1 正控只能由不同 trust-domain observer 从真实
+  append-only API/PG store 回读 receipt/raw artifact，独立重算 canonical
+  receipt/artifact/predecessor digest 与 before/after effect；环境不可用必须 BLOCKED。
+- R48-exact-counterfactuals: Reviewer 七键集合严格等于生产接口且每项为整数 7..10；
+  fake temp JSON/stdout、13×11 duplicate/missing、binding mutation、same observer、
+  predecessor reorder、invented/unknown/missing rubric key 六类均 non-authorizing。
+- R48-real-target-replay: target recovery 必须在真 PG 重放
+  `cycleA team4 transport fail → cycleB team3 transport fail + team5 quota →
+  cycleC team4 fresh Green`，同一 run 选回 team4；禁止 mocked `decisions.push` 或空数组
+  `every()`。Contract Gate 必须拒绝 R14/R15 self-attestation/permanent flat
+  failed_targets/exhausted hard-fail fixture。
 - R41-test-oracle: verifier stdout、fixture 自带 summary、被测模块返回 boolean/array/count/hash
   均不可单独证明 P0。每个 planned verifier 必须调用真实生产 seam，测试随后从独立
   Git object/PG/GitHub/deployment/effect store 重算；缺 planned module 只允许产生该模块一条
@@ -523,24 +535,26 @@ fresh probe snapshot 与 selected target。`all_execution_targets_exhausted` 只
 reprobe/owner intervention；只有独立持久化 termination limit 或 owner terminate 才可 failed。
 同一 run 的后续 cycle 可重新选择恢复后的 team4。标准恢复不修改历史 failed run，而是保留
 旧 run/attempt/decision log，新建 run 并从远端 contract branch exact SHA 接续。
+测试必须通过生产 capability gate/dispatcher/loop 与真 PG append-only store 重放
+`cycleA team4 transport fail → cycleB team3 transport fail + team5 quota unavailable →
+cycleC team4 fresh Green`；测试进程独立回读 selection receipt 与 probe artifact，禁止注入
+mock `recordDecision/decisions.push`。considered/excluded 必须是非空 exact set，不能对空数组
+用 `every()` 充当证明。
 
 **验证命令**:
 ```bash
-DB_URL="${DB_URL:?}" npx vitest run \
-  packages/brain/src/orchestrator/preflight/execution-target-quarantine.integration.test.js \
-  --reporter=verbose
-node packages/brain/scripts/contract-gate-check.mjs \
-  packages/brain/src/lib/__tests__/fixtures/contract-gate/execution-target-quarantine
+DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-execution-target-recovery.sh \
+  --real-controller --real-pg --restart --all-counterfactuals \
+  --task "${TASK_ID:?}" --run "${RUN_ID:?}" --contract "${CONTRACT_SHA:?}" \
+  --head "${PR_HEAD_SHA:?}"
 ```
-**硬阈值**: 正控顺序精确为
-`cycle1:team3 transport unavailable,team4 transport unavailable →
-cycle1:team5 quota unavailable → bounded backoff →
-cycle2:fresh team4 probe Green → selected team4`，同一 run 不新建替代 run；
-restart/replay 选择一致且 receipt 唯一。TTL 未到仍隔离，TTL 到期/auth reset 后重探；
-持续全不可用只有达到独立 termination receipt 才 failed；历史 failed run mutation=0，
-新 run 的 recovery_of 与 remote contract branch full SHA 精确匹配；Contract Gate 对永久
-flat `failed_targets`、缺 logical-cycle/expiry/source 的 exclusion 和 exhausted→hard-failed
-合同分别非零。
+**硬阈值**: 正控顺序精确为 cycleA/team4 transport fail、cycleB/team3 transport fail+
+team5 quota、bounded persisted backoff、cycleC/team4 fresh Green+selected；同一 run 不新建
+替代 run。真实 PG receipt 至少三条且 considered/excluded 非空，逐 exclusion 的
+failure_class/source_attempt/expiry|reset/observed_at 以及 probe candidate digest/signature
+齐全。TTL 未到、TTL 到期、auth reset、machine offline、transient、product failure、
+restart replay、persistent exhaustion cap、owner terminate 各有独立 reason；历史 failed
+run byte digest 不变，新 run 的 recovery_of 与 remote contract branch full SHA 精确匹配。
 
 ### Step 10A：Controller 确定性归一化 Reviewer 合同批准
 **来源**: `[AI_ADDED]` — R43 发现 Reviewer outcome/prose、concerns 状态、stale task intent 与
@@ -586,6 +600,34 @@ bash scripts/kernel-fleet/verify-reviewer-effect-isolation.sh \
 **硬阈值**: Reviewer mutation credential count=0；八类 POST 全部 exact deny receipt 且 effect
 delta=0；secret scan=0；legacy force-approval/default-APPROVED/pre-verification judgment 指令任一
 出现即 preflight 非零；REVISION/stale outbox writes=0，verified approval writes=1，retry 后仍 1。
+
+### Step 10C：独立 authority observer 与 Contract Gate 拒绝自证
+**来源**: `[AI_ADDED]` — R48 证明 R15 仍由 verifier 自写临时 JSON 并由测试直接采信，
+且 Contract Gate 对 R14/R15 self-attestation 与永久 target quarantine 返回 `ok=true,hits=0`。
+
+**可观测行为**: real seam 的 subject/issuer 只产生原始事件；另一进程和不同 principal 从
+append-only server/API/PG store 回读 receipt body 与 content-addressed artifact，独立重算
+canonical receipt/artifact/predecessor digest、全 lineage binding 与 before/after effect。
+stdout/temp JSON 明确 non-authorizing。Controller-owned Contract Gate 在冻结 contract head
+独立读取 Red inventory 和 authority receipt，拒绝 R14/R15、自证 rubric、永久 flat
+failed_targets 与 exhausted→hard-failed。缺生产环境、store signature 或 observer separation
+返回 BLOCKED，不能 Green。
+
+**验证命令**:
+```bash
+DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-r48-independent-authority.sh \
+  --controller-store --content-addressed-artifacts --independent-observer \
+  --frozen-contract "${CONTRACT_SHA:?}" --head "${PR_HEAD_SHA:?}" \
+  --task "${TASK_ID:?}" --run "${RUN_ID:?}" \
+  --fixtures r14-self-attested,r15-self-attested,flat-failed-targets,exhausted-hard-fail \
+  --mutations fake-temp-json,duplicate-cell,missing-cell,binding,same-observer,predecessor-order,invented-rubric,unknown-rubric,missing-rubric
+```
+**硬阈值**: rubric key exact set 与整数 7..10 均由 Controller 重算；九类 mutation 与四个旧
+fixture 全部 `authorizing=false` 且有不同结构化 reason。任一 positive receipt 的
+task/run/attempt/role/session/lease/intent/contract/head/skill/policy、issuer、observer、artifact
+digest、predecessor digest、before/after effect 全匹配；同 trust-domain 或无 raw artifact
+一律拒绝。独立 gate artifact digest 持久化并进入 approval receipt，verifier stdout/temp
+JSON 的 `count_toward_authorization=false`。
 
 ### Step 11：exact-head owner approval 后仅 controller 可 merge
 **来源**: `[FROM_PRD]` — 修订后 PRD Golden Path 第 11 步与 Human authority。
@@ -731,7 +773,9 @@ if [ "$E2E_PHASE" = preapproval ]; then
   --guard-providers claude,codex,grok --guard-vectors V01-V13 \
   --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
   --require-reviewer-result-channel --require-reviewer-effect-isolation \
-  --require-target-quarantine-recovery --require-selection-receipts \
+  --require-target-quarantine-recovery --require-real-pg-selection-replay \
+  --require-selection-receipts --require-independent-authority-observer \
+  --reject-self-attested-evidence --require-independent-contract-gate \
   --execution-mode serial_single_writer --parallel-width 1 \
   --expect-order draft,ci,evaluator,judge,reviewer_v2_verified \
   --expect-serving-mutations 0 \
@@ -752,7 +796,9 @@ bash scripts/kernel-fleet/run-authoritative-final-e2e.sh \
   --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
   --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
   --require-verified-reviewer-v2 --execution-mode serial_single_writer \
-  --require-target-quarantine-recovery --require-selection-receipts \
+  --require-target-quarantine-recovery --require-real-pg-selection-replay \
+  --require-selection-receipts --require-independent-authority-observer \
+  --reject-self-attested-evidence --require-independent-contract-gate \
   --expect-order owner,merge,staging,production,rollback,s12 \
   --strict-staging --require-production-health --require-rollback-anchor \
   --require-guard-proof proven,fresh --reject-second-merge-authority \
@@ -769,9 +815,9 @@ US staging、production canary、rollback anchor 与 S12，且所有 origin Atte
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | 32 个 `it()` 的字面测试名（由下方库存命令直接提取） | 32 个唯一 `it()`；每条直接读 authority fixture/store 或执行具体生产 seam；禁止共享动态 import helper、proof summary boolean 与 duplicate collection。 |
+| P0 durable recovery（唯一收集项） | `tests/durable-recovery.contract.test.ts` | 34 个 `it()` 的字面测试名（由下方库存命令直接提取） | 34 个唯一 `it()`；授权正控必须由独立 observer 直接读 append-only authority store/raw artifact；禁止共享动态 import helper、proof summary boolean、temp JSON authority 与 duplicate collection。 |
 
-**测试库存硬阈值**: 唯一文件数 = 1；总数 = 32；不得重复收集。migration parity、
+**测试库存硬阈值**: 唯一文件数 = 1；总数 = 34；不得重复收集。migration parity、
 workflow bypass、result channel、full fixture/advisory/classification、projection/direct origin、
 manifest/evidence schema、strict staging、terminal-order、clean-home D/A/F/E、V01-V13 exact
 set、single merge authority、Reviewer-v2 approval、Reviewer effect isolation 与
@@ -783,7 +829,7 @@ serial-single-writer Red 必须保留。
 TEST_ROOT="sprints/07280225-kernel-fleet-durable-recovery-r5/tests"
 UNIQUE_FILES=$(find "$TEST_ROOT" -name '*.test.ts' -print0 | xargs -0 realpath | sort -u | wc -l | tr -d ' ')
 IT_COUNT=$(rg -c '^[[:space:]]*it\(' "$TEST_ROOT/durable-recovery.contract.test.ts")
-[ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 32 ]
+[ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 34 ]
 # packages/brain/sprints 是指向根 sprints 的 symlink；真实 collector 必须显式排除，
 # 否则同一 realpath 会被 Vitest 以两个逻辑路径执行两次。
 npx vitest run --exclude 'packages/brain/sprints/**' \
@@ -821,6 +867,9 @@ for COVER in \
   'single merge staging production authority cannot be bypassed' \
   'deterministic reviewer v2 approval rejects advisory outcomes and stale intent' \
   'reviewer mutation surface is denied before verified approval' \
+  'execution target quarantine replays real PG cycles and writes complete selection receipts' \
+  'independent authority observer rejects temp self attestation and malformed rubric evidence' \
+  'Controller Contract Gate rejects R14 R15 and permanent target poisoning fixtures' \
   'current controller remains serial single writer'
 do
   grep -F "$COVER" "$TEST_ROOT/durable-recovery.contract.test.ts" >/dev/null
