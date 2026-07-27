@@ -188,6 +188,24 @@ if run_nodectl admit us-mac-m4 >/dev/null 2>&1; then
   fail "admit accepted a Runner digest rejected by the pure evaluator"
 fi
 
+fetch_log="$test_root/fetch-url.log"
+printf '%s\n' \
+  "'use strict';" \
+  "const fs = require('node:fs');" \
+  "globalThis.fetch = async (url) => {" \
+  "  fs.writeFileSync(process.env.FLEET_NODECTL_FETCH_LOG, String(url));" \
+  "  return { ok: false };" \
+  "};" > "$test_root/fetch-preload.cjs"
+if CECELIA_MACHINE_ID=xian-mac-m4 \
+  FLEET_NODECTL_HEALTH_FILE='' \
+  FLEET_NODECTL_FETCH_LOG="$fetch_log" \
+  NODE_OPTIONS="--require=$test_root/fetch-preload.cjs" \
+  "$NODECTL" admit xian-mac-m4 >/dev/null 2>&1; then
+  fail "unavailable Xian Worker unexpectedly admitted"
+fi
+[[ "$(<"$fetch_log")" == 'http://100.86.57.69:5231/health' ]] \
+  || fail "nodectl did not use the Xian NodeProfile listener"
+
 if run_nodectl drain xian-mac-m4 --apply >/dev/null 2>&1; then
   fail "nodectl attempted to mutate a remote node"
 fi
