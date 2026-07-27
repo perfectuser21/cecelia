@@ -64,9 +64,9 @@
     {
       "task_id": "ws5",
       "title": "Gate 5：生产 preflight 与语义锚点",
-      "scope": "fail closed 校验 remote/callback、URL 可达、immutable profile；把当前 task 从零行 placeholder 原子迁移并回读既有 DevOps Map journey/golden-path/step existence 和 ownership。",
-      "dod": ["[BEHAVIOR] task 4a530430... 回读的 anchor 精确等于合同既有三元组", "[BEHAVIOR] 虚构 UUID、ownership 错误、task_id 等于 run_id、不可达 URL 均失败"],
-      "files": ["packages/brain/src/anchor-check.js", "scripts/kernel-fleet/verify-production-preflight.sh"],
+      "scope": "fail closed 校验 remote/callback、URL 可达、immutable profile；从不可变 TaskBundle 动态绑定 current task/run/attempt/contract/head，并回读既有 DevOps Map journey/golden-path/step existence 和 ownership。",
+      "dod": ["[BEHAVIOR] current run fda8... 与 task 4a530430... 分离，anchor 精确等于合同既有三元组", "[BEHAVIOR] historical failed run 4bbe...、task-as-run、receipt mismatch、stale contract/head、cross-run artifact、虚构 UUID、ownership 错误、不可达 URL 均 fail closed 且不耗 semantic/GAN budget"],
+      "files": ["packages/brain/src/anchor-check.js", "scripts/kernel-fleet/verify-production-preflight.sh", "scripts/kernel-fleet/verify-run-binding-counterfactuals.sh"],
       "depends_on": ["ws4"],
       "complexity": "M",
       "estimated_minutes": 45
@@ -144,13 +144,15 @@
     {
       "task_id": "ws13",
       "title": "Gate 13：F1 S0-S12×11 lifecycle SSOT 与 S12 硬终态收账",
-      "scope": "以 #4372 exact provenance 作为迁移输入，把既有 F1 六步 rows 原位升级为唯一 S0-S12 manifest；驱动 DevOps Map、regression contract、runtime API/report 与 143 typed cells。S0/S1 建立 born/intent receipt，S2-S11 逐段消费 authenticated exact-head receipt，S12 在 production+rollback anchor 后一次性收 task/run、Promise Map、regression、report、learning/handoff 与 external status。",
+      "scope": "以 #4372 exact provenance 作为迁移输入，把既有 F1 rows 原位升级为唯一 S0-S12 manifest，逐字保留 intended baseline 的 stable stage ID/name/order/promise；驱动 DevOps Map、regression contract、runtime API/report 与 143 typed cells。S2=Planner、S3=Contract GAN、S4=Generator 且 Draft PR 仅为 S4 输出。以 canonical KH-F1-F01..F08 和 exact 129 legacy IDs 建 KernelPolicyGate；S12 在 production+rollback anchor 后一次性收账。",
       "dod": [
         "[BEHAVIOR] migration 368+ 在 fresh/production-like 真 PG 原位升级且 rollback，F1 journey count 不增、migration 366 不动",
         "[BEHAVIOR] 13 stages×11 canonical elements=143 cells，gray/null=0，manifest/DB/regression/API/report SHA parity",
         "[BEHAVIOR] 每 stage 有稳定 owner、input/output receipt、positive/violation/recovery oracle、freshness/death/failure/effect 与 legacy/unified IDs",
-        "[BEHAVIOR] S0 born/S1 intent 是 S2 前置，S6/S7 为独立 non-mutating Attempts，S8-S11 严格 exact-head 有序",
-        "[BEHAVIOR] 八个 legacy family 在 Claude/Codex/Grok normal/violation/recovery 共72 receipts，缺失保持 typed_pending",
+        "[BEHAVIOR] 13 个 stable stage ID/name/order/promise 与 4dc3b69a 精确 parity，rename/merge/split/shift/insert 全失败",
+        "[BEHAVIOR] S0/S1→S2 Planner→S3 Contract GAN→S4 Generator/Draft output→S5-S12 严格有序，S6/S7 独立 non-mutating",
+        "[BEHAVIOR] canonical family counts 0,2,2,8,6,0,1,110 且 legacy total=129/P0=66/P1=63；F01/F06 typed gap，F08 无 bulk inferred pass",
+        "[BEHAVIOR] 每个 KernelPolicyGate receipt 绑定 exact legacy ID/provider/phase/subject/run/attempt/head/lease/evidence/recovery，缺真实 proven-to-fire 保持 typed_pending",
         "[BEHAVIOR] S12 缺 production/rollback/report/external receipt 时 non-complete，恢复后 accounting transaction 恰一次"
       ],
       "files": [
@@ -159,6 +161,13 @@
         "packages/brain/src/lib/kernel-harness-lifecycle.js",
         "packages/brain/src/orchestrator/kernel-harness-lifecycle.js",
         "packages/brain/scripts/smoke/kernel-harness-lifecycle-smoke.sh",
+        "packages/engine/hooks/bash-guard.sh",
+        "packages/engine/hooks/main-repo-write-guard.sh",
+        "packages/engine/hooks/stop.sh",
+        "scripts/local-precheck.sh",
+        "packages/brain/src/staging-e2e-runner.js",
+        "scripts/promote-dashboard.sh",
+        "scripts/rollback-cecelia.sh",
         "scripts/kernel-fleet/verify-lifecycle-s0-s12.sh",
         "scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh",
         "scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh",

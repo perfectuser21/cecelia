@@ -11,6 +11,8 @@ const requireEnv = (name: string): string => {
 };
 const CURRENT_TASK_ID = requireEnv('TASK_ID');
 const CURRENT_RUN_ID = requireEnv('RUN_ID');
+const CURRENT_ATTEMPT_ID = requireEnv('ATTEMPT_ID');
+const CURRENT_CONTRACT_SHA = requireEnv('CONTRACT_SHA');
 const REAL_JOURNEY_ID = requireEnv('REAL_JOURNEY_ID');
 const REAL_GP_ID = requireEnv('REAL_GP_ID');
 const REAL_STEP_ID = requireEnv('REAL_STEP_ID');
@@ -374,6 +376,7 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
 
   it('semantic anchor resolves journey golden-path step ownership and distinguishes task from run', async () => {
     const mod = await import('../../../packages/brain/src/anchor-check.js');
+    expect(CURRENT_RUN_ID).toBe('fda8bfd7-fbbc-4260-a657-ea7f3b51bd16');
     const result = await mod.validateSemanticAnchor({
       databaseUrl: DB_URL,
       journeyId: REAL_JOURNEY_ID,
@@ -389,6 +392,30 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     expect(result.journeyId).toBe(REAL_JOURNEY_ID);
     expect(result.goldenPathId).toBe(REAL_GP_ID);
     expect(result.stepId).toBe(REAL_STEP_ID);
+    const mutations = await mod.verifyRunBindingCounterfactuals({
+      databaseUrl: DB_URL,
+      taskId: CURRENT_TASK_ID,
+      runId: CURRENT_RUN_ID,
+      attemptId: CURRENT_ATTEMPT_ID,
+      contractSha: CURRENT_CONTRACT_SHA,
+      headSha: requireEnv('PR_HEAD_SHA'),
+      historicalFailedRunId: '4bbe35de-63c1-4cfe-9b55-fea8c01a0647',
+      cases: [
+        'terminal_historical_run',
+        'task_id_as_run_id',
+        'taskbundle_receipt_run_mismatch',
+        'stale_contract_round',
+        'stale_head',
+        'cross_run_artifact',
+        'cross_run_result',
+      ],
+    });
+    for (const mutation of mutations) {
+      expect(mutation.accepted).toBe(false);
+      expect(mutation.semanticBudgetDelta).toBe(0);
+      expect(mutation.ganBudgetDelta).toBe(0);
+      expect(mutation.historicalReceiptMutated).toBe(false);
+    }
   });
 
   it('attempt scoped result channel ignores stale source and binds exact callback receipt', async () => {
@@ -463,6 +490,25 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       'S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6',
       'S7', 'S8', 'S9', 'S10', 'S11', 'S12',
     ]);
+    expect(proof.stages).toMatchObject([
+      { id: 'S0', stepId: '4540991e-17ca-4f31-a318-8ab18f856b31', name: 'Task Born', promise: '每个任务有稳定身份、来源、仓库、环境、风险和锚点' },
+      { id: 'S1', stepId: 'a5ce672f-2202-4eae-a74d-2da323dc64ff', name: 'Intent / PrepPRD', promise: '用户意图、成功标准、真实旅程和依赖被冻结' },
+      { id: 'S2', stepId: 'c5bae104-da5e-483d-b5ea-c295c90a3f28', name: 'Planner', promise: '计划覆盖 FR/NFR/Invariant/真实 E2E，范围足够薄' },
+      { id: 'S3', stepId: 'd6dcdfaf-4b98-4717-bbe3-522f03f70757', name: 'Contract GAN', promise: '对抗审核后的合同可执行且批准后不可偷改' },
+      { id: 'S4', stepId: '0cdadc1a-e3a0-46a1-8333-ebbc102883f7', name: 'Generator', promise: '在受控工作树先 Red 后 Green，创建 Harness-owned PR' },
+      { id: 'S5', stepId: 'f12be1d5-ae65-4813-b2d8-cfde24ac5ac6', name: 'CI', promise: '客观检查全绿，只产证据，不持有 Harness merge 权' },
+      { id: 'S6', stepId: '1a738e05-99a7-421c-a52d-c2bb80bf19be', name: 'Evaluator', promise: '新 session 真跑合同、反作弊和真实 E2E' },
+      { id: 'S7', stepId: '9a8b4080-97f5-46a0-848e-6428ac881d1b', name: 'Independent Judge', promise: '独立复核 Evaluator 证据并给最终机器裁决' },
+      { id: 'S8', stepId: 'de269b2e-46aa-4d5a-afea-1bc4558b0fef', name: 'Risk-based Human Review', promise: '首次/高风险变更在 merge 前由主理人查看' },
+      { id: 'S9', stepId: 'd6f3c80a-5e48-4058-b7e5-f972f1a23ee1', name: 'Merge', promise: '只有唯一 Merge Authority 在全部门禁满足后合并' },
+      { id: 'S10', stepId: '004993cf-01ff-422d-b45a-14328361279b', name: 'Staging', promise: '部署并验证刚合并的精确 artifact' },
+      { id: 'S11', stepId: '0e7a817c-d8ef-4f9a-8561-4300fe6b547a', name: 'Production', promise: '按发布策略 promote、验活并留回滚锚点' },
+      { id: 'S12', stepId: '4d0ed49c-4949-4e8b-90f3-6840d58f39fe', name: 'Report / Learning / Complete', promise: '更新承诺地图、回归、学习和外部状态后才收账' },
+    ]);
+    for (const mutation of proof.stageIdentityCounterfactuals) {
+      expect(['rename', 'merge', 'split', 'shift', 'insert']).toContain(mutation.kind);
+      expect(mutation.parityAccepted).toBe(false);
+    }
     expect(proof.elementCount).toBe(11);
     expect(proof.cellCount).toBe(143);
     expect(proof.grayCount).toBe(0);
@@ -534,9 +580,12 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     ]);
     expect(proof.receipts.S0.type).toBe('task_born_receipt');
     expect(proof.receipts.S1.type).toBe('intent_receipt');
+    expect(proof.receipts.S2.type).toBe('planner_artifact_receipt');
     expect(proof.receipts.S2.plannerArtifactSha).toMatch(/^[0-9a-f]{40}$/);
-    expect(proof.receipts.S2.contractApprovalSignature).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(proof.receipts.S3.implementationCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(proof.receipts.S3.type).toBe('contract_approval_receipt');
+    expect(proof.receipts.S3.contractApprovalSignature).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(proof.receipts.S4.type).toBe('generator_draft_pr_receipt');
+    expect(proof.receipts.S4.implementationCommit).toMatch(/^[0-9a-f]{40}$/);
     expect(proof.receipts.S4.draft).toBe(true);
     expect(proof.receipts.S5.mergeMutationCount).toBe(0);
     expect(proof.receipts.S6.attemptId).not.toBe(proof.receipts.S7.attemptId);
@@ -558,7 +607,7 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
     }
   });
 
-  it('eight legacy behavior families prove normal violation recovery on three providers', async () => {
+  it('canonical legacy behavior families preserve exact inventory and proven fire evidence', async () => {
     const mod = await import(
       '../../../packages/brain/src/orchestrator/kernel-harness-lifecycle.js'
     );
@@ -567,25 +616,47 @@ describe('P0 durable Kernel Fleet recovery contract [BEHAVIOR]', () => {
       exactHead: process.env.PR_HEAD_SHA,
       providers: ['claude', 'codex', 'grok'],
       modes: ['normal', 'violation', 'recovery'],
-      families: [
-        'draft_pr_guard',
-        'ci_no_merge',
-        'independent_evaluator_judge',
-        'exact_head_human_review',
-        'controller_only_merge',
-        'post_merge_staging',
-        'production_canary_rollback',
-        'terminal_accounting',
+      familyIds: [
+        'KH-F1-F01', 'KH-F1-F02', 'KH-F1-F03', 'KH-F1-F04',
+        'KH-F1-F05', 'KH-F1-F06', 'KH-F1-F07', 'KH-F1-F08',
       ],
+      provenanceSha: '4dc3b69a',
     });
-    expect(proof.expectedReceiptCount).toBe(72);
-    expect(proof.authenticatedReceiptCount).toBe(72);
-    expect(proof.missingReceiptCount).toBe(0);
+    expect(proof.legacyBehaviorCount).toBe(129);
+    expect(proof.priorityCounts).toEqual({ P0: 66, P1: 63 });
+    expect(proof.familyCounts).toEqual({
+      'KH-F1-F01': 0,
+      'KH-F1-F02': 2,
+      'KH-F1-F03': 2,
+      'KH-F1-F04': 8,
+      'KH-F1-F05': 6,
+      'KH-F1-F06': 0,
+      'KH-F1-F07': 1,
+      'KH-F1-F08': 110,
+    });
+    expect(proof.zeroMappingTypedGaps).toEqual(['KH-F1-F01', 'KH-F1-F06']);
+    expect(proof.exactIdsByFamily['KH-F1-F02']).toEqual(['H1-017', 'H3-002']);
+    expect(proof.exactIdsByFamily['KH-F1-F03']).toEqual(['W1-005', 'C1-005']);
+    expect(proof.exactIdsByFamily['KH-F1-F04']).toEqual([
+      'C8-101', 'S1-007', 'S1-008', 'S1-009',
+      'S1-010', 'S2-001', 'S2-002', 'S2-003',
+    ]);
+    expect(proof.exactIdsByFamily['KH-F1-F05']).toEqual([
+      'H7-002', 'H7-006', 'H7-009', 'H7-029', 'W1-004', 'S3-001',
+    ]);
+    expect(proof.exactIdsByFamily['KH-F1-F07']).toEqual(['C4-001']);
+    expect(proof.f08BulkInferredPassCount).toBe(0);
     expect(proof.inferredPassCount).toBe(0);
     for (const receipt of proof.receipts) {
       expect(receipt.signatureVerified).toBe(true);
       expect(receipt.headSha).toBe(process.env.PR_HEAD_SHA);
       expect(receipt.positiveOrViolationOrRecoveryFired).toBe(true);
+      expect(receipt).toMatchObject({
+        runId: CURRENT_RUN_ID,
+        familyId: expect.stringMatching(/^KH-F1-F0[1-8]$/),
+        legacyBehaviorId: expect.any(String),
+        evidenceDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      });
     }
   });
 });

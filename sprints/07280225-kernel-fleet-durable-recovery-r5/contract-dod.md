@@ -5,7 +5,7 @@ target_environment: linux_server
 ---
 # Contract DoD — Durable Fleet Worker bootstrap 与 Kernel 恢复闭环
 
-**范围**: PRD Golden Path 第 1-12 步 + R15 result channel + R16/R17 F1 S0-S12×11 lifecycle SSOT；一个 Draft PR、一个 immutable exact head、一个 fail-safe release boundary。
+**范围**: PRD Golden Path 第 1-12 步 + R15 result channel + R16-R20 F1 S0-S12×11 lifecycle/current-run/canonical legacy SSOT；一个 Draft PR、一个 immutable exact head、一个 fail-safe release boundary。
 **大小**: L
 
 ## ARTIFACT 条目
@@ -58,9 +58,9 @@ target_environment: linux_server
   期望: exit 0；cleanup residue=0。
 
 - [ ] [BEHAVIOR] [L3] Golden Path Step 5 — production preflight and semantic anchor
-  动作: 请求真实 Brain/Worker/Xian 网络探测并用真 Postgres 验证 current task、journey、golden-path、step existence+ownership；回读 task `4a530430-00c5-46bc-8a4f-c0ec38025391` 已迁移的既有三元组，同时独立解析 run `4bbe35de-63c1-4cfe-9b55-fea8c01a0647`。
-  预期观察: task 回读 anchor 精确为 journey `2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6`、GP `4e5fd7eb-3823-4c57-a817-081b7fdd2eed`、step `817f59f5-02ff-4a70-bd81-f7ae65f77e02` 且 GP/step ownership 同属 journey；task_id 与 run_id 不同；语法合法但零行 UUID、虚构锚、错误 ownership、task/run 混用、remote-disabled、不可达 URL fail closed；Xian 差距显示 `blocked_external` 而非降 profile。
-  验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-production-preflight.sh "${PROD_BRAIN_URL:?}" "4a530430-00c5-46bc-8a4f-c0ec38025391" "4bbe35de-63c1-4cfe-9b55-fea8c01a0647" "2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6" "4e5fd7eb-3823-4c57-a817-081b7fdd2eed" "817f59f5-02ff-4a70-bd81-f7ae65f77e02"
+  动作: 从不可变 TaskBundle 动态读取 TASK_ID/RUN_ID/ATTEMPT_ID/CONTRACT_SHA/head 与真实 anchor，用真 Postgres 验 current task、journey、golden-path、step existence+ownership；再注入 terminal historical run、task-as-run、receipt mismatch、stale round/head、cross-run artifact/result。
+  预期观察: current run 精确为 `fda8bfd7-fbbc-4260-a657-ea7f3b51bd16`；task 回读 anchor 精确为 journey `2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6`、GP `4e5fd7eb-3823-4c57-a817-081b7fdd2eed`、step `817f59f5-02ff-4a70-bd81-f7ae65f77e02` 且 ownership 一致；historical failed `4bbe35de-63c1-4cfe-9b55-fea8c01a0647` 等反事实 fail closed、budget delta=0；Xian 差距显示 `blocked_external`。
+  验证命令: Test: manual:bash bash -c 'bash scripts/kernel-fleet/verify-production-preflight.sh "${PROD_BRAIN_URL:?}" "${TASK_ID:?}" "${RUN_ID:?}" "${REAL_JOURNEY_ID:?}" "${REAL_GP_ID:?}" "${REAL_STEP_ID:?}" && bash scripts/kernel-fleet/verify-run-binding-counterfactuals.sh "$TASK_ID" "$RUN_ID" "${ATTEMPT_ID:?}" "${CONTRACT_SHA:?}" "${PR_HEAD_SHA:?}" "4bbe35de-63c1-4cfe-9b55-fea8c01a0647"'
   期望: exit 0；blocked evidence 含真实探测时间与 profile requirement。
 
 - [ ] [BEHAVIOR] [L3] Golden Path Step 6 — phase-aware budgets and idempotent cancellation
@@ -118,16 +118,16 @@ target_environment: linux_server
   期望: exit 0；rollback 恢复 prior rows/constraints/provenance，evidence lost=0。
 
 - [ ] [BEHAVIOR] [L2] Golden Path Step 12A — authenticated S0-S12 receipts and hard terminal gate
-  动作: 由真实 Controller/PG/GitHub seam 从 S0 task-born、S1 intent、S2 Planner/GAN、S3 Generator、S4 Draft、S5 CI、独立 S6 Evaluator、独立 S7 Judge、S8 owner、S9 merge、S10 staging、S11 production/rollback 推进到 S12 accounting；分别删除 production、rollback、report、external-status receipt 后重跑，再恢复。
+  动作: 由真实 Controller/PG/GitHub seam 从 S0 task-born、S1 intent、S2 Planner、S3 Contract GAN、S4 Generator（输出 Draft PR receipt）、S5 CI、独立 S6 Evaluator、独立 S7 Judge、S8 owner、S9 merge、S10 staging、S11 production/rollback 推进到 S12 accounting；对 stable ID/name/order/promise 做 rename/merge/split/shift/insert mutation，并分别删除 production、rollback、report、external-status receipt 后重跑。
   预期观察: 每 stage 只消费上段 exact-head authenticated receipt；S6/S7 attempt_id 不同且 mutation=0；任一 S12 前置缺失时 task/run 非 complete。恢复后 task/run、Promise Map、regression result、report、learning/handoff、external status 在一事务恰一次提交。
   验证命令: Test: manual:bash bash -c 'DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh "$TASK_ID" "$RUN_ID" "$PR_HEAD_SHA"'
   期望: exit 0；重复调用返回 already_complete 且无重复 ledger/report/external write。
 
-- [ ] [BEHAVIOR] [L3] Golden Path Step 12A — eight legacy families across Claude Codex Grok
-  动作: 对 `draft_pr_guard|ci_no_merge|independent_evaluator_judge|exact_head_human_review|controller_only_merge|post_merge_staging|production_canary_rollback|terminal_accounting` 八个 family，在 Claude/Codex/Grok 分别运行 normal、violation、recovery。
-  预期观察: 72 个 authenticated、exact-head、proven-to-fire receipt；任一 family/provider/mode 缺失时对应 cell 保持 typed_pending，禁止 unified-equivalent/pass。
+- [ ] [BEHAVIOR] [L3] Golden Path Step 12A — canonical KH-F1-F01..F08 legacy inventory
+  动作: 从 4dc3b69a provenance 读取 129 个 exact legacy IDs，以 `KernelPolicyGate(family_id,legacy_behavior_id,provider,phase,subject)` 在真实 bash-guard/main-repo-write/local-precheck、DevGate、stop/watchdog、independent Judge、GitHub rule、staging/promote/rollback seams 运行可用的 Claude/Codex/Grok normal/violation/recovery；保留 evidence_mode/assertion_ref。
+  预期观察: P0=66、P1=63，family counts=`F01=0,F02=2,F03=2,F04=8,F05=6,F06=0,F07=1,F08=110`；F01/F06 是 typed gap，F08 逐 ID 重分类；source anchor/active declaration/合成 72 receipt 都不能产 pass，缺真触发保持 typed_pending。
   验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh "$PR_HEAD_SHA" claude codex grok
-  期望: exit 0；receipt_count=72、missing=0、inferred_pass=0。
+  期望: exit 0；legacy_total=129、P0=66、P1=63、family inventory digest 匹配、bulk_inferred_pass=0。
 
 ## Invariant 覆盖映射
 
@@ -146,7 +146,7 @@ target_environment: linux_server
 - [ ] [BEHAVIOR] [L3] INV-3 Golden Path Step 5 — 环境路由、Payload 环境、环境假设、真环境、服务存活、Mac 常驻、Daemon 清单、人工接管
   动作: 在 linux_server→真实 US Mac 路由运行 admission/launchd/port/manifest/ACL 探测。
   预期观察: target_environment 与 payload 一致；launchctl+port 同时存活；LaunchDaemon/manifest 登记；headless 失败可进入受审计人工接管但不绕 gate。
-  验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-production-preflight.sh "${PROD_BRAIN_URL:?}" "4a530430-00c5-46bc-8a4f-c0ec38025391" "4bbe35de-63c1-4cfe-9b55-fea8c01a0647" "2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6" "4e5fd7eb-3823-4c57-a817-081b7fdd2eed" "817f59f5-02ff-4a70-bd81-f7ae65f77e02"
+  验证命令: Test: manual:bash bash scripts/kernel-fleet/verify-production-preflight.sh "${PROD_BRAIN_URL:?}" "${TASK_ID:?}" "${RUN_ID:?}" "${REAL_JOURNEY_ID:?}" "${REAL_GP_ID:?}" "${REAL_STEP_ID:?}"
   期望: exit 0。
 
 - [ ] [BEHAVIOR] [L2] INV-4 Golden Path Step 2 — Oracle 实跑、Shell 展开、测试质量、合同表格、Red 提交、毕业门禁、Brain Smoke、共享 CI

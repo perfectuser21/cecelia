@@ -91,7 +91,20 @@
 
 ## 运行时 ID 注入合同
 
-Controller 必须把 `TASK_ID`、`RUN_ID`、`REAL_JOURNEY_ID`、`REAL_GP_ID`、`REAL_STEP_ID` 分别注入 CI/Evaluator/Judge 与合并后 controller job；脚本以 `${VAR:?}` fail closed，不使用内置默认值。`TASK_ID=4a530430-00c5-46bc-8a4f-c0ec38025391` 与 `RUN_ID=4bbe35de-63c1-4cfe-9b55-fea8c01a0647` 必须不同。语义锚点固定为生产既有且 ownership 一致的 journey `2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6`、golden path `4e5fd7eb-3823-4c57-a817-081b7fdd2eed`、step `817f59f5-02ff-4a70-bd81-f7ae65f77e02`；不得创建占位行。
+Controller 必须从本次不可变 TaskBundle 把 `TASK_ID`、`RUN_ID`、`ATTEMPT_ID`、`CONTRACT_SHA`、`PR_HEAD_SHA`、`REAL_JOURNEY_ID`、`REAL_GP_ID`、`REAL_STEP_ID` 分别注入 CI/Evaluator/Judge 与合并后 controller job；脚本以 `${VAR:?}` fail closed，不使用历史 UUID 或源码默认值。本次 `TASK_ID=4a530430-00c5-46bc-8a4f-c0ec38025391`、`RUN_ID=fda8bfd7-fbbc-4260-a657-ea7f3b51bd16`，两者必须不同；已终态失败的 run `4bbe35de-63c1-4cfe-9b55-fea8c01a0647` 仅是不可变 Red evidence，永远不能授权当前 Generator、review、merge 或 release。语义锚点固定为生产既有且 ownership 一致的 journey `2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6`、golden path `4e5fd7eb-3823-4c57-a817-081b7fdd2eed`、step `817f59f5-02ff-4a70-bd81-f7ae65f77e02`；不得创建占位行。terminal historical run、task-as-run、TaskBundle/receipt run mismatch、stale contract round/head、cross-run artifact/result 全部 fail closed，且不消耗当前 semantic/GAN budget。
+
+## F1 生命周期 SSOT 与 legacy 行为库存
+
+本 sprint 只把 Draft+CONFLICTING PR #4372 的 `origin/cp-07271751-51836fb2@4dc3b69a` 当作带 provenance 的迁移输入，不把它当 operational truth，也不允许它独立 merge。唯一 F1 Journey 是 `bb8cc561-b3ee-4fec-b74d-2255694bd963`。S0-S12 的 stage ID、名称、顺序、promise 与稳定 step ID 必须逐字继承该 intended baseline；尤其：
+
+- S2 `Planner` = `c5bae104-da5e-483d-b5ea-c295c90a3f28`
+- S3 `Contract GAN` = `d6dcdfaf-4b98-4717-bbe3-522f03f70757`
+- S4 `Generator` = `0cdadc1a-e3a0-46a1-8333-ebbc102883f7`，Draft PR 是其输出 receipt，不是新 stage
+- S6 `Evaluator` = `1a738e05-99a7-421c-a52d-c2bb80bf19be`
+
+任一 rename、merge、split、shift 或新增 stage 都必须使 manifest/migration/regression/runtime parity fail。产品 F2 step 仍只作 `product_anchor`，另行绑定 `lifecycle_ssot_ref=kernel_harness_f1_baseline/S0-S12`，不得冒充整个 F1 生命周期。
+
+legacy 库存固定为 `KH-F1-F01..F08`，baseline 总计 129 个行为（P0=66、P1=63），family 分布严格为 `F01=0,F02=2,F03=2,F04=8,F05=6,F06=0,F07=1,F08=110`。F01/F06 的零映射与 F08 的 110 偏斜必须保留为 typed audit gap，禁止用合成 8×3×3 receipt 数宣称等价。每个 legacy behavior 保留 `evidence_mode` 与 `assertion_ref`；源码 anchor 或 `audit_status=active` 不是 proven-to-fire evidence。统一 `KernelPolicyGate` receipt 必须按 canonical `family_id+legacy_behavior_id+provider+phase+subject` 建键，并包含 run/attempt/hop/head/provider/machine/lease/scenario/decision/reason/probe/exit/evidence/freshness/recovery binding。
 
 ## NFR 约束
 
