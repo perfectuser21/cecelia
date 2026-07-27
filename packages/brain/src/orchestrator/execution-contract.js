@@ -23,6 +23,14 @@ const EXECUTOR_STATUSES = [
   'cancelled',
 ];
 
+const PROVIDER_UNAVAILABLE_CODES = new Set([
+  'http_500',
+  'http_502',
+  'http_503',
+  'http_504',
+  'provider_unavailable',
+]);
+
 const PROVIDER_NATIVE_INSTRUCTION = /(?:\bTask\s+tool\b|Skill\s*\(|\bspawn_agent\b)/i;
 
 const skillSchema = z.object({
@@ -99,39 +107,60 @@ export function parseTaskBundle(value) {
 
 export function parseHarnessResult(value, role, expectedOutput = null) {
   const parsed = harnessResultSchema.parse(value);
+  const failureClass = (() => {
+    if (['blocked', 'needs_context'].includes(parsed.status)) {
+      return 'semantic_refusal';
+    }
+    if (!['failed', 'cancelled'].includes(parsed.status)) return null;
+    const errorCode = parsed.error && typeof parsed.error === 'object'
+      ? String(parsed.error.code ?? '').trim().toLowerCase()
+      : '';
+    return PROVIDER_UNAVAILABLE_CODES.has(errorCode)
+      ? 'infrastructure_blocked'
+      : 'runner_failure';
+  })();
+  const classified = failureClass == null
+    ? parsed
+    : { ...parsed, failure_class: failureClass };
   if (expectedOutput === 'harness-result/canary-v1') {
     // Every executor terminal state must reach persistence. Only the exact
     // successful state is subject to the stricter canary proof envelope.
-    if (parsed.status !== 'completed') return parsed;
-    if (parsed.decision?.outcome !== 'CANARY_OK') {
+    if (classified.status !== 'completed') return classified;
+    if (classified.decision?.outcome !== 'CANARY_OK') {
       throw new Error('canary result requires status completed and decision outcome CANARY_OK');
     }
-    if (parsed.artifacts.length !== 0 || parsed.checks.length !== 0 || parsed.error !== null) {
+    if (
+      classified.artifacts.length !== 0
+      || classified.checks.length !== 0
+      || classified.error !== null
+    ) {
       throw new Error('canary result requires empty artifacts, empty checks, and null error');
     }
-    return parsed;
+    return classified;
   }
-  const decisionRequired = ['completed', 'completed_with_concerns'].includes(parsed.status);
+  const decisionRequired = ['completed', 'completed_with_concerns'].includes(classified.status);
   const adversarialRole = ['reviewer', 'evaluator', 'judge'].includes(role);
-  if (decisionRequired && adversarialRole && !parsed.decision) {
+  if (decisionRequired && adversarialRole && !classified.decision) {
     throw new Error(`decision is required for adversarial role ${role}`);
   }
-  if (decisionRequired && adversarialRole && parsed.decision) {
-    const outcome = parsed.decision.outcome ?? parsed.decision.verdict;
+  if (decisionRequired && adversarialRole && classified.decision) {
+    const outcome = classified.decision.outcome ?? classified.decision.verdict;
     if (typeof outcome !== 'string' || !outcome.trim()) {
       throw new Error(`decision outcome is required for adversarial role ${role}`);
     }
-    const reason = parsed.decision.reason ?? parsed.decision.feedback ?? parsed.summary;
+    const reason = classified.decision.reason
+      ?? classified.decision.feedback
+      ?? classified.summary;
     return {
-      ...parsed,
+      ...classified,
       decision: {
-        ...parsed.decision,
+        ...classified.decision,
         outcome: outcome.trim(),
         reason: String(reason ?? '').trim(),
       },
     };
   }
-  return parsed;
+  return classified;
 }
 
 export function toKernelStatus(status) {

@@ -99,7 +99,7 @@ function approvalForRequest(rows, request) {
  */
 export function replayProductConvergence(
   logRows,
-  { currentFailureSet, currentHeadSha },
+  { currentFailureSet, currentHeadSha, historicalFailureSets = [] },
 ) {
   if (!Array.isArray(logRows)) {
     throw new Error('replayProductConvergence: logRows must be an array');
@@ -194,6 +194,12 @@ export function replayProductConvergence(
 
   const currentSet = normalizeFailureSet(currentFailureSet);
   const currentKey = failureSetKey(currentSet);
+  const historicalKeys = new Set(
+    (Array.isArray(historicalFailureSets) ? historicalFailureSets : [])
+      .map((failureSet) => failureSetKey(failureSet))
+      .filter(Boolean),
+  );
+  const repeatedAcrossRuns = currentKey != null && historicalKeys.has(currentKey);
   const structuredCompleted = completed.filter(
     (round) => round.failureSetKey != null,
   );
@@ -214,6 +220,7 @@ export function replayProductConvergence(
   const reviewReasons = new Set([
     'failure_set_repeated',
     'failure_set_patience_exhausted',
+    'failure_set_repeated_across_runs',
   ]);
   const requests = rows.filter((row) => {
     if (row.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
@@ -225,12 +232,32 @@ export function replayProductConvergence(
   const approval = request == null
     ? null
     : approvalForRequest(rows, request);
+  const crossRunRequest = [...requests].reverse().find((candidate) => {
+    const detail = asJson(candidate.detail) ?? {};
+    return failureSetKey(detail.failure_set) === currentKey;
+  }) ?? null;
+  const crossRunApproval = crossRunRequest == null
+    ? null
+    : approvalForRequest(rows, crossRunRequest);
 
   if (immediateFailureReason != null) {
     return { outcome: 'failed', reason: immediateFailureReason };
   }
+  if (repeatedAcrossRuns && !crossRunApproval) {
+    return {
+      outcome: 'review',
+      reason: 'failure_set_repeated_across_runs',
+      failureSet: currentSet,
+      failureSetKey: currentKey,
+    };
+  }
   if (modernIntents.length === 0) {
-    return { outcome: 'continue', reason: 'first_product_fix' };
+    return {
+      outcome: 'continue',
+      reason: repeatedAcrossRuns
+        ? 'failure_set_approved_single_retry'
+        : 'first_product_fix',
+    };
   }
   if (pendingReason != null) {
     return { outcome: 'pending', reason: pendingReason };
@@ -262,6 +289,13 @@ export function replayProductConvergence(
       return { outcome: 'continue', reason: 'verified_new_sha' };
     }
     return { outcome: 'failed', reason: 'callback_sha_unverified' };
+  }
+
+  if (repeatedAcrossRuns && crossRunApproval) {
+    return {
+      outcome: 'failed',
+      reason: 'failure_set_no_progress_after_approval',
+    };
   }
 
   if (approval) {

@@ -576,6 +576,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       code: 'provider_exit',
       message: 'exit 1',
       status: 'failed',
+      failureClass: 'runner_failure',
     }, { leaseOwner });
     expect(mocks.store.complete).not.toHaveBeenCalled();
   });

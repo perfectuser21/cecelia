@@ -109,7 +109,7 @@ try {
     nowMs: Date.now(),
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
-  if (result.base_admitted !== true || result.dispatch_ready !== false) {
+  if (result.base_admitted !== true || result.dispatch_ready !== true) {
     process.exitCode = 1;
   }
 } catch {

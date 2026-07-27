@@ -178,6 +178,37 @@ function successfulWorkerFetch(machineId = 'us-mac-m4') {
 }
 
 describe('kernel fleet watchdog recovery', () => {
+  it('resumes on the receipt-proven actual machine instead of the requested fallback origin', async () => {
+    const originalParentAttempt = {
+      ...parentAttempt(),
+      requested_machine_id: 'xian-mac-m4',
+      actual_machine_id: 'xian-mac-m1',
+    };
+    const fetchFn = successfulWorkerFetch('xian-mac-m1');
+
+    await expect(resumeKernelAttempt({
+      ...childAttempt(),
+      machine_id: 'xian-mac-m1',
+      requested_machine_id: 'xian-mac-m1',
+    }, resumeOptions({
+      originalParentAttempt,
+      reclaimedParentAttempt: {
+        ...originalParentAttempt,
+        lease_owner: 'watchdog:test',
+        lease_generation: 4,
+      },
+      fetchFn,
+    }))).resolves.toMatchObject({ ok: true, resumed: true });
+
+    expect(JSON.parse(fetchFn.mock.calls[2][1].body)).toMatchObject({
+      target: {
+        provider: 'codex',
+        account: 'team3',
+        machine: 'xian-mac-m1',
+      },
+    });
+  });
+
   it('resumes a xian parent through inspect/cancel/launch and persists the child receipt', async () => {
     const child = childAttempt();
     const store = resumeStore();
@@ -927,7 +958,26 @@ describe('kernel fleet watchdog recovery', () => {
   });
 
   it('passes immutable original and reclaimed parent claims and exact-fails both generations', async () => {
-    const original = parentAttempt();
+    const original = {
+      ...parentAttempt(),
+      actual_machine_id: 'xian-mac-m1',
+      task_bundle: {
+        ...bundle(),
+        attempt_id: PARENT_ID,
+        hop: 7,
+        constraints: {
+          ...bundle().constraints,
+          fresh_session: true,
+        },
+        inputs: {
+          ...bundle().inputs,
+          workspace_spec: {
+            ...bundle().inputs.workspace_spec,
+            attempt_id: PARENT_ID,
+          },
+        },
+      },
+    };
     const reclaimed = {
       ...original,
       lease_owner: 'watchdog:test',
@@ -962,6 +1012,18 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(store.markStarting).toHaveBeenCalledTimes(1);
+    expect(store.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      id: CHILD_ID,
+      machineId: 'xian-mac-m1',
+      bundle: expect.objectContaining({
+        attempt_id: CHILD_ID,
+        hop: 8,
+        constraints: expect.objectContaining({ fresh_session: false }),
+        inputs: expect.objectContaining({
+          workspace_spec: expect.objectContaining({ attempt_id: CHILD_ID }),
+        }),
+      }),
+    }));
     expect(resumeAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         id: CHILD_ID,

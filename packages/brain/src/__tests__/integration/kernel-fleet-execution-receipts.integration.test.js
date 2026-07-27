@@ -23,6 +23,10 @@ const migration364 = readFileSync(
   new URL('../../../migrations/364_kernel_local_container_naming.sql', import.meta.url),
   'utf8',
 );
+const migration366 = readFileSync(
+  new URL('../../../migrations/366_kernel_harness_failure_class.sql', import.meta.url),
+  'utf8',
+);
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const databaseName = testDatabaseUrl
@@ -117,6 +121,8 @@ beforeAll(async () => {
   await client.query(migration363);
   await client.query(migration364);
   await client.query(migration364);
+  await client.query(migration366);
+  await client.query(migration366);
   await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [oldBinaryRunId]);
   await client.query(
     `INSERT INTO harness_attempts (
@@ -136,7 +142,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
+describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => {
   it('reruns safely, backfills legacy targets, and preserves explicit targets', async () => {
     const rows = await client.query(
       `SELECT id, requested_machine_id
@@ -154,6 +160,9 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
     )).rows[0].count).toBe(1);
     expect((await client.query(
       `SELECT COUNT(*)::int AS count FROM schema_version WHERE version = '364'`,
+    )).rows[0].count).toBe(1);
+    expect((await client.query(
+      `SELECT COUNT(*)::int AS count FROM schema_version WHERE version = '366'`,
     )).rows[0].count).toBe(1);
   });
 
@@ -195,6 +204,43 @@ describe('migration 363 and fleet execution receipts on PostgreSQL', () => {
     await expectCheckViolation(
       'UPDATE harness_attempts SET machine_attestation_status = $2 WHERE id = $1',
       [legacyBackfillId, 'unknown'],
+    );
+  });
+
+  it('persists bounded canonical failure classes for semantic and runner terminal states', async () => {
+    const runId = randomUUID();
+    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    const semanticAttempt = attemptInput({ runId, hop: 31, machineId: 'us-mac-m4' });
+    const runnerAttempt = attemptInput({ runId, hop: 32, machineId: 'us-mac-m4' });
+    await store.createAttempt(semanticAttempt);
+    await store.createAttempt(runnerAttempt);
+
+    await store.complete(semanticAttempt.id, {
+      status: 'blocked',
+      summary: 'structured context required',
+      failure_class: 'semantic_refusal',
+    });
+    await store.fail(runnerAttempt.id, {
+      status: 'failed',
+      code: 'runner_exit',
+      message: 'bounded diagnostic',
+      failureClass: 'runner_failure',
+    });
+
+    const rows = await client.query(
+      `SELECT id, failure_class
+         FROM harness_attempts
+        WHERE id = ANY($1::uuid[])
+        ORDER BY id`,
+      [[semanticAttempt.id, runnerAttempt.id]],
+    );
+    expect(Object.fromEntries(rows.rows.map((row) => [row.id, row.failure_class]))).toEqual({
+      [semanticAttempt.id]: 'semantic_refusal',
+      [runnerAttempt.id]: 'runner_failure',
+    });
+    await expectCheckViolation(
+      'UPDATE harness_attempts SET failure_class = $2 WHERE id = $1',
+      [semanticAttempt.id, 'natural_language_guess'],
     );
   });
 

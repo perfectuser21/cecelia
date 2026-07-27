@@ -445,7 +445,11 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
       const error = resultError(result);
       outcome = await attemptStore.fail(
         attemptId,
-        { ...error, status: result.status },
+        {
+          ...error,
+          status: result.status,
+          failureClass: result.failure_class,
+        },
         { leaseOwner },
       );
       if (!outcome.attempt) {

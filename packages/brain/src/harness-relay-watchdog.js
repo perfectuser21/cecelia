@@ -82,6 +82,36 @@ export const MAX_CODEX_RELAY_ATTEMPTS = 2;
 export const GENERATOR_DONE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const KERNEL_RECONCILE_STALE_MS = 3 * 60 * 1000;
 
+function sameMachineResumeBundle(rawBundle, { attemptId, hop }) {
+  const bundle = tryParseJson(rawBundle);
+  if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
+    throw new Error('resume_task_bundle_invalid');
+  }
+  const inputs = tryParseJson(bundle.inputs) ?? {};
+  const constraints = tryParseJson(bundle.constraints) ?? {};
+  const workspaceSpec = tryParseJson(inputs.workspace_spec);
+  return {
+    ...bundle,
+    attempt_id: attemptId,
+    hop,
+    inputs: {
+      ...inputs,
+      ...(workspaceSpec
+        ? {
+            workspace_spec: {
+              ...workspaceSpec,
+              attempt_id: attemptId,
+            },
+          }
+        : {}),
+    },
+    constraints: {
+      ...constraints,
+      fresh_session: false,
+    },
+  };
+}
+
 async function reserveResumeIntent(db, attempt) {
   const next = await db.query(
     `SELECT GREATEST(
@@ -164,6 +194,13 @@ export async function reconcileExpiredKernelAttempt({
   const childHop = reservedChildHop ?? (Number(originalParentAttempt.hop) + 1);
   const callbackSecret = generateCallbackSecret();
   const childId = randomUUIDFn();
+  const resumeMachineId = originalParentAttempt.actual_machine_id
+    ?? originalParentAttempt.machine_id
+    ?? originalParentAttempt.requested_machine_id;
+  const resumeBundle = sameMachineResumeBundle(
+    originalParentAttempt.task_bundle,
+    { attemptId: childId, hop: childHop },
+  );
   const child = await store.createAttempt({
     id: childId,
     runId: originalParentAttempt.run_id,
@@ -172,8 +209,8 @@ export async function reconcileExpiredKernelAttempt({
     role: originalParentAttempt.role,
     provider: originalParentAttempt.provider,
     accountId: originalParentAttempt.account_id,
-    machineId: originalParentAttempt.requested_machine_id ?? originalParentAttempt.machine_id,
-    bundle: originalParentAttempt.task_bundle,
+    machineId: resumeMachineId,
+    bundle: resumeBundle,
     callbackSecretHash: hashCallbackSecret(callbackSecret),
     logicalCycleId: originalParentAttempt.logical_cycle_id
       ?? `intent:${originalParentAttempt.run_id}:${originalParentAttempt.hop}`,
@@ -467,7 +504,9 @@ export async function resumeKernelAttempt(attempt, {
   const target = {
     provider: originalParentAttempt.provider,
     account: originalParentAttempt.account_id ?? null,
-    machine: originalParentAttempt.requested_machine_id ?? originalParentAttempt.machine_id,
+    machine: originalParentAttempt.actual_machine_id
+      ?? originalParentAttempt.machine_id
+      ?? originalParentAttempt.requested_machine_id,
   };
 
   let parentCleanup;
