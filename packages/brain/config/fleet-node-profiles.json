@@ -1,0 +1,94 @@
+{
+  "profiles": [
+    {
+      "machine_id": "us-mac-m4",
+      "capacity": 7,
+      "worker_bind_host": "127.0.0.1",
+      "brain_health_url": "http://127.0.0.1:5221/api/brain/health",
+      "runner_image_digest": "sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36",
+      "resources": {
+        "cpu_cores": 6,
+        "memory_gib": 8,
+        "disk_min_free_gib": 40,
+        "disk_max_used_percent": 85,
+        "cpu_pressure_max_percent": 90,
+        "memory_pressure_max_percent": 90
+      },
+      "launchd": {
+        "domain": "system",
+        "kind": "LaunchDaemon"
+      },
+      "version_policy": {
+        "os": "15.7.4",
+        "orbstack": "2.2.1",
+        "worker_protocol": "kernel-harness/v1",
+        "worker_contract": "fleet-node-health/v1",
+        "worker": "1.267.90",
+        "runner": "cecelia-runner/v1",
+        "git": "2.39.5",
+        "node": "25.8.0",
+        "codex": "0.145.0"
+      }
+    },
+    {
+      "machine_id": "xian-mac-m4",
+      "capacity": 8,
+      "worker_bind_host": "100.86.57.69",
+      "brain_health_url": "http://100.71.151.105:5221/api/brain/health",
+      "runner_image_digest": "sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36",
+      "resources": {
+        "cpu_cores": 6,
+        "memory_gib": 8,
+        "disk_min_free_gib": 40,
+        "disk_max_used_percent": 85,
+        "cpu_pressure_max_percent": 90,
+        "memory_pressure_max_percent": 90
+      },
+      "launchd": {
+        "domain": "system",
+        "kind": "LaunchDaemon"
+      },
+      "version_policy": {
+        "os": "15.7.4",
+        "orbstack": "2.2.1",
+        "worker_protocol": "kernel-harness/v1",
+        "worker_contract": "fleet-node-health/v1",
+        "worker": "1.267.90",
+        "runner": "cecelia-runner/v1",
+        "git": "2.39.5",
+        "node": "25.8.0",
+        "codex": "0.145.0"
+      }
+    },
+    {
+      "machine_id": "xian-mac-m1",
+      "capacity": 8,
+      "worker_bind_host": "100.88.166.55",
+      "brain_health_url": "http://100.71.151.105:5221/api/brain/health",
+      "runner_image_digest": "sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36",
+      "resources": {
+        "cpu_cores": 6,
+        "memory_gib": 8,
+        "disk_min_free_gib": 40,
+        "disk_max_used_percent": 85,
+        "cpu_pressure_max_percent": 90,
+        "memory_pressure_max_percent": 90
+      },
+      "launchd": {
+        "domain": "system",
+        "kind": "LaunchDaemon"
+      },
+      "version_policy": {
+        "os": "15.7.4",
+        "orbstack": "2.2.1",
+        "worker_protocol": "kernel-harness/v1",
+        "worker_contract": "fleet-node-health/v1",
+        "worker": "1.267.90",
+        "runner": "cecelia-runner/v1",
+        "git": "2.39.5",
+        "node": "25.8.0",
+        "codex": "0.145.0"
+      }
+    }
+  ]
+}

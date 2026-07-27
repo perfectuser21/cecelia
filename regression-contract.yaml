@@ -9,7 +9,7 @@
 # ============================================================================
 
 version: "1.0.0"
-updated: "2026-07-22"
+updated: "2026-07-27"
 
 # ============================================================================
 # 核心功能回归契约
@@ -50,6 +50,22 @@ golden_paths:
     trigger: [PR, Release]
     method: auto
     test_command: "bash scripts/__tests__/brain-keepalive-path.test.sh"
+    must_never_break: true
+
+  - id: KERNEL-FLEET-NODE-ADMISSION-01
+    name: "Fleet Node mandatory base-admission contract remains fail-closed"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "bash packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh"
+    must_never_break: true
+
+  - id: KERNEL-FLEET-NODE-SELF-DEPLOY-01
+    name: "Fleet Node self-deploy remains pinned, credential-free, and fail-closed"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'"
     must_never_break: true
 
   # ── 五条 P0 铁律（主理人圈定，HANDOFF-cicd-closeloop.md PR-1）──────────────

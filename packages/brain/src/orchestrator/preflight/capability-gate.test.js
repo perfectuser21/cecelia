@@ -304,4 +304,42 @@ describe('capability gate deterministic target recovery', () => {
     expect(deps.resolveCanonicalMachineId).not.toHaveBeenCalled();
     expect(deps.probeProviderAuth).not.toHaveBeenCalled();
   });
+
+  it('preserves final dispatch-readiness failure in the result and alert evidence', async () => {
+    const deps = healthyGateDeps();
+    deps.getMachineHealth.mockResolvedValue({
+      ok: false,
+      signature: 'node_not_dispatch_ready',
+    });
+    deps.emitAlert = vi.fn();
+    deps.recordDecision = vi.fn();
+    const gate = createCapabilityGate(deps);
+
+    const result = await gate.evaluate({
+      preferred_target: preferredTarget,
+      candidate_targets: [preferredTarget],
+      failed_targets: [],
+      requirements: { provider_auth: true },
+      task_bundle: { logical_cycle: 'intent:dispatch-not-ready:1' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'blocked',
+      fallback_reason: 'node_not_dispatch_ready',
+      evidence: {
+        fallback_reason: 'node_not_dispatch_ready',
+      },
+    });
+    expect(deps.emitAlert).toHaveBeenCalledWith(expect.objectContaining({
+      evidence: expect.objectContaining({
+        fallback_reason: 'node_not_dispatch_ready',
+      }),
+    }));
+    expect(deps.recordDecision).toHaveBeenCalledWith(expect.objectContaining({
+      evidence: expect.objectContaining({
+        fallback_reason: 'node_not_dispatch_ready',
+      }),
+    }));
+    expect(deps.probeProviderAuth).not.toHaveBeenCalled();
+  });
 });

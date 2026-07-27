@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.perfect21.fleet-worker-docker-access</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@@ACCESS_HELPER@@</string>
+  </array>
+  <key>UserName</key>
+  <string>root</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>WatchPaths</key>
+  <array>
+    <string>@@DOCKER_SOCKET_TARGET@@</string>
+  </array>
+  <key>StandardOutPath</key>
+  <string>@@ACCESS_STDOUT_LOG@@</string>
+  <key>StandardErrorPath</key>
+  <string>@@ACCESS_STDERR_LOG@@</string>
+</dict>
+</plist>

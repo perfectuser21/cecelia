@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildCapabilityEvidence } from './capability-gate.js';
+import { buildCapabilityEvidence, createCapabilityGate } from './capability-gate.js';
 
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -18,6 +18,15 @@ async function loadFactory() {
 describe('production capability probes', () => {
   it('reads Brain-owned fleet and account state and verifies required capabilities', async () => {
     const createProductionCapabilityProbes = await loadFactory();
+    const nodeAdmissionClient = {
+      getAdmission: vi.fn(async (machine) => ({
+        machine_id: machine,
+        state: 'base_admitted',
+        base_admitted: true,
+        dispatch_ready: true,
+        reasons: [],
+      })),
+    };
     const fetchFn = vi.fn(async (url) => {
       if (String(url).endsWith('/api/brain/capacity-budget')) {
         return response({
@@ -61,6 +70,7 @@ describe('production capability probes', () => {
       resolveGitHubTokenFn: vi.fn(async () => 'secret-token'),
       env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
       requestTimeoutMs: 100,
+      nodeAdmissionClient,
     });
 
     await expect(probes.resolveCanonicalMachineId()).resolves.toBe('us-mac-m4');
@@ -68,9 +78,19 @@ describe('production capability probes', () => {
       ok: true,
       machine: 'us-mac-m4',
     });
-    await expect(probes.getMachineCapacity({ machine: 'us-mac-m4' })).resolves.toMatchObject({
+    await expect(probes.getMachineCapacity({
+      machine: 'us-mac-m4',
+      task_bundle: { role: 'planner' },
+    })).resolves.toMatchObject({
       ok: true,
       available: 5,
+      physical_capacity: 7,
+    });
+    expect(nodeAdmissionClient.getAdmission).toHaveBeenNthCalledWith(1, 'us-mac-m4', {
+      forceFresh: true,
+    });
+    expect(nodeAdmissionClient.getAdmission).toHaveBeenNthCalledWith(2, 'us-mac-m4', {
+      forceFresh: true,
     });
     await expect(probes.listProviderAccounts({ provider: 'codex' })).resolves.toEqual([
       'team4',
@@ -102,6 +122,131 @@ describe('production capability probes', () => {
     })).resolves.toEqual({
       ok: true,
       capability: 'structured_output',
+    });
+  });
+
+  it.each([
+    ['planner', 8, 8],
+    ['proposer', 4, 4],
+    ['generator', 2, 2],
+    ['reporter', 8, 8],
+  ])('converts eight canonical base slots into %s role units', async (
+    role,
+    available,
+    physicalCapacity,
+  ) => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const probes = createProductionCapabilityProbes({
+      pool: { query: vi.fn() },
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(async () => response({
+        fleet: [{
+          id: 'xian-mac-m4',
+          online: true,
+          effective_slots: 12,
+          physical_capacity: 12,
+          pressure: 0,
+        }],
+      })),
+      env: { CECELIA_MACHINE_ID: 'xian-mac-m4' },
+      nodeAdmissionClient: {
+        getAdmission: vi.fn(async () => ({
+          state: 'base_admitted',
+          base_admitted: true,
+          dispatch_ready: true,
+          reasons: [],
+        })),
+      },
+    });
+
+    await expect(probes.getMachineCapacity({
+      machine: 'xian-mac-m4',
+      task_bundle: { role },
+    })).resolves.toMatchObject({
+      ok: true,
+      available,
+      physical_capacity: physicalCapacity,
+      role,
+    });
+  });
+
+  it.each([undefined, '', 'observer'])(
+    'fails admitted capacity closed for unsupported role %s',
+    async (role) => {
+      const createProductionCapabilityProbes = await loadFactory();
+      const fetchFn = vi.fn();
+      const probes = createProductionCapabilityProbes({
+        pool: { query: vi.fn() },
+        registry: { get: vi.fn() },
+        fetchFn,
+        env: { CECELIA_MACHINE_ID: 'xian-mac-m4' },
+        nodeAdmissionClient: {
+          getAdmission: vi.fn(async () => ({
+            state: 'base_admitted',
+            base_admitted: true,
+            dispatch_ready: true,
+            reasons: [],
+          })),
+        },
+      });
+
+      await expect(probes.getMachineCapacity({
+        machine: 'xian-mac-m4',
+        task_bundle: role === undefined ? {} : { role },
+      })).resolves.toMatchObject({
+        ok: false,
+        available: 0,
+        physical_capacity: 0,
+        signature: 'unknown_fleet_role',
+      });
+      expect(fetchFn).not.toHaveBeenCalled();
+    },
+  );
+
+  it('blocks the real capability gate when generator-weighted slots round to zero', async () => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const productionProbes = createProductionCapabilityProbes({
+      pool: { query: vi.fn() },
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(async () => response({
+        fleet: [{
+          id: 'xian-mac-m4',
+          online: true,
+          effective_slots: 3,
+          physical_capacity: 8,
+          pressure: 0.6,
+        }],
+      })),
+      env: { CECELIA_MACHINE_ID: 'xian-mac-m4' },
+      nodeAdmissionClient: {
+        getAdmission: vi.fn(async () => ({
+          state: 'base_admitted',
+          base_admitted: true,
+          dispatch_ready: true,
+          reasons: [],
+        })),
+      },
+    });
+    const gate = createCapabilityGate({
+      ...productionProbes,
+      probeTimeoutMs: 100,
+    });
+
+    await expect(gate.evaluate({
+      preferred_target: {
+        provider: 'codex',
+        account: 'team1',
+        machine: 'xian-mac-m4',
+      },
+      requirements: {},
+      task_bundle: {
+        role: 'generator',
+        logical_cycle: 'weighted-capacity-gate',
+      },
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      fallback_reason: 'all_execution_targets_exhausted',
+      should_create_attempt: false,
     });
   });
 
@@ -153,6 +298,101 @@ describe('production capability probes', () => {
         cookie: '[REDACTED]',
         safe: 'visible',
       },
+    });
+  });
+
+  it.each([
+    ['missing client and Worker URL', undefined, {}, 'node_not_base_admitted'],
+    ['missing evidence', { getAdmission: vi.fn(async () => null) }, {
+      FLEET_WORKER_US_MAC_M4_URL: 'http://worker.internal:5231',
+    }, 'node_not_base_admitted'],
+    ['explicit draining evidence', {
+      getAdmission: vi.fn(async () => ({
+        state: 'draining',
+        base_admitted: false,
+        dispatch_ready: false,
+        reasons: [{ code: 'docker_unavailable', field: 'docker.available', message: 'down' }],
+      })),
+    }, {
+      FLEET_WORKER_US_MAC_M4_URL: 'http://worker.internal:5231',
+      FLEET_NODE_ADMISSION_ENFORCED: 'false',
+    }, 'node_not_base_admitted'],
+  ])('fails both health and capacity closed for %s', async (
+    _name,
+    nodeAdmissionClient,
+    env,
+    signature,
+  ) => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const probes = createProductionCapabilityProbes({
+      pool: { query: vi.fn() },
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(async (url) => {
+        if (String(url).endsWith('/api/brain/capacity-budget')) {
+          return response({
+            fleet: [{
+              id: 'us-mac-m4',
+              online: true,
+              effective_slots: 8,
+              physical_capacity: 8,
+              pressure: 0,
+            }],
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4', ...env },
+      nodeAdmissionClient,
+    });
+
+    await expect(probes.getMachineHealth({ machine: 'us-mac-m4' })).resolves.toMatchObject({
+      ok: false,
+      signature,
+    });
+    await expect(probes.getMachineCapacity({ machine: 'us-mac-m4' })).resolves.toMatchObject({
+      ok: false,
+      available: 0,
+      signature,
+    });
+  });
+
+  it('keeps Phase 4A base-admitted nodes closed until final dispatch readiness exists', async () => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const probes = createProductionCapabilityProbes({
+      pool: { query: vi.fn() },
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(async () => response({
+        fleet: [{
+          id: 'us-mac-m4',
+          online: true,
+          effective_slots: 8,
+          physical_capacity: 8,
+          pressure: 0,
+        }],
+      })),
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      nodeAdmissionClient: {
+        getAdmission: vi.fn(async () => ({
+          machine_id: 'us-mac-m4',
+          state: 'base_admitted',
+          base_admitted: true,
+          dispatch_ready: false,
+          reasons: [],
+        })),
+      },
+    });
+
+    await expect(probes.getMachineHealth({ machine: 'us-mac-m4' })).resolves.toMatchObject({
+      ok: false,
+      signature: 'node_not_dispatch_ready',
+    });
+    await expect(probes.getMachineCapacity({
+      machine: 'us-mac-m4',
+      task_bundle: { role: 'generator' },
+    })).resolves.toMatchObject({
+      ok: false,
+      available: 0,
+      signature: 'node_not_dispatch_ready',
     });
   });
 });

@@ -1,5 +1,5 @@
 # 编排系统 (orchestration) - Feature 详情
-# 更新时间: 2026-07-22
+# 更新时间: 2026-07-27
 # Schema: v2.0.0
 
 system_id: orchestration
@@ -313,6 +313,22 @@ features:
         - packages/brain/src/orchestrator/execution-contract.js
         - packages/brain/src/harness-skill-relay.js
         - packages/brain/src/harness-relay-watchdog.js
+        - packages/brain/config/fleet-node-profiles.json
+        - packages/brain/src/orchestrator/fleet-node/node-profile.js
+        - packages/brain/src/orchestrator/fleet-node/node-admission.js
+        - packages/brain/src/orchestrator/fleet-node/node-admission-client.js
+        - packages/brain/src/orchestrator/preflight/capability-gate.js
+        - packages/brain/src/orchestrator/preflight/production-probes.js
+        - packages/brain/scripts/fleet-worker/node-probe.cjs
+        - packages/brain/scripts/fleet-worker/fleet-worker.cjs
+        - packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker.plist.template
+        - packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker-docker-access.plist.template
+        - packages/brain/scripts/fleet-worker/refresh-fleet-worker-docker-access.sh
+        - packages/brain/scripts/fleet-worker/install-fleet-worker.sh
+        - packages/brain/scripts/fleet-worker/fleet-nodectl.sh
+        - packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.sh
+        - packages/brain/scripts/fleet-worker/fleet-rollout.sh
+        - docker-compose.yml
       language: javascript
       runtime: node
     docs:
@@ -347,11 +363,24 @@ features:
         - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
         - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
         - packages/brain/src/__tests__/harness-relay-watchdog.test.js
+        - packages/brain/src/orchestrator/fleet-node/node-profile.test.js
+        - packages/brain/src/orchestrator/fleet-node/node-admission.test.js
+        - packages/brain/src/orchestrator/fleet-node/node-admission-client.test.js
+        - packages/brain/src/orchestrator/preflight/production-probes.test.js
+        - packages/brain/src/orchestrator/preflight/production-wiring.test.js
+        - packages/brain/scripts/fleet-worker/fleet-worker.test.js
       integration:
         - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
+        - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
+        - packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh
+        - packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh
+        - packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh
+        - packages/brain/scripts/fleet-worker/fleet-rollout.test.sh
       e2e:
         - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
-      regression: []
+        - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
+      regression:
+        - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
     capabilities:
       - id: provider_neutral_harness_relay
         name: Provider-neutral Harness Relay
@@ -365,6 +394,26 @@ features:
             - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
           e2e:
             - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
+        status: active
+      - id: fleet_node_base_admission
+        name: Fleet Node mandatory base admission
+        entry_file: packages/brain/src/orchestrator/fleet-node/node-admission.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/orchestrator/fleet-node/node-profile.test.js
+            - packages/brain/src/orchestrator/fleet-node/node-admission.test.js
+            - packages/brain/src/orchestrator/fleet-node/node-admission-client.test.js
+            - packages/brain/src/orchestrator/preflight/production-probes.test.js
+            - packages/brain/src/orchestrator/preflight/production-wiring.test.js
+            - packages/brain/scripts/fleet-worker/fleet-worker.test.js
+          integration:
+            - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
+            - packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh
+            - packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh
+            - packages/brain/scripts/fleet-worker/fleet-rollout.test.sh
+          e2e:
+            - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
         status: active
     ci:
       jobs:

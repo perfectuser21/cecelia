@@ -1,4 +1,6 @@
 import { resolveGitHubToken } from '../../harness-credentials.js';
+import { createNodeAdmissionClient } from '../fleet-node/node-admission-client.js';
+import { getNodeProfile, getRoleCapacity } from '../fleet-node/node-profile.js';
 import { resolveCanonicalMachineId } from './canonical-machine-id.js';
 
 const DEFAULT_BRAIN_URL = 'http://127.0.0.1:5221';
@@ -13,6 +15,11 @@ function accountRows(snapshot, provider) {
 function boundedSignature(value, fallback) {
   const normalized = String(value ?? fallback).trim();
   return normalized.slice(0, 160) || fallback;
+}
+
+function boundedBaseSlots(value, canonicalCapacity) {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.min(canonicalCapacity, Math.floor(value));
 }
 
 /**
@@ -30,6 +37,12 @@ export function createProductionCapabilityProbes(deps = {}) {
   const cacheTtlMs = Number(deps.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS);
   const now = deps.now ?? Date.now;
   const cache = new Map();
+  const nodeAdmissionClient = deps.nodeAdmissionClient ?? createNodeAdmissionClient({
+    env,
+    fetchFn,
+    now,
+    requestTimeoutMs,
+  });
 
   async function fetchJson(url, options = {}, { force = false } = {}) {
     const cached = cache.get(url);
@@ -66,6 +79,40 @@ export function createProductionCapabilityProbes(deps = {}) {
     return fleet.find((row) => row?.id === machine) ?? null;
   }
 
+  async function admittedNode(machine) {
+    try {
+      const admission = await nodeAdmissionClient.getAdmission(machine, {
+        forceFresh: true,
+      });
+      const baseAdmitted = admission?.base_admitted === true
+        && admission?.state === 'base_admitted';
+      const dispatchReady = admission?.dispatch_ready === true;
+      const admitted = baseAdmitted && dispatchReady;
+      const admissionReasons = Array.isArray(admission?.reasons)
+        ? admission.reasons
+          .map((reason) => String(reason?.code ?? '').slice(0, 64))
+          .filter(Boolean)
+          .slice(0, 16)
+        : [];
+      if (baseAdmitted && !dispatchReady) {
+        admissionReasons.unshift('node_not_dispatch_ready');
+      }
+      return {
+        admitted,
+        admissionReasons,
+        signature: baseAdmitted
+          ? 'node_not_dispatch_ready'
+          : 'node_not_base_admitted',
+      };
+    } catch {
+      return {
+        admitted: false,
+        admissionReasons: ['node_admission_probe_failed'],
+        signature: 'node_not_base_admitted',
+      };
+    }
+  }
+
   return Object.freeze({
     async resolveCanonicalMachineId() {
       const snapshot = await fleetSnapshot();
@@ -78,6 +125,15 @@ export function createProductionCapabilityProbes(deps = {}) {
     },
 
     async getMachineHealth({ machine }) {
+      const admission = await admittedNode(machine);
+      if (!admission.admitted) {
+        return {
+          ok: false,
+          machine,
+          signature: admission.signature,
+          admission_reasons: admission.admissionReasons,
+        };
+      }
       const row = await fleetRow(machine);
       return {
         ok: row?.online === true,
@@ -86,12 +142,64 @@ export function createProductionCapabilityProbes(deps = {}) {
       };
     },
 
-    async getMachineCapacity({ machine }) {
+    async getMachineCapacity({ machine, task_bundle: taskBundle }) {
+      const admission = await admittedNode(machine);
+      if (!admission.admitted) {
+        return {
+          ok: false,
+          available: 0,
+          physical_capacity: 0,
+          pressure: 1,
+          signature: admission.signature,
+          admission_reasons: admission.admissionReasons,
+        };
+      }
+
+      let profile;
+      let role;
+      try {
+        profile = getNodeProfile(machine);
+        role = getRoleCapacity({
+          baseCapacity: 0,
+          role: taskBundle?.role,
+        }).role;
+      } catch (error) {
+        return {
+          ok: false,
+          available: 0,
+          physical_capacity: 0,
+          pressure: 1,
+          signature: error?.message === 'unknown_fleet_node'
+            ? 'unknown_fleet_node'
+            : 'unknown_fleet_role',
+        };
+      }
+
       const row = await fleetRow(machine);
+      const effectiveBaseSlots = boundedBaseSlots(
+        row?.effective_slots,
+        profile.capacity,
+      );
+      const physicalBaseSlots = boundedBaseSlots(
+        row?.physical_capacity,
+        profile.capacity,
+      );
+      const availableCapacity = getRoleCapacity({
+        baseCapacity: effectiveBaseSlots,
+        role,
+      });
+      const physicalCapacity = getRoleCapacity({
+        baseCapacity: physicalBaseSlots,
+        role,
+      });
       return {
         ok: row?.online === true,
-        available: Math.max(0, Number(row?.effective_slots ?? 0)),
-        physical_capacity: Math.max(0, Number(row?.physical_capacity ?? 0)),
+        available: availableCapacity.capacity,
+        physical_capacity: physicalCapacity.capacity,
+        role,
+        role_weight: availableCapacity.weight,
+        effective_base_slots: effectiveBaseSlots,
+        physical_base_slots: physicalBaseSlots,
         pressure: Number(row?.pressure ?? 1),
         signature: row ? (row.online ? null : 'machine_offline') : 'machine_unregistered',
       };
