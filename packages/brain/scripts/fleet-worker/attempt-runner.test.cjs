@@ -323,6 +323,49 @@ describe('Fleet Worker Attempt runner', () => {
 });
 
 describe('Fleet Worker durable runtime adapters', () => {
+  it('removes the container and runtime when Docker omits the created id', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
+    const runCommand = vi.fn(async () => ({ stdout: '' }));
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+
+    try {
+      await expect(docker.launch({
+        attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        image: IMAGE_DIGEST,
+        providerSpec: request().provider_spec,
+        role: 'generator',
+        model: 'gpt-5',
+        workspaceMount: {
+          source: `/controlled/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: true,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        callback: {
+          url: request().callback_url,
+          token: request().callback_token,
+        },
+        lease: { owner: 'dispatcher-1', generation: 0 },
+      })).rejects.toThrow(/attempt_container_id_missing/);
+
+      expect(runCommand).toHaveBeenCalledWith(
+        'docker',
+        ['rm', '-f', '--', `cecelia-fleet-${ATTEMPT_ID}`],
+        undefined,
+      );
+      expect(fs.existsSync(path.join(runtimeRoot, ATTEMPT_ID))).toBe(false);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it('builds a pinned Docker launch with only Worker-owned mounts', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
