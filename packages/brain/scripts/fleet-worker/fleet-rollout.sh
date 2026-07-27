@@ -110,10 +110,48 @@ run_node_apply() {
   trap - EXIT HUP INT TERM
 }
 
+run_node_drain() {
+  local machine_id="$1"
+  local payload_root="$2"
+  local node_ctl
+
+  require_machine "$machine_id"
+  [[ -d "$payload_root" && ! -L "$payload_root" \
+    && -f "$payload_root/repository.bundle" \
+    && ! -L "$payload_root/repository.bundle" \
+    && -f "$payload_root/runner.tar" \
+    && ! -L "$payload_root/runner.tar" ]] \
+    || die "rollout_payload_invalid"
+
+  node_ctl="${NODECTL_OVERRIDE:-$payload_root/source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh}"
+  [[ -x "$node_ctl" && ! -L "$node_ctl" ]] || die "rollout_nodectl_invalid"
+  [[ -x "$SUDO" ]] || die "sudo_unavailable"
+
+  "$SUDO" -n env \
+    CECELIA_MACHINE_ID="$machine_id" \
+    FLEET_BASELINE_REPOSITORY_BUNDLE="$payload_root/repository.bundle" \
+    FLEET_BASELINE_RUNNER_ARCHIVE="$payload_root/runner.tar" \
+    "$node_ctl" drain "$machine_id" --apply
+}
+
 run_root_staged_payload() {
   local machine_id="$1"
   local payload_tar="$2"
-  local staged_root controller status=0
+  local staged_root controller controller_pid='' status=0
+
+  interrupt_root_staged_payload() {
+    local signal_name="$1"
+    local signal_status="$2"
+
+    trap - HUP INT TERM
+    if [[ -n "$controller_pid" ]]; then
+      kill -s "$signal_name" "$controller_pid" >/dev/null 2>&1 || true
+      wait "$controller_pid" >/dev/null 2>&1 || true
+      controller_pid=''
+    fi
+    "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1 || true
+    exit "$signal_status"
+  }
 
   staged_root="$("$SUDO" -n /usr/bin/mktemp \
     -d /var/tmp/cecelia-fleet-rollout.XXXXXX)"
@@ -127,17 +165,37 @@ run_root_staged_payload() {
 
   controller="$staged_root/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh"
   if ! "$SUDO" -n /bin/chmod \
-    +x "$staged_root/source/packages/brain/scripts/fleet-worker/"*.sh \
-    || ! "$SUDO" -n "$controller" __node-apply "$machine_id" "$staged_root"; then
+    +x "$staged_root/source/packages/brain/scripts/fleet-worker/"*.sh; then
+    status=1
+  else
+    trap 'interrupt_root_staged_payload HUP 129' HUP
+    trap 'interrupt_root_staged_payload INT 130' INT
+    trap 'interrupt_root_staged_payload TERM 143' TERM
+    "$SUDO" -n "$controller" __node-apply "$machine_id" "$staged_root" &
+    controller_pid=$!
+    wait "$controller_pid" || status=$?
+    controller_pid=''
+    trap - HUP INT TERM
+  fi
+  if ! "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1; then
+    if [[ "$status" -eq 0 ]]; then
+      "$SUDO" -n "$controller" __node-drain \
+        "$machine_id" "$staged_root" >/dev/null 2>&1 || true
+    fi
     status=1
   fi
-  "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1 || status=1
   return "$status"
 }
 
 if [[ "${1:-}" == '__node-apply' ]]; then
   [[ $# -eq 3 ]] || die "rollout_internal_usage" 64
   run_node_apply "$2" "$3"
+  exit 0
+fi
+
+if [[ "${1:-}" == '__node-drain' ]]; then
+  [[ $# -eq 3 ]] || die "rollout_internal_usage" 64
+  run_node_drain "$2" "$3"
   exit 0
 fi
 
@@ -203,10 +261,18 @@ machine_id="$1"
 sudo_command="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 remote_root="$("$sudo_command" -n /usr/bin/mktemp \
   -d /var/tmp/cecelia-fleet-rollout.XXXXXX)"
-cleanup_remote() {
-  "$sudo_command" -n /bin/rm -rf -- "$remote_root"
+controller_pid=''
+interrupt_remote() {
+  signal_name="$1"
+  signal_status="$2"
+  trap - HUP INT TERM
+  if [[ -n "$controller_pid" ]]; then
+    kill -s "$signal_name" "$controller_pid" >/dev/null 2>&1 || true
+    wait "$controller_pid" >/dev/null 2>&1 || true
+  fi
+  "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1 || true
+  exit "$signal_status"
 }
-trap cleanup_remote EXIT
 "$sudo_command" -n /usr/bin/tar -xf - -C "$remote_root"
 "$sudo_command" -n /bin/mkdir -p "$remote_root/source"
 "$sudo_command" -n /usr/bin/tar \
@@ -214,9 +280,37 @@ trap cleanup_remote EXIT
 controller="$remote_root/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh"
 "$sudo_command" -n /bin/chmod \
   +x "$remote_root/source/packages/brain/scripts/fleet-worker/"*.sh
-"$sudo_command" -n "$controller" __node-apply "$machine_id" "$remote_root"
+trap 'interrupt_remote HUP 129' HUP
+trap 'interrupt_remote INT 130' INT
+trap 'interrupt_remote TERM 143' TERM
+status=0
+"$sudo_command" -n "$controller" __node-apply "$machine_id" "$remote_root" &
+controller_pid=$!
+wait "$controller_pid" || status=$?
+controller_pid=''
+trap - HUP INT TERM
+if ! "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1; then
+  if [[ "$status" -eq 0 ]]; then
+    "$sudo_command" -n "$controller" __node-drain \
+      "$machine_id" "$remote_root" >/dev/null 2>&1 || true
+  fi
+  status=1
+fi
+exit "$status"
 REMOTE
 )"
+
+interrupt_transport() {
+  local signal_name="$1"
+  local signal_status="$2"
+
+  trap - HUP INT TERM
+  if [[ -n "${transport_pid:-}" ]]; then
+    kill -s "$signal_name" "$transport_pid" >/dev/null 2>&1 || true
+    wait "$transport_pid" >/dev/null 2>&1 || true
+  fi
+  exit "$signal_status"
+}
 
 for machine_id in "${targets[@]}"; do
   if [[ "$machine_id" == 'us-mac-m4' ]]; then
@@ -226,11 +320,20 @@ for machine_id in "${targets[@]}"; do
 
   remote_target="$(ssh_target_for "$machine_id")" || die "unknown_fleet_node" 64
   remote_command="$(printf '%q ' /bin/bash -c "$remote_program" -- "$machine_id")"
+  transport_status=0
+  trap 'interrupt_transport HUP 129' HUP
+  trap 'interrupt_transport INT 130' INT
+  trap 'interrupt_transport TERM 143' TERM
   "$SSH" \
     -o BatchMode=yes \
     -o ConnectTimeout=10 \
     -o StrictHostKeyChecking=yes \
     "$remote_target" \
     "$remote_command" \
-    <"$payload_tar"
+    <"$payload_tar" &
+  transport_pid=$!
+  wait "$transport_pid" || transport_status=$?
+  transport_pid=''
+  trap - HUP INT TERM
+  [[ "$transport_status" -eq 0 ]] || exit "$transport_status"
 done

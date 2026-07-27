@@ -235,7 +235,14 @@ FLEET_TEST_NODE_LOG="$node_log" \
 FLEET_TEST_NODE_ADMIT_READY="$admit_ready" \
 FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
 FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
-  run_rollout us-mac-m4 --apply >"$test_root/public-signal.out" 2>&1 &
+FLEET_TEST_ARTIFACT_LOG="$artifact_log" \
+FLEET_TEST_TRANSPORT_LOG="$transport_log" \
+FLEET_ROLLOUT_GIT="$fake_bin/git" \
+FLEET_ROLLOUT_DOCKER="$fake_bin/docker" \
+FLEET_ROLLOUT_SSH="$fake_bin/ssh" \
+FLEET_ROLLOUT_TAR="$(command -v tar)" \
+FLEET_ROLLOUT_TMPDIR="$test_root/tmp" \
+  "$ROLLOUT" us-mac-m4 --apply >"$test_root/public-signal.out" 2>&1 &
 public_rollout_pid=$!
 for _ in {1..100}; do
   [[ -e "$admit_ready" ]] && break
