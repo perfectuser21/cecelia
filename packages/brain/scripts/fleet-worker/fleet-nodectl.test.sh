@@ -175,6 +175,7 @@ console.log(JSON.stringify({
 NODE
 run_nodectl admit us-mac-m4 >/dev/null \
   || fail "admit rejected a valid Brain-evaluated base-admission report"
+cp "$health" "$test_root/valid-health.json"
 
 HEALTH_FILE="$health" node --input-type=module > "$test_root/drift-health.json" <<'NODE'
 import { readFileSync } from 'node:fs';
@@ -205,6 +206,56 @@ if CECELIA_MACHINE_ID=xian-mac-m4 \
 fi
 [[ "$(<"$fetch_log")" == 'http://100.86.57.69:5231/health' ]] \
   || fail "nodectl did not use the Xian NodeProfile listener"
+
+fetch_options_log="$test_root/fetch-options.log"
+printf '%s\n' \
+  "'use strict';" \
+  "const fs = require('node:fs');" \
+  "globalThis.fetch = async (_url, options) => {" \
+  "  fs.writeFileSync(process.env.FLEET_NODECTL_FETCH_OPTIONS_LOG, JSON.stringify(options));" \
+  "  return { ok: false };" \
+  "};" > "$test_root/fetch-options-preload.cjs"
+if CECELIA_MACHINE_ID=xian-mac-m4 \
+  FLEET_NODECTL_HEALTH_FILE='' \
+  FLEET_NODECTL_FETCH_OPTIONS_LOG="$fetch_options_log" \
+  NODE_OPTIONS="--require=$test_root/fetch-options-preload.cjs" \
+  "$NODECTL" admit xian-mac-m4 >/dev/null 2>&1; then
+  fail "unavailable Xian Worker unexpectedly admitted"
+fi
+grep -Fq '"redirect":"error"' "$fetch_options_log" \
+  || fail "nodectl live health fetch did not reject redirects"
+
+printf '%s\n' \
+  "'use strict';" \
+  "const fs = require('node:fs');" \
+  "const report = JSON.parse(fs.readFileSync(process.env.FLEET_NODECTL_VALID_HEALTH, 'utf8'));" \
+  "globalThis.fetch = async () => ({" \
+  "  ok: true," \
+  "  json: async () => report," \
+  "  arrayBuffer: async () => new Uint8Array(65_537).buffer," \
+  "});" > "$test_root/fetch-oversize-preload.cjs"
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_NODECTL_HEALTH_FILE='' \
+  FLEET_NODECTL_VALID_HEALTH="$test_root/valid-health.json" \
+  NODE_OPTIONS="--require=$test_root/fetch-oversize-preload.cjs" \
+  "$NODECTL" admit us-mac-m4 >/dev/null 2>&1; then
+  fail "nodectl accepted an oversized live health body"
+fi
+
+printf '%s\n' \
+  "'use strict';" \
+  "const fs = require('node:fs');" \
+  "const body = fs.readFileSync(process.env.FLEET_NODECTL_VALID_HEALTH);" \
+  "globalThis.fetch = async () => ({" \
+  "  ok: true," \
+  "  arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)," \
+  "});" > "$test_root/fetch-bounded-preload.cjs"
+CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_NODECTL_HEALTH_FILE='' \
+  FLEET_NODECTL_VALID_HEALTH="$test_root/valid-health.json" \
+  NODE_OPTIONS="--require=$test_root/fetch-bounded-preload.cjs" \
+  "$NODECTL" admit us-mac-m4 >/dev/null \
+  || fail "nodectl rejected a bounded valid live health body"
 
 if run_nodectl drain xian-mac-m4 --apply >/dev/null 2>&1; then
   fail "nodectl attempted to mutate a remote node"

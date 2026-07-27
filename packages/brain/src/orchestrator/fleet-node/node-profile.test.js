@@ -11,6 +11,11 @@ const EXPECTED_WORKER_BIND_HOSTS = {
   'xian-mac-m4': '100.86.57.69',
   'xian-mac-m1': '100.88.166.55',
 };
+const EXPECTED_BRAIN_HEALTH_URLS = {
+  'us-mac-m4': 'http://127.0.0.1:5221/api/brain/health',
+  'xian-mac-m4': 'http://100.71.151.105:5221/api/brain/health',
+  'xian-mac-m1': 'http://100.71.151.105:5221/api/brain/health',
+};
 
 async function loadContract() {
   const loaded = await import('./node-profile.js').catch(() => ({}));
@@ -102,6 +107,21 @@ describe('Fleet NodeProfile registry', () => {
     for (const profile of profiles.slice(1)) {
       expect(profile.worker_bind_host).not.toBe('127.0.0.1');
       expect(profile.worker_bind_host).not.toBe('0.0.0.0');
+    }
+  });
+
+  it('pins local US and remote Xian callback health URLs', async () => {
+    const { listNodeProfiles } = await loadContract();
+    const profiles = listNodeProfiles();
+
+    expect(Object.fromEntries(profiles.map((profile) => [
+      profile.machine_id,
+      profile.brain_health_url,
+    ]))).toEqual(EXPECTED_BRAIN_HEALTH_URLS);
+    expect(profiles[0].brain_health_url).toContain('127.0.0.1:5221');
+    for (const profile of profiles.slice(1)) {
+      expect(profile.brain_health_url).toContain('100.71.151.105:5221');
+      expect(profile.brain_health_url).not.toContain('127.0.0.1');
     }
   });
 
