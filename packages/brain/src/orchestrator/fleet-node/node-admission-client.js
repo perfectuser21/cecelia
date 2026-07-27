@@ -198,6 +198,7 @@ export function createNodeAdmissionClient(options = {}) {
       const response = await fetchFn(`${workerUrl}/health`, {
         method: 'GET',
         headers: { accept: 'application/json' },
+        redirect: 'error',
         signal: controller.signal,
       });
 
