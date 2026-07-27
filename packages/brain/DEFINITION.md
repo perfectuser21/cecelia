@@ -42,11 +42,13 @@
 - Phase 4B 定义 strict、path-free `WorkspaceSpec` 与 authenticated Worker
   Attempt API。三台 canonical machine 均使用 server-owned Worker URL；Brain
   保留 ExecutionTarget 决策，Worker 从 controlled Git mirror 创建 Attempt-owned
-  worktree，并独占 pinned OrbStack/Docker container、durable state、terminal
+  worktree 与无 hardlink 的 private Git common-dir，容器不挂载共享 mirror，并
+  独占 pinned OrbStack/Docker container、durable state、terminal
   cleanup、restart reconciliation 与 quarantine。Caller cwd/worktree path 不得
   跨越 Worker boundary。
 - Worker bearer token 只做节点 transport auth，由受保护文件读取，不是 provider
-  credential。installer 为 `_cecelia` 准备 mode 0700 data root；容器退出按
+  credential。installer 为 `_cecelia` 准备 `/var/lib/cecelia` 下 canonical、
+  mode 0700 data root，拒绝 traversal；容器退出按
   container（含 prompt runtime）→ worktree → state 回收。Legacy bridge 的
   production `/harness/attempts*` 返回 `410 fleet_worker_required`。
 - Phase 4A 仍返回 `dispatch_ready=false`；CredentialEnvelope、执行等价/恢复和

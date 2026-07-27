@@ -96,6 +96,11 @@ Reconciliation may remove only containers/worktrees carrying all three matching
 ownership values. A cleanup error atomically moves the state/worktree reference
 under the Worker quarantine root and prevents reuse.
 
+The controlled mirror is staging-only. Each Attempt clones an independent bare
+Git common-dir with `--no-hardlinks`; only that private admin directory is
+mounted at its identical absolute path in the container. A writer therefore
+cannot mutate shared refs, objects, or another Attempt's worktree metadata.
+
 ## Phase 4B file boundary
 
 Create:
@@ -204,6 +209,9 @@ The implementation must first record failures for these behaviors:
    read-only metadata, expected-head mismatch before execution, idempotent
    cleanup, and quarantine on cleanup failure. Inject only command execution and
    filesystem roots; never accept a caller path.
+   Each Attempt must receive a private, no-hardlink Git common-dir derived from
+   its validated `attempt_id`; the shared mirror must never be mounted RW into
+   a runner.
 2. Observe Red with:
 
    ```bash

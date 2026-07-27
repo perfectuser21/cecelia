@@ -250,12 +250,14 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - Phase 4B 在 Phase 4A baseline 上定义 strict、path-free `WorkspaceSpec` 和
   authenticated Worker Attempt API。三台 canonical machine 均通过各自的
   server-owned Worker URL 执行；Brain 保留 machine/provider/account/model/role
-  决策，Worker 从 controlled Git mirror 创建 Attempt-owned worktree，并独占 pinned
+  决策，Worker 从 controlled Git mirror 创建 Attempt-owned worktree 和无 hardlink
+  的 private Git common-dir；容器不挂载共享 mirror，并独占 pinned
   OrbStack/Docker container、durable state、terminal cleanup、restart reconcile
   与 quarantine。Caller cwd/worktree path 不得跨过 Worker boundary。
 - Worker 使用受保护文件中的节点 bearer token；该 token 只做 transport auth，
-  不是 Codex/provider credential。installer 为 `_cecelia` 准备 mode 0700 data
-  root；正常退出按 container（含 prompt runtime）→ worktree → state 回收。
+  不是 Codex/provider credential。installer 为 `_cecelia` 准备
+  `/var/lib/cecelia` 下 canonical、mode 0700 data root，并拒绝 traversal；正常
+  退出按 container（含 prompt runtime）→ worktree → state 回收。
   Legacy bridge 的 production `/harness/attempts*` 已关闭，返回
   `410 fleet_worker_required`。
 - Phase 4A 的成功结果仍固定为 `dispatch_ready=false`。CredentialEnvelope、
