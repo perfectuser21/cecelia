@@ -5,7 +5,7 @@ target_environment: local_api
 ---
 # Contract DoD — Sprint: Legacy P0/P1 全量行为等价证明矩阵
 
-**范围**: 129 条 P0/P1 inventory、8 个行为族、Claude/Codex/Grok 三态矩阵、Engine/CI/GitHub 真实证明与 fail-closed gate
+**范围**: 129 条 P0/P1 inventory、8 个行为族、Claude/Codex/Grok × behavior_id 逐行三态矩阵、Engine/CI/GitHub 真实证明与 fail-closed gate
 **大小**: L
 
 ## ARTIFACT 条目
@@ -48,16 +48,16 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-oracles --output /tmp/legacy-oracles.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'[.behaviors[]|select((.unified_owner|length)==0 or (.unified_construct|length)==0 or (.assertion_ref|length)==0 or ([.oracles.positive,.oracles.violation,.oracles.recovery]|any(.started!=true or .passed!=true or .exit_code==null or (.log_tail|length)==0 or .assertion_ref==null)))]|length==0'"'"' /tmp/legacy-oracles.json'
   期望: within 600s exit 0
 
-- [ ] [BEHAVIOR] [L2] GP Step 2 — provider 3×8 family 覆盖无缺格，supported 真三态，unsupported 有批准 decision
-  动作: evaluator 运行 Claude/Codex/Grok × F01..F08 provider matrix。
-  预期观察: within 600s 精确得到 24 个唯一 provider×family 格；支持项均有三态 exit/assertion，不支持项只有批准的 retirement/supersession。
-  验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-providers --output /tmp/legacy-providers.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'(.provider_matrix|length)==24 and ([.provider_matrix[]|[.provider,.family_id]]|unique|length)==24 and ([.provider_matrix[].provider]|unique|sort)==["claude","codex","grok"] and ([.provider_matrix[].family_id]|unique|sort)==["F01","F02","F03","F04","F05","F06","F07","F08"] and all(.provider_matrix[];if .support=="supported" then ([.positive,.violation,.recovery]|all(.started==true and .passed==true and .exit_code!=null and (.assertion_ref|type=="string" and length>0))) else (.support=="unsupported" and .decision.status=="approved" and (.decision.kind=="retirement" or .decision.kind=="supersession")) end)'"'"' /tmp/legacy-providers.json'
+- [ ] [BEHAVIOR] [L3] GP Step 2 — provider×behavior_id 逐行覆盖全部 129 行，supported 真三态，unsupported 有批准 decision
+  动作: evaluator 运行 Claude/Codex/Grok × 129 behavior_id provider matrix。
+  预期观察: within 600s 精确得到 387 个唯一 provider×behavior_id 行；每个 provider 的 behavior_id 集合都等于 inventory；支持行均有三态 exit/assertion，不支持行只有批准的 retirement/supersession。
+  验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-providers --output /tmp/legacy-providers.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'. as $rpt | (.provider_behavior_matrix|length)==387 and ([.provider_behavior_matrix[]|[.provider,.behavior_id]]|unique|length)==387 and ([.provider_behavior_matrix[].provider]|unique|sort)==["claude","codex","grok"] and all(["claude","codex","grok"][];. as $p | ([$rpt.provider_behavior_matrix[]|select(.provider==$p)|.behavior_id]|sort)==([$rpt.behaviors[].behavior_id]|sort)) and all($rpt.provider_behavior_matrix[];. as $r | any($rpt.behaviors[];.behavior_id==$r.behavior_id and .family_id==$r.family_id) and if $r.support=="supported" then ([$r.positive,$r.violation,$r.recovery]|all(.started==true and .passed==true and .exit_code!=null and (.assertion_ref|type=="string" and length>0))) else ($r.support=="unsupported" and $r.decision.status=="approved" and ($r.decision.kind=="retirement" or $r.decision.kind=="supersession")) end)'"'"' /tmp/legacy-providers.json'
   期望: within 600s exit 0
 
 - [ ] [BEHAVIOR] [L2] GP Step 3 — guards、全部 stop hooks、DevGate、Evaluator/Judge 与发布链真执行且 skipped=0
   动作: evaluator 运行 Engine 等价套件与 shell glob runner。
-  预期观察: within 600s started=true、failed=0、skipped=0，合同列出的 required constructs 全部出现。
-  验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-engine --output /tmp/legacy-engine.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'.engine_test_summary.started==true and .engine_test_summary.failed==0 and .engine_test_summary.skipped==0'"'"' /tmp/legacy-engine.json'
+  预期观察: within 600s started=true、failed=0、skipped=0；required constructs 与证明行精确相等；现存 stop hook、stop.sh 实际路由与证明清单精确相等。
+  验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-engine --output /tmp/legacy-engine.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'. as $rpt | .engine_test_summary.started==true and .engine_test_summary.failed==0 and .engine_test_summary.skipped==0 and (.required_constructs|sort)==(["bash-guard","branch-protect","branch-push-guard","credential-guard","devgate-dod","devgate-tdd","evaluator","github-branch-protection","judge","main-repo-write-guard","pre-push","promote","rollback","staging","stop-architect","stop-conversation","stop-decomp","stop-router","worktree-checkout-guard"]|sort) and ([.required_construct_proofs[].construct]|sort)==(.required_constructs|sort) and ([.required_construct_proofs[].construct]|unique|length)==(.required_constructs|length) and all(.required_construct_proofs[];(.behavior_ids|length)>0 and ([.oracles.positive,.oracles.violation,.oracles.recovery]|all(.started==true and .passed==true and .exit_code!=null and (.log_tail|length)>0 and (.assertion_ref|length)>0))) and all($rpt.required_construct_proofs[].behavior_ids[];. as $id | any($rpt.behaviors[];.behavior_id==$id)) and (.discovered_stop_hooks|sort)==(["stop-architect","stop-conversation","stop-decomp"]|sort) and (.routed_stop_hooks|sort)==(.discovered_stop_hooks|sort) and (.proven_stop_hooks|sort)==(.discovered_stop_hooks|sort)'"'"' /tmp/legacy-engine.json'
   期望: within 600s exit 0
 
 - [ ] [BEHAVIOR] [L2] GP Step 3 — CI workflow 独立 gate job 强制进入 ci-passed
@@ -104,8 +104,8 @@ target_environment: local_api
 
 - [ ] [BEHAVIOR] [L3] GP Step 10 — 全量真实矩阵才可 PASS 与 143 green
   动作: evaluator 在 current SHA 真跑所有 oracle并真读 GitHub protection。
-  预期观察: within 600s 只有 129 proven active、四类 gap=0 且 143 cells 全部有逐行证据时 PASS。
-  验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --verify-github-protection perfectuser21/cecelia main --output /tmp/legacy-final.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'.result=="pass" and .inventory_counts=={"total":129,"P0":66,"P1":63} and .status_counts=={"proven_active":129,"unknown":0,"drifted":0,"missing_assertion":0,"owner_mismatch":0} and .proven_status_count==129 and .matrix.cell_count==143 and .matrix.green==143 and .engine_test_summary.skipped==0 and .github_protection.match==true'"'"' /tmp/legacy-final.json'
+  预期观察: within 600s 只有 129 proven active、387 provider 行、required construct/stop route 精确无缺、四类 gap=0 且 143 cells 全部有逐行证据时 PASS。
+  验证命令: Test: manual:bash -c 'DEADLINE=$((SECONDS+600)); node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --verify-github-protection perfectuser21/cecelia main --output /tmp/legacy-final.json & PID=$!; until ! kill -0 "$PID" 2>/dev/null; do [ "$SECONDS" -lt "$DEADLINE" ] || { kill "$PID"; exit 1; }; sleep 2; done; wait "$PID"; jq -e '"'"'.result=="pass" and .inventory_counts=={"total":129,"P0":66,"P1":63} and .status_counts=={"proven_active":129,"unknown":0,"drifted":0,"missing_assertion":0,"owner_mismatch":0} and .proven_status_count==129 and (.provider_behavior_matrix|length)==387 and ([.provider_behavior_matrix[]|[.provider,.behavior_id]]|unique|length)==387 and ([.required_construct_proofs[].construct]|sort)==(.required_constructs|sort) and (.discovered_stop_hooks|sort)==(.routed_stop_hooks|sort) and (.discovered_stop_hooks|sort)==(.proven_stop_hooks|sort) and .matrix.cell_count==143 and .matrix.green==143 and .engine_test_summary.skipped==0 and .github_protection.match==true'"'"' /tmp/legacy-final.json'
   期望: within 600s exit 0
 
 ## Invariant 约束逐条映射
@@ -178,7 +178,7 @@ target_environment: local_api
 - INV-37 N/A：不派发 headed relay。
 - INV-38 N/A：这是 generator 的 Red commit 操作纪律；task-plan 明确只精确 add sprint tests。
 - INV-39 N/A：本 task-plan 单 ws1 串行实现。
-- INV-40 N/A：未复用历史合同；已核对本次初始派发 `attempt_kind=initial`、round=1。
+- INV-40 N/A：Round 3 仅基于上轮已提交分支 `cp-harness-propose-r2-3706e621-a5` 按 reviewer 三项反馈修订；已核对本次真实派发 `attempt_kind=initial`、`contract_round=3`、`propose_branch=cp-harness-propose-r3-3706e621-a8`。
 - INV-41 N/A：新增 proof report 字段均由 PRD字面定义，无与既有 HTTP/DB 字段冲突。
 
 - [ ] [BEHAVIOR] [L2] INV-42 部署/门禁失败不得 warning 降级

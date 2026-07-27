@@ -6,11 +6,11 @@
     {
       "task_id": "ws1",
       "title": "实现 Legacy P0/P1 129 行等价证明矩阵与 fail-closed gate",
-      "scope": "把 packages/engine/regression-contract.yaml 的 66 条 P0 与 63 条 P1 逐行转换为稳定 unified mapping；实现真实 positive/violation/recovery oracle、Claude/Codex/Grok 支持/批准退役矩阵、Engine guards/全部 stop hooks/DevGate/Evaluator/Judge/staging-promote-rollback 真执行、GitHub main protection 真只读比较、current-SHA/24h TTL/assertion_ref/owner 校验、#4372 与指定 mutation proven-to-fire、13×11 逐行聚合；接入 CI required gate。不得修改生产 DB 或 PR #4372。",
+      "scope": "把 packages/engine/regression-contract.yaml 的 66 条 P0 与 63 条 P1 逐行转换为稳定 unified mapping；实现真实 positive/violation/recovery oracle、Claude/Codex/Grok × behavior_id 逐行支持/批准退役矩阵、Engine required constructs 与现存 stop route 精确清单真执行、DevGate/Evaluator/Judge/staging-promote-rollback 真执行、GitHub main protection 真只读比较、current-SHA/24h TTL/assertion_ref/owner 校验、#4372 与指定 mutation proven-to-fire、13×11 逐行聚合；接入 CI required gate。不得修改生产 DB 或 PR #4372。",
       "dod": [
         "[BEHAVIOR] inventory 精确为 total=129/P0=66/P1=63，129 行必填字段非空，family_counts 逐行重算总和=129，F01/F06 非空、F08 无 catch-all",
-        "[BEHAVIOR] Claude/Codex/Grok × F01..F08 精确 24 个唯一格；支持项真跑 positive/violation/recovery，不支持项仅接受 approved retirement/supersession decision",
-        "[BEHAVIOR] Engine guards、全部 stop hooks、DevGate/TDD/DoD、Evaluator/Judge、staging/promote/rollback 真执行且 failed=0/skipped=0",
+        "[BEHAVIOR] Claude/Codex/Grok × 129 behavior_id 精确 387 个唯一行；每方 ID 集等于 inventory，支持行真跑 positive/violation/recovery，不支持行仅接受 approved retirement/supersession decision",
+        "[BEHAVIOR] Engine required constructs 与证明行精确相等，现存 stop hook=stop.sh 实际路由=证明清单；全部三态真执行且 failed=0/skipped=0",
         "[BEHAVIOR] 独立 Legacy P0/P1 Equivalence CI job 真执行 gate，ci-passed 强制依赖其 success，当前 PR 两个 check 均真实 pass",
         "[BEHAVIOR] GitHub main protection 真读 required checks/admin/linear history/force-push/delete/review policy，漂移或 API 失败均 fail-closed",
         "[BEHAVIOR] PR #4372 固定 SHA 必须精确报告 unknown=100/drifted=5/missing assertion=129/green=0 且非零退出",

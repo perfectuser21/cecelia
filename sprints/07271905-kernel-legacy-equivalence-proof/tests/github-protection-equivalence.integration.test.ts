@@ -79,8 +79,30 @@ describe('Legacy equivalence real seams', () => {
     );
   });
 
-  it('Engine shell 与 stop hook 全量真跑且 skipped=0', async () => {
+  it('Engine required construct 与 stop route 精确集合真跑且 skipped=0', async () => {
     const report = await runCli(['--run-engine']);
+    const requiredConstructs = [
+      'bash-guard',
+      'branch-protect',
+      'branch-push-guard',
+      'credential-guard',
+      'devgate-dod',
+      'devgate-tdd',
+      'evaluator',
+      'github-branch-protection',
+      'judge',
+      'main-repo-write-guard',
+      'pre-push',
+      'promote',
+      'rollback',
+      'staging',
+      'stop-architect',
+      'stop-conversation',
+      'stop-decomp',
+      'stop-router',
+      'worktree-checkout-guard',
+    ].sort();
+    const stopHooks = ['stop-architect', 'stop-conversation', 'stop-decomp'].sort();
     expect(report.engine_test_summary).toEqual(
       expect.objectContaining({
         started: true,
@@ -88,38 +110,27 @@ describe('Legacy equivalence real seams', () => {
         skipped: 0,
       }),
     );
-    expect(report.required_constructs).toEqual(
-      expect.arrayContaining([
-        'branch-protect',
-        'credential-guard',
-        'bash-guard',
-        'branch-push-guard',
-        'main-repo-write-guard',
-        'pre-push',
-        'worktree-checkout-guard',
-        'stop-router',
-        'stop-architect',
-        'stop-conversation',
-        'stop-decomp',
-        'devgate-tdd',
-        'devgate-dod',
-        'evaluator',
-        'judge',
-        'staging',
-        'promote',
-        'rollback',
-      ]),
-    );
-    for (const proof of report.engine_test_summary.proofs as Array<Record<string, any>>) {
-      expect(proof).toEqual(
-        expect.objectContaining({
-          started: true,
-          passed: true,
-          exit_code: 0,
-          log_tail: expect.any(String),
-          assertion_ref: expect.any(String),
-        }),
-      );
+    expect([...report.required_constructs].sort()).toEqual(requiredConstructs);
+    expect([...report.discovered_stop_hooks].sort()).toEqual(stopHooks);
+    expect([...report.routed_stop_hooks].sort()).toEqual(stopHooks);
+    expect([...report.proven_stop_hooks].sort()).toEqual(stopHooks);
+
+    const proofs = report.required_construct_proofs as Array<Record<string, any>>;
+    expect(proofs.map((proof) => proof.construct).sort()).toEqual(requiredConstructs);
+    expect(new Set(proofs.map((proof) => proof.construct)).size).toBe(requiredConstructs.length);
+    for (const proof of proofs) {
+      expect(proof.behavior_ids.length, `${proof.construct} 必须关联 behavior_id`).toBeGreaterThan(0);
+      for (const phase of ['positive', 'violation', 'recovery']) {
+        expect(proof.oracles[phase]).toEqual(
+          expect.objectContaining({
+            started: true,
+            passed: true,
+            exit_code: expect.any(Number),
+            log_tail: expect.any(String),
+            assertion_ref: expect.any(String),
+          }),
+        );
+      }
     }
   });
 });

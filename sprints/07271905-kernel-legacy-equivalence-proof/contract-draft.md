@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## 合同边界与证据基线
 
@@ -8,7 +8,7 @@
 - 当前候选 SHA：执行时由 `git rev-parse --verify "HEAD^{commit}"` 取得；报告中的每条证据必须逐行携带该 SHA。
 - 证据保质期：自动 oracle 与 GitHub protection 证据统一为 24 小时；`checked_at + 24h <= now` 即过期并 fail-closed。
 - 本任务不得连接或修改生产数据库；所有 mutation 必须在临时目录或内存副本进行。
-- PRD 显式授权修改 Engine 与 `.github/` 等价门禁接线；Round 2 仅收敛 reviewer 指出的逐行字段/family 计数、3×8 provider 覆盖、CI job→`ci-passed`→branch protection 真接线，不顺带改其他共享 CI。
+- PRD 显式授权修改 Engine 与 `.github/` 等价门禁接线；Round 3 仅收敛 reviewer 指出的 provider×behavior_id 逐行证明、required construct/stop route 精确集合、可复跑 Red 证据，不顺带改其他共享 CI。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -27,7 +27,7 @@ N/A — 本任务无 HTTP 响应。验收入口是本地 CLI，输出 JSON 证�
     "missing_assertion": 0, "owner_mismatch": 0},
   "family_counts": {"F01": "<derived>", "F02": "<derived>", "F03": "<derived>",
     "F04": "<derived>", "F05": "<derived>", "F06": "<derived>", "F07": "<derived>", "F08": "<derived>"},
-  "behaviors": [], "provider_matrix": [],
+  "behaviors": [], "provider_behavior_matrix": [],
   "matrix": {"stage_count": 13, "element_count": 11, "cell_count": 143, "green": 143},
   "github_protection": {}, "engine_test_summary": {}, "violations": []
 }
@@ -41,6 +41,13 @@ N/A — 本任务无 HTTP 响应。验收入口是本地 CLI，输出 JSON 证�
 - `oracles.positive|violation|recovery`：每项均含真实 `command`、`exit_code`、`log_tail`、`observed_at`、`assertion_ref`。
 - `artifact_sha`、`checked_at`、`expires_at`、`fail_semantics`、`proven_status`。
 - `assertion_ref`：非空、唯一解析到一个自动测试/脚本；`manual:` 不得用于 `method=auto`。
+- `provider_behavior_matrix[]` 精确为 Claude/Codex/Grok × 129 behavior_id 共 387 行；每行含
+  `provider`、`behavior_id`、`family_id`、`support`。supported 行含三态真实 oracle；unsupported 行含已批准
+  retirement/supersession decision。禁止只按 provider×family 聚合后宣称逐行为 proven。
+- `required_construct_proofs[]` 的 construct 集合必须与本合同点名集合精确相等；每项含非空
+  `behavior_ids` 与 positive/violation/recovery 三态真实 oracle。
+- `discovered_stop_hooks` 从 `packages/engine/hooks/stop-*.sh`（排除路由器 `stop.sh`）运行时发现，
+  `routed_stop_hooks` 从 `stop.sh` 的实际路由解析，`proven_stop_hooks` 从证明行派生；三者必须精确相等。
 - `matrix.cells[]` 每格含 `stage_id`、`element_id`、非空 `behavior_ids`、`artifact_sha`、`all_behaviors_proven` 与 `status`；只有 `all_behaviors_proven=true` 才可 green。
 
 禁用的伪造汇总字段或语义：硬编码 `mismatch=0`、硬编码 `match_count`、把 `active+drifted` 计入 `proven_status_count`、无逐行证据直接写 green。
@@ -132,7 +139,7 @@ notes:
 |------|----------|-----------|----------|
 | inventory 缺行/重复/字段空 | CLI exit 1，报告具体 behavior_id | 是，只读重算 | 无降级 |
 | oracle 非零、超时、skipped | 对应行非 proven，CLI exit 1 | 可在同 SHA 重跑 | 不得变 unknown/PASS |
-| unsupported provider 无批准 decision | CLI exit 1，列 provider/family | 是 | 无降级 |
+| unsupported provider 无批准 decision | CLI exit 1，列 provider/behavior_id | 是 | 无降级 |
 | GitHub API 认证/限流/字段漂移 | CLI exit 1，日志脱敏 | 可重试一次 | 无缓存 PASS |
 | current SHA/TTL/assertion_ref 不符 | CLI exit 1 | 重新生成证据 | 旧证据不得复用 |
 | mutation/fixture 被错误接受 | 测试与 gate exit 1 | 是 | 禁止继续标 green |
@@ -142,7 +149,7 @@ notes:
 | 风险 | 缓解与可执行证据 |
 |------|------------------|
 | GitHub 凭据不可用、限流或 protection 漂移 | `gh api` 失败即非零；不得缓存 PASS；E2E 真读六类 policy |
-| provider capability 行缺失被真空 `all()` 放过 | 强制 Claude/Codex/Grok × F01..F08 精确 24 个唯一格；unsupported 只认批准 decision |
+| provider capability 行缺失被真空 `all()` 放过 | 强制 Claude/Codex/Grok × 129 behavior_id 精确 387 行；每个 provider 的 behavior_id 集合均等于 inventory；unsupported 逐行只认批准 decision |
 | CI job 只写文本或未绑定 required 聚合 | 结构化解析 workflow，强制独立 job 真跑 gate、`ci-passed.needs` 依赖并要求 success；E2E 再查当前 PR 两个 check 真为 pass |
 
 ### 输入对抗面
@@ -192,6 +199,7 @@ jq -e '
 ### Step 2: 建立 unified owner/construct 与 positive/violation/recovery oracle
 
 **来源**: `[FROM_PRD]` — PRD 第 18-20 行、第 54 行。
+**GAN 防伪补充**: `[AI_ADDED]` — Round 3 将 provider×family 聚合改为 provider×behavior_id 逐行集合相等，防止同 family 内支持性分裂被折叠。
 
 **可观测行为**: 129 行每行均有三态自动 oracle；8 个行为族的 Claude/Codex/Grok 支持项三态有真
 exit/log，不支持项关联 approved retirement/supersession decision。
@@ -211,22 +219,28 @@ jq -e '
 ' /tmp/legacy-oracles.json
 node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --run-providers --output /tmp/legacy-providers.json
 jq -e '
-  (.provider_matrix|length)==24 and ([.provider_matrix[]|[.provider,.family_id]]|unique|length)==24 and
-  ([.provider_matrix[].provider]|unique|sort)==["claude","codex","grok"] and
-  ([.provider_matrix[].family_id]|unique|sort)==["F01","F02","F03","F04","F05","F06","F07","F08"] and
-  all(.provider_matrix[];
-    if .support=="supported" then ([.positive,.violation,.recovery] |
+  . as $report |
+  (.provider_behavior_matrix|length)==387 and
+  ([.provider_behavior_matrix[]|[.provider,.behavior_id]]|unique|length)==387 and
+  ([.provider_behavior_matrix[].provider]|unique|sort)==["claude","codex","grok"] and
+  all(["claude","codex","grok"][]; . as $provider |
+    ([$report.provider_behavior_matrix[]|select(.provider==$provider)|.behavior_id]|sort) ==
+    ([$report.behaviors[].behavior_id]|sort)) and
+  all($report.provider_behavior_matrix[]; . as $row |
+    any($report.behaviors[];.behavior_id==$row.behavior_id and .family_id==$row.family_id) and
+    if $row.support=="supported" then ([$row.positive,$row.violation,$row.recovery] |
       all(.started==true and .passed==true and .exit_code!=null and (.assertion_ref|type=="string" and length>0)))
-    else (.support=="unsupported" and .decision.status=="approved" and
-      (.decision.kind=="retirement" or .decision.kind=="supersession")) end)
+    else ($row.support=="unsupported" and $row.decision.status=="approved" and
+      ($row.decision.kind=="retirement" or $row.decision.kind=="supersession")) end)
  ' /tmp/legacy-providers.json
 ```
 
-**硬阈值**: owner/construct/assertion_ref 缺失=0；129×3 oracle 均实际启动；provider×family=24 个唯一格；未批准 unsupported=0。
+**硬阈值**: owner/construct/assertion_ref 缺失=0；129×3 oracle 均实际启动；provider×behavior_id=387 个唯一行且三方各覆盖同一 129 ID；未批准 unsupported=0。
 
 ### Step 3: 真执行 guards、全部 stop hooks、DevGate、Evaluator/Judge 与发布链
 
 **来源**: `[FROM_PRD]` — PRD 第 20-21 行、第 57 行。
+**GAN 防伪补充**: `[AI_ADDED]` — Round 3 增加 required construct 精确集合与“发现 stop hook=实际路由=证明清单”，防止 aggregate summary 在漏接线时假绿。
 
 **可观测行为**: branch-protect、credential-guard、bash-guard、branch/push、main-repo-write、pre-push、
 worktree-checkout、全部现存 stop hooks、DevGate/TDD/DoD、Evaluator/Judge、staging/promote/rollback 均有
@@ -239,11 +253,27 @@ node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" --ru
 jq -e '.engine_test_summary.started == true
   and .engine_test_summary.failed == 0
   and .engine_test_summary.skipped == 0
-  and ([.required_constructs[]] | sort ==
+  and (.required_constructs | sort ==
     (["bash-guard","branch-protect","branch-push-guard","credential-guard",
       "devgate-dod","devgate-tdd","evaluator","github-branch-protection","judge",
-      "main-repo-write-guard","pre-push","rollback","staging","stop-architect",
+      "main-repo-write-guard","pre-push","promote","rollback","staging","stop-architect",
       "stop-conversation","stop-decomp","stop-router","worktree-checkout-guard"] | sort))' /tmp/legacy-engine.json
+jq -e '
+  . as $report |
+  (.discovered_stop_hooks|sort)==(["stop-architect","stop-conversation","stop-decomp"]|sort) and
+  (.routed_stop_hooks|sort)==(.discovered_stop_hooks|sort) and
+  (.proven_stop_hooks|sort)==(.discovered_stop_hooks|sort) and
+  ([.required_construct_proofs[].construct]|sort)==(.required_constructs|sort) and
+  ([.required_construct_proofs[].construct]|unique|length)==(.required_constructs|length) and
+  all(.required_construct_proofs[];
+    (.behavior_ids|type=="array" and length>0) and
+    ([.oracles.positive,.oracles.violation,.oracles.recovery] |
+      all(.started==true and .passed==true and .exit_code!=null and
+          (.log_tail|type=="string" and length>0) and
+          (.assertion_ref|type=="string" and length>0)))) and
+  all($report.required_construct_proofs[].behavior_ids[]; . as $id |
+    any($report.behaviors[];.behavior_id==$id))
+' /tmp/legacy-engine.json
 node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$PWD" \
   --verify-ci-workflow .github/workflows/ci.yml --output /tmp/legacy-ci.json
 jq -e '.ci_workflow.job_id=="legacy-equivalence" and
@@ -252,7 +282,7 @@ jq -e '.ci_workflow.job_id=="legacy-equivalence" and
   and .ci_workflow.ci_passed_requires_success==true' /tmp/legacy-ci.json
 ```
 
-**硬阈值**: required construct 缺失=0；started=true；failed=0；skipped=0；独立 CI job 真跑 gate 且 `ci-passed` 强制依赖 success。
+**硬阈值**: required construct 精确集合缺失/多余=0；现存 stop hook=实际路由=证明清单；每个 construct 有 behavior_id 与三态证据；started=true；failed=0；skipped=0；独立 CI job 真跑 gate 且 `ci-passed` 强制依赖 success。
 
 ### Step 4: 在 current SHA 重算证据与时效
 
@@ -512,11 +542,17 @@ done
 node packages/engine/scripts/legacy-equivalence-gate.mjs --repo-root "$REPO_ROOT" \
   --verify-github-protection perfectuser21/cecelia main --output /tmp/legacy-final.json
 jq -e --arg sha "$CURRENT_SHA" '
+  . as $report |
   .artifact_sha==$sha and .evidence_ttl_hours==24 and .result=="pass" and
   .inventory_counts=={"total":129,"P0":66,"P1":63} and
   .status_counts=={"proven_active":129,"unknown":0,"drifted":0,
                    "missing_assertion":0,"owner_mismatch":0} and
   .proven_status_count==129 and
+  (.provider_behavior_matrix|length)==387 and
+  ([.provider_behavior_matrix[]|[.provider,.behavior_id]]|unique|length)==387 and
+  all(["claude","codex","grok"][]; . as $provider |
+    ([$report.provider_behavior_matrix[]|select(.provider==$provider)|.behavior_id]|sort) ==
+    ([$report.behaviors[].behavior_id]|sort)) and
   .matrix.stage_count==13 and .matrix.element_count==11 and
   .matrix.cell_count==143 and .matrix.green==143 and
   ([.matrix.cells[]|select(
@@ -525,6 +561,14 @@ jq -e --arg sha "$CURRENT_SHA" '
   )]|length)==0 and
   .engine_test_summary.started==true and
   .engine_test_summary.failed==0 and .engine_test_summary.skipped==0 and
+  (.required_constructs|sort)==(["bash-guard","branch-protect","branch-push-guard",
+    "credential-guard","devgate-dod","devgate-tdd","evaluator","github-branch-protection",
+    "judge","main-repo-write-guard","pre-push","promote","rollback","staging",
+    "stop-architect","stop-conversation","stop-decomp","stop-router",
+    "worktree-checkout-guard"]|sort) and
+  ([.required_construct_proofs[].construct]|sort)==(.required_constructs|sort) and
+  (.discovered_stop_hooks|sort)==(.routed_stop_hooks|sort) and
+  (.discovered_stop_hooks|sort)==(.proven_stop_hooks|sort) and
   .github_protection.requested_live==true and .github_protection.match==true and
   ([.behaviors[]|select(.artifact_sha!=$sha or (.assertion_ref|length)==0)]|length)==0
 ' /tmp/legacy-final.json
@@ -537,8 +581,8 @@ echo "Legacy P0/P1 全量行为等价证明通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| inventory/三态/provider/矩阵/fixture/mutation/CI | `sprints/07271905-kernel-legacy-equivalence-proof/tests/legacy-p0p1-equivalence.contract.test.ts` | `129 条 P0/P1 inventory`；`provider 3×8 family 覆盖无缺格`；`CI workflow 独立 gate job 强制进入 ci-passed`；`#4372 反例精确报告`；`credential guard 缺失`；`stop hook 缺失`；`branch guard 缺失`；`manual oracle 填入 auto 行`；`hardcoded mismatch zero`；`伪造 match_count`；`current SHA 与证据时效`；`proven_status_count 只数真实 proven active`；`13×11 cell 仅由 current-SHA proven active 行聚合为 green` | CLI/fixture/policy/CI job 尚不存在，测试失败 |
-| 真 GitHub/Engine 接缝 | `sprints/07271905-kernel-legacy-equivalence-proof/tests/github-protection-equivalence.integration.test.ts` | `GitHub main protection 真实只读 API`；`Engine shell 与 stop hook 全量真跑且 skipped=0` | equivalence CLI 尚不存在，真实接缝测试失败 |
+| inventory/三态/provider/矩阵/fixture/mutation/CI | `sprints/07271905-kernel-legacy-equivalence-proof/tests/legacy-p0p1-equivalence.contract.test.ts` | `129 条 P0/P1 inventory`；`provider×behavior_id 逐行覆盖全部 129 行`；`CI workflow 独立 gate job 强制进入 ci-passed`；`#4372 反例精确报告`；`credential guard 缺失`；`stop hook 缺失`；`branch guard 缺失`；`manual oracle 填入 auto 行`；`hardcoded mismatch zero`；`伪造 match_count`；`current SHA 与证据时效`；`proven_status_count 只数真实 proven active`；`13×11 cell 仅由 current-SHA proven active 行聚合为 green` | `NODE_PATH=$PWD/packages/engine/node_modules packages/engine/node_modules/.bin/vitest run sprints/07271905-kernel-legacy-equivalence-proof/tests/legacy-p0p1-equivalence.contract.test.ts --reporter=verbose`；预期 exit=1；Round 3 实跑 13/13 FAIL，最小失败锚点为 `Cannot find module '/workspace/packages/engine/scripts/legacy-equivalence-gate.mjs'` 与 `expected 1 to be +0` |
+| 真 GitHub/Engine 接缝 | `sprints/07271905-kernel-legacy-equivalence-proof/tests/github-protection-equivalence.integration.test.ts` | `GitHub main protection 真实只读 API`；`Engine required construct 与 stop route 精确集合真跑且 skipped=0` | `NODE_PATH=$PWD/packages/engine/node_modules packages/engine/node_modules/.bin/vitest run sprints/07271905-kernel-legacy-equivalence-proof/tests/github-protection-equivalence.integration.test.ts --reporter=verbose`；预期 exit=1；Round 3 实跑 2/2 FAIL，最小失败锚点为 `Cannot find module '/workspace/packages/engine/scripts/legacy-equivalence-gate.mjs'`（`runCli` 的 `expect(result.status).toBe(0)`） |
 
 ## CI 接线合同
 

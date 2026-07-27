@@ -222,19 +222,26 @@ describe('Legacy P0/P1 equivalence contract', () => {
     expect(report?.proven_status_count).toBe(derived);
   });
 
-  it('provider 3×8 family 覆盖无缺格且 unsupported 必须 approved retirement 或 supersession decision', async () => {
+  it('provider×behavior_id 逐行覆盖全部 129 行且 unsupported 必须 approved retirement 或 supersession decision', async () => {
     const { status, report } = await runCli(['--run-providers']);
     expect(status).toBe(0);
-    const matrix = report?.provider_matrix as Array<Record<string, any>>;
-    expect(matrix).toHaveLength(24);
+    const behaviors = report?.behaviors as Array<Record<string, any>>;
+    const inventoryIds = behaviors.map((row) => row.behavior_id).sort();
+    const matrix = report?.provider_behavior_matrix as Array<Record<string, any>>;
+    expect(matrix).toHaveLength(387);
     expect(new Set(matrix.map((row) => row.provider))).toEqual(
       new Set(['claude', 'codex', 'grok']),
     );
-    expect(new Set(matrix.map((row) => row.family_id))).toEqual(
-      new Set(['F01', 'F02', 'F03', 'F04', 'F05', 'F06', 'F07', 'F08']),
-    );
-    expect(new Set(matrix.map((row) => `${row.provider}:${row.family_id}`)).size).toBe(24);
+    expect(new Set(matrix.map((row) => `${row.provider}:${row.behavior_id}`)).size).toBe(387);
+    for (const provider of ['claude', 'codex', 'grok']) {
+      expect(
+        matrix.filter((row) => row.provider === provider).map((row) => row.behavior_id).sort(),
+      ).toEqual(inventoryIds);
+    }
     for (const row of matrix) {
+      const behavior = behaviors.find((candidate) => candidate.behavior_id === row.behavior_id);
+      expect(behavior, `${row.provider}:${row.behavior_id} 必须对应 inventory 行`).toBeDefined();
+      expect(row.family_id).toBe(behavior?.family_id);
       if (row.support === 'supported') {
         for (const phase of ['positive', 'violation', 'recovery']) {
           expect(row[phase]).toEqual(
