@@ -1,0 +1,199 @@
+{
+  "initiative_id": "4a530430-00c5-46bc-8a4f-c0ec38025391",
+  "harness_gear": "segmented",
+  "anchor": {
+    "journey_id": "2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6",
+    "gp_id": "4e5fd7eb-3823-4c57-a817-081b7fdd2eed",
+    "step_id": "817f59f5-02ff-4a70-bd81-f7ae65f77e02",
+    "ownership_basis": "生产 DevOps Map 只读查询确认 GP 与 step 均属于 journey 工厂 · F2 部署闭环；复用既有行，不创建占位行。"
+  },
+  "lifecycle_ssot": {
+    "ref": "kernel_harness_f1_baseline/S0-S12",
+    "manifest": "packages/brain/config/kernel-harness-lifecycle-s0-s12.json",
+    "provenance_branch": "cp-07271751-51836fb2",
+    "provenance_sha": "4dc3b69a",
+    "migration_min": 368,
+    "stages": ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12"],
+    "elements": ["FR", "NFR", "Invariant", "判定点", "保质期", "死亡告警", "失败语义", "效果确认", "输入对抗面", "账本保鲜", "两轴衔接"],
+    "cell_count": 143,
+    "migration_cell_states": ["pass", "na_with_reason", "typed_pending", "typed_blocked"],
+    "terminal_cell_states": ["pass", "na_with_reason"],
+    "terminal_forbidden_counts": ["typed_pending", "typed_blocked", "stale", "expired", "gray", "null"]
+  },
+  "journey_type": "agent_remote",
+  "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；12 个产品 gate 后追加一个 F1 S0-S12×11 lifecycle/terminal-accounting gate，保持线性依赖。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Gate 1：Brain image 自包含",
+      "scope": "构建 immutable Brain image，并在无 worktree mount 时导入 orchestrator、加载三个 profile。",
+      "dod": ["[BEHAVIOR] built image 加载 3/3 profile，missing-config 反事实非零", "[ARTIFACT] Dockerfile 与 built-image smoke"],
+      "files": ["packages/brain/Dockerfile", "scripts/ci/verify-brain-image-self-contained.sh"],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws2",
+      "title": "Gate 2：原子 release 与 per-attempt snapshot",
+      "scope": "锁定 Runner digest、profile、Worker generation、runtime UID/GID、协议能力和 transport schema，并冻结每个 Attempt 的 immutable snapshot。",
+      "dod": ["[BEHAVIOR] concurrent profile upgrade 不改变已创建 Attempt snapshot", "[BEHAVIOR] migration 367+ 真 PG upgrade/rollback parity"],
+      "files": ["packages/brain/config/fleet-node-profiles.json", "packages/brain/migrations/", "packages/brain/src/orchestrator/fleet-release-contract.js"],
+      "depends_on": ["ws1"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws3",
+      "title": "Gate 3：macOS installer 可回滚事务",
+      "scope": "在真实 macOS/OrbStack 身份边界交付 Docker-visible root、最小 ACL、身份、TMPDIR、plist/scripts/toolchain/credential-envelope 的 journaled transaction。",
+      "dod": ["[BEHAVIOR] 每个 mutation 独立失败且 rollback 仅撤销本次变更"],
+      "files": ["packages/brain/scripts/fleet-worker/install-fleet-worker.sh", "packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh"],
+      "depends_on": ["ws2"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws4",
+      "title": "Gate 4：真实 Worker admission",
+      "scope": "使 authenticated health 使用真实 Attempt 合同，并在隔离 candidate LaunchDaemon/port/data-root/router/generation 上验证 stdout、GitHub auth 与 serving state 零变更。",
+      "dod": ["[BEHAVIOR] base_admitted 与 dispatch_ready 匹配 exact generation/digest", "[BEHAVIOR] stdout 不可写时 Agent 未启动，持久化 1..2048 bytes 脱敏诊断", "[BEHAVIOR] pre-merge candidate proof 前后 staging/production state byte-identical"],
+      "files": ["packages/brain/scripts/fleet-worker/fleet-worker.cjs", "packages/brain/scripts/fleet-worker/attempt-runner.cjs", "packages/brain/scripts/fleet-worker/real-runner-preflight-proof.cjs", "scripts/kernel-fleet/verify-worker-admission.sh"],
+      "depends_on": ["ws3"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws5",
+      "title": "Gate 5：生产 preflight 与语义锚点",
+      "scope": "fail closed 校验 remote/callback、URL 可达、immutable profile；从不可变 TaskBundle 动态绑定 current task/run/attempt/contract/head，并回读既有 DevOps Map journey/golden-path/step existence 和 ownership。",
+      "dod": ["[BEHAVIOR] current run fda8... 与 task 4a530430... 分离，anchor 精确等于合同既有三元组", "[BEHAVIOR] historical failed run 4bbe...、task-as-run、receipt mismatch、stale contract/head、cross-run artifact、虚构 UUID、ownership 错误、不可达 URL 均 fail closed 且不耗 semantic/GAN budget"],
+      "files": ["packages/brain/src/anchor-check.js", "scripts/kernel-fleet/verify-production-preflight.sh", "scripts/kernel-fleet/verify-run-binding-counterfactuals.sh"],
+      "depends_on": ["ws4"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws6",
+      "title": "Gate 6：phase-aware transport",
+      "scope": "实现 accepted/startup lease、分阶段预算、idempotency、cancel 和 truthful timeout evidence。",
+      "dod": ["[BEHAVIOR] slow mirror/image/secret 各有独立 code，active Attempt/provider/container 至多一个"],
+      "files": ["packages/brain/src/orchestrator/remote-bridge-transport.js", "packages/brain/scripts/fleet-worker/fleet-worker.cjs"],
+      "depends_on": ["ws5"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws7",
+      "title": "Gate 7：secret、Git auth、artifact handoff 与反向 cleanup",
+      "scope": "完成 secret/Git auth/stdout/canonical artifact handoff 与 attempt-scoped result channel；result proof 明确传入当前 Agent attempt/contract/role/run/head并拒绝模块自洽 ID；预建 exact attempt inheritable ACL，按 container-absent fenced cleanup 处理新/legacy Attempt，并以单锁串行 terminal/cancel/wait/reconcile，失败保留首份 append-only quarantine receipt。",
+      "dod": ["[BEHAVIOR] brokered GitHub auth 在 Agent 前验证且 success/timeout/crash/cancel 四终态 revoke+delete", "[BEHAVIOR] callback artifact SHA/branch/task ownership真验后才 cleanup", "[BEHAVIOR] read-only Runner 只向 BRAIN_RESULT_FILE 写 verdict，positive receipt 精确等于调用传入的 attempt/contract/role/run/head，source stale result 被忽略且 hash receipt 先落库", "[BEHAVIOR] missing/EROFS/wrong-binding/symlink/oversize result 在 Agent 前或 finalize fail closed且不耗 semantic/GAN budget", "[BEHAVIOR] precreate helper failure 无 Docker side effect，RO/RW/path attack fail closed", "[BEHAVIOR] exact Runner 深层 umask-077 后正控 residual/quarantine=0", "[BEHAVIOR] normalizer/host cleanup 失败仅一份完整 receipt 且跨 restart 不覆盖", "[BEHAVIOR] concurrent terminal/cancel/wait/reconcile 仅一个 clean/quarantine 结果"],
+      "files": ["packages/brain/scripts/fleet-worker/attempt-runner.cjs", "packages/brain/scripts/fleet-worker/fleet-worker.cjs", "packages/brain/scripts/fleet-worker/github-auth-lifecycle-proof.cjs", "packages/brain/scripts/fleet-worker/reverse-cleanup-proof.cjs", "packages/brain/scripts/fleet-worker/result-channel-proof.cjs", "packages/brain/scripts/fleet-worker/credential-envelope-broker.cjs", "packages/brain/scripts/fleet-worker/credential-envelope-consumer.cjs", "packages/brain/src/orchestrator/canonical-artifact-transfer.js", "packages/brain/src/orchestrator/loop.js", "packages/engine/install/install-kernel-policy-hooks.sh", "packages/engine/config/kernel-policy-installed-targets.json", "packages/engine/runners/codex/runner.sh", "scripts/kernel-fleet/run-result-channel-proof.sh"],
+      "depends_on": ["ws6"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws8",
+      "title": "Gate 8：Kernel truthful readiness",
+      "scope": "以真 PG active-run uniqueness 和 owner/generation lease CAS 建立通用 Kernel Controller；在 spawn 前拒绝坏 worktree，正控分别绑定 built image digest、git commit/tree 与 exact orchestrator/run.js blob digest，父进程独立查 PG 并仅在 lease+real dependencies+ownership frame+fenced heartbeat 后成功。",
+      "dod": ["[BEHAVIOR] concurrent create 与 startup/watchdog/manual race 只产生一个 ready owner", "[BEHAVIOR] image/commit/tree/run.js blob+PG 正控通过，SHA 类型混用、frame-only spoof、early exit/no-ready/spawn-error/timeout/lease_busy 失败", "[BEHAVIOR] 独立 DB 查询 owner/generation/ready_at/heartbeat 与 child 匹配，旧 generation 写入全部拒绝"],
+      "files": ["packages/brain/migrations/", "packages/brain/src/harness-skill-relay.js", "packages/brain/src/kernel-launch-readiness.js", "packages/brain/src/kernel-controller-ownership.js"],
+      "depends_on": ["ws7"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws9",
+      "title": "Gate 9：Watchdog truthful recovery",
+      "scope": "startup-sync/watchdog/manual 共用 ensureKernelController，删除 tmux_session schema drift；扩展既有 lib/kernel-liveness SSOT；基础设施 block 不消费语义 streak，恢复严格一次。",
+      "dod": ["[BEHAVIOR] 两次 infrastructure block 后 semantic streak=0 且 run 不 failed", "[BEHAVIOR] admission Green 后 resumed=1 且 owner/replacement/provider/event 各一", "[BEHAVIOR] real child kill+await 后 ESRCH 判 dead；kill 前 live PID 与 unknown host 不被判死"],
+      "files": ["packages/brain/src/startup-sync.js", "packages/brain/src/harness-relay-watchdog.js", "packages/brain/src/orchestrator/loop.js", "packages/brain/src/lib/kernel-liveness.js"],
+      "depends_on": ["ws8"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws10",
+      "title": "Gate 10：Draft exact-head evidence-only workflow",
+      "scope": "用签名 task/PR receipt 做 P0 分类，把 built-image smoke、隔离 Worker candidate、CI、Evaluator、Judge 接入 required exact-head check；真实 GitHub API 回读 run/check-suite/head/actor/rules snapshot，合成模块返回不算 evidence；三者只产证据且 serving state 不变。",
+      "dod": ["[BEHAVIOR] ci→evaluator→judge 后 Draft=true、auto-merge off、merge/staging/production mutation=0", "[BEHAVIOR] required check 绑定 authenticated GitHub run/check-suite/actor/head 与签名 rules snapshot", "[BEHAVIOR] title/label/old-green/合成 evidence 不改变 P0 required check", "[BEHAVIOR] built image smoke 在四个发布消费点同脚本执行", "[BEHAVIOR] Worker/config admission 失败时 Brain candidate receipt=0"],
+      "files": [".github/workflows/ci.yml", ".github/workflows/kernel-fleet-p0-gate.yml", ".github/workflows/scripts/should-auto-merge.sh", "packages/brain/scripts/fleet-worker/fleet-rollout.sh", "scripts/ci/verify-brain-image-self-contained.sh", "scripts/kernel-fleet/run-p0-preapproval-e2e.sh", "scripts/kernel-fleet/verify-p0-workflow-contract.sh"],
+      "depends_on": ["ws9"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws11",
+      "title": "Gate 11：exact-head 人工授权与严格发布顺序",
+      "scope": "以 required exact-head check、签名 owner receipt、GHA run/check-suite/actor 与 repository-rule snapshot 统一 merge authority；branch protection/ruleset 对所有 actor 强制 stale/last-push approval，仅 controller 可授权 merge。",
+      "dod": ["[BEHAVIOR] CI-only/non-owner/stale-head/title/label/old-green/alternate actor 均保持 Draft且 merge=0", "[BEHAVIOR] evaluator 完成时 Draft=true、auto-merge off、staging/production=0", "[BEHAVIOR] ruleset rollout/admission/rollback snapshot 精确且 admin 无旁路"],
+      "files": [".github/workflows/kernel-fleet-p0-gate.yml", ".github/workflows/ci.yml", ".github/workflows/scripts/should-auto-merge.sh", "packages/brain/src/orchestrator/exact-head-owner-gate.js", "packages/brain/src/orchestrator/workflow-release-gate.js", "scripts/kernel-fleet/reconcile-p0-repository-rules.sh", "scripts/kernel-fleet/verify-p0-workflow-contract.sh"],
+      "depends_on": ["ws10"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws12",
+      "title": "Gate 12：merge 后 staging、production canary 与 rollback drain",
+      "scope": "authorized merge 后先 admit exact Worker，再 publish Brain、跑真实 US staging 与 production canary；部署 SSOT fail-closed 提供 remote/callback；pre-undrain 验新/legacy reverse cleanup；rollback image 先 attestation，不合格保持 drained。",
+      "dod": ["[BEHAVIOR] merge→worker admitted→Brain publish→staging→production 严格有序且唯一 Controller/replacement/heartbeat/resumed/dispatch 成功", "[BEHAVIOR] main-push/Fast Lane/schedule/skipped/idle/missing receipt/config 旁路全部在 semantic Attempt 前失败", "[BEHAVIOR] Mac cleanup gate 新/legacy/restart/RO/failure/concurrency 全过且 residual=0", "[BEHAVIOR] rollback diff=0；unattested image 不启动且 Kernel drained"],
+      "files": [".github/workflows/brain-ci-deploy.yml", ".github/workflows/auto-staging-deploy.yml", ".github/workflows/deploy.yml", ".github/workflows/kernel-fleet-p0-gate.yml", "docker-compose.yml", "docker-compose.staging.yml", "scripts/kernel-fleet/run-us-durable-recovery-canary.sh", "scripts/kernel-fleet/run-p0-postapproval-e2e.sh", "scripts/kernel-fleet/verify-p0-workflow-contract.sh", "packages/brain/DEFINITION.md", "packages/brain/package.json"],
+      "depends_on": ["ws11"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws13",
+      "title": "Gate 13：F1 S0-S12×11 lifecycle、1161+18+24 receipt exact-set 与 S12 硬终态收账",
+      "scope": "以 #4372 exact provenance 把既有 F1 rows 原位升级为唯一 S0-S12 manifest，驱动 DevOps Map、regression contract、runtime API/report 与 143 exact cells。以 canonical KH-F1-F01..F08 建 provider-neutral KernelPolicyGate：从 1161 legacy、18 family 与 24 CredentialEnvelope authenticated receipt bodies 派生 observed exact sets；activation required set 由 verifier 从 canonical manifest+具体 production entrypoint 独立生成，observed 只从 fire receipts 派生。每条 receipt 由 verifier 独立查询自己的 originating Attempt，S6/S7 与三 provider 不得塌成 proposer Attempt。S12 只在八类结构化 obligation receipts Green、四类 receipt IDs+receipt-set digest 与已验签 body 重算一致、所有 zero-gap counter 为 0 后收账。",
+      "dod": [
+        "[BEHAVIOR] migration 368+ 在 fresh/production-like 真 PG 原位升级且 rollback，F1 journey count 不增、migration 366 不动",
+        "[BEHAVIOR] 13 stages×11 canonical elements=143 exact cells，终态仅 pass 或独立 review 的 na_with_reason，pending/blocked/stale/expired/gray/null=0",
+        "[BEHAVIOR] 每 stage 有稳定 owner、input/output receipt、positive/violation/recovery oracle、freshness/death/failure/effect 与 legacy/unified IDs",
+        "[BEHAVIOR] 13 个 stable stage ID/name/order/promise 与 4dc3b69a 精确 parity，rename/merge/split/shift/insert 全失败",
+        "[BEHAVIOR] S0/S1→S2 Planner→S3 Contract GAN→S4 Generator/Draft output→S5-S12 严格有序，S6/S7 独立 non-mutating",
+        "[BEHAVIOR] canonical family counts 0,2,2,8,6,0,1,110 且 legacy total=129/P0=66/P1=63；legacyReceipts=1161、familyReceipts=18，required=receipt-derived observed 且 zero-gap counters=0",
+        "[BEHAVIOR] 每个 receipt 共享 current task/run/contract/head lineage但查询独立 origin Attempt/provider/session/machine/role/lease；wrong provider/session/cross-run/stale lease/nonexistent attempt 失败",
+        "[BEHAVIOR] root .claude/settings、packages/engine/.claude/settings、installer/symlink 与 provider-neutral dispatcher 的 canonical activation required set 等于 receipt-derived fire set；任一 hop mutation 失败",
+        "[BEHAVIOR] Claude/Codex/Grok CredentialEnvelope receipt bodies=24，normal+六 denial+fresh recovery exact-set，secret persistence=0",
+        "[BEHAVIOR] S12 obligation exact-set 恰为八类 production/rollback/report/external_status/legacy_equivalence/family_gap/provider_activation/credential_envelope；每项 missing/invalid/wrong identity/stale/non-Green 或聚合 body/digest/id 不匹配时 non-complete"
+      ],
+      "files": [
+        "packages/brain/config/kernel-harness-lifecycle-s0-s12.json",
+        "packages/brain/config/kernel-policy-applicability.json",
+        "packages/brain/migrations/368_kernel_harness_lifecycle_ssot.sql",
+        "packages/brain/src/lib/kernel-harness-lifecycle.js",
+        "packages/brain/src/orchestrator/kernel-harness-lifecycle.js",
+        "packages/brain/src/orchestrator/kernel-policy-gate.js",
+        "packages/brain/scripts/smoke/kernel-harness-lifecycle-smoke.sh",
+        "packages/brain/scripts/fleet-worker/provider-credential-envelope-proof.cjs",
+        "packages/brain/scripts/fleet-worker/credential-envelope-broker.cjs",
+        "packages/brain/scripts/fleet-worker/credential-envelope-consumer.cjs",
+        "packages/engine/runners/claude/runner.sh",
+        "packages/engine/runners/codex/runner.sh",
+        "packages/engine/runners/grok/runner.sh",
+        "packages/engine/hooks/bash-guard.sh",
+        "packages/engine/hooks/main-repo-write-guard.sh",
+        "packages/engine/hooks/stop.sh",
+        "packages/engine/install/install-kernel-policy-hooks.sh",
+        "packages/engine/config/kernel-policy-installed-targets.json",
+        "scripts/local-precheck.sh",
+        "packages/brain/src/staging-e2e-runner.js",
+        "scripts/promote-dashboard.sh",
+        "scripts/rollback-cecelia.sh",
+        "scripts/kernel-fleet/verify-lifecycle-s0-s12.sh",
+        "scripts/kernel-fleet/verify-lifecycle-terminal-accounting.sh",
+        "scripts/kernel-fleet/verify-lifecycle-legacy-equivalence.sh",
+        "scripts/kernel-fleet/verify-provider-policy-activation.sh",
+        "scripts/kernel-fleet/verify-provider-credential-envelope.sh",
+        ".claude/settings.json",
+        "packages/engine/.claude/settings.json",
+        "regression-contract.yaml"
+      ],
+      "depends_on": ["ws12"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    }
+  ]
+}
