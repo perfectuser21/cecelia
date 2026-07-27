@@ -30,6 +30,7 @@ run_installer() {
     FLEET_WORKER_INSTALL_DIR="$install_dir" \
     FLEET_WORKER_LOG_DIR="$log_dir" \
     FLEET_WORKER_LAUNCHCTL="$test_root/launchctl" \
+    FLEET_WORKER_PLUTIL="$test_root/plutil" \
     FLEET_WORKER_NODE_PROBE="$test_root/node-probe" \
     FLEET_WORKER_READLINK="$test_root/readlink" \
     FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
@@ -49,6 +50,7 @@ run_installer_with_id() {
     FLEET_WORKER_INSTALL_DIR="$install_dir" \
     FLEET_WORKER_LOG_DIR="$log_dir" \
     FLEET_WORKER_LAUNCHCTL="$test_root/launchctl" \
+    FLEET_WORKER_PLUTIL="$test_root/plutil" \
     FLEET_WORKER_NODE_PROBE="$test_root/node-probe" \
     FLEET_WORKER_READLINK="$test_root/readlink" \
     FLEET_WORKER_ACL_LIST="$test_root/acl-list" \
@@ -66,6 +68,12 @@ printf '%s\n' \
   'printf "%s\\n" "$*" >> "${FLEET_WORKER_LAUNCH_LOG:?}"' \
   'exit 0' > "$test_root/launchctl"
 chmod +x "$test_root/launchctl"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  '[[ "$1" == "-lint" && -f "$2" ]]' > "$test_root/plutil"
+chmod +x "$test_root/plutil"
+
 export FLEET_WORKER_LAUNCH_LOG="$launch_log"
 export FLEET_WORKER_LAUNCH_STATE="$launch_state"
 export FLEET_WORKER_ACL_LOG="$acl_log"
