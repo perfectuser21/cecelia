@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 19)
+# Sprint Contract Draft (Round 20)
 
 ## 合同边界
 
@@ -9,7 +9,7 @@
 
 ## Response Schema（推导来源: PRD字面 + api_registry对齐）
 
-补充说明：`/api/brain/registry` 当前可读但照相层已陈旧（最近扫描时间 2026-07-18，截至 2026-07-27 已过去约 213 小时），且未发现可直接复用的 Kernel approvals endpoint 定义，因此本 sprint 的 approve/reject response schema 以 PRD 字面约束为准，并仅对齐现有 snake_case 风格。
+补充说明：`/api/brain/registry` 当前返回 `{items:[...]}`，最近扫描时间为 2026-07-18；截至 2026-07-27 已过期约 9 天，且未发现可直接复用的 Kernel approvals endpoint 定义，因此本 sprint 的 approve/reject response schema 以 PRD 字面约束为准，并仅对齐现有 snake_case 风格。
 
 ### Endpoint: POST /api/brain/harness/kernel-reviews/:runId/approve
 **Success (HTTP 202)**:
@@ -67,9 +67,9 @@ N/A — 任务无新增公开 HTTP 响应；对外可观测契约是 `orchestrat
 
 ## 当前红证据（2026-07-27）
 
-- `node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts --reporter=verbose` 于 2026-07-27 本地实跑红：`.github/workflows/scripts/should-auto-merge.sh` 仍输出 `SKIP: harness-owned PR...` 而非 `FAIL_CLOSED`；`createKernelHandlers(...).merge_pr` 实际命令仍是 `gh pr merge ... --squash --delete-branch` 且缺 `--match-head-commit`；`finalizeHarnessTask` 仍在 `review_required=true` 且缺当前 SHA `human_review` 时返回 `allow:true`；`packages/brain/src/harness-ci-gate.js` 尚未导出 server-owned `resolveKernelMergeAuthority`。
-- `packages/brain/src/routes/harness-kernel-approvals.js` 当前快照只要求 `task_id/pr_head_sha/review_request_hop`，缺 `pr_head_sha` 虽会 400，但尚未把 `repo/pr_number` 纳入原子校验，也没有把 `task_id` 与 `repo/pr_number/current head` 做全量比对；成功响应与落账 detail 仍使用 `approved_at/rejected_at`，未满足 PRD 要求的 `source/timestamp/repo/pr_number` 证据链。
-- 同一轮红测还命中了 `ECONNREFUSED 127.0.0.1:5432`；这说明合同红测已真实依赖 Postgres 接缝，符合“禁 mock 被改的边”，但执行 green 与 final-e2e 前必须起真 PG。
+- `node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts --reporter=verbose` 于 2026-07-27 实跑红：`.github/workflows/scripts/should-auto-merge.sh` 仍输出 `SKIP: harness-owned PR...` 而非 `FAIL_CLOSED`；`createKernelHandlers(...).merge_pr` 仍发 `gh pr merge ... --squash --delete-branch` 且缺 `--match-head-commit <head_sha>`；`finalizeHarnessTask` 在 `review_required=true` 且缺当前 SHA `human_review` 时仍返回 `allow:true`；`packages/brain/src/harness-ci-gate.js` 尚未导出 server-owned `resolveKernelMergeAuthority`。
+- 同一轮红测还命中了 `connect ECONNREFUSED 127.0.0.1:5432`；这说明 approve/reject 合同红测已经真实触达 Postgres 接缝，没有通过 mock 邻边造假，但 generator 转绿与 final-e2e 之前必须起真 PG。
+- `packages/brain/src/routes/harness-kernel-approvals.js` 当前快照仍只强校验 `task_id/pr_head_sha/review_request_hop`，没有把 `repo/pr_number` 纳入 run/task/current-head 的原子校验；成功响应与落账 detail 仍使用 `approved_at/rejected_at`，未满足 PRD 要求的 `source/timestamp/repo/pr_number/run_id` 证据链。
 
 ## 真实调用方请求 shape
 
