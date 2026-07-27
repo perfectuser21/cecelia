@@ -65,6 +65,7 @@ function inMemoryStateStore(initial = []) {
 
 function dependencies(overrides = {}) {
   const events = [];
+  const pendingWait = new Promise(() => {});
   const workspace = {
     path: '/controlled/worktrees/22222222-2222-4222-8222-222222222222',
     mirror_path: '/controlled/mirrors/perfectuser21__cecelia.git',
@@ -101,6 +102,7 @@ function dependencies(overrides = {}) {
       events.push('docker.remove');
       return { removed: true };
     }),
+    wait: vi.fn(async () => pendingWait),
     listOwned: vi.fn(async () => []),
   };
   return {
@@ -198,7 +200,32 @@ describe('Fleet Worker Attempt runner', () => {
       'docker.remove',
       'workspace.cleanup',
     ]);
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+    });
     expect(deps.stateStore.delete).toHaveBeenCalledWith(ATTEMPT_ID);
+  });
+
+  it('automatically performs terminal cleanup after the owned container exits', async () => {
+    let resolveExit;
+    const containerExit = new Promise((resolve) => {
+      resolveExit = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.wait.mockReturnValueOnce(containerExit);
+    const runner = createRunner(deps);
+
+    await runner.launch(request());
+    resolveExit({ statusCode: 0 });
+
+    await vi.waitFor(() => {
+      expect(deps.stateStore.delete).toHaveBeenCalledWith(ATTEMPT_ID);
+    });
+    expect(deps.events.slice(-2)).toEqual([
+      'docker.remove',
+      'workspace.cleanup',
+    ]);
   });
 
   it('quarantines the workspace and retains evidence when container cleanup fails', async () => {
@@ -285,6 +312,7 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalledWith(foreignAttempt.workspace);
     expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'unrecorded-owned-container',
+      attemptId: '55555555-5555-4555-8555-555555555555',
     });
     expect(deps.docker.remove).not.toHaveBeenCalledWith({
       containerId: 'unrecorded-foreign-container',
@@ -350,6 +378,15 @@ describe('Fleet Worker durable runtime adapters', () => {
         ['start', 'cecelia-fleet-22222222-2222-4222-8222-222222222222'],
         undefined,
       ]);
+      const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
+      expect(fs.existsSync(attemptRuntime)).toBe(true);
+
+      await docker.remove({
+        containerId: 'container-created',
+        attemptId: ATTEMPT_ID,
+      });
+
+      expect(fs.existsSync(attemptRuntime)).toBe(false);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
