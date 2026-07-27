@@ -1,131 +1,173 @@
-contract_branch: cp-harness-propose-r4-ed561be4-a4
-sprint_dir: sprints/07251915-kernel-ed561be4
+contract_branch: cp-harness-propose-r6-51836fb2-a17
+sprint_dir: sprints/07271239-kernel-harness-11-elements-baseline
 
 ---
 skeleton: false
-journey_type: autonomous
+journey_type: dev_pipeline
 target_environment: local_api
 ---
-# Contract DoD — Kernel capability gate：派发前能力预检
+# Contract DoD — Sprint: Cecelia Harness Pipeline F1 账本归位与等价基线
 
-**范围**: dispatcher 派发前 preflight、ExecutionTarget 路由矩阵、server-owned capability snapshot、故障分类、canonical machine identity、结构化 evidence 与回归测试。
+**范围**: 现有 F1 Journey 原位 S0-S12 × 11 要素、legacy P0/P1 基线与唯一根回归引用；不改变 merge/staging/production 运行时。
 **大小**: L
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] preflight / capability-gate / canonical-machine 模块与 dispatcher 最小接线已落到 `packages/brain/src/orchestrator/`
-  Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/orchestrator/preflight/capability-gate.js','packages/brain/src/orchestrator/preflight/execution-targets.js','packages/brain/src/orchestrator/preflight/canonical-machine-id.js']){if(!fs.existsSync(p))throw new Error('missing '+p)};const d=fs.readFileSync('packages/brain/src/orchestrator/dispatcher.js','utf8');if(!/preflight|capabilityGate|capability_snapshot_id/.test(d))throw new Error('dispatcher missing preflight wiring')"
+- [ ] [ARTIFACT] 幂等 migration 365 存在，且只扩展既有 Journey/Step/Cell 模型
+  Test: node -e "const fs=require('fs');const p='packages/brain/migrations/365_kernel_harness_f1_baseline.sql';const s=fs.readFileSync(p,'utf8');for(const x of ['bb8cc561-b3ee-4fec-b74d-2255694bd963','lifecycle_stage','is_backbone','mapping_status','mapping_reason','mapping_evidence','journey_step_links','Invariant','输入对抗面','reason_code','source_refs','missing_evidence',\"'na'\"])if(!s.includes(x))process.exit(1);for(const x of ['CREATE TABLE kernel_steps','CREATE TABLE behavior_ledger','Kernel Harness Delivery'])if(s.includes(x))process.exit(1)"
 
-- [x] [ARTIFACT] 稳定 capability parsing/routing/evidence 导出存在，且 Commander/telemetry/跨 run inheritance 保持非实现边界
-  Test: bash -c 'node -e "import(\"./packages/brain/src/orchestrator/preflight/capability-gate.js\").then(m=>{for(const n of [\"parseCapabilityRequirements\",\"buildCapabilityEvidence\",\"createCapabilityGate\"]){if(typeof m[n]!==\"function\")throw new Error(\"missing export \"+n)}})" && node -e "import(\"./packages/brain/src/orchestrator/preflight/execution-targets.js\").then(m=>{if(typeof m.resolveExecutionTarget!==\"function\")throw new Error(\"missing resolveExecutionTarget\")})" && CHANGED=$(git diff --name-only origin/main...HEAD) && if printf "%s\n" "$CHANGED" | grep -Eq "packages/brain/src/.*/(commander|telemetry|contract-store)|packages/brain/src/(commander|telemetry)"; then echo "FAIL: scope crossed Commander/telemetry/contract inheritance boundary"; exit 1; fi'
+- [ ] [ARTIFACT] 真 PostgreSQL integration 与 smoke 均已入册
+  Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/integration/migration-365-kernel-harness-f1-baseline.integration.test.js','packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh']){const s=fs.readFileSync(p,'utf8');if(!/HARNESS_TEST_DATABASE_URL|DATABASE_URL/.test(s))process.exit(1)}"
 
-- [x] [ARTIFACT] Brain 版本账本同步
-  Test: bash scripts/check-version-sync.sh
+- [ ] [ARTIFACT] 根 regression-contract.yaml 登记 F1 逐项权威映射，engine 合同只作 legacy source
+  Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');for(const x of ['kernel_harness_f1_baseline:','cells:','reason_code:','missing_evidence:','evidence_requirement:','required_families:','family_id:','legacy_owner:','unified_owner:','wiring_refs:','wiring_id:','legacy_behavior_id:','required_family_id:','wiring_ref_ids:','selection_basis:','journey_stage:','element:','source_refs:','assertion_ref:','status_evidence:'])if(!root.includes(x))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
+
+- [ ] [ARTIFACT] Brain 源码改动同步版本与 DEFINITION.md
+  Test: node -e "const fs=require('fs');const d=fs.readFileSync('packages/brain/DEFINITION.md','utf8');const p=JSON.parse(fs.readFileSync('packages/brain/package.json','utf8'));if(!d.includes(p.version))process.exit(1)"
 
 ## BEHAVIOR 条目
 
-- [x] [BEHAVIOR] [L2] dispatcher 真实调用 preflight 后才创建合法 UUID attempt 并写完整 evidence
-  动作: 以合法裸 UUID 的 task/run/attempt 运行真实 gate↔dispatcher 接缝。
-  预期观察: preflight 严格先于 createAttempt/adapter/launch；attempt bundle 含 capability_snapshot_id 与五字段 evidence。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts -t "dispatcher 真实调用 preflight 后才创建合法 UUID attempt 并写完整 evidence"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] B1 Golden Path Step 1 只识别原 Cecelia Harness Pipeline
+  动作: 在隔离 PostgreSQL 中以六个真实历史 ID 建 fixture，执行 migration 两次并查询同域 Journey。
+  预期观察: within 180s 仅返回固定 Journey ID；`Kernel Harness Delivery` 与平行账本表均为 0。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh unique-journey'
 
-- [x] [BEHAVIOR] [L2] capability parsing routing evidence 是 Commander 可消费的稳定导出且不依赖 Commander
-  动作: 直接 import 三个纯函数接口并用 task bundle 调用 parsing/routing/evidence。
-  预期观察: 接口保持 role/phase/logical_cycle/task bundle，结果无 CommanderDirective/Actor Inbox 字段。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "capability parsing routing evidence 是 Commander 可消费的稳定导出且不依赖 Commander"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] B2 Golden Path Step 2 保留历史并补齐 S0-S12
+  动作: 在同一未重置事务中连续应用两轮 baseline，再经真 PostgreSQL 与真实 Brain GET 读取 backbone 与 history alias。
+  预期观察: within 180s 六个历史 ID/Notion 关联不变，S0-S12 各一个 backbone，13 组稳定名称/promise 逐字匹配；四个复用行 `mapping_status=exact`；Reviewer/Final E2E 为非 backbone 且 `mapping_status=gap`，原因码均为 `co_stage_historical_alias`，证据分别指向 GAN Proposer/Evaluator backbone；真库与 Brain GET 逐字段一致，第二轮无新增。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh history-and-backbone'
 
-- [x] [BEHAVIOR] [L2] capability snapshot 包含 provider auth GitHub PostgreSQL 外部模型能力与 canonical machine_id
-  动作: 调用真实 capability gate，用注入 probe 生成 server-owned snapshot。
-  预期观察: snapshot 包含能力、canonical machine、logical_cycle、created_at/expires_at 与唯一 snapshot id。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "capability snapshot 包含 provider auth GitHub PostgreSQL 外部模型能力与 canonical machine_id"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] B3 Golden Path Step 3 每个 backbone Step 恰有精确 11 个 element cells
+  动作: 查询真 PostgreSQL 与根合同 cell manifest，并逐项比对精确键 `FR/NFR/Invariant/判定点/保质期/死亡告警/失败语义/效果确认/输入对抗面/账本保鲜/两轴衔接`。
+  预期观察: within 180s manifest、DB、派生报告各 143 格且 1:1；每步 11 格；同义键为 0；状态仅 `gray|red|pending|green|na`。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
-- [x] [BEHAVIOR] [L2] capacity cache 可用但宿主真实 credential probe 失败时 fail-safe
-  动作: 让容量缓存返回 available=9，同时让宿主 provider credential probe 返回 credential_missing。
-  预期观察: 真实 probe 覆盖缓存乐观值，返回 infrastructure_blocked/credential_probe_mismatch 且不创建 attempt。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "capacity cache 可用但宿主真实 credential probe 失败时 fail-safe"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] B4 Golden Path Step 3 的 143 格状态依据逐格唯一命中五态事实门槛
+  动作: 对每个 `step_id+element` 读取 `cell_status/reason_code/source_refs/missing_evidence/assertion_ref/evidence_envelope`，运行互斥五态分类器；green 真跑 current-SHA assertion，gray 真跑 current-SHA 非空范围 inventory scan，red/pending/na 分别验证缺口、缺证据或不适用事实。
+  预期观察: within 180s 每格 `matched_status_rules` 恰为自身状态；13 个 FR 均有定义且非 gray；gray<143；false-green、unsupported-red/pending/na、unclassified、ambiguous 均为 0。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
-- [x] [BEHAVIOR] [L2] ExecutionTarget 完整矩阵逐项放行且未列组合 fail-closed
-  动作: 表驱动逐项运行 Codex team1..team5×三机、Claude account1/account2×USM4、Grok grok×USM4 及反例。
-  预期观察: 恰好 18 个组合通过；CM1/CM4 Claude/Grok、team6、Docker hostname 等未列组合全部拒绝。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "ExecutionTarget 完整矩阵逐项放行且未列组合 fail-closed"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] B5 Golden Path Step 4 P0/P1 筛选与五态证据逐项机检
+  动作: 真解析 engine 结构化 priority，并枚举 hooks、DevGate/CI、Kernel/GitHub/release gates；先锁定批准设计稿八个 required family，再逐族真跑当前 SHA wiring probe；同时对 engine selected 项真跑 probe 后分类。
+  预期观察: within 180s `KH-F1-F01..F08` 精确齐全，族级 legacy/unified owner 逐字匹配、gap 非空、顺序 `1..8`，每族 wiring probe exit 0；每个 engine behavior 归属一族并精确继承 owner，gap 非空、wiring_ref_ids 有效，next_knife_order 唯一连续 `1..mapped_behavior_count`；candidate_source=included+excluded、selected_seed=mapped_behavior、unmapped/duplicate=0；auto 可判项 unknown=0，非 unknown 至少一项。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh legacy-baseline'
 
-- [x] [BEHAVIOR] [L2] team4 transient 恢复与跨机跨厂商降级保持确定性
-  动作: 触发 team4 503 重试耗尽，并分别运行 CM1/CM4 禁 Claude/Grok、USM4 Claude/Grok、Codex 跨机 fresh recovery。
-  预期观察: team4 仅重试一次后切 team1；CM1/CM4 禁跨厂商；USM4 三个降级目标可用；跨机从 Git/PR/DB fresh 恢复且不 resume session。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "team4 503 后同 cycle 最多重试一次且切换同 provider 健康账号 team1|CM1 CM4 禁 Claude Grok 且 USM4 Claude Grok 可确定性降级|Codex 跨机 fresh recovery 保持 task bundle 并从 Git PR DB 真相恢复"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] B6 Golden Path Step 5 非空 assertion_ref 全部可追到唯一根合同或真实测试
+  动作: 对 F1 cells 与根 baseline behaviors 的 assertion_ref 逐条解析唯一根 regression entry，并检查 test_command 目标真实存在。
+  预期观察: within 180s 悬空/重复/静态文档引用均为 0；source_ref 与 assertion_ref 分工明确；engine YAML 未成为第二 SSOT。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh assertion-refs'
 
-- [x] [BEHAVIOR] [L2] 同 failure signature 同 logical_cycle 跨调用首次最多恢复一次后直接熔断轮换
-  动作: 在同一 gate 上以相同 logical_cycle 和 http_503 signature 连续调用两次。
-  预期观察: 首次最多重试 team4 一次；后续调用不再 probe team4，直接以 logical_cycle_retry_exhausted 熔断并轮换 team1。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "同 failure signature 同 logical_cycle 跨调用首次最多恢复一次后直接熔断轮换"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] B7 Golden Path Step 6 真实 Brain endpoint 显示 merge 不等于 completed
+  动作: 用隔离数据库启动真实 Brain 到独立端口，curl 固定 Journey，并用 jq 检查 endpoint。
+  预期观察: within 180s HTTP 200，endpoint 同时表达 production verified、rollback anchor、report/learning。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh endpoint-semantics'
 
-- [x] [BEHAVIOR] [L2] 五个 Codex 账号全失败时 dispatcher 不建 attempt 并转人审告警
-  动作: 通过真实 gate↔dispatcher 依次让 team1..team5 probe 全失败。
-  预期观察: 不创建 attempt、不 launch、不进 generator-fix；返回 wait:human_review/infrastructure_blocked，发带五字段 evidence 的结构化告警。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts -t "五个 Codex 账号全失败时 dispatcher 不建 attempt 并转人审告警"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] B8 Golden Path Step 7 既有 merge staging production 行为零回退
+  动作: 执行 baseline smoke 与现有 completion/finalize/staging 回归，比较 migration 前后运行时表 fingerprint。
+  预期观察: within 240s 运行时表 fingerprint 相同、既有回归 exit 0、派生报告声明 authoritative=false。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 240 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh runtime-nonregression'
 
-- [x] [BEHAVIOR] [L2] provider auth GitHub PostgreSQL 外部模型任一 required capability 缺失均阻断 attempt
-  动作: 表驱动逐项让 provider auth、GitHub、PostgreSQL、structured_output probe 缺失，其余 probe 保持健康。
-  预期观察: 每一项都返回 infrastructure_blocked/contract_capability_mismatch，createAttempt 与 launch 始终为 0。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts -t "provider auth GitHub PostgreSQL 外部模型任一 required capability 缺失均阻断 attempt"'
-  期望: exit 0
+## 铁律逐条映射
 
-- [x] [BEHAVIOR] [L2] 能力匹配后的 product failure 仍进入 generator-fix
-  动作: 传入 capability_matched=true 与测试断言失败的结构化执行结果。
-  预期观察: 分类为 product_failure，action=generator-fix，不能误分为 infrastructure_blocked。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "能力匹配后的 product failure 仍进入 generator-fix"'
-  期望: exit 0
+- INV-01 超时恢复 — N/A：本 sprint 不改 relay watchdog/orphan requeue。
+- INV-02 语义成功 — N/A：不新增通知/写库成功回执接口；DB 断言直接核对持久化事实。
+- INV-03 依赖修复 — N/A：不修改依赖或 advisory 白名单。
+- INV-04 会话心跳 — N/A：不改 headed relay/CI 等待。
+- INV-05 毕业检查 — N/A：由现有 DevGate 流程执行，不属于 F1 baseline 运行时产物。
+- INV-06 手工证据 — N/A：GAN 阶段只交合同模板；evaluator 执行时由 behavior_tests 记录真实 exit code。
+- INV-07 真跑脚本 — N/A：本合同不使用 `manual:node -e` 作为 BEHAVIOR oracle。
+- INV-08 冒烟一 — N/A：decision 6041333c 未指向本单模块；本单另有真库 smoke。
+- INV-09 冒烟二 — N/A：decision a3989e96 未指向本单模块；本单另有真库 smoke。
+- INV-10 多轮测试 — 映射到 B2：同一未重置事务中连续应用两轮，验证真实多轮幂等。
+- INV-11 付费去重 — N/A：不引入第三方或付费调用。
+- INV-12 时间关系 — N/A：不新增跨模块时间常数。
+- INV-13 环境剧场 — 映射到 B1-B8：合同与 task payload 均为 `local_api`，真实服务为 Brain + PostgreSQL。
+- INV-14 环境真相 — 映射到 B1-B8：`target_environment=local_api` 已写入 task-plan 与 DoD frontmatter。
+- INV-15 判决格式 — N/A：不修改 Brain judge 输出协议。
+- INV-16 字段长度 — 映射到 ARTIFACT migration：新增 stage/status 使用 CHECK 枚举，reason/source/missing evidence 使用 TEXT/JSONB，不截断写入受限短列。
+- INV-17 退役溯源 — N/A：不复活已退役功能；只按当前 legacy source 分类。
+- INV-18 失败分支 — 映射到 B4-B6：审计缺失/无效返回必须非零或 fail-closed，不能靠 try/catch 吞错。
+- INV-19 冒烟三 — N/A：decision 33ede9f1 未指向本单模块；本单另有真库 smoke。
+- INV-20 收账探针 — N/A：本刀只建基线，不实现 report freshness patrol。
 
-- [x] [BEHAVIOR] [L2] canonical machine 仅接受 env 或受控 Fleet 且忽略 Docker hostname
-  动作: 直接运行 canonical resolver 的 env、Fleet、缺失、未知、Docker hostname 五组输入。
-  预期观察: 只返回三台 canonical id；缺失/未知/Docker hostname 均 fail-closed。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "canonical machine 仅接受 env 或受控 Fleet 且忽略 Docker hostname"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] INV-21 完成核验要求外部产出而非容器 exit 0
+  动作: 执行 Golden Path Step 6 的真实 Brain GET 和 Step 7 的审计/回归校验。
+  预期观察: within 240s 只有 endpoint、rollback/report 证据和全部真实断言通过才 exit 0。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 240 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh runtime-nonregression'
 
-- [x] [BEHAVIOR] [L2] preflight probe 有界 timeout 且过期 snapshot 竞态不得放行
-  动作: 让 GitHub probe 永不 resolve，并在 snapshot 生成后推进 server clock 越过 expires_at；另在 dispatcher createAttempt 前制造过期竞态。
-  预期观察: 250ms 内返回 preflight_timeout；过期 snapshot 返回 capability_snapshot_expired 且 createAttempt/launch 都为 0。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "preflight probe 有界 timeout 且过期 snapshot 竞态不得放行" && npx vitest run sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts -t "过期 snapshot 在 createAttempt 前被竞态闸拒绝"'
-  期望: exit 0
+- INV-22 场景核对 — N/A：不增加 host 白名单或 headed 人工接管场景。
+- INV-23 点火锚点 — N/A：不改 headed relay 点火。
 
-- [x] [BEHAVIOR] [L2] 结构化 evidence 脱敏凭据并保留路由审计字段
-  动作: 构造含 authorization/token/password/cookie 的 probe detail，调用真实 evidence builder。
-  预期观察: 凭据原文全部消失并替换为 [REDACTED]；五个路由/分类审计字段保持。
-  Test: manual:bash -c 'npx vitest run sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts -t "结构化 evidence 脱敏凭据并保留路由审计字段"'
-  期望: exit 0
+- [ ] [BEHAVIOR] [L2] INV-24 退役事实来自真实 legacy source
+  动作: 真读 engine 合同、根合同和测试路径生成 Step 4 基线，不使用记忆或硬编码乐观状态。
+  预期观察: within 180s 无证据条目为 unknown/drifted，不会被默认归为 retired/active。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh legacy-baseline'
 
-## E2E 验收
+- INV-25 吞错告警 — N/A：不新增后台常驻任务；审计 CLI 失败直接非零。
 
-```bash
-#!/bin/bash
-set -euo pipefail
+- [ ] [BEHAVIOR] [L2] INV-26 复用共享表前核对全部写入方且不建同义表
+  动作: 运行唯一 Journey/禁表断言，并执行 journeys 现有 route/integration 回归。
+  预期观察: within 180s 只复用 journeys/journey_steps/journey_step_links，平行表计数为 0。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh unique-journey'
 
-cd /workspace
+- INV-27 消费闭环 — N/A：不新增后台任务。
+- INV-28 多端完整 — N/A：真实运行环境单一为 local_api，不涉及设备/OS 分支。
 
-HARNESS_TASK_ID="${HARNESS_TASK_ID:-ed561be4-940a-4c26-844c-e3c5a5a3f7c8}"
-TASK_JSON=$(curl -fsS --max-time 10 "http://localhost:5221/api/brain/tasks/$HARNESS_TASK_ID")
-echo "$TASK_JSON" | jq -e --arg id "$HARNESS_TASK_ID" '
-  (.id // .task.id) == $id
-  and ((.title // .task.title) | contains("Kernel capability gate"))
-  and ((.payload.sprint_dir // .task.payload.sprint_dir) == "sprints/07251915-kernel-ed561be4")
-' >/dev/null
+- [ ] [BEHAVIOR] [L2] INV-29 精确 11 键与 cell 状态判定在落库和终验采用同一策略
+  动作: 让根合同 manifest、ledger classifier、DB CHECK 与 smoke 对同一 143 cells 执行精确键和互斥五态校验。
+  预期观察: within 180s 四处逐格一致，只接受精确 11 键与 `gray|red|pending|green|na`，无同义键或状态漂移。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
-npx vitest run \
-  sprints/07251915-kernel-ed561be4/tests/preflight-capability-gate.contract.test.ts \
-  sprints/07251915-kernel-ed561be4/tests/dispatcher-preflight-wiring.contract.test.ts \
-  packages/brain/src/orchestrator/__tests__/dispatcher.test.js \
-  packages/brain/src/orchestrator/__tests__/derive.test.js \
-  packages/brain/src/__tests__/dispatcher-preflight-three-strikes.test.js \
-  packages/brain/src/__tests__/executor-codex-review-preflight.test.js \
-  packages/brain/src/__tests__/fleet-heartbeat.test.js
+- INV-30 引用验证 — N/A：本 sprint 不消费动态 git ref；证据 SHA 来自已解析的当前 commit，不接受用户传入 ref。
 
-bash scripts/check-version-sync.sh
-```
+- [ ] [BEHAVIOR] [L2] INV-31 真 worktree 测试必须隔离生产资源
+  动作: 在任何写入前查询 `current_database()` 并执行 `_test|preview_` guard。
+  预期观察: within 10s 非隔离库立即非零且零写入；隔离库才继续 baseline。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; DB=$(psql -X -qAt "$HARNESS_TEST_DATABASE_URL" -c "SELECT current_database()"); case "$DB" in *_test|preview_*) exit 0;; *) echo "FAIL: non-isolated db=$DB"; exit 1;; esac'
+
+- INV-32 部署失败 — N/A：不修改部署链；smoke 自身所有失败非零。
+- INV-33 生产自报 — N/A：不做生产部署判变。
+- INV-34 测试异步 — 映射到 Test Contract：所有真 DB/API 测试 await 被测异步函数和查询。
+- INV-35 合同表格 — 映射到 contract-draft.md：Test Contract 固定四列且 testFile 使用反引号。
+- INV-36 红测提交 — N/A：属于 Generator 提交流程；task-plan 要求 TDD Red→Green，controller/DevGate 执法。
+- INV-37 调度验证 — N/A：不改调度；本合同的 DB/API 接缝均真验。
+- INV-38 定时入口 — N/A：不新增 cron。
+- INV-39 合并权限 — N/A：Generator 只交 PR，controller 持有 merge 权。
+- INV-40 环境继承 — N/A：不改 headed relay/tmux。
+- INV-41 先例核对 — 映射到 contract-draft.md 已知约束：已核对 migration 349/350、journeys route 与当前真实派发环境。
+- INV-42 共享禁区 — N/A：task-plan 未授权修改共享 CI 判定文件。
+- INV-43 合并漂移 — N/A：不改 CI/merge gate。
+- INV-44 冒烟四 — N/A：decision 552520d0 未指向本单模块；本单另有真库 smoke。
+
+- [ ] [BEHAVIOR] [L2] INV-45 Brain 源码改动同时提供 smoke 与现有门禁登记
+  动作: 执行 F1 baseline smoke，并从根 regression contract 运行对应 KH-F1 条目。
+  预期观察: within 240s smoke exit 0，根合同存在可运行 test_command，Brain 版本/DEFINITION 同步。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 240 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh runtime-nonregression'
+
+- INV-46 任务接线 — N/A：不新增 task_type。
+- INV-47 存活双信 — N/A：不新增服务存活判定。
+- INV-48 常驻域 — N/A：不新增 LaunchDaemon。
+- INV-49 巡检登记 — N/A：不新增宿主服务。
+- INV-50 冒烟五 — N/A：decision 4b73376c 未指向本单模块；本单另有真库 smoke。
+- INV-51 单槽串行 — N/A：由 Harness controller 执法；task-plan 仅 ws1。
+
+- [ ] [BEHAVIOR] [L2] INV-52 数据库与 Brain 端口必须从环境推导
+  动作: smoke 从 `HARNESS_TEST_DATABASE_URL` 读取数据库，并动态选择独立 Brain 端口，禁止写死生产连接。
+  预期观察: within 180s 缺变量或目标非测试库立即失败；合法环境完成真实查询。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh unique-journey'
+
+- [ ] [BEHAVIOR] [L2] INV-53 接缝仅在真实 local_api 目标验过后才可 done
+  动作: 在隔离真 PostgreSQL应用 migration，并启动真实 Brain 运行 Step 1-7。
+  预期观察: within 240s 真 DB/API 全过才 exit 0；否则保持 logic-done-pending。
+  验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 240 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh runtime-nonregression'
+
+- INV-54 租户测试 — N/A：F1 承诺地图为全局工厂元数据，不读取或写入租户业务数据。
+- INV-55 凭据安全 — N/A：不新增凭据处理；所有连接串只来自环境且 smoke 不打印。
+- INV-56 日志脱敏 — N/A：baseline 不读取客户 PII/聊天内容，审计输出只含合同元数据与路径。
+- INV-57 端点鉴权 — N/A：不新增 endpoint；只读复用现有内部 journeys 路由，鉴权改造超出本刀范围。
+- INV-58 租户隔离 — N/A：本单不涉及租户数据查询/写入。
+
+## BEHAVIOR:E2E 条目
+
+- [ ] [BEHAVIOR:E2E] local_api evaluator 在隔离 PostgreSQL + 真实 Brain 上走完七步
+  期望: `.brain-result` 记录每条 behavior 的真实 exit_code/log_tail；七步全过后才 PASS。
