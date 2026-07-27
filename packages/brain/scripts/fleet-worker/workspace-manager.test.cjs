@@ -122,6 +122,8 @@ describe('Fleet Worker workspace manager', () => {
     expect(git(['rev-parse', '--absolute-git-dir'], second.path)).toContain(
       second.admin_path,
     );
+    expect(git(['remote', 'get-url', 'origin'], first.path)).toBe(fixture.remote);
+    expect(git(['remote', 'get-url', 'origin'], second.path)).toBe(fixture.remote);
     expect(first.owner).toEqual({
       run_id: RUN_ID,
       attempt_id: ATTEMPT_A,
