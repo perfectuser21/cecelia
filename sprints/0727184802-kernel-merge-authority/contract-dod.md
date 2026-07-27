@@ -10,8 +10,8 @@ target_environment: local_api
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 合同红测文件覆盖真实 PostgreSQL approve/reject 接缝、merge gate、lock-head、CI fail-closed
-  Test: node -e "const fs=require('fs');const p='sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts';const c=fs.readFileSync(p,'utf8');for(const s of ['createIsolatedDatabase','approve route 缺少 repo 或 pr_number','reject route stale SHA','review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并','--match-head-commit','resolveKernelMergeAuthority']){if(!c.includes(s))throw new Error('missing '+s)}"
+- [ ] [ARTIFACT] 合同红测文件覆盖真实 PostgreSQL approve/reject 接缝、缺 SHA、task/run/PR 失配、merge gate、lock-head、CI fail-closed
+  Test: node -e "const fs=require('fs');const p='sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts';const c=fs.readFileSync(p,'utf8');for(const s of ['createIsolatedDatabase','approve route 缺少 repo 或 pr_number','approve route 缺少 pr_head_sha','approve route stale SHA 或 task/run/PR 不匹配','reject route 缺少 pr_head_sha','reject route stale SHA 或 task/run/PR 不匹配','review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并','--match-head-commit','resolveKernelMergeAuthority']){if(!c.includes(s))throw new Error('missing '+s)}"
 
 - [ ] [ARTIFACT] 合同草案声明真实调用方 shape、禁 mock 边、未覆盖真实链路清单
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/0727184802-kernel-merge-authority/contract-draft.md','utf8');for(const s of ['## 真实调用方请求 shape','## 禁 mock 边清单','## 未覆盖真实链路清单']){if(!c.includes(s))throw new Error('missing '+s)}"
@@ -28,6 +28,18 @@ target_environment: local_api
   动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/reject` 发送缺少 `repo/pr_number` 的 authenticated 请求。
   预期观察: 返回 400，`orchestrator_decision_log` 不新增 `verdict:human_review`。
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] approve route 缺少 pr_head_sha 时拒绝且不写 human_review verdict
+  动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/approve` 发送缺少 `pr_head_sha` 的 authenticated 请求。
+  预期观察: 返回 400，`orchestrator_decision_log` 不新增 `verdict:human_review`。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route 缺少 pr_head_sha 时拒绝且不写 human_review verdict"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] reject route 缺少 pr_head_sha 时拒绝且不写 human_review verdict
+  动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/reject` 发送缺少 `pr_head_sha` 的 authenticated 请求。
+  预期观察: 返回 400，`orchestrator_decision_log` 不新增 `verdict:human_review`。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route 缺少 pr_head_sha 时拒绝且不写 human_review verdict"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail
@@ -54,16 +66,16 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class rejected_by timestamp source"'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] approve route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict
-  动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/approve` 先发送过期 `pr_head_sha`，再发送 `repo/pr_number` 不匹配的 authenticated 请求。
-  预期观察: 两次请求都返回 409，`orchestrator_decision_log` 不新增 approve verdict。
-  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict"'
+- [ ] [BEHAVIOR] [L2] approve route stale SHA 或 task/run/PR 不匹配时拒绝且不写 human_review verdict
+  动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/approve` 先发送过期 `pr_head_sha`，再发送错误 `task_id`，最后发送 `repo/pr_number` 不匹配的 authenticated 请求。
+  预期观察: 三次请求都返回 409，`orchestrator_decision_log` 不新增 approve verdict。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route stale SHA 或 task/run/PR 不匹配时拒绝且不写 human_review verdict"'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict
-  动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/reject` 先发送过期 `pr_head_sha`，再发送 `repo/pr_number` 不匹配的 authenticated 请求。
-  预期观察: 两次请求都返回 409，`orchestrator_decision_log` 不新增 reject verdict。
-  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict"'
+- [ ] [BEHAVIOR] [L2] reject route stale SHA 或 task/run/PR 不匹配时拒绝且不写 human_review verdict
+  动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/reject` 先发送过期 `pr_head_sha`，再发送错误 `task_id`，最后发送 `repo/pr_number` 不匹配的 authenticated 请求。
+  预期观察: 三次请求都返回 409，`orchestrator_decision_log` 不新增 reject verdict。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route stale SHA 或 task/run/PR 不匹配时拒绝且不写 human_review verdict"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并

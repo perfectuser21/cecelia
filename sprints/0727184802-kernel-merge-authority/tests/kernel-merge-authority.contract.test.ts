@@ -184,6 +184,48 @@ describe('kernel merge authority contract red tests', () => {
       expect(await approvalRows(run.runId)).toHaveLength(0);
     });
 
+    it('approve route 缺少 pr_head_sha 时拒绝且不写 human_review verdict', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+      const run = await seedRun();
+      await appendReviewRequest(run.runId, HEAD_SHA);
+      const app = createApp(HEAD_SHA);
+
+      const response = await request(app)
+        .post(`/api/brain/harness/kernel-reviews/${run.runId}/approve`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          review_request_hop: 3,
+          approved_by: 'alex',
+        });
+
+      expect(response.status).toBe(400);
+      expect(await approvalRows(run.runId)).toHaveLength(0);
+    });
+
+    it('reject route 缺少 pr_head_sha 时拒绝且不写 human_review verdict', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+      const run = await seedRun();
+      await appendReviewRequest(run.runId, HEAD_SHA);
+      const app = createApp(HEAD_SHA);
+
+      const response = await request(app)
+        .post(`/api/brain/harness/kernel-reviews/${run.runId}/reject`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          review_request_hop: 3,
+          rejected_by: 'alex',
+        });
+
+      expect(response.status).toBe(400);
+      expect(await approvalRows(run.runId)).toHaveLength(0);
+    });
+
     it('approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail', async () => {
       process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
       const run = await seedRun();
@@ -250,7 +292,7 @@ describe('kernel merge authority contract red tests', () => {
       });
     });
 
-    it('approve route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
+    it('approve route stale SHA 或 task/run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
       process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
 
       const staleRun = await seedRun();
@@ -271,6 +313,24 @@ describe('kernel merge authority contract red tests', () => {
       expect(stale.status).toBe(409);
       expect(await approvalRows(staleRun.runId)).toHaveLength(0);
 
+      const taskMismatchRun = await seedRun();
+      await appendReviewRequest(taskMismatchRun.runId, HEAD_SHA);
+      const taskMismatchApp = createApp(HEAD_SHA);
+      const taskMismatch = await request(taskMismatchApp)
+        .post(`/api/brain/harness/kernel-reviews/${taskMismatchRun.runId}/approve`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: randomUUID(),
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          approved_by: 'alex',
+        });
+
+      expect(taskMismatch.status).toBe(409);
+      expect(await approvalRows(taskMismatchRun.runId)).toHaveLength(0);
+
       const mismatchRun = await seedRun();
       await appendReviewRequest(mismatchRun.runId, HEAD_SHA);
       const mismatchApp = createApp(HEAD_SHA);
@@ -290,7 +350,7 @@ describe('kernel merge authority contract red tests', () => {
       expect(await approvalRows(mismatchRun.runId)).toHaveLength(0);
     });
 
-    it('reject route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
+    it('reject route stale SHA 或 task/run/PR 不匹配时拒绝且不写 human_review verdict', async () => {
       process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
 
       const staleRun = await seedRun();
@@ -310,6 +370,24 @@ describe('kernel merge authority contract red tests', () => {
 
       expect(stale.status).toBe(409);
       expect(await approvalRows(staleRun.runId)).toHaveLength(0);
+
+      const taskMismatchRun = await seedRun();
+      await appendReviewRequest(taskMismatchRun.runId, HEAD_SHA);
+      const taskMismatchApp = createApp(HEAD_SHA);
+      const taskMismatch = await request(taskMismatchApp)
+        .post(`/api/brain/harness/kernel-reviews/${taskMismatchRun.runId}/reject`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: randomUUID(),
+          repo: REPO,
+          pr_number: PR_NUMBER,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          rejected_by: 'alex',
+        });
+
+      expect(taskMismatch.status).toBe(409);
+      expect(await approvalRows(taskMismatchRun.runId)).toHaveLength(0);
 
       const mismatchRun = await seedRun();
       await appendReviewRequest(mismatchRun.runId, HEAD_SHA);
