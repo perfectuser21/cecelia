@@ -121,10 +121,16 @@ write_executable "$fake_bin/sudo" \
   'if [[ "${1:-}" == "/bin/kill" && "${FLEET_TEST_SUDO_FAIL_KILL:-0}" == 1 ]]; then exit 25; fi' \
   'if [[ "${1:-}" == "/bin/mkdir" && "${*: -1}" == "/var/run/cecelia" ]]; then exit 0; fi' \
   'if [[ "${1:-}" == "/usr/bin/touch" && "${2:-}" == "/var/run/cecelia/fleet-worker.drain" ]]; then' \
+  '  [[ "${FLEET_TEST_SUDO_FAIL_TOUCH:-0}" == 1 ]] && exit 26' \
   '  [[ -n "${FLEET_TEST_NODE_LOG:-}" ]] && printf "drain emergency\n" >> "$FLEET_TEST_NODE_LOG"' \
   '  exit 0' \
   'fi' \
-  'if [[ "${1:-}" == "/bin/launchctl" ]]; then exit 0; fi' \
+  'if [[ "${1:-}" == "/bin/launchctl" ]]; then' \
+  '  if [[ "${FLEET_TEST_SUDO_FAIL_TOUCH:-0}" == 1 && -n "${FLEET_TEST_NODE_LOG:-}" ]]; then' \
+  '    printf "drain emergency\n" >> "$FLEET_TEST_NODE_LOG"' \
+  '  fi' \
+  '  exit 0' \
+  'fi' \
   'if [[ "${1:-}" == "/bin/rm" && "${FLEET_TEST_SUDO_PARTIAL_RM:-0}" == 1 ]]; then' \
   '  target="${@: -1}"' \
   '  case "$target" in' \
@@ -457,6 +463,7 @@ grep -Fq 'jinnuoshengyuan@100.86.57.69' "$transport_log" \
   || fail "public SSH interruption did not exercise the remote path"
 
 : > "$node_log"
+: > "$transport_log"
 if CECELIA_MACHINE_ID=us-mac-m4 \
   FLEET_TEST_REAL_GIT=1 \
   FLEET_TEST_SUDO_NOEXEC=1 \
@@ -471,6 +478,29 @@ fi
 node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
 [[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
   || fail "cleanup failure after admission did not restore drain: $node_sequence"
+
+: > "$node_log"
+: > "$transport_log"
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_TEST_REAL_GIT=1 \
+  FLEET_TEST_SUDO_NOEXEC=1 \
+  FLEET_TEST_SUDO_EXEC_NODE=1 \
+  FLEET_TEST_SUDO_PARTIAL_RM=1 \
+  FLEET_TEST_SUDO_FAIL_TOUCH=1 \
+  FLEET_TEST_NODE_LOG="$node_log" \
+  FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
+  FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout us-mac-m4 --apply >"$test_root/emergency-drain-failure.out" 2>&1; then
+  fail "failed emergency drain was reported as rollout success"
+fi
+grep -Fq 'sudo -n /bin/launchctl bootout system/com.perfect21.fleet-worker' \
+  "$transport_log" \
+  || fail "marker failure skipped emergency launchd bootout"
+grep -Fq 'emergency_drain_failed' "$test_root/emergency-drain-failure.out" \
+  || fail "emergency drain failure was not observable"
+node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
+  || fail "launchd fallback did not close failed emergency drain: $node_sequence"
 
 : > "$node_log"
 rm_signal_state="$test_root/rm-signal.state"
