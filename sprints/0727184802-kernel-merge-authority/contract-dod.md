@@ -11,7 +11,7 @@ target_environment: local_api
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] 合同红测文件覆盖真实 PostgreSQL approve/reject 接缝、缺 SHA、task/run/PR 失配、merge gate、lock-head、CI fail-closed
-  Test: node -e "const fs=require('fs');const p='sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts';const c=fs.readFileSync(p,'utf8');for(const s of ['createIsolatedDatabase','approve route 缺少 repo 或 pr_number','approve route 缺少 pr_head_sha','approve route stale SHA 或 task/run/PR 不匹配','reject route 缺少 pr_head_sha','reject route stale SHA 或 task/run/PR 不匹配','review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并','--match-head-commit','resolveKernelMergeAuthority']){if(!c.includes(s))throw new Error('missing '+s)}"
+  Test: node -e "const fs=require('fs');const p='sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts';const c=fs.readFileSync(p,'utf8');for(const s of ['createIsolatedDatabase','approve route 缺少 repo 或 pr_number','approve route 缺少 pr_head_sha','approve route stale SHA 或 task/run/PR 不匹配','reject route 缺少 pr_head_sha','reject route stale SHA 或 task/run/PR 不匹配','review_required=true 且无有效 human_review 批准时所有 merge caller 都不能合并','--match-head-commit','resolveKernelMergeAuthority','PR-owned script']){if(!c.includes(s))throw new Error('missing '+s)}"
 
 - [ ] [ARTIFACT] 合同草案声明真实调用方 shape、禁 mock 边、未覆盖真实链路清单
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/0727184802-kernel-merge-authority/contract-draft.md','utf8');for(const s of ['## 真实调用方请求 shape','## 禁 mock 边清单','## 未覆盖真实链路清单']){if(!c.includes(s))throw new Error('missing '+s)}"
@@ -100,6 +100,12 @@ target_environment: local_api
   动作: 调用 server-owned ownership resolver，对完整 tuple、缺 `head_sha`，以及只提供 `feat(harness)` 标题与 `cp-*` branch 的伪证据三种输入分别判定。
   预期观察: 缺字段/普通 PR fail-closed，标题与 branch 伪证据单独出现也 fail-closed，只有完整 tuple 才返回 `{ kernelOwned: true }`。
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "resolveKernelMergeAuthority 只接受 repo pr_number run_id head_sha 四元组"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] resolveKernelMergeAuthority 拒绝 title body branch 与 PR-owned script 作为授权证据
+  动作: 调用 server-owned ownership resolver，分别输入 `title/body/branch` 伪证据和 `evidence_source:"pr_script"` 的 caller。
+  预期观察: 两类输入都返回 `kernelOwned:false`；PR-owned script 被标记为不可信证据源。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "resolveKernelMergeAuthority 拒绝 title body branch 与 PR-owned script 作为授权证据"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed

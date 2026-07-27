@@ -22,6 +22,7 @@
         "[BEHAVIOR] merge_pr 调用 gh 时必须传 --match-head-commit 当前 head_sha",
         "[BEHAVIOR] 标题 feat(harness) 或 cp- branch 本身不能决定 Harness merge authority",
         "[BEHAVIOR] finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed",
+        "[BEHAVIOR] resolveKernelMergeAuthority 拒绝 title body branch 与 PR-owned script 作为授权证据",
         "[ARTIFACT] 合同测试文件覆盖 approve/reject、ownership resolver、merge lock、旧 CI 脚本"
       ],
       "files": [

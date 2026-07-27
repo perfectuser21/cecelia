@@ -555,6 +555,26 @@ describe('kernel merge authority contract red tests', () => {
     })).toEqual({ kernelOwned: false, reason: 'missing_repo' });
   });
 
+  it('resolveKernelMergeAuthority 拒绝 title body branch 与 PR-owned script 作为授权证据', async () => {
+    const mod = await import('../../../packages/brain/src/harness-ci-gate.js');
+    expect(typeof (mod as Record<string, unknown>).resolveKernelMergeAuthority).toBe('function');
+    const resolver = (mod as Record<string, Function>).resolveKernelMergeAuthority;
+
+    expect(resolver({
+      title: 'feat(harness): fake authority',
+      body: 'run_id=123 task_id=456',
+      head_branch: 'cp-07271848-fake',
+    })).toEqual({ kernelOwned: false, reason: 'missing_repo' });
+
+    expect(resolver({
+      repo: REPO,
+      pr_number: PR_NUMBER,
+      run_id: randomUUID(),
+      head_sha: HEAD_SHA,
+      evidence_source: 'pr_script',
+    })).toEqual({ kernelOwned: false, reason: 'untrusted_evidence_source' });
+  });
+
   it('finalizeHarnessTask 在 review_required=true 且缺当前 SHA human_review 时 fail-closed', async () => {
     const pool = {
       query: vi.fn(async (sql: string) => {
