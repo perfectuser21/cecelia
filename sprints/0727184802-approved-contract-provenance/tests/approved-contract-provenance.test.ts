@@ -523,7 +523,7 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     });
   });
 
-  it('approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift', async () => {
+  it('approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift', async () => {
     const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
     const { repo, approvedSha } = createApprovedRepo();
     const manifest = await buildApprovedContractManifest({
@@ -536,10 +536,13 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
       reviewerVerdict: { verdict: 'APPROVED' },
     });
 
+    write(repo, `${SPRINT_DIR}/sprint-prd.md`, '# PRD\nGolden Path: approved manifest changed\n');
     write(repo, `${SPRINT_DIR}/contract-draft.md`, '# Sprint Contract Draft\nStep 1 changed\n');
+    write(repo, `${SPRINT_DIR}/contract-dod.md`, '- [ ] [BEHAVIOR] [L2] approved path changed\n  Test: manual:bash echo changed\n');
     sh(repo, `git rm -q ${SPRINT_DIR}/task-plan.json`);
     sh(repo, `git mv ${SPRINT_DIR}/tests/approved.test.ts ${SPRINT_DIR}/tests/renamed-approved.test.ts`);
-    sh(repo, `git commit -qam contract-artifact-drift`);
+    sh(repo, 'git rm -q sprints/fixtures/approved-contract/golden.json');
+    sh(repo, `git add ${SPRINT_DIR}/sprint-prd.md ${SPRINT_DIR}/contract-draft.md ${SPRINT_DIR}/contract-dod.md && git commit -qm contract-artifact-drift`);
     const driftSha = sh(repo, 'git rev-parse HEAD');
 
     await expect(verifyApprovedContractManifest({
@@ -550,9 +553,12 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
       ok: false,
       reason: 'approved_contract_drift',
       drift: expect.arrayContaining([
+        expect.objectContaining({ path: `${SPRINT_DIR}/sprint-prd.md` }),
         expect.objectContaining({ path: `${SPRINT_DIR}/contract-draft.md` }),
+        expect.objectContaining({ path: `${SPRINT_DIR}/contract-dod.md` }),
         expect.objectContaining({ path: `${SPRINT_DIR}/task-plan.json` }),
         expect.objectContaining({ path: `${SPRINT_DIR}/tests/approved.test.ts` }),
+        expect.objectContaining({ path: 'sprints/fixtures/approved-contract/golden.json' }),
       ]),
     });
   });

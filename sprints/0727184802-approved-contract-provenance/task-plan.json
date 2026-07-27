@@ -19,7 +19,7 @@
         "[BEHAVIOR] callback refuses stale pr_head_sha before writing generator verdict",
         "[BEHAVIOR] mergeGate refuses PASS verdicts that do not carry the approved manifest_digest",
         "[BEHAVIOR] mergeGate refuses missing approved manifest_digest and stale judge manifest_digest",
-        "[BEHAVIOR] approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift",
+        "[BEHAVIOR] approved sprint PRD contract DoD task-plan tests fixture golden deletion rename and content edits are rejected as approved_contract_drift",
         "[BEHAVIOR] main migration conflict after approval returns requires_re_gan",
         "[ARTIFACT] packages/brain/src/orchestrator/approved-contract-provenance.js",
         "[ARTIFACT] scripts/ci/approved-contract-provenance-check.mjs",
