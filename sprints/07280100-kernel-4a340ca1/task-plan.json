@@ -1,0 +1,34 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "任务只涉及 Brain/Kernel 后端 authority、receipt、cleanup 与 host gate，不含前端或真机 UI 操作。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Kernel Test Environment Controller 的权威 authority、signed receipt、cleanup 与 host gate",
+      "scope": "基于真实 initiative_contracts/initiative_runs 建 authority；attempt 持久化后 provisioning real PG capability；补全 signed non-replayable receipt 与 cleanup lifecycle；在 exact Draft PR head + owner review 之前阻断 report/merge。",
+      "dod": [
+        "[BEHAVIOR] frozen-contract authority 只从 initiative_contracts 与 initiative_runs 派生",
+        "[BEHAVIOR] CredentialEnvelope 与 remote bridge receipt 带 signed_payload 和 task/run/attempt/contract/SHA/DB 绑定",
+        "[BEHAVIOR] cleanup 覆盖八条终态并证明无残留 capability",
+        "[BEHAVIOR] report 在缺 exact Draft PR head host receipt 或 owner review 时必须阻断",
+        "[ARTIFACT] 红测、contract-draft.md、contract-dod.md、task-plan.json 齐全"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/credential-broker.js",
+        "packages/brain/src/orchestrator/remote-bridge-transport.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/src/harness-judge.js",
+        "packages/brain/scripts/fleet-worker/credential-envelope.cjs",
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "packages/brain/src/cleanup-worker.js",
+        "sprints/07280100-kernel-4a340ca1/tests/"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
