@@ -2,7 +2,7 @@
 
 日期：2026-07-25
 优先级：P0
-状态：设计已确认；2026-07-25 完成 Phase 0 融合修订，交下一 Session 制定实施计划
+状态：设计已确认；2026-07-27 完成生产 as-built 对账，交下一 Session 续接未完成 Phase
 适用仓库：Cecelia
 目标设备：`us-mac-m4`（US M4）、`xian-mac-m4`（xian-m4/CM4）、
 `xian-mac-m1`（M1/CM1）
@@ -40,6 +40,78 @@
 Phase 0 不实现 LLM Commander、Commander Memory 或 CommanderDirective。Commander
 五个 Phase 必须复用 Phase 0 的恢复、路由和遥测原语，不得另建同义状态机、账号选择器
 或第二流程账本。
+
+### 0.2 2026-07-27 生产 as-built 对账
+
+本节是对 2026-07-25 设计的接线盘点，不是第二套架构。权威生产基线为 Brain
+`1.267.89`、Git SHA `6b9446e81`。下一 Session 必须从该基线重新核对，不得把已经合入的
+Fleet 运输层重写一遍。
+
+| 设计块 | 2026-07-27 状态 | 生产证据或缺口 |
+|---|---|---|
+| Phase 0A Durable Resume | 未完成 | PR #4336 仍为 OPEN，未进入 `main` |
+| Phase 0B Capability Gate | 已合入 | PR #4342 |
+| Phase 0C Attempt Telemetry | 已合入 | PR #4343 |
+| Phase 1 Commander 契约/状态 | 未开始 | `main` 无 CommanderBundle、Directive、Commander Memory 实现 |
+| Phase 2 Provider-neutral Commander | 未开始 | Commander 尚未成为正式 Provider role |
+| Phase 3 Fleet Routing | 部分完成 | PR #4352～#4359、#4361、#4363、#4364 已提供 transport、receipt、attestation、reconcile、synthetic canary |
+| Phase 4 统一 Runner | 未完成 | US 走 local Docker Runner；Xian 走宿主机 Codex；没有统一执行镜像和工作区 |
+| Phase 5 真业务 Canary | 未完成 | 仅 `CANARY_OK` 运输探针；没有完成 Planner→Generator→Evaluator→PR 的真实任务 |
+
+2026-07-27 三机实测：
+
+| 项目 | `us-mac-m4` | `xian-mac-m4` | `xian-mac-m1` |
+|---|---|---|---|
+| 芯片/内存 | M4 10C / 16GB | M4 10C / 16GB | M1 8C / 16GB |
+| macOS | 15.7.4 | 15.6.1 | 15.6.1 |
+| Codex | 0.145.0 | 0.145.0 | 0.145.0 |
+| Node 执行面 | Runner 20.20.2 | Host 25.8.1 | Host 26.0.0 |
+| 容器运行时 | OrbStack | OrbStack | 无 |
+| Kernel transport | local-docker | remote-bridge + host Codex | remote-bridge + host Codex |
+| Worker 服务域 | Brain 内本地路径 | 用户 LaunchAgent | system LaunchDaemon |
+| 数据盘可用 | 41GB | 15GB（使用率 93%） | 93GB |
+| 非 Canary 工作区 | per-task mount | 固定旧脏仓库，167 项改动 | 固定目录，但不是 Git 仓库 |
+| Credential 来源 | US 本地账号目录 | Xian 本机账号目录 | Xian 本机账号目录 |
+
+远端 Bridge 的 handler checksum 已一致，Codex 版本也已一致；这只证明协议文件相同，
+不代表执行环境等价。当前 `kernel-attempt-handler.cjs` 对正常 Attempt 使用固定
+`WORK_DIR`，只为 synthetic canary 建一次性空目录；因此 canary 绕过了真实开发最关键的
+Git 工作区、依赖、写入隔离和并发冲突问题。
+
+当前 Kernel Attempt 请求也没有从 US M4 下发所选 Codex 凭据。Bridge 只收到账号 ID，
+随后调用远端本机 `loadRawAuth(account)`。旧 Bridge endpoint 虽已有 `setupInjectedAccounts`
+辅助函数，但没有接入 Kernel Attempt endpoint。以下目标语义尚未实现：
+
+> team1～team5 的账号状态和认证材料只由 US M4 管理；每个 Attempt 只把被选中的一个
+> 账号以一次性凭据包注入目标 Worker；Worker 不永久保存、不回填 token。
+
+### 0.3 下一 Session 的立即范围
+
+下一 Session 不新写 Commander/Fleet 总体 PRD，也不重写已合入的 Fleet receipt、
+attestation、watchdog 或 canary。立即范围是补齐 Phase 4 的承重接线，使 Phase 5 可以跑
+第一条真实业务任务：
+
+1. 三台 macOS Worker 统一 OrbStack、Worker Daemon 和固定 Runner digest；
+2. 所有机器由同一 Worker API 启动容器，US M4 不再保留行为不同的特例执行器；
+3. 每 Attempt 由 Worker 根据结构化 WorkspaceSpec 创建隔离 Git worktree；
+4. US M4 中央账号管理接入 Kernel Attempt 的一次性凭据注入；
+5. Worker admission、磁盘/内存/账号/Runner drift 闸 fail-closed；
+6. 运行同题 One-session 与 Kernel Harness 真实 A/B，不再用 synthetic canary 代替。
+
+上述范围仍应拆成可独立回滚的小 PR，禁止一次提交 Commander Phase 1～5。
+
+### 0.4 新 Terminal 点火约束
+
+下一 Terminal 使用 Codex Headless One-session Harness 执行，不依赖 Claude Code 额度。启动后：
+
+1. 读取根目录 `AGENTS.md` 和本 PRD 全文；
+2. 从 `origin/main` 建独立 worktree；
+3. 先输出 Phase 4A～4D 的依赖图、逐 PR 文件边界和 Red 测试；
+4. 只从 Phase 4A 开始，完成后保持 PR 未 merge，交独立复审；
+5. 每个 Phase 通过复审后再进入下一 Phase；
+6. 不改写本 PRD 已定的 Brain/Kernel/Commander 权责；
+7. 不把 synthetic canary 作为真实任务 DoD；
+8. 不在 Xian 节点手工复制长期 Codex 账号目录。
 
 ## 1. 背景与问题
 
@@ -450,6 +522,10 @@ Attempt 落库前必须持久化最终解析结果：
 | Codex | `team1`～`team5` | `us-mac-m4`, `xian-mac-m4`, `xian-mac-m1` |
 | Grok | `grok` | `us-mac-m4` |
 
+Codex 的该行表示中央 Credential Broker 完成后的逻辑能力矩阵，不表示三台机器各自永久保存
+team1～team5。实际候选集必须是“US M4 中央健康账号 × ready Codex Worker”的交集。中央
+注入未接通前，禁止用远端本地 auth 文件假装该矩阵已经成立。
+
 未列出或未实机验证的 Provider × Account × Machine 组合一律不可选。禁止静默复制凭据，
 禁止把账号名、容器 hostname、Prompt 文本或 `location` 别名当作物理机器证据。
 
@@ -516,6 +592,129 @@ fail-closed。
 
 Reviewer 只读必须通过外层执行边界实现。若 Worktree 已只读挂载，禁止再在 Docker 内启动
 会依赖 `bwrap/unshare` 的嵌套 Provider 沙箱。三个设备必须有相同测试证明。
+
+#### FR-10.1：统一 macOS Fleet Node 基线
+
+当前三台 16GB macOS 设备必须使用同一节点基线：
+
+- OrbStack/Docker 作为唯一 Provider 执行介质；
+- 初始统一资源档为 6 vCPU / 8GiB VM 内存；后续改档必须走受控 NodeProfile；
+- 同一 OCI Runner image digest，禁止生产使用可漂移的 `latest` 作为验收证据；
+- 同一 Worker Daemon 代码、API、LaunchDaemon 模板、日志格式和升级方式；
+- 同一容器内 Node、Codex、Git、测试工具、entrypoint、Skills 和工具开关；
+- 同一 `TaskBundle → Provider → HarnessResult` 调用链。
+
+US M4 可以使用 loopback 或 Unix socket 调用本机 Worker，但不能绕过 Worker API 后维护另一套
+local-docker 业务实现。`xian-mac-m4` 的用户 LaunchAgent 必须迁成与其他节点一致的
+system LaunchDaemon，不得依赖 GUI 用户已登录。
+
+所有节点必须满足服务器基线：
+
+- `sleep=0`、网络睡眠关闭、来电自动启动；
+- Tailscale 和 Worker 随系统启动并自动恢复；
+- 时间同步可用；
+- Worker 运行在明确的低权限服务账号下；
+- 日志轮转，不记录 Prompt 原文或凭据；
+- 数据盘可用空间至少 40GB 且使用率不高于 85%，否则自动 drain；
+- Runner/Worker/OS/OrbStack 漂移可观测，超过白名单版本时不接新 Attempt。
+
+硬件型号、CPU 核数和地理位置允许不同；执行合同和安全边界必须相同。不同硬件只通过
+NodeProfile 和 capacity units 表达，禁止伪造为相同物理容量。
+
+#### FR-10.2：Worker-owned WorkspaceSpec
+
+Brain 不得把某台机器上的绝对路径当作跨设备工作区真相。每个 Attempt 必须携带结构化
+WorkspaceSpec：
+
+```json
+{
+  "repo": "perfectuser21/cecelia",
+  "base_sha": "40-char-lowercase-sha",
+  "branch": "cp-...",
+  "expected_head_sha": "40-char-lowercase-sha-or-null",
+  "mode": "read-only|read-write",
+  "run_id": "uuid",
+  "attempt_id": "uuid"
+}
+```
+
+Worker 必须：
+
+1. 从受控 bare mirror/fetch cache 获取 Git 结构化真相；
+2. 服务端创建 Attempt 专属 worktree，不信任请求中的任意 cwd；
+3. 校验 `base_sha/expected_head_sha` 后才启动 Runner；
+4. Reviewer/Evaluator 以只读 mount 运行；
+5. Writer 只写本 Attempt worktree，并通过 Git SHA/PR 交接给下一机器；
+6. terminal callback 后清理容器和 worktree；清理失败进入 quarantine；
+7. 同一机器 resume 只可复用受控 SessionStore；跨机器一律 fresh Attempt，从
+   DB/Git/PR 恢复，禁止复制 Provider 私有 session 文件。
+
+任何节点的固定 checkout、部署目录或人工工作区都不得作为并发 Generator 的 cwd。
+
+#### FR-10.3：US M4 中央 Codex Credential Broker
+
+team1～team5 的账号状态、配额、熔断和认证材料以 US M4 为唯一权威源。Xian Worker
+只声明 `provider=codex` 能力，不再声明或永久持有某个 team 账号。
+
+派发流程：
+
+```text
+Fleet Supervisor 选择 machine
+→ Capability Gate 选择健康 account
+→ Credential Broker 为 attempt_id 签发单账号 CredentialEnvelope
+→ Brain 通过已认证的 Worker API 下发
+→ Worker 只在目标容器 tmpfs 中生成 0600 CODEX_HOME/auth.json
+→ Codex 执行
+→ callback 只返回结果和 credential_ref
+→ 容器/tmpfs 销毁
+```
+
+CredentialEnvelope 的持久元数据只允许包含：
+
+- `credential_ref`
+- `attempt_id`
+- `account_id`
+- `machine_id`
+- `issued_at`
+- `expires_at`
+- `payload_hash`
+
+完整 `auth.json`、access token、refresh token 和 API key：
+
+- 不得写入 PostgreSQL、decision log、Attempt state、Bridge receipt、stdout/stderr 或 callback；
+- 不得同时把五个账号发给 Worker，只能发送最终选中的一个账号；
+- 不得落到宿主机普通磁盘；只允许 Worker 进程内存和容器 tmpfs；
+- 不得由 Worker 回填或覆盖 US M4 权威凭据。
+
+派发前 Credential Broker 必须确认凭据剩余有效期覆盖 Attempt deadline 加安全余量；不满足时
+先在 US M4 中央刷新或熔断账号，禁止让远端 Worker 自行承担跨 Attempt 的凭据刷新责任。
+若 Codex 在临时副本中修改认证文件，Worker 只上报布尔型
+`credential_copy_mutated=true`，销毁副本并触发 US M4 重新校验；绝不回传修改后的 token。
+
+当前 `CODEX_ACCOUNT_ALLOWLIST` 和远端本机 `loadRawAuth` 只能作为迁移期兼容代码。中央注入
+通过真业务 canary 后必须关闭本地凭据 fallback；缺少 CredentialEnvelope 时 loud-fail。
+
+#### FR-10.4：Node Admission 与真实容量
+
+Fleet Registry 中的节点只有同时满足以下条件才进入 `ready`：
+
+1. canonical machine ID 与注册表一致；
+2. Worker protocol、Runner contract 和 image digest 完全匹配；
+3. OrbStack/Docker、Git、Tailscale、callback 网络可用；
+4. 磁盘、内存、CPU 压力低于 admission 阈值；
+5. 能创建、挂载、销毁隔离 worktree/container；
+6. 能接受中央凭据包但不会持久化或回显；
+7. 串行 synthetic canary 和节点自检通过。
+
+当前 `7/8/8=23` 仅是资源公式给出的轻量 capacity units。生产接口的 confidence 仍为
+`theoretical`，样本量仅 2，不得宣称为三倍 PR 吞吐。Slot 必须改为角色加权：
+
+- Commander/Planner/Reviewer：轻量 unit；
+- Proposer：中量 unit；
+- Generator/Evaluator/Judge（含测试/构建）：重量 unit；
+- 重量任务必须按容器 memory/cpu limit 预留，不能与轻量任务一比一计数。
+
+新节点只有完成至少一条真实开发任务并留下 p50/p95 资源数据后，才可提高重量任务并发。
 
 ### FR-11：持久真相与恢复
 
@@ -798,6 +997,15 @@ Dashboard/API 至少可以回答：
 - [ ] `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` 使用同一 Runner Contract 版本，并记录可验证的
   multi-arch manifest 或 per-platform runner digest。
 - [ ] Worker Docker 健康状态会重新探测，不永久缓存启动时失败。
+- [ ] 三台机器均通过同一 Worker API 启动同一 pinned Runner digest；US 本机路径不再有行为特例。
+- [ ] 三台机器均由 Worker 创建 Attempt 专属 worktree；固定 checkout 和部署目录不参与执行。
+- [ ] `xian-mac-m1` 已具备 OrbStack/Docker，`xian-mac-m4` 不再依赖 GUI LaunchAgent。
+- [ ] 每台节点 admission 记录 OS、OrbStack、Worker、Runner、Codex、Node、磁盘和 capacity profile。
+- [ ] 任何一项 drift、磁盘低水位或 worktree/container 自检失败都会 drain 节点。
+- [ ] team1～team5 只由 US M4 Credential Broker 管理；Xian 节点无长期账号权威状态。
+- [ ] 每个 Attempt 只注入所选一个账号，且 callback/日志/DB 均不含认证材料。
+- [ ] CredentialEnvelope 缺失、过期、machine/attempt 不匹配时 fail-closed。
+- [ ] Worker 修改临时认证副本时只回报 mutation 布尔值，不回传 token。
 
 ### 11.4 Commander 全程监控验收
 
@@ -831,6 +1039,10 @@ Dashboard/API 至少可以回答：
 5. Machine/Provider/account/model 五轴独立解析。
 6. Health TTL 与重新探测。
 7. Actor Inbox 地址、线程、去重、ack、消息预算与跨 Attempt 游标恢复。
+8. WorkspaceSpec schema、SHA/branch/cwd 对抗输入和 read-only/read-write 边界。
+9. CredentialEnvelope 的 attempt/machine/expiry 绑定、一次消费和 secret redaction。
+10. Node admission 的 Runner drift、磁盘低水位、Docker 不可用和服务版本拒绝。
+11. 角色加权 capacity units，不允许把轻量和重量 Attempt 一比一计数。
 
 ### 12.2 集成测试
 
@@ -842,6 +1054,11 @@ Dashboard/API 至少可以回答：
 6. Kernel/Worker 崩溃后从 DB/Git/PR 重建下一 hop。
 7. Commander → Planner 提问 → Planner 回复 → Commander 消费同一线程的完整闭环。
 8. Agent 定向消息请求副作用时，Kernel 拒绝非法动作并把原因回送发送者。
+9. US M4 Credential Broker → Xian Worker → 容器 tmpfs → Codex → callback 的真调用链。
+10. Worker terminal 后容器、worktree、tmpfs 凭据全部销毁；重启后无 token 残留。
+11. 同一 Runner digest 在三机执行相同合同 fixture，输出通过同一 schema。
+12. 两个 Writer 同时落同一机器时拥有不同 worktree，不能互见未提交文件。
+13. remote Attempt 明确指定模型、角色环境和工具策略，Worker 不得回落宿主默认配置。
 
 ### 12.3 三机实弹
 
@@ -881,6 +1098,15 @@ model=GPT-5.5
 
 任何 Attempt 落到 US M4 都算验收失败，不得以“Provider 正常”替代设备证据。
 
+最后必须进行同题 A/B：
+
+1. 从同一个 base SHA 创建两个隔离分支；
+2. 使用同一份小型真实代码任务、同一 Codex 模型、同一合同测试和相同 merge gate；
+3. A 路径由 One-session Harness 执行，B 路径由 Kernel Hybrid 执行；
+4. 两边都必须真实产生代码 diff、Red→Green、PR、CI 和独立 verdict；
+5. 记录总耗时、各角色耗时、Attempt 数、LLM 次数、token、空等时间、人工介入和最终质量；
+6. Kernel 未完成 Generator/Evaluator/PR 闭环时，本项目不得宣称可替代 One-session Harness。
+
 ## 13. 建议实施分期
 
 ### Phase 1：契约与持久状态
@@ -909,24 +1135,58 @@ model=GPT-5.5
 - Requested/actual machine 证据；
 - strict affinity 和非 strict fallback。
 
+2026-07-27 状态：transport、receipt、attestation、watchdog reconcile 已部分落地；不能因
+synthetic canary 通过而把 Phase 3/4 标完成。缺口必须由 Phase 4 的统一执行面闭合。
+
 ### Phase 4：统一 Runner 与故障闭环
 
-- `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` Runner Contract 对齐；
+Phase 4 拆成四个独立可回滚交付，不得合成一个大 PR：
+
+#### Phase 4A：Fleet Node Contract 与 admission
+
+- 三台 macOS 的 OrbStack、Worker LaunchDaemon、NodeProfile 和 server baseline；
+- pinned Runner digest 和 drift 检查；
+- 磁盘/内存/Docker/worktree 自检；
+- role-weighted capacity units；
+- 新节点 bootstrap/admission/drain 工具。
+
+#### Phase 4B：统一 Worker API 与隔离 Workspace
+
+- US/Xian 统一走 Worker Attempt API；
+- WorkspaceSpec 与服务端 Git SHA 对账；
+- Bridge-owned per-Attempt worktree/container；
 - Reviewer 外层只读；
+- terminal/restart/orphan 清理与 quarantine。
+
+#### Phase 4C：中央 Credential Broker
+
+- team1～team5 只在 US M4 管理；
+- 每 Attempt 单账号 CredentialEnvelope；
+- 容器 tmpfs 注入、一次消费、全链路 redaction；
+- 禁止 token writeback；
+- 关闭 Xian 本地 `loadRawAuth` fallback。
+
+#### Phase 4D：执行等价与故障闭环
+
+- 三机相同 model、role env、Skills、tool policy、timeout 和 result schema；
+- 同机 SessionStore 与跨机 fresh recovery；
 - Worker health TTL；
-- 统一 failure classification。
+- 统一 failure classification；
+- Runner/Worker/Brain 任一重启后的恢复和清理实测。
 
 ### Phase 5：Canary 与默认策略
 
 - 三 Provider 合同实测；
 - 三机混合 canary；
 - Xian strict canary；
+- One-session vs Kernel 同题真实 A/B；
 - 故障注入；
 - 形成是否把 `hybrid` 设为默认的独立决策。
 
 每个 Phase 必须可以单独回滚。不要用一个超大 PR 同时完成五个 Phase。
-Phase 0 三个 hotfix 也必须保持独立 PR；因此整个计划最多形成三个前置 PR 加五个
-Commander Phase PR，而不是一个八块合一的巨型改动。
+Phase 0 三个 hotfix 必须保持独立；Phase 4 又明确拆成 4A～4D。PR 数量以可独立
+Red→Green、复审、部署和回滚为准，不再设置“最多八个”的人为上限，也不得把多个交付块
+压回一个巨型 PR。
 
 ## 14. 代码导航
 
