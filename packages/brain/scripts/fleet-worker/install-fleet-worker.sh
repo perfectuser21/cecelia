@@ -22,6 +22,7 @@ PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
 RUNNER_DIGEST=''
 WORKER_BIND_HOST=''
+BRAIN_HEALTH_URL=''
 LOCK_DIR=''
 BACKUP_DIR=''
 STAGED_WORKER=''
@@ -97,6 +98,20 @@ NODE
   )
 }
 
+load_brain_health_url() {
+  [[ -n "$NODE_EXECUTABLE" && -x "$NODE_EXECUTABLE" ]] || return 1
+  (
+    cd "$REPO_ROOT"
+    FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
+      "$NODE_EXECUTABLE" --input-type=module <<'NODE'
+import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+
+const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
+process.stdout.write(profile.brain_health_url);
+NODE
+  )
+}
+
 run_default_preflight() {
   local service_uid service_gid
   [[ -n "$NODE_EXECUTABLE" && -x "$NODE_EXECUTABLE" ]] \
@@ -108,6 +123,7 @@ run_default_preflight() {
 
   PATH='/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' \
   DOCKER_HOST='unix:///var/run/docker.sock' \
+  CECELIA_CALLBACK_URL="$BRAIN_HEALTH_URL" \
   CECELIA_MACHINE_ID="$machine_id" \
   CECELIA_RUNNER_DIGEST="$RUNNER_DIGEST" \
   CECELIA_REPO_ROOT="$WORKTREE_ROOT" \
@@ -209,7 +225,8 @@ prepare_orbstack_access() {
 render_plist() {
   local target="$1"
   local target_dir temporary line
-  local escaped_machine escaped_digest escaped_bind_host escaped_node escaped_worker
+  local escaped_machine escaped_digest escaped_bind_host escaped_brain_health
+  local escaped_node escaped_worker
   local escaped_marker escaped_root escaped_stdout escaped_stderr
 
   [[ -f "$TEMPLATE" ]] || die "plist_template_missing"
@@ -222,6 +239,7 @@ render_plist() {
   escaped_machine="$(xml_escape "$machine_id")"
   escaped_digest="$(xml_escape "$RUNNER_DIGEST")"
   escaped_bind_host="$(xml_escape "$WORKER_BIND_HOST")"
+  escaped_brain_health="$(xml_escape "$BRAIN_HEALTH_URL")"
   escaped_node="$(xml_escape "$NODE_EXECUTABLE")"
   escaped_worker="$(xml_escape "$WORKER_SCRIPT")"
   escaped_marker="$(xml_escape "$DRAIN_MARKER")"
@@ -235,6 +253,7 @@ render_plist() {
       line="${line//@@MACHINE_ID@@/$escaped_machine}"
       line="${line//@@RUNNER_DIGEST@@/$escaped_digest}"
       line="${line//@@WORKER_BIND_HOST@@/$escaped_bind_host}"
+      line="${line//@@BRAIN_HEALTH_URL@@/$escaped_brain_health}"
       line="${line//@@NODE_EXECUTABLE@@/$escaped_node}"
       line="${line//@@WORKER_SCRIPT@@/$escaped_worker}"
       line="${line//@@DRAIN_MARKER@@/$escaped_marker}"
@@ -379,6 +398,9 @@ if ! RUNNER_DIGEST="$(load_runner_digest)"; then
   die "node_profile_unavailable"
 fi
 if ! WORKER_BIND_HOST="$(load_worker_bind_host)"; then
+  die "node_profile_unavailable"
+fi
+if ! BRAIN_HEALTH_URL="$(load_brain_health_url)"; then
   die "node_profile_unavailable"
 fi
 

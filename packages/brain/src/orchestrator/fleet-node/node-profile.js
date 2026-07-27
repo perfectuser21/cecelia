@@ -12,6 +12,11 @@ const CANONICAL_BASELINE = Object.freeze({
     'xian-mac-m4': '100.86.57.69',
     'xian-mac-m1': '100.88.166.55',
   }),
+  brain_health_urls: Object.freeze({
+    'us-mac-m4': 'http://127.0.0.1:5221/api/brain/health',
+    'xian-mac-m4': 'http://100.71.151.105:5221/api/brain/health',
+    'xian-mac-m1': 'http://100.71.151.105:5221/api/brain/health',
+  }),
   runner_image_digest: 'sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36',
   resources: Object.freeze({
     cpu_cores: 6,
@@ -42,6 +47,7 @@ const PROFILE_KEYS = [
   'machine_id',
   'capacity',
   'worker_bind_host',
+  'brain_health_url',
   'runner_image_digest',
   'resources',
   'launchd',
@@ -73,6 +79,9 @@ export function validateNodeProfile(profile) {
     return false;
   }
   if (profile.worker_bind_host !== CANONICAL_BASELINE.worker_bind_hosts[profile.machine_id]) {
+    return false;
+  }
+  if (profile.brain_health_url !== CANONICAL_BASELINE.brain_health_urls[profile.machine_id]) {
     return false;
   }
   if (typeof profile.runner_image_digest !== 'string'

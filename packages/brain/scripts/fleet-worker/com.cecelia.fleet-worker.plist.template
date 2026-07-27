@@ -25,6 +25,8 @@
     <string>@@MACHINE_ID@@</string>
     <key>CECELIA_RUNNER_DIGEST</key>
     <string>@@RUNNER_DIGEST@@</string>
+    <key>CECELIA_CALLBACK_URL</key>
+    <string>@@BRAIN_HEALTH_URL@@</string>
     <key>CECELIA_FLEET_WORKER_HOST</key>
     <string>@@WORKER_BIND_HOST@@</string>
     <key>CECELIA_FLEET_WORKER_PORT</key>

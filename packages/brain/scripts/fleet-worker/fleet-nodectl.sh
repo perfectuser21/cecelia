@@ -49,23 +49,60 @@ read_health_and_admit() {
     FLEET_NODECTL_ADMIT_HEALTH_FILE="$HEALTH_FILE" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
 import { readFile } from 'node:fs/promises';
+import { Buffer } from 'node:buffer';
 import { evaluateBaseAdmission } from './packages/brain/src/orchestrator/fleet-node/node-admission.js';
 import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
+const MAX_HEALTH_BODY_BYTES = 64 * 1024;
 const machineId = process.env.FLEET_NODECTL_ADMIT_MACHINE;
 const healthFile = process.env.FLEET_NODECTL_ADMIT_HEALTH_FILE;
 const profile = getNodeProfile(machineId);
 let report;
+
+async function readBoundedJson(response) {
+  const declaredLength = Number(response.headers?.get?.('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_HEALTH_BODY_BYTES) {
+    throw new Error('health_body_too_large');
+  }
+
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const body = Buffer.from(await response.arrayBuffer());
+    if (body.length > MAX_HEALTH_BODY_BYTES) throw new Error('health_body_too_large');
+    return JSON.parse(body.toString('utf8'));
+  }
+
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      total += chunk.length;
+      if (total > MAX_HEALTH_BODY_BYTES) {
+        await reader.cancel();
+        throw new Error('health_body_too_large');
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+  return JSON.parse(Buffer.concat(chunks, total).toString('utf8'));
+}
 
 try {
   if (healthFile) {
     report = JSON.parse(await readFile(healthFile, 'utf8'));
   } else {
     const response = await fetch(`http://${profile.worker_bind_host}:5231/health`, {
+      method: 'GET',
+      redirect: 'error',
       signal: AbortSignal.timeout(5_000),
     });
     if (!response.ok) throw new Error('health_unavailable');
-    report = await response.json();
+    report = await readBoundedJson(response);
   }
   const result = evaluateBaseAdmission(report, {
     profile,
