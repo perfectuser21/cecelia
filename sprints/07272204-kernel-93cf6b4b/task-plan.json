@@ -1,0 +1,34 @@
+{
+  "initiative_id": "intent:51dace32-5661-41de-8286-15627c87c8ed:2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "本任务只修复 Brain / Harness 内部账本、回归基线与验收链，不经过前端或远端 agent 主路径。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "在既有 F1 Journey 上完成 current main Recovery 与 fresh evidence gate 重建",
+      "scope": "原位补齐 S0-S12 × 11要素、回挂旧 Claude Code P0/P1 等价基线到根 regression-contract.yaml、并用 current SHA 重建 evaluator/judge/主理人人审验收链。",
+      "dod": [
+        "[BEHAVIOR] current main 对账后仍只存在同一条 F1 Journey，旧 SHA 证据不会直接判绿",
+        "[BEHAVIOR] S0-S12 × 11要素矩阵在同一 Journey 上完整可见，缺口按真实证据判色",
+        "[BEHAVIOR] 根 regression-contract.yaml 挂回 F1 Recovery 等价基线且 assertion_ref 全部可解析",
+        "[BEHAVIOR] fresh evaluator、independent judge、主理人人审全部绑定 current SHA 后才允许 ready/merge",
+        "[ARTIFACT] 4 个 F1 recovery smoke 脚本与对应测试骨架已落仓"
+      ],
+      "files": [
+        "packages/brain/src/",
+        "packages/brain/src/lib/eleven-elements-ledger.js",
+        "packages/brain/src/harness-line-context.js",
+        "packages/brain/src/promise-map-nightly.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/harness-judge.js",
+        "packages/brain/scripts/smoke/",
+        "regression-contract.yaml",
+        "docs/current/SYSTEM_MAP.md",
+        "tests/"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
