@@ -44,6 +44,10 @@
   第二 authority；first/new/high-risk/authority change 只能由 versioned Controller policy
   要求 exact-head owner receipt。
 - runtime-result-channel-blocker: 本次 TaskBundle 没有注入 `BRAIN_RESULT_FILE`；source checkout 的 `.brain-result.json` 不具 authority。本轮只提交合同 branch，不能凭 source result 授权 Generator；修复后必须由真实 Reviewer Attempt 产生 `attempt.result.result_channel_receipt` 且完成 durable ack。
+- red-execution: 当前 proposer checkout 未安装 root 可解析的 `vitest/config`，目标 Vitest
+  在 collection 前以 `MODULE_NOT_FOUND` 退出；按 R37/R48 这是 tooling BLOCKED，不记 product
+  Red。34-case TypeScript 已由 esbuild 静态转换并通过 `node --check`，待依赖准备、真 PG 与
+  authority store 可用后必须运行合同列出的唯一 product-level 命令并逐 case 到达目标 seam。
 - inventory-authority: exact main `dd424a61926009ac85a915b31187124b85f0ca98:packages/engine/regression-contract.yaml` blob `7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3` 是唯一既有 P0/P1 source inventory，exact 129/P0=66/P1=63/digest=`4fcdf146ad08ab0ba349d789084fad6d85902b0e345993fb7ddf9057899a1e5f`；`packages/quality/contracts/` 是唯一 authority boundary。
 - lifecycle-proposal-provenance: Draft+CONFLICTING PR #4372 的 full source `4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13` 只是 proposed v1；分布 `0,2,2,8,6,0,1,110` 与 digest `be80793527a817611ba0698654ea858eda7c77ea9e63da937cba7b885a4d9363` 不 canonical。main migration 366 已占用；执行前重查 tree/DB 后选择未用 `>=368` 编号。
 - migration-filename: 本轮 re-fetch exact origin/main `dd424a...` 确认 tree 最大编号为 366；
