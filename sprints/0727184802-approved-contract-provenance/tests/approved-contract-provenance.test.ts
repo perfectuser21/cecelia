@@ -405,6 +405,123 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     });
   });
 
+  it('dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch', async () => {
+    const {
+      materializeApprovedContractManifest,
+      verifyApprovedContractExecutionPreflight,
+    } = await subject();
+    const pool = new pg.Pool(DB_DEFAULTS);
+    const client = await pool.connect();
+    const initiativeId = randomUUID();
+    const runId = randomUUID();
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        CREATE TEMP TABLE initiative_contracts (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          initiative_id uuid NOT NULL,
+          version integer NOT NULL,
+          status text NOT NULL DEFAULT 'draft',
+          prd_content text,
+          contract_content text,
+          review_rounds integer DEFAULT 0,
+          approved_at timestamptz,
+          branch text,
+          source_commit_sha text,
+          manifest_digest text,
+          approved_manifest jsonb,
+          reviewer_verdict jsonb,
+          created_at timestamptz DEFAULT now(),
+          updated_at timestamptz DEFAULT now(),
+          UNIQUE (initiative_id, version)
+        ) ON COMMIT DROP;
+        CREATE TEMP TABLE initiative_runs (
+          id uuid PRIMARY KEY,
+          initiative_id uuid NOT NULL,
+          contract_id uuid,
+          updated_at timestamptz DEFAULT now()
+        ) ON COMMIT DROP;
+      `);
+      await client.query(
+        'INSERT INTO initiative_runs (id, initiative_id) VALUES ($1::uuid, $2::uuid)',
+        [runId, initiativeId],
+      );
+      const manifest = {
+        run_id: runId,
+        contract_version: 6,
+        source_commit_sha: APPROVED_SOURCE_SHA,
+        sprint_dir: SPRINT_DIR,
+        artifacts: [],
+        manifest_digest: APPROVED_DIGEST,
+        approved_at: '2026-07-27T00:00:00.000Z',
+        reviewer_verdict: { verdict: 'APPROVED' },
+      };
+      await materializeApprovedContractManifest(client, {
+        runId,
+        version: 6,
+        branch: 'cp-harness-propose-r6-51836fb2-a17',
+        manifest,
+        prdContent: '# PRD',
+        contractContent: '# Contract',
+      });
+      const { rows } = await client.query(
+        `SELECT branch, manifest_digest, source_commit_sha, approved_manifest
+           FROM initiative_contracts
+          WHERE initiative_id=$1::uuid AND version=6`,
+        [initiativeId],
+      );
+      const approvedContract = rows[0];
+
+      expect(verifyApprovedContractExecutionPreflight({
+        role: 'generator',
+        contract: null,
+        expectedManifestDigest: APPROVED_DIGEST,
+      })).toMatchObject({
+        ok: false,
+        reason: 'approved_contract_manifest_missing',
+      });
+      expect(verifyApprovedContractExecutionPreflight({
+        role: 'generator',
+        contract: approvedContract,
+        expectedManifestDigest: STALE_DIGEST,
+      })).toMatchObject({
+        ok: false,
+        reason: 'stale_manifest_digest',
+      });
+      expect(verifyApprovedContractExecutionPreflight({
+        role: 'evaluator',
+        contract: approvedContract,
+        expectedManifestDigest: APPROVED_DIGEST,
+        expectedPrHeadSha: 'sha-current',
+        currentPrSha: null,
+      })).toMatchObject({
+        ok: false,
+        reason: 'current_pr_sha_missing',
+      });
+      expect(verifyApprovedContractExecutionPreflight({
+        role: 'evaluator',
+        contract: approvedContract,
+        expectedManifestDigest: APPROVED_DIGEST,
+        expectedPrHeadSha: 'sha-current',
+        currentPrSha: 'sha-old',
+      })).toMatchObject({
+        ok: false,
+        reason: 'stale_pr_head_sha',
+      });
+      expect(verifyApprovedContractExecutionPreflight({
+        role: 'evaluator',
+        contract: approvedContract,
+        expectedManifestDigest: APPROVED_DIGEST,
+        expectedPrHeadSha: 'sha-current',
+        currentPrSha: 'sha-current',
+      })).toMatchObject({ ok: true });
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+      await pool.end();
+    }
+  });
+
   it('callback refuses stale manifest_digest before writing evaluator verdict', async () => {
     const { verifyAttemptCallbackApprovedContract } = await subject();
     const attempt = {

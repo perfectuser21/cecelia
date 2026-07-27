@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "实现 Approved Contract Provenance Manifest 可信链路",
-      "scope": "从 Reviewer APPROVED 的 Git SHA 生成 canonical manifest，append-only 写入批准记录，并让 Generator dispatch/callback、Evaluator、CI required check 与 merge gate 校验同一 manifest_digest 和 current PR SHA；approved artifact drift fail-closed，main migration 冲突 requires_re_gan。",
+      "scope": "从 Reviewer APPROVED 的 Git SHA 生成 canonical manifest，append-only 写入批准记录，并让 Generator dispatch/preflight/callback、Evaluator preflight、CI required check 与 merge gate 校验同一 manifest_digest 和 current PR SHA；approved artifact drift fail-closed，main migration 冲突 requires_re_gan。",
       "dod": [
         "[BEHAVIOR] canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts",
         "[BEHAVIOR] append-only approval rejects same contract_version with a different manifest_digest",
@@ -15,6 +15,7 @@
         "[BEHAVIOR] root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift",
         "[BEHAVIOR] missing manifest unreachable stale sha and stale manifest digest fail closed",
         "[BEHAVIOR] generator and evaluator dispatch carry approved manifest digest and source sha",
+        "[BEHAVIOR] dispatch preflight rejects missing manifest stale digest and stale pr_head_sha before launch",
         "[BEHAVIOR] callback refuses stale manifest_digest before writing evaluator verdict",
         "[BEHAVIOR] callback refuses stale pr_head_sha before writing generator verdict",
         "[BEHAVIOR] generator callback refuses stale manifest_digest before writing generator verdict",
