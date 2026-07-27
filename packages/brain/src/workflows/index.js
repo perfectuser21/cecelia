@@ -1,13 +1,14 @@
 /**
- * Brain v2 Phase C2 + C8a + consciousness: workflows 集中注册入口。
+ * workflows 启动预热入口。
  *
- * Brain server 启动时调 initializeWorkflows()，在所有 graph-runtime 调用前把
- * 已知 workflow 注册到 orchestrator/workflow-registry。保证 runWorkflow 能查到。
+ * 历史：本文件曾是 Brain v2 Phase C 的「workflow 集中注册」入口，把 graph 注册进
+ * orchestrator/workflow-registry 供 graph-runtime.runWorkflow 查表。
+ * 现状：dev-task 已迁离 LangGraph（T6，走 triggerCeceliaRun 本地 spawn），
+ * registry 与 graph-runtime 已作为死码删除（刀4a）。**这里不再有任何注册动作。**
  *
- * consciousness graph 不走 runWorkflow（无 task 语义），不注册到 registry，
- * 但在此预热单例（compileGraph + pg-checkpointer setup），避免首次 consciousness tick 延迟。
- *
- * dev-task 已迁离 LangGraph（T6），走 triggerCeceliaRun 本地 spawn，不再注册。
+ * 现在 initializeWorkflows() 只做一件事：预热 consciousness graph 单例
+ * （compileGraph + pg-checkpointer setup），避免首次 consciousness tick 延迟。
+ * consciousness-loop.js 直接持有该 graph 调用，不经任何 runtime 中转。
  */
 import { getCompiledConsciousnessGraph } from './consciousness.graph.js';
 
