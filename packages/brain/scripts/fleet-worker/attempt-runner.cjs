@@ -275,8 +275,22 @@ function createDockerAdapter({
       }
     },
 
-    async remove({ containerId } = {}) {
+    async wait({ containerId } = {}) {
+      const result = await runCommand(
+        'docker',
+        ['wait', '--', containerId],
+        undefined,
+      );
+      const statusCode = Number.parseInt(String(result?.stdout ?? '').trim(), 10);
+      return Object.freeze({
+        statusCode: Number.isInteger(statusCode) ? statusCode : null,
+      });
+    },
+
+    async remove({ containerId, attemptId } = {}) {
+      assertAttemptId(attemptId);
       await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
+      fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
       return Object.freeze({ removed: true });
     },
 
@@ -319,7 +333,7 @@ function validateDependencies({
   for (const method of ['prepare', 'verify', 'cleanup', 'quarantine']) {
     requireMethod(workspaceManager, method, 'workspace_manager');
   }
-  for (const method of ['launch', 'inspect', 'remove', 'listOwned']) {
+  for (const method of ['launch', 'inspect', 'wait', 'remove', 'listOwned']) {
     requireMethod(docker, method, 'docker');
   }
   for (const method of ['save', 'get', 'delete', 'list']) {
@@ -573,6 +587,9 @@ function createAttemptRunner({
         updated_at: new Date().toISOString(),
       };
       await stateStore.save(state);
+      void docker.wait({ containerId: launched.containerId })
+        .then(() => runner.terminal(request.attempt_id))
+        .catch(() => {});
       return Object.freeze({
         attempt_id: request.attempt_id,
         run_id: request.run_id,
@@ -609,7 +626,10 @@ function createAttemptRunner({
         throw new Error('attempt_worker_owner_mismatch');
       }
       try {
-        await docker.remove({ containerId: state.container_id });
+        await docker.remove({
+          containerId: state.container_id,
+          attemptId: state.attempt_id,
+        });
       } catch (error) {
         return quarantineState(state, error);
       }
@@ -631,7 +651,10 @@ function createAttemptRunner({
         if (!isTerminalContainerStatus(inspected.status)) continue;
         if (inspected.status !== 'missing') {
           try {
-            await docker.remove({ containerId: state.container_id });
+            await docker.remove({
+              containerId: state.container_id,
+              attemptId: state.attempt_id,
+            });
           } catch (error) {
             await quarantineState(state, error);
             continue;
@@ -656,7 +679,10 @@ function createAttemptRunner({
         ) {
           continue;
         }
-        await docker.remove({ containerId: container.containerId });
+        await docker.remove({
+          containerId: container.containerId,
+          attemptId,
+        });
         removedOrphanContainers.push(container.containerId);
       }
 
