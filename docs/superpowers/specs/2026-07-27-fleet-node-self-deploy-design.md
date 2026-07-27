@@ -132,8 +132,10 @@ artifacts execute only from that root-owned staging directory, never from an SSH
 user-writable path. Before execution, local and remote controllers require the
 staging directory to be root-owned mode 0700 and require the staged controller
 and nodectl to be root-owned regular non-symlink files with no group/world write
-bits. It never invokes Cecelia Bridge `/run` and never reads or sends a Codex
-account directory.
+bits. The internal apply mode requires EUID 0, repeats that validation, executes
+the canonical staged nodectl directly as root, and exposes neither nested sudo
+nor a production nodectl override. It never invokes Cecelia Bridge `/run` and
+never reads or sends a Codex account directory.
 
 Canonical targets:
 
@@ -154,8 +156,9 @@ bootstrap it removes the marker only long enough to obtain fresh admission
 evidence. If admission fails, it immediately restores drain and exits non-zero.
 HUP, INT, TERM, or an unexpected exit after undrain also restores drain.
 The public local/SSH entrypoint forwards those signals to the node transaction;
-root staging cleanup failure after admission also re-drains before returning
-non-zero.
+signal relay failure, interruption during cleanup, and partial root staging
+deletion use a fixed system drain marker and launchd label independent of staged
+files, then return non-zero.
 Phase 4A still reports `dispatch_ready=false`; production probes require final
 dispatch readiness, so no Attempt becomes runnable. The capability gate
 preserves `node_not_dispatch_ready` in its result, alert, and decision evidence.

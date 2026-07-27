@@ -231,8 +231,9 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   pinned Runner image 构建工件；构建开始固定 commit OID，归档、bundle 与传输前
   复核必须保持同一 OID 且 worktree 干净。本地与远端 payload 均由 `sudo -n`
   解包到 root-owned mode 0700 `/var/tmp` staging，controller/nodectl 经 root
-  owner、非 symlink、非 group/world writable 校验后才执行；不从用户可写临时目录
-  执行 root 脚本，也不复制用户目录、Codex auth、Prompt、token 或 provider session。
+  owner、非 symlink、非 group/world writable 校验后才执行；root internal apply
+  再次独立校验且不接受 nested-sudo/override。不从用户可写临时目录执行 root 脚本，
+  也不复制用户目录、Codex auth、Prompt、token 或 provider session。
 - baseline reconciler 固定创建 UID/GID 450 的 `_cecelia`，安装 pinned
   Node/Codex CLI 与 OrbStack 2.2.1，并把 app 内 `orbctl/docker` 固定暴露到
   Cecelia toolchain PATH，再导入 Git baseline/Runner；installer 增加

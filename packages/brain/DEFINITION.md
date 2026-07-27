@@ -22,7 +22,9 @@
   和传输前复核必须属于同一 OID 且 worktree 仍干净。本地与 BatchMode SSH 路径
   都先由 root 解包到 `/var/tmp` mode 0700 staging，并在执行前校验 controller
   与 nodectl 为 root-owned、非 symlink、不可被 group/world 写入；不执行用户可写
-  临时目录中的 root 脚本，也不读取或传输账号目录、Prompt、token 或 provider session。
+  临时目录中的 root 脚本。内部 apply 入口只接受 EUID 0 并再次校验 staging，
+  不提供 nested-sudo 或 nodectl override；也不读取或传输账号目录、Prompt、token
+  或 provider session。
 - baseline reconciler 创建固定 UID/GID 450 的 `_cecelia` 服务身份，安装 pinned
   Node/Codex CLI 与 OrbStack 2.2.1，把 app 内 `orbctl/docker` 链接到 Cecelia
   toolchain PATH，导入 Git baseline/Runner，再调用 transactional installer。

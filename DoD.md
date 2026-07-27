@@ -44,6 +44,9 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
   非 symlink 与不可 group/world 写。再按 Xian M4→US M4→Xian M1 顺序调用节点
   本地 bootstrap。默认均为 dry-run，公开入口 HUP/INT/TERM、admission 失败或
   staging cleanup 失败均恢复 drain。
+  cleanup/signaling 的最终 fail-closed 使用固定 system drain marker/launchd label，
+  不依赖可能已被部分删除的 staging；internal apply 仅接受 EUID 0、再次校验
+  root staging，且不执行 nested sudo 或 production nodectl override。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh'
 
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
@@ -101,7 +104,9 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
   首次安装失败会删除未完成 app，已有 app 升级失败会回滚；发现高于 baseline 的
   版本绝不静默 downgrade。rollout 不从用户可写 staging 执行 root 脚本，且
   固定单一 commit OID、拒绝源码漂移及异常 owner/mode/symlink；公开入口的
-  drain→bootstrap→undrain→admit 任一步失败、信号中断或清理失败都会恢复 drain。
+  local/SSH drain→bootstrap→undrain→admit 任一步失败、signal relay 失败、
+  cleanup 中断或部分删除都会通过独立 system marker 恢复 drain；普通用户直接
+  调用 internal apply 必须在执行 nodectl 前失败。
   Test: contract:KERNEL-FLEET-NODE-SELF-DEPLOY-01
   期望: exit 0
 
