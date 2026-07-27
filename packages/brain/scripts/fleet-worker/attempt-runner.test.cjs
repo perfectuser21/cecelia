@@ -122,9 +122,12 @@ describe('Fleet Worker Attempt runner', () => {
     readOnly,
   ) => {
     const deps = dependencies();
-    deps.workspaceManager.prepare.mockResolvedValueOnce({
-      ...deps.workspace,
-      mode,
+    deps.workspaceManager.prepare.mockImplementationOnce(async () => {
+      deps.events.push('workspace.prepare');
+      return {
+        ...deps.workspace,
+        mode,
+      };
     });
     const runner = createRunner(deps);
 
