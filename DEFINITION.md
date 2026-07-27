@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.267.89
+**Brain 版本**: 1.267.90
 
 **状态**: 生产运行中
 
@@ -218,6 +218,23 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - L1/L2 输出 Decision JSON（actions + rationale + confidence）
 - decision-executor.js 验证 action 在白名单内，然后在事务中执行
 - 危险 action（如 adjust_strategy）进入 pending_actions 表等人工审批
+
+### 2.3 Fleet Node 基础准入（Phase 4A）
+
+- Brain 只接受 `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` 三个不可变
+  `NodeProfile`，并从 system LaunchDaemon Worker 的有界 `/health` 报告重新计算
+  `base_admitted`；Worker 自报的准入结论不可信。
+- 准入是强制、fail-closed 的派发前置条件。Worker URL 缺失、重定向、超时、
+  非 2xx、超限/畸形响应、identity/版本/Runner digest/资源/新鲜度不匹配、显式
+  drain，均关闭节点；不得回退为仅凭 `online` 或 `effective_slots` 放行。
+- Phase 4A 的成功结果也固定为 `dispatch_ready=false`。WorkspaceSpec/Attempt API、
+  CredentialEnvelope、执行等价与恢复，以及 Phase 5 真实业务任务验收不属于本阶段。
+- 发布顺序固定为 Worker-first，待三台节点真实健康证据通过复审后再发布 Brain。
+  当前 `xian-mac-m1` 的 Docker 不可用，必须保持 drained，不能降低阈值。
+- 节点紧急回退先在该节点执行
+  `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`；
+  Brain 镜像回退执行 `bash scripts/brain-rollback.sh 1.267.89`。恢复前必须重新取得
+  真实 Worker 健康证据，不能用 synthetic canary 替代。
 
 ---
 
