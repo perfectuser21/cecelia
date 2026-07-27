@@ -142,6 +142,18 @@ resolve_docker_command() {
   DOCKER="$path_docker"
 }
 
+install_orbstack_commands() {
+  local orbctl="$APPLICATIONS_DIR/OrbStack.app/Contents/MacOS/bin/orbctl"
+  local docker="$APPLICATIONS_DIR/OrbStack.app/Contents/MacOS/xbin/docker"
+
+  [[ -x "$orbctl" && -x "$docker" ]] || die "orbstack_commands_unavailable"
+  /bin/mkdir -p "$TOOLCHAIN_BIN"
+  /bin/ln -sfn "$orbctl" "$TOOLCHAIN_BIN/orbctl"
+  /bin/ln -sfn "$docker" "$TOOLCHAIN_BIN/docker"
+  [[ -x "$TOOLCHAIN_BIN/orbctl" && -x "$TOOLCHAIN_BIN/docker" ]] \
+    || die "orbstack_command_install_failed"
+}
+
 verify_sha256() {
   local target="$1"
   local expected="$2"
@@ -268,6 +280,7 @@ ensure_orbstack() {
       resolve_docker_command
       "$DOCKER" info --format '{{json .ServerVersion}}' >/dev/null 2>&1 \
         || die "docker_unavailable"
+      install_orbstack_commands
       return
     fi
   fi
@@ -302,6 +315,7 @@ ensure_orbstack() {
   resolve_docker_command
   "$DOCKER" info --format '{{json .ServerVersion}}' >/dev/null 2>&1 \
     || die "docker_unavailable"
+  install_orbstack_commands
   ORBSTACK_INSTALL_SUCCEEDED=true
 }
 

@@ -53,6 +53,8 @@ case "$INSTALL_DIR" in
     ;;
 esac
 RUNTIME_DIR="${FLEET_WORKER_RUNTIME_DIR:-$SYSTEM_ROOT/usr/local/libexec/cecelia/fleet-worker}"
+TOOLCHAIN_BIN="$SYSTEM_ROOT/usr/local/libexec/cecelia/toolchain/bin"
+COMMAND_PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
 ACCESS_HELPER="$RUNTIME_DIR/refresh-fleet-worker-docker-access.sh"
 WORKTREE_ROOT="${FLEET_WORKER_REPO_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/repository}"
@@ -134,7 +136,7 @@ run_default_preflight() {
   service_uid="$("$ID_COMMAND" -u _cecelia)"
   service_gid="$("$ID_COMMAND" -g _cecelia)"
 
-  PATH='/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' \
+  PATH="$COMMAND_PATH" \
   DOCKER_HOST='unix:///var/run/docker.sock' \
   CECELIA_CALLBACK_URL="$BRAIN_HEALTH_URL" \
   CECELIA_MACHINE_ID="$machine_id" \
