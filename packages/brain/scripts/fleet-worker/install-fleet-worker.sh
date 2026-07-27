@@ -541,6 +541,11 @@ validate_worker_data_root_path() {
   esac
   [[ "$FLEET_DATA_ROOT" != "$managed_parent/" ]] \
     || die "worker_data_root_invalid"
+  case "$FLEET_DATA_ROOT" in
+    *'//'*) die "worker_data_root_invalid" ;;
+    *'/./'*|*'/../'*|*'/.'|*'/..') die "worker_data_root_invalid" ;;
+    */) die "worker_data_root_invalid" ;;
+  esac
 }
 
 prepare_worker_data_root() {

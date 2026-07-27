@@ -579,8 +579,8 @@ function createAttemptRunner({
             readOnly: workspace.mode === 'read-only',
           },
           workspaceAdminMount: {
-            source: workspace.mirror_path,
-            target: workspace.mirror_path,
+            source: workspace.admin_path,
+            target: workspace.admin_path,
             readOnly: workspace.mode === 'read-only',
           },
           labels,

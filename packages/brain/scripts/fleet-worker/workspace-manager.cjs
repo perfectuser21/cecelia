@@ -105,6 +105,7 @@ function createWorkspaceManager({
 
   const allowedRepos = Object.freeze({ ...repoAllowlist });
   const ownershipRoot = path.join(worktrees, '.ownership');
+  const adminRoot = path.join(worktrees, '.admin');
   const allowedMirrorPaths = new Set(
     Object.keys(allowedRepos).map((repo) => path.join(mirrors, mirrorName(repo))),
   );
@@ -174,10 +175,14 @@ function createWorkspaceManager({
       throw new Error('workspace_owner_invalid');
     }
     const expectedPath = path.join(worktrees, attemptId);
+    const expectedAdminPath = path.join(adminRoot, `${attemptId}.git`);
     if (path.resolve(workspace.path ?? '') !== expectedPath) {
       throw new Error('workspace_path_not_owned');
     }
-    return { attemptId, expectedPath };
+    if (path.resolve(workspace.admin_path ?? '') !== expectedAdminPath) {
+      throw new Error('workspace_admin_path_not_owned');
+    }
+    return { attemptId, expectedPath, expectedAdminPath };
   }
 
   function ownershipPath(attemptId) {
@@ -205,13 +210,14 @@ function createWorkspaceManager({
       const serialized = fs.readFileSync(ownershipPath(attemptId), 'utf8');
       if (Buffer.byteLength(serialized, 'utf8') > 16_384) return null;
       const workspace = JSON.parse(serialized);
-      const { expectedPath } = assertOwnedWorkspace(workspace);
+      const { expectedPath, expectedAdminPath } = assertOwnedWorkspace(workspace);
       if (
         workspace.repo == null
         || !Object.hasOwn(allowedRepos, workspace.repo)
         || workspace.mirror_path !== path.join(mirrors, mirrorName(workspace.repo))
         || !allowedMirrorPaths.has(workspace.mirror_path)
         || workspace.path !== expectedPath
+        || workspace.admin_path !== expectedAdminPath
       ) {
         return null;
       }
@@ -233,8 +239,10 @@ function createWorkspaceManager({
       await verifyExpectedHead(mirrorPath, spec);
 
       fs.mkdirSync(worktrees, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(adminRoot, { recursive: true, mode: 0o700 });
       const workspacePath = path.join(worktrees, spec.attempt_id);
-      if (fs.existsSync(workspacePath)) {
+      const adminPath = path.join(adminRoot, `${spec.attempt_id}.git`);
+      if (fs.existsSync(workspacePath) || fs.existsSync(adminPath)) {
         throw new Error('workspace_attempt_already_exists');
       }
       const checkoutSha = spec.expected_head_sha ?? spec.base_sha;
@@ -247,6 +255,7 @@ function createWorkspaceManager({
         mode: spec.mode,
         path: workspacePath,
         mirror_path: mirrorPath,
+        admin_path: adminPath,
         owner: {
           run_id: spec.run_id,
           attempt_id: spec.attempt_id,
@@ -255,8 +264,16 @@ function createWorkspaceManager({
       saveOwnership(workspace);
       try {
         await git([
-          '--git-dir',
+          'clone',
+          '--bare',
+          '--no-hardlinks',
+          '--',
           mirrorPath,
+          adminPath,
+        ]);
+        await git([
+          '--git-dir',
+          adminPath,
           'worktree',
           'add',
           '--detach',
@@ -269,12 +286,13 @@ function createWorkspaceManager({
       } catch (error) {
         await git([
           '--git-dir',
-          mirrorPath,
+          adminPath,
           'worktree',
           'remove',
           '--force',
           workspacePath,
         ]).catch(() => {});
+        fs.rmSync(adminPath, { recursive: true, force: true });
         deleteOwnership(spec.attempt_id);
         throw error;
       }
@@ -301,7 +319,7 @@ function createWorkspaceManager({
     },
 
     async quarantine(workspace, reason) {
-      const { attemptId, expectedPath } = assertOwnedWorkspace(workspace);
+      const { attemptId, expectedPath, expectedAdminPath } = assertOwnedWorkspace(workspace);
       fs.mkdirSync(quarantine, { recursive: true, mode: 0o700 });
       const quarantinePath = path.join(
         quarantine,
@@ -309,6 +327,10 @@ function createWorkspaceManager({
       );
       if (fs.existsSync(expectedPath)) {
         fs.renameSync(expectedPath, quarantinePath);
+      }
+      const quarantineAdminPath = `${quarantinePath}.git-admin`;
+      if (fs.existsSync(expectedAdminPath)) {
+        fs.renameSync(expectedAdminPath, quarantineAdminPath);
       }
       const message = String(reason?.message ?? reason ?? 'workspace_cleanup_failed')
         .slice(0, 1024);
@@ -327,13 +349,15 @@ function createWorkspaceManager({
         status: 'quarantined',
         attempt_id: attemptId,
         path: quarantinePath,
+        admin_path: quarantineAdminPath,
         reason: message,
       });
     },
 
     async cleanup(workspace) {
-      const { attemptId, expectedPath } = assertOwnedWorkspace(workspace);
+      const { attemptId, expectedPath, expectedAdminPath } = assertOwnedWorkspace(workspace);
       if (!fs.existsSync(expectedPath)) {
+        fs.rmSync(expectedAdminPath, { recursive: true, force: true });
         deleteOwnership(attemptId);
         return Object.freeze({
           status: 'already_clean',
@@ -343,12 +367,13 @@ function createWorkspaceManager({
       try {
         await git([
           '--git-dir',
-          workspace.mirror_path,
+          expectedAdminPath,
           'worktree',
           'remove',
           '--force',
           expectedPath,
         ]);
+        fs.rmSync(expectedAdminPath, { recursive: true, force: true });
         deleteOwnership(attemptId);
         return Object.freeze({
           status: 'cleaned',
@@ -392,6 +417,7 @@ function createWorkspaceManager({
       worktrees,
       quarantine,
       ownership: ownershipRoot,
+      admin: adminRoot,
     }),
   });
 }
