@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -174,14 +174,17 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 2 点要求这些节点都验证 current PR SHA + `manifest_digest`，缺 manifest、不可达、stale SHA/digest fail-closed。
 
-**可观测行为**: dispatcher 将 approved manifest digest/source SHA 注入 task_bundle 与 env；callback 上报 verdict 时写入服务端校验后的 `manifest_digest`；ground-truth 读取 verdict 时保留 digest；merge gate 只有 evaluate/judge 均 PASS 且 `pr_head_sha == current PR SHA` 且 `manifest_digest == approved digest` 才 allow；CI required check 脚本同样校验。
+**可观测行为**: dispatcher 将 approved manifest digest/source SHA 注入 task_bundle 与 env；callback 上报 verdict 时先服务端校验 `manifest_digest` 与 current PR SHA，校验通过才写 verdict；ground-truth 读取 verdict 时保留 digest；merge gate 只有 evaluate/judge 均 PASS 且 `pr_head_sha == current PR SHA` 且 `manifest_digest == approved digest` 才 allow；CI required check 脚本同样校验。
 
 **验证命令**:
 ```bash
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator and evaluator dispatch carry approved manifest digest and source sha"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale manifest_digest before writing evaluator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses PASS verdicts that do not carry the approved manifest_digest"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses missing approved manifest_digest and stale judge manifest_digest"
 ```
 
-**硬阈值**: stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 digest 返回 `approved_contract_manifest_digest_missing`。
+**硬阈值**: dispatch env 必须含 `APPROVED_CONTRACT_MANIFEST_DIGEST` 与 `APPROVED_CONTRACT_SOURCE_SHA`；callback stale digest 在写 verdict 前返回 `stale_evaluate_manifest_digest`；stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 approved digest 返回 `approved_contract_manifest_digest_missing`。
 
 ---
 
@@ -195,9 +198,10 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 ```bash
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved migration 365 changed to 366 is rejected as approved_contract_drift"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "checkbox evidence and provenance only root DoD edits are allowed"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift"
 ```
 
-**硬阈值**: `365->366` 必须 `ok:false reason=approved_contract_drift`；checkbox/evidence/provenance-only 必须 `ok:true`；删除/重命名/内容修改均列 drift path。
+**硬阈值**: `365->366` 必须 `ok:false reason=approved_contract_drift`；checkbox/evidence/provenance-only 必须 `ok:true`；删除/重命名/内容修改均列 drift path，且不得把 rename 当新 artifact 放行。
 
 ---
 
@@ -285,14 +289,18 @@ echo "OK: approved contract provenance final e2e passed"
 | 365→366 drift | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | approved migration 365 changed to 366 is rejected as approved_contract_drift | 旧系统不比较 approved root DoD 语义 → FAIL |
 | Root DoD 机械变化 | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | checkbox evidence and provenance only root DoD edits are allowed | 过严 byte compare 或过松语义 compare → FAIL |
 | fail-closed reference | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | missing manifest unreachable stale sha and stale manifest digest fail closed | 缺 manifest/stale digest 被放行 → FAIL |
+| dispatch digest propagation | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | generator and evaluator dispatch carry approved manifest digest and source sha | 现有 dispatch env 不注入 approved digest/source SHA → FAIL |
+| callback digest preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | callback refuses stale manifest_digest before writing evaluator verdict | 旧 callback 只落 verdict，不在写入前校验 digest → FAIL |
 | merge gate digest | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | mergeGate refuses PASS verdicts that do not carry the approved manifest_digest | 现有 mergeGate 只看 pr_head_sha → FAIL |
+| merge gate missing/stale digest | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | mergeGate refuses missing approved manifest_digest and stale judge manifest_digest | 缺 approved digest 或 stale judge digest 被放行 → FAIL |
+| frozen artifact deletion/rename | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift | 删除 task-plan、rename test、改 contract-draft 被放行 → FAIL |
 | requires_re_gan | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | main migration conflict after approval returns requires_re_gan | migration 冲突进入普通 fix loop 或被改号 → FAIL |
 
 ## 预期实现边界
 
 | 文件 | 要求 |
 |---|---|
-| `packages/brain/src/orchestrator/approved-contract-provenance.js` | 新增 manifest 构建、digest canonicalization、Git artifact drift 验证、Root DoD 机械变化归一化、manifest reference 校验、main migration conflict 检测。 |
+| `packages/brain/src/orchestrator/approved-contract-provenance.js` | 新增 manifest 构建、digest canonicalization、Git artifact drift 验证、Root DoD 机械变化归一化、manifest reference 校验、dispatch context 构建、callback digest preflight、main migration conflict 检测。 |
 | `packages/brain/src/orchestrator/contract-store.js` | `materializeApprovedContract` 升级或旁路到 `materializeApprovedContractManifest`；同 version 不同 digest 拒绝覆写。 |
 | `packages/brain/src/orchestrator/loop.js` | `persist_contract_approval` 用 approved SHA 生成 manifest，并冻结 `sprint-prd/contract-draft/contract-dod/task-plan/tests/**/fixtures/golden/DoD.md/migration`。 |
 | `packages/brain/src/orchestrator/dispatcher.js` | generator/evaluator/judge bundle 与 env 注入 approved manifest digest/source SHA；缺 manifest fail-closed。 |

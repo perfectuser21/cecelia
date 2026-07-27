@@ -12,6 +12,9 @@ const MODULE_PATH = '../../../packages/brain/src/orchestrator/approved-contract-
 const RUN_ID = '13d41c64-f5f1-4aaf-9487-c2608c3ec990';
 const INITIATIVE_ID = '891b959f-98e5-43be-8315-dd83dedf00c8';
 const SPRINT_DIR = 'sprints/kernel-contract-fixture';
+const APPROVED_DIGEST = '1'.repeat(64);
+const STALE_DIGEST = '2'.repeat(64);
+const APPROVED_SOURCE_SHA = 'a'.repeat(40);
 
 async function subject() {
   return import(MODULE_PATH);
@@ -293,6 +296,81 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     })).toMatchObject({ ok: false, reason: 'current_pr_sha_missing' });
   });
 
+  it('generator and evaluator dispatch carry approved manifest digest and source sha', async () => {
+    const { buildApprovedContractDispatchContext } = await subject();
+    const approvedContract = {
+      branch: 'cp-harness-propose-r6-51836fb2-a12',
+      manifest_digest: APPROVED_DIGEST,
+      source_commit_sha: APPROVED_SOURCE_SHA,
+      approved_manifest: {
+        manifest_digest: APPROVED_DIGEST,
+        source_commit_sha: APPROVED_SOURCE_SHA,
+        sprint_dir: SPRINT_DIR,
+      },
+    };
+
+    const generatorContext = buildApprovedContractDispatchContext({
+      role: 'generator',
+      contract: approvedContract,
+      currentPrSha: null,
+    });
+    expect(generatorContext.inputs.contract.manifest_digest).toBe(APPROVED_DIGEST);
+    expect(generatorContext.inputs.contract.approved_manifest.manifest_digest).toBe(APPROVED_DIGEST);
+    expect(generatorContext.env).toMatchObject({
+      APPROVED_CONTRACT_MANIFEST_DIGEST: APPROVED_DIGEST,
+      APPROVED_CONTRACT_SOURCE_SHA: APPROVED_SOURCE_SHA,
+    });
+
+    const evaluatorContext = buildApprovedContractDispatchContext({
+      role: 'evaluator',
+      contract: approvedContract,
+      currentPrSha: 'sha-current',
+    });
+    expect(evaluatorContext.env).toMatchObject({
+      APPROVED_CONTRACT_MANIFEST_DIGEST: APPROVED_DIGEST,
+      APPROVED_CONTRACT_SOURCE_SHA: APPROVED_SOURCE_SHA,
+      PR_HEAD_SHA: 'sha-current',
+    });
+  });
+
+  it('callback refuses stale manifest_digest before writing evaluator verdict', async () => {
+    const { verifyAttemptCallbackApprovedContract } = await subject();
+    const attempt = {
+      id: 'attempt-evaluator-1',
+      role: 'evaluator',
+      task_bundle: {
+        inputs: {
+          contract: {
+            manifest_digest: APPROVED_DIGEST,
+            approved_manifest: { manifest_digest: APPROVED_DIGEST },
+          },
+          pull_request: { head_sha: 'sha-current' },
+        },
+      },
+    };
+
+    expect(verifyAttemptCallbackApprovedContract(attempt, {
+      decision: { outcome: 'PASS', manifest_digest: STALE_DIGEST },
+      provider_metadata: { pr_head_sha: 'sha-current' },
+    })).toMatchObject({
+      ok: false,
+      reason: 'stale_evaluate_manifest_digest',
+    });
+
+    expect(verifyAttemptCallbackApprovedContract(attempt, {
+      decision: { outcome: 'PASS' },
+      provider_metadata: { pr_head_sha: 'sha-current' },
+    })).toMatchObject({
+      ok: false,
+      reason: 'approved_contract_manifest_digest_missing',
+    });
+
+    expect(verifyAttemptCallbackApprovedContract(attempt, {
+      decision: { outcome: 'PASS', manifest_digest: APPROVED_DIGEST },
+      provider_metadata: { pr_head_sha: 'sha-current' },
+    })).toMatchObject({ ok: true });
+  });
+
   it('mergeGate refuses PASS verdicts that do not carry the approved manifest_digest', async () => {
     const { mergeGate } = await import('../../../packages/brain/src/orchestrator/gates.js');
     const result = mergeGate({
@@ -314,6 +392,66 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     expect(result).toEqual({
       allow: false,
       reason: 'stale_evaluate_manifest_digest',
+    });
+  });
+
+  it('mergeGate refuses missing approved manifest_digest and stale judge manifest_digest', async () => {
+    const { mergeGate } = await import('../../../packages/brain/src/orchestrator/gates.js');
+    expect(mergeGate({
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-current', manifest_digest: APPROVED_DIGEST },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-current', manifest_digest: APPROVED_DIGEST },
+      prHeadSha: 'sha-current',
+      reviewRequired: false,
+      reviewApproved: false,
+    })).toEqual({
+      allow: false,
+      reason: 'approved_contract_manifest_digest_missing',
+    });
+
+    expect(mergeGate({
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-current', manifest_digest: APPROVED_DIGEST },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-current', manifest_digest: STALE_DIGEST },
+      prHeadSha: 'sha-current',
+      approvedManifestDigest: APPROVED_DIGEST,
+      reviewRequired: false,
+      reviewApproved: false,
+    })).toEqual({
+      allow: false,
+      reason: 'stale_judge_manifest_digest',
+    });
+  });
+
+  it('approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift', async () => {
+    const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
+    const { repo, approvedSha } = createApprovedRepo();
+    const manifest = await buildApprovedContractManifest({
+      repoRoot: repo,
+      runId: RUN_ID,
+      contractVersion: 6,
+      sourceCommitSha: approvedSha,
+      sprintDir: SPRINT_DIR,
+      approvedAt: '2026-07-27T00:00:00.000Z',
+      reviewerVerdict: { verdict: 'APPROVED' },
+    });
+
+    write(repo, `${SPRINT_DIR}/contract-draft.md`, '# Sprint Contract Draft\nStep 1 changed\n');
+    sh(repo, `git rm -q ${SPRINT_DIR}/task-plan.json`);
+    sh(repo, `git mv ${SPRINT_DIR}/tests/approved.test.ts ${SPRINT_DIR}/tests/renamed-approved.test.ts`);
+    sh(repo, `git commit -qam contract-artifact-drift`);
+    const driftSha = sh(repo, 'git rev-parse HEAD');
+
+    await expect(verifyApprovedContractManifest({
+      repoRoot: repo,
+      manifest,
+      currentCommitSha: driftSha,
+    })).resolves.toMatchObject({
+      ok: false,
+      reason: 'approved_contract_drift',
+      drift: expect.arrayContaining([
+        expect.objectContaining({ path: `${SPRINT_DIR}/contract-draft.md` }),
+        expect.objectContaining({ path: `${SPRINT_DIR}/task-plan.json` }),
+        expect.objectContaining({ path: `${SPRINT_DIR}/tests/approved.test.ts` }),
+      ]),
     });
   });
 
