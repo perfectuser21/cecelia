@@ -83,6 +83,7 @@ function dependencies(overrides = {}) {
       events.push('workspace.cleanup');
       return { status: 'cleaned', attempt_id: ATTEMPT_ID };
     }),
+    reconcile: vi.fn(async () => ({ cleaned_attempts: [] })),
     quarantine: vi.fn(async (_workspace, reason) => {
       events.push('workspace.quarantine');
       return {
@@ -344,6 +345,12 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.workspaceManager.cleanup).toHaveBeenCalledWith(ownedOrphan.workspace);
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalledWith(healthyAttempt.workspace);
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalledWith(foreignAttempt.workspace);
+    expect(deps.workspaceManager.reconcile).toHaveBeenCalledWith({
+      retainedAttemptIds: [
+        OTHER_ATTEMPT_ID,
+        foreignAttempt.attempt_id,
+      ],
+    });
     expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'missing-owned-container',
       attemptId: ATTEMPT_ID,
