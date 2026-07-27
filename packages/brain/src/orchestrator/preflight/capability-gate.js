@@ -7,6 +7,10 @@ import {
 const SECRET_KEYS = /(?:^|_)(?:authorization|token|password|cookie)(?:$|_)/i;
 const TRANSIENT_HTTP_STATUSES = new Set([500, 502, 503, 504]);
 const TRANSIENT_SIGNATURE = /^(?:http_)?(?:500|502|503|504)$|^high_demand$|^biscuit_baker_.*_circuit_open$/;
+const NODE_ADMISSION_SIGNATURES = new Set([
+  'node_not_base_admitted',
+  'node_not_dispatch_ready',
+]);
 
 function asObject(value) {
   return value && typeof value === 'object' ? value : {};
@@ -159,9 +163,10 @@ export function createCapabilityGate(deps = {}) {
         continue;
       }
       if (!health?.ok || !capacity?.ok || Number(capacity?.available ?? 0) < 1) {
-        if (health?.signature === 'node_not_base_admitted'
-          || capacity?.signature === 'node_not_base_admitted') {
-          fallbackReason = 'node_not_base_admitted';
+        const admissionSignature = [health?.signature, capacity?.signature]
+          .find((signature) => NODE_ADMISSION_SIGNATURES.has(signature));
+        if (admissionSignature) {
+          fallbackReason = admissionSignature;
         }
         continue;
       }
@@ -242,8 +247,8 @@ export function createCapabilityGate(deps = {}) {
         ? 'credential_probe_mismatch'
         : fallbackReason === 'preflight_timeout'
           ? 'preflight_timeout'
-          : fallbackReason === 'node_not_base_admitted' && !lastProviderProbe
-            ? 'node_not_base_admitted'
+          : NODE_ADMISSION_SIGNATURES.has(fallbackReason) && !lastProviderProbe
+            ? fallbackReason
           : 'all_execution_targets_exhausted';
       const blocked = blockedResult({
         snapshotId,
