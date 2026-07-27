@@ -449,6 +449,20 @@ printf 'bundle\n' > "$payload_root/repository.bundle"
 printf 'runner\n' > "$payload_root/runner.tar"
 
 : > "$node_log"
+if FLEET_TEST_NODE_LOG="$node_log" \
+  FLEET_TEST_TRANSPORT_LOG="$transport_log" \
+  FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  FLEET_ROLLOUT_NODECTL="$node_source/fleet-nodectl.sh" \
+  "$ROLLOUT" __node-apply xian-mac-m4 "$payload_root" \
+  >"$test_root/direct-internal.out" 2>&1; then
+  fail "unprivileged caller entered the privileged node-apply entrypoint"
+fi
+grep -Fq 'rollout_internal_root_required' "$test_root/direct-internal.out" \
+  || fail "unprivileged internal-entry failure was not explicit"
+[[ ! -s "$node_log" ]] \
+  || fail "unprivileged internal entrypoint executed a user-writable nodectl"
+
+: > "$node_log"
 FLEET_TEST_NODE_LOG="$node_log" \
 FLEET_TEST_TRANSPORT_LOG="$transport_log" \
 FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
