@@ -16,8 +16,8 @@ target_environment: local_api
 - [ ] [ARTIFACT] 真 PostgreSQL integration 与 smoke 均已入册
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/integration/migration-365-kernel-harness-f1-baseline.integration.test.js','packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh']){const s=fs.readFileSync(p,'utf8');if(!/HARNESS_TEST_DATABASE_URL|DATABASE_URL/.test(s))process.exit(1)}"
 
-- [ ] [ARTIFACT] 根 regression-contract.yaml 登记 F1 基线，engine 合同只作 legacy source
-  Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');if(!root.includes('KH-F1-BASELINE-'))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
+- [ ] [ARTIFACT] 根 regression-contract.yaml 登记 F1 逐项权威映射，engine 合同只作 legacy source
+  Test: node -e "const fs=require('fs');const root=fs.readFileSync('regression-contract.yaml','utf8');for(const x of ['kernel_harness_f1_baseline:','legacy_behavior_id:','journey_stage:','element:','source_ref:','assertion_ref:'])if(!root.includes(x))process.exit(1);const engine=fs.readFileSync('packages/engine/regression-contract.yaml','utf8');if(!engine.includes('Regression Contract - ZenithJoy Engine'))process.exit(1)"
 
 - [ ] [ARTIFACT] Brain 源码改动同步版本与 DEFINITION.md
   Test: node -e "const fs=require('fs');const d=fs.readFileSync('packages/brain/DEFINITION.md','utf8');const p=JSON.parse(fs.readFileSync('packages/brain/package.json','utf8'));if(!d.includes(p.version))process.exit(1)"
@@ -30,8 +30,8 @@ target_environment: local_api
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh unique-journey'
 
 - [ ] [BEHAVIOR] [L2] B2 Golden Path Step 2 保留历史并补齐 S0-S12
-  动作: 在同一未重置事务中连续应用两轮 baseline，再读取 backbone 与 history alias。
-  预期观察: within 180s 六个历史 ID/Notion 关联不变，S0-S12 各一个 backbone，第二轮无新增。
+  动作: 在同一未重置事务中连续应用两轮 baseline，再经真 PostgreSQL 与真实 Brain GET 读取 backbone 与 history alias。
+  预期观察: within 180s 六个历史 ID/Notion 关联不变，S0-S12 各一个 backbone，13 组稳定名称/promise 逐字匹配，Reviewer/Final E2E 仅为非 backbone 历史别名，第二轮无新增。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh history-and-backbone'
 
 - [ ] [BEHAVIOR] [L2] B3 Golden Path Step 3 每个 backbone Step 恰有 11 个合法 element cells
@@ -44,14 +44,14 @@ target_environment: local_api
   预期观察: within 180s false-green 与 invalid assertion_ref 数组均为空；缺证据项保持 gray/red/pending。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh cells-and-evidence'
 
-- [ ] [BEHAVIOR] [L2] B5 Golden Path Step 4 legacy P0/P1 基线五字段完整
-  动作: 真读 engine legacy source、根合同和真实测试路径，生成非权威派生 JSON。
-  预期观察: within 180s 每个 P0/P1 条目含 legacy owner、合法 audit status、unified owner、gap、下一刀顺序。
+- [ ] [BEHAVIOR] [L2] B5 Golden Path Step 4 legacy P0/P1 四类来源逐项归位到根合同
+  动作: 真读 engine P0/P1、hooks、DevGate/CI 与 Kernel gates 的去重发现集，并与根 regression-contract 的权威 behaviors 映射和真库 143 cells 对账。
+  预期观察: within 180s discovered=mapped、unmapped=0、duplicate=0；每项含 legacy_behavior_id/priority/stage/element/双 owner/status/gap/order/source_ref/assertion_ref，派生 JSON authoritative=false。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh legacy-baseline'
 
 - [ ] [BEHAVIOR] [L2] B6 Golden Path Step 5 非空 assertion_ref 全部可追到唯一根合同或真实测试
-  动作: 对 F1 cells 的 assertion_ref 逐条解析根 regression contract，并检查 test_command 目标真实存在。
-  预期观察: within 180s 悬空引用为 0；engine YAML 未成为第二 SSOT；文档路径不被当作可执行证据。
+  动作: 对 F1 cells 与根 baseline behaviors 的 assertion_ref 逐条解析唯一根 regression entry，并检查 test_command 目标真实存在。
+  预期观察: within 180s 悬空/重复/静态文档引用均为 0；source_ref 与 assertion_ref 分工明确；engine YAML 未成为第二 SSOT。
   验证命令: Test: manual:bash -c ': "${HARNESS_TEST_DATABASE_URL:?}"; timeout 180 bash packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh assertion-refs'
 
 - [ ] [BEHAVIOR] [L2] B7 Golden Path Step 6 真实 Brain endpoint 显示 merge 不等于 completed

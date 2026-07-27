@@ -16,6 +16,33 @@ const HISTORY = [
   ['a6888ef3-2482-4655-8703-cf3b9f037cb9', 'Final E2E', 6, '374c40c2-ba63-8149-81f6-ea2909746d5d'],
 ] as const;
 
+const STAGES = [
+  ['S0', 'Task Born', '每个任务有稳定身份、来源、仓库、环境、风险和锚点'],
+  ['S1', 'Intent / PrepPRD', '用户意图、成功标准、真实旅程和依赖被冻结'],
+  ['S2', 'Planner', '计划覆盖 FR/NFR/Invariant/真实 E2E，范围足够薄'],
+  ['S3', 'Contract GAN', '对抗审核后的合同可执行且批准后不可偷改'],
+  ['S4', 'Generator', '在受控工作树先 Red 后 Green，创建 Harness-owned PR'],
+  ['S5', 'CI', '客观检查全绿，只产证据，不持有 Harness merge 权'],
+  ['S6', 'Evaluator', '新 session 真跑合同、反作弊和真实 E2E'],
+  ['S7', 'Independent Judge', '独立复核 Evaluator 证据并给最终机器裁决'],
+  ['S8', 'Risk-based Human Review', '首次/高风险变更在 merge 前由主理人查看'],
+  ['S9', 'Merge', '只有唯一 Merge Authority 在全部门禁满足后合并'],
+  ['S10', 'Staging', '部署并验证刚合并的精确 artifact'],
+  ['S11', 'Production', '按发布策略 promote、验活并留回滚锚点'],
+  ['S12', 'Report / Learning / Complete', '更新承诺地图、回归、学习和外部状态后才收账'],
+] as const;
+
+const BACKBONE_HISTORY = new Map([
+  ['c5bae104-da5e-483d-b5ea-c295c90a3f28', 'S2'],
+  ['d6dcdfaf-4b98-4717-bbe3-522f03f70757', 'S3'],
+  ['0cdadc1a-e3a0-46a1-8333-ebbc102883f7', 'S4'],
+  ['1a738e05-99a7-421c-a52d-c2bb80bf19be', 'S6'],
+]);
+const HISTORY_ALIASES = new Map([
+  ['e2bd9263-87ef-4461-a1d5-5ff07a38b8a8', 'S3'],
+  ['a6888ef3-2482-4655-8703-cf3b9f037cb9', 'S6'],
+]);
+
 let client: Client;
 let runtimeBefore: unknown;
 
@@ -93,23 +120,34 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
     expect(duplicates).toEqual([]);
   });
 
-  it('历史 ID 与 Notion 关联保留且 S0-S12 骨干完整', async () => {
+  it('历史 ID 与 Notion 关联保留且 S0-S12 名称 promise 骨干完整', async () => {
     const { rows: history } = await client.query(
-      `SELECT id, notion_id FROM journey_steps WHERE id = ANY($1::uuid[]) ORDER BY id`,
+      `SELECT id, notion_id, lifecycle_stage, is_backbone
+       FROM journey_steps WHERE id = ANY($1::uuid[]) ORDER BY id`,
       [HISTORY.map(([id]) => id)],
     );
     expect(history).toHaveLength(6);
     for (const [id, , , notionId] of HISTORY) {
-      expect(history).toContainEqual({ id, notion_id: notionId });
+      expect(history).toContainEqual(expect.objectContaining({ id, notion_id: notionId }));
+    }
+    for (const [id, stage] of BACKBONE_HISTORY) {
+      expect(history).toContainEqual(expect.objectContaining({
+        id, lifecycle_stage: stage, is_backbone: true,
+      }));
+    }
+    for (const [id, stage] of HISTORY_ALIASES) {
+      expect(history).toContainEqual(expect.objectContaining({
+        id, lifecycle_stage: stage, is_backbone: false,
+      }));
     }
     const { rows: stages } = await client.query(
-      `SELECT lifecycle_stage FROM journey_steps
+      `SELECT lifecycle_stage, name, promise FROM journey_steps
        WHERE journey_id=$1 AND is_backbone=true ORDER BY step_number`,
       [JOURNEY_ID],
     );
-    expect(stages.map((row) => row.lifecycle_stage)).toEqual(
-      Array.from({ length: 13 }, (_, index) => `S${index}`),
-    );
+    expect(stages).toEqual(STAGES.map(([lifecycle_stage, name, promise]) => ({
+      lifecycle_stage, name, promise,
+    })));
   });
 
   it('每个 S0-S12 骨干 Step 恰有 11 个合法 element cells', async () => {
@@ -141,17 +179,43 @@ describe.sequential('Kernel Harness F1 账本归位（真 PostgreSQL，禁 mock�
     )).toBe(true);
   });
 
-  it('legacy P0/P1 基线字段完整且状态合法', async () => {
+  it('legacy P0/P1 四类来源逐项归位且权威映射完整', async () => {
     const report = await buildKernelHarnessF1BaselineReport(client, { repoRoot: process.cwd() });
     expect(report.authoritative).toBe(false);
+    expect(report.authoritative_source).toBe(
+      'regression-contract.yaml#kernel_harness_f1_baseline',
+    );
     expect(report.legacy_baseline.length).toBeGreaterThan(0);
+    expect(report.legacy_source_coverage).toMatchObject({
+      discovered_count: report.legacy_source_coverage.mapped_count,
+      unmapped_count: 0,
+      duplicate_mapping_count: 0,
+    });
+    for (const sourceKind of ['engine_contract', 'hook', 'devgate_ci', 'kernel_gate']) {
+      expect(report.legacy_source_coverage.by_kind[sourceKind].discovered_count)
+        .toBeGreaterThan(0);
+      expect(report.legacy_source_coverage.by_kind[sourceKind].unmapped_count).toBe(0);
+    }
+    expect(report.invalid_source_refs).toEqual([]);
+    expect(report.invalid_cell_targets).toEqual([]);
+    expect(report.invalid_root_assertion_refs).toEqual([]);
     const statuses = ['active', 'shadowed', 'retired', 'drifted', 'unknown'];
+    const elements = [
+      'FR', 'NFR', '不变量', '判定点', '保质期', '死亡告警',
+      '失败语义', '效果确认', '对抗面', '账本保鲜', '两轴衔接',
+    ];
     for (const item of report.legacy_baseline) {
+      expect(item.legacy_behavior_id).toBeTruthy();
+      expect(['P0', 'P1']).toContain(item.priority);
+      expect(STAGES.map(([stage]) => stage)).toContain(item.journey_stage);
+      expect(elements).toContain(item.element);
       expect(item.legacy_owner).toBeTruthy();
       expect(statuses).toContain(item.audit_status);
       expect(item.unified_owner).toBeTruthy();
       expect(typeof item.gap).toBe('string');
       expect(item.next_knife_order).toBeGreaterThan(0);
+      expect(item.source_ref).toBeTruthy();
+      expect(Object.hasOwn(item, 'assertion_ref')).toBe(true);
     }
   });
 
