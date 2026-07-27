@@ -84,6 +84,12 @@ services:
       - ENV_REGION=${ENV_REGION:-us}
       # Kernel controller 固定留在 US M4；Docker hostname 不是可调度机器身份。
       - CECELIA_MACHINE_ID=${CECELIA_MACHINE_ID:-us-mac-m4}
+      # Fleet Node admission is mandatory. Brain accepts only these canonical
+      # server-owned Worker endpoints and caches their evidence for at most 90s.
+      - FLEET_WORKER_US_MAC_M4_URL=${FLEET_WORKER_US_MAC_M4_URL:-http://host.docker.internal:5231}
+      - FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://xian-mac-m4:5231}
+      - FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://xian-mac-m1:5231}
+      - FLEET_NODE_ADMISSION_CACHE_TTL_MS=${FLEET_NODE_ADMISSION_CACHE_TTL_MS:-1000}
       # host.docker.internal: OrbStack 原生支持，容器内此地址到宿主 127.0.0.1
       - DB_HOST=${DB_HOST:-host.docker.internal}
       - DB_PORT=${DB_PORT:-5432}

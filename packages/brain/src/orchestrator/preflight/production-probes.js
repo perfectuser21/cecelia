@@ -1,4 +1,5 @@
 import { resolveGitHubToken } from '../../harness-credentials.js';
+import { createNodeAdmissionClient } from '../fleet-node/node-admission-client.js';
 import { resolveCanonicalMachineId } from './canonical-machine-id.js';
 
 const DEFAULT_BRAIN_URL = 'http://127.0.0.1:5221';
@@ -30,6 +31,12 @@ export function createProductionCapabilityProbes(deps = {}) {
   const cacheTtlMs = Number(deps.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS);
   const now = deps.now ?? Date.now;
   const cache = new Map();
+  const nodeAdmissionClient = deps.nodeAdmissionClient ?? createNodeAdmissionClient({
+    env,
+    fetchFn,
+    now,
+    requestTimeoutMs,
+  });
 
   async function fetchJson(url, options = {}, { force = false } = {}) {
     const cached = cache.get(url);
@@ -66,6 +73,25 @@ export function createProductionCapabilityProbes(deps = {}) {
     return fleet.find((row) => row?.id === machine) ?? null;
   }
 
+  async function admittedNode(machine) {
+    try {
+      const admission = await nodeAdmissionClient.getAdmission(machine, {
+        forceFresh: true,
+      });
+      const admitted = admission?.base_admitted === true
+        && admission?.state === 'base_admitted';
+      const admissionReasons = Array.isArray(admission?.reasons)
+        ? admission.reasons
+          .map((reason) => String(reason?.code ?? '').slice(0, 64))
+          .filter(Boolean)
+          .slice(0, 16)
+        : [];
+      return { admitted, admissionReasons };
+    } catch {
+      return { admitted: false, admissionReasons: ['node_admission_probe_failed'] };
+    }
+  }
+
   return Object.freeze({
     async resolveCanonicalMachineId() {
       const snapshot = await fleetSnapshot();
@@ -78,6 +104,15 @@ export function createProductionCapabilityProbes(deps = {}) {
     },
 
     async getMachineHealth({ machine }) {
+      const admission = await admittedNode(machine);
+      if (!admission.admitted) {
+        return {
+          ok: false,
+          machine,
+          signature: 'node_not_base_admitted',
+          admission_reasons: admission.admissionReasons,
+        };
+      }
       const row = await fleetRow(machine);
       return {
         ok: row?.online === true,
@@ -87,6 +122,17 @@ export function createProductionCapabilityProbes(deps = {}) {
     },
 
     async getMachineCapacity({ machine }) {
+      const admission = await admittedNode(machine);
+      if (!admission.admitted) {
+        return {
+          ok: false,
+          available: 0,
+          physical_capacity: 0,
+          pressure: 1,
+          signature: 'node_not_base_admitted',
+          admission_reasons: admission.admissionReasons,
+        };
+      }
       const row = await fleetRow(machine);
       return {
         ok: row?.online === true,

@@ -158,7 +158,13 @@ export function createCapabilityGate(deps = {}) {
         }
         continue;
       }
-      if (!health?.ok || !capacity?.ok || Number(capacity?.available ?? 0) < 1) continue;
+      if (!health?.ok || !capacity?.ok || Number(capacity?.available ?? 0) < 1) {
+        if (health?.signature === 'node_not_base_admitted'
+          || capacity?.signature === 'node_not_base_admitted') {
+          fallbackReason = 'node_not_base_admitted';
+        }
+        continue;
+      }
 
       const accountCycleKey = [
         logicalCycle,
@@ -236,6 +242,8 @@ export function createCapabilityGate(deps = {}) {
         ? 'credential_probe_mismatch'
         : fallbackReason === 'preflight_timeout'
           ? 'preflight_timeout'
+          : fallbackReason === 'node_not_base_admitted' && !lastProviderProbe
+            ? 'node_not_base_admitted'
           : 'all_execution_targets_exhausted';
       const blocked = blockedResult({
         snapshotId,
