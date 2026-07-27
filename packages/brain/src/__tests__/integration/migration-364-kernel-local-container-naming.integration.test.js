@@ -50,16 +50,21 @@ beforeAll(async () => {
       ADD COLUMN lease_generation INTEGER NOT NULL DEFAULT 0;
   `);
 
-  const versionsThrough363 = readdirSync(migrationsUrl)
+  // 本 fixture 只建了 schema_version / initiative_runs / harness_attempts 三张表，
+  // 跑不了任何别的 migration。所以把「除 364 外的全部版本」标成已应用，
+  // 让 runMigrations 恰好只剩 364 待跑。
+  // 不能写成 `<= 363`——那样每加一条 ≥365 的新 migration 都会被这个 fixture 拖下水
+  // （2026-07-27 实证：migration 365 在这里炸 relation "tasks" does not exist）。
+  const versionsExcept364 = readdirSync(migrationsUrl)
     .filter((file) => /^\d+_.*\.sql$/.test(file))
     .map((file) => file.split('_')[0])
-    .filter((version) => Number(version) <= 363);
+    .filter((version) => Number(version) !== 364);
   await client.query(
     `INSERT INTO schema_version (version, description)
      SELECT version, 'pre-364 fixture'
        FROM UNNEST($1::text[]) AS version
      ON CONFLICT (version) DO NOTHING`,
-    [versionsThrough363],
+    [versionsExcept364],
   );
 
   migrationPool = new pg.Pool({
