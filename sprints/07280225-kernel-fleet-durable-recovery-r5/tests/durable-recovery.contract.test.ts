@@ -1,0 +1,251 @@
+import { describe, it, expect } from 'vitest';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+
+const BASE = 'dd424a61926009ac85a915b31187124b85f0ca98';
+const SOURCE_PATH = 'packages/engine/regression-contract.yaml';
+const SOURCE_BLOB = '7bb49c69e1af07bdaf7d69cf9ec286688b5f75d3';
+const FULL_ENTRY_DIGEST = 'bfcb7a7678d5a1e1e3076ca27e34f0b01978ca590780f33d7ddb551f9615914d';
+const ADVISORY_DIGEST = 'a8e979f936ea1d5072d148cd3500c32231e9c3227f438d96bd4bd2258470e7b3';
+const HISTORY_DIGEST = 'd74103b146f2261c47c20ed1880830f8bd98adcdfee4c53854a9b9c5d2006cfd';
+const JOURNEY = 'bb8cc561-b3ee-4fec-b74d-2255694bd963';
+const REVIEWER_ALIAS = 'e2bd9263-87ef-4461-a1d5-5ff07a38b8a8';
+const FINAL_E2E_ALIAS = 'a6888ef3-2482-4655-8703-cf3b9f037cb9';
+const PROPOSAL = '4dc3b69aaca97e16fd4c8e28c35c4a8b6fd08f13';
+const SPRINT = 'sprints/07280225-kernel-fleet-durable-recovery-r5';
+
+function sha256(value: string | Buffer) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function run(script: string, args: string[] = [], env: Record<string, string> = {}) {
+  return execFileSync('bash', [script, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+function source(path: string) {
+  return readFileSync(path, 'utf8');
+}
+
+function expectExecutable(path: string) {
+  expect(existsSync(path), `缺少产品验证入口 ${path}`).toBe(true);
+}
+
+function waitForExit(child: ChildProcess) {
+  return new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+}
+
+describe('P0 durable recovery contract [BEHAVIOR]', () => {
+  it('built image self-contained profiles', () => {
+    const script = 'scripts/ci/verify-brain-image-self-contained.sh';
+    expectExecutable(script);
+    const out = run(script, ['--contract-red', '--network-none', '--read-only', '--no-mounts']);
+    expect(out).toContain('profiles=3');
+    expect(out).toContain('missing_config=denied');
+  });
+
+  it('immutable per-attempt profile snapshot across concurrent upgrade', () => {
+    const script = 'scripts/kernel-fleet/verify-atomic-release.sh';
+    expectExecutable(script);
+    expect(run(script, ['--real-pg', '--concurrent-upgrade'])).toContain('snapshot_drift=0');
+  });
+
+  it('real Worker Runner seam before Agent execution', () => {
+    const script = 'scripts/kernel-fleet/verify-worker-admission.sh';
+    expectExecutable(script);
+    const out = run(script, ['--exact-runner', '--mutate-stdout-unwritable', '--mutate-private-root']);
+    expect(out).toMatch(/agent_start_count=0[\s\S]*diagnostic_bytes=([1-9]\d{0,2}|1\d{3}|20[0-3]\d|204[0-8])/);
+  });
+
+  it('GitHub auth on success timeout crash and cancel', () => {
+    const script = 'scripts/kernel-fleet/verify-github-broker.sh';
+    expectExecutable(script);
+    expect(run(script, ['--real-runner', '--all-terminals'])).toContain('credential_residual=0');
+  });
+
+  it('fleet-worker transport with production upgrade rollback and source enum parity', () => {
+    const script = 'scripts/kernel-fleet/verify-transport-migration.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-pg', '--migration-min', '368', '--upgrade-rollback']);
+    expect(out).toContain('fleet-worker');
+    expect(out).toContain('schema_source_parity=1');
+  });
+
+  it('ownership frame plus persisted heartbeat', () => {
+    const script = 'scripts/kernel-fleet/verify-real-kernel-startup.sh';
+    expectExecutable(script);
+    const out = run(script, ['--entrypoint', 'packages/brain/src/orchestrator/run.js', '--real-pg']);
+    expect(out).toContain('parent_resolved_after_persisted_heartbeat=1');
+    for (const key of ['async_spawn_error', 'early_exit', 'handshake_timeout', 'lease_busy', 'spoof_ready_without_db'])
+      expect(out).toContain(`${key}=denied`);
+  });
+
+  it('authenticated callback commit before Worker cleanup', () => {
+    const script = 'scripts/kernel-fleet/verify-artifact-transfer.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-git', '--authenticated-callback']);
+    expect(out).toContain('materialized_before_cleanup=1');
+    expect(out).toContain('cross_run=denied');
+  });
+
+  it('reverse cleanup removes real Runner nested and ignored output', () => {
+    const script = 'scripts/kernel-fleet/verify-reverse-cleanup.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-runner', '--deep-umask-077', '--concurrent-cancel-wait-reconcile']);
+    expect(out).toContain('container_absent>normalize_descendants>workspace_admin>runtime_secret>state');
+    expect(out).toContain('residual_total=0');
+    expect(out).toContain('append_only_quarantine_duplicates=0');
+  });
+
+  it('ESRCH-only local liveness death', async () => {
+    const liveness = await import('../../../packages/brain/src/lib/kernel-liveness.js');
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)']);
+    const task = { id: 'real-child', payload: { harness_runtime: 'kernel-v1' } };
+    const runRow = { id: 'real-run', orchestrator_pid: child.pid, orchestrator_host: 'same-host', orchestrator_heartbeat_at: null };
+    await expect(liveness.assessKernelLiveness({ task, run: runRow, hostFn: () => 'same-host' }))
+      .resolves.toMatchObject({ verdict: 'alive', reason: 'pid_alive' });
+    child.kill('SIGKILL');
+    await waitForExit(child);
+    await expect(liveness.assessKernelLiveness({ task, run: runRow, hostFn: () => 'same-host' }))
+      .resolves.toMatchObject({ verdict: 'dead', reason: 'pid_gone' });
+    await expect(liveness.assessKernelLiveness({ task, run: runRow, hostFn: () => 'other-host' }))
+      .resolves.toMatchObject({ verdict: 'unknown', reason: 'host_mismatch' });
+  });
+
+  it('CI-only authorization and stale exact-head owner approval', () => {
+    const script = 'scripts/kernel-fleet/verify-p0-workflow-contract.sh';
+    expectExecutable(script);
+    const out = run(script, ['--github-api', '--mutate-all-merge-bypasses']);
+    expect(out).toContain('pre_owner_mutation_count=0');
+    expect(out).toContain('stale_head=denied');
+  });
+
+  it('semantic anchor resolves journey golden-path step ownership', () => {
+    const script = 'scripts/kernel-fleet/verify-semantic-anchor.sh';
+    expectExecutable(script);
+    expect(run(script, ['--real-pg', '--task', process.env.TASK_ID ?? '', '--run', process.env.RUN_ID ?? '']))
+      .toContain('ownership_consistent=1');
+  });
+
+  it('P0 workflows enforce owner merge staging production order', () => {
+    const script = 'scripts/kernel-fleet/run-authoritative-final-e2e.sh';
+    expectExecutable(script);
+    expect(run(script, ['--contract-red', '--assert-order-only']))
+      .toContain('draft>ci>evaluator>judge>owner>merge>staging>production>rollback>s12');
+  });
+
+  it('attempt scoped result channel', () => {
+    const script = 'scripts/kernel-fleet/run-result-channel-proof.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-worker-runner', '--taskbundle-bindings', '--all-mutations']);
+    expect(out).toContain('durable_receipt_before_ack=1');
+    expect(out).toContain('workspace_result_authority=0');
+    expect(out).toContain('pre_agent_failure_budget_delta=0');
+  });
+
+  it('authority inventory full entry fixture and advisory partition', () => {
+    expect(execFileSync('git', ['rev-parse', `${BASE}:${SOURCE_PATH}`], { encoding: 'utf8' }).trim()).toBe(SOURCE_BLOB);
+    const fixture = source('packages/quality/contracts/kernel-policy-source-inventory.json');
+    expect(Buffer.byteLength(fixture)).toBe(56518);
+    expect(sha256(fixture)).toBe(FULL_ENTRY_DIGEST);
+    const advisory = JSON.parse(source('packages/quality/contracts/kernel-policy-classification-advisory.json'));
+    expect(sha256(JSON.stringify(advisory.rows))).toBe(ADVISORY_DIGEST);
+    expect(advisory.partition).toEqual({ machine_recommended: 76, needs_human_review: 53 });
+    expect(advisory.f08_partition).toEqual({ machine_recommended_elsewhere: 66, unreviewed_or_out_of_taxonomy: 44 });
+    expect(advisory.f08_semantic_staging_promote_rollback_hits).toBe(0);
+    expect(advisory.provider_independent_candidates).toEqual({ ci: 32, doc: 2, export: 5, infrastructure: 1, regression: 3 });
+  });
+
+  it('classification decisions are append only and pre-authority creates zero obligations', () => {
+    const decisions = JSON.parse(source('packages/quality/contracts/kernel-policy-classification-decisions.json'));
+    expect(decisions.rows).toHaveLength(129);
+    expect(decisions.rows.every((r: any) => r.approved_family === null && r.state !== 'owner_approved')).toBe(true);
+    expect(new Set(decisions.rows.map((r: any) => r.legacy_id)).size).toBe(129);
+    expect(JSON.parse(source('packages/quality/contracts/kernel-policy-equivalence-obligations.json')).rows).toHaveLength(0);
+  });
+
+  it('owner approval binds full proposal head manifest bytes and signature', () => {
+    const script = 'scripts/kernel-fleet/verify-authority-owner-receipt.sh';
+    expectExecutable(script);
+    const out = run(script, ['--proposal', PROPOSAL, '--github-api', '--allowlisted-owner', '--verify-signature']);
+    expect(out).toContain('manifest_bytes_bound=1');
+    expect(out).toContain('behavior_pass_inferred=0');
+  });
+
+  it('lifecycle migration preserves exact production history fixture', () => {
+    const fixture = JSON.parse(source('packages/quality/contracts/kernel-harness-production-history.json'));
+    expect(fixture.journey_id).toBe(JOURNEY);
+    expect(fixture.rows.map((r: any) => r.id)).toEqual(expect.arrayContaining([REVIEWER_ALIAS, FINAL_E2E_ALIAS]));
+    expect(sha256(JSON.stringify(fixture.rows))).toBe(HISTORY_DIGEST);
+    const script = 'scripts/kernel-fleet/verify-lifecycle-projection.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-pg', '--migration-min', '368', '--upgrade-failure-logical-rollback']);
+    expect(out).toContain('historical_fingerprint_unchanged=1');
+    expect(out).toContain('backbones=13 aliases=2 new_rows=9 cells=143');
+  });
+
+  it('origin kind uses direct authority queries not module booleans', () => {
+    const script = 'scripts/kernel-fleet/verify-stage-origin-receipts.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-pg', '--github-api', '--deployment-store']);
+    expect(out).toContain('S3=proposer+reviewer+approved');
+    expect(out).toContain('S6_S7_distinct_attempt_session=1');
+    expect(out).toContain('self_asserted_boolean_accepted=0');
+  });
+
+  it('canonical manifest contains law only and exact 143 requirement cells', () => {
+    const manifest = JSON.parse(source('packages/quality/contracts/kernel-harness-authority-manifest.json'));
+    expect(manifest.stages).toHaveLength(13);
+    expect(manifest.elements).toHaveLength(11);
+    expect(manifest.cells).toHaveLength(143);
+    expect(manifest).not.toHaveProperty('current_colors');
+    expect(manifest.cells.every((c: any) => c.requirement_digest && c.positive_oracle_id && c.violation_oracle_id && c.recovery_oracle_id)).toBe(true);
+  });
+
+  it('append only evidence schema derives expiry and independent NA review', () => {
+    const migration = source('packages/brain/migrations/368_or_later_kernel_harness_authority.sql');
+    for (const table of ['kernel_harness_manifest_versions', 'kernel_harness_origin_receipts', 'kernel_harness_cell_evidence', 'kernel_harness_terminal_accounting'])
+      expect(migration).toContain(`CREATE TABLE ${table}`);
+    expect(migration).toContain('valid_until');
+    expect(migration).toContain('na_requested');
+    expect(migration).toContain('na_approved');
+  });
+
+  it('journey projection writes cannot satisfy canonical cell gates', () => {
+    const script = 'scripts/kernel-fleet/verify-authority-write-isolation.sh';
+    expectExecutable(script);
+    expect(run(script, ['--real-pg', '--patch-journey-green'])).toContain('canonical_satisfied_delta=0');
+  });
+
+  it('strict staging rejects empty skip and SHA drift', async () => {
+    const staging = await import('../../../packages/brain/src/staging-e2e-runner.js');
+    const fakeDb = (rows: any[]) => ({ query: async () => ({ rows }) });
+    await expect(staging.checkInitiativeAggregate(fakeDb([]), 'i')).resolves.toMatchObject({ allPass: false });
+    await expect(staging.checkInitiativeAggregate(fakeDb([{ verdict: 'SKIP', tested_sha: BASE }]), 'i'))
+      .resolves.toMatchObject({ allPass: false });
+    await expect(staging.checkInitiativeAggregate(fakeDb([{ verdict: 'PASS', tested_sha: 'wrong' }]), 'i', BASE))
+      .resolves.toMatchObject({ allPass: false });
+  });
+
+  it('merge report cannot complete before staging production rollback and S12', () => {
+    const handlers = source('packages/brain/src/orchestrator/kernel-handlers.js');
+    expect(handlers).not.toContain("SET status='completed'");
+    expect(handlers).not.toContain("detail: 'report chain completed'");
+  });
+
+  it('S12 serializable accountant consumes exact current evidence chain', () => {
+    const script = 'scripts/kernel-fleet/verify-terminal-accounting.sh';
+    expectExecutable(script);
+    const out = run(script, ['--real-pg', '--serializable', '--all-counterfactuals']);
+    expect(out).toContain('stage_chain=S0>S1>S2>S3>S4>S5>S6>S7>S8>S9>S10>S11>S12');
+    for (const key of ['missing_cell', 'expired_without_scheduler', 'empty_staging', 'all_skip_staging', 'sha_drift', 'promoted_without_health', 'missing_rollback', 'missing_report_effect'])
+      expect(out).toContain(`${key}=blocked`);
+    expect(out).toContain('terminal_transaction_count=1');
+  });
+});
