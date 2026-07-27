@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 16)
+# Sprint Contract Draft (Round 17)
 
 ## 合同边界
 
@@ -64,6 +64,12 @@ N/A — 任务无新增公开 HTTP 响应；对外可观测契约是 `orchestrat
 - `[packages/brain/src/__tests__/harness-ci-gate.test.js]` → `gh 命令抛错 → FAIL`
 - `[.github/workflows/scripts/__tests__/should-auto-merge.test.sh]` → `harness PR（feat(harness):）→ 跳过 auto-merge`
 - `[累积FR] context-manifest: unavailable`（`GET /api/brain/line/bb8cc561-b3ee-4fec-b74d-2255694bd963/context-manifest` 返回 404）
+
+## 当前红证据（2026-07-27）
+
+- `sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts` 当前红测已证明 4 个真实缺口：`.github/workflows/scripts/should-auto-merge.sh` 仍输出 `SKIP` 而非 fail-closed；`createKernelHandlers(...).merge_pr` 仍缺 `--match-head-commit`；`finalizeHarnessTask` 仍会在 `review_required=true` 且缺当前 SHA `human_review` 时放行；server-owned `resolveKernelMergeAuthority` 入口尚未存在。
+- `packages/brain/src/routes/harness-kernel-approvals.js` 当前快照只要求 `task_id/pr_head_sha/review_request_hop`，尚未把 `repo/pr_number` 纳入原子校验，成功响应与落账 detail 也仍使用 `approved_at/rejected_at`，未满足 PRD 要求的 `source/timestamp/repo/pr_number` 证据链。
+- 本地 Red 运行还命中了 `ECONNREFUSED 127.0.0.1:5432`；这说明合同红测已真实依赖 Postgres 接缝，符合“禁 mock 被改的边”，但执行 green 时需要真 PG。
 
 ## 真实调用方请求 shape
 

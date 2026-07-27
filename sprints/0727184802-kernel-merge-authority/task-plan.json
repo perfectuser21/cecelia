@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "收归 Kernel 唯一 Merge Authority 并移除标题型合并旁路",
-      "scope": "把 Kernel-owned PR 的 ownership 绑定到 repo、pr_number、run_id、head_sha，补齐 authenticated approve/reject、human_review 落账、stale SHA 失效、merge head 原子锁定，以及 CI/legacy merge caller fail-closed。",
+      "scope": "把 Kernel-owned PR 的 ownership 绑定到 repo、pr_number、run_id、head_sha，补齐 approve/reject 对 repo/pr_number/current head 的原子校验与 human_review 语义字段落账，收紧 merge 到 --match-head-commit 锁头，并让 CI/legacy merge caller 统一 fail-closed。",
       "dod": [
         "[BEHAVIOR] approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict",
         "[BEHAVIOR] reject route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict",
