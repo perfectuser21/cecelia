@@ -251,7 +251,7 @@ print(
 )
 PY
 )" || fail "rendered file is not a valid plist"
-[[ "$plist_contract" == 'true|true|_cecelia|/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|100.86.57.69|unix:///var/run/docker.sock|http://100.71.151.105:5221/api/brain/health' ]] \
+[[ "$plist_contract" == 'true|true|_cecelia|/usr/local/libexec/cecelia/toolchain/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|100.86.57.69|unix:///var/run/docker.sock|http://100.71.151.105:5221/api/brain/health' ]] \
   || fail "plist contract drifted: $plist_contract"
 validated_plist="$test_root/validated-fleet-worker.plist"
 cp "$plist" "$validated_plist"
