@@ -25,7 +25,7 @@ function guardWorkerConfiguration(worker, {
   sharedSecret,
   callbackBaseUrl,
 }) {
-  const assertAvailable = (input) => {
+  const assertAvailable = (input, { requireWorkspace = false } = {}) => {
     const machine = input?.target?.machine;
     const workerUrl = workerUrls?.[machine];
     const workspaceSpec = input?.bundle?.inputs?.workspace_spec;
@@ -35,17 +35,22 @@ function guardWorkerConfiguration(worker, {
       || typeof sharedSecret !== 'string'
       || sharedSecret.length < 32
       || !isValidHttpBaseUrl(callbackBaseUrl)
-      || input?.bundle?.inputs?.execution_surface !== 'fleet-worker'
-      || !workspaceSpec
-      || typeof workspaceSpec !== 'object'
-      || Array.isArray(workspaceSpec)
+      || (
+        requireWorkspace
+        && (
+          input?.bundle?.inputs?.execution_surface !== 'fleet-worker'
+          || !workspaceSpec
+          || typeof workspaceSpec !== 'object'
+          || Array.isArray(workspaceSpec)
+        )
+      )
     ) {
       throw new Error(`execution_transport_unavailable:${String(machine)}`);
     }
   };
   return Object.freeze({
     async launch(input) {
-      assertAvailable(input);
+      assertAvailable(input, { requireWorkspace: true });
       return worker.launch(input);
     },
     async inspect(input) {
