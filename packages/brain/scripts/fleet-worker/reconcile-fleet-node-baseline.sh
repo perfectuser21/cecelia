@@ -39,6 +39,9 @@ REPOSITORY_ROOT="${FLEET_BASELINE_REPOSITORY_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/
 BASELINE_TMPDIR="${FLEET_BASELINE_TMPDIR:-${TMPDIR:-/tmp}}"
 REPOSITORY_BUNDLE="${FLEET_BASELINE_REPOSITORY_BUNDLE:-}"
 RUNNER_ARCHIVE="${FLEET_BASELINE_RUNNER_ARCHIVE:-}"
+WORKER_TOKEN_SOURCE="${FLEET_BASELINE_WORKER_TOKEN_FILE:-}"
+WORKER_DATA_ROOT="$SYSTEM_ROOT/var/lib/cecelia/fleet-worker"
+WORKER_TOKEN_FILE="$WORKER_DATA_ROOT/worker-auth"
 
 TEMP_ROOT=''
 ORBSTACK_MOUNTED=false
@@ -349,6 +352,30 @@ ensure_runner() {
     || die "runner_digest_unavailable"
 }
 
+ensure_worker_token() {
+  local temporary mode
+
+  case "$(uname -s)" in
+    Darwin) mode="$(stat -f '%Lp' "$WORKER_TOKEN_SOURCE")" ;;
+    Linux) mode="$(stat -c '%a' "$WORKER_TOKEN_SOURCE")" ;;
+    *) die "worker_token_file_invalid" ;;
+  esac
+  case "$mode" in
+    400|600) ;;
+    *) die "worker_token_file_permissions" ;;
+  esac
+  [[ "$(tr -d '\r\n' < "$WORKER_TOKEN_SOURCE" | wc -c | tr -d ' ')" -ge 32 ]] \
+    || die "worker_token_file_invalid"
+  [[ ! -L "$WORKER_DATA_ROOT" && ! -L "$WORKER_TOKEN_FILE" ]] \
+    || die "worker_token_path_invalid"
+  /bin/mkdir -p "$WORKER_DATA_ROOT"
+  temporary="$(mktemp "$WORKER_DATA_ROOT/.worker-auth.XXXXXX")"
+  /bin/cp "$WORKER_TOKEN_SOURCE" "$temporary"
+  /bin/chmod 0600 "$temporary"
+  "$CHOWN" _cecelia:_cecelia "$temporary"
+  /bin/mv "$temporary" "$WORKER_TOKEN_FILE"
+}
+
 [[ $# -ge 1 && $# -le 2 ]] || { usage; exit 64; }
 machine_id="$1"
 shift
@@ -369,6 +396,7 @@ fi
 [[ "$("$UNAME" -m)" == 'arm64' ]] || die "unsupported_architecture"
 verify_regular_input "$REPOSITORY_BUNDLE" "repository_bundle_required"
 verify_regular_input "$RUNNER_ARCHIVE" "runner_archive_required"
+verify_regular_input "$WORKER_TOKEN_SOURCE" "worker_token_file_required"
 [[ -n "$GIT" && -x "$GIT" ]] || die "git_command_unavailable"
 [[ -x "$INSTALLER" ]] || die "fleet_worker_installer_unavailable"
 
@@ -388,6 +416,7 @@ ensure_codex_toolchain
 ensure_orbstack
 ensure_repository
 ensure_runner
+ensure_worker_token
 
 observed_os="$("$SW_VERS" -productVersion 2>/dev/null || true)"
 if [[ "$observed_os" != "$MACOS_VERSION" ]]; then
@@ -397,6 +426,7 @@ fi
 PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
 FLEET_WORKER_NODE_EXECUTABLE="$TOOLCHAIN_BIN/node" \
 FLEET_WORKER_REPO_ROOT="$REPOSITORY_ROOT" \
+FLEET_WORKER_TOKEN_FILE="$WORKER_TOKEN_FILE" \
 FLEET_WORKER_ID="$ID_COMMAND" \
   "$INSTALLER" "$machine_id" --apply
 

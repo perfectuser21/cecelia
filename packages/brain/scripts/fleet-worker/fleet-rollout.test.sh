@@ -23,6 +23,7 @@ worker_token="$test_root/worker-token"
 touch "$artifact_log" "$transport_log" "$node_log"
 printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
 chmod 0600 "$worker_token"
+export FLEET_ROLLOUT_WORKER_TOKEN_FILE="$worker_token"
 
 write_executable() {
   local target="$1"

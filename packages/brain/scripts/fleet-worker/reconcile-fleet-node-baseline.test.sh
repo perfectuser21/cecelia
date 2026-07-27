@@ -400,7 +400,7 @@ grep -Fq 'installer xian-mac-m1 --apply' "$mutation_log" \
   || fail "Docker command does not target the pinned OrbStack app"
 git -C "$system_root/var/lib/cecelia/repository" rev-parse --verify HEAD >/dev/null \
   || fail "credential-free Git baseline was not imported"
-cmp -s "$worker_token" "$system_root/var/lib/cecelia/fleet-worker/worker-token" \
+cmp -s "$worker_token" "$system_root/var/lib/cecelia/fleet-worker/worker-auth" \
   || fail "US M4 Worker transport token was not installed on the node"
 
 install_mutations_before="$(

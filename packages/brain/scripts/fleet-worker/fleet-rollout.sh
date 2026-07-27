@@ -13,6 +13,7 @@ SSH="${FLEET_ROLLOUT_SSH:-/usr/bin/ssh}"
 TAR="${FLEET_ROLLOUT_TAR:-/usr/bin/tar}"
 SUDO="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 ROLLOUT_TMPDIR="${FLEET_ROLLOUT_TMPDIR:-${TMPDIR:-/tmp}}"
+WORKER_TOKEN_SOURCE="${FLEET_ROLLOUT_WORKER_TOKEN_FILE:-/var/lib/cecelia/fleet-worker/worker-token}"
 
 TEMP_ROOT=''
 
@@ -58,7 +59,9 @@ run_node_apply() {
     && -f "$payload_root/repository.bundle" \
     && ! -L "$payload_root/repository.bundle" \
     && -f "$payload_root/runner.tar" \
-    && ! -L "$payload_root/runner.tar" ]] \
+    && ! -L "$payload_root/runner.tar" \
+    && -f "$payload_root/worker-token" \
+    && ! -L "$payload_root/worker-token" ]] \
     || die "rollout_payload_invalid"
 
   node_ctl="${node_ctl_override:-$payload_root/source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh}"
@@ -69,6 +72,7 @@ run_node_apply() {
       CECELIA_MACHINE_ID="$machine_id" \
       FLEET_BASELINE_REPOSITORY_BUNDLE="$payload_root/repository.bundle" \
       FLEET_BASELINE_RUNNER_ARCHIVE="$payload_root/runner.tar" \
+      FLEET_BASELINE_WORKER_TOKEN_FILE="$payload_root/worker-token" \
       "$node_ctl" "$@"
   }
 
@@ -279,6 +283,14 @@ fi
 [[ -n "$GIT" && -x "$GIT" ]] || die "git_unavailable"
 [[ -n "$DOCKER" && -x "$DOCKER" ]] || die "docker_unavailable"
 [[ -x "$SSH" && -x "$TAR" ]] || die "rollout_transport_unavailable"
+[[ -f "$WORKER_TOKEN_SOURCE" && ! -L "$WORKER_TOKEN_SOURCE" ]] \
+  || die "worker_token_file_required"
+case "$(/usr/bin/stat -f '%Lp' "$WORKER_TOKEN_SOURCE")" in
+  400|600) ;;
+  *) die "worker_token_file_permissions" ;;
+esac
+[[ "$(/usr/bin/tr -d '\r\n' < "$WORKER_TOKEN_SOURCE" | /usr/bin/wc -c | /usr/bin/tr -d ' ')" -ge 32 ]] \
+  || die "worker_token_file_invalid"
 
 rollout_commit="$(
   "$GIT" -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}'
@@ -295,6 +307,7 @@ trap cleanup EXIT
 source_tar="$TEMP_ROOT/source.tar"
 repository_bundle="$TEMP_ROOT/repository.bundle"
 runner_archive="$TEMP_ROOT/runner.tar"
+worker_token="$TEMP_ROOT/worker-token"
 payload_tar="$TEMP_ROOT/payload.tar"
 bundle_repository="$TEMP_ROOT/bundle.git"
 
@@ -312,8 +325,10 @@ bundle_repository="$TEMP_ROOT/bundle.git"
 "$GIT" --git-dir="$bundle_repository" bundle create \
   "$repository_bundle" refs/heads/fleet-rollout
 "$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST"
+/bin/cp "$WORKER_TOKEN_SOURCE" "$worker_token"
+/bin/chmod 0600 "$worker_token"
 "$TAR" -cf "$payload_tar" -C "$TEMP_ROOT" \
-  source.tar repository.bundle runner.tar
+  source.tar repository.bundle runner.tar worker-token
 rollout_commit_after="$(
   "$GIT" -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}'
 )"
