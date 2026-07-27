@@ -6,17 +6,19 @@
     {
       "task_id": "ws1",
       "title": "恢复 Kernel provider-neutral capacity accounting 与真实 dispatch 链",
-      "scope": "统一 attempt 状态 SSOT、provider/account free 核算、role target 交集、legacy usage 边界与 fail-closed snapshot，同时补齐真实 dispatcher/tick 到 unified Controller 的回归测试与 review gate 收口。",
+      "scope": "统一 attempt 状态 SSOT、provider/account free 核算、legacy relay/kernel/attempt usage 归一去重、服务端 role target 交集、candidate 级 fail-closed snapshot，并补齐真实 dispatcher/tick 到 unified Controller 的回归测试与 review gate 收口。",
       "dod": [
         "[BEHAVIOR] attempt 状态 SSOT：active 仅 queued starting running，terminal 仅 completed completed_with_concerns needs_context blocked failed cancelled",
         "[BEHAVIOR] selected account free=max(0,safe_limit-active(provider account)) 且 total=4 active=2 free=2 仍放行",
-        "[BEHAVIOR] dispatcher tick -> harnessSlotCheck -> unified Controller 真实链路证明 Claude 满载拒 Claude 而 Codex Grok 可派发",
+        "[BEHAVIOR] legacy relay kernel attempt usage 统一归一并按 attempt_id provider account 去重",
+        "[BEHAVIOR] dispatcher tick -> harnessSlotCheck -> unified Controller 真实链路：Claude 满载拒 Claude，Codex 或 Grok 仅在 pinned account 可用时派发",
         "[ARTIFACT] Sprint 红测文件、contract-draft.md、contract-dod.md 与 task-plan.json 均落盘"
       ],
       "files": [
         "packages/brain/src/slot-allocator.js",
         "packages/brain/src/dispatcher.js",
         "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
         "packages/brain/src/routes/tasks.js",
         "packages/brain/src/__tests__/harness-slot-check-kernel.test.js",
         "sprints/07272227-kernel-0f481d85/tests/kernel-attempt-status-ssot.contract.test.ts",

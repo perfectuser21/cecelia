@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 describe('Kernel dispatcher real-chain contract', () => {
-  it('dispatcher tick 真实 role target 交集：Claude 满载但 pinned Codex account 有位时仍派发 Codex，未知 Grok 不得顶替', async () => {
+  it('dispatcher tick 真实 role target 交集：只允许 server owned role_assignments 命中的 provider account，未知候选只拒自身', async () => {
     const dispatcher = await import('../../../packages/brain/src/dispatcher.js');
 
     expect(typeof (dispatcher as any).buildKernelDispatchCandidates).toBe('function');
@@ -9,16 +9,18 @@ describe('Kernel dispatcher real-chain contract', () => {
     const result = await (dispatcher as any).buildKernelDispatchCandidates({
       task: {
         id: 'task-kernel-1',
-        task_type: 'harness_initiative',
+        task_type: 'harness_contract_propose',
         priority: 'P0',
         payload: {
+          orchestrator: 'skill-relay',
+          harness_runtime: 'kernel-v1',
           role_assignments: {
-            generator: { provider: 'codex', account: 'team5' },
+            proposer: { provider: 'codex', account: 'team5' },
           },
           review_required: true,
         },
       },
-      role: 'generator',
+      role: 'proposer',
       snapshot: {
         sampled_at: '2026-07-27T00:00:00.000Z',
         cache_ttl_ms: 60000,
@@ -31,23 +33,34 @@ describe('Kernel dispatcher real-chain contract', () => {
     });
 
     expect(result.selected).toMatchObject({ provider: 'codex', account: 'team5' });
+    expect(result.considered).toEqual([{ provider: 'codex', account: 'team5' }]);
     expect(result.rejected).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ provider: 'claude' }),
-        expect.objectContaining({ provider: 'grok', reason: 'candidate_unknown' }),
+        expect.objectContaining({ provider: 'grok', account: 'grok', reason: 'candidate_unknown' }),
       ]),
     );
   });
 
-  it('dispatcher tick -> harnessSlotCheck -> unified Controller 真实链路证明 Claude 满载拒 Claude 而 Codex Grok 可派发', async () => {
+  it('dispatcher tick -> harnessSlotCheck -> unified Controller 真实链路：Claude 满载拒 Claude，Codex 或 Grok 仅在 pinned account 可用时派发', async () => {
     const dispatcher = await import('../../../packages/brain/src/dispatcher.js');
 
     expect(typeof (dispatcher as any).runKernelDispatchProbe).toBe('function');
 
     const probe = await (dispatcher as any).runKernelDispatchProbe({
-      task_id: 'task-kernel-probe',
-      role: 'generator',
-      role_assignments: { generator: { provider: 'codex', account: 'team5' } },
+      task: {
+        id: 'task-kernel-probe',
+        task_type: 'harness_contract_propose',
+        priority: 'P0',
+        payload: {
+          orchestrator: 'skill-relay',
+          harness_runtime: 'kernel-v1',
+          role_assignments: {
+            proposer: { provider: 'codex', account: 'team5' },
+          },
+          review_required: true,
+        },
+      },
+      role: 'proposer',
       snapshot: {
         sampled_at: '2026-07-27T00:00:00.000Z',
         cache_ttl_ms: 60000,
@@ -65,6 +78,7 @@ describe('Kernel dispatcher real-chain contract', () => {
       'unifiedController',
     ]);
     expect(probe.claude).toMatchObject({ allow: false, reason: 'account_full' });
-    expect(probe.codex).toMatchObject({ allow: true, provider: 'codex', account: 'team5' });
+    expect(probe.selected).toMatchObject({ provider: 'codex', account: 'team5' });
+    expect(probe.fallback_selected).not.toMatchObject({ provider: 'grok', account: 'grok' });
   });
 });
