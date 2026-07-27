@@ -153,7 +153,7 @@ verify_sha256() {
 }
 
 ensure_service_identity() {
-  local user_match group_match generated_uuid
+  local user_match group_match group_uuid user_uuid
 
   if "$ID_COMMAND" -u _cecelia >/dev/null 2>&1; then
     [[ "$("$ID_COMMAND" -u _cecelia)" == "$SERVICE_UID" \
@@ -166,23 +166,32 @@ ensure_service_identity() {
   group_match="$(
     "$DSCL" . -search /Groups PrimaryGroupID "$SERVICE_GID" 2>/dev/null || true
   )"
-  [[ -z "$user_match" && -z "$group_match" ]] || die "service_identity_collision"
+  [[ -z "$user_match" || "${user_match%%[[:space:]]*}" == '_cecelia' ]] \
+    || die "service_identity_collision"
+  [[ -z "$group_match" || "${group_match%%[[:space:]]*}" == '_cecelia' ]] \
+    || die "service_identity_collision"
 
-  generated_uuid="$("$UUIDGEN")" || die "service_identity_create_failed"
-  "$DSCL" . -create /Groups/_cecelia
-  "$DSCL" . -create /Groups/_cecelia PrimaryGroupID "$SERVICE_GID"
-  "$DSCL" . -create /Groups/_cecelia Password '*'
-  "$DSCL" . -create /Groups/_cecelia RealName 'Cecelia Fleet Worker'
-  "$DSCL" . -create /Groups/_cecelia GeneratedUID "$generated_uuid"
-  "$DSCL" . -create /Users/_cecelia
-  "$DSCL" . -create /Users/_cecelia UniqueID "$SERVICE_UID"
-  "$DSCL" . -create /Users/_cecelia PrimaryGroupID "$SERVICE_GID"
-  "$DSCL" . -create /Users/_cecelia NFSHomeDirectory /var/empty
-  "$DSCL" . -create /Users/_cecelia UserShell /usr/bin/false
-  "$DSCL" . -create /Users/_cecelia Password '*'
-  "$DSCL" . -create /Users/_cecelia IsHidden 1
-  "$DSCL" . -create /Users/_cecelia RealName 'Cecelia Fleet Worker'
-  "$DSCL" . -create /Users/_cecelia GeneratedUID "$generated_uuid"
+  if [[ -z "$group_match" ]]; then
+    group_uuid="$("$UUIDGEN")" || die "service_identity_create_failed"
+    "$DSCL" . -create /Groups/_cecelia
+    "$DSCL" . -create /Groups/_cecelia PrimaryGroupID "$SERVICE_GID"
+    "$DSCL" . -create /Groups/_cecelia Password '*'
+    "$DSCL" . -create /Groups/_cecelia RealName 'Cecelia Fleet Worker'
+    "$DSCL" . -create /Groups/_cecelia GeneratedUID "$group_uuid"
+  fi
+
+  if [[ -z "$user_match" ]]; then
+    user_uuid="$("$UUIDGEN")" || die "service_identity_create_failed"
+    "$DSCL" . -create /Users/_cecelia
+    "$DSCL" . -create /Users/_cecelia UniqueID "$SERVICE_UID"
+    "$DSCL" . -create /Users/_cecelia PrimaryGroupID "$SERVICE_GID"
+    "$DSCL" . -create /Users/_cecelia NFSHomeDirectory /var/empty
+    "$DSCL" . -create /Users/_cecelia UserShell /usr/bin/false
+    "$DSCL" . -create /Users/_cecelia Password '*'
+    "$DSCL" . -create /Users/_cecelia IsHidden 1
+    "$DSCL" . -create /Users/_cecelia RealName 'Cecelia Fleet Worker'
+    "$DSCL" . -create /Users/_cecelia GeneratedUID "$user_uuid"
+  fi
 
   [[ "$("$ID_COMMAND" -u _cecelia)" == "$SERVICE_UID" \
     && "$("$ID_COMMAND" -g _cecelia)" == "$SERVICE_GID" ]] \

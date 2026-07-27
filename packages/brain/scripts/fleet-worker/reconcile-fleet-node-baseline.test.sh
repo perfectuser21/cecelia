@@ -46,7 +46,8 @@ write_executable "$fake_bin/dscl" \
   '  exit 0' \
   'fi' \
   'if [[ "$*" == *"-search /Groups PrimaryGroupID 450"* ]]; then' \
-  '  [[ "${FLEET_TEST_ID_COLLISION:-0}" == 1 ]] && echo "somegroup 450"' \
+  '  if [[ "${FLEET_TEST_ID_COLLISION:-0}" == 1 ]]; then echo "somegroup 450"; fi' \
+  '  if [[ "${FLEET_TEST_PARTIAL_GROUP:-0}" == 1 ]]; then echo "_cecelia 450"; fi' \
   '  exit 0' \
   'fi' \
   'if [[ "$*" == *"-create /Users/_cecelia"* ]]; then' \
@@ -64,7 +65,12 @@ write_executable "$fake_bin/sw_vers" \
 
 write_executable "$fake_bin/uuidgen" \
   '#!/usr/bin/env bash' \
-  'echo 11111111-2222-3333-4444-555555555555'
+  'state="${FLEET_TEST_UUID_STATE:?}"' \
+  'count=0' \
+  '[[ ! -f "$state" ]] || read -r count < "$state"' \
+  'count=$((count + 1))' \
+  'printf "%s\n" "$count" > "$state"' \
+  'printf "11111111-2222-3333-4444-%012d\n" "$count"'
 
 write_executable "$fake_bin/curl" \
   '#!/usr/bin/env bash' \
@@ -245,6 +251,7 @@ run_reconciler() {
   FLEET_TEST_MUTATION_LOG="$mutation_log" \
   FLEET_TEST_SERVICE_STATE="$service_state" \
   FLEET_TEST_RUNNER_STATE="$runner_state" \
+  FLEET_TEST_UUID_STATE="$state_root/uuid-count" \
   FLEET_TEST_FAKE_NODE="$fake_bin/toolchain-node" \
   FLEET_TEST_FAKE_NPM="$fake_bin/toolchain-npm" \
   FLEET_TEST_FAKE_CODEX="$fake_bin/toolchain-codex" \
@@ -330,6 +337,7 @@ grep -Fq 'docker_unavailable' "$test_root/rollback.out" \
 /bin/rm -f "$service_state" "$runner_state"
 
 : > "$mutation_log"
+/bin/rm -f "$state_root/uuid-count"
 FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
 run_reconciler "$system_root" xian-mac-m1 --apply >/dev/null \
   || fail "valid baseline apply failed"
@@ -337,6 +345,14 @@ grep -Fq 'dscl . -create /Groups/_cecelia PrimaryGroupID 450' "$mutation_log" \
   || fail "dedicated service group was not created"
 grep -Fq 'dscl . -create /Users/_cecelia UniqueID 450' "$mutation_log" \
   || fail "dedicated service user was not created"
+group_uuid="$(
+  awk '/-create \/Groups\/_cecelia GeneratedUID/ { print $NF }' "$mutation_log"
+)"
+user_uuid="$(
+  awk '/-create \/Users\/_cecelia GeneratedUID/ { print $NF }' "$mutation_log"
+)"
+[[ -n "$group_uuid" && -n "$user_uuid" && "$user_uuid" != "$group_uuid" ]] \
+  || fail "service user and group reused a GeneratedUID"
 grep -Fq 'npm pinned-codex' "$mutation_log" \
   || fail "pinned Codex CLI was not installed"
 grep -Fq 'ditto orbstack' "$mutation_log" \
@@ -364,6 +380,19 @@ install_mutations_after="$(
 )"
 [[ "$install_mutations_after" -eq "$install_mutations_before" ]] \
   || fail "repeat apply reinstalled an exact baseline"
+
+/bin/rm -f "$service_state" "$runner_state" "$state_root/uuid-count"
+: > "$mutation_log"
+partial_root="$test_root/partial-identity-system"
+FLEET_TEST_PARTIAL_GROUP=1 \
+FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
+run_reconciler "$partial_root" us-mac-m4 --apply >/dev/null \
+  || fail "partial service identity was not resumed"
+if grep -Fq 'dscl . -create /Groups/_cecelia' "$mutation_log"; then
+  fail "existing dedicated service group was recreated"
+fi
+grep -Fq 'dscl . -create /Users/_cecelia UniqueID 450' "$mutation_log" \
+  || fail "missing dedicated service user was not resumed"
 
 newer_root="$test_root/newer-system"
 newer_bin="$newer_root/Applications/OrbStack.app/Contents/MacOS/bin"
