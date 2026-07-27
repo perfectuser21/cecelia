@@ -78,11 +78,24 @@ function write(repo: string, filePath: string, content: string) {
 function createApprovedRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'approved-contract-provenance-'));
   sh(repo, 'git init -q');
+  const rootGoldenPath = 'sprints/fixtures/approved-contract/golden.json';
+  const sprintGoldenPath = `${SPRINT_DIR}/fixtures/replay-golden.json`;
   write(repo, `${SPRINT_DIR}/sprint-prd.md`, '# PRD\nGolden Path: approved manifest\n');
-  write(repo, `${SPRINT_DIR}/contract-draft.md`, '# Sprint Contract Draft\nStep 1\n');
+  write(repo, `${SPRINT_DIR}/contract-draft.md`, [
+    '# Sprint Contract Draft',
+    'Step 1',
+    `Fixture: ${rootGoldenPath}`,
+    `Golden: ${sprintGoldenPath}`,
+    '',
+  ].join('\n'));
   write(repo, `${SPRINT_DIR}/contract-dod.md`, '- [ ] [BEHAVIOR] [L2] approved path\n  Test: manual:bash npx vitest\n');
   write(repo, `${SPRINT_DIR}/task-plan.json`, '{"tasks":[{"task_id":"ws1"}]}\n');
-  write(repo, `${SPRINT_DIR}/tests/approved.test.ts`, 'import { it } from "vitest"; it("approved", () => {});\n');
+  write(repo, `${SPRINT_DIR}/tests/approved.test.ts`, [
+    'import { it } from "vitest";',
+    `const referencedFixtures = ["${rootGoldenPath}", "${sprintGoldenPath}"];`,
+    'it("approved", () => { if (referencedFixtures.length !== 2) throw new Error("missing referenced fixtures"); });',
+    '',
+  ].join('\n'));
   write(repo, 'DoD.md', [
     '# Root DoD',
     '- [ ] migration 365 stays approved',
@@ -94,7 +107,8 @@ function createApprovedRepo() {
     '',
   ].join('\n'));
   write(repo, 'packages/brain/migrations/365_executor_kind_kernel_process.sql', '-- migration 365\n');
-  write(repo, 'sprints/fixtures/approved-contract/golden.json', '{"migration":365}\n');
+  write(repo, rootGoldenPath, '{"migration":365}\n');
+  write(repo, sprintGoldenPath, '{"replay":"approved"}\n');
   sh(repo, 'git add . && git commit -qm approved');
   const approvedSha = sh(repo, 'git rev-parse HEAD');
   return { repo, approvedSha };
@@ -130,6 +144,7 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
       ['DoD.md', 'root_dod'],
       ['packages/brain/migrations/365_executor_kind_kernel_process.sql', 'migration'],
       ['sprints/fixtures/approved-contract/golden.json', 'golden'],
+      [`${SPRINT_DIR}/fixtures/replay-golden.json`, 'golden'],
       [`${SPRINT_DIR}/contract-dod.md`, 'contract_dod'],
       [`${SPRINT_DIR}/contract-draft.md`, 'contract_draft'],
       [`${SPRINT_DIR}/sprint-prd.md`, 'prd'],
@@ -160,7 +175,7 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     expect(rebuilt.manifest_digest).toBe(manifest.manifest_digest);
   });
 
-  it('append-only approval rejects same contract_version with a different manifest_digest', async () => {
+  it('append-only approval ledger records immutable facts and rejects same contract_version with a different manifest_digest', async () => {
     const { materializeApprovedContractManifest } = await subject();
     const pool = new pg.Pool(DB_DEFAULTS);
     const client = await pool.connect();
@@ -187,6 +202,21 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
           updated_at timestamptz DEFAULT now(),
           UNIQUE (initiative_id, version)
         ) ON COMMIT DROP;
+        CREATE TEMP TABLE initiative_contract_approvals (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          initiative_id uuid NOT NULL,
+          run_id uuid NOT NULL,
+          contract_version integer NOT NULL,
+          source_commit_sha text NOT NULL,
+          sprint_dir text NOT NULL,
+          manifest_digest text NOT NULL,
+          approved_manifest jsonb NOT NULL,
+          reviewer_verdict jsonb NOT NULL,
+          approved_at timestamptz NOT NULL DEFAULT now(),
+          supersedes_approval_id uuid,
+          created_at timestamptz DEFAULT now(),
+          UNIQUE (initiative_id, contract_version, manifest_digest)
+        ) ON COMMIT DROP;
         CREATE TEMP TABLE initiative_runs (
           id uuid PRIMARY KEY,
           initiative_id uuid NOT NULL,
@@ -210,6 +240,13 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
         reviewer_verdict: { verdict: 'APPROVED' },
       };
       const manifestB = { ...manifestA, manifest_digest: '2'.repeat(64) };
+      const manifestC = {
+        ...manifestA,
+        contract_version: 7,
+        source_commit_sha: 'b'.repeat(40),
+        manifest_digest: '3'.repeat(64),
+        approved_at: '2026-07-27T01:00:00.000Z',
+      };
 
       await materializeApprovedContractManifest(client, {
         runId,
@@ -241,6 +278,25 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
         prd_content: '# PRD',
         contract_content: '# Contract',
       });
+      const ledgerAfterReplay = await client.query(
+        `SELECT id, (count(*) OVER())::int AS count, contract_version, manifest_digest,
+                source_commit_sha, sprint_dir, approved_manifest->>'manifest_digest' AS approved_manifest_digest,
+                reviewer_verdict->>'verdict' AS reviewer_verdict
+           FROM initiative_contract_approvals
+          WHERE initiative_id = $1::uuid AND contract_version = 6
+          ORDER BY approved_at`,
+        [initiativeId],
+      );
+      expect(ledgerAfterReplay.rows).toHaveLength(1);
+      expect(ledgerAfterReplay.rows[0]).toMatchObject({
+        count: 1,
+        contract_version: 6,
+        manifest_digest: manifestA.manifest_digest,
+        source_commit_sha: manifestA.source_commit_sha,
+        sprint_dir: SPRINT_DIR,
+        approved_manifest_digest: manifestA.manifest_digest,
+        reviewer_verdict: 'APPROVED',
+      });
       await expect(materializeApprovedContractManifest(client, {
         runId,
         version: 6,
@@ -249,6 +305,32 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
         prdContent: '# PRD changed',
         contractContent: '# Contract changed',
       })).rejects.toThrow(/approved_contract_manifest_conflict|same contract_version/i);
+      await materializeApprovedContractManifest(client, {
+        runId,
+        version: 7,
+        branch: 'cp-harness-propose-r7-51836fb2-a14',
+        manifest: manifestC,
+        prdContent: '# PRD v7',
+        contractContent: '# Contract v7',
+      });
+      const ledgerVersions = await client.query(
+        `SELECT id, contract_version, manifest_digest, supersedes_approval_id
+           FROM initiative_contract_approvals
+          WHERE initiative_id = $1::uuid
+          ORDER BY contract_version`,
+        [initiativeId],
+      );
+      expect(ledgerVersions.rows).toHaveLength(2);
+      expect(ledgerVersions.rows[0]).toMatchObject({
+        contract_version: 6,
+        manifest_digest: manifestA.manifest_digest,
+        supersedes_approval_id: null,
+      });
+      expect(ledgerVersions.rows[1]).toMatchObject({
+        contract_version: 7,
+        manifest_digest: manifestC.manifest_digest,
+        supersedes_approval_id: ledgerVersions.rows[0].id,
+      });
     } finally {
       await client.query('ROLLBACK');
       client.release();
@@ -298,7 +380,7 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     });
   });
 
-  it('checkbox-only evidence-only and provenance-only root DoD edits are allowed', async () => {
+  it('checkbox-only evidence-only provenance-only and combined root DoD edits are allowed', async () => {
     const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
     const baseLines = [
       '# Root DoD',
@@ -335,6 +417,17 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
           '',
         ],
       },
+      {
+        label: 'combined-mechanical',
+        lines: [
+          '# Root DoD',
+          '- [x] migration 365 stays approved',
+          ...baseLines.slice(2, -1),
+          'Evidence: CI run 123 passed at sha-current',
+          'Provenance: approved-contract-provenance manifest digest 1111',
+          '',
+        ],
+      },
     ];
 
     for (const c of cases) {
@@ -363,6 +456,42 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
         ]),
       });
     }
+  });
+
+  it('referenced fixture and golden discovery freezes indirect assets and rejects their drift', async () => {
+    const { buildApprovedContractManifest, verifyApprovedContractManifest } = await subject();
+    const { repo, approvedSha } = createApprovedRepo();
+    const manifest = await buildApprovedContractManifest({
+      repoRoot: repo,
+      runId: RUN_ID,
+      contractVersion: 6,
+      sourceCommitSha: approvedSha,
+      sprintDir: SPRINT_DIR,
+      approvedAt: '2026-07-27T00:00:00.000Z',
+      reviewerVerdict: { verdict: 'APPROVED' },
+    });
+
+    const artifactPaths = manifest.artifacts.map((a: { path: string }) => a.path);
+    expect(artifactPaths).toEqual(expect.arrayContaining([
+      'sprints/fixtures/approved-contract/golden.json',
+      `${SPRINT_DIR}/fixtures/replay-golden.json`,
+    ]));
+
+    write(repo, `${SPRINT_DIR}/fixtures/replay-golden.json`, '{"replay":"drifted"}\n');
+    sh(repo, `git add ${SPRINT_DIR}/fixtures/replay-golden.json && git commit -qm referenced-golden-drift`);
+    const driftSha = sh(repo, 'git rev-parse HEAD');
+
+    await expect(verifyApprovedContractManifest({
+      repoRoot: repo,
+      manifest,
+      currentCommitSha: driftSha,
+    })).resolves.toMatchObject({
+      ok: false,
+      reason: 'approved_contract_drift',
+      drift: expect.arrayContaining([
+        expect.objectContaining({ path: `${SPRINT_DIR}/fixtures/replay-golden.json` }),
+      ]),
+    });
   });
 
   it('root DoD Test command action expected environment and safety semantic edits are each rejected as approved_contract_drift', async () => {
@@ -463,6 +592,65 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
     })).toMatchObject({ ok: false, reason: 'current_pr_sha_missing' });
   });
 
+  it('generator evaluator CI and merge gate reject unreachable approved manifest fail closed', async () => {
+    const { verifyApprovedContractExecutionPreflight } = await subject();
+    const { runApprovedContractProvenanceCheck } = await import('../../../scripts/ci/approved-contract-provenance-check.mjs');
+    const { mergeGate } = await import('../../../packages/brain/src/orchestrator/gates.js');
+    const approvedContract = {
+      branch: 'cp-harness-propose-r6-51836fb2-a17',
+      manifest_digest: APPROVED_DIGEST,
+      source_commit_sha: APPROVED_SOURCE_SHA,
+      approved_manifest: {
+        manifest_digest: APPROVED_DIGEST,
+        source_commit_sha: APPROVED_SOURCE_SHA,
+        sprint_dir: SPRINT_DIR,
+      },
+    };
+
+    expect(verifyApprovedContractExecutionPreflight({
+      role: 'generator',
+      contract: approvedContract,
+      manifestLoadError: new Error('approved manifest row unreadable'),
+      expectedManifestDigest: APPROVED_DIGEST,
+    })).toMatchObject({
+      ok: false,
+      reason: 'approved_contract_manifest_unreachable',
+    });
+    expect(verifyApprovedContractExecutionPreflight({
+      role: 'evaluator',
+      contract: approvedContract,
+      manifestLoadError: new Error('approved manifest row unreadable'),
+      expectedManifestDigest: APPROVED_DIGEST,
+      expectedPrHeadSha: 'sha-current',
+      currentPrSha: 'sha-current',
+    })).toMatchObject({
+      ok: false,
+      reason: 'approved_contract_manifest_unreachable',
+    });
+    await expect(runApprovedContractProvenanceCheck({
+      repoRoot: '/tmp/approved-contract-manifest-unreachable',
+      sprintDir: SPRINT_DIR,
+      manifestDigest: APPROVED_DIGEST,
+      prHeadSha: 'sha-current',
+      manifestLoadError: new Error('approved manifest DB read failed'),
+    })).resolves.toMatchObject({
+      ok: false,
+      reason: 'approved_contract_manifest_unreachable',
+    });
+    expect(mergeGate({
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-current', manifest_digest: APPROVED_DIGEST },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-current', manifest_digest: APPROVED_DIGEST },
+      prHeadSha: 'sha-current',
+      approvedManifestDigest: APPROVED_DIGEST,
+      approvedManifestLoadError: new Error('approved manifest DB read failed'),
+      reviewRequired: false,
+      reviewApproved: false,
+    })).toEqual({
+      allow: false,
+      reason: 'approved_contract_manifest_unreachable',
+    });
+  });
+
   it('generator and evaluator dispatch carry approved manifest digest and source sha', async () => {
     const { buildApprovedContractDispatchContext } = await subject();
     const approvedContract = {
@@ -529,6 +717,21 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
           created_at timestamptz DEFAULT now(),
           updated_at timestamptz DEFAULT now(),
           UNIQUE (initiative_id, version)
+        ) ON COMMIT DROP;
+        CREATE TEMP TABLE initiative_contract_approvals (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          initiative_id uuid NOT NULL,
+          run_id uuid NOT NULL,
+          contract_version integer NOT NULL,
+          source_commit_sha text NOT NULL,
+          sprint_dir text NOT NULL,
+          manifest_digest text NOT NULL,
+          approved_manifest jsonb NOT NULL,
+          reviewer_verdict jsonb NOT NULL,
+          approved_at timestamptz NOT NULL DEFAULT now(),
+          supersedes_approval_id uuid,
+          created_at timestamptz DEFAULT now(),
+          UNIQUE (initiative_id, contract_version, manifest_digest)
         ) ON COMMIT DROP;
         CREATE TEMP TABLE initiative_runs (
           id uuid PRIMARY KEY,
@@ -829,6 +1032,20 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
           created_at timestamptz DEFAULT now(),
           updated_at timestamptz DEFAULT now()
         );
+        CREATE TABLE ${schema}.initiative_contract_approvals (
+          id uuid,
+          initiative_id uuid,
+          run_id uuid,
+          contract_version integer,
+          source_commit_sha text,
+          sprint_dir text,
+          manifest_digest text,
+          approved_manifest jsonb,
+          reviewer_verdict jsonb,
+          approved_at timestamptz,
+          supersedes_approval_id uuid,
+          created_at timestamptz DEFAULT now()
+        );
       `);
       await client.query(
         `INSERT INTO ${schema}.initiative_contracts
@@ -840,6 +1057,22 @@ describe('approved contract provenance manifest [BEHAVIOR]', () => {
           6,
           SPRINT_DIR,
           approvedSha,
+          manifest.manifest_digest,
+          JSON.stringify(manifest),
+          JSON.stringify({ verdict: 'APPROVED', reviewer: 'harness-contract-reviewer' }),
+        ],
+      );
+      await client.query(
+        `INSERT INTO ${schema}.initiative_contract_approvals
+          (id, initiative_id, run_id, contract_version, source_commit_sha, sprint_dir, manifest_digest, approved_manifest, reviewer_verdict, approved_at)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::jsonb, $9::jsonb, now())`,
+        [
+          randomUUID(),
+          INITIATIVE_ID,
+          RUN_ID,
+          6,
+          approvedSha,
+          SPRINT_DIR,
           manifest.manifest_digest,
           JSON.stringify(manifest),
           JSON.stringify({ verdict: 'APPROVED', reviewer: 'harness-contract-reviewer' }),
