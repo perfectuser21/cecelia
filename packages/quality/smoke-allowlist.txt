@@ -177,3 +177,4 @@ conversations-smoke.sh
 conversation-agent-smoke.sh
 conversation-ttl-archiver-smoke.sh
 kernel-capability-gate-smoke.sh
+kernel-harness-f1-baseline-smoke.sh

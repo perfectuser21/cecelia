@@ -1,0 +1,37 @@
+{
+  "initiative_id": "13d41c64-f5f1-4aaf-9487-c2608c3ec990",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "本 Sprint 加厚现有 Cecelia Harness 开发闭环的承诺地图、回归证据与隔离真库验收，不改变生产运行时。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "原位建立 Cecelia Harness Pipeline F1 的 S0-S12 × 11 要素与 legacy 等价基线",
+      "scope": "保留现有 Journey 与全部历史关联，通过幂等 migration 建立 S0-S12 稳定名称/promise，并在真库/API 记录 Reviewer 与 Final E2E 的历史别名映射缺口；建立精确 11 键的 143 格并以逐格事实门槛分类五态；以批准设计稿八个 legacy 行为族作为有限必含 inventory，精确核验 legacy/unified owner、gap、连续下一刀顺序与当前 SHA 真实 wiring，同时审计 engine 显式 P0/P1 条目；用隔离 PostgreSQL 验收，派生报告非权威，不修改 merge/staging/production 行为。",
+      "dod": [
+        "[BEHAVIOR] 隔离真 PostgreSQL 重放两次后仍只有原 Journey，历史 ID/Notion 不变，13 个 backbone stage 完整；四个复用历史行 mapping_status=exact，Reviewer/Final E2E 为 gap 且原因和 backbone 证据在真库与 Brain GET 一致",
+        "[BEHAVIOR] 精确键 FR/NFR/Invariant/判定点/保质期/死亡告警/失败语义/效果确认/输入对抗面/账本保鲜/两轴衔接的 143 个 cells 完整",
+        "[BEHAVIOR] 143 格逐格具有 reason_code、source_refs、missing_evidence 与条件证据，且每格唯一命中自身 gray/red/pending/green/na 事实门槛；13 个 FR 非 gray，禁止全 gray 或任意非 green 假基线",
+        "[BEHAVIOR] 批准设计稿 KH-F1-F01..F08 八个行为族精确齐全，族级 legacy/unified owner 逐字匹配、gap 非空、next_knife_order 为 1..8，每族 current-SHA wiring probe 真跑 exit 0；每个 engine behavior 归属一族并继承 owner，gap 非空、wiring_ref_ids 有效、next_knife_order 全局唯一连续",
+        "[BEHAVIOR] 四类 source inventory 满足 candidate=included+excluded，engine behavior 层 selected_seed=mapped_behavior；未被八族 wiring 或 engine 显式 P0/P1 引用的入口带 reason_code 排除",
+        "[BEHAVIOR] active/shadowed/retired/drifted/unknown 均按当前 SHA 事实 envelope 条件式验证，auto 可判项不得 unknown 且全部 unknown 失败",
+        "[BEHAVIOR] 非空 assertion_ref 只解析到根合同唯一可执行 entry，静态文档不能产生 green",
+        "[BEHAVIOR] 真实 Brain GET 显示 endpoint 延伸到 production verified、rollback anchor、report/learning",
+        "[BEHAVIOR] 既有 merge/staging/production 回归全绿且 migration 未写运行时状态表",
+        "[ARTIFACT] 根 regression-contract.yaml 仍为唯一权威回归 SSOT，engine 合同仅为 legacy source"
+      ],
+      "files": [
+        "packages/brain/migrations/365_kernel_harness_f1_baseline.sql",
+        "packages/brain/src/lib/kernel-harness-f1-baseline.js",
+        "packages/brain/src/lib/eleven-elements-ledger.js",
+        "packages/brain/src/routes/journeys.js",
+        "packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh",
+        "packages/brain/src/__tests__/integration/migration-365-kernel-harness-f1-baseline.integration.test.js",
+        "regression-contract.yaml",
+        "packages/brain/DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
