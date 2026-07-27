@@ -1,10 +1,10 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
-## Round 3 修订摘要
+## Round 4 修订摘要
 
-- 统一 DoD 中所有 BEHAVIOR 为 `Test: manual:bash` 可执行形态，删除非 bash 执行缩写，避免 evaluator 执行器解析分叉。
-- 补齐 customer line 的正向签名 attestation oracle：只有签名 deployment/verification attestation verified 且 SHA 精确匹配后才允许 `promoted`。
-- 保留 Round 2 已补强项：真实 Postgres/真实相邻模块边界、`initiative_runs.phase` CHECK 约束、replay 幂等 oracle、Promote API 认证后 DB 未突变断言。
+- 补齐 DoD 与 `tests/*.test.ts` 的 1:1 覆盖名：status schema、invalid id error path、staging PASS 正向 gate、Promote API auth 都新增红测。
+- Final E2E 在 happy path 之外增加 tested_sha mismatch fail-closed 与 report dispatch failure gate，避免只跑正向链路假绿。
+- 保留 Round 3 已补强项：真实 Postgres/真实相邻模块边界、customer signed attestation oracle、replay 幂等 oracle、Promote API 认证后 DB 未突变断言。
 
 ## Response Schema（推导来源: PRD字面 + api_registry推导）
 
@@ -415,11 +415,15 @@ curl -sf "$BRAIN_URL/api/brain/harness/delivery/$DELIVERY_ID/status" \
   | jq -e '.parent.run_phase=="delivery/staging_pending" and .parent.task_status!="completed" and .merged_sha==env.MERGED_SHA'
 
 node --input-type=module <<'NODE'
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import {
   applyStagingResult,
   applyProductionResult,
   persistFinalReportAndComplete,
   replayDeliveryEvent,
+  createDeliveryFromMerge,
 } from './packages/brain/src/delivery-terminal-authority.js';
 
 await applyStagingResult({
@@ -455,7 +459,81 @@ await replayDeliveryEvent({
   event_type: 'report_persisted',
   idempotency_key: 'report-pass',
 });
+
+const badRunId = randomUUID();
+const badTaskId = randomUUID();
+execFileSync('psql', [process.env.DB_URL, '-v', 'ON_ERROR_STOP=1', '-c', `
+  INSERT INTO tasks (id, title, description, task_type, status, payload)
+  VALUES ('${badTaskId}', 'delivery terminal authority mismatch', 'contract e2e negative', 'harness_initiative', 'in_progress', '{}'::jsonb);
+  INSERT INTO initiative_runs (id, initiative_id, phase, current_task_id)
+  VALUES ('${badRunId}', '${badTaskId}', 'B_task_loop', '${badTaskId}');
+`], { stdio: 'inherit' });
+const bad = await createDeliveryFromMerge({
+  dbUrl: process.env.DB_URL,
+  run_id: badRunId,
+  task_id: badTaskId,
+  pr_url: process.env.PR_URL.replace('/4327', '/4317'),
+  merged_sha: process.env.MERGED_SHA,
+  head_sha: process.env.MERGED_SHA,
+  contract_manifest_digest: process.env.DIGEST,
+  target_environment: 'local_api',
+  base_repo: 'perfectuser21/cecelia',
+});
+await applyStagingResult({
+  dbUrl: process.env.DB_URL,
+  delivery_id: bad.delivery_id,
+  verdict: 'PASS',
+  tested_sha: process.env.OTHER_SHA,
+  idempotency_key: 'staging-mismatch',
+});
+const badDeliveryId = bad.delivery_id;
+
+const reportRunId = randomUUID();
+const reportTaskId = randomUUID();
+execFileSync('psql', [process.env.DB_URL, '-v', 'ON_ERROR_STOP=1', '-c', `
+  INSERT INTO tasks (id, title, description, task_type, status, payload)
+  VALUES ('${reportTaskId}', 'delivery terminal authority report fail', 'contract e2e negative', 'harness_initiative', 'in_progress', '{}'::jsonb);
+  INSERT INTO initiative_runs (id, initiative_id, phase, current_task_id)
+  VALUES ('${reportRunId}', '${reportTaskId}', 'B_task_loop', '${reportTaskId}');
+`], { stdio: 'inherit' });
+const report = await createDeliveryFromMerge({
+  dbUrl: process.env.DB_URL,
+  run_id: reportRunId,
+  task_id: reportTaskId,
+  pr_url: process.env.PR_URL.replace('/4327', '/4328'),
+  merged_sha: process.env.MERGED_SHA,
+  head_sha: process.env.MERGED_SHA,
+  contract_manifest_digest: process.env.DIGEST,
+  target_environment: 'local_api',
+  base_repo: 'perfectuser21/cecelia',
+});
+await applyStagingResult({
+  dbUrl: process.env.DB_URL,
+  delivery_id: report.delivery_id,
+  verdict: 'PASS',
+  tested_sha: process.env.MERGED_SHA,
+  idempotency_key: 'staging-pass-report-fail',
+});
+await applyProductionResult({
+  dbUrl: process.env.DB_URL,
+  delivery_id: report.delivery_id,
+  line: 'internal',
+  tested_sha: process.env.MERGED_SHA,
+  health_ok: true,
+  fingerprint_sha: process.env.MERGED_SHA,
+  e2e_ok: true,
+  rollback_anchor: 'prod-before-report-fail',
+  idempotency_key: 'promote-pass-report-fail',
+});
+await persistFinalReportAndComplete({
+  dbUrl: process.env.DB_URL,
+  delivery_id: report.delivery_id,
+  dispatch_error: 'report dispatch failed',
+  idempotency_key: 'report-fail',
+});
+writeFileSync('/tmp/delivery-terminal-authority-e2e.ids', `BAD_DELIVERY_ID=${badDeliveryId}\nREPORT_FAIL_DELIVERY_ID=${report.delivery_id}\n`);
 NODE
+source /tmp/delivery-terminal-authority-e2e.ids
 
 psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
 SELECT count(*) FROM harness_deliveries d
@@ -480,6 +558,27 @@ SELECT count(*) FROM (
 ) dup;" \
   | tr -d ' ' | grep -qx '0'
 
+psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
+SELECT count(*) FROM harness_deliveries d
+JOIN tasks t ON t.id = d.task_id
+WHERE d.id = '$BAD_DELIVERY_ID'
+  AND d.status IN ('staging_failed','failed')
+  AND d.promote_status IS DISTINCT FROM 'promoted'
+  AND t.status <> 'completed'
+  AND d.updated_at > NOW() - interval '5 minutes';" \
+  | tr -d ' ' | grep -qx '1'
+
+psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
+SELECT count(*) FROM harness_deliveries d
+JOIN initiative_runs r ON r.id = d.run_id
+JOIN tasks t ON t.id = d.task_id
+WHERE d.id = '$REPORT_FAIL_DELIVERY_ID'
+  AND d.status IN ('report_pending','report_failed')
+  AND r.phase <> 'done'
+  AND t.status <> 'completed'
+  AND d.updated_at > NOW() - interval '5 minutes';" \
+  | tr -d ' ' | grep -qx '1'
+
 echo "Golden Path local_api delivery terminal authority passed"
 ```
 
@@ -488,10 +587,14 @@ echo "Golden Path local_api delivery terminal authority passed"
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | delivery 状态机 | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | Merge 后 parent 进入 delivery/staging_pending 且 staging child 绑定 merge manifest | missing module/export 或 parent 仍 completed |
+| status schema | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | delivery status endpoint schema keys 完整且禁用字段不存在 | 当前无 status endpoint 或返回禁用字段 |
+| status error path | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | delivery status invalid id error path 返回 400 + error 字段 | 当前通用 404 或无 error schema |
+| staging positive gate | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging PASS 且 tested_sha 等于 merged_sha 后才可 promote | 当前 PASS 与 SHA 对账未成为唯一 promote 前置 |
 | staging fail-closed | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging SKIP(no_contract) 不得 success 且 parent 保持 blocked | 当前 SKIP 可被当作非失败 |
 | SHA gate | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | tested_sha 缺失或不等于 merged_sha 必须 fail-closed | 当前缺失/漂移可能 pending/promote |
 | executor success false authority | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging child completed+executor success 不得替代 PASS | 当前 child completed+executor success 可被当交付成功 |
 | production rollback | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor | 当前 promote best-effort/report 仍可完成 |
+| promote auth | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | Promote API 必须认证 approver，body.promoted_by 不可冒充 | 当前无 header auth 可由 body promoted_by 放行 |
 | customer attestation | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | customer confirm 无签名 attestation 不得 promoted | 当前 body promoted_by 可标 promoted |
 | customer attestation positive | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | customer repo 签名 deployment attestation verified 后才 promoted | 当前缺少客户 repo 签名验真链路 |
 | report gate | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | report dispatch失败不得 parent complete; persisted 后 atomically complete | 当前 report dispatch best-effort 后 parent 仍可 completed |

@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import express from 'express';
+import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 
 const DB_URL = process.env.DB_URL || process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia';
@@ -12,6 +14,14 @@ const PR_URL_4317 = 'https://github.com/perfectuser21/cecelia/pull/4317';
 
 async function loadAuthority() {
   return import(pathToFileURL(join(process.cwd(), 'packages/brain/src/delivery-terminal-authority.js')).href);
+}
+
+async function makeHarnessApp() {
+  const { default: harnessRouter } = await import(pathToFileURL(join(process.cwd(), 'packages/brain/src/routes/harness.js')).href);
+  const app = express();
+  app.use(express.json());
+  app.use('/api/brain/harness', harnessRouter);
+  return app;
 }
 
 function sql(value: unknown) {
@@ -54,14 +64,25 @@ function seedParent(ctx: ReturnType<typeof makeCtx>) {
 }
 
 function cleanup(ctxs: Array<ReturnType<typeof makeCtx> | { initiativeId?: string; runId?: string; taskId?: string; deliveryId?: string }>) {
-  const deliveryIds = ctxs.map((x) => x.deliveryId).filter(Boolean);
   const initiativeIds = ctxs.map((x) => x.initiativeId).filter(Boolean);
   const runIds = ctxs.map((x) => x.runId).filter(Boolean);
   const taskIds = ctxs.map((x) => x.taskId).filter(Boolean);
-  const quotedDeliveries = deliveryIds.map((x) => `'${sql(x)}'`).join(',');
+  const deliveryIds = ctxs.map((x) => x.deliveryId).filter(Boolean);
   const quotedInitiatives = initiativeIds.map((x) => `'${sql(x)}'`).join(',');
   const quotedRuns = runIds.map((x) => `'${sql(x)}'`).join(',');
   const quotedTasks = taskIds.map((x) => `'${sql(x)}'`).join(',');
+  try {
+    if (quotedRuns || quotedTasks) {
+      const found = psql(`
+        SELECT id::text
+          FROM harness_deliveries
+         WHERE ${quotedRuns ? `run_id IN (${quotedRuns})` : 'FALSE'}
+            OR ${quotedTasks ? `task_id IN (${quotedTasks})` : 'FALSE'}
+      `).split('\n').filter(Boolean);
+      deliveryIds.push(...found);
+    }
+  } catch { /* ignore */ }
+  const quotedDeliveries = [...new Set(deliveryIds)].map((x) => `'${sql(x)}'`).join(',');
   try { if (quotedDeliveries) psql(`DELETE FROM harness_delivery_events WHERE delivery_id IN (${quotedDeliveries});`); } catch { /* ignore */ }
   try { if (quotedDeliveries) psql(`DELETE FROM harness_deliveries WHERE id IN (${quotedDeliveries});`); } catch { /* ignore */ }
   try {
@@ -99,9 +120,10 @@ describe('Delivery Terminal Authority [BEHAVIOR]', () => {
     const authority = await loadAuthority();
     const ctx = makeCtx('PR4327');
     seedParent(ctx);
+    let deliveryId: string | undefined;
     try {
       const created = await authority.createDeliveryFromMerge(mergeInput(ctx));
-      const deliveryId = deliveryIdFrom(created);
+      deliveryId = deliveryIdFrom(created);
       const row = psqlJson<{
         run_phase: string;
         task_status: string;
@@ -149,7 +171,92 @@ describe('Delivery Terminal Authority [BEHAVIOR]', () => {
         target_environment: 'local_api',
       });
     } finally {
-      cleanup([ctx]);
+      cleanup([{ ...ctx, deliveryId }]);
+    }
+  });
+
+  it('delivery status endpoint schema keys 完整且禁用字段不存在', async () => {
+    const authority = await loadAuthority();
+    const app = await makeHarnessApp();
+    const ctx = makeCtx('status-schema');
+    seedParent(ctx);
+    let deliveryId: string | undefined;
+    try {
+      deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge(mergeInput(ctx)));
+      const res = await request(app).get(`/api/brain/harness/delivery/${deliveryId}/status`);
+
+      expect(res.status).toBe(200);
+      expect(Object.keys(res.body).sort()).toEqual([
+        'contract_manifest_digest',
+        'delivery_id',
+        'external_attestation',
+        'head_sha',
+        'merged_sha',
+        'parent',
+        'pr_url',
+        'promote_status',
+        'report',
+        'run_id',
+        'staging_child_payload',
+        'status',
+        'target_environment',
+        'task_id',
+        'tested_sha',
+      ].sort());
+      for (const forbidden of ['ok_only', 'promoted_by_only', 'executor_success', 'child_completed_success']) {
+        expect(Object.prototype.hasOwnProperty.call(res.body, forbidden)).toBe(false);
+      }
+      expect(res.body).toMatchObject({
+        delivery_id: deliveryId,
+        run_id: ctx.runId,
+        task_id: ctx.taskId,
+        pr_url: ctx.prUrl,
+        merged_sha: MERGED_SHA,
+        target_environment: 'local_api',
+      });
+    } finally {
+      cleanup([{ ...ctx, deliveryId }]);
+    }
+  });
+
+  it('delivery status invalid id error path 返回 400 + error 字段', async () => {
+    const app = await makeHarnessApp();
+    const res = await request(app).get('/api/brain/harness/delivery/not-a-uuid/status');
+
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+  });
+
+  it('staging PASS 且 tested_sha 等于 merged_sha 后才可 promote', async () => {
+    const authority = await loadAuthority();
+    const ctx = makeCtx('staging-pass');
+    seedParent(ctx);
+    let deliveryId: string | undefined;
+    try {
+      deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge(mergeInput(ctx)));
+      await authority.applyStagingResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        verdict: 'PASS',
+        reason: null,
+        tested_sha: MERGED_SHA,
+        executor_success: true,
+        idempotency_key: 'staging-pass',
+      });
+      const row = psqlJson<{ status: string; verdict: string; tested_sha: string; merged_sha: string }>(`
+        SELECT d.status, s.verdict, s.tested_sha, d.merged_sha
+          FROM harness_deliveries d
+          JOIN staging_e2e_results s ON s.id = d.staging_result_id
+         WHERE d.id = '${deliveryId}'
+      `);
+      expect(row).toMatchObject({
+        status: 'promote_pending',
+        verdict: 'PASS',
+        tested_sha: MERGED_SHA,
+        merged_sha: MERGED_SHA,
+      });
+    } finally {
+      cleanup([{ ...ctx, deliveryId }]);
     }
   });
 
@@ -283,6 +390,39 @@ describe('Delivery Terminal Authority [BEHAVIOR]', () => {
       expect(row.rollback_events).toBeGreaterThanOrEqual(1);
     } finally {
       cleanup([ctx]);
+    }
+  });
+
+  it('Promote API 必须认证 approver，body.promoted_by 不可冒充', async () => {
+    const app = await makeHarnessApp();
+    const resultId = randomUUID();
+    const initiativeId = randomUUID();
+    const prUrl = `https://github.com/perfectuser21/cecelia/pull/promote-auth-${resultId}`;
+    try {
+      psql(`
+        INSERT INTO staging_e2e_results
+          (id, initiative_id, pr_url, verdict, promote_status, scenarios_total, scenarios_passed, failed_scenarios)
+        VALUES
+          ('${resultId}', '${initiativeId}', '${prUrl}', 'PASS', 'pending_promote', 1, 1, '[]'::jsonb);
+      `);
+      const before = psql(`
+        SELECT count(*)
+          FROM staging_e2e_results
+         WHERE id='${resultId}' AND promoted_at IS NOT NULL
+      `);
+      const res = await request(app)
+        .post(`/api/brain/harness/promote/${resultId}`)
+        .send({ base_repo: 'perfectuser21/cecelia', promoted_by: 'body-only' });
+      const after = psql(`
+        SELECT count(*)
+          FROM staging_e2e_results
+         WHERE id='${resultId}' AND promoted_at IS NOT NULL
+      `);
+
+      expect([401, 503]).toContain(res.status);
+      expect(after).toBe(before);
+    } finally {
+      try { psql(`DELETE FROM staging_e2e_results WHERE id='${resultId}' OR initiative_id='${initiativeId}';`); } catch { /* ignore */ }
     }
   });
 

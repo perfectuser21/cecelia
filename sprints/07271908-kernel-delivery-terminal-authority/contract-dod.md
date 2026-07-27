@@ -18,8 +18,8 @@ journey_type: autonomous
 - [ ] [ARTIFACT] Existing promote route uses approver authentication before DB mutation.
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('packages/brain/src/routes/harness.js','utf8');if(!/authenticateApprover/.test(c)||!/x-approver-token|HARNESS_REVIEW_APPROVER_TOKEN/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] Contract red tests exist and include production fixtures PR4327/PR4317.
-  Test: node -e "const fs=require('fs');const p='sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts';const c=fs.readFileSync(p,'utf8');for(const s of ['PR4327','PR4317','delivery/staging_pending','external_ack_pending']){if(!c.includes(s))process.exit(1)}"
+- [ ] [ARTIFACT] Contract red tests exist and include production fixtures PR4327/PR4317 plus all DoD behavior coverage names.
+  Test: node -e "const fs=require('fs');const p='sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts';const c=fs.readFileSync(p,'utf8');for(const s of ['PR4327','PR4317','delivery/staging_pending','external_ack_pending','delivery status endpoint schema keys 完整且禁用字段不存在','delivery status invalid id error path 返回 400 + error 字段','staging PASS 且 tested_sha 等于 merged_sha 后才可 promote','Promote API 必须认证 approver']){if(!c.includes(s))process.exit(1)}"
 
 - [ ] [ARTIFACT] Contract red tests 不 mock 本单禁 mock 边。
   Test: node -e "const fs=require('fs');const p='sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts';const c=fs.readFileSync(p,'utf8');if(/\\bvi\\.mock\\b|\\bjest\\.mock\\b|sinon\\.stub|\\bstub\\(/.test(c))process.exit(1);for(const s of ['psql','harness_deliveries','harness_delivery_events','initiative_runs']){if(!c.includes(s))process.exit(1)}"
