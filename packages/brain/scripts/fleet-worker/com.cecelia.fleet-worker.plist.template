@@ -24,7 +24,7 @@
     <key>CECELIA_RUNNER_DIGEST</key>
     <string>@@RUNNER_DIGEST@@</string>
     <key>CECELIA_FLEET_WORKER_HOST</key>
-    <string>127.0.0.1</string>
+    <string>@@WORKER_BIND_HOST@@</string>
     <key>CECELIA_FLEET_WORKER_PORT</key>
     <string>5231</string>
     <key>CECELIA_DRAIN_MARKER</key>

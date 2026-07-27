@@ -3,6 +3,7 @@
     {
       "machine_id": "us-mac-m4",
       "capacity": 7,
+      "worker_bind_host": "127.0.0.1",
       "runner_image_digest": "sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36",
       "resources": {
         "cpu_cores": 6,
@@ -31,6 +32,7 @@
     {
       "machine_id": "xian-mac-m4",
       "capacity": 8,
+      "worker_bind_host": "100.86.57.69",
       "runner_image_digest": "sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36",
       "resources": {
         "cpu_cores": 6,
@@ -59,6 +61,7 @@
     {
       "machine_id": "xian-mac-m1",
       "capacity": 8,
+      "worker_bind_host": "100.88.166.55",
       "runner_image_digest": "sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36",
       "resources": {
         "cpu_cores": 6,

@@ -7,6 +7,11 @@ const CANONICAL_BASELINE = Object.freeze({
     'xian-mac-m4': 8,
     'xian-mac-m1': 8,
   }),
+  worker_bind_hosts: Object.freeze({
+    'us-mac-m4': '127.0.0.1',
+    'xian-mac-m4': '100.86.57.69',
+    'xian-mac-m1': '100.88.166.55',
+  }),
   runner_image_digest: 'sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36',
   resources: Object.freeze({
     cpu_cores: 6,
@@ -36,6 +41,7 @@ const CANONICAL_IDS = Object.freeze(Object.keys(CANONICAL_BASELINE.capacities));
 const PROFILE_KEYS = [
   'machine_id',
   'capacity',
+  'worker_bind_host',
   'runner_image_digest',
   'resources',
   'launchd',
@@ -64,6 +70,9 @@ export function validateNodeProfile(profile) {
   if (!Object.hasOwn(CANONICAL_BASELINE.capacities, profile.machine_id)) return false;
   if (!Number.isInteger(profile.capacity)
     || profile.capacity !== CANONICAL_BASELINE.capacities[profile.machine_id]) {
+    return false;
+  }
+  if (profile.worker_bind_host !== CANONICAL_BASELINE.worker_bind_hosts[profile.machine_id]) {
     return false;
   }
   if (typeof profile.runner_image_digest !== 'string'
