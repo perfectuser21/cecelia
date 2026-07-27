@@ -10,7 +10,7 @@ journey_type: autonomous
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] sprint regression test 存在且覆盖 manifest/drift/gate/re-GAN
-  Test: node -e "const c=require('fs').readFileSync('sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts','utf8'); for (const s of ['canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts','approved migration 365 changed to 366 is rejected as approved_contract_drift','generator and evaluator dispatch carry approved manifest digest and source sha','callback refuses stale manifest_digest before writing evaluator verdict','approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift']) { if (!c.includes(s)) process.exit(1); }"
+  Test: node -e "const c=require('fs').readFileSync('sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts','utf8'); for (const s of ['canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts','approved migration 365 changed to 366 is rejected as approved_contract_drift','root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift','generator and evaluator dispatch carry approved manifest digest and source sha','callback refuses stale manifest_digest before writing evaluator verdict','callback refuses stale pr_head_sha before writing generator verdict','approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift']) { if (!c.includes(s)) process.exit(1); }"
 
 - [ ] [ARTIFACT] approved provenance module 必须新增
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/approved-contract-provenance.js','utf8'); for (const s of ['buildApprovedContractManifest','verifyApprovedContractManifest','verifyApprovedContractReference','buildApprovedContractDispatchContext','verifyAttemptCallbackApprovedContract','detectApprovedContractMainConflict']) { if (!c.includes(s)) process.exit(1); }"
@@ -31,7 +31,7 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] [L2] append-only approval rejects same contract_version with a different manifest_digest
   动作: 在真实 PostgreSQL temp table 中对同一 run/version 先写 digest A，再写 digest B。
-  预期观察: 第一次写入成功并 attach run；第二次不同 digest 被 `approved_contract_manifest_conflict` 拒绝，原 row 不被覆写。
+  预期观察: 第一次写入成功并 attach run；同 digest 重放不改已批准正文；第二次不同 digest 被 `approved_contract_manifest_conflict` 拒绝，原 row 不被覆写。
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "append-only approval rejects same contract_version with a different manifest_digest"'
   期望: exit 0
 
@@ -47,9 +47,15 @@ journey_type: autonomous
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "checkbox evidence and provenance only root DoD edits are allowed"'
   期望: exit 0
 
+- [ ] [BEHAVIOR] [L2] root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift
+  动作: 在真实临时 Git repo 中批准 root DoD 后，修改 Test command、Action、Expected、Environment、Safety 五类语义行。
+  预期观察: `verifyApprovedContractManifest` 返回 `ok:false`、`reason:"approved_contract_drift"`，drift path 含 `DoD.md` 且 change 为 semantic。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift"'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] missing manifest unreachable stale sha and stale manifest digest fail closed
-  动作: 直接调用 `verifyApprovedContractReference` 分别传入缺 manifest、digest mismatch、缺 current PR SHA。
-  预期观察: 三个分支均 fail-closed，reason 分别为 `approved_contract_manifest_missing`、`stale_manifest_digest`、`current_pr_sha_missing`。
+  动作: 直接调用 `verifyApprovedContractReference` 分别传入 manifest load error、缺 manifest、digest mismatch、缺 current PR SHA。
+  预期观察: 四个分支均 fail-closed，reason 分别为 `approved_contract_manifest_unreachable`、`approved_contract_manifest_missing`、`stale_manifest_digest`、`current_pr_sha_missing`。
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "missing manifest unreachable stale sha and stale manifest digest fail closed"'
   期望: exit 0
 
@@ -63,6 +69,12 @@ journey_type: autonomous
   动作: 构造真实 attempt task_bundle.contract 中 approved digest，再用 evaluator callback 上报 stale digest、缺 digest、正确 digest 三种结果。
   预期观察: stale digest 返回 `stale_evaluate_manifest_digest`，缺 digest 返回 `approved_contract_manifest_digest_missing`，正确 digest 才允许写 verdict。
   验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale manifest_digest before writing evaluator verdict"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] callback refuses stale pr_head_sha before writing generator verdict
+  动作: 构造真实 attempt task_bundle.pull_request.head_sha，再用 generator callback 上报 stale `provider_metadata.pr_head_sha`。
+  预期观察: stale PR SHA 返回 `stale_generator_pr_head_sha`，正确 PR SHA 才允许写 verdict。
+  验证命令: Test: manual:bash -c 'set -euo pipefail; npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale pr_head_sha before writing generator verdict"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] mergeGate refuses PASS verdicts that do not carry the approved manifest_digest

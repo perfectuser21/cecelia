@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -159,14 +159,14 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 1 点要求 append-only；第 6 点要求同一 `contract_version` 已有不同 manifest 时拒绝覆写。
 
-**可观测行为**: `initiative_contracts` 新增/扩展 `approved_manifest jsonb`、`manifest_digest text`、`source_commit_sha text`、`reviewer_verdict jsonb`；同一 version + 同 digest 重放幂等；同一 version + 不同 digest 抛 `approved_contract_manifest_conflict`，不更新原批准记录。
+**可观测行为**: `initiative_contracts` 新增/扩展 `approved_manifest jsonb`、`manifest_digest text`、`source_commit_sha text`、`reviewer_verdict jsonb`；同一 version + 同 digest 重放幂等且不得覆写已批准正文；同一 version + 不同 digest 抛 `approved_contract_manifest_conflict`，不更新原批准记录。
 
 **验证命令**:
 ```bash
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "append-only approval rejects same contract_version with a different manifest_digest"
 ```
 
-**硬阈值**: 真 PostgreSQL temp table 中第二次不同 digest 写入必须 reject；原 row 的 `manifest_digest` 不变。
+**硬阈值**: 真 PostgreSQL temp table 中同 digest 重放后 row 数仍为 1 且 `prd_content/contract_content` 保持首次批准值；第二次不同 digest 写入必须 reject；原 row 的 `manifest_digest` 不变。
 
 ---
 
@@ -180,11 +180,12 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 ```bash
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "generator and evaluator dispatch carry approved manifest digest and source sha"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale manifest_digest before writing evaluator verdict"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "callback refuses stale pr_head_sha before writing generator verdict"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses PASS verdicts that do not carry the approved manifest_digest"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "mergeGate refuses missing approved manifest_digest and stale judge manifest_digest"
 ```
 
-**硬阈值**: dispatch env 必须含 `APPROVED_CONTRACT_MANIFEST_DIGEST` 与 `APPROVED_CONTRACT_SOURCE_SHA`；callback stale digest 在写 verdict 前返回 `stale_evaluate_manifest_digest`；stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 approved digest 返回 `approved_contract_manifest_digest_missing`。
+**硬阈值**: dispatch env 必须含 `APPROVED_CONTRACT_MANIFEST_DIGEST` 与 `APPROVED_CONTRACT_SOURCE_SHA`；callback stale digest 在写 verdict 前返回 `stale_evaluate_manifest_digest`；callback stale generator PR SHA 在写 verdict 前返回 `stale_generator_pr_head_sha`；stale evaluator digest 返回 `{allow:false, reason:"stale_evaluate_manifest_digest"}`；judge digest 同理返回 `stale_judge_manifest_digest`；缺 approved digest 返回 `approved_contract_manifest_digest_missing`。
 
 ---
 
@@ -192,16 +193,17 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 3/4 点要求 sprint-prd、contract、DoD、task-plan、tests、fixture/golden 删除/重命名/修改均拒绝；Root DoD 只允许 checkbox/evidence/provenance 机械变化，artifact path、Test command、动作、预期、环境和安全语义不得漂移。
 
-**可观测行为**: `verifyApprovedContractManifest` 对当前 PR SHA 的 Git tree 与 manifest artifacts 逐项比对；`365 -> 366` 的 root DoD Test command/action 变化返回 `approved_contract_drift`；只勾 checkbox 或追加 evidence/provenance 行返回 ok 并列 `allowed_mechanical_changes`。
+**可观测行为**: `verifyApprovedContractManifest` 对当前 PR SHA 的 Git tree 与 manifest artifacts 逐项比对；`365 -> 366` 的 root DoD Test command/action 变化返回 `approved_contract_drift`；Root DoD 的 Test command、动作、预期、环境、安全语义任一变化都返回 `approved_contract_drift`；只勾 checkbox 或追加 evidence/provenance 行返回 ok 并列 `allowed_mechanical_changes`。
 
 **验证命令**:
 ```bash
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved migration 365 changed to 366 is rejected as approved_contract_drift"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "checkbox evidence and provenance only root DoD edits are allowed"
+npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift"
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift"
 ```
 
-**硬阈值**: `365->366` 必须 `ok:false reason=approved_contract_drift`；checkbox/evidence/provenance-only 必须 `ok:true`；删除/重命名/内容修改均列 drift path，且不得把 rename 当新 artifact 放行。
+**硬阈值**: `365->366` 必须 `ok:false reason=approved_contract_drift`；Root DoD Test command/Action/Expected/Environment/Safety 语义变化必须 `approved_contract_drift`；checkbox/evidence/provenance-only 必须 `ok:true`；删除/重命名/内容修改均列 drift path，且不得把 rename 当新 artifact 放行。
 
 ---
 
@@ -216,7 +218,7 @@ npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-co
 npx vitest run sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts --testNamePattern "missing manifest unreachable stale sha and stale manifest digest fail closed"
 ```
 
-**硬阈值**: 缺 manifest → `approved_contract_manifest_missing`；digest 不匹配 → `stale_manifest_digest`；current PR SHA 缺失 → `current_pr_sha_missing`；命令 exit 0 只在这些拒绝 reason 被断言命中时成立。
+**硬阈值**: manifest load error → `approved_contract_manifest_unreachable`；缺 manifest → `approved_contract_manifest_missing`；digest 不匹配 → `stale_manifest_digest`；current PR SHA 缺失 → `current_pr_sha_missing`；命令 exit 0 只在这些拒绝 reason 被断言命中时成立。
 
 ---
 
@@ -285,12 +287,14 @@ echo "OK: approved contract provenance final e2e passed"
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | canonical manifest | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | canonical manifest freezes approved PRD contract DoD task-plan tests and fixture artifacts | `approved-contract-provenance.js` 不存在或未生成 artifacts/digest → FAIL |
-| append-only DB approval | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | append-only approval rejects same contract_version with a different manifest_digest | 旧 `materializeApprovedContract` 覆写同 version → FAIL |
+| append-only DB approval | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | append-only approval rejects same contract_version with a different manifest_digest | 旧 `materializeApprovedContract` 覆写同 version 或同 digest 重放改正文 → FAIL |
 | 365→366 drift | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | approved migration 365 changed to 366 is rejected as approved_contract_drift | 旧系统不比较 approved root DoD 语义 → FAIL |
 | Root DoD 机械变化 | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | checkbox evidence and provenance only root DoD edits are allowed | 过严 byte compare 或过松语义 compare → FAIL |
+| Root DoD 安全语义漂移 | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | root DoD Test command action expected environment and safety semantic edits are rejected as approved_contract_drift | Test command/动作/预期/环境/安全语义被改后仍通过 → FAIL |
 | fail-closed reference | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | missing manifest unreachable stale sha and stale manifest digest fail closed | 缺 manifest/stale digest 被放行 → FAIL |
 | dispatch digest propagation | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | generator and evaluator dispatch carry approved manifest digest and source sha | 现有 dispatch env 不注入 approved digest/source SHA → FAIL |
 | callback digest preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | callback refuses stale manifest_digest before writing evaluator verdict | 旧 callback 只落 verdict，不在写入前校验 digest → FAIL |
+| callback PR SHA preflight | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | callback refuses stale pr_head_sha before writing generator verdict | generator callback stale PR SHA 被写入 verdict → FAIL |
 | merge gate digest | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | mergeGate refuses PASS verdicts that do not carry the approved manifest_digest | 现有 mergeGate 只看 pr_head_sha → FAIL |
 | merge gate missing/stale digest | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | mergeGate refuses missing approved manifest_digest and stale judge manifest_digest | 缺 approved digest 或 stale judge digest 被放行 → FAIL |
 | frozen artifact deletion/rename | `sprints/0727184802-approved-contract-provenance/tests/approved-contract-provenance.test.ts` | approved PRD contract task-plan test deletion rename and content edits are rejected as approved_contract_drift | 删除 task-plan、rename test、改 contract-draft 被放行 → FAIL |
