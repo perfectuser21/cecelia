@@ -78,6 +78,7 @@ run_node_apply() {
     fi
   }
 
+  # shellcheck disable=SC2329  # Invoked indirectly by signal traps below.
   stop_with_drain() {
     local status="$1"
     restore_drain_guard

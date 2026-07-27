@@ -1,4 +1,4 @@
-contract_branch: cp-07270814-fleet-node-admission-4a
+contract_branch: cp-07271555-fleet-node-baseline-reconcile
 sprint_dir: docs/superpowers/plans/2026-07-27-fleet-node-phase-4-wiring.md
 
 ---
@@ -37,13 +37,14 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
 
 - [x] [ARTIFACT] `reconcile-fleet-node-baseline.sh` 固定安装 Node `25.8.0`、
   Codex CLI `0.145.0`、OrbStack `2.2.1`、UID/GID 450 `_cecelia`、credential-free
-  Git baseline 与 pinned Runner；`fleet-rollout.sh` 仅允许 US M4 从 committed
-  Git 构建工件，以 BatchMode SSH + `sudo -n` 按 Xian M4→US M4→Xian M1 顺序
-  调用节点本地 bootstrap。默认均为 dry-run，任一失败恢复 drain。
+  Git baseline 与 pinned Runner，并把 app 内 `orbctl/docker` 暴露到 toolchain；
+  `fleet-rollout.sh` 仅允许 US M4 从 committed Git 构建工件，本地与 BatchMode SSH
+  payload 都先进入 root-owned `/var/tmp` staging，再按 Xian M4→US M4→Xian M1
+  顺序调用节点本地 bootstrap。默认均为 dry-run，失败或 HUP/INT/TERM 恢复 drain。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh'
 
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
-  Brain `1.267.93` canonical version sources 已同步。
+  Brain `1.267.94` canonical version sources 已同步。
   Test: manual:bash -c 'bash scripts/check-version-sync.sh && node scripts/registry-lint.mjs && node -e "const fs=require(\"fs\"),yaml=require(\"js-yaml\");yaml.load(fs.readFileSync(\"regression-contract.yaml\",\"utf8\"));yaml.load(fs.readFileSync(\"docs/registry/features/orchestration.yml\",\"utf8\"));"'
 
 ## BEHAVIOR 条目
@@ -69,7 +70,9 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
   `online`/`effective_slots` fallback 或 default-off enforcement flag。
   动作: 表驱动运行 Worker URL 缺失、redirect、timeout、non-2xx、oversize、
   malformed、stale、identity mismatch 和 drain 的 production probe tests。
-  预期观察: 每种缺失/漂移均返回 `node_not_base_admitted`，不以 slots 放行。
+  预期观察: 每种缺失/漂移均返回 `node_not_base_admitted`；即使
+  `base_admitted=true`，`dispatch_ready=false` 仍在 Attempt/launcher 前返回
+  `node_not_dispatch_ready`，不以 slots 放行。
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/preflight/production-probes.test.js src/orchestrator/preflight/production-wiring.test.js'
   期望: exit 0
 
@@ -90,10 +93,11 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
 
 - [x] [BEHAVIOR] [L2] US M4 自部署只传输 committed Git bundle 与 pinned Runner，
   不传用户 home、Xian 长期 Codex 凭据或 provider session；缺 Docker CLI 的新节点
-  可由 OrbStack app 自带 CLI 完成 bootstrap，checksum/签名/version/Runner digest
-  任一不匹配即失败。新 OrbStack 首次安装失败会删除未完成 app，已有 app 升级失败
-  会回滚；发现高于 baseline 的版本绝不静默 downgrade。rollout 的
-  drain→bootstrap→undrain→admit 任一步失败都会恢复 drain。
+  由 OrbStack app 自带 CLI 完成 bootstrap，并把 `orbctl/docker` 链接进 Worker
+  默认 PATH；checksum/签名/version/Runner digest 任一不匹配即失败。新 OrbStack
+  首次安装失败会删除未完成 app，已有 app 升级失败会回滚；发现高于 baseline 的
+  版本绝不静默 downgrade。rollout 不从用户可写 staging 执行 root 脚本，且
+  drain→bootstrap→undrain→admit 任一步失败或信号中断都会恢复 drain。
   Test: contract:KERNEL-FLEET-NODE-SELF-DEPLOY-01
   期望: exit 0
 

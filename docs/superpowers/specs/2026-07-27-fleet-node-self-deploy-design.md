@@ -121,9 +121,11 @@ For each node it builds artifacts only from the committed Git object graph:
 - a Git bundle rooted at the rollout commit;
 - a Docker archive of the pinned Runner image.
 
-It sends those files over SSH to a fresh remote temporary directory and invokes
-the node-local reconciler with `sudo -n`. It never invokes Cecelia Bridge `/run`
-and never reads or sends a Codex account directory.
+It sends those files over SSH and streams them through `sudo -n` into a fresh,
+root-owned `/var/tmp` staging directory. The node-local reconciler and its input
+artifacts execute only from that root-owned staging directory, never from an SSH
+user-writable path. It never invokes Cecelia Bridge `/run` and never reads or
+sends a Codex account directory.
 
 Canonical targets:
 
@@ -142,7 +144,9 @@ Canonical targets:
 The controller creates the drain marker before changing runtime state. After
 bootstrap it removes the marker only long enough to obtain fresh admission
 evidence. If admission fails, it immediately restores drain and exits non-zero.
-Phase 4A still reports `dispatch_ready=false`, so no Attempt becomes runnable.
+HUP, INT, TERM, or an unexpected exit after undrain also restores drain.
+Phase 4A still reports `dispatch_ready=false`; production probes require final
+dispatch readiness, so no Attempt becomes runnable.
 
 ## macOS maintenance boundary
 
@@ -164,6 +168,8 @@ not need to log in, but Phase 4A does not hide a reboot inside `--apply`.
 - Existing newer OrbStack is never downgraded.
 - Git input contains committed objects only.
 - Runner import must resolve to the pinned digest.
+- OrbStack's pinned `orbctl` and `docker` commands are linked into the Worker
+  toolchain PATH before the real installer preflight.
 - Worker installation retains its existing transactional rollback.
 - Any failure leaves or restores the node drain marker.
 - No node is considered ready from Worker-supplied booleans; Brain-owned
@@ -180,6 +186,8 @@ Automated tests must prove:
 - tracked Git and Runner artifacts are transferred without credential paths;
 - rollout target mapping and `all` order are exact;
 - SSH or admission failure leaves the node drained;
+- local and remote privileged execution uses root-owned staging only;
+- interruption after undrain restores the node drain marker;
 - a successful Phase 4A rollout remains `dispatch_ready=false`;
 - existing Fleet Node admission and production wiring tests remain green.
 

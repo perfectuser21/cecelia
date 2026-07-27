@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.267.93
+**Brain 版本**: 1.267.94
 
 **状态**: 生产运行中
 
@@ -228,10 +228,12 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   Xian 指向 US Brain Tailscale health 的 callback。LaunchDaemon 固定通过
   `/var/run/docker.sock` 访问 OrbStack。
 - US M4 通过 `fleet-rollout.sh` 从 committed Git、credential-free bundle 与
-  pinned Runner image 构建工件，并以 BatchMode SSH + `sudo -n` 运行节点本地
-  reconciler；不复制用户目录、Codex auth、Prompt、token 或 provider session。
+  pinned Runner image 构建工件。本地与远端 payload 均由 `sudo -n` 直接解包到
+  root-owned `/var/tmp` staging 后才执行节点本地 reconciler；不从用户可写临时目录
+  执行 root 脚本，也不复制用户目录、Codex auth、Prompt、token 或 provider session。
 - baseline reconciler 固定创建 UID/GID 450 的 `_cecelia`，安装 pinned
-  Node/Codex CLI 与 OrbStack 2.2.1，导入 Git baseline/Runner；installer 增加
+  Node/Codex CLI 与 OrbStack 2.2.1，并把 app 内 `orbctl/docker` 固定暴露到
+  Cecelia toolchain PATH，再导入 Git baseline/Runner；installer 增加
   owner-home `search` 与 exact
   `docker.sock` `read,write`；root-only WatchPaths helper 在 socket 重建后恢复
   exact ACL，不触碰 sibling sockets。本次安装新增 ACL 在失败时逆序撤销。
@@ -243,7 +245,8 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - production capacity 必须使用 `task_bundle.role`，先取 canonical capacity 与
   实时 effective/physical slots 的较小值，再按角色权重折算；缺失/未知角色关闭节点。
 - Phase 4A 的成功结果也固定为 `dispatch_ready=false`。WorkspaceSpec/Attempt API、
-  CredentialEnvelope、执行等价与恢复，以及 Phase 5 真实业务任务验收不属于本阶段。
+  CredentialEnvelope、执行等价与恢复，以及 Phase 5 真实业务任务验收不属于本阶段；
+  production probes 必须在 `dispatch_ready=true` 前阻断 Attempt 创建与 launcher。
 - 发布顺序固定为 Worker-first，待三台节点真实健康证据通过复审后再发布 Brain。
   当前 `xian-mac-m1` 的 Docker 不可用，必须保持 drained，不能降低阈值。
 - 节点紧急回退先在该节点执行

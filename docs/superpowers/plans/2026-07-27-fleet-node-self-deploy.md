@@ -397,14 +397,9 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes
 The remote shell creates a bounded `mktemp -d`, extracts the received tar, and
 executes:
 
-```bash
-sudo -n env \
-  FLEET_BASELINE_REPOSITORY_BUNDLE="$remote_root/repository.bundle" \
-  FLEET_BASELINE_RUNNER_ARCHIVE="$remote_root/runner.tar" \
-  CECELIA_MACHINE_ID="$machine_id" \
-  "$remote_root/source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh" \
-  bootstrap "$machine_id" --apply
-```
+Stream the payload through `sudo -n` into a fresh root-owned directory under
+`/var/tmp`, then execute the staged controller as root. Never execute a Fleet
+script from the SSH user's writable `/tmp`.
 
 Do not use Cecelia Bridge as a privileged transport.
 
@@ -419,9 +414,10 @@ undrain --apply
 admit
 ```
 
-If bootstrap, undrain, or admit fails, invoke `drain --apply` best-effort and
-return non-zero. Stop `all` at the first failed machine. Do not report final
-dispatch readiness; Phase 4A admission must still emit `dispatch_ready=false`.
+If bootstrap, undrain, or admit fails, or HUP/INT/TERM arrives after undrain,
+invoke `drain --apply` best-effort and return non-zero. Stop `all` at the first
+failed machine. Do not report final dispatch readiness; Phase 4A admission must
+still emit `dispatch_ready=false`, and production probes must block it.
 
 - [ ] **Step 6: Run Green**
 
@@ -558,8 +554,8 @@ Expected: PASS after registration.
 - [ ] **Step 3: Advance Brain patch metadata**
 
 Advance the Brain patch version in the package and definition metadata. The
-published Phase 4A branch uses `1.267.93` because `origin/main` advanced through
-`1.267.92` during CI reconciliation.
+published Phase 4A review-fix branch uses `1.267.94`; `1.267.93` was the initial
+Phase 4A patch and the review closure adds another production behavior change.
 Update lockfiles with:
 
 ```bash
