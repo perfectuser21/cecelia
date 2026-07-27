@@ -46,7 +46,8 @@ machine-health 的 mandatory fail-closed 接线与 US M4 自部署闭环。
   staging cleanup 失败均恢复 drain。
   cleanup/signaling 的最终 fail-closed 使用固定 system drain marker/launchd label，
   不依赖可能已被部分删除的 staging；internal apply 仅接受 EUID 0、再次校验
-  root staging，且不执行 nested sudo 或 production nodectl override。
+  root staging，且不执行 nested sudo 或 production nodectl override。marker
+  创建失败仍独立尝试 launchd bootout，并输出 `emergency_drain_failed`。
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh && bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh'
 
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
