@@ -386,6 +386,16 @@ describe('Kernel v1 GAN 轮次卡死检测（harness_attempts）', () => {
     expect(r.stuck).toBe(0);
   });
 
+  it('最新 hop 无时间戳（预留行）→ 不算卡住', async () => {
+    routeKernel({
+      run: kernelRun(),
+      attempt: { hop: 19, role: 'reviewer', status: 'queued', created_at: null, started_at: null },
+    });
+    const r = await runHarnessInitiativePatrol();
+    expect(r.stuck).toBe(0);
+    expect(r.intervened).toBe(0);
+  });
+
   it('harness_attempts 查询异常 → 吞掉不冒泡（失败非致命不变量）', async () => {
     routeKernel({ run: kernelRun(), attemptsError: 'relation "harness_attempts" does not exist' });
     const r = await runHarnessInitiativePatrol();
