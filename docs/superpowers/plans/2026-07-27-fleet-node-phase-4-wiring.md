@@ -76,6 +76,9 @@ Create:
 - `packages/brain/scripts/fleet-worker/fleet-worker.cjs`
 - `packages/brain/scripts/fleet-worker/fleet-worker.test.js`
 - `packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker.plist.template`
+- `packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker-docker-access.plist.template`
+- `packages/brain/scripts/fleet-worker/refresh-fleet-worker-docker-access.sh`
+- `packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh`
 - `packages/brain/scripts/fleet-worker/install-fleet-worker.sh`
 - `packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh`
 - `packages/brain/scripts/fleet-worker/fleet-nodectl.sh`
@@ -507,6 +510,9 @@ git commit -m "feat(fleet): serve bounded node evidence (Green)"
 **Files:**
 
 - Create: `packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker.plist.template`
+- Create: `packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker-docker-access.plist.template`
+- Create: `packages/brain/scripts/fleet-worker/refresh-fleet-worker-docker-access.sh`
+- Create: `packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh`
 - Create: `packages/brain/scripts/fleet-worker/install-fleet-worker.sh`
 - Create: `packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh`
 - Create: `packages/brain/scripts/fleet-worker/fleet-nodectl.sh`
@@ -523,11 +529,15 @@ The test must prove:
 - launch domain is `system`;
 - the template includes `RunAtLoad`, `KeepAlive`, explicit `UserName`, bounded log paths,
   `CECELIA_MACHINE_ID`, pinned `CECELIA_RUNNER_DIGEST`, the profile-owned Worker bind
-  host, and `DOCKER_HOST=unix:///var/run/docker.sock`;
+  host, profile-owned `CECELIA_CALLBACK_URL`, and
+  `DOCKER_HOST=unix:///var/run/docker.sock`;
 - US binds loopback while Xian M4/M1 bind only their exact Tailscale IPs;
+- US callback health is local while both Xian callbacks use the canonical US
+  Tailscale Brain address;
 - `--apply` requires the pre-existing `_cecelia` user and grants only owner-home
-  `search` ACL for the strictly bounded OrbStack socket target; a newly granted ACL is
-  idempotent and rolls back with failed preflight/install;
+  `search` plus exact `docker.sock` `read,write`; it never grants the OrbStack run
+  directory or sibling sockets. A root-only WatchPaths helper restores the exact-socket
+  ACL after recreation; newly granted ACLs roll back with failed preflight/install;
 - no account directory, auth material, token, Prompt, or `CODEX_ACCOUNT_ALLOWLIST` appears;
 - `drain` creates the local drain marker before booting out the service;
 - `admit` exits non-zero unless the pure contract returns `base_admitted=true`.
@@ -536,6 +546,7 @@ The test must prove:
 
 ```bash
 bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
+bash packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh
 bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh
 ```
 
@@ -546,10 +557,10 @@ Expected: FAIL because the template and admin tool do not exist.
 Expose:
 
 ```text
-fleet-nodectl.sh bootstrap --machine-id us-mac-m4 [--apply]
-fleet-nodectl.sh admit --machine-id us-mac-m4
-fleet-nodectl.sh drain --machine-id us-mac-m4 [--apply]
-fleet-nodectl.sh undrain --machine-id us-mac-m4 [--apply]
+fleet-nodectl.sh bootstrap us-mac-m4 [--apply]
+fleet-nodectl.sh admit us-mac-m4
+fleet-nodectl.sh drain us-mac-m4 [--apply]
+fleet-nodectl.sh undrain us-mac-m4 [--apply]
 ```
 
 `bootstrap` renders but does not silently install OrbStack or credentials. `--apply`
@@ -561,8 +572,11 @@ reversible. No command contacts Xian or changes remote nodes implicitly.
 
 ```bash
 bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
+bash packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh
 bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh
 git add packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker.plist.template \
+  packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker-docker-access.plist.template \
+  packages/brain/scripts/fleet-worker/refresh-fleet-worker-docker-access.sh \
   packages/brain/scripts/fleet-worker/install-fleet-worker.sh \
   packages/brain/scripts/fleet-worker/fleet-nodectl.sh
 git commit -m "feat(fleet): add node bootstrap admission and drain tools (Green)"

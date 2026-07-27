@@ -322,6 +322,8 @@ features:
         - packages/brain/scripts/fleet-worker/node-probe.cjs
         - packages/brain/scripts/fleet-worker/fleet-worker.cjs
         - packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker.plist.template
+        - packages/brain/scripts/fleet-worker/com.cecelia.fleet-worker-docker-access.plist.template
+        - packages/brain/scripts/fleet-worker/refresh-fleet-worker-docker-access.sh
         - packages/brain/scripts/fleet-worker/install-fleet-worker.sh
         - packages/brain/scripts/fleet-worker/fleet-nodectl.sh
         - docker-compose.yml
@@ -368,6 +370,7 @@ features:
       integration:
         - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
         - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
+        - packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh
         - packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh
       e2e:
         - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh

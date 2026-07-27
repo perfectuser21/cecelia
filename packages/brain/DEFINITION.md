@@ -14,10 +14,12 @@
 
 - `fleet-node-profiles.json` 是三台 canonical 节点的 immutable policy；Brain 从
   Worker 的有界、新鲜、同身份健康报告本地计算 `base_admitted`。
-- NodeProfile 同时固定 Worker listener：US 仅回环，Xian M4/M1 仅绑定各自
-  Tailscale IP；system LaunchDaemon 固定 `DOCKER_HOST=unix:///var/run/docker.sock`。
-  installer 只为预先存在的 `_cecelia` 向 OrbStack owner home 授予最小 `search`
-  ACL，本次新增 ACL 在 preflight/install 失败时事务回退。
+- NodeProfile 同时固定 Worker listener 与 Brain callback：US 使用回环，Xian
+  M4/M1 listener 绑定各自 Tailscale IP，callback 指向 US Brain Tailscale health。
+  system LaunchDaemon 固定 `DOCKER_HOST=unix:///var/run/docker.sock`。
+- installer 只为预先存在的 `_cecelia` 向 OrbStack owner home 授予 `search`，
+  并向 exact `docker.sock` 授予 `read,write`；root-only WatchPaths helper 负责
+  socket 重建后的恢复，不授权 sibling sockets。本次新增 ACL 在失败时逆序回退。
 - 所有 production machine health 都必须经过该 gate。缺失、重定向、超时、
   malformed/stale evidence、显式 drain 或 policy/resource/digest 不匹配均
   fail-closed；不存在 `online`/`effective_slots` 回退。

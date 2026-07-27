@@ -224,9 +224,12 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - Brain 只接受 `us-mac-m4`、`xian-mac-m4`、`xian-mac-m1` 三个不可变
   `NodeProfile`，并从 system LaunchDaemon Worker 的有界 `/health` 报告重新计算
   `base_admitted`；Worker 自报的准入结论不可信。
-- NodeProfile 固定 US loopback 与 Xian 两台各自的 Tailscale listener；
-  LaunchDaemon 固定通过 `/var/run/docker.sock` 访问 OrbStack。installer 只为
-  预先存在的 `_cecelia` 增加 owner home 的最小 `search` ACL，并在本次安装失败时撤销。
+- NodeProfile 固定 US loopback、Xian 两台各自的 Tailscale listener，以及
+  Xian 指向 US Brain Tailscale health 的 callback。LaunchDaemon 固定通过
+  `/var/run/docker.sock` 访问 OrbStack。
+- installer 只为预先存在的 `_cecelia` 增加 owner-home `search` 与 exact
+  `docker.sock` `read,write`；root-only WatchPaths helper 在 socket 重建后恢复
+  exact ACL，不触碰 sibling sockets。本次安装新增 ACL 在失败时逆序撤销。
 - 准入是强制、fail-closed 的派发前置条件。Worker URL 缺失、重定向、超时、
   非 2xx、超限/畸形响应、identity/版本/Runner digest/资源/新鲜度不匹配、显式
   drain，均关闭节点；不得回退为仅凭 `online` 或 `effective_slots` 放行。

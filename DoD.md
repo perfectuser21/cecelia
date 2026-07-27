@@ -19,7 +19,8 @@ machine-health 的 mandatory fail-closed 接线。
 - [x] [ARTIFACT] NodeProfile、纯基础准入 evaluator 与有界 Worker evidence client
   已落到 `packages/brain/src/orchestrator/fleet-node/`，canonical policy 固定三台
   machine、Runner digest、Worker listener、Worker/OS/OrbStack/Git/Node/Codex
-  版本和资源阈值；US listener 为 loopback，Xian listener 为各自 Tailscale IP。
+  版本和资源阈值；US listener/callback 为 loopback，Xian listener 为各自
+  Tailscale IP，callback 固定指向 US Brain Tailscale health URL。
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/fleet-node/node-profile.test.js src/orchestrator/fleet-node/node-admission.test.js src/orchestrator/fleet-node/node-admission-client.test.js'
 
 - [x] [ARTIFACT] `fleet-worker.cjs` 与 `node-probe.cjs` 提供 system LaunchDaemon
@@ -29,8 +30,10 @@ machine-health 的 mandatory fail-closed 接线。
 
 - [x] [ARTIFACT] Worker plist、transactional installer 与 `fleet-nodectl.sh`
   bootstrap/status/admit/drain/undrain 命令已冻结；plist 固定 `/var/run/docker.sock`，
-  installer 为 `_cecelia` 管理最小 owner-home search ACL，远程 mutation 不在命令能力内。
-  Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'
+  installer 为 `_cecelia` 管理 owner-home search 与 exact docker socket read/write ACL；
+  root-only WatchPaths helper 在 socket 重建后恢复 exact ACL，不授权 OrbStack run
+  目录或 sibling sockets。远程 mutation 不在命令能力内。
+  Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh && bash packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'
 
 - [x] [ARTIFACT] P0 `must_never_break` 回归、feature registry、smoke allowlist 与
   Brain `1.267.90` canonical version sources 已同步。
@@ -68,10 +71,12 @@ machine-health 的 mandatory fail-closed 接线。
   有显式 root gate，nodectl mutation 只接受与本机 identity 相同的 canonical
   machine，并使用 system-owned target/launchctl（测试仅通过注入 seam 隔离）。
   `_cecelia` 不存在、socket target 越界或 ACL grant 失败均在 mutation 前关闭；
-  本次新增 ACL 在 preflight/install 失败时撤销，撤销失败输出稳定安全告警。
-  动作: 对 bootstrap/launchctl 各失败阶段与 stopped/running 原状态运行行为测试。
-  预期观察: mutation 顺序确定、失败后状态恢复、跨机或非 root apply 拒绝。
-  Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'
+  本次新增的 home/socket ACL 在 preflight/install 失败时逆序撤销，撤销失败输出
+  稳定安全告警；root watcher 日志拒绝 symlink/non-file。
+  动作: 对 placement、bootstrap/kickstart 各失败阶段、stopped/running 原状态与
+  socket recreation 运行行为测试。
+  预期观察: 文件/服务/ACL 恢复，helper 幂等且只触碰 docker.sock，跨机或非 root apply 拒绝。
+  Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh && bash packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh && bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh'
   期望: exit 0
 
 ## 明确非声明与待复审项
