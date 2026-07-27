@@ -34,7 +34,14 @@ function request(overrides = {}) {
       command: 'codex',
       args: ['exec', '--json'],
       stdin: 'perform the bounded task',
-      output: 'jsonl',
+      output: { format: 'jsonl' },
+    },
+    target: {
+      machine: WORKER_ID,
+      provider: 'codex',
+      account: 'team1',
+      model: 'gpt-5',
+      role: 'generator',
     },
     callback_url: 'http://brain.internal:5221/api/brain/harness/callback',
     callback_token: 'callback-secret',
@@ -158,6 +165,8 @@ describe('Fleet Worker Attempt runner', () => {
         'cecelia.fleet.run_id': RUN_ID,
         'cecelia.fleet.worker_id': WORKER_ID,
       },
+      role: 'generator',
+      model: 'gpt-5',
     }));
   });
 
@@ -331,6 +340,8 @@ describe('Fleet Worker durable runtime adapters', () => {
         '--label', `cecelia.fleet.attempt_id=${ATTEMPT_ID}`,
         '--label', `cecelia.fleet.run_id=${RUN_ID}`,
         '--label', `cecelia.fleet.worker_id=${WORKER_ID}`,
+        '--env', 'HARNESS_NODE=generator',
+        '--env', 'HARNESS_MODEL=gpt-5',
       ]));
       expect(runCommand.mock.calls[1]).toEqual([
         'docker',

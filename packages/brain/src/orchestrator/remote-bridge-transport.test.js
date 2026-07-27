@@ -30,6 +30,7 @@ function launchInput(overrides = {}) {
   };
   const bundle = {
     opaque: 'must-not-be-sent',
+    role: 'generator',
     inputs: {
       execution_surface: 'fleet-worker',
       workspace_spec: {
@@ -175,6 +176,7 @@ describe('remote Bridge launch', () => {
         provider: 'codex',
         account: 'team3',
         machine: MACHINE,
+        role: 'generator',
       },
       workspace_spec: {
         repo: 'perfectuser21/cecelia',
