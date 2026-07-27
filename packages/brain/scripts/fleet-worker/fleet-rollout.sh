@@ -174,7 +174,8 @@ run_root_staged_payload() {
 
     trap - HUP INT TERM
     if [[ -n "$controller_pid" ]]; then
-      kill -s "$signal_name" "$controller_pid" >/dev/null 2>&1 || true
+      "$SUDO" -n /bin/kill -s "$signal_name" \
+        "$controller_pid" >/dev/null 2>&1 || true
       wait "$controller_pid" >/dev/null 2>&1 || true
       controller_pid=''
     fi
@@ -347,7 +348,8 @@ interrupt_remote() {
   signal_status="$2"
   trap - HUP INT TERM
   if [[ -n "$controller_pid" ]]; then
-    kill -s "$signal_name" "$controller_pid" >/dev/null 2>&1 || true
+    "$sudo_command" -n /bin/kill -s "$signal_name" \
+      "$controller_pid" >/dev/null 2>&1 || true
     wait "$controller_pid" >/dev/null 2>&1 || true
   fi
   "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1 || true

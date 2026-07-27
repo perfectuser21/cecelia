@@ -136,7 +136,7 @@ write_executable "$fake_bin/sudo" \
   'fi' \
   'if [[ "${FLEET_TEST_SUDO_NOEXEC:-0}" == 1 ]]; then' \
   '  case "${1:-}" in' \
-  '    /usr/bin/mktemp|/usr/bin/tar|/bin/mkdir|/bin/chmod|/bin/rm|/bin/test|/bin/realpath) exec "$@" ;;' \
+  '    /usr/bin/mktemp|/usr/bin/tar|/bin/mkdir|/bin/chmod|/bin/rm|/bin/kill|/bin/test|/bin/realpath) exec "$@" ;;' \
   '    */fleet-rollout.sh) exec "$@" ;;' \
   '    env) [[ "${FLEET_TEST_SUDO_EXEC_NODE:-0}" == 1 ]] && exec "$@"; exit 0 ;;' \
   '    *) exit 0 ;;' \
