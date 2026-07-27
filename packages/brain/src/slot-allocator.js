@@ -25,6 +25,7 @@ import { getMachineVitals } from './machine-vitals.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { getAvailableAccountCount } from './account-usage.js';
 import { RESOURCE_TIERS } from './spawn/middleware/resource-tier.js';
+import { KERNEL_HEARTBEAT_STALE_MS } from './lib/kernel-liveness.js';
 
 // ============================================================
 // Constants
@@ -592,13 +593,19 @@ async function getSlotStatus() {
 
 /**
  * harness 派发 admission 判定——唯一入口（beeba317 收权自 dispatcher 任务数 cap）。
- * 拟占用 = 活 relay 容器数 + 宽限期内已派发但尚无容器的 harness 数（防超发窗口）。
+ * 拟占用 = 活 relay 容器数 + 宽限期内已派发但尚无容器的 harness 数（防超发窗口）
+ *          + 在跑的 Kernel v1 run 数。
  * 动态 cap = min(mem_cap, acct_cap, hard_cap)，任一维度保守失败即拒。
+ *
+ * Kernel v1（2026-07-27 补）：执行体是 Brain 容器内的裸 Node 进程，没有
+ * cecelia-relay-* 容器 → v.relay_count 恒 0；inflight 那段只覆盖 INFLIGHT_GRACE_MS
+ * (5min) 宽限期，于是 kernel run 起来 5 分钟后从产能账本上彻底消失，闸门以为槽是空的
+ * 会继续放新 harness 进来超发。改用 initiative_runs 直接数，不再依赖 docker。
  * @param {{candidate?: {priority?: string}, _memHealthOverride?: object}} opts
  */
 async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
   const v = getMachineVitals();
-  const base = { containers: v.relay_count, inflight: null, cap: null, stale: v.stale };
+  const base = { containers: v.relay_count, inflight: null, kernel_active: null, cap: null, stale: v.stale };
 
   // 1. vitals 可用性（保守：看不见机器就不派）
   if (v.error) return { ...base, allow: false, reason: v.error === 'never_sampled' ? 'vitals_stale' : 'vitals_error' };
@@ -638,12 +645,14 @@ async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
   if (mem_cap <= 0 && v.relay_count >= 1) return { ...base, cap, allow: false, reason: 'no_memory_headroom' };
 
   // inflight：宽限期内已 in_progress 但 docker ps 还看不到容器的 harness（防派发→容器出现间隙超发）
+  // kernel-v1 排除在外——它永远没有容器，条件恒真，改由下面 kernel_active 精确计数，防数两遍。
   let inflight;
   try {
     const r = await pool.query(
       `SELECT count(*)::int AS n FROM tasks
          WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
            AND status = 'in_progress'
+           AND COALESCE(payload->>'harness_runtime', '') <> 'kernel-v1'
            AND started_at > NOW() - make_interval(secs => $1)
            AND NOT EXISTS (
              SELECT 1 FROM unnest($2::text[]) AS c(name)
@@ -656,11 +665,33 @@ async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
     return { ...base, cap, allow: false, reason: 'inflight_query_error' };
   }
 
-  const occupied = v.relay_count + inflight;
-  if (occupied >= cap.effective) {
-    return { containers: v.relay_count, inflight, cap, stale: false, allow: false, reason: 'cap_reached' };
+  // kernel_active：在跑的 Kernel v1 run。判据 = v2 非终态 run + 对应 task 是 kernel-v1
+  // 且（心跳新鲜 或 刚落行还没来得及打第一跳）。全程不查 docker。
+  let kernelActive;
+  try {
+    const r = await pool.query(
+      `SELECT count(*)::int AS n
+         FROM initiative_runs r
+         JOIN tasks t ON t.id = r.current_task_id
+        WHERE r.orchestrator_version = 'v2'
+          AND r.phase NOT IN ('done','failed')
+          AND t.status = 'in_progress'
+          AND t.payload->>'harness_runtime' = 'kernel-v1'
+          AND (r.orchestrator_heartbeat_at > NOW() - make_interval(secs => $1)
+               OR (r.orchestrator_heartbeat_at IS NULL
+                   AND r.started_at > NOW() - make_interval(secs => $2)))`,
+      [KERNEL_HEARTBEAT_STALE_MS / 1000, INFLIGHT_GRACE_MS / 1000]
+    );
+    kernelActive = r.rows[0]?.n ?? 0;
+  } catch {
+    return { ...base, inflight, cap, allow: false, reason: 'kernel_active_query_error' };
   }
-  return { containers: v.relay_count, inflight, cap, stale: false, allow: true, reason: 'ok' };
+
+  const occupied = v.relay_count + inflight + kernelActive;
+  if (occupied >= cap.effective) {
+    return { containers: v.relay_count, inflight, kernel_active: kernelActive, cap, stale: false, allow: false, reason: 'cap_reached' };
+  }
+  return { containers: v.relay_count, inflight, kernel_active: kernelActive, cap, stale: false, allow: true, reason: 'ok' };
 }
 
 // ============================================================

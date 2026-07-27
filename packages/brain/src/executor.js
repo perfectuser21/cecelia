@@ -36,7 +36,7 @@ import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBra
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
-import { EXECUTOR_KIND_FOR } from './executor-contracts.js';
+import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
   _resetCpuSampler as platformResetCpuSampler,
@@ -3265,8 +3265,8 @@ async function triggerCeceliaRun(task) {
   // 实现下沉到 runHarnessInitiativeRouter，便于测试 + 复用。
   if (task.task_type === 'harness_initiative' || task.task_type === 'golden_path_proposal') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
-    // 打标：harness_initiative / golden_path_proposal 走 skill-relay docker session → relay-container
-    await setExecutorKind(task.id, EXECUTOR_KIND_FOR[task.task_type]);
+    // 打标：relay-container；harness_runtime='kernel-v1' → kernel-process（事故 51836fb2）
+    await setExecutorKind(task.id, resolveExecutorKind(task));
 
     // OAuth token 自动刷新，无需 session ≥ 4h 的 pre-check
 
