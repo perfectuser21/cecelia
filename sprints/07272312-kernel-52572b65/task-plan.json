@@ -1,0 +1,36 @@
+{
+  "initiative_id": "91459cb7-8f80-45e8-9e31-0c14c4dc66ee",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 Brain Harness 后端真实 launcher、callback、PostgreSQL、ground truth 与 merge gate",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "恢复 Kernel result channel、review lineage 与 final SHA merge gate",
+      "scope": "在 current-main 的真实 local-docker/fleet-worker、callback、ground-truth、dispatcher 与 merge gate 上实现合同恰好五个行为，不创建新 HarnessResult 版本或 ledger",
+      "dod": [
+        "[BEHAVIOR] 五个具名真实链测试在显式隔离 TEST_DATABASE_URL 上通过",
+        "[ARTIFACT] 唯一业务测试 packages/brain/src/__tests__/harness-kernel-feedback-lineage.real.test.js",
+        "[ARTIFACT] packages/brain/DEFINITION.md 版本同步"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/orchestrator/remote-bridge-transport.js",
+        "packages/brain/src/orchestrator/machine-attestation.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/gates.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/src/__tests__/harness-kernel-feedback-lineage.real.test.js",
+        "packages/brain/DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
