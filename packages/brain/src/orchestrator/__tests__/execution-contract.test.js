@@ -9,6 +9,20 @@ import {
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
+const BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
+
+function validWorkspaceSpec(overrides = {}) {
+  return {
+    repo: 'perfectuser21/cecelia',
+    base_sha: BASE_SHA,
+    branch: 'cp-07272050-fleet-worker-workspace-4b',
+    expected_head_sha: null,
+    mode: 'read-write',
+    run_id: RUN_ID,
+    attempt_id: ATTEMPT_ID,
+    ...overrides,
+  };
+}
 
 function validBundle(overrides = {}) {
   return {
@@ -90,6 +104,29 @@ describe('TaskBundle contract', () => {
       skill: { ...validBundle().skill, content: 'Legacy text may mention Skill(foo).' },
     });
     expect(parseTaskBundle(bundle).skill.content).toContain('Skill(foo)');
+  });
+
+  it('accepts a path-free bundle carrying a canonical WorkspaceSpec', () => {
+    const bundle = validBundle();
+    delete bundle.inputs.worktree_path;
+    bundle.inputs.workspace_spec = validWorkspaceSpec();
+
+    expect(parseTaskBundle(bundle).inputs.workspace_spec).toEqual(validWorkspaceSpec());
+  });
+
+  it('rejects a Fleet bundle that only carries a caller-owned absolute worktree path', () => {
+    expect(() => parseTaskBundle(validBundle())).toThrow(/workspace_spec/);
+  });
+
+  it('rejects a WorkspaceSpec whose mode disagrees with the read-only constraint', () => {
+    const bundle = validBundle({
+      inputs: {
+        ...validBundle().inputs,
+        workspace_spec: validWorkspaceSpec({ mode: 'read-only' }),
+      },
+    });
+
+    expect(() => parseTaskBundle(bundle)).toThrow(/workspace_mode_mismatch/);
   });
 });
 
