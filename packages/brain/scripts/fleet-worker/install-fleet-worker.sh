@@ -14,6 +14,7 @@ ID_COMMAND="${FLEET_WORKER_ID:-/usr/bin/id}"
 READLINK="${FLEET_WORKER_READLINK:-/usr/bin/readlink}"
 ACL_LIST="${FLEET_WORKER_ACL_LIST:-/bin/ls}"
 CHMOD="${FLEET_WORKER_CHMOD:-/bin/chmod}"
+CHOWN="${FLEET_WORKER_CHOWN:-/usr/sbin/chown}"
 STAT="${FLEET_WORKER_STAT:-/usr/bin/stat}"
 MOVE="${FLEET_WORKER_MV:-/bin/mv}"
 SLEEP="${FLEET_WORKER_SLEEP:-/bin/sleep}"
@@ -532,6 +533,22 @@ validate_worker_token_file() {
     || die "worker_token_file_invalid"
 }
 
+prepare_worker_data_root() {
+  local data_parent
+  case "$FLEET_DATA_ROOT" in
+    /*) ;;
+    *) die "worker_data_root_invalid" ;;
+  esac
+  data_parent="$(dirname "$FLEET_DATA_ROOT")"
+  [[ ! -L "$data_parent" && ! -L "$FLEET_DATA_ROOT" ]] \
+    || die "worker_data_root_invalid"
+  mkdir -p "$data_parent" "$FLEET_DATA_ROOT"
+  [[ -d "$FLEET_DATA_ROOT" ]] || die "worker_data_root_invalid"
+  "$CHMOD" 0700 "$FLEET_DATA_ROOT"
+  "$CHOWN" _cecelia:_cecelia "$FLEET_DATA_ROOT"
+  "$CHOWN" _cecelia:_cecelia "$WORKER_TOKEN_FILE"
+}
+
 snapshot_file() {
   local source="$1"
   local backup="$2"
@@ -591,8 +608,8 @@ prepare_logs() {
     "$access_stdout_log" \
     "$access_stderr_log"
   if [[ "$(/usr/bin/id -u)" == '0' ]]; then
-    /usr/sbin/chown _cecelia "$stdout_log" "$stderr_log"
-    /usr/sbin/chown root:wheel "$access_stdout_log" "$access_stderr_log"
+    "$CHOWN" _cecelia "$stdout_log" "$stderr_log"
+    "$CHOWN" root:wheel "$access_stdout_log" "$access_stderr_log"
   fi
 }
 
@@ -645,6 +662,9 @@ if [[ "$mode" == 'apply' ]]; then
 fi
 run_preflight
 validate_worker_token_file
+if [[ "$mode" == 'apply' ]]; then
+  prepare_worker_data_root
+fi
 
 if [[ "$mode" == 'render' ]]; then
   render_plist "$render_target"
