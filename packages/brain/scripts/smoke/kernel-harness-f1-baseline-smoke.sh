@@ -58,12 +58,11 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 SQL
 
-# 主迁移器以数字 version 记账；当前 main 已有另一份 365，因此本基线 SQL
-# 作为可幂等投影显式重放两轮，避免同号迁移被 schema_version 误跳过。
+# 作为可幂等投影显式重放两轮，验证不重置状态时不会生成重复记录。
 psql -X -v ON_ERROR_STOP=1 "$HARNESS_TEST_DATABASE_URL" \
-  -f packages/brain/migrations/365_kernel_harness_f1_baseline.sql >/dev/null
+  -f packages/brain/migrations/366_kernel_harness_f1_baseline.sql >/dev/null
 psql -X -v ON_ERROR_STOP=1 "$HARNESS_TEST_DATABASE_URL" \
-  -f packages/brain/migrations/365_kernel_harness_f1_baseline.sql >/dev/null
+  -f packages/brain/migrations/366_kernel_harness_f1_baseline.sql >/dev/null
 
 HARNESS_TEST_DATABASE_URL="$HARNESS_TEST_DATABASE_URL" \
   npx vitest run \

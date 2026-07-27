@@ -13,8 +13,8 @@ target_environment: local_api
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 幂等 migration 365 存在，且只扩展既有 Journey/Step/Cell 模型
-  Test: node -e "const fs=require('fs');const p='packages/brain/migrations/365_kernel_harness_f1_baseline.sql';const s=fs.readFileSync(p,'utf8');for(const x of ['bb8cc561-b3ee-4fec-b74d-2255694bd963','lifecycle_stage','is_backbone','mapping_status','mapping_reason','mapping_evidence','journey_step_links','Invariant','输入对抗面','reason_code','source_refs','missing_evidence',\"'na'\"])if(!s.includes(x))process.exit(1);for(const x of ['CREATE TABLE kernel_steps','CREATE TABLE behavior_ledger','Kernel Harness Delivery'])if(s.includes(x))process.exit(1)"
+- [x] [ARTIFACT] 幂等 migration 366 存在，且只扩展既有 Journey/Step/Cell 模型
+  Test: node -e "const fs=require('fs');const p='packages/brain/migrations/366_kernel_harness_f1_baseline.sql';const s=fs.readFileSync(p,'utf8');for(const x of ['bb8cc561-b3ee-4fec-b74d-2255694bd963','lifecycle_stage','is_backbone','mapping_status','mapping_reason','mapping_evidence','journey_step_links','Invariant','输入对抗面','reason_code','source_refs','missing_evidence',\"'na'\"])if(!s.includes(x))process.exit(1);for(const x of ['CREATE TABLE kernel_steps','CREATE TABLE behavior_ledger','Kernel Harness Delivery'])if(s.includes(x))process.exit(1)"
 
 - [x] [ARTIFACT] 真 PostgreSQL integration 与 smoke 均已入册
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/integration/migration-365-kernel-harness-f1-baseline.integration.test.js','packages/brain/scripts/smoke/kernel-harness-f1-baseline-smoke.sh']){const s=fs.readFileSync(p,'utf8');if(!/HARNESS_TEST_DATABASE_URL|DATABASE_URL/.test(s))process.exit(1)}"

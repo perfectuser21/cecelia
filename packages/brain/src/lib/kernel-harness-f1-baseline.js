@@ -17,7 +17,7 @@ export const ELEMENT_KEYS = Object.freeze([
   'FR', 'NFR', 'Invariant', '判定点', '保质期', '死亡告警',
   '失败语义', '效果确认', '输入对抗面', '账本保鲜', '两轴衔接',
 ]);
-const MIGRATION_PATH = 'packages/brain/migrations/365_kernel_harness_f1_baseline.sql';
+const MIGRATION_PATH = 'packages/brain/migrations/366_kernel_harness_f1_baseline.sql';
 const ROOT_CONTRACT_PATH = 'regression-contract.yaml';
 const ENGINE_CONTRACT_PATH = 'packages/engine/regression-contract.yaml';
 const CONTRACT_SOURCE = 'sprints/07271239-kernel-harness-11-elements-baseline/contract-draft.md';
