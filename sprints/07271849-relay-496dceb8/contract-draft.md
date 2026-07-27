@@ -73,6 +73,27 @@
 
 ---
 
+## E2E 验收
+
+**环境**: mac_web（localhost:5174，Playwright）
+
+场景 A（主流程强制通过）：
+```bash
+pnpm --filter @cecelia/dashboard exec playwright test sprints/07271849-relay-496dceb8/tests/e2e/conversation-flow.spec.ts --grep "场景A"
+```
+
+场景 B（GP 页对话框）：
+```bash
+pnpm --filter @cecelia/dashboard exec playwright test sprints/07271849-relay-496dceb8/tests/e2e/conversation-flow.spec.ts --grep "场景B"
+```
+
+场景 C（历史议题回访）：
+```bash
+pnpm --filter @cecelia/dashboard exec playwright test sprints/07271849-relay-496dceb8/tests/e2e/conversation-flow.spec.ts --grep "场景C"
+```
+
+---
+
 ## 边界约束
 
 - 不含：PR4（Stop Hook + cron 归档）、用户鉴权、SSE 升级、decision 前端落库逻辑
