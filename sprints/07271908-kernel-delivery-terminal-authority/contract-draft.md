@@ -1,4 +1,11 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+## Round 2 修订摘要
+
+- 补强真实 Postgres/真实相邻模块边界：红测改为 integration 形态，禁止用纯对象替代 delivery -> DB -> parent completion 接缝。
+- 补齐 `initiative_runs.phase` CHECK 约束变更要求，否则 `delivery/staging_pending` 无法真实落库。
+- 修正 replay 幂等 oracle：用子查询计数重复 idempotency_key，避免 `GROUP BY HAVING` 无行时假失败。
+- 补齐 Promote API 认证后的 DB 未突变断言与 status endpoint schema/error path 断言。
 
 ## Response Schema（推导来源: PRD字面 + api_registry推导）
 
@@ -7,16 +14,33 @@
 ```json
 {
   "delivery_id": "uuid",
-  "status": "staging_pending|staging_failed|promote_pending|rollback_required|external_ack_pending|promoted|report_pending|completed|failed",
+  "status": "staging_pending|staging_blocked|staging_failed|promote_pending|rollback_required|external_ack_pending|promoted|report_pending|report_failed|completed|failed",
   "run_id": "uuid",
   "task_id": "uuid",
   "pr_url": "string",
   "merged_sha": "string",
+  "head_sha": "string",
+  "contract_manifest_digest": "sha256:string",
   "tested_sha": "string|null",
+  "promote_status": "string|null",
   "target_environment": "local_api",
   "parent": {
     "run_phase": "string",
     "task_status": "string"
+  },
+  "staging_child_payload": {
+    "delivery_id": "uuid",
+    "run_id": "uuid",
+    "task_id": "uuid",
+    "pr_url": "string",
+    "merged_sha": "string",
+    "head_sha": "string",
+    "contract_manifest_digest": "sha256:string",
+    "target_environment": "local_api"
+  },
+  "external_attestation": {
+    "attestation_status": "verified|rejected|null",
+    "verified_sha": "string|null"
   },
   "report": {
     "persisted": "boolean"
@@ -29,9 +53,14 @@
 - `task_id` (string, 必填): 来源--PRD 要求 staging child 绑定 task_id。
 - `pr_url` (string, 必填): 来源--PRD 要求 staging child 绑定 PR URL。
 - `merged_sha` (string, 必填): 来源--PRD 要求 exact tested SHA 对账 merged artifact。
+- `head_sha` (string, 必填): 来源--PRD 要求 staging child 绑定 head SHA。
+- `contract_manifest_digest` (string, 必填): 来源--PRD 要求 staging child 绑定 contract manifest digest。
 - `tested_sha` (string|null, 必填): 来源--既有 staging_e2e_results.tested_sha + PRD fail-closed。
+- `promote_status` (string|null, 必填): 来源--既有 staging_e2e_results.promote_status + PRD production terminal gate。
 - `target_environment` (string, 必填): 来源--PRD target_environment=local_api。
 - `parent.run_phase` / `parent.task_status` (string, 必填): 来源--PRD parent completion gate。
+- `staging_child_payload` (object, 必填): 来源--真实调用方 `spawnStaging` payload shape。
+- `external_attestation` (object, 必填): 来源--PRD customer line signed attestation。
 - `report.persisted` (boolean, 必填): 来源--PRD final report persisted 后才 complete。
 **禁用字段名**: ["ok_only", "promoted_by_only", "executor_success", "child_completed_success"]
 
@@ -69,6 +98,8 @@
 - [回归测试] packages/brain/src/__tests__/staging-e2e-runner.test.js -> PASS 落库含 tested_sha；本 sprint 必须把 tested_sha 与 merged_sha 精确匹配改为 fail-closed。
 - [回归测试] packages/brain/src/__tests__/staging-e2e-runner-promote.test.js -> customer PASS 当前 pending_promote；本 sprint 必须把人工 confirm 降级为 external_ack_pending，直到客户 repo 签名 attestation verified。
 - [回归测试] packages/brain/src/routes/__tests__/harness-promote.test.js -> 现有 /promote/:resultId 未要求 x-approver-token；本 sprint 必须补认证并更新测试。
+- [回归测试] packages/brain/migrations/238_harness_v2_initiative_runs.sql -> initiative_runs.phase CHECK 当前只允许 A_contract/B_task_loop/C_final_e2e/done/failed；本 sprint 必须迁移允许 delivery/staging_pending 等非终态，否则 parent 无法真实进入 delivery。
+- [回归测试] packages/brain/src/staging-promote.js -> spawnHarnessReport 当前 best-effort 永不 throw；本 sprint 的 parent completion gate 必须以 report persisted 为准，不能以 dispatch 尝试成功为准。
 - [累积FR] context-manifest: unavailable (HTTP returned non-JSON 404 page for journey bb8cc561-b3ee-4fec-b74d-2255694bd963).
 
 ## 八要素需求规范
@@ -155,9 +186,21 @@ DoD 构造 staging child 时必须使用这些 payload 字段，不允许测试�
 **验证命令**:
 ```bash
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+DB_URL="${DB_URL:-postgresql://localhost/cecelia}"
 DELIVERY_ID="${DELIVERY_ID:?set DELIVERY_ID from E2E setup}"
-curl -sf "$BRAIN_URL/api/brain/harness/delivery/$DELIVERY_ID/status" \
-  | jq -e '.parent.run_phase=="delivery/staging_pending" and .parent.task_status!="completed" and (.merged_sha|test("^[0-9a-f]{40}$")) and .target_environment=="local_api"'
+STATUS_JSON="$(curl -sf "$BRAIN_URL/api/brain/harness/delivery/$DELIVERY_ID/status")"
+echo "$STATUS_JSON" | jq -e '.parent.run_phase=="delivery/staging_pending" and .parent.task_status!="completed" and (.merged_sha|test("^[0-9a-f]{40}$")) and (.head_sha|test("^[0-9a-f]{40}$")) and (.contract_manifest_digest|startswith("sha256:")) and .target_environment=="local_api"'
+CHILD_COUNT="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
+SELECT count(*) FROM tasks
+WHERE task_type = 'staging_e2e'
+  AND payload->>'delivery_id' = '$DELIVERY_ID'
+  AND payload->>'run_id' = (SELECT run_id::text FROM harness_deliveries WHERE id = '$DELIVERY_ID')
+  AND payload->>'task_id' = (SELECT task_id::text FROM harness_deliveries WHERE id = '$DELIVERY_ID')
+  AND payload->>'merged_sha' = (SELECT merged_sha FROM harness_deliveries WHERE id = '$DELIVERY_ID')
+  AND payload->>'contract_manifest_digest' = (SELECT contract_manifest_digest FROM harness_deliveries WHERE id = '$DELIVERY_ID')
+  AND payload->>'target_environment' = 'local_api'
+  AND created_at > NOW() - interval '5 minutes';" | tr -d ' ')"
+[ "$CHILD_COUNT" -eq 1 ]
 ```
 
 **硬阈值**: parent 不 completed；staging child payload 关键字段全部非空；target_environment 字面等于 `local_api`。
@@ -220,7 +263,7 @@ WHERE delivery_id = '$DELIVERY_ID'
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DELIVERY_ID="${DELIVERY_ID:?set DELIVERY_ID from E2E setup}"
 curl -sf "$BRAIN_URL/api/brain/harness/delivery/$DELIVERY_ID/status" \
-  | jq -e '.status!="promoted" or (.external_attestation.attestation_status=="verified" and .external_attestation.verified_sha==.tested_sha)'
+  | jq -e 'if (.status=="promoted" or .promote_status=="promoted") then (.external_attestation.attestation_status=="verified" and .external_attestation.verified_sha==.tested_sha) else (.status=="external_ack_pending" or .promote_status=="pending_external_attestation") end'
 ```
 
 **硬阈值**: body.promoted_by 或 confirm:true 不足以 promoted；签名/sha 任一不合法返回 409 或保持 pending。
@@ -263,12 +306,16 @@ WHERE d.id = '$DELIVERY_ID'
 DB_URL="${DB_URL:-postgresql://localhost/cecelia}"
 DELIVERY_ID="${DELIVERY_ID:?set DELIVERY_ID from E2E setup}"
 psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
-SELECT count(*) FROM harness_delivery_events
-WHERE delivery_id = '$DELIVERY_ID'
-  AND idempotency_key IN ('staging-pass', 'promote-pass', 'report-pass')
-GROUP BY idempotency_key
-HAVING count(*) > 1;" \
+SELECT count(*) FROM (
+  SELECT idempotency_key
+  FROM harness_delivery_events
+  WHERE delivery_id = '$DELIVERY_ID'
+    AND idempotency_key IN ('staging-pass', 'promote-pass', 'report-pass')
+  GROUP BY idempotency_key
+  HAVING count(*) > 1
+) dup;" \
   | tr -d ' ' | grep -qx '0'
+node --input-type=module -e "import('./packages/brain/src/delivery-terminal-authority.js').then(async m=>{for(const pr_number of [4327,4317]){const r=await m.auditLegacyCompletionFixture({pr_number,parent_task_status:'completed',run_phase:'done',staging_task_status:'queued',staging_result:null});if(r.verdict!=='FAIL'||!/parent_completed_before_staging|staging queued/i.test(r.reason||'')||r.may_rewrite_history!==false)process.exit(1)}})"
 ```
 
 **硬阈值**: 每个 idempotency_key 最多一行；legacy bad fixture audit verdict 必须 FAIL。
@@ -314,7 +361,7 @@ MERGED_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 OTHER_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 PR_URL="https://github.com/perfectuser21/cecelia/pull/4327"
 DIGEST="sha256:delivery-terminal-authority-contract"
-export RUN_ID TASK_ID PR_URL MERGED_SHA OTHER_SHA DIGEST
+export DB_URL BRAIN_URL RUN_ID TASK_ID PR_URL MERGED_SHA OTHER_SHA DIGEST
 
 curl -sf "$BRAIN_URL/api/brain/health" | jq -e '.status=="ok" or .ok==true' >/dev/null
 
@@ -330,6 +377,7 @@ SQL
 DELIVERY_ID="$(node --input-type=module <<'NODE'
 import { createDeliveryFromMerge } from './packages/brain/src/delivery-terminal-authority.js';
 const result = await createDeliveryFromMerge({
+  dbUrl: process.env.DB_URL,
   run_id: process.env.RUN_ID,
   task_id: process.env.TASK_ID,
   pr_url: process.env.PR_URL,
@@ -357,12 +405,14 @@ import {
 } from './packages/brain/src/delivery-terminal-authority.js';
 
 await applyStagingResult({
+  dbUrl: process.env.DB_URL,
   delivery_id: process.env.DELIVERY_ID,
   verdict: 'PASS',
   tested_sha: process.env.MERGED_SHA,
   idempotency_key: 'staging-pass',
 });
 await applyProductionResult({
+  dbUrl: process.env.DB_URL,
   delivery_id: process.env.DELIVERY_ID,
   line: 'internal',
   tested_sha: process.env.MERGED_SHA,
@@ -373,6 +423,7 @@ await applyProductionResult({
   idempotency_key: 'promote-pass',
 });
 await persistFinalReportAndComplete({
+  dbUrl: process.env.DB_URL,
   delivery_id: process.env.DELIVERY_ID,
   report_id: 'report-delivery-terminal-authority',
   handoff_id: 'handoff-delivery-terminal-authority',
@@ -381,6 +432,7 @@ await persistFinalReportAndComplete({
   idempotency_key: 'report-pass',
 });
 await replayDeliveryEvent({
+  dbUrl: process.env.DB_URL,
   delivery_id: process.env.DELIVERY_ID,
   event_type: 'report_persisted',
   idempotency_key: 'report-pass',
@@ -400,11 +452,14 @@ WHERE d.id = '$DELIVERY_ID'
   | tr -d ' ' | grep -qx '1'
 
 psql "$DB_URL" -v ON_ERROR_STOP=1 -t -c "
-SELECT count(*) FROM harness_delivery_events
-WHERE delivery_id = '$DELIVERY_ID'
-  AND idempotency_key = 'report-pass'
-GROUP BY idempotency_key
-HAVING count(*) > 1;" \
+SELECT count(*) FROM (
+  SELECT idempotency_key
+  FROM harness_delivery_events
+  WHERE delivery_id = '$DELIVERY_ID'
+    AND idempotency_key = 'report-pass'
+  GROUP BY idempotency_key
+  HAVING count(*) > 1
+) dup;" \
   | tr -d ' ' | grep -qx '0'
 
 echo "Golden Path local_api delivery terminal authority passed"
@@ -417,9 +472,10 @@ echo "Golden Path local_api delivery terminal authority passed"
 | delivery 状态机 | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | Merge 后 parent 进入 delivery/staging_pending 且 staging child 绑定 merge manifest | missing module/export 或 parent 仍 completed |
 | staging fail-closed | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging SKIP(no_contract) 不得 success 且 parent 保持 blocked | 当前 SKIP 可被当作非失败 |
 | SHA gate | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | tested_sha 缺失或不等于 merged_sha 必须 fail-closed | 当前缺失/漂移可能 pending/promote |
+| executor success false authority | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | staging child completed+executor success 不得替代 PASS | 当前 child completed+executor success 可被当交付成功 |
 | production rollback | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor | 当前 promote best-effort/report 仍可完成 |
 | customer attestation | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | customer confirm 无签名 attestation 不得 promoted | 当前 body promoted_by 可标 promoted |
-| report gate | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | final report persisted 前 parent 不得 completed; persisted 后 atomically complete | 当前 report 前已 completed |
+| report gate | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | report dispatch失败不得 parent complete; persisted 后 atomically complete | 当前 report dispatch best-effort 后 parent 仍可 completed |
 | replay idempotency | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | 重放同一 staging/promote/report 事件不重复 | 当前 staging/promote/report 幂等粒度不足 |
 | fixture audit | `sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts` | PR4327 PR4317 parent completed + staging queued fixture 在审计中 FAIL | 当前生产快照会被视为已完成 |
 

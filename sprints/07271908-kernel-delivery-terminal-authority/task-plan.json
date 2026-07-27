@@ -6,16 +6,18 @@
     {
       "task_id": "ws1",
       "title": "实现 Kernel Delivery Terminal Authority",
-      "scope": "把 Merge 后完成权延长为 Merge→Staging E2E→Production promote/attestation→Final Report/Learning→parent Complete 的单一可回放 delivery 状态机；SKIP/FAIL/sha mismatch/report failure 均 fail-closed；Promote API 加 approver auth；customer confirm 需签名 attestation 后才 promoted；全链 append-only/idempotent。",
+      "scope": "把 Merge 后完成权延长为 Merge→Staging E2E→Production promote/attestation→Final Report/Learning→parent Complete 的单一可回放 delivery 状态机；新增 delivery status / promote / external attestation / report gate 的真实 DB/API 权威；SKIP/FAIL/sha mismatch/child executor success/report failure 均 fail-closed；Promote API 加 approver auth；customer confirm 需签名 attestation 后才 promoted；全链 append-only/idempotent。",
       "dod": [
         "[BEHAVIOR] Merge 后 parent 进入 delivery/staging_pending 且 staging child 绑定 merge manifest",
+        "[BEHAVIOR] delivery status endpoint schema keys 完整且禁用字段不存在",
         "[BEHAVIOR] staging SKIP(no_contract) 不得 success 且 parent 保持 blocked",
         "[BEHAVIOR] tested_sha 缺失或不等于 merged_sha 必须 fail-closed",
+        "[BEHAVIOR] staging child completed+executor success 不得替代 PASS",
         "[BEHAVIOR] Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor",
         "[BEHAVIOR] customer confirm 无签名 attestation 不得 promoted",
-        "[BEHAVIOR] final report persisted 前 parent 不得 completed; persisted 后 atomically complete",
+        "[BEHAVIOR] report dispatch失败不得 parent complete; persisted 后 atomically complete",
         "[BEHAVIOR] 重放同一 staging/promote/report 事件不重复",
-        "[ARTIFACT] 新增 delivery authority 模块、migration、route wiring 与回归测试"
+        "[ARTIFACT] 新增 delivery authority 模块、phase CHECK migration、route wiring 与真实 PG 回归测试"
       ],
       "files": [
         "packages/brain/src/delivery-terminal-authority.js",

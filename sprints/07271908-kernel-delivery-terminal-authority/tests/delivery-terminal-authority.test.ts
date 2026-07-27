@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { describe, expect, it } from 'vitest';
 
-const RUN_ID = '11111111-1111-4111-8111-111111111111';
-const TASK_ID = '22222222-2222-4222-8222-222222222222';
-const DELIVERY_ID = '33333333-3333-4333-8333-333333333333';
+const DB_URL = process.env.DB_URL || process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia';
 const MERGED_SHA = 'a'.repeat(40);
 const OTHER_SHA = 'b'.repeat(40);
 const PR_URL_4327 = 'https://github.com/perfectuser21/cecelia/pull/4327';
@@ -14,236 +14,427 @@ async function loadAuthority() {
   return import(pathToFileURL(join(process.cwd(), 'packages/brain/src/delivery-terminal-authority.js')).href);
 }
 
-function mergedPrInput(overrides = {}) {
+function sql(value: unknown) {
+  return String(value).replace(/'/g, "''");
+}
+
+function psql(command: string) {
+  return execFileSync('psql', [DB_URL, '-XAt', '-v', 'ON_ERROR_STOP=1', '-c', command], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function psqlJson<T = Record<string, unknown>>(query: string): T {
+  const out = psql(`SELECT row_to_json(q)::text FROM (${query}) q`);
+  expect(out).not.toBe('');
+  return JSON.parse(out) as T;
+}
+
+function makeCtx(label: string) {
   return {
-    run_id: RUN_ID,
-    task_id: TASK_ID,
-    pr_url: PR_URL_4327,
-    pr_branch: 'cp-kernel-delivery-terminal-authority',
+    label,
+    initiativeId: randomUUID(),
+    runId: randomUUID(),
+    taskId: randomUUID(),
+    prUrl: label === 'PR4317' ? PR_URL_4317 : PR_URL_4327,
+    prBranch: `cp-delivery-authority-${label.toLowerCase()}`,
+    digest: `sha256:${label}-contract-manifest-digest`,
+  };
+}
+
+function seedParent(ctx: ReturnType<typeof makeCtx>) {
+  psql(`
+    INSERT INTO tasks (id, title, description, task_type, status, payload)
+    VALUES ('${ctx.taskId}', '${ctx.label} parent', 'delivery authority test fixture', 'harness_initiative', 'in_progress', '{}'::jsonb);
+    INSERT INTO initiative_runs (id, initiative_id, phase, current_task_id)
+    VALUES ('${ctx.runId}', '${ctx.initiativeId}', 'B_task_loop', '${ctx.taskId}');
+  `);
+}
+
+function cleanup(ctxs: Array<ReturnType<typeof makeCtx> | { initiativeId?: string; runId?: string; taskId?: string; deliveryId?: string }>) {
+  const deliveryIds = ctxs.map((x) => x.deliveryId).filter(Boolean);
+  const initiativeIds = ctxs.map((x) => x.initiativeId).filter(Boolean);
+  const runIds = ctxs.map((x) => x.runId).filter(Boolean);
+  const taskIds = ctxs.map((x) => x.taskId).filter(Boolean);
+  const quotedDeliveries = deliveryIds.map((x) => `'${sql(x)}'`).join(',');
+  const quotedInitiatives = initiativeIds.map((x) => `'${sql(x)}'`).join(',');
+  const quotedRuns = runIds.map((x) => `'${sql(x)}'`).join(',');
+  const quotedTasks = taskIds.map((x) => `'${sql(x)}'`).join(',');
+  try { if (quotedDeliveries) psql(`DELETE FROM harness_delivery_events WHERE delivery_id IN (${quotedDeliveries});`); } catch { /* ignore */ }
+  try { if (quotedDeliveries) psql(`DELETE FROM harness_deliveries WHERE id IN (${quotedDeliveries});`); } catch { /* ignore */ }
+  try {
+    if (quotedTasks || quotedInitiatives) {
+      psql(`DELETE FROM staging_e2e_results WHERE ${quotedTasks ? `task_id IN (${quotedTasks})` : 'FALSE'} OR ${quotedInitiatives ? `initiative_id IN (${quotedInitiatives})` : 'FALSE'};`);
+    }
+  } catch { /* ignore */ }
+  try { if (quotedRuns) psql(`DELETE FROM initiative_runs WHERE id IN (${quotedRuns});`); } catch { /* ignore */ }
+  try { if (quotedTasks) psql(`DELETE FROM tasks WHERE id IN (${quotedTasks});`); } catch { /* ignore */ }
+}
+
+function mergeInput(ctx: ReturnType<typeof makeCtx>) {
+  return {
+    dbUrl: DB_URL,
+    run_id: ctx.runId,
+    task_id: ctx.taskId,
+    pr_url: ctx.prUrl,
+    pr_branch: ctx.prBranch,
     merged_sha: MERGED_SHA,
     head_sha: MERGED_SHA,
-    contract_manifest_digest: 'sha256:contract-manifest-digest',
+    contract_manifest_digest: ctx.digest,
     target_environment: 'local_api',
     base_repo: 'perfectuser21/cecelia',
-    ...overrides,
   };
+}
+
+function deliveryIdFrom(result: any) {
+  const id = result?.delivery_id || result?.delivery?.id || result?.id;
+  expect(id).toMatch(/^[0-9a-f-]{36}$/i);
+  return id;
 }
 
 describe('Delivery Terminal Authority [BEHAVIOR]', () => {
   it('Merge 后 parent 进入 delivery/staging_pending 且 staging child 绑定 merge manifest', async () => {
-    const { createDeliveryFromMerge } = await loadAuthority();
+    const authority = await loadAuthority();
+    const ctx = makeCtx('PR4327');
+    seedParent(ctx);
+    try {
+      const created = await authority.createDeliveryFromMerge(mergeInput(ctx));
+      const deliveryId = deliveryIdFrom(created);
+      const row = psqlJson<{
+        run_phase: string;
+        task_status: string;
+        delivery_status: string;
+        merged_sha: string;
+        target_environment: string;
+        contract_manifest_digest: string;
+        staging_payload: Record<string, string> | null;
+      }>(`
+        SELECT r.phase AS run_phase,
+               t.status AS task_status,
+               d.status AS delivery_status,
+               d.merged_sha,
+               d.target_environment,
+               d.contract_manifest_digest,
+               child.payload AS staging_payload
+          FROM harness_deliveries d
+          JOIN initiative_runs r ON r.id = d.run_id
+          JOIN tasks t ON t.id = d.task_id
+          LEFT JOIN LATERAL (
+            SELECT payload
+              FROM tasks
+             WHERE task_type = 'staging_e2e'
+               AND payload->>'delivery_id' = d.id::text
+             ORDER BY created_at DESC
+             LIMIT 1
+          ) child ON TRUE
+         WHERE d.id = '${deliveryId}'
+      `);
 
-    const result = await createDeliveryFromMerge(mergedPrInput());
-
-    expect(result.delivery).toMatchObject({
-      run_id: RUN_ID,
-      task_id: TASK_ID,
-      pr_url: PR_URL_4327,
-      merged_sha: MERGED_SHA,
-      head_sha: MERGED_SHA,
-      contract_manifest_digest: 'sha256:contract-manifest-digest',
-      target_environment: 'local_api',
-      status: 'staging_pending',
-    });
-    expect(result.parent_run_patch).toMatchObject({
-      phase: 'delivery/staging_pending',
-      completed_at: null,
-    });
-    expect(result.parent_task_patch.status).not.toBe('completed');
-    expect(result.staging_task_payload).toMatchObject({
-      delivery_id: result.delivery.id,
-      run_id: RUN_ID,
-      task_id: TASK_ID,
-      pr_url: PR_URL_4327,
-      merged_sha: MERGED_SHA,
-      head_sha: MERGED_SHA,
-      contract_manifest_digest: 'sha256:contract-manifest-digest',
-      target_environment: 'local_api',
-    });
+      expect(row.run_phase).toBe('delivery/staging_pending');
+      expect(row.task_status).not.toBe('completed');
+      expect(row.delivery_status).toBe('staging_pending');
+      expect(row.merged_sha).toBe(MERGED_SHA);
+      expect(row.target_environment).toBe('local_api');
+      expect(row.contract_manifest_digest).toBe(ctx.digest);
+      expect(row.staging_payload).toMatchObject({
+        delivery_id: deliveryId,
+        run_id: ctx.runId,
+        task_id: ctx.taskId,
+        pr_url: ctx.prUrl,
+        merged_sha: MERGED_SHA,
+        head_sha: MERGED_SHA,
+        contract_manifest_digest: ctx.digest,
+        target_environment: 'local_api',
+      });
+    } finally {
+      cleanup([ctx]);
+    }
   });
 
   it('staging SKIP(no_contract) 不得 success 且 parent 保持 blocked', async () => {
-    const { applyStagingResult } = await loadAuthority();
-
-    const result = await applyStagingResult({
-      delivery: {
-        id: DELIVERY_ID,
-        run_id: RUN_ID,
-        task_id: TASK_ID,
-        merged_sha: MERGED_SHA,
-        status: 'staging_pending',
-      },
-      staging_result: {
+    const authority = await loadAuthority();
+    const ctx = makeCtx('skip');
+    seedParent(ctx);
+    try {
+      const deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge(mergeInput(ctx)));
+      await authority.applyStagingResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
         verdict: 'SKIP',
         reason: 'no_contract',
         tested_sha: MERGED_SHA,
         executor_success: true,
-      },
-    });
-
-    expect(result.may_promote).toBe(false);
-    expect(result.delivery.status).toMatch(/staging_(blocked|failed)|failed/);
-    expect(result.parent_task_patch.status).not.toBe('completed');
-    expect(result.failure_reason).toMatch(/no_contract|skip/i);
+        idempotency_key: 'staging-skip-no-contract',
+      });
+      const row = psqlJson<{ delivery_status: string; task_status: string; failure_reason: string }>(`
+        SELECT d.status AS delivery_status, t.status AS task_status, COALESCE(d.failure_reason, '') AS failure_reason
+          FROM harness_deliveries d
+          JOIN tasks t ON t.id = d.task_id
+         WHERE d.id = '${deliveryId}'
+      `);
+      expect(row.delivery_status).toMatch(/staging_(blocked|failed)|failed/);
+      expect(row.task_status).not.toBe('completed');
+      expect(row.failure_reason).toMatch(/no_contract|skip/i);
+    } finally {
+      cleanup([ctx]);
+    }
   });
 
   it('tested_sha 缺失或不等于 merged_sha 必须 fail-closed', async () => {
-    const { applyStagingResult } = await loadAuthority();
-
-    for (const testedSha of [null, OTHER_SHA]) {
-      const result = await applyStagingResult({
-        delivery: {
-          id: DELIVERY_ID,
-          run_id: RUN_ID,
-          task_id: TASK_ID,
-          merged_sha: MERGED_SHA,
-          status: 'staging_pending',
-        },
-        staging_result: {
+    const authority = await loadAuthority();
+    const ctxs = [makeCtx('missing-sha'), makeCtx('mismatch-sha')];
+    try {
+      for (const [idx, ctx] of ctxs.entries()) {
+        seedParent(ctx);
+        const deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge(mergeInput(ctx)));
+        await authority.applyStagingResult({
+          dbUrl: DB_URL,
+          delivery_id: deliveryId,
           verdict: 'PASS',
           reason: null,
-          tested_sha: testedSha,
+          tested_sha: idx === 0 ? null : OTHER_SHA,
           executor_success: true,
-        },
-      });
+          idempotency_key: `staging-sha-${idx}`,
+        });
+        const row = psqlJson<{ status: string; promote_status: string; failure_reason: string }>(`
+          SELECT d.status, COALESCE(d.promote_status, '') AS promote_status, COALESCE(d.failure_reason, '') AS failure_reason
+            FROM harness_deliveries d
+           WHERE d.id = '${deliveryId}'
+        `);
+        expect(row.status).toMatch(/staging_failed|failed/);
+        expect(row.promote_status).not.toMatch(/promoted|auto_promoted/);
+        expect(row.failure_reason).toMatch(/tested_sha|sha/i);
+        ctxs[idx] = { ...ctx, deliveryId };
+      }
+    } finally {
+      cleanup(ctxs);
+    }
+  });
 
-      expect(result.may_promote).toBe(false);
-      expect(result.delivery.status).toMatch(/staging_failed|failed/);
-      expect(result.promote_status ?? '').not.toMatch(/promoted/);
-      expect(result.failure_reason).toMatch(/tested_sha|sha/i);
+  it('staging child completed+executor success 不得替代 PASS', async () => {
+    const authority = await loadAuthority();
+    const ctx = makeCtx('executor-success-not-pass');
+    seedParent(ctx);
+    try {
+      const deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge(mergeInput(ctx)));
+      await authority.applyStagingResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        verdict: 'FAIL',
+        reason: 'scenario_failed',
+        tested_sha: MERGED_SHA,
+        executor_success: true,
+        child_task_status: 'completed',
+        idempotency_key: 'staging-fail-executor-success',
+      });
+      const row = psqlJson<{ status: string; task_status: string; promote_status: string }>(`
+        SELECT d.status, t.status AS task_status, COALESCE(d.promote_status, '') AS promote_status
+          FROM harness_deliveries d
+          JOIN tasks t ON t.id = d.task_id
+         WHERE d.id = '${deliveryId}'
+      `);
+      expect(row.status).toMatch(/staging_failed|failed/);
+      expect(row.task_status).not.toBe('completed');
+      expect(row.promote_status).not.toMatch(/promoted|auto_promoted/);
+    } finally {
+      cleanup([ctx]);
     }
   });
 
   it('Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor', async () => {
-    const { applyProductionResult } = await loadAuthority();
-
-    const result = await applyProductionResult({
-      delivery: {
-        id: DELIVERY_ID,
-        run_id: RUN_ID,
-        task_id: TASK_ID,
-        line: 'internal',
-        merged_sha: MERGED_SHA,
+    const authority = await loadAuthority();
+    const ctx = makeCtx('rollback');
+    seedParent(ctx);
+    try {
+      const deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge(mergeInput(ctx)));
+      await authority.applyStagingResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        verdict: 'PASS',
         tested_sha: MERGED_SHA,
-        status: 'promote_pending',
-      },
-      production: {
+        idempotency_key: 'staging-pass',
+      });
+      await authority.applyProductionResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        line: 'internal',
         tested_sha: MERGED_SHA,
         health_ok: false,
         fingerprint_sha: MERGED_SHA,
         e2e_ok: true,
         rollback_anchor: 'prod-before-4327',
-      },
-    });
-
-    expect(result.promoted).toBe(false);
-    expect(result.delivery.status).toMatch(/rollback_required|failed/);
-    expect(result.rollback_anchor).toBe('prod-before-4327');
-    expect(result.events).toContainEqual(expect.objectContaining({
-      event_type: 'production_verify_failed',
-      detail: expect.objectContaining({ rollback_anchor: 'prod-before-4327' }),
-    }));
+        idempotency_key: 'promote-fail-health',
+      });
+      const row = psqlJson<{ status: string; promote_status: string; rollback_events: number }>(`
+        SELECT d.status,
+               COALESCE(d.promote_status, '') AS promote_status,
+               (SELECT count(*)::int
+                  FROM harness_delivery_events e
+                 WHERE e.delivery_id = d.id
+                   AND e.event_type = 'production_verify_failed'
+                   AND e.detail ? 'rollback_anchor') AS rollback_events
+          FROM harness_deliveries d
+         WHERE d.id = '${deliveryId}'
+      `);
+      expect(row.status).toMatch(/rollback_required|failed/);
+      expect(row.promote_status).not.toMatch(/promoted|auto_promoted/);
+      expect(row.rollback_events).toBeGreaterThanOrEqual(1);
+    } finally {
+      cleanup([ctx]);
+    }
   });
 
   it('customer confirm 无签名 attestation 不得 promoted', async () => {
-    const { applyCustomerConfirmation, applyCustomerAttestation } = await loadAuthority();
-
-    const confirmed = await applyCustomerConfirmation({
-      delivery: {
-        id: DELIVERY_ID,
-        line: 'customer',
-        merged_sha: MERGED_SHA,
+    const authority = await loadAuthority();
+    const ctx = makeCtx('customer');
+    seedParent(ctx);
+    try {
+      const deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge({ ...mergeInput(ctx), base_repo: 'perfectuser21/zenithjoy-workspace' }));
+      await authority.applyStagingResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        verdict: 'PASS',
         tested_sha: MERGED_SHA,
-        status: 'promote_pending',
-      },
-      confirmed_by: 'owner-body-only',
-    });
+        idempotency_key: 'staging-pass',
+      });
+      await authority.applyCustomerConfirmation({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        confirmed_by: 'body-only-owner',
+        idempotency_key: 'customer-confirm',
+      });
+      let row = psqlJson<{ status: string; promote_status: string }>(`
+        SELECT status, COALESCE(promote_status, '') AS promote_status
+          FROM harness_deliveries
+         WHERE id = '${deliveryId}'
+      `);
+      expect(row.status).toBe('external_ack_pending');
+      expect(row.promote_status).not.toBe('promoted');
 
-    expect(confirmed.delivery.status).toBe('external_ack_pending');
-    expect(confirmed.promote_status).not.toBe('promoted');
-
-    const rejected = await applyCustomerAttestation({
-      delivery: confirmed.delivery,
-      attestation: {
+      await authority.applyCustomerAttestation({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
         repo: 'perfectuser21/zenithjoy-workspace',
         deployment_id: 'deploy-4327',
         deployed_sha: OTHER_SHA,
         verified_sha: OTHER_SHA,
         verification_url: 'https://github.com/perfectuser21/zenithjoy-workspace/actions/runs/1',
         attestation_signature: 'invalid-signature',
-      },
-    });
-
-    expect(rejected.promote_status).not.toBe('promoted');
-    expect(rejected.attestation_status).toBe('rejected');
+        idempotency_key: 'customer-attestation-rejected',
+      });
+      row = psqlJson<{ status: string; promote_status: string }>(`
+        SELECT status, COALESCE(promote_status, '') AS promote_status
+          FROM harness_deliveries
+         WHERE id = '${deliveryId}'
+      `);
+      expect(row.promote_status).not.toBe('promoted');
+    } finally {
+      cleanup([ctx]);
+    }
   });
 
-  it('final report persisted 前 parent 不得 completed; persisted 后 atomically complete', async () => {
-    const { completeAfterFinalReport } = await loadAuthority();
+  it('report dispatch失败不得 parent complete; persisted 后 atomically complete', async () => {
+    const authority = await loadAuthority();
+    const ctx = makeCtx('report-gate');
+    seedParent(ctx);
+    try {
+      const deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge(mergeInput(ctx)));
+      await authority.applyStagingResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        verdict: 'PASS',
+        tested_sha: MERGED_SHA,
+        idempotency_key: 'staging-pass',
+      });
+      await authority.applyProductionResult({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        line: 'internal',
+        tested_sha: MERGED_SHA,
+        health_ok: true,
+        fingerprint_sha: MERGED_SHA,
+        e2e_ok: true,
+        rollback_anchor: 'prod-before-report-gate',
+        idempotency_key: 'promote-pass',
+      });
+      await authority.persistFinalReportAndComplete({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
+        dispatch_error: 'report dispatch failed',
+        idempotency_key: 'report-fail',
+      });
+      let row = psqlJson<{ status: string; run_phase: string; task_status: string }>(`
+        SELECT d.status, r.phase AS run_phase, t.status AS task_status
+          FROM harness_deliveries d
+          JOIN initiative_runs r ON r.id = d.run_id
+          JOIN tasks t ON t.id = d.task_id
+         WHERE d.id = '${deliveryId}'
+      `);
+      expect(row.status).toMatch(/report_pending|report_failed/);
+      expect(row.run_phase).not.toBe('done');
+      expect(row.task_status).not.toBe('completed');
 
-    const beforeReport = await completeAfterFinalReport({
-      delivery: {
-        id: DELIVERY_ID,
-        run_id: RUN_ID,
-        task_id: TASK_ID,
-        status: 'report_pending',
-        promote_status: 'promoted',
-      },
-      report: { persisted: false },
-    });
-
-    expect(beforeReport.parent_run_patch?.phase).not.toBe('done');
-    expect(beforeReport.parent_task_patch?.status).not.toBe('completed');
-
-    const afterReport = await completeAfterFinalReport({
-      delivery: {
-        id: DELIVERY_ID,
-        run_id: RUN_ID,
-        task_id: TASK_ID,
-        status: 'report_pending',
-        promote_status: 'promoted',
-      },
-      report: {
-        persisted: true,
+      await authority.persistFinalReportAndComplete({
+        dbUrl: DB_URL,
+        delivery_id: deliveryId,
         report_id: 'report-4327',
         handoff_id: 'handoff-4327',
         learning_id: 'learning-4327',
         okr_commitment_map_id: 'okr-4327',
-      },
-    });
-
-    expect(afterReport.delivery.status).toBe('completed');
-    expect(afterReport.parent_run_patch).toMatchObject({ phase: 'done' });
-    expect(afterReport.parent_task_patch).toMatchObject({ status: 'completed' });
-    expect(afterReport.transactional_updates).toEqual([
-      'harness_deliveries',
-      'initiative_runs',
-      'tasks',
-    ]);
+        idempotency_key: 'report-pass',
+      });
+      row = psqlJson<{ status: string; run_phase: string; task_status: string }>(`
+        SELECT d.status, r.phase AS run_phase, t.status AS task_status
+          FROM harness_deliveries d
+          JOIN initiative_runs r ON r.id = d.run_id
+          JOIN tasks t ON t.id = d.task_id
+         WHERE d.id = '${deliveryId}'
+      `);
+      expect(row).toMatchObject({ status: 'completed', run_phase: 'done', task_status: 'completed' });
+    } finally {
+      cleanup([ctx]);
+    }
   });
 
   it('重放同一 staging/promote/report 事件不重复', async () => {
-    const { replayDeliveryEvents } = await loadAuthority();
-
-    const result = await replayDeliveryEvents({
-      delivery_id: DELIVERY_ID,
-      events: [
-        { event_type: 'staging_pass', idempotency_key: 'staging-pass' },
-        { event_type: 'staging_pass', idempotency_key: 'staging-pass' },
-        { event_type: 'promote_pass', idempotency_key: 'promote-pass' },
-        { event_type: 'promote_pass', idempotency_key: 'promote-pass' },
-        { event_type: 'report_persisted', idempotency_key: 'report-pass' },
-        { event_type: 'report_persisted', idempotency_key: 'report-pass' },
-      ],
-    });
-
-    expect(result.events_inserted).toBe(3);
-    expect(result.duplicates_suppressed).toBe(3);
-    expect(result.event_counts_by_key).toEqual({
-      'staging-pass': 1,
-      'promote-pass': 1,
-      'report-pass': 1,
-    });
+    const authority = await loadAuthority();
+    const ctx = makeCtx('replay');
+    seedParent(ctx);
+    try {
+      const deliveryId = deliveryIdFrom(await authority.createDeliveryFromMerge(mergeInput(ctx)));
+      for (const event of [
+        ['staging_pass', 'staging-pass'],
+        ['staging_pass', 'staging-pass'],
+        ['promote_pass', 'promote-pass'],
+        ['promote_pass', 'promote-pass'],
+        ['report_persisted', 'report-pass'],
+        ['report_persisted', 'report-pass'],
+      ] as const) {
+        await authority.replayDeliveryEvent({
+          dbUrl: DB_URL,
+          delivery_id: deliveryId,
+          event_type: event[0],
+          idempotency_key: event[1],
+          detail: { source: 'replay-test' },
+        });
+      }
+      const dupCount = Number(psql(`
+        SELECT count(*)
+          FROM (
+            SELECT idempotency_key
+              FROM harness_delivery_events
+             WHERE delivery_id = '${deliveryId}'
+               AND idempotency_key IN ('staging-pass','promote-pass','report-pass')
+             GROUP BY idempotency_key
+            HAVING count(*) > 1
+          ) dup
+      `));
+      expect(dupCount).toBe(0);
+    } finally {
+      cleanup([ctx]);
+    }
   });
 
   it('PR4327 PR4317 parent completed + staging queued fixture 在审计中 FAIL', async () => {

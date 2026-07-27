@@ -9,11 +9,11 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 新增 delivery terminal authority 模块。
-  Test: node -e "const fs=require('fs');const p='packages/brain/src/delivery-terminal-authority.js';const c=fs.readFileSync(p,'utf8');for(const s of ['createDeliveryFromMerge','applyStagingResult','applyProductionResult','persistFinalReportAndComplete']){if(!c.includes(s))process.exit(1)}"
+- [ ] [ARTIFACT] 新增 delivery terminal authority 模块，导出 S10-S12 单一状态机函数。
+  Test: node -e "const fs=require('fs');const p='packages/brain/src/delivery-terminal-authority.js';const c=fs.readFileSync(p,'utf8');for(const s of ['createDeliveryFromMerge','applyStagingResult','applyProductionResult','applyCustomerConfirmation','applyCustomerAttestation','persistFinalReportAndComplete','replayDeliveryEvent','auditLegacyCompletionFixture']){if(!c.includes(s))process.exit(1)}"
 
-- [ ] [ARTIFACT] DB migration 新增 harness_deliveries / harness_delivery_events 且只 append，不修改历史生产行。
-  Test: node -e "const fs=require('fs');const files=fs.readdirSync('packages/brain/migrations').filter(f=>/delivery|terminal|staging/i.test(f));const body=files.map(f=>fs.readFileSync('packages/brain/migrations/'+f,'utf8')).join('\n');for(const s of ['harness_deliveries','harness_delivery_events','idempotency_key','delivery_id']){if(!body.includes(s))process.exit(1)}"
+- [ ] [ARTIFACT] DB migration 新增 harness_deliveries / harness_delivery_events，并扩展 initiative_runs.phase CHECK 支持 delivery 非终态。
+  Test: node -e "const fs=require('fs');const files=fs.readdirSync('packages/brain/migrations').filter(f=>/delivery|terminal|staging|initiative/i.test(f));const body=files.map(f=>fs.readFileSync('packages/brain/migrations/'+f,'utf8')).join('\n');for(const s of ['harness_deliveries','harness_delivery_events','idempotency_key','delivery_id','delivery/staging_pending','staging_blocked','report_failed']){if(!body.includes(s))process.exit(1)}"
 
 - [ ] [ARTIFACT] Existing promote route uses approver authentication before DB mutation.
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('packages/brain/src/routes/harness.js','utf8');if(!/authenticateApprover/.test(c)||!/x-approver-token|HARNESS_REVIEW_APPROVER_TOKEN/.test(c))process.exit(1)"
@@ -21,17 +21,32 @@ journey_type: autonomous
 - [ ] [ARTIFACT] Contract red tests exist and include production fixtures PR4327/PR4317.
   Test: node -e "const fs=require('fs');const p='sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts';const c=fs.readFileSync(p,'utf8');for(const s of ['PR4327','PR4317','delivery/staging_pending','external_ack_pending']){if(!c.includes(s))process.exit(1)}"
 
+- [ ] [ARTIFACT] Contract red tests 不 mock 本单禁 mock 边。
+  Test: node -e "const fs=require('fs');const p='sprints/07271908-kernel-delivery-terminal-authority/tests/delivery-terminal-authority.test.ts';const c=fs.readFileSync(p,'utf8');if(/\\bvi\\.mock\\b|\\bjest\\.mock\\b|sinon\\.stub|\\bstub\\(/.test(c))process.exit(1);for(const s of ['psql','harness_deliveries','harness_delivery_events','initiative_runs']){if(!c.includes(s))process.exit(1)}"
+
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [ ] [BEHAVIOR] [L2] Merge 后 parent 进入 delivery/staging_pending 且 staging child 绑定 merge manifest
+- [ ] [BEHAVIOR] [L2] INV-14 INV-23 INV-43 Merge 后 parent 进入 delivery/staging_pending 且 staging child 绑定 merge manifest
   动作: 以 merged PR 的 delivery_id 查询真实 Brain delivery status。
-  预期观察: parent run phase 为 delivery/staging_pending，parent task 未 completed，merged/head SHA、contract_manifest_digest、target_environment 均存在。
-  验证命令: Test: manual:curl -sf "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/${DELIVERY_ID:?set DELIVERY_ID}/status" | jq -e '.parent.run_phase=="delivery/staging_pending" and .parent.task_status!="completed" and (.merged_sha|test("^[0-9a-f]{40}$")) and .contract_manifest_digest and .target_environment=="local_api"'
+  预期观察: parent run phase 为 delivery/staging_pending，parent task 未 completed，merged/head SHA、contract_manifest_digest、target_environment 均存在，staging child payload 与 delivery 行逐字段一致。
+  验证命令: Test: manual:bash -c 'RESP=$(curl -sf "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/${DELIVERY_ID:?set DELIVERY_ID}/status"); echo "$RESP" | jq -e ".parent.run_phase==\"delivery/staging_pending\" and .parent.task_status!=\"completed\" and (.merged_sha|test(\"^[0-9a-f]{40}$\")) and (.head_sha|test(\"^[0-9a-f]{40}$\")) and (.contract_manifest_digest|startswith(\"sha256:\")) and .target_environment==\"local_api\"" >/dev/null; COUNT=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM tasks WHERE task_type='\''staging_e2e'\'' AND payload->>'\''delivery_id'\''='\''${DELIVERY_ID}'\'' AND payload->>'\''contract_manifest_digest'\''=(SELECT contract_manifest_digest FROM harness_deliveries WHERE id='\''${DELIVERY_ID}'\'') AND payload->>'\''target_environment'\''='\''local_api'\'' AND created_at > NOW() - interval '\''5 minutes'\'';" | tr -d " "); [ "$COUNT" -eq 1 ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] delivery status endpoint schema keys 完整且禁用字段不存在
+  动作: 查询真实 Brain delivery status endpoint。
+  预期观察: 顶层 keys 精确匹配合同 Response Schema；禁用字段 ok_only、promoted_by_only、executor_success、child_completed_success 不存在。
+  验证命令: Test: manual:bash -c 'RESP=$(curl -sf "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/${DELIVERY_ID:?set DELIVERY_ID}/status"); echo "$RESP" | jq -e "keys == [\"contract_manifest_digest\",\"delivery_id\",\"external_attestation\",\"head_sha\",\"merged_sha\",\"parent\",\"pr_url\",\"promote_status\",\"report\",\"run_id\",\"staging_child_payload\",\"status\",\"target_environment\",\"task_id\",\"tested_sha\"]" >/dev/null; echo "$RESP" | jq -e "has(\"ok_only\")|not and has(\"promoted_by_only\")|not and has(\"executor_success\")|not and has(\"child_completed_success\")|not" >/dev/null'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] delivery status invalid id error path 返回 400 + error 字段
+  动作: 用非法 delivery id 调用真实 Brain status endpoint。
+  预期观察: HTTP 400，响应体含 error 字符串，404 不可接受。
+  验证命令: Test: manual:bash -c 'BODY=/tmp/delivery-status-error.json; CODE=$(curl -s -o "$BODY" -w "%{http_code}" "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/not-a-uuid/status"); [ "$CODE" = "400" ]; jq -e ".error | type == \"string\"" "$BODY" >/dev/null'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] staging PASS 且 tested_sha 等于 merged_sha 后才可 promote
   动作: 在真 Postgres 查询本轮 delivery 与 staging_e2e_results 的绑定行。
-  预期观察: within 60s 出现 exactly one promote_pending 行，verdict=PASS，tested_sha=merged_sha，created_at 在 5 分钟内。
+  预期观察: 出现 exactly one promote_pending 行，verdict=PASS，tested_sha=merged_sha，created_at 在 5 分钟内。
   验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN staging_e2e_results s ON s.id=d.staging_result_id WHERE d.id='${DELIVERY_ID}' AND d.status='promote_pending' AND s.verdict='PASS' AND s.tested_sha=d.merged_sha AND s.created_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
   期望: exit 0
 
@@ -47,22 +62,34 @@ journey_type: autonomous
   验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries WHERE id IN ('${MISSING_SHA_DELIVERY_ID:?set MISSING_SHA_DELIVERY_ID}','${MISMATCH_SHA_DELIVERY_ID:?set MISMATCH_SHA_DELIVERY_ID}') AND status IN ('staging_failed','failed') AND COALESCE(promote_status,'') NOT IN ('promoted','auto_promoted') AND updated_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '2'
   期望: exit 0
 
+- [ ] [BEHAVIOR] [L2] staging child completed+executor success 不得替代 PASS
+  动作: 回放 verdict=FAIL 但 child task completed 且 executor_success=true 的 staging result fixture。
+  预期观察: delivery 仍为 staging_failed/failed，parent task 不 completed，promote_status 不为 promoted/auto_promoted。
+  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN tasks t ON t.id=d.task_id WHERE d.id='${EXECUTOR_SUCCESS_FAIL_DELIVERY_ID:?set EXECUTOR_SUCCESS_FAIL_DELIVERY_ID}' AND d.status IN ('staging_failed','failed') AND t.status <> 'completed' AND COALESCE(d.promote_status,'') NOT IN ('promoted','auto_promoted') AND d.updated_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] Internal production health/fingerprint/E2E 失败进入 rollback_required 且带 rollback anchor
   动作: 对 internal delivery 回放 production health/fingerprint/E2E 任一失败。
   预期观察: delivery 不 promoted，状态为 rollback_required/failed，delivery_events 写 production_verify_failed 且 detail.rollback_anchor 非空。
   验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN harness_delivery_events e ON e.delivery_id=d.id WHERE d.id='${ROLLBACK_DELIVERY_ID:?set ROLLBACK_DELIVERY_ID}' AND d.status IN ('rollback_required','failed') AND COALESCE(d.promote_status,'') NOT IN ('promoted','auto_promoted') AND e.event_type='production_verify_failed' AND e.detail ? 'rollback_anchor' AND e.created_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
   期望: exit 0
 
-- [ ] [BEHAVIOR] [L2] Promote API 必须认证 approver，body.promoted_by 不可冒充
+- [ ] [BEHAVIOR] [L2] INV-06 INV-55 INV-57 Promote API 必须认证 approver，body.promoted_by 不可冒充
   动作: 不带 x-approver-token 调用 Promote API，只在 body 传 promoted_by。
   预期观察: API 返回 401 或 503，且不会更新 promoted_at。
-  验证命令: Test: manual:bash -c 'curl -s -o /tmp/promote-auth-body -w "%{http_code}" -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/promote/${PROMOTE_RESULT_ID:?set PROMOTE_RESULT_ID}" -H "Content-Type: application/json" -d "{\"base_repo\":\"perfectuser21/cecelia\",\"promoted_by\":\"body-only\"}" | grep -Eq "^(401|503)$"'
+  验证命令: Test: manual:bash -c 'BEFORE=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM staging_e2e_results WHERE id='\''${PROMOTE_RESULT_ID:?set PROMOTE_RESULT_ID}'\'' AND promoted_at IS NOT NULL;" | tr -d " "); CODE=$(curl -s -o /tmp/promote-auth-body -w "%{http_code}" -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/promote/${PROMOTE_RESULT_ID}" -H "Content-Type: application/json" -d "{\"base_repo\":\"perfectuser21/cecelia\",\"promoted_by\":\"body-only\"}"); [ "$CODE" = "401" ] || [ "$CODE" = "503" ]; AFTER=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM staging_e2e_results WHERE id='\''${PROMOTE_RESULT_ID}'\'' AND promoted_at IS NOT NULL;" | tr -d " "); [ "$BEFORE" = "$AFTER" ]'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] customer confirm 无签名 attestation 不得 promoted
   动作: 对 customer delivery 只执行 Cecelia confirm，不提交客户 repo 签名 attestation。
   预期观察: delivery.status=external_ack_pending 或 pending_external_attestation，promote_status 不为 promoted。
-  验证命令: Test: manual:curl -sf "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/${CUSTOMER_DELIVERY_ID:?set CUSTOMER_DELIVERY_ID}/status" | jq -e '.status=="external_ack_pending" or .promote_status=="pending_external_attestation" and .promote_status!="promoted"'
+  验证命令: Test: manual:curl -sf "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/delivery/${CUSTOMER_DELIVERY_ID:?set CUSTOMER_DELIVERY_ID}/status" | jq -e '(.status=="external_ack_pending" or .promote_status=="pending_external_attestation") and .promote_status!="promoted"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] [L2] INV-20 INV-21 report dispatch 失败不得 parent complete
+  动作: 回放 report dispatch/persist 失败 fixture。
+  预期观察: delivery.status=report_pending/report_failed，parent run 不 done，parent task 不 completed。
+  验证命令: Test: manual:psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -t -c "SELECT count(*) FROM harness_deliveries d JOIN initiative_runs r ON r.id=d.run_id JOIN tasks t ON t.id=d.task_id WHERE d.id='${REPORT_FAIL_DELIVERY_ID:?set REPORT_FAIL_DELIVERY_ID}' AND d.status IN ('report_pending','report_failed') AND r.phase <> 'done' AND t.status <> 'completed' AND d.updated_at > NOW() - interval '5 minutes';" | tr -d ' ' | grep -qx '1'
   期望: exit 0
 
 - [ ] [BEHAVIOR] [L2] final report persisted 前 parent 不得 completed; persisted 后 atomically complete
