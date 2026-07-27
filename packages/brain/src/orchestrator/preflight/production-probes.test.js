@@ -18,6 +18,15 @@ async function loadFactory() {
 describe('production capability probes', () => {
   it('reads Brain-owned fleet and account state and verifies required capabilities', async () => {
     const createProductionCapabilityProbes = await loadFactory();
+    const nodeAdmissionClient = {
+      getAdmission: vi.fn(async (machine) => ({
+        machine_id: machine,
+        state: 'base_admitted',
+        base_admitted: true,
+        dispatch_ready: false,
+        reasons: [],
+      })),
+    };
     const fetchFn = vi.fn(async (url) => {
       if (String(url).endsWith('/api/brain/capacity-budget')) {
         return response({
@@ -61,6 +70,7 @@ describe('production capability probes', () => {
       resolveGitHubTokenFn: vi.fn(async () => 'secret-token'),
       env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
       requestTimeoutMs: 100,
+      nodeAdmissionClient,
     });
 
     await expect(probes.resolveCanonicalMachineId()).resolves.toBe('us-mac-m4');
@@ -71,6 +81,12 @@ describe('production capability probes', () => {
     await expect(probes.getMachineCapacity({ machine: 'us-mac-m4' })).resolves.toMatchObject({
       ok: true,
       available: 5,
+    });
+    expect(nodeAdmissionClient.getAdmission).toHaveBeenNthCalledWith(1, 'us-mac-m4', {
+      forceFresh: true,
+    });
+    expect(nodeAdmissionClient.getAdmission).toHaveBeenNthCalledWith(2, 'us-mac-m4', {
+      forceFresh: true,
     });
     await expect(probes.listProviderAccounts({ provider: 'codex' })).resolves.toEqual([
       'team4',
@@ -153,6 +169,61 @@ describe('production capability probes', () => {
         cookie: '[REDACTED]',
         safe: 'visible',
       },
+    });
+  });
+
+  it.each([
+    ['missing client and Worker URL', undefined, {}, 'node_not_base_admitted'],
+    ['missing evidence', { getAdmission: vi.fn(async () => null) }, {
+      FLEET_WORKER_US_MAC_M4_URL: 'http://worker.internal:5231',
+    }, 'node_not_base_admitted'],
+    ['explicit draining evidence', {
+      getAdmission: vi.fn(async () => ({
+        state: 'draining',
+        base_admitted: false,
+        dispatch_ready: false,
+        reasons: [{ code: 'docker_unavailable', field: 'docker.available', message: 'down' }],
+      })),
+    }, {
+      FLEET_WORKER_US_MAC_M4_URL: 'http://worker.internal:5231',
+      FLEET_NODE_ADMISSION_ENFORCED: 'false',
+    }, 'node_not_base_admitted'],
+  ])('fails both health and capacity closed for %s', async (
+    _name,
+    nodeAdmissionClient,
+    env,
+    signature,
+  ) => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const probes = createProductionCapabilityProbes({
+      pool: { query: vi.fn() },
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(async (url) => {
+        if (String(url).endsWith('/api/brain/capacity-budget')) {
+          return response({
+            fleet: [{
+              id: 'us-mac-m4',
+              online: true,
+              effective_slots: 8,
+              physical_capacity: 8,
+              pressure: 0,
+            }],
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4', ...env },
+      nodeAdmissionClient,
+    });
+
+    await expect(probes.getMachineHealth({ machine: 'us-mac-m4' })).resolves.toMatchObject({
+      ok: false,
+      signature,
+    });
+    await expect(probes.getMachineCapacity({ machine: 'us-mac-m4' })).resolves.toMatchObject({
+      ok: false,
+      available: 0,
+      signature,
     });
   });
 });

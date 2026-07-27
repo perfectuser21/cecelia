@@ -831,4 +831,89 @@ describe('production capability wiring', () => {
     ]);
     expect(spawnDetached).not.toHaveBeenCalled();
   });
+
+  it('buildRealDeps reaches mandatory admission through the canonical Worker URL environment', async () => {
+    const workerUrl = 'http://us-fleet-worker.internal:5231';
+    const fetchFn = vi.fn(async (url) => {
+      if (String(url) === `${workerUrl}/health`) return response(null);
+      if (String(url).endsWith('/api/brain/capacity-budget')) {
+        return response({
+          fleet: [{
+            id: 'us-mac-m4',
+            online: true,
+            effective_slots: 8,
+            physical_capacity: 8,
+            pressure: 0,
+          }],
+        });
+      }
+      if (String(url).endsWith('/api/brain/dispatch/llm-capacity')) {
+        return response({
+          sentinel: 'ok',
+          vendors: {
+            codex: {
+              accounts: [{ name: 'team1', available: true, source: 'usage_api' }],
+            },
+          },
+        });
+      }
+      if (String(url) === 'https://api.github.com/user') {
+        return response({ login: 'cecelia-ci' });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    const attemptStore = attemptStoreDouble();
+    const launcher = {
+      launch: vi.fn(async () => Object.freeze({
+        actualMachineId: 'us-mac-m4',
+        executionTransport: 'local-docker',
+        remoteJobId: null,
+        attestationStatus: 'local',
+        containerId: 'must-not-launch',
+        jobId: null,
+      })),
+      cancel: vi.fn(),
+    };
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn(async () => ({ rows: [{ ok: 1 }] })) },
+      attemptStore,
+      registry: createProviderRegistry([codexAdapter()]),
+      launcher,
+      handlers: {},
+      loadSkill: vi.fn(() => ({
+        name: 'harness-generator',
+        version: '1.0.0',
+        digest: `sha256:${'7'.repeat(64)}`,
+        content: 'generate',
+      })),
+      fetchFn,
+      resolveGitHubToken: vi.fn(async () => 'secret-token'),
+      env: {
+        CECELIA_MACHINE_ID: 'us-mac-m4',
+        FLEET_WORKER_US_MAC_M4_URL: workerUrl,
+      },
+      onPreflightBlocked: vi.fn(),
+    });
+
+    const result = await deps.dispatch('spawn:generator', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 16,
+      observed: observed(),
+      decision: { phase: 'generate' },
+    });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      `${workerUrl}/health`,
+      expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) }),
+    );
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      control_status: 'BLOCKED',
+      fallback_reason: 'node_not_base_admitted',
+      should_create_attempt: false,
+    });
+    expect(attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(launcher.launch).not.toHaveBeenCalled();
+  });
 });
