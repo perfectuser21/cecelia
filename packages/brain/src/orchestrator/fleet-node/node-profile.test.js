@@ -145,6 +145,7 @@ describe('Fleet NodeProfile registry', () => {
     ['generator', 4, 2],
     ['evaluator', 4, 2],
     ['judge', 4, 2],
+    ['reporter', 1, 8],
   ])('applies the %s role weight %i to eight base slots', async (role, weight, expected) => {
     const { getRoleCapacity } = await loadContract();
     expect(getRoleCapacity({ baseCapacity: 8, role })).toEqual({
