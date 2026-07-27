@@ -130,6 +130,57 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('replaces caller paths with a resolved WorkspaceSpec before Fleet launch', async () => {
+    const deps = makeDeps();
+    deps.machineId = 'us-mac-m4';
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: observed.proposeBranch,
+      expected_head_sha: 'a'.repeat(40),
+      mode: 'read-only',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    deps.launcher.launch.mockResolvedValueOnce({
+      jobId: 'worker-job-1',
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'worker-job-1',
+      attestationStatus: 'verified',
+    });
+    const dispatch = createDispatcher(deps);
+
+    await expect(dispatch('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 2,
+      observed,
+      decision: { phase: 'gan', reason: 'awaiting_review' },
+    })).resolves.toMatchObject({ status: 'DONE', attemptId });
+
+    expect(deps.resolveWorkspaceSpec).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'reviewer',
+      readOnly: true,
+      attemptId,
+    }));
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).toMatchObject({
+      execution_surface: 'fleet-worker',
+      workspace_spec: {
+        repo: 'perfectuser21/cecelia',
+        base_sha: 'a'.repeat(40),
+        branch: observed.proposeBranch,
+        expected_head_sha: 'a'.repeat(40),
+        mode: 'read-only',
+        run_id: runId,
+        attempt_id: attemptId,
+      },
+    });
+    expect(created.bundle.inputs).not.toHaveProperty('worktree_path');
+    expect(deps.launcher.launch.mock.calls[0][0].bundle).toBe(created.bundle);
+  });
+
   it('dispatches the fleet canary without a role Skill or workspace dependency', async () => {
     const deps = makeDeps();
     const dispatch = createDispatcher(deps);
