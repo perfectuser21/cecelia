@@ -9,6 +9,7 @@
       "scope": "把 Kernel-owned PR 的 ownership 绑定到 repo、pr_number、run_id、head_sha，补齐 authenticated approve/reject、human_review 落账、stale SHA 失效、merge head 原子锁定，以及 CI/legacy merge caller fail-closed。",
       "dod": [
         "[BEHAVIOR] approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict",
+        "[BEHAVIOR] reject route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict",
         "[BEHAVIOR] approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail",
         "[BEHAVIOR] approve route 成功响应只返回 ok run_id task_id repo pr_number pr_head_sha review_request_hop review_class approved_by timestamp source",
         "[BEHAVIOR] approve route stale SHA 或 run/PR 不匹配时拒绝且不写 human_review verdict",

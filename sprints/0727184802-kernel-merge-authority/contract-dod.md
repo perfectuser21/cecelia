@@ -24,6 +24,12 @@ target_environment: local_api
   验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "approve route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict"'
   期望: exit 0
 
+- [ ] [BEHAVIOR] [L2] reject route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict
+  动作: 对 `POST /api/brain/harness/kernel-reviews/:runId/reject` 发送缺少 `repo/pr_number` 的 authenticated 请求。
+  预期观察: 返回 400，`orchestrator_decision_log` 不新增 `verdict:human_review`。
+  验证命令: Test: manual:bash -c 'node ./node_modules/vitest/vitest.mjs run sprints/0727184802-kernel-merge-authority/tests/kernel-merge-authority.contract.test.ts -t "reject route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict"'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] [L2] approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail
   动作: 对 approve route 发送完整 `task_id/repo/pr_number/pr_head_sha/review_request_hop` 请求。
   预期观察: 返回 202，并写入 `approved_by/pr_head_sha/source/timestamp/repo/pr_number/run_id` 完整 detail。

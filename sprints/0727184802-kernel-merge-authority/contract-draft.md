@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 11)
+# Sprint Contract Draft (Round 12)
 
 ## 合同边界
 
@@ -56,6 +56,7 @@ N/A — 任务无新增公开 HTTP 响应；对外可观测契约是 `orchestrat
 - `[packages/brain/src/routes/__tests__/harness-kernel-approvals.test.js]` → `adds the open human-review wait back to deadline in the approval transaction`
 - `[packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js]` → `approval 并发与 429: fails closed, writes once, and derives merge`
 - `[packages/brain/src/orchestrator/__tests__/ground-truth.test.js]` → `reviewRequired 从 tasks.payload.review_required（string payload 兼容）；reviewApproved 锚定当前 head_sha`
+- `[packages/brain/src/orchestrator/__tests__/ground-truth.test.js]` → `reviewApproved：approved 记录是旧 sha → false（stale 批准不放行）`
 - `[packages/brain/src/orchestrator/__tests__/ground-truth.test.js]` → `same-SHA evidence approval cannot satisfy the later merge gate after evaluator and judge PASS`
 - `[packages/brain/src/orchestrator/__tests__/kernel-handlers.test.js]` → `merge 按 GitHub 真相处理 CLEAN / BEHIND / CONFLICTING`
 - `[packages/brain/src/lib/__tests__/harness-finalize.test.js]` → `PR MERGED 但无 evaluator gate → allow:false 且 reason 含 evaluator`

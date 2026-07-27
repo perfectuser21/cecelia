@@ -164,6 +164,26 @@ describe('kernel merge authority contract red tests', () => {
       expect(await approvalRows(run.runId)).toHaveLength(0);
     });
 
+    it('reject route 缺少 repo 或 pr_number 时拒绝且不写 human_review verdict', async () => {
+      process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+      const run = await seedRun();
+      await appendReviewRequest(run.runId, HEAD_SHA);
+      const app = createApp(HEAD_SHA);
+
+      const response = await request(app)
+        .post(`/api/brain/harness/kernel-reviews/${run.runId}/reject`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          pr_head_sha: HEAD_SHA,
+          review_request_hop: 3,
+          rejected_by: 'alex',
+        });
+
+      expect(response.status).toBe(400);
+      expect(await approvalRows(run.runId)).toHaveLength(0);
+    });
+
     it('approve route 记录含 approved_by pr_head_sha source timestamp repo pr_number run_id 的 human_review detail', async () => {
       process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
       const run = await seedRun();
