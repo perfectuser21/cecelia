@@ -1,0 +1,33 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "本 sprint 只涉及 Kernel/Brain 后端 gate、workflow 接缝与回归测试，无浏览器或远端代理交互。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "恢复 exact-SHA target-aware required-context gate 与 preview/post-merge 闭环",
+      "scope": "以服务端 task/run/PR 真相推导 required contexts 与 current SHA，补 preview failure evidence seam、post-merge 独立 blocker、Draft PR stale approval invalidation，并用合同测试冻结行为。",
+      "dod": [
+        "[BEHAVIOR] server-owned facts derive target_environment and required contexts",
+        "[BEHAVIOR] independent blocker reasons stay exact",
+        "[BEHAVIOR] preview failure persists http status response body and error",
+        "[BEHAVIOR] post-merge gates stay independent",
+        "[ARTIFACT] .github/workflows/preview-deploy.yml 真实调用 /api/brain/preview/start"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/gates.js",
+        "packages/brain/src/routes/preview.js",
+        ".github/workflows/preview-deploy.yml",
+        "packages/brain/src/routes/harness-kernel-approvals.js",
+        "packages/brain/src/orchestrator/__tests__/",
+        "packages/brain/src/routes/__tests__/",
+        "tests/regression/"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
