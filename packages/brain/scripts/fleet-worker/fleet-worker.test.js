@@ -182,7 +182,9 @@ describe('Fleet Worker health-only service', () => {
           ].join('\n'),
         };
       }
-      if (file === 'systemsetup') return { stdout: 'Network Time: On\n' };
+      if (file === 'sntp') {
+        return { stdout: 'time.apple.com: offset +0.042 seconds\n' };
+      }
       return { stdout: '' };
     });
 
@@ -239,7 +241,9 @@ describe('Fleet Worker health-only service', () => {
       ['df', (args) => args.includes('-k')],
       ['launchctl', (args) => args[0] === 'print'
         && args.includes('system/com.perfect21.fleet-worker')],
-      ['systemsetup', (args) => args.includes('-getusingnetworktime')],
+      ['sntp', (args) => args.length === 2
+        && args[0] === '-d'
+        && args[1] === 'time.apple.com'],
       ['git', (args) => args[0] === 'worktree'
         && args[1] === 'add'
         && args.includes('--detach')],
