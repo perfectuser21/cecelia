@@ -57,6 +57,7 @@ const manifest: FeatureManifest = {
     { path: '/pipeline/:id', component: 'HarnessPipelineDetailPage' },
     { path: '/pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
     { path: '/warroom/line/:id', component: 'WarRoomLineCommandPage' },
+    { path: '/warroom/gp/:gpId', component: 'WarRoomGoldenPathPage' },
     // War Room PR-C：退役死页/重复详情页 → 统一收口到 /pipeline（战情室）
     // - /autonomous: /api/brain/autonomous/sessions 0 条死页
     // - /harness/:id: 老 SSE stream 详情页，SSE 日志 + sprint-docs tab 已吸收进 HarnessPipelineDetailPage(/pipeline/:id)
@@ -174,6 +175,7 @@ const manifest: FeatureManifest = {
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
     WarRoomPage: () => import('../../../dashboard/src/pages/warroom/WarRoomPage'),
     WarRoomLineCommandPage: () => import('../../../dashboard/src/pages/warroom/WarRoomLineCommandPage'),
+    WarRoomGoldenPathPage: () => import('../../../dashboard/src/pages/warroom/WarRoomGoldenPathPage'),
     HarnessPipelineDetailPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage'),
     HarnessPipelineStepPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage'),
     CollectionDashboardPage: () => import('../../../dashboard/src/pages/collection-dashboard/CollectionDashboardPage'),

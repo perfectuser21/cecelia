@@ -74,6 +74,7 @@ function AppContent() {
     path.startsWith('/gtd') || path.startsWith('/knowledge/doc-chat') ||
     path === '/pipeline' ||  // 战情室全屏三栏（/pipeline/:id 详情仍走带内边距布局）
     path.startsWith('/warroom/line') ||  // Line 指挥页全屏三栏
+    path.startsWith('/warroom/gp') ||   // GP 二级页全屏双栏
     path === '/ledger';  // 11要素账本（带侧边下钻面板）
 
   // Tab 路由不加 p-8 内边距（TabbedPage 自带布局）
