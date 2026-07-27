@@ -558,8 +558,8 @@ Expected: PASS after registration.
 - [ ] **Step 3: Advance Brain patch metadata**
 
 Advance the Brain patch version in the package and definition metadata. The
-published Phase 4A branch uses `1.267.92` because `origin/main` advanced to
-`1.267.91` before CI reconciliation.
+published Phase 4A branch uses `1.267.93` because `origin/main` advanced through
+`1.267.92` during CI reconciliation.
 Update lockfiles with:
 
 ```bash
