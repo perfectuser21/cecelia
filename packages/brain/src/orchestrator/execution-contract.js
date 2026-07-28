@@ -11,6 +11,22 @@ export const RESULT_CONTRACT_VERSION = '1.0';
 export const RESULT_CHANNEL_VERSION = 'attempt-result-file/v1';
 export const RESULT_CHANNEL_ROOT = '/tmp/cecelia-prompts';
 export const RESULT_CHANNEL_MAX_BYTES = 1024 * 1024;
+export const GITHUB_MUTATION_POLICY_VERSION = 'github-mutation/v1';
+export const GITHUB_MUTATION_ALLOWED_PATHS = Object.freeze([
+  '.brain-versions',
+  '.github/',
+  'AGENTS.md',
+  'README.md',
+  'apps/',
+  'docker/',
+  'docs/',
+  'hooks/',
+  'package-lock.json',
+  'package.json',
+  'packages/',
+  'scripts/',
+  'sprints/',
+]);
 
 export const ROLE_VALUES = [
   'planner',
@@ -70,6 +86,30 @@ const verificationCommandSchema = z.string()
     (value) => value.trim() === value && !value.includes('\0'),
     'verification_commands entries must be canonical non-empty strings',
   );
+
+const mutationBranchSchema = z.string().min(1).max(127)
+  .regex(/^cp-[a-z0-9][a-z0-9._-]{0,126}$/)
+  .refine((value) => !value.includes('..') && !value.endsWith('.lock'));
+const mutationAllowedPathSchema = z.string().min(1).max(1024).refine(
+  (value) => (
+    !value.startsWith('/')
+    && !/[\r\n\\\0]/.test(value)
+    && value.split('/').filter(Boolean).every((part) => part !== '.' && part !== '..')
+  ),
+  'allowed path must be normalized and relative',
+);
+const githubMutationPolicySchema = z.object({
+  version: z.literal(GITHUB_MUTATION_POLICY_VERSION),
+  repo: z.literal('perfectuser21/cecelia'),
+  branch: mutationBranchSchema,
+  base_sha: z.string().regex(/^[a-f0-9]{40}$/),
+  expected_remote_sha: z.string().regex(/^[a-f0-9]{40}$/).nullable(),
+  operation: z.enum(['push-and-create-draft', 'push-existing-draft']),
+  pr_base: z.literal('main'),
+  pr_title: z.string().min(1).max(256).regex(/^[^\r\n\0]+$/),
+  pr_body: z.string().min(1).max(4096).refine((value) => !value.includes('\0')),
+  allowed_paths: z.array(mutationAllowedPathSchema).min(1).max(64),
+}).strict();
 
 const taskBundleSchema = z.object({
   contract_version: z.literal(TASK_CONTRACT_VERSION),
@@ -791,6 +831,49 @@ export function parseResultChannelDescriptor(value, expected = {}) {
   });
 }
 
+export function parseGithubMutationPolicy(value, { workspaceSpec } = {}) {
+  const parsed = githubMutationPolicySchema.parse(value);
+  if (!workspaceSpec || typeof workspaceSpec !== 'object') {
+    throw new Error('github_mutation_workspace_required');
+  }
+  if (parsed.repo !== workspaceSpec.repo) {
+    throw new Error('github_mutation_repo_mismatch');
+  }
+  if (parsed.branch !== workspaceSpec.branch) {
+    throw new Error('github_mutation_branch_mismatch');
+  }
+  if (parsed.base_sha !== workspaceSpec.base_sha) {
+    throw new Error('github_mutation_base_sha_mismatch');
+  }
+  if (parsed.expected_remote_sha !== workspaceSpec.expected_head_sha) {
+    throw new Error('github_mutation_remote_sha_mismatch');
+  }
+  const allowedPaths = Object.freeze([...parsed.allowed_paths]);
+  return Object.freeze({ ...parsed, allowed_paths: allowedPaths });
+}
+
+export function buildGithubMutationPolicy({
+  taskId,
+  runId,
+  workspaceSpec,
+  operation,
+  allowedPaths = GITHUB_MUTATION_ALLOWED_PATHS,
+} = {}) {
+  const policy = {
+    version: GITHUB_MUTATION_POLICY_VERSION,
+    repo: workspaceSpec?.repo,
+    branch: workspaceSpec?.branch,
+    base_sha: workspaceSpec?.base_sha,
+    expected_remote_sha: workspaceSpec?.expected_head_sha ?? null,
+    operation,
+    pr_base: 'main',
+    pr_title: `feat(harness): ${taskId}`,
+    pr_body: `Kernel task ${taskId}\nRun ${runId}\n`,
+    allowed_paths: [...allowedPaths],
+  };
+  return parseGithubMutationPolicy(policy, { workspaceSpec });
+}
+
 export function buildResultChannelDescriptor({
   taskId,
   runId,
@@ -835,6 +918,14 @@ export function parseTaskBundle(value) {
     });
     if (!hasResultChannel) {
       throw new Error('result_channel_required');
+    }
+    if (parsed.role === 'generator') {
+      parsed.inputs.github_mutation_policy = parseGithubMutationPolicy(
+        parsed.inputs.github_mutation_policy,
+        { workspaceSpec: parsed.inputs.workspace_spec },
+      );
+    } else if (Object.hasOwn(parsed.inputs, 'github_mutation_policy')) {
+      throw new Error('github_mutation_policy_role_mismatch');
     }
   } else if (!parsed.inputs.worktree_path) {
     throw new Error('worktree_path_required_for_legacy_execution');

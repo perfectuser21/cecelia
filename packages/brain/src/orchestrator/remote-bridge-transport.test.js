@@ -24,6 +24,18 @@ const RESULT_CHANNEL = Object.freeze({
     role: 'generator',
   }),
 });
+const GITHUB_MUTATION_POLICY = Object.freeze({
+  version: 'github-mutation/v1',
+  repo: 'perfectuser21/cecelia',
+  branch: 'cp-07272050-remote-worker',
+  base_sha: '0123456789abcdef0123456789abcdef01234567',
+  expected_remote_sha: null,
+  operation: 'push-and-create-draft',
+  pr_base: 'main',
+  pr_title: `feat(harness): ${TASK_ID}`,
+  pr_body: `Kernel task ${TASK_ID}\nRun ${RUN_ID}\n`,
+  allowed_paths: Object.freeze(['packages/', 'sprints/']),
+});
 const NOW_MS = Date.parse('2026-07-27T12:00:00.000Z');
 const ENVELOPE = Object.freeze({
   contract_version: 'credential-envelope/v1',
@@ -72,6 +84,7 @@ function launchInput(overrides = {}) {
         run_id: RUN_ID,
         attempt_id: ATTEMPT_ID,
       },
+      github_mutation_policy: GITHUB_MUTATION_POLICY,
     },
     constraints: { timeout_seconds: 3600 },
     ...overrides.bundle,
@@ -230,6 +243,7 @@ describe('remote Bridge launch', () => {
       },
       credential_envelope: ENVELOPE,
       result_channel: RESULT_CHANNEL,
+      github_mutation_policy: GITHUB_MUTATION_POLICY,
       brain_url: BRAIN_URL,
     });
     expect(requestBody).not.toHaveProperty('bundle');

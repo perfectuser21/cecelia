@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  buildGithubMutationPolicy,
   buildResultChannelDescriptor,
   parseTaskBundle,
 } from './execution-contract.js';
@@ -488,6 +489,18 @@ export function createDispatcher(deps) {
           ...pathFreeInputs,
           execution_surface: 'fleet-worker',
           workspace_spec: workspaceSpec,
+          ...(spec.role === 'generator'
+            ? {
+                github_mutation_policy: buildGithubMutationPolicy({
+                  taskId: bundle.inputs.task_id,
+                  runId: bundle.run_id,
+                  workspaceSpec,
+                  operation: action === 'spawn:generator'
+                    ? 'push-and-create-draft'
+                    : 'push-existing-draft',
+                }),
+              }
+            : {}),
         },
       });
     }

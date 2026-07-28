@@ -50,6 +50,22 @@ function validWorkspaceSpec(overrides = {}) {
   };
 }
 
+function validGithubMutationPolicy(overrides = {}) {
+  return {
+    version: 'github-mutation/v1',
+    repo: 'perfectuser21/cecelia',
+    branch: 'cp-07272050-fleet-worker-workspace-4b',
+    base_sha: BASE_SHA,
+    expected_remote_sha: null,
+    operation: 'push-and-create-draft',
+    pr_base: 'main',
+    pr_title: `feat(harness): ${TASK_ID}`,
+    pr_body: `Kernel task ${TASK_ID}\nRun ${RUN_ID}\n`,
+    allowed_paths: ['packages/', 'sprints/'],
+    ...overrides,
+  };
+}
+
 function validBundle(overrides = {}) {
   return {
     contract_version: '1.0',
@@ -259,6 +275,37 @@ describe('TaskBundle contract', () => {
     expect(() => {
       descriptor.bindings.role = 'reviewer';
     }).toThrow(TypeError);
+  });
+
+  it('strictly parses and freezes the server-owned Generator GitHub mutation policy', () => {
+    expect(executionContract.parseGithubMutationPolicy).toBeTypeOf('function');
+    expect(executionContract.buildGithubMutationPolicy).toBeTypeOf('function');
+    const policy = executionContract.buildGithubMutationPolicy({
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      workspaceSpec: validWorkspaceSpec(),
+      operation: 'push-and-create-draft',
+      allowedPaths: ['packages/', 'sprints/'],
+    });
+    expect(policy).toEqual(validGithubMutationPolicy());
+    expect(Object.isFrozen(policy)).toBe(true);
+    expect(Object.isFrozen(policy.allowed_paths)).toBe(true);
+    expect(executionContract.parseGithubMutationPolicy(policy, {
+      workspaceSpec: validWorkspaceSpec(),
+    })).toEqual(policy);
+  });
+
+  it.each([
+    ['credential URL', { repo: 'https://user:secret@github.com/perfectuser21/cecelia.git' }],
+    ['wrong branch', { branch: 'cp-attacker' }],
+    ['wrong base', { base_sha: 'f'.repeat(40) }],
+    ['path escape', { allowed_paths: ['../secrets'] }],
+    ['unknown field', { callback_token: 'secret' }],
+  ])('rejects Generator mutation policy with %s', (_name, patch) => {
+    expect(() => executionContract.parseGithubMutationPolicy(
+      { ...validGithubMutationPolicy(), ...patch },
+      { workspaceSpec: validWorkspaceSpec() },
+    )).toThrow();
   });
 
   it('requires the v1 result channel for Fleet bundles but keeps legacy bundles compatible', () => {

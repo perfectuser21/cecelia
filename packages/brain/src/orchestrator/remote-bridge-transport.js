@@ -1,5 +1,8 @@
 import { verifyMachineAttestation } from './machine-attestation.js';
-import { parseResultChannelDescriptor } from './execution-contract.js';
+import {
+  parseGithubMutationPolicy,
+  parseResultChannelDescriptor,
+} from './execution-contract.js';
 
 const JSON_HEADERS = Object.freeze({
   'Content-Type': 'application/json',
@@ -228,6 +231,13 @@ export function createRemoteBridgeTransport({
       const isCanary = bundle?.expected_output === 'harness-result/canary-v1'
         && bundle?.role === 'reporter'
         && bundle?.skill === null;
+
+      const githubMutationPolicy = bundle?.role === 'generator'
+        && bundle?.inputs?.github_mutation_policy
+        ? parseGithubMutationPolicy(bundle?.inputs?.github_mutation_policy, {
+            workspaceSpec: bundle?.inputs?.workspace_spec,
+          })
+        : null;
       let credentialEnvelope;
       if (target?.provider === 'codex' && !isCanary) {
         if (typeof configuredCredentialBroker?.issue !== 'function') {
@@ -284,6 +294,9 @@ export function createRemoteBridgeTransport({
               role: bundle?.role,
             },
             ...(workspaceSpec ? { workspace_spec: workspaceSpec } : {}),
+            ...(githubMutationPolicy
+              ? { github_mutation_policy: githubMutationPolicy }
+              : {}),
             provider_spec: {
               provider: spec?.provider,
               command: spec?.command,

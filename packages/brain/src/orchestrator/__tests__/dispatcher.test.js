@@ -666,6 +666,48 @@ describe('createDispatcher', () => {
     expect(deps.attemptStore.createAttempt).toHaveBeenCalledTimes(1);
   });
 
+  it('freezes a server-owned GitHub mutation policy into a Fleet Generator bundle', async () => {
+    const deps = makeDeps();
+    deps.machineId = 'us-mac-m4';
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-07280905-github-broker',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    deps.launcher.launch.mockResolvedValueOnce({
+      jobId: 'worker-job-1',
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'worker-job-1',
+      attestationStatus: 'verified',
+    });
+
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.github_mutation_policy).toMatchObject({
+      version: 'github-mutation/v1',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-07280905-github-broker',
+      base_sha: 'a'.repeat(40),
+      expected_remote_sha: null,
+      operation: 'push-and-create-draft',
+      pr_base: 'main',
+    });
+    expect(bundle.inputs.github_mutation_policy.allowed_paths).toContain('packages/');
+    expect(bundle.inputs.github_mutation_policy.pr_title).toContain(taskId);
+  });
+
   it('dispatches the fleet canary without a role Skill or workspace dependency', async () => {
     const deps = makeDeps();
     deps.preflightGate = {
