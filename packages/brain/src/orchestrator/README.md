@@ -31,6 +31,41 @@ Code、Codex 等 CLI 只是执行 TaskBundle 的 worker，不拥有流程状态�
 TaskBundle、结构化输出、session 隔离和恢复测试；不要把 provider 专有指令写入
 Skill 或状态机。
 
+### Opt-in Commander Phase 2
+
+`commander_mode` 默认仍为 `kernel-only`。只有显式设为 `hybrid` 且任务 payload
+声明 `commander.primary`（可带最多三个有序 fallback）的 Run，才在 material
+Kernel boundary 创建一个正常的 `harness_attempts.role='commander'` Attempt：
+
+```json
+{
+  "commander": {
+    "primary": {
+      "provider": "codex",
+      "account": "team4",
+      "machine": "us-mac-m4"
+    },
+    "fallbacks": [
+      {
+        "provider": "claude",
+        "account": "account1",
+        "machine": "us-mac-m4"
+      }
+    ]
+  }
+}
+```
+
+Commander 只返回一条 provider-neutral `commander-directive/v1`。L0 会重新校验
+Run/cursor/evidence/role/cost/hop/deadline/capability，并且只允许当前 Kernel boundary
+本来合法的动作。`switch_provider` 与 `switch_machine` 在 Phase 2 明确拒绝；
+merge、deploy、promote 仍只能经过现有 Kernel gate。Provider fallback 只响应已落库
+的白名单基础设施错误，使用新 Attempt、新 session 和保留的 logical-cycle lineage；
+语义拒绝、Reviewer/Evaluator 产品失败和未知文本都不会触发跨 Provider。
+
+本阶段不安装节点、不复制凭据、不部署，也不执行真实或 synthetic canary。Xian
+机器不得保存长期 Codex 凭据；后续节点配置以 US M4 的 OrbStack 基线为准。
+
 ## 契约与 Skill
 
 - `execution-contract.js`：内部 v1 `TaskBundle` / `HarnessResult` schema。

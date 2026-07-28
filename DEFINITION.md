@@ -6,11 +6,25 @@
 
 
 
-**Brain 版本**: 1.267.98
+**Brain 版本**: 1.267.99
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.99 — Harness Commander Phase 2
+
+- `hybrid` Run 现在可把 material Kernel boundary 封装成隔离 Commander Attempt，
+  经 Claude/Codex/Grok 的同一 Provider Registry、preflight、lease、callback 与
+  execution receipt 链返回一条 provider-neutral Directive；默认仍为 `kernel-only`。
+- L0 保持最终权威：Directive 不能绕过 role、evidence、budget、deadline、merge 或
+  deployment gate。接受、拒绝和基础设施 failover 都可从 authoritative decision log
+  与不可变事件投影回放。
+- 跨 Provider 只允许显式白名单基础设施失败并创建 fresh-session retry lineage；
+  语义/产品失败、无效 Directive 和未知文本不 failover，目标用尽转人工。
+- 本版本不部署节点、不复制凭据、不执行 synthetic/真实 canary；Xian 不保存长期
+  Codex 凭据，后续节点基线继续以 US M4 OrbStack 配置为准。
+- Brain 回退目标：`1.267.98`。
 
 ## Brain 1.267.98 — Harness Commander Phase 1
 

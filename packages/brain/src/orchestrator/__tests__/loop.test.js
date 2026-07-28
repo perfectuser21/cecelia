@@ -11,6 +11,24 @@ import { SingletonConflictError } from '../decision-log.js';
 const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 const CONTRACT_ID = '99999999-8888-7777-6666-555555555555';
+const HYBRID_TASK = Object.freeze({
+  status: 'in_progress',
+  payload: {
+    commander: {
+      primary: {
+        provider: 'codex',
+        account: 'team4',
+        machine: 'us-mac-m4',
+      },
+      fallbacks: [],
+    },
+    routing: {
+      preferred_machine: 'us-mac-m4',
+      fallback_machines: [],
+      strict_affinity: true,
+    },
+  },
+});
 
 /** 造一份完整 observed（derive 契约字段全齐），供逐跳喂给 fake collectGroundTruth */
 function obs(overrides = {}) {
@@ -192,6 +210,7 @@ describe('runLoop：hybrid Commander boundary', () => {
         cost_usd: 0,
         commander_mode: 'hybrid',
       },
+      task: HYBRID_TASK,
       prdExists: false,
       contract: { approved: false, id: CONTRACT_ID },
     });
@@ -255,6 +274,7 @@ describe('runLoop：hybrid Commander boundary', () => {
         cost_usd: 0,
         commander_mode: 'hybrid',
       },
+      task: HYBRID_TASK,
       generatorSpawned: true,
       pr,
       evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
@@ -306,6 +326,7 @@ describe('runLoop：hybrid Commander boundary', () => {
         cost_usd: 0,
         commander_mode: 'hybrid',
       },
+      task: HYBRID_TASK,
       prdExists: false,
       contract: { approved: false, id: CONTRACT_ID },
     });
@@ -347,6 +368,39 @@ describe('runLoop：hybrid Commander boundary', () => {
       expect.objectContaining({ action: 'spawn:planner' }),
     ]));
     expect(deps.dispatch).toHaveBeenCalledWith('spawn:planner', expect.any(Object));
+    expect(deps.commanderDirectiveExecutor.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        validation: expect.objectContaining({
+          strictMachine: 'us-mac-m4',
+        }),
+      }),
+    );
+  });
+
+  it('loud-fails hybrid mode without an explicit Commander primary', async () => {
+    const { deps } = makeEnv({
+      observedSeq: [
+        obs({
+          run: {
+            id: RUN_ID,
+            phase: 'planning',
+            cost_usd: 0,
+            commander_mode: 'hybrid',
+          },
+          prdExists: false,
+          contract: { approved: false, id: CONTRACT_ID },
+        }),
+      ],
+    });
+    deps.commanderCoordinator = {
+      reconcile: vi.fn().mockResolvedValue({ kind: 'bypass' }),
+    };
+
+    await expect(
+      runLoop(deps, { taskId: TASK_ID, runId: RUN_ID }),
+    ).rejects.toThrow();
+    expect(deps.commanderCoordinator.reconcile).not.toHaveBeenCalled();
+    expect(deps.dispatch).not.toHaveBeenCalled();
   });
 
   it('keeps non-hybrid dispatch behavior byte-for-byte when coordinator bypasses', async () => {

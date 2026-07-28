@@ -413,9 +413,16 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     if (deps.commanderCoordinator) {
       const commanderMode = observed.run.commander_mode ?? 'kernel-only';
       const payload = asPayload(observed.task?.payload);
-      const runProfile = payload.commander
-        ? parseCommanderProfile({ commanderMode, payload })
-        : { mode: commanderMode, commander: null };
+      const runProfile = parseCommanderProfile({ commanderMode, payload });
+      const strictMachine = payload.routing?.strict_affinity === true
+        ? payload.routing?.preferred_machine
+        : null;
+      if (
+        payload.routing?.strict_affinity === true
+        && (typeof strictMachine !== 'string' || strictMachine.length < 1)
+      ) {
+        throw new Error('commander_strict_machine_missing');
+      }
       const configuredRetryBudget = Number.isSafeInteger(payload.commander_retry_budget)
         ? Math.max(0, Math.min(8, payload.commander_retry_budget))
         : 2;
@@ -498,7 +505,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
             maxUsd: BUDGET_CAP_USD,
             deadlineAt: effectiveDeadline,
             now: now(),
-            strictMachine: payload.commander_strict_machine ?? null,
+            strictMachine,
             capabilityAllowed: true,
             evidenceOwned: true,
             remainingRetryBudget,
