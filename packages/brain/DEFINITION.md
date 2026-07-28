@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.268.20
+**版本**: 1.268.21
+
+## Kernel unified test-contract reconciliation
+
+- 旧 Claude/relay fixture 已跟随 Kernel 的 lease generation、post-diff risk、
+  fleet bridge credential 与 ReleaseRun-only deploy authority 合同更新，继续验证
+  fail-closed 行为而不恢复旧旁路。
+- PostgreSQL 集成测试使用每轮唯一业务标识和隔离 deploy status 文件，避免残留
+  测试数据或宿主持久状态造成假红；OKR 链路不再用 silent return 掩盖前置失败。
+- 重复 Jest 回归已迁到 Vitest，evaluator extractor 钉住当前 Skill 合同版本。
 
 ## Unified Kernel Golden Path + durable ReleaseRun
 

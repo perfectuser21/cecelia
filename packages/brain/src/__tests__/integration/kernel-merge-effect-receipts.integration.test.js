@@ -6,8 +6,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createPostgresMergeEffectStore } from '../../orchestrator/merge-effect-store.js';
 
-const migration = readFileSync(
+const receiptMigration = readFileSync(
   new URL('../../../migrations/372_kernel_merge_effect_receipts.sql', import.meta.url),
+  'utf8',
+);
+const riskMigration = readFileSync(
+  new URL('../../../migrations/373_kernel_post_diff_risk_policy.sql', import.meta.url),
   'utf8',
 );
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -37,11 +41,18 @@ beforeAll(async () => {
   await client.query(`CREATE SCHEMA ${quotedSchema}`);
   await client.query(`SET search_path TO ${quotedSchema}, public`);
   await client.query(`
+    CREATE TABLE schema_version (
+      version VARCHAR(10) PRIMARY KEY,
+      description TEXT,
+      applied_at TIMESTAMPTZ DEFAULT NOW()
+    );
     CREATE TABLE tasks (id UUID PRIMARY KEY);
     CREATE TABLE initiative_runs (id UUID PRIMARY KEY);
   `);
-  await client.query(migration);
-  await client.query(migration);
+  await client.query(receiptMigration);
+  await client.query(receiptMigration);
+  await client.query(riskMigration);
+  await client.query(riskMigration);
   await client.query('INSERT INTO tasks (id) VALUES ($1)', [taskId]);
   await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
 
@@ -147,6 +158,32 @@ describe('migration 372 exact-SHA merge ledger on PostgreSQL', () => {
         judge_hop: 2,
         human_review_hop: null,
         merge_intent_hop: 3,
+        post_diff_risk: {
+          schema_version: 'kernel-post-diff-risk/v1',
+          policy_version: 'kernel-post-diff-risk/v1',
+          risk_level: 'low',
+          human_review_required: false,
+          auto_eligible: true,
+          reasons: [],
+          bindings: {
+            task_id: secondTaskId,
+            run_id: secondRunId,
+            hop: 3,
+            repository: 'perfectuser21/cecelia',
+            head_sha: headSha,
+            base_repository: 'perfectuser21/cecelia',
+            base_ref: 'main',
+            base_sha: 'b'.repeat(40),
+            diff_hash: `sha256:${'b'.repeat(64)}`,
+            contract_version: 7,
+            contract_digest: `sha256:${'c'.repeat(64)}`,
+            behavior_fingerprint: `sha256:${'d'.repeat(64)}`,
+            capability_fingerprint: `sha256:${'e'.repeat(64)}`,
+            path_surface_digest: `sha256:${'f'.repeat(64)}`,
+            path_class: 'application',
+          },
+          expires_at: '2099-07-28T08:15:00.000Z',
+        },
       },
       currentPr: {
         url: secondPrUrl,

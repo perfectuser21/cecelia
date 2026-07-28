@@ -9,7 +9,7 @@
  * 覆盖场景：
  *   FR-15-ok          : SHA 一致 → verdict=ok，deploy 不被调
  *   FR-15-debounce    : SHA 不等但未满 30min → verdict=drifting，deploy 不被调
- *   FR-15-redeploy    : SHA 不等且满 30min01s → verdict=redeploying，deploy 被调 1 次
+ *   FR-15-redeploy    : SHA 不等且满 30min01s → 无 ReleaseRun authority，阻断并告警
  *   FR-15-network-err : 拉取 main SHA 失败 → verdict=network_error，deploy 不被调
  *   FR-15-prod-unreach: 拉取 prod SHA 失败 → verdict=prod_unreachable，deploy 不被调
  *   FR-15-escalate         : redeployCount>=2 且仍漂移 → verdict=escalated，deploy 不被调，sendBark 被调 1 次
@@ -163,9 +163,9 @@ describe('drift-sentinel — FR-15 contract tests', () => {
     expect(mockExecDeploy).not.toHaveBeenCalled();
   });
 
-  // FR-15-redeploy：SHA 不等 + 满 30min01s → verdict=redeploying，deploy 被调 1 次
+  // FR-15-redeploy：legacy sentinel 无 ReleaseRun authority，只能告警并阻断
   // INV-10：补部署触发前须做 SHA 二次核验（fetchProdSha 调用次数 >=2）
-  it('FR-15-redeploy: SHA 不等且 driftFirstSeenAt 满 30min01s → verdict=redeploying，deploy 被调 1 次', async () => {
+  it('FR-15-redeploy: SHA 不等且满窗口时 blocked_unowned_release，deploy 不被调', async () => {
     const now = new Date('2026-07-16T10:00:00Z');
     // 首见时间 = 30min01s 前（满 30min）
     const driftFirstSeenAt = new Date(now.getTime() - (30 * 60 * 1000 + 1000)).toISOString(); // 30min01s
@@ -179,12 +179,10 @@ describe('drift-sentinel — FR-15 contract tests', () => {
     });
     const result = await runDriftCheck(opts);
 
-    expect(result.verdict).toBe('redeploying');
-    expect(mockExecDeploy).toHaveBeenCalledTimes(1);
-    expect(mockExecDeploy).toHaveBeenCalledWith(expect.stringContaining('brain-deploy.sh'));
-    expect(mockSendBark).not.toHaveBeenCalled();
-    // INV-10：二次核验 — redeploying 场景下 fetchProdSha 必须被调用 >=2 次（触发前再核验一次）
-    // toHaveBeenCalledTimes 不支持 asymmetric matcher，直接用 calls.length 断言
+    expect(result.verdict).toBe('blocked_unowned_release');
+    expect(mockExecDeploy).not.toHaveBeenCalled();
+    expect(mockSendBark).toHaveBeenCalledOnce();
+    // INV-10：即使最终阻断，仍必须二次核验生产 SHA 后再发出 authority 告警。
     expect(opts._fetchProdShaSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -249,8 +247,8 @@ describe('drift-sentinel — FR-15 contract tests', () => {
     expect(mockExecDeploy).not.toHaveBeenCalled();
   });
 
-  // FR-15-boundary-30m01s：边界：30min01s 触发（防抖边界上限）
-  it('FR-15-boundary: 30min01s 触发 → verdict=redeploying', async () => {
+  // FR-15-boundary-30m01s：边界：30min01s 进入 ReleaseRun authority 阻断
+  it('FR-15-boundary: 30min01s 触发 → blocked_unowned_release', async () => {
     const now = new Date('2026-07-16T10:00:00Z');
     const driftFirstSeenAt = new Date(now.getTime() - (30 * 60 * 1000 + 1000)).toISOString();
 
@@ -262,8 +260,8 @@ describe('drift-sentinel — FR-15 contract tests', () => {
       redeployCount: 0,
     }));
 
-    expect(result.verdict).toBe('redeploying');
-    expect(mockExecDeploy).toHaveBeenCalledTimes(1);
+    expect(result.verdict).toBe('blocked_unowned_release');
+    expect(mockExecDeploy).not.toHaveBeenCalled();
   });
 
   // FR-15-首见：SHA 首次不等（无 driftFirstSeenAt）→ 记录时间戳，verdict=drifting

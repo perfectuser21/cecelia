@@ -30,6 +30,7 @@ const WORKER_URLS = Object.freeze({
   'xian-mac-m1': 'http://xian-m1-worker.internal:5231',
 });
 const WORKER_ENV = Object.freeze({
+  KERNEL_FLEET_BRIDGE_TOKEN: 'k'.repeat(32),
   FLEET_WORKER_US_MAC_M4_URL: WORKER_URLS['us-mac-m4'],
   FLEET_WORKER_XIAN_MAC_M4_URL: WORKER_URLS['xian-mac-m4'],
   FLEET_WORKER_XIAN_MAC_M1_URL: WORKER_URLS['xian-mac-m1'],
@@ -101,6 +102,9 @@ describe('createLiveDispatch production probe wiring', () => {
     'probes canonical %s identity and blocks a drifted node before attempt creation',
     async (targetMachine) => {
       pool.query.mockImplementation(async (sql, params) => {
+        if (/FROM kernel_release_alert_outbox outbox/.test(sql)) {
+          return { rows: [], rowCount: 0 };
+        }
         if (/INSERT INTO initiative_runs/.test(sql)) {
           return { rows: [{ id: RUN_ID }], rowCount: 1 };
         }

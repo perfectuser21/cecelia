@@ -125,7 +125,7 @@ describe('Commander Phase 2 PostgreSQL authority chain', () => {
       callbackSecretHash: 'a'.repeat(64),
       logicalCycleId: 'commander-wakeup:1',
     });
-    await attempts.markStarting(attemptId, {
+    const startingAttempt = await attempts.markStarting(attemptId, {
       leaseOwner: 'brain-1',
       leaseSeconds: 90,
     });
@@ -133,7 +133,10 @@ describe('Commander Phase 2 PostgreSQL authority chain', () => {
       status: 'completed',
       decision: directive,
       provider_metadata: { provider: 'codex', session_id: 'session-private' },
-    }, { leaseOwner: 'brain-1' });
+    }, {
+      leaseOwner: 'brain-1',
+      leaseGeneration: startingAttempt.lease_generation,
+    });
 
     await appendHop(migrationPool, {
       runId,

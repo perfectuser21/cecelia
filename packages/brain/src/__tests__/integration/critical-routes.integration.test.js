@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
@@ -118,6 +119,7 @@ const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
 
 // 记录本次测试插入的数据 ID，afterAll 清理
 const insertedTaskIds = [];
+const testRunId = randomUUID();
 
 // ─── 测试辅助函数 ─────────────────────────────────────────────────────────────
 
@@ -163,8 +165,16 @@ describe('Brain 关键路由集成测试（真实 PostgreSQL）', () => {
   beforeAll(async () => {
     app = await makeApp();
     // 插入测试任务，确保 tasks 表有数据
-    await insertTestTask({ title: '集成测试-P1任务', priority: 'P1', status: 'queued' });
-    await insertTestTask({ title: '集成测试-P2任务', priority: 'P2', status: 'in_progress' });
+    await insertTestTask({
+      title: `集成测试-${testRunId}-P1任务`,
+      priority: 'P1',
+      status: 'queued',
+    });
+    await insertTestTask({
+      title: `集成测试-${testRunId}-P2任务`,
+      priority: 'P2',
+      status: 'in_progress',
+    });
   }, 15000);
 
   // 每个用例前重置 probe 默认返回为 healthy，避免用例间污染

@@ -19,10 +19,23 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
+
+const testRunId = randomUUID();
+const pipelineKeyword = `golden-path-smoke-test-${testRunId}`;
+const previousDeployStatusFile = process.env.DEPLOY_STATUS_FILE;
+const isolatedDeployStatusFile = path.join(
+  os.tmpdir(),
+  `cecelia-golden-path-deploy-${testRunId}.json`,
+);
+process.env.DEPLOY_STATUS_FILE = isolatedDeployStatusFile;
 
 // ─── Mock 外部依赖（不测 AI 调用和告警，只测路由 + DB 链路）────────────────
 
@@ -253,6 +266,12 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
     if (insertedTaskIds.length > 0) {
       await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
     }
+    rmSync(isolatedDeployStatusFile, { force: true });
+    if (previousDeployStatusFile === undefined) {
+      delete process.env.DEPLOY_STATUS_FILE;
+    } else {
+      process.env.DEPLOY_STATUS_FILE = previousDeployStatusFile;
+    }
     await testPool.end();
   });
 
@@ -268,7 +287,7 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       const res = await request(app)
         .post('/api/brain/tasks')
         .send({
-          title: '[golden-path] Brain 调度链路测试任务',
+          title: `[golden-path:${testRunId}] Brain 调度链路测试任务`,
           description: 'Golden Path E2E 测试自动创建，测试完毕后自动清理',
           task_type: 'dev',
           priority: 'P2',
@@ -356,14 +375,14 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       const res = await request(app)
         .post('/api/brain/pipelines')
         .send({
-          keyword: 'golden-path-smoke-test',
+          keyword: pipelineKeyword,
           content_type: 'golden-path-test-type',
           priority: 'P2',
         })
         .expect(201);
 
       expect(res.body).toHaveProperty('id');
-      expect(res.body.title).toContain('golden-path-smoke-test');
+      expect(res.body.title).toContain(pipelineKeyword);
 
       createdPipelineId = res.body.id;
       insertedTaskIds.push(createdPipelineId);
@@ -395,7 +414,7 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
 
       // payload 包含 keyword 和 content_type
       const payload = dbRes.rows[0].payload;
-      expect(payload.keyword).toBe('golden-path-smoke-test');
+      expect(payload.keyword).toBe(pipelineKeyword);
       expect(payload.content_type).toBe('golden-path-test-type');
     });
 
@@ -544,7 +563,7 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       const res = await request(app)
         .post('/api/brain/golden-paths')
         .send({
-          title: '[integration-test] GP7 T7 拍板回路 E2E',
+          title: `[integration-test:${testRunId}] GP7 T7 拍板回路 E2E`,
           one_liner: '端到端验证拍板回路——integration test 自动清理',
           est_scale: '约2周/3个PR',
         })

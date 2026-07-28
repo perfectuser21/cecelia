@@ -7,7 +7,14 @@
  * 或: npx jest sprints/07231722-relay-28e7c41a/tests/ops-panorama.test.js --passWithNoTests
  */
 
-import { jest } from '@jest/globals';
+import {
+  describe,
+  expect,
+  test,
+  vi,
+} from 'vitest';
+
+const jest = vi;
 
 // ── Mock 工厂 ──────────────────────────────────────────────────
 

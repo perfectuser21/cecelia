@@ -84,7 +84,7 @@ describe('OKR 拆解端到端集成测试', () => {
     });
 
     it('创建 KeyResult（绑定 Objective）', async () => {
-      if (!objId) return; // 依赖前一个 it 的 objId
+      expect(objId, 'Objective setup must succeed before creating a KeyResult').toBeTruthy();
       const { status, body } = await post('/key-results', {
         title: '[TEST] KR: 完成集成测试覆盖',
         objective_id: objId,
@@ -101,7 +101,7 @@ describe('OKR 拆解端到端集成测试', () => {
     });
 
     it('创建 okr_project（绑定 KR）', async () => {
-      if (!krId) return;
+      expect(krId, 'KeyResult setup must succeed before creating a project').toBeTruthy();
       const { status, body } = await post('/projects', {
         title: '[TEST] Project: 补充 P0 集成测试',
         kr_id: krId,
@@ -115,7 +115,7 @@ describe('OKR 拆解端到端集成测试', () => {
     });
 
     it('创建 okr_scope（绑定 okr_project）', async () => {
-      if (!projectId) return;
+      expect(projectId, 'Project setup must succeed before creating a scope').toBeTruthy();
       const { status, body } = await post('/scopes', {
         title: '[TEST] Scope: Brain 测试',
         project_id: projectId,
@@ -129,11 +129,11 @@ describe('OKR 拆解端到端集成测试', () => {
     });
 
     it('创建 okr_initiative（绑定 Scope）', async () => {
-      if (!scopeId) return;
+      expect(scopeId, 'Scope setup must succeed before creating an initiative').toBeTruthy();
       const { status, body } = await post('/initiatives', {
         title: '[TEST] Initiative: 写 tick-full-loop 测试',
         scope_id: scopeId,
-        status: 'planning',
+        status: 'planned',
       });
 
       expect(status).toBe(201);
@@ -143,7 +143,9 @@ describe('OKR 拆解端到端集成测试', () => {
     });
 
     it('GET 各层级单条记录', async () => {
-      if (!objId || !krId || !projectId) return;
+      expect(objId, 'Objective setup must succeed before GET assertions').toBeTruthy();
+      expect(krId, 'KeyResult setup must succeed before GET assertions').toBeTruthy();
+      expect(projectId, 'Project setup must succeed before GET assertions').toBeTruthy();
       const { status: s1, body: b1 } = await get(`/objectives/${objId}`);
       expect(s1).toBe(200);
       expect(b1.item.id).toBe(objId);
@@ -162,7 +164,8 @@ describe('OKR 拆解端到端集成测试', () => {
 
   describe('okr-decomposition: 树状查询', () => {
     it('/okr/tree 返回含测试 Vision 的完整 Objective+KR 层级', async () => {
-      if (!objId || !krId) return;
+      expect(objId, 'Objective setup must succeed before tree assertions').toBeTruthy();
+      expect(krId, 'KeyResult setup must succeed before tree assertions').toBeTruthy();
       const { status, body } = await get(`/tree?vision_id=${visionId}`);
 
       expect(status).toBe(200);
@@ -181,7 +184,8 @@ describe('OKR 拆解端到端集成测试', () => {
     });
 
     it('/okr/tree KR 层包含 projects 数组（全树扩展）', async () => {
-      if (!objId || !krId) return;
+      expect(objId, 'Objective setup must succeed before tree assertions').toBeTruthy();
+      expect(krId, 'KeyResult setup must succeed before tree assertions').toBeTruthy();
       const { status, body } = await get(`/tree?vision_id=${visionId}`);
 
       expect(status).toBe(200);
@@ -209,7 +213,7 @@ describe('OKR 拆解端到端集成测试', () => {
 
   describe('okr-decomposition: recalculate-progress', () => {
     it('无 task 时 current_value = 0', async () => {
-      if (!krId) return;
+      expect(krId, 'KeyResult setup must succeed before progress assertions').toBeTruthy();
       const { status, body } = await post(`/key-results/${krId}/recalculate-progress`, {});
 
       expect(status).toBe(200);
@@ -219,7 +223,8 @@ describe('OKR 拆解端到端集成测试', () => {
     });
 
     it('1/2 task 完成时 current_value = 50（target=100）', async () => {
-      if (!krId || !initiativeId) return;
+      expect(krId, 'KeyResult setup must succeed before progress assertions').toBeTruthy();
+      expect(initiativeId, 'Initiative setup must succeed before task assertions').toBeTruthy();
       // 直接 DB 插入 2 个 task，1 个 completed
       const t1Res = await testPool.query(
         `INSERT INTO tasks (title, status, priority, task_type, okr_initiative_id)

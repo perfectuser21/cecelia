@@ -389,18 +389,29 @@ describe('migration 367 through the real PostgreSQL migration runner', () => {
       bundle: { objective: 'bounded fixture' },
       callbackSecretHash: 'a'.repeat(64),
     });
-    await attempts.markStarting(attemptId, { leaseOwner: 'brain-1', leaseSeconds: 90 });
+    const startingAttempt = await attempts.markStarting(attemptId, {
+      leaseOwner: 'brain-1',
+      leaseSeconds: 90,
+    });
     await attempts.markRunning(attemptId, {
       leaseOwner: 'brain-1',
+      leaseGeneration: startingAttempt.lease_generation,
       providerSessionId: 'session-private',
       leaseSeconds: 90,
     });
-    await attempts.heartbeat(attemptId, { leaseOwner: 'brain-1', leaseSeconds: 90 });
+    await attempts.heartbeat(attemptId, {
+      leaseOwner: 'brain-1',
+      leaseGeneration: startingAttempt.lease_generation,
+      leaseSeconds: 90,
+    });
     await attempts.complete(attemptId, {
       status: 'completed',
       summary: 'private result',
       provider_metadata: { session_id: 'session-private' },
-    }, { leaseOwner: 'brain-1' });
+    }, {
+      leaseOwner: 'brain-1',
+      leaseGeneration: startingAttempt.lease_generation,
+    });
 
     const projected = await migrationPool.query(
       `SELECT event_type,payload
