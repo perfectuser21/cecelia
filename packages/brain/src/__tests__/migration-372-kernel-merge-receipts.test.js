@@ -2,11 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const sql = readFileSync(
-  new URL('../../migrations/371_kernel_merge_effect_receipts.sql', import.meta.url),
+  new URL('../../migrations/372_kernel_merge_effect_receipts.sql', import.meta.url),
   'utf8',
 );
 
-describe('migration 371 kernel merge effect receipts', () => {
+describe('migration 372 kernel merge effect receipts', () => {
   it.each([
     'kernel_pr_ownership',
     'kernel_pr_head_observations',
@@ -34,7 +34,9 @@ describe('migration 371 kernel merge effect receipts', () => {
   });
 
   it('anchors all mutable PR evidence to exact 40-character SHAs', () => {
-    expect(sql.match(/char_length\(head_sha\) = 40/gi)?.length).toBeGreaterThanOrEqual(3);
+    expect(
+      sql.match(/char_length\((?:head_sha|requested_head_sha|observed_head_sha)\) = 40/gi)?.length,
+    ).toBeGreaterThanOrEqual(4);
     expect(sql).toMatch(/observed_head_sha TEXT NOT NULL/i);
   });
 });
