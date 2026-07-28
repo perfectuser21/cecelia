@@ -35,6 +35,13 @@ export default defineConfig({
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
     exclude: [
+      // These CommonJS suites use Node's built-in test runner. Loading them in
+      // Vitest executes TAP tests as import side effects and then reports
+      // "No test suite found"; package.json runs them explicitly via node --test.
+      'scripts/fleet-worker/callback-auth.test.cjs',
+      'scripts/fleet-worker/github-mutation-broker.test.cjs',
+      'scripts/fleet-worker/github-read-broker.test.cjs',
+      'scripts/fleet-worker/result-delivery.test.cjs',
       // DB 集成测试（pool.query 直连，beforeAll import pool）
       'src/__tests__/actions-dedup.test.js',
       'src/__tests__/actions-goal-validation.test.js',

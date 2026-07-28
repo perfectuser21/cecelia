@@ -8,6 +8,7 @@ import { canonicalRequiredChecksDigest } from '../post-diff-risk-policy.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
+const ASSESSMENT_ID = '33333333-3333-4333-8333-333333333333';
 const HEAD_SHA = 'a'.repeat(40);
 const BASE_SHA = '9'.repeat(40);
 const DIFF_DIGEST = `sha256:${'8'.repeat(64)}`;
@@ -62,7 +63,19 @@ function row(hop, action, detail = {}, extra = {}) {
 }
 
 function evidence(overrides = {}) {
-  const reviewRequired = overrides.reviewRequired ?? true;
+  const payloadReviewRequired = overrides.payloadReviewRequired ?? true;
+  const reviewPolicy = {
+    assessment_id: ASSESSMENT_ID,
+    policy_version: 'kernel-merge/v1',
+    changed_paths: ['apps/dashboard/src/components/ReleaseStatus.jsx'],
+    risk_tier: 'low',
+    risk_reasons: ['low_risk_paths'],
+    first_kernel_release: false,
+    payload_review_required: payloadReviewRequired,
+    review_required: payloadReviewRequired,
+    ...overrides.reviewPolicy,
+  };
+  const reviewRequired = overrides.reviewRequired ?? reviewPolicy.review_required;
   const postDiffRisk = overrides.postDiffRisk ?? riskProof(reviewRequired);
   const reviewRequest = row(3, 'effect:human_review_requested', {
     review_reason: 'awaiting_human_review',
@@ -87,7 +100,7 @@ function evidence(overrides = {}) {
     },
     task: {
       id: TASK_ID,
-      payload: { review_required: reviewRequired },
+      payload: { review_required: payloadReviewRequired },
     },
     contract: {
       id: '33333333-3333-4333-8333-333333333333',
@@ -113,6 +126,7 @@ function evidence(overrides = {}) {
       ci: 'pass',
       required_checks: REQUIRED_CHECKS,
       merged: false,
+      changed_paths: reviewPolicy.changed_paths,
     },
     decisionLog: [
       row(1, 'verdict:evaluate', {
@@ -166,6 +180,7 @@ function evidence(overrides = {}) {
     revalidatedPostDiffRisk: postDiffRisk,
     policyVersion: 'kernel-merge/v1',
     ...overrides,
+    reviewPolicy,
   };
 }
 
@@ -197,6 +212,9 @@ describe('validateMergeAuthorizationEvidence', () => {
       contract_digest: `sha256:${'c'.repeat(64)}`,
       contract_approved_at: '2026-07-28T07:00:00.000Z',
       policy_version: 'kernel-merge/v1',
+      review_assessment_id: ASSESSMENT_ID,
+      risk_tier: 'low',
+      first_kernel_release: false,
       review_required: true,
       evaluator_hop: 1,
       judge_hop: 2,
@@ -244,6 +262,69 @@ describe('validateMergeAuthorizationEvidence', () => {
     const stale = evidence();
     stale.decisionLog[2].observed.pr.head_sha = 'b'.repeat(40);
     expectDenied(stale, 'stale_human_review');
+  });
+
+  it.each([
+    ['first kernel release', {
+      first_kernel_release: true,
+      risk_reasons: ['low_risk_paths', 'first_kernel_release'],
+      review_required: true,
+    }],
+    ['high-risk path', {
+      changed_paths: ['packages/brain/migrations/376_unsafe.sql'],
+      risk_tier: 'high',
+      risk_reasons: ['high_risk_path:packages/brain/migrations/376_unsafe.sql'],
+      review_required: true,
+    }],
+  ])('requires same-SHA human review for a server-observed %s even when payload is false', (
+    _name,
+    reviewPolicy,
+  ) => {
+    const input = evidence({
+      payloadReviewRequired: false,
+      reviewPolicy,
+    });
+    input.decisionLog = input.decisionLog.filter((entry) => (
+      entry.action !== 'verdict:human_review'
+      && entry.action !== 'effect:human_review_requested'
+    ));
+    expectDenied(input, 'human_review_missing');
+  });
+
+  it('allows payload to tighten a low-risk repeat release', () => {
+    const input = evidence({
+      payloadReviewRequired: true,
+      reviewPolicy: {
+        risk_tier: 'low',
+        first_kernel_release: false,
+        review_required: true,
+      },
+    });
+    expect(validateMergeAuthorizationEvidence(input)).toMatchObject({
+      review_required: true,
+      risk_tier: 'low',
+      first_kernel_release: false,
+    });
+  });
+
+  it.each([
+    ['first release downgrade', {
+      first_kernel_release: true,
+      risk_reasons: ['low_risk_paths', 'first_kernel_release'],
+      review_required: false,
+    }],
+    ['high-risk downgrade', {
+      risk_tier: 'high',
+      risk_reasons: ['high_risk_path:packages/brain/src/orchestrator/run.js'],
+      changed_paths: ['packages/brain/src/orchestrator/run.js'],
+      review_required: false,
+    }],
+    ['payload downgrade', {
+      payload_review_required: false,
+      review_required: false,
+    }],
+  ])('rejects forged durable review policy: %s', (_name, reviewPolicy) => {
+    expectDenied(evidence({ reviewPolicy }), 'review_policy_invalid');
   });
 
   it('a new PR head invalidates every old verdict and merge intent', () => {

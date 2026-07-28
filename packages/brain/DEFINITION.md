@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.268.19
+**版本**: 1.268.20
+
+## Unified Kernel Golden Path + durable ReleaseRun
+
+- Codex review trust boundary、Kernel 11 要素等价 runtime 与 durable ReleaseRun
+  已在同一候选树集成；exact-head confirmed merge receipt 唯一创建 ReleaseRun。
+- Merge effect 在 intent 前和真实 GitHub effect 前都重新验证 approved contract、
+  exact diff/check/base、post-diff risk 与 PostgreSQL durable review assessment。
+- Migration 374–380 顺序覆盖 ReleaseRun、equivalence runtime/cases、Codex callback
+  与 typed rollback；当前仅为本地候选，未部署，live proof 仍诚实为 0/99。
 
 ## Kernel Codex review trust boundary
 
@@ -200,6 +209,154 @@
   envelope；空 description 规范化为 title，缺 id/title 则 fail-closed。
 - P1 合同测试同时验证 envelope、失败路径与 `/dev` 可执行 prompt 的标题/描述。
 - 回退：`bash scripts/brain-rollback.sh 1.268.2`。
+## Exact production recovery readback
+
+- Brain and dashboard restart detection separates source-tree artifact identity
+  from image/dist deployment digests and verifies route-owned durable receipts.
+- External production/rollback controllers are accepted only after an exact
+  running-container readback of image, command, environment, owner nonce,
+  mounts, tmpfs, healthcheck, resource, network, and security policy.
+- Production generations greater than one remain launchable; staging receipts
+  cannot stale a production rollback, and deploy busy races terminalize every
+  claimed-but-not-launched generation.
+- 回退：`bash scripts/brain-rollback.sh 1.268.17`（保留 ReleaseRun 账本）。
+
+## Durable typed post-production rollback
+
+- Migration 380 adds an append-only rollback execution authority, one-shot
+  claim/lease, terminal settlement, and exact readback receipt, independently
+  bound to the already-confirmed `production_verified` ReleaseRun evidence.
+- Brain, dashboard, and Workflow Skills rollback through fixed typed routes;
+  production deploy intents and legacy/manual token-only calls cannot authorize
+  rollback.
+- Forward and rollback mutations run in restartable sibling controllers from
+  immutable image-owned routes under one PostgreSQL production-mutation lock.
+- Timeout, abort, lease loss, and post-effect readback mismatch settle
+  fail-closed with durable `late_effect_risk`; expired claims are observed as
+  `unknown` after Brain restart and never create a replacement claim. A bounded
+  controller restart may only resume the same still-live claim and recover its
+  Workflow WAL before ordinary CAS preflight.
+- 回退：`bash scripts/brain-rollback.sh 1.268.16`（保留 rollback execution ledger）。
+
+## Crash-safe immutable ReleaseRun effects
+
+- Every route runs from a fresh writable copy of a digest-verified, read-only
+  exact-SHA archive; mutable production state is written only under the
+  dedicated deploy root.
+- Snapshot reuse re-hashes the canonical tree and rejects changed bytes.
+- Detached worker and bootstrap secret files enforce owner/mode/link/inode
+  invariants and safely reap only stale private directories after SIGKILL.
+- Staging effect status is persisted for Brain restart recovery, and legacy
+  image recreation now requires the same ReleaseRun production authority.
+- 回退：`bash scripts/brain-rollback.sh 1.268.15`（保留 ReleaseRun 审计账本）。
+
+## Exact bootstrap receipt closure
+
+- `staging_passed` and `production_verified` require the exact persisted
+  bootstrap artifact versions and receipt evidence.
+- Receipt conflict replay compares the full confirmed row and rejects any
+  divergent merge, manifest, scenarios, probes, timestamps, or evidence.
+- 回退：`bash scripts/brain-rollback.sh 1.268.14`（保留 bootstrap receipt ledger）。
+
+## Private bootstrap secret transport
+
+- The one-time bootstrap accepts only a current-owner `0600` private-config
+  reference for its production DB URL and owner approval signature.
+- Approval verification and PostgreSQL clients load secrets from files;
+  `psql` gets only `PGSERVICEFILE`/`PGPASSFILE` references.
+- Migration, E2E, and deployment children run with explicit environment
+  allowlists, preventing ambient credential inheritance.
+- 回退：`bash scripts/brain-rollback.sh 1.268.13`（保留 bootstrap ledger）。
+
+## Durable ReleaseRun alert delivery
+
+- BLOCKED escalation and P0 outbox rows are one atomic database write.
+- Every delivery failure/success is appended durably; a provider failure leaves
+  the item pending for repeated BLOCKED reports or orchestrator-startup retry.
+- Only one immutable delivered attempt may exist per outbox item.
+- 回退：`bash scripts/brain-rollback.sh 1.268.12`（保留 alert outbox 审计账本）。
+
+## Leased private release workers
+
+- Detached release workers own renewal for their exact dispatch generation
+  until every artifact route finishes, then append one fenced terminal outcome.
+- Lease loss aborts active work and cannot report `dispatched`.
+- Worker and route environments are allowlisted; authorization, deploy token,
+  and database credentials are passed only by validated `0600` private-file
+  reference.
+- 回退：`bash scripts/brain-rollback.sh 1.268.11`（保留 dispatch lease 审计账本）。
+
+## Exact ReleaseRun receipt replay
+
+- Receipt idempotency returns the persisted row and compares every authority
+  field; conflicting replays are rejected instead of inheriting an existing ID.
+- Staging and production transitions bind exact persisted artifact readback and
+  receipt verification JSON at the database boundary.
+- 回退：`bash scripts/brain-rollback.sh 1.268.10`（保留 exact receipt ledger）。
+
+## Server-owned merge review authority
+
+- Merge review risk comes from the exact changed paths observed by the GitHub
+  adapter and a fixed server policy, never mutable title metadata.
+- An append-only PostgreSQL assessment recomputes durable first-release
+  history and enforces monotonic review: first/high/unknown always review,
+  while task payload can only require more review.
+- The effect executor binds that assessment to the current PR head before
+  persisting merge authorization.
+- 回退：`bash scripts/brain-rollback.sh 1.268.9`（保留 review assessment ledger）。
+
+## Artifact-bound rollback ledger
+
+- Normal and bootstrap production record exact per-artifact rollback intents
+  before effect execution and exact receipts after confirmed readback.
+- Runtime and PostgreSQL independently bind current/previous digests,
+  operational metadata, confirmed effect receipt, and full artifact coverage.
+- Terminal evidence must reference the exact ordered artifact receipt set.
+- 回退：`bash scripts/brain-rollback.sh 1.268.8`（保留 artifact rollback ledger）。
+
+## Immutable ReleaseRun artifacts
+
+- Release effects materialize an exact-merge archive in a retained,
+  per-commit artifact root; the shared deployment checkout is never reset.
+- Workflow Skills production links point only into that immutable root and
+  retain exact prior link targets.
+- Dashboard rollback evidence is a typed per-run JSON receipt containing the
+  exact old tag and deterministic previous-tree digest.
+- 回退：`bash scripts/brain-rollback.sh 1.268.7`（保留 immutable artifact roots）。
+
+## Server-owned ReleaseRun E2E probes
+
+- E2E policy v2 仅执行 server registry typed probes，不导入通用 shell runner。
+- canonical origin、staging network allowlist、timeout 和 bounded response reader
+  阻断 manifest URL/command 注入。
+- per-probe ID/status/observation digest 同步进入 normal/bootstrap durable receipts。
+
+## Fenced Kernel ReleaseRun closure
+
+- approved contract E2E manifest、typed per-scenario receipt、dispatch renewal /
+  generation / outcome fencing 和 DB transition guards 组成唯一 PASS 权威。
+- production 在 effect 前写 rollback intent，在 live readback 后写 rollback receipt；
+  terminal transition 必须引用 exact effect、E2E 与 rollback receipts。
+- artifact routes 由数据库持久 manifest 驱动，分别执行 Brain、Dashboard 与
+  Workflow Skills runtime；unknown/no-runtime fail closed。
+- bootstrap 使用同一 manifest executor 和 append-only lease renewal，exact merge
+  fetch、private output 与无 DB URL argv；BLOCKED report 写 durable dedup P0 escalation。
+- 回退：`bash scripts/brain-rollback.sh 1.268.5`（保留 migrations 374–375 审计账本）。
+
+## Durable Kernel ReleaseRun
+
+- confirmed merge receipt 唯一创建不可变 ReleaseRun，绑定 source/merge SHA、
+  artifact versions 与 `kernel-release/v1` policy；migration 374 的 append-only
+  ledger 强制六状态顺序。
+- staging/production 共用 release advisory lease；intent 先写、effect 后验，
+  重放先观察。只有 exact PASS receipt 才推进，unknown/skipped/idle/fail 均阻断。
+- Kernel `report/done` 只消费 `production_verified`。部署 API、历史 workflows、
+  drift sentinel 与直接生产脚本没有 ReleaseRun authorization 时全部 fail closed。
+- N-1 首次升级只允许 root-trusted owner signature + GitHub merged PR authoritative
+  read 的 exact-SHA bootstrap；canonical runner 顺序补齐 migration 369–374，
+  append-only singleton state/attempt/receipt ledger 强制 staging confirmed 后才能
+  production，并支持 crash 后 generation replay；terminal 后永久禁用。
+- 回退：`bash scripts/brain-rollback.sh 1.268.3`（保留 migration 374 审计账本）。
 
 ## Kernel controller contract and intervention evidence
 

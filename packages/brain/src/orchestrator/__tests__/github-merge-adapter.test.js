@@ -257,6 +257,7 @@ describe('GitHub merge adapter', () => {
         bypass_disabled: true,
         required_contexts: ['ci-passed'],
       },
+      changed_paths: ['apps/dashboard/src/App.jsx'],
     });
     expect(execFile).toHaveBeenCalledWith('gh', [
       'pr',
@@ -367,6 +368,38 @@ describe('GitHub merge adapter', () => {
     });
     await expect(adapter.observePullRequest(PR_URL))
       .rejects.toThrow('github_pr_identity_mismatch');
+  });
+
+  it.each([
+    ['empty path', pullFiles({ filename: '' })],
+    ['traversal path', pullFiles({ filename: '../outside' })],
+    ['NUL path', pullFiles({ filename: 'safe\u0000unsafe' })],
+  ])('fails closed for an invalid REST file path: %s', async (_label, files) => {
+    const adapter = createGitHubMergeAdapter({
+      execFile: makeExec({ files }),
+      requiredCheckPolicy: REQUIRED_CHECK_POLICY,
+    });
+
+    await expect(adapter.observePullRequest(PR_URL))
+      .rejects.toThrow('github_pr_files_invalid');
+  });
+
+  it.each([
+    ['null', null],
+    ['object', { filename: 'apps/dashboard/src/App.jsx' }],
+  ])('fails closed for a non-array REST files payload: %s', async (_label, rawFiles) => {
+    const execFile = vi.fn((_binary, args) => {
+      if (args[0] === 'pr') return JSON.stringify(prView());
+      if (String(args[1]).includes('/pulls/')) return JSON.stringify(rawFiles);
+      throw new Error(`unexpected command: ${args.join(' ')}`);
+    });
+    const adapter = createGitHubMergeAdapter({
+      execFile,
+      requiredCheckPolicy: REQUIRED_CHECK_POLICY,
+    });
+
+    await expect(adapter.observePullRequest(PR_URL))
+      .rejects.toThrow('github_pr_files_incomplete');
   });
 
   it('merges with an exact head fence through argv, never a command string', async () => {

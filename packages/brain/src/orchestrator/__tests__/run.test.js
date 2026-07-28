@@ -400,15 +400,26 @@ describe('buildRealDeps', () => {
 });
 
 describe('buildDefaultHandlers merge authority', () => {
-  it('wires merge_pr only to the receipted merge effect', async () => {
+  it('wires merge_pr and report only to their receipted effects', async () => {
     const mergeEffect = vi.fn(async () => ({ status: 'DONE', detail: 'merge confirmed' }));
+    const releaseEffect = vi.fn(async () => ({
+      status: 'BLOCKED',
+      release_state: 'production_deploying',
+      detail: 'verification pending',
+    }));
+    const query = vi.fn(async () => ({ rows: [] }));
     const handlers = await buildDefaultHandlers({
-      pool: { query: vi.fn() },
+      pool: { query },
       execCmd: vi.fn(),
       attemptStore: { complete: vi.fn() },
       judgeGate: vi.fn(),
       mergeEffect,
+      releaseEffect,
     });
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM kernel_release_alert_outbox'),
+      [null, 25],
+    );
 
     await expect(handlers.merge_pr({
       runId: '11111111-1111-4111-8111-111111111111',
@@ -424,5 +435,23 @@ describe('buildDefaultHandlers merge authority', () => {
       },
     })).resolves.toEqual({ status: 'DONE', detail: 'merge confirmed' });
     expect(mergeEffect).toHaveBeenCalledOnce();
+
+    await expect(handlers.report({
+      runId: '11111111-1111-4111-8111-111111111111',
+      taskId: '22222222-2222-4222-8222-222222222222',
+      observed: {
+        task: { title: 'T', payload: {} },
+        run: {},
+        pr: { url: 'https://github.com/perfectuser21/cecelia/pull/4400' },
+      },
+    })).resolves.toEqual({
+      status: 'BLOCKED',
+      detail: 'verification pending',
+    });
+    expect(releaseEffect).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO kernel_release_blocked_escalations'),
+      expect.any(Array),
+    );
   });
 });

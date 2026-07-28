@@ -4,7 +4,7 @@ vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows:
 vi.mock('../task-updater.js', () => ({ updateTaskStatus: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(undefined), sendBark: vi.fn().mockResolvedValue(false) }));
 
-import { runStagingE2E } from '../staging-e2e-runner.js';
+import { handlePromote, runStagingE2E } from '../staging-e2e-runner.js';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Slice 2 集成：runStagingE2E PASS 后放行分流（内部线 auto-promote 必 mock，绝不打真生产）
@@ -73,5 +73,25 @@ describe('runStagingE2E PASS 后 promote 分流', () => {
 
     expect(res.promoteStatus).toBe('pending_promote');
     expect(promoteExec).not.toHaveBeenCalled();
+  });
+});
+
+describe('handlePromote fail-closed status', () => {
+  it('never reports auto_promoted when the aggregate gate throws', async () => {
+    const res = await handlePromote(
+      { query: vi.fn() },
+      {
+        verdict: 'PASS',
+        baseRepo: 'cecelia',
+        prUrl: 'https://github.com/perfectuser21/cecelia/pull/1',
+        initiativeId: 'initiative-1',
+      },
+      {
+        checkInitiativeAggregate: vi.fn(async () => {
+          throw new Error('database unavailable');
+        }),
+      },
+    );
+    expect(res).toBe('promote_failed');
   });
 });

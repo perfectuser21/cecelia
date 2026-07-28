@@ -6,15 +6,15 @@
  *   2. fetchProdSha: 调 /health 端点获取 git_sha（不可达→保守跳过）
  *   3. SHA 一致 → verdict=ok，清除 driftFirstSeenAt
  *   4. SHA 不一致，首次记录 driftFirstSeenAt，< 30min → verdict=drifting
- *   5. SHA 不一致，≥ 30min → SHA 二次核验，通过后调 brain-deploy.sh → verdict=redeploying，redeployCount++
- *   6. redeployCount ≥ 2 且仍漂移 → 停止重试，sendBark P1，写 issue → verdict=escalated
+ *   5. SHA 不一致，≥ 30min → SHA 二次核验；无 ReleaseRun authority 时告警并阻断
+ *   6. 漂移持续 → 保持阻断，等待 Kernel ReleaseRun 接管
  *   7. 连续 3 次 network_error → sendBark P2 告警
  *
- * 审计日志格式: [drift_check] sha_main=X sha_prod=Y verdict=<ok|drifting|redeploying|escalated>
+ * 审计日志格式: [drift_check] sha_main=X sha_prod=Y verdict=<ok|drifting|blocked_unowned_release|escalated>
  *
  * 禁止：
  *   - INV-01: 不得引入路径判据（changed_paths/file filter/path filter）
- *   - INV-02: 补部署必须走 brain-deploy.sh 全闸，不得绕过
+ *   - INV-02: sentinel 只有观察权；部署副作用必须由 Kernel ReleaseRun 持有
  */
 
 import { exec } from 'child_process';
@@ -267,8 +267,8 @@ export async function runDriftCheck({
     return { verdict: 'ok', sha_main: shaMain, sha_prod: shaProd2 };
   }
 
-  // ── 7. 触发自动补部署（INV-02: 必须走 brain-deploy.sh 全闸） ───────────────
-  const newRedeployCount = redeployCount + 1;
+  // ── 7. legacy sentinel 无 ReleaseRun intent，严格阻断并告警 ───────────────
+  const newRedeployCount = redeployCount;
   const newState = {
     driftFirstSeenAt,
     redeployCount: newRedeployCount,
@@ -276,17 +276,23 @@ export async function runDriftCheck({
   };
   if (!_testInitialState) await saveState(newState, db);
 
-  console.log(`[drift_check] sha_main=${shaMain} sha_prod=${shaProd2} verdict=redeploying`);
-
-  // 执行 brain-deploy.sh（INV-02: 不得绕过，必须是这个脚本）
-  await new Promise((resolve, reject) => {
-    exec('bash scripts/brain-deploy.sh', { timeout: 300000 }, (err, stdout, stderr) => {
-      if (err) reject(err);
-      else resolve({ stdout, stderr });
-    });
-  });
-
-  return { verdict: 'redeploying', sha_main: shaMain, sha_prod: shaProd2, redeployCount: newRedeployCount };
+  console.log(`[drift_check] sha_main=${shaMain} sha_prod=${shaProd2} verdict=blocked_unowned_release`);
+  await sendBark(
+    '[drift-sentinel] 部署漂移已阻断 P1',
+    `legacy sentinel 无 ReleaseRun authority：main=${shaMain.slice(0, 8)} prod=${shaProd2.slice(0, 8)}`,
+    { dedupeKey: 'drift-blocked-unowned-release', ttl: 30 * 60, level: 'P1' },
+  );
+  await raise(
+    'P1',
+    'drift_blocked_unowned_release',
+    `部署漂移等待 Kernel ReleaseRun: sha_main=${shaMain} sha_prod=${shaProd2}`,
+  );
+  return {
+    verdict: 'blocked_unowned_release',
+    sha_main: shaMain,
+    sha_prod: shaProd2,
+    redeployCount: newRedeployCount,
+  };
 }
 
 /** 模块自 gate（同 launchd-patrol.js 模式）：scheduler-jobs 60s 轮询下保证每 30min 才真跑 */

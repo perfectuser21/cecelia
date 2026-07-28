@@ -2,10 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="${KERNEL_RELEASE_DEPLOY_ROOT:-$SOURCE_ROOT}"
+ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 VERSIONS_FILE="$ROOT_DIR/.brain-versions"
-BRAIN_DIR="$ROOT_DIR/packages/brain"
-DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"
+BRAIN_DIR="$SOURCE_ROOT/packages/brain"
+DEPLOY_STATUS_FILE="${DEPLOY_STATUS_FILE:-$ROOT_DIR/logs/cecelia-deploy-status.json}"
+DEPLOY_STARTED_AT="${KERNEL_RELEASE_STARTED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 # 蓝绿切换 + Bark 告警工具（顶层 source，保证 Docker/launchd 两模式都有 send_bark/bluegreen_swap）
 # shellcheck disable=SC1091
@@ -16,13 +19,81 @@ ENV_REGION="${ENV_REGION:-us}"
 
 # ── 部署状态文件：供 Brain 重启后感知 deploy 结果 ──────────────────────────
 DEPLOY_SUCCESS=false
+ROLLBACK_IMAGE_DIGEST=""
+ROLLBACK_IMAGE_TAG=""
+# shellcheck disable=SC2329 # invoked by EXIT trap
 _write_deploy_status() {
     if [[ "$DEPLOY_SUCCESS" == "true" ]]; then
-        printf '{"status":"success","version":"%s","finished_at":"%s"}' \
-            "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
+        local deployed_image_digest=""
+        local rollback_image_exists=false
+        local rollback_probe="fail"
+        local rollback_command=""
+        local rollback_version=""
+        deployed_image_digest=$(docker inspect --format '{{.Image}}' cecelia-node-brain 2>/dev/null || true)
+        if [[ -n "$ROLLBACK_IMAGE_DIGEST" ]] \
+          && docker image inspect "$ROLLBACK_IMAGE_DIGEST" >/dev/null 2>&1; then
+            rollback_image_exists=true
+            rollback_probe="pass"
+            rollback_version="${ROLLBACK_IMAGE_TAG#cecelia-brain:}"
+            rollback_command="BRAIN_VERSION=${rollback_version} docker compose -f docker-compose.yml up -d"
+        fi
+        mkdir -p "$(dirname "$DEPLOY_STATUS_FILE")"
+        DEPLOY_VERSION="$VERSION" DEPLOYED_IMAGE_DIGEST="$deployed_image_digest" \
+        ROLLBACK_IMAGE_EXISTS="$rollback_image_exists" ROLLBACK_PROBE="$rollback_probe" \
+        ROLLBACK_COMMAND="$rollback_command" \
+        ROLLBACK_IMAGE_DIGEST="$ROLLBACK_IMAGE_DIGEST" ROLLBACK_IMAGE_TAG="$ROLLBACK_IMAGE_TAG" \
+        DEPLOY_STARTED_AT="$DEPLOY_STARTED_AT" DEPLOY_STATUS_FILE="$DEPLOY_STATUS_FILE" \
+        node -e '
+          const fs = require("fs");
+          const artifacts = JSON.parse(process.env.KERNEL_RELEASE_ARTIFACT_VERSIONS || "[]");
+          const data = {
+            status: "success",
+            version: process.env.DEPLOY_VERSION,
+            release_run_id: process.env.KERNEL_RELEASE_RUN_ID || "",
+            merge_sha: process.env.KERNEL_RELEASE_MERGE_SHA || "",
+            dispatch_claim_id: Number(process.env.KERNEL_RELEASE_DISPATCH_CLAIM_ID || 0) || null,
+            dispatch_generation: Number(process.env.KERNEL_RELEASE_DISPATCH_GENERATION || 0) || null,
+            deployed_artifact_versions: artifacts,
+            deployed_image_digest: process.env.DEPLOYED_IMAGE_DIGEST || "",
+            rollback_image_digest: process.env.ROLLBACK_IMAGE_DIGEST || "",
+            rollback_image_reference: process.env.ROLLBACK_IMAGE_DIGEST || "",
+            rollback_image_tag: process.env.ROLLBACK_IMAGE_TAG || "",
+            rollback_image_exists: process.env.ROLLBACK_IMAGE_EXISTS === "true",
+            rollback_probe: process.env.ROLLBACK_PROBE,
+            rollback_command: process.env.ROLLBACK_COMMAND || "",
+            started_at: process.env.DEPLOY_STARTED_AT,
+            finished_at: new Date().toISOString(),
+          };
+          fs.writeFileSync(process.env.DEPLOY_STATUS_FILE, JSON.stringify(data));
+        ' 2>/dev/null || true
     else
-        printf '{"status":"failed","error":"brain-deploy.sh exited before success","finished_at":"%s"}' \
-            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
+        ROLLBACK_IMAGE_DIGEST="$ROLLBACK_IMAGE_DIGEST" \
+        ROLLBACK_IMAGE_TAG="$ROLLBACK_IMAGE_TAG" \
+        DEPLOY_STATUS_FILE="$DEPLOY_STATUS_FILE" \
+        node -e '
+          const fs = require("fs");
+          let prior = {};
+          try {
+            prior = JSON.parse(fs.readFileSync(process.env.DEPLOY_STATUS_FILE, "utf8"));
+          } catch {}
+          const temporary = `${process.env.DEPLOY_STATUS_FILE}.next-${process.pid}`;
+          fs.mkdirSync(require("path").dirname(process.env.DEPLOY_STATUS_FILE), {
+            recursive: true,
+          });
+          fs.writeFileSync(temporary, JSON.stringify({
+            ...prior,
+            status: "failed",
+            error: "brain-deploy.sh exited before success",
+            release_run_id: process.env.KERNEL_RELEASE_RUN_ID || "",
+            merge_sha: process.env.KERNEL_RELEASE_MERGE_SHA || "",
+            rollback_image_digest: process.env.ROLLBACK_IMAGE_DIGEST || "",
+            rollback_image_reference: process.env.ROLLBACK_IMAGE_DIGEST || "",
+            rollback_image_tag: process.env.ROLLBACK_IMAGE_TAG || "",
+            finished_at: new Date().toISOString(),
+          }), { mode: 0o600 });
+          fs.renameSync(temporary, process.env.DEPLOY_STATUS_FILE);
+          fs.chmodSync(process.env.DEPLOY_STATUS_FILE, 0o600);
+        ' 2>/dev/null || true
     fi
 }
 trap '_write_deploy_status' EXIT
@@ -32,11 +103,16 @@ trap '_write_deploy_status' EXIT
 # 验生产 Brain 真生效（不只 200/healthy）。
 #
 # 控制 env：
-#   SKIP_POST_DEPLOY_SMOKE=1  整体跳过（紧急部署 / 离线场景）
+#   SKIP_POST_DEPLOY_SMOKE=1  仅允许非 ReleaseRun 运维调用跳过
 #   RECENT_PRS="2651 2650"    强制指定 PR 列表，绕过 gh pr list（测试用 / mock）
 #
-# 退出码：始终 0（每条 smoke non-fatal — deploy 已成功不能因 smoke 回滚）。
+# ReleaseRun contract E2E 由服务端持久化 manifest executor 执行；本函数只保留
+# 非 ReleaseRun 的兼容 smoke。
 run_post_deploy_smoke() {
+    if [[ -n "${KERNEL_RELEASE_RUN_ID:-}" ]]; then
+        echo "  ReleaseRun E2E is owned by the server-owned contract E2E manifest executor"
+        return 0
+    fi
     if [[ "${SKIP_POST_DEPLOY_SMOKE:-0}" == "1" ]]; then
         echo "  [skip] SKIP_POST_DEPLOY_SMOKE=1"
         return 0
@@ -83,7 +159,7 @@ run_post_deploy_smoke() {
             if bash "$ROOT_DIR/$sf"; then
                 echo "  ✅ smoke pass: $sf"
             else
-                echo "  ❌ smoke failed: $sf (non-fatal — deploy 已成功)"
+                echo "  ❌ smoke failed: $sf"
                 failed=$((failed + 1))
             fi
         done
@@ -92,6 +168,9 @@ run_post_deploy_smoke() {
         echo "  最近 5 个合并 PR 未引入 smoke.sh — 跳过"
     else
         echo "  Post-deploy smoke 总计：跑 $ran 条，失败 $failed 条"
+    fi
+    if [[ "$failed" -ne 0 ]]; then
+        return 1
     fi
     return 0
 }
@@ -103,7 +182,7 @@ run_post_deploy_smoke() {
 DRAIN_TIMEOUT_SECS="${DRAIN_TIMEOUT_SECS:-120}"
 
 drain_before_swap() {
-    local brain_url="http://localhost:5221"
+    local brain_url="${BRAIN_URL:-http://localhost:5221}"
 
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] POST ${brain_url}/api/brain/tick/drain  # 进入 drain 模式"
@@ -168,7 +247,7 @@ if [[ "$SHA_CHECK_ONLY" == true ]]; then
 
     if [[ -z "$local_expected_sha" ]]; then
         echo "[SHA-CHECK] EXPECTED_SHA 未设置，从 git rev-parse HEAD 获取..."
-        local_expected_sha=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        local_expected_sha="${KERNEL_RELEASE_MERGE_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")}"
     fi
 
     echo "[SHA-CHECK] EXPECTED_SHA=${local_expected_sha}"
@@ -205,6 +284,63 @@ if [[ "$SHA_CHECK_ONLY" == true ]]; then
     echo "[SHA-CHECK] ✅ SHA 一致：${local_actual_sha}"
     exit 0
 fi
+
+# 所有真实生产副作用必须消费 server-owned ReleaseRun intent；直接手工调用默认拒绝。
+bash "$SCRIPT_DIR/lib/release-run-guard.sh" production
+CURRENT_PRODUCTION_IMAGE=$(docker inspect --format '{{.Image}}' \
+  cecelia-node-brain 2>/dev/null || true)
+PRESERVED_ROLLBACK_IMAGE=$(DEPLOY_STATUS_FILE="$DEPLOY_STATUS_FILE" node -e '
+  const fs = require("fs");
+  try {
+    const prior = JSON.parse(fs.readFileSync(process.env.DEPLOY_STATUS_FILE, "utf8"));
+    if (
+      prior.release_run_id === process.env.KERNEL_RELEASE_RUN_ID
+      && prior.merge_sha === process.env.KERNEL_RELEASE_MERGE_SHA
+      && /^sha256:[0-9a-f]{64}$/.test(prior.rollback_image_digest || "")
+    ) {
+      process.stdout.write(prior.rollback_image_digest);
+    }
+  } catch {}
+' 2>/dev/null || true)
+if [[ "$PRESERVED_ROLLBACK_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] \
+  && docker image inspect "$PRESERVED_ROLLBACK_IMAGE" >/dev/null 2>&1; then
+    ROLLBACK_IMAGE_DIGEST="$PRESERVED_ROLLBACK_IMAGE"
+else
+    ROLLBACK_IMAGE_DIGEST="$CURRENT_PRODUCTION_IMAGE"
+fi
+[[ "$ROLLBACK_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || { echo "[FAIL] current production image has no immutable rollback digest" >&2; exit 78; }
+docker image inspect "$ROLLBACK_IMAGE_DIGEST" >/dev/null 2>&1 \
+    || { echo "[FAIL] current production rollback image is unavailable" >&2; exit 78; }
+ROLLBACK_IMAGE_TAG="cecelia-brain:rollback-${ROLLBACK_IMAGE_DIGEST#sha256:}"
+ROLLBACK_IMAGE_TAG="${ROLLBACK_IMAGE_TAG:0:35}"
+docker tag "$ROLLBACK_IMAGE_DIGEST" "$ROLLBACK_IMAGE_TAG"
+ROLLBACK_IMAGE_DIGEST="$ROLLBACK_IMAGE_DIGEST" \
+ROLLBACK_IMAGE_TAG="$ROLLBACK_IMAGE_TAG" \
+DEPLOY_STATUS_FILE="$DEPLOY_STATUS_FILE" \
+node -e '
+  const fs = require("fs");
+  const path = require("path");
+  let prior = {};
+  try {
+    prior = JSON.parse(fs.readFileSync(process.env.DEPLOY_STATUS_FILE, "utf8"));
+  } catch {}
+  const temporary = `${process.env.DEPLOY_STATUS_FILE}.next-${process.pid}`;
+  fs.mkdirSync(path.dirname(process.env.DEPLOY_STATUS_FILE), { recursive: true });
+  fs.writeFileSync(temporary, JSON.stringify({
+    ...prior,
+    status: "running",
+    release_run_id: process.env.KERNEL_RELEASE_RUN_ID || "",
+    merge_sha: process.env.KERNEL_RELEASE_MERGE_SHA || "",
+    rollback_image_digest: process.env.ROLLBACK_IMAGE_DIGEST,
+    rollback_image_reference: process.env.ROLLBACK_IMAGE_DIGEST,
+    rollback_image_tag: process.env.ROLLBACK_IMAGE_TAG,
+    rollback_probe: "pass",
+    updated_at: new Date().toISOString(),
+  }), { mode: 0o600 });
+  fs.renameSync(temporary, process.env.DEPLOY_STATUS_FILE);
+  fs.chmodSync(process.env.DEPLOY_STATUS_FILE, 0o600);
+'
 
 # ── 部署模式检测：Docker vs launchd ─────────────────────────────────────────
 DEPLOY_MODE="docker"
@@ -321,6 +457,14 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     CURRENT_IMG=$(docker inspect cecelia-node-brain --format '{{.Image}}' 2>/dev/null || echo "")
     TARGET_IMG=$(docker inspect "cecelia-brain:${VERSION}" --format '{{.Id}}' 2>/dev/null || echo "")
     if [[ "$DRY_RUN" == false && -n "$CURRENT_IMG" && -n "$TARGET_IMG" && "$CURRENT_IMG" == "$TARGET_IMG" ]]; then
+        TARGET_GIT_SHA=$(docker image inspect "$TARGET_IMG" \
+          --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+          | sed -n 's/^GIT_SHA=//p')
+        if [[ -n "${KERNEL_RELEASE_MERGE_SHA:-}" \
+          && "$TARGET_GIT_SHA" != "$KERNEL_RELEASE_MERGE_SHA" ]]; then
+            echo "[FAIL] current image identity conflicts with ReleaseRun merge SHA" >&2
+            exit 78
+        fi
         echo "  [skip] 容器已在 v${VERSION}（image SHA 一致），跳过 recreate"
         DEPLOY_SUCCESS=true
         exit 0
@@ -355,7 +499,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
             # blue 仍在运行且已进入 drain 模式 → 恢复正常派发
             echo "  [drain] green 未通过，恢复旧 Brain 派发..."
-            curl -sf --max-time 5 -X POST "http://localhost:5221/api/brain/tick/drain-cancel" >/dev/null 2>&1 || true
+            curl -sf --max-time 5 -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/tick/drain-cancel" >/dev/null 2>&1 || true
             exit 1
         fi
     else
@@ -486,8 +630,7 @@ MAX_TRIES=12
 while [ $TRIES -lt $MAX_TRIES ]; do
   sleep 5
   TRIES=$((TRIES + 1))
-  if curl -sf http://localhost:5221/api/brain/tick/status > /dev/null 2>&1; then
-    DEPLOY_SUCCESS=true
+  if curl -sf "${BRAIN_URL:-http://localhost:5221}/api/brain/tick/status" > /dev/null 2>&1; then
     echo ""
     echo "=== Deploy SUCCESS: cecelia-brain v${VERSION} is healthy (${DEPLOY_MODE}) ==="
 
@@ -496,7 +639,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     echo ""
     echo "[S6] SHA 回读断言（Gate3 C-05）..."
     if [[ -z "${EXPECTED_SHA:-}" ]]; then
-        EXPECTED_SHA=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        EXPECTED_SHA="${KERNEL_RELEASE_MERGE_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")}"
     fi
     if [[ -n "$EXPECTED_SHA" ]]; then
         S6_HEALTH_JSON=""
@@ -504,7 +647,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
             S6_HEALTH_JSON=$(cat "${HEALTH_JSON_OVERRIDE}")
         else
             S6_HEALTH_JSON=$(curl -sf --connect-timeout 10 --max-time 15 \
-                "http://localhost:5221/api/brain/health" 2>/dev/null || echo "")
+                "${BRAIN_URL:-http://localhost:5221}/api/brain/health" 2>/dev/null || echo "")
         fi
         if [[ -n "$S6_HEALTH_JSON" ]]; then
             ACTUAL_SHA=$(echo "$S6_HEALTH_JSON" | node -e "
@@ -531,7 +674,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     # 8. Update cecelia-run on host (self-update: keeps executor in sync with repo)
     echo ""
     echo "[8/8] Updating cecelia-run on host..."
-    CECELIA_RUN_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-run.sh"
+    CECELIA_RUN_SRC="$SOURCE_ROOT/packages/brain/scripts/cecelia-run.sh"
     CECELIA_RUN_DST="${HOST_HOME}/bin/cecelia-run"
     if [[ -f "$CECELIA_RUN_SRC" ]]; then
       # macOS cp identical files 返 rc=1，set -e 会中止后续 Phase 9-11；|| true 兜底
@@ -545,7 +688,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     # 9. Update cecelia-bridge on host (self-update: keeps bridge timeout config in sync)
     echo ""
     echo "[9/9] Updating cecelia-bridge on host..."
-    BRIDGE_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-bridge.js"
+    BRIDGE_SRC="$SOURCE_ROOT/packages/brain/scripts/cecelia-bridge.js"
     BRIDGE_DST="${HOST_HOME}/bin/cecelia-bridge.js"
     if [[ -f "$BRIDGE_SRC" ]]; then
       # 同 cecelia-run 的 cp identical 防中止
@@ -579,7 +722,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     # 10. Trigger Notion sync to catch missed webhook events during restart
     echo ""
     echo "[10/11] Triggering post-deploy Notion sync..."
-    SYNC_RESPONSE=$(curl -sf --max-time 30 -X POST http://localhost:5221/api/brain/notion-sync/run 2>&1) || true
+    SYNC_RESPONSE=$(curl -sf --max-time 30 -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/notion-sync/run" 2>&1) || true
     if [[ -n "$SYNC_RESPONSE" ]]; then
       SYNCED=$(echo "$SYNC_RESPONSE" | node -e "try{const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const f=r.fromNotion||{};const t=r.toNotion||{};console.log('fromNotion synced='+( f.synced||0)+' toNotion synced='+(t.synced||0)+' failed='+(t.failed||0))}catch(e){console.log('(parse error)'+ e.message)}" 2>/dev/null || echo "$SYNC_RESPONSE" | head -c 200)
       echo "  Notion sync triggered: $SYNCED"
@@ -590,8 +733,17 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     # 11. Post-deploy smoke：跑最近合并 PR 引入的 packages/brain/scripts/smoke/*.sh
     echo ""
     echo "[11/11] Post-deploy smoke..."
-    run_post_deploy_smoke || true   # smoke non-fatal — deploy 已成功
-
+    set +e
+    SMOKE_OUTPUT=$(run_post_deploy_smoke 2>&1)
+    SMOKE_CODE=$?
+    set -e
+    echo "$SMOKE_OUTPUT"
+    if [[ "$SMOKE_CODE" -ne 0 ]]; then
+      DEPLOY_SUCCESS=false
+      echo "[FAIL] required post-deploy E2E failed"
+      exit 1
+    fi
+    DEPLOY_SUCCESS=true
     exit 0
   fi
   echo "  Attempt ${TRIES}/${MAX_TRIES}..."

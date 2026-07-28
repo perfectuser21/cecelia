@@ -35,6 +35,10 @@ import { createKernelHandlers } from './kernel-handlers.js';
 import { createGitHubMergeAdapter } from './github-merge-adapter.js';
 import { createMergeEffectExecutor } from './merge-effect-executor.js';
 import { createPostgresMergeEffectStore } from './merge-effect-store.js';
+import { createReleaseRunExecutor } from './release-run-executor.js';
+import { createReleaseBlockedEscalator } from './release-run-escalation.js';
+import { createPostgresReleaseRunStore } from './release-run-store.js';
+import { createReleaseRunAdapters } from './release-run-adapters.js';
 import { readGitArtifact } from './git-artifact-reader.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
@@ -72,8 +76,16 @@ export async function buildDefaultHandlers({
   attemptStore,
   judgeGate,
   mergeEffect,
+  releaseEffect,
+  resolveArtifactVersions,
+  observeStaging,
+  runStaging,
+  observeProduction,
+  runProduction,
+  prepareProductionRollback,
   githubExecFile,
 }) {
+  const defaultReleaseAdapters = createReleaseRunAdapters();
   const [
     judge,
     previewManager,
@@ -84,6 +96,7 @@ export async function buildDefaultHandlers({
     okr,
     cleanup,
     dockerExecutor,
+    alerting,
   ] = await Promise.all([
     import('../harness-judge.js'),
     import('../preview-manager.js'),
@@ -94,25 +107,8 @@ export async function buildDefaultHandlers({
     import('../okr-initiative-sync.js'),
     import('../harness-container-cleanup.js'),
     import('../docker-executor.js'),
+    import('../alerting.js'),
   ]);
-
-  const spawnStaging = async (payload) => {
-    if (!payload.pr_url) return { created: false, reason: 'missing_pr_url' };
-    const result = await pool.query(
-      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       SELECT $1, $2, 'staging_e2e', 'queued', 'P2', $3::jsonb
-       WHERE NOT EXISTS (
-         SELECT 1 FROM tasks WHERE task_type='staging_e2e' AND payload->>'pr_url'=$4
-       )`,
-      [
-        `[Staging E2E] ${payload.pr_branch || payload.pr_url}`,
-        `Kernel post-merge staging verification for ${payload.pr_url}`,
-        JSON.stringify(payload),
-        payload.pr_url,
-      ],
-    );
-    return { created: result.rowCount > 0 };
-  };
 
   let resolvedMergeEffect = mergeEffect;
   if (!resolvedMergeEffect) {
@@ -130,10 +126,29 @@ export async function buildDefaultHandlers({
     });
   }
 
+  const resolvedReleaseEffect = releaseEffect ?? createReleaseRunExecutor({
+    store: createPostgresReleaseRunStore(pool),
+    resolveArtifactVersions: resolveArtifactVersions
+      ?? defaultReleaseAdapters.resolveArtifactVersions,
+    observeStaging: observeStaging ?? defaultReleaseAdapters.observeStaging,
+    runStaging: runStaging ?? defaultReleaseAdapters.runStaging,
+    observeProduction: observeProduction ?? defaultReleaseAdapters.observeProduction,
+    runProduction: runProduction ?? defaultReleaseAdapters.runProduction,
+    prepareProductionRollback: prepareProductionRollback
+      ?? defaultReleaseAdapters.prepareProductionRollback,
+  });
+  const releaseBlockedEscalator = createReleaseBlockedEscalator({
+    pool,
+    raiseAlert: alerting.raise,
+  });
+  await releaseBlockedEscalator.flushPending();
+
   return createKernelHandlers({
     pool,
     attemptStore,
     mergeEffect: resolvedMergeEffect,
+    releaseEffect: resolvedReleaseEffect,
+    escalateReleaseBlocked: releaseBlockedEscalator,
     promptDir: dockerExecutor.getHostPromptDir(),
     judgeGate: judgeGate ?? judge.runJudgeGate,
     allocatePort: previewManager.allocatePort,
@@ -143,7 +158,6 @@ export async function buildDefaultHandlers({
     buildHandoff: handoff.buildHandoff,
     saveHandoff: handoff.saveHandoff,
     syncOkr: okr.syncOkrInitiativeStatus,
-    spawnStaging,
     cleanup: cleanup.killInitiativeContainers,
   });
 }

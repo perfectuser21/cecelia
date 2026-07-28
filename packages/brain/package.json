@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "bash -c 'NODE_OPTIONS=\"--max-old-space-size=3072\" npx vitest run 2>&1 | tee /tmp/brain-vitest-out.txt; EXIT=${PIPESTATUS[0]}; if [ $EXIT -ne 0 ] && grep -qE \"Tests.*[0-9]+ passed\" /tmp/brain-vitest-out.txt && ! grep -qE \"Tests.*[0-9]+ failed\" /tmp/brain-vitest-out.txt; then echo \"[test] OOM worker exit, all tests passed\"; exit 0; fi; exit $EXIT'",
+    "test": "bash -c 'NODE_OPTIONS=\"--max-old-space-size=3072\" npx vitest run 2>&1 | tee /tmp/brain-vitest-out.txt; EXIT=${PIPESTATUS[0]}; if [ $EXIT -ne 0 ] && grep -qE \"Tests.*[0-9]+ passed\" /tmp/brain-vitest-out.txt && ! grep -qE \"Tests.*[0-9]+ failed\" /tmp/brain-vitest-out.txt; then echo \"[test] OOM worker exit, all tests passed\"; exit 0; fi; exit $EXIT' && npm run test:node",
+    "test:node": "node --test scripts/fleet-worker/callback-auth.test.cjs scripts/fleet-worker/github-mutation-broker.test.cjs scripts/fleet-worker/github-read-broker.test.cjs scripts/fleet-worker/result-delivery.test.cjs",
     "test:watch": "vitest",
     "test:coverage": "NODE_OPTIONS='--max-old-space-size=3072' vitest run --coverage",
     "test:coverage:watch": "vitest --coverage",
@@ -46,5 +47,5 @@
     "supertest": "^7.2.2",
     "vitest": "^1.6.1"
   },
-  "version": "1.268.19"
+  "version": "1.268.20"
 }

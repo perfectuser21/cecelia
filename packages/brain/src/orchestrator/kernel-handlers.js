@@ -159,6 +159,14 @@ function evaluatorBrainResult(result) {
   };
 }
 
+function isVerifiedReleaseReceipt(receipt) {
+  return receipt?.status === 'DONE'
+    && receipt?.release_state === 'production_verified'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(receipt?.release_run_id ?? '')
+    && /^[0-9a-f]{40}$/i.test(receipt?.merge_sha ?? '');
+}
+
 async function appendJudgeVerdict(
   pool,
   ctx,
@@ -337,6 +345,34 @@ export function createKernelHandlers(deps) {
     },
 
     async report(ctx) {
+      const blockRelease = async (detail, receipt = null) => {
+        if (typeof deps.escalateReleaseBlocked !== 'function') {
+          throw new Error('release_blocked_escalation_unavailable');
+        }
+        await deps.escalateReleaseBlocked({
+          run_id: ctx.runId,
+          task_id: ctx.taskId,
+          release_run_id: receipt?.release_run_id ?? null,
+          merge_sha: receipt?.merge_sha ?? null,
+          release_state: receipt?.release_state ?? null,
+          detail,
+        });
+        return { status: 'BLOCKED', detail };
+      };
+      if (typeof deps.releaseEffect !== 'function') {
+        return blockRelease('ReleaseRun authority unavailable');
+      }
+      const releaseReceipt = await deps.releaseEffect({
+        runId: ctx.runId,
+        taskId: ctx.taskId,
+      });
+      if (!isVerifiedReleaseReceipt(releaseReceipt)) {
+        return blockRelease(
+          releaseReceipt?.detail ?? 'production_verified ReleaseRun receipt required',
+          releaseReceipt,
+        );
+      }
+
       const { observed } = ctx;
       const payload = observed.task?.payload ?? {};
       await deps.promote(ctx.taskId, { merged: true, pr_url: observed.pr?.url }, observed.pr?.url, deps.pool);
@@ -356,15 +392,6 @@ export function createKernelHandlers(deps) {
       });
       await deps.saveHandoff({ pool: deps.pool }, handoff);
       await deps.syncOkr(deps.pool, ctx.taskId, 'done');
-      await deps.spawnStaging({
-        pr_url: observed.pr?.url,
-        pr_branch: payload.pr_branch,
-        sub_task_id: ctx.taskId,
-        initiative_id: observed.run?.initiative_id,
-        journey_id: payload.journey_id,
-        base_repo: payload.base_repo,
-        project_id: payload.project_id,
-      });
       await deps.cleanup(ctx.runId);
 
       const client = await deps.pool.connect();
@@ -552,4 +579,8 @@ export function createIndependentJudgeEquivalenceSeam({
   });
 }
 
-export const __test__ = { prNumber, appendJudgeVerdict };
+export const __test__ = {
+  prNumber,
+  appendJudgeVerdict,
+  isVerifiedReleaseReceipt,
+};

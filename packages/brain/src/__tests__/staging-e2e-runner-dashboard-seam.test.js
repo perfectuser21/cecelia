@@ -1,6 +1,6 @@
 /**
  * A 方案 — harness 内部线 staging→promote 接缝对齐 dashboard。
- * 改动1：deployStaging 内部线走 deploy-local.sh（构建 dashboard + 写 .staging-pending），返回 stagingPort 5223。
+ * 改动1：deployStaging 内部线拒绝 legacy 直接部署，由 ReleaseRun 独占 staging mutation。
  * 改动2：staging E2E scenario 用 deploy 返回的 stagingPort（内部线打 5223）。
  * 改动3：handlePromote 未注入 promoteExec 时，defaultPromoteExec 用 process.env.REPO_ROOT（非裸 getRepoRoot=容器内/）。
  */
@@ -23,20 +23,19 @@ vi.mock('../staging-promote.js', async (importActual) => {
 import { deployStaging, runStagingE2E } from '../staging-e2e-runner.js';
 import { defaultPromoteExec } from '../staging-promote.js';
 
-describe('deployStaging — 内部线走 deploy-local.sh（改动1）', () => {
+describe('deployStaging — 内部线 mutation 归 ReleaseRun（改动1）', () => {
   let origEnv;
   beforeEach(() => { origEnv = process.env.REPO_ROOT; process.env.REPO_ROOT = '/fake/repo'; });
   afterEach(() => {
     if (origEnv === undefined) delete process.env.REPO_ROOT; else process.env.REPO_ROOT = origEnv;
   });
 
-  it('internal → deploy-local.sh --changed=apps/dashboard + stagingPort 5223', async () => {
+  it('internal → fail closed，不调用 legacy deploy-local.sh，保留 stagingPort 5223', async () => {
     const exec = vi.fn(() => '');
     const r = await deployStaging({ exec, line: 'internal' });
-    const [cmd, optsArg] = exec.mock.calls[0];
-    expect(cmd).toContain('/fake/repo/scripts/deploy-local.sh');
-    expect(cmd).toContain('--changed=apps/dashboard');
-    expect(optsArg.cwd).toBe('/fake/repo');
+    expect(exec).not.toHaveBeenCalled();
+    expect(r.status).toBe('failed');
+    expect(r.reason).toBe('release_run_authority_required');
     expect(r.stagingPort).toBe(5223);
   });
 

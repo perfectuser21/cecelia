@@ -181,6 +181,13 @@ export function createMergeEffectExecutor({
       }
 
       const risk = recomputePostDiffRisk(authority, current, now);
+      const reviewPolicy = await store.assessReviewPolicy(client, {
+        runId,
+        taskId,
+        currentPr: current,
+        policyVersion,
+        payload: authority.task.payload,
+      });
       const proof = validateMergeAuthorizationEvidence({
         ...authority,
         pr: current,
@@ -188,6 +195,7 @@ export function createMergeEffectExecutor({
         postDiffRisk: risk.original,
         revalidatedPostDiffRisk: risk.revalidated,
         now,
+        reviewPolicy,
       });
       const effect = existing ?? await store.createAuthorizationIntent(
         client,
@@ -201,6 +209,13 @@ export function createMergeEffectExecutor({
       const freshAuthority = await store.loadEvidence(client, { runId, taskId });
       const freshCurrent = await observePullRequest(current.url);
       const freshRisk = recomputePostDiffRisk(freshAuthority, freshCurrent, now);
+      const freshReviewPolicy = await store.assessReviewPolicy(client, {
+        runId,
+        taskId,
+        currentPr: freshCurrent,
+        policyVersion,
+        payload: freshAuthority.task.payload,
+      });
       validateMergeAuthorizationEvidence({
         ...freshAuthority,
         pr: freshCurrent,
@@ -208,6 +223,7 @@ export function createMergeEffectExecutor({
         postDiffRisk: freshRisk.original,
         revalidatedPostDiffRisk: freshRisk.revalidated,
         now,
+        reviewPolicy: freshReviewPolicy,
       });
       if (effect.requested_head_sha !== freshCurrent.head_sha) {
         deny('stale_effect_intent');

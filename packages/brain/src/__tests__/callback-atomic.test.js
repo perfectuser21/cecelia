@@ -175,14 +175,9 @@ describe('execution-callback atomicity', () => {
   });
 
   it('should use BEGIN/COMMIT transaction for callback processing', async () => {
-    // Mock the pool.query for progress rollup (after transaction)
-    // 幂等性检查 (decision_log) 必须返回空 rows，否则会提前 return duplicate
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) {
-        return Promise.resolve({ rows: [], rowCount: 0 });
-      }
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    // This unit only exercises the transaction boundary. Unrelated post-callback
+    // lookups must stay empty so they cannot activate background workflows.
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
 
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-tx-1',
@@ -240,10 +235,7 @@ describe('execution-callback atomicity', () => {
   it('UPDATE tasks should use boolean $6 for completed_at, not reuse $2 in CASE WHEN', async () => {
     // Regression test: "inconsistent types deduced for parameter $2 (text vs character varying)"
     // The fix extracts isCompleted as a separate boolean param ($6) to avoid $2 type ambiguity.
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) return Promise.resolve({ rows: [], rowCount: 0 });
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
 
     await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-sql-type',
@@ -259,9 +251,9 @@ describe('execution-callback atomicity', () => {
     const updateCall = clientCalls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
     expect(updateCall).toBeDefined();
 
-    // Should have 11 params: [task_id, newStatus, lastRunResult, status, pr_url, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted]
+    // Should have 12 params: the original transaction fields plus execMetaJson.
     const params = updateCall[1];
-    expect(params).toHaveLength(11);
+    expect(params).toHaveLength(12);
 
     // $6 (isCompleted) must be a boolean true for 'AI Done'
     expect(typeof params[5]).toBe('boolean');
@@ -277,10 +269,7 @@ describe('execution-callback atomicity', () => {
   });
 
   it('isCompleted should be false for AI Failed status', async () => {
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) return Promise.resolve({ rows: [], rowCount: 0 });
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
 
     await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-failed-type',
@@ -295,7 +284,7 @@ describe('execution-callback atomicity', () => {
     expect(updateCall).toBeDefined();
 
     const params = updateCall[1];
-    expect(params).toHaveLength(11);
+    expect(params).toHaveLength(12);
     // $6 must be false for failed tasks
     expect(params[5]).toBe(false);
     expect(params[1]).toBe('failed');
@@ -306,10 +295,7 @@ describe('execution-callback findings storage (D1/D2/D3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) return Promise.resolve({ rows: [], rowCount: 0 });
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
   });
 
   function getUpdateParams() {
@@ -427,10 +413,7 @@ describe('execution-callback pr_number 提取 (DoD-4)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) return Promise.resolve({ rows: [], rowCount: 0 });
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
   });
 
   it('从 pr_url 提取 pr_number 并作为 $8 参数传给 SQL', async () => {

@@ -1,133 +1,27 @@
-name: Promote Dashboard to Production (人工放行闸)
-
-# 死规矩：AI 只到 staging，生产由用户手点放行。
-# 流程：打开 staging（perfect21:5222）看过、确认 OK
-#       → 来 Actions 手点本 workflow、confirm 框输入 PROMOTE
-#       → 触发 Brain webhook 部署生产（5221）
+name: Authorized Dashboard Production Effect
 
 on:
   workflow_dispatch:
     inputs:
-      confirm:
-        description: '输入 PROMOTE 确认放行到生产'
+      release_run_id:
+        description: Durable Kernel ReleaseRun UUID
         required: true
-        default: ''
-      bypass_nightly_gate:
-        description: '输入 BYPASS 跳过 nightly 绿色检查（紧急通道，需知晓风险）'
-        required: false
-        default: ''
+      merge_sha:
+        description: Exact merge SHA
+        required: true
+      release_authorization:
+        description: Persisted production effect authorization UUID
+        required: true
 
 concurrency:
-  group: promote-dashboard-prod
+  group: kernel-release
   cancel-in-progress: false
 
 jobs:
-  # ─── 刀C Release Gate：promote 前检查最近 nightly 绿色证据 ────────────────
-  nightly_gate:
-    name: 刀C Release Gate (nightly 绿色检查)
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    if: github.event.inputs.confirm == 'PROMOTE'
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: 检查最近 nightly 绿色证据
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          WINDOW_HOURS: '48'
-          BYPASS_NIGHTLY_GATE: ${{ github.event.inputs.bypass_nightly_gate == 'BYPASS' && '1' || '0' }}
-        run: bash scripts/ci/check-nightly-green.sh
-
-  promote:
-    name: Promote Dashboard → Production
-    needs: nightly_gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: github.event.inputs.confirm == 'PROMOTE'
-    steps:
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v2
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-
-      - name: Trigger production deploy via Brain webhook
-        env:
-          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          set -uo pipefail
-          if [ -z "${DEPLOY_TOKEN:-}" ]; then
-            echo "::error::DEPLOY_TOKEN secret 未配置"
-            exit 1
-          fi
-
-          echo "手动放行 → 触发生产部署（端口 5221）"
-          echo "  URL: ${BRAIN_URL}/api/brain/deploy"
-
-          # 传一个具体文件路径让 deploy-local.sh 能命中 apps/dashboard/* 分支
-          HTTP_CODE=$(curl -s -o /tmp/resp.txt -w "%{http_code}" \
-            -X POST "${BRAIN_URL}/api/brain/deploy" \
-            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"changed_paths": ["apps/dashboard/src/App.tsx"]}' \
-            --connect-timeout 30 --max-time 60)
-
-          echo "Response ($HTTP_CODE):"
-          cat /tmp/resp.txt
-          echo ""
-
-          # 409 = deploy 正在进行，视为成功（变更将被包含在进行中的 deploy）
-          if [ "$HTTP_CODE" = "409" ]; then
-            echo "::notice::Deploy 正在进行中（409），当前变更将被纳入"
-            exit 0
-          fi
-
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ 生产部署 webhook 已触发"
-          else
-            echo "::error::Deploy webhook 失败（HTTP $HTTP_CODE）"
-            exit 1
-          fi
-
-      - name: 等待生产 deploy 完成
-        env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          set -uo pipefail
-          echo "轮询 /api/brain/deploy/status（最多 180s）..."
-          ELAPSED=0
-          while [ $ELAPSED -lt 180 ]; do
-            STATUS=$(curl -s --connect-timeout 10 --max-time 15 \
-              "${BRAIN_URL}/api/brain/deploy/status" 2>/dev/null \
-              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))" 2>/dev/null || echo "unknown")
-            echo "  [${ELAPSED}s] status=${STATUS}"
-            if [ "$STATUS" = "success" ]; then
-              echo "✅ 生产部署完成"
-              exit 0
-            elif [ "$STATUS" = "failed" ]; then
-              echo "::error::生产部署失败，请检查 Brain 日志"
-              exit 1
-            elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 30 ]; then
-              echo "::notice::Status idle — deploy 可能已跳过（无变更），视为成功"
-              exit 0
-            fi
-            sleep 10
-            ELAPSED=$((ELAPSED + 10))
-          done
-          echo "::warning::等待超时（180s），deploy 结果未知，请手动检查 Brain 日志"
-          exit 1
-
-  guard:
-    name: Confirm input guard
-    runs-on: ubuntu-latest
-    if: github.event.inputs.confirm != 'PROMOTE'
-    steps:
-      - run: |
-          echo "❌ 确认输入不正确，必须填写 PROMOTE"
-          echo "当前输入: '${{ github.event.inputs.confirm }}'"
-          exit 1
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+    with:
+      release_run_id: ${{ inputs.release_run_id }}
+      merge_sha: ${{ inputs.merge_sha }}
+      release_authorization: ${{ inputs.release_authorization }}
+    secrets: inherit

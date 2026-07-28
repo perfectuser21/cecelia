@@ -1,8 +1,9 @@
 import express, { Router } from 'express';
 import pool from '../db.js';
+import { DB_DEFAULTS } from '../db-config.js';
 import { recordActionReceipt, resolveActionReceipt } from '../receipt-collector.js';
-import { readFileSync, writeFileSync, openSync, writeSync, closeSync, mkdirSync } from 'fs';
-import { join as pathJoin } from 'node:path';
+import { readFileSync, writeFileSync, openSync, writeSync, closeSync, mkdirSync, chmodSync } from 'fs';
+import { dirname as pathDirname, join as pathJoin } from 'node:path';
 import { callLLM, callLLMStream } from '../llm-caller.js';
 import { handleChat } from '../orchestrator-chat.js';
 import { check48hReport } from '../tick.js';
@@ -26,9 +27,36 @@ import {
 import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from '../pr-callback-handler.js';
 import { getAllStates as getAllCBStates } from '../circuit-breaker.js';
 import { getActiveExecutionPaths, INVENTORY_CONFIG } from './shared.js';
+import {
+  authorizeReleaseEffect,
+  appendDispatchOutcome,
+  claimReleaseEffect,
+  claimReleaseVerification,
+} from '../orchestrator/release-run-authorization.js';
+import { planReleaseArtifactRoutes } from '../orchestrator/release-run-routing.js';
+import {
+  claimRollbackExecution,
+  createRollbackAuthority,
+  observeRollbackAuthority,
+  settleRollbackExecution,
+} from '../orchestrator/release-run-rollback-authorization.js';
+import { planRollbackArtifactRoutes } from '../orchestrator/release-run-rollback-routing.js';
+import {
+  cleanupPrivateReleaseWorkerConfig,
+  cleanupStalePrivateReleaseWorkerConfigs,
+  createPrivateRollbackWorkerConfig,
+  createPrivateReleaseWorkerConfig,
+} from '../orchestrator/release-run-worker-secret.js';
+import { buildReleaseWorkerEnvironment } from '../../../../scripts/lib/release-run-worker-runtime.mjs';
+import {
+  launchProductionController,
+  launchRollbackController,
+  resolveRollbackControllerRuntime,
+} from '../orchestrator/release-run-controller-launcher.js';
 
 const router = Router();
 
+cleanupStalePrivateReleaseWorkerConfigs();
 
 // ============================================================
 // Desire System API — Cecelia 的欲望/表达
@@ -2681,19 +2709,51 @@ router.get('/docs/instruction-book', async (req, res) => {
 
 // ─── Deploy Webhook ──────────────────────────────────────────────────────────
 
-const DEPLOY_STATUS_FILE = '/tmp/cecelia-deploy-status.json';
+const DEPLOY_STATUS_FILE = process.env.DEPLOY_STATUS_FILE
+  || pathJoin(
+    process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname,
+    'logs/cecelia-deploy-status.json',
+  );
+const STAGING_DEPLOY_STATUS_FILE = process.env.STAGING_DEPLOY_STATUS_FILE
+  || pathJoin(
+    process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname,
+    'logs/cecelia-staging-deploy-status.json',
+  );
 
 function readDeployStatusFile() {
   try {
     const data = JSON.parse(readFileSync(DEPLOY_STATUS_FILE, 'utf8'));
-    const age = Date.now() - new Date(data.started_at || 0).getTime();
-    if (age < 15 * 60 * 1000 && data.status && data.status !== 'idle') return data;
+    if (data.status && data.status !== 'idle') return data;
   } catch {}
   return null;
 }
 
 function writeDeployStatusFile(data) {
   try { writeFileSync(DEPLOY_STATUS_FILE, JSON.stringify(data)); } catch {}
+}
+
+function readStagingDeployStatusFile() {
+  try {
+    const data = JSON.parse(readFileSync(STAGING_DEPLOY_STATUS_FILE, 'utf8'));
+    if (data.status && data.status !== 'idle') return data;
+  } catch {}
+  return null;
+}
+
+function writeStagingDeployStatusFile(data) {
+  try {
+    mkdirSync(pathDirname(STAGING_DEPLOY_STATUS_FILE), { recursive: true });
+    writeFileSync(STAGING_DEPLOY_STATUS_FILE, JSON.stringify(data), { mode: 0o600 });
+  } catch {}
+}
+
+function publicDeployStatus(state) {
+  const {
+    release_authorization: _releaseAuthorization,
+    log_path: _logPath,
+    ...safe
+  } = state;
+  return safe;
 }
 
 // Deploy state — 启动时从文件恢复（Brain 重启后可延续上次 deploy 状态）
@@ -2707,8 +2767,8 @@ export const deployState = _savedDeploy ? { ..._savedDeploy } : {
   error: null,
 };
 
-// In-memory staging deploy state（Safe Lane 专用，与 production 隔离）
-export const stagingDeployState = {
+const _savedStagingDeploy = readStagingDeployStatusFile();
+export const stagingDeployState = _savedStagingDeploy ? { ..._savedStagingDeploy } : {
   status: 'idle',       // idle | running | success | failed | skipped_no_env | skipped_no_docker
   version: null,
   started_at: null,
@@ -2725,7 +2785,46 @@ router.get('/deploy/status', (req, res) => {
     Object.assign(deployState, fileStatus);
   }
   // FR-02/Gate3 SHA 对账：deploy status 附带当前运行实例的 git_sha（构建期烙入）
-  res.json({ ...deployState, git_sha: process.env.GIT_SHA || 'unknown' });
+  res.json({
+    ...publicDeployStatus(deployState),
+    git_sha: process.env.GIT_SHA || 'unknown',
+  });
+});
+
+// Direct deploy scripts consume the same persisted ReleaseRun intent.
+router.post('/release-runs/authorize', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const expectedToken = process.env.DEPLOY_TOKEN;
+  if (!expectedToken) {
+    return res.status(500).json({ error: 'DEPLOY_TOKEN not configured on server' });
+  }
+  if (!token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid or missing deploy token' });
+  }
+  try {
+    const authorization = await authorizeReleaseEffect(pool, req.body);
+    return res.json(authorization);
+  } catch (error) {
+    return res.status(403).json({
+      error: error?.code ?? 'release_effect_unauthorized',
+    });
+  }
+});
+
+router.post('/release-runs/verification-claim', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const expectedToken = process.env.DEPLOY_TOKEN;
+  if (!expectedToken || !token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid or missing deploy token' });
+  }
+  try {
+    const claim = await claimReleaseVerification(pool, req.body);
+    return res.json(claim);
+  } catch (error) {
+    return res.status(409).json({
+      error: error?.code ?? 'release_verification_claim_denied',
+    });
+  }
 });
 
 // POST /api/brain/deploy — GitHub Actions 合并后触发本地部署
@@ -2741,32 +2840,99 @@ router.post('/deploy', async (req, res) => {
     return res.status(401).json({ error: 'Invalid or missing deploy token' });
   }
 
-  const { changed_paths, staging, mode } = req.body || {};
+  const {
+    changed_paths,
+    staging,
+    mode,
+    release_run_id,
+    merge_sha,
+    release_authorization,
+  } = req.body || {};
   const isStagingDeploy = staging === true || mode === 'staging';
+  const effectKind = isStagingDeploy ? 'staging' : 'production';
+  let dispatchClaim;
+  let artifactVersions;
+  let artifactRoutes;
+  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
+
+  try {
+    dispatchClaim = await claimReleaseEffect(pool, {
+      release_run_id,
+      merge_sha,
+      release_authorization,
+      effect_kind: effectKind,
+    });
+    if (dispatchClaim.deduped) {
+      return res.status(202).json({
+        status: 'accepted',
+        deduped: true,
+        release_run_id,
+        merge_sha,
+        dispatch_claim_id: dispatchClaim.dispatch_claim_id,
+        generation: dispatchClaim.generation,
+      });
+    }
+    artifactVersions = dispatchClaim.artifact_versions;
+    artifactRoutes = planReleaseArtifactRoutes(effectKind, artifactVersions, {
+      repoRoot,
+      mergeSha: merge_sha,
+    });
+  } catch (error) {
+    if (dispatchClaim?.dispatch_claim_id) {
+      await appendDispatchOutcome(
+        pool,
+        dispatchClaim.dispatch_claim_id,
+        dispatchClaim.generation,
+        'failed',
+        { error_code: error?.code ?? 'release_artifact_route_denied' },
+      ).catch(() => {});
+    }
+    if (error?.code === 'release_effect_claim_unavailable') {
+      return res.status(409).json({
+        error: isStagingDeploy
+          ? 'Staging deploy already in progress'
+          : 'Deploy already in progress',
+        current_status: isStagingDeploy
+          ? stagingDeployState.status
+          : deployState.status,
+        started_at: isStagingDeploy
+          ? stagingDeployState.started_at
+          : deployState.started_at,
+      });
+    }
+    return res.status(403).json({
+      error: error?.code ?? 'release_effect_unauthorized',
+    });
+  }
 
   // ── Staging 分支（Safe Lane）──────────────────────────────────────────────
   if (isStagingDeploy) {
-    if (stagingDeployState.status === 'running') {
-      return res.status(409).json({
-        error: 'Staging deploy already in progress',
-        current_status: stagingDeployState.status,
-        started_at: stagingDeployState.started_at,
-      });
-    }
-
     stagingDeployState.status = 'running';
     stagingDeployState.started_at = new Date().toISOString();
     stagingDeployState.finished_at = null;
     stagingDeployState.elapsed_ms = null;
     stagingDeployState.error = null;
     stagingDeployState.skip_reason = null;
+    stagingDeployState.release_run_id = release_run_id;
+    stagingDeployState.merge_sha = merge_sha;
+    stagingDeployState.artifact_versions = artifactVersions;
+    stagingDeployState.dispatch_claim_id = dispatchClaim.dispatch_claim_id;
+    stagingDeployState.dispatch_generation = dispatchClaim.generation;
+    writeStagingDeployStatusFile({ ...stagingDeployState });
 
     res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging' });
 
-    const { execSync } = await import('child_process');
-    const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
     const startTime = Date.now();
     let stagingReceiptId = null;
+    cleanupStalePrivateReleaseWorkerConfigs();
+    const workerPrivateConfig = createPrivateReleaseWorkerConfig({
+      authorization: release_authorization,
+      deploy_token: expectedToken,
+      database: DB_DEFAULTS,
+    });
 
     try {
       stagingReceiptId = await recordActionReceipt({
@@ -2774,32 +2940,25 @@ router.post('/deploy', async (req, res) => {
         target: 'staging',
         evidence: { changed_paths: changed_paths || [] },
       });
-      const stagingScript = `${repoRoot}/scripts/staging-deploy.sh`;
-      const { existsSync } = await import('fs');
-      let cmd;
-
-      if (existsSync(stagingScript)) {
-        let args = '';
-        if (changed_paths && changed_paths.length > 0) {
-          args = ` --changed="${changed_paths.join(' ').replace(/"/g, '\\"')}"`;
-        }
-        cmd = `bash "${stagingScript}"${args}`;
-      } else {
-        // 降级：用 PM2 在端口 5222 启动 staging 实例
-        cmd = [
-          'BRAIN_PORT=5222',
-          'NODE_ENV=staging',
-          'pm2 start packages/brain/src/server.js',
-          '--name brain-staging',
-          '--env staging',
-          '-- --port 5222',
-          '2>/dev/null || pm2 restart brain-staging 2>/dev/null || true',
-        ].join(' ');
-      }
-
-      console.log(`[staging-deploy] 开始 staging 部署: ${cmd}`);
+      const workerScript = `${repoRoot}/scripts/lib/release-run-effect-worker.mjs`;
+      console.log(`[staging-deploy] 开始 server-owned artifact routes: ${artifactRoutes.map((route) => route.artifact).join(',')}`);
       // 捕获输出以检测 STAGING_SKIP_REASON（脚本 exit 0 时正常完成，但可能是跳过）
-      const output = execSync(cmd, { cwd: repoRoot, timeout: 600_000, shell: true }).toString();
+      const { stdout = '' } = await execFileAsync(process.execPath, [workerScript], {
+        cwd: repoRoot,
+        timeout: 600_000,
+        env: buildReleaseWorkerEnvironment(process.env, {
+          KERNEL_RELEASE_RUN_ID: release_run_id,
+          KERNEL_RELEASE_MERGE_SHA: merge_sha,
+          KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifactVersions),
+          KERNEL_RELEASE_EFFECT_KIND: effectKind,
+          KERNEL_RELEASE_DEPLOY_ROOT: repoRoot,
+          KERNEL_RELEASE_DISPATCH_CLAIM_ID: dispatchClaim.dispatch_claim_id,
+          KERNEL_RELEASE_DISPATCH_GENERATION: dispatchClaim.generation,
+          KERNEL_RELEASE_PRIVATE_CONFIG_FILE: workerPrivateConfig.file,
+        }),
+        maxBuffer: 20 * 1024 * 1024,
+      });
+      const output = stdout.toString();
       console.log(output);
 
       const elapsed = Date.now() - startTime;
@@ -2813,37 +2972,48 @@ router.post('/deploy', async (req, res) => {
         stagingDeployState.finished_at = new Date().toISOString();
         stagingDeployState.elapsed_ms = elapsed;
         stagingDeployState.skip_reason = skipReason;
-        await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed, skip_reason: skipReason });
-        console.log(`[staging-deploy] ⚠️ Staging 部署已跳过 (${skipReason}): production 部署不受阻断 (${(elapsed / 1000).toFixed(1)}s)`);
+        writeStagingDeployStatusFile({ ...stagingDeployState });
+        await resolveActionReceipt(stagingReceiptId, 'failed', { elapsed_ms: elapsed, skip_reason: skipReason });
+        console.log(`[staging-deploy] Staging 部署已跳过 (${skipReason})，ReleaseRun 保持阻断`);
       } else {
         stagingDeployState.status = 'success';
         stagingDeployState.finished_at = new Date().toISOString();
         stagingDeployState.elapsed_ms = elapsed;
+        stagingDeployState.deployed_artifact_versions = artifactVersions;
+        writeStagingDeployStatusFile({ ...stagingDeployState });
         await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed });
         console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
       }
     } catch (err) {
+      await appendDispatchOutcome(
+        pool,
+        dispatchClaim.dispatch_claim_id,
+        dispatchClaim.generation,
+        'failed',
+        { error_code: 'staging_dispatch_failed' },
+      ).catch(() => {});
       const elapsed = Date.now() - startTime;
       stagingDeployState.status = 'failed';
       stagingDeployState.finished_at = new Date().toISOString();
       stagingDeployState.elapsed_ms = elapsed;
-      stagingDeployState.error = err.message;
-      await resolveActionReceipt(stagingReceiptId, 'failed', { elapsed_ms: elapsed, error: err.message });
+      stagingDeployState.error = 'staging_dispatch_failed';
+      writeStagingDeployStatusFile({ ...stagingDeployState });
+      await resolveActionReceipt(stagingReceiptId, 'failed', {
+        elapsed_ms: elapsed,
+        error_code: 'staging_dispatch_failed',
+      });
       console.error(`[staging-deploy] ❌ Staging 部署失败（真实错误，非环境未配置）(${(elapsed / 1000).toFixed(1)}s):`, err.message);
+    } finally {
+      try {
+        cleanupPrivateReleaseWorkerConfig(workerPrivateConfig.file);
+      } catch {
+        // The worker normally removes its private config after terminal CAS.
+      }
     }
     return;
   }
 
   // ── Production 分支（Fast Lane / Safe Lane 提升后）────────────────────────
-
-  // 并发互斥保护：running 或 rolling_back 时拒绝新请求
-  if (deployState.status === 'running' || deployState.status === 'rolling_back') {
-    return res.status(409).json({
-      error: 'Deploy already in progress',
-      current_status: deployState.status,
-      started_at: deployState.started_at,
-    });
-  }
 
   // 更新状态为 running，立即返回 202
   deployState.status = 'running';
@@ -2852,95 +3022,152 @@ router.post('/deploy', async (req, res) => {
   deployState.elapsed_ms = null;
   deployState.error = null;
   deployState.log_path = null;
+  deployState.release_run_id = release_run_id;
+  deployState.merge_sha = merge_sha;
+  deployState.artifact_versions = artifactVersions;
+  deployState.dispatch_claim_id = dispatchClaim.dispatch_claim_id;
+  deployState.dispatch_generation = dispatchClaim.generation;
 
   res.status(202).json({ status: 'accepted', message: 'Deploy triggered' });
 
-  // 写入文件状态，Brain 重启后可通过文件恢复 running 状态
-  writeDeployStatusFile({ ...deployState });
-
-  const { spawn } = await import('child_process');
-  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
-  const scriptDir = `${repoRoot}/scripts/deploy-local.sh`;
-
-  const args = ['bash', scriptDir];
-  if (changed_paths && changed_paths.length > 0) {
-    const escaped = changed_paths.join(' ').replace(/"/g, '\\"');
-    args.push(`--changed=${escaped}`);
-  }
-  args.push('main');
-
-  // 部署日志写到宿主机挂载目录（repoRoot/logs/），容器死亡后日志不丢失。
-  // 历史：原先写 /tmp/（容器 tmpfs），brain 容器自杀后日志随容器消失，失败根因不可考。
-  const logTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const logsDir = pathJoin(repoRoot, 'logs');
-  try { mkdirSync(logsDir, { recursive: true }); } catch { /* 目录已存在 */ }
-  const logFile = pathJoin(logsDir, `cecelia-deploy-${logTimestamp}.log`);
-  let logFd;
+  let logFd = 'ignore';
+  let receiptId = null;
+  let workerPrivateConfig = null;
   try {
-    logFd = openSync(logFile, 'a');
-    writeSync(logFd, `[deploy-webhook] starting at ${new Date().toISOString()}\n`);
-    writeSync(logFd, `[deploy-webhook] cmd: bash ${scriptDir} ${args.slice(2).join(' ')}\n`);
-    writeSync(logFd, `[deploy-webhook] cwd: ${repoRoot}\n\n`);
-  } catch (err) {
-    console.error(`[deploy-webhook] 创建 log 文件失败 ${logFile}: ${err.message}，回退 stdio:'ignore'`);
-    logFd = 'ignore';
+    // 写入文件状态，Brain 重启后可通过文件恢复 running 状态
+    writeDeployStatusFile({ ...deployState });
+
+    const scriptDir = '/repo/scripts/lib/release-run-effect-worker.mjs';
+
+    // 部署日志写到宿主机挂载目录（repoRoot/logs/），容器死亡后日志不丢失。
+    const logTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const logsDir = pathJoin(repoRoot, 'logs');
+    try { mkdirSync(logsDir, { recursive: true }); } catch { /* 目录已存在 */ }
+    const logFile = pathJoin(logsDir, `cecelia-deploy-${logTimestamp}.log`);
+    try {
+      logFd = openSync(logFile, 'a');
+      writeSync(logFd, `[deploy-webhook] starting at ${new Date().toISOString()}\n`);
+      writeSync(logFd, `[deploy-webhook] worker: ${scriptDir}\n`);
+      writeSync(logFd, `[deploy-webhook] routes: ${artifactRoutes.map((route) => route.artifact).join(',')}\n`);
+      writeSync(logFd, `[deploy-webhook] cwd: ${repoRoot}\n\n`);
+    } catch (err) {
+      console.error(`[deploy-webhook] 创建 log 文件失败 ${logFile}: ${err.message}，回退 stdio:'ignore'`);
+      logFd = 'ignore';
+    }
+    deployState.log_path = logFile;
+    writeDeployStatusFile({ ...deployState });
+
+    receiptId = await recordActionReceipt({
+      kind: 'deploy',
+      target: 'production',
+      evidence: { changed_paths: changed_paths || [], log_path: logFile },
+    });
+
+    console.log(`[deploy-webhook] 开始 server-owned artifact routes（detached）: ${artifactRoutes.map((route) => route.artifact).join(',')}`);
+    console.log(`[deploy-webhook] log: ${logFile}`);
+
+    const productionPrivateRoot = process.env.KERNEL_RELEASE_WORKER_RUNTIME_ROOT
+      || pathJoin(repoRoot, 'logs/.kernel-release-workers');
+    mkdirSync(productionPrivateRoot, { recursive: true });
+    chmodSync(productionPrivateRoot, 0o700);
+    cleanupStalePrivateReleaseWorkerConfigs({ temporaryRoot: productionPrivateRoot });
+    workerPrivateConfig = createPrivateReleaseWorkerConfig({
+      authorization: release_authorization,
+      deploy_token: expectedToken,
+      database: DB_DEFAULTS,
+    }, { temporaryRoot: productionPrivateRoot });
+
+    const runtime = resolveRollbackControllerRuntime();
+    const productionWorkerEnvironment = buildReleaseWorkerEnvironment(process.env, {
+      KERNEL_RELEASE_RUN_ID: release_run_id,
+      KERNEL_RELEASE_MERGE_SHA: merge_sha,
+      KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifactVersions),
+      KERNEL_RELEASE_EFFECT_KIND: effectKind,
+      KERNEL_RELEASE_DEPLOY_ROOT: repoRoot,
+      KERNEL_RELEASE_STARTED_AT: deployState.started_at,
+      KERNEL_RELEASE_DISPATCH_CLAIM_ID: String(dispatchClaim.dispatch_claim_id),
+      KERNEL_RELEASE_DISPATCH_GENERATION: String(dispatchClaim.generation),
+      KERNEL_RELEASE_PRIVATE_CONFIG_FILE: workerPrivateConfig.file,
+      KERNEL_RELEASE_ACTION_RECEIPT_ID: receiptId,
+    });
+    productionWorkerEnvironment.BRAIN_URL = 'http://node-brain:5221';
+    await launchProductionController({
+      ...runtime,
+      repoRoot,
+      privateConfigFile: workerPrivateConfig.file,
+      logFile,
+      claimId: dispatchClaim.dispatch_claim_id,
+      generation: dispatchClaim.generation,
+      workerEnvironment: productionWorkerEnvironment,
+    });
+  } catch (error) {
+    const launchOutcomeUnknown = error?.code
+      === 'release_controller_launch_outcome_unknown';
+    deployState.status = launchOutcomeUnknown ? 'unknown' : 'failed';
+    deployState.error = launchOutcomeUnknown
+      ? 'production_controller_launch_outcome_unknown'
+      : 'production_worker_spawn_failed';
+    deployState.finished_at = new Date().toISOString();
+    try {
+      await appendDispatchOutcome(
+        pool,
+        dispatchClaim.dispatch_claim_id,
+        dispatchClaim.generation,
+        launchOutcomeUnknown ? 'unknown' : 'failed',
+        {
+          error_code: launchOutcomeUnknown
+            ? 'production_controller_launch_outcome_unknown'
+            : 'production_worker_spawn_failed',
+        },
+      );
+    } catch (terminalError) {
+      deployState.status = 'unknown';
+      deployState.error = 'production_terminal_persistence_failed';
+      if (typeof logFd === 'number') {
+        try { closeSync(logFd); } catch { /* noop */ }
+      }
+      try {
+        writeDeployStatusFile({ ...deployState });
+      } catch { /* the durable claim and private config remain for recovery */ }
+      console.error(
+        `[deploy-webhook] terminal persistence failed: ${terminalError.message}`,
+      );
+      return;
+    }
+    if (receiptId && !launchOutcomeUnknown) {
+      await resolveActionReceipt(receiptId, 'failed', {
+        error: error.message,
+        error_code: 'production_worker_spawn_failed',
+      }).catch(() => {});
+    }
+    if (workerPrivateConfig?.file) {
+      try {
+        cleanupPrivateReleaseWorkerConfig(workerPrivateConfig.file);
+      } catch { /* durable settlement has priority over best-effort cleanup */ }
+    }
+    if (typeof logFd === 'number') {
+      try { closeSync(logFd); } catch { /* noop */ }
+    }
+    try {
+      writeDeployStatusFile({ ...deployState });
+    } catch { /* durable dispatch outcome is authoritative */ }
+    console.error(`[deploy-webhook] worker spawn failed: ${error.message}`);
+    return;
   }
-  deployState.log_path = logFile;
-  writeDeployStatusFile({ ...deployState });
-
-  const receiptId = await recordActionReceipt({
-    kind: 'deploy',
-    target: 'production',
-    evidence: { changed_paths: changed_paths || [], log_path: logFile },
-  });
-
-  console.log(`[deploy-webhook] 开始部署（detached）: bash ${scriptDir}`);
-  console.log(`[deploy-webhook] log: ${logFile}`);
-
-  // 使用 detached spawn：Brain 重启自身时不阻塞事件循环，避免 EADDRINUSE
-  // stdio: stdin=ignore + stdout/stderr=logFd → 子进程输出落盘可调试
-  const stdioOption = logFd === 'ignore'
-    ? 'ignore'
-    : ['ignore', logFd, logFd];
-  const child = spawn(args[0], args.slice(1), {
-    detached: true,
-    stdio: stdioOption,
-    cwd: repoRoot,
-  });
   // log fd 被子进程接管后父进程可以关闭（数据继续写入文件）
   if (typeof logFd === 'number') {
     try { closeSync(logFd); } catch { /* noop */ }
   }
-  child.unref(); // 完全解绑，Brain 可自由退出/重启
-
-  // 若 Brain 在子进程完成前仍在运行，捕获退出码更新状态
-  const startTime = Date.now();
-  child.on('close', (code, signal) => {
-    const elapsed = Date.now() - startTime;
-    if (code === 0) {
-      deployState.status = 'success';
-      deployState.elapsed_ms = elapsed;
-      deployState.finished_at = new Date().toISOString();
-      // close 回调是同步函数，不 await；Brain 若在 close 前重启 → 无人核销 → collector 30min 后标 timeout
-      resolveActionReceipt(receiptId, 'confirmed', { exit_code: code, elapsed_ms: elapsed })
-        .catch((e) => console.warn('[deploy-webhook] 回执核销失败:', e.message));
-      console.log(`[deploy-webhook] ✅ 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
-    } else {
-      deployState.status = 'failed';
-      deployState.error = `deploy-local.sh exited code=${code} signal=${signal}`;
-      deployState.elapsed_ms = elapsed;
-      deployState.finished_at = new Date().toISOString();
-      resolveActionReceipt(receiptId, 'failed', { exit_code: code, signal, elapsed_ms: elapsed })
-        .catch((e) => console.warn('[deploy-webhook] 回执核销失败:', e.message));
-      console.error(`[deploy-webhook] ❌ 部署失败 code=${code} (${(elapsed / 1000).toFixed(1)}s)，log: ${logFile}`);
-    }
-    writeDeployStatusFile({ ...deployState });
-  });
+  console.log(`[deploy-webhook] external controller accepted receipt=${receiptId}`);
 });
 
 // GET /api/brain/deploy/staging/status — 查询 staging 部署状态（Safe Lane 轮询用）
 router.get('/deploy/staging/status', (req, res) => {
-  res.json({ ...stagingDeployState });
+  const fileStatus = readStagingDeployStatusFile();
+  if (fileStatus && fileStatus.status !== stagingDeployState.status) {
+    Object.assign(stagingDeployState, fileStatus);
+  }
+  res.json(publicDeployStatus(stagingDeployState));
 });
 
 // POST /api/brain/deploy/staging/cleanup — 清理 staging 环境（Safe Lane 失败时触发）
@@ -2969,6 +3196,7 @@ router.post('/deploy/staging/cleanup', async (req, res) => {
     stagingDeployState.finished_at = null;
     stagingDeployState.elapsed_ms = null;
     stagingDeployState.error = null;
+    writeStagingDeployStatusFile({ ...stagingDeployState });
     console.log('[staging-cleanup] ✅ Staging 清理完成');
   } catch (err) {
     console.error('[staging-cleanup] ⚠️ 清理异常（非阻塞）:', err.message);
@@ -2984,44 +3212,160 @@ router.post('/deploy/rollback', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { stable_sha, reason } = req.body || {};
-  if (!stable_sha || !/^[0-9a-f]{7,40}$/.test(stable_sha)) {
-    return res.status(400).json({ error: 'stable_sha required (7-40 hex chars)' });
+  const {
+    release_run_id,
+    merge_sha,
+    rollback_authorization,
+  } = req.body ?? {};
+  const repoRoot = process.env.REPO_ROOT
+    || new URL('../../../..', import.meta.url).pathname;
+  let authority;
+  let claim;
+  let routes;
+  try {
+    authority = await createRollbackAuthority(pool, {
+      release_run_id,
+      merge_sha,
+      rollback_authorization,
+    });
+    routes = planRollbackArtifactRoutes(authority.rollback_targets, {
+      repoRoot,
+      releaseRunId: release_run_id,
+    });
+    claim = await claimRollbackExecution(pool, {
+      release_run_id,
+      merge_sha,
+      rollback_authorization,
+    });
+  } catch (error) {
+    return res.status(403).json({
+      error: error?.code ?? 'release_rollback_authority_unavailable',
+    });
   }
 
-  deployState.status = 'rolling_back';
-  deployState.started_at = new Date().toISOString();
-  deployState.error = null;
-
-  res.status(202).json({ status: 'accepted', message: `Rollback to ${stable_sha} triggered`, reason });
-
-  const { execSync } = await import('child_process');
-  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
-  const startTime = Date.now();
-
-  try {
-    console.log(`[rollback] 回滚到 ${stable_sha}，原因: ${reason || 'unspecified'}`);
-    execSync(
-      `git fetch origin && git checkout ${stable_sha} -- packages/brain/src packages/brain/migrations packages/brain/package.json packages/brain/package-lock.json`,
-      { cwd: repoRoot, timeout: 120_000, stdio: 'inherit' }
-    );
-    execSync(`cd packages/brain && npm install --prefer-offline 2>/dev/null || npm install`, {
-      cwd: repoRoot, timeout: 120_000, stdio: 'inherit', shell: true,
+  if (claim.deduped) {
+    return res.status(202).json({
+      status: 'accepted',
+      deduped: true,
+      authority_id: claim.authority_id,
+      claim_id: claim.claim_id,
+      generation: claim.generation,
     });
-    execSync(`pm2 restart brain 2>/dev/null || true`, { cwd: repoRoot, stdio: 'inherit', shell: true });
+  }
 
-    const elapsed = Date.now() - startTime;
-    deployState.status = 'rolled_back';
-    deployState.finished_at = new Date().toISOString();
-    deployState.elapsed_ms = elapsed;
-    console.log(`[rollback] ✅ 回滚成功 (${(elapsed / 1000).toFixed(1)}s)`);
-  } catch (err) {
-    const elapsed = Date.now() - startTime;
-    deployState.status = 'rollback_failed';
-    deployState.finished_at = new Date().toISOString();
-    deployState.elapsed_ms = elapsed;
-    deployState.error = err.message;
-    console.error(`[rollback] ❌ 回滚失败:`, err.message);
+  let workerPrivateConfig = null;
+  let logFile = null;
+  let logFd = 'ignore';
+  let controller;
+  try {
+    const privateRuntimeRoot = process.env.KERNEL_RELEASE_WORKER_RUNTIME_ROOT
+      || pathJoin(repoRoot, 'logs/.kernel-release-workers');
+    mkdirSync(privateRuntimeRoot, { recursive: true });
+    chmodSync(privateRuntimeRoot, 0o700);
+    cleanupStalePrivateReleaseWorkerConfigs({ temporaryRoot: privateRuntimeRoot });
+    workerPrivateConfig = createPrivateRollbackWorkerConfig({
+      rollback_authorization,
+      database: DB_DEFAULTS,
+    }, { temporaryRoot: privateRuntimeRoot });
+    const logTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const logsDir = pathJoin(repoRoot, 'logs');
+    try { mkdirSync(logsDir, { recursive: true }); } catch { /* noop */ }
+    logFile = pathJoin(logsDir, `cecelia-rollback-${logTimestamp}.log`);
+    try {
+      logFd = openSync(logFile, 'a');
+      writeSync(logFd, `[rollback] authority=${claim.authority_id} claim=${claim.claim_id}\n`);
+      writeSync(logFd, `[rollback] typed routes=${routes.map((route) => route.artifact).join(',')}\n`);
+    } catch {
+      logFd = 'ignore';
+    }
+    const runtime = resolveRollbackControllerRuntime();
+    controller = await launchRollbackController({
+      ...runtime,
+      repoRoot,
+      privateConfigFile: workerPrivateConfig.file,
+      logFile,
+      claimId: claim.claim_id,
+      generation: claim.generation,
+      workerEnvironment: buildReleaseWorkerEnvironment({
+        ...process.env,
+        BRAIN_URL: 'http://node-brain:5221',
+      }, {
+        KERNEL_RELEASE_RUN_ID: release_run_id,
+        KERNEL_RELEASE_MERGE_SHA: merge_sha,
+        KERNEL_RELEASE_DEPLOY_ROOT: repoRoot,
+        KERNEL_RELEASE_PRIVATE_CONFIG_FILE: workerPrivateConfig.file,
+        KERNEL_RELEASE_ROLLBACK_WORKER: '1',
+        KERNEL_RELEASE_ROLLBACK_AUTHORITY_ID: claim.authority_id,
+        KERNEL_RELEASE_ROLLBACK_CLAIM_ID: String(claim.claim_id),
+        KERNEL_RELEASE_ROLLBACK_GENERATION: String(claim.generation),
+        KERNEL_RELEASE_ROLLBACK_TARGETS: JSON.stringify(claim.rollback_targets),
+      }),
+    });
+  } catch (error) {
+    const launchOutcomeUnknown = error?.code
+      === 'release_controller_launch_outcome_unknown';
+    try {
+      await settleRollbackExecution(pool, {
+        claim_id: claim.claim_id,
+        generation: claim.generation,
+        status: launchOutcomeUnknown ? 'unknown' : 'failed',
+        late_effect_risk: launchOutcomeUnknown,
+        evidence: {
+          source: 'release_rollback_spawn',
+          error_code: launchOutcomeUnknown
+            ? 'release_controller_launch_outcome_unknown'
+            : 'release_rollback_worker_spawn_failed',
+        },
+      });
+    } catch {
+      if (typeof logFd === 'number') {
+        try { closeSync(logFd); } catch { /* noop */ }
+      }
+      return res.status(503).json({
+        error: 'release_rollback_terminal_persistence_failed',
+      });
+    }
+    if (workerPrivateConfig?.file) {
+      try {
+        cleanupPrivateReleaseWorkerConfig(workerPrivateConfig.file);
+      } catch { /* durable settlement has priority over best-effort cleanup */ }
+    }
+    if (typeof logFd === 'number') {
+      try { closeSync(logFd); } catch { /* noop */ }
+    }
+    return res.status(launchOutcomeUnknown ? 503 : 500).json({
+      error: launchOutcomeUnknown
+        ? 'release_controller_launch_outcome_unknown'
+        : 'release_rollback_worker_spawn_failed',
+      late_effect_risk: launchOutcomeUnknown,
+    });
+  }
+  if (typeof logFd === 'number') {
+    try { closeSync(logFd); } catch { /* noop */ }
+  }
+  return res.status(202).json({
+    status: 'accepted',
+    authority_id: claim.authority_id,
+    claim_id: claim.claim_id,
+    generation: claim.generation,
+    log_path: logFile,
+    controller: controller.name,
+  });
+});
+
+router.get('/deploy/rollback/:authorityId', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const expectedToken = process.env.DEPLOY_TOKEN;
+  if (!expectedToken || !token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    return res.json(await observeRollbackAuthority(pool, req.params.authorityId));
+  } catch (error) {
+    const status = error?.code === 'release_rollback_authority_not_found' ? 404 : 400;
+    return res.status(status).json({
+      error: error?.code ?? 'release_rollback_observation_failed',
+    });
   }
 });
 

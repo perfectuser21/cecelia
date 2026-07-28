@@ -12,6 +12,7 @@ const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
 const GRANT_ID = '33333333-3333-4333-8333-333333333333';
 const RESOURCE_ID = '44444444-4444-4444-8444-444444444444';
+const ASSESSMENT_ID = '55555555-5555-4555-8555-555555555555';
 const HEAD_SHA = 'a'.repeat(40);
 const BASE_SHA = '9'.repeat(40);
 const DIFF_DIGEST = `sha256:${'8'.repeat(64)}`;
@@ -66,6 +67,7 @@ function mergeEvidence({ staleReview = false } = {}) {
     diff_digest: DIFF_DIGEST,
     required_checks: REQUIRED_CHECKS,
     files: FILES,
+    changed_paths: FILES.map(({ path }) => path).sort(),
     state: 'OPEN',
     is_draft: false,
     merge_state_status: 'CLEAN',
@@ -116,6 +118,16 @@ function mergeEvidence({ staleReview = false } = {}) {
     contract,
     postDiffRisk,
     revalidatedPostDiffRisk: postDiffRisk,
+    reviewPolicy: {
+      assessment_id: ASSESSMENT_ID,
+      policy_version: 'kernel-merge/v1',
+      changed_paths: pr.changed_paths,
+      risk_tier: 'low',
+      risk_reasons: ['low_risk_paths', 'first_kernel_release'],
+      first_kernel_release: true,
+      payload_review_required: true,
+      review_required: true,
+    },
     decisionLog: [
       row(1, 'verdict:evaluate', {
         verdict: 'PASS',

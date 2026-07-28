@@ -7,7 +7,13 @@
 #   HARNESS_TASK_ID=<id> bash scripts/post-merge-deploy.sh
 #   CHANGED_FILES="packages/brain/src/server.js apps/dashboard/..." bash scripts/post-merge-deploy.sh
 
-set -uo pipefail
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 旧 post-merge 入口也必须消费 server-owned ReleaseRun 授权；
+# 未授权时在重启、回滚或 dashboard 换入之前 fail closed。
+bash "$SCRIPT_DIR/lib/release-run-guard.sh" production
 
 BRAIN_BASE_URL="http://localhost:5221"
 HEALTH_TIMEOUT=60
@@ -37,7 +43,7 @@ _restart_brain() {
   elif command -v systemctl >/dev/null 2>&1 && systemctl is-enabled cecelia-brain.service >/dev/null 2>&1; then
     systemctl restart cecelia-brain.service
   else
-    bash "$(dirname "$0")/brain-reload.sh" 2>/dev/null || true
+    bash "$SCRIPT_DIR/brain-reload.sh" 2>/dev/null || true
   fi
 }
 

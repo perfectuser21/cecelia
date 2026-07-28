@@ -44,6 +44,7 @@ RELEASE_FILE="$ROOT_DIR/.production-release"
 RELEASES_DIR="$DASH/.dist-releases"
 
 cleanup() {
+  [[ -n "${AUTH_PID:-}" ]] && kill "$AUTH_PID" 2>/dev/null || true
   [[ -f "$PID_FILE" ]] && kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
   [[ -f "$DASH/.dev-preview.pid" ]] && kill "$(cat "$DASH/.dev-preview.pid" 2>/dev/null)" 2>/dev/null || true
   # 复原 promote 副产物：.production-release（指针文件）备份恢复 / smoke 前不存在则删
@@ -169,7 +170,16 @@ echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
 echo "[B] promote：人工放行才换入生产"
-CECELIA_DEPLOY_ROOT="$ROOT_DIR" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 CECELIA_SKIP_GIT_TAG=1 DASHBOARD_STAGING_PORT="$PORT" bash "$PROMOTE" > "$TMP/b.log" 2>&1
+AUTH_PORT=$((PORT + 100))
+node -e "require('http').createServer((req,res)=>{res.setHeader('content-type','application/json');res.end('{\"authorized\":true}')}).listen(${AUTH_PORT},'127.0.0.1')" &
+AUTH_PID=$!
+sleep 0.2
+CECELIA_DEPLOY_ROOT="$ROOT_DIR" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 CECELIA_SKIP_GIT_TAG=1 \
+  DASHBOARD_STAGING_PORT="$PORT" BRAIN_URL="http://127.0.0.1:${AUTH_PORT}" DEPLOY_TOKEN="smoke-only" \
+  KERNEL_RELEASE_RUN_ID="44444444-4444-4444-8444-444444444444" \
+  KERNEL_RELEASE_MERGE_SHA="ffffffffffffffffffffffffffffffffffffffff" \
+  KERNEL_RELEASE_AUTHORIZATION="55555555-5555-4555-8555-555555555555" \
+  bash "$PROMOTE" > "$TMP/b.log" 2>&1
 B_RC=$?
 [[ $B_RC -eq 0 ]] && pass "promote-dashboard.sh 退 0" || { fail "promote-dashboard.sh 退 $B_RC"; sed 's/^/    /' "$TMP/b.log" | tail -20; }
 grep -q "NEW_VERSION_SENTINEL" "$LIVE_DIST/index.html" 2>/dev/null \

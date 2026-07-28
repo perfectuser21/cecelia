@@ -21,7 +21,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # 找主仓库路径（兼容 worktree 和直接调用）
 # git rev-parse --git-common-dir 在 worktree 里返回主仓库的 .git 路径
 # 测试钩子：CECELIA_DEPLOY_ROOT 显式指定部署根（smoke 在隔离目录自洽跑，不碰真实主仓库）
-if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
+if [[ -n "${KERNEL_RELEASE_DEPLOY_ROOT:-}" ]]; then
+    MAIN_ROOT="$(cd "$KERNEL_RELEASE_DEPLOY_ROOT" && pwd)"
+elif [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     MAIN_ROOT="$(cd "$CECELIA_DEPLOY_ROOT" && pwd)"
 else
     GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
@@ -33,6 +35,8 @@ else
 fi
 
 MAIN_SCRIPTS="$MAIN_ROOT/scripts"
+SOURCE_ROOT="${KERNEL_RELEASE_ARTIFACT_ROOT:-$MAIN_ROOT}"
+SOURCE_SCRIPTS="$SOURCE_ROOT/scripts"
 
 # 参数解析
 DRY_RUN=false
@@ -69,7 +73,13 @@ RUN_GUARD=true
 [[ "$DRY_RUN" == true ]] && RUN_GUARD=false
 
 if [[ "$RUN_GUARD" == true ]]; then
-    if [[ "${CECELIA_DEPLOY_AUTORESET:-0}" == "1" ]]; then
+    if [[ -n "${KERNEL_RELEASE_MERGE_SHA:-}" ]]; then
+        if [[ "$SOURCE_ROOT" != /* || ! -f "$SOURCE_ROOT/.release-snapshot.json" ]]; then
+            echo "❌ ReleaseRun immutable artifact snapshot unavailable" >&2
+            exit 78
+        fi
+        echo "🔒 ReleaseRun immutable exact-SHA source: ${KERNEL_RELEASE_MERGE_SHA}"
+    elif [[ "${CECELIA_DEPLOY_AUTORESET:-0}" == "1" ]]; then
         # 专用部署根（机器独占，无人类工作）：自愈到 origin/main
         echo "🔒 部署根守卫（专用根自愈）: fetch + checkout -f + reset --hard origin/$BASE_BRANCH"
         git -C "$MAIN_ROOT" fetch origin "$BASE_BRANCH" \
@@ -114,7 +124,9 @@ fi
 # 隔离守卫：CECELIA_DEPLOY_ROOT 测试模式禁 curl 真生产——否则真生产落后 main 时
 # NEED_BRAIN=true 会在隔离根真点火 brain-deploy.sh（staging-gate smoke 实证）。
 SHA_MISMATCH=false
-ORIGIN_SHA=$(git -C "$MAIN_ROOT" rev-parse --verify "origin/$BASE_BRANCH^{commit}" 2>/dev/null || echo "")
+ORIGIN_SHA="${KERNEL_RELEASE_MERGE_SHA:-}"
+[[ "$ORIGIN_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    || ORIGIN_SHA=$(git -C "$MAIN_ROOT" rev-parse --verify "origin/$BASE_BRANCH^{commit}" 2>/dev/null || echo "")
 PROD_SHA="${CECELIA_PROD_GIT_SHA:-${GIT_SHA:-}}"
 if [[ -z "$PROD_SHA" && -z "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     PROD_SHA=$(curl -sf --max-time 5 \
@@ -214,14 +226,14 @@ done <<< "$CHANGED_FILES"
 [[ "$DASHBOARD_SHA_MISMATCH" == true ]] && NEED_DASHBOARD=true
 
 # ── 去重闸：staging 已就绪等放行时不重建（防刀2前保守构建 + Bark 风暴）──────
-if [[ "$NEED_DASHBOARD" == true ]]; then
+if [[ "$NEED_DASHBOARD" == true && -z "${KERNEL_RELEASE_RUN_ID:-}" ]]; then
     DEDUP_PENDING="$MAIN_ROOT/apps/dashboard/.staging-pending"
     if [[ -f "$DEDUP_PENDING" ]]; then
         # || echo "" 兜底：pending 文件缺 commit= 行（截断/旧格式）时 grep 退 1 + pipefail
         # 会被 set -e 静默吞成 exit 1 零输出——兜成空串走"不去重"分支即可
         DEDUP_COMMIT=$(grep '^commit=' "$DEDUP_PENDING" | head -1 | cut -d= -f2 || echo "")
-        DEDUP_HEAD=$(git -C "$MAIN_ROOT" rev-parse --short "origin/$BASE_BRANCH" 2>/dev/null \
-            || git -C "$MAIN_ROOT" rev-parse --short "$BASE_BRANCH" 2>/dev/null || echo "")
+        DEDUP_HEAD=$(git -C "$MAIN_ROOT" rev-parse "origin/$BASE_BRANCH" 2>/dev/null \
+            || git -C "$MAIN_ROOT" rev-parse "$BASE_BRANCH" 2>/dev/null || echo "")
         if [[ -n "$DEDUP_COMMIT" && -n "$DEDUP_HEAD" && "$DEDUP_COMMIT" == "$DEDUP_HEAD" ]]; then
             echo "⏸️  staging 已就绪（commit ${DEDUP_COMMIT}）等人工放行 → 跳过重建（防重复构建/Bark）"
             NEED_DASHBOARD=false
@@ -277,13 +289,14 @@ fi
 #   ★ promote（原子换入 5211 + 同步 HK）改由人工跑 scripts/promote-dashboard.sh ★
 if [[ "$NEED_DASHBOARD" == true ]]; then
     DASH_DIR="$MAIN_ROOT/apps/dashboard"
+    DASH_SOURCE_DIR="$SOURCE_ROOT/apps/dashboard"
     DIST_DIR="$DASH_DIR/dist"
     STAGING_DIST="$DASH_DIR/.dist-staging"
     PENDING_FILE="$DASH_DIR/.staging-pending"
     SLOT_PID_FILE="$DASH_DIR/.staging-slot.pid"
     SLOT_LOG_FILE="$DASH_DIR/.staging-slot.log"
-    SELFCHECK="$MAIN_SCRIPTS/dashboard-staging-selfcheck.sh"
-    SLOT_SERVER="$MAIN_SCRIPTS/dashboard-slot-server.cjs"
+    SELFCHECK="$SOURCE_SCRIPTS/dashboard-staging-selfcheck.sh"
+    SLOT_SERVER="$SOURCE_SCRIPTS/dashboard-slot-server.cjs"
     STAGING_SLOT_PORT="${DASHBOARD_STAGING_PORT:-5223}"
 
     echo "🖥️  Dashboard 改动 → 构建到 staging slot（自检 → 起常驻 staging → 停住等放行）"
@@ -292,6 +305,62 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         echo "  [dry-run] bash $SELFCHECK $STAGING_DIST $STAGING_SLOT_PORT"
         echo "  [dry-run] 起常驻 staging :$STAGING_SLOT_PORT + 写 ${PENDING_FILE}（不自动 promote）"
     else
+        stop_previous_staging_slot() {
+            local previous previous_port previous_pid previous_nonce previous_commit
+            local identity
+            [[ -f "$SLOT_PID_FILE" ]] || return 0
+            [[ -f "$PENDING_FILE" ]] || {
+                echo "❌ stale staging pidfile lacks verifiable slot identity; refusing PID kill" >&2
+                exit 78
+            }
+            previous=$(RELEASE_DASHBOARD_ACTION=read-slot \
+              RELEASE_DASHBOARD_PENDING_FILE="$PENDING_FILE" \
+              node "$SOURCE_SCRIPTS/lib/release-run-dashboard-stage-seal.mjs") || {
+                echo "❌ prior staging slot identity invalid; refusing PID kill" >&2
+                exit 78
+            }
+            IFS=$'\t' read -r previous_port previous_pid previous_nonce \
+              previous_commit <<< "$previous"
+            [[ "$(cat "$SLOT_PID_FILE" 2>/dev/null)" == "$previous_pid" ]] || {
+                echo "❌ prior staging pidfile mismatch; refusing PID kill" >&2
+                exit 78
+            }
+            identity=$(curl -sf --max-time 2 \
+              -H "X-Cecelia-Slot-Nonce: ${previous_nonce}" \
+              -H "X-Cecelia-Slot-Commit: ${previous_commit}" \
+              "http://127.0.0.1:${previous_port}/.cecelia-staging-identity" \
+              2>/dev/null) || {
+                echo "❌ prior staging slot cannot prove identity; refusing PID kill" >&2
+                exit 78
+            }
+            STAGING_IDENTITY_JSON="$identity" \
+              EXPECTED_STAGING_PID="$previous_pid" \
+              EXPECTED_STAGING_NONCE="$previous_nonce" \
+              EXPECTED_STAGING_COMMIT="$previous_commit" \
+              node -e '
+                const value = JSON.parse(process.env.STAGING_IDENTITY_JSON);
+                if (
+                  String(value.pid) !== process.env.EXPECTED_STAGING_PID
+                  || value.nonce !== process.env.EXPECTED_STAGING_NONCE
+                  || value.commit !== process.env.EXPECTED_STAGING_COMMIT
+                ) process.exit(1);
+              ' >/dev/null 2>&1 || {
+                echo "❌ prior staging slot identity mismatch; refusing PID kill" >&2
+                exit 78
+            }
+            curl -sf --max-time 2 -X POST \
+              -H "X-Cecelia-Slot-Nonce: ${previous_nonce}" \
+              -H "X-Cecelia-Slot-Commit: ${previous_commit}" \
+              "http://127.0.0.1:${previous_port}/.cecelia-staging-shutdown" \
+              -o /dev/null || {
+                echo "❌ prior staging slot refused owned shutdown" >&2
+                exit 78
+            }
+            rm -f "$SLOT_PID_FILE" "$PENDING_FILE"
+        }
+
+        # 旧 slot 只能用 identity + nonce 请求它自行退出；任何不确定性都阻断。
+        stop_previous_staging_slot
         rm -rf "$STAGING_DIST"
         rm -f "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
         if [[ -n "${STAGING_FIXTURE_DIST:-}" ]]; then
@@ -303,7 +372,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             # cache 挂 $MAIN_ROOT/.npm-cache（bind-mounted volume），避免 Brain /tmp 100MB tmpfs 被塞满
             # logs-dir 同理必须显式指定：--cache 不管 npm 自己的运行日志，容器内
             # 默认日志路径 $HOME/.npm/_logs 只读会导致同一类 mkdir 失败（2026-07-20 实锤）
-            cd "$MAIN_ROOT"
+            cd "$SOURCE_ROOT"
             NPM_CACHE_DIR="$MAIN_ROOT/.npm-cache"
             NPM_LOGS_DIR="$MAIN_ROOT/.npm-logs"
             if ! npm install --prefer-offline --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" 2>&1; then
@@ -318,16 +387,17 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
                 echo "  (容器内构建 → 使用独立 node 容器，4GB 内存限制)"
                 docker run --rm \
                     -v "$MAIN_ROOT:$MAIN_ROOT:rw" \
-                    -w "$DASH_DIR" \
+                    -v "$SOURCE_ROOT:$SOURCE_ROOT:rw" \
+                    -w "$DASH_SOURCE_DIR" \
                     -e NODE_OPTIONS="--max-old-space-size=3072" \
-                    -e GIT_SHA="$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
+                    -e GIT_SHA="${KERNEL_RELEASE_MERGE_SHA:-unknown}" \
                     --memory=4g \
                     --memory-swap=4g \
                     node:20-alpine \
                     npm run build -- --outDir "$STAGING_DIST"
             else
-                cd "$DASH_DIR"
-                GIT_SHA="$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
+                cd "$DASH_SOURCE_DIR"
+                GIT_SHA="${KERNEL_RELEASE_MERGE_SHA:-unknown}" \
                     NODE_OPTIONS="--max-old-space-size=3072" npm run build -- --outDir "$STAGING_DIST"
             fi
             cd "$MAIN_ROOT"
@@ -350,15 +420,19 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         echo ""
 
         # ── 起【常驻】staging 服务（perfect21:52xx 私密预览，绑 0.0.0.0 对外像 5211）──
-        # 杀掉上一轮常驻 staging（若有），再起新的。
+        # 上一轮 slot 已在构建前完成自证关闭；这里仅启动本轮。
         # STAGING_BANNER=1：注入"待放行横幅 + 放行按钮"；commit 显示在横幅上。
-        if [[ -f "$SLOT_PID_FILE" ]]; then
-            kill "$(cat "$SLOT_PID_FILE" 2>/dev/null)" 2>/dev/null || true
-            rm -f "$SLOT_PID_FILE"
-        fi
-        STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+        STAGE_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+        [[ "$STAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "❌ exact staging commit unavailable" >&2
+            rm -rf "$STAGING_DIST" 2>/dev/null || true
+            exit 78
+        }
+        STAGING_SLOT_NONCE=$(node -e \
+          "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
         DIST_DIR="$STAGING_DIST" SLOT_PORT="$STAGING_SLOT_PORT" \
             STAGING_BANNER=1 STAGING_COMMIT="$STAGE_COMMIT" \
+            STAGING_SLOT_NONCE="$STAGING_SLOT_NONCE" \
             nohup node "$SLOT_SERVER" > "$SLOT_LOG_FILE" 2>&1 &
         SLOT_PID=$!
         echo "$SLOT_PID" > "$SLOT_PID_FILE"
@@ -379,13 +453,47 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         fi
 
         # ── 写放行标记（promote 据此知道放行哪一份）────────────────────────────
+        STAGED_ARTIFACT_NAME="${KERNEL_RELEASE_ARTIFACT_NAME:-}"
+        STAGED_ARTIFACT_VERSION="${KERNEL_RELEASE_ARTIFACT_VERSION:-}"
+        STAGED_SOURCE_DIGEST="${KERNEL_RELEASE_ARTIFACT_DIGEST:-}"
+        STAGED_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+        STAGED_BUILD_SHA=$(node -e "
+          try {
+            const value = JSON.parse(require('fs').readFileSync(
+              '$STAGING_DIST/build-info.json',
+              'utf8',
+            ));
+            process.stdout.write(value.git_sha || '');
+          } catch {}
+        " 2>/dev/null || true)
+        [[ "$STAGED_ARTIFACT_NAME" == "workspace" \
+          && -n "$STAGED_ARTIFACT_VERSION" \
+          && "$STAGED_SOURCE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ \
+          && "$STAGED_COMMIT" =~ ^[0-9a-f]{40}$ \
+          && "$STAGED_BUILD_SHA" == "$STAGED_COMMIT" ]] || {
+            echo "❌ staging artifact identity does not match ReleaseRun" >&2
+            kill "$SLOT_PID" 2>/dev/null || true
+            rm -f "$SLOT_PID_FILE"
+            rm -rf "$STAGING_DIST"
+            exit 78
+        }
+        STAGED_DEPLOYED_DIGEST=$(node \
+          "$SOURCE_SCRIPTS/lib/release-run-tree-digest-cli.mjs" \
+          "$STAGING_DIST")
         {
             echo "staging_dist=$STAGING_DIST"
             echo "staging_port=$STAGING_SLOT_PORT"
             echo "slot_pid=$SLOT_PID"
-            echo "commit=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+            echo "slot_nonce=$STAGING_SLOT_NONCE"
+            echo "commit=$STAGED_COMMIT"
             echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        } > "$PENDING_FILE"
+            echo "artifact_name=$STAGED_ARTIFACT_NAME"
+            echo "artifact_version=$STAGED_ARTIFACT_VERSION"
+            echo "source_digest=$STAGED_SOURCE_DIGEST"
+            echo "staged_deployed_digest=$STAGED_DEPLOYED_DIGEST"
+        } > "${PENDING_FILE}.next"
+        chmod 600 "${PENDING_FILE}.next"
+        mv "${PENDING_FILE}.next" "$PENDING_FILE"
 
         echo "🟡 已停在 staging，等你人工放行（生产未触碰）"
         echo "   ┌─ 私密预览（走 SSH 隧道）──────────────────────────────"
@@ -397,7 +505,10 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         echo "   └───────────────────────────────────────────────────────"
 
         # ── 发 Bark 推送通知你去看 staging（iPhone 收到再放行）──────────────────
-        STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+        STAGE_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+        STAGE_COMMIT="${STAGE_COMMIT:0:12}"
+        [[ -n "$STAGE_COMMIT" ]] \
+            || STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
         NOTIFY_TITLE="Cecelia 部署待放行 🟡"
         NOTIFY_BODY="dashboard 新版已停在 staging。电脑开 perfect21:${STAGING_SLOT_PORT} 看，满意跑 promote-dashboard.sh 放行。commit ${STAGE_COMMIT}"
         if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then

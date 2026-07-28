@@ -27,6 +27,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+source "$SCRIPT_DIR/lib/release-run-guard.sh"
+require_release_run_authority production
+
 VERSION=$(node -e "console.log(require('$ROOT_DIR/packages/brain/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
 

@@ -19,8 +19,17 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Forward promotion and rollback have disjoint durable authorities.
+if [[ "${1:-}" == "--rollback" ]]; then
+    bash "$SCRIPT_DIR/lib/release-run-rollback-guard.sh" || exit $?
+else
+    bash "$SCRIPT_DIR/lib/release-run-guard.sh" production || exit $?
+fi
+
 # 部署根：测试钩子 CECELIA_DEPLOY_ROOT 优先，否则按 worktree/主仓库解析（与 deploy-local.sh 一致）
-if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
+if [[ -n "${KERNEL_RELEASE_DEPLOY_ROOT:-}" ]]; then
+    MAIN_ROOT="$(cd "$KERNEL_RELEASE_DEPLOY_ROOT" && pwd)"
+elif [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     MAIN_ROOT="$(cd "$CECELIA_DEPLOY_ROOT" && pwd)"
 else
     GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
@@ -42,8 +51,88 @@ SLOT_LOG_FILE="$DASH_DIR/.staging-slot.log"
 RELEASES_DIR="$DASH_DIR/.dist-releases"       # 产物库（release 冻结 + 旧版留存；产物，不进 git）
 RELEASE_FILE="$MAIN_ROOT/.production-release" # 指针 + 历史 + manifest（git 跟踪）
 BRAIN_VERSIONS_FILE="$MAIN_ROOT/.brain-versions" # brain 镜像版本账本（brain-rollback.sh 的 SSOT）
+ROLLBACK_DIR="$MAIN_ROOT/logs/release-rollbacks/dashboard"
+ROLLBACK_IMMUTABLE_SOURCE=""
 RETAIN_N=5                                     # 留存份数上限
 TAG_PREFIX="prod-cecelia-v"
+
+dashboard_build_sha() {
+    node -e '
+      const fs = require("fs");
+      const path = require("path");
+      try {
+        const value = JSON.parse(fs.readFileSync(
+          path.join(process.argv[1], "build-info.json"),
+          "utf8",
+        ));
+        process.stdout.write(typeof value.git_sha === "string" ? value.git_sha : "");
+      } catch {}
+    ' "$1" 2>/dev/null || true
+}
+
+assert_forward_dashboard_identity() {
+    local root="$1"
+    local actual_digest actual_sha
+    [[ -d "$root" && -f "$root/index.html" \
+      && "${STAGED_COMMIT:-}" =~ ^[0-9a-f]{40}$ \
+      && "${STAGED_DEPLOYED_DIGEST:-}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    actual_digest=$(node "$SCRIPT_DIR/lib/release-run-tree-digest-cli.mjs" \
+      "$root") || return 1
+    actual_sha=$(dashboard_build_sha "$root")
+    [[ "$actual_digest" == "$STAGED_DEPLOYED_DIGEST" \
+      && "$actual_sha" == "$STAGED_COMMIT" ]]
+}
+
+stop_verified_staging_slot() {
+    local identity staging_slot_host
+    [[ "${STAGED_PORT:-}" =~ ^[1-9][0-9]*$ \
+      && "${STAGED_PID:-}" =~ ^[1-9][0-9]*$ \
+      && "${STAGED_SLOT_NONCE:-}" =~ ^[0-9a-f]{64}$ \
+      && "${STAGED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || return 1
+    staging_slot_host=$(BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" \
+      node -e '
+        try {
+          process.stdout.write(new URL(process.env.BRAIN_URL).hostname);
+        } catch {}
+      ')
+    [[ "$staging_slot_host" =~ ^[A-Za-z0-9.-]+$ ]] || {
+        echo "⚠️  staging slot host invalid; refusing slot shutdown"
+        return 1
+    }
+    identity=$(curl -sf --max-time 2 \
+      -H "X-Cecelia-Slot-Nonce: ${STAGED_SLOT_NONCE}" \
+      -H "X-Cecelia-Slot-Commit: ${STAGED_COMMIT}" \
+      "http://${staging_slot_host}:${STAGED_PORT}/.cecelia-staging-identity" \
+      2>/dev/null) || {
+        echo "⚠️  staging slot identity unavailable; refusing slot shutdown"
+        return 1
+    }
+    if STAGING_IDENTITY_JSON="$identity" \
+      EXPECTED_STAGING_PID="$STAGED_PID" \
+      EXPECTED_STAGING_NONCE="$STAGED_SLOT_NONCE" \
+      EXPECTED_STAGING_COMMIT="$STAGED_COMMIT" \
+      node -e '
+        const value = JSON.parse(process.env.STAGING_IDENTITY_JSON);
+        if (
+          String(value.pid) !== process.env.EXPECTED_STAGING_PID
+          || value.nonce !== process.env.EXPECTED_STAGING_NONCE
+          || value.commit !== process.env.EXPECTED_STAGING_COMMIT
+        ) process.exit(1);
+      ' >/dev/null 2>&1; then
+        if ! curl -sf --max-time 2 -X POST \
+          -H "X-Cecelia-Slot-Nonce: ${STAGED_SLOT_NONCE}" \
+          -H "X-Cecelia-Slot-Commit: ${STAGED_COMMIT}" \
+          "http://${staging_slot_host}:${STAGED_PORT}/.cecelia-staging-shutdown" \
+          -o /dev/null; then
+            echo "⚠️  verified staging slot refused owned shutdown"
+            return 1
+        fi
+        return 0
+    else
+        echo "⚠️  staging slot identity mismatch; refusing slot shutdown"
+        return 1
+    fi
+}
 
 # 算下一个单调递增 tag 号：取 .production-release current 与本地 git tag 的 max + 1。
 next_release_tag() {
@@ -83,19 +172,29 @@ read_staged() {
         echo "   先跑一次 dashboard 部署（deploy-local.sh）把新版本停到 staging，再回来放行。"
         exit 1
     fi
-    while IFS='=' read -r k v; do
-        case "$k" in
-            staging_dist) STAGED_DIST="$v" ;;
-            staging_port) STAGED_PORT="$v" ;;
-            slot_pid)     STAGED_PID="$v" ;;
-        esac
-    done < "$PENDING_FILE"
-    [[ -z "$STAGED_DIST" ]] && STAGED_DIST="$STAGING_DIST"
-    if [[ ! -d "$STAGED_DIST" || ! -f "$STAGED_DIST/index.html" ]]; then
-        echo "❌ 待放行的 staging 产物不存在或残缺：$STAGED_DIST"
-        echo "   放行标记已失效，重新跑一次 dashboard 部署。"
-        exit 1
-    fi
+    local sealed
+    sealed=$(RELEASE_DASHBOARD_PENDING_FILE="$PENDING_FILE" \
+      RELEASE_DASHBOARD_STAGING_ROOT="$STAGING_DIST" \
+      RELEASE_DASHBOARD_SEAL_PARENT="$DASH_DIR" \
+      node "$SCRIPT_DIR/lib/release-run-dashboard-stage-seal.mjs") || {
+        echo "❌ Dashboard release blocked: staged artifact identity mismatch" >&2
+        exit 78
+    }
+    IFS=$'\t' read -r STAGED_SEALED_ROOT STAGED_PORT STAGED_PID STAGED_SLOT_NONCE \
+      STAGED_COMMIT \
+      STAGED_ARTIFACT_NAME STAGED_ARTIFACT_VERSION STAGED_SOURCE_DIGEST \
+      STAGED_DEPLOYED_DIGEST <<< "$sealed"
+    [[ "$STAGED_SEALED_ROOT" == "$DASH_DIR"/.staging-sealed-* \
+      && -d "$STAGED_SEALED_ROOT" \
+      && "$STAGED_COMMIT" == "$KERNEL_RELEASE_MERGE_SHA" \
+      && "$STAGED_ARTIFACT_NAME" == "workspace" \
+      && "$STAGED_ARTIFACT_VERSION" == "$KERNEL_RELEASE_ARTIFACT_VERSION" \
+      && "$STAGED_SOURCE_DIGEST" == "$KERNEL_RELEASE_ARTIFACT_DIGEST" ]] || {
+        echo "❌ Dashboard release blocked: sealed artifact invalid" >&2
+        exit 78
+    }
+    STAGED_DIST="$STAGED_SEALED_ROOT"
+    trap 'rm -rf "$STAGED_SEALED_ROOT"' EXIT
 }
 
 # 写 manifest= + history=（release 阶段登记本版构成；不动 current/commit/promoted_at）。
@@ -114,6 +213,7 @@ do_release() {
     read_staged
     local RELEASE_TAG PROMOTE_COMMIT BRAIN_IMAGE
     RELEASE_TAG="$(next_release_tag)"
+    RELEASE_TAG_RESULT="$RELEASE_TAG"
     echo "🏷️  release tag：$RELEASE_TAG"
 
     mkdir -p "$RELEASES_DIR"
@@ -122,9 +222,18 @@ do_release() {
         echo "❌ 冻结产物进库失败：$RELEASES_DIR/$RELEASE_TAG"
         exit 1
     fi
+    if ! assert_forward_dashboard_identity "$RELEASES_DIR/$RELEASE_TAG"; then
+        rm -rf "${RELEASES_DIR:?}/$RELEASE_TAG"
+        echo "❌ Dashboard release blocked: frozen artifact identity mismatch" >&2
+        exit 78
+    fi
     echo "📦 已冻结验过的产物 → .dist-releases/${RELEASE_TAG}（不可变 release）"
 
-    PROMOTE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
+    PROMOTE_COMMIT="${STAGED_COMMIT:-}"
+    [[ "$PROMOTE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "❌ Dashboard release blocked: exact merge SHA unavailable" >&2
+        exit 78
+    }
     if [[ -z "${CECELIA_SKIP_GIT_TAG:-}" ]]; then
         git -C "$MAIN_ROOT" tag -f "$RELEASE_TAG" "$PROMOTE_COMMIT" >/dev/null 2>&1 \
             && echo "🏷️  已打 git tag $RELEASE_TAG → ${PROMOTE_COMMIT:0:8}" \
@@ -144,17 +253,83 @@ do_release() {
 # ── deploy 阶段：从产物库把 <tag> 原子换入 live 5211 + 旧版留存 + 写 current + brain-deploy + 停 staging ──
 do_deploy() {
     local tag="$1"
+    local rollback_mode="${2:-0}"
     local SRC="$RELEASES_DIR/$tag"
     if [[ ! -d "$SRC" || ! -f "$SRC/index.html" ]]; then
         echo "❌ 部署源 $tag 不在产物库 .dist-releases/（先 release 或指定已存在的 tag），无法部署。"
         ls -1 "$RELEASES_DIR" 2>/dev/null | sed 's/^/     /' || true
         exit 1
     fi
+    if [[ "$rollback_mode" == "1" ]]; then
+        local expected_digest="${KERNEL_RELEASE_ROLLBACK_EXPECTED_DIGEST:-}"
+        local target_merge_sha="${KERNEL_RELEASE_ROLLBACK_TARGET_MERGE_SHA:-}"
+        local immutable_source="$RELEASES_DIR/.rollback-source.$$"
+        [[ "$expected_digest" =~ ^sha256:[0-9a-f]{64}$ \
+           && "$target_merge_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "❌ Dashboard rollback blocked: exact target identity unavailable" >&2
+            exit 78
+        }
+        rm -rf "$immutable_source"
+        cp -R "$SRC" "$immutable_source" || {
+            rm -rf "$immutable_source"
+            echo "❌ Dashboard rollback blocked: target snapshot failed" >&2
+            exit 78
+        }
+        local snapshot_digest
+        snapshot_digest=$(node "$SCRIPT_DIR/lib/release-run-tree-digest-cli.mjs" \
+            "$immutable_source") || {
+            rm -rf "$immutable_source"
+            exit 78
+        }
+        [[ "$snapshot_digest" == "$expected_digest" ]] || {
+            rm -rf "$immutable_source"
+            echo "❌ Dashboard rollback blocked: retained target digest mismatch" >&2
+            exit 78
+        }
+        SRC="$immutable_source"
+        ROLLBACK_IMMUTABLE_SOURCE="$immutable_source"
+        trap 'if [[ -n "${ROLLBACK_IMMUTABLE_SOURCE:-}" ]]; then rm -rf "$ROLLBACK_IMMUTABLE_SOURCE"; fi' EXIT
+    fi
     echo "🟢 Deploy → 从产物库原子换入本机 live dist/（5211）：$tag"
 
     local PROMOTE_FAIL=0
-    local OLD_TAG="" HAD_OLD=false
+    local OLD_TAG="" OLD_COMMIT="" HAD_OLD=false
+    local DEPLOY_COMMIT
     [[ -f "$RELEASE_FILE" ]] && OLD_TAG=$(grep '^current=' "$RELEASE_FILE" | head -1 | cut -d= -f2)
+    [[ -f "$RELEASE_FILE" ]] && OLD_COMMIT=$(grep '^commit=' "$RELEASE_FILE" | head -1 | cut -d= -f2)
+    if [[ ! "$OLD_TAG" =~ ^${TAG_PREFIX}[0-9]+$ ]]; then
+        echo "❌ Dashboard promotion blocked: exact OLD_TAG unavailable" >&2
+        exit 78
+    fi
+    if [[ "$rollback_mode" == "1" ]]; then
+        DEPLOY_COMMIT="${KERNEL_RELEASE_ROLLBACK_TARGET_MERGE_SHA:-}"
+        local expected_current_digest="${KERNEL_RELEASE_ROLLBACK_EXPECTED_CURRENT_DIGEST:-}"
+        local expected_current_version="${KERNEL_RELEASE_ROLLBACK_EXPECTED_CURRENT_VERSION:-}"
+        local expected_current_merge_sha="${KERNEL_RELEASE_ROLLBACK_EXPECTED_CURRENT_MERGE_SHA:-}"
+        local actual_current_digest=""
+        [[ -d "$DIST_DIR" ]] && actual_current_digest=$(
+            node "$SCRIPT_DIR/lib/release-run-tree-digest-cli.mjs" "$DIST_DIR"
+        )
+        [[ "$expected_current_digest" =~ ^sha256:[0-9a-f]{64}$ \
+           && "$expected_current_version" =~ ^${TAG_PREFIX}[0-9]+$ \
+           && "$expected_current_merge_sha" =~ ^[0-9a-f]{40}$ \
+           && "$OLD_TAG" == "$expected_current_version" \
+           && "$OLD_COMMIT" == "$expected_current_merge_sha" \
+           && "$actual_current_digest" == "$expected_current_digest" ]] || {
+            echo "❌ Dashboard rollback blocked: current production CAS mismatch" >&2
+            exit 78
+        }
+    else
+        DEPLOY_COMMIT="${STAGED_COMMIT:-${KERNEL_RELEASE_MERGE_SHA:-}}"
+        if ! assert_forward_dashboard_identity "$SRC"; then
+            echo "❌ Dashboard promotion blocked: release artifact identity mismatch" >&2
+            exit 78
+        fi
+    fi
+    [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "❌ Dashboard promotion blocked: exact merge SHA unavailable" >&2
+        exit 78
+    }
     if [[ -d "$DIST_DIR" ]]; then
         rm -rf "${DIST_DIR}.old" 2>/dev/null || true
         mv "$DIST_DIR" "${DIST_DIR}.old"
@@ -162,17 +337,19 @@ do_deploy() {
     fi
     # cp -R（库版本要留在库里，不能 mv 走）。
     if cp -R "$SRC" "$DIST_DIR"; then
+        if [[ "$rollback_mode" != "1" ]] \
+          && ! assert_forward_dashboard_identity "$DIST_DIR"; then
+            echo "❌ Dashboard promotion blocked: live artifact identity mismatch" >&2
+            rm -rf "$DIST_DIR" 2>/dev/null || true
+            [[ "$HAD_OLD" == true && -d "${DIST_DIR}.old" ]] \
+              && mv "${DIST_DIR}.old" "$DIST_DIR"
+            exit 78
+        fi
         if [[ "$HAD_OLD" == true ]]; then
             mkdir -p "$RELEASES_DIR"
-            if [[ -n "$OLD_TAG" ]]; then
-                rm -rf "${RELEASES_DIR:?}/$OLD_TAG"
-                mv "${DIST_DIR}.old" "$RELEASES_DIR/$OLD_TAG"
-                echo "📦 旧版已留存：.dist-releases/$OLD_TAG"
-            else
-                rm -rf "${RELEASES_DIR:?}/pre-$tag"
-                mv "${DIST_DIR}.old" "$RELEASES_DIR/pre-$tag"
-                echo "📦 旧版（无指针历史）已留存：.dist-releases/pre-$tag"
-            fi
+            rm -rf "${RELEASES_DIR:?}/$OLD_TAG"
+            mv "${DIST_DIR}.old" "$RELEASES_DIR/$OLD_TAG"
+            echo "📦 旧版已留存：.dist-releases/$OLD_TAG"
             prune_releases
         fi
         echo "✅ 本机 5211 已指向 $tag"
@@ -184,8 +361,6 @@ do_deploy() {
     fi
 
     # 写指针：current/commit/promoted_at 覆盖；manifest/history（release 已写）保留。
-    local DEPLOY_COMMIT
-    DEPLOY_COMMIT=$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
     {
         echo "current=$tag"
         echo "commit=$DEPLOY_COMMIT"
@@ -205,12 +380,12 @@ do_deploy() {
     fi
 
     # 停常驻 staging 服务 + 清放行标记/通知（防重复 promote）。
-    if [[ -n "${STAGED_PID:-}" ]]; then kill "$STAGED_PID" 2>/dev/null || true; fi
-    if [[ -f "$SLOT_PID_FILE" ]]; then
-        kill "$(cat "$SLOT_PID_FILE" 2>/dev/null)" 2>/dev/null || true
-        rm -f "$SLOT_PID_FILE"
+    if stop_verified_staging_slot; then
+        rm -f "$SLOT_PID_FILE" "$PENDING_FILE" "$SLOT_LOG_FILE" \
+          "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
+    else
+        echo "⚠️  staging slot authority retained for verified cleanup on next deploy"
     fi
-    rm -f "$PENDING_FILE" "$SLOT_LOG_FILE" "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
 
     # ── HK 同步：rsync 本机 live dist → HK /opt/cecelia/frontend/dist/ ───────────
     if [[ -z "${CECELIA_SKIP_HK:-}" ]]; then
@@ -243,6 +418,19 @@ do_deploy() {
         echo "🔴 deploy 结束：本机 5211 已上线 ${tag}，但 HK 同步/终验对账红（见上方）——退出非零"
         exit 1
     fi
+    if [[ "$rollback_mode" != "1" ]]; then
+        KERNEL_RELEASE_MERGE_SHA="$DEPLOY_COMMIT" \
+        KERNEL_RELEASE_ARTIFACT_VERSION="${STAGED_ARTIFACT_VERSION:-${KERNEL_RELEASE_ARTIFACT_VERSION:-}}" \
+        KERNEL_RELEASE_ARTIFACT_DIGEST="${STAGED_SOURCE_DIGEST:-${KERNEL_RELEASE_ARTIFACT_DIGEST:-}}" \
+        KERNEL_RELEASE_ARTIFACT_DEPLOYED_DIGEST="${STAGED_DEPLOYED_DIGEST:-}" \
+        RELEASE_DASHBOARD_OLD_TAG="$OLD_TAG" \
+        RELEASE_DASHBOARD_NEW_TAG="$tag" \
+        RELEASE_DASHBOARD_OLD_COMMIT="$OLD_COMMIT" \
+        RELEASE_DASHBOARD_OLD_ROOT="$RELEASES_DIR/$OLD_TAG" \
+        RELEASE_DASHBOARD_NEW_ROOT="$DIST_DIR" \
+        RELEASE_DASHBOARD_RECEIPT="$ROLLBACK_DIR/${KERNEL_RELEASE_RUN_ID}.json" \
+            node "$SCRIPT_DIR/lib/release-run-dashboard-receipt.mjs"
+    fi
     echo "🎉 deploy 完成：本机 5211 已上线 ${tag}，HK 已同步，staging 已停、标记已清。"
 }
 
@@ -253,6 +441,7 @@ while [[ $# -gt 0 ]]; do
         --release-only) MODE="release-only"; shift ;;
         --deploy) MODE="deploy"; DEPLOY_TAG="${2:-}"; shift 2 ;;
         --deploy=*) MODE="deploy"; DEPLOY_TAG="${1#--deploy=}"; shift ;;
+        --rollback) MODE="rollback"; DEPLOY_TAG="${2:-}"; shift 2 ;;
         *) shift ;;
     esac
 done
@@ -263,18 +452,22 @@ echo ""
 
 case "$MODE" in
     release-only)
-        do_release
+        echo "❌ Dashboard release blocked: split forward mode is not authorized" >&2
+        exit 78
         ;;
     deploy)
-        [[ -n "$DEPLOY_TAG" ]] || { echo "❌ --deploy 需要指定 <tag>"; exit 1; }
-        # deploy 模式需要 read_staged 取 STAGED_PID（停 slot）；无 pending 也允许纯部署（slot 信息缺省）。
-        if [[ -f "$PENDING_FILE" ]]; then read_staged || true; fi
-        do_deploy "$DEPLOY_TAG"
+        echo "❌ Dashboard release blocked: split forward mode is not authorized" >&2
+        exit 78
+        ;;
+    rollback)
+        [[ "$DEPLOY_TAG" =~ ^prod-cecelia-v[1-9][0-9]*$ ]] \
+            || { echo "❌ --rollback 需要 exact retained <prod-cecelia-vN>"; exit 78; }
+        CECELIA_SKIP_BRAIN_PROMOTE=1 do_deploy "$DEPLOY_TAG" 1
         ;;
     full)
-        REL_OUT="$(do_release)"
-        echo "$REL_OUT"
-        RELEASE_TAG=$(echo "$REL_OUT" | grep '^RELEASE_TAG=' | tail -1 | cut -d= -f2)
+        RELEASE_TAG_RESULT=""
+        do_release
+        RELEASE_TAG="$RELEASE_TAG_RESULT"
         [[ -n "$RELEASE_TAG" ]] || { echo "❌ release 阶段未产出 RELEASE_TAG"; exit 1; }
         do_deploy "$RELEASE_TAG"
         ;;

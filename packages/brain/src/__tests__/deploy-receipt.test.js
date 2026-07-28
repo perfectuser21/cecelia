@@ -14,15 +14,42 @@ import { join } from 'node:path';
 import express from 'express';
 import request from 'supertest';
 
-let capturedSpawnArgs = null;
-let spawnCloseHandler = null;
-
-const { recordActionReceipt, resolveActionReceipt, execSyncMock } = vi.hoisted(() => ({
+const {
+  recordActionReceipt,
+  resolveActionReceipt,
+  execFileMock,
+  claimReleaseEffect,
+  launchProductionController,
+} = vi.hoisted(() => ({
   recordActionReceipt: vi.fn().mockResolvedValue('r-dep'),
   resolveActionReceipt: vi.fn().mockResolvedValue(true),
-  execSyncMock: vi.fn().mockReturnValue(Buffer.from('ok')),
+  execFileMock: vi.fn((_file, _args, _options, callback) => callback(null, { stdout: 'ok', stderr: '' })),
+  claimReleaseEffect: vi.fn(),
+  launchProductionController: vi.fn().mockResolvedValue({ name: 'controller' }),
 }));
 vi.mock('../receipt-collector.js', () => ({ recordActionReceipt, resolveActionReceipt }));
+vi.mock('../orchestrator/release-run-authorization.js', () => ({
+  authorizeReleaseEffect: vi.fn(),
+  appendDispatchOutcome: vi.fn().mockResolvedValue(true),
+  claimReleaseEffect,
+  claimReleaseVerification: vi.fn(),
+}));
+vi.mock('../orchestrator/release-run-routing.js', () => ({
+  planReleaseArtifactRoutes: vi.fn(() => [{
+    artifact: 'brain',
+    command: '/fixture/deploy-brain.sh',
+    args: [],
+    env: {},
+  }]),
+}));
+vi.mock('../orchestrator/release-run-controller-launcher.js', () => ({
+  launchProductionController,
+  launchRollbackController: vi.fn(),
+  resolveRollbackControllerRuntime: vi.fn(() => ({
+    image: `sha256:${'a'.repeat(64)}`,
+    network: 'fixture',
+  })),
+}));
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
@@ -58,17 +85,16 @@ vi.mock('./shared.js', () => ({
   INVENTORY_CONFIG: {},
 }));
 vi.mock('child_process', () => ({
-  spawn: (...args) => {
-    capturedSpawnArgs = args;
-    return {
-      unref: vi.fn(),
-      on: (event, handler) => { if (event === 'close') spawnCloseHandler = handler; },
-    };
-  },
-  execSync: execSyncMock,
+  spawn: vi.fn(),
+  execFile: (...args) => execFileMock(...args),
 }));
 
 describe('deploy webhook 回执接线（T4）', () => {
+  const authority = {
+    release_run_id: '44444444-4444-4444-8444-444444444444',
+    merge_sha: 'f'.repeat(40),
+    release_authorization: '55555555-5555-4555-8555-555555555555',
+  };
   const ORIG_REPO_ROOT = process.env.REPO_ROOT;
   let app;
   let tmpRepoRoot;
@@ -77,9 +103,21 @@ describe('deploy webhook 回执接线（T4）', () => {
     vi.clearAllMocks();
     recordActionReceipt.mockResolvedValue('r-dep');
     resolveActionReceipt.mockResolvedValue(true);
-    execSyncMock.mockReturnValue(Buffer.from('ok'));
-    capturedSpawnArgs = null;
-    spawnCloseHandler = null;
+    execFileMock.mockImplementation(
+      (_file, _args, _options, callback) => callback(null, { stdout: 'ok', stderr: '' }),
+    );
+    claimReleaseEffect.mockResolvedValue({
+      claimed: true,
+      deduped: false,
+      dispatch_claim_id: 91,
+      generation: 1,
+      artifact_versions: [{
+        name: 'brain',
+        version: '1.268.15',
+        digest: `sha256:${'a'.repeat(64)}`,
+      }],
+    });
+    launchProductionController.mockResolvedValue({ name: 'controller' });
     process.env.DEPLOY_TOKEN = 'tok';
     // 用临时目录做 REPO_ROOT，避免 production 分支在真实仓库里落 log 文件
     tmpRepoRoot = mkdtempSync(join(tmpdir(), 'deploy-receipt-test-'));
@@ -107,32 +145,36 @@ describe('deploy webhook 回执接线（T4）', () => {
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
   });
 
-  it('production deploy → 写 pending(kind=deploy/target=production)，close(0) 核销 confirmed', async () => {
+  it('production deploy writes pending and delegates exact receipt identity to the durable controller', async () => {
     const res = await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
-      .send({ changed_paths: ['packages/brain/src/x.js'] });
+      .send({ ...authority, changed_paths: ['packages/brain/src/x.js'] });
     expect(res.status).toBe(202);
     await new Promise((r) => setTimeout(r, 50));
     expect(recordActionReceipt).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'deploy', target: 'production' })
     );
-    expect(spawnCloseHandler).toBeTypeOf('function');
-    spawnCloseHandler(0, null);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'confirmed', expect.objectContaining({ exit_code: 0 })
+    expect(launchProductionController).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workerEnvironment: expect.objectContaining({
+          KERNEL_RELEASE_ACTION_RECEIPT_ID: 'r-dep',
+        }),
+      }),
     );
+    expect(resolveActionReceipt).not.toHaveBeenCalled();
   });
 
-  it('production deploy close(1) → 核销 failed', async () => {
-    await request(app).post('/api/brain/deploy').set('Authorization', 'Bearer tok').send({});
+  it('production controller launch failure immediately核销 failed', async () => {
+    launchProductionController.mockRejectedValueOnce(new Error('launch failed'));
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer tok')
+      .send(authority);
+    expect(res.status).toBe(202);
     await new Promise((r) => setTimeout(r, 50));
-    expect(spawnCloseHandler).toBeTypeOf('function');
-    spawnCloseHandler(1, null);
-    await new Promise((r) => setTimeout(r, 20));
     expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'failed', expect.objectContaining({ exit_code: 1 })
+      'r-dep', 'failed', expect.objectContaining({ error: 'launch failed' })
     );
   });
 
@@ -150,7 +192,7 @@ describe('deploy webhook 回执接线（T4）', () => {
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
-      .send({ mode: 'staging' });
+      .send({ ...authority, mode: 'staging' });
     await new Promise((r) => setTimeout(r, 50));
     expect(recordActionReceipt).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'deploy', target: 'staging' })
@@ -158,30 +200,35 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect(resolveActionReceipt).toHaveBeenCalledWith('r-dep', 'confirmed', expect.anything());
   });
 
-  it('staging execSync 抛错 → 核销 failed（含 error）', async () => {
-    execSyncMock.mockImplementation(() => { throw new Error('boom'); });
+  it('staging worker 失败 → 核销 failed（含稳定 error_code）', async () => {
+    execFileMock.mockImplementation((_file, _args, _options, callback) => callback(new Error('boom')));
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
-      .send({ mode: 'staging' });
+      .send({ ...authority, mode: 'staging' });
     await new Promise((r) => setTimeout(r, 50));
     expect(recordActionReceipt).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'deploy', target: 'staging' })
     );
     expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'failed', expect.objectContaining({ error: 'boom' })
+      'r-dep', 'failed', expect.objectContaining({ error_code: 'staging_dispatch_failed' })
     );
   });
 
-  it('staging 输出 STAGING_SKIP_REASON=no_docker → confirmed 且 evidence 含 skip_reason', async () => {
-    execSyncMock.mockReturnValue(Buffer.from('STAGING_SKIP_REASON=no_docker\n'));
+  it('staging 输出 STAGING_SKIP_REASON=no_docker → failed 且 evidence 含 skip_reason', async () => {
+    execFileMock.mockImplementation(
+      (_file, _args, _options, callback) => callback(
+        null,
+        { stdout: 'STAGING_SKIP_REASON=no_docker\n', stderr: '' },
+      ),
+    );
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
-      .send({ mode: 'staging' });
+      .send({ ...authority, mode: 'staging' });
     await new Promise((r) => setTimeout(r, 50));
     expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'confirmed', expect.objectContaining({ skip_reason: 'no_docker' })
+      'r-dep', 'failed', expect.objectContaining({ skip_reason: 'no_docker' })
     );
   });
 });

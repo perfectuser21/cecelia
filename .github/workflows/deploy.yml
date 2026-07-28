@@ -1,462 +1,66 @@
-name: Deploy
-
-# Release 触发机制（已从 push to main 改为手动/定时）
-#
-# 背景：每次 merge 触发 deploy 导致一天 5-6 次失败，production 长期 rolled_back。
-# AI 并行开发下 merge 节奏（10-20次/天）必须与 release 节奏（1-2次/天）解耦。
-#
-# 触发方式：
-#   1. workflow_dispatch — 手动触发（你决定 release 时机）
-#   2. schedule — 每天北京时间 10:00 / 18:00 自动触发
-#
-# 发布决策层：Fast Lane / Safe Lane（保持不变）
-#   Fast Lane（risk_level=low）：risk_gate 通过 → 直接 deploy production
-#   Safe Lane（risk_level=high）：staging_deploy（staging 验证）→ deploy production
-#     高风险路径：thalamus/tick/executor/task-router/migrate/selfcheck/ops.js
-#
-# 架构：
-#   changes
-#     ├── [Fast Lane]  risk_gate (pass) ─────────────────────────────→ deploy (production)
-#     └── [Safe Lane]  staging_deploy (staging 验证通过) ────────────→ deploy (production)
+name: Kernel Release Production Effect
 
 on:
+  workflow_call:
+    inputs:
+      release_run_id:
+        required: true
+        type: string
+      merge_sha:
+        required: true
+        type: string
+      release_authorization:
+        required: true
+        type: string
+    secrets:
+      TS_AUTHKEY:
+        required: true
+      BRAIN_DEPLOY_URL:
+        required: true
+      DEPLOY_TOKEN:
+        required: true
   workflow_dispatch:
     inputs:
-      reason:
-        description: 'Release 原因（可选）'
-        required: false
-        default: '手动发布'
-      bypass_nightly_gate:
-        description: '输入 BYPASS 跳过 nightly 绿色检查（紧急通道，需知晓风险）'
-        required: false
-        default: ''
-  schedule:
-    # 北京时间 10:00 (UTC 02:00) 和 18:00 (UTC 10:00)
-    - cron: '0 2 * * *'
-    - cron: '0 10 * * *'
+      release_run_id:
+        description: Durable Kernel ReleaseRun UUID
+        required: true
+        type: string
+      merge_sha:
+        description: Exact 40-character merge SHA
+        required: true
+        type: string
+      release_authorization:
+        description: Persisted production effect authorization UUID
+        required: true
+        type: string
 
-# 串行部署：同一时间只允许一个 deploy workflow 运行，排队等待而非取消
 concurrency:
-  group: deploy-production
+  group: kernel-release
   cancel-in-progress: false
 
 jobs:
-  # ─── Detect Changes ───────────────────────────────────────────────────────
-
-  changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    outputs:
-      brain: ${{ steps.filter.outputs.brain }}
-      workspace: ${{ steps.filter.outputs.workspace }}
-      changed_paths: ${{ steps.filter.outputs.changed_paths }}
-      risk_level: ${{ steps.filter.outputs.risk_level }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-      - name: Detect changed paths
-        id: filter
-        run: |
-          COMMIT_MSG=$(git log -1 --pretty=%B 2>/dev/null || echo "")
-
-          # schedule / workflow_dispatch 触发：全量部署（不依赖 push event 的 before/after）
-          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "brain=true" >> $GITHUB_OUTPUT
-            echo "workspace=true" >> $GITHUB_OUTPUT
-            echo "changed_paths=packages/brain/ apps/" >> $GITHUB_OUTPUT
-            echo "risk_level=low" >> $GITHUB_OUTPUT
-            echo "🕐 Release 触发（${{ github.event_name }}）— 全量部署"
-            exit 0
-          fi
-
-          BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.event.after }}"
-
-          # 首次 commit
-          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            echo "brain=true" >> $GITHUB_OUTPUT
-            echo "workspace=true" >> $GITHUB_OUTPUT
-            echo "changed_paths=packages/brain/ apps/" >> $GITHUB_OUTPUT
-            echo "risk_level=low" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
-
-          if echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$"; then
-            echo "brain=true" >> $GITHUB_OUTPUT
-          else
-            echo "brain=false" >> $GITHUB_OUTPUT
-          fi
-          if echo "$CHANGED" | grep -qE "^apps/"; then
-            echo "workspace=true" >> $GITHUB_OUTPUT
-          else
-            echo "workspace=false" >> $GITHUB_OUTPUT
-          fi
-
-          # Pass changed paths to webhook
-          PATHS=$(echo "$CHANGED" | tr '\n' ' ')
-          echo "changed_paths=$PATHS" >> $GITHUB_OUTPUT
-
-          # ── 风险等级检测 ──────────────────────────────────────────────────
-          # [SAFE-DEPLOY] 在 commit message 中 → 强制 Fast Lane（bypass）
-          if echo "$COMMIT_MSG" | grep -qF "[SAFE-DEPLOY]"; then
-            echo "risk_level=low" >> $GITHUB_OUTPUT
-            echo "⚡ [SAFE-DEPLOY] bypass 激活 — 强制 Fast Lane"
-            exit 0
-          fi
-
-          # 高风险路径：Brain 核心编排文件
-          # Patterns: thalamus.js tick.js executor.js task-router.js migrate.js selfcheck.js ops.js
-          SAFE_LANE_PATTERN="^packages/brain/src/thalamus\.js$|^packages/brain/src/tick\.js$|^packages/brain/src/executor\.js$|^packages/brain/src/task-router\.js$|^packages/brain/src/migrate\.js$|^packages/brain/src/migrations/|^packages/brain/src/selfcheck\.js$|^packages/brain/src/routes/ops\.js$"
-
-          if echo "$CHANGED" | grep -qE "$SAFE_LANE_PATTERN"; then
-            echo "risk_level=high" >> $GITHUB_OUTPUT
-            echo "🔴 Safe Lane 触发 — 检测到高风险文件改动"
-            echo "$CHANGED" | grep -E "$SAFE_LANE_PATTERN" | sed 's/^/  /'
-          else
-            echo "risk_level=low" >> $GITHUB_OUTPUT
-            echo "🟢 Fast Lane — 无高风险文件改动"
-          fi
-
-  # ─── 刀C Release Gate：生产部署前检查最近 nightly 绿色证据 ─────────────────
-
-  nightly_gate:
-    name: 刀C Release Gate (nightly 绿色检查)
-    needs: changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: 检查最近 nightly 绿色证据
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          WINDOW_HOURS: '48'
-          BYPASS_NIGHTLY_GATE: ${{ github.event.inputs.bypass_nightly_gate == 'BYPASS' && '1' || '0' }}
-        run: bash scripts/ci/check-nightly-green.sh
-
-  # ─── Risk Gate：Fast Lane 门禁（仅 risk_level=low 时执行）─────────────────
-
-  risk_gate:
-    name: Risk Gate (Fast Lane)
-    needs: [changes, nightly_gate]
-    if: needs.changes.outputs.risk_level == 'low'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Fast Lane 通过
-        run: |
-          echo "风险等级: low"
-          echo "✅ Fast Lane 通过 — 自动 deploy production"
-
-  # ─── Staging Deploy：Safe Lane 缓冲层（仅 risk_level=high 时执行）─────────
-
-  staging_deploy:
-    name: Staging Deploy (Safe Lane)
-    needs: [changes, nightly_gate]
-    if: needs.changes.outputs.risk_level == 'high'
+  deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Connect to Tailscale
+      - name: Connect to deployment network
         uses: tailscale/github-action@v2
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
-      - name: 触发 Staging 部署
+      - name: Execute authorized production effect
         env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+          RELEASE_AUTHORIZATION: ${{ inputs.release_authorization }}
         run: |
-          echo "🔴 Safe Lane — 先部署到 staging（端口 5222）验证"
-          echo ""
-
-          if [ -z "$DEPLOY_TOKEN" ]; then
-            echo "::error::DEPLOY_TOKEN secret not configured."
-            exit 1
-          fi
-
-          CHANGED_PATHS='${{ needs.changes.outputs.changed_paths }}'
-          JSON_PATHS=$(echo "$CHANGED_PATHS" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
-
-          echo "Triggering staging deploy webhook..."
-          echo "  URL: ${BRAIN_URL}/api/brain/deploy"
-          echo "  Changed paths: $CHANGED_PATHS"
-          echo "  Mode: staging"
-
-          HTTP_CODE=$(curl -s -o /tmp/staging_deploy_response.txt -w "%{http_code}" \
+          set -euo pipefail
+          test -n "$BRAIN_URL" && test -n "$DEPLOY_TOKEN"
+          HTTP_CODE=$(curl --silent --show-error --output /tmp/release-response.json --write-out "%{http_code}" \
             -X POST "${BRAIN_URL}/api/brain/deploy" \
             -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"changed_paths\": ${JSON_PATHS}, \"staging\": true}" \
-            --connect-timeout 30 \
-            --max-time 60)
-
-          echo "Response code: $HTTP_CODE"
-          cat /tmp/staging_deploy_response.txt
-          echo ""
-
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ Staging deploy webhook triggered successfully"
-          else
-            echo "::error::Staging deploy webhook failed with HTTP $HTTP_CODE"
-            exit 1
-          fi
-
-      - name: 等待 Staging 部署完成
-        env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          echo "Polling /api/brain/deploy/staging/status (max 300s)..."
-          MAX_WAIT=300
-          INTERVAL=10
-          ELAPSED=0
-
-          while [ $ELAPSED -lt $MAX_WAIT ]; do
-            STATUS_JSON=$(curl -s --connect-timeout 10 --max-time 15 \
-              "${BRAIN_URL}/api/brain/deploy/staging/status" 2>/dev/null || echo '{"status":"unknown"}')
-            STATUS=$(echo "$STATUS_JSON" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
-
-            echo "  [${ELAPSED}s] staging status=${STATUS}"
-
-            if [ "$STATUS" = "success" ]; then
-              ELAPSED_MS=$(echo "$STATUS_JSON" | jq -r '.elapsed_ms // "?"' 2>/dev/null || echo "?")
-              echo "✅ Staging deploy confirmed success (${ELAPSED_MS}ms)"
-              exit 0
-            elif echo "$STATUS" | grep -q "^skipped_"; then
-              SKIP_REASON=$(echo "$STATUS_JSON" | jq -r '.skip_reason // "unknown"' 2>/dev/null || echo "unknown")
-              echo "⚠️  Staging 跳过 (${SKIP_REASON}) — production 部署不受阻断"
-              exit 0
-            elif [ "$STATUS" = "failed" ]; then
-              ERR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unknown error")
-              echo "::error::Staging deploy failed: $ERR"
-              echo "::error::Production deploy 已阻止，请检查 staging 日志后重新触发"
-              exit 1
-            elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 30 ]; then
-              echo "::warning::Staging deploy status idle after ${ELAPSED}s — 可能已跳过"
-              exit 0
-            fi
-
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
-          done
-
-          echo "::error::Staging deploy poll 超时 (${MAX_WAIT}s)，阻止 production deploy"
-          exit 1
-
-      - name: Staging Smoke Test
-        env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          # 先查询 staging 状态：若已被跳过（无 Docker），跳过 smoke test
-          STAGING_STATUS=$(curl -s --connect-timeout 5 --max-time 10 \
-            "${BRAIN_URL}/api/brain/deploy/staging/status" 2>/dev/null | \
-            jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
-          if echo "$STAGING_STATUS" | grep -q "^skipped_"; then
-            echo "⚠️  Staging 已跳过 (${STAGING_STATUS})，跳过 smoke test"
-            exit 0
-          fi
-
-          echo "验证 staging Brain 健康（端口 5222）..."
-          sleep 5
-
-          HTTP_CODE=$(curl -s -o /tmp/staging_health.txt -w "%{http_code}" \
-            "${BRAIN_URL%:*}:5222/api/brain/health" \
-            --connect-timeout 15 --max-time 30 2>/dev/null || echo "000")
-
-          echo "Staging health check HTTP: $HTTP_CODE"
-          if [ -f /tmp/staging_health.txt ]; then cat /tmp/staging_health.txt; fi
-          echo ""
-
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ Staging smoke test 通过 — 允许提升到 production"
-          else
-            echo "::error::Staging smoke test 失败 (HTTP $HTTP_CODE) — 阻止 production deploy"
-            exit 1
-          fi
-
-      - name: Staging 部署失败 — 清理并阻止 production
-        if: failure()
-        env:
-          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          echo "::error::Staging 部署/验证失败，production deploy 已阻止"
-          echo "排查步骤："
-          echo "  1. 检查 staging 容器日志: docker logs cecelia-node-brain-staging --tail 50"
-          echo "  2. 本地验证: bash scripts/staging-verify.sh"
-          echo "  3. 修复后重新 push 或使用 [SAFE-DEPLOY] bypass"
-
-          # 尝试清理 staging 容器（非阻塞）
-          if [ -n "$DEPLOY_TOKEN" ]; then
-            curl -s -X POST "${BRAIN_URL}/api/brain/deploy/staging/cleanup" \
-              -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --connect-timeout 10 --max-time 20 2>/dev/null || true
-          fi
-
-  # ─── Trigger Deploy via Brain Webhook ─────────────────────────────────────
-
-  deploy:
-    name: Trigger Deploy
-    needs: [changes, nightly_gate, risk_gate, staging_deploy]
-    # Fast Lane: risk_gate 通过（staging_deploy 跳过）
-    # Safe Lane: staging_deploy 通过（risk_gate 跳过）
-    # always() 配合条件判断，确保两种 lane 都能触发
-    # 注意：job-level concurrency 已移除，workflow-level concurrency 已负责串行
-    if: |
-      always() &&
-      (needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true') &&
-      (
-        (needs.changes.outputs.risk_level == 'low' && needs.risk_gate.result == 'success') ||
-        (needs.changes.outputs.risk_level == 'high' && needs.staging_deploy.result == 'success')
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v2
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-      - name: Call Brain deploy webhook
-        env:
-          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          RISK="${{ needs.changes.outputs.risk_level }}"
-          if [ "$RISK" = "high" ]; then
-            echo "🔴 Safe Lane → staging 验证通过 → 提升到 production"
-          else
-            echo "🟢 Fast Lane → 直接部署到 production"
-          fi
-          echo ""
-
-          if [ -z "$DEPLOY_TOKEN" ]; then
-            echo "::error::DEPLOY_TOKEN secret not configured."
-            echo "Setup: gh secret set DEPLOY_TOKEN --body '<your-token>'"
-            exit 1
-          fi
-
-          CHANGED_PATHS='${{ needs.changes.outputs.changed_paths }}'
-
-          # Convert space-separated paths to JSON array
-          JSON_PATHS=$(echo "$CHANGED_PATHS" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
-
-          echo "Triggering deploy webhook..."
-          echo "  URL: ${BRAIN_URL}/api/brain/deploy"
-          echo "  Changed paths: $CHANGED_PATHS"
-
-          HTTP_CODE=$(curl -s -o /tmp/deploy_response.txt -w "%{http_code}" \
-            -X POST "${BRAIN_URL}/api/brain/deploy" \
-            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"changed_paths\": ${JSON_PATHS}}" \
-            --connect-timeout 30 \
-            --max-time 60)
-
-          echo "Response code: $HTTP_CODE"
-          cat /tmp/deploy_response.txt
-          echo ""
-
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ Deploy webhook triggered successfully"
-          else
-            echo "::error::Deploy webhook failed with HTTP $HTTP_CODE"
-            exit 1
-          fi
-
-      - name: Poll deploy status
-        env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          echo "Polling /api/brain/deploy/status (max 300s)..."
-          MAX_WAIT=300
-          INTERVAL=10
-          ELAPSED=0
-
-          while [ $ELAPSED -lt $MAX_WAIT ]; do
-            STATUS_JSON=$(curl -s --connect-timeout 10 --max-time 15 \
-              "${BRAIN_URL}/api/brain/deploy/status" 2>/dev/null || echo '{"status":"unknown"}')
-            STATUS=$(echo "$STATUS_JSON" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
-
-            echo "  [${ELAPSED}s] status=${STATUS}"
-
-            if [ "$STATUS" = "success" ]; then
-              ELAPSED_MS=$(echo "$STATUS_JSON" | jq -r '.elapsed_ms // "?"' 2>/dev/null || echo "?")
-              echo "✅ Deploy confirmed success (${ELAPSED_MS}ms)"
-              exit 0
-            elif [ "$STATUS" = "failed" ]; then
-              ERR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unknown error")
-              echo "::error::Deploy failed: $ERR"
-              exit 1
-            elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 30 ]; then
-              echo "::warning::Deploy status is idle after ${ELAPSED}s — deploy may have been skipped (no relevant changes)"
-              exit 0
-            fi
-
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
-          done
-
-          echo "::warning::Deploy status poll timed out after ${MAX_WAIT}s — webhook accepted but result unknown"
-
-      - name: Smoke Test — 验证 Brain 健康
-        env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          echo "运行烟雾测试..."
-          sleep 5
-
-          HTTP_CODE=$(curl -s -o /tmp/smoke_response.txt -w "%{http_code}" \
-            "${BRAIN_URL}/api/brain/health" \
-            --connect-timeout 15 --max-time 30 2>/dev/null || echo "000")
-
-          echo "Health check HTTP: $HTTP_CODE"
-          if [ -f /tmp/smoke_response.txt ]; then cat /tmp/smoke_response.txt; fi
-          echo ""
-
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ 烟雾测试通过 — Brain /health 响应正常"
-          else
-            echo "::error::烟雾测试失败 (HTTP $HTTP_CODE) — 部署成功但 Brain 不健康"
-            exit 1
-          fi
-
-      - name: 部署失败 — 触发回滚
-        if: failure()
-        env:
-          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-          STABLE_SHA: ${{ github.event.before }}
-        run: |
-          echo "::error::部署失败，触发回滚到稳定版本 $STABLE_SHA"
-
-          if [ -z "$DEPLOY_TOKEN" ] || [ -z "$STABLE_SHA" ] || [ "$STABLE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            echo "::warning::无法自动回滚（缺少 token 或 SHA），请手动执行：git revert HEAD && git push origin main"
-            exit 0
-          fi
-
-          HTTP_CODE=$(curl -s -o /tmp/rollback_response.txt -w "%{http_code}" \
-            -X POST "${BRAIN_URL}/api/brain/deploy/rollback" \
-            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"stable_sha\": \"${STABLE_SHA}\", \"reason\": \"deploy_failed_in_ci\"}" \
-            --connect-timeout 30 --max-time 60 2>/dev/null || echo "000")
-
-          echo "Rollback response ($HTTP_CODE):"
-          if [ -f /tmp/rollback_response.txt ]; then cat /tmp/rollback_response.txt; fi
-
-          if [ "$HTTP_CODE" = "202" ]; then
-            echo "✅ 回滚已触发，Brain 将恢复到 $STABLE_SHA"
-          else
-            echo "::warning::回滚请求失败 (HTTP $HTTP_CODE)，请手动回滚"
-          fi
+            -d "{\"release_run_id\":\"${RELEASE_RUN_ID}\",\"merge_sha\":\"${MERGE_SHA}\",\"release_authorization\":\"${RELEASE_AUTHORIZATION}\"}")
+          test "$HTTP_CODE" = "202"
+          jq -e '.status == "accepted"' /tmp/release-response.json

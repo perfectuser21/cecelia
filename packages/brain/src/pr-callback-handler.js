@@ -63,7 +63,12 @@ export async function matchTaskByBranchOrUrl(pool, branchName) {
   const inProgressResult = await pool.query(`
     SELECT
       id, title, status, project_id, goal_id,
-      metadata, payload, task_type
+      metadata, payload, task_type,
+      EXISTS (
+        SELECT 1
+        FROM kernel_release_runs release
+        WHERE release.task_id = tasks.id
+      ) AS kernel_release_run
     FROM tasks
     WHERE status = 'in_progress'
       AND (
@@ -82,7 +87,12 @@ export async function matchTaskByBranchOrUrl(pool, branchName) {
   const completedResult = await pool.query(`
     SELECT
       id, title, status, project_id, goal_id,
-      metadata, payload, task_type
+      metadata, payload, task_type,
+      EXISTS (
+        SELECT 1
+        FROM kernel_release_runs release
+        WHERE release.task_id = tasks.id
+      ) AS kernel_release_run
     FROM tasks
     WHERE status = 'completed'
       AND pr_merged_at IS NULL
@@ -154,8 +164,14 @@ export async function handlePrMerged(pool, prInfo) {
   const taskTitle = task.title;
   console.log(`[pr-callback] 匹配到任务: id=${taskId} title="${taskTitle}" status=${task.status}`);
 
-  // 2. 分支处理：已完成任务只更新 pr_merged_at，不改 status 也不触发 KR 进度
-  if (task.status === 'completed') {
+  // Kernel 的终态只由 ReleaseRun production_verified 决定。GitHub webhook
+  // 是外部事实输入，只能回填 merged facts，不能替 Kernel 把任务标 completed。
+  const isKernelReleaseRunTask = task.payload?.harness_runtime === 'kernel-v1'
+    || task.kernel_release_run === true;
+
+  // 2. facts-only 分支：已完成任务或 Kernel ReleaseRun 任务只回填 PR 事实。
+  if (task.status === 'completed' || isKernelReleaseRunTask) {
+    const expectedStatus = task.status === 'completed' ? 'completed' : 'in_progress';
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -168,7 +184,7 @@ export async function handlePrMerged(pool, prInfo) {
           pr_status = 'merged',
           updated_at = NOW()
         WHERE id = $1
-          AND status = 'completed'
+          AND status = '${expectedStatus}'
           AND pr_merged_at IS NULL
         RETURNING id
       `, [taskId, prUrl, mergedAt]);
@@ -181,7 +197,7 @@ export async function handlePrMerged(pool, prInfo) {
       }
 
       await client.query('COMMIT');
-      console.log(`[pr-callback] 已完成任务 ${taskId} pr_merged_at 已更新（via PR #${prNumber}）`);
+      console.log(`[pr-callback] 任务 ${taskId} merged facts 已回填（via PR #${prNumber}）`);
     } catch (err) {
       try { await client.query('ROLLBACK'); } catch { /* ignore */ }
       console.error(`[pr-callback] pr_merged_at 更新失败: ${err.message}`);

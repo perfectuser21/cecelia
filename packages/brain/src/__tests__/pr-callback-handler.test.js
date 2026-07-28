@@ -542,6 +542,85 @@ describe('handlePrMerged', () => {
     expect(clientCalls[2]).toBe('COMMIT');
   });
 
+  it('kernel-v1 merge webhook 只回填 merged facts，绝不把任务标为 completed', async () => {
+    const kernelTask = {
+      id: 'task-kernel-runtime',
+      title: 'Kernel ReleaseRun task',
+      status: 'in_progress',
+      project_id: 'proj-1',
+      goal_id: 'goal-1',
+      metadata: { branch: prInfo.branchName },
+      payload: { harness_runtime: 'kernel-v1' },
+      task_type: 'harness_initiative',
+      kernel_release_run: false
+    };
+    const mockClient = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [{ id: kernelTask.id }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),
+      release: vi.fn()
+    };
+    const mockPool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [kernelTask], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),
+      connect: vi.fn(async () => mockClient)
+    };
+
+    const result = await handlePrMerged(mockPool, prInfo);
+
+    expect(result).toMatchObject({
+      matched: true,
+      taskId: kernelTask.id,
+      krProgressUpdated: false
+    });
+    const updateSql = mockClient.query.mock.calls[1][0];
+    expect(updateSql).toContain('pr_status = \'merged\'');
+    expect(updateSql).not.toContain("status = 'completed'");
+    expect(updateSql).not.toContain('completed_at =');
+    expect(mockClient.query.mock.calls.map(call => call[0])).toEqual([
+      'BEGIN',
+      expect.any(String),
+      'COMMIT'
+    ]);
+    expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('dev_records'))).toBe(false);
+  });
+
+  it('已有 ReleaseRun ledger 的 kernel task merge webhook 也不能完成任务', async () => {
+    const kernelTask = {
+      id: 'task-kernel-ledger',
+      title: 'Recovered Kernel ReleaseRun task',
+      status: 'in_progress',
+      project_id: 'proj-1',
+      goal_id: 'goal-1',
+      metadata: { branch: prInfo.branchName },
+      payload: {},
+      task_type: 'harness_initiative',
+      kernel_release_run: true
+    };
+    const mockClient = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [{ id: kernelTask.id }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),
+      release: vi.fn()
+    };
+    const mockPool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [kernelTask], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),
+      connect: vi.fn(async () => mockClient)
+    };
+
+    const result = await handlePrMerged(mockPool, prInfo);
+
+    expect(result.krProgressUpdated).toBe(false);
+    const updateSql = mockClient.query.mock.calls[1][0];
+    expect(updateSql).toContain('pr_merged_at = $3');
+    expect(updateSql).not.toContain("status = 'completed'");
+  });
+
   it('当 goal_id 为空时应该尝试通过 project_id 查找 KR', async () => {
     const mockTask = {
       id: 'task-uuid-2',

@@ -240,6 +240,25 @@ function headRepositoryName(observed, baseRepository) {
   return validRepository(repository) ? repository : null;
 }
 
+function changedPaths(files) {
+  if (!Array.isArray(files) || files.length < 1 || files.length > 3000) {
+    throw new Error('github_pr_files_invalid');
+  }
+  const paths = files.map((file) => file?.path);
+  if (paths.some((path) => (
+    typeof path !== 'string'
+    || path.length < 1
+    || path.length > 1024
+    || path.startsWith('/')
+    || path.includes('\\')
+    || path.includes('\0')
+    || path.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
+  ))) {
+    throw new Error('github_pr_files_invalid');
+  }
+  return [...new Set(paths)].sort();
+}
+
 export function createGitHubMergeAdapter({
   execFile,
   requiredCheckPolicy,
@@ -286,6 +305,7 @@ export function createGitHubMergeAdapter({
       if (
         !Number.isInteger(observed.changedFiles)
         || observed.changedFiles < 1
+        || !Array.isArray(rawFiles)
         || rawFiles.length !== observed.changedFiles
       ) {
         throw new Error('github_pr_files_incomplete');
@@ -344,6 +364,7 @@ export function createGitHubMergeAdapter({
         diff_digest: sha256(JSON.stringify(files)),
         files,
         repository_policy: repositoryPolicy,
+        changed_paths: changedPaths(files),
       };
     },
 
@@ -366,6 +387,7 @@ export function createGitHubMergeAdapter({
 
 export const __test__ = {
   assessRequiredChecks,
+  changedPaths,
   normalizePullFiles,
   normalizeRequiredCheckPolicy,
   parseIdentity,

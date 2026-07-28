@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "release_run_id": "44444444-4444-4444-8444-444444444444",
+  "merge_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "artifact_name": "workspace",
+  "current_version": "bbbbbbbbbbbb",
+  "current_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+  "current_deployed_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+  "old_tag": "prod-cecelia-v41",
+  "new_tag": "prod-cecelia-v42",
+  "anchor": "workspace:sha256:7777777777777777777777777777777777777777777777777777777777777777",
+  "previous_version": "dashboard:prod-cecelia-v41",
+  "previous_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+  "previous_merge_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

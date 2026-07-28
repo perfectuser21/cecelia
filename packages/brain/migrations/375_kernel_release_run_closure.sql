@@ -1,0 +1,1786 @@
+-- Migration 375: reconcile installed ReleaseRun v374 with fenced closure.
+--
+-- Migration 374 shipped before the complete fencing and evidence schema. This
+-- migration is intentionally safe after both the original and hardened v374:
+-- it adds missing columns/tables and replaces all guards with the exact form.
+--
+-- A confirmed Kernel merge receipt may create one immutable ReleaseRun. The
+-- state ledger and effect ledgers are append-only. Staging and production
+-- effects are separately receipted but serialized by the runtime's one
+-- release advisory lease.
+
+
+
+CREATE OR REPLACE FUNCTION kernel_release_run_identity_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_merge_effect_intents intent
+      JOIN kernel_merge_authorizations auth
+        ON auth.id = intent.authorization_id
+       AND auth.run_id = intent.run_id
+      JOIN kernel_merge_effect_receipts receipt
+        ON receipt.intent_id = intent.id
+       AND receipt.receipt_status = 'confirmed'
+       AND receipt.merged = TRUE
+       AND receipt.observed_head_sha = intent.requested_head_sha
+     WHERE intent.id = NEW.merge_intent_id
+       AND receipt.id = NEW.merge_receipt_id
+       AND auth.run_id = NEW.run_id
+       AND auth.task_id = NEW.task_id
+       AND auth.repository = NEW.repository
+       AND auth.pr_number = NEW.pr_number
+       AND auth.head_sha = NEW.source_head_sha
+       AND intent.requested_head_sha = NEW.source_head_sha
+       AND receipt.evidence->>'merge_commit_sha' = NEW.merge_sha
+  ) THEN
+    RAISE EXCEPTION
+      'release identity requires one exact confirmed merge intent/receipt pair';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_run_identity_guard
+  ON kernel_release_runs;
+CREATE TRIGGER trg_kernel_release_run_identity_guard
+  BEFORE INSERT ON kernel_release_runs
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_run_identity_guard();
+
+CREATE TABLE IF NOT EXISTS kernel_release_e2e_manifests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  release_run_id UUID NOT NULL UNIQUE REFERENCES kernel_release_runs(id),
+  run_id UUID NOT NULL REFERENCES initiative_runs(id),
+  repository TEXT NOT NULL CHECK (
+    repository ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+  ),
+  contract_id UUID NOT NULL REFERENCES initiative_contracts(id),
+  merge_sha TEXT NOT NULL CHECK (merge_sha ~ '^[0-9a-f]{40}$'),
+  artifact_versions JSONB NOT NULL CHECK (
+    jsonb_typeof(artifact_versions) = 'array'
+    AND jsonb_array_length(artifact_versions) > 0
+  ),
+  artifact_set_digest TEXT NOT NULL CHECK (
+    artifact_set_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  contract_version INTEGER NOT NULL CHECK (contract_version > 0),
+  contract_approved_at TIMESTAMPTZ NOT NULL,
+  contract_content TEXT NOT NULL CHECK (contract_content <> ''),
+  contract_digest TEXT NOT NULL CHECK (
+    contract_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  policy_version TEXT NOT NULL CHECK (policy_version = 'kernel-release-e2e/v2'),
+  e2e_acceptance JSONB NOT NULL CHECK (
+    jsonb_typeof(e2e_acceptance) = 'object'
+    AND jsonb_typeof(e2e_acceptance->'scenarios') = 'array'
+    AND jsonb_array_length(e2e_acceptance->'scenarios') > 0
+  ),
+  e2e_acceptance_digest TEXT NOT NULL CHECK (
+    e2e_acceptance_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  scenarios_total INTEGER NOT NULL CHECK (
+    scenarios_total > 0
+    AND scenarios_total = jsonb_array_length(e2e_acceptance->'scenarios')
+  ),
+  manifest_digest TEXT NOT NULL UNIQUE CHECK (
+    manifest_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+
+
+
+-- Existing v374 dispatch claims predate claim modes. Temporarily remove the
+-- append-only row trigger only for the deterministic schema backfill; the
+-- hardened trigger is recreated below before this transaction commits.
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_dispatch_claims_append_only
+  ON kernel_release_effect_dispatch_claims;
+ALTER TABLE kernel_release_effect_dispatch_claims
+  ADD COLUMN IF NOT EXISTS claim_mode TEXT;
+UPDATE kernel_release_effect_dispatch_claims
+   SET claim_mode = 'dispatch'
+ WHERE claim_mode IS NULL;
+ALTER TABLE kernel_release_effect_dispatch_claims
+  ALTER COLUMN claim_mode SET NOT NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'kernel_release_effect_dispatch_claims'::regclass
+       AND conname = 'kernel_release_effect_dispatch_claims_claim_mode_check'
+  ) THEN
+    ALTER TABLE kernel_release_effect_dispatch_claims
+      ADD CONSTRAINT kernel_release_effect_dispatch_claims_claim_mode_check
+      CHECK (claim_mode IN ('dispatch', 'verification'));
+  END IF;
+END;
+$$;
+
+
+CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_renewals (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  dispatch_claim_id BIGINT NOT NULL
+    REFERENCES kernel_release_effect_dispatch_claims(id),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  lease_expires_at TIMESTAMPTZ NOT NULL,
+  renewed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+ALTER TABLE kernel_release_effect_dispatch_outcomes
+  DROP CONSTRAINT IF EXISTS kernel_release_effect_dispatch_outcomes_outcome_check;
+ALTER TABLE kernel_release_effect_dispatch_outcomes
+  ADD CONSTRAINT kernel_release_effect_dispatch_outcomes_outcome_check
+  CHECK (outcome IN ('dispatched', 'failed', 'observed'));
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT dispatch_claim_id
+      FROM kernel_release_effect_dispatch_outcomes
+     GROUP BY dispatch_claim_id
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION
+      'cannot fence ReleaseRun dispatch outcomes: duplicate claim outcomes exist';
+  END IF;
+END;
+$$;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_dispatch_outcome_claim
+  ON kernel_release_effect_dispatch_outcomes (dispatch_claim_id);
+
+
+ALTER TABLE kernel_release_effect_receipts
+  ADD COLUMN IF NOT EXISTS dispatch_claim_id BIGINT
+    REFERENCES kernel_release_effect_dispatch_claims(id),
+  ADD COLUMN IF NOT EXISTS dispatch_generation INTEGER CHECK (
+    dispatch_generation IS NULL OR dispatch_generation > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_manifest_id UUID
+    REFERENCES kernel_release_e2e_manifests(id),
+  ADD COLUMN IF NOT EXISTS e2e_manifest_digest TEXT CHECK (
+    e2e_manifest_digest IS NULL
+    OR e2e_manifest_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenarios_total INTEGER CHECK (
+    e2e_scenarios_total IS NULL OR e2e_scenarios_total > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenarios_passed INTEGER CHECK (
+    e2e_scenarios_passed IS NULL OR e2e_scenarios_passed > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_environment TEXT CHECK (
+    e2e_environment IS NULL OR e2e_environment IN ('staging', 'production')
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenario_results JSONB CHECK (
+    e2e_scenario_results IS NULL
+    OR jsonb_typeof(e2e_scenario_results) = 'array'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_probe_results JSONB CHECK (
+    e2e_probe_results IS NULL
+    OR jsonb_typeof(e2e_probe_results) = 'array'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_started_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS e2e_finished_at TIMESTAMPTZ CHECK (
+    e2e_finished_at IS NULL OR e2e_started_at IS NULL
+    OR e2e_finished_at >= e2e_started_at
+  );
+
+
+
+
+CREATE TABLE IF NOT EXISTS kernel_release_rollback_intents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  release_run_id UUID NOT NULL UNIQUE REFERENCES kernel_release_runs(id),
+  expected_merge_sha TEXT NOT NULL CHECK (
+    expected_merge_sha ~ '^[0-9a-f]{40}$'
+  ),
+  expected_artifact_versions JSONB NOT NULL CHECK (
+    jsonb_typeof(expected_artifact_versions) = 'array'
+    AND jsonb_array_length(expected_artifact_versions) > 0
+  ),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_rollback_receipts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rollback_intent_id UUID NOT NULL UNIQUE
+    REFERENCES kernel_release_rollback_intents(id),
+  effect_receipt_id UUID NOT NULL UNIQUE
+    REFERENCES kernel_release_effect_receipts(id),
+  anchor TEXT NOT NULL CHECK (anchor <> ''),
+  previous_version TEXT NOT NULL CHECK (previous_version <> ''),
+  rollback_metadata JSONB NOT NULL CHECK (
+    jsonb_typeof(rollback_metadata) = 'object'
+  ),
+  verified_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+
+CREATE TABLE IF NOT EXISTS kernel_release_rollback_artifact_intents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rollback_intent_id UUID NOT NULL
+    REFERENCES kernel_release_rollback_intents(id),
+  artifact_name TEXT NOT NULL CHECK (artifact_name <> ''),
+  expected_current_version TEXT NOT NULL CHECK (expected_current_version <> ''),
+  expected_current_digest TEXT NOT NULL CHECK (
+    expected_current_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  expected_anchor TEXT NOT NULL CHECK (expected_anchor <> ''),
+  expected_previous_version TEXT NOT NULL CHECK (expected_previous_version <> ''),
+  expected_previous_digest TEXT NOT NULL CHECK (
+    expected_previous_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (rollback_intent_id, artifact_name)
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_rollback_artifact_receipts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rollback_artifact_intent_id UUID NOT NULL UNIQUE
+    REFERENCES kernel_release_rollback_artifact_intents(id),
+  effect_receipt_id UUID NOT NULL
+    REFERENCES kernel_release_effect_receipts(id),
+  observed_anchor TEXT NOT NULL CHECK (observed_anchor <> ''),
+  observed_previous_version TEXT NOT NULL CHECK (observed_previous_version <> ''),
+  observed_previous_digest TEXT NOT NULL CHECK (
+    observed_previous_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  rollback_metadata JSONB NOT NULL CHECK (
+    jsonb_typeof(rollback_metadata) = 'object'
+  ),
+  verified_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id UUID NOT NULL REFERENCES initiative_runs(id),
+  task_id UUID NOT NULL REFERENCES tasks(id),
+  release_run_id UUID REFERENCES kernel_release_runs(id),
+  release_state TEXT,
+  merge_sha TEXT CHECK (
+    merge_sha IS NULL OR merge_sha ~ '^[0-9a-f]{40}$'
+  ),
+  severity TEXT NOT NULL CHECK (severity = 'P0'),
+  detail TEXT NOT NULL CHECK (detail <> ''),
+  dedup_key TEXT NOT NULL UNIQUE CHECK (
+    dedup_key ~ '^[0-9a-f]{64}$'
+  ),
+  evidence JSONB NOT NULL CHECK (jsonb_typeof(evidence) = 'object'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_alert_outbox (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  escalation_id UUID NOT NULL UNIQUE
+    REFERENCES kernel_release_blocked_escalations(id),
+  severity TEXT NOT NULL CHECK (severity = 'P0'),
+  alert_key TEXT NOT NULL CHECK (alert_key <> ''),
+  alert_message TEXT NOT NULL CHECK (alert_message <> ''),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_alert_delivery_attempts (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  outbox_id UUID NOT NULL REFERENCES kernel_release_alert_outbox(id),
+  attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+  outcome TEXT NOT NULL CHECK (
+    outcome IN ('delivered', 'failed')
+  ),
+  error_code TEXT CHECK (
+    (outcome = 'delivered' AND error_code IS NULL)
+    OR (outcome = 'failed' AND error_code IS NOT NULL AND error_code <> '')
+  ),
+  attempted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (outbox_id, attempt_no)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_alert_delivered
+  ON kernel_release_alert_delivery_attempts (outbox_id)
+  WHERE outcome = 'delivered';
+
+CREATE TABLE IF NOT EXISTS kernel_merge_review_assessments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id UUID NOT NULL REFERENCES initiative_runs(id),
+  task_id UUID NOT NULL REFERENCES tasks(id),
+  repository TEXT NOT NULL CHECK (
+    repository ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+  ),
+  pr_number INTEGER NOT NULL CHECK (pr_number > 0),
+  head_sha TEXT NOT NULL CHECK (head_sha ~ '^[0-9a-f]{40}$'),
+  policy_version TEXT NOT NULL CHECK (policy_version <> ''),
+  changed_paths JSONB NOT NULL CHECK (
+    jsonb_typeof(changed_paths) = 'array'
+  ),
+  risk_tier TEXT NOT NULL CHECK (risk_tier IN ('low', 'high', 'unknown')),
+  risk_reasons JSONB NOT NULL CHECK (
+    jsonb_typeof(risk_reasons) = 'array'
+    AND jsonb_array_length(risk_reasons) > 0
+  ),
+  first_kernel_release BOOLEAN NOT NULL,
+  payload_review_required BOOLEAN NOT NULL,
+  review_required BOOLEAN NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (run_id, head_sha, policy_version)
+);
+
+CREATE OR REPLACE FUNCTION kernel_merge_review_assessment_guard()
+RETURNS trigger AS $$
+DECLARE
+  expected_first_release BOOLEAN;
+  expected_payload_required BOOLEAN;
+  expected_risk_tier TEXT;
+  expected_risk_reasons JSONB;
+  canonical_paths JSONB;
+BEGIN
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('kernel-merge-review:' || NEW.repository, 0)
+  );
+
+  IF jsonb_array_length(NEW.changed_paths) > 3000
+     OR EXISTS (
+       SELECT 1
+         FROM jsonb_array_elements(NEW.changed_paths) AS item
+        WHERE jsonb_typeof(item) <> 'string'
+     ) THEN
+    RAISE EXCEPTION 'merge review assessment requires bounded string paths';
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(to_jsonb(path) ORDER BY path), '[]'::jsonb)
+    INTO canonical_paths
+    FROM (
+      SELECT DISTINCT value AS path
+        FROM jsonb_array_elements_text(NEW.changed_paths)
+    ) paths;
+  IF NEW.changed_paths IS DISTINCT FROM canonical_paths
+     OR EXISTS (
+       SELECT 1
+         FROM jsonb_array_elements_text(NEW.changed_paths) AS path(value)
+        WHERE length(value) < 1
+           OR length(value) > 1024
+           OR value ~ '(^/|(^|/)\.{1,2}(/|$)|[[:cntrl:]\\])'
+     ) THEN
+    RAISE EXCEPTION 'merge review assessment requires canonical safe paths';
+  END IF;
+
+  IF jsonb_array_length(NEW.changed_paths) = 0 THEN
+    expected_risk_tier := 'unknown';
+    expected_risk_reasons := '["changed_paths_missing"]'::jsonb;
+  ELSIF EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements_text(NEW.changed_paths) AS path(value)
+     WHERE value ~ '^(\.github/workflows/|packages/brain/migrations/|packages/brain/src/(orchestrator/|orchestrator\.js$|routes/harness-kernel-approvals(/|\.js$))|packages/workflows/skills/|scripts/(brain-|deploy|promote-|release-run-|rollback))'
+  ) THEN
+    expected_risk_tier := 'high';
+    SELECT jsonb_agg(
+             to_jsonb('high_risk_path:' || value)
+             ORDER BY value
+           )
+      INTO expected_risk_reasons
+      FROM jsonb_array_elements_text(NEW.changed_paths) AS path(value)
+     WHERE value ~ '^(\.github/workflows/|packages/brain/migrations/|packages/brain/src/(orchestrator/|orchestrator\.js$|routes/harness-kernel-approvals(/|\.js$))|packages/workflows/skills/|scripts/(brain-|deploy|promote-|release-run-|rollback))';
+  ELSE
+    expected_risk_tier := 'low';
+    expected_risk_reasons := '["low_risk_paths"]'::jsonb;
+  END IF;
+
+  SELECT COALESCE(task.payload->>'review_required' = 'true', FALSE)
+    INTO expected_payload_required
+    FROM tasks task
+   WHERE task.id = NEW.task_id;
+  IF expected_payload_required IS NULL THEN
+    RAISE EXCEPTION 'merge review assessment requires an existing task';
+  END IF;
+
+  SELECT NOT EXISTS (
+    SELECT 1
+      FROM kernel_merge_effect_receipts receipt
+      JOIN kernel_merge_effect_intents intent
+        ON intent.id = receipt.intent_id
+      JOIN kernel_merge_authorizations merge_auth
+        ON merge_auth.id = intent.authorization_id
+     WHERE merge_auth.repository = NEW.repository
+       AND receipt.receipt_status = 'confirmed'
+       AND receipt.merged = TRUE
+  ) INTO expected_first_release;
+
+  IF NEW.first_kernel_release IS DISTINCT FROM expected_first_release
+     OR NEW.payload_review_required IS DISTINCT FROM expected_payload_required
+     OR NEW.risk_tier IS DISTINCT FROM expected_risk_tier
+     OR NEW.risk_reasons IS DISTINCT FROM (
+       expected_risk_reasons
+       || CASE
+            WHEN expected_first_release THEN '["first_kernel_release"]'::jsonb
+            ELSE '[]'::jsonb
+          END
+     )
+     OR NEW.review_required IS DISTINCT FROM (
+       expected_payload_required
+       OR expected_first_release
+       OR expected_risk_tier <> 'low'
+     ) THEN
+    RAISE EXCEPTION 'merge review assessment does not match server policy';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_merge_review_assessment_guard
+  ON kernel_merge_review_assessments;
+CREATE TRIGGER trg_kernel_merge_review_assessment_guard
+  BEFORE INSERT ON kernel_merge_review_assessments
+  FOR EACH ROW EXECUTE FUNCTION kernel_merge_review_assessment_guard();
+
+-- One-time N-1 cutover authority. This is deliberately isomorphic with the
+-- normal ReleaseRun shape: immutable identity, ordered state, leased effect
+-- attempts, and durable observations. The singleton survives terminal state,
+-- permanently preventing a second bootstrap.
+
+
+CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_rollback_artifact_intents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bootstrap_run_id UUID NOT NULL
+    REFERENCES kernel_release_bootstrap_runs(id),
+  artifact_name TEXT NOT NULL CHECK (artifact_name <> ''),
+  expected_current_version TEXT NOT NULL CHECK (expected_current_version <> ''),
+  expected_current_digest TEXT NOT NULL CHECK (
+    expected_current_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  expected_anchor TEXT NOT NULL CHECK (expected_anchor <> ''),
+  expected_previous_version TEXT NOT NULL CHECK (expected_previous_version <> ''),
+  expected_previous_digest TEXT NOT NULL CHECK (
+    expected_previous_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (bootstrap_run_id, artifact_name)
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_rollback_artifact_receipts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rollback_artifact_intent_id UUID NOT NULL UNIQUE
+    REFERENCES kernel_release_bootstrap_rollback_artifact_intents(id),
+  effect_receipt_id BIGINT NOT NULL
+    REFERENCES kernel_release_bootstrap_effect_receipts(id),
+  observed_anchor TEXT NOT NULL CHECK (observed_anchor <> ''),
+  observed_previous_version TEXT NOT NULL CHECK (observed_previous_version <> ''),
+  observed_previous_digest TEXT NOT NULL CHECK (
+    observed_previous_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  rollback_metadata JSONB NOT NULL CHECK (
+    jsonb_typeof(rollback_metadata) = 'object'
+  ),
+  verified_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_e2e_manifests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bootstrap_run_id UUID NOT NULL UNIQUE REFERENCES kernel_release_bootstrap_runs(id),
+  run_id UUID NOT NULL REFERENCES initiative_runs(id),
+  repository TEXT NOT NULL CHECK (
+    repository ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+  ),
+  contract_id UUID NOT NULL REFERENCES initiative_contracts(id),
+  merge_sha TEXT NOT NULL CHECK (merge_sha ~ '^[0-9a-f]{40}$'),
+  artifact_versions JSONB NOT NULL CHECK (
+    jsonb_typeof(artifact_versions) = 'array'
+    AND jsonb_array_length(artifact_versions) > 0
+  ),
+  artifact_set_digest TEXT NOT NULL CHECK (
+    artifact_set_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  contract_version INTEGER NOT NULL CHECK (contract_version > 0),
+  contract_approved_at TIMESTAMPTZ NOT NULL,
+  contract_content TEXT NOT NULL CHECK (contract_content <> ''),
+  contract_digest TEXT NOT NULL CHECK (
+    contract_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  policy_version TEXT NOT NULL CHECK (policy_version = 'kernel-release-e2e/v2'),
+  e2e_acceptance JSONB NOT NULL CHECK (
+    jsonb_typeof(e2e_acceptance) = 'object'
+    AND jsonb_typeof(e2e_acceptance->'scenarios') = 'array'
+    AND jsonb_array_length(e2e_acceptance->'scenarios') > 0
+  ),
+  e2e_acceptance_digest TEXT NOT NULL CHECK (
+    e2e_acceptance_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  scenarios_total INTEGER NOT NULL CHECK (
+    scenarios_total > 0
+    AND scenarios_total = jsonb_array_length(e2e_acceptance->'scenarios')
+  ),
+  manifest_digest TEXT NOT NULL UNIQUE CHECK (
+    manifest_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+
+
+CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_effect_attempt_renewals (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  effect_attempt_id BIGINT NOT NULL
+    REFERENCES kernel_release_bootstrap_effect_attempts(id),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  lease_expires_at TIMESTAMPTZ NOT NULL,
+  renewed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX IF NOT EXISTS idx_kernel_release_bootstrap_attempt_renewals
+  ON kernel_release_bootstrap_effect_attempt_renewals
+    (effect_attempt_id, generation, renewed_at DESC);
+
+ALTER TABLE kernel_release_bootstrap_effect_receipts
+  ADD COLUMN IF NOT EXISTS observed_merge_sha TEXT CHECK (
+    observed_merge_sha IS NULL OR observed_merge_sha ~ '^[0-9a-f]{40}$'
+  ),
+  ADD COLUMN IF NOT EXISTS observed_artifact_versions JSONB,
+  ADD COLUMN IF NOT EXISTS e2e_manifest_id UUID
+    REFERENCES kernel_release_bootstrap_e2e_manifests(id),
+  ADD COLUMN IF NOT EXISTS e2e_manifest_digest TEXT CHECK (
+    e2e_manifest_digest IS NULL
+    OR e2e_manifest_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenarios_total INTEGER CHECK (
+    e2e_scenarios_total IS NULL OR e2e_scenarios_total > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenarios_passed INTEGER CHECK (
+    e2e_scenarios_passed IS NULL OR e2e_scenarios_passed > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_environment TEXT CHECK (
+    e2e_environment IS NULL OR e2e_environment IN ('staging', 'production')
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenario_results JSONB CHECK (
+    e2e_scenario_results IS NULL
+    OR jsonb_typeof(e2e_scenario_results) = 'array'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_probe_results JSONB CHECK (
+    e2e_probe_results IS NULL
+    OR jsonb_typeof(e2e_probe_results) = 'array'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_started_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS e2e_finished_at TIMESTAMPTZ CHECK (
+    e2e_finished_at IS NULL OR e2e_started_at IS NULL
+    OR e2e_finished_at >= e2e_started_at
+  );
+
+
+
+CREATE OR REPLACE FUNCTION kernel_release_e2e_acceptance_is_typed(
+  acceptance JSONB
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+  scenario JSONB;
+  command JSONB;
+BEGIN
+  IF jsonb_typeof(acceptance) IS DISTINCT FROM 'object'
+     OR jsonb_typeof(acceptance->'scenarios') IS DISTINCT FROM 'array'
+     OR jsonb_array_length(acceptance->'scenarios') < 1 THEN
+    RETURN FALSE;
+  END IF;
+  FOR scenario IN
+    SELECT value FROM jsonb_array_elements(acceptance->'scenarios')
+  LOOP
+    IF jsonb_typeof(scenario) IS DISTINCT FROM 'object'
+       OR jsonb_typeof(scenario->'commands') IS DISTINCT FROM 'array'
+       OR jsonb_array_length(scenario->'commands') < 1 THEN
+      RETURN FALSE;
+    END IF;
+    FOR command IN
+      SELECT value FROM jsonb_array_elements(scenario->'commands')
+    LOOP
+      IF jsonb_typeof(command) IS DISTINCT FROM 'object'
+         OR (SELECT count(*) FROM jsonb_object_keys(command)) <> 2
+         OR command->>'type' IS DISTINCT FROM 'probe'
+         OR command->>'id' NOT IN (
+           'brain.health',
+           'brain.release-identity',
+           'brain.status-full',
+           'dashboard.release-identity'
+         ) THEN
+        RETURN FALSE;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION kernel_release_e2e_probe_results_match(
+  acceptance JSONB,
+  results JSONB
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+  scenario JSONB;
+  command JSONB;
+  result JSONB;
+  result_index INTEGER := 0;
+BEGIN
+  IF NOT kernel_release_e2e_acceptance_is_typed(acceptance)
+     OR jsonb_typeof(results) IS DISTINCT FROM 'array' THEN
+    RETURN FALSE;
+  END IF;
+  FOR scenario IN
+    SELECT value FROM jsonb_array_elements(acceptance->'scenarios')
+  LOOP
+    FOR command IN
+      SELECT value FROM jsonb_array_elements(scenario->'commands')
+    LOOP
+      result := results->result_index;
+      result_index := result_index + 1;
+      IF jsonb_typeof(result) IS DISTINCT FROM 'object'
+         OR (SELECT count(*) FROM jsonb_object_keys(result)) <> 4
+         OR result->>'scenario_name' IS DISTINCT FROM scenario->>'name'
+         OR result->>'probe_id' IS DISTINCT FROM command->>'id'
+         OR result->>'status' IS DISTINCT FROM 'pass'
+         OR COALESCE(result->>'observation_digest', '')
+            !~ '^sha256:[0-9a-f]{64}$' THEN
+        RETURN FALSE;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RETURN result_index = jsonb_array_length(results);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION kernel_release_e2e_manifest_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NOT kernel_release_e2e_acceptance_is_typed(NEW.e2e_acceptance) THEN
+    RAISE EXCEPTION
+      'release E2E manifest requires server-registered typed probes';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_runs release
+      JOIN initiative_runs run
+        ON run.id = release.run_id
+       AND run.id = NEW.run_id
+       AND run.contract_id = NEW.contract_id
+      JOIN initiative_contracts contract
+        ON contract.id = NEW.contract_id
+       AND contract.status = 'approved'
+       AND contract.version = NEW.contract_version
+       AND contract.approved_at = NEW.contract_approved_at
+       AND contract.contract_content = NEW.contract_content
+       AND contract.e2e_acceptance = NEW.e2e_acceptance
+     WHERE release.id = NEW.release_run_id
+       AND release.repository = NEW.repository
+       AND release.merge_sha = NEW.merge_sha
+       AND release.artifact_versions = NEW.artifact_versions
+  ) THEN
+    RAISE EXCEPTION
+      'release E2E manifest requires the exact approved run contract and merge SHA';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_e2e_manifest_guard
+  ON kernel_release_e2e_manifests;
+CREATE TRIGGER trg_kernel_release_e2e_manifest_guard
+  BEFORE INSERT ON kernel_release_e2e_manifests
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_e2e_manifest_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_bootstrap_e2e_manifest_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NOT kernel_release_e2e_acceptance_is_typed(NEW.e2e_acceptance) THEN
+    RAISE EXCEPTION
+      'bootstrap E2E manifest requires server-registered typed probes';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_bootstrap_runs bootstrap
+      JOIN initiative_runs run
+        ON run.id = NEW.run_id
+       AND run.contract_id = NEW.contract_id
+      JOIN initiative_contracts contract
+        ON contract.id = NEW.contract_id
+       AND contract.status = 'approved'
+       AND contract.version = NEW.contract_version
+       AND contract.approved_at = NEW.contract_approved_at
+       AND contract.contract_content = NEW.contract_content
+       AND contract.e2e_acceptance = NEW.e2e_acceptance
+      JOIN kernel_merge_authorizations auth
+        ON auth.run_id = run.id
+       AND auth.repository = bootstrap.repository
+       AND auth.pr_number = bootstrap.pr_number
+      JOIN kernel_merge_effect_intents intent
+        ON intent.authorization_id = auth.id
+       AND intent.requested_head_sha = bootstrap.source_head_sha
+      JOIN kernel_merge_effect_receipts receipt
+        ON receipt.intent_id = intent.id
+       AND receipt.receipt_status = 'confirmed'
+       AND receipt.merged = TRUE
+       AND receipt.observed_head_sha = intent.requested_head_sha
+       AND receipt.evidence->>'merge_commit_sha' = bootstrap.merge_sha
+     WHERE bootstrap.id = NEW.bootstrap_run_id
+       AND bootstrap.repository = NEW.repository
+       AND bootstrap.merge_sha = NEW.merge_sha
+  ) THEN
+    RAISE EXCEPTION
+      'bootstrap E2E manifest requires the exact approved merge run contract';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_e2e_manifest_guard
+  ON kernel_release_bootstrap_e2e_manifests;
+CREATE TRIGGER trg_kernel_release_bootstrap_e2e_manifest_guard
+  BEFORE INSERT ON kernel_release_bootstrap_e2e_manifests
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_bootstrap_e2e_manifest_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_contract_immutability_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM kernel_release_e2e_manifests
+     WHERE contract_id = OLD.id
+  ) OR EXISTS (
+    SELECT 1 FROM kernel_release_bootstrap_e2e_manifests
+     WHERE contract_id = OLD.id
+  ) THEN
+    RAISE EXCEPTION 'referenced approved contract is immutable';
+  END IF;
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_contract_immutability
+  ON initiative_contracts;
+CREATE TRIGGER trg_kernel_release_contract_immutability
+  BEFORE UPDATE OR DELETE ON initiative_contracts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_contract_immutability_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_effect_receipt_guard()
+RETURNS trigger AS $$
+DECLARE
+  intent kernel_release_effect_intents%ROWTYPE;
+  manifest kernel_release_e2e_manifests%ROWTYPE;
+  claim kernel_release_effect_dispatch_claims%ROWTYPE;
+  outcome kernel_release_effect_dispatch_outcomes%ROWTYPE;
+  effective_lease_expires_at TIMESTAMPTZ;
+  verification JSONB;
+  result JSONB;
+  result_index BIGINT;
+BEGIN
+  IF NEW.receipt_status <> 'confirmed' THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT *
+    INTO intent
+    FROM kernel_release_effect_intents
+   WHERE id = NEW.intent_id;
+
+  IF NEW.observed_merge_sha IS DISTINCT FROM intent.expected_merge_sha THEN
+    RAISE EXCEPTION 'confirmed release receipt requires exact merge SHA';
+  END IF;
+  IF NEW.observed_artifact_versions IS DISTINCT FROM intent.expected_artifact_versions THEN
+    RAISE EXCEPTION 'confirmed release receipt requires exact artifact versions';
+  END IF;
+
+  SELECT * INTO claim
+    FROM kernel_release_effect_dispatch_claims
+   WHERE id = NEW.dispatch_claim_id
+     AND intent_id = intent.id
+     AND generation = NEW.dispatch_generation;
+  SELECT * INTO outcome
+    FROM kernel_release_effect_dispatch_outcomes
+   WHERE dispatch_claim_id = claim.id;
+  SELECT GREATEST(
+           claim.lease_expires_at,
+           COALESCE(MAX(renewal.lease_expires_at), claim.lease_expires_at)
+         )
+    INTO effective_lease_expires_at
+    FROM kernel_release_effect_dispatch_renewals renewal
+   WHERE renewal.dispatch_claim_id = claim.id
+     AND renewal.generation = claim.generation;
+  IF claim.id IS NULL
+     OR claim.generation IS DISTINCT FROM (
+       SELECT MAX(latest.generation)
+         FROM kernel_release_effect_dispatch_claims latest
+        WHERE latest.intent_id = intent.id
+     )
+     OR claim.claim_mode IS DISTINCT FROM 'verification'
+     OR outcome.outcome IS DISTINCT FROM 'observed'
+     OR effective_lease_expires_at IS NULL
+     OR effective_lease_expires_at <= clock_timestamp() THEN
+    RAISE EXCEPTION
+      'confirmed release receipt requires latest live observed dispatch generation';
+  END IF;
+
+  SELECT *
+    INTO manifest
+    FROM kernel_release_e2e_manifests
+   WHERE id = NEW.e2e_manifest_id
+     AND release_run_id = intent.release_run_id;
+  IF manifest.id IS NULL
+     OR NEW.e2e_manifest_digest IS DISTINCT FROM manifest.manifest_digest
+     OR NEW.e2e_scenarios_total IS DISTINCT FROM manifest.scenarios_total
+     OR NEW.e2e_scenarios_passed IS DISTINCT FROM manifest.scenarios_total
+     OR NEW.e2e_environment IS DISTINCT FROM intent.effect_kind
+     OR jsonb_typeof(NEW.e2e_scenario_results) IS DISTINCT FROM 'array'
+     OR jsonb_array_length(NEW.e2e_scenario_results)
+        IS DISTINCT FROM manifest.scenarios_total
+     OR NOT kernel_release_e2e_probe_results_match(
+       manifest.e2e_acceptance,
+       NEW.e2e_probe_results
+     )
+     OR NEW.e2e_started_at IS NULL
+     OR NEW.e2e_finished_at IS NULL THEN
+    RAISE EXCEPTION 'confirmed release receipt requires exact E2E manifest';
+  END IF;
+  FOR result, result_index IN
+    SELECT value, ordinality
+      FROM jsonb_array_elements(NEW.e2e_scenario_results) WITH ORDINALITY
+  LOOP
+    IF jsonb_typeof(result) IS DISTINCT FROM 'object'
+       OR (
+         SELECT count(*)
+           FROM jsonb_object_keys(
+             CASE WHEN jsonb_typeof(result) = 'object'
+               THEN result ELSE '{}'::jsonb END
+           )
+       ) IS DISTINCT FROM 5::bigint
+       OR result->>'status' IS DISTINCT FROM 'pass'
+       OR result->>'name' IS DISTINCT FROM
+          manifest.e2e_acceptance->'scenarios'->(result_index::integer - 1)->>'name'
+       OR COALESCE(result->>'started_at', '')
+          !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+       OR COALESCE(result->>'finished_at', '')
+          !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+       OR COALESCE(result->>'log_digest', '')
+          !~ '^sha256:[0-9a-f]{64}$' THEN
+      RAISE EXCEPTION 'confirmed release receipt has invalid scenario result';
+    END IF;
+  END LOOP;
+
+  verification := NEW.evidence->'verification';
+  IF intent.effect_kind = 'staging'
+     AND (
+       verification->>'status' IS DISTINCT FROM 'pass'
+       OR verification->>'required_e2e' IS DISTINCT FROM 'pass'
+       OR verification->>'e2e_manifest_digest'
+          IS DISTINCT FROM manifest.manifest_digest
+       OR (verification->>'e2e_scenarios_total')::integer
+          IS DISTINCT FROM manifest.scenarios_total
+       OR (verification->>'e2e_scenarios_passed')::integer
+          IS DISTINCT FROM manifest.scenarios_total
+       OR verification->'e2e_probe_results'
+          IS DISTINCT FROM NEW.e2e_probe_results
+     ) THEN
+    RAISE EXCEPTION
+      'confirmed staging receipt requires pass verification and exact E2E manifest';
+  END IF;
+  IF intent.effect_kind = 'production'
+     AND (
+       verification->>'status' IS DISTINCT FROM 'pass'
+       OR verification->>'health' IS DISTINCT FROM 'pass'
+       OR verification->>'required_e2e' IS DISTINCT FROM 'pass'
+       OR verification->>'e2e_manifest_digest'
+          IS DISTINCT FROM manifest.manifest_digest
+       OR (verification->>'e2e_scenarios_total')::integer
+          IS DISTINCT FROM manifest.scenarios_total
+       OR (verification->>'e2e_scenarios_passed')::integer
+          IS DISTINCT FROM manifest.scenarios_total
+       OR verification->'e2e_probe_results'
+          IS DISTINCT FROM NEW.e2e_probe_results
+       OR COALESCE(verification#>>'{rollback_metadata,anchor}', '') = ''
+       OR COALESCE(verification#>>'{rollback_metadata,previous_version}', '') = ''
+       OR jsonb_typeof(verification->'rollback_artifacts') IS DISTINCT FROM 'array'
+       OR jsonb_array_length(verification->'rollback_artifacts') <>
+          jsonb_array_length(intent.expected_artifact_versions)
+     ) THEN
+    RAISE EXCEPTION
+      'confirmed production receipt requires health and E2E verification';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_receipt_guard
+  ON kernel_release_effect_receipts;
+CREATE TRIGGER trg_kernel_release_effect_receipt_guard
+  BEFORE INSERT ON kernel_release_effect_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_effect_receipt_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_rollback_intent_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_runs release
+     WHERE release.id = NEW.release_run_id
+       AND release.merge_sha = NEW.expected_merge_sha
+       AND release.artifact_versions = NEW.expected_artifact_versions
+  ) THEN
+    RAISE EXCEPTION 'rollback intent requires exact ReleaseRun identity';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_intent_guard
+  ON kernel_release_rollback_intents;
+CREATE TRIGGER trg_kernel_release_rollback_intent_guard
+  BEFORE INSERT ON kernel_release_rollback_intents
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_rollback_intent_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_rollback_receipt_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_rollback_intents rollback_intent
+      JOIN kernel_release_effect_intents effect_intent
+        ON effect_intent.release_run_id = rollback_intent.release_run_id
+       AND effect_intent.effect_kind = 'production'
+      JOIN kernel_release_effect_receipts effect_receipt
+        ON effect_receipt.intent_id = effect_intent.id
+       AND effect_receipt.id = NEW.effect_receipt_id
+       AND effect_receipt.receipt_status = 'confirmed'
+     WHERE rollback_intent.id = NEW.rollback_intent_id
+       AND effect_receipt.observed_merge_sha =
+           rollback_intent.expected_merge_sha
+       AND effect_receipt.observed_artifact_versions =
+           rollback_intent.expected_artifact_versions
+       AND effect_receipt.evidence#>'{verification,rollback_metadata}' =
+           NEW.rollback_metadata
+       AND NEW.anchor =
+           effect_receipt.evidence#>>'{verification,rollback_metadata,anchor}'
+       AND NEW.previous_version =
+           effect_receipt.evidence#>>'{verification,rollback_metadata,previous_version}'
+  ) THEN
+    RAISE EXCEPTION
+      'rollback receipt requires exact confirmed production readback';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_receipt_guard
+  ON kernel_release_rollback_receipts;
+CREATE TRIGGER trg_kernel_release_rollback_receipt_guard
+  BEFORE INSERT ON kernel_release_rollback_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_rollback_receipt_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_rollback_artifact_intent_guard()
+RETURNS trigger AS $$
+DECLARE
+  artifact JSONB;
+BEGIN
+  SELECT item INTO artifact
+    FROM kernel_release_rollback_intents rollback_intent,
+         LATERAL jsonb_array_elements(
+           rollback_intent.expected_artifact_versions
+         ) item
+   WHERE rollback_intent.id = NEW.rollback_intent_id
+     AND item->>'name' = NEW.artifact_name;
+  IF artifact IS NULL
+     OR NEW.expected_current_version IS DISTINCT FROM artifact->>'version'
+     OR NEW.expected_current_digest IS DISTINCT FROM artifact->>'digest'
+     OR NEW.expected_anchor IS DISTINCT FROM
+        NEW.artifact_name || ':' || (artifact->>'digest')
+  THEN
+    RAISE EXCEPTION
+      'rollback artifact intent requires exact artifact identity';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_artifact_intent_guard
+  ON kernel_release_rollback_artifact_intents;
+CREATE TRIGGER trg_kernel_release_rollback_artifact_intent_guard
+  BEFORE INSERT ON kernel_release_rollback_artifact_intents
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_rollback_artifact_intent_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_rollback_artifact_receipt_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_rollback_artifact_intents artifact_intent
+      JOIN kernel_release_rollback_intents rollback_intent
+        ON rollback_intent.id = artifact_intent.rollback_intent_id
+      JOIN kernel_release_effect_intents effect_intent
+        ON effect_intent.release_run_id = rollback_intent.release_run_id
+       AND effect_intent.effect_kind = 'production'
+      JOIN kernel_release_effect_receipts effect_receipt
+        ON effect_receipt.intent_id = effect_intent.id
+       AND effect_receipt.id = NEW.effect_receipt_id
+       AND effect_receipt.receipt_status = 'confirmed'
+      JOIN LATERAL jsonb_array_elements(
+        effect_receipt.evidence#>'{verification,rollback_artifacts}'
+      ) observed ON observed->>'artifact_name' = artifact_intent.artifact_name
+     WHERE artifact_intent.id = NEW.rollback_artifact_intent_id
+       AND effect_receipt.observed_merge_sha =
+           rollback_intent.expected_merge_sha
+       AND effect_receipt.observed_artifact_versions =
+           rollback_intent.expected_artifact_versions
+       AND observed->>'current_version' =
+           artifact_intent.expected_current_version
+       AND observed->>'current_digest' =
+           artifact_intent.expected_current_digest
+       AND observed->>'anchor' = artifact_intent.expected_anchor
+       AND NEW.observed_anchor = artifact_intent.expected_anchor
+       AND observed->>'previous_version' =
+           artifact_intent.expected_previous_version
+       AND NEW.observed_previous_version =
+           artifact_intent.expected_previous_version
+       AND observed->>'previous_digest' =
+           artifact_intent.expected_previous_digest
+       AND NEW.observed_previous_digest =
+           artifact_intent.expected_previous_digest
+       AND observed->'rollback_metadata' = NEW.rollback_metadata
+  ) THEN
+    RAISE EXCEPTION
+      'rollback artifact receipt requires exact confirmed artifact readback';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_artifact_receipt_guard
+  ON kernel_release_rollback_artifact_receipts;
+CREATE TRIGGER trg_kernel_release_rollback_artifact_receipt_guard
+  BEFORE INSERT ON kernel_release_rollback_artifact_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_rollback_artifact_receipt_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_bootstrap_effect_receipt_guard()
+RETURNS trigger AS $$
+DECLARE
+  attempt kernel_release_bootstrap_effect_attempts%ROWTYPE;
+  manifest kernel_release_bootstrap_e2e_manifests%ROWTYPE;
+  effective_lease_expires_at TIMESTAMPTZ;
+  result JSONB;
+  result_index BIGINT;
+BEGIN
+  IF NEW.receipt_status <> 'confirmed' THEN
+    RETURN NEW;
+  END IF;
+  SELECT * INTO attempt
+    FROM kernel_release_bootstrap_effect_attempts
+   WHERE id = NEW.effect_attempt_id;
+  SELECT GREATEST(
+           attempt.lease_expires_at,
+           COALESCE(MAX(renewal.lease_expires_at), attempt.lease_expires_at)
+         )
+    INTO effective_lease_expires_at
+    FROM kernel_release_bootstrap_effect_attempt_renewals renewal
+   WHERE renewal.effect_attempt_id = attempt.id
+     AND renewal.generation = attempt.generation;
+  IF attempt.id IS NULL
+     OR attempt.generation IS DISTINCT FROM (
+       SELECT MAX(latest.generation)
+         FROM kernel_release_bootstrap_effect_attempts latest
+        WHERE latest.bootstrap_run_id = attempt.bootstrap_run_id
+          AND latest.effect_kind = attempt.effect_kind
+     )
+     OR effective_lease_expires_at IS NULL
+     OR effective_lease_expires_at <= clock_timestamp() THEN
+    RAISE EXCEPTION
+      'confirmed bootstrap receipt requires latest live attempt generation';
+  END IF;
+  SELECT * INTO manifest
+    FROM kernel_release_bootstrap_e2e_manifests
+   WHERE id = NEW.e2e_manifest_id
+     AND bootstrap_run_id = attempt.bootstrap_run_id;
+  IF manifest.id IS NULL
+     OR NEW.observed_merge_sha IS DISTINCT FROM manifest.merge_sha
+     OR NEW.observed_artifact_versions IS DISTINCT FROM manifest.artifact_versions
+     OR NEW.e2e_manifest_digest IS DISTINCT FROM manifest.manifest_digest
+     OR NEW.e2e_scenarios_total IS DISTINCT FROM manifest.scenarios_total
+     OR NEW.e2e_scenarios_passed IS DISTINCT FROM manifest.scenarios_total
+     OR NEW.e2e_environment IS DISTINCT FROM attempt.effect_kind
+     OR jsonb_typeof(NEW.e2e_scenario_results) IS DISTINCT FROM 'array'
+     OR jsonb_array_length(NEW.e2e_scenario_results)
+        IS DISTINCT FROM manifest.scenarios_total
+     OR NOT kernel_release_e2e_probe_results_match(
+       manifest.e2e_acceptance,
+       NEW.e2e_probe_results
+     )
+     OR NEW.e2e_started_at IS NULL
+     OR NEW.e2e_finished_at IS NULL
+     OR NEW.evidence->>'required_e2e' IS DISTINCT FROM 'pass'
+     OR NEW.evidence->'e2e_probe_results'
+        IS DISTINCT FROM NEW.e2e_probe_results
+     OR NEW.evidence->>'merge_sha' IS DISTINCT FROM manifest.merge_sha THEN
+    RAISE EXCEPTION
+      'confirmed bootstrap receipt requires exact E2E manifest';
+  END IF;
+  IF attempt.effect_kind = 'production'
+     AND (
+       jsonb_typeof(NEW.evidence->'rollback_artifacts')
+         IS DISTINCT FROM 'array'
+       OR jsonb_array_length(NEW.evidence->'rollback_artifacts') <>
+          jsonb_array_length(manifest.artifact_versions)
+     ) THEN
+    RAISE EXCEPTION
+      'confirmed bootstrap production receipt requires rollback artifacts';
+  END IF;
+  FOR result, result_index IN
+    SELECT value, ordinality
+      FROM jsonb_array_elements(NEW.e2e_scenario_results) WITH ORDINALITY
+  LOOP
+    IF jsonb_typeof(result) IS DISTINCT FROM 'object'
+       OR (
+         SELECT count(*)
+           FROM jsonb_object_keys(
+             CASE WHEN jsonb_typeof(result) = 'object'
+               THEN result ELSE '{}'::jsonb END
+           )
+       ) IS DISTINCT FROM 5::bigint
+       OR result->>'status' IS DISTINCT FROM 'pass'
+       OR result->>'name' IS DISTINCT FROM
+          manifest.e2e_acceptance->'scenarios'->(result_index::integer - 1)->>'name'
+       OR COALESCE(result->>'started_at', '')
+          !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+       OR COALESCE(result->>'finished_at', '')
+          !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+       OR COALESCE(result->>'log_digest', '')
+          !~ '^sha256:[0-9a-f]{64}$' THEN
+      RAISE EXCEPTION 'confirmed bootstrap receipt has invalid scenario result';
+    END IF;
+  END LOOP;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_effect_receipt_guard
+  ON kernel_release_bootstrap_effect_receipts;
+CREATE TRIGGER trg_kernel_release_bootstrap_effect_receipt_guard
+  BEFORE INSERT ON kernel_release_bootstrap_effect_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_bootstrap_effect_receipt_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_bootstrap_rollback_artifact_intent_guard()
+RETURNS trigger AS $$
+DECLARE
+  artifact JSONB;
+BEGIN
+  SELECT item INTO artifact
+    FROM kernel_release_bootstrap_e2e_manifests manifest,
+         LATERAL jsonb_array_elements(manifest.artifact_versions) item
+   WHERE manifest.bootstrap_run_id = NEW.bootstrap_run_id
+     AND item->>'name' = NEW.artifact_name;
+  IF artifact IS NULL
+     OR NEW.expected_current_version IS DISTINCT FROM artifact->>'version'
+     OR NEW.expected_current_digest IS DISTINCT FROM artifact->>'digest'
+     OR NEW.expected_anchor IS DISTINCT FROM
+        NEW.artifact_name || ':' || (artifact->>'digest')
+  THEN
+    RAISE EXCEPTION
+      'bootstrap rollback artifact intent requires exact artifact identity';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS
+  trg_kernel_release_bootstrap_rollback_artifact_intent_guard
+  ON kernel_release_bootstrap_rollback_artifact_intents;
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_intent_guard
+  BEFORE INSERT ON kernel_release_bootstrap_rollback_artifact_intents
+  FOR EACH ROW EXECUTE FUNCTION
+    kernel_release_bootstrap_rollback_artifact_intent_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_bootstrap_rollback_artifact_receipt_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_bootstrap_rollback_artifact_intents artifact_intent
+      JOIN kernel_release_bootstrap_effect_attempts attempt
+        ON attempt.bootstrap_run_id = artifact_intent.bootstrap_run_id
+       AND attempt.effect_kind = 'production'
+      JOIN kernel_release_bootstrap_effect_receipts effect_receipt
+        ON effect_receipt.effect_attempt_id = attempt.id
+       AND effect_receipt.id = NEW.effect_receipt_id
+       AND effect_receipt.receipt_status = 'confirmed'
+      JOIN LATERAL jsonb_array_elements(
+        effect_receipt.evidence->'rollback_artifacts'
+      ) observed ON observed->>'artifact_name' = artifact_intent.artifact_name
+     WHERE artifact_intent.id = NEW.rollback_artifact_intent_id
+       AND observed->>'current_version' =
+           artifact_intent.expected_current_version
+       AND observed->>'current_digest' =
+           artifact_intent.expected_current_digest
+       AND observed->>'anchor' = artifact_intent.expected_anchor
+       AND NEW.observed_anchor = artifact_intent.expected_anchor
+       AND observed->>'previous_version' =
+           artifact_intent.expected_previous_version
+       AND NEW.observed_previous_version =
+           artifact_intent.expected_previous_version
+       AND observed->>'previous_digest' =
+           artifact_intent.expected_previous_digest
+       AND NEW.observed_previous_digest =
+           artifact_intent.expected_previous_digest
+       AND observed->'rollback_metadata' = NEW.rollback_metadata
+  ) THEN
+    RAISE EXCEPTION
+      'bootstrap rollback artifact receipt requires exact production readback';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS
+  trg_kernel_release_bootstrap_rollback_artifact_receipt_guard
+  ON kernel_release_bootstrap_rollback_artifact_receipts;
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_receipt_guard
+  BEFORE INSERT ON kernel_release_bootstrap_rollback_artifact_receipts
+  FOR EACH ROW EXECUTE FUNCTION
+    kernel_release_bootstrap_rollback_artifact_receipt_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_transition_guard()
+RETURNS trigger AS $$
+DECLARE
+  previous_state TEXT;
+  expected_state TEXT;
+  exact_merge_sha TEXT;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended(NEW.release_run_id::text, 0));
+
+  SELECT merge_sha INTO exact_merge_sha
+    FROM kernel_release_runs
+   WHERE id = NEW.release_run_id;
+  IF exact_merge_sha IS NULL
+     OR NEW.evidence->>'merge_sha' IS DISTINCT FROM exact_merge_sha THEN
+    RAISE EXCEPTION 'release transition requires exact merge SHA evidence';
+  END IF;
+
+  SELECT state
+    INTO previous_state
+    FROM kernel_release_transitions
+   WHERE release_run_id = NEW.release_run_id
+   ORDER BY append_seq DESC
+   LIMIT 1;
+
+  expected_state := CASE
+    WHEN previous_state IS NULL THEN 'merged'
+    WHEN previous_state = 'merged' THEN 'staging_queued'
+    WHEN previous_state = 'staging_queued' THEN 'staging_running'
+    WHEN previous_state = 'staging_running' THEN 'staging_passed'
+    WHEN previous_state = 'staging_passed' THEN 'production_deploying'
+    WHEN previous_state = 'production_deploying' THEN 'production_verified'
+    ELSE NULL
+  END;
+
+  IF NEW.state IS DISTINCT FROM expected_state THEN
+    RAISE EXCEPTION
+      'invalid kernel release transition: % -> % (expected %)',
+      COALESCE(previous_state, '<none>'), NEW.state, COALESCE(expected_state, '<terminal>');
+  END IF;
+
+  IF NEW.state = 'production_deploying' AND (
+    jsonb_typeof(NEW.evidence->'artifact_rollback_intent_ids')
+      IS DISTINCT FROM 'array'
+    OR NEW.evidence->'artifact_rollback_intent_ids' IS DISTINCT FROM (
+      SELECT COALESCE(
+        jsonb_agg(artifact_intent.id::text ORDER BY artifact_intent.artifact_name),
+        '[]'::jsonb
+      )
+        FROM kernel_release_rollback_intents rollback_intent
+        JOIN kernel_release_rollback_artifact_intents artifact_intent
+          ON artifact_intent.rollback_intent_id = rollback_intent.id
+       WHERE rollback_intent.release_run_id = NEW.release_run_id
+    )
+    OR jsonb_array_length(NEW.evidence->'artifact_rollback_intent_ids') <>
+       (
+         SELECT jsonb_array_length(release.artifact_versions)
+           FROM kernel_release_runs release
+          WHERE release.id = NEW.release_run_id
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'production_deploying requires exact rollback artifact intent set';
+  END IF;
+
+  IF NEW.state = 'staging_passed' AND NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_effect_intents intent
+      JOIN kernel_release_effect_receipts receipt
+        ON receipt.intent_id = intent.id
+     WHERE intent.release_run_id = NEW.release_run_id
+       AND intent.effect_kind = 'staging'
+       AND receipt.receipt_status = 'confirmed'
+       AND receipt.observed_merge_sha = intent.expected_merge_sha
+       AND receipt.observed_artifact_versions = intent.expected_artifact_versions
+       AND NEW.evidence->>'effect_receipt_id' = receipt.id::text
+       AND NEW.evidence->>'e2e_manifest_digest' = receipt.e2e_manifest_digest
+       AND NEW.evidence->'artifact_versions'
+           IS NOT DISTINCT FROM receipt.observed_artifact_versions
+       AND NEW.evidence->'verification'
+           IS NOT DISTINCT FROM receipt.evidence->'verification'
+  ) THEN
+    RAISE EXCEPTION 'staging_passed requires confirmed staging effect receipt';
+  END IF;
+
+  IF NEW.state = 'production_verified' AND NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_effect_intents intent
+      JOIN kernel_release_effect_receipts receipt
+        ON receipt.intent_id = intent.id
+     WHERE intent.release_run_id = NEW.release_run_id
+       AND intent.effect_kind = 'production'
+       AND receipt.receipt_status = 'confirmed'
+       AND receipt.observed_merge_sha = intent.expected_merge_sha
+       AND receipt.observed_artifact_versions = intent.expected_artifact_versions
+       AND NEW.evidence->>'effect_receipt_id' = receipt.id::text
+       AND NEW.evidence->>'e2e_manifest_digest' = receipt.e2e_manifest_digest
+       AND NEW.evidence->'deployed_versions'
+           IS NOT DISTINCT FROM receipt.observed_artifact_versions
+       AND NEW.evidence->'verification'
+           IS NOT DISTINCT FROM receipt.evidence->'verification'
+  ) THEN
+    RAISE EXCEPTION 'production_verified requires confirmed production effect receipt';
+  END IF;
+  IF NEW.state = 'production_verified' AND NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_rollback_intents rollback_intent
+      JOIN kernel_release_rollback_receipts rollback_receipt
+        ON rollback_receipt.rollback_intent_id = rollback_intent.id
+     WHERE rollback_intent.release_run_id = NEW.release_run_id
+       AND NEW.evidence->>'rollback_receipt_id' = rollback_receipt.id::text
+       AND NEW.evidence->>'effect_receipt_id' =
+           rollback_receipt.effect_receipt_id::text
+  ) THEN
+    RAISE EXCEPTION
+      'production_verified requires exact durable rollback receipt';
+  END IF;
+  IF NEW.state = 'production_verified' AND (
+    jsonb_typeof(NEW.evidence->'artifact_rollback_receipt_ids')
+      IS DISTINCT FROM 'array'
+    OR NEW.evidence->'artifact_rollback_receipt_ids' IS DISTINCT FROM (
+      SELECT COALESCE(
+        jsonb_agg(artifact_receipt.id::text ORDER BY artifact_intent.artifact_name),
+        '[]'::jsonb
+      )
+        FROM kernel_release_rollback_intents rollback_intent
+        JOIN kernel_release_rollback_artifact_intents artifact_intent
+          ON artifact_intent.rollback_intent_id = rollback_intent.id
+        JOIN kernel_release_rollback_artifact_receipts artifact_receipt
+          ON artifact_receipt.rollback_artifact_intent_id = artifact_intent.id
+       WHERE rollback_intent.release_run_id = NEW.release_run_id
+         AND artifact_receipt.effect_receipt_id::text =
+             NEW.evidence->>'effect_receipt_id'
+    )
+    OR jsonb_array_length(NEW.evidence->'artifact_rollback_receipt_ids') <>
+       (
+         SELECT jsonb_array_length(release.artifact_versions)
+           FROM kernel_release_runs release
+          WHERE release.id = NEW.release_run_id
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'production_verified requires exact rollback artifact receipt set';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION kernel_release_bootstrap_transition_guard()
+RETURNS trigger AS $$
+DECLARE
+  previous_state TEXT;
+  expected_state TEXT;
+  exact_merge_sha TEXT;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended(NEW.bootstrap_run_id::text, 0));
+
+  SELECT merge_sha INTO exact_merge_sha
+    FROM kernel_release_bootstrap_runs
+   WHERE id = NEW.bootstrap_run_id;
+  IF exact_merge_sha IS NULL
+     OR NEW.evidence->>'merge_sha' IS DISTINCT FROM exact_merge_sha THEN
+    RAISE EXCEPTION 'bootstrap transition requires exact merge SHA evidence';
+  END IF;
+
+  SELECT state
+    INTO previous_state
+    FROM kernel_release_bootstrap_transitions
+   WHERE bootstrap_run_id = NEW.bootstrap_run_id
+   ORDER BY append_seq DESC
+   LIMIT 1;
+
+  expected_state := CASE
+    WHEN previous_state IS NULL THEN 'approved'
+    WHEN previous_state = 'approved' THEN 'staging_intent'
+    WHEN previous_state = 'staging_intent' THEN 'staging_passed'
+    WHEN previous_state = 'staging_passed' THEN 'production_intent'
+    WHEN previous_state = 'production_intent' THEN 'production_verified'
+    ELSE NULL
+  END;
+
+  IF NEW.state IS DISTINCT FROM expected_state THEN
+    RAISE EXCEPTION
+      'invalid kernel bootstrap transition: % -> % (expected %)',
+      COALESCE(previous_state, '<none>'), NEW.state, COALESCE(expected_state, '<terminal>');
+  END IF;
+
+  IF NEW.state = 'production_intent' AND (
+    jsonb_typeof(NEW.evidence->'artifact_rollback_intent_ids')
+      IS DISTINCT FROM 'array'
+    OR NEW.evidence->'artifact_rollback_intent_ids' IS DISTINCT FROM (
+      SELECT COALESCE(
+        jsonb_agg(intent.id::text ORDER BY intent.artifact_name),
+        '[]'::jsonb
+      )
+        FROM kernel_release_bootstrap_rollback_artifact_intents intent
+       WHERE intent.bootstrap_run_id = NEW.bootstrap_run_id
+    )
+    OR jsonb_array_length(NEW.evidence->'artifact_rollback_intent_ids') <>
+       (
+         SELECT jsonb_array_length(manifest.artifact_versions)
+           FROM kernel_release_bootstrap_e2e_manifests manifest
+          WHERE manifest.bootstrap_run_id = NEW.bootstrap_run_id
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'bootstrap production_intent requires exact rollback artifact intent set';
+  END IF;
+
+  IF NEW.state = 'staging_passed' AND NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_bootstrap_effect_attempts a
+      JOIN kernel_release_bootstrap_effect_receipts r
+        ON r.effect_attempt_id = a.id
+     WHERE a.bootstrap_run_id = NEW.bootstrap_run_id
+       AND a.effect_kind = 'staging'
+       AND r.receipt_status = 'confirmed'
+       AND NEW.evidence->>'effect_receipt_id' = r.id::text
+       AND NEW.evidence->>'e2e_manifest_digest' = r.e2e_manifest_digest
+       AND NEW.evidence->'artifact_versions'
+           IS NOT DISTINCT FROM r.observed_artifact_versions
+       AND NEW.evidence->'receipt_evidence'
+           IS NOT DISTINCT FROM r.evidence
+  ) THEN
+    RAISE EXCEPTION 'staging_passed requires confirmed staging effect receipt';
+  END IF;
+
+  IF NEW.state = 'production_verified' AND NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_bootstrap_effect_attempts a
+      JOIN kernel_release_bootstrap_effect_receipts r
+        ON r.effect_attempt_id = a.id
+     WHERE a.bootstrap_run_id = NEW.bootstrap_run_id
+       AND a.effect_kind = 'production'
+       AND r.receipt_status = 'confirmed'
+       AND NEW.evidence->>'effect_receipt_id' = r.id::text
+       AND NEW.evidence->>'e2e_manifest_digest' = r.e2e_manifest_digest
+       AND NEW.evidence->'artifact_versions'
+           IS NOT DISTINCT FROM r.observed_artifact_versions
+       AND NEW.evidence->'receipt_evidence'
+           IS NOT DISTINCT FROM r.evidence
+  ) THEN
+    RAISE EXCEPTION 'production_verified requires confirmed production effect receipt';
+  END IF;
+  IF NEW.state = 'production_verified' AND (
+    jsonb_typeof(NEW.evidence->'artifact_rollback_receipt_ids')
+      IS DISTINCT FROM 'array'
+    OR NEW.evidence->'artifact_rollback_receipt_ids' IS DISTINCT FROM (
+      SELECT COALESCE(
+        jsonb_agg(receipt.id::text ORDER BY intent.artifact_name),
+        '[]'::jsonb
+      )
+        FROM kernel_release_bootstrap_rollback_artifact_intents intent
+        JOIN kernel_release_bootstrap_rollback_artifact_receipts receipt
+          ON receipt.rollback_artifact_intent_id = intent.id
+       WHERE intent.bootstrap_run_id = NEW.bootstrap_run_id
+         AND receipt.effect_receipt_id::text =
+             NEW.evidence->>'effect_receipt_id'
+    )
+    OR jsonb_array_length(NEW.evidence->'artifact_rollback_receipt_ids') <>
+       (
+         SELECT jsonb_array_length(manifest.artifact_versions)
+           FROM kernel_release_bootstrap_e2e_manifests manifest
+          WHERE manifest.bootstrap_run_id = NEW.bootstrap_run_id
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'bootstrap production_verified requires exact rollback artifact receipt set';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_transition_guard
+  ON kernel_release_bootstrap_transitions;
+CREATE TRIGGER trg_kernel_release_bootstrap_transition_guard
+  BEFORE INSERT ON kernel_release_bootstrap_transitions
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_bootstrap_transition_guard();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_transition_guard
+  ON kernel_release_transitions;
+CREATE TRIGGER trg_kernel_release_transition_guard
+  BEFORE INSERT ON kernel_release_transitions
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_transition_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_ledger_append_only()
+RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'kernel release ledger is append-only (% blocked)', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_runs_append_only ON kernel_release_runs;
+CREATE TRIGGER trg_kernel_release_runs_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_runs
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_transitions_append_only ON kernel_release_transitions;
+CREATE TRIGGER trg_kernel_release_transitions_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_transitions
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_e2e_manifests_append_only
+  ON kernel_release_e2e_manifests;
+CREATE TRIGGER trg_kernel_release_e2e_manifests_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_e2e_manifests
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_intents_append_only ON kernel_release_effect_intents;
+CREATE TRIGGER trg_kernel_release_effect_intents_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_effect_intents
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_receipts_append_only ON kernel_release_effect_receipts;
+CREATE TRIGGER trg_kernel_release_effect_receipts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_effect_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_intents_append_only
+  ON kernel_release_rollback_intents;
+CREATE TRIGGER trg_kernel_release_rollback_intents_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_rollback_intents
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_receipts_append_only
+  ON kernel_release_rollback_receipts;
+CREATE TRIGGER trg_kernel_release_rollback_receipts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_rollback_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_artifact_intents_append_only
+  ON kernel_release_rollback_artifact_intents;
+CREATE TRIGGER trg_kernel_release_rollback_artifact_intents_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_rollback_artifact_intents
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_artifact_receipts_append_only
+  ON kernel_release_rollback_artifact_receipts;
+CREATE TRIGGER trg_kernel_release_rollback_artifact_receipts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_rollback_artifact_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_blocked_escalations_append_only
+  ON kernel_release_blocked_escalations;
+CREATE TRIGGER trg_kernel_release_blocked_escalations_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_blocked_escalations
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_alert_outbox_append_only
+  ON kernel_release_alert_outbox;
+CREATE TRIGGER trg_kernel_release_alert_outbox_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_alert_outbox
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_alert_delivery_attempts_append_only
+  ON kernel_release_alert_delivery_attempts;
+CREATE TRIGGER trg_kernel_release_alert_delivery_attempts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_alert_delivery_attempts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_merge_review_assessments_append_only
+  ON kernel_merge_review_assessments;
+CREATE TRIGGER trg_kernel_merge_review_assessments_append_only
+  BEFORE UPDATE OR DELETE ON kernel_merge_review_assessments
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_dispatch_claims_append_only
+  ON kernel_release_effect_dispatch_claims;
+CREATE TRIGGER trg_kernel_release_effect_dispatch_claims_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_effect_dispatch_claims
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_dispatch_outcomes_append_only
+  ON kernel_release_effect_dispatch_outcomes;
+CREATE TRIGGER trg_kernel_release_effect_dispatch_outcomes_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_effect_dispatch_outcomes
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_dispatch_renewals_append_only
+  ON kernel_release_effect_dispatch_renewals;
+CREATE TRIGGER trg_kernel_release_effect_dispatch_renewals_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_effect_dispatch_renewals
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_runs_append_only
+  ON kernel_release_bootstrap_runs;
+CREATE TRIGGER trg_kernel_release_bootstrap_runs_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_runs
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_transitions_append_only
+  ON kernel_release_bootstrap_transitions;
+CREATE TRIGGER trg_kernel_release_bootstrap_transitions_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_transitions
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_e2e_manifests_append_only
+  ON kernel_release_bootstrap_e2e_manifests;
+CREATE TRIGGER trg_kernel_release_bootstrap_e2e_manifests_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_e2e_manifests
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_effect_attempts_append_only
+  ON kernel_release_bootstrap_effect_attempts;
+CREATE TRIGGER trg_kernel_release_bootstrap_effect_attempts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_effect_attempts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_attempt_renewals_append_only
+  ON kernel_release_bootstrap_effect_attempt_renewals;
+CREATE TRIGGER trg_kernel_release_bootstrap_attempt_renewals_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_effect_attempt_renewals
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_effect_receipts_append_only
+  ON kernel_release_bootstrap_effect_receipts;
+CREATE TRIGGER trg_kernel_release_bootstrap_effect_receipts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_effect_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS
+  trg_kernel_release_bootstrap_rollback_artifact_intents_append_only
+  ON kernel_release_bootstrap_rollback_artifact_intents;
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_intents_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_rollback_artifact_intents
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS
+  trg_kernel_release_bootstrap_rollback_artifact_receipts_append_only
+  ON kernel_release_bootstrap_rollback_artifact_receipts;
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_receipts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_rollback_artifact_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DO $$
+DECLARE
+  ledger_table TEXT;
+BEGIN
+  FOREACH ledger_table IN ARRAY ARRAY[
+    'kernel_release_runs',
+    'kernel_release_e2e_manifests',
+    'kernel_release_transitions',
+    'kernel_release_effect_intents',
+    'kernel_release_effect_receipts',
+    'kernel_release_effect_dispatch_claims',
+    'kernel_release_effect_dispatch_renewals',
+    'kernel_release_effect_dispatch_outcomes',
+    'kernel_release_rollback_intents',
+    'kernel_release_rollback_receipts',
+    'kernel_release_rollback_artifact_intents',
+    'kernel_release_rollback_artifact_receipts',
+    'kernel_release_blocked_escalations',
+    'kernel_release_alert_outbox',
+    'kernel_release_alert_delivery_attempts',
+    'kernel_merge_review_assessments',
+    'kernel_release_bootstrap_runs',
+    'kernel_release_bootstrap_e2e_manifests',
+    'kernel_release_bootstrap_transitions',
+    'kernel_release_bootstrap_effect_attempts',
+    'kernel_release_bootstrap_effect_attempt_renewals',
+    'kernel_release_bootstrap_effect_receipts',
+    'kernel_release_bootstrap_rollback_artifact_intents',
+    'kernel_release_bootstrap_rollback_artifact_receipts'
+  ]
+  LOOP
+    EXECUTE format(
+      'DROP TRIGGER IF EXISTS %I ON %I',
+      'trg_' || ledger_table || '_truncate',
+      ledger_table
+    );
+  END LOOP;
+END;
+$$;
+
+CREATE TRIGGER trg_kernel_release_runs_truncate
+  BEFORE TRUNCATE ON kernel_release_runs
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_e2e_manifests_truncate
+  BEFORE TRUNCATE ON kernel_release_e2e_manifests
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_transitions_truncate
+  BEFORE TRUNCATE ON kernel_release_transitions
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_effect_intents_truncate
+  BEFORE TRUNCATE ON kernel_release_effect_intents
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_effect_receipts_truncate
+  BEFORE TRUNCATE ON kernel_release_effect_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_effect_dispatch_claims_truncate
+  BEFORE TRUNCATE ON kernel_release_effect_dispatch_claims
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_effect_dispatch_renewals_truncate
+  BEFORE TRUNCATE ON kernel_release_effect_dispatch_renewals
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_effect_dispatch_outcomes_truncate
+  BEFORE TRUNCATE ON kernel_release_effect_dispatch_outcomes
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_rollback_intents_truncate
+  BEFORE TRUNCATE ON kernel_release_rollback_intents
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_rollback_receipts_truncate
+  BEFORE TRUNCATE ON kernel_release_rollback_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_rollback_artifact_intents_truncate
+  BEFORE TRUNCATE ON kernel_release_rollback_artifact_intents
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_rollback_artifact_receipts_truncate
+  BEFORE TRUNCATE ON kernel_release_rollback_artifact_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_blocked_escalations_truncate
+  BEFORE TRUNCATE ON kernel_release_blocked_escalations
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_alert_outbox_truncate
+  BEFORE TRUNCATE ON kernel_release_alert_outbox
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_alert_delivery_attempts_truncate
+  BEFORE TRUNCATE ON kernel_release_alert_delivery_attempts
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_merge_review_assessments_truncate
+  BEFORE TRUNCATE ON kernel_merge_review_assessments
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_runs_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_runs
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_e2e_manifests_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_e2e_manifests
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_transitions_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_transitions
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_effect_attempts_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_effect_attempts
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_effect_attempt_renewals_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_effect_attempt_renewals
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_effect_receipts_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_effect_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_intents_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_rollback_artifact_intents
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_receipts_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_rollback_artifact_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+INSERT INTO schema_version (version, description, applied_at)
+VALUES ('375', 'Fence and close Kernel ReleaseRun authority and receipts', NOW())
+ON CONFLICT (version) DO NOTHING;

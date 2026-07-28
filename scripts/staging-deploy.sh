@@ -22,8 +22,10 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BRAIN_DIR="$ROOT_DIR/packages/brain"
+SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="${KERNEL_RELEASE_DEPLOY_ROOT:-$SOURCE_ROOT}"
+ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
+BRAIN_DIR="$SOURCE_ROOT/packages/brain"
 STAGING_PORT=5222
 STAGING_CONTAINER="cecelia-node-brain-staging"
 STAGING_DB="cecelia_staging"
@@ -38,6 +40,30 @@ for arg in "$@"; do
     esac
 done
 
+if [[ "$DRY_RUN" != true
+  && -z "${CECELIA_STAGING_EXACT_ROOT:-}"
+  && -z "${KERNEL_RELEASE_ARTIFACT_ROOT:-}" ]]; then
+    bash "$SCRIPT_DIR/lib/release-run-guard.sh" staging
+    EXACT_SHA="${KERNEL_RELEASE_MERGE_SHA:?KERNEL_RELEASE_MERGE_SHA required}"
+    EXACT_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cecelia-staging-release.XXXXXX")
+    # shellcheck disable=SC2329 # invoked by EXIT trap
+    cleanup_exact_root() {
+        git -C "$ROOT_DIR" worktree remove --force "$EXACT_ROOT" >/dev/null 2>&1 || true
+    }
+    trap cleanup_exact_root EXIT
+    git -C "$ROOT_DIR" fetch --no-tags origin "$EXACT_SHA" \
+        || git -C "$ROOT_DIR" fetch --no-tags origin main
+    git -C "$ROOT_DIR" worktree add --detach "$EXACT_ROOT" "$EXACT_SHA"
+    [[ "$(git -C "$EXACT_ROOT" rev-parse HEAD)" == "$EXACT_SHA" ]] \
+        || { echo "staging exact-SHA worktree mismatch" >&2; exit 78; }
+    if [[ -f "$ROOT_DIR/.env.staging" ]]; then
+        cp "$ROOT_DIR/.env.staging" "$EXACT_ROOT/.env.staging"
+        chmod 600 "$EXACT_ROOT/.env.staging"
+    fi
+    CECELIA_STAGING_EXACT_ROOT="$EXACT_ROOT" bash "$EXACT_ROOT/scripts/staging-deploy.sh" "$@"
+    exit $?
+fi
+
 echo "=== Staging Deploy: cecelia-brain v${VERSION} (port=${STAGING_PORT}, db=${STAGING_DB}) ==="
 echo ""
 
@@ -46,7 +72,7 @@ if ! command -v docker > /dev/null 2>&1; then
     echo "[WARN] docker 命令不在 PATH 中，staging 部署跳过"
     echo "  原因：此机器未安装 docker 或 docker 不在 PATH"
     echo "  影响：staging 验证被跳过（STAGING_SKIP_REASON=no_docker）"
-    echo "  说明：staging 是可选验证环节，production 部署不受影响"
+    echo "  说明：ReleaseRun 保持阻断，禁止进入 production"
     echo ""
     echo "=== Staging Deploy SKIPPED (no docker) ==="
     # 输出机器可读的跳过原因，供 ops.js 解析
@@ -82,10 +108,12 @@ if [[ ! -f "$ROOT_DIR/.env.staging" ]]; then
     fi
 fi
 
-# ── 检查镜像是否存在（复用 production 同版本镜像，不重新 build）──────────────
+# ── ReleaseRun staging 从 exact SHA 构建；旧调用仅复用既有镜像 ──────────────
 echo "[1/5] 检查 cecelia-brain:${VERSION} 镜像..."
 if [[ "$DRY_RUN" == true ]]; then
     echo "  [dry-run] docker image inspect cecelia-brain:${VERSION}"
+elif [[ -n "${KERNEL_RELEASE_MERGE_SHA:-}" ]]; then
+    bash "$SCRIPT_DIR/brain-build.sh"
 elif ! docker image inspect "cecelia-brain:${VERSION}" > /dev/null 2>&1; then
     echo "[FAIL] 镜像 cecelia-brain:${VERSION} 不存在，请先运行 bash scripts/brain-build.sh"
     exit 1

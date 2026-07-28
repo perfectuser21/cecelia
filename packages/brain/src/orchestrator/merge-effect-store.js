@@ -1,5 +1,10 @@
-import { MergeAuthorizationError } from './merge-authority.js';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+
+import {
+  classifyMergeReviewRisk,
+  MergeAuthorizationError,
+} from './merge-authority.js';
 
 function deny(code) {
   throw new MergeAuthorizationError(code);
@@ -41,6 +46,20 @@ function sameOwnership(row, proof) {
     && Number(row.pr_number) === proof.pr_number
     && row.pr_url === proof.pr_url
     && row.head_ref === proof.head_ref;
+}
+
+function reviewPolicyFromRow(row) {
+  if (!row) return null;
+  return {
+    assessment_id: row.assessment_id,
+    policy_version: row.policy_version,
+    changed_paths: row.changed_paths,
+    risk_tier: row.risk_tier,
+    risk_reasons: row.risk_reasons,
+    first_kernel_release: row.first_kernel_release,
+    payload_review_required: row.payload_review_required,
+    review_required: row.review_required,
+  };
 }
 
 async function selectIntent(client, runId) {
@@ -170,6 +189,106 @@ export function createPostgresMergeEffectStore(pool) {
 
     async findIntent(client, { runId }) {
       return selectIntent(client, runId);
+    },
+
+    async assessReviewPolicy(client, {
+      runId,
+      taskId,
+      currentPr,
+      policyVersion,
+      payload,
+    }) {
+      const changedPaths = currentPr.changed_paths;
+      const classification = classifyMergeReviewRisk(changedPaths);
+      const payloadRequired = parsePayload(payload).review_required === true;
+      await client.query('BEGIN');
+      try {
+        await client.query(
+          `SELECT pg_advisory_xact_lock(
+             hashtextextended('kernel-merge-review:' || $1::text, 0)
+           )`,
+          [currentPr.repository],
+        );
+        const historyResult = await client.query(
+          `SELECT NOT EXISTS (
+             SELECT 1
+               FROM kernel_merge_effect_receipts receipt
+               JOIN kernel_merge_effect_intents intent
+                 ON intent.id = receipt.intent_id
+               JOIN kernel_merge_authorizations merge_auth
+                 ON merge_auth.id = intent.authorization_id
+              WHERE merge_auth.repository = $1
+                AND receipt.receipt_status = 'confirmed'
+                AND receipt.merged = TRUE
+           ) AS first_kernel_release`,
+          [currentPr.repository],
+        );
+        const firstRelease = historyResult.rows[0]?.first_kernel_release === true;
+        const reviewRequired = payloadRequired
+          || firstRelease
+          || classification.risk_tier !== 'low';
+        const riskReasons = [
+          ...classification.risk_reasons,
+          ...(firstRelease ? ['first_kernel_release'] : []),
+        ];
+        const expected = {
+          run_id: runId,
+          task_id: taskId,
+          repository: currentPr.repository,
+          pr_number: currentPr.number,
+          head_sha: currentPr.head_sha,
+          policy_version: policyVersion,
+          changed_paths: changedPaths,
+          risk_tier: classification.risk_tier,
+          risk_reasons: riskReasons,
+          first_kernel_release: firstRelease,
+          payload_review_required: payloadRequired,
+          review_required: reviewRequired,
+        };
+
+        await client.query(
+          `INSERT INTO kernel_merge_review_assessments
+             (run_id, task_id, repository, pr_number, head_sha, policy_version,
+              changed_paths, risk_tier, risk_reasons, first_kernel_release,
+              payload_review_required, review_required)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12)
+           ON CONFLICT (run_id, head_sha, policy_version) DO NOTHING`,
+          [
+            expected.run_id,
+            expected.task_id,
+            expected.repository,
+            expected.pr_number,
+            expected.head_sha,
+            expected.policy_version,
+            JSON.stringify(expected.changed_paths),
+            expected.risk_tier,
+            JSON.stringify(expected.risk_reasons),
+            expected.first_kernel_release,
+            expected.payload_review_required,
+            expected.review_required,
+          ],
+        );
+        const assessmentResult = await client.query(
+          `SELECT id AS assessment_id, run_id, task_id, repository, pr_number,
+                  head_sha, policy_version, changed_paths, risk_tier, risk_reasons,
+                  first_kernel_release, payload_review_required, review_required
+             FROM kernel_merge_review_assessments
+            WHERE run_id = $1
+              AND head_sha = $2
+              AND policy_version = $3`,
+          [runId, currentPr.head_sha, policyVersion],
+        );
+        const persisted = assessmentResult.rows[0];
+        const { assessment_id: _assessmentId, ...persistedAuthority } = persisted ?? {};
+        if (!persisted || !isDeepStrictEqual(persistedAuthority, expected)) {
+          deny('review_assessment_conflict');
+        }
+        await client.query('COMMIT');
+        return reviewPolicyFromRow(persisted);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      }
     },
 
     async createAuthorizationIntent(client, { proof, currentPr }) {
@@ -388,5 +507,6 @@ export const __test__ = {
   parsePayload,
   proofDigest,
   sameJson,
+  reviewPolicyFromRow,
   sameOwnership,
 };

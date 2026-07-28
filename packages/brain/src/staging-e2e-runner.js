@@ -17,6 +17,7 @@
  */
 
 import { execSync, spawnSync } from 'child_process';
+import { createHash } from 'node:crypto';
 import fs, { existsSync } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -27,7 +28,7 @@ import { resolveLine, decidePromote, runInternalPromote, defaultPromoteExec, get
 import { sendFeishu, sendBark } from './notifier.js';
 
 export const STAGING_PORT = 5222;
-// A 方案：内部线交付 dashboard，staging 用 deploy-local.sh 起的 dashboard 预览端口。
+// Legacy dashboard staging port; only an injected ReleaseRun-owned deployer may mutate it.
 export const DASHBOARD_STAGING_PORT = 5223;
 // ZenithJoy 蓝绿护栏：:5200=生产，:5201=staging（ZenithJoy CI push:main→:5201 自动部署）。
 export const ZJ_STAGING_PORT = 5201;
@@ -56,8 +57,8 @@ export async function deployStaging(opts = {}) {
   // 容器内 cwd=/app，部署脚本在 bind-mount 的 repo 根 scripts/；用绝对路径。
   // REPO_ROOT env（容器=bind-mount repo 根）优先；getRepoRoot() 仅本地直跑兜底（容器内返回 /）。
   const repoRoot = opts.cwd || process.env.REPO_ROOT || getRepoRoot();
-  // A 方案：内部线交付 dashboard → 用 deploy-local.sh 构建 dashboard 到 staging（:5223）
-  // + 写 .staging-pending（promote 步靠它）；非内部线沿用 staging-deploy.sh（brain :5222）。
+  // Internal staging mutation is ReleaseRun-owned. This legacy evaluator may
+  // observe it or use an explicitly injected test deployer, but cannot deploy.
   const internal = opts.line === 'internal';
   const customer = opts.line === 'customer';
   const stagingPort = internal ? DASHBOARD_STAGING_PORT : customer ? ZJ_STAGING_PORT : STAGING_PORT;
@@ -122,8 +123,12 @@ export async function deployStaging(opts = {}) {
   if (opts.deployScript) {
     script = `bash ${opts.deployScript}`;
   } else if (internal) {
-    // --changed 显式指定 dashboard：harness 合 main 后在 main 上跑，git diff 为空，必须强制走 dashboard build。
-    script = `bash ${path.join(repoRoot, 'scripts/deploy-local.sh')} --changed=apps/dashboard/`;
+    return {
+      status: 'failed',
+      reason: 'release_run_authority_required',
+      output: 'internal staging mutation is owned by Kernel ReleaseRun',
+      stagingPort,
+    };
   } else {
     script = `bash ${path.join(repoRoot, 'scripts/staging-deploy.sh')}`;
   }
@@ -162,6 +167,9 @@ export function runStagingCommand(command, opts = {}) {
   if (!command || typeof command.cmd !== 'string' || !command.cmd.trim()) {
     return { exitCode: 1, output: '(empty cmd)' };
   }
+  if (opts.releaseEnvironment && command.type !== 'bash') {
+    return { exitCode: 1, output: '(unsupported release command type)' };
+  }
   // 此脚本在生产 brain 容器内跑，容器内 localhost 不通 staging 容器；重写目标用
   // host.docker.internal（容器内访问 host 的 staging :5222）。env STAGING_HOST 可覆盖（host 直跑传 localhost）。
   const host = opts.host || process.env.STAGING_HOST || 'host.docker.internal';
@@ -186,12 +194,23 @@ export function runStagingCommand(command, opts = {}) {
       .replace(/127\.0\.0\.1:5221/g, `${host}:${port}`);
   }
   try {
+    const releaseEnv = opts.releaseEnvironment
+      ? {
+          LANG: 'C',
+          LC_ALL: 'C',
+          NO_COLOR: '1',
+          PATH: process.env.PATH,
+          RELEASE_E2E_ENVIRONMENT: opts.releaseEnvironment,
+          RELEASE_E2E_TARGET_URL: `http://${host}:${port}`,
+        }
+      : undefined;
     const raw = exec(cmd, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: opts.cwd,
       timeout: SCENARIO_TIMEOUT_MS,
       maxBuffer: 20 * 1024 * 1024,
+      ...(releaseEnv == null ? {} : { env: releaseEnv }),
     });
     const str = typeof raw === 'string' ? raw : (raw ? raw.toString('utf8') : '');
     return { exitCode: 0, output: cap(str) };
@@ -208,16 +227,34 @@ export function runStagingCommand(command, opts = {}) {
 export function runScenarios(acceptance, opts = {}) {
   const { scenarios } = normalizeAcceptance(acceptance);
   const failedScenarios = [];
+  const scenarioResults = [];
   let scenariosPassed = 0;
   for (const sc of scenarios) {
+    const now = opts.now || (() => new Date());
+    const startedAt = new Date(now()).toISOString();
     let failure = null;
+    const commandOutputs = [];
     for (const command of sc.commands) {
       const r = runStagingCommand(command, opts);
+      commandOutputs.push(r.output);
       if (r.exitCode !== 0) {
-        failure = { name: sc.name, exitCode: r.exitCode, output: r.output };
+        const output = opts.releaseEnvironment
+          ? '(release output redacted; inspect digest)'
+          : r.output;
+        failure = { name: sc.name, exitCode: r.exitCode, output };
         break;
       }
     }
+    const finishedAt = new Date(now()).toISOString();
+    scenarioResults.push({
+      name: sc.name,
+      status: failure ? 'fail' : 'pass',
+      started_at: startedAt,
+      finished_at: finishedAt,
+      log_digest: `sha256:${createHash('sha256')
+        .update(commandOutputs.join('\n--- command boundary ---\n'))
+        .digest('hex')}`,
+    });
     if (failure) failedScenarios.push(failure);
     else scenariosPassed++;
   }
@@ -226,6 +263,7 @@ export function runScenarios(acceptance, opts = {}) {
     scenariosTotal: scenarios.length,
     scenariosPassed,
     failedScenarios,
+    scenarioResults,
   };
 }
 
@@ -478,7 +516,9 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
     return PROMOTE_STATUS.PENDING_PROMOTE;
   } catch (err) {
     console.warn(`[staging-e2e] handlePromote 失败（best-effort，verdict 已落库）: ${err.message}`);
-    return decision.promoteStatus;
+    return decision.action === 'auto'
+      ? PROMOTE_STATUS.PROMOTE_FAILED
+      : decision.promoteStatus;
   }
 }
 
@@ -714,7 +754,7 @@ export async function runStagingE2E(task, opts = {}) {
     const acceptance = await loadAcceptance(dbPool, initiativeId);
     if (!acceptance) return await finalize('SKIP', 'no_contract');
 
-    // 2. 部署 staging：内部线(cecelia)走 deploy-local.sh 构建 dashboard 到 :5223；
+    // 2. Observe staging; internal mutation is owned by Kernel ReleaseRun.
     //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
     const line = resolveLine(baseRepo);
 

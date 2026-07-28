@@ -25,6 +25,14 @@ const HUMAN_REVIEW_EQUIVALENCE_EFFECTS = Object.freeze({
     effect_code: 'renewed_human_approval_accepted',
   }),
 });
+const RISK_TIERS = new Set(['low', 'high', 'unknown']);
+const HIGH_RISK_PATH_PATTERNS = [
+  /^\.github\/workflows\//,
+  /^packages\/brain\/migrations\//,
+  /^packages\/brain\/src\/(?:orchestrator|routes\/harness-kernel-approvals)(?:\/|\.js$)/,
+  /^packages\/workflows\/skills\//,
+  /^scripts\/(?:brain-|deploy|promote-|release-run-|rollback)/,
+];
 
 export class MergeAuthorizationError extends Error {
   constructor(code) {
@@ -41,6 +49,65 @@ function deny(code) {
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function sameJson(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function classifyMergeReviewRisk(changedPaths) {
+  if (!Array.isArray(changedPaths) || changedPaths.length === 0) {
+    return Object.freeze({
+      risk_tier: 'unknown',
+      risk_reasons: Object.freeze(['changed_paths_missing']),
+    });
+  }
+  const highRiskPaths = changedPaths.filter((path) => (
+    typeof path === 'string'
+    && HIGH_RISK_PATH_PATTERNS.some((pattern) => pattern.test(path))
+  ));
+  if (highRiskPaths.length > 0) {
+    return Object.freeze({
+      risk_tier: 'high',
+      risk_reasons: Object.freeze(
+        highRiskPaths.map((path) => `high_risk_path:${path}`),
+      ),
+    });
+  }
+  return Object.freeze({
+    risk_tier: 'low',
+    risk_reasons: Object.freeze(['low_risk_paths']),
+  });
+}
+
+function assertReviewPolicy(input, task, pr, policyVersion) {
+  const policy = asObject(input);
+  const changedPaths = Array.isArray(pr.changed_paths) ? pr.changed_paths : [];
+  const classified = classifyMergeReviewRisk(changedPaths);
+  const payloadRequired = asObject(task.payload).review_required === true;
+  const firstRelease = policy.first_kernel_release;
+  const expectedRequired = payloadRequired
+    || firstRelease === true
+    || classified.risk_tier !== 'low';
+  const expectedReasons = [
+    ...classified.risk_reasons,
+    ...(firstRelease === true ? ['first_kernel_release'] : []),
+  ];
+
+  if (
+    !UUID_PATTERN.test(policy.assessment_id ?? '')
+    || policy.policy_version !== policyVersion
+    || !RISK_TIERS.has(policy.risk_tier)
+    || policy.risk_tier !== classified.risk_tier
+    || typeof firstRelease !== 'boolean'
+    || policy.payload_review_required !== payloadRequired
+    || policy.review_required !== expectedRequired
+    || !sameJson(policy.changed_paths, changedPaths)
+    || !sameJson(policy.risk_reasons, expectedReasons)
+  ) {
+    deny('review_policy_invalid');
+  }
+  return policy;
 }
 
 function latest(rows, action) {
@@ -323,6 +390,7 @@ export function validateMergeAuthorizationEvidence(input) {
   }
   assertCurrentPr(pr);
   const contract = assertApprovedContract(input?.contract, nowMs);
+  const reviewPolicy = assertReviewPolicy(input?.reviewPolicy, task, pr, policyVersion);
 
   const evaluator = assertVerdict(rows, 'verdict:evaluate', pr.head_sha, {
     missingCode: 'evaluator_missing',
@@ -360,7 +428,8 @@ export function validateMergeAuthorizationEvidence(input) {
   if (!sameRiskDecision(postDiffRisk, revalidatedPostDiffRisk)) {
     deny('post_diff_risk_revalidation_failed');
   }
-  const reviewRequired = asObject(task.payload).review_required === true
+  const reviewRequired = reviewPolicy.review_required === true
+    || asObject(task.payload).review_required === true
     || postDiffRisk.human_review_required === true;
   if (asObject(task.payload).review_required === true && !postDiffRisk.human_review_required) {
     deny('caller_risk_downgraded');
@@ -386,6 +455,9 @@ export function validateMergeAuthorizationEvidence(input) {
     contract_digest: contract.digest,
     contract_approved_at: contract.approved_at,
     policy_version: policyVersion,
+    review_assessment_id: reviewPolicy.assessment_id,
+    risk_tier: reviewPolicy.risk_tier,
+    first_kernel_release: reviewPolicy.first_kernel_release,
     review_required: reviewRequired,
     evaluator_hop: Number(evaluator.hop),
     judge_hop: Number(judge.hop),
