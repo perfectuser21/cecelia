@@ -154,4 +154,42 @@ describe('merge effect executor', () => {
       merged: false,
     }));
   });
+
+  it('reconciles GitHub truth when the merge command reports an error', async () => {
+    const d = deps();
+    d.mergePullRequest.mockRejectedValueOnce(new Error('transport failed with secret text'));
+    const execute = createMergeEffectExecutor(d);
+
+    await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).resolves.toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      detail: 'merge confirmed after command error',
+    });
+    expect(d.store.appendReceipt).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      receipt_status: 'confirmed',
+      evidence: expect.not.objectContaining({
+        error: expect.stringContaining('secret text'),
+      }),
+    }));
+  });
+
+  it('records a bounded failed receipt when command error is confirmed unmerged', async () => {
+    const d = deps();
+    d.mergePullRequest.mockRejectedValueOnce(new Error('GH_TOKEN=must-not-leak'));
+    d.observePullRequest = vi.fn(async () => currentPr());
+    const execute = createMergeEffectExecutor(d);
+
+    await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).resolves.toMatchObject({
+      status: 'BLOCKED',
+      detail: 'merge effect failed and was not confirmed',
+    });
+    expect(d.store.appendReceipt).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      receipt_status: 'failed',
+      evidence: {
+        source: 'post_effect_observation',
+        error_code: 'github_merge_command_failed',
+        pr_url: PR_URL,
+        state: 'OPEN',
+      },
+    }));
+  });
 });

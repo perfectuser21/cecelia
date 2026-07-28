@@ -68,6 +68,23 @@ describe('PostgreSQL merge effect store', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
+  it('still releases the client when advisory unlock itself fails', async () => {
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockRejectedValueOnce(new Error('unlock connection lost')),
+      release: vi.fn(),
+    };
+    const store = createPostgresMergeEffectStore({
+      connect: vi.fn(async () => client),
+    });
+
+    await expect(store.withRunLock(RUN_ID, async () => 'done')).rejects.toThrow(
+      'unlock connection lost',
+    );
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
   it('loads run, task, and append-only decision evidence from the database', async () => {
     const client = {
       query: vi.fn()
