@@ -2,7 +2,9 @@ import { createHash, createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildFleetHeartbeatAck,
   buildFleetResultReceiptAck,
+  parseFleetHeartbeat,
   parseFleetResultDelivery,
 } from './fleet-callback-auth.js';
 
@@ -11,6 +13,7 @@ const attemptId = '22222222-2222-4222-8222-222222222222';
 const runId = '11111111-1111-4111-8111-111111111111';
 const deliveryId = '55555555-5555-4555-8555-555555555555';
 const resultNonce = '66666666-6666-4666-8666-666666666666';
+const heartbeatNonce = '88888888-8888-4888-8888-888888888888';
 
 function fixture() {
   const resultBytes = Buffer.from(JSON.stringify({
@@ -156,5 +159,78 @@ describe('Fleet callback transport authentication', () => {
     expect(ack.receipt_hmac).toBe(
       createHmac('sha256', secret).update(expectedPayload).digest('hex'),
     );
+  });
+
+  it('parses and signs the exact domain-separated Fleet heartbeat contract', () => {
+    const body = {
+      schema_version: 'fleet-attempt-heartbeat/v1',
+      heartbeat_nonce: heartbeatNonce,
+      observed_at: '2026-07-28T01:00:00.000Z',
+      lease_seconds: 180,
+      provider_session_id: 'thread-live',
+    };
+    const signed = {
+      worker: 'xian-mac-m4',
+      run: runId,
+      job: 'job-7',
+      owner: 'brain-1:123',
+      generation: '2',
+    };
+    const payload = `${[
+      'cecelia-fleet-heartbeat/v1',
+      attemptId,
+      signed.worker,
+      signed.run,
+      signed.job,
+      signed.owner,
+      signed.generation,
+      body.heartbeat_nonce,
+      body.observed_at,
+      String(body.lease_seconds),
+      body.provider_session_id,
+    ].join('\n')}\n`;
+    const rawHeaders = [
+      'X-Cecelia-Fleet-Protocol', 'fleet-heartbeat/v1',
+      'X-Cecelia-Fleet-Worker-Id', signed.worker,
+      'X-Cecelia-Fleet-Run-Id', signed.run,
+      'X-Cecelia-Fleet-Job-Id', signed.job,
+      'X-Cecelia-Fleet-Lease-Owner', signed.owner,
+      'X-Cecelia-Fleet-Lease-Generation', signed.generation,
+      'X-Cecelia-Fleet-Heartbeat-Nonce', heartbeatNonce,
+      'Authorization', `Cecelia-Fleet-HMAC-SHA256 ${
+        createHmac('sha256', secret).update(payload).digest('hex')
+      }`,
+    ];
+    const parsed = parseFleetHeartbeat({
+      attemptId,
+      rawHeaders,
+      body,
+      secret,
+      nowMs: Date.parse('2026-07-28T01:00:30.000Z'),
+    });
+    expect(parsed).toMatchObject({
+      workerId: signed.worker,
+      runId,
+      jobId: signed.job,
+      leaseOwner: signed.owner,
+      leaseGeneration: 2,
+      heartbeatNonce,
+      providerSessionId: 'thread-live',
+      leaseSeconds: 180,
+    });
+
+    const ack = buildFleetHeartbeatAck({
+      heartbeat: parsed,
+      attempt: {
+        heartbeat_at: '2026-07-28T01:00:31.000Z',
+        lease_expires_at: '2026-07-28T01:03:31.000Z',
+        provider_session_id: 'thread-live',
+      },
+      attemptId,
+      secret,
+    });
+    expect(ack.schema_version).toBe('fleet-attempt-heartbeat-ack/v1');
+    expect(ack.heartbeat_nonce).toBe(heartbeatNonce);
+    expect(ack.receipt_hmac).toMatch(/^[a-f0-9]{64}$/);
   });
 });

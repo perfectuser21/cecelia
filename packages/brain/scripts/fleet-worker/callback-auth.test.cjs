@@ -5,7 +5,9 @@ const crypto = require('node:crypto');
 const test = require('node:test');
 
 const {
+  buildFleetHeartbeat,
   buildFleetResultDelivery,
+  verifyFleetHeartbeatAck,
   verifyFleetResultReceiptAck,
 } = require('./callback-auth.cjs');
 
@@ -20,6 +22,8 @@ const DELIVERY_ID = '55555555-5555-4555-8555-555555555555';
 const RESULT_NONCE = '66666666-6666-4666-8666-666666666666';
 const RECEIPT_ID = '77777777-7777-4777-8777-777777777777';
 const PERSISTED_AT = '2026-07-28T01:00:00.000Z';
+const HEARTBEAT_NONCE = '88888888-8888-4888-8888-888888888888';
+const OBSERVED_AT = '2026-07-28T00:59:59.000Z';
 const RESULT_BYTES = Buffer.from(JSON.stringify({
   contract_version: '1.0',
   attempt_id: ATTEMPT_ID,
@@ -222,4 +226,95 @@ test('never serializes a callback secret into delivery metadata', () => {
   assert.equal(JSON.stringify(metadata).includes(SECRET), false);
   assert.equal(Object.hasOwn(metadata, 'result_b64'), false);
   assert.equal(Object.hasOwn(metadata, 'authorization'), false);
+});
+
+test('builds and verifies an exact domain-separated Fleet heartbeat', () => {
+  const wire = buildFleetHeartbeat({
+    secret: SECRET,
+    attemptId: ATTEMPT_ID,
+    runId: RUN_ID,
+    workerId: WORKER_ID,
+    jobId: JOB_ID,
+    leaseOwner: LEASE_OWNER,
+    leaseGeneration: LEASE_GENERATION,
+    heartbeatNonce: HEARTBEAT_NONCE,
+    observedAt: OBSERVED_AT,
+    leaseSeconds: 180,
+    providerSessionId: 'thread-1',
+  });
+  assert.deepEqual(wire.body, {
+    schema_version: 'fleet-attempt-heartbeat/v1',
+    heartbeat_nonce: HEARTBEAT_NONCE,
+    observed_at: OBSERVED_AT,
+    lease_seconds: 180,
+    provider_session_id: 'thread-1',
+  });
+  assert.equal(
+    wire.headers['X-Cecelia-Fleet-Protocol'],
+    'fleet-heartbeat/v1',
+  );
+  assert.match(
+    wire.headers.Authorization,
+    /^Cecelia-Fleet-HMAC-SHA256 [a-f0-9]{64}$/,
+  );
+
+  const unsignedAck = {
+    schema_version: 'fleet-attempt-heartbeat-ack/v1',
+    attempt_id: ATTEMPT_ID,
+    run_id: RUN_ID,
+    worker_id: WORKER_ID,
+    job_id: JOB_ID,
+    lease_owner: LEASE_OWNER,
+    lease_generation: LEASE_GENERATION,
+    heartbeat_nonce: HEARTBEAT_NONCE,
+    provider_session_id: 'thread-1',
+    heartbeat_at: PERSISTED_AT,
+    lease_expires_at: '2026-07-28T01:03:00.000Z',
+  };
+  const receipt_hmac = crypto.createHmac('sha256', SECRET).update(`${[
+    'cecelia-fleet-heartbeat-ack/v1',
+    unsignedAck.attempt_id,
+    unsignedAck.run_id,
+    unsignedAck.worker_id,
+    unsignedAck.job_id,
+    unsignedAck.lease_owner,
+    String(unsignedAck.lease_generation),
+    unsignedAck.heartbeat_nonce,
+    unsignedAck.provider_session_id,
+    unsignedAck.heartbeat_at,
+    unsignedAck.lease_expires_at,
+  ].join('\n')}\n`, 'utf8').digest('hex');
+  const ack = { ...unsignedAck, receipt_hmac };
+
+  assert.deepEqual(verifyFleetHeartbeatAck({
+    ack,
+    secret: SECRET,
+    expected: {
+      attemptId: ATTEMPT_ID,
+      runId: RUN_ID,
+      workerId: WORKER_ID,
+      jobId: JOB_ID,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: LEASE_GENERATION,
+      heartbeatNonce: HEARTBEAT_NONCE,
+      providerSessionId: 'thread-1',
+    },
+  }), ack);
+  assert.throws(
+    () => verifyFleetHeartbeatAck({
+      ack: { ...ack, heartbeat_nonce: DELIVERY_ID },
+      secret: SECRET,
+      expected: {
+        attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        jobId: JOB_ID,
+        leaseOwner: LEASE_OWNER,
+        leaseGeneration: LEASE_GENERATION,
+        heartbeatNonce: HEARTBEAT_NONCE,
+        providerSessionId: 'thread-1',
+      },
+    }),
+    /fleet_callback_auth:/,
+  );
 });
