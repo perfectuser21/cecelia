@@ -1,5 +1,9 @@
 import {
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
+  openSync,
   readFileSync,
   realpathSync,
 } from 'node:fs';
@@ -44,27 +48,45 @@ export function createReadOnlyBundleReader({ directory } = {}) {
 
   return function readBundle(hash) {
     if (!HASH_PATTERN.test(hash ?? '')) fail('receipt_reference_invalid');
-    const path = join(directory, `${hash}.json`);
-    let stat;
+    const path = join(canonicalDirectory, `${hash}.json`);
+    let descriptor;
+    let descriptorStat;
+    let pathStat;
     let canonicalPath;
     try {
-      stat = lstatSync(path);
+      descriptor = openSync(
+        path,
+        constants.O_RDONLY | constants.O_NOFOLLOW,
+      );
+      descriptorStat = fstatSync(descriptor);
       canonicalPath = realpathSync(path);
-    } catch {
-      fail('receipt_bundle_unavailable');
+      pathStat = lstatSync(path);
+    } catch (error) {
+      if (descriptor != null) closeSync(descriptor);
+      fail(
+        error?.code === 'ENOENT'
+          ? 'receipt_bundle_unavailable'
+          : 'receipt_bundle_path_unsafe',
+      );
     }
     if (
-      !stat.isFile()
-      || stat.isSymbolicLink()
+      !descriptorStat.isFile()
+      || pathStat.isSymbolicLink()
+      || descriptorStat.nlink !== 1
+      || descriptorStat.dev !== pathStat.dev
+      || descriptorStat.ino !== pathStat.ino
       || canonicalPath !== join(canonicalDirectory, `${hash}.json`)
       || !canonicalPath.startsWith(`${canonicalDirectory}/`)
     ) {
+      closeSync(descriptor);
       fail('receipt_bundle_path_unsafe');
     }
     try {
-      return JSON.parse(readFileSync(path, 'utf8'));
+      return JSON.parse(readFileSync(descriptor, 'utf8'));
     } catch {
       fail('receipt_bundle_json_invalid');
+    } finally {
+      closeSync(descriptor);
     }
   };
 }

@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 
 import {
-  lstatSync,
   readFileSync,
-  realpathSync,
 } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { load } from 'js-yaml';
@@ -12,17 +10,26 @@ import {
 } from '../../packages/brain/src/lib/kernel-behavior-equivalence.js';
 import {
   compileDrillPlan,
-  executeDrillCell,
 } from '../../packages/brain/src/lib/kernel-equivalence-drills.js';
 import {
   createReadOnlyBundleReader,
 } from '../../packages/brain/src/lib/kernel-equivalence-file-store.js';
+import {
+  compileReportDrillPlan,
+} from '../../packages/brain/src/lib/kernel-equivalence-report-clock.js';
 
 const repositoryRoot = resolve(
   new URL('../..', import.meta.url).pathname,
 );
 const contractPath = resolve(repositoryRoot, 'regression-contract.yaml');
 const FORBIDDEN_PATH = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
+const EXECUTION_WIRING_BLOCKERS = Object.freeze([
+  'trusted_nonce_consumer_unavailable',
+  'trusted_adapter_registry_unavailable',
+  'trusted_collector_unavailable',
+  'trusted_bundle_chain_store_unavailable',
+  'trusted_cleanup_verifier_unavailable',
+]);
 
 class UsageError extends Error {}
 
@@ -117,25 +124,6 @@ function safeAbsolutePath(value, label) {
   return value;
 }
 
-function readGrant(path) {
-  let stat;
-  try {
-    stat = lstatSync(path);
-  } catch {
-    throw new Error('grant_file_unavailable');
-  }
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error('grant_file_unsafe');
-  }
-  const canonicalPath = realpathSync(path);
-  if (canonicalPath !== path) throw new Error('grant_file_unsafe');
-  try {
-    return JSON.parse(readFileSync(path, 'utf8'));
-  } catch {
-    throw new Error('grant_json_invalid');
-  }
-}
-
 function loadContract() {
   return load(readFileSync(contractPath, 'utf8'));
 }
@@ -199,8 +187,7 @@ function configuredBundleReferenceCount(contract) {
   );
 }
 
-function checkReport(contract, plan, { bundleDir = null } = {}) {
-  const reportAsOf = Date.parse(contract.behavior_equivalence?.report_as_of);
+function checkReport(contract, plan, { bundleDir = null, now } = {}) {
   const configuredBundleRefs = configuredBundleReferenceCount(contract);
   if (configuredBundleRefs > 0 && bundleDir == null) {
     throw new Error('trusted_bundle_store_required');
@@ -209,18 +196,26 @@ function checkReport(contract, plan, { bundleDir = null } = {}) {
     ? null
     : createReadOnlyBundleReader({ directory: bundleDir });
   const validation = validateBehaviorEquivalence(contract, {
-    now: Number.isFinite(reportAsOf) ? reportAsOf : Date.now(),
+    now,
     readBundle,
   });
-  const trustedBundleFailures = validation.findings.filter((finding) => (
-    finding.code.startsWith('trusted_receipt_')
-  )).length;
   const blockerCount = plan.cells.filter((cell) => cell.blocked_by != null).length;
+  const verifiedCellCount = validation.verified_proof_cell_count ?? 0;
+  const proofMatrixReady =
+    plan.cells.length === 99
+    && verifiedCellCount === plan.cells.length;
+  const executionWiringReady = false;
   return {
     schema_version: 'kernel-equivalence-drill-cli/v1',
     mode: 'check',
     contract_valid: validation.valid,
-    execution_ready: validation.valid && blockerCount === 0,
+    execution_ready:
+      validation.valid
+      && blockerCount === 0
+      && proofMatrixReady
+      && executionWiringReady,
+    execution_wiring_ready: executionWiringReady,
+    execution_wiring_blockers: EXECUTION_WIRING_BLOCKERS,
     behavior_count: validation.behaviors.length,
     behavior_gap_count: validation.behaviors.filter(
       (behavior) => behavior.effective_status === 'gap',
@@ -228,9 +223,9 @@ function checkReport(contract, plan, { bundleDir = null } = {}) {
     cell_count: plan.cells.length,
     cell_blocker_count: blockerCount,
     configured_bundle_ref_count: configuredBundleRefs,
-    trusted_bundle_count: trustedBundleFailures === 0
-      ? configuredBundleRefs
-      : 0,
+    trusted_bundle_count: verifiedCellCount,
+    verified_cell_count: verifiedCellCount,
+    proof_matrix_ready: proofMatrixReady,
     trust_key_count:
       contract.behavior_equivalence?.drill_trust_registry?.keys?.length ?? 0,
     findings: validation.findings,
@@ -265,45 +260,38 @@ function output(report, format) {
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const contract = loadContract();
-  const plan = compileDrillPlan(contract);
 
-  if (options.mode === 'plan') {
-    output(planReport(plan), options.format);
-    return;
-  }
   if (options.mode === 'check') {
+    const { now, plan } = compileReportDrillPlan(contract);
     const report = checkReport(contract, plan, {
       bundleDir: options.bundleDir,
+      now,
     });
     output(report, options.format);
     if (!report.contract_valid) process.exitCode = 1;
     return;
   }
 
+  const plan = compileDrillPlan(contract, { now: Date.now() });
+
+  if (options.mode === 'plan') {
+    output(planReport(plan), options.format);
+    return;
+  }
+
   const cell = plan.cells.find((candidate) => candidate.cell_id === options.cellId);
   if (!cell) usage('cell is not in the canonical 99-cell plan');
-  const grant = cell.effect_signer_status === 'available'
-    ? readGrant(options.grantPath)
-    : null;
-  const result = await executeDrillCell({
-    cell,
-    grant,
-    trustRegistry: contract.behavior_equivalence.drill_trust_registry,
-    nonceConsumer: null,
-    adapters: new Map(),
-    collector: null,
-    predecessorResolver: null,
-    now: Date.now(),
-  });
   output({
     schema_version: 'kernel-equivalence-drill-cli/v1',
     mode: 'execute',
     cell_id: cell.cell_id,
-    status: result.status,
-    code: result.code,
-    audit: result.audit,
+    status: 'blocked',
+    code: 'trusted_execution_wiring_unavailable',
+    execution_ready: false,
+    missing_wiring: EXECUTION_WIRING_BLOCKERS,
+    audit: null,
   }, 'json');
-  if (result.status !== 'collected') process.exitCode = 1;
+  process.exitCode = 1;
 }
 
 try {

@@ -291,7 +291,12 @@ function validateProofIdentity(behavior, behaviorFindings, now) {
   }
 }
 
-function validateProofMatrix(behavior, behaviorFindings, receiptResolver) {
+function validateProofMatrix(
+  behavior,
+  behaviorFindings,
+  receiptResolver,
+  verificationMetrics,
+) {
   const id = behavior.behavior_id;
   const matrix = asObject(behavior.proof_matrix);
   for (const provider of PROOF_PROVIDERS) {
@@ -422,6 +427,7 @@ function validateProofMatrix(behavior, behaviorFindings, receiptResolver) {
         ) {
           throw new Error('trusted receipt outcome mismatch');
         }
+        verificationMetrics.verifiedProofCellCount += 1;
       } catch (error) {
         addFinding(
           behaviorFindings,
@@ -520,6 +526,9 @@ export function validateBehaviorEquivalence(
   } = {},
 ) {
   const findings = [];
+  const verificationMetrics = {
+    verifiedProofCellCount: 0,
+  };
   const section = contract?.behavior_equivalence;
   if (!section || typeof section !== 'object') {
     addFinding(
@@ -588,7 +597,12 @@ export function validateBehaviorEquivalence(
       validateGap(behavior, behaviorFindings);
     } else {
       validateProofIdentity(behavior, behaviorFindings, now);
-      validateProofMatrix(behavior, behaviorFindings, receiptResolver);
+      validateProofMatrix(
+        behavior,
+        behaviorFindings,
+        receiptResolver,
+        verificationMetrics,
+      );
       if (behavior.status === 'intentional_replacement') {
         validateReplacement(behavior, behaviorFindings);
       }
@@ -626,6 +640,7 @@ export function validateBehaviorEquivalence(
     contract_version: section.contract_version ?? null,
     journey: section.journey ?? null,
     dimensions: asArray(section.dimensions),
+    verified_proof_cell_count: verificationMetrics.verifiedProofCellCount,
     findings,
     behaviors: normalizedBehaviors,
   };

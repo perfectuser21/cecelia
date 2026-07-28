@@ -303,6 +303,24 @@ describe('validateBehaviorEquivalence', () => {
 
     expect(result.valid).toBe(true);
     expect(result.behaviors[0].effective_status).toBe('proven');
+    expect(result.verified_proof_cell_count).toBe(9);
+  });
+
+  it('reports zero verified proof cells when configured refs are outside a bad chain', () => {
+    const trusted = trustedContract();
+    trusted.contract.behavior_equivalence.drill_bundle_chain.head_hash =
+      'f'.repeat(64);
+
+    const result = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      readBundle: trusted.readBundle,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.verified_proof_cell_count).toBe(0);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'trusted_receipt_bundle_invalid' }),
+    ]));
   });
 
   it('requires the canonical exact eleven unique behavior manifest', () => {

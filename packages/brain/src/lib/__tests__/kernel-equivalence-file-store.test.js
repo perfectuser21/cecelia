@@ -1,4 +1,5 @@
 import {
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -49,6 +50,24 @@ describe('createReadOnlyBundleReader', () => {
         join(actual, `${HASH}.json`),
         join(safe, `${HASH}.json`),
       );
+      const reader = createReadOnlyBundleReader({ directory: safe });
+      expect(() => reader(HASH)).toThrowError(
+        expect.objectContaining({ code: 'receipt_bundle_path_unsafe' }),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a hard-linked file whose inode is shared outside the store', () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-store-'));
+    try {
+      const outside = join(root, 'outside.json');
+      const safe = join(root, 'safe');
+      mkdirSync(safe);
+      writeFileSync(outside, '{"outside":true}');
+      linkSync(outside, join(safe, `${HASH}.json`));
+
       const reader = createReadOnlyBundleReader({ directory: safe });
       expect(() => reader(HASH)).toThrowError(
         expect.objectContaining({ code: 'receipt_bundle_path_unsafe' }),
