@@ -6,11 +6,25 @@
 
 
 
-**Brain 版本**: 1.267.100
+**Brain 版本**: 1.267.101
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.101 — Fleet Node Phase 4A production convergence
+
+- 三台 canonical Fleet Node 使用同一份 US M4 基线和从
+  `origin/main@9466c380` 构建的 pinned Runner
+  `sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7`；
+  rollout、registry、admission 与 drift 检查共享该唯一 pin。
+- macOS `15.7.4` 是最低补丁线：同一 `15.7` release line 的更高补丁可准入，
+  低于 floor 或跨 release line 的版本仍 fail closed。Baseline reconciler 同时
+  将官方 Tailscale app CLI 暴露到 system LaunchDaemon 的固定 toolchain PATH。
+- 本版本只收敛 Phase 4A NodeProfile、bootstrap、admission、drain 与生产节点基线；
+  不新增 Phase 4B/4C/4D 行为，不复制 Xian 长期 Codex 凭据，也不执行 Phase 5
+  synthetic 或真实业务 canary。
+- Brain 回退目标：`1.267.100`；节点先用 `fleet-nodectl.sh drain` fail closed。
 
 ## Brain 1.267.99 — Harness Commander Phase 2
 

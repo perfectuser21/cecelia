@@ -30,6 +30,12 @@ write_executable() {
   chmod +x "$target"
 }
 
+tailscale_app="$system_root/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+mkdir -p "$(dirname "$tailscale_app")"
+write_executable "$tailscale_app" \
+  '#!/usr/bin/env bash' \
+  'echo "100.88.166.55"'
+
 write_executable "$fake_bin/id" \
   '#!/usr/bin/env bash' \
   'if [[ "$1" == "-u" && $# -eq 1 ]]; then echo "${FLEET_TEST_EFFECTIVE_UID:-0}"; exit 0; fi' \
@@ -282,6 +288,7 @@ run_reconciler() {
   FLEET_BASELINE_HDIUTIL="$fake_bin/hdiutil" \
   FLEET_BASELINE_DITTO="$fake_bin/ditto" \
   FLEET_BASELINE_CODESIGN="$fake_bin/codesign" \
+  FLEET_BASELINE_TAILSCALE="$tailscale_app" \
   FLEET_BASELINE_DOCKER="$docker_command" \
   FLEET_BASELINE_GIT="$(command -v git)" \
   FLEET_BASELINE_CHOWN="$fake_bin/chown" \
@@ -390,6 +397,8 @@ grep -Fq 'installer xian-mac-m1 --apply' "$mutation_log" \
   || fail "stable OrbStack control command was not installed"
 [[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/docker" ]] \
   || fail "stable OrbStack Docker command was not installed"
+[[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/tailscale" ]] \
+  || fail "stable Tailscale command was not installed"
 [[ "$(
   readlink "$system_root/usr/local/libexec/cecelia/toolchain/bin/orbctl"
 )" == "$system_root/Applications/OrbStack.app/Contents/MacOS/bin/orbctl" ]] \
@@ -398,6 +407,10 @@ grep -Fq 'installer xian-mac-m1 --apply' "$mutation_log" \
   readlink "$system_root/usr/local/libexec/cecelia/toolchain/bin/docker"
 )" == "$system_root/Applications/OrbStack.app/Contents/MacOS/xbin/docker" ]] \
   || fail "Docker command does not target the pinned OrbStack app"
+[[ "$(
+  readlink "$system_root/usr/local/libexec/cecelia/toolchain/bin/tailscale"
+)" == "$tailscale_app" ]] \
+  || fail "Tailscale command does not target the official app"
 git -C "$system_root/var/lib/cecelia/repository" rev-parse --verify HEAD >/dev/null \
   || fail "credential-free Git baseline was not imported"
 cmp -s "$worker_token" "$system_root/var/lib/cecelia/fleet-worker/worker-auth" \

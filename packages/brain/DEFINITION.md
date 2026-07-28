@@ -1,6 +1,21 @@
 # Brain 模块定义
 
-**版本**: 1.267.99
+**版本**: 1.267.101
+
+## Fleet Node Phase 4A production convergence
+
+- NodeProfile registry、rollout 与 admission 统一固定从
+  `origin/main@9466c380` 构建的 Runner
+  `sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7`，
+  任一节点报告不同 digest 都进入 draining。
+- macOS policy 将 `15.7.4` 作为最低补丁线；同一 `15.7` release line 的更高
+  patch 可准入，低于 floor、跨 release line 或 malformed version 均 fail closed。
+- baseline reconciler 除 pinned Node/Codex/OrbStack/Git 外，还从已安装的官方
+  Tailscale app 暴露稳定 CLI 到 system LaunchDaemon 的 toolchain PATH。
+- 变更边界只包含 Phase 4A NodeProfile、bootstrap、admission、drain 与三机基线；
+  Phase 4B/4C/4D 执行语义未改，Phase 5 真实业务 canary 未运行。
+- 回退：节点先执行 `fleet-nodectl.sh drain`，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.100`。
 
 ## Provider-neutral Harness Commander Phase 2
 
@@ -112,12 +127,12 @@
   mode 0700 data root，拒绝 traversal 与中间 symlink 逃逸；容器退出按
   container（含 prompt runtime）→ worktree → state 回收。Legacy bridge 的
   production `/harness/attempts*` 返回 `410 fleet_worker_required`。
-- Phase 4A 仍返回 `dispatch_ready=false`；CredentialEnvelope、执行等价/恢复和
-  Phase 5 真实任务验收不属于 Phase 4B；production probes
-  在最终 readiness 出现前不得创建 Attempt 或调用 launcher，并将
-  `node_not_dispatch_ready` 原样写入阻断结果、告警和决策 evidence。
-- self-deploy 发布尚待复审与 merge；`xian-mac-m1` 在 Docker 不可用时必须保持 drained，
-  不得降低准入阈值，也不得用 synthetic canary 代替真实任务验收。
+- 只有完整、匹配、新鲜且未 drain 的 report 才能由 Brain 计算
+  `dispatch_ready=true`；在最终 readiness 出现前不得创建 Attempt 或调用 launcher，
+  并将 `node_not_dispatch_ready` 原样写入阻断结果、告警和决策 evidence。
+- self-deploy 以 US M4 baseline 和 pinned Runner 收敛三台节点；任一节点缺少
+  Docker/OrbStack、低于 OS floor 或出现 digest drift 时必须保持 drained，不得降低
+  准入阈值，也不得用 synthetic canary 代替真实任务验收。
 - 节点回退：
   `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`。
   Brain 回退：`bash scripts/brain-rollback.sh 1.267.95`。

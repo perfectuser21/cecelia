@@ -20,6 +20,7 @@ artifact_log="$test_root/artifacts.log"
 transport_log="$test_root/transport.log"
 node_log="$test_root/node.log"
 worker_token="$test_root/worker-token"
+expected_runner_digest='sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7'
 touch "$artifact_log" "$transport_log" "$node_log"
 printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
 chmod 0600 "$worker_token"
@@ -276,6 +277,8 @@ grep -Eq 'fetch --no-tags .* 0000000000000000000000000000000000000001$' \
   || fail "rollout bundle did not fetch the frozen commit"
 grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
+grep -Fq "$expected_runner_digest" "$artifact_log" \
+  || fail "rollout did not export the verified origin/main Runner digest"
 grep -Fq 'jinnuoshengyuan@100.86.57.69' "$transport_log" \
   || fail "Xian M4 SSH target drifted"
 grep -Fq 'BatchMode=yes' "$transport_log" \

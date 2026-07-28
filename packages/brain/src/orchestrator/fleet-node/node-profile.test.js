@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 const CANONICAL_IDS = ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'];
+const EXPECTED_RUNNER_DIGEST = 'sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7';
 const EXPECTED_CAPACITIES = {
   'us-mac-m4': 7,
   'xian-mac-m4': 8,
@@ -51,6 +53,7 @@ describe('Fleet NodeProfile registry', () => {
 
     expect(digests.size).toBe(1);
     const [digest] = digests;
+    expect(digest).toBe(EXPECTED_RUNNER_DIGEST);
     expect(digest).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(digest).not.toMatch(/latest/i);
     expect(() => {
@@ -68,6 +71,27 @@ describe('Fleet NodeProfile registry', () => {
     expect(() => {
       profiles.push({ machine_id: 'moon-base' });
     }).toThrow();
+  });
+
+  it('keeps NodeProfile, rollout, and node reconciler on the verified origin/main Runner', async () => {
+    const { listNodeProfiles } = await loadContract();
+    const rollout = readFileSync(
+      new URL('../../../scripts/fleet-worker/fleet-rollout.sh', import.meta.url),
+      'utf8',
+    );
+    const reconciler = readFileSync(
+      new URL('../../../scripts/fleet-worker/reconcile-fleet-node-baseline.sh', import.meta.url),
+      'utf8',
+    );
+
+    expect(listNodeProfiles().map(({ runner_image_digest }) => runner_image_digest))
+      .toEqual([
+        EXPECTED_RUNNER_DIGEST,
+        EXPECTED_RUNNER_DIGEST,
+        EXPECTED_RUNNER_DIGEST,
+      ]);
+    expect(rollout).toContain(`RUNNER_DIGEST='${EXPECTED_RUNNER_DIGEST}'`);
+    expect(reconciler).toContain(`RUNNER_DIGEST='${EXPECTED_RUNNER_DIGEST}'`);
   });
 
   it('requires the shared resource floor, disk guard, and system LaunchDaemon', async () => {

@@ -182,6 +182,32 @@ describe('pure Fleet Node base admission', () => {
     expect(report).toEqual(inputBefore);
   });
 
+  it('admits a newer Sequoia patch that remains on the shared 15.7 baseline', async () => {
+    const { contract, profile, report } = await fixture('xian-mac-m4', {
+      os: { version: '15.7.8' },
+    });
+
+    expect(
+      contract.evaluateBaseAdmission(report, { profile, nowMs: NOW_MS }),
+    ).toMatchObject({
+      state: 'base_admitted',
+      base_admitted: true,
+      dispatch_ready: true,
+      reasons: [],
+    });
+  });
+
+  it('drains a Sequoia node below the shared 15.7.4 patch floor', async () => {
+    const { contract, profile, report } = await fixture('xian-mac-m4', {
+      os: { version: '15.6.1' },
+    });
+
+    expectDraining(
+      contract.evaluateBaseAdmission(report, { profile, nowMs: NOW_MS }),
+      'os_version_below_floor',
+    );
+  });
+
   it.each([
     ['a missing report', null, 'health_report_missing'],
     ['a malformed report', 'not-an-object', 'health_report_malformed'],
