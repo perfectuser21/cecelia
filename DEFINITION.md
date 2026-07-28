@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.268.12
+**Brain 版本**: 1.268.13
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.13 — Durable ReleaseRun alert delivery
+
+- BLOCKED escalation and its P0 alert outbox item are persisted atomically.
+  Notification failures append a failed delivery attempt without losing the
+  escalation or marking it delivered.
+- Pending alerts retry on repeated BLOCKED reports and orchestrator startup;
+  successful delivery is an immutable unique ledger event.
+- 回退：`bash scripts/brain-rollback.sh 1.268.12`（保留 alert outbox 审计账本）。
 
 ## Brain 1.268.12 — Leased private release workers
 

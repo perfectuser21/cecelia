@@ -24,6 +24,8 @@ describe('migration 374 Kernel ReleaseRun', () => {
     'kernel_release_rollback_artifact_intents',
     'kernel_release_rollback_artifact_receipts',
     'kernel_release_blocked_escalations',
+    'kernel_release_alert_outbox',
+    'kernel_release_alert_delivery_attempts',
     'kernel_merge_review_assessments',
   ];
   const bootstrapLedgerTables = [
@@ -129,6 +131,11 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations/i);
     expect(sql).toMatch(/severity TEXT NOT NULL CHECK \(severity = 'P0'\)/i);
     expect(sql).toMatch(/dedup_key TEXT NOT NULL UNIQUE/i);
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_alert_outbox/i);
+    expect(sql).toMatch(/escalation_id UUID NOT NULL UNIQUE[\s\S]+?kernel_release_blocked_escalations\(id\)/i);
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_alert_delivery_attempts/i);
+    expect(sql).toMatch(/outcome TEXT NOT NULL CHECK[\s\S]+?'delivered', 'failed'/i);
+    expect(sql).toMatch(/UNIQUE \(outbox_id, attempt_no\)/i);
   });
 
   it('freezes one non-empty contract E2E manifest per exact release authority', () => {
@@ -312,6 +319,8 @@ describe('migration 375 installed-v374 reconciliation', () => {
     expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_e2e_manifests/i);
     expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_rollback_intents/i);
     expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations/i);
+    expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_alert_outbox/i);
+    expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_alert_delivery_attempts/i);
   });
 
   it('stores rollback authority and receipts per exact artifact for normal and bootstrap runs', () => {

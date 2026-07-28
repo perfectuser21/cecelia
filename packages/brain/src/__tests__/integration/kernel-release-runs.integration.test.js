@@ -544,6 +544,47 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
     expect((await client.query(
       'SELECT count(*)::integer AS count FROM kernel_release_blocked_escalations',
     )).rows[0].count).toBe(1);
+    expect((await client.query(
+      'SELECT count(*)::integer AS count FROM kernel_release_alert_outbox',
+    )).rows[0].count).toBe(1);
+    expect((await client.query(
+      `SELECT count(*)::integer AS count
+         FROM kernel_release_alert_delivery_attempts
+        WHERE outcome = 'delivered'`,
+    )).rows[0].count).toBe(1);
+
+    let deliveryAttempt = 0;
+    const retryingEscalate = createReleaseBlockedEscalator({
+      pool: client,
+      raiseAlert: async () => {
+        deliveryAttempt += 1;
+        if (deliveryAttempt === 1) throw new Error('provider unavailable');
+      },
+    });
+    const retryValue = {
+      ...value,
+      detail: 'release_production_e2e_not_passed',
+    };
+    await expect(retryingEscalate(retryValue)).resolves.toMatchObject({
+      delivery: 'pending',
+    });
+    await expect(retryingEscalate(retryValue)).resolves.toMatchObject({
+      deduped: true,
+      delivery: 'delivered',
+    });
+    expect((await client.query(
+      `SELECT outcome
+         FROM kernel_release_alert_delivery_attempts
+        WHERE outbox_id = (
+          SELECT outbox.id
+            FROM kernel_release_alert_outbox outbox
+            JOIN kernel_release_blocked_escalations escalation
+              ON escalation.id = outbox.escalation_id
+           WHERE escalation.detail = $1
+        )
+        ORDER BY attempt_no`,
+      [retryValue.detail],
+    )).rows.map((row) => row.outcome)).toEqual(['failed', 'delivered']);
   });
 
   it('fences exact receipts and transitions to a live observed generation', async () => {

@@ -269,6 +269,35 @@ CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
+CREATE TABLE IF NOT EXISTS kernel_release_alert_outbox (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  escalation_id UUID NOT NULL UNIQUE
+    REFERENCES kernel_release_blocked_escalations(id),
+  severity TEXT NOT NULL CHECK (severity = 'P0'),
+  alert_key TEXT NOT NULL CHECK (alert_key <> ''),
+  alert_message TEXT NOT NULL CHECK (alert_message <> ''),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_alert_delivery_attempts (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  outbox_id UUID NOT NULL REFERENCES kernel_release_alert_outbox(id),
+  attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+  outcome TEXT NOT NULL CHECK (
+    outcome IN ('delivered', 'failed')
+  ),
+  error_code TEXT CHECK (
+    (outcome = 'delivered' AND error_code IS NULL)
+    OR (outcome = 'failed' AND error_code IS NOT NULL AND error_code <> '')
+  ),
+  attempted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (outbox_id, attempt_no)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_alert_delivered
+  ON kernel_release_alert_delivery_attempts (outbox_id)
+  WHERE outcome = 'delivered';
+
 CREATE TABLE IF NOT EXISTS kernel_merge_review_assessments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   run_id UUID NOT NULL REFERENCES initiative_runs(id),
@@ -1545,6 +1574,18 @@ CREATE TRIGGER trg_kernel_release_blocked_escalations_append_only
   BEFORE UPDATE OR DELETE ON kernel_release_blocked_escalations
   FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
 
+DROP TRIGGER IF EXISTS trg_kernel_release_alert_outbox_append_only
+  ON kernel_release_alert_outbox;
+CREATE TRIGGER trg_kernel_release_alert_outbox_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_alert_outbox
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_alert_delivery_attempts_append_only
+  ON kernel_release_alert_delivery_attempts;
+CREATE TRIGGER trg_kernel_release_alert_delivery_attempts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_alert_delivery_attempts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
 DROP TRIGGER IF EXISTS trg_kernel_merge_review_assessments_append_only
   ON kernel_merge_review_assessments;
 CREATE TRIGGER trg_kernel_merge_review_assessments_append_only
@@ -1637,6 +1678,8 @@ BEGIN
     'kernel_release_rollback_artifact_intents',
     'kernel_release_rollback_artifact_receipts',
     'kernel_release_blocked_escalations',
+    'kernel_release_alert_outbox',
+    'kernel_release_alert_delivery_attempts',
     'kernel_merge_review_assessments',
     'kernel_release_bootstrap_runs',
     'kernel_release_bootstrap_e2e_manifests',
@@ -1695,6 +1738,12 @@ CREATE TRIGGER trg_kernel_release_rollback_artifact_receipts_truncate
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
 CREATE TRIGGER trg_kernel_release_blocked_escalations_truncate
   BEFORE TRUNCATE ON kernel_release_blocked_escalations
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_alert_outbox_truncate
+  BEFORE TRUNCATE ON kernel_release_alert_outbox
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_alert_delivery_attempts_truncate
+  BEFORE TRUNCATE ON kernel_release_alert_delivery_attempts
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
 CREATE TRIGGER trg_kernel_merge_review_assessments_truncate
   BEFORE TRUNCATE ON kernel_merge_review_assessments

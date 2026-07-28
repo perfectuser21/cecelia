@@ -137,16 +137,18 @@ export async function buildDefaultHandlers({
     prepareProductionRollback: prepareProductionRollback
       ?? defaultReleaseAdapters.prepareProductionRollback,
   });
+  const releaseBlockedEscalator = createReleaseBlockedEscalator({
+    pool,
+    raiseAlert: alerting.raise,
+  });
+  await releaseBlockedEscalator.flushPending();
 
   return createKernelHandlers({
     pool,
     attemptStore,
     mergeEffect: resolvedMergeEffect,
     releaseEffect: resolvedReleaseEffect,
-    escalateReleaseBlocked: createReleaseBlockedEscalator({
-      pool,
-      raiseAlert: alerting.raise,
-    }),
+    escalateReleaseBlocked: releaseBlockedEscalator,
     promptDir: dockerExecutor.getHostPromptDir(),
     judgeGate: judgeGate ?? judge.runJudgeGate,
     allocatePort: previewManager.allocatePort,

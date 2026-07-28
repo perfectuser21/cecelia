@@ -405,6 +405,10 @@ describe('buildDefaultHandlers merge authority', () => {
       mergeEffect,
       releaseEffect,
     });
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM kernel_release_alert_outbox'),
+      [null, 25],
+    );
 
     await expect(handlers.merge_pr({
       runId: '11111111-1111-4111-8111-111111111111',

@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.268.12
+**版本**: 1.268.13
+
+## Durable ReleaseRun alert delivery
+
+- BLOCKED escalation and P0 outbox rows are one atomic database write.
+- Every delivery failure/success is appended durably; a provider failure leaves
+  the item pending for repeated BLOCKED reports or orchestrator-startup retry.
+- Only one immutable delivered attempt may exist per outbox item.
+- 回退：`bash scripts/brain-rollback.sh 1.268.12`（保留 alert outbox 审计账本）。
 
 ## Leased private release workers
 
