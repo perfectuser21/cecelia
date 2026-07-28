@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.101
+**版本**: 1.267.102
+
+## Fleet rollout protected-token staging hotfix
+
+- US M4 的 Worker bearer token 位于 `_cecelia` 专属的 0700 数据目录；普通
+  rollout 控制器现在通过非交互 sudo 验证 regular-file、non-symlink 与 0400/0600
+  权限，再以 0600 分阶段复制到一次性 payload，不放宽生产 token 目录权限。
+- token 内容不进入参数、日志、Git 或长期 Xian provider credential；其余 Phase 4A
+  rollout/admission 顺序不变，Phase 4B/4C/4D 与 Phase 5 仍不在本 hotfix 范围。
+- 回退：节点先执行 `fleet-nodectl.sh drain`，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.101`。
 
 ## Fleet Node Phase 4A production convergence
 

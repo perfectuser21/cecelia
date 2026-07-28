@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.101
+**Brain 版本**: 1.267.102
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.102 — Fleet rollout protected-token staging
+
+- US M4 rollout 控制器可在不放宽 `_cecelia` 0700 数据目录的前提下，经
+  `sudo -n` 验证并以 0600 一次性分阶段复制 Worker bearer token。
+- token 内容不进入命令参数、日志、Git 或 Xian 长期 provider credential；节点
+  drain/bootstrap/admission 顺序及 Phase 4A 之外的执行语义均未改变。
+- Brain 回退目标：`1.267.101`；节点先用 `fleet-nodectl.sh drain` fail closed。
 
 ## Brain 1.267.101 — Fleet Node Phase 4A production convergence
 

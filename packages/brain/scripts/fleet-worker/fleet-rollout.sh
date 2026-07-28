@@ -41,6 +41,53 @@ local_file_mode() {
   esac
 }
 
+privileged_file_mode() {
+  case "$(uname -s)" in
+    Darwin) "$SUDO" -n /usr/bin/stat -f '%Lp' -- "$1" ;;
+    Linux) "$SUDO" -n /usr/bin/stat -c '%a' -- "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+stage_worker_token() {
+  local destination="$1"
+  local mode uid gid
+
+  if [[ -r "$WORKER_TOKEN_SOURCE" \
+    && -f "$WORKER_TOKEN_SOURCE" \
+    && ! -L "$WORKER_TOKEN_SOURCE" ]]; then
+    mode="$(local_file_mode "$WORKER_TOKEN_SOURCE")" \
+      || die "worker_token_file_permissions"
+    case "$mode" in
+      400|600) ;;
+      *) die "worker_token_file_permissions" ;;
+    esac
+    /bin/cp "$WORKER_TOKEN_SOURCE" "$destination"
+  else
+    "$SUDO" -n /bin/test -f "$WORKER_TOKEN_SOURCE" \
+      && "$SUDO" -n /bin/test ! -L "$WORKER_TOKEN_SOURCE" \
+      || die "worker_token_file_required"
+    mode="$(privileged_file_mode "$WORKER_TOKEN_SOURCE")" \
+      || die "worker_token_file_permissions"
+    case "$mode" in
+      400|600) ;;
+      *) die "worker_token_file_permissions" ;;
+    esac
+    uid="$(/usr/bin/id -u)"
+    gid="$(/usr/bin/id -g)"
+    "$SUDO" -n /usr/bin/install -m 0600 -o "$uid" -g "$gid" \
+      "$WORKER_TOKEN_SOURCE" "$destination" \
+      || die "worker_token_stage_failed"
+  fi
+
+  /bin/chmod 0600 "$destination"
+  [[ -f "$destination" && ! -L "$destination" ]] \
+    || die "worker_token_stage_failed"
+  [[ "$(/usr/bin/tr -d '\r\n' < "$destination" \
+    | /usr/bin/wc -c | /usr/bin/tr -d ' ')" -ge 32 ]] \
+    || die "worker_token_file_invalid"
+}
+
 ssh_target_for() {
   case "$1" in
     xian-mac-m4) echo 'jinnuoshengyuan@100.86.57.69' ;;
@@ -291,14 +338,6 @@ fi
 [[ -n "$GIT" && -x "$GIT" ]] || die "git_unavailable"
 [[ -n "$DOCKER" && -x "$DOCKER" ]] || die "docker_unavailable"
 [[ -x "$SSH" && -x "$TAR" ]] || die "rollout_transport_unavailable"
-[[ -f "$WORKER_TOKEN_SOURCE" && ! -L "$WORKER_TOKEN_SOURCE" ]] \
-  || die "worker_token_file_required"
-case "$(local_file_mode "$WORKER_TOKEN_SOURCE")" in
-  400|600) ;;
-  *) die "worker_token_file_permissions" ;;
-esac
-[[ "$(/usr/bin/tr -d '\r\n' < "$WORKER_TOKEN_SOURCE" | /usr/bin/wc -c | /usr/bin/tr -d ' ')" -ge 32 ]] \
-  || die "worker_token_file_invalid"
 
 rollout_commit="$(
   "$GIT" -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}'
@@ -319,6 +358,7 @@ worker_token="$TEMP_ROOT/worker-token"
 payload_tar="$TEMP_ROOT/payload.tar"
 bundle_repository="$TEMP_ROOT/bundle.git"
 
+stage_worker_token "$worker_token"
 "$GIT" -C "$REPO_ROOT" -c tar.umask=0022 \
   archive --format=tar --output "$source_tar" "$rollout_commit" \
   packages/brain/package.json \
@@ -333,8 +373,6 @@ bundle_repository="$TEMP_ROOT/bundle.git"
 "$GIT" --git-dir="$bundle_repository" bundle create \
   "$repository_bundle" refs/heads/fleet-rollout
 "$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST"
-/bin/cp "$WORKER_TOKEN_SOURCE" "$worker_token"
-/bin/chmod 0600 "$worker_token"
 "$TAR" -cf "$payload_tar" -C "$TEMP_ROOT" \
   source.tar repository.bundle runner.tar worker-token
 rollout_commit_after="$(

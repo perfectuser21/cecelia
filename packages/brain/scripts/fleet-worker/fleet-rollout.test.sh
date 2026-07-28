@@ -252,6 +252,7 @@ CECELIA_MACHINE_ID=us-mac-m4 \
 FLEET_TEST_TOKEN_SOURCE="$protected_token_source" \
 FLEET_TEST_PROTECTED_TOKEN_SOURCE="$protected_token_source" \
 FLEET_TEST_PROTECTED_TOKEN_BACKING="$worker_token" \
+FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
   run_rollout xian-mac-m4 --apply >/dev/null \
   || fail "controller could not stage the protected production Worker token"
 grep -Fq "sudo -n /bin/test -f $protected_token_source" "$transport_log" \
