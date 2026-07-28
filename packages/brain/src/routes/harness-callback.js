@@ -121,7 +121,7 @@ function attemptAuthority(attempt) {
     ? inputs.pull_request
     : {};
   const pullRequest = {
-    type: taskPullRequest.type ?? null,
+    type: 'pull_request',
     url: taskPullRequest.url ?? inputs.pr_url ?? null,
     number: taskPullRequest.number ?? null,
     head_ref: inputs.pr_branch ?? taskPullRequest.head_ref ?? null,

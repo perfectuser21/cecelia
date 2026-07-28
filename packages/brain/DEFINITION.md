@@ -50,6 +50,16 @@
 - 回退：`bash scripts/brain-rollback.sh 1.267.97`。additive 表可保留不用；
   将 Run 保持/恢复为 `commander_mode=kernel-only` 即禁用新读取面。
 
+## Kernel role result PR authority
+
+- generator-fix 与 evaluator Attempt 创建前必须冻结完整、server-owned 的
+  PR URL、head ref、head SHA 与 state；PR type 固定为 `pull_request`，
+  number 从无 query/hash 的 canonical `/pull/N` URL 解析。
+- required callback authority 必须逐字段精确匹配，partial PR evidence
+  fail-closed；callback 自报的 PR number 不作为权威。
+- generator/evaluator 仅接受 `OPEN` PR，reporter 可验证 `OPEN` 或
+  post-merge 的 `MERGED` PR。
+
 ## Fleet execution equivalence and recovery
 
 - Brain-owned node admission now marks a clean, fresh, policy-matched report

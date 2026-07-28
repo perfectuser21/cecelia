@@ -270,7 +270,7 @@ function validateArtifactDigest(value, path) {
   return value;
 }
 
-function validatePullRequest(value, path) {
+function validatePullRequest(value, path, allowedStates = ['OPEN']) {
   exactObject(
     value,
     ['type', 'url', 'number', 'head_ref', 'head_sha', 'state'],
@@ -282,7 +282,9 @@ function validatePullRequest(value, path) {
   integer(value.number, `${path}.number`, { min: 1 });
   branch(value.head_ref, `${path}.head_ref`);
   gitSha(value.head_sha, `${path}.head_sha`);
-  if (value.state !== 'OPEN') invalid(`${path}.state must be OPEN`);
+  if (!allowedStates.includes(value.state)) {
+    invalid(`${path}.state must be ${allowedStates.join(' or ')}`);
+  }
   return value;
 }
 
@@ -647,7 +649,11 @@ function validateReporter(raw, verified, binding) {
     [],
     'verifierEnvelope',
   );
-  validatePullRequest(verified.pull_request, 'verifierEnvelope.pull_request');
+  validatePullRequest(
+    verified.pull_request,
+    'verifierEnvelope.pull_request',
+    ['OPEN', 'MERGED'],
+  );
   validateArtifactDigest(verified.report, 'verifierEnvelope.report');
   validateArtifactDigest(verified.learning, 'verifierEnvelope.learning');
   if (!Array.isArray(verified.screenshots) || verified.screenshots.length > 256) {

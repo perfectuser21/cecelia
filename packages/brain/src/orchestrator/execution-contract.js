@@ -155,14 +155,16 @@ const cascadeAssertionSchema = z.object({
   ran: z.boolean(),
   result: z.enum(['pass', 'fail', 'skip']),
 }).strict();
-const pullRequestSchema = z.object({
+const pullRequestSchema = (states) => z.object({
   type: z.literal('pull_request'),
   url: webUrlSchema,
   number: z.number().int().positive(),
   head_ref: branchSchema,
   head_sha: gitShaSchema,
-  state: z.literal('OPEN'),
+  state: z.enum(states),
 }).strict();
+const openPullRequestSchema = pullRequestSchema(['OPEN']);
+const reporterPullRequestSchema = pullRequestSchema(['OPEN', 'MERGED']);
 
 const plannerRoleResultSchema = z.object({
   kind: z.literal('planner'),
@@ -242,7 +244,7 @@ const generatorRoleResultSchema = z.object({
   raw_sha256: rawSha256Schema,
   claimed: generatorClaimSchema,
   verified: z.object({
-    pull_request: pullRequestSchema,
+    pull_request: openPullRequestSchema,
   }).strict(),
 }).strict();
 
@@ -269,7 +271,7 @@ const evaluatorRoleResultSchema = z.object({
   }).strict(),
   verified: z.object({
     contract_sha: gitShaSchema,
-    pull_request: pullRequestSchema,
+    pull_request: openPullRequestSchema,
     behavior_tests: z.array(behaviorTestSchema).max(256),
   }).strict(),
 }).strict();
@@ -286,7 +288,7 @@ const reporterRoleResultSchema = z.object({
     concerns: boundedTextSchema,
   }).strict(),
   verified: z.object({
-    pull_request: pullRequestSchema,
+    pull_request: reporterPullRequestSchema,
     report: artifactDigestSchema,
     learning: artifactDigestSchema,
     screenshots: z.array(artifactDigestSchema).max(256),
@@ -601,16 +603,56 @@ function assertOuterRoleResultParity(parsed, authority) {
     required,
     workspaceHead = false,
   } = {}) => {
-    const expected = authority?.pullRequest ?? {};
-    const presentEntries = Object.entries(expected).filter(([, value]) => value != null);
-    if (required && presentEntries.length === 0 && !authority?.workspaceExpectedHeadSha) {
+    const supplied = authority?.pullRequest ?? {};
+    const requiredFields = ['url', 'head_ref', 'head_sha', 'state'];
+    const hasCompleteAuthority = requiredFields.every(
+      (key) => typeof supplied[key] === 'string' && supplied[key].length > 0,
+    );
+    if (required && !hasCompleteAuthority) {
       throw new Error(`role_result ${roleResult.kind} PR authority is required`);
     }
+    const presentEntries = [];
+    if (hasCompleteAuthority) {
+      let url;
+      try {
+        url = new URL(supplied.url);
+      } catch {
+        throw new Error(`role_result ${roleResult.kind} PR authority is required`);
+      }
+      const numberMatch = (
+        !url.search
+        && !url.hash
+        && !url.username
+        && !url.password
+        && ['http:', 'https:'].includes(url.protocol)
+      )
+        ? url.pathname.match(/^\/[^/]+\/[^/]+\/pull\/([1-9]\d*)$/)
+        : null;
+      const numberFromUrl = numberMatch ? Number(numberMatch[1]) : null;
+      if (!Number.isSafeInteger(numberFromUrl)) {
+        throw new Error(`role_result ${roleResult.kind} PR authority is required`);
+      }
+      if (
+        supplied.number != null
+        && (!Number.isInteger(supplied.number) || supplied.number !== numberFromUrl)
+      ) {
+        throw new Error(`role_result ${roleResult.kind} PR number authority mismatch`);
+      }
+      presentEntries.push(
+        ['type', 'pull_request'],
+        ['url', supplied.url],
+        ['number', numberFromUrl],
+        ['head_ref', supplied.head_ref],
+        ['head_sha', supplied.head_sha],
+        ['state', supplied.state],
+      );
+    } else if (!required) {
+      for (const [key, value] of Object.entries(supplied)) {
+        if (value != null) presentEntries.push([key, value]);
+      }
+    }
     for (const [key, expectedValue] of presentEntries) {
-      const normalizedExpected = key === 'state'
-        ? String(expectedValue).toUpperCase()
-        : expectedValue;
-      if (verifiedPullRequest[key] !== normalizedExpected) {
+      if (verifiedPullRequest[key] !== expectedValue) {
         throw new Error(`role_result ${roleResult.kind} PR ${key} authority mismatch`);
       }
     }

@@ -86,6 +86,57 @@ function asObject(value) {
   try { return JSON.parse(value); } catch { return {}; }
 }
 
+function strictPullRequestNumber(urlValue) {
+  if (typeof urlValue !== 'string' || urlValue.length === 0) return null;
+  try {
+    const url = new URL(urlValue);
+    if (
+      !['http:', 'https:'].includes(url.protocol)
+      || url.username
+      || url.password
+      || url.search
+      || url.hash
+    ) return null;
+    const match = url.pathname.match(/^\/[^/]+\/[^/]+\/pull\/([1-9]\d*)$/);
+    if (!match) return null;
+    const number = Number(match[1]);
+    return Number.isSafeInteger(number) ? number : null;
+  } catch {
+    return null;
+  }
+}
+
+function freezeRequiredPullRequest(value, errorCode) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(errorCode);
+  }
+  for (const key of ['url', 'head_ref', 'head_sha', 'state']) {
+    if (typeof value[key] !== 'string' || value[key].trim().length === 0) {
+      throw new Error(errorCode);
+    }
+  }
+  const numberFromUrl = strictPullRequestNumber(value.url);
+  if (
+    numberFromUrl == null
+    || (
+      value.number != null
+      && (!Number.isInteger(value.number) || value.number !== numberFromUrl)
+    )
+  ) {
+    throw new Error(errorCode);
+  }
+  const state = value.state.toUpperCase();
+  if (state !== 'OPEN') throw new Error(errorCode);
+  return {
+    type: 'pull_request',
+    url: value.url,
+    number: numberFromUrl,
+    head_ref: value.head_ref,
+    head_sha: value.head_sha,
+    state,
+  };
+}
+
 export function resolveProviderAccountHome(provider, account) {
   if (!account) return null;
   const value = String(account);
@@ -156,18 +207,16 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
       ?? observed.contract?.row?.sha
       ?? null;
   }
-  if (action === 'spawn:generator-fix') {
-    if (!observed.pr) throw new Error('generator_fix_pr_authority_required');
-    common.pull_request = observed.pr;
-    common.pr_branch = observed.pr.head_ref ?? null;
-    common.pr_head_sha = observed.pr.head_sha ?? null;
-  }
-  if (spec.role === 'evaluator' || spec.role === 'judge') {
+  if (action === 'spawn:generator-fix' || spec.role === 'evaluator') {
+    const errorCode = action === 'spawn:generator-fix'
+      ? 'generator_fix_pr_authority_required'
+      : 'evaluator_pr_authority_required';
+    const pullRequest = freezeRequiredPullRequest(observed.pr, errorCode);
+    common.pull_request = pullRequest;
+    common.pr_branch = pullRequest.head_ref;
+    common.pr_head_sha = pullRequest.head_sha;
+  } else if (spec.role === 'judge') {
     common.pull_request = observed.pr ?? null;
-  }
-  if (spec.role === 'evaluator') {
-    common.pr_branch = observed.pr?.head_ref ?? null;
-    common.pr_head_sha = observed.pr?.head_sha ?? null;
   }
   if (spec.role === 'judge') {
     common.evaluator_result = observed.evaluateVerdict ?? observed.callbackResult ?? null;
