@@ -38,13 +38,20 @@ RESULT_FILE="$RUNTIME_DIR/$ATTEMPT_ID.result.json"
 printf '%s' '{}' > "$RESULT_FILE"
 chmod 600 "$RESULT_FILE"
 BUNDLE_FILE="$(mktemp)"
-printf '%s' '{"task_bundle":{}}' > "$BUNDLE_FILE"
+printf '%s' \
+  '{"task_bundle":{"role":"reporter","skill":null,"expected_output":"harness-result/canary-v1"}}' \
+  > "$BUNDLE_FILE"
 BRAIN_RESULT_CHANNEL_VERSION='attempt-result-file/v1'
 BRAIN_RESULT_FILE="$RESULT_FILE"
 BRAIN_RESULT_MAX_BYTES='1048576'
 HARNESS_ATTEMPT_ID="$ATTEMPT_ID"
 HARNESS_TASK_BUNDLE_FILE="$BUNDLE_FILE"
 validate_managed_result_channel
+configure_managed_bundle_runtime
+[[ "$HARNESS_CANARY" == 'true' ]] || {
+  echo 'canary isolation was not derived from the frozen TaskBundle' >&2
+  exit 1
+}
 
 # The production seam must invoke only the fixed, image-owned driver with the
 # fixed attempt-owned normalized provider path. No callback credential exists.
