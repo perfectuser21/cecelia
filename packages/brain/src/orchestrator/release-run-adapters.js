@@ -53,7 +53,7 @@ export function createReleaseRunAdapters({
     }
     if (artifacts.length === 0) {
       artifacts.push({
-        name: 'release-contract',
+        name: 'brain',
         version: packageJson.version,
         digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha])),
       });
@@ -78,7 +78,6 @@ export function createReleaseRunAdapters({
         changed_paths: request.artifact_versions.flatMap((artifact) => ({
           brain: ['packages/brain/'],
           dashboard: ['apps/dashboard/'],
-          'release-contract': ['DEFINITION.md'],
         })[artifact.name] ?? []),
       }),
     });
@@ -124,22 +123,27 @@ export function createReleaseRunAdapters({
       const build = await json(fetchFn, `${dashboardUrl}/build-info.json`);
       if (build.git_sha !== request.merge_sha) return { status: 'fail' };
     }
-    let anchor;
-    let previousVersion;
+    const anchors = [];
+    const previousVersions = [];
     if (brain) {
       const versions = readBrainVersions().trim().split('\n').filter(Boolean);
       if (versions.at(-1) !== brain.version || versions.length < 2) return { status: 'fail' };
-      anchor = `brain:${brain.version}`;
-      previousVersion = `brain:${versions.at(-2)}`;
-    } else {
+      anchors.push(`brain:${brain.version}`);
+      previousVersions.push(`brain:${versions.at(-2)}`);
+    }
+    if (dashboard) {
       const rollback = Object.fromEntries(
         readDashboardRollback().split('\n')
           .filter((line) => line.includes('='))
           .map((line) => line.split('=', 2)),
       );
-      if (!rollback.current || !rollback.history) return { status: 'fail' };
-      anchor = rollback.current;
-      previousVersion = rollback.history.split(',').at(-1);
+      if (
+        !rollback.current
+        || !rollback.history
+        || rollback.commit !== request.merge_sha
+      ) return { status: 'fail' };
+      anchors.push(`dashboard:${rollback.current}`);
+      previousVersions.push(`dashboard:${rollback.history.split(',').at(-1)}`);
     }
     return {
       status: 'pass',
@@ -148,8 +152,8 @@ export function createReleaseRunAdapters({
       merge_sha: health.git_sha,
       deployed_versions: request.artifact_versions,
       rollback_metadata: {
-        anchor,
-        previous_version: previousVersion,
+        anchor: anchors.join('+'),
+        previous_version: previousVersions.join('+'),
       },
     };
   };
