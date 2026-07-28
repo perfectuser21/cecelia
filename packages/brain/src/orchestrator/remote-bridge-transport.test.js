@@ -254,6 +254,43 @@ describe('remote Bridge launch', () => {
     });
   });
 
+  it('launches a frozen Codex-labelled canary without issuing a credential envelope', async () => {
+    const issue = vi.fn(async () => ENVELOPE);
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const transport = createTransport({ fetchFn, credentialBroker: { issue } });
+    const canaryChannel = {
+      ...RESULT_CHANNEL,
+      bindings: { ...RESULT_CHANNEL.bindings, role: 'reporter' },
+    };
+    const canaryBundle = {
+      contract_version: '1.0',
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+      role: 'reporter',
+      skill: null,
+      expected_output: 'harness-result/canary-v1',
+      inputs: {
+        task_id: TASK_ID,
+        execution_surface: 'fleet-worker',
+        workspace_spec: launchInput().bundle.inputs.workspace_spec,
+      },
+      constraints: { timeout_seconds: 600 },
+      result_channel: canaryChannel,
+    };
+
+    await transport.launch(launchInput({
+      bundle: canaryBundle,
+      spec: {
+        stdin: JSON.stringify({ instruction: '', task_bundle: canaryBundle }),
+      },
+    }));
+
+    expect(issue).not.toHaveBeenCalled();
+    const body = JSON.parse(fetchFn.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty('credential_envelope');
+    expect(body.target.provider).toBe('codex');
+  });
+
   it('does not require a per-Attempt callback secret', async () => {
     const input = launchInput();
     delete input.attempt.callbackSecret;

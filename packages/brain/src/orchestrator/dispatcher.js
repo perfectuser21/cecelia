@@ -158,6 +158,44 @@ export function resolveProviderAccountHome(provider, account) {
   throw new Error(`invalid ${provider} account: ${value}`);
 }
 
+const MAX_VERIFICATION_COMMANDS = 16;
+const MAX_VERIFICATION_COMMAND_BYTES = 8192;
+
+function freezeApprovedVerificationCommands(contract) {
+  const row = asObject(contract?.row);
+  const acceptance = asObject(row.e2e_acceptance);
+  const scenarios = acceptance.scenarios;
+  if (contract?.approved !== true || row.status !== 'approved' || !Array.isArray(scenarios)) {
+    throw new Error('evaluator_verification_commands_invalid');
+  }
+  const commands = [];
+  for (const scenario of scenarios) {
+    const entries = asObject(scenario).commands;
+    if (!Array.isArray(entries) || entries.length === 0) {
+      throw new Error('evaluator_verification_commands_invalid');
+    }
+    for (const entry of entries) {
+      const command = asObject(entry);
+      if (
+        !['bash', 'sh'].includes(command.type)
+        || typeof command.cmd !== 'string'
+        || command.cmd.length === 0
+        || command.cmd.length > MAX_VERIFICATION_COMMAND_BYTES
+        || command.cmd.trim() !== command.cmd
+        || command.cmd.includes('\0')
+      ) {
+        throw new Error('evaluator_verification_commands_invalid');
+      }
+      commands.push(command.cmd);
+      if (commands.length > MAX_VERIFICATION_COMMANDS) {
+        throw new Error('evaluator_verification_commands_invalid');
+      }
+    }
+  }
+  if (commands.length === 0) throw new Error('evaluator_verification_commands_invalid');
+  return Object.freeze([...commands]);
+}
+
 function buildInputs(action, spec, ctx, attemptMetadata) {
   const { observed } = ctx;
   const task = observed.task;
@@ -224,6 +262,9 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   }
   if (spec.role === 'judge') {
     common.evaluator_result = observed.evaluateVerdict ?? observed.callbackResult ?? null;
+  }
+  if (spec.role === 'evaluator') {
+    common.verification_commands = freezeApprovedVerificationCommands(observed.contract);
   }
   return common;
 }
@@ -391,7 +432,9 @@ export function createDispatcher(deps) {
     }
 
     const spec = resolveAction(action);
-    const hostWorktreePath = ctx.worktreePath;
+    const payload = asObject(ctx.observed.task.payload);
+    const hostWorktreePath = [ctx.worktreePath, payload.worktree_path]
+      .find((candidate) => typeof candidate === 'string' && path.isAbsolute(candidate));
     const commanderContext = spec.role === 'commander' ? ctx.commander : null;
     if (spec.role === 'commander' && !commanderContext?.bundle) {
       throw new Error('spawn:commander requires coordinator context');
@@ -401,7 +444,6 @@ export function createDispatcher(deps) {
       : randomUUID();
     const callbackSecret = createCallbackSecret();
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
-    const payload = asObject(ctx.observed.task.payload);
     const attemptMetadata = {
       logicalCycleId: commanderContext?.logical_cycle_id
         ?? ctx.retry?.logical_cycle_id
@@ -502,10 +544,17 @@ export function createDispatcher(deps) {
       ?? payload.contract_requirements
       ?? payload.capability_requirements
       ?? null;
-    const capabilityRequirements = deriveCapabilityRequirements({
-      role: spec.role,
-      requirements: rawCapabilityRequirements,
-    });
+    const capabilityRequirements = spec.canary === true
+      ? {
+          provider_auth: false,
+          github: false,
+          postgres: false,
+          model_capabilities: [],
+        }
+      : deriveCapabilityRequirements({
+          role: spec.role,
+          requirements: rawCapabilityRequirements,
+        });
 
     if (
       (rawCapabilityRequirements || spec.role === 'commander')

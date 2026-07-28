@@ -869,6 +869,7 @@ function isFrozenFleetCanary(providerStdin, {
     const bundle = JSON.parse(providerStdin)?.task_bundle;
     return bundle?.expected_output === 'harness-result/canary-v1'
       && bundle?.skill === null
+      && role === 'reporter'
       && bundle?.attempt_id === attemptId
       && bundle?.run_id === runId
       && bundle?.role === role
@@ -983,8 +984,9 @@ function createDockerAdapter({
         taskId: input.taskId,
         role: input.role,
       });
+      const usesCredential = isCodex && !isCanary;
       if (
-        isCodex
+        usesCredential
         && (
           !UUID_PATTERN.test(input.credential?.credentialRef ?? '')
           || typeof input.credential?.authJson !== 'string'
@@ -1025,7 +1027,7 @@ function createDockerAdapter({
         workspaceAdminMount,
         '--mount',
         runtimeMount,
-        ...(isCodex
+        ...(usesCredential
           ? [
               '--tmpfs',
               '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700',
@@ -1051,10 +1053,10 @@ function createDockerAdapter({
           BRAIN_RESULT_FILE: resultChannel.path,
           BRAIN_RESULT_MAX_BYTES: resultChannel.max_bytes,
           BRAIN_RESULT_CHANNEL_VERSION: resultChannel.version,
-          CECELIA_CREDENTIAL_FIFO: isCodex
+          CECELIA_CREDENTIAL_FIFO: usesCredential
             ? containerCredentialFifo
             : undefined,
-          CECELIA_CREDENTIAL_REF: isCodex
+          CECELIA_CREDENTIAL_REF: usesCredential
             ? input.credential.credentialRef
             : undefined,
           WORKTREE_PATH: '/workspace',
@@ -1068,11 +1070,11 @@ function createDockerAdapter({
         if (!String(created?.stdout ?? '').trim()) {
           throw new Error('attempt_container_id_missing');
         }
-        if (isCodex) {
+        if (usesCredential) {
           await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
         }
         await runCommand('docker', ['start', containerName], undefined);
-        if (isCodex) {
+        if (usesCredential) {
           try {
             await writeCredential(credentialFifo, input.credential.authJson);
           } finally {
@@ -1740,7 +1742,13 @@ function createAttemptRunner({
       }
 
       let credential = null;
-      if (target.provider === 'codex') {
+      const isCanary = isFrozenFleetCanary(providerSpec.stdin, {
+        attemptId: request.attempt_id,
+        runId: request.run_id,
+        taskId: request.task_id,
+        role: target.role,
+      });
+      if (target.provider === 'codex' && !isCanary) {
         if (
           !request.credential_envelope
           || typeof request.credential_envelope !== 'object'

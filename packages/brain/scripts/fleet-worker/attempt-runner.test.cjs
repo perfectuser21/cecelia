@@ -441,6 +441,47 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.launch).not.toHaveBeenCalled();
   });
 
+  it('launches a frozen Codex-labelled canary without requiring or consuming credentials', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    const canaryChannel = {
+      ...RESULT_CHANNEL,
+      bindings: { ...RESULT_CHANNEL.bindings, role: 'reporter' },
+    };
+    const canaryBundle = {
+      contract_version: '1.0',
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+      role: 'reporter',
+      skill: null,
+      expected_output: 'harness-result/canary-v1',
+      inputs: { task_id: TASK_ID },
+    };
+
+    await runner.launch(request({
+      credential_envelope: undefined,
+      target: {
+        ...request().target,
+        role: 'reporter',
+      },
+      workspace_spec: {
+        ...request().workspace_spec,
+        mode: 'read-only',
+      },
+      result_channel: canaryChannel,
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: JSON.stringify({ instruction: '', task_bundle: canaryBundle }),
+      },
+    }));
+
+    expect(deps.credentialConsumer.consume).not.toHaveBeenCalled();
+    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+      credential: null,
+      role: 'reporter',
+    }));
+  });
+
   it('rejects caller-owned cwd and mounts before Git or Docker side effects', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
@@ -1247,6 +1288,73 @@ describe('Fleet Worker durable runtime adapters', () => {
       });
 
       expect(fs.existsSync(attemptRuntime)).toBe(false);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a frozen Codex-labelled canary free of credential files, env, and FIFO writes', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-canary-adapter-'));
+    const runCommand = vi.fn(async (_command, args) => (
+      args[0] === 'create' ? { stdout: 'canary-container\n' } : { stdout: '' }
+    ));
+    const writeCredential = vi.fn(async () => undefined);
+    const docker = createDockerAdapter({ runCommand, runtimeRoot, writeCredential });
+    const canaryChannel = {
+      ...RESULT_CHANNEL,
+      bindings: { ...RESULT_CHANNEL.bindings, role: 'reporter' },
+    };
+    const canaryBundle = {
+      contract_version: '1.0',
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+      role: 'reporter',
+      skill: null,
+      expected_output: 'harness-result/canary-v1',
+      inputs: { task_id: TASK_ID },
+    };
+
+    try {
+      await docker.launch({
+        attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        image: IMAGE_DIGEST,
+        providerSpec: {
+          ...request().provider_spec,
+          stdin: JSON.stringify({ instruction: '', task_bundle: canaryBundle }),
+        },
+        role: 'reporter',
+        model: 'gpt-5',
+        workspaceMount: {
+          source: `/controlled/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: true,
+        },
+        workspaceAdminMount: {
+          source: '/controlled/mirrors/perfectuser21__cecelia.git',
+          target: '/controlled/mirrors/perfectuser21__cecelia.git',
+          readOnly: true,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        taskId: TASK_ID,
+        brainUrl: BRAIN_URL,
+        resultChannel: canaryChannel,
+        lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: null,
+      });
+
+      const createArgs = runCommand.mock.calls[0][1];
+      expect(createArgs).toContain('HARNESS_CANARY=true');
+      expect(createArgs.join(' ')).not.toContain('/home/cecelia/.codex');
+      expect(createArgs.join(' ')).not.toContain('CECELIA_CREDENTIAL_');
+      expect(runCommand.mock.calls.map(([command]) => command)).toEqual(['docker', 'docker']);
+      expect(writeCredential).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }

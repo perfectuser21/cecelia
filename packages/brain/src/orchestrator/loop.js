@@ -577,14 +577,25 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
           await markRunFailed(deps.pool, resolvedRunId, 'approved_but_contract_artifacts_missing');
           return { exitReason: 'approved_but_contract_artifacts_missing', hops };
         }
-        await materializeApprovedContract(deps.pool, {
-          runId: resolvedRunId,
-          version: observed.proposeBranchRn,
-          branch: observed.proposeBranch,
-          prdContent: artifacts.prdContent,
-          contractContent: artifacts.contractContent,
-          approvedAt: now(),
-        });
+        try {
+          await materializeApprovedContract(deps.pool, {
+            runId: resolvedRunId,
+            version: observed.proposeBranchRn,
+            branch: observed.proposeBranch,
+            prdContent: artifacts.prdContent,
+            contractContent: artifacts.contractContent,
+            coveredTaskId: taskId,
+            approvedAt: now(),
+          });
+        } catch (error) {
+          if (error?.message !== 'approved_contract_e2e_invalid') throw error;
+          await markRunFailed(
+            deps.pool,
+            resolvedRunId,
+            'approved_but_e2e_acceptance_invalid',
+          );
+          return { exitReason: 'approved_but_e2e_acceptance_invalid', hops };
+        }
         await beat();
         continue;
       }

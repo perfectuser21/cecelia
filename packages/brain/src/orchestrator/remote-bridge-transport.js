@@ -225,8 +225,11 @@ export function createRemoteBridgeTransport({
           role: bundle?.role,
         },
       );
+      const isCanary = bundle?.expected_output === 'harness-result/canary-v1'
+        && bundle?.role === 'reporter'
+        && bundle?.skill === null;
       let credentialEnvelope;
-      if (target?.provider === 'codex') {
+      if (target?.provider === 'codex' && !isCanary) {
         if (typeof configuredCredentialBroker?.issue !== 'function') {
           throw new Error('remote_bridge_credential_broker_unavailable');
         }

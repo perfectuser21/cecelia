@@ -179,6 +179,32 @@ describe('TaskBundle contract', () => {
     });
   });
 
+  it('requires a bounded exact verification_commands array for evaluator bundles', () => {
+    const evaluator = validBundle({
+      role: 'evaluator',
+      expected_output: 'harness-result/evaluator-v1',
+      inputs: {
+        ...validBundle().inputs,
+        verification_commands: ['npm test', 'bash scripts/smoke.sh'],
+      },
+    });
+    expect(parseTaskBundle(evaluator).inputs.verification_commands)
+      .toEqual(['npm test', 'bash scripts/smoke.sh']);
+
+    for (const verificationCommands of [
+      undefined,
+      [],
+      Array.from({ length: 17 }, (_, index) => `echo ${index}`),
+      [''],
+      [' npm test'],
+      [`echo ${'x'.repeat(8192)}`],
+    ]) {
+      const invalid = structuredClone(evaluator);
+      invalid.inputs.verification_commands = verificationCommands;
+      expect(() => parseTaskBundle(invalid)).toThrow(/verification_commands/);
+    }
+  });
+
   it('accepts a skill-free read-only canary bundle', () => {
     expect(parseTaskBundle(validBundle({
       role: 'reporter',

@@ -19,6 +19,9 @@ const RUNTIME_ROOT = '/tmp/cecelia-prompts';
 const MAX_BYTES = 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 16 * 1024 * 1024;
 const MAX_EVIDENCE_FILES = 4096;
+const MAX_VERIFICATION_COMMANDS = 16;
+const MAX_VERIFICATION_COMMAND_BYTES = 8192;
+const EVALUATOR_COMMAND_TIMEOUT_MS = 120_000;
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const ROLE_VALUES = new Set([
@@ -426,7 +429,35 @@ function validateBundleEnvelope(envelope, binding) {
   if (isCanary && (binding.role !== 'reporter' || bundle.skill !== null)) {
     invalid('TaskBundle canary authority mismatch');
   }
+  if (binding.role === 'evaluator') {
+    validateVerificationCommands(bundle.inputs.verification_commands);
+  }
   return { bundle, isCanary };
+}
+
+function validateVerificationCommands(value) {
+  if (
+    !Array.isArray(value)
+    || value.length === 0
+    || value.length > MAX_VERIFICATION_COMMANDS
+  ) {
+    invalid('TaskBundle verification_commands must be non-empty and bounded');
+  }
+  return value.map((entry, index) => {
+    const command = boundedString(
+      entry,
+      `TaskBundle verification_commands[${index}]`,
+      { max: MAX_VERIFICATION_COMMAND_BYTES },
+    );
+    if (
+      Buffer.byteLength(command) > MAX_VERIFICATION_COMMAND_BYTES
+      || command.trim() !== command
+      || command.includes('\0')
+    ) {
+      invalid(`TaskBundle verification_commands[${index}] is invalid`);
+    }
+    return command;
+  });
 }
 
 function validateProviderMetadata(value, env) {
@@ -841,8 +872,19 @@ function evaluatorLogTail(stdout, stderr) {
   return combined.slice(-8192);
 }
 
-async function defaultExecuteEvaluatorCommand({ command, cwd }) {
+async function defaultExecuteEvaluatorCommand({
+  command,
+  cwd,
+  timeoutMs = EVALUATOR_COMMAND_TIMEOUT_MS,
+}) {
   boundedString(command, 'evaluator command', { max: 8192 });
+  if (
+    !Number.isSafeInteger(timeoutMs)
+    || timeoutMs < 1
+    || timeoutMs > EVALUATOR_COMMAND_TIMEOUT_MS
+  ) {
+    invalid('evaluator command timeout is invalid');
+  }
   const executionEnv = { ...process.env };
   for (const key of [
     'HARNESS_CALLBACK_TOKEN',
@@ -881,7 +923,7 @@ exit "$command_status"
           cwd,
           env: executionEnv,
           encoding: 'utf8',
-          timeout: 120_000,
+          timeout: timeoutMs,
           maxBuffer: MAX_BYTES,
           killSignal: 'SIGTERM',
         },
@@ -1083,20 +1125,24 @@ async function buildVerifierEnvelope({
       pullRequest.head_ref,
       pullRequest.head_sha,
     );
-    const claimed = Array.isArray(rawEnvelope.behavior_tests)
-      ? rawEnvelope.behavior_tests
-      : [];
-    let behaviorTests = [];
-    if (claimed.length > 0) {
-      if (claimed.length !== 1) {
-        invalid('evaluator execution authority supports exactly one command');
+    const verificationCommands = validateVerificationCommands(inputs.verification_commands);
+    const claimed = rawEnvelope.behavior_tests;
+    if (claimed !== undefined) {
+      if (!Array.isArray(claimed) || claimed.length !== verificationCommands.length) {
+        invalid('provider behavior_tests commands differ from frozen TaskBundle');
       }
-      const execution = await deps.executeEvaluatorCommand({
-        command: boundedString(claimed[0].command, 'evaluator claimed command', {
-          max: 8192,
-        }),
-        cwd: workspacePath,
-      });
+      for (let index = 0; index < claimed.length; index += 1) {
+        if (
+          !isPlainObject(claimed[index])
+          || claimed[index].command !== verificationCommands[index]
+        ) {
+          invalid('provider behavior_tests commands differ from frozen TaskBundle');
+        }
+      }
+    }
+    const behaviorTests = [];
+    for (const command of verificationCommands) {
+      const execution = await deps.executeEvaluatorCommand({ command, cwd: workspacePath });
       exact(
         execution,
         ['command', 'exit_code'],
@@ -1106,14 +1152,21 @@ async function buildVerifierEnvelope({
       const observed = {
         command: execution.command,
         exit_code: execution.exit_code,
-        log_tail: execution.log_tail ?? '',
+        log_tail: boundedString(
+          execution.log_tail ?? '',
+          'Runner evaluator execution log_tail',
+          { min: 0, max: 8192 },
+        ),
       };
-      for (const key of ['command', 'exit_code', 'log_tail']) {
-        if (claimed[0][key] !== observed[key]) {
-          invalid(`evaluator execution ${key} mismatch`);
-        }
+      if (
+        observed.command !== command
+        || !Number.isSafeInteger(observed.exit_code)
+        || observed.exit_code < 0
+        || observed.exit_code > 255
+      ) {
+        invalid('Runner evaluator execution authority mismatch');
       }
-      behaviorTests = JSON.parse(canonicalJson(claimed));
+      behaviorTests.push(observed);
     }
     return {
       contract_sha: contractSha,
@@ -1326,6 +1379,7 @@ if (require.main === module) {
 
 module.exports = {
   buildVerifierEnvelope,
+  defaultExecuteEvaluatorCommand,
   finalizeManagedResult,
   isManagedResultChannel,
   writeManagedSession,

@@ -63,6 +63,14 @@ const resultChannelDescriptorSchema = z.object({
   bindings: resultChannelBindingsSchema,
 }).strict();
 
+const verificationCommandSchema = z.string()
+  .min(1)
+  .max(8192)
+  .refine(
+    (value) => value.trim() === value && !value.includes('\0'),
+    'verification_commands entries must be canonical non-empty strings',
+  );
+
 const taskBundleSchema = z.object({
   contract_version: z.literal(TASK_CONTRACT_VERSION),
   run_id: z.string().uuid(),
@@ -79,6 +87,7 @@ const taskBundleSchema = z.object({
     execution_surface: z.literal('fleet-worker').optional(),
     workspace_spec: z.unknown().optional(),
     artifacts: z.array(z.unknown()).default([]),
+    verification_commands: z.array(verificationCommandSchema).min(1).max(16).optional(),
   }).passthrough(),
   constraints: z.object({
     read_only: z.boolean(),
@@ -808,6 +817,12 @@ export function buildResultChannelDescriptor({
 
 export function parseTaskBundle(value) {
   const parsed = taskBundleSchema.parse(value);
+  if (parsed.role === 'evaluator' && !parsed.inputs.verification_commands) {
+    throw new Error('verification_commands_required_for_evaluator');
+  }
+  if (parsed.role !== 'evaluator' && parsed.inputs.verification_commands) {
+    throw new Error('verification_commands_only_allowed_for_evaluator');
+  }
   const hasResultChannel = Object.hasOwn(parsed, 'result_channel');
   if (parsed.inputs.execution_surface === 'fleet-worker') {
     if (!parsed.inputs.workspace_spec) {

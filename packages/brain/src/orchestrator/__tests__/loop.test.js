@@ -617,7 +617,13 @@ describe('runLoop：控制 action 自消费', () => {
     const { deps, sqls, sleeps } = makeEnv({ observedSeq });
     const files = {
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
-      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-draft.md': [
+        '# Contract',
+        '## E2E 验收',
+        '```bash',
+        'npm test',
+        '```',
+      ].join('\n'),
       'sprints/kernel-contract/contract-dod.md': '# DoD',
     };
     deps.fileExists = vi.fn(() => false);
@@ -647,6 +653,13 @@ describe('runLoop：控制 action 自消费', () => {
     ]));
     expect(materializeSql[1].join('\n')).toContain('# Contract');
     expect(materializeSql[1].join('\n')).toContain('# DoD');
+    expect(materializeSql[1]).toContainEqual({
+      scenarios: [{
+        name: 'Approved contract E2E',
+        covered_tasks: [TASK_ID],
+        commands: [{ type: 'bash', cmd: 'npm test' }],
+      }],
+    });
   });
 
   it('APPROVED 没有不可变合同 SHA 时 fail closed，不读取可变 branch', async () => {
@@ -666,6 +679,35 @@ describe('runLoop：控制 action 自消费', () => {
 
     expect(result.exitReason).toBe('approved_but_no_contract_sha');
     expect(deps.readGitFile).not.toHaveBeenCalled();
+  });
+
+  it('APPROVED 合同没有 canonical E2E 命令时 fail closed，不进入 generator', async () => {
+    const approvedSha = 'b'.repeat(40);
+    const observedSeq = [obs({
+      run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+      task: { status: 'in_progress', payload: { sprint_dir: 'sprints/kernel-contract' } },
+      contract: { approved: false, id: null },
+      proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+      proposeBranchRn: 1,
+      ganLatestRoundVerdict: 'APPROVED',
+      ganLatestRoundContractSha: approvedSha,
+    })];
+    const { deps, sqls } = makeEnv({ observedSeq });
+    deps.readGitFile = vi.fn((_sha, filePath) => ({
+      'sprints/kernel-contract/sprint-prd.md': '# PRD',
+      'sprints/kernel-contract/contract-draft.md': '# Contract without E2E',
+      'sprints/kernel-contract/contract-dod.md': '# DoD',
+    })[filePath]);
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('approved_but_e2e_acceptance_invalid');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(sqls.some(([sql, params]) => (
+      sql.includes('initiative_runs')
+      && sql.includes("'failed'")
+      && params.includes('approved_but_e2e_acceptance_invalid')
+    ))).toBe(true);
   });
 
   it('exit（terminal）→ 直接退出，无任何写入', async () => {

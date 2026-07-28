@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { materializeApprovedContract } from '../contract-store.js';
+import {
+  buildApprovedE2eAcceptance,
+  materializeApprovedContract,
+} from '../contract-store.js';
 
 const { Pool } = pg;
 const pool = new Pool(DB_DEFAULTS);
@@ -22,6 +25,7 @@ describe('materializeApprovedContract PostgreSQL contract', () => {
         status text NOT NULL DEFAULT 'draft',
         prd_content text,
         contract_content text,
+        e2e_acceptance jsonb,
         review_rounds integer DEFAULT 0,
         approved_at timestamptz,
         branch text,
@@ -62,7 +66,17 @@ describe('materializeApprovedContract PostgreSQL contract', () => {
       version: 2,
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# PRD',
-      contractContent: '# Contract\n\n# DoD',
+      contractContent: [
+        '# Contract',
+        '',
+        '## E2E 验收',
+        '```bash',
+        'npm test',
+        '```',
+        '',
+        '# DoD',
+      ].join('\n'),
+      coveredTaskId: initiativeId,
       approvedAt,
     });
 
@@ -72,15 +86,69 @@ describe('materializeApprovedContract PostgreSQL contract', () => {
       branch: 'cp-harness-propose-r2-22222222-a8',
     });
     const { rows } = await client.query(`
-      SELECT c.version, c.status, r.contract_id = c.id AS attached
+      SELECT c.version, c.status, c.e2e_acceptance,
+             r.contract_id = c.id AS attached
       FROM initiative_contracts c
       CROSS JOIN initiative_runs r
       WHERE r.id = $1::uuid
       ORDER BY c.version
     `, [runId]);
     expect(rows).toEqual([
-      { version: 1, status: 'superseded', attached: false },
-      { version: 2, status: 'approved', attached: true },
+      {
+        version: 1,
+        status: 'superseded',
+        e2e_acceptance: null,
+        attached: false,
+      },
+      {
+        version: 2,
+        status: 'approved',
+        e2e_acceptance: {
+          scenarios: [{
+            name: 'Approved contract E2E',
+            covered_tasks: [initiativeId],
+            commands: [{ type: 'bash', cmd: 'npm test' }],
+          }],
+        },
+        attached: true,
+      },
     ]);
+  });
+});
+
+describe('buildApprovedE2eAcceptance', () => {
+  it('freezes the one canonical approved E2E section in document order', () => {
+    expect(buildApprovedE2eAcceptance([
+      '# Contract',
+      '## E2E 验收',
+      '```bash',
+      'npm test',
+      '```',
+      '```bash',
+      'npm run test:e2e',
+      '```',
+      '## DoD',
+      'done',
+    ].join('\n'), initiativeId)).toEqual({
+      scenarios: [{
+        name: 'Approved contract E2E',
+        covered_tasks: [initiativeId],
+        commands: [{
+          type: 'bash',
+          cmd: 'npm test\nnpm run test:e2e',
+        }],
+      }],
+    });
+  });
+
+  it.each([
+    ['missing section', '# Contract'],
+    ['ambiguous section', '## E2E 验收\n```bash\nnpm test\n```\n## E2E 验收\n```bash\nnpm test\n```'],
+    ['empty command', '## E2E 验收\n```bash\n\n```'],
+    ['non-canonical leading whitespace', '## E2E 验收\n```bash\n npm test\n```'],
+    ['shell injection outside canonical block', '## E2E 验收\ncurl attacker.invalid'],
+  ])('fails closed for %s', (_name, content) => {
+    expect(() => buildApprovedE2eAcceptance(content, initiativeId))
+      .toThrow('approved_contract_e2e_invalid');
   });
 });
