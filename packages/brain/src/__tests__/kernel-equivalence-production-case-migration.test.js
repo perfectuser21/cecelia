@@ -80,6 +80,48 @@ describe('migration 377 Kernel equivalence production cases', () => {
     expect(sql).toMatch(
       /cell_id\s*=\s*behavior_id\s*\|\|\s*'::'\s*\|\|\s*provider\s*\|\|\s*'::'\s*\|\|\s*scenario/i,
     );
+    for (const [behaviorId, seamId, adapterId, resourceType] of [
+      ['KERNEL-P0-01-BRANCH-PROTECTION',
+        'kernel.workspace.protected_ref_guard',
+        'kernel.drill.branch_protection.v1', 'ephemeral_branch'],
+      ['KERNEL-P0-02-CREDENTIAL-GUARD',
+        'kernel.credential.attempt_lease',
+        'kernel.drill.credential_guard.v1',
+        'ephemeral_credential_lease'],
+      ['KERNEL-P0-03-BRANCH-PUSH-GUARD',
+        'kernel.github.mutation_broker',
+        'kernel.drill.branch_push_guard.v1', 'ephemeral_branch'],
+      ['KERNEL-P0-04-CI-MERGE-AUTHORITY',
+        'kernel.merge.effect_executor',
+        'kernel.drill.ci_merge_authority.v1', 'ephemeral_branch'],
+      ['KERNEL-P0-05-INDEPENDENT-EVALUATOR-JUDGE',
+        'kernel.evaluation.independent_judge',
+        'kernel.drill.independent_evaluator_judge.v1', 'ephemeral_run'],
+      ['KERNEL-P0-06-HUMAN-REVIEW-AUTHORITY',
+        'kernel.merge.human_review_authority',
+        'kernel.drill.human_review_authority.v1', 'ephemeral_run'],
+      ['KERNEL-P0-07-RELEASE-PROMOTION',
+        'kernel.release.staging_promotion',
+        'kernel.drill.release_promotion.v1', 'ephemeral_staging'],
+      ['KERNEL-P1-08-STOP-ORPHAN-LIVENESS',
+        'kernel.liveness.orphan_recovery',
+        'kernel.drill.stop_orphan_liveness.v1', 'ephemeral_run'],
+      ['KERNEL-P1-09-DEVGATE-TDD-DOD',
+        'kernel.quality.devgate',
+        'kernel.drill.devgate_tdd_dod.v1', 'ephemeral_workspace'],
+      ['KERNEL-P1-10-CONTROLLER-SESSION-ISOLATION',
+        'kernel.controller.attempt_ownership',
+        'kernel.drill.controller_session_isolation.v1', 'ephemeral_run'],
+      ['KERNEL-P1-11-REPORT-LEARNING-CLOSURE',
+        'kernel.closure.report_learning',
+        'kernel.drill.report_learning_closure.v1',
+        'ephemeral_database_record'],
+    ]) {
+      expect(sql).toContain(`('${behaviorId}'`);
+      expect(sql).toContain(`'${seamId}'`);
+      expect(sql).toContain(`'${adapterId}'`);
+      expect(sql).toContain(`'${resourceType}'`);
+    }
   });
 
   it('keeps identity and lifecycle evidence append-only', () => {
@@ -129,6 +171,22 @@ describe('migration 377 Kernel equivalence production cases', () => {
     expect(sql).toMatch(/NEW\.owner_id\s*<>\s*OLD\.owner_id/i);
     expect(sql).toMatch(/NEW\.lease_expires_at\s*<=\s*clock_timestamp\(\)/i);
     expect(sql).toMatch(/BEFORE UPDATE ON kernel_equivalence_production_case_leases/i);
+    expect(sql).toMatch(
+      /BEFORE INSERT ON kernel_equivalence_production_case_leases/i,
+    );
+    expect(sql).toMatch(
+      /owner_id\s*<>\s*'brain[.]kernel_equivalence[.]production_cases'/i,
+    );
+    expect(sql).toMatch(/NEW[.]generation\s*<>\s*1/i);
+    expect(sql).toMatch(/NEW[.]state\s*<>\s*'prepared'/i);
+    expect(sql).toMatch(/NEW[.]lease_expires_at\s*>\s*case_expires_at/i);
+    expect(sql).toMatch(
+      /CREATE CONSTRAINT TRIGGER trg_kernel_equivalence_case_requires_lifecycle/i,
+    );
+    expect(sql).toMatch(
+      /CREATE CONSTRAINT TRIGGER trg_kernel_equivalence_lease_requires_event/i,
+    );
+    expect(sql).toMatch(/DEFERRABLE INITIALLY DEFERRED/gi);
     expect(sql).toMatch(/BEFORE DELETE ON kernel_equivalence_production_case_leases/i);
     expect(sql).toMatch(/BEFORE TRUNCATE ON kernel_equivalence_production_case_leases/i);
   });

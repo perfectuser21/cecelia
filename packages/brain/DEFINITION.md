@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.268.16
+**版本**: 1.268.17
 
 ## Kernel zero-Attempt patrol coverage
 
@@ -74,10 +74,17 @@
 - case identity 与 lifecycle event append-only；event 只保存固定 evidence ref、
   before/after hash 与 late-effect risk，不接受任意 JSON 或秘密。
 - mutable lease 只能由同一 owner 以 generation +1 和数据库时钟单调迁移；
-  删除、截断、过期续租和非法状态跳转均被数据库 trigger 拒绝。
+  初始 owner/generation/state、case expiry 与同 generation lifecycle event 由
+  immediate + deferred trigger 双向约束；删除、截断、过期续租、缺 event 和
+  非法状态跳转均被数据库拒绝。
+- 11 个 behavior 与 seam/adapter/resource class 使用 canonical descriptor
+  一一绑定；case 输入一次性 descriptor snapshot 并拒绝 accessor/Proxy，
+  artifact SHA 与 Brain/Engine version 必须匹配 server-owned trusted binding。
+- transaction deadline 覆盖 pool acquire、statement 与 COMMIT；任何已发出但
+  未确认的 COMMIT 都返回 `late_effect_risk`，不得作为普通失败重试。
 - 本版本只建立 authority ledger，不注册 signer、production seam port 或 proof；
   根合同继续保持 0/99，且未执行任何生产 mutation。
-- 回退：`bash scripts/brain-rollback.sh 1.268.15`；migration evidence 保留，
+- 回退：`bash scripts/brain-rollback.sh 1.268.16`；migration evidence 保留，
   回退代码不得删除或改写 case/event rows。
 
 ## Brain-owned Kernel equivalence trusted execution

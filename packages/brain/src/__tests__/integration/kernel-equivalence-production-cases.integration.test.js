@@ -29,6 +29,7 @@ const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const OTHER_RUN_ID = '33333333-3333-4333-8333-333333333333';
 const CASE_ID = '44444444-4444-4444-8444-444444444444';
 const EVENT_ID = '55555555-5555-4555-8555-555555555555';
+const OWNER_SERVICE = 'brain.kernel_equivalence.production_cases';
 
 let adminPool;
 let pool;
@@ -67,6 +68,11 @@ async function insertCase(values = caseColumns()) {
         $12, $13, $14, $15, $16, clock_timestamp() + interval '10 minutes')`,
     values,
   );
+}
+
+function trustedBindingFor(input) {
+  const { expires_at: _expiresAt, ...binding } = input;
+  return binding;
 }
 
 beforeAll(async () => {
@@ -110,12 +116,13 @@ afterAll(async () => {
 
 describe('production equivalence cases on real PostgreSQL', () => {
   it('creates one exact case, lease, and allowlisted event', async () => {
+    await pool.query('BEGIN');
     await expect(insertCase()).resolves.toMatchObject({ rowCount: 1 });
     await expect(pool.query(
       `INSERT INTO kernel_equivalence_production_case_leases
          (case_id, owner_id, state, lease_expires_at)
        VALUES ($1, $2, 'prepared', clock_timestamp() + interval '5 minutes')`,
-      [CASE_ID, `brain:${RUN_ID}`],
+      [CASE_ID, OWNER_SERVICE],
     )).resolves.toMatchObject({ rowCount: 1 });
     await expect(pool.query(
       `INSERT INTO kernel_equivalence_production_case_events
@@ -129,6 +136,7 @@ describe('production equivalence cases on real PostgreSQL', () => {
         'b'.repeat(64),
       ],
     )).resolves.toMatchObject({ rowCount: 1 });
+    await pool.query('COMMIT');
   });
 
   it('rejects cross-run ownership and duplicate resource identity', async () => {
@@ -160,15 +168,120 @@ describe('production equivalence cases on real PostgreSQL', () => {
     });
   });
 
+  it('rejects a canonical cell paired with another behavior seam', async () => {
+    const semanticMismatch = caseColumns(
+      'edededed-eded-4ded-8ded-edededededed',
+      'semantic-mismatch',
+    );
+    semanticMismatch[5] = 'kernel.release.staging_promotion';
+    semanticMismatch[6] = 'kernel.drill.release_promotion.v1';
+    semanticMismatch[12] = 'ephemeral_credential_lease';
+
+    await expect(insertCase(semanticMismatch)).rejects.toMatchObject({
+      code: '23514',
+    });
+  });
+
+  it('rejects a forged initial lease owner and generation', async () => {
+    const forgedCase = caseColumns(
+      'abababab-abab-4bab-8bab-abababababab',
+      'forged-lease',
+    );
+    await pool.query('BEGIN');
+    try {
+      await insertCase(forgedCase);
+      await expect(pool.query(
+        `INSERT INTO kernel_equivalence_production_case_leases
+           (case_id, owner_id, generation, state, lease_expires_at)
+         VALUES ($1, 'attacker-owner', 41, 'prepared',
+                 clock_timestamp() + interval '5 minutes')`,
+        [forgedCase[0]],
+      )).rejects.toThrow(/lease insert is invalid/i);
+    } finally {
+      await pool.query('ROLLBACK');
+    }
+  });
+
+  it('rejects a case committed without its initial lease and event', async () => {
+    const incompleteCase = caseColumns(
+      'bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc',
+      'incomplete-lifecycle',
+    );
+
+    await expect(insertCase(incompleteCase)).rejects.toThrow(
+      /lease event is missing/i,
+    );
+  });
+
+  it('rejects a lease transition without its same-generation event', async () => {
+    const atomicCase = caseColumns(
+      'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+      'atomic-transition',
+    );
+    const atomicEventId = 'cececece-cece-4ece-8ece-cececececece';
+    await pool.query('BEGIN');
+    await insertCase(atomicCase);
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_case_leases
+         (case_id, owner_id, generation, state, lease_expires_at)
+       VALUES ($1, $2, 1, 'prepared',
+               clock_timestamp() + interval '5 minutes')`,
+      [atomicCase[0], OWNER_SERVICE],
+    );
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_case_events
+         (event_id, case_id, generation, event_type, status, evidence_ref,
+          before_hash, after_hash, late_effect_risk)
+       VALUES ($1, $2, 1, 'prepared', 'confirmed', $3, NULL, NULL, false)`,
+      [
+        atomicEventId,
+        atomicCase[0],
+        `db:kernel-equivalence-production-cases/${atomicCase[0]}/1/prepared`,
+      ],
+    );
+    await pool.query('COMMIT');
+
+    await pool.query('BEGIN');
+    await pool.query(
+      `UPDATE kernel_equivalence_production_case_leases
+          SET generation = generation + 1,
+              state = 'cancelling',
+              updated_at = clock_timestamp() + interval '1 millisecond'
+        WHERE case_id = $1`,
+      [atomicCase[0]],
+    );
+    try {
+      await expect(pool.query('COMMIT')).rejects.toThrow(
+        /lease event is missing/i,
+      );
+    } finally {
+      await pool.query('ROLLBACK').catch(() => {});
+    }
+  });
+
   it('fences lease owner, generation, transition, and database expiry', async () => {
+    await pool.query('BEGIN');
     await expect(pool.query(
       `UPDATE kernel_equivalence_production_case_leases
           SET generation = generation + 1,
               state = 'cancelling',
               updated_at = clock_timestamp() + interval '1 millisecond'
         WHERE case_id = $1 AND owner_id = $2 AND generation = 1`,
-      [CASE_ID, `brain:${RUN_ID}`],
+      [CASE_ID, OWNER_SERVICE],
     )).resolves.toMatchObject({ rowCount: 1 });
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_case_events
+         (event_id, case_id, generation, event_type, status, evidence_ref,
+          before_hash, after_hash, late_effect_risk)
+       VALUES
+         ('acacacac-acac-4cac-8cac-acacacacacac', $1, 2,
+          'cancel_requested', 'confirmed', $2, NULL, NULL, false)`,
+      [
+        CASE_ID,
+        `db:kernel-equivalence-production-cases/${CASE_ID}/2/cancel_requested`,
+      ],
+    );
+    await pool.query('COMMIT');
 
     await expect(pool.query(
       `UPDATE kernel_equivalence_production_case_leases
@@ -196,6 +309,16 @@ describe('production equivalence cases on real PostgreSQL', () => {
         WHERE case_id = $1`,
       [CASE_ID],
     )).rejects.toThrow(/lease is expired|transition is invalid/i);
+
+    await expect(pool.query(
+      `UPDATE kernel_equivalence_production_case_leases
+          SET generation = generation + 1,
+              state = 'cancelled',
+              lease_expires_at = clock_timestamp() + interval '1 day',
+              updated_at = clock_timestamp() + interval '1 millisecond'
+        WHERE case_id = $1`,
+      [CASE_ID],
+    )).rejects.toThrow(/lease exceeds case expiry/i);
   });
 
   it('blocks mutation and erasure of immutable evidence', async () => {
@@ -237,13 +360,7 @@ describe('production equivalence cases on real PostgreSQL', () => {
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
     ];
-    const store = createPostgresProductionCaseStore({
-      pool,
-      randomUUID: () => generated.shift(),
-    });
-    const prefix =
-      `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/controller/`;
-    const prepared = await store.prepareCase({
+    const controllerInput = {
       adapter_id: 'kernel.drill.controller_session_isolation.v1',
       artifact_sha: 'd'.repeat(40),
       attempt_id: ATTEMPT_ID,
@@ -255,13 +372,25 @@ describe('production equivalence cases on real PostgreSQL', () => {
       expires_at: new Date(Date.now() + 600_000).toISOString(),
       provider: 'grok',
       resource_id: 'controller-case-1',
-      resource_prefix: prefix,
-      resource_ref: `${prefix}controller-case-1`,
+      resource_prefix:
+        `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/controller/`,
+      resource_ref:
+        `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/controller/`
+        + 'controller-case-1',
       resource_type: 'ephemeral_run',
       run_id: RUN_ID,
       scenario: 'recovery',
       seam_id: 'kernel.controller.attempt_ownership',
-    }, { timeoutMs: 2_000 });
+    };
+    const store = createPostgresProductionCaseStore({
+      pool,
+      randomUUID: () => generated.shift(),
+      resolveTrustedBinding: () => trustedBindingFor(controllerInput),
+    });
+    const prepared = await store.prepareCase(
+      controllerInput,
+      { timeoutMs: 2_000 },
+    );
 
     expect(prepared).toMatchObject({
       case_id: '88888888-8888-4888-8888-888888888888',
@@ -335,5 +464,93 @@ describe('production equivalence cases on real PostgreSQL', () => {
         late_effect_risk: false,
       },
     ]);
+  });
+
+  it('serializes concurrent duplicate prepare and generation transitions', async () => {
+    const prefix =
+      `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/concurrent/`;
+    const input = {
+      adapter_id: 'kernel.drill.devgate_tdd_dod.v1',
+      artifact_sha: '9'.repeat(40),
+      attempt_id: ATTEMPT_ID,
+      behavior_id: 'KERNEL-P1-09-DEVGATE-TDD-DOD',
+      brain_version: '1.268.16',
+      cell_id: 'KERNEL-P1-09-DEVGATE-TDD-DOD::claude::normal',
+      engine_version: '19.7.1',
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      provider: 'claude',
+      resource_id: 'concurrent-prepare',
+      resource_prefix: prefix,
+      resource_ref: `${prefix}concurrent-prepare`,
+      resource_type: 'ephemeral_workspace',
+      run_id: RUN_ID,
+      scenario: 'normal',
+      seam_id: 'kernel.quality.devgate',
+    };
+    const prepareIds = [
+      '10101010-1010-4010-8010-101010101010',
+      '20202020-2020-4020-8020-202020202020',
+      '30303030-3030-4030-8030-303030303030',
+      '40404040-4040-4040-8040-404040404040',
+    ];
+    const prepareStore = createPostgresProductionCaseStore({
+      pool,
+      randomUUID: () => prepareIds.shift(),
+      resolveTrustedBinding: () => trustedBindingFor(input),
+    });
+
+    const preparations = await Promise.allSettled([
+      prepareStore.prepareCase(input, { timeoutMs: 2_000 }),
+      prepareStore.prepareCase(input, { timeoutMs: 2_000 }),
+    ]);
+    const prepared = preparations.find(
+      ({ status }) => status === 'fulfilled',
+    )?.value;
+    const rejected = preparations.find(
+      ({ status }) => status === 'rejected',
+    )?.reason;
+    expect(preparations.filter(
+      ({ status }) => status === 'fulfilled',
+    )).toHaveLength(1);
+    expect(rejected).toMatchObject({
+      code: 'production_case_identity_conflict',
+    });
+
+    const transitionIds = [
+      '50505050-5050-4050-8050-505050505050',
+      '60606060-6060-4060-8060-606060606060',
+    ];
+    const transitionStore = createPostgresProductionCaseStore({
+      pool,
+      randomUUID: () => transitionIds.shift(),
+      resolveTrustedBinding: () => trustedBindingFor(input),
+    });
+    const transition = {
+      after_hash: null,
+      before_hash: null,
+      case_id: prepared.case_id,
+      event_type: 'cancel_requested',
+      evidence_ref:
+        `db:kernel-equivalence-production-cases/${prepared.case_id}/`
+        + '2/cancel_requested',
+      expected_generation: 1,
+      from_state: 'prepared',
+      late_effect_risk: false,
+      lease_expires_at: new Date(Date.now() + 300_000).toISOString(),
+      status: 'confirmed',
+      to_state: 'cancelling',
+    };
+    const transitions = await Promise.allSettled([
+      transitionStore.transitionCase(transition, { timeoutMs: 2_000 }),
+      transitionStore.transitionCase(transition, { timeoutMs: 2_000 }),
+    ]);
+    expect(transitions.filter(
+      ({ status }) => status === 'fulfilled',
+    )).toHaveLength(1);
+    expect(transitions.find(
+      ({ status }) => status === 'rejected',
+    )?.reason).toMatchObject({
+      code: 'production_case_transition_stale',
+    });
   });
 });

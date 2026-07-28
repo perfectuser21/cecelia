@@ -33,6 +33,18 @@ function caseInput(overrides = {}) {
   };
 }
 
+function trustedBindingFor(input = caseInput()) {
+  const { expires_at: _expiresAt, ...binding } = input;
+  return binding;
+}
+
+function productionStore(options = {}) {
+  return createPostgresProductionCaseStore({
+    resolveTrustedBinding: () => trustedBindingFor(),
+    ...options,
+  });
+}
+
 function preparedRow(overrides = {}) {
   const input = caseInput();
   return {
@@ -53,6 +65,9 @@ function transactionPool({
   transitionRow = null,
   deadlineOpen = true,
   commitPromise = null,
+  commitError = null,
+  connectPromise = null,
+  preparePromise = null,
 } = {}) {
   const calls = [];
   const client = {
@@ -61,6 +76,7 @@ function transactionPool({
       if (text === 'BEGIN') return { rows: [], rowCount: null };
       if (text === 'ROLLBACK') return { rows: [], rowCount: null };
       if (text === 'COMMIT') {
+        if (commitError) throw commitError;
         if (commitPromise) return commitPromise;
         return { rows: [], rowCount: null };
       }
@@ -74,6 +90,7 @@ function transactionPool({
         };
       }
       if (/INSERT INTO kernel_equivalence_production_cases/i.test(text)) {
+        if (preparePromise) return preparePromise;
         return {
           rows: prepareRow == null ? [] : [prepareRow],
           rowCount: prepareRow == null ? 0 : 1,
@@ -93,17 +110,39 @@ function transactionPool({
     calls,
     client,
     pool: {
-      connect: vi.fn(async () => client),
+      connect: vi.fn(() => connectPromise ?? Promise.resolve(client)),
       query: vi.fn(),
     },
   };
 }
 
 describe('PostgreSQL production equivalence case store', () => {
+  it('requires a server-owned trusted-binding resolver', async () => {
+    const runtime = transactionPool();
+    expect(() => createPostgresProductionCaseStore({
+      pool: runtime.pool,
+    })).toThrowError(expect.objectContaining({
+      code: 'production_case_store_configuration_invalid',
+    }));
+
+    const store = productionStore({
+      pool: runtime.pool,
+      randomUUID: () => CASE_ID,
+      now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+      resolveTrustedBinding() {
+        throw new Error('binding registry unavailable');
+      },
+    });
+    await expect(store.prepareCase(caseInput())).rejects.toMatchObject({
+      code: 'production_case_trusted_binding_unavailable',
+    });
+    expect(runtime.pool.connect).not.toHaveBeenCalled();
+  });
+
   it('prepares one fully bound case, lease, and event before returning', async () => {
     const runtime = transactionPool();
     const uuids = [CASE_ID, EVENT_ID];
-    const store = createPostgresProductionCaseStore({
+    const store = productionStore({
       pool: runtime.pool,
       randomUUID: () => uuids.shift(),
       now: () => Date.parse('2026-07-28T12:00:00.000Z'),
@@ -151,9 +190,12 @@ describe('PostgreSQL production equivalence case store', () => {
     ['wrong cell axis', { scenario: 'violation' }],
     ['wrong seam', { seam_id: 'caller.seam' }],
     ['expired', { expires_at: '2026-07-28T11:59:59.000Z' }],
+    ['mutable expiry value', {
+      expires_at: new Date('2026-07-28T12:10:00.000Z'),
+    }],
   ])('rejects %s before connecting', async (_label, overrides) => {
     const runtime = transactionPool();
-    const store = createPostgresProductionCaseStore({
+    const store = productionStore({
       pool: runtime.pool,
       randomUUID: () => CASE_ID,
       now: () => Date.parse('2026-07-28T12:00:00.000Z'),
@@ -166,7 +208,7 @@ describe('PostgreSQL production equivalence case store', () => {
 
   it('fails closed on conflicting case identity and database deadline', async () => {
     const conflict = transactionPool({ prepareRow: null });
-    const conflictStore = createPostgresProductionCaseStore({
+    const conflictStore = productionStore({
       pool: conflict.pool,
       randomUUID: vi.fn()
         .mockReturnValueOnce(CASE_ID)
@@ -177,7 +219,7 @@ describe('PostgreSQL production equivalence case store', () => {
       .rejects.toMatchObject({ code: 'production_case_identity_conflict' });
 
     const expired = transactionPool({ deadlineOpen: false });
-    const expiredStore = createPostgresProductionCaseStore({
+    const expiredStore = productionStore({
       pool: expired.pool,
       randomUUID: vi.fn()
         .mockReturnValueOnce(CASE_ID)
@@ -195,7 +237,7 @@ describe('PostgreSQL production equivalence case store', () => {
     });
     const runtime = transactionPool({ commitPromise: commit });
     const controller = new AbortController();
-    const store = createPostgresProductionCaseStore({
+    const store = productionStore({
       pool: runtime.pool,
       randomUUID: vi.fn()
         .mockReturnValueOnce(CASE_ID)
@@ -220,6 +262,226 @@ describe('PostgreSQL production equivalence case store', () => {
     expect(runtime.client.release).toHaveBeenCalledWith(true);
   });
 
+  it('reports every unconfirmed COMMIT response as late-effect risk', async () => {
+    const connectionReset = Object.assign(
+      new Error('connection reset after COMMIT was sent'),
+      { code: 'ECONNRESET' },
+    );
+    const runtime = transactionPool({ commitError: connectionReset });
+    const store = productionStore({
+      pool: runtime.pool,
+      randomUUID: vi.fn()
+        .mockReturnValueOnce(CASE_ID)
+        .mockReturnValueOnce(EVENT_ID),
+      now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+    });
+
+    await expect(store.prepareCase(caseInput(), {
+      timeoutMs: 1_000,
+    })).rejects.toMatchObject({
+      code: 'production_case_commit_settlement_unknown',
+      late_effect_risk: true,
+    });
+    expect(runtime.client.release).toHaveBeenCalledWith(true);
+  });
+
+  it('applies the operation deadline while waiting for a pool client', async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = transactionPool({
+        connectPromise: new Promise(() => {}),
+      });
+      const store = productionStore({
+        pool: runtime.pool,
+        randomUUID: vi.fn()
+          .mockReturnValueOnce(CASE_ID)
+          .mockReturnValueOnce(EVENT_ID),
+        now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+      });
+      let observed = null;
+      store.prepareCase(caseInput(), { timeoutMs: 5 })
+        .catch((error) => {
+          observed = error;
+        });
+
+      await vi.advanceTimersByTimeAsync(6);
+
+      expect(observed).toMatchObject({
+        code: 'production_case_transaction_timeout',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels a pending pool acquisition and destroys a late client', async () => {
+    let resolveConnect;
+    const connect = new Promise((resolve) => {
+      resolveConnect = resolve;
+    });
+    const runtime = transactionPool({ connectPromise: connect });
+    const controller = new AbortController();
+    const store = productionStore({
+      pool: runtime.pool,
+      randomUUID: vi.fn()
+        .mockReturnValueOnce(CASE_ID)
+        .mockReturnValueOnce(EVENT_ID),
+      now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+    });
+    const running = store.prepareCase(caseInput(), {
+      signal: controller.signal,
+      timeoutMs: 1_000,
+    });
+
+    controller.abort();
+
+    await expect(running).rejects.toMatchObject({
+      code: 'production_case_transaction_aborted',
+    });
+    resolveConnect(runtime.client);
+    await vi.waitFor(() => {
+      expect(runtime.client.release).toHaveBeenCalledWith(true);
+    });
+  });
+
+  it('applies the operation deadline while a statement is pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = transactionPool({
+        preparePromise: new Promise(() => {}),
+      });
+      const store = productionStore({
+        pool: runtime.pool,
+        randomUUID: vi.fn()
+          .mockReturnValueOnce(CASE_ID)
+          .mockReturnValueOnce(EVENT_ID),
+        now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+      });
+      const running = store.prepareCase(caseInput(), { timeoutMs: 5 });
+      const assertion = expect(running).rejects.toMatchObject({
+        code: 'production_case_transaction_timeout',
+      });
+
+      await vi.advanceTimersByTimeAsync(6);
+
+      await assertion;
+      expect(runtime.client.release).toHaveBeenCalledWith(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects accessor and Proxy inputs before connecting', async () => {
+    const accessorRuntime = transactionPool();
+    const accessorStore = productionStore({
+      pool: accessorRuntime.pool,
+      randomUUID: () => CASE_ID,
+      now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+    });
+    const accessorInput = caseInput();
+    let reads = 0;
+    Object.defineProperty(accessorInput, 'artifact_sha', {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return (reads === 1 ? 'a' : 'f').repeat(40);
+      },
+    });
+
+    await expect(accessorStore.prepareCase(accessorInput))
+      .rejects.toMatchObject({ code: 'production_case_record_invalid' });
+    expect(reads).toBe(0);
+    expect(accessorRuntime.pool.connect).not.toHaveBeenCalled();
+
+    const proxyRuntime = transactionPool();
+    const proxyStore = productionStore({
+      pool: proxyRuntime.pool,
+      randomUUID: () => CASE_ID,
+      now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+    });
+    const proxyInput = new Proxy(caseInput(), {
+      get(target, property, receiver) {
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    await expect(proxyStore.prepareCase(proxyInput))
+      .rejects.toMatchObject({ code: 'production_case_record_invalid' });
+    expect(proxyRuntime.pool.connect).not.toHaveBeenCalled();
+  });
+
+  it('rejects accessor and Proxy transition inputs before connecting', async () => {
+    const runtime = transactionPool();
+    const store = productionStore({
+      pool: runtime.pool,
+      randomUUID: () => EVENT_ID,
+      now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+    });
+    const transition = {
+      after_hash: null,
+      before_hash: null,
+      case_id: CASE_ID,
+      event_type: 'cancel_requested',
+      evidence_ref:
+        `db:kernel-equivalence-production-cases/${CASE_ID}/`
+        + '2/cancel_requested',
+      expected_generation: 1,
+      from_state: 'prepared',
+      late_effect_risk: false,
+      lease_expires_at: '2026-07-28T12:05:00.000Z',
+      status: 'confirmed',
+      to_state: 'cancelling',
+    };
+    let reads = 0;
+    Object.defineProperty(transition, 'before_hash', {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return null;
+      },
+    });
+    await expect(store.transitionCase(transition)).rejects.toMatchObject({
+      code: 'production_case_transition_invalid',
+    });
+    expect(reads).toBe(0);
+    expect(runtime.pool.connect).not.toHaveBeenCalled();
+
+    await expect(store.transitionCase(new Proxy({
+      ...transition,
+      before_hash: null,
+    }, {}))).rejects.toMatchObject({
+      code: 'production_case_transition_invalid',
+    });
+    expect(runtime.pool.connect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['artifact SHA', { artifact_sha: 'f'.repeat(40) }],
+    ['Brain version', { brain_version: '1.268.15' }],
+    ['Engine version', { engine_version: '19.7.0' }],
+  ])('requires %s to match a server-owned binding', async (
+    _label,
+    bindingOverrides,
+  ) => {
+    const runtime = transactionPool();
+    const store = productionStore({
+      pool: runtime.pool,
+      randomUUID: vi.fn()
+        .mockReturnValueOnce(CASE_ID)
+        .mockReturnValueOnce(EVENT_ID),
+      now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+      resolveTrustedBinding: () => trustedBindingFor(
+        caseInput(bindingOverrides),
+      ),
+    });
+
+    await expect(store.prepareCase(caseInput()))
+      .rejects.toMatchObject({
+        code: 'production_case_trusted_binding_invalid',
+      });
+    expect(runtime.pool.connect).not.toHaveBeenCalled();
+  });
+
   it('advances a lease by exact owner, generation, state, and deadline', async () => {
     const transition = {
       case_id: CASE_ID,
@@ -232,7 +494,7 @@ describe('PostgreSQL production equivalence case store', () => {
         `db:kernel-equivalence-production-cases/${CASE_ID}/2/cancel_requested`,
     };
     const runtime = transactionPool({ transitionRow: transition });
-    const store = createPostgresProductionCaseStore({
+    const store = productionStore({
       pool: runtime.pool,
       randomUUID: () => EVENT_ID,
       now: () => Date.parse('2026-07-28T12:00:00.000Z'),
@@ -263,7 +525,7 @@ describe('PostgreSQL production equivalence case store', () => {
 
   it('distinguishes a stale transition without inventing cleanup', async () => {
     const runtime = transactionPool({ transitionRow: null });
-    const store = createPostgresProductionCaseStore({
+    const store = productionStore({
       pool: runtime.pool,
       randomUUID: () => EVENT_ID,
       now: () => Date.parse('2026-07-28T12:00:00.000Z'),
@@ -303,12 +565,15 @@ describe('PostgreSQL production equivalence case store', () => {
     ['cancel confirmation without cancelled state', {
       event_type: 'cancel_confirmed',
     }],
+    ['mutable lease expiry', {
+      lease_expires_at: new Date('2026-07-28T12:05:00.000Z'),
+    }],
   ])('rejects semantic event/state mismatch: %s', async (
     _label,
     overrides,
   ) => {
     const runtime = transactionPool();
-    const store = createPostgresProductionCaseStore({
+    const store = productionStore({
       pool: runtime.pool,
       randomUUID: () => EVENT_ID,
       now: () => Date.parse('2026-07-28T12:00:00.000Z'),

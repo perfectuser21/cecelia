@@ -72,6 +72,42 @@ CREATE TABLE IF NOT EXISTS kernel_equivalence_production_cases (
   CONSTRAINT uq_kernel_equivalence_production_case_resource_ref
     UNIQUE (resource_ref),
   CHECK (cell_id = behavior_id || '::' || provider || '::' || scenario),
+  CHECK ((behavior_id, seam_id, adapter_id, resource_type) IN (
+    ('KERNEL-P0-01-BRANCH-PROTECTION',
+     'kernel.workspace.protected_ref_guard',
+     'kernel.drill.branch_protection.v1', 'ephemeral_branch'),
+    ('KERNEL-P0-02-CREDENTIAL-GUARD',
+     'kernel.credential.attempt_lease',
+     'kernel.drill.credential_guard.v1', 'ephemeral_credential_lease'),
+    ('KERNEL-P0-03-BRANCH-PUSH-GUARD',
+     'kernel.github.mutation_broker',
+     'kernel.drill.branch_push_guard.v1', 'ephemeral_branch'),
+    ('KERNEL-P0-04-CI-MERGE-AUTHORITY',
+     'kernel.merge.effect_executor',
+     'kernel.drill.ci_merge_authority.v1', 'ephemeral_branch'),
+    ('KERNEL-P0-05-INDEPENDENT-EVALUATOR-JUDGE',
+     'kernel.evaluation.independent_judge',
+     'kernel.drill.independent_evaluator_judge.v1', 'ephemeral_run'),
+    ('KERNEL-P0-06-HUMAN-REVIEW-AUTHORITY',
+     'kernel.merge.human_review_authority',
+     'kernel.drill.human_review_authority.v1', 'ephemeral_run'),
+    ('KERNEL-P0-07-RELEASE-PROMOTION',
+     'kernel.release.staging_promotion',
+     'kernel.drill.release_promotion.v1', 'ephemeral_staging'),
+    ('KERNEL-P1-08-STOP-ORPHAN-LIVENESS',
+     'kernel.liveness.orphan_recovery',
+     'kernel.drill.stop_orphan_liveness.v1', 'ephemeral_run'),
+    ('KERNEL-P1-09-DEVGATE-TDD-DOD',
+     'kernel.quality.devgate',
+     'kernel.drill.devgate_tdd_dod.v1', 'ephemeral_workspace'),
+    ('KERNEL-P1-10-CONTROLLER-SESSION-ISOLATION',
+     'kernel.controller.attempt_ownership',
+     'kernel.drill.controller_session_isolation.v1', 'ephemeral_run'),
+    ('KERNEL-P1-11-REPORT-LEARNING-CLOSURE',
+     'kernel.closure.report_learning',
+     'kernel.drill.report_learning_closure.v1',
+     'ephemeral_database_record')
+  )),
   CHECK (expires_at > created_at)
 );
 
@@ -168,13 +204,27 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION kernel_equivalence_case_lease_advance_guard()
 RETURNS trigger AS $$
+DECLARE
+  case_expires_at TIMESTAMPTZ;
 BEGIN
+  SELECT expires_at
+    INTO case_expires_at
+    FROM kernel_equivalence_production_cases
+   WHERE case_id = NEW.case_id;
+
   IF NEW.case_id <> OLD.case_id
      OR NEW.owner_id <> OLD.owner_id
      OR NEW.generation <> OLD.generation + 1
-     OR NEW.updated_at <= OLD.updated_at THEN
+     OR NEW.updated_at <= OLD.updated_at
+     OR NEW.updated_at > clock_timestamp() + interval '1 second'
+     OR NOT FOUND THEN
     RAISE EXCEPTION
       'kernel equivalence production case lease advance is invalid';
+  END IF;
+
+  IF NEW.lease_expires_at > case_expires_at THEN
+    RAISE EXCEPTION
+      'kernel equivalence production case lease exceeds case expiry';
   END IF;
 
   IF NEW.state NOT IN ('cleanup_unconfirmed', 'cleaned')
@@ -195,6 +245,30 @@ BEGIN
   ) THEN
     RAISE EXCEPTION
       'kernel equivalence production case lease transition is invalid';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION kernel_equivalence_case_lease_insert_guard()
+RETURNS trigger AS $$
+DECLARE
+  case_expires_at TIMESTAMPTZ;
+BEGIN
+  SELECT expires_at
+    INTO case_expires_at
+    FROM kernel_equivalence_production_cases
+   WHERE case_id = NEW.case_id;
+
+  IF NOT FOUND
+     OR NEW.owner_id <> 'brain.kernel_equivalence.production_cases'
+     OR NEW.generation <> 1
+     OR NEW.state <> 'prepared'
+     OR NEW.lease_expires_at <= clock_timestamp()
+     OR NEW.lease_expires_at > case_expires_at
+     OR NEW.updated_at > clock_timestamp() + interval '1 second' THEN
+    RAISE EXCEPTION
+      'kernel equivalence production case lease insert is invalid';
   END IF;
   RETURN NEW;
 END;
@@ -250,6 +324,67 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION kernel_equivalence_case_lifecycle_guard()
+RETURNS trigger AS $$
+DECLARE
+  guarded_case_id UUID;
+  required_generation BIGINT;
+  required_state TEXT;
+BEGIN
+  guarded_case_id := NEW.case_id;
+  IF TG_TABLE_NAME = 'kernel_equivalence_production_cases'
+     OR TG_OP = 'INSERT' THEN
+    required_generation := 1;
+    required_state := 'prepared';
+    IF NOT EXISTS (
+      SELECT 1
+        FROM kernel_equivalence_production_case_leases
+       WHERE case_id = guarded_case_id
+         AND owner_id = 'brain.kernel_equivalence.production_cases'
+    ) THEN
+      RAISE EXCEPTION
+        'kernel equivalence production case lease event is missing';
+    END IF;
+  ELSE
+    required_generation := NEW.generation;
+    required_state := NEW.state;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_equivalence_production_case_events
+     WHERE case_id = guarded_case_id
+       AND generation = required_generation
+       AND (
+         (required_state = 'prepared'
+          AND event_type = 'prepared'
+          AND status = 'confirmed'
+          AND late_effect_risk = false)
+         OR (required_state = 'cancelling'
+          AND event_type = 'cancel_requested'
+          AND status = 'confirmed'
+          AND late_effect_risk = false)
+         OR (required_state = 'cancelled'
+          AND event_type = 'cancel_confirmed'
+          AND status = 'confirmed'
+          AND late_effect_risk = false)
+         OR (required_state = 'cleaned'
+          AND event_type = 'cleanup_confirmed'
+          AND status = 'confirmed'
+          AND late_effect_risk = false)
+         OR (required_state = 'cleanup_unconfirmed'
+          AND event_type = 'cleanup_unconfirmed'
+          AND status = 'unconfirmed'
+          AND late_effect_risk = true)
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'kernel equivalence production case lease event is missing';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_production_case_run_guard
   ON kernel_equivalence_production_cases;
 CREATE TRIGGER trg_kernel_equivalence_production_case_run_guard
@@ -263,6 +398,29 @@ CREATE TRIGGER trg_kernel_equivalence_case_event_guard
   BEFORE INSERT ON kernel_equivalence_production_case_events
   FOR EACH ROW
   EXECUTE FUNCTION kernel_equivalence_case_event_guard();
+
+DROP TRIGGER IF EXISTS trg_kernel_equivalence_case_lease_insert_guard
+  ON kernel_equivalence_production_case_leases;
+CREATE TRIGGER trg_kernel_equivalence_case_lease_insert_guard
+  BEFORE INSERT ON kernel_equivalence_production_case_leases
+  FOR EACH ROW
+  EXECUTE FUNCTION kernel_equivalence_case_lease_insert_guard();
+
+DROP TRIGGER IF EXISTS trg_kernel_equivalence_case_requires_lifecycle
+  ON kernel_equivalence_production_cases;
+CREATE CONSTRAINT TRIGGER trg_kernel_equivalence_case_requires_lifecycle
+  AFTER INSERT ON kernel_equivalence_production_cases
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW
+  EXECUTE FUNCTION kernel_equivalence_case_lifecycle_guard();
+
+DROP TRIGGER IF EXISTS trg_kernel_equivalence_lease_requires_event
+  ON kernel_equivalence_production_case_leases;
+CREATE CONSTRAINT TRIGGER trg_kernel_equivalence_lease_requires_event
+  AFTER INSERT OR UPDATE ON kernel_equivalence_production_case_leases
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW
+  EXECUTE FUNCTION kernel_equivalence_case_lifecycle_guard();
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_production_cases_append_only
   ON kernel_equivalence_production_cases;
