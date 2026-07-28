@@ -43,6 +43,7 @@ function deps() {
       releaseTransaction,
     },
     execCmd: vi.fn(() => ''),
+    mergeEffect: vi.fn(async () => ({ status: 'DONE', detail: 'merge confirmed' })),
     attemptStore: { complete: vi.fn(async () => ({ deduped: false })) },
     judgeGate: vi.fn(async () => ({ verdict: 'PASS', feedback: null, judged: true })),
     promptDir: '/host/cecelia-prompts',
@@ -182,12 +183,18 @@ describe('kernel deterministic handlers', () => {
     expect(result.status).toBe('DONE');
   });
 
-  it('merge 按 GitHub 真相处理 CLEAN / BEHIND / CONFLICTING', async () => {
+  it('CLEAN merge 只能调用 receipted effect executor，不能直接执行 gh', async () => {
     const cleanDeps = deps();
     const clean = createKernelHandlers(cleanDeps)['merge_pr'];
-    await expect(clean(context())).resolves.toMatchObject({ status: 'DONE' });
-    expect(cleanDeps.execCmd).toHaveBeenCalledWith(expect.stringContaining('gh pr merge'));
+    await expect(clean(context())).resolves.toMatchObject({
+      status: 'DONE',
+      detail: 'merge confirmed',
+    });
+    expect(cleanDeps.mergeEffect).toHaveBeenCalledWith({ runId, taskId });
+    expect(cleanDeps.execCmd).not.toHaveBeenCalled();
+  });
 
+  it('BEHIND / CONFLICTING fail closed without an unreceipted branch mutation', async () => {
     const behindDeps = deps();
     const behind = createKernelHandlers(behindDeps)['merge_pr'];
     await expect(behind(context({
@@ -195,8 +202,12 @@ describe('kernel deterministic handlers', () => {
         ...context().observed,
         pr: { ...context().observed.pr, mergeStateStatus: 'BEHIND' },
       },
-    }))).resolves.toMatchObject({ status: 'DONE_WITH_CONCERNS' });
-    expect(behindDeps.execCmd).toHaveBeenCalledWith(expect.stringContaining('gh pr update-branch'));
+    }))).resolves.toMatchObject({
+      status: 'BLOCKED',
+      detail: 'branch update requires a new generator cycle',
+    });
+    expect(behindDeps.mergeEffect).not.toHaveBeenCalled();
+    expect(behindDeps.execCmd).not.toHaveBeenCalled();
 
     const conflictDeps = deps();
     const conflict = createKernelHandlers(conflictDeps)['merge_pr'];
@@ -206,6 +217,7 @@ describe('kernel deterministic handlers', () => {
         pr: { ...context().observed.pr, mergeStateStatus: 'CONFLICTING' },
       },
     }))).resolves.toMatchObject({ status: 'BLOCKED' });
+    expect(conflictDeps.mergeEffect).not.toHaveBeenCalled();
     expect(conflictDeps.execCmd).not.toHaveBeenCalled();
   });
 
@@ -229,6 +241,7 @@ describe('kernel deterministic handlers', () => {
       detail: 'rebase attempt cap reached',
     });
     expect(d.execCmd).not.toHaveBeenCalled();
+    expect(d.mergeEffect).not.toHaveBeenCalled();
   });
 
   it('report 执行完整收尾链，最后才写 run/task done', async () => {
