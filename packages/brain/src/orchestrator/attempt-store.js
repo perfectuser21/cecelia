@@ -557,9 +557,19 @@ export function createAttemptStore(pool, { now = () => Date.now() } = {}) {
       return firstRow(result);
     },
 
-    async complete(id, resultPayload, { leaseOwner = null } = {}) {
+    async complete(
+      id,
+      resultPayload,
+      { leaseOwner = null, leaseGeneration = null } = {},
+    ) {
       if (!SUCCESS_TERMINAL_STATUSES.has(resultPayload?.status)) {
         throw new Error(`invalid successful terminal status: ${resultPayload?.status}`);
+      }
+      if (
+        leaseOwner !== null
+        && (!Number.isInteger(leaseGeneration) || leaseGeneration < 0)
+      ) {
+        throw new Error('complete requires leaseGeneration');
       }
       const result = await pool.query(
         `UPDATE harness_attempts
@@ -573,6 +583,7 @@ export function createAttemptStore(pool, { now = () => Date.now() } = {}) {
           WHERE id = $1
             AND status NOT IN (${TERMINAL_SQL})
             AND ($6::text IS NULL OR lease_owner = $6)
+            AND ($7::integer IS NULL OR lease_generation = $7)
           RETURNING *`,
         [
           id,
@@ -581,6 +592,7 @@ export function createAttemptStore(pool, { now = () => Date.now() } = {}) {
           resultPayload.provider_metadata?.session_id ?? null,
           resultPayload.failure_class ?? null,
           leaseOwner,
+          leaseGeneration,
         ],
       );
       const attempt = firstRow(result);

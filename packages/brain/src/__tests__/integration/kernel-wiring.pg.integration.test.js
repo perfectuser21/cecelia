@@ -18,6 +18,7 @@ import callbackRouter, {
   appendGeneratorFixCallback,
 } from '../../routes/harness-callback.js';
 import approvalRouter from '../../routes/harness-kernel-approvals.js';
+import { sha256Canonical } from '../../lib/kernel-equivalence-receipts.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -412,6 +413,10 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       id: evaluatorAttemptId,
       run_id: run.runId,
       role: 'evaluator',
+      status: 'completed',
+      lease_owner: 'kernel-pg-evaluator:1',
+      lease_generation: 0,
+      execution_transport: 'local-docker',
       task_bundle: { inputs: { pull_request: { head_sha: HEAD_SHA } } },
     }, {
       status: 'completed',
@@ -419,6 +424,7 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
         outcome: 'FAIL',
         reason: 'evidence invalid and requires evaluator repair',
         failure_class: 'evidence_invalid',
+        pr_head_sha: HEAD_SHA,
       },
     }, testPool);
 
@@ -436,22 +442,59 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
     expect(repairDispatches).toEqual(['spawn:evaluator-evidence-repair']);
     await setTaskStatus(run.taskId, 'in_progress');
 
+    const attemptStore = createAttemptStore(testPool);
     const repairedEvaluatorAttemptId = randomUUID();
-    await appendAttemptVerdict({
+    await attemptStore.createAttempt({
       id: repairedEvaluatorAttemptId,
-      run_id: run.runId,
+      runId: run.runId,
+      hop: 20,
+      phase: 'evaluate',
       role: 'evaluator',
-      task_bundle: { inputs: { pull_request: { head_sha: HEAD_SHA } } },
-    }, {
+      provider: 'codex',
+      bundle: { inputs: { pull_request: { head_sha: HEAD_SHA } } },
+      callbackSecretHash: createHash('sha256')
+        .update('repaired-evaluator-secret')
+        .digest('hex'),
+    });
+    const repairedLeaseOwner = 'kernel-pg-evaluator-repair:1';
+    await attemptStore.markStarting(repairedEvaluatorAttemptId, {
+      leaseOwner: repairedLeaseOwner,
+      leaseSeconds: 180,
+    });
+    await attemptStore.recordLaunchReceipt(repairedEvaluatorAttemptId, {
+      leaseOwner: repairedLeaseOwner,
+      leaseGeneration: 0,
+      actualMachineId: 'kernel-pg-evaluator',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+    });
+    const repairedEvaluatorResult = {
+      contract_version: '1.0',
+      attempt_id: repairedEvaluatorAttemptId,
       status: 'completed',
+      summary: 'evidence repaired',
+      artifacts: [],
+      checks: [],
       decision: {
         outcome: 'PASS',
         reason: 'evidence repaired while preserving the original classification',
         failure_class: 'evidence_invalid',
+        pr_head_sha: HEAD_SHA,
       },
-    }, testPool);
+      error: null,
+      provider_metadata: { provider: 'codex', session_id: null },
+    };
+    const repairedCompletion = await attemptStore.complete(
+      repairedEvaluatorAttemptId,
+      repairedEvaluatorResult,
+    );
+    await appendAttemptVerdict(
+      repairedCompletion.attempt,
+      repairedEvaluatorResult,
+      testPool,
+    );
 
-    const attemptStore = createAttemptStore(testPool);
     const judgeAttemptId = randomUUID();
     const judgeAttempt = await attemptStore.createAttempt({
       id: judgeAttemptId,
@@ -487,11 +530,18 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       observed: {
         pr: { head_sha: HEAD_SHA },
         evaluateVerdict: {
+          attempt_id: repairedEvaluatorAttemptId,
           verdict: 'PASS',
           pr_head_sha: HEAD_SHA,
+          feedback:
+            'evidence repaired while preserving the original classification',
           failure_class: 'evidence_invalid',
+          executor_kind: 'local-docker',
+          result_digest: sha256Canonical(repairedEvaluatorResult),
+          result_receipt_id: null,
+          result_sha256: null,
         },
-        evaluateResult: null,
+        evaluateResult: repairedEvaluatorResult,
         callbackResult: null,
       },
     });

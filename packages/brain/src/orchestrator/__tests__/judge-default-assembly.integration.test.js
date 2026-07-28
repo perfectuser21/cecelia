@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { buildJudgePrompt, runJudgeGate } from '../../harness-judge.js';
+import { sha256Canonical } from '../../lib/kernel-equivalence-receipts.js';
 import { buildDefaultHandlers } from '../run.js';
 
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -70,7 +71,11 @@ describe('independent judge default assembly integration', () => {
       transcript: 'callback tail only',
       summary: 'contract passed',
       checks: [{ command: 'bash contract-e2e.sh', exit_code: 0, log_tail: '8 passed' }],
-      decision: { outcome: 'PASS', reason: 'verified' },
+      decision: {
+        outcome: 'PASS',
+        reason: 'verified',
+        pr_head_sha: headSha,
+      },
     };
     const attemptStore = {
       complete: vi.fn(async () => ({ deduped: false })),
@@ -82,6 +87,15 @@ describe('independent judge default assembly integration', () => {
               run_id: runId,
               role: 'evaluator',
               status: 'completed',
+              execution_transport: 'local-docker',
+              lease_owner: 'judge-fixture-worker',
+              lease_generation: 2,
+              completed_at: new Date('2026-07-28T12:00:00.000Z'),
+              task_bundle: {
+                inputs: {
+                  pull_request: { head_sha: headSha },
+                },
+              },
               result: evaluateResult,
             }
       )),
@@ -107,6 +121,12 @@ describe('independent judge default assembly integration', () => {
           attempt_id: evaluatorAttemptId,
           verdict: 'PASS',
           pr_head_sha: headSha,
+          feedback: 'verified',
+          failure_class: null,
+          executor_kind: 'local-docker',
+          result_digest: sha256Canonical(evaluateResult),
+          result_receipt_id: null,
+          result_sha256: null,
         },
         evaluateResult,
       },

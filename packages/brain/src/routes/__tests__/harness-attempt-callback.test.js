@@ -571,7 +571,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       expect.objectContaining({
         role_result: expect.objectContaining({ kind: 'evaluator' }),
       }),
-      { leaseOwner },
+      { leaseOwner, leaseGeneration: attempt.lease_generation },
     );
   });
 

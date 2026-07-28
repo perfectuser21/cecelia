@@ -64,7 +64,11 @@ const runtime = vi.hoisted(() => {
       if (!attempt || ['completed', 'failed', 'cancelled'].includes(attempt.status)) {
         return { attempt: null, deduped: true };
       }
-      Object.assign(attempt, { status: result.status, result });
+      Object.assign(attempt, {
+        status: result.status,
+        result,
+        completed_at: new Date('2026-07-28T12:00:00.000Z'),
+      });
       return { attempt, deduped: false };
     }),
     fail: vi.fn(async (id, error) => {
@@ -92,6 +96,7 @@ vi.mock('../../lib/harness-orphan-guard.js', () => ({
 }));
 
 import callbackRouter from '../../routes/harness-callback.js';
+import { sha256Canonical } from '../../lib/kernel-equivalence-receipts.js';
 import { createDispatcher } from '../dispatcher.js';
 import { createKernelHandlers } from '../kernel-handlers.js';
 import { runLoop } from '../loop.js';
@@ -313,6 +318,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       provider: 'codex',
       status: 'running',
       lease_owner: leaseOwner,
+      lease_generation: 0,
       requested_machine_id: 'integration-host',
       actual_machine_id: 'integration-host',
       execution_transport: 'local-docker',
@@ -340,7 +346,11 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       summary: 'evaluator verified behavior',
       artifacts: [],
       checks: ['provider summary only'],
-      decision: { outcome: 'PASS', reason: 'verified' },
+      decision: {
+        outcome: 'PASS',
+        reason: 'verified',
+        pr_head_sha: 'sha-evidence',
+      },
       error: null,
       provider_metadata: { provider: 'codex', session_id: 'thread-evaluator' },
     }, {
@@ -360,6 +370,8 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       .send(bridgedResult);
 
     expect(callback.status).toBe(200);
+    const persistedEvaluatorResult =
+      runtime.attempts.get(evaluatorAttemptId).result;
     const judgeGate = vi.fn(async () => ({ verdict: 'PASS', feedback: 'grounded', judged: true }));
     const handlers = createKernelHandlers({
       pool: runtime.pool,
@@ -377,8 +389,14 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
           attempt_id: evaluatorAttemptId,
           verdict: 'PASS',
           pr_head_sha: 'sha-evidence',
+          feedback: 'verified',
+          failure_class: null,
+          executor_kind: 'local-docker',
+          result_digest: sha256Canonical(persistedEvaluatorResult),
+          result_receipt_id: null,
+          result_sha256: null,
         },
-        evaluateResult: runtime.attempts.get(evaluatorAttemptId).result,
+        evaluateResult: persistedEvaluatorResult,
       },
     });
 

@@ -3,6 +3,12 @@ import { sha256Canonical } from '../lib/kernel-equivalence-receipts.js';
 
 const INDEPENDENT_JUDGE_SEAM_ID = 'kernel.evaluation.independent_judge';
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const EVALUATOR_EXECUTOR_KINDS = new Set([
+  'local-docker',
+  'remote-bridge',
+  'fleet-worker',
+]);
 const INDEPENDENT_JUDGE_EFFECTS = Object.freeze({
   normal: Object.freeze({
     observed_outcome: 'confirmed',
@@ -29,6 +35,18 @@ function normalizedOutcome(value) {
   return outcome === 'FIXED' ? 'PASS' : outcome;
 }
 
+function attemptBundle(attempt) {
+  if (attempt?.task_bundle && typeof attempt.task_bundle === 'object') {
+    return attempt.task_bundle;
+  }
+  if (typeof attempt?.task_bundle !== 'string') return null;
+  try {
+    return JSON.parse(attempt.task_bundle);
+  } catch {
+    return null;
+  }
+}
+
 async function validateIndependentAttemptAuthority(ctx, attemptStore) {
   const judgeAttemptId = ctx?.attempt?.id;
   const evaluatorVerdict = ctx?.observed?.evaluateVerdict;
@@ -51,6 +69,47 @@ async function validateIndependentAttemptAuthority(ctx, attemptStore) {
     attemptStore.getById(evaluatorAttemptId),
   ]);
   const persistedResult = evaluatorAttempt?.result;
+  const executorKind = evaluatorAttempt?.execution_transport;
+  const currentPrHeadSha = ctx?.observed?.pr?.head_sha;
+  let resultDigest = null;
+  let resultExact = false;
+  try {
+    resultDigest = sha256Canonical(persistedResult);
+    resultExact = resultDigest === sha256Canonical(evaluatorResult);
+  } catch {
+    resultDigest = null;
+  }
+  const bundledPrHeadSha =
+    attemptBundle(evaluatorAttempt)?.inputs?.pull_request?.head_sha;
+  const terminalWriteFenced = (
+    typeof evaluatorAttempt?.lease_owner === 'string'
+    && evaluatorAttempt.lease_owner.length > 0
+    && Number.isInteger(evaluatorAttempt.lease_generation)
+    && evaluatorAttempt.lease_generation >= 0
+    && Number.isFinite(Date.parse(evaluatorAttempt.completed_at))
+  );
+  const verdictBoundToResult = (
+    evaluatorVerdict?.executor_kind === executorKind
+    && evaluatorVerdict?.result_digest === resultDigest
+    && evaluatorVerdict?.feedback
+      === (persistedResult?.decision?.reason ?? null)
+    && (evaluatorVerdict?.failure_class ?? null)
+      === (persistedResult?.decision?.failure_class ?? null)
+  );
+  const executorReceiptBound = executorKind === 'fleet-worker'
+    ? (
+        UUID_PATTERN.test(evaluatorAttempt?.result_receipt_id ?? '')
+        && SHA256_PATTERN.test(evaluatorAttempt?.result_sha256 ?? '')
+        && evaluatorVerdict?.result_receipt_id
+          === evaluatorAttempt.result_receipt_id
+        && evaluatorVerdict?.result_sha256
+          === evaluatorAttempt.result_sha256
+      )
+    : (
+        ['local-docker', 'remote-bridge'].includes(executorKind)
+        && (evaluatorVerdict?.result_receipt_id ?? null) === null
+        && (evaluatorVerdict?.result_sha256 ?? null) === null
+      );
   const exact = (
     judgeAttempt?.id === judgeAttemptId
     && judgeAttempt.run_id === ctx.runId
@@ -61,18 +120,26 @@ async function validateIndependentAttemptAuthority(ctx, attemptStore) {
     && ['completed', 'completed_with_concerns'].includes(
       evaluatorAttempt.status,
     )
+    && EVALUATOR_EXECUTOR_KINDS.has(executorKind)
+    && terminalWriteFenced
     && persistedResult?.attempt_id === evaluatorAttemptId
-    && persistedResult?.contract_version === evaluatorResult.contract_version
-    && normalizedOutcome(persistedResult?.decision?.outcome)
-      === normalizedOutcome(evaluatorResult?.decision?.outcome)
+    && resultExact
+    && currentPrHeadSha
+    && persistedResult?.decision?.pr_head_sha === currentPrHeadSha
+    && bundledPrHeadSha === currentPrHeadSha
+    && evaluatorVerdict.pr_head_sha === currentPrHeadSha
+    && verdictBoundToResult
+    && executorReceiptBound
     && normalizedOutcome(evaluatorVerdict.verdict)
-      === normalizedOutcome(evaluatorResult?.decision?.outcome)
+      === normalizedOutcome(persistedResult?.decision?.outcome)
   );
   return {
     valid: exact,
     selfCertification: false,
     judgeAttempt,
     evaluatorAttempt,
+    evaluatorResult: persistedResult,
+    evaluatorVerdict,
   };
 }
 
@@ -138,8 +205,6 @@ async function appendJudgeVerdict(
 export function createKernelHandlers(deps) {
   return Object.freeze({
     async 'spawn:judge'(ctx) {
-      const evaluator = ctx.observed.evaluateVerdict ?? {};
-      const evaluateResult = ctx.observed.evaluateResult ?? null;
       const attemptAuthority = await validateIndependentAttemptAuthority(
         ctx,
         deps.attemptStore,
@@ -156,6 +221,8 @@ export function createKernelHandlers(deps) {
           detail: 'independent judge Attempt authority invalid',
         };
       }
+      const evaluator = attemptAuthority.evaluatorVerdict;
+      const evaluateResult = attemptAuthority.evaluatorResult;
       const brainResult = evaluatorBrainResult(evaluateResult) ?? ctx.observed.callbackResult;
       const result = await deps.judgeGate({
         agentVerdict: evaluator.verdict ?? evaluateResult?.decision?.outcome,
@@ -339,7 +406,7 @@ export function createIndependentJudgeEquivalenceSeam({
     judgeAuthority?.owner_service !== INDEPENDENT_JUDGE_SEAM_ID
     || typeof judgeAuthority?.loadContext !== 'function'
     || typeof judgeAuthority?.snapshot !== 'function'
-    || typeof judgeAuthority?.loadPredecessorActors !== 'function'
+    || typeof judgeAuthority?.loadPredecessorActorBinding !== 'function'
   ) {
     throw seamError('judge_authority_port_unavailable');
   }
@@ -386,7 +453,7 @@ export function createIndependentJudgeEquivalenceSeam({
       }
       if (cell.scenario === 'recovery') {
         const predecessorActors =
-          await judgeAuthority.loadPredecessorActors({
+          await judgeAuthority.loadPredecessorActorBinding({
             cell,
             grant,
             predecessor,
@@ -394,9 +461,19 @@ export function createIndependentJudgeEquivalenceSeam({
             signal,
           });
         signal?.throwIfAborted();
+        const predecessorReceiptId = predecessor?.receipt?.receipt_id;
+        const predecessorGrantId = predecessor?.grant?.grant_id;
         if (
-          !predecessor
-          || predecessorActors?.receipt_id !== predecessor.receipt_id
+          !UUID_PATTERN.test(predecessorReceiptId ?? '')
+          || !UUID_PATTERN.test(predecessorGrantId ?? '')
+          || predecessorActors?.owner_service
+            !== INDEPENDENT_JUDGE_SEAM_ID
+          || predecessorActors?.predecessor_receipt_id
+            !== predecessorReceiptId
+          || predecessorActors?.predecessor_grant_id
+            !== predecessorGrantId
+          || predecessorActors?.evidence_ref
+            !== `db:kernel-equivalence-receipts/${predecessorReceiptId}`
           || !UUID_PATTERN.test(
             predecessorActors?.evaluator_attempt_id ?? '',
           )
