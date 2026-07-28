@@ -6,6 +6,7 @@ const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
 const HEAD_SHA = 'a'.repeat(40);
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4400';
+const ASSESSMENT_ID = '33333333-3333-4333-8333-333333333333';
 
 function proof() {
   return {
@@ -26,6 +27,104 @@ function proof() {
 }
 
 describe('PostgreSQL merge effect store', () => {
+  it('persists an exact server-owned review assessment using durable merge history', async () => {
+    const assessment = {
+      assessment_id: ASSESSMENT_ID,
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      repository: 'perfectuser21/cecelia',
+      pr_number: 4400,
+      head_sha: HEAD_SHA,
+      policy_version: 'kernel-merge/v1',
+      changed_paths: ['apps/dashboard/src/App.jsx'],
+      risk_tier: 'low',
+      risk_reasons: ['low_risk_paths'],
+      first_kernel_release: false,
+      payload_review_required: false,
+      review_required: false,
+    };
+    const client = {
+      query: vi.fn(async (sql) => {
+        if (/AS first_kernel_release/.test(sql)) {
+          return { rows: [{ first_kernel_release: false }] };
+        }
+        if (/SELECT id AS assessment_id/.test(sql)) return { rows: [assessment] };
+        return { rows: [] };
+      }),
+    };
+    const store = createPostgresMergeEffectStore({});
+
+    await expect(store.assessReviewPolicy(client, {
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      currentPr: {
+        repository: 'perfectuser21/cecelia',
+        number: 4400,
+        head_sha: HEAD_SHA,
+        changed_paths: ['apps/dashboard/src/App.jsx'],
+      },
+      policyVersion: 'kernel-merge/v1',
+      payload: { review_required: false },
+    })).resolves.toEqual({
+      assessment_id: ASSESSMENT_ID,
+      policy_version: 'kernel-merge/v1',
+      changed_paths: ['apps/dashboard/src/App.jsx'],
+      risk_tier: 'low',
+      risk_reasons: ['low_risk_paths'],
+      first_kernel_release: false,
+      payload_review_required: false,
+      review_required: false,
+    });
+
+    expect(client.query.mock.calls.map(([sql]) => sql).join('\n')).toMatch(
+      /pg_advisory_xact_lock[\s\S]*kernel_merge_effect_receipts[\s\S]*INSERT INTO kernel_merge_review_assessments[\s\S]*SELECT id AS assessment_id/,
+    );
+  });
+
+  it('fails closed when an idempotency collision returns different review authority', async () => {
+    const client = {
+      query: vi.fn(async (sql) => {
+        if (/AS first_kernel_release/.test(sql)) {
+          return { rows: [{ first_kernel_release: false }] };
+        }
+        if (/SELECT id AS assessment_id/.test(sql)) {
+          return {
+            rows: [{
+              assessment_id: ASSESSMENT_ID,
+              run_id: RUN_ID,
+              task_id: TASK_ID,
+              repository: 'perfectuser21/cecelia',
+              pr_number: 4400,
+              head_sha: HEAD_SHA,
+              policy_version: 'kernel-merge/v1',
+              changed_paths: ['packages/brain/migrations/376_bad.sql'],
+              risk_tier: 'high',
+              risk_reasons: ['high_risk_path:packages/brain/migrations/376_bad.sql'],
+              first_kernel_release: false,
+              payload_review_required: false,
+              review_required: true,
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+    };
+    const store = createPostgresMergeEffectStore({});
+
+    await expect(store.assessReviewPolicy(client, {
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      currentPr: {
+        repository: 'perfectuser21/cecelia',
+        number: 4400,
+        head_sha: HEAD_SHA,
+        changed_paths: ['apps/dashboard/src/App.jsx'],
+      },
+      policyVersion: 'kernel-merge/v1',
+      payload: { review_required: false },
+    })).rejects.toMatchObject({ code: 'review_assessment_conflict' });
+  });
+
   it('holds and releases one session advisory lock around the whole effect callback', async () => {
     const order = [];
     const client = {

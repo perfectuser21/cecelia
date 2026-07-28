@@ -8,6 +8,7 @@ import { runMigrations } from '../../migrate.js';
 import {
   materializeBootstrapE2EManifest,
 } from '../../orchestrator/release-run-bootstrap-e2e.js';
+import { createPostgresMergeEffectStore } from '../../orchestrator/merge-effect-store.js';
 import { createReleaseBlockedEscalator } from '../../orchestrator/release-run-escalation.js';
 import { createPostgresReleaseRunStore } from '../../orchestrator/release-run-store.js';
 
@@ -197,7 +198,10 @@ beforeAll(async () => {
   await client.query(`CREATE SCHEMA ${quotedSchema}`);
   await client.query(`SET search_path TO ${quotedSchema}, public`);
   await client.query(`
-    CREATE TABLE tasks (id UUID PRIMARY KEY);
+    CREATE TABLE tasks (
+      id UUID PRIMARY KEY,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
     CREATE TABLE initiative_contracts (
       id UUID PRIMARY KEY,
       version INTEGER NOT NULL,
@@ -270,6 +274,71 @@ afterAll(async () => {
 });
 
 describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
+  it('persists first-release and path risk as immutable server-owned review authority', async () => {
+    const mergeStore = createPostgresMergeEffectStore({});
+    const firstTaskId = randomUUID();
+    const firstRunId = randomUUID();
+    await client.query('INSERT INTO tasks (id) VALUES ($1)', [firstTaskId]);
+    await client.query(
+      'INSERT INTO initiative_runs (id, contract_id) VALUES ($1, $2)',
+      [firstRunId, contractId],
+    );
+
+    await expect(client.query(
+      `INSERT INTO kernel_merge_review_assessments
+         (run_id, task_id, repository, pr_number, head_sha, policy_version,
+          changed_paths, risk_tier, risk_reasons, first_kernel_release,
+          payload_review_required, review_required)
+       VALUES ($1, $2, 'other/repository', 1, $3, 'kernel-merge/v1',
+               '["apps/dashboard/src/App.jsx"]', 'low', '["low_risk_paths"]',
+               false, false, false)`,
+      [firstRunId, firstTaskId, headSha],
+    )).rejects.toMatchObject({ code: 'P0001' });
+
+    const first = await mergeStore.assessReviewPolicy(client, {
+      runId: firstRunId,
+      taskId: firstTaskId,
+      currentPr: {
+        repository: 'other/repository',
+        number: 1,
+        head_sha: headSha,
+        changed_paths: ['apps/dashboard/src/App.jsx'],
+      },
+      policyVersion: 'kernel-merge/v1',
+      payload: { review_required: false },
+    });
+    expect(first).toMatchObject({
+      risk_tier: 'low',
+      first_kernel_release: true,
+      payload_review_required: false,
+      review_required: true,
+      risk_reasons: ['low_risk_paths', 'first_kernel_release'],
+    });
+    await expect(client.query(
+      `UPDATE kernel_merge_review_assessments
+          SET review_required = false
+        WHERE id = $1`,
+      [first.assessment_id],
+    )).rejects.toMatchObject({ code: 'P0001' });
+
+    await expect(mergeStore.assessReviewPolicy(client, {
+      runId,
+      taskId,
+      currentPr: {
+        repository: 'perfectuser21/cecelia',
+        number: 4500,
+        head_sha: headSha,
+        changed_paths: ['apps/dashboard/src/App.jsx'],
+      },
+      policyVersion: 'kernel-merge/v1',
+      payload: { review_required: false },
+    })).resolves.toMatchObject({
+      risk_tier: 'low',
+      first_kernel_release: false,
+      review_required: false,
+    });
+  });
+
   it('uses the canonical runner to upgrade an N-1 schema from 368 through 375', async () => {
     const upgradeSchema = `kernel_release_upgrade_${randomUUID().replaceAll('-', '')}`;
     const quotedUpgradeSchema = `"${upgradeSchema}"`;

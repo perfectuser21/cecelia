@@ -4,6 +4,7 @@ import { createMergeEffectExecutor } from '../merge-effect-executor.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
+const ASSESSMENT_ID = '33333333-3333-4333-8333-333333333333';
 const HEAD_SHA = 'a'.repeat(40);
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4400';
 
@@ -17,6 +18,7 @@ function currentPr(overrides = {}) {
     state: 'OPEN',
     ci: 'pass',
     merged: false,
+    changed_paths: ['apps/dashboard/src/App.jsx'],
     ...overrides,
   };
 }
@@ -60,6 +62,16 @@ function deps(overrides = {}) {
     withRunLock: vi.fn(async (_runId, fn) => fn({})),
     loadEvidence: vi.fn(async () => evidence()),
     findIntent: vi.fn(async () => null),
+    assessReviewPolicy: vi.fn(async () => ({
+      assessment_id: ASSESSMENT_ID,
+      policy_version: 'kernel-merge/v1',
+      changed_paths: ['apps/dashboard/src/App.jsx'],
+      risk_tier: 'low',
+      risk_reasons: ['low_risk_paths'],
+      first_kernel_release: false,
+      payload_review_required: false,
+      review_required: false,
+    })),
     createAuthorizationIntent: vi.fn(async () => {
       order.push('intent');
       return {
@@ -99,6 +111,15 @@ describe('merge effect executor', () => {
     });
 
     expect(d.order).toEqual(['intent', 'effect', 'receipt:confirmed']);
+    expect(d.store.assessReviewPolicy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        runId: RUN_ID,
+        taskId: TASK_ID,
+        currentPr: expect.objectContaining({ head_sha: HEAD_SHA }),
+        policyVersion: 'kernel-merge/v1',
+      }),
+    );
     expect(d.mergePullRequest).toHaveBeenCalledWith({
       pr_url: PR_URL,
       expected_head_sha: HEAD_SHA,

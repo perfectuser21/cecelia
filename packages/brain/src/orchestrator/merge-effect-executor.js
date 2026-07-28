@@ -88,10 +88,18 @@ export function createMergeEffectExecutor({
         }
       }
 
+      const reviewPolicy = await store.assessReviewPolicy(client, {
+        runId,
+        taskId,
+        currentPr: current,
+        policyVersion,
+        payload: authority.task.payload,
+      });
       const proof = validateMergeAuthorizationEvidence({
         ...authority,
         pr: current,
         policyVersion,
+        reviewPolicy,
       });
       const effect = existing ?? await store.createAuthorizationIntent(
         client,

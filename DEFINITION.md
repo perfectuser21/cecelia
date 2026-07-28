@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.268.9
+**Brain 版本**: 1.268.10
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.10 — Server-owned merge review authority
+
+- GitHub PR observations now include a canonical exact changed-path set; a
+  fixed server classifier marks Kernel orchestration, migration, release,
+  workflow, and CI policy changes as high risk.
+- PostgreSQL durably derives first-release history and the monotonic review
+  decision. First, high-risk, and unknown releases always require same-head
+  human approval; task payload may only tighten this decision.
+- Immutable review assessments are revalidated at the merge effect boundary.
+- 回退：`bash scripts/brain-rollback.sh 1.268.9`（保留 review assessment 审计账本）。
 
 ## Brain 1.268.9 — Artifact-bound rollback ledger
 

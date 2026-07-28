@@ -24,6 +24,7 @@ describe('migration 374 Kernel ReleaseRun', () => {
     'kernel_release_rollback_artifact_intents',
     'kernel_release_rollback_artifact_receipts',
     'kernel_release_blocked_escalations',
+    'kernel_merge_review_assessments',
   ];
   const bootstrapLedgerTables = [
     'kernel_release_bootstrap_runs',
@@ -325,6 +326,15 @@ describe('migration 375 installed-v374 reconciliation', () => {
     expect(closureSql).toMatch(/UNIQUE \(bootstrap_run_id, artifact_name\)/i);
     expect(closureSql).toMatch(/expected_previous_version TEXT NOT NULL/i);
     expect(closureSql).toMatch(/expected_previous_digest TEXT NOT NULL/i);
+  });
+
+  it('durably enforces server-owned merge review risk and history', () => {
+    expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_merge_review_assessments/i);
+    expect(closureSql).toMatch(/kernel_merge_review_assessment_guard/i);
+    expect(closureSql).toMatch(/NEW\.first_kernel_release IS DISTINCT FROM expected_first_release/i);
+    expect(closureSql).toMatch(/NEW\.payload_review_required IS DISTINCT FROM expected_payload_required/i);
+    expect(closureSql).toMatch(/NEW\.review_required IS DISTINCT FROM \([\s\S]+?expected_risk_tier <> 'low'/i);
+    expect(closureSql).toMatch(/kernel_merge_effect_receipts[\s\S]+?receipt_status = 'confirmed'/i);
   });
 
   it('replaces the guards and registers migration 375', () => {

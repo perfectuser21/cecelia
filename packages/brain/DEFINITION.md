@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.268.9
+**版本**: 1.268.10
+
+## Server-owned merge review authority
+
+- Merge review risk comes from the exact changed paths observed by the GitHub
+  adapter and a fixed server policy, never mutable title metadata.
+- An append-only PostgreSQL assessment recomputes durable first-release
+  history and enforces monotonic review: first/high/unknown always review,
+  while task payload can only require more review.
+- The effect executor binds that assessment to the current PR head before
+  persisting merge authorization.
+- 回退：`bash scripts/brain-rollback.sh 1.268.9`（保留 review assessment ledger）。
 
 ## Artifact-bound rollback ledger
 

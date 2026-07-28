@@ -269,6 +269,138 @@ CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
+CREATE TABLE IF NOT EXISTS kernel_merge_review_assessments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id UUID NOT NULL REFERENCES initiative_runs(id),
+  task_id UUID NOT NULL REFERENCES tasks(id),
+  repository TEXT NOT NULL CHECK (
+    repository ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+  ),
+  pr_number INTEGER NOT NULL CHECK (pr_number > 0),
+  head_sha TEXT NOT NULL CHECK (head_sha ~ '^[0-9a-f]{40}$'),
+  policy_version TEXT NOT NULL CHECK (policy_version <> ''),
+  changed_paths JSONB NOT NULL CHECK (
+    jsonb_typeof(changed_paths) = 'array'
+  ),
+  risk_tier TEXT NOT NULL CHECK (risk_tier IN ('low', 'high', 'unknown')),
+  risk_reasons JSONB NOT NULL CHECK (
+    jsonb_typeof(risk_reasons) = 'array'
+    AND jsonb_array_length(risk_reasons) > 0
+  ),
+  first_kernel_release BOOLEAN NOT NULL,
+  payload_review_required BOOLEAN NOT NULL,
+  review_required BOOLEAN NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (run_id, head_sha, policy_version)
+);
+
+CREATE OR REPLACE FUNCTION kernel_merge_review_assessment_guard()
+RETURNS trigger AS $$
+DECLARE
+  expected_first_release BOOLEAN;
+  expected_payload_required BOOLEAN;
+  expected_risk_tier TEXT;
+  expected_risk_reasons JSONB;
+  canonical_paths JSONB;
+BEGIN
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('kernel-merge-review:' || NEW.repository, 0)
+  );
+
+  IF jsonb_array_length(NEW.changed_paths) > 3000
+     OR EXISTS (
+       SELECT 1
+         FROM jsonb_array_elements(NEW.changed_paths) AS item
+        WHERE jsonb_typeof(item) <> 'string'
+     ) THEN
+    RAISE EXCEPTION 'merge review assessment requires bounded string paths';
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(to_jsonb(path) ORDER BY path), '[]'::jsonb)
+    INTO canonical_paths
+    FROM (
+      SELECT DISTINCT value AS path
+        FROM jsonb_array_elements_text(NEW.changed_paths)
+    ) paths;
+  IF NEW.changed_paths IS DISTINCT FROM canonical_paths
+     OR EXISTS (
+       SELECT 1
+         FROM jsonb_array_elements_text(NEW.changed_paths) AS path(value)
+        WHERE length(value) < 1
+           OR length(value) > 1024
+           OR value ~ '(^/|(^|/)\.{1,2}(/|$)|[[:cntrl:]\\])'
+     ) THEN
+    RAISE EXCEPTION 'merge review assessment requires canonical safe paths';
+  END IF;
+
+  IF jsonb_array_length(NEW.changed_paths) = 0 THEN
+    expected_risk_tier := 'unknown';
+    expected_risk_reasons := '["changed_paths_missing"]'::jsonb;
+  ELSIF EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements_text(NEW.changed_paths) AS path(value)
+     WHERE value ~ '^(\.github/workflows/|packages/brain/migrations/|packages/brain/src/(orchestrator/|orchestrator\.js$|routes/harness-kernel-approvals(/|\.js$))|packages/workflows/skills/|scripts/(brain-|deploy|promote-|release-run-|rollback))'
+  ) THEN
+    expected_risk_tier := 'high';
+    SELECT jsonb_agg(
+             to_jsonb('high_risk_path:' || value)
+             ORDER BY value
+           )
+      INTO expected_risk_reasons
+      FROM jsonb_array_elements_text(NEW.changed_paths) AS path(value)
+     WHERE value ~ '^(\.github/workflows/|packages/brain/migrations/|packages/brain/src/(orchestrator/|orchestrator\.js$|routes/harness-kernel-approvals(/|\.js$))|packages/workflows/skills/|scripts/(brain-|deploy|promote-|release-run-|rollback))';
+  ELSE
+    expected_risk_tier := 'low';
+    expected_risk_reasons := '["low_risk_paths"]'::jsonb;
+  END IF;
+
+  SELECT COALESCE(task.payload->>'review_required' = 'true', FALSE)
+    INTO expected_payload_required
+    FROM tasks task
+   WHERE task.id = NEW.task_id;
+  IF expected_payload_required IS NULL THEN
+    RAISE EXCEPTION 'merge review assessment requires an existing task';
+  END IF;
+
+  SELECT NOT EXISTS (
+    SELECT 1
+      FROM kernel_merge_effect_receipts receipt
+      JOIN kernel_merge_effect_intents intent
+        ON intent.id = receipt.intent_id
+      JOIN kernel_merge_authorizations merge_auth
+        ON merge_auth.id = intent.authorization_id
+     WHERE merge_auth.repository = NEW.repository
+       AND receipt.receipt_status = 'confirmed'
+       AND receipt.merged = TRUE
+  ) INTO expected_first_release;
+
+  IF NEW.first_kernel_release IS DISTINCT FROM expected_first_release
+     OR NEW.payload_review_required IS DISTINCT FROM expected_payload_required
+     OR NEW.risk_tier IS DISTINCT FROM expected_risk_tier
+     OR NEW.risk_reasons IS DISTINCT FROM (
+       expected_risk_reasons
+       || CASE
+            WHEN expected_first_release THEN '["first_kernel_release"]'::jsonb
+            ELSE '[]'::jsonb
+          END
+     )
+     OR NEW.review_required IS DISTINCT FROM (
+       expected_payload_required
+       OR expected_first_release
+       OR expected_risk_tier <> 'low'
+     ) THEN
+    RAISE EXCEPTION 'merge review assessment does not match server policy';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_merge_review_assessment_guard
+  ON kernel_merge_review_assessments;
+CREATE TRIGGER trg_kernel_merge_review_assessment_guard
+  BEFORE INSERT ON kernel_merge_review_assessments
+  FOR EACH ROW EXECUTE FUNCTION kernel_merge_review_assessment_guard();
+
 -- One-time N-1 cutover authority. This is deliberately isomorphic with the
 -- normal ReleaseRun shape: immutable identity, ordered state, leased effect
 -- attempts, and durable observations. The singleton survives terminal state,
@@ -1405,6 +1537,12 @@ CREATE TRIGGER trg_kernel_release_blocked_escalations_append_only
   BEFORE UPDATE OR DELETE ON kernel_release_blocked_escalations
   FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
 
+DROP TRIGGER IF EXISTS trg_kernel_merge_review_assessments_append_only
+  ON kernel_merge_review_assessments;
+CREATE TRIGGER trg_kernel_merge_review_assessments_append_only
+  BEFORE UPDATE OR DELETE ON kernel_merge_review_assessments
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
 DROP TRIGGER IF EXISTS trg_kernel_release_effect_dispatch_claims_append_only
   ON kernel_release_effect_dispatch_claims;
 CREATE TRIGGER trg_kernel_release_effect_dispatch_claims_append_only
@@ -1491,6 +1629,7 @@ BEGIN
     'kernel_release_rollback_artifact_intents',
     'kernel_release_rollback_artifact_receipts',
     'kernel_release_blocked_escalations',
+    'kernel_merge_review_assessments',
     'kernel_release_bootstrap_runs',
     'kernel_release_bootstrap_e2e_manifests',
     'kernel_release_bootstrap_transitions',
@@ -1548,6 +1687,9 @@ CREATE TRIGGER trg_kernel_release_rollback_artifact_receipts_truncate
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
 CREATE TRIGGER trg_kernel_release_blocked_escalations_truncate
   BEFORE TRUNCATE ON kernel_release_blocked_escalations
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_merge_review_assessments_truncate
+  BEFORE TRUNCATE ON kernel_merge_review_assessments
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
 CREATE TRIGGER trg_kernel_release_bootstrap_runs_truncate
   BEFORE TRUNCATE ON kernel_release_bootstrap_runs
