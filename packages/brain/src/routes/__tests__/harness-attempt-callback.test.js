@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { signMachineAttestation } from '../../orchestrator/machine-attestation.js';
@@ -55,6 +55,7 @@ const attempt = {
   provider: 'codex',
   status: 'running',
   lease_owner: leaseOwner,
+  lease_generation: 2,
   requested_machine_id: localMachineId,
   actual_machine_id: localMachineId,
   execution_transport: 'local-docker',
@@ -182,6 +183,54 @@ function postCallback(app, body = validResult, token = callbackToken, owner = le
     .set('Authorization', `Bearer ${token}`)
     .set('X-Harness-Lease-Owner', owner);
   return call.send(body);
+}
+
+function postFleetHeartbeat(app, {
+  providerSessionId = null,
+  attemptRecord = fleetAttempt(),
+} = {}) {
+  const heartbeatNonce = randomUUID();
+  const observedAt = new Date().toISOString();
+  const body = {
+    schema_version: 'fleet-attempt-heartbeat/v1',
+    heartbeat_nonce: heartbeatNonce,
+    observed_at: observedAt,
+    lease_seconds: 180,
+    provider_session_id: providerSessionId,
+  };
+  const signingPayload = `${[
+    'cecelia-fleet-heartbeat/v1',
+    attemptId,
+    attemptRecord.actual_machine_id,
+    runId,
+    attemptRecord.remote_job_id,
+    attemptRecord.lease_owner,
+    String(attemptRecord.lease_generation),
+    heartbeatNonce,
+    observedAt,
+    '180',
+    providerSessionId ?? '',
+  ].join('\n')}\n`;
+  mocks.store.getById.mockResolvedValue(attemptRecord);
+  return request(app)
+    .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+    .set('X-Cecelia-Fleet-Protocol', 'fleet-heartbeat/v1')
+    .set('X-Cecelia-Fleet-Worker-Id', attemptRecord.actual_machine_id)
+    .set('X-Cecelia-Fleet-Run-Id', runId)
+    .set('X-Cecelia-Fleet-Job-Id', attemptRecord.remote_job_id)
+    .set('X-Cecelia-Fleet-Lease-Owner', attemptRecord.lease_owner)
+    .set(
+      'X-Cecelia-Fleet-Lease-Generation',
+      String(attemptRecord.lease_generation),
+    )
+    .set('X-Cecelia-Fleet-Heartbeat-Nonce', heartbeatNonce)
+    .set(
+      'Authorization',
+      `Cecelia-Fleet-HMAC-SHA256 ${
+        createHmac('sha256', fleetSecret).update(signingPayload).digest('hex')
+      }`,
+    )
+    .send(body);
 }
 
 function evaluatorRoleCallback() {
@@ -1147,6 +1196,72 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       leaseOwner: 'brain-1:123',
       leaseSeconds: 180,
     });
+  });
+
+  it('Fleet Worker 用 launch receipt 全绑定 HMAC 续租并拿签名 ACK', async () => {
+    const heartbeatAt = new Date().toISOString();
+    const leaseExpiresAt = new Date(Date.now() + 180_000).toISOString();
+    mocks.store.heartbeat.mockResolvedValue({
+      ...fleetAttempt(),
+      heartbeat_at: heartbeatAt,
+      lease_expires_at: leaseExpiresAt,
+    });
+
+    const response = await postFleetHeartbeat(app);
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.heartbeat).toHaveBeenCalledWith(attemptId, {
+      leaseOwner,
+      leaseGeneration: 2,
+      leaseSeconds: 180,
+    });
+    expect(response.body).toMatchObject({
+      schema_version: 'fleet-attempt-heartbeat-ack/v1',
+      attempt_id: attemptId,
+      run_id: runId,
+      worker_id: remoteMachineId,
+      job_id: remoteJobId,
+      lease_owner: leaseOwner,
+      lease_generation: 2,
+      provider_session_id: null,
+      heartbeat_at: heartbeatAt,
+      lease_expires_at: leaseExpiresAt,
+    });
+    expect(response.body.receipt_hmac).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('Fleet heartbeat 首次观察 session 时以同一 generation 转 running', async () => {
+    mocks.store.markRunning.mockResolvedValue({
+      ...fleetAttempt(),
+      provider_session_id: 'thread-live',
+      heartbeat_at: new Date().toISOString(),
+      lease_expires_at: new Date(Date.now() + 180_000).toISOString(),
+    });
+
+    const response = await postFleetHeartbeat(app, {
+      providerSessionId: 'thread-live',
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.markRunning).toHaveBeenCalledWith(attemptId, {
+      leaseOwner,
+      leaseGeneration: 2,
+      providerSessionId: 'thread-live',
+      leaseSeconds: 180,
+    });
+  });
+
+  it('Fleet attempt 的 heartbeat 不得降级为旧 Bearer token', async () => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt());
+
+    const response = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+      .set('Authorization', `Bearer ${callbackToken}`)
+      .send({ lease_owner: leaseOwner, lease_seconds: 180 });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe('fleet_heartbeat_hmac_required');
+    expect(mocks.store.heartbeat).not.toHaveBeenCalled();
   });
 
   it('heartbeat 同样拒绝无密钥请求', async () => {
