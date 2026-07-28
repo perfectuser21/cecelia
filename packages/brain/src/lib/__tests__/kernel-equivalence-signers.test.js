@@ -234,7 +234,7 @@ describe('protected Ed25519 equivalence signers', () => {
     });
     const grant = authority.issue(grantInput(cell));
 
-    const receipt = effectSigner({
+    const receipt = effectSigner.signEffectResult({
       cell,
       grant,
       observation: {
@@ -261,6 +261,13 @@ describe('protected Ed25519 equivalence signers', () => {
       expected(cell, grant),
       { now: FIXTURE_NOW },
     )).toEqual(receipt);
+    expect(effectSigner).toMatchObject({
+      key_id: keys.effect.record.key_id,
+      purpose: 'effect_receipt',
+      service_id: cell.seam_id,
+      signEffectResult: expect.any(Function),
+    });
+    expect(Object.isFrozen(effectSigner)).toBe(true);
     expect(JSON.stringify(effectSigner)).not.toContain('effect.pem');
     expect(JSON.stringify(effectSigner)).not.toMatch(/PRIVATE KEY/);
   });
@@ -300,7 +307,7 @@ describe('protected Ed25519 equivalence signers', () => {
       forged_axis: cell.cell_id,
     };
 
-    expect(() => effectSigner({
+    expect(() => effectSigner.signEffectResult({
       cell,
       grant,
       observation,
@@ -308,7 +315,7 @@ describe('protected Ed25519 equivalence signers', () => {
     })).toThrowError(expect.objectContaining({
       code: 'effect_observation_invalid',
     }));
-    expect(() => effectSigner({
+    expect(() => effectSigner.signEffectResult({
       cell: { ...cell, seam_id: 'kernel.other.seam' },
       grant,
       observation: {
