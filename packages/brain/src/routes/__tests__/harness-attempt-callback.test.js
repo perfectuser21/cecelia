@@ -1249,6 +1249,12 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       providerSessionId: 'thread-live',
       leaseSeconds: 180,
     });
+    expect(mocks.store.assertFreshRoleSession).toHaveBeenCalledWith({
+      runId,
+      attemptId,
+      role: 'evaluator',
+      sessionId: 'thread-live',
+    });
   });
 
   it('Fleet attempt 的 heartbeat 不得降级为旧 Bearer token', async () => {
