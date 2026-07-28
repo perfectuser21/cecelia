@@ -706,6 +706,36 @@ describe('Fleet Worker Attempt API', () => {
     server.close();
   });
 
+  it('returns 409 when cancellation races a durable callback receipt', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    attemptRunner.cancel.mockRejectedValue(new Error('attempt_callback_pending'));
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/attempts/${attemptId}/cancel`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toEqual({
+      error: 'attempt_callback_pending',
+    });
+    server.close();
+  });
+
   it('keeps Attempt traffic closed until startup reconciliation completes', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     let release;
