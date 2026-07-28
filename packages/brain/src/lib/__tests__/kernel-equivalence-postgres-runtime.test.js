@@ -1,0 +1,259 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  createPostgresAuditSink,
+  createPostgresBundleChainStore,
+  createPostgresNonceConsumer,
+  createPostgresPredecessorResolver,
+} from '../kernel-equivalence-postgres-runtime.js';
+import {
+  sha256Canonical,
+} from '../kernel-equivalence-receipts.js';
+import {
+  FIXTURE_ATTEMPT_ID,
+  FIXTURE_RUN_ID,
+  createTrustFixture,
+  fixtureBundle,
+  fixtureCell,
+  fixtureGrant,
+  fixtureReceipt,
+} from './kernel-equivalence-test-fixtures.js';
+
+function nonceInput() {
+  return {
+    grant_id: '33333333-3333-4333-8333-333333333333',
+    nonce: '44444444-4444-4444-8444-444444444444',
+    cell_id: 'KERNEL-P0-04-CI-MERGE-AUTHORITY::codex::normal',
+    run_id: FIXTURE_RUN_ID,
+    attempt_id: FIXTURE_ATTEMPT_ID,
+    expires_at: '2026-07-28T12:05:00.000Z',
+  };
+}
+
+function audit() {
+  return {
+    schema_version: 'kernel-equivalence-denial-audit/v1',
+    occurred_at: '2026-07-28T12:02:00.000Z',
+    status: 'blocked',
+    code: 'grant_nonce_replay',
+    stage: 'nonce_consumption',
+    cell_id: 'KERNEL-P0-04-CI-MERGE-AUTHORITY::codex::normal',
+    behavior_id: 'KERNEL-P0-04-CI-MERGE-AUTHORITY',
+    provider: 'codex',
+    scenario: 'normal',
+    run_id: FIXTURE_RUN_ID,
+    attempt_id: FIXTURE_ATTEMPT_ID,
+    late_effect_risk: false,
+  };
+}
+
+function bundleFixture(scenario = 'normal') {
+  const keys = createTrustFixture();
+  const cell = {
+    ...fixtureCell({ scenario }),
+    effect_signer_status: 'available',
+    effect_key_id: keys.effect.record.key_id,
+    blocked_by: null,
+  };
+  const grant = fixtureGrant(keys, cell);
+  const receipt = fixtureReceipt(keys, grant, cell);
+  const bundle = fixtureBundle(keys, cell, grant, [receipt]);
+  return {
+    keys,
+    cell,
+    grant,
+    receipt,
+    bundle,
+    hash: sha256Canonical(bundle),
+  };
+}
+
+function transactionPool({ updateRows, readbackBundle }) {
+  const calls = [];
+  const client = {
+    query: vi.fn(async (text, params) => {
+      calls.push({ text, params });
+      if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
+      if (/^ROLLBACK$/i.test(text)) return { rows: [], rowCount: null };
+      if (/^COMMIT$/i.test(text)) return { rows: [], rowCount: null };
+      if (/INSERT INTO kernel_equivalence_receipt_bundles/i.test(text)) {
+        return { rows: [{ bundle_hash: params[1] }], rowCount: 1 };
+      }
+      if (/UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)) {
+        return { rows: updateRows, rowCount: updateRows.length };
+      }
+      if (/SELECT bundle FROM kernel_equivalence_receipt_bundles/i.test(text)) {
+        return {
+          rows: readbackBundle == null ? [] : [{ bundle: readbackBundle }],
+          rowCount: readbackBundle == null ? 0 : 1,
+        };
+      }
+      throw new Error(`unexpected SQL: ${text}`);
+    }),
+    release: vi.fn(),
+  };
+  return {
+    pool: { connect: vi.fn(async () => client) },
+    client,
+    calls,
+  };
+}
+
+describe('PostgreSQL Kernel equivalence runtime authorities', () => {
+  it('consumes a grant nonce with one conflict-safe INSERT statement', async () => {
+    const pool = {
+      query: vi.fn(async () => ({
+        rows: [{ grant_id: nonceInput().grant_id }],
+        rowCount: 1,
+      })),
+    };
+    const consume = createPostgresNonceConsumer({ pool });
+
+    await expect(consume(nonceInput())).resolves.toEqual({ consumed: true });
+    const [text, params] = pool.query.mock.calls[0];
+    expect(text).toMatch(/INSERT INTO kernel_equivalence_execution_nonces/i);
+    expect(text).toMatch(/ON CONFLICT DO NOTHING/i);
+    expect(text).toMatch(/RETURNING grant_id/i);
+    expect(text).toMatch(/clock_timestamp\(\)/i);
+    expect(params).toHaveLength(6);
+  });
+
+  it('returns a replay denial when the atomic INSERT loses its conflict', async () => {
+    const pool = {
+      query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    };
+    const consume = createPostgresNonceConsumer({ pool });
+
+    await expect(consume(nonceInput())).resolves.toEqual({ consumed: false });
+  });
+
+  it('persists only the denial audit allowlist', async () => {
+    const pool = {
+      query: vi.fn(async () => ({
+        rows: [{ audit_id: '55555555-5555-4555-8555-555555555555' }],
+        rowCount: 1,
+      })),
+    };
+    const sink = createPostgresAuditSink({
+      pool,
+      randomUUID: () => '55555555-5555-4555-8555-555555555555',
+    });
+
+    await expect(sink(audit())).resolves.toEqual({
+      persisted: true,
+      audit_id: '55555555-5555-4555-8555-555555555555',
+    });
+    expect(pool.query.mock.calls[0][1]).toHaveLength(13);
+    await expect(sink({ ...audit(), signature: 'secret' }))
+      .rejects.toMatchObject({ code: 'audit_record_invalid' });
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits a bundle and advances the head in one transaction after readback', async () => {
+    const value = bundleFixture();
+    const checkpoint = {
+      genesis_hash: value.hash,
+      head_hash: value.hash,
+      revision: 1,
+    };
+    const runtime = transactionPool({
+      updateRows: [checkpoint],
+      readbackBundle: value.bundle,
+    });
+    const store = createPostgresBundleChainStore({ pool: runtime.pool });
+
+    await expect(store.commit({
+      bundle: value.bundle,
+      bundle_hash: value.hash,
+      previous_head_hash: null,
+    })).resolves.toEqual({
+      committed: true,
+      checkpoint: {
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: value.hash,
+        head_hash: value.hash,
+      },
+    });
+    expect(runtime.calls.map(({ text }) => text.trim().split(/\s+/)[0]))
+      .toEqual(['BEGIN', 'INSERT', 'UPDATE', 'SELECT', 'COMMIT']);
+    expect(store.readBundle(value.hash)).toEqual(value.bundle);
+    expect(runtime.client.release).toHaveBeenCalledOnce();
+  });
+
+  it('rolls back an inserted loser when compare-and-swap head advancement fails', async () => {
+    const value = bundleFixture();
+    const runtime = transactionPool({
+      updateRows: [],
+      readbackBundle: null,
+    });
+    const store = createPostgresBundleChainStore({ pool: runtime.pool });
+
+    await expect(store.commit({
+      bundle: value.bundle,
+      bundle_hash: value.hash,
+      previous_head_hash: null,
+    })).resolves.toEqual({
+      committed: false,
+      checkpoint: null,
+    });
+    expect(runtime.calls.map(({ text }) => text.trim()))
+      .toContain('ROLLBACK');
+    expect(() => store.readBundle(value.hash))
+      .toThrowError(expect.objectContaining({
+        code: 'bundle_chain_read_unavailable',
+      }));
+  });
+
+  it('rolls back when durable readback differs from the canonical bundle', async () => {
+    const value = bundleFixture();
+    const runtime = transactionPool({
+      updateRows: [{
+        genesis_hash: value.hash,
+        head_hash: value.hash,
+        revision: 1,
+      }],
+      readbackBundle: { tampered: true },
+    });
+    const store = createPostgresBundleChainStore({ pool: runtime.pool });
+
+    await expect(store.commit({
+      bundle: value.bundle,
+      bundle_hash: value.hash,
+      previous_head_hash: null,
+    })).rejects.toMatchObject({ code: 'bundle_chain_readback_invalid' });
+    expect(runtime.calls.map(({ text }) => text.trim()))
+      .toContain('ROLLBACK');
+  });
+
+  it('resolves one exact committed violation predecessor and rejects ambiguity', async () => {
+    const value = bundleFixture('violation');
+    const request = {
+      cell_id: value.cell.cell_id,
+      behavior_id: value.cell.behavior_id,
+      provider: value.cell.provider,
+      scenario: 'violation',
+      run_id: value.grant.run_id,
+      attempt_id: value.grant.attempt_id,
+      artifact_sha: value.grant.artifact_sha,
+      resource_id: value.grant.resource_id,
+      resource_ref: value.grant.resource_ref,
+      seam_id: value.cell.seam_id,
+      adapter_id: value.cell.adapter_id,
+    };
+    const pool = {
+      query: vi.fn(async () => ({ rows: [{ bundle: value.bundle }] })),
+    };
+    const resolve = createPostgresPredecessorResolver({ pool });
+
+    await expect(resolve(request)).resolves.toEqual({
+      grant: value.grant,
+      receipt: value.receipt,
+    });
+    expect(pool.query.mock.calls[0][0]).toMatch(/LIMIT 2/i);
+    pool.query.mockResolvedValue({
+      rows: [{ bundle: value.bundle }, { bundle: value.bundle }],
+    });
+    await expect(resolve(request)).rejects.toMatchObject({
+      code: 'recovery_predecessor_ambiguous',
+    });
+  });
+});
