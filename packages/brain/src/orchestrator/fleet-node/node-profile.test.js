@@ -173,6 +173,14 @@ describe('Fleet NodeProfile registry', () => {
     }
   });
 
+  it('publishes macOS 15.6.1 as the shared minimum supported version', async () => {
+    const { listNodeProfiles } = await loadContract();
+
+    expect(
+      listNodeProfiles().map((profile) => profile.version_policy.os),
+    ).toEqual(['15.6.1', '15.6.1', '15.6.1']);
+  });
+
   it('copies every shared baseline field from one golden profile and permits only node overlays', async () => {
     const { listNodeProfiles } = await loadContract();
     const profiles = listNodeProfiles();
