@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.268.3
+**Brain 版本**: 1.268.4
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.4 — Kernel post-diff risk and human review authority
+
+- Server 在候选 PR diff 和 approved contract 已知后计算
+  `kernel-post-diff-risk/v1`；caller 风险只能上调，不能关闭 server 人审要求。
+- 首次 behavior、新能力、合同或 path class 变化、migration、CI/workflow、
+  security/credential、deploy/release、核心编排及未知/过期 proof 强制人审。
+- Auto eligibility 只接受同 behavior version 的有效 production receipt、
+  不变合同与 path class、小 diff、非保护类别以及当前 CI/Evaluator/Judge 全绿。
+- 审批和 merge authority 精确绑定 task/run/hop/head SHA、diff hash、
+  contract digest 与 policy version；merge effect 前重新观测并计算，任何变化失效。
+- Migration 373 新增 append-only production receipt 与 risk assessment ledger。
+- Brain 回退目标：`1.268.3`。
 
 ## Brain 1.268.3 — Unified legacy Skill dispatch contract
 
