@@ -42,7 +42,17 @@ describe('executor: triggerLocalCodexExec 独立审查池', () => {
     it('使用 codex-bin exec 模式（通过 shell 脚本启动）', () => {
       // triggerLocalCodexExec 通过 bash 脚本调用 codex-bin exec
       expect(executorSrc).toContain("codex-bin");
-      expect(executorSrc).toContain("exec --model");
+      expect(executorSrc).toContain("exec --skip-git-repo-check --model");
+    });
+
+    it('显式允许从找到的隔离 worktree 或 controller 根目录执行', () => {
+      const start = executorSrc.indexOf('async function triggerLocalCodexExec(task)');
+      const end = executorSrc.indexOf('\nasync function ', start + 1);
+      const triggerLocalCodexExecSrc = executorSrc.slice(start, end);
+
+      expect(triggerLocalCodexExecSrc).toContain(
+        'exec --skip-git-repo-check --model'
+      );
     });
   });
 

@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.268.13
+**版本**: 1.268.14
+
+## Codex review worktree admission
+
+- 两条 controller-owned 本机 Codex review 执行路径都显式携带
+  `--skip-git-repo-check`，允许在 controller 固定根目录或发现的隔离 worktree
+  中执行，不再因 Codex repo admission 预检重复失败。
+- 此参数只关闭 Codex CLI 自身的 git 元数据准入；branch guard、DevGate、
+  review 独立槽位、callback 与既有执行权限边界保持不变。
+- 回退：`bash scripts/brain-rollback.sh 1.268.13`；没有数据库迁移。
 
 ## Kernel zero-Attempt patrol coverage
 

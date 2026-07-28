@@ -45,6 +45,16 @@ describe('executor: Codex 独立审查加固', () => {
       expect(executorSrc).not.toContain("'--dangerously-skip-permissions'");
     });
 
+    it('显式允许从 controller 固定工作目录执行，不因缺少 git 仓库元数据反复失败', () => {
+      const start = executorSrc.indexOf('async function triggerCodexReview(task)');
+      const end = executorSrc.indexOf('\nasync function ', start + 1);
+      const triggerCodexReviewSrc = executorSrc.slice(start, end);
+
+      expect(triggerCodexReviewSrc).toContain(
+        "spawn(codexBin, ['exec', '--skip-git-repo-check'"
+      );
+    });
+
     it('使用独立锁目录 codex-review-locks', () => {
       expect(executorSrc).toContain('codex-review-locks');
     });

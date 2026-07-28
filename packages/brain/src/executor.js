@@ -2439,7 +2439,7 @@ async function triggerCodexReview(task) {
       };
     }
 
-    const child = spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
+    const child = spawn(codexBin, ['exec', '--skip-git-repo-check', '-c', 'approval_policy="never"', promptContent], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: WORK_DIR,
@@ -2857,7 +2857,7 @@ async function triggerLocalCodexExec(task) {
     await writeFile(tmpPromptFile, promptContent);
     const scriptContent = [
       '#!/bin/bash',
-      `CODEX_HOME="${CODEX_HOME}" "${CODEX_BIN}" exec --model "${CODEX_MODEL}" --sandbox danger-full-access "$(cat '${tmpPromptFile}')" 2>&1`,
+      `CODEX_HOME="${CODEX_HOME}" "${CODEX_BIN}" exec --skip-git-repo-check --model "${CODEX_MODEL}" --sandbox danger-full-access "$(cat '${tmpPromptFile}')" 2>&1`,
       'EXIT=$?',
       `rm -f "${tmpPromptFile}" 2>/dev/null; rm -rf "${slotPath}" 2>/dev/null; rm -f "${tmpScriptFile}" 2>/dev/null`,
       `curl -s -X POST "${WEBHOOK_URL}" -H "Content-Type: application/json" \\`,
