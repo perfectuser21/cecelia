@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.268.8
+**Brain 版本**: 1.268.9
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.9 — Artifact-bound rollback ledger
+
+- Normal and bootstrap production paths persist one rollback intent per exact
+  release artifact before mutation and one receipt per artifact only after
+  confirmed live readback.
+- Database guards bind current version/digest, stable anchor, previous
+  version/digest, operational rollback metadata, production effect receipt,
+  and exact full artifact set.
+- Production terminal transitions require the ordered durable artifact
+  receipt-ID set; aggregate rollback strings cannot authorize completion.
+- 回退：`bash scripts/brain-rollback.sh 1.268.8`（保留 artifact rollback ledger）。
 
 ## Brain 1.268.8 — Immutable ReleaseRun artifacts
 

@@ -493,6 +493,161 @@ export function createPostgresReleaseRunStore(pool) {
       };
     },
 
+    async findOrCreateArtifactRollbackIntents(client, {
+      rollbackIntent,
+      releaseRun,
+      artifacts: rollbackArtifacts,
+    }) {
+      if (
+        !Array.isArray(rollbackArtifacts)
+        || rollbackArtifacts.length !== releaseRun.artifact_versions.length
+      ) {
+        deny('release_rollback_artifact_intents_invalid');
+      }
+      await client.query(
+        `INSERT INTO kernel_release_rollback_artifact_intents
+           (rollback_intent_id, artifact_name, expected_current_version,
+            expected_current_digest, expected_anchor,
+            expected_previous_version, expected_previous_digest)
+         SELECT $1, item.artifact_name, item.expected_current_version,
+                item.expected_current_digest, item.expected_anchor,
+                item.expected_previous_version, item.expected_previous_digest
+           FROM jsonb_to_recordset($2::jsonb) AS item(
+             artifact_name text,
+             expected_current_version text,
+             expected_current_digest text,
+             expected_anchor text,
+             expected_previous_version text,
+             expected_previous_digest text
+           )
+         ON CONFLICT (rollback_intent_id, artifact_name) DO NOTHING`,
+        [rollbackIntent.id, JSON.stringify(rollbackArtifacts)],
+      );
+      return this.loadArtifactRollbackIntents(client, {
+        rollbackIntent,
+        releaseRun,
+        expectedArtifacts: rollbackArtifacts,
+      });
+    },
+
+    async loadArtifactRollbackIntents(client, {
+      rollbackIntent,
+      releaseRun,
+      expectedArtifacts,
+    }) {
+      const { rows } = await client.query(
+        `SELECT *
+           FROM kernel_release_rollback_artifact_intents
+          WHERE rollback_intent_id = $1
+          ORDER BY artifact_name`,
+        [rollbackIntent.id],
+      );
+      if (rows.length !== releaseRun.artifact_versions.length) {
+        deny('release_rollback_artifact_intents_incomplete');
+      }
+      for (const artifact of releaseRun.artifact_versions) {
+        const persisted = rows.find((row) => row.artifact_name === artifact.name);
+        const expected = expectedArtifacts?.find(
+          (item) => item.artifact_name === artifact.name,
+        );
+        if (
+          !persisted
+          || persisted.expected_current_version !== artifact.version
+          || persisted.expected_current_digest !== artifact.digest
+          || (expected && (
+            persisted.expected_anchor !== expected.expected_anchor
+            || persisted.expected_previous_version !== expected.expected_previous_version
+            || persisted.expected_previous_digest !== expected.expected_previous_digest
+          ))
+        ) {
+          deny('release_rollback_artifact_intent_conflict');
+        }
+      }
+      return rows;
+    },
+
+    async appendArtifactRollbackReceipts(client, {
+      effectReceiptId,
+      intents,
+      artifacts: rollbackArtifacts,
+    }) {
+      if (
+        !Array.isArray(intents)
+        || !Array.isArray(rollbackArtifacts)
+        || intents.length !== rollbackArtifacts.length
+      ) {
+        deny('release_rollback_artifact_receipts_invalid');
+      }
+      const values = intents.map((intent) => {
+        const artifact = rollbackArtifacts.find(
+          (item) => item.artifact_name === intent.artifact_name,
+        );
+        if (!artifact) deny('release_rollback_artifact_receipts_invalid');
+        return {
+          rollback_artifact_intent_id: intent.id,
+          effect_receipt_id: effectReceiptId,
+          observed_anchor: artifact.anchor,
+          observed_previous_version: artifact.previous_version,
+          observed_previous_digest: artifact.previous_digest,
+          rollback_metadata: artifact.rollback_metadata,
+        };
+      });
+      await client.query(
+        `INSERT INTO kernel_release_rollback_artifact_receipts
+           (rollback_artifact_intent_id, effect_receipt_id, observed_anchor,
+            observed_previous_version, observed_previous_digest,
+            rollback_metadata)
+         SELECT item.rollback_artifact_intent_id, item.effect_receipt_id,
+                item.observed_anchor, item.observed_previous_version,
+                item.observed_previous_digest, item.rollback_metadata
+           FROM jsonb_to_recordset($1::jsonb) AS item(
+             rollback_artifact_intent_id uuid,
+             effect_receipt_id uuid,
+             observed_anchor text,
+             observed_previous_version text,
+             observed_previous_digest text,
+             rollback_metadata jsonb
+           )
+         ON CONFLICT (rollback_artifact_intent_id) DO NOTHING`,
+        [JSON.stringify(values)],
+      );
+      const { rows } = await client.query(
+        `SELECT receipt.*, intent.artifact_name
+           FROM kernel_release_rollback_artifact_receipts receipt
+           JOIN kernel_release_rollback_artifact_intents intent
+             ON intent.id = receipt.rollback_artifact_intent_id
+          WHERE receipt.rollback_artifact_intent_id = ANY($1::uuid[])
+          ORDER BY intent.artifact_name`,
+        [intents.map((intent) => intent.id)],
+      );
+      if (rows.length !== values.length) {
+        deny('release_rollback_artifact_receipts_incomplete');
+      }
+      for (const value of values) {
+        const persisted = rows.find(
+          (row) => String(row.rollback_artifact_intent_id)
+            === String(value.rollback_artifact_intent_id),
+        );
+        if (
+          !persisted
+          || String(persisted.effect_receipt_id) !== String(value.effect_receipt_id)
+          || persisted.observed_anchor !== value.observed_anchor
+          || persisted.observed_previous_version !== value.observed_previous_version
+          || persisted.observed_previous_digest !== value.observed_previous_digest
+          || !isDeepStrictEqual(
+            asJson(persisted.rollback_metadata),
+            value.rollback_metadata,
+          )
+        ) {
+          deny('release_rollback_artifact_receipt_conflict');
+        }
+      }
+      return rows.map((row) => ({
+        ...row,
+        rollback_metadata: asJson(row.rollback_metadata),
+      }));
+    },
+
     async appendReceipt(client, receipt) {
       const params = [
         receipt.intent_id,

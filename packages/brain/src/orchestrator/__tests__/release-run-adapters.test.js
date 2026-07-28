@@ -118,6 +118,27 @@ describe('production ReleaseRun adapters', () => {
     });
   });
 
+  it('captures the exact Brain rollback baseline before production mutation', async () => {
+    const fetchFn = vi.fn(async () => response({
+      status: 'success',
+      deployed_image_digest: rollbackImage,
+    }));
+    const adapters = createReleaseRunAdapters({
+      fetchFn,
+      brainUrl: 'http://brain',
+    });
+
+    await expect(adapters.prepareProductionRollback(request)).resolves.toEqual([{
+      artifact_name: 'brain',
+      expected_current_version: artifacts[0].version,
+      expected_current_digest: artifacts[0].digest,
+      expected_anchor: `brain:${artifacts[0].digest}`,
+      expected_previous_version: `brain-image:${rollbackImage}`,
+      expected_previous_digest: rollbackImage,
+    }]);
+    expect(fetchFn).toHaveBeenCalledWith('http://brain/api/brain/deploy/status', undefined);
+  });
+
   it('observes exact production health, E2E and rollback evidence', async () => {
     const e2eFetchFn = vi.fn(async () => healthyProbeResponse());
     const fetchFn = vi.fn()
@@ -172,7 +193,7 @@ describe('production ReleaseRun adapters', () => {
       dispatch_claim_id: verificationClaim.dispatch_claim_id,
       dispatch_generation: verificationClaim.generation,
       rollback_metadata: {
-        anchor: `brain-image:${deployedImage}`,
+        anchor: `brain:${artifacts[0].digest}`,
         previous_version: `brain-image:${rollbackImage}`,
         image_reference: rollbackImage,
         image_tag: rollbackTag,
@@ -248,7 +269,7 @@ describe('production ReleaseRun adapters', () => {
       merge_sha: sha,
       deployed_versions: [workspaceArtifact],
       rollback_metadata: {
-        anchor: 'dashboard:prod-cecelia-v42',
+        anchor: `workspace:${workspaceArtifact.digest}`,
         previous_version: 'dashboard:prod-cecelia-v41',
       },
     });
@@ -362,6 +383,7 @@ describe('production ReleaseRun adapters', () => {
         workflow_rollback_metadata: {
           anchor: `workflow-skills:${workflowArtifact.digest}`,
           previous_version: `workflow-skills:sha256:${'8'.repeat(64)}`,
+          previous_digest: `sha256:${'8'.repeat(64)}`,
         },
       }))
       .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
@@ -376,7 +398,7 @@ describe('production ReleaseRun adapters', () => {
     await expect(adapters.observeProduction(mixedRequest)).resolves.toMatchObject({
       status: 'pass',
       rollback_metadata: {
-        anchor: `brain-image:${deployedImage}+workflow-skills:${workflowArtifact.digest}`,
+        anchor: `brain:${artifacts[0].digest}+workflow-skills:${workflowArtifact.digest}`,
         previous_version:
           `brain-image:${rollbackImage}+workflow-skills:sha256:${'8'.repeat(64)}`,
       },

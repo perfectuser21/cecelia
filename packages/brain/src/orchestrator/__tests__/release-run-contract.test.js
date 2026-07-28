@@ -214,6 +214,23 @@ describe('ReleaseRun contract', () => {
   });
 
   it('requires complete production verification and rollback metadata', () => {
+    const rollbackArtifacts = artifacts.map((artifact, index) => ({
+      artifact_name: artifact.name,
+      current_version: artifact.version,
+      current_digest: artifact.digest,
+      anchor: `${artifact.name}:${artifact.digest}`,
+      previous_version: `${artifact.name}:previous-${index}`,
+      previous_digest: `sha256:${String(index + 3).repeat(64)}`,
+      rollback_metadata: { exact: true },
+    }));
+    const rollbackBaselines = rollbackArtifacts.map((artifact) => ({
+      artifact_name: artifact.artifact_name,
+      expected_current_version: artifact.current_version,
+      expected_current_digest: artifact.current_digest,
+      expected_anchor: artifact.anchor,
+      expected_previous_version: artifact.previous_version,
+      expected_previous_digest: artifact.previous_digest,
+    }));
     const observation = {
       status: 'pass',
       health: 'pass',
@@ -224,10 +241,12 @@ describe('ReleaseRun contract', () => {
         anchor: 'prod-cecelia-v4401',
         previous_version: 'prod-cecelia-v4400',
       },
+      rollback_artifacts: rollbackArtifacts,
     };
     expect(validateProductionObservation(observation, {
       merge_sha: MERGE_SHA,
       artifact_versions: artifacts,
+      rollback_artifacts: rollbackBaselines,
       ...e2eExpected('production'),
     })).toEqual({
       ...observation,

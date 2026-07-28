@@ -70,6 +70,8 @@ const acceptance = {
 let client;
 let release;
 let store;
+let rollbackIntent;
+let artifactRollbackIntents;
 
 async function appendTransition(state, evidence = {}) {
   await store.appendTransition(client, {
@@ -123,14 +125,22 @@ async function appendConfirmedReceipt(effectKind) {
     ...(effectKind === 'production' ? {
       health: 'pass',
       rollback_metadata: {
-        anchor: `brain-image:sha256:${'e'.repeat(64)}`,
+        anchor: `brain:${artifacts[0].digest}`,
         previous_version: `brain-image:sha256:${'f'.repeat(64)}`,
       },
+      rollback_artifacts: [{
+        artifact_name: 'brain',
+        current_version: artifacts[0].version,
+        current_digest: artifacts[0].digest,
+        anchor: `brain:${artifacts[0].digest}`,
+        previous_version: `brain-image:sha256:${'f'.repeat(64)}`,
+        previous_digest: `sha256:${'f'.repeat(64)}`,
+        rollback_metadata: {
+          image_reference: `sha256:${'f'.repeat(64)}`,
+        },
+      }],
     } : {}),
   };
-  const rollbackIntent = effectKind === 'production'
-    ? await store.findOrCreateRollbackIntent(client, { releaseRun: release })
-    : null;
   const effectReceipt = await store.appendReceipt(client, {
     intent_id: intent.id,
     receipt_status: 'confirmed',
@@ -149,7 +159,7 @@ async function appendConfirmedReceipt(effectKind) {
     e2e_finished_at: scenarioResult.finished_at,
     evidence: { verification },
   });
-  if (!rollbackIntent) return effectReceipt;
+  if (effectKind !== 'production') return effectReceipt;
   const rollbackReceipt = await store.appendRollbackReceipt(client, {
     rollback_intent_id: rollbackIntent.id,
     effect_receipt_id: effectReceipt.id,
@@ -157,9 +167,28 @@ async function appendConfirmedReceipt(effectKind) {
     previous_version: verification.rollback_metadata.previous_version,
     rollback_metadata: verification.rollback_metadata,
   });
+  await expect(client.query(
+    `INSERT INTO kernel_release_rollback_artifact_receipts
+       (rollback_artifact_intent_id, effect_receipt_id, observed_anchor,
+        observed_previous_version, observed_previous_digest, rollback_metadata)
+     VALUES ($1, $2, 'brain:forged', 'brain-image:forged',
+             $3, '{"image_reference":"forged"}')`,
+    [
+      artifactRollbackIntents[0].id,
+      effectReceipt.id,
+      `sha256:${'0'.repeat(64)}`,
+    ],
+  )).rejects.toMatchObject({ code: 'P0001' });
+  const artifactRollbackReceipts = await store.appendArtifactRollbackReceipts(client, {
+    effectReceiptId: effectReceipt.id,
+    intents: artifactRollbackIntents,
+    artifacts: verification.rollback_artifacts,
+  });
   return {
     ...effectReceipt,
     rollback_receipt_id: rollbackReceipt.id,
+    artifact_rollback_receipt_ids:
+      artifactRollbackReceipts.map((receipt) => receipt.id),
   };
 }
 
@@ -462,12 +491,63 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
       effect_receipt_id: stagingReceipt.id,
       e2e_manifest_digest: release.e2e_manifest.manifest_digest,
     });
-    await appendTransition('production_deploying');
+    rollbackIntent = await store.findOrCreateRollbackIntent(
+      client,
+      { releaseRun: release },
+    );
+    await expect(client.query(
+      `INSERT INTO kernel_release_rollback_artifact_intents
+         (rollback_intent_id, artifact_name, expected_current_version,
+          expected_current_digest, expected_anchor, expected_previous_version,
+          expected_previous_digest)
+       VALUES ($1, 'evil', 'forged', $2, 'evil:forged',
+               'evil:previous', $3)`,
+      [
+        rollbackIntent.id,
+        `sha256:${'0'.repeat(64)}`,
+        `sha256:${'1'.repeat(64)}`,
+      ],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    artifactRollbackIntents = await store.findOrCreateArtifactRollbackIntents(
+      client,
+      {
+        rollbackIntent,
+        releaseRun: release,
+        artifacts: [{
+          artifact_name: 'brain',
+          expected_current_version: artifacts[0].version,
+          expected_current_digest: artifacts[0].digest,
+          expected_anchor: `brain:${artifacts[0].digest}`,
+          expected_previous_version: `brain-image:sha256:${'f'.repeat(64)}`,
+          expected_previous_digest: `sha256:${'f'.repeat(64)}`,
+        }],
+      },
+    );
+    await appendTransition('production_deploying', {
+      artifact_rollback_intent_ids:
+        artifactRollbackIntents.map((intent) => intent.id),
+    });
     const productionReceipt = await appendConfirmedReceipt('production');
+    await expect(client.query(
+      `INSERT INTO kernel_release_transitions
+         (release_run_id, state, evidence)
+       VALUES ($1, 'production_verified', $2::jsonb)`,
+      [
+        release.id,
+        JSON.stringify({
+          merge_sha: mergeSha,
+          effect_receipt_id: productionReceipt.id,
+          e2e_manifest_digest: release.e2e_manifest.manifest_digest,
+          rollback_receipt_id: productionReceipt.rollback_receipt_id,
+        }),
+      ],
+    )).rejects.toMatchObject({ code: 'P0001' });
     await appendTransition('production_verified', {
       effect_receipt_id: productionReceipt.id,
       e2e_manifest_digest: release.e2e_manifest.manifest_digest,
       rollback_receipt_id: productionReceipt.rollback_receipt_id,
+      artifact_rollback_receipt_ids:
+        productionReceipt.artifact_rollback_receipt_ids,
     });
     const persistedProductionReceipt = (await client.query(
       `SELECT e2e_probe_results,
@@ -657,5 +737,123 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
         ...confirmedValues,
       ],
     )).rejects.toMatchObject({ code: '23505' });
+
+    const bootstrapPreviousDigest = `sha256:${'7'.repeat(64)}`;
+    const bootstrapArtifactIntent = (await client.query(
+      `INSERT INTO kernel_release_bootstrap_rollback_artifact_intents
+         (bootstrap_run_id, artifact_name, expected_current_version,
+          expected_current_digest, expected_anchor, expected_previous_version,
+          expected_previous_digest)
+       VALUES ($1, 'brain', $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [
+        bootstrapRunId,
+        artifacts[0].version,
+        artifacts[0].digest,
+        `brain:${artifacts[0].digest}`,
+        `brain-image:${bootstrapPreviousDigest}`,
+        bootstrapPreviousDigest,
+      ],
+    )).rows[0];
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions
+         (bootstrap_run_id, state, evidence)
+       VALUES ($1, 'production_intent', $2::jsonb)`,
+      [bootstrapRunId, JSON.stringify({
+        merge_sha: mergeSha,
+        artifact_rollback_intent_ids: [bootstrapArtifactIntent.id],
+      })],
+    );
+    const productionAttempt = (await client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_attempts
+         (bootstrap_run_id, effect_kind, generation, lease_expires_at)
+       VALUES ($1, 'production', 1, clock_timestamp() + interval '15 minutes')
+       RETURNING id`,
+      [bootstrapRunId],
+    )).rows[0];
+    const bootstrapRollbackArtifacts = [{
+      artifact_name: 'brain',
+      current_version: artifacts[0].version,
+      current_digest: artifacts[0].digest,
+      anchor: `brain:${artifacts[0].digest}`,
+      previous_version: `brain-image:${bootstrapPreviousDigest}`,
+      previous_digest: bootstrapPreviousDigest,
+      rollback_metadata: { image_reference: bootstrapPreviousDigest },
+    }];
+    const productionEffectReceipt = (await client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_receipts
+         (effect_attempt_id, receipt_status, observed_merge_sha,
+          observed_artifact_versions, e2e_manifest_id, e2e_manifest_digest,
+          e2e_scenarios_total, e2e_scenarios_passed, e2e_environment,
+          e2e_scenario_results, e2e_probe_results,
+          e2e_started_at, e2e_finished_at, evidence)
+       VALUES ($1, 'confirmed', $2, $3::jsonb, $4, $5, 1, 1, 'production',
+               $6::jsonb, $7::jsonb, $8, $9, $10::jsonb)
+       RETURNING id`,
+      [
+        productionAttempt.id,
+        mergeSha,
+        JSON.stringify(artifacts),
+        manifest.id,
+        manifest.manifest_digest,
+        JSON.stringify([scenarioResult]),
+        JSON.stringify([probeResult]),
+        scenarioResult.started_at,
+        scenarioResult.finished_at,
+        JSON.stringify({
+          required_e2e: 'pass',
+          merge_sha: mergeSha,
+          e2e_probe_results: [probeResult],
+          rollback_artifacts: bootstrapRollbackArtifacts,
+        }),
+      ],
+    )).rows[0];
+    await expect(client.query(
+      `INSERT INTO kernel_release_bootstrap_rollback_artifact_receipts
+         (rollback_artifact_intent_id, effect_receipt_id, observed_anchor,
+          observed_previous_version, observed_previous_digest, rollback_metadata)
+       VALUES ($1, $2, 'brain:forged', 'brain-image:forged', $3, '{}')`,
+      [
+        bootstrapArtifactIntent.id,
+        productionEffectReceipt.id,
+        `sha256:${'0'.repeat(64)}`,
+      ],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    const bootstrapArtifactReceipt = (await client.query(
+      `INSERT INTO kernel_release_bootstrap_rollback_artifact_receipts
+         (rollback_artifact_intent_id, effect_receipt_id, observed_anchor,
+          observed_previous_version, observed_previous_digest, rollback_metadata)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+       RETURNING id`,
+      [
+        bootstrapArtifactIntent.id,
+        productionEffectReceipt.id,
+        bootstrapRollbackArtifacts[0].anchor,
+        bootstrapRollbackArtifacts[0].previous_version,
+        bootstrapRollbackArtifacts[0].previous_digest,
+        JSON.stringify(bootstrapRollbackArtifacts[0].rollback_metadata),
+      ],
+    )).rows[0];
+    await expect(client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions
+         (bootstrap_run_id, state, evidence)
+       VALUES ($1, 'production_verified', $2::jsonb)`,
+      [bootstrapRunId, JSON.stringify({
+        merge_sha: mergeSha,
+        effect_receipt_id: String(productionEffectReceipt.id),
+        e2e_manifest_digest: manifest.manifest_digest,
+      })],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions
+         (bootstrap_run_id, state, evidence)
+       VALUES ($1, 'production_verified', $2::jsonb)`,
+      [bootstrapRunId, JSON.stringify({
+        merge_sha: mergeSha,
+        effect_receipt_id: String(productionEffectReceipt.id),
+        e2e_manifest_digest: manifest.manifest_digest,
+        artifact_rollback_receipt_ids: [String(bootstrapArtifactReceipt.id)],
+      })],
+    );
   });
 });

@@ -102,6 +102,7 @@ printf 200
     ))).toEqual({
       anchor: `workflow-skills:sha256:${'9'.repeat(64)}`,
       previous_version: expect.stringMatching(/^workflow-skills:sha256:[0-9a-f]{64}$/),
+      previous_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
     });
   });
 });

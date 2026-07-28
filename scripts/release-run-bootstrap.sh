@@ -205,18 +205,27 @@ latest_state() {
 
 append_transition() {
   local state="$1" effect_receipt_id="" e2e_manifest_digest=""
+  local artifact_intent_ids="[]" artifact_receipt_ids="[]"
   if [[ -n "${2:-}" ]]; then
-    IFS=$'\t' read -r effect_receipt_id e2e_manifest_digest < <(
+    IFS=$'\t' read -r effect_receipt_id e2e_manifest_digest \
+      artifact_intent_ids artifact_receipt_ids < <(
       node -e '
         const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-        process.stdout.write(`${value.receipt_id}\t${value.manifest_digest}\n`);
+        process.stdout.write([
+          value.receipt_id || "",
+          value.manifest_digest || "",
+          JSON.stringify(value.artifact_rollback_intent_ids || []),
+          JSON.stringify(value.artifact_rollback_receipt_ids || []),
+        ].join("\t") + "\n");
       ' "$2"
     )
   fi
   psql_bootstrap -Xqv ON_ERROR_STOP=1 \
     -v run_id="$bootstrap_run_id" -v state="$state" -v merge_sha="$merge_sha" \
     -v effect_receipt_id="$effect_receipt_id" \
-    -v e2e_manifest_digest="$e2e_manifest_digest" <<'SQL' \
+    -v e2e_manifest_digest="$e2e_manifest_digest" \
+    -v artifact_intent_ids="$artifact_intent_ids" \
+    -v artifact_receipt_ids="$artifact_receipt_ids" <<'SQL' \
     >/dev/null
 INSERT INTO kernel_release_bootstrap_transitions (
   bootstrap_run_id, state, evidence
@@ -227,7 +236,13 @@ VALUES (
     'merge_sha', :'merge_sha',
     'recorded_by', 'bootstrap-controller',
     'effect_receipt_id', NULLIF(:'effect_receipt_id', ''),
-    'e2e_manifest_digest', NULLIF(:'e2e_manifest_digest', '')
+    'e2e_manifest_digest', NULLIF(:'e2e_manifest_digest', ''),
+    'artifact_rollback_intent_ids',
+      CASE WHEN :'artifact_intent_ids' = '[]' THEN NULL
+           ELSE :'artifact_intent_ids'::jsonb END,
+    'artifact_rollback_receipt_ids',
+      CASE WHEN :'artifact_receipt_ids' = '[]' THEN NULL
+           ELSE :'artifact_receipt_ids'::jsonb END
   ))
 )
 ON CONFLICT (bootstrap_run_id, state) DO NOTHING;
@@ -453,7 +468,20 @@ if [[ "$state" == "staging_intent" ]]; then
 fi
 
 if [[ "$state" == "staging_passed" ]]; then
-  append_transition production_intent
+  [[ -n "$receipt_file" ]] || {
+    receipt_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-receipt.XXXXXX")
+    chmod 600 "$receipt_file"
+  }
+  KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
+  KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
+  KERNEL_RELEASE_REPOSITORY="$repository" \
+  KERNEL_RELEASE_MERGE_SHA="$merge_sha" \
+  KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT="$deploy_root" \
+  KERNEL_RELEASE_BOOTSTRAP_E2E_OUTPUT_FILE="$receipt_file" \
+  BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" \
+    node "$deploy_root/scripts/lib/release-run-bootstrap-e2e.mjs" prepare-rollback \
+    || deny "bootstrap rollback intents could not be prepared"
+  append_transition production_intent "$receipt_file"
   state=production_intent
 fi
 if [[ "$state" == "production_intent" ]]; then

@@ -14,6 +14,23 @@ const APPROVED_AT = '2026-07-28T06:00:00.000Z';
 const artifacts = [
   { name: 'brain', version: '1.268.2', digest: `sha256:${'1'.repeat(64)}` },
 ];
+const artifactRollbackBaseline = [{
+  artifact_name: 'brain',
+  expected_current_version: '1.268.2',
+  expected_current_digest: `sha256:${'1'.repeat(64)}`,
+  expected_anchor: `brain:sha256:${'1'.repeat(64)}`,
+  expected_previous_version: `brain-image:sha256:${'2'.repeat(64)}`,
+  expected_previous_digest: `sha256:${'2'.repeat(64)}`,
+}];
+const artifactRollbackReadback = [{
+  artifact_name: 'brain',
+  current_version: '1.268.2',
+  current_digest: `sha256:${'1'.repeat(64)}`,
+  anchor: `brain:sha256:${'1'.repeat(64)}`,
+  previous_version: `brain-image:sha256:${'2'.repeat(64)}`,
+  previous_digest: `sha256:${'2'.repeat(64)}`,
+  rollback_metadata: { image_reference: `sha256:${'2'.repeat(64)}` },
+}];
 const e2eManifest = {
   id: MANIFEST_ID,
   ...createRequiredE2EManifest({
@@ -84,9 +101,10 @@ function productionPass(overrides = {}) {
     merge_sha: MERGE_SHA,
     deployed_versions: artifacts,
     rollback_metadata: {
-      anchor: 'prod-cecelia-v4401',
-      previous_version: 'prod-cecelia-v4400',
+      anchor: `brain:sha256:${'1'.repeat(64)}`,
+      previous_version: `brain-image:sha256:${'2'.repeat(64)}`,
     },
+    rollback_artifacts: artifactRollbackReadback,
     ...overrides,
   };
 }
@@ -170,6 +188,27 @@ function deps(overrides = {}) {
         ...receipt,
       };
     }),
+    findOrCreateArtifactRollbackIntents: vi.fn(async (_client, request) => {
+      order.push('rollback:artifact-intents');
+      return request.artifacts.map((artifact, index) => ({
+        id: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${index}`,
+        rollback_intent_id: request.rollbackIntent.id,
+        ...artifact,
+      }));
+    }),
+    loadArtifactRollbackIntents: vi.fn(async () => artifactRollbackBaseline.map(
+      (artifact, index) => ({
+        id: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${index}`,
+        ...artifact,
+      }),
+    )),
+    appendArtifactRollbackReceipts: vi.fn(async (_client, request) => {
+      order.push('rollback:artifact-receipts');
+      return request.artifacts.map((artifact, index) => ({
+        id: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb${index}`,
+        ...artifact,
+      }));
+    }),
   };
   const resolveArtifactVersions = vi.fn(async () => artifacts);
   const observeStaging = vi.fn()
@@ -184,6 +223,10 @@ function deps(overrides = {}) {
   const runProduction = vi.fn(async ({ idempotency_key }) => {
     order.push(`effect:production:${idempotency_key}`);
   });
+  const prepareProductionRollback = vi.fn(async () => {
+    order.push('rollback:prepare');
+    return artifactRollbackBaseline;
+  });
   return {
     order,
     store,
@@ -192,6 +235,7 @@ function deps(overrides = {}) {
     runStaging,
     observeProduction,
     runProduction,
+    prepareProductionRollback,
     getRelease: () => release,
     setRelease: (value) => { release = value; },
     ...overrides,
@@ -220,11 +264,14 @@ describe('ReleaseRun executor', () => {
       'receipt:staging-intent:confirmed',
       'state:staging_passed',
       'rollback:intent',
+      'rollback:prepare',
+      'rollback:artifact-intents',
       'state:production_deploying',
       'intent:production',
       'effect:production:production-key',
       'receipt:production-intent:confirmed',
       'rollback:receipt',
+      'rollback:artifact-receipts',
       'state:production_verified',
       'lease:release',
     ]);
@@ -299,9 +346,10 @@ describe('ReleaseRun executor', () => {
           .filter(([key]) => !key.startsWith('dispatch_')),
       ),
       rollback_metadata: {
-        anchor: 'prod-cecelia-v4401',
-        previous_version: 'prod-cecelia-v4400',
+        anchor: `brain:sha256:${'1'.repeat(64)}`,
+        previous_version: `brain-image:sha256:${'2'.repeat(64)}`,
       },
+      rollback_artifacts: artifactRollbackReadback,
     });
     const transition = d.store.appendTransition.mock.calls
       .map((call) => call[1])
@@ -321,6 +369,9 @@ describe('ReleaseRun executor', () => {
       effect_receipt_id: 'production-intent-receipt',
       e2e_manifest_digest: e2eManifest.manifest_digest,
       rollback_receipt_id: '99999999-9999-4999-8999-999999999999',
+      artifact_rollback_receipt_ids: [
+        'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb0',
+      ],
     });
     expect(receipt).toMatchObject({
       dispatch_claim_id: 31,
@@ -341,14 +392,24 @@ describe('ReleaseRun executor', () => {
       expect.objectContaining({
         rollback_intent_id: '88888888-8888-4888-8888-888888888888',
         effect_receipt_id: 'production-intent-receipt',
-        anchor: 'prod-cecelia-v4401',
-        previous_version: 'prod-cecelia-v4400',
+        anchor: `brain:sha256:${'1'.repeat(64)}`,
+        previous_version: `brain-image:sha256:${'2'.repeat(64)}`,
       }),
     );
     expect(d.order.indexOf('rollback:intent'))
       .toBeLessThan(d.order.indexOf('effect:production:production-key'));
+    expect(d.order.indexOf('rollback:artifact-intents'))
+      .toBeLessThan(d.order.indexOf('effect:production:production-key'));
     expect(d.order.indexOf('rollback:receipt'))
       .toBeGreaterThan(d.order.indexOf('receipt:production-intent:confirmed'));
+    expect(d.store.appendArtifactRollbackReceipts).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        effectReceiptId: 'production-intent-receipt',
+        intents: expect.any(Array),
+        artifacts: artifactRollbackReadback,
+      },
+    );
   });
 
   it.each(['skipped', 'idle', 'unknown', 'unavailable', 'fail'])(

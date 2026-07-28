@@ -76,6 +76,9 @@ function receiptFor(intent, status, observation, evidence, e2eManifest) {
         ...(observation.rollback_metadata == null
           ? {}
           : { rollback_metadata: observation.rollback_metadata }),
+        ...(observation.rollback_artifacts == null
+          ? {}
+          : { rollback_artifacts: observation.rollback_artifacts }),
       }
     : null;
   return {
@@ -147,6 +150,7 @@ async function reconcileEffect({
   runEffect,
   validate,
   e2eManifest,
+  expectedRollbackArtifacts,
 }) {
   const intent = await store.findOrCreateIntent(client, {
     releaseRun: release,
@@ -166,6 +170,9 @@ async function reconcileEffect({
         probe_id: command.id,
       })),
     ),
+    ...(expectedRollbackArtifacts == null
+      ? {}
+      : { rollback_artifacts: expectedRollbackArtifacts }),
   };
   const effectRequest = {
     release_run_id: release.id,
@@ -274,6 +281,7 @@ export function createReleaseRunExecutor({
   runStaging,
   observeProduction,
   runProduction,
+  prepareProductionRollback,
 }) {
   return async function executeRelease({ runId, taskId }) {
     return store.withReleaseLease(async (client) => {
@@ -354,6 +362,9 @@ export function createReleaseRunExecutor({
           if (
             typeof store.findOrCreateRollbackIntent !== 'function'
             || typeof store.appendRollbackReceipt !== 'function'
+            || typeof store.findOrCreateArtifactRollbackIntents !== 'function'
+            || typeof store.loadArtifactRollbackIntents !== 'function'
+            || typeof store.appendArtifactRollbackReceipts !== 'function'
           ) {
             return blocked(release, 'release_rollback_ledger_unavailable');
           }
@@ -361,13 +372,37 @@ export function createReleaseRunExecutor({
             client,
             { releaseRun: release },
           );
+          let artifactRollbackIntents;
           if (release.state === 'staging_passed') {
+            if (typeof prepareProductionRollback !== 'function') {
+              return blocked(release, 'release_rollback_preflight_unavailable');
+            }
+            const rollbackArtifacts = await prepareProductionRollback({
+              release_run_id: release.id,
+              merge_sha: release.merge_sha,
+              artifact_versions: release.artifact_versions,
+            });
+            artifactRollbackIntents =
+              await store.findOrCreateArtifactRollbackIntents(client, {
+                rollbackIntent,
+                releaseRun: release,
+                artifacts: rollbackArtifacts,
+              });
             release = await transition(
               store,
               client,
               release,
               'production_deploying',
-              { merge_sha: release.merge_sha },
+              {
+                merge_sha: release.merge_sha,
+                artifact_rollback_intent_ids: artifactRollbackIntents
+                  .map((intent) => intent.id),
+              },
+            );
+          } else {
+            artifactRollbackIntents = await store.loadArtifactRollbackIntents(
+              client,
+              { rollbackIntent, releaseRun: release },
             );
           }
           const production = await reconcileEffect({
@@ -379,6 +414,7 @@ export function createReleaseRunExecutor({
             runEffect: runProduction,
             validate: validateProductionObservation,
             e2eManifest,
+            expectedRollbackArtifacts: artifactRollbackIntents,
           });
           if (!production.confirmed) return blocked(release, production.detail);
           const rollbackReceipt = await store.appendRollbackReceipt(client, {
@@ -389,6 +425,12 @@ export function createReleaseRunExecutor({
               production.observation.rollback_metadata.previous_version,
             rollback_metadata: production.observation.rollback_metadata,
           });
+          const artifactRollbackReceipts =
+            await store.appendArtifactRollbackReceipts(client, {
+              effectReceiptId: production.receipt.id,
+              intents: artifactRollbackIntents,
+              artifacts: production.observation.rollback_artifacts,
+            });
           release = await transition(
             store,
             client,
@@ -399,6 +441,8 @@ export function createReleaseRunExecutor({
               deployed_versions: release.artifact_versions,
               effect_receipt_id: production.receipt.id,
               rollback_receipt_id: rollbackReceipt.id,
+              artifact_rollback_receipt_ids: artifactRollbackReceipts
+                .map((receipt) => receipt.id),
               e2e_manifest_digest: e2eManifest.manifest_digest,
               verification: production.observation,
             },

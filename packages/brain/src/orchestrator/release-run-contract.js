@@ -268,6 +268,50 @@ export function validateProductionObservation(observation, expected) {
   ) {
     deny('release_production_rollback_invalid');
   }
+  if (
+    !Array.isArray(observation.rollback_artifacts)
+    || !Array.isArray(expected.rollback_artifacts)
+    || observation.rollback_artifacts.length !== expected.artifact_versions.length
+    || expected.rollback_artifacts.length !== expected.artifact_versions.length
+  ) {
+    deny('release_production_rollback_artifacts_invalid');
+  }
+  const rollbackArtifacts = expected.artifact_versions.map((artifact) => {
+    const baseline = expected.rollback_artifacts.find(
+      (item) => item.artifact_name === artifact.name,
+    );
+    const observed = observation.rollback_artifacts.find(
+      (item) => item.artifact_name === artifact.name,
+    );
+    if (
+      !baseline
+      || !observed
+      || observed.current_version !== artifact.version
+      || observed.current_digest !== artifact.digest
+      || baseline.expected_current_version !== artifact.version
+      || baseline.expected_current_digest !== artifact.digest
+      || observed.anchor !== baseline.expected_anchor
+      || observed.previous_version !== baseline.expected_previous_version
+      || observed.previous_digest !== baseline.expected_previous_digest
+      || !/^sha256:[0-9a-f]{64}$/.test(observed.previous_digest ?? '')
+      || !boundedString(observed.anchor, 256)
+      || !boundedString(observed.previous_version, 256)
+      || observed.rollback_metadata == null
+      || typeof observed.rollback_metadata !== 'object'
+      || Array.isArray(observed.rollback_metadata)
+    ) {
+      deny('release_production_rollback_artifacts_mismatch');
+    }
+    return Object.freeze({
+      artifact_name: artifact.name,
+      current_version: artifact.version,
+      current_digest: artifact.digest,
+      anchor: observed.anchor,
+      previous_version: observed.previous_version,
+      previous_digest: observed.previous_digest,
+      rollback_metadata: Object.freeze({ ...observed.rollback_metadata }),
+    });
+  });
 
   return Object.freeze({
     status: 'pass',
@@ -281,5 +325,6 @@ export function validateProductionObservation(observation, expected) {
       anchor: rollback.anchor,
       previous_version: rollback.previous_version,
     }),
+    rollback_artifacts: Object.freeze(rollbackArtifacts),
   });
 }

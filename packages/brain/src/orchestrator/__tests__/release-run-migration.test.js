@@ -112,6 +112,13 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/rollback receipt requires exact confirmed production readback/i);
     expect(sql).toMatch(/production_verified requires exact durable rollback receipt/i);
     expect(sql).toMatch(/NEW\.evidence->>'rollback_receipt_id' = rollback_receipt\.id::text/i);
+    expect(sql).toMatch(/production_deploying requires exact rollback artifact intent set/i);
+    expect(sql).toMatch(/production_verified requires exact rollback artifact receipt set/i);
+    expect(sql).toMatch(/rollback artifact intent requires exact artifact identity/i);
+    expect(sql).toMatch(/rollback artifact receipt requires exact confirmed artifact readback/i);
+    expect(sql).toMatch(/bootstrap production_intent requires exact rollback artifact intent set/i);
+    expect(sql).toMatch(/bootstrap production_verified requires exact rollback artifact receipt set/i);
+    expect(sql).toMatch(/bootstrap rollback artifact receipt requires exact production readback/i);
   });
 
   it('persists a unique P0 escalation for every ReleaseRun BLOCKED condition', () => {

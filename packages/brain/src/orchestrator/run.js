@@ -82,6 +82,7 @@ export async function buildDefaultHandlers({
   runStaging,
   observeProduction,
   runProduction,
+  prepareProductionRollback,
   githubExecFile,
 }) {
   const defaultReleaseAdapters = createReleaseRunAdapters();
@@ -133,6 +134,8 @@ export async function buildDefaultHandlers({
     runStaging: runStaging ?? defaultReleaseAdapters.runStaging,
     observeProduction: observeProduction ?? defaultReleaseAdapters.observeProduction,
     runProduction: runProduction ?? defaultReleaseAdapters.runProduction,
+    prepareProductionRollback: prepareProductionRollback
+      ?? defaultReleaseAdapters.prepareProductionRollback,
   });
 
   return createKernelHandlers({

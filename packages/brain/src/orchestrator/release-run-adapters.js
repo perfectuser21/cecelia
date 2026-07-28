@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import {
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+} from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { digestTree } from '../../../../scripts/lib/release-run-tree-digest.mjs';
 import { sameArtifactVersions } from './release-run-contract.js';
 import { executeRequiredE2EManifest } from './release-run-e2e.js';
 import { resolveReleaseArtifactVersions } from './release-run-artifacts.js';
@@ -15,6 +24,26 @@ function exactStatus(status, request) {
     && status?.merge_sha === request.merge_sha;
 }
 
+function exactDashboardTag(source) {
+  const matches = source.match(/^current=(prod-cecelia-v[0-9]+)$/gm) ?? [];
+  if (matches.length !== 1) throw new Error('release_dashboard_current_invalid');
+  return matches[0].slice('current='.length);
+}
+
+function workflowPreviousDigest(deployRoots) {
+  const lines = [];
+  for (const accountRoot of deployRoots.split(':').filter(Boolean)) {
+    const skillsRoot = join(accountRoot, 'skills');
+    for (const name of readdirSync(skillsRoot).sort()) {
+      const liveSkill = join(skillsRoot, name);
+      if (!lstatSync(liveSkill).isSymbolicLink()) continue;
+      lines.push(`${liveSkill}\t${readlinkSync(liveSkill)}\n`);
+    }
+  }
+  if (lines.length === 0) throw new Error('release_workflow_previous_links_missing');
+  return `sha256:${createHash('sha256').update(lines.join('')).digest('hex')}`;
+}
+
 export function createReleaseRunAdapters({
   fetchFn = globalThis.fetch,
   e2eFetchFn = fetchFn,
@@ -27,6 +56,9 @@ export function createReleaseRunAdapters({
   dashboardStagingUrl = process.env.DASHBOARD_STAGING_URL
     ?? 'http://localhost:5212',
   deployToken = process.env.DEPLOY_TOKEN,
+  readDashboardRelease = () => readFileSync(join(repoRoot, '.production-release'), 'utf8'),
+  digestDashboardLive = () => digestTree(join(repoRoot, 'apps/dashboard/dist')),
+  workflowDeployRoots = process.env.CECELIA_SKILLS_DEPLOY_ROOTS ?? '',
 } = {}) {
   const runRequiredE2E = async (request, environment, artifactReadback) => {
     const { id: _manifestId, ...manifest } = request.e2e_manifest ?? {};
@@ -112,6 +144,47 @@ export function createReleaseRunAdapters({
     });
   };
 
+  const prepareProductionRollback = async (request) => {
+    const currentStatus = await json(fetchFn, `${brainUrl}/api/brain/deploy/status`);
+    return request.artifact_versions.map((artifact) => {
+      const base = {
+        artifact_name: artifact.name,
+        expected_current_version: artifact.version,
+        expected_current_digest: artifact.digest,
+        expected_anchor: `${artifact.name}:${artifact.digest}`,
+      };
+      if (artifact.name === 'brain') {
+        if (!/^sha256:[0-9a-f]{64}$/.test(currentStatus.deployed_image_digest ?? '')) {
+          throw new Error('release_brain_previous_digest_invalid');
+        }
+        return {
+          ...base,
+          expected_previous_version:
+            `brain-image:${currentStatus.deployed_image_digest}`,
+          expected_previous_digest: currentStatus.deployed_image_digest,
+        };
+      }
+      if (artifact.name === 'workspace') {
+        const previousDigest = digestDashboardLive();
+        return {
+          ...base,
+          expected_previous_version:
+            `dashboard:${exactDashboardTag(readDashboardRelease())}`,
+          expected_previous_digest: previousDigest,
+        };
+      }
+      if (artifact.name === 'workflow-skills') {
+        const previousDigest = workflowPreviousDigest(workflowDeployRoots);
+        return {
+          ...base,
+          expected_previous_version: `workflow-skills:${previousDigest}`,
+          expected_previous_digest: previousDigest,
+        };
+      }
+      throw new Error('release_rollback_artifact_unknown');
+    });
+  };
+
   const observeStaging = async (request) => {
     const status = await json(fetchFn, `${brainUrl}/api/brain/deploy/staging/status`);
     if (status.status === 'idle') return { status: 'not_applied' };
@@ -177,6 +250,7 @@ export function createReleaseRunAdapters({
     }
     const anchors = [];
     const previousVersions = [];
+    const rollbackArtifacts = [];
     if (brain) {
       if (
         !/^sha256:[0-9a-f]{64}$/.test(status.deployed_image_digest ?? '')
@@ -191,8 +265,24 @@ export function createReleaseRunAdapters({
         )
         || status.deployed_image_digest === status.rollback_image_digest
       ) return { status: 'fail' };
-      anchors.push(`brain-image:${status.deployed_image_digest}`);
-      previousVersions.push(`brain-image:${status.rollback_image_digest}`);
+      const anchor = `brain:${brain.digest}`;
+      const previousVersion = `brain-image:${status.rollback_image_digest}`;
+      anchors.push(anchor);
+      previousVersions.push(previousVersion);
+      rollbackArtifacts.push({
+        artifact_name: brain.name,
+        current_version: brain.version,
+        current_digest: brain.digest,
+        anchor,
+        previous_version: previousVersion,
+        previous_digest: status.rollback_image_digest,
+        rollback_metadata: {
+          image_reference: status.rollback_image_reference,
+          image_tag: status.rollback_image_tag,
+          rollback_command: status.rollback_command,
+          probe: status.rollback_probe,
+        },
+      });
     }
     if (dashboard) {
       const rollback = status.dashboard_rollback_metadata;
@@ -205,12 +295,22 @@ export function createReleaseRunAdapters({
         || rollback.current_digest !== dashboard.digest
         || !/^prod-cecelia-v[0-9]+$/.test(rollback.old_tag ?? '')
         || !/^prod-cecelia-v[0-9]+$/.test(rollback.new_tag ?? '')
-        || rollback.anchor !== `dashboard:${rollback.new_tag}`
+        || rollback.anchor !== `workspace:${dashboard.digest}`
         || rollback.previous_version !== `dashboard:${rollback.old_tag}`
         || !/^sha256:[0-9a-f]{64}$/.test(rollback.previous_digest ?? '')
       ) return { status: 'fail' };
-      anchors.push(rollback.anchor);
+      const anchor = `workspace:${dashboard.digest}`;
+      anchors.push(anchor);
       previousVersions.push(rollback.previous_version);
+      rollbackArtifacts.push({
+        artifact_name: dashboard.name,
+        current_version: dashboard.version,
+        current_digest: dashboard.digest,
+        anchor,
+        previous_version: rollback.previous_version,
+        previous_digest: rollback.previous_digest,
+        rollback_metadata: rollback,
+      });
     }
     if (workflowSkills) {
       const workflowRollback = status.workflow_rollback_metadata;
@@ -219,9 +319,23 @@ export function createReleaseRunAdapters({
         || !/^workflow-skills:sha256:[0-9a-f]{64}$/.test(
           workflowRollback?.previous_version ?? '',
         )
+        || !/^sha256:[0-9a-f]{64}$/.test(
+          workflowRollback?.previous_digest ?? '',
+        )
+        || workflowRollback.previous_version
+          !== `workflow-skills:${workflowRollback.previous_digest}`
       ) return { status: 'fail' };
       anchors.push(workflowRollback.anchor);
       previousVersions.push(workflowRollback.previous_version);
+      rollbackArtifacts.push({
+        artifact_name: workflowSkills.name,
+        current_version: workflowSkills.version,
+        current_digest: workflowSkills.digest,
+        anchor: workflowRollback.anchor,
+        previous_version: workflowRollback.previous_version,
+        previous_digest: workflowRollback.previous_digest,
+        rollback_metadata: workflowRollback,
+      });
     }
     try {
       const e2e = await runRequiredE2E(
@@ -247,6 +361,11 @@ export function createReleaseRunAdapters({
             probe: status.rollback_probe,
           } : {}),
         },
+        rollback_artifacts: request.artifact_versions.map(
+          (artifact) => rollbackArtifacts.find(
+            (rollbackArtifact) => rollbackArtifact.artifact_name === artifact.name,
+          ),
+        ),
       };
     } catch {
       return { status: 'fail' };
@@ -259,7 +378,8 @@ export function createReleaseRunAdapters({
     runStaging: run(true),
     observeProduction,
     runProduction: run(false),
+    prepareProductionRollback,
   });
 }
 
-export const __test__ = { exactStatus };
+export const __test__ = { exactDashboardTag, exactStatus, workflowPreviousDigest };

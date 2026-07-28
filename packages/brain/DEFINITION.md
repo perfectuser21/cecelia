@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.268.8
+**版本**: 1.268.9
+
+## Artifact-bound rollback ledger
+
+- Normal and bootstrap production record exact per-artifact rollback intents
+  before effect execution and exact receipts after confirmed readback.
+- Runtime and PostgreSQL independently bind current/previous digests,
+  operational metadata, confirmed effect receipt, and full artifact coverage.
+- Terminal evidence must reference the exact ordered artifact receipt set.
+- 回退：`bash scripts/brain-rollback.sh 1.268.8`（保留 artifact rollback ledger）。
 
 ## Immutable ReleaseRun artifacts
 

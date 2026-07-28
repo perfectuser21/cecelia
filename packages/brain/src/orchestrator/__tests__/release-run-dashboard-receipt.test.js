@@ -54,7 +54,7 @@ describe('dashboard ReleaseRun rollback receipt', () => {
       current_digest: `sha256:${'7'.repeat(64)}`,
       old_tag: 'prod-cecelia-v41',
       new_tag: 'prod-cecelia-v42',
-      anchor: 'dashboard:prod-cecelia-v42',
+      anchor: `workspace:sha256:${'7'.repeat(64)}`,
       previous_version: 'dashboard:prod-cecelia-v41',
       previous_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
     });

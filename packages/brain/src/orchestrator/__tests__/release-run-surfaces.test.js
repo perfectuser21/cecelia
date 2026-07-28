@@ -334,8 +334,22 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).toContain('run_bootstrap_effect');
     expect(source).toContain('start_attempt_renewal');
     expect(source).toContain('stop_attempt_renewal');
+    expect(source).toContain('prepare-rollback');
+    expect(source).toContain('artifact_rollback_intent_ids');
+    expect(source).toContain('artifact_rollback_receipt_ids');
     expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_ATTEMPT_FILE');
     expect(source).not.toContain('KERNEL_RELEASE_BOOTSTRAP_RECEIPT');
+
+    const bootstrapE2E = readFileSync(
+      resolve(root, 'scripts/lib/release-run-bootstrap-e2e.mjs'),
+      'utf8',
+    );
+    expect(bootstrapE2E).toContain(
+      'kernel_release_bootstrap_rollback_artifact_intents',
+    );
+    expect(bootstrapE2E).toContain(
+      'kernel_release_bootstrap_rollback_artifact_receipts',
+    );
 
     const migration = readFileSync(
       resolve(root, 'packages/brain/migrations/374_kernel_release_runs.sql'),

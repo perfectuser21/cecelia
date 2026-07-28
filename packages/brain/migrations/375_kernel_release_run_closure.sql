@@ -728,6 +728,9 @@ BEGIN
           IS DISTINCT FROM NEW.e2e_probe_results
        OR COALESCE(verification#>>'{rollback_metadata,anchor}', '') = ''
        OR COALESCE(verification#>>'{rollback_metadata,previous_version}', '') = ''
+       OR jsonb_typeof(verification->'rollback_artifacts') IS DISTINCT FROM 'array'
+       OR jsonb_array_length(verification->'rollback_artifacts') <>
+          jsonb_array_length(intent.expected_artifact_versions)
      ) THEN
     RAISE EXCEPTION
       'confirmed production receipt requires health and E2E verification';
@@ -802,6 +805,89 @@ CREATE TRIGGER trg_kernel_release_rollback_receipt_guard
   BEFORE INSERT ON kernel_release_rollback_receipts
   FOR EACH ROW EXECUTE FUNCTION kernel_release_rollback_receipt_guard();
 
+CREATE OR REPLACE FUNCTION kernel_release_rollback_artifact_intent_guard()
+RETURNS trigger AS $$
+DECLARE
+  artifact JSONB;
+BEGIN
+  SELECT item INTO artifact
+    FROM kernel_release_rollback_intents rollback_intent,
+         LATERAL jsonb_array_elements(
+           rollback_intent.expected_artifact_versions
+         ) item
+   WHERE rollback_intent.id = NEW.rollback_intent_id
+     AND item->>'name' = NEW.artifact_name;
+  IF artifact IS NULL
+     OR NEW.expected_current_version IS DISTINCT FROM artifact->>'version'
+     OR NEW.expected_current_digest IS DISTINCT FROM artifact->>'digest'
+     OR NEW.expected_anchor IS DISTINCT FROM
+        NEW.artifact_name || ':' || (artifact->>'digest')
+  THEN
+    RAISE EXCEPTION
+      'rollback artifact intent requires exact artifact identity';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_artifact_intent_guard
+  ON kernel_release_rollback_artifact_intents;
+CREATE TRIGGER trg_kernel_release_rollback_artifact_intent_guard
+  BEFORE INSERT ON kernel_release_rollback_artifact_intents
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_rollback_artifact_intent_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_rollback_artifact_receipt_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_rollback_artifact_intents artifact_intent
+      JOIN kernel_release_rollback_intents rollback_intent
+        ON rollback_intent.id = artifact_intent.rollback_intent_id
+      JOIN kernel_release_effect_intents effect_intent
+        ON effect_intent.release_run_id = rollback_intent.release_run_id
+       AND effect_intent.effect_kind = 'production'
+      JOIN kernel_release_effect_receipts effect_receipt
+        ON effect_receipt.intent_id = effect_intent.id
+       AND effect_receipt.id = NEW.effect_receipt_id
+       AND effect_receipt.receipt_status = 'confirmed'
+      JOIN LATERAL jsonb_array_elements(
+        effect_receipt.evidence#>'{verification,rollback_artifacts}'
+      ) observed ON observed->>'artifact_name' = artifact_intent.artifact_name
+     WHERE artifact_intent.id = NEW.rollback_artifact_intent_id
+       AND effect_receipt.observed_merge_sha =
+           rollback_intent.expected_merge_sha
+       AND effect_receipt.observed_artifact_versions =
+           rollback_intent.expected_artifact_versions
+       AND observed->>'current_version' =
+           artifact_intent.expected_current_version
+       AND observed->>'current_digest' =
+           artifact_intent.expected_current_digest
+       AND observed->>'anchor' = artifact_intent.expected_anchor
+       AND NEW.observed_anchor = artifact_intent.expected_anchor
+       AND observed->>'previous_version' =
+           artifact_intent.expected_previous_version
+       AND NEW.observed_previous_version =
+           artifact_intent.expected_previous_version
+       AND observed->>'previous_digest' =
+           artifact_intent.expected_previous_digest
+       AND NEW.observed_previous_digest =
+           artifact_intent.expected_previous_digest
+       AND observed->'rollback_metadata' = NEW.rollback_metadata
+  ) THEN
+    RAISE EXCEPTION
+      'rollback artifact receipt requires exact confirmed artifact readback';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_artifact_receipt_guard
+  ON kernel_release_rollback_artifact_receipts;
+CREATE TRIGGER trg_kernel_release_rollback_artifact_receipt_guard
+  BEFORE INSERT ON kernel_release_rollback_artifact_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_rollback_artifact_receipt_guard();
+
 CREATE OR REPLACE FUNCTION kernel_release_bootstrap_effect_receipt_guard()
 RETURNS trigger AS $$
 DECLARE
@@ -864,6 +950,16 @@ BEGIN
     RAISE EXCEPTION
       'confirmed bootstrap receipt requires exact E2E manifest';
   END IF;
+  IF attempt.effect_kind = 'production'
+     AND (
+       jsonb_typeof(NEW.evidence->'rollback_artifacts')
+         IS DISTINCT FROM 'array'
+       OR jsonb_array_length(NEW.evidence->'rollback_artifacts') <>
+          jsonb_array_length(manifest.artifact_versions)
+     ) THEN
+    RAISE EXCEPTION
+      'confirmed bootstrap production receipt requires rollback artifacts';
+  END IF;
   FOR result, result_index IN
     SELECT value, ordinality
       FROM jsonb_array_elements(NEW.e2e_scenario_results) WITH ORDINALITY
@@ -897,6 +993,85 @@ DROP TRIGGER IF EXISTS trg_kernel_release_bootstrap_effect_receipt_guard
 CREATE TRIGGER trg_kernel_release_bootstrap_effect_receipt_guard
   BEFORE INSERT ON kernel_release_bootstrap_effect_receipts
   FOR EACH ROW EXECUTE FUNCTION kernel_release_bootstrap_effect_receipt_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_bootstrap_rollback_artifact_intent_guard()
+RETURNS trigger AS $$
+DECLARE
+  artifact JSONB;
+BEGIN
+  SELECT item INTO artifact
+    FROM kernel_release_bootstrap_e2e_manifests manifest,
+         LATERAL jsonb_array_elements(manifest.artifact_versions) item
+   WHERE manifest.bootstrap_run_id = NEW.bootstrap_run_id
+     AND item->>'name' = NEW.artifact_name;
+  IF artifact IS NULL
+     OR NEW.expected_current_version IS DISTINCT FROM artifact->>'version'
+     OR NEW.expected_current_digest IS DISTINCT FROM artifact->>'digest'
+     OR NEW.expected_anchor IS DISTINCT FROM
+        NEW.artifact_name || ':' || (artifact->>'digest')
+  THEN
+    RAISE EXCEPTION
+      'bootstrap rollback artifact intent requires exact artifact identity';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS
+  trg_kernel_release_bootstrap_rollback_artifact_intent_guard
+  ON kernel_release_bootstrap_rollback_artifact_intents;
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_intent_guard
+  BEFORE INSERT ON kernel_release_bootstrap_rollback_artifact_intents
+  FOR EACH ROW EXECUTE FUNCTION
+    kernel_release_bootstrap_rollback_artifact_intent_guard();
+
+CREATE OR REPLACE FUNCTION kernel_release_bootstrap_rollback_artifact_receipt_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_bootstrap_rollback_artifact_intents artifact_intent
+      JOIN kernel_release_bootstrap_effect_attempts attempt
+        ON attempt.bootstrap_run_id = artifact_intent.bootstrap_run_id
+       AND attempt.effect_kind = 'production'
+      JOIN kernel_release_bootstrap_effect_receipts effect_receipt
+        ON effect_receipt.effect_attempt_id = attempt.id
+       AND effect_receipt.id = NEW.effect_receipt_id
+       AND effect_receipt.receipt_status = 'confirmed'
+      JOIN LATERAL jsonb_array_elements(
+        effect_receipt.evidence->'rollback_artifacts'
+      ) observed ON observed->>'artifact_name' = artifact_intent.artifact_name
+     WHERE artifact_intent.id = NEW.rollback_artifact_intent_id
+       AND observed->>'current_version' =
+           artifact_intent.expected_current_version
+       AND observed->>'current_digest' =
+           artifact_intent.expected_current_digest
+       AND observed->>'anchor' = artifact_intent.expected_anchor
+       AND NEW.observed_anchor = artifact_intent.expected_anchor
+       AND observed->>'previous_version' =
+           artifact_intent.expected_previous_version
+       AND NEW.observed_previous_version =
+           artifact_intent.expected_previous_version
+       AND observed->>'previous_digest' =
+           artifact_intent.expected_previous_digest
+       AND NEW.observed_previous_digest =
+           artifact_intent.expected_previous_digest
+       AND observed->'rollback_metadata' = NEW.rollback_metadata
+  ) THEN
+    RAISE EXCEPTION
+      'bootstrap rollback artifact receipt requires exact production readback';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS
+  trg_kernel_release_bootstrap_rollback_artifact_receipt_guard
+  ON kernel_release_bootstrap_rollback_artifact_receipts;
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_receipt_guard
+  BEFORE INSERT ON kernel_release_bootstrap_rollback_artifact_receipts
+  FOR EACH ROW EXECUTE FUNCTION
+    kernel_release_bootstrap_rollback_artifact_receipt_guard();
 
 CREATE OR REPLACE FUNCTION kernel_release_transition_guard()
 RETURNS trigger AS $$
@@ -936,6 +1111,30 @@ BEGIN
     RAISE EXCEPTION
       'invalid kernel release transition: % -> % (expected %)',
       COALESCE(previous_state, '<none>'), NEW.state, COALESCE(expected_state, '<terminal>');
+  END IF;
+
+  IF NEW.state = 'production_deploying' AND (
+    jsonb_typeof(NEW.evidence->'artifact_rollback_intent_ids')
+      IS DISTINCT FROM 'array'
+    OR NEW.evidence->'artifact_rollback_intent_ids' IS DISTINCT FROM (
+      SELECT COALESCE(
+        jsonb_agg(artifact_intent.id::text ORDER BY artifact_intent.artifact_name),
+        '[]'::jsonb
+      )
+        FROM kernel_release_rollback_intents rollback_intent
+        JOIN kernel_release_rollback_artifact_intents artifact_intent
+          ON artifact_intent.rollback_intent_id = rollback_intent.id
+       WHERE rollback_intent.release_run_id = NEW.release_run_id
+    )
+    OR jsonb_array_length(NEW.evidence->'artifact_rollback_intent_ids') <>
+       (
+         SELECT jsonb_array_length(release.artifact_versions)
+           FROM kernel_release_runs release
+          WHERE release.id = NEW.release_run_id
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'production_deploying requires exact rollback artifact intent set';
   END IF;
 
   IF NEW.state = 'staging_passed' AND NOT EXISTS (
@@ -982,6 +1181,33 @@ BEGIN
     RAISE EXCEPTION
       'production_verified requires exact durable rollback receipt';
   END IF;
+  IF NEW.state = 'production_verified' AND (
+    jsonb_typeof(NEW.evidence->'artifact_rollback_receipt_ids')
+      IS DISTINCT FROM 'array'
+    OR NEW.evidence->'artifact_rollback_receipt_ids' IS DISTINCT FROM (
+      SELECT COALESCE(
+        jsonb_agg(artifact_receipt.id::text ORDER BY artifact_intent.artifact_name),
+        '[]'::jsonb
+      )
+        FROM kernel_release_rollback_intents rollback_intent
+        JOIN kernel_release_rollback_artifact_intents artifact_intent
+          ON artifact_intent.rollback_intent_id = rollback_intent.id
+        JOIN kernel_release_rollback_artifact_receipts artifact_receipt
+          ON artifact_receipt.rollback_artifact_intent_id = artifact_intent.id
+       WHERE rollback_intent.release_run_id = NEW.release_run_id
+         AND artifact_receipt.effect_receipt_id::text =
+             NEW.evidence->>'effect_receipt_id'
+    )
+    OR jsonb_array_length(NEW.evidence->'artifact_rollback_receipt_ids') <>
+       (
+         SELECT jsonb_array_length(release.artifact_versions)
+           FROM kernel_release_runs release
+          WHERE release.id = NEW.release_run_id
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'production_verified requires exact rollback artifact receipt set';
+  END IF;
 
   RETURN NEW;
 END;
@@ -1026,6 +1252,28 @@ BEGIN
       COALESCE(previous_state, '<none>'), NEW.state, COALESCE(expected_state, '<terminal>');
   END IF;
 
+  IF NEW.state = 'production_intent' AND (
+    jsonb_typeof(NEW.evidence->'artifact_rollback_intent_ids')
+      IS DISTINCT FROM 'array'
+    OR NEW.evidence->'artifact_rollback_intent_ids' IS DISTINCT FROM (
+      SELECT COALESCE(
+        jsonb_agg(intent.id::text ORDER BY intent.artifact_name),
+        '[]'::jsonb
+      )
+        FROM kernel_release_bootstrap_rollback_artifact_intents intent
+       WHERE intent.bootstrap_run_id = NEW.bootstrap_run_id
+    )
+    OR jsonb_array_length(NEW.evidence->'artifact_rollback_intent_ids') <>
+       (
+         SELECT jsonb_array_length(manifest.artifact_versions)
+           FROM kernel_release_bootstrap_e2e_manifests manifest
+          WHERE manifest.bootstrap_run_id = NEW.bootstrap_run_id
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'bootstrap production_intent requires exact rollback artifact intent set';
+  END IF;
+
   IF NEW.state = 'staging_passed' AND NOT EXISTS (
     SELECT 1
       FROM kernel_release_bootstrap_effect_attempts a
@@ -1052,6 +1300,31 @@ BEGIN
        AND NEW.evidence->>'e2e_manifest_digest' = r.e2e_manifest_digest
   ) THEN
     RAISE EXCEPTION 'production_verified requires confirmed production effect receipt';
+  END IF;
+  IF NEW.state = 'production_verified' AND (
+    jsonb_typeof(NEW.evidence->'artifact_rollback_receipt_ids')
+      IS DISTINCT FROM 'array'
+    OR NEW.evidence->'artifact_rollback_receipt_ids' IS DISTINCT FROM (
+      SELECT COALESCE(
+        jsonb_agg(receipt.id::text ORDER BY intent.artifact_name),
+        '[]'::jsonb
+      )
+        FROM kernel_release_bootstrap_rollback_artifact_intents intent
+        JOIN kernel_release_bootstrap_rollback_artifact_receipts receipt
+          ON receipt.rollback_artifact_intent_id = intent.id
+       WHERE intent.bootstrap_run_id = NEW.bootstrap_run_id
+         AND receipt.effect_receipt_id::text =
+             NEW.evidence->>'effect_receipt_id'
+    )
+    OR jsonb_array_length(NEW.evidence->'artifact_rollback_receipt_ids') <>
+       (
+         SELECT jsonb_array_length(manifest.artifact_versions)
+           FROM kernel_release_bootstrap_e2e_manifests manifest
+          WHERE manifest.bootstrap_run_id = NEW.bootstrap_run_id
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'bootstrap production_verified requires exact rollback artifact receipt set';
   END IF;
   RETURN NEW;
 END;

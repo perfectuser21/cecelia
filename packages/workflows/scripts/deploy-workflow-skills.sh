@@ -136,6 +136,7 @@ PREVIOUS_DIGEST="$previous_digest" RECEIPT_FILE="$receipt_file" node -e '
   fs.writeFileSync(process.env.RECEIPT_FILE, JSON.stringify({
     anchor: `workflow-skills:${artifact.digest}`,
     previous_version: `workflow-skills:sha256:${process.env.PREVIOUS_DIGEST}`,
+    previous_digest: `sha256:${process.env.PREVIOUS_DIGEST}`,
   }), { mode: 0o600 });
   fs.chmodSync(process.env.RECEIPT_FILE, 0o600);
 '

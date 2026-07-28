@@ -39,7 +39,7 @@ const receipt = {
   current_digest: artifactDigest,
   old_tag: oldTag,
   new_tag: newTag,
-  anchor: `dashboard:${newTag}`,
+  anchor: `workspace:${artifactDigest}`,
   previous_version: `dashboard:${oldTag}`,
   previous_digest: digestTree(oldRoot),
 };
