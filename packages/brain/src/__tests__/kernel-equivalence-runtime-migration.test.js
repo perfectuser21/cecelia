@@ -44,8 +44,12 @@ describe('provisional migration 375 Kernel equivalence runtime', () => {
     ['adapter_id', 'adapter_id'],
     ['grant_id', 'grant_id::text'],
   ])('binds extracted %s to the signed bundle JSON', (_label, expression) => {
+    const escapedExpression = expression.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      '\\$&',
+    );
     expect(sql).toMatch(new RegExp(
-      `bundle->>'${_label}'\\s*=\\s*${expression.replace('::', '\\\\:\\\\:')}`,
+      `bundle->>'${_label}'\\s*=\\s*${escapedExpression}`,
       'i',
     ));
   });
