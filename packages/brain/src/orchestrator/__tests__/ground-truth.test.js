@@ -6,9 +6,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { collectGroundTruth } from '../ground-truth.js';
 import { derive } from '../derive.js';
+import { canonicalContractDigest } from '../post-diff-risk-policy.js';
 
-const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-const TASK_ID = '11111111-2222-3333-4444-555555555555';
+const RUN_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const TASK_ID = '11111111-2222-4333-8444-555555555555';
 const CONTRACT_ID = '99999999-8888-7777-6666-555555555555';
 const PR_URL = 'https://github.com/o/r/pull/42';
 
@@ -41,6 +42,9 @@ function fakePool(rowsByTable = {}) {
         return { rows: rowsByTable.orchestrator_decision_log ?? [] };
       }
       if (sql.includes('FROM account_usage_cache')) return { rows: rowsByTable.account_usage_cache ?? [] };
+      if (sql.includes('FROM kernel_behavior_production_receipts')) {
+        return { rows: rowsByTable.kernel_behavior_production_receipts ?? [] };
+      }
       throw new Error(`unexpected sql: ${sql}`);
     }),
   };
@@ -91,6 +95,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
     orchestrator_decision_log: rows.log ?? [],
     historical_failure_sets: rows.historicalFailureSets ?? [],
     account_usage_cache: rows.circuit ?? [],
+    kernel_behavior_production_receipts: rows.productionReceipts ?? [],
     ...(rows.attemptsQueryResult !== undefined
       ? { harness_attempts_result: rows.attemptsQueryResult }
       : {}),
@@ -104,6 +109,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
       if (!(p in files)) throw new Error(`ENOENT: ${p}`);
       return files[p];
     }),
+    now: () => Date.parse('2026-07-28T08:00:00.000Z'),
     ...(readAuthCircuit ? { readAuthCircuit } : {}),
   };
 }
@@ -847,6 +853,156 @@ describe('collectGroundTruth：决策日志推导字段', () => {
     expect(o.judgeVerdict).toBeNull();
   });
 
+  it('computes auto eligibility from the exact server-observed diff, contract and production receipt', async () => {
+    const headSha = 'a'.repeat(40);
+    const contractContent = { acceptance: ['status card remains green'] };
+    const contractDigest = canonicalContractDigest(contractContent);
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: PR_URL },
+        contracts: [{
+          id: CONTRACT_ID,
+          status: 'approved',
+          version: 7,
+          contract_content: contractContent,
+        }],
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: {
+            review_required: false,
+            behavior_version: 'dashboard-status-card/v3',
+            risk_level: 'low',
+          },
+        }],
+        log: [
+          {
+            hop: 9,
+            action: 'verdict:evaluate',
+            detail: { verdict: 'PASS', pr_head_sha: headSha },
+          },
+          {
+            hop: 10,
+            action: 'verdict:judge',
+            detail: { verdict: 'PASS', pr_head_sha: headSha },
+          },
+        ],
+        productionReceipts: [{
+          receipt_status: 'confirmed',
+          behavior_version: 'dashboard-status-card/v3',
+          contract_version: 7,
+          contract_digest: contractDigest,
+          path_class: 'application',
+          production_head_sha: 'b'.repeat(40),
+          deployed_at: '2026-07-27T08:00:00.000Z',
+          expires_at: '2026-08-27T08:00:00.000Z',
+        }],
+      },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefName: 'cp-status-card',
+          headRefOid: headSha,
+          statusCheckRollup: [{ state: 'SUCCESS' }],
+          files: [{
+            path: 'apps/dashboard/src/components/StatusCard.jsx',
+            additions: 12,
+            deletions: 3,
+          }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+    });
+
+    expect(observed.postDiffRisk).toMatchObject({
+      auto_eligible: true,
+      human_review_required: false,
+      bindings: {
+        task_id: TASK_ID,
+        run_id: RUN_ID,
+        hop: 11,
+        head_sha: headSha,
+        contract_version: 7,
+        contract_digest: contractDigest,
+        behavior_version: 'dashboard-status-card/v3',
+        path_class: 'application',
+      },
+    });
+    expect(observed.reviewRequired).toBe(false);
+    expect(deps.execCmd.calls.find((command) => command.includes('gh pr view')))
+      .toContain('files');
+    expect(deps.pool.calls.some(([sql, params]) => (
+      sql.includes('FROM kernel_behavior_production_receipts')
+      && params[0] === 'dashboard-status-card/v3'
+    ))).toBe(true);
+  });
+
+  it('caller cannot disable human review when the production proof is missing', async () => {
+    const headSha = 'a'.repeat(40);
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: PR_URL },
+        contracts: [{
+          id: CONTRACT_ID,
+          status: 'approved',
+          version: 7,
+          contract_content: { acceptance: ['safe'] },
+        }],
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: {
+            review_required: false,
+            behavior_version: 'new-behavior/v1',
+            risk_level: 'low',
+          },
+        }],
+        log: [
+          {
+            hop: 9,
+            action: 'verdict:evaluate',
+            detail: { verdict: 'PASS', pr_head_sha: headSha },
+          },
+          {
+            hop: 10,
+            action: 'verdict:judge',
+            detail: { verdict: 'PASS', pr_head_sha: headSha },
+          },
+        ],
+      },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefOid: headSha,
+          statusCheckRollup: [{ state: 'SUCCESS' }],
+          files: [{
+            path: 'apps/dashboard/src/App.jsx',
+            additions: 2,
+            deletions: 1,
+          }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+    });
+
+    expect(observed.postDiffRisk).toMatchObject({
+      auto_eligible: false,
+      human_review_required: true,
+      reasons: expect.arrayContaining(['first_behavior']),
+    });
+    expect(observed.reviewRequired).toBe(true);
+  });
+
   it('ganLatestRoundVerdict：verdict:reviewer detail.rn === 当前分支 rN 才算本轮 verdict', async () => {
     const lsRemote = 'aaa\trefs/heads/cp-harness-propose-r2-11111111-a0';
     const deps1 = makeDeps({
@@ -865,7 +1021,7 @@ describe('collectGroundTruth：决策日志推导字段', () => {
     expect(o2.ganLatestRoundVerdict).toBeNull();
   });
 
-  it('reviewRequired 从 tasks.payload.review_required（string payload 兼容）；reviewApproved 锚定当前 head_sha', async () => {
+  it('legacy same-SHA approval without a post-diff proof cannot satisfy review authority', async () => {
     const deps = makeDeps({
       rows: {
         run: { pr_url: PR_URL },
@@ -899,7 +1055,7 @@ describe('collectGroundTruth：决策日志推导字段', () => {
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.reviewRequired).toBe(true);
-    expect(o.reviewApproved).toBe(true);
+    expect(o.reviewApproved).toBe(false);
   });
 
   it('same-SHA evidence approval cannot satisfy the later merge gate after evaluator and judge PASS', async () => {

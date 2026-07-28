@@ -20,6 +20,10 @@ import {
   reviewClassForReason,
 } from './human-review-class.js';
 import { normalizeFailureSet } from './convergence-signatures.js';
+import {
+  assessPostDiffRisk,
+  canonicalContractDigest,
+} from './post-diff-risk-policy.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -196,6 +200,21 @@ export async function collectGroundTruth(deps, opts) {
   const tRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
   const task = tRes.rows[0] ?? null;
   if (!task) throw new Error(`collectGroundTruth: tasks 无此 task 行: ${taskId}`);
+  const payload = asJson(task.payload) ?? {};
+  let productionReceipt = null;
+  if (typeof payload.behavior_version === 'string' && payload.behavior_version.length > 0) {
+    const receiptResult = await pool.query(
+      `SELECT id, receipt_status, behavior_version, contract_version, contract_digest,
+              path_class, production_head_sha, deployed_at, expires_at
+         FROM kernel_behavior_production_receipts
+        WHERE behavior_version = $1
+          AND receipt_status = 'confirmed'
+        ORDER BY deployed_at DESC, id DESC
+        LIMIT 1`,
+      [payload.behavior_version],
+    );
+    productionReceipt = receiptResult.rows[0] ?? null;
+  }
 
   const logRes = await pool.query(
     'SELECT hop, action, observed, derived_phase, gate_verdict, detail, created_at FROM orchestrator_decision_log WHERE run_id = $1 ORDER BY hop',
@@ -295,7 +314,7 @@ export async function collectGroundTruth(deps, opts) {
   if (prUrl) {
     const view = asJson(execTolerant(
       execCmd,
-      `gh pr view ${prUrl} --json state,mergeStateStatus,headRefName,headRefOid,statusCheckRollup`,
+      `gh pr view ${prUrl} --json state,mergeStateStatus,headRefName,headRefOid,statusCheckRollup,files`,
     )) ?? {};
     const checks = normalizeStatusCheckRollup(view.statusCheckRollup);
     pr = {
@@ -307,6 +326,13 @@ export async function collectGroundTruth(deps, opts) {
       head_sha: view.headRefOid ?? null,
       ci: mapCiStatus(checks),
       failed_checks: failedCheckNames(checks),
+      files: Array.isArray(view.files)
+        ? view.files.map((file) => ({
+            path: file.path,
+            additions: file.additions,
+            deletions: file.deletions,
+          }))
+        : null,
     };
   }
 
@@ -377,17 +403,71 @@ export async function collectGroundTruth(deps, opts) {
     ? reviewerDetail.contract_sha ?? proposeBranchSha
     : null;
 
-  // review gate：required 来自 tasks.payload（harness-initiative 透传 review_required）；
-  // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
-  const payload = asJson(task.payload) ?? {};
-  const reviewRequired = payload.review_required === true;
+  let contractDigest = null;
+  try {
+    if (contractRow?.status === 'approved') {
+      contractDigest = canonicalContractDigest(contractRow.contract_content);
+    }
+  } catch {
+    contractDigest = null;
+  }
+  const priorRiskRow = latestRow(decisionLog, (row) => {
+    if (![LOG_ACTION.HUMAN_REVIEW_REQUESTED, ACTION.MERGE_PR].includes(row.action)) {
+      return false;
+    }
+    const priorRisk = asJson(row.observed)?.post_diff_risk;
+    return priorRisk?.bindings?.head_sha === pr?.head_sha;
+  });
+  const riskHop = priorRiskRow?.hop
+    ?? (decisionLog.reduce((maximum, row) => Math.max(maximum, Number(row.hop) || 0), 0) + 1);
+  const postDiffRisk = pr
+    ? assessPostDiffRisk({
+        taskId,
+        runId,
+        hop: riskHop,
+        headSha: pr.head_sha,
+        files: pr.files,
+        contract: {
+          version: contractRow?.version ?? null,
+          digest: contractDigest,
+        },
+        behaviorVersion: payload.behavior_version ?? null,
+        productionReceipt,
+        callerRisk: payload.review_required === true
+          ? 'high'
+          : payload.risk_level ?? 'low',
+        changeSignals: {
+          newCapability: payload.new_capability === true,
+        },
+        evidence: {
+          ci: pr.ci,
+          evaluator: evaluateVerdict?.pr_head_sha === pr.head_sha
+            ? evaluateVerdict.verdict
+            : null,
+          judge: judgeVerdict?.pr_head_sha === pr.head_sha
+            ? judgeVerdict.verdict
+            : null,
+        },
+        now: deps.now ?? Date.now,
+      })
+    : null;
+
+  // review gate：caller 只能升风险；server post-diff proof 才是最终 required authority。
+  // approved 必须锚定同一 request hop、SHA、diff、contract 与 policy。
+  const reviewRequired = payload.review_required === true
+    || postDiffRisk?.human_review_required === true;
   const mergeApproval = latestRow(decisionLog, (row) => {
     if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW || !pr) return false;
     const detail = asJson(row.detail);
+    const approvedRisk = asJson(detail?.post_diff_risk) ?? {};
+    const currentBindings = postDiffRisk?.bindings;
     if (
       detail?.approved !== true
       || detail.review_class !== HUMAN_REVIEW_CLASS.MERGE_GATE
       || detail.pr_head_sha !== pr.head_sha
+      || approvedRisk.policy_version !== postDiffRisk?.policy_version
+      || JSON.stringify(approvedRisk.bindings) !== JSON.stringify(currentBindings)
+      || Date.parse(approvedRisk.expires_at) <= (deps.now ?? Date.now)()
     ) {
       return false;
     }
@@ -399,6 +479,9 @@ export async function collectGroundTruth(deps, opts) {
     const requestObserved = asJson(request.observed);
     const requestDetail = asJson(request.detail);
     return requestObserved?.pr?.head_sha === pr.head_sha
+      && JSON.stringify(requestObserved?.post_diff_risk?.bindings)
+        === JSON.stringify(currentBindings)
+      && requestDetail?.post_diff_risk?.policy_version === postDiffRisk?.policy_version
       && reviewClassForReason(requestDetail?.review_reason)
         === HUMAN_REVIEW_CLASS.MERGE_GATE;
   });
@@ -431,6 +514,7 @@ export async function collectGroundTruth(deps, opts) {
     evaluateVerdict,
     evaluateResult,
     judgeVerdict,
+    postDiffRisk,
     reviewRequired,
     reviewApproved,
     decisionLog,

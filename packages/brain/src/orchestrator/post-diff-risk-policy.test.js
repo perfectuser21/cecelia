@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assessPostDiffRisk,
+  canonicalContractDigest,
   canonicalDiffHash,
   classifyChangedPaths,
 } from './post-diff-risk-policy.js';
@@ -59,6 +60,15 @@ function input(overrides = {}) {
 }
 
 describe('canonical post-diff evidence', () => {
+  it('hashes contract JSON independent of object key order', () => {
+    expect(canonicalContractDigest({ b: 2, a: { y: 2, x: 1 } })).toBe(
+      canonicalContractDigest({ a: { x: 1, y: 2 }, b: 2 }),
+    );
+    expect(canonicalContractDigest('same contract')).not.toBe(
+      canonicalContractDigest('changed contract'),
+    );
+  });
+
   it('sorts files before hashing and binds path plus additions/deletions', () => {
     const reversed = [...FILES].reverse();
     expect(canonicalDiffHash(reversed)).toBe(canonicalDiffHash(FILES));

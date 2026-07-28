@@ -148,7 +148,25 @@ function isFailureSetReview(reason) {
   ].includes(reason);
 }
 
-function buildSnapshot(observed, counters, action, reason = null) {
+function postDiffRiskForHop(proof, authorityHop = null) {
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
+  if (!Number.isInteger(authorityHop)) return proof;
+  return {
+    ...proof,
+    bindings: {
+      ...(proof.bindings ?? {}),
+      hop: authorityHop,
+    },
+  };
+}
+
+function buildSnapshot(
+  observed,
+  counters,
+  action,
+  reason = null,
+  authorityHop = null,
+) {
   const snapshot = {
     prdExists: observed.prdExists,
     contractApproved: observed.contract.approved,
@@ -169,6 +187,8 @@ function buildSnapshot(observed, counters, action, reason = null) {
     proposeBranchSha: observed.proposeBranchSha,
     counters,
   };
+  const postDiffRisk = postDiffRiskForHop(observed.postDiffRisk, authorityHop);
+  if (postDiffRisk) snapshot.post_diff_risk = postDiffRisk;
   const prev = (a) => {
     let best = null;
     for (const r of observed.decisionLog) {
@@ -240,16 +260,19 @@ function buildSnapshot(observed, counters, action, reason = null) {
   return snapshot;
 }
 
-function humanReviewDetail(observed, reason) {
+function humanReviewDetail(observed, reason, authorityHop = null) {
+  const postDiffRisk = postDiffRiskForHop(observed.postDiffRisk, authorityHop);
+  const riskDetail = postDiffRisk ? { post_diff_risk: postDiffRisk } : {};
   if ([
     'evidence_invalid:repeated_signature',
     'unknown:missing_failure_signature',
   ].includes(reason)) {
     const verdict = structuredEvidenceVerdict(observed);
-    if (!verdict) return { review_reason: reason };
+    if (!verdict) return { review_reason: reason, ...riskDetail };
     return {
       review_reason: reason,
       failure_signature: normalizeFailureSignature(verdict.failure_signature),
+      ...riskDetail,
     };
   }
   if (isFailureSetReview(reason)) {
@@ -258,9 +281,10 @@ function humanReviewDetail(observed, reason) {
       review_reason: reason,
       failure_set: failureSet,
       failure_set_key: failureSetKey(failureSet),
+      ...riskDetail,
     };
   }
-  return { review_reason: reason };
+  return { review_reason: reason, ...riskDetail };
 }
 
 async function markRunFailed(pool, runId, reason) {
@@ -618,6 +642,16 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
           const snapshot = asStructuredJson(row.observed) ?? {};
           const detail = asStructuredJson(row.detail) ?? {};
           if (snapshot.pr?.head_sha !== observed.pr?.head_sha) return false;
+          if (observed.postDiffRisk) {
+            const priorRisk = snapshot.post_diff_risk ?? detail.post_diff_risk;
+            if (
+              priorRisk?.policy_version !== observed.postDiffRisk.policy_version
+              || JSON.stringify(priorRisk?.bindings)
+                !== JSON.stringify(observed.postDiffRisk.bindings)
+            ) {
+              return false;
+            }
+          }
           if ([
             'evidence_invalid:repeated_signature',
             'unknown:missing_failure_signature',
@@ -828,6 +862,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
           fullCounters,
           LOG_ACTION.HUMAN_REVIEW_REQUESTED,
           decision.reason,
+          effectHop,
         ),
         derivedPhase: decision.phase,
         gateVerdict: null,
@@ -835,7 +870,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         detail: {
           dispatch_hop: hop,
           result: result.detail ?? null,
-          ...humanReviewDetail(observed, decision.reason),
+          ...humanReviewDetail(observed, decision.reason, effectHop),
         },
       });
       hops++;

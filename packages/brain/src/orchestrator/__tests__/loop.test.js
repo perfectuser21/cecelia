@@ -839,6 +839,71 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(heartbeats).toHaveLength(2);
   });
 
+  it('binds the review effect to the exact task/run/hop/head/diff/contract policy proof', async () => {
+    const pr = {
+      url: 'u',
+      state: 'OPEN',
+      ci: 'pass',
+      merged: false,
+      head_sha: 'a'.repeat(40),
+    };
+    const postDiffRisk = {
+      schema_version: 'kernel-post-diff-risk/v1',
+      policy_version: 'kernel-post-diff-risk/v1',
+      risk_level: 'high',
+      human_review_required: true,
+      auto_eligible: false,
+      reasons: ['first_behavior'],
+      bindings: {
+        task_id: TASK_ID,
+        run_id: RUN_ID,
+        hop: 1,
+        head_sha: pr.head_sha,
+        diff_hash: `sha256:${'b'.repeat(64)}`,
+        contract_version: 7,
+        contract_digest: `sha256:${'c'.repeat(64)}`,
+        behavior_version: 'status-card/v1',
+        path_class: 'application',
+      },
+      expires_at: '2026-07-04T12:15:00.000Z',
+    };
+    const verdicts = {
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: pr.head_sha },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: pr.head_sha },
+    };
+    const observedSeq = [
+      obs({
+        generatorSpawned: true,
+        pr,
+        reviewRequired: true,
+        postDiffRisk,
+        ...verdicts,
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended } = makeEnv({ observedSeq });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    const request = appended.find(
+      (entry) => entry.action === 'effect:human_review_requested',
+    );
+    expect(request.observed.post_diff_risk).toMatchObject({
+      policy_version: 'kernel-post-diff-risk/v1',
+      bindings: {
+        task_id: TASK_ID,
+        run_id: RUN_ID,
+        hop: request.hop,
+        head_sha: pr.head_sha,
+        diff_hash: `sha256:${'b'.repeat(64)}`,
+        contract_digest: `sha256:${'c'.repeat(64)}`,
+      },
+    });
+    expect(request.detail.post_diff_risk).toEqual(
+      request.observed.post_diff_risk,
+    );
+  });
+
   it('human review 首次派发失败只有 intent 时会重试，成功后才写 effect marker', async () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-review' };
     const verdicts = {

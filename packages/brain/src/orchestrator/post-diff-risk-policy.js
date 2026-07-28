@@ -19,6 +19,26 @@ function immutable(value) {
   return value;
 }
 
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, stableValue(value[key])]),
+    );
+  }
+  return value;
+}
+
+export function canonicalContractDigest(value) {
+  const canonical = typeof value === 'string'
+    ? value
+    : JSON.stringify(stableValue(value));
+  if (typeof canonical !== 'string' || canonical.length === 0) {
+    throw new Error('post_diff_contract_invalid');
+  }
+  return `sha256:${createHash('sha256').update(canonical, 'utf8').digest('hex')}`;
+}
+
 function validPath(value) {
   return typeof value === 'string'
     && value.length > 0
