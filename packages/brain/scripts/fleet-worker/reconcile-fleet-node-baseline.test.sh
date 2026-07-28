@@ -452,6 +452,18 @@ grep -Eq "launchctl asuser 501 $fake_bin/sudo -H -u fleet-admin .*/orb status" \
   || fail "OrbStack readiness was not checked in the rollout user's launchd domain"
 /bin/rm -f "$service_state" "$runner_state" "$state_root/orbstack-running"
 
+socket_conflict_root="$test_root/socket-conflict-system"
+mkdir -p "$socket_conflict_root/var/run"
+ln -s /tmp/unmanaged-docker.sock "$socket_conflict_root/var/run/docker.sock"
+if FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
+  run_reconciler "$socket_conflict_root" xian-mac-m1 --apply \
+  >"$test_root/socket-conflict.out" 2>&1; then
+  fail "conflicting global Docker socket link was accepted"
+fi
+grep -Fq 'docker_socket_link_conflict' "$test_root/socket-conflict.out" \
+  || fail "Docker socket link conflict lacked a bounded refusal"
+/bin/rm -f "$service_state" "$runner_state"
+
 : > "$mutation_log"
 /bin/rm -f "$state_root/uuid-count"
 FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
