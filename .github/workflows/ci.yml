@@ -1477,12 +1477,12 @@ jobs:
         env:
           BRAIN_URL: http://localhost:5221
           BRAIN_CONTAINER: cecelia-brain-smoke
-          DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: |
           SMOKE_DIR=packages/brain/scripts/smoke
           if [ ! -d "$SMOKE_DIR" ]; then
@@ -1750,6 +1750,15 @@ jobs:
       - name: Stop Hook 单一出口守护
         run: bash scripts/check-single-exit.sh
 
+  # 防篡改哨兵：关键质量门、版本门和只读 merge 边界必须持续存在。
+  lint-ci-guard-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: CI guard integrity
+        run: bash packages/quality/scripts/devgate/assert-ci-guards.sh
+
   # ─── Brain 版本递增门禁（仅 pull_request 事件，src 变更必须 bump）─────
   # 修复：改 packages/brain/src/** 不 bump 版本，check-version-sync 全绿放行的漏洞
   # 铁律：不改 scripts/check-version-sync.sh / auto-version.yml / brain-ci-deploy.yml
@@ -1776,7 +1785,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-ci-guard-integrity, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1833,6 +1842,7 @@ jobs:
           check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
           check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"
           check "lint-single-exit"       "${{ needs.lint-single-exit.result }}"
+          check "lint-ci-guard-integrity" "${{ needs.lint-ci-guard-integrity.result }}"
           check "lint-bypass-not-committed" "${{ needs.lint-bypass-not-committed.result }}"
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
           check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"

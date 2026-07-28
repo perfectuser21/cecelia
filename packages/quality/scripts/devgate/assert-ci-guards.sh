@@ -1,10 +1,11 @@
 #!/bin/bash
 # assert-ci-guards.sh - 防篡改哨兵
 #
-# 验证 CI 守门没有被移除：
-#   - coverage:rci 检查仍然存在
-#   - version-check 检查仍然存在
-#   - DevGate 检查仍然存在
+# 验证当前 CI 的等价守门没有被移除：
+#   - 根 regression-contract release 回归
+#   - Engine/Brain 版本检查
+#   - 分解后的 DevGate lint 集合
+#   - 汇总门与只读 merge eligibility
 #
 # 用法：
 #   bash scripts/devgate/assert-ci-guards.sh
@@ -16,7 +17,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 CI_FILE="$PROJECT_ROOT/.github/workflows/ci.yml"
 
 echo ""
@@ -32,46 +33,50 @@ fi
 
 FAILED=0
 
-# Guard 1: coverage:rci / scan-rci-coverage
-echo "  [Guard 1] RCI 覆盖率检查"
-if grep -q "scan-rci-coverage" "$CI_FILE"; then
-    echo "    ✅ scan-rci-coverage 存在于 CI"
+# Guard 1: 根 regression-contract release 回归
+echo "  [Guard 1] Regression Contract release 回归"
+if grep -q "^  core-regression:" "$CI_FILE" \
+  && grep -q "run-core-regression.sh --tier release" "$CI_FILE"; then
+    echo "    ✅ core-regression release gate 存在"
 else
-    echo "    ❌ scan-rci-coverage 不存在于 CI"
-    echo "       守门被移除! 请恢复 DevGate 检查中的 coverage:rci"
+    echo "    ❌ core-regression release gate 不完整"
     FAILED=1
 fi
 
-# Guard 2: version-check job
+# Guard 2: Engine + Brain 版本门
 echo ""
 echo "  [Guard 2] 版本号检查"
-if grep -q "version-check:" "$CI_FILE"; then
-    echo "    ✅ version-check job 存在"
+if grep -q "check-version-sync.sh" "$CI_FILE" \
+  && grep -q "^  brain-version-bump-gate:" "$CI_FILE"; then
+    echo "    ✅ Engine sync + Brain bump gate 存在"
 else
-    echo "    ❌ version-check job 不存在"
-    echo "       守门被移除! 请恢复 version-check job"
+    echo "    ❌ Engine/Brain 版本门不完整"
     FAILED=1
 fi
 
-# Guard 3: DevGate checks step
+# Guard 3: 分解后的 DevGate
 echo ""
 echo "  [Guard 3] DevGate 检查"
-if grep -q "DevGate checks" "$CI_FILE"; then
-    echo "    ✅ DevGate checks step 存在"
+if grep -q "^  lint-tdd-commit-order:" "$CI_FILE" \
+  && grep -q "^  lint-test-quality:" "$CI_FILE" \
+  && grep -q "^  lint-no-fake-test:" "$CI_FILE" \
+  && grep -q "^  lint-bypass-not-committed:" "$CI_FILE"; then
+    echo "    ✅ 分解式 DevGate lint 集合存在"
 else
-    echo "    ❌ DevGate checks step 不存在"
-    echo "       守门被移除! 请恢复 DevGate checks step"
+    echo "    ❌ 分解式 DevGate lint 集合不完整"
     FAILED=1
 fi
 
-# Guard 4: release-check job (for PR to main)
+# Guard 4: 汇总门 + merge eligibility 只读
 echo ""
-echo "  [Guard 4] Release 检查"
-if grep -q "release-check:" "$CI_FILE"; then
-    echo "    ✅ release-check job 存在"
+echo "  [Guard 4] 合并授权边界"
+if grep -q "^  ci-passed:" "$CI_FILE" \
+  && grep -q "^  auto-merge:" "$CI_FILE" \
+  && grep -q "pull-requests: read" "$CI_FILE" \
+  && grep -q "Kernel merge eligibility（只读）" "$CI_FILE"; then
+    echo "    ✅ ci-passed + 只读 merge eligibility 存在"
 else
-    echo "    ❌ release-check job 不存在"
-    echo "       守门被移除! 请恢复 release-check job"
+    echo "    ❌ 合并授权边界不完整"
     FAILED=1
 fi
 
