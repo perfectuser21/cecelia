@@ -8,13 +8,14 @@ import {
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const runId = '11111111-1111-4111-8111-111111111111';
 const attemptId = '22222222-2222-4222-8222-222222222222';
+const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
 
 function context(overrides = {}) {
   return {
     taskId,
     runId,
     hop: 5,
-    attempt: { id: attemptId },
+    attempt: { id: attemptId, run_id: runId, role: 'judge' },
     bundle: { inputs: { worktree_path: '/tmp/wt', sprint_dir: 'sprints/x' } },
     observed: {
       task: { id: taskId, title: 'T', payload: { sprint_dir: 'sprints/x' } },
@@ -27,7 +28,18 @@ function context(overrides = {}) {
         merged: false,
       },
       reviewApproved: false,
-      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+      evaluateVerdict: {
+        attempt_id: evaluatorAttemptId,
+        verdict: 'PASS',
+        pr_head_sha: 'sha-1',
+      },
+      evaluateResult: {
+        contract_version: '1.0',
+        attempt_id: evaluatorAttemptId,
+        status: 'completed',
+        checks: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
+        decision: { outcome: 'PASS', reason: 'verified' },
+      },
       callbackResult: { verdict: 'PASS', behavior_tests: [{ exit_code: 0, log_tail: 'ok' }] },
       decisionLog: [],
     },
@@ -47,7 +59,24 @@ function deps() {
     },
     execCmd: vi.fn(() => ''),
     mergeEffect: vi.fn(async () => ({ status: 'DONE', detail: 'merge confirmed' })),
-    attemptStore: { complete: vi.fn(async () => ({ deduped: false })) },
+    attemptStore: {
+      complete: vi.fn(async () => ({ deduped: false })),
+      getById: vi.fn(async (id) => {
+        if (id === attemptId) {
+          return { id, run_id: runId, role: 'judge', status: 'running' };
+        }
+        if (id === evaluatorAttemptId) {
+          return {
+            id,
+            run_id: runId,
+            role: 'evaluator',
+            status: 'completed',
+            result: context().observed.evaluateResult,
+          };
+        }
+        return null;
+      }),
+    },
     judgeGate: vi.fn(async () => ({ verdict: 'PASS', feedback: null, judged: true })),
     promptDir: '/host/cecelia-prompts',
     allocatePort: vi.fn(async () => 5301),
@@ -114,6 +143,10 @@ describe('kernel deterministic handlers', () => {
           ...context().observed.evaluateVerdict,
           attempt_id: attemptId,
         },
+        evaluateResult: {
+          ...context().observed.evaluateResult,
+          attempt_id: attemptId,
+        },
       },
     });
 
@@ -125,9 +158,46 @@ describe('kernel deterministic handlers', () => {
     expect(d.attemptStore.complete).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['missing evaluator id', (ctx, d) => {
+      delete ctx.observed.evaluateVerdict.attempt_id;
+      delete ctx.observed.evaluateResult.attempt_id;
+    }],
+    ['missing persisted evaluator attempt', (_ctx, d) => {
+      d.attemptStore.getById.mockResolvedValue(null);
+    }],
+    ['wrong persisted evaluator role', (_ctx, d) => {
+      d.attemptStore.getById.mockImplementation(async (id) => (
+        id === attemptId
+          ? { id, run_id: runId, role: 'judge', status: 'running' }
+          : { id, run_id: runId, role: 'generator', status: 'completed' }
+      ));
+    }],
+    ['verdict not tied to evaluator result', (ctx) => {
+      ctx.observed.evaluateResult.attempt_id =
+        '44444444-4444-4444-8444-444444444444';
+    }],
+  ])('judge fails closed for invalid Attempt authority: %s', async (
+    _label,
+    mutate,
+  ) => {
+    const d = deps();
+    const ctx = structuredClone(context());
+    mutate(ctx, d);
+
+    await expect(createKernelHandlers(d)['spawn:judge'](ctx)).resolves.toEqual({
+      status: 'BLOCKED',
+      detail: 'independent judge Attempt authority invalid',
+    });
+    expect(d.judgeGate).not.toHaveBeenCalled();
+    expect(d.attemptStore.complete).not.toHaveBeenCalled();
+  });
+
   it('judge 优先使用 evaluator attempt result，并把 checks 适配为机械闸证据', async () => {
     const d = deps();
     const evaluatorResult = {
+      contract_version: '1.0',
+      attempt_id: evaluatorAttemptId,
       status: 'completed',
       summary: 'all checks passed',
       checks: [{ command: 'npm test', exit_code: 0, log_tail: '12 tests passed' }],
@@ -178,8 +248,8 @@ describe('kernel deterministic handlers', () => {
       observed: {
         ...context().observed,
         evaluateVerdict: {
+          ...context().observed.evaluateVerdict,
           verdict: 'FAIL',
-          pr_head_sha: 'sha-1',
           failure_class: 'product_failure',
         },
       },
@@ -318,15 +388,19 @@ describe('independent judge equivalence seam', () => {
         signature: 'test-signature',
       })),
     };
-    const evaluatorAttemptId = scenario === 'violation'
+    const currentEvaluatorAttemptId = scenario === 'violation'
       ? attemptId
-      : '33333333-3333-4333-8333-333333333333';
+      : evaluatorAttemptId;
     const handlerContext = context({
       observed: {
         ...context().observed,
         evaluateVerdict: {
           ...context().observed.evaluateVerdict,
-          attempt_id: evaluatorAttemptId,
+          attempt_id: currentEvaluatorAttemptId,
+        },
+        evaluateResult: {
+          ...context().observed.evaluateResult,
+          attempt_id: currentEvaluatorAttemptId,
         },
       },
     });
@@ -337,8 +411,18 @@ describe('independent judge equivalence seam', () => {
     const resource = {
       resource_id: `eq-${attemptId}`,
       resource_ref: `equivalence-drill/${runId}/${attemptId}/judge/case`,
-      handler_context: handlerContext,
+      handler_context: { forged: true },
+      snapshot: vi.fn(async () => ({ forged: true })),
+    };
+    const judgeAuthority = {
+      owner_service: 'kernel.evaluation.independent_judge',
+      loadContext: vi.fn(async () => handlerContext),
       snapshot: vi.fn(async () => snapshots.shift()),
+      loadPredecessorActors: vi.fn(async () => ({
+        receipt_id: '44444444-4444-4444-8444-444444444444',
+        evaluator_attempt_id:
+          '55555555-5555-4555-8555-555555555555',
+      })),
     };
     const cell = {
       cell_id: `KERNEL-P0-05-INDEPENDENT-EVALUATOR-JUDGE::codex::${scenario}`,
@@ -357,12 +441,14 @@ describe('independent judge equivalence seam', () => {
     return {
       d,
       effectSigner,
+      judgeAuthority,
       resource,
       cell,
       grant,
       seam: createIndependentJudgeEquivalenceSeam({
         handlerDeps: d,
         effectSigner,
+        judgeAuthority,
       }),
     };
   }
@@ -408,13 +494,51 @@ describe('independent judge equivalence seam', () => {
         after_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
       }),
     );
+    expect(value.judgeAuthority.loadContext).toHaveBeenCalledOnce();
+    expect(value.judgeAuthority.snapshot).toHaveBeenCalledTimes(2);
+    expect(value.resource.snapshot).not.toHaveBeenCalled();
+    if (scenario === 'recovery') {
+      expect(value.judgeAuthority.loadPredecessorActors).toHaveBeenCalledWith(
+        expect.objectContaining({
+          predecessor,
+          current_evaluator_attempt_id: evaluatorAttemptId,
+        }),
+      );
+    }
   });
 
-  it('requires a seam-owned signer at construction', () => {
+  it('rejects recovery when no newly assigned evaluator is proven', async () => {
+    const value = seamFixture('recovery');
+    value.judgeAuthority.loadPredecessorActors.mockResolvedValue({
+      receipt_id: '44444444-4444-4444-8444-444444444444',
+      evaluator_attempt_id: evaluatorAttemptId,
+    });
+
+    await expect(value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      predecessor: {
+        receipt_id: '44444444-4444-4444-8444-444444444444',
+      },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'judge_recovery_reassignment_unproven',
+    });
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
+  });
+
+  it('requires seam-owned signer and authority ports at construction', () => {
     expect(() => createIndependentJudgeEquivalenceSeam({
       handlerDeps: deps(),
     })).toThrowError(expect.objectContaining({
       code: 'seam_effect_signer_unavailable',
+    }));
+    expect(() => createIndependentJudgeEquivalenceSeam({
+      handlerDeps: deps(),
+      effectSigner: { signEffectResult: vi.fn() },
+    })).toThrowError(expect.objectContaining({
+      code: 'judge_authority_port_unavailable',
     }));
   });
 });
