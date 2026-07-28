@@ -35,10 +35,11 @@ CredentialEnvelope、Phase 4D execution recovery 和 Phase 5 真实业务 Canary
 
 - [x] [ARTIFACT] rollout 只从 committed Git、pinned Runner 和受保护的 Worker
   Test: manual:bash -c 'bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh'
-  bearer token 构建 root-owned staging；不读取、保存或复制 Xian 长期 Codex/
-  provider credential，并按 Xian M4 → US M4 → Xian M1 顺序执行。
+  bearer token 构建 root-owned staging；控制器经 sudo 验证/分阶段读取 `_cecelia`
+  0700 目录而不放宽权限，不保存或复制 Xian 长期 Codex/provider credential，并按
+  Xian M4 → US M4 → Xian M1 顺序执行。
 
-- [x] [ARTIFACT] Brain `1.267.101`、两份 DEFINITION、版本锁、P0 回归契约和
+- [x] [ARTIFACT] Brain `1.267.102`、两份 DEFINITION、版本锁、P0 回归契约和
   Test: manual:bash -c 'bash scripts/check-version-sync.sh && BRAIN_URL=http://localhost:5221 bash packages/brain/scripts/smoke/provider-neutral-phase4a-node-smoke.sh && node scripts/registry-lint.mjs && node -e "const fs=require(\"fs\"),yaml=require(\"js-yaml\");yaml.load(fs.readFileSync(\"regression-contract.yaml\",\"utf8\"));yaml.load(fs.readFileSync(\"docs/registry/features/orchestration.yml\",\"utf8\"));"'
   Phase 4A production as-built/实施计划已同步。
 
@@ -84,7 +85,7 @@ CredentialEnvelope、Phase 4D execution recovery 和 Phase 5 真实业务 Canary
 CECELIA_MACHINE_ID=<machine-id> sudo -E \
   packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply
 
-bash scripts/brain-rollback.sh 1.267.100
+bash scripts/brain-rollback.sh 1.267.101
 ```
 
 恢复前必须重新取得真实 Worker health evidence 并通过 admission；不得用
