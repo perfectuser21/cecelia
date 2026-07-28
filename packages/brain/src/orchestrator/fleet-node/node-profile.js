@@ -31,7 +31,7 @@ const CANONICAL_BASELINE = Object.freeze({
     kind: 'LaunchDaemon',
   }),
   version_policy: Object.freeze({
-    os: '15.7.4',
+    os: '15.6.1',
     orbstack: '2.2.1',
     worker_protocol: 'kernel-harness/v1',
     worker_contract: 'fleet-node-health/v1',

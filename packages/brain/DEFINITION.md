@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.267.103
+**版本**: 1.267.105
+
+## Fleet Node macOS admission policy correction
+
+- macOS `15.6.1` 是当前最低支持版本；同一 macOS 15 major 的更高 release/patch
+  可以准入，低于 floor、malformed 或未经验证的其他 major 继续 fail closed。
+- `15.7.4` 保留为 baseline reconciler 的推荐安全维护目标；`15.6.1` 节点只记录
+  非阻塞升级建议，不再仅因补丁号不同而 drain。
+- Runner digest、OrbStack/Docker、Worker LaunchDaemon、NodeProfile capacity 和
+  Phase 4A 其他合同不变；Phase 4B/4C/4D 与 Phase 5 均未扩展。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.104`。
 
 ## Fleet rollout transfer-interruption cleanup hotfix
 

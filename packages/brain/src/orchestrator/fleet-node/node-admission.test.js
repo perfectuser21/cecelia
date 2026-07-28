@@ -182,7 +182,25 @@ describe('pure Fleet Node base admission', () => {
     expect(report).toEqual(inputBefore);
   });
 
-  it('admits a newer Sequoia patch that remains on the shared 15.7 baseline', async () => {
+  it.each(['15.6.1', '15.7.4'])(
+    'admits supported Sequoia version %s',
+    async (osVersion) => {
+      const { contract, profile, report } = await fixture('xian-mac-m4', {
+        os: { version: osVersion },
+      });
+
+      expect(
+        contract.evaluateBaseAdmission(report, { profile, nowMs: NOW_MS }),
+      ).toMatchObject({
+        state: 'base_admitted',
+        base_admitted: true,
+        dispatch_ready: true,
+        reasons: [],
+      });
+    },
+  );
+
+  it('admits a newer Sequoia patch within the supported macOS major', async () => {
     const { contract, profile, report } = await fixture('xian-mac-m4', {
       os: { version: '15.7.8' },
     });
@@ -197,14 +215,28 @@ describe('pure Fleet Node base admission', () => {
     });
   });
 
-  it('drains a Sequoia node below the shared 15.7.4 patch floor', async () => {
+  it.each(['15.6.0', '14.7.4'])(
+    'drains macOS version %s below the shared 15.6.1 floor',
+    async (osVersion) => {
+      const { contract, profile, report } = await fixture('xian-mac-m4', {
+        os: { version: osVersion },
+      });
+
+      expectDraining(
+        contract.evaluateBaseAdmission(report, { profile, nowMs: NOW_MS }),
+        'os_version_below_floor',
+      );
+    },
+  );
+
+  it('drains an untested macOS major above the supported Sequoia line', async () => {
     const { contract, profile, report } = await fixture('xian-mac-m4', {
-      os: { version: '15.6.1' },
+      os: { version: '16.0.0' },
     });
 
     expectDraining(
       contract.evaluateBaseAdmission(report, { profile, nowMs: NOW_MS }),
-      'os_version_below_floor',
+      'os_version_drift',
     );
   });
 
