@@ -19,7 +19,7 @@ for (const profile of profiles) {
   if (profile.runner_image_digest !== expectedDigest) {
     throw new Error(`Runner digest drift on ${profile.machine_id}`);
   }
-  if (profile.version_policy.os !== '15.7.4') {
+  if (profile.version_policy.os !== '15.6.1') {
     throw new Error(`macOS floor drift on ${profile.machine_id}`);
   }
   if (profile.launchd.domain !== 'system' || profile.launchd.kind !== 'LaunchDaemon') {
