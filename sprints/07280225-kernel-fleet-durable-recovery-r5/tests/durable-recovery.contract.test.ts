@@ -4,7 +4,6 @@ import { createHash, verify as verifySignature } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import yaml from 'js-yaml';
 
 const BASE = 'dd424a61926009ac85a915b31187124b85f0ca98';
 const SOURCE_PATH = 'packages/engine/regression-contract.yaml';
@@ -46,7 +45,17 @@ function run(script: string, args: string[] = [], env: Record<string, string> = 
 }
 
 function source(path: string) {
+  if (!existsSync(path)) throw new Error(`expected_product_seam_absent:${path}`);
   return readFileSync(path, 'utf8');
+}
+
+function parseYaml(value: string) {
+  const parsed = execFileSync(
+    'npx',
+    ['--yes', '--package', 'js-yaml', 'js-yaml', '-'],
+    { encoding: 'utf8', input: value, stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  return JSON.parse(parsed);
 }
 
 function readDiagnosticReceipts(dir: string) {
@@ -128,7 +137,7 @@ function readAuthoritativeScenario(scenario: string) {
 }
 
 function expectExecutable(path: string) {
-  expect(existsSync(path), `缺少产品验证入口 ${path}`).toBe(true);
+  expect(existsSync(path), `expected_product_seam_absent:${path}`).toBe(true);
 }
 
 function waitForExit(child: ChildProcess) {
@@ -300,9 +309,19 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
   });
 
   it('authority inventory full entry fixture and advisory partition', () => {
+    const redManifest = JSON.parse(source(`${SPRINT}/tests/red-case-manifest.json`));
+    const collectedCaseIds = [...source(`${SPRINT}/tests/durable-recovery.contract.test.ts`)
+      .matchAll(/^  it\('([^']+)'/gm)].map((match) => match[1]);
+    expect(redManifest.schema_version).toBe('kernel-fleet-red-cases/v1');
+    expect(redManifest.case_count).toBe(34);
+    expect(redManifest.cases).toEqual(collectedCaseIds);
+    expect(new Set(redManifest.cases).size).toBe(34);
+    expect(sha256(JSON.stringify(redManifest.cases))).toBe(redManifest.case_ids_digest);
+    expect(redManifest.case_ids_digest)
+      .toBe('c8413e6a709ca86eff0d5e3719f4b851617766b6de696aa346432895e50d438f');
     expect(execFileSync('git', ['rev-parse', `${BASE}:${SOURCE_PATH}`], { encoding: 'utf8' }).trim()).toBe(SOURCE_BLOB);
     const sourceYaml = execFileSync('git', ['show', `${BASE}:${SOURCE_PATH}`], { encoding: 'utf8' });
-    const extracted = collectPriorityEntries(yaml.load(sourceYaml));
+    const extracted = collectPriorityEntries(parseYaml(sourceYaml));
     const byId = new Map(extracted.map((row: any) => [row.id, row]));
     expect(extracted).toHaveLength(129);
     expect(byId.size).toBe(129);
@@ -422,6 +441,8 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
   });
 
   it('strict staging rejects empty skip and SHA drift', async () => {
+    const script = 'scripts/kernel-fleet/verify-strict-staging-receipt.sh';
+    expectExecutable(script);
     const staging = await import('../../../packages/brain/src/staging-e2e-runner.js');
     const fakeDb = (rows: any[]) => ({ query: async () => ({ rows }) });
     await expect(staging.checkInitiativeAggregate(fakeDb([]), 'i')).resolves.toMatchObject({ allPass: false });
@@ -429,8 +450,6 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
       .resolves.toMatchObject({ allPass: false });
     await expect(staging.checkInitiativeAggregate(fakeDb([{ verdict: 'PASS', tested_sha: 'wrong' }]), 'i', BASE))
       .resolves.toMatchObject({ allPass: false });
-    const script = 'scripts/kernel-fleet/verify-strict-staging-receipt.sh';
-    expectExecutable(script);
     run(script, ['--real-pg', '--deployment-store', '--all-counterfactuals']);
     const evidence = readAuthoritativeScenario('strict_staging_real_environment');
     expect(evidence.counterfactuals).toEqual({
@@ -650,19 +669,24 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
     expect(verified.secret_scan_hits).toBe(0);
   });
 
-  it('execution target quarantine replays real PG cycles and writes complete selection receipts', () => {
+  it('health probe busy shares one admission snapshot and target quarantine recovers in the same run', () => {
     const script = 'scripts/kernel-fleet/verify-execution-target-recovery.sh';
     expectExecutable(script);
     for (const key of ['TASK_ID', 'RUN_ID', 'CONTRACT_SHA', 'PR_HEAD_SHA'])
       if (!process.env[key]) throw new Error(`R48_BLOCKED_${key}_REQUIRED`);
     run(script, [
-      '--real-controller', '--real-pg', '--restart', '--all-counterfactuals',
+      '--real-controller', '--real-worker', '--real-pg', '--restart', '--all-counterfactuals',
+      '--concurrent-controllers', '2', '--block-first-worker-probe',
+      '--require-singleflight', '--share-health-capacity-snapshot',
       '--task', process.env.TASK_ID!, '--run', process.env.RUN_ID!,
       '--contract', process.env.CONTRACT_SHA!, '--head', process.env.PR_HEAD_SHA!,
     ], { DB_URL: process.env.DB_URL ?? '' });
     const receipts = queryPgJson(`
       SELECT logical_cycle_id, considered_targets, excluded_targets, selected_target,
-             probe_snapshot, candidate_digest, signed_payload, signature,
+             probe_snapshot, admission_snapshot_id, worker_probe_count,
+             health_capacity_snapshot_count, failure_reason_set,
+             semantic_budget_delta, gan_budget_delta, target_quarantine_delta,
+             run_terminal_delta, candidate_digest, signed_payload, signature,
              signature_key_id, public_key_pem, receipt_digest
       FROM execution_target_selection_receipts
       WHERE run_id='${process.env.RUN_ID}'
@@ -691,23 +715,59 @@ describe('P0 durable recovery contract [BEHAVIOR]', () => {
         Buffer.from(receipt.signature, 'base64'),
       )).toBe(true);
     }
-    expect(incident[0].excluded_targets).toEqual(expect.arrayContaining([
-      expect.objectContaining({ account: 'team4', failure_class: 'execution_transport_unavailable' }),
-    ]));
-    expect(incident[1].excluded_targets).toEqual(expect.arrayContaining([
-      expect.objectContaining({ account: 'team3', failure_class: 'execution_transport_unavailable' }),
-      expect.objectContaining({ account: 'team5', failure_class: 'quota_unavailable' }),
-    ]));
+    expect(incident[0].excluded_targets).toEqual([
+      expect.objectContaining({
+        provider: 'codex', account: 'team4', machine: 'us-mac-m4',
+        failure_class: 'execution_transport_unavailable',
+      }),
+    ]);
+    expect(incident[1].excluded_targets).toEqual([
+      expect.objectContaining({
+        provider: 'codex', account: 'team3', machine: 'us-mac-m4',
+        failure_class: 'execution_transport_unavailable',
+      }),
+      expect.objectContaining({
+        provider: 'codex', account: 'team5', machine: 'us-mac-m4',
+        failure_class: 'quota_unavailable',
+      }),
+    ]);
     const recovered = incident[2];
     expect(recovered.selected_target).toMatchObject({
       provider: 'codex', account: 'team4', machine: 'us-mac-m4',
     });
     expect(recovered.probe_snapshot).toMatchObject({ account: 'team4', fresh: true, healthy: true });
+    const busy = receipts.filter((r: any) =>
+      r.failure_reason_set?.includes('health_probe_busy') ||
+      r.failure_reason_set?.includes('worker_http_503'));
+    expect(busy).toHaveLength(1);
+    expect(busy[0]).toMatchObject({
+      worker_probe_count: 1,
+      health_capacity_snapshot_count: 1,
+      semantic_budget_delta: 0,
+      gan_budget_delta: 0,
+      target_quarantine_delta: 0,
+      run_terminal_delta: 0,
+    });
+    expect(busy[0].admission_snapshot_id).toBeTruthy();
+    expect(busy[0].probe_snapshot.health_snapshot_id)
+      .toBe(busy[0].probe_snapshot.capacity_snapshot_id);
+    expect(busy[0].failure_reason_set).not.toContain('node_not_base_admitted');
     const recovery = readAuthoritativeScenario('execution_target_recovery_counterfactuals');
     expect(recovery.counterfactuals).toEqual({
       ttl_not_elapsed: 'excluded', ttl_elapsed: 'reprobe',
       auth_reset_not_elapsed: 'excluded', auth_reset_elapsed: 'reprobe',
       machine_offline_ttl: 'reprobe', transient_probe_ttl: 'reprobe',
+      health_probe_busy: 'bounded_jitter_reprobe',
+      worker_http_503: 'recoverable_infrastructure_probe',
+      worker_timeout: 'recoverable_infrastructure_probe',
+      concurrent_controllers_probe_count: 1,
+      health_capacity_same_snapshot: true,
+      busy_then_recovered_same_run: true,
+      busy_target_quarantine_delta: 0,
+      busy_semantic_budget_delta: 0,
+      busy_gan_budget_delta: 0,
+      persistent_busy_before_cap: 'infrastructure_blocked',
+      persistent_busy_at_cap: 'infrastructure_blocked_owner_intervention',
       product_failure_health_delta: 0, restart_replay_duplicate_count: 0,
       persistent_exhaustion_before_cap: 'infrastructure_blocked',
       persistent_exhaustion_at_cap: 'terminal_failed',

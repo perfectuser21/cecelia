@@ -1,4 +1,4 @@
-# Sprint Contract Draft（Round 17）
+# Sprint Contract Draft（Round 18）
 
 ## 合同 Notes
 
@@ -9,7 +9,11 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
-- 先前 proposer heads 均仅作 Red 证据；Round 17 保留 R32-R48 修正，并把 R48 从文字约束落实为
+- 先前 proposer heads 均仅作 Red 证据；Round 18 保留 R32-R50 修正，并把 R51 纳入同一
+  immutable 34-case inventory；R51 不通过新增/改名 case 规避既有 Red，而是扩展 R47 的真实
+  PG incident replay case，要求真实 Worker/Brain 并发 probe、singleflight admission snapshot、
+  exact reason preservation 与 budget/quarantine/terminal 零副作用。
+- Round 18 继续把 R48 从文字约束落实为
   全 34-case 的统一 oracle 纪律：
   Reviewer 自报 APPROVED 不具权威，必须由 Controller 对 durable result-channel、七维评分、
   task-intent revision、skill/policy digest、Contract Gate 与 Red inventory 做确定性批准；
@@ -33,6 +37,18 @@
   cycleC team4 fresh Green`，同一 run 选回 team4；禁止 mocked `decisions.push` 或空数组
   `every()`。Contract Gate 必须拒绝 R14/R15 self-attestation/permanent flat
   failed_targets/exhausted hard-fail fixture。
+- R49/R50-red-stage-law: GAN 审的是 frozen 34-case 可执行 Red 合同，实际
+  `collected=34,executed=34,33 failed,1 passed`；33 个失败均为各 case 明示 planned product
+  seam absent，ESRCH 是现存基线。共享 collection/dependency/config/env/SQL 失败不算 Red。
+  Contract Gate 对冻结坏合同漏报是合法产品 Red；Reviewer 批准只授权 Generator。Generator
+  后同一 manifest 必须全 Green 并由 CI/Evaluator/Judge 独立回读权威 evidence；禁止改 case
+  digest 逃避失败。
+- R51-admission-singleflight: `health_probe_busy|worker_http_503|worker_timeout|
+  transient_admission_fetch` 保留原 reason/source/observed_at，并分类为
+  recoverable infrastructure probe；同一 logical cycle 的 health+capacity 与并发 Controller
+  只消费一个 signed immutable admission snapshot。busy 后 jitter bounded fresh reprobe，同一
+  run 可重新选回 target；quarantine/semantic/GAN/terminal delta 均为 0。只有成功 fresh 完整
+  report 的稳定 policy reason 才可产生 `node_not_base_admitted`。
 - R41-test-oracle: verifier stdout、fixture 自带 summary、被测模块返回 boolean/array/count/hash
   均不可单独证明 P0。每个 planned verifier 必须调用真实生产 seam，测试随后从独立
   Git object/PG/GitHub/deployment/effect store 重算；缺 planned module 只允许产生该模块一条
@@ -45,14 +61,15 @@
   第二 authority；first/new/high-risk/authority change 只能由 versioned Controller policy
   要求 exact-head owner receipt。
 - runtime-result-channel-blocker: 本次 TaskBundle 没有注入 `BRAIN_RESULT_FILE`；source checkout 的 `.brain-result.json` 不具 authority。本轮只提交合同 branch，不能凭 source result 授权 Generator；修复后必须由真实 Reviewer Attempt 产生 `attempt.result.result_channel_receipt` 且完成 durable ack。
-- red-oracle-v17: 34 个 case 不再从 verifier stdout、`--evidence-dir` 或同模块 summary 读取
+- red-oracle-v18: 34 个 case 不再从 verifier stdout、`--evidence-dir` 或同模块 summary 读取
   正向授权。脚本产生的临时 JSON 只验证 `count_toward_authorization=false`；正向判定统一由
   不同 trust-domain reader 查询 append-only PG store、读取 content-addressed raw artifact，
   独立重算 receipt/artifact/predecessor/signature 与 effect snapshot。静态 manifest/migration
   case 只验证 law/schema，不能授权运行时 pass。缺依赖、真 PG、GitHub/deployment authority
   store 或签名公钥时明确 BLOCKED，不得把 collection/config/SQL 错误记为 product Red。
-- red-execution-v17: `npm --prefix packages/brain ci --ignore-scripts` 后，用 sprint 自带
-  `tests/vitest.config.ts` 精确收集 1 个文件/34 个 case；实际结果 `33 failed | 1 passed`。
+- red-execution-v18: 用 pinned `npx --yes vitest@4.1.10` 与 sprint 自带
+  `tests/vitest.config.ts` 精确收集 1 个文件/34 个 case；YAML case 用 pinned npx CLI 在
+  case 内解析，不在 collection 阶段 import 缺失依赖。实际结果 `33 failed | 1 passed`。
   失败分别落在缺失的生产 verifier/store/migration/manifest 或现有 strict-staging
   empty→pass 行为，未再发生 dynamic import、Vitest include、SQL column 或共享 helper
   collection 错误；ESRCH 真子进程 liveness 正控已通过，保留为现有能力基线。
@@ -131,6 +148,11 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 - accepted receipt 必须为 HTTP 202 且逐字含 `status:"accepted"`、非空 `job_id`、匹配目标的 `actual_machine_id`、可验 `attestation`；持久化值 `executionTransport` 必须为 `fleet-worker`。
 - 取消：`POST /harness/attempts/:attempt_id/cancel`，body 仅含 `lease_owner`、`lease_generation`，重复调用幂等。
 - callback：Runner/Worker 使用 attempt-scoped callback token；Controller 必须先验 attempt/run/lease/head ownership 再物化 artifact/commit，不能只信 `completed` 或进程 exit code。
+- admission：Brain 对 Worker `GET /health` 复用同一 Bearer 认证；成功 report 必须逐字含
+  `base_admitted`、`dispatch_ready`、`reasons`、profile/Runner/Worker digest 与 observed time。
+  并发昂贵 probe 的 HTTP 503 body 为 `{"error":"health_probe_busy"}`，必须原样进入 signed
+  admission/selection receipt，禁止压成 `node_not_base_admitted`。同一 logical cycle 的
+  health/capacity 请求必须携带/返回同一 server-derived `admission_snapshot_id`。
 
 ## 禁 mock 边清单
 
@@ -138,6 +160,7 @@ N/A — PRD 不新增独立 HTTP endpoint。真实调用链复用 Worker `/healt
 - `harness-skill-relay.launchKernelProcess ↔ child orchestrator/run.js ↔ Postgres initiative_runs/heartbeat`：必须真实 spawn、真实 handshake、真 Postgres；不得 mock PID、child ready frame 或 heartbeat。
 - `harness-relay-watchdog ↔ launchKernelProcess ↔ harness_attempts/initiative_run_events`：恢复成功计数与事件只能在真实 acknowledged readiness 后落库。
 - `remote-bridge-transport ↔ fleet-worker.cjs ↔ attempt-runner.cjs ↔ exact Runner image`：必须真 HTTP、真 Docker/OrbStack、真 pinned digest；只允许在单独 mutation case 替换外部下载速度。
+- `fleet-worker.cjs /health ↔ node-admission-client.js ↔ production-probes.js ↔ capability-gate.js health+capacity ↔ execution-target selection receipt`：R51 必须真 Worker 阻塞 probe、两个真 Controller preflight 与真 PG receipt；禁 mock health JSON、把 busy 泛化成 node death，或分别 fresh probe health/capacity。
 - `install-fleet-worker.sh ↔ macOS identity/ACL/LaunchDaemon/OrbStack`：真实 macOS transaction 验收不得 mock `dscl`、ACL、launchctl、Docker bind。
 - `Fleet Worker callback/artifact transfer ↔ Controller ground-truth/Git`：必须传真实 commit/bundle、验 SHA/branch/task ownership 并在 cleanup 前物化。
 - `migration 367+ ↔ production-shaped Postgres harness_attempts CHECK ↔ attempt-store`：真 Postgres upgrade/rollback，禁止内存 schema。
@@ -533,10 +556,12 @@ bash scripts/kernel-fleet/verify-p0-workflow-contract.sh draft-evidence "$PR_NUM
 ```
 **硬阈值**: 事件精确为 `ci,evaluator,judge`；PR 仍 Draft、auto-merge off；merge/staging/production mutation count=0；title 改名/移除 label/旧 Harness green/伪造 run ID/未 attested rollback image 均 required check 非绿；candidate proof 前后 serving state byte-identical；Worker admission 或 built-config remote/callback 缺失时 Brain candidate receipt count=0。
 
-### Step 9A：execution target 隔离只作用于当前 logical cycle
-**来源**: `[AI_ADDED]` — R47 live Red 证明早期
+### Step 9A：execution target 隔离与 admission singleflight
+**来源**: `[AI_ADDED]` — R47/R51 live Red 证明早期
 `execution_transport_unavailable` 被永久写入 `failed_targets`，跨 logical cycle 毒化 team3/team4；
-team5 quota 不可用后，重复 `all_execution_targets_exhausted` 又把可恢复 run 错标 failed。
+team5 quota 不可用后，重复 `all_execution_targets_exhausted` 又把可恢复 run 错标 failed；
+并发 Worker health probe 的 503 `health_probe_busy` 被泛化为 `node_not_base_admitted`，且同一
+cycle 的 health/capacity 重复 probe 放大碰撞。
 
 **可观测行为**: exclusion identity 至少包含
 `run_id,role,logical_cycle_id,provider,account,machine,failure_class,source_attempt_id,
@@ -551,12 +576,20 @@ reprobe/owner intervention；只有独立持久化 termination limit 或 owner t
 `cycleA team4 transport fail → cycleB team3 transport fail + team5 quota unavailable →
 cycleC team4 fresh Green`；测试进程独立回读 selection receipt 与 probe artifact，禁止注入
 mock `recordDecision/decisions.push`。considered/excluded 必须是非空 exact set，不能对空数组
-用 `every()` 充当证明。
+用 `every()` 充当证明。`health_probe_busy|worker_http_503|worker_timeout|
+transient_admission_fetch` 必须保留 exact reason/source/observed_at 并分类为 recoverable
+infrastructure probe；不得写 target quarantine 或 semantic/GAN blocked budget。一个
+logical cycle 的 health 与 capacity 以及并发 Controller 必须消费同一 signed immutable
+`admission_snapshot_id`，Worker probe effect 恰为 1；busy 走 jitter bounded backoff 后
+fresh reprobe，同一 run 继续选择恢复后的 target。只有成功、fresh、完整 report 上稳定的
+digest/version/disk/pressure policy reason set 才能产生 `node_not_base_admitted`。
 
 **验证命令**:
 ```bash
 DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-execution-target-recovery.sh \
-  --real-controller --real-pg --restart --all-counterfactuals \
+  --real-controller --real-worker --real-pg --restart --all-counterfactuals \
+  --concurrent-controllers 2 --block-first-worker-probe \
+  --require-singleflight --share-health-capacity-snapshot \
   --task "${TASK_ID:?}" --run "${RUN_ID:?}" --contract "${CONTRACT_SHA:?}" \
   --head "${PR_HEAD_SHA:?}"
 ```
@@ -567,6 +600,11 @@ failure_class/source_attempt/expiry|reset/observed_at 以及 probe candidate dig
 齐全。TTL 未到、TTL 到期、auth reset、machine offline、transient、product failure、
 restart replay、persistent exhaustion cap、owner terminate 各有独立 reason；历史 failed
 run byte digest 不变，新 run 的 recovery_of 与 remote contract branch full SHA 精确匹配。
+R51 正控额外要求 `worker_probe_count=1`、`health_capacity_snapshot_count=1`、
+`health_snapshot_id=capacity_snapshot_id`，busy receipt 的 quarantine/semantic/GAN/terminal
+delta 全为 0，reason set 不含 `node_not_base_admitted`；两个 Controller 同时 preflight、
+health+capacity 同 cycle、busy→恢复、restart replay 均无 duplicate probe。持续 busy 达独立
+上限保持 `infrastructure_blocked_owner_intervention`，current run 不硬失败。
 
 ### Step 10A：Controller 确定性归一化 Reviewer 合同批准
 **来源**: `[AI_ADDED]` — R43 发现 Reviewer outcome/prose、concerns 状态、stale task intent 与
@@ -784,9 +822,11 @@ if [ "$E2E_PHASE" = preapproval ]; then
   --guard-manifest packages/quality/contracts/kernel-guard-manifest.json \
   --guard-providers claude,codex,grok --guard-vectors V01-V13 \
   --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
-  --require-reviewer-result-channel --require-reviewer-effect-isolation \
-  --require-target-quarantine-recovery --require-real-pg-selection-replay \
-  --require-selection-receipts --require-independent-authority-observer \
+    --require-reviewer-result-channel --require-reviewer-effect-isolation \
+    --require-target-quarantine-recovery --require-real-pg-selection-replay \
+    --require-admission-singleflight --require-health-capacity-shared-snapshot \
+    --require-health-probe-busy-recovery --expect-busy-budget-delta 0 \
+    --require-selection-receipts --require-independent-authority-observer \
   --reject-self-attested-evidence --require-independent-contract-gate \
   --execution-mode serial_single_writer --parallel-width 1 \
   --expect-order draft,ci,evaluator,judge,reviewer_v2_verified \
@@ -809,6 +849,8 @@ bash scripts/kernel-fleet/run-authoritative-final-e2e.sh \
   --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
   --require-verified-reviewer-v2 --execution-mode serial_single_writer \
   --require-target-quarantine-recovery --require-real-pg-selection-replay \
+  --require-admission-singleflight --require-health-capacity-shared-snapshot \
+  --require-health-probe-busy-recovery --expect-busy-budget-delta 0 \
   --require-selection-receipts --require-independent-authority-observer \
   --reject-self-attested-evidence --require-independent-contract-gate \
   --expect-order owner,merge,staging,production,rollback,s12 \
@@ -834,12 +876,21 @@ workflow bypass、result channel、full fixture/advisory/classification、projec
 manifest/evidence schema、strict staging、terminal-order、clean-home D/A/F/E、V01-V13 exact
 set、single merge authority、Reviewer-v2 approval、Reviewer effect isolation 与
 execution-target logical-cycle quarantine/recovery、
+health-probe-busy singleflight/shared-snapshot/recovery、
 serial-single-writer Red 必须保留。
+
+**immutable case manifest**：`tests/red-case-manifest.json` 是 R49-R51 共用的有序 34-case
+清单，`case_ids_digest=c8413e6a709ca86eff0d5e3719f4b851617766b6de696aa346432895e50d438f`。
+Vitest 文件中的 `it()` 名称、顺序、数量必须逐字等于该清单；Generator/CI/Evaluator/Judge
+只能把同一 Red 变 Green，不得增删/改名/重排隐藏失败。R51 复用第 31 个 case。
 
 **R48 oracle 硬阈值**：`rg 'expect\\(out\\)|expect\\(run'` 在测试文件中必须 0 命中；
 任何 `--evidence-dir` 只允许传给 `readDiagnosticReceipts` 并逐条断言
 `count_toward_authorization=false`。每个运行时正控随后必须查询真实 append-only store；
 execution-target selection 还必须从 receipt body 独立重算 canonical digest 并用公钥验证签名。
+同一个 execution-target case 必须同时覆盖 R51，不得增加/删除/改名来改变 immutable 34-case：
+阻塞真实 Worker probe、并发两个 Controller、health+capacity 共用一个 snapshot、busy 后同一
+run fresh 恢复，且 quarantine/semantic/GAN/terminal delta 全为 0。
 
 **测试库存验证命令**:
 ```bash
@@ -847,10 +898,10 @@ TEST_ROOT="sprints/07280225-kernel-fleet-durable-recovery-r5/tests"
 UNIQUE_FILES=$(find "$TEST_ROOT" -name '*.test.ts' -print0 | xargs -0 realpath | sort -u | wc -l | tr -d ' ')
 IT_COUNT=$(rg -c '^[[:space:]]*it\(' "$TEST_ROOT/durable-recovery.contract.test.ts")
 [ "$UNIQUE_FILES" -eq 1 ] && [ "$IT_COUNT" -eq 34 ]
+node -e 'const fs=require("fs"),c=require("crypto"),r=process.argv[1],s=fs.readFileSync(r+"/durable-recovery.contract.test.ts","utf8"),ids=[...s.matchAll(/^  it\x28\x27([^\x27]+)\x27/gm)].map(x=>x[1]),m=JSON.parse(fs.readFileSync(r+"/red-case-manifest.json"));if(JSON.stringify(ids)!==JSON.stringify(m.cases)||c.createHash("sha256").update(JSON.stringify(ids)).digest("hex")!==m.case_ids_digest)process.exit(1)' "$TEST_ROOT"
 # packages/brain/sprints 是指向根 sprints 的 symlink；真实 collector 必须显式排除，
 # 否则同一 realpath 会被 Vitest 以两个逻辑路径执行两次。
-npm --prefix packages/brain ci --ignore-scripts
-npx vitest run \
+npx --yes vitest@4.1.10 run \
   --config "$TEST_ROOT/vitest.config.ts" \
   --reporter=verbose
 rg -q 'fleet-worker transport with production upgrade rollback and source enum parity' \
@@ -886,7 +937,7 @@ for COVER in \
   'single merge staging production authority cannot be bypassed' \
   'deterministic reviewer v2 approval rejects advisory outcomes and stale intent' \
   'reviewer mutation surface is denied before verified approval' \
-  'execution target quarantine replays real PG cycles and writes complete selection receipts' \
+  'health probe busy shares one admission snapshot and target quarantine recovers in the same run' \
   'independent authority observer rejects temp self attestation and malformed rubric evidence' \
   'Controller Contract Gate rejects R14 R15 and permanent target poisoning fixtures' \
   'current controller remains serial single writer'
