@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.106
+**Brain 版本**: 1.267.107
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.107 — Fleet OrbStack eventual-start hotfix
+
+- OrbStack `start` 返回非零后不再立即回滚；baseline 会在 30 秒有界窗口内以
+  `orb status` 核对真实运行状态，兼容升级和首次安装的异步 VM handoff。
+- 超时仍 fail closed 并保持节点 drain；Runner digest、NodeProfile 和 Phase
+  4B/4C/4D/5 范围均未改变。
+- Brain 回退目标：`1.267.106`；节点保持 drain 后再回退。
 
 ## Brain 1.267.106 — Fleet rollout root-staging executable hotfix
 

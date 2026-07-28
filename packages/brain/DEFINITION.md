@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.106
+**版本**: 1.267.107
+
+## Fleet OrbStack eventual-start hotfix
+
+- baseline 现在把 `orb start` 视为启动请求，并在 30 秒有界窗口内通过
+  `orb status` 确认最终状态；OrbStack 异步完成 VM handoff 时不再误回滚。
+- 确认窗口耗尽仍返回 `orbstack_start_failed`、保持节点 drain；不改变 Runner
+  pin、NodeProfile、Provider 凭据或 Phase 4B/4C/4D/5 语义。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.106`。
 
 ## Fleet rollout root-staging executable hotfix
 
