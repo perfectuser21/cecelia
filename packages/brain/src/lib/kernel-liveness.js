@@ -24,6 +24,32 @@
  * 依赖全注入（pool / now / hostFn / killFn），便于单测喂假 db、假 process.kill。
  */
 import os from 'node:os';
+import { sha256Canonical } from './kernel-equivalence-receipts.js';
+
+const LIVENESS_SEAM_ID = 'kernel.liveness.orphan_recovery';
+const LIVENESS_EFFECTS = Object.freeze({
+  normal: Object.freeze({
+    verdict: 'alive',
+    observed_outcome: 'confirmed',
+    effect_code: 'live_attempt_preserved',
+  }),
+  violation: Object.freeze({
+    verdict: 'unknown',
+    observed_outcome: 'denied',
+    effect_code: 'uncertain_liveness_cleanup_denied',
+  }),
+  recovery: Object.freeze({
+    verdict: 'dead',
+    observed_outcome: 'recovered',
+    effect_code: 'confirmed_dead_attempt_recovered',
+  }),
+});
+
+function livenessSeamError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
 
 /**
  * 心跳新鲜阈值 = 3 分钟。
@@ -174,4 +200,95 @@ export async function assessKernelLiveness({
       source: 'pid', runId: row.id,
     };
   }
+}
+
+export function createKernelLivenessEquivalenceSeam({
+  effectSigner,
+  recoverDeadAttempt,
+} = {}) {
+  if (typeof effectSigner?.signEffectResult !== 'function') {
+    throw livenessSeamError('seam_effect_signer_unavailable');
+  }
+  if (typeof recoverDeadAttempt !== 'function') {
+    throw livenessSeamError('liveness_recovery_port_unavailable');
+  }
+
+  return Object.freeze({
+    async invoke({
+      cell,
+      grant,
+      resource,
+      predecessor = null,
+      signal,
+    }) {
+      signal?.throwIfAborted();
+      if (
+        cell?.seam_id !== LIVENESS_SEAM_ID
+        || typeof resource?.snapshot !== 'function'
+        || !resource?.liveness_input
+      ) {
+        throw livenessSeamError('liveness_equivalence_resource_invalid');
+      }
+      const effect = LIVENESS_EFFECTS[cell.scenario];
+      if (!effect) {
+        throw livenessSeamError('liveness_equivalence_scenario_invalid');
+      }
+
+      const before = await resource.snapshot({ phase: 'before', signal });
+      signal?.throwIfAborted();
+      const assessment = await assessKernelLiveness(
+        resource.liveness_input,
+      );
+      signal?.throwIfAborted();
+      if (assessment.verdict !== effect.verdict) {
+        throw livenessSeamError('liveness_equivalence_outcome_unexpected');
+      }
+
+      let recovery = null;
+      if (cell.scenario === 'recovery') {
+        recovery = await recoverDeadAttempt({
+          assessment,
+          cell,
+          grant,
+          resource,
+          signal,
+        });
+        signal?.throwIfAborted();
+        if (!['requeued', 'recovered'].includes(recovery?.action)) {
+          throw livenessSeamError(
+            'liveness_equivalence_recovery_unconfirmed',
+          );
+        }
+      }
+      const after = await resource.snapshot({
+        phase: 'after',
+        assessment,
+        recovery,
+        signal,
+      });
+      signal?.throwIfAborted();
+
+      return effectSigner.signEffectResult({
+        service_id: LIVENESS_SEAM_ID,
+        cell,
+        grant,
+        resource_id: grant.resource_id,
+        resource_ref: grant.resource_ref,
+        observed_outcome: effect.observed_outcome,
+        effect_code: effect.effect_code,
+        before_hash: sha256Canonical(before),
+        after_hash: sha256Canonical(after),
+        predecessor,
+        signal,
+      });
+    },
+
+    async cancel({ signal } = {}) {
+      return { confirmed: signal?.aborted === true };
+    },
+
+    async cleanup() {
+      return { confirmed: true };
+    },
+  });
 }
