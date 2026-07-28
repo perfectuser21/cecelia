@@ -29,6 +29,8 @@ vi.mock('../../lib/harness-orphan-guard.js', () => ({
 
 const attemptId = '22222222-2222-4222-8222-222222222222';
 const runId = '11111111-1111-4111-8111-111111111111';
+const taskId = '44444444-4444-4444-8444-444444444444';
+const prHeadSha = '0123456789abcdef0123456789abcdef01234567';
 const callbackToken = 'attempt-callback-secret';
 const leaseOwner = 'brain-1:123';
 const fleetSecret = 'kernel-fleet-bridge-secret-at-least-32-bytes';
@@ -172,6 +174,39 @@ function postCallback(app, body = validResult, token = callbackToken, owner = le
     .set('Authorization', `Bearer ${token}`)
     .set('X-Harness-Lease-Owner', owner);
   return call.send(body);
+}
+
+function evaluatorRoleCallback() {
+  const behaviorTests = [{
+    command: 'npm test',
+    exit_code: 0,
+    log_tail: 'green',
+  }];
+  return {
+    ...validResult,
+    artifacts: [{ type: 'evaluation_target', head_sha: prHeadSha }],
+    checks: behaviorTests,
+    decision: {
+      outcome: 'PASS',
+      reason: '',
+      pr_head_sha: prHeadSha,
+      unverifiable: [],
+    },
+    role_result: {
+      kind: 'evaluator',
+      raw_sha256: 'a'.repeat(64),
+      claimed: {
+        verdict: 'PASS',
+        task_id: taskId,
+        attempt_id: attemptId,
+        behavior_tests: behaviorTests,
+      },
+      verified: {
+        pr_head_sha: prHeadSha,
+        behavior_tests: behaviorTests,
+      },
+    },
+  };
 }
 
 it('production server 从环境注入 bridge token 且不记录 secret', () => {
@@ -393,6 +428,49 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(200);
     expect(mocks.store.complete).toHaveBeenCalledOnce();
+  });
+
+  it('从 persisted TaskBundle 注入 evaluator task authority 后接受 exact role_result', async () => {
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      task_bundle: {
+        expected_output: 'harness-result/evaluator-v1',
+        inputs: {
+          task_id: taskId,
+          pull_request: { head_sha: prHeadSha },
+        },
+      },
+    });
+
+    const response = await postCallback(app, evaluatorRoleCallback());
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.complete).toHaveBeenCalledWith(
+      attemptId,
+      expect.objectContaining({
+        role_result: expect.objectContaining({ kind: 'evaluator' }),
+      }),
+      { leaseOwner },
+    );
+  });
+
+  it('拒绝 evaluator role_result 绕过 persisted TaskBundle task authority', async () => {
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      task_bundle: {
+        expected_output: 'harness-result/evaluator-v1',
+        inputs: {
+          task_id: runId,
+          pull_request: { head_sha: prHeadSha },
+        },
+      },
+    });
+
+    const response = await postCallback(app, evaluatorRoleCallback());
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/task_id authority mismatch/);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
   });
 
   it('launch receipt 尚未确认时拒绝 callback，避免远端先回调绕过验签', async () => {

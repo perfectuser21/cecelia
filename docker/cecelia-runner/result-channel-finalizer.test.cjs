@@ -291,6 +291,19 @@ test('canonical JSON and raw_sha256 are deterministic across input key order', (
   assert.equal(a.role_result.raw_sha256, b.role_result.raw_sha256);
 });
 
+test('canonical JSON preserves adversarial own property names without digest collisions', () => {
+  const adversarial = JSON.parse(
+    '{"__proto__":{"polluted":true},"constructor":"owned","prototype":"owned"}',
+  );
+
+  assert.equal(
+    canonicalJson(adversarial),
+    '{"__proto__":{"polluted":true},"constructor":"owned","prototype":"owned"}',
+  );
+  assert.notEqual(canonicalJson(adversarial), canonicalJson({}));
+  assert.equal({}.polluted, undefined);
+});
+
 test('rejects unknown fields at every authority boundary', () => {
   const raw = {
     verdict: 'REVISION',
@@ -307,6 +320,12 @@ test('rejects unknown fields at every authority boundary', () => {
   const cases = [
     { ...input('reviewer', raw, verified), injected: true },
     input('reviewer', { ...raw, injected: true }, verified),
+    input('reviewer', JSON.parse(JSON.stringify({
+      ...raw,
+      __proto_placeholder__: true,
+    }).replace('"__proto_placeholder__"', '"__proto__"')), verified),
+    input('reviewer', { ...raw, constructor: 'owned' }, verified),
+    input('reviewer', { ...raw, prototype: 'owned' }, verified),
     input('reviewer', raw, { ...verified, injected: true }),
     input('reviewer', raw, verified, {
       providerResult: providerResult({ injected: true }),
@@ -316,6 +335,30 @@ test('rejects unknown fields at every authority boundary', () => {
   for (const value of cases) {
     assert.throws(() => finalizeRoleResult(value), /unknown field/);
   }
+});
+
+test('accepts the exact feedback-only segmented FAIL and relative mac_web screenshot Skill shapes', () => {
+  const rawEnvelope = {
+    verdict: 'FAIL',
+    task_id: TASK_ID,
+    attempt_id: ATTEMPT_ID,
+    feedback: 'DoD 缺 [BEHAVIOR] 条目',
+    segment_eval: 'ws2',
+    screenshots: [
+      'sprints/07280905-kernel-result-channel-bootstrap/screenshots/result.png',
+    ],
+  };
+  const verifierEnvelope = {
+    pr_head_sha: SHA,
+    behavior_tests: [],
+  };
+
+  const result = finalizeRoleResult(input('evaluator', rawEnvelope, verifierEnvelope));
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.decision.outcome, 'FAIL');
+  assert.equal(result.decision.reason, rawEnvelope.feedback);
+  assert.equal(result.role_result.claimed.segment_eval, 'ws2');
 });
 
 test('rejects identity, SHA, artifact, judgment, test and PR claims not established by verifierEnvelope', () => {

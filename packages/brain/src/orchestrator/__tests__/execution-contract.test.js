@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createRequire } from 'node:module';
 import * as executionContract from '../execution-contract.js';
 import {
   parseTaskBundle,
@@ -8,6 +9,11 @@ import {
   RESULT_CONTRACT_VERSION,
   ROLE_VALUES,
 } from '../execution-contract.js';
+
+const require = createRequire(import.meta.url);
+const { finalizeRoleResult } = require(
+  '../../../../../docker/cecelia-runner/result-channel-finalizer.cjs',
+);
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
@@ -428,7 +434,14 @@ describe('HarnessResult contract', () => {
 
   it('preserves an exact role_result instead of stripping it from the callback', () => {
     const parsed = parseHarnessResult(validResult({
-      decision: { outcome: 'REVISION', reason: reviewerRoleResult.claimed.feedback },
+      decision: {
+        outcome: 'REVISION',
+        reason: reviewerRoleResult.claimed.feedback,
+        contract_sha: BASE_SHA,
+        judgments_written: 0,
+      },
+      checks: Object.entries(reviewerRoleResult.verified.rubric_scores)
+        .map(([name, score]) => ({ name, score })),
       role_result: reviewerRoleResult,
     }), 'reviewer', 'harness-result/reviewer-v1');
 
@@ -503,10 +516,307 @@ describe('HarnessResult contract', () => {
     };
 
     expect(parseHarnessResult(validResult({
-      decision: { outcome: 'PASS', reason: '' },
+      decision: {
+        outcome: 'PASS',
+        reason: '',
+        pr_head_sha: BASE_SHA,
+        unverifiable: [],
+      },
+      artifacts: [{ type: 'evaluation_target', head_sha: BASE_SHA }],
+      checks: evaluatorRoleResult.verified.behavior_tests,
       role_result: evaluatorRoleResult,
-    }), 'evaluator', 'harness-result/evaluator-v1').role_result)
+    }), 'evaluator', 'harness-result/evaluator-v1', {
+      taskId: TASK_ID,
+    }).role_result)
       .toEqual(evaluatorRoleResult);
+  });
+
+  it('accepts exact evaluator Skill feedback-only, segmented and relative screenshot fields', () => {
+    const evaluatorRoleResult = {
+      kind: 'evaluator',
+      raw_sha256: 'b'.repeat(64),
+      claimed: {
+        verdict: 'FAIL',
+        task_id: TASK_ID,
+        attempt_id: ATTEMPT_ID,
+        feedback: 'DoD 缺 [BEHAVIOR] 条目',
+        segment_eval: 'ws2',
+        screenshots: [
+          'sprints/07280905-kernel-result-channel-bootstrap/screenshots/result.png',
+        ],
+      },
+      verified: {
+        pr_head_sha: BASE_SHA,
+        behavior_tests: [],
+      },
+    };
+
+    expect(parseHarnessResult(validResult({
+      decision: {
+        outcome: 'FAIL',
+        reason: evaluatorRoleResult.claimed.feedback,
+        pr_head_sha: BASE_SHA,
+        unverifiable: [],
+      },
+      artifacts: [{ type: 'evaluation_target', head_sha: BASE_SHA }],
+      checks: [],
+      role_result: evaluatorRoleResult,
+    }), 'evaluator', 'harness-result/evaluator-v1', {
+      taskId: TASK_ID,
+    }).role_result).toEqual(evaluatorRoleResult);
+  });
+
+  it.each([
+    [
+      'planner claimed/verified branch mismatch',
+      {
+        kind: 'planner',
+        raw_sha256: 'c'.repeat(64),
+        claimed: {
+          verdict: 'DONE',
+          branch: 'cp-claimed',
+          sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+          planner_branch: 'cp-claimed',
+          review_required: true,
+          status: 'DONE_WITH_CONCERNS',
+        },
+        verified: {
+          branch: 'cp-verified',
+          sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+          planner_branch: 'cp-verified',
+          prd_sha256: `sha256:${'d'.repeat(64)}`,
+          effective_review_required: false,
+        },
+      },
+    ],
+    [
+      'reviewer rubric and verdict mismatch',
+      {
+        ...reviewerRoleResult,
+        claimed: {
+          ...reviewerRoleResult.claimed,
+          verdict: 'APPROVED',
+          judgments_written: 1,
+        },
+        verified: {
+          ...reviewerRoleResult.verified,
+          verdict: 'REVISION',
+          judgments_written: 1,
+          rubric_scores: {
+            ...reviewerRoleResult.verified.rubric_scores,
+            dod_machineability: 0,
+          },
+        },
+      },
+    ],
+    [
+      'evaluator PASS without verified tests and invalid cascade state',
+      {
+        kind: 'evaluator',
+        raw_sha256: 'e'.repeat(64),
+        claimed: {
+          verdict: 'PASS',
+          task_id: TASK_ID,
+          attempt_id: ATTEMPT_ID,
+          behavior_tests: [],
+          cascade_assertions: [{
+            link_id: 'link-1',
+            assertion_ref: 'tests/e2e.test.js',
+            ran: false,
+            result: 'pass',
+          }],
+        },
+        verified: {
+          pr_head_sha: BASE_SHA,
+          behavior_tests: [],
+        },
+      },
+    ],
+    [
+      'generator claimed and verified PR mismatch',
+      {
+        kind: 'generator',
+        raw_sha256: 'f'.repeat(64),
+        claimed: {
+          verdict: 'DONE',
+          pr_url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+        },
+        verified: {
+          pull_request: {
+            type: 'pull_request',
+            url: 'https://github.com/perfectuser21/cecelia/pull/9999',
+            number: 9999,
+            head_ref: 'cp-other',
+            head_sha: BASE_SHA,
+            state: 'OPEN',
+          },
+        },
+      },
+    ],
+  ])('rejects cross-field role_result parity violation: %s', (_name, roleResult) => {
+    expect(() => executionContract.__test__.roleResultSchema.parse(roleResult)).toThrow();
+  });
+
+  it('requires evaluator role_result task authority and rejects a mismatched task binding', () => {
+    const evaluatorRoleResult = {
+      kind: 'evaluator',
+      raw_sha256: 'e'.repeat(64),
+      claimed: {
+        verdict: 'FAIL',
+        task_id: TASK_ID,
+        attempt_id: ATTEMPT_ID,
+        feedback: 'failed safely',
+      },
+      verified: {
+        pr_head_sha: BASE_SHA,
+        behavior_tests: [],
+      },
+    };
+    const envelope = validResult({
+      decision: {
+        outcome: 'FAIL',
+        reason: 'failed safely',
+        pr_head_sha: BASE_SHA,
+        unverifiable: [],
+      },
+      artifacts: [{ type: 'evaluation_target', head_sha: BASE_SHA }],
+      role_result: evaluatorRoleResult,
+    });
+
+    expect(() => parseHarnessResult(
+      envelope,
+      'evaluator',
+      'harness-result/evaluator-v1',
+    )).toThrow(/authority/);
+    expect(() => parseHarnessResult(
+      envelope,
+      'evaluator',
+      'harness-result/evaluator-v1',
+      { taskId: RUN_ID },
+    )).toThrow(/task_id/);
+  });
+
+  it.each([
+    ['planner lifecycle', {
+      role: 'planner',
+      expectedOutput: 'harness-result/planner-v1',
+      authority: undefined,
+      roleResult: {
+        kind: 'planner',
+        raw_sha256: 'c'.repeat(64),
+        claimed: {
+          verdict: 'DONE',
+          branch: 'cp-planner',
+          sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+          planner_branch: 'cp-planner',
+          review_required: false,
+          status: 'DONE',
+        },
+        verified: {
+          branch: 'cp-planner',
+          sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+          planner_branch: 'cp-planner',
+          prd_sha256: `sha256:${'d'.repeat(64)}`,
+          effective_review_required: false,
+        },
+      },
+      patch: {
+        status: 'failed',
+        decision: { outcome: 'DONE', reason: '', review_required: false },
+        artifacts: [{
+          type: 'planner_prd',
+          path: 'sprints/07280905-kernel-result-channel-bootstrap',
+          sha256: `sha256:${'d'.repeat(64)}`,
+          branch: 'cp-planner',
+        }],
+      },
+    }],
+    ['reviewer decision/checks', {
+      role: 'reviewer',
+      expectedOutput: 'harness-result/reviewer-v1',
+      authority: undefined,
+      roleResult: reviewerRoleResult,
+      patch: {
+        decision: { outcome: 'APPROVED', reason: 'forged' },
+        checks: [],
+      },
+    }],
+    ['evaluator observed checks', {
+      role: 'evaluator',
+      expectedOutput: 'harness-result/evaluator-v1',
+      authority: { taskId: TASK_ID },
+      roleResult: {
+        kind: 'evaluator',
+        raw_sha256: 'e'.repeat(64),
+        claimed: {
+          verdict: 'PASS',
+          task_id: TASK_ID,
+          attempt_id: ATTEMPT_ID,
+          behavior_tests: [{
+            command: 'npm test',
+            exit_code: 0,
+            log_tail: 'green',
+          }],
+        },
+        verified: {
+          pr_head_sha: BASE_SHA,
+          behavior_tests: [{
+            command: 'npm test',
+            exit_code: 0,
+            log_tail: 'green',
+          }],
+        },
+      },
+      patch: {
+        decision: {
+          outcome: 'PASS',
+          reason: '',
+          pr_head_sha: BASE_SHA,
+          unverifiable: [],
+        },
+        artifacts: [{ type: 'evaluation_target', head_sha: BASE_SHA }],
+        checks: [{ command: 'forged', exit_code: 0, log_tail: 'green' }],
+      },
+    }],
+    ['generator callback artifact SHA', {
+      role: 'generator',
+      expectedOutput: 'harness-result/generator-v1',
+      authority: undefined,
+      roleResult: {
+        kind: 'generator',
+        raw_sha256: 'f'.repeat(64),
+        claimed: {
+          verdict: 'DONE',
+          pr_url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+        },
+        verified: {
+          pull_request: {
+            type: 'pull_request',
+            url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+            number: 4391,
+            head_ref: 'cp-result',
+            head_sha: BASE_SHA,
+            state: 'OPEN',
+          },
+        },
+      },
+      patch: {
+        decision: { outcome: 'DONE', reason: '', pr_head_sha: BASE_SHA },
+        artifacts: [{
+          type: 'pull_request',
+          url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+          number: 4391,
+          head_ref: 'cp-result',
+          head_sha: 'f'.repeat(40),
+          state: 'OPEN',
+        }],
+      },
+    }],
+  ])('rejects outer envelope parity violation: %s', (_name, fixture) => {
+    expect(() => parseHarnessResult(validResult({
+      ...fixture.patch,
+      role_result: fixture.roleResult,
+    }), fixture.role, fixture.expectedOutput, fixture.authority)).toThrow(/parity|lifecycle/);
   });
 
   it.each([
@@ -598,6 +908,56 @@ describe('HarnessResult contract', () => {
   ])('accepts the exact $kind role_result branch of the discriminated union', (roleResult) => {
     expect(executionContract.__test__.roleResultSchema.parse(roleResult))
       .toEqual(roleResult);
+  });
+
+  it('accepts the exact deterministic proposer envelope emitted by the Runner finalizer', () => {
+    const taskPlanPath = 'sprints/07280905-kernel-result-channel-bootstrap/task-plan.json';
+    const proposeBranch = 'cp-harness-propose-r1-33333333-a2';
+    const artifact = (path) => ({
+      path,
+      sha256: `sha256:${'d'.repeat(64)}`,
+    });
+    const finalized = finalizeRoleResult({
+      expectedOutput: 'harness-result/proposer-v1',
+      binding: {
+        task_id: TASK_ID,
+        run_id: RUN_ID,
+        attempt_id: ATTEMPT_ID,
+        role: 'proposer',
+      },
+      providerResult: validResult({
+        artifacts: [],
+        checks: [],
+        decision: null,
+      }),
+      rawEnvelope: {
+        propose_branch: proposeBranch,
+        workstream_count: 1,
+        task_plan_path: taskPlanPath,
+      },
+      verifierEnvelope: {
+        propose_branch: proposeBranch,
+        head_sha: BASE_SHA,
+        artifacts: {
+          task_plan: artifact(taskPlanPath),
+          contract_tests: artifact(
+            'sprints/07280905-kernel-result-channel-bootstrap/tests',
+          ),
+          contract_dod: artifact(
+            'sprints/07280905-kernel-result-channel-bootstrap/contract-dod.md',
+          ),
+          contract_draft: artifact(
+            'sprints/07280905-kernel-result-channel-bootstrap/contract-draft.md',
+          ),
+        },
+      },
+    });
+
+    expect(parseHarnessResult(
+      finalized,
+      'proposer',
+      'harness-result/proposer-v1',
+    ).role_result.kind).toBe('proposer');
   });
 
   it.each([
