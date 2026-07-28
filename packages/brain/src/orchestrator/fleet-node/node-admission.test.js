@@ -215,16 +215,19 @@ describe('pure Fleet Node base admission', () => {
     });
   });
 
-  it('drains a Sequoia node below the shared 15.6.1 floor', async () => {
-    const { contract, profile, report } = await fixture('xian-mac-m4', {
-      os: { version: '15.6.0' },
-    });
+  it.each(['15.6.0', '14.7.4'])(
+    'drains macOS version %s below the shared 15.6.1 floor',
+    async (osVersion) => {
+      const { contract, profile, report } = await fixture('xian-mac-m4', {
+        os: { version: osVersion },
+      });
 
-    expectDraining(
-      contract.evaluateBaseAdmission(report, { profile, nowMs: NOW_MS }),
-      'os_version_below_floor',
-    );
-  });
+      expectDraining(
+        contract.evaluateBaseAdmission(report, { profile, nowMs: NOW_MS }),
+        'os_version_below_floor',
+      );
+    },
+  );
 
   it('drains an untested macOS major above the supported Sequoia line', async () => {
     const { contract, profile, report } = await fixture('xian-mac-m4', {
