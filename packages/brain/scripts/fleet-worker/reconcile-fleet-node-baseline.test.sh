@@ -262,7 +262,11 @@ write_executable "$fake_bin/git" \
   '    repository="${args[$((i + 1))]:-}"' \
   '  fi' \
   'done' \
-  'if [[ "$repository" == */var/lib/cecelia/repository && "$safe_directory" != "$repository" ]]; then' \
+  'canonical_repository=""' \
+  'if [[ "$repository" == */var/lib/cecelia/repository ]]; then' \
+  '  canonical_repository="$(cd "$repository" && pwd -P)"' \
+  'fi' \
+  'if [[ -n "$canonical_repository" && "$safe_directory" != "$canonical_repository" ]]; then' \
   '  echo "fatal: detected dubious ownership in repository at '"'"'$repository'"'"'" >&2' \
   '  exit 128' \
   'fi' \
