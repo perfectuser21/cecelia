@@ -1,4 +1,4 @@
-# Sprint Contract Draft（Round 18）
+# Sprint Contract Draft（Round 19）
 
 ## 合同 Notes
 
@@ -9,11 +9,11 @@
 - judgment-pending-user: ⚠️ Mac-compatible single-use secret consumption receipt 的生产判定方法
 - Xian `macOS 15.6.1 < 15.7.4` 与 M1 Tailscale CLI 暴露属于外部维护 blocker，只记录 blocked evidence；禁止降低 profile 或加入绕过。
 - 候选 `sha256:9fc98f...`、临时 60 秒 timeout、`/tmp` copy、手工 plist/ACL/schema 扩宽均仅为 operator evidence，不是发货构件。
-- 先前 proposer heads 均仅作 Red 证据；Round 18 保留 R32-R50 修正，并把 R51 纳入同一
+- 先前 proposer heads 均仅作 Red 证据；Round 19 保留 R32-R50 修正，并把 R51 纳入同一
   immutable 34-case inventory；R51 不通过新增/改名 case 规避既有 Red，而是扩展 R47 的真实
   PG incident replay case，要求真实 Worker/Brain 并发 probe、singleflight admission snapshot、
   exact reason preservation 与 budget/quarantine/terminal 零副作用。
-- Round 18 继续把 R48 从文字约束落实为
+- Round 19 继续把 R48 从文字约束落实为
   全 34-case 的统一 oracle 纪律：
   Reviewer 自报 APPROVED 不具权威，必须由 Controller 对 durable result-channel、七维评分、
   task-intent revision、skill/policy digest、Contract Gate 与 Red inventory 做确定性批准；
