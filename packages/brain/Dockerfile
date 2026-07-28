@@ -61,6 +61,7 @@ RUN ln -s /repo/node_modules /app/node_modules
 # 源代码
 COPY packages/brain/server.js ./
 COPY packages/brain/src/ ./src/
+COPY packages/brain/config/ ./config/
 COPY packages/brain/migrations/ ./migrations/
 COPY packages/brain/package.json ./
 
