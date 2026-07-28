@@ -229,6 +229,9 @@ export function createRemoteBridgeTransport({
           role: bundle?.role,
         },
       );
+      const isCanary = bundle?.expected_output === 'harness-result/canary-v1'
+        && bundle?.role === 'reporter'
+        && bundle?.skill === null;
       const githubMutationPolicy = bundle?.role === 'generator'
         && bundle?.inputs?.github_mutation_policy
         ? parseGithubMutationPolicy(bundle?.inputs?.github_mutation_policy, {
@@ -236,11 +239,12 @@ export function createRemoteBridgeTransport({
           })
         : null;
       const workspace = disposableCanaryWorkspace(bundle, attempt.id);
+      const credentialFreeCanary = isCanary || workspace !== null;
       let credentialEnvelope;
       if (!PROVIDERS.has(target?.provider)) {
         throw new Error('remote_bridge_provider_invalid');
       }
-      if (workspace === null) {
+      if (!credentialFreeCanary) {
         if (typeof configuredCredentialBroker?.issue !== 'function') {
           throw new Error('remote_bridge_credential_broker_unavailable');
         }

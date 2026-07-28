@@ -37,25 +37,38 @@ const GITHUB_MUTATION_POLICY = Object.freeze({
   allowed_paths: Object.freeze(['packages/', 'sprints/']),
 });
 const CREDENTIAL_ENVELOPE = Object.freeze({
-  contract_version: 'credential-envelope/v1',
+  contract_version: 'provider-credential-envelope/v2',
   credential_ref: '33333333-3333-4333-8333-333333333333',
+  delivery_nonce: '44444444-4444-4444-8444-444444444444',
   attempt_id: ATTEMPT_ID,
+  run_id: RUN_ID,
+  provider: 'codex',
   account_id: 'team1',
   machine_id: WORKER_ID,
+  lease_owner: 'dispatcher-1',
+  lease_generation: 0,
   issued_at: '2026-07-27T12:00:00.000Z',
-  expires_at: '2026-07-27T14:00:00.000Z',
+  expires_at: '2026-07-27T12:01:00.000Z',
   payload_hash: `sha256:${'b'.repeat(64)}`,
   payload: 'sensitive-base64-payload',
+  signature: `hmac-sha256:${'c'.repeat(64)}`,
 });
 const CREDENTIAL = Object.freeze({
   credentialRef: CREDENTIAL_ENVELOPE.credential_ref,
+  deliveryNonce: CREDENTIAL_ENVELOPE.delivery_nonce,
+  provider: 'codex',
   accountId: 'team1',
   authJson: '{"tokens":{"access_token":"sensitive-access-token"}}',
   metadata: Object.freeze({
     credential_ref: CREDENTIAL_ENVELOPE.credential_ref,
+    delivery_nonce: CREDENTIAL_ENVELOPE.delivery_nonce,
     attempt_id: ATTEMPT_ID,
+    run_id: RUN_ID,
+    provider: 'codex',
     account_id: 'team1',
     machine_id: WORKER_ID,
+    lease_owner: 'dispatcher-1',
+    lease_generation: 0,
     issued_at: CREDENTIAL_ENVELOPE.issued_at,
     expires_at: CREDENTIAL_ENVELOPE.expires_at,
     payload_hash: CREDENTIAL_ENVELOPE.payload_hash,
@@ -467,8 +480,12 @@ describe('Fleet Worker Attempt runner', () => {
       CREDENTIAL_ENVELOPE,
       {
         attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        provider: 'codex',
         accountId: 'team1',
         machineId: WORKER_ID,
+        leaseOwner: 'dispatcher-1',
+        leaseGeneration: 0,
       },
     );
     expect(deps.events.slice(0, 2)).toEqual([
@@ -548,7 +565,7 @@ describe('Fleet Worker Attempt runner', () => {
   );
 
   it.each(['claude', 'grok'])(
-    'fails %s closed until Fleet has a bounded Worker-owned provider credential broker',
+    'rejects %s without a bounded Worker-owned provider credential envelope',
     async (provider) => {
       const deps = dependencies();
       const runner = createRunner(deps);
@@ -564,7 +581,7 @@ describe('Fleet Worker Attempt runner', () => {
           account: `${provider}-team1`,
         },
         credential_envelope: undefined,
-      }))).rejects.toThrow('attempt_provider_credential_broker_required');
+      }))).rejects.toThrow('credential_envelope_required');
       expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
       expect(deps.docker.launch).not.toHaveBeenCalled();
     },
@@ -1262,7 +1279,11 @@ describe('Fleet Worker durable runtime adapters', () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const runCommand = vi.fn(async () => ({ stdout: '' }));
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      writeCredential: vi.fn(async () => undefined),
+    });
 
     try {
       await expect(docker.launch({
@@ -1600,7 +1621,11 @@ describe('Fleet Worker durable runtime adapters', () => {
     const runCommand = vi.fn(async (_command, args) => (
       args[0] === 'create' ? { stdout: 'container-created\n' } : { stdout: '' }
     ));
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      writeCredential: vi.fn(async () => undefined),
+    });
     const launchInput = {
       attemptId: ATTEMPT_ID,
       taskId: TASK_ID,
@@ -1632,7 +1657,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         'cecelia.fleet.worker_id': WORKER_ID,
       },
       lease: { owner: 'dispatcher-1', generation: 0 },
-      credential: null,
+      credential: { ...CREDENTIAL, provider: 'claude' },
     };
 
     try {
@@ -1699,7 +1724,7 @@ describe('Fleet Worker durable runtime adapters', () => {
           'cecelia.fleet.worker_id': WORKER_ID,
         },
         lease: { owner: 'dispatcher-1', generation: 0 },
-        credential: null,
+        credential: { ...CREDENTIAL, provider: 'grok' },
       })).rejects.toThrow(/attempt_runtime_symlink/);
       expect(fs.readdirSync(outside)).toEqual([]);
       expect(runCommand).not.toHaveBeenCalled();
