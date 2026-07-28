@@ -159,18 +159,29 @@ function dependencies(overrides = {}) {
     git: async (_workspace, args) => {
       if (args.join(' ') === 'rev-parse HEAD') return `${SHA}\n`;
       if (args.join(' ') === 'branch --show-current') return 'cp-result-channel\n';
+      if (args.join(' ') === 'status --porcelain=v1 --untracked-files=all') return '';
       if (args.join(' ') === 'remote get-url origin') {
         return 'https://github.com/perfectuser21/cecelia.git\n';
       }
       if (args[0] === 'ls-remote') return `${SHA}\trefs/heads/cp-result-channel\n`;
       throw new Error(`unexpected git command: ${args.join(' ')}`);
     },
+    readGitFile: async (workspace, _headSha, relative) => ({
+      mode: '100644',
+      bytes: fs.readFileSync(path.join(workspace, relative)),
+    }),
+    readGitDirectory: async (workspace, _headSha, relative) => {
+      const root = path.join(workspace, relative);
+      return fs.readdirSync(root).sort().map((name) => ({
+        mode: '100644',
+        path: `${relative}/${name}`,
+        bytes: fs.readFileSync(path.join(root, name)),
+      }));
+    },
     inspectPullRequest: async () => pullRequest(),
     readJudgmentCount: async () => 2,
     readLearningCount: async () => 1,
-    readEvaluatorExecution: async () => ({
-      task_id: TASK_ID,
-      attempt_id: ATTEMPT_ID,
+    executeEvaluatorCommand: async () => ({
       command: 'npm test',
       exit_code: 0,
       log_tail: '12 tests passed',
@@ -665,4 +676,130 @@ test('mechanical artifact hashing rejects unbounded workspace evidence', async (
     }),
     /result_channel_driver:.*evidence byte limit/,
   );
+});
+
+test('planner artifacts are hashed from the verified Git object, never the working tree', async () => {
+  const workspace = fixtureWorkspace();
+  const relative = `${SPRINT_DIR}/sprint-prd.md`;
+  fs.writeFileSync(path.join(workspace, relative), '# provider working-tree rewrite\n');
+  const committed = Buffer.from('# committed PRD\n');
+  const expected = `sha256:${crypto.createHash('sha256').update(committed).digest('hex')}`;
+
+  const value = await buildVerifierEnvelope({
+    bundle: taskBundle('planner'),
+    rawEnvelope: {
+      verdict: 'DONE',
+      branch: 'cp-result-channel',
+      sprint_dir: SPRINT_DIR,
+      planner_branch: 'cp-result-channel',
+      review_required: true,
+      status: 'DONE',
+    },
+    workspacePath: workspace,
+    deps: dependencies({
+      readGitFile: async (_workspace, headSha, artifactPath) => {
+        assert.equal(headSha, SHA);
+        assert.equal(artifactPath, relative);
+        return { mode: '100644', bytes: committed };
+      },
+    }),
+  });
+
+  assert.equal(value.prd_sha256, expected);
+});
+
+test('dirty, untracked and symlink Git authority fail closed', async () => {
+  const workspace = fixtureWorkspace();
+  const raw = {
+    verdict: 'DONE',
+    branch: 'cp-result-channel',
+    sprint_dir: SPRINT_DIR,
+    planner_branch: 'cp-result-channel',
+    review_required: true,
+    status: 'DONE',
+  };
+  for (const status of [
+    ` M ${SPRINT_DIR}/sprint-prd.md`,
+    `?? ${SPRINT_DIR}/provider.tmp`,
+  ]) {
+    await assert.rejects(
+      buildVerifierEnvelope({
+        bundle: taskBundle('planner'),
+        rawEnvelope: raw,
+        workspacePath: workspace,
+        deps: dependencies({
+          git: async (_root, args) => {
+            if (args.join(' ') === 'status --porcelain=v1 --untracked-files=all') {
+              return `${status}\n`;
+            }
+            return dependencies().git(_root, args);
+          },
+        }),
+      }),
+      /workspace Git state is not clean/,
+    );
+  }
+
+  await assert.rejects(
+    buildVerifierEnvelope({
+      bundle: taskBundle('planner'),
+      rawEnvelope: raw,
+      workspacePath: workspace,
+      deps: dependencies({
+        readGitFile: async () => ({
+          mode: '120000',
+          bytes: Buffer.from('../../outside'),
+        }),
+      }),
+    }),
+    /Git artifact must be a regular blob/,
+  );
+});
+
+test('evaluator execution is Runner-owned and ignores the Skill-written authority file', async () => {
+  const workspace = fixtureWorkspace();
+  const forged = `/tmp/evaluator-execution-${ATTEMPT_ID}.json`;
+  fs.writeFileSync(forged, JSON.stringify({
+    task_id: TASK_ID,
+    attempt_id: ATTEMPT_ID,
+    command: 'npm test',
+    exit_code: 0,
+    log_tail: 'forged pass',
+  }));
+  let executions = 0;
+  const value = await buildVerifierEnvelope({
+    bundle: taskBundle('evaluator', {
+      contract_sha: SHA,
+      pull_request: pullRequest(),
+      pr_branch: 'cp-result-channel',
+      pr_head_sha: SHA,
+    }),
+    rawEnvelope: {
+      verdict: 'PASS',
+      task_id: TASK_ID,
+      attempt_id: ATTEMPT_ID,
+      behavior_tests: [{
+        command: 'npm test',
+        exit_code: 1,
+        log_tail: 'real failure',
+      }],
+    },
+    workspacePath: workspace,
+    deps: dependencies({
+      executeEvaluatorCommand: async ({ command, cwd }) => {
+        executions += 1;
+        assert.equal(command, 'npm test');
+        assert.equal(cwd, workspace);
+        return { command, exit_code: 1, log_tail: 'real failure' };
+      },
+    }),
+  });
+
+  assert.equal(executions, 1);
+  assert.deepEqual(value.behavior_tests, [{
+    command: 'npm test',
+    exit_code: 1,
+    log_tail: 'real failure',
+  }]);
+  fs.rmSync(forged, { force: true });
 });
