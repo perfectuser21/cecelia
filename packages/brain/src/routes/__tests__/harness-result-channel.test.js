@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
+import { createRequire } from 'node:module';
 import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,9 +9,16 @@ const mocks = vi.hoisted(() => ({
     getById: vi.fn(),
     assertFreshRoleSession: vi.fn(),
     persistFleetResultReceipt: vi.fn(),
+    complete: vi.fn(),
+    fail: vi.fn(),
   },
   pool: { query: vi.fn() },
 }));
+
+const require = createRequire(import.meta.url);
+const { finalizeRoleResult } = require(
+  '../../../../../docker/cecelia-runner/result-channel-finalizer.cjs',
+);
 
 vi.mock('../../orchestrator/attempt-store.js', () => ({
   createAttemptStore: () => mocks.store,
@@ -28,24 +36,49 @@ const runId = '11111111-1111-4111-8111-111111111111';
 const deliveryId = '55555555-5555-4555-8555-555555555555';
 const resultNonce = '66666666-6666-4666-8666-666666666666';
 const receiptId = '77777777-7777-4777-8777-777777777777';
-const taskId = 'task-1';
+const taskId = '44444444-4444-4444-8444-444444444444';
 const workerId = 'xian-mac-m4';
 const jobId = 'job-7';
 const leaseOwner = 'brain-1:123';
 const leaseGeneration = 2;
 const persistedAt = '2026-07-28T01:00:00.000Z';
+const sprintDir = 'sprints/07280905-kernel-result-channel-bootstrap';
 
-const result = {
-  contract_version: '1.0',
-  attempt_id: attemptId,
-  status: 'completed',
-  summary: 'planner finished',
-  artifacts: [],
-  checks: [],
-  decision: null,
-  error: null,
-  provider_metadata: { provider: 'claude', session_id: 'session-1' },
-};
+const result = finalizeRoleResult({
+  expectedOutput: 'harness-result/planner-v1',
+  binding: {
+    task_id: taskId,
+    run_id: runId,
+    attempt_id: attemptId,
+    role: 'planner',
+  },
+  providerResult: {
+    contract_version: '1.0',
+    attempt_id: attemptId,
+    status: 'completed',
+    summary: 'planner finished',
+    artifacts: [],
+    checks: [],
+    decision: null,
+    error: null,
+    provider_metadata: { provider: 'claude', session_id: 'session-1' },
+  },
+  rawEnvelope: {
+    verdict: 'DONE',
+    branch: 'cp-result-channel',
+    sprint_dir: sprintDir,
+    planner_branch: 'cp-result-channel',
+    review_required: false,
+    status: 'DONE',
+  },
+  verifierEnvelope: {
+    branch: 'cp-result-channel',
+    sprint_dir: sprintDir,
+    planner_branch: 'cp-result-channel',
+    prd_sha256: `sha256:${'a'.repeat(64)}`,
+    effective_review_required: false,
+  },
+});
 
 function fleetAttempt(overrides = {}) {
   return {
@@ -66,7 +99,8 @@ function fleetAttempt(overrides = {}) {
       run_id: runId,
       attempt_id: attemptId,
       role: 'planner',
-      inputs: { task_id: taskId },
+      expected_output: 'harness-result/planner-v1',
+      inputs: { task_id: taskId, sprint_dir: sprintDir },
       result_channel: {
         version: 'attempt-result-file/v1',
         path: `/tmp/cecelia-prompts/${attemptId}.result.json`,
@@ -258,6 +292,27 @@ describe('Fleet durable Harness result callback', () => {
     expect(mocks.store.persistFleetResultReceipt).not.toHaveBeenCalled();
   });
 
+  it('does not let a Fleet Attempt downgrade to the legacy Bearer callback', async () => {
+    mocks.store.getById.mockResolvedValueOnce(fleetAttempt({
+      callback_secret_hash: createHash('sha256').update('retained-token').digest('hex'),
+    }));
+    mocks.store.complete.mockResolvedValueOnce({
+      attempt: { ...fleetAttempt(), status: 'completed', result },
+      deduped: false,
+    });
+
+    const response = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
+      .set('Authorization', 'Bearer retained-token')
+      .set('X-Harness-Lease-Owner', leaseOwner)
+      .send(result);
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe('fleet_callback_hmac_required');
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.persistFleetResultReceipt).not.toHaveBeenCalled();
+  });
+
   it('rejects digest, byte-count and non-canonical base64 mismatches', async () => {
     const cases = [
       deliveryBody(result, { result_sha256: 'b'.repeat(64) }),
@@ -270,6 +325,70 @@ describe('Fleet durable Harness result callback', () => {
     }
     expect(mocks.store.persistFleetResultReceipt).not.toHaveBeenCalled();
   });
+
+  it('requires the verified six-role result envelope for Fleet attempts', async () => {
+    const withoutRoleResult = { ...result };
+    delete withoutRoleResult.role_result;
+
+    const response = await postFleet(app, deliveryBody(withoutRoleResult));
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('role_result_required_for_fleet_result');
+    expect(mocks.store.persistFleetResultReceipt).not.toHaveBeenCalled();
+  });
+
+  it.each(['needs_context', 'blocked', 'failed', 'cancelled'])(
+    'durably receipts the Runner pass-through terminal status %s without role evidence',
+    async (status) => {
+      const passThrough = {
+        contract_version: '1.0',
+        attempt_id: attemptId,
+        status,
+        summary: `${status} before verified role output`,
+        artifacts: [],
+        checks: [],
+        decision: null,
+        error: ['failed', 'cancelled'].includes(status)
+          ? { code: 'provider_exit', message: status }
+          : null,
+        provider_metadata: { provider: 'claude', session_id: 'session-1' },
+      };
+      const body = deliveryBody(passThrough);
+      mocks.store.persistFleetResultReceipt.mockResolvedValueOnce({
+        attempt: { ...fleetAttempt(), status, result: passThrough },
+        receipt: {
+          receipt_id: receiptId,
+          attempt_id: attemptId,
+          run_id: runId,
+          task_id: taskId,
+          role: 'planner',
+          worker_id: workerId,
+          job_id: jobId,
+          lease_owner: leaseOwner,
+          lease_generation: leaseGeneration,
+          delivery_id: deliveryId,
+          result_nonce: resultNonce,
+          result_sha256: body.result_sha256,
+          result_bytes: body.result_bytes,
+          terminal_status: status,
+          persisted_at: persistedAt,
+        },
+        deduped: false,
+      });
+
+      const response = await postFleet(app, body);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        receipt_id: receiptId,
+        terminal_status: status,
+        receipt_status: 'accepted',
+      });
+      expect(mocks.store.persistFleetResultReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({ terminalStatus: status }),
+      );
+    },
+  );
 
   it('rejects oversized raw bytes and malformed or non-UTF8 JSON', async () => {
     mocks.store.getById.mockResolvedValue(fleetAttempt({

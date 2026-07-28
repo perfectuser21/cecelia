@@ -373,24 +373,16 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.complete).not.toHaveBeenCalled();
   });
 
-  it('接受已确认 Fleet Worker receipt 的 bounded credential callback', async () => {
+  it('Fleet Worker attempt 不得降级使用旧 Bearer callback', async () => {
     mocks.store.getById.mockResolvedValue(fleetAttempt());
 
     const response = await postCallback(app, fleetResult({
       credential_copy_mutated: true,
     }));
 
-    expect(response.status).toBe(200);
-    expect(mocks.store.complete).toHaveBeenCalledWith(
-      attemptId,
-      expect.objectContaining({
-        provider_metadata: expect.objectContaining({
-          credential_ref: credentialRef,
-          credential_copy_mutated: true,
-        }),
-      }),
-      { leaseOwner },
-    );
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe('fleet_callback_hmac_required');
+    expect(mocks.store.complete).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -398,13 +390,13 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     ['invalid credential ref', { credential_ref: 'not-a-uuid' }],
     ['non-boolean mutation evidence', { credential_copy_mutated: 'false' }],
     ['provider credential field', { access_token: 'must-not-persist' }],
-  ])('拒绝 Fleet Codex callback 的 %s', async (_case, metadata) => {
+  ])('旧 Bearer 路径不解析 Fleet Codex callback 的 %s', async (_case, metadata) => {
     mocks.store.getById.mockResolvedValue(fleetAttempt());
 
     const response = await postCallback(app, fleetResult(metadata));
 
-    expect(response.status).toBe(409);
-    expect(response.body.error).toBe('credential_callback_invalid');
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe('fleet_callback_hmac_required');
     expect(mocks.store.complete).not.toHaveBeenCalled();
   });
 

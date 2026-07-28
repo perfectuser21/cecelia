@@ -33,8 +33,18 @@ import { sendBark } from '../notifier.js';
 import pool from '../db.js';
 import { handleRelayExitConsistency } from '../lib/harness-orphan-guard.js';
 import { createAttemptStore } from '../orchestrator/attempt-store.js';
-import { parseHarnessResult } from '../orchestrator/execution-contract.js';
+import {
+  parseHarnessResult,
+  parseResultChannelDescriptor,
+} from '../orchestrator/execution-contract.js';
 import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
+import {
+  buildFleetResultReceiptAck,
+  computeFleetAuthoritySha256,
+  FleetCallbackProtocolError,
+  FLEET_CALLBACK_AUTH_SCHEME,
+  parseFleetResultDelivery,
+} from '../orchestrator/fleet-callback-auth.js';
 import { verifyMachineAttestation } from '../orchestrator/machine-attestation.js';
 import {
   defaultPrHeadResolver,
@@ -50,6 +60,7 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
   'blocked',
 ]);
 const FAILURE_TERMINAL_STATUSES = new Set(['failed', 'cancelled']);
+const ROLE_RESULT_REQUIRED_STATUSES = new Set(['completed', 'completed_with_concerns']);
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const FLEET_CODEX_METADATA_FIELDS = new Set([
   'provider',
@@ -89,8 +100,26 @@ function callbackAuthorized(req, attempt) {
   return verifyCallbackSecret(bearerToken(req), attempt?.callback_secret_hash);
 }
 
+function isFleetCallbackRequest(req) {
+  const authorization = req.get('authorization') ?? '';
+  return req.get('x-cecelia-fleet-protocol') !== undefined
+    || authorization.startsWith(`${FLEET_CALLBACK_AUTH_SCHEME} `);
+}
+
 function requestDatabase(req) {
   return req.app.get('pool') || pool;
+}
+
+function attemptTaskBundle(attempt) {
+  if (attempt?.task_bundle && typeof attempt.task_bundle === 'object') {
+    return attempt.task_bundle;
+  }
+  if (typeof attempt?.task_bundle !== 'string') return null;
+  try {
+    return JSON.parse(attempt.task_bundle);
+  } catch {
+    return null;
+  }
 }
 
 function attemptExpectedOutput(attempt) {
@@ -397,6 +426,206 @@ function resultError(result) {
   };
 }
 
+async function persistFleetResultSideEffects({
+  attempt,
+  persistedResult,
+  db,
+  resolvePrHead,
+}) {
+  await appendAttemptVerdict(attempt, persistedResult, db);
+  await appendGeneratorFixCallback(attempt, persistedResult, db, resolvePrHead);
+  if (attempt.role !== 'generator') return;
+  const pullRequest = persistedResult.artifacts.find(
+    (artifact) => artifact?.type === 'pull_request' && artifact.url,
+  );
+  if (pullRequest) {
+    await db.query(
+      'UPDATE initiative_runs SET pr_url=$2, updated_at=NOW() WHERE id=$1',
+      [attempt.run_id, pullRequest.url],
+    );
+  }
+}
+
+async function handleFleetResultCallback(req, res) {
+  const { attemptId } = req.params;
+  const db = requestDatabase(req);
+  const secret = req.app.get('kernelFleetBridgeToken');
+  let delivery;
+  try {
+    delivery = parseFleetResultDelivery({
+      attemptId,
+      rawHeaders: req.rawHeaders,
+      body: req.body,
+      secret,
+    });
+  } catch (error) {
+    if (error instanceof FleetCallbackProtocolError) {
+      return res.status(error.status).json({ ok: false, error: error.code });
+    }
+    return res.status(400).json({ ok: false, error: 'fleet_delivery_invalid' });
+  }
+
+  const attemptStore = createAttemptStore(db);
+  const attempt = await attemptStore.getById(attemptId);
+  if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
+
+  const bundle = attemptTaskBundle(attempt);
+  let resultChannel;
+  try {
+    if (
+      bundle?.run_id !== attempt.run_id
+      || bundle?.attempt_id !== attempt.id
+      || bundle?.role !== attempt.role
+      || !bundle?.inputs?.task_id
+    ) {
+      throw new Error('task_bundle_authority_mismatch');
+    }
+    resultChannel = parseResultChannelDescriptor(bundle.result_channel, {
+      taskId: bundle.inputs.task_id,
+      runId: attempt.run_id,
+      attemptId: attempt.id,
+      role: attempt.role,
+    });
+  } catch {
+    return res.status(409).json({ ok: false, error: 'result_channel_authority_mismatch' });
+  }
+
+  if (delivery.resultBytes > resultChannel.max_bytes) {
+    return res.status(413).json({ ok: false, error: 'fleet_result_too_large' });
+  }
+  if (
+    attempt.execution_transport !== 'fleet-worker'
+    || !attempt.actual_machine_id
+    || !attempt.remote_job_id
+    || attempt.machine_attestation_status !== 'verified'
+  ) {
+    return res.status(409).json({ ok: false, error: 'launch_receipt_unconfirmed' });
+  }
+  if (
+    delivery.runId !== attempt.run_id
+    || delivery.workerId !== attempt.actual_machine_id
+    || delivery.jobId !== attempt.remote_job_id
+    || delivery.leaseOwner !== attempt.lease_owner
+    || delivery.leaseGeneration !== attempt.lease_generation
+  ) {
+    return res.status(409).json({ ok: false, error: 'fleet_callback_authority_mismatch' });
+  }
+
+  let result;
+  const resultAuthority = attemptAuthority(attempt);
+  try {
+    const expectedOutput = attemptExpectedOutput(attempt);
+    result = parseHarnessResult(
+      delivery.resultValue,
+      attempt.role,
+      expectedOutput,
+      resultAuthority,
+    );
+    if (
+      /^harness-result\/(?:planner|proposer|reviewer|generator|evaluator|reporter)-v1$/.test(
+        expectedOutput ?? '',
+      )
+      && ROLE_RESULT_REQUIRED_STATUSES.has(result.status)
+      && !result.role_result
+    ) {
+      throw new Error('role_result_required_for_fleet_result');
+    }
+    if (result.attempt_id !== attemptId) {
+      throw new Error(`attempt_id mismatch: body=${result.attempt_id} path=${attemptId}`);
+    }
+    if (result.status !== delivery.terminalStatus) {
+      throw new Error('terminal_status mismatch');
+    }
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+
+  if (
+    attempt.provider
+    && attempt.provider !== 'auto'
+    && result.provider_metadata.provider !== attempt.provider
+  ) {
+    return res.status(409).json({ ok: false, error: 'provider_mismatch' });
+  }
+  const sessionId = result.provider_metadata?.session_id ?? null;
+  if (attempt.provider_session_id && sessionId !== attempt.provider_session_id) {
+    return res.status(409).json({ ok: false, error: 'provider_session_mismatch' });
+  }
+  if (
+    attempt.provider === 'codex'
+    && (
+      !UUID_PATTERN.test(result.provider_metadata?.credential_ref ?? '')
+      || typeof result.provider_metadata?.credential_copy_mutated !== 'boolean'
+      || Object.keys(result.provider_metadata).some(
+        (field) => !FLEET_CODEX_METADATA_FIELDS.has(field),
+      )
+    )
+  ) {
+    return res.status(409).json({ ok: false, error: 'credential_callback_invalid' });
+  }
+  if (sessionId) {
+    try {
+      await attemptStore.assertFreshRoleSession({
+        runId: attempt.run_id,
+        attemptId,
+        role: attempt.role,
+        sessionId,
+      });
+    } catch (error) {
+      return res.status(409).json({ ok: false, error: error.message });
+    }
+  }
+
+  try {
+    const outcome = await attemptStore.persistFleetResultReceipt({
+      attemptId,
+      runId: attempt.run_id,
+      taskId: bundle.inputs.task_id,
+      taskBundle: bundle,
+      taskBundleSha256: computeFleetAuthoritySha256(bundle),
+      resultAuthority,
+      resultAuthoritySha256: computeFleetAuthoritySha256(resultAuthority),
+      role: attempt.role,
+      provider: attempt.provider,
+      resultProvider: result.provider_metadata.provider,
+      providerSessionId: sessionId,
+      skillName: attempt.skill_name ?? null,
+      skillVersion: attempt.skill_version ?? null,
+      skillDigest: attempt.skill_digest ?? null,
+      workerId: delivery.workerId,
+      jobId: delivery.jobId,
+      leaseOwner: delivery.leaseOwner,
+      leaseGeneration: delivery.leaseGeneration,
+      deliveryId: delivery.deliveryId,
+      resultNonce: delivery.resultNonce,
+      resultSha256: delivery.resultSha256,
+      resultBytes: delivery.resultBytes,
+      terminalStatus: delivery.terminalStatus,
+      result,
+    });
+    const persistedResult = outcome.attempt?.result ?? result;
+    if (SUCCESS_TERMINAL_STATUSES.has(result.status)) {
+      await persistFleetResultSideEffects({
+        attempt,
+        persistedResult,
+        db,
+        resolvePrHead: req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver,
+      });
+    }
+    return res.json(buildFleetResultReceiptAck({
+      receipt: outcome.receipt,
+      deduped: outcome.deduped,
+      secret,
+    }));
+  } catch (error) {
+    if (error?.code === 'fleet_result_conflict') {
+      return res.status(409).json({ ok: false, error: 'fleet_result_conflict' });
+    }
+    console.error(`[harness-fleet-result-callback] attempt=${attemptId}: ${error.message}`);
+    return res.status(500).json({ ok: false, error: 'attempt callback persistence failed' });
+  }
+}
+
 router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async (req, res) => {
   const db = requestDatabase(req);
   const attemptStore = createAttemptStore(db);
@@ -429,11 +658,17 @@ router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async 
 });
 
 router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (req, res) => {
+  if (isFleetCallbackRequest(req)) {
+    return handleFleetResultCallback(req, res);
+  }
   const { attemptId } = req.params;
   const db = requestDatabase(req);
   const attemptStore = createAttemptStore(db);
   const attempt = await attemptStore.getById(attemptId);
   if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
+  if (attempt.execution_transport === 'fleet-worker') {
+    return res.status(401).json({ ok: false, error: 'fleet_callback_hmac_required' });
+  }
   if (!callbackAuthorized(req, attempt)) {
     return res.status(401).json({ ok: false, error: 'invalid attempt callback credential' });
   }
@@ -465,24 +700,10 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     });
   }
 
-  if (!['local-docker', 'remote-bridge', 'fleet-worker'].includes(
+  if (!['local-docker', 'remote-bridge'].includes(
     attempt.execution_transport,
   )) {
     return res.status(409).json({ ok: false, error: 'launch_receipt_unconfirmed' });
-  }
-
-  if (
-    attempt.execution_transport === 'fleet-worker'
-    && attempt.provider === 'codex'
-    && (
-      !UUID_PATTERN.test(result.provider_metadata?.credential_ref ?? '')
-      || typeof result.provider_metadata?.credential_copy_mutated !== 'boolean'
-      || Object.keys(result.provider_metadata).some(
-        (field) => !FLEET_CODEX_METADATA_FIELDS.has(field),
-      )
-    )
-  ) {
-    return res.status(409).json({ ok: false, error: 'credential_callback_invalid' });
   }
 
   if (attempt.execution_transport === 'remote-bridge') {

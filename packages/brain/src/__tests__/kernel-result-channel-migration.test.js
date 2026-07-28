@@ -42,7 +42,26 @@ describe('Kernel result channel migrations', () => {
       expect(sql).toMatch(new RegExp(`ADD COLUMN IF NOT EXISTS ${column}\\b`, 'i'));
     }
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS harness_result_receipts/i);
+    for (const column of [
+      'provider',
+      'requested_provider',
+      'provider_session_id',
+      'skill_name',
+      'skill_version',
+      'skill_digest',
+      'task_bundle_sha256',
+      'result_authority_sha256',
+      'result_authority',
+    ]) {
+      expect(sql).toMatch(new RegExp(`\\b${column}\\b`, 'i'));
+    }
+    expect(sql).toMatch(/attempt_id UUID NOT NULL[\s\S]*ON DELETE RESTRICT/i);
+    expect(sql).toMatch(/UNIQUE\s*\(\s*attempt_id\s*\)/i);
     expect(sql).toMatch(/UNIQUE\s*\(\s*attempt_id\s*,\s*lease_generation\s*\)/i);
+    expect(sql).toMatch(
+      /FOREIGN KEY\s*\(\s*result_receipt_id\s*\)[\s\S]*REFERENCES harness_result_receipts\s*\(\s*receipt_id\s*\)/i,
+    );
+    expect(sql).toMatch(/DEFERRABLE INITIALLY DEFERRED/i);
     expect(sql).toMatch(/BEFORE UPDATE OR DELETE ON harness_result_receipts/i);
     expect(sql).toMatch(/append-only/i);
     expect(sql).toMatch(/VALUES\s*\(\s*'370'/);

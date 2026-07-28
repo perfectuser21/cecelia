@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * Harness Attempt authority store.
  *
@@ -26,6 +28,109 @@ const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
 
 function firstRow(queryResult) {
   return queryResult.rows?.[0] ?? null;
+}
+
+export class FleetResultReceiptConflictError extends Error {
+  constructor(message = 'conflicting Fleet result receipt') {
+    super(message);
+    this.name = 'FleetResultReceiptConflictError';
+    this.code = 'fleet_result_conflict';
+  }
+}
+
+function fleetReceiptConflict(message) {
+  throw new FleetResultReceiptConflictError(message);
+}
+
+function parsedTaskBundle(attempt) {
+  if (attempt?.task_bundle && typeof attempt.task_bundle === 'object') {
+    return attempt.task_bundle;
+  }
+  if (typeof attempt?.task_bundle !== 'string') return null;
+  try {
+    return JSON.parse(attempt.task_bundle);
+  } catch {
+    return null;
+  }
+}
+
+function stableJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map(
+    (key) => `${JSON.stringify(key)}:${stableJson(value[key])}`,
+  ).join(',')}}`;
+}
+
+function stableJsonSha256(value) {
+  return createHash('sha256').update(stableJson(value), 'utf8').digest('hex');
+}
+
+function assertFleetReceiptAuthority(attempt, input) {
+  if (!attempt) fleetReceiptConflict('attempt missing during receipt transaction');
+  const bundle = parsedTaskBundle(attempt);
+  const channel = bundle?.result_channel;
+  const bindings = channel?.bindings;
+  const expectedResultPath = `/tmp/cecelia-prompts/${input.attemptId}.result.json`;
+  const exact = (
+    attempt.id === input.attemptId
+    && attempt.run_id === input.runId
+    && attempt.role === input.role
+    && attempt.provider === input.provider
+    && (attempt.skill_name ?? null) === (input.skillName ?? null)
+    && (attempt.skill_version ?? null) === (input.skillVersion ?? null)
+    && (attempt.skill_digest ?? null) === (input.skillDigest ?? null)
+    && attempt.lease_owner === input.leaseOwner
+    && attempt.lease_generation === input.leaseGeneration
+    && attempt.execution_transport === 'fleet-worker'
+    && attempt.actual_machine_id === input.workerId
+    && attempt.remote_job_id === input.jobId
+    && attempt.machine_attestation_status === 'verified'
+    && (!attempt.provider_session_id || attempt.provider_session_id === input.providerSessionId)
+    && bundle?.run_id === input.runId
+    && bundle?.attempt_id === input.attemptId
+    && bundle?.role === input.role
+    && bundle?.inputs?.task_id === input.taskId
+    && channel?.version === 'attempt-result-file/v1'
+    && channel?.path === expectedResultPath
+    && bindings?.task_id === input.taskId
+    && bindings?.run_id === input.runId
+    && bindings?.attempt_id === input.attemptId
+    && bindings?.role === input.role
+    && Number.isInteger(channel?.max_bytes)
+    && channel.max_bytes > 0
+    && input.resultBytes <= channel.max_bytes
+    && stableJson(bundle) === stableJson(input.taskBundle)
+    && stableJsonSha256(bundle) === input.taskBundleSha256
+    && stableJsonSha256(input.resultAuthority) === input.resultAuthoritySha256
+  );
+  if (!exact) fleetReceiptConflict('Fleet result authority changed before terminal write');
+}
+
+function exactFleetReceipt(receipt, input) {
+  return Boolean(receipt)
+    && receipt.attempt_id === input.attemptId
+    && receipt.run_id === input.runId
+    && receipt.task_id === input.taskId
+    && receipt.role === input.role
+    && receipt.provider === input.resultProvider
+    && receipt.requested_provider === input.provider
+    && (receipt.provider_session_id ?? null) === (input.providerSessionId ?? null)
+    && (receipt.skill_name ?? null) === (input.skillName ?? null)
+    && (receipt.skill_version ?? null) === (input.skillVersion ?? null)
+    && (receipt.skill_digest ?? null) === (input.skillDigest ?? null)
+    && receipt.task_bundle_sha256 === input.taskBundleSha256
+    && receipt.result_authority_sha256 === input.resultAuthoritySha256
+    && stableJson(receipt.result_authority) === stableJson(input.resultAuthority)
+    && receipt.worker_id === input.workerId
+    && receipt.job_id === input.jobId
+    && receipt.lease_owner === input.leaseOwner
+    && receipt.lease_generation === input.leaseGeneration
+    && receipt.delivery_id === input.deliveryId
+    && receipt.result_nonce === input.resultNonce
+    && receipt.result_sha256 === input.resultSha256
+    && receipt.result_bytes === input.resultBytes
+    && receipt.terminal_status === input.terminalStatus;
 }
 
 const CREATE_ATTEMPT_WINNER_READ_ATTEMPTS = 3;
@@ -287,6 +392,154 @@ export function createAttemptStore(pool) {
       );
       const attempt = firstRow(result);
       return { attempt, deduped: attempt === null };
+    },
+
+    async persistFleetResultReceipt(input) {
+      if (typeof pool.connect !== 'function') {
+        throw new Error('persistFleetResultReceipt requires a transactional PostgreSQL pool');
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const current = firstRow(await client.query(
+          'SELECT * FROM harness_attempts WHERE id=$1 FOR UPDATE',
+          [input.attemptId],
+        ));
+        assertFleetReceiptAuthority(current, input);
+
+        if (TERMINAL_STATUSES.includes(current.status)) {
+          if (
+            !current.result_receipt_id
+            || current.result_sha256 !== input.resultSha256
+            || current.lease_generation !== input.leaseGeneration
+          ) {
+            fleetReceiptConflict('terminal Attempt has a conflicting Fleet receipt');
+          }
+          const receipt = firstRow(await client.query(
+            'SELECT * FROM harness_result_receipts WHERE receipt_id=$1',
+            [current.result_receipt_id],
+          ));
+          if (!exactFleetReceipt(receipt, input)) {
+            fleetReceiptConflict('persisted Fleet receipt bindings conflict');
+          }
+          await client.query('COMMIT');
+          return { attempt: current, receipt, deduped: true };
+        }
+
+        if (!['starting', 'running'].includes(current.status)) {
+          fleetReceiptConflict('Attempt is not eligible for a terminal Fleet receipt');
+        }
+
+        const receipt = firstRow(await client.query(
+          `INSERT INTO harness_result_receipts (
+             attempt_id, run_id, task_id, role, provider, requested_provider,
+             provider_session_id,
+             skill_name, skill_version, skill_digest,
+             task_bundle_sha256, result_authority_sha256, result_authority,
+             worker_id, job_id, lease_owner, lease_generation,
+             delivery_id, result_nonce, result_sha256, result_bytes,
+             terminal_status, result
+           ) VALUES (
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+             $17,$18,$19,$20,$21,$22,$23
+           )
+           RETURNING *`,
+          [
+            input.attemptId,
+            input.runId,
+            input.taskId,
+            input.role,
+            input.resultProvider,
+            input.provider,
+            input.providerSessionId ?? null,
+            input.skillName ?? null,
+            input.skillVersion ?? null,
+            input.skillDigest ?? null,
+            input.taskBundleSha256,
+            input.resultAuthoritySha256,
+            input.resultAuthority,
+            input.workerId,
+            input.jobId,
+            input.leaseOwner,
+            input.leaseGeneration,
+            input.deliveryId,
+            input.resultNonce,
+            input.resultSha256,
+            input.resultBytes,
+            input.terminalStatus,
+            input.result,
+          ],
+        ));
+        if (!receipt) fleetReceiptConflict('Fleet receipt insert returned no row');
+
+        const error = input.result?.error;
+        const errorCode = typeof error === 'object' && error
+          ? error.code ?? null
+          : (['failed', 'cancelled'].includes(input.terminalStatus) ? 'provider_failed' : null);
+        const errorMessage = typeof error === 'string'
+          ? error
+          : error?.message ?? null;
+        const persistedAttempt = firstRow(await client.query(
+          `UPDATE harness_attempts
+              SET status = $2,
+                  result = $3,
+                  provider_session_id = COALESCE($4, provider_session_id),
+                  failure_class = $5,
+                  error_code = $6,
+                  error_message = $7,
+                  completed_at = NOW(),
+                  lease_expires_at = NULL,
+                  result_receipt_id = $8,
+                  result_sha256 = $9,
+                  result_bytes = $10,
+                  result_delivery_id = $11,
+                  result_nonce = $12,
+                  result_worker_id = $13,
+                  result_persisted_at = $14,
+                  updated_at = NOW()
+            WHERE id = $1
+              AND status IN ('starting','running')
+              AND lease_owner = $15
+              AND lease_generation = $16
+              AND result_receipt_id IS NULL
+            RETURNING *`,
+          [
+            input.attemptId,
+            input.terminalStatus,
+            input.result,
+            input.providerSessionId ?? null,
+            input.result?.failure_class ?? null,
+            errorCode,
+            errorMessage,
+            receipt.receipt_id,
+            input.resultSha256,
+            input.resultBytes,
+            input.deliveryId,
+            input.resultNonce,
+            input.workerId,
+            receipt.persisted_at,
+            input.leaseOwner,
+            input.leaseGeneration,
+          ],
+        ));
+        if (!persistedAttempt) {
+          fleetReceiptConflict('Attempt terminal write lost its lease or generation');
+        }
+        await client.query('COMMIT');
+        return { attempt: persistedAttempt, receipt, deduped: false };
+      } catch (error) {
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          // Preserve the original persistence error.
+        }
+        if (error?.code === '23505') {
+          throw new FleetResultReceiptConflictError('Fleet receipt uniqueness conflict');
+        }
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async getById(id) {
