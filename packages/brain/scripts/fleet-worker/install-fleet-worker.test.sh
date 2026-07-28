@@ -20,6 +20,8 @@ launch_state="$test_root/launchctl.state"
 launch_fail_once="$test_root/launchctl.fail-once"
 acl_log="$test_root/acl.log"
 acl_state="$test_root/acl.state"
+orbstack_acl_state="$test_root/orbstack-acl.state"
+run_acl_state="$test_root/run-acl.state"
 socket_acl_state="$test_root/socket-acl.state"
 preflight_log="$test_root/preflight.log"
 startup_probe_log="$test_root/startup-probe.log"
@@ -47,6 +49,8 @@ run_installer() {
     FLEET_WORKER_CHOWN="$test_root/chown" \
     FLEET_WORKER_CHOWN_LOG="$chown_log" \
     FLEET_WORKER_STAT="$test_root/stat" \
+    FLEET_WORKER_ORBSTACK_ACL_STATE="$orbstack_acl_state" \
+    FLEET_WORKER_RUN_ACL_STATE="$run_acl_state" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
@@ -71,6 +75,8 @@ run_installer_with_id() {
     FLEET_WORKER_CHOWN="$test_root/chown" \
     FLEET_WORKER_CHOWN_LOG="$chown_log" \
     FLEET_WORKER_STAT="$test_root/stat" \
+    FLEET_WORKER_ORBSTACK_ACL_STATE="$orbstack_acl_state" \
+    FLEET_WORKER_RUN_ACL_STATE="$run_acl_state" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
@@ -116,6 +122,10 @@ printf '%s\n' \
   'target="${@: -1}"' \
   'if [[ "$target" == "/Users/orbstack-owner" && -e "${FLEET_WORKER_ACL_STATE:?}" ]]; then' \
   '  printf "%s\\n" " 0: user:_cecelia allow search"' \
+  'elif [[ "$target" == "/Users/orbstack-owner/.orbstack" && -e "${FLEET_WORKER_ORBSTACK_ACL_STATE:?}" ]]; then' \
+  '  printf "%s\\n" " 0: user:_cecelia allow search"' \
+  'elif [[ "$target" == "/Users/orbstack-owner/.orbstack/run" && -e "${FLEET_WORKER_RUN_ACL_STATE:?}" ]]; then' \
+  '  printf "%s\\n" " 0: user:_cecelia allow search"' \
   'elif [[ "$target" == */docker.sock && -e "${FLEET_WORKER_SOCKET_ACL_STATE:?}" ]]; then' \
   '  printf "%s\\n" " 0: user:_cecelia allow read,write"' \
   'fi' \
@@ -127,11 +137,23 @@ printf '%s\n' \
   'printf "%s\\n" "acl $*" >> "${FLEET_WORKER_ACL_LOG:?}"' \
   'printf "%s\\n" "acl $1" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
   'if [[ "$1" == "+a" && "$2" == "_cecelia allow search" ]]; then' \
-  '  : > "${FLEET_WORKER_ACL_STATE:?}"' \
+  '  case "${@: -1}" in' \
+  '    /Users/orbstack-owner) state="${FLEET_WORKER_ACL_STATE:?}" ;;' \
+  '    /Users/orbstack-owner/.orbstack) state="${FLEET_WORKER_ORBSTACK_ACL_STATE:?}" ;;' \
+  '    /Users/orbstack-owner/.orbstack/run) state="${FLEET_WORKER_RUN_ACL_STATE:?}" ;;' \
+  '    *) exit 95 ;;' \
+  '  esac' \
+  '  : > "$state"' \
   '  [[ "${FLEET_WORKER_ACL_FAIL_ADD:-0}" != "1" ]] || exit 91' \
   'elif [[ "$1" == "-a" && "$2" == "_cecelia allow search" ]]; then' \
+  '  case "${@: -1}" in' \
+  '    /Users/orbstack-owner) state="${FLEET_WORKER_ACL_STATE:?}" ;;' \
+  '    /Users/orbstack-owner/.orbstack) state="${FLEET_WORKER_ORBSTACK_ACL_STATE:?}" ;;' \
+  '    /Users/orbstack-owner/.orbstack/run) state="${FLEET_WORKER_RUN_ACL_STATE:?}" ;;' \
+  '    *) exit 95 ;;' \
+  '  esac' \
   '  [[ "${FLEET_WORKER_ACL_FAIL_REMOVE:-0}" != "1" ]] || exit 92' \
-  '  rm -f "${FLEET_WORKER_ACL_STATE:?}"' \
+  '  rm -f "$state"' \
   'elif [[ "$1" == "+a" && "$2" == "_cecelia allow read,write" ]]; then' \
   '  : > "${FLEET_WORKER_SOCKET_ACL_STATE:?}"' \
   '  [[ "${FLEET_WORKER_SOCKET_ACL_FAIL_ADD:-0}" != "1" ]] || exit 93' \
@@ -467,14 +489,16 @@ if acl_failure_output="$(
 fi
 grep -Fq 'prerequisite_docker_acl' <<<"$acl_failure_output" \
   || fail "failed ACL grant lacked a bounded refusal"
-[[ ! -e "$acl_state" ]] || fail "failed ACL grant left ACL state behind"
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" ]] \
+  || fail "failed ACL grant left ACL state behind"
 grep -Fq 'acl -a _cecelia allow search /Users/orbstack-owner' "$acl_log" \
   || fail "partial ACL grant was not rolled back"
 
 : > "$acl_log"
 : > "$preflight_log"
 : > "$acl_state"
-rm -f "$socket_acl_state"
+rm -f "$orbstack_acl_state" "$run_acl_state" "$socket_acl_state"
 socket_acl_failure_output=''
 if socket_acl_failure_output="$(
   FLEET_WORKER_SOCKET_ACL_FAIL_ADD=1 \
@@ -485,15 +509,17 @@ fi
 grep -Fq 'prerequisite_docker_socket_acl' <<<"$socket_acl_failure_output" \
   || fail "failed exact-socket ACL grant lacked a bounded refusal"
 [[ -e "$acl_state" ]] || fail "socket ACL failure removed a pre-existing home ACL"
-[[ ! -e "$socket_acl_state" ]] || fail "failed socket ACL grant left partial state"
+[[ ! -e "$orbstack_acl_state" && ! -e "$run_acl_state" \
+  && ! -e "$socket_acl_state" ]] \
+  || fail "failed socket ACL grant left partial state"
 grep -Fq \
   'acl -a _cecelia allow read,write /Users/orbstack-owner/.orbstack/run/docker.sock' \
   "$acl_log" || fail "partial socket ACL grant was not rolled back"
-rm -f "$acl_state"
+rm -f "$acl_state" "$orbstack_acl_state" "$run_acl_state"
 
 : > "$acl_log"
 : > "$preflight_log"
-rm -f "$acl_state" "$socket_acl_state"
+rm -f "$acl_state" "$orbstack_acl_state" "$run_acl_state" "$socket_acl_state"
 socket_validation_output=''
 if socket_validation_output="$(
   FLEET_WORKER_STAT_FAIL=1 \
@@ -523,7 +549,8 @@ if preflight_failure_output="$(
 fi
 grep -Fq 'prerequisite_docker' <<<"$preflight_failure_output" \
   || fail "failed low-privilege preflight lacked a bounded refusal"
-[[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" && ! -e "$socket_acl_state" ]] \
   || fail "failed low-privilege preflight leaked a new ACL"
 [[ ! -s "$launch_log" ]] || fail "failed low-privilege preflight mutated launchd"
 printf '%s\n' \
@@ -536,7 +563,7 @@ chmod +x "$test_root/node-probe"
 : > "$acl_log"
 : > "$preflight_log"
 : > "$launch_log"
-rm -f "$acl_state" "$socket_acl_state"
+rm -f "$acl_state" "$orbstack_acl_state" "$run_acl_state" "$socket_acl_state"
 malformed_log_dir="$test_root/"$'invalid\001log'
 mkdir -p "$malformed_log_dir"
 malformed_plist_output=''
@@ -550,7 +577,8 @@ grep -Fq 'plist_validation_failed' <<<"$malformed_plist_output" \
   || fail "malformed rendered plist lacked a bounded validation signature"
 [[ ! -s "$launch_log" ]] \
   || fail "malformed rendered plist mutated launchd before validation"
-[[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" && ! -e "$socket_acl_state" ]] \
   || fail "malformed rendered plist leaked a newly-added ACL"
 
 : > "$launch_log"
@@ -570,7 +598,9 @@ rm -f "$log_dir/fleet-worker-docker-access.stdout.log"
 
 : > "$acl_log"
 : > "$preflight_log"
-rm -f "$acl_state" "$socket_acl_state" "$launch_fail_once"
+rm -f \
+  "$acl_state" "$orbstack_acl_state" "$run_acl_state" \
+  "$socket_acl_state" "$launch_fail_once"
 export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
 first_failure_output=''
 if first_failure_output="$(
@@ -582,17 +612,20 @@ fi
 unset FLEET_WORKER_LAUNCH_FAIL_MATCH
 grep -Fq 'install_failed_rolled_back' <<<"$first_failure_output" \
   || fail "failed first install lacked a bounded rollback signature"
-[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 2 ]] \
-  || fail "failed first install did not add both minimal ACLs"
-[[ "$(grep -Ec '^acl -a ' "$acl_log")" -eq 2 ]] \
-  || fail "failed first install did not remove both new ACLs"
-[[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 4 ]] \
+  || fail "failed first install did not add all minimal ACLs"
+[[ "$(grep -Ec '^acl -a ' "$acl_log")" -eq 4 ]] \
+  || fail "failed first install did not remove all new ACLs"
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" && ! -e "$socket_acl_state" ]] \
   || fail "failed first install leaked a new ACL"
 
 : > "$acl_log"
 : > "$preflight_log"
 : > "$launch_log"
-rm -f "$acl_state" "$socket_acl_state" "$launch_fail_once"
+rm -f \
+  "$acl_state" "$orbstack_acl_state" "$run_acl_state" \
+  "$socket_acl_state" "$launch_fail_once"
 export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
 acl_rollback_failure_output=''
 if acl_rollback_failure_output="$(
@@ -605,14 +638,18 @@ fi
 unset FLEET_WORKER_LAUNCH_FAIL_MATCH
 grep -Fq 'docker_acl_rollback_incomplete' <<<"$acl_rollback_failure_output" \
   || fail "ACL rollback failure was silently swallowed"
-[[ -e "$acl_state" ]] || fail "ACL rollback failure fixture did not preserve evidence"
-rm -f "$acl_state"
+[[ -e "$acl_state" && -e "$orbstack_acl_state" \
+  && -e "$run_acl_state" ]] \
+  || fail "ACL rollback failure fixture did not preserve evidence"
+rm -f "$acl_state" "$orbstack_acl_state" "$run_acl_state"
 rm -f "$socket_acl_state"
 
 : > "$acl_log"
 : > "$preflight_log"
 : > "$launch_log"
-rm -f "$acl_state" "$socket_acl_state" "$launch_fail_once"
+rm -f \
+  "$acl_state" "$orbstack_acl_state" "$run_acl_state" \
+  "$socket_acl_state" "$launch_fail_once"
 export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
 socket_acl_rollback_failure_output=''
 if socket_acl_rollback_failure_output="$(
@@ -628,8 +665,9 @@ grep -Fq 'docker_socket_acl_rollback_incomplete' \
   || fail "socket ACL rollback failure was silently swallowed"
 [[ -e "$socket_acl_state" ]] \
   || fail "socket ACL rollback failure fixture did not preserve evidence"
-[[ ! -e "$acl_state" ]] \
-  || fail "socket ACL rollback failure prevented home ACL rollback"
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" ]] \
+  || fail "socket ACL rollback failure prevented path ACL rollback"
 rm -f "$socket_acl_state"
 
 : > "$acl_log"
@@ -692,18 +730,26 @@ cmp -s "$validated_plist" "$installed_plist" \
   || fail "--apply did not kickstart the installed system LaunchDaemon"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "first apply did not leave the service running"
-[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 2 ]] \
-  || fail "first apply did not add exactly two minimal ACLs"
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 4 ]] \
+  || fail "first apply did not add exactly four minimal ACLs"
 grep -Fxq 'acl +a _cecelia allow search /Users/orbstack-owner' "$acl_log" \
-  || fail "first apply granted more than owner-home search ACL"
+  || fail "first apply omitted owner-home search ACL"
+grep -Fxq 'acl +a _cecelia allow search /Users/orbstack-owner/.orbstack' "$acl_log" \
+  || fail "first apply omitted OrbStack directory search ACL"
+grep -Fxq 'acl +a _cecelia allow search /Users/orbstack-owner/.orbstack/run' "$acl_log" \
+  || fail "first apply omitted OrbStack run directory search ACL"
 grep -Fxq 'acl +a _cecelia allow read,write /Users/orbstack-owner/.orbstack/run/docker.sock' \
   "$acl_log" || fail "first apply did not grant exact socket read,write"
 [[ "$(sed -n '1p' "$preflight_log")" == 'acl +a' ]] \
   || fail "home ACL was not granted before the low-privilege node probe"
 [[ "$(sed -n '2p' "$preflight_log")" == 'acl +a' ]] \
+  || fail "OrbStack directory ACL was not granted before the low-privilege node probe"
+[[ "$(sed -n '3p' "$preflight_log")" == 'acl +a' ]] \
+  || fail "OrbStack run ACL was not granted before the low-privilege node probe"
+[[ "$(sed -n '4p' "$preflight_log")" == 'acl +a' ]] \
   || fail "socket ACL was not granted before the low-privilege node probe"
-[[ "$(sed -n '3p' "$preflight_log")" == 'probe' ]] \
-  || fail "node probe did not run after both ACL grants"
+[[ "$(sed -n '5p' "$preflight_log")" == 'probe' ]] \
+  || fail "node probe did not run after all ACL grants"
 
 : > "$launch_log"
 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
@@ -724,7 +770,7 @@ run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
   || fail "repeat --apply did not kickstart the replacement service"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "repeat --apply left split service state"
-[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 2 ]] \
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 4 ]] \
   || fail "repeat --apply duplicated an existing ACL"
 
 mode_of() {
@@ -770,6 +816,8 @@ assert_support_placement_failure_rolled_back() {
   : > "$launch_log"
   rm -f \
     "$acl_state" \
+    "$orbstack_acl_state" \
+    "$run_acl_state" \
     "$socket_acl_state" \
     "$FLEET_WORKER_MV_FAIL_ONCE"
 
@@ -803,7 +851,8 @@ assert_support_placement_failure_rolled_back() {
     || fail "placement failure did not restore prior services"
   [[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq 8 ]] \
     || fail "placement rollback mutation sequence drifted"
-  [[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+  [[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+    && ! -e "$run_acl_state" && ! -e "$socket_acl_state" ]] \
     || fail "placement failure leaked a newly-added ACL"
 }
 
