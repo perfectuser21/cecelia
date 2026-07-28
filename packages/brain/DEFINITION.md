@@ -2,7 +2,7 @@
 
 **版本**: 1.268.29
 
-## Kernel execution grant runtime expiry fence
+## Kernel controller authority review closure
 
 - Trusted runtime 在 adapter `prepare` 完成后、actual seam 调用前，以同一
   server-owned trust registry 与 trusted clock 重新验证冻结 grant；过期或失效时
@@ -10,7 +10,14 @@
 - Trusted execution service 的 runtime timeout 与完成 deadline 取 caller/service
   deadline 和 protected grant `expires_at` 的较早者，避免 nonce、predecessor 或
   prepare 消耗掉授权窗口后仍获得更长执行预算。
-- 未新增 A2 effect/isolation port；live equivalence proof 继续保持 0/99。
+- normal settlement 与 startup reconciliation 都把 durable bundle 的
+  `grant_id` 绑定到本次 controller execution 的 exact `grant_ref`。
+- append-only execution event guard 拒绝没有 `grant_issued` lineage 的
+  succeeded，并拒绝 grant-issued、executing、terminal 之间替换 grant。
+- binding/claim 对 Attempt 与 durable receipt 采用一致行锁与完整权威重验；
+  reconciliation 采用 keyset 全量分页、周期维护和 listener 启动 barrier。
+- 未新增 A2 effect/isolation port；本地候选仍未部署，live equivalence proof
+  继续保持 0/99。
 
 ## Kernel production controller A1
 

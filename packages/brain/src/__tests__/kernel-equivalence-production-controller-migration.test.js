@@ -125,6 +125,19 @@ describe('migration 381 Kernel equivalence production controller', () => {
     expect(sql).toMatch(
       /previous_state IN \(\s*'claimed',\s*'grant_issued',\s*'executing',\s*'reconciling'\s*\)/is,
     );
+    expect(sql).toMatch(/previous_grant_ref TEXT/i);
+    expect(sql).toMatch(
+      /NEW\.grant_ref IS DISTINCT FROM previous_grant_ref/i,
+    );
+    expect(sql).toMatch(
+      /kernel equivalence execution grant lineage mismatch/i,
+    );
+    expect(sql).toMatch(
+      /NEW\.grant_ref\s*=\s*'kernel-equivalence-grant:'\s*\|\|\s*bundles\.grant_id::text/i,
+    );
+    expect(sql).toMatch(
+      /NEW\.state = 'succeeded'[\s\S]*NEW\.grant_ref IS NULL/i,
+    );
     expect(sql).toMatch(
       /CREATE TRIGGER trg_kernel_equivalence_execution_events_append_only/i,
     );

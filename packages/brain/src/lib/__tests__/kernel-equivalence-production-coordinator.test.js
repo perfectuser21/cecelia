@@ -112,6 +112,12 @@ describe('production Kernel equivalence coordinator', () => {
     expect(pool.statements[0].text).toMatch(
       /WHERE latest\.state IN \(\s*'claimed',\s*'grant_issued',\s*'executing',\s*'reconciling',\s*'settlement_unknown'/is,
     );
+    expect(pool.statements[0].text).toMatch(
+      /events\.grant_ref/i,
+    );
+    expect(pool.statements[0].text).toMatch(
+      /latest\.grant_ref\s*=\s*'kernel-equivalence-grant:'\s*\|\|\s*bundles\.grant_id::text/i,
+    );
     expect(pool.statements[0].text).not.toMatch(
       /WHERE events\.state IN/i,
     );
@@ -200,6 +206,9 @@ describe('production Kernel equivalence coordinator', () => {
               state: 'executing',
               controller_instance_id:
                 '88888888-8888-4888-8888-888888888888',
+              grant_ref:
+                'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+              grant_expires_at: '2026-07-29T00:05:00.000Z',
               lease_expired: true,
               bundle_hash: null,
             }],
@@ -233,6 +242,10 @@ describe('production Kernel equivalence coordinator', () => {
     );
     expect(statements[2].values[3]).toBe(
       '11111111-1111-4111-8111-111111111111',
+    );
+    expect(statements[1].values[5]).toBeNull();
+    expect(statements[2].values[5]).toBe(
+      'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
     );
   });
 

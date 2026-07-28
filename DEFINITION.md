@@ -12,7 +12,7 @@
 
 ---
 
-## Brain 1.268.29 — Kernel execution grant runtime expiry fence
+## Brain 1.268.29 — Kernel controller authority review closure
 
 - Trusted runtime 在 `prepare` 完成后、actual seam 前重新验证同一份冻结的
   execution grant；若 grant 已过期或失效，先验证 cleanup 再 fail-closed，
@@ -20,6 +20,13 @@
 - Trusted execution service 将有效执行 deadline 约束为 caller/service deadline
   与 protected grant `expires_at` 的较早者，同时保留原有 cancellation、settlement
   与 cleanup 语义。
+- production controller 的正常 settlement 与 startup reconciliation 只接受
+  `bundle.grant_id` 精确匹配本次执行 `grant_ref` 的 durable bundle。
+- Migration 381 的事件守卫拒绝 claimed-only success，并强制
+  grant-issued、executing 与 terminal 事件沿用同一 grant identity。
+- binding/claim 对 Attempt 与 receipt 使用一致行锁并交叉验证
+  session、machine、job 与 terminal status；reconcile 全量分页并持续运行，
+  listener 只在启动 barrier 通过后开放。
 - 本版本仍是未发布的本地集成候选；未 push、未 merge、未 deploy，且 99 个 live
   equivalence drill 未完成前保持 `0/99 proven`。
 

@@ -292,18 +292,22 @@ DECLARE
   previous_state TEXT;
   previous_controller UUID;
   previous_lease_expires_at TIMESTAMPTZ;
+  previous_grant_ref TEXT;
+  lineage_grant_ref TEXT;
   fence_active BOOLEAN;
 BEGIN
   SELECT
       generation,
       state,
       controller_instance_id,
-      controller_lease_expires_at
+      controller_lease_expires_at,
+      grant_ref
     INTO
       previous_generation,
       previous_state,
       previous_controller,
-      previous_lease_expires_at
+      previous_lease_expires_at,
+      previous_grant_ref
     FROM kernel_equivalence_production_execution_events
    WHERE case_id = NEW.case_id
    ORDER BY generation DESC
@@ -376,6 +380,40 @@ BEGIN
       'kernel equivalence execution event generation mismatch';
   END IF;
 
+  SELECT grant_ref
+    INTO lineage_grant_ref
+    FROM kernel_equivalence_production_execution_events
+   WHERE case_id = NEW.case_id
+     AND grant_ref IS NOT NULL
+   ORDER BY generation DESC
+   LIMIT 1;
+
+  IF NEW.state = 'executing'
+     AND NEW.grant_ref IS DISTINCT FROM previous_grant_ref THEN
+    RAISE EXCEPTION
+      'kernel equivalence execution grant lineage mismatch';
+  END IF;
+  IF NEW.state = 'succeeded'
+     AND (
+       lineage_grant_ref IS NULL
+       OR NEW.grant_ref IS NULL
+       OR NEW.grant_ref IS DISTINCT FROM lineage_grant_ref
+     ) THEN
+    RAISE EXCEPTION
+      'kernel equivalence execution grant lineage mismatch';
+  END IF;
+  IF NEW.state IN ('blocked', 'settlement_unknown')
+     AND (
+       (lineage_grant_ref IS NULL AND NEW.grant_ref IS NOT NULL)
+       OR (
+         lineage_grant_ref IS NOT NULL
+         AND NEW.grant_ref IS DISTINCT FROM lineage_grant_ref
+       )
+     ) THEN
+    RAISE EXCEPTION
+      'kernel equivalence execution grant lineage mismatch';
+  END IF;
+
   IF NOT (
     (previous_state = 'claimed'
       AND NEW.state IN (
@@ -431,6 +469,8 @@ BEGIN
        AND bundles.resource_ref = cases.resource_ref
        AND bundles.seam_id = cases.seam_id
        AND bundles.adapter_id = cases.adapter_id
+       AND NEW.grant_ref =
+             'kernel-equivalence-grant:' || bundles.grant_id::text
   ) THEN
     RAISE EXCEPTION
       'kernel equivalence execution settlement readback mismatch';

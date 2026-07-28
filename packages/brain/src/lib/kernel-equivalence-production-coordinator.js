@@ -378,8 +378,21 @@ async function appendRequiredEvent(pool, event) {
   }
 }
 
-async function confirmBundle(pool, authority, bundleHash) {
-  if (!HASH_PATTERN.test(bundleHash ?? '')) return false;
+async function confirmBundle(
+  pool,
+  authority,
+  bundleHash,
+  grantRef,
+) {
+  const grantId = GRANT_REF_PATTERN.test(grantRef ?? '')
+    ? grantRef.slice('kernel-equivalence-grant:'.length)
+    : null;
+  if (
+    !HASH_PATTERN.test(bundleHash ?? '')
+    || !UUID_PATTERN.test(grantId ?? '')
+  ) {
+    return false;
+  }
   const result = await pool.query(
     `SELECT 1
        FROM kernel_equivalence_receipt_bundles
@@ -394,7 +407,8 @@ async function confirmBundle(pool, authority, bundleHash) {
         AND resource_id = $9
         AND resource_ref = $10
         AND seam_id = $11
-        AND adapter_id = $12`,
+        AND adapter_id = $12
+        AND grant_id = $13::uuid`,
     [
       bundleHash,
       authority.cell_id,
@@ -408,6 +422,7 @@ async function confirmBundle(pool, authority, bundleHash) {
       authority.resource_ref,
       authority.seam_id,
       authority.adapter_id,
+      grantId,
     ],
   );
   return result?.rowCount === 1;
@@ -599,7 +614,12 @@ export function createPostgresKernelEquivalenceCoordinator({
 
     if (result?.status === 'collected') {
       const bundleHash = result?.bundle?.bundle_hash;
-      if (await confirmBundle(pool, authority, bundleHash)) {
+      if (await confirmBundle(
+        pool,
+        authority,
+        bundleHash,
+        issued.grant_ref,
+      )) {
         await appendRequiredEvent(pool, {
           randomUUID,
           caseId,
@@ -664,6 +684,8 @@ export function createPostgresKernelEquivalenceCoordinator({
            events.generation,
            events.state,
            events.controller_instance_id,
+           lineage.grant_ref,
+           lineage.grant_expires_at,
            events.controller_lease_expires_at,
            cases.cell_id,
            cases.behavior_id,
@@ -677,6 +699,17 @@ export function createPostgresKernelEquivalenceCoordinator({
            cases.seam_id,
            cases.adapter_id
          FROM kernel_equivalence_production_execution_events events
+         LEFT JOIN LATERAL (
+           SELECT
+             lineage_events.grant_ref,
+             lineage_events.grant_expires_at
+           FROM kernel_equivalence_production_execution_events
+                  lineage_events
+           WHERE lineage_events.case_id = events.case_id
+             AND lineage_events.grant_ref IS NOT NULL
+           ORDER BY lineage_events.generation DESC
+           LIMIT 1
+         ) lineage ON true
          JOIN kernel_equivalence_production_case_bindings bindings
            ON bindings.case_id = events.case_id
          JOIN kernel_equivalence_production_cases cases
@@ -690,20 +723,22 @@ export function createPostgresKernelEquivalenceCoordinator({
          bundles.bundle_hash
        FROM latest
        LEFT JOIN LATERAL (
-         SELECT bundle_hash
-         FROM kernel_equivalence_receipt_bundles
-         WHERE cell_id = latest.cell_id
-           AND behavior_id = latest.behavior_id
-           AND provider = latest.provider
-           AND scenario = latest.scenario
-           AND run_id = latest.run_id
-           AND attempt_id = latest.attempt_id
-           AND artifact_sha = latest.artifact_sha
-           AND resource_id = latest.resource_id
-           AND resource_ref = latest.resource_ref
-           AND seam_id = latest.seam_id
-           AND adapter_id = latest.adapter_id
-         ORDER BY committed_at DESC
+         SELECT bundles.bundle_hash
+         FROM kernel_equivalence_receipt_bundles bundles
+         WHERE bundles.cell_id = latest.cell_id
+           AND bundles.behavior_id = latest.behavior_id
+           AND bundles.provider = latest.provider
+           AND bundles.scenario = latest.scenario
+           AND bundles.run_id = latest.run_id
+           AND bundles.attempt_id = latest.attempt_id
+           AND bundles.artifact_sha = latest.artifact_sha
+           AND bundles.resource_id = latest.resource_id
+           AND bundles.resource_ref = latest.resource_ref
+           AND bundles.seam_id = latest.seam_id
+           AND bundles.adapter_id = latest.adapter_id
+           AND latest.grant_ref =
+                 'kernel-equivalence-grant:' || bundles.grant_id::text
+         ORDER BY bundles.committed_at DESC
          LIMIT 1
        ) bundles ON true
        WHERE latest.state IN (
@@ -734,6 +769,8 @@ export function createPostgresKernelEquivalenceCoordinator({
             generation: generation + 1,
             controllerInstanceId,
             state: 'succeeded',
+            grantRef: row.grant_ref,
+            grantExpiresAt: row.grant_expires_at,
             bundleHash: row.bundle_hash,
             lateEffectRisk: false,
           });
@@ -747,6 +784,8 @@ export function createPostgresKernelEquivalenceCoordinator({
                 generation: generation + 1,
                 controllerInstanceId,
                 state: 'settlement_unknown',
+                grantRef: row.grant_ref,
+                grantExpiresAt: row.grant_expires_at,
                 code: 'startup_settlement_unresolved',
                 lateEffectRisk: true,
               });
@@ -767,6 +806,8 @@ export function createPostgresKernelEquivalenceCoordinator({
                   generation: generation + 2,
                   controllerInstanceId,
                   state: 'settlement_unknown',
+                  grantRef: row.grant_ref,
+                  grantExpiresAt: row.grant_expires_at,
                   code: 'startup_settlement_unresolved',
                   lateEffectRisk: true,
                 });
