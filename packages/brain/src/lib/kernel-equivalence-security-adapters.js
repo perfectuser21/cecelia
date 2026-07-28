@@ -77,12 +77,13 @@ function assertBoundary(descriptor, cell, grant) {
     || cell?.adapter_id !== descriptor.adapter_id
     || grant?.seam_id !== descriptor.seam_id
     || grant?.adapter_id !== descriptor.adapter_id
+    || !prefix.endsWith('/')
     || grant?.resource_prefix !== prefix
     || typeof grant?.resource_id !== 'string'
     || grant.resource_id.length === 0
     || typeof grant?.resource_ref !== 'string'
     || grant.resource_ref === prefix
-    || !grant.resource_ref.startsWith(`${prefix}/`)
+    || !grant.resource_ref.startsWith(prefix)
   ) {
     fail('security_adapter_resource_boundary_invalid');
   }
