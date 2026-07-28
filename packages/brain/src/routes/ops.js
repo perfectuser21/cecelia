@@ -1,5 +1,6 @@
 import express, { Router } from 'express';
 import pool from '../db.js';
+import { DB_DEFAULTS } from '../db-config.js';
 import { recordActionReceipt, resolveActionReceipt } from '../receipt-collector.js';
 import { readFileSync, writeFileSync, openSync, writeSync, closeSync, mkdirSync } from 'fs';
 import { join as pathJoin } from 'node:path';
@@ -31,9 +32,13 @@ import {
   appendDispatchOutcome,
   claimReleaseEffect,
   claimReleaseVerification,
-  renewReleaseEffectClaim,
 } from '../orchestrator/release-run-authorization.js';
 import { planReleaseArtifactRoutes } from '../orchestrator/release-run-routing.js';
+import {
+  cleanupPrivateReleaseWorkerConfig,
+  createPrivateReleaseWorkerConfig,
+} from '../orchestrator/release-run-worker-secret.js';
+import { buildReleaseWorkerEnvironment } from '../../../../scripts/lib/release-run-worker-runtime.mjs';
 
 const router = Router();
 
@@ -2881,16 +2886,11 @@ router.post('/deploy', async (req, res) => {
     const execFileAsync = promisify(execFile);
     const startTime = Date.now();
     let stagingReceiptId = null;
-    let renewalFailure = null;
-    const renewalTimer = setInterval(() => {
-      renewReleaseEffectClaim(pool, {
-        dispatch_claim_id: dispatchClaim.dispatch_claim_id,
-        generation: dispatchClaim.generation,
-      }).catch((error) => {
-        renewalFailure = error;
-      });
-    }, 60_000);
-    renewalTimer.unref?.();
+    const workerPrivateConfig = createPrivateReleaseWorkerConfig({
+      authorization: release_authorization,
+      deploy_token: expectedToken,
+      database: DB_DEFAULTS,
+    });
 
     try {
       stagingReceiptId = await recordActionReceipt({
@@ -2904,25 +2904,19 @@ router.post('/deploy', async (req, res) => {
       const { stdout = '' } = await execFileAsync(process.execPath, [workerScript], {
         cwd: repoRoot,
         timeout: 600_000,
-        env: {
-          ...process.env,
+        env: buildReleaseWorkerEnvironment(process.env, {
           KERNEL_RELEASE_RUN_ID: release_run_id,
           KERNEL_RELEASE_MERGE_SHA: merge_sha,
-          KERNEL_RELEASE_AUTHORIZATION: release_authorization,
           KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifactVersions),
           KERNEL_RELEASE_EFFECT_KIND: effectKind,
           KERNEL_RELEASE_DEPLOY_ROOT: repoRoot,
-        },
+          KERNEL_RELEASE_DISPATCH_CLAIM_ID: dispatchClaim.dispatch_claim_id,
+          KERNEL_RELEASE_DISPATCH_GENERATION: dispatchClaim.generation,
+          KERNEL_RELEASE_PRIVATE_CONFIG_FILE: workerPrivateConfig.file,
+        }),
         maxBuffer: 20 * 1024 * 1024,
       });
-      if (renewalFailure) throw renewalFailure;
       const output = stdout.toString();
-      await appendDispatchOutcome(
-        pool,
-        dispatchClaim.dispatch_claim_id,
-        dispatchClaim.generation,
-        'dispatched',
-      );
       console.log(output);
 
       const elapsed = Date.now() - startTime;
@@ -2965,7 +2959,11 @@ router.post('/deploy', async (req, res) => {
       });
       console.error(`[staging-deploy] ❌ Staging 部署失败（真实错误，非环境未配置）(${(elapsed / 1000).toFixed(1)}s):`, err.message);
     } finally {
-      clearInterval(renewalTimer);
+      try {
+        cleanupPrivateReleaseWorkerConfig(workerPrivateConfig.file);
+      } catch {
+        // The worker normally removes its private config after terminal CAS.
+      }
     }
     return;
   }
@@ -3032,6 +3030,12 @@ router.post('/deploy', async (req, res) => {
   console.log(`[deploy-webhook] 开始 server-owned artifact routes（detached）: ${artifactRoutes.map((route) => route.artifact).join(',')}`);
   console.log(`[deploy-webhook] log: ${logFile}`);
 
+  const workerPrivateConfig = createPrivateReleaseWorkerConfig({
+    authorization: release_authorization,
+    deploy_token: expectedToken,
+    database: DB_DEFAULTS,
+  });
+
   // 使用 detached spawn：Brain 重启自身时不阻塞事件循环，避免 EADDRINUSE
   // stdio: stdin=ignore + stdout/stderr=logFd → 子进程输出落盘可调试
   const stdioOption = logFd === 'ignore'
@@ -3041,25 +3045,18 @@ router.post('/deploy', async (req, res) => {
     detached: true,
     stdio: stdioOption,
     cwd: repoRoot,
-    env: {
-      ...process.env,
+    env: buildReleaseWorkerEnvironment(process.env, {
       KERNEL_RELEASE_RUN_ID: release_run_id,
       KERNEL_RELEASE_MERGE_SHA: merge_sha,
-      KERNEL_RELEASE_AUTHORIZATION: release_authorization,
       KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifactVersions),
       KERNEL_RELEASE_EFFECT_KIND: effectKind,
       KERNEL_RELEASE_DEPLOY_ROOT: repoRoot,
       KERNEL_RELEASE_STARTED_AT: deployState.started_at,
       KERNEL_RELEASE_DISPATCH_CLAIM_ID: String(dispatchClaim.dispatch_claim_id),
       KERNEL_RELEASE_DISPATCH_GENERATION: String(dispatchClaim.generation),
-    },
+      KERNEL_RELEASE_PRIVATE_CONFIG_FILE: workerPrivateConfig.file,
+    }),
   });
-  await appendDispatchOutcome(
-    pool,
-    dispatchClaim.dispatch_claim_id,
-    dispatchClaim.generation,
-    'dispatched',
-  );
   // log fd 被子进程接管后父进程可以关闭（数据继续写入文件）
   if (typeof logFd === 'number') {
     try { closeSync(logFd); } catch { /* noop */ }
@@ -3069,6 +3066,11 @@ router.post('/deploy', async (req, res) => {
   // 若 Brain 在子进程完成前仍在运行，捕获退出码更新状态
   const startTime = Date.now();
   child.on('close', (code, signal) => {
+    try {
+      cleanupPrivateReleaseWorkerConfig(workerPrivateConfig.file);
+    } catch {
+      // The worker normally removes its private config after terminal CAS.
+    }
     const elapsed = Date.now() - startTime;
     if (code === 0) {
       deployState.status = 'success';

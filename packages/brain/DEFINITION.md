@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.268.11
+**版本**: 1.268.12
+
+## Leased private release workers
+
+- Detached release workers own renewal for their exact dispatch generation
+  until every artifact route finishes, then append one fenced terminal outcome.
+- Lease loss aborts active work and cannot report `dispatched`.
+- Worker and route environments are allowlisted; authorization, deploy token,
+  and database credentials are passed only by validated `0600` private-file
+  reference.
+- 回退：`bash scripts/brain-rollback.sh 1.268.11`（保留 dispatch lease 审计账本）。
 
 ## Exact ReleaseRun receipt replay
 

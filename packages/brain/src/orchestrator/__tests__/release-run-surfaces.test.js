@@ -388,6 +388,22 @@ describe('legacy release surfaces fail closed', () => {
     expect(worker).not.toMatch(/git['"], \[['"]checkout/);
     expect(worker).toContain('prepareReleaseArtifactSnapshot');
     expect(worker).toContain('KERNEL_RELEASE_ARTIFACT_ROOT');
+    expect(worker).toContain('runLeasedReleaseRoutes');
+    expect(worker).toContain('KERNEL_RELEASE_PRIVATE_CONFIG_FILE');
+    expect(worker).not.toContain('...process.env');
+
+    const ops = readFileSync(
+      resolve(root, 'packages/brain/src/routes/ops.js'),
+      'utf8',
+    );
+    const productionSpawn = ops.slice(
+      ops.indexOf('const child = spawn(args[0]'),
+      ops.indexOf('child.unref()'),
+    );
+    expect(productionSpawn).toContain('buildReleaseWorkerEnvironment');
+    expect(productionSpawn).toContain('KERNEL_RELEASE_PRIVATE_CONFIG_FILE');
+    expect(productionSpawn).not.toContain('...process.env');
+    expect(productionSpawn).not.toContain('appendDispatchOutcome');
 
     const deployLocal = readFileSync(resolve(root, 'scripts/deploy-local.sh'), 'utf8');
     expect(deployLocal).not.toContain('release-run-checkout.sh');

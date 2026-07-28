@@ -16,6 +16,28 @@ require_release_run_authority() {
   release_authorization="${KERNEL_RELEASE_AUTHORIZATION:-}"
   brain_url="${BRAIN_URL:-http://localhost:5221}"
   deploy_token="${DEPLOY_TOKEN:-}"
+  private_config_file="${KERNEL_RELEASE_PRIVATE_CONFIG_FILE:-}"
+
+  if [[ -n "$private_config_file" ]]; then
+    [[ "$private_config_file" == /* && -f "$private_config_file" && ! -L "$private_config_file" ]] \
+      || release_run_deny "private worker authority unavailable"
+    if stat -f '%u:%Lp' "$private_config_file" >/dev/null 2>&1; then
+      private_mode=$(stat -f '%u:%Lp' "$private_config_file")
+    else
+      private_mode=$(stat -c '%u:%a' "$private_config_file")
+    fi
+    [[ "$private_mode" == "$(id -u):600" ]] \
+      || release_run_deny "private worker authority must be owner-only mode 0600"
+    private_values=$(node -e '
+      const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+      if (typeof value.authorization !== "string" || typeof value.deploy_token !== "string") {
+        process.exit(78);
+      }
+      process.stdout.write(`${value.authorization}\t${value.deploy_token}`);
+    ' "$private_config_file") \
+      || release_run_deny "private worker authority invalid"
+    IFS=$'\t' read -r release_authorization deploy_token <<< "$private_values"
+  fi
 
 if [[ "${KERNEL_RELEASE_BOOTSTRAP:-0}" == "1" ]]; then
   bootstrap_run_id="${KERNEL_RELEASE_BOOTSTRAP_RUN_ID:-}"
@@ -144,16 +166,19 @@ fi
   || release_run_deny "missing or malformed merge_sha"
 [[ "$release_authorization" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] \
   || release_run_deny "missing or malformed release_authorization"
-[[ -n "$deploy_token" ]] || release_run_deny "DEPLOY_TOKEN unavailable"
+[[ "$deploy_token" =~ ^[A-Za-z0-9._~-]+$ ]] \
+  || release_run_deny "DEPLOY_TOKEN unavailable or malformed"
 
 response_file=$(mktemp "${TMPDIR:-/tmp}/release-authority.XXXXXX")
 trap 'rm -f "$response_file"' EXIT
-http_code=$(curl --silent --show-error --output "$response_file" --write-out "%{http_code}" \
+http_code=$(curl --config - --silent --show-error --output "$response_file" --write-out "%{http_code}" \
   -X POST "${brain_url}/api/brain/release-runs/authorize" \
-  -H "Authorization: Bearer ${deploy_token}" \
-  -H "Content-Type: application/json" \
-  -d "{\"release_run_id\":\"${release_run_id}\",\"merge_sha\":\"${merge_sha}\",\"release_authorization\":\"${release_authorization}\",\"effect_kind\":\"${effect_kind}\"}" \
-  --connect-timeout 10 --max-time 20) \
+  --connect-timeout 10 --max-time 20 <<CURL_CONFIG
+header = "Authorization: Bearer ${deploy_token}"
+header = "Content-Type: application/json"
+data = "{\\"release_run_id\\":\\"${release_run_id}\\",\\"merge_sha\\":\\"${merge_sha}\\",\\"release_authorization\\":\\"${release_authorization}\\",\\"effect_kind\\":\\"${effect_kind}\\"}"
+CURL_CONFIG
+) \
   || release_run_deny "authorization service unavailable"
 
 [[ "$http_code" == "200" ]] || release_run_deny "server denied release effect (HTTP ${http_code})"

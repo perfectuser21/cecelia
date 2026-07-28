@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.268.11
+**Brain 版本**: 1.268.12
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.12 — Leased private release workers
+
+- Detached release workers renew their exact dispatch generation throughout
+  every artifact route and persist the sole terminal outcome only after all
+  routes complete; lease loss aborts work and fails closed.
+- Worker and route child processes receive a strict environment allowlist.
+  Release authorization, deploy token, and database credentials cross the
+  process boundary only through a validated owner-only `0600` file reference.
+- 回退：`bash scripts/brain-rollback.sh 1.268.11`（保留 dispatch lease 审计账本）。
 
 ## Brain 1.268.11 — Exact ReleaseRun receipt replay
 
