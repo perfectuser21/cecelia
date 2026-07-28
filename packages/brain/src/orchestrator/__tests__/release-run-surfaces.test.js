@@ -75,6 +75,9 @@ describe('legacy release surfaces fail closed', () => {
 
     const directProductionScripts = [
       'brain-deploy.sh',
+      'brain-rollback.sh',
+      'rollback-cecelia.sh',
+      'rolling-update.sh',
       'promote-dashboard.sh',
       'post-merge-deploy.sh',
       'deploy.sh',
@@ -91,6 +94,24 @@ describe('legacy release surfaces fail closed', () => {
       expect(denied.status, `${file} must fail closed`).not.toBe(0);
       expect(`${denied.stdout}${denied.stderr}`).toMatch(/ReleaseRun authority required/);
     }
+  });
+
+  it('does not expose the legacy token-only rollback endpoint', () => {
+    const source = readFileSync(resolve(root, 'packages/brain/src/routes/ops.js'), 'utf8');
+    const rollbackRoute = source.slice(
+      source.indexOf("router.post('/deploy/rollback'"),
+      source.indexOf("router.post('/deploy/rollback'") + 900,
+    );
+    expect(rollbackRoute).toContain('release_rollback_authority_required');
+    expect(rollbackRoute).not.toMatch(/git (?:fetch|checkout)/);
+    expect(rollbackRoute).not.toMatch(/pm2 restart/);
+  });
+
+  it('legacy staging callers cannot mutate staging outside ReleaseRun authority', () => {
+    const relay = readFileSync(resolve(root, 'packages/brain/scripts/cecelia-run.sh'), 'utf8');
+    const runner = readFileSync(resolve(root, 'packages/brain/src/staging-e2e-runner.js'), 'utf8');
+    expect(relay).not.toMatch(/deploy-local\.sh/);
+    expect(runner).not.toMatch(/deploy-local\.sh/);
   });
 
   it('bootstrap is normally disabled and requires an explicit database and deploy root', () => {
@@ -263,6 +284,9 @@ describe('legacy release surfaces fail closed', () => {
   it('persists exact production E2E evidence outside container tmpfs', () => {
     const deploy = readFileSync(resolve(root, 'scripts/brain-deploy.sh'), 'utf8');
     expect(deploy).not.toMatch(/run_post_deploy_smoke\s*\|\|\s*true/);
+    expect(deploy).toMatch(/required[\s\S]+?KERNEL_RELEASE_RUN_ID/);
+    expect(deploy).toMatch(/required[\s\S]+?ran" -eq 0[\s\S]+?return 1/);
+    expect(deploy).toMatch(/failed" -ne 0[\s\S]+?return 1/);
     expect(deploy).toContain('e2e_receipt');
     expect(deploy).toContain('deployed_artifact_versions');
     expect(deploy).toMatch(/logs\/cecelia-deploy-status\.json/);

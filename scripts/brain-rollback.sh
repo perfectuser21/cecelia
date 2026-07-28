@@ -6,6 +6,11 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 ENV_REGION="${ENV_REGION:-us}"
 
+# Rollback changes the production image and must be authorized by the same
+# durable ReleaseRun effect ledger as every other production mutation.
+source "$SCRIPT_DIR/lib/release-run-guard.sh"
+require_release_run_authority production
+
 # Determine target version
 if [ $# -ge 1 ]; then
   TARGET="$1"

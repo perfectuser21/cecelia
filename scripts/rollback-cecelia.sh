@@ -19,6 +19,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+source "$SCRIPT_DIR/lib/release-run-guard.sh"
+require_release_run_authority production
+
 # 部署根解析（与 promote-dashboard.sh / deploy-local.sh 一致）
 if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     MAIN_ROOT="$(cd "$CECELIA_DEPLOY_ROOT" && pwd)"

@@ -83,17 +83,21 @@ trap '_write_deploy_status' EXIT
 # 验生产 Brain 真生效（不只 200/healthy）。
 #
 # 控制 env：
-#   SKIP_POST_DEPLOY_SMOKE=1  整体跳过（紧急部署 / 离线场景）
+#   SKIP_POST_DEPLOY_SMOKE=1  仅允许非 ReleaseRun 运维调用跳过
 #   RECENT_PRS="2651 2650"    强制指定 PR 列表，绕过 gh pr list（测试用 / mock）
 #
-# 退出码：始终 0（每条 smoke non-fatal — deploy 已成功不能因 smoke 回滚）。
+# ReleaseRun 路径严格要求至少一条真实 smoke，任何 skip/zero/failure 都失败。
 run_post_deploy_smoke() {
+    local required=0
+    [[ -n "${KERNEL_RELEASE_RUN_ID:-}" ]] && required=1
     if [[ "${SKIP_POST_DEPLOY_SMOKE:-0}" == "1" ]]; then
         echo "  [skip] SKIP_POST_DEPLOY_SMOKE=1"
+        [[ "$required" -eq 1 ]] && return 1
         return 0
     fi
     if ! command -v gh >/dev/null 2>&1 && [[ -z "${RECENT_PRS:-}" ]]; then
         echo "  [skip] gh CLI 不存在且未提供 RECENT_PRS 覆盖 — 跳过 smoke 扫描"
+        [[ "$required" -eq 1 ]] && return 1
         return 0
     fi
 
@@ -103,6 +107,7 @@ run_post_deploy_smoke() {
     fi
     if [[ -z "$recent_prs" ]]; then
         echo "  没找到最近合并 PR — 跳过"
+        [[ "$required" -eq 1 ]] && return 1
         return 0
     fi
 
@@ -134,7 +139,7 @@ run_post_deploy_smoke() {
             if bash "$ROOT_DIR/$sf"; then
                 echo "  ✅ smoke pass: $sf"
             else
-                echo "  ❌ smoke failed: $sf (non-fatal — deploy 已成功)"
+                echo "  ❌ smoke failed: $sf"
                 failed=$((failed + 1))
             fi
         done
@@ -143,6 +148,9 @@ run_post_deploy_smoke() {
         echo "  最近 5 个合并 PR 未引入 smoke.sh — 跳过"
     else
         echo "  Post-deploy smoke 总计：跑 $ran 条，失败 $failed 条"
+    fi
+    if [[ "$required" -eq 1 && ( "$ran" -eq 0 || "$failed" -ne 0 ) ]]; then
+        return 1
     fi
     return 0
 }

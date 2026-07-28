@@ -27,7 +27,7 @@ import { resolveLine, decidePromote, runInternalPromote, defaultPromoteExec, get
 import { sendFeishu, sendBark } from './notifier.js';
 
 export const STAGING_PORT = 5222;
-// A 方案：内部线交付 dashboard，staging 用 deploy-local.sh 起的 dashboard 预览端口。
+// Legacy dashboard staging port; only an injected ReleaseRun-owned deployer may mutate it.
 export const DASHBOARD_STAGING_PORT = 5223;
 // ZenithJoy 蓝绿护栏：:5200=生产，:5201=staging（ZenithJoy CI push:main→:5201 自动部署）。
 export const ZJ_STAGING_PORT = 5201;
@@ -56,8 +56,8 @@ export async function deployStaging(opts = {}) {
   // 容器内 cwd=/app，部署脚本在 bind-mount 的 repo 根 scripts/；用绝对路径。
   // REPO_ROOT env（容器=bind-mount repo 根）优先；getRepoRoot() 仅本地直跑兜底（容器内返回 /）。
   const repoRoot = opts.cwd || process.env.REPO_ROOT || getRepoRoot();
-  // A 方案：内部线交付 dashboard → 用 deploy-local.sh 构建 dashboard 到 staging（:5223）
-  // + 写 .staging-pending（promote 步靠它）；非内部线沿用 staging-deploy.sh（brain :5222）。
+  // Internal staging mutation is ReleaseRun-owned. This legacy evaluator may
+  // observe it or use an explicitly injected test deployer, but cannot deploy.
   const internal = opts.line === 'internal';
   const customer = opts.line === 'customer';
   const stagingPort = internal ? DASHBOARD_STAGING_PORT : customer ? ZJ_STAGING_PORT : STAGING_PORT;
@@ -122,8 +122,12 @@ export async function deployStaging(opts = {}) {
   if (opts.deployScript) {
     script = `bash ${opts.deployScript}`;
   } else if (internal) {
-    // --changed 显式指定 dashboard：harness 合 main 后在 main 上跑，git diff 为空，必须强制走 dashboard build。
-    script = `bash ${path.join(repoRoot, 'scripts/deploy-local.sh')} --changed=apps/dashboard/`;
+    return {
+      status: 'failed',
+      reason: 'release_run_authority_required',
+      output: 'internal staging mutation is owned by Kernel ReleaseRun',
+      stagingPort,
+    };
   } else {
     script = `bash ${path.join(repoRoot, 'scripts/staging-deploy.sh')}`;
   }
@@ -714,7 +718,7 @@ export async function runStagingE2E(task, opts = {}) {
     const acceptance = await loadAcceptance(dbPool, initiativeId);
     if (!acceptance) return await finalize('SKIP', 'no_contract');
 
-    // 2. 部署 staging：内部线(cecelia)走 deploy-local.sh 构建 dashboard 到 :5223；
+    // 2. Observe staging; internal mutation is owned by Kernel ReleaseRun.
     //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
     const line = resolveLine(baseRepo);
 

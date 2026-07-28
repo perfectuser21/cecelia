@@ -754,32 +754,6 @@ main() {
   # WHERE status='in_progress' 守卫失效, 使 agent 的 result 从未写入 tasks.result.
   # 改由 callback-processor / execution-callback 作为唯一 status+result 写入点.
 
-  # 触发本地部署（PR 合并后自动重启服务）
-  # 在 send_webhook 之前执行：此时 worktree 还未 fetch，origin/main 是合并前状态，
-  # git diff origin/main..HEAD 能正确得到本次 PR 的改动文件列表。
-  if [[ $exit_code -eq 0 && "${TASK_TYPE:-dev}" == "dev" ]]; then
-    DEPLOY_CHANGED=$(cd "$ACTUAL_WORK_DIR" && git diff --name-only "origin/main..HEAD" 2>/dev/null || echo "")
-    # apps/api/** 被 dashboard vite alias 引用，改动同样需要重建 dashboard
-    if echo "$DEPLOY_CHANGED" | grep -q "^packages/brain/\|^apps/dashboard/\|^apps/api/"; then
-      # 找主仓库根目录（worktree 的 git-common-dir 指向主仓库 .git）
-      GIT_COMMON=$(cd "$ACTUAL_WORK_DIR" && git rev-parse --git-common-dir 2>/dev/null || echo ".git")
-      if [[ "$GIT_COMMON" == ".git" ]]; then
-        REPO_ROOT="$(cd "$ACTUAL_WORK_DIR" && git rev-parse --show-toplevel 2>/dev/null || echo "")"
-      else
-        REPO_ROOT="$(cd "$(dirname "$GIT_COMMON")" && pwd)"
-      fi
-      DEPLOY_SCRIPT="$REPO_ROOT/scripts/deploy-local.sh"
-      if [[ -n "$REPO_ROOT" && -f "$DEPLOY_SCRIPT" ]]; then
-        echo "[cecelia-run] 检测到需要部署的改动，触发 deploy-local.sh (fire-and-forget)" >&2
-        setsid bash "$DEPLOY_SCRIPT" main --changed="$DEPLOY_CHANGED" \
-          >"/tmp/cecelia-deploy-${TASK_ID}.log" 2>&1 &
-        echo "[cecelia-run] 部署已启动 (pid=$!，日志: /tmp/cecelia-deploy-${TASK_ID}.log)" >&2
-      else
-        echo "[cecelia-run] WARN: deploy-local.sh 不存在 ($DEPLOY_SCRIPT)，跳过部署" >&2
-      fi
-    fi
-  fi
-
   # 分类失败原因（仅在 AI Failed 时）
   local failure_class_val=""
   if [[ "$status" == "AI Failed" ]]; then
