@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.112
+**Brain 版本**: 1.267.113
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.113 — Fleet rollout bundle HEAD contract hotfix
+
+- rollout 产物仓库把 `HEAD` 固定到冻结的 `fleet-rollout` ref，并以 `HEAD`
+  创建 Git bundle，使节点 baseline 的既有 `fetch ... HEAD` 契约可解析到同一
+  rollout commit。
+- bundle 仍只包含冻结提交，不改变 Runner pin、Worker token、admission 或
+  Phase 4B/4C/4D/5 范围；失败仍保持节点 drain。
+- Brain 回退目标：`1.267.112`；节点保持 drain 后再回退。
 
 ## Brain 1.267.112 — Fleet disposable bind-mount traversal hotfix
 
