@@ -105,6 +105,8 @@ Modify:
 - `packages/brain/scripts/fleet-worker/fleet-rollout.sh`
 - `packages/brain/scripts/fleet-worker/fleet-rollout.test.sh`
 - `packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh`
+- `packages/brain/scripts/smoke/provider-neutral-phase4a-node-smoke.sh`
+- `packages/quality/smoke-allowlist.txt`
 - `DoD.md`
 - `regression-contract.yaml`
 - `.brain-versions`

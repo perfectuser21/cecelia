@@ -39,7 +39,7 @@ CredentialEnvelope、Phase 4D execution recovery 和 Phase 5 真实业务 Canary
   provider credential，并按 Xian M4 → US M4 → Xian M1 顺序执行。
 
 - [x] [ARTIFACT] Brain `1.267.101`、两份 DEFINITION、版本锁、P0 回归契约和
-  Test: manual:bash -c 'bash scripts/check-version-sync.sh && node scripts/registry-lint.mjs && node -e "const fs=require(\"fs\"),yaml=require(\"js-yaml\");yaml.load(fs.readFileSync(\"regression-contract.yaml\",\"utf8\"));yaml.load(fs.readFileSync(\"docs/registry/features/orchestration.yml\",\"utf8\"));"'
+  Test: manual:bash -c 'bash scripts/check-version-sync.sh && BRAIN_URL=http://localhost:5221 bash packages/brain/scripts/smoke/provider-neutral-phase4a-node-smoke.sh && node scripts/registry-lint.mjs && node -e "const fs=require(\"fs\"),yaml=require(\"js-yaml\");yaml.load(fs.readFileSync(\"regression-contract.yaml\",\"utf8\"));yaml.load(fs.readFileSync(\"docs/registry/features/orchestration.yml\",\"utf8\"));"'
   Phase 4A production as-built/实施计划已同步。
 
 ## BEHAVIOR 条目
