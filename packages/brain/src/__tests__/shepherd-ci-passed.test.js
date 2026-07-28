@@ -3,8 +3,7 @@
  *
  * 覆盖：
  *  A) shepherdOpenPRs 主 SELECT WHERE 包含 'ci_passed'
- *  B) ci_passed + MERGEABLE 分支：executeMerge 后 reload PR state，
- *     state==='MERGED' 时同时 UPDATE status='completed' + completed_at + pr_status='merged'
+ *  B) ci_passed + MERGEABLE 分支只记录观察，不拥有 merge authority。
  *
  * 注：新实现拆为两次 execSync 调用（state+mergeable / statusCheckRollup），MERGED 早返回。
  */
@@ -39,21 +38,18 @@ describe('shepherdOpenPRs 主 SELECT WHERE', () => {
   });
 });
 
-describe('ci_passed + MERGEABLE 分支：merge 后推进 status=completed', () => {
+describe('ci_passed + MERGEABLE 分支：等待 Kernel merge authorization', () => {
   beforeEach(() => {
     vi.mocked(execSync).mockReset();
   });
 
-  it('executeMerge 后 reload state=MERGED → UPDATE status=completed + pr_status=merged', async () => {
+  it('does not invoke gh pr merge and only records pr_status=ci_passed', async () => {
     vi.mocked(execSync)
       // checkPrStatus call 1: state+mergeable → OPEN
       .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
       // checkPrStatus call 2: statusCheckRollup → CI 通过
       .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }))
-      // executeMerge（gh pr merge --squash）
-      .mockReturnValueOnce('')
-      // reload checkPrStatus call 1: state=MERGED（早返回）
-      .mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
+      ;
 
     const updates = [];
     const queryMock = vi.fn(async (sql, params) => {
@@ -76,28 +72,19 @@ describe('ci_passed + MERGEABLE 分支：merge 后推进 status=completed', () =
     const pool = { query: queryMock };
     const result = await shepherdOpenPRs(pool);
 
-    expect(result.merged).toBeGreaterThanOrEqual(1);
-    // 应当出现一条 UPDATE 同时含 status='completed' + pr_status='merged'
-    const completedUpdate = updates.find(u =>
-      /UPDATE\s+tasks/i.test(u.sql) &&
-      /status\s*=\s*'completed'/i.test(u.sql) &&
-      /pr_status\s*=\s*'merged'/i.test(u.sql)
-    );
-    expect(completedUpdate).toBeDefined();
+    expect(result.merged).toBe(0);
+    expect(execSync.mock.calls.map((call) => call[0]).some((cmd) => cmd.includes('gh pr merge'))).toBe(false);
+    expect(updates.some((u) => /pr_status\s*=\s*'ci_passed'/i.test(u.sql))).toBe(true);
+    expect(updates.some((u) => /status\s*=\s*'completed'/i.test(u.sql))).toBe(false);
   });
 
-  it('executeMerge 后 reload 仍 OPEN → 仅 UPDATE pr_status=ci_passed', async () => {
+  it('does not reload after CI success because no merge effect was requested', async () => {
     vi.mocked(execSync)
       // checkPrStatus call 1: state+mergeable → OPEN
       .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
       // checkPrStatus call 2: statusCheckRollup → CI 通过
       .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }))
-      // executeMerge OK
-      .mockReturnValueOnce('')
-      // reload checkPrStatus call 1: 还没 merged（OPEN，不早返回）
-      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
-      // reload checkPrStatus call 2: statusCheckRollup
-      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }));
+      ;
 
     const updates = [];
     const queryMock = vi.fn(async (sql, params) => {
@@ -127,5 +114,6 @@ describe('ci_passed + MERGEABLE 分支：merge 后推进 status=completed', () =
     // 不应有 status='completed' 的 UPDATE
     const completedUpdate = updates.find(u => /status\s*=\s*'completed'/i.test(u.sql));
     expect(completedUpdate).toBeUndefined();
+    expect(execSync).toHaveBeenCalledTimes(2);
   });
 });

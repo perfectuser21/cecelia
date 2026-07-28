@@ -124,20 +124,19 @@ describe('shepherdOpenPRs', () => {
     expect(mockPool.query).toHaveBeenCalledTimes(1);
   });
 
-  it('S2: CI 通过且 mergeable → auto-merge，pr_status=merged', async () => {
+  it('S2: CI 通过且 mergeable → only observe ci_passed, never auto-merge', async () => {
     const task = { id: 'task-1', title: 'T1', pr_url: 'https://github.com/o/r/pull/1', pr_status: 'open', retry_count: 0, payload: {} };
     mockPool.query
       .mockResolvedValueOnce({ rows: [task] })
       .mockResolvedValueOnce({ rowCount: 1 });
     vi.mocked(execSync)
       .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
-      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }))
-      .mockReturnValueOnce('')
-      .mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
+      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }));
 
     const result = await shepherdOpenPRs(mockPool);
-    expect(result.merged).toBe(1);
-    expect(mockPool.query.mock.calls[1][0]).toContain("pr_status = 'merged'");
+    expect(result.merged).toBe(0);
+    expect(mockPool.query.mock.calls[1][0]).toContain("pr_status = 'ci_passed'");
+    expect(execSync.mock.calls.map((call) => call[0]).some((cmd) => cmd.includes('gh pr merge'))).toBe(false);
   });
 
   it('S3: CI 失败 + retry=0 + lint → 重排 queued', async () => {
