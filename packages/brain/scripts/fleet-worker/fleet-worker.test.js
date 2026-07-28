@@ -123,11 +123,72 @@ function safeHealth(sequence) {
 }
 
 describe('Fleet Worker health-only service', () => {
-  it('freshly reprobes health for every GET /health', async () => {
+  it('serves cached health within TTL without reprobing (admission 超时根因：探测 4-6s > client 5s)', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    let sequence = 0;
+    let nowMs = 1_000_000;
+    const probeHealth = vi.fn(async () => safeHealth(++sequence));
+    const server = createFleetWorkerServer({
+      probeHealth,
+      healthCacheTtlMs: 30_000,
+      now: () => nowMs,
+    });
+
+    const first = await request(server, 'GET', '/health');
+    nowMs += 10_000; // 仍在 30s 新鲜期内
+    const second = await request(server, 'GET', '/health');
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(JSON.parse(first.body).observed_at).toBe(JSON.parse(second.body).observed_at);
+    expect(probeHealth).toHaveBeenCalledTimes(1);
+    server.close();
+  });
+
+  it('reprobes after the health cache TTL expires', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    let sequence = 0;
+    let nowMs = 1_000_000;
+    const probeHealth = vi.fn(async () => safeHealth(++sequence));
+    const server = createFleetWorkerServer({
+      probeHealth,
+      healthCacheTtlMs: 30_000,
+      now: () => nowMs,
+    });
+
+    const first = await request(server, 'GET', '/health');
+    nowMs += 30_001; // 过期
+    const second = await request(server, 'GET', '/health');
+
+    expect(JSON.parse(first.body).observed_at).not.toBe(JSON.parse(second.body).observed_at);
+    expect(probeHealth).toHaveBeenCalledTimes(2);
+    server.close();
+  });
+
+  it('does not cache failed probes', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    let sequence = 0;
+    const probeHealth = vi.fn(async () => {
+      sequence += 1;
+      if (sequence === 1) throw new Error('probe boom');
+      return safeHealth(sequence);
+    });
+    const server = createFleetWorkerServer({ probeHealth, healthCacheTtlMs: 30_000 });
+
+    const failed = await request(server, 'GET', '/health');
+    const recovered = await request(server, 'GET', '/health');
+
+    expect(failed.statusCode).toBe(503);
+    expect(recovered.statusCode).toBe(200);
+    expect(probeHealth).toHaveBeenCalledTimes(2);
+    server.close();
+  });
+
+  it('freshly reprobes health for every GET /health when cache disabled (ttl=0)', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     let sequence = 0;
     const probeHealth = vi.fn(async () => safeHealth(++sequence));
-    const server = createFleetWorkerServer({ probeHealth });
+    const server = createFleetWorkerServer({ probeHealth, healthCacheTtlMs: 0 });
 
     const first = await request(server, 'GET', '/health');
     const second = await request(server, 'GET', '/health');
@@ -149,7 +210,7 @@ describe('Fleet Worker health-only service', () => {
       if (current === 1) await firstPending;
       return safeHealth(current);
     });
-    const server = createFleetWorkerServer({ probeHealth });
+    const server = createFleetWorkerServer({ probeHealth, healthCacheTtlMs: 0 });
 
     const firstPendingResponse = request(server, 'GET', '/health');
     expect(probeHealth).toHaveBeenCalledTimes(1);
@@ -988,5 +1049,16 @@ describe('Fleet Worker production runtime assembly', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Fleet Worker launchd plist template', () => {
+  it('pins TMPDIR to the OrbStack-shareable path (重装回归守卫：_cecelia 私有临时目录 OrbStack 读不了，container probe 必死)', () => {
+    const template = fs.readFileSync(
+      path.join(path.dirname(new URL(import.meta.url).pathname), 'com.cecelia.fleet-worker.plist.template'),
+      'utf8',
+    );
+    expect(template).toContain('<key>TMPDIR</key>');
+    expect(template).toContain('<string>/Users/Shared/cecelia-fleet-tmp</string>');
   });
 });

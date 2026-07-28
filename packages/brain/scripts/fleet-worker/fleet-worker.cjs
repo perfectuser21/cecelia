@@ -49,6 +49,7 @@ try {
 const MAX_STRING_LENGTH = 1_024;
 const MAX_RESPONSE_BYTES = 65_536;
 const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
+const DEFAULT_HEALTH_CACHE_TTL_MS = 30_000;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 5_231;
 const ATTEMPT_PATH = /^\/harness\/attempts\/([a-f0-9-]+)$/;
@@ -718,6 +719,16 @@ function createFleetWorkerServer(options = {}) {
     && options.maxRequestBytes > 0
     ? options.maxRequestBytes
     : DEFAULT_MAX_REQUEST_BYTES;
+  // 完整探测（git worktree + docker 容器）单发 4-6s，超过 admission client 5s 超时；
+  // 新鲜期内直接复用上次成功报告。0 = 关缓存。admission 侧证据 TTL 上限 90s，30s 缓存安全。
+  const configuredHealthTtl = Number(
+    options.healthCacheTtlMs ?? options.env?.CECELIA_FLEET_HEALTH_CACHE_TTL_MS,
+  );
+  const healthCacheTtlMs = Number.isFinite(configuredHealthTtl)
+    ? Math.min(60_000, Math.max(0, Math.trunc(configuredHealthTtl)))
+    : DEFAULT_HEALTH_CACHE_TTL_MS;
+  const nowFn = typeof options.now === 'function' ? options.now : Date.now;
+  let healthCache = null;
   let probeInFlight = false;
   let attemptReady = attemptRunner === null;
   let reconciliationFailed = false;
@@ -776,6 +787,10 @@ function createFleetWorkerServer(options = {}) {
         writeJson(response, 405, { error: 'method_not_allowed' });
         return;
       }
+      if (healthCache && nowFn() < healthCache.expiresAt) {
+        writeJson(response, 200, projectHealth(healthCache.report));
+        return;
+      }
       if (probeInFlight) {
         writeJson(response, 503, { error: 'health_probe_busy' });
         return;
@@ -784,8 +799,12 @@ function createFleetWorkerServer(options = {}) {
       probeInFlight = true;
       try {
         const health = await probeHealth();
+        if (healthCacheTtlMs > 0) {
+          healthCache = { report: health, expiresAt: nowFn() + healthCacheTtlMs };
+        }
         writeJson(response, 200, projectHealth(health));
       } catch {
+        healthCache = null;
         writeJson(response, 503, { error: 'health_probe_failed' });
       } finally {
         probeInFlight = false;
