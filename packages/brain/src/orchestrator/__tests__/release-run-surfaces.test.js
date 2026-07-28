@@ -365,20 +365,46 @@ describe('legacy release surfaces fail closed', () => {
     expect(build).toMatch(/BUILD_SHA=.*rev-parse "\$BUILD_REF"/);
   });
 
-  it('checks out the exact authorized merge before artifact routing', () => {
+  it('routes from immutable exact-SHA artifacts without mutating the live checkout', () => {
     const worker = readFileSync(
       resolve(root, 'scripts/lib/release-run-effect-worker.mjs'),
       'utf8',
     );
-    const checkoutPosition = worker.indexOf('release-run-checkout.sh');
-    const routePosition = worker.lastIndexOf('planReleaseArtifactRoutes');
-    expect(checkoutPosition).toBeGreaterThan(-1);
-    expect(routePosition).toBeGreaterThan(checkoutPosition);
+    expect(worker).not.toContain('release-run-checkout.sh');
+    expect(worker).not.toMatch(/git['"], \[['"]checkout/);
+    expect(worker).toContain('prepareReleaseArtifactSnapshot');
+    expect(worker).toContain('KERNEL_RELEASE_ARTIFACT_ROOT');
 
     const deployLocal = readFileSync(resolve(root, 'scripts/deploy-local.sh'), 'utf8');
-    expect(deployLocal).toMatch(
-      /release-run-checkout\.sh"[\s\\]*"\$\{KERNEL_RELEASE_EFFECT_KIND:-production\}"/,
+    expect(deployLocal).not.toContain('release-run-checkout.sh');
+
+    const workflow = readFileSync(
+      resolve(root, 'packages/workflows/scripts/deploy-workflow-skills.sh'),
+      'utf8',
     );
+    expect(workflow).toContain('KERNEL_RELEASE_ARTIFACT_ROOT');
+    expect(workflow).not.toContain('source_dir="$workflow_root/packages/workflows/skills"');
+    expect(workflow).toMatch(/ln -s "\$skill_dir" "\$temporary_link"/);
+  });
+
+  it('publishes typed per-run dashboard rollback metadata', () => {
+    const promote = readFileSync(resolve(root, 'scripts/promote-dashboard.sh'), 'utf8');
+    expect(promote).toContain('logs/release-rollbacks/dashboard');
+    expect(promote).toContain('KERNEL_RELEASE_RUN_ID');
+    expect(promote).toContain('OLD_TAG');
+    const receipt = readFileSync(
+      resolve(root, 'scripts/lib/release-run-dashboard-receipt.mjs'),
+      'utf8',
+    );
+    expect(receipt).toContain('old_tag');
+    expect(receipt).toContain('new_tag');
+    expect(receipt).toContain('previous_digest');
+
+    const worker = readFileSync(
+      resolve(root, 'scripts/lib/release-run-effect-worker.mjs'),
+      'utf8',
+    );
+    expect(worker).toContain('dashboard_rollback_metadata');
   });
 
   it('leaves ReleaseRun contract E2E evidence to the server-owned manifest executor', () => {

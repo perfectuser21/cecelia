@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.268.7
+**版本**: 1.268.8
+
+## Immutable ReleaseRun artifacts
+
+- Release effects materialize an exact-merge archive in a retained,
+  per-commit artifact root; the shared deployment checkout is never reset.
+- Workflow Skills production links point only into that immutable root and
+  retain exact prior link targets.
+- Dashboard rollback evidence is a typed per-run JSON receipt containing the
+  exact old tag and deterministic previous-tree digest.
+- 回退：`bash scripts/brain-rollback.sh 1.268.7`（保留 immutable artifact roots）。
 
 ## Server-owned ReleaseRun E2E probes
 

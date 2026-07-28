@@ -45,6 +45,7 @@ SLOT_LOG_FILE="$DASH_DIR/.staging-slot.log"
 RELEASES_DIR="$DASH_DIR/.dist-releases"       # 产物库（release 冻结 + 旧版留存；产物，不进 git）
 RELEASE_FILE="$MAIN_ROOT/.production-release" # 指针 + 历史 + manifest（git 跟踪）
 BRAIN_VERSIONS_FILE="$MAIN_ROOT/.brain-versions" # brain 镜像版本账本（brain-rollback.sh 的 SSOT）
+ROLLBACK_DIR="$MAIN_ROOT/logs/release-rollbacks/dashboard"
 RETAIN_N=5                                     # 留存份数上限
 TAG_PREFIX="prod-cecelia-v"
 
@@ -127,7 +128,11 @@ do_release() {
     fi
     echo "📦 已冻结验过的产物 → .dist-releases/${RELEASE_TAG}（不可变 release）"
 
-    PROMOTE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
+    PROMOTE_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+    [[ "$PROMOTE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "❌ Dashboard release blocked: exact merge SHA unavailable" >&2
+        exit 78
+    }
     if [[ -z "${CECELIA_SKIP_GIT_TAG:-}" ]]; then
         git -C "$MAIN_ROOT" tag -f "$RELEASE_TAG" "$PROMOTE_COMMIT" >/dev/null 2>&1 \
             && echo "🏷️  已打 git tag $RELEASE_TAG → ${PROMOTE_COMMIT:0:8}" \
@@ -158,6 +163,10 @@ do_deploy() {
     local PROMOTE_FAIL=0
     local OLD_TAG="" HAD_OLD=false
     [[ -f "$RELEASE_FILE" ]] && OLD_TAG=$(grep '^current=' "$RELEASE_FILE" | head -1 | cut -d= -f2)
+    if [[ ! "$OLD_TAG" =~ ^${TAG_PREFIX}[0-9]+$ ]]; then
+        echo "❌ Dashboard promotion blocked: exact OLD_TAG unavailable" >&2
+        exit 78
+    fi
     if [[ -d "$DIST_DIR" ]]; then
         rm -rf "${DIST_DIR}.old" 2>/dev/null || true
         mv "$DIST_DIR" "${DIST_DIR}.old"
@@ -167,15 +176,9 @@ do_deploy() {
     if cp -R "$SRC" "$DIST_DIR"; then
         if [[ "$HAD_OLD" == true ]]; then
             mkdir -p "$RELEASES_DIR"
-            if [[ -n "$OLD_TAG" ]]; then
-                rm -rf "${RELEASES_DIR:?}/$OLD_TAG"
-                mv "${DIST_DIR}.old" "$RELEASES_DIR/$OLD_TAG"
-                echo "📦 旧版已留存：.dist-releases/$OLD_TAG"
-            else
-                rm -rf "${RELEASES_DIR:?}/pre-$tag"
-                mv "${DIST_DIR}.old" "$RELEASES_DIR/pre-$tag"
-                echo "📦 旧版（无指针历史）已留存：.dist-releases/pre-$tag"
-            fi
+            rm -rf "${RELEASES_DIR:?}/$OLD_TAG"
+            mv "${DIST_DIR}.old" "$RELEASES_DIR/$OLD_TAG"
+            echo "📦 旧版已留存：.dist-releases/$OLD_TAG"
             prune_releases
         fi
         echo "✅ 本机 5211 已指向 $tag"
@@ -188,7 +191,11 @@ do_deploy() {
 
     # 写指针：current/commit/promoted_at 覆盖；manifest/history（release 已写）保留。
     local DEPLOY_COMMIT
-    DEPLOY_COMMIT=$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
+    DEPLOY_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+    [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "❌ Dashboard promotion blocked: exact merge SHA unavailable" >&2
+        exit 78
+    }
     {
         echo "current=$tag"
         echo "commit=$DEPLOY_COMMIT"
@@ -246,6 +253,11 @@ do_deploy() {
         echo "🔴 deploy 结束：本机 5211 已上线 ${tag}，但 HK 同步/终验对账红（见上方）——退出非零"
         exit 1
     fi
+    RELEASE_DASHBOARD_OLD_TAG="$OLD_TAG" \
+    RELEASE_DASHBOARD_NEW_TAG="$tag" \
+    RELEASE_DASHBOARD_OLD_ROOT="$RELEASES_DIR/$OLD_TAG" \
+    RELEASE_DASHBOARD_RECEIPT="$ROLLBACK_DIR/${KERNEL_RELEASE_RUN_ID}.json" \
+        node "$SCRIPT_DIR/lib/release-run-dashboard-receipt.mjs"
     echo "🎉 deploy 完成：本机 5211 已上线 ${tag}，HK 已同步，staging 已停、标记已清。"
 }
 

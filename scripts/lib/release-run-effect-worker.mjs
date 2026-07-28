@@ -2,13 +2,13 @@
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
-  existsSync,
   readFileSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 
 import { planReleaseArtifactRoutes } from '../../packages/brain/src/orchestrator/release-run-routing.js';
+import { prepareReleaseArtifactSnapshot } from './release-run-artifact-snapshot.mjs';
 
 const effectKind = process.env.KERNEL_RELEASE_EFFECT_KIND;
 const repoRoot = process.env.KERNEL_RELEASE_DEPLOY_ROOT;
@@ -19,28 +19,28 @@ try {
   throw new Error('release_effect_worker_artifacts_invalid');
 }
 
-let routes = planReleaseArtifactRoutes(effectKind, artifactVersions, {
+const artifactRoot = prepareReleaseArtifactSnapshot({
   repoRoot,
+  artifactStore: process.env.KERNEL_RELEASE_ARTIFACT_STORE
+    || join(repoRoot, '.release-artifacts'),
   mergeSha: process.env.KERNEL_RELEASE_MERGE_SHA,
 });
-const checkoutScript = join(repoRoot, 'scripts/lib/release-run-checkout.sh');
-if (!existsSync(checkoutScript)) {
-  throw new Error('release_effect_worker_checkout_unavailable');
-}
-execFileSync('bash', [checkoutScript, effectKind, repoRoot], {
-  cwd: repoRoot,
-  env: process.env,
-  stdio: 'inherit',
-  timeout: 5 * 60_000,
-});
-routes = planReleaseArtifactRoutes(effectKind, artifactVersions, {
-  repoRoot,
+const routes = planReleaseArtifactRoutes(effectKind, artifactVersions, {
+  repoRoot: artifactRoot,
   mergeSha: process.env.KERNEL_RELEASE_MERGE_SHA,
 });
 for (const route of routes) {
+  const artifact = artifactVersions.find((item) => item.name === route.artifact);
   execFileSync('bash', [route.command, ...route.args], {
-    cwd: repoRoot,
-    env: { ...process.env, ...route.env },
+    cwd: artifactRoot,
+    env: {
+      ...process.env,
+      ...route.env,
+      KERNEL_RELEASE_ARTIFACT_ROOT: artifactRoot,
+      KERNEL_RELEASE_ARTIFACT_NAME: artifact.name,
+      KERNEL_RELEASE_ARTIFACT_VERSION: artifact.version,
+      KERNEL_RELEASE_ARTIFACT_DIGEST: artifact.digest,
+    },
     stdio: 'inherit',
     timeout: 15 * 60_000,
   });
@@ -61,6 +61,17 @@ if (effectKind === 'production') {
       join(
         repoRoot,
         'logs/release-rollbacks/workflow-skills',
+        `${process.env.KERNEL_RELEASE_RUN_ID}.json`,
+      ),
+      'utf8',
+    ));
+  }
+  const dashboard = artifactVersions.find((artifact) => artifact.name === 'workspace');
+  if (dashboard) {
+    status.dashboard_rollback_metadata = JSON.parse(readFileSync(
+      join(
+        repoRoot,
+        'logs/release-rollbacks/dashboard',
         `${process.env.KERNEL_RELEASE_RUN_ID}.json`,
       ),
       'utf8',

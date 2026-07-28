@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.268.7
+**Brain 版本**: 1.268.8
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.8 — Immutable ReleaseRun artifacts
+
+- Release effects execute from an exact-merge `git archive` snapshot instead
+  of checking out or resetting the shared deployment repository.
+- Workflow Skills links target the retained immutable snapshot and preserve
+  the exact previous link manifest for rollback.
+- Dashboard promotion writes a typed, per-run rollback receipt with the exact
+  `OLD_TAG`, target tag, merge SHA, and deterministic previous-tree digest.
+- 回退：`bash scripts/brain-rollback.sh 1.268.7`（保留 immutable artifact roots）。
 
 ## Brain 1.268.7 — Server-owned ReleaseRun E2E probes
 

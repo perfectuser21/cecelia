@@ -5,15 +5,32 @@
 set -euo pipefail
 
 workflow_root="$(cd "$(dirname "$0")/../../.." && pwd)"
+deployment_root="${KERNEL_RELEASE_DEPLOY_ROOT:-$workflow_root}"
 effect_kind="production"
 [[ "${1:-}" == "--staging" ]] && effect_kind="staging"
 
 bash "$workflow_root/scripts/lib/release-run-guard.sh" "$effect_kind"
 
 release_run_id="${KERNEL_RELEASE_RUN_ID:-}"
-source_dir="$workflow_root/packages/workflows/skills"
-[[ "$release_run_id" =~ ^[0-9a-fA-F-]{36}$ && -d "$source_dir" ]] || {
+artifact_root="${KERNEL_RELEASE_ARTIFACT_ROOT:-}"
+source_dir="$artifact_root/packages/workflows/skills"
+[[ "$release_run_id" =~ ^[0-9a-fA-F-]{36}$ \
+   && "$artifact_root" == /* \
+   && -f "$artifact_root/.release-snapshot.json" \
+   && -d "$source_dir" ]] || {
   echo "Workflow Skills promotion blocked: invalid ReleaseRun source" >&2
+  exit 78
+}
+node -e '
+  const fs = require("node:fs");
+  const receipt = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (
+    receipt.schema_version !== 1
+    || receipt.source !== "git-archive"
+    || receipt.merge_sha !== process.env.KERNEL_RELEASE_MERGE_SHA
+  ) process.exit(78);
+' "$artifact_root/.release-snapshot.json" || {
+  echo "Workflow Skills promotion blocked: snapshot identity mismatch" >&2
   exit 78
 }
 
@@ -50,7 +67,7 @@ deploy_roots="${CECELIA_SKILLS_DEPLOY_ROOTS:-}"
   exit 78
 }
 
-rollback_dir="$workflow_root/logs/release-rollbacks/workflow-skills"
+rollback_dir="$deployment_root/logs/release-rollbacks/workflow-skills"
 rollback_manifest="$rollback_dir/${release_run_id}.links"
 receipt_file="$rollback_dir/${release_run_id}.json"
 mkdir -p "$rollback_dir"
@@ -99,7 +116,10 @@ for account_root in $deploy_roots; do
     skill_name="${skill_dir##*/}"
     temporary_link="$skills_root/.${skill_name}.release-next.$$"
     ln -s "$skill_dir" "$temporary_link"
-    mv -f "$temporary_link" "$skills_root/$skill_name"
+    node -e '
+      const fs = require("node:fs");
+      fs.renameSync(process.argv[1], process.argv[2]);
+    ' "$temporary_link" "$skills_root/$skill_name"
     [[ "$(readlink "$skills_root/$skill_name")" == "$skill_dir" ]] || {
       echo "Workflow Skills production blocked: live readback mismatch" >&2
       exit 78

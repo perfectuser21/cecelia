@@ -33,6 +33,8 @@ else
 fi
 
 MAIN_SCRIPTS="$MAIN_ROOT/scripts"
+SOURCE_ROOT="${KERNEL_RELEASE_ARTIFACT_ROOT:-$MAIN_ROOT}"
+SOURCE_SCRIPTS="$SOURCE_ROOT/scripts"
 
 # 参数解析
 DRY_RUN=false
@@ -70,9 +72,11 @@ RUN_GUARD=true
 
 if [[ "$RUN_GUARD" == true ]]; then
     if [[ -n "${KERNEL_RELEASE_MERGE_SHA:-}" ]]; then
-        echo "🔒 ReleaseRun exact-SHA checkout: ${KERNEL_RELEASE_MERGE_SHA}"
-        bash "$SCRIPT_DIR/lib/release-run-checkout.sh" \
-            "${KERNEL_RELEASE_EFFECT_KIND:-production}" "$MAIN_ROOT"
+        if [[ "$SOURCE_ROOT" != /* || ! -f "$SOURCE_ROOT/.release-snapshot.json" ]]; then
+            echo "❌ ReleaseRun immutable artifact snapshot unavailable" >&2
+            exit 78
+        fi
+        echo "🔒 ReleaseRun immutable exact-SHA source: ${KERNEL_RELEASE_MERGE_SHA}"
     elif [[ "${CECELIA_DEPLOY_AUTORESET:-0}" == "1" ]]; then
         # 专用部署根（机器独占，无人类工作）：自愈到 origin/main
         echo "🔒 部署根守卫（专用根自愈）: fetch + checkout -f + reset --hard origin/$BASE_BRANCH"
@@ -118,7 +122,9 @@ fi
 # 隔离守卫：CECELIA_DEPLOY_ROOT 测试模式禁 curl 真生产——否则真生产落后 main 时
 # NEED_BRAIN=true 会在隔离根真点火 brain-deploy.sh（staging-gate smoke 实证）。
 SHA_MISMATCH=false
-ORIGIN_SHA=$(git -C "$MAIN_ROOT" rev-parse --verify "origin/$BASE_BRANCH^{commit}" 2>/dev/null || echo "")
+ORIGIN_SHA="${KERNEL_RELEASE_MERGE_SHA:-}"
+[[ "$ORIGIN_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    || ORIGIN_SHA=$(git -C "$MAIN_ROOT" rev-parse --verify "origin/$BASE_BRANCH^{commit}" 2>/dev/null || echo "")
 PROD_SHA="${CECELIA_PROD_GIT_SHA:-${GIT_SHA:-}}"
 if [[ -z "$PROD_SHA" && -z "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     PROD_SHA=$(curl -sf --max-time 5 \
@@ -281,13 +287,14 @@ fi
 #   ★ promote（原子换入 5211 + 同步 HK）改由人工跑 scripts/promote-dashboard.sh ★
 if [[ "$NEED_DASHBOARD" == true ]]; then
     DASH_DIR="$MAIN_ROOT/apps/dashboard"
+    DASH_SOURCE_DIR="$SOURCE_ROOT/apps/dashboard"
     DIST_DIR="$DASH_DIR/dist"
     STAGING_DIST="$DASH_DIR/.dist-staging"
     PENDING_FILE="$DASH_DIR/.staging-pending"
     SLOT_PID_FILE="$DASH_DIR/.staging-slot.pid"
     SLOT_LOG_FILE="$DASH_DIR/.staging-slot.log"
-    SELFCHECK="$MAIN_SCRIPTS/dashboard-staging-selfcheck.sh"
-    SLOT_SERVER="$MAIN_SCRIPTS/dashboard-slot-server.cjs"
+    SELFCHECK="$SOURCE_SCRIPTS/dashboard-staging-selfcheck.sh"
+    SLOT_SERVER="$SOURCE_SCRIPTS/dashboard-slot-server.cjs"
     STAGING_SLOT_PORT="${DASHBOARD_STAGING_PORT:-5223}"
 
     echo "🖥️  Dashboard 改动 → 构建到 staging slot（自检 → 起常驻 staging → 停住等放行）"
@@ -307,7 +314,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             # cache 挂 $MAIN_ROOT/.npm-cache（bind-mounted volume），避免 Brain /tmp 100MB tmpfs 被塞满
             # logs-dir 同理必须显式指定：--cache 不管 npm 自己的运行日志，容器内
             # 默认日志路径 $HOME/.npm/_logs 只读会导致同一类 mkdir 失败（2026-07-20 实锤）
-            cd "$MAIN_ROOT"
+            cd "$SOURCE_ROOT"
             NPM_CACHE_DIR="$MAIN_ROOT/.npm-cache"
             NPM_LOGS_DIR="$MAIN_ROOT/.npm-logs"
             if ! npm install --prefer-offline --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" 2>&1; then
@@ -322,16 +329,17 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
                 echo "  (容器内构建 → 使用独立 node 容器，4GB 内存限制)"
                 docker run --rm \
                     -v "$MAIN_ROOT:$MAIN_ROOT:rw" \
-                    -w "$DASH_DIR" \
+                    -v "$SOURCE_ROOT:$SOURCE_ROOT:rw" \
+                    -w "$DASH_SOURCE_DIR" \
                     -e NODE_OPTIONS="--max-old-space-size=3072" \
-                    -e GIT_SHA="$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
+                    -e GIT_SHA="${KERNEL_RELEASE_MERGE_SHA:-unknown}" \
                     --memory=4g \
                     --memory-swap=4g \
                     node:20-alpine \
                     npm run build -- --outDir "$STAGING_DIST"
             else
-                cd "$DASH_DIR"
-                GIT_SHA="$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
+                cd "$DASH_SOURCE_DIR"
+                GIT_SHA="${KERNEL_RELEASE_MERGE_SHA:-unknown}" \
                     NODE_OPTIONS="--max-old-space-size=3072" npm run build -- --outDir "$STAGING_DIST"
             fi
             cd "$MAIN_ROOT"
@@ -360,7 +368,10 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             kill "$(cat "$SLOT_PID_FILE" 2>/dev/null)" 2>/dev/null || true
             rm -f "$SLOT_PID_FILE"
         fi
-        STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+        STAGE_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+        STAGE_COMMIT="${STAGE_COMMIT:0:12}"
+        [[ -n "$STAGE_COMMIT" ]] \
+            || STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
         DIST_DIR="$STAGING_DIST" SLOT_PORT="$STAGING_SLOT_PORT" \
             STAGING_BANNER=1 STAGING_COMMIT="$STAGE_COMMIT" \
             nohup node "$SLOT_SERVER" > "$SLOT_LOG_FILE" 2>&1 &
@@ -387,7 +398,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             echo "staging_dist=$STAGING_DIST"
             echo "staging_port=$STAGING_SLOT_PORT"
             echo "slot_pid=$SLOT_PID"
-            echo "commit=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+            echo "commit=${KERNEL_RELEASE_MERGE_SHA:-$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
             echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         } > "$PENDING_FILE"
 
@@ -401,7 +412,10 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         echo "   └───────────────────────────────────────────────────────"
 
         # ── 发 Bark 推送通知你去看 staging（iPhone 收到再放行）──────────────────
-        STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+        STAGE_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+        STAGE_COMMIT="${STAGE_COMMIT:0:12}"
+        [[ -n "$STAGE_COMMIT" ]] \
+            || STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
         NOTIFY_TITLE="Cecelia 部署待放行 🟡"
         NOTIFY_BODY="dashboard 新版已停在 staging。电脑开 perfect21:${STAGING_SLOT_PORT} 看，满意跑 promote-dashboard.sh 放行。commit ${STAGE_COMMIT}"
         if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then

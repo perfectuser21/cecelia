@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { createReleaseRunAdapters } from '../release-run-adapters.js';
 import { createRequiredE2EManifest } from '../release-run-e2e.js';
@@ -213,6 +215,13 @@ describe('production ReleaseRun adapters', () => {
         release_run_id: request.release_run_id,
         merge_sha: sha,
         deployed_artifact_versions: [workspaceArtifact],
+        dashboard_rollback_metadata: JSON.parse(readFileSync(
+          resolve(
+            import.meta.dirname,
+            'fixtures/dashboard-release-rollback-receipt.json',
+          ),
+          'utf8',
+        )),
       }))
       .mockResolvedValueOnce(response({
         status: 'healthy',
@@ -227,11 +236,6 @@ describe('production ReleaseRun adapters', () => {
       brainUrl: 'http://brain',
       dashboardUrl: 'http://dashboard',
       deployToken: 'token',
-      readDashboardRollback: () => [
-        'current=release-current',
-        'history=release-previous',
-        `commit=${sha}`,
-      ].join('\n'),
       e2eFetchFn: vi.fn(async () => healthyProbeResponse()),
     });
 
@@ -244,10 +248,73 @@ describe('production ReleaseRun adapters', () => {
       merge_sha: sha,
       deployed_versions: [workspaceArtifact],
       rollback_metadata: {
-        anchor: 'dashboard:release-current',
-        previous_version: 'dashboard:release-previous',
+        anchor: 'dashboard:prod-cecelia-v42',
+        previous_version: 'dashboard:prod-cecelia-v41',
       },
     });
+  });
+
+  it('rejects dashboard rollback metadata that does not name the exact old tag', async () => {
+    const workspaceArtifact = {
+      name: 'workspace',
+      version: sha.slice(0, 12),
+      digest: `sha256:${'7'.repeat(64)}`,
+    };
+    const workspaceManifest = {
+      id: e2eManifest.id,
+      ...createRequiredE2EManifest({
+        release_run_id: request.release_run_id,
+        run_id: e2eManifest.run_id,
+        repository: e2eManifest.repository,
+        merge_sha: sha,
+        artifact_versions: [workspaceArtifact],
+        contract: {
+          id: e2eManifest.contract_id,
+          version: e2eManifest.contract_version,
+          approved_at: e2eManifest.contract_approved_at,
+          contract_content: '# frozen approved contract',
+          e2e_acceptance: e2eManifest.e2e_acceptance,
+        },
+      }),
+    };
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(response({
+        status: 'success',
+        release_run_id: request.release_run_id,
+        merge_sha: sha,
+        deployed_artifact_versions: [workspaceArtifact],
+        dashboard_rollback_metadata: {
+          schema_version: 1,
+          release_run_id: request.release_run_id,
+          merge_sha: sha,
+          artifact_name: 'workspace',
+          old_tag: '',
+          new_tag: 'prod-cecelia-v42',
+          anchor: 'dashboard:prod-cecelia-v42',
+          previous_version: 'dashboard:history-tail-guess',
+          previous_digest: `sha256:${'6'.repeat(64)}`,
+        },
+      }))
+      .mockResolvedValueOnce(response({
+        status: 'healthy',
+        version: '1.268.5',
+        git_sha: 'a'.repeat(40),
+      }))
+      .mockResolvedValueOnce(response({ ok: true, queue: {} }))
+      .mockResolvedValueOnce(response({ git_sha: sha }));
+    const adapters = createReleaseRunAdapters({
+      fetchFn,
+      brainUrl: 'http://brain',
+      dashboardUrl: 'http://dashboard',
+      deployToken: 'token',
+      e2eFetchFn: vi.fn(async () => healthyProbeResponse()),
+    });
+
+    await expect(adapters.observeProduction({
+      ...request,
+      artifact_versions: [workspaceArtifact],
+      e2e_manifest: workspaceManifest,
+    })).resolves.toEqual({ status: 'fail' });
   });
 
   it('requires live Workflow Skills rollback readback for a routed artifact', async () => {

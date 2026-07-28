@@ -1,6 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sameArtifactVersions } from './release-run-contract.js';
 import { executeRequiredE2EManifest } from './release-run-e2e.js';
@@ -23,10 +21,6 @@ export function createReleaseRunAdapters({
   gitExecFile = (args) => execFileSync('git', args, { encoding: 'utf8' }),
   repoRoot = process.env.REPO_ROOT
     ?? fileURLToPath(new URL('../../../..', import.meta.url)),
-  readDashboardRollback = () => readFileSync(
-    join(repoRoot, '.production-release'),
-    'utf8',
-  ),
   brainUrl = process.env.BRAIN_URL ?? 'http://localhost:5221',
   stagingUrl = process.env.BRAIN_STAGING_URL ?? 'http://localhost:5222',
   dashboardUrl = process.env.DASHBOARD_URL ?? 'http://localhost:5211',
@@ -201,18 +195,22 @@ export function createReleaseRunAdapters({
       previousVersions.push(`brain-image:${status.rollback_image_digest}`);
     }
     if (dashboard) {
-      const rollback = Object.fromEntries(
-        readDashboardRollback().split('\n')
-          .filter((line) => line.includes('='))
-          .map((line) => line.split('=', 2)),
-      );
+      const rollback = status.dashboard_rollback_metadata;
       if (
-        !rollback.current
-        || !rollback.history
-        || rollback.commit !== request.merge_sha
+        rollback?.schema_version !== 1
+        || rollback.release_run_id !== request.release_run_id
+        || rollback.merge_sha !== request.merge_sha
+        || rollback.artifact_name !== 'workspace'
+        || rollback.current_version !== dashboard.version
+        || rollback.current_digest !== dashboard.digest
+        || !/^prod-cecelia-v[0-9]+$/.test(rollback.old_tag ?? '')
+        || !/^prod-cecelia-v[0-9]+$/.test(rollback.new_tag ?? '')
+        || rollback.anchor !== `dashboard:${rollback.new_tag}`
+        || rollback.previous_version !== `dashboard:${rollback.old_tag}`
+        || !/^sha256:[0-9a-f]{64}$/.test(rollback.previous_digest ?? '')
       ) return { status: 'fail' };
-      anchors.push(`dashboard:${rollback.current}`);
-      previousVersions.push(`dashboard:${rollback.history.split(',').at(-1)}`);
+      anchors.push(rollback.anchor);
+      previousVersions.push(rollback.previous_version);
     }
     if (workflowSkills) {
       const workflowRollback = status.workflow_rollback_metadata;
