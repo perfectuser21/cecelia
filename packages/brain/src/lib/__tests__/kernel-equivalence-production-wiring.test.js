@@ -597,4 +597,29 @@ describe('kernel equivalence production wiring', () => {
       /__trustedExecutionBoot\s*=\s*await\s+bootBrainTrustedExecution\(\)/,
     );
   });
+
+  it('rejects accessor-backed outer ports without invoking the accessor', () => {
+    const value = fixture();
+    const ports = assemblyPorts();
+    let reads = 0;
+    Object.defineProperty(ports, 'profile_id', {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return 'local-isolated-test';
+      },
+    });
+
+    expect(() => (
+      productionWiring.loadProductionTrustedExecutionWiring({
+        env: value.env,
+        pool: databasePort(),
+        assemblyPorts: ports,
+        now: () => NOW,
+      })
+    )).toThrowError(expect.objectContaining({
+      code: 'trusted_execution_ports_invalid',
+    }));
+    expect(reads).toBe(0);
+  });
 });

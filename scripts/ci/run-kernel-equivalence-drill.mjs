@@ -20,7 +20,7 @@ import {
 import {
   BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
   createBrainTrustedExecutionClient,
-  inspectBrainTrustedExecutionSocketReadiness,
+  probeBrainTrustedExecutionSocketReadiness,
 } from '../../packages/brain/src/lib/kernel-equivalence-trusted-execution-client.js';
 
 const repositoryRoot = resolve(
@@ -264,7 +264,7 @@ async function main() {
   if (options.mode === 'check') {
     const { now, plan } = compileReportDrillPlan(contract);
     const executionReadiness =
-      inspectBrainTrustedExecutionSocketReadiness({
+      await probeBrainTrustedExecutionSocketReadiness({
         socketPath:
           process.env.KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH
             || BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,

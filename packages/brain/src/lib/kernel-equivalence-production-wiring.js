@@ -98,14 +98,31 @@ function exactObject(value, fields, code) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     fail(code);
   }
-  const actual = Object.keys(value).sort();
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    fail(code);
+  }
+  const ownKeys = Reflect.ownKeys(descriptors);
+  if (ownKeys.some((field) => typeof field !== 'string')) {
+    fail(code);
+  }
+  const actual = ownKeys.sort();
   if (
     actual.length !== fields.length
     || actual.some((field, index) => field !== fields[index])
+    || fields.some((field) => (
+      !Object.hasOwn(descriptors[field] ?? {}, 'value')
+      || descriptors[field].enumerable !== true
+    ))
   ) {
     fail(code);
   }
-  return value;
+  return Object.freeze(Object.fromEntries(fields.map((field) => [
+    field,
+    descriptors[field].value,
+  ])));
 }
 
 function bounded(value, maximum = 2_048) {
@@ -374,15 +391,15 @@ function pinManifest(value, now) {
 
 function pinAssemblyPorts(value, profileId) {
   if (value == null) fail('trusted_execution_ports_unconfigured');
-  exactObject(
+  const snapshot = exactObject(
     value,
     ASSEMBLY_PORT_FIELDS,
     'trusted_execution_ports_invalid',
   );
-  if (value.profile_id !== profileId) {
+  if (snapshot.profile_id !== profileId) {
     fail('trusted_execution_ports_profile_mismatch');
   }
-  return value;
+  return snapshot;
 }
 
 export function loadProductionTrustedExecutionWiring({
@@ -430,6 +447,7 @@ export function loadProductionTrustedExecutionWiring({
   const grantIssuer = createProtectedGrantFileIssuer({
     grantRoot: manifest.grantRoot,
     executionGrantAuthority,
+    maximumTtlSeconds: manifest.grantTtlSeconds,
     now,
   });
   const createService = createProductionTrustedExecutionServiceFactory({

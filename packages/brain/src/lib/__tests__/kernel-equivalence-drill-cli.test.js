@@ -105,6 +105,45 @@ describe('kernel equivalence drill CLI', () => {
     }
   });
 
+  it('does not report a stale mode-0600 Unix socket inode as ready', () => {
+    const temporaryRoot = mkdtempSync('/tmp/keq-cli-stale-');
+    const socketPath = join(temporaryRoot, 'brain.sock');
+    try {
+      const created = spawnSync('python3', [
+        '-c',
+        [
+          'import os, socket',
+          'path = os.environ["KEQ_STALE_SOCKET"]',
+          'sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)',
+          'sock.bind(path)',
+          'os.chmod(path, 0o600)',
+        ].join('; '),
+      ], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          KEQ_STALE_SOCKET: socketPath,
+        },
+      });
+      expect(created.status).toBe(0);
+
+      const result = run(['--check', '--format=json'], {
+        KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH: socketPath,
+      });
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        execution_ready: false,
+        execution_wiring_ready: false,
+        execution_wiring_blockers: [
+          'trusted_execution_socket_unavailable',
+        ],
+      });
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
   it('compiles a historical check with the same finite report_as_of clock', () => {
     const contract = load(readFileSync(
       join(repositoryRoot, 'regression-contract.yaml'),

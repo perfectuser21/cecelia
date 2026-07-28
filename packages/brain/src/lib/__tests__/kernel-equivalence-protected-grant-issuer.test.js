@@ -7,6 +7,7 @@ import {
   realpathSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -265,6 +266,48 @@ describe('protected execution grant issuer', () => {
     )).toBe(true);
     expect(existsSync(
       join(value.grantRoot, `${malformedId}.json`),
+    )).toBe(true);
+  });
+
+  it('enforces the production-configured grant TTL below the registry maximum', async () => {
+    const value = fixture();
+    const issuer = protectedGrants.createProtectedGrantFileIssuer({
+      grantRoot: value.grantRoot,
+      executionGrantAuthority: value.authority,
+      maximumTtlSeconds: 300,
+      now: value.now,
+    });
+
+    await expect(issuer.issueProtectedGrant(
+      grantInput(value.cell, 600),
+    )).rejects.toMatchObject({
+      code: 'protected_grant_ttl_exceeded',
+    });
+    expect(readdirSync(value.grantRoot)).toEqual([]);
+  });
+
+  it('retains an expired file whose signed grant id does not match its filename', async () => {
+    const value = fixture();
+    const issuer = protectedGrants.createProtectedGrantFileIssuer({
+      grantRoot: value.grantRoot,
+      executionGrantAuthority: value.authority,
+      now: value.now,
+    });
+    await issuer.issueProtectedGrant(grantInput(value.cell, 1));
+    const mismatchedId =
+      '99999999-9999-4999-8999-999999999999';
+    renameSync(
+      join(value.grantRoot, `${value.grantId}.json`),
+      join(value.grantRoot, `${mismatchedId}.json`),
+    );
+    value.advance(1_001);
+
+    await expect(issuer.cleanupExpiredGrants()).resolves.toEqual({
+      removed: 0,
+      retained: 1,
+    });
+    expect(existsSync(
+      join(value.grantRoot, `${mismatchedId}.json`),
     )).toBe(true);
   });
 });

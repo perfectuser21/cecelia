@@ -198,6 +198,67 @@ export function inspectBrainTrustedExecutionSocketReadiness({
   }
 }
 
+export async function probeBrainTrustedExecutionSocketReadiness({
+  socketPath = DEFAULT_SOCKET_PATH,
+  timeoutMs = 1_000,
+} = {}) {
+  let identity;
+  try {
+    validateSocketPath(socketPath);
+    if (
+      !Number.isInteger(timeoutMs)
+      || timeoutMs < 1
+      || timeoutMs > 5_000
+    ) {
+      fail('trusted_execution_transport_configuration_invalid');
+    }
+    identity = inspectSocket(socketPath);
+  } catch (error) {
+    const code = (
+      error instanceof KernelTrustedExecutionClientError
+      && typeof error.code === 'string'
+    )
+      ? error.code
+      : 'trusted_execution_socket_unavailable';
+    return Object.freeze({
+      ready: false,
+      code,
+      socket_path: null,
+    });
+  }
+
+  return new Promise((resolveReadiness) => {
+    let settled = false;
+    const socket = createConnection({ path: socketPath });
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolveReadiness(Object.freeze(value));
+    };
+    const unavailable = () => finish({
+      ready: false,
+      code: 'trusted_execution_socket_unavailable',
+      socket_path: null,
+    });
+    const timer = setTimeout(unavailable, timeoutMs);
+    socket.once('error', unavailable);
+    socket.once('connect', () => {
+      try {
+        sameSocket(socketPath, identity);
+        finish({
+          ready: true,
+          code: null,
+          socket_path: socketPath,
+        });
+      } catch {
+        unavailable();
+      }
+    });
+  });
+}
+
 export function createUnixSocketTrustedExecutionTransport({
   socketPath = DEFAULT_SOCKET_PATH,
   timeoutMs = DEFAULT_CLIENT_DEADLINE_MS,

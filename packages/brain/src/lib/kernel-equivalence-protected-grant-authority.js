@@ -323,9 +323,19 @@ function removeExactFile(path, identity) {
 export function createProtectedGrantFileIssuer({
   grantRoot,
   executionGrantAuthority,
+  maximumTtlSeconds = null,
   now = Date.now,
 } = {}) {
-  if (typeof now !== 'function') {
+  if (
+    typeof now !== 'function'
+    || (
+      maximumTtlSeconds != null
+      && (
+        !Number.isInteger(maximumTtlSeconds)
+        || maximumTtlSeconds < 1
+      )
+    )
+  ) {
     fail('protected_grant_configuration_invalid');
   }
   assertGrantAuthority(executionGrantAuthority);
@@ -337,6 +347,21 @@ export function createProtectedGrantFileIssuer({
       'brain.kernel_equivalence.protected_grant_issuer.v1',
     async issueProtectedGrant(input = {}) {
       assertRootUnchanged(trustedRoot);
+      const ttlDescriptor = Object.getOwnPropertyDescriptor(
+        input,
+        'ttl_seconds',
+      );
+      if (
+        maximumTtlSeconds != null
+        && (
+          !ttlDescriptor
+          || !Object.hasOwn(ttlDescriptor, 'value')
+          || !Number.isInteger(ttlDescriptor.value)
+          || ttlDescriptor.value > maximumTtlSeconds
+        )
+      ) {
+        fail('protected_grant_ttl_exceeded');
+      }
       const grant = executionGrantAuthority.issue(input);
       const grantId = grant?.grant_id;
       if (
@@ -516,6 +541,9 @@ export function createProtectedGrantFileIssuer({
             || completed.ino !== opened.ino
             || completed.size !== opened.size
             || completed.ctimeMs !== opened.ctimeMs
+            || grant?.schema_version
+              !== 'kernel-equivalence-execution-grant/v1'
+            || grant?.grant_id !== entry.name.slice(0, -'.json'.length)
             || !Number.isFinite(expiresAt)
             || expiresAt > operationNow
           ) {
