@@ -114,12 +114,25 @@ const VERSION_CHECKS = [
   ['worker.contract_version', 'worker_contract', 'worker_contract_drift'],
   ['worker.version', 'worker', 'worker_version_drift'],
   ['runner.version', 'runner', 'runner_version_drift'],
-  ['os.version', 'os', 'os_version_drift'],
   ['orbstack.version', 'orbstack', 'orbstack_version_drift'],
   ['git.version', 'git', 'git_version_drift'],
   ['node.version', 'node', 'node_version_drift'],
   ['codex.version', 'codex', 'codex_version_drift'],
 ];
+
+function parseVersionTriplet(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return null;
+  return match.slice(1).map((part) => Number.parseInt(part, 10));
+}
+
+function compareVersionTriplets(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -327,6 +340,29 @@ export function evaluateBaseAdmission(report, options = {}) {
       if (isUsable(invalidFields, report, field)
         && getPath(report, field) !== profile.version_policy[policyKey]) {
         collector.add(code, field, 'Reported software version does not match the node policy.');
+      }
+    }
+    if (isUsable(invalidFields, report, 'os.version')) {
+      const observed = parseVersionTriplet(report.os.version);
+      const floor = parseVersionTriplet(profile.version_policy.os);
+      if (observed === null || floor === null) {
+        collector.add(
+          'os_version_drift',
+          'os.version',
+          'Reported macOS version does not match the supported baseline.',
+        );
+      } else if (compareVersionTriplets(observed, floor) < 0) {
+        collector.add(
+          'os_version_below_floor',
+          'os.version',
+          'Reported macOS version is below the node policy floor.',
+        );
+      } else if (observed[0] !== floor[0] || observed[1] !== floor[1]) {
+        collector.add(
+          'os_version_drift',
+          'os.version',
+          'Reported macOS version is outside the supported release line.',
+        );
       }
     }
   }

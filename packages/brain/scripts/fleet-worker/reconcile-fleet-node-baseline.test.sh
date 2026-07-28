@@ -288,6 +288,7 @@ run_reconciler() {
   FLEET_BASELINE_HDIUTIL="$fake_bin/hdiutil" \
   FLEET_BASELINE_DITTO="$fake_bin/ditto" \
   FLEET_BASELINE_CODESIGN="$fake_bin/codesign" \
+  FLEET_BASELINE_TAILSCALE="$tailscale_app" \
   FLEET_BASELINE_DOCKER="$docker_command" \
   FLEET_BASELINE_GIT="$(command -v git)" \
   FLEET_BASELINE_CHOWN="$fake_bin/chown" \

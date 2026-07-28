@@ -11,7 +11,7 @@ ORBSTACK_VERSION='2.2.1'
 ORBSTACK_URL='https://cdn-updates.orbstack.dev/arm64/OrbStack_v2.2.1_20628_arm64.dmg'
 ORBSTACK_SHA256='5bc1719c3c987c4c60c65be9fdd65b4730990e1697ec1cb1c33e6bba31bf92b5'
 MACOS_VERSION='15.7.4'
-RUNNER_DIGEST='sha256:72afb77061714668276d4b47bce4554544afc0b862364ab2c646d28b785a3f36'
+RUNNER_DIGEST='sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7'
 SERVICE_UID=450
 SERVICE_GID=450
 
@@ -26,6 +26,7 @@ TAR="${FLEET_BASELINE_TAR:-/usr/bin/tar}"
 HDIUTIL="${FLEET_BASELINE_HDIUTIL:-/usr/bin/hdiutil}"
 DITTO="${FLEET_BASELINE_DITTO:-/usr/bin/ditto}"
 CODESIGN="${FLEET_BASELINE_CODESIGN:-/usr/bin/codesign}"
+TAILSCALE="${FLEET_BASELINE_TAILSCALE:-$(command -v tailscale || true)}"
 DOCKER="${FLEET_BASELINE_DOCKER-$(command -v docker || true)}"
 GIT="${FLEET_BASELINE_GIT:-$(command -v git || true)}"
 CHOWN="${FLEET_BASELINE_CHOWN:-/usr/sbin/chown}"
@@ -155,6 +156,27 @@ install_orbstack_commands() {
   /bin/ln -sfn "$docker" "$TOOLCHAIN_BIN/docker"
   [[ -x "$TOOLCHAIN_BIN/orbctl" && -x "$TOOLCHAIN_BIN/docker" ]] \
     || die "orbstack_command_install_failed"
+}
+
+install_tailscale_command() {
+  local installed="$TOOLCHAIN_BIN/tailscale"
+  local app_tailscale="$APPLICATIONS_DIR/Tailscale.app/Contents/MacOS/Tailscale"
+  local source=''
+
+  if [[ -x "$installed" ]]; then
+    return
+  fi
+  if [[ -n "$TAILSCALE" && -x "$TAILSCALE" ]]; then
+    source="$TAILSCALE"
+  elif [[ -x "$app_tailscale" ]]; then
+    source="$app_tailscale"
+  else
+    die "tailscale_command_unavailable"
+  fi
+
+  /bin/mkdir -p "$TOOLCHAIN_BIN"
+  /bin/ln -sfn "$source" "$installed"
+  [[ -x "$installed" ]] || die "tailscale_command_install_failed"
 }
 
 verify_sha256() {
@@ -414,13 +436,28 @@ ensure_service_identity
 ensure_node_toolchain
 ensure_codex_toolchain
 ensure_orbstack
+install_tailscale_command
 ensure_repository
 ensure_runner
 ensure_worker_token
 
 observed_os="$("$SW_VERS" -productVersion 2>/dev/null || true)"
-if [[ "$observed_os" != "$MACOS_VERSION" ]]; then
+IFS=. read -r expected_major expected_minor expected_patch <<<"$MACOS_VERSION"
+IFS=. read -r observed_major observed_minor observed_patch <<<"$observed_os"
+if [[ ! "$observed_major" =~ ^[0-9]+$ \
+  || ! "$observed_minor" =~ ^[0-9]+$ \
+  || ! "$observed_patch" =~ ^[0-9]+$ ]]; then
   echo "warning: os_version_drift expected=$MACOS_VERSION observed=${observed_os:-unavailable}" >&2
+elif (( 10#$observed_major < 10#$expected_major \
+  || (10#$observed_major == 10#$expected_major \
+    && 10#$observed_minor < 10#$expected_minor) \
+  || (10#$observed_major == 10#$expected_major \
+    && 10#$observed_minor == 10#$expected_minor \
+    && 10#$observed_patch < 10#$expected_patch) )); then
+  echo "warning: os_version_below_floor expected=$MACOS_VERSION observed=$observed_os" >&2
+elif [[ "$observed_major" != "$expected_major" \
+  || "$observed_minor" != "$expected_minor" ]]; then
+  echo "warning: os_version_drift expected=$MACOS_VERSION observed=$observed_os" >&2
 fi
 
 PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
