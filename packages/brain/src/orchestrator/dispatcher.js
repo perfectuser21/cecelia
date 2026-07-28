@@ -3,7 +3,10 @@ import { mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { parseTaskBundle } from './execution-contract.js';
+import {
+  buildResultChannelDescriptor,
+  parseTaskBundle,
+} from './execution-contract.js';
 import { generateCallbackSecret, hashCallbackSecret } from './callback-auth.js';
 import { errorMessage, failurePersistenceError } from './failure-persistence.js';
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
@@ -369,6 +372,12 @@ export function createDispatcher(deps) {
       } = bundle.inputs;
       bundle = parseTaskBundle({
         ...bundle,
+        result_channel: buildResultChannelDescriptor({
+          taskId: bundle.inputs.task_id,
+          runId: bundle.run_id,
+          attemptId: bundle.attempt_id,
+          role: bundle.role,
+        }),
         inputs: {
           ...pathFreeInputs,
           execution_surface: 'fleet-worker',

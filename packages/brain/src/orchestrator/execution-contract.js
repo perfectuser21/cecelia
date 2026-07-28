@@ -7,6 +7,9 @@ import {
 
 export const TASK_CONTRACT_VERSION = '1.0';
 export const RESULT_CONTRACT_VERSION = '1.0';
+export const RESULT_CHANNEL_VERSION = 'attempt-result-file/v1';
+export const RESULT_CHANNEL_ROOT = '/tmp/cecelia-prompts';
+export const RESULT_CHANNEL_MAX_BYTES = 1024 * 1024;
 
 export const ROLE_VALUES = [
   'planner',
@@ -45,6 +48,20 @@ const skillSchema = z.object({
   content: z.string().min(1),
 });
 
+const resultChannelBindingsSchema = z.object({
+  task_id: z.string().min(1).regex(/^[^\r\n]+$/),
+  run_id: z.string().uuid(),
+  attempt_id: z.string().uuid(),
+  role: z.enum(ROLE_VALUES),
+}).strict();
+
+const resultChannelDescriptorSchema = z.object({
+  version: z.literal(RESULT_CHANNEL_VERSION),
+  path: z.string().min(1),
+  max_bytes: z.number().int().positive().max(RESULT_CHANNEL_MAX_BYTES),
+  bindings: resultChannelBindingsSchema,
+}).strict();
+
 const taskBundleSchema = z.object({
   contract_version: z.literal(TASK_CONTRACT_VERSION),
   run_id: z.string().uuid(),
@@ -68,6 +85,7 @@ const taskBundleSchema = z.object({
     timeout_seconds: z.number().int().positive(),
   }).passthrough(),
   expected_output: z.string().min(1),
+  result_channel: z.unknown().optional(),
 });
 
 // Keep transport parsing permissive because legacy role Skills emit useful
@@ -90,8 +108,62 @@ const harnessResultSchema = z.object({
   }).passthrough(),
 });
 
+function resultPathForAttempt(attemptId) {
+  return `${RESULT_CHANNEL_ROOT}/${attemptId}.result.json`;
+}
+
+export function parseResultChannelDescriptor(value, expected = {}) {
+  const parsed = resultChannelDescriptorSchema.parse(value);
+  if (parsed.path !== resultPathForAttempt(parsed.bindings.attempt_id)) {
+    throw new Error('result_channel_path_mismatch');
+  }
+  const expectedBindings = [
+    ['taskId', 'task_id'],
+    ['runId', 'run_id'],
+    ['attemptId', 'attempt_id'],
+    ['role', 'role'],
+  ];
+  for (const [expectedKey, bindingKey] of expectedBindings) {
+    if (
+      expected[expectedKey] !== undefined
+      && parsed.bindings[bindingKey] !== expected[expectedKey]
+    ) {
+      throw new Error(`result_channel_${bindingKey}_mismatch`);
+    }
+  }
+  return Object.freeze({
+    ...parsed,
+    bindings: Object.freeze(parsed.bindings),
+  });
+}
+
+export function buildResultChannelDescriptor({
+  taskId,
+  runId,
+  attemptId,
+  role,
+}) {
+  return parseResultChannelDescriptor({
+    version: RESULT_CHANNEL_VERSION,
+    path: resultPathForAttempt(attemptId),
+    max_bytes: RESULT_CHANNEL_MAX_BYTES,
+    bindings: {
+      task_id: taskId,
+      run_id: runId,
+      attempt_id: attemptId,
+      role,
+    },
+  }, {
+    taskId,
+    runId,
+    attemptId,
+    role,
+  });
+}
+
 export function parseTaskBundle(value) {
   const parsed = taskBundleSchema.parse(value);
+  const hasResultChannel = Object.hasOwn(parsed, 'result_channel');
   if (parsed.inputs.execution_surface === 'fleet-worker') {
     if (!parsed.inputs.workspace_spec) {
       throw new Error('workspace_spec_required');
@@ -101,8 +173,19 @@ export function parseTaskBundle(value) {
       attemptId: parsed.attempt_id,
       mode: parsed.constraints.read_only ? 'read-only' : 'read-write',
     });
+    if (!hasResultChannel) {
+      throw new Error('result_channel_required');
+    }
   } else if (!parsed.inputs.worktree_path) {
     throw new Error('worktree_path_required_for_legacy_execution');
+  }
+  if (hasResultChannel) {
+    parsed.result_channel = parseResultChannelDescriptor(parsed.result_channel, {
+      taskId: parsed.inputs.task_id,
+      runId: parsed.run_id,
+      attemptId: parsed.attempt_id,
+      role: parsed.role,
+    });
   }
   if (PROVIDER_NATIVE_INSTRUCTION.test(parsed.objective)) {
     throw new Error('provider_native_instruction: TaskBundle objective must not name provider tools');
@@ -246,5 +329,6 @@ export function toKernelStatus(status) {
 export const __test__ = {
   taskBundleSchema,
   harnessResultSchema,
+  resultChannelDescriptorSchema,
   PROVIDER_NATIVE_INSTRUCTION,
 };
