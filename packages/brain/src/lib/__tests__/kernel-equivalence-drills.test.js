@@ -296,6 +296,22 @@ describe('executeDrillCell', () => {
     ]);
   });
 
+  it('re-samples one trusted clock across later receipt and bundle boundaries', async () => {
+    const value = executionFixture();
+    const start = Date.parse('2026-07-28T12:00:00.000Z');
+    let reads = 0;
+    const clock = vi.fn(() => {
+      reads += 1;
+      return reads <= 2 ? start : FIXTURE_NOW;
+    });
+
+    await expect(execute(value, { now: clock })).resolves.toMatchObject({
+      status: 'collected',
+      code: 'drill_receipt_collected',
+    });
+    expect(clock.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+
   it('blocks invalid grants without consuming nonce', async () => {
     const value = executionFixture();
     value.grant = { ...value.grant, provider: 'grok' };
