@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.268.26
+**版本**: 1.268.27
 
 ## Unified Kernel Golden Path exact-image candidate
 
@@ -10,6 +10,13 @@
 - PostgreSQL 集成测试使用每轮唯一业务标识和隔离 deploy status 文件，避免残留
   测试数据或宿主持久状态造成假红；OKR 链路不再用 silent return 掩盖前置失败。
 - 重复 Jest 回归已迁到 Vitest，evaluator extractor 钉住当前 Skill 合同版本。
+
+- `staging_passed -> production_deploying` 现在先通过 Brain-owned adapter 查询固定
+  `main` / `nightly-regression.yml`，只接受 48 小时内完成且成功的 canonical run。
+- repository、run ID、head SHA、完成时间和 URL receipt 在 production transition
+  中持久化；闸门通过前不写 rollback/production intent，也不执行 production effect。
+- transport、解析、schema、失败、过期或未来时间全部 fail-closed，且不持久化原始
+  错误文本；旧 workflow bypass 和孤立 shell gate 已退役。
 
 ## Unified Kernel Golden Path + durable ReleaseRun
 

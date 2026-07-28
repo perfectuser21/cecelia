@@ -80,6 +80,7 @@ export async function buildDefaultHandlers({
   resolveArtifactVersions,
   observeStaging,
   runStaging,
+  observeReleaseQuality,
   observeProduction,
   runProduction,
   prepareProductionRollback,
@@ -132,6 +133,8 @@ export async function buildDefaultHandlers({
       ?? defaultReleaseAdapters.resolveArtifactVersions,
     observeStaging: observeStaging ?? defaultReleaseAdapters.observeStaging,
     runStaging: runStaging ?? defaultReleaseAdapters.runStaging,
+    observeReleaseQuality: observeReleaseQuality
+      ?? defaultReleaseAdapters.observeReleaseQuality,
     observeProduction: observeProduction ?? defaultReleaseAdapters.observeProduction,
     runProduction: runProduction ?? defaultReleaseAdapters.runProduction,
     prepareProductionRollback: prepareProductionRollback

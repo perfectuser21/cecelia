@@ -9,7 +9,7 @@
 # ============================================================================
 
 version: "1.0.0"
-updated: "2026-07-28"
+updated: "2026-07-29"
 
 # ============================================================================
 # 核心功能回归契约
@@ -169,6 +169,14 @@ golden_paths:
     trigger: [PR, Release]
     method: auto
     test_command: "node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report && node scripts/ci/run-kernel-equivalence-drill.mjs --gate --format=json"
+    must_never_break: true
+
+  - id: KERNEL-RELEASE-NIGHTLY-QUALITY-01
+    name: "ReleaseRun production authority 必须持久化 48h 内 main nightly 成功证据并 fail-closed"
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    test_command: "cd packages/brain && npx vitest run src/orchestrator/__tests__/release-run-quality.test.js src/orchestrator/__tests__/release-run-adapters.test.js src/orchestrator/__tests__/release-run-executor.test.js src/orchestrator/__tests__/release-run-surfaces.test.js src/__tests__/nightly-regression-config.test.js"
     must_never_break: true
 
 # ============================================================================

@@ -11,6 +11,19 @@ const MANIFEST_ID = '77777777-7777-4777-8777-777777777777';
 const HEAD_SHA = 'a'.repeat(40);
 const MERGE_SHA = 'b'.repeat(40);
 const APPROVED_AT = '2026-07-28T06:00:00.000Z';
+const OBSERVED_AT = '2026-07-29T12:00:00.000Z';
+const REPOSITORY = 'perfectuser21/cecelia';
+const releaseQuality = {
+  status: 'pass',
+  repository: REPOSITORY,
+  workflow_file: 'nightly-regression.yml',
+  branch: 'main',
+  run_id: 123456,
+  head_sha: 'c'.repeat(40),
+  conclusion: 'success',
+  completed_at: '2026-07-28T12:00:00.000Z',
+  html_url: `https://github.com/${REPOSITORY}/actions/runs/123456`,
+};
 const artifacts = [
   { name: 'brain', version: '1.268.2', digest: `sha256:${'1'.repeat(64)}` },
 ];
@@ -36,7 +49,7 @@ const e2eManifest = {
   ...createRequiredE2EManifest({
     release_run_id: RELEASE_ID,
     run_id: RUN_ID,
-    repository: 'perfectuser21/cecelia',
+    repository: REPOSITORY,
     merge_sha: MERGE_SHA,
     artifact_versions: artifacts,
     contract: {
@@ -127,7 +140,7 @@ function deps(overrides = {}) {
       task_id: TASK_ID,
       merge_intent_id: '44444444-4444-4444-8444-444444444444',
       merge_receipt_id: '55555555-5555-4555-8555-555555555555',
-      repository: 'perfectuser21/cecelia',
+      repository: REPOSITORY,
       pr_number: 4401,
       source_head_sha: HEAD_SHA,
       merge_sha: MERGE_SHA,
@@ -227,15 +240,22 @@ function deps(overrides = {}) {
     order.push('rollback:prepare');
     return artifactRollbackBaseline;
   });
+  const observeReleaseQuality = vi.fn(async () => {
+    order.push('quality:observe');
+    return releaseQuality;
+  });
+  const now = vi.fn(() => new Date(OBSERVED_AT));
   return {
     order,
     store,
     resolveArtifactVersions,
     observeStaging,
     runStaging,
+    observeReleaseQuality,
     observeProduction,
     runProduction,
     prepareProductionRollback,
+    now,
     getRelease: () => release,
     setRelease: (value) => { release = value; },
     ...overrides,
@@ -263,6 +283,7 @@ describe('ReleaseRun executor', () => {
       'effect:staging:staging-key',
       'receipt:staging-intent:confirmed',
       'state:staging_passed',
+      'quality:observe',
       'rollback:intent',
       'rollback:prepare',
       'rollback:artifact-intents',
@@ -312,6 +333,7 @@ describe('ReleaseRun executor', () => {
       run_id: RUN_ID,
       task_id: TASK_ID,
       state: 'staging_running',
+      repository: REPOSITORY,
       source_head_sha: HEAD_SHA,
       merge_sha: MERGE_SHA,
       artifact_versions: artifacts,
@@ -410,6 +432,129 @@ describe('ReleaseRun executor', () => {
         artifacts: artifactRollbackReadback,
       },
     );
+  });
+
+  it('persists canonical nightly quality before production authority', async () => {
+    const d = deps();
+    await createReleaseRunExecutor(d)({ runId: RUN_ID, taskId: TASK_ID });
+
+    expect(d.observeReleaseQuality).toHaveBeenCalledOnce();
+    expect(d.observeReleaseQuality).toHaveBeenCalledWith({
+      release_run_id: RELEASE_ID,
+      repository: REPOSITORY,
+      merge_sha: MERGE_SHA,
+      observed_at: OBSERVED_AT,
+    });
+    const transition = d.store.appendTransition.mock.calls
+      .map((call) => call[1])
+      .find((value) => value.state === 'production_deploying');
+    expect(transition.evidence).toEqual({
+      merge_sha: MERGE_SHA,
+      release_quality: releaseQuality,
+      artifact_rollback_intent_ids: [
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa0',
+      ],
+    });
+    expect(d.order.indexOf('quality:observe'))
+      .toBeLessThan(d.order.indexOf('rollback:intent'));
+    expect(d.order.indexOf('quality:observe'))
+      .toBeLessThan(d.order.indexOf('intent:production'));
+  });
+
+  it.each([
+    [
+      'missing adapter',
+      { observeReleaseQuality: undefined },
+      'release_quality_adapter_unavailable',
+    ],
+    [
+      'unavailable observation',
+      { observeReleaseQuality: vi.fn(async () => ({ status: 'unavailable' })) },
+      'release_quality_observation_unavailable',
+    ],
+    [
+      'adapter exception',
+      {
+        observeReleaseQuality: vi.fn(async () => {
+          throw new Error('GH_TOKEN=must-not-leak');
+        }),
+      },
+      'release_quality_observation_unavailable',
+    ],
+    [
+      'failed observation',
+      { observeReleaseQuality: vi.fn(async () => ({ status: 'fail' })) },
+      'release_quality_not_passed',
+    ],
+    [
+      'stale observation',
+      {
+        observeReleaseQuality: vi.fn(async () => ({
+          ...releaseQuality,
+          completed_at: '2026-07-27T11:59:59.999Z',
+        })),
+      },
+      'release_quality_not_passed',
+    ],
+  ])('blocks %s before rollback and production authority', async (
+    _label,
+    overrides,
+    detail,
+  ) => {
+    const d = deps(overrides);
+    d.setRelease({
+      id: RELEASE_ID,
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      state: 'staging_passed',
+      repository: REPOSITORY,
+      source_head_sha: HEAD_SHA,
+      merge_sha: MERGE_SHA,
+      artifact_versions: artifacts,
+      e2e_manifest: e2eManifest,
+    });
+
+    await expect(createReleaseRunExecutor(d)({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+    })).resolves.toEqual({
+      status: 'BLOCKED',
+      release_state: 'staging_passed',
+      release_run_id: RELEASE_ID,
+      merge_sha: MERGE_SHA,
+      detail,
+    });
+    expect(d.store.findOrCreateRollbackIntent).not.toHaveBeenCalled();
+    expect(d.prepareProductionRollback).not.toHaveBeenCalled();
+    expect(d.store.findOrCreateIntent).not.toHaveBeenCalled();
+    expect(d.runProduction).not.toHaveBeenCalled();
+    expect(d.observeProduction).not.toHaveBeenCalled();
+    expect(d.order).not.toContain('state:production_deploying');
+    expect(JSON.stringify(d.order)).not.toContain('GH_TOKEN');
+  });
+
+  it('does not re-observe nightly quality after its durable production transition', async () => {
+    const d = deps();
+    d.setRelease({
+      id: RELEASE_ID,
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      state: 'production_deploying',
+      repository: REPOSITORY,
+      source_head_sha: HEAD_SHA,
+      merge_sha: MERGE_SHA,
+      artifact_versions: artifacts,
+      e2e_manifest: e2eManifest,
+    });
+
+    await expect(createReleaseRunExecutor(d)({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+    })).resolves.toMatchObject({
+      status: 'DONE',
+      release_state: 'production_verified',
+    });
+    expect(d.observeReleaseQuality).not.toHaveBeenCalled();
   });
 
   it.each(['skipped', 'idle', 'unknown', 'unavailable', 'fail'])(

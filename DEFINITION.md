@@ -6,13 +6,21 @@
 
 
 
-**Brain 版本**: 1.268.26
+**Brain 版本**: 1.268.27
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.268.26 — Unified Kernel Golden Path exact-image candidate
+## Brain 1.268.27 — Unified Kernel Golden Path exact-image candidate
+
+- Production authority 现在要求 server-owned 观测：固定仓库的 `main` 分支必须有
+  48 小时内完成且成功的 `nightly-regression.yml` workflow run。
+- canonical repository、run ID、head SHA、完成时间与 URL 证据经过严格校验后，
+  写入 append-only `production_deploying` transition；在此之前不能创建 rollback
+  或 production intent，也不能执行 production effect。
+- 缺失、不可用、畸形、失败、过期或未来时间证据全部 fail-closed；旧 workflow-owned
+  `BYPASS_NIGHTLY_GATE` 与孤立的 shell gate 已移除。
 
 - Kernel Codex reviewer、11 要素等价合同与 durable ReleaseRun 已在同一候选树完成
   本地语义集成；confirmed exact-head merge receipt 是 ReleaseRun 的唯一根凭证。

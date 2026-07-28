@@ -3,7 +3,7 @@
  * 守住 cecelia CI/CD 三把刀三件套，防被静默删改：
  *   刀A nightly-regression.yml（每晚全量回归闸，#3717）
  *   刀B integration-nightly.yml（跨组件 integration nightly，#3713）
- *   刀C promote-dashboard-prod.yml 的 nightly_gate + scripts/ci/check-nightly-green.sh（#3717）
+ *   刀C durable ReleaseRun quality observation（迁移自 #3717）
  * 背景：PR CI 按路径过滤 + vitest --changed，回归靠 nightly 兜底；promote 靠 nightly 绿证据。
  */
 import { describe, it, expect } from 'vitest';
@@ -33,18 +33,19 @@ describe('刀B integration-nightly workflow', () => {
 });
 
 describe('刀C Release Gate', () => {
-  it('promote-dashboard-prod 有 nightly_gate 前置且 promote 依赖它', () => {
+  it('ReleaseRun 在 production authority 前持久化固定 48h nightly 质量证据', () => {
+    const QUALITY = read('packages/brain/src/orchestrator/release-run-quality.js');
+    const EXECUTOR = read('packages/brain/src/orchestrator/release-run-executor.js');
+    const RUN = read('packages/brain/src/orchestrator/run.js');
     const WF = read('.github/workflows/promote-dashboard-prod.yml');
-    expect(WF).toMatch(/nightly_gate/);
-    expect(WF).toMatch(/needs:\s*nightly_gate/);
-    expect(WF).toMatch(/check-nightly-green\.sh/);
-  });
-  it('check-nightly-green.sh 指向存活的刀A workflow 文件', () => {
-    const SH = read('scripts/ci/check-nightly-green.sh');
-    const m = SH.match(/WORKFLOW_FILE="([^"]+)"/);
-    expect(m).toBeTruthy();
-    // 被守文件必须真实存在（防刀A改名后闸空转）
-    expect(() => read(`.github/workflows/${m[1]}`)).not.toThrow();
+    expect(QUALITY).toContain("RELEASE_QUALITY_WORKFLOW = 'nightly-regression.yml'");
+    expect(QUALITY).toContain("RELEASE_QUALITY_BRANCH = 'main'");
+    expect(QUALITY).toMatch(/RELEASE_QUALITY_MAX_AGE_MS\s*=\s*48\s*\*/);
+    expect(EXECUTOR).toContain('observeReleaseQuality');
+    expect(EXECUTOR).toContain('release_quality');
+    expect(RUN).toContain('defaultReleaseAdapters.observeReleaseQuality');
+    expect(WF).not.toMatch(/nightly_gate|BYPASS_NIGHTLY_GATE/);
+    expect(() => read('scripts/ci/check-nightly-green.sh')).toThrow();
   });
 });
 

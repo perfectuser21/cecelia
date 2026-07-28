@@ -41,6 +41,78 @@ const request = {
   artifact_versions: artifacts,
   e2e_manifest: e2eManifest,
 };
+const qualityObservedAt = '2026-07-29T12:00:00.000Z';
+
+function workflowRun(overrides = {}) {
+  return {
+    id: 123456,
+    name: 'Nightly Regression Gate (刀A)',
+    node_id: 'WFR_kwLOA123',
+    head_branch: 'main',
+    head_sha: 'a'.repeat(40),
+    path: '.github/workflows/nightly-regression.yml',
+    display_title: 'Nightly Regression Gate',
+    run_number: 42,
+    event: 'schedule',
+    status: 'completed',
+    conclusion: 'success',
+    workflow_id: 98765,
+    check_suite_id: 222222,
+    check_suite_node_id: 'CS_kwLOA123',
+    url: 'https://api.github.com/repos/perfectuser21/cecelia/actions/runs/123456',
+    html_url: 'https://github.com/perfectuser21/cecelia/actions/runs/123456',
+    pull_requests: [],
+    created_at: '2026-07-28T11:00:00.000Z',
+    updated_at: '2026-07-28T12:00:00.000Z',
+    actor: { login: 'github-actions[bot]', id: 41898282, type: 'Bot' },
+    run_attempt: 1,
+    referenced_workflows: [],
+    run_started_at: '2026-07-28T11:00:00.000Z',
+    triggering_actor: { login: 'github-actions[bot]', id: 41898282, type: 'Bot' },
+    jobs_url: 'https://api.github.com/repos/perfectuser21/cecelia/actions/runs/123456/jobs',
+    logs_url: 'https://api.github.com/repos/perfectuser21/cecelia/actions/runs/123456/logs',
+    check_suite_url:
+      'https://api.github.com/repos/perfectuser21/cecelia/check-suites/222222',
+    artifacts_url:
+      'https://api.github.com/repos/perfectuser21/cecelia/actions/runs/123456/artifacts',
+    cancel_url:
+      'https://api.github.com/repos/perfectuser21/cecelia/actions/runs/123456/cancel',
+    rerun_url:
+      'https://api.github.com/repos/perfectuser21/cecelia/actions/runs/123456/rerun',
+    previous_attempt_url: null,
+    workflow_url:
+      'https://api.github.com/repos/perfectuser21/cecelia/actions/workflows/98765',
+    head_commit: {
+      id: 'a'.repeat(40),
+      tree_id: 'b'.repeat(40),
+      message: 'nightly fixture',
+      timestamp: '2026-07-28T10:59:00.000Z',
+      author: { name: 'Cecelia', email: 'bot@example.invalid' },
+      committer: { name: 'Cecelia', email: 'bot@example.invalid' },
+    },
+    repository: {
+      id: 123,
+      node_id: 'R_kgDOA123',
+      name: 'cecelia',
+      full_name: 'perfectuser21/cecelia',
+      private: true,
+      owner: { login: 'perfectuser21', id: 321, type: 'User' },
+      html_url: 'https://github.com/perfectuser21/cecelia',
+      url: 'https://api.github.com/repos/perfectuser21/cecelia',
+    },
+    head_repository: {
+      id: 123,
+      node_id: 'R_kgDOA123',
+      name: 'cecelia',
+      full_name: 'perfectuser21/cecelia',
+      private: true,
+      owner: { login: 'perfectuser21', id: 321, type: 'User' },
+      html_url: 'https://github.com/perfectuser21/cecelia',
+      url: 'https://api.github.com/repos/perfectuser21/cecelia',
+    },
+    ...overrides,
+  };
+}
 
 function response(body) {
   return {
@@ -55,6 +127,139 @@ function healthyProbeResponse() {
 }
 
 describe('production ReleaseRun adapters', () => {
+  it('observes fresh nightly quality through one fixed repository endpoint', async () => {
+    const githubExecFile = vi.fn(() => JSON.stringify({
+      total_count: 1,
+      workflow_runs: [workflowRun()],
+    }));
+    const adapters = createReleaseRunAdapters({ githubExecFile });
+
+    await expect(adapters.observeReleaseQuality({
+      release_run_id: request.release_run_id,
+      repository: 'perfectuser21/cecelia',
+      merge_sha: sha,
+      observed_at: qualityObservedAt,
+    })).resolves.toEqual({
+      status: 'pass',
+      repository: 'perfectuser21/cecelia',
+      workflow_file: 'nightly-regression.yml',
+      branch: 'main',
+      run_id: 123456,
+      head_sha: 'a'.repeat(40),
+      conclusion: 'success',
+      completed_at: '2026-07-28T12:00:00.000Z',
+      html_url: 'https://github.com/perfectuser21/cecelia/actions/runs/123456',
+    });
+    expect(githubExecFile).toHaveBeenCalledOnce();
+    expect(githubExecFile).toHaveBeenCalledWith([
+      'api',
+      'repos/perfectuser21/cecelia/actions/workflows/nightly-regression.yml/runs?branch=main&status=completed&per_page=5',
+      '-H',
+      'Accept: application/vnd.github+json',
+    ]);
+  });
+
+  it('selects the newest canonical fresh nightly success instead of trusting API order', async () => {
+    const githubExecFile = vi.fn(() => JSON.stringify({
+      total_count: 2,
+      workflow_runs: [
+        workflowRun({
+          id: 123456,
+          updated_at: '2026-07-28T12:00:00.000Z',
+        }),
+        workflowRun({
+          id: 123457,
+          head_sha: 'c'.repeat(40),
+          updated_at: '2026-07-29T10:00:00.000Z',
+          html_url: 'https://github.com/perfectuser21/cecelia/actions/runs/123457',
+        }),
+      ],
+    }));
+    const adapters = createReleaseRunAdapters({ githubExecFile });
+
+    await expect(adapters.observeReleaseQuality({
+      repository: 'perfectuser21/cecelia',
+      observed_at: qualityObservedAt,
+    })).resolves.toMatchObject({
+      run_id: 123457,
+      head_sha: 'c'.repeat(40),
+      completed_at: '2026-07-29T10:00:00.000Z',
+    });
+  });
+
+  it.each([
+    ['stale success', workflowRun({ updated_at: '2026-07-27T11:59:59.999Z' })],
+    ['failed run', workflowRun({ conclusion: 'failure' })],
+    ['unfinished run', workflowRun({ status: 'in_progress', conclusion: null })],
+    ['wrong branch', workflowRun({ head_branch: 'develop' })],
+    ['wrong workflow path', workflowRun({ path: '.github/workflows/ci.yml' })],
+    ['future run', workflowRun({ updated_at: '2026-07-29T12:00:00.001Z' })],
+    ['wrong repository URL', workflowRun({
+      html_url: 'https://github.com/attacker/repo/actions/runs/123456',
+    })],
+    ['wrong run URL id', workflowRun({
+      html_url: 'https://github.com/perfectuser21/cecelia/actions/runs/654321',
+    })],
+  ])('fails closed when the only candidate is a %s', async (_label, candidate) => {
+    const adapters = createReleaseRunAdapters({
+      githubExecFile: vi.fn(() => JSON.stringify({
+        total_count: 1,
+        workflow_runs: [candidate],
+      })),
+    });
+
+    await expect(adapters.observeReleaseQuality({
+      repository: 'perfectuser21/cecelia',
+      observed_at: qualityObservedAt,
+    })).resolves.toEqual({ status: 'fail' });
+  });
+
+  it.each([
+    ['non-JSON response', 'not-json'],
+    ['missing run array', JSON.stringify({ total_count: 1 })],
+    ['unsafe total count', JSON.stringify({
+      total_count: '1',
+      workflow_runs: [workflowRun()],
+    })],
+    ['impossible total count', JSON.stringify({
+      total_count: 0,
+      workflow_runs: [workflowRun()],
+    })],
+    ['overfull response', JSON.stringify({
+      total_count: 6,
+      workflow_runs: Array.from({ length: 6 }, (_, index) => workflowRun({
+        id: 123456 + index,
+        html_url:
+          `https://github.com/perfectuser21/cecelia/actions/runs/${123456 + index}`,
+      })),
+    })],
+  ])('returns unavailable without raw evidence for %s', async (_label, output) => {
+    const adapters = createReleaseRunAdapters({
+      githubExecFile: vi.fn(() => output),
+    });
+
+    await expect(adapters.observeReleaseQuality({
+      repository: 'perfectuser21/cecelia',
+      observed_at: qualityObservedAt,
+    })).resolves.toEqual({ status: 'unavailable' });
+  });
+
+  it('does not return GitHub CLI error text or credentials', async () => {
+    const adapters = createReleaseRunAdapters({
+      githubExecFile: vi.fn(() => {
+        throw new Error('GH_TOKEN=must-not-enter-release-evidence');
+      }),
+    });
+
+    const result = await adapters.observeReleaseQuality({
+      repository: 'perfectuser21/cecelia',
+      observed_at: qualityObservedAt,
+    });
+    expect(result).toEqual({ status: 'unavailable' });
+    expect(JSON.stringify(result)).not.toContain('must-not-enter');
+    expect(JSON.stringify(result)).not.toContain('GH_TOKEN');
+  });
+
   it('resolves artifact identity from the exact merge tree', async () => {
     const gitExecFile = vi.fn((args) => {
       if (args[0] === 'show') return JSON.stringify({ version: '1.268.5' });

@@ -12,6 +12,11 @@ import { digestTree } from '../../../../scripts/lib/release-run-tree-digest.mjs'
 import { sameArtifactVersions } from './release-run-contract.js';
 import { executeRequiredE2EManifest } from './release-run-e2e.js';
 import { resolveReleaseArtifactVersions } from './release-run-artifacts.js';
+import {
+  RELEASE_QUALITY_BRANCH,
+  RELEASE_QUALITY_WORKFLOW,
+  validateReleaseQualityObservation,
+} from './release-run-quality.js';
 
 async function json(fetchFn, url, options) {
   const response = await fetchFn(url, options);
@@ -48,6 +53,11 @@ export function createReleaseRunAdapters({
   fetchFn = globalThis.fetch,
   e2eFetchFn = fetchFn,
   gitExecFile = (args) => execFileSync('git', args, { encoding: 'utf8' }),
+  githubExecFile = (args) => execFileSync('gh', args, {
+    encoding: 'utf8',
+    maxBuffer: 4 * 1024 * 1024,
+    timeout: 60_000,
+  }),
   repoRoot = process.env.REPO_ROOT
     ?? fileURLToPath(new URL('../../../..', import.meta.url)),
   brainUrl = process.env.BRAIN_URL ?? 'http://localhost:5221',
@@ -60,6 +70,69 @@ export function createReleaseRunAdapters({
   digestDashboardLive = () => digestTree(join(repoRoot, 'apps/dashboard/dist')),
   workflowDeployRoots = process.env.CECELIA_SKILLS_DEPLOY_ROOTS ?? '',
 } = {}) {
+  const observeReleaseQuality = async (request) => {
+    try {
+      const repository = request?.repository;
+      if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? '')) {
+        return { status: 'unavailable' };
+      }
+      const endpoint =
+        `repos/${repository}/actions/workflows/${RELEASE_QUALITY_WORKFLOW}`
+        + `/runs?branch=${RELEASE_QUALITY_BRANCH}&status=completed&per_page=5`;
+      const payload = JSON.parse(await githubExecFile([
+        'api',
+        endpoint,
+        '-H',
+        'Accept: application/vnd.github+json',
+      ]));
+      if (
+        !Number.isSafeInteger(payload?.total_count)
+        || payload.total_count < 0
+        || !Array.isArray(payload.workflow_runs)
+        || payload.workflow_runs.length > 5
+        || payload.total_count < payload.workflow_runs.length
+      ) {
+        return { status: 'unavailable' };
+      }
+      const receipts = [];
+      for (const run of payload.workflow_runs) {
+        if (
+          run?.status !== 'completed'
+          || run.conclusion !== 'success'
+          || run.head_branch !== RELEASE_QUALITY_BRANCH
+          || run.path !== `.github/workflows/${RELEASE_QUALITY_WORKFLOW}`
+          || run.repository?.full_name !== repository
+        ) {
+          continue;
+        }
+        try {
+          receipts.push(validateReleaseQualityObservation({
+            status: 'pass',
+            repository,
+            workflow_file: RELEASE_QUALITY_WORKFLOW,
+            branch: RELEASE_QUALITY_BRANCH,
+            run_id: run.id,
+            head_sha: run.head_sha,
+            conclusion: run.conclusion,
+            completed_at: run.updated_at,
+            html_url: run.html_url,
+          }, {
+            repository,
+            observedAt: request.observed_at,
+          }));
+        } catch {
+          // Invalid GitHub evidence is untrusted and cannot become a receipt.
+        }
+      }
+      receipts.sort(
+        (left, right) => Date.parse(right.completed_at) - Date.parse(left.completed_at),
+      );
+      return receipts[0] ?? { status: 'fail' };
+    } catch {
+      return { status: 'unavailable' };
+    }
+  };
+
   const runRequiredE2E = async (request, environment, artifactReadback) => {
     const { id: _manifestId, ...manifest } = request.e2e_manifest ?? {};
     const receipt = await executeRequiredE2EManifest(manifest, {
@@ -382,6 +455,7 @@ export function createReleaseRunAdapters({
 
   return Object.freeze({
     resolveArtifactVersions,
+    observeReleaseQuality,
     observeStaging,
     runStaging: run(true),
     observeProduction,

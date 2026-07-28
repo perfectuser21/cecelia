@@ -6,6 +6,7 @@ import {
   validateStagingObservation,
 } from './release-run-contract.js';
 import { validateRequiredE2EManifest } from './release-run-e2e.js';
+import { validateReleaseQualityObservation } from './release-run-quality.js';
 
 function blocked(release, detail) {
   return {
@@ -279,9 +280,11 @@ export function createReleaseRunExecutor({
   resolveArtifactVersions,
   observeStaging,
   runStaging,
+  observeReleaseQuality,
   observeProduction,
   runProduction,
   prepareProductionRollback,
+  now = () => new Date(),
 }) {
   return async function executeRelease({ runId, taskId }) {
     return store.withReleaseLease(async (client) => {
@@ -359,6 +362,43 @@ export function createReleaseRunExecutor({
           ) {
             return blocked(release, 'release_production_adapter_unavailable');
           }
+          let releaseQuality = null;
+          if (release.state === 'staging_passed') {
+            if (typeof observeReleaseQuality !== 'function') {
+              return blocked(release, 'release_quality_adapter_unavailable');
+            }
+            let observedAt;
+            try {
+              observedAt = now().toISOString();
+            } catch {
+              return blocked(release, 'release_quality_observation_unavailable');
+            }
+            let observedQuality;
+            try {
+              observedQuality = await observeReleaseQuality({
+                release_run_id: release.id,
+                repository: release.repository,
+                merge_sha: release.merge_sha,
+                observed_at: observedAt,
+              });
+            } catch {
+              return blocked(release, 'release_quality_observation_unavailable');
+            }
+            if (observedQuality?.status === 'unavailable') {
+              return blocked(release, 'release_quality_observation_unavailable');
+            }
+            try {
+              releaseQuality = validateReleaseQualityObservation(
+                observedQuality,
+                {
+                  repository: release.repository,
+                  observedAt,
+                },
+              );
+            } catch {
+              return blocked(release, 'release_quality_not_passed');
+            }
+          }
           if (
             typeof store.findOrCreateRollbackIntent !== 'function'
             || typeof store.appendRollbackReceipt !== 'function'
@@ -395,6 +435,7 @@ export function createReleaseRunExecutor({
               'production_deploying',
               {
                 merge_sha: release.merge_sha,
+                release_quality: releaseQuality,
                 artifact_rollback_intent_ids: artifactRollbackIntents
                   .map((intent) => intent.id),
               },
