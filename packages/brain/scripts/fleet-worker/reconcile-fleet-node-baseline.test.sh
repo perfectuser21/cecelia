@@ -205,8 +205,8 @@ write_executable "$fake_bin/orbstack-orb" \
   'if [[ "${1:-}" == start ]]; then' \
   '  socket="${FLEET_TEST_SOCKET_ROOT:?}/Users/fleet-admin/.orbstack/run/docker.sock"' \
   '  mkdir -p "$(dirname "$socket")"' \
-  '  if [[ ! -S "$socket" ]]; then' \
-  '    python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()" "$socket"' \
+  '  if [[ ! -e "$socket" ]]; then' \
+  '    : > "$socket"' \
   '  fi' \
   'fi' \
   'if [[ "${FLEET_TEST_ORB_ASYNC_START:-0}" == 1 ]]; then' \
@@ -252,6 +252,13 @@ write_executable "$fake_bin/codesign" \
 
 write_executable "$fake_bin/docker" \
   '#!/usr/bin/env bash' \
+  'if [[ "${1:-} ${2:-}" == "info --format" ]]; then' \
+  '  socket="${FLEET_TEST_SOCKET_ROOT:?}/Users/fleet-admin/.orbstack/run/docker.sock"' \
+  '  mkdir -p "$(dirname "$socket")"' \
+  '  if [[ ! -e "$socket" ]]; then' \
+  '    : > "$socket"' \
+  '  fi' \
+  'fi' \
   'case "${1:-} ${2:-}" in' \
   '  "info --format") [[ "${FLEET_TEST_DOCKER_FAIL_INFO:-0}" != 1 ]]; exit $? ;;' \
   '  "load --input") touch "${FLEET_TEST_RUNNER_STATE:?}"; printf "docker load\n" >> "${FLEET_TEST_MUTATION_LOG:?}"; exit 0 ;;' \
@@ -262,6 +269,11 @@ write_executable "$fake_bin/docker" \
 write_executable "$fake_bin/chown" \
   '#!/usr/bin/env bash' \
   'printf "chown %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"'
+
+write_executable "$fake_bin/stat" \
+  '#!/usr/bin/env bash' \
+  '[[ -f "${@: -1}" ]] || exit 1' \
+  'echo Socket'
 
 write_executable "$fake_bin/git" \
   '#!/usr/bin/env bash' \
@@ -357,6 +369,7 @@ run_reconciler() {
   FLEET_BASELINE_DOCKER="$docker_command" \
   FLEET_BASELINE_GIT="${FLEET_TEST_GIT_COMMAND-$(command -v git)}" \
   FLEET_BASELINE_CHOWN="$fake_bin/chown" \
+  FLEET_BASELINE_STAT="$fake_bin/stat" \
   FLEET_BASELINE_LAUNCHCTL="$fake_bin/launchctl" \
   FLEET_BASELINE_SUDO="$fake_bin/sudo" \
   FLEET_BASELINE_ORBSTACK_OWNER=fleet-admin \
@@ -439,7 +452,10 @@ FLEET_TEST_ORB_ASYNC_START=1 \
 FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
 run_reconciler "$async_root" xian-mac-m4 --apply \
   >"$test_root/async-orbstack.out" 2>&1 \
-  || fail "eventually running OrbStack was rejected after start returned nonzero"
+  || {
+    cat "$test_root/async-orbstack.out" >&2
+    fail "eventually running OrbStack was rejected after start returned nonzero"
+  }
 grep -Fq 'orb start' "$mutation_log" \
   || fail "asynchronous OrbStack fixture did not exercise start"
 grep -Fq 'orb status' "$mutation_log" \
