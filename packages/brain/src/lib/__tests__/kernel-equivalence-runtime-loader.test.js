@@ -13,6 +13,9 @@ import {
   validateTrustedRuntimeEnvironment,
 } from '../kernel-equivalence-runtime-loader.js';
 import {
+  createServerOwnedRuntimeRegistry,
+} from '../kernel-equivalence-runtime-registry.js';
+import {
   createTrustFixture,
   fixtureCell,
   fixtureGrant,
@@ -112,6 +115,7 @@ describe('trusted equivalence runtime loader', () => {
       },
       trustRegistry: keys.registry,
       pool,
+      runtimeRegistry: createServerOwnedRuntimeRegistry(),
       now: () => Date.parse('2026-07-28T12:02:00.000Z'),
     });
 
@@ -124,6 +128,34 @@ describe('trusted equivalence runtime loader', () => {
     expect(Object.isFrozen(runtime)).toBe(true);
     expect(JSON.stringify(runtime)).not.toContain(secretFile);
     expect(JSON.stringify(runtime)).not.toContain('PRIVATE KEY');
+  });
+
+  it('does not default to an empty trusted adapter registry', async () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+    const secretFile = writePrivateKey(root, keys.collector.privateKey);
+    const pool = {
+      connect: async () => {},
+      query: async () => ({
+        rows: [{
+          genesis_hash: null,
+          head_hash: null,
+          revision: 0,
+        }],
+        rowCount: 1,
+      }),
+    };
+
+    await expect(loadTrustedEquivalenceRuntime({
+      env: {
+        KERNEL_EQ_COLLECTOR_KEY_FILE: secretFile,
+        KERNEL_EQ_COLLECTOR_KEY_ID: keys.collector.record.key_id,
+      },
+      trustRegistry: keys.registry,
+      pool,
+    })).rejects.toMatchObject({
+      code: 'trusted_runtime_registry_unavailable',
+    });
   });
 
   it('maps a database checkpoint failure to one stable wiring code', async () => {
@@ -146,6 +178,7 @@ describe('trusted equivalence runtime loader', () => {
       },
       trustRegistry: keys.registry,
       pool,
+      runtimeRegistry: createServerOwnedRuntimeRegistry(),
     })).rejects.toMatchObject({
       code: 'trusted_runtime_database_unavailable',
     });
