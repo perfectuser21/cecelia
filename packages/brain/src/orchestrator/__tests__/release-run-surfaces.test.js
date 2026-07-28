@@ -60,10 +60,23 @@ describe('legacy release surfaces fail closed', () => {
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/ReleaseRun authority required/);
 
-    for (const file of ['brain-deploy.sh', 'promote-dashboard.sh']) {
+    const directProductionScripts = [
+      'brain-deploy.sh',
+      'promote-dashboard.sh',
+      'post-merge-deploy.sh',
+      'deploy.sh',
+    ];
+    for (const file of directProductionScripts) {
       const source = readFileSync(resolve(root, 'scripts', file), 'utf8');
       expect(source).toContain('release-run-guard.sh');
       expect(source).toContain('production');
+
+      const denied = spawnSync('bash', [resolve(root, 'scripts', file)], {
+        env: { PATH: process.env.PATH },
+        encoding: 'utf8',
+      });
+      expect(denied.status, `${file} must fail closed`).not.toBe(0);
+      expect(`${denied.stdout}${denied.stderr}`).toMatch(/ReleaseRun authority required/);
     }
   });
 });
