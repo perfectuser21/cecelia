@@ -1,9 +1,25 @@
 import { isPassVerdict } from './gates.js';
+import { sha256Canonical } from '../lib/kernel-equivalence-receipts.js';
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_PATTERN = /^(?![./])(?!.*(?:\.\.|\/\/|@\{|[~^:?*\\\s]))(?!.*[./]$)[A-Za-z0-9._/-]+$/;
+const HUMAN_REVIEW_EQUIVALENCE_SEAM_ID = 'kernel.merge.human_review_authority';
+const HUMAN_REVIEW_EQUIVALENCE_EFFECTS = Object.freeze({
+  normal: Object.freeze({
+    observed_outcome: 'confirmed',
+    effect_code: 'exact_sha_human_approval_accepted',
+  }),
+  violation: Object.freeze({
+    observed_outcome: 'denied',
+    effect_code: 'stale_human_approval_denied',
+  }),
+  recovery: Object.freeze({
+    observed_outcome: 'recovered',
+    effect_code: 'renewed_human_approval_accepted',
+  }),
+});
 
 export class MergeAuthorizationError extends Error {
   constructor(code) {
@@ -177,5 +193,194 @@ export function validateMergeAuthorizationEvidence(input) {
     judge_hop: Number(judge.hop),
     human_review_hop: human ? Number(human.hop) : null,
     merge_intent_hop: Number(intent.hop),
+  });
+}
+
+function reviewEquivalenceFail(code) {
+  const error = new MergeAuthorizationError(code);
+  throw error;
+}
+
+/**
+ * Proves the human-review behavior by running the same full merge authority
+ * validator used at the effect boundary. Evidence and observations are loaded
+ * only through the review-owner service; caller-provided resource metadata is
+ * reduced to the verified isolated identity.
+ */
+export function createHumanReviewEquivalenceSeam({
+  reviewAuthority,
+  effectSigner,
+} = {}) {
+  if (typeof effectSigner?.signEffectResult !== 'function') {
+    reviewEquivalenceFail('seam_effect_signer_unavailable');
+  }
+  if (
+    reviewAuthority?.owner_service !== HUMAN_REVIEW_EQUIVALENCE_SEAM_ID
+    || typeof reviewAuthority?.loadEvidence !== 'function'
+    || typeof reviewAuthority?.snapshot !== 'function'
+    || typeof reviewAuthority?.confirmDenial !== 'function'
+    || typeof reviewAuthority?.confirmRenewal !== 'function'
+    || typeof reviewAuthority?.cancel !== 'function'
+    || typeof reviewAuthority?.cleanup !== 'function'
+  ) {
+    reviewEquivalenceFail('human_review_equivalence_authority_unavailable');
+  }
+
+  return Object.freeze({
+    owner_service: HUMAN_REVIEW_EQUIVALENCE_SEAM_ID,
+
+    async invoke({
+      cell,
+      grant,
+      resource,
+      predecessor = null,
+      signal,
+    } = {}) {
+      signal?.throwIfAborted();
+      const effect = HUMAN_REVIEW_EQUIVALENCE_EFFECTS[cell?.scenario];
+      if (
+        cell?.seam_id !== HUMAN_REVIEW_EQUIVALENCE_SEAM_ID
+        || grant?.seam_id !== HUMAN_REVIEW_EQUIVALENCE_SEAM_ID
+        || grant?.adapter_id !== cell?.adapter_id
+        || resource?.resource_id !== grant?.resource_id
+        || resource?.resource_ref !== grant?.resource_ref
+      ) {
+        reviewEquivalenceFail('human_review_equivalence_resource_invalid');
+      }
+      if (!effect) {
+        reviewEquivalenceFail('human_review_equivalence_scenario_invalid');
+      }
+      if (
+        (cell.scenario === 'recovery' && predecessor == null)
+        || (cell.scenario !== 'recovery' && predecessor != null)
+      ) {
+        reviewEquivalenceFail('human_review_equivalence_predecessor_invalid');
+      }
+
+      const authorityResource = Object.freeze({
+        resource_id: resource.resource_id,
+        resource_ref: resource.resource_ref,
+      });
+      const evidence = await reviewAuthority.loadEvidence({
+        cell,
+        grant,
+        resource: authorityResource,
+        predecessor,
+        signal,
+      });
+      signal?.throwIfAborted();
+      const before = await reviewAuthority.snapshot({
+        phase: 'before',
+        cell,
+        grant,
+        resource: authorityResource,
+        evidence,
+        predecessor,
+        signal,
+      });
+      signal?.throwIfAborted();
+
+      let proof = null;
+      let denial = null;
+      try {
+        proof = validateMergeAuthorizationEvidence(evidence);
+      } catch (error) {
+        denial = error;
+      }
+
+      if (cell.scenario === 'violation') {
+        const confirmed = await reviewAuthority.confirmDenial({
+          cell,
+          grant,
+          resource: authorityResource,
+          evidence,
+          error: denial,
+          predecessor,
+          signal,
+        });
+        signal?.throwIfAborted();
+        if (proof != null || denial == null || confirmed !== true) {
+          reviewEquivalenceFail('human_review_denial_unconfirmed');
+        }
+      } else {
+        if (denial != null || proof == null || proof.review_required !== true) {
+          reviewEquivalenceFail('human_review_approval_unconfirmed');
+        }
+        if (cell.scenario === 'recovery') {
+          const renewed = await reviewAuthority.confirmRenewal({
+            cell,
+            grant,
+            resource: authorityResource,
+            evidence,
+            proof,
+            predecessor,
+            signal,
+          });
+          signal?.throwIfAborted();
+          if (renewed !== true) {
+            reviewEquivalenceFail('human_review_renewal_unconfirmed');
+          }
+        }
+      }
+
+      const after = await reviewAuthority.snapshot({
+        phase: 'after',
+        cell,
+        grant,
+        resource: authorityResource,
+        evidence,
+        proof,
+        denial_code: denial?.code ?? null,
+        predecessor,
+        signal,
+      });
+      signal?.throwIfAborted();
+      if (
+        !before
+        || typeof before !== 'object'
+        || Array.isArray(before)
+        || !after
+        || typeof after !== 'object'
+        || Array.isArray(after)
+      ) {
+        reviewEquivalenceFail('human_review_equivalence_snapshot_invalid');
+      }
+
+      return effectSigner.signEffectResult({
+        cell,
+        grant,
+        observation: {
+          observed_outcome: effect.observed_outcome,
+          effect_code: effect.effect_code,
+          before_hash: sha256Canonical(before),
+          after_hash: sha256Canonical(after),
+        },
+        predecessor,
+      });
+    },
+
+    async cancel(context = {}) {
+      return reviewAuthority.cancel({
+        ...context,
+        resource: context?.resource == null
+          ? null
+          : {
+            resource_id: context.resource.resource_id,
+            resource_ref: context.resource.resource_ref,
+          },
+      });
+    },
+
+    async cleanup(context = {}) {
+      return reviewAuthority.cleanup({
+        ...context,
+        resource: context?.resource == null
+          ? null
+          : {
+            resource_id: context.resource.resource_id,
+            resource_ref: context.resource.resource_ref,
+          },
+      });
+    },
   });
 }
