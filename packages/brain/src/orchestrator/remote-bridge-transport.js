@@ -1,5 +1,6 @@
 import { verifyMachineAttestation } from './machine-attestation.js';
 import {
+  parseGithubReadPolicy,
   parseGithubMutationPolicy,
   parseResultChannelDescriptor,
 } from './execution-contract.js';
@@ -240,6 +241,15 @@ export function createRemoteBridgeTransport({
         : null;
       const workspace = disposableCanaryWorkspace(bundle, attempt.id);
       const credentialFreeCanary = isCanary || workspace !== null;
+      const githubReadPolicy = (
+        ['evaluator', 'reporter'].includes(bundle?.role)
+        && bundle?.expected_output !== 'harness-result/canary-v1'
+      )
+        ? parseGithubReadPolicy(bundle?.inputs?.github_read_policy, {
+            pullRequest: bundle?.inputs?.pull_request,
+            workspaceSpec: bundle?.inputs?.workspace_spec,
+          })
+        : null;
       let credentialEnvelope;
       if (!PROVIDERS.has(target?.provider)) {
         throw new Error('remote_bridge_provider_invalid');
@@ -304,6 +314,9 @@ export function createRemoteBridgeTransport({
             ...(workspaceSpec ? { workspace_spec: workspaceSpec } : {}),
             ...(githubMutationPolicy
               ? { github_mutation_policy: githubMutationPolicy }
+              : {}),
+            ...(githubReadPolicy
+              ? { github_read_policy: githubReadPolicy }
               : {}),
             provider_spec: {
               provider: spec?.provider,

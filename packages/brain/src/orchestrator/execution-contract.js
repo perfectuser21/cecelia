@@ -12,6 +12,7 @@ export const RESULT_CHANNEL_VERSION = 'attempt-result-file/v1';
 export const RESULT_CHANNEL_ROOT = '/tmp/cecelia-prompts';
 export const RESULT_CHANNEL_MAX_BYTES = 1024 * 1024;
 export const GITHUB_MUTATION_POLICY_VERSION = 'github-mutation/v1';
+export const GITHUB_READ_POLICY_VERSION = 'github-read/v1';
 export const GITHUB_MUTATION_ALLOWED_PATHS = Object.freeze([
   '.brain-versions',
   '.github/',
@@ -109,6 +110,17 @@ const githubMutationPolicySchema = z.object({
   pr_title: z.string().min(1).max(256).regex(/^[^\r\n\0]+$/),
   pr_body: z.string().min(1).max(4096).refine((value) => !value.includes('\0')),
   allowed_paths: z.array(mutationAllowedPathSchema).min(1).max(64),
+}).strict();
+const githubReadPolicySchema = z.object({
+  version: z.literal(GITHUB_READ_POLICY_VERSION),
+  repo: z.literal('perfectuser21/cecelia'),
+  url: z.string().url().max(2048),
+  number: z.number().int().positive(),
+  head_ref: z.string().min(1).max(255).regex(
+    /^(?![./])(?!.*(?:\.\.|\/\/|@\{|[~^:?*\\\s]))(?!.*[./]$)[A-Za-z0-9._/-]+$/,
+  ),
+  head_sha: z.string().regex(/^[a-f0-9]{40}$/),
+  allowed_states: z.array(z.enum(['OPEN', 'MERGED'])).length(1),
 }).strict();
 
 const taskBundleSchema = z.object({
@@ -874,6 +886,75 @@ export function buildGithubMutationPolicy({
   return parseGithubMutationPolicy(policy, { workspaceSpec });
 }
 
+export function parseGithubReadPolicy(value, {
+  pullRequest,
+  workspaceSpec,
+} = {}) {
+  const parsed = githubReadPolicySchema.parse(value);
+  if (
+    !pullRequest
+    || typeof pullRequest !== 'object'
+    || !workspaceSpec
+    || typeof workspaceSpec !== 'object'
+  ) {
+    throw new Error('github_read_authority_required');
+  }
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(parsed.url);
+  } catch {
+    throw new Error('github_read_url_invalid');
+  }
+  if (
+    parsedUrl.protocol !== 'https:'
+    || parsedUrl.hostname !== 'github.com'
+    || parsedUrl.username
+    || parsedUrl.password
+    || parsedUrl.search
+    || parsedUrl.hash
+    || parsedUrl.pathname !== `/${parsed.repo}/pull/${parsed.number}`
+  ) {
+    throw new Error('github_read_url_invalid');
+  }
+  if (
+    pullRequest.type !== 'pull_request'
+    || parsed.url !== pullRequest.url
+    || parsed.number !== pullRequest.number
+    || parsed.head_ref !== pullRequest.head_ref
+    || parsed.head_sha !== pullRequest.head_sha
+    || parsed.allowed_states[0] !== pullRequest.state
+  ) {
+    throw new Error('github_read_pull_request_mismatch');
+  }
+  if (
+    workspaceSpec.repo !== parsed.repo
+    || workspaceSpec.branch !== parsed.head_ref
+    || workspaceSpec.expected_head_sha !== parsed.head_sha
+  ) {
+    throw new Error('github_read_workspace_mismatch');
+  }
+  return Object.freeze({
+    ...parsed,
+    allowed_states: Object.freeze([...parsed.allowed_states]),
+  });
+}
+
+export function buildGithubReadPolicy({
+  pullRequest,
+  workspaceSpec,
+  allowedStates = [pullRequest?.state],
+} = {}) {
+  return parseGithubReadPolicy({
+    version: GITHUB_READ_POLICY_VERSION,
+    repo: workspaceSpec?.repo,
+    url: pullRequest?.url,
+    number: pullRequest?.number,
+    head_ref: pullRequest?.head_ref,
+    head_sha: pullRequest?.head_sha,
+    allowed_states: [...allowedStates],
+  }, { pullRequest, workspaceSpec });
+}
+
 export function buildResultChannelDescriptor({
   taskId,
   runId,
@@ -926,6 +1007,24 @@ export function parseTaskBundle(value) {
       );
     } else if (Object.hasOwn(parsed.inputs, 'github_mutation_policy')) {
       throw new Error('github_mutation_policy_role_mismatch');
+    }
+    const needsGithubRead = (
+      ['evaluator', 'reporter'].includes(parsed.role)
+      && parsed.expected_output !== 'harness-result/canary-v1'
+    );
+    if (needsGithubRead) {
+      if (!Object.hasOwn(parsed.inputs, 'github_read_policy')) {
+        throw new Error('github_read_policy_required');
+      }
+      parsed.inputs.github_read_policy = parseGithubReadPolicy(
+        parsed.inputs.github_read_policy,
+        {
+          pullRequest: parsed.inputs.pull_request,
+          workspaceSpec: parsed.inputs.workspace_spec,
+        },
+      );
+    } else if (Object.hasOwn(parsed.inputs, 'github_read_policy')) {
+      throw new Error('github_read_policy_role_mismatch');
     }
   } else if (!parsed.inputs.worktree_path) {
     throw new Error('worktree_path_required_for_legacy_execution');

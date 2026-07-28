@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  buildGithubReadPolicy,
   buildGithubMutationPolicy,
   buildResultChannelDescriptor,
   parseTaskBundle,
@@ -501,6 +502,18 @@ export function createDispatcher(deps) {
                 }),
               }
             : {}),
+          ...(
+            ['evaluator', 'reporter'].includes(spec.role)
+            && spec.canary !== true
+            ? {
+                github_read_policy: buildGithubReadPolicy({
+                  pullRequest: pathFreeInputs.pull_request,
+                  workspaceSpec,
+                  allowedStates: [pathFreeInputs.pull_request?.state],
+                }),
+              }
+            : {}
+          ),
         },
       });
     }
