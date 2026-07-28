@@ -342,6 +342,24 @@ describe('quality equivalence adapter registry', () => {
     })).resolves.toEqual({ confirmed: false });
   });
 
+  it('still cancels the isolation boundary when seam cancellation rejects', async () => {
+    const value = fixture();
+    const registry = createQualityEquivalenceAdapterRegistry(value);
+    const target = cell(QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS[0]);
+    value.seams[target.seam_id].cancel.mockRejectedValueOnce(
+      new Error('seam cancellation failed'),
+    );
+
+    await expect(registry.get(target.adapter_id).cancel({
+      cell: target,
+      grant: grant(target),
+      prepared: { resource: { resource_ref: 'resource' } },
+      phase: 'invoke',
+      signal: AbortSignal.abort(),
+    })).resolves.toEqual({ confirmed: false });
+    expect(value.isolation.cancel).toHaveBeenCalledOnce();
+  });
+
   it('attempts isolation compensation even when seam cleanup fails', async () => {
     const value = fixture();
     const registry = createQualityEquivalenceAdapterRegistry(value);

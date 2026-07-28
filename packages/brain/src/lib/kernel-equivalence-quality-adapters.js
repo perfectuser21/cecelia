@@ -248,19 +248,23 @@ function createAdapter({
     },
 
     async cancel(context) {
-      const seamCancellation = await seam.cancel({
-        ...context,
-        resource: context?.prepared?.resource ?? null,
-      });
-      const isolationCancellation = await isolation.cancel({
-        ...context,
-        descriptor,
-        resources: cleanupResources(context),
-      });
+      const [seamCancellation, isolationCancellation] = await Promise.allSettled([
+        Promise.resolve().then(() => seam.cancel({
+          ...context,
+          resource: context?.prepared?.resource ?? null,
+        })),
+        Promise.resolve().then(() => isolation.cancel({
+          ...context,
+          descriptor,
+          resources: cleanupResources(context),
+        })),
+      ]);
       return Object.freeze({
         confirmed:
-          seamCancellation?.confirmed === true
-          && isolationCancellation?.confirmed === true,
+          seamCancellation.status === 'fulfilled'
+          && seamCancellation.value?.confirmed === true
+          && isolationCancellation.status === 'fulfilled'
+          && isolationCancellation.value?.confirmed === true,
       });
     },
 

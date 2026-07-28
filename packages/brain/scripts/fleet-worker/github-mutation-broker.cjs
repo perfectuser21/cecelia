@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile);
 const SHA = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const BRANCH = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
+const BRANCH = /^[a-z0-9][a-z0-9._/-]{0,254}$/;
 const MAX_INPUT_BYTES = 1024 * 1024;
 const SECRET = /(?:gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|Authorization:\s*Bearer\s+\S+|BEGIN [A-Z ]*PRIVATE KEY)/i;
 const GITHUB_EQUIVALENCE_DESCRIPTORS = Object.freeze({
@@ -117,20 +117,62 @@ function safeRelative(value, code) {
   return value;
 }
 
-function validatePolicy(value, state) {
+const DEFAULT_REPOSITORY_POLICY = Object.freeze({
+  repo: 'perfectuser21/cecelia',
+  pr_base: 'main',
+  branch_prefix: 'cp-',
+  origins: Object.freeze([
+    'https://github.com/perfectuser21/cecelia.git',
+    'git@github.com:perfectuser21/cecelia.git',
+  ]),
+});
+
+function validateRepositoryPolicy(value) {
+  if (
+    !value
+    || typeof value !== 'object'
+    || Array.isArray(value)
+    || !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(value.repo ?? '')
+    || typeof value.pr_base !== 'string'
+    || !BRANCH.test(value.pr_base)
+    || typeof value.branch_prefix !== 'string'
+    || value.branch_prefix.length < 1
+    || value.branch_prefix.length > 128
+    || !BRANCH.test(`${value.branch_prefix}x`)
+    || !Array.isArray(value.origins)
+    || value.origins.length < 1
+    || value.origins.length > 4
+    || value.origins.some((origin) => (
+      typeof origin !== 'string'
+      || origin.length < 1
+      || origin.length > 1024
+      || /[\r\n\0]/.test(origin)
+    ))
+  ) fail('github_mutation_repository_policy_invalid');
+  return Object.freeze({
+    repo: value.repo,
+    pr_base: value.pr_base,
+    branch_prefix: value.branch_prefix,
+    origins: Object.freeze([...value.origins]),
+  });
+}
+
+function validatePolicy(value, state, repositoryPolicy) {
   exact(value, [
     'version', 'repo', 'branch', 'base_sha', 'expected_remote_sha',
     'operation', 'pr_base', 'pr_title', 'pr_body', 'allowed_paths',
   ], 'github_mutation_policy_invalid');
   if (
     value.version !== 'github-mutation/v1'
-    || value.repo !== 'perfectuser21/cecelia'
+    || value.repo !== repositoryPolicy.repo
     || !BRANCH.test(value.branch)
+    || !value.branch.startsWith(repositoryPolicy.branch_prefix)
     || value.branch.includes('..')
+    || value.branch.split('/').some((part) => !part || part === '.' || part === '..')
     || !SHA.test(value.base_sha)
     || (value.expected_remote_sha !== null && !SHA.test(value.expected_remote_sha))
     || !['push-and-create-draft', 'push-existing-draft'].includes(value.operation)
-    || value.pr_base !== 'main'
+    || value.pr_base !== repositoryPolicy.pr_base
     || typeof value.pr_title !== 'string'
     || value.pr_title.length < 1
     || value.pr_title.length > 256
@@ -273,6 +315,33 @@ function validateTree(output, changedPaths) {
   }
 }
 
+function buildGithubToolEnv(source = {}) {
+  const env = {};
+  for (const key of [
+    'PATH',
+    'HOME',
+    'LANG',
+    'LC_ALL',
+    'TMPDIR',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'GH_CONFIG_DIR',
+    'XDG_CONFIG_HOME',
+    'SSH_AUTH_SOCK',
+  ]) {
+    if (typeof source[key] === 'string' && source[key].length > 0) {
+      env[key] = source[key];
+    }
+  }
+  return Object.freeze({
+    ...env,
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.hooksPath',
+    GIT_CONFIG_VALUE_0: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0',
+  });
+}
+
 function normalizePullRequest(value, policy, headSha) {
   exact(value, [
     'url', 'number', 'headRefName', 'headRefOid', 'state', 'isDraft',
@@ -288,7 +357,7 @@ function normalizePullRequest(value, policy, headSha) {
     || url.username
     || url.password
     || url.hostname !== 'github.com'
-    || url.pathname !== `/perfectuser21/cecelia/pull/${value.number}`
+    || url.pathname !== `/${policy.repo}/pull/${value.number}`
     || !Number.isInteger(value.number)
     || value.number < 1
     || value.headRefName !== policy.branch
@@ -311,7 +380,7 @@ async function defaultTool(command, args, options) {
     cwd: options?.cwd,
     encoding: 'utf8',
     maxBuffer: 2 * 1024 * 1024,
-    env: process.env,
+    env: buildGithubToolEnv(process.env),
   });
   return result.stdout;
 }
@@ -368,6 +437,7 @@ function createGithubMutationBroker({
   gh = (args, options) => defaultTool('gh', args, options),
   auditStore,
   finalizeRoleResult,
+  repositoryPolicy = DEFAULT_REPOSITORY_POLICY,
 } = {}) {
   if (
     typeof git !== 'function'
@@ -376,9 +446,14 @@ function createGithubMutationBroker({
     || typeof auditStore?.append !== 'function'
     || typeof finalizeRoleResult !== 'function'
   ) fail('github_mutation_broker_dependency_invalid');
+  const trustedRepositoryPolicy = validateRepositoryPolicy(repositoryPolicy);
 
   function requestContext({ state, policy, declarationBytes }) {
-    const parsedPolicy = validatePolicy(policy, state);
+    const parsedPolicy = validatePolicy(
+      policy,
+      state,
+      trustedRepositoryPolicy,
+    );
     const declaration = validateDeclaration(
       declarationBytes,
       state,
@@ -462,10 +537,9 @@ function createGithubMutationBroker({
       line.startsWith('+') && !line.startsWith('+++') && SECRET.test(line.slice(1))
     ))) fail('github_mutation_secret_detected');
     const origin = String(await git(['remote', 'get-url', 'origin'], { cwd })).trim();
-    if (![
-      'https://github.com/perfectuser21/cecelia.git',
-      'git@github.com:perfectuser21/cecelia.git',
-    ].includes(origin)) fail('github_mutation_origin_invalid');
+    if (!trustedRepositoryPolicy.origins.includes(origin)) {
+      fail('github_mutation_origin_invalid');
+    }
     return changedPaths;
   }
 
@@ -631,6 +705,11 @@ function createGithubMutationEquivalenceSeam({
   }
   if (
     mutationAuthority?.owner_service !== descriptor.seam_id
+    || typeof mutationAuthority?.sandbox_repo !== 'string'
+    || mutationAuthority.sandbox_repo === 'perfectuser21/cecelia'
+    || !/^[a-z0-9_.-]+\/[a-z0-9_.-]+-kernel-equivalence-drills$/.test(
+      mutationAuthority.sandbox_repo,
+    )
     || typeof mutationAuthority?.loadInput !== 'function'
     || typeof mutationAuthority?.snapshot !== 'function'
     || typeof mutationAuthority?.confirmDenial !== 'function'
@@ -697,6 +776,24 @@ function createGithubMutationEquivalenceSeam({
         || !Buffer.isBuffer(input.providerResultBytes)
       ) {
         equivalenceFail('github_mutation_equivalence_input_invalid');
+      }
+      const expectedBranchPrefix = (
+        `refs/heads/equivalence-drill/${grant.run_id}/${grant.attempt_id}/`
+      );
+      const expectedBranch = grant.resource_ref?.startsWith(expectedBranchPrefix)
+        ? grant.resource_ref.slice('refs/heads/'.length)
+        : null;
+      if (
+        typeof expectedBranch !== 'string'
+        || expectedBranch.length > 255
+        || expectedBranch.includes('..')
+        || /[\r\n\\\0]/.test(expectedBranch)
+        || input.policy?.repo !== mutationAuthority.sandbox_repo
+        || input.policy?.branch !== expectedBranch
+        || input.state?.workspace?.repo !== mutationAuthority.sandbox_repo
+        || input.state?.workspace?.branch !== expectedBranch
+      ) {
+        equivalenceFail('github_mutation_equivalence_isolation_invalid');
       }
       const before = await mutationAuthority.snapshot({
         phase: 'before',
@@ -850,6 +947,7 @@ function createBranchPushEquivalenceSeam(options = {}) {
 }
 
 module.exports = {
+  buildGithubToolEnv,
   createBranchProtectionEquivalenceSeam,
   createBranchPushEquivalenceSeam,
   createFileGithubMutationAuditStore,

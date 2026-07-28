@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
 const {
+  buildGithubToolEnv,
   createGithubMutationBroker,
 } = require('./github-mutation-broker.cjs');
 const {
@@ -16,6 +17,81 @@ const BASE = '0123456789abcdef0123456789abcdef01234567';
 const HEAD = 'abcdef0123456789abcdef0123456789abcdef01';
 const BRANCH = 'cp-07280905-github-broker';
 const PATH = 'packages/brain/src/safe.js';
+
+test('GitHub tool environment excludes service and equivalence signing secrets', () => {
+  const env = buildGithubToolEnv({
+    PATH: '/usr/bin:/bin',
+    HOME: '/controlled/home',
+    GH_TOKEN: 'ghp_example',
+    GITHUB_TOKEN: 'github_example',
+    LANG: 'C.UTF-8',
+    TMPDIR: '/controlled/tmp',
+    KERNEL_EQUIVALENCE_COLLECTOR_PRIVATE_KEY_FILE: '/run/secrets/collector.pem',
+    KERNEL_EQUIVALENCE_EFFECT_PRIVATE_KEY_FILE: '/run/secrets/effect.pem',
+    DATABASE_URL: 'postgres://secret',
+    CECELIA_INTERNAL_TOKEN: 'internal-secret',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.hooksPath',
+    GIT_CONFIG_VALUE_0: '/attacker/hooks',
+    GIT_SSH_COMMAND: 'ssh -o ProxyCommand=attacker',
+    NODE_OPTIONS: '--require=/attacker/hook.cjs',
+  });
+
+  assert.deepEqual(env, {
+    PATH: '/usr/bin:/bin',
+    HOME: '/controlled/home',
+    GH_TOKEN: 'ghp_example',
+    GITHUB_TOKEN: 'github_example',
+    LANG: 'C.UTF-8',
+    TMPDIR: '/controlled/tmp',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.hooksPath',
+    GIT_CONFIG_VALUE_0: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0',
+  });
+  assert.equal(Object.isFrozen(env), true);
+});
+
+test('repository policy can confine a broker to a dedicated equivalence sandbox', () => {
+  const sandboxRepo = 'perfectuser21/cecelia-kernel-equivalence-drills';
+  const sandboxBranch = `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/git`;
+  const broker = createGithubMutationBroker({
+    git: async () => '',
+    gh: async () => '[]',
+    auditStore: {
+      async read() { return []; },
+      async append() {},
+    },
+    finalizeRoleResult,
+    repositoryPolicy: {
+      repo: sandboxRepo,
+      pr_base: 'kernel-equivalence-base',
+      branch_prefix: 'equivalence-drill/',
+      origins: [
+        `https://github.com/${sandboxRepo}.git`,
+      ],
+    },
+  });
+  const sandboxState = state();
+  sandboxState.workspace.repo = sandboxRepo;
+  sandboxState.workspace.branch = sandboxBranch;
+  const prepared = broker.buildPrepared({
+    state: sandboxState,
+    policy: policy({
+      repo: sandboxRepo,
+      branch: sandboxBranch,
+      pr_base: 'kernel-equivalence-base',
+    }),
+    declarationBytes: declaration({ branch: sandboxBranch }),
+  });
+
+  assert.equal(prepared.branch, sandboxBranch);
+  assert.throws(() => broker.buildPrepared({
+    state: state(),
+    policy: policy(),
+    declarationBytes: declaration(),
+  }), /github_mutation_policy_invalid/);
+});
 
 function policy(overrides = {}) {
   return {

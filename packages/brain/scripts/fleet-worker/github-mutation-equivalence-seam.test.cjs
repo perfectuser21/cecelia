@@ -12,6 +12,8 @@ const {
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const RESOURCE_ID = '33333333-3333-4333-8333-333333333333';
+const SANDBOX_REPO = 'perfectuser21/cecelia-kernel-equivalence-drills';
+const RESOURCE_REF = `refs/heads/equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/git`;
 
 function canonicalJson(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -70,7 +72,7 @@ function grant(descriptor) {
     run_id: RUN_ID,
     attempt_id: ATTEMPT_ID,
     resource_id: RESOURCE_ID,
-    resource_ref: `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/git`,
+    resource_ref: RESOURCE_REF,
     seam_id: descriptor.seamId,
     adapter_id: descriptor.adapterId,
   };
@@ -89,8 +91,18 @@ function predecessor(descriptor) {
 
 function fixture(descriptor, scenario) {
   const input = Object.freeze({
-    state: { attempt_id: ATTEMPT_ID, run_id: RUN_ID },
-    policy: { branch: 'cp-equivalence-safe' },
+    state: {
+      attempt_id: ATTEMPT_ID,
+      run_id: RUN_ID,
+      workspace: {
+        repo: SANDBOX_REPO,
+        branch: RESOURCE_REF.slice('refs/heads/'.length),
+      },
+    },
+    policy: {
+      repo: SANDBOX_REPO,
+      branch: RESOURCE_REF.slice('refs/heads/'.length),
+    },
     declarationBytes: Buffer.from('{}'),
     providerResultBytes: Buffer.from('{}'),
   });
@@ -127,6 +139,7 @@ function fixture(descriptor, scenario) {
   ];
   const mutationAuthority = {
     owner_service: descriptor.seamId,
+    sandbox_repo: SANDBOX_REPO,
     loadInput: async () => input,
     snapshot: async () => snapshots.shift(),
     confirmDenial: async ({ error }) => error?.code?.startsWith('github_mutation_'),
@@ -246,6 +259,56 @@ for (const descriptor of DESCRIPTORS) {
       }),
       { code: 'github_mutation_equivalence_resource_invalid' },
     );
+    assert.equal(value.signed.length, 0);
+  });
+
+  test(`${descriptor.name} binds the sandbox repo and branch before broker execution`, async () => {
+    const value = fixture(descriptor, 'normal');
+    let brokerCalls = 0;
+    const seam = descriptor.factory({
+      mutationBroker: {
+        async execute() {
+          brokerCalls += 1;
+          return value.mutationBroker.execute();
+        },
+      },
+      mutationAuthority: {
+        ...value.mutationAuthority,
+        async loadInput() {
+          return {
+            state: {
+              attempt_id: ATTEMPT_ID,
+              run_id: RUN_ID,
+              workspace: {
+                repo: 'perfectuser21/cecelia',
+                branch: 'cp-equivalence-safe',
+              },
+            },
+            policy: {
+              repo: 'perfectuser21/cecelia',
+              branch: 'cp-equivalence-safe',
+            },
+            declarationBytes: Buffer.from('{}'),
+            providerResultBytes: Buffer.from('{}'),
+          };
+        },
+      },
+      effectSigner: value.effectSigner,
+    });
+
+    await assert.rejects(
+      seam.invoke({
+        cell: cell(descriptor, 'normal'),
+        grant: grant(descriptor),
+        resource: {
+          resource_id: RESOURCE_ID,
+          resource_ref: RESOURCE_REF,
+        },
+        signal: AbortSignal.timeout(1_000),
+      }),
+      { code: 'github_mutation_equivalence_isolation_invalid' },
+    );
+    assert.equal(brokerCalls, 0);
     assert.equal(value.signed.length, 0);
   });
 }
