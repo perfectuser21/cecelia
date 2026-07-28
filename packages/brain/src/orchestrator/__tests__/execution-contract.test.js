@@ -393,6 +393,213 @@ describe('TaskBundle contract', () => {
 });
 
 describe('HarnessResult contract', () => {
+  const reviewerRoleResult = {
+    kind: 'reviewer',
+    raw_sha256: 'a'.repeat(64),
+    claimed: {
+      verdict: 'REVISION',
+      rubric_scores: {
+        dod_machineability: 10,
+        scope_match_prd: 9,
+        test_is_red: 8,
+        internal_consistency: 10,
+        risk_registered: 9,
+        verification_oracle_completeness: 8,
+        ci_workflow_alignment: 10,
+      },
+      judgments_written: 0,
+      feedback: '补充真实重启回放断言。',
+    },
+    verified: {
+      contract_sha: BASE_SHA,
+      verdict: 'REVISION',
+      rubric_scores: {
+        dod_machineability: 10,
+        scope_match_prd: 9,
+        test_is_red: 8,
+        internal_consistency: 10,
+        risk_registered: 9,
+        verification_oracle_completeness: 8,
+        ci_workflow_alignment: 10,
+      },
+      judgments_written: 0,
+    },
+  };
+
+  it('preserves an exact role_result instead of stripping it from the callback', () => {
+    const parsed = parseHarnessResult(validResult({
+      decision: { outcome: 'REVISION', reason: reviewerRoleResult.claimed.feedback },
+      role_result: reviewerRoleResult,
+    }), 'reviewer', 'harness-result/reviewer-v1');
+
+    expect(parsed.role_result).toEqual(reviewerRoleResult);
+  });
+
+  it('rejects role_result unknown fields and role/expected-output mismatches', () => {
+    expect(() => parseHarnessResult(validResult({
+      decision: { outcome: 'REVISION', reason: reviewerRoleResult.claimed.feedback },
+      role_result: {
+        ...reviewerRoleResult,
+        injected: true,
+      },
+    }), 'reviewer', 'harness-result/reviewer-v1')).toThrow();
+
+    expect(() => parseHarnessResult(validResult({
+      decision: { outcome: 'REVISION', reason: reviewerRoleResult.claimed.feedback },
+      role_result: reviewerRoleResult,
+    }), 'evaluator', 'harness-result/evaluator-v1')).toThrow(/role_result/);
+  });
+
+  it('rejects an APPROVED reviewer role_result with no observed judgment write', () => {
+    expect(() => executionContract.__test__.roleResultSchema.parse({
+      ...reviewerRoleResult,
+      claimed: {
+        ...reviewerRoleResult.claimed,
+        verdict: 'APPROVED',
+      },
+      verified: {
+        ...reviewerRoleResult.verified,
+        verdict: 'APPROVED',
+      },
+    })).toThrow(/judgment/i);
+  });
+
+  it('keeps legacy callback envelopes valid when role_result is absent', () => {
+    expect(parseHarnessResult(
+      validResult({ decision: { verdict: 'REVISION', feedback: 'legacy' } }),
+      'reviewer',
+      'harness-result/reviewer-v1',
+    ).role_result).toBeUndefined();
+  });
+
+  it('accepts the evaluator Skill cascade assertion object without a permissive passthrough', () => {
+    const evaluatorRoleResult = {
+      kind: 'evaluator',
+      raw_sha256: 'b'.repeat(64),
+      claimed: {
+        verdict: 'PASS',
+        task_id: TASK_ID,
+        attempt_id: ATTEMPT_ID,
+        behavior_tests: [{
+          command: 'npm test',
+          exit_code: 0,
+          log_tail: 'green',
+        }],
+        cascade_assertions: [{
+          link_id: '44444444-4444-4444-8444-444444444444',
+          assertion_ref: 'tests/receipt-replay.test.js',
+          ran: true,
+          result: 'pass',
+        }],
+      },
+      verified: {
+        pr_head_sha: BASE_SHA,
+        behavior_tests: [{
+          command: 'npm test',
+          exit_code: 0,
+          log_tail: 'green',
+        }],
+      },
+    };
+
+    expect(parseHarnessResult(validResult({
+      decision: { outcome: 'PASS', reason: '' },
+      role_result: evaluatorRoleResult,
+    }), 'evaluator', 'harness-result/evaluator-v1').role_result)
+      .toEqual(evaluatorRoleResult);
+  });
+
+  it.each([
+    {
+      kind: 'planner',
+      raw_sha256: 'c'.repeat(64),
+      claimed: {
+        verdict: 'DONE',
+        branch: 'cp-07280905-harness-prd',
+        sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+        planner_branch: 'cp-07280905-harness-prd',
+        review_required: true,
+        status: 'DONE',
+      },
+      verified: {
+        branch: 'cp-07280905-harness-prd',
+        sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+        planner_branch: 'cp-07280905-harness-prd',
+        prd_sha256: `sha256:${'d'.repeat(64)}`,
+        effective_review_required: true,
+      },
+    },
+    {
+      kind: 'proposer',
+      raw_sha256: 'c'.repeat(64),
+      claimed: {
+        propose_branch: 'cp-harness-propose-r1-33333333-a2',
+        workstream_count: 1,
+        task_plan_path: 'sprints/07280905-kernel-result-channel-bootstrap/task-plan.json',
+      },
+      verified: {
+        propose_branch: 'cp-harness-propose-r1-33333333-a2',
+        head_sha: BASE_SHA,
+        artifacts: Object.fromEntries([
+          ['contract_draft', 'contract-draft.md'],
+          ['contract_dod', 'contract-dod.md'],
+          ['task_plan', 'task-plan.json'],
+          ['contract_tests', 'tests'],
+        ].map(([kind, name]) => [kind, {
+          path: `sprints/07280905-kernel-result-channel-bootstrap/${name}`,
+          sha256: `sha256:${'d'.repeat(64)}`,
+        }])),
+      },
+    },
+    {
+      kind: 'generator',
+      raw_sha256: 'c'.repeat(64),
+      claimed: {
+        verdict: 'FAILED',
+        pr_url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+        reason: 'bounded repair budget exhausted',
+      },
+      verified: {
+        pull_request: {
+          type: 'pull_request',
+          url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+          number: 4391,
+          head_ref: 'cp-07280905-result-channel',
+          head_sha: BASE_SHA,
+          state: 'OPEN',
+        },
+      },
+    },
+    {
+      kind: 'reporter',
+      raw_sha256: 'c'.repeat(64),
+      claimed: {
+        verdict: 'DONE',
+        task_id: TASK_ID,
+        report_path: 'sprints/07280905-kernel-result-channel-bootstrap/harness-report.md',
+        pr_url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+        screenshots: [],
+        concerns: '',
+      },
+      verified: {
+        pull_request_url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+        report: {
+          path: 'sprints/07280905-kernel-result-channel-bootstrap/harness-report.md',
+          sha256: `sha256:${'d'.repeat(64)}`,
+        },
+        learning: {
+          path: 'sprints/07280905-kernel-result-channel-bootstrap/learning.md',
+          sha256: `sha256:${'d'.repeat(64)}`,
+        },
+        screenshots: [],
+        learnings_inserted: 1,
+      },
+    },
+  ])('accepts the exact $kind role_result branch of the discriminated union', (roleResult) => {
+    expect(executionContract.__test__.roleResultSchema.parse(roleResult))
+      .toEqual(roleResult);
+  });
+
   it.each([
     [
       'provider 503',
