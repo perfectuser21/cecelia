@@ -494,3 +494,245 @@ export function buildEvidenceEnvelopes(validation) {
     ))
   ));
 }
+
+function countBy(items, key, knownValues) {
+  const counts = Object.fromEntries(knownValues.map((value) => [value, 0]));
+  for (const item of items) {
+    const value = item?.[key];
+    if (Object.hasOwn(counts, value)) counts[value] += 1;
+  }
+  return counts;
+}
+
+export function buildEquivalenceReport(
+  validation,
+  { evaluatedAt = null } = {},
+) {
+  const behaviors = asArray(validation?.behaviors);
+  const envelopes = buildEvidenceEnvelopes(validation);
+  const projectedCells = projectJourneyCells(validation);
+  const requiredCells = behaviors.length * PROOF_PROVIDERS.length * PROOF_SCENARIOS.length;
+  const receiptedCells = envelopes.filter((envelope) => nonEmpty(envelope.effect_receipt_id)).length;
+  const provenToFireCommands = envelopes
+    .filter((envelope) => (
+      envelope.effective_status === 'proven'
+      && envelope.scenario === 'violation'
+      && nonEmpty(envelope.test_command)
+      && DENIAL_RESULTS.has(envelope.observed_result)
+      && nonEmpty(envelope.effect_receipt_id)
+    ))
+    .map((envelope) => ({
+      behavior_id: envelope.behavior_id,
+      provider: envelope.provider,
+      scenario: envelope.scenario,
+      test_command: envelope.test_command,
+      observed_result: envelope.observed_result,
+      effect_receipt_id: envelope.effect_receipt_id,
+    }))
+    .sort((left, right) => (
+      `${left.behavior_id}:${left.provider}`.localeCompare(`${right.behavior_id}:${right.provider}`)
+    ));
+
+  return {
+    report_version: '1.0.0',
+    contract_version: validation?.contract_version ?? null,
+    evaluated_at: evaluatedAt,
+    valid: validation?.valid === true,
+    summary: {
+      total: behaviors.length,
+      by_priority: countBy(behaviors, 'priority', ['P0', 'P1']),
+      by_effective_status: countBy(
+        behaviors,
+        'effective_status',
+        ['proven', 'gap', 'intentional_replacement'],
+      ),
+      findings: asArray(validation?.findings).length,
+    },
+    axes: {
+      steps: [...GOLDEN_PATH_STEPS],
+      dimensions: [...BEHAVIOR_DIMENSIONS],
+      providers: [...PROOF_PROVIDERS],
+      scenarios: [...PROOF_SCENARIOS],
+      possible_cells: GOLDEN_PATH_STEPS.length * BEHAVIOR_DIMENSIONS.length,
+      grid: GOLDEN_PATH_STEPS.map((step) => ({
+        step,
+        cells: Object.fromEntries(BEHAVIOR_DIMENSIONS.map((dimension) => {
+          const statuses = projectedCells
+            .filter((cell) => cell.step === step && cell.dimension === dimension)
+            .map((cell) => cell.cell_status);
+          const status = statuses.includes('red')
+            ? 'red'
+            : statuses.includes('pending')
+              ? 'pending'
+              : statuses.includes('green')
+                ? 'green'
+                : 'unaccounted';
+          return [dimension, status];
+        })),
+      })),
+    },
+    provider_matrix: {
+      required_cells: requiredCells,
+      receipted_cells: receiptedCells,
+      missing_cells: requiredCells - receiptedCells,
+      cells: PROOF_PROVIDERS.flatMap((provider) => (
+        PROOF_SCENARIOS.map((scenario) => {
+          const matching = envelopes.filter((envelope) => (
+            envelope.provider === provider && envelope.scenario === scenario
+          ));
+          const receipted = matching.filter((envelope) => nonEmpty(envelope.effect_receipt_id)).length;
+          return {
+            provider,
+            scenario,
+            required: behaviors.length,
+            receipted,
+            missing: behaviors.length - receipted,
+          };
+        })
+      )),
+    },
+    proven_to_fire_commands: provenToFireCommands,
+    gaps: behaviors
+      .filter((behavior) => behavior.effective_status === 'gap')
+      .map((behavior) => ({
+        behavior_id: behavior.behavior_id ?? null,
+        priority: behavior.priority ?? null,
+        claimed_status: behavior.claimed_status ?? null,
+        reason: behavior.gap?.reason
+          ?? asArray(behavior.findings).map((finding) => finding.message).join('; ')
+          ?? null,
+        owner: behavior.gap?.owner ?? behavior.owner ?? null,
+        closure_plan: behavior.gap?.closure_plan ?? null,
+        finding_codes: asArray(behavior.findings).map((finding) => finding.code),
+      }))
+      .sort((left, right) => `${left.behavior_id}`.localeCompare(`${right.behavior_id}`)),
+    behaviors: behaviors
+      .map((behavior) => ({
+        behavior_id: behavior.behavior_id ?? null,
+        priority: behavior.priority ?? null,
+        claimed_status: behavior.claimed_status ?? null,
+        effective_status: behavior.effective_status ?? null,
+        steps: asArray(behavior.steps),
+        dimensions: asArray(behavior.dimensions),
+        verified_at: behavior.freshness?.verified_at ?? null,
+        expires_at: behavior.freshness?.expires_at ?? null,
+        assertion_id: behavior.assertion_id ?? null,
+        legacy_behavior: behavior.legacy_behavior ?? null,
+        legacy_evidence: asArray(behavior.legacy_evidence),
+        unified_constructs: asArray(behavior.unified_constructs),
+        failure_semantics: behavior.failure_semantics ?? null,
+        partial_behavioral_evidence: asArray(behavior.partial_behavioral_evidence),
+      }))
+      .sort((left, right) => `${left.behavior_id}`.localeCompare(`${right.behavior_id}`)),
+  };
+}
+
+function markdownCell(value) {
+  if (value == null || value === '') return '—';
+  return String(value).replaceAll('|', '\\|').replaceAll('\n', ' ');
+}
+
+export function formatEquivalenceMarkdown(report) {
+  const summary = asObject(report?.summary);
+  const matrix = asObject(report?.provider_matrix);
+  const axes = asObject(report?.axes);
+  const behaviors = asArray(report?.behaviors);
+  const gaps = asArray(report?.gaps);
+  const fireCommands = asArray(report?.proven_to_fire_commands);
+  const providerCells = asArray(matrix.cells);
+  const grid = asArray(axes.grid);
+  const gridSymbol = {
+    green: 'G',
+    pending: 'P',
+    red: 'R',
+    unaccounted: '—',
+  };
+  const lines = [
+    '# Kernel P0/P1 行为等价报告',
+    '',
+    `- 合同版本：\`${markdownCell(report?.contract_version)}\``,
+    `- 评估时间：\`${markdownCell(report?.evaluated_at)}\``,
+    `- 合同行为数：${summary.total ?? 0}（P0 ${summary.by_priority?.P0 ?? 0} / P1 ${summary.by_priority?.P1 ?? 0}）`,
+    `- 有效状态：proven ${summary.by_effective_status?.proven ?? 0} / gap ${summary.by_effective_status?.gap ?? 0} / intentional_replacement ${summary.by_effective_status?.intentional_replacement ?? 0}`,
+    `- Provider 场景证据：${matrix.receipted_cells ?? 0}/${matrix.required_cells ?? 0}，缺 ${matrix.missing_cells ?? 0}`,
+    `- 轴：${asArray(axes.steps).length} 个步骤（S0–S12）× 11 项行为维度 = ${axes.possible_cells ?? 0} 个可能单元`,
+    '',
+    '> 缺口不是证明。只有绑定 exact SHA/version、未过期 freshness、effect receipt，且 Claude/Codex/Grok × normal/violation/recovery 全覆盖，才是 proven。',
+    '',
+    '## 行为清单',
+    '',
+    '| Behavior | Priority | Claimed | Effective | Steps | Dimensions |',
+    '|---|---:|---|---|---|---|',
+    ...behaviors.map((behavior) => (
+      `| ${markdownCell(behavior.behavior_id)} | ${markdownCell(behavior.priority)} | ${markdownCell(behavior.claimed_status)} | ${markdownCell(behavior.effective_status)} | ${markdownCell(behavior.steps.join(', '))} | ${markdownCell(behavior.dimensions.join(', '))} |`
+    )),
+    '',
+    '## S0–S12 × 11 要素投影',
+    '',
+    'R = 有真实缺口；P = 证据过期；G = 完整证明；— = 尚未映射。',
+    '',
+    `| Step | ${asArray(axes.dimensions).join(' | ')} |`,
+    `|---|${asArray(axes.dimensions).map(() => '---').join('|')}|`,
+    ...grid.map((row) => (
+      `| ${markdownCell(row.step)} | ${asArray(axes.dimensions).map((dimension) => gridSymbol[row.cells?.[dimension]] ?? '—').join(' | ')} |`
+    )),
+    '',
+    '## Provider × 场景证据矩阵',
+    '',
+    '| Provider | Scenario | Receipted | Required | Missing |',
+    '|---|---|---:|---:|---:|',
+    ...providerCells.map((cell) => (
+      `| ${markdownCell(cell.provider)} | ${markdownCell(cell.scenario)} | ${cell.receipted} | ${cell.required} | ${cell.missing} |`
+    )),
+    '',
+    '## Legacy → Kernel unified construct 对照',
+    '',
+  ];
+
+  for (const behavior of behaviors) {
+    lines.push(
+      `### ${markdownCell(behavior.behavior_id)}`,
+      '',
+      `- 旧行为：${markdownCell(behavior.legacy_behavior)}`,
+      `- 旧证据：${behavior.legacy_evidence.length > 0 ? behavior.legacy_evidence.map((item) => `\`${markdownCell(item)}\``).join(', ') : '—'}`,
+      `- Unified constructs：${behavior.unified_constructs.length > 0 ? behavior.unified_constructs.map(markdownCell).join('; ') : '—'}`,
+      `- 失败语义：${markdownCell(behavior.failure_semantics)}`,
+      `- Freshness：verified ${markdownCell(behavior.verified_at)} / expires ${markdownCell(behavior.expires_at)}`,
+      `- 部分行为证据（不等于 proven）：${behavior.partial_behavioral_evidence.length > 0 ? behavior.partial_behavioral_evidence.map((item) => `\`${markdownCell(item)}\``).join(', ') : '—'}`,
+      '',
+    );
+  }
+
+  lines.push(
+    '## Proven-to-fire 命令',
+    '',
+  );
+
+  if (fireCommands.length === 0) {
+    lines.push('没有命令达到完整 proven-to-fire 证据门槛。');
+  } else {
+    for (const proof of fireCommands) {
+      lines.push(
+        `- ${markdownCell(proof.behavior_id)} / ${markdownCell(proof.provider)}: \`${markdownCell(proof.test_command)}\` → ${markdownCell(proof.observed_result)}（${markdownCell(proof.effect_receipt_id)}）`,
+      );
+    }
+  }
+
+  lines.push('', '## 真实缺口', '');
+  if (gaps.length === 0) {
+    lines.push('无。');
+  } else {
+    for (const gap of gaps) {
+      lines.push(
+        `### ${markdownCell(gap.behavior_id)}（${markdownCell(gap.priority)}）`,
+        '',
+        `- 原因：${markdownCell(gap.reason)}`,
+        `- Owner：${markdownCell(gap.owner)}`,
+        `- 收口计划：${markdownCell(gap.closure_plan)}`,
+        '',
+      );
+    }
+  }
+
+  return `${lines.join('\n').trimEnd()}\n`;
+}
