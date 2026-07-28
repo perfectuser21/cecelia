@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.268.20
+**版本**: 1.268.21
+
+## Durable ReleaseRun nightly quality gate
+
+- `staging_passed -> production_deploying` 现在先通过 Brain-owned adapter 查询固定
+  `main` / `nightly-regression.yml`，只接受 48 小时内完成且成功的 canonical run。
+- repository、run ID、head SHA、完成时间和 URL receipt 在 production transition
+  中持久化；闸门通过前不写 rollback/production intent，也不执行 production effect。
+- transport、解析、schema、失败、过期或未来时间全部 fail-closed，且不持久化原始
+  错误文本；旧 workflow bypass 和孤立 shell gate 已退役。
+- 无数据库迁移；回退：`bash scripts/brain-rollback.sh 1.268.20`。
 
 ## Unified Kernel Golden Path + durable ReleaseRun
 
