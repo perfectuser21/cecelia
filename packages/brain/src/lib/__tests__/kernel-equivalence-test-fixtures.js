@@ -107,6 +107,7 @@ export function fixtureExpected(cell, grant = null) {
     nonce: grant?.nonce,
     resource_id: grant?.resource_id,
     resource_ref: grant?.resource_ref,
+    resource_prefix: grant?.resource_prefix,
   };
 }
 
@@ -142,6 +143,7 @@ export function fixtureReceipt(
   grant,
   cell,
   predecessor = null,
+  overrides = {},
 ) {
   const recovery = cell.scenario === 'recovery';
   return signFixture({
@@ -181,16 +183,24 @@ export function fixtureReceipt(
     predecessor_cell_id: predecessor?.cell_id ?? null,
     predecessor_receipt_id: predecessor?.receipt_id ?? null,
     predecessor_receipt_hash: predecessor ? sha256Canonical(predecessor) : null,
+    ...overrides,
   }, keys.effect.privateKey);
 }
 
-export function fixtureBundle(keys, cell, grant, receipts) {
+export function fixtureBundle(
+  keys,
+  cell,
+  grant,
+  receipts,
+  executionGrants = [grant],
+) {
   const unsigned = assembleUnsignedBundle({
     keyId: keys.collector.record.key_id,
     collectorServiceId: keys.collector.record.service_id,
     issuedAt: '2026-07-28T12:01:00.000Z',
     expiresAt: '2026-07-29T12:01:00.000Z',
     expected: fixtureExpected(cell, grant),
+    executionGrants,
     receipts,
     previousBundleHash: null,
   });

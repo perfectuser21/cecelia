@@ -351,6 +351,7 @@ describe('receipt bundle and recovery lineage', () => {
       issuedAt: '2026-07-28T12:01:00.000Z',
       expiresAt: '2026-07-29T12:01:00.000Z',
       expected: expected(target, executionGrant),
+      executionGrants: [executionGrant],
       receipts: [receipt],
       previousBundleHash: null,
     });
@@ -364,6 +365,7 @@ describe('receipt bundle and recovery lineage', () => {
     )).toMatchObject({
       bundle_id: unsigned.bundle_id,
       receipt_ids: [receipt.receipt_id],
+      grant_ids: [executionGrant.grant_id],
     });
 
     const brokenChain = signed({
@@ -389,6 +391,7 @@ describe('receipt bundle and recovery lineage', () => {
       issuedAt: '2026-07-28T12:01:00.000Z',
       expiresAt: '2026-07-29T12:01:00.000Z',
       expected: expected(target, executionGrant),
+      executionGrants: [executionGrant],
       receipts: [receipt],
       previousBundleHash: null,
     });
@@ -416,5 +419,100 @@ describe('receipt bundle and recovery lineage', () => {
       expected(target, executionGrant),
       { now: NOW },
     )).toThrowError(expect.objectContaining({ code: 'effect_signature_invalid' }));
+  });
+
+  it('re-verifies the signed execution grant carried by the bundle', () => {
+    const keys = trustFixture();
+    const target = cell();
+    const executionGrant = grant(keys, target);
+    const receipt = effectReceipt(keys, executionGrant, target);
+    const unsigned = assembleUnsignedBundle({
+      keyId: keys.collector.record.key_id,
+      collectorServiceId: keys.collector.record.service_id,
+      issuedAt: '2026-07-28T12:01:00.000Z',
+      expiresAt: '2026-07-29T12:01:00.000Z',
+      expected: expected(target, executionGrant),
+      executionGrants: [executionGrant],
+      receipts: [receipt],
+      previousBundleHash: null,
+    });
+
+    expect(unsigned.execution_grants).toEqual([executionGrant]);
+    const forgedGrant = {
+      ...executionGrant,
+      resource_ref: `${executionGrant.resource_prefix}forged`,
+    };
+    const wrapped = signed({
+      ...unsigned,
+      execution_grants: [forgedGrant],
+    }, keys.collector.privateKey);
+    expect(() => verifyReceiptBundle(
+      wrapped,
+      keys.registry,
+      expected(target, executionGrant),
+      { now: NOW },
+    )).toThrowError(expect.objectContaining({ code: 'grant_signature_invalid' }));
+  });
+
+  it('binds each effect resource exactly to its verified execution grant', () => {
+    const keys = trustFixture();
+    const target = cell();
+    const executionGrant = grant(keys, target);
+    const forgedResource = `${executionGrant.resource_prefix}other`;
+    const receipt = effectReceipt(keys, executionGrant, target, {
+      resource_id: 'eq-forged',
+      resource_ref: forgedResource,
+    });
+    const unsigned = assembleUnsignedBundle({
+      keyId: keys.collector.record.key_id,
+      collectorServiceId: keys.collector.record.service_id,
+      issuedAt: '2026-07-28T12:01:00.000Z',
+      expiresAt: '2026-07-29T12:01:00.000Z',
+      expected: {
+        ...expected(target, executionGrant),
+        resource_id: 'eq-forged',
+        resource_ref: forgedResource,
+      },
+      executionGrants: [executionGrant],
+      receipts: [receipt],
+      previousBundleHash: null,
+    });
+    const wrapped = signed(unsigned, keys.collector.privateKey);
+
+    expect(() => verifyReceiptBundle(
+      wrapped,
+      keys.registry,
+      {
+        ...expected(target, executionGrant),
+        resource_id: 'eq-forged',
+        resource_ref: forgedResource,
+      },
+      { now: NOW },
+    )).toThrowError(expect.objectContaining({ code: 'bundle_axis_mismatch' }));
+  });
+
+  it('rejects an unresolvable previous bundle hash instead of claiming a chain', () => {
+    const keys = trustFixture();
+    const target = cell();
+    const executionGrant = grant(keys, target);
+    const receipt = effectReceipt(keys, executionGrant, target);
+    const unsigned = assembleUnsignedBundle({
+      keyId: keys.collector.record.key_id,
+      collectorServiceId: keys.collector.record.service_id,
+      issuedAt: '2026-07-28T12:01:00.000Z',
+      expiresAt: '2026-07-29T12:01:00.000Z',
+      expected: expected(target, executionGrant),
+      executionGrants: [executionGrant],
+      receipts: [receipt],
+      previousBundleHash: 'f'.repeat(64),
+    });
+    const wrapped = signed(unsigned, keys.collector.privateKey);
+
+    expect(() => verifyReceiptBundle(
+      wrapped,
+      keys.registry,
+      expected(target, executionGrant),
+      { now: NOW },
+    )).toThrowError(expect.objectContaining({ code: 'bundle_previous_unresolved' }));
   });
 });

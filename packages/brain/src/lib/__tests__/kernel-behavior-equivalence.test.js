@@ -123,7 +123,11 @@ function contract(behaviors = [provenBehavior()]) {
   };
 }
 
-function trustedContract(extraBehaviors = [], behaviorOverrides = {}) {
+function trustedContract(
+  extraBehaviors = [],
+  behaviorOverrides = {},
+  receiptOverrides = {},
+) {
   const behavior = provenBehavior(behaviorOverrides);
   const keys = createTrustFixture(behavior.drill.seam_id);
   behavior.drill.effect_key_id = keys.effect.record.key_id;
@@ -133,6 +137,7 @@ function trustedContract(extraBehaviors = [], behaviorOverrides = {}) {
   for (const provider of PROOF_PROVIDERS) {
     matrix[provider] = {};
     let violationReceipt = null;
+    let violationGrant = null;
     for (const scenario of PROOF_SCENARIOS) {
       const target = fixtureCell({
         behaviorId: behavior.behavior_id,
@@ -147,12 +152,25 @@ function trustedContract(extraBehaviors = [], behaviorOverrides = {}) {
         executionGrant,
         target,
         scenario === 'recovery' ? violationReceipt : null,
+        receiptOverrides[scenario] ?? {},
       );
-      if (scenario === 'violation') violationReceipt = receipt;
+      if (scenario === 'violation') {
+        violationReceipt = receipt;
+        violationGrant = executionGrant;
+      }
       const receipts = scenario === 'recovery'
         ? [violationReceipt, receipt]
         : [receipt];
-      const bundle = fixtureBundle(keys, target, executionGrant, receipts);
+      const executionGrants = scenario === 'recovery'
+        ? [violationGrant, executionGrant]
+        : [executionGrant];
+      const bundle = fixtureBundle(
+        keys,
+        target,
+        executionGrant,
+        receipts,
+        executionGrants,
+      );
       const bundleHash = sha256Canonical(bundle);
       const bundleReference = `receipt-bundle:${bundleHash}`;
       bundles.set(bundleHash, bundle);
@@ -175,6 +193,16 @@ function trustedContract(extraBehaviors = [], behaviorOverrides = {}) {
   }
 
   behavior.proof_matrix = matrix;
+  for (const scenario of PROOF_SCENARIOS) {
+    const observedOutcome = receiptOverrides[scenario]?.observed_outcome;
+    const effectCode = receiptOverrides[scenario]?.effect_code;
+    if (observedOutcome != null) {
+      behavior.drill.scenarios[scenario].expected_outcome = observedOutcome;
+    }
+    if (effectCode != null) {
+      behavior.drill.scenarios[scenario].effect_code = effectCode;
+    }
+  }
   behavior.proof_identity.effect_receipt_id = 'signed-3x3-bundle-set';
   const value = contract([behavior, ...extraBehaviors]);
   value.behavior_equivalence.drill_trust_registry = keys.registry;
@@ -233,6 +261,21 @@ describe('validateBehaviorEquivalence', () => {
       claimed_status: 'proven',
       effective_status: 'proven',
     });
+  });
+
+  it('uses each drill descriptor exact violation outcome instead of hard-coding denied', () => {
+    const trusted = trustedContract([], {}, {
+      violation: {
+        observed_outcome: 'blocked',
+        effect_code: 'stale_sha_merge_blocked',
+      },
+    });
+    const result = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      receiptResolver: trusted.receiptResolver,
+    });
+
+    expect(result.valid).toBe(true);
   });
 
   it.each([
