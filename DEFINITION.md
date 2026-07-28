@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.268.13
+**Brain 版本**: 1.268.14
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.14 — Private bootstrap secret transport
+
+- Bootstrap database authority and owner signature are read only from a
+  caller-owned regular `0600` private-config reference; neither secret appears
+  in argv or child-process environment.
+- `psql` receives only owner-only `PGSERVICEFILE` and `PGPASSFILE` references,
+  while migration, E2E, and effect children start from explicit environment
+  allowlists.
+- 回退：`bash scripts/brain-rollback.sh 1.268.13`（保留 bootstrap 审计账本）。
 
 ## Brain 1.268.13 — Durable ReleaseRun alert delivery
 

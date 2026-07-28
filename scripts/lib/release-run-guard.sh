@@ -41,13 +41,14 @@ require_release_run_authority() {
 
 if [[ "${KERNEL_RELEASE_BOOTSTRAP:-0}" == "1" ]]; then
   bootstrap_run_id="${KERNEL_RELEASE_BOOTSTRAP_RUN_ID:-}"
-  bootstrap_database_url="${KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL:-}"
+  bootstrap_private_config_file="${KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE:-}"
+  bootstrap_pg_service_file="${KERNEL_RELEASE_BOOTSTRAP_PG_SERVICE_FILE:-}"
+  bootstrap_pgpass_file="${KERNEL_RELEASE_BOOTSTRAP_PGPASS_FILE:-}"
   bootstrap_repository="${KERNEL_RELEASE_REPOSITORY:-}"
   bootstrap_pr_number="${KERNEL_RELEASE_PR_NUMBER:-}"
   bootstrap_source_sha="${KERNEL_RELEASE_SOURCE_HEAD_SHA:-}"
   bootstrap_actor="${KERNEL_RELEASE_BOOTSTRAP_ACTOR:-}"
   bootstrap_key_id="${KERNEL_RELEASE_BOOTSTRAP_APPROVAL_KEY_ID:-}"
-  bootstrap_signature="${KERNEL_RELEASE_BOOTSTRAP_APPROVAL_SIGNATURE:-}"
   bootstrap_trust_key="/etc/cecelia/kernel-release-bootstrap-owner-v1.pub"
   [[ "$effect_kind" == "production" || "$effect_kind" == "staging" ]] \
     || release_run_deny "invalid bootstrap effect kind"
@@ -55,18 +56,36 @@ if [[ "${KERNEL_RELEASE_BOOTSTRAP:-0}" == "1" ]]; then
     || release_run_deny "missing or malformed bootstrap run id"
   [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]] \
     || release_run_deny "missing or malformed bootstrap merge SHA"
-  [[ "$bootstrap_database_url" =~ ^postgres(ql)?:// ]] \
-    || release_run_deny "explicit bootstrap database URL required"
+  node "$guard_dir/bootstrap-private-config.mjs" \
+    validate "$bootstrap_private_config_file" \
+    || release_run_deny "private bootstrap config unavailable"
+  for bootstrap_pg_file in \
+    "$bootstrap_pg_service_file" "$bootstrap_pgpass_file"; do
+    [[ "$bootstrap_pg_file" == /* && -f "$bootstrap_pg_file" && ! -L "$bootstrap_pg_file" ]] \
+      || release_run_deny "private bootstrap database reference unavailable"
+    if stat -f '%u:%Lp' "$bootstrap_pg_file" >/dev/null 2>&1; then
+      bootstrap_pg_mode=$(stat -f '%u:%Lp' "$bootstrap_pg_file")
+    else
+      bootstrap_pg_mode=$(stat -c '%u:%a' "$bootstrap_pg_file")
+    fi
+    [[ "$bootstrap_pg_mode" == "$(id -u):600" ]] \
+      || release_run_deny "private bootstrap database reference must be mode 0600"
+  done
   command -v psql >/dev/null || release_run_deny "bootstrap ledger cannot be verified"
   bootstrap_approval_digest=$(node "$guard_dir/verify-bootstrap-approval.mjs" \
-    "$bootstrap_trust_key" "$bootstrap_repository" "$bootstrap_pr_number" \
-    "$bootstrap_source_sha" "$merge_sha" "$bootstrap_actor" \
-    "$bootstrap_key_id" "$bootstrap_signature") \
+    "$bootstrap_trust_key" "$bootstrap_private_config_file" \
+    "$bootstrap_repository" "$bootstrap_pr_number" "$bootstrap_source_sha" \
+    "$merge_sha" "$bootstrap_actor" "$bootstrap_key_id") \
     || release_run_deny "bootstrap owner approval cannot be verified"
 
   expected_state="staging_intent"
   [[ "$effect_kind" == "production" ]] && expected_state="production_intent"
-  attempt_id=$(PGDATABASE="$bootstrap_database_url" psql -XqAtv ON_ERROR_STOP=1 \
+  attempt_id=$(env -i \
+    PATH="$PATH" HOME="${HOME:-}" LANG="${LANG:-}" LC_ALL="${LC_ALL:-}" \
+    PGSERVICEFILE="$bootstrap_pg_service_file" \
+    PGPASSFILE="$bootstrap_pgpass_file" \
+    PGSERVICE=kernel_release_bootstrap \
+    psql -XqAtv ON_ERROR_STOP=1 \
     -v run_id="$bootstrap_run_id" \
     -v merge_sha="$merge_sha" \
     -v repository="$bootstrap_repository" \

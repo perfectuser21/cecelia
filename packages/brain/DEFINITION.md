@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.268.13
+**版本**: 1.268.14
+
+## Private bootstrap secret transport
+
+- The one-time bootstrap accepts only a current-owner `0600` private-config
+  reference for its production DB URL and owner approval signature.
+- Approval verification and PostgreSQL clients load secrets from files;
+  `psql` gets only `PGSERVICEFILE`/`PGPASSFILE` references.
+- Migration, E2E, and deployment children run with explicit environment
+  allowlists, preventing ambient credential inheritance.
+- 回退：`bash scripts/brain-rollback.sh 1.268.13`（保留 bootstrap ledger）。
 
 ## Durable ReleaseRun alert delivery
 

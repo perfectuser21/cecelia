@@ -178,7 +178,7 @@ describe('legacy release surfaces fail closed', () => {
     expect(registry).not.toMatch(/exec(?:File|Sync)?\(/);
   });
 
-  it('bootstrap is normally disabled and requires an explicit database and deploy root', () => {
+  it('bootstrap is normally disabled and requires private config and deploy root', () => {
     const script = resolve(root, 'scripts/release-run-bootstrap.sh');
     const result = spawnSync('bash', [script], {
       env: { PATH: process.env.PATH },
@@ -186,10 +186,15 @@ describe('legacy release surfaces fail closed', () => {
     });
     expect(result.status).not.toBe(0);
     const source = readFileSync(script, 'utf8');
-    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL');
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE');
     expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT');
-    expect(source).toMatch(/PGDATABASE="\$database_url" psql/);
-    expect(source).not.toMatch(/psql "\$database_url"/);
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_PG_SERVICE_FILE');
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_PGPASS_FILE');
+    expect(source).not.toContain('KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL');
+    expect(source).not.toContain('KERNEL_RELEASE_BOOTSTRAP_APPROVAL_SIGNATURE');
+    expect(source).not.toMatch(/PGDATABASE=/);
+    expect(source).toMatch(/psql_bootstrap\(\)[\s\S]+?env -i[\s\S]+?psql "\$@"/);
+    expect(source).toMatch(/run_bootstrap_effect\(\)[\s\S]+?env -i[\s\S]+?bash "\$effect_script"/);
     expect(source).toMatch(/git -C "\$deploy_root"/);
   });
 
@@ -243,6 +248,8 @@ describe('legacy release surfaces fail closed', () => {
       verifyPosition,
       verifyPosition + 350,
     );
+    expect(approvalContext).toContain('$private_config_file');
+    expect(approvalContext).not.toContain('$approval_signature');
     for (const axis of [
       'repository',
       'pr_number',
@@ -300,7 +307,11 @@ describe('legacy release surfaces fail closed', () => {
       'utf8',
     );
     expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_RUN_ID');
-    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL');
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE');
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_PG_SERVICE_FILE');
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_PGPASS_FILE');
+    expect(source).not.toContain('KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL');
+    expect(source).not.toContain('KERNEL_RELEASE_BOOTSTRAP_APPROVAL_SIGNATURE');
     expect(source).toContain('kernel_release_bootstrap_effect_attempts');
     expect(source).toContain('generation');
     expect(source).toContain('lease_expires_at');
@@ -313,8 +324,10 @@ describe('legacy release surfaces fail closed', () => {
     );
     expect(source).toContain('verify-bootstrap-approval.mjs');
     expect(source).toContain('approval_digest');
-    expect(source).toMatch(/PGDATABASE="\$bootstrap_database_url" psql/);
-    expect(source).not.toMatch(/psql "\$bootstrap_database_url"/);
+    expect(source).toMatch(/PGSERVICEFILE="\$bootstrap_pg_service_file"/);
+    expect(source).toMatch(/PGPASSFILE="\$bootstrap_pgpass_file"/);
+    expect(source).toMatch(/attempt_id=\$\(env -i/);
+    expect(source).not.toMatch(/PGDATABASE=/);
     expect(source).toContain('kernel_release_bootstrap_e2e_manifests');
     expect(source).toMatch(/staging_intent/);
     expect(source).toMatch(/production_intent/);

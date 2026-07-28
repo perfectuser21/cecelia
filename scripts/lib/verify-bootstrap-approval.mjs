@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { readBootstrapPrivateConfig } from './bootstrap-private-config.mjs';
 
 export function bootstrapApprovalMessage({
   repository,
@@ -44,18 +45,20 @@ if (process.argv[1]
   try {
     const [
       trustKey,
+      privateConfigFile,
       repository,
       prNumber,
       sourceHeadSha,
       mergeSha,
       actor,
       keyId,
-      signatureBase64,
     ] = process.argv.slice(2);
     const stat = lstatSync(trustKey);
     if (stat.isSymbolicLink() || stat.uid !== 0 || (stat.mode & 0o777) !== 0o444) {
       throw new Error('bootstrap_trust_root_permissions_invalid');
     }
+    const { approval_signature: signatureBase64 } =
+      readBootstrapPrivateConfig(privateConfigFile);
     const digest = verifyBootstrapApproval({
       publicKey: readFileSync(trustKey),
       signatureBase64,

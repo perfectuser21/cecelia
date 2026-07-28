@@ -15,29 +15,30 @@ deny() {
   || deny "caller-supplied owner secrets are forbidden"
 
 deploy_root="${KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT:-}"
-database_url="${KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL:-}"
+private_config_file="${KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE:-}"
 repository="${KERNEL_RELEASE_REPOSITORY:-}"
 pr_number="${KERNEL_RELEASE_PR_NUMBER:-}"
 source_head_sha="${KERNEL_RELEASE_SOURCE_HEAD_SHA:-}"
 merge_sha="${KERNEL_RELEASE_MERGE_SHA:-}"
 actor="${KERNEL_RELEASE_BOOTSTRAP_ACTOR:-}"
 approval_key_id="${KERNEL_RELEASE_BOOTSTRAP_APPROVAL_KEY_ID:-}"
-approval_signature="${KERNEL_RELEASE_BOOTSTRAP_APPROVAL_SIGNATURE:-}"
 trust_key="/etc/cecelia/kernel-release-bootstrap-owner-v1.pub"
 
 [[ "$deploy_root" == /* ]] \
   || deny "a dedicated absolute deploy root is required"
 [[ "$(git -C "$deploy_root" rev-parse --is-inside-work-tree 2>/dev/null || true)" == "true" ]] \
   || deny "dedicated deploy root is not a git worktree"
-[[ "$database_url" =~ ^postgres(ql)?:// ]] \
-  || deny "explicit production database URL is required"
+env -i PATH="$PATH" HOME="${HOME:-}" \
+  node "$bootstrap_root/scripts/lib/bootstrap-private-config.mjs" \
+  validate "$private_config_file" \
+  || deny "owner-only bootstrap private config is required"
 [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
   || deny "repository must be owner/name"
 [[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || deny "positive PR number required"
 [[ "$source_head_sha" =~ ^[0-9a-f]{40}$ ]] || deny "exact source SHA required"
 [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]] || deny "exact merge SHA required"
 [[ -n "$actor" ]] || deny "owner actor required"
-[[ "$approval_key_id" == "owner-v1" && -n "$approval_signature" ]] \
+[[ "$approval_key_id" == "owner-v1" ]] \
   || deny "known rotating owner approval key required"
 command -v psql >/dev/null || deny "psql unavailable"
 command -v gh >/dev/null || deny "GitHub authoritative read unavailable"
@@ -81,6 +82,9 @@ manifest_file=""
 receipt_file=""
 attempt_file=""
 attempt_renewal_pid=""
+bootstrap_pg_dir=""
+bootstrap_pg_service_file=""
+bootstrap_pgpass_file=""
 stop_attempt_renewal() {
   if [[ -n "$attempt_renewal_pid" ]]; then
     kill "$attempt_renewal_pid" >/dev/null 2>&1 || true
@@ -96,6 +100,9 @@ cleanup_refs() {
   [[ -z "$manifest_file" ]] || rm -f "$manifest_file"
   [[ -z "$receipt_file" ]] || rm -f "$receipt_file"
   [[ -z "$attempt_file" ]] || rm -f "$attempt_file"
+  [[ -z "$bootstrap_pg_service_file" ]] || rm -f "$bootstrap_pg_service_file"
+  [[ -z "$bootstrap_pgpass_file" ]] || rm -f "$bootstrap_pgpass_file"
+  [[ -z "$bootstrap_pg_dir" ]] || rmdir "$bootstrap_pg_dir" 2>/dev/null || true
 }
 trap cleanup_refs EXIT
 git -C "$deploy_root" fetch --no-tags origin \
@@ -117,8 +124,21 @@ git -C "$deploy_root" switch --detach "$merge_sha" >/dev/null
 [[ "$(git -C "$deploy_root" rev-parse HEAD)" == "$merge_sha" ]] \
   || deny "dedicated deploy root checkout is not exact merge SHA"
 
+bootstrap_pg_dir=$(mktemp -d "${TMPDIR:-/tmp}/kernel-bootstrap-pg.XXXXXX")
+chmod 700 "$bootstrap_pg_dir"
+bootstrap_pg_service_file="$bootstrap_pg_dir/pg_service.conf"
+bootstrap_pgpass_file="$bootstrap_pg_dir/pgpass"
+env -i PATH="$PATH" HOME="${HOME:-}" \
+  node "$bootstrap_root/scripts/lib/bootstrap-private-config.mjs" write-pg-files \
+  "$private_config_file" "$bootstrap_pg_service_file" "$bootstrap_pgpass_file" \
+  || deny "private bootstrap database references could not be created"
+
 psql_bootstrap() {
-  PGDATABASE="$database_url" psql "$@"
+  env -i \
+  PATH="$PATH" HOME="${HOME:-}" LANG="${LANG:-}" LC_ALL="${LC_ALL:-}" \
+  PGSERVICEFILE="$bootstrap_pg_service_file" \
+  PGPASSFILE="$bootstrap_pgpass_file" PGSERVICE=kernel_release_bootstrap \
+    psql "$@"
 }
 
 production_database=$(psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
@@ -126,9 +146,10 @@ production_database=$(psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
 [[ "$production_database" == "cecelia" ]] \
   || deny "bootstrap database must be the production cecelia database"
 
-approval_digest=$(node "$bootstrap_root/scripts/lib/verify-bootstrap-approval.mjs" \
-  "$trust_key" "$repository" "$pr_number" "$source_head_sha" "$merge_sha" \
-  "$actor" "$approval_key_id" "$approval_signature") \
+approval_digest=$(env -i PATH="$PATH" HOME="${HOME:-}" \
+  node "$bootstrap_root/scripts/lib/verify-bootstrap-approval.mjs" \
+  "$trust_key" "$private_config_file" "$repository" "$pr_number" \
+  "$source_head_sha" "$merge_sha" "$actor" "$approval_key_id") \
   || deny "owner approval signature invalid"
 
 # The exact merge tree's canonical runner is the SSOT. Starting from the
@@ -143,13 +164,18 @@ pre_cutover_schema=$(psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
   || deny "production schema is outside the supported N-1 cutover window"
 (
   cd "$deploy_root/packages/brain"
-  KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
+  env -i PATH="$PATH" HOME="${HOME:-}" LANG="${LANG:-}" LC_ALL="${LC_ALL:-}" \
+    KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE="$private_config_file" \
     node --input-type=module - <<'NODE'
 import pg from 'pg';
 import { runMigrations } from './src/migrate.js';
+import { readBootstrapPrivateConfig } from '../../scripts/lib/bootstrap-private-config.mjs';
 
+const privateConfig = readBootstrapPrivateConfig(
+  process.env.KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE,
+);
 const pool = new pg.Pool({
-  connectionString: process.env.KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL,
+  connectionString: privateConfig.database_url,
   max: 1,
 });
 try {
@@ -209,7 +235,7 @@ append_transition() {
   if [[ -n "${2:-}" ]]; then
     IFS=$'\t' read -r effect_receipt_id e2e_manifest_digest \
       artifact_intent_ids artifact_receipt_ids < <(
-      node -e '
+      env -i PATH="$PATH" HOME="${HOME:-}" node -e '
         const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
         process.stdout.write([
           value.receipt_id || "",
@@ -277,7 +303,8 @@ SQL
 
 manifest_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-manifest.XXXXXX")
 chmod 600 "$manifest_file"
-KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
+env -i PATH="$PATH" HOME="${HOME:-}" LANG="${LANG:-}" LC_ALL="${LC_ALL:-}" \
+KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE="$private_config_file" \
 KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
 KERNEL_RELEASE_REPOSITORY="$repository" \
 KERNEL_RELEASE_SOURCE_HEAD_SHA="$source_head_sha" \
@@ -286,7 +313,7 @@ KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT="$deploy_root" \
 KERNEL_RELEASE_BOOTSTRAP_E2E_OUTPUT_FILE="$manifest_file" \
   node "$deploy_root/scripts/lib/release-run-bootstrap-e2e.mjs" materialize \
   || deny "exact approved E2E manifest could not be materialized"
-artifact_versions=$(node -e '
+artifact_versions=$(env -i PATH="$PATH" HOME="${HOME:-}" node -e '
   const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   process.stdout.write(JSON.stringify(value.artifact_versions));
 ' "$manifest_file") || deny "materialized artifact versions could not be read"
@@ -362,9 +389,19 @@ run_bootstrap_effect() {
   local effect_kind="$1" effect_script="$2" effect_pid wait_round
   attempt_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-attempt.XXXXXX")
   chmod 600 "$attempt_file"
-  KERNEL_RELEASE_BOOTSTRAP=1 \
+  env -i \
+    PATH="$PATH" HOME="${HOME:-}" USER="${USER:-}" LOGNAME="${LOGNAME:-}" \
+    TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-}" LC_ALL="${LC_ALL:-}" \
+    TZ="${TZ:-}" SHELL="${SHELL:-}" ENV_REGION="${ENV_REGION:-us}" \
+    DOCKER_HOST="${DOCKER_HOST:-}" DOCKER_CONFIG="${DOCKER_CONFIG:-}" \
+    DEPLOY_STATUS_FILE="${DEPLOY_STATUS_FILE:-}" HOST_HOME="${HOST_HOME:-}" \
+    BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" \
+    BRAIN_STAGING_URL="${BRAIN_STAGING_URL:-http://localhost:5222}" \
+    KERNEL_RELEASE_BOOTSTRAP=1 \
     KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
-    KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
+    KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE="$private_config_file" \
+    KERNEL_RELEASE_BOOTSTRAP_PG_SERVICE_FILE="$bootstrap_pg_service_file" \
+    KERNEL_RELEASE_BOOTSTRAP_PGPASS_FILE="$bootstrap_pgpass_file" \
     KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT="$deploy_root" \
     KERNEL_RELEASE_BOOTSTRAP_ATTEMPT_FILE="$attempt_file" \
     KERNEL_RELEASE_RUN_ID="$bootstrap_run_id" \
@@ -375,7 +412,6 @@ run_bootstrap_effect() {
     KERNEL_RELEASE_MERGE_SHA="$merge_sha" \
     KERNEL_RELEASE_BOOTSTRAP_ACTOR="$actor" \
     KERNEL_RELEASE_BOOTSTRAP_APPROVAL_KEY_ID="$approval_key_id" \
-    KERNEL_RELEASE_BOOTSTRAP_APPROVAL_SIGNATURE="$approval_signature" \
     bash "$effect_script" &
   effect_pid=$!
 
@@ -412,7 +448,8 @@ execute_manifest() {
   local environment="$1" attempt_id="$2"
   receipt_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-receipt.XXXXXX")
   chmod 600 "$receipt_file"
-  KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
+  env -i PATH="$PATH" HOME="${HOME:-}" LANG="${LANG:-}" LC_ALL="${LC_ALL:-}" \
+  KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE="$private_config_file" \
   KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
   KERNEL_RELEASE_REPOSITORY="$repository" \
   KERNEL_RELEASE_MERGE_SHA="$merge_sha" \
@@ -472,7 +509,8 @@ if [[ "$state" == "staging_passed" ]]; then
     receipt_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-receipt.XXXXXX")
     chmod 600 "$receipt_file"
   }
-  KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
+  env -i PATH="$PATH" HOME="${HOME:-}" LANG="${LANG:-}" LC_ALL="${LC_ALL:-}" \
+  KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE="$private_config_file" \
   KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
   KERNEL_RELEASE_REPOSITORY="$repository" \
   KERNEL_RELEASE_MERGE_SHA="$merge_sha" \

@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, writeFileSync } from 'node:fs';
 import pg from 'pg';
 
+import { readBootstrapPrivateConfig } from './bootstrap-private-config.mjs';
 import { sameArtifactVersions } from '../../packages/brain/src/orchestrator/release-run-contract.js';
 import { resolveReleaseArtifactVersions } from '../../packages/brain/src/orchestrator/release-run-artifacts.js';
 import {
@@ -12,7 +13,10 @@ import {
 } from '../../packages/brain/src/orchestrator/release-run-bootstrap-e2e.js';
 
 const action = process.argv[2];
-const databaseUrl = process.env.KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL;
+const privateConfigFile =
+  process.env.KERNEL_RELEASE_BOOTSTRAP_PRIVATE_CONFIG_FILE;
+const { database_url: databaseUrl } =
+  readBootstrapPrivateConfig(privateConfigFile);
 const bootstrapRunId = process.env.KERNEL_RELEASE_BOOTSTRAP_RUN_ID;
 const repository = process.env.KERNEL_RELEASE_REPOSITORY;
 const sourceHeadSha = process.env.KERNEL_RELEASE_SOURCE_HEAD_SHA;
