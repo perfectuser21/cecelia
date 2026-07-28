@@ -23,6 +23,9 @@
 - `report/done` 只接受 `production_verified` receipt。部署 API、五条历史 workflow、
   drift sentinel、`brain-deploy.sh` 与 `promote-dashboard.sh` 都必须消费服务端持久化的
   exact-SHA ReleaseRun authorization，缺失时 fail closed。
+- 首次从 N-1 升级使用 `scripts/release-run-bootstrap.sh`：必须 owner 显式批准 exact
+  SHA，审批只存 digest，receipt/consumption append-only 且 singleton；消费一次后自动
+  失效，后续发布不能再走 bootstrap。
 - Brain 回退目标：`1.268.3`；回退只影响执行代码，不删除 migration 374 账本。
 
 ## Brain 1.268.2 — Kernel controller guard migration

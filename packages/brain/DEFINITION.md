@@ -11,6 +11,8 @@
   重放先观察。只有 exact PASS receipt 才推进，unknown/skipped/idle/fail 均阻断。
 - Kernel `report/done` 只消费 `production_verified`。部署 API、历史 workflows、
   drift sentinel 与直接生产脚本没有 ReleaseRun authorization 时全部 fail closed。
+- N-1 首次升级只允许 owner-approved exact-SHA bootstrap；append-only singleton
+  receipt 只能消费一次，升级后所有正常 release 仍只走 ReleaseRun。
 - 回退：`bash scripts/brain-rollback.sh 1.268.3`（保留 migration 374 审计账本）。
 
 ## Kernel controller contract and intervention evidence
