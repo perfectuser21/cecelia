@@ -51,6 +51,9 @@ describe('migration 381 Kernel equivalence production controller', () => {
     expect(sql).toMatch(
       /attempts\.task_bundle\s+#>> '\{inputs,workspace_spec,expected_head_sha\}' = cases\.artifact_sha/i,
     );
+    expect(sql).toMatch(
+      /FOR UPDATE OF leases\s+FOR SHARE OF cases, attempts, receipts/i,
+    );
     expect(sql).toMatch(/cases\.resource_type = 'ephemeral_run'/i);
     expect(sql).toMatch(/cases\.resource_id = attempts\.id::text/i);
     expect(sql).toMatch(
@@ -79,6 +82,12 @@ describe('migration 381 Kernel equivalence production controller', () => {
     );
     expect(sql).toMatch(
       /kernel equivalence production execution claim authority unavailable/i,
+    );
+    expect(sql).toMatch(
+      /JOIN kernel_equivalence_production_case_bindings bindings[\s\S]*bindings\.provider_session_id = attempts\.provider_session_id[\s\S]*bindings\.actual_machine_id = attempts\.actual_machine_id[\s\S]*bindings\.execution_transport = attempts\.execution_transport[\s\S]*bindings\.remote_job_id = attempts\.remote_job_id/is,
+    );
+    expect(sql).toMatch(
+      /JOIN harness_result_receipts receipts[\s\S]*receipts\.receipt_id = bindings\.result_receipt_id[\s\S]*receipts\.receipt_id = attempts\.result_receipt_id[\s\S]*receipts\.task_bundle_sha256 = bindings\.task_bundle_sha256/is,
     );
     expect(sql).toMatch(
       /active production execution blocks lease transition/i,

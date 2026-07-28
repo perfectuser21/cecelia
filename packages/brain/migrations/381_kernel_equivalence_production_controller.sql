@@ -38,8 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_kernel_equivalence_case_binding_receipt
 CREATE OR REPLACE FUNCTION kernel_equivalence_case_binding_guard()
 RETURNS trigger AS $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1
+  PERFORM cases.case_id
       FROM kernel_equivalence_production_cases cases
       JOIN kernel_equivalence_production_case_leases leases
         ON leases.case_id = cases.case_id
@@ -77,7 +76,9 @@ BEGIN
        AND cases.resource_ref =
              cases.resource_prefix || attempts.id::text
        AND cases.expires_at > clock_timestamp()
-  ) THEN
+     FOR UPDATE OF leases
+     FOR SHARE OF cases, attempts, receipts;
+  IF NOT FOUND THEN
     RAISE EXCEPTION
       'kernel equivalence production case authority binding mismatch';
   END IF;
@@ -320,12 +321,29 @@ BEGIN
        AND attempts.run_id = cases.run_id
        AND attempts.machine_attestation_status = 'verified'
        AND attempts.status IN ('completed', 'completed_with_concerns')
+      JOIN kernel_equivalence_production_case_bindings bindings
+        ON bindings.case_id = cases.case_id
+       AND bindings.provider_session_id = attempts.provider_session_id
+       AND bindings.actual_machine_id = attempts.actual_machine_id
+       AND bindings.execution_transport = attempts.execution_transport
+       AND bindings.remote_job_id = attempts.remote_job_id
+       AND bindings.artifact_sha = cases.artifact_sha
+      JOIN harness_result_receipts receipts
+        ON receipts.receipt_id = bindings.result_receipt_id
+       AND receipts.receipt_id = attempts.result_receipt_id
+       AND receipts.attempt_id = attempts.id
+       AND receipts.run_id = attempts.run_id
+       AND receipts.provider = cases.provider
+       AND receipts.requested_provider = cases.provider
+       AND receipts.provider_session_id = attempts.provider_session_id
+       AND receipts.task_bundle_sha256 = bindings.task_bundle_sha256
      WHERE leases.case_id = NEW.case_id
        AND leases.owner_id
              = 'brain.kernel_equivalence.production_cases'
        AND leases.state = 'prepared'
        AND leases.lease_expires_at > clock_timestamp()
-     FOR UPDATE OF leases;
+     FOR UPDATE OF leases
+     FOR SHARE OF cases, attempts, bindings, receipts;
     IF NOT FOUND THEN
       RAISE EXCEPTION
         'kernel equivalence production execution claim authority unavailable';

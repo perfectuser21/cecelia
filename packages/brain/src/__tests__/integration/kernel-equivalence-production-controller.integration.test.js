@@ -89,6 +89,9 @@ const SHARED_RECEIPT_CASE = 'dacadaca-daca-4aca-8aca-dacadacadaca';
 const LOCKED_CASE = 'dbdbdbdb-dbdb-4bdb-8bdb-dbdbdbdbdbdb';
 const LOCKED_ATTEMPT = 'dcdcdcdc-dcdc-4cdc-8cdc-dcdcdcdcdcdc';
 const LOCKED_RECEIPT = 'dededede-dede-4ede-8ede-dededededede';
+const RACING_CASE = 'eaeaeaea-eaea-4aea-8aea-eaeaeaeaeaea';
+const RACING_ATTEMPT = 'ebebebeb-ebeb-4beb-8beb-ebebebebebeb';
+const RACING_RECEIPT = 'ecececec-ecec-4cec-8cec-ecececececec';
 const ARTIFACT_SHA = 'a'.repeat(40);
 const CELL_ID =
   'KERNEL-P1-10-CONTROLLER-SESSION-ISOLATION::codex::normal';
@@ -121,6 +124,7 @@ function protectedIssuer() {
 
 async function insertAuthority({
   attemptId,
+  bind = true,
   caseId,
   receiptId,
   sessionId,
@@ -184,6 +188,7 @@ async function insertAuthority({
         'prepared', clock_timestamp() + interval '5 minutes')`,
     [caseId],
   );
+  if (!bind) return;
   await pool.query(
     `INSERT INTO kernel_equivalence_production_case_bindings
        (case_id, result_receipt_id, provider_session_id,
@@ -381,6 +386,65 @@ afterAll(async () => {
 });
 
 describe('production controller restart fencing on real PostgreSQL', () => {
+  it('serializes first authority binding against an in-flight Attempt rewrite', async () => {
+    await insertAuthority({
+      attemptId: RACING_ATTEMPT,
+      bind: false,
+      caseId: RACING_CASE,
+      receiptId: RACING_RECEIPT,
+      sessionId: 'original-session',
+    });
+    const writer = await pool.connect();
+    const binder = await pool.connect();
+    try {
+      await writer.query('BEGIN');
+      await writer.query(
+        `UPDATE harness_attempts
+            SET provider_session_id = 'forged-session'
+          WHERE id = $1::uuid`,
+        [RACING_ATTEMPT],
+      );
+      const binding = binder.query(
+        `INSERT INTO kernel_equivalence_production_case_bindings
+           (case_id, result_receipt_id, provider_session_id,
+            actual_machine_id, execution_transport, remote_job_id,
+            task_bundle_sha256, artifact_sha)
+         VALUES
+           ($1::uuid, $2::uuid, 'original-session', 'xian-mac-m4',
+            'fleet-worker', $3, $4, $5)`,
+        [
+          RACING_CASE,
+          RACING_RECEIPT,
+          `job-${RACING_ATTEMPT}`,
+          TASK_BUNDLE_SHA,
+          ARTIFACT_SHA,
+        ],
+      ).then(
+        (value) => ({ status: 'fulfilled', value }),
+        (error) => ({ status: 'rejected', error }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await writer.query('COMMIT');
+
+      const outcome = await binding;
+      expect(outcome.status).toBe('rejected');
+      expect(outcome.error?.message).toMatch(
+        /authority binding mismatch/i,
+      );
+      const readback = await pool.query(
+        `SELECT count(*)::integer AS count
+           FROM kernel_equivalence_production_case_bindings
+          WHERE case_id = $1::uuid`,
+        [RACING_CASE],
+      );
+      expect(readback.rows[0].count).toBe(0);
+    } finally {
+      await writer.query('ROLLBACK').catch(() => {});
+      writer.release();
+      binder.release();
+    }
+  });
+
   it('freezes Attempt authority after a production case is bound', async () => {
     await expect(pool.query(
       `UPDATE harness_attempts
