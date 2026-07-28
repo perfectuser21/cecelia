@@ -1,6 +1,20 @@
 # Brain 模块定义
 
-**版本**: 1.268.8
+**版本**: 1.268.9
+
+## Brain-owned Kernel production seam builders
+
+- 一个 server-owned factory 只接受精确的 production dependency/authority
+  port 集合，并校验 10 个 non-release seam 的 owner 与实际 creator 所需函数；
+  缺失、额外或错 owner 的 port 均 fail-closed。
+- factory 复用 10 个现有真实 equivalence seam creator，返回按 canonical seam ID
+  索引且冻结的 builder map；builder 只接受 trusted assembly 提供的
+  `effectSigner` 与 `createAuthorityBinding`。
+- credential、independent judge、orphan liveness 与 DevGate loader 返回的 authority
+  context 必须精确匹配 grant-derived binding；已校验函数与 sandbox repo 在冻结
+  port snapshot 中捕获，调用方后续突变不能替换生产依赖。
+- 本版本不读取 env/key、不接 server wiring、不创建 fake authority、不部署；
+  回退：`bash scripts/brain-rollback.sh 1.268.8`；没有数据库迁移。
 
 ## Brain-owned Kernel equivalence trusted execution
 
