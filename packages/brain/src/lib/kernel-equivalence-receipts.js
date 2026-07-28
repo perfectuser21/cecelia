@@ -96,8 +96,10 @@ const BUNDLE_FIELDS = Object.freeze([
   'effect_receipts',
   'engine_version',
   'environment',
+  'execution_grants',
   'expires_at',
   'grant_id',
+  'grant_hashes',
   'issued_at',
   'key_id',
   'nonce',
@@ -382,10 +384,15 @@ export function verifyEffectReceipt(receipt, registry, expected, { now = Date.no
   }
   validateIdentity(receipt, 'effect');
   if (
-    (expected.grant_id != null && receipt.grant_id !== expected.grant_id)
-    || (expected.nonce != null && receipt.nonce !== expected.nonce)
-    || (expected.resource_id != null && receipt.resource_id !== expected.resource_id)
-    || (expected.resource_ref != null && receipt.resource_ref !== expected.resource_ref)
+    !UUID_PATTERN.test(expected?.grant_id ?? '')
+    || !UUID_PATTERN.test(expected?.nonce ?? '')
+    || !nonEmpty(expected?.resource_id)
+    || !nonEmpty(expected?.resource_ref)
+    || !nonEmpty(expected?.resource_prefix)
+    || receipt.grant_id !== expected.grant_id
+    || receipt.nonce !== expected.nonce
+    || receipt.resource_id !== expected.resource_id
+    || receipt.resource_ref !== expected.resource_ref
   ) {
     fail('effect_axis_mismatch');
   }
@@ -410,7 +417,7 @@ export function verifyEffectReceipt(receipt, registry, expected, { now = Date.no
     || !HASH_PATTERN.test(receipt.before_hash ?? '')
     || !HASH_PATTERN.test(receipt.after_hash ?? '')
     || !nonEmpty(receipt.effect_code)
-    || !validResource(receipt, receipt.resource_ref)
+    || !validResource(receipt, expected.resource_prefix)
   ) {
     fail('effect_outcome_invalid');
   }
@@ -441,9 +448,10 @@ export function verifyEffectReceipt(receipt, registry, expected, { now = Date.no
   return Object.freeze(structuredClone(receipt));
 }
 
-function bundlePayload(previousBundleHash, receiptHashes) {
+function bundlePayload(previousBundleHash, grantHashes, receiptHashes) {
   return {
     previous_bundle_hash: previousBundleHash,
+    grant_hashes: grantHashes,
     receipt_hashes: receiptHashes,
   };
 }
@@ -454,11 +462,15 @@ export function assembleUnsignedBundle({
   issuedAt,
   expiresAt,
   expected,
+  executionGrants,
   receipts,
   previousBundleHash = null,
 }) {
+  const grantHashes = executionGrants.map(sha256Canonical);
   const receiptHashes = receipts.map(sha256Canonical);
-  const payloadHash = sha256Canonical(bundlePayload(previousBundleHash, receiptHashes));
+  const payloadHash = sha256Canonical(
+    bundlePayload(previousBundleHash, grantHashes, receiptHashes),
+  );
   return {
     schema_version: 'kernel-equivalence-receipt-bundle/v1',
     bundle_id: `bundle:${payloadHash}`,
@@ -483,13 +495,72 @@ export function assembleUnsignedBundle({
     seam_id: expected.cell.seam_id,
     adapter_id: expected.cell.adapter_id,
     previous_bundle_hash: previousBundleHash,
+    execution_grants: structuredClone(executionGrants),
+    grant_hashes: grantHashes,
     effect_receipts: structuredClone(receipts),
     receipt_hashes: receiptHashes,
     bundle_payload_hash: payloadHash,
   };
 }
 
-export function verifyReceiptBundle(bundle, registry, expected, { now = Date.now() } = {}) {
+function expectedForGrant(bundle, grant, cell) {
+  return {
+    cell,
+    run_id: bundle.run_id,
+    attempt_id: bundle.attempt_id,
+    artifact_sha: bundle.artifact_sha,
+    brain_version: bundle.brain_version,
+    engine_version: bundle.engine_version,
+    grant_id: grant.grant_id,
+    nonce: grant.nonce,
+    resource_id: grant.resource_id,
+    resource_ref: grant.resource_ref,
+    resource_prefix: grant.resource_prefix,
+  };
+}
+
+function deriveExpectedFromBundle(bundle) {
+  const grants = Array.isArray(bundle?.execution_grants)
+    ? bundle.execution_grants
+    : [];
+  const currentGrant = grants.at(-1);
+  return {
+    cell: {
+      cell_id: bundle?.cell_id,
+      behavior_id: bundle?.behavior_id,
+      provider: bundle?.provider,
+      scenario: bundle?.scenario,
+      seam_id: bundle?.seam_id,
+      adapter_id: bundle?.adapter_id,
+      isolation: {
+        environment: currentGrant?.environment,
+        resource_type: 'verified_previous_bundle',
+        resource_prefix: currentGrant?.resource_prefix,
+      },
+    },
+    run_id: bundle?.run_id,
+    attempt_id: bundle?.attempt_id,
+    artifact_sha: bundle?.artifact_sha,
+    brain_version: bundle?.brain_version,
+    engine_version: bundle?.engine_version,
+    grant_id: bundle?.grant_id,
+    nonce: bundle?.nonce,
+    resource_id: bundle?.resource_id,
+    resource_ref: bundle?.resource_ref,
+    resource_prefix: currentGrant?.resource_prefix,
+  };
+}
+
+export function verifyReceiptBundle(
+  bundle,
+  registry,
+  expected,
+  {
+    now = Date.now(),
+    resolvePreviousBundle = null,
+    _seenBundleHashes = new Set(),
+  } = {},
+) {
   exactFields(bundle, BUNDLE_FIELDS, 'bundle_fields_invalid');
   if (
     bundle.schema_version !== 'kernel-equivalence-receipt-bundle/v1'
@@ -498,6 +569,8 @@ export function verifyReceiptBundle(bundle, registry, expected, { now = Date.now
     || bundle.nonce !== expected.nonce
     || bundle.resource_id !== expected.resource_id
     || bundle.resource_ref !== expected.resource_ref
+    || !Array.isArray(bundle.execution_grants)
+    || !Array.isArray(bundle.grant_hashes)
     || !Array.isArray(bundle.effect_receipts)
     || !Array.isArray(bundle.receipt_hashes)
   ) {
@@ -520,6 +593,55 @@ export function verifyReceiptBundle(bundle, registry, expected, { now = Date.now
   if (bundle.collector_service_id !== key.service_id) fail('bundle_key_invalid');
   verifySignature(bundle, key, 'bundle_signature_invalid');
 
+  const expectedGrantCount = expected.cell.scenario === 'recovery' ? 2 : 1;
+  if (bundle.execution_grants.length !== expectedGrantCount) {
+    fail('bundle_grant_count_invalid');
+  }
+  let verifiedGrants;
+  if (expected.cell.scenario === 'recovery') {
+    const violationCell = expectedViolationCell(expected.cell);
+    const violationGrant = verifyExecutionGrant(
+      bundle.execution_grants[0],
+      registry,
+      { ...expected, cell: violationCell },
+      { now },
+    );
+    const recoveryGrant = verifyExecutionGrant(
+      bundle.execution_grants[1],
+      registry,
+      expected,
+      { now },
+    );
+    if (
+      violationGrant.run_id !== recoveryGrant.run_id
+      || violationGrant.attempt_id !== recoveryGrant.attempt_id
+      || violationGrant.artifact_sha !== recoveryGrant.artifact_sha
+      || violationGrant.brain_version !== recoveryGrant.brain_version
+      || violationGrant.engine_version !== recoveryGrant.engine_version
+      || violationGrant.resource_id !== recoveryGrant.resource_id
+      || violationGrant.resource_ref !== recoveryGrant.resource_ref
+      || violationGrant.resource_prefix !== recoveryGrant.resource_prefix
+      || violationGrant.seam_id !== recoveryGrant.seam_id
+      || violationGrant.adapter_id !== recoveryGrant.adapter_id
+    ) {
+      fail('bundle_recovery_grants_invalid');
+    }
+    verifiedGrants = [violationGrant, recoveryGrant];
+  } else {
+    verifiedGrants = [
+      verifyExecutionGrant(bundle.execution_grants[0], registry, expected, { now }),
+    ];
+  }
+  const currentGrant = verifiedGrants.at(-1);
+  if (
+    bundle.grant_id !== currentGrant.grant_id
+    || bundle.nonce !== currentGrant.nonce
+    || bundle.resource_id !== currentGrant.resource_id
+    || bundle.resource_ref !== currentGrant.resource_ref
+  ) {
+    fail('bundle_axis_mismatch');
+  }
+
   let verifiedReceipts;
   if (expected.cell.scenario === 'recovery') {
     if (bundle.effect_receipts.length !== 2) fail('bundle_recovery_receipts_invalid');
@@ -527,10 +649,11 @@ export function verifyReceiptBundle(bundle, registry, expected, { now = Date.now
       bundle.effect_receipts[0],
       registry,
       {
-        ...expected,
-        cell: expectedViolationCell(expected.cell),
-        grant_id: null,
-        nonce: null,
+        ...expectedForGrant(
+          bundle,
+          verifiedGrants[0],
+          expectedViolationCell(expected.cell),
+        ),
         predecessor: null,
       },
       { now },
@@ -538,22 +661,34 @@ export function verifyReceiptBundle(bundle, registry, expected, { now = Date.now
     const recovery = verifyEffectReceipt(
       bundle.effect_receipts[1],
       registry,
-      { ...expected, predecessor: violation },
+      {
+        ...expectedForGrant(bundle, verifiedGrants[1], expected.cell),
+        predecessor: violation,
+      },
       { now },
     );
     verifiedReceipts = [violation, recovery];
   } else {
     if (bundle.effect_receipts.length !== 1) fail('bundle_receipt_count_invalid');
     verifiedReceipts = [
-      verifyEffectReceipt(bundle.effect_receipts[0], registry, expected, { now }),
+      verifyEffectReceipt(
+        bundle.effect_receipts[0],
+        registry,
+        expectedForGrant(bundle, verifiedGrants[0], expected.cell),
+        { now },
+      ),
     ];
   }
 
+  const grantHashes = verifiedGrants.map(sha256Canonical);
   const hashes = verifiedReceipts.map(sha256Canonical);
   const payloadHash = sha256Canonical(
-    bundlePayload(bundle.previous_bundle_hash, hashes),
+    bundlePayload(bundle.previous_bundle_hash, grantHashes, hashes),
   );
   if (
+    grantHashes.length !== bundle.grant_hashes.length
+    || grantHashes.some((hash, index) => hash !== bundle.grant_hashes[index])
+    ||
     hashes.length !== bundle.receipt_hashes.length
     || hashes.some((hash, index) => hash !== bundle.receipt_hashes[index])
     || bundle.bundle_payload_hash !== payloadHash
@@ -566,9 +701,42 @@ export function verifyReceiptBundle(bundle, registry, expected, { now = Date.now
     fail('bundle_hash_chain_invalid');
   }
 
+  if (bundle.previous_bundle_hash != null) {
+    if (typeof resolvePreviousBundle !== 'function') {
+      fail('bundle_previous_unresolved');
+    }
+    if (
+      _seenBundleHashes.size >= 100
+      || _seenBundleHashes.has(bundle.previous_bundle_hash)
+    ) {
+      fail('bundle_hash_chain_invalid');
+    }
+    let previous;
+    try {
+      previous = resolvePreviousBundle(bundle.previous_bundle_hash);
+    } catch {
+      fail('bundle_previous_unresolved');
+    }
+    if (
+      !asObject(previous)
+      || sha256Canonical(previous) !== bundle.previous_bundle_hash
+    ) {
+      fail('bundle_previous_unresolved');
+    }
+    const seen = new Set(_seenBundleHashes);
+    seen.add(bundle.previous_bundle_hash);
+    verifyReceiptBundle(
+      previous,
+      registry,
+      deriveExpectedFromBundle(previous),
+      { now, resolvePreviousBundle, _seenBundleHashes: seen },
+    );
+  }
+
   return Object.freeze({
     bundle_id: bundle.bundle_id,
     bundle_hash: sha256Canonical(bundle),
+    grant_ids: verifiedGrants.map((grant) => grant.grant_id),
     receipt_ids: verifiedReceipts.map((receipt) => receipt.receipt_id),
     effect_receipts: verifiedReceipts,
   });

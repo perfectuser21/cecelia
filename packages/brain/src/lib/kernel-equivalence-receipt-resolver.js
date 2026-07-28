@@ -37,7 +37,16 @@ export function createTrustedReceiptResolver({
       raw,
       trustRegistry,
       expected,
-      { now },
+      {
+        now,
+        resolvePreviousBundle: (hash) => {
+          try {
+            return readBundle(hash);
+          } catch {
+            fail('receipt_bundle_unavailable');
+          }
+        },
+      },
     );
     return Object.freeze({
       ...verified,

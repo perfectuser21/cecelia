@@ -172,6 +172,7 @@ function expected(target = cell(), executionGrant = null) {
     nonce: executionGrant?.nonce,
     resource_id: executionGrant?.resource_id,
     resource_ref: executionGrant?.resource_ref,
+    resource_prefix: executionGrant?.resource_prefix,
   };
 }
 

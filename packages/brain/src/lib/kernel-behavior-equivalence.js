@@ -406,13 +406,14 @@ function validateProofMatrix(behavior, behaviorFindings, receiptResolver) {
         nonce: proof.nonce,
         resource_id: proof.resource_id,
         resource_ref: proof.resource_ref,
+        resource_prefix: drill.isolation?.resource_prefix
+          ?.replaceAll('{run_id}', proof.run_id)
+          .replaceAll('{attempt_id}', proof.attempt_id),
       };
       try {
         const verified = receiptResolver(receiptReference, expected);
         const finalReceipt = asArray(verified?.effect_receipts).at(-1);
-        const expectedOutcome = scenario === 'violation'
-          ? 'denied'
-          : scenario === 'recovery' ? 'recovered' : 'confirmed';
+        const expectedOutcome = drill.scenarios?.[scenario]?.expected_outcome;
         if (
           !asArray(verified?.receipt_ids).includes(proof.effect_receipt_id)
           || finalReceipt?.receipt_id !== proof.effect_receipt_id
