@@ -73,5 +73,6 @@ jobs:
           git push origin "$BRANCH"
           gh pr create --head "$BRANCH" --base main \
             --title "chore(cleanup): 自动清理合并后的 prd/task 残留（${COUNT} 个）" \
-            --body "由 cleanup-merged-artifacts.yml 自动创建。仅删除合并后残留的流程文件（.prd-*/.task-*/.dod-*/.dev-mode.*/.dev-seal.*/.enriched-prd-*/DoD.cp-*/PRD.cp-*/TASK_CARD.cp-*），不含任何代码改动。"
-          gh pr merge "$BRANCH" --auto --squash
+            --body "由 cleanup-merged-artifacts.yml 自动创建。仅删除合并后残留的流程文件（.prd-*/.task-*/.dod-*/.dev-mode.*/.dev-seal.*/.enriched-prd-*/DoD.cp-*/PRD.cp-*/TASK_CARD.cp-*），不含任何代码改动。" \
+            --draft
+          echo "Draft cleanup PR 已创建；等待 Kernel SHA-bound merge authorization"

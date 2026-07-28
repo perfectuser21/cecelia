@@ -142,12 +142,11 @@ jobs:
             --head "$BRANCH_NAME" \
             --title "$PR_TITLE" \
             --body "$PR_BODY" \
+            --draft \
             2>&1) \
             || PR_URL=$(gh pr view "$BRANCH_NAME" --json url -q '.url' 2>/dev/null \
                || echo "PR creation failed and no existing PR found")
 
           echo "PR URL: $PR_URL"
 
-          # Request auto-merge (|| true so workflow succeeds even if auto-merge unavailable)
-          gh pr merge "$BRANCH_NAME" --squash --auto --delete-branch \
-            || echo "Note: auto-merge request failed (CI may not have started yet). PR: $PR_URL"
+          echo "Draft PR 已创建；等待 Kernel SHA-bound merge authorization: $PR_URL"
