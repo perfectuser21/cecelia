@@ -500,6 +500,66 @@ manifest/migration 检查只证明 law/schema，不授权运行时 pass。execut
 case 还必须逐字断言 cycle A/B/C 的 target/failure/TTL/reset/probe exact set、签名和旧 failed
 run before/after digest，不允许 `arrayContaining` 或非空检查替代事故级 oracle。
 
+## R49-R50 immutable Red 与后置 Green 阶段语义
+
+GAN 审批对象是 `tests/red-case-manifest.json` 冻结的可执行 34-case Red 合同，不是实现 Green。
+合同阶段必须真实 `collected=34,executed=34`；每个失败都到达现有 production seam，或在本
+sprint 明确的 planned file/export/schema/caller 上产生独立
+`expected_product_seam_absent`。共享 config/dependency/tool/env/DB 初始化失败、无 collection、
+动态 import helper、临时 JSON/stdout 自证都属于 BLOCKED，不算 Red。本轮 pinned 命令实际
+得到 `33 failed | 1 passed (34)`：33 个按各自 planned product seam 缺失而 Red，ESRCH
+liveness 是现存正基线；不存在共享 collection/tooling failure。
+
+Contract Gate 对冻结 R14/R15/R16 坏合同当前误报 `ok=true,hits=[]` 本身是产品 Red：同一个
+case 必须直接调用 production `runContractGate` 并期望稳定 deny rule IDs，不得由 proposer
+伪造 gate rows 让合同阶段先 Green。Reviewer 只有在 34-case exact、有序、逐 case failure
+classification 合法、R49 A-F 都有 executable oracle、七维均达标且 durable Reviewer result
+receipt 有效时，才可批准“授权 Generator”。该批准不代表 equivalence/CI/merge/deploy。
+
+Generator 后，CI 必须让同一 case IDs/digest 全 Green，保存独立 observer、真 PG/restart、
+signed/content-addressed receipts、旧 run immutability、Gate negative/nearby-positive 与
+result-channel readback；Evaluator/Judge 在 exact Draft PR head 独立重算。实现阶段增删、
+改名或重排 case 一律 fail closed。真实环境缺失只能 BLOCKED，绝不能 merge。
+
+## R51 health_probe_busy 单快照与可恢复 admission
+
+生产实测表明 Fleet Worker 的一次 fresh `/health` 需要约 1.1–1.8 秒；并发昂贵 probe 会返回
+HTTP 503 `{"error":"health_probe_busy"}`。当前 `node-admission-client` /
+`production-probes` 会把它以及 `worker_http_503`、`worker_timeout`、transient fetch failure
+压成泛化 `node_not_base_admitted`，同一 dispatch 又分别为 health/capacity 触发 fresh
+probe，最终污染 execution target 并让重复 BLOCKED 把健康 run 标 failed。权威手工回读随后
+显示 `base_admitted=true,dispatch_ready=true,reasons=[]`，证明这是 probe contention，不是
+profile/admission drift。
+
+统一合同必须保留原始 reason、`observed_at`、source receipt，并将
+`health_probe_busy|worker_http_503|worker_timeout|transient_admission_fetch` 分类为
+`recoverable_infrastructure_probe`：target quarantine delta、semantic budget delta、
+GAN budget delta、run terminal delta 均为 0。只有 Brain-owned evaluator 对一份成功、fresh、
+完整 Worker health report 得出稳定的 digest/version/disk/pressure reason set 时，才允许
+`node_not_base_admitted`；decision receipt 必须保存 exact reason set。
+
+同一 dispatch/capability logical cycle 的 health 与 capacity 必须引用一个不可变
+`admission_snapshot_id`，`worker_probe_count=1` 且
+`health_snapshot_id=capacity_snapshot_id`。两个 Controller 并发 preflight 必须经
+singleflight 共享该 probe；若观察到 busy，只能 jitter bounded backoff 后 fresh reprobe。
+Brain restart 可重放已签收且仍 fresh 的 snapshot，但不得制造 duplicate probe/effect。
+持续 busy 达独立上限仍保持 `infrastructure_blocked_owner_intervention`，不得把 run 硬失败。
+
+immutable 34-case manifest 位于 `tests/red-case-manifest.json`，有序 case IDs digest 固定为
+`c8413e6a709ca86eff0d5e3719f4b851617766b6de696aa346432895e50d438f`，不得增删、改名或重排。
+既有
+`health probe busy shares one admission snapshot and target quarantine recovers in the same run`
+同时覆盖 R47 与 R51。它必须通过真实 Worker/Brain/PG seam 阻塞第一个 probe，并发两个
+Controller，断言第二请求的 503 busy、health+capacity 同快照、busy 后同一 run 重新选择同一
+team4、无 quarantine/budget/terminal effect；再覆盖 restart replay、持续 busy 上限及稳定
+policy drift 的 `node_not_base_admitted` 正反例。Contract Gate 必须拒绝把 busy 泛化为
+node death、重复 fresh probe、永久 quarantine 或 BLOCKED-string hard-fail 的合同。
+
+在修复进入 CI/Evaluator 前，任何由这些 transient reason 派生的历史
+`node_not_base_admitted` 只能保留旧 failed run 的 append-only evidence，并创建绑定
+`recovery_of_task_id,recovery_of_run_id,required_base_sha,contract_sha,pr_head_sha` 的新 run；
+禁止 PATCH failed run。修复部署后，未终态 current run 必须原地通过 fresh probe 恢复。
+
 ## NFR 约束
 
 <!-- 来源: decisions 表 category=nfr，PrepPRD 显式值优先 -->
@@ -607,6 +667,8 @@ if [ "$E2E_PHASE" = preapproval ]; then
     --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
     --require-reviewer-result-channel --require-reviewer-effect-isolation \
     --require-target-quarantine-recovery --require-real-pg-selection-replay \
+    --require-admission-singleflight --require-health-capacity-shared-snapshot \
+    --require-health-probe-busy-recovery --expect-busy-budget-delta 0 \
     --require-selection-receipts --require-independent-authority-observer \
     --reject-self-attested-evidence --require-independent-contract-gate \
     --execution-mode serial_single_writer --parallel-width 1 \
@@ -630,6 +692,8 @@ bash scripts/kernel-fleet/run-authoritative-final-e2e.sh \
   --approval-policy packages/quality/contracts/kernel-contract-approval-v2.json \
   --require-verified-reviewer-v2 --execution-mode serial_single_writer \
   --require-target-quarantine-recovery --require-real-pg-selection-replay \
+  --require-admission-singleflight --require-health-capacity-shared-snapshot \
+  --require-health-probe-busy-recovery --expect-busy-budget-delta 0 \
   --require-selection-receipts --require-independent-authority-observer \
   --reject-self-attested-evidence --require-independent-contract-gate \
   --expect-order owner,merge,staging,production,rollback,s12 \

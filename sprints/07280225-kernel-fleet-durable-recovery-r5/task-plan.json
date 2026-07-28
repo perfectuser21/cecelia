@@ -45,7 +45,10 @@
     "guard_stages": ["D", "A", "F", "E"],
     "guard_vectors": ["V01", "V02", "V03", "V04", "V05", "V06", "V07", "V08", "V09", "V10", "V11", "V12", "V13"],
     "guard_providers": ["claude", "codex", "grok"],
-    "guard_summary_boolean_is_authority": false
+    "guard_summary_boolean_is_authority": false,
+    "red_case_manifest": "sprints/07280225-kernel-fleet-durable-recovery-r5/tests/red-case-manifest.json",
+    "red_case_count": 34,
+    "red_case_ids_digest": "c8413e6a709ca86eff0d5e3719f4b851617766b6de696aa346432895e50d438f"
   },
   "journey_type": "agent_remote",
   "journey_type_reason": "P0 Golden Path 跨 built Brain image、真实 Fleet Worker/Runner、macOS OrbStack、Postgres、GitHub exact-head、Kernel 子进程及生产发布接缝；18 个合同 gate 通过显式 depends_on 构成 serial_single_writer 单链，不声称当前 Controller 支持并行。",
@@ -343,18 +346,28 @@
     },
     {
       "task_id": "ws17",
-      "title": "Gate 17：execution-target logical-cycle quarantine 与可恢复 exhaustion",
-      "scope": "把 target exclusion 收敛为 run/role/logical-cycle/target/failure-class 有界事实；用真 PG 重放 cycleA team4 transport fail、cycleB team3 transport fail+team5 quota、cycleC team4 fresh Green；为 transient/auth/quota 设置 TTL/reset 与 fresh reprobe；每次选择持久化完整 append-only receipt；all-targets exhausted 进入可恢复 backoff 而非字符串重复硬失败，并支持保留旧 failed run 后从 remote exact contract SHA 建新 recovery run。",
+      "title": "Gate 17：admission 单快照、health_probe_busy 恢复与 logical-cycle quarantine",
+      "scope": "把 Worker admission 与 target exclusion 收敛为 run/role/logical-cycle/target/failure-class 有界事实；同一 dispatch 的 health/capacity 与并发 Controller 经 singleflight 只消费一个 immutable signed snapshot；保留 health_probe_busy/worker_http_503/worker_timeout/transient fetch exact reason 并零预算、零 quarantine、零 terminal effect；用真 Worker/Brain/PG 重放 cycleA team4 transport fail、cycleB team3 transport fail+team5 quota、cycleC team4 fresh Green；all-targets exhausted 与持续 busy 进入可恢复 backoff/owner intervention，并支持保留旧 failed run 后从 remote exact contract SHA 建新 recovery run。",
       "dod": [
         "[BEHAVIOR] cycleA team4 transport unavailable、cycleB team3 transport unavailable+team5 quota 后，cycleC team4 fresh probe Green 可在同一 run 重新被选中",
         "[BEHAVIOR] TTL 未到/到期、auth reset、machine_offline/transient TTL、product failure、Brain restart/replay 与 persistent exhaustion termination cap/owner terminate 均有独立 reason/receipt",
         "[BEHAVIOR] 真 PG selection receipt 的 considered/excluded 都非空且完整包含 class/source/expiry或reset/observed_at/fresh probe/candidate digest/signature，独立 reader 重算通过",
+        "[BEHAVIOR] 阻塞真实 Worker probe 并发两个 Controller 时，health+capacity 共用 admission_snapshot_id、Worker probe=1；busy/503/timeout exact reason 不得泛化为 node_not_base_admitted",
+        "[BEHAVIOR] busy receipt 的 target quarantine、semantic/GAN budget、run terminal delta 全为0；jitter fresh reprobe 后同一 run 选择原 target；持续 busy 到 cap 保持 infrastructure_blocked_owner_intervention",
         "[BEHAVIOR] 历史 failed run/attempt/decision log byte-identical；新 recovery run 的 recovery_of 与远端 contract branch full SHA 精确匹配"
       ],
       "files": [
         "packages/brain/migrations/",
+        "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+        "packages/brain/scripts/fleet-worker/fleet-worker.test.js",
+        "packages/brain/src/orchestrator/fleet-node/node-admission-client.js",
+        "packages/brain/src/orchestrator/fleet-node/node-admission-client.test.js",
         "packages/brain/src/orchestrator/preflight/capability-gate.js",
+        "packages/brain/src/orchestrator/preflight/capability-gate.test.js",
         "packages/brain/src/orchestrator/preflight/execution-targets.js",
+        "packages/brain/src/orchestrator/preflight/execution-targets.test.js",
+        "packages/brain/src/orchestrator/preflight/production-probes.js",
+        "packages/brain/src/orchestrator/preflight/production-probes.test.js",
         "packages/brain/src/orchestrator/preflight/production-wiring.js",
         "packages/brain/src/orchestrator/dispatcher.js",
         "packages/brain/src/orchestrator/loop.js",
@@ -372,13 +385,15 @@
     },
     {
       "task_id": "ws18",
-      "title": "Gate 18：R48 独立 authority observer 与 Contract Gate",
-      "scope": "把 R48 oracle 纪律应用到全部 34 个 Red case：verifier stdout/temp JSON 仅 diagnostic；由独立 trust-domain observer 从 append-only server/PG store 与 content-addressed artifact 回读重算 receipt/artifact/predecessor/signature/effect；严格校验生产七维 rubric；以事故级 exact-set+签名 oracle 重放 execution-target cycle A/B/C；Controller-owned Contract Gate 在冻结 SHA 拒绝 R14/R15 self-attestation、永久 failed_targets 与 exhausted hard-fail。",
+      "title": "Gate 18：R48-R51 immutable Red、独立 observer 与 Contract Gate",
+      "scope": "冻结有序 34-case manifest；GAN 阶段真实 collected/executed=34 且仅 planned product seam 产生 Red，Generator 后同一 digest 全 Green。verifier stdout/temp JSON 仅 diagnostic；由独立 trust-domain observer 从 append-only server/PG store 与 content-addressed artifact 回读重算 receipt/artifact/predecessor/signature/effect；严格校验生产七维 rubric；以事故级 exact-set+签名 oracle 重放 execution-target cycle A/B/C 和 health_probe_busy singleflight/shared snapshot；Controller-owned Contract Gate 在冻结 SHA 拒绝 R14/R15 self-attestation、永久 failed_targets、exhausted hard-fail、busy->node death 与 duplicate fresh probe。",
       "dod": [
         "[BEHAVIOR] fake temp JSON/stdout、duplicate/missing cell、binding mutation、same observer、predecessor reorder、invented/unknown/missing rubric 全部 non-authorizing",
         "[BEHAVIOR] positive authority receipt 由不同 principal 独立回读并重算完整 task/run/attempt/role/session/lease/intent/contract/head/skill/policy、raw artifact、predecessor 与 before/after effect",
         "[BEHAVIOR] 全 34-case 禁止 expect(verifier stdout) 正控；静态 law/schema 不计 runtime pass；selection receipt 独立重算 canonical digest 并验公钥签名",
+        "[BEHAVIOR] R49/R50 合同阶段 collected=34/executed=34/33 Red+1 existing baseline；实现后相同 case_ids_digest 34 Green，禁止增删改名重排或 tool/config/env failure 冒充产品 Red",
         "[BEHAVIOR] cycle A team4 transport、cycle B team3 transport+team5 quota、cycle C team4 fresh recovery 的 exact set、TTL/reset/probe 与旧 failed-run before/after digest 全部逐字匹配",
+        "[BEHAVIOR] immutable 34-case 中同一 R47/R51 case 在真实 Worker/Brain seam 证明并发 busy、health+capacity 单 snapshot、同 run 恢复和四类 delta=0；不增删/改名库存",
         "[BEHAVIOR] R14/R15 self-attested、flat failed_targets、exhausted hard-fail 四 fixture 均被独立 Contract Gate 拒绝并持久化 content-addressed gate artifact digest",
         "[BEHAVIOR] BRAIN_RESULT_FILE/result-channel store 不可用时返回 infrastructure BLOCKED，source .brain-result.json 与 stdout authority=0"
       ],
@@ -393,6 +408,7 @@
         "packages/brain/src/lib/__tests__/fixtures/contract-gate/r14-self-attested/",
         "packages/brain/src/lib/__tests__/fixtures/contract-gate/r15-self-attested/",
         "sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts",
+        "sprints/07280225-kernel-fleet-durable-recovery-r5/tests/red-case-manifest.json",
         "sprints/07280225-kernel-fleet-durable-recovery-r5/tests/vitest.config.ts",
         "scripts/kernel-fleet/verify-r48-independent-authority.sh",
         "scripts/kernel-fleet/verify-r48-contract-gate.sh"

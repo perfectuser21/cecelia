@@ -5,7 +5,7 @@ target_environment: linux_server
 ---
 # Contract DoD — Durable Fleet Worker bootstrap 与 Kernel 恢复闭环
 
-**范围**: PRD Golden Path 第 1-12 步 + R32-R48 exact inventory/advisory、append-only
+**范围**: PRD Golden Path 第 1-12 步 + R32-R51 exact inventory/advisory、append-only
 classification/manifest/origin/cell evidence、同 Journey lifecycle projection、strict
 staging/production/rollback、provider-neutral Guard Ledger D/A/F/E、独立 S12 accountant、
 attempt-runtime result channel、Reviewer-v2 确定性批准/效果隔离、serial-single-writer
@@ -25,10 +25,13 @@ attempt-runtime result channel、Reviewer-v2 确定性批准/效果隔离、seri
 - [ ] [ARTIFACT] 真实 US E2E、mutation、rollback 脚本及两个 integration test 在合同路径落地。
   Test: node -e "const fs=require('fs');for(const p of ['scripts/kernel-fleet/run-real-attempt-proof.sh','scripts/kernel-fleet/run-us-durable-recovery-canary.sh','scripts/kernel-fleet/verify-owner-gate-and-rollback.sh','packages/brain/src/__tests__/kernel-launch-readiness.integration.test.js','packages/brain/src/__tests__/kernel-durable-recovery.integration.test.js'])fs.accessSync(p)"
 - [ ] [ARTIFACT] Sprint Red 测试库存按 realpath 去重后恰好一个文件、34 个唯一 `it()`；
+  `tests/red-case-manifest.json` 的有序 case IDs 与测试逐字相等，digest 固定为
+  `c8413e6a709ca86eff0d5e3719f4b851617766b6de696aa346432895e50d438f`；
   无共享 `loadProof` 动态 import、stdout 正向 oracle 或 mock decision store；保留
   migration/workflow/result-channel/full-fixture/classification/direct-origin/
   strict-staging/terminal-order Red，并统一从 append-only store 独立回读。
-  Test: node -e "const fs=require('fs');const p='sprints/07280225-kernel-fleet-durable-recovery-r5/tests/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8');if((c.match(/^  it\\(/gm)||[]).length!==34||c.includes('loadProof(')||c.includes('decisions.push')||/expect\\((out|run\\()/.test(c)||!c.includes('readAuthoritativeScenario')||!c.includes('queryPgJson')||!c.includes('verifySignature')||!c.includes('authority inventory full entry fixture and advisory partition')||!c.includes('strict staging rejects empty skip and SHA drift')||!c.includes('deterministic reviewer v2 approval rejects advisory outcomes and stale intent')||!c.includes('reviewer mutation surface is denied before verified approval')||!c.includes('execution target quarantine replays real PG cycles and writes complete selection receipts')||!c.includes('independent authority observer rejects temp self attestation and malformed rubric evidence')||!c.includes('Controller Contract Gate rejects R14 R15 and permanent target poisoning fixtures')||!c.includes('current controller remains serial single writer'))process.exit(1)"
+  Test: node -e "const fs=require('fs'),crypto=require('crypto');const root='sprints/07280225-kernel-fleet-durable-recovery-r5/tests',p=root+'/durable-recovery.contract.test.ts';const c=fs.readFileSync(p,'utf8'),ids=[...c.matchAll(/^  it\\('([^']+)'/gm)].map(x=>x[1]),m=JSON.parse(fs.readFileSync(root+'/red-case-manifest.json'));if(ids.length!==34||new Set(ids).size!==34||JSON.stringify(ids)!==JSON.stringify(m.cases)||crypto.createHash('sha256').update(JSON.stringify(ids)).digest('hex')!=='c8413e6a709ca86eff0d5e3719f4b851617766b6de696aa346432895e50d438f'||c.includes('loadProof(')||c.includes('decisions.push')||/expect\\((out|run\\()/.test(c)||!c.includes('expected_product_seam_absent')||!c.includes('readAuthoritativeScenario')||!c.includes('queryPgJson')||!c.includes('verifySignature')||!c.includes('authority inventory full entry fixture and advisory partition')||!c.includes('strict staging rejects empty skip and SHA drift')||!c.includes('deterministic reviewer v2 approval rejects advisory outcomes and stale intent')||!c.includes('reviewer mutation surface is denied before verified approval')||!c.includes('health probe busy shares one admission snapshot and target quarantine recovers in the same run')||!c.includes('concurrent_controllers_probe_count: 1')||!c.includes(\"persistent_busy_at_cap: 'infrastructure_blocked_owner_intervention'\")||!c.includes('independent authority observer rejects temp self attestation and malformed rubric evidence')||!c.includes('Controller Contract Gate rejects R14 R15 and permanent target poisoning fixtures')||!c.includes('current controller remains serial single writer'))process.exit(1)"
+  gate-allow: weak-oracle/file-existence-only 本行 `.size` 是 Set 唯一 ID 计数并同时校验完整有序 case 集合与 SHA-256，不是文件存在/大小 oracle。
 - [ ] [ARTIFACT] Sprint 独立 Vitest config 精确收集唯一合同测试，不依赖 Brain 默认 include。
   Test: node -e "const c=require('fs').readFileSync('sprints/07280225-kernel-fleet-durable-recovery-r5/tests/vitest.config.ts','utf8');if(!c.includes('durable-recovery.contract.test.ts')||!c.includes(\"environment: 'node'\"))process.exit(1)"
 - [ ] [ARTIFACT] P0 统一 gate 与四个现有 workflow 的 fail-closed 接线均在实现范围。
@@ -231,18 +234,34 @@ attempt-runtime result channel、Reviewer-v2 确定性批准/效果隔离、seri
   验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-r48-contract-gate.sh --frozen-contract "${CONTRACT_SHA:?}" --head "${PR_HEAD_SHA:?}" --fixtures r14-self-attested,r15-self-attested,flat-failed-targets,exhausted-hard-fail --independent-store-readback
   期望: exit 0；denied fixture exact set=4，gate receipt issuer/observer 分离且 artifact digest 重算一致。
 
-- [ ] [BEHAVIOR] [L2] Golden Path Step 9A — execution target quarantine 按 logical cycle 过期
-  动作: 在真 PG/生产 capability gate 中顺序注入 cycleA team4 transport unavailable、
-  cycleB team3 transport unavailable+team5 quota unavailable、Brain restart replay、TTL 后
-  cycleC team4 fresh Green；另跑 TTL 未到/到期、auth reset、machine_offline/transient TTL、
-  product failure、persistent exhaustion cap/owner terminate 与 failed-run recovery。
+- [ ] [BEHAVIOR] [L2] Golden Path Step 10C — R49/R50 immutable Contract Red 到后置 Green
+  动作: 用 pinned Vitest 运行 manifest 指定的唯一文件；逐字比对有序 34 case IDs/digest，并
+  分类每个失败是否为该 case 明示 planned product seam absent。
+  预期观察: GAN 阶段 `collected=34,executed=34,failed=33,passed=1`，无 collection/tool/env/
+  shared-import failure；Generator 后仍是相同 case digest 且 failed=0/passed=34。任一 case
+  增删改名重排、环境 BLOCKED 伪装 Red、或 Contract Gate 漏拒 frozen bad fixture 均不授权。
+  验证命令: Test: manual:bash bash -c 'TEST_ROOT=sprints/07280225-kernel-fleet-durable-recovery-r5/tests; node -e '\''const fs=require("fs"),c=require("crypto"),r=process.argv[1],s=fs.readFileSync(r+"/durable-recovery.contract.test.ts","utf8"),ids=[...s.matchAll(/^  it\x28\x27([^\x27]+)\x27/gm)].map(x=>x[1]),m=JSON.parse(fs.readFileSync(r+"/red-case-manifest.json"));if(ids.length!==34||new Set(ids).size!==34||JSON.stringify(ids)!==JSON.stringify(m.cases)||c.createHash("sha256").update(JSON.stringify(ids)).digest("hex")!==m.case_ids_digest)process.exit(1)'\'' "$TEST_ROOT"; npx --yes vitest@4.1.10 run --config "$TEST_ROOT/vitest.config.ts" --reporter=verbose'
+  期望: 合同阶段非零且报告 33 failed/1 passed；Green 阶段 exit 0 且 34 passed。Reviewer 以阶段
+  识别结果，不能要求合同阶段先 Green，也不能接受 tool/config/DB 初始化失败。
+
+- [ ] [BEHAVIOR] [L3] Golden Path Step 9A — health_probe_busy 单快照与 target quarantine 恢复
+  动作: 在真 Worker/Brain/PG seam 阻塞第一个昂贵 `/health` probe，让两个 Controller 并发
+  preflight 且同 cycle 同时请求 health/capacity；随后顺序注入 cycleA team4 transport
+  unavailable、cycleB team3 transport unavailable+team5 quota unavailable、Brain restart
+  replay、TTL 后 cycleC team4 fresh Green；另跑 TTL 未到/到期、auth reset、
+  machine_offline/transient TTL、product failure、persistent busy/exhaustion cap、owner
+  terminate 与 failed-run recovery。
   预期观察: cycleA/B 只进入 persisted recoverable backoff；cycleC 同一 run 重新选 team4；
   每轮 append-only receipt 的 considered/excluded 都非空并含完整 reason/source/expiry/probe。
   重复 exhausted 不消耗 semantic/GAN budget；历史 failed run byte-immutable，新 recovery run
-  精确绑定 remote contract full SHA。
-  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-execution-target-recovery.sh --real-controller --real-pg --restart --all-counterfactuals --task "${TASK_ID:?}" --run "${RUN_ID:?}" --contract "${CONTRACT_SHA:?}" --head "${PR_HEAD_SHA:?}"
+  精确绑定 remote contract full SHA。busy/503/timeout 保留 exact reason，分类为 recoverable
+  infrastructure probe；health+capacity 和两个 Controller 共用一个 snapshot，Worker probe=1，
+  quarantine/semantic/GAN/terminal delta=0；busy 后同一 run fresh 恢复。稳定 policy drift 才能
+  产生 `node_not_base_admitted`，持续 busy 到 cap 仍是 infrastructure_blocked owner intervention。
+  验证命令: Test: manual:bash DB_URL="${DB_URL:?}" bash scripts/kernel-fleet/verify-execution-target-recovery.sh --real-controller --real-worker --real-pg --restart --all-counterfactuals --concurrent-controllers 2 --block-first-worker-probe --require-singleflight --share-health-capacity-snapshot --task "${TASK_ID:?}" --run "${RUN_ID:?}" --contract "${CONTRACT_SHA:?}" --head "${PR_HEAD_SHA:?}"
   期望: exit 0；测试由独立 PG reader 重算 selection receipt exact set、candidate digest/signature
-  与历史 run before/after digest；禁止 mocked decisions.push 与空数组 every()。
+  与历史 run before/after digest；`worker_probe_count=1`、
+  `health_snapshot_id=capacity_snapshot_id`；禁止 mocked decisions.push 与空数组 every()。
 
 - [ ] [BEHAVIOR] [L2] Golden Path contract execution — current Controller stays serial single writer
   动作: 把本合同 task-plan 交给真实 Controller scheduler preflight，注入四个 ready label、
