@@ -29,8 +29,11 @@ describe('post-deploy smoke contract', () => {
     const txt = readFileSync(DEPLOY_SH, 'utf8');
     expect(txt).toMatch(/\[11\/11\] Post-deploy smoke/);
     expect(txt).toContain('run_post_deploy_smoke');
-    // smoke non-fatal — deploy 已成功不能因 smoke 回滚
-    expect(txt).toMatch(/run_post_deploy_smoke[^\n]*\|\| true/);
+    // Required E2E is fail-closed: a failed smoke cannot be reported as a
+    // verified deployment.
+    expect(txt).toContain('SMOKE_CODE=$?');
+    expect(txt).toMatch(/\[\[ "\$SMOKE_CODE" -ne 0 \]\]/);
+    expect(txt).toContain('[FAIL] required post-deploy E2E failed');
   });
 
   it('c8a smoke 脚本存在且可执行', () => {
