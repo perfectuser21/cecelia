@@ -479,6 +479,57 @@ describe('receipt bundle and recovery lineage', () => {
     });
   });
 
+  it('iteratively verifies ancestry beyond 198 bundles with a safe bound', async () => {
+    const keys = trustFixture();
+    const target = cell();
+    const executionGrant = grant(keys, target);
+    const receipt = effectReceipt(keys, executionGrant, target);
+    const bundles = new Map();
+    let previousBundleHash = null;
+    let genesisHash = null;
+    for (let index = 0; index < 199; index += 1) {
+      const unsigned = assembleUnsignedBundle({
+        keyId: keys.collector.record.key_id,
+        collectorServiceId: keys.collector.record.service_id,
+        issuedAt: '2026-07-28T12:01:00.000Z',
+        expiresAt: '2026-07-29T12:01:00.000Z',
+        expected: expected(target, executionGrant),
+        executionGrants: [executionGrant],
+        receipts: [receipt],
+        cleanupEvidence: cleanupEvidence(target, executionGrant),
+        previousBundleHash,
+      });
+      const bundle = signed(unsigned, keys.collector.privateKey);
+      const hash = sha256Canonical(bundle);
+      bundles.set(hash, bundle);
+      genesisHash ??= hash;
+      previousBundleHash = hash;
+    }
+    const headHash = previousBundleHash;
+    const readBundle = async (hash) => bundles.get(hash) ?? null;
+
+    await expect(preloadReceiptBundleAncestry({
+      headHash,
+      genesisHash,
+      readBundle,
+      trustRegistry: keys.registry,
+      now: NOW,
+      maximumBundleDepth: 1_000,
+    })).resolves.toMatchObject({
+      head_hash: headHash,
+      genesis_hash: genesisHash,
+      bundle_hashes: expect.arrayContaining([headHash, genesisHash]),
+    });
+    await expect(preloadReceiptBundleAncestry({
+      headHash,
+      genesisHash,
+      readBundle,
+      trustRegistry: keys.registry,
+      now: NOW,
+      maximumBundleDepth: 198,
+    })).rejects.toMatchObject({ code: 'bundle_hash_chain_invalid' });
+  });
+
   it('requires recovery to reference the matching violation cell receipt id and hash', () => {
     const keys = trustFixture();
     const violationCell = cell('violation');
