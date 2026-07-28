@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createProtectedGrantFileAuthority,
@@ -224,4 +225,44 @@ describe('protected execution grant file authority', () => {
       code: 'protected_grant_file_invalid',
     });
   });
+
+  it.runIf(process.platform === 'darwin')(
+    'rejects extended ACLs that grant access beyond mode bits',
+    async () => {
+      const value = fixture();
+      execFileSync('/bin/chmod', [
+        '+a',
+        'everyone allow read',
+        value.grantPath,
+      ]);
+      const authority = createProtectedGrantFileAuthority({
+        grantRoot: value.root,
+      });
+
+      await expect(authority.resolveProtectedGrant({
+        cellId: CELL_ID,
+        grantRef: GRANT_REF,
+      })).rejects.toMatchObject({
+        code: 'protected_grant_file_unsafe',
+      });
+    },
+  );
+
+  it.runIf(process.platform === 'darwin')(
+    'rejects an ACL-bearing protected root even when mode remains 0700',
+    () => {
+      const value = fixture();
+      execFileSync('/bin/chmod', [
+        '+a',
+        'everyone allow list,search',
+        value.root,
+      ]);
+
+      expect(() => createProtectedGrantFileAuthority({
+        grantRoot: value.root,
+      })).toThrowError(expect.objectContaining({
+        code: 'protected_grant_root_unsafe',
+      }));
+    },
+  );
 });

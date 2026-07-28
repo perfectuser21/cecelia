@@ -9,8 +9,9 @@
   `{cell_id, grant_ref}`。
 - Brain trusted service 从 pinned 99-cell plan 解析 cell，经独立 protected-grant
   authority 对服务专属目录逐级校验 owner/mode、单次 `O_NOFOLLOW` 打开并把
-  grant UUID/cell 绑定到 opaque ref；runtime 只接收冻结 grant 对象，不接受裸路径
-  capability，再调用已装配的 10 个 non-release adapter。
+  grant UUID/cell 绑定到 opaque ref；目录、祖先与 grant 文件还必须无 extended
+  ACL，避免 mode 0700/0600 被 ACL 旁路。runtime 只接收冻结 grant 对象，不接受
+  裸路径 capability，再调用已装配的 10 个 non-release adapter。
 - Unix listener 使用安全 owner parent、私有 bind 名称、0600 发布路径、请求/响应
   大小与超时上限；关闭时只按 exact inode 删除自己发布的 socket。
 - 生产 assembly/secrets 未配置时 boot readiness 明确 fail-closed，不建立 listener；
