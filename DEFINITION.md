@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.114
+**Brain 版本**: 1.267.115
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.115 — Fleet admission evaluator artifact hotfix
+
+- rollout source archive 纳入 `node-admission.js`，使节点 `fleet-nodectl admit`
+  能加载与 `node-profile.js` 配套的 admission evaluator，而不是在 undrain 后因
+  `ERR_MODULE_NOT_FOUND` 失败。
+- artifact 合同测试机械锁定该依赖；不改变 admission 阈值、Runner pin、凭据或
+  Phase 4B/4C/4D/5 范围，任何失败继续恢复 drain。
+- Brain 回退目标：`1.267.114`；节点保持 drain 后再回退。
 
 ## Brain 1.267.114 — Fleet Worker credential module install hotfix
 

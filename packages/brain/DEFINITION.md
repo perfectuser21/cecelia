@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.114
+**版本**: 1.267.115
+
+## Fleet admission evaluator artifact hotfix
+
+- rollout source archive 补齐 `fleet-nodectl admit` 在节点本地直接加载的
+  `node-admission.js`，并由 artifact 合同测试锁定，避免 undrain 后出现
+  `ERR_MODULE_NOT_FOUND`。
+- 不改变 admission 阈值、Runner pin、凭据或 Phase 4B/4C/4D/5 范围；失败
+  继续恢复 drain。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.114`。
 
 ## Fleet Worker credential module install hotfix
 

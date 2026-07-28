@@ -365,6 +365,7 @@ stage_worker_token "$worker_token"
   packages/brain/package.json \
   packages/brain/config/fleet-node-profiles.json \
   packages/brain/src/orchestrator/fleet-node/node-profile.js \
+  packages/brain/src/orchestrator/fleet-node/node-admission.js \
   packages/brain/scripts/fleet-worker
 "$GIT" init --bare "$bundle_repository" >/dev/null
 "$GIT" --git-dir="$bundle_repository" fetch --no-tags \
