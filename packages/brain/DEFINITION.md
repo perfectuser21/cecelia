@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.268.17
+**版本**: 1.268.18
 
 ## Kernel zero-Attempt patrol coverage
 
@@ -68,6 +68,10 @@
 
 - Migration 377 在 ReleaseRun 374/375 与 trusted runtime 376 之后增加隔离
   production-case authority；它不覆盖既有 release 或 receipt evidence。
+- Migration 378 是不可跳过的 additive authority upgrade：即使 377 已登记也会
+  先拒绝存量 non-canonical behavior tuple，再幂等添加并 VALIDATE canonical
+  constraint，同时补齐初始 lease 与同 generation lifecycle 的双向 trigger；
+  不依赖重跑或篡改 377。
 - 每个 case 绑定 canonical cell、Run、Attempt、artifact SHA、Brain/Engine
   version、seam/adapter 与唯一 ephemeral resource ref；跨 Run ownership、
   复用 resource 或 protected/main/production ref 均 fail closed。
@@ -84,7 +88,7 @@
   未确认的 COMMIT 都返回 `late_effect_risk`，不得作为普通失败重试。
 - 本版本只建立 authority ledger，不注册 signer、production seam port 或 proof；
   根合同继续保持 0/99，且未执行任何生产 mutation。
-- 回退：`bash scripts/brain-rollback.sh 1.268.16`；migration evidence 保留，
+- 回退：`bash scripts/brain-rollback.sh 1.268.17`；migration evidence 保留，
   回退代码不得删除或改写 case/event rows。
 
 ## Brain-owned Kernel equivalence trusted execution

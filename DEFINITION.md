@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.268.17
+**Brain 版本**: 1.268.18
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.18 — Production case authority additive upgrade
+
+- Migration 378 不依赖重跑已登记的 377：先审计并拒绝任何存量
+  behavior/seam/adapter/resource-class 非 canonical tuple，再幂等添加并验证命名
+  CHECK constraint。
+- 旧 377 缺失的初始 lease owner/generation/state guard、case-expiry 上界与同
+  generation lifecycle event deferred guard 由 378 additive 回填；fresh 与重复
+  执行均保持 fail-closed。
+- 真实 PostgreSQL 回归覆盖 cb805-era schema 升级、坏 tuple 攻击、合法升级、
+  幂等重跑，以及 ReleaseRun 374/375 → trusted runtime 376 → case 377/378
+  的顺序兼容。
 
 ## Brain 1.268.7 — Signed Kernel equivalence drills
 

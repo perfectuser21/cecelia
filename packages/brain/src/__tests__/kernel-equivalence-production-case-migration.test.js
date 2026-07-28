@@ -8,6 +8,13 @@ const sql = readFileSync(
   ),
   'utf8',
 );
+const authorityUpgradeSql = readFileSync(
+  new URL(
+    '../../migrations/378_kernel_equivalence_production_case_authority.sql',
+    import.meta.url,
+  ),
+  'utf8',
+);
 
 describe('migration 377 Kernel equivalence production cases', () => {
   it('is additive after ReleaseRun 374/375 and trusted runtime 376', () => {
@@ -196,5 +203,21 @@ describe('migration 377 Kernel equivalence production cases', () => {
     expect(sql).toMatch(/DROP TRIGGER IF EXISTS/g);
     expect(sql).toMatch(/VALUES \('377'/i);
     expect(sql).toMatch(/ON CONFLICT \(version\) DO NOTHING/i);
+  });
+});
+
+describe('migration 378 production-case authority upgrade', () => {
+  it('serializes the audit and constraint/trigger cutover against writers', () => {
+    expect(authorityUpgradeSql).toMatch(
+      /LOCK TABLE\s+kernel_equivalence_production_cases,\s*kernel_equivalence_production_case_leases,\s*kernel_equivalence_production_case_events\s+IN SHARE ROW EXCLUSIVE MODE/i,
+    );
+    expect(authorityUpgradeSql).toMatch(/non-canonical behavior tuple/i);
+    expect(authorityUpgradeSql).toMatch(/invalid production case lifecycle/i);
+    expect(authorityUpgradeSql).toMatch(
+      /ADD CONSTRAINT\s+ck_kernel_equivalence_production_case_canonical_tuple/i,
+    );
+    expect(authorityUpgradeSql).toMatch(
+      /VALIDATE CONSTRAINT\s+ck_kernel_equivalence_production_case_canonical_tuple/i,
+    );
   });
 });
