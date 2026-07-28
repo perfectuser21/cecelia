@@ -136,6 +136,31 @@ GROK_LINE="$(grep -n 'elif \[\[ "\$provider" == "grok" \]\]' <<<"$PROVIDER_SECTI
 (( CANARY_LINE < CODEX_LINE && CANARY_LINE < CLAUDE_LINE && CANARY_LINE < GROK_LINE ))
 grep -q 'managed_drain_provider_descendants' <<<"$PROVIDER_SECTION"
 
+# Execute the real provider-contract function with managed canary seams. All
+# three requested provider targets must take the runner-owned canary exit before
+# any provider binary is invoked.
+eval "$PROVIDER_SECTION"
+CANARY_TRACE="$(mktemp)"
+managed_result_channel_active() { return 0; }
+validate_managed_result_channel() { return 0; }
+configure_managed_bundle_runtime() { export HARNESS_CANARY=true; }
+write_managed_canary_result() {
+  printf '%s\n' "$CECELIA_EXECUTOR" >> "$CANARY_TRACE"
+}
+codex() { printf 'provider-called:codex\n' >> "$CANARY_TRACE"; return 97; }
+claude() { printf 'provider-called:claude\n' >> "$CANARY_TRACE"; return 97; }
+grok() { printf 'provider-called:grok\n' >> "$CANARY_TRACE"; return 97; }
+HARNESS_ATTEMPT_ID="$ATTEMPT_ID"
+HARNESS_NODE=reporter
+for CECELIA_EXECUTOR in codex claude grok; do
+  run_provider_contract
+done
+[[ "$(cat "$CANARY_TRACE")" == $'codex\nclaude\ngrok' ]] || {
+  echo 'managed canary invoked a provider or diverged across targets' >&2
+  exit 1
+}
+rm -f "$CANARY_TRACE"
+
 # Once provider execution returns, managed mode exits before callback body/URL,
 # callback token, retry loop, or any legacy callback HTTP can be evaluated.
 MANAGED_EXIT_LINE="$(

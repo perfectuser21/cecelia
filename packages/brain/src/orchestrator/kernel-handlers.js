@@ -74,7 +74,9 @@ export function createKernelHandlers(deps) {
         agentFeedback: evaluator.feedback ?? evaluateResult?.decision?.reason ?? null,
         brainResult,
         transcript: evaluateResult?.transcript ?? ctx.observed.callbackResult?.transcript,
-        worktreePath: ctx.bundle.inputs.worktree_path,
+        worktreePath: ctx.hostWorktreePath
+          ?? ctx.worktreePath
+          ?? ctx.bundle.inputs.worktree_path,
         sprintDir: ctx.bundle.inputs.sprint_dir,
         taskId: ctx.taskId,
         instanceLabel: `kernel-${String(ctx.attempt.id).slice(0, 8)}`,

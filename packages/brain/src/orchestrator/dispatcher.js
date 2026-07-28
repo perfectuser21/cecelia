@@ -391,6 +391,7 @@ export function createDispatcher(deps) {
     }
 
     const spec = resolveAction(action);
+    const hostWorktreePath = ctx.worktreePath;
     const commanderContext = spec.role === 'commander' ? ctx.commander : null;
     if (spec.role === 'commander' && !commanderContext?.bundle) {
       throw new Error('spawn:commander requires coordinator context');
@@ -648,7 +649,12 @@ export function createDispatcher(deps) {
       try {
         const judge = handlers[action];
         if (!judge) throw new Error('spawn:judge requires an independent judge handler');
-        return await judge({ ...ctx, attempt, bundle });
+        return await judge({
+          ...ctx,
+          attempt,
+          bundle,
+          hostWorktreePath,
+        });
       } catch (error) {
         await deps.attemptStore.fail(attempt.id, {
           code: 'judge_failed',

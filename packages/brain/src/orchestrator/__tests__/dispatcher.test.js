@@ -441,7 +441,7 @@ describe('createDispatcher', () => {
         ...observed.task,
         payload: {
           ...observed.task.payload,
-          worktree_path: hostWorktree,
+          worktree_path: '/attacker/payload/worktree',
         },
       },
       pr: {

@@ -266,12 +266,91 @@ configure_managed_bundle_runtime() {
   unset HARNESS_CALLBACK_TOKEN HARNESS_CALLBACK_URL
 }
 
+managed_drain_candidates() {
+  if [[ "${CECELIA_DRAIN_TEST_MODE:-0}" == "1" ]]; then
+    jobs -pr
+    return 0
+  fi
+  [[ "$$" -eq 1 && -d /proc ]] || return 1
+  local proc=""
+  local pid=""
+  local stat=""
+  local tail=""
+  local state=""
+  for proc in /proc/[0-9]*; do
+    pid="${proc##*/}"
+    [[ "$pid" =~ ^[0-9]+$ && "$pid" -ne "$$" ]] || continue
+    stat="$(<"$proc/stat")" 2>/dev/null || continue
+    tail="${stat##*) }"
+    state="${tail%% *}"
+    [[ "$state" == "Z" || "$state" == "X" ]] && continue
+    printf '%s\n' "$pid"
+  done
+}
+
+# After a managed provider's main process exits, no provider-created process may
+# remain capable of mutating the workspace, TaskBundle, result, or session.
+# PID 1 is the entrypoint ancestor in production; every other live PID in the
+# container namespace is frozen, terminated, and finally killed if necessary.
+managed_drain_provider_descendants() {
+  local round=""
+  local pids=""
+  local pid=""
+  for round in 1 2 3; do
+    pids="$(managed_drain_candidates)" || return 1
+    [[ -n "$pids" ]] || return 0
+    while IFS= read -r pid; do
+      [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+      kill -STOP "$pid" 2>/dev/null || true
+    done <<< "$pids"
+    # Re-enumerate after the freeze so a process racing to fork cannot escape
+    # between the initial snapshot and termination.
+    pids="$(managed_drain_candidates)" || return 1
+    while IFS= read -r pid; do
+      [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+      kill -TERM "$pid" 2>/dev/null || true
+      kill -CONT "$pid" 2>/dev/null || true
+    done <<< "$pids"
+    sleep 0.1
+    pids="$(managed_drain_candidates)" || return 1
+    [[ -n "$pids" ]] || return 0
+    while IFS= read -r pid; do
+      [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+      kill -KILL "$pid" 2>/dev/null || true
+    done <<< "$pids"
+    sleep 0.05
+  done
+  [[ -z "$(managed_drain_candidates)" ]]
+}
+
 finalize_managed_result() {
   local provider_result_file="$1"
   local expected="/tmp/harness-result-${HARNESS_ATTEMPT_ID}.normalized.json"
   [[ "$provider_result_file" == "$expected" ]] || return 1
   node /usr/local/bin/result-channel-driver.cjs \
     --provider-result "$provider_result_file"
+}
+
+write_managed_canary_result() {
+  local provider="${CECELIA_EXECUTOR:-}"
+  [[ "$provider" =~ ^(claude|codex|grok)$ ]] || return 1
+  NORMALIZED_RESULT_FILE="/tmp/harness-result-${HARNESS_ATTEMPT_ID}.normalized.json"
+  unset BRAIN_PROVIDER_SESSION_ID CECELIA_CREDENTIAL_REF BRAIN_CREDENTIAL_COPY_MUTATED
+  jq -n \
+    --arg attempt "$HARNESS_ATTEMPT_ID" \
+    --arg provider "$provider" \
+    '{
+      contract_version:"1.0",
+      attempt_id:$attempt,
+      status:"completed",
+      summary:"Managed canary completed without provider invocation.",
+      artifacts:[],
+      checks:[],
+      decision:{outcome:"CANARY_OK",reason:"runner-owned transport probe"},
+      error:null,
+      provider_metadata:{provider:$provider,session_id:null}
+    }' > "$NORMALIZED_RESULT_FILE" || return 1
+  finalize_managed_result "$NORMALIZED_RESULT_FILE"
 }
 
 write_managed_provider_session() {
@@ -693,6 +772,14 @@ run_provider_contract() {
   local heartbeat_pid=""
   local safe_line=""
   local commander_contract=false
+  local provider_drained=0
+
+  drain_managed_provider_once() {
+    managed_result_channel_active || return 0
+    [[ "$provider_drained" == "0" ]] || return 0
+    managed_drain_provider_descendants || return 1
+    provider_drained=1
+  }
 
   if managed_result_channel_active && ! validate_managed_result_channel; then
     echo "[entrypoint] invalid managed result channel; provider was not started" >&2
@@ -704,6 +791,10 @@ run_provider_contract() {
       echo "[entrypoint] invalid managed TaskBundle runtime authority" >&2
       return 1
     fi
+  fi
+  if managed_result_channel_active && [[ "${HARNESS_CANARY:-false}" == "true" ]]; then
+    write_managed_canary_result || return 1
+    return 0
   fi
 
   if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
@@ -869,6 +960,7 @@ run_provider_contract() {
           fi
         done
     provider_exit=${PIPESTATUS[0]}
+    drain_managed_provider_once || return 1
     redact_codex_credential_file "$result_file" || provider_exit=1
     provider_session_id=$(jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' "$STDOUT_FILE" 2>/dev/null | head -n 1)
   elif [[ "$provider" == "claude" ]]; then
@@ -894,6 +986,7 @@ run_provider_contract() {
     claude_args+=("${model_args[@]}")
     claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"
     provider_exit=${PIPESTATUS[0]}
+    drain_managed_provider_once || return 1
     if [[ $provider_exit -eq 0 ]]; then
       jq -c '
         if .structured_output then .structured_output
@@ -924,6 +1017,7 @@ run_provider_contract() {
     grok_args+=("${model_args[@]}")
     grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 | tee "$STDOUT_FILE"
     provider_exit=${PIPESTATUS[0]}
+    drain_managed_provider_once || return 1
     if [[ $provider_exit -eq 0 ]]; then
       jq -c '
         if .structuredOutput then .structuredOutput
