@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS kernel_equivalence_production_case_leases (
   state TEXT NOT NULL CHECK (state IN (
     'prepared',
     'cancelling',
+    'cancelled',
     'cleanup_unconfirmed',
     'cleaned'
   )),
@@ -182,6 +183,8 @@ BEGIN
     (OLD.state = 'prepared'
       AND NEW.state IN ('cancelling', 'cleanup_unconfirmed', 'cleaned'))
     OR (OLD.state = 'cancelling'
+      AND NEW.state IN ('cancelled', 'cleanup_unconfirmed', 'cleaned'))
+    OR (OLD.state = 'cancelled'
       AND NEW.state IN ('cleanup_unconfirmed', 'cleaned'))
     OR (OLD.state = 'cleanup_unconfirmed'
       AND NEW.state IN ('cancelling', 'cleaned'))

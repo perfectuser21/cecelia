@@ -284,4 +284,52 @@ describe('PostgreSQL production equivalence case store', () => {
       to_state: 'cleaned',
     })).rejects.toMatchObject({ code: 'production_case_transition_stale' });
   });
+
+  it.each([
+    ['cleanup claim on cancelling transition', {
+      event_type: 'cleanup_confirmed',
+    }],
+    ['confirmed claim for uncertain cleanup', {
+      event_type: 'cleanup_unconfirmed',
+      late_effect_risk: true,
+      status: 'confirmed',
+      to_state: 'cleanup_unconfirmed',
+    }],
+    ['false risk for uncertain cleanup', {
+      event_type: 'cleanup_unconfirmed',
+      status: 'unconfirmed',
+      to_state: 'cleanup_unconfirmed',
+    }],
+    ['cancel confirmation without cancelled state', {
+      event_type: 'cancel_confirmed',
+    }],
+  ])('rejects semantic event/state mismatch: %s', async (
+    _label,
+    overrides,
+  ) => {
+    const runtime = transactionPool();
+    const store = createPostgresProductionCaseStore({
+      pool: runtime.pool,
+      randomUUID: () => EVENT_ID,
+      now: () => Date.parse('2026-07-28T12:00:00.000Z'),
+    });
+
+    await expect(store.transitionCase({
+      after_hash: null,
+      before_hash: 'b'.repeat(64),
+      case_id: CASE_ID,
+      event_type: 'cancel_requested',
+      evidence_ref:
+        `db:kernel-equivalence-production-cases/${CASE_ID}/2/`
+        + `${overrides.event_type ?? 'cancel_requested'}`,
+      expected_generation: 1,
+      from_state: 'prepared',
+      late_effect_risk: false,
+      lease_expires_at: '2026-07-28T12:05:00.000Z',
+      status: 'confirmed',
+      to_state: 'cancelling',
+      ...overrides,
+    })).rejects.toMatchObject({ code: 'production_case_transition_invalid' });
+    expect(runtime.pool.connect).not.toHaveBeenCalled();
+  });
 });

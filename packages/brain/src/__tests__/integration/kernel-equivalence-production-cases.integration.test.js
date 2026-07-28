@@ -10,6 +10,9 @@ import {
 } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
+import {
+  createPostgresProductionCaseStore,
+} from '../../lib/kernel-equivalence-production-case-store.js';
 
 const migration = readFileSync(
   new URL(
@@ -201,5 +204,112 @@ describe('production equivalence cases on real PostgreSQL', () => {
     ]) {
       await expect(pool.query(statement)).rejects.toThrow(/append-only/i);
     }
+  });
+
+  it('prepares and generation-fences a case through the production store', async () => {
+    const generated = [
+      '88888888-8888-4888-8888-888888888888',
+      '99999999-9999-4999-8999-999999999999',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    ];
+    const store = createPostgresProductionCaseStore({
+      pool,
+      randomUUID: () => generated.shift(),
+    });
+    const prefix =
+      `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/controller/`;
+    const prepared = await store.prepareCase({
+      adapter_id: 'kernel.drill.controller_session_isolation.v1',
+      artifact_sha: 'd'.repeat(40),
+      attempt_id: ATTEMPT_ID,
+      behavior_id: 'KERNEL-P1-10-CONTROLLER-SESSION-ISOLATION',
+      brain_version: '1.268.16',
+      cell_id:
+        'KERNEL-P1-10-CONTROLLER-SESSION-ISOLATION::grok::recovery',
+      engine_version: '19.7.1',
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      provider: 'grok',
+      resource_id: 'controller-case-1',
+      resource_prefix: prefix,
+      resource_ref: `${prefix}controller-case-1`,
+      resource_type: 'ephemeral_run',
+      run_id: RUN_ID,
+      scenario: 'recovery',
+      seam_id: 'kernel.controller.attempt_ownership',
+    }, { timeoutMs: 2_000 });
+
+    expect(prepared).toMatchObject({
+      case_id: '88888888-8888-4888-8888-888888888888',
+      generation: 1,
+      state: 'prepared',
+      resource_id: 'controller-case-1',
+    });
+
+    const cancelling = await store.transitionCase({
+      after_hash: null,
+      before_hash: 'e'.repeat(64),
+      case_id: prepared.case_id,
+      event_type: 'cancel_requested',
+      evidence_ref:
+        `db:kernel-equivalence-production-cases/${prepared.case_id}/2/cancel_requested`,
+      expected_generation: 1,
+      from_state: 'prepared',
+      late_effect_risk: false,
+      lease_expires_at: new Date(Date.now() + 300_000).toISOString(),
+      status: 'confirmed',
+      to_state: 'cancelling',
+    }, { timeoutMs: 2_000 });
+    expect(cancelling).toMatchObject({
+      generation: 2,
+      state: 'cancelling',
+    });
+
+    const cleaned = await store.transitionCase({
+      after_hash: 'f'.repeat(64),
+      before_hash: 'e'.repeat(64),
+      case_id: prepared.case_id,
+      event_type: 'cleanup_confirmed',
+      evidence_ref:
+        `db:kernel-equivalence-production-cases/${prepared.case_id}/3/cleanup_confirmed`,
+      expected_generation: 2,
+      from_state: 'cancelling',
+      late_effect_risk: false,
+      lease_expires_at: null,
+      status: 'confirmed',
+      to_state: 'cleaned',
+    }, { timeoutMs: 2_000 });
+    expect(cleaned).toMatchObject({
+      generation: 3,
+      state: 'cleaned',
+    });
+
+    const evidence = await pool.query(
+      `SELECT generation, event_type, status, late_effect_risk
+         FROM kernel_equivalence_production_case_events
+        WHERE case_id = $1
+        ORDER BY generation`,
+      [prepared.case_id],
+    );
+    expect(evidence.rows).toEqual([
+      {
+        generation: '1',
+        event_type: 'prepared',
+        status: 'confirmed',
+        late_effect_risk: false,
+      },
+      {
+        generation: '2',
+        event_type: 'cancel_requested',
+        status: 'confirmed',
+        late_effect_risk: false,
+      },
+      {
+        generation: '3',
+        event_type: 'cleanup_confirmed',
+        status: 'confirmed',
+        late_effect_risk: false,
+      },
+    ]);
   });
 });
