@@ -184,6 +184,34 @@ describe('Fleet Worker health-only service', () => {
     server.close();
   });
 
+  it('does not hold a transient self-check failure for the full healthy TTL', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    let sequence = 0;
+    let nowMs = 1_000_000;
+    const probeHealth = vi.fn(async () => {
+      const report = safeHealth(++sequence);
+      if (sequence === 1) {
+        report.worktree.root_ready = false;
+        report.container.probe_succeeded = false;
+      }
+      return report;
+    });
+    const server = createFleetWorkerServer({
+      probeHealth,
+      healthCacheTtlMs: 30_000,
+      now: () => nowMs,
+    });
+
+    const transient = await request(server, 'GET', '/health');
+    nowMs += 2_000;
+    const recovered = await request(server, 'GET', '/health');
+
+    expect(JSON.parse(transient.body).worktree.root_ready).toBe(false);
+    expect(JSON.parse(recovered.body).worktree.root_ready).toBe(true);
+    expect(probeHealth).toHaveBeenCalledTimes(2);
+    server.close();
+  });
+
   it('freshly reprobes health for every GET /health when cache disabled (ttl=0)', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     let sequence = 0;
@@ -257,7 +285,10 @@ describe('Fleet Worker health-only service', () => {
       expect(args).toBeInstanceOf(Array);
       expect(options).toMatchObject({ shell: false });
       if (file === 'sw_vers') return { stdout: '15.5\n' };
-      if (file === 'orbctl') return { stdout: '{"version":"1.9.4"}' };
+      if (file === 'orbctl') {
+        expect(options.env.HOME).toBe('/Users/orbstack-owner');
+        return { stdout: '{"version":"1.9.4"}' };
+      }
       if (file === 'docker' && args[0] === 'info') return { stdout: '{"ServerVersion":"27.5"}' };
       if (file === 'docker' && args[0] === 'image') return { stdout: JSON.stringify([`runner@${DIGEST}`]) };
       if (file === 'docker' && args[0] === 'create') {
@@ -271,6 +302,7 @@ describe('Fleet Worker health-only service', () => {
       if (file === 'node') return { stdout: 'v22.17.0\n' };
       if (file === 'codex') return { stdout: 'codex-cli 0.40.0\n' };
       if (file === 'tailscale') return { stdout: '{"BackendState":"Running"}' };
+      if (file === 'ifconfig') return { stdout: 'inet 100.71.151.105 netmask 0xffffffff\n' };
       if (file === 'pmset') return { stdout: ' sleep 0\n autorestart 1\n' };
       if (file === 'sysctl' && args.includes('hw.ncpu')) return { stdout: '6\n' };
       if (file === 'sysctl' && args.includes('hw.memsize')) {
@@ -312,6 +344,7 @@ describe('Fleet Worker health-only service', () => {
       execFileFn,
       fetchFn,
       callbackUrl: 'http://brain.internal:5221/api/brain/health',
+      orbstackHome: '/Users/orbstack-owner',
       makeTempDirFn,
       chmodTempDirFn,
       removeTempDirFn,
@@ -320,6 +353,7 @@ describe('Fleet Worker health-only service', () => {
     const second = await probeFleetWorkerHealth(input);
 
     expect(first.docker.available).toBe(true);
+    expect(first.orbstack.version).toBe('1.9.4');
     expect(second.runner.image_digest).toBe(DIGEST);
     for (const report of [first, second]) {
       expect(report.resources).toMatchObject({
@@ -351,6 +385,7 @@ describe('Fleet Worker health-only service', () => {
       ['node', (args) => args.includes('--version')],
       ['codex', (args) => args.includes('--version')],
       ['tailscale', (args) => args[0] === 'status'],
+      ['ifconfig', (args) => args.length === 0],
       ['pmset', (args) => args[0] === '-g'],
       ['sysctl', (args) => args.includes('hw.ncpu')],
       ['sysctl', (args) => args.includes('hw.memsize')],
@@ -422,6 +457,61 @@ describe('Fleet Worker health-only service', () => {
         expect.objectContaining({ shell: false }),
       );
     }
+  });
+
+  it('accepts the exact Tailscale listener address plus callback reachability when the GUI CLI denies the service user', async () => {
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    const execFileFn = vi.fn(async (file) => {
+      if (file === 'tailscale') throw new Error('local API permission denied');
+      if (file === 'ifconfig') {
+        return {
+          stdout: [
+            'utun7: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST>',
+            '    inet 100.86.57.69 --> 100.86.57.69 netmask 0xffffffff',
+          ].join('\n'),
+        };
+      }
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'xian-mac-m4',
+      workerBindHost: '100.86.57.69',
+      runnerImageDigest: DIGEST,
+      execFileFn,
+      fetchFn: vi.fn(async () => new globalThis.Response('{}', { status: 200 })),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-fallback'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: vi.fn(async () => undefined),
+    });
+
+    expect(report.tailscale).toEqual({ connected: true });
+  });
+
+  it('keeps the Tailscale fallback fail-closed when the callback is unreachable', async () => {
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    const execFileFn = vi.fn(async (file) => {
+      if (file === 'tailscale') throw new Error('local API permission denied');
+      if (file === 'ifconfig') return { stdout: 'inet 100.86.57.69 netmask 0xffffffff\n' };
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'xian-mac-m4',
+      workerBindHost: '100.86.57.69',
+      runnerImageDigest: DIGEST,
+      execFileFn,
+      fetchFn: vi.fn(async () => {
+        throw new Error('callback unavailable');
+      }),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-fallback'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: vi.fn(async () => undefined),
+    });
+
+    expect(report.tailscale).toEqual({ connected: false });
   });
 
   it.each([

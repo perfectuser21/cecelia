@@ -288,7 +288,7 @@ write_executable "$fake_bin/sudo" \
 
 write_executable "$fake_bin/installer" \
   '#!/usr/bin/env bash' \
-  'printf "installer %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"'
+  'printf "installer %s home=%s\n" "$*" "${FLEET_WORKER_ORBSTACK_HOME:-missing}" >> "${FLEET_TEST_MUTATION_LOG:?}"'
 
 bundle="$test_root/repository.bundle"
 runner_archive="$test_root/runner.tar"
@@ -468,7 +468,7 @@ grep -Fq 'ditto orbstack' "$mutation_log" \
   || fail "pinned OrbStack app was not installed"
 grep -Fq 'docker load' "$mutation_log" \
   || fail "pinned Runner archive was not loaded"
-grep -Fq 'installer xian-mac-m1 --apply' "$mutation_log" \
+grep -Fq 'installer xian-mac-m1 --apply home=/Users/fleet-admin' "$mutation_log" \
   || fail "Fleet Worker installer was not invoked"
 [[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/node" ]] \
   || fail "stable Node toolchain command was not installed"

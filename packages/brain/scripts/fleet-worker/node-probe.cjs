@@ -184,6 +184,25 @@ function tailscaleConnected(result) {
   return status?.BackendState === 'Running';
 }
 
+function isTailscaleIpv4(address) {
+  const octets = String(address ?? '').split('.').map(Number);
+  return octets.length === 4
+    && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)
+    && octets[0] === 100
+    && octets[1] >= 64
+    && octets[1] <= 127;
+}
+
+function tailscaleInterfaceConnected(result, expectedAddress) {
+  if (!result.ok || !isTailscaleIpv4(expectedAddress)) return false;
+  return String(result.stdout ?? '')
+    .split(/\r?\n/)
+    .some((line) => {
+      const fields = line.trim().split(/\s+/);
+      return fields[0] === 'inet' && fields[1] === expectedAddress;
+    });
+}
+
 async function probeCallback(fetchFn, callbackUrl, timeoutMs) {
   if (typeof fetchFn !== 'function') return false;
   const controller = new AbortController();
@@ -419,6 +438,14 @@ async function probeFleetWorkerHealth(options = {}) {
       options.callbackUrl ?? env.CECELIA_CALLBACK_URL,
       DEFAULT_CALLBACK_URL,
     );
+    const workerBindHost = boundedString(
+      options.workerBindHost ?? env.CECELIA_FLEET_WORKER_HOST,
+      '',
+    );
+    const orbstackHome = boundedString(
+      options.orbstackHome ?? env.CECELIA_ORBSTACK_HOME,
+      '/var/empty',
+    );
     const drainMarkerPath = boundedString(
       options.drainMarkerPath ?? env.CECELIA_DRAIN_MARKER,
       DEFAULT_DRAIN_MARKER,
@@ -440,6 +467,7 @@ async function probeFleetWorkerHealth(options = {}) {
       nodeResult,
       codexResult,
       tailscaleResult,
+      ifconfigResult,
       powerResult,
       cpuResult,
       memoryResult,
@@ -453,13 +481,16 @@ async function probeFleetWorkerHealth(options = {}) {
       disposable,
     ] = await Promise.all([
       run('sw_vers', ['-productVersion']),
-      run('orbctl', ['version']),
+      run('orbctl', ['version'], {
+        env: { ...env, HOME: orbstackHome },
+      }),
       run('docker', ['info', '--format', '{{json .}}']),
       run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', commandDigest]),
       run('git', ['--version']),
       run('node', ['--version']),
       run('codex', ['--version']),
       run('tailscale', ['status', '--json']),
+      run('ifconfig', []),
       run('pmset', ['-g']),
       run('sysctl', ['-n', 'hw.ncpu']),
       run('sysctl', ['-n', 'hw.memsize']),
@@ -533,7 +564,11 @@ async function probeFleetWorkerHealth(options = {}) {
         ? parseVersion(codexResult.stdout, [/^codex(?:-cli)?\s*/i])
         : 'unavailable',
     };
-    report.tailscale.connected = tailscaleConnected(tailscaleResult);
+    report.tailscale.connected = tailscaleConnected(tailscaleResult)
+      || (
+        callbackReachable
+        && tailscaleInterfaceConnected(ifconfigResult, workerBindHost)
+      );
     report.callback.reachable = callbackReachable;
     report.time_sync.synchronized = timeResult.ok
       && parseTimeSynchronization(timeOutput);
