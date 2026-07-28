@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.268.10
+**版本**: 1.268.11
 
 ## Brain-owned Kernel production seam builders
 
@@ -13,10 +13,11 @@
 - credential、independent judge、orphan liveness 与 DevGate loader 返回的 authority
   context 必须精确匹配 grant-derived binding；已校验函数与 sandbox repo 在冻结
   port snapshot 中捕获，调用方后续突变不能替换生产依赖。descriptor snapshot
-  拒绝 accessor，函数只在冻结 receiver 上调用；orphan staleMs 只接受 nullish
-  默认或 1ms–24h 的有限整数。
+  拒绝 accessor 与 schema 外的 own/prototype receiver state，函数只在仅含显式
+  function/scalar/nested port 的冻结 receiver 上调用；orphan staleMs 只接受
+  nullish 默认或 1ms–24h 的有限整数。
 - 本版本不读取 env/key、不接 server wiring、不创建 fake authority、不部署；
-  回退：`bash scripts/brain-rollback.sh 1.268.9`；没有数据库迁移。
+  回退：`bash scripts/brain-rollback.sh 1.268.10`；没有数据库迁移。
 
 ## Brain-owned Kernel equivalence trusted execution
 

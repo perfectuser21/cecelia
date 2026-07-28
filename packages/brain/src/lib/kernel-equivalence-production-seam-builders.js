@@ -207,7 +207,27 @@ function hasFunctions(value, names) {
   return names.every((name) => typeof value?.[name] === 'function');
 }
 
-function receiverValues(port, code) {
+function scalarValue(value) {
+  return (
+    value == null
+    || typeof value === 'string'
+    || typeof value === 'number'
+    || typeof value === 'boolean'
+    || typeof value === 'bigint'
+  );
+}
+
+function receiverValues(port, {
+  functions,
+  scalars,
+  nested,
+  code,
+}) {
+  const allowed = new Set([
+    ...functions,
+    ...scalars,
+    ...Object.keys(nested),
+  ]);
   const values = new Map();
   let cursor = port;
   let own = true;
@@ -222,12 +242,14 @@ function receiverValues(port, code) {
       fail(code);
     }
     for (const key of Reflect.ownKeys(descriptors)) {
-      if (key === 'constructor' || values.has(key)) continue;
+      if (key === 'constructor' && !own) continue;
       const descriptor = descriptors[key];
-      if (!Object.hasOwn(descriptor, 'value')) {
-        if (own) fail(code);
-        continue;
-      }
+      if (
+        typeof key !== 'string'
+        || !allowed.has(key)
+        || !Object.hasOwn(descriptor, 'value')
+      ) fail(code);
+      if (values.has(key)) continue;
       values.set(key, descriptor.value);
     }
     cursor = prototype;
@@ -242,7 +264,13 @@ function snapshotPort(port, {
   nested = {},
   code,
 }) {
-  const values = receiverValues(port, code);
+  const values = receiverValues(port, {
+    functions,
+    scalars,
+    nested,
+    code,
+  });
+  if (scalars.some((name) => !scalarValue(values.get(name)))) fail(code);
   const nestedSnapshots = {};
   for (const [name, specification] of Object.entries(nested)) {
     const nestedPort = values.get(name);
@@ -406,6 +434,7 @@ function validateBuilderInput(value) {
   const input = materializeExact(value, BUILDER_INPUT_KEYS, code);
   const effectSigner = snapshotPort(input.effectSigner, {
     functions: ['signEffectResult'],
+    scalars: ['key_id', 'purpose', 'service_id'],
     code,
   });
   if (typeof input.createAuthorityBinding !== 'function') fail(code);

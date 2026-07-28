@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createBrainOwnedProductionSeamBuilders,
 } from '../kernel-equivalence-production-seam-builders.js';
-import { sha256Canonical } from '../kernel-equivalence-receipts.js';
 
 const SEAM_IDS = [
   'kernel.closure.report_learning',
@@ -304,6 +303,22 @@ describe('Brain-owned production equivalence seam builders', () => {
     }));
   });
 
+  it('accepts the real trusted-assembly effect signer scalar metadata', () => {
+    const seamBuilders = createBrainOwnedProductionSeamBuilders(fixture());
+
+    expect(() => (
+      seamBuilders['kernel.workspace.protected_ref_guard']({
+        effectSigner: {
+          key_id: 'effect-key-1',
+          purpose: 'effect_receipt',
+          service_id: 'kernel.workspace.protected_ref_guard',
+          signEffectResult: fn(),
+        },
+        createAuthorityBinding: fn(),
+      })
+    )).not.toThrow();
+  });
+
   it('snapshots validated production ports before caller mutation can substitute them', async () => {
     const value = fixture();
     const dependency = value.dependencies.protectedRefGuard;
@@ -495,170 +510,98 @@ describe('Brain-owned production equivalence seam builders', () => {
     );
   });
 
-  it('does not retain the original mutable receiver behind a captured function', async () => {
+  it('rejects an undeclared function on a dependency receiver', () => {
     const value = fixture();
-    const branch = configureProtectedRef(value);
-    const safeDelegate = vi.fn(async () => ({ applied: true }));
-    const substitutedDelegate = vi.fn(async () => ({ applied: true }));
     value.dependencies.protectedRefGuard = {
-      delegate: safeDelegate,
+      delegate: fn(),
       async execute(input) {
         return this.delegate(input);
       },
     };
-    const seamBuilders = createBrainOwnedProductionSeamBuilders(value);
 
-    value.dependencies.protectedRefGuard.delegate = substitutedDelegate;
-
-    await expect(invokeProtectedRef(seamBuilders, branch)).resolves.toEqual({
-      signed: true,
-    });
-    expect(safeDelegate).toHaveBeenCalledOnce();
-    expect(substitutedDelegate).not.toHaveBeenCalled();
+    expect(() => createBrainOwnedProductionSeamBuilders(value)).toThrowError(
+      expect.objectContaining({
+        code: 'production_seam_dependency_port_invalid',
+      }),
+    );
   });
 
-  it('does not retain the original independentJudge receiver behind judgeGate', async () => {
+  it('rejects undeclared mutable object state on an authority receiver', () => {
     const value = fixture();
-    const runId = '11111111-1111-4111-8111-111111111111';
-    const judgeAttemptId = '22222222-2222-4222-8222-222222222222';
-    const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
-    const headSha = 'a'.repeat(40);
-    const evaluatorResult = {
-      attempt_id: evaluatorAttemptId,
-      decision: {
-        outcome: 'PASS',
-        reason: 'approved',
-        pr_head_sha: headSha,
-      },
-      transcript: 'trusted transcript',
-    };
-    const evaluatorVerdict = {
-      attempt_id: evaluatorAttemptId,
-      executor_kind: 'local-docker',
-      result_digest: sha256Canonical(evaluatorResult),
-      feedback: 'approved',
-      failure_class: null,
-      result_receipt_id: null,
-      result_sha256: null,
-      pr_head_sha: headSha,
-      verdict: 'PASS',
-    };
-    const judgeAttempt = {
-      id: judgeAttemptId,
-      run_id: runId,
-      role: 'judge',
-    };
-    const evaluatorAttempt = {
-      id: evaluatorAttemptId,
-      run_id: runId,
-      role: 'evaluator',
-      status: 'completed',
-      execution_transport: 'local-docker',
-      lease_owner: 'kernel-evaluator',
-      lease_generation: 0,
-      completed_at: '2026-07-28T10:00:00.000Z',
-      result: evaluatorResult,
-      task_bundle: {
-        inputs: {
-          pull_request: { head_sha: headSha },
-        },
-      },
-      result_receipt_id: null,
-      result_sha256: null,
-    };
-    const safeDelegate = vi.fn(async () => ({
-      judged: true,
-      verdict: 'PASS',
-      feedback: 'approved',
-    }));
-    const substitutedDelegate = vi.fn(async () => ({
-      judged: true,
-      verdict: 'FAIL',
-      feedback: 'substituted',
-    }));
-    value.dependencies.independentJudge = {
-      pool: {
-        query: vi.fn(async () => ({ rows: [], rowCount: 1 })),
-      },
-      attemptStore: {
-        complete: vi.fn(async () => ({})),
-        getById: vi.fn(async (attemptId) => (
-          attemptId === judgeAttemptId ? judgeAttempt : evaluatorAttempt
-        )),
-      },
-      delegate: safeDelegate,
-      async judgeGate(input) {
-        return this.delegate(input);
-      },
-      promptDir: '/var/lib/cecelia/equivalence-prompts',
-    };
-    const resource = {
-      resource_id: 'resource-judge',
-      resource_ref: 'equivalence-drill/judge/resource',
-    };
-    const handlerContext = {
-      runId,
-      taskId: 'task-judge',
-      attempt: judgeAttempt,
-      observed: {
-        run: { id: runId },
-        pr: { head_sha: headSha },
-        evaluateVerdict: evaluatorVerdict,
-        evaluateResult: evaluatorResult,
-      },
-      bundle: {
-        inputs: {
-          worktree_path: '/tmp/equivalence-worktree',
-          sprint_dir: '/tmp/equivalence-sprint',
-        },
-      },
-      resource,
-    };
-    value.authorities.independentJudge.loadContext
-      .mockResolvedValue(handlerContext);
-    value.authorities.independentJudge.snapshot
-      .mockResolvedValueOnce({ state: 'before' })
-      .mockResolvedValueOnce({ state: 'after' });
-    const seamBuilders = createBrainOwnedProductionSeamBuilders(value);
-    value.dependencies.independentJudge.delegate = substitutedDelegate;
-    const seam = seamBuilders['kernel.evaluation.independent_judge']({
-      effectSigner: {
-        signEffectResult: vi.fn(async () => ({ signed: true })),
-      },
-      createAuthorityBinding: vi.fn(() => ({
-        runId,
-        attempt: judgeAttempt,
-        observed: {
-          run: { id: runId },
-          pr: { head_sha: headSha },
-        },
-        resource,
-      })),
-    });
-    const cell = {
-      seam_id: 'kernel.evaluation.independent_judge',
-      adapter_id: 'kernel.drill.independent_evaluator_judge.v1',
-      scenario: 'normal',
-    };
-    const grant = {
-      seam_id: cell.seam_id,
-      adapter_id: cell.adapter_id,
-      run_id: runId,
-      attempt_id: judgeAttemptId,
-      artifact_sha: headSha,
-      resource_id: resource.resource_id,
-      resource_ref: resource.resource_ref,
+    value.authorities.protectedRefGuard.state = {
+      delegate: fn(),
     };
 
-    await expect(seam.invoke({
-      cell,
-      grant,
-      resource,
-      predecessor: null,
-      signal: new AbortController().signal,
-    })).resolves.toEqual({ signed: true });
-    expect(safeDelegate).toHaveBeenCalledOnce();
-    expect(substitutedDelegate).not.toHaveBeenCalled();
+    expect(() => createBrainOwnedProductionSeamBuilders(value)).toThrowError(
+      expect.objectContaining({
+        code: 'production_seam_authority_port_invalid',
+      }),
+    );
+  });
+
+  it('rejects undeclared nested state on an effect signer receiver', () => {
+    const seamBuilders = createBrainOwnedProductionSeamBuilders(fixture());
+    const effectSigner = {
+      state: {
+        delegate: fn(),
+      },
+      signEffectResult(input) {
+        return this.state.delegate(input);
+      },
+    };
+
+    expect(() => (
+      seamBuilders['kernel.workspace.protected_ref_guard']({
+        effectSigner,
+        createAuthorityBinding: fn(),
+      })
+    )).toThrowError(expect.objectContaining({
+      code: 'production_seam_builder_input_invalid',
+    }));
+  });
+
+  it.each([
+    {
+      label: 'dependency nested object',
+      code: 'production_seam_dependency_port_invalid',
+      mutate(value) {
+        value.dependencies.independentJudge.pool.state = {
+          delegate: fn(),
+        };
+      },
+    },
+    {
+      label: 'authority nested function',
+      code: 'production_seam_authority_port_invalid',
+      mutate(value) {
+        value.authorities.orphanLiveness.pool = {
+          query: fn(),
+          helper: fn(),
+        };
+      },
+    },
+    {
+      label: 'prototype data object',
+      code: 'production_seam_dependency_port_invalid',
+      mutate(value) {
+        const prototype = {
+          state: {
+            delegate: fn(),
+          },
+        };
+        value.dependencies.protectedRefGuard = Object.assign(
+          Object.create(prototype),
+          { execute: fn() },
+        );
+      },
+    },
+  ])('rejects undeclared $label receiver state', ({ mutate, code }) => {
+    const value = fixture();
+    mutate(value);
+
+    expect(() => createBrainOwnedProductionSeamBuilders(value)).toThrowError(
+      expect.objectContaining({ code }),
+    );
   });
 
   it.each([
