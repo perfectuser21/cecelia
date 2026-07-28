@@ -48,6 +48,39 @@ const CREDENTIAL = Object.freeze({
     payload_hash: CREDENTIAL_ENVELOPE.payload_hash,
   }),
 });
+const CANONICAL_RESULT = Buffer.from(JSON.stringify({
+  contract_version: '1.0',
+  attempt_id: ATTEMPT_ID,
+  status: 'completed',
+  summary: 'done',
+  artifacts: [],
+  checks: [],
+  decision: {
+    outcome: 'DONE',
+    reason: '',
+  },
+  error: null,
+  provider_metadata: {
+    provider: 'codex',
+    session_id: 'thread-1',
+    credential_ref: CREDENTIAL_ENVELOPE.credential_ref,
+    credential_copy_mutated: false,
+  },
+}), 'utf8');
+const DELIVERY_METADATA = Object.freeze({
+  delivery_id: '55555555-5555-4555-8555-555555555555',
+  result_nonce: '66666666-6666-4666-8666-666666666666',
+  result_sha256: 'b'.repeat(64),
+  result_bytes: CANONICAL_RESULT.length,
+  terminal_status: 'completed',
+});
+const RESULT_RECEIPT = Object.freeze({
+  schema_version: 'fleet-attempt-result-receipt/v1',
+  receipt_id: '77777777-7777-4777-8777-777777777777',
+  receipt_status: 'accepted',
+  persisted_at: '2026-07-28T01:00:00.000Z',
+  ...DELIVERY_METADATA,
+});
 
 function loadAttemptRunner() {
   return require('./attempt-runner.cjs');
@@ -145,8 +178,35 @@ function dependencies(overrides = {}) {
       events.push('docker.remove');
       return { removed: true };
     }),
+    readResult: vi.fn(async () => {
+      events.push('docker.readResult');
+      return {
+        resultBytes: CANONICAL_RESULT,
+        terminalStatus: 'completed',
+        session: {
+          contract_version: 'provider-session/v1',
+          attempt_id: ATTEMPT_ID,
+          provider: 'codex',
+          session_id: 'thread-1',
+        },
+      };
+    }),
+    cleanupRuntime: vi.fn(async () => {
+      events.push('docker.cleanupRuntime');
+      return { cleaned: true };
+    }),
     wait: vi.fn(async () => pendingWait),
     listOwned: vi.fn(async () => []),
+  };
+  const resultDelivery = {
+    prepare: vi.fn(async () => {
+      events.push('delivery.prepare');
+      return DELIVERY_METADATA;
+    }),
+    deliver: vi.fn(async () => {
+      events.push('delivery.deliver');
+      return RESULT_RECEIPT;
+    }),
   };
   const credentialConsumer = {
     consume: vi.fn(() => {
@@ -159,6 +219,7 @@ function dependencies(overrides = {}) {
     workspaceManager,
     docker,
     credentialConsumer,
+    resultDelivery,
     stateStore: inMemoryStateStore(),
     events,
     ...overrides,
@@ -174,6 +235,7 @@ function createRunner(deps) {
     workerId: WORKER_ID,
     runnerImageDigest: IMAGE_DIGEST,
     credentialConsumer: deps.credentialConsumer,
+    resultDelivery: deps.resultDelivery,
   });
 }
 
@@ -372,7 +434,7 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.stateStore.save).not.toHaveBeenCalled();
   });
 
-  it('terminal cleanup removes the container before its worktree and state', async () => {
+  it('terminal cleanup persists callback_pending before container removal and waits for exact ACK', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
     await runner.launch(request());
@@ -382,17 +444,44 @@ describe('Fleet Worker Attempt runner', () => {
       attempt_id: ATTEMPT_ID,
     });
     expect(deps.events.slice(-2)).toEqual([
-      'docker.remove',
+      'docker.cleanupRuntime',
       'workspace.cleanup',
     ]);
     expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'container-attempt-1',
       attemptId: ATTEMPT_ID,
+      preserveRuntime: true,
     });
+    const savedStatuses = deps.stateStore.save.mock.calls
+      .map(([state]) => state.status);
+    expect(savedStatuses).toEqual([
+      'running',
+      'callback_pending',
+      'cleanup_pending',
+    ]);
+    const callbackPending = deps.stateStore.save.mock.calls[1][0];
+    expect(callbackPending.delivery).toEqual(DELIVERY_METADATA);
+    expect(JSON.stringify(callbackPending)).not.toContain(
+      CANONICAL_RESULT.toString('base64'),
+    );
+    expect(JSON.stringify(callbackPending)).not.toMatch(
+      /authorization|callback_token|kernel-fleet-bridge-secret/i,
+    );
+    expect(deps.events).toEqual([
+      'credential.consume',
+      'workspace.prepare',
+      'docker.launch',
+      'docker.readResult',
+      'delivery.prepare',
+      'docker.remove',
+      'delivery.deliver',
+      'docker.cleanupRuntime',
+      'workspace.cleanup',
+    ]);
     expect(deps.stateStore.delete).toHaveBeenCalledWith(ATTEMPT_ID);
   });
 
-  it('automatically performs terminal cleanup after the owned container exits', async () => {
+  it('automatically performs receipt-gated cleanup after the owned container exits', async () => {
     let resolveExit;
     const containerExit = new Promise((resolve) => {
       resolveExit = resolve;
@@ -407,10 +496,83 @@ describe('Fleet Worker Attempt runner', () => {
     await vi.waitFor(() => {
       expect(deps.stateStore.delete).toHaveBeenCalledWith(ATTEMPT_ID);
     });
-    expect(deps.events.slice(-2)).toEqual([
-      'docker.remove',
+    expect(deps.resultDelivery.deliver).toHaveBeenCalledOnce();
+    expect(deps.docker.cleanupRuntime).toHaveBeenCalledWith({
+      attemptId: ATTEMPT_ID,
+    });
+  });
+
+  it('retains result, workspace and state as callback_pending when delivery fails', async () => {
+    const deps = dependencies();
+    deps.resultDelivery.deliver.mockRejectedValueOnce(new Error('Brain unavailable'));
+    const runner = createRunner(deps);
+    await runner.launch(request());
+
+    await expect(runner.terminal(ATTEMPT_ID)).resolves.toMatchObject({
+      status: 'callback_pending',
+      attempt_id: ATTEMPT_ID,
+    });
+
+    const retained = deps.stateStore.states.get(ATTEMPT_ID);
+    expect(retained.status).toBe('callback_pending');
+    expect(retained.delivery).toEqual(DELIVERY_METADATA);
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+      preserveRuntime: true,
+    });
+    expect(deps.docker.cleanupRuntime).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
+  });
+
+  it('rejects cancellation while a durable callback is pending', async () => {
+    const deps = dependencies();
+    deps.resultDelivery.deliver.mockRejectedValueOnce(new Error('Brain unavailable'));
+    const runner = createRunner(deps);
+    await runner.launch(request());
+    await runner.terminal(ATTEMPT_ID);
+
+    await expect(runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).rejects.toThrow(/attempt_callback_pending/);
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    expect(deps.docker.cleanupRuntime).not.toHaveBeenCalled();
+  });
+
+  it('restart reconciliation replays callback_pending before cleanup', async () => {
+    const deps = dependencies();
+    deps.resultDelivery.deliver.mockRejectedValueOnce(new Error('Brain unavailable'));
+    const runner = createRunner(deps);
+    await runner.launch(request());
+    await runner.terminal(ATTEMPT_ID);
+    deps.events.length = 0;
+
+    await expect(runner.reconcile()).resolves.toMatchObject({
+      cleaned_attempts: [ATTEMPT_ID],
+    });
+    expect(deps.events).toEqual([
+      'docker.readResult',
+      'delivery.deliver',
+      'docker.cleanupRuntime',
       'workspace.cleanup',
     ]);
+  });
+
+  it('quarantines corrupt or missing canonical result without deleting runtime evidence', async () => {
+    const deps = dependencies();
+    deps.docker.readResult.mockRejectedValueOnce(new Error('attempt_result_missing'));
+    const runner = createRunner(deps);
+    await runner.launch(request());
+
+    await expect(runner.terminal(ATTEMPT_ID)).resolves.toMatchObject({
+      status: 'quarantined',
+      attempt_id: ATTEMPT_ID,
+    });
+    expect(deps.workspaceManager.quarantine).toHaveBeenCalledOnce();
+    expect(deps.docker.cleanupRuntime).not.toHaveBeenCalled();
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
   });
 
   it('quarantines the workspace and retains evidence when container cleanup fails', async () => {
