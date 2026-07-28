@@ -2,10 +2,11 @@
 'use strict';
 
 const { execFile } = require('node:child_process');
-const { randomBytes } = require('node:crypto');
+const { createHash, randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { promisify } = require('node:util');
+const { TextDecoder } = require('node:util');
 
 const execFileAsync = promisify(execFile);
 const CANONICAL_MACHINE_IDS = new Set([
@@ -66,8 +67,50 @@ const RESULT_CHANNEL_BINDING_FIELDS = new Set([
 const RESULT_CHANNEL_VERSION = 'attempt-result-file/v1';
 const RESULT_CHANNEL_ROOT = '/tmp/cecelia-prompts';
 const RESULT_CHANNEL_MAX_BYTES = 1024 * 1024;
+const ATTEMPT_STATE_VERSION = 'fleet-attempt-state/v2';
+const DELIVERY_METADATA_FIELDS = Object.freeze([
+  'delivery_id',
+  'result_nonce',
+  'result_sha256',
+  'result_bytes',
+  'terminal_status',
+]);
+const ATTEMPT_STATE_FIELDS = new Set([
+  'schema_version',
+  'attempt_id',
+  'task_id',
+  'run_id',
+  'worker_id',
+  'lease_owner',
+  'lease_generation',
+  'provider',
+  'brain_url',
+  'result_channel',
+  'credential',
+  'container_id',
+  'container_removed',
+  'workspace',
+  'labels',
+  'status',
+  'delivery',
+  'receipt',
+  'quarantine',
+  'created_at',
+  'updated_at',
+]);
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const SHA1_PATTERN = /^[a-f0-9]{40}$/;
 const PROVIDER_PATTERN = /^(codex|claude|grok)$/;
 const ROLE_PATTERN = /^(planner|proposer|reviewer|generator|evaluator|judge|reporter)$/;
+const TERMINAL_RESULT_STATUSES = new Set([
+  'completed',
+  'completed_with_concerns',
+  'needs_context',
+  'blocked',
+  'failed',
+  'cancelled',
+]);
+const PROVIDER_SESSION_MAX_BYTES = 64 * 1024;
 const MAX_STATE_BYTES = 1_048_576;
 
 async function defaultRunCommand(command, args, options) {
@@ -143,6 +186,331 @@ function assertAttemptId(value) {
   }
 }
 
+function stateContainsForbiddenField(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some(stateContainsForbiddenField);
+  return Object.entries(value).some(([key, nested]) => (
+    /(?:authorization|callback_token|secret|result_b64|auth_json|stdin|prompt)/i.test(key)
+    || stateContainsForbiddenField(nested)
+  ));
+}
+
+function hasExactFields(value, fields) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...fields].sort();
+  return actual.length === expected.length
+    && actual.every((field, index) => field === expected[index]);
+}
+
+function isCanonicalTimestamp(value) {
+  if (typeof value !== 'string') return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function validateStoredDelivery(value, resultChannel) {
+  if (
+    !hasExactFields(value, DELIVERY_METADATA_FIELDS)
+    || !UUID_PATTERN.test(value.delivery_id ?? '')
+    || !UUID_PATTERN.test(value.result_nonce ?? '')
+    || !SHA256_PATTERN.test(value.result_sha256 ?? '')
+    || !Number.isInteger(value.result_bytes)
+    || value.result_bytes < 1
+    || value.result_bytes > resultChannel.max_bytes
+    || !TERMINAL_RESULT_STATUSES.has(value.terminal_status)
+  ) {
+    throw new Error('invalid delivery');
+  }
+}
+
+function validateStoredReceipt(value) {
+  if (
+    !hasExactFields(value, [
+      'receipt_id',
+      'receipt_status',
+      'persisted_at',
+    ])
+    || !UUID_PATTERN.test(value.receipt_id ?? '')
+    || !['accepted', 'deduped'].includes(value.receipt_status)
+    || !isCanonicalTimestamp(value.persisted_at)
+  ) {
+    throw new Error('invalid receipt');
+  }
+}
+
+function validateStoredCredential(value, state) {
+  if (
+    !hasExactFields(value, [
+      'credential_ref',
+      'attempt_id',
+      'account_id',
+      'machine_id',
+      'issued_at',
+      'expires_at',
+      'payload_hash',
+    ])
+    || !UUID_PATTERN.test(value.credential_ref ?? '')
+    || value.attempt_id !== state.attempt_id
+    || typeof value.account_id !== 'string'
+    || value.account_id.length < 1
+    || value.machine_id !== state.worker_id
+    || !isCanonicalTimestamp(value.issued_at)
+    || !isCanonicalTimestamp(value.expires_at)
+    || !/^sha256:[a-f0-9]{64}$/.test(value.payload_hash ?? '')
+  ) {
+    throw new Error('invalid credential');
+  }
+}
+
+function validateStoredWorkspace(value, state) {
+  if (
+    !hasExactFields(value, [
+      'repo',
+      'branch',
+      'base_sha',
+      'expected_head_sha',
+      'head_sha',
+      'mode',
+      'path',
+      'mirror_path',
+      'admin_path',
+      'owner',
+    ])
+    || typeof value.repo !== 'string'
+    || value.repo.length < 1
+    || typeof value.branch !== 'string'
+    || value.branch.length < 1
+    || !SHA1_PATTERN.test(value.base_sha ?? '')
+    || (
+      value.expected_head_sha !== null
+      && !SHA1_PATTERN.test(value.expected_head_sha ?? '')
+    )
+    || !SHA1_PATTERN.test(value.head_sha ?? '')
+    || !['read-only', 'read-write'].includes(value.mode)
+    || !path.isAbsolute(value.path ?? '')
+    || !path.isAbsolute(value.mirror_path ?? '')
+    || !path.isAbsolute(value.admin_path ?? '')
+    || !hasExactFields(value.owner, ['run_id', 'attempt_id'])
+    || value.owner.run_id !== state.run_id
+    || value.owner.attempt_id !== state.attempt_id
+  ) {
+    throw new Error('invalid workspace');
+  }
+}
+
+function validateStoredLabels(value, state) {
+  if (
+    !hasExactFields(value, [
+      'cecelia.fleet.attempt_id',
+      'cecelia.fleet.run_id',
+      'cecelia.fleet.worker_id',
+    ])
+    || value['cecelia.fleet.attempt_id'] !== state.attempt_id
+    || value['cecelia.fleet.run_id'] !== state.run_id
+    || value['cecelia.fleet.worker_id'] !== state.worker_id
+  ) {
+    throw new Error('invalid labels');
+  }
+}
+
+function validateStoredQuarantine(value, state) {
+  if (
+    !hasExactFields(value, [
+      'status',
+      'attempt_id',
+      'path',
+      'admin_path',
+      'reason',
+    ])
+    || value.status !== 'quarantined'
+    || value.attempt_id !== state.attempt_id
+    || !path.isAbsolute(value.path ?? '')
+    || !path.isAbsolute(value.admin_path ?? '')
+    || typeof value.reason !== 'string'
+    || value.reason.length < 1
+    || value.reason.length > 256
+    || !/^attempt_[a-z0-9_:-]+$/.test(value.reason)
+  ) {
+    throw new Error('invalid quarantine');
+  }
+}
+
+function validateDurableAttemptState(state, attemptId = state?.attempt_id) {
+  try {
+    const requiredFields = [
+      'schema_version',
+      'attempt_id',
+      'task_id',
+      'run_id',
+      'worker_id',
+      'lease_owner',
+      'lease_generation',
+      'provider',
+      'brain_url',
+      'result_channel',
+      'container_id',
+      'workspace',
+      'labels',
+      'status',
+      'created_at',
+      'updated_at',
+    ];
+    if (
+      !state
+      || typeof state !== 'object'
+      || Array.isArray(state)
+      || state.schema_version !== ATTEMPT_STATE_VERSION
+      || state.attempt_id !== attemptId
+      || !UUID_PATTERN.test(state.attempt_id ?? '')
+      || !UUID_PATTERN.test(state.run_id ?? '')
+      || !CANONICAL_MACHINE_IDS.has(state.worker_id)
+      || typeof state.task_id !== 'string'
+      || state.task_id.length < 1
+      || state.task_id.length > 256
+      || /[\r\n]/.test(state.task_id)
+      || typeof state.lease_owner !== 'string'
+      || state.lease_owner.length < 1
+      || state.lease_owner.length > 256
+      || /[\r\n]/.test(state.lease_owner)
+      || !Number.isInteger(state.lease_generation)
+      || state.lease_generation < 0
+      || !PROVIDER_PATTERN.test(state.provider ?? '')
+      || typeof state.container_id !== 'string'
+      || state.container_id.length < 1
+      || state.container_id.length > 256
+      || /[\r\n]/.test(state.container_id)
+      || !['running', 'callback_pending', 'cleanup_pending', 'quarantined']
+        .includes(state.status)
+      || requiredFields.some((field) => !Object.hasOwn(state, field))
+      || Object.keys(state).some((field) => !ATTEMPT_STATE_FIELDS.has(field))
+      || stateContainsForbiddenField(state)
+      || !isCanonicalTimestamp(state.created_at)
+      || !isCanonicalTimestamp(state.updated_at)
+    ) {
+      throw new Error('invalid state');
+    }
+    validateBrainUrl(state.brain_url);
+    const resultChannel = validateResultChannel(state.result_channel, {
+      task_id: state.task_id,
+      run_id: state.run_id,
+      attempt_id: state.attempt_id,
+      role: state.result_channel?.bindings?.role,
+    });
+    validateStoredWorkspace(state.workspace, state);
+    validateStoredLabels(state.labels, state);
+    if (Object.hasOwn(state, 'credential')) {
+      if (state.provider !== 'codex') throw new Error('unexpected credential');
+      validateStoredCredential(state.credential, state);
+    }
+    if (state.status === 'running') {
+      if (
+        Object.hasOwn(state, 'container_removed')
+        || Object.hasOwn(state, 'delivery')
+        || Object.hasOwn(state, 'receipt')
+        || Object.hasOwn(state, 'quarantine')
+      ) {
+        throw new Error('invalid running state');
+      }
+    } else if (state.status === 'callback_pending') {
+      if (
+        typeof state.container_removed !== 'boolean'
+        || Object.hasOwn(state, 'receipt')
+        || Object.hasOwn(state, 'quarantine')
+      ) {
+        throw new Error('invalid callback state');
+      }
+      validateStoredDelivery(state.delivery, resultChannel);
+    } else if (state.status === 'cleanup_pending') {
+      if (state.container_removed !== true || Object.hasOwn(state, 'quarantine')) {
+        throw new Error('invalid cleanup state');
+      }
+      validateStoredDelivery(state.delivery, resultChannel);
+      validateStoredReceipt(state.receipt);
+    } else {
+      validateStoredQuarantine(state.quarantine, state);
+      if (
+        Object.hasOwn(state, 'container_removed')
+        && typeof state.container_removed !== 'boolean'
+      ) {
+        throw new Error('invalid quarantine container state');
+      }
+      if (Object.hasOwn(state, 'delivery')) {
+        validateStoredDelivery(state.delivery, resultChannel);
+      }
+      if (Object.hasOwn(state, 'receipt')) validateStoredReceipt(state.receipt);
+    }
+    return state;
+  } catch {
+    throw new Error(`attempt_state_corrupt:${attemptId}`);
+  }
+}
+
+function decodeStrictUtf8(bytes, errorCode) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(errorCode);
+  }
+}
+
+function readOwnedRegularFile(filePath, {
+  maxBytes,
+  minBytes = 1,
+  errorCode,
+  missingIsNull = false,
+} = {}) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY
+        | fs.constants.O_NONBLOCK
+        | fs.constants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (missingIsNull && error?.code === 'ENOENT') return null;
+    throw new Error(errorCode);
+  }
+  try {
+    const before = fs.fstatSync(descriptor);
+    if (
+      !before.isFile()
+      || (before.mode & 0o777) !== 0o600
+      || before.size < minBytes
+      || before.size > maxBytes
+    ) {
+      throw new Error(errorCode);
+    }
+    const bytes = Buffer.allocUnsafe(before.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = fs.readSync(
+        descriptor,
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset,
+      );
+      if (count === 0) break;
+      offset += count;
+    }
+    const after = fs.fstatSync(descriptor);
+    if (
+      offset !== bytes.length
+      || after.dev !== before.dev
+      || after.ino !== before.ino
+      || after.size !== before.size
+      || after.mtimeMs !== before.mtimeMs
+    ) {
+      throw new Error(errorCode);
+    }
+    return bytes;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 function createFileAttemptStateStore({ stateRoot } = {}) {
   const root = assertRuntimeRoot(stateRoot, 'state_root');
 
@@ -154,15 +522,24 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
   function parseState(serialized, attemptId) {
     try {
       const state = JSON.parse(serialized);
-      if (
-        !state
-        || typeof state !== 'object'
-        || Array.isArray(state)
-        || state.attempt_id !== attemptId
-      ) {
-        throw new Error('invalid shape');
-      }
-      return state;
+      return validateDurableAttemptState(state, attemptId);
+    } catch {
+      throw new Error(`attempt_state_corrupt:${attemptId}`);
+    }
+  }
+
+  function readStateFile(target, attemptId) {
+    try {
+      const bytes = readOwnedRegularFile(target, {
+        maxBytes: MAX_STATE_BYTES,
+        errorCode: `attempt_state_corrupt:${attemptId}`,
+        missingIsNull: true,
+      });
+      if (bytes === null) return null;
+      return parseState(
+        decodeStrictUtf8(bytes, `attempt_state_corrupt:${attemptId}`),
+        attemptId,
+      );
     } catch {
       throw new Error(`attempt_state_corrupt:${attemptId}`);
     }
@@ -171,6 +548,7 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
   return Object.freeze({
     async save(state) {
       assertAttemptId(state?.attempt_id);
+      validateDurableAttemptState(state);
       const serialized = `${JSON.stringify(state)}\n`;
       if (Buffer.byteLength(serialized, 'utf8') > MAX_STATE_BYTES) {
         throw new Error('attempt_state_too_large');
@@ -184,7 +562,19 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
           mode: 0o600,
           flag: 'wx',
         });
+        const temporaryFd = fs.openSync(temporary, fs.constants.O_RDONLY);
+        try {
+          fs.fsyncSync(temporaryFd);
+        } finally {
+          fs.closeSync(temporaryFd);
+        }
         fs.renameSync(temporary, target);
+        const rootFd = fs.openSync(root, fs.constants.O_RDONLY);
+        try {
+          fs.fsyncSync(rootFd);
+        } finally {
+          fs.closeSync(rootFd);
+        }
       } finally {
         fs.rmSync(temporary, { force: true });
       }
@@ -193,12 +583,7 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
 
     async get(attemptId) {
       const target = fileFor(attemptId);
-      try {
-        return parseState(fs.readFileSync(target, 'utf8'), attemptId);
-      } catch (error) {
-        if (error?.code === 'ENOENT') return null;
-        throw error;
-      }
+      return readStateFile(target, attemptId);
     },
 
     async delete(attemptId) {
@@ -215,15 +600,12 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
         throw error;
       }
       return entries
-        .filter((entry) => entry.isFile() && UUID_PATTERN.test(entry.name.replace(/\.json$/, '')))
+        .filter((entry) => UUID_PATTERN.test(entry.name.replace(/\.json$/, '')))
         .filter((entry) => entry.name.endsWith('.json'))
         .sort((left, right) => left.name.localeCompare(right.name))
         .map((entry) => {
           const attemptId = entry.name.slice(0, -'.json'.length);
-          return parseState(
-            fs.readFileSync(path.join(root, entry.name), 'utf8'),
-            attemptId,
-          );
+          return readStateFile(path.join(root, entry.name), attemptId);
         });
     },
   });
@@ -407,6 +789,25 @@ function parseDockerLabels(serialized) {
   return labels;
 }
 
+function isFrozenFleetCanary(providerStdin, {
+  attemptId,
+  runId,
+  taskId,
+  role,
+} = {}) {
+  try {
+    const bundle = JSON.parse(providerStdin)?.task_bundle;
+    return bundle?.expected_output === 'harness-result/canary-v1'
+      && bundle?.skill === null
+      && bundle?.attempt_id === attemptId
+      && bundle?.run_id === runId
+      && bundle?.role === role
+      && bundle?.inputs?.task_id === taskId;
+  } catch {
+    return false;
+  }
+}
+
 function createDockerAdapter({
   runCommand = defaultRunCommand,
   runtimeRoot,
@@ -418,6 +819,41 @@ function createDockerAdapter({
   }
   if (typeof writeCredential !== 'function') {
     throw new Error('attempt_runner_invalid_credential_writer');
+  }
+
+  async function readSession({ attemptId } = {}) {
+    assertAttemptId(attemptId);
+    const sessionPath = path.join(root, attemptId, `${attemptId}.session.json`);
+    const sessionBytes = readOwnedRegularFile(sessionPath, {
+      maxBytes: PROVIDER_SESSION_MAX_BYTES,
+      errorCode: 'attempt_session_invalid',
+      missingIsNull: true,
+    });
+    if (sessionBytes === null) return null;
+    let session;
+    try {
+      session = JSON.parse(decodeStrictUtf8(sessionBytes, 'attempt_session_invalid'));
+    } catch {
+      throw new Error('attempt_session_invalid');
+    }
+    if (
+      !hasExactFields(session, [
+        'attempt_id',
+        'contract_version',
+        'provider',
+        'session_id',
+      ])
+      || session.contract_version !== 'provider-session/v1'
+      || session.attempt_id !== attemptId
+      || !PROVIDER_PATTERN.test(session.provider ?? '')
+      || typeof session.session_id !== 'string'
+      || session.session_id.length < 1
+      || session.session_id.length > 16_384
+      || /[\r\n]/.test(session.session_id)
+    ) {
+      throw new Error('attempt_session_invalid');
+    }
+    return Object.freeze(session);
   }
 
   return Object.freeze({
@@ -465,6 +901,12 @@ function createDockerAdapter({
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
       freshenResultTarget(attemptRuntime, resultChannel);
       const isCodex = input.providerSpec?.provider === 'codex';
+      const isCanary = isFrozenFleetCanary(input.providerSpec?.stdin, {
+        attemptId,
+        runId: input.runId,
+        taskId: input.taskId,
+        role: input.role,
+      });
       if (
         isCodex
         && (
@@ -524,6 +966,7 @@ function createDockerAdapter({
           HARNESS_LEASE_OWNER: input.lease.owner,
           HARNESS_LEASE_GENERATION: input.lease.generation,
           HARNESS_READ_ONLY: String(input.workspaceMount.readOnly),
+          HARNESS_CANARY: String(isCanary),
           HARNESS_NODE: input.role,
           HARNESS_MODEL: input.model,
           HARNESS_TASK_BUNDLE_FILE: containerPrompt,
@@ -598,13 +1041,68 @@ function createDockerAdapter({
       });
     },
 
-    async remove({ containerId, attemptId, containerMissing = false } = {}) {
+    async remove({
+      containerId,
+      attemptId,
+      containerMissing = false,
+      preserveRuntime = false,
+    } = {}) {
       assertAttemptId(attemptId);
       if (!containerMissing) {
         await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
       }
-      fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
+      if (!preserveRuntime) {
+        fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
+      }
       return Object.freeze({ removed: true });
+    },
+
+    async readResult({ attemptId, resultChannel } = {}) {
+      assertAttemptId(attemptId);
+      const channel = validateResultChannel(resultChannel, {
+        task_id: resultChannel?.bindings?.task_id,
+        run_id: resultChannel?.bindings?.run_id,
+        attempt_id: attemptId,
+        role: resultChannel?.bindings?.role,
+      });
+      const attemptRuntime = path.join(root, attemptId);
+      const resultPath = path.join(attemptRuntime, `${attemptId}.result.json`);
+      const resultBytes = readOwnedRegularFile(resultPath, {
+        maxBytes: channel.max_bytes,
+        errorCode: 'attempt_result_invalid',
+        missingIsNull: true,
+      });
+      if (resultBytes === null) throw new Error('attempt_result_missing');
+      let result;
+      try {
+        const text = decodeStrictUtf8(resultBytes, 'attempt_result_invalid');
+        result = JSON.parse(text);
+      } catch {
+        throw new Error('attempt_result_invalid');
+      }
+      if (
+        !result
+        || typeof result !== 'object'
+        || Array.isArray(result)
+        || result.attempt_id !== attemptId
+        || !TERMINAL_RESULT_STATUSES.has(result.status)
+      ) {
+        throw new Error('attempt_result_invalid');
+      }
+      const session = await readSession({ attemptId });
+      return Object.freeze({
+        resultBytes,
+        terminalStatus: result.status,
+        session: session == null ? null : Object.freeze(session),
+      });
+    },
+
+    readSession,
+
+    async cleanupRuntime({ attemptId } = {}) {
+      assertAttemptId(attemptId);
+      fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
+      return Object.freeze({ cleaned: true });
     },
 
     async listOwned({ workerId } = {}) {
@@ -643,17 +1141,29 @@ function validateDependencies({
   workerId,
   runnerImageDigest,
   credentialConsumer,
+  resultDelivery,
 }) {
   for (const method of ['prepare', 'verify', 'cleanup', 'quarantine', 'reconcile']) {
     requireMethod(workspaceManager, method, 'workspace_manager');
   }
-  for (const method of ['launch', 'inspect', 'wait', 'remove', 'listOwned']) {
+  for (const method of [
+    'launch',
+    'inspect',
+    'wait',
+    'remove',
+    'readResult',
+    'cleanupRuntime',
+    'listOwned',
+  ]) {
     requireMethod(docker, method, 'docker');
   }
   for (const method of ['save', 'get', 'delete', 'list']) {
     requireMethod(stateStore, method, 'state_store');
   }
   requireMethod(credentialConsumer, 'consume', 'credential_consumer');
+  for (const method of ['prepare', 'deliver']) {
+    requireMethod(resultDelivery, method, 'result_delivery');
+  }
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
     throw new Error('attempt_runner_invalid_worker_id');
   }
@@ -830,6 +1340,63 @@ function assertLeaseFence(state, lease) {
   }
 }
 
+function validateDeliveryMetadata(value, resultBytes, terminalStatus) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('attempt_delivery_metadata_invalid');
+  }
+  const fields = Object.keys(value).sort();
+  const expectedFields = [...DELIVERY_METADATA_FIELDS].sort();
+  if (
+    fields.length !== expectedFields.length
+    || fields.some((field, index) => field !== expectedFields[index])
+    || !UUID_PATTERN.test(value.delivery_id ?? '')
+    || !UUID_PATTERN.test(value.result_nonce ?? '')
+    || !SHA256_PATTERN.test(value.result_sha256 ?? '')
+    || value.result_sha256 !== createHash('sha256').update(resultBytes).digest('hex')
+    || value.result_bytes !== resultBytes.length
+    || value.terminal_status !== terminalStatus
+  ) {
+    throw new Error('attempt_delivery_metadata_invalid');
+  }
+  return Object.freeze({ ...value });
+}
+
+function safeReceiptMetadata(receipt) {
+  if (
+    !receipt
+    || typeof receipt !== 'object'
+    || Array.isArray(receipt)
+    || receipt.schema_version !== 'fleet-attempt-result-receipt/v1'
+    || !UUID_PATTERN.test(receipt.receipt_id ?? '')
+    || !['accepted', 'deduped'].includes(receipt.receipt_status)
+    || typeof receipt.persisted_at !== 'string'
+    || Number.isNaN(Date.parse(receipt.persisted_at))
+  ) {
+    throw new Error('attempt_result_receipt_invalid');
+  }
+  return Object.freeze({
+    receipt_id: receipt.receipt_id,
+    receipt_status: receipt.receipt_status,
+    persisted_at: receipt.persisted_at,
+  });
+}
+
+function safeQuarantineMetadata(value, state) {
+  const rawReason = String(value?.reason ?? '');
+  const reason = rawReason.match(/\battempt_[a-z0-9_:-]{1,240}\b/i)?.[0]
+    ?.toLowerCase()
+    ?? 'attempt_quarantined';
+  return Object.freeze({
+    status: 'quarantined',
+    attempt_id: state.attempt_id,
+    path: typeof value?.path === 'string' ? value.path : state.workspace.path,
+    admin_path: typeof value?.admin_path === 'string'
+      ? value.admin_path
+      : state.workspace.admin_path,
+    reason: reason.slice(0, 256),
+  });
+}
+
 function createAttemptRunner({
   workspaceManager,
   docker,
@@ -837,6 +1404,7 @@ function createAttemptRunner({
   workerId,
   runnerImageDigest,
   credentialConsumer,
+  resultDelivery,
 } = {}) {
   validateDependencies({
     workspaceManager,
@@ -845,10 +1413,14 @@ function createAttemptRunner({
     workerId,
     runnerImageDigest,
     credentialConsumer,
+    resultDelivery,
   });
 
   async function quarantineState(state, error) {
-    const quarantined = await workspaceManager.quarantine(state.workspace, error);
+    const quarantined = safeQuarantineMetadata(
+      await workspaceManager.quarantine(state.workspace, error),
+      state,
+    );
     const nextState = {
       ...state,
       status: 'quarantined',
@@ -863,26 +1435,142 @@ function createAttemptRunner({
     });
   }
 
-  async function cleanupWorkspaceState(state) {
+  async function cleanupAckedState(state) {
     const cleaned = await workspaceManager.cleanup(state.workspace);
     if (cleaned.status === 'quarantined') {
+      const quarantined = safeQuarantineMetadata(cleaned, state);
       await stateStore.save({
         ...state,
         status: 'quarantined',
-        quarantine: cleaned,
+        quarantine: quarantined,
         updated_at: new Date().toISOString(),
       });
       return Object.freeze({
         status: 'quarantined',
         attempt_id: state.attempt_id,
-        reason: cleaned.reason,
+        reason: quarantined.reason,
       });
     }
+    await docker.cleanupRuntime({ attemptId: state.attempt_id });
     await stateStore.delete(state.attempt_id);
     return Object.freeze({
       status: 'cleaned',
       attempt_id: state.attempt_id,
     });
+  }
+
+  async function readPendingResult(state) {
+    const observed = await docker.readResult({
+      attemptId: state.attempt_id,
+      resultChannel: state.result_channel,
+    });
+    const digest = createHash('sha256').update(observed.resultBytes).digest('hex');
+    if (
+      state.delivery
+      && (
+        state.delivery.result_sha256 !== digest
+        || state.delivery.result_bytes !== observed.resultBytes.length
+        || state.delivery.terminal_status !== observed.terminalStatus
+      )
+    ) {
+      throw new Error('attempt_pending_result_changed');
+    }
+    return observed;
+  }
+
+  async function ensurePendingContainerRemoved(state, { containerMissing = false } = {}) {
+    if (state.container_removed === true) return state;
+    await docker.remove({
+      containerId: state.container_id,
+      attemptId: state.attempt_id,
+      preserveRuntime: true,
+      ...(containerMissing ? { containerMissing: true } : {}),
+    });
+    const removed = {
+      ...state,
+      container_removed: true,
+      updated_at: new Date().toISOString(),
+    };
+    await stateStore.save(removed);
+    return removed;
+  }
+
+  async function deliverPendingState(
+    inputState,
+    observedResult = null,
+    { containerMissing = false } = {},
+  ) {
+    let state;
+    try {
+      state = await ensurePendingContainerRemoved(inputState, { containerMissing });
+    } catch (error) {
+      return quarantineState(inputState, error);
+    }
+    let observed;
+    try {
+      observed = observedResult ?? await readPendingResult(state);
+    } catch (error) {
+      return quarantineState(state, error);
+    }
+    let receipt;
+    try {
+      receipt = await resultDelivery.deliver({
+        state,
+        resultBytes: observed.resultBytes,
+        terminalStatus: observed.terminalStatus,
+        session: observed.session,
+        delivery: state.delivery,
+      });
+      receipt = safeReceiptMetadata(receipt);
+    } catch {
+      return Object.freeze({
+        status: 'callback_pending',
+        attempt_id: state.attempt_id,
+      });
+    }
+    const cleanupPending = {
+      ...state,
+      status: 'cleanup_pending',
+      receipt,
+      updated_at: new Date().toISOString(),
+    };
+    await stateStore.save(cleanupPending);
+    return cleanupAckedState(cleanupPending);
+  }
+
+  async function beginCallbackPending(state, { containerMissing = false } = {}) {
+    let observed;
+    try {
+      observed = await readPendingResult(state);
+    } catch (error) {
+      return quarantineState(state, error);
+    }
+    let delivery;
+    try {
+      delivery = validateDeliveryMetadata(
+        await resultDelivery.prepare({
+          state,
+          resultBytes: observed.resultBytes,
+          terminalStatus: observed.terminalStatus,
+          session: observed.session,
+        }),
+        observed.resultBytes,
+        observed.terminalStatus,
+      );
+    } catch (error) {
+      return quarantineState(state, error);
+    }
+    const callbackPending = {
+      ...state,
+      status: 'callback_pending',
+      delivery,
+      container_removed: false,
+      updated_at: new Date().toISOString(),
+    };
+    // This durable write must happen before the only result-producing container
+    // is removed. A restart can then replay the exact runtime bytes.
+    await stateStore.save(callbackPending);
+    return deliverPendingState(callbackPending, observed, { containerMissing });
   }
 
   const runner = {
@@ -960,6 +1648,7 @@ function createAttemptRunner({
       }
 
       const state = {
+        schema_version: ATTEMPT_STATE_VERSION,
         attempt_id: request.attempt_id,
         task_id: request.task_id,
         run_id: request.run_id,
@@ -1033,15 +1722,23 @@ function createAttemptRunner({
       if (lease !== null) {
         assertLeaseFence(state, lease);
       }
-      try {
-        await docker.remove({
-          containerId: state.container_id,
-          attemptId: state.attempt_id,
-        });
-      } catch (error) {
-        return quarantineState(state, error);
+      if (state.status === 'callback_pending') {
+        return deliverPendingState(state);
       }
-      return cleanupWorkspaceState(state);
+      if (state.status === 'cleanup_pending') {
+        return cleanupAckedState(state);
+      }
+      if (state.status === 'quarantined') {
+        return Object.freeze({
+          status: 'quarantined',
+          attempt_id: state.attempt_id,
+          reason: state.quarantine?.reason ?? 'retained',
+        });
+      }
+      if (state.status !== 'running') {
+        throw new Error('attempt_state_status_invalid');
+      }
+      return beginCallbackPending(state);
     },
 
     async cancel(attemptId, lease) {
@@ -1050,6 +1747,9 @@ function createAttemptRunner({
         return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
       }
       assertLeaseFence(state, lease);
+      if (['callback_pending', 'cleanup_pending'].includes(state.status)) {
+        throw new Error('attempt_callback_pending');
+      }
       return this.terminal(attemptId, lease);
     },
 
@@ -1061,19 +1761,37 @@ function createAttemptRunner({
       const cleanedAttempts = [];
 
       for (const state of ownedStates) {
-        const inspected = await docker.inspect({ containerId: state.container_id });
-        if (!isTerminalContainerStatus(inspected.status)) continue;
-        try {
-          await docker.remove({
-            containerId: state.container_id,
-            attemptId: state.attempt_id,
-            ...(inspected.status === 'missing' ? { containerMissing: true } : {}),
+        if (state.status === 'quarantined') continue;
+        if (state.status === 'callback_pending') {
+          const inspected = state.container_removed === true
+            ? null
+            : await docker.inspect({ containerId: state.container_id });
+          const result = await deliverPendingState(state, null, {
+            containerMissing: inspected?.status === 'missing',
           });
-        } catch (error) {
-          await quarantineState(state, error);
+          if (result.status === 'cleaned') {
+            cleanedAttempts.push(state.attempt_id);
+            retainedAttemptIds.delete(state.attempt_id);
+          }
           continue;
         }
-        const result = await cleanupWorkspaceState(state);
+        if (state.status === 'cleanup_pending') {
+          const result = await cleanupAckedState(state);
+          if (result.status === 'cleaned') {
+            cleanedAttempts.push(state.attempt_id);
+            retainedAttemptIds.delete(state.attempt_id);
+          }
+          continue;
+        }
+        if (state.status !== 'running') {
+          await quarantineState(state, new Error('attempt_state_status_invalid'));
+          continue;
+        }
+        const inspected = await docker.inspect({ containerId: state.container_id });
+        if (!isTerminalContainerStatus(inspected.status)) continue;
+        const result = await beginCallbackPending(state, {
+          containerMissing: inspected.status === 'missing',
+        });
         if (result.status === 'cleaned') {
           cleanedAttempts.push(state.attempt_id);
           retainedAttemptIds.delete(state.attempt_id);

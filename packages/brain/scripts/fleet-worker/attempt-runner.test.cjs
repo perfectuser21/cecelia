@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -70,7 +71,7 @@ const CANONICAL_RESULT = Buffer.from(JSON.stringify({
 const DELIVERY_METADATA = Object.freeze({
   delivery_id: '55555555-5555-4555-8555-555555555555',
   result_nonce: '66666666-6666-4666-8666-666666666666',
-  result_sha256: 'b'.repeat(64),
+  result_sha256: createHash('sha256').update(CANONICAL_RESULT).digest('hex'),
   result_bytes: CANONICAL_RESULT.length,
   terminal_status: 'completed',
 });
@@ -81,6 +82,44 @@ const RESULT_RECEIPT = Object.freeze({
   persisted_at: '2026-07-28T01:00:00.000Z',
   ...DELIVERY_METADATA,
 });
+
+function durableState(overrides = {}) {
+  return {
+    schema_version: 'fleet-attempt-state/v2',
+    attempt_id: ATTEMPT_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    worker_id: WORKER_ID,
+    lease_owner: 'dispatcher-1',
+    lease_generation: 0,
+    provider: 'codex',
+    brain_url: BRAIN_URL,
+    result_channel: RESULT_CHANNEL,
+    credential: CREDENTIAL.metadata,
+    container_id: 'container-1',
+    workspace: {
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-07272050-attempt-runner',
+      base_sha: '0123456789abcdef0123456789abcdef01234567',
+      expected_head_sha: null,
+      path: `/controlled/worktrees/${ATTEMPT_ID}`,
+      mirror_path: '/controlled/mirrors/perfectuser21__cecelia.git',
+      admin_path: `/controlled/worktrees/.admin/${ATTEMPT_ID}.git`,
+      mode: 'read-write',
+      head_sha: '0123456789abcdef0123456789abcdef01234567',
+      owner: { run_id: RUN_ID, attempt_id: ATTEMPT_ID },
+    },
+    labels: {
+      'cecelia.fleet.attempt_id': ATTEMPT_ID,
+      'cecelia.fleet.run_id': RUN_ID,
+      'cecelia.fleet.worker_id': WORKER_ID,
+    },
+    status: 'running',
+    created_at: '2026-07-28T01:00:00.000Z',
+    updated_at: '2026-07-28T01:00:00.000Z',
+    ...overrides,
+  };
+}
 
 function loadAttemptRunner() {
   return require('./attempt-runner.cjs');
@@ -444,8 +483,8 @@ describe('Fleet Worker Attempt runner', () => {
       attempt_id: ATTEMPT_ID,
     });
     expect(deps.events.slice(-2)).toEqual([
-      'docker.cleanupRuntime',
       'workspace.cleanup',
+      'docker.cleanupRuntime',
     ]);
     expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'container-attempt-1',
@@ -456,6 +495,7 @@ describe('Fleet Worker Attempt runner', () => {
       .map(([state]) => state.status);
     expect(savedStatuses).toEqual([
       'running',
+      'callback_pending',
       'callback_pending',
       'cleanup_pending',
     ]);
@@ -475,8 +515,8 @@ describe('Fleet Worker Attempt runner', () => {
       'delivery.prepare',
       'docker.remove',
       'delivery.deliver',
-      'docker.cleanupRuntime',
       'workspace.cleanup',
+      'docker.cleanupRuntime',
     ]);
     expect(deps.stateStore.delete).toHaveBeenCalledWith(ATTEMPT_ID);
   });
@@ -555,8 +595,8 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.events).toEqual([
       'docker.readResult',
       'delivery.deliver',
-      'docker.cleanupRuntime',
       'workspace.cleanup',
+      'docker.cleanupRuntime',
     ]);
   });
 
@@ -573,6 +613,24 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.workspaceManager.quarantine).toHaveBeenCalledOnce();
     expect(deps.docker.cleanupRuntime).not.toHaveBeenCalled();
     expect(deps.stateStore.delete).not.toHaveBeenCalled();
+  });
+
+  it('persists only a bounded non-secret quarantine reason', async () => {
+    const deps = dependencies();
+    const secret = `Bearer ${'s'.repeat(400)}`;
+    deps.docker.readResult.mockRejectedValueOnce(
+      new Error(`authorization=${secret}`),
+    );
+    const runner = createRunner(deps);
+    await runner.launch(request());
+
+    await runner.terminal(ATTEMPT_ID);
+
+    const quarantine = deps.stateStore.states.get(ATTEMPT_ID).quarantine;
+    expect(quarantine.reason.length).toBeLessThanOrEqual(256);
+    expect(quarantine.reason).not.toContain('authorization');
+    expect(quarantine.reason).not.toContain('Bearer');
+    expect(quarantine.reason).not.toContain('s'.repeat(32));
   });
 
   it('quarantines the workspace and retains evidence when container cleanup fails', async () => {
@@ -696,6 +754,7 @@ describe('Fleet Worker Attempt runner', () => {
       containerId: 'missing-owned-container',
       attemptId: ATTEMPT_ID,
       containerMissing: true,
+      preserveRuntime: true,
     });
     expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'unrecorded-owned-container',
@@ -1043,17 +1102,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     const { createFileAttemptStateStore } = loadAttemptRunner();
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-store-'));
     const store = createFileAttemptStateStore({ stateRoot });
-    const state = {
-      attempt_id: ATTEMPT_ID,
-      run_id: RUN_ID,
-      worker_id: WORKER_ID,
-      container_id: 'container-1',
-      status: 'running',
-      workspace: {
-        path: `/controlled/worktrees/${ATTEMPT_ID}`,
-        owner: { run_id: RUN_ID, attempt_id: ATTEMPT_ID },
-      },
-    };
+    const state = durableState();
 
     try {
       await store.save(state);
@@ -1063,11 +1112,226 @@ describe('Fleet Worker durable runtime adapters', () => {
       const files = fs.readdirSync(stateRoot);
       expect(files).toEqual([`${ATTEMPT_ID}.json`]);
       const persisted = fs.readFileSync(path.join(stateRoot, files[0]), 'utf8');
-      expect(persisted).not.toMatch(/callback_token|authorization|stdin|prompt/i);
+      expect(persisted).not.toMatch(
+        /"(?:callback_token|authorization|stdin|prompt)"\s*:/i,
+      );
 
       await store.delete(ATTEMPT_ID);
       await expect(store.get(ATTEMPT_ID)).resolves.toBeNull();
     } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('reads canonical result and provider session through descriptor-only bounded IO', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-result-read-'));
+    const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
+    fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(attemptRuntime, `${ATTEMPT_ID}.result.json`),
+      CANONICAL_RESULT,
+      { mode: 0o600 },
+    );
+    const session = {
+      contract_version: 'provider-session/v1',
+      attempt_id: ATTEMPT_ID,
+      provider: 'codex',
+      session_id: 'thread-1',
+    };
+    fs.writeFileSync(
+      path.join(attemptRuntime, `${ATTEMPT_ID}.session.json`),
+      JSON.stringify(session),
+      { mode: 0o600 },
+    );
+    const docker = createDockerAdapter({ runtimeRoot });
+    const readFileSpy = vi.spyOn(fs, 'readFileSync');
+
+    try {
+      await expect(docker.readSession({ attemptId: ATTEMPT_ID }))
+        .resolves.toEqual(session);
+      await expect(docker.readResult({
+        attemptId: ATTEMPT_ID,
+        resultChannel: RESULT_CHANNEL,
+      })).resolves.toMatchObject({
+        resultBytes: CANONICAL_RESULT,
+        terminalStatus: 'completed',
+        session,
+      });
+      expect(readFileSpy).not.toHaveBeenCalled();
+    } finally {
+      readFileSpy.mockRestore();
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['symlink', (target, root) => {
+      const outside = path.join(root, 'outside-result.json');
+      fs.writeFileSync(outside, CANONICAL_RESULT, { mode: 0o600 });
+      fs.symlinkSync(outside, target);
+    }],
+    ['FIFO', (target) => execFileSync('mkfifo', [target])],
+    ['group-readable file', (target) => {
+      fs.writeFileSync(target, CANONICAL_RESULT, { mode: 0o640 });
+    }],
+    ['oversized file', (target) => {
+      fs.writeFileSync(target, Buffer.alloc(RESULT_CHANNEL.max_bytes + 1), {
+        mode: 0o600,
+      });
+    }],
+    ['invalid UTF-8', (target) => {
+      fs.writeFileSync(target, Buffer.from([0xc3, 0x28]), { mode: 0o600 });
+    }],
+  ])('rejects a %s canonical result file', async (_name, createTarget) => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-result-invalid-'));
+    const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
+    const target = path.join(attemptRuntime, `${ATTEMPT_ID}.result.json`);
+    fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
+    createTarget(target, runtimeRoot);
+    const docker = createDockerAdapter({ runtimeRoot });
+
+    try {
+      await expect(docker.readResult({
+        attemptId: ATTEMPT_ID,
+        resultChannel: RESULT_CHANNEL,
+      })).rejects.toThrow(/attempt_result_(?:missing|invalid)/);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['symlink', (target, root) => {
+      const outside = path.join(root, 'outside-session.json');
+      fs.writeFileSync(outside, JSON.stringify({
+        contract_version: 'provider-session/v1',
+        attempt_id: ATTEMPT_ID,
+        provider: 'codex',
+        session_id: 'thread-1',
+      }), { mode: 0o600 });
+      fs.symlinkSync(outside, target);
+    }],
+    ['FIFO', (target) => execFileSync('mkfifo', [target])],
+    ['world-readable file', (target) => {
+      fs.writeFileSync(target, '{}', { mode: 0o604 });
+    }],
+    ['oversized file', (target) => {
+      fs.writeFileSync(target, JSON.stringify({
+        contract_version: 'provider-session/v1',
+        attempt_id: ATTEMPT_ID,
+        provider: 'codex',
+        session_id: 'x'.repeat(65_536),
+      }), { mode: 0o600 });
+    }],
+    ['invalid UTF-8', (target) => {
+      fs.writeFileSync(target, Buffer.from([0xc3, 0x28]), { mode: 0o600 });
+    }],
+  ])('rejects a %s provider session file', async (_name, createTarget) => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-session-invalid-'));
+    const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
+    const target = path.join(attemptRuntime, `${ATTEMPT_ID}.session.json`);
+    fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
+    createTarget(target, runtimeRoot);
+    const docker = createDockerAdapter({ runtimeRoot });
+
+    try {
+      await expect(docker.readSession({ attemptId: ATTEMPT_ID }))
+        .rejects.toThrow(/attempt_session_invalid/);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null when the optional provider session file is absent', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-session-missing-'));
+    const docker = createDockerAdapter({ runtimeRoot });
+
+    try {
+      await expect(docker.readSession({ attemptId: ATTEMPT_ID }))
+        .resolves.toBeNull();
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['legacy schema', () => durableState({ schema_version: 'fleet-attempt-state/v1' })],
+    ['unknown schema', () => durableState({ schema_version: 'fleet-attempt-state/v99' })],
+    ['unknown top-level field', () => durableState({ surprise: true })],
+    ['unknown delivery field', () => durableState({
+      status: 'callback_pending',
+      container_removed: false,
+      delivery: { ...DELIVERY_METADATA, surprise: true },
+    })],
+    ['invalid delivery digest', () => durableState({
+      status: 'callback_pending',
+      container_removed: false,
+      delivery: { ...DELIVERY_METADATA, result_sha256: 'not-a-digest' },
+    })],
+  ])('fails closed for %s durable state', async (_name, buildState) => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-schema-'));
+    const stateFile = path.join(stateRoot, `${ATTEMPT_ID}.json`);
+    fs.writeFileSync(stateFile, JSON.stringify(buildState()), { mode: 0o600 });
+    const store = createFileAttemptStateStore({ stateRoot });
+
+    try {
+      await expect(store.get(ATTEMPT_ID))
+        .rejects.toThrow(new RegExp(`attempt_state_corrupt:${ATTEMPT_ID}`));
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['symlink', (target, root) => {
+      const outside = path.join(root, 'outside-state.json');
+      fs.writeFileSync(outside, JSON.stringify(durableState()), { mode: 0o600 });
+      fs.symlinkSync(outside, target);
+    }],
+    ['FIFO', (target) => execFileSync('mkfifo', [target])],
+    ['group-readable file', (target) => {
+      fs.writeFileSync(target, JSON.stringify(durableState()), { mode: 0o640 });
+    }],
+    ['oversized file', (target) => {
+      fs.writeFileSync(target, Buffer.alloc(1_048_577), { mode: 0o600 });
+    }],
+    ['invalid UTF-8', (target) => {
+      fs.writeFileSync(target, Buffer.from([0xc3, 0x28]), { mode: 0o600 });
+    }],
+  ])('rejects a %s durable state entry during listing', async (_name, createTarget) => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-invalid-'));
+    const stateFile = path.join(stateRoot, `${ATTEMPT_ID}.json`);
+    createTarget(stateFile, stateRoot);
+    const store = createFileAttemptStateStore({ stateRoot });
+
+    try {
+      await expect(store.list())
+        .rejects.toThrow(new RegExp(`attempt_state_corrupt:${ATTEMPT_ID}`));
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('reads durable state from the descriptor without pathname re-open', async () => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-read-'));
+    const stateFile = path.join(stateRoot, `${ATTEMPT_ID}.json`);
+    const state = durableState();
+    fs.writeFileSync(stateFile, JSON.stringify(state), { mode: 0o600 });
+    const store = createFileAttemptStateStore({ stateRoot });
+    const readFileSpy = vi.spyOn(fs, 'readFileSync');
+
+    try {
+      await expect(store.get(ATTEMPT_ID)).resolves.toEqual(state);
+      expect(readFileSpy).not.toHaveBeenCalled();
+    } finally {
+      readFileSpy.mockRestore();
       fs.rmSync(stateRoot, { recursive: true, force: true });
     }
   });
