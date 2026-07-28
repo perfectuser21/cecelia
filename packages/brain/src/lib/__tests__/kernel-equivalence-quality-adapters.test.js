@@ -53,6 +53,7 @@ function signedReceipt(target, authorization) {
 function fixture() {
   const resources = new Map();
   const isolation = {
+    owner_service: 'kernel.equivalence.isolation',
     prepare: vi.fn(async ({ authorization, registerCompensation }) => {
       const resource = {
         resource_id: authorization.resource_id,
@@ -67,14 +68,19 @@ function fixture() {
       for (const resource of targets) resources.delete(resource.resource_ref);
       return { removed: targets.map((resource) => resource.resource_ref) };
     }),
+  };
+  const inspector = {
+    owner_service: 'kernel.equivalence.cleanup_inspector',
     inspect: vi.fn(async ({ resource }) => ({
       exists: resources.has(resource.resource_ref),
+      evidence_ref: `cleanup-evidence:${'a'.repeat(64)}`,
     })),
   };
   const seams = Object.fromEntries(
     QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS.map((descriptor) => [
       descriptor.seam_id,
       {
+        owner_service: descriptor.seam_id,
         invoke: vi.fn(async ({ cell: target, grant: authorization }) => (
           signedReceipt(target, authorization)
         )),
@@ -83,7 +89,7 @@ function fixture() {
       },
     ]),
   );
-  return { resources, isolation, seams };
+  return { resources, isolation, inspector, seams };
 }
 
 describe('quality equivalence adapter registry', () => {
@@ -124,12 +130,18 @@ describe('quality equivalence adapter registry', () => {
     for (const descriptor of QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS) {
       const adapter = registry.get(descriptor.adapter_id);
       expect(Object.keys(adapter).sort()).toEqual([
+        'adapter_id',
         'cancel',
         'cleanup',
         'invokeActualSeam',
         'observe',
+        'owner_service',
         'prepare',
       ]);
+      expect(adapter).toMatchObject({
+        adapter_id: descriptor.adapter_id,
+        owner_service: descriptor.seam_id,
+      });
       expect(JSON.stringify(adapter)).not.toContain('signer');
     }
 
@@ -143,18 +155,21 @@ describe('quality equivalence adapter registry', () => {
       grant: authorization,
       signal: controller.signal,
       registerCompensation: (resource) => compensations.push(resource),
+      predecessor: null,
     });
     const seamOutput = await registry.get(target.adapter_id).invokeActualSeam({
       cell: target,
       grant: authorization,
       prepared,
       compensations,
+      predecessor: null,
       signal: controller.signal,
     });
     await expect(registry.get(target.adapter_id).observe(seamOutput, {
       cell: target,
       grant: authorization,
       prepared,
+      predecessor: null,
       signal: controller.signal,
     })).resolves.toEqual(seamOutput);
     expect(value.seams[target.seam_id].invoke).toHaveBeenCalledWith(
@@ -162,6 +177,7 @@ describe('quality equivalence adapter registry', () => {
         cell: target,
         grant: authorization,
         resource: prepared.resource,
+        predecessor: null,
         signal: controller.signal,
       }),
     );
@@ -183,6 +199,39 @@ describe('quality equivalence adapter registry', () => {
       registerCompensation: vi.fn(),
     })).rejects.toMatchObject({ code: 'adapter_resource_boundary_invalid' });
     expect(value.isolation.prepare).not.toHaveBeenCalled();
+  });
+
+  it('rejects a seam whose registered owner does not match the contract cell', () => {
+    const value = fixture();
+    const descriptor = QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS[0];
+    value.seams[descriptor.seam_id].owner_service = 'kernel.fake.owner';
+
+    expect(() => createQualityEquivalenceAdapterRegistry(value))
+      .toThrowError(expect.objectContaining({
+        code: 'adapter_actual_seam_owner_mismatch',
+      }));
+  });
+
+  it('rejects non-serializable adapter resources before seam invocation', async () => {
+    const value = fixture();
+    value.isolation.prepare.mockImplementationOnce(async ({ authorization }) => ({
+      resource_id: authorization.resource_id,
+      resource_ref: authorization.resource_ref,
+      signer: () => 'forged',
+    }));
+    const registry = createQualityEquivalenceAdapterRegistry(value);
+    const target = cell(QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS[0]);
+
+    await expect(registry.get(target.adapter_id).prepare({
+      cell: target,
+      grant: grant(target),
+      predecessor: null,
+      signal: new AbortController().signal,
+      registerCompensation: vi.fn(),
+    })).rejects.toMatchObject({
+      code: 'adapter_prepared_resource_invalid',
+    });
+    expect(value.seams[target.seam_id].invoke).not.toHaveBeenCalled();
   });
 
   it('does not turn an unsigned or mismatched seam result into a receipt', async () => {
@@ -207,18 +256,20 @@ describe('quality equivalence adapter registry', () => {
     }, context)).rejects.toMatchObject({ code: 'adapter_seam_receipt_invalid' });
   });
 
-  it('loads exact violation lineage before a recovery seam invocation', async () => {
+  it('uses the one verified predecessor supplied by the runtime core', async () => {
     const value = fixture();
     const predecessor = {
-      schema_version: 'kernel-equivalence-effect-receipt/v1',
-      cell_id: 'violation-cell',
-      receipt_id: '55555555-5555-4555-8555-555555555555',
+      grant: {
+        schema_version: 'kernel-equivalence-execution-grant/v1',
+        grant_id: '66666666-6666-4666-8666-666666666666',
+      },
+      receipt: {
+        schema_version: 'kernel-equivalence-effect-receipt/v1',
+        cell_id: 'violation-cell',
+        receipt_id: '55555555-5555-4555-8555-555555555555',
+      },
     };
-    const predecessorLoader = vi.fn(async () => ({ receipt: predecessor }));
-    const registry = createQualityEquivalenceAdapterRegistry({
-      ...value,
-      predecessorLoader,
-    });
+    const registry = createQualityEquivalenceAdapterRegistry(value);
     const descriptor = QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS[0];
     const target = cell(descriptor, 'recovery');
     const authorization = grant(target);
@@ -227,23 +278,21 @@ describe('quality equivalence adapter registry', () => {
       grant: authorization,
       signal: new AbortController().signal,
       registerCompensation: vi.fn(),
+      predecessor,
     });
 
-    expect(predecessorLoader).toHaveBeenCalledWith(expect.objectContaining({
-      cell_id: target.cell_id.replace(/::recovery$/, '::violation'),
-      run_id: RUN_ID,
-      attempt_id: ATTEMPT_ID,
-      resource_id: authorization.resource_id,
-      resource_ref: authorization.resource_ref,
-      seam_id: target.seam_id,
-      adapter_id: target.adapter_id,
-    }));
-    expect(prepared.predecessor).toEqual(predecessor);
+    expect(prepared).toEqual({
+      resource: {
+        resource_id: authorization.resource_id,
+        resource_ref: authorization.resource_ref,
+      },
+    });
 
     await registry.get(target.adapter_id).invokeActualSeam({
       cell: target,
       grant: authorization,
       prepared,
+      predecessor,
       signal: new AbortController().signal,
     });
     expect(value.seams[target.seam_id].invoke).toHaveBeenCalledWith(
@@ -264,6 +313,7 @@ describe('quality equivalence adapter registry', () => {
       grant: grant(target),
       signal: new AbortController().signal,
       registerCompensation: vi.fn(),
+      predecessor: null,
     })).rejects.toMatchObject({ code: 'adapter_recovery_predecessor_unavailable' });
     expect(value.isolation.prepare).not.toHaveBeenCalled();
   });
@@ -295,10 +345,23 @@ describe('quality equivalence adapter registry', () => {
   it('uses an independent inspection hook to verify all cleanup targets are absent', async () => {
     const value = fixture();
     const registry = createQualityEquivalenceAdapterRegistry(value);
+    const descriptor = QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS[0];
     const verifyCleanup = createQualityCleanupVerifier({
-      isolation: value.isolation,
+      descriptor,
+      inspector: value.inspector,
     });
-    const target = cell(QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS[0]);
+    expect(Object.keys(verifyCleanup).sort()).toEqual([
+      'adapter_id',
+      'owner_service',
+      'verifier_id',
+      'verifyCleanup',
+    ]);
+    expect(verifyCleanup).toMatchObject({
+      adapter_id: descriptor.adapter_id,
+      owner_service: value.inspector.owner_service,
+    });
+    expect(verifyCleanup.owner_service).not.toBe(descriptor.seam_id);
+    const target = cell(descriptor);
     const authorization = grant(target);
     const compensations = [];
     const prepared = await registry.get(target.adapter_id).prepare({
@@ -312,15 +375,37 @@ describe('quality equivalence adapter registry', () => {
       grant: authorization,
       prepared,
       compensations,
+      predecessor: null,
     };
     const cleanup = await registry.get(target.adapter_id).cleanup(context);
 
-    await expect(verifyCleanup({ ...context, cleanup })).resolves.toEqual({
+    await expect(verifyCleanup.verifyCleanup({
+      ...context,
+      cleanup,
+    })).resolves.toEqual({
       confirmed: true,
+      evidence_ref: expect.stringMatching(/^cleanup-evidence:[a-f0-9]{64}$/),
     });
     value.resources.set(authorization.resource_ref, prepared.resource);
-    await expect(verifyCleanup({ ...context, cleanup })).resolves.toEqual({
+    await expect(verifyCleanup.verifyCleanup({
+      ...context,
+      cleanup,
+    })).resolves.toEqual({
       confirmed: false,
+      evidence_ref: null,
     });
+  });
+
+  it('rejects cleanup inspection owned by the adapter seam', () => {
+    const value = fixture();
+    const descriptor = QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS[0];
+    value.inspector.owner_service = descriptor.seam_id;
+
+    expect(() => createQualityCleanupVerifier({
+      descriptor,
+      inspector: value.inspector,
+    })).toThrowError(expect.objectContaining({
+      code: 'cleanup_inspector_not_independent',
+    }));
   });
 });
