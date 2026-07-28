@@ -1,9 +1,5 @@
 import { normalizeFailureSignature } from './convergence-signatures.js';
 
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'"'"'`)}'`;
-}
-
 function prNumber(prUrl) {
   const value = String(prUrl ?? '').match(/\/pull\/(\d+)(?:\/|$)/)?.[1];
   return value ? Number(value) : null;
@@ -157,20 +153,28 @@ export function createKernelHandlers(deps) {
     async merge_pr(ctx) {
       const pr = ctx.observed.pr;
       if (!pr?.url) return { status: 'BLOCKED', detail: 'merge requires PR URL' };
-      if (pr.merged || pr.state === 'MERGED') return { status: 'DONE', detail: 'already merged' };
-      if (pr.mergeStateStatus === 'CONFLICTING') {
+      if (
+        pr.merged !== true
+        && pr.state !== 'MERGED'
+        && pr.mergeStateStatus === 'CONFLICTING'
+      ) {
         return { status: 'BLOCKED', detail: 'PR has merge conflicts' };
       }
-      if (pr.mergeStateStatus === 'BEHIND') {
+      if (
+        pr.merged !== true
+        && pr.state !== 'MERGED'
+        && pr.mergeStateStatus === 'BEHIND'
+      ) {
         const priorRebases = (ctx.observed.decisionLog ?? []).filter(
           (row) => row.action === 'merge_pr' && row.observed?.pr?.mergeStateStatus === 'BEHIND',
         ).length;
         if (priorRebases >= 3) return { status: 'BLOCKED', detail: 'rebase attempt cap reached' };
-        deps.execCmd(`gh pr update-branch ${shellQuote(pr.url)}`);
-        return { status: 'DONE_WITH_CONCERNS', detail: 'updated PR branch; rechecking gates' };
+        return { status: 'BLOCKED', detail: 'branch update requires a new generator cycle' };
       }
-      deps.execCmd(`gh pr merge ${shellQuote(pr.url)} --squash --delete-branch`);
-      return { status: 'DONE', detail: 'merge requested' };
+      if (typeof deps.mergeEffect !== 'function') {
+        return { status: 'BLOCKED', detail: 'merge effect authority unavailable' };
+      }
+      return deps.mergeEffect({ runId: ctx.runId, taskId: ctx.taskId });
     },
 
     async report(ctx) {
@@ -231,4 +235,4 @@ export function createKernelHandlers(deps) {
   });
 }
 
-export const __test__ = { shellQuote, prNumber, appendJudgeVerdict };
+export const __test__ = { prNumber, appendJudgeVerdict };

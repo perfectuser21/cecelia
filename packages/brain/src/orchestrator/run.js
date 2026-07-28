@@ -32,6 +32,9 @@ import { codexAdapter } from './providers/codex.js';
 import { grokAdapter } from './providers/grok.js';
 import { loadSkillBundle } from './skill-bundle.js';
 import { createKernelHandlers } from './kernel-handlers.js';
+import { createGitHubMergeAdapter } from './github-merge-adapter.js';
+import { createMergeEffectExecutor } from './merge-effect-executor.js';
+import { createPostgresMergeEffectStore } from './merge-effect-store.js';
 import { readGitArtifact } from './git-artifact-reader.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
@@ -64,7 +67,13 @@ export function parseArgs(argv) {
   return args;
 }
 
-export async function buildDefaultHandlers({ pool, execCmd, attemptStore, judgeGate }) {
+export async function buildDefaultHandlers({
+  pool,
+  attemptStore,
+  judgeGate,
+  mergeEffect,
+  githubExecFile,
+}) {
   const [
     judge,
     previewManager,
@@ -105,10 +114,26 @@ export async function buildDefaultHandlers({ pool, execCmd, attemptStore, judgeG
     return { created: result.rowCount > 0 };
   };
 
+  let resolvedMergeEffect = mergeEffect;
+  if (!resolvedMergeEffect) {
+    const execFile = githubExecFile
+      ?? ((file, args) => execFileSync(file, args, {
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: 60_000,
+      }));
+    const adapter = createGitHubMergeAdapter({ execFile });
+    resolvedMergeEffect = createMergeEffectExecutor({
+      store: createPostgresMergeEffectStore(pool),
+      observePullRequest: adapter.observePullRequest,
+      mergePullRequest: adapter.mergePullRequest,
+    });
+  }
+
   return createKernelHandlers({
     pool,
-    execCmd,
     attemptStore,
+    mergeEffect: resolvedMergeEffect,
     promptDir: dockerExecutor.getHostPromptDir(),
     judgeGate: judgeGate ?? judge.runJudgeGate,
     allocatePort: previewManager.allocatePort,
