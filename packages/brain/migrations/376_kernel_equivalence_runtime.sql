@@ -1,9 +1,7 @@
--- PROVISIONAL Migration 375: trusted Kernel equivalence execution runtime.
+-- Migration 376: trusted Kernel equivalence execution runtime.
 --
--- Integration ordering: this line depends on migration 374 (ReleaseRun) landing
--- first. Integration may renumber this migration if the risk/ReleaseRun join
--- claims 375. No table below references ReleaseRun, which keeps renumbering
--- mechanical and preserves isolated review/testing from the 372 base.
+-- Integration ordering: ReleaseRun owns migration 374; closure owns migration 375.
+-- This runtime follows both and does not overwrite either.
 
 CREATE TABLE IF NOT EXISTS kernel_equivalence_execution_nonces (
   grant_id UUID PRIMARY KEY,
@@ -233,5 +231,5 @@ CREATE TRIGGER trg_kernel_equivalence_heads_no_delete
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_equivalence_runtime_append_only();
 
 INSERT INTO schema_version (version, description)
-VALUES ('375', 'kernel_equivalence_runtime_provisional')
+VALUES ('376', 'kernel_equivalence_runtime')
 ON CONFLICT (version) DO NOTHING;

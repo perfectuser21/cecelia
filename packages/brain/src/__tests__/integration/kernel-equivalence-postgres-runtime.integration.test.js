@@ -30,7 +30,7 @@ import {
 } from '../../lib/__tests__/kernel-equivalence-test-fixtures.js';
 
 const migration = readFileSync(
-  new URL('../../../migrations/375_kernel_equivalence_runtime.sql', import.meta.url),
+  new URL('../../../migrations/376_kernel_equivalence_runtime.sql', import.meta.url),
   'utf8',
 );
 const schemaName =

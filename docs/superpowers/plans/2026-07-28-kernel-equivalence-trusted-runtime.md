@@ -17,7 +17,7 @@
 - `packages/brain/src/lib/kernel-equivalence-postgres-runtime.js`: atomic nonce consumer, trusted audit sink, CAS bundle-chain store/readback, and recovery predecessor resolver.
 - `packages/brain/src/lib/kernel-equivalence-runtime-loader.js`: fail-closed environment-metadata and PostgreSQL wiring composition.
 - `scripts/ci/run-kernel-equivalence-drill.mjs`: opt-in trusted `--execute` path; unconfigured operation retains the current explicit blocker.
-- `packages/brain/migrations/375_kernel_equivalence_runtime.sql`: provisional post-ReleaseRun runtime schema; integration must land after migration `374` and may renumber this file.
+- `packages/brain/migrations/376_kernel_equivalence_runtime.sql`: runtime schema after ReleaseRun `374` and closure `375`.
 - Focused unit, adversarial, migration, CLI, and real-PostgreSQL tests live beside the existing equivalence suites.
 
 ### Task 1: Protected Ed25519 signer authorities
@@ -34,16 +34,16 @@
 - [x] Implement immutable registry constructors. Adapter resolution returns only pre-registered server objects; cleanup verification is delegated to a separately registered verifier identity and only returns a bounded `{ confirmed, evidence_ref }` result.
 - [x] Run focused tests; commit RED then GREEN.
 
-### Task 3: Provisional migration and PostgreSQL authorities
+### Task 3: Migration and PostgreSQL authorities
 
 - [x] Add a migration contract test requiring nonce uniqueness, immutable nonce/audit/bundle rows, a mutable singleton chain head, exact hash/axis constraints, indexes for predecessor lookup, and schema-version registration. Assert the migration documents its integration dependency on ReleaseRun migration `374`.
 - [x] Add failing store tests against query/client doubles for one-statement nonce consumption, allowlisted audit insertion, transactional CAS, rollback on lost head race, canonical bundle hash/readback checks, and exact unique violation predecessor lookup.
-- [x] Add `375_kernel_equivalence_runtime.sql` and implement PostgreSQL factories with strict input validation and stable error codes.
+- [x] Add `376_kernel_equivalence_runtime.sql` after ReleaseRun `374` and closure `375`, and implement PostgreSQL factories with strict input validation and stable error codes.
 - [x] Run migration/store tests; commit RED then GREEN.
 
 ### Task 4: Real PostgreSQL concurrency and append-only proof
 
-- [x] Add an integration test that applies migration `375` twice in an isolated schema, races two consumers for one nonce, races two commits from one chain head, reads the winner back, resolves a violation predecessor, and proves UPDATE/DELETE/TRUNCATE triggers reject nonce/audit/bundle mutations.
+- [x] Add an integration test that applies migration `376` twice in an isolated schema, races two consumers for one nonce, races two commits from one chain head, reads the winner back, resolves a violation predecessor, and proves UPDATE/DELETE/TRUNCATE triggers reject nonce/audit/bundle mutations.
 - [x] Run against the local test PostgreSQL.
 - [x] Adjust only production SQL/store behavior needed for atomicity and readback; keep the integration suite green.
 - [x] Commit the real-PostgreSQL proof.

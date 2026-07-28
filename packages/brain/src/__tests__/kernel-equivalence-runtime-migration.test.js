@@ -2,15 +2,15 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const sql = readFileSync(
-  new URL('../../migrations/375_kernel_equivalence_runtime.sql', import.meta.url),
+  new URL('../../migrations/376_kernel_equivalence_runtime.sql', import.meta.url),
   'utf8',
 );
 
-describe('provisional migration 375 Kernel equivalence runtime', () => {
-  it('documents the ReleaseRun integration dependency and provisional number', () => {
-    expect(sql).toMatch(/provisional/i);
-    expect(sql).toMatch(/depends on migration 374.*ReleaseRun/i);
-    expect(sql).toMatch(/integration may renumber/i);
+describe('migration 376 Kernel equivalence runtime', () => {
+  it('follows the ReleaseRun 374 and closure 375 migrations', () => {
+    expect(sql).toMatch(/ReleaseRun owns migration 374/i);
+    expect(sql).toMatch(/closure owns.*375/i);
+    expect(sql).toMatch(/does not overwrite either/i);
   });
 
   it('atomically deduplicates both grant and nonce identities', () => {
@@ -77,7 +77,7 @@ describe('provisional migration 375 Kernel equivalence runtime', () => {
   it('is rerunnable and registers its provisional schema version', () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS/g);
     expect(sql).toMatch(/DROP TRIGGER IF EXISTS/g);
-    expect(sql).toMatch(/VALUES \('375'/i);
+    expect(sql).toMatch(/VALUES \('376'/i);
     expect(sql).toMatch(/ON CONFLICT \(version\) DO NOTHING/i);
   });
 });

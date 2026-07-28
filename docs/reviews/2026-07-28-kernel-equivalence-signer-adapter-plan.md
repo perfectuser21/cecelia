@@ -23,8 +23,8 @@
 - `--grant` 同样从受保护的绝对路径 regular file 读取。CLI/controller 不加载
   `effect_receipt` 私钥；只有对应 seam service 可调用冻结的
   `{ key_id, purpose, service_id, signEffectResult }` 端口。
-- PostgreSQL migration 当前为 **provisional 375**，必须在 ReleaseRun migration
-  `374` 之后集成；如果风险/ReleaseRun join 占用 `375`，合入时机械重编号。
+- PostgreSQL runtime migration 为 **376**，明确排在 ReleaseRun `374` 与其
+  closure `375` 之后，不覆盖两者。
   ledger 对 nonce/audit/bundle 为 append-only，head 用 revision + hash CAS。
   head trigger 同时禁止重根/跳 revision，并要求每个新 head 是旧 head 的已存 successor；
   recovery predecessor 只可来自当前 head→genesis 的 recursive ancestry。
