@@ -36,6 +36,33 @@ const GITHUB_MUTATION_POLICY = Object.freeze({
   pr_body: `Kernel task ${TASK_ID}\nRun ${RUN_ID}\n`,
   allowed_paths: Object.freeze(['packages/', 'sprints/']),
 });
+const GITHUB_READ_POLICY = Object.freeze({
+  version: 'github-read/v1',
+  repo: 'perfectuser21/cecelia',
+  url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+  number: 4391,
+  head_ref: 'cp-07272050-attempt-runner',
+  head_sha: '0123456789abcdef0123456789abcdef01234567',
+  allowed_states: Object.freeze(['OPEN']),
+});
+const GITHUB_READ_AUTHORITY = Object.freeze({
+  schema_version: 'github-read-authority/v1',
+  attempt_id: ATTEMPT_ID,
+  task_id: TASK_ID,
+  run_id: RUN_ID,
+  role: 'evaluator',
+  request_sha256: 'c'.repeat(64),
+  observed_at: '2026-07-28T01:00:00.000Z',
+  pull_request: Object.freeze({
+    type: 'pull_request',
+    url: GITHUB_READ_POLICY.url,
+    number: GITHUB_READ_POLICY.number,
+    head_ref: GITHUB_READ_POLICY.head_ref,
+    head_sha: GITHUB_READ_POLICY.head_sha,
+    state: 'OPEN',
+  }),
+  audit_record_sha256: 'd'.repeat(64),
+});
 const CREDENTIAL_ENVELOPE = Object.freeze({
   contract_version: 'provider-credential-envelope/v2',
   credential_ref: '33333333-3333-4333-8333-333333333333',
@@ -321,6 +348,12 @@ function dependencies(overrides = {}) {
       };
     }),
   };
+  const githubReadBroker = {
+    observe: vi.fn(async () => {
+      events.push('github-read.observe');
+      return GITHUB_READ_AUTHORITY;
+    }),
+  };
   return {
     workspace,
     workspaceManager,
@@ -328,6 +361,7 @@ function dependencies(overrides = {}) {
     credentialConsumer,
     resultDelivery,
     githubMutationBroker,
+    githubReadBroker,
     stateStore: inMemoryStateStore(),
     events,
     ...overrides,
@@ -345,31 +379,94 @@ function createRunner(deps) {
     credentialConsumer: deps.credentialConsumer,
     resultDelivery: deps.resultDelivery,
     githubMutationBroker: deps.githubMutationBroker,
+    githubReadBroker: deps.githubReadBroker,
   });
 }
 
 describe('Fleet Worker Attempt runner', () => {
-  it.each(['evaluator', 'reporter'])(
-    'fails %s closed until Worker-owned GitHub read authority is implemented',
-    async (role) => {
+  it.each([
+    ['evaluator', 'read-write'],
+    ['reporter', 'read-only'],
+  ])(
+    'observes frozen GitHub authority before launching a %s',
+    async (role, mode) => {
       const deps = dependencies();
       const runner = createRunner(deps);
+      const resultChannel = {
+        ...RESULT_CHANNEL,
+        bindings: { ...RESULT_CHANNEL.bindings, role },
+      };
+      const authority = {
+        ...GITHUB_READ_AUTHORITY,
+        role,
+      };
+      deps.githubReadBroker.observe.mockResolvedValueOnce(authority);
+
       await expect(runner.launch(request({
         target: { ...request().target, role },
         workspace_spec: {
           ...request().workspace_spec,
-          mode: 'read-only',
+          mode,
+          expected_head_sha: GITHUB_READ_POLICY.head_sha,
         },
-        result_channel: {
-          ...RESULT_CHANNEL,
-          bindings: { ...RESULT_CHANNEL.bindings, role },
-        },
+        result_channel: resultChannel,
+        github_read_policy: GITHUB_READ_POLICY,
         github_mutation_policy: undefined,
-      }))).rejects.toThrow('attempt_github_read_broker_required');
-      expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
-      expect(deps.docker.launch).not.toHaveBeenCalled();
+      }))).resolves.toMatchObject({ attempt_id: ATTEMPT_ID });
+      expect(deps.githubReadBroker.observe).toHaveBeenCalledWith({
+        attemptId: ATTEMPT_ID,
+        taskId: TASK_ID,
+        runId: RUN_ID,
+        role,
+        policy: GITHUB_READ_POLICY,
+      });
+      expect(deps.events.indexOf('github-read.observe')).toBeLessThan(
+        deps.events.indexOf('credential.consume'),
+      );
+      expect(deps.events.indexOf('github-read.observe')).toBeLessThan(
+        deps.events.indexOf('workspace.prepare'),
+      );
+      expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+        githubReadAuthority: authority,
+      }));
+      expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+        github_read_policy: GITHUB_READ_POLICY,
+        github_read_authority: authority,
+      });
     },
   );
+
+  it.each([
+    ['missing', undefined],
+    ['wrong repo', { ...GITHUB_READ_POLICY, repo: 'attacker/repo' }],
+    ['wrong ref', { ...GITHUB_READ_POLICY, head_ref: 'cp-attacker' }],
+    ['wrong SHA', { ...GITHUB_READ_POLICY, head_sha: 'f'.repeat(40) }],
+    ['unknown field', { ...GITHUB_READ_POLICY, token: 'secret' }],
+  ])('fails Evaluator %s GitHub read policy before side effects', async (_name, policy) => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    const evaluatorChannel = {
+      ...RESULT_CHANNEL,
+      bindings: { ...RESULT_CHANNEL.bindings, role: 'evaluator' },
+    };
+    const launch = request({
+      target: { ...request().target, role: 'evaluator' },
+      workspace_spec: {
+        ...request().workspace_spec,
+        expected_head_sha: GITHUB_READ_POLICY.head_sha,
+      },
+      result_channel: evaluatorChannel,
+      github_mutation_policy: undefined,
+      ...(policy === undefined ? {} : { github_read_policy: policy }),
+    });
+    if (policy === undefined) delete launch.github_read_policy;
+
+    await expect(runner.launch(launch)).rejects.toThrow(/attempt_github_read_policy/);
+    expect(deps.githubReadBroker.observe).not.toHaveBeenCalled();
+    expect(deps.credentialConsumer.consume).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+    expect(deps.docker.launch).not.toHaveBeenCalled();
+  });
 
   it('removes a managed Generator container before Worker-owned GitHub mutation', async () => {
     const deps = dependencies();
