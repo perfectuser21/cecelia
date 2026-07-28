@@ -141,6 +141,44 @@ updates. It continues only when the result is:
 Every other result is a hard block. The old eager `staging_e2e` task spawn is
 removed from this Kernel handler so there is only one release owner.
 
+## Release authorization consumer and legacy surfaces
+
+The Brain deploy API is the server-owned ReleaseRun authorization consumer.
+Every staging or production request must include exact `release_run_id` and
+`merge_sha`. Before accepting an effect it loads the immutable ReleaseRun,
+latest transition, and matching effect intent under the release lease:
+
+- staging accepts only `staging_queued`/`staging_running` for the staging
+  intent;
+- production accepts only `production_deploying` for the production intent;
+- the supplied merge SHA must equal both ReleaseRun and intent authority;
+- missing, malformed, stale, already failed, skipped, unknown, or unreceipted
+  authority returns 409 and executes no child process.
+
+The consumer returns the persisted effect idempotency key. Workflow titles,
+branch names, `main`, changed paths, risk level, deploy token, and current
+production drift are not release authorization.
+
+Cecelia-controlled release surfaces are closed as follows:
+
+- `deploy.yml`, `promote-all-prod.yml`, and `promote-dashboard-prod.yml`
+  require manual `release_run_id` plus full `merge_sha`, send both to Brain,
+  and share the `kernel-release` concurrency group. Their latest-main,
+  Fast-Lane, nightly bypass, skipped, and idle-success paths are removed.
+- `brain-ci-deploy.yml` no longer deploys on `push:main`; it remains a PR/CI
+  guard until a ReleaseRun-bound caller invokes the production consumer.
+- `auto-staging-deploy.yml` no longer deploys latest `main` on push. Manual
+  dispatch requires the exact ReleaseRun axes, shares `kernel-release`
+  concurrency, and treats skipped/idle/unknown as failure.
+- `drift-sentinel.js` becomes detection and escalation only. Drift never
+  selects latest `main` and never invokes `brain-deploy.sh`.
+- `routes/ops.js` changes staging skip logging and status semantics from
+  "production not blocked" to explicit release denial.
+
+Static adversarial tests scan every controlled workflow and sentinel for old
+latest-main, Fast-Lane, skip-as-success, idle-as-success, direct production
+payload, and unbound deploy patterns.
+
 ## Verification
 
 Tests prove:
@@ -155,4 +193,7 @@ Tests prove:
 - full production evidence is required;
 - report/done side effects are absent before `production_verified`;
 - replay of an already verified ReleaseRun returns without effects.
-
+- every production/staging deploy API call requires exact ReleaseRun axes;
+- scheduled/push latest-main deploy paths are disabled;
+- no workflow treats staging skip or deploy idle as success;
+- drift detection cannot invoke a deploy script.

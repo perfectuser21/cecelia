@@ -88,7 +88,39 @@
 - [ ] Run focused tests and verify they pass.
 - [ ] Commit RED and GREEN separately.
 
-### Task 6: Publish versioned contract and verify
+### Task 6: Close workflow and deploy API bypasses
+
+**Files:**
+- Create: `packages/brain/src/orchestrator/release-run-authorization.js`
+- Create: `packages/brain/src/orchestrator/__tests__/release-run-authorization.test.js`
+- Create: `packages/brain/src/orchestrator/__tests__/release-run-surfaces.test.js`
+- Modify: `packages/brain/src/routes/ops.js`
+- Modify: `packages/brain/src/routes/__tests__/ops.test.js`
+- Modify: `packages/brain/src/cron/drift-sentinel.js`
+- Modify: `packages/brain/src/cron/__tests__/drift-sentinel.test.js`
+- Modify: `.github/workflows/deploy.yml`
+- Modify: `.github/workflows/promote-all-prod.yml`
+- Modify: `.github/workflows/promote-dashboard-prod.yml`
+- Modify: `.github/workflows/brain-ci-deploy.yml`
+- Modify: `.github/workflows/auto-staging-deploy.yml`
+
+- [ ] Add failing tests that exact `release_run_id + merge_sha + effect_kind`
+  authority is required before staging/production spawn, and that stale or
+  wrong-state authority denies.
+- [ ] Add adversarial static tests that detect schedule/push latest-main
+  deployment, Fast Lane, skipped/idle success, unbound deploy JSON, distinct
+  release concurrency groups, and drift-triggered deploy scripts.
+- [ ] Run focused tests and verify the current legacy surfaces fail.
+- [ ] Add the server-owned authorization consumer and gate both deploy API
+  branches before any state mutation, receipt, log file, or child process.
+- [ ] Require exact manual ReleaseRun inputs in release workflows, disable
+  push/scheduled production deployment, share `kernel-release` concurrency,
+  and make every unknown/skip/idle path fail.
+- [ ] Convert drift sentinel from auto-remediation to detection/escalation.
+- [ ] Run focused API, workflow, and sentinel tests and verify they pass.
+- [ ] Commit RED and GREEN separately.
+
+### Task 7: Publish versioned contract and verify
 
 **Files:**
 - Modify: `packages/brain/package.json`
@@ -105,4 +137,3 @@
 - [ ] Confirm the worktree is clean after committing.
 - [ ] Report base, HEAD, commit order, fresh test counts, and residual adapter
   risks without pushing, opening a PR, merging, or deploying.
-
