@@ -212,17 +212,10 @@ export function createPostgresNonceConsumer({ pool } = {}) {
         await client.query('ROLLBACK').catch(() => {});
         began = false;
       }
-      if (error instanceof EquivalencePostgresRuntimeError) throw error;
-      if (
-        commitStarted
-        && (
-          aborted
-          || signal?.aborted
-          || Date.now() >= absoluteDeadlineMs
-        )
-      ) {
+      if (commitStarted) {
         fail('nonce_cancellation_unconfirmed');
       }
+      if (error instanceof EquivalencePostgresRuntimeError) throw error;
       if (aborted || signal?.aborted) fail('nonce_consumer_aborted');
       if (POSTGRES_TIMEOUT_CODES.has(error?.code)) {
         fail('nonce_consumer_timeout');
@@ -598,17 +591,10 @@ export function createPostgresBundleChainStore({
         if (began && !released) {
           await client.query('ROLLBACK').catch(() => {});
         }
-        if (error instanceof EquivalencePostgresRuntimeError) throw error;
-        if (
-          commitStarted
-          && (
-            aborted
-            || signal?.aborted
-            || Date.now() >= absoluteDeadlineMs
-          )
-        ) {
+        if (commitStarted) {
           fail('bundle_chain_cancellation_unconfirmed');
         }
+        if (error instanceof EquivalencePostgresRuntimeError) throw error;
         if (aborted || signal?.aborted) {
           fail('bundle_chain_commit_aborted');
         }

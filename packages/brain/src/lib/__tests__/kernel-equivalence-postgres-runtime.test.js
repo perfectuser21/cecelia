@@ -281,6 +281,39 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     expect(runtime.client.release).toHaveBeenCalledWith(true);
   });
 
+  it('treats an unclassified nonce COMMIT reject as an ambiguous outcome', async () => {
+    const runtime = noncePool(1);
+    const reset = new Error('connection terminated during COMMIT');
+    reset.code = 'ECONNRESET';
+    runtime.client.query.mockImplementation(async (text) => {
+      if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
+      if (/AS before_deadline/i.test(text)) {
+        return { rows: [{ before_deadline: true }], rowCount: 1 };
+      }
+      if (/set_config\('statement_timeout'/i.test(text)) {
+        return { rows: [{}], rowCount: 1 };
+      }
+      if (/INSERT INTO kernel_equivalence_execution_nonces/i.test(text)) {
+        return {
+          rows: [{ grant_id: nonceInput().grant_id }],
+          rowCount: 1,
+        };
+      }
+      if (/^COMMIT$/i.test(text)) throw reset;
+      if (/^ROLLBACK$/i.test(text)) {
+        throw new Error('ROLLBACK cannot prove the COMMIT outcome');
+      }
+      throw new Error(`unexpected SQL: ${text}`);
+    });
+    const consume = createPostgresNonceConsumer({ pool: runtime.pool });
+
+    await expect(consume(nonceInput(), {
+      timeoutMs: 100,
+    })).rejects.toMatchObject({
+      code: 'nonce_cancellation_unconfirmed',
+    });
+  });
+
   it('persists only the denial audit allowlist', async () => {
     const pool = {
       query: vi.fn(async () => ({
@@ -482,6 +515,56 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       code: 'bundle_chain_cancellation_unconfirmed',
     });
     expect(runtime.client.release).toHaveBeenCalledWith(true);
+  });
+
+  it('treats an unknown bundle COMMIT reject as an ambiguous outcome', async () => {
+    const value = bundleFixture();
+    const checkpoint = {
+      genesis_hash: value.hash,
+      head_hash: value.hash,
+      revision: 1,
+    };
+    const runtime = transactionPool({
+      updateRows: [checkpoint],
+      readbackBundle: value.bundle,
+    });
+    runtime.client.query.mockImplementation(async (text, params) => {
+      runtime.calls.push({ text, params });
+      if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
+      if (/^ROLLBACK$/i.test(text)) {
+        throw new Error('ROLLBACK cannot prove the COMMIT outcome');
+      }
+      if (/^COMMIT$/i.test(text)) {
+        throw new Error('unexpected protocol termination');
+      }
+      if (/AS before_deadline/i.test(text)) {
+        return { rows: [{ before_deadline: true }], rowCount: 1 };
+      }
+      if (/set_config\('statement_timeout'/i.test(text)) {
+        return { rows: [{}], rowCount: 1 };
+      }
+      if (/INSERT INTO kernel_equivalence_receipt_bundles/i.test(text)) {
+        return { rows: [{ bundle_hash: params[1] }], rowCount: 1 };
+      }
+      if (/UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)) {
+        return { rows: [checkpoint], rowCount: 1 };
+      }
+      if (/SELECT bundle\s+FROM kernel_equivalence_receipt_bundles/i.test(text)) {
+        return { rows: [{ bundle: value.bundle }], rowCount: 1 };
+      }
+      throw new Error(`unexpected SQL: ${text}`);
+    });
+    const store = createPostgresBundleChainStore({ pool: runtime.pool });
+    await store.getCheckpoint();
+
+    await expect(store.commit({
+      bundle: value.bundle,
+      bundle_hash: value.hash,
+      previous_head_hash: null,
+      timeout_ms: 100,
+    })).rejects.toMatchObject({
+      code: 'bundle_chain_cancellation_unconfirmed',
+    });
   });
 
   it('rolls back an inserted loser when compare-and-swap head advancement fails', async () => {

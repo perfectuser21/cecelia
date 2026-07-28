@@ -574,6 +574,34 @@ describe('executeDrillCell', () => {
     });
   });
 
+  it.each([
+    ['nonce', 'nonce_cancellation_unconfirmed', (value) => {
+      value.nonceConsumer.mockRejectedValue(Object.assign(
+        new Error('nonce COMMIT outcome is ambiguous'),
+        { code: 'nonce_cancellation_unconfirmed' },
+      ));
+    }],
+    ['bundle', 'bundle_chain_cancellation_unconfirmed', (value) => {
+      value.bundleChainStore.commit.mockRejectedValue(Object.assign(
+        new Error('bundle COMMIT outcome is ambiguous'),
+        { code: 'bundle_chain_cancellation_unconfirmed' },
+      ));
+    }],
+  ])('audits a post-COMMIT %s reject as late-effect risk without outer abort', async (
+    _label,
+    code,
+    arrange,
+  ) => {
+    const value = executionFixture();
+    arrange(value);
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code,
+      audit: { late_effect_risk: true },
+    });
+  });
+
   it('records late-effect risk when timeout cancellation is not confirmed', async () => {
     const value = executionFixture();
     value.adapter.invokeActualSeam.mockImplementation(
