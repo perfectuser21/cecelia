@@ -66,6 +66,19 @@ function validGithubMutationPolicy(overrides = {}) {
   };
 }
 
+function validGithubReadPolicy(overrides = {}) {
+  return {
+    version: 'github-read/v1',
+    repo: 'perfectuser21/cecelia',
+    url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+    number: 4391,
+    head_ref: 'cp-07280905-result-channel',
+    head_sha: BASE_SHA,
+    allowed_states: ['OPEN'],
+    ...overrides,
+  };
+}
+
 function validBundle(overrides = {}) {
   return {
     contract_version: '1.0',
@@ -307,6 +320,85 @@ describe('TaskBundle contract', () => {
       { workspaceSpec: validWorkspaceSpec() },
     )).toThrow();
   });
+
+  it('strictly freezes an exact Workspace-bound GitHub read policy', () => {
+    expect(executionContract.parseGithubReadPolicy).toBeTypeOf('function');
+    expect(executionContract.buildGithubReadPolicy).toBeTypeOf('function');
+    const workspaceSpec = validWorkspaceSpec({
+      branch: 'cp-07280905-result-channel',
+      expected_head_sha: BASE_SHA,
+      mode: 'read-only',
+    });
+    const pullRequest = verifiedPullRequest();
+    const policy = executionContract.buildGithubReadPolicy({
+      pullRequest,
+      workspaceSpec,
+      allowedStates: ['OPEN'],
+    });
+
+    expect(policy).toEqual(validGithubReadPolicy());
+    expect(Object.isFrozen(policy)).toBe(true);
+    expect(Object.isFrozen(policy.allowed_states)).toBe(true);
+    expect(executionContract.parseGithubReadPolicy(policy, {
+      pullRequest,
+      workspaceSpec,
+    })).toEqual(policy);
+  });
+
+  it.each([
+    ['wrong repo', { repo: 'attacker/repo' }],
+    ['wrong URL', { url: 'https://github.com/perfectuser21/cecelia/pull/4392' }],
+    ['wrong number', { number: 4392 }],
+    ['wrong ref', { head_ref: 'cp-attacker' }],
+    ['wrong SHA', { head_sha: 'f'.repeat(40) }],
+    ['unknown state', { allowed_states: ['UNKNOWN'] }],
+    ['unknown field', { token: 'secret' }],
+  ])('rejects GitHub read policy with %s', (_name, patch) => {
+    const workspaceSpec = validWorkspaceSpec({
+      branch: 'cp-07280905-result-channel',
+      expected_head_sha: BASE_SHA,
+      mode: 'read-only',
+    });
+    expect(() => executionContract.parseGithubReadPolicy(
+      { ...validGithubReadPolicy(), ...patch },
+      { pullRequest: verifiedPullRequest(), workspaceSpec },
+    )).toThrow();
+  });
+
+  it.each(['evaluator', 'reporter'])(
+    'requires a GitHub read policy for Fleet %s but exempts canary',
+    (role) => {
+      const workspaceSpec = validWorkspaceSpec({
+        branch: 'cp-07280905-result-channel',
+        expected_head_sha: BASE_SHA,
+        mode: role === 'evaluator' ? 'read-write' : 'read-only',
+      });
+      const bundle = validBundle({
+        role,
+        expected_output: `harness-result/${role}-v1`,
+        constraints: {
+          read_only: role === 'reporter',
+          fresh_session: true,
+          timeout_seconds: 600,
+        },
+        inputs: {
+          ...validBundle().inputs,
+          execution_surface: 'fleet-worker',
+          workspace_spec: workspaceSpec,
+          pull_request: verifiedPullRequest(),
+        },
+        result_channel: validResultChannel({
+          bindings: { ...validResultChannel().bindings, role },
+        }),
+      });
+      delete bundle.inputs.worktree_path;
+
+      expect(() => parseTaskBundle(bundle)).toThrow(/github_read_policy_required/);
+      bundle.inputs.github_read_policy = validGithubReadPolicy();
+      expect(parseTaskBundle(bundle).inputs.github_read_policy)
+        .toEqual(validGithubReadPolicy());
+    },
+  );
 
   it('requires the v1 result channel for Fleet bundles but keeps legacy bundles compatible', () => {
     const fleetBundle = validBundle();

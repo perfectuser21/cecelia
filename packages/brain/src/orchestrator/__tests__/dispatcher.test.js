@@ -708,6 +708,55 @@ describe('createDispatcher', () => {
     expect(bundle.inputs.github_mutation_policy.pr_title).toContain(taskId);
   });
 
+  it('freezes exact PR read authority into a Fleet Evaluator bundle', async () => {
+    const deps = makeDeps();
+    const headSha = 'b'.repeat(40);
+    const pullRequest = {
+      type: 'pull_request',
+      url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+      number: 4391,
+      head_ref: 'cp-result-channel',
+      head_sha: headSha,
+      state: 'OPEN',
+    };
+    deps.machineId = 'us-mac-m4';
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: pullRequest.head_ref,
+      expected_head_sha: pullRequest.head_sha,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    deps.launcher.launch.mockResolvedValueOnce({
+      jobId: 'worker-job-1',
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'worker-job-1',
+      attestationStatus: 'verified',
+    });
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: { ...observed, pr: pullRequest },
+      decision: { phase: 'evaluate', reason: 'ci_pass' },
+    });
+
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.github_read_policy).toEqual({
+      version: 'github-read/v1',
+      repo: 'perfectuser21/cecelia',
+      url: pullRequest.url,
+      number: pullRequest.number,
+      head_ref: pullRequest.head_ref,
+      head_sha: pullRequest.head_sha,
+      allowed_states: ['OPEN'],
+    });
+  });
+
   it('dispatches the fleet canary without a role Skill or workspace dependency', async () => {
     const deps = makeDeps();
     deps.preflightGate = {

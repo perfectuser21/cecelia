@@ -36,6 +36,15 @@ const GITHUB_MUTATION_POLICY = Object.freeze({
   pr_body: `Kernel task ${TASK_ID}\nRun ${RUN_ID}\n`,
   allowed_paths: Object.freeze(['packages/', 'sprints/']),
 });
+const GITHUB_READ_POLICY = Object.freeze({
+  version: 'github-read/v1',
+  repo: 'perfectuser21/cecelia',
+  url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+  number: 4391,
+  head_ref: 'cp-result-channel',
+  head_sha: 'b'.repeat(40),
+  allowed_states: Object.freeze(['OPEN']),
+});
 const NOW_MS = Date.parse('2026-07-27T12:00:00.000Z');
 const ENVELOPE = Object.freeze({
   contract_version: 'provider-credential-envelope/v2',
@@ -257,6 +266,50 @@ describe('remote Bridge launch', () => {
     expect(requestBody).not.toHaveProperty('callback_token');
     expect(JSON.stringify(requestBody)).not.toContain(CALLBACK_TOKEN);
     expect(requestBody.provider_spec).not.toHaveProperty('environment');
+  });
+
+  it('copies the frozen Evaluator GitHub read policy without credentials', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const transport = createTransport({ fetchFn });
+    const evaluatorResultChannel = {
+      ...RESULT_CHANNEL,
+      bindings: { ...RESULT_CHANNEL.bindings, role: 'evaluator' },
+    };
+    const input = launchInput({
+      bundle: {
+        role: 'evaluator',
+        result_channel: evaluatorResultChannel,
+        inputs: {
+          task_id: TASK_ID,
+          execution_surface: 'fleet-worker',
+          workspace_spec: {
+            repo: 'perfectuser21/cecelia',
+            base_sha: '0123456789abcdef0123456789abcdef01234567',
+            branch: GITHUB_READ_POLICY.head_ref,
+            expected_head_sha: GITHUB_READ_POLICY.head_sha,
+            mode: 'read-write',
+            run_id: RUN_ID,
+            attempt_id: ATTEMPT_ID,
+          },
+          pull_request: {
+            type: 'pull_request',
+            url: GITHUB_READ_POLICY.url,
+            number: GITHUB_READ_POLICY.number,
+            head_ref: GITHUB_READ_POLICY.head_ref,
+            head_sha: GITHUB_READ_POLICY.head_sha,
+            state: 'OPEN',
+          },
+          github_read_policy: GITHUB_READ_POLICY,
+        },
+      },
+      target: { role: 'evaluator' },
+    });
+
+    await transport.launch(input);
+
+    const body = JSON.parse(fetchFn.mock.calls[0][1].body);
+    expect(body.github_read_policy).toEqual(GITHUB_READ_POLICY);
+    expect(JSON.stringify(body)).not.toMatch(/gh_token|github_token|authorization.*github/i);
   });
 
   it('binds one provider credential envelope to the selected run, lease, account, machine, and deadline', async () => {
