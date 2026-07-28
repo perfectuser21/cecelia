@@ -162,7 +162,7 @@ write_executable "$fake_bin/sudo" \
   'if [[ "${1:-}" == "/bin/rm" && "${FLEET_TEST_SUDO_FAIL_RM:-0}" == 1 ]]; then exit 24; fi' \
   'if [[ "${1:-}" == "/usr/bin/stat" ]]; then' \
   '  target="${@: -1}"' \
-  '  if [[ "${3:-}" == "%Lp" && "$target" == "${FLEET_TEST_PROTECTED_TOKEN_SOURCE:-}" ]]; then' \
+  '  if [[ ( "${3:-}" == "%Lp" || "${3:-}" == "%a" ) && "$target" == "${FLEET_TEST_PROTECTED_TOKEN_SOURCE:-}" ]]; then' \
   '    printf "600\n"' \
   '  elif [[ "${FLEET_TEST_STAGE_INVALID_OWNER:-0}" == 1 ]]; then' \
   '    printf "501:755\n"' \
