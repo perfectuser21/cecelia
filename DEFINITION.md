@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.113
+**Brain 版本**: 1.267.114
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.114 — Fleet Worker credential module install hotfix
+
+- system LaunchDaemon installer 把 Worker 运行时依赖的 `credential-envelope.cjs`
+  纳入同一代 staging、placement、snapshot 与 rollback 事务，避免启动时
+  `MODULE_NOT_FOUND`。
+- credential envelope 使用只读 `0644` runtime mode；失败继续完整回滚并保持
+  节点 drain，不改变凭据内容、Runner pin 或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.113`；节点保持 drain 后再回退。
 
 ## Brain 1.267.113 — Fleet rollout bundle HEAD contract hotfix
 

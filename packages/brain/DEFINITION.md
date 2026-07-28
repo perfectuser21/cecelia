@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.113
+**版本**: 1.267.114
+
+## Fleet Worker credential module install hotfix
+
+- system LaunchDaemon installer 将 Worker 已依赖的 `credential-envelope.cjs`
+  纳入 generation staging、placement、snapshot 和 rollback 事务，避免正式启动
+  出现 `MODULE_NOT_FOUND`。
+- 模块以 `0644` 安装，不保存 credential 内容；失败继续完整回滚并保持节点
+  drain，Runner pin 与 Phase 4B/4C/4D/5 范围不变。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.113`。
 
 ## Fleet rollout bundle HEAD contract hotfix
 
