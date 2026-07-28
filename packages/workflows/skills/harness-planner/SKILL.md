@@ -7,11 +7,10 @@ description: |
   人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，payload 必须带 orchestrator=skill-relay）。
   直接调本 skill = 绕过 controller 接力链，违反 zero-human-gate 原则。
   （2026-07-05 cecelia #3554 起 LangGraph 图编排已废弃，"Brain executor Layer 1 节点"为过时语义。）
-version: 8.16.0
+version: 8.15.0
 created: 2026-04-08
-updated: 2026-07-16
+updated: 2026-07-14
 changelog:
-  - 8.16.0: target_environment 枚举加 android_realmachine（洞①）— PRD 模板枚举行 + 发货前机械闸正则同步补，Path2 安卓获客真机验收（xian-rog）此前无枚举可路由
   - 8.15.0: EVA v2 审计五修 — ① 修 Step 0.3 THIN_PRD 引用未定义变量 bug（TASK_PAYLOAD→TASK_JSON）；② Step 2 后新增「发货前机械闸」（journey_type/target_environment 枚举 + Invariant/累积FR/NFR/journey_id/step_id 五段结构 + thin-slice 行数自查，任一 FAIL 禁进 Step 3，恢复/重跑同样过闸——d063b3e5 实证 299 行 PRD 穿透）；③ 执行规则加防漂移铁律（输入真相只来自 task payload API，Step 0-3 不可跳）；④ 累积 FR 段加语义反例（禁表格、禁写本 sprint 新行为）；⑤ Step 3 出口 JSON 增 status 四态（DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED）
   - 8.14.0: 跨 repo 化刀3 — Step 0.5 环境映射加前置护栏：路径→环境映射表仅适用 base_repo=cecelia；zenithjoy 走既有布局约定（apps/dashboard→windows_cloud 等）；其他第三方 repo 禁止路径猜测，target_environment 必须由 payload 显式提供，缺失时 PRD 标注 environment: unresolved 交 controller 上报；映射表本体与 Brain API（localhost:5221）调用不动
   - 8.13.0: description 更新为 skill-relay 语义 — LangGraph 图编排已废弃（cecelia #3554，2026-07-05），本 skill 现由 harness-controller 单 session 接力调用，不再是 Brain executor 图节点；正文流程不变
@@ -444,7 +443,7 @@ mkdir -p "$SPRINT_DIR"
 
 ## journey_type: autonomous|user_facing|dev_pipeline|agent_remote
 ## journey_type_reason: {1 句推断依据}
-## target_environment: mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground|android_realmachine
+## target_environment: mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground
 ## target_environment_reason: {1 句推断依据，含目标机器名（如 GitHub Actions、hk-vps、localhost:5174）}
 ## journey_id: <Journey UUID，来源 = task.payload.journey_id（/dev 路径 C 点火写入），缺则取 PrepPRD 锚定结果>
 ## step_id: <Step UUID 或 step code，如 L01-S5，来源 = PrepPRD Golden Path 锚定结果>
@@ -457,7 +456,7 @@ mkdir -p "$SPRINT_DIR"
 ```bash
 # 发货前机械闸（EVA v2：实战 2/3 跑枚举非法——feature/local/deploy 都出现过，下游 proposer 选模板/evaluator 派机器全瞎）
 grep -qE '^(## )?journey_type: (autonomous|user_facing|dev_pipeline|agent_remote)$' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: journey_type 非法枚举"; exit 1; }
-grep -qE '^(## )?target_environment: (mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground|android_realmachine)$' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: target_environment 非法枚举"; exit 1; }
+grep -qE '^(## )?target_environment: (mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground)$' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: target_environment 非法枚举"; exit 1; }
 grep -q '## Invariant 约束' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺 Invariant 段"; exit 1; }
 grep -q '## 累积 FR' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺累积 FR 段"; exit 1; }
 grep -q '## NFR' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺 NFR 段"; exit 1; }
