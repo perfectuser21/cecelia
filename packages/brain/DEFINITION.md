@@ -7,6 +7,9 @@
 - Drill CLI 不再加载 Brain runtime、数据库、registry 或 signer，也不接收 grant
   文件路径；execute 只向固定 Brain Unix socket 发送 canonical
   `{cell_id, grant_ref}`。
+- Behavior equivalence proof command 与 CLI 同步为 exact `--cell/--grant-ref`；
+  recovery cell 验证显式携带 violation 的 expected outcome/effect code，历史链
+  自描述校验与当前 cell 的合同校验分离，不能因 recovery 位于链头而误判全链。
 - Brain trusted service 从 pinned 99-cell plan 解析 cell，经独立 protected-grant
   authority 对服务专属目录逐级校验 owner/mode、单次 `O_NOFOLLOW` 打开并把
   grant UUID/cell 绑定到 opaque ref；目录、祖先与 grant 文件还必须无 extended

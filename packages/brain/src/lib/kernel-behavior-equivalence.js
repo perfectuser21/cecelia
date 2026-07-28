@@ -34,7 +34,8 @@ const PSEUDO_PROOF = [
   /(?:^|[/_-])smoke(?:[/_.-]|$)/i,
 ];
 const LIVE_PROOF_CELL = /^[A-Z0-9-]+::(?:claude|codex|grok)::(?:normal|violation|recovery)$/;
-const LIVE_PROOF_PATH = /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/;
+const LIVE_GRANT_REF =
+  /^kernel-equivalence-grant:[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -69,19 +70,15 @@ function classifyProofCommand(command, expectedCellId) {
   if (PSEUDO_PROOF.some((pattern) => pattern.test(command))) return 'pseudo';
   const tokens = command.trim().split(/\s+/);
   if (
-    tokens.length !== 11
+    tokens.length !== 7
     || tokens[0] !== 'node'
     || tokens[1] !== 'scripts/ci/run-kernel-equivalence-drill.mjs'
     || tokens[2] !== '--execute'
     || tokens[3] !== '--cell'
     || !LIVE_PROOF_CELL.test(tokens[4])
     || tokens[4] !== expectedCellId
-    || tokens[5] !== '--grant'
-    || !LIVE_PROOF_PATH.test(tokens[6])
-    || tokens[7] !== '--state-dir'
-    || !LIVE_PROOF_PATH.test(tokens[8])
-    || tokens[9] !== '--receipt-dir'
-    || !LIVE_PROOF_PATH.test(tokens[10])
+    || tokens[5] !== '--grant-ref'
+    || !LIVE_GRANT_REF.test(tokens[6])
   ) {
     return 'non_live';
   }
@@ -401,6 +398,21 @@ function validateProofMatrix(
           adapter_id: drill.adapter_id,
           effect_key_id: drill.effect_key_id,
           isolation: structuredClone(asObject(drill.isolation)),
+          expected: {
+            expected_outcome:
+              drill.scenarios?.[scenario]?.expected_outcome,
+            effect_code: drill.scenarios?.[scenario]?.effect_code,
+            ...(scenario === 'recovery'
+              ? {
+                predecessor_expected: {
+                  expected_outcome:
+                    drill.scenarios?.violation?.expected_outcome,
+                  effect_code:
+                    drill.scenarios?.violation?.effect_code,
+                },
+              }
+              : {}),
+          },
         },
         run_id: proof.run_id,
         attempt_id: proof.attempt_id,

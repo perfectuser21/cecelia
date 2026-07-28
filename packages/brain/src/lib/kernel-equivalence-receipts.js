@@ -796,6 +796,9 @@ export function expectedFromReceiptBundle(bundle) {
     ? bundle.execution_grants
     : [];
   const currentGrant = grants.at(-1);
+  const violationReceipt = bundle?.scenario === 'recovery'
+    ? bundle?.effect_receipts?.[0]
+    : null;
   return {
     cell: {
       cell_id: bundle?.cell_id,
@@ -805,6 +808,16 @@ export function expectedFromReceiptBundle(bundle) {
       seam_id: bundle?.seam_id,
       adapter_id: bundle?.adapter_id,
       effect_key_id: bundle?.effect_receipts?.at(-1)?.key_id,
+      ...(violationReceipt == null
+        ? {}
+        : {
+          expected: {
+            predecessor_expected: {
+              expected_outcome: violationReceipt.observed_outcome,
+              effect_code: violationReceipt.effect_code,
+            },
+          },
+        }),
       isolation: {
         environment: currentGrant?.environment,
         resource_type: 'verified_previous_bundle',

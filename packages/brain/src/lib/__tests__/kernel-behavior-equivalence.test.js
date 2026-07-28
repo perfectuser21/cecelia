@@ -203,7 +203,7 @@ function trustedContract(
       const bundleReference = `receipt-bundle:${bundleHash}`;
       bundles.set(bundleHash, bundle);
       matrix[provider][scenario] = {
-        test_command: `node scripts/ci/run-kernel-equivalence-drill.mjs --execute --cell ${target.cell_id} --grant /var/lib/cecelia/equivalence/${provider}-${scenario}.grant.json --state-dir /var/lib/cecelia/equivalence/state --receipt-dir /var/lib/cecelia/equivalence/receipts`,
+        test_command: `node scripts/ci/run-kernel-equivalence-drill.mjs --execute --cell ${target.cell_id} --grant-ref kernel-equivalence-grant:${executionGrant.grant_id}`,
         expected_result: scenario === 'violation' ? 'denied' : 'pass',
         observed_result: scenario === 'violation' ? 'denied' : 'pass',
         evidence_refs: [bundleReference],
