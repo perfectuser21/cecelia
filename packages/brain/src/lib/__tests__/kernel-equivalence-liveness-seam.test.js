@@ -34,9 +34,9 @@ function fixture(scenario) {
           orchestrator_pid: 123,
           orchestrator_host: 'drill-host',
         };
-  const livenessInput = {
-    task,
-    run,
+  const livenessAuthority = {
+    owner_service: 'kernel.liveness.orphan_recovery',
+    loadTarget: vi.fn(async () => ({ task, run })),
     now: () => current,
     hostFn: () => 'drill-host',
     killFn: () => {
@@ -46,6 +46,8 @@ function fixture(scenario) {
         throw error;
       }
     },
+    recoverDeadAttempt: vi.fn(async () => ({ action: 'requeued' })),
+    snapshot: vi.fn(async () => snapshots.shift()),
   };
   const snapshots = [
     { status: 'in_progress', recoveries: 0 },
@@ -57,8 +59,16 @@ function fixture(scenario) {
   const resource = {
     resource_id: `eq-${ATTEMPT_ID}`,
     resource_ref: `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/liveness/case`,
-    liveness_input: livenessInput,
-    snapshot: vi.fn(async () => snapshots.shift()),
+    liveness_input: {
+      task: { ...task, status: 'forged-dead' },
+      run: null,
+      killFn: () => {
+        const error = new Error('forged');
+        error.code = 'ESRCH';
+        throw error;
+      },
+    },
+    snapshot: vi.fn(async () => ({ forged: true })),
   };
   const cell = {
     cell_id: `KERNEL-P1-08-STOP-ORPHAN-LIVENESS::codex::${scenario}`,
@@ -81,17 +91,16 @@ function fixture(scenario) {
       signature: 'test-signature',
     })),
   };
-  const recoverDeadAttempt = vi.fn(async () => ({ action: 'requeued' }));
   return {
     task,
     resource,
     cell,
     grant,
     effectSigner,
-    recoverDeadAttempt,
+    livenessAuthority,
     seam: createKernelLivenessEquivalenceSeam({
       effectSigner,
-      recoverDeadAttempt,
+      livenessAuthority,
     }),
   };
 }
@@ -124,9 +133,19 @@ describe('Kernel liveness equivalence seam', () => {
       effect_code: effectCode,
       signature: 'test-signature',
     });
-    expect(value.recoverDeadAttempt).toHaveBeenCalledTimes(
+    expect(value.livenessAuthority.recoverDeadAttempt).toHaveBeenCalledTimes(
       scenario === 'recovery' ? 1 : 0,
     );
+    expect(value.livenessAuthority.loadTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: {
+          resource_id: value.resource.resource_id,
+          resource_ref: value.resource.resource_ref,
+        },
+      }),
+    );
+    expect(value.livenessAuthority.snapshot).toHaveBeenCalledTimes(2);
+    expect(value.resource.snapshot).not.toHaveBeenCalled();
     expect(value.effectSigner.signEffectResult).toHaveBeenCalledWith(
       expect.objectContaining({
         service_id: value.cell.seam_id,
@@ -141,7 +160,9 @@ describe('Kernel liveness equivalence seam', () => {
 
   it('does not claim recovery when the actual orphan recovery did not requeue', async () => {
     const value = fixture('recovery');
-    value.recoverDeadAttempt.mockResolvedValue({ action: 'noop' });
+    value.livenessAuthority.recoverDeadAttempt.mockResolvedValue({
+      action: 'noop',
+    });
 
     await expect(value.seam.invoke({
       cell: value.cell,
@@ -155,16 +176,32 @@ describe('Kernel liveness equivalence seam', () => {
     expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
   });
 
-  it('requires signer and recovery ports at seam construction', () => {
+  it('fails closed when the server-owned liveness target is unavailable', async () => {
+    const value = fixture('normal');
+    value.livenessAuthority.loadTarget.mockResolvedValue(null);
+
+    await expect(value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'liveness_equivalence_target_unavailable',
+    });
+    expect(value.resource.snapshot).not.toHaveBeenCalled();
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
+  });
+
+  it('requires signer and server-owned authority ports at seam construction', () => {
     expect(() => createKernelLivenessEquivalenceSeam({
-      recoverDeadAttempt: vi.fn(),
+      livenessAuthority: fixture('normal').livenessAuthority,
     })).toThrowError(expect.objectContaining({
       code: 'seam_effect_signer_unavailable',
     }));
     expect(() => createKernelLivenessEquivalenceSeam({
       effectSigner: { signEffectResult: vi.fn() },
     })).toThrowError(expect.objectContaining({
-      code: 'liveness_recovery_port_unavailable',
+      code: 'liveness_authority_port_unavailable',
     }));
   });
 });
