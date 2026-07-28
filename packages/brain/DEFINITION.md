@@ -42,13 +42,16 @@
   blocked。响应必须精确绑定 cell id 与 grant ref，
   缺失、错绑、未知字段及尾随字节均由 client 拒绝。
 - nonce 与 bundle CAS authority 接收同一 deadline 派生的 signal 和剩余时限；
-  PostgreSQL 事务设置 statement/lock/idle timeout，abort 会销毁尚未提交的连接
-  以触发 rollback。deadline 前已提交的 append-only nonce 不删除，deadline 后
-  不允许迟到 COMMIT。
+  PostgreSQL 事务设置 statement/lock/idle/transaction timeout，并用 DB
+  `clock_timestamp()` 对同一绝对期限守卫写入和 COMMIT；abort 会销毁尚未提交的
+  连接以触发 rollback。COMMIT 已发出后的 abort/超时一律视为
+  cancellation-unconfirmed，保留 late-effect risk，绝不回报 consumed/committed
+  成功或降级为普通 execution-aborted。trusted service 与 socket 在执行返回后都
+  重新核对墙钟，timer 被同步工作阻塞也不能产生迟到成功。
 - 请求/响应都有大小与超时上限；关闭时只按 exact inode 删除自己发布的 socket。
 - 生产 assembly/secrets 未配置时 boot readiness 明确 fail-closed，不建立 listener；
   `execution_wiring_ready` 仍为 false，不把机械 wiring 冒充等价证明。
-- 回退：`bash scripts/brain-rollback.sh 1.268.8`；没有数据库迁移。
+- 回退：`bash scripts/brain-rollback.sh 1.268.9`；没有数据库迁移。
 
 ## Signed Kernel equivalence drills
 

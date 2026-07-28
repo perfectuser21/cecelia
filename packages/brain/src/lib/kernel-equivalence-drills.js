@@ -478,8 +478,11 @@ async function withDurableAuthorityCancellation(
     try {
       settlement = await withTimeout(
         () => error.abortContext.operationPromise.then(
-          () => 'fulfilled',
-          () => 'rejected',
+          () => ({ status: 'fulfilled', error: null }),
+          (operationError) => ({
+            status: 'rejected',
+            error: operationError,
+          }),
         ),
         Math.max(
           timeoutMs,
@@ -490,7 +493,14 @@ async function withDurableAuthorityCancellation(
     } catch {
       fail('durable_authority_cancellation_unconfirmed');
     }
-    if (settlement !== 'rejected') {
+    if (settlement.status !== 'rejected') {
+      fail('durable_authority_cancellation_unconfirmed');
+    }
+    if (
+      settlement.error?.code === 'durable_authority_cancellation_unconfirmed'
+      || settlement.error?.code === 'nonce_cancellation_unconfirmed'
+      || settlement.error?.code === 'bundle_chain_cancellation_unconfirmed'
+    ) {
       fail('durable_authority_cancellation_unconfirmed');
     }
     throw error;
@@ -924,6 +934,15 @@ export async function executeDrillCell({
       return deny('grant_nonce_replay', 'nonce_consumption');
     }
   } catch (error) {
+    if (
+      error?.code === 'durable_authority_cancellation_unconfirmed'
+      || error?.code === 'nonce_cancellation_unconfirmed'
+    ) {
+      return deny(
+        'nonce_cancellation_unconfirmed',
+        'nonce_consumption',
+      );
+    }
     if (signal?.aborted || isInternalTimeout(error, 'adapter_aborted')) {
       return deny('execution_aborted', 'request_cancellation');
     }
@@ -1239,6 +1258,15 @@ export async function executeDrillCell({
     );
     committed = structuredClone(commitResult);
   } catch (error) {
+    if (
+      error?.code === 'durable_authority_cancellation_unconfirmed'
+      || error?.code === 'bundle_chain_cancellation_unconfirmed'
+    ) {
+      return deny(
+        'bundle_chain_cancellation_unconfirmed',
+        'bundle_chain',
+      );
+    }
     if (signal?.aborted || isInternalTimeout(error, 'adapter_aborted')) {
       return deny('execution_aborted', 'request_cancellation');
     }

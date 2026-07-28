@@ -35,6 +35,9 @@ function noncePool(rowCount) {
       if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
       if (/^COMMIT$/i.test(text)) return { rows: [], rowCount: null };
       if (/^ROLLBACK$/i.test(text)) return { rows: [], rowCount: null };
+      if (/AS before_deadline/i.test(text)) {
+        return { rows: [{ before_deadline: true }], rowCount: 1 };
+      }
       if (/set_config\('statement_timeout'/i.test(text)) {
         return { rows: [{}], rowCount: 1 };
       }
@@ -102,6 +105,9 @@ function transactionPool({ updateRows, readbackBundle, updateError = null }) {
       if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
       if (/^ROLLBACK$/i.test(text)) return { rows: [], rowCount: null };
       if (/^COMMIT$/i.test(text)) return { rows: [], rowCount: null };
+      if (/AS before_deadline/i.test(text)) {
+        return { rows: [{ before_deadline: true }], rowCount: 1 };
+      }
       if (/set_config\('statement_timeout'/i.test(text)) {
         return { rows: [{}], rowCount: 1 };
       }
@@ -165,7 +171,14 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     expect(text).toMatch(/ON CONFLICT DO NOTHING/i);
     expect(text).toMatch(/RETURNING grant_id/i);
     expect(text).toMatch(/clock_timestamp\(\)/i);
-    expect(params).toHaveLength(6);
+    expect(text).toMatch(
+      /clock_timestamp\(\)\s*<\s*to_timestamp\(\$7::double precision\s*\/\s*1000\.0\)/i,
+    );
+    expect(params).toHaveLength(7);
+    const timeoutSql = runtime.client.query.mock.calls.find(([sql]) => (
+      /set_config\('statement_timeout'/i.test(sql)
+    ))[0];
+    expect(timeoutSql).toMatch(/set_config\('transaction_timeout'/i);
   });
 
   it('returns a replay denial when the atomic INSERT loses its conflict', async () => {
@@ -184,6 +197,9 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     const client = {
       query: vi.fn(async (text) => {
         if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
+        if (/AS before_deadline/i.test(text)) {
+          return { rows: [{ before_deadline: true }], rowCount: 1 };
+        }
         if (/set_config\('statement_timeout'/i.test(text)) {
           return { rows: [{}], rowCount: 1 };
         }
@@ -220,6 +236,49 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     });
     expect(client.release).toHaveBeenCalledWith(true);
     expect(client.query).not.toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('never acknowledges a nonce consumed when abort races a pending COMMIT', async () => {
+    const controller = new AbortController();
+    let resolveCommit;
+    const commit = new Promise((resolve) => {
+      resolveCommit = resolve;
+    });
+    const runtime = noncePool(1);
+    runtime.client.query.mockImplementation(async (text) => {
+      if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
+      if (/AS before_deadline/i.test(text)) {
+        return { rows: [{ before_deadline: true }], rowCount: 1 };
+      }
+      if (/set_config\('statement_timeout'/i.test(text)) {
+        return { rows: [{}], rowCount: 1 };
+      }
+      if (/INSERT INTO kernel_equivalence_execution_nonces/i.test(text)) {
+        return {
+          rows: [{ grant_id: nonceInput().grant_id }],
+          rowCount: 1,
+        };
+      }
+      if (/^COMMIT$/i.test(text)) return commit;
+      if (/^ROLLBACK$/i.test(text)) return { rows: [], rowCount: null };
+      throw new Error(`unexpected SQL: ${text}`);
+    });
+    const consume = createPostgresNonceConsumer({ pool: runtime.pool });
+    const running = consume(nonceInput(), {
+      signal: controller.signal,
+      timeoutMs: 100,
+    });
+    await vi.waitFor(() => {
+      expect(runtime.client.query).toHaveBeenCalledWith('COMMIT');
+    });
+
+    controller.abort();
+    resolveCommit({ rows: [], rowCount: null });
+
+    await expect(running).rejects.toMatchObject({
+      code: 'nonce_cancellation_unconfirmed',
+    });
+    expect(runtime.client.release).toHaveBeenCalledWith(true);
   });
 
   it('persists only the denial audit allowlist', async () => {
@@ -271,9 +330,27 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       },
     });
     expect(runtime.calls.map(({ text }) => text.trim().split(/\s+/)[0]))
-      .toEqual(['BEGIN', 'SELECT', 'INSERT', 'UPDATE', 'SELECT', 'COMMIT']);
+      .toEqual([
+        'BEGIN',
+        'SELECT',
+        'INSERT',
+        'UPDATE',
+        'SELECT',
+        'SELECT',
+        'COMMIT',
+      ]);
     expect(runtime.calls[1].text).toMatch(/set_config\('statement_timeout'/i);
     expect(runtime.calls[1].text).toMatch(/set_config\('lock_timeout'/i);
+    expect(runtime.calls[1].text).toMatch(
+      /set_config\('transaction_timeout'/i,
+    );
+    expect(runtime.calls.find(({ text }) => (
+      /UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)
+    )).text).toMatch(
+      /clock_timestamp\(\)\s*<\s*to_timestamp\(\$5::double precision\s*\/\s*1000\.0\)/i,
+    );
+    expect(runtime.calls.some(({ text }) => /AS before_deadline/i.test(text)))
+      .toBe(true);
     await expect(store.readBundle(value.hash)).resolves.toEqual(value.bundle);
     expect(runtime.calls.find(({ text }) => (
       /UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)
@@ -297,6 +374,9 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       if (/^ROLLBACK$/i.test(text)) return { rows: [], rowCount: null };
       if (/^COMMIT$/i.test(text)) {
         throw new Error('commit must not run');
+      }
+      if (/AS before_deadline/i.test(text)) {
+        return { rows: [{ before_deadline: true }], rowCount: 1 };
       }
       if (/set_config\('statement_timeout'/i.test(text)) {
         return { rows: [{}], rowCount: 1 };
@@ -342,6 +422,66 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     });
     expect(runtime.client.release).toHaveBeenCalledWith(true);
     expect(runtime.client.query).not.toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('never acknowledges a bundle committed when abort races a pending COMMIT', async () => {
+    const value = bundleFixture();
+    const checkpoint = {
+      genesis_hash: value.hash,
+      head_hash: value.hash,
+      revision: 1,
+    };
+    const runtime = transactionPool({
+      updateRows: [checkpoint],
+      readbackBundle: value.bundle,
+    });
+    let resolveCommit;
+    const commit = new Promise((resolve) => {
+      resolveCommit = resolve;
+    });
+    runtime.client.query.mockImplementation(async (text, params) => {
+      runtime.calls.push({ text, params });
+      if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
+      if (/^ROLLBACK$/i.test(text)) return { rows: [], rowCount: null };
+      if (/^COMMIT$/i.test(text)) return commit;
+      if (/AS before_deadline/i.test(text)) {
+        return { rows: [{ before_deadline: true }], rowCount: 1 };
+      }
+      if (/set_config\('statement_timeout'/i.test(text)) {
+        return { rows: [{}], rowCount: 1 };
+      }
+      if (/INSERT INTO kernel_equivalence_receipt_bundles/i.test(text)) {
+        return { rows: [{ bundle_hash: params[1] }], rowCount: 1 };
+      }
+      if (/UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)) {
+        return { rows: [checkpoint], rowCount: 1 };
+      }
+      if (/SELECT bundle\s+FROM kernel_equivalence_receipt_bundles/i.test(text)) {
+        return { rows: [{ bundle: value.bundle }], rowCount: 1 };
+      }
+      throw new Error(`unexpected SQL: ${text}`);
+    });
+    const store = createPostgresBundleChainStore({ pool: runtime.pool });
+    await store.getCheckpoint();
+    const controller = new AbortController();
+    const running = store.commit({
+      bundle: value.bundle,
+      bundle_hash: value.hash,
+      previous_head_hash: null,
+      signal: controller.signal,
+      timeout_ms: 100,
+    });
+    await vi.waitFor(() => {
+      expect(runtime.client.query).toHaveBeenCalledWith('COMMIT');
+    });
+
+    controller.abort();
+    resolveCommit({ rows: [], rowCount: null });
+
+    await expect(running).rejects.toMatchObject({
+      code: 'bundle_chain_cancellation_unconfirmed',
+    });
+    expect(runtime.client.release).toHaveBeenCalledWith(true);
   });
 
   it('rolls back an inserted loser when compare-and-swap head advancement fails', async () => {

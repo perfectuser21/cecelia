@@ -326,19 +326,27 @@ export function createBrainTrustedExecutionSocketServer({
 
     const dispatchRequest = async (request) => {
       executionController = new AbortController();
-      if (Date.now() >= absoluteDeadlineMs) {
-        executionController.abort(
-          abortReason('trusted_execution_deadline_exceeded'),
-        );
-      }
+      const enforceAbsoluteDeadline = () => {
+        if (
+          Date.now() >= absoluteDeadlineMs
+          && !executionController.signal.aborted
+        ) {
+          executionController.abort(
+            abortReason('trusted_execution_deadline_exceeded'),
+          );
+        }
+      };
+      enforceAbsoluteDeadline();
       try {
         const result = await service.execute(request, {
           signal: executionController.signal,
           deadlineMs: absoluteDeadlineMs,
         });
+        enforceAbsoluteDeadline();
         await new Promise((resolvePendingInput) => {
           setImmediate(resolvePendingInput);
         });
+        enforceAbsoluteDeadline();
         if (executionController.signal.aborted) {
           writeResponse(
             blocked(
@@ -351,9 +359,11 @@ export function createBrainTrustedExecutionSocketServer({
         }
         writeResponse(succeeded(request, result), request);
       } catch (error) {
+        enforceAbsoluteDeadline();
         await new Promise((resolvePendingInput) => {
           setImmediate(resolvePendingInput);
         });
+        enforceAbsoluteDeadline();
         writeResponse(
           blocked(
             executionController.signal.aborted

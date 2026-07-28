@@ -103,6 +103,19 @@ function validAbortSignal(signal) {
   );
 }
 
+async function databaseDeadlineOpen(client, absoluteDeadlineMs) {
+  const result = await client.query(
+    `SELECT
+       clock_timestamp()
+         < to_timestamp($1::double precision / 1000.0) AS before_deadline`,
+    [absoluteDeadlineMs],
+  );
+  return (
+    result?.rowCount === 1
+    && result.rows?.[0]?.before_deadline === true
+  );
+}
+
 function validNonceInput(input) {
   return (
     exactFields(input, NONCE_FIELDS)
@@ -131,12 +144,14 @@ export function createPostgresNonceConsumer({ pool } = {}) {
     ) {
       fail('nonce_record_invalid');
     }
+    const absoluteDeadlineMs = Date.now() + timeoutMs;
     const client = await pool.connect().catch(() => {
       fail('nonce_consumer_failed');
     });
     let began = false;
     let released = false;
     let aborted = signal?.aborted === true;
+    let commitStarted = false;
     const destroyTransaction = () => {
       aborted = true;
       if (!released) {
@@ -153,7 +168,8 @@ export function createPostgresNonceConsumer({ pool } = {}) {
         `SELECT
            set_config('statement_timeout', $1, true),
            set_config('lock_timeout', $1, true),
-           set_config('idle_in_transaction_session_timeout', $1, true)`,
+           set_config('idle_in_transaction_session_timeout', $1, true),
+           set_config('transaction_timeout', $1, true)`,
         [`${timeoutMs}ms`],
       );
       const result = await client.query(
@@ -161,6 +177,8 @@ export function createPostgresNonceConsumer({ pool } = {}) {
            (grant_id, nonce, cell_id, run_id, attempt_id, expires_at)
          SELECT $1::uuid, $2::uuid, $3, $4::uuid, $5::uuid, $6::timestamptz
           WHERE $6::timestamptz > clock_timestamp()
+            AND clock_timestamp()
+              < to_timestamp($7::double precision / 1000.0)
          ON CONFLICT DO NOTHING
          RETURNING grant_id`,
         [
@@ -170,11 +188,24 @@ export function createPostgresNonceConsumer({ pool } = {}) {
           input.run_id,
           input.attempt_id,
           input.expires_at,
+          absoluteDeadlineMs,
         ],
       );
       if (aborted || signal?.aborted) fail('nonce_consumer_aborted');
+      if (!await databaseDeadlineOpen(client, absoluteDeadlineMs)) {
+        fail('nonce_consumer_timeout');
+      }
+      if (aborted || signal?.aborted) fail('nonce_consumer_aborted');
+      commitStarted = true;
       await client.query('COMMIT');
       began = false;
+      if (
+        aborted
+        || signal?.aborted
+        || Date.now() >= absoluteDeadlineMs
+      ) {
+        fail('nonce_cancellation_unconfirmed');
+      }
       return Object.freeze({ consumed: result.rowCount === 1 });
     } catch (error) {
       if (began && !released) {
@@ -182,6 +213,16 @@ export function createPostgresNonceConsumer({ pool } = {}) {
         began = false;
       }
       if (error instanceof EquivalencePostgresRuntimeError) throw error;
+      if (
+        commitStarted
+        && (
+          aborted
+          || signal?.aborted
+          || Date.now() >= absoluteDeadlineMs
+        )
+      ) {
+        fail('nonce_cancellation_unconfirmed');
+      }
       if (aborted || signal?.aborted) fail('nonce_consumer_aborted');
       if (POSTGRES_TIMEOUT_CODES.has(error?.code)) {
         fail('nonce_consumer_timeout');
@@ -424,12 +465,14 @@ export function createPostgresBundleChainStore({
       ) {
         fail('bundle_chain_checkpoint_stale');
       }
+      const absoluteDeadlineMs = Date.now() + timeoutMs;
       const client = await pool.connect().catch(() => {
         fail('bundle_chain_commit_failed');
       });
       let began = false;
       let released = false;
       let aborted = signal?.aborted === true;
+      let commitStarted = false;
       const destroyTransaction = () => {
         aborted = true;
         if (!released) {
@@ -446,7 +489,8 @@ export function createPostgresBundleChainStore({
           `SELECT
              set_config('statement_timeout', $1, true),
              set_config('lock_timeout', $1, true),
-             set_config('idle_in_transaction_session_timeout', $1, true)`,
+             set_config('idle_in_transaction_session_timeout', $1, true),
+             set_config('transaction_timeout', $1, true)`,
           [`${timeoutMs}ms`],
         );
         await client.query(
@@ -455,9 +499,11 @@ export function createPostgresBundleChainStore({
               behavior_id, provider, scenario, run_id, attempt_id,
               artifact_sha, resource_id, resource_ref, seam_id, adapter_id,
               grant_id, bundle)
-           VALUES
-             ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid,
-              $11, $12, $13, $14, $15, $16::uuid, $17::jsonb)
+           SELECT
+             $1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid,
+             $11, $12, $13, $14, $15, $16::uuid, $17::jsonb
+            WHERE clock_timestamp()
+              < to_timestamp($18::double precision / 1000.0)
            ON CONFLICT (bundle_hash) DO NOTHING
            RETURNING bundle_hash`,
           [
@@ -478,6 +524,7 @@ export function createPostgresBundleChainStore({
             bundle.adapter_id,
             bundle.grant_id,
             JSON.stringify(bundle),
+            absoluteDeadlineMs,
           ],
         );
         const advanced = await client.query(
@@ -489,10 +536,21 @@ export function createPostgresBundleChainStore({
             WHERE chain_id = $1
               AND head_hash IS NOT DISTINCT FROM $3
               AND revision = $4
+              AND clock_timestamp()
+                < to_timestamp($5::double precision / 1000.0)
           RETURNING genesis_hash, head_hash, revision`,
-          [chainId, bundleHash, previousHead, observedRevision],
+          [
+            chainId,
+            bundleHash,
+            previousHead,
+            observedRevision,
+            absoluteDeadlineMs,
+          ],
         );
         if (advanced.rowCount !== 1) {
+          if (!await databaseDeadlineOpen(client, absoluteDeadlineMs)) {
+            fail('bundle_chain_commit_timeout');
+          }
           await client.query('ROLLBACK');
           began = false;
           return Object.freeze({ committed: false, checkpoint: null });
@@ -514,8 +572,22 @@ export function createPostgresBundleChainStore({
         if (aborted || signal?.aborted) {
           fail('bundle_chain_commit_aborted');
         }
+        if (!await databaseDeadlineOpen(client, absoluteDeadlineMs)) {
+          fail('bundle_chain_commit_timeout');
+        }
+        if (aborted || signal?.aborted) {
+          fail('bundle_chain_commit_aborted');
+        }
+        commitStarted = true;
         await client.query('COMMIT');
         began = false;
+        if (
+          aborted
+          || signal?.aborted
+          || Date.now() >= absoluteDeadlineMs
+        ) {
+          fail('bundle_chain_cancellation_unconfirmed');
+        }
         observedHead = advanced.rows[0].head_hash;
         observedRevision = Number(advanced.rows[0].revision);
         return Object.freeze({
@@ -527,6 +599,16 @@ export function createPostgresBundleChainStore({
           await client.query('ROLLBACK').catch(() => {});
         }
         if (error instanceof EquivalencePostgresRuntimeError) throw error;
+        if (
+          commitStarted
+          && (
+            aborted
+            || signal?.aborted
+            || Date.now() >= absoluteDeadlineMs
+          )
+        ) {
+          fail('bundle_chain_cancellation_unconfirmed');
+        }
         if (aborted || signal?.aborted) {
           fail('bundle_chain_commit_aborted');
         }

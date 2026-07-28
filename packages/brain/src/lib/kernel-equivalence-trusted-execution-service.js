@@ -283,6 +283,13 @@ export function createBrainTrustedExecutionService({
           : 'trusted_execution_request_aborted',
       );
     }
+    const completionNow = now();
+    if (!Number.isFinite(completionNow)) {
+      fail('trusted_execution_deadline_invalid');
+    }
+    if (completionNow >= effectiveDeadline) {
+      fail('trusted_execution_deadline_exceeded');
+    }
     return result;
   };
 

@@ -231,6 +231,28 @@ describe('Brain trusted execution service', () => {
       }),
     );
   });
+
+  it('rejects a synchronous runtime result returned after its absolute deadline', async () => {
+    const value = fixture();
+    value.runtime.executeCell = vi.fn(() => {
+      const busyUntil = Date.now() + 20;
+      while (Date.now() < busyUntil) {
+        // Deliberately block timers to prove wall-clock enforcement.
+      }
+      return { status: 'collected', code: 'late_success' };
+    });
+    const service = createBrainTrustedExecutionService({
+      ...value,
+      maximumExecutionTimeoutMs: 5,
+    });
+
+    await expect(service.execute({
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+    })).rejects.toMatchObject({
+      code: 'trusted_execution_deadline_exceeded',
+    });
+  });
 });
 
 describe('Brain trusted execution client', () => {
@@ -380,6 +402,51 @@ describe('Brain trusted execution client', () => {
     });
 
     expect(abortedAt).toBeGreaterThan(0);
+    expect(response).toMatchObject({
+      status: 'blocked',
+      code: 'trusted_execution_deadline_exceeded',
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+    });
+    await listener.close();
+  });
+
+  it('does not emit ok when synchronous service work outruns the socket deadline', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
+    roots.push(root);
+    const socketPath = join(root, 'trusted-execution.sock');
+    const service = {
+      schema_version: 'kernel-equivalence-trusted-execution-service/v1',
+      cell_count: 99,
+      adapter_count: 10,
+      execute: vi.fn(() => {
+        const busyUntil = Date.now() + 20;
+        while (Date.now() < busyUntil) {
+          // Deliberately block timers to probe the completion decision.
+        }
+        return { status: 'collected', code: 'late_success' };
+      }),
+    };
+    const listener = await startBrainTrustedExecutionSocketServer({
+      service,
+      socketPath,
+      requestDeadlineMs: 5,
+      totalDeadlineMs: 5,
+    });
+    const response = await new Promise((resolve) => {
+      const socket = createConnection({ path: socketPath });
+      let output = '';
+      socket.setEncoding('utf8');
+      socket.on('connect', () => socket.end(`${JSON.stringify({
+        cell_id: CELL_ID,
+        grant_ref: GRANT_REF,
+      })}\n`));
+      socket.on('data', (chunk) => {
+        output += chunk;
+      });
+      socket.on('close', () => resolve(JSON.parse(output.trim())));
+    });
+
     expect(response).toMatchObject({
       status: 'blocked',
       code: 'trusted_execution_deadline_exceeded',

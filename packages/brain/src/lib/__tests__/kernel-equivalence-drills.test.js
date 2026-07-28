@@ -530,6 +530,50 @@ describe('executeDrillCell', () => {
     expect(durableEffects).toEqual([]);
   });
 
+  it.each([
+    ['nonce', 'nonce_cancellation_unconfirmed', (value, controller) => {
+      value.nonceConsumer.mockImplementation((_input, { signal }) => (
+        new Promise((resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            const error = new Error('nonce COMMIT outcome is ambiguous');
+            error.code = 'nonce_cancellation_unconfirmed';
+            reject(error);
+          }, { once: true });
+          setTimeout(() => controller.abort(), 5);
+        })
+      ));
+    }],
+    ['bundle', 'bundle_chain_cancellation_unconfirmed', (value, controller) => {
+      value.bundleChainStore.commit.mockImplementation(({ signal }) => (
+        new Promise((resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            const error = new Error('bundle COMMIT outcome is ambiguous');
+            error.code = 'bundle_chain_cancellation_unconfirmed';
+            reject(error);
+          }, { once: true });
+          setTimeout(() => controller.abort(), 5);
+        })
+      ));
+    }],
+  ])('preserves %s COMMIT ambiguity as late-effect risk', async (
+    _label,
+    code,
+    arrange,
+  ) => {
+    const value = executionFixture();
+    const controller = new AbortController();
+    arrange(value, controller);
+
+    await expect(execute(value, {
+      signal: controller.signal,
+      timeoutMs: 100,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code,
+      audit: { late_effect_risk: true },
+    });
+  });
+
   it('records late-effect risk when timeout cancellation is not confirmed', async () => {
     const value = executionFixture();
     value.adapter.invokeActualSeam.mockImplementation(
