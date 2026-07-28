@@ -14,11 +14,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  sha256Canonical,
+  verifyEffectReceipt,
   verifyExecutionGrant,
   verifyReceiptBundle,
 } from '../kernel-equivalence-receipts.js';
 import {
   loadCollectorSigner,
+  loadEffectReceiptSigner,
   loadExecutionGrantAuthority,
 } from '../kernel-equivalence-signers.js';
 import {
@@ -27,6 +30,7 @@ import {
   FIXTURE_RUN_ID,
   FIXTURE_SHA,
   createTrustFixture,
+  fixtureBundle,
   fixtureCell,
   fixtureReceipt,
 } from './kernel-equivalence-test-fixtures.js';
@@ -200,6 +204,241 @@ describe('protected Ed25519 equivalence signers', () => {
     });
     expect(JSON.stringify(collector)).not.toContain(secretFile);
     expect(JSON.stringify(collector)).not.toMatch(/PRIVATE KEY/);
+  });
+
+  it('loads a seam-only signer that derives receipt axes from a verified grant', () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+    const cell = {
+      ...fixtureCell(),
+      effect_signer_status: 'available',
+      effect_key_id: keys.effect.record.key_id,
+      blocked_by: null,
+    };
+    const authority = loadExecutionGrantAuthority({
+      secretFile: writePrivateKey(
+        root,
+        'authority.pem',
+        keys.authority.privateKey,
+      ),
+      keyId: keys.authority.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+    });
+    const effectSigner = loadEffectReceiptSigner({
+      secretFile: writePrivateKey(root, 'effect.pem', keys.effect.privateKey),
+      keyId: keys.effect.record.key_id,
+      serviceId: cell.seam_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+      randomUUID: () => '55555555-5555-4555-8555-555555555555',
+    });
+    const grant = authority.issue(grantInput(cell));
+
+    const receipt = effectSigner({
+      cell,
+      grant,
+      observation: {
+        observed_outcome: cell.expected.expected_outcome,
+        effect_code: cell.expected.effect_code,
+        before_hash: 'a'.repeat(64),
+        after_hash: 'b'.repeat(64),
+      },
+      predecessor: null,
+    });
+
+    expect(receipt).toMatchObject({
+      receipt_id: '55555555-5555-4555-8555-555555555555',
+      key_id: keys.effect.record.key_id,
+      service_id: cell.seam_id,
+      grant_id: grant.grant_id,
+      nonce: grant.nonce,
+      cell_id: cell.cell_id,
+      resource_id: grant.resource_id,
+    });
+    expect(verifyEffectReceipt(
+      receipt,
+      keys.registry,
+      expected(cell, grant),
+      { now: FIXTURE_NOW },
+    )).toEqual(receipt);
+    expect(JSON.stringify(effectSigner)).not.toContain('effect.pem');
+    expect(JSON.stringify(effectSigner)).not.toMatch(/PRIVATE KEY/);
+  });
+
+  it('rejects arbitrary seam drafts and cross-seam signing', () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+    const cell = {
+      ...fixtureCell(),
+      effect_signer_status: 'available',
+      effect_key_id: keys.effect.record.key_id,
+      blocked_by: null,
+    };
+    const authority = loadExecutionGrantAuthority({
+      secretFile: writePrivateKey(
+        root,
+        'authority.pem',
+        keys.authority.privateKey,
+      ),
+      keyId: keys.authority.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+    });
+    const effectSigner = loadEffectReceiptSigner({
+      secretFile: writePrivateKey(root, 'effect.pem', keys.effect.privateKey),
+      keyId: keys.effect.record.key_id,
+      serviceId: cell.seam_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+    });
+    const grant = authority.issue(grantInput(cell));
+    const observation = {
+      observed_outcome: cell.expected.expected_outcome,
+      effect_code: cell.expected.effect_code,
+      before_hash: 'a'.repeat(64),
+      after_hash: 'b'.repeat(64),
+      forged_axis: cell.cell_id,
+    };
+
+    expect(() => effectSigner({
+      cell,
+      grant,
+      observation,
+      predecessor: null,
+    })).toThrowError(expect.objectContaining({
+      code: 'effect_observation_invalid',
+    }));
+    expect(() => effectSigner({
+      cell: { ...cell, seam_id: 'kernel.other.seam' },
+      grant,
+      observation: {
+        observed_outcome: cell.expected.expected_outcome,
+        effect_code: cell.expected.effect_code,
+        before_hash: 'a'.repeat(64),
+        after_hash: 'b'.repeat(64),
+      },
+      predecessor: null,
+    })).toThrowError(expect.objectContaining({
+      code: 'effect_signer_boundary_invalid',
+    }));
+  });
+
+  it('rechecks registry lifecycle at every signing operation', () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+    const authority = loadExecutionGrantAuthority({
+      secretFile: writePrivateKey(
+        root,
+        'authority.pem',
+        keys.authority.privateKey,
+      ),
+      keyId: keys.authority.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+    });
+    keys.authority.record.revoked_at =
+      new Date(FIXTURE_NOW - 1).toISOString();
+
+    expect(() => authority.issue(grantInput(fixtureCell())))
+      .toThrowError(expect.objectContaining({
+        code: 'signer_registry_key_inactive',
+      }));
+  });
+
+  it('refuses caller attempts to raise the absolute private-key size ceiling', () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+
+    expect(() => loadExecutionGrantAuthority({
+      secretFile: writePrivateKey(
+        root,
+        'authority.pem',
+        keys.authority.privateKey,
+      ),
+      keyId: keys.authority.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+      maximumBytes: 1_000_000,
+    })).toThrowError(expect.objectContaining({
+      code: 'signer_secret_size_invalid',
+    }));
+  });
+
+  it('verifies collector material before signing and requires ancestry resolution', async () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+    const cell = {
+      ...fixtureCell(),
+      effect_signer_status: 'available',
+      effect_key_id: keys.effect.record.key_id,
+      blocked_by: null,
+    };
+    const authority = loadExecutionGrantAuthority({
+      secretFile: writePrivateKey(
+        root,
+        'authority.pem',
+        keys.authority.privateKey,
+      ),
+      keyId: keys.authority.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+    });
+    const grant = authority.issue(grantInput(cell));
+    const receipt = fixtureReceipt(keys, grant, cell, null, {
+      brain_version: grant.brain_version,
+      engine_version: grant.engine_version,
+      issued_at: new Date(FIXTURE_NOW - 30_000).toISOString(),
+      expires_at: new Date(FIXTURE_NOW + 3_600_000).toISOString(),
+    });
+    const secretFile = writePrivateKey(
+      root,
+      'collector.pem',
+      keys.collector.privateKey,
+    );
+    const noResolver = loadCollectorSigner({
+      secretFile,
+      keyId: keys.collector.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+    });
+
+    await expect(noResolver({
+      cell,
+      grant,
+      executionGrants: [grant],
+      receipts: [{ ...receipt, signature: 'invalid' }],
+      previousBundleHash: null,
+    })).rejects.toMatchObject({ code: 'effect_signature_invalid' });
+    await expect(noResolver({
+      cell,
+      grant,
+      executionGrants: [grant],
+      receipts: [receipt],
+      previousBundleHash: 'c'.repeat(64),
+    })).rejects.toMatchObject({ code: 'collector_previous_bundle_unavailable' });
+
+    const previous = fixtureBundle(keys, cell, grant, [receipt]);
+    const previousHash = sha256Canonical(previous);
+    const collector = loadCollectorSigner({
+      secretFile,
+      keyId: keys.collector.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+      resolvePreviousBundle: (hash) => (
+        hash === previousHash ? previous : null
+      ),
+    });
+    await expect(collector({
+      cell,
+      grant,
+      executionGrants: [grant],
+      receipts: [receipt],
+      previousBundleHash: previousHash,
+    })).resolves.toMatchObject({
+      previous_bundle_hash: previousHash,
+      signature: expect.any(String),
+    });
   });
 
   it.each([

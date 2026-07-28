@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createIndependentCleanupVerifierRegistry,
   createServerOwnedAdapterRegistry,
+  createServerOwnedRuntimeRegistry,
 } from '../kernel-equivalence-runtime-registry.js';
 import {
   fixtureCell,
@@ -49,6 +50,16 @@ describe('server-owned equivalence runtime registries', () => {
         owner_service: 'kernel.merge.effect_executor',
       });
     expect(registry.resolve('missing')).toBeNull();
+    expect(registry.resolveForCell(fixtureCell())).toMatchObject({
+      adapter_id: 'kernel.drill.ci_merge_authority.v1',
+      owner_service: 'kernel.merge.effect_executor',
+    });
+    expect(() => registry.resolveForCell({
+      ...fixtureCell(),
+      seam_id: 'kernel.other.seam',
+    })).toThrowError(expect.objectContaining({
+      code: 'adapter_seam_owner_mismatch',
+    }));
     expect(registry.resolve('kernel.drill.ci_merge_authority.v1').prepare)
       .not.toBe(registered.prepare);
     expect(Object.isFrozen(registry)).toBe(true);
@@ -163,5 +174,27 @@ describe('server-owned equivalence runtime registries', () => {
       confirmed: false,
       evidence_ref: null,
     });
+  });
+
+  it('composes the adapter and cleanup authority inside one server-owned registry', async () => {
+    const runtime = createServerOwnedRuntimeRegistry({
+      adapters: [adapter()],
+      cleanupVerifiers: [verifier()],
+    });
+    const selected = runtime.resolveForCell(fixtureCell());
+
+    expect(selected.adapter).toMatchObject({
+      adapter_id: fixtureCell().adapter_id,
+      owner_service: fixtureCell().seam_id,
+    });
+    await expect(selected.verifyCleanup({
+      cell: fixtureCell(),
+      cleanup: {},
+    })).resolves.toEqual({
+      confirmed: true,
+      evidence_ref: `cleanup-evidence:${'a'.repeat(64)}`,
+    });
+    expect(selected).not.toHaveProperty('selectCleanupVerifier');
+    expect(Object.isFrozen(selected)).toBe(true);
   });
 });
