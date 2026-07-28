@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.109
+**版本**: 1.267.110
+
+## Fleet repeat-bootstrap repository ownership hotfix
+
+- baseline 的受控 bare repository Git 操作显式限定 `safe.directory` 为
+  NodeProfile repository 路径，允许 root reconcile 重复处理已归属
+  `_cecelia` 的仓库，同时不写入或放宽系统/用户级 Git 配置。
+- 失败继续保持节点 drain；Runner pin、Provider 凭据和
+  Phase 4B/4C/4D/5 范围不变。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.109`。
 
 ## Fleet OrbStack service-user path ACL hotfix
 

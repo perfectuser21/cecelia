@@ -401,12 +401,16 @@ ensure_repository() {
     "$GIT" init --bare "$REPOSITORY_ROOT" >/dev/null
   fi
   [[ -d "$REPOSITORY_ROOT" \
-    && "$("$GIT" -C "$REPOSITORY_ROOT" rev-parse --is-bare-repository)" == true ]] \
+    && "$("$GIT" -c "safe.directory=$REPOSITORY_ROOT" \
+      -C "$REPOSITORY_ROOT" rev-parse --is-bare-repository)" == true ]] \
     || die "repository_path_invalid"
-  "$GIT" -C "$REPOSITORY_ROOT" fetch --force "$REPOSITORY_BUNDLE" \
+  "$GIT" -c "safe.directory=$REPOSITORY_ROOT" \
+    -C "$REPOSITORY_ROOT" fetch --force "$REPOSITORY_BUNDLE" \
     HEAD:refs/heads/fleet-baseline >/dev/null
-  "$GIT" -C "$REPOSITORY_ROOT" symbolic-ref HEAD refs/heads/fleet-baseline
-  "$GIT" -C "$REPOSITORY_ROOT" rev-parse --verify HEAD >/dev/null \
+  "$GIT" -c "safe.directory=$REPOSITORY_ROOT" \
+    -C "$REPOSITORY_ROOT" symbolic-ref HEAD refs/heads/fleet-baseline
+  "$GIT" -c "safe.directory=$REPOSITORY_ROOT" \
+    -C "$REPOSITORY_ROOT" rev-parse --verify HEAD >/dev/null \
     || die "repository_import_failed"
   "$CHOWN" -R _cecelia:_cecelia "$REPOSITORY_ROOT"
 }

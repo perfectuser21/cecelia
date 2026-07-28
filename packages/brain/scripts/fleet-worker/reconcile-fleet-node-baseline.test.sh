@@ -250,6 +250,24 @@ write_executable "$fake_bin/chown" \
   '#!/usr/bin/env bash' \
   'printf "chown %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"'
 
+write_executable "$fake_bin/git" \
+  '#!/usr/bin/env bash' \
+  'safe_directory=""' \
+  'repository=""' \
+  'args=("$@")' \
+  'for (( i = 0; i < ${#args[@]}; i += 1 )); do' \
+  '  if [[ "${args[$i]}" == "-c" && "${args[$((i + 1))]:-}" == safe.directory=* ]]; then' \
+  '    safe_directory="${args[$((i + 1))]#safe.directory=}"' \
+  '  elif [[ "${args[$i]}" == "-C" ]]; then' \
+  '    repository="${args[$((i + 1))]:-}"' \
+  '  fi' \
+  'done' \
+  'if [[ "$repository" == */var/lib/cecelia/repository && "$safe_directory" != "$repository" ]]; then' \
+  '  echo "fatal: detected dubious ownership in repository at '"'"'$repository'"'"'" >&2' \
+  '  exit 128' \
+  'fi' \
+  'exec "${FLEET_TEST_REAL_GIT:?}" "$@"'
+
 write_executable "$fake_bin/launchctl" \
   '#!/usr/bin/env bash' \
   'printf "launchctl %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"' \
@@ -303,6 +321,7 @@ run_reconciler() {
   FLEET_TEST_FAKE_ORBCTL="$fake_bin/orbstack-orbctl" \
   FLEET_TEST_FAKE_ORB="$fake_bin/orbstack-orb" \
   FLEET_TEST_FAKE_DOCKER="$fake_bin/docker" \
+  FLEET_TEST_REAL_GIT="$(command -v git)" \
   FLEET_TEST_DOCKER_FAIL_INFO="${FLEET_TEST_DOCKER_FAIL_INFO:-0}" \
   FLEET_BASELINE_ID="$fake_bin/id" \
   FLEET_BASELINE_DSCL="$fake_bin/dscl" \
@@ -317,7 +336,7 @@ run_reconciler() {
   FLEET_BASELINE_CODESIGN="$fake_bin/codesign" \
   FLEET_BASELINE_TAILSCALE="$tailscale_app" \
   FLEET_BASELINE_DOCKER="$docker_command" \
-  FLEET_BASELINE_GIT="$(command -v git)" \
+  FLEET_BASELINE_GIT="${FLEET_TEST_GIT_COMMAND-$(command -v git)}" \
   FLEET_BASELINE_CHOWN="$fake_bin/chown" \
   FLEET_BASELINE_LAUNCHCTL="$fake_bin/launchctl" \
   FLEET_BASELINE_SUDO="$fake_bin/sudo" \
@@ -478,6 +497,7 @@ install_mutations_before="$(
   grep -Ec '^(curl|tar node|npm pinned-codex|ditto orbstack|docker load)' \
     "$mutation_log"
 )"
+FLEET_TEST_GIT_COMMAND="$fake_bin/git" \
 run_reconciler "$system_root" xian-mac-m1 --apply >/dev/null \
   || fail "repeat baseline apply failed"
 install_mutations_after="$(
