@@ -146,6 +146,9 @@ const BUILDER_INPUT_KEYS = Object.freeze([
   'createAuthorityBinding',
   'effectSigner',
 ]);
+const MAX_LIVENESS_STALE_MS = 24 * 60 * 60 * 1000;
+const SANDBOX_REPO_PATTERN =
+  /^[a-z0-9_.-]+\/[a-z0-9_.-]+-kernel-equivalence-drills$/;
 
 export class KernelProductionSeamBuilderError extends Error {
   constructor(code) {
@@ -159,127 +162,189 @@ function fail(code) {
   throw new KernelProductionSeamBuilderError(code);
 }
 
-function exactKeys(value, expected) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return false;
-  }
-  const actual = Object.keys(value).sort();
+function objectValue(value) {
   return (
-    actual.length === expected.length
-    && actual.every((key, index) => key === expected[index])
+    value != null
+    && typeof value === 'object'
+    && !Array.isArray(value)
   );
+}
+
+function descriptorsFor(value, code) {
+  if (!objectValue(value)) fail(code);
+  try {
+    return Object.getOwnPropertyDescriptors(value);
+  } catch {
+    fail(code);
+  }
+}
+
+function materializeExact(value, expected, code) {
+  const descriptors = descriptorsFor(value, code);
+  const actual = Reflect.ownKeys(descriptors);
+  if (
+    actual.some((key) => typeof key !== 'string')
+    || actual.length !== expected.length
+    || actual.sort().some((key, index) => key !== expected[index])
+  ) {
+    fail(code);
+  }
+  const entries = expected.map((name) => {
+    const descriptor = descriptors[name];
+    if (
+      descriptor == null
+      || !Object.hasOwn(descriptor, 'value')
+      || descriptor.enumerable !== true
+    ) {
+      fail(code);
+    }
+    return [name, descriptor.value];
+  });
+  return Object.freeze(Object.fromEntries(entries));
 }
 
 function hasFunctions(value, names) {
   return names.every((name) => typeof value?.[name] === 'function');
 }
 
-function validateDependencies(dependencies) {
-  if (!exactKeys(dependencies, DEPENDENCY_KEYS)) {
-    fail('production_seam_dependency_set_invalid');
-  }
-  if (
-    !hasFunctions(dependencies.protectedRefGuard, ['execute'])
-    || !hasFunctions(dependencies.credentialGuard, ['issue'])
-    || !hasFunctions(dependencies.branchPushGuard, ['execute'])
-    || !hasFunctions(dependencies.ciMergeEffect, ['execute'])
-    || !hasFunctions(
-      dependencies.independentJudge?.pool,
-      ['query'],
-    )
-    || !hasFunctions(
-      dependencies.independentJudge?.attemptStore,
-      ['complete', 'getById'],
-    )
-    || typeof dependencies.independentJudge?.judgeGate !== 'function'
-    || typeof dependencies.independentJudge?.promptDir !== 'string'
-    || dependencies.independentJudge.promptDir.length === 0
-    || !hasFunctions(dependencies.devgate, ['spawnGuarded'])
-    || !hasFunctions(
-      dependencies.attemptOwnership,
-      ['complete', 'getById'],
-    )
-    || !hasFunctions(
-      dependencies.reportLearning,
-      ['dbQuery', 'learningQuery'],
-    )
-  ) {
-    fail('production_seam_dependency_port_invalid');
-  }
-}
-
-function validateAuthorities(authorities) {
-  if (!exactKeys(authorities, AUTHORITY_KEYS)) {
-    fail('production_seam_authority_set_invalid');
-  }
-  for (const [purpose, descriptor] of Object.entries(AUTHORITY_PORTS)) {
-    const port = authorities[purpose];
-    if (
-      port?.owner_service !== descriptor.owner
-      || !hasFunctions(port, descriptor.functions)
-    ) {
-      fail('production_seam_authority_port_invalid');
+function receiverValues(port, code) {
+  const values = new Map();
+  let cursor = port;
+  let own = true;
+  if (!objectValue(port)) fail(code);
+  while (cursor != null && cursor !== Object.prototype) {
+    let descriptors;
+    let prototype;
+    try {
+      descriptors = Object.getOwnPropertyDescriptors(cursor);
+      prototype = Object.getPrototypeOf(cursor);
+    } catch {
+      fail(code);
     }
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (key === 'constructor' || values.has(key)) continue;
+      const descriptor = descriptors[key];
+      if (!Object.hasOwn(descriptor, 'value')) {
+        if (own) fail(code);
+        continue;
+      }
+      values.set(key, descriptor.value);
+    }
+    cursor = prototype;
+    own = false;
   }
+  return values;
 }
 
-function snapshotFunctions(port, names, scalars = []) {
-  const snapshot = Object.fromEntries([
-    ...scalars.map((name) => [name, port[name]]),
-    ...names.map((name) => [name, port[name].bind(port)]),
-  ]);
-  return Object.freeze(snapshot);
-}
+function snapshotPort(port, {
+  functions,
+  scalars = [],
+  nested = {},
+  code,
+}) {
+  const values = receiverValues(port, code);
+  const nestedSnapshots = {};
+  for (const [name, specification] of Object.entries(nested)) {
+    const nestedPort = values.get(name);
+    if (nestedPort == null && specification.optional === true) continue;
+    nestedSnapshots[name] = snapshotPort(nestedPort, {
+      ...specification,
+      code,
+    });
+  }
+  const rawFunctions = Object.fromEntries(functions.map((name) => [
+    name,
+    values.get(name),
+  ]));
+  if (!hasFunctions(rawFunctions, functions)) fail(code);
 
-function snapshotDependencies(dependencies) {
+  const receiver = Object.create(null);
+  for (const [name, value] of values.entries()) {
+    Object.defineProperty(receiver, name, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+  Object.assign(receiver, nestedSnapshots);
+  const wrappers = Object.fromEntries(functions.map((name) => [
+    name,
+    (...args) => Reflect.apply(rawFunctions[name], receiver, args),
+  ]));
+  Object.assign(receiver, wrappers);
+  Object.freeze(receiver);
+
   return Object.freeze({
-    protectedRefGuard: snapshotFunctions(
-      dependencies.protectedRefGuard,
-      ['execute'],
-    ),
-    credentialGuard: snapshotFunctions(
-      dependencies.credentialGuard,
-      ['issue'],
-    ),
-    branchPushGuard: snapshotFunctions(
-      dependencies.branchPushGuard,
-      ['execute'],
-    ),
-    ciMergeEffect: snapshotFunctions(
-      dependencies.ciMergeEffect,
-      ['execute'],
-    ),
-    independentJudge: Object.freeze({
-      pool: snapshotFunctions(
-        dependencies.independentJudge.pool,
-        ['query'],
-      ),
-      attemptStore: snapshotFunctions(
-        dependencies.independentJudge.attemptStore,
-        ['complete', 'getById'],
-      ),
-      judgeGate: dependencies.independentJudge.judgeGate.bind(
-        dependencies.independentJudge,
-      ),
-      promptDir: dependencies.independentJudge.promptDir,
-    }),
-    devgate: snapshotFunctions(
-      dependencies.devgate,
-      ['spawnGuarded'],
-    ),
-    attemptOwnership: snapshotFunctions(
-      dependencies.attemptOwnership,
-      ['complete', 'getById'],
-    ),
-    reportLearning: snapshotFunctions(
-      dependencies.reportLearning,
-      ['dbQuery', 'learningQuery'],
-    ),
+    ...Object.fromEntries(scalars.map((name) => [name, values.get(name)])),
+    ...nestedSnapshots,
+    ...wrappers,
   });
 }
 
-function snapshotAuthorities(authorities) {
-  return Object.freeze(Object.fromEntries(
+function snapshotDependencies(input) {
+  const dependencies = materializeExact(
+    input,
+    DEPENDENCY_KEYS,
+    'production_seam_dependency_set_invalid',
+  );
+  const code = 'production_seam_dependency_port_invalid';
+  const independentJudge = snapshotPort(dependencies.independentJudge, {
+    functions: ['judgeGate'],
+    scalars: ['promptDir'],
+    nested: {
+      pool: { functions: ['query'] },
+      attemptStore: { functions: ['complete', 'getById'] },
+    },
+    code,
+  });
+  if (
+    typeof independentJudge.promptDir !== 'string'
+    || independentJudge.promptDir.length === 0
+  ) {
+    fail(code);
+  }
+  return Object.freeze({
+    protectedRefGuard: snapshotPort(dependencies.protectedRefGuard, {
+      functions: ['execute'],
+      code,
+    }),
+    credentialGuard: snapshotPort(dependencies.credentialGuard, {
+      functions: ['issue'],
+      code,
+    }),
+    branchPushGuard: snapshotPort(dependencies.branchPushGuard, {
+      functions: ['execute'],
+      code,
+    }),
+    ciMergeEffect: snapshotPort(dependencies.ciMergeEffect, {
+      functions: ['execute'],
+      code,
+    }),
+    independentJudge,
+    devgate: snapshotPort(dependencies.devgate, {
+      functions: ['spawnGuarded'],
+      code,
+    }),
+    attemptOwnership: snapshotPort(dependencies.attemptOwnership, {
+      functions: ['complete', 'getById'],
+      code,
+    }),
+    reportLearning: snapshotPort(dependencies.reportLearning, {
+      functions: ['dbQuery', 'learningQuery'],
+      code,
+    }),
+  });
+}
+
+function snapshotAuthorities(input) {
+  const authorities = materializeExact(
+    input,
+    AUTHORITY_KEYS,
+    'production_seam_authority_set_invalid',
+  );
+  const code = 'production_seam_authority_port_invalid';
+  const snapshots = Object.fromEntries(
     Object.entries(AUTHORITY_PORTS).map(([purpose, descriptor]) => {
       const port = authorities[purpose];
       const scalars = ['owner_service'];
@@ -292,28 +357,62 @@ function snapshotAuthorities(authorities) {
       if (purpose === 'orphanLiveness') {
         scalars.push('staleMs');
       }
-      const snapshot = {
-        ...snapshotFunctions(port, descriptor.functions, scalars),
-      };
-      if (purpose === 'orphanLiveness' && port.pool != null) {
-        if (typeof port.pool?.query !== 'function') {
-          fail('production_seam_authority_port_invalid');
-        }
-        snapshot.pool = snapshotFunctions(port.pool, ['query']);
+      const snapshot = snapshotPort(port, {
+        functions: descriptor.functions,
+        scalars,
+        nested: purpose === 'orphanLiveness'
+          ? {
+              pool: {
+                functions: ['query'],
+                optional: true,
+              },
+            }
+          : {},
+        code,
+      });
+      if (snapshot.owner_service !== descriptor.owner) fail(code);
+      if (
+        (
+          purpose === 'protectedRefGuard'
+          || purpose === 'branchPushGuard'
+        )
+        && (
+          snapshot.sandbox_repo === 'perfectuser21/cecelia'
+          || typeof snapshot.sandbox_repo !== 'string'
+          || !SANDBOX_REPO_PATTERN.test(snapshot.sandbox_repo)
+        )
+      ) {
+        fail(code);
       }
-      return [purpose, Object.freeze(snapshot)];
+      if (
+        purpose === 'orphanLiveness'
+        && snapshot.staleMs != null
+        && (
+          !Number.isInteger(snapshot.staleMs)
+          || snapshot.staleMs < 1
+          || snapshot.staleMs > MAX_LIVENESS_STALE_MS
+        )
+      ) {
+        fail(code);
+      }
+      return [purpose, snapshot];
     }),
-  ));
+  );
+  return Object.freeze(snapshots);
 }
 
 function validateBuilderInput(value) {
-  if (
-    !exactKeys(value, BUILDER_INPUT_KEYS)
-    || typeof value.effectSigner?.signEffectResult !== 'function'
-    || typeof value.createAuthorityBinding !== 'function'
-  ) {
-    fail('production_seam_builder_input_invalid');
-  }
+  const code = 'production_seam_builder_input_invalid';
+  const input = materializeExact(value, BUILDER_INPUT_KEYS, code);
+  const effectSigner = snapshotPort(input.effectSigner, {
+    functions: ['signEffectResult'],
+    code,
+  });
+  if (typeof input.createAuthorityBinding !== 'function') fail(code);
+  return Object.freeze({
+    createAuthorityBinding: input.createAuthorityBinding,
+    effectSigner,
+  });
 }
 
 function sameResource(actual, expected) {
@@ -376,20 +475,22 @@ function bindLoader({
 
 function builder(createSeam) {
   return (input = {}) => {
-    validateBuilderInput(input);
-    return createSeam(input);
+    return createSeam(validateBuilderInput(input));
   };
 }
 
 export function createBrainOwnedProductionSeamBuilders(input = {}) {
-  if (!exactKeys(input, ['authorities', 'dependencies'])) {
-    fail('production_seam_factory_input_invalid');
-  }
-  const { dependencies, authorities } = input;
-  validateDependencies(dependencies);
-  validateAuthorities(authorities);
-  const productionDependencies = snapshotDependencies(dependencies);
-  const productionAuthorities = snapshotAuthorities(authorities);
+  const factoryInput = materializeExact(
+    input,
+    ['authorities', 'dependencies'],
+    'production_seam_factory_input_invalid',
+  );
+  const productionDependencies = snapshotDependencies(
+    factoryInput.dependencies,
+  );
+  const productionAuthorities = snapshotAuthorities(
+    factoryInput.authorities,
+  );
 
   return Object.freeze({
     'kernel.workspace.protected_ref_guard': builder(({

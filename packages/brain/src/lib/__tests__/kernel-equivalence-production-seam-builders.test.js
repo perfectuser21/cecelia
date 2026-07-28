@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createBrainOwnedProductionSeamBuilders,
 } from '../kernel-equivalence-production-seam-builders.js';
+import { sha256Canonical } from '../kernel-equivalence-receipts.js';
 
 const SEAM_IDS = [
   'kernel.closure.report_learning',
@@ -161,6 +162,63 @@ function buildAll(value = fixture()) {
     }),
   ]));
   return { ...value, seamBuilders, seams, createAuthorityBinding };
+}
+
+function configureProtectedRef(value) {
+  const authorityPort = value.authorities.protectedRefGuard;
+  const branch = 'equivalence-drill/run-1/attempt-1/protected';
+  authorityPort.loadInput.mockResolvedValue({
+    declarationBytes: Buffer.from('{}'),
+    policy: {
+      repo: authorityPort.sandbox_repo,
+      branch,
+    },
+    providerResultBytes: Buffer.from('{}'),
+    state: {
+      run_id: 'run-1',
+      attempt_id: 'attempt-1',
+      workspace: {
+        repo: authorityPort.sandbox_repo,
+        branch,
+      },
+    },
+  });
+  authorityPort.snapshot
+    .mockResolvedValueOnce({ state: 'before' })
+    .mockResolvedValueOnce({ state: 'after' });
+  authorityPort.confirmSuccess.mockResolvedValue(true);
+  return branch;
+}
+
+async function invokeProtectedRef(seamBuilders, branch) {
+  const seam = seamBuilders['kernel.workspace.protected_ref_guard']({
+    effectSigner: {
+      signEffectResult: vi.fn(async () => ({ signed: true })),
+    },
+    createAuthorityBinding: fn(),
+  });
+  const grant = {
+    seam_id: 'kernel.workspace.protected_ref_guard',
+    adapter_id: 'kernel.drill.branch_protection.v1',
+    run_id: 'run-1',
+    attempt_id: 'attempt-1',
+    resource_id: 'resource-1',
+    resource_ref: `refs/heads/${branch}`,
+  };
+  return seam.invoke({
+    cell: {
+      seam_id: grant.seam_id,
+      adapter_id: grant.adapter_id,
+      scenario: 'normal',
+    },
+    grant,
+    resource: {
+      resource_id: grant.resource_id,
+      resource_ref: grant.resource_ref,
+    },
+    predecessor: null,
+    signal: new AbortController().signal,
+  });
 }
 
 describe('Brain-owned production equivalence seam builders', () => {
@@ -341,6 +399,296 @@ describe('Brain-owned production equivalence seam builders', () => {
       'perfectuser21/cecelia-kernel-equivalence-drills',
     );
   });
+
+  it('rejects accessor functions instead of validating and snapshotting different values', () => {
+    const value = fixture();
+    let reads = 0;
+    Object.defineProperty(value.dependencies.protectedRefGuard, 'execute', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        reads += 1;
+        return fn();
+      },
+    });
+
+    expect(() => createBrainOwnedProductionSeamBuilders(value)).toThrowError(
+      expect.objectContaining({
+        code: 'production_seam_dependency_port_invalid',
+      }),
+    );
+    expect(reads).toBe(0);
+  });
+
+  it('materializes a Proxy dependency function once without later get substitution', async () => {
+    const value = fixture();
+    const branch = configureProtectedRef(value);
+    const safeExecute = vi.fn(async () => ({ applied: true }));
+    const substitutedExecute = vi.fn(async () => ({ applied: true }));
+    let reads = 0;
+    const target = { execute: safeExecute };
+    value.dependencies.protectedRefGuard = new Proxy(target, {
+      get(current, property, receiver) {
+        if (property === 'execute') {
+          reads += 1;
+          return reads === 1 ? safeExecute : substitutedExecute;
+        }
+        return Reflect.get(current, property, receiver);
+      },
+    });
+
+    const seamBuilders = createBrainOwnedProductionSeamBuilders(value);
+
+    await expect(invokeProtectedRef(seamBuilders, branch)).resolves.toEqual({
+      signed: true,
+    });
+    expect(safeExecute).toHaveBeenCalledOnce();
+    expect(substitutedExecute).not.toHaveBeenCalled();
+    expect(reads).toBe(0);
+  });
+
+  it('rejects accessor owner_service with the stable authority-port error', () => {
+    const value = fixture();
+    let reads = 0;
+    Object.defineProperty(value.authorities.protectedRefGuard, 'owner_service', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        reads += 1;
+        return 'kernel.workspace.protected_ref_guard';
+      },
+    });
+
+    expect(() => createBrainOwnedProductionSeamBuilders(value)).toThrowError(
+      expect.objectContaining({
+        code: 'production_seam_authority_port_invalid',
+      }),
+    );
+    expect(reads).toBe(0);
+  });
+
+  it.each([
+    ['pool', (port) => {
+      Object.defineProperty(port, 'pool', {
+        configurable: true,
+        enumerable: true,
+        get: () => ({ query: fn() }),
+      });
+    }],
+    ['pool.query', (port) => {
+      const pool = {};
+      Object.defineProperty(pool, 'query', {
+        configurable: true,
+        enumerable: true,
+        get: () => fn(),
+      });
+      port.pool = pool;
+    }],
+  ])('rejects accessor-backed optional liveness %s', (_label, mutate) => {
+    const value = fixture();
+    mutate(value.authorities.orphanLiveness);
+
+    expect(() => createBrainOwnedProductionSeamBuilders(value)).toThrowError(
+      expect.objectContaining({
+        code: 'production_seam_authority_port_invalid',
+      }),
+    );
+  });
+
+  it('does not retain the original mutable receiver behind a captured function', async () => {
+    const value = fixture();
+    const branch = configureProtectedRef(value);
+    const safeDelegate = vi.fn(async () => ({ applied: true }));
+    const substitutedDelegate = vi.fn(async () => ({ applied: true }));
+    value.dependencies.protectedRefGuard = {
+      delegate: safeDelegate,
+      async execute(input) {
+        return this.delegate(input);
+      },
+    };
+    const seamBuilders = createBrainOwnedProductionSeamBuilders(value);
+
+    value.dependencies.protectedRefGuard.delegate = substitutedDelegate;
+
+    await expect(invokeProtectedRef(seamBuilders, branch)).resolves.toEqual({
+      signed: true,
+    });
+    expect(safeDelegate).toHaveBeenCalledOnce();
+    expect(substitutedDelegate).not.toHaveBeenCalled();
+  });
+
+  it('does not retain the original independentJudge receiver behind judgeGate', async () => {
+    const value = fixture();
+    const runId = '11111111-1111-4111-8111-111111111111';
+    const judgeAttemptId = '22222222-2222-4222-8222-222222222222';
+    const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
+    const headSha = 'a'.repeat(40);
+    const evaluatorResult = {
+      attempt_id: evaluatorAttemptId,
+      decision: {
+        outcome: 'PASS',
+        reason: 'approved',
+        pr_head_sha: headSha,
+      },
+      transcript: 'trusted transcript',
+    };
+    const evaluatorVerdict = {
+      attempt_id: evaluatorAttemptId,
+      executor_kind: 'local-docker',
+      result_digest: sha256Canonical(evaluatorResult),
+      feedback: 'approved',
+      failure_class: null,
+      result_receipt_id: null,
+      result_sha256: null,
+      pr_head_sha: headSha,
+      verdict: 'PASS',
+    };
+    const judgeAttempt = {
+      id: judgeAttemptId,
+      run_id: runId,
+      role: 'judge',
+    };
+    const evaluatorAttempt = {
+      id: evaluatorAttemptId,
+      run_id: runId,
+      role: 'evaluator',
+      status: 'completed',
+      execution_transport: 'local-docker',
+      lease_owner: 'kernel-evaluator',
+      lease_generation: 0,
+      completed_at: '2026-07-28T10:00:00.000Z',
+      result: evaluatorResult,
+      task_bundle: {
+        inputs: {
+          pull_request: { head_sha: headSha },
+        },
+      },
+      result_receipt_id: null,
+      result_sha256: null,
+    };
+    const safeDelegate = vi.fn(async () => ({
+      judged: true,
+      verdict: 'PASS',
+      feedback: 'approved',
+    }));
+    const substitutedDelegate = vi.fn(async () => ({
+      judged: true,
+      verdict: 'FAIL',
+      feedback: 'substituted',
+    }));
+    value.dependencies.independentJudge = {
+      pool: {
+        query: vi.fn(async () => ({ rows: [], rowCount: 1 })),
+      },
+      attemptStore: {
+        complete: vi.fn(async () => ({})),
+        getById: vi.fn(async (attemptId) => (
+          attemptId === judgeAttemptId ? judgeAttempt : evaluatorAttempt
+        )),
+      },
+      delegate: safeDelegate,
+      async judgeGate(input) {
+        return this.delegate(input);
+      },
+      promptDir: '/var/lib/cecelia/equivalence-prompts',
+    };
+    const resource = {
+      resource_id: 'resource-judge',
+      resource_ref: 'equivalence-drill/judge/resource',
+    };
+    const handlerContext = {
+      runId,
+      taskId: 'task-judge',
+      attempt: judgeAttempt,
+      observed: {
+        run: { id: runId },
+        pr: { head_sha: headSha },
+        evaluateVerdict: evaluatorVerdict,
+        evaluateResult: evaluatorResult,
+      },
+      bundle: {
+        inputs: {
+          worktree_path: '/tmp/equivalence-worktree',
+          sprint_dir: '/tmp/equivalence-sprint',
+        },
+      },
+      resource,
+    };
+    value.authorities.independentJudge.loadContext
+      .mockResolvedValue(handlerContext);
+    value.authorities.independentJudge.snapshot
+      .mockResolvedValueOnce({ state: 'before' })
+      .mockResolvedValueOnce({ state: 'after' });
+    const seamBuilders = createBrainOwnedProductionSeamBuilders(value);
+    value.dependencies.independentJudge.delegate = substitutedDelegate;
+    const seam = seamBuilders['kernel.evaluation.independent_judge']({
+      effectSigner: {
+        signEffectResult: vi.fn(async () => ({ signed: true })),
+      },
+      createAuthorityBinding: vi.fn(() => ({
+        runId,
+        attempt: judgeAttempt,
+        observed: {
+          run: { id: runId },
+          pr: { head_sha: headSha },
+        },
+        resource,
+      })),
+    });
+    const cell = {
+      seam_id: 'kernel.evaluation.independent_judge',
+      adapter_id: 'kernel.drill.independent_evaluator_judge.v1',
+      scenario: 'normal',
+    };
+    const grant = {
+      seam_id: cell.seam_id,
+      adapter_id: cell.adapter_id,
+      run_id: runId,
+      attempt_id: judgeAttemptId,
+      artifact_sha: headSha,
+      resource_id: resource.resource_id,
+      resource_ref: resource.resource_ref,
+    };
+
+    await expect(seam.invoke({
+      cell,
+      grant,
+      resource,
+      predecessor: null,
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ signed: true });
+    expect(safeDelegate).toHaveBeenCalledOnce();
+    expect(substitutedDelegate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    -1,
+    0,
+    1.5,
+    '180000',
+    24 * 60 * 60 * 1000 + 1,
+  ])('rejects invalid optional liveness staleMs=%s', (staleMs) => {
+    const value = fixture();
+    value.authorities.orphanLiveness.staleMs = staleMs;
+
+    expect(() => createBrainOwnedProductionSeamBuilders(value)).toThrowError(
+      expect.objectContaining({
+        code: 'production_seam_authority_port_invalid',
+      }),
+    );
+  });
+
+  it.each([null, undefined, 1, 180_000, 24 * 60 * 60 * 1000])(
+    'accepts defaultable or bounded optional liveness staleMs=%s',
+    (staleMs) => {
+      const value = fixture();
+      value.authorities.orphanLiveness.staleMs = staleMs;
+
+      expect(() => createBrainOwnedProductionSeamBuilders(value)).not.toThrow();
+    },
+  );
 
   it.each([
     {
