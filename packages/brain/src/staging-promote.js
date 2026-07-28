@@ -56,6 +56,13 @@ export function buildHarnessReportInsert(args = {}) {
     promoted_by: args.promotedBy || null,
     production_version: args.productionVersion || null,
     rollback_anchor: args.rollbackAnchor || null,
+    // Kernel equivalence closure: bind a green report task to the
+    // server-verified effect evidence that authorized it.
+    effect_receipt_id: args.effectReceiptId || null,
+    effect_receipt_sha256: args.effectReceiptSha256 || null,
+    effect_artifact_sha: args.effectArtifactSha || null,
+    effect_evidence_verified_at:
+      args.effectEvidenceVerifiedAt || null,
     // 沿用原 report 字段
     sprint_dir: args.sprintDir || null,
     journey_id: args.journeyId || null,
