@@ -1,4 +1,4 @@
-import { sha256Canonical } from './kernel-equivalence-receipts.js';
+import { createCleanupEvidence } from './kernel-equivalence-runtime-registry.js';
 
 const DESCRIPTORS = [
   {
@@ -302,6 +302,8 @@ export function createQualityEquivalenceAdapterRegistry({
   if (
     typeof isolation?.owner_service !== 'string'
     || !isolation.owner_service.startsWith('kernel.')
+    || typeof isolation?.capability_id !== 'string'
+    || isolation.capability_id.length === 0
   ) {
     fail('adapter_isolation_port_unavailable');
   }
@@ -332,6 +334,7 @@ export function createQualityEquivalenceAdapterRegistry({
 export function createQualityCleanupVerifier({
   descriptor,
   inspector,
+  isolationCapabilityId,
 } = {}) {
   const knownDescriptor = DESCRIPTORS.find((candidate) => (
     candidate.behavior_id === descriptor?.behavior_id
@@ -344,6 +347,11 @@ export function createQualityCleanupVerifier({
   if (
     typeof inspector?.owner_service !== 'string'
     || !inspector.owner_service.startsWith('kernel.')
+    || typeof inspector?.capability_id !== 'string'
+    || inspector.capability_id.length === 0
+    || typeof isolationCapabilityId !== 'string'
+    || isolationCapabilityId.length === 0
+    || inspector.capability_id === isolationCapabilityId
   ) {
     fail('cleanup_inspection_port_unavailable');
   }
@@ -384,24 +392,23 @@ export function createQualityCleanupVerifier({
       );
       return Object.freeze({
         confirmed,
-        evidence_ref: confirmed
-          ? `cleanup-evidence:${sha256Canonical({
-              adapter_id: knownDescriptor.adapter_id,
-              inspections: inspections.map(({ resource_ref, result }) => ({
-                resource_ref,
-                evidence_ref: result.evidence_ref,
-              })),
-            })}`
-          : null,
+        evidence: confirmed ? createCleanupEvidence(context) : null,
       });
     },
   });
 }
 
-export function createQualityCleanupVerifiers({ inspector } = {}) {
+export function createQualityCleanupVerifiers({
+  inspector,
+  isolationCapabilityId,
+} = {}) {
   return Object.freeze(
     QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS.map((descriptor) => (
-      createQualityCleanupVerifier({ descriptor, inspector })
+      createQualityCleanupVerifier({
+        descriptor,
+        inspector,
+        isolationCapabilityId,
+      })
     )),
   );
 }

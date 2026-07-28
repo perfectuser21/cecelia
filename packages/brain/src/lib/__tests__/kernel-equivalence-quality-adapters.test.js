@@ -5,6 +5,7 @@ import {
   createQualityCleanupVerifier,
   createQualityEquivalenceAdapterRegistry,
 } from '../kernel-equivalence-quality-adapters.js';
+import { createCleanupEvidence } from '../kernel-equivalence-runtime-registry.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
@@ -54,6 +55,7 @@ function fixture() {
   const resources = new Map();
   const isolation = {
     owner_service: 'kernel.equivalence.isolation',
+    capability_id: 'kernel-equivalence-quality-writer',
     prepare: vi.fn(async ({ authorization, registerCompensation }) => {
       const resource = {
         resource_id: authorization.resource_id,
@@ -71,6 +73,7 @@ function fixture() {
   };
   const inspector = {
     owner_service: 'kernel.equivalence.cleanup_inspector',
+    capability_id: 'kernel-equivalence-quality-reader',
     inspect: vi.fn(async ({ resource }) => ({
       exists: resources.has(resource.resource_ref),
       evidence_ref: `cleanup-evidence:${'a'.repeat(64)}`,
@@ -398,6 +401,7 @@ describe('quality equivalence adapter registry', () => {
     const verifyCleanup = createQualityCleanupVerifier({
       descriptor,
       inspector: value.inspector,
+      isolationCapabilityId: value.isolation.capability_id,
     });
     expect(Object.keys(verifyCleanup).sort()).toEqual([
       'adapter_id',
@@ -433,7 +437,10 @@ describe('quality equivalence adapter registry', () => {
       cleanup,
     })).resolves.toEqual({
       confirmed: true,
-      evidence_ref: expect.stringMatching(/^cleanup-evidence:[a-f0-9]{64}$/),
+      evidence: createCleanupEvidence({
+        ...context,
+        cleanup,
+      }),
     });
     value.resources.set(authorization.resource_ref, prepared.resource);
     await expect(verifyCleanup.verifyCleanup({
@@ -441,7 +448,7 @@ describe('quality equivalence adapter registry', () => {
       cleanup,
     })).resolves.toEqual({
       confirmed: false,
-      evidence_ref: null,
+      evidence: null,
     });
   });
 
@@ -453,6 +460,7 @@ describe('quality equivalence adapter registry', () => {
     expect(() => createQualityCleanupVerifier({
       descriptor,
       inspector: value.inspector,
+      isolationCapabilityId: value.isolation.capability_id,
     })).toThrowError(expect.objectContaining({
       code: 'cleanup_inspector_not_independent',
     }));

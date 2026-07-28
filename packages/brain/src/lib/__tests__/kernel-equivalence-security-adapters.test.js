@@ -4,6 +4,7 @@ import {
   createSecurityEquivalenceAdapters,
   createSecurityEquivalenceCleanupVerifiers,
 } from '../kernel-equivalence-security-adapters.js';
+import { createCleanupEvidence } from '../kernel-equivalence-runtime-registry.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
@@ -62,15 +63,24 @@ function fixture() {
   );
   const isolation = {
     owner_service: 'kernel.equivalence.isolation',
+    capability_id: 'kernel-equivalence-isolation-writer',
     prepare: vi.fn(async ({ authorization }) => ({
       resource_id: authorization.resource_id,
       resource_ref: authorization.resource_ref,
     })),
     cancel: vi.fn(async () => ({ confirmed: true })),
     cleanup: vi.fn(async () => ({ completed: true })),
-    inspect: vi.fn(async () => ({ exists: false, residue: [] })),
   };
-  return { seams, isolation };
+  const inspector = {
+    owner_service: 'kernel.equivalence.cleanup_inspector',
+    capability_id: 'kernel-equivalence-cleanup-reader',
+    inspect: vi.fn(async () => ({
+      exists: false,
+      residue: [],
+      evidence_ref: `cleanup-observation:${'a'.repeat(64)}`,
+    })),
+  };
+  return { seams, isolation, inspector };
 }
 
 describe('Kernel security equivalence adapters', () => {
@@ -193,14 +203,23 @@ describe('Kernel security equivalence adapters', () => {
     const value = fixture();
     const adapters = createSecurityEquivalenceAdapters(value);
     const verifiers = createSecurityEquivalenceCleanupVerifiers({
-      isolation: value.isolation,
+      inspector: value.inspector,
+      isolationCapabilityId: value.isolation.capability_id,
     });
     expect(verifiers).toHaveLength(adapters.length);
     for (const verifier of verifiers) {
       const adapter = adapters.find((entry) => entry.adapter_id === verifier.adapter_id);
       expect(verifier.owner_service).not.toBe(adapter.owner_service);
-      const result = await verifier.verifyCleanup({
-        cell: { adapter_id: adapter.adapter_id },
+      const descriptor = SECURITY_EQUIVALENCE_ADAPTER_DESCRIPTORS.find(
+        (entry) => entry.adapter_id === adapter.adapter_id,
+      );
+      const context = {
+        cell: cell(descriptor),
+        grant: {
+          grant_id: '44444444-4444-4444-8444-444444444444',
+          resource_id: RESOURCE_ID,
+          resource_ref: `equivalence-drill/${RUN_ID}/resource`,
+        },
         prepared: {
           resource: {
             resource_id: RESOURCE_ID,
@@ -208,12 +227,25 @@ describe('Kernel security equivalence adapters', () => {
           },
         },
         compensations: [],
-      });
+        cleanup: { confirmed: true },
+      };
+      const result = await verifier.verifyCleanup(context);
       expect(result).toEqual({
         confirmed: true,
-        evidence_ref: expect.stringMatching(/^cleanup-evidence:[a-f0-9]{64}$/),
+        evidence: createCleanupEvidence(context),
       });
     }
+  });
+
+  it('rejects cleanup inspection that reuses the mutation capability', () => {
+    const value = fixture();
+    expect(() => createSecurityEquivalenceCleanupVerifiers({
+      inspector: {
+        ...value.inspector,
+        capability_id: value.isolation.capability_id,
+      },
+      isolationCapabilityId: value.isolation.capability_id,
+    })).toThrow('security_cleanup_inspection_unavailable');
   });
 
   it('attempts isolation cleanup even when seam cleanup fails', async () => {

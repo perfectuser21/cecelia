@@ -1,7 +1,6 @@
-import { sha256Canonical } from './kernel-equivalence-receipts.js';
+import { createCleanupEvidence } from './kernel-equivalence-runtime-registry.js';
 
 const ISOLATION_OWNER = 'kernel.equivalence.isolation';
-const CLEANUP_OWNER = 'kernel.equivalence.cleanup';
 
 const DESCRIPTORS = [
   {
@@ -236,6 +235,8 @@ function createAdapter({ descriptor, seam, isolation }) {
 function validateAssembly({ seams, isolation }) {
   if (
     isolation?.owner_service !== ISOLATION_OWNER
+    || typeof isolation?.capability_id !== 'string'
+    || isolation.capability_id.length === 0
     || typeof isolation?.prepare !== 'function'
     || typeof isolation?.cancel !== 'function'
     || typeof isolation?.cleanup !== 'function'
@@ -272,11 +273,19 @@ export function createSecurityEquivalenceAdapters({
 }
 
 export function createSecurityEquivalenceCleanupVerifiers({
-  isolation,
+  inspector,
+  isolationCapabilityId,
 } = {}) {
   if (
-    isolation?.owner_service !== ISOLATION_OWNER
-    || typeof isolation?.inspect !== 'function'
+    typeof inspector?.owner_service !== 'string'
+    || !inspector.owner_service.startsWith('kernel.')
+    || inspector.owner_service === ISOLATION_OWNER
+    || typeof inspector?.capability_id !== 'string'
+    || inspector.capability_id.length === 0
+    || typeof isolationCapabilityId !== 'string'
+    || isolationCapabilityId.length === 0
+    || inspector.capability_id === isolationCapabilityId
+    || typeof inspector?.inspect !== 'function'
   ) {
     fail('security_cleanup_inspection_unavailable');
   }
@@ -285,11 +294,11 @@ export function createSecurityEquivalenceCleanupVerifiers({
       Object.freeze({
         verifier_id: descriptor.verifier_id,
         adapter_id: descriptor.adapter_id,
-        owner_service: CLEANUP_OWNER,
+        owner_service: inspector.owner_service,
         async verifyCleanup(context = {}) {
           const resources = resourcesFrom(context);
           const inspections = await Promise.all(resources.map((resource) => (
-            isolation.inspect({
+            inspector.inspect({
               ...context,
               descriptor,
               resource,
@@ -301,20 +310,14 @@ export function createSecurityEquivalenceCleanupVerifiers({
               inspection?.exists === false
               && Array.isArray(inspection?.residue)
               && inspection.residue.length === 0
+              && /^cleanup-observation:[a-f0-9]{64}$/.test(
+                inspection.evidence_ref ?? '',
+              )
             ))
           );
           return Object.freeze({
             confirmed,
-            evidence_ref: confirmed
-              ? `cleanup-evidence:${sha256Canonical({
-                adapter_id: descriptor.adapter_id,
-                resources: resources.map((resource) => ({
-                  resource_id: resource.resource_id,
-                  resource_ref: resource.resource_ref,
-                })),
-                inspections,
-              })}`
-              : null,
+            evidence: confirmed ? createCleanupEvidence(context) : null,
           });
         },
       })
