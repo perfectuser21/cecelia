@@ -600,6 +600,7 @@ describe('Fleet Worker Attempt runner', () => {
 
     await runner.launch(request({
       credential_envelope: undefined,
+      github_mutation_policy: undefined,
       target: {
         ...request().target,
         role: 'reporter',

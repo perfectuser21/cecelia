@@ -1529,9 +1529,6 @@ function validateLaunchRequest(value) {
   if (target.provider !== 'codex') {
     throw new Error('attempt_provider_credential_broker_required');
   }
-  if (['evaluator', 'reporter'].includes(target.role)) {
-    throw new Error('attempt_github_read_broker_required');
-  }
   const resultChannel = validateResultChannel(value.result_channel, {
     task_id: value.task_id,
     run_id: value.run_id,
@@ -1580,6 +1577,15 @@ function validateLaunchRequest(value) {
   const providerSpec = validateProviderSpec(value.provider_spec);
   if (providerSpec.provider !== target.provider) {
     throw new Error('attempt_provider_target_mismatch');
+  }
+  const isCanary = isFrozenFleetCanary(providerSpec.stdin, {
+    attemptId: value.attempt_id,
+    runId: value.run_id,
+    taskId: value.task_id,
+    role: target.role,
+  });
+  if (['evaluator', 'reporter'].includes(target.role) && !isCanary) {
+    throw new Error('attempt_github_read_broker_required');
   }
   return {
     request: value,
