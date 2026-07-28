@@ -24,6 +24,10 @@ import { describe, test, expect, beforeEach, afterEach } from 'vitest';
 // harness-pending-reviews.js 是 ES module，直接静态导入
 import { authenticateApprover } from '../../../packages/brain/src/routes/harness-pending-reviews.js';
 import approvalRouter from '../../../packages/brain/src/routes/harness-kernel-approvals.js';
+import {
+  assessPostDiffRisk,
+  canonicalContractDigest,
+} from '../../../packages/brain/src/orchestrator/post-diff-risk-policy.js';
 
 const ROUTE_TOKEN = 'test-token-abc';
 const ROUTE_RUN_ID = '11111111-1111-4111-8111-111111111111';
@@ -31,6 +35,175 @@ const ROUTE_TASK_ID = '22222222-2222-4222-8222-222222222222';
 const ROUTE_PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4226';
 const ROUTE_SHA_A = 'a'.repeat(40);
 const ROUTE_SHA_B = 'b'.repeat(40);
+const REVIEW_CONTRACT_ID = '33333333-3333-4333-8333-333333333333';
+const REVIEW_NOW = Date.parse('2026-07-29T00:00:00.000Z');
+const REVIEW_CONTRACT_CONTENT = Object.freeze({
+  acceptance: Object.freeze(['merge remains safe']),
+});
+const REVIEW_CONTRACT = Object.freeze({
+  id: REVIEW_CONTRACT_ID,
+  status: 'approved',
+  version: 7,
+  approved_at: '2026-07-28T00:00:00.000Z',
+  contract_content: REVIEW_CONTRACT_CONTENT,
+});
+const REVIEW_PR = Object.freeze({
+  url: ROUTE_PR_URL,
+  repository: 'perfectuser21/cecelia',
+  number: 4226,
+  head_repository: 'perfectuser21/cecelia',
+  head_ref: 'cp-kernel-review-proof',
+  head_sha: ROUTE_SHA_A,
+  base_repository: 'perfectuser21/cecelia',
+  base_ref: 'main',
+  base_sha: '9'.repeat(40),
+  diff_digest: `sha256:${'8'.repeat(64)}`,
+  required_checks: Object.freeze([Object.freeze({
+    context: 'ci-passed',
+    app_slug: 'github-actions',
+    source: 'github-actions',
+    run_id: '123456',
+    job_id: '789012',
+    head_sha: ROUTE_SHA_A,
+    conclusion: 'SUCCESS',
+  })]),
+  files: Object.freeze([Object.freeze({
+    path: 'apps/dashboard/src/App.jsx',
+    previous_path: null,
+    status: 'modified',
+    blob_sha: '7'.repeat(40),
+    patch_digest: `sha256:${'6'.repeat(64)}`,
+    additions: 12,
+    deletions: 3,
+  })]),
+  changed_paths: Object.freeze(['apps/dashboard/src/App.jsx']),
+  state: 'OPEN',
+  is_draft: false,
+  mergeStateStatus: 'CLEAN',
+  ci: 'pass',
+  merged: false,
+});
+
+function canonicalReviewRisk(reviewRequestHop) {
+  return assessPostDiffRisk({
+    taskId: ROUTE_TASK_ID,
+    runId: ROUTE_RUN_ID,
+    hop: reviewRequestHop,
+    repository: REVIEW_PR.repository,
+    headRepository: REVIEW_PR.head_repository,
+    headRef: REVIEW_PR.head_ref,
+    headSha: REVIEW_PR.head_sha,
+    baseRepository: REVIEW_PR.base_repository,
+    baseRef: REVIEW_PR.base_ref,
+    baseSha: REVIEW_PR.base_sha,
+    diffDigest: REVIEW_PR.diff_digest,
+    requiredChecks: REVIEW_PR.required_checks,
+    files: REVIEW_PR.files,
+    contract: {
+      id: REVIEW_CONTRACT.id,
+      version: REVIEW_CONTRACT.version,
+      status: REVIEW_CONTRACT.status,
+      approved_at: REVIEW_CONTRACT.approved_at,
+      digest: canonicalContractDigest(REVIEW_CONTRACT.contract_content),
+    },
+    productionReceipt: null,
+    callerRisk: 'high',
+    evidence: { ci: 'pass', evaluator: null, judge: null },
+    now: () => REVIEW_NOW,
+  });
+}
+
+async function collectReviewGroundTruth({
+  reviewRequestHop,
+  mutateApprovalRisk = (risk) => risk,
+}) {
+  const { collectGroundTruth } = await import(
+    '../../../packages/brain/src/orchestrator/ground-truth.js'
+  );
+  const requestRisk = canonicalReviewRisk(reviewRequestHop);
+  const approvalRisk = mutateApprovalRisk(structuredClone(requestRisk));
+  const decisionLog = [
+    {
+      hop: reviewRequestHop,
+      action: 'effect:human_review_requested',
+      observed: {
+        pr: { head_sha: REVIEW_PR.head_sha },
+        post_diff_risk: requestRisk,
+      },
+      derived_phase: 'review',
+      gate_verdict: null,
+      detail: {
+        review_reason: 'awaiting_human_review',
+        post_diff_risk: requestRisk,
+      },
+    },
+    {
+      hop: reviewRequestHop + 1,
+      action: 'verdict:human_review',
+      observed: { pr: { head_sha: REVIEW_PR.head_sha } },
+      derived_phase: 'review',
+      gate_verdict: 'allow',
+      detail: {
+        approved: true,
+        review_class: 'merge_gate',
+        pr_head_sha: REVIEW_PR.head_sha,
+        review_request_hop: reviewRequestHop,
+        approved_by: 'alex',
+        post_diff_risk: approvalRisk,
+      },
+    },
+  ];
+  const mockPool = {
+    query: async (sql) => {
+      if (sql.includes('FROM initiative_runs')) {
+        return {
+          rows: [{
+            id: ROUTE_RUN_ID,
+            phase: 'review',
+            contract_id: REVIEW_CONTRACT_ID,
+            cost_usd: '0',
+            pr_url: ROUTE_PR_URL,
+          }],
+        };
+      }
+      if (sql.includes('FROM initiative_contracts')) {
+        return { rows: [REVIEW_CONTRACT] };
+      }
+      if (sql.includes('FROM tasks')) {
+        return {
+          rows: [{
+            id: ROUTE_TASK_ID,
+            status: 'in_progress',
+            payload: { review_required: true },
+            title: 'review authority regression',
+            ability_id: null,
+          }],
+        };
+      }
+      if (sql.includes('SELECT hop, action, observed')) {
+        return { rows: decisionLog };
+      }
+      return { rows: [] };
+    },
+  };
+
+  return collectGroundTruth(
+    {
+      pool: mockPool,
+      execCmd: (cmd) => {
+        if (cmd.includes('git ls-remote')) return '';
+        if (cmd.includes('docker ps')) return '';
+        if (cmd.includes('docker inspect')) return JSON.stringify({ ExitCode: 0 });
+        return '';
+      },
+      observePullRequest: async () => structuredClone(REVIEW_PR),
+      fileExists: (path) => path.includes('sprint-prd.md'),
+      readFile: () => '# PRD content',
+      now: () => REVIEW_NOW,
+    },
+    { taskId: ROUTE_TASK_ID, runId: ROUTE_RUN_ID },
+  );
+}
 
 // ---- helper: 构建 mock request/response ----
 
@@ -231,104 +404,16 @@ describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
   });
 
   /**
-   * T-17-b: ground-truth reviewApproved 推导：verdict:human_review 行含 approved:true → true（行为测试）
+   * T-17-b: ground-truth reviewApproved 推导：同 SHA、request hop、diff、
+   * contract 与 policy 的 canonical proof 全匹配才为 true（行为测试）。
    * C-2b 修复：从 readFileSync 源码扫描升级为真实行为测试。
-   * mock pool.query 返回含 action='verdict:human_review', detail.approved=true 的决策日志行，
-   * 调用 collectGroundTruth，断言 reviewApproved === true。
+   * 调用 collectGroundTruth，验证 server-derived post_diff_risk 与批准证明完全一致。
    */
   test('T-17-b: reviewApproved 只接受同 SHA merge-gate request 的 approved verdict', async () => {
-    const { collectGroundTruth } = await import('../../../packages/brain/src/orchestrator/ground-truth.js');
-
-    const headSha = 'sha-approved-b';
-
-    const mockPool = {
-      query: async (sql) => {
-        if (typeof sql === 'string' && sql.includes('initiative_runs')) {
-          return {
-            rows: [{
-              id: 'run-b',
-              phase: 'review',
-              contract_id: 'c-b',
-              cost_usd: '0',
-              pr_url: 'https://github.com/test/repo/pull/77',
-            }],
-          };
-        }
-        if (typeof sql === 'string' && sql.includes('initiative_contracts')) {
-          return { rows: [{ id: 'c-b', status: 'approved' }] };
-        }
-        if (typeof sql === 'string' && sql.includes('tasks')) {
-          return {
-            rows: [{
-              id: 'task-b',
-              status: 'in_progress',
-              payload: JSON.stringify({ review_required: true }),
-              title: 'test-b',
-              ability_id: null,
-            }],
-          };
-        }
-        if (typeof sql === 'string' && sql.includes('orchestrator_decision_log')) {
-          return {
-            rows: [
-              {
-                hop: 4,
-                action: 'effect:human_review_requested',
-                observed: JSON.stringify({ pr: { head_sha: headSha } }),
-                derived_phase: 'review',
-                gate_verdict: null,
-                detail: JSON.stringify({
-                  review_reason: 'awaiting_human_review',
-                }),
-              },
-              {
-                hop: 5,
-                action: 'verdict:human_review',
-                observed: JSON.stringify({}),
-                derived_phase: 'review',
-                gate_verdict: null,
-                detail: JSON.stringify({
-                  approved: true,
-                  review_class: 'merge_gate',
-                  pr_head_sha: headSha,
-                  review_request_hop: 4,
-                  approved_by: 'alex',
-                }),
-              },
-            ],
-          };
-        }
-        if (typeof sql === 'string' && sql.includes('harness_attempts')) return { rows: [] };
-        if (typeof sql === 'string' && sql.includes('account_usage_cache')) return { rows: [] };
-        return { rows: [] };
-      },
-    };
-
-    const observed = await collectGroundTruth(
-      {
-        pool: mockPool,
-        execCmd: (cmd) => {
-          if (cmd.includes('gh pr view')) {
-            return JSON.stringify({
-              state: 'OPEN',
-              mergeStateStatus: 'CLEAN',
-              headRefOid: headSha,
-              statusCheckRollup: [{ state: 'SUCCESS' }],
-            });
-          }
-          if (cmd.includes('git ls-remote')) return '';
-          if (cmd.includes('docker ps') && cmd.includes('exited')) return '';
-          if (cmd.includes('docker ps')) return '';
-          if (cmd.includes('docker inspect')) return JSON.stringify({ ExitCode: 0 });
-          return '';
-        },
-        fileExists: (path) => path.includes('sprint-prd.md'),
-        readFile: () => '# PRD content',
-      },
-      { taskId: 'task-b', runId: 'run-b' },
-    );
+    const observed = await collectReviewGroundTruth({ reviewRequestHop: 4 });
 
     expect(observed.reviewApproved).toBe(true);
+    expect(observed.postDiffRisk).toEqual(canonicalReviewRisk(4));
   });
 
   test('T-17-c: 旧 SHA 批准 → 409（真实 Router）', async () => {
@@ -412,95 +497,18 @@ describe('[BEHAVIOR] B-06 approval bridge 认证', () => {
 // ---- T-17-f: ground-truth reviewApproved 语义与 verdict:human_review 对齐 ----
 
 describe('[BEHAVIOR] B-06 ground-truth reviewApproved 推导', () => {
-  test('T-17-f: reviewApproved = true 当 merge-gate request 与批准类别、hop、SHA 全匹配', async () => {
-    // 直接测试 collectGroundTruth 的 reviewApproved 推导逻辑（用 mock 注入）
-    const { collectGroundTruth } = await import('../../../packages/brain/src/orchestrator/ground-truth.js');
-
-    const headSha = 'sha-approved';
-    const mockPool = {
-      query: async (sql, params) => {
-        if (sql.includes('initiative_runs')) {
-          return {
-            rows: [{
-              id: 'run-1',
-              phase: 'review',
-              contract_id: 'c1',
-              cost_usd: '0',
-              pr_url: 'https://github.com/test/repo/pull/99',
-            }],
-          };
-        }
-        if (sql.includes('initiative_contracts')) {
-          return { rows: [{ id: 'c1', status: 'approved' }] };
-        }
-        if (sql.includes('tasks')) {
-          return {
-            rows: [{
-              id: 'task-1',
-              status: 'in_progress',
-              payload: JSON.stringify({ review_required: true }),
-              title: 'test',
-              ability_id: null,
-            }],
-          };
-        }
-        if (sql.includes('orchestrator_decision_log')) {
-          return {
-            rows: [
-              {
-                hop: 9,
-                action: 'effect:human_review_requested',
-                observed: JSON.stringify({ pr: { head_sha: headSha } }),
-                detail: JSON.stringify({
-                  review_reason: 'awaiting_human_review',
-                }),
-              },
-              {
-                hop: 10,
-                action: 'verdict:human_review',
-                observed: JSON.stringify({}),
-                detail: JSON.stringify({
-                  approved: true,
-                  review_class: 'merge_gate',
-                  pr_head_sha: headSha,
-                  review_request_hop: 9,
-                  approved_by: 'alex',
-                }),
-              },
-            ],
-          };
-        }
-        if (sql.includes('harness_attempts')) return { rows: [] };
-        if (sql.includes('account_usage_cache')) return { rows: [] };
-        return { rows: [] };
-      },
-    };
-
-    const mockDeps = {
-      pool: mockPool,
-      execCmd: (cmd) => {
-        if (cmd.includes('gh pr view')) {
-          return JSON.stringify({
-            state: 'OPEN',
-            mergeStateStatus: 'CLEAN',
-            headRefOid: headSha,
-            statusCheckRollup: [{ state: 'SUCCESS' }],
-          });
-        }
-        if (cmd.includes('git ls-remote')) return '';
-        if (cmd.includes('docker ps') && cmd.includes('exited')) return '';
-        if (cmd.includes('docker ps')) return '';
-        return '';
-      },
-      fileExists: (path) => path.includes('sprint-prd.md'),
-      readFile: () => '# PRD content',
-    };
-
-    const observed = await collectGroundTruth(mockDeps, {
-      taskId: 'task-1',
-      runId: 'run-1',
+  test('T-17-f: diff-bound post_diff_risk 不匹配时同 SHA 批准仍 fail-closed', async () => {
+    const observed = await collectReviewGroundTruth({
+      reviewRequestHop: 9,
+      mutateApprovalRisk: (risk) => ({
+        ...risk,
+        bindings: {
+          ...risk.bindings,
+          diff_hash: `sha256:${'5'.repeat(64)}`,
+        },
+      }),
     });
 
-    expect(observed.reviewApproved).toBe(true);
+    expect(observed.reviewApproved).toBe(false);
   });
 });
