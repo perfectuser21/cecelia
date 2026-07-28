@@ -46,19 +46,16 @@ describe('buildRealDeps', () => {
   it('wires the central Credential Broker into the real Fleet Worker launcher', async () => {
     const attemptId = '33333333-3333-4333-8333-333333333333';
     const sharedSecret = 'run-test-fleet-secret-that-is-long-enough';
-    const credentialBroker = {
-      issue: vi.fn(async () => ({
-        contract_version: 'credential-envelope/v1',
-        credential_ref: '44444444-4444-4444-8444-444444444444',
-        attempt_id: attemptId,
-        account_id: 'team4',
-        machine_id: 'us-mac-m4',
-        issued_at: '2026-07-27T15:00:00.000Z',
-        expires_at: '2026-07-27T17:00:00.000Z',
-        payload_hash: `sha256:${'a'.repeat(64)}`,
-        payload: 'eyJ0b2tlbnMiOnsiYWNjZXNzX3Rva2VuIjoidGVzdCJ9fQ==',
-      })),
-    };
+    const tokenExpiry = Math.floor((Date.now() + 48 * 60 * 60 * 1000) / 1000);
+    const accessToken = `header.${Buffer.from(JSON.stringify({
+      exp: tokenExpiry,
+    })).toString('base64url')}.signature`;
+    const loadCredential = vi.fn(async () => JSON.stringify({
+      tokens: {
+        access_token: accessToken,
+        refresh_token: 'run-test-refresh-secret',
+      },
+    }));
     const fetchFn = vi.fn(async (_url, options) => {
       const request = JSON.parse(options.body);
       const jobId = 'run-test-fleet-job';
@@ -117,7 +114,7 @@ describe('buildRealDeps', () => {
         KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'http://brain.internal:5221',
       },
       attemptStore,
-      credentialBroker,
+      loadCredential,
       fetchFn,
       handlers: {},
       machineId: 'us-mac-m4',
@@ -169,14 +166,22 @@ describe('buildRealDeps', () => {
       },
     });
 
-    expect(credentialBroker.issue).toHaveBeenCalledWith(expect.objectContaining({
-      attemptId,
-      accountId: 'team4',
-      machineId: 'us-mac-m4',
-    }));
+    expect(loadCredential).toHaveBeenCalledWith('codex', 'team4');
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).credential_envelope)
-      .toMatchObject({ credential_ref: '44444444-4444-4444-8444-444444444444' });
+      .toMatchObject({
+        contract_version: 'provider-credential-envelope/v2',
+        attempt_id: attemptId,
+        run_id: '11111111-1111-4111-8111-111111111111',
+        provider: 'codex',
+        account_id: 'team4',
+        machine_id: 'us-mac-m4',
+        lease_owner: 'run-test:credential-broker',
+        lease_generation: 0,
+        credential_ref: expect.stringMatching(/^[a-f0-9-]{36}$/),
+        delivery_nonce: expect.stringMatching(/^[a-f0-9-]{36}$/),
+        signature: expect.stringMatching(/^hmac-sha256:[a-f0-9]{64}$/),
+      });
   });
 
   it('默认 registry 注册 Grok，可把 evaluator 派给不同厂商', async () => {

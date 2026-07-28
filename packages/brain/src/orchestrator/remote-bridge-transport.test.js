@@ -38,15 +38,21 @@ const GITHUB_MUTATION_POLICY = Object.freeze({
 });
 const NOW_MS = Date.parse('2026-07-27T12:00:00.000Z');
 const ENVELOPE = Object.freeze({
-  contract_version: 'credential-envelope/v1',
+  contract_version: 'provider-credential-envelope/v2',
   credential_ref: '33333333-3333-4333-8333-333333333333',
+  delivery_nonce: '44444444-4444-4444-8444-444444444444',
   attempt_id: ATTEMPT_ID,
+  run_id: RUN_ID,
+  provider: 'codex',
   account_id: 'team3',
   machine_id: MACHINE,
+  lease_owner: 'dispatcher-1',
+  lease_generation: 3,
   issued_at: '2026-07-27T12:00:00.000Z',
-  expires_at: '2026-07-27T14:00:00.000Z',
+  expires_at: '2026-07-27T12:01:00.000Z',
   payload_hash: `sha256:${'a'.repeat(64)}`,
   payload: 'eyJ0b2tlbnMiOnsiYWNjZXNzX3Rva2VuIjoic2VjcmV0In19',
+  signature: `hmac-sha256:${'b'.repeat(64)}`,
 });
 
 function jsonResponse(status, body) {
@@ -253,7 +259,7 @@ describe('remote Bridge launch', () => {
     expect(requestBody.provider_spec).not.toHaveProperty('environment');
   });
 
-  it('binds one Codex credential envelope to the selected attempt, account, machine, and deadline', async () => {
+  it('binds one provider credential envelope to the selected run, lease, account, machine, and deadline', async () => {
     const issue = vi.fn(async () => ENVELOPE);
     const transport = createTransport({ credentialBroker: { issue } });
 
@@ -262,8 +268,12 @@ describe('remote Bridge launch', () => {
     expect(issue).toHaveBeenCalledOnce();
     expect(issue).toHaveBeenCalledWith({
       attemptId: ATTEMPT_ID,
+      runId: RUN_ID,
+      provider: 'codex',
       accountId: 'team3',
       machineId: MACHINE,
+      leaseOwner: 'dispatcher-1',
+      leaseGeneration: 3,
       deadlineAt: '2026-07-27T13:00:00.000Z',
     });
   });
@@ -354,21 +364,75 @@ describe('remote Bridge launch', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('does not issue or send a Codex credential envelope for another provider', async () => {
-    const issue = vi.fn();
+  it.each([
+    ['claude', 'account2'],
+    ['grok', 'grok'],
+  ])('issues and sends a brokered credential envelope for %s', async (
+    provider,
+    account,
+  ) => {
+    const providerEnvelope = {
+      ...ENVELOPE,
+      provider,
+      account_id: account,
+    };
+    const issue = vi.fn(async () => providerEnvelope);
     const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
     const transport = createTransport({ fetchFn, credentialBroker: { issue } });
 
     await transport.launch(launchInput({
-      spec: { provider: 'claude', command: 'claude' },
-      target: { provider: 'claude', account: 'claude-team1' },
+      spec: { provider, command: provider },
+      target: { provider, account },
     }));
 
-    expect(issue).not.toHaveBeenCalled();
-    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).not.toHaveProperty(
-      'credential_envelope',
-    );
+    expect(issue).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: ATTEMPT_ID,
+      runId: RUN_ID,
+      provider,
+      accountId: account,
+      machineId: MACHINE,
+      leaseOwner: 'dispatcher-1',
+      leaseGeneration: 3,
+    }));
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).credential_envelope)
+      .toEqual(providerEnvelope);
   });
+
+  it.each(['codex', 'claude', 'grok'])(
+    'never issues or sends a %s credential for a frozen canary',
+    async (provider) => {
+      const issue = vi.fn();
+      const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+      const transport = createTransport({ fetchFn, credentialBroker: { issue } });
+
+      await transport.launch(launchInput({
+        bundle: {
+          role: 'generator',
+          result_channel: RESULT_CHANNEL,
+          inputs: {
+            task_id: TASK_ID,
+            worktree_path: '/var/empty/kernel-fleet-canary',
+          },
+        },
+        spec: {
+          provider,
+          command: provider,
+          workspace: { kind: 'disposable-canary-v1' },
+        },
+        target: {
+          provider,
+          account: provider === 'codex'
+            ? 'team1'
+            : provider === 'claude' ? 'account1' : 'grok',
+        },
+      }));
+
+      expect(issue).not.toHaveBeenCalled();
+      expect(JSON.parse(fetchFn.mock.calls[0][1].body)).not.toHaveProperty(
+        'credential_envelope',
+      );
+    },
+  );
 
   it('uses zero when lease generation is absent', async () => {
     const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));

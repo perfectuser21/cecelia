@@ -233,11 +233,10 @@ export async function buildRealDeps(overrides = {}) {
       const credentialBroker = overrides.credentialBroker
         ?? createCredentialBroker({
           controllerMachineId: machineId,
+          signingSecret: env.KERNEL_FLEET_BRIDGE_TOKEN,
           loadCredential: overrides.loadCredential
             ?? createFileCredentialLoader({
-              accountHomeResolver: (accountId) => (
-                resolveAccountHome('codex', accountId)
-              ),
+              accountHomeResolver: resolveAccountHome,
             }),
         });
       launcher = createProductionExecutionTransport({

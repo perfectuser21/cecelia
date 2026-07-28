@@ -9,6 +9,7 @@ const JSON_HEADERS = Object.freeze({
 });
 const CANARY_WORKSPACE_SENTINEL = '/var/empty/kernel-fleet-canary';
 const DISPOSABLE_CANARY_WORKSPACE_KIND = 'disposable-canary-v1';
+const PROVIDERS = new Set(['codex', 'claude', 'grok']);
 const WORKSPACE_SPEC_FIELDS = Object.freeze([
   'repo',
   'base_sha',
@@ -228,18 +229,18 @@ export function createRemoteBridgeTransport({
           role: bundle?.role,
         },
       );
-      const isCanary = bundle?.expected_output === 'harness-result/canary-v1'
-        && bundle?.role === 'reporter'
-        && bundle?.skill === null;
-
       const githubMutationPolicy = bundle?.role === 'generator'
         && bundle?.inputs?.github_mutation_policy
         ? parseGithubMutationPolicy(bundle?.inputs?.github_mutation_policy, {
             workspaceSpec: bundle?.inputs?.workspace_spec,
           })
         : null;
+      const workspace = disposableCanaryWorkspace(bundle, attempt.id);
       let credentialEnvelope;
-      if (target?.provider === 'codex' && !isCanary) {
+      if (!PROVIDERS.has(target?.provider)) {
+        throw new Error('remote_bridge_provider_invalid');
+      }
+      if (workspace === null) {
         if (typeof configuredCredentialBroker?.issue !== 'function') {
           throw new Error('remote_bridge_credential_broker_unavailable');
         }
@@ -260,8 +261,12 @@ export function createRemoteBridgeTransport({
         }
         credentialEnvelope = await configuredCredentialBroker.issue({
           attemptId: attempt.id,
+          runId: attempt.run_id,
+          provider: target.provider,
           accountId: target?.account,
           machineId: machine,
+          leaseOwner: attempt.lease_owner,
+          leaseGeneration,
           deadlineAt: new Date(deadlineMs).toISOString(),
         });
         if (
@@ -272,7 +277,6 @@ export function createRemoteBridgeTransport({
           throw new Error('remote_bridge_credential_envelope_invalid');
         }
       }
-      const workspace = disposableCanaryWorkspace(bundle, attempt.id);
       const workspaceSpec = copyWorkspaceSpec(bundle);
       return request(
         'launch',
