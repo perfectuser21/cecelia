@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 BRAIN_DIR="$ROOT_DIR/packages/brain"
 DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"
+DEPLOY_STARTED_AT="${KERNEL_RELEASE_STARTED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 # 蓝绿切换 + Bark 告警工具（顶层 source，保证 Docker/launchd 两模式都有 send_bark/bluegreen_swap）
 # shellcheck disable=SC1091
@@ -16,10 +17,30 @@ ENV_REGION="${ENV_REGION:-us}"
 
 # ── 部署状态文件：供 Brain 重启后感知 deploy 结果 ──────────────────────────
 DEPLOY_SUCCESS=false
+ROLLBACK_IMAGE_DIGEST=""
+ROLLBACK_IMAGE_TAG=""
+# shellcheck disable=SC2329 # invoked by EXIT trap
 _write_deploy_status() {
     if [[ "$DEPLOY_SUCCESS" == "true" ]]; then
-        printf '{"status":"success","version":"%s","finished_at":"%s"}' \
-            "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
+        local deployed_image_digest=""
+        local rollback_image_exists=false
+        local rollback_probe="fail"
+        local rollback_command=""
+        local rollback_version=""
+        deployed_image_digest=$(docker inspect --format '{{.Image}}' cecelia-node-brain 2>/dev/null || true)
+        if [[ -n "$ROLLBACK_IMAGE_DIGEST" ]] \
+          && docker image inspect "$ROLLBACK_IMAGE_DIGEST" >/dev/null 2>&1; then
+            rollback_image_exists=true
+            rollback_probe="pass"
+            rollback_version="${ROLLBACK_IMAGE_TAG#cecelia-brain:}"
+            rollback_command="BRAIN_VERSION=${rollback_version} docker compose -f docker-compose.yml up -d"
+        fi
+        printf '{"status":"success","version":"%s","release_run_id":"%s","merge_sha":"%s","release_authorization":"%s","deployed_image_digest":"%s","rollback_image_digest":"%s","rollback_image_reference":"%s","rollback_image_tag":"%s","rollback_image_exists":%s,"rollback_probe":"%s","rollback_command":"%s","started_at":"%s","finished_at":"%s"}' \
+            "$VERSION" "${KERNEL_RELEASE_RUN_ID:-}" "${KERNEL_RELEASE_MERGE_SHA:-}" \
+            "${KERNEL_RELEASE_AUTHORIZATION:-}" "$deployed_image_digest" \
+            "$ROLLBACK_IMAGE_DIGEST" "$ROLLBACK_IMAGE_DIGEST" "$ROLLBACK_IMAGE_TAG" "$rollback_image_exists" \
+            "$rollback_probe" "$rollback_command" "$DEPLOY_STARTED_AT" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
     else
         printf '{"status":"failed","error":"brain-deploy.sh exited before success","finished_at":"%s"}' \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
@@ -208,6 +229,14 @@ fi
 
 # 所有真实生产副作用必须消费 server-owned ReleaseRun intent；直接手工调用默认拒绝。
 bash "$SCRIPT_DIR/lib/release-run-guard.sh" production
+ROLLBACK_IMAGE_DIGEST=$(docker inspect --format '{{.Image}}' cecelia-node-brain 2>/dev/null || true)
+[[ "$ROLLBACK_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || { echo "[FAIL] current production image has no immutable rollback digest" >&2; exit 78; }
+docker image inspect "$ROLLBACK_IMAGE_DIGEST" >/dev/null 2>&1 \
+    || { echo "[FAIL] current production rollback image is unavailable" >&2; exit 78; }
+ROLLBACK_IMAGE_TAG="cecelia-brain:rollback-${ROLLBACK_IMAGE_DIGEST#sha256:}"
+ROLLBACK_IMAGE_TAG="${ROLLBACK_IMAGE_TAG:0:35}"
+docker tag "$ROLLBACK_IMAGE_DIGEST" "$ROLLBACK_IMAGE_TAG"
 
 # ── 部署模式检测：Docker vs launchd ─────────────────────────────────────────
 DEPLOY_MODE="docker"

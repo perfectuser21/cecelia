@@ -2994,6 +2994,7 @@ router.post('/deploy', async (req, res) => {
       KERNEL_RELEASE_MERGE_SHA: merge_sha,
       KERNEL_RELEASE_AUTHORIZATION: release_authorization,
       KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifact_versions ?? []),
+      KERNEL_RELEASE_STARTED_AT: deployState.started_at,
     },
   });
   await appendDispatchOutcome(pool, dispatchClaim.dispatch_claim_id, 'dispatched');
@@ -3023,6 +3024,20 @@ router.post('/deploy', async (req, res) => {
       resolveActionReceipt(receiptId, 'failed', { exit_code: code, signal, elapsed_ms: elapsed })
         .catch((e) => console.warn('[deploy-webhook] 回执核销失败:', e.message));
       console.error(`[deploy-webhook] ❌ 部署失败 code=${code} (${(elapsed / 1000).toFixed(1)}s)，log: ${logFile}`);
+    }
+    const scriptEvidence = readDeployStatusFile();
+    if (scriptEvidence?.status === 'success') {
+      for (const key of [
+        'deployed_image_digest',
+        'rollback_image_digest',
+        'rollback_image_reference',
+        'rollback_image_tag',
+        'rollback_image_exists',
+        'rollback_probe',
+        'rollback_command',
+      ]) {
+        if (scriptEvidence[key] !== undefined) deployState[key] = scriptEvidence[key];
+      }
     }
     writeDeployStatusFile({ ...deployState });
   });

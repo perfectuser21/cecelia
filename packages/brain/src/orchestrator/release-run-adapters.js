@@ -21,7 +21,6 @@ function exactStatus(status, request) {
 export function createReleaseRunAdapters({
   fetchFn = globalThis.fetch,
   gitExecFile = (args) => execFileSync('git', args, { encoding: 'utf8' }),
-  readBrainVersions = () => readFileSync('.brain-versions', 'utf8'),
   readDashboardRollback = () => readFileSync('.production-release', 'utf8'),
   brainUrl = process.env.BRAIN_URL ?? 'http://localhost:5221',
   stagingUrl = process.env.BRAIN_STAGING_URL ?? 'http://localhost:5222',
@@ -126,10 +125,21 @@ export function createReleaseRunAdapters({
     const anchors = [];
     const previousVersions = [];
     if (brain) {
-      const versions = readBrainVersions().trim().split('\n').filter(Boolean);
-      if (versions.at(-1) !== brain.version || versions.length < 2) return { status: 'fail' };
-      anchors.push(`brain:${brain.version}`);
-      previousVersions.push(`brain:${versions.at(-2)}`);
+      if (
+        !/^sha256:[0-9a-f]{64}$/.test(status.deployed_image_digest ?? '')
+        || !/^sha256:[0-9a-f]{64}$/.test(status.rollback_image_digest ?? '')
+        || status.rollback_image_reference !== status.rollback_image_digest
+        || !/^cecelia-brain:rollback-[0-9a-f]{12}$/.test(status.rollback_image_tag ?? '')
+        || status.rollback_image_exists !== true
+        || status.rollback_probe !== 'pass'
+        || typeof status.rollback_command !== 'string'
+        || !status.rollback_command.includes(
+          status.rollback_image_tag.replace('cecelia-brain:', ''),
+        )
+        || status.deployed_image_digest === status.rollback_image_digest
+      ) return { status: 'fail' };
+      anchors.push(`brain-image:${status.deployed_image_digest}`);
+      previousVersions.push(`brain-image:${status.rollback_image_digest}`);
     }
     if (dashboard) {
       const rollback = Object.fromEntries(
@@ -154,6 +164,12 @@ export function createReleaseRunAdapters({
       rollback_metadata: {
         anchor: anchors.join('+'),
         previous_version: previousVersions.join('+'),
+        ...(brain ? {
+          image_reference: status.rollback_image_reference,
+          image_tag: status.rollback_image_tag,
+          rollback_command: status.rollback_command,
+          probe: status.rollback_probe,
+        } : {}),
       },
     };
   };

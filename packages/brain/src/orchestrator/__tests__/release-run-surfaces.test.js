@@ -90,7 +90,7 @@ describe('legacy release surfaces fail closed', () => {
     const source = readFileSync(script, 'utf8');
     expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL');
     expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT');
-    expect(source).toMatch(/psql[^ \n]*[ \\\n]+"?\$[^"\n]*DATABASE_URL/i);
+    expect(source).toMatch(/psql "\$database_url"/);
     expect(source).toMatch(/git -C "\$deploy_root"/);
   });
 
@@ -115,21 +115,33 @@ describe('legacy release surfaces fail closed', () => {
     expect(exactHeadPosition).toBeGreaterThan(exactCheckoutPosition);
     expect(firstAuthorityPosition).toBeGreaterThan(exactHeadPosition);
     expect(source).toMatch(/source_head_sha/);
+    expect(source).toContain('gh api --method GET');
+    expect(source).toContain('validate-bootstrap-pr.mjs');
+    expect(source).toMatch(/"\$\{source_head_sha\}:\$\{source_ref\}"/);
+    expect(source).toMatch(/"refs\/heads\/main:\$\{main_ref\}"/);
     expect(source).toMatch(
-      /git -C "\$deploy_root" merge-base --is-ancestor "\$source_head_sha" "\$merge_sha"/,
+      /git -C "\$deploy_root" merge-base --is-ancestor "\$merge_sha" "\$main_ref"/,
     );
+    expect(source).not.toMatch(
+      /merge-base --is-ancestor "\$source_head_sha" "\$merge_sha"/,
+    );
+    expect(source).not.toContain('refs/pull/${pr_number}/merge');
   });
 
-  it('bootstrap owner approval binds repository, PR, source, merge, and actor', () => {
+  it('bootstrap owner approval uses an immutable trust root and binds every release axis', () => {
     const source = readFileSync(
       resolve(root, 'scripts/release-run-bootstrap.sh'),
       'utf8',
     );
-    const hmacPosition = source.indexOf('openssl dgst -sha256 -hmac');
-    expect(hmacPosition).toBeGreaterThan(-1);
+    const verifyPosition = source.indexOf('verify-bootstrap-approval.mjs');
+    expect(verifyPosition).toBeGreaterThan(-1);
+    expect(source).toContain('/etc/cecelia/kernel-release-bootstrap-owner-v1.pub');
+    expect(source).toMatch(/trust_mode.*0:444/);
+    expect(source).toMatch(/root-owned, non-writable, mode 0444/);
+    expect(source).toMatch(/caller-supplied owner secrets are forbidden/);
     const approvalContext = source.slice(
-      Math.max(0, source.lastIndexOf('expected_approval', hmacPosition) - 1_000),
-      hmacPosition + 250,
+      verifyPosition,
+      verifyPosition + 350,
     );
     for (const axis of [
       'repository',
@@ -138,8 +150,21 @@ describe('legacy release surfaces fail closed', () => {
       'merge_sha',
       'actor',
     ]) {
-      expect(approvalContext).toContain(`\${${axis}}`);
+      expect(approvalContext).toContain(`$${axis}`);
     }
+
+    const attacker = spawnSync('bash', [
+      resolve(root, 'scripts/release-run-bootstrap.sh'),
+    ], {
+      env: {
+        PATH: process.env.PATH,
+        KERNEL_RELEASE_BOOTSTRAP: '1',
+        KERNEL_RELEASE_BOOTSTRAP_OWNER_SECRET: 'attacker-owned-secret',
+      },
+      encoding: 'utf8',
+    });
+    expect(attacker.status).not.toBe(0);
+    expect(`${attacker.stdout}${attacker.stderr}`).toMatch(/caller-supplied owner secrets/i);
   });
 
   it('bootstrap executes staging before production and refuses a terminal replay', () => {
@@ -160,9 +185,9 @@ describe('legacy release surfaces fail closed', () => {
     const productionDeployPosition = source.indexOf('scripts/brain-deploy.sh');
     expect(stagingDeployPosition).toBeGreaterThan(-1);
     expect(productionDeployPosition).toBeGreaterThan(stagingDeployPosition);
-    expect(source).toMatch(
-      /production_verified[\s\S]{0,500}(?:terminal|already|forbid|permanent)[\s\S]{0,200}exit 78/i,
-    );
+    expect(source).toMatch(/state" != "production_verified"/);
+    expect(source).toMatch(/one-time bootstrap is terminal and permanently closed/);
+    expect(source).toMatch(/canonical migration 369-374 sequence failed/);
   });
 
   it('bootstrap guard claims a leased generation for the current stage', () => {
@@ -175,6 +200,8 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).toContain('kernel_release_bootstrap_effect_attempts');
     expect(source).toContain('generation');
     expect(source).toContain('lease_expires_at');
+    expect(source).toContain('verify-bootstrap-approval.mjs');
+    expect(source).toContain('approval_digest');
     expect(source).toMatch(/staging_intent/);
     expect(source).toMatch(/production_intent/);
     expect(source).not.toContain('kernel_release_bootstrap_consumptions');
@@ -185,16 +212,22 @@ describe('legacy release surfaces fail closed', () => {
       resolve(root, 'scripts/release-run-bootstrap.sh'),
       'utf8',
     );
-    expect(source).toContain('KERNEL_RELEASE_OWNER_APPROVED_SHA');
     expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_OWNER_SECRET');
-    expect(source).toMatch(/openssl dgst -sha256 -hmac/);
     expect(source).toContain('kernel_release_bootstrap_runs');
     expect(source).toContain('kernel_release_bootstrap_transitions');
     expect(source).toContain('kernel_release_bootstrap_effect_attempts');
     expect(source).toContain('kernel_release_bootstrap_effect_receipts');
-    expect(source).toMatch(/singleton BOOLEAN NOT NULL UNIQUE/);
-    expect(source).toMatch(/BEFORE UPDATE OR DELETE/g);
     expect(source).not.toContain('KERNEL_RELEASE_BOOTSTRAP_RECEIPT');
+
+    const migration = readFileSync(
+      resolve(root, 'packages/brain/migrations/374_kernel_release_runs.sql'),
+      'utf8',
+    );
+    expect(migration).toMatch(/singleton BOOLEAN NOT NULL UNIQUE/);
+    expect(migration.match(/BEFORE UPDATE OR DELETE/g)?.length).toBeGreaterThanOrEqual(10);
+    expect(migration).toMatch(/staging_passed requires confirmed staging effect receipt/);
+    expect(migration).toMatch(/production_verified requires confirmed production effect receipt/);
+    expect(migration).toMatch(/uq_kernel_release_bootstrap_attempt_confirmed/);
   });
 
   it('staging builds from an isolated exact-SHA worktree', () => {
@@ -203,5 +236,14 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).toContain('CECELIA_STAGING_EXACT_ROOT');
     expect(source).toMatch(/worktree remove --force/);
     expect(source).not.toContain('release-run-checkout.sh" staging');
+    expect(source).toMatch(
+      /KERNEL_RELEASE_MERGE_SHA[\s\S]+?bash "\$SCRIPT_DIR\/brain-build\.sh"/,
+    );
+
+    const build = readFileSync(resolve(root, 'scripts/brain-build.sh'), 'utf8');
+    expect(build).toContain('RELEASE_SHA="${KERNEL_RELEASE_MERGE_SHA:-}"');
+    expect(build).toMatch(/BUILD_REF="\$RELEASE_SHA"/);
+    expect(build).toMatch(/archive --format=tar "\$BUILD_REF"/);
+    expect(build).toMatch(/BUILD_SHA=.*rev-parse "\$BUILD_REF"/);
   });
 });

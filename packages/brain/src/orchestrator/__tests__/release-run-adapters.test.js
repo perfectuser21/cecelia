@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { createReleaseRunAdapters } from '../release-run-adapters.js';
 
 const sha = 'b'.repeat(40);
+const deployedImage = `sha256:${'d'.repeat(64)}`;
+const rollbackImage = `sha256:${'e'.repeat(64)}`;
+const rollbackTag = `cecelia-brain:rollback-${'e'.repeat(12)}`;
+const rollbackCommand = `BRAIN_VERSION=rollback-${'e'.repeat(12)} docker compose -f docker-compose.yml up -d`;
 const artifacts = [{ name: 'brain', version: '1.268.5', digest: `sha256:${'c'.repeat(64)}` }];
 const request = {
   release_run_id: '44444444-4444-4444-8444-444444444444',
@@ -57,13 +61,19 @@ describe('production ReleaseRun adapters', () => {
         release_run_id: request.release_run_id,
         merge_sha: sha,
         release_authorization: request.idempotency_key,
+        deployed_image_digest: deployedImage,
+        rollback_image_digest: rollbackImage,
+        rollback_image_reference: rollbackImage,
+        rollback_image_tag: rollbackTag,
+        rollback_image_exists: true,
+        rollback_probe: 'pass',
+        rollback_command: rollbackCommand,
       }))
       .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
       .mockResolvedValueOnce(response({ ok: true, queue: {} }));
     const adapters = createReleaseRunAdapters({
       fetchFn,
       brainUrl: 'http://brain',
-      readBrainVersions: () => '1.268.4\n1.268.5\n',
     });
     await expect(adapters.observeProduction(request)).resolves.toMatchObject({
       status: 'pass',
@@ -71,7 +81,35 @@ describe('production ReleaseRun adapters', () => {
       required_e2e: 'pass',
       merge_sha: sha,
       deployed_versions: artifacts,
-      rollback_metadata: { anchor: 'brain:1.268.5', previous_version: 'brain:1.268.4' },
+      rollback_metadata: {
+        anchor: `brain-image:${deployedImage}`,
+        previous_version: `brain-image:${rollbackImage}`,
+        image_reference: rollbackImage,
+        image_tag: rollbackTag,
+        rollback_command: rollbackCommand,
+        probe: 'pass',
+      },
     });
+  });
+
+  it('rejects production evidence without a distinct recoverable image', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(response({
+        status: 'success',
+        release_run_id: request.release_run_id,
+        merge_sha: sha,
+        release_authorization: request.idempotency_key,
+        deployed_image_digest: deployedImage,
+        rollback_image_digest: deployedImage,
+        rollback_image_reference: deployedImage,
+        rollback_image_tag: `cecelia-brain:rollback-${'d'.repeat(12)}`,
+        rollback_image_exists: true,
+        rollback_probe: 'pass',
+        rollback_command: `BRAIN_VERSION=rollback-${'d'.repeat(12)} docker compose -f docker-compose.yml up -d`,
+      }))
+      .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
+      .mockResolvedValueOnce(response({ ok: true, queue: {} }));
+    const adapters = createReleaseRunAdapters({ fetchFn, brainUrl: 'http://brain' });
+    await expect(adapters.observeProduction(request)).resolves.toEqual({ status: 'fail' });
   });
 });

@@ -42,6 +42,7 @@ if [[ "$DRY_RUN" != true && -z "${CECELIA_STAGING_EXACT_ROOT:-}" ]]; then
     bash "$SCRIPT_DIR/lib/release-run-guard.sh" staging
     EXACT_SHA="${KERNEL_RELEASE_MERGE_SHA:?KERNEL_RELEASE_MERGE_SHA required}"
     EXACT_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cecelia-staging-release.XXXXXX")
+    # shellcheck disable=SC2329 # invoked by EXIT trap
     cleanup_exact_root() {
         git -C "$ROOT_DIR" worktree remove --force "$EXACT_ROOT" >/dev/null 2>&1 || true
     }
@@ -103,10 +104,12 @@ if [[ ! -f "$ROOT_DIR/.env.staging" ]]; then
     fi
 fi
 
-# ── 检查镜像是否存在（复用 production 同版本镜像，不重新 build）──────────────
+# ── ReleaseRun staging 从 exact SHA 构建；旧调用仅复用既有镜像 ──────────────
 echo "[1/5] 检查 cecelia-brain:${VERSION} 镜像..."
 if [[ "$DRY_RUN" == true ]]; then
     echo "  [dry-run] docker image inspect cecelia-brain:${VERSION}"
+elif [[ -n "${KERNEL_RELEASE_MERGE_SHA:-}" ]]; then
+    bash "$SCRIPT_DIR/brain-build.sh"
 elif ! docker image inspect "cecelia-brain:${VERSION}" > /dev/null 2>&1; then
     echo "[FAIL] 镜像 cecelia-brain:${VERSION} 不存在，请先运行 bash scripts/brain-build.sh"
     exit 1

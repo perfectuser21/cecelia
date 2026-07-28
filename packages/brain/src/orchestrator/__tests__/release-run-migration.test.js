@@ -103,6 +103,8 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/previous_state = 'staging_passed' THEN 'production_intent'/i);
     expect(sql).toMatch(/previous_state = 'production_intent' THEN 'production_verified'/i);
     expect(sql).toMatch(/UNIQUE \(bootstrap_run_id, state\)/i);
+    expect(sql).toMatch(/staging_passed requires confirmed staging effect receipt/i);
+    expect(sql).toMatch(/production_verified requires confirmed production effect receipt/i);
   });
 
   it('persists expiring generations and durable receipts for crash recovery', () => {
@@ -114,6 +116,11 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/UNIQUE \(bootstrap_run_id, effect_kind, generation\)/i);
     expect(sql).toMatch(
       /CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_effect_receipts[\s\S]+?effect_attempt_id[\s\S]+?REFERENCES kernel_release_bootstrap_effect_attempts\(id\)/i,
+    );
+    expect(sql).not.toMatch(/effect_attempt_id BIGINT NOT NULL UNIQUE/i);
+    expect(sql).toMatch(/uq_kernel_release_bootstrap_attempt_confirmed/i);
+    expect(sql).toMatch(
+      /ON kernel_release_bootstrap_effect_receipts \(effect_attempt_id\)[\s\S]+?WHERE receipt_status = 'confirmed'/i,
     );
   });
 

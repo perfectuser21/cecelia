@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
+import { runMigrations } from '../../migrate.js';
 import { createPostgresReleaseRunStore } from '../../orchestrator/release-run-store.js';
 
 const mergeMigration = readFileSync(
@@ -104,6 +105,74 @@ afterAll(async () => {
 });
 
 describe('migration 374 ReleaseRun ledger on PostgreSQL', () => {
+  it('uses the canonical runner to upgrade an N-1 schema from 368 through 374', async () => {
+    const upgradeSchema = `kernel_release_upgrade_${randomUUID().replaceAll('-', '')}`;
+    const quotedUpgradeSchema = `"${upgradeSchema}"`;
+    await client.query(`CREATE SCHEMA ${quotedUpgradeSchema}`);
+    const upgradePool = new pg.Pool(testDatabaseUrl
+      ? {
+        connectionString: testDatabaseUrl,
+        options: `-c search_path=${upgradeSchema},public`,
+        max: 1,
+      }
+      : {
+        ...DB_DEFAULTS,
+        options: `-c search_path=${upgradeSchema},public`,
+        max: 1,
+      });
+    try {
+      const seed = await upgradePool.connect();
+      try {
+        await seed.query(`
+          CREATE TABLE schema_version (
+            version VARCHAR(10) PRIMARY KEY,
+            description TEXT,
+            applied_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          CREATE TABLE tasks (id UUID PRIMARY KEY);
+          CREATE TABLE initiative_runs (id UUID PRIMARY KEY);
+          CREATE TABLE harness_attempts (
+            id UUID PRIMARY KEY,
+            execution_transport TEXT
+          );
+        `);
+        const migrationNames = readdirSync(
+          new URL('../../../migrations/', import.meta.url),
+        ).filter((name) => /^\d+_.+\.sql$/.test(name));
+        const through368 = migrationNames
+          .map((name) => name.split('_')[0])
+          .filter((version) => Number(version) <= 368);
+        for (const version of through368) {
+          await seed.query(
+            `INSERT INTO schema_version (version, description)
+             VALUES ($1, 'N-1 fixture') ON CONFLICT DO NOTHING`,
+            [version],
+          );
+        }
+      } finally {
+        seed.release();
+      }
+
+      await expect(runMigrations(upgradePool)).resolves.toEqual([
+        '369', '370', '371', '372', '374',
+      ]);
+      const proof = await upgradePool.query(`
+        SELECT
+          to_regclass('kernel_merge_effect_intents') IS NOT NULL AS merge_ready,
+          to_regclass('kernel_release_bootstrap_runs') IS NOT NULL AS bootstrap_ready,
+          (SELECT max(version::integer) FROM schema_version) AS max_version
+      `);
+      expect(proof.rows[0]).toEqual({
+        merge_ready: true,
+        bootstrap_ready: true,
+        max_version: 374,
+      });
+    } finally {
+      await upgradePool.end();
+      await client.query(`DROP SCHEMA IF EXISTS ${quotedUpgradeSchema} CASCADE`);
+    }
+  });
+
   it('binds the confirmed merge receipt and enforces the exact six states', async () => {
     const merge = await store.loadMergeAuthority(client, { runId, taskId });
     release = await store.createRelease(client, {
@@ -193,19 +262,69 @@ describe('migration 374 ReleaseRun ledger on PostgreSQL', () => {
       [bootstrapRunId],
     )).rejects.toMatchObject({ code: 'P0001' });
 
-    for (const state of [
-      'staging_intent',
-      'staging_passed',
-      'production_intent',
-      'production_verified',
-    ]) {
-      await client.query(
-        `INSERT INTO kernel_release_bootstrap_transitions
-           (bootstrap_run_id, state, evidence)
-         VALUES ($1, $2, $3::jsonb)`,
-        [bootstrapRunId, state, JSON.stringify({ merge_sha: mergeSha })],
-      );
-    }
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions
+         (bootstrap_run_id, state, evidence)
+       VALUES ($1, 'staging_intent', $2::jsonb)`,
+      [bootstrapRunId, JSON.stringify({ merge_sha: mergeSha })],
+    );
+    await expect(client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions
+         (bootstrap_run_id, state)
+       VALUES ($1, 'staging_passed')`,
+      [bootstrapRunId],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    const stagingAttemptId = (await client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_attempts
+         (bootstrap_run_id, effect_kind, generation, lease_expires_at)
+       VALUES ($1, 'staging', 1, clock_timestamp() + interval '5 minutes')
+       RETURNING id`,
+      [bootstrapRunId],
+    )).rows[0].id;
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_receipts
+         (effect_attempt_id, receipt_status)
+       VALUES ($1, 'confirmed')`,
+      [stagingAttemptId],
+    );
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions
+         (bootstrap_run_id, state, evidence)
+       VALUES ($1, 'staging_passed', $2::jsonb)`,
+      [bootstrapRunId, JSON.stringify({ merge_sha: mergeSha })],
+    );
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions
+         (bootstrap_run_id, state, evidence)
+       VALUES ($1, 'production_intent', $2::jsonb)`,
+      [bootstrapRunId, JSON.stringify({ merge_sha: mergeSha })],
+    );
+    await expect(client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions
+         (bootstrap_run_id, state)
+       VALUES ($1, 'production_verified')`,
+      [bootstrapRunId],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    const productionAttemptId = (await client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_attempts
+         (bootstrap_run_id, effect_kind, generation, lease_expires_at)
+       VALUES ($1, 'production', 1, clock_timestamp() - interval '1 second')
+       RETURNING id`,
+      [bootstrapRunId],
+    )).rows[0].id;
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_receipts
+         (effect_attempt_id, receipt_status, evidence)
+       VALUES ($1, 'observed_unconfirmed', '{"reason":"controller crashed"}'),
+              ($1, 'confirmed', '{"reason":"late exact observation"}')`,
+      [productionAttemptId],
+    );
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions
+         (bootstrap_run_id, state, evidence)
+       VALUES ($1, 'production_verified', $2::jsonb)`,
+      [bootstrapRunId, JSON.stringify({ merge_sha: mergeSha })],
+    );
     const states = await client.query(
       `SELECT state FROM kernel_release_bootstrap_transitions
         WHERE bootstrap_run_id = $1 ORDER BY append_seq`,
@@ -246,8 +365,8 @@ describe('migration 374 ReleaseRun ledger on PostgreSQL', () => {
     const bootstrapRunId = bootstrapRun.rows[0].id;
     const firstAttemptId = (await client.query(
       `INSERT INTO kernel_release_bootstrap_effect_attempts
-         (bootstrap_run_id, effect_kind, generation, idempotency_key, lease_expires_at)
-       VALUES ($1, 'staging', 1, $2, clock_timestamp() - interval '1 second')
+       (bootstrap_run_id, effect_kind, generation, idempotency_key, lease_expires_at)
+       VALUES ($1, 'staging', 2, $2, clock_timestamp() - interval '1 second')
        RETURNING id`,
       [bootstrapRunId, randomUUID()],
     )).rows[0].id;
@@ -263,17 +382,17 @@ describe('migration 374 ReleaseRun ledger on PostgreSQL', () => {
 
     await expect(client.query(
       `INSERT INTO kernel_release_bootstrap_effect_attempts
-         (bootstrap_run_id, effect_kind, generation, idempotency_key, lease_expires_at)
-       VALUES ($1, 'staging', 1, $2, clock_timestamp() + interval '5 minutes')`,
+       (bootstrap_run_id, effect_kind, generation, idempotency_key, lease_expires_at)
+       VALUES ($1, 'staging', 2, $2, clock_timestamp() + interval '5 minutes')`,
       [bootstrapRunId, randomUUID()],
     )).rejects.toMatchObject({ code: '23505' });
     const replay = await client.query(
       `INSERT INTO kernel_release_bootstrap_effect_attempts
-         (bootstrap_run_id, effect_kind, generation, idempotency_key, lease_expires_at)
-       VALUES ($1, 'staging', 2, $2, clock_timestamp() + interval '5 minutes')
+       (bootstrap_run_id, effect_kind, generation, idempotency_key, lease_expires_at)
+       VALUES ($1, 'staging', 3, $2, clock_timestamp() + interval '5 minutes')
        RETURNING generation`,
       [bootstrapRunId, randomUUID()],
     );
-    expect(replay.rows[0].generation).toBe(2);
+    expect(replay.rows[0].generation).toBe(3);
   });
 });
