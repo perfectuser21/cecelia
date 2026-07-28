@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.107
+**版本**: 1.267.108
+
+## Fleet OrbStack user-domain startup hotfix
+
+- baseline 现在通过原始 rollout 管理用户的 launchd 域执行 OrbStack
+  `start`、`status` 和升级前 `stop`，不再从 root 域调用用户态 VM。
+- 30 秒有界状态核对、失败 drain 和回滚语义保持不变；Fleet Worker 仍是
+  `_cecelia` system LaunchDaemon，不依赖 GUI LaunchAgent。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.107`。
 
 ## Fleet OrbStack eventual-start hotfix
 

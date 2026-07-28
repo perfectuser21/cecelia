@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.107
+**Brain 版本**: 1.267.108
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.108 — Fleet OrbStack user-domain startup hotfix
+
+- baseline 通过原始 rollout 管理用户的 launchd 域启动、停止并检查 OrbStack，
+  不再从 root 域调用用户态 VM；异步启动仍使用 30 秒有界状态核对。
+- Fleet Worker 继续作为 `_cecelia` 的 system LaunchDaemon 运行；不引入 GUI
+  LaunchAgent，不改变 Runner pin、Provider 凭据或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.107`；节点保持 drain 后再回退。
 
 ## Brain 1.267.107 — Fleet OrbStack eventual-start hotfix
 
