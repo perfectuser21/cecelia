@@ -3,6 +3,7 @@
  * buildRealDeps/main 组装真实 pg/execSync，不在单测覆盖（--dry-run 冒烟见 scripts/smoke/orchestrator-smoke.sh）。
  */
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { signMachineAttestation } from '../machine-attestation.js';
 import { buildDefaultHandlers, buildRealDeps, parseArgs } from '../run.js';
 
@@ -400,6 +401,16 @@ describe('buildRealDeps', () => {
 });
 
 describe('buildDefaultHandlers merge authority', () => {
+  it('assembles the default server-owned nightly quality observer with an injection seam', () => {
+    const source = readFileSync(new URL('../run.js', import.meta.url), 'utf8');
+    expect(source).toMatch(
+      /buildDefaultHandlers\(\{[\s\S]*?observeReleaseQuality,[\s\S]*?\}\)/,
+    );
+    expect(source).toMatch(
+      /observeReleaseQuality:\s*observeReleaseQuality\s*\?\?\s*defaultReleaseAdapters\.observeReleaseQuality/,
+    );
+  });
+
   it('wires merge_pr and report only to their receipted effects', async () => {
     const mergeEffect = vi.fn(async () => ({ status: 'DONE', detail: 'merge confirmed' }));
     const releaseEffect = vi.fn(async () => ({

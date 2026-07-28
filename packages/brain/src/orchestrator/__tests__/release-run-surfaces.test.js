@@ -16,6 +16,16 @@ function workflow(name) {
 }
 
 describe('legacy release surfaces fail closed', () => {
+  it('has no workflow-owned nightly production bypass', () => {
+    for (const name of production) {
+      expect(workflow(name)).not.toMatch(/BYPASS_NIGHTLY_GATE|bypass_nightly_gate/);
+    }
+    expect(() => readFileSync(
+      resolve(root, 'scripts/ci/check-nightly-green.sh'),
+      'utf8',
+    )).toThrow();
+  });
+
   it.each(production)('%s requires exact ReleaseRun production authority', (name) => {
     const source = workflow(name);
     expect(source).toMatch(/release_run_id:/);
