@@ -1,0 +1,777 @@
+import { createHash } from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
+
+import {
+  createPostgresGrantExecutionAuthority,
+} from '../kernel-equivalence-grant-execution-authority.js';
+import {
+  sha256Canonical,
+} from '../kernel-equivalence-receipts.js';
+
+const ACTOR_INSTANCE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const CASE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const GRANT_ID = '11111111-1111-4111-8111-111111111111';
+const NONCE = '22222222-2222-4222-8222-222222222222';
+const RUN_ID = '33333333-3333-4333-8333-333333333333';
+const ATTEMPT_ID = '44444444-4444-4444-8444-444444444444';
+const GRANT_REF = `kernel-equivalence-grant:${GRANT_ID}`;
+
+function grantFixture() {
+  return {
+    schema_version: 'kernel-equivalence-execution-grant/v1',
+    grant_id: GRANT_ID,
+    nonce: NONCE,
+    cell_id: 'KERNEL-P0-01-BRANCH-PROTECTION::codex::normal',
+    run_id: RUN_ID,
+    attempt_id: ATTEMPT_ID,
+    expires_at: '2099-07-29T12:00:00.000Z',
+    signature: 'signed-grant',
+  };
+}
+
+function clientFixture(query) {
+  return {
+    query: vi.fn(query),
+    release: vi.fn(),
+  };
+}
+
+function expectedLockKey() {
+  return createHash('sha256')
+    .update(GRANT_ID, 'utf8')
+    .digest()
+    .readBigInt64BE(0)
+    .toString();
+}
+
+function activeRow(grantSha256) {
+  return {
+    grant_id: GRANT_ID,
+    grant_ref: GRANT_REF,
+    grant_sha256: grantSha256,
+    cell_id: grantFixture().cell_id,
+    expires_at: grantFixture().expires_at,
+    active: true,
+    grant: grantFixture(),
+  };
+}
+
+function anchorRow(grantSha256) {
+  const { active: _active, grant: _grant, ...anchor } =
+    activeRow(grantSha256);
+  return anchor;
+}
+
+function eventRow(state, generation = 1) {
+  return {
+    grant_id: GRANT_ID,
+    generation,
+    state,
+    actor_instance_id: ACTOR_INSTANCE_ID,
+    actor_kind: state === 'published' ? 'controller' : 'runtime',
+    occurred_at: '2026-07-29T07:00:00.000Z',
+  };
+}
+
+describe('PostgreSQL grant execution authority', () => {
+  it('registers an exact pending signed grant on one dedicated transaction client', async () => {
+    const grant = grantFixture();
+    const grantSha256 = sha256Canonical(grant);
+    const dbAnchor = {
+      ...anchorRow(grantSha256),
+      expires_at: new Date(grant.expires_at),
+    };
+    const client = clientFixture(async (sql, parameters) => {
+      const call = client.query.mock.calls.length;
+      if (call === 1) {
+        expect(sql).toBe('BEGIN');
+        expect(parameters).toBeUndefined();
+        return { rows: [] };
+      }
+      if (call === 2) {
+        expect(sql).toMatch(/kernel_equivalence_register_grant_authority/);
+        expect(parameters).toEqual([
+          CASE_ID,
+          JSON.stringify(grant),
+          grantSha256,
+        ]);
+        return {
+          rowCount: 1,
+          rows: [dbAnchor],
+        };
+      }
+      expect(call).toBe(3);
+      expect(sql).toBe('COMMIT');
+      expect(parameters).toBeUndefined();
+      return { rows: [] };
+    });
+    const pool = { connect: vi.fn(async () => client) };
+    const authority = createPostgresGrantExecutionAuthority({
+      pool,
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    expect(Object.isFrozen(authority)).toBe(true);
+    expect(Object.keys(authority).sort()).toEqual([
+      'consumeNonceIfActive',
+      'invokeWhileActive',
+      'markGrantPublished',
+      'registerPendingGrant',
+      'resolveActiveGrant',
+      'revokeGrant',
+    ]);
+    await expect(authority.registerPendingGrant({
+      case_id: CASE_ID,
+      grant,
+      grant_sha256: grantSha256,
+    })).resolves.toEqual({
+      ...dbAnchor,
+    });
+    expect(pool.connect).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('publishes and resolves only the exact UUID/SHA/cell DB authority', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const cellId = grantFixture().cell_id;
+    const client = clientFixture(async (sql, parameters) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      if (/kernel_equivalence_append_grant_event/.test(sql)) {
+        expect(parameters).toEqual([
+          GRANT_ID,
+          grantSha256,
+          'published',
+          ACTOR_INSTANCE_ID,
+          JSON.stringify({}),
+        ]);
+        return {
+          rowCount: 1,
+          rows: [eventRow('published')],
+        };
+      }
+      expect(sql).toMatch(/kernel_equivalence_resolve_active_grant/);
+      expect(parameters).toEqual([GRANT_ID, grantSha256, cellId]);
+      return { rowCount: 1, rows: [activeRow(grantSha256)] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.markGrantPublished({
+      grant_id: GRANT_ID,
+      grant_sha256: grantSha256,
+    })).resolves.toEqual({
+      ...eventRow('published'),
+    });
+    await expect(authority.resolveActiveGrant({
+      grant_id: GRANT_ID,
+      grant_sha256: grantSha256,
+      cell_id: cellId,
+    })).resolves.toEqual(activeRow(grantSha256));
+    expect(client.release).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects malformed signed-grant identity before registration connects', async () => {
+    const grant = {
+      ...grantFixture(),
+      attempt_id: 'not-a-uuid',
+    };
+    const pool = { connect: vi.fn() };
+    const authority = createPostgresGrantExecutionAuthority({
+      pool,
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.registerPendingGrant({
+      case_id: CASE_ID,
+      grant,
+      grant_sha256: sha256Canonical(grant),
+    })).rejects.toMatchObject({ code: 'grant_registration_invalid' });
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on malformed identity and mismatched DB revalidation', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const cellId = grantFixture().cell_id;
+    const invalidPool = { connect: vi.fn() };
+    const invalidAuthority = createPostgresGrantExecutionAuthority({
+      pool: invalidPool,
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(invalidAuthority.resolveActiveGrant({
+      grant_id: GRANT_ID,
+      grant_sha256: grantSha256.toUpperCase(),
+      cell_id: cellId,
+    })).rejects.toMatchObject({ code: 'grant_authority_request_invalid' });
+    expect(invalidPool.connect).not.toHaveBeenCalled();
+
+    const client = clientFixture(async (sql) => {
+      if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [] };
+      return {
+        rowCount: 1,
+        rows: [{
+          ...activeRow(grantSha256),
+          expires_at: '2098-07-29T12:00:00.000Z',
+        }],
+      };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.resolveActiveGrant({
+      grant_id: GRANT_ID,
+      grant_sha256: grantSha256,
+      cell_id: cellId,
+    })).rejects.toMatchObject({ code: 'grant_authority_revalidation_failed' });
+    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      expect.stringMatching(/kernel_equivalence_resolve_active_grant/),
+      'ROLLBACK',
+    ]);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('consumes a nonce only while holding the per-grant shared session lock', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const cellId = grantFixture().cell_id;
+    const order = [];
+    const client = clientFixture(async (sql, parameters) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') {
+        order.push(sql.toLowerCase());
+        return { rows: [] };
+      }
+      if (/set_config\('statement_timeout'/.test(sql)) {
+        order.push('timeout');
+        expect(parameters).toEqual(['1500ms']);
+        return { rows: [] };
+      }
+      if (/pg_advisory_lock_shared/.test(sql)) {
+        order.push('lock_shared');
+        expect(parameters).toEqual([expectedLockKey()]);
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_resolve_active_grant/.test(sql)) {
+        order.push('resolve');
+        return { rowCount: 1, rows: [activeRow(grantSha256)] };
+      }
+      if (/INSERT INTO kernel_equivalence_execution_nonces/.test(sql)) {
+        order.push('nonce');
+        expect(sql).toMatch(/clock_timestamp\(\)[\s\S]+ON CONFLICT DO NOTHING/);
+        expect(parameters.slice(0, 6)).toEqual([
+          GRANT_ID,
+          NONCE,
+          cellId,
+          RUN_ID,
+          ATTEMPT_ID,
+          grantFixture().expires_at,
+        ]);
+        expect(parameters[6]).toEqual(expect.any(Number));
+        return {
+          rowCount: 1,
+          rows: [{ grant_id: GRANT_ID }],
+        };
+      }
+      expect(sql).toMatch(/pg_advisory_unlock_shared/);
+      order.push('unlock_shared');
+      expect(parameters).toEqual([expectedLockKey()]);
+      return { rowCount: 1, rows: [{ unlocked: true }] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.consumeNonceIfActive({
+      grant: grantFixture(),
+      timeoutMs: 1_500,
+    })).resolves.toEqual({
+      consumed: true,
+    });
+    expect(order).toEqual([
+      'begin',
+      'timeout',
+      'lock_shared',
+      'resolve',
+      'nonce',
+      'commit',
+      'unlock_shared',
+    ]);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('preserves the nonce consumer contract when an exact nonce is already used', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const client = clientFixture(async (sql) => {
+      if (
+        sql === 'BEGIN'
+        || sql === 'COMMIT'
+        || /set_config\('statement_timeout'/.test(sql)
+        || /pg_advisory_lock_shared/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_resolve_active_grant/.test(sql)) {
+        return { rowCount: 1, rows: [activeRow(grantSha256)] };
+      }
+      if (/kernel_equivalence_execution_nonces/.test(sql)) {
+        return { rowCount: 0, rows: [] };
+      }
+      return { rowCount: 1, rows: [{ unlocked: true }] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.consumeNonceIfActive({
+      grant: grantFixture(),
+    })).resolves.toEqual({ consumed: false });
+    expect(client.query.mock.calls.some(
+      ([sql]) => /kernel_equivalence_append_grant_event/.test(sql),
+    )).toBe(false);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a pre-aborted nonce request before opening a DB session', async () => {
+    const pool = { connect: vi.fn() };
+    const authority = createPostgresGrantExecutionAuthority({
+      pool,
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(authority.consumeNonceIfActive({
+      grant: grantFixture(),
+      signal: controller.signal,
+    })).rejects.toMatchObject({
+      code: 'grant_nonce_consumption_aborted',
+    });
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
+  it('rolls back and unlocks when nonce cancellation arrives after revalidation', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const controller = new AbortController();
+    const order = [];
+    const client = clientFixture(async (sql) => {
+      if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+        order.push(sql.toLowerCase());
+        return { rows: [] };
+      }
+      if (
+        /set_config\('statement_timeout'/.test(sql)
+        || /pg_advisory_lock_shared/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_resolve_active_grant/.test(sql)) {
+        order.push('resolve');
+        controller.abort();
+        return { rowCount: 1, rows: [activeRow(grantSha256)] };
+      }
+      if (/kernel_equivalence_execution_nonces/.test(sql)) {
+        order.push('nonce');
+        return { rowCount: 1, rows: [{ grant_id: GRANT_ID }] };
+      }
+      order.push('unlock');
+      return { rowCount: 1, rows: [{ unlocked: true }] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.consumeNonceIfActive({
+      grant: grantFixture(),
+      signal: controller.signal,
+    })).rejects.toMatchObject({
+      code: 'grant_nonce_consumption_aborted',
+    });
+    expect(order).toEqual(['begin', 'resolve', 'rollback', 'unlock']);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('commits durable intent before invoke and records completion before shared unlock', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const cellId = grantFixture().cell_id;
+    const order = [];
+    let transaction = 0;
+    const client = clientFixture(async (sql, parameters) => {
+      if (sql === 'BEGIN') {
+        transaction += 1;
+        order.push(`begin:${transaction}`);
+        return { rows: [] };
+      }
+      if (sql === 'COMMIT') {
+        order.push(`commit:${transaction}`);
+        return { rows: [] };
+      }
+      if (/set_config\('statement_timeout'/.test(sql)) {
+        order.push('timeout');
+        return { rows: [] };
+      }
+      if (/pg_advisory_lock_shared/.test(sql)) {
+        order.push('lock_shared');
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_resolve_active_grant/.test(sql)) {
+        order.push('resolve');
+        return { rowCount: 1, rows: [activeRow(grantSha256)] };
+      }
+      if (/kernel_equivalence_append_grant_event/.test(sql)) {
+        const state = parameters[2];
+        order.push(state);
+        if (state !== 'execution_intent') {
+          expect(JSON.parse(parameters[4])).toEqual({
+            intent_generation: 3,
+          });
+        }
+        return {
+          rowCount: 1,
+          rows: [eventRow(
+            state,
+            state === 'execution_intent' ? 3 : 4,
+          )],
+        };
+      }
+      expect(sql).toMatch(/pg_advisory_unlock_shared/);
+      order.push('unlock_shared');
+      return { rowCount: 1, rows: [{ unlocked: true }] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+    const invoke = vi.fn(async ({
+      grant,
+      intent_generation: intentGeneration,
+    }) => {
+      order.push('invoke');
+      expect(grant).toEqual(grantFixture());
+      expect(intentGeneration).toBe(3);
+      return { receipt_id: 'effect-receipt' };
+    });
+
+    await expect(authority.invokeWhileActive({
+      grant: grantFixture(),
+      invoke,
+      timeoutMs: 1_500,
+    })).resolves.toEqual({
+      grant_ref: GRANT_REF,
+      disposition: 'effect_completed',
+      result: { receipt_id: 'effect-receipt' },
+    });
+    expect(order).toEqual([
+      'begin:1',
+      'timeout',
+      'lock_shared',
+      'resolve',
+      'execution_intent',
+      'commit:1',
+      'invoke',
+      'begin:2',
+      'timeout',
+      'effect_completed',
+      'commit:2',
+      'unlock_shared',
+    ]);
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('records aborted_before_effect after durable intent without invoking', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const cellId = grantFixture().cell_id;
+    const states = [];
+    const client = clientFixture(async (sql, parameters) => {
+      if (
+        sql === 'BEGIN'
+        || sql === 'COMMIT'
+        || /set_config\('statement_timeout'/.test(sql)
+        || /pg_advisory_lock_shared/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_resolve_active_grant/.test(sql)) {
+        return { rowCount: 1, rows: [activeRow(grantSha256)] };
+      }
+      if (/kernel_equivalence_append_grant_event/.test(sql)) {
+        states.push(parameters[2]);
+        return {
+          rowCount: 1,
+          rows: [eventRow(parameters[2], states.length + 2)],
+        };
+      }
+      return { rowCount: 1, rows: [{ unlocked: true }] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+    const controller = new AbortController();
+    controller.abort();
+    const invoke = vi.fn();
+
+    await expect(authority.invokeWhileActive({
+      grant: grantFixture(),
+      invoke,
+      signal: controller.signal,
+    })).resolves.toEqual({
+      grant_ref: GRANT_REF,
+      disposition: 'aborted_before_effect',
+    });
+    expect(states).toEqual(['execution_intent', 'aborted_before_effect']);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('records effect_unknown and never reports safe_no_effect when invoke throws', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const cellId = grantFixture().cell_id;
+    const states = [];
+    const client = clientFixture(async (sql, parameters) => {
+      if (
+        sql === 'BEGIN'
+        || sql === 'COMMIT'
+        || /set_config\('statement_timeout'/.test(sql)
+        || /pg_advisory_lock_shared/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_resolve_active_grant/.test(sql)) {
+        return { rowCount: 1, rows: [activeRow(grantSha256)] };
+      }
+      if (/kernel_equivalence_append_grant_event/.test(sql)) {
+        states.push(parameters[2]);
+        return {
+          rowCount: 1,
+          rows: [eventRow(parameters[2], states.length + 2)],
+        };
+      }
+      return { rowCount: 1, rows: [{ unlocked: true }] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.invokeWhileActive({
+      grant: grantFixture(),
+      invoke: async () => {
+        throw new Error('transport ended after dispatch');
+      },
+    })).rejects.toMatchObject({
+      code: 'grant_effect_unknown',
+      disposition: 'effect_unknown',
+      safe_no_effect: false,
+      effect_possible: true,
+    });
+    expect(states).toEqual(['execution_intent', 'effect_unknown']);
+    expect(client.query.mock.calls.at(-1)[0]).toMatch(
+      /pg_advisory_unlock_shared/,
+    );
+  });
+
+  it('records aborted_before_effect only for an explicit pre-effect callback failure', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const states = [];
+    const client = clientFixture(async (sql, parameters) => {
+      if (
+        sql === 'BEGIN'
+        || sql === 'COMMIT'
+        || /set_config\('statement_timeout'/.test(sql)
+        || /pg_advisory_lock_shared/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_resolve_active_grant/.test(sql)) {
+        return { rowCount: 1, rows: [activeRow(grantSha256)] };
+      }
+      if (/kernel_equivalence_append_grant_event/.test(sql)) {
+        states.push(parameters[2]);
+        return {
+          rowCount: 1,
+          rows: [eventRow(parameters[2], states.length + 2)],
+        };
+      }
+      return { rowCount: 1, rows: [{ unlocked: true }] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.invokeWhileActive({
+      grant: grantFixture(),
+      invoke: async () => {
+        throw Object.assign(new Error('dispatch rejected locally'), {
+          effectStarted: false,
+        });
+      },
+    })).rejects.toMatchObject({
+      code: 'grant_effect_aborted_before_effect',
+      disposition: 'aborted_before_effect',
+      safe_no_effect: true,
+      effect_possible: false,
+    });
+    expect(states).toEqual([
+      'execution_intent',
+      'aborted_before_effect',
+    ]);
+  });
+
+  it('destroys an intent COMMIT-uncertain client without invoking the effect', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const commitFailure = Object.assign(
+      new Error('connection ended during COMMIT'),
+      { code: '08006' },
+    );
+    const client = clientFixture(async (sql, parameters) => {
+      if (
+        sql === 'BEGIN'
+        || /set_config\('statement_timeout'/.test(sql)
+        || /pg_advisory_lock_shared/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_resolve_active_grant/.test(sql)) {
+        return { rowCount: 1, rows: [activeRow(grantSha256)] };
+      }
+      if (/kernel_equivalence_append_grant_event/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [eventRow(parameters[2], 3)],
+        };
+      }
+      if (sql === 'COMMIT') throw commitFailure;
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+    const invoke = vi.fn();
+
+    await expect(authority.invokeWhileActive({
+      grant: grantFixture(),
+      invoke,
+    })).rejects.toMatchObject({
+      disposition: 'effect_unknown',
+      safe_no_effect: false,
+      effect_possible: true,
+    });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(client.release).toHaveBeenCalledWith(true);
+    expect(client.query.mock.calls.some(
+      ([sql]) => /pg_advisory_unlock_shared/.test(sql),
+    )).toBe(false);
+  });
+
+  it('takes the exclusive session lock before DB-derived revocation disposition', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const order = [];
+    const client = clientFixture(async (sql, parameters) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') {
+        order.push(sql.toLowerCase());
+        return { rows: [] };
+      }
+      if (/set_config\('statement_timeout'/.test(sql)) {
+        order.push('timeout');
+        return { rows: [] };
+      }
+      if (/pg_advisory_lock\(/.test(sql)) {
+        order.push('lock_exclusive');
+        expect(parameters).toEqual([expectedLockKey()]);
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_revoke_grant/.test(sql)) {
+        order.push('revoke');
+        expect(parameters).toEqual([
+          GRANT_ID,
+          grantSha256,
+          ACTOR_INSTANCE_ID,
+          'controller_shutdown',
+        ]);
+        expect(parameters).not.toContain(true);
+        expect(parameters).not.toContain(false);
+        return {
+          rowCount: 1,
+          rows: [{
+            safe_no_effect: false,
+            effect_possible: true,
+            disposition: 'revoked_effect_possible',
+          }],
+        };
+      }
+      expect(sql).toMatch(/pg_advisory_unlock\(/);
+      order.push('unlock_exclusive');
+      return { rowCount: 1, rows: [{ unlocked: true }] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    const result = await authority.revokeGrant({
+      grant_id: GRANT_ID,
+      grant_sha256: grantSha256,
+      reason: 'controller_shutdown',
+    });
+
+    expect(result).toEqual({
+      grant_ref: GRANT_REF,
+      revoked: true,
+      safe_no_effect: false,
+      effect_possible: true,
+      disposition: 'revoked_effect_possible',
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(order).toEqual([
+      'begin',
+      'timeout',
+      'lock_exclusive',
+      'revoke',
+      'commit',
+      'unlock_exclusive',
+    ]);
+  });
+
+  it('destroys an uncertain lock client and reports effect_possible, never safe', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const timeout = Object.assign(new Error('lock timeout'), { code: '57014' });
+    const client = clientFixture(async (sql) => {
+      if (
+        sql === 'BEGIN'
+        || sql === 'ROLLBACK'
+        || /set_config\('statement_timeout'/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/pg_advisory_lock\(/.test(sql)) throw timeout;
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.revokeGrant({
+      grant_id: GRANT_ID,
+      grant_sha256: grantSha256,
+      reason: 'timeout_test',
+    })).rejects.toMatchObject({
+      code: 'grant_lock_outcome_unknown',
+      disposition: 'effect_unknown',
+      safe_no_effect: false,
+      effect_possible: true,
+    });
+    expect(client.release).toHaveBeenCalledWith(true);
+    expect(client.query.mock.calls.some(
+      ([sql]) => /pg_advisory_unlock/.test(sql),
+    )).toBe(false);
+  });
+});
