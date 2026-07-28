@@ -62,7 +62,7 @@ function grantInput(cell) {
     run_id: FIXTURE_RUN_ID,
     attempt_id: FIXTURE_ATTEMPT_ID,
     artifact_sha: FIXTURE_SHA,
-    brain_version: '1.268.8',
+    brain_version: '1.268.7',
     engine_version: '19.7.1',
     resource_id: `eq-${FIXTURE_ATTEMPT_ID}`,
     resource_ref:
