@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   INTERVENTION_ACTIONS,
   readDockerLogs,
+  readKernelAttemptEvidence,
   parseInterventionAction,
   handleIntervention,
 } from '../harness-intervention-handler.js';
@@ -62,6 +63,36 @@ describe('readDockerLogs', () => {
   it('execFile 报错时 reject', async () => {
     const fakeExec = vi.fn((cmd, args, opts, cb) => cb(new Error('no such container')));
     await expect(readDockerLogs('missing', { execFile: fakeExec })).rejects.toThrow('no such container');
+  });
+});
+
+describe('readKernelAttemptEvidence', () => {
+  it('只按 run_id 读取 harness_attempts 的 result/receipt/telemetry 白名单', async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [{
+        id: 'attempt-18',
+        hop: 18,
+        phase: 'contract',
+        role: 'reviewer',
+        status: 'running',
+        heartbeat_at: '2026-07-28T04:00:00.000Z',
+        result: { decision: { outcome: 'REVISION' }, token: 'must-not-leak' },
+        result_receipt_id: null,
+      }],
+    });
+
+    const evidence = await readKernelAttemptEvidence('run-kernel-1', { pool: { query } });
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][0]).toContain('FROM harness_attempts');
+    expect(query.mock.calls[0][0]).toContain('result');
+    expect(query.mock.calls[0][0]).toContain('heartbeat_at');
+    expect(query.mock.calls[0][0]).toContain('result_receipt_id');
+    expect(query.mock.calls[0][1]).toEqual(['run-kernel-1']);
+    expect(evidence).toContain('"source":"harness_attempts"');
+    expect(evidence).toContain('"role":"reviewer"');
+    expect(evidence).toContain('"token":"[REDACTED]"');
+    expect(evidence).not.toContain('must-not-leak');
   });
 });
 
@@ -139,6 +170,89 @@ describe('handleIntervention', () => {
   it('task 为空也不抛错', async () => {
     const res = await handleIntervention(null, {});
     expect(res.action).toBe('alert');
+  });
+
+  it('kernel-v1 只读 Attempt evidence，绝不调用 docker logs', async () => {
+    const readLogs = vi.fn(async () => 'wrong execution body');
+    const readKernelEvidence = vi.fn(async () => (
+      '{"source":"harness_attempts","attempts":[{"role":"reviewer","status":"running"}]}'
+    ));
+    const llm = vi.fn(async (_kind, prompt) => {
+      expect(prompt).toContain('Kernel Attempt evidence');
+      expect(prompt).toContain('harness_attempts');
+      expect(prompt).not.toContain('Docker 日志');
+      return { text: 'ACTION: retry lease still fresh' };
+    });
+    const task = {
+      id: 'kernel-intervention',
+      title: 'Kernel reviewer stuck',
+      payload: {
+        harness_runtime: 'kernel-v1',
+        run_id: 'run-kernel-1',
+        container_id: 'misleading-relay-container',
+      },
+    };
+
+    const res = await handleIntervention(task, {
+      readLogs,
+      readKernelEvidence,
+      callLLM: llm,
+    });
+
+    expect(res).toMatchObject({ action: 'retry', analyzed: true, evidence_source: 'harness_attempts' });
+    expect(readKernelEvidence).toHaveBeenCalledWith('run-kernel-1', expect.any(Object));
+    expect(readLogs).not.toHaveBeenCalled();
+  });
+
+  it('kernel-v1 缺 run_id 时 fail-closed，且不回落 docker', async () => {
+    const readLogs = vi.fn(async () => 'relay logs');
+    const res = await handleIntervention({
+      id: 'kernel-no-run',
+      payload: { harness_runtime: 'kernel-v1', container_id: 'relay-1' },
+    }, {
+      readLogs,
+      callLLM: async () => ({ text: 'ACTION: alert must not be reached' }),
+    });
+
+    expect(res).toMatchObject({
+      action: 'alert',
+      analyzed: false,
+      reason: 'kernel_run_id_missing',
+      evidence_source: 'harness_attempts',
+    });
+    expect(readLogs).not.toHaveBeenCalled();
+  });
+
+  it('kernel Attempt evidence 读取失败时 alert，不回落 docker', async () => {
+    const readLogs = vi.fn(async () => 'relay logs');
+    const res = await handleIntervention({
+      id: 'kernel-db-failure',
+      payload: { harness_runtime: 'kernel-v1', run_id: 'run-kernel-2', container_id: 'relay-2' },
+    }, {
+      readLogs,
+      readKernelEvidence: async () => { throw new Error('postgres down'); },
+      callLLM: async () => ({ text: 'ACTION: alert must not be reached' }),
+    });
+
+    expect(res.action).toBe('alert');
+    expect(res.analyzed).toBe(false);
+    expect(res.reason).toContain('kernel_evidence_failed');
+    expect(res.evidence_source).toBe('harness_attempts');
+    expect(readLogs).not.toHaveBeenCalled();
+  });
+
+  it('旧 relay 保持 Docker logs 路径并标记 evidence_source', async () => {
+    const readLogs = vi.fn(async () => 'legacy relay output');
+    const readKernelEvidence = vi.fn();
+    const res = await handleIntervention(baseTask, {
+      readLogs,
+      readKernelEvidence,
+      callLLM: async () => ({ text: 'ACTION: alert inspect relay' }),
+    });
+
+    expect(res.evidence_source).toBe('docker_logs');
+    expect(readLogs).toHaveBeenCalledWith('c1', expect.any(Object));
+    expect(readKernelEvidence).not.toHaveBeenCalled();
   });
 });
 

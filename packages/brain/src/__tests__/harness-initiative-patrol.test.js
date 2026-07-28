@@ -309,6 +309,11 @@ describe('Kernel v1 GAN 轮次卡死检测（harness_attempts）', () => {
     const payloadJson = insertCall[1].find((p) => typeof p === 'string' && p.includes('initiative_id'));
     expect(JSON.parse(payloadJson).kind).toBe('gan_round');
     expect(JSON.parse(payloadJson).initiative_id).toBe('init-k1');
+    expect(JSON.parse(payloadJson).run_id).toBe('run-k1');
+    expect(JSON.parse(payloadJson).harness_runtime).toBe('kernel-v1');
+    expect(mockQuery.mock.calls.some(
+      ([sql]) => typeof sql === 'string' && sql.includes('walking_skeleton_thread_lookup')
+    )).toBe(false);
   });
 
   it('kernel run 的 GAN 活性只从 harness_attempts 推导，不查 initiative_run_events', async () => {
