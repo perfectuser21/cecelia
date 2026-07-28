@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 
 import pool from '../db.js';
@@ -106,8 +107,16 @@ export function createHarnessCommanderRouter({ pool: databasePool }) {
     throw new Error('createHarnessCommanderRouter requires a PostgreSQL pool');
   }
   const router = Router();
+  const commanderReadRateLimit = rateLimit({
+    windowMs: 60_000,
+    limit: 120,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    identifier: 'harness-commander-observability',
+    message: { error: 'commander_read_rate_limit_exceeded' },
+  });
 
-  router.get('/runs/:runId/commander', async (req, res) => {
+  router.get('/runs/:runId/commander', commanderReadRateLimit, async (req, res) => {
     const runId = parseRunId(req.params.runId);
     if (!runId) return res.status(400).json({ error: 'run_id_invalid' });
     try {
@@ -127,7 +136,7 @@ export function createHarnessCommanderRouter({ pool: databasePool }) {
     }
   });
 
-  router.get('/runs/:runId/events', async (req, res) => {
+  router.get('/runs/:runId/events', commanderReadRateLimit, async (req, res) => {
     const runId = parseRunId(req.params.runId);
     const page = parsePage(req.query);
     if (!runId || !page) return res.status(400).json({ error: 'commander_query_invalid' });
@@ -145,7 +154,7 @@ export function createHarnessCommanderRouter({ pool: databasePool }) {
     }
   });
 
-  router.get('/runs/:runId/actors/:actorKey/inbox', async (req, res) => {
+  router.get('/runs/:runId/actors/:actorKey/inbox', commanderReadRateLimit, async (req, res) => {
     const runId = parseRunId(req.params.runId);
     const page = parsePage(req.query);
     const actorKey = req.params.actorKey;

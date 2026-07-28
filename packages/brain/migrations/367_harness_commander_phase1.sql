@@ -100,6 +100,13 @@ CREATE TABLE IF NOT EXISTS harness_actor_cursors (
 CREATE OR REPLACE FUNCTION harness_run_events_append_only()
 RETURNS trigger AS $$
 BEGIN
+  -- A direct audit delete is forbidden while its authoritative Run exists.
+  -- Deleting the authoritative Run itself must still be able to cascade-clean
+  -- its rebuildable projection, otherwise normal Run lifecycle cleanup breaks.
+  IF TG_OP = 'DELETE'
+     AND NOT EXISTS (SELECT 1 FROM initiative_runs WHERE id = OLD.run_id) THEN
+    RETURN OLD;
+  END IF;
   RAISE EXCEPTION 'harness_run_events is append-only (% blocked)', TG_OP;
 END;
 $$ LANGUAGE plpgsql;
@@ -112,6 +119,10 @@ CREATE TRIGGER trg_harness_run_events_append_only
 CREATE OR REPLACE FUNCTION harness_actor_messages_append_only()
 RETURNS trigger AS $$
 BEGIN
+  IF TG_OP = 'DELETE'
+     AND NOT EXISTS (SELECT 1 FROM initiative_runs WHERE id = OLD.run_id) THEN
+    RETURN OLD;
+  END IF;
   RAISE EXCEPTION 'harness_actor_messages is append-only (% blocked)', TG_OP;
 END;
 $$ LANGUAGE plpgsql;
