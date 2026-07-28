@@ -107,7 +107,7 @@ export function resolveProviderAccountHome(provider, account) {
   throw new Error(`invalid ${provider} account: ${value}`);
 }
 
-function buildInputs(spec, ctx, attemptMetadata) {
+function buildInputs(action, spec, ctx, attemptMetadata) {
   const { observed } = ctx;
   const task = observed.task;
   const payload = asObject(task.payload);
@@ -151,6 +151,16 @@ function buildInputs(spec, ctx, attemptMetadata) {
     common.contract_branch = observed.contract?.row?.branch
       ?? observed.contract?.row?.propose_branch
       ?? null;
+    common.contract_sha = observed.proposeBranchSha
+      ?? observed.contract?.row?.contract_sha
+      ?? observed.contract?.row?.sha
+      ?? null;
+  }
+  if (action === 'spawn:generator-fix') {
+    if (!observed.pr) throw new Error('generator_fix_pr_authority_required');
+    common.pull_request = observed.pr;
+    common.pr_branch = observed.pr.head_ref ?? null;
+    common.pr_head_sha = observed.pr.head_sha ?? null;
   }
   if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.pull_request = observed.pr ?? null;
@@ -174,7 +184,7 @@ function buildBundle(
   attemptMetadata,
   { deferWorkspaceValidation = false } = {},
 ) {
-  const inputs = buildInputs(spec, ctx, attemptMetadata);
+  const inputs = buildInputs(action, spec, ctx, attemptMetadata);
   const bundle = {
     contract_version: '1.0',
     run_id: ctx.runId,

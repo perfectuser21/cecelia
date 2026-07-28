@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import { parseWorkspaceSpec } from './workspace-spec.js';
 import {
   parseCommanderBundle,
@@ -109,6 +110,7 @@ const branchSchema = z.string().min(1).max(255).regex(
   /^(?![./])(?!.*(?:\.\.|\/\/|@\{|[~^:?*\\\s]))(?!.*[./]$)[A-Za-z0-9._/-]+$/,
 );
 const boundedTextSchema = z.string().max(32768);
+const failedStepSchema = z.string().max(8192);
 const webUrlSchema = z.string().min(1).max(2048).refine((value) => {
   try {
     const url = new URL(value);
@@ -152,6 +154,14 @@ const cascadeAssertionSchema = z.object({
   assertion_ref: z.string().max(8192),
   ran: z.boolean(),
   result: z.enum(['pass', 'fail', 'skip']),
+}).strict();
+const pullRequestSchema = z.object({
+  type: z.literal('pull_request'),
+  url: webUrlSchema,
+  number: z.number().int().positive(),
+  head_ref: branchSchema,
+  head_sha: gitShaSchema,
+  state: z.literal('OPEN'),
 }).strict();
 
 const plannerRoleResultSchema = z.object({
@@ -200,14 +210,14 @@ const reviewerRoleResultSchema = z.object({
   claimed: z.object({
     verdict: z.enum(['APPROVED', 'REVISION']),
     rubric_scores: rubricScoresSchema,
-    judgments_written: z.number().int().nonnegative(),
+    judgments_written: z.number().int().min(0).max(10000),
     feedback: boundedTextSchema,
   }).strict(),
   verified: z.object({
     contract_sha: gitShaSchema,
     verdict: z.enum(['APPROVED', 'REVISION']),
     rubric_scores: rubricScoresSchema,
-    judgments_written: z.number().int().nonnegative(),
+    judgments_written: z.number().int().min(0).max(10000),
   }).strict(),
 }).strict();
 
@@ -232,14 +242,7 @@ const generatorRoleResultSchema = z.object({
   raw_sha256: rawSha256Schema,
   claimed: generatorClaimSchema,
   verified: z.object({
-    pull_request: z.object({
-      type: z.literal('pull_request'),
-      url: webUrlSchema,
-      number: z.number().int().positive(),
-      head_ref: branchSchema,
-      head_sha: gitShaSchema,
-      state: z.literal('OPEN'),
-    }).strict(),
+    pull_request: pullRequestSchema,
   }).strict(),
 }).strict();
 
@@ -250,7 +253,7 @@ const evaluatorRoleResultSchema = z.object({
     verdict: z.enum(['PASS', 'FAIL']),
     task_id: z.string().min(1).max(128),
     attempt_id: z.string().uuid(),
-    failed_step: boundedTextSchema.nullable().optional(),
+    failed_step: failedStepSchema.nullable().optional(),
     log_excerpt: boundedTextSchema.nullable().optional(),
     behavior_tests: z.array(behaviorTestSchema).max(256).optional(),
     unverifiable: z.array(z.object({
@@ -265,7 +268,8 @@ const evaluatorRoleResultSchema = z.object({
     segment_eval: z.string().min(1).max(128).optional(),
   }).strict(),
   verified: z.object({
-    pr_head_sha: gitShaSchema,
+    contract_sha: gitShaSchema,
+    pull_request: pullRequestSchema,
     behavior_tests: z.array(behaviorTestSchema).max(256),
   }).strict(),
 }).strict();
@@ -282,11 +286,11 @@ const reporterRoleResultSchema = z.object({
     concerns: boundedTextSchema,
   }).strict(),
   verified: z.object({
-    pull_request_url: webUrlSchema,
+    pull_request: pullRequestSchema,
     report: artifactDigestSchema,
     learning: artifactDigestSchema,
     screenshots: z.array(artifactDigestSchema).max(256),
-    learnings_inserted: z.number().int().nonnegative(),
+    learnings_inserted: z.number().int().min(0).max(100000),
   }).strict(),
 }).strict();
 
@@ -300,6 +304,10 @@ function stableJson(value) {
 
 function sameJson(left, right) {
   return stableJson(left) === stableJson(right);
+}
+
+export function computeRoleResultRawSha256(claimed) {
+  return createHash('sha256').update(stableJson(claimed)).digest('hex');
 }
 
 function parityIssue(context, message, path = []) {
@@ -319,6 +327,9 @@ const roleResultSchema = z.discriminatedUnion('kind', [
   reporterRoleResultSchema,
 ]).superRefine((value, context) => {
   const { claimed, verified } = value;
+  if (value.raw_sha256 !== computeRoleResultRawSha256(claimed)) {
+    parityIssue(context, 'role_result claimed raw_sha256 mismatch', ['raw_sha256']);
+  }
   if (value.kind === 'planner') {
     if (claimed.status !== claimed.verdict) {
       parityIssue(context, 'planner status/verdict parity mismatch', ['claimed', 'status']);
@@ -432,8 +443,12 @@ const roleResultSchema = z.discriminatedUnion('kind', [
       }
     }
   } else if (value.kind === 'reporter') {
-    if (claimed.pr_url !== verified.pull_request_url) {
-      parityIssue(context, 'reporter PR URL parity mismatch', ['verified', 'pull_request_url']);
+    if (claimed.pr_url !== verified.pull_request.url) {
+      parityIssue(context, 'reporter PR URL parity mismatch', [
+        'verified',
+        'pull_request',
+        'url',
+      ]);
     }
     if (claimed.report_path !== verified.report.path) {
       parityIssue(context, 'reporter path parity mismatch', ['verified', 'report', 'path']);
@@ -448,14 +463,17 @@ const harnessResultSchema = z.object({
   contract_version: z.literal(RESULT_CONTRACT_VERSION),
   attempt_id: z.string().uuid(),
   status: z.enum(EXECUTOR_STATUSES),
-  summary: z.string(),
+  summary: z.string().refine(
+    (value) => Buffer.byteLength(value) <= 8192,
+    'summary exceeds byte limit',
+  ),
   artifacts: z.array(z.unknown()).default([]),
   checks: z.array(z.unknown()).default([]),
   decision: decisionSchema.nullable(),
   error: z.unknown().nullable(),
   provider_metadata: z.object({
-    provider: z.string().min(1),
-    session_id: z.string().min(1).nullable().optional(),
+    provider: z.string().min(1).max(64),
+    session_id: z.string().min(1).max(512).nullable().optional(),
   }).passthrough(),
   role_result: roleResultSchema.optional(),
 });
@@ -533,13 +551,18 @@ function expectedRoleEnvelope(roleResult) {
       status: unverifiable.length > 0 ? 'completed_with_concerns' : 'completed',
       artifacts: [{
         type: 'evaluation_target',
-        head_sha: verified.pr_head_sha,
+        url: verified.pull_request.url,
+        number: verified.pull_request.number,
+        head_ref: verified.pull_request.head_ref,
+        head_sha: verified.pull_request.head_sha,
+        contract_sha: verified.contract_sha,
       }],
       checks: verified.behavior_tests,
       decision: {
         outcome: claimed.verdict,
         reason: claimed.feedback ?? claimed.log_excerpt ?? claimed.failed_step ?? '',
-        pr_head_sha: verified.pr_head_sha,
+        pr_head_sha: verified.pull_request.head_sha,
+        contract_sha: verified.contract_sha,
         unverifiable,
       },
     };
@@ -549,6 +572,7 @@ function expectedRoleEnvelope(roleResult) {
       ? 'completed_with_concerns'
       : 'completed',
     artifacts: [
+      verified.pull_request,
       { type: 'harness_report', ...verified.report },
       { type: 'learning', ...verified.learning },
       ...verified.screenshots.map((screenshot) => ({
@@ -573,6 +597,70 @@ function assertOuterRoleResultParity(parsed, authority) {
   if (authority?.attemptId && authority.attemptId !== parsed.attempt_id) {
     throw new Error('role_result authority attempt_id mismatch');
   }
+  const assertPullRequestAuthority = (verifiedPullRequest, {
+    required,
+    workspaceHead = false,
+  } = {}) => {
+    const expected = authority?.pullRequest ?? {};
+    const presentEntries = Object.entries(expected).filter(([, value]) => value != null);
+    if (required && presentEntries.length === 0 && !authority?.workspaceExpectedHeadSha) {
+      throw new Error(`role_result ${roleResult.kind} PR authority is required`);
+    }
+    for (const [key, expectedValue] of presentEntries) {
+      const normalizedExpected = key === 'state'
+        ? String(expectedValue).toUpperCase()
+        : expectedValue;
+      if (verifiedPullRequest[key] !== normalizedExpected) {
+        throw new Error(`role_result ${roleResult.kind} PR ${key} authority mismatch`);
+      }
+    }
+    if (
+      workspaceHead
+      && authority?.workspaceExpectedHeadSha
+      && verifiedPullRequest.head_sha !== authority.workspaceExpectedHeadSha
+    ) {
+      throw new Error(`role_result ${roleResult.kind} workspace head authority mismatch`);
+    }
+  };
+  if (roleResult.kind === 'planner') {
+    if (!authority?.sprintDir) {
+      throw new Error('role_result planner sprint authority is required');
+    }
+    if (roleResult.claimed.sprint_dir !== authority.sprintDir) {
+      throw new Error('role_result planner sprint authority mismatch');
+    }
+  }
+  if (roleResult.kind === 'proposer') {
+    if (!authority?.proposerBranch || !authority?.sprintDir) {
+      throw new Error('role_result proposer branch/sprint authority is required');
+    }
+    if (roleResult.verified.propose_branch !== authority.proposerBranch) {
+      throw new Error('role_result proposer branch authority mismatch');
+    }
+    if (!roleResult.claimed.task_plan_path.startsWith(`${authority.sprintDir}/`)) {
+      throw new Error('role_result proposer sprint authority mismatch');
+    }
+    if (
+      authority.workspaceExpectedHeadSha
+      && roleResult.verified.head_sha !== authority.workspaceExpectedHeadSha
+    ) {
+      throw new Error('role_result proposer workspace head authority mismatch');
+    }
+  }
+  if (roleResult.kind === 'reviewer') {
+    if (!authority?.contractSha) {
+      throw new Error('role_result reviewer contract authority is required');
+    }
+    if (roleResult.verified.contract_sha !== authority.contractSha) {
+      throw new Error('role_result reviewer contract_sha authority mismatch');
+    }
+    if (
+      authority.workspaceExpectedHeadSha
+      && roleResult.verified.contract_sha !== authority.workspaceExpectedHeadSha
+    ) {
+      throw new Error('role_result reviewer workspace head authority mismatch');
+    }
+  }
   if (roleResult.kind === 'evaluator') {
     if (!authority?.taskId) {
       throw new Error('role_result evaluator task authority is required');
@@ -583,6 +671,22 @@ function assertOuterRoleResultParity(parsed, authority) {
     if (roleResult.claimed.attempt_id !== parsed.attempt_id) {
       throw new Error('role_result evaluator attempt_id parity mismatch');
     }
+    if (!authority?.contractSha) {
+      throw new Error('role_result evaluator contract authority is required');
+    }
+    if (roleResult.verified.contract_sha !== authority.contractSha) {
+      throw new Error('role_result evaluator contract_sha authority mismatch');
+    }
+    assertPullRequestAuthority(roleResult.verified.pull_request, {
+      required: true,
+      workspaceHead: true,
+    });
+  }
+  if (roleResult.kind === 'generator') {
+    assertPullRequestAuthority(roleResult.verified.pull_request, {
+      required: authority?.attemptKind === 'fix',
+      workspaceHead: authority?.attemptKind === 'fix',
+    });
   }
   if (roleResult.kind === 'reporter') {
     if (!authority?.taskId) {
@@ -591,6 +695,13 @@ function assertOuterRoleResultParity(parsed, authority) {
     if (authority.taskId !== roleResult.claimed.task_id) {
       throw new Error('role_result reporter task_id authority mismatch');
     }
+    if (!authority?.sprintDir) {
+      throw new Error('role_result reporter sprint authority is required');
+    }
+    if (!roleResult.claimed.report_path.startsWith(`${authority.sprintDir}/`)) {
+      throw new Error('role_result reporter sprint authority mismatch');
+    }
+    assertPullRequestAuthority(roleResult.verified.pull_request, { required: true });
   }
 
   const expected = expectedRoleEnvelope(roleResult);

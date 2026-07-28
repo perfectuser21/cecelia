@@ -270,6 +270,22 @@ function validateArtifactDigest(value, path) {
   return value;
 }
 
+function validatePullRequest(value, path) {
+  exactObject(
+    value,
+    ['type', 'url', 'number', 'head_ref', 'head_sha', 'state'],
+    [],
+    path,
+  );
+  if (value.type !== 'pull_request') invalid(`${path}.type is invalid`);
+  webUrl(value.url, `${path}.url`);
+  integer(value.number, `${path}.number`, { min: 1 });
+  branch(value.head_ref, `${path}.head_ref`);
+  gitSha(value.head_sha, `${path}.head_sha`);
+  if (value.state !== 'OPEN') invalid(`${path}.state must be OPEN`);
+  return value;
+}
+
 function validateBehaviorTest(value, path) {
   exactObject(
     value,
@@ -486,20 +502,7 @@ function validateGenerator(raw, verified) {
   if (raw.verdict === 'FAILED') string(raw.reason, 'rawEnvelope.reason', { max: 32768 });
 
   exactObject(verified, ['pull_request'], [], 'verifierEnvelope');
-  exactObject(
-    verified.pull_request,
-    ['type', 'url', 'number', 'head_ref', 'head_sha', 'state'],
-    [],
-    'verifierEnvelope.pull_request',
-  );
-  if (verified.pull_request.type !== 'pull_request') {
-    invalid('verifierEnvelope.pull_request.type is invalid');
-  }
-  webUrl(verified.pull_request.url, 'verifierEnvelope.pull_request.url');
-  integer(verified.pull_request.number, 'verifierEnvelope.pull_request.number', { min: 1 });
-  branch(verified.pull_request.head_ref, 'verifierEnvelope.pull_request.head_ref');
-  gitSha(verified.pull_request.head_sha, 'verifierEnvelope.pull_request.head_sha');
-  if (verified.pull_request.state !== 'OPEN') invalid('verifierEnvelope.pull_request.state must be OPEN');
+  validatePullRequest(verified.pull_request, 'verifierEnvelope.pull_request');
   if (verified.pull_request.url !== raw.pr_url) invalid('pr_url mismatch');
   return {
     status: raw.verdict === 'FAILED' ? 'completed_with_concerns' : 'completed',
@@ -583,8 +586,14 @@ function validateEvaluator(raw, verified, binding) {
     string(item.reason, `rawEnvelope.unverifiable[${index}].reason`, { max: 8192 });
   });
 
-  exactObject(verified, ['pr_head_sha', 'behavior_tests'], [], 'verifierEnvelope');
-  gitSha(verified.pr_head_sha, 'verifierEnvelope.pr_head_sha');
+  exactObject(
+    verified,
+    ['contract_sha', 'pull_request', 'behavior_tests'],
+    [],
+    'verifierEnvelope',
+  );
+  gitSha(verified.contract_sha, 'verifierEnvelope.contract_sha');
+  validatePullRequest(verified.pull_request, 'verifierEnvelope.pull_request');
   validateBehaviorTests(verified.behavior_tests, 'verifierEnvelope.behavior_tests');
   sameValue(verified.behavior_tests, claimedTests, 'behavior_tests');
   if (raw.verdict === 'PASS') {
@@ -597,13 +606,18 @@ function validateEvaluator(raw, verified, binding) {
     status: unverifiable.length > 0 ? 'completed_with_concerns' : 'completed',
     artifacts: [{
       type: 'evaluation_target',
-      head_sha: verified.pr_head_sha,
+      url: verified.pull_request.url,
+      number: verified.pull_request.number,
+      head_ref: verified.pull_request.head_ref,
+      head_sha: verified.pull_request.head_sha,
+      contract_sha: verified.contract_sha,
     }],
     checks: cloneCanonical(verified.behavior_tests),
     decision: {
       outcome: raw.verdict,
       reason: raw.feedback ?? raw.log_excerpt ?? raw.failed_step ?? '',
-      pr_head_sha: verified.pr_head_sha,
+      pr_head_sha: verified.pull_request.head_sha,
+      contract_sha: verified.contract_sha,
       unverifiable: cloneCanonical(unverifiable),
     },
   };
@@ -629,11 +643,11 @@ function validateReporter(raw, verified, binding) {
 
   exactObject(
     verified,
-    ['pull_request_url', 'report', 'learning', 'screenshots', 'learnings_inserted'],
+    ['pull_request', 'report', 'learning', 'screenshots', 'learnings_inserted'],
     [],
     'verifierEnvelope',
   );
-  webUrl(verified.pull_request_url, 'verifierEnvelope.pull_request_url');
+  validatePullRequest(verified.pull_request, 'verifierEnvelope.pull_request');
   validateArtifactDigest(verified.report, 'verifierEnvelope.report');
   validateArtifactDigest(verified.learning, 'verifierEnvelope.learning');
   if (!Array.isArray(verified.screenshots) || verified.screenshots.length > 256) {
@@ -643,7 +657,7 @@ function validateReporter(raw, verified, binding) {
     (item, index) => validateArtifactDigest(item, `verifierEnvelope.screenshots[${index}]`),
   );
   integer(verified.learnings_inserted, 'verifierEnvelope.learnings_inserted', { max: 100000 });
-  if (verified.pull_request_url !== raw.pr_url) invalid('pr_url mismatch');
+  if (verified.pull_request.url !== raw.pr_url) invalid('pr_url mismatch');
   if (verified.report.path !== raw.report_path) invalid('report_path mismatch');
   sameValue(
     verified.screenshots.map((item) => item.path),
@@ -655,6 +669,7 @@ function validateReporter(raw, verified, binding) {
       ? 'completed_with_concerns'
       : 'completed',
     artifacts: [
+      cloneCanonical(verified.pull_request),
       { type: 'harness_report', ...cloneCanonical(verified.report) },
       { type: 'learning', ...cloneCanonical(verified.learning) },
       ...verified.screenshots.map((item) => ({

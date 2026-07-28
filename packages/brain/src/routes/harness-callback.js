@@ -104,28 +104,45 @@ function attemptExpectedOutput(attempt) {
   }
 }
 
-function attemptCommanderCursor(attempt) {
+function attemptAuthority(attempt) {
   const value = attempt?.task_bundle;
-  const bundle = typeof value === 'string' ? (() => {
+  let bundle = null;
+  if (value && typeof value === 'object') {
+    bundle = value;
+  } else if (typeof value === 'string') {
     try {
-      return JSON.parse(value);
+      bundle = JSON.parse(value);
     } catch {
-      return null;
+      bundle = null;
     }
-  })() : value;
-  const cursor = bundle?.inputs?.commander_bundle?.event_cursor;
-  return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : undefined;
-}
-
-function attemptTaskId(attempt) {
-  const value = attempt?.task_bundle;
-  if (value && typeof value === 'object') return value.inputs?.task_id ?? null;
-  if (typeof value !== 'string') return null;
-  try {
-    return JSON.parse(value)?.inputs?.task_id ?? null;
-  } catch {
-    return null;
   }
+  const inputs = bundle?.inputs ?? {};
+  const taskPullRequest = inputs.pull_request && typeof inputs.pull_request === 'object'
+    ? inputs.pull_request
+    : {};
+  const pullRequest = {
+    type: taskPullRequest.type ?? null,
+    url: taskPullRequest.url ?? inputs.pr_url ?? null,
+    number: taskPullRequest.number ?? null,
+    head_ref: inputs.pr_branch ?? taskPullRequest.head_ref ?? null,
+    head_sha: inputs.pr_head_sha ?? taskPullRequest.head_sha ?? null,
+    state: taskPullRequest.state ?? null,
+  };
+  const commanderCursor = inputs.commander_bundle?.event_cursor;
+  return {
+    taskId: inputs.task_id ?? null,
+    attemptId: attempt?.id ?? null,
+    runId: attempt?.run_id ?? null,
+    eventCursor: Number.isSafeInteger(commanderCursor) && commanderCursor >= 0
+      ? commanderCursor
+      : undefined,
+    sprintDir: inputs.sprint_dir ?? null,
+    proposerBranch: inputs.propose_branch ?? null,
+    contractSha: inputs.contract_sha ?? null,
+    attemptKind: inputs.attempt_kind ?? null,
+    pullRequest,
+    workspaceExpectedHeadSha: inputs.workspace_spec?.expected_head_sha ?? null,
+  };
 }
 
 function normalizeVerdict(role, outcome) {
@@ -431,12 +448,7 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
       req.body,
       attempt.role,
       attemptExpectedOutput(attempt),
-      {
-        taskId: attemptTaskId(attempt),
-        runId: attempt.run_id,
-        attemptId,
-        eventCursor: attemptCommanderCursor(attempt),
-      },
+      attemptAuthority(attempt),
     );
     if (result.attempt_id !== attemptId) {
       throw new Error(`attempt_id mismatch: body=${result.attempt_id} path=${attemptId}`);
