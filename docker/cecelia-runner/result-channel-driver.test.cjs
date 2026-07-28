@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -152,6 +153,44 @@ function fixtureWorkspace() {
     fs.writeFileSync(target, content);
   }
   return root;
+}
+
+function fixtureGitWorkspace({ symlinkPrd = false } = {}) {
+  const root = fixtureWorkspace();
+  execFileSync('git', ['init', '-q', '-b', 'cp-result-channel'], { cwd: root });
+  execFileSync('git', ['config', 'user.name', 'Result Channel Test'], { cwd: root });
+  execFileSync('git', ['config', 'user.email', 'result-channel@example.invalid'], { cwd: root });
+  execFileSync('git', ['config', 'core.hooksPath', '/dev/null'], { cwd: root });
+  if (symlinkPrd) {
+    fs.rmSync(path.join(root, SPRINT_DIR, 'sprint-prd.md'));
+    fs.symlinkSync('contract-draft.md', path.join(root, SPRINT_DIR, 'sprint-prd.md'));
+  }
+  execFileSync('git', ['add', '.'], { cwd: root });
+  execFileSync('git', ['commit', '-q', '-m', 'fixture'], {
+    cwd: root,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z',
+      GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z',
+    },
+  });
+  const headSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: root,
+    encoding: 'utf8',
+  }).trim();
+  const git = async (_workspace, args, options = {}) => {
+    if (args.join(' ') === 'remote get-url origin') {
+      return 'https://github.com/perfectuser21/cecelia.git\n';
+    }
+    if (args[0] === 'ls-remote') {
+      return `${headSha}\trefs/heads/cp-result-channel\n`;
+    }
+    return execFileSync('git', ['-C', root, ...args], {
+      encoding: options.binary ? null : 'utf8',
+      maxBuffer: 1024 * 1024,
+    });
+  };
+  return { root, headSha, git };
 }
 
 function dependencies(overrides = {}) {
@@ -679,10 +718,12 @@ test('mechanical artifact hashing rejects unbounded workspace evidence', async (
 });
 
 test('planner artifacts are hashed from the verified Git object, never the working tree', async () => {
-  const workspace = fixtureWorkspace();
+  const fixture = fixtureGitWorkspace();
+  const workspace = fixture.root;
   const relative = `${SPRINT_DIR}/sprint-prd.md`;
+  const committed = fs.readFileSync(path.join(workspace, relative));
+  execFileSync('git', ['update-index', '--assume-unchanged', relative], { cwd: workspace });
   fs.writeFileSync(path.join(workspace, relative), '# provider working-tree rewrite\n');
-  const committed = Buffer.from('# committed PRD\n');
   const expected = `sha256:${crypto.createHash('sha256').update(committed).digest('hex')}`;
 
   const value = await buildVerifierEnvelope({
@@ -696,13 +737,7 @@ test('planner artifacts are hashed from the verified Git object, never the worki
       status: 'DONE',
     },
     workspacePath: workspace,
-    deps: dependencies({
-      readGitFile: async (_workspace, headSha, artifactPath) => {
-        assert.equal(headSha, SHA);
-        assert.equal(artifactPath, relative);
-        return { mode: '100644', bytes: committed };
-      },
-    }),
+    deps: { git: fixture.git },
   });
 
   assert.equal(value.prd_sha256, expected);
@@ -740,17 +775,13 @@ test('dirty, untracked and symlink Git authority fail closed', async () => {
     );
   }
 
+  const symlinkFixture = fixtureGitWorkspace({ symlinkPrd: true });
   await assert.rejects(
     buildVerifierEnvelope({
       bundle: taskBundle('planner'),
       rawEnvelope: raw,
-      workspacePath: workspace,
-      deps: dependencies({
-        readGitFile: async () => ({
-          mode: '120000',
-          bytes: Buffer.from('../../outside'),
-        }),
-      }),
+      workspacePath: symlinkFixture.root,
+      deps: { git: symlinkFixture.git },
     }),
     /Git artifact must be a regular blob/,
   );
@@ -802,4 +833,50 @@ test('evaluator execution is Runner-owned and ignores the Skill-written authorit
     log_tail: 'real failure',
   }]);
   fs.rmSync(forged, { force: true });
+});
+
+test('Runner-owned evaluator execution kills its own background process group', async () => {
+  const workspace = fixtureWorkspace();
+  const pidFile = path.join(os.tmpdir(), `runner-evaluator-child-${process.pid}.pid`);
+  fs.rmSync(pidFile, { force: true });
+  const command = `sleep 30 >/dev/null 2>&1 & echo $! > ${JSON.stringify(pidFile)}`;
+  const injected = dependencies();
+  delete injected.executeEvaluatorCommand;
+
+  await buildVerifierEnvelope({
+    bundle: taskBundle('evaluator', {
+      contract_sha: SHA,
+      pull_request: pullRequest(),
+      pr_branch: 'cp-result-channel',
+      pr_head_sha: SHA,
+    }),
+    rawEnvelope: {
+      verdict: 'PASS',
+      task_id: TASK_ID,
+      attempt_id: ATTEMPT_ID,
+      behavior_tests: [{ command, exit_code: 0, log_tail: '' }],
+    },
+    workspacePath: workspace,
+    deps: injected,
+  });
+
+  const childPid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+  assert.ok(Number.isInteger(childPid) && childPid > 1);
+  let alive = true;
+  for (let attempt = 0; attempt < 200 && alive; attempt += 1) {
+    try {
+      const state = execFileSync(
+        'ps',
+        ['-o', 'state=', '-p', String(childPid)],
+        { encoding: 'utf8' },
+      ).trim();
+      alive = state !== '' && !['Z', 'X'].includes(state[0]);
+    } catch (error) {
+      if (error?.status !== 1) throw error;
+      alive = false;
+    }
+    if (alive) await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(alive, false);
+  fs.rmSync(pidFile, { force: true });
 });

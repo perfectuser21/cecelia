@@ -504,103 +504,10 @@ function validateProviderResult(value, binding, env) {
   return value;
 }
 
-function safeWorkspacePath(workspacePath, relative, label) {
-  const parsed = relativePath(relative, label);
-  const root = path.resolve(workspacePath);
-  const resolved = path.resolve(root, parsed);
-  if (!resolved.startsWith(`${root}${path.sep}`)) invalid(`${label} escapes workspace`);
-  return { relative: parsed, absolute: resolved };
-}
-
-function realWorkspaceDescendant(workspacePath, absolute, label) {
-  let root;
-  let target;
-  try {
-    root = fs.realpathSync(workspacePath);
-    target = fs.realpathSync(absolute);
-  } catch (error) {
-    invalid(`${label} is unavailable: ${error.code ?? error.message}`);
-  }
-  if (!target.startsWith(`${root}${path.sep}`)) {
-    invalid(`${label} escapes workspace through a symbolic link`);
-  }
-  return target;
-}
-
-function readRegularFileNoFollow(absolute, maxBytes, label) {
-  let fd;
-  try {
-    fd = fs.openSync(absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const descriptor = fs.fstatSync(fd);
-    if (!descriptor.isFile()) invalid(`${label} must be a regular file`);
-    if (descriptor.size > maxBytes) invalid(`${label} exceeds evidence byte limit`);
-    return { bytes: fs.readFileSync(fd), size: descriptor.size };
-  } catch (error) {
-    if (String(error?.message ?? '').startsWith('result_channel_driver:')) throw error;
-    invalid(`${label} cannot be read safely: ${error.code ?? error.message}`);
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-}
-
-function hashFile(workspacePath, relative, label) {
-  const resolved = safeWorkspacePath(workspacePath, relative, label);
-  const real = realWorkspaceDescendant(workspacePath, resolved.absolute, label);
-  const expectedReal = path.resolve(fs.realpathSync(workspacePath), resolved.relative);
-  if (real !== expectedReal) invalid(`${label} must not use symbolic links`);
-  const { bytes } = readRegularFileNoFollow(real, MAX_EVIDENCE_BYTES, label);
-  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
-  return { path: resolved.relative, sha256: `sha256:${digest}` };
-}
-
-function hashDirectory(workspacePath, relative, label) {
-  const resolved = safeWorkspacePath(workspacePath, relative, label);
-  const realRoot = realWorkspaceDescendant(workspacePath, resolved.absolute, label);
-  const expectedReal = path.resolve(fs.realpathSync(workspacePath), resolved.relative);
-  if (realRoot !== expectedReal) invalid(`${label} must not use symbolic links`);
-  const rootDescriptor = fs.lstatSync(realRoot);
-  if (!rootDescriptor.isDirectory() || rootDescriptor.isSymbolicLink()) {
-    invalid(`${label} must be a directory`);
-  }
-  const entries = [];
-  let totalBytes = 0;
-  let totalFiles = 0;
-  const visit = (directory, prefix) => {
-    for (const name of fs.readdirSync(directory).sort()) {
-      const absolute = path.join(directory, name);
-      const child = fs.lstatSync(absolute);
-      const childRelative = prefix ? `${prefix}/${name}` : name;
-      if (child.isSymbolicLink()) invalid(`${label} contains a symbolic link`);
-      const realChild = realWorkspaceDescendant(workspacePath, absolute, label);
-      if (realChild !== absolute) invalid(`${label} contains a symbolic link`);
-      if (child.isDirectory()) {
-        visit(realChild, childRelative);
-      } else if (child.isFile()) {
-        totalFiles += 1;
-        const file = readRegularFileNoFollow(realChild, MAX_EVIDENCE_BYTES, label);
-        totalBytes += file.size;
-        if (
-          totalFiles > MAX_EVIDENCE_FILES
-          || totalBytes > MAX_EVIDENCE_BYTES
-        ) {
-          invalid(`${label} exceeds evidence byte limit`);
-        }
-        const digest = crypto.createHash('sha256').update(file.bytes).digest('hex');
-        entries.push(`${childRelative}\0${digest}\0`);
-      } else {
-        invalid(`${label} contains a non-regular entry`);
-      }
-    }
-  };
-  visit(realRoot, '');
-  const digest = crypto.createHash('sha256').update(entries.join('')).digest('hex');
-  return { path: resolved.relative, sha256: `sha256:${digest}` };
-}
-
-async function defaultGit(workspacePath, args) {
+async function defaultGit(workspacePath, args, { binary = false } = {}) {
   try {
     const result = await execFileAsync('git', ['-C', workspacePath, ...args], {
-      encoding: 'utf8',
+      encoding: binary ? null : 'utf8',
       maxBuffer: MAX_BYTES,
     });
     return result.stdout;
@@ -617,6 +524,10 @@ async function localAndRemoteGit(deps, workspacePath, branch, expectedSha = null
   if (expectedSha !== null && localSha !== expectedSha) {
     invalid('workspace HEAD authority mismatch');
   }
+  const status = String(
+    await deps.git(workspacePath, ['status', '--porcelain=v1', '--untracked-files=all']),
+  );
+  if (status !== '') invalid('workspace Git state is not clean');
   const remote = String(
     await deps.git(workspacePath, [
       'ls-remote',
@@ -632,6 +543,133 @@ async function localAndRemoteGit(deps, workspacePath, branch, expectedSha = null
     invalid('remote branch authority mismatch');
   }
   return localSha;
+}
+
+function parseGitTreeRecord(buffer, label) {
+  const value = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  if (value.length === 0 || value[value.length - 1] !== 0) {
+    invalid(`${label} Git tree record is invalid`);
+  }
+  const records = value.subarray(0, -1).toString('utf8').split('\0');
+  return records.map((record) => {
+    const match = record.match(/^([0-9]{6}) (blob|tree) ([a-f0-9]{40})\t(.+)$/s);
+    if (!match) invalid(`${label} Git tree record is invalid`);
+    return {
+      mode: match[1],
+      type: match[2],
+      oid: match[3],
+      path: match[4],
+    };
+  });
+}
+
+function assertRegularGitBlob(entry, label) {
+  if (
+    entry.type !== 'blob'
+    || !['100644', '100755'].includes(entry.mode)
+  ) {
+    invalid(`${label} Git artifact must be a regular blob`);
+  }
+}
+
+async function defaultReadGitFile(workspacePath, headSha, relative, deps) {
+  const tree = parseGitTreeRecord(
+    await deps.git(
+      workspacePath,
+      ['ls-tree', '-z', headSha, '--', relative],
+      { binary: true },
+    ),
+    'file',
+  );
+  if (tree.length !== 1 || tree[0].path !== relative) {
+    invalid('Git artifact file is missing from verified HEAD');
+  }
+  assertRegularGitBlob(tree[0], 'file');
+  return {
+    mode: tree[0].mode,
+    bytes: await deps.git(
+      workspacePath,
+      ['cat-file', 'blob', tree[0].oid],
+      { binary: true },
+    ),
+  };
+}
+
+async function defaultReadGitDirectory(workspacePath, headSha, relative, deps) {
+  const tree = parseGitTreeRecord(
+    await deps.git(
+      workspacePath,
+      ['ls-tree', '-r', '-z', headSha, '--', relative],
+      { binary: true },
+    ),
+    'directory',
+  );
+  if (tree.length === 0) invalid('Git artifact directory is empty or missing');
+  const entries = [];
+  for (const entry of tree) {
+    if (!entry.path.startsWith(`${relative}/`)) {
+      invalid('Git artifact directory escaped its verified prefix');
+    }
+    assertRegularGitBlob(entry, 'directory');
+    entries.push({
+      mode: entry.mode,
+      path: entry.path,
+      bytes: await deps.git(
+        workspacePath,
+        ['cat-file', 'blob', entry.oid],
+        { binary: true },
+      ),
+    });
+  }
+  return entries;
+}
+
+function boundedGitBytes(value, label) {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  if (bytes.length > MAX_EVIDENCE_BYTES) {
+    invalid(`${label} exceeds evidence byte limit`);
+  }
+  return bytes;
+}
+
+async function hashGitFile(deps, workspacePath, headSha, relative, label) {
+  const parsed = relativePath(relative, label);
+  const artifact = await deps.readGitFile(workspacePath, headSha, parsed);
+  if (!artifact || !['100644', '100755'].includes(artifact.mode)) {
+    invalid(`${label} Git artifact must be a regular blob`);
+  }
+  const bytes = boundedGitBytes(artifact.bytes, label);
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  return { path: parsed, sha256: `sha256:${digest}` };
+}
+
+async function hashGitDirectory(deps, workspacePath, headSha, relative, label) {
+  const parsed = relativePath(relative, label);
+  const artifacts = await deps.readGitDirectory(workspacePath, headSha, parsed);
+  if (!Array.isArray(artifacts) || artifacts.length === 0) {
+    invalid(`${label} Git artifact directory is empty or missing`);
+  }
+  let totalBytes = 0;
+  const entries = [];
+  for (const artifact of artifacts) {
+    if (!artifact || !['100644', '100755'].includes(artifact.mode)) {
+      invalid(`${label} Git artifact must be a regular blob`);
+    }
+    const artifactPath = relativePath(artifact.path, `${label} entry`);
+    if (!artifactPath.startsWith(`${parsed}/`)) {
+      invalid(`${label} Git artifact escaped its verified prefix`);
+    }
+    const bytes = boundedGitBytes(artifact.bytes, label);
+    totalBytes += bytes.length;
+    if (entries.length >= MAX_EVIDENCE_FILES || totalBytes > MAX_EVIDENCE_BYTES) {
+      invalid(`${label} exceeds evidence byte limit`);
+    }
+    const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+    entries.push(`${artifactPath.slice(parsed.length + 1)}\0${digest}\0`);
+  }
+  entries.sort();
+  const digest = crypto.createHash('sha256').update(entries.join('')).digest('hex');
+  return { path: parsed, sha256: `sha256:${digest}` };
 }
 
 async function validateWorkspaceOrigin(bundle, deps, workspacePath) {
@@ -792,22 +830,112 @@ async function defaultReadLearningCount(taskId, brainUrl) {
   return payload.total;
 }
 
-function defaultReadEvaluatorExecution(binding) {
-  const file = `/tmp/evaluator-execution-${binding.attemptId}.json`;
-  return readBoundedJson(file, 131072, 'evaluator execution authority');
+function evaluatorLogTail(stdout, stderr) {
+  const combined = `${stdout ?? ''}${stderr ?? ''}`
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .slice(-6)
+    .filter((line, index, lines) => !(index === lines.length - 1 && line === ''))
+    .slice(-5)
+    .join('\n');
+  return combined.slice(-8192);
+}
+
+async function defaultExecuteEvaluatorCommand({ command, cwd }) {
+  boundedString(command, 'evaluator command', { max: 8192 });
+  const executionEnv = { ...process.env };
+  for (const key of [
+    'HARNESS_CALLBACK_TOKEN',
+    'HARNESS_CALLBACK_URL',
+    'CECELIA_CREDENTIAL_REF',
+    'BRAIN_CREDENTIAL_COPY_MUTATED',
+    'BRAIN_PROVIDER_SESSION_ID',
+  ]) {
+    delete executionEnv[key];
+  }
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const supervisor = `
+exec 3>&1 4>&2
+exec >/dev/null 2>/dev/null
+set -m
+command_pid=''
+cleanup() {
+  if [[ "$command_pid" =~ ^[1-9][0-9]*$ ]]; then
+    kill -KILL -- "-$command_pid" 2>/dev/null || true
+    wait "$command_pid" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+trap 'exit 124' HUP INT TERM
+/bin/bash --noprofile --norc -lc "$1" >&3 2>&4 &
+command_pid=$!
+wait "$command_pid"
+command_status=$?
+exit "$command_status"
+`;
+      execFile(
+        '/bin/bash',
+        ['--noprofile', '--norc', '-c', supervisor, 'runner-owned-evaluator', command],
+        {
+          cwd,
+          env: executionEnv,
+          encoding: 'utf8',
+          timeout: 120_000,
+          maxBuffer: MAX_BYTES,
+          killSignal: 'SIGTERM',
+        },
+        (error, stdout, stderr) => {
+          const outcome = { stdout, stderr };
+          if (error) {
+            Object.assign(error, outcome);
+            reject(error);
+          } else {
+            resolve(outcome);
+          }
+        },
+      );
+    });
+    return {
+      command,
+      exit_code: 0,
+      log_tail: evaluatorLogTail(result.stdout, result.stderr),
+    };
+  } catch (error) {
+    if (error?.killed || ['SIGKILL', 'SIGTERM'].includes(error?.signal)) {
+      invalid('evaluator command timed out or exceeded output bounds');
+    }
+    if (!Number.isInteger(error?.code)) {
+      invalid(`evaluator command could not execute: ${error.message}`);
+    }
+    return {
+      command,
+      exit_code: error.code,
+      log_tail: evaluatorLogTail(error.stdout, error.stderr),
+    };
+  }
 }
 
 function resolveDependencies(injected, env) {
-  return {
+  const resolved = {
     git: injected?.git ?? defaultGit,
     inspectPullRequest: injected?.inspectPullRequest ?? defaultInspectPullRequest,
     readJudgmentCount: injected?.readJudgmentCount
       ?? ((taskId) => defaultReadJudgmentCount(taskId, env.BRAIN_URL)),
     readLearningCount: injected?.readLearningCount
       ?? ((taskId) => defaultReadLearningCount(taskId, env.BRAIN_URL)),
-    readEvaluatorExecution: injected?.readEvaluatorExecution
-      ?? defaultReadEvaluatorExecution,
+    executeEvaluatorCommand: injected?.executeEvaluatorCommand
+      ?? defaultExecuteEvaluatorCommand,
   };
+  resolved.readGitFile = injected?.readGitFile
+    ?? ((workspacePath, headSha, relative) => (
+      defaultReadGitFile(workspacePath, headSha, relative, resolved)
+    ));
+  resolved.readGitDirectory = injected?.readGitDirectory
+    ?? ((workspacePath, headSha, relative) => (
+      defaultReadGitDirectory(workspacePath, headSha, relative, resolved)
+    ));
+  return resolved;
 }
 
 function validateRubric(value) {
@@ -858,11 +986,13 @@ async function buildVerifierEnvelope({
       branch,
       sprint_dir: sprintDir,
       planner_branch: branch,
-      prd_sha256: hashFile(
+      prd_sha256: (await hashGitFile(
+        deps,
         workspacePath,
+        actualHead,
         `${sprintDir}/sprint-prd.md`,
         'planner PRD',
-      ).sha256,
+      )).sha256,
       effective_review_required: typeof inputs.review_required === 'boolean'
         ? inputs.review_required
         : true,
@@ -876,23 +1006,31 @@ async function buildVerifierEnvelope({
       propose_branch: branch,
       head_sha: headSha,
       artifacts: {
-        contract_draft: hashFile(
+        contract_draft: await hashGitFile(
+          deps,
           workspacePath,
+          headSha,
           `${sprintDir}/contract-draft.md`,
           'proposer contract draft',
         ),
-        contract_dod: hashFile(
+        contract_dod: await hashGitFile(
+          deps,
           workspacePath,
+          headSha,
           `${sprintDir}/contract-dod.md`,
           'proposer contract DoD',
         ),
-        task_plan: hashFile(
+        task_plan: await hashGitFile(
+          deps,
           workspacePath,
+          headSha,
           `${sprintDir}/task-plan.json`,
           'proposer task plan',
         ),
-        contract_tests: hashDirectory(
+        contract_tests: await hashGitDirectory(
+          deps,
           workspacePath,
+          headSha,
           `${sprintDir}/tests`,
           'proposer contract tests',
         ),
@@ -953,19 +1091,18 @@ async function buildVerifierEnvelope({
       if (claimed.length !== 1) {
         invalid('evaluator execution authority supports exactly one command');
       }
-      const execution = await deps.readEvaluatorExecution({
-        taskId,
-        attemptId: bundle.attempt_id,
+      const execution = await deps.executeEvaluatorCommand({
+        command: boundedString(claimed[0].command, 'evaluator claimed command', {
+          max: 8192,
+        }),
+        cwd: workspacePath,
       });
       exact(
         execution,
-        ['task_id', 'attempt_id', 'command', 'exit_code'],
+        ['command', 'exit_code'],
         ['log_tail'],
-        'evaluator execution authority',
+        'Runner evaluator execution authority',
       );
-      if (execution.task_id !== taskId || execution.attempt_id !== bundle.attempt_id) {
-        invalid('evaluator execution authority binding mismatch');
-      }
       const observed = {
         command: execution.command,
         exit_code: execution.exit_code,
@@ -996,6 +1133,12 @@ async function buildVerifierEnvelope({
       frozenPr,
       ['OPEN', 'MERGED'],
     );
+    await localAndRemoteGit(
+      deps,
+      workspacePath,
+      pullRequest.head_ref,
+      pullRequest.head_sha,
+    );
     const reportPath = relativePath(rawEnvelope.report_path, 'reporter report path');
     if (!reportPath.startsWith(`${sprintDir}/`)) invalid('reporter report path authority mismatch');
     const learningCount = await deps.readLearningCount(taskId);
@@ -1007,17 +1150,29 @@ async function buildVerifierEnvelope({
     }
     return {
       pull_request: pullRequest,
-      report: hashFile(workspacePath, reportPath, 'reporter report'),
-      learning: hashFile(
+      report: await hashGitFile(
+        deps,
         workspacePath,
+        pullRequest.head_sha,
+        reportPath,
+        'reporter report',
+      ),
+      learning: await hashGitFile(
+        deps,
+        workspacePath,
+        pullRequest.head_sha,
         `${sprintDir}/learning.md`,
         'reporter learning',
       ),
-      screenshots: rawEnvelope.screenshots.map((entry, index) => hashFile(
-        workspacePath,
-        entry,
-        `reporter screenshot ${index}`,
-      )),
+      screenshots: await Promise.all(rawEnvelope.screenshots.map((entry, index) => (
+        hashGitFile(
+          deps,
+          workspacePath,
+          pullRequest.head_sha,
+          entry,
+          `reporter screenshot ${index}`,
+        )
+      ))),
       learnings_inserted: learningCount,
     };
   }
