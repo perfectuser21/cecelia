@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.109
+**Brain 版本**: 1.267.110
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.110 — Fleet repeat-bootstrap repository ownership hotfix
+
+- baseline 对受控 bare repository 的每次 Git 读取、fetch 与 ref 更新都显式限定
+  `safe.directory` 为该 NodeProfile 的 repository 路径，使 root reconcile 能安全、
+  可重复地处理已归属 `_cecelia` 的基线仓库。
+- 不放宽全局 Git 配置，不信任其他目录；失败仍保持节点 drain，不改变 Runner pin、
+  Provider 凭据或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.109`；节点保持 drain 后再回退。
 
 ## Brain 1.267.109 — Fleet OrbStack service-user path ACL hotfix
 
