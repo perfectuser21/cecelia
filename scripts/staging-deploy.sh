@@ -22,8 +22,10 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BRAIN_DIR="$ROOT_DIR/packages/brain"
+SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="${KERNEL_RELEASE_DEPLOY_ROOT:-$SOURCE_ROOT}"
+ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
+BRAIN_DIR="$SOURCE_ROOT/packages/brain"
 STAGING_PORT=5222
 STAGING_CONTAINER="cecelia-node-brain-staging"
 STAGING_DB="cecelia_staging"
@@ -38,7 +40,9 @@ for arg in "$@"; do
     esac
 done
 
-if [[ "$DRY_RUN" != true && -z "${CECELIA_STAGING_EXACT_ROOT:-}" ]]; then
+if [[ "$DRY_RUN" != true
+  && -z "${CECELIA_STAGING_EXACT_ROOT:-}"
+  && -z "${KERNEL_RELEASE_ARTIFACT_ROOT:-}" ]]; then
     bash "$SCRIPT_DIR/lib/release-run-guard.sh" staging
     EXACT_SHA="${KERNEL_RELEASE_MERGE_SHA:?KERNEL_RELEASE_MERGE_SHA required}"
     EXACT_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cecelia-staging-release.XXXXXX")

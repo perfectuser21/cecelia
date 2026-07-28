@@ -8,7 +8,8 @@ release_run_deny() {
 }
 
 require_release_run_authority() {
-  local guard_dir effect_kind release_run_id merge_sha release_authorization brain_url deploy_token
+  local guard_dir effect_kind release_run_id merge_sha release_authorization brain_url
+  local deploy_token private_config_file private_values
   guard_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   effect_kind="${1:-production}"
   release_run_id="${KERNEL_RELEASE_RUN_ID:-}"
@@ -19,22 +20,8 @@ require_release_run_authority() {
   private_config_file="${KERNEL_RELEASE_PRIVATE_CONFIG_FILE:-}"
 
   if [[ -n "$private_config_file" ]]; then
-    [[ "$private_config_file" == /* && -f "$private_config_file" && ! -L "$private_config_file" ]] \
-      || release_run_deny "private worker authority unavailable"
-    if stat -f '%u:%Lp' "$private_config_file" >/dev/null 2>&1; then
-      private_mode=$(stat -f '%u:%Lp' "$private_config_file")
-    else
-      private_mode=$(stat -c '%u:%a' "$private_config_file")
-    fi
-    [[ "$private_mode" == "$(id -u):600" ]] \
-      || release_run_deny "private worker authority must be owner-only mode 0600"
-    private_values=$(node -e '
-      const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-      if (typeof value.authorization !== "string" || typeof value.deploy_token !== "string") {
-        process.exit(78);
-      }
-      process.stdout.write(`${value.authorization}\t${value.deploy_token}`);
-    ' "$private_config_file") \
+    private_values=$(node "$guard_dir/read-release-worker-authority.mjs" \
+      "$private_config_file") \
       || release_run_deny "private worker authority invalid"
     IFS=$'\t' read -r release_authorization deploy_token <<< "$private_values"
   fi

@@ -98,6 +98,9 @@ describe('legacy release surfaces fail closed', () => {
 
   it('release guard is source-safe and continues only after server authorization', () => {
     const guard = resolve(root, 'scripts/lib/release-run-guard.sh');
+    const guardSource = readFileSync(guard, 'utf8');
+    expect(guardSource).toContain('read-release-worker-authority.mjs');
+    expect(guardSource).not.toContain('readFileSync(process.argv[1]');
     const fixture = `
       curl() {
         local out="" previous=""
@@ -381,6 +384,8 @@ describe('legacy release surfaces fail closed', () => {
     const source = readFileSync(resolve(root, 'scripts/staging-deploy.sh'), 'utf8');
     expect(source).toMatch(/worktree add --detach "\$EXACT_ROOT" "\$EXACT_SHA"/);
     expect(source).toContain('CECELIA_STAGING_EXACT_ROOT');
+    expect(source).toContain('KERNEL_RELEASE_ARTIFACT_ROOT');
+    expect(source).toContain('KERNEL_RELEASE_DEPLOY_ROOT');
     expect(source).toMatch(/worktree remove --force/);
     expect(source).not.toContain('release-run-checkout.sh" staging');
     expect(source).toMatch(
@@ -402,6 +407,8 @@ describe('legacy release surfaces fail closed', () => {
     expect(worker).not.toContain('release-run-checkout.sh');
     expect(worker).not.toMatch(/git['"], \[['"]checkout/);
     expect(worker).toContain('prepareReleaseArtifactSnapshot');
+    expect(worker).toContain('prepareReleaseExecutionWorkspace');
+    expect(worker).toContain('cleanupReleaseExecutionWorkspace');
     expect(worker).toContain('KERNEL_RELEASE_ARTIFACT_ROOT');
     expect(worker).toContain('runLeasedReleaseRoutes');
     expect(worker).toContain('KERNEL_RELEASE_PRIVATE_CONFIG_FILE');
@@ -411,9 +418,10 @@ describe('legacy release surfaces fail closed', () => {
       resolve(root, 'packages/brain/src/routes/ops.js'),
       'utf8',
     );
+    const productionSpawnStart = ops.indexOf('child = spawn(args[0]');
     const productionSpawn = ops.slice(
-      ops.indexOf('const child = spawn(args[0]'),
-      ops.indexOf('child.unref()'),
+      productionSpawnStart,
+      ops.indexOf('  } catch (error)', productionSpawnStart),
     );
     expect(productionSpawn).toContain('buildReleaseWorkerEnvironment');
     expect(productionSpawn).toContain('KERNEL_RELEASE_PRIVATE_CONFIG_FILE');
@@ -422,6 +430,9 @@ describe('legacy release surfaces fail closed', () => {
 
     const deployLocal = readFileSync(resolve(root, 'scripts/deploy-local.sh'), 'utf8');
     expect(deployLocal).not.toContain('release-run-checkout.sh');
+    expect(deployLocal).toContain('KERNEL_RELEASE_DEPLOY_ROOT');
+    const promote = readFileSync(resolve(root, 'scripts/promote-dashboard.sh'), 'utf8');
+    expect(promote).toContain('KERNEL_RELEASE_DEPLOY_ROOT');
 
     const workflow = readFileSync(
       resolve(root, 'packages/workflows/scripts/deploy-workflow-skills.sh'),
@@ -430,6 +441,12 @@ describe('legacy release surfaces fail closed', () => {
     expect(workflow).toContain('KERNEL_RELEASE_ARTIFACT_ROOT');
     expect(workflow).not.toContain('source_dir="$workflow_root/packages/workflows/skills"');
     expect(workflow).toMatch(/ln -s "\$skill_dir" "\$temporary_link"/);
+  });
+
+  it('fences legacy production image recreation behind ReleaseRun authority', () => {
+    const dockerUp = readFileSync(resolve(root, 'scripts/brain-docker-up.sh'), 'utf8');
+    expect(dockerUp).toContain('release-run-guard.sh');
+    expect(dockerUp).toMatch(/require_release_run_authority production/);
   });
 
   it('publishes typed per-run dashboard rollback metadata', () => {

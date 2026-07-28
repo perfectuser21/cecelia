@@ -1,10 +1,20 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   readBootstrapPrivateConfig,
+  cleanupStaleBootstrapPgDirectories,
   writeBootstrapPgFiles,
 } from '../../../../../scripts/lib/bootstrap-private-config.mjs';
 
@@ -43,6 +53,22 @@ describe('bootstrap private config', () => {
       .toThrow('bootstrap_private_config_permissions_invalid');
   });
 
+  it('rejects hard-linked secrets and unsafe parent directories', () => {
+    const { directory, file } = privateFixture();
+    const hardLink = join(directory, 'bootstrap-hardlink.json');
+    linkSync(file, hardLink);
+    expect(() => readBootstrapPrivateConfig(file))
+      .toThrow('bootstrap_private_config_permissions_invalid');
+
+    const unsafeDirectory = mkdtempSync(join(tmpdir(), 'bootstrap-private-test-'));
+    created.push(unsafeDirectory);
+    chmodSync(unsafeDirectory, 0o777);
+    const unsafeFile = join(unsafeDirectory, 'bootstrap.json');
+    writeFileSync(unsafeFile, readFileSync(file), { mode: 0o600 });
+    expect(() => readBootstrapPrivateConfig(unsafeFile))
+      .toThrow('bootstrap_private_config_permissions_invalid');
+  });
+
   it('writes libpq service and password files without exposing the URI', () => {
     const { directory, file } = privateFixture();
     const serviceFile = join(directory, 'pg_service.conf');
@@ -56,5 +82,26 @@ describe('bootstrap private config', () => {
     expect(readFileSync(serviceFile, 'utf8')).not.toContain('p@ss');
     expect(readFileSync(passFile, 'utf8')).toContain('p@ss');
     expect(readFileSync(passFile, 'utf8')).not.toContain('postgresql://');
+  });
+
+  it('safely reaps only stale owner-only bootstrap pg directories', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bootstrap-pg-reaper-'));
+    created.push(root);
+    const stale = join(root, 'kernel-bootstrap-pg.stale');
+    const unsafe = join(root, 'kernel-bootstrap-pg.unsafe');
+    mkdirSync(stale, { mode: 0o700 });
+    mkdirSync(unsafe, { mode: 0o777 });
+    writeFileSync(join(stale, 'pgpass'), 'secret\n', { mode: 0o600 });
+    const epoch = new Date(0);
+    utimesSync(join(stale, 'pgpass'), epoch, epoch);
+    utimesSync(stale, epoch, epoch);
+
+    expect(cleanupStaleBootstrapPgDirectories({
+      temporaryRoot: root,
+      now: () => new Date(20_000),
+      staleAfterMs: 15_000,
+    })).toEqual({ removed: 1 });
+    expect(() => statSync(stale)).toThrow();
+    expect(statSync(unsafe).isDirectory()).toBe(true);
   });
 });

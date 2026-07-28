@@ -71,6 +71,7 @@ export async function runLeasedReleaseRoutes({
   appendOutcome,
   runRoute,
   beforeTerminal = async () => {},
+  afterTerminal = async () => {},
   renewalIntervalMs = 60_000,
 }) {
   if (
@@ -82,6 +83,7 @@ export async function runLeasedReleaseRoutes({
     || typeof appendOutcome !== 'function'
     || typeof runRoute !== 'function'
     || typeof beforeTerminal !== 'function'
+    || typeof afterTerminal !== 'function'
   ) {
     throw workerError('release_worker_contract_invalid');
   }
@@ -129,6 +131,7 @@ export async function runLeasedReleaseRoutes({
         'dispatched',
         { source: 'release_effect_worker_terminal' },
       );
+      await afterTerminal();
     } catch (error) {
       throw workerError('release_worker_terminal_fenced', error);
     }

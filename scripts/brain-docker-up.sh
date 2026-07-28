@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Brain 从 launchd 裸跑 → OrbStack Docker 容器运行
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/release-run-guard.sh"
+require_release_run_authority production
+# Brain 从 launchd 裸跑 → OrbStack Docker 容器运行
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PLIST="/Library/LaunchDaemons/com.cecelia.brain.plist"

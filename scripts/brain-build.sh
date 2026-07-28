@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+RELEASE_ARTIFACT_ROOT="${KERNEL_RELEASE_ARTIFACT_ROOT:-}"
 
 # v1.2.0 (2026-05-05): build 用 origin/main 而不是 HEAD — 工具链对 cwd 分支彻底免疫。
 # 旧版 v1.1.0 用 git archive HEAD：当主仓库 cwd 被切到 cp-* 分支（如另一个 session 在做
@@ -17,8 +18,19 @@ RELEASE_SHA="${KERNEL_RELEASE_MERGE_SHA:-}"
 if [[ -n "$RELEASE_SHA" ]]; then
   [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     || { echo "[FAIL] KERNEL_RELEASE_MERGE_SHA must be an exact SHA" >&2; exit 78; }
-  git -C "$ROOT_DIR" cat-file -e "${RELEASE_SHA}^{commit}" \
-    || { echo "[FAIL] exact ReleaseRun SHA is unavailable" >&2; exit 78; }
+  if [[ -n "$RELEASE_ARTIFACT_ROOT" ]]; then
+    [[ "$RELEASE_ARTIFACT_ROOT" == "$ROOT_DIR" && -f "$ROOT_DIR/.release-snapshot.json" ]] \
+      || { echo "[FAIL] exact ReleaseRun artifact snapshot is unavailable" >&2; exit 78; }
+    SNAPSHOT_SHA=$(node -e '
+      const receipt = require(process.argv[1]);
+      process.stdout.write(String(receipt.merge_sha || ""));
+    ' "$ROOT_DIR/.release-snapshot.json")
+    [[ "$SNAPSHOT_SHA" == "$RELEASE_SHA" ]] \
+      || { echo "[FAIL] ReleaseRun artifact identity mismatch" >&2; exit 78; }
+  else
+    git -C "$ROOT_DIR" cat-file -e "${RELEASE_SHA}^{commit}" \
+      || { echo "[FAIL] exact ReleaseRun SHA is unavailable" >&2; exit 78; }
+  fi
   BUILD_REF="$RELEASE_SHA"
   BUILD_SOURCE="ReleaseRun ${RELEASE_SHA}"
 else
@@ -27,9 +39,13 @@ else
 fi
 
 # Read version from the immutable build ref — 不读 cwd 工作树
-VERSION=$(git -C "$ROOT_DIR" show "$BUILD_REF:packages/brain/package.json" 2>/dev/null \
-  | node -e "let s=''; process.stdin.on('data',c=>s+=c); process.stdin.on('end',()=>console.log(JSON.parse(s).version))" \
-  || node -e "console.log(require('$ROOT_DIR/packages/brain/package.json').version)")
+if [[ -n "$RELEASE_ARTIFACT_ROOT" ]]; then
+  VERSION=$(node -e "console.log(require('$ROOT_DIR/packages/brain/package.json').version)")
+else
+  VERSION=$(git -C "$ROOT_DIR" show "$BUILD_REF:packages/brain/package.json" 2>/dev/null \
+    | node -e "let s=''; process.stdin.on('data',c=>s+=c); process.stdin.on('end',()=>console.log(JSON.parse(s).version))" \
+    || node -e "console.log(require('$ROOT_DIR/packages/brain/package.json').version)")
+fi
 
 echo "=== Building cecelia-brain:${VERSION} (from ${BUILD_SOURCE}) ==="
 
@@ -45,11 +61,19 @@ if [[ -z "$RELEASE_SHA" ]]; then
 fi
 
 echo "  导出 ${BUILD_SOURCE} 到临时 build context: $TEMP_BUILD"
-git -C "$ROOT_DIR" archive --format=tar "$BUILD_REF" | tar -x -C "$TEMP_BUILD"
+if [[ -n "$RELEASE_ARTIFACT_ROOT" ]]; then
+  tar -C "$ROOT_DIR" --exclude='./.release-snapshot.json' -cf - . | tar -x -C "$TEMP_BUILD"
+else
+  git -C "$ROOT_DIR" archive --format=tar "$BUILD_REF" | tar -x -C "$TEMP_BUILD"
+fi
 
 # FR-01: 传 GIT_SHA build-arg（Gate3 SHA 对账）
 # ReleaseRun uses its immutable SHA; compatibility builds use fetched main.
-BUILD_SHA=$(git -C "$ROOT_DIR" rev-parse "$BUILD_REF" 2>/dev/null || echo "unknown")
+if [[ -n "$RELEASE_ARTIFACT_ROOT" ]]; then
+  BUILD_SHA="$RELEASE_SHA"
+else
+  BUILD_SHA=$(git -C "$ROOT_DIR" rev-parse "$BUILD_REF" 2>/dev/null || echo "unknown")
+fi
 echo "  GIT_SHA=${BUILD_SHA}"
 
 # 从干净的 origin/main 快照构建

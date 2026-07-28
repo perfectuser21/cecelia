@@ -23,7 +23,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 bash "$SCRIPT_DIR/lib/release-run-guard.sh" production
 
 # 部署根：测试钩子 CECELIA_DEPLOY_ROOT 优先，否则按 worktree/主仓库解析（与 deploy-local.sh 一致）
-if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
+if [[ -n "${KERNEL_RELEASE_DEPLOY_ROOT:-}" ]]; then
+    MAIN_ROOT="$(cd "$KERNEL_RELEASE_DEPLOY_ROOT" && pwd)"
+elif [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     MAIN_ROOT="$(cd "$CECELIA_DEPLOY_ROOT" && pwd)"
 else
     GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")

@@ -6,28 +6,46 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { unlinkSync } from 'fs';
+import { readdirSync, unlinkSync } from 'fs';
+import { tmpdir } from 'node:os';
 import express from 'express';
 import request from 'supertest';
 
 let capturedSpawnArgs = null;
+let spawnError = null;
 
-vi.mock('../../db.js', () => ({ default: {
-  query: vi.fn(async (sql) => {
-    if (/INSERT INTO kernel_release_effect_dispatch_claims/.test(sql)) {
-      return { rows: [{ id: 91, generation: 1 }], rowCount: 1 };
-    }
-    if (/INSERT INTO kernel_release_effect_dispatch_outcomes/.test(sql)) {
-      return { rows: [], rowCount: 1 };
-    }
-    return { rows: [{
+const query = vi.fn(async (sql) => {
+  if (/INSERT INTO kernel_release_effect_dispatch_claims/.test(sql)) {
+    return {
+      rows: [{
+        id: 91,
+        generation: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        inserted: true,
+      }],
+      rowCount: 1,
+    };
+  }
+  if (/INSERT INTO kernel_release_effect_dispatch_outcomes/.test(sql)) {
+    return { rows: [], rowCount: 1 };
+  }
+  return { rows: [{
     state: 'production_deploying',
     merge_sha: 'f'.repeat(40),
     expected_merge_sha: 'f'.repeat(40),
     effect_kind: 'production',
     idempotency_key: '55555555-5555-4555-8555-555555555555',
-    }], rowCount: 1 };
-  }),
+    artifact_versions: [{
+      name: 'brain',
+      version: '1.2.3',
+      digest: `sha256:${'a'.repeat(64)}`,
+    }],
+  }], rowCount: 1 };
+});
+
+vi.mock('../../db.js', () => ({ default: {
+  query,
+  connect: vi.fn(async () => ({ query, release: vi.fn() })),
 } }));
 vi.mock('../../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
 vi.mock('../../llm-caller.js', () => ({ callLLM: vi.fn(), callLLMStream: vi.fn() }));
@@ -56,6 +74,14 @@ vi.mock('../../pr-callback-handler.js', () => ({
   extractPrInfo: vi.fn(),
   handlePrMerged: vi.fn(),
 }));
+vi.mock('../../orchestrator/release-run-routing.js', () => ({
+  planReleaseArtifactRoutes: vi.fn(() => [{
+    artifact: 'brain',
+    command: '/custom/repo/root/scripts/brain-deploy.sh',
+    args: [],
+    env: {},
+  }]),
+}));
 vi.mock('../shared.js', () => ({
   resolveRelatedFailureMemories: vi.fn(),
   getActiveExecutionPaths: vi.fn(),
@@ -63,8 +89,14 @@ vi.mock('../shared.js', () => ({
 }));
 vi.mock('child_process', () => ({
   spawn: (...args) => {
+    if (spawnError) throw spawnError;
     capturedSpawnArgs = args;
-    return { unref: vi.fn(), on: vi.fn() };
+    return {
+      unref: vi.fn(),
+      on: vi.fn((event, callback) => {
+        if (event === 'close') queueMicrotask(() => callback(0, null));
+      }),
+    };
   },
   execSync: vi.fn(),
 }));
@@ -74,6 +106,7 @@ describe('ops — deploy REPO_ROOT path', () => {
 
   beforeEach(async () => {
     capturedSpawnArgs = null;
+    spawnError = null;
     process.env.DEPLOY_TOKEN = 'test-token';
     process.env.REPO_ROOT = '/custom/repo/root';
     vi.resetModules();
@@ -106,7 +139,7 @@ describe('ops — deploy REPO_ROOT path', () => {
     expect(res.status).toBe(202);
     expect(capturedSpawnArgs).not.toBeNull();
     const scriptPath = capturedSpawnArgs[1][0];
-    expect(scriptPath).toBe('/custom/repo/root/scripts/deploy-local.sh');
+    expect(scriptPath).toBe('/custom/repo/root/scripts/lib/release-run-effect-worker.mjs');
     const opts = capturedSpawnArgs[2];
     expect(opts.cwd).toBe('/custom/repo/root');
   });
@@ -125,6 +158,30 @@ describe('ops — deploy REPO_ROOT path', () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toMatch(/release_effect_request_invalid/);
     expect(capturedSpawnArgs).toBeNull();
+  });
+
+  it('cleans the private authority file immediately when detached spawn fails', async () => {
+    const countPrivateConfigs = () => readdirSync(tmpdir())
+      .filter((entry) => entry.startsWith('cecelia-release-worker-')).length;
+    const before = countPrivateConfigs();
+    spawnError = new Error('spawn unavailable');
+    const mod = await import('../ops.js');
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', mod.default);
+
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer test-token')
+      .send({
+        release_run_id: '44444444-4444-4444-8444-444444444444',
+        merge_sha: 'f'.repeat(40),
+        release_authorization: '55555555-5555-4555-8555-555555555555',
+      });
+
+    expect(res.status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(countPrivateConfigs()).toBe(before);
   });
 
   it('REPO_ROOT 未设置时 path 不崩溃（含 deploy-local.sh 后缀）', () => {

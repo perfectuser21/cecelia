@@ -24,6 +24,13 @@ actor="${KERNEL_RELEASE_BOOTSTRAP_ACTOR:-}"
 approval_key_id="${KERNEL_RELEASE_BOOTSTRAP_APPROVAL_KEY_ID:-}"
 trust_key="/etc/cecelia/kernel-release-bootstrap-owner-v1.pub"
 
+# A SIGKILL cannot run the EXIT trap. Reap only old, owner-only directories
+# created by this bootstrap before materializing another database password.
+env -i PATH="$PATH" HOME="${HOME:-}" \
+  node "$bootstrap_root/scripts/lib/bootstrap-private-config.mjs" \
+  cleanup-stale-pg "${TMPDIR:-/tmp}" \
+  || deny "stale bootstrap secret cleanup failed"
+
 [[ "$deploy_root" == /* ]] \
   || deny "a dedicated absolute deploy root is required"
 [[ "$(git -C "$deploy_root" rev-parse --is-inside-work-tree 2>/dev/null || true)" == "true" ]] \

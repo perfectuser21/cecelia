@@ -1,11 +1,17 @@
 import {
   chmodSync,
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
+  openSync,
   readFileSync,
+  readdirSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
@@ -23,14 +29,47 @@ function validatePrivateFile(file) {
   if (!isAbsolute(file ?? '')) {
     throw new Error('bootstrap_private_config_reference_invalid');
   }
+  const parent = dirname(file);
+  const parentStat = lstatSync(parent);
   const stat = lstatSync(file);
   if (
-    !stat.isFile()
+    !parentStat.isDirectory()
+    || parentStat.isSymbolicLink()
+    || (parentStat.mode & 0o777) !== 0o700
+    || (typeof process.getuid === 'function' && parentStat.uid !== process.getuid())
+    || !stat.isFile()
     || stat.isSymbolicLink()
     || (stat.mode & 0o777) !== 0o600
+    || stat.nlink !== 1
     || (typeof process.getuid === 'function' && stat.uid !== process.getuid())
   ) {
     throw new Error('bootstrap_private_config_permissions_invalid');
+  }
+  return { parent, parentStat, stat };
+}
+
+function openPrivateFile(file) {
+  const before = validatePrivateFile(file);
+  let descriptor;
+  try {
+    descriptor = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(descriptor);
+    const parentAfter = lstatSync(before.parent);
+    if (
+      !opened.isFile()
+      || opened.nlink !== 1
+      || opened.dev !== before.stat.dev
+      || opened.ino !== before.stat.ino
+      || parentAfter.dev !== before.parentStat.dev
+      || parentAfter.ino !== before.parentStat.ino
+    ) {
+      throw new Error('bootstrap_private_config_permissions_invalid');
+    }
+    return descriptor;
+  } catch (error) {
+    if (descriptor != null) closeSync(descriptor);
+    if (error?.message === 'bootstrap_private_config_permissions_invalid') throw error;
+    throw new Error('bootstrap_private_config_permissions_invalid', { cause: error });
   }
 }
 
@@ -85,12 +124,14 @@ function parseDatabaseUrl(databaseUrl) {
 }
 
 export function readBootstrapPrivateConfig(file) {
-  validatePrivateFile(file);
+  const descriptor = openPrivateFile(file);
   let value;
   try {
-    value = JSON.parse(readFileSync(file, 'utf8'));
+    value = JSON.parse(readFileSync(descriptor, 'utf8'));
   } catch {
     throw new Error('bootstrap_private_config_invalid');
+  } finally {
+    closeSync(descriptor);
   }
   if (
     !value
@@ -106,6 +147,70 @@ export function readBootstrapPrivateConfig(file) {
   return value;
 }
 
+export function cleanupStaleBootstrapPgDirectories({
+  temporaryRoot,
+  now = () => new Date(),
+  staleAfterMs = 2 * 60 * 60_000,
+} = {}) {
+  if (
+    !isAbsolute(temporaryRoot ?? '')
+    || !Number.isFinite(staleAfterMs)
+    || staleAfterMs <= 0
+  ) {
+    throw new Error('bootstrap_pg_reaper_request_invalid');
+  }
+  let removed = 0;
+  let entries = [];
+  try {
+    entries = readdirSync(temporaryRoot);
+  } catch {
+    return { removed };
+  }
+  const uid = process.getuid?.();
+  const allowedNames = new Set(['pg_service.conf', 'pgpass']);
+  const nowMs = now().getTime();
+  for (const entry of entries) {
+    if (!entry.startsWith('kernel-bootstrap-pg.')) continue;
+    const directory = join(temporaryRoot, entry);
+    try {
+      const directoryStat = lstatSync(directory);
+      if (
+        !directoryStat.isDirectory()
+        || directoryStat.isSymbolicLink()
+        || (directoryStat.mode & 0o777) !== 0o700
+        || (uid != null && directoryStat.uid !== uid)
+        || nowMs - directoryStat.mtimeMs < staleAfterMs
+      ) continue;
+      const children = readdirSync(directory);
+      let safe = true;
+      for (const child of children) {
+        if (!allowedNames.has(child)) {
+          safe = false;
+          break;
+        }
+        const stat = lstatSync(join(directory, child));
+        if (
+          !stat.isFile()
+          || stat.isSymbolicLink()
+          || (stat.mode & 0o777) !== 0o600
+          || stat.nlink !== 1
+          || (uid != null && stat.uid !== uid)
+          || nowMs - stat.mtimeMs < staleAfterMs
+        ) {
+          safe = false;
+          break;
+        }
+      }
+      if (!safe) continue;
+      rmSync(directory, { recursive: true });
+      removed += 1;
+    } catch {
+      // Ignore malformed or concurrently changed paths.
+    }
+  }
+  return { removed };
+}
+
 function escapePgPass(value) {
   return value.replaceAll('\\', '\\\\').replaceAll(':', '\\:');
 }
@@ -114,12 +219,21 @@ function writePrivate(file, content) {
   if (!isAbsolute(file ?? '')) {
     throw new Error('bootstrap_pg_reference_invalid');
   }
-  writeFileSync(file, content, {
-    encoding: 'utf8',
-    flag: 'wx',
-    mode: 0o600,
-  });
-  chmodSync(file, 0o600);
+  try {
+    writeFileSync(file, content, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    chmodSync(file, 0o600);
+  } catch (error) {
+    try {
+      unlinkSync(file);
+    } catch {
+      // The file may not have been created.
+    }
+    throw error;
+  }
 }
 
 export function writeBootstrapPgFiles(
@@ -146,7 +260,16 @@ export function writeBootstrapPgFiles(
       database.password,
     ].map(escapePgPass).join(':') + '\n');
   } catch (error) {
-    unlinkSync(serviceFile);
+    try {
+      unlinkSync(passFile);
+    } catch {
+      // writePrivate already removes partial files.
+    }
+    try {
+      unlinkSync(serviceFile);
+    } catch {
+      // Preserve the original private-file error.
+    }
     throw error;
   }
   return { serviceFile, passFile, service: SERVICE_NAME };
@@ -163,6 +286,8 @@ if (
       readBootstrapPrivateConfig(privateConfigFile);
     } else if (action === 'write-pg-files') {
       writeBootstrapPgFiles(privateConfigFile, { serviceFile, passFile });
+    } else if (action === 'cleanup-stale-pg') {
+      cleanupStaleBootstrapPgDirectories({ temporaryRoot: privateConfigFile });
     } else {
       throw new Error('bootstrap_private_config_action_invalid');
     }

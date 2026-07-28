@@ -2,9 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="${KERNEL_RELEASE_DEPLOY_ROOT:-$SOURCE_ROOT}"
+ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 VERSIONS_FILE="$ROOT_DIR/.brain-versions"
-BRAIN_DIR="$ROOT_DIR/packages/brain"
+BRAIN_DIR="$SOURCE_ROOT/packages/brain"
 DEPLOY_STATUS_FILE="${DEPLOY_STATUS_FILE:-$ROOT_DIR/logs/cecelia-deploy-status.json}"
 DEPLOY_STARTED_AT="${KERNEL_RELEASE_STARTED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
@@ -220,7 +222,7 @@ if [[ "$SHA_CHECK_ONLY" == true ]]; then
 
     if [[ -z "$local_expected_sha" ]]; then
         echo "[SHA-CHECK] EXPECTED_SHA 未设置，从 git rev-parse HEAD 获取..."
-        local_expected_sha=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        local_expected_sha="${KERNEL_RELEASE_MERGE_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")}"
     fi
 
     echo "[SHA-CHECK] EXPECTED_SHA=${local_expected_sha}"
@@ -559,7 +561,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     echo ""
     echo "[S6] SHA 回读断言（Gate3 C-05）..."
     if [[ -z "${EXPECTED_SHA:-}" ]]; then
-        EXPECTED_SHA=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        EXPECTED_SHA="${KERNEL_RELEASE_MERGE_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")}"
     fi
     if [[ -n "$EXPECTED_SHA" ]]; then
         S6_HEALTH_JSON=""
@@ -594,7 +596,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     # 8. Update cecelia-run on host (self-update: keeps executor in sync with repo)
     echo ""
     echo "[8/8] Updating cecelia-run on host..."
-    CECELIA_RUN_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-run.sh"
+    CECELIA_RUN_SRC="$SOURCE_ROOT/packages/brain/scripts/cecelia-run.sh"
     CECELIA_RUN_DST="${HOST_HOME}/bin/cecelia-run"
     if [[ -f "$CECELIA_RUN_SRC" ]]; then
       # macOS cp identical files 返 rc=1，set -e 会中止后续 Phase 9-11；|| true 兜底
@@ -608,7 +610,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     # 9. Update cecelia-bridge on host (self-update: keeps bridge timeout config in sync)
     echo ""
     echo "[9/9] Updating cecelia-bridge on host..."
-    BRIDGE_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-bridge.js"
+    BRIDGE_SRC="$SOURCE_ROOT/packages/brain/scripts/cecelia-bridge.js"
     BRIDGE_DST="${HOST_HOME}/bin/cecelia-bridge.js"
     if [[ -f "$BRIDGE_SRC" ]]; then
       # 同 cecelia-run 的 cp identical 防中止

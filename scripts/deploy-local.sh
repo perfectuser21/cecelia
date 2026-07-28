@@ -21,7 +21,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # 找主仓库路径（兼容 worktree 和直接调用）
 # git rev-parse --git-common-dir 在 worktree 里返回主仓库的 .git 路径
 # 测试钩子：CECELIA_DEPLOY_ROOT 显式指定部署根（smoke 在隔离目录自洽跑，不碰真实主仓库）
-if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
+if [[ -n "${KERNEL_RELEASE_DEPLOY_ROOT:-}" ]]; then
+    MAIN_ROOT="$(cd "$KERNEL_RELEASE_DEPLOY_ROOT" && pwd)"
+elif [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     MAIN_ROOT="$(cd "$CECELIA_DEPLOY_ROOT" && pwd)"
 else
     GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")

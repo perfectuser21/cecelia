@@ -13,7 +13,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { prepareReleaseArtifactSnapshot } from '../../../../../scripts/lib/release-run-artifact-snapshot.mjs';
+import {
+  cleanupReleaseExecutionWorkspace,
+  prepareReleaseArtifactSnapshot,
+  prepareReleaseExecutionWorkspace,
+} from '../../../../../scripts/lib/release-run-artifact-snapshot.mjs';
 
 const temporaryRoots = [];
 
@@ -71,6 +75,7 @@ describe('ReleaseRun immutable artifact snapshots', () => {
         schema_version: 1,
         merge_sha: mergeSha,
         source: 'git-archive',
+        tree_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
       });
     expect(readFileSync(
       join(first, 'packages/workflows/skills/example/SKILL.md'),
@@ -79,5 +84,68 @@ describe('ReleaseRun immutable artifact snapshots', () => {
     expect(statSync(
       join(first, 'packages/workflows/skills/example/SKILL.md'),
     ).mode & 0o222).toBe(0);
+  });
+
+  it('rejects a reused snapshot when any archived source byte changed', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'release-snapshot-tamper-'));
+    temporaryRoots.push(fixture);
+    mkdirSync(join(fixture, 'scripts'), { recursive: true });
+    writeFileSync(join(fixture, 'scripts/brain-deploy.sh'), 'echo exact\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: fixture });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: fixture });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: fixture });
+    execFileSync('git', ['add', '.'], { cwd: fixture });
+    execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: fixture });
+    const mergeSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: fixture,
+      encoding: 'utf8',
+    }).trim();
+    const artifactStore = resolve(fixture, '.artifacts');
+    const snapshot = prepareReleaseArtifactSnapshot({
+      repoRoot: fixture,
+      artifactStore,
+      mergeSha,
+    });
+    const script = join(snapshot, 'scripts/brain-deploy.sh');
+    chmodSync(join(snapshot, 'scripts'), 0o700);
+    chmodSync(script, 0o600);
+    writeFileSync(script, 'echo TAMPERED\n');
+
+    expect(() => prepareReleaseArtifactSnapshot({
+      repoRoot: fixture,
+      artifactStore,
+      mergeSha,
+    })).toThrow('release_artifact_snapshot_digest_mismatch');
+  });
+
+  it('uses disposable writable workspaces without mutating the immutable snapshot', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'release-snapshot-execution-'));
+    temporaryRoots.push(fixture);
+    writeFileSync(join(fixture, 'source.txt'), 'exact\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: fixture });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: fixture });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: fixture });
+    execFileSync('git', ['add', '.'], { cwd: fixture });
+    execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: fixture });
+    const mergeSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: fixture,
+      encoding: 'utf8',
+    }).trim();
+    const artifactStore = resolve(fixture, '.artifacts');
+    const snapshotRoot = prepareReleaseArtifactSnapshot({
+      repoRoot: fixture,
+      artifactStore,
+      mergeSha,
+    });
+
+    const executionRoot = prepareReleaseExecutionWorkspace({
+      artifactStore,
+      snapshotRoot,
+      mergeSha,
+    });
+    writeFileSync(join(executionRoot, 'source.txt'), 'generated output\n');
+    expect(readFileSync(join(snapshotRoot, 'source.txt'), 'utf8')).toBe('exact\n');
+    cleanupReleaseExecutionWorkspace(executionRoot, { artifactStore });
+    expect(() => statSync(executionRoot)).toThrow();
   });
 });

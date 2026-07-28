@@ -1,6 +1,18 @@
 # Brain 模块定义
 
-**版本**: 1.268.15
+**版本**: 1.268.16
+
+## Crash-safe immutable ReleaseRun effects
+
+- Every route runs from a fresh writable copy of a digest-verified, read-only
+  exact-SHA archive; mutable production state is written only under the
+  dedicated deploy root.
+- Snapshot reuse re-hashes the canonical tree and rejects changed bytes.
+- Detached worker and bootstrap secret files enforce owner/mode/link/inode
+  invariants and safely reap only stale private directories after SIGKILL.
+- Staging effect status is persisted for Brain restart recovery, and legacy
+  image recreation now requires the same ReleaseRun production authority.
+- 回退：`bash scripts/brain-rollback.sh 1.268.15`（保留 ReleaseRun 审计账本）。
 
 ## Exact bootstrap receipt closure
 

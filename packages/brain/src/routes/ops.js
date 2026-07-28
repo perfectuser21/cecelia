@@ -3,7 +3,7 @@ import pool from '../db.js';
 import { DB_DEFAULTS } from '../db-config.js';
 import { recordActionReceipt, resolveActionReceipt } from '../receipt-collector.js';
 import { readFileSync, writeFileSync, openSync, writeSync, closeSync, mkdirSync } from 'fs';
-import { join as pathJoin } from 'node:path';
+import { dirname as pathDirname, join as pathJoin } from 'node:path';
 import { callLLM, callLLMStream } from '../llm-caller.js';
 import { handleChat } from '../orchestrator-chat.js';
 import { check48hReport } from '../tick.js';
@@ -36,12 +36,14 @@ import {
 import { planReleaseArtifactRoutes } from '../orchestrator/release-run-routing.js';
 import {
   cleanupPrivateReleaseWorkerConfig,
+  cleanupStalePrivateReleaseWorkerConfigs,
   createPrivateReleaseWorkerConfig,
 } from '../orchestrator/release-run-worker-secret.js';
 import { buildReleaseWorkerEnvironment } from '../../../../scripts/lib/release-run-worker-runtime.mjs';
 
 const router = Router();
 
+cleanupStalePrivateReleaseWorkerConfigs();
 
 // ============================================================
 // Desire System API — Cecelia 的欲望/表达
@@ -2699,6 +2701,11 @@ const DEPLOY_STATUS_FILE = process.env.DEPLOY_STATUS_FILE
     process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname,
     'logs/cecelia-deploy-status.json',
   );
+const STAGING_DEPLOY_STATUS_FILE = process.env.STAGING_DEPLOY_STATUS_FILE
+  || pathJoin(
+    process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname,
+    'logs/cecelia-staging-deploy-status.json',
+  );
 
 function readDeployStatusFile() {
   try {
@@ -2710,6 +2717,21 @@ function readDeployStatusFile() {
 
 function writeDeployStatusFile(data) {
   try { writeFileSync(DEPLOY_STATUS_FILE, JSON.stringify(data)); } catch {}
+}
+
+function readStagingDeployStatusFile() {
+  try {
+    const data = JSON.parse(readFileSync(STAGING_DEPLOY_STATUS_FILE, 'utf8'));
+    if (data.status && data.status !== 'idle') return data;
+  } catch {}
+  return null;
+}
+
+function writeStagingDeployStatusFile(data) {
+  try {
+    mkdirSync(pathDirname(STAGING_DEPLOY_STATUS_FILE), { recursive: true });
+    writeFileSync(STAGING_DEPLOY_STATUS_FILE, JSON.stringify(data), { mode: 0o600 });
+  } catch {}
 }
 
 function publicDeployStatus(state) {
@@ -2732,8 +2754,8 @@ export const deployState = _savedDeploy ? { ..._savedDeploy } : {
   error: null,
 };
 
-// In-memory staging deploy state（Safe Lane 专用，与 production 隔离）
-export const stagingDeployState = {
+const _savedStagingDeploy = readStagingDeployStatusFile();
+export const stagingDeployState = _savedStagingDeploy ? { ..._savedStagingDeploy } : {
   status: 'idle',       // idle | running | success | failed | skipped_no_env | skipped_no_docker
   version: null,
   started_at: null,
@@ -2878,6 +2900,7 @@ router.post('/deploy', async (req, res) => {
     stagingDeployState.artifact_versions = artifactVersions;
     stagingDeployState.dispatch_claim_id = dispatchClaim.dispatch_claim_id;
     stagingDeployState.dispatch_generation = dispatchClaim.generation;
+    writeStagingDeployStatusFile({ ...stagingDeployState });
 
     res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging' });
 
@@ -2886,6 +2909,7 @@ router.post('/deploy', async (req, res) => {
     const execFileAsync = promisify(execFile);
     const startTime = Date.now();
     let stagingReceiptId = null;
+    cleanupStalePrivateReleaseWorkerConfigs();
     const workerPrivateConfig = createPrivateReleaseWorkerConfig({
       authorization: release_authorization,
       deploy_token: expectedToken,
@@ -2930,6 +2954,7 @@ router.post('/deploy', async (req, res) => {
         stagingDeployState.finished_at = new Date().toISOString();
         stagingDeployState.elapsed_ms = elapsed;
         stagingDeployState.skip_reason = skipReason;
+        writeStagingDeployStatusFile({ ...stagingDeployState });
         await resolveActionReceipt(stagingReceiptId, 'failed', { elapsed_ms: elapsed, skip_reason: skipReason });
         console.log(`[staging-deploy] Staging 部署已跳过 (${skipReason})，ReleaseRun 保持阻断`);
       } else {
@@ -2937,6 +2962,7 @@ router.post('/deploy', async (req, res) => {
         stagingDeployState.finished_at = new Date().toISOString();
         stagingDeployState.elapsed_ms = elapsed;
         stagingDeployState.deployed_artifact_versions = artifactVersions;
+        writeStagingDeployStatusFile({ ...stagingDeployState });
         await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed });
         console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
       }
@@ -2953,6 +2979,7 @@ router.post('/deploy', async (req, res) => {
       stagingDeployState.finished_at = new Date().toISOString();
       stagingDeployState.elapsed_ms = elapsed;
       stagingDeployState.error = 'staging_dispatch_failed';
+      writeStagingDeployStatusFile({ ...stagingDeployState });
       await resolveActionReceipt(stagingReceiptId, 'failed', {
         elapsed_ms: elapsed,
         error_code: 'staging_dispatch_failed',
@@ -3030,6 +3057,7 @@ router.post('/deploy', async (req, res) => {
   console.log(`[deploy-webhook] 开始 server-owned artifact routes（detached）: ${artifactRoutes.map((route) => route.artifact).join(',')}`);
   console.log(`[deploy-webhook] log: ${logFile}`);
 
+  cleanupStalePrivateReleaseWorkerConfigs();
   const workerPrivateConfig = createPrivateReleaseWorkerConfig({
     authorization: release_authorization,
     deploy_token: expectedToken,
@@ -3041,22 +3069,43 @@ router.post('/deploy', async (req, res) => {
   const stdioOption = logFd === 'ignore'
     ? 'ignore'
     : ['ignore', logFd, logFd];
-  const child = spawn(args[0], args.slice(1), {
-    detached: true,
-    stdio: stdioOption,
-    cwd: repoRoot,
-    env: buildReleaseWorkerEnvironment(process.env, {
-      KERNEL_RELEASE_RUN_ID: release_run_id,
-      KERNEL_RELEASE_MERGE_SHA: merge_sha,
-      KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifactVersions),
-      KERNEL_RELEASE_EFFECT_KIND: effectKind,
-      KERNEL_RELEASE_DEPLOY_ROOT: repoRoot,
-      KERNEL_RELEASE_STARTED_AT: deployState.started_at,
-      KERNEL_RELEASE_DISPATCH_CLAIM_ID: String(dispatchClaim.dispatch_claim_id),
-      KERNEL_RELEASE_DISPATCH_GENERATION: String(dispatchClaim.generation),
-      KERNEL_RELEASE_PRIVATE_CONFIG_FILE: workerPrivateConfig.file,
-    }),
-  });
+  let child;
+  try {
+    child = spawn(args[0], args.slice(1), {
+      detached: true,
+      stdio: stdioOption,
+      cwd: repoRoot,
+      env: buildReleaseWorkerEnvironment(process.env, {
+        KERNEL_RELEASE_RUN_ID: release_run_id,
+        KERNEL_RELEASE_MERGE_SHA: merge_sha,
+        KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifactVersions),
+        KERNEL_RELEASE_EFFECT_KIND: effectKind,
+        KERNEL_RELEASE_DEPLOY_ROOT: repoRoot,
+        KERNEL_RELEASE_STARTED_AT: deployState.started_at,
+        KERNEL_RELEASE_DISPATCH_CLAIM_ID: String(dispatchClaim.dispatch_claim_id),
+        KERNEL_RELEASE_DISPATCH_GENERATION: String(dispatchClaim.generation),
+        KERNEL_RELEASE_PRIVATE_CONFIG_FILE: workerPrivateConfig.file,
+      }),
+    });
+  } catch (error) {
+    cleanupPrivateReleaseWorkerConfig(workerPrivateConfig.file);
+    if (typeof logFd === 'number') {
+      try { closeSync(logFd); } catch { /* noop */ }
+    }
+    deployState.status = 'failed';
+    deployState.error = 'production_worker_spawn_failed';
+    deployState.finished_at = new Date().toISOString();
+    writeDeployStatusFile({ ...deployState });
+    await appendDispatchOutcome(
+      pool,
+      dispatchClaim.dispatch_claim_id,
+      dispatchClaim.generation,
+      'failed',
+      { error_code: 'production_worker_spawn_failed' },
+    ).catch(() => {});
+    console.error(`[deploy-webhook] worker spawn failed: ${error.message}`);
+    return;
+  }
   // log fd 被子进程接管后父进程可以关闭（数据继续写入文件）
   if (typeof logFd === 'number') {
     try { closeSync(logFd); } catch { /* noop */ }
@@ -3111,6 +3160,10 @@ router.post('/deploy', async (req, res) => {
 
 // GET /api/brain/deploy/staging/status — 查询 staging 部署状态（Safe Lane 轮询用）
 router.get('/deploy/staging/status', (req, res) => {
+  const fileStatus = readStagingDeployStatusFile();
+  if (fileStatus && fileStatus.status !== stagingDeployState.status) {
+    Object.assign(stagingDeployState, fileStatus);
+  }
   res.json(publicDeployStatus(stagingDeployState));
 });
 
@@ -3140,6 +3193,7 @@ router.post('/deploy/staging/cleanup', async (req, res) => {
     stagingDeployState.finished_at = null;
     stagingDeployState.elapsed_ms = null;
     stagingDeployState.error = null;
+    writeStagingDeployStatusFile({ ...stagingDeployState });
     console.log('[staging-cleanup] ✅ Staging 清理完成');
   } catch (err) {
     console.error('[staging-cleanup] ⚠️ 清理异常（非阻塞）:', err.message);

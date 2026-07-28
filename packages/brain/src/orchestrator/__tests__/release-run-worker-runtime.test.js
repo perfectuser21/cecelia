@@ -1,5 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import {
   buildReleaseWorkerEnvironment,
@@ -8,6 +20,7 @@ import {
 import {
   cleanupPrivateReleaseWorkerConfig,
   createPrivateReleaseWorkerConfig,
+  cleanupStalePrivateReleaseWorkerConfigs,
   readPrivateReleaseWorkerConfig,
 } from '../release-run-worker-secret.js';
 
@@ -22,6 +35,7 @@ describe('leased ReleaseRun worker runtime', () => {
     const appendOutcome = vi.fn(async (_claim, _generation, outcome) => {
       order.push(`outcome:${outcome}`);
     });
+    const afterTerminal = vi.fn(async () => order.push('status:success'));
     const runRoute = vi.fn(async () => {
       order.push('route:start');
       await routePending;
@@ -34,6 +48,7 @@ describe('leased ReleaseRun worker runtime', () => {
       generation: 3,
       renew,
       appendOutcome,
+      afterTerminal,
       runRoute,
       renewalIntervalMs: 5,
     });
@@ -45,7 +60,8 @@ describe('leased ReleaseRun worker runtime', () => {
     expect(order.at(0)).toBe('renew');
     expect(order).toContain('route:start');
     expect(order).toContain('route:end');
-    expect(order.at(-1)).toBe('outcome:dispatched');
+    expect(order.at(-2)).toBe('outcome:dispatched');
+    expect(order.at(-1)).toBe('status:success');
     expect(appendOutcome).toHaveBeenCalledTimes(1);
   });
 
@@ -119,5 +135,99 @@ describe('leased ReleaseRun worker runtime', () => {
       cleanupPrivateReleaseWorkerConfig(reference.file);
     }
     expect(() => statSync(reference.file)).toThrow();
+  });
+
+  it('lets the release guard consume only the hardened private file reference', () => {
+    const reference = createPrivateReleaseWorkerConfig({
+      authorization: '55555555-5555-4555-8555-555555555555',
+      deploy_token: 'deploy-secret',
+      database: {},
+    });
+    try {
+      const guard = resolve(
+        import.meta.dirname,
+        '../../../../../scripts/lib/release-run-guard.sh',
+      );
+      const result = spawnSync('bash', ['-c', `
+        curl() {
+          local out="" previous=""
+          for arg in "$@"; do
+            if [[ "$previous" == "--output" ]]; then out="$arg"; fi
+            previous="$arg"
+          done
+          printf '{"authorized":true}' > "$out"
+          printf 200
+        }
+        export -f curl
+        source "$1"
+        require_release_run_authority production
+      `, '--', guard], {
+        env: {
+          PATH: process.env.PATH,
+          KERNEL_RELEASE_RUN_ID: '44444444-4444-4444-8444-444444444444',
+          KERNEL_RELEASE_MERGE_SHA: 'f'.repeat(40),
+          KERNEL_RELEASE_PRIVATE_CONFIG_FILE: reference.file,
+        },
+        encoding: 'utf8',
+      });
+      expect(result.status, result.stderr).toBe(0);
+    } finally {
+      cleanupPrivateReleaseWorkerConfig(reference.file);
+    }
+  });
+
+  it('rejects hard links and private files under an unsafe parent directory', () => {
+    const root = mkdtempSync(join(tmpdir(), 'release-worker-secret-test-'));
+    try {
+      const external = join(root, 'external.json');
+      writeFileSync(external, JSON.stringify({
+        authorization: 'a',
+        deploy_token: 'b',
+        database: {},
+      }), { mode: 0o600 });
+      const unsafeParent = join(root, 'cecelia-release-worker-attacker');
+      mkdirSync(unsafeParent, { mode: 0o700 });
+      const authority = join(unsafeParent, 'authority.json');
+      linkSync(external, authority);
+      expect(() => readPrivateReleaseWorkerConfig(authority))
+        .toThrow('release_worker_private_reference_invalid');
+
+      rmSync(authority);
+      writeFileSync(authority, readFileSync(external), { mode: 0o600 });
+      chmodSync(unsafeParent, 0o777);
+      expect(() => readPrivateReleaseWorkerConfig(authority))
+        .toThrow('release_worker_private_reference_invalid');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('removes only stale owner-only release worker secret directories', () => {
+    const root = mkdtempSync(join(tmpdir(), 'release-worker-reaper-test-'));
+    try {
+      const stale = createPrivateReleaseWorkerConfig({
+        authorization: 'a',
+        deploy_token: 'b',
+        database: {},
+      }, { temporaryRoot: root, now: () => new Date(0) });
+      const fresh = createPrivateReleaseWorkerConfig({
+        authorization: 'c',
+        deploy_token: 'd',
+        database: {},
+      }, { temporaryRoot: root, now: () => new Date(10_000) });
+
+      const result = cleanupStalePrivateReleaseWorkerConfigs({
+        temporaryRoot: root,
+        now: () => new Date(20_000),
+        staleAfterMs: 15_000,
+      });
+
+      expect(result.removed).toBe(1);
+      expect(() => statSync(stale.file)).toThrow();
+      expect(statSync(fresh.file).isFile()).toBe(true);
+      cleanupPrivateReleaseWorkerConfig(fresh.file);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
