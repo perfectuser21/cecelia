@@ -5,8 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 BRAIN_DIR="$ROOT_DIR/packages/brain"
-DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"
+DEPLOY_STATUS_FILE="${DEPLOY_STATUS_FILE:-$ROOT_DIR/logs/cecelia-deploy-status.json}"
 DEPLOY_STARTED_AT="${KERNEL_RELEASE_STARTED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+E2E_EVIDENCE_DIGEST=""
 
 # 蓝绿切换 + Bark 告警工具（顶层 source，保证 Docker/launchd 两模式都有 send_bark/bluegreen_swap）
 # shellcheck disable=SC1091
@@ -35,12 +36,41 @@ _write_deploy_status() {
             rollback_version="${ROLLBACK_IMAGE_TAG#cecelia-brain:}"
             rollback_command="BRAIN_VERSION=${rollback_version} docker compose -f docker-compose.yml up -d"
         fi
-        printf '{"status":"success","version":"%s","release_run_id":"%s","merge_sha":"%s","release_authorization":"%s","deployed_image_digest":"%s","rollback_image_digest":"%s","rollback_image_reference":"%s","rollback_image_tag":"%s","rollback_image_exists":%s,"rollback_probe":"%s","rollback_command":"%s","started_at":"%s","finished_at":"%s"}' \
-            "$VERSION" "${KERNEL_RELEASE_RUN_ID:-}" "${KERNEL_RELEASE_MERGE_SHA:-}" \
-            "${KERNEL_RELEASE_AUTHORIZATION:-}" "$deployed_image_digest" \
-            "$ROLLBACK_IMAGE_DIGEST" "$ROLLBACK_IMAGE_DIGEST" "$ROLLBACK_IMAGE_TAG" "$rollback_image_exists" \
-            "$rollback_probe" "$rollback_command" "$DEPLOY_STARTED_AT" \
-            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
+        mkdir -p "$(dirname "$DEPLOY_STATUS_FILE")"
+        DEPLOY_VERSION="$VERSION" DEPLOYED_IMAGE_DIGEST="$deployed_image_digest" \
+        ROLLBACK_IMAGE_EXISTS="$rollback_image_exists" ROLLBACK_PROBE="$rollback_probe" \
+        ROLLBACK_COMMAND="$rollback_command" E2E_EVIDENCE_DIGEST="$E2E_EVIDENCE_DIGEST" \
+        ROLLBACK_IMAGE_DIGEST="$ROLLBACK_IMAGE_DIGEST" ROLLBACK_IMAGE_TAG="$ROLLBACK_IMAGE_TAG" \
+        DEPLOY_STARTED_AT="$DEPLOY_STARTED_AT" DEPLOY_STATUS_FILE="$DEPLOY_STATUS_FILE" \
+        node -e '
+          const fs = require("fs");
+          const artifacts = JSON.parse(process.env.KERNEL_RELEASE_ARTIFACT_VERSIONS || "[]");
+          const data = {
+            status: "success",
+            version: process.env.DEPLOY_VERSION,
+            release_run_id: process.env.KERNEL_RELEASE_RUN_ID || "",
+            merge_sha: process.env.KERNEL_RELEASE_MERGE_SHA || "",
+            release_authorization: process.env.KERNEL_RELEASE_AUTHORIZATION || "",
+            deployed_artifact_versions: artifacts,
+            deployed_image_digest: process.env.DEPLOYED_IMAGE_DIGEST || "",
+            rollback_image_digest: process.env.ROLLBACK_IMAGE_DIGEST || "",
+            rollback_image_reference: process.env.ROLLBACK_IMAGE_DIGEST || "",
+            rollback_image_tag: process.env.ROLLBACK_IMAGE_TAG || "",
+            rollback_image_exists: process.env.ROLLBACK_IMAGE_EXISTS === "true",
+            rollback_probe: process.env.ROLLBACK_PROBE,
+            rollback_command: process.env.ROLLBACK_COMMAND || "",
+            e2e_receipt: {
+              status: "pass",
+              release_run_id: process.env.KERNEL_RELEASE_RUN_ID || "",
+              merge_sha: process.env.KERNEL_RELEASE_MERGE_SHA || "",
+              artifact_versions: artifacts,
+              evidence_digest: process.env.E2E_EVIDENCE_DIGEST || "",
+            },
+            started_at: process.env.DEPLOY_STARTED_AT,
+            finished_at: new Date().toISOString(),
+          };
+          fs.writeFileSync(process.env.DEPLOY_STATUS_FILE, JSON.stringify(data));
+        ' 2>/dev/null || true
     else
         printf '{"status":"failed","error":"brain-deploy.sh exited before success","finished_at":"%s"}' \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
@@ -622,7 +652,17 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     # 11. Post-deploy smoke：跑最近合并 PR 引入的 packages/brain/scripts/smoke/*.sh
     echo ""
     echo "[11/11] Post-deploy smoke..."
-    run_post_deploy_smoke || true   # smoke non-fatal — deploy 已成功
+    set +e
+    SMOKE_OUTPUT=$(run_post_deploy_smoke 2>&1)
+    SMOKE_CODE=$?
+    set -e
+    echo "$SMOKE_OUTPUT"
+    if [[ "$SMOKE_CODE" -ne 0 ]]; then
+      DEPLOY_SUCCESS=false
+      echo "[FAIL] required post-deploy E2E failed"
+      exit 1
+    fi
+    E2E_EVIDENCE_DIGEST="sha256:$(printf '%s' "$SMOKE_OUTPUT" | shasum -a 256 | awk '{print $1}')"
 
     exit 0
   fi

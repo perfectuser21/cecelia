@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { sameArtifactVersions } from './release-run-contract.js';
 
 function sha256(value) {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -16,6 +17,14 @@ function exactStatus(status, request) {
   return status?.release_run_id === request.release_run_id
     && status?.merge_sha === request.merge_sha
     && status?.release_authorization === request.idempotency_key;
+}
+
+function exactE2EReceipt(receipt, request) {
+  return receipt?.status === 'pass'
+    && receipt.release_run_id === request.release_run_id
+    && receipt.merge_sha === request.merge_sha
+    && /^sha256:[0-9a-f]{64}$/.test(receipt.evidence_digest ?? '')
+    && sameArtifactVersions(receipt.artifact_versions, request.artifact_versions);
 }
 
 export function createReleaseRunAdapters({
@@ -43,19 +52,22 @@ export function createReleaseRunAdapters({
         digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha, 'packages/brain'])),
       });
     }
-    if (paths.some((path) => path.startsWith('apps/dashboard/'))) {
+    if (paths.some((path) => path.startsWith('apps/'))) {
       artifacts.push({
-        name: 'dashboard',
+        name: 'workspace',
         version: mergeSha.slice(0, 12),
-        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha, 'apps/dashboard'])),
+        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha, 'apps'])),
+      });
+    }
+    if (paths.some((path) => path.startsWith('packages/workflows/skills/'))) {
+      artifacts.push({
+        name: 'workflow-skills',
+        version: mergeSha.slice(0, 12),
+        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha, 'packages/workflows/skills'])),
       });
     }
     if (artifacts.length === 0) {
-      artifacts.push({
-        name: 'brain',
-        version: packageJson.version,
-        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha])),
-      });
+      throw new Error('release_non_deployable_change_blocked');
     }
     return artifacts;
   };
@@ -76,7 +88,8 @@ export function createReleaseRunAdapters({
         artifact_versions: request.artifact_versions,
         changed_paths: request.artifact_versions.flatMap((artifact) => ({
           brain: ['packages/brain/'],
-          dashboard: ['apps/dashboard/'],
+          workspace: ['apps/'],
+          'workflow-skills': ['packages/workflows/skills/'],
         })[artifact.name] ?? []),
       }),
     });
@@ -88,6 +101,10 @@ export function createReleaseRunAdapters({
     if (status.status !== 'success' || !exactStatus(status, request)) {
       return { status: status.status ?? 'unknown' };
     }
+    if (
+      !exactE2EReceipt(status.e2e_receipt, request)
+      || !sameArtifactVersions(status.deployed_artifact_versions, request.artifact_versions)
+    ) return { status: 'fail' };
     const health = await json(fetchFn, `${stagingUrl}/api/brain/health`);
     const brain = request.artifact_versions.find((item) => item.name === 'brain');
     if (brain && (health.git_sha !== request.merge_sha
@@ -111,13 +128,17 @@ export function createReleaseRunAdapters({
       json(fetchFn, `${brainUrl}/api/brain/status/full`),
     ]);
     const brain = request.artifact_versions.find((item) => item.name === 'brain');
-    const dashboard = request.artifact_versions.find((item) => item.name === 'dashboard');
+    const dashboard = request.artifact_versions.find((item) => item.name === 'workspace');
     if (brain && (health.git_sha !== request.merge_sha
       || health.status !== 'healthy'
       || health.version !== brain.version)) {
       return { status: 'fail' };
     }
     if (full == null || full.error != null) return { status: 'fail' };
+    if (
+      !exactE2EReceipt(status.e2e_receipt, request)
+      || !sameArtifactVersions(status.deployed_artifact_versions, request.artifact_versions)
+    ) return { status: 'fail' };
     if (dashboard) {
       const build = await json(fetchFn, `${dashboardUrl}/build-info.json`);
       if (build.git_sha !== request.merge_sha) return { status: 'fail' };

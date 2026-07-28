@@ -2686,13 +2686,17 @@ router.get('/docs/instruction-book', async (req, res) => {
 
 // ─── Deploy Webhook ──────────────────────────────────────────────────────────
 
-const DEPLOY_STATUS_FILE = '/tmp/cecelia-deploy-status.json';
+const DEPLOY_STATUS_FILE = process.env.DEPLOY_STATUS_FILE
+  || pathJoin(
+    process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname,
+    'logs/cecelia-deploy-status.json',
+  );
 
 function readDeployStatusFile() {
   try {
     const data = JSON.parse(readFileSync(DEPLOY_STATUS_FILE, 'utf8'));
     const age = Date.now() - new Date(data.started_at || 0).getTime();
-    if (age < 15 * 60 * 1000 && data.status && data.status !== 'idle') return data;
+    if (data.status && data.status !== 'idle') return data;
   } catch {}
   return null;
 }
@@ -2888,9 +2892,18 @@ router.post('/deploy', async (req, res) => {
         await resolveActionReceipt(stagingReceiptId, 'failed', { elapsed_ms: elapsed, skip_reason: skipReason });
         console.log(`[staging-deploy] Staging 部署已跳过 (${skipReason})，ReleaseRun 保持阻断`);
       } else {
+        const { createHash } = await import('node:crypto');
         stagingDeployState.status = 'success';
         stagingDeployState.finished_at = new Date().toISOString();
         stagingDeployState.elapsed_ms = elapsed;
+        stagingDeployState.deployed_artifact_versions = artifact_versions;
+        stagingDeployState.e2e_receipt = {
+          status: 'pass',
+          release_run_id,
+          merge_sha,
+          artifact_versions,
+          evidence_digest: `sha256:${createHash('sha256').update(output).digest('hex')}`,
+        };
         await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed });
         console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
       }
@@ -3035,6 +3048,8 @@ router.post('/deploy', async (req, res) => {
         'rollback_image_exists',
         'rollback_probe',
         'rollback_command',
+        'deployed_artifact_versions',
+        'e2e_receipt',
       ]) {
         if (scriptEvidence[key] !== undefined) deployState[key] = scriptEvidence[key];
       }

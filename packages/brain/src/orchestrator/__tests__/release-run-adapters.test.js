@@ -36,6 +36,34 @@ describe('production ReleaseRun adapters', () => {
     })]);
   });
 
+  it.each([
+    ['apps/dashboard/src/x.ts', 'workspace', 'apps'],
+    ['apps/api/src/x.ts', 'workspace', 'apps'],
+    ['packages/workflows/skills/x/SKILL.md', 'workflow-skills', 'packages/workflows/skills'],
+  ])('maps %s to its real deployable artifact', async (changedPath, name, treePath) => {
+    const gitExecFile = vi.fn((args) => {
+      if (args[0] === 'show') return JSON.stringify({ version: '1.268.5' });
+      if (args[0] === 'diff-tree') return `${changedPath}\n`;
+      return `immutable tree for ${treePath}`;
+    });
+    const adapters = createReleaseRunAdapters({ gitExecFile });
+    await expect(adapters.resolveArtifactVersions({ merge_sha: sha })).resolves.toEqual([
+      expect.objectContaining({ name, digest: expect.stringMatching(/^sha256:/) }),
+    ]);
+    expect(gitExecFile).toHaveBeenCalledWith(['ls-tree', '-r', sha, treePath]);
+  });
+
+  it('blocks changed paths without a ReleaseRun effect owner', async () => {
+    const gitExecFile = vi.fn((args) => {
+      if (args[0] === 'show') return JSON.stringify({ version: '1.268.5' });
+      if (args[0] === 'diff-tree') return 'packages/engine/src/runner.js\n';
+      return 'tree';
+    });
+    const adapters = createReleaseRunAdapters({ gitExecFile });
+    await expect(adapters.resolveArtifactVersions({ merge_sha: sha }))
+      .rejects.toThrow('release_non_deployable_change_blocked');
+  });
+
   it('runs only the authorized exact-SHA deploy request', async () => {
     const fetchFn = vi.fn(async () => response({ status: 'accepted' }));
     const adapters = createReleaseRunAdapters({
@@ -68,6 +96,14 @@ describe('production ReleaseRun adapters', () => {
         rollback_image_exists: true,
         rollback_probe: 'pass',
         rollback_command: rollbackCommand,
+        deployed_artifact_versions: artifacts,
+        e2e_receipt: {
+          status: 'pass',
+          merge_sha: sha,
+          release_run_id: request.release_run_id,
+          artifact_versions: artifacts,
+          evidence_digest: `sha256:${'f'.repeat(64)}`,
+        },
       }))
       .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
       .mockResolvedValueOnce(response({ ok: true, queue: {} }));
@@ -90,6 +126,28 @@ describe('production ReleaseRun adapters', () => {
         probe: 'pass',
       },
     });
+  });
+
+  it('rejects healthy production without a fresh exact E2E receipt', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(response({
+        status: 'success',
+        release_run_id: request.release_run_id,
+        merge_sha: sha,
+        release_authorization: request.idempotency_key,
+        deployed_image_digest: deployedImage,
+        rollback_image_digest: rollbackImage,
+        rollback_image_reference: rollbackImage,
+        rollback_image_tag: rollbackTag,
+        rollback_image_exists: true,
+        rollback_probe: 'pass',
+        rollback_command: rollbackCommand,
+        deployed_artifact_versions: artifacts,
+      }))
+      .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
+      .mockResolvedValueOnce(response({ ok: true }));
+    const adapters = createReleaseRunAdapters({ fetchFn, brainUrl: 'http://brain' });
+    await expect(adapters.observeProduction(request)).resolves.toEqual({ status: 'fail' });
   });
 
   it('rejects production evidence without a distinct recoverable image', async () => {

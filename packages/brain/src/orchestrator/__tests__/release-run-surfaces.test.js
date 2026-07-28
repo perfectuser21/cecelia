@@ -259,4 +259,17 @@ describe('legacy release surfaces fail closed', () => {
     expect(build).toMatch(/archive --format=tar "\$BUILD_REF"/);
     expect(build).toMatch(/BUILD_SHA=.*rev-parse "\$BUILD_REF"/);
   });
+
+  it('persists exact production E2E evidence outside container tmpfs', () => {
+    const deploy = readFileSync(resolve(root, 'scripts/brain-deploy.sh'), 'utf8');
+    expect(deploy).not.toMatch(/run_post_deploy_smoke\s*\|\|\s*true/);
+    expect(deploy).toContain('e2e_receipt');
+    expect(deploy).toContain('deployed_artifact_versions');
+    expect(deploy).toMatch(/logs\/cecelia-deploy-status\.json/);
+
+    const ops = readFileSync(resolve(root, 'packages/brain/src/routes/ops.js'), 'utf8');
+    expect(ops).not.toContain("const DEPLOY_STATUS_FILE = '/tmp/cecelia-deploy-status.json'");
+    expect(ops).toContain('e2e_receipt');
+    expect(ops).toContain('deployed_artifact_versions');
+  });
 });
