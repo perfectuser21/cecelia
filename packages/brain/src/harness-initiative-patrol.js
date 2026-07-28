@@ -197,11 +197,20 @@ async function checkInitiativeStuck(dbPool, run) {
  * 在 tasks 表创建 harness_intervention 任务（带防重）。
  *
  * @param {import('pg').Pool} dbPool
- * @param {{initiativeId: string, phase: string, kind: string, elapsedMs: number, thresholdMs: number, detail: string}} info
+ * @param {{initiativeId: string, runId?: string, harnessRuntime?: string, phase: string, kind: string, elapsedMs: number, thresholdMs: number, detail: string}} info
  * @returns {Promise<{created: boolean, taskId?: string, reason?: string}>}
  */
 async function createInterventionTask(dbPool, info) {
-  const { initiativeId, phase, kind, elapsedMs, thresholdMs, detail } = info;
+  const {
+    initiativeId,
+    runId,
+    harnessRuntime,
+    phase,
+    kind,
+    elapsedMs,
+    thresholdMs,
+    detail,
+  } = info;
 
   // 防重：同一 initiative 已有未结束（queued/in_progress/pending）的 harness_intervention 任务则跳过
   const dedup = await dbPool.query(
@@ -234,18 +243,20 @@ async function createInterventionTask(dbPool, info) {
   // alert（读不到 docker logs 无法真诊断）。thread_id 格式 harness-task:<initiativeId>:...，取最近
   // 一条未终态的容器。查询失败/无容器 → null 降级，仍建任务（intervention 至少能 alert）。
   let containerId = null;
-  try {
-    const cr = await dbPool.query(
-      `SELECT container_id FROM walking_skeleton_thread_lookup
-        WHERE thread_id LIKE 'harness-task:' || $1 || ':%'
-          AND status NOT IN ('completed', 'failed')
-        ORDER BY created_at DESC
-        LIMIT 1`,
-      [initiativeId]
-    );
-    containerId = cr.rows[0]?.container_id || null;
-  } catch (err) {
-    console.warn(`[harness-initiative-patrol] 查在飞容器失败 initiative=${initiativeId} (non-fatal): ${err.message}`);
+  if (harnessRuntime !== KERNEL_RUNTIME) {
+    try {
+      const cr = await dbPool.query(
+        `SELECT container_id FROM walking_skeleton_thread_lookup
+          WHERE thread_id LIKE 'harness-task:' || $1 || ':%'
+            AND status NOT IN ('completed', 'failed')
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [initiativeId]
+      );
+      containerId = cr.rows[0]?.container_id || null;
+    } catch (err) {
+      console.warn(`[harness-initiative-patrol] 查在飞容器失败 initiative=${initiativeId} (non-fatal): ${err.message}`);
+    }
   }
 
   const result = await dbPool.query(
@@ -257,6 +268,8 @@ async function createInterventionTask(dbPool, info) {
       description,
       JSON.stringify({
         initiative_id: initiativeId,
+        run_id: runId || null,
+        harness_runtime: harnessRuntime || null,
         container_id: containerId,
         phase,
         kind,
@@ -331,6 +344,8 @@ export async function runHarnessInitiativePatrol(dbPool = pool) {
     try {
       const created = await createInterventionTask(dbPool, {
         initiativeId: run.initiative_id,
+        runId: run.id,
+        harnessRuntime: run.harness_runtime,
         phase: run.phase,
         kind: stuckCheck.kind,
         elapsedMs: stuckCheck.elapsedMs,
