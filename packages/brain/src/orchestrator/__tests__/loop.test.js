@@ -183,6 +183,189 @@ describe('runLoop：全链 planning→done', () => {
   });
 });
 
+describe('runLoop：hybrid Commander boundary', () => {
+  it('inserts one Commander Attempt before the existing default dispatch', async () => {
+    const current = obs({
+      run: {
+        id: RUN_ID,
+        phase: 'planning',
+        cost_usd: 0,
+        commander_mode: 'hybrid',
+      },
+      prdExists: false,
+      contract: { approved: false, id: CONTRACT_ID },
+    });
+    const { deps } = makeEnv({
+      observedSeq: [
+        current,
+        current,
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+    deps.commanderCoordinator = {
+      reconcile: vi.fn()
+        .mockResolvedValueOnce({
+          kind: 'dispatch',
+          action: 'spawn:commander',
+          context: {
+            target: {
+              role: 'commander',
+              provider: 'codex',
+              account: 'team4',
+              machine: 'us-mac-m4',
+            },
+            bundle: { commander_attempt_id: 'commander-attempt' },
+          },
+        })
+        .mockResolvedValueOnce({ kind: 'continue', decision: {
+          phase: 'planning',
+          action: 'spawn:planner',
+          reason: 'no_prd',
+        } })
+        .mockResolvedValue({ kind: 'bypass' }),
+    };
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch.mock.calls.map(([action]) => action)).toEqual([
+      'spawn:commander',
+      'spawn:planner',
+    ]);
+    expect(deps.dispatch.mock.calls[0][1]).toMatchObject({
+      commander: {
+        target: expect.objectContaining({ role: 'commander' }),
+        bundle: { commander_attempt_id: 'commander-attempt' },
+      },
+    });
+  });
+
+  it('wakes Commander before merge and does not execute merge in the same pass', async () => {
+    const pr = {
+      url: 'u',
+      state: 'OPEN',
+      mergeStateStatus: 'CLEAN',
+      ci: 'pass',
+      merged: false,
+      head_sha: 'sha-1',
+    };
+    const mergeReady = obs({
+      run: {
+        id: RUN_ID,
+        phase: 'evaluate',
+        cost_usd: 0,
+        commander_mode: 'hybrid',
+      },
+      generatorSpawned: true,
+      pr,
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+    });
+    const { deps } = makeEnv({
+      observedSeq: [
+        mergeReady,
+        mergeReady,
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+    deps.commanderCoordinator = {
+      reconcile: vi.fn()
+        .mockResolvedValueOnce({
+          kind: 'dispatch',
+          action: 'spawn:commander',
+          context: {
+            target: {
+              role: 'commander',
+              provider: 'codex',
+              account: 'team4',
+              machine: 'us-mac-m4',
+            },
+            bundle: { commander_attempt_id: 'commander-attempt' },
+          },
+        })
+        .mockResolvedValueOnce({ kind: 'continue', decision: {
+          phase: 'merge',
+          action: 'merge_pr',
+          reason: 'all_gates_passed',
+        } })
+        .mockResolvedValue({ kind: 'bypass' }),
+    };
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch.mock.calls.map(([action]) => action)).toEqual([
+      'spawn:commander',
+      'merge_pr',
+    ]);
+  });
+
+  it('records a rejected Directive and reuses current Kernel truth', async () => {
+    const current = obs({
+      run: {
+        id: RUN_ID,
+        phase: 'planning',
+        cost_usd: 0,
+        commander_mode: 'hybrid',
+      },
+      prdExists: false,
+      contract: { approved: false, id: CONTRACT_ID },
+    });
+    const { deps, appended } = makeEnv({
+      observedSeq: [
+        current,
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+    const rawDirective = {
+      schema: 'commander-directive/v1',
+      run_id: RUN_ID,
+      event_cursor: 9,
+      action: 'switch_machine',
+      reason: 'Move the role.',
+      route: { machine: 'xian-mac-m4' },
+      evidence_refs: ['event:9'],
+    };
+    deps.commanderCoordinator = {
+      reconcile: vi.fn()
+        .mockResolvedValueOnce({ kind: 'control', decision: rawDirective })
+        .mockResolvedValue({ kind: 'bypass' }),
+    };
+    deps.commanderDirectiveExecutor = {
+      execute: vi.fn().mockResolvedValue({
+        accepted: false,
+        reason_code: 'phase2_route_mutation_deferred',
+        decision: null,
+      }),
+    };
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(appended).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: 'commander.directive_rejected',
+        gateVerdict: 'deny:phase2_route_mutation_deferred',
+      }),
+      expect.objectContaining({ action: 'spawn:planner' }),
+    ]));
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:planner', expect.any(Object));
+  });
+
+  it('keeps non-hybrid dispatch behavior byte-for-byte when coordinator bypasses', async () => {
+    const { deps } = makeEnv({
+      observedSeq: [
+        obs({ prdExists: false, contract: { approved: false, id: CONTRACT_ID } }),
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+    deps.commanderCoordinator = {
+      reconcile: vi.fn().mockResolvedValue({ kind: 'bypass' }),
+    };
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch.mock.calls.map(([action]) => action)).toEqual(['spawn:planner']);
+  });
+});
+
 describe('runLoop：崩溃在 log 与 dispatch 之间（hop 协议）', () => {
   it('intent 有记录、无容器无产物 → 视为未遂，重派为新 hop（nextHop = MAX+1）', async () => {
     // 上一进程在 hop=4 记了 spawn:generator intent 后崩溃：无 inflight、无 PR
