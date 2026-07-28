@@ -6,6 +6,14 @@ const bundle = {
   attempt_id: '22222222-2222-4222-8222-222222222222',
   inputs: { worktree_path: '/workspace' },
 };
+const directive = {
+  schema: 'commander-directive/v1',
+  run_id: '11111111-1111-4111-8111-111111111111',
+  event_cursor: 9,
+  action: 'continue_default',
+  reason: 'The fresh Kernel decision remains legal.',
+  evidence_refs: ['event:9'],
+};
 
 describe('claudeAdapter', () => {
   it('starts a fresh structured-output session in the assigned account home', () => {
@@ -51,6 +59,28 @@ describe('claudeAdapter', () => {
       status: 'completed',
       summary: 'done',
       provider_metadata: { provider: 'claude', session_id: 'claude-session' },
+    });
+  });
+
+  it('normalizes a direct Commander Directive with Claude session identity', () => {
+    expect(claudeAdapter.normalizeResult({
+      attempt: {
+        id: bundle.attempt_id,
+        task_bundle: { expected_output: 'commander-directive/v1' },
+      },
+      raw: {
+        stdout: JSON.stringify({
+          session_id: 'claude-commander',
+          structured_output: directive,
+        }),
+      },
+    })).toMatchObject({
+      status: 'completed',
+      decision: directive,
+      provider_metadata: {
+        provider: 'claude',
+        session_id: 'claude-commander',
+      },
     });
   });
 });

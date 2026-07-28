@@ -131,6 +131,95 @@ grep -q 'HARNESS_RESUME_SESSION_ID' <<<"$SECTION"
 grep -q -- '--json-schema' <<<"$SECTION"
 grep -q 'HARNESS_MODEL' <<<"$SECTION"
 grep -q 'NORMALIZED_RESULT_FILE' <<<"$SECTION"
+grep -q 'commander-directive/v1' <<<"$SECTION" || {
+  echo 'runner does not select the Commander Directive contract' >&2
+  exit 1
+}
+grep -q 'validate_commander_task_bundle' <<<"$SECTION" || {
+  echo 'runner does not enforce the observational Commander TaskBundle boundary' >&2
+  exit 1
+}
+grep -q 'normalize_provider_success' <<<"$SECTION" || {
+  echo 'runner does not wrap direct Commander output for callback transport' >&2
+  exit 1
+}
+if ! grep -q 'HARNESS_CALLBACK_TOKEN' <<<"$SECTION"; then
+  echo 'Commander path dropped callback credentials' >&2
+  exit 1
+fi
+
+eval "$SECTION"
+type provider_result_schema_json >/dev/null 2>&1 || {
+  echo 'missing Provider result schema selector' >&2
+  exit 1
+}
+type validate_commander_task_bundle >/dev/null 2>&1 || {
+  echo 'missing Commander TaskBundle validator' >&2
+  exit 1
+}
+type normalize_provider_success >/dev/null 2>&1 || {
+  echo 'missing Provider success normalizer' >&2
+  exit 1
+}
+
+COMMANDER_TMP="$(mktemp -d)"
+cat > "$COMMANDER_TMP/task.json" <<'JSON'
+{"task_bundle":{"contract_version":"1.0","run_id":"11111111-1111-4111-8111-111111111111","attempt_id":"22222222-2222-4222-8222-222222222222","role":"commander","skill":null,"inputs":{"commander_bundle":{"schema":"commander-bundle/v1","run_id":"11111111-1111-4111-8111-111111111111","commander_attempt_id":"22222222-2222-4222-8222-222222222222"}},"constraints":{"read_only":true,"fresh_session":true,"timeout_seconds":600},"expected_output":"commander-directive/v1"}}
+JSON
+cat > "$COMMANDER_TMP/directive.json" <<'JSON'
+{"schema":"commander-directive/v1","run_id":"11111111-1111-4111-8111-111111111111","event_cursor":9,"action":"continue_default","reason":"The fresh Kernel decision remains legal.","evidence_refs":["event:9"]}
+JSON
+
+COMMANDER_SCHEMA="$(provider_result_schema_json "$COMMANDER_TMP/task.json")"
+jq -e '
+  .properties.schema.const == "commander-directive/v1"
+  and .required == [
+    "schema","run_id","event_cursor","action","reason","evidence_refs"
+  ]
+  and .additionalProperties == false
+' <<<"$COMMANDER_SCHEMA" >/dev/null || {
+  echo 'runner Commander schema is not strict' >&2
+  exit 1
+}
+validate_commander_task_bundle "$COMMANDER_TMP/task.json"
+normalize_provider_success \
+  "$COMMANDER_TMP/task.json" \
+  "$COMMANDER_TMP/directive.json" \
+  "$COMMANDER_TMP/normalized.json" \
+  "22222222-2222-4222-8222-222222222222" \
+  "codex" \
+  "thread-commander" \
+  "" \
+  "false"
+jq -e '
+  .contract_version == "1.0"
+  and .attempt_id == "22222222-2222-4222-8222-222222222222"
+  and .status == "completed"
+  and .summary == .decision.reason
+  and .artifacts == []
+  and .checks == []
+  and .decision.schema == "commander-directive/v1"
+  and .error == null
+  and .provider_metadata.provider == "codex"
+  and .provider_metadata.session_id == "thread-commander"
+' "$COMMANDER_TMP/normalized.json" >/dev/null || {
+  echo 'runner did not wrap the direct Commander Directive' >&2
+  exit 1
+}
+
+jq '.task_bundle.skill = {"name":"writer","content":"mutating"}' \
+  "$COMMANDER_TMP/task.json" > "$COMMANDER_TMP/with-skill.json"
+if validate_commander_task_bundle "$COMMANDER_TMP/with-skill.json"; then
+  echo 'runner allowed Commander role Skill content' >&2
+  exit 1
+fi
+jq '.task_bundle.constraints.read_only = false' \
+  "$COMMANDER_TMP/task.json" > "$COMMANDER_TMP/writable.json"
+if validate_commander_task_bundle "$COMMANDER_TMP/writable.json"; then
+  echo 'runner allowed a writable Commander workspace' >&2
+  exit 1
+fi
+rm -rf "$COMMANDER_TMP"
 
 # Evaluator writes the authoritative mechanical evidence to .brain-result.json.
 # The provider-facing summary may reduce checks to strings, so the runner must

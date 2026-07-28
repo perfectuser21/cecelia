@@ -6,6 +6,14 @@ const bundle = {
   attempt_id: '22222222-2222-4222-8222-222222222222',
   inputs: { worktree_path: '/workspace' },
 };
+const directive = {
+  schema: 'commander-directive/v1',
+  run_id: '11111111-1111-4111-8111-111111111111',
+  event_cursor: 9,
+  action: 'continue_default',
+  reason: 'The fresh Kernel decision remains legal.',
+  evidence_refs: ['event:9'],
+};
 
 describe('grokAdapter', () => {
   it('starts with approval, schema, session, and assigned account home', () => {
@@ -89,6 +97,28 @@ describe('grokAdapter', () => {
       status: 'completed',
       summary: 'reviewed',
       provider_metadata: { provider: 'grok', session_id: 'grok-session-real' },
+    });
+  });
+
+  it('normalizes a direct Commander Directive with Grok session identity', () => {
+    expect(grokAdapter.normalizeResult({
+      attempt: {
+        id: bundle.attempt_id,
+        task_bundle: { expected_output: 'commander-directive/v1' },
+      },
+      raw: {
+        stdout: JSON.stringify({
+          sessionId: 'grok-commander',
+          structuredOutput: directive,
+        }),
+      },
+    })).toMatchObject({
+      status: 'completed',
+      decision: directive,
+      provider_metadata: {
+        provider: 'grok',
+        session_id: 'grok-commander',
+      },
     });
   });
 });

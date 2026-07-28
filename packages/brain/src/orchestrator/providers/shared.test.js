@@ -56,4 +56,37 @@ describe('provider shared contract', () => {
       'codex',
     )).not.toThrow();
   });
+
+  it('wraps a direct Commander Directive in the normal HarnessResult transport', () => {
+    const directive = {
+      schema: 'commander-directive/v1',
+      run_id: '11111111-1111-4111-8111-111111111111',
+      event_cursor: 9,
+      action: 'continue_default',
+      reason: 'The fresh Kernel decision remains legal.',
+      evidence_refs: ['event:9'],
+    };
+    expect(normalizeProviderResult({
+      attempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        task_bundle: { expected_output: 'commander-directive/v1' },
+      },
+      payload: directive,
+      provider: 'codex',
+      sessionId: 'thread-commander',
+    })).toEqual({
+      contract_version: '1.0',
+      attempt_id: '22222222-2222-4222-8222-222222222222',
+      status: 'completed',
+      summary: directive.reason,
+      artifacts: [],
+      checks: [],
+      decision: directive,
+      error: null,
+      provider_metadata: {
+        provider: 'codex',
+        session_id: 'thread-commander',
+      },
+    });
+  });
 });
