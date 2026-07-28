@@ -20,7 +20,7 @@ const e2eAcceptance = {
   scenarios: [{
     name: 'release behavior',
     covered_tasks: [TASK_ID],
-    commands: [{ type: 'bash', cmd: 'curl -fsS http://localhost:5221/api/brain/health' }],
+    commands: [{ type: 'probe', id: 'brain.health' }],
   }],
 };
 

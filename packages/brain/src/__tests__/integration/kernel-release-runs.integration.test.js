@@ -54,14 +54,17 @@ const scenarioResult = {
   finished_at: '2026-07-28T06:01:01.000Z',
   log_digest: `sha256:${'d'.repeat(64)}`,
 };
+const probeResult = {
+  scenario_name: scenarioResult.name,
+  probe_id: 'brain.health',
+  status: 'pass',
+  observation_digest: `sha256:${'9'.repeat(64)}`,
+};
 const acceptance = {
   scenarios: [{
     name: scenarioResult.name,
     covered_tasks: [taskId],
-    commands: [{
-      type: 'bash',
-      cmd: 'curl -fsS "$RELEASE_E2E_TARGET_URL/api/brain/health"',
-    }],
+    commands: [{ type: 'probe', id: 'brain.health' }],
   }],
 };
 let client;
@@ -113,6 +116,7 @@ async function appendConfirmedReceipt(effectKind) {
     e2e_scenarios_total: 1,
     e2e_scenarios_passed: 1,
     e2e_scenario_results: [scenarioResult],
+    e2e_probe_results: [probeResult],
     e2e_started_at: scenarioResult.started_at,
     e2e_finished_at: scenarioResult.finished_at,
     e2e_artifact_readback: artifacts,
@@ -140,6 +144,7 @@ async function appendConfirmedReceipt(effectKind) {
     e2e_scenarios_passed: 1,
     e2e_environment: effectKind,
     e2e_scenario_results: [scenarioResult],
+    e2e_probe_results: [probeResult],
     e2e_started_at: scenarioResult.started_at,
     e2e_finished_at: scenarioResult.finished_at,
     evidence: { verification },
@@ -406,6 +411,20 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
     )).rejects.toMatchObject({ code: 'P0001' });
   });
 
+  it('rejects arbitrary shell acceptance at the durable manifest boundary', async () => {
+    const { rows } = await client.query(
+      `SELECT kernel_release_e2e_acceptance_is_typed($1::jsonb) AS allowed`,
+      [JSON.stringify({
+        scenarios: [{
+          name: 'unsafe',
+          covered_tasks: [taskId],
+          commands: [{ type: 'bash', cmd: 'curl localhost; rm -rf /tmp/x' }],
+        }],
+      })],
+    );
+    expect(rows[0].allowed).toBe(false);
+  });
+
   it('durably deduplicates a ReleaseRun BLOCKED P0 escalation', async () => {
     const notifications = [];
     const escalate = createReleaseBlockedEscalator({
@@ -450,6 +469,17 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
       e2e_manifest_digest: release.e2e_manifest.manifest_digest,
       rollback_receipt_id: productionReceipt.rollback_receipt_id,
     });
+    const persistedProductionReceipt = (await client.query(
+      `SELECT e2e_probe_results,
+              evidence->'verification'->'e2e_probe_results'
+                AS verification_probe_results
+         FROM kernel_release_effect_receipts
+        WHERE id = $1`,
+      [productionReceipt.id],
+    )).rows[0];
+    expect(persistedProductionReceipt.e2e_probe_results).toEqual([probeResult]);
+    expect(persistedProductionReceipt.verification_probe_results)
+      .toEqual([probeResult]);
 
     const staleClaim = await client.query(
       `SELECT id, generation
@@ -467,9 +497,10 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
           observed_artifact_versions, dispatch_claim_id, dispatch_generation,
           e2e_manifest_id, e2e_manifest_digest, e2e_scenarios_total,
           e2e_scenarios_passed, e2e_environment, e2e_scenario_results,
-          e2e_started_at, e2e_finished_at, evidence)
+          e2e_probe_results, e2e_started_at, e2e_finished_at, evidence)
        SELECT intent.id, 'confirmed', $2, $3::jsonb, $4, $5 - 1,
-              $6, $7, 1, 1, 'production', $8::jsonb, $9, $10, $11::jsonb
+              $6, $7, 1, 1, 'production', $8::jsonb, $9::jsonb,
+              $10, $11, $12::jsonb
          FROM kernel_release_effect_intents intent
         WHERE intent.release_run_id = $1 AND intent.effect_kind = 'production'`,
       [
@@ -481,6 +512,7 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
         release.e2e_manifest.id,
         release.e2e_manifest.manifest_digest,
         JSON.stringify([scenarioResult]),
+        JSON.stringify([probeResult]),
         scenarioResult.started_at,
         scenarioResult.finished_at,
         JSON.stringify({ verification: { status: 'pass' } }),
@@ -547,18 +579,24 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
       manifest.id,
       manifest.manifest_digest,
       JSON.stringify([scenarioResult]),
+      JSON.stringify([probeResult]),
       scenarioResult.started_at,
       scenarioResult.finished_at,
-      JSON.stringify({ required_e2e: 'pass', merge_sha: mergeSha }),
+      JSON.stringify({
+        required_e2e: 'pass',
+        merge_sha: mergeSha,
+        e2e_probe_results: [probeResult],
+      }),
     ];
     await expect(client.query(
       `INSERT INTO kernel_release_bootstrap_effect_receipts
          (effect_attempt_id, receipt_status, observed_merge_sha,
           observed_artifact_versions, e2e_manifest_id, e2e_manifest_digest,
           e2e_scenarios_total, e2e_scenarios_passed, e2e_environment,
-          e2e_scenario_results, e2e_started_at, e2e_finished_at, evidence)
+          e2e_scenario_results, e2e_probe_results,
+          e2e_started_at, e2e_finished_at, evidence)
        VALUES ($1, 'confirmed', $2, $3::jsonb, $4, $5, 1, 1, 'staging',
-               $6::jsonb, $7, $8, $9::jsonb)`,
+               $6::jsonb, $7::jsonb, $8, $9, $10::jsonb)`,
       [staleAttempt.id, ...confirmedValues],
     )).rejects.toMatchObject({ code: 'P0001' });
     const attempt = (await client.query(
@@ -579,9 +617,10 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
          (effect_attempt_id, receipt_status, observed_merge_sha,
           observed_artifact_versions, e2e_manifest_id, e2e_manifest_digest,
           e2e_scenarios_total, e2e_scenarios_passed, e2e_environment,
-          e2e_scenario_results, e2e_started_at, e2e_finished_at, evidence)
+          e2e_scenario_results, e2e_probe_results,
+          e2e_started_at, e2e_finished_at, evidence)
        VALUES ($1, 'confirmed', $2, $3::jsonb, $4, $5, 1, 1, 'staging',
-               $6::jsonb, $7, $8, $9::jsonb)
+               $6::jsonb, $7::jsonb, $8, $9, $10::jsonb)
        RETURNING id`,
       [
         attempt.id,
@@ -609,9 +648,10 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
          (effect_attempt_id, receipt_status, observed_merge_sha,
           observed_artifact_versions, e2e_manifest_id, e2e_manifest_digest,
           e2e_scenarios_total, e2e_scenarios_passed, e2e_environment,
-          e2e_scenario_results, e2e_started_at, e2e_finished_at, evidence)
+          e2e_scenario_results, e2e_probe_results,
+          e2e_started_at, e2e_finished_at, evidence)
        VALUES ($1, 'confirmed', $2, $3::jsonb, $4, $5, 1, 1, 'staging',
-               $6::jsonb, $7, $8, $9::jsonb)`,
+               $6::jsonb, $7::jsonb, $8, $9, $10::jsonb)`,
       [
         attempt.id,
         ...confirmedValues,

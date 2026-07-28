@@ -123,6 +123,24 @@ function validateRequiredE2EObservation(observation, expected, scope) {
   ) {
     deny(`release_${scope}_e2e_receipt_invalid`);
   }
+  if (
+    !Array.isArray(expected.e2e_probes)
+    || !Array.isArray(observation.e2e_probe_results)
+    || observation.e2e_probe_results.length !== expected.e2e_probes.length
+    || observation.e2e_probe_results.some((result, index) => (
+      !result
+      || typeof result !== 'object'
+      || Array.isArray(result)
+      || Object.keys(result).sort().join(',')
+        !== 'observation_digest,probe_id,scenario_name,status'
+      || result.scenario_name !== expected.e2e_probes[index].scenario_name
+      || result.probe_id !== expected.e2e_probes[index].probe_id
+      || result.status !== 'pass'
+      || !DIGEST_RE.test(result.observation_digest ?? '')
+    ))
+  ) {
+    deny(`release_${scope}_e2e_probe_receipt_invalid`);
+  }
   return {
     required_e2e: 'pass',
     e2e_manifest_digest: observation.e2e_manifest_digest,
@@ -131,6 +149,9 @@ function validateRequiredE2EObservation(observation, expected, scope) {
     e2e_scenarios_passed: observation.e2e_scenarios_passed,
     e2e_scenario_results: Object.freeze(
       observation.e2e_scenario_results.map((result) => Object.freeze({ ...result })),
+    ),
+    e2e_probe_results: Object.freeze(
+      observation.e2e_probe_results.map((result) => Object.freeze({ ...result })),
     ),
     e2e_started_at: observation.e2e_started_at,
     e2e_finished_at: observation.e2e_finished_at,

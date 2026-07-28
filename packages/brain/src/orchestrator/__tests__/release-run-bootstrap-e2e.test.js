@@ -22,10 +22,7 @@ const acceptance = {
   scenarios: [{
     name: 'bootstrap contract behavior',
     covered_tasks: [TASK_ID],
-    commands: [{
-      type: 'bash',
-      cmd: 'curl -fsS "$RELEASE_E2E_TARGET_URL/api/brain/health"',
-    }],
+    commands: [{ type: 'probe', id: 'brain.health' }],
   }],
 };
 
@@ -127,25 +124,19 @@ describe('bootstrap required contract E2E manifest', () => {
       merge_sha: MERGE_SHA,
       artifact_versions: artifacts,
     });
-    const runScenarios = vi.fn(() => ({
-      verdict: 'PASS',
-      scenariosTotal: 1,
-      scenariosPassed: 1,
-      failedScenarios: [],
-      scenarioResults: [{
-        name: 'bootstrap contract behavior',
-        status: 'pass',
-        started_at: '2026-07-28T06:01:00.000Z',
-        finished_at: '2026-07-28T06:01:01.000Z',
-        log_digest: `sha256:${'d'.repeat(64)}`,
-      }],
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ status: 'healthy' }),
     }));
 
     await expect(executeBootstrapE2EManifest(manifest, {
       environment: 'staging',
       artifact_readback: artifacts,
-      runScenarios,
-      runnerOptions: { host: 'localhost', port: 5222 },
+      fetchFn,
+      endpoints: {
+        brain: 'http://staging:5222',
+        dashboard: 'http://dashboard-staging:5211',
+      },
     })).resolves.toMatchObject({
       status: 'pass',
       environment: 'staging',
@@ -154,11 +145,9 @@ describe('bootstrap required contract E2E manifest', () => {
       scenarios_total: 1,
       scenarios_passed: 1,
     });
-    expect(runScenarios).toHaveBeenCalledWith(acceptance, expect.objectContaining({
-      releaseEnvironment: 'staging',
-      host: 'localhost',
-      port: 5222,
-    }));
+    expect(fetchFn.mock.calls[0][0]).toBe(
+      'http://staging:5222/api/brain/health',
+    );
   });
 
   it('rejects a wrong live artifact readback before running commands', async () => {
@@ -170,12 +159,16 @@ describe('bootstrap required contract E2E manifest', () => {
       merge_sha: MERGE_SHA,
       artifact_versions: artifacts,
     });
-    const runScenarios = vi.fn();
+    const fetchFn = vi.fn();
     await expect(executeBootstrapE2EManifest(manifest, {
       environment: 'production',
       artifact_readback: [{ ...artifacts[0], digest: `sha256:${'e'.repeat(64)}` }],
-      runScenarios,
+      fetchFn,
+      endpoints: {
+        brain: 'http://brain:5221',
+        dashboard: 'http://dashboard:5211',
+      },
     })).rejects.toThrow('release_e2e_execution_artifacts_mismatch');
-    expect(runScenarios).not.toHaveBeenCalled();
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

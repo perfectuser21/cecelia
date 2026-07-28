@@ -10,7 +10,6 @@ import {
   loadBootstrapE2EManifest,
   materializeBootstrapE2EManifest,
 } from '../../packages/brain/src/orchestrator/release-run-bootstrap-e2e.js';
-import { runScenarios } from '../../packages/brain/src/staging-e2e-runner.js';
 
 const action = process.argv[2];
 const databaseUrl = process.env.KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL;
@@ -173,11 +172,14 @@ try {
       const receipt = await executeBootstrapE2EManifest(manifest, {
         environment,
         artifact_readback: artifactReadback,
-        runScenarios,
-        runnerOptions: {
-          host: process.env.RELEASE_E2E_HOST || 'localhost',
-          port: environment === 'staging' ? 5222 : 5221,
-          cwd: deployRoot,
+        fetchFn: fetch,
+        endpoints: {
+          brain: environment === 'staging'
+            ? (process.env.BRAIN_STAGING_URL || 'http://localhost:5222')
+            : (process.env.BRAIN_URL || 'http://localhost:5221'),
+          dashboard: environment === 'staging'
+            ? (process.env.DASHBOARD_STAGING_URL || 'http://localhost:5212')
+            : (process.env.DASHBOARD_URL || 'http://localhost:5211'),
         },
       });
       const inserted = await client.query(
@@ -185,9 +187,10 @@ try {
            (effect_attempt_id, receipt_status, observed_merge_sha,
             observed_artifact_versions, e2e_manifest_id, e2e_manifest_digest,
             e2e_scenarios_total, e2e_scenarios_passed, e2e_environment,
-            e2e_scenario_results, e2e_started_at, e2e_finished_at, evidence)
+            e2e_scenario_results, e2e_probe_results,
+            e2e_started_at, e2e_finished_at, evidence)
          VALUES ($1, 'confirmed', $2, $3::jsonb, $4, $5, $6, $7, $8,
-                 $9::jsonb, $10, $11, $12::jsonb)
+                 $9::jsonb, $10::jsonb, $11, $12, $13::jsonb)
          ON CONFLICT (effect_attempt_id)
            WHERE receipt_status = 'confirmed' DO NOTHING
          RETURNING id`,
@@ -201,12 +204,14 @@ try {
           receipt.scenarios_passed,
           receipt.environment,
           JSON.stringify(receipt.scenario_results),
+          JSON.stringify(receipt.probe_results),
           receipt.started_at,
           receipt.finished_at,
           JSON.stringify({
             required_e2e: 'pass',
             merge_sha: receipt.merge_sha,
             artifact_readback: receipt.artifact_readback,
+            e2e_probe_results: receipt.probe_results,
           }),
         ],
       );

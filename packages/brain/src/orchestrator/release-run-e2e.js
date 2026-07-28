@@ -4,14 +4,17 @@ import {
   normalizeArtifactVersions,
   sameArtifactVersions,
 } from './release-run-contract.js';
+import {
+  executeRegisteredReleaseE2EProbes,
+  isRegisteredReleaseE2EProbe,
+} from './release-run-e2e-registry.js';
 
-export const RELEASE_E2E_POLICY_VERSION = 'kernel-release-e2e/v1';
+export const RELEASE_E2E_POLICY_VERSION = 'kernel-release-e2e/v2';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const TARGET_SEMANTICS_RE = /(?:RELEASE_E2E_TARGET_URL|BRAIN_URL|(?:localhost|127\.0\.0\.1|host\.docker\.internal):[1-9][0-9]{1,4})/;
 const MANIFEST_KEYS = Object.freeze([
   'artifact_set_digest',
   'artifact_versions',
@@ -109,18 +112,14 @@ function normalizeAcceptance(value) {
     }
     names.add(scenario.name);
     const commands = scenario.commands.map((command) => {
-      exactKeys(command, ['cmd', 'type'], 'release_e2e_manifest_command_shape_invalid');
+      exactKeys(command, ['id', 'type'], 'release_e2e_manifest_command_shape_invalid');
       if (
-        command.type !== 'bash'
-        || typeof command.cmd !== 'string'
-        || command.cmd.trim().length < 1
-        || command.cmd.length > 8192
-        || command.cmd.includes('\0')
-        || !TARGET_SEMANTICS_RE.test(command.cmd)
+        command.type !== 'probe'
+        || !isRegisteredReleaseE2EProbe(command.id)
       ) {
         deny('release_e2e_manifest_command_invalid');
       }
-      return Object.freeze({ type: 'bash', cmd: command.cmd });
+      return Object.freeze({ type: 'probe', id: command.id });
     });
     return Object.freeze({
       name: scenario.name,
@@ -291,11 +290,43 @@ function validateScenarioResults(result, manifest) {
   return Object.freeze(scenarioResults);
 }
 
-export function executeRequiredE2EManifest(value, {
-  runScenarios,
+function validateProbeResults(result, manifest) {
+  const expected = manifest.e2e_acceptance.scenarios.flatMap(
+    (scenario) => scenario.commands.map((command) => ({
+      scenario_name: scenario.name,
+      probe_id: command.id,
+    })),
+  );
+  if (
+    !Array.isArray(result.probeResults)
+    || result.probeResults.length !== expected.length
+  ) {
+    deny('release_e2e_execution_probe_evidence_invalid');
+  }
+  return Object.freeze(result.probeResults.map((probe, index) => {
+    exactKeys(
+      probe,
+      ['observation_digest', 'probe_id', 'scenario_name', 'status'],
+      'release_e2e_execution_probe_evidence_invalid',
+    );
+    if (
+      probe.scenario_name !== expected[index].scenario_name
+      || probe.probe_id !== expected[index].probe_id
+      || probe.status !== 'pass'
+      || !DIGEST_RE.test(probe.observation_digest ?? '')
+    ) {
+      deny('release_e2e_execution_probe_evidence_invalid');
+    }
+    return Object.freeze({ ...probe });
+  }));
+}
+
+export async function executeRequiredE2EManifest(value, {
   environment,
   artifact_readback: artifactReadback,
-  runnerOptions = {},
+  fetchFn,
+  endpoints,
+  now,
 } = {}) {
   const manifest = validateRequiredE2EManifest(value);
   if (!['staging', 'production'].includes(environment)) {
@@ -304,12 +335,24 @@ export function executeRequiredE2EManifest(value, {
   if (!sameArtifactVersions(artifactReadback, manifest.artifact_versions)) {
     deny('release_e2e_execution_artifacts_mismatch');
   }
-  if (typeof runScenarios !== 'function') deny('release_e2e_runner_unavailable');
-  const result = runScenarios(manifest.e2e_acceptance, {
-    ...runnerOptions,
-    releaseEnvironment: environment,
-  });
+  let result;
+  try {
+    result = await executeRegisteredReleaseE2EProbes(
+      manifest.e2e_acceptance,
+      {
+        environment,
+        artifactVersions: manifest.artifact_versions,
+        mergeSha: manifest.merge_sha,
+        fetchFn,
+        endpoints,
+        now,
+      },
+    );
+  } catch {
+    deny('release_e2e_runner_unavailable');
+  }
   const scenarioResults = validateScenarioResults(result, manifest);
+  const probeResults = validateProbeResults(result, manifest);
   return Object.freeze({
     status: 'pass',
     environment,
@@ -319,6 +362,7 @@ export function executeRequiredE2EManifest(value, {
     scenarios_total: result.scenariosTotal,
     scenarios_passed: result.scenariosPassed,
     scenario_results: scenarioResults,
+    probe_results: probeResults,
     started_at: scenarioResults[0].started_at,
     finished_at: scenarioResults.at(-1).finished_at,
   });

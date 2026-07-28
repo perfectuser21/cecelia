@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS kernel_release_e2e_manifests (
   contract_digest TEXT NOT NULL CHECK (
     contract_digest ~ '^sha256:[0-9a-f]{64}$'
   ),
-  policy_version TEXT NOT NULL CHECK (policy_version = 'kernel-release-e2e/v1'),
+  policy_version TEXT NOT NULL CHECK (policy_version = 'kernel-release-e2e/v2'),
   e2e_acceptance JSONB NOT NULL CHECK (
     jsonb_typeof(e2e_acceptance) = 'object'
     AND jsonb_typeof(e2e_acceptance->'scenarios') = 'array'
@@ -174,6 +174,10 @@ ALTER TABLE kernel_release_effect_receipts
   ADD COLUMN IF NOT EXISTS e2e_scenario_results JSONB CHECK (
     e2e_scenario_results IS NULL
     OR jsonb_typeof(e2e_scenario_results) = 'array'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_probe_results JSONB CHECK (
+    e2e_probe_results IS NULL
+    OR jsonb_typeof(e2e_probe_results) = 'array'
   ),
   ADD COLUMN IF NOT EXISTS e2e_started_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS e2e_finished_at TIMESTAMPTZ CHECK (
@@ -328,7 +332,7 @@ CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_e2e_manifests (
   contract_digest TEXT NOT NULL CHECK (
     contract_digest ~ '^sha256:[0-9a-f]{64}$'
   ),
-  policy_version TEXT NOT NULL CHECK (policy_version = 'kernel-release-e2e/v1'),
+  policy_version TEXT NOT NULL CHECK (policy_version = 'kernel-release-e2e/v2'),
   e2e_acceptance JSONB NOT NULL CHECK (
     jsonb_typeof(e2e_acceptance) = 'object'
     AND jsonb_typeof(e2e_acceptance->'scenarios') = 'array'
@@ -386,6 +390,10 @@ ALTER TABLE kernel_release_bootstrap_effect_receipts
     e2e_scenario_results IS NULL
     OR jsonb_typeof(e2e_scenario_results) = 'array'
   ),
+  ADD COLUMN IF NOT EXISTS e2e_probe_results JSONB CHECK (
+    e2e_probe_results IS NULL
+    OR jsonb_typeof(e2e_probe_results) = 'array'
+  ),
   ADD COLUMN IF NOT EXISTS e2e_started_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS e2e_finished_at TIMESTAMPTZ CHECK (
     e2e_finished_at IS NULL OR e2e_started_at IS NULL
@@ -394,9 +402,92 @@ ALTER TABLE kernel_release_bootstrap_effect_receipts
 
 
 
+CREATE OR REPLACE FUNCTION kernel_release_e2e_acceptance_is_typed(
+  acceptance JSONB
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+  scenario JSONB;
+  command JSONB;
+BEGIN
+  IF jsonb_typeof(acceptance) IS DISTINCT FROM 'object'
+     OR jsonb_typeof(acceptance->'scenarios') IS DISTINCT FROM 'array'
+     OR jsonb_array_length(acceptance->'scenarios') < 1 THEN
+    RETURN FALSE;
+  END IF;
+  FOR scenario IN
+    SELECT value FROM jsonb_array_elements(acceptance->'scenarios')
+  LOOP
+    IF jsonb_typeof(scenario) IS DISTINCT FROM 'object'
+       OR jsonb_typeof(scenario->'commands') IS DISTINCT FROM 'array'
+       OR jsonb_array_length(scenario->'commands') < 1 THEN
+      RETURN FALSE;
+    END IF;
+    FOR command IN
+      SELECT value FROM jsonb_array_elements(scenario->'commands')
+    LOOP
+      IF jsonb_typeof(command) IS DISTINCT FROM 'object'
+         OR (SELECT count(*) FROM jsonb_object_keys(command)) <> 2
+         OR command->>'type' IS DISTINCT FROM 'probe'
+         OR command->>'id' NOT IN (
+           'brain.health',
+           'brain.release-identity',
+           'brain.status-full',
+           'dashboard.release-identity'
+         ) THEN
+        RETURN FALSE;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION kernel_release_e2e_probe_results_match(
+  acceptance JSONB,
+  results JSONB
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+  scenario JSONB;
+  command JSONB;
+  result JSONB;
+  result_index INTEGER := 0;
+BEGIN
+  IF NOT kernel_release_e2e_acceptance_is_typed(acceptance)
+     OR jsonb_typeof(results) IS DISTINCT FROM 'array' THEN
+    RETURN FALSE;
+  END IF;
+  FOR scenario IN
+    SELECT value FROM jsonb_array_elements(acceptance->'scenarios')
+  LOOP
+    FOR command IN
+      SELECT value FROM jsonb_array_elements(scenario->'commands')
+    LOOP
+      result := results->result_index;
+      result_index := result_index + 1;
+      IF jsonb_typeof(result) IS DISTINCT FROM 'object'
+         OR (SELECT count(*) FROM jsonb_object_keys(result)) <> 4
+         OR result->>'scenario_name' IS DISTINCT FROM scenario->>'name'
+         OR result->>'probe_id' IS DISTINCT FROM command->>'id'
+         OR result->>'status' IS DISTINCT FROM 'pass'
+         OR COALESCE(result->>'observation_digest', '')
+            !~ '^sha256:[0-9a-f]{64}$' THEN
+        RETURN FALSE;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RETURN result_index = jsonb_array_length(results);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
 CREATE OR REPLACE FUNCTION kernel_release_e2e_manifest_guard()
 RETURNS trigger AS $$
 BEGIN
+  IF NOT kernel_release_e2e_acceptance_is_typed(NEW.e2e_acceptance) THEN
+    RAISE EXCEPTION
+      'release E2E manifest requires server-registered typed probes';
+  END IF;
   IF NOT EXISTS (
     SELECT 1
       FROM kernel_release_runs release
@@ -432,6 +523,10 @@ CREATE TRIGGER trg_kernel_release_e2e_manifest_guard
 CREATE OR REPLACE FUNCTION kernel_release_bootstrap_e2e_manifest_guard()
 RETURNS trigger AS $$
 BEGIN
+  IF NOT kernel_release_e2e_acceptance_is_typed(NEW.e2e_acceptance) THEN
+    RAISE EXCEPTION
+      'bootstrap E2E manifest requires server-registered typed probes';
+  END IF;
   IF NOT EXISTS (
     SELECT 1
       FROM kernel_release_bootstrap_runs bootstrap
@@ -568,6 +663,10 @@ BEGIN
      OR jsonb_typeof(NEW.e2e_scenario_results) IS DISTINCT FROM 'array'
      OR jsonb_array_length(NEW.e2e_scenario_results)
         IS DISTINCT FROM manifest.scenarios_total
+     OR NOT kernel_release_e2e_probe_results_match(
+       manifest.e2e_acceptance,
+       NEW.e2e_probe_results
+     )
      OR NEW.e2e_started_at IS NULL
      OR NEW.e2e_finished_at IS NULL THEN
     RAISE EXCEPTION 'confirmed release receipt requires exact E2E manifest';
@@ -608,6 +707,8 @@ BEGIN
           IS DISTINCT FROM manifest.scenarios_total
        OR (verification->>'e2e_scenarios_passed')::integer
           IS DISTINCT FROM manifest.scenarios_total
+       OR verification->'e2e_probe_results'
+          IS DISTINCT FROM NEW.e2e_probe_results
      ) THEN
     RAISE EXCEPTION
       'confirmed staging receipt requires pass verification and exact E2E manifest';
@@ -623,6 +724,8 @@ BEGIN
           IS DISTINCT FROM manifest.scenarios_total
        OR (verification->>'e2e_scenarios_passed')::integer
           IS DISTINCT FROM manifest.scenarios_total
+       OR verification->'e2e_probe_results'
+          IS DISTINCT FROM NEW.e2e_probe_results
        OR COALESCE(verification#>>'{rollback_metadata,anchor}', '') = ''
        OR COALESCE(verification#>>'{rollback_metadata,previous_version}', '') = ''
      ) THEN
@@ -748,9 +851,15 @@ BEGIN
      OR jsonb_typeof(NEW.e2e_scenario_results) IS DISTINCT FROM 'array'
      OR jsonb_array_length(NEW.e2e_scenario_results)
         IS DISTINCT FROM manifest.scenarios_total
+     OR NOT kernel_release_e2e_probe_results_match(
+       manifest.e2e_acceptance,
+       NEW.e2e_probe_results
+     )
      OR NEW.e2e_started_at IS NULL
      OR NEW.e2e_finished_at IS NULL
      OR NEW.evidence->>'required_e2e' IS DISTINCT FROM 'pass'
+     OR NEW.evidence->'e2e_probe_results'
+        IS DISTINCT FROM NEW.e2e_probe_results
      OR NEW.evidence->>'merge_sha' IS DISTINCT FROM manifest.merge_sha THEN
     RAISE EXCEPTION
       'confirmed bootstrap receipt requires exact E2E manifest';

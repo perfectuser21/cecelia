@@ -61,6 +61,9 @@ function receiptFor(intent, status, observation, evidence, e2eManifest) {
         ...(observation.e2e_scenario_results == null
           ? {}
           : { e2e_scenario_results: observation.e2e_scenario_results }),
+        ...(observation.e2e_probe_results == null
+          ? {}
+          : { e2e_probe_results: observation.e2e_probe_results }),
         ...(observation.e2e_started_at == null
           ? {}
           : { e2e_started_at: observation.e2e_started_at }),
@@ -91,6 +94,7 @@ function receiptFor(intent, status, observation, evidence, e2eManifest) {
     e2e_scenarios_total: observation?.e2e_scenarios_total ?? null,
     e2e_scenarios_passed: observation?.e2e_scenarios_passed ?? null,
     e2e_scenario_results: observation?.e2e_scenario_results ?? null,
+    e2e_probe_results: observation?.e2e_probe_results ?? null,
     e2e_started_at: observation?.e2e_started_at ?? null,
     e2e_finished_at: observation?.e2e_finished_at ?? null,
     evidence: {
@@ -156,6 +160,12 @@ async function reconcileEffect({
     e2e_environment: effectKind,
     e2e_scenario_names: e2eManifest.e2e_acceptance.scenarios
       .map((scenario) => scenario.name),
+    e2e_probes: e2eManifest.e2e_acceptance.scenarios.flatMap(
+      (scenario) => scenario.commands.map((command) => ({
+        scenario_name: scenario.name,
+        probe_id: command.id,
+      })),
+    ),
   };
   const effectRequest = {
     release_run_id: release.id,

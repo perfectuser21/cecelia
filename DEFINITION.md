@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.268.6
+**Brain 版本**: 1.268.7
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.7 — Server-owned ReleaseRun E2E probes
+
+- ReleaseRun E2E policy v2 仅接受服务端注册的 typed probe ID；manifest 与数据库
+  guard 均拒绝 shell/cmd 和未注册 command，执行路径不再接入通用 shell runner。
+- probe origin 来自服务端 canonical 配置，staging 限 loopback/isolated service；
+  响应使用 timeout 与 256 KiB bounded reader。
+- 每个 probe 的 ID、状态和 observation digest 随 scenario receipt 持久化，normal
+  与 bootstrap 数据库 guard 都验证其与 frozen manifest 精确一致。
+- 回退：`bash scripts/brain-rollback.sh 1.268.6`（保留 migration 375 审计账本）。
 
 ## Brain 1.268.6 — Fenced Kernel ReleaseRun closure
 

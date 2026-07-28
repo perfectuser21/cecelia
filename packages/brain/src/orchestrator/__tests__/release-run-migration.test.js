@@ -134,7 +134,7 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/contract_content TEXT NOT NULL/i);
     expect(sql).toMatch(/contract_digest TEXT NOT NULL/i);
     expect(sql).toMatch(/e2e_acceptance_digest TEXT NOT NULL/i);
-    expect(sql).toMatch(/policy_version TEXT NOT NULL CHECK \(policy_version = 'kernel-release-e2e\/v1'\)/i);
+    expect(sql).toMatch(/policy_version TEXT NOT NULL CHECK \(policy_version = 'kernel-release-e2e\/v2'\)/i);
     expect(sql).toMatch(/manifest_digest TEXT NOT NULL UNIQUE/i);
     expect(sql).toMatch(/scenarios_total INTEGER NOT NULL CHECK \([\s\S]+?scenarios_total > 0/i);
     expect(sql).toMatch(/e2e_manifest_id UUID[\s\S]+?REFERENCES kernel_release_e2e_manifests\(id\)/i);
@@ -144,8 +144,12 @@ describe('migration 374 Kernel ReleaseRun', () => {
   });
 
   it('types exact environment and per-scenario E2E receipt evidence', () => {
+    expect(sql).toMatch(/kernel_release_e2e_acceptance_is_typed/i);
+    expect(sql).toMatch(/command->>'type' IS DISTINCT FROM 'probe'/i);
+    expect(sql).toMatch(/server-registered typed probes/i);
     expect(sql).toMatch(/e2e_environment TEXT CHECK[\s\S]+?'staging', 'production'/i);
     expect(sql).toMatch(/e2e_scenario_results JSONB/i);
+    expect(sql).toMatch(/e2e_probe_results JSONB/i);
     expect(sql).toMatch(/e2e_started_at TIMESTAMPTZ/i);
     expect(sql).toMatch(/e2e_finished_at TIMESTAMPTZ/i);
     expect(sql).toMatch(/jsonb_array_length\(NEW\.e2e_scenario_results\)/i);

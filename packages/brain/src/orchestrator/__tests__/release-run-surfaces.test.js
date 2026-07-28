@@ -153,6 +153,31 @@ describe('legacy release surfaces fail closed', () => {
     expect(runner).not.toMatch(/deploy-local\.sh/);
   });
 
+  it('ReleaseRun E2E never imports or invokes the arbitrary shell scenario runner', () => {
+    const adapter = readFileSync(
+      resolve(root, 'packages/brain/src/orchestrator/release-run-adapters.js'),
+      'utf8',
+    );
+    const executor = readFileSync(
+      resolve(root, 'packages/brain/src/orchestrator/release-run-e2e.js'),
+      'utf8',
+    );
+    const bootstrap = readFileSync(
+      resolve(root, 'scripts/lib/release-run-bootstrap-e2e.mjs'),
+      'utf8',
+    );
+    for (const source of [adapter, executor, bootstrap]) {
+      expect(source).not.toMatch(/staging-e2e-runner/);
+      expect(source).not.toMatch(/\brunScenarios\b/);
+    }
+    const registry = readFileSync(
+      resolve(root, 'packages/brain/src/orchestrator/release-run-e2e-registry.js'),
+      'utf8',
+    );
+    expect(registry).not.toMatch(/node:child_process/);
+    expect(registry).not.toMatch(/exec(?:File|Sync)?\(/);
+  });
+
   it('bootstrap is normally disabled and requires an explicit database and deploy root', () => {
     const script = resolve(root, 'scripts/release-run-bootstrap.sh');
     const result = spawnSync('bash', [script], {

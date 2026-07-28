@@ -31,10 +31,7 @@ const e2eManifest = {
         scenarios: [{
           name: 'release behavior',
           covered_tasks: [TASK_ID],
-          commands: [{
-            type: 'bash',
-            cmd: 'curl -fsS http://localhost:5221/api/brain/health',
-          }],
+          commands: [{ type: 'probe', id: 'brain.health' }],
         }],
       },
     },
@@ -56,6 +53,12 @@ function e2eEvidence(environment) {
       started_at: '2026-07-28T06:01:00.000Z',
       finished_at: '2026-07-28T06:01:01.000Z',
       log_digest: `sha256:${'f'.repeat(64)}`,
+    }],
+    e2e_probe_results: [{
+      scenario_name: 'release behavior',
+      probe_id: 'brain.health',
+      status: 'pass',
+      observation_digest: `sha256:${'9'.repeat(64)}`,
     }],
     e2e_started_at: '2026-07-28T06:01:00.000Z',
     e2e_finished_at: '2026-07-28T06:01:01.000Z',
@@ -311,6 +314,7 @@ describe('ReleaseRun executor', () => {
       e2e_scenarios_total: 1,
       e2e_scenarios_passed: 1,
       e2e_scenario_results: expect.any(Array),
+      e2e_probe_results: expect.any(Array),
       rollback_metadata: expect.any(Object),
     });
     expect(transition.evidence).toMatchObject({

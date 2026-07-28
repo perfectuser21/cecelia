@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.268.6
+**版本**: 1.268.7
+
+## Server-owned ReleaseRun E2E probes
+
+- E2E policy v2 仅执行 server registry typed probes，不导入通用 shell runner。
+- canonical origin、staging network allowlist、timeout 和 bounded response reader
+  阻断 manifest URL/command 注入。
+- per-probe ID/status/observation digest 同步进入 normal/bootstrap durable receipts。
 
 ## Fenced Kernel ReleaseRun closure
 

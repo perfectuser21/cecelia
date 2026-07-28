@@ -26,10 +26,7 @@ const e2eManifest = {
         scenarios: [{
           name: 'release behavior',
           covered_tasks: ['99999999-9999-4999-8999-999999999999'],
-          commands: [{
-            type: 'bash',
-            cmd: 'curl -fsS "$RELEASE_E2E_TARGET_URL/api/brain/health"',
-          }],
+          commands: [{ type: 'probe', id: 'brain.health' }],
         }],
       },
     },
@@ -43,24 +40,16 @@ const request = {
   e2e_manifest: e2eManifest,
 };
 
-function passingScenarios() {
+function response(body) {
   return {
-    verdict: 'PASS',
-    scenariosTotal: 1,
-    scenariosPassed: 1,
-    failedScenarios: [],
-    scenarioResults: [{
-      name: 'release behavior',
-      status: 'pass',
-      started_at: '2026-07-28T06:01:00.000Z',
-      finished_at: '2026-07-28T06:01:01.000Z',
-      log_digest: `sha256:${'f'.repeat(64)}`,
-    }],
+    ok: true,
+    json: vi.fn(async () => body),
+    text: vi.fn(async () => JSON.stringify(body)),
   };
 }
 
-function response(body) {
-  return { ok: true, json: vi.fn(async () => body) };
+function healthyProbeResponse() {
+  return response({ status: 'healthy', version: '1.268.5', git_sha: sha });
 }
 
 describe('production ReleaseRun adapters', () => {
@@ -128,7 +117,7 @@ describe('production ReleaseRun adapters', () => {
   });
 
   it('observes exact production health, E2E and rollback evidence', async () => {
-    const contractE2ERunner = vi.fn(() => passingScenarios());
+    const e2eFetchFn = vi.fn(async () => healthyProbeResponse());
     const fetchFn = vi.fn()
       .mockResolvedValueOnce(response({
         status: 'success',
@@ -156,10 +145,9 @@ describe('production ReleaseRun adapters', () => {
       .mockResolvedValueOnce(response(verificationClaim));
     const adapters = createReleaseRunAdapters({
       fetchFn,
+      e2eFetchFn,
       brainUrl: 'http://brain',
       deployToken: 'token',
-      contractE2ERunner,
-      releaseE2EHost: 'localhost',
     });
     await expect(adapters.observeProduction(request)).resolves.toMatchObject({
       status: 'pass',
@@ -169,7 +157,13 @@ describe('production ReleaseRun adapters', () => {
       e2e_environment: 'production',
       e2e_scenarios_total: 1,
       e2e_scenarios_passed: 1,
-      e2e_scenario_results: passingScenarios().scenarioResults,
+      e2e_scenario_results: [{
+        name: 'release behavior',
+        status: 'pass',
+        started_at: expect.any(String),
+        finished_at: expect.any(String),
+        log_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      }],
       e2e_artifact_readback: artifacts,
       merge_sha: sha,
       deployed_versions: artifacts,
@@ -184,13 +178,9 @@ describe('production ReleaseRun adapters', () => {
         probe: 'pass',
       },
     });
-    expect(contractE2ERunner).toHaveBeenCalledWith(
-      e2eManifest.e2e_acceptance,
-      expect.objectContaining({
-        host: 'localhost',
-        port: 5221,
-        releaseEnvironment: 'production',
-      }),
+    expect(e2eFetchFn).toHaveBeenCalledWith(
+      'http://brain/api/brain/health',
+      expect.objectContaining({ method: 'GET' }),
     );
   });
 
@@ -242,7 +232,7 @@ describe('production ReleaseRun adapters', () => {
         'history=release-previous',
         `commit=${sha}`,
       ].join('\n'),
-      contractE2ERunner: vi.fn(() => passingScenarios()),
+      e2eFetchFn: vi.fn(async () => healthyProbeResponse()),
     });
 
     await expect(adapters.observeProduction({
@@ -312,9 +302,9 @@ describe('production ReleaseRun adapters', () => {
       .mockResolvedValueOnce(response(verificationClaim));
     const adapters = createReleaseRunAdapters({
       fetchFn,
+      e2eFetchFn: vi.fn(async () => healthyProbeResponse()),
       brainUrl: 'http://brain',
       deployToken: 'token',
-      contractE2ERunner: vi.fn(() => passingScenarios()),
     });
     await expect(adapters.observeProduction(mixedRequest)).resolves.toMatchObject({
       status: 'pass',
@@ -346,19 +336,14 @@ describe('production ReleaseRun adapters', () => {
       .mockResolvedValueOnce(response({ ok: true }));
     const adapters = createReleaseRunAdapters({
       fetchFn,
+      e2eFetchFn: vi.fn(async () => ({ ok: false, status: 503 })),
       brainUrl: 'http://brain',
-      contractE2ERunner: () => ({
-        verdict: 'FAIL',
-        scenariosTotal: 1,
-        scenariosPassed: 0,
-        scenarioResults: [],
-      }),
     });
     await expect(adapters.observeProduction(request)).resolves.toEqual({ status: 'fail' });
   });
 
   it('observes staging only after exact contract E2E runs against staging', async () => {
-    const contractE2ERunner = vi.fn(() => passingScenarios());
+    const e2eFetchFn = vi.fn(async () => healthyProbeResponse());
     const fetchFn = vi.fn()
       .mockResolvedValueOnce(response({
         status: 'success',
@@ -375,11 +360,10 @@ describe('production ReleaseRun adapters', () => {
       .mockResolvedValueOnce(response(verificationClaim));
     const adapters = createReleaseRunAdapters({
       fetchFn,
+      e2eFetchFn,
       brainUrl: 'http://brain',
       stagingUrl: 'http://staging',
       deployToken: 'token',
-      contractE2ERunner,
-      releaseE2EHost: 'localhost',
     });
     await expect(adapters.observeStaging(request)).resolves.toMatchObject({
       status: 'pass',
@@ -391,13 +375,9 @@ describe('production ReleaseRun adapters', () => {
       dispatch_claim_id: verificationClaim.dispatch_claim_id,
       dispatch_generation: verificationClaim.generation,
     });
-    expect(contractE2ERunner).toHaveBeenCalledWith(
-      e2eManifest.e2e_acceptance,
-      expect.objectContaining({
-        host: 'localhost',
-        port: 5222,
-        releaseEnvironment: 'staging',
-      }),
+    expect(e2eFetchFn).toHaveBeenCalledWith(
+      'http://staging/api/brain/health',
+      expect.objectContaining({ method: 'GET' }),
     );
   });
 
@@ -421,7 +401,6 @@ describe('production ReleaseRun adapters', () => {
     const adapters = createReleaseRunAdapters({
       fetchFn,
       brainUrl: 'http://brain',
-      contractE2ERunner: () => passingScenarios(),
     });
     await expect(adapters.observeProduction(request)).resolves.toEqual({ status: 'fail' });
   });

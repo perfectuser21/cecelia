@@ -511,6 +511,9 @@ export function createPostgresReleaseRunStore(pool) {
         receipt.e2e_scenario_results == null
           ? null
           : JSON.stringify(receipt.e2e_scenario_results),
+        receipt.e2e_probe_results == null
+          ? null
+          : JSON.stringify(receipt.e2e_probe_results),
         receipt.e2e_started_at ?? null,
         receipt.e2e_finished_at ?? null,
         JSON.stringify(receipt.evidence ?? {}),
@@ -520,9 +523,10 @@ export function createPostgresReleaseRunStore(pool) {
           observed_artifact_versions, dispatch_claim_id, dispatch_generation,
           e2e_manifest_id, e2e_manifest_digest,
           e2e_scenarios_total, e2e_scenarios_passed, e2e_environment,
-          e2e_scenario_results, e2e_started_at, e2e_finished_at, evidence)
+          e2e_scenario_results, e2e_probe_results,
+          e2e_started_at, e2e_finished_at, evidence)
        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11,
-               $12::jsonb, $13, $14, $15::jsonb)
+               $12::jsonb, $13::jsonb, $14, $15, $16::jsonb)
        RETURNING id`;
       let result;
       if (receipt.receipt_status === 'confirmed') {

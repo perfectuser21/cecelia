@@ -24,6 +24,12 @@ const scenarioResult = {
   finished_at: '2026-07-28T06:01:01.000Z',
   log_digest: `sha256:${'f'.repeat(64)}`,
 };
+const probeResult = {
+  scenario_name: scenarioResult.name,
+  probe_id: 'brain.health',
+  status: 'pass',
+  observation_digest: `sha256:${'9'.repeat(64)}`,
+};
 
 function e2eObservation(environment) {
   return {
@@ -35,6 +41,7 @@ function e2eObservation(environment) {
     e2e_scenarios_total: 1,
     e2e_scenarios_passed: 1,
     e2e_scenario_results: [scenarioResult],
+    e2e_probe_results: [probeResult],
     e2e_started_at: scenarioResult.started_at,
     e2e_finished_at: scenarioResult.finished_at,
     e2e_artifact_readback: artifacts,
@@ -47,6 +54,10 @@ function e2eExpected(environment) {
     e2e_scenarios_total: 1,
     e2e_environment: environment,
     e2e_scenario_names: [scenarioResult.name],
+    e2e_probes: [{
+      scenario_name: scenarioResult.name,
+      probe_id: probeResult.probe_id,
+    }],
   };
 }
 

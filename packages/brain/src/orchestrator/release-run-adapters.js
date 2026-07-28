@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { sameArtifactVersions } from './release-run-contract.js';
 import { executeRequiredE2EManifest } from './release-run-e2e.js';
 import { resolveReleaseArtifactVersions } from './release-run-artifacts.js';
-import { runScenarios as defaultContractE2ERunner } from '../staging-e2e-runner.js';
 
 async function json(fetchFn, url, options) {
   const response = await fetchFn(url, options);
@@ -20,6 +19,7 @@ function exactStatus(status, request) {
 
 export function createReleaseRunAdapters({
   fetchFn = globalThis.fetch,
+  e2eFetchFn = fetchFn,
   gitExecFile = (args) => execFileSync('git', args, { encoding: 'utf8' }),
   repoRoot = process.env.REPO_ROOT
     ?? fileURLToPath(new URL('../../../..', import.meta.url)),
@@ -30,19 +30,21 @@ export function createReleaseRunAdapters({
   brainUrl = process.env.BRAIN_URL ?? 'http://localhost:5221',
   stagingUrl = process.env.BRAIN_STAGING_URL ?? 'http://localhost:5222',
   dashboardUrl = process.env.DASHBOARD_URL ?? 'http://localhost:5211',
+  dashboardStagingUrl = process.env.DASHBOARD_STAGING_URL
+    ?? 'http://localhost:5212',
   deployToken = process.env.DEPLOY_TOKEN,
-  contractE2ERunner = defaultContractE2ERunner,
-  releaseE2EHost = process.env.RELEASE_E2E_HOST ?? 'localhost',
 } = {}) {
-  const runRequiredE2E = (request, environment, artifactReadback, port) => {
+  const runRequiredE2E = async (request, environment, artifactReadback) => {
     const { id: _manifestId, ...manifest } = request.e2e_manifest ?? {};
-    const receipt = executeRequiredE2EManifest(manifest, {
-      runScenarios: contractE2ERunner,
+    const receipt = await executeRequiredE2EManifest(manifest, {
       environment,
       artifact_readback: artifactReadback,
-      runnerOptions: {
-        host: releaseE2EHost,
-        port,
+      fetchFn: e2eFetchFn,
+      endpoints: {
+        brain: environment === 'staging' ? stagingUrl : brainUrl,
+        dashboard: environment === 'staging'
+          ? dashboardStagingUrl
+          : dashboardUrl,
       },
     });
     return {
@@ -52,6 +54,7 @@ export function createReleaseRunAdapters({
       e2e_scenarios_total: receipt.scenarios_total,
       e2e_scenarios_passed: receipt.scenarios_passed,
       e2e_scenario_results: receipt.scenario_results,
+      e2e_probe_results: receipt.probe_results,
       e2e_started_at: receipt.started_at,
       e2e_finished_at: receipt.finished_at,
       e2e_artifact_readback: receipt.artifact_readback,
@@ -131,11 +134,10 @@ export function createReleaseRunAdapters({
       || health.status !== 'healthy'
       || health.version !== brain.version)) return { status: 'fail' };
     try {
-      const e2e = runRequiredE2E(
+      const e2e = await runRequiredE2E(
         request,
         'staging',
         status.deployed_artifact_versions,
-        5222,
       );
       const verificationClaim = await claimVerification(request, 'staging');
       return {
@@ -224,11 +226,10 @@ export function createReleaseRunAdapters({
       previousVersions.push(workflowRollback.previous_version);
     }
     try {
-      const e2e = runRequiredE2E(
+      const e2e = await runRequiredE2E(
         request,
         'production',
         status.deployed_artifact_versions,
-        5221,
       );
       const verificationClaim = await claimVerification(request, 'production');
       return {

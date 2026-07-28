@@ -21,8 +21,8 @@ const acceptance = {
     name: 'exact contract behavior',
     covered_tasks: [TASK_ID],
     commands: [{
-      type: 'bash',
-      cmd: 'curl -fsS "$RELEASE_E2E_TARGET_URL/api/brain/health"',
+      type: 'probe',
+      id: 'brain.health',
     }],
   }],
 };
@@ -63,7 +63,7 @@ function expectedAuthority() {
 describe('required ReleaseRun contract E2E manifest', () => {
   it('freezes approved contract, repository, artifacts, and exact merge identity', () => {
     expect(manifest()).toEqual({
-      policy_version: 'kernel-release-e2e/v1',
+      policy_version: 'kernel-release-e2e/v2',
       release_run_id: RELEASE_RUN_ID,
       run_id: RUN_ID,
       repository: 'perfectuser21/cecelia',
@@ -106,7 +106,14 @@ describe('required ReleaseRun contract E2E manifest', () => {
       ...acceptance,
       scenarios: [{
         ...acceptance.scenarios[0],
-        commands: [{ type: 'powershell', cmd: 'curl "$RELEASE_E2E_TARGET_URL"' }],
+        commands: [{ type: 'bash', cmd: 'curl "$RELEASE_E2E_TARGET_URL"' }],
+      }],
+    }],
+    ['arbitrary shell injection', {
+      ...acceptance,
+      scenarios: [{
+        ...acceptance.scenarios[0],
+        commands: [{ type: 'bash', cmd: 'curl localhost; rm -rf /tmp/release' }],
       }],
     }],
     ['duplicate covered task', {
@@ -128,7 +135,7 @@ describe('required ReleaseRun contract E2E manifest', () => {
     ['command without target semantics', {
       scenarios: [{
         ...acceptance.scenarios[0],
-        commands: [{ type: 'bash', cmd: 'true' }],
+        commands: [{ type: 'probe', id: 'unregistered.command' }],
       }],
     }],
   ])('rejects %s', (_label, e2eAcceptance) => {
@@ -148,27 +155,30 @@ describe('required ReleaseRun contract E2E manifest', () => {
     })).toThrow(/release_e2e_manifest_/);
   });
 
-  it('returns environment-bound per-scenario evidence and exact artifact readback', () => {
-    const runScenarios = vi.fn(() => ({
-      verdict: 'PASS',
-      scenariosTotal: 1,
-      scenariosPassed: 1,
-      failedScenarios: [],
-      scenarioResults: [{
-        name: 'exact contract behavior',
-        status: 'pass',
-        started_at: '2026-07-28T06:01:00.000Z',
-        finished_at: '2026-07-28T06:01:01.000Z',
-        log_digest: `sha256:${'f'.repeat(64)}`,
-      }],
+  it('runs only the registered server probe and returns environment-bound evidence', async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({
+        status: 'healthy',
+        version: artifacts[0].version,
+        git_sha: MERGE_SHA,
+      }),
     }));
+    const times = [
+      new Date('2026-07-28T06:01:00.000Z'),
+      new Date('2026-07-28T06:01:01.000Z'),
+    ];
 
-    expect(executeRequiredE2EManifest(manifest(), {
-      runScenarios,
+    await expect(executeRequiredE2EManifest(manifest(), {
       environment: 'staging',
       artifact_readback: artifacts,
-      runnerOptions: { host: 'localhost', port: 5222 },
-    })).toEqual({
+      fetchFn,
+      endpoints: {
+        brain: 'http://staging:5222',
+        dashboard: 'http://dashboard-staging:5211',
+      },
+      now: () => times.shift(),
+    })).resolves.toEqual({
       status: 'pass',
       environment: 'staging',
       merge_sha: MERGE_SHA,
@@ -181,49 +191,33 @@ describe('required ReleaseRun contract E2E manifest', () => {
         status: 'pass',
         started_at: '2026-07-28T06:01:00.000Z',
         finished_at: '2026-07-28T06:01:01.000Z',
-        log_digest: `sha256:${'f'.repeat(64)}`,
+        log_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      }],
+      probe_results: [{
+        scenario_name: 'exact contract behavior',
+        probe_id: 'brain.health',
+        status: 'pass',
+        observation_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
       }],
       started_at: '2026-07-28T06:01:00.000Z',
       finished_at: '2026-07-28T06:01:01.000Z',
     });
-    expect(runScenarios).toHaveBeenCalledWith(acceptance, {
-      host: 'localhost',
-      port: 5222,
-      releaseEnvironment: 'staging',
-    });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(fetchFn.mock.calls[0][0]).toBe(
+      'http://staging:5222/api/brain/health',
+    );
   });
 
-  it.each([
-    ['FAIL', 1, 0, []],
-    ['SKIP', 1, 0, []],
-    ['PASS', 0, 0, []],
-    ['PASS', 1, 0, []],
-    ['PASS', 1, 1, []],
-    ['PASS', 1, 1, [{
-      name: 'exact contract behavior',
-      status: 'pass',
-      started_at: 'not-a-time',
-      finished_at: '2026-07-28T06:01:01.000Z',
-      log_digest: `sha256:${'f'.repeat(64)}`,
-    }]],
-  ])('fails closed on verdict=%s total=%i passed=%i or invalid detail', (
-    verdict,
-    scenariosTotal,
-    scenariosPassed,
-    scenarioResults,
-  ) => {
-    const runScenarios = vi.fn(() => ({
-      verdict,
-      scenariosTotal,
-      scenariosPassed,
-      failedScenarios: [],
-      scenarioResults,
-    }));
-    expect(() => executeRequiredE2EManifest(manifest(), {
-      runScenarios,
+  it('fails closed when a registered probe fails', async () => {
+    await expect(executeRequiredE2EManifest(manifest(), {
       environment: 'production',
       artifact_readback: artifacts,
-    })).toThrow(/release_e2e_execution_not_passed/);
+      fetchFn: vi.fn(async () => ({ ok: false, status: 503 })),
+      endpoints: {
+        brain: 'http://brain:5221',
+        dashboard: 'http://dashboard:5211',
+      },
+    })).rejects.toThrow(/release_e2e_execution_not_passed/);
   });
 
   it.each([
@@ -232,21 +226,14 @@ describe('required ReleaseRun contract E2E manifest', () => {
       environment: 'production',
       artifact_readback: [{ ...artifacts[0], digest: `sha256:${'d'.repeat(64)}` }],
     }],
-  ])('fails closed on %s', (_label, options) => {
-    expect(() => executeRequiredE2EManifest(manifest(), {
-      runScenarios: () => ({
-        verdict: 'PASS',
-        scenariosTotal: 1,
-        scenariosPassed: 1,
-        scenarioResults: [{
-          name: 'exact contract behavior',
-          status: 'pass',
-          started_at: '2026-07-28T06:01:00.000Z',
-          finished_at: '2026-07-28T06:01:01.000Z',
-          log_digest: `sha256:${'f'.repeat(64)}`,
-        }],
-      }),
+  ])('fails closed on %s', async (_label, options) => {
+    await expect(executeRequiredE2EManifest(manifest(), {
+      fetchFn: vi.fn(),
+      endpoints: {
+        brain: 'http://brain:5221',
+        dashboard: 'http://dashboard:5211',
+      },
       ...options,
-    })).toThrow(/release_e2e_execution_/);
+    })).rejects.toThrow(/release_e2e_execution_/);
   });
 });

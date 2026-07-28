@@ -190,15 +190,17 @@ export async function materializeBootstrapE2EManifest(client, {
 export async function executeBootstrapE2EManifest(manifestWithId, {
   environment,
   artifact_readback: artifactReadback,
-  runScenarios,
-  runnerOptions,
+  fetchFn,
+  endpoints,
+  now,
 }) {
   const { id: _manifestId, ...manifest } = manifestWithId;
   return executeRequiredE2EManifest(manifest, {
     environment,
     artifact_readback: artifactReadback,
-    runScenarios,
-    runnerOptions,
+    fetchFn,
+    endpoints,
+    now,
   });
 }
 
