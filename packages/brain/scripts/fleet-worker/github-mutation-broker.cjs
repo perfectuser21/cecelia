@@ -14,9 +14,51 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-
 const BRANCH = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
 const MAX_INPUT_BYTES = 1024 * 1024;
 const SECRET = /(?:gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|Authorization:\s*Bearer\s+\S+|BEGIN [A-Z ]*PRIVATE KEY)/i;
+const GITHUB_EQUIVALENCE_DESCRIPTORS = Object.freeze({
+  branchProtection: Object.freeze({
+    seam_id: 'kernel.workspace.protected_ref_guard',
+    effects: Object.freeze({
+      normal: Object.freeze({
+        observed_outcome: 'confirmed',
+        effect_code: 'protected_ref_scope_allowed',
+      }),
+      violation: Object.freeze({
+        observed_outcome: 'denied',
+        effect_code: 'protected_ref_mutation_denied',
+      }),
+      recovery: Object.freeze({
+        observed_outcome: 'recovered',
+        effect_code: 'protected_ref_scope_recovered',
+      }),
+    }),
+  }),
+  branchPush: Object.freeze({
+    seam_id: 'kernel.github.mutation_broker',
+    effects: Object.freeze({
+      normal: Object.freeze({
+        observed_outcome: 'confirmed',
+        effect_code: 'scoped_push_confirmed',
+      }),
+      violation: Object.freeze({
+        observed_outcome: 'denied',
+        effect_code: 'out_of_scope_push_denied',
+      }),
+      recovery: Object.freeze({
+        observed_outcome: 'recovered',
+        effect_code: 'corrected_ref_push_confirmed',
+      }),
+    }),
+  }),
+});
 
 function fail(code) {
   throw new Error(code);
+}
+
+function equivalenceFail(code) {
+  const error = new Error(code);
+  error.code = code;
+  throw error;
 }
 
 function canonicalJson(value) {
@@ -575,7 +617,241 @@ function createGithubMutationBroker({
   return Object.freeze({ execute, buildPrepared });
 }
 
+function createGithubMutationEquivalenceSeam({
+  descriptor,
+  mutationBroker,
+  mutationAuthority,
+  effectSigner,
+}) {
+  if (typeof mutationBroker?.execute !== 'function') {
+    equivalenceFail('github_mutation_equivalence_broker_unavailable');
+  }
+  if (typeof effectSigner?.signEffectResult !== 'function') {
+    equivalenceFail('seam_effect_signer_unavailable');
+  }
+  if (
+    mutationAuthority?.owner_service !== descriptor.seam_id
+    || typeof mutationAuthority?.loadInput !== 'function'
+    || typeof mutationAuthority?.snapshot !== 'function'
+    || typeof mutationAuthority?.confirmDenial !== 'function'
+    || typeof mutationAuthority?.confirmSuccess !== 'function'
+    || typeof mutationAuthority?.confirmRecovery !== 'function'
+    || typeof mutationAuthority?.cancel !== 'function'
+    || typeof mutationAuthority?.cleanup !== 'function'
+  ) {
+    equivalenceFail('github_mutation_equivalence_authority_unavailable');
+  }
+
+  return Object.freeze({
+    owner_service: descriptor.seam_id,
+
+    async invoke({
+      cell,
+      grant,
+      resource,
+      predecessor = null,
+      signal,
+    } = {}) {
+      signal?.throwIfAborted();
+      const effect = descriptor.effects[cell?.scenario];
+      if (
+        cell?.seam_id !== descriptor.seam_id
+        || grant?.seam_id !== descriptor.seam_id
+        || grant?.adapter_id !== cell?.adapter_id
+        || resource?.resource_id !== grant?.resource_id
+        || resource?.resource_ref !== grant?.resource_ref
+      ) {
+        equivalenceFail('github_mutation_equivalence_resource_invalid');
+      }
+      if (!effect) {
+        equivalenceFail('github_mutation_equivalence_scenario_invalid');
+      }
+      if (
+        (cell.scenario === 'recovery' && predecessor == null)
+        || (cell.scenario !== 'recovery' && predecessor != null)
+      ) {
+        equivalenceFail('github_mutation_equivalence_predecessor_invalid');
+      }
+
+      const authorityResource = Object.freeze({
+        resource_id: resource.resource_id,
+        resource_ref: resource.resource_ref,
+      });
+      const input = await mutationAuthority.loadInput({
+        cell,
+        grant,
+        resource: authorityResource,
+        predecessor,
+        signal,
+      });
+      signal?.throwIfAborted();
+      if (
+        !input
+        || typeof input !== 'object'
+        || Array.isArray(input)
+        || Object.keys(input).sort().join(',')
+          !== 'declarationBytes,policy,providerResultBytes,state'
+        || input.state?.run_id !== grant.run_id
+        || input.state?.attempt_id !== grant.attempt_id
+        || !Buffer.isBuffer(input.declarationBytes)
+        || !Buffer.isBuffer(input.providerResultBytes)
+      ) {
+        equivalenceFail('github_mutation_equivalence_input_invalid');
+      }
+      const before = await mutationAuthority.snapshot({
+        phase: 'before',
+        cell,
+        grant,
+        resource: authorityResource,
+        input,
+        predecessor,
+        signal,
+      });
+      signal?.throwIfAborted();
+
+      let result = null;
+      let mutationError = null;
+      try {
+        result = await mutationBroker.execute(input);
+      } catch (error) {
+        mutationError = error;
+      }
+      signal?.throwIfAborted();
+      const after = await mutationAuthority.snapshot({
+        phase: 'after',
+        cell,
+        grant,
+        resource: authorityResource,
+        input,
+        result,
+        mutation_error_code: mutationError?.code ?? mutationError?.message ?? null,
+        predecessor,
+        signal,
+      });
+      signal?.throwIfAborted();
+
+      if (cell.scenario === 'violation') {
+        const denied = await mutationAuthority.confirmDenial({
+          cell,
+          grant,
+          resource: authorityResource,
+          input,
+          result,
+          error: mutationError == null
+            ? null
+            : Object.freeze({
+              code: mutationError.code ?? mutationError.message ?? 'unknown',
+            }),
+          before,
+          after,
+          signal,
+        });
+        signal?.throwIfAborted();
+        if (mutationError == null || result != null || denied !== true) {
+          equivalenceFail('github_mutation_denial_unconfirmed');
+        }
+      } else {
+        const confirmed = await mutationAuthority.confirmSuccess({
+          cell,
+          grant,
+          resource: authorityResource,
+          input,
+          result,
+          error: mutationError,
+          before,
+          after,
+          predecessor,
+          signal,
+        });
+        signal?.throwIfAborted();
+        if (mutationError != null || result == null || confirmed !== true) {
+          equivalenceFail('github_mutation_effect_unconfirmed');
+        }
+        if (cell.scenario === 'recovery') {
+          const recovered = await mutationAuthority.confirmRecovery({
+            cell,
+            grant,
+            resource: authorityResource,
+            input,
+            result,
+            before,
+            after,
+            predecessor,
+            signal,
+          });
+          signal?.throwIfAborted();
+          if (recovered !== true) {
+            equivalenceFail('github_mutation_recovery_unconfirmed');
+          }
+        }
+      }
+      if (
+        !before
+        || typeof before !== 'object'
+        || Array.isArray(before)
+        || !after
+        || typeof after !== 'object'
+        || Array.isArray(after)
+      ) {
+        equivalenceFail('github_mutation_equivalence_snapshot_invalid');
+      }
+
+      return effectSigner.signEffectResult({
+        cell,
+        grant,
+        observation: {
+          observed_outcome: effect.observed_outcome,
+          effect_code: effect.effect_code,
+          before_hash: digest(before),
+          after_hash: digest(after),
+        },
+        predecessor,
+      });
+    },
+
+    async cancel(context = {}) {
+      return mutationAuthority.cancel({
+        ...context,
+        resource: context?.resource == null
+          ? null
+          : {
+            resource_id: context.resource.resource_id,
+            resource_ref: context.resource.resource_ref,
+          },
+      });
+    },
+
+    async cleanup(context = {}) {
+      return mutationAuthority.cleanup({
+        ...context,
+        resource: context?.resource == null
+          ? null
+          : {
+            resource_id: context.resource.resource_id,
+            resource_ref: context.resource.resource_ref,
+          },
+      });
+    },
+  });
+}
+
+function createBranchProtectionEquivalenceSeam(options = {}) {
+  return createGithubMutationEquivalenceSeam({
+    ...options,
+    descriptor: GITHUB_EQUIVALENCE_DESCRIPTORS.branchProtection,
+  });
+}
+
+function createBranchPushEquivalenceSeam(options = {}) {
+  return createGithubMutationEquivalenceSeam({
+    ...options,
+    descriptor: GITHUB_EQUIVALENCE_DESCRIPTORS.branchPush,
+  });
+}
+
 module.exports = {
+  createBranchProtectionEquivalenceSeam,
+  createBranchPushEquivalenceSeam,
   createFileGithubMutationAuditStore,
   createGithubMutationBroker,
 };

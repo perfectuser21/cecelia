@@ -6,8 +6,25 @@ import {
   assessPostDiffRisk,
   canonicalContractDigest,
 } from './post-diff-risk-policy.js';
+import { sha256Canonical } from '../lib/kernel-equivalence-receipts.js';
 
 const POLICY_VERSION = 'kernel-merge/v1';
+const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const CI_MERGE_EQUIVALENCE_SEAM_ID = 'kernel.merge.effect_executor';
+const CI_MERGE_EQUIVALENCE_EFFECTS = Object.freeze({
+  normal: Object.freeze({
+    observed_outcome: 'confirmed',
+    effect_code: 'exact_sha_merge_confirmed',
+  }),
+  violation: Object.freeze({
+    observed_outcome: 'denied',
+    effect_code: 'stale_sha_merge_denied',
+  }),
+  recovery: Object.freeze({
+    observed_outcome: 'recovered',
+    effect_code: 'renewed_authority_merge_confirmed',
+  }),
+});
 
 function deny(code) {
   throw new MergeAuthorizationError(code);
@@ -232,6 +249,229 @@ export function createMergeEffectExecutor({
       return { status: 'BLOCKED', detail: 'merge effect not confirmed' };
     });
   };
+}
+
+function mergeEquivalenceFail(code) {
+  const error = new MergeAuthorizationError(code);
+  throw error;
+}
+
+/**
+ * Executes the durable exact-SHA merge executor against an isolated PR
+ * authority. Run/task inputs and effect observations are server-owned; the
+ * drill caller can only name the already verified isolated resource.
+ */
+export function createCiMergeAuthorityEquivalenceSeam({
+  mergeEffectExecutor,
+  mergeDrillAuthority,
+  effectSigner,
+} = {}) {
+  if (typeof mergeEffectExecutor !== 'function') {
+    mergeEquivalenceFail('ci_merge_executor_unavailable');
+  }
+  if (typeof effectSigner?.signEffectResult !== 'function') {
+    mergeEquivalenceFail('seam_effect_signer_unavailable');
+  }
+  if (
+    mergeDrillAuthority?.owner_service !== CI_MERGE_EQUIVALENCE_SEAM_ID
+    || typeof mergeDrillAuthority?.loadExecution !== 'function'
+    || typeof mergeDrillAuthority?.snapshot !== 'function'
+    || typeof mergeDrillAuthority?.confirmDenial !== 'function'
+    || typeof mergeDrillAuthority?.confirmSuccess !== 'function'
+    || typeof mergeDrillAuthority?.confirmRecovery !== 'function'
+    || typeof mergeDrillAuthority?.cancel !== 'function'
+    || typeof mergeDrillAuthority?.cleanup !== 'function'
+  ) {
+    mergeEquivalenceFail('ci_merge_equivalence_authority_unavailable');
+  }
+
+  return Object.freeze({
+    owner_service: CI_MERGE_EQUIVALENCE_SEAM_ID,
+
+    async invoke({
+      cell,
+      grant,
+      resource,
+      predecessor = null,
+      signal,
+    } = {}) {
+      signal?.throwIfAborted();
+      const effect = CI_MERGE_EQUIVALENCE_EFFECTS[cell?.scenario];
+      if (
+        cell?.seam_id !== CI_MERGE_EQUIVALENCE_SEAM_ID
+        || grant?.seam_id !== CI_MERGE_EQUIVALENCE_SEAM_ID
+        || grant?.adapter_id !== cell?.adapter_id
+        || resource?.resource_id !== grant?.resource_id
+        || resource?.resource_ref !== grant?.resource_ref
+      ) {
+        mergeEquivalenceFail('ci_merge_equivalence_resource_invalid');
+      }
+      if (!effect) mergeEquivalenceFail('ci_merge_equivalence_scenario_invalid');
+      if (
+        (cell.scenario === 'recovery' && predecessor == null)
+        || (cell.scenario !== 'recovery' && predecessor != null)
+      ) {
+        mergeEquivalenceFail('ci_merge_equivalence_predecessor_invalid');
+      }
+
+      const authorityResource = Object.freeze({
+        resource_id: resource.resource_id,
+        resource_ref: resource.resource_ref,
+      });
+      const execution = await mergeDrillAuthority.loadExecution({
+        cell,
+        grant,
+        resource: authorityResource,
+        predecessor,
+        signal,
+      });
+      signal?.throwIfAborted();
+      if (
+        execution?.runId !== grant.run_id
+        || !UUID_PATTERN.test(execution?.taskId ?? '')
+        || Object.keys(execution ?? {}).sort().join(',') !== 'runId,taskId'
+      ) {
+        mergeEquivalenceFail('ci_merge_execution_identity_invalid');
+      }
+
+      const before = await mergeDrillAuthority.snapshot({
+        phase: 'before',
+        cell,
+        grant,
+        resource: authorityResource,
+        execution,
+        predecessor,
+        signal,
+      });
+      signal?.throwIfAborted();
+      let result = null;
+      let executionError = null;
+      try {
+        result = await mergeEffectExecutor(execution);
+      } catch (error) {
+        executionError = error;
+      }
+      signal?.throwIfAborted();
+      const after = await mergeDrillAuthority.snapshot({
+        phase: 'after',
+        cell,
+        grant,
+        resource: authorityResource,
+        execution,
+        result,
+        execution_error_code: executionError?.code ?? null,
+        predecessor,
+        signal,
+      });
+      signal?.throwIfAborted();
+
+      if (cell.scenario === 'violation') {
+        const denied = await mergeDrillAuthority.confirmDenial({
+          cell,
+          grant,
+          resource: authorityResource,
+          execution,
+          result,
+          error: executionError,
+          before,
+          after,
+          signal,
+        });
+        signal?.throwIfAborted();
+        if (
+          (executionError == null && result?.status !== 'BLOCKED')
+          || denied !== true
+        ) {
+          mergeEquivalenceFail('ci_merge_denial_unconfirmed');
+        }
+      } else {
+        const confirmed = await mergeDrillAuthority.confirmSuccess({
+          cell,
+          grant,
+          resource: authorityResource,
+          execution,
+          result,
+          error: executionError,
+          before,
+          after,
+          predecessor,
+          signal,
+        });
+        signal?.throwIfAborted();
+        if (
+          executionError != null
+          ||
+          !['DONE', 'DONE_WITH_CONCERNS'].includes(result?.status)
+          || confirmed !== true
+        ) {
+          mergeEquivalenceFail('ci_merge_effect_unconfirmed');
+        }
+        if (cell.scenario === 'recovery') {
+          const recovered = await mergeDrillAuthority.confirmRecovery({
+            cell,
+            grant,
+            resource: authorityResource,
+            execution,
+            result,
+            before,
+            after,
+            predecessor,
+            signal,
+          });
+          signal?.throwIfAborted();
+          if (recovered !== true) {
+            mergeEquivalenceFail('ci_merge_recovery_unconfirmed');
+          }
+        }
+      }
+      if (
+        !before
+        || typeof before !== 'object'
+        || Array.isArray(before)
+        || !after
+        || typeof after !== 'object'
+        || Array.isArray(after)
+      ) {
+        mergeEquivalenceFail('ci_merge_equivalence_snapshot_invalid');
+      }
+
+      return effectSigner.signEffectResult({
+        cell,
+        grant,
+        observation: {
+          observed_outcome: effect.observed_outcome,
+          effect_code: effect.effect_code,
+          before_hash: sha256Canonical(before),
+          after_hash: sha256Canonical(after),
+        },
+        predecessor,
+      });
+    },
+
+    async cancel(context = {}) {
+      return mergeDrillAuthority.cancel({
+        ...context,
+        resource: context?.resource == null
+          ? null
+          : {
+            resource_id: context.resource.resource_id,
+            resource_ref: context.resource.resource_ref,
+          },
+      });
+    },
+
+    async cleanup(context = {}) {
+      return mergeDrillAuthority.cleanup({
+        ...context,
+        resource: context?.resource == null
+          ? null
+          : {
+            resource_id: context.resource.resource_id,
+            resource_ref: context.resource.resource_ref,
+          },
+      });
+    },
+  });
 }
 
 export const __test__ = {
