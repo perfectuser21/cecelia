@@ -25,10 +25,12 @@ ENV GIT_SHA=${GIT_SHA}
 # `docker compose -f docker-compose.yml up -d` 报 "unknown shorthand flag: 'f' in -f"
 # → webhook deploy 永久 fail。手动 host 跑 OK 因为 host 装了 compose plugin。
 # 加 docker-cli-compose 让 container 内 docker compose 子命令可用。
+# acl/attr：Kernel protected-path inspector 在 Linux runtime 必须完整枚举
+# POSIX ACL 与 xattr；缺任一工具时按安全合同 fail-closed。
 # postgresql-client (createdb/dropdb/psql)：WS1 预览闸 preview-env-start.sh 用
 # `createdb -T cecelia cecelia_preview_<PR>` 克隆生产快照做数据隔离，容器内此前没装过，
 # 实测(PR#3801) Step4 直接报 "createdb: command not found" 失败退出。
-RUN apk add --no-cache curl bash jq procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client \
+RUN apk add --no-cache curl bash jq procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client acl attr \
  && adduser -D -u 1001 cecelia
 
 # Install Codex CLI globally so triggerCodexReview() in executor.js can spawn it.
@@ -87,6 +89,15 @@ COPY scripts/lib/release-run-tree-digest-cli.mjs /repo/scripts/lib/
 COPY scripts/lib/release-run-dashboard-receipt.mjs /repo/scripts/lib/
 COPY packages/workflows/scripts/deploy-workflow-skills.sh /repo/packages/workflows/scripts/
 COPY docker-compose.yml /repo/docker-compose.yml
+# Brain 的 production seam builder 会加载 package-owned fleet-worker
+# mutation broker；完整复制 scripts runtime，避免首个缺文件修好后继续在二级
+# require/import 上启动失败。
+COPY packages/brain/scripts/ ./scripts/
+# Kernel DevGate seam 是跨 workspace 的生产依赖。它从 /engine 反向引用 /brain，
+# 因此保留 /app 为唯一 Brain copy，以 immutable alias 提供 /brain 身份，并复制
+# 完整 Engine package（包括 sidecar 的同目录 shell/CJS runtime），禁止单文件补洞。
+COPY packages/engine/ /engine/
+RUN ln -s /app /brain
 
 # Root user: 容器内需要访问 /var/run/docker.sock 调 dockerd spawn 兄弟容器。
 # macOS 宿主没有 docker group，gid 映射不稳定；direct root 最简单。

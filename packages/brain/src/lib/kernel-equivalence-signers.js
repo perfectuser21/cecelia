@@ -28,6 +28,9 @@ import {
   verifyExecutionGrant,
   verifyReceiptBundle,
 } from './kernel-equivalence-receipts.js';
+import {
+  assertPathAclFree,
+} from './kernel-equivalence-protected-filesystem.js';
 
 const MAXIMUM_KEY_BYTES = 8_192;
 const DEFAULT_MAXIMUM_KEY_BYTES = MAXIMUM_KEY_BYTES;
@@ -125,6 +128,10 @@ function readProtectedPrivateKey(
 
   let descriptor;
   try {
+    assertPathAclFree(
+      secretFile,
+      () => fail('signer_secret_permissions_invalid'),
+    );
     descriptor = openSync(
       secretFile,
       constants.O_RDONLY | constants.O_NOFOLLOW,
@@ -151,7 +158,12 @@ function readProtectedPrivateKey(
     ) {
       fail('signer_secret_size_invalid');
     }
-    return readFileSync(descriptor);
+    const secret = readFileSync(descriptor);
+    assertPathAclFree(
+      secretFile,
+      () => fail('signer_secret_permissions_invalid'),
+    );
+    return secret;
   } catch (error) {
     if (error instanceof EquivalenceReceiptError) throw error;
     if (error?.code === 'ELOOP') fail('signer_secret_file_unsafe');
@@ -273,6 +285,33 @@ function expectedFromGrant(cell, grant) {
     resource_ref: grant?.resource_ref,
     resource_prefix: grant?.resource_prefix,
   };
+}
+
+export function loadTrustedExecutionReadinessSigner({
+  secretFile,
+  keyId,
+  trustRegistry,
+  now = Date.now,
+} = {}) {
+  const signer = loadSigner({
+    secretFile,
+    keyId,
+    purpose: 'trusted_execution_readiness',
+    serviceId:
+      'brain.kernel_equivalence.trusted_execution',
+    trustRegistry,
+    now,
+  });
+  return Object.freeze({
+    owner_service: 'brain.kernel_equivalence.readiness_signer',
+    capability_id:
+      'brain.kernel_equivalence.readiness_signer.v1',
+    key_id: signer.record.key_id,
+    signReadiness: (payload) => signer.signCanonical(
+      payload,
+      finiteNow(now),
+    ),
+  });
 }
 
 function violationCellFor(recoveryCell) {

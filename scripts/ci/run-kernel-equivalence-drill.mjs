@@ -19,20 +19,17 @@ import {
 } from '../../packages/brain/src/lib/kernel-equivalence-report-clock.js';
 import {
   createBrainTrustedExecutionClient,
+  probeBrainTrustedExecutionSocketReadiness,
 } from '../../packages/brain/src/lib/kernel-equivalence-trusted-execution-client.js';
+import {
+  loadProductionTrustedExecutionReadinessConfiguration,
+} from '../../packages/brain/src/lib/kernel-equivalence-readiness-configuration.js';
 
 const repositoryRoot = resolve(
   new URL('../..', import.meta.url).pathname,
 );
 const contractPath = resolve(repositoryRoot, 'regression-contract.yaml');
 const FORBIDDEN_PATH = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
-const EXECUTION_WIRING_BLOCKERS = Object.freeze([
-  'trusted_nonce_consumer_unavailable',
-  'trusted_adapter_registry_unavailable',
-  'trusted_collector_unavailable',
-  'trusted_bundle_chain_store_unavailable',
-  'trusted_cleanup_verifier_unavailable',
-]);
 
 class UsageError extends Error {}
 
@@ -43,7 +40,7 @@ function usage(message) {
 function parseArguments(argv) {
   if (argv.length === 0) usage('exactly one mode is required');
   const modeArguments = argv.filter((argument) => (
-    ['--plan', '--check', '--execute'].includes(argument)
+    ['--plan', '--check', '--gate', '--execute'].includes(argument)
   ));
   if (modeArguments.length !== 1) usage('exactly one mode is required');
   const mode = modeArguments[0].slice(2);
@@ -65,7 +62,10 @@ function parseArguments(argv) {
     };
   }
 
-  if (mode === 'check' && argv[0] === '--check') {
+  if (
+    ['check', 'gate'].includes(mode)
+    && argv[0] === `--${mode}`
+  ) {
     const bundleDirIndex = argv.indexOf('--bundle-dir');
     const formatArgument = argv.find((argument) => argument.startsWith('--format='));
     const allowedLength =
@@ -84,7 +84,7 @@ function parseArguments(argv) {
         && argument !== formatArgument
       ))
     ) {
-      usage('check accepts --bundle-dir <absolute-dir> and --format=json|markdown');
+      usage(`${mode} accepts --bundle-dir <absolute-dir> and --format=json|markdown`);
     }
     return {
       mode,
@@ -186,7 +186,12 @@ function configuredBundleReferenceCount(contract) {
   );
 }
 
-function checkReport(contract, plan, { bundleDir = null, now } = {}) {
+function checkReport(contract, plan, {
+  bundleDir = null,
+  executionReadiness,
+  mode = 'check',
+  now,
+} = {}) {
   const configuredBundleRefs = configuredBundleReferenceCount(contract);
   if (configuredBundleRefs > 0 && bundleDir == null) {
     throw new Error('trusted_bundle_store_required');
@@ -203,10 +208,10 @@ function checkReport(contract, plan, { bundleDir = null, now } = {}) {
   const proofMatrixReady =
     plan.cells.length === 99
     && verifiedCellCount === plan.cells.length;
-  const executionWiringReady = false;
+  const executionWiringReady = executionReadiness.ready;
   return {
     schema_version: 'kernel-equivalence-drill-cli/v1',
-    mode: 'check',
+    mode,
     contract_valid: validation.valid,
     execution_ready:
       validation.valid
@@ -214,7 +219,9 @@ function checkReport(contract, plan, { bundleDir = null, now } = {}) {
       && proofMatrixReady
       && executionWiringReady,
     execution_wiring_ready: executionWiringReady,
-    execution_wiring_blockers: EXECUTION_WIRING_BLOCKERS,
+    execution_wiring_blockers: executionReadiness.ready
+      ? []
+      : [executionReadiness.code],
     behavior_count: validation.behaviors.length,
     behavior_gap_count: validation.behaviors.filter(
       (behavior) => behavior.effective_status === 'gap',
@@ -260,14 +267,53 @@ async function main() {
   const options = parseArguments(process.argv.slice(2));
   const contract = loadContract();
 
-  if (options.mode === 'check') {
+  if (['check', 'gate'].includes(options.mode)) {
     const { now, plan } = compileReportDrillPlan(contract);
+    let executionReadiness;
+    try {
+      const readiness =
+        loadProductionTrustedExecutionReadinessConfiguration();
+      executionReadiness =
+        await probeBrainTrustedExecutionSocketReadiness({
+          socketPath: readiness.socket_path,
+          expectedPlanDigest:
+            readiness.expected_plan_digest,
+          readinessTrustAnchor:
+            readiness.readiness_trust_anchor,
+        });
+    } catch (error) {
+      const code = (
+        typeof error?.code === 'string'
+        && error.code.startsWith('trusted_execution_')
+      )
+        ? error.code
+        : 'trusted_execution_config_unavailable';
+      executionReadiness = Object.freeze({
+        ready: false,
+        code,
+        socket_path: null,
+      });
+    }
     const report = checkReport(contract, plan, {
       bundleDir: options.bundleDir,
+      executionReadiness,
+      mode: options.mode,
       now,
     });
     output(report, options.format);
-    if (!report.contract_valid) process.exitCode = 1;
+    if (
+      !report.contract_valid
+      || (
+        options.mode === 'gate'
+        && (
+          report.execution_ready !== true
+          || report.proof_matrix_ready !== true
+          || report.execution_wiring_ready !== true
+        )
+      )
+    ) {
+      process.exitCode = 1;
+    }
     return;
   }
 

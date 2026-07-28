@@ -4,28 +4,39 @@ import {
   existsSync,
   lstatSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   unlinkSync,
 } from 'node:fs';
 import { load } from 'js-yaml';
 import {
+  generateKeyPairSync,
+  sign as signBytes,
+} from 'node:crypto';
+import {
   createConnection,
   createServer,
 } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createBrainTrustedExecutionClient,
   createUnixSocketTrustedExecutionTransport,
+  probeBrainTrustedExecutionSocketReadiness,
 } from '../kernel-equivalence-trusted-execution-client.js';
 import {
   createBrainTrustedExecutionService,
   digestTrustedExecutionPlan,
 } from '../kernel-equivalence-trusted-execution-service.js';
 import {
-  startBrainTrustedExecutionSocketServer,
+  canonicalJson,
+} from '../kernel-equivalence-receipts.js';
+import {
+  __trustedExecutionSocketServerTest,
+  startBrainTrustedExecutionSocketServer as startSignedSocketServer,
 } from '../kernel-equivalence-trusted-execution-socket-server.js';
 import {
   bootBrainTrustedExecution,
@@ -47,6 +58,100 @@ const CELL_ID = `${BEHAVIORS[0].behavior_id}::codex::normal`;
 const GRANT_REF =
   'kernel-equivalence-grant:11111111-1111-4111-8111-111111111111';
 const roots = [];
+const readinessKeyPair = generateKeyPairSync('ed25519');
+const readinessTrustAnchor = Object.freeze({
+  key_id: 'trusted-readiness-2026-07',
+  purpose: 'trusted_execution_readiness',
+  service_id: 'brain.kernel_equivalence.trusted_execution',
+  public_key_pem: readinessKeyPair.publicKey.export({
+    type: 'spki',
+    format: 'pem',
+  }),
+  not_before: '2026-01-01T00:00:00.000Z',
+  not_after: '2027-01-01T00:00:00.000Z',
+  revoked_at: null,
+  rotates_key_id: null,
+});
+const readinessSigner = Object.freeze({
+  owner_service: 'brain.kernel_equivalence.readiness_signer',
+  capability_id: 'test-readiness-signer-v1',
+  key_id: readinessTrustAnchor.key_id,
+  signReadiness: (payload) => signBytes(
+    null,
+    Buffer.from(canonicalJson(payload), 'utf8'),
+    readinessKeyPair.privateKey,
+  ).toString('base64'),
+});
+
+function startBrainTrustedExecutionSocketServer(options) {
+  return startSignedSocketServer({
+    ...options,
+    readinessSigner: options?.readinessSigner ?? readinessSigner,
+  });
+}
+const linuxSetfacl = existsSync('/usr/bin/setfacl')
+  ? '/usr/bin/setfacl'
+  : existsSync('/bin/setfacl')
+    ? '/bin/setfacl'
+    : null;
+const aclMutationSupported = (
+  process.platform === 'darwin'
+  || (process.platform === 'linux' && linuxSetfacl != null)
+);
+
+function addExtendedAcl(path, { directory = false } = {}) {
+  if (process.platform === 'darwin') {
+    execFileSync('/bin/chmod', [
+      '+a',
+      directory
+        ? 'everyone allow list,search'
+        : 'everyone allow read',
+      path,
+    ]);
+    return;
+  }
+  execFileSync(linuxSetfacl, [
+    '-m',
+    directory ? 'u:nobody:rx' : 'u:nobody:r',
+    path,
+  ]);
+}
+
+function signedReadinessEnvelope({
+  request,
+  socketPath,
+  privateKey = readinessKeyPair.privateKey,
+  keyId = readinessTrustAnchor.key_id,
+  issuedAt = Date.now(),
+  planDigest = request.expected_plan_digest,
+}) {
+  const identity = lstatSync(socketPath);
+  const unsigned = {
+    schema_version:
+      'kernel-equivalence-trusted-execution-readiness-response/v1',
+    status: 'ready',
+    nonce: request.nonce,
+    brain_identity: 'cecelia.brain',
+    service_id:
+      'brain.kernel_equivalence.trusted_execution',
+    service_schema_version:
+      'kernel-equivalence-trusted-execution-service/v1',
+    plan_digest: planDigest,
+    socket_device: String(identity.dev),
+    socket_inode: String(identity.ino),
+    key_id: keyId,
+    issued_at: new Date(issuedAt).toISOString(),
+    expires_at: new Date(issuedAt + 2_000).toISOString(),
+  };
+  return {
+    ...unsigned,
+    signature: signBytes(
+      null,
+      Buffer.from(canonicalJson(unsigned), 'utf8'),
+      privateKey,
+    ).toString('base64'),
+  };
+}
 
 function successEnvelope(result, overrides = {}) {
   return {
@@ -256,6 +361,270 @@ describe('Brain trusted execution service', () => {
 });
 
 describe('Brain trusted execution client', () => {
+  it('proves readiness with a bounded identity and plan challenge without executing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
+    roots.push(root);
+    const socketPath = join(root, 'trusted-execution.sock');
+    const value = fixture();
+    const service = createBrainTrustedExecutionService(value);
+    const listener = await startBrainTrustedExecutionSocketServer({
+      service,
+      socketPath,
+      readinessSigner,
+    });
+    try {
+      await expect(probeBrainTrustedExecutionSocketReadiness({
+        socketPath,
+        expectedPlanDigest: service.plan_digest,
+        readinessTrustAnchor,
+        timeoutMs: 250,
+      })).resolves.toEqual({
+        ready: true,
+        code: null,
+        socket_path: socketPath,
+      });
+      expect(value.resolveProtectedGrant).not.toHaveBeenCalled();
+      expect(value.executeCell).not.toHaveBeenCalled();
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it.each([
+    ['wrong plan digest', (request) => ({
+      schema_version:
+        'kernel-equivalence-trusted-execution-readiness-response/v1',
+      challenge: request.challenge,
+      brain_identity: 'cecelia.brain',
+      service_identity:
+        'brain.kernel_equivalence.trusted_execution',
+      service_schema_version:
+        'kernel-equivalence-trusted-execution-service/v1',
+      plan_digest: 'f'.repeat(64),
+    })],
+    ['malformed response', () => ({ ready: true })],
+    ['oversized response', () => ({ payload: 'x'.repeat(2_000) })],
+  ])('rejects a %s from a mode-0600 Unix listener', async (
+    _label,
+    responseFor,
+  ) => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-probe-'));
+    roots.push(root);
+    const socketPath = join(root, 'listener.sock');
+    const server = createServer({ allowHalfOpen: true }, (socket) => {
+      let input = '';
+      socket.setEncoding('utf8');
+      socket.on('data', (chunk) => {
+        input += chunk;
+      });
+      socket.once('end', () => {
+        let request = {};
+        try {
+          request = JSON.parse(input.trim());
+        } catch {
+          // The response remains intentionally invalid.
+        }
+        socket.end(`${JSON.stringify(responseFor(request))}\n`);
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+    chmodSync(socketPath, 0o600);
+    try {
+      await expect(probeBrainTrustedExecutionSocketReadiness({
+        socketPath,
+        expectedPlanDigest: digestTrustedExecutionPlan(CANONICAL_PLAN),
+        readinessTrustAnchor,
+        timeoutMs: 250,
+      })).resolves.toMatchObject({
+        ready: false,
+        socket_path: null,
+      });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('rejects an adaptive echo listener that has no Brain private key', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-echo-'));
+    roots.push(root);
+    const socketPath = join(root, 'echo.sock');
+    const server = createServer({ allowHalfOpen: true }, (socket) => {
+      let input = '';
+      socket.setEncoding('utf8');
+      socket.on('data', (chunk) => {
+        input += chunk;
+      });
+      socket.once('end', () => {
+        const request = JSON.parse(input.trim());
+        socket.end(`${JSON.stringify({
+          schema_version:
+            'kernel-equivalence-trusted-execution-readiness-response/v1',
+          status: 'ready',
+          challenge: request.challenge,
+          brain_identity: 'cecelia.brain',
+          service_identity:
+            'brain.kernel_equivalence.trusted_execution',
+          service_schema_version:
+            'kernel-equivalence-trusted-execution-service/v1',
+          plan_digest: request.expected_plan_digest,
+        })}\n`);
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+    chmodSync(socketPath, 0o600);
+    try {
+      await expect(probeBrainTrustedExecutionSocketReadiness({
+        socketPath,
+        expectedPlanDigest: digestTrustedExecutionPlan(CANONICAL_PLAN),
+        readinessTrustAnchor,
+        timeoutMs: 250,
+      })).resolves.toEqual({
+        ready: false,
+        code: 'trusted_execution_socket_unavailable',
+        socket_path: null,
+      });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it.each([
+    ['wrong key', ({ request, socketPath }) => {
+      const attacker = generateKeyPairSync('ed25519');
+      return signedReadinessEnvelope({
+        request,
+        socketPath,
+        privateKey: attacker.privateKey,
+      });
+    }],
+    ['expired response', ({ request, socketPath }) => (
+      signedReadinessEnvelope({
+        request,
+        socketPath,
+        issuedAt: Date.now() - 10_000,
+      })
+    )],
+    ['plan mismatch', ({ request, socketPath }) => (
+      signedReadinessEnvelope({
+        request,
+        socketPath,
+        planDigest: 'f'.repeat(64),
+      })
+    )],
+  ])('rejects a signed readiness %s', async (_label, responseFor) => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-signed-fake-'));
+    roots.push(root);
+    const socketPath = join(root, 'fake.sock');
+    const server = createServer({ allowHalfOpen: true }, (socket) => {
+      let input = '';
+      socket.setEncoding('utf8');
+      socket.on('data', (chunk) => {
+        input += chunk;
+      });
+      socket.once('end', () => {
+        const request = JSON.parse(input.trim());
+        socket.end(`${JSON.stringify(responseFor({
+          request,
+          socketPath,
+        }))}\n`);
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+    chmodSync(socketPath, 0o600);
+    try {
+      await expect(probeBrainTrustedExecutionSocketReadiness({
+        socketPath,
+        expectedPlanDigest: digestTrustedExecutionPlan(CANONICAL_PLAN),
+        readinessTrustAnchor,
+        timeoutMs: 250,
+      })).resolves.toMatchObject({
+        ready: false,
+        socket_path: null,
+      });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('rejects replay of a previously valid signed readiness response', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-replay-'));
+    roots.push(root);
+    const socketPath = join(root, 'replay.sock');
+    let cached = null;
+    const server = createServer({ allowHalfOpen: true }, (socket) => {
+      let input = '';
+      socket.setEncoding('utf8');
+      socket.on('data', (chunk) => {
+        input += chunk;
+      });
+      socket.once('end', () => {
+        const request = JSON.parse(input.trim());
+        cached ??= signedReadinessEnvelope({
+          request,
+          socketPath,
+        });
+        socket.end(`${JSON.stringify(cached)}\n`);
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+    chmodSync(socketPath, 0o600);
+    const probe = () => probeBrainTrustedExecutionSocketReadiness({
+      socketPath,
+      expectedPlanDigest: digestTrustedExecutionPlan(CANONICAL_PLAN),
+      readinessTrustAnchor,
+      timeoutMs: 250,
+    });
+    try {
+      await expect(probe()).resolves.toMatchObject({ ready: true });
+      await expect(probe()).resolves.toMatchObject({
+        ready: false,
+        socket_path: null,
+      });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('rejects an empty or timed-out listener as not ready', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-probe-'));
+    roots.push(root);
+    const socketPath = join(root, 'empty.sock');
+    const server = createServer((socket) => {
+      socket.resume();
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+    chmodSync(socketPath, 0o600);
+    try {
+      await expect(probeBrainTrustedExecutionSocketReadiness({
+        socketPath,
+        expectedPlanDigest: digestTrustedExecutionPlan(CANONICAL_PLAN),
+        readinessTrustAnchor,
+        timeoutMs: 20,
+      })).resolves.toEqual({
+        ready: false,
+        code: 'trusted_execution_socket_unavailable',
+        socket_path: null,
+      });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('executes end-to-end through the Brain-owned Unix listener', async () => {
     const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
     roots.push(root);
@@ -419,6 +788,7 @@ describe('Brain trusted execution client', () => {
       schema_version: 'kernel-equivalence-trusted-execution-service/v1',
       cell_count: 99,
       adapter_count: 10,
+      plan_digest: digestTrustedExecutionPlan(CANONICAL_PLAN),
       execute: vi.fn(() => {
         const busyUntil = Date.now() + 20;
         while (Date.now() < busyUntil) {
@@ -789,6 +1159,162 @@ describe('Brain trusted execution client', () => {
     expect(lstatSync(socketPath).isSymbolicLink()).toBe(true);
   });
 
+  it('recovers one pinned inactive Unix socket by retaining its exact quarantined inode', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-stale-'));
+    roots.push(root);
+    const stalePath = join(root, 'stale.sock');
+    const created = spawnSync('python3', [
+      '-c',
+      [
+        'import os, socket',
+        'path = os.environ["KEQ_STALE_SOCKET"]',
+        'sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)',
+        'sock.bind(path)',
+        'os.chmod(path, 0o600)',
+      ].join('; '),
+    ], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        KEQ_STALE_SOCKET: stalePath,
+      },
+    });
+    expect(created.status).toBe(0);
+    const staleIdentity = lstatSync(stalePath);
+
+    const recovered = await startBrainTrustedExecutionSocketServer({
+      service: createBrainTrustedExecutionService(fixture()),
+      socketPath: stalePath,
+    });
+    try {
+      expect(lstatSync(stalePath).isSocket()).toBe(true);
+      expect(lstatSync(stalePath).ino).not.toBe(
+        staleIdentity.ino,
+      );
+      const quarantine = readdirSync(root).filter((name) => (
+        name.startsWith('.stale-')
+      ));
+      expect(quarantine).toHaveLength(1);
+      const retained = lstatSync(join(root, quarantine[0]));
+      expect(retained.isSocket()).toBe(true);
+      expect({
+        device: retained.dev,
+        inode: retained.ino,
+      }).toEqual({
+        device: staleIdentity.dev,
+        inode: staleIdentity.ino,
+      });
+    } finally {
+      await recovered.close();
+    }
+
+    const activePath = join(root, 'active.sock');
+    const active = createServer((socket) => socket.end('active'));
+    await new Promise((resolve, reject) => {
+      active.once('error', reject);
+      active.listen(activePath, resolve);
+    });
+    chmodSync(activePath, 0o600);
+    const activeIdentity = lstatSync(activePath).ino;
+    try {
+      await expect(startBrainTrustedExecutionSocketServer({
+        service: createBrainTrustedExecutionService(fixture()),
+        socketPath: activePath,
+      })).rejects.toMatchObject({
+        code: 'trusted_execution_socket_path_occupied',
+      });
+      expect(lstatSync(activePath).ino).toBe(activeIdentity);
+    } finally {
+      await new Promise((resolve) => active.close(resolve));
+    }
+  });
+
+  it.runIf(aclMutationSupported)(
+    'rejects ACL-bearing UDS parents and stale server sockets',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'kernel-eq-acl-parent-'));
+      roots.push(root);
+      const socketPath = join(root, 'brain.sock');
+      if (process.platform === 'darwin') {
+        execFileSync('/usr/bin/xattr', [
+          '-w',
+          'com.cecelia.kernel-equivalence-test',
+          'present',
+          root,
+        ]);
+      }
+      addExtendedAcl(root, { directory: true });
+
+      await expect(startBrainTrustedExecutionSocketServer({
+        service: createBrainTrustedExecutionService(fixture()),
+        socketPath,
+      })).rejects.toMatchObject({
+        code: 'trusted_execution_socket_parent_unsafe',
+      });
+
+      const safeRoot = mkdtempSync(join(tmpdir(), 'kernel-eq-acl-stale-'));
+      roots.push(safeRoot);
+      const stalePath = join(safeRoot, 'brain.sock');
+      const created = spawnSync('python3', [
+        '-c',
+        [
+          'import os, socket',
+          'path = os.environ["KEQ_STALE_SOCKET"]',
+          'sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)',
+          'sock.bind(path)',
+          'os.chmod(path, 0o600)',
+        ].join('; '),
+      ], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          KEQ_STALE_SOCKET: stalePath,
+        },
+      });
+      expect(created.status).toBe(0);
+      addExtendedAcl(stalePath);
+      const staleIdentity = lstatSync(stalePath).ino;
+
+      await expect(startBrainTrustedExecutionSocketServer({
+        service: createBrainTrustedExecutionService(fixture()),
+        socketPath: stalePath,
+      })).rejects.toMatchObject({
+        code: 'trusted_execution_socket_path_occupied',
+      });
+      expect(lstatSync(stalePath).ino).toBe(staleIdentity);
+    },
+  );
+
+  it.runIf(aclMutationSupported)(
+    'makes the UDS client reject an ACL-bearing listener',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'kernel-eq-acl-client-'));
+      roots.push(root);
+      const socketPath = join(root, 'brain.sock');
+      const server = createServer((socket) => socket.resume());
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(socketPath, resolve);
+      });
+      chmodSync(socketPath, 0o600);
+      addExtendedAcl(socketPath);
+      try {
+        await expect(probeBrainTrustedExecutionSocketReadiness({
+          socketPath,
+          expectedPlanDigest:
+            digestTrustedExecutionPlan(CANONICAL_PLAN),
+          timeoutMs: 50,
+        })).resolves.toEqual({
+          ready: false,
+          code: 'trusted_execution_socket_unsafe',
+          socket_path: null,
+        });
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    },
+  );
+
   it('never unlinks a replacement that is not its exact socket inode', async () => {
     const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
     roots.push(root);
@@ -805,6 +1331,43 @@ describe('Brain trusted execution client', () => {
     expect(lstatSync(socketPath).isSymbolicLink()).toBe(true);
   });
 
+  it('never deletes an attacker replacement during stale-socket recovery', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-stale-race-'));
+    roots.push(root);
+    const socketPath = join(root, 'brain.sock');
+    const replacementTarget = join(root, 'attacker-target');
+    const created = spawnSync('python3', [
+      '-c',
+      [
+        'import os, socket',
+        'path = os.environ["KEQ_STALE_SOCKET"]',
+        'sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)',
+        'sock.bind(path)',
+        'os.chmod(path, 0o600)',
+      ].join('; '),
+    ], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        KEQ_STALE_SOCKET: socketPath,
+      },
+    });
+    expect(created.status).toBe(0);
+    await expect(
+      __trustedExecutionSocketServerTest
+        .recoverPinnedStaleSocket({
+          socketPath,
+          afterQuarantine: async () => {
+            expect(existsSync(socketPath)).toBe(false);
+            symlinkSync(replacementTarget, socketPath);
+          },
+        }),
+    ).rejects.toMatchObject({
+      code: 'trusted_execution_socket_path_occupied',
+    });
+    expect(lstatSync(socketPath).isSymbolicLink()).toBe(true);
+  });
+
   it('boots fail-closed without a configured trusted assembly', async () => {
     const boot = await bootBrainTrustedExecution();
 
@@ -816,6 +1379,41 @@ describe('Brain trusted execution client', () => {
     await expect(boot.close()).resolves.toBeUndefined();
   });
 
+  it.each([
+    'trusted_runtime_collector_unavailable',
+    'production_trusted_execution_database_port_invalid',
+  ])('preserves the exact safe production boot failure code %s', async (code) => {
+    const boot = await bootBrainTrustedExecution({
+      createService: async () => {
+        const error = new Error(code);
+        error.code = code;
+        throw error;
+      },
+    });
+
+    expect(boot.getReadiness()).toEqual({
+      ready: false,
+      code,
+      socket_path: null,
+    });
+  });
+
+  it('does not expose an unsafe production boot error code', async () => {
+    const boot = await bootBrainTrustedExecution({
+      createService: async () => {
+        const error = new Error('secret');
+        error.code = 'PRIVATE_KEY=do-not-expose';
+        throw error;
+      },
+    });
+
+    expect(boot.getReadiness()).toEqual({
+      ready: false,
+      code: 'trusted_execution_assembly_unavailable',
+      socket_path: null,
+    });
+  });
+
   it('boots a configured service and reports listener readiness', async () => {
     const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
     roots.push(root);
@@ -824,6 +1422,7 @@ describe('Brain trusted execution client', () => {
       createService: async () => (
         createBrainTrustedExecutionService(fixture())
       ),
+      readinessSigner,
       socketPath,
     });
 

@@ -1,9 +1,11 @@
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
 } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,13 +73,118 @@ describe('kernel equivalence drill CLI', () => {
       proof_matrix_ready: false,
       execution_wiring_ready: false,
       execution_wiring_blockers: [
-        'trusted_nonce_consumer_unavailable',
-        'trusted_adapter_registry_unavailable',
-        'trusted_collector_unavailable',
-        'trusted_bundle_chain_store_unavailable',
-        'trusted_cleanup_verifier_unavailable',
+        'trusted_execution_config_file_missing',
       ],
     });
+  });
+
+  it('keeps check informational but makes gate fail closed on every readiness field', () => {
+    const information = run(['--check', '--format=json']);
+    const gate = run(['--gate', '--format=json']);
+
+    expect(information.status).toBe(0);
+    expect(JSON.parse(information.stdout)).toMatchObject({
+      mode: 'check',
+      contract_valid: true,
+      execution_ready: false,
+      proof_matrix_ready: false,
+      execution_wiring_ready: false,
+    });
+    expect(gate.status).toBe(1);
+    expect(gate.stderr).toBe('');
+    expect(JSON.parse(gate.stdout)).toMatchObject({
+      mode: 'gate',
+      contract_valid: true,
+      execution_ready: false,
+      proof_matrix_ready: false,
+      execution_wiring_ready: false,
+    });
+  });
+
+  it('uses the fail-closed gate in the P0 regression contract', () => {
+    const contract = readFileSync(
+      join(repositoryRoot, 'regression-contract.yaml'),
+      'utf8',
+    );
+
+    expect(contract).toContain(
+      'run-kernel-equivalence-drill.mjs --gate --format=json',
+    );
+    expect(contract).not.toContain(
+      'run-kernel-equivalence-drill.mjs --check --format=json',
+    );
+  });
+
+  it('ignores raw socket and digest overrides without a protected manifest', async () => {
+    const temporaryRoot = mkdtempSync('/tmp/keq-cli-');
+    const socketPath = join(temporaryRoot, 'brain.sock');
+    const listener = createServer((socket) => {
+      socket.resume();
+    });
+    await new Promise((resolve, reject) => {
+      listener.once('error', reject);
+      listener.listen(socketPath, resolve);
+    });
+    chmodSync(socketPath, 0o600);
+    try {
+      const result = run(['--check', '--format=json'], {
+        KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH: socketPath,
+        KERNEL_EQ_TRUSTED_EXECUTION_PLAN_DIGEST: 'a'.repeat(64),
+      });
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        execution_ready: false,
+        execution_wiring_ready: false,
+        execution_wiring_blockers: [
+          'trusted_execution_config_file_missing',
+        ],
+        proof_matrix_ready: false,
+      });
+    } finally {
+      await new Promise((resolve) => listener.close(resolve));
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores a raw stale socket override without a protected manifest', () => {
+    const temporaryRoot = mkdtempSync('/tmp/keq-cli-stale-');
+    const socketPath = join(temporaryRoot, 'brain.sock');
+    try {
+      const created = spawnSync('python3', [
+        '-c',
+        [
+          'import os, socket',
+          'path = os.environ["KEQ_STALE_SOCKET"]',
+          'sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)',
+          'sock.bind(path)',
+          'os.chmod(path, 0o600)',
+        ].join('; '),
+      ], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          KEQ_STALE_SOCKET: socketPath,
+        },
+      });
+      expect(created.status).toBe(0);
+
+      const result = run(['--check', '--format=json'], {
+        KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH: socketPath,
+        KERNEL_EQ_TRUSTED_EXECUTION_PLAN_DIGEST: 'a'.repeat(64),
+      });
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        execution_ready: false,
+        execution_wiring_ready: false,
+        execution_wiring_blockers: [
+          'trusted_execution_config_file_missing',
+        ],
+      });
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   it('compiles a historical check with the same finite report_as_of clock', () => {
@@ -127,6 +234,7 @@ describe('kernel equivalence drill CLI', () => {
   it.each([
     [[]],
     [['--plan', '--check']],
+    [['--check', '--gate']],
     [['--plan', '--unknown']],
     [['--plan', '--cell', 'anything']],
     [['--execute']],
@@ -181,5 +289,17 @@ describe('kernel equivalence drill CLI', () => {
       /KERNEL_EQ_(?:COLLECTOR|EFFECT|GRANT_AUTHORITY)_[A-Z_]+/,
     );
     expect(source).not.toContain('--trusted-runtime');
+    expect(source).not.toContain(
+      'KERNEL_EQ_TRUSTED_EXECUTION_PLAN_DIGEST',
+    );
+    expect(source).toContain(
+      'loadProductionTrustedExecutionReadinessConfiguration',
+    );
+    expect(source).toContain(
+      'kernel-equivalence-readiness-configuration.js',
+    );
+    expect(source).not.toContain(
+      'kernel-equivalence-production-wiring.js',
+    );
   });
 });

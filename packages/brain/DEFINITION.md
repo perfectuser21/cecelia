@@ -1,8 +1,8 @@
 # Brain 模块定义
 
-**版本**: 1.268.21
+**版本**: 1.268.25
 
-## Kernel unified test-contract reconciliation
+## Unified Kernel Golden Path exact-image candidate
 
 - 旧 Claude/relay fixture 已跟随 Kernel 的 lease generation、post-diff risk、
   fleet bridge credential 与 ReleaseRun-only deploy authority 合同更新，继续验证
@@ -19,6 +19,91 @@
   exact diff/check/base、post-diff risk 与 PostgreSQL durable review assessment。
 - Migration 374–380 顺序覆盖 ReleaseRun、equivalence runtime/cases、Codex callback
   与 typed rollback；当前仅为本地候选，未部署，live proof 仍诚实为 0/99。
+- Exact-image 合并保留 ReleaseRun sibling controllers 与 rollback runtime，同时
+  提供完整 Brain scripts、Engine package 和 immutable `/brain -> /app`。
+
+## Kernel exact-image boot graph closure
+
+- `/app` 继续是唯一 Brain source copy；immutable `/brain -> /app` 与完整
+  `/engine` package 恢复 production seam 原有的跨 workspace 相对 import，
+  完整 `/app/scripts` 同时提供 fleet mutation broker 与 server runtime。
+- CI build 必须注入 exact 40-hex `GIT_SHA`。Docker runtime contract 在镜像内
+  回读 image ID/SHA、导入 Brain→Engine→Brain production graph，并通过隔离
+  pgvector 实例验证真实 migration、listen 与 health 的有界启动。
+- 无 Docker只有显式 allow-skip；required 模式、SHA mismatch、import/startup
+  failure 或任何 container/network residue 均失败。既有 ACL/xattr contract
+  保持不变。
+- 回退：`bash scripts/brain-rollback.sh 1.268.23`；无数据库迁移。
+
+## Kernel Alpine metadata runtime closure
+
+- Brain `node:20-alpine` runtime 显式安装 `acl` 与 `attr`，使 Linux
+  protected-path inspector 的 `getfacl/getfattr` 依赖不再在生产镜像缺失。
+- Docker image contract 必须对 exact built image 验证两个命令存在，并在容器内
+  真实调用 shared inspector：normal file 放行，ACL、xattr 及组合全部拒绝。
+  Ubuntu brain-unit/integration 同样显式安装依赖；本地 contract 只能选择
+  `--require-docker` fail 或 `--allow-skip` 显式跳过，不允许偶然假绿。
+- stale socket quarantine 不再调用 path-based unlink。Node 无 inode-bound
+  `unlinkat` 能力时保留 pinned stale inode 作为 forensic artifact，replacement
+  继续保留并 fail-closed；artifact 只允许 Brain 离线生命周期清理。
+- 回退：`bash scripts/brain-rollback.sh 1.268.22`；无数据库迁移。
+
+## Kernel authenticated readiness and metadata closure
+
+- production manifest 新增独立 readiness Ed25519 key purpose；Brain 只持有受保护
+  private-key signer，CLI 只从 mode-0600 manifest 读取固定 public trust anchor。
+  readiness 签名绑定 nonce、schema、plan digest、Brain/service identity、socket
+  device/inode 与 2 秒有效期；错密钥、重放、过期、plan mismatch 和 adaptive echo
+  全部 fail-closed 且不执行 effect。
+- CLI 不再接受 raw socket/digest/key override；缺 protected manifest 时只报告
+  稳定 config blocker。真实 production boot 把 signer capability 显式交给 UDS
+  listener，未配置或签名失败时不声称 ready。
+- 受保护 manifest、全部 signer key、grant root/file、UDS parent/socket 共用
+  完整 metadata 枚举：Darwin `ls -lde@`、Linux `getfacl/getfattr`；受保护目标
+  的 ACL、任意 xattr 或二者组合均拒绝。仅 ancestor walk 可接受 OS-owned
+  `com.apple.rootless`，仍拒绝所有用户 metadata。
+- stale socket recovery 移除时间猜测窗口；quarantine 后通过确定性 seam 重验
+  parent/stale inode 并确认原路径仍为空。攻击者插入 symlink/replacement 时保留
+  replacement、停止启动且不扩大 unlink。
+- 回退：`bash scripts/brain-rollback.sh 1.268.21`；无数据库迁移。
+
+## Kernel boot control review closure
+
+- production manifest loader 将真实 `pg.Pool` 的 prototype methods 与内部状态
+  封装成冻结、绑定、恰含 `connect/query` 的 Brain-owned capability，再交给
+  trusted runtime factory。
+- UDS readiness 使用 0600/owner/ACL/inode 检查和有界 challenge-response，
+  精确匹配 challenge、service schema、plan digest、Brain/service identity；
+  探针不解析 grant、不消费 nonce、不执行 effect。
+- UDS server pin parent/socket inode，以 bounded connect 区分 active 与
+  `ECONNREFUSED` stale；stale 经 quarantine、重验和精确 unlink 后才复用路径，
+  symlink、ACL、unknown、active 及 replacement race 一律保留并 fail-closed。
+- CLI 把 `--check` 信息报告与 `--gate` 阻断语义分开；P0 regression contract
+  改用 gate，execution/proof-matrix/wiring 任一非 true 都非零退出。
+- manifest、全部 signer private key、grant root/file、UDS parent/server/client
+  共用跨 macOS/Linux 的 ACL-free 验证；production boot 保留安全且具体的
+  `trusted_runtime_*` / `production_trusted_execution_*` 错误码。
+- 回退：`bash scripts/brain-rollback.sh 1.268.20`；无数据库迁移。
+
+## Kernel production boot and grant control plane
+
+- `server.js` 不再以空参数启动 trusted execution；它把 production environment
+  与 shared PostgreSQL pool 交给 outer wiring loader。protected manifest
+  缺失、不可用、不安全、digest/key/registry 漂移或 Phase 5 B ports 未配置时
+  返回各自稳定 readiness code，且不创建 UDS。
+- manifest 只允许 public trust registry、canonical assembled-plan digest、
+  collector/execution-grant/十个 effect signer 的 key ID 与 absolute protected
+  secret-file path、grant root/TTL、socket path 和 resource-port profile。配置
+  通过单个 `O_NOFOLLOW` descriptor 读取并固定；raw Kernel secret env 禁止。
+- grant issuer 独占 signer 与写/清理 authority，签名 grant 以 mode-0600
+  exclusive temp file 落盘，执行 file fsync → rename → directory fsync 后只
+  返回 opaque ref；reader 只有 exact-ref read authority，并拒绝已过期 grant。
+  cleanup 对每个候选重验 regular/owner/single-link/mode/inode，未知或被替换的
+  文件保留而不扩大删除。
+- CLI `--check` 共用 client 的 UDS owner/mode/directory 安全检查，动态报告
+  wiring readiness。真实 listener 仍不代表 proof matrix ready；本版本未配置
+  Phase 5 B production ports、未接 ReleaseRun、未执行 drill、未部署。
+- 回退：`bash scripts/brain-rollback.sh 1.268.19`；无数据库迁移。
 
 ## Kernel Codex review trust boundary
 

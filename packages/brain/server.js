@@ -115,7 +115,7 @@ import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
 import { setupGitCredentials } from './src/lib/git-credentials-setup.js';
 import { bootDurable } from './src/durable/dbos-runtime.js';
 import {
-  bootBrainTrustedExecution,
+  bootProductionBrainTrustedExecution,
 } from './src/lib/kernel-equivalence-trusted-execution-boot.js';
 
 // 容器 git 凭据初始化（必须在任何 git clone/fetch/push 之前）：
@@ -649,7 +649,10 @@ if (!process.env.VITEST) {
   // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
   await bootDurable();
 
-  __trustedExecutionBoot = await bootBrainTrustedExecution();
+  __trustedExecutionBoot = await bootProductionBrainTrustedExecution({
+    env: process.env,
+    pool,
+  });
   const trustedExecutionReadiness =
     __trustedExecutionBoot.getReadiness();
   if (!trustedExecutionReadiness.ready) {

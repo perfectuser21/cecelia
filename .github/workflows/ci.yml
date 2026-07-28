@@ -55,7 +55,7 @@ jobs:
           echo "brain=$(echo "$CHANGED" | grep -qE '^packages/brain/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "engine=$(echo "$CHANGED" | grep -q '^packages/engine/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
-          echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|packages/brain/scripts/|packages/engine/|scripts/brain-(docker-up|docker-down|build)\.sh|scripts/ci/kernel-protected-filesystem-image-contract\.mjs|scripts/ci/brain-runtime-image-contract\.mjs)$' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "quality=$(echo "$CHANGED" | grep -qE '^packages/quality/' && echo true || echo false)" >> $GITHUB_OUTPUT
 
@@ -67,13 +67,28 @@ jobs:
     if: needs.changes.outputs.compose == 'true'
     needs: [changes]
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - name: Build cecelia-brain image
         run: |
           set -e
-          docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
+          docker build \
+            --build-arg GIT_SHA="${{ github.sha }}" \
+            -f packages/brain/Dockerfile \
+            -t cecelia-brain:ci \
+            .
+      - name: Verify exact image runtime graph and bounded Brain startup
+        run: |
+          node scripts/ci/brain-runtime-image-contract.mjs \
+            --image cecelia-brain:ci \
+            --expected-git-sha "${{ github.sha }}" \
+            --require-docker
+      - name: Verify protected filesystem tools and behavior in exact image
+        run: |
+          node scripts/ci/kernel-protected-filesystem-image-contract.mjs \
+            --image cecelia-brain:ci \
+            --require-docker
       - name: Verify key deps resolve inside image
         run: |
           set -e
@@ -560,6 +575,12 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+      - name: Install protected filesystem inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends acl attr
+          command -v getfacl
+          command -v getfattr
       - name: Consciousness Guard SSOT Check
         run: bash scripts/check-consciousness-guard.sh
       - run: cd packages/brain && npm ci
@@ -735,6 +756,12 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+      - name: Install protected filesystem inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends acl attr
+          command -v getfacl
+          command -v getfattr
       - run: cd packages/brain && npm ci
       - name: Run Migrations
         env:

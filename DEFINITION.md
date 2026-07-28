@@ -6,13 +6,13 @@
 
 
 
-**Brain 版本**: 1.268.20
+**Brain 版本**: 1.268.25
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.268.20 — Unified Kernel Golden Path + durable ReleaseRun
+## Brain 1.268.25 — Unified Kernel Golden Path exact-image candidate
 
 - Kernel Codex reviewer、11 要素等价合同与 durable ReleaseRun 已在同一候选树完成
   本地语义集成；confirmed exact-head merge receipt 是 ReleaseRun 的唯一根凭证。
@@ -20,8 +20,72 @@
   post-diff risk 与 durable review policy；任一风险来源要求人审时均不可自动合并。
 - Migrations 374–380 按 ReleaseRun、equivalence runtime/cases、Codex callback 与
   typed rollback 顺序共存；N-1 migration 回归覆盖完整 369–380 链。
+- Exact-image 同时保留 ReleaseRun controller/rollback runtime、完整 Brain
+  scripts、完整 Engine package 与 immutable `/brain -> /app`，关闭跨 workspace
+  production import graph 缺口。
+- 旧 relay/Claude fixture 已迁到 Kernel lease、post-diff risk、独立 Attempt
+  authority 与 ReleaseRun-only deploy 合同，测试残留不再造成共享数据库假红。
 - 本版本仍是未发布的本地集成候选；未 push、未 merge、未 deploy，且 99 个 live
   equivalence drill 未完成前保持 `0/99 proven`。
+
+## Brain 1.268.24 — Kernel exact-image boot graph closure
+
+- Brain image 保留 `/app` 唯一源码，以 `/brain -> /app` 提供跨 workspace
+  canonical runtime identity，并完整复制 Engine package 与 Brain scripts，
+  闭合 DevGate sidecar、receipt primitive、fleet mutation broker 的二级 import。
+- Docker CI 将 checkout exact `${{ github.sha }}` 作为 build arg 烙入镜像；runtime
+  contract 重新读取 image ID/SHA、导入完整 production seam graph，并用隔离
+  pgvector 数据库在有界时间内启动真实 Brain 和读取 health。
+- contract 对 Docker 缺失、SHA 漂移、graph 缺失、启动超时与清理残留全部
+  fail-closed；原 Alpine `acl/attr` 与 normal/ACL/xattr exact-image 合同保持独立。
+
+## Brain 1.268.23 — Kernel Alpine metadata runtime closure
+
+- Brain Alpine runtime 安装 `acl/attr`，exact-image contract 在真实容器内验证
+  `getfacl/getfattr` 与 normal/ACL/xattr shared-inspector 行为。
+- Ubuntu unit/integration runners 显式安装同一依赖；Docker 缺失只能显式
+  required-fail 或 allow-skip。
+- stale socket recovery 不再执行非 inode-bound quarantine unlink，保留
+  forensic stale inode，replacement 一律保留并 fail-closed。
+
+## Brain 1.268.22 — Kernel authenticated readiness and metadata closure
+
+- production readiness 使用 manifest-pinned Ed25519 trust anchor；签名 envelope
+  绑定 nonce、schema、plan digest、Brain/service identity、socket inode 与短
+  expiry，错 key、重放、过期、digest drift 和 adaptive echo 均零执行阻断。
+- Brain boot 显式注入受保护 signer capability；CLI 只读 protected manifest
+  的 public anchor，不接受 raw socket/digest/key override。
+- manifest、全部 private keys、grant root/file 和 UDS parent/socket 使用
+  Darwin `ls -lde@` 或 Linux `getfacl/getfattr` 全枚举，拒绝 ACL/xattr。
+- stale socket recovery 以 atomic quarantine + 确定性 post-rename 重验代替
+  时间窗口；replacement 保留且启动 fail-closed。
+
+## Brain 1.268.21 — Kernel boot control review closure
+
+- production wiring 通过 Brain-owned wrapper 接受真实 `pg.Pool`，但只向
+  trusted runtime 暴露冻结且绑定的 `connect/query` 最小 capability。
+- UDS readiness 改为有界 challenge-response，精确绑定随机 challenge、
+  service schema、canonical plan digest 与 Brain/service identity；空 listener、
+  错 digest、畸形、超长及 timeout 均 fail-closed，且探针不触发执行。
+- `--check` 保持信息模式，新增 `--gate`；P0 regression contract 只有在
+  execution/proof-matrix/wiring 三项均为 true 时才允许零退出。
+- manifest、private keys、grant 与 UDS parent/socket/client 复用 ACL-free
+  校验；stale UDS 仅在 bounded connect 证明 inactive 且 inode/parent 重验后
+  恢复，active、symlink 与 replacement race 均不删除。
+
+## Brain 1.268.20 — Kernel production boot and grant control plane
+
+- Brain server boot 通过受保护 production manifest 装配唯一 trusted-execution
+  factory；无配置、坏配置与 Phase 5 B ports 未接线分别给出精确 fail-closed
+  readiness，均不建立 Unix listener。
+- manifest 固定 canonical plan digest、public trust registry、collector /
+  execution-grant / 十个 effect signer 的 key ID 与 protected file metadata；
+  raw `KERNEL_EQ_*` secret environment 被拒绝。
+- execution-grant issuer 与 reader 分权；issuer 以 mode-0600 临时文件执行
+  file fsync → atomic rename → directory fsync，并仅由 issuer 对过期且 inode
+  未变化的 grant 做清理。
+- CLI `--check` 读取真实 mode-0600 Brain UDS readiness，不再返回硬编码 wiring
+  blocker；listener ready 与 0/99 proof readiness 仍严格分离。
 
 ## Brain 1.268.18 — Production case authority additive upgrade
 
