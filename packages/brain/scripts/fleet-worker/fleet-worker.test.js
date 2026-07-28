@@ -908,4 +908,25 @@ describe('Fleet Worker production runtime assembly', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('rejects an oversized protected Worker token before reading authority', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-token-size-'));
+    const tokenFile = path.join(root, 'worker-token');
+    fs.writeFileSync(tokenFile, 'x'.repeat(8_193), { mode: 0o600 });
+
+    try {
+      expect(() => createFleetWorkerRuntime({
+        env: {
+          CECELIA_MACHINE_ID: 'us-mac-m4',
+          CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+          CECELIA_FLEET_DATA_ROOT: path.join(root, 'data'),
+          CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
+        },
+        runCommand: vi.fn(),
+      })).toThrow(/fleet_worker_token_file_permissions/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
