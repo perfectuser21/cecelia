@@ -25,8 +25,13 @@ const executorSrc = readFileSync(
 
 describe('executor: triggerLocalCodexExec 独立审查池', () => {
   describe('常量定义', () => {
-    it('CODEX_REVIEW_LOCK_DIR 指向 codex-review-locks', () => {
-      expect(executorSrc).toContain("CODEX_REVIEW_LOCK_DIR = '/tmp/codex-review-locks'");
+    it('CODEX_REVIEW_LOCK_DIR 指向宿主持久化的 codex-review-locks', () => {
+      expect(executorSrc).toContain(
+        "path.join(WORK_DIR, 'logs', '.kernel-codex-review-locks')"
+      );
+      expect(executorSrc).not.toContain(
+        "CODEX_REVIEW_LOCK_DIR = '/tmp/codex-review-locks'"
+      );
     });
 
     it('CODEX_REVIEW_MAX = 2（独立 2-slot 池）', () => {

@@ -82,11 +82,17 @@ export async function processExecutionCallback(data, pool) {
 
   // 2. Build update payload
   const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url, result });
+  const isCodexReviewCallback = coding_type === 'codex-review';
+  const isFailDominantCodexCallback = (
+    isCodexReviewCallback
+    && newStatus === 'failed'
+  );
 
   // 3. ATOMIC transaction: task UPDATE + decision_log + progress step
   const client = await pool.connect();
   let findingsValue = null;
   let applied = false;
+  let reviewResultCommitted = false;
   try {
     await client.query('BEGIN');
 
@@ -114,8 +120,16 @@ export async function processExecutionCallback(data, pool) {
           'pr_url', $5::text
         ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END
           || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END,
-        result = CASE WHEN result IS NULL AND $12::jsonb IS NOT NULL THEN $12::jsonb ELSE result END,
-        completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END,
+        result = CASE
+          WHEN $14::boolean AND $12::jsonb IS NOT NULL THEN $12::jsonb
+          WHEN result IS NULL AND $12::jsonb IS NOT NULL THEN $12::jsonb
+          ELSE result
+        END,
+        completed_at = CASE
+          WHEN $6 THEN NOW()
+          WHEN $16::boolean THEN NULL
+          ELSE completed_at
+        END,
         quota_exhausted_at = CASE WHEN $11 THEN NOW() ELSE quota_exhausted_at END,
         pr_url = COALESCE($5::text, pr_url),
         pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END,
@@ -124,19 +138,31 @@ export async function processExecutionCallback(data, pool) {
         updated_at = NOW(),
         claimed_by = CASE WHEN $13::boolean THEN NULL ELSE claimed_by END,
         claimed_at = CASE WHEN $13::boolean THEN NULL ELSE claimed_at END
-      WHERE id = $1 AND status IN ('in_progress', 'queued', 'dispatched')
+      WHERE id = $1
+        AND (
+          status IN ('in_progress', 'queued', 'dispatched')
+          OR ($16::boolean AND status = 'completed')
+        )
+        AND (
+          NOT $14::boolean
+          OR payload->>'current_run_id' = $15::text
+        )
     `, [
       task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null,
       isCompleted, findingsValue, prNumber, errorMessage, blockedDetail,
-      isQuotaExhausted, execMetaJson, isTerminal,
+      isQuotaExhausted, execMetaJson, isTerminal, isCodexReviewCallback,
+      run_id || null, isFailDominantCodexCallback,
     ]);
-    applied = (updRes.rowCount ?? 0) > 0;
+    // node-postgres always returns numeric rowCount. Treat omitted rowCount as
+    // applied only for lightweight test doubles and older adapter shims.
+    applied = updRes.rowCount !== 0;
     if (!applied) {
       console.warn(`[callback-processor] 迟到回调被守卫拦下(task=${task_id} 已非 in_progress/queued/dispatched),status=${newStatus} 未落地`);
     }
 
-    // decision_log（带 WHERE NOT EXISTS 防重复写入）
-    await client.query(`
+    if (applied) {
+      // decision_log（带 WHERE NOT EXISTS 防重复写入）
+      await client.query(`
       INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
       SELECT $1, $2, $3::jsonb, $4::jsonb, $5
       WHERE NOT EXISTS (
@@ -153,33 +179,42 @@ export async function processExecutionCallback(data, pool) {
       (newStatus === 'completed' || newStatus === 'completed_no_pr') ? 'success' : 'failed',
       String(run_id || ''),
       String(status || ''),
-    ]);
+      ]);
 
-    // Progress step（非阻塞）
-    const isSuccessfulExecution = newStatus === 'completed' || newStatus === 'completed_no_pr';
-    try {
-      const { recordProgressStep } = await import('./progress-ledger.js');
-      await recordProgressStep(task_id, run_id, {
-        sequence: 1,
-        name: 'task_execution',
-        type: 'execution',
-        status: isSuccessfulExecution ? 'completed' : 'failed',
-        startedAt: null,
-        completedAt: new Date(),
-        durationMs: duration_ms || null,
-        inputSummary: null,
-        outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
-        findings: result && typeof result === 'object' ? result : {},
-        errorCode: isSuccessfulExecution ? null : 'execution_failed',
-        errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
-        retryCount: iterations || 0,
-        artifacts: { pr_url: pr_url || null },
-        metadata: { checkpoint_id: checkpoint_id || null, original_status: status },
-        confidenceScore: isSuccessfulExecution ? 1.0 : 0.2,
-      });
-      console.log(`[callback-processor] Progress step recorded for task ${task_id}`);
-    } catch (progressErr) {
-      console.error(`[callback-processor] Progress step recording failed: ${progressErr.message}`);
+      // Exact review gate result is part of the same DB transaction as the
+      // review task terminal state. A worker crash cannot commit one without
+      // the other.
+      if (isCodexReviewCallback && newStatus === 'completed') {
+        await writeReviewResult(task_id, result, client);
+        reviewResultCommitted = true;
+      }
+
+      // Progress step（非阻塞）
+      const isSuccessfulExecution = newStatus === 'completed' || newStatus === 'completed_no_pr';
+      try {
+        const { recordProgressStep } = await import('./progress-ledger.js');
+        await recordProgressStep(task_id, run_id, {
+          sequence: 1,
+          name: 'task_execution',
+          type: 'execution',
+          status: isSuccessfulExecution ? 'completed' : 'failed',
+          startedAt: null,
+          completedAt: new Date(),
+          durationMs: duration_ms || null,
+          inputSummary: null,
+          outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
+          findings: result && typeof result === 'object' ? result : {},
+          errorCode: isSuccessfulExecution ? null : 'execution_failed',
+          errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
+          retryCount: iterations || 0,
+          artifacts: { pr_url: pr_url || null },
+          metadata: { checkpoint_id: checkpoint_id || null, original_status: status },
+          confidenceScore: isSuccessfulExecution ? 1.0 : 0.2,
+        });
+        console.log(`[callback-processor] Progress step recorded for task ${task_id}`);
+      } catch (progressErr) {
+        console.error(`[callback-processor] Progress step recording failed: ${progressErr.message}`);
+      }
     }
 
     await client.query('COMMIT');
@@ -188,6 +223,16 @@ export async function processExecutionCallback(data, pool) {
     throw txErr;
   } finally {
     client.release();
+  }
+
+  if (!applied) {
+    return {
+      success: true,
+      newStatus,
+      applied: false,
+      skipped: true,
+      reason: 'late_or_duplicate_callback',
+    };
   }
 
   // Clean up activeProcesses registry（after commit）
@@ -292,9 +337,11 @@ export async function processExecutionCallback(data, pool) {
     );
 
     // 5c8b. 审查任务完成 → 写入 review_result（共享后处理管道）
-    await writeReviewResult(task_id, result, pool).catch(err =>
-      console.error(`[callback-processor] writeReviewResult 失败 (non-fatal): ${err.message}`)
-    );
+    if (!reviewResultCommitted) {
+      await writeReviewResult(task_id, result, pool).catch(err =>
+        console.error(`[callback-processor] writeReviewResult 失败 (non-fatal): ${err.message}`)
+      );
+    }
 
     // 5c11. 串行调度：dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
     await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>

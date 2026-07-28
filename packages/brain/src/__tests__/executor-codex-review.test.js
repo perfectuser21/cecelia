@@ -115,16 +115,17 @@ describe('triggerCodexReview: spawn error handler', () => {
   it('error handler 清理原子 slot 目录', () => {
     const errorHandlerIdx = executorSrc.indexOf("child.on('error'");
     const snippet = executorSrc.slice(errorHandlerIdx, errorHandlerIdx + 600);
-    expect(snippet).toContain(
+    expect(snippet).toContain('finalizeCodexReview');
+    expect(executorSrc).toContain(
       'rm(slotPath, { recursive: true, force: true })'
     );
   });
 
-  it('error handler 回调 execution-callback 且 status=AI Failed', () => {
+  it('error handler 写 durable callback_queue 且 status=AI Failed', () => {
     const errorHandlerIdx = executorSrc.indexOf("child.on('error'");
-    const snippet = executorSrc.slice(errorHandlerIdx, errorHandlerIdx + 900);
+    const snippet = executorSrc.slice(errorHandlerIdx, errorHandlerIdx + 2_600);
     expect(snippet).toContain('AI Failed');
-    expect(snippet).toContain('execution-callback');
+    expect(executorSrc).toContain('INSERT INTO callback_queue');
   });
 });
 

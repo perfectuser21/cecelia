@@ -18,7 +18,7 @@ const BATCH_SIZE = 10;
  * 1. HTTP 端点写入：result_json 含 _meta 字段（存 pr_url、account_id 等）
  * 2. 直接 INSERT（测试/WS3）：result_json 为纯 result 数据，无 _meta
  */
-function buildDataFromRow(row) {
+export function buildDataFromRow(row) {
   const resultJson = row.result_json || {};
   const meta = resultJson._meta || {};
 
@@ -41,18 +41,23 @@ function buildDataFromRow(row) {
     stderr: row.stderr_tail || null,
     failure_class: row.failure_class || null,
     account_id: meta.account_id || null,
+    coding_type: meta.coding_type || null,
   };
 }
 
-async function pollAndProcess() {
+export async function pollAndProcess() {
   let client;
+  let transactionStarted = false;
   try {
     client = await pool.connect();
+    await client.query('BEGIN');
+    transactionStarted = true;
     const result = await client.query(`
       SELECT * FROM callback_queue
       WHERE processed_at IS NULL
       ORDER BY created_at ASC
       LIMIT ${BATCH_SIZE}
+      FOR UPDATE SKIP LOCKED
     `);
 
     for (const row of result.rows) {
@@ -68,7 +73,12 @@ async function pollAndProcess() {
         console.error(`[callback-worker] Failed to process row id=${row.id} task=${row.task_id}: ${rowErr.message}`);
       }
     }
+    await client.query('COMMIT');
+    transactionStarted = false;
   } catch (pollErr) {
+    if (client && transactionStarted) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
     console.error(`[callback-worker] Poll error: ${pollErr.message}`);
   } finally {
     if (client) client.release();

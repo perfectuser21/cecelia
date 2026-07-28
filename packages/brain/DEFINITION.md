@@ -1,28 +1,34 @@
 # Brain 模块定义
 
-**版本**: 1.268.15
+**版本**: 1.268.19
 
-## Codex review worktree admission
+## Kernel Codex review trust boundary
 
-- 两条 controller-owned 本机 Codex review 路由收敛到一个执行实现；先按 exact
-  branch 解析已登记 worktree，再校验 realpath、允许根和 Git top-level，缺失或
-  指向主仓/部署根时在占 slot、spawn 之前 fail-closed。
-- Codex 只在独立 non-root 容器运行：worktree 与单个 mode-0600 auth 文件只读
-  挂载，root filesystem 只读，drop all capabilities，无 Docker socket、主仓、
-  部署仓、SSH/gh/数据库/人工审批/Kernel controller 凭据；容器 image 先解析成
-  immutable digest，Docker client 也只接收本地 transport allowlist env。
-- 容器内 Codex 固定使用已验证的 `gpt-5.4` 与
-  `--sandbox read-only --ephemeral`，prompt 经 Docker interactive stdin；
-  此时才允许
-  `--skip-git-repo-check` 绕过 CLI 自身的重复 admission。
-- Spec task card 通过 `O_NOFOLLOW`、regular-file、single-link、512 KiB 上限从
-  已 admission 的 exact worktree 读取；Code gate 用无 shell 的 `git
-  --no-ext-diff --no-textconv` 从同一 worktree 生成有界 diff，不再从旧固定目录
-  猜 branch 路径。
-- review slot 使用私有目录下的原子 `mkdir`，没有 shell runner、可预测 prompt
-  文件或 count-then-write 竞态；Docker runtime/image/auth 缺失和非零退出都
-  fail-closed。
-- 回退：`bash scripts/brain-rollback.sh 1.268.14`；没有数据库迁移。
+- Controller 只接纳已登记、非主仓、clean 的 exact Git worktree，并把已持久化的
+  head/base、merge-base、tree digest、Skill/evidence digest 与 immutable image
+  ID 写入证据 receipt；Reviewer 从固定 commit archive 解包到 tmpfs，不挂载 live
+  worktree。
+- Reviewer 固定 `codex 0.145.0 / gpt-5.4`，non-root、read-only、cap-drop、
+  no-new-privileges、最小 mounts、permission profile 与 `--network none`。Auth
+  通过 `O_NOFOLLOW` pinned descriptor 复制到每次运行的 mode-0600 临时文件；
+  Codex tool 看不到 auth、Git object store、Brain `/app`、broker socket、
+  Docker socket、Brain/DB/部署凭据。
+- 每次 review 使用带 owner/expiry 标签的独占 Docker volume 与无凭据 egress
+  broker sidecar。Broker 仅接受 HTTP/1.1 exact CONNECT
+  `chatgpt.com:443`/`auth.openai.com:443`，只连接已校验的 global-unicast IPv4；
+  DNS、握手、idle、absolute TTL、header、连接数均有界。
+- Cleanup 严格等待 reviewer → broker → volume 并验证零残留；失败保留 slot
+  fail-closed；删除前逐资源核对 kind/run/owner nonce。启动/巡检 TTL reaper 从
+  Docker labels 收敛 crash-window 半资源。
+- Review run intent 与 terminal journal 位于宿主持久目录，并执行
+  file fsync → atomic rename → directory fsync。缺 terminal 的 confirmed-dead
+  reviewer 合成 FAIL；callback queue 以 task/run 幂等键 fail-dominant UPSERT，
+  worker 用 `FOR UPDATE SKIP LOCKED`，且只有 current run 能落终态和 gate verdict。
+- Spec task card 与 diff 均从 admitted commit 读取；最终输出必须是 exact
+  PASS/FAIL JSON。缺失/畸形 verdict、非零退出、boundary/cleanup 失败均写 FAIL，
+  合法 FAIL 不会被 callback 改写成 PASS。
+- 回退：`bash scripts/brain-rollback.sh 1.268.18`；migration 377 仅增加 nullable
+  `callback_queue.idempotency_key` 与 partial unique index，可向后兼容保留。
 
 ## Kernel zero-Attempt patrol coverage
 
