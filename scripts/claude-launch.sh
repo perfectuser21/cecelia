@@ -116,8 +116,12 @@ _sweep_orphan_wt_project_dirs() {
     root="$(_proj_root)"
     main_target="$root/$(_path_to_project_key "$_MAIN_REPO")"
     mkdir -p "$main_target" 2>/dev/null || return 0
-    # 物理化 worktree base 路径（与 Claude Code process.cwd() 一致）
-    wt_base_phys="$(cd "$_WT_BASE" 2>/dev/null && pwd -P)" || wt_base_phys="$_WT_BASE"
+    # 物理化 worktree base 路径（与 Claude Code process.cwd() 一致）。首次启动时
+    # 项目子目录还不存在，因此先物理化已存在的父目录再拼回 basename；否则 macOS
+    # 的 /var → /private/var 会让 sweep 前缀与 Claude 的真实 project key 不一致。
+    wt_base_phys="$(cd "$(dirname "$_WT_BASE")" 2>/dev/null \
+      && printf '%s/%s' "$(pwd -P)" "$(basename "$_WT_BASE")")" \
+      || wt_base_phys="$_WT_BASE"
     wt_base_key="$(_path_to_project_key "$wt_base_phys")-"
     local swept=0
     for entry in "$root"/${wt_base_key}*; do
