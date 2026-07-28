@@ -582,3 +582,24 @@ test('unknown authority response shapes fail closed', async () => {
     /result_channel_driver:/,
   );
 });
+
+test('mechanical artifact hashing rejects unbounded workspace evidence', async () => {
+  const workspace = fixtureWorkspace();
+  fs.truncateSync(path.join(workspace, SPRINT_DIR, 'contract-draft.md'), 16 * 1024 * 1024 + 1);
+
+  await assert.rejects(
+    buildVerifierEnvelope({
+      bundle: taskBundle('proposer', {
+        propose_branch: 'cp-result-channel',
+      }),
+      rawEnvelope: {
+        propose_branch: 'cp-result-channel',
+        workstream_count: 1,
+        task_plan_path: `${SPRINT_DIR}/task-plan.json`,
+      },
+      workspacePath: workspace,
+      deps: dependencies(),
+    }),
+    /result_channel_driver:.*evidence byte limit/,
+  );
+});
