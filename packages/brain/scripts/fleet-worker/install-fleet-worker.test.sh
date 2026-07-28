@@ -28,6 +28,7 @@ startup_probe_log="$test_root/startup-probe.log"
 chown_log="$test_root/chown.log"
 worker_token_file="$test_root/worker-token"
 worker_data_root="$test_root/var/lib/cecelia/fleet-worker"
+shared_tmpdir="$test_root/Users/Shared/cecelia-fleet-tmp"
 mkdir -p "$install_dir" "$log_dir"
 printf '%s\n' 'fleet-worker-token-at-least-32-bytes' > "$worker_token_file"
 chmod 0600 "$worker_token_file"
@@ -58,6 +59,7 @@ run_installer() {
     FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
     FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
     FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
+    FLEET_WORKER_SHARED_TMPDIR="$shared_tmpdir" \
     "$INSTALLER" "$@"
 }
 
@@ -85,6 +87,7 @@ run_installer_with_id() {
     FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
     FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
     FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
+    FLEET_WORKER_SHARED_TMPDIR="$shared_tmpdir" \
     "$INSTALLER" "$@"
 }
 
@@ -706,8 +709,12 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
   || fail "--apply omitted the credential envelope runtime module"
 [[ -d "$worker_data_root" ]] \
   || fail "--apply did not create the Worker-owned data root"
+[[ -d "$shared_tmpdir" ]] \
+  || fail "--apply did not create the OrbStack-shareable Worker TMPDIR"
 grep -Fxq "_cecelia:_cecelia $worker_data_root" "$chown_log" \
   || fail "--apply did not assign the data root to the Worker identity"
+grep -Fxq "_cecelia:_cecelia $shared_tmpdir" "$chown_log" \
+  || fail "--apply did not assign the shared TMPDIR to the Worker identity"
 grep -Fxq "_cecelia:_cecelia $worker_token_file" "$chown_log" \
   || fail "--apply did not assign the token file to the Worker identity"
 [[ -f "$installed_access_helper" && -f "$installed_access_plist" ]] \
