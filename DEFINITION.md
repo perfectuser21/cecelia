@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.101
+**Brain 版本**: 1.268.0
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.0 — Kernel Fleet Provider Credential Broker
+
+- Controller 为 Codex、Claude、Grok 签发短期 HMAC CredentialEnvelope，绑定
+  Attempt、Run、machine、lease owner/generation、TTL 与单次 delivery nonce。
+- Worker 严格验证签名和全部绑定，使用持久 nonce marker 拒绝重放；只把凭据
+  经 FIFO 写入 Runner 的 provider 专属 tmpfs，不挂载宿主 credential home。
+- Runner 校验 provider-specific payload，以 `0600` 临时文件启动 provider，
+  并对 stdout、结果与 mutation metadata 做统一脱敏和完整性检查。
+- 缺失、过期、篡改、错机器或错租约一律 fail-closed；冻结 canary 不需要凭据。
+- Brain 回退目标：`1.267.101`。
 
 ## Brain 1.267.101 — Fleet Node Phase 4A production convergence
 
