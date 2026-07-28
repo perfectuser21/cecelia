@@ -65,6 +65,22 @@
 - 缺失、过期、篡改、错机器或错租约一律 fail-closed；冻结 canary 不需要凭据。
 - Brain 回退目标：`1.267.101`。
 
+## Brain 1.267.103 — Fleet rollout transfer-interruption cleanup
+
+- Xian SSH rollout 在 payload 解包前即安装 EXIT/HUP/INT/TERM 清理：截断传输、
+  tar 失败或控制器中断都会先 fail-closed drain，再删除精确的 root staging。
+- 成功路径仍只清理一次性 staging，不改变 NodeProfile、bootstrap、admission、
+  Runner digest 或 Phase 4B/4C/4D/5 边界。
+- Brain 回退目标：`1.267.102`；节点保持 drain 后再回退。
+
+## Brain 1.267.102 — Fleet rollout protected-token staging
+
+- US M4 rollout 控制器可在不放宽 `_cecelia` 0700 数据目录的前提下，经
+  `sudo -n` 验证并以 0600 一次性分阶段复制 Worker bearer token。
+- token 内容不进入命令参数、日志、Git 或 Xian 长期 provider credential；节点
+  drain/bootstrap/admission 顺序及 Phase 4A 之外的执行语义均未改变。
+- Brain 回退目标：`1.267.101`；节点先用 `fleet-nodectl.sh drain` fail closed。
+
 ## Brain 1.267.101 — Fleet Node Phase 4A production convergence
 
 - 三台 canonical Fleet Node 使用同一份 US M4 基线和从

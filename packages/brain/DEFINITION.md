@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.268.3
+**版本**: 1.268.4
+
+## Kernel post-diff risk and human review authority
+
+- 候选 PR diff 在 merge authority 前由 server 计算风险；首次行为、合同或路径变化、
+  migration、CI/workflow、安全凭据、release 及未知或过期 proof 强制人审。
+- 审批和 merge effect 绑定 exact head SHA、diff hash、contract digest 与 policy，
+  任一轴变化即失效；低风险重复变更也必须持有有效 production receipt。
+- Migration 373 提供 append-only production receipt 与 risk assessment ledger。
+- 回退：`bash scripts/brain-rollback.sh 1.268.3`。
 
 ## Unified legacy Skill dispatch contract
 
@@ -51,6 +60,27 @@
   Claude/Grok 在 provider credential broker 完成前 fail-closed。两者均不会回退到
   provider 内执行 `gh`。
 - 回退：`bash scripts/brain-rollback.sh 1.267.99`。
+
+## Fleet rollout transfer-interruption cleanup hotfix
+
+## Fleet rollout transfer-interruption cleanup hotfix
+
+- Xian SSH payload 在读取 tar stdin 前即受 EXIT/HUP/INT/TERM cleanup 保护；传输
+  截断、解包失败或控制器中断都会写入 drain 并删除精确 root staging。
+- 成功 rollout 只删除一次性 staging，不误设 drain；NodeProfile、Runner pin、
+  bootstrap/admission 和 Phase 4B/4C/4D/5 语义均未扩展。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.102`。
+
+## Fleet rollout protected-token staging hotfix
+
+- US M4 的 Worker bearer token 位于 `_cecelia` 专属的 0700 数据目录；普通
+  rollout 控制器现在通过非交互 sudo 验证 regular-file、non-symlink 与 0400/0600
+  权限，再以 0600 分阶段复制到一次性 payload，不放宽生产 token 目录权限。
+- token 内容不进入参数、日志、Git 或长期 Xian provider credential；其余 Phase 4A
+  rollout/admission 顺序不变，Phase 4B/4C/4D 与 Phase 5 仍不在本 hotfix 范围。
+- 回退：节点先执行 `fleet-nodectl.sh drain`，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.101`。
 
 ## Fleet Node Phase 4A production convergence
 

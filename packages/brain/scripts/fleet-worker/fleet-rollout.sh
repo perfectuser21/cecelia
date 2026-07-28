@@ -44,6 +44,53 @@ local_file_mode() {
   esac
 }
 
+privileged_file_mode() {
+  case "$(uname -s)" in
+    Darwin) "$SUDO" -n /usr/bin/stat -f '%Lp' -- "$1" ;;
+    Linux) "$SUDO" -n /usr/bin/stat -c '%a' -- "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+stage_worker_token() {
+  local destination="$1"
+  local mode uid gid
+
+  if [[ -r "$WORKER_TOKEN_SOURCE" \
+    && -f "$WORKER_TOKEN_SOURCE" \
+    && ! -L "$WORKER_TOKEN_SOURCE" ]]; then
+    mode="$(local_file_mode "$WORKER_TOKEN_SOURCE")" \
+      || die "worker_token_file_permissions"
+    case "$mode" in
+      400|600) ;;
+      *) die "worker_token_file_permissions" ;;
+    esac
+    /bin/cp "$WORKER_TOKEN_SOURCE" "$destination"
+  else
+    "$SUDO" -n /bin/test -f "$WORKER_TOKEN_SOURCE" \
+      && "$SUDO" -n /bin/test ! -L "$WORKER_TOKEN_SOURCE" \
+      || die "worker_token_file_required"
+    mode="$(privileged_file_mode "$WORKER_TOKEN_SOURCE")" \
+      || die "worker_token_file_permissions"
+    case "$mode" in
+      400|600) ;;
+      *) die "worker_token_file_permissions" ;;
+    esac
+    uid="$(/usr/bin/id -u)"
+    gid="$(/usr/bin/id -g)"
+    "$SUDO" -n /usr/bin/install -m 0600 -o "$uid" -g "$gid" \
+      "$WORKER_TOKEN_SOURCE" "$destination" \
+      || die "worker_token_stage_failed"
+  fi
+
+  /bin/chmod 0600 "$destination"
+  [[ -f "$destination" && ! -L "$destination" ]] \
+    || die "worker_token_stage_failed"
+  [[ "$(/usr/bin/tr -d '\r\n' < "$destination" \
+    | /usr/bin/wc -c | /usr/bin/tr -d ' ')" -ge 32 ]] \
+    || die "worker_token_file_invalid"
+}
+
 ssh_target_for() {
   case "$1" in
     xian-mac-m4) echo 'jinnuoshengyuan@100.86.57.69' ;;
@@ -300,14 +347,6 @@ fi
   || die "runner_profile_invalid"
 [[ -f "$GITHUB_READ_BROKER_SOURCE" && ! -L "$GITHUB_READ_BROKER_SOURCE" ]] \
   || die "rollout_github_read_broker_missing"
-[[ -f "$WORKER_TOKEN_SOURCE" && ! -L "$WORKER_TOKEN_SOURCE" ]] \
-  || die "worker_token_file_required"
-case "$(local_file_mode "$WORKER_TOKEN_SOURCE")" in
-  400|600) ;;
-  *) die "worker_token_file_permissions" ;;
-esac
-[[ "$(/usr/bin/tr -d '\r\n' < "$WORKER_TOKEN_SOURCE" | /usr/bin/wc -c | /usr/bin/tr -d ' ')" -ge 32 ]] \
-  || die "worker_token_file_invalid"
 
 rollout_commit="$(
   "$GIT" -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}'
@@ -359,6 +398,7 @@ worker_token="$TEMP_ROOT/worker-token"
 payload_tar="$TEMP_ROOT/payload.tar"
 bundle_repository="$TEMP_ROOT/bundle.git"
 
+stage_worker_token "$worker_token"
 "$GIT" -C "$REPO_ROOT" -c tar.umask=0022 \
   archive --format=tar --output "$source_tar" "$rollout_commit" \
   packages/brain/package.json \
@@ -374,8 +414,6 @@ bundle_repository="$TEMP_ROOT/bundle.git"
 "$GIT" --git-dir="$bundle_repository" bundle create \
   "$repository_bundle" refs/heads/fleet-rollout
 "$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST"
-/bin/cp "$WORKER_TOKEN_SOURCE" "$worker_token"
-/bin/chmod 0600 "$worker_token"
 "$TAR" -cf "$payload_tar" -C "$TEMP_ROOT" \
   source.tar repository.bundle runner.tar worker-token
 rollout_commit_after="$(
@@ -406,6 +444,19 @@ emergency_drain_remote() {
     echo "emergency_drain_failed" >&2
     return 1
   fi
+}
+cleanup_remote() {
+  local status=$?
+
+  trap - EXIT HUP INT TERM
+  if [[ "$status" -ne 0 ]]; then
+    emergency_drain_remote || true
+  fi
+  if ! "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1; then
+    emergency_drain_remote || true
+    status=1
+  fi
+  exit "$status"
 }
 validate_remote_staging() {
   staged_root="$1"
@@ -443,10 +494,12 @@ interrupt_remote() {
       "$controller_pid" >/dev/null 2>&1 || true
     wait "$controller_pid" >/dev/null 2>&1 || true
   fi
-  emergency_drain_remote || true
-  "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1 || true
   exit "$signal_status"
 }
+trap cleanup_remote EXIT
+trap 'interrupt_remote HUP 129' HUP
+trap 'interrupt_remote INT 130' INT
+trap 'interrupt_remote TERM 143' TERM
 "$sudo_command" -n /usr/bin/tar -xf - -C "$remote_root"
 "$sudo_command" -n /bin/mkdir -p "$remote_root/source"
 "$sudo_command" -n /usr/bin/tar \
@@ -454,24 +507,15 @@ interrupt_remote() {
 controller="$remote_root/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh"
 if ! validate_remote_staging "$remote_root"; then
   echo "rollout_staging_invalid" >&2
-  "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1 || true
   exit 1
 fi
 "$sudo_command" -n /bin/chmod \
   +x "$remote_root/source/packages/brain/scripts/fleet-worker/"*.sh
-trap 'interrupt_remote HUP 129' HUP
-trap 'interrupt_remote INT 130' INT
-trap 'interrupt_remote TERM 143' TERM
 status=0
 "$sudo_command" -n "$controller" __node-apply "$machine_id" "$remote_root" &
 controller_pid=$!
 wait "$controller_pid" || status=$?
 controller_pid=''
-if ! "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1; then
-  emergency_drain_remote || true
-  status=1
-fi
-trap - HUP INT TERM
 exit "$status"
 REMOTE
 )"
