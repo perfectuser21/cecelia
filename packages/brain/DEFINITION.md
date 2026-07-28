@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.268.12
+**版本**: 1.268.13
+
+## Kernel zero-Attempt patrol coverage
+
+- Kernel v1 run 在 Planner 阈值内尚未创建 Attempt 时保持观察；超过 15 分钟仍为
+  0 Attempt 则按 planner 卡死创建 intervention，不再成为巡检盲区。
+- 计时只使用 run 的受信 `started_at`；时间缺失/无效时 fail-open 为不误杀，
+  已有 Attempt 仍沿用 role/status/start time 判据，旧 relay 路径不变。
+- 回退：`bash scripts/brain-rollback.sh 1.268.12`；没有数据库迁移。
 
 ## Kernel watchdog credential authority
 

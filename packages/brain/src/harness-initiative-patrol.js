@@ -62,6 +62,7 @@ function isKernelRun(run) {
  * Kernel v1 卡死判据：取该 run 最新一跳 harness_attempts（run_id + 最大 hop），
  * 按 role 套用原有阈值语义。
  *
+ *   - 仍未创建任何 Attempt 且 run 超 PLANNER_STUCK_MS(15min)       → planner
  *   - proposer/reviewer 仍 in-flight 且超 GAN_ROUND_STUCK_MS(20min) → gan_round
  *   - planner        仍 in-flight 且超 PLANNER_STUCK_MS(15min)      → planner
  *   - 其余 role（generator/evaluator/judge/reporter）长跑合法 → 不判卡死
@@ -92,7 +93,24 @@ async function checkKernelAttemptStuck(dbPool, run, now) {
     return { stuck: false };
   }
 
-  if (!attempt) return { stuck: false };
+  if (!attempt) {
+    if (run.started_at == null || run.started_at === '') {
+      return { stuck: false };
+    }
+    const runStartedAt = new Date(run.started_at).getTime();
+    if (!Number.isFinite(runStartedAt)) return { stuck: false };
+    const elapsedMs = now - runStartedAt;
+    if (elapsedMs > PLANNER_STUCK_MS) {
+      return {
+        stuck: true,
+        kind: 'planner',
+        elapsedMs,
+        thresholdMs: PLANNER_STUCK_MS,
+        detail: 'Planner 阶段停留 (kernel-v1 尚未创建 Attempt)',
+      };
+    }
+    return { stuck: false };
+  }
   if (!KERNEL_INFLIGHT_STATUS.includes(attempt.status)) return { stuck: false };
 
   const roundStart = attempt.started_at || attempt.created_at;

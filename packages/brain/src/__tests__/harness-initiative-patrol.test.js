@@ -267,7 +267,12 @@ describe('Kernel v1 GAN 轮次卡死检测（harness_attempts）', () => {
   beforeEach(() => mockQuery.mockReset());
 
   it('主扫描 SQL 纳管 kernel-v1 run（不被 v2 过滤器整体排除）', async () => {
-    routeKernel({ run: kernelRun() });
+    routeKernel({
+      run: kernelRun({
+        started_at: agoIso(5 * MIN),
+        updated_at: agoIso(1 * MIN),
+      }),
+    });
     const r = await runHarnessInitiativePatrol();
     expect(r.scanned).toBe(1);
 
@@ -277,6 +282,80 @@ describe('Kernel v1 GAN 轮次卡死检测（harness_attempts）', () => {
     expect(scanSql).toContain('completed_at IS NULL');
     expect(scanSql).toContain('harness_runtime');
     expect(scanSql).toContain('kernel-v1');
+  });
+
+  it('Kernel run 超过 Planner 阈值仍为 0 Attempt → 卡死并建 intervention', async () => {
+    routeKernel({
+      run: kernelRun({
+        started_at: agoIso(18 * MIN),
+        updated_at: agoIso(1 * MIN),
+      }),
+      insertId: 'task-kernel-zero-attempt',
+    });
+
+    const r = await runHarnessInitiativePatrol();
+
+    expect(r).toMatchObject({
+      scanned: 1,
+      stuck: 1,
+      intervened: 1,
+    });
+    expect(r.details[0]).toMatchObject({
+      kind: 'planner',
+      initiativeId: 'init-k1',
+    });
+    const insertCall = mockQuery.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO tasks'),
+    );
+    expect(insertCall).toBeTruthy();
+    const payloadJson = insertCall[1].find(
+      (entry) => typeof entry === 'string' && entry.includes('initiative_id'),
+    );
+    expect(JSON.parse(payloadJson)).toMatchObject({
+      run_id: 'run-k1',
+      harness_runtime: 'kernel-v1',
+      kind: 'planner',
+    });
+  });
+
+  it('Kernel run 在 Planner 阈值内仍为 0 Attempt → 保持观察不误报', async () => {
+    routeKernel({
+      run: kernelRun({
+        started_at: agoIso(5 * MIN),
+        updated_at: agoIso(1 * MIN),
+      }),
+    });
+
+    const r = await runHarnessInitiativePatrol();
+
+    expect(r).toMatchObject({
+      scanned: 1,
+      stuck: 0,
+      intervened: 0,
+    });
+  });
+
+  it.each([
+    ['无效', 'not-a-time'],
+    ['缺失', null],
+  ])('Kernel 0 Attempt 的 run started_at %s → fail-open 不误杀', async (
+    _label,
+    startedAt,
+  ) => {
+    routeKernel({
+      run: kernelRun({
+        started_at: startedAt,
+        updated_at: agoIso(30 * MIN),
+      }),
+    });
+
+    const r = await runHarnessInitiativePatrol();
+
+    expect(r).toMatchObject({
+      scanned: 1,
+      stuck: 0,
+      intervened: 0,
+    });
   });
 
   it('最新 hop 是 reviewer/running 且超 20min → gan_round 卡死 + 建 intervention 任务', async () => {
