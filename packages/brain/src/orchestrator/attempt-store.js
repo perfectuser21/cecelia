@@ -1,3 +1,10 @@
+/**
+ * Harness Attempt authority store.
+ *
+ * 所有状态写保持单条 SQL 且显式更新 updated_at。migration 367 的数据库 trigger
+ * 在同一事务中推进 event_version 并投影 lifecycle event；这里不得双写
+ * harness_run_events，也不得把 task_bundle/result/error_message 投影进去。
+ */
 const TERMINAL_STATUSES = [
   'completed',
   'completed_with_concerns',

@@ -70,6 +70,7 @@ import registryRoutes from './src/routes/registry.js';
 import notesRoutes from './src/routes/notes.js';
 import harnessRoutes from './src/routes/harness.js';
 import harnessRoutesRouter from './src/routes/harness.routes.js';
+import harnessCommanderRouter from './src/routes/harness-commander.js';
 import harnessInterruptsRouter from './src/routes/harness-interrupts.js';
 import harnessReviewsRouter from './src/routes/harness-pending-reviews.js';
 import harnessKernelApprovalsRouter from './src/routes/harness-kernel-approvals.js';
@@ -384,6 +385,7 @@ app.get('/api/brain/issues', async (req, res) => {
 });
 app.use('/api/brain', abilitiesRouter);
 app.use('/api/brain', goldenPathsRouter);
+app.use('/api/brain/harness', harnessCommanderRouter);
 app.use('/api/brain/harness', harnessRoutesRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);

@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.97
+**Brain 版本**: 1.267.98
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.98 — Harness Commander Phase 1
+
+- 新增 provider-neutral Commander/Directive/Actor message 合同、Run 隔离状态、
+  事务性事件投影、持久 Actor Inbox 与只读观测 API。
+- `commander_mode` 默认 `kernel-only`；事件是既有 Kernel authority 的可重建投影，
+  Actor message 和 Directive validator 在本阶段都不能造成副作用。
+- 本版本不含 Provider 调用、Commander Attempt、部署或 synthetic/真实 canary。
+  Phase 2 和 Phase 5 继续以独立 PR 交付。
+- Brain 回退目标：`1.267.97`。
 
 ## 目录
 

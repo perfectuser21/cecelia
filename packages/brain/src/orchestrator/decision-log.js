@@ -7,6 +7,8 @@
  * - UNIQUE(run_id,hop) 冲突（pg 23505）= 有并发 orchestrator 实例 →
  *   throw SingletonConflictError，本进程立即退出（singleton 守卫），交 watchdog
  * 表结构：packages/brain/migrations/312_orchestrator_runs_state.sql（append-only trigger 在库层强制）
+ * Commander 事件投影由 migration 367 的同事务 AFTER INSERT trigger 唯一负责；
+ * 本薄层不得追加 harness_run_events，避免 authority 与 projection 双写分裂。
  */
 
 const PG_UNIQUE_VIOLATION = '23505';
