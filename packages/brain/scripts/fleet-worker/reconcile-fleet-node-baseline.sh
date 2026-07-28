@@ -33,6 +33,8 @@ TAILSCALE="${FLEET_BASELINE_TAILSCALE:-$(command -v tailscale || true)}"
 DOCKER="${FLEET_BASELINE_DOCKER-$(command -v docker || true)}"
 GIT="${FLEET_BASELINE_GIT:-$(command -v git || true)}"
 CHOWN="${FLEET_BASELINE_CHOWN:-/usr/sbin/chown}"
+READLINK="${FLEET_BASELINE_READLINK:-/usr/bin/readlink}"
+STAT="${FLEET_BASELINE_STAT:-/usr/bin/stat}"
 INSTALLER="${FLEET_BASELINE_INSTALLER:-$SCRIPT_DIR/install-fleet-worker.sh}"
 
 SYSTEM_ROOT="${FLEET_BASELINE_SYSTEM_ROOT:-}"
@@ -397,6 +399,29 @@ ensure_orbstack() {
   ORBSTACK_INSTALL_SUCCEEDED=true
 }
 
+ensure_docker_socket_link() {
+  local socket_target="/Users/$ORBSTACK_OWNER/.orbstack/run/docker.sock"
+  local socket_path="$SYSTEM_ROOT$socket_target"
+  local socket_link="$SYSTEM_ROOT/var/run/docker.sock"
+  local current_target=''
+
+  [[ "$("$STAT" -f '%HT' "$socket_path" 2>/dev/null || true)" == Socket ]] \
+    || die "docker_socket_unavailable"
+  if [[ -L "$socket_link" ]]; then
+    current_target="$("$READLINK" "$socket_link" 2>/dev/null || true)"
+    [[ "$current_target" == "$socket_target" ]] \
+      || die "docker_socket_link_conflict"
+    return
+  fi
+  [[ ! -e "$socket_link" ]] || die "docker_socket_link_conflict"
+
+  /bin/mkdir -p "$(dirname "$socket_link")"
+  /bin/ln -s "$socket_target" "$socket_link" \
+    || die "docker_socket_link_failed"
+  [[ "$("$READLINK" "$socket_link" 2>/dev/null)" == "$socket_target" ]] \
+    || die "docker_socket_link_failed"
+}
+
 ensure_repository() {
   local repository_parent repository_safe_path
 
@@ -496,6 +521,7 @@ ensure_service_identity
 ensure_node_toolchain
 ensure_codex_toolchain
 ensure_orbstack
+ensure_docker_socket_link
 install_tailscale_command
 ensure_repository
 ensure_runner

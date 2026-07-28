@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.119
+**版本**: 1.267.120
+
+## Clean-node OrbStack Docker socket link
+
+- reconciler 在 OrbStack 首次启动并确认用户 socket 类型为 Unix socket 后，
+  幂等创建 `/var/run/docker.sock` 到 rollout owner socket 的精确符号链接，
+  使干净节点不依赖 GUI 初始化。
+- 已存在的非链接路径或不同链接目标一律 fail closed；不覆盖路径、不放宽
+  ACL、不引入凭据。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.119`。
 
 ## Clean-node Codex runtime PATH propagation
 
