@@ -183,6 +183,54 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_bootstrap_attempt_confirmed
   ON kernel_release_bootstrap_effect_receipts (effect_attempt_id)
   WHERE receipt_status = 'confirmed';
 
+CREATE OR REPLACE FUNCTION kernel_release_effect_receipt_guard()
+RETURNS trigger AS $$
+DECLARE
+  intent kernel_release_effect_intents%ROWTYPE;
+  verification JSONB;
+BEGIN
+  IF NEW.receipt_status <> 'confirmed' THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT *
+    INTO intent
+    FROM kernel_release_effect_intents
+   WHERE id = NEW.intent_id;
+
+  IF NEW.observed_merge_sha IS DISTINCT FROM intent.expected_merge_sha THEN
+    RAISE EXCEPTION 'confirmed release receipt requires exact merge SHA';
+  END IF;
+  IF NEW.observed_artifact_versions IS DISTINCT FROM intent.expected_artifact_versions THEN
+    RAISE EXCEPTION 'confirmed release receipt requires exact artifact versions';
+  END IF;
+
+  verification := NEW.evidence->'verification';
+  IF intent.effect_kind = 'staging'
+     AND verification->>'status' IS DISTINCT FROM 'pass' THEN
+    RAISE EXCEPTION 'confirmed staging receipt requires pass verification';
+  END IF;
+  IF intent.effect_kind = 'production'
+     AND (
+       verification->>'status' IS DISTINCT FROM 'pass'
+       OR verification->>'health' IS DISTINCT FROM 'pass'
+       OR verification->>'required_e2e' IS DISTINCT FROM 'pass'
+       OR COALESCE(verification#>>'{rollback_metadata,anchor}', '') = ''
+       OR COALESCE(verification#>>'{rollback_metadata,previous_version}', '') = ''
+     ) THEN
+    RAISE EXCEPTION
+      'confirmed production receipt requires health and E2E verification';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_receipt_guard
+  ON kernel_release_effect_receipts;
+CREATE TRIGGER trg_kernel_release_effect_receipt_guard
+  BEFORE INSERT ON kernel_release_effect_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_effect_receipt_guard();
+
 CREATE OR REPLACE FUNCTION kernel_release_transition_guard()
 RETURNS trigger AS $$
 DECLARE
@@ -212,6 +260,34 @@ BEGIN
     RAISE EXCEPTION
       'invalid kernel release transition: % -> % (expected %)',
       COALESCE(previous_state, '<none>'), NEW.state, COALESCE(expected_state, '<terminal>');
+  END IF;
+
+  IF NEW.state = 'staging_passed' AND NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_effect_intents intent
+      JOIN kernel_release_effect_receipts receipt
+        ON receipt.intent_id = intent.id
+     WHERE intent.release_run_id = NEW.release_run_id
+       AND intent.effect_kind = 'staging'
+       AND receipt.receipt_status = 'confirmed'
+       AND receipt.observed_merge_sha = intent.expected_merge_sha
+       AND receipt.observed_artifact_versions = intent.expected_artifact_versions
+  ) THEN
+    RAISE EXCEPTION 'staging_passed requires confirmed staging effect receipt';
+  END IF;
+
+  IF NEW.state = 'production_verified' AND NOT EXISTS (
+    SELECT 1
+      FROM kernel_release_effect_intents intent
+      JOIN kernel_release_effect_receipts receipt
+        ON receipt.intent_id = intent.id
+     WHERE intent.release_run_id = NEW.release_run_id
+       AND intent.effect_kind = 'production'
+       AND receipt.receipt_status = 'confirmed'
+       AND receipt.observed_merge_sha = intent.expected_merge_sha
+       AND receipt.observed_artifact_versions = intent.expected_artifact_versions
+  ) THEN
+    RAISE EXCEPTION 'production_verified requires confirmed production effect receipt';
   END IF;
 
   RETURN NEW;

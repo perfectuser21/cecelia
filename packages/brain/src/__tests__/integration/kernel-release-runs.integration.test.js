@@ -173,7 +173,7 @@ describe('migration 374 ReleaseRun ledger on PostgreSQL', () => {
     }
   });
 
-  it('binds the confirmed merge receipt and enforces the exact six states', async () => {
+  it('binds success transitions to exact confirmed effect receipts', async () => {
     const merge = await store.loadMergeAuthority(client, { runId, taskId });
     release = await store.createRelease(client, {
       ...merge,
@@ -182,13 +182,7 @@ describe('migration 374 ReleaseRun ledger on PostgreSQL', () => {
     });
     expect(release).toMatchObject({ state: 'merged', merge_sha: mergeSha });
 
-    for (const state of [
-      'staging_queued',
-      'staging_running',
-      'staging_passed',
-      'production_deploying',
-      'production_verified',
-    ]) {
+    for (const state of ['staging_queued', 'staging_running']) {
       await store.appendTransition(client, {
         releaseRunId: release.id,
         currentState: release.state,
@@ -197,6 +191,85 @@ describe('migration 374 ReleaseRun ledger on PostgreSQL', () => {
       });
       release = { ...release, state };
     }
+    await expect(client.query(
+      `INSERT INTO kernel_release_transitions (release_run_id, state)
+       VALUES ($1, 'staging_passed')`,
+      [release.id],
+    )).rejects.toMatchObject({ code: 'P0001' });
+
+    const stagingIntent = await store.findOrCreateIntent(client, {
+      releaseRun: release,
+      effectKind: 'staging',
+    });
+    await expect(client.query(
+      `INSERT INTO kernel_release_effect_receipts
+         (intent_id, receipt_status, observed_merge_sha,
+          observed_artifact_versions, evidence)
+       VALUES ($1, 'confirmed', $2, $3::jsonb, $4::jsonb)`,
+      [
+        stagingIntent.id,
+        mergeSha,
+        JSON.stringify(artifacts),
+        JSON.stringify({ verification: { status: 'not_applied' } }),
+      ],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    await store.appendReceipt(client, {
+      intent_id: stagingIntent.id,
+      receipt_status: 'confirmed',
+      observed_merge_sha: mergeSha,
+      observed_artifact_versions: artifacts,
+      evidence: { verification: { status: 'pass' } },
+    });
+    await store.appendTransition(client, {
+      releaseRunId: release.id,
+      currentState: release.state,
+      state: 'staging_passed',
+      evidence: { merge_sha: mergeSha },
+    });
+    release = { ...release, state: 'staging_passed' };
+
+    await store.appendTransition(client, {
+      releaseRunId: release.id,
+      currentState: release.state,
+      state: 'production_deploying',
+      evidence: { merge_sha: mergeSha },
+    });
+    release = { ...release, state: 'production_deploying' };
+    await expect(client.query(
+      `INSERT INTO kernel_release_transitions (release_run_id, state)
+       VALUES ($1, 'production_verified')`,
+      [release.id],
+    )).rejects.toMatchObject({ code: 'P0001' });
+
+    const productionIntent = await store.findOrCreateIntent(client, {
+      releaseRun: release,
+      effectKind: 'production',
+    });
+    await store.appendReceipt(client, {
+      intent_id: productionIntent.id,
+      receipt_status: 'confirmed',
+      observed_merge_sha: mergeSha,
+      observed_artifact_versions: artifacts,
+      evidence: {
+        verification: {
+          status: 'pass',
+          health: 'pass',
+          required_e2e: 'pass',
+          rollback_metadata: {
+            anchor: `brain-image:sha256:${'d'.repeat(64)}`,
+            previous_version: `brain-image:sha256:${'e'.repeat(64)}`,
+          },
+        },
+      },
+    });
+    await store.appendTransition(client, {
+      releaseRunId: release.id,
+      currentState: release.state,
+      state: 'production_verified',
+      evidence: { merge_sha: mergeSha },
+    });
+    release = { ...release, state: 'production_verified' };
+
     const rows = await client.query(
       `SELECT state FROM kernel_release_transitions
         WHERE release_run_id = $1 ORDER BY created_at, id`,
@@ -222,22 +295,31 @@ describe('migration 374 ReleaseRun ledger on PostgreSQL', () => {
       releaseRun: release,
       effectKind: 'production',
     });
-    await store.appendReceipt(client, {
-      intent_id: intent.id,
-      receipt_status: 'confirmed',
-      observed_merge_sha: mergeSha,
-      observed_artifact_versions: artifacts,
-      evidence: { status: 'pass' },
-    });
     await expect(client.query(
       'UPDATE kernel_release_runs SET repository = repository WHERE id = $1',
       [release.id],
     )).rejects.toMatchObject({ code: 'P0001' });
     await expect(client.query(
       `INSERT INTO kernel_release_effect_receipts
-         (intent_id, receipt_status, observed_merge_sha, observed_artifact_versions)
-       VALUES ($1, 'confirmed', $2, $3::jsonb)`,
-      [intent.id, mergeSha, JSON.stringify(artifacts)],
+         (intent_id, receipt_status, observed_merge_sha,
+          observed_artifact_versions, evidence)
+       VALUES ($1, 'confirmed', $2, $3::jsonb, $4::jsonb)`,
+      [
+        intent.id,
+        mergeSha,
+        JSON.stringify(artifacts),
+        JSON.stringify({
+          verification: {
+            status: 'pass',
+            health: 'pass',
+            required_e2e: 'pass',
+            rollback_metadata: {
+              anchor: `brain-image:sha256:${'d'.repeat(64)}`,
+              previous_version: `brain-image:sha256:${'e'.repeat(64)}`,
+            },
+          },
+        }),
+      ],
     )).rejects.toMatchObject({ code: '23505' });
   });
 

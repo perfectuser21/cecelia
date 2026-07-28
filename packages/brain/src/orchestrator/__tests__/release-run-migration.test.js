@@ -64,6 +64,16 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/WHERE receipt_status = 'confirmed'/i);
   });
 
+  it('requires exact confirmed receipts before success transitions', () => {
+    expect(sql).toMatch(/kernel_release_effect_receipt_guard/i);
+    expect(sql).toMatch(/confirmed release receipt requires exact merge SHA/i);
+    expect(sql).toMatch(/confirmed release receipt requires exact artifact versions/i);
+    expect(sql).toMatch(/confirmed staging receipt requires pass verification/i);
+    expect(sql).toMatch(/confirmed production receipt requires health and E2E verification/i);
+    expect(sql).toMatch(/staging_passed requires confirmed staging effect receipt/i);
+    expect(sql).toMatch(/production_verified requires confirmed production effect receipt/i);
+  });
+
   it('makes every ledger table immutable', () => {
     expect(sql).toMatch(/kernel_release_ledger_append_only/i);
     expect(sql).toMatch(/append_seq BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE/i);
