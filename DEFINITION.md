@@ -6,11 +6,64 @@
 
 
 
-**Brain 版本**: 1.267.115
+**Brain 版本**: 1.267.122
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.122 — Fleet Worker shared TMPDIR hotfix
+
+- system LaunchDaemon installer 创建并校验 OrbStack 可共享的固定 TMPDIR，
+  以 `_cecelia:_cecelia`、`0755` 管理，避免 clean node 在 worktree/container
+  probe 前因 `mkdtemp` 失败。
+- 路径拒绝 symlink 与任意 override；不改变 Runner pin、凭据或
+  Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.121`；节点保持 drain 后再回退。
+
+## Brain 1.267.121 — Fleet nodectl pinned Node hotfix
+
+- `fleet-nodectl admit` 优先使用受管 pinned Node，再回退到显式 override 或
+  `PATH`，使 clean node 不依赖交互式 shell 的 Node 安装。
+- 不改变 admission 阈值、Runner pin、凭据或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.120`；节点保持 drain 后再回退。
+
+## Brain 1.267.120 — Fleet OrbStack Docker socket link hotfix
+
+- baseline reconcile 以 fail-closed 契约把 `/var/run/docker.sock` 链接到节点
+  OrbStack owner 的受管 socket，使 system LaunchDaemon 使用统一 Docker 入口。
+- 冲突链接或非 OrbStack 目标继续拒绝 admission；不扩展 Phase 4A 范围。
+- Brain 回退目标：`1.267.119`；节点保持 drain 后再回退。
+
+## Brain 1.267.119 — Fleet Codex probe pinned runtime hotfix
+
+- Node/Codex 自检通过受管 toolchain 执行，避免 LaunchDaemon 与交互式 shell
+  `PATH` 差异造成误报。
+- 不复制长期 Codex 凭据，不改变凭据 envelope 或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.118`；节点保持 drain 后再回退。
+
+## Brain 1.267.118 — Fleet pinned Node bootstrap hotfix
+
+- baseline bootstrap 安装并验证 pinned Node 路径，使 Worker、admission 与 Codex
+  probe 在 clean node 上使用同一受管运行时。
+- 失败继续保持 drain；不改变 Runner pin 或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.117`；节点保持 drain 后再回退。
+
+## Brain 1.267.117 — Fleet OrbStack home preflight hotfix
+
+- Worker LaunchDaemon 显式携带 OrbStack owner home，避免 system domain 使用
+  `/var/empty` 时无法解析统一容器运行时。
+- 仍只允许 OrbStack/Docker，不引入其他容器运行时或长期凭据。
+- Brain 回退目标：`1.267.116`；节点保持 drain 后再回退。
+
+## Brain 1.267.116 — Fleet production admission stabilization
+
+- 收紧生产 NodeProfile、probe 与 admission 的一致性，修复 clean node 在真实
+  LaunchDaemon 环境下的 false negative，同时保留磁盘、资源、网络与 drift
+  的 fail-closed 门槛。
+- macOS `15.7.4` 是安全更新建议，`15.6.1` 仍满足本阶段服务器 admission；
+  不扩展 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.115`；节点保持 drain 后再回退。
 
 ## Brain 1.267.115 — Fleet admission evaluator artifact hotfix
 
