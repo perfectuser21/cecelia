@@ -39,8 +39,12 @@ describe('Brain exact runtime image contract wiring', () => {
   });
 
   it('reruns Docker infrastructure when the runtime contract changes', () => {
-    expect(job('changes', 'docker-infra-smoke')).toContain(
+    const changesJob = job('changes', 'docker-infra-smoke');
+
+    expect(changesJob).toContain(
       'scripts/ci/brain-runtime-image-contract\\.mjs',
     );
+    expect(changesJob).toContain('packages/brain/scripts/');
+    expect(changesJob).toContain('packages/engine/');
   });
 });
