@@ -11,8 +11,10 @@ import {
 
 import { DB_DEFAULTS } from '../../db-config.js';
 import {
+  createPostgresAuditSink,
   createPostgresBundleChainStore,
   createPostgresNonceConsumer,
+  createPostgresPredecessorResolver,
 } from '../../lib/kernel-equivalence-postgres-runtime.js';
 import {
   sha256Canonical,
@@ -38,13 +40,26 @@ const quotedSchema = `"${schemaName}"`;
 let adminPool;
 let pool;
 
-function bundleValue(behaviorId) {
+function bundleValue(behaviorId, scenario = 'normal', previousBundleHash = null) {
   const keys = createTrustFixture();
-  const cell = fixtureCell({ behaviorId });
+  const cell = fixtureCell({ behaviorId, scenario });
   const grant = fixtureGrant(keys, cell);
   const receipt = fixtureReceipt(keys, grant, cell);
-  const bundle = fixtureBundle(keys, cell, grant, [receipt]);
-  return { bundle, hash: sha256Canonical(bundle) };
+  const bundle = fixtureBundle(
+    keys,
+    cell,
+    grant,
+    [receipt],
+    [grant],
+    previousBundleHash,
+  );
+  return {
+    cell,
+    grant,
+    receipt,
+    bundle,
+    hash: sha256Canonical(bundle),
+  };
 }
 
 beforeAll(async () => {
@@ -69,6 +84,7 @@ beforeAll(async () => {
       run_id UUID NOT NULL REFERENCES initiative_runs(id)
     );
   `);
+  await pool.query(migration);
   await pool.query(migration);
   await pool.query(
     'INSERT INTO initiative_runs (id) VALUES ($1)',
@@ -159,5 +175,71 @@ describe('trusted equivalence runtime on real PostgreSQL', () => {
     const restartedStore = createPostgresBundleChainStore({ pool });
     await expect(restartedStore.readBundle(winners[0].value.hash))
       .resolves.toEqual(winners[0].value.bundle);
+
+    const violation = bundleValue(
+      'KERNEL-P0-VIOLATION-AUTHORITY',
+      'violation',
+      winners[0].value.hash,
+    );
+    await restartedStore.getCheckpoint();
+    await expect(restartedStore.commit({
+      bundle: violation.bundle,
+      bundle_hash: violation.hash,
+      previous_head_hash: winners[0].value.hash,
+    })).resolves.toMatchObject({ committed: true });
+    const resolvePredecessor = createPostgresPredecessorResolver({ pool });
+    await expect(resolvePredecessor({
+      cell_id: violation.cell.cell_id,
+      behavior_id: violation.cell.behavior_id,
+      provider: violation.cell.provider,
+      scenario: 'violation',
+      run_id: violation.grant.run_id,
+      attempt_id: violation.grant.attempt_id,
+      artifact_sha: violation.grant.artifact_sha,
+      resource_id: violation.grant.resource_id,
+      resource_ref: violation.grant.resource_ref,
+      seam_id: violation.cell.seam_id,
+      adapter_id: violation.cell.adapter_id,
+    })).resolves.toEqual({
+      grant: violation.grant,
+      receipt: violation.receipt,
+    });
+  });
+
+  it('rejects mutation and truncation of every append-only ledger', async () => {
+    const persistAudit = createPostgresAuditSink({
+      pool,
+      randomUUID: () => randomUUID(),
+    });
+    await persistAudit({
+      schema_version: 'kernel-equivalence-denial-audit/v1',
+      occurred_at: '2026-07-28T12:02:00.000Z',
+      status: 'blocked',
+      code: 'grant_nonce_replay',
+      stage: 'nonce_consumption',
+      cell_id: 'KERNEL-P0-MERGE-AUTHORITY::codex::normal',
+      behavior_id: 'KERNEL-P0-MERGE-AUTHORITY',
+      provider: 'codex',
+      scenario: 'normal',
+      run_id: FIXTURE_RUN_ID,
+      attempt_id: FIXTURE_ATTEMPT_ID,
+      late_effect_risk: false,
+    });
+
+    for (const statement of [
+      `UPDATE kernel_equivalence_execution_nonces
+          SET expires_at = expires_at + interval '1 second'`,
+      'DELETE FROM kernel_equivalence_denial_audits',
+      `UPDATE kernel_equivalence_receipt_bundles
+          SET resource_ref = resource_ref || '-tampered'`,
+      'TRUNCATE kernel_equivalence_execution_nonces',
+      'TRUNCATE kernel_equivalence_denial_audits',
+      'TRUNCATE kernel_equivalence_receipt_bundles',
+      'DELETE FROM kernel_equivalence_bundle_chain_heads',
+    ]) {
+      await expect(pool.query(statement)).rejects.toMatchObject({
+        code: 'P0001',
+      });
+    }
   });
 });
