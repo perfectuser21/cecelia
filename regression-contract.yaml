@@ -9,7 +9,7 @@
 # ============================================================================
 
 version: "1.0.0"
-updated: "2026-07-27"
+updated: "2026-07-28"
 
 # ============================================================================
 # 核心功能回归契约
@@ -61,7 +61,7 @@ golden_paths:
     must_never_break: true
 
   - id: KERNEL-FLEET-NODE-SELF-DEPLOY-01
-    name: "Fleet Node self-deploy remains pinned, credential-free, and fail-closed"
+    name: "Fleet Node self-deploy remains pinned, credential-free, Tailscale-ready, and fail-closed"
     priority: P0
     trigger: [PR, Release]
     method: auto
