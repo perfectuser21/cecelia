@@ -9,34 +9,7 @@
 -- effects are separately receipted but serialized by the runtime's one
 -- release advisory lease.
 
-CREATE TABLE IF NOT EXISTS kernel_release_runs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  run_id UUID NOT NULL UNIQUE REFERENCES initiative_runs(id),
-  task_id UUID NOT NULL REFERENCES tasks(id),
-  merge_intent_id UUID NOT NULL UNIQUE REFERENCES kernel_merge_effect_intents(id),
-  merge_receipt_id UUID NOT NULL UNIQUE REFERENCES kernel_merge_effect_receipts(id),
-  repository TEXT NOT NULL,
-  pr_number INTEGER NOT NULL CHECK (pr_number > 0),
-  source_head_sha TEXT NOT NULL CHECK (
-    char_length(source_head_sha) = 40
-    AND source_head_sha = lower(source_head_sha)
-    AND source_head_sha ~ '^[0-9a-f]+$'
-  ),
-  merge_sha TEXT NOT NULL CHECK (
-    char_length(merge_sha) = 40
-    AND merge_sha = lower(merge_sha)
-    AND merge_sha ~ '^[0-9a-f]+$'
-  ),
-  artifact_versions JSONB NOT NULL CHECK (
-    jsonb_typeof(artifact_versions) = 'array'
-    AND jsonb_array_length(artifact_versions) > 0
-  ),
-  policy_version TEXT NOT NULL CHECK (policy_version = 'kernel-release/v1'),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
-CREATE INDEX IF NOT EXISTS idx_kernel_release_runs_task
-  ON kernel_release_runs (task_id, created_at DESC);
 
 CREATE OR REPLACE FUNCTION kernel_release_run_identity_guard()
 RETURNS trigger AS $$
@@ -116,43 +89,8 @@ CREATE TABLE IF NOT EXISTS kernel_release_e2e_manifests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
-CREATE TABLE IF NOT EXISTS kernel_release_transitions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  append_seq BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
-  release_run_id UUID NOT NULL REFERENCES kernel_release_runs(id),
-  state TEXT NOT NULL CHECK (state IN (
-    'merged',
-    'staging_queued',
-    'staging_running',
-    'staging_passed',
-    'production_deploying',
-    'production_verified'
-  )),
-  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (release_run_id, state)
-);
 
-CREATE INDEX IF NOT EXISTS idx_kernel_release_transitions_current
-  ON kernel_release_transitions (release_run_id, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS kernel_release_effect_intents (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  release_run_id UUID NOT NULL REFERENCES kernel_release_runs(id),
-  effect_kind TEXT NOT NULL CHECK (effect_kind IN ('staging', 'production')),
-  idempotency_key UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
-  expected_merge_sha TEXT NOT NULL CHECK (
-    char_length(expected_merge_sha) = 40
-    AND expected_merge_sha = lower(expected_merge_sha)
-    AND expected_merge_sha ~ '^[0-9a-f]+$'
-  ),
-  expected_artifact_versions JSONB NOT NULL CHECK (
-    jsonb_typeof(expected_artifact_versions) = 'array'
-    AND jsonb_array_length(expected_artifact_versions) > 0
-  ),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (release_run_id, effect_kind)
-);
 
 -- Existing v374 dispatch claims predate claim modes. Temporarily remove the
 -- append-only row trigger only for the deterministic schema backfill; the
@@ -180,17 +118,6 @@ BEGIN
 END;
 $$;
 
-CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_claims (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  intent_id UUID NOT NULL REFERENCES kernel_release_effect_intents(id),
-  generation INTEGER NOT NULL CHECK (generation > 0),
-  idempotency_key UUID NOT NULL,
-  effect_kind TEXT NOT NULL CHECK (effect_kind IN ('staging', 'production')),
-  claim_mode TEXT NOT NULL CHECK (claim_mode IN ('dispatch', 'verification')),
-  claimed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-  lease_expires_at TIMESTAMPTZ NOT NULL,
-  UNIQUE (intent_id, generation)
-);
 
 CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_renewals (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -222,14 +149,6 @@ $$;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_dispatch_outcome_claim
   ON kernel_release_effect_dispatch_outcomes (dispatch_claim_id);
 
-CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_outcomes (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  dispatch_claim_id BIGINT NOT NULL UNIQUE
-    REFERENCES kernel_release_effect_dispatch_claims(id),
-  outcome TEXT NOT NULL CHECK (outcome IN ('dispatched', 'failed', 'observed')),
-  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-);
 
 ALTER TABLE kernel_release_effect_receipts
   ADD COLUMN IF NOT EXISTS dispatch_claim_id BIGINT
@@ -262,58 +181,8 @@ ALTER TABLE kernel_release_effect_receipts
     OR e2e_finished_at >= e2e_started_at
   );
 
-CREATE TABLE IF NOT EXISTS kernel_release_effect_receipts (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  append_seq BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
-  intent_id UUID NOT NULL REFERENCES kernel_release_effect_intents(id),
-  receipt_status TEXT NOT NULL CHECK (
-    receipt_status IN ('confirmed', 'failed', 'observed_unconfirmed')
-  ),
-  observed_merge_sha TEXT CHECK (
-    observed_merge_sha IS NULL OR (
-      char_length(observed_merge_sha) = 40
-      AND observed_merge_sha = lower(observed_merge_sha)
-      AND observed_merge_sha ~ '^[0-9a-f]+$'
-    )
-  ),
-  observed_artifact_versions JSONB,
-  dispatch_claim_id BIGINT
-    REFERENCES kernel_release_effect_dispatch_claims(id),
-  dispatch_generation INTEGER CHECK (
-    dispatch_generation IS NULL OR dispatch_generation > 0
-  ),
-  e2e_manifest_id UUID REFERENCES kernel_release_e2e_manifests(id),
-  e2e_manifest_digest TEXT CHECK (
-    e2e_manifest_digest IS NULL
-    OR e2e_manifest_digest ~ '^sha256:[0-9a-f]{64}$'
-  ),
-  e2e_scenarios_total INTEGER CHECK (
-    e2e_scenarios_total IS NULL OR e2e_scenarios_total > 0
-  ),
-  e2e_scenarios_passed INTEGER CHECK (
-    e2e_scenarios_passed IS NULL OR e2e_scenarios_passed > 0
-  ),
-  e2e_environment TEXT CHECK (
-    e2e_environment IS NULL OR e2e_environment IN ('staging', 'production')
-  ),
-  e2e_scenario_results JSONB CHECK (
-    e2e_scenario_results IS NULL OR jsonb_typeof(e2e_scenario_results) = 'array'
-  ),
-  e2e_started_at TIMESTAMPTZ,
-  e2e_finished_at TIMESTAMPTZ CHECK (
-    e2e_finished_at IS NULL OR e2e_started_at IS NULL
-    OR e2e_finished_at >= e2e_started_at
-  ),
-  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
-  observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
-CREATE INDEX IF NOT EXISTS idx_kernel_release_effect_receipts_intent
-  ON kernel_release_effect_receipts (intent_id, observed_at DESC);
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_effect_confirmed
-  ON kernel_release_effect_receipts (intent_id)
-  WHERE receipt_status = 'confirmed';
 
 CREATE TABLE IF NOT EXISTS kernel_release_rollback_intents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -342,6 +211,42 @@ CREATE TABLE IF NOT EXISTS kernel_release_rollback_receipts (
   verified_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
+
+CREATE TABLE IF NOT EXISTS kernel_release_rollback_artifact_intents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rollback_intent_id UUID NOT NULL
+    REFERENCES kernel_release_rollback_intents(id),
+  artifact_name TEXT NOT NULL CHECK (artifact_name <> ''),
+  expected_current_version TEXT NOT NULL CHECK (expected_current_version <> ''),
+  expected_current_digest TEXT NOT NULL CHECK (
+    expected_current_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  expected_anchor TEXT NOT NULL CHECK (expected_anchor <> ''),
+  expected_previous_version TEXT NOT NULL CHECK (expected_previous_version <> ''),
+  expected_previous_digest TEXT NOT NULL CHECK (
+    expected_previous_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (rollback_intent_id, artifact_name)
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_rollback_artifact_receipts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rollback_artifact_intent_id UUID NOT NULL UNIQUE
+    REFERENCES kernel_release_rollback_artifact_intents(id),
+  effect_receipt_id UUID NOT NULL
+    REFERENCES kernel_release_effect_receipts(id),
+  observed_anchor TEXT NOT NULL CHECK (observed_anchor <> ''),
+  observed_previous_version TEXT NOT NULL CHECK (observed_previous_version <> ''),
+  observed_previous_digest TEXT NOT NULL CHECK (
+    observed_previous_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  rollback_metadata JSONB NOT NULL CHECK (
+    jsonb_typeof(rollback_metadata) = 'object'
+  ),
+  verified_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   run_id UUID NOT NULL REFERENCES initiative_runs(id),
@@ -364,23 +269,41 @@ CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations (
 -- normal ReleaseRun shape: immutable identity, ordered state, leased effect
 -- attempts, and durable observations. The singleton survives terminal state,
 -- permanently preventing a second bootstrap.
-CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_runs (
+
+
+CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_rollback_artifact_intents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  singleton BOOLEAN NOT NULL UNIQUE DEFAULT TRUE CHECK (singleton),
-  repository TEXT NOT NULL CHECK (repository ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'),
-  pr_number INTEGER NOT NULL CHECK (pr_number > 0),
-  source_head_sha TEXT NOT NULL CHECK (
-    source_head_sha ~ '^[0-9a-f]{40}$'
+  bootstrap_run_id UUID NOT NULL
+    REFERENCES kernel_release_bootstrap_runs(id),
+  artifact_name TEXT NOT NULL CHECK (artifact_name <> ''),
+  expected_current_version TEXT NOT NULL CHECK (expected_current_version <> ''),
+  expected_current_digest TEXT NOT NULL CHECK (
+    expected_current_digest ~ '^sha256:[0-9a-f]{64}$'
   ),
-  merge_sha TEXT NOT NULL CHECK (
-    merge_sha ~ '^[0-9a-f]{40}$'
+  expected_anchor TEXT NOT NULL CHECK (expected_anchor <> ''),
+  expected_previous_version TEXT NOT NULL CHECK (expected_previous_version <> ''),
+  expected_previous_digest TEXT NOT NULL CHECK (
+    expected_previous_digest ~ '^sha256:[0-9a-f]{64}$'
   ),
-  approved_by TEXT NOT NULL CHECK (approved_by <> ''),
-  approval_key_id TEXT NOT NULL CHECK (approval_key_id <> ''),
-  approval_digest TEXT NOT NULL CHECK (
-    approval_digest ~ '^[0-9a-f]{64}$'
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (bootstrap_run_id, artifact_name)
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_rollback_artifact_receipts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rollback_artifact_intent_id UUID NOT NULL UNIQUE
+    REFERENCES kernel_release_bootstrap_rollback_artifact_intents(id),
+  effect_receipt_id BIGINT NOT NULL
+    REFERENCES kernel_release_bootstrap_effect_receipts(id),
+  observed_anchor TEXT NOT NULL CHECK (observed_anchor <> ''),
+  observed_previous_version TEXT NOT NULL CHECK (observed_previous_version <> ''),
+  observed_previous_digest TEXT NOT NULL CHECK (
+    observed_previous_digest ~ '^sha256:[0-9a-f]{64}$'
   ),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+  rollback_metadata JSONB NOT NULL CHECK (
+    jsonb_typeof(rollback_metadata) = 'object'
+  ),
+  verified_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_e2e_manifests (
@@ -424,32 +347,7 @@ CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_e2e_manifests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
-CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_transitions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  append_seq BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
-  bootstrap_run_id UUID NOT NULL REFERENCES kernel_release_bootstrap_runs(id),
-  state TEXT NOT NULL CHECK (state IN (
-    'approved',
-    'staging_intent',
-    'staging_passed',
-    'production_intent',
-    'production_verified'
-  )),
-  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-  UNIQUE (bootstrap_run_id, state)
-);
 
-CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_effect_attempts (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  bootstrap_run_id UUID NOT NULL REFERENCES kernel_release_bootstrap_runs(id),
-  effect_kind TEXT NOT NULL CHECK (effect_kind IN ('staging', 'production')),
-  generation INTEGER NOT NULL CHECK (generation > 0),
-  idempotency_key UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
-  claimed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-  lease_expires_at TIMESTAMPTZ NOT NULL,
-  UNIQUE (bootstrap_run_id, effect_kind, generation)
-);
 
 CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_effect_attempt_renewals (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -494,47 +392,7 @@ ALTER TABLE kernel_release_bootstrap_effect_receipts
     OR e2e_finished_at >= e2e_started_at
   );
 
-CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_effect_receipts (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  append_seq BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
-  effect_attempt_id BIGINT NOT NULL
-    REFERENCES kernel_release_bootstrap_effect_attempts(id),
-  receipt_status TEXT NOT NULL CHECK (
-    receipt_status IN ('confirmed', 'failed', 'observed_unconfirmed')
-  ),
-  observed_merge_sha TEXT CHECK (
-    observed_merge_sha IS NULL OR observed_merge_sha ~ '^[0-9a-f]{40}$'
-  ),
-  observed_artifact_versions JSONB,
-  e2e_manifest_id UUID REFERENCES kernel_release_bootstrap_e2e_manifests(id),
-  e2e_manifest_digest TEXT CHECK (
-    e2e_manifest_digest IS NULL
-    OR e2e_manifest_digest ~ '^sha256:[0-9a-f]{64}$'
-  ),
-  e2e_scenarios_total INTEGER CHECK (
-    e2e_scenarios_total IS NULL OR e2e_scenarios_total > 0
-  ),
-  e2e_scenarios_passed INTEGER CHECK (
-    e2e_scenarios_passed IS NULL OR e2e_scenarios_passed > 0
-  ),
-  e2e_environment TEXT CHECK (
-    e2e_environment IS NULL OR e2e_environment IN ('staging', 'production')
-  ),
-  e2e_scenario_results JSONB CHECK (
-    e2e_scenario_results IS NULL OR jsonb_typeof(e2e_scenario_results) = 'array'
-  ),
-  e2e_started_at TIMESTAMPTZ,
-  e2e_finished_at TIMESTAMPTZ CHECK (
-    e2e_finished_at IS NULL OR e2e_started_at IS NULL
-    OR e2e_finished_at >= e2e_started_at
-  ),
-  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
-  observed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-);
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_bootstrap_attempt_confirmed
-  ON kernel_release_bootstrap_effect_receipts (effect_attempt_id)
-  WHERE receipt_status = 'confirmed';
 
 CREATE OR REPLACE FUNCTION kernel_release_e2e_manifest_guard()
 RETURNS trigger AS $$
@@ -1147,6 +1005,18 @@ CREATE TRIGGER trg_kernel_release_rollback_receipts_append_only
   BEFORE UPDATE OR DELETE ON kernel_release_rollback_receipts
   FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
 
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_artifact_intents_append_only
+  ON kernel_release_rollback_artifact_intents;
+CREATE TRIGGER trg_kernel_release_rollback_artifact_intents_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_rollback_artifact_intents
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_rollback_artifact_receipts_append_only
+  ON kernel_release_rollback_artifact_receipts;
+CREATE TRIGGER trg_kernel_release_rollback_artifact_receipts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_rollback_artifact_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
 DROP TRIGGER IF EXISTS trg_kernel_release_blocked_escalations_append_only
   ON kernel_release_blocked_escalations;
 CREATE TRIGGER trg_kernel_release_blocked_escalations_append_only
@@ -1207,6 +1077,20 @@ CREATE TRIGGER trg_kernel_release_bootstrap_effect_receipts_append_only
   BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_effect_receipts
   FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
 
+DROP TRIGGER IF EXISTS
+  trg_kernel_release_bootstrap_rollback_artifact_intents_append_only
+  ON kernel_release_bootstrap_rollback_artifact_intents;
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_intents_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_rollback_artifact_intents
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS
+  trg_kernel_release_bootstrap_rollback_artifact_receipts_append_only
+  ON kernel_release_bootstrap_rollback_artifact_receipts;
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_receipts_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_bootstrap_rollback_artifact_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
 DO $$
 DECLARE
   ledger_table TEXT;
@@ -1222,13 +1106,17 @@ BEGIN
     'kernel_release_effect_dispatch_outcomes',
     'kernel_release_rollback_intents',
     'kernel_release_rollback_receipts',
+    'kernel_release_rollback_artifact_intents',
+    'kernel_release_rollback_artifact_receipts',
     'kernel_release_blocked_escalations',
     'kernel_release_bootstrap_runs',
     'kernel_release_bootstrap_e2e_manifests',
     'kernel_release_bootstrap_transitions',
     'kernel_release_bootstrap_effect_attempts',
     'kernel_release_bootstrap_effect_attempt_renewals',
-    'kernel_release_bootstrap_effect_receipts'
+    'kernel_release_bootstrap_effect_receipts',
+    'kernel_release_bootstrap_rollback_artifact_intents',
+    'kernel_release_bootstrap_rollback_artifact_receipts'
   ]
   LOOP
     EXECUTE format(
@@ -1270,6 +1158,12 @@ CREATE TRIGGER trg_kernel_release_rollback_intents_truncate
 CREATE TRIGGER trg_kernel_release_rollback_receipts_truncate
   BEFORE TRUNCATE ON kernel_release_rollback_receipts
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_rollback_artifact_intents_truncate
+  BEFORE TRUNCATE ON kernel_release_rollback_artifact_intents
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_rollback_artifact_receipts_truncate
+  BEFORE TRUNCATE ON kernel_release_rollback_artifact_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
 CREATE TRIGGER trg_kernel_release_blocked_escalations_truncate
   BEFORE TRUNCATE ON kernel_release_blocked_escalations
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
@@ -1290,6 +1184,12 @@ CREATE TRIGGER trg_kernel_release_bootstrap_effect_attempt_renewals_truncate
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
 CREATE TRIGGER trg_kernel_release_bootstrap_effect_receipts_truncate
   BEFORE TRUNCATE ON kernel_release_bootstrap_effect_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_intents_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_rollback_artifact_intents
+  FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
+CREATE TRIGGER trg_kernel_release_bootstrap_rollback_artifact_receipts_truncate
+  BEFORE TRUNCATE ON kernel_release_bootstrap_rollback_artifact_receipts
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
 
 INSERT INTO schema_version (version, description, applied_at)

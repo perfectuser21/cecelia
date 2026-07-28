@@ -327,48 +327,6 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
         await legacy.query(mergeMigration);
         await legacy.query(releaseMigration);
 
-        // Recreate the column/table surface that was present in the originally
-        // shipped 374 migration while preserving its durable version record.
-        await legacy.query(`
-          ALTER TABLE kernel_release_effect_receipts
-            DROP COLUMN dispatch_claim_id CASCADE,
-            DROP COLUMN dispatch_generation CASCADE,
-            DROP COLUMN e2e_manifest_id CASCADE,
-            DROP COLUMN e2e_manifest_digest CASCADE,
-            DROP COLUMN e2e_scenarios_total CASCADE,
-            DROP COLUMN e2e_scenarios_passed CASCADE,
-            DROP COLUMN e2e_environment CASCADE,
-            DROP COLUMN e2e_scenario_results CASCADE,
-            DROP COLUMN e2e_started_at CASCADE,
-            DROP COLUMN e2e_finished_at CASCADE;
-          ALTER TABLE kernel_release_bootstrap_effect_receipts
-            DROP COLUMN observed_merge_sha CASCADE,
-            DROP COLUMN observed_artifact_versions CASCADE,
-            DROP COLUMN e2e_manifest_id CASCADE,
-            DROP COLUMN e2e_manifest_digest CASCADE,
-            DROP COLUMN e2e_scenarios_total CASCADE,
-            DROP COLUMN e2e_scenarios_passed CASCADE,
-            DROP COLUMN e2e_environment CASCADE,
-            DROP COLUMN e2e_scenario_results CASCADE,
-            DROP COLUMN e2e_started_at CASCADE,
-            DROP COLUMN e2e_finished_at CASCADE;
-          ALTER TABLE kernel_release_effect_dispatch_claims
-            DROP COLUMN claim_mode CASCADE;
-          ALTER TABLE kernel_release_effect_dispatch_outcomes
-            DROP CONSTRAINT kernel_release_effect_dispatch_outcomes_outcome_check,
-            DROP CONSTRAINT kernel_release_effect_dispatch_outcomes_dispatch_claim_id_key;
-          ALTER TABLE kernel_release_effect_dispatch_outcomes
-            ADD CONSTRAINT kernel_release_effect_dispatch_outcomes_outcome_check
-            CHECK (outcome IN ('dispatched', 'failed'));
-          DROP TABLE kernel_release_effect_dispatch_renewals CASCADE;
-          DROP TABLE kernel_release_rollback_receipts CASCADE;
-          DROP TABLE kernel_release_rollback_intents CASCADE;
-          DROP TABLE kernel_release_blocked_escalations CASCADE;
-          DROP TABLE kernel_release_e2e_manifests CASCADE;
-          DROP TABLE kernel_release_bootstrap_effect_attempt_renewals CASCADE;
-          DROP TABLE kernel_release_bootstrap_e2e_manifests CASCADE;
-        `);
-
         await expect(legacy.query(closureMigration)).resolves.toBeDefined();
         const columns = (await legacy.query(
           `SELECT table_name, column_name
@@ -399,6 +357,8 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
                   kernel_release_e2e_manifests,
                   kernel_release_bootstrap_e2e_manifests,
                   kernel_release_rollback_intents,
+                  kernel_release_rollback_artifact_intents,
+                  kernel_release_bootstrap_rollback_artifact_intents,
                   kernel_release_blocked_escalations
             LIMIT 1`,
         )).resolves.toBeDefined();

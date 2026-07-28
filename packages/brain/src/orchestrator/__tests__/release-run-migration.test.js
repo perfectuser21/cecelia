@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const sql = readFileSync(
+const published374Sql = readFileSync(
   new URL('../../../migrations/374_kernel_release_runs.sql', import.meta.url),
   'utf8',
 );
@@ -9,6 +10,7 @@ const closureSql = readFileSync(
   new URL('../../../migrations/375_kernel_release_run_closure.sql', import.meta.url),
   'utf8',
 );
+const sql = `${published374Sql}\n${closureSql}`;
 
 describe('migration 374 Kernel ReleaseRun', () => {
   const releaseLedgerTables = [
@@ -19,6 +21,8 @@ describe('migration 374 Kernel ReleaseRun', () => {
     'kernel_release_e2e_manifests',
     'kernel_release_rollback_intents',
     'kernel_release_rollback_receipts',
+    'kernel_release_rollback_artifact_intents',
+    'kernel_release_rollback_artifact_receipts',
     'kernel_release_blocked_escalations',
   ];
   const bootstrapLedgerTables = [
@@ -28,7 +32,14 @@ describe('migration 374 Kernel ReleaseRun', () => {
     'kernel_release_bootstrap_effect_attempt_renewals',
     'kernel_release_bootstrap_effect_receipts',
     'kernel_release_bootstrap_e2e_manifests',
+    'kernel_release_bootstrap_rollback_artifact_intents',
+    'kernel_release_bootstrap_rollback_artifact_receipts',
   ];
+
+  it('keeps the published migration byte-for-byte immutable', () => {
+    expect(createHash('sha256').update(published374Sql).digest('hex'))
+      .toBe('d6580a018fde6dbd87b4d3845e46aafb3c18ab3eaed25b5e3bd7319a1538ba48');
+  });
 
   it.each([...releaseLedgerTables, ...bootstrapLedgerTables])(
     'creates append-only %s authority',
@@ -152,7 +163,9 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/claim\.claim_mode IS DISTINCT FROM 'verification'/i);
     expect(sql).toMatch(/outcome\.outcome IS DISTINCT FROM 'observed'/i);
     expect(sql).toMatch(/effective_lease_expires_at <= clock_timestamp\(\)/i);
-    expect(sql).toMatch(/dispatch_claim_id BIGINT NOT NULL UNIQUE/i);
+    expect(sql).toMatch(
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_dispatch_outcome_claim[\s\S]+?dispatch_claim_id/i,
+    );
   });
 
   it('makes every ledger table immutable', () => {
@@ -241,11 +254,31 @@ describe('migration 374 Kernel ReleaseRun', () => {
   });
 
   it('registers migration 374', () => {
-    expect(sql).toMatch(/VALUES \('374', 'Kernel ReleaseRun exact-SHA authority and receipts', NOW\(\)\)/i);
+    expect(published374Sql).toMatch(/VALUES \('374', 'Kernel ReleaseRun exact-SHA authority and receipts', NOW\(\)\)/i);
   });
 });
 
 describe('migration 375 installed-v374 reconciliation', () => {
+  it('is additive over the published v374 tables instead of republishing them', () => {
+    for (const table of [
+      'kernel_release_runs',
+      'kernel_release_transitions',
+      'kernel_release_effect_intents',
+      'kernel_release_effect_receipts',
+      'kernel_release_effect_dispatch_claims',
+      'kernel_release_effect_dispatch_outcomes',
+      'kernel_release_bootstrap_runs',
+      'kernel_release_bootstrap_transitions',
+      'kernel_release_bootstrap_effect_attempts',
+      'kernel_release_bootstrap_effect_receipts',
+    ]) {
+      expect(closureSql).not.toMatch(
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`, 'i'),
+      );
+    }
+    expect(closureSql).not.toContain("VALUES ('374'");
+  });
+
   it('adds every field that did not exist in the shipped v374 schema', () => {
     expect(closureSql).toMatch(
       /ALTER TABLE kernel_release_effect_dispatch_claims[\s\S]+?ADD COLUMN IF NOT EXISTS claim_mode/i,
@@ -264,6 +297,23 @@ describe('migration 375 installed-v374 reconciliation', () => {
     expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_e2e_manifests/i);
     expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_rollback_intents/i);
     expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations/i);
+  });
+
+  it('stores rollback authority and receipts per exact artifact for normal and bootstrap runs', () => {
+    for (const table of [
+      'kernel_release_rollback_artifact_intents',
+      'kernel_release_rollback_artifact_receipts',
+      'kernel_release_bootstrap_rollback_artifact_intents',
+      'kernel_release_bootstrap_rollback_artifact_receipts',
+    ]) {
+      expect(closureSql).toMatch(
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`, 'i'),
+      );
+    }
+    expect(closureSql).toMatch(/UNIQUE \(rollback_intent_id, artifact_name\)/i);
+    expect(closureSql).toMatch(/UNIQUE \(bootstrap_run_id, artifact_name\)/i);
+    expect(closureSql).toMatch(/expected_previous_version TEXT NOT NULL/i);
+    expect(closureSql).toMatch(/expected_previous_digest TEXT NOT NULL/i);
   });
 
   it('replaces the guards and registers migration 375', () => {
