@@ -24,9 +24,6 @@ const migration = existsSync(migrationUrl)
 const schemaName =
   `kernel_grant_${process.pid}_${randomUUID().replaceAll('-', '')}`;
 const quotedSchema = `"${schemaName}"`;
-const appRole = `kernel_grant_app_${process.pid}_${randomUUID()
-  .replaceAll('-', '')}`;
-const quotedAppRole = `"${appRole}"`;
 const integrationMigration = migration.replaceAll(
   'SET search_path = public, pg_temp',
   `SET search_path = ${schemaName}, pg_temp`,
@@ -143,7 +140,6 @@ beforeAll(async () => {
   expect(migration).not.toBe('');
   adminPool = new pg.Pool({ ...DB_DEFAULTS, max: 2 });
   await adminPool.query(`CREATE SCHEMA ${quotedSchema}`);
-  await adminPool.query(`CREATE ROLE ${quotedAppRole} NOLOGIN`);
   pool = new pg.Pool({
     ...DB_DEFAULTS,
     options: `-c search_path=${schemaName}`,
@@ -193,16 +189,12 @@ beforeAll(async () => {
   `);
   await pool.query(integrationMigration);
   await pool.query(integrationMigration);
-  await adminPool.query(
-    `GRANT USAGE ON SCHEMA ${quotedSchema} TO ${quotedAppRole}`,
-  );
 }, 15_000);
 
 afterAll(async () => {
   if (pool) await pool.end();
   if (adminPool) {
     await adminPool.query(`DROP SCHEMA IF EXISTS ${quotedSchema} CASCADE`);
-    await adminPool.query(`DROP ROLE IF EXISTS ${quotedAppRole}`);
     await adminPool.end();
   }
 });
@@ -392,48 +384,110 @@ describe('migration 382 grant authority on real PostgreSQL', () => {
     });
   });
 
-  it('blocks non-owner app DML while controlled functions remain executable', async () => {
-    const appClient = await pool.connect();
-    const grantId = randomUUID();
-    try {
-      await appClient.query(`SET ROLE ${quotedAppRole}`);
-      await expect(appClient.query(
-        `INSERT INTO kernel_equivalence_grant_authorities
-           (grant_id, case_id, cell_id, run_id, attempt_id, resource_type,
-            resource_id, resource_ref, grant_digest, expires_at,
-            grant_issued_at, grant_payload)
-         VALUES
-           ($1::uuid, $2::uuid, $3, $4::uuid, $5::uuid, $6, $7, $8, $9,
-            clock_timestamp() + interval '1 minute', clock_timestamp(),
-            '{}'::jsonb)`,
-        [
-          grantId,
-          CASE_ID,
-          CELL_ID,
-          RUN_ID,
-          ATTEMPT_ID,
-          RESOURCE_TYPE,
-          RESOURCE_ID,
-          RESOURCE_REF,
-          DIGEST,
-        ],
-      )).rejects.toMatchObject({ code: '42501' });
+  it('uses the deployed runtime role as owner without PUBLIC function access', async () => {
+    const topology = await pool.query(`
+      SELECT
+        current_user,
+        pg_get_userbyid(t.relowner) AS table_owner,
+        pg_get_userbyid(p.proowner) AS function_owner,
+        EXISTS (
+          SELECT 1
+            FROM aclexplode(
+              COALESCE(p.proacl, acldefault('f', p.proowner))
+            ) acl
+           WHERE acl.grantee = 0
+             AND acl.privilege_type = 'EXECUTE'
+        ) AS public_execute
+      FROM pg_class t
+      JOIN pg_proc p
+        ON p.proname = 'kernel_equivalence_register_grant_authority'
+      WHERE t.oid = 'kernel_equivalence_grant_authorities'::regclass
+    `);
+    expect(topology.rows).toEqual([{
+      current_user: DB_DEFAULTS.user,
+      table_owner: DB_DEFAULTS.user,
+      function_owner: DB_DEFAULTS.user,
+      public_execute: false,
+    }]);
+  });
 
-      await expect(appClient.query(
-        `SELECT *
-           FROM kernel_equivalence_register_grant_authority(
-             $1::uuid, $2::jsonb, $3
-           )`,
-        [
-          CASE_ID,
-          JSON.stringify(signedGrant({ expiresInMs: 60_000, grantId })),
-          DIGEST,
-        ],
-      )).resolves.toBeTruthy();
-    } finally {
-      await appClient.query('RESET ROLE');
-      appClient.release();
-    }
+  it('constrains default-owner direct INSERT through table contract triggers', async () => {
+    const forgedAnchorId = randomUUID();
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_grant_authorities
+         (grant_id, case_id, cell_id, run_id, attempt_id, resource_type,
+          resource_id, resource_ref, grant_digest, expires_at,
+          grant_issued_at, grant_payload)
+       VALUES
+         ($1::uuid, $2::uuid, $3, $4::uuid, $5::uuid, $6, $7, $8, $9,
+          clock_timestamp() + interval '1 minute', clock_timestamp(),
+          '{}'::jsonb)`,
+      [
+        forgedAnchorId,
+        CASE_ID,
+        CELL_ID,
+        RUN_ID,
+        ATTEMPT_ID,
+        RESOURCE_TYPE,
+        RESOURCE_ID,
+        RESOURCE_REF,
+        DIGEST,
+      ],
+    )).rejects.toThrow(/payload|contract/i);
+
+    const grantId = await registerGrant();
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_grant_events
+         (grant_id, generation, state, actor_instance_id, actor_kind,
+          grant_digest, details)
+       VALUES
+         ($1::uuid, 99, 'published', $2::uuid, 'controller', $3, '{}')`,
+      [grantId, CONTROLLER_ID, DIGEST],
+    )).rejects.toThrow(/generation|start|contract/i);
+
+    await appendEvent({ grantId, state: 'published' });
+    await pool.query(
+      `INSERT INTO kernel_equivalence_grant_revocations
+         (grant_id, grant_digest, reason, controller_instance_id,
+          execution_disposition)
+       VALUES
+         ($1::uuid, $2, 'owner_direct_revoke', $3::uuid,
+          'effect_possible')`,
+      [grantId, DIGEST, CONTROLLER_ID],
+    );
+    const revocation = await pool.query(
+      `SELECT execution_disposition
+         FROM kernel_equivalence_grant_revocations
+        WHERE grant_id = $1`,
+      [grantId],
+    );
+    expect(revocation.rows).toEqual([{
+      execution_disposition: 'safe_no_effect',
+    }]);
+  });
+
+  it('keeps the original revoke result after a later terminal event', async () => {
+    const grantId = await registerGrant();
+    await appendEvent({ grantId, state: 'published' });
+    await appendEvent({ grantId, state: 'execution_intent' });
+    let revoked = await revokeGrant({ grantId, reason: 'runtime_timeout' });
+    expect(revoked.rows[0]).toMatchObject({
+      disposition: 'effect_possible',
+      effect_possible: true,
+      safe_no_effect: false,
+    });
+
+    await appendEvent({
+      details: { intent_generation: 2 },
+      grantId,
+      state: 'aborted_before_effect',
+    });
+    revoked = await revokeGrant({ grantId, reason: 'runtime_timeout' });
+    expect(revoked.rows[0]).toMatchObject({
+      disposition: 'effect_possible',
+      effect_possible: true,
+      safe_no_effect: false,
+    });
   });
 
   it('rejects UPDATE, DELETE, and TRUNCATE on every durable relation', async () => {

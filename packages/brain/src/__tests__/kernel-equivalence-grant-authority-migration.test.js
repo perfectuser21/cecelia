@@ -69,6 +69,10 @@ describe('migration 382 Kernel equivalence grant authority', () => {
       'kernel_equivalence_grant_revocations',
     ]) {
       expect(sql).toMatch(new RegExp(
+        `BEFORE INSERT ON ${table}`,
+        'i',
+      ));
+      expect(sql).toMatch(new RegExp(
         `BEFORE UPDATE OR DELETE ON ${table}`,
         'i',
       ));
@@ -94,13 +98,17 @@ describe('migration 382 Kernel equivalence grant authority', () => {
         `CREATE OR REPLACE FUNCTION ${functionName}\\(`,
         'i',
       ));
-      expect(sql).toMatch(new RegExp(
-        `GRANT EXECUTE ON FUNCTION\\s+${functionName}\\(`,
-        'is',
-      ));
+      expect(sql).toContain(`'${functionName}(`);
     }
     expect(sql.match(/SECURITY DEFINER/gi)).toHaveLength(4);
     expect(sql.match(/SET search_path = public, pg_temp/gi)).toHaveLength(4);
+    expect(sql).toMatch(
+      /CREATE TEMP TABLE kernel_equivalence_grant_migration_context[\s\S]*current_user::name AS runtime_role/i,
+    );
+    expect(sql).toMatch(
+      /format\(\s*'GRANT EXECUTE ON FUNCTION %s TO %I'/i,
+    );
+    expect(sql).not.toMatch(/GRANT EXECUTE[\s\S]*TO PUBLIC/i);
     expect(sql).not.toMatch(
       /kernel_equivalence_revoke_grant\(\s*p_grant_id UUID,\s*p_grant_sha256 TEXT,\s*p_controller_instance_id UUID,\s*p_reason TEXT\s*\)[\s\S]*p_execution_disposition/i,
     );
@@ -162,8 +170,11 @@ describe('migration 382 Kernel equivalence grant authority', () => {
       /WHEN NOT EXISTS \([\s\S]*intent\.state = 'execution_intent'[\s\S]*AND NOT EXISTS \([\s\S]*aborted\.state = 'aborted_before_effect'[\s\S]*aborted\.details->>'intent_generation'[\s\S]*intent\.generation[\s\S]*THEN 'safe_no_effect'/i,
     );
     expect(sql).toMatch(/ELSE 'effect_possible'/i);
-    expect(sql).toMatch(
+    expect(sql).not.toMatch(
       /existing_revocation\.execution_disposition\s+IS DISTINCT FROM computed_disposition/i,
+    );
+    expect(sql).toMatch(
+      /IF FOUND THEN[\s\S]*existing_revocation\.reason IS DISTINCT FROM p_reason[\s\S]*RETURN QUERY[\s\S]*END IF;[\s\S]*computed_disposition :=/i,
     );
     expect(sql).toMatch(
       /VALUES \('382', 'kernel_equivalence_grant_authority'\)/i,

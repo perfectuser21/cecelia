@@ -2,12 +2,16 @@
 --
 -- Protected grant files remain transport artifacts. These relations are the
 -- immutable database authority for publication, execution intent, terminal
--- evidence, and revocation. A non-owner runtime role receives only controlled
--- function access; all authority writes serialize on the grant anchor row.
--- PostgreSQL owners retain inherent DDL/DML authority, so production must keep
--- the migration owner separate from the runtime role. Append-only triggers
--- still reject owner UPDATE, DELETE, and TRUNCATE, but table ownership itself
--- is an administrative trust boundary for direct INSERT.
+-- evidence, and revocation. Migration captures the explicit runtime role and
+-- grants the controlled APIs only to it. Current deployments may use that same
+-- role as table owner, so BEFORE INSERT contract triggers independently enforce
+-- every authority invariant for ordinary owner DML. PostgreSQL owners retain
+-- inherent DDL authority (including disabling triggers), which remains an
+-- administrative trust boundary.
+
+CREATE TEMP TABLE kernel_equivalence_grant_migration_context
+ON COMMIT DROP
+AS SELECT current_user::name AS runtime_role;
 
 CREATE TABLE IF NOT EXISTS kernel_equivalence_grant_authorities (
   grant_id UUID PRIMARY KEY,
@@ -128,6 +132,361 @@ BEGIN
     TG_OP;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION kernel_equivalence_grant_authority_insert_guard()
+RETURNS trigger AS $$
+DECLARE
+  payload_keys TEXT[];
+  payload_grant_id UUID;
+  payload_run_id UUID;
+  payload_attempt_id UUID;
+  payload_issued_at TIMESTAMPTZ;
+  payload_expires_at TIMESTAMPTZ;
+  case_resource_type TEXT;
+  case_expires_at TIMESTAMPTZ;
+  lease_expires_at TIMESTAMPTZ;
+  database_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+  IF jsonb_typeof(NEW.grant_payload) IS DISTINCT FROM 'object' THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant anchor payload contract mismatch';
+  END IF;
+  SELECT ARRAY(
+    SELECT key
+      FROM jsonb_object_keys(NEW.grant_payload) AS grant_keys(key)
+     ORDER BY key
+  ) INTO payload_keys;
+  IF payload_keys IS DISTINCT FROM ARRAY[
+       'adapter_id',
+       'artifact_sha',
+       'attempt_id',
+       'behavior_id',
+       'brain_version',
+       'cell_id',
+       'engine_version',
+       'environment',
+       'expires_at',
+       'grant_id',
+       'issued_at',
+       'key_id',
+       'nonce',
+       'provider',
+       'resource_id',
+       'resource_prefix',
+       'resource_ref',
+       'run_id',
+       'scenario',
+       'schema_version',
+       'scopes',
+       'seam_id',
+       'signature'
+     ]::TEXT[]
+     OR NEW.grant_digest !~ '^[a-f0-9]{64}$'
+     OR COALESCE(NEW.grant_payload->>'schema_version', '')
+          <> 'kernel-equivalence-execution-grant/v1'
+     OR COALESCE(NEW.grant_payload->>'grant_id', '')
+          !~ '^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+     OR COALESCE(NEW.grant_payload->>'run_id', '')
+          !~ '^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+     OR COALESCE(NEW.grant_payload->>'attempt_id', '')
+          !~ '^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+     OR length(
+          COALESCE(NEW.grant_payload->>'cell_id', '')
+        ) NOT BETWEEN 1 AND 512
+     OR length(
+          COALESCE(NEW.grant_payload->>'resource_id', '')
+        ) NOT BETWEEN 1 AND 512
+     OR length(
+          COALESCE(NEW.grant_payload->>'resource_ref', '')
+        ) NOT BETWEEN 1 AND 2048
+     OR COALESCE(NEW.grant_payload->>'cell_id', '') ~ E'[\\000\\r\\n]'
+     OR COALESCE(NEW.grant_payload->>'resource_id', '') ~ E'[\\000\\r\\n]'
+     OR COALESCE(NEW.grant_payload->>'resource_ref', '') ~ E'[\\000\\r\\n]'
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant anchor payload contract mismatch';
+  END IF;
+
+  BEGIN
+    payload_grant_id := (NEW.grant_payload->>'grant_id')::UUID;
+    payload_run_id := (NEW.grant_payload->>'run_id')::UUID;
+    payload_attempt_id := (NEW.grant_payload->>'attempt_id')::UUID;
+    payload_issued_at :=
+      (NEW.grant_payload->>'issued_at')::TIMESTAMPTZ;
+    payload_expires_at :=
+      (NEW.grant_payload->>'expires_at')::TIMESTAMPTZ;
+  EXCEPTION
+    WHEN invalid_text_representation OR datetime_field_overflow THEN
+      RAISE EXCEPTION
+        'kernel equivalence grant anchor payload contract mismatch';
+  END;
+
+  IF NEW.grant_id IS DISTINCT FROM payload_grant_id
+     OR NEW.cell_id IS DISTINCT FROM NEW.grant_payload->>'cell_id'
+     OR NEW.run_id IS DISTINCT FROM payload_run_id
+     OR NEW.attempt_id IS DISTINCT FROM payload_attempt_id
+     OR NEW.resource_id
+          IS DISTINCT FROM NEW.grant_payload->>'resource_id'
+     OR NEW.resource_ref
+          IS DISTINCT FROM NEW.grant_payload->>'resource_ref'
+     OR NEW.grant_issued_at IS DISTINCT FROM payload_issued_at
+     OR NEW.expires_at IS DISTINCT FROM payload_expires_at
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant anchor identity contract mismatch';
+  END IF;
+
+  SELECT
+      cases.resource_type,
+      cases.expires_at,
+      leases.lease_expires_at
+    INTO
+      case_resource_type,
+      case_expires_at,
+      lease_expires_at
+    FROM kernel_equivalence_production_case_bindings bindings
+    JOIN kernel_equivalence_production_cases cases
+      ON cases.case_id = bindings.case_id
+    JOIN kernel_equivalence_production_case_leases leases
+      ON leases.case_id = cases.case_id
+   WHERE bindings.case_id = NEW.case_id
+     AND cases.cell_id = NEW.cell_id
+     AND cases.run_id = NEW.run_id
+     AND cases.attempt_id = NEW.attempt_id
+     AND cases.resource_id = NEW.resource_id
+     AND cases.resource_ref = NEW.resource_ref
+     AND leases.owner_id =
+           'brain.kernel_equivalence.production_cases'
+     AND leases.state = 'prepared'
+     AND cases.expires_at > database_now
+     AND leases.lease_expires_at > database_now
+   FOR UPDATE OF leases
+   FOR SHARE OF cases, bindings;
+  IF NOT FOUND
+     OR NEW.resource_type IS DISTINCT FROM case_resource_type
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant anchor production contract mismatch';
+  END IF;
+  IF payload_issued_at > database_now + interval '1 second'
+     OR payload_expires_at <= database_now
+     OR payload_expires_at <= payload_issued_at
+     OR payload_expires_at
+          > LEAST(case_expires_at, lease_expires_at)
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant anchor expiry contract mismatch';
+  END IF;
+
+  NEW.registered_at := database_now;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION kernel_equivalence_grant_event_insert_guard()
+RETURNS trigger AS $$
+DECLARE
+  authority_digest TEXT;
+  previous_generation BIGINT;
+  previous_state TEXT;
+  expected_generation BIGINT;
+  expected_actor_kind TEXT;
+  database_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+  IF NEW.state NOT IN (
+       'published',
+       'execution_intent',
+       'effect_completed',
+       'aborted_before_effect',
+       'effect_unknown'
+     )
+     OR NEW.actor_instance_id IS NULL
+     OR jsonb_typeof(NEW.details) IS DISTINCT FROM 'object'
+     OR octet_length(NEW.details::TEXT) > 16384
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant event input contract mismatch';
+  END IF;
+
+  SELECT authorities.grant_digest
+    INTO authority_digest
+    FROM kernel_equivalence_grant_authorities authorities
+   WHERE authorities.grant_id = NEW.grant_id
+   FOR UPDATE;
+  IF NOT FOUND
+     OR authority_digest IS DISTINCT FROM NEW.grant_digest
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant event digest contract mismatch';
+  END IF;
+
+  SELECT events.generation, events.state
+    INTO previous_generation, previous_state
+    FROM kernel_equivalence_grant_events events
+   WHERE events.grant_id = NEW.grant_id
+   ORDER BY events.generation DESC
+   LIMIT 1;
+  expected_generation := COALESCE(previous_generation + 1, 1);
+  IF NEW.generation IS DISTINCT FROM expected_generation THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant event generation contract mismatch';
+  END IF;
+  IF previous_generation IS NULL THEN
+    IF NEW.state <> 'published' THEN
+      RAISE EXCEPTION
+        'kernel equivalence grant event must start with publication';
+    END IF;
+  ELSIF NEW.state = 'execution_intent'
+        AND previous_state <> 'published' THEN
+    RAISE EXCEPTION
+      'kernel equivalence execution intent requires publication';
+  ELSIF NEW.state IN (
+          'effect_completed',
+          'aborted_before_effect',
+          'effect_unknown'
+        )
+        AND previous_state <> 'execution_intent' THEN
+    RAISE EXCEPTION
+      'kernel equivalence terminal event requires execution intent';
+  ELSIF NEW.state = 'published' THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant event transition contract mismatch';
+  END IF;
+
+  expected_actor_kind := CASE
+    WHEN NEW.state = 'published' THEN 'controller'
+    ELSE 'runtime'
+  END;
+  IF NEW.actor_kind IS DISTINCT FROM expected_actor_kind THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant event actor contract mismatch';
+  END IF;
+  IF NEW.state IN (
+       'effect_completed',
+       'aborted_before_effect',
+       'effect_unknown'
+     )
+     AND (
+       COALESCE(
+         NEW.details->>'intent_generation',
+         ''
+       ) !~ '^[1-9][0-9]*$'
+       OR (NEW.details->>'intent_generation')::BIGINT
+            IS DISTINCT FROM previous_generation
+     )
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence terminal intent generation mismatch';
+  END IF;
+
+  IF NEW.state IN ('published', 'execution_intent') THEN
+    PERFORM authorities.grant_id
+      FROM kernel_equivalence_grant_authorities authorities
+      JOIN kernel_equivalence_production_case_bindings bindings
+        ON bindings.case_id = authorities.case_id
+      JOIN kernel_equivalence_production_cases cases
+        ON cases.case_id = bindings.case_id
+      JOIN kernel_equivalence_production_case_leases leases
+        ON leases.case_id = cases.case_id
+     WHERE authorities.grant_id = NEW.grant_id
+       AND authorities.grant_digest = NEW.grant_digest
+       AND authorities.expires_at > database_now
+       AND cases.expires_at > database_now
+       AND leases.owner_id =
+             'brain.kernel_equivalence.production_cases'
+       AND leases.state = 'prepared'
+       AND leases.lease_expires_at > database_now
+       AND NOT EXISTS (
+         SELECT 1
+           FROM kernel_equivalence_grant_revocations revocations
+          WHERE revocations.grant_id = NEW.grant_id
+       )
+     FOR SHARE OF authorities, bindings, cases, leases;
+    IF NOT FOUND THEN
+      IF EXISTS (
+        SELECT 1
+          FROM kernel_equivalence_grant_revocations revocations
+         WHERE revocations.grant_id = NEW.grant_id
+      ) THEN
+        RAISE EXCEPTION
+          'kernel equivalence grant is revoked';
+      END IF;
+      RAISE EXCEPTION
+        'kernel equivalence grant active contract is unavailable';
+    END IF;
+  END IF;
+
+  NEW.occurred_at := database_now;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION kernel_equivalence_grant_revocation_insert_guard()
+RETURNS trigger AS $$
+DECLARE
+  authority_digest TEXT;
+BEGIN
+  IF NEW.controller_instance_id IS NULL
+     OR length(NEW.reason) NOT BETWEEN 1 AND 512
+     OR NEW.reason !~ '^[a-z][a-z0-9_]*$'
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant revocation input contract mismatch';
+  END IF;
+  SELECT authorities.grant_digest
+    INTO authority_digest
+    FROM kernel_equivalence_grant_authorities authorities
+   WHERE authorities.grant_id = NEW.grant_id
+   FOR UPDATE;
+  IF NOT FOUND
+     OR authority_digest IS DISTINCT FROM NEW.grant_digest
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant revocation digest contract mismatch';
+  END IF;
+
+  NEW.execution_disposition := CASE
+    WHEN NOT EXISTS (
+      SELECT 1
+        FROM kernel_equivalence_grant_events intent
+       WHERE intent.grant_id = NEW.grant_id
+         AND intent.state = 'execution_intent'
+         AND NOT EXISTS (
+           SELECT 1
+             FROM kernel_equivalence_grant_events aborted
+            WHERE aborted.grant_id = intent.grant_id
+              AND aborted.state = 'aborted_before_effect'
+              AND (aborted.details->>'intent_generation')::BIGINT
+                    = intent.generation
+         )
+    ) THEN 'safe_no_effect'
+    ELSE 'effect_possible'
+  END;
+  NEW.revoked_at := clock_timestamp();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_kernel_equivalence_grant_authority_insert_guard
+  ON kernel_equivalence_grant_authorities;
+CREATE TRIGGER trg_kernel_equivalence_grant_authority_insert_guard
+  BEFORE INSERT ON kernel_equivalence_grant_authorities
+  FOR EACH ROW
+  EXECUTE FUNCTION kernel_equivalence_grant_authority_insert_guard();
+
+DROP TRIGGER IF EXISTS trg_kernel_equivalence_grant_event_insert_guard
+  ON kernel_equivalence_grant_events;
+CREATE TRIGGER trg_kernel_equivalence_grant_event_insert_guard
+  BEFORE INSERT ON kernel_equivalence_grant_events
+  FOR EACH ROW
+  EXECUTE FUNCTION kernel_equivalence_grant_event_insert_guard();
+
+DROP TRIGGER IF EXISTS trg_kernel_equivalence_grant_revocation_insert_guard
+  ON kernel_equivalence_grant_revocations;
+CREATE TRIGGER trg_kernel_equivalence_grant_revocation_insert_guard
+  BEFORE INSERT ON kernel_equivalence_grant_revocations
+  FOR EACH ROW
+  EXECUTE FUNCTION kernel_equivalence_grant_revocation_insert_guard();
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_grant_authorities_append_only
   ON kernel_equivalence_grant_authorities;
@@ -582,7 +941,6 @@ RETURNS TABLE (
 DECLARE
   authority_digest TEXT;
   computed_disposition TEXT;
-  inserted_count INTEGER;
   existing_revocation kernel_equivalence_grant_revocations%ROWTYPE;
 BEGIN
   IF p_grant_sha256 !~ '^[a-f0-9]{64}$'
@@ -602,6 +960,29 @@ BEGIN
   IF NOT FOUND OR authority_digest IS DISTINCT FROM p_grant_sha256 THEN
     RAISE EXCEPTION
       'kernel equivalence grant revocation digest mismatch';
+  END IF;
+
+  SELECT revocations.*
+    INTO existing_revocation
+    FROM kernel_equivalence_grant_revocations revocations
+   WHERE revocations.grant_id = p_grant_id;
+  IF FOUND THEN
+    IF existing_revocation.grant_digest
+         IS DISTINCT FROM p_grant_sha256
+       OR existing_revocation.reason IS DISTINCT FROM p_reason
+       OR existing_revocation.controller_instance_id
+            IS DISTINCT FROM p_controller_instance_id
+    THEN
+      RAISE EXCEPTION
+        'kernel equivalence grant revocation idempotency identity mismatch';
+    END IF;
+    RETURN QUERY SELECT
+      existing_revocation.grant_id,
+      existing_revocation.execution_disposition = 'safe_no_effect',
+      existing_revocation.execution_disposition = 'effect_possible',
+      existing_revocation.execution_disposition,
+      existing_revocation.revoked_at;
+    RETURN;
   END IF;
 
   computed_disposition := CASE
@@ -627,28 +1008,12 @@ BEGIN
      execution_disposition)
   VALUES
     (p_grant_id, p_grant_sha256, p_reason, p_controller_instance_id,
-     computed_disposition)
-  ON CONFLICT ON CONSTRAINT kernel_equivalence_grant_revocations_pkey
-  DO NOTHING;
-  GET DIAGNOSTICS inserted_count = ROW_COUNT;
+     computed_disposition);
 
   SELECT revocations.*
     INTO existing_revocation
     FROM kernel_equivalence_grant_revocations revocations
    WHERE revocations.grant_id = p_grant_id;
-  IF inserted_count = 0
-     AND (
-       existing_revocation.grant_digest IS DISTINCT FROM p_grant_sha256
-       OR existing_revocation.reason IS DISTINCT FROM p_reason
-       OR existing_revocation.controller_instance_id
-            IS DISTINCT FROM p_controller_instance_id
-       OR existing_revocation.execution_disposition
-            IS DISTINCT FROM computed_disposition
-     )
-  THEN
-    RAISE EXCEPTION
-      'kernel equivalence grant revocation idempotency identity mismatch';
-  END IF;
 
   RETURN QUERY SELECT
     existing_revocation.grant_id,
@@ -661,33 +1026,37 @@ $$ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp;
 
-REVOKE ALL ON FUNCTION
-  kernel_equivalence_register_grant_authority(UUID, JSONB, TEXT)
-  FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION
-  kernel_equivalence_register_grant_authority(UUID, JSONB, TEXT)
-  TO PUBLIC;
-
-REVOKE ALL ON FUNCTION
-  kernel_equivalence_append_grant_event(UUID, TEXT, TEXT, UUID, JSONB)
-  FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION
-  kernel_equivalence_append_grant_event(UUID, TEXT, TEXT, UUID, JSONB)
-  TO PUBLIC;
-
-REVOKE ALL ON FUNCTION
-  kernel_equivalence_resolve_active_grant(UUID, TEXT, TEXT)
-  FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION
-  kernel_equivalence_resolve_active_grant(UUID, TEXT, TEXT)
-  TO PUBLIC;
-
-REVOKE ALL ON FUNCTION
-  kernel_equivalence_revoke_grant(UUID, TEXT, UUID, TEXT)
-  FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION
-  kernel_equivalence_revoke_grant(UUID, TEXT, UUID, TEXT)
-  TO PUBLIC;
+DO $$
+DECLARE
+  migration_runtime_role NAME;
+  function_signature TEXT;
+BEGIN
+  SELECT runtime_role
+    INTO migration_runtime_role
+    FROM kernel_equivalence_grant_migration_context;
+  IF migration_runtime_role IS NULL THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant migration runtime role is unavailable';
+  END IF;
+  FOREACH function_signature IN ARRAY ARRAY[
+    'kernel_equivalence_register_grant_authority(UUID, JSONB, TEXT)',
+    'kernel_equivalence_append_grant_event(UUID, TEXT, TEXT, UUID, JSONB)',
+    'kernel_equivalence_resolve_active_grant(UUID, TEXT, TEXT)',
+    'kernel_equivalence_revoke_grant(UUID, TEXT, UUID, TEXT)'
+  ]::TEXT[]
+  LOOP
+    EXECUTE format(
+      'REVOKE ALL ON FUNCTION %s FROM PUBLIC',
+      function_signature
+    );
+    EXECUTE format(
+      'GRANT EXECUTE ON FUNCTION %s TO %I',
+      function_signature,
+      migration_runtime_role
+    );
+  END LOOP;
+END;
+$$;
 
 INSERT INTO schema_version (version, description)
 VALUES ('382', 'kernel_equivalence_grant_authority')
