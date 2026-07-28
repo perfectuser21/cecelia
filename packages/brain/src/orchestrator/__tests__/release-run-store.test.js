@@ -9,6 +9,7 @@ const RELEASE_ID = '33333333-3333-4333-8333-333333333333';
 const INTENT_ID = '44444444-4444-4444-8444-444444444444';
 const CONTRACT_ID = '77777777-7777-4777-8777-777777777777';
 const MANIFEST_ID = '88888888-8888-4888-8888-888888888888';
+const RECEIPT_ID = '99999999-9999-4999-8999-999999999999';
 const HEAD_SHA = 'a'.repeat(40);
 const MERGE_SHA = 'b'.repeat(40);
 const APPROVED_AT = '2026-07-28T06:00:00.000Z';
@@ -220,11 +221,31 @@ describe('PostgreSQL ReleaseRun store', () => {
   });
 
   it('deduplicates confirmed receipts but appends failed observations', async () => {
+    const persistedRows = [];
     const client = {
-      query: vi.fn(async () => ({
-        rows: [{ id: crypto.randomUUID() }],
-        rowCount: 1,
-      })),
+      query: vi.fn(async (_sql, params) => {
+        const row = {
+          id: RECEIPT_ID,
+          intent_id: params[0],
+          receipt_status: params[1],
+          observed_merge_sha: params[2],
+          observed_artifact_versions: JSON.parse(params[3]),
+          dispatch_claim_id: String(params[4]),
+          dispatch_generation: params[5],
+          e2e_manifest_id: params[6],
+          e2e_manifest_digest: params[7],
+          e2e_scenarios_total: params[8],
+          e2e_scenarios_passed: params[9],
+          e2e_environment: params[10],
+          e2e_scenario_results: params[11] == null ? null : JSON.parse(params[11]),
+          e2e_probe_results: params[12] == null ? null : JSON.parse(params[12]),
+          e2e_started_at: params[13],
+          e2e_finished_at: params[14],
+          evidence: JSON.parse(params[15]),
+        };
+        persistedRows.push(row);
+        return { rows: [row], rowCount: 1 };
+      }),
     };
     const store = createPostgresReleaseRunStore({});
     const base = {
@@ -240,7 +261,15 @@ describe('PostgreSQL ReleaseRun store', () => {
       evidence: { source: 'post_effect_observation' },
     };
 
-    await store.appendReceipt(client, { ...base, receipt_status: 'confirmed' });
+    await expect(store.appendReceipt(
+      client,
+      { ...base, receipt_status: 'confirmed' },
+    )).resolves.toEqual(expect.objectContaining({
+      id: RECEIPT_ID,
+      intent_id: INTENT_ID,
+      receipt_status: 'confirmed',
+      evidence: base.evidence,
+    }));
     await store.appendReceipt(client, { ...base, receipt_status: 'failed' });
 
     expect(client.query.mock.calls[0][0]).toMatch(
@@ -250,5 +279,54 @@ describe('PostgreSQL ReleaseRun store', () => {
     expect(client.query.mock.calls[0][1]).toContain(MANIFEST_ID);
     expect(client.query.mock.calls[0][1]).toContain(21);
     expect(client.query.mock.calls[0][1]).toContain(3);
+    expect(persistedRows).toHaveLength(2);
+  });
+
+  it('rejects a confirmed receipt idempotency collision with any different persisted field', async () => {
+    const base = {
+      intent_id: INTENT_ID,
+      receipt_status: 'confirmed',
+      observed_merge_sha: MERGE_SHA,
+      observed_artifact_versions: artifacts,
+      dispatch_claim_id: 21,
+      dispatch_generation: 3,
+      e2e_manifest_id: MANIFEST_ID,
+      e2e_manifest_digest: `sha256:${'e'.repeat(64)}`,
+      e2e_scenarios_total: 1,
+      e2e_scenarios_passed: 1,
+      e2e_environment: 'staging',
+      e2e_scenario_results: [{ name: 'release behavior', status: 'pass' }],
+      e2e_probe_results: [{
+        scenario_name: 'release behavior',
+        probe_id: 'brain.health',
+        status: 'pass',
+      }],
+      e2e_started_at: '2026-07-28T06:01:00.000Z',
+      e2e_finished_at: '2026-07-28T06:01:01.000Z',
+      evidence: {
+        source: 'post_effect_observation',
+        verification: { status: 'pass' },
+      },
+    };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: RECEIPT_ID,
+            ...base,
+            dispatch_claim_id: '21',
+            e2e_manifest_digest: `sha256:${'f'.repeat(64)}`,
+          }],
+        }),
+    };
+    const store = createPostgresReleaseRunStore({});
+
+    await expect(store.appendReceipt(client, base)).rejects.toMatchObject({
+      code: 'release_effect_receipt_conflict',
+    });
+    expect(client.query.mock.calls[1][0]).toMatch(
+      /SELECT \*[\s\S]*receipt_status = 'confirmed'/i,
+    );
   });
 });

@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.268.10
+**版本**: 1.268.11
+
+## Exact ReleaseRun receipt replay
+
+- Receipt idempotency returns the persisted row and compares every authority
+  field; conflicting replays are rejected instead of inheriting an existing ID.
+- Staging and production transitions bind exact persisted artifact readback and
+  receipt verification JSON at the database boundary.
+- 回退：`bash scripts/brain-rollback.sh 1.268.10`（保留 exact receipt ledger）。
 
 ## Server-owned merge review authority
 

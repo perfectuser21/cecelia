@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.268.10
+**Brain 版本**: 1.268.11
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.11 — Exact ReleaseRun receipt replay
+
+- Confirmed effect receipt replay now loads and compares every persisted
+  authority field; an idempotency-key collision with different evidence,
+  artifact readback, E2E result, generation, or timestamp fails closed.
+- Successful transitions carry the exact persisted receipt verification, and
+  PostgreSQL rejects any transition whose artifact set or verification differs.
+- 回退：`bash scripts/brain-rollback.sh 1.268.10`（保留 exact receipt ledger）。
 
 ## Brain 1.268.10 — Server-owned merge review authority
 

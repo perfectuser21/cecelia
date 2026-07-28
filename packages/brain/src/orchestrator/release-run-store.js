@@ -27,6 +27,49 @@ function asJson(value) {
   }
 }
 
+function nullableString(value) {
+  return value == null ? null : String(value);
+}
+
+function nullableNumber(value) {
+  return value == null ? null : Number(value);
+}
+
+function nullableTimestamp(value) {
+  if (value == null) return null;
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.valueOf()) ? null : timestamp.toISOString();
+}
+
+function receiptAuthority(value) {
+  return {
+    intent_id: value.intent_id,
+    receipt_status: value.receipt_status,
+    observed_merge_sha: value.observed_merge_sha ?? null,
+    observed_artifact_versions: asJson(value.observed_artifact_versions),
+    dispatch_claim_id: nullableString(value.dispatch_claim_id),
+    dispatch_generation: nullableNumber(value.dispatch_generation),
+    e2e_manifest_id: value.e2e_manifest_id ?? null,
+    e2e_manifest_digest: value.e2e_manifest_digest ?? null,
+    e2e_scenarios_total: nullableNumber(value.e2e_scenarios_total),
+    e2e_scenarios_passed: nullableNumber(value.e2e_scenarios_passed),
+    e2e_environment: value.e2e_environment ?? null,
+    e2e_scenario_results: asJson(value.e2e_scenario_results),
+    e2e_probe_results: asJson(value.e2e_probe_results),
+    e2e_started_at: nullableTimestamp(value.e2e_started_at),
+    e2e_finished_at: nullableTimestamp(value.e2e_finished_at),
+    evidence: asJson(value.evidence) ?? {},
+  };
+}
+
+function receiptFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    ...receiptAuthority(row),
+  };
+}
+
 function sameIdentity(row, identity) {
   return row
     && row.run_id === identity.run_id
@@ -682,18 +725,18 @@ export function createPostgresReleaseRunStore(pool) {
           e2e_started_at, e2e_finished_at, evidence)
        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11,
                $12::jsonb, $13::jsonb, $14, $15, $16::jsonb)
-       RETURNING id`;
+       RETURNING *`;
       let result;
       if (receipt.receipt_status === 'confirmed') {
         result = await client.query(
-          `${baseSql.slice(0, -'RETURNING id'.length)}
+          `${baseSql.slice(0, -'RETURNING *'.length)}
            ON CONFLICT (intent_id) WHERE receipt_status = 'confirmed' DO NOTHING
-           RETURNING id`,
+           RETURNING *`,
           params,
         );
         if (!result.rows[0]) {
           result = await client.query(
-            `SELECT id
+            `SELECT *
                FROM kernel_release_effect_receipts
               WHERE intent_id = $1
                 AND receipt_status = 'confirmed'`,
@@ -703,7 +746,14 @@ export function createPostgresReleaseRunStore(pool) {
       } else {
         result = await client.query(baseSql, params);
       }
-      return { id: result.rows[0]?.id ?? null, ...receipt };
+      const persisted = receiptFromRow(result.rows[0]);
+      if (
+        !persisted
+        || !isDeepStrictEqual(receiptAuthority(persisted), receiptAuthority(receipt))
+      ) {
+        deny('release_effect_receipt_conflict');
+      }
+      return persisted;
     },
   });
 }
@@ -711,5 +761,7 @@ export function createPostgresReleaseRunStore(pool) {
 export const __test__ = {
   RELEASE_LEASE_KEY,
   asJson,
+  receiptAuthority,
+  receiptFromRow,
   sameIdentity,
 };

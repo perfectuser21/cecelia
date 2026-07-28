@@ -1281,6 +1281,10 @@ BEGIN
        AND receipt.observed_artifact_versions = intent.expected_artifact_versions
        AND NEW.evidence->>'effect_receipt_id' = receipt.id::text
        AND NEW.evidence->>'e2e_manifest_digest' = receipt.e2e_manifest_digest
+       AND NEW.evidence->'artifact_versions'
+           IS NOT DISTINCT FROM receipt.observed_artifact_versions
+       AND NEW.evidence->'verification'
+           IS NOT DISTINCT FROM receipt.evidence->'verification'
   ) THEN
     RAISE EXCEPTION 'staging_passed requires confirmed staging effect receipt';
   END IF;
@@ -1297,6 +1301,10 @@ BEGIN
        AND receipt.observed_artifact_versions = intent.expected_artifact_versions
        AND NEW.evidence->>'effect_receipt_id' = receipt.id::text
        AND NEW.evidence->>'e2e_manifest_digest' = receipt.e2e_manifest_digest
+       AND NEW.evidence->'deployed_versions'
+           IS NOT DISTINCT FROM receipt.observed_artifact_versions
+       AND NEW.evidence->'verification'
+           IS NOT DISTINCT FROM receipt.evidence->'verification'
   ) THEN
     RAISE EXCEPTION 'production_verified requires confirmed production effect receipt';
   END IF;

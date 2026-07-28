@@ -104,6 +104,9 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/production_verified requires confirmed production effect receipt/i);
     expect(sql).toMatch(/NEW\.evidence->>'effect_receipt_id' = receipt\.id::text/i);
     expect(sql).toMatch(/NEW\.evidence->>'e2e_manifest_digest' = receipt\.e2e_manifest_digest/i);
+    expect(sql).toMatch(
+      /NEW\.evidence->'verification'\s+IS NOT DISTINCT FROM receipt\.evidence->'verification'/i,
+    );
   });
 
   it('persists exact rollback intent before production and receipt before success', () => {

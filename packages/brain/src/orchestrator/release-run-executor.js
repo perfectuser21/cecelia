@@ -348,7 +348,7 @@ export function createReleaseRunExecutor({
             artifact_versions: release.artifact_versions,
             effect_receipt_id: staging.receipt.id,
             e2e_manifest_digest: e2eManifest.manifest_digest,
-            verification: staging.observation,
+            verification: staging.receipt.evidence.verification,
           });
         }
 
@@ -444,7 +444,7 @@ export function createReleaseRunExecutor({
               artifact_rollback_receipt_ids: artifactRollbackReceipts
                 .map((receipt) => receipt.id),
               e2e_manifest_digest: e2eManifest.manifest_digest,
-              verification: production.observation,
+              verification: production.receipt.evidence.verification,
             },
           );
         }

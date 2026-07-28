@@ -160,7 +160,7 @@ async function appendConfirmedReceipt(effectKind) {
     e2e_finished_at: scenarioResult.finished_at,
     evidence: { verification },
   });
-  if (effectKind !== 'production') return effectReceipt;
+  if (effectKind !== 'production') return { ...effectReceipt, verification };
   const rollbackReceipt = await store.appendRollbackReceipt(client, {
     rollback_intent_id: rollbackIntent.id,
     effect_receipt_id: effectReceipt.id,
@@ -187,6 +187,7 @@ async function appendConfirmedReceipt(effectKind) {
   });
   return {
     ...effectReceipt,
+    verification,
     rollback_receipt_id: rollbackReceipt.id,
     artifact_rollback_receipt_ids:
       artifactRollbackReceipts.map((receipt) => receipt.id),
@@ -556,9 +557,33 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
     )).rejects.toMatchObject({ code: 'P0001' });
 
     const stagingReceipt = await appendConfirmedReceipt('staging');
+    await expect(store.appendReceipt(client, {
+      ...stagingReceipt,
+      evidence: {
+        ...stagingReceipt.evidence,
+        source: 'forged_idempotent_replay',
+      },
+    })).rejects.toMatchObject({ code: 'release_effect_receipt_conflict' });
+    await expect(client.query(
+      `INSERT INTO kernel_release_transitions
+         (release_run_id, state, evidence)
+       VALUES ($1, 'staging_passed', $2::jsonb)`,
+      [
+        release.id,
+        JSON.stringify({
+          merge_sha: mergeSha,
+          artifact_versions: artifacts,
+          effect_receipt_id: stagingReceipt.id,
+          e2e_manifest_digest: release.e2e_manifest.manifest_digest,
+          verification: { ...stagingReceipt.verification, status: 'forged' },
+        }),
+      ],
+    )).rejects.toMatchObject({ code: 'P0001' });
     await appendTransition('staging_passed', {
+      artifact_versions: artifacts,
       effect_receipt_id: stagingReceipt.id,
       e2e_manifest_digest: release.e2e_manifest.manifest_digest,
+      verification: stagingReceipt.verification,
     });
     rollbackIntent = await store.findOrCreateRollbackIntent(
       client,
@@ -612,11 +637,13 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
       ],
     )).rejects.toMatchObject({ code: 'P0001' });
     await appendTransition('production_verified', {
+      deployed_versions: artifacts,
       effect_receipt_id: productionReceipt.id,
       e2e_manifest_digest: release.e2e_manifest.manifest_digest,
       rollback_receipt_id: productionReceipt.rollback_receipt_id,
       artifact_rollback_receipt_ids:
         productionReceipt.artifact_rollback_receipt_ids,
+      verification: productionReceipt.verification,
     });
     const persistedProductionReceipt = (await client.query(
       `SELECT e2e_probe_results,
