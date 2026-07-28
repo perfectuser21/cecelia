@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.268.14
+**Brain 版本**: 1.268.15
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.15 — Exact bootstrap receipt closure
+
+- Bootstrap success transitions bind the exact persisted artifact set and
+  receipt evidence in addition to receipt ID and manifest digest.
+- Concurrent confirmed-receipt replay reloads and compares every persisted
+  authority field; any conflict fails closed before transition evidence is
+  emitted.
+- 回退：`bash scripts/brain-rollback.sh 1.268.14`（保留 bootstrap receipt ledger）。
 
 ## Brain 1.268.14 — Private bootstrap secret transport
 

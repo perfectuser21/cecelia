@@ -848,7 +848,13 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
       `INSERT INTO kernel_release_bootstrap_transitions
          (bootstrap_run_id, state, evidence)
        VALUES ($1, 'staging_passed', $2::jsonb)`,
-      [bootstrapRunId, JSON.stringify({ merge_sha: mergeSha })],
+      [bootstrapRunId, JSON.stringify({
+        merge_sha: mergeSha,
+        effect_receipt_id: String(receipt.id),
+        e2e_manifest_digest: manifest.manifest_digest,
+        artifact_versions: [{ ...artifacts[0], version: 'forged' }],
+        receipt_evidence: confirmedValues.at(-1),
+      })],
     )).rejects.toMatchObject({ code: 'P0001' });
     await client.query(
       `INSERT INTO kernel_release_bootstrap_transitions
@@ -858,6 +864,8 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
         merge_sha: mergeSha,
         effect_receipt_id: String(receipt.id),
         e2e_manifest_digest: manifest.manifest_digest,
+        artifact_versions: artifacts,
+        receipt_evidence: JSON.parse(confirmedValues.at(-1)),
       })],
     );
     await expect(client.query(
@@ -989,6 +997,13 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
         merge_sha: mergeSha,
         effect_receipt_id: String(productionEffectReceipt.id),
         e2e_manifest_digest: manifest.manifest_digest,
+        artifact_versions: artifacts,
+        receipt_evidence: {
+          required_e2e: 'pass',
+          merge_sha: mergeSha,
+          e2e_probe_results: [probeResult],
+          rollback_artifacts: bootstrapRollbackArtifacts,
+        },
         artifact_rollback_receipt_ids: [String(bootstrapArtifactReceipt.id)],
       })],
     );

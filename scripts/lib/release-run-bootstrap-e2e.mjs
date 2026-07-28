@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { chmodSync, writeFileSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import pg from 'pg';
 
 import { readBootstrapPrivateConfig } from './bootstrap-private-config.mjs';
@@ -37,6 +38,25 @@ function writePrivate(value) {
     mode: 0o600,
   });
   chmodSync(outputFile, 0o600);
+}
+
+function exactReceiptAuthority(row) {
+  return {
+    effect_attempt_id: String(row.effect_attempt_id),
+    receipt_status: row.receipt_status,
+    observed_merge_sha: row.observed_merge_sha,
+    observed_artifact_versions: row.observed_artifact_versions,
+    e2e_manifest_id: row.e2e_manifest_id,
+    e2e_manifest_digest: row.e2e_manifest_digest,
+    e2e_scenarios_total: Number(row.e2e_scenarios_total),
+    e2e_scenarios_passed: Number(row.e2e_scenarios_passed),
+    e2e_environment: row.e2e_environment,
+    e2e_scenario_results: row.e2e_scenario_results,
+    e2e_probe_results: row.e2e_probe_results,
+    e2e_started_at: new Date(row.e2e_started_at).toISOString(),
+    e2e_finished_at: new Date(row.e2e_finished_at).toISOString(),
+    evidence: row.evidence,
+  };
 }
 
 async function json(url) {
@@ -236,7 +256,8 @@ try {
         merge_sha: required(mergeSha, 'bootstrap_e2e_merge_sha_missing'),
       });
       const existing = (await client.query(
-        `SELECT receipt.id, receipt.e2e_manifest_digest,
+        `SELECT receipt.id, receipt.observed_artifact_versions,
+                receipt.e2e_manifest_digest,
                 receipt.e2e_scenarios_total, receipt.e2e_scenarios_passed,
                 receipt.e2e_environment, receipt.evidence
            FROM kernel_release_bootstrap_effect_receipts receipt
@@ -269,6 +290,8 @@ try {
           scenarios_total: Number(existing.e2e_scenarios_total),
           scenarios_passed: Number(existing.e2e_scenarios_passed),
           environment: existing.e2e_environment,
+          artifact_versions: existing.observed_artifact_versions,
+          receipt_evidence: existing.evidence,
           artifact_rollback_receipt_ids: artifactReceiptIds,
         });
         break actionBlock;
@@ -322,7 +345,14 @@ try {
           },
         }];
       }
-      const inserted = await client.query(
+      const receiptEvidence = {
+        required_e2e: 'pass',
+        merge_sha: receipt.merge_sha,
+        artifact_readback: receipt.artifact_readback,
+        e2e_probe_results: receipt.probe_results,
+        ...(rollbackArtifacts == null ? {} : { rollback_artifacts: rollbackArtifacts }),
+      };
+      await client.query(
         `INSERT INTO kernel_release_bootstrap_effect_receipts
            (effect_attempt_id, receipt_status, observed_merge_sha,
             observed_artifact_versions, e2e_manifest_id, e2e_manifest_digest,
@@ -347,27 +377,49 @@ try {
           JSON.stringify(receipt.probe_results),
           receipt.started_at,
           receipt.finished_at,
-          JSON.stringify({
-            required_e2e: 'pass',
-            merge_sha: receipt.merge_sha,
-            artifact_readback: receipt.artifact_readback,
-            e2e_probe_results: receipt.probe_results,
-            ...(rollbackArtifacts == null ? {} : { rollback_artifacts: rollbackArtifacts }),
-          }),
+          JSON.stringify(receiptEvidence),
         ],
       );
-      const receiptId = inserted.rows[0]?.id ?? (await client.query(
-        `SELECT id
+      const persistedReceipt = (await client.query(
+        `SELECT id, effect_attempt_id, receipt_status, observed_merge_sha,
+                observed_artifact_versions, e2e_manifest_id,
+                e2e_manifest_digest, e2e_scenarios_total,
+                e2e_scenarios_passed, e2e_environment,
+                e2e_scenario_results, e2e_probe_results,
+                e2e_started_at, e2e_finished_at, evidence
            FROM kernel_release_bootstrap_effect_receipts
           WHERE effect_attempt_id = $1
             AND receipt_status = 'confirmed'`,
         [attemptId],
-      )).rows[0]?.id;
-      if (!receiptId) throw new Error('bootstrap_e2e_receipt_missing');
+      )).rows[0];
+      if (!persistedReceipt) throw new Error('bootstrap_e2e_receipt_missing');
+      const expectedAuthority = {
+        effect_attempt_id: String(attemptId),
+        receipt_status: 'confirmed',
+        observed_merge_sha: receipt.merge_sha,
+        observed_artifact_versions: receipt.artifact_readback,
+        e2e_manifest_id: manifest.id,
+        e2e_manifest_digest: receipt.manifest_digest,
+        e2e_scenarios_total: receipt.scenarios_total,
+        e2e_scenarios_passed: receipt.scenarios_passed,
+        e2e_environment: receipt.environment,
+        e2e_scenario_results: receipt.scenario_results,
+        e2e_probe_results: receipt.probe_results,
+        e2e_started_at: new Date(receipt.started_at).toISOString(),
+        e2e_finished_at: new Date(receipt.finished_at).toISOString(),
+        evidence: receiptEvidence,
+      };
+      if (!isDeepStrictEqual(
+        exactReceiptAuthority(persistedReceipt),
+        expectedAuthority,
+      )) {
+        throw new Error('bootstrap_e2e_receipt_conflict');
+      }
+      const receiptId = persistedReceipt.id;
       const artifactReceiptIds = await appendBootstrapArtifactReceipts(client, {
         bootstrapRunId,
         effectReceiptId: receiptId,
-        rollbackArtifacts,
+        rollbackArtifacts: persistedReceipt.evidence?.rollback_artifacts,
       });
       writePrivate({
         receipt_id: String(receiptId),
@@ -376,6 +428,8 @@ try {
         scenarios_total: receipt.scenarios_total,
         scenarios_passed: receipt.scenarios_passed,
         environment,
+        artifact_versions: persistedReceipt.observed_artifact_versions,
+        receipt_evidence: persistedReceipt.evidence,
         artifact_rollback_receipt_ids: artifactReceiptIds,
       });
     } else {

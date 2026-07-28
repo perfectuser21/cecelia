@@ -1453,6 +1453,10 @@ BEGIN
        AND r.receipt_status = 'confirmed'
        AND NEW.evidence->>'effect_receipt_id' = r.id::text
        AND NEW.evidence->>'e2e_manifest_digest' = r.e2e_manifest_digest
+       AND NEW.evidence->'artifact_versions'
+           IS NOT DISTINCT FROM r.observed_artifact_versions
+       AND NEW.evidence->'receipt_evidence'
+           IS NOT DISTINCT FROM r.evidence
   ) THEN
     RAISE EXCEPTION 'staging_passed requires confirmed staging effect receipt';
   END IF;
@@ -1467,6 +1471,10 @@ BEGIN
        AND r.receipt_status = 'confirmed'
        AND NEW.evidence->>'effect_receipt_id' = r.id::text
        AND NEW.evidence->>'e2e_manifest_digest' = r.e2e_manifest_digest
+       AND NEW.evidence->'artifact_versions'
+           IS NOT DISTINCT FROM r.observed_artifact_versions
+       AND NEW.evidence->'receipt_evidence'
+           IS NOT DISTINCT FROM r.evidence
   ) THEN
     RAISE EXCEPTION 'production_verified requires confirmed production effect receipt';
   END IF;

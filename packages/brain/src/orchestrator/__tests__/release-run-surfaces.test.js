@@ -350,6 +350,7 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).toContain('prepare-rollback');
     expect(source).toContain('artifact_rollback_intent_ids');
     expect(source).toContain('artifact_rollback_receipt_ids');
+    expect(source).toContain('receipt_evidence');
     expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_ATTEMPT_FILE');
     expect(source).not.toContain('KERNEL_RELEASE_BOOTSTRAP_RECEIPT');
 
@@ -363,6 +364,7 @@ describe('legacy release surfaces fail closed', () => {
     expect(bootstrapE2E).toContain(
       'kernel_release_bootstrap_rollback_artifact_receipts',
     );
+    expect(bootstrapE2E).toContain('bootstrap_e2e_receipt_conflict');
 
     const migration = readFileSync(
       resolve(root, 'packages/brain/migrations/374_kernel_release_runs.sql'),

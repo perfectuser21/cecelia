@@ -232,9 +232,11 @@ latest_state() {
 append_transition() {
   local state="$1" effect_receipt_id="" e2e_manifest_digest=""
   local artifact_intent_ids="[]" artifact_receipt_ids="[]"
+  local receipt_artifact_versions="[]" receipt_evidence="{}"
   if [[ -n "${2:-}" ]]; then
     IFS=$'\t' read -r effect_receipt_id e2e_manifest_digest \
-      artifact_intent_ids artifact_receipt_ids < <(
+      artifact_intent_ids artifact_receipt_ids \
+      receipt_artifact_versions receipt_evidence < <(
       env -i PATH="$PATH" HOME="${HOME:-}" node -e '
         const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
         process.stdout.write([
@@ -242,6 +244,8 @@ append_transition() {
           value.manifest_digest || "",
           JSON.stringify(value.artifact_rollback_intent_ids || []),
           JSON.stringify(value.artifact_rollback_receipt_ids || []),
+          JSON.stringify(value.artifact_versions || []),
+          JSON.stringify(value.receipt_evidence || {}),
         ].join("\t") + "\n");
       ' "$2"
     )
@@ -251,7 +255,9 @@ append_transition() {
     -v effect_receipt_id="$effect_receipt_id" \
     -v e2e_manifest_digest="$e2e_manifest_digest" \
     -v artifact_intent_ids="$artifact_intent_ids" \
-    -v artifact_receipt_ids="$artifact_receipt_ids" <<'SQL' \
+    -v artifact_receipt_ids="$artifact_receipt_ids" \
+    -v receipt_artifact_versions="$receipt_artifact_versions" \
+    -v receipt_evidence="$receipt_evidence" <<'SQL' \
     >/dev/null
 INSERT INTO kernel_release_bootstrap_transitions (
   bootstrap_run_id, state, evidence
@@ -263,6 +269,12 @@ VALUES (
     'recorded_by', 'bootstrap-controller',
     'effect_receipt_id', NULLIF(:'effect_receipt_id', ''),
     'e2e_manifest_digest', NULLIF(:'e2e_manifest_digest', ''),
+    'artifact_versions',
+      CASE WHEN :'receipt_artifact_versions' = '[]' THEN NULL
+           ELSE :'receipt_artifact_versions'::jsonb END,
+    'receipt_evidence',
+      CASE WHEN :'receipt_evidence' = '{}' THEN NULL
+           ELSE :'receipt_evidence'::jsonb END,
     'artifact_rollback_intent_ids',
       CASE WHEN :'artifact_intent_ids' = '[]' THEN NULL
            ELSE :'artifact_intent_ids'::jsonb END,

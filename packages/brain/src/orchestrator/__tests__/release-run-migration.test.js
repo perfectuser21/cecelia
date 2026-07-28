@@ -253,6 +253,12 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/bootstrap transition requires exact merge SHA evidence/i);
     expect(sql).toMatch(/NEW\.evidence->>'effect_receipt_id' = r\.id::text/i);
     expect(sql).toMatch(/NEW\.evidence->>'e2e_manifest_digest' = r\.e2e_manifest_digest/i);
+    expect(sql).toMatch(
+      /NEW\.evidence->'artifact_versions'\s+IS NOT DISTINCT FROM r\.observed_artifact_versions/i,
+    );
+    expect(sql).toMatch(
+      /NEW\.evidence->'receipt_evidence'\s+IS NOT DISTINCT FROM r\.evidence/i,
+    );
   });
 
   it('persists expiring generations and durable receipts for crash recovery', () => {

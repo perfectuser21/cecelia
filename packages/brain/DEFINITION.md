@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.268.14
+**版本**: 1.268.15
+
+## Exact bootstrap receipt closure
+
+- `staging_passed` and `production_verified` require the exact persisted
+  bootstrap artifact versions and receipt evidence.
+- Receipt conflict replay compares the full confirmed row and rejects any
+  divergent merge, manifest, scenarios, probes, timestamps, or evidence.
+- 回退：`bash scripts/brain-rollback.sh 1.268.14`（保留 bootstrap receipt ledger）。
 
 ## Private bootstrap secret transport
 
