@@ -2855,24 +2855,6 @@ router.post('/deploy', async (req, res) => {
   let artifactRoutes;
   const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
 
-  const persistedDeploy = isStagingDeploy
-    ? readStagingDeployStatusFile()
-    : readDeployStatusFile();
-  const currentDeployState = isStagingDeploy ? stagingDeployState : deployState;
-  if (persistedDeploy) Object.assign(currentDeployState, persistedDeploy);
-  const deployBusy = isStagingDeploy
-    ? currentDeployState.status === 'running'
-    : ['running', 'rolling_back'].includes(currentDeployState.status);
-  if (deployBusy) {
-    return res.status(409).json({
-      error: isStagingDeploy
-        ? 'Staging deploy already in progress'
-        : 'Deploy already in progress',
-      current_status: currentDeployState.status,
-      started_at: currentDeployState.started_at,
-    });
-  }
-
   try {
     dispatchClaim = await claimReleaseEffect(pool, {
       release_run_id,
@@ -2890,29 +2872,6 @@ router.post('/deploy', async (req, res) => {
         generation: dispatchClaim.generation,
       });
     }
-    const becameBusy = isStagingDeploy
-      ? stagingDeployState.status === 'running'
-      : ['running', 'rolling_back'].includes(deployState.status);
-    if (becameBusy) {
-      await appendDispatchOutcome(
-        pool,
-        dispatchClaim.dispatch_claim_id,
-        dispatchClaim.generation,
-        'failed',
-        { error_code: 'release_deploy_busy_before_dispatch' },
-      );
-      return res.status(409).json({
-        error: isStagingDeploy
-          ? 'Staging deploy already in progress'
-          : 'Deploy already in progress',
-        current_status: isStagingDeploy
-          ? stagingDeployState.status
-          : deployState.status,
-        started_at: isStagingDeploy
-          ? stagingDeployState.started_at
-          : deployState.started_at,
-      });
-    }
     artifactVersions = dispatchClaim.artifact_versions;
     artifactRoutes = planReleaseArtifactRoutes(effectKind, artifactVersions, {
       repoRoot,
@@ -2927,6 +2886,19 @@ router.post('/deploy', async (req, res) => {
         'failed',
         { error_code: error?.code ?? 'release_artifact_route_denied' },
       ).catch(() => {});
+    }
+    if (error?.code === 'release_effect_claim_unavailable') {
+      return res.status(409).json({
+        error: isStagingDeploy
+          ? 'Staging deploy already in progress'
+          : 'Deploy already in progress',
+        current_status: isStagingDeploy
+          ? stagingDeployState.status
+          : deployState.status,
+        started_at: isStagingDeploy
+          ? stagingDeployState.started_at
+          : deployState.started_at,
+      });
     }
     return res.status(403).json({
       error: error?.code ?? 'release_effect_unauthorized',

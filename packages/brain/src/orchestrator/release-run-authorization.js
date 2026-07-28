@@ -76,11 +76,7 @@ async function claimReleaseGeneration(pool, request, claimMode, claimOutcome = n
     await client.query('BEGIN');
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))',
-      [
-        request?.effect_kind === 'production'
-          ? 'kernel-release/production-mutation/v1'
-          : `kernel-release/effect/${request?.release_run_id ?? ''}/${request?.effect_kind ?? ''}`,
-      ],
+      ['kernel-release/effect-mutation/v1'],
     );
     const authorization = await authorizeReleaseEffect(client, request);
     const claimed = await client.query(
@@ -128,6 +124,26 @@ async function claimReleaseGeneration(pool, request, claimMode, claimOutcome = n
              WHERE outcome_id IS NULL
                AND effective_lease_expires_at > clock_timestamp()
           )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM kernel_release_effect_dispatch_claims active_claim
+                LEFT JOIN kernel_release_effect_dispatch_renewals
+                  active_renewal
+                  ON active_renewal.dispatch_claim_id = active_claim.id
+                 AND active_renewal.generation = active_claim.generation
+                LEFT JOIN kernel_release_effect_dispatch_outcomes
+                  active_outcome
+                  ON active_outcome.dispatch_claim_id = active_claim.id
+               GROUP BY active_claim.id, active_outcome.id
+              HAVING active_outcome.id IS NULL
+                 AND GREATEST(
+                   active_claim.lease_expires_at,
+                   COALESCE(
+                     MAX(active_renewal.lease_expires_at),
+                     active_claim.lease_expires_at
+                   )
+                 ) > clock_timestamp()
+            )
           GROUP BY intent.id, intent.idempotency_key, intent.effect_kind
          RETURNING id, generation, lease_expires_at
        )

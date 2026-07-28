@@ -12,6 +12,7 @@ import express from 'express';
 import request from 'supertest';
 
 let capturedSpawnArgs = null;
+let capturedController = null;
 let spawnError = null;
 let terminalWriteError = null;
 const rollbackAuthorityId = '66666666-6666-4666-8666-666666666666';
@@ -169,6 +170,26 @@ vi.mock('../../orchestrator/release-run-rollback-routing.js', () => ({
     readback_kind: 'brain-image',
   }]),
 }));
+vi.mock('../../orchestrator/release-run-controller-launcher.js', () => ({
+  resolveRollbackControllerRuntime: vi.fn(() => ({
+    image: `sha256:${'a'.repeat(64)}`,
+    network: 'cecelia_default',
+  })),
+  launchProductionController: vi.fn(async (options) => {
+    if (spawnError) throw spawnError;
+    capturedController = { kind: 'production', ...options };
+    return {
+      name: `cecelia-release-production-${options.claimId}-${options.generation}`,
+    };
+  }),
+  launchRollbackController: vi.fn(async (options) => {
+    if (spawnError) throw spawnError;
+    capturedController = { kind: 'rollback', ...options };
+    return {
+      name: `cecelia-release-rollback-${options.claimId}-${options.generation}`,
+    };
+  }),
+}));
 vi.mock('../shared.js', () => ({
   resolveRelatedFailureMemories: vi.fn(),
   getActiveExecutionPaths: vi.fn(),
@@ -199,6 +220,7 @@ describe('ops — deploy REPO_ROOT path', () => {
   beforeEach(async () => {
     query.mockClear();
     capturedSpawnArgs = null;
+    capturedController = null;
     spawnError = null;
     terminalWriteError = null;
     process.env.DEPLOY_TOKEN = 'test-token';
@@ -239,12 +261,12 @@ describe('ops — deploy REPO_ROOT path', () => {
       });
 
     expect(res.status).toBe(202);
-    expect(capturedSpawnArgs).not.toBeNull();
-    expect(capturedSpawnArgs[0]).toBe('docker');
-    expect(capturedSpawnArgs[1])
-      .toContain('/repo/scripts/lib/release-run-effect-worker.mjs');
-    const opts = capturedSpawnArgs[2];
-    expect(opts.cwd).toBe('/custom/repo/root');
+    expect(capturedController).toMatchObject({
+      kind: 'production',
+      repoRoot: '/custom/repo/root',
+      claimId: 91,
+      generation: 1,
+    });
   });
 
   it('POST /deploy 缺 ReleaseRun authority 时 fail closed before spawn', async () => {
@@ -390,12 +412,17 @@ describe('ops — deploy REPO_ROOT path', () => {
       authority_id: rollbackAuthorityId,
       claim_id: 72,
     });
-    expect(capturedSpawnArgs[0]).toBe('docker');
-    expect(capturedSpawnArgs[1]).toContain('/repo/scripts/lib/release-run-rollback-worker.mjs');
-    expect(capturedSpawnArgs[1]).toContain(`sha256:${'a'.repeat(64)}`);
-    const dockerArgs = capturedSpawnArgs[1].join('\n');
-    expect(dockerArgs).not.toContain('77777777-7777-4777-8777-777777777777');
-    expect(dockerArgs).toContain('KERNEL_RELEASE_ROLLBACK_TARGETS=');
+    expect(capturedController).toMatchObject({
+      kind: 'rollback',
+      image: `sha256:${'a'.repeat(64)}`,
+      repoRoot: '/custom/repo/root',
+      claimId: 72,
+      generation: 1,
+    });
+    expect(JSON.stringify(capturedController.workerEnvironment))
+      .not.toContain('77777777-7777-4777-8777-777777777777');
+    expect(capturedController.workerEnvironment)
+      .toHaveProperty('KERNEL_RELEASE_ROLLBACK_TARGETS');
     expect(res.body.controller).toBe('cecelia-release-rollback-72-1');
   });
 
@@ -463,7 +490,11 @@ describe('ops — deploy REPO_ROOT path', () => {
         merge_sha: 'f'.repeat(40),
         rollback_authorization: '77777777-7777-4777-8777-777777777777',
       });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({
+      error: 'release_controller_launch_outcome_unknown',
+      late_effect_risk: true,
+    });
     expect(query).toHaveBeenCalledWith(
       expect.stringMatching(/INSERT INTO kernel_release_rollback_execution_settlements/),
       expect.arrayContaining([72, 1, 'unknown', true]),

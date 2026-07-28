@@ -115,10 +115,13 @@ describe('server-owned ReleaseRun authorization consumer', () => {
     const sql = client.query.mock.calls.map(([statement]) => statement).join('\n');
     expect(sql).toMatch(/BEGIN[\s\S]+?pg_advisory_xact_lock[\s\S]+?COMMIT/);
     expect(client.query.mock.calls[1][1])
-      .toEqual(['kernel-release/production-mutation/v1']);
+      .toEqual(['kernel-release/effect-mutation/v1']);
     expect(sql).toContain("INTERVAL '15 minutes'");
     expect(sql).toMatch(/effective_lease_expires_at > clock_timestamp\(\)/);
     expect(sql).toMatch(/MAX\(claim\.generation\)/);
+    expect(sql).toMatch(
+      /FROM kernel_release_effect_dispatch_claims active_claim[\s\S]+active_outcome\.id IS NULL[\s\S]+active_renewal\.lease_expires_at/,
+    );
   });
 
   it('returns the active generation as a durable dedupe instead of losing its identity', async () => {
@@ -156,6 +159,8 @@ describe('server-owned ReleaseRun authorization consumer', () => {
       dispatch_claim_id: 9,
       generation: 1,
     });
+    expect(client.query.mock.calls[1][1])
+      .toEqual(['kernel-release/effect-mutation/v1']);
     expect(client.release).toHaveBeenCalledOnce();
   });
 

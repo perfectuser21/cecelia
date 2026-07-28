@@ -226,14 +226,14 @@ done <<< "$CHANGED_FILES"
 [[ "$DASHBOARD_SHA_MISMATCH" == true ]] && NEED_DASHBOARD=true
 
 # ── 去重闸：staging 已就绪等放行时不重建（防刀2前保守构建 + Bark 风暴）──────
-if [[ "$NEED_DASHBOARD" == true ]]; then
+if [[ "$NEED_DASHBOARD" == true && -z "${KERNEL_RELEASE_RUN_ID:-}" ]]; then
     DEDUP_PENDING="$MAIN_ROOT/apps/dashboard/.staging-pending"
     if [[ -f "$DEDUP_PENDING" ]]; then
         # || echo "" 兜底：pending 文件缺 commit= 行（截断/旧格式）时 grep 退 1 + pipefail
         # 会被 set -e 静默吞成 exit 1 零输出——兜成空串走"不去重"分支即可
         DEDUP_COMMIT=$(grep '^commit=' "$DEDUP_PENDING" | head -1 | cut -d= -f2 || echo "")
-        DEDUP_HEAD=$(git -C "$MAIN_ROOT" rev-parse --short "origin/$BASE_BRANCH" 2>/dev/null \
-            || git -C "$MAIN_ROOT" rev-parse --short "$BASE_BRANCH" 2>/dev/null || echo "")
+        DEDUP_HEAD=$(git -C "$MAIN_ROOT" rev-parse "origin/$BASE_BRANCH" 2>/dev/null \
+            || git -C "$MAIN_ROOT" rev-parse "$BASE_BRANCH" 2>/dev/null || echo "")
         if [[ -n "$DEDUP_COMMIT" && -n "$DEDUP_HEAD" && "$DEDUP_COMMIT" == "$DEDUP_HEAD" ]]; then
             echo "⏸️  staging 已就绪（commit ${DEDUP_COMMIT}）等人工放行 → 跳过重建（防重复构建/Bark）"
             NEED_DASHBOARD=false
@@ -396,13 +396,46 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         fi
 
         # ── 写放行标记（promote 据此知道放行哪一份）────────────────────────────
+        STAGED_ARTIFACT_NAME="${KERNEL_RELEASE_ARTIFACT_NAME:-}"
+        STAGED_ARTIFACT_VERSION="${KERNEL_RELEASE_ARTIFACT_VERSION:-}"
+        STAGED_SOURCE_DIGEST="${KERNEL_RELEASE_ARTIFACT_DIGEST:-}"
+        STAGED_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+        STAGED_BUILD_SHA=$(node -e "
+          try {
+            const value = JSON.parse(require('fs').readFileSync(
+              '$STAGING_DIST/build-info.json',
+              'utf8',
+            ));
+            process.stdout.write(value.git_sha || '');
+          } catch {}
+        " 2>/dev/null || true)
+        [[ "$STAGED_ARTIFACT_NAME" == "workspace" \
+          && -n "$STAGED_ARTIFACT_VERSION" \
+          && "$STAGED_SOURCE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ \
+          && "$STAGED_COMMIT" =~ ^[0-9a-f]{40}$ \
+          && "$STAGED_BUILD_SHA" == "$STAGED_COMMIT" ]] || {
+            echo "❌ staging artifact identity does not match ReleaseRun" >&2
+            kill "$SLOT_PID" 2>/dev/null || true
+            rm -f "$SLOT_PID_FILE"
+            rm -rf "$STAGING_DIST"
+            exit 78
+        }
+        STAGED_DEPLOYED_DIGEST=$(node \
+          "$SOURCE_SCRIPTS/lib/release-run-tree-digest-cli.mjs" \
+          "$STAGING_DIST")
         {
             echo "staging_dist=$STAGING_DIST"
             echo "staging_port=$STAGING_SLOT_PORT"
             echo "slot_pid=$SLOT_PID"
-            echo "commit=${KERNEL_RELEASE_MERGE_SHA:-$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+            echo "commit=$STAGED_COMMIT"
             echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        } > "$PENDING_FILE"
+            echo "artifact_name=$STAGED_ARTIFACT_NAME"
+            echo "artifact_version=$STAGED_ARTIFACT_VERSION"
+            echo "source_digest=$STAGED_SOURCE_DIGEST"
+            echo "staged_deployed_digest=$STAGED_DEPLOYED_DIGEST"
+        } > "${PENDING_FILE}.next"
+        chmod 600 "${PENDING_FILE}.next"
+        mv "${PENDING_FILE}.next" "$PENDING_FILE"
 
         echo "🟡 已停在 staging，等你人工放行（生产未触碰）"
         echo "   ┌─ 私密预览（走 SSH 隧道）──────────────────────────────"

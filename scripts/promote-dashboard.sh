@@ -94,19 +94,28 @@ read_staged() {
         echo "   先跑一次 dashboard 部署（deploy-local.sh）把新版本停到 staging，再回来放行。"
         exit 1
     fi
-    while IFS='=' read -r k v; do
-        case "$k" in
-            staging_dist) STAGED_DIST="$v" ;;
-            staging_port) STAGED_PORT="$v" ;;
-            slot_pid)     STAGED_PID="$v" ;;
-        esac
-    done < "$PENDING_FILE"
-    [[ -z "$STAGED_DIST" ]] && STAGED_DIST="$STAGING_DIST"
-    if [[ ! -d "$STAGED_DIST" || ! -f "$STAGED_DIST/index.html" ]]; then
-        echo "❌ 待放行的 staging 产物不存在或残缺：$STAGED_DIST"
-        echo "   放行标记已失效，重新跑一次 dashboard 部署。"
-        exit 1
-    fi
+    local sealed
+    sealed=$(RELEASE_DASHBOARD_PENDING_FILE="$PENDING_FILE" \
+      RELEASE_DASHBOARD_STAGING_ROOT="$STAGING_DIST" \
+      RELEASE_DASHBOARD_SEAL_PARENT="$DASH_DIR" \
+      node "$SCRIPT_DIR/lib/release-run-dashboard-stage-seal.mjs") || {
+        echo "❌ Dashboard release blocked: staged artifact identity mismatch" >&2
+        exit 78
+    }
+    IFS=$'\t' read -r STAGED_SEALED_ROOT STAGED_PORT STAGED_PID STAGED_COMMIT \
+      STAGED_ARTIFACT_NAME STAGED_ARTIFACT_VERSION STAGED_SOURCE_DIGEST \
+      STAGED_DEPLOYED_DIGEST <<< "$sealed"
+    [[ "$STAGED_SEALED_ROOT" == "$DASH_DIR"/.staging-sealed-* \
+      && -d "$STAGED_SEALED_ROOT" \
+      && "$STAGED_COMMIT" == "$KERNEL_RELEASE_MERGE_SHA" \
+      && "$STAGED_ARTIFACT_NAME" == "workspace" \
+      && "$STAGED_ARTIFACT_VERSION" == "$KERNEL_RELEASE_ARTIFACT_VERSION" \
+      && "$STAGED_SOURCE_DIGEST" == "$KERNEL_RELEASE_ARTIFACT_DIGEST" ]] || {
+        echo "❌ Dashboard release blocked: sealed artifact invalid" >&2
+        exit 78
+    }
+    STAGED_DIST="$STAGED_SEALED_ROOT"
+    trap 'rm -rf "$STAGED_SEALED_ROOT"' EXIT
 }
 
 # 写 manifest= + history=（release 阶段登记本版构成；不动 current/commit/promoted_at）。
@@ -125,6 +134,7 @@ do_release() {
     read_staged
     local RELEASE_TAG PROMOTE_COMMIT BRAIN_IMAGE
     RELEASE_TAG="$(next_release_tag)"
+    RELEASE_TAG_RESULT="$RELEASE_TAG"
     echo "🏷️  release tag：$RELEASE_TAG"
 
     mkdir -p "$RELEASES_DIR"
@@ -135,7 +145,7 @@ do_release() {
     fi
     echo "📦 已冻结验过的产物 → .dist-releases/${RELEASE_TAG}（不可变 release）"
 
-    PROMOTE_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+    PROMOTE_COMMIT="${STAGED_COMMIT:-}"
     [[ "$PROMOTE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
         echo "❌ Dashboard release blocked: exact merge SHA unavailable" >&2
         exit 78
@@ -226,7 +236,7 @@ do_deploy() {
             exit 78
         }
     else
-        DEPLOY_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
+        DEPLOY_COMMIT="${STAGED_COMMIT:-${KERNEL_RELEASE_MERGE_SHA:-}}"
     fi
     [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
         echo "❌ Dashboard promotion blocked: exact merge SHA unavailable" >&2
@@ -313,6 +323,9 @@ do_deploy() {
         exit 1
     fi
     if [[ "$rollback_mode" != "1" ]]; then
+        KERNEL_RELEASE_MERGE_SHA="$DEPLOY_COMMIT" \
+        KERNEL_RELEASE_ARTIFACT_VERSION="${STAGED_ARTIFACT_VERSION:-${KERNEL_RELEASE_ARTIFACT_VERSION:-}}" \
+        KERNEL_RELEASE_ARTIFACT_DIGEST="${STAGED_SOURCE_DIGEST:-${KERNEL_RELEASE_ARTIFACT_DIGEST:-}}" \
         RELEASE_DASHBOARD_OLD_TAG="$OLD_TAG" \
         RELEASE_DASHBOARD_NEW_TAG="$tag" \
         RELEASE_DASHBOARD_OLD_COMMIT="$OLD_COMMIT" \
@@ -356,9 +369,9 @@ case "$MODE" in
         CECELIA_SKIP_BRAIN_PROMOTE=1 do_deploy "$DEPLOY_TAG" 1
         ;;
     full)
-        REL_OUT="$(do_release)"
-        echo "$REL_OUT"
-        RELEASE_TAG=$(echo "$REL_OUT" | grep '^RELEASE_TAG=' | tail -1 | cut -d= -f2)
+        RELEASE_TAG_RESULT=""
+        do_release
+        RELEASE_TAG="$RELEASE_TAG_RESULT"
         [[ -n "$RELEASE_TAG" ]] || { echo "❌ release 阶段未产出 RELEASE_TAG"; exit 1; }
         do_deploy "$RELEASE_TAG"
         ;;

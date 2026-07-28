@@ -11,6 +11,10 @@ import {
 import { createPostgresMergeEffectStore } from '../../orchestrator/merge-effect-store.js';
 import { createReleaseBlockedEscalator } from '../../orchestrator/release-run-escalation.js';
 import {
+  appendDispatchOutcome,
+  claimReleaseEffect,
+} from '../../orchestrator/release-run-authorization.js';
+import {
   claimRollbackExecution,
   createRollbackAuthority,
   renewRollbackClaim,
@@ -86,13 +90,14 @@ let release;
 let store;
 let rollbackIntent;
 let artifactRollbackIntents;
+let foreignProductionAuthority;
 
 async function appendTransition(state, evidence = {}) {
   await store.appendTransition(client, {
     releaseRunId: release.id,
     currentState: release.state,
     state,
-    evidence: { merge_sha: mergeSha, ...evidence },
+    evidence: { merge_sha: release.merge_sha, ...evidence },
   });
   release = { ...release, state };
 }
@@ -158,7 +163,7 @@ async function appendConfirmedReceipt(effectKind) {
   const effectReceipt = await store.appendReceipt(client, {
     intent_id: intent.id,
     receipt_status: 'confirmed',
-    observed_merge_sha: mergeSha,
+    observed_merge_sha: release.merge_sha,
     observed_artifact_versions: artifacts,
     dispatch_claim_id: Number(claim.id),
     dispatch_generation: claim.generation,
@@ -552,6 +557,105 @@ describe('migrations 374-380 ReleaseRun ledger on PostgreSQL', () => {
         WHERE id = $3`,
       [otherRunId, otherTaskId, release.id],
     )).rejects.toMatchObject({ code: 'P0001' });
+
+    const foreignRunId = randomUUID();
+    const foreignHeadSha = 'c'.repeat(40);
+    const foreignMergeSha = 'd'.repeat(40);
+    await client.query(
+      'INSERT INTO initiative_runs (id, contract_id) VALUES ($1, $2)',
+      [foreignRunId, contractId],
+    );
+    const foreignOwnershipId = (await client.query(
+      `INSERT INTO kernel_pr_ownership
+         (run_id, task_id, repository, pr_number, pr_url, head_ref)
+       VALUES ($1, $2, 'perfectuser21/cecelia', 4501,
+               'https://github.com/perfectuser21/cecelia/pull/4501',
+               'cp-release-foreign')
+       RETURNING id`,
+      [foreignRunId, taskId],
+    )).rows[0].id;
+    const foreignAuthorizationId = (await client.query(
+      `INSERT INTO kernel_merge_authorizations
+         (ownership_id, run_id, task_id, repository, pr_number, pr_url,
+          head_ref, head_sha, policy_version, evidence)
+       VALUES ($1, $2, $3, 'perfectuser21/cecelia', 4501,
+               'https://github.com/perfectuser21/cecelia/pull/4501',
+               'cp-release-foreign', $4, 'kernel-merge/v1', '{}')
+       RETURNING id`,
+      [foreignOwnershipId, foreignRunId, taskId, foreignHeadSha],
+    )).rows[0].id;
+    const foreignMergeIntentId = (await client.query(
+      `INSERT INTO kernel_merge_effect_intents
+         (authorization_id, run_id, target, requested_head_sha)
+       VALUES ($1, $2,
+               'https://github.com/perfectuser21/cecelia/pull/4501', $3)
+       RETURNING id`,
+      [foreignAuthorizationId, foreignRunId, foreignHeadSha],
+    )).rows[0].id;
+    await client.query(
+      `INSERT INTO kernel_merge_effect_receipts
+         (intent_id, receipt_status, observed_head_sha, merged, evidence)
+       VALUES ($1, 'confirmed', $2, true, $3::jsonb)`,
+      [
+        foreignMergeIntentId,
+        foreignHeadSha,
+        JSON.stringify({ merge_commit_sha: foreignMergeSha }),
+      ],
+    );
+    const primaryRelease = release;
+    const foreignMerge = await store.loadMergeAuthority(client, {
+      runId: foreignRunId,
+      taskId,
+    });
+    release = await store.createRelease(client, {
+      ...foreignMerge,
+      artifact_versions: artifacts,
+      policy_version: 'kernel-release/v1',
+    });
+    await appendTransition('staging_queued');
+    await appendTransition('staging_running');
+    const foreignStagingReceipt = await appendConfirmedReceipt('staging');
+    await appendTransition('staging_passed', {
+      artifact_versions: artifacts,
+      effect_receipt_id: foreignStagingReceipt.id,
+      e2e_manifest_digest: release.e2e_manifest.manifest_digest,
+      verification: foreignStagingReceipt.verification,
+    });
+    const foreignRollbackIntent = await store.findOrCreateRollbackIntent(
+      client,
+      { releaseRun: release },
+    );
+    const foreignArtifactRollbackIntents =
+      await store.findOrCreateArtifactRollbackIntents(
+        client,
+        {
+          rollbackIntent: foreignRollbackIntent,
+          releaseRun: release,
+          artifacts: [{
+            artifact_name: 'brain',
+            expected_current_version: artifacts[0].version,
+            expected_current_digest: artifacts[0].digest,
+            expected_anchor: `brain:${artifacts[0].digest}`,
+            expected_previous_version: `brain-image:sha256:${'f'.repeat(64)}`,
+            expected_previous_digest: `sha256:${'f'.repeat(64)}`,
+          }],
+        },
+      );
+    await appendTransition('production_deploying', {
+      artifact_rollback_intent_ids:
+        foreignArtifactRollbackIntents.map((intent) => intent.id),
+    });
+    const foreignProductionIntent = await store.findOrCreateIntent(
+      client,
+      { releaseRun: release, effectKind: 'production' },
+    );
+    foreignProductionAuthority = {
+      release_run_id: release.id,
+      merge_sha: foreignMergeSha,
+      release_authorization: foreignProductionIntent.idempotency_key,
+      effect_kind: 'production',
+    };
+    release = primaryRelease;
   });
 
   it('rejects arbitrary shell acceptance at the durable manifest boundary', async () => {
@@ -706,6 +810,46 @@ describe('migrations 374-380 ReleaseRun ledger on PostgreSQL', () => {
       artifact_rollback_intent_ids:
         artifactRollbackIntents.map((intent) => intent.id),
     });
+    const productionIntent = await store.findOrCreateIntent(
+      client,
+      { releaseRun: release, effectKind: 'production' },
+    );
+    const productionAuthority = {
+      release_run_id: release.id,
+      merge_sha: mergeSha,
+      release_authorization: productionIntent.idempotency_key,
+      effect_kind: 'production',
+    };
+    const claimPool = {
+      connect: async () => ({
+        query: (...args) => client.query(...args),
+        release() {},
+      }),
+    };
+    const foreignClaim = await claimReleaseEffect(
+      claimPool,
+      foreignProductionAuthority,
+    );
+    await expect(claimReleaseEffect(
+      claimPool,
+      productionAuthority,
+    )).rejects.toMatchObject({ code: 'release_effect_claim_unavailable' });
+    await appendDispatchOutcome(
+      client,
+      foreignClaim.dispatch_claim_id,
+      foreignClaim.generation,
+      'failed',
+      { source: 'integration_global_production_fence' },
+    );
+    const admittedClaim = await claimReleaseEffect(claimPool, productionAuthority);
+    expect(admittedClaim).toMatchObject({ claimed: true, generation: 1 });
+    await appendDispatchOutcome(
+      client,
+      admittedClaim.dispatch_claim_id,
+      admittedClaim.generation,
+      'failed',
+      { source: 'integration_global_production_fence' },
+    );
     const productionReceipt = await appendConfirmedReceipt('production');
     await expect(client.query(
       `INSERT INTO kernel_release_transitions
