@@ -159,6 +159,7 @@ async function execute(value, overrides = {}) {
     nonceConsumer: value.nonceConsumer,
     adapters: value.adapters,
     collector: value.collector,
+    predecessorResolver: value.predecessorResolver,
     auditSink: value.auditSink,
     now: FIXTURE_NOW,
     timeoutMs: 25,
@@ -278,5 +279,120 @@ describe('executeDrillCell', () => {
       status: 'blocked',
       code: 'bundle_fields_invalid',
     });
+  });
+
+  it('verifies the exact violation predecessor before executing recovery', async () => {
+    const keys = createTrustFixture();
+    const violationCell = {
+      ...fixtureCell({ scenario: 'violation' }),
+      effect_signer_status: 'available',
+      effect_key_id: keys.effect.record.key_id,
+      blocked_by: null,
+    };
+    const recoveryCell = {
+      ...fixtureCell({ scenario: 'recovery' }),
+      effect_signer_status: 'available',
+      effect_key_id: keys.effect.record.key_id,
+      blocked_by: null,
+    };
+    const violationGrant = fixtureGrant(keys, violationCell);
+    const recoveryGrant = fixtureGrant(keys, recoveryCell);
+    const violationReceipt = fixtureReceipt(
+      keys,
+      violationGrant,
+      violationCell,
+    );
+    const recoveryReceipt = fixtureReceipt(
+      keys,
+      recoveryGrant,
+      recoveryCell,
+      violationReceipt,
+    );
+    const bundle = fixtureBundle(
+      keys,
+      recoveryCell,
+      recoveryGrant,
+      [violationReceipt, recoveryReceipt],
+      [violationGrant, recoveryGrant],
+    );
+    const calls = [];
+    const adapter = {
+      prepare: vi.fn(async () => {
+        calls.push('prepare');
+        return {};
+      }),
+      invokeActualSeam: vi.fn(async () => {
+        calls.push('seam');
+        return recoveryReceipt;
+      }),
+      observe: vi.fn(async (output) => {
+        calls.push('observe');
+        return output;
+      }),
+      cleanup: vi.fn(async () => {
+        calls.push('cleanup');
+        return { confirmed: true };
+      }),
+    };
+    const predecessorResolver = vi.fn(async () => {
+      calls.push('predecessor');
+      return {
+        grant: violationGrant,
+        receipt: violationReceipt,
+      };
+    });
+    const nonceConsumer = vi.fn(async () => {
+      calls.push('nonce');
+      return { consumed: true };
+    });
+    const collector = vi.fn(async (input) => {
+      calls.push('collector');
+      expect(input.executionGrants).toEqual([violationGrant, recoveryGrant]);
+      expect(input.receipts).toEqual([violationReceipt, recoveryReceipt]);
+      return bundle;
+    });
+
+    await expect(executeDrillCell({
+      cell: recoveryCell,
+      grant: recoveryGrant,
+      trustRegistry: keys.registry,
+      predecessorResolver,
+      nonceConsumer,
+      adapters: new Map([[recoveryCell.adapter_id, adapter]]),
+      collector,
+      now: FIXTURE_NOW,
+      timeoutMs: 25,
+    })).resolves.toMatchObject({
+      status: 'collected',
+      code: 'drill_receipt_collected',
+    });
+    expect(calls).toEqual([
+      'predecessor',
+      'nonce',
+      'prepare',
+      'seam',
+      'observe',
+      'cleanup',
+      'collector',
+    ]);
+  });
+
+  it('blocks recovery without a trusted violation predecessor before nonce use', async () => {
+    const value = executionFixture();
+    value.cell = {
+      ...value.cell,
+      cell_id: value.cell.cell_id.replace(/::normal$/, '::recovery'),
+      scenario: 'recovery',
+    };
+    value.grant = fixtureGrant(value.keys, value.cell);
+
+    await expect(execute(value, {
+      predecessorResolver: null,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'recovery_predecessor_unavailable',
+    });
+    expect(value.nonceConsumer).not.toHaveBeenCalled();
+    expect(value.adapter.prepare).not.toHaveBeenCalled();
   });
 });
