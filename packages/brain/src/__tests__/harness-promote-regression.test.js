@@ -181,7 +181,7 @@ describe('promoteToRegression', () => {
     ({ promoteToRegression } = await import('../harness-promote-regression.js'));
   });
 
-  it('happy path：DB 覆盖写（DELETE 后 INSERT，事务）+ yaml auto-PR 流程走完', async () => {
+  it('happy path：DB 覆盖写 + yaml draft PR，绝不自授 merge', async () => {
     const d = makeDeps({ files: GOOD_FILES });
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
@@ -201,7 +201,8 @@ describe('promoteToRegression', () => {
     expect(gitArgs.some((s) => s.includes('checkout -b') && s.endsWith('origin/main'))).toBe(true);
     const commitCall = d.execFileCalls.find((c) => c.cmd === 'git' && c.args[0] === 'commit');
     expect(commitCall.args.slice(-2)).toEqual(['--', 'regression-contract.yaml']);
-    expect(gitArgs.some((s) => s.startsWith('gh pr create'))).toBe(true);
+    expect(gitArgs.some((s) => s.startsWith('gh pr create') && s.includes('--draft'))).toBe(true);
+    expect(gitArgs.some((s) => s.startsWith('gh pr merge'))).toBe(false);
   });
 
   it('commit 校验失败（contract-dod.md 未被 git 跟踪）→ yaml 跳过但 DB 保留', async () => {

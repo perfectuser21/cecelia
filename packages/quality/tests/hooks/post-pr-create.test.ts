@@ -1,12 +1,8 @@
 /**
  * post-pr-create.sh 回归测试
  *
- * 覆盖 5 个用例（含 gh 失败场景 3 个核心 regression）：
- * 1. rewrite/* → 跳过 auto-merge（正常路径）
- * 2. cp-* → 触发 auto-merge（正常路径）
- * 3. gh 失败 + git 兜底 rewrite/* → 跳过（fail-closed 核心修复）
- * 4. gh 失败 + git 兜底 cp-* → 触发 auto-merge（不过度拦截）
- * 5. gh 失败 + git 也失败 → fail-closed 跳过（防静默放行）
+ * 所有分支都只能把 PR 交给 Kernel exact-SHA merge gate。
+ * Hook 不再拥有任何 auto-merge authority。
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -114,20 +110,16 @@ describe("post-pr-create.sh", () => {
     expect(exitCode).toBe(0);
   });
 
-  // 用例1：rewrite/* 正常路径 → gh 成功返回 rewrite/xxx → 跳过 auto-merge
-  it("用例1: rewrite/* 分支 gh 成功 → 跳过 auto-merge (exit 0, no merge)", () => {
+  it("用例1: rewrite/* 分支 → 交给 Kernel merge gate", () => {
     const binDir = makeFakeBinDir(0, "rewrite/ux-overhaul", "rewrite/ux-overhaul");
     const input = makeInput("gh pr create --repo owner/repo --title 'test'");
     const { exitCode, stderr } = runHook(input, binDir);
     expect(exitCode).toBe(0);
-    expect(stderr).toMatch(/rewrite\/\*|跳过 auto-merge/);
+    expect(stderr).toMatch(/Kernel|merge gate/);
     expect(stderr).not.toMatch(/触发 auto-merge/);
   });
 
-  // 用例2：cp-* 正常路径 → gh 成功返回 cp-xxx → 触发 auto-merge
-  it("用例2: cp-* 分支 gh 成功 → 触发 auto-merge", () => {
-    // 让 fake gh pr merge 也成功，区分两次 gh 调用：
-    // 第一次 gh pr view → 返回分支名；第二次 gh pr merge → exit 0
+  it("用例2: cp-* 分支也不得触发 auto-merge", () => {
     const binDir = join(TMP_DIR, `bin-case2-${Date.now()}`);
     mkdirSync(binDir, { recursive: true });
     writeFileSync(
@@ -137,7 +129,6 @@ if [[ "$*" == *"headRefName"* ]]; then
   echo "cp-07121800-my-feature"
   exit 0
 fi
-# gh pr merge
 echo "auto-merge enabled"
 exit 0
 `
@@ -147,25 +138,22 @@ exit 0
     const input = makeInput("gh pr create --repo owner/repo --title 'test'");
     const { exitCode, stderr } = runHook(input, binDir);
     expect(exitCode).toBe(0);
-    expect(stderr).toMatch(/触发 auto-merge/);
-    expect(stderr).not.toMatch(/跳过 auto-merge/);
+    expect(stderr).toMatch(/Kernel|merge gate/);
+    expect(stderr).not.toMatch(/触发 auto-merge/);
   });
 
-  // 用例3（核心 regression）：gh 失败 + git 兜底 rewrite/* → 跳过
-  it("用例3 [regression]: gh失败 + git兜底 rewrite/* → 跳过 auto-merge (fail-closed)", () => {
+  it("用例3: gh 失败也保持 Kernel-only", () => {
     const binDir = makeFakeBinDir(1, "", "rewrite/payments-v2");
     const input = makeInput("gh pr create --repo owner/repo --title 'test'");
     const { exitCode, stderr } = runHook(input, binDir);
     expect(exitCode).toBe(0);
-    expect(stderr).toMatch(/rewrite\/\*|跳过 auto-merge/);
+    expect(stderr).toMatch(/Kernel|merge gate/);
     expect(stderr).not.toMatch(/触发 auto-merge/);
   });
 
-  // 用例4（核心 regression）：gh 失败 + git 兜底 cp-* → 触发 auto-merge（不过度拦截）
-  it("用例4 [regression]: gh失败 + git兜底 cp-* → 触发 auto-merge（不过度拦截）", () => {
+  it("用例4: git 可解析 cp-* 也不能授予 merge authority", () => {
     const binDir = join(TMP_DIR, `bin-case4-${Date.now()}`);
     mkdirSync(binDir, { recursive: true });
-    // gh: 第一次（pr view）失败，第二次（pr merge）成功
     writeFileSync(
       join(binDir, "gh"),
       `#!/usr/bin/env bash
@@ -194,17 +182,16 @@ exit $?
     const input = makeInput("gh pr create --repo owner/repo --title 'test'");
     const { exitCode, stderr } = runHook(input, binDir);
     expect(exitCode).toBe(0);
-    expect(stderr).toMatch(/触发 auto-merge/);
-    expect(stderr).not.toMatch(/跳过 auto-merge/);
+    expect(stderr).toMatch(/Kernel|merge gate/);
+    expect(stderr).not.toMatch(/触发 auto-merge/);
   });
 
-  // 用例5（核心 regression）：gh 失败 + git 也失败 → fail-closed 跳过
-  it("用例5 [regression]: gh失败 + git也失败 → fail-closed 保守跳过 auto-merge", () => {
+  it("用例5: gh/git 都失败仍保持 fail-closed", () => {
     const binDir = makeFakeBinDir(1, "", null);
     const input = makeInput("gh pr create --repo owner/repo --title 'test'");
     const { exitCode, stderr } = runHook(input, binDir);
     expect(exitCode).toBe(0);
-    expect(stderr).toMatch(/fail-closed|无法获取分支名/);
+    expect(stderr).toMatch(/Kernel|merge gate|fail-closed/);
     expect(stderr).not.toMatch(/触发 auto-merge/);
   });
 });

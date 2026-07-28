@@ -347,9 +347,11 @@ describe("bash-guard.sh", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    it("allows gh pr merge", () => {
+    it("blocks direct gh pr merge outside the Kernel receipt executor", () => {
       const result = runHookIsolated("gh pr merge --squash");
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("MERGE AUTHORITY");
+      expect(result.stderr).toContain("Kernel");
     });
   });
 
