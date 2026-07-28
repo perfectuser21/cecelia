@@ -21,6 +21,17 @@
   secret 不进入请求 JSON 或诊断文本。
 - 回退：`bash scripts/brain-rollback.sh 1.268.11`；没有数据库迁移。
 
+## Kernel production effect signer set
+
+- production signer loader 只接受与 canonical 10 个 non-release seam 精确对应的
+  `{key_id, secret_file}` 配置；缺失、额外、accessor、跨 seam key 或 plan key
+  漂移均在装配前 fail-closed。
+- 每个 effect signer 必须由 trust registry 中同 service/purpose/key 的 Ed25519
+  公钥校验私钥文件后加载；返回值不暴露路径或私钥，且不能用 raw secret/config
+  扩展字段绕过。
+- 本版本只提供生产 signer set 的可信装配边界，不生成、不提交、不部署私钥；
+  回退：`bash scripts/brain-rollback.sh 1.268.11`；没有数据库迁移。
+
 ## Brain-owned Kernel production seam builders
 
 - 一个 server-owned factory 只接受精确的 production dependency/authority
