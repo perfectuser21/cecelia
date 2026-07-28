@@ -1,9 +1,18 @@
 import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   compileDrillPlan,
+  executeDrillCell,
 } from '../kernel-equivalence-drills.js';
+import {
+  FIXTURE_NOW,
+  createTrustFixture,
+  fixtureBundle,
+  fixtureCell,
+  fixtureGrant,
+  fixtureReceipt,
+} from './kernel-equivalence-test-fixtures.js';
 
 function rootContract() {
   return load(readFileSync(
@@ -83,5 +92,191 @@ describe('compileDrillPlan', () => {
       () => compileDrillPlan(contract),
       'drill_effect_signer_key_missing',
     );
+  });
+});
+
+function executionFixture() {
+  const keys = createTrustFixture();
+  const cell = {
+    ...fixtureCell(),
+    effect_signer_status: 'available',
+    effect_key_id: keys.effect.record.key_id,
+    blocked_by: null,
+  };
+  const grant = fixtureGrant(keys, cell);
+  const receipt = fixtureReceipt(keys, grant, cell);
+  const bundle = fixtureBundle(keys, cell, grant, [receipt]);
+  const calls = [];
+  const audits = [];
+  const nonceConsumer = vi.fn(async () => {
+    calls.push('nonce');
+    return { consumed: true };
+  });
+  const adapter = {
+    prepare: vi.fn(async () => {
+      calls.push('prepare');
+      return { resource_id: grant.resource_id };
+    }),
+    invokeActualSeam: vi.fn(async () => {
+      calls.push('seam');
+      return receipt;
+    }),
+    observe: vi.fn(async (value) => {
+      calls.push('observe');
+      return value;
+    }),
+    cleanup: vi.fn(async () => {
+      calls.push('cleanup');
+      return { confirmed: true };
+    }),
+  };
+  const collector = vi.fn(async () => {
+    calls.push('collector');
+    return bundle;
+  });
+  const auditSink = vi.fn((audit) => audits.push(audit));
+  return {
+    keys,
+    cell,
+    grant,
+    receipt,
+    bundle,
+    calls,
+    audits,
+    nonceConsumer,
+    adapter,
+    adapters: new Map([[cell.adapter_id, adapter]]),
+    collector,
+    auditSink,
+  };
+}
+
+async function execute(value, overrides = {}) {
+  return executeDrillCell({
+    cell: value.cell,
+    grant: value.grant,
+    trustRegistry: value.keys.registry,
+    nonceConsumer: value.nonceConsumer,
+    adapters: value.adapters,
+    collector: value.collector,
+    auditSink: value.auditSink,
+    now: FIXTURE_NOW,
+    timeoutMs: 25,
+    ...overrides,
+  });
+}
+
+describe('executeDrillCell', () => {
+  it('blocks a missing signer before grant, nonce, adapter, or collector activity', async () => {
+    const value = executionFixture();
+    value.cell.effect_signer_status = 'missing';
+    value.cell.blocked_by = 'seam_receipt_signer_missing';
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'seam_receipt_signer_missing',
+      bundle: null,
+    });
+    expect(value.nonceConsumer).not.toHaveBeenCalled();
+    expect(value.adapter.prepare).not.toHaveBeenCalled();
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('atomically consumes nonce after grant verification and before adapter prepare', async () => {
+    const value = executionFixture();
+    const result = await execute(value);
+
+    expect(result).toMatchObject({
+      status: 'collected',
+      code: 'drill_receipt_collected',
+    });
+    expect(result.bundle.bundle_id).toBe(value.bundle.bundle_id);
+    expect(value.calls).toEqual([
+      'nonce',
+      'prepare',
+      'seam',
+      'observe',
+      'cleanup',
+      'collector',
+    ]);
+  });
+
+  it('blocks invalid grants without consuming nonce', async () => {
+    const value = executionFixture();
+    value.grant = { ...value.grant, provider: 'grok' };
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'grant_axis_mismatch',
+    });
+    expect(value.nonceConsumer).not.toHaveBeenCalled();
+  });
+
+  it('blocks nonce replay and writes a secret-free denial audit', async () => {
+    const value = executionFixture();
+    value.nonceConsumer.mockResolvedValue({ consumed: false });
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'grant_nonce_replay',
+    });
+    expect(value.adapter.prepare).not.toHaveBeenCalled();
+    expect(value.audits).toHaveLength(1);
+    const serialized = JSON.stringify(value.audits[0]);
+    expect(serialized).not.toContain('signature');
+    expect(serialized).not.toContain(value.grant.signature);
+    expect(serialized).not.toContain(value.grant.nonce);
+  });
+
+  it('times out the actual seam, cleans up, and never collects', async () => {
+    const value = executionFixture();
+    value.adapter.invokeActualSeam.mockImplementation(
+      () => new Promise(() => {}),
+    );
+
+    await expect(execute(value, { timeoutMs: 5 })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'adapter_timeout',
+    });
+    expect(value.adapter.cleanup).toHaveBeenCalledTimes(1);
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['unsigned output', () => ({ effect_code: 'ordinary object' }), 'effect_fields_invalid'],
+    [
+      'axis mismatch',
+      (value) => ({ ...value.receipt, provider: 'grok' }),
+      'effect_axis_mismatch',
+    ],
+  ])('blocks %s from the adapter without a bundle', async (_label, output, code) => {
+    const value = executionFixture();
+    value.adapter.invokeActualSeam.mockImplementation(async () => (
+      typeof output === 'function' ? output(value) : output
+    ));
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code,
+      bundle: null,
+    });
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('blocks unconfirmed cleanup and collector-invalid bundles', async () => {
+    const cleanup = executionFixture();
+    cleanup.adapter.cleanup.mockResolvedValue({ confirmed: false });
+    await expect(execute(cleanup)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'adapter_cleanup_unconfirmed',
+    });
+    expect(cleanup.collector).not.toHaveBeenCalled();
+
+    const collector = executionFixture();
+    collector.collector.mockResolvedValue({ ordinary: 'object' });
+    await expect(execute(collector)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'bundle_fields_invalid',
+    });
   });
 });
