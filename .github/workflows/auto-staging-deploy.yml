@@ -1,136 +1,45 @@
-name: Auto Staging Deploy
-
-# main push（含 auto-merge 合入后产生的 push）→ 自动部署到**常驻 staging**(端口 5222)
-# → 跑 staging smoke。验证最新 main 在 staging 真能起来、真健康。
-#
-# 与 deploy.yml 的关系（关键边界）：
-#   - deploy.yml = 发布到 **production**(5221)，触发方式是**手动/定时(10:00/18:00)**，
-#     这是用户故意把 merge 节奏和 release 节奏解耦。**本 workflow 不动它、不 promote**。
-#   - 本 workflow 只打 **staging**，每次 main push 都跑，给"最新 main 在 staging 健不健康"
-#     一个持续信号。**绝不触碰 production、绝不 promote**。
-#
-# 实现复用现成基建（不重造轮子）：
-#   - POST /api/brain/deploy  {staging:true} → 部署机执行 scripts/staging-deploy.sh
-#   - GET  /api/brain/deploy/staging/status → 轮询直到 success / skipped_* / failed
-#   - smoke = scripts/auto-staging-smoke.sh（远程验 staging 5222 健康）
-#
-# 无 Docker / 无 .env.staging 的机器：staging-deploy.sh 优雅降级（skipped_*），
-# 本 workflow 视为通过（staging 是加分项，不阻断；且本就不阻断任何东西）。
+name: Authorized Kernel Staging Effect
 
 on:
-  push:
-    branches: [main]
-    # 只在可能影响 Brain 运行时的改动上触发（避免纯文档 push 也起 staging）。
-    paths:
-      - 'packages/brain/**'
-      - 'docker-compose.staging.yml'
-      - 'scripts/staging-deploy.sh'
-      - 'scripts/staging-verify.sh'
-      - 'scripts/auto-staging-smoke.sh'
-      - '.github/workflows/auto-staging-deploy.yml'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Durable Kernel ReleaseRun UUID
+        required: true
+      merge_sha:
+        description: Exact merge SHA
+        required: true
+      release_authorization:
+        description: Persisted staging effect authorization UUID
+        required: true
 
-# 与 production 部署用**不同**的并发组：staging 自跑，绝不和 production 排队/互相取消。
-# 同时 staging 自身串行，避免两次 main push 同时打 staging。
 concurrency:
-  group: auto-staging-deploy
+  group: kernel-release
   cancel-in-progress: false
 
 jobs:
-  staging_deploy_and_smoke:
-    name: Deploy to Staging + Smoke
+  staging:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: read
     steps:
-      - name: Connect to Tailscale
+      - name: Connect to deployment network
         uses: tailscale/github-action@v2
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
-
-      - name: Checkout（取 smoke 脚本）
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: 触发 Staging 部署（staging:true，绝不 promote）
+      - name: Execute authorized staging effect
         env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+          RELEASE_AUTHORIZATION: ${{ inputs.release_authorization }}
         run: |
-          set -uo pipefail
-          if [ -z "${DEPLOY_TOKEN:-}" ]; then
-            echo "::error::DEPLOY_TOKEN secret 未配置"
-            exit 1
-          fi
-
-          echo "main push → 触发 staging 部署（端口 5222），不碰 production"
-          echo "  URL: ${BRAIN_URL}/api/brain/deploy  (staging:true)"
-
-          HTTP_CODE=$(curl -s -o /tmp/staging_deploy_resp.txt -w "%{http_code}" \
+          set -euo pipefail
+          test -n "$BRAIN_URL" && test -n "$DEPLOY_TOKEN"
+          HTTP_CODE=$(curl --silent --show-error --output /tmp/release-response.json --write-out "%{http_code}" \
             -X POST "${BRAIN_URL}/api/brain/deploy" \
             -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"staging": true}' \
-            --connect-timeout 30 --max-time 60)
-
-          echo "Response code: $HTTP_CODE"
-          cat /tmp/staging_deploy_resp.txt 2>/dev/null || true
-          echo ""
-
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ staging 部署 webhook 已触发"
-          else
-            echo "::error::staging 部署 webhook 失败 (HTTP $HTTP_CODE)"
-            exit 1
-          fi
-
-      - name: 等待 Staging 部署完成
-        env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          set -uo pipefail
-          echo "轮询 /api/brain/deploy/staging/status (max 300s)..."
-          MAX_WAIT=300; INTERVAL=10; ELAPSED=0
-          while [ $ELAPSED -lt $MAX_WAIT ]; do
-            STATUS_JSON=$(curl -s --connect-timeout 10 --max-time 15 \
-              "${BRAIN_URL}/api/brain/deploy/staging/status" 2>/dev/null || echo '{"status":"unknown"}')
-            STATUS=$(echo "$STATUS_JSON" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
-            echo "  [${ELAPSED}s] staging status=${STATUS}"
-
-            if [ "$STATUS" = "success" ]; then
-              echo "✅ staging 部署成功，进入 smoke"
-              exit 0
-            elif echo "$STATUS" | grep -q "^skipped_"; then
-              REASON=$(echo "$STATUS_JSON" | jq -r '.skip_reason // "unknown"' 2>/dev/null || echo "unknown")
-              echo "⚠️  staging 跳过 (${REASON}) — 该机器无 docker/.env.staging，非失败"
-              echo "STAGING_SKIPPED=1" >> "$GITHUB_ENV"
-              exit 0
-            elif [ "$STATUS" = "failed" ]; then
-              ERR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown"' 2>/dev/null || echo "unknown")
-              echo "::error::staging 部署失败: $ERR"
-              exit 1
-            elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 30 ]; then
-              echo "::warning::staging status idle after ${ELAPSED}s — 可能已跳过"
-              echo "STAGING_SKIPPED=1" >> "$GITHUB_ENV"
-              exit 0
-            fi
-            sleep $INTERVAL; ELAPSED=$((ELAPSED + INTERVAL))
-          done
-          echo "::error::staging 部署轮询超时 (${MAX_WAIT}s)"
-          exit 1
-
-      - name: Staging Smoke（验 5222 真健康）
-        env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
-        run: |
-          set -uo pipefail
-          if [ "${STAGING_SKIPPED:-0}" = "1" ]; then
-            echo "⚠️  staging 被跳过（无 docker/.env.staging），跳过 smoke"
-            exit 0
-          fi
-          # BRAIN_URL 形如 http://HOST:5221 → 取 HOST，smoke 打同主机 5222。
-          HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
-          echo "对 staging ${HOST}:5222 跑 auto-staging-smoke..."
-          STAGING_HOST="$HOST" STAGING_PORT=5222 bash scripts/auto-staging-smoke.sh
+            -d "{\"staging\":true,\"release_run_id\":\"${RELEASE_RUN_ID}\",\"merge_sha\":\"${MERGE_SHA}\",\"release_authorization\":\"${RELEASE_AUTHORIZATION}\"}")
+          test "$HTTP_CODE" = "202"
+          jq -e '.status == "accepted"' /tmp/release-response.json

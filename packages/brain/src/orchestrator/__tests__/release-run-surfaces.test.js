@@ -20,9 +20,9 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).toMatch(/release_run_id:/);
     expect(source).toMatch(/merge_sha:/);
     expect(source).toMatch(/release_authorization:/);
-    expect(source).toContain('"release_run_id"');
-    expect(source).toContain('"merge_sha"');
-    expect(source).toContain('"release_authorization"');
+    expect(source).toMatch(/release_run_id[^\n]*(RELEASE_RUN_ID|inputs\.release_run_id)/);
+    expect(source).toMatch(/merge_sha[^\n]*(MERGE_SHA|inputs\.merge_sha)/);
+    expect(source).toMatch(/release_authorization[^\n]*(RELEASE_AUTHORIZATION|inputs\.release_authorization)/);
     expect(source).toMatch(/group:\s*kernel-release/);
     expect(source).not.toMatch(/schedule:/);
     expect(source).not.toMatch(/push:/);
@@ -34,7 +34,7 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).toMatch(/release_run_id:/);
     expect(source).toMatch(/merge_sha:/);
     expect(source).toMatch(/release_authorization:/);
-    expect(source).toContain('"staging":true');
+    expect(source).toMatch(/\\?"staging\\?":true/);
     expect(source).toMatch(/group:\s*kernel-release/);
     expect(source).not.toMatch(/push:/);
     expect(source).not.toMatch(/skipped_|视为通过|status idle/);
