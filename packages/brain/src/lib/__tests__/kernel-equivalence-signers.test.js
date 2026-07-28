@@ -30,8 +30,10 @@ import {
   FIXTURE_RUN_ID,
   FIXTURE_SHA,
   createTrustFixture,
+  fixtureBundle,
   fixtureCell,
   fixtureCleanupEvidence,
+  fixtureGrant,
   fixtureReceipt,
 } from './kernel-equivalence-test-fixtures.js';
 
@@ -507,6 +509,160 @@ describe('protected Ed25519 equivalence signers', () => {
     })).resolves.toMatchObject({
       previous_bundle_hash: previousHash,
       signature: expect.any(String),
+    });
+  });
+
+  it('refuses recovery as a genesis bundle without a committed predecessor', async () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+    const violationCell = fixtureCell({ scenario: 'violation' });
+    const recoveryCell = fixtureCell({ scenario: 'recovery' });
+    const violationGrant = fixtureGrant(keys, violationCell);
+    const recoveryGrant = fixtureGrant(keys, recoveryCell);
+    const violationReceipt = fixtureReceipt(
+      keys,
+      violationGrant,
+      violationCell,
+    );
+    const recoveryReceipt = fixtureReceipt(
+      keys,
+      recoveryGrant,
+      recoveryCell,
+      violationReceipt,
+    );
+    const collector = loadCollectorSigner({
+      secretFile: writePrivateKey(
+        root,
+        'collector-recovery-genesis.pem',
+        keys.collector.privateKey,
+      ),
+      keyId: keys.collector.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+    });
+
+    await expect(collector({
+      cell: recoveryCell,
+      grant: recoveryGrant,
+      executionGrants: [violationGrant, recoveryGrant],
+      receipts: [violationReceipt, recoveryReceipt],
+      cleanupEvidence: fixtureCleanupEvidence(recoveryCell, recoveryGrant),
+      previousBundleHash: null,
+    })).rejects.toMatchObject({
+      code: 'collector_recovery_predecessor_uncommitted',
+    });
+  });
+
+  it('refuses a signed off-chain violation pair absent from committed ancestry', async () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+    const violationCell = fixtureCell({ scenario: 'violation' });
+    const recoveryCell = fixtureCell({ scenario: 'recovery' });
+    const committedGrant = fixtureGrant(keys, violationCell);
+    const committedReceipt = fixtureReceipt(
+      keys,
+      committedGrant,
+      violationCell,
+    );
+    const committedBundle = fixtureBundle(
+      keys,
+      violationCell,
+      committedGrant,
+      [committedReceipt],
+    );
+    const committedHash = sha256Canonical(committedBundle);
+    const offChainGrant = fixtureGrant(keys, violationCell);
+    const offChainReceipt = fixtureReceipt(
+      keys,
+      offChainGrant,
+      violationCell,
+    );
+    const recoveryGrant = fixtureGrant(keys, recoveryCell);
+    const recoveryReceipt = fixtureReceipt(
+      keys,
+      recoveryGrant,
+      recoveryCell,
+      offChainReceipt,
+    );
+    const collector = loadCollectorSigner({
+      secretFile: writePrivateKey(
+        root,
+        'collector-off-chain.pem',
+        keys.collector.privateKey,
+      ),
+      keyId: keys.collector.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+      resolvePreviousBundle: async (hash) => (
+        hash === committedHash ? committedBundle : null
+      ),
+    });
+
+    await expect(collector({
+      cell: recoveryCell,
+      grant: recoveryGrant,
+      executionGrants: [offChainGrant, recoveryGrant],
+      receipts: [offChainReceipt, recoveryReceipt],
+      cleanupEvidence: fixtureCleanupEvidence(recoveryCell, recoveryGrant),
+      previousBundleHash: committedHash,
+    })).rejects.toMatchObject({
+      code: 'collector_recovery_predecessor_uncommitted',
+    });
+  });
+
+  it('refuses a committed predecessor with a different denial contract', async () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+    const violationCell = fixtureCell({ scenario: 'violation' });
+    const recoveryCell = fixtureCell({ scenario: 'recovery' });
+    const violationGrant = fixtureGrant(keys, violationCell);
+    const differentDenial = fixtureReceipt(
+      keys,
+      violationGrant,
+      violationCell,
+      null,
+      {
+        observed_outcome: 'blocked',
+        effect_code: 'different_denial',
+      },
+    );
+    const violationBundle = fixtureBundle(
+      keys,
+      violationCell,
+      violationGrant,
+      [differentDenial],
+    );
+    const violationHash = sha256Canonical(violationBundle);
+    const recoveryGrant = fixtureGrant(keys, recoveryCell);
+    const recoveryReceipt = fixtureReceipt(
+      keys,
+      recoveryGrant,
+      recoveryCell,
+      differentDenial,
+    );
+    const collector = loadCollectorSigner({
+      secretFile: writePrivateKey(
+        root,
+        'collector-different-denial.pem',
+        keys.collector.privateKey,
+      ),
+      keyId: keys.collector.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+      resolvePreviousBundle: async (hash) => (
+        hash === violationHash ? violationBundle : null
+      ),
+    });
+
+    await expect(collector({
+      cell: recoveryCell,
+      grant: recoveryGrant,
+      executionGrants: [violationGrant, recoveryGrant],
+      receipts: [differentDenial, recoveryReceipt],
+      cleanupEvidence: fixtureCleanupEvidence(recoveryCell, recoveryGrant),
+      previousBundleHash: violationHash,
+    })).rejects.toMatchObject({
+      code: 'collector_recovery_predecessor_contract_mismatch',
     });
   });
 
