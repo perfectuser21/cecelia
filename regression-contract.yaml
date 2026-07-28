@@ -144,3 +144,362 @@ golden_paths:
     method: auto
     test_command: "node tests/regression/codex-grok-launcher-supervisor/supervisor-parse-behavior.test.mjs"
     must_never_break: true
+
+  - id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+    name: "Kernel P0/P1 行为等价账本完整且不得用静态文档伪造证明"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report"
+    must_never_break: true
+
+# ============================================================================
+# Kernel Harness P0/P1 Behavior Equivalence
+# ============================================================================
+# 这是唯一行为清单；不是第二套 lifecycle，也不创建 behavior_ledger 表。
+# gap 是合规状态：只有 exact artifact + freshness + effect receipt + 3 providers ×
+# normal/violation/recovery 全部真实触发后，才允许改成 proven。
+behavior_equivalence:
+  schema_version: "1.0.0"
+  contract_version: "kernel-equivalence-2026-07-28"
+  report_as_of: "2026-07-28T00:00:00.000Z"
+
+  journey:
+    key: "kernel-harness-golden-path"
+    steps:
+      - { id: S0, name: "task born and admitted" }
+      - { id: S1, name: "requirements and acceptance frozen" }
+      - { id: S2, name: "controller and attempt assigned" }
+      - { id: S3, name: "workspace and branch isolated" }
+      - { id: S4, name: "generator executes under guards" }
+      - { id: S5, name: "CI and DevGate evaluate without merge authority" }
+      - { id: S6, name: "independent evaluator measures the artifact" }
+      - { id: S7, name: "judge resolves evidence and convergence" }
+      - { id: S8, name: "human review policy is resolved" }
+      - { id: S9, name: "authorized exact SHA is merged" }
+      - { id: S10, name: "the merged SHA is deployed to staging" }
+      - { id: S11, name: "staging E2E promotes the same SHA to production" }
+      - { id: S12, name: "effects, report, and learning are closed" }
+
+  dimensions:
+    - fr
+    - nfr
+    - invariant
+    - checkpoint
+    - freshness
+    - death_alert
+    - failure_semantics
+    - effect_confirmation
+    - adversarial_surface
+    - ledger_freshness
+    - axis_alignment
+
+  # An explicit empty matrix is deliberate evidence of absence, not proof.
+  missing_proof_cell: &missing_proof_cell
+    availability: gap
+    test_command:
+    expected_result:
+    observed_result:
+    evidence_refs: []
+    effect_receipt_id:
+
+  missing_provider_matrix: &missing_provider_matrix
+    claude:
+      normal: *missing_proof_cell
+      violation: *missing_proof_cell
+      recovery: *missing_proof_cell
+    codex:
+      normal: *missing_proof_cell
+      violation: *missing_proof_cell
+      recovery: *missing_proof_cell
+    grok:
+      normal: *missing_proof_cell
+      violation: *missing_proof_cell
+      recovery: *missing_proof_cell
+
+  behaviors:
+    - behavior_id: KERNEL-P0-01-BRANCH-PROTECTION
+      priority: P0
+      owner: engine-platform
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "Claude Code branch-protect/main-repo-write hooks deny protected-branch mutation."
+      legacy_evidence:
+        - packages/engine/tests/hooks/branch-protect.test.ts
+        - packages/engine/tests/hooks/main-repo-write-guard.test.ts
+      unified_constructs:
+        - "Kernel workspace admission and protected-ref mutation policy"
+        - "central GitHub mutation broker"
+      steps: [S3, S4, S9]
+      dimensions: [invariant, checkpoint, failure_semantics, adversarial_surface]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Deny before any protected ref changes; preserve the attempted mutation receipt."
+      partial_behavioral_evidence:
+        - "cd packages/engine && npx vitest run tests/hooks/branch-protect.test.ts tests/hooks/main-repo-write-guard.test.ts"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "No provider-specific 3x3 production-effect receipts bind the legacy hook behavior to Kernel enforcement."
+        owner: engine-platform
+        closure_plan: "Run protected-ref normal/violation/recovery drills for Claude, Codex, and Grok and retain denied mutation receipts."
+
+    - behavior_id: KERNEL-P0-02-CREDENTIAL-GUARD
+      priority: P0
+      owner: security-platform
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "Claude Code credential hooks prevent secret persistence, cross-account reuse, and expired credential execution."
+      legacy_evidence:
+        - packages/brain/src/orchestrator/credential-broker.test.js
+        - packages/brain/src/__tests__/harness-credentials.test.js
+      unified_constructs:
+        - "CredentialEnvelope broker"
+        - "attempt-scoped one-shot credential lease"
+      steps: [S2, S3, S4, S12]
+      dimensions: [nfr, invariant, freshness, failure_semantics, effect_confirmation, adversarial_surface]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Fail closed before provider launch and revoke/clean the attempt-scoped credential."
+      partial_behavioral_evidence:
+        - "cd packages/brain && npx vitest run src/orchestrator/credential-broker.test.js src/__tests__/harness-credentials.test.js"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "Unit behavior exists, but no complete provider-specific violation and recovery receipts exist for all three providers."
+        owner: security-platform
+        closure_plan: "Exercise valid, expired/cross-account, and refreshed leases for each provider and capture launch plus cleanup effects."
+
+    - behavior_id: KERNEL-P0-03-BRANCH-PUSH-GUARD
+      priority: P0
+      owner: kernel-runtime
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "Claude Code branch and Bash guards restrict push/merge mutations to the task branch and authorized path."
+      legacy_evidence:
+        - packages/engine/tests/hooks/bash-guard.test.ts
+        - packages/brain/src/__tests__/legacy-harness-merge-firewall.test.js
+      unified_constructs:
+        - "Kernel mutation intent"
+        - "GitHub mutation broker with exact repository/ref scope"
+      steps: [S3, S4, S5, S9]
+      dimensions: [fr, invariant, checkpoint, failure_semantics, effect_confirmation, adversarial_surface]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Reject out-of-scope push or merge before network mutation and record the denial."
+      partial_behavioral_evidence:
+        - "cd packages/brain && npx vitest run src/__tests__/legacy-harness-merge-firewall.test.js"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "The unified mutation path has tests but lacks provider-attributed normal, denial, and recovery effect receipts."
+        owner: kernel-runtime
+        closure_plan: "Run broker drills for scoped push, forbidden ref, and corrected-ref retry for all providers."
+
+    - behavior_id: KERNEL-P0-04-CI-MERGE-AUTHORITY
+      priority: P0
+      owner: release-platform
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "CI may evaluate but cannot merge; only an authorized post-evaluation decision may merge the exact reviewed SHA."
+      legacy_evidence:
+        - packages/brain/src/__tests__/harness-ci-gate-branches.test.js
+        - packages/brain/src/orchestrator/__tests__/merge-authority.test.js
+      unified_constructs:
+        - "MergeAuthorization decision"
+        - "exact-SHA merge effect executor and receipt store"
+      steps: [S5, S6, S7, S8, S9]
+      dimensions: [fr, invariant, checkpoint, freshness, failure_semantics, effect_confirmation, adversarial_surface, ledger_freshness]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "CI success alone never grants merge; stale or mismatched SHA fails closed."
+      partial_behavioral_evidence:
+        - "cd packages/brain && npx vitest run src/orchestrator/__tests__/merge-authority.test.js src/orchestrator/__tests__/merge-effect-executor.test.js src/orchestrator/__tests__/merge-effect-store.test.js"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "The exact-SHA contract is tested locally, but no 3x3 provider-attributed live GitHub effect receipt set exists."
+        owner: release-platform
+        closure_plan: "Run allowed, stale-SHA denial, and refreshed-authorization retry through the real mutation broker for each provider."
+
+    - behavior_id: KERNEL-P0-05-INDEPENDENT-EVALUATOR-JUDGE
+      priority: P0
+      owner: evaluation-platform
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "Generator cannot self-certify; evaluator and judge independently measure evidence before merge eligibility."
+      legacy_evidence:
+        - packages/brain/src/__tests__/harness-judge.test.js
+        - packages/brain/src/routes/__tests__/harness-judge-verdict-writeback.test.js
+      unified_constructs:
+        - "Kernel evaluator attempt"
+        - "independent judge decision and verdict writeback"
+      steps: [S6, S7, S8, S9]
+      dimensions: [fr, nfr, invariant, checkpoint, freshness, failure_semantics, effect_confirmation, axis_alignment]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Missing, stale, or self-authored evaluation prevents merge authorization."
+      partial_behavioral_evidence:
+        - "cd packages/brain && npx vitest run src/__tests__/harness-judge.test.js src/routes/__tests__/harness-judge-verdict-writeback.test.js"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "Judge mechanics are tested, but generator/evaluator identity separation and recovery are not receipted across providers."
+        owner: evaluation-platform
+        closure_plan: "Execute independent pass, self-certification denial, and reassigned evaluator recovery for all providers."
+
+    - behavior_id: KERNEL-P0-06-HUMAN-REVIEW-AUTHORITY
+      priority: P0
+      owner: governance-platform
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "First-time or material changes require human review before merge; explicitly repetitive low-risk work may auto-pass."
+      legacy_evidence:
+        - scripts/ci/invariants/core-inv-03-fixed-needs-judge.mjs
+        - packages/brain/src/orchestrator/__tests__/merge-authority.test.js
+      unified_constructs:
+        - "ReviewPolicy decision with risk/repetition inputs"
+        - "human approval receipt bound to exact SHA"
+      steps: [S1, S7, S8, S9]
+      dimensions: [nfr, invariant, checkpoint, freshness, failure_semantics, effect_confirmation, adversarial_surface, axis_alignment]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Unresolved mandatory human review or approval for another SHA blocks merge."
+      partial_behavioral_evidence:
+        - "node scripts/ci/invariants/core-inv-03-fixed-needs-judge.mjs"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "The desired first-time/material-versus-repetitive policy lacks a single implemented and receipted Kernel decision contract."
+        owner: governance-platform
+        closure_plan: "Define the review classifier, bind approval to artifact SHA, and drill mandatory, bypass-denied, and renewed-approval paths."
+
+    - behavior_id: KERNEL-P0-07-RELEASE-PROMOTION
+      priority: P0
+      owner: release-platform
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "Merged exact SHA deploys to staging, passes E2E, then promotes that same SHA to production."
+      legacy_evidence:
+        - packages/brain/src/__tests__/staging-e2e-runner-promote.test.js
+        - packages/brain/src/routes/__tests__/release-gate.test.js
+      unified_constructs:
+        - "Kernel post-merge release decision"
+        - "staging verification and exact-SHA production promotion receipts"
+      steps: [S9, S10, S11, S12]
+      dimensions: [fr, nfr, invariant, checkpoint, freshness, death_alert, failure_semantics, effect_confirmation, ledger_freshness]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Staging failure, unknown health, or SHA drift prevents production promotion."
+      partial_behavioral_evidence:
+        - "cd packages/brain && npx vitest run src/__tests__/staging-e2e-runner-promote.test.js src/routes/__tests__/release-gate.test.js"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "Local release-gate tests do not constitute three-provider staging and production effect receipts for the same SHA."
+        owner: release-platform
+        closure_plan: "Run same-SHA happy path, staging/E2E denial, and corrected redeploy recovery for every provider-originated artifact."
+
+    - behavior_id: KERNEL-P1-08-STOP-ORPHAN-LIVENESS
+      priority: P1
+      owner: reliability-platform
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "Stop hook, watchdog, and orphan guard distinguish live, dead, and uncertain sessions and recover without false death."
+      legacy_evidence:
+        - packages/engine/tests/hooks/stop-hook-retry.test.ts
+        - packages/brain/src/lib/__tests__/harness-orphan-guard.test.js
+      unified_constructs:
+        - "executor-kind-aware Kernel liveness resolver"
+        - "attempt heartbeat/PID recovery contract"
+      steps: [S2, S4, S5, S6, S7, S10, S11, S12]
+      dimensions: [nfr, invariant, checkpoint, freshness, death_alert, failure_semantics, effect_confirmation, adversarial_surface, ledger_freshness]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Unknown liveness fails open for destructive cleanup; confirmed host-local ESRCH may mark dead and recover."
+      partial_behavioral_evidence:
+        - "cd packages/brain && npx vitest run src/lib/__tests__/harness-orphan-guard.test.js src/__tests__/harness-relay-watchdog-kernel-fleet.test.js"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "Kernel liveness migration covers core paths but zero-attempt visibility and provider-specific recovery receipts remain absent."
+        owner: reliability-platform
+        closure_plan: "Drill live, false-death, confirmed-death, and resumed-attempt behavior for all providers including zero-attempt runs."
+
+    - behavior_id: KERNEL-P1-09-DEVGATE-TDD-DOD
+      priority: P1
+      owner: quality-platform
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "Claude Code DevGate enforces test-first evidence, coverage, fake-test rejection, and definition-of-done before PR readiness."
+      legacy_evidence:
+        - packages/engine/tests/devgate/check-tdd-commit-order-red-evidence.test.ts
+        - packages/engine/tests/devgate/quickcheck-dod-guard.test.ts
+      unified_constructs:
+        - "Kernel quality checkpoint contract"
+        - "provider-neutral DevGate invocation"
+      steps: [S1, S4, S5, S6]
+      dimensions: [fr, nfr, invariant, checkpoint, failure_semantics, adversarial_surface, axis_alignment]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Missing RED evidence, fake tests, or unmet DoD blocks evaluator admission."
+      partial_behavioral_evidence:
+        - "cd packages/engine && npx vitest run tests/devgate/check-tdd-commit-order-red-evidence.test.ts tests/devgate/quickcheck-dod-guard.test.ts"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "Legacy DevGate tests exist, but Kernel invocation parity is not demonstrated with 3x3 provider execution receipts."
+        owner: quality-platform
+        closure_plan: "Run clean, intentionally invalid, and corrected DevGate tasks through Claude, Codex, and Grok Kernel attempts."
+
+    - behavior_id: KERNEL-P1-10-CONTROLLER-SESSION-ISOLATION
+      priority: P1
+      owner: kernel-runtime
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "One session harness has one authoritative controller; attempts, workspace, branch, and callbacks remain session-scoped."
+      legacy_evidence:
+        - packages/engine/tests/skills/harness-controller-kernel-contract.test.ts
+        - packages/brain/src/__tests__/harness-complete-account-guard.test.js
+      unified_constructs:
+        - "shared Kernel controller contract"
+        - "attempt ownership and idempotent callback authority"
+      steps: [S0, S2, S3, S4, S5, S6, S7, S12]
+      dimensions: [fr, nfr, invariant, checkpoint, freshness, death_alert, failure_semantics, effect_confirmation, adversarial_surface, ledger_freshness, axis_alignment]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Ambiguous controller ownership or cross-session callback fails closed without completing the task."
+      partial_behavioral_evidence:
+        - "cd packages/engine && npx vitest run tests/skills/harness-controller-kernel-contract.test.ts"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "A shared controller contract test exists, but authoritative ownership and recovery effects are not receipted per provider."
+        owner: kernel-runtime
+        closure_plan: "Run single-owner success, dual-controller denial, and ownership-recovery scenarios for all providers."
+
+    - behavior_id: KERNEL-P1-11-REPORT-LEARNING-CLOSURE
+      priority: P1
+      owner: learning-platform
+      contract_version: "1.0.0"
+      status: gap
+      legacy_behavior: "Completion emits evidence-backed report and learning artifacts only after verified effects."
+      legacy_evidence:
+        - packages/brain/scripts/__tests__/harness-report.test.mjs
+        - packages/brain/src/__tests__/learning-effectiveness.test.js
+      unified_constructs:
+        - "Kernel result/effect evidence envelope"
+        - "report and learning closure checkpoint"
+      steps: [S1, S6, S7, S9, S10, S11, S12]
+      dimensions: [fr, nfr, invariant, checkpoint, freshness, failure_semantics, effect_confirmation, ledger_freshness, axis_alignment]
+      assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
+      failure_semantics: "Missing or stale effect evidence prevents a green completion report and learning closure."
+      partial_behavioral_evidence:
+        - "cd packages/brain && npx vitest run src/__tests__/learning-effectiveness.test.js && node scripts/__tests__/harness-report.test.mjs"
+      proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
+      freshness: { verified_at: null, expires_at: null }
+      proof_matrix: *missing_provider_matrix
+      gap:
+        reason: "Report and learning tests are not bound to provider-specific end-to-end effect receipts and freshness windows."
+        owner: learning-platform
+        closure_plan: "Execute complete, stale-evidence denial, and refreshed-evidence recovery closures for every provider."
