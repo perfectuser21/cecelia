@@ -1,15 +1,23 @@
 # Brain 模块定义
 
-**版本**: 1.268.14
+**版本**: 1.268.15
 
 ## Codex review worktree admission
 
-- 两条 controller-owned 本机 Codex review 执行路径都显式携带
-  `--skip-git-repo-check`，允许在 controller 固定根目录或发现的隔离 worktree
-  中执行，不再因 Codex repo admission 预检重复失败。
-- 此参数只关闭 Codex CLI 自身的 git 元数据准入；branch guard、DevGate、
-  review 独立槽位、callback 与既有执行权限边界保持不变。
-- 回退：`bash scripts/brain-rollback.sh 1.268.13`；没有数据库迁移。
+- 两条 controller-owned 本机 Codex review 路由收敛到一个执行实现；先按 exact
+  branch 解析已登记 worktree，再校验 realpath、允许根和 Git top-level，缺失或
+  指向主仓/部署根时在占 slot、spawn 之前 fail-closed。
+- Codex 只在独立 non-root 容器运行：worktree 与单个 mode-0600 auth 文件只读
+  挂载，root filesystem 只读，drop all capabilities，无 Docker socket、主仓、
+  部署仓、SSH/gh/数据库/人工审批/Kernel controller 凭据；容器 image 先解析成
+  immutable digest，Docker client 也只接收本地 transport allowlist env。
+- 容器内 Codex 固定使用 `--sandbox read-only --ephemeral`，prompt 走 stdin；
+  此时才允许
+  `--skip-git-repo-check` 绕过 CLI 自身的重复 admission。
+- review slot 使用私有目录下的原子 `mkdir`，没有 shell runner、可预测 prompt
+  文件或 count-then-write 竞态；Docker runtime/image/auth 缺失和非零退出都
+  fail-closed。
+- 回退：`bash scripts/brain-rollback.sh 1.268.14`；没有数据库迁移。
 
 ## Kernel zero-Attempt patrol coverage
 

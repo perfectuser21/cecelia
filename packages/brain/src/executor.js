@@ -15,8 +15,12 @@
 
 import crypto from 'crypto';
 import { spawn, execSync, exec } from 'child_process';
-import { writeFile, mkdir, access } from 'fs/promises';
-import { readFileSync, readdirSync, unlinkSync } from 'fs';
+import { writeFile, mkdir, access, rm } from 'fs/promises';
+import {
+  constants as fsConstants,
+  readFileSync,
+  readdirSync,
+} from 'fs';
 import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -36,6 +40,14 @@ import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBra
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
+import {
+  buildCodexReviewDockerArguments,
+  buildCodexReviewDockerEnvironment,
+  extractCodexReviewBranch,
+  resolveCodexReviewAuthFile,
+  resolveCodexReviewImage,
+  resolveCodexReviewWorktree,
+} from './lib/codex-review-boundary.js';
 import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
@@ -2388,71 +2400,128 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
  */
 async function triggerCodexReview(task) {
   const runId = generateRunId(task.id);
+  let slotPath = null;
 
   try {
-    // 检查独立 codex review 池槽位
-    await mkdir(CODEX_REVIEW_LOCK_DIR, { recursive: true });
-    const lockFiles = readdirSync(CODEX_REVIEW_LOCK_DIR).filter(f => f.endsWith('.lock'));
-    if (lockFiles.length >= CODEX_REVIEW_MAX) {
-      console.log(`[executor] codex-review-locks pool full (${lockFiles.length}/${CODEX_REVIEW_MAX}), deferring task=${task.id}`);
-      return {
-        success: false,
-        taskId: task.id,
-        reason: 'codex_review_pool_full',
-        detail: `codex-review-locks pool full (${lockFiles.length}/${CODEX_REVIEW_MAX})`,
-      };
-    }
-
-    // 获取 prompt 内容
-    const promptContent = await preparePrompt(task);
-
-    // 写 prompt 文件
-    await mkdir(PROMPT_DIR, { recursive: true });
-    const promptFile = path.join(PROMPT_DIR, `codex-review-${task.id}.txt`);
-    await writeFile(promptFile, promptContent);
-
-    // 获取锁文件（标记槽位占用）
-    const lockFile = path.join(CODEX_REVIEW_LOCK_DIR, `${task.id}.lock`);
-    await writeFile(lockFile, JSON.stringify({ taskId: task.id, runId, startedAt: new Date().toISOString() }));
-
-    console.log(`[executor] triggerCodexReview: 使用本机 codex CLI task=${task.id} type=${task.task_type}`);
-
-    // 派发到本机 codex CLI（容器内默认 /usr/local/bin/codex，host fallback /opt/homebrew/bin/codex）
-    // 使用 codex exec 非交互模式，prompt 通过 stdin 传入（避免 shell 转义问题）
-    const codexBin = process.env.CODEX_BIN || '/opt/homebrew/bin/codex';
-
-    // 预检 codex binary 是否存在 — 容器漏装 codex CLI 时返回 configError，不发 FAIL callback、
-    // 不让 dispatcher 累积 cecelia-run breaker failures（生产事故：failures=351 OPEN 阻断所有 dispatch）。
+    assertSafeId(task.id, 'task id');
+    const reviewBranch = extractCodexReviewBranch(task);
+    let reviewWorktreePath;
     try {
-      await access(codexBin);
-    } catch (accessErr) {
-      console.error(`[executor] triggerCodexReview: codex binary not accessible at ${codexBin}: ${accessErr.code || accessErr.message}`);
-      // 清理已写入的 lockFile（spawn 未启动 → 槽位归还）
-      try { unlinkSync(lockFile); } catch {}
+      reviewWorktreePath = resolveCodexReviewWorktree({
+        branch: reviewBranch,
+        repoRoot: WORK_DIR,
+      });
+    } catch (boundaryError) {
       return {
         success: false,
         configError: true,
         taskId: task.id,
-        reason: 'codex_binary_missing',
-        error: `codex binary not found at ${codexBin} (set CODEX_BIN env or install @openai/codex)`,
+        reason: boundaryError?.code ?? 'review_worktree_unavailable',
         executor: 'codex-review',
       };
     }
 
-    const child = spawn(codexBin, ['exec', '--skip-git-repo-check', '-c', 'approval_policy="never"', promptContent], {
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: WORK_DIR,
-      env: { ...process.env, TASK_ID: task.id, RUN_ID: runId, BRAIN_URL: process.env.BRAIN_URL || 'http://localhost:5221' },
+    // Review agent 必须在独立容器运行。只预检 docker client；Codex binary
+    // 和 auth 都在随后解析的最小容器边界内，不能继承 Brain 容器挂载。
+    const dockerBin = process.env.DOCKER_BIN || '/usr/bin/docker';
+    try {
+      await access(dockerBin, fsConstants.X_OK);
+    } catch (accessErr) {
+      return {
+        success: false,
+        configError: true,
+        taskId: task.id,
+        reason: 'review_container_runtime_missing',
+        error: `docker client not found at ${dockerBin}: ${accessErr.code || accessErr.message}`,
+        executor: 'codex-review',
+      };
+    }
+
+    let reviewAuthFile;
+    let reviewImageId;
+    try {
+      reviewAuthFile = resolveCodexReviewAuthFile({
+        codexHome: process.env.CODEX_HOME,
+      });
+      reviewImageId = resolveCodexReviewImage({ dockerBin });
+    } catch (boundaryError) {
+      return {
+        success: false,
+        configError: true,
+        taskId: task.id,
+        reason: boundaryError?.code ?? 'review_container_boundary_unavailable',
+        executor: 'codex-review',
+      };
+    }
+
+    // 在占用 slot 前完成纯读取 prompt 构造；构造失败不会泄漏容量。
+    const promptContent = await preparePrompt(task);
+
+    // 原子获取独立 review slot。mkdir 不跟随同名 symlink，避免 /tmp
+    // predictable-file 覆盖和 count-then-write 竞态。
+    await mkdir(CODEX_REVIEW_LOCK_DIR, {
+      recursive: true,
+      mode: 0o700,
     });
+    for (let index = 1; index <= CODEX_REVIEW_MAX; index++) {
+      const candidate = path.join(
+        CODEX_REVIEW_LOCK_DIR,
+        `slot-${index}`,
+      );
+      try {
+        await mkdir(candidate, { mode: 0o700 });
+        slotPath = candidate;
+        break;
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+      }
+    }
+    if (!slotPath) {
+      console.log(`[executor] codex-review-locks pool full (${CODEX_REVIEW_MAX}/${CODEX_REVIEW_MAX}), deferring task=${task.id}`);
+      return {
+        success: false,
+        taskId: task.id,
+        reason: 'codex_review_pool_full',
+        detail: `codex-review-locks pool full (${CODEX_REVIEW_MAX}/${CODEX_REVIEW_MAX})`,
+      };
+    }
+
+    await writeFile(
+      path.join(slotPath, 'info.json'),
+      JSON.stringify({
+        taskId: task.id,
+        runId,
+        startedAt: new Date().toISOString(),
+      }),
+      { mode: 0o600, flag: 'wx' },
+    );
+
+    console.log(`[executor] triggerCodexReview: 使用隔离 Codex review 容器 task=${task.id} type=${task.task_type}`);
+
+    const child = spawn(dockerBin, buildCodexReviewDockerArguments({
+      worktreePath: reviewWorktreePath,
+      authFilePath: reviewAuthFile,
+      imageId: reviewImageId,
+    }), {
+      detached: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: '/',
+      env: buildCodexReviewDockerEnvironment(process.env),
+    });
+    child.stdin?.end(promptContent);
 
     // 收集 stdout，解析审查结果后回调 Brain
     let stdout = '';
+    let stderr = '';
+    let terminalHandled = false;
     child.stdout?.on('data', (d) => { stdout += d.toString(); });
+    child.stderr?.on('data', (d) => { stderr += d.toString(); });
 
     child.on('error', async (err) => {
+      if (terminalHandled) return;
+      terminalHandled = true;
       console.error(`[executor] codex spawn error: ${err.message} task=${task.id}`);
-      try { unlinkSync(lockFile); } catch {}
+      await rm(slotPath, { recursive: true, force: true }).catch(() => {});
       try {
         const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
         await fetch(`${brainUrl}/api/brain/execution-callback`, {
@@ -2462,7 +2531,7 @@ async function triggerCodexReview(task) {
             task_id: task.id,
             run_id: runId,
             status: 'AI Failed',
-            result: { verdict: 'FAIL', summary: `codex binary not found: ${err.message}` },
+            result: { verdict: 'FAIL', summary: `review container failed to start: ${err.message}` },
             coding_type: 'codex-review',
           }),
         });
@@ -2472,7 +2541,9 @@ async function triggerCodexReview(task) {
     });
 
     child.on('exit', async (code) => {
-      try { unlinkSync(lockFile); } catch {}
+      if (terminalHandled) return;
+      terminalHandled = true;
+      await rm(slotPath, { recursive: true, force: true }).catch(() => {});
       console.log(`[executor] codex review exit code=${code} task=${task.id}`);
 
       // 尝试从输出中提取 JSON verdict 并回调 Brain
@@ -2484,7 +2555,10 @@ async function triggerCodexReview(task) {
           task_id: task.id,
           run_id: runId,
           status: code === 0 ? 'AI Done' : 'AI Failed',
-          result: verdict || { verdict: code === 0 ? 'PASS' : 'FAIL', summary: stdout.slice(-500) },
+          result: verdict || {
+            verdict: code === 0 ? 'PASS' : 'FAIL',
+            summary: (stdout || stderr).slice(-500),
+          },
           coding_type: 'codex-review',
         };
         await fetch(`${brainUrl}/api/brain/execution-callback`, {
@@ -2507,6 +2581,9 @@ async function triggerCodexReview(task) {
       executor: 'codex-review',
     };
   } catch (err) {
+    if (slotPath) {
+      await rm(slotPath, { recursive: true, force: true }).catch(() => {});
+    }
     console.error(`[executor] triggerCodexReview error: ${err.message}`);
     return {
       success: false,
@@ -2762,121 +2839,15 @@ async function triggerMiniMaxExecutor(task) {
 // prompt 携带完整 Task Card + git diff，帮助审查 agent 了解变更上下文。
 // ============================================================
 
-const REVIEW_LOCK_DIR = '/tmp/codex-review-locks';
-const MAX_REVIEW_SLOTS = 2;
-
 /**
  * Trigger local Codex CLI for spec_review / code_review_gate.
- * Uses separate /tmp/codex-review-locks pool (max 2 slots).
- * Spawns codex-bin exec with full Task Card + git diff prompt.
+ * Delegates to the single bounded review executor so the legacy routing
+ * alias cannot retain a second shell/cwd/credential authority.
  * @param {Object} task
  * @returns {Object} { success, taskId, runId, executor }
  */
 async function triggerLocalCodexExec(task) {
-  const CODEX_BIN = process.env.CODEX_BIN || '/opt/homebrew/bin/codex-bin';
-  const CODEX_HOME = process.env.CODEX_REVIEW_HOME || process.env.CODEX_HOME || '';
-  const CODEX_MODEL = process.env.CODEX_REVIEW_MODEL || process.env.CODEX_MODEL || 'gpt-5.4';
-  const REPO_ROOT = process.env.CECELIA_WORK_DIR || '/Users/administrator/perfect21/cecelia';
-  const WEBHOOK_URL = process.env.CECELIA_WEBHOOK_URL || 'http://localhost:5221/api/brain/execution-callback';
-  const runId = generateRunId(task.id);
-
-  try {
-    console.log(`[executor] Local Codex CLI for task=${task.id} type=${task.task_type}`);
-
-    // --- Acquire review slot (atomic mkdir) ---
-    await mkdir(REVIEW_LOCK_DIR, { recursive: true });
-    let slotPath = null;
-    for (let i = 1; i <= MAX_REVIEW_SLOTS; i++) {
-      const candidate = path.join(REVIEW_LOCK_DIR, `slot-${i}`);
-      try {
-        execSync(`mkdir "${candidate}"`, { stdio: 'pipe' });
-        slotPath = candidate;
-        break;
-      } catch {
-        // slot occupied, try next
-      }
-    }
-    if (!slotPath) {
-      console.log(`[executor] Review slots full (max=${MAX_REVIEW_SLOTS}), requeueing task=${task.id}`);
-      return { success: false, taskId: task.id, error: 'review_slots_full', executor: 'local-codex' };
-    }
-
-    // Write slot info
-    writeFile(path.join(slotPath, 'info.json'), JSON.stringify({
-      task_id: task.id, pid: process.pid,
-      started: new Date().toISOString(), type: task.task_type,
-    })).catch(() => {});
-
-    // --- Build rich prompt (Task Card + git diff) ---
-    const branch = task.metadata?.branch || (task.title || '').replace(/^(Spec|Code) Review:\s*/, '').trim();
-    let taskCardContent = '';
-    let gitDiff = '';
-
-    if (branch) {
-      try {
-        const worktreeList = execSync(
-          `git -C "${REPO_ROOT}" worktree list --porcelain 2>/dev/null`,
-          { encoding: 'utf8' }
-        );
-        const wtLines = worktreeList.split('\n');
-        let currentWtPath = '';
-        let foundWtPath = '';
-        for (const line of wtLines) {
-          if (line.startsWith('worktree ')) { currentWtPath = line.slice('worktree '.length).trim(); }
-          else if (line.startsWith('branch refs/heads/') && line.includes(branch)) {
-            foundWtPath = currentWtPath; break;
-          }
-        }
-        if (foundWtPath) {
-          const taskCardPath = path.join(foundWtPath, `.task-${branch}.md`);
-          try { taskCardContent = readFileSync(taskCardPath, 'utf8'); } catch { /* no task card yet */ }
-          try {
-            gitDiff = execSync(
-              `git -C "${foundWtPath}" diff origin/main..HEAD 2>/dev/null || git -C "${foundWtPath}" diff HEAD~1..HEAD 2>/dev/null || true`,
-              { encoding: 'utf8', maxBuffer: 512 * 1024 }
-            );
-          } catch { /* no diff */ }
-        }
-      } catch (err) {
-        console.warn(`[executor] Worktree lookup failed for branch ${branch}: ${err.message}`);
-      }
-    }
-
-    const skill = task.task_type === 'spec_review' ? '/spec-review' : '/code-review-gate';
-    let promptContent = `${skill}\n\n## 任务信息\n${task.description || task.title || ''}\n\n`;
-    if (taskCardContent) {
-      promptContent += `## Task Card 内容\n\`\`\`markdown\n${taskCardContent}\n\`\`\`\n\n`;
-    }
-    if (gitDiff) {
-      promptContent += `## Git Diff (main..HEAD)\n\`\`\`diff\n${gitDiff.slice(0, 30000)}\n\`\`\`\n\n`;
-    }
-
-    // --- Write prompt to temp file, spawn codex-bin via shell script ---
-    const tmpPromptFile = `/tmp/codex-review-prompt-${task.id}.txt`;
-    const tmpScriptFile = `/tmp/codex-review-runner-${task.id}.sh`;
-    await writeFile(tmpPromptFile, promptContent);
-    const scriptContent = [
-      '#!/bin/bash',
-      `CODEX_HOME="${CODEX_HOME}" "${CODEX_BIN}" exec --skip-git-repo-check --model "${CODEX_MODEL}" --sandbox danger-full-access "$(cat '${tmpPromptFile}')" 2>&1`,
-      'EXIT=$?',
-      `rm -f "${tmpPromptFile}" 2>/dev/null; rm -rf "${slotPath}" 2>/dev/null; rm -f "${tmpScriptFile}" 2>/dev/null`,
-      `curl -s -X POST "${WEBHOOK_URL}" -H "Content-Type: application/json" \\`,
-      `  -d "{\\"task_id\\":\\"${task.id}\\",\\"run_id\\":\\"${runId}\\",\\"status\\":\\"AI Done\\",\\"exit_code\\":$EXIT}" \\`,
-      '  --max-time 10 2>/dev/null || true',
-    ].join('\n');
-    await writeFile(tmpScriptFile, scriptContent, { mode: 0o755 });
-
-    const proc = spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' });
-    proc.unref();
-    // 打标：本地 codex-bin spawn → brain-local
-    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__local_spawn);
-
-    console.log(`[executor] Local Codex spawned task=${task.id} pid=${proc.pid} slot=${path.basename(slotPath)}`);
-    return { success: true, taskId: task.id, runId, executor: 'local-codex', pid: proc.pid };
-  } catch (err) {
-    console.error(`[executor] Local Codex error for task=${task.id}: ${err.message}`);
-    return { success: false, taskId: task.id, error: err.message, executor: 'local-codex' };
-  }
+  return triggerCodexReview(task);
 }
 
 /**

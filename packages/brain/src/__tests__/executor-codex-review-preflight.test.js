@@ -1,8 +1,8 @@
 /**
  * executor-codex-review-preflight.test.js
  *
- * 验证 triggerCodexReview spawn 前对 codex binary 的存在性预检：
- * - codex binary 不存在 → fs.access 抛 ENOENT → 不调 spawn → 不发 FAIL callback
+ * 验证 triggerCodexReview spawn 前对隔离容器 runtime/image 的存在性预检：
+ * - docker client 不存在 → fs.access 抛 ENOENT → 不调 spawn → 不发 FAIL callback
  * - 返回 { success: false, configError: true, ... }，dispatcher 据此跳过 cecelia-run breaker
  *
  * 根因：Brain 容器无 codex CLI，spawn 异步触发 child.on('error') ENOENT，
@@ -26,7 +26,7 @@ const executorSrc = readFileSync(
   'utf8'
 );
 
-describe('triggerCodexReview: codex binary 存在性预检', () => {
+describe('triggerCodexReview: isolated container preflight', () => {
   function getFnBody(src, fnSig) {
     const fnStart = src.indexOf(fnSig);
     if (fnStart < 0) return '';
@@ -34,17 +34,17 @@ describe('triggerCodexReview: codex binary 存在性预检', () => {
     return src.slice(fnStart, nextFnIdx > 0 ? nextFnIdx : fnStart + 4000);
   }
 
-  it('triggerCodexReview 函数体内 spawn 前调用 fs access 预检 codexBin', () => {
+  it('triggerCodexReview 函数体内 spawn 前预检 docker client 和 immutable image', () => {
     const fnBody = getFnBody(executorSrc, 'async function triggerCodexReview(task)');
     expect(fnBody.length).toBeGreaterThan(0);
-    const spawnIdx = fnBody.indexOf('spawn(codexBin');
+    const spawnIdx = fnBody.indexOf('spawn(dockerBin');
     expect(spawnIdx).toBeGreaterThan(-1);
     const beforeSpawn = fnBody.slice(0, spawnIdx);
-    // 必须有 access(codexBin 调用（fs.promises.access 或 fsAccess(codexBin)）
-    expect(beforeSpawn).toMatch(/access\(\s*codexBin/);
+    expect(beforeSpawn).toMatch(/access\(\s*dockerBin/);
+    expect(beforeSpawn).toContain('resolveCodexReviewImage');
   });
 
-  it('codex binary 缺失返回 configError: true（不抛 spawn 也不发 FAIL callback）', () => {
+  it('container runtime/image 缺失返回 configError: true', () => {
     const fnBody = getFnBody(executorSrc, 'async function triggerCodexReview(task)');
     expect(fnBody).toContain('configError: true');
   });
@@ -58,10 +58,9 @@ describe('triggerCodexReview: codex binary 存在性预检', () => {
     expect(before).not.toContain('execution-callback');
   });
 
-  it('CODEX_BIN env 优先于硬编码默认值（容器路径 vs host 路径）', () => {
-    expect(executorSrc).toContain('process.env.CODEX_BIN');
-    // host fallback 仍是 /opt/homebrew/bin/codex（兼容本机开发）
-    expect(executorSrc).toContain('/opt/homebrew/bin/codex');
+  it('使用 Docker client 启动隔离容器，不在 Brain 直接启动 Codex binary', () => {
+    expect(executorSrc).toContain("process.env.DOCKER_BIN || '/usr/bin/docker'");
+    expect(executorSrc).not.toContain('spawn(codexBin');
   });
 });
 
@@ -83,7 +82,8 @@ describe('Dockerfile / docker-compose 配置闭环', () => {
     expect(composeSrc).toContain('/Users/administrator/.codex-team1:/Users/administrator/.codex-team1:ro');
   });
 
-  it('docker-compose.yml 设置 CODEX_BIN env 指向容器内路径', () => {
+  it('review image 内 Codex binary 路径仍固定存在', () => {
+    expect(dockerfileSrc).toContain('/usr/local/bin/codex');
     expect(composeSrc).toContain('CODEX_BIN=/usr/local/bin/codex');
   });
 

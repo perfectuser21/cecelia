@@ -4,7 +4,7 @@
  * 测试 triggerCodexReview 独立审查加固：
  * - REVIEW_TASK_TYPES 路由到 triggerCodexReview
  * - buildPrompt 对 spec_review 和 code_review_gate 的内容
- * - spawn 使用 codex exec 参数
+ * - spawn 使用隔离 Docker review container
  */
 
 import { describe, it, expect } from 'vitest';
@@ -35,25 +35,41 @@ describe('executor: Codex 独立审查加固', () => {
     });
   });
 
-  describe('triggerCodexReview: codex CLI 调用', () => {
-    it('使用 /opt/homebrew/bin/codex 路径', () => {
-      expect(executorSrc).toContain('/opt/homebrew/bin/codex');
+  describe('triggerCodexReview: isolated container', () => {
+    it('只预检 Docker client，不在 Brain 容器直接执行 Codex', () => {
+      expect(executorSrc).toContain("process.env.DOCKER_BIN || '/usr/bin/docker'");
     });
 
-    it('spawn 使用 codex exec 参数（非 claude CLI）', () => {
-      expect(executorSrc).toContain("spawn(codexBin, ['exec'");
+    it('spawn 使用固定的最小权限容器参数', () => {
+      expect(executorSrc).toContain(
+        'spawn(dockerBin, buildCodexReviewDockerArguments({'
+      );
       expect(executorSrc).not.toContain("'--dangerously-skip-permissions'");
     });
 
-    it('显式允许从 controller 固定工作目录执行，不因缺少 git 仓库元数据反复失败', () => {
+    it('将已验证 worktree/auth/image 交给专用容器，不继承 Brain cwd/env', () => {
       const start = executorSrc.indexOf('async function triggerCodexReview(task)');
       const end = executorSrc.indexOf('\nasync function ', start + 1);
       const triggerCodexReviewSrc = executorSrc.slice(start, end);
 
       expect(triggerCodexReviewSrc).toContain(
-        "spawn(codexBin, ['exec', '--skip-git-repo-check', '--sandbox', 'read-only'"
+        'resolveCodexReviewWorktree'
       );
-      expect(triggerCodexReviewSrc).toContain('cwd: WORK_DIR');
+      expect(triggerCodexReviewSrc).toContain(
+        'resolveCodexReviewAuthFile'
+      );
+      expect(triggerCodexReviewSrc).toContain(
+        'resolveCodexReviewImage'
+      );
+      expect(triggerCodexReviewSrc).toContain(
+        'spawn(dockerBin, buildCodexReviewDockerArguments({'
+      );
+      expect(triggerCodexReviewSrc).toContain(
+        "cwd: '/'"
+      );
+      expect(triggerCodexReviewSrc).toContain(
+        'env: buildCodexReviewDockerEnvironment'
+      );
       expect(triggerCodexReviewSrc).not.toContain(
         "'--sandbox', 'danger-full-access'"
       );
@@ -94,16 +110,17 @@ describe('triggerCodexReview: spawn error handler', () => {
     expect(executorSrc).toContain("child.on('error'");
   });
 
-  it('error handler 清理 lockFile', () => {
-    // handler 内必须有 unlinkSync(lockFile) 调用
+  it('error handler 清理原子 slot 目录', () => {
     const errorHandlerIdx = executorSrc.indexOf("child.on('error'");
     const snippet = executorSrc.slice(errorHandlerIdx, errorHandlerIdx + 600);
-    expect(snippet).toContain('unlinkSync(lockFile)');
+    expect(snippet).toContain(
+      'rm(slotPath, { recursive: true, force: true })'
+    );
   });
 
   it('error handler 回调 execution-callback 且 status=AI Failed', () => {
     const errorHandlerIdx = executorSrc.indexOf("child.on('error'");
-    const snippet = executorSrc.slice(errorHandlerIdx, errorHandlerIdx + 600);
+    const snippet = executorSrc.slice(errorHandlerIdx, errorHandlerIdx + 900);
     expect(snippet).toContain('AI Failed');
     expect(snippet).toContain('execution-callback');
   });
