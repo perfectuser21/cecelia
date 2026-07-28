@@ -68,7 +68,7 @@
 - Add: `docker/cecelia-runner/result-channel-finalizer.cjs`
 - Add: `docker/cecelia-runner/result-channel-finalizer.test.cjs`
 - Modify: `docker/cecelia-runner/entrypoint-provider-contract.test.sh`
-- Add: `docker/cecelia-runner/result-channel-contract.test.sh`
+- Add: `docker/cecelia-runner/entrypoint-managed-result-channel.test.sh`
 - Modify: `packages/brain/src/orchestrator/execution-contract.js`
 - Modify: `packages/brain/src/orchestrator/__tests__/execution-contract.test.js`
 
@@ -103,6 +103,7 @@
 - Add: `packages/brain/migrations/369_allow_fleet_worker_execution_transport.sql`
 - Add: `packages/brain/migrations/370_kernel_result_channel_receipts.sql`
 - Add: `packages/brain/src/__tests__/kernel-result-channel-migration.test.js`
+- Add: `packages/brain/src/__tests__/integration/kernel-result-channel-receipts.integration.test.js`
 
 **Steps:**
 
