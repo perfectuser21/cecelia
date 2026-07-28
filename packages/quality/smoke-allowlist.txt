@@ -180,3 +180,4 @@ kernel-capability-gate-smoke.sh
 kernel-fleet-node-admission-smoke.sh
 fleet-worker-workspace-smoke.sh
 fleet-credential-envelope-smoke.sh
+harness-commander-phase1-smoke.sh
