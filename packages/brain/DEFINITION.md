@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.100
+**版本**: 1.267.101
 
 ## Fleet Node Phase 4A production convergence
 
@@ -15,7 +15,7 @@
 - 变更边界只包含 Phase 4A NodeProfile、bootstrap、admission、drain 与三机基线；
   Phase 4B/4C/4D 执行语义未改，Phase 5 真实业务 canary 未运行。
 - 回退：节点先执行 `fleet-nodectl.sh drain`，Brain 使用
-  `bash scripts/brain-rollback.sh 1.267.99`。
+  `bash scripts/brain-rollback.sh 1.267.100`。
 
 ## Provider-neutral Harness Commander Phase 2
 
