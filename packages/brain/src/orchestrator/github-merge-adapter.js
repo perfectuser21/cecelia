@@ -8,7 +8,9 @@ const CI_FAILURE = new Set([
   'ACTION_REQUIRED',
   'STARTUP_FAILURE',
 ]);
-const CI_SUCCESS = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
+// Skipped/neutral require an explicit applicability policy. Until that policy
+// is represented in the signed TaskBundle, neither can authorize a merge.
+const CI_SUCCESS = new Set(['SUCCESS']);
 
 function parseIdentity(url) {
   const match = String(url ?? '').match(PR_URL_PATTERN);
