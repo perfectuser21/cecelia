@@ -74,6 +74,18 @@ function equivalenceFail(code) {
   throw error;
 }
 
+function issueRequestMatchesGrant(request, grant) {
+  return (
+    request
+    && typeof request === 'object'
+    && !Array.isArray(request)
+    && request.runId === grant?.run_id
+    && request.attemptId === grant?.attempt_id
+    && request.resourceId === grant?.resource_id
+    && request.resourceRef === grant?.resource_ref
+  );
+}
+
 function validTimestamp(value) {
   return Number.isFinite(value)
     && Math.abs(value) <= 8_640_000_000_000_000;
@@ -416,6 +428,11 @@ export function createCredentialGuardEquivalenceSeam({
         signal,
       });
       signal?.throwIfAborted();
+      if (!issueRequestMatchesGrant(request, grant)) {
+        equivalenceFail(
+          'credential_equivalence_authority_binding_invalid',
+        );
+      }
       const before = await credentialAuthority.snapshot({
         phase: 'before',
         cell,

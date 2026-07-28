@@ -258,6 +258,17 @@ export function createKernelLivenessEquivalenceSeam({
       if (!target?.task || !target?.run) {
         throw livenessSeamError('liveness_equivalence_target_unavailable');
       }
+      if (
+        target.run.id !== grant?.run_id
+        || target.attempt?.id !== grant?.attempt_id
+        || target.attempt?.run_id !== grant?.run_id
+        || target.resource?.resource_id !== grant?.resource_id
+        || target.resource?.resource_ref !== grant?.resource_ref
+      ) {
+        throw livenessSeamError(
+          'liveness_equivalence_authority_binding_invalid',
+        );
+      }
 
       const before = await livenessAuthority.snapshot({
         phase: 'before',

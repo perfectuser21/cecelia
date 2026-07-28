@@ -93,6 +93,7 @@ function createWorkspace(scenario: 'normal' | 'violation' | 'recovery') {
 
 function fixture(scenario: 'normal' | 'violation' | 'recovery') {
   const { workspace, dodPath } = createWorkspace(scenario);
+  const artifactSha = git(workspace, ['rev-parse', 'HEAD']);
   const cell = {
     cell_id: `KERNEL-P1-09-DEVGATE-TDD-DOD::codex::${scenario}`,
     behavior_id: 'KERNEL-P1-09-DEVGATE-TDD-DOD',
@@ -104,6 +105,7 @@ function fixture(scenario: 'normal' | 'violation' | 'recovery') {
   const grant = {
     run_id: RUN_ID,
     attempt_id: ATTEMPT_ID,
+    artifact_sha: artifactSha,
     resource_id: `eq-${ATTEMPT_ID}`,
     resource_ref:
       `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/workspace/case`,
@@ -124,6 +126,10 @@ function fixture(scenario: 'normal' | 'violation' | 'recovery') {
   const devgateAuthority = {
     owner_service: 'kernel.quality.devgate',
     loadTarget: vi.fn(async () => ({
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+      resource_id: grant.resource_id,
+      resource_ref: grant.resource_ref,
       workspace_path: workspace,
       base_ref: 'base',
       head_ref: 'HEAD',
@@ -233,7 +239,13 @@ describe('DevGate equivalence guarded sidecar', () => {
     let childEnvironment: NodeJS.ProcessEnv | null = null;
     const spawnGuarded = vi.fn(async (command) => {
       childEnvironment = command.env;
-      return { exit_code: 0, stdout: 'ok', stderr: '' };
+      return {
+        exit_code: 0,
+        stdout: command.executable === 'git'
+          ? `${value.grant.artifact_sha}\n`
+          : 'ok',
+        stderr: '',
+      };
     });
     value.seam = createDevGateEquivalenceSeam({
       effectSigner: value.effectSigner,
@@ -293,6 +305,10 @@ describe('DevGate equivalence guarded sidecar', () => {
   it('uses only the fixed checked-in scripts and rejects an escaped DoD path', async () => {
     const value = fixture('normal');
     value.devgateAuthority.loadTarget.mockResolvedValue({
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+      resource_id: value.grant.resource_id,
+      resource_ref: value.grant.resource_ref,
       workspace_path: value.workspace,
       base_ref: 'base',
       head_ref: 'HEAD',
@@ -306,6 +322,55 @@ describe('DevGate equivalence guarded sidecar', () => {
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
       code: 'devgate_equivalence_resource_invalid',
+    });
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['run id', { run_id: '99999999-9999-4999-8999-999999999999' }],
+    ['attempt id', {
+      attempt_id: '99999999-9999-4999-8999-999999999999',
+    }],
+    ['resource id', { resource_id: 'eq-forged' }],
+    ['resource ref', {
+      resource_ref:
+        `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/workspace/forged`,
+    }],
+  ])('rejects a server authority target with mismatched %s', async (
+    _label,
+    override,
+  ) => {
+    const value = fixture('normal');
+    const target = await value.devgateAuthority.loadTarget();
+    value.devgateAuthority.loadTarget.mockResolvedValue({
+      ...target,
+      ...override,
+    });
+
+    await expect(value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'devgate_equivalence_authority_binding_invalid',
+    });
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the real workspace HEAD is not the granted artifact', async () => {
+    const value = fixture('normal');
+
+    await expect(value.seam.invoke({
+      cell: value.cell,
+      grant: {
+        ...value.grant,
+        artifact_sha: 'f'.repeat(40),
+      },
+      resource: value.resource,
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'devgate_equivalence_artifact_mismatch',
     });
     expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
   });

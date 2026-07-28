@@ -36,7 +36,19 @@ function fixture(scenario) {
         };
   const livenessAuthority = {
     owner_service: 'kernel.liveness.orphan_recovery',
-    loadTarget: vi.fn(async () => ({ task, run })),
+    loadTarget: vi.fn(async () => ({
+      task,
+      run,
+      attempt: {
+        id: ATTEMPT_ID,
+        run_id: RUN_ID,
+      },
+      resource: {
+        resource_id: `eq-${ATTEMPT_ID}`,
+        resource_ref:
+          `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/liveness/case`,
+      },
+    })),
     now: () => current,
     hostFn: () => 'drill-host',
     killFn: () => {
@@ -218,5 +230,45 @@ describe('Kernel liveness equivalence seam', () => {
     })).toThrowError(expect.objectContaining({
       code: 'liveness_authority_port_unavailable',
     }));
+  });
+
+  it.each([
+    ['run id', (target) => {
+      target.run.id = '99999999-9999-4999-8999-999999999999';
+    }],
+    ['attempt id', (target) => {
+      target.attempt.id = '99999999-9999-4999-8999-999999999999';
+    }],
+    ['attempt run id', (target) => {
+      target.attempt.run_id = '99999999-9999-4999-8999-999999999999';
+    }],
+    ['resource id', (target) => {
+      target.resource.resource_id = 'eq-forged';
+    }],
+    ['resource ref', (target) => {
+      target.resource.resource_ref = 'equivalence-drill/forged';
+    }],
+  ])('rejects an authority target with mismatched %s', async (
+    _label,
+    mutate,
+  ) => {
+    const value = fixture('normal');
+    const target = structuredClone(
+      await value.livenessAuthority.loadTarget(),
+    );
+    mutate(target);
+    value.livenessAuthority.loadTarget.mockResolvedValue(target);
+    value.livenessAuthority.loadTarget.mockClear();
+
+    await expect(value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'liveness_equivalence_authority_binding_invalid',
+    });
+    expect(value.livenessAuthority.snapshot).not.toHaveBeenCalled();
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
   });
 });

@@ -68,6 +68,15 @@ function targetWithinWorkspace(target) {
   );
 }
 
+function targetMatchesGrant(target, grant) {
+  return (
+    target?.run_id === grant?.run_id
+    && target?.attempt_id === grant?.attempt_id
+    && target?.resource_id === grant?.resource_id
+    && target?.resource_ref === grant?.resource_ref
+  );
+}
+
 function boundedAppend(current, chunk) {
   const next = current + String(chunk);
   return next.length > OUTPUT_LIMIT
@@ -158,7 +167,7 @@ async function invokeChild(spawnGuarded, command) {
 async function gitHead(spawnGuarded, target, signal) {
   const result = await invokeChild(spawnGuarded, {
     executable: 'git',
-    args: ['rev-parse', '--verify', target.head_ref],
+    args: ['rev-parse', '--verify', 'HEAD'],
     cwd: target.workspace_path,
     env: childEnvironment(target),
     signal,
@@ -231,11 +240,17 @@ export function createDevGateEquivalenceSeam({
         signal,
       });
       throwIfAborted(signal);
+      if (!targetMatchesGrant(target, grant)) {
+        fail('devgate_equivalence_authority_binding_invalid');
+      }
       if (!targetWithinWorkspace(target)) {
         fail('devgate_equivalence_resource_invalid');
       }
 
       const beforeHead = await gitHead(spawnGuarded, target, signal);
+      if (beforeHead !== grant.artifact_sha) {
+        fail('devgate_equivalence_artifact_mismatch');
+      }
       const env = childEnvironment(target);
       const tdd = await invokeChild(spawnGuarded, {
         executable: '/bin/bash',
@@ -264,6 +279,9 @@ export function createDevGateEquivalenceSeam({
       }
       const afterHead = await gitHead(spawnGuarded, target, signal);
       throwIfAborted(signal);
+      if (afterHead !== grant.artifact_sha) {
+        fail('devgate_equivalence_artifact_mismatch');
+      }
 
       return effectSigner.signEffectResult({
         cell,
