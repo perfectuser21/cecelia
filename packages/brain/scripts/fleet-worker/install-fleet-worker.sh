@@ -75,6 +75,7 @@ WORKTREE_ROOT="${FLEET_WORKER_REPO_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/repository
 FLEET_DATA_ROOT="${FLEET_WORKER_DATA_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/fleet-worker}"
 WORKER_TOKEN_FILE="${FLEET_WORKER_TOKEN_FILE:-$FLEET_DATA_ROOT/worker-token}"
 ORBSTACK_HOME="${FLEET_WORKER_ORBSTACK_HOME:-/var/empty}"
+SHARED_TMPDIR="${FLEET_WORKER_SHARED_TMPDIR:-$SYSTEM_ROOT/Users/Shared/cecelia-fleet-tmp}"
 
 usage() {
   echo "usage: $0 <us-mac-m4|xian-mac-m4|xian-mac-m1> [--render-to PATH|--apply]" >&2
@@ -659,6 +660,20 @@ prepare_worker_data_root() {
   "$CHOWN" _cecelia:_cecelia "$WORKER_TOKEN_FILE"
 }
 
+prepare_shared_tmpdir() {
+  local shared_parent="$SYSTEM_ROOT/Users/Shared"
+
+  [[ "$SHARED_TMPDIR" == "$shared_parent/cecelia-fleet-tmp" ]] \
+    || die "shared_tmpdir_invalid"
+  [[ ! -L "$shared_parent" && ! -L "$SHARED_TMPDIR" ]] \
+    || die "shared_tmpdir_invalid"
+  mkdir -p "$shared_parent" "$SHARED_TMPDIR"
+  [[ -d "$SHARED_TMPDIR" && ! -L "$SHARED_TMPDIR" ]] \
+    || die "shared_tmpdir_invalid"
+  "$CHMOD" 0755 "$SHARED_TMPDIR"
+  "$CHOWN" _cecelia:_cecelia "$SHARED_TMPDIR"
+}
+
 snapshot_file() {
   local source="$1"
   local backup="$2"
@@ -775,6 +790,7 @@ run_preflight
 validate_worker_token_file
 if [[ "$mode" == 'apply' ]]; then
   prepare_worker_data_root
+  prepare_shared_tmpdir
 fi
 
 if [[ "$mode" == 'render' ]]; then

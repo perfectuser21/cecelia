@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.121
+**版本**: 1.267.122
+
+## OrbStack-shareable Worker TMPDIR bootstrap
+
+- system Worker 安装器在启动 LaunchDaemon 前创建固定
+  `/Users/Shared/cecelia-fleet-tmp`，设置 `_cecelia:_cecelia`、0755，
+  使健康探针的临时 worktree 能被 OrbStack bind mount。
+- 目录目标必须是节点根下的精确固定路径，符号链接和任意 override 均
+  fail closed；不改变 Runner digest、admission 阈值或凭据边界。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.121`。
 
 ## Clean-node nodectl pinned Node resolution
 
