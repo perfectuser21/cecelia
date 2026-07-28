@@ -56,6 +56,9 @@ function authorizedContext(overrides = {}) {
     attempt_id: value.observed.evaluateResult.attempt_id,
     verdict: value.observed.evaluateResult.decision.outcome,
     pr_head_sha: value.observed.pr.head_sha,
+    feedback: value.observed.evaluateResult.decision.reason,
+    failure_class:
+      value.observed.evaluateResult.decision.failure_class ?? null,
     executor_kind: 'fleet-worker',
     result_digest: sha256Canonical(value.observed.evaluateResult),
     result_receipt_id: evaluatorReceiptId,
@@ -90,6 +93,14 @@ function deps() {
             role: 'evaluator',
             status: 'completed',
             execution_transport: 'fleet-worker',
+            lease_owner: 'worker-1',
+            lease_generation: 4,
+            completed_at: new Date('2026-07-28T12:00:00.000Z'),
+            task_bundle: {
+              inputs: {
+                pull_request: { head_sha: 'sha-1' },
+              },
+            },
             result_receipt_id: evaluatorReceiptId,
             result_sha256: evaluatorResultSha256,
             result: authorizedContext().observed.evaluateResult,
@@ -288,6 +299,14 @@ describe('kernel deterministic handlers', () => {
             role: 'evaluator',
             status: 'completed',
             execution_transport: 'fleet-worker',
+            lease_owner: 'worker-1',
+            lease_generation: 4,
+            completed_at: new Date('2026-07-28T12:00:00.000Z'),
+            task_bundle: {
+              inputs: {
+                pull_request: { head_sha: 'sha-1' },
+              },
+            },
             result_receipt_id: evaluatorReceiptId,
             result_sha256: evaluatorResultSha256,
             result: evaluatorResult,
@@ -332,6 +351,7 @@ describe('kernel deterministic handlers', () => {
         evaluateVerdict: {
           ...authorizedContext().observed.evaluateVerdict,
           verdict: 'FAIL',
+          feedback: 'product failed',
           failure_class: 'product_failure',
         },
         evaluateResult: {
@@ -340,6 +360,7 @@ describe('kernel deterministic handlers', () => {
             outcome: 'FAIL',
             reason: 'product failed',
             pr_head_sha: 'sha-1',
+            failure_class: 'product_failure',
           },
         },
       },
@@ -355,6 +376,14 @@ describe('kernel deterministic handlers', () => {
             role: 'evaluator',
             status: 'completed',
             execution_transport: 'fleet-worker',
+            lease_owner: 'worker-1',
+            lease_generation: 4,
+            completed_at: new Date('2026-07-28T12:00:00.000Z'),
+            task_bundle: {
+              inputs: {
+                pull_request: { head_sha: 'sha-1' },
+              },
+            },
             result_receipt_id: evaluatorReceiptId,
             result_sha256: evaluatorResultSha256,
             result: ctx.observed.evaluateResult,

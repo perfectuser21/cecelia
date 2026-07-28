@@ -202,11 +202,26 @@ describe('attempt store', () => {
     const store = createAttemptStore(pool);
     const result = { status: 'completed', summary: 'done' };
 
-    expect(await store.complete(input.id, result, { leaseOwner: 'brain-1' })).toMatchObject({ deduped: false });
-    expect(await store.complete(input.id, result, { leaseOwner: 'brain-1' })).toEqual({ attempt: null, deduped: true });
+    const lease = { leaseOwner: 'brain-1', leaseGeneration: 4 };
+    expect(await store.complete(input.id, result, lease)).toMatchObject({ deduped: false });
+    expect(await store.complete(input.id, result, lease)).toEqual({ attempt: null, deduped: true });
     expect(pool.query.mock.calls[0][0]).toMatch(/status NOT IN \(/i);
     expect(pool.query.mock.calls[0][0]).toMatch(/lease_owner\s*=\s*\$6/i);
+    expect(pool.query.mock.calls[0][0]).toMatch(/lease_generation\s*=\s*\$7/i);
     expect(pool.query.mock.calls[0][0]).not.toMatch(/lease_owner\s*=\s*NULL/i);
+  });
+
+  it('claimed terminal completion requires the exact lease generation', async () => {
+    const pool = poolWith();
+    const store = createAttemptStore(pool);
+
+    await expect(store.complete(input.id, {
+      status: 'completed',
+      summary: 'done',
+    }, {
+      leaseOwner: 'brain-1',
+    })).rejects.toThrow('complete requires leaseGeneration');
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   it('semantic refusal 作为成功终态的规范化 failure class 持久化', async () => {
@@ -219,12 +234,16 @@ describe('attempt store', () => {
     };
 
     await expect(
-      store.complete(input.id, result, { leaseOwner: 'brain-1' }),
+      store.complete(input.id, result, {
+        leaseOwner: 'brain-1',
+        leaseGeneration: 4,
+      }),
     ).resolves.toMatchObject({ deduped: false });
 
     const [sql, values] = pool.query.mock.calls[0];
     expect(sql).toMatch(/failure_class\s*=\s*\$5/i);
     expect(sql).toMatch(/lease_owner\s*=\s*\$6/i);
+    expect(sql).toMatch(/lease_generation\s*=\s*\$7/i);
     expect(values).toEqual([
       input.id,
       'blocked',
@@ -232,6 +251,7 @@ describe('attempt store', () => {
       null,
       'semantic_refusal',
       'brain-1',
+      4,
     ]);
   });
 
