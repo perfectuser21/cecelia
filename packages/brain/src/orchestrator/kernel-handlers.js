@@ -514,17 +514,15 @@ export function createIndependentJudgeEquivalenceSeam({
       }
 
       return effectSigner.signEffectResult({
-        service_id: INDEPENDENT_JUDGE_SEAM_ID,
         cell,
         grant,
-        resource_id: grant.resource_id,
-        resource_ref: grant.resource_ref,
-        observed_outcome: effect.observed_outcome,
-        effect_code: effect.effect_code,
-        before_hash: sha256Canonical(before),
-        after_hash: sha256Canonical(after),
+        observation: {
+          observed_outcome: effect.observed_outcome,
+          effect_code: effect.effect_code,
+          before_hash: sha256Canonical(before),
+          after_hash: sha256Canonical(after),
+        },
         predecessor,
-        signal,
       });
     },
 

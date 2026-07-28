@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sha256Canonical } from '../../../brain/src/lib/kernel-equivalence-receipts.js';
 
 const SEAM_ID = 'kernel.quality.devgate';
 const TDD_SCRIPT = fileURLToPath(
@@ -141,12 +141,6 @@ function childEnvironment(target) {
   });
 }
 
-function snapshotHash(snapshot) {
-  return createHash('sha256')
-    .update(JSON.stringify(snapshot), 'utf8')
-    .digest('hex');
-}
-
 async function invokeChild(spawnGuarded, command) {
   const result = await spawnGuarded(command);
   throwIfAborted(command.signal);
@@ -272,25 +266,23 @@ export function createDevGateEquivalenceSeam({
       throwIfAborted(signal);
 
       return effectSigner.signEffectResult({
-        service_id: SEAM_ID,
         cell,
         grant,
-        resource_id: grant.resource_id,
-        resource_ref: grant.resource_ref,
-        observed_outcome: effect.observed_outcome,
-        effect_code: effect.effect_code,
-        before_hash: snapshotHash({
-          head: beforeHead,
-          base_ref: target.base_ref,
-        }),
-        after_hash: snapshotHash({
-          head: afterHead,
-          tdd_exit_code: tdd.exit_code,
-          dod_exit_code: dod.exit_code,
-          dod_complete: dodComplete,
-        }),
+        observation: {
+          observed_outcome: effect.observed_outcome,
+          effect_code: effect.effect_code,
+          before_hash: sha256Canonical({
+            head: beforeHead,
+            base_ref: target.base_ref,
+          }),
+          after_hash: sha256Canonical({
+            head: afterHead,
+            tdd_exit_code: tdd.exit_code,
+            dod_exit_code: dod.exit_code,
+            dod_complete: dodComplete,
+          }),
+        },
         predecessor,
-        signal,
       });
     },
 
