@@ -137,6 +137,41 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION kernel_equivalence_head_advance_guard()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.chain_id <> OLD.chain_id
+     OR NEW.revision <> OLD.revision + 1
+     OR NEW.head_hash IS NULL
+     OR NEW.updated_at <= OLD.updated_at THEN
+    RAISE EXCEPTION 'kernel equivalence head advance is not monotonic';
+  END IF;
+
+  IF OLD.revision = 0 THEN
+    IF OLD.genesis_hash IS NOT NULL
+       OR OLD.head_hash IS NOT NULL
+       OR NEW.genesis_hash IS NULL
+       OR NEW.genesis_hash <> NEW.head_hash THEN
+      RAISE EXCEPTION 'kernel equivalence genesis initialization is invalid';
+    END IF;
+  ELSIF NEW.genesis_hash IS NULL
+        OR NEW.genesis_hash <> OLD.genesis_hash THEN
+    RAISE EXCEPTION 'kernel equivalence genesis is immutable';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM kernel_equivalence_receipt_bundles
+     WHERE chain_id = NEW.chain_id
+       AND bundle_hash = NEW.head_hash
+       AND previous_bundle_hash IS NOT DISTINCT FROM OLD.head_hash
+  ) THEN
+    RAISE EXCEPTION 'kernel equivalence head is not a committed successor';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_nonce_attempt_run_guard
   ON kernel_equivalence_execution_nonces;
 CREATE TRIGGER trg_kernel_equivalence_nonce_attempt_run_guard
@@ -148,6 +183,12 @@ DROP TRIGGER IF EXISTS trg_kernel_equivalence_bundle_attempt_run_guard
 CREATE TRIGGER trg_kernel_equivalence_bundle_attempt_run_guard
   BEFORE INSERT ON kernel_equivalence_receipt_bundles
   FOR EACH ROW EXECUTE FUNCTION kernel_equivalence_attempt_run_guard();
+
+DROP TRIGGER IF EXISTS trg_kernel_equivalence_head_advance_guard
+  ON kernel_equivalence_bundle_chain_heads;
+CREATE TRIGGER trg_kernel_equivalence_head_advance_guard
+  BEFORE UPDATE ON kernel_equivalence_bundle_chain_heads
+  FOR EACH ROW EXECUTE FUNCTION kernel_equivalence_head_advance_guard();
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_nonces_append_only
   ON kernel_equivalence_execution_nonces;

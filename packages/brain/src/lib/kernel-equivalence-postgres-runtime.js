@@ -460,10 +460,31 @@ export function createPostgresPredecessorResolver({ pool } = {}) {
     let result;
     try {
       result = await pool.query(
-        `SELECT bundle_hash, bundle
-           FROM kernel_equivalence_receipt_bundles
-          WHERE chain_id = $1
-            AND cell_id = $2
+        `WITH RECURSIVE trusted_chain AS (
+           SELECT b.bundle_hash, b.previous_bundle_hash, b.bundle,
+                  b.cell_id, b.behavior_id, b.provider, b.scenario,
+                  b.run_id, b.attempt_id, b.artifact_sha, b.resource_id,
+                  b.resource_ref, b.seam_id, b.adapter_id, b.committed_at
+             FROM kernel_equivalence_bundle_chain_heads h
+             JOIN kernel_equivalence_receipt_bundles b
+               ON b.chain_id = h.chain_id
+              AND b.bundle_hash = h.head_hash
+            WHERE h.chain_id = $1
+           UNION ALL
+           SELECT parent.bundle_hash, parent.previous_bundle_hash,
+                  parent.bundle, parent.cell_id, parent.behavior_id,
+                  parent.provider, parent.scenario, parent.run_id,
+                  parent.attempt_id, parent.artifact_sha,
+                  parent.resource_id, parent.resource_ref, parent.seam_id,
+                  parent.adapter_id, parent.committed_at
+             FROM kernel_equivalence_receipt_bundles parent
+             JOIN trusted_chain child
+               ON parent.chain_id = $1
+              AND parent.bundle_hash = child.previous_bundle_hash
+         )
+         SELECT bundle_hash, bundle
+           FROM trusted_chain
+          WHERE cell_id = $2
             AND behavior_id = $3
             AND provider = $4
             AND scenario = 'violation'
