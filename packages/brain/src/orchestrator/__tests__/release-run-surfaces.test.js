@@ -96,6 +96,45 @@ describe('legacy release surfaces fail closed', () => {
     }
   });
 
+  it('release guard is source-safe and continues only after server authorization', () => {
+    const guard = resolve(root, 'scripts/lib/release-run-guard.sh');
+    const fixture = `
+      curl() {
+        local out="" previous=""
+        for arg in "$@"; do
+          if [[ "$previous" == "--output" ]]; then out="$arg"; fi
+          previous="$arg"
+        done
+        printf '{"authorized":true}' > "$out"
+        printf 200
+      }
+      export -f curl
+      source "$1"
+      require_release_run_authority production
+      printf authorized-ok
+    `;
+    const authorized = spawnSync('bash', ['-c', fixture, '--', guard], {
+      env: {
+        PATH: process.env.PATH,
+        KERNEL_RELEASE_RUN_ID: '44444444-4444-4444-8444-444444444444',
+        KERNEL_RELEASE_MERGE_SHA: 'b'.repeat(40),
+        KERNEL_RELEASE_AUTHORIZATION: '55555555-5555-4555-8555-555555555555',
+        DEPLOY_TOKEN: 'fixture-token',
+      },
+      encoding: 'utf8',
+    });
+    expect(authorized.status).toBe(0);
+    expect(authorized.stdout).toBe('authorized-ok');
+
+    const unauthorized = spawnSync(
+      'bash',
+      ['-c', 'source "$1"; require_release_run_authority production', '--', guard],
+      { env: { PATH: process.env.PATH }, encoding: 'utf8' },
+    );
+    expect(unauthorized.status).toBe(78);
+    expect(unauthorized.stderr).toMatch(/ReleaseRun authority required/);
+  });
+
   it('does not expose the legacy token-only rollback endpoint', () => {
     const source = readFileSync(resolve(root, 'packages/brain/src/routes/ops.js'), 'utf8');
     const rollbackRoute = source.slice(
