@@ -14,6 +14,7 @@ import { digestTree } from './release-run-tree-digest.mjs';
 
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
+const NONCE_RE = /^[0-9a-f]{64}$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 const UTC_TIMESTAMP_RE =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/;
@@ -22,6 +23,7 @@ const REQUIRED_KEYS = Object.freeze([
   'staging_dist',
   'staging_port',
   'slot_pid',
+  'slot_nonce',
   'commit',
   'created_at',
   'artifact_name',
@@ -130,6 +132,7 @@ export function sealDashboardStage({
     || Number(pending.staging_port) > 65535
     || !POSITIVE_INT_RE.test(pending.slot_pid)
     || !Number.isSafeInteger(Number(pending.slot_pid))
+    || !NONCE_RE.test(pending.slot_nonce)
     || !UTC_TIMESTAMP_RE.test(pending.created_at)
     || !Number.isFinite(Date.parse(pending.created_at))
   ) {
@@ -167,6 +170,7 @@ export function sealDashboardStage({
       sealedRoot,
       stagingPort: pending.staging_port,
       slotPid: pending.slot_pid,
+      slotNonce: pending.slot_nonce,
       commit: pending.commit,
       artifactName: pending.artifact_name,
       artifactVersion: pending.artifact_version,
@@ -193,6 +197,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     result.sealedRoot,
     result.stagingPort,
     result.slotPid,
+    result.slotNonce,
     result.commit,
     result.artifactName,
     result.artifactVersion,

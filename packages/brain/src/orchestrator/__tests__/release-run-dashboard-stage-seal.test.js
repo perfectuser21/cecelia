@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -23,6 +23,7 @@ const promoteScript = resolve(
   '../../../../../scripts/promote-dashboard.sh',
 );
 const roots = [];
+const childProcesses = [];
 const mergeSha = 'b'.repeat(40);
 const previousSha = 'a'.repeat(40);
 const artifactVersion = mergeSha.slice(0, 12);
@@ -31,11 +32,14 @@ const sourceDigest = `sha256:${'7'.repeat(64)}`;
 function writePending(pendingPath, stagingRoot, {
   commit = mergeSha,
   deployedDigest = digestTree(stagingRoot),
+  slotPid = '999999',
+  slotNonce = '1'.repeat(64),
 } = {}) {
   writeFileSync(pendingPath, [
     `staging_dist=${stagingRoot}`,
     'staging_port=5223',
-    'slot_pid=999999',
+    `slot_pid=${slotPid}`,
+    `slot_nonce=${slotNonce}`,
     `commit=${commit}`,
     'created_at=2026-07-28T15:00:00Z',
     'artifact_name=workspace',
@@ -97,6 +101,11 @@ printf '200'
 }
 
 afterEach(() => {
+  for (const child of childProcesses.splice(0)) {
+    try {
+      child.kill('SIGTERM');
+    } catch {}
+  }
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -227,7 +236,14 @@ describe('sealed Dashboard staging identity', () => {
       .toContain(`commit=${previousSha}`);
 
     const exact = makeFixture();
-    writePending(exact.pending, exact.staging);
+    const unrelated = spawn(process.execPath, [
+      '-e',
+      'setInterval(() => {}, 1000)',
+    ], { stdio: 'ignore' });
+    childProcesses.push(unrelated);
+    writePending(exact.pending, exact.staging, {
+      slotPid: String(unrelated.pid),
+    });
     const accepted = spawnSync('bash', [promoteScript], {
       env: {
         ...env,
@@ -252,5 +268,54 @@ describe('sealed Dashboard staging identity', () => {
       current_digest: sourceDigest,
       current_deployed_digest: digestTree(exact.live),
     });
+    expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+  });
+
+  it('rejects an arbitrary retained release and never kills an unverified reused PID', () => {
+    const fixture = makeFixture();
+    const retained = join(
+      fixture.dashboard,
+      '.dist-releases/prod-cecelia-v9',
+    );
+    mkdirSync(retained, { recursive: true });
+    writeFileSync(join(retained, 'index.html'), '<h1>wrong retained</h1>\n');
+    writeFileSync(
+      join(retained, 'build-info.json'),
+      JSON.stringify({ git_sha: previousSha }),
+    );
+    const unrelated = spawn(process.execPath, [
+      '-e',
+      'setInterval(() => {}, 1000)',
+    ], { stdio: 'ignore' });
+    childProcesses.push(unrelated);
+    writePending(fixture.pending, fixture.staging, {
+      slotPid: String(unrelated.pid),
+    });
+    const rejected = spawnSync('bash', [promoteScript, '--deploy', 'prod-cecelia-v9'], {
+      env: {
+        ...process.env,
+        PATH: `${fixture.fakeBin}:${process.env.PATH}`,
+        KERNEL_RELEASE_DEPLOY_ROOT: fixture.root,
+        KERNEL_RELEASE_RUN_ID: '44444444-4444-4444-8444-444444444444',
+        KERNEL_RELEASE_MERGE_SHA: mergeSha,
+        KERNEL_RELEASE_AUTHORIZATION:
+          '55555555-5555-4555-8555-555555555555',
+        KERNEL_RELEASE_ARTIFACT_NAME: 'workspace',
+        KERNEL_RELEASE_ARTIFACT_VERSION: artifactVersion,
+        KERNEL_RELEASE_ARTIFACT_DIGEST: sourceDigest,
+        DEPLOY_TOKEN: 'test-token',
+        BRAIN_URL: 'http://brain.test',
+        CECELIA_SKIP_BRAIN_PROMOTE: '1',
+        CECELIA_SKIP_HK: '1',
+        CECELIA_SKIP_FINGERPRINT: '1',
+        CECELIA_SKIP_GIT_TAG: '1',
+      },
+      encoding: 'utf8',
+    });
+    expect(rejected.status, `${rejected.stdout}\n${rejected.stderr}`).toBe(78);
+    expect(readFileSync(join(fixture.live, 'build-info.json'), 'utf8'))
+      .toContain(previousSha);
+    expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+    unrelated.kill('SIGTERM');
   });
 });

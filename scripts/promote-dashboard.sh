@@ -56,6 +56,63 @@ ROLLBACK_IMMUTABLE_SOURCE=""
 RETAIN_N=5                                     # 留存份数上限
 TAG_PREFIX="prod-cecelia-v"
 
+dashboard_build_sha() {
+    node -e '
+      const fs = require("fs");
+      const path = require("path");
+      try {
+        const value = JSON.parse(fs.readFileSync(
+          path.join(process.argv[1], "build-info.json"),
+          "utf8",
+        ));
+        process.stdout.write(typeof value.git_sha === "string" ? value.git_sha : "");
+      } catch {}
+    ' "$1" 2>/dev/null || true
+}
+
+assert_forward_dashboard_identity() {
+    local root="$1"
+    local actual_digest actual_sha
+    [[ -d "$root" && -f "$root/index.html" \
+      && "${STAGED_COMMIT:-}" =~ ^[0-9a-f]{40}$ \
+      && "${STAGED_DEPLOYED_DIGEST:-}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    actual_digest=$(node "$SCRIPT_DIR/lib/release-run-tree-digest-cli.mjs" \
+      "$root") || return 1
+    actual_sha=$(dashboard_build_sha "$root")
+    [[ "$actual_digest" == "$STAGED_DEPLOYED_DIGEST" \
+      && "$actual_sha" == "$STAGED_COMMIT" ]]
+}
+
+stop_verified_staging_slot() {
+    local identity
+    [[ "${STAGED_PORT:-}" =~ ^[1-9][0-9]*$ \
+      && "${STAGED_PID:-}" =~ ^[1-9][0-9]*$ \
+      && "${STAGED_SLOT_NONCE:-}" =~ ^[0-9a-f]{64}$ \
+      && "${STAGED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || return 0
+    identity=$(curl -sf --max-time 2 \
+      "http://127.0.0.1:${STAGED_PORT}/.cecelia-staging-identity" \
+      2>/dev/null) || {
+        echo "⚠️  staging slot identity unavailable; refusing PID kill"
+        return 0
+    }
+    if STAGING_IDENTITY_JSON="$identity" \
+      EXPECTED_STAGING_PID="$STAGED_PID" \
+      EXPECTED_STAGING_NONCE="$STAGED_SLOT_NONCE" \
+      EXPECTED_STAGING_COMMIT="$STAGED_COMMIT" \
+      node -e '
+        const value = JSON.parse(process.env.STAGING_IDENTITY_JSON);
+        if (
+          String(value.pid) !== process.env.EXPECTED_STAGING_PID
+          || value.nonce !== process.env.EXPECTED_STAGING_NONCE
+          || value.commit !== process.env.EXPECTED_STAGING_COMMIT
+        ) process.exit(1);
+      ' >/dev/null 2>&1; then
+        kill "$STAGED_PID" 2>/dev/null || true
+    else
+        echo "⚠️  staging slot identity mismatch; refusing PID kill"
+    fi
+}
+
 # 算下一个单调递增 tag 号：取 .production-release current 与本地 git tag 的 max + 1。
 next_release_tag() {
     local max=0 n t
@@ -102,7 +159,8 @@ read_staged() {
         echo "❌ Dashboard release blocked: staged artifact identity mismatch" >&2
         exit 78
     }
-    IFS=$'\t' read -r STAGED_SEALED_ROOT STAGED_PORT STAGED_PID STAGED_COMMIT \
+    IFS=$'\t' read -r STAGED_SEALED_ROOT STAGED_PORT STAGED_PID STAGED_SLOT_NONCE \
+      STAGED_COMMIT \
       STAGED_ARTIFACT_NAME STAGED_ARTIFACT_VERSION STAGED_SOURCE_DIGEST \
       STAGED_DEPLOYED_DIGEST <<< "$sealed"
     [[ "$STAGED_SEALED_ROOT" == "$DASH_DIR"/.staging-sealed-* \
@@ -142,6 +200,11 @@ do_release() {
     if ! cp -R "$STAGED_DIST" "$RELEASES_DIR/$RELEASE_TAG"; then
         echo "❌ 冻结产物进库失败：$RELEASES_DIR/$RELEASE_TAG"
         exit 1
+    fi
+    if ! assert_forward_dashboard_identity "$RELEASES_DIR/$RELEASE_TAG"; then
+        rm -rf "${RELEASES_DIR:?}/$RELEASE_TAG"
+        echo "❌ Dashboard release blocked: frozen artifact identity mismatch" >&2
+        exit 78
     fi
     echo "📦 已冻结验过的产物 → .dist-releases/${RELEASE_TAG}（不可变 release）"
 
@@ -237,6 +300,10 @@ do_deploy() {
         }
     else
         DEPLOY_COMMIT="${STAGED_COMMIT:-${KERNEL_RELEASE_MERGE_SHA:-}}"
+        if ! assert_forward_dashboard_identity "$SRC"; then
+            echo "❌ Dashboard promotion blocked: release artifact identity mismatch" >&2
+            exit 78
+        fi
     fi
     [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
         echo "❌ Dashboard promotion blocked: exact merge SHA unavailable" >&2
@@ -249,6 +316,14 @@ do_deploy() {
     fi
     # cp -R（库版本要留在库里，不能 mv 走）。
     if cp -R "$SRC" "$DIST_DIR"; then
+        if [[ "$rollback_mode" != "1" ]] \
+          && ! assert_forward_dashboard_identity "$DIST_DIR"; then
+            echo "❌ Dashboard promotion blocked: live artifact identity mismatch" >&2
+            rm -rf "$DIST_DIR" 2>/dev/null || true
+            [[ "$HAD_OLD" == true && -d "${DIST_DIR}.old" ]] \
+              && mv "${DIST_DIR}.old" "$DIST_DIR"
+            exit 78
+        fi
         if [[ "$HAD_OLD" == true ]]; then
             mkdir -p "$RELEASES_DIR"
             rm -rf "${RELEASES_DIR:?}/$OLD_TAG"
@@ -284,11 +359,8 @@ do_deploy() {
     fi
 
     # 停常驻 staging 服务 + 清放行标记/通知（防重复 promote）。
-    if [[ -n "${STAGED_PID:-}" ]]; then kill "$STAGED_PID" 2>/dev/null || true; fi
-    if [[ -f "$SLOT_PID_FILE" ]]; then
-        kill "$(cat "$SLOT_PID_FILE" 2>/dev/null)" 2>/dev/null || true
-        rm -f "$SLOT_PID_FILE"
-    fi
+    stop_verified_staging_slot
+    rm -f "$SLOT_PID_FILE"
     rm -f "$PENDING_FILE" "$SLOT_LOG_FILE" "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
 
     # ── HK 同步：rsync 本机 live dist → HK /opt/cecelia/frontend/dist/ ───────────
@@ -326,6 +398,7 @@ do_deploy() {
         KERNEL_RELEASE_MERGE_SHA="$DEPLOY_COMMIT" \
         KERNEL_RELEASE_ARTIFACT_VERSION="${STAGED_ARTIFACT_VERSION:-${KERNEL_RELEASE_ARTIFACT_VERSION:-}}" \
         KERNEL_RELEASE_ARTIFACT_DIGEST="${STAGED_SOURCE_DIGEST:-${KERNEL_RELEASE_ARTIFACT_DIGEST:-}}" \
+        KERNEL_RELEASE_ARTIFACT_DEPLOYED_DIGEST="${STAGED_DEPLOYED_DIGEST:-}" \
         RELEASE_DASHBOARD_OLD_TAG="$OLD_TAG" \
         RELEASE_DASHBOARD_NEW_TAG="$tag" \
         RELEASE_DASHBOARD_OLD_COMMIT="$OLD_COMMIT" \
@@ -359,8 +432,12 @@ case "$MODE" in
         ;;
     deploy)
         [[ -n "$DEPLOY_TAG" ]] || { echo "❌ --deploy 需要指定 <tag>"; exit 1; }
-        # deploy 模式需要 read_staged 取 STAGED_PID（停 slot）；无 pending 也允许纯部署（slot 信息缺省）。
-        if [[ -f "$PENDING_FILE" ]]; then read_staged || true; fi
+        # Forward deploy 必须绑定本轮 sealed staging，不能任选 retained tag 冒充本轮产物。
+        [[ -f "$PENDING_FILE" ]] || {
+            echo "❌ Dashboard promotion blocked: exact staged authority unavailable" >&2
+            exit 78
+        }
+        read_staged
         do_deploy "$DEPLOY_TAG"
         ;;
     rollback)

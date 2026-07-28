@@ -34,6 +34,11 @@ describe('dashboard ReleaseRun rollback receipt', () => {
     mkdirSync(newRoot);
     writeFileSync(join(oldRoot, 'index.html'), '<h1>old</h1>\n');
     writeFileSync(join(newRoot, 'index.html'), '<h1>new</h1>\n');
+    writeFileSync(
+      join(newRoot, 'build-info.json'),
+      JSON.stringify({ git_sha: 'b'.repeat(40) }),
+    );
+    const deployedDigest = digestTree(newRoot);
 
     execFileSync(process.execPath, [helper], {
       env: {
@@ -42,6 +47,7 @@ describe('dashboard ReleaseRun rollback receipt', () => {
         KERNEL_RELEASE_MERGE_SHA: 'b'.repeat(40),
         KERNEL_RELEASE_ARTIFACT_VERSION: 'b'.repeat(12),
         KERNEL_RELEASE_ARTIFACT_DIGEST: `sha256:${'7'.repeat(64)}`,
+        KERNEL_RELEASE_ARTIFACT_DEPLOYED_DIGEST: deployedDigest,
         RELEASE_DASHBOARD_OLD_TAG: 'prod-cecelia-v41',
         RELEASE_DASHBOARD_NEW_TAG: 'prod-cecelia-v42',
         RELEASE_DASHBOARD_OLD_COMMIT: 'a'.repeat(40),
@@ -58,7 +64,7 @@ describe('dashboard ReleaseRun rollback receipt', () => {
       artifact_name: 'workspace',
       current_version: 'b'.repeat(12),
       current_digest: `sha256:${'7'.repeat(64)}`,
-      current_deployed_digest: digestTree(newRoot),
+      current_deployed_digest: deployedDigest,
       old_tag: 'prod-cecelia-v41',
       new_tag: 'prod-cecelia-v42',
       anchor: `workspace:sha256:${'7'.repeat(64)}`,

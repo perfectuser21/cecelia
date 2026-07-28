@@ -26,6 +26,7 @@
  *   SLOT_HOST       — 监听地址（默认 0.0.0.0 对外；自检可设 127.0.0.1）
  *   STAGING_BANNER  — =1 时注入 STAGING 角旗（常驻 staging 用；自检不设）
  *   STAGING_COMMIT  — 角旗 title 悬停显示的本次 commit（可选）
+ *   STAGING_SLOT_NONCE — 本轮 64-hex slot 身份（仅 promote 本机核对后停进程）
  */
 const http = require('http');
 const fs = require('fs');
@@ -36,6 +37,7 @@ const PORT = parseInt(process.env.SLOT_PORT || '5223', 10);
 const HOST = process.env.SLOT_HOST || '0.0.0.0';
 const BANNER_ON = process.env.STAGING_BANNER === '1';
 const STAGING_COMMIT = process.env.STAGING_COMMIT || 'unknown';
+const STAGING_SLOT_NONCE = process.env.STAGING_SLOT_NONCE || '';
 // 标识可配置：staging=橙 STAGING（默认）；dev 预览=蓝 DEV。文字/颜色由 env 覆盖。
 const FLAG_TEXT = (process.env.STAGING_FLAG_TEXT || 'STAGING').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 12) || 'STAGING';
 const FLAG_COLOR = /^#[0-9a-fA-F]{3,8}$/.test(process.env.STAGING_FLAG_COLOR || '') ? process.env.STAGING_FLAG_COLOR : '#f97316';
@@ -104,6 +106,27 @@ const server = http.createServer((req, res) => {
   if (reqPath.includes('..')) {
     res.writeHead(400);
     res.end('bad path');
+    return;
+  }
+  if (reqPath === '/.cecelia-staging-identity') {
+    if (
+      !BANNER_ON
+      || !/^[0-9a-f]{40}$/.test(STAGING_COMMIT)
+      || !/^[0-9a-f]{64}$/.test(STAGING_SLOT_NONCE)
+    ) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('not found');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+    res.end(JSON.stringify({
+      pid: process.pid,
+      nonce: STAGING_SLOT_NONCE,
+      commit: STAGING_COMMIT,
+    }));
     return;
   }
 

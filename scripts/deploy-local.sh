@@ -371,11 +371,16 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             rm -f "$SLOT_PID_FILE"
         fi
         STAGE_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
-        STAGE_COMMIT="${STAGE_COMMIT:0:12}"
-        [[ -n "$STAGE_COMMIT" ]] \
-            || STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+        [[ "$STAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "❌ exact staging commit unavailable" >&2
+            rm -rf "$STAGING_DIST" 2>/dev/null || true
+            exit 78
+        }
+        STAGING_SLOT_NONCE=$(node -e \
+          "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
         DIST_DIR="$STAGING_DIST" SLOT_PORT="$STAGING_SLOT_PORT" \
             STAGING_BANNER=1 STAGING_COMMIT="$STAGE_COMMIT" \
+            STAGING_SLOT_NONCE="$STAGING_SLOT_NONCE" \
             nohup node "$SLOT_SERVER" > "$SLOT_LOG_FILE" 2>&1 &
         SLOT_PID=$!
         echo "$SLOT_PID" > "$SLOT_PID_FILE"
@@ -427,6 +432,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             echo "staging_dist=$STAGING_DIST"
             echo "staging_port=$STAGING_SLOT_PORT"
             echo "slot_pid=$SLOT_PID"
+            echo "slot_nonce=$STAGING_SLOT_NONCE"
             echo "commit=$STAGED_COMMIT"
             echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "artifact_name=$STAGED_ARTIFACT_NAME"
