@@ -2322,6 +2322,24 @@ const _TASK_ROUTES = {
   ci_patrol:                _prepareCiPatrolPrompt,
 };
 
+/**
+ * Provider-neutral minimum task identity passed across every legacy Skill
+ * dispatch boundary. Keep this explicit instead of relying on a prompt to
+ * preserve fields implicitly.
+ */
+function buildSkillDispatchEnvelope(task) {
+  const id = typeof task?.id === 'string' ? task.id.trim() : '';
+  const title = typeof task?.title === 'string' ? task.title.trim() : '';
+  if (!id) throw new Error('task_dispatch_id_required');
+  if (!title) throw new Error('task_dispatch_title_required');
+
+  const description = typeof task?.description === 'string' && task.description.trim()
+    ? task.description
+    : task.title;
+
+  return Object.freeze({ id: task.id, title: task.title, description });
+}
+
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
 
 async function preparePrompt(task) {
@@ -2595,6 +2613,7 @@ function buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccoun
   const { runner, runner_args } = buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize);
   const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
   return {
+    task: buildSkillDispatchEnvelope(task),
     task_id: task.id,
     checkpoint_id: null,
     prompt: promptContent,
@@ -2680,15 +2699,14 @@ async function triggerMiniMaxExecutor(task) {
   const runId = generateRunId(task.id);
 
   try {
+    const taskEnvelope = buildSkillDispatchEnvelope(task);
     console.log(`[executor] Calling HK MiniMax for task=${task.id} type=${task.task_type}`);
 
     const response = await fetch(`${HK_MINIMAX_URL}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        id: task.id,
-        title: task.title,
-        description: task.description,
+        ...taskEnvelope,
         task_type: task.task_type,
       }),
       signal: AbortSignal.timeout(120000), // 2 minute timeout
@@ -3517,7 +3535,7 @@ async function triggerCeceliaRun(task) {
       // resolveExecutor（DB 驱动 machine+executor），graph 不再读任何全局开关。
 
       const dockerResult = await spawnDocker({
-        task,
+        task: { ...task, ...buildSkillDispatchEnvelope(task) },
         prompt: promptContent,
         env: dockerEnv,
         worktreePath: repoPath || undefined,
@@ -3577,6 +3595,7 @@ async function triggerCeceliaRun(task) {
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(30000),
       body: JSON.stringify({
+        task: buildSkillDispatchEnvelope(task),
         task_id: task.id,
         checkpoint_id: checkpointId,
         prompt: promptContent,
@@ -4308,6 +4327,7 @@ export {
   checkCeceliaRunAvailable,
   getTaskExecutionStatus,
   updateTaskRunInfo,
+  buildSkillDispatchEnvelope,
   preparePrompt,
   buildRetryContext,
   buildTimeContext,

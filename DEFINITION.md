@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.268.2
+**Brain 版本**: 1.268.3
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.3 — Unified legacy Skill dispatch contract
+
+- 旧 Executor 到 Claude/Codex/MiniMax/Docker/bridge 的派发边界统一携带
+  `id/title/description` 最小任务 envelope；空 description 使用 title，
+  缺身份或标题 fail-closed。
+- 恢复缺失的 P1 `executor_skill_dispatch_format` 行为合同，防止 Kernel 迁移期间
+  旧 `/dev`、`/code-review` 消费方静默丢任务身份。
+- Brain 回退目标：`1.268.2`。
 
 ## Brain 1.268.2 — Kernel controller guard migration
 

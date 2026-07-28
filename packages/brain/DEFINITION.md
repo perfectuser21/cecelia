@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.268.2
+**版本**: 1.268.3
+
+## Unified legacy Skill dispatch contract
+
+- Executor 的 provider/bridge 边界现在都显式携带 `id/title/description` 最小
+  envelope；空 description 规范化为 title，缺 id/title 则 fail-closed。
+- P1 合同测试同时验证 envelope、失败路径与 `/dev` 可执行 prompt 的标题/描述。
+- 回退：`bash scripts/brain-rollback.sh 1.268.2`。
 
 ## Kernel controller contract and intervention evidence
 
