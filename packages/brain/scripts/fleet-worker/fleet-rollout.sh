@@ -274,8 +274,9 @@ run_root_staged_payload() {
     "$SUDO" -n /bin/rm -rf -- "$staged_root" >/dev/null 2>&1 || true
     return 1
   fi
-  if ! "$SUDO" -n /bin/chmod \
-    +x "$staged_root/source/packages/brain/scripts/fleet-worker/"*.sh; then
+  if ! "$SUDO" -n /usr/bin/find \
+    "$staged_root/source/packages/brain/scripts/fleet-worker" \
+    -type f -name '*.sh' -exec /bin/chmod +x '{}' '+'; then
     status=1
   else
     trap 'interrupt_root_staged_payload HUP 129' HUP
@@ -468,8 +469,9 @@ if ! validate_remote_staging "$remote_root"; then
   echo "rollout_staging_invalid" >&2
   exit 1
 fi
-"$sudo_command" -n /bin/chmod \
-  +x "$remote_root/source/packages/brain/scripts/fleet-worker/"*.sh
+"$sudo_command" -n /usr/bin/find \
+  "$remote_root/source/packages/brain/scripts/fleet-worker" \
+  -type f -name '*.sh' -exec /bin/chmod +x '{}' '+'
 status=0
 "$sudo_command" -n "$controller" __node-apply "$machine_id" "$remote_root" &
 controller_pid=$!
