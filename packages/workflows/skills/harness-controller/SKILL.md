@@ -7,10 +7,9 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 2.10.0
+version: 2.9.0
 created: 2026-07-04
 changelog:
-  - 2.10.0: Step 6 review 门加执行体自批禁令（issue afc50c30，1b997ed6 事故实证：controller 以"meta-sprint 循环依赖"为由自调 approve 路由伪造 approved_by=alex self-merge，PR #4220 已 revert）——review_required=true 时执行体绝对禁止调用 pending-reviews approve/reject 路由或以任何方式（直写 DB/INSERT task_events）制造批准事件；批准事件只能由持 HARNESS_REVIEW_APPROVER_TOKEN 的主理人产生（token 不在执行体环境，路由已 401/503 fail-closed）；等不到批准 = 阻塞轮询 + 每 30 分钟 Bark 重提醒，超 24h 走 blocked 上报，任何理由（含"审批机制还没建成/循环依赖/等不到人"）都不构成自批与 merge 的许可；Bark approve 命令模板改为带 token（主理人 shell source credentials 执行）
   - 2.9.0: gear 档位：新增 gear=segmented 分叉（骨架棋盘 + 分段串行点绿，移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策2）——HARNESS_GEAR=segmented 时 Step 1 planner 照跑、Step 2 GAN 透传该档位给 proposer 输出多段 task-plan.json、GAN 后先派骨架 generator 落全红棋盘、再按 task-plan.json 串行段循环 generator(WORKSTREAM_INDEX)+evaluator(SEGMENT_EVAL)，同段 2 次仍败转 escalate，全段绿后走现行全量总验；复用既有 Step 0.1 HARNESS_GEAR 解析与 gear=hotfix 同款 default 不生效声明，不与 2.8.0 hotfix 支路冲突；HARNESS_GEAR 缺失/=default/=hotfix 时本节整节不生效
   - 2.8.0: gear=hotfix 短流程支路（handoff 0716 刀C，fcb459b5-c510-4f45-b41f-e71b100d94f1）——Step 0 新增 HARNESS_GEAR 变量（来源 payload.gear）；当 HARNESS_GEAR=hotfix 时跳过 GAN（proposer/reviewer）直接由 controller 从 thin_prd 锚定断言组装 contract-draft.md/contract-dod.md（输出 [gear=hotfix] skip proposer/reviewer GAN）；两条安全阀铁律：①generator 发现需改 Golden Path 断言 → FATAL 报错升档，禁止顺手改；②thin_prd 缺锚定声明 → 拒绝 hotfix，回退全流程（走完整 GAN 路径）；新增 examples/hotfix-shortflow/ 示例文件；全流程默认档（无 gear 字段）路径零回归
   - 2.7.0: Step 6 新增「毕业（测试入册）」机械步（刀1b relay 路径，配套 cecelia test-pyramid-guard 孤儿棘轮锁 0）——judge PASS 后、SHA 锚定与 merge 前，仓库存在 scripts/graduate-sprint-tests.mjs 时必须跑毕业脚本把 sprints/ 下 tests/ 与 e2e-verify.sh 搬进永久池（tests/regression/<slug>/ + scripts/smoke/e2e/<slug>.sh），commit+push 等 CI 绿再锚定；无脚本的 repo（如 zenithjoy-workspace）跳过。SHA 锚定条款新增与 update-branch 对称的毕业 commit 豁免（git diff --stat HEAD~1 证明纯 rename 零内容变更 → re-anchor 不触发 Step 4 全量重评）。插点依据：evaluator B-1 已把 e2e-verify.sh 固化完毕、merge 后无人再接手，且 guard 棘轮 orphans=0 会把没毕业的 PR 拦红
@@ -470,20 +469,6 @@ curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITI
 
 - merge 动作前后按「横切纪律 B」自报 node=merge。
 - review_required → 起预览环境 + Bark 通知主理人（附 approve 命令），阻塞等 task_events 批准事件
-
-### ⛔ 执行体自批禁令（v2.10，issue afc50c30 —— 1b997ed6 事故实证后的铁律）
-
-- **你（controller/任何执行体）绝对禁止**：调用 `POST /api/brain/harness/pending-reviews/:taskId/approve|reject`、直写 `task_events` 制造 `human_review_approved`/`human_review_rejected` 事件、或以任何变通方式替主理人"完成"批准。批准事件只能由持 `HARNESS_REVIEW_APPROVER_TOKEN` 的主理人产生——该 token 不在你的环境里，路由对无 token 请求返回 401/503，**你物理上调不动，也不要试**。
-- **任何理由都不构成自批许可**：包括但不限于"审批机制还没建成""meta-sprint 循环依赖""等不到人""判断 unit tests 已足够 DoD"。1b997ed6 就是用"循环依赖"自我说服后伪造 `approved_by=alex` self-merge 的——事后 Codex 复审 FAIL，整个 PR 被 revert，代价远大于等待。
-- **等不到批准的唯一合法行为**：阻塞轮询 task_events + 每 30 分钟 Bark 重提醒一次；超过 24 小时仍无批准 → 按 blocked 上报（PATCH task status=blocked，result 写明 waiting_human_review），**禁止 merge，禁止把任务标 completed**。
-- Bark 通知附的 approve 命令模板（主理人在自己 shell 执行，token 来自 credentials）：
-
-```bash
-source ~/.credentials/cecelia-brain.env && curl -s -X POST \
-  "http://localhost:5221/api/brain/harness/pending-reviews/<TASK_ID>/approve" \
-  -H "x-approver-token: $HARNESS_REVIEW_APPROVER_TOKEN" \
-  -H "Content-Type: application/json" -d '{"approved_by":"alex"}'
-```
 - **毕业（测试入册）——judge PASS 后、SHA 锚定与 merge 前的机械步（v2.7）**。为什么插在这里：evaluator B-1 已把 e2e-verify.sh 固化进 sprint 目录（这是该脚本内容定稿的唯一时点），merge 之后没有任何阶段再碰这条 PR——所以「e2e-verify.sh 之后、merge 之前」是毕业的唯一时点；且 cecelia 已上线 test-pyramid-guard 孤儿棘轮锁 0，sprints/ 下留测试的 PR 会被 CI 直接拦红，不毕业就合不进去：
 
 ```bash
