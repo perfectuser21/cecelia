@@ -5,6 +5,7 @@ import {
   toKernelStatus,
   TASK_CONTRACT_VERSION,
   RESULT_CONTRACT_VERSION,
+  ROLE_VALUES,
 } from '../execution-contract.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
@@ -73,6 +74,59 @@ function validResult(overrides = {}) {
   };
 }
 
+function validCommanderBundle(overrides = {}) {
+  return {
+    schema: 'commander-bundle/v1',
+    run_id: RUN_ID,
+    commander_attempt_id: ATTEMPT_ID,
+    event_cursor: 0,
+    run_profile: { commander_mode: 'hybrid' },
+    objective: { goal: 'Adjudicate the next Kernel boundary.' },
+    observed: { phase: 'planning' },
+    history_summary: {},
+    new_events: [],
+    actor_messages: [],
+    active_risks: [],
+    budgets: { remaining_attempts: 2 },
+    allowed_actions: ['continue_default'],
+    output_schema: 'commander-directive/v1',
+    ...overrides,
+  };
+}
+
+function validCommanderTask(overrides = {}) {
+  return validBundle({
+    role: 'commander',
+    skill: null,
+    inputs: {
+      task_id: '33333333-3333-4333-8333-333333333333',
+      sprint_dir: 'sprints/07280945-commander-phase2',
+      worktree_path: '/workspace',
+      commander_bundle: validCommanderBundle(),
+      artifacts: [],
+    },
+    constraints: {
+      read_only: true,
+      fresh_session: true,
+      timeout_seconds: 600,
+    },
+    expected_output: 'commander-directive/v1',
+    ...overrides,
+  });
+}
+
+function validCommanderDirective(overrides = {}) {
+  return {
+    schema: 'commander-directive/v1',
+    run_id: RUN_ID,
+    event_cursor: 0,
+    action: 'continue_default',
+    reason: 'The current Kernel decision remains within all fences.',
+    evidence_refs: ['event:1'],
+    ...overrides,
+  };
+}
+
 describe('TaskBundle contract', () => {
   it('accepts the provider-neutral v1 bundle', () => {
     expect(parseTaskBundle(validBundle())).toMatchObject({
@@ -131,6 +185,61 @@ describe('TaskBundle contract', () => {
     });
 
     expect(() => parseTaskBundle(bundle)).toThrow(/workspace_mode_mismatch/);
+  });
+
+  it('formalizes commander as a provider-neutral Harness role', () => {
+    expect(ROLE_VALUES).toContain('commander');
+    expect(parseTaskBundle(validCommanderTask())).toMatchObject({
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+      role: 'commander',
+      expected_output: 'commander-directive/v1',
+      inputs: {
+        commander_bundle: {
+          run_id: RUN_ID,
+          commander_attempt_id: ATTEMPT_ID,
+        },
+      },
+    });
+  });
+
+  it.each([
+    [
+      'missing CommanderBundle',
+      () => {
+        const task = validCommanderTask();
+        delete task.inputs.commander_bundle;
+        return task;
+      },
+    ],
+    [
+      'run id mismatch',
+      () => validCommanderTask({
+        inputs: {
+          ...validCommanderTask().inputs,
+          commander_bundle: validCommanderBundle({
+            run_id: '44444444-4444-4444-8444-444444444444',
+          }),
+        },
+      }),
+    ],
+    [
+      'attempt id mismatch',
+      () => validCommanderTask({
+        inputs: {
+          ...validCommanderTask().inputs,
+          commander_bundle: validCommanderBundle({
+            commander_attempt_id: '55555555-5555-4555-8555-555555555555',
+          }),
+        },
+      }),
+    ],
+    [
+      'wrong expected output',
+      () => validCommanderTask({ expected_output: 'harness-result/commander-v1' }),
+    ],
+  ])('rejects a Commander TaskBundle with %s', (_name, buildTask) => {
+    expect(() => parseTaskBundle(buildTask())).toThrow();
   });
 });
 
@@ -285,4 +394,74 @@ describe('HarnessResult contract', () => {
   it.each(['failed', 'cancelled'])('rejects terminal executor status %s as a Kernel success state', (status) => {
     expect(() => toKernelStatus(status)).toThrow(/executor_terminal/);
   });
+
+  it('accepts one strict Commander Directive in the transport decision', () => {
+    const parsed = parseHarnessResult(
+      validResult({
+        summary: 'Continue with the current Kernel decision.',
+        decision: validCommanderDirective(),
+      }),
+      'commander',
+      'commander-directive/v1',
+      { runId: RUN_ID, attemptId: ATTEMPT_ID },
+    );
+
+    expect(parsed.decision).toEqual(validCommanderDirective());
+  });
+
+  it.each([
+    [
+      'unknown Directive field',
+      validResult({
+        decision: validCommanderDirective({ provider_prompt: 'must not persist' }),
+      }),
+      { runId: RUN_ID, attemptId: ATTEMPT_ID },
+    ],
+    [
+      'Directive run id mismatch',
+      validResult({
+        decision: validCommanderDirective({
+          run_id: '44444444-4444-4444-8444-444444444444',
+        }),
+      }),
+      { runId: RUN_ID, attemptId: ATTEMPT_ID },
+    ],
+    [
+      'transport attempt id mismatch',
+      validResult({
+        attempt_id: '55555555-5555-4555-8555-555555555555',
+        decision: validCommanderDirective(),
+      }),
+      { runId: RUN_ID, attemptId: ATTEMPT_ID },
+    ],
+  ])('rejects Commander result with %s', (_name, result, expectedIdentity) => {
+    expect(() => parseHarnessResult(
+      result,
+      'commander',
+      'commander-directive/v1',
+      expectedIdentity,
+    )).toThrow();
+  });
+
+  it.each(['completed_with_concerns', 'needs_context', 'blocked', 'failed', 'cancelled'])(
+    'persists non-success Commander transport state %s only without a Directive',
+    (status) => {
+      expect(parseHarnessResult(
+        validResult({
+          status,
+          decision: null,
+          error: status === 'failed' ? { code: 'provider_unavailable' } : null,
+        }),
+        'commander',
+        'commander-directive/v1',
+        { runId: RUN_ID, attemptId: ATTEMPT_ID },
+      ).status).toBe(status);
+      expect(() => parseHarnessResult(
+        validResult({ status, decision: validCommanderDirective() }),
+        'commander',
+        'commander-directive/v1',
+        { runId: RUN_ID, attemptId: ATTEMPT_ID },
+      )).toThrow();
+    },
+  );
 });

@@ -1,6 +1,24 @@
 # Brain 模块定义
 
-**版本**: 1.267.98
+**版本**: 1.267.99
+
+## Provider-neutral Harness Commander Phase 2
+
+- `commander_mode=hybrid` 现在可在 material Kernel boundary 通过 Provider Registry、
+  capability preflight、正常 Attempt lease/heartbeat/callback/receipt 调用一个隔离的
+  Commander；默认仍为 `kernel-only`，`derive.js` 与既有非 hybrid 路径不变。
+- Provider 返回的 `commander-directive/v1` 先进入正常 HarnessResult/Attempt 终态，
+  再由 L0 校验 cursor、evidence、合法 role、budget、deadline 与 capability。接受、
+  拒绝和 failover 决策以 `orchestrator_decision_log` 为 authority，并由 migration
+  368 同事务投影成不可变 Run event。
+- Commander 自身只对带持久 `failure_class` 和显式白名单 code 的基础设施故障按声明
+  target 顺序 fresh-session failover；语义拒绝、产品失败、无效 Directive 与未知文本
+  均不跨 Provider，fallback 用尽转人工。
+- role 级 `switch_provider`/`switch_machine`、节点安装、OrbStack bootstrap、部署与
+  真实 Provider canary 仍属 Phase 3/4/5；本版本没有使用 synthetic canary 代替验收，
+  也不允许 Xian 本地长期 Codex credential。
+- 回退：`bash scripts/brain-rollback.sh 1.267.98`；或将 Run 保持/恢复为
+  `commander_mode=kernel-only` 立即旁路 Commander。
 
 ## Provider-neutral Harness Commander Phase 1
 

@@ -120,6 +120,7 @@ describe('resolveAction', () => {
     ['spawn:generator-fix', 'generator', 'harness-generator'],
     ['spawn:evaluator', 'evaluator', 'harness-evaluator'],
     ['spawn:judge', 'judge', null],
+    ['spawn:commander', 'commander', null],
   ])('%s 映射为隔离的 %s/%s', (action, role, skill) => {
     expect(resolveAction(action)).toMatchObject({ role, skill });
   });
@@ -130,6 +131,283 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('dispatches the frozen CommanderBundle through preflight before Attempt creation', async () => {
+    const order = [];
+    const deps = makeDeps(order);
+    const target = {
+      role: 'commander',
+      provider: 'codex',
+      account: 'team4',
+      model: 'GPT-5.5',
+      machine: 'us-mac-m4',
+    };
+    const commanderBundle = {
+      schema: 'commander-bundle/v1',
+      run_id: runId,
+      commander_attempt_id: attemptId,
+      event_cursor: 6,
+      run_profile: { commander: { primary: target, fallbacks: [] } },
+      objective: { summary: 'Adjudicate the next Kernel boundary.' },
+      observed: { phase: 'planning' },
+      history_summary: {},
+      new_events: [],
+      actor_messages: [],
+      active_risks: [],
+      budgets: { remaining_attempts: 2 },
+      allowed_actions: ['continue_default'],
+      output_schema: 'commander-directive/v1',
+    };
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => {
+        order.push('preflight.evaluate');
+        return {
+          status: 'ok',
+          snapshot: {
+            provider: 'codex',
+            account: 'team4',
+            machine: 'us-mac-m4',
+            capability_snapshot_id: 'snapshot-commander',
+          },
+          evidence: { structured_output: true },
+        };
+      }),
+      validateSnapshotForDispatch: vi.fn(async () => {
+        order.push('preflight.validate');
+        return { status: 'ok' };
+      }),
+    };
+    deps.launcher.launch.mockImplementationOnce(async ({ target: launchedTarget }) => {
+      order.push('launcher.launch');
+      return {
+        actualMachineId: launchedTarget.machine,
+        executionTransport: 'local-docker',
+        remoteJobId: null,
+        attestationStatus: 'local',
+        containerId: 'commander-container',
+        jobId: null,
+      };
+    });
+
+    await createDispatcher(deps)('spawn:commander', {
+      taskId,
+      runId,
+      hop: 12,
+      observed,
+      decision: { phase: 'planning', reason: 'commander_material_wakeup' },
+      commander: {
+        target,
+        candidate_targets: [target],
+        bundle: commanderBundle,
+        logical_cycle_id: 'commander-wakeup:6',
+      },
+    });
+
+    expect(order).toEqual([
+      'preflight.evaluate',
+      'preflight.validate',
+      'attempt.create',
+      'attempt.claim',
+      'adapter.start',
+      'launcher.launch',
+      'attempt.receipt',
+    ]);
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created).toMatchObject({
+      id: attemptId,
+      role: 'commander',
+      provider: 'codex',
+      accountId: 'team4',
+      machineId: 'us-mac-m4',
+      logicalCycleId: 'commander-wakeup:6',
+      retryOfAttemptId: null,
+      bundle: {
+        role: 'commander',
+        skill: null,
+        inputs: { commander_bundle: commanderBundle },
+        constraints: { read_only: true, fresh_session: true },
+        expected_output: 'commander-directive/v1',
+      },
+    });
+    expect(deps.loadSkill).not.toHaveBeenCalled();
+    expect(deps.preflightGate.evaluate).toHaveBeenCalledWith(expect.objectContaining({
+      preferred_target: {
+        provider: 'codex',
+        account: 'team4',
+        model: 'GPT-5.5',
+        machine: 'us-mac-m4',
+      },
+      candidate_targets: [{
+        provider: 'codex',
+        account: 'team4',
+        model: 'GPT-5.5',
+        machine: 'us-mac-m4',
+      }],
+    }));
+  });
+
+  it('keeps one failover retry on the declared fallback lineage with a fresh session', async () => {
+    const deps = makeDeps();
+    const fallbackAdapter = {
+      name: 'claude',
+      start: vi.fn(() => ({
+        provider: 'claude',
+        command: 'claude',
+        args: ['--print'],
+        stdin: '{}',
+      })),
+    };
+    deps.registry.resolve.mockReturnValue(fallbackAdapter);
+    deps.resolveAccountHome = vi.fn(() => '/tmp/claude-account1');
+    deps.launcher.launch.mockResolvedValue({
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+      containerId: 'commander-fallback',
+      jobId: null,
+    });
+    const sourceAttemptId = '33333333-3333-4333-8333-333333333333';
+    const target = {
+      role: 'commander',
+      provider: 'claude',
+      account: 'account1',
+      machine: 'us-mac-m4',
+    };
+    const bundle = {
+      schema: 'commander-bundle/v1',
+      run_id: runId,
+      commander_attempt_id: attemptId,
+      event_cursor: 7,
+      run_profile: {},
+      objective: {},
+      observed: {},
+      history_summary: {},
+      new_events: [],
+      actor_messages: [],
+      active_risks: [],
+      budgets: {},
+      allowed_actions: ['continue_default'],
+      output_schema: 'commander-directive/v1',
+    };
+    deps.preflightGate = {
+      evaluate: vi.fn(async ({ preferred_target: preferredTarget }) => ({
+        status: 'ok',
+        snapshot: {
+          ...preferredTarget,
+          capability_snapshot_id: 'snapshot-fallback',
+        },
+        evidence: {},
+        to_target: preferredTarget,
+      })),
+      validateSnapshotForDispatch: vi.fn(async (snapshot) => ({
+        status: 'ok',
+        snapshot,
+      })),
+    };
+
+    await createDispatcher(deps)('spawn:commander', {
+      taskId,
+      runId,
+      hop: 14,
+      observed,
+      decision: { phase: 'planning' },
+      commander: {
+        target,
+        candidate_targets: [target],
+        bundle,
+        logical_cycle_id: 'commander-wakeup:5',
+        retry_of_attempt_id: sourceAttemptId,
+        restart_reason: 'commander_failover:provider_unavailable',
+      },
+    });
+
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: attemptId,
+        provider: 'claude',
+        logicalCycleId: 'commander-wakeup:5',
+        attemptKind: 'retry',
+        retryOfAttemptId: sourceAttemptId,
+        restartReason: 'commander_failover:provider_unavailable',
+      }),
+    );
+    expect(fallbackAdapter.start)
+      .toHaveBeenCalledWith(expect.objectContaining({
+        execution: expect.not.objectContaining({
+          resume_session: expect.anything(),
+        }),
+      }));
+  });
+
+  it.each([
+    [
+      'missing capability gate',
+      null,
+    ],
+    [
+      'expired capability snapshot',
+      {
+        evaluate: vi.fn(async () => ({
+          status: 'ok',
+          snapshot: {
+            provider: 'codex',
+            account: 'team4',
+            machine: 'brain-1',
+            capability_snapshot_id: 'expired',
+          },
+          evidence: {},
+        })),
+        validateSnapshotForDispatch: vi.fn(async () => ({
+          status: 'blocked',
+          fallback_reason: 'capability_snapshot_expired',
+        })),
+      },
+    ],
+  ])('creates no Commander Attempt for %s', async (_name, preflightGate) => {
+    const deps = makeDeps();
+    deps.preflightGate = preflightGate;
+    const target = {
+      role: 'commander',
+      provider: 'codex',
+      account: 'team4',
+      machine: 'brain-1',
+    };
+    const result = await createDispatcher(deps)('spawn:commander', {
+      taskId,
+      runId,
+      hop: 12,
+      observed,
+      decision: { phase: 'planning' },
+      commander: {
+        target,
+        candidate_targets: [target],
+        logical_cycle_id: 'commander-wakeup:6',
+        bundle: {
+          schema: 'commander-bundle/v1',
+          run_id: runId,
+          commander_attempt_id: attemptId,
+          event_cursor: 6,
+          run_profile: {},
+          objective: {},
+          observed: {},
+          history_summary: {},
+          new_events: [],
+          actor_messages: [],
+          active_risks: [],
+          budgets: {},
+          allowed_actions: ['continue_default'],
+          output_schema: 'commander-directive/v1',
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+  });
+
   it('replaces caller paths with a resolved WorkspaceSpec before Fleet launch', async () => {
     const deps = makeDeps();
     deps.machineId = 'us-mac-m4';
@@ -244,6 +522,39 @@ describe('createDispatcher', () => {
     const evaluatedBundle = deps.preflightGate.evaluate.mock.calls[0][0].task_bundle;
     expect(evaluatedBundle.logical_cycle).toBe(created.logicalCycleId);
     expect(evaluatedBundle.inputs.logical_cycle_id).toBe(created.logicalCycleId);
+  });
+
+  it('preserves the source logical cycle for an L0-authorized role retry', async () => {
+    const deps = makeDeps();
+    const sourceAttemptId = '33333333-3333-4333-8333-333333333333';
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 13,
+      observed,
+      decision: { phase: 'gan', reason: 'commander_retry' },
+      retry: {
+        retry_of_attempt_id: sourceAttemptId,
+        logical_cycle_id: 'intent:contract-review',
+        restart_reason: 'commander_retry',
+      },
+    });
+
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logicalCycleId: 'intent:contract-review',
+        attemptKind: 'retry',
+        retryOfAttemptId: sourceAttemptId,
+        restartReason: 'commander_retry',
+        bundle: expect.objectContaining({
+          inputs: expect.objectContaining({
+            logical_cycle_id: 'intent:contract-review',
+            attempt_kind: 'retry',
+          }),
+        }),
+      }),
+    );
   });
 
   it('先持久化 attempt，再生成 adapter spec，最后 launch', async () => {

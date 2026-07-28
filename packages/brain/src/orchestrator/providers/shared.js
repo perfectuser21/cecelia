@@ -21,6 +21,22 @@ export function parseJsonValue(value, label) {
 }
 
 export function normalizeProviderResult({ attempt, payload, provider, sessionId }) {
+  if (attempt?.task_bundle?.expected_output === 'commander-directive/v1') {
+    return {
+      contract_version: RESULT_CONTRACT_VERSION,
+      attempt_id: attempt.id,
+      status: 'completed',
+      summary: payload.reason ?? '',
+      artifacts: [],
+      checks: [],
+      decision: payload,
+      error: null,
+      provider_metadata: {
+        provider,
+        session_id: sessionId ?? null,
+      },
+    };
+  }
   return {
     contract_version: payload.contract_version ?? RESULT_CONTRACT_VERSION,
     attempt_id: payload.attempt_id ?? attempt.id,

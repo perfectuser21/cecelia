@@ -466,6 +466,97 @@ record_codex_credential_mutation() {
 }
 # codex-credential-envelope:end
 
+# commander-provider-contract:start
+provider_result_schema_json() {
+  local task_bundle_file="$1"
+  local expected_output
+  expected_output=$(jq -r '.task_bundle.expected_output // empty' "$task_bundle_file")
+  if [[ "$expected_output" == "commander-directive/v1" ]]; then
+    printf '%s' '{"type":"object","properties":{"schema":{"const":"commander-directive/v1"},"run_id":{"type":"string","format":"uuid"},"event_cursor":{"type":"integer","minimum":0},"action":{"type":"string","enum":["continue_default","dispatch_role","retry_attempt","revise_guidance","switch_provider","switch_machine","pause_run","request_human","abort_run"]},"target_role":{"type":"string","enum":["commander","planner","proposer","reviewer","generator","evaluator","judge"]},"target_attempt_id":{"type":"string","format":"uuid"},"reason":{"type":"string","minLength":1,"maxLength":4000},"guidance":{"type":"string","maxLength":4000},"route":{"type":"object","properties":{"machine":{"type":"string"},"provider":{"type":"string"},"account":{"type":"string"},"model":{"type":"string"}},"additionalProperties":false},"evidence_refs":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","pattern":"^(event:[1-9][0-9]*|attempt:[0-9a-fA-F-]{36})$"}}},"required":["schema","run_id","event_cursor","action","reason","evidence_refs"],"additionalProperties":false}'
+    return
+  fi
+  printf '%s' '{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"type":"string"}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string"},"reason":{"type":"string"}},"required":["outcome","reason"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]}},"required":["status","summary","artifacts","checks","decision","error"],"additionalProperties":false}'
+}
+
+validate_commander_task_bundle() {
+  local task_bundle_file="$1"
+  local expected_output
+  expected_output=$(jq -r '.task_bundle.expected_output // empty' "$task_bundle_file")
+  if [[ "$expected_output" != "commander-directive/v1" ]]; then
+    return 0
+  fi
+  jq -e '
+    .task_bundle as $task
+    | $task.role == "commander"
+      and $task.skill == null
+      and $task.constraints.read_only == true
+      and $task.constraints.fresh_session == true
+      and ($task.inputs.commander_bundle | type) == "object"
+      and $task.run_id == $task.inputs.commander_bundle.run_id
+      and $task.attempt_id == $task.inputs.commander_bundle.commander_attempt_id
+      and $task.inputs.commander_bundle.output_schema == "commander-directive/v1"
+  ' "$task_bundle_file" >/dev/null
+}
+
+normalize_provider_success() {
+  local task_bundle_file="$1"
+  local result_file="$2"
+  local normalized_file="$3"
+  local attempt_id="$4"
+  local provider="$5"
+  local session_id="$6"
+  local credential_ref="$7"
+  local credential_copy_mutated="$8"
+  local expected_output
+  expected_output=$(jq -r '.task_bundle.expected_output // empty' "$task_bundle_file")
+
+  if [[ "$expected_output" == "commander-directive/v1" ]]; then
+    jq \
+      --arg attempt "$attempt_id" \
+      --arg provider "$provider" \
+      --arg session "$session_id" \
+      --arg credential_ref "$credential_ref" \
+      --argjson credential_copy_mutated "$credential_copy_mutated" \
+      '{
+         contract_version: "1.0",
+         attempt_id: $attempt,
+         status: "completed",
+         summary: .reason,
+         artifacts: [],
+         checks: [],
+         decision: .,
+         error: null,
+         provider_metadata: ({
+           provider: $provider,
+           session_id: (if $session == "" then null else $session end)
+         } + (if $credential_ref == "" then {} else {
+           credential_ref: $credential_ref,
+           credential_copy_mutated: $credential_copy_mutated
+         } end))
+       }' \
+      "$result_file" > "$normalized_file"
+    return
+  fi
+
+  jq \
+    --arg attempt "$attempt_id" \
+    --arg provider "$provider" \
+    --arg session "$session_id" \
+    --arg credential_ref "$credential_ref" \
+    --argjson credential_copy_mutated "$credential_copy_mutated" \
+    '.contract_version = (.contract_version // "1.0")
+     | .attempt_id = $attempt
+     | .provider_metadata = ((.provider_metadata // {}) + {
+         provider: $provider,
+         session_id: (if $session == "" then null else $session end)
+       } + (if $credential_ref == "" then {} else {
+         credential_ref: $credential_ref,
+         credential_copy_mutated: $credential_copy_mutated
+       } end))' \
+    "$result_file" > "$normalized_file"
+}
+# commander-provider-contract:end
+
 run_provider_contract() {
   PROVIDER_CONTRACT=1
   local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-$PROMPT_FILE}"
@@ -478,6 +569,7 @@ run_provider_contract() {
   local provider_exit=1
   local heartbeat_pid=""
   local safe_line=""
+  local commander_contract=false
 
   if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
     jq -n \
@@ -500,8 +592,22 @@ run_provider_contract() {
       > "$NORMALIZED_RESULT_FILE"
     return 1
   fi
+  if ! validate_commander_task_bundle "$task_bundle_file"; then
+    jq -n \
+      --arg attempt "$HARNESS_ATTEMPT_ID" \
+      --arg provider "$provider" \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"Commander TaskBundle rejected",artifacts:[],checks:[],decision:null,error:{code:"invalid_commander_task_bundle",message:"runner rejected the observational Commander boundary"},provider_metadata:{provider:$provider,session_id:null}}' \
+      > "$NORMALIZED_RESULT_FILE"
+    return 1
+  fi
+  if [[ "$(jq -r '.task_bundle.expected_output // empty' "$task_bundle_file")" == "commander-directive/v1" ]]; then
+    commander_contract=true
+  fi
 
   result_schema_json='{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"type":"string"}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string"},"reason":{"type":"string"}},"required":["outcome","reason"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]}},"required":["status","summary","artifacts","checks","decision","error"],"additionalProperties":false}'
+  if [[ "$commander_contract" == "true" ]]; then
+    result_schema_json="$(provider_result_schema_json "$task_bundle_file")"
+  fi
   printf '%s' "$result_schema_json" > "$result_schema_file"
 
   local model_args=()
@@ -578,6 +684,22 @@ run_provider_contract() {
         -u HARNESS_CALLBACK_TOKEN
         -u HARNESS_LEASE_OWNER
         codex
+      )
+    elif [[ "$commander_contract" == "true" ]]; then
+      codex_permission_args+=(
+        --ignore-user-config
+        --ignore-rules
+        --ephemeral
+        --disable shell_tool
+        --disable unified_exec
+        --disable code_mode_host
+        --disable browser_use
+        --disable apps
+        --disable plugins
+        --disable multi_agent
+        --disable multi_agent_v2
+        --disable hooks
+        --disable goals
       )
     fi
     if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
@@ -679,26 +801,29 @@ run_provider_contract() {
     record_codex_credential_mutation
   fi
 
-  if [[ $provider_exit -eq 0 ]] && jq -e 'type == "object" and .status' "$result_file" >/dev/null 2>&1; then
+  local provider_success=false
+  if [[ $provider_exit -eq 0 ]]; then
+    if [[ "$commander_contract" == "true" ]]; then
+      jq -e 'type == "object" and .schema == "commander-directive/v1"' \
+        "$result_file" >/dev/null 2>&1 && provider_success=true
+    else
+      jq -e 'type == "object" and .status' "$result_file" >/dev/null 2>&1 \
+        && provider_success=true
+    fi
+  fi
+  if [[ "$provider_success" == "true" ]]; then
     finalize_proposer_output || {
       echo "[entrypoint] proposer finalizer did not establish remote branch; Kernel no-push detector remains authoritative" >&2
     }
-    jq \
-      --arg attempt "$HARNESS_ATTEMPT_ID" \
-      --arg provider "$provider" \
-      --arg session "$provider_session_id" \
-      --arg credential_ref "$CREDENTIAL_REF" \
-      --argjson credential_copy_mutated "$CREDENTIAL_COPY_MUTATED" \
-      '.contract_version = (.contract_version // "1.0")
-       | .attempt_id = $attempt
-       | .provider_metadata = ((.provider_metadata // {}) + {
-           provider: $provider,
-           session_id: (if $session == "" then null else $session end)
-         } + (if $credential_ref == "" then {} else {
-           credential_ref: $credential_ref,
-           credential_copy_mutated: $credential_copy_mutated
-         } end))' \
-      "$result_file" > "$NORMALIZED_RESULT_FILE"
+    normalize_provider_success \
+      "$task_bundle_file" \
+      "$result_file" \
+      "$NORMALIZED_RESULT_FILE" \
+      "$HARNESS_ATTEMPT_ID" \
+      "$provider" \
+      "$provider_session_id" \
+      "$CREDENTIAL_REF" \
+      "$CREDENTIAL_COPY_MUTATED"
   else
     local stderr_tail
     stderr_tail=$(tail -c 2000 "$STDOUT_FILE" 2>/dev/null || true)

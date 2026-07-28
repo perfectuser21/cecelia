@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { parseWorkspaceSpec } from './workspace-spec.js';
+import {
+  parseCommanderBundle,
+  parseCommanderDirective,
+} from './commander-contract.js';
 
 export const TASK_CONTRACT_VERSION = '1.0';
 export const RESULT_CONTRACT_VERSION = '1.0';
@@ -12,6 +16,7 @@ export const ROLE_VALUES = [
   'evaluator',
   'judge',
   'reporter',
+  'commander',
 ];
 
 const EXECUTOR_STATUSES = [
@@ -102,10 +107,31 @@ export function parseTaskBundle(value) {
   if (PROVIDER_NATIVE_INSTRUCTION.test(parsed.objective)) {
     throw new Error('provider_native_instruction: TaskBundle objective must not name provider tools');
   }
+  if (parsed.role === 'commander') {
+    if (!parsed.inputs.commander_bundle) {
+      throw new Error('commander_bundle_required');
+    }
+    const commanderBundle = parseCommanderBundle(parsed.inputs.commander_bundle);
+    if (commanderBundle.run_id !== parsed.run_id) {
+      throw new Error('commander_bundle_run_id_mismatch');
+    }
+    if (commanderBundle.commander_attempt_id !== parsed.attempt_id) {
+      throw new Error('commander_bundle_attempt_id_mismatch');
+    }
+    if (parsed.expected_output !== 'commander-directive/v1') {
+      throw new Error('commander_expected_output_mismatch');
+    }
+    parsed.inputs.commander_bundle = commanderBundle;
+  }
   return parsed;
 }
 
-export function parseHarnessResult(value, role, expectedOutput = null) {
+export function parseHarnessResult(
+  value,
+  role,
+  expectedOutput = null,
+  expectedIdentity = {},
+) {
   const parsed = harnessResultSchema.parse(value);
   const failureClass = (() => {
     if (['blocked', 'needs_context'].includes(parsed.status)) {
@@ -122,6 +148,46 @@ export function parseHarnessResult(value, role, expectedOutput = null) {
   const classified = failureClass == null
     ? parsed
     : { ...parsed, failure_class: failureClass };
+  if (role === 'commander' || expectedOutput === 'commander-directive/v1') {
+    if (role !== 'commander' || expectedOutput !== 'commander-directive/v1') {
+      throw new Error('commander_transport_contract_mismatch');
+    }
+    if (
+      expectedIdentity.attemptId
+      && classified.attempt_id !== expectedIdentity.attemptId
+    ) {
+      throw new Error('commander_result_attempt_id_mismatch');
+    }
+    if (classified.status !== 'completed') {
+      if (classified.decision !== null) {
+        throw new Error('non_success_commander_result_must_not_carry_directive');
+      }
+      return classified;
+    }
+    if (!classified.decision) {
+      throw new Error('commander_result_requires_directive');
+    }
+    const directive = parseCommanderDirective(classified.decision);
+    if (expectedIdentity.runId && directive.run_id !== expectedIdentity.runId) {
+      throw new Error('commander_directive_run_id_mismatch');
+    }
+    if (
+      expectedIdentity.eventCursor !== undefined
+      && directive.event_cursor !== expectedIdentity.eventCursor
+    ) {
+      throw new Error('commander_directive_event_cursor_mismatch');
+    }
+    if (
+      classified.artifacts.length !== 0
+      || classified.checks.length !== 0
+      || classified.error !== null
+    ) {
+      throw new Error(
+        'commander result requires empty artifacts, empty checks, and null error',
+      );
+    }
+    return { ...classified, decision: directive };
+  }
   if (expectedOutput === 'harness-result/canary-v1') {
     // Every executor terminal state must reach persistence. Only the exact
     // successful state is subject to the stricter canary proof envelope.

@@ -34,6 +34,12 @@ describe('buildRealDeps', () => {
     });
 
     expect(deps.dispatch).toBe(dispatch);
+    expect(deps.commanderCoordinator).toMatchObject({
+      reconcile: expect.any(Function),
+    });
+    expect(deps.commanderDirectiveExecutor).toMatchObject({
+      execute: expect.any(Function),
+    });
     expect(String(deps.dispatch)).not.toContain('NotImplemented');
   });
 

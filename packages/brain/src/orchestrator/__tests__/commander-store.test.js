@@ -63,4 +63,33 @@ describe('Commander state store', () => {
     })).rejects.toThrow('secret_material_forbidden');
     expect(pool.query).not.toHaveBeenCalled();
   });
+
+  it('persists recoverable Commander memory without raw Provider material', async () => {
+    const runId = randomUUID();
+    const row = {
+      run_id: runId,
+      event_cursor: '8',
+      strategy_summary: { approach: 'Keep Kernel truth authoritative.' },
+      active_risks: [{ code: 'provider_capacity' }],
+      latest_guidance: { text: 'Use evidence-backed retries.' },
+    };
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [row] }) };
+
+    await expect(createCommanderStore(pool).updateMemory(runId, {
+      expectedCursor: 8,
+      provider: 'claude',
+      accountId: 'account1',
+      model: 'claude-opus',
+      providerSessionId: 'session-new',
+      strategySummary: row.strategy_summary,
+      activeRisks: row.active_risks,
+      latestGuidance: row.latest_guidance,
+      status: 'ready',
+    })).resolves.toMatchObject({ ...row, event_cursor: 8 });
+
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).not.toMatch(/raw_prompt|raw_provider_output|callback_secret|error_message/i);
+    expect(JSON.stringify(values)).not.toContain('credential');
+    expect(sql).toMatch(/WHERE run_id=\$1\s+AND event_cursor=\$2/is);
+  });
 });

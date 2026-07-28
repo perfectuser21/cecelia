@@ -50,6 +50,10 @@ const ACTION_SPECS = Object.freeze({
     role: 'judge', skill: null, readOnly: true,
     expectedOutput: 'harness-result/judge-v1',
   },
+  'spawn:commander': {
+    role: 'commander', skill: null, readOnly: true,
+    expectedOutput: 'commander-directive/v1',
+  },
 });
 
 const OBJECTIVES = Object.freeze({
@@ -59,6 +63,7 @@ const OBJECTIVES = Object.freeze({
   generator: 'Implement or fix the approved contract in the supplied worktree and produce a pull request artifact.',
   evaluator: 'Independently evaluate the current pull request against the approved contract and return evidence.',
   judge: 'Independently judge the evaluator evidence and return the final verification decision.',
+  commander: 'Observe one bounded Run snapshot and return exactly one provider-neutral Commander Directive.',
 });
 
 export function resolveAction(action) {
@@ -116,6 +121,13 @@ function buildInputs(spec, ctx, attemptMetadata) {
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+
+  if (spec.role === 'commander') {
+    return {
+      ...common,
+      commander_bundle: ctx.commander.bundle,
+    };
+  }
 
   if (spec.role !== 'planner') {
     common.prd = { path: `${common.sprint_dir}/sprint-prd.md` };
@@ -313,13 +325,24 @@ export function createDispatcher(deps) {
     }
 
     const spec = resolveAction(action);
-    const attemptId = randomUUID();
+    const commanderContext = spec.role === 'commander' ? ctx.commander : null;
+    if (spec.role === 'commander' && !commanderContext?.bundle) {
+      throw new Error('spawn:commander requires coordinator context');
+    }
+    const attemptId = spec.role === 'commander'
+      ? commanderContext.bundle.commander_attempt_id
+      : randomUUID();
     const callbackSecret = createCallbackSecret();
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
     const payload = asObject(ctx.observed.task.payload);
     const attemptMetadata = {
-      logicalCycleId: `intent:${ctx.runId}:${ctx.hop}`,
-      attemptKind: action === 'spawn:generator-fix' ? 'fix' : 'initial',
+      logicalCycleId: commanderContext?.logical_cycle_id
+        ?? ctx.retry?.logical_cycle_id
+        ?? `intent:${ctx.runId}:${ctx.hop}`,
+      attemptKind: commanderContext?.retry_of_attempt_id
+        || ctx.retry?.retry_of_attempt_id
+        ? 'retry'
+        : (action === 'spawn:generator-fix' ? 'fix' : 'initial'),
       workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
     };
     let bundle = buildBundle(
@@ -353,17 +376,36 @@ export function createDispatcher(deps) {
         },
       });
     }
-    const roleAssignment = asObject(asObject(payload.role_assignments)[spec.role]);
-    const requestedProvider = roleAssignment.provider ?? payload.executor ?? payload.provider ?? 'auto';
-    const requestedAccount = roleAssignment.account ?? payload.executor_account ?? null;
-    const requestedModel = roleAssignment.model
-      ?? (payload.model && payload.model !== 'auto' ? payload.model : null);
+    const roleAssignment = spec.role === 'commander'
+      ? {}
+      : asObject(asObject(payload.role_assignments)[spec.role]);
+    const {
+      role: _commanderRole,
+      ...commanderTarget
+    } = commanderContext?.target ?? {};
+    const requestedProvider = spec.role === 'commander'
+      ? commanderTarget.provider
+      : roleAssignment.provider ?? payload.executor ?? payload.provider ?? 'auto';
+    const requestedAccount = spec.role === 'commander'
+      ? commanderTarget.account
+      : roleAssignment.account ?? payload.executor_account ?? null;
+    const requestedModel = spec.role === 'commander'
+      ? commanderTarget.model ?? null
+      : roleAssignment.model
+        ?? (payload.model && payload.model !== 'auto' ? payload.model : null);
     let adapter = spec.role === 'judge' ? null : deps.registry.resolve({
       provider: requestedProvider,
       requires: ['structured_output'],
     });
     const preferredTarget = spec.role === 'judge'
       ? null
+      : spec.role === 'commander'
+        ? {
+            provider: commanderTarget.provider ?? adapter.name,
+            account: commanderTarget.account ?? null,
+            ...(commanderTarget.model ? { model: commanderTarget.model } : {}),
+            machine: commanderTarget.machine ?? machineId,
+          }
       : {
           provider: roleAssignment.provider ?? adapter.name,
           account: roleAssignment.account ?? requestedAccount,
@@ -372,6 +414,10 @@ export function createDispatcher(deps) {
         };
     const candidateTargets = spec.role === 'judge'
       ? []
+      : spec.role === 'commander'
+        ? (commanderContext.candidate_targets ?? [commanderContext.target]).map(
+            ({ role: _role, ...target }) => target,
+          )
       : roleAssignment.strict_affinity === true
         ? [preferredTarget]
         : [preferredTarget, ...(roleAssignment.fallback_targets ?? [])];
@@ -379,7 +425,8 @@ export function createDispatcher(deps) {
     let selectedMachine = preferredTarget?.machine ?? machineId;
     let selectedTarget = preferredTarget;
     let accountHome = null;
-    const rawCapabilityRequirements = payload.contract_requirements
+    const rawCapabilityRequirements = commanderContext?.capability_requirements
+      ?? payload.contract_requirements
       ?? payload.capability_requirements
       ?? null;
     const capabilityRequirements = deriveCapabilityRequirements({
@@ -387,7 +434,11 @@ export function createDispatcher(deps) {
       requirements: rawCapabilityRequirements,
     });
 
-    if (rawCapabilityRequirements && !deps.preflightGate && spec.role !== 'judge') {
+    if (
+      (rawCapabilityRequirements || spec.role === 'commander')
+      && !deps.preflightGate
+      && spec.role !== 'judge'
+    ) {
       const blocked = {
         status: 'DONE_WITH_CONCERNS',
         control_status: 'BLOCKED',
@@ -425,6 +476,8 @@ export function createDispatcher(deps) {
           status: 'DONE_WITH_CONCERNS',
           control_status: 'BLOCKED',
           detail: `dispatch preflight blocked: ${preflight.fallback_reason}`,
+          should_create_attempt: false,
+          should_enter_generator_fix: false,
         };
         await deps.onPreflightBlocked?.(blocked, { action, ctx });
         return blocked;
@@ -440,6 +493,8 @@ export function createDispatcher(deps) {
           status: 'DONE_WITH_CONCERNS',
           control_status: 'BLOCKED',
           detail: `dispatch preflight blocked: ${freshness.fallback_reason}`,
+          should_create_attempt: false,
+          should_enter_generator_fix: false,
         };
         await deps.onPreflightBlocked?.(blocked, { action, ctx });
         return blocked;
@@ -490,8 +545,12 @@ export function createDispatcher(deps) {
       callbackSecretHash: hashCallbackSecret(callbackSecret),
       logicalCycleId: attemptMetadata.logicalCycleId,
       attemptKind: attemptMetadata.attemptKind,
-      retryOfAttemptId: null,
-      restartReason: action === 'spawn:generator-fix' ? 'evaluator_failed' : null,
+      retryOfAttemptId: commanderContext?.retry_of_attempt_id
+        ?? ctx.retry?.retry_of_attempt_id
+        ?? null,
+      restartReason: commanderContext?.restart_reason
+        ?? ctx.retry?.restart_reason
+        ?? (action === 'spawn:generator-fix' ? 'evaluator_failed' : null),
       workstreamKey: attemptMetadata.workstreamKey,
       timeDerived: ['judge', 'reporter'].includes(spec.role),
     });
@@ -582,6 +641,9 @@ export function createDispatcher(deps) {
         await deps.attemptStore.fail(attempt.id, {
           code: 'launch_failed',
           message,
+          ...(spec.role === 'commander'
+            ? { failureClass: 'infrastructure_blocked' }
+            : {}),
         }, {
           leaseOwner: attempt.lease_owner,
           leaseGeneration: attempt.lease_generation,
