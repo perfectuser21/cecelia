@@ -34,6 +34,7 @@ const LAUNCH_FIELDS = new Set([
   'provider_spec',
   'credential_envelope',
   'result_channel',
+  'github_mutation_policy',
   'brain_url',
 ]);
 const TARGET_FIELDS = new Set([
@@ -64,6 +65,18 @@ const RESULT_CHANNEL_BINDING_FIELDS = new Set([
   'attempt_id',
   'role',
 ]);
+const GITHUB_MUTATION_POLICY_FIELDS = new Set([
+  'version',
+  'repo',
+  'branch',
+  'base_sha',
+  'expected_remote_sha',
+  'operation',
+  'pr_base',
+  'pr_title',
+  'pr_body',
+  'allowed_paths',
+]);
 const RESULT_CHANNEL_VERSION = 'attempt-result-file/v1';
 const RESULT_CHANNEL_ROOT = '/tmp/cecelia-prompts';
 const RESULT_CHANNEL_MAX_BYTES = 1024 * 1024;
@@ -86,6 +99,7 @@ const ATTEMPT_STATE_FIELDS = new Set([
   'provider',
   'brain_url',
   'result_channel',
+  'github_mutation_policy',
   'credential',
   'container_id',
   'container_removed',
@@ -418,6 +432,7 @@ function validateDurableAttemptState(state, attemptId = state?.attempt_id) {
       || /[\r\n]/.test(state.container_id)
       || ![
         'running',
+        'mutation_pending',
         'cancel_pending',
         'callback_pending',
         'cleanup_pending',
@@ -445,6 +460,13 @@ function validateDurableAttemptState(state, attemptId = state?.attempt_id) {
       if (state.provider !== 'codex') throw new Error('unexpected credential');
       validateStoredCredential(state.credential, state);
     }
+    if (Object.hasOwn(state, 'github_mutation_policy')) {
+      validateGithubMutationPolicy(
+        state.github_mutation_policy,
+        state.workspace,
+        state.result_channel.bindings.role,
+      );
+    }
     if (state.status === 'running') {
       if (
         Object.hasOwn(state, 'container_removed')
@@ -454,6 +476,15 @@ function validateDurableAttemptState(state, attemptId = state?.attempt_id) {
         || Object.hasOwn(state, 'cancel_requested_at')
       ) {
         throw new Error('invalid running state');
+      }
+    } else if (state.status === 'mutation_pending') {
+      if (
+        typeof state.container_removed !== 'boolean'
+        || !Object.hasOwn(state, 'github_mutation_policy')
+        || Object.hasOwn(state, 'delivery')
+        || Object.hasOwn(state, 'receipt')
+      ) {
+        throw new Error('invalid mutation state');
       }
     } else if (state.status === 'cancel_pending') {
       if (
@@ -799,6 +830,61 @@ function validateResultChannel(value, expected) {
       attempt_id: value.bindings.attempt_id,
       role: value.bindings.role,
     }),
+  });
+}
+
+function validateGithubMutationPolicy(value, workspaceSpec, role) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('attempt_github_mutation_policy_invalid');
+  }
+  assertExactFields(
+    value,
+    GITHUB_MUTATION_POLICY_FIELDS,
+    'attempt_github_mutation_policy_unknown_field',
+  );
+  if (
+    role !== 'generator'
+    || value.version !== 'github-mutation/v1'
+    || value.repo !== 'perfectuser21/cecelia'
+    || !/^cp-[a-z0-9][a-z0-9._-]{0,126}$/.test(value.branch ?? '')
+    || value.branch.includes('..')
+    || !SHA1_PATTERN.test(value.base_sha ?? '')
+    || (
+      value.expected_remote_sha !== null
+      && !SHA1_PATTERN.test(value.expected_remote_sha ?? '')
+    )
+    || !['push-and-create-draft', 'push-existing-draft'].includes(value.operation)
+    || value.pr_base !== 'main'
+    || typeof value.pr_title !== 'string'
+    || value.pr_title.length < 1
+    || value.pr_title.length > 256
+    || /[\r\n\0]/.test(value.pr_title)
+    || typeof value.pr_body !== 'string'
+    || value.pr_body.length < 1
+    || value.pr_body.length > 4096
+    || value.pr_body.includes('\0')
+    || !Array.isArray(value.allowed_paths)
+    || value.allowed_paths.length < 1
+    || value.allowed_paths.length > 64
+    || value.allowed_paths.some((entry) => (
+      typeof entry !== 'string'
+      || entry.length < 1
+      || entry.length > 1024
+      || entry.startsWith('/')
+      || /[\r\n\\\0]/.test(entry)
+      || entry.split('/').filter(Boolean).some((part) => part === '.' || part === '..')
+    ))
+    || workspaceSpec?.repo !== value.repo
+    || workspaceSpec?.branch !== value.branch
+    || workspaceSpec?.base_sha !== value.base_sha
+    || workspaceSpec?.expected_head_sha !== value.expected_remote_sha
+    || workspaceSpec?.mode !== 'read-write'
+  ) {
+    throw new Error('attempt_github_mutation_policy_invalid');
+  }
+  return Object.freeze({
+    ...value,
+    allowed_paths: Object.freeze([...value.allowed_paths]),
   });
 }
 
@@ -1177,6 +1263,83 @@ function createDockerAdapter({
       });
     },
 
+    async readGithubMutation({ attemptId, resultChannel } = {}) {
+      assertAttemptId(attemptId);
+      const channel = validateResultChannel(resultChannel, {
+        task_id: resultChannel?.bindings?.task_id,
+        run_id: resultChannel?.bindings?.run_id,
+        attempt_id: attemptId,
+        role: 'generator',
+      });
+      const attemptRuntime = path.join(root, attemptId);
+      const declarationBytes = readOwnedRegularFile(
+        path.join(attemptRuntime, `${attemptId}.result.json`),
+        {
+          maxBytes: channel.max_bytes,
+          errorCode: 'attempt_github_mutation_declaration_invalid',
+          missingIsNull: true,
+        },
+      );
+      const providerResultBytes = readOwnedRegularFile(
+        path.join(attemptRuntime, `${attemptId}.provider.json`),
+        {
+          maxBytes: channel.max_bytes,
+          errorCode: 'attempt_github_mutation_provider_result_invalid',
+          missingIsNull: true,
+        },
+      );
+      if (declarationBytes === null || providerResultBytes === null) {
+        throw new Error('attempt_github_mutation_evidence_missing');
+      }
+      return Object.freeze({ declarationBytes, providerResultBytes });
+    },
+
+    async writeResult({ attemptId, resultChannel, resultBytes } = {}) {
+      assertAttemptId(attemptId);
+      const channel = validateResultChannel(resultChannel, {
+        task_id: resultChannel?.bindings?.task_id,
+        run_id: resultChannel?.bindings?.run_id,
+        attempt_id: attemptId,
+        role: 'generator',
+      });
+      if (
+        !Buffer.isBuffer(resultBytes)
+        || resultBytes.length < 2
+        || resultBytes.length > channel.max_bytes
+      ) {
+        throw new Error('attempt_result_invalid');
+      }
+      const attemptRuntime = path.join(root, attemptId);
+      const target = path.join(attemptRuntime, `${attemptId}.result.json`);
+      const temporary = path.join(
+        attemptRuntime,
+        `.${attemptId}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`,
+      );
+      let descriptor;
+      try {
+        descriptor = fs.openSync(
+          temporary,
+          fs.constants.O_WRONLY
+            | fs.constants.O_CREAT
+            | fs.constants.O_EXCL
+            | (fs.constants.O_NOFOLLOW ?? 0),
+          0o600,
+        );
+        fs.writeFileSync(descriptor, resultBytes);
+        fs.fsyncSync(descriptor);
+        fs.fchmodSync(descriptor, 0o600);
+      } finally {
+        if (descriptor !== undefined) fs.closeSync(descriptor);
+      }
+      const current = fs.lstatSync(target);
+      if (!current.isFile() || current.isSymbolicLink()) {
+        fs.rmSync(temporary, { force: true });
+        throw new Error('attempt_result_invalid');
+      }
+      fs.renameSync(temporary, target);
+      return Object.freeze({ written: true });
+    },
+
     readSession,
 
     async cleanupRuntime({ attemptId } = {}) {
@@ -1223,6 +1386,7 @@ function validateDependencies({
   runnerImageDigest,
   credentialConsumer,
   resultDelivery,
+  githubMutationBroker,
 }) {
   for (const method of ['prepare', 'verify', 'cleanup', 'quarantine', 'reconcile']) {
     requireMethod(workspaceManager, method, 'workspace_manager');
@@ -1233,6 +1397,8 @@ function validateDependencies({
     'wait',
     'remove',
     'readResult',
+    'readGithubMutation',
+    'writeResult',
     'cleanupRuntime',
     'listOwned',
   ]) {
@@ -1245,6 +1411,7 @@ function validateDependencies({
   for (const method of ['prepare', 'deliver']) {
     requireMethod(resultDelivery, method, 'result_delivery');
   }
+  requireMethod(githubMutationBroker, 'execute', 'github_mutation_broker');
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
     throw new Error('attempt_runner_invalid_worker_id');
   }
@@ -1355,6 +1522,12 @@ function validateLaunchRequest(value) {
     throw new Error('attempt_task_id_invalid');
   }
   const target = validateTarget(value.target);
+  if (target.provider !== 'codex') {
+    throw new Error('attempt_provider_credential_broker_required');
+  }
+  if (['evaluator', 'reporter'].includes(target.role)) {
+    throw new Error('attempt_github_read_broker_required');
+  }
   const resultChannel = validateResultChannel(value.result_channel, {
     task_id: value.task_id,
     run_id: value.run_id,
@@ -1379,6 +1552,20 @@ function validateLaunchRequest(value) {
   ) {
     throw new Error('attempt_workspace_owner_mismatch');
   }
+  const githubMutationPolicy = target.role === 'generator'
+    && value.workspace_spec.mode === 'read-write'
+    ? validateGithubMutationPolicy(
+        value.github_mutation_policy,
+        value.workspace_spec,
+        target.role,
+      )
+    : null;
+  if (
+    (target.role !== 'generator' || value.workspace_spec.mode !== 'read-write')
+    && value.github_mutation_policy !== undefined
+  ) {
+    throw new Error('attempt_github_mutation_policy_role_mismatch');
+  }
   if (typeof value.lease_owner !== 'string' || value.lease_owner.length === 0) {
     throw new Error('attempt_lease_owner_invalid');
   }
@@ -1395,6 +1582,7 @@ function validateLaunchRequest(value) {
     providerSpec,
     target,
     resultChannel,
+    githubMutationPolicy,
     brainUrl,
   };
 }
@@ -1490,6 +1678,7 @@ function createAttemptRunner({
   runnerImageDigest,
   credentialConsumer,
   resultDelivery,
+  githubMutationBroker,
 } = {}) {
   validateDependencies({
     workspaceManager,
@@ -1499,6 +1688,7 @@ function createAttemptRunner({
     runnerImageDigest,
     credentialConsumer,
     resultDelivery,
+    githubMutationBroker,
   });
 
   const attemptLocks = new Map();
@@ -1642,7 +1832,10 @@ function createAttemptRunner({
     return cleanupAckedState(cleanupPending);
   }
 
-  async function beginCallbackPending(state, { containerMissing = false } = {}) {
+  async function beginCallbackPending(
+    state,
+    { containerMissing = false, containerRemoved = false } = {},
+  ) {
     let observed;
     try {
       observed = await readPendingResult(state);
@@ -1668,13 +1861,41 @@ function createAttemptRunner({
       ...state,
       status: 'callback_pending',
       delivery,
-      container_removed: false,
+      container_removed: containerRemoved || state.container_removed === true,
       updated_at: new Date().toISOString(),
     };
     // This durable write must happen before the only result-producing container
     // is removed. A restart can then replay the exact runtime bytes.
     await stateStore.save(callbackPending);
     return deliverPendingState(callbackPending, observed, { containerMissing });
+  }
+
+  async function continueGithubMutation(inputState) {
+    let state = inputState;
+    try {
+      state = await ensurePendingContainerRemoved(state);
+      const evidence = await docker.readGithubMutation({
+        attemptId: state.attempt_id,
+        resultChannel: state.result_channel,
+      });
+      const finalized = await githubMutationBroker.execute({
+        state,
+        policy: state.github_mutation_policy,
+        declarationBytes: evidence.declarationBytes,
+        providerResultBytes: evidence.providerResultBytes,
+      });
+      if (!Buffer.isBuffer(finalized?.resultBytes)) {
+        throw new Error('attempt_github_mutation_result_invalid');
+      }
+      await docker.writeResult({
+        attemptId: state.attempt_id,
+        resultChannel: state.result_channel,
+        resultBytes: finalized.resultBytes,
+      });
+      return beginCallbackPending(state, { containerRemoved: true });
+    } catch (error) {
+      return quarantineState(state, error);
+    }
   }
 
   function cancelPendingResult(state) {
@@ -1731,6 +1952,7 @@ function createAttemptRunner({
         providerSpec,
         target,
         resultChannel,
+        githubMutationPolicy,
         brainUrl,
       } = validateLaunchRequest(input);
       if (target.machine !== workerId) {
@@ -1815,6 +2037,9 @@ function createAttemptRunner({
         provider: providerSpec.provider,
         brain_url: brainUrl,
         result_channel: resultChannel,
+        ...(githubMutationPolicy
+          ? { github_mutation_policy: githubMutationPolicy }
+          : {}),
         ...(credential ? { credential: credential.metadata } : {}),
         container_id: launched.containerId,
         workspace,
@@ -1882,6 +2107,9 @@ function createAttemptRunner({
       if (state.status === 'cancel_pending') {
         return continueCancellation(state);
       }
+      if (state.status === 'mutation_pending') {
+        return continueGithubMutation(state);
+      }
       if (state.status === 'callback_pending') {
         return deliverPendingState(state);
       }
@@ -1897,6 +2125,16 @@ function createAttemptRunner({
       }
       if (state.status !== 'running') {
         throw new Error('attempt_state_status_invalid');
+      }
+      if (state.github_mutation_policy) {
+        const mutationPending = {
+          ...state,
+          status: 'mutation_pending',
+          container_removed: false,
+          updated_at: new Date().toISOString(),
+        };
+        await stateStore.save(mutationPending);
+        return continueGithubMutation(mutationPending);
       }
       return beginCallbackPending(state);
     },
@@ -1960,6 +2198,14 @@ function createAttemptRunner({
             }
             return;
           }
+          if (state.status === 'mutation_pending') {
+            const result = await continueGithubMutation(state);
+            if (result.status === 'cleaned') {
+              cleanedAttempts.push(state.attempt_id);
+              retainedAttemptIds.delete(state.attempt_id);
+            }
+            return;
+          }
           if (state.status === 'callback_pending') {
             const inspected = state.container_removed === true
               ? null
@@ -1987,6 +2233,21 @@ function createAttemptRunner({
           }
           const inspected = await docker.inspect({ containerId: state.container_id });
           if (!isTerminalContainerStatus(inspected.status)) return;
+          if (state.github_mutation_policy) {
+            const mutationPending = {
+              ...state,
+              status: 'mutation_pending',
+              container_removed: inspected.status === 'missing',
+              updated_at: new Date().toISOString(),
+            };
+            await stateStore.save(mutationPending);
+            const result = await continueGithubMutation(mutationPending);
+            if (result.status === 'cleaned') {
+              cleanedAttempts.push(state.attempt_id);
+              retainedAttemptIds.delete(state.attempt_id);
+            }
+            return;
+          }
           const result = await beginCallbackPending(state, {
             containerMissing: inspected.status === 'missing',
           });

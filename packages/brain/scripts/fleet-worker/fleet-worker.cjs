@@ -22,6 +22,10 @@ const {
   createCredentialEnvelopeConsumer,
 } = require('./credential-envelope.cjs');
 const {
+  createFileGithubMutationAuditStore,
+  createGithubMutationBroker,
+} = require('./github-mutation-broker.cjs');
+const {
   buildFleetHeartbeat,
   buildFleetResultDelivery,
   verifyFleetHeartbeatAck,
@@ -29,6 +33,14 @@ const {
 } = require('./callback-auth.cjs');
 const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager } = require('./workspace-manager.cjs');
+let finalizeRoleResult;
+try {
+  ({ finalizeRoleResult } = require('./result-channel-finalizer.cjs'));
+} catch {
+  ({ finalizeRoleResult } = require(
+    '../../../../docker/cecelia-runner/result-channel-finalizer.cjs'
+  ));
+}
 
 const MAX_STRING_LENGTH = 1_024;
 const MAX_RESPONSE_BYTES = 65_536;
@@ -536,6 +548,7 @@ function createFleetWorkerRuntime({
     state: path.join(dataRoot, 'state'),
     runtime: path.join(dataRoot, 'runtime'),
     credentials: path.join(dataRoot, 'credential-consumption'),
+    githubAudit: path.join(dataRoot, 'github-mutation-audit'),
   });
   const workspaceManager = createWorkspaceManager({
     mirrorRoot: roots.mirrors,
@@ -564,6 +577,12 @@ function createFleetWorkerRuntime({
     workerId,
     runnerImageDigest,
     credentialConsumer,
+    githubMutationBroker: createGithubMutationBroker({
+      auditStore: createFileGithubMutationAuditStore({
+        auditRoot: roots.githubAudit,
+      }),
+      finalizeRoleResult,
+    }),
     resultDelivery: createResultDeliveryClient({ secret: attemptToken }),
   });
   const maintenance = createFleetMaintenance({

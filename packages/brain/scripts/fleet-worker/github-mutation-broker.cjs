@@ -534,7 +534,11 @@ function createGithubMutationBroker({
         pull_request: receipt.pull_request,
       },
     });
-    return Object.freeze({ receipt, result });
+    return Object.freeze({
+      receipt,
+      result,
+      resultBytes: Buffer.from(`${canonicalJson(result)}\n`),
+    });
   }
 
   return Object.freeze({ execute, buildPrepared });

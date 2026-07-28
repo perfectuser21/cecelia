@@ -24,6 +24,18 @@ const RESULT_CHANNEL = Object.freeze({
     role: 'generator',
   }),
 });
+const GITHUB_MUTATION_POLICY = Object.freeze({
+  version: 'github-mutation/v1',
+  repo: 'perfectuser21/cecelia',
+  branch: 'cp-07272050-attempt-runner',
+  base_sha: '0123456789abcdef0123456789abcdef01234567',
+  expected_remote_sha: null,
+  operation: 'push-and-create-draft',
+  pr_base: 'main',
+  pr_title: `feat(harness): ${TASK_ID}`,
+  pr_body: `Kernel task ${TASK_ID}\nRun ${RUN_ID}\n`,
+  allowed_paths: Object.freeze(['packages/', 'sprints/']),
+});
 const CREDENTIAL_ENVELOPE = Object.freeze({
   contract_version: 'credential-envelope/v1',
   credential_ref: '33333333-3333-4333-8333-333333333333',
@@ -95,6 +107,7 @@ function durableState(overrides = {}) {
     provider: 'codex',
     brain_url: BRAIN_URL,
     result_channel: RESULT_CHANNEL,
+    github_mutation_policy: GITHUB_MUTATION_POLICY,
     credential: CREDENTIAL.metadata,
     container_id: 'container-1',
     workspace: {
@@ -166,6 +179,7 @@ function request(overrides = {}) {
       role: 'generator',
     },
     result_channel: RESULT_CHANNEL,
+    github_mutation_policy: GITHUB_MUTATION_POLICY,
     brain_url: BRAIN_URL,
     credential_envelope: CREDENTIAL_ENVELOPE,
     ...overrides,
@@ -190,6 +204,10 @@ function dependencies(overrides = {}) {
   const events = [];
   const pendingWait = new Promise(() => {});
   const workspace = {
+    repo: 'perfectuser21/cecelia',
+    branch: 'cp-07272050-attempt-runner',
+    base_sha: '0123456789abcdef0123456789abcdef01234567',
+    expected_head_sha: null,
     path: '/controlled/worktrees/22222222-2222-4222-8222-222222222222',
     mirror_path: '/controlled/mirrors/perfectuser21__cecelia.git',
     admin_path: '/controlled/worktrees/.admin/22222222-2222-4222-8222-222222222222.git',
@@ -240,6 +258,19 @@ function dependencies(overrides = {}) {
         },
       };
     }),
+    readGithubMutation: vi.fn(async () => ({
+      declarationBytes: Buffer.from(JSON.stringify({
+        contract_version: 'github-mutation-declaration/v1',
+        verdict: 'DONE',
+        branch: 'cp-07272050-attempt-runner',
+        head_sha: 'abcdef0123456789abcdef0123456789abcdef01',
+      })),
+      providerResultBytes: CANONICAL_RESULT,
+    })),
+    writeResult: vi.fn(async () => {
+      events.push('docker.writeResult');
+      return { written: true };
+    }),
     cleanupRuntime: vi.fn(async () => {
       events.push('docker.cleanupRuntime');
       return { cleaned: true };
@@ -263,12 +294,27 @@ function dependencies(overrides = {}) {
       return CREDENTIAL;
     }),
   };
+  const githubMutationBroker = {
+    execute: vi.fn(async () => {
+      events.push('github.execute');
+      return {
+        receipt: {
+          stage: 'draft_pr_confirmed',
+          request_sha256: 'c'.repeat(64),
+          record_sha256: 'd'.repeat(64),
+        },
+        result: JSON.parse(CANONICAL_RESULT),
+        resultBytes: CANONICAL_RESULT,
+      };
+    }),
+  };
   return {
     workspace,
     workspaceManager,
     docker,
     credentialConsumer,
     resultDelivery,
+    githubMutationBroker,
     stateStore: inMemoryStateStore(),
     events,
     ...overrides,
@@ -285,10 +331,63 @@ function createRunner(deps) {
     runnerImageDigest: IMAGE_DIGEST,
     credentialConsumer: deps.credentialConsumer,
     resultDelivery: deps.resultDelivery,
+    githubMutationBroker: deps.githubMutationBroker,
   });
 }
 
 describe('Fleet Worker Attempt runner', () => {
+  it.each(['evaluator', 'reporter'])(
+    'fails %s closed until Worker-owned GitHub read authority is implemented',
+    async (role) => {
+      const deps = dependencies();
+      const runner = createRunner(deps);
+      await expect(runner.launch(request({
+        target: { ...request().target, role },
+        workspace_spec: {
+          ...request().workspace_spec,
+          mode: 'read-only',
+        },
+        result_channel: {
+          ...RESULT_CHANNEL,
+          bindings: { ...RESULT_CHANNEL.bindings, role },
+        },
+        github_mutation_policy: undefined,
+      }))).rejects.toThrow('attempt_github_read_broker_required');
+      expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+      expect(deps.docker.launch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('removes a managed Generator container before Worker-owned GitHub mutation', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.launch(request());
+    deps.events.length = 0;
+
+    await runner.terminal(ATTEMPT_ID);
+
+    expect(deps.events.indexOf('docker.remove')).toBeGreaterThanOrEqual(0);
+    expect(deps.events.indexOf('github.execute')).toBeGreaterThan(
+      deps.events.indexOf('docker.remove'),
+    );
+    expect(deps.events.indexOf('docker.writeResult')).toBeGreaterThan(
+      deps.events.indexOf('github.execute'),
+    );
+    expect(deps.githubMutationBroker.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: expect.objectContaining({
+          status: 'mutation_pending',
+          container_removed: true,
+          github_mutation_policy: GITHUB_MUTATION_POLICY,
+        }),
+        policy: GITHUB_MUTATION_POLICY,
+        declarationBytes: expect.any(Buffer),
+        providerResultBytes: expect.any(Buffer),
+      }),
+    );
+    expect(deps.stateStore.save.mock.calls.map(([entry]) => entry.status))
+      .toContain('mutation_pending');
+  });
   it.each([
     ['read-only', true],
     ['read-write', false],
@@ -311,6 +410,7 @@ describe('Fleet Worker Attempt runner', () => {
         ...request().workspace_spec,
         mode,
       },
+      ...(readOnly ? { github_mutation_policy: undefined } : {}),
     }));
 
     expect(deps.events.slice(0, 3)).toEqual([
@@ -397,9 +497,10 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.launch).toHaveBeenCalledOnce();
   });
 
-  it.each(['claude', 'codex', 'grok'])(
-    'carries the same true identity and result channel to the %s Docker seam',
-    async (provider) => {
+  it(
+    'carries the true identity and result channel to the Codex Docker seam',
+    async () => {
+      const provider = 'codex';
       const deps = dependencies();
       const runner = createRunner(deps);
       const launchRequest = request({
@@ -427,6 +528,29 @@ describe('Fleet Worker Attempt runner', () => {
         brainUrl: BRAIN_URL,
         resultChannel: RESULT_CHANNEL,
       }));
+    },
+  );
+
+  it.each(['claude', 'grok'])(
+    'fails %s closed until Fleet has a bounded Worker-owned provider credential broker',
+    async (provider) => {
+      const deps = dependencies();
+      const runner = createRunner(deps);
+      await expect(runner.launch(request({
+        provider_spec: {
+          ...request().provider_spec,
+          provider,
+          command: provider,
+        },
+        target: {
+          ...request().target,
+          provider,
+          account: `${provider}-team1`,
+        },
+        credential_envelope: undefined,
+      }))).rejects.toThrow('attempt_provider_credential_broker_required');
+      expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+      expect(deps.docker.launch).not.toHaveBeenCalled();
     },
   );
 
@@ -577,11 +701,14 @@ describe('Fleet Worker Attempt runner', () => {
       .map(([state]) => state.status);
     expect(savedStatuses).toEqual([
       'running',
-      'callback_pending',
+      'mutation_pending',
+      'mutation_pending',
       'callback_pending',
       'cleanup_pending',
     ]);
-    const callbackPending = deps.stateStore.save.mock.calls[1][0];
+    const callbackPending = deps.stateStore.save.mock.calls
+      .map(([saved]) => saved)
+      .find((saved) => saved.status === 'callback_pending');
     expect(callbackPending.delivery).toEqual(DELIVERY_METADATA);
     expect(JSON.stringify(callbackPending)).not.toContain(
       CANONICAL_RESULT.toString('base64'),
@@ -593,9 +720,11 @@ describe('Fleet Worker Attempt runner', () => {
       'credential.consume',
       'workspace.prepare',
       'docker.launch',
+      'docker.remove',
+      'github.execute',
+      'docker.writeResult',
       'docker.readResult',
       'delivery.prepare',
-      'docker.remove',
       'delivery.deliver',
       'workspace.cleanup',
       'docker.cleanupRuntime',
