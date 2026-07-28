@@ -367,8 +367,16 @@ grep -Fq 'docker_unavailable' "$test_root/rollback.out" \
 : > "$mutation_log"
 /bin/rm -f "$state_root/uuid-count"
 FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
-run_reconciler "$system_root" xian-mac-m1 --apply >/dev/null \
+FLEET_TEST_OS_VERSION=15.6.1 \
+run_reconciler "$system_root" xian-mac-m1 --apply \
+  >"$test_root/supported-os.out" 2>&1 \
   || fail "valid baseline apply failed"
+grep -Fq 'os_security_update_recommended recommended=15.7.4 observed=15.6.1' \
+  "$test_root/supported-os.out" \
+  || fail "supported older macOS did not receive the security recommendation"
+if grep -Fq 'os_version_below_floor' "$test_root/supported-os.out"; then
+  fail "supported macOS 15.6.1 was reported below the admission floor"
+fi
 grep -Fq 'dscl . -create /Groups/_cecelia PrimaryGroupID 450' "$mutation_log" \
   || fail "dedicated service group was not created"
 grep -Fq 'dscl . -create /Users/_cecelia UniqueID 450' "$mutation_log" \
