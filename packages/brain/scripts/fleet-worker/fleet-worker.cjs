@@ -2,7 +2,12 @@
 'use strict';
 
 const { Buffer } = require('node:buffer');
-const { createHmac, timingSafeEqual } = require('node:crypto');
+const {
+  createHash,
+  createHmac,
+  randomUUID,
+  timingSafeEqual,
+} = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -15,6 +20,12 @@ const {
 const {
   createCredentialEnvelopeConsumer,
 } = require('./credential-envelope.cjs');
+const {
+  buildFleetHeartbeat,
+  buildFleetResultDelivery,
+  verifyFleetHeartbeatAck,
+  verifyFleetResultReceiptAck,
+} = require('./callback-auth.cjs');
 const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager } = require('./workspace-manager.cjs');
 
@@ -36,6 +47,7 @@ const CANONICAL_MACHINE_IDS = new Set([
   'xian-mac-m1',
 ]);
 const RUNNER_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const MAX_RECEIPT_RESPONSE_BYTES = 65_536;
 
 function safeString(value, fallback = 'unavailable') {
   if (typeof value !== 'string' || value.length === 0) return fallback;
@@ -206,20 +218,257 @@ function protectedTokenFromFile(tokenFile) {
   if (typeof tokenFile !== 'string' || !path.isAbsolute(tokenFile)) {
     throw new Error('fleet_worker_token_file_required');
   }
-  let stat;
+  let descriptor;
   try {
-    stat = fs.lstatSync(tokenFile);
-  } catch {
+    descriptor = fs.openSync(
+      tokenFile,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+  } catch (error) {
+    if (error?.code === 'ELOOP') {
+      throw new Error('fleet_worker_token_file_permissions');
+    }
     throw new Error('fleet_worker_token_file_unreadable');
   }
-  if (!stat.isFile() || (stat.mode & 0o077) !== 0) {
-    throw new Error('fleet_worker_token_file_permissions');
+  let token;
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (
+      !stat.isFile()
+      || (stat.mode & 0o077) !== 0
+      || stat.size < 32
+      || stat.size > 8_192
+    ) {
+      throw new Error('fleet_worker_token_file_permissions');
+    }
+    token = fs.readFileSync(descriptor, 'utf8').trim();
+  } finally {
+    fs.closeSync(descriptor);
   }
-  const token = fs.readFileSync(tokenFile, 'utf8').trim();
-  if (token.length < 32 || /[\r\n]/.test(token)) {
+  if (
+    Buffer.byteLength(token, 'utf8') < 32
+    || Buffer.byteLength(token, 'utf8') > 8_192
+    || /[\r\n\0]/.test(token)
+  ) {
     throw new Error('fleet_worker_token_invalid');
   }
   return token;
+}
+
+function createResultDeliveryClient({
+  secret,
+  fetchFn = globalThis.fetch,
+  randomUuid = randomUUID,
+} = {}) {
+  if (typeof secret !== 'string' || secret.length < 32 || /[\r\n\0]/.test(secret)) {
+    throw new Error('fleet_result_delivery_secret_invalid');
+  }
+  if (typeof fetchFn !== 'function' || typeof randomUuid !== 'function') {
+    throw new Error('fleet_result_delivery_dependency_invalid');
+  }
+  return Object.freeze({
+    async prepare({ resultBytes, terminalStatus } = {}) {
+      if (!Buffer.isBuffer(resultBytes) || resultBytes.length < 1) {
+        throw new Error('fleet_result_delivery_bytes_invalid');
+      }
+      return Object.freeze({
+        delivery_id: randomUuid(),
+        result_nonce: randomUuid(),
+        result_sha256: createHash('sha256').update(resultBytes).digest('hex'),
+        result_bytes: resultBytes.length,
+        terminal_status: terminalStatus,
+      });
+    },
+
+    async deliver({
+      state,
+      resultBytes,
+      terminalStatus,
+      delivery,
+    } = {}) {
+      const wire = buildFleetResultDelivery({
+        secret,
+        attemptId: state?.attempt_id,
+        runId: state?.run_id,
+        workerId: state?.worker_id,
+        jobId: state?.container_id,
+        leaseOwner: state?.lease_owner,
+        leaseGeneration: state?.lease_generation,
+        deliveryId: delivery?.delivery_id,
+        resultNonce: delivery?.result_nonce,
+        resultBytes,
+        terminalStatus,
+      });
+      const base = new URL(state.brain_url);
+      const target = new URL(
+        `/api/brain/harness/attempts/${state.attempt_id}/callback`,
+        base,
+      );
+      const response = await fetchFn(target, {
+        method: 'POST',
+        headers: wire.headers,
+        body: JSON.stringify(wire.body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response?.ok) {
+        throw new Error(`fleet_result_delivery_http_${response?.status ?? 'invalid'}`);
+      }
+      const receiptText = await response.text();
+      if (
+        Buffer.byteLength(receiptText, 'utf8') > MAX_RECEIPT_RESPONSE_BYTES
+        || receiptText.length === 0
+      ) {
+        throw new Error('fleet_result_receipt_response_invalid');
+      }
+      let receipt;
+      try {
+        receipt = JSON.parse(receiptText);
+      } catch {
+        throw new Error('fleet_result_receipt_response_invalid');
+      }
+      return verifyFleetResultReceiptAck({
+        receipt,
+        secret,
+        expected: {
+          attemptId: state.attempt_id,
+          runId: state.run_id,
+          workerId: state.worker_id,
+          jobId: state.container_id,
+          leaseOwner: state.lease_owner,
+          leaseGeneration: state.lease_generation,
+          deliveryId: delivery.delivery_id,
+          resultNonce: delivery.result_nonce,
+          resultSha256: delivery.result_sha256,
+          resultBytes: delivery.result_bytes,
+          terminalStatus: delivery.terminal_status,
+        },
+      });
+    },
+  });
+}
+
+function createFleetHeartbeatClient({
+  secret,
+  fetchFn = globalThis.fetch,
+  randomUuid = randomUUID,
+  now = () => new Date(),
+} = {}) {
+  if (typeof secret !== 'string' || secret.length < 32 || /[\r\n\0]/.test(secret)) {
+    throw new Error('fleet_heartbeat_secret_invalid');
+  }
+  if (
+    typeof fetchFn !== 'function'
+    || typeof randomUuid !== 'function'
+    || typeof now !== 'function'
+  ) {
+    throw new Error('fleet_heartbeat_dependency_invalid');
+  }
+  return Object.freeze({
+    async deliver({ state, session = null } = {}) {
+      const heartbeatNonce = randomUuid();
+      const observedAt = now();
+      if (!(observedAt instanceof Date) || Number.isNaN(observedAt.getTime())) {
+        throw new Error('fleet_heartbeat_clock_invalid');
+      }
+      const providerSessionId = session?.session_id ?? null;
+      const wire = buildFleetHeartbeat({
+        secret,
+        attemptId: state?.attempt_id,
+        runId: state?.run_id,
+        workerId: state?.worker_id,
+        jobId: state?.container_id,
+        leaseOwner: state?.lease_owner,
+        leaseGeneration: state?.lease_generation,
+        heartbeatNonce,
+        observedAt: observedAt.toISOString(),
+        leaseSeconds: 180,
+        providerSessionId,
+      });
+      const target = new URL(
+        `/api/brain/harness/attempts/${state.attempt_id}/heartbeat`,
+        new URL(state.brain_url),
+      );
+      const response = await fetchFn(target, {
+        method: 'POST',
+        headers: wire.headers,
+        body: JSON.stringify(wire.body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response?.ok) {
+        throw new Error(`fleet_heartbeat_http_${response?.status ?? 'invalid'}`);
+      }
+      const responseText = await response.text();
+      if (
+        responseText.length === 0
+        || Buffer.byteLength(responseText, 'utf8') > MAX_RECEIPT_RESPONSE_BYTES
+      ) {
+        throw new Error('fleet_heartbeat_ack_response_invalid');
+      }
+      let ack;
+      try {
+        ack = JSON.parse(responseText);
+      } catch {
+        throw new Error('fleet_heartbeat_ack_response_invalid');
+      }
+      return verifyFleetHeartbeatAck({
+        ack,
+        secret,
+        expected: {
+          attemptId: state.attempt_id,
+          runId: state.run_id,
+          workerId: state.worker_id,
+          jobId: state.container_id,
+          leaseOwner: state.lease_owner,
+          leaseGeneration: state.lease_generation,
+          heartbeatNonce,
+          providerSessionId,
+        },
+      });
+    },
+  });
+}
+
+function createFleetMaintenance({
+  workerId,
+  stateStore,
+  docker,
+  heartbeatClient,
+} = {}) {
+  if (
+    !CANONICAL_MACHINE_IDS.has(workerId)
+    || typeof stateStore?.list !== 'function'
+    || typeof docker?.readSession !== 'function'
+    || typeof heartbeatClient?.deliver !== 'function'
+  ) {
+    throw new Error('fleet_maintenance_dependency_invalid');
+  }
+  return Object.freeze({
+    async heartbeatAll() {
+      const states = await stateStore.list();
+      const live = states.filter((state) => (
+        state.worker_id === workerId
+        && ['running', 'callback_pending'].includes(state.status)
+      ));
+      let accepted = 0;
+      let failed = 0;
+      for (const state of live) {
+        try {
+          const session = await docker.readSession({
+            attemptId: state.attempt_id,
+          });
+          await heartbeatClient.deliver({ state, session });
+          accepted += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      return Object.freeze({
+        attempted: live.length,
+        accepted,
+        failed,
+      });
+    },
+  });
 }
 
 function createFleetWorkerRuntime({
@@ -278,10 +527,18 @@ function createFleetWorkerRuntime({
     workerId,
     runnerImageDigest,
     credentialConsumer,
+    resultDelivery: createResultDeliveryClient({ secret: attemptToken }),
+  });
+  const maintenance = createFleetMaintenance({
+    workerId,
+    stateStore,
+    docker,
+    heartbeatClient: createFleetHeartbeatClient({ secret: attemptToken }),
   });
   return Object.freeze({
     attemptRunner,
     attemptToken,
+    maintenance,
     roots,
   });
 }
@@ -334,6 +591,7 @@ function requestErrorStatus(error) {
   if (Number.isInteger(error?.statusCode)) return error.statusCode;
   if (error?.message === 'attempt_already_exists') return 409;
   if (error?.message === 'attempt_lease_conflict') return 409;
+  if (error?.message === 'attempt_callback_pending') return 409;
   if (
     /(?:invalid|required|mismatch|unknown_field|not_allowed|untrusted)/i
       .test(String(error?.message ?? ''))
@@ -351,6 +609,11 @@ function createFleetWorkerServer(options = {}) {
     ? options.attemptRunner
     : null;
   const attemptToken = options.attemptToken;
+  const maintenance = typeof options.maintenance?.heartbeatAll === 'function'
+    ? options.maintenance
+    : null;
+  const setIntervalFn = options.setIntervalFn ?? setInterval;
+  const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
   const maximumRequestBytes = Number.isInteger(options.maxRequestBytes)
     && options.maxRequestBytes > 0
     ? options.maxRequestBytes
@@ -358,19 +621,53 @@ function createFleetWorkerServer(options = {}) {
   let probeInFlight = false;
   let attemptReady = attemptRunner === null;
   let reconciliationFailed = false;
+  let reconciliationInFlight = false;
+  let heartbeatInFlight = false;
+  const timers = [];
 
-  if (attemptRunner) {
-    Promise.resolve()
-      .then(() => attemptRunner.reconcile())
-      .then(() => {
-        attemptReady = true;
-      })
-      .catch(() => {
-        reconciliationFailed = true;
-      });
+  async function reconcile({ startup = false } = {}) {
+    if (!attemptRunner || reconciliationInFlight) return;
+    reconciliationInFlight = true;
+    try {
+      await attemptRunner.reconcile();
+      if (startup) attemptReady = true;
+    } catch {
+      if (startup) reconciliationFailed = true;
+    } finally {
+      reconciliationInFlight = false;
+    }
   }
 
-  return http.createServer(async (request, response) => {
+  if (attemptRunner) {
+    void Promise.resolve().then(() => reconcile({ startup: true }));
+    const retryTimer = setIntervalFn(() => {
+      if (attemptReady && !reconciliationFailed) void reconcile();
+    }, 30_000);
+    retryTimer?.unref?.();
+    timers.push(retryTimer);
+    if (maintenance) {
+      const heartbeatTimer = setIntervalFn(() => {
+        if (
+          !attemptReady
+          || reconciliationFailed
+          || heartbeatInFlight
+        ) {
+          return;
+        }
+        heartbeatInFlight = true;
+        void Promise.resolve()
+          .then(() => maintenance.heartbeatAll())
+          .catch(() => {})
+          .finally(() => {
+            heartbeatInFlight = false;
+          });
+      }, 60_000);
+      heartbeatTimer?.unref?.();
+      timers.push(heartbeatTimer);
+    }
+  }
+
+  const server = http.createServer(async (request, response) => {
     if (request.url === '/health') {
       if (request.method !== 'GET') {
         writeJson(response, 405, { error: 'method_not_allowed' });
@@ -458,6 +755,12 @@ function createFleetWorkerServer(options = {}) {
       writeJson(response, statusCode, { error: errorCode });
     }
   });
+  server.once('close', () => {
+    for (const timer of timers) {
+      if (timer != null) clearIntervalFn(timer);
+    }
+  });
+  return server;
 }
 
 function parsePort(value) {
@@ -475,6 +778,7 @@ function main(env = process.env) {
     env,
     attemptRunner: runtime.attemptRunner,
     attemptToken: runtime.attemptToken,
+    maintenance: runtime.maintenance,
     machineId: env.CECELIA_MACHINE_ID,
     runnerImageDigest: env.CECELIA_RUNNER_DIGEST,
     repoRoot: env.CECELIA_REPO_ROOT,
@@ -490,6 +794,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createFleetHeartbeatClient,
+  createFleetMaintenance,
   createFleetWorkerRuntime,
   createFleetWorkerServer,
+  createResultDeliveryClient,
 };
