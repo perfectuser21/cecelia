@@ -287,6 +287,22 @@ ensure_codex_toolchain() {
   /bin/ln -sfn "$codex_bin" "$TOOLCHAIN_BIN/codex"
 }
 
+start_orbstack() {
+  local orb="$1"
+  local attempt
+
+  "$orb" start >/dev/null 2>&1 || true
+  for (( attempt = 1; attempt <= 30; attempt += 1 )); do
+    if "$orb" status >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ "$attempt" -lt 30 ]]; then
+      /bin/sleep 1
+    fi
+  done
+  return 1
+}
+
 ensure_orbstack() {
   local current_version comparison
   local orb_app="$APPLICATIONS_DIR/OrbStack.app"
@@ -302,7 +318,8 @@ ensure_orbstack() {
       die "orbstack_newer_than_baseline"
     fi
     if [[ "$comparison" == '0' ]]; then
-      "$orb_app/Contents/MacOS/bin/orb" start >/dev/null 2>&1 || die "orbstack_start_failed"
+      start_orbstack "$orb_app/Contents/MacOS/bin/orb" \
+        || die "orbstack_start_failed"
       resolve_docker_command
       "$DOCKER" info --format '{{json .ServerVersion}}' >/dev/null 2>&1 \
         || die "docker_unavailable"
@@ -334,7 +351,7 @@ ensure_orbstack() {
   fi
   /bin/mv "$stage_app" "$orb_app"
   ORBSTACK_REPLACED=true
-  "$orb_app/Contents/MacOS/bin/orb" start >/dev/null 2>&1 \
+  start_orbstack "$orb_app/Contents/MacOS/bin/orb" \
     || die "orbstack_start_failed"
   [[ "$(read_orbstack_version)" == "$ORBSTACK_VERSION" ]] \
     || die "orbstack_version_mismatch"
