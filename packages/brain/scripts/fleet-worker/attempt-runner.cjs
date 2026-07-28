@@ -35,6 +35,7 @@ const LAUNCH_FIELDS = new Set([
   'credential_envelope',
   'result_channel',
   'github_mutation_policy',
+  'github_read_policy',
   'brain_url',
 ]);
 const TARGET_FIELDS = new Set([
@@ -77,6 +78,15 @@ const GITHUB_MUTATION_POLICY_FIELDS = new Set([
   'pr_body',
   'allowed_paths',
 ]);
+const GITHUB_READ_POLICY_FIELDS = new Set([
+  'version',
+  'repo',
+  'url',
+  'number',
+  'head_ref',
+  'head_sha',
+  'allowed_states',
+]);
 const RESULT_CHANNEL_VERSION = 'attempt-result-file/v1';
 const RESULT_CHANNEL_ROOT = '/tmp/cecelia-prompts';
 const RESULT_CHANNEL_MAX_BYTES = 1024 * 1024;
@@ -100,6 +110,8 @@ const ATTEMPT_STATE_FIELDS = new Set([
   'brain_url',
   'result_channel',
   'github_mutation_policy',
+  'github_read_policy',
+  'github_read_authority',
   'credential',
   'container_id',
   'container_removed',
@@ -251,6 +263,14 @@ function hasExactFields(value, fields) {
   const expected = [...fields].sort();
   return actual.length === expected.length
     && actual.every((field, index) => field === expected[index]);
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map(
+    (key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+  ).join(',')}}`;
 }
 
 function isCanonicalTimestamp(value) {
@@ -475,6 +495,22 @@ function validateDurableAttemptState(state, attemptId = state?.attempt_id) {
         state.workspace,
         state.result_channel.bindings.role,
       );
+    }
+    if (Object.hasOwn(state, 'github_read_policy')) {
+      const policy = validateGithubReadPolicy(
+        state.github_read_policy,
+        state.workspace,
+        state.result_channel.bindings.role,
+      );
+      validateGithubReadAuthority(state.github_read_authority, {
+        attemptId: state.attempt_id,
+        taskId: state.task_id,
+        runId: state.run_id,
+        role: state.result_channel.bindings.role,
+        policy,
+      });
+    } else if (Object.hasOwn(state, 'github_read_authority')) {
+      throw new Error('unexpected GitHub read authority');
     }
     if (state.status === 'running') {
       if (
@@ -894,6 +930,118 @@ function validateGithubMutationPolicy(value, workspaceSpec, role) {
   return Object.freeze({
     ...value,
     allowed_paths: Object.freeze([...value.allowed_paths]),
+  });
+}
+
+function validateGithubReadPolicy(value, workspaceSpec, role) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('attempt_github_read_policy_invalid');
+  }
+  assertExactFields(
+    value,
+    GITHUB_READ_POLICY_FIELDS,
+    'attempt_github_read_policy_unknown_field',
+  );
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(value.url);
+  } catch {
+    throw new Error('attempt_github_read_policy_invalid');
+  }
+  if (
+    !['evaluator', 'reporter'].includes(role)
+    || value.version !== 'github-read/v1'
+    || value.repo !== 'perfectuser21/cecelia'
+    || !Number.isInteger(value.number)
+    || value.number < 1
+    || parsedUrl.protocol !== 'https:'
+    || parsedUrl.hostname !== 'github.com'
+    || parsedUrl.username
+    || parsedUrl.password
+    || parsedUrl.search
+    || parsedUrl.hash
+    || parsedUrl.pathname !== `/${value.repo}/pull/${value.number}`
+    || typeof value.head_ref !== 'string'
+    || value.head_ref.length < 1
+    || value.head_ref.length > 255
+    || !/^(?![./])(?!.*(?:\.\.|\/\/|@\{|[~^:?*\\\s]))(?!.*[./]$)[A-Za-z0-9._/-]+$/
+      .test(value.head_ref)
+    || !SHA1_PATTERN.test(value.head_sha ?? '')
+    || !Array.isArray(value.allowed_states)
+    || value.allowed_states.length !== 1
+    || !['OPEN', 'MERGED'].includes(value.allowed_states[0])
+    || workspaceSpec?.repo !== value.repo
+    || workspaceSpec?.branch !== value.head_ref
+    || workspaceSpec?.expected_head_sha !== value.head_sha
+  ) {
+    throw new Error('attempt_github_read_policy_invalid');
+  }
+  return Object.freeze({
+    ...value,
+    allowed_states: Object.freeze([...value.allowed_states]),
+  });
+}
+
+function validateGithubReadAuthority(value, {
+  attemptId,
+  taskId,
+  runId,
+  role,
+  policy,
+}) {
+  if (!hasExactFields(value, [
+    'schema_version',
+    'attempt_id',
+    'task_id',
+    'run_id',
+    'role',
+    'request_sha256',
+    'observed_at',
+    'pull_request',
+    'audit_record_sha256',
+  ])) {
+    throw new Error('attempt_github_read_authority_invalid');
+  }
+  const pullRequest = value.pull_request;
+  if (
+    !hasExactFields(pullRequest, [
+      'type',
+      'url',
+      'number',
+      'head_ref',
+      'head_sha',
+      'state',
+    ])
+    || value.schema_version !== 'github-read-authority/v1'
+    || value.attempt_id !== attemptId
+    || value.task_id !== taskId
+    || value.run_id !== runId
+    || value.role !== role
+    || !SHA256_PATTERN.test(value.request_sha256 ?? '')
+    || !isCanonicalTimestamp(value.observed_at)
+    || !SHA256_PATTERN.test(value.audit_record_sha256 ?? '')
+    || pullRequest.type !== 'pull_request'
+    || pullRequest.url !== policy.url
+    || pullRequest.number !== policy.number
+    || pullRequest.head_ref !== policy.head_ref
+    || pullRequest.head_sha !== policy.head_sha
+    || pullRequest.state !== policy.allowed_states[0]
+  ) {
+    throw new Error('attempt_github_read_authority_invalid');
+  }
+  const expectedRequestSha = createHash('sha256').update(canonicalJson({
+    attempt_id: attemptId,
+    task_id: taskId,
+    run_id: runId,
+    role,
+    policy,
+  })).digest('hex');
+  if (value.request_sha256 !== expectedRequestSha) {
+    throw new Error('attempt_github_read_authority_invalid');
+  }
+  return Object.freeze({
+    ...value,
+    pull_request: Object.freeze({ ...pullRequest }),
   });
 }
 
@@ -1404,6 +1552,7 @@ function validateDependencies({
   credentialConsumer,
   resultDelivery,
   githubMutationBroker,
+  githubReadBroker,
 }) {
   for (const method of ['prepare', 'verify', 'cleanup', 'quarantine', 'reconcile']) {
     requireMethod(workspaceManager, method, 'workspace_manager');
@@ -1429,6 +1578,7 @@ function validateDependencies({
     requireMethod(resultDelivery, method, 'result_delivery');
   }
   requireMethod(githubMutationBroker, 'execute', 'github_mutation_broker');
+  requireMethod(githubReadBroker, 'observe', 'github_read_broker');
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
     throw new Error('attempt_runner_invalid_worker_id');
   }
@@ -1577,6 +1727,19 @@ function validateLaunchRequest(value) {
   ) {
     throw new Error('attempt_github_mutation_policy_role_mismatch');
   }
+  const githubReadPolicy = ['evaluator', 'reporter'].includes(target.role)
+    ? validateGithubReadPolicy(
+        value.github_read_policy,
+        value.workspace_spec,
+        target.role,
+      )
+    : null;
+  if (
+    !['evaluator', 'reporter'].includes(target.role)
+    && value.github_read_policy !== undefined
+  ) {
+    throw new Error('attempt_github_read_policy_role_mismatch');
+  }
   if (typeof value.lease_owner !== 'string' || value.lease_owner.length === 0) {
     throw new Error('attempt_lease_owner_invalid');
   }
@@ -1603,6 +1766,7 @@ function validateLaunchRequest(value) {
     target,
     resultChannel,
     githubMutationPolicy,
+    githubReadPolicy,
     brainUrl,
   };
 }
@@ -1699,6 +1863,7 @@ function createAttemptRunner({
   credentialConsumer,
   resultDelivery,
   githubMutationBroker,
+  githubReadBroker,
 } = {}) {
   validateDependencies({
     workspaceManager,
@@ -1709,6 +1874,7 @@ function createAttemptRunner({
     credentialConsumer,
     resultDelivery,
     githubMutationBroker,
+    githubReadBroker,
   });
 
   const attemptLocks = new Map();
@@ -1976,6 +2142,7 @@ function createAttemptRunner({
         target,
         resultChannel,
         githubMutationPolicy,
+        githubReadPolicy,
         brainUrl,
       } = validateLaunchRequest(input);
       if (target.machine !== workerId) {
@@ -1992,6 +2159,24 @@ function createAttemptRunner({
         taskId: request.task_id,
         role: target.role,
       });
+      const githubReadAuthority = githubReadPolicy
+        ? validateGithubReadAuthority(
+            await githubReadBroker.observe({
+              attemptId: request.attempt_id,
+              taskId: request.task_id,
+              runId: request.run_id,
+              role: target.role,
+              policy: githubReadPolicy,
+            }),
+            {
+              attemptId: request.attempt_id,
+              taskId: request.task_id,
+              runId: request.run_id,
+              role: target.role,
+              policy: githubReadPolicy,
+            },
+          )
+        : null;
       let credential = null;
       if (!isCanary) {
         if (
@@ -2043,6 +2228,7 @@ function createAttemptRunner({
             generation: request.lease_generation,
           },
           credential,
+          ...(githubReadAuthority ? { githubReadAuthority } : {}),
         });
       } catch (error) {
         await workspaceManager.cleanup(workspace);
@@ -2066,6 +2252,12 @@ function createAttemptRunner({
         result_channel: resultChannel,
         ...(githubMutationPolicy
           ? { github_mutation_policy: githubMutationPolicy }
+          : {}),
+        ...(githubReadPolicy
+          ? {
+              github_read_policy: githubReadPolicy,
+              github_read_authority: githubReadAuthority,
+            }
           : {}),
         ...(credential ? { credential: credential.metadata } : {}),
         container_id: launched.containerId,

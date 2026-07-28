@@ -26,6 +26,10 @@ const {
   createGithubMutationBroker,
 } = require('./github-mutation-broker.cjs');
 const {
+  createFileGithubReadAuditStore,
+  createGithubReadBroker,
+} = require('./github-read-broker.cjs');
+const {
   buildFleetHeartbeat,
   buildFleetResultDelivery,
   verifyFleetHeartbeatAck,
@@ -582,6 +586,7 @@ function createFleetWorkerRuntime({
     runtime: path.join(dataRoot, 'runtime'),
     credentials: path.join(dataRoot, 'credential-consumption'),
     githubAudit: path.join(dataRoot, 'github-mutation-audit'),
+    githubReadAudit: path.join(dataRoot, 'github-read-audit'),
   });
   const workspaceManager = createWorkspaceManager({
     mirrorRoot: roots.mirrors,
@@ -616,6 +621,11 @@ function createFleetWorkerRuntime({
         auditRoot: roots.githubAudit,
       }),
       finalizeRoleResult,
+    }),
+    githubReadBroker: createGithubReadBroker({
+      auditStore: createFileGithubReadAuditStore({
+        auditRoot: roots.githubReadAudit,
+      }),
     }),
     resultDelivery: createResultDeliveryClient({ secret: attemptToken }),
   });

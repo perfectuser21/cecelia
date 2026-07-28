@@ -45,13 +45,26 @@ const GITHUB_READ_POLICY = Object.freeze({
   head_sha: '0123456789abcdef0123456789abcdef01234567',
   allowed_states: Object.freeze(['OPEN']),
 });
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map(
+    (key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+  ).join(',')}}`;
+}
 const GITHUB_READ_AUTHORITY = Object.freeze({
   schema_version: 'github-read-authority/v1',
   attempt_id: ATTEMPT_ID,
   task_id: TASK_ID,
   run_id: RUN_ID,
   role: 'evaluator',
-  request_sha256: 'c'.repeat(64),
+  request_sha256: createHash('sha256').update(canonicalJson({
+    attempt_id: ATTEMPT_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    role: 'evaluator',
+    policy: GITHUB_READ_POLICY,
+  })).digest('hex'),
   observed_at: '2026-07-28T01:00:00.000Z',
   pull_request: Object.freeze({
     type: 'pull_request',
@@ -399,6 +412,13 @@ describe('Fleet Worker Attempt runner', () => {
       const authority = {
         ...GITHUB_READ_AUTHORITY,
         role,
+        request_sha256: createHash('sha256').update(canonicalJson({
+          attempt_id: ATTEMPT_ID,
+          task_id: TASK_ID,
+          run_id: RUN_ID,
+          role,
+          policy: GITHUB_READ_POLICY,
+        })).digest('hex'),
       };
       deps.githubReadBroker.observe.mockResolvedValueOnce(authority);
 
