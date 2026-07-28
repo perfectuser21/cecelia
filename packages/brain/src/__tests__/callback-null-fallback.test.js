@@ -169,7 +169,9 @@ describe('execution-callback result=null fallback error_message', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-    mockPool.query.mockResolvedValue({ rows: [{ goal_id: null }], rowCount: 1 });
+    // Keep unrelated post-callback lookups empty. A generic fake row activates
+    // background workflows and can create an unbounded microtask chain.
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
   });
 
   it('result=null + AI Failed → errorMessage contains "callback received but result was null"', async () => {
