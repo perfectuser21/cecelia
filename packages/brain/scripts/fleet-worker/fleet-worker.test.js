@@ -738,6 +738,63 @@ describe('Fleet Worker Attempt API', () => {
     expect(accepted.statusCode).toBe(202);
     server.close();
   });
+
+  it('periodically retries durable callbacks and renews leases with bounded single-flight loops', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    let releaseRetry;
+    const retryInFlight = new Promise((resolve) => { releaseRetry = resolve; });
+    attemptRunner.reconcile
+      .mockResolvedValueOnce({
+        cleaned_attempts: [],
+        removed_orphan_containers: [],
+      })
+      .mockImplementationOnce(async () => retryInFlight);
+    const maintenance = {
+      heartbeatAll: vi.fn(async () => ({
+        attempted: 1,
+        accepted: 1,
+        failed: 0,
+      })),
+    };
+    const intervals = [];
+    const cleared = [];
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+      maintenance,
+      setIntervalFn: (callback, milliseconds) => {
+        const timer = { callback, milliseconds, unref: vi.fn() };
+        intervals.push(timer);
+        return timer;
+      },
+      clearIntervalFn: (timer) => cleared.push(timer),
+    });
+    await vi.waitFor(() => expect(attemptRunner.reconcile).toHaveBeenCalledOnce());
+
+    expect(intervals.map(({ milliseconds }) => milliseconds).sort()).toEqual([
+      30_000,
+      60_000,
+    ]);
+    const retryTimer = intervals.find(({ milliseconds }) => milliseconds === 30_000);
+    const heartbeatTimer = intervals.find(({ milliseconds }) => milliseconds === 60_000);
+    retryTimer.callback();
+    retryTimer.callback();
+    heartbeatTimer.callback();
+    heartbeatTimer.callback();
+
+    await vi.waitFor(() => {
+      expect(attemptRunner.reconcile).toHaveBeenCalledTimes(2);
+      expect(maintenance.heartbeatAll).toHaveBeenCalledOnce();
+    });
+    releaseRetry({
+      cleaned_attempts: [],
+      removed_orphan_containers: [],
+    });
+    server.emit('close');
+    expect(cleared).toHaveLength(2);
+  });
 });
 
 describe('Fleet Worker production runtime assembly', () => {
