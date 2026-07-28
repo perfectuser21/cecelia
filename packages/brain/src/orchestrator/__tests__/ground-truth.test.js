@@ -6,7 +6,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { collectGroundTruth } from '../ground-truth.js';
 import { derive } from '../derive.js';
-import { canonicalContractDigest } from '../post-diff-risk-policy.js';
+import {
+  assessPostDiffRisk,
+  canonicalContractDigest,
+} from '../post-diff-risk-policy.js';
 
 const RUN_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const TASK_ID = '11111111-2222-4333-8444-555555555555';
@@ -1056,6 +1059,66 @@ describe('collectGroundTruth：决策日志推导字段', () => {
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.reviewRequired).toBe(true);
     expect(o.reviewApproved).toBe(false);
+  });
+
+  it('expired post-diff review request is replaced with a fresh hop-bound proof', async () => {
+    const headSha = 'a'.repeat(40);
+    const files = [{ path: 'apps/dashboard/src/App.jsx', additions: 2, deletions: 1 }];
+    const contract = { acceptance: ['safe'] };
+    const contractDigest = canonicalContractDigest(contract);
+    const expiredRisk = assessPostDiffRisk({
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 11,
+      headSha,
+      files,
+      contract: { version: 7, digest: contractDigest },
+      behaviorVersion: 'new-behavior/v1',
+      productionReceipt: null,
+      evidence: { ci: 'pass', evaluator: 'PASS', judge: 'PASS' },
+      now: () => Date.parse('2026-07-28T00:00:00.000Z'),
+    });
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: PR_URL },
+        contracts: [{
+          id: CONTRACT_ID,
+          status: 'approved',
+          version: 7,
+          contract_content: contract,
+        }],
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: { behavior_version: 'new-behavior/v1' },
+        }],
+        log: [{
+          hop: 11,
+          action: 'effect:human_review_requested',
+          observed: { post_diff_risk: expiredRisk },
+          detail: { review_reason: 'awaiting_human_review', post_diff_risk: expiredRisk },
+        }],
+      },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefOid: headSha,
+          statusCheckRollup: [{ state: 'SUCCESS' }],
+          files,
+        }),
+      },
+    });
+    deps.now = () => Date.parse('2026-07-28T01:00:00.000Z');
+
+    const observed = await collectGroundTruth(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+    });
+
+    expect(observed.postDiffRisk.bindings.hop).toBe(12);
+    expect(Date.parse(observed.postDiffRisk.expires_at))
+      .toBeGreaterThan(Date.parse(expiredRisk.expires_at));
   });
 
   it('same-SHA evidence approval cannot satisfy the later merge gate after evaluator and judge PASS', async () => {

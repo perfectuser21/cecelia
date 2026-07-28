@@ -103,6 +103,25 @@ function asJson(value) {
   return value;
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(
+      (key) => `${JSON.stringify(key)}:${stableJson(value[key])}`,
+    ).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sameRiskDecision(left, right) {
+  const withoutExpiry = (proof) => {
+    const value = asJson(proof) ?? {};
+    const { expires_at: _expiresAt, ...decision } = value;
+    return decision;
+  };
+  return stableJson(withoutExpiry(left)) === stableJson(withoutExpiry(right));
+}
+
 /** docker --format "{{json .}}" 输出（每行一个 JSON）→ 对象数组 */
 function parseJsonLines(stdout) {
   return String(stdout || '')
@@ -411,12 +430,15 @@ export async function collectGroundTruth(deps, opts) {
   } catch {
     contractDigest = null;
   }
+  const riskNow = Number((deps.now ?? Date.now)());
   const priorRiskRow = latestRow(decisionLog, (row) => {
     if (![LOG_ACTION.HUMAN_REVIEW_REQUESTED, ACTION.MERGE_PR].includes(row.action)) {
       return false;
     }
     const priorRisk = asJson(row.observed)?.post_diff_risk;
-    return priorRisk?.bindings?.head_sha === pr?.head_sha;
+    return priorRisk?.bindings?.head_sha === pr?.head_sha
+      && Number.isFinite(Date.parse(priorRisk.expires_at))
+      && Date.parse(priorRisk.expires_at) > riskNow;
   });
   const riskHop = priorRiskRow?.hop
     ?? (decisionLog.reduce((maximum, row) => Math.max(maximum, Number(row.hop) || 0), 0) + 1);
@@ -448,7 +470,7 @@ export async function collectGroundTruth(deps, opts) {
             ? judgeVerdict.verdict
             : null,
         },
-        now: deps.now ?? Date.now,
+        now: () => riskNow,
       })
     : null;
 
@@ -466,8 +488,9 @@ export async function collectGroundTruth(deps, opts) {
       || detail.review_class !== HUMAN_REVIEW_CLASS.MERGE_GATE
       || detail.pr_head_sha !== pr.head_sha
       || approvedRisk.policy_version !== postDiffRisk?.policy_version
-      || JSON.stringify(approvedRisk.bindings) !== JSON.stringify(currentBindings)
-      || Date.parse(approvedRisk.expires_at) <= (deps.now ?? Date.now)()
+      || stableJson(approvedRisk.bindings) !== stableJson(currentBindings)
+      || !sameRiskDecision(approvedRisk, postDiffRisk)
+      || Date.parse(approvedRisk.expires_at) <= riskNow
     ) {
       return false;
     }
@@ -479,8 +502,9 @@ export async function collectGroundTruth(deps, opts) {
     const requestObserved = asJson(request.observed);
     const requestDetail = asJson(request.detail);
     return requestObserved?.pr?.head_sha === pr.head_sha
-      && JSON.stringify(requestObserved?.post_diff_risk?.bindings)
-        === JSON.stringify(currentBindings)
+      && stableJson(requestObserved?.post_diff_risk?.bindings)
+        === stableJson(currentBindings)
+      && sameRiskDecision(requestObserved?.post_diff_risk, approvedRisk)
       && requestDetail?.post_diff_risk?.policy_version === postDiffRisk?.policy_version
       && reviewClassForReason(requestDetail?.review_reason)
         === HUMAN_REVIEW_CLASS.MERGE_GATE;
