@@ -95,6 +95,16 @@ describe('canonical behavior equivalence axes', () => {
 });
 
 describe('validateBehaviorEquivalence', () => {
+  it('never treats non-empty receipt strings or unit-test commands as live proof', () => {
+    const result = validateBehaviorEquivalence(contract(), { now: NOW });
+
+    expect(result.behaviors[0].effective_status).toBe('gap');
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'trusted_receipt_bundle_required' }),
+      expect.objectContaining({ code: 'non_live_proof_command' }),
+    ]));
+  });
+
   it('rejects a silently truncated behavior inventory', () => {
     const truncated = contract();
     truncated.behavior_equivalence.required_behavior_count = 2;
