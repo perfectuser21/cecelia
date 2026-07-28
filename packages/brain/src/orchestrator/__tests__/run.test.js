@@ -154,7 +154,17 @@ describe('buildRealDeps', () => {
           },
         },
         run: { phase: 'generate' },
-        contract: { row: {} },
+        contract: {
+          approved: true,
+          row: {
+            status: 'approved',
+            e2e_acceptance: {
+              scenarios: [{
+                commands: [{ type: 'bash', cmd: 'npm test' }],
+              }],
+            },
+          },
+        },
         pr: null,
       },
     });
@@ -244,7 +254,17 @@ describe('buildRealDeps', () => {
           },
         },
         run: { phase: 'evaluate' },
-        contract: { row: {} },
+        contract: {
+          approved: true,
+          row: {
+            status: 'approved',
+            e2e_acceptance: {
+              scenarios: [{
+                commands: [{ type: 'bash', cmd: 'npm test' }],
+              }],
+            },
+          },
+        },
         pr: {
           url: 'https://github.com/o/r/pull/1',
           state: 'OPEN',

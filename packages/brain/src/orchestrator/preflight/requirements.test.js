@@ -95,9 +95,24 @@ function context(role, requirements) {
         },
       },
       run: { id: RUN_ID, phase: role },
-      contract: { row: {} },
+      contract: {
+        approved: true,
+        row: {
+          status: 'approved',
+          e2e_acceptance: {
+            scenarios: [{
+              commands: [{ type: 'bash', cmd: 'npm test' }],
+            }],
+          },
+        },
+      },
       pr: role === 'evaluator'
-        ? { url: 'https://github.com/perfectuser21/cecelia/pull/1' }
+        ? {
+            url: 'https://github.com/perfectuser21/cecelia/pull/1',
+            head_ref: 'cp-requirements',
+            head_sha: 'a'.repeat(40),
+            state: 'OPEN',
+          }
         : null,
     },
   };

@@ -681,12 +681,21 @@ describe('production capability wiring', () => {
       lease_owner: LEASE_OWNER,
       lease_generation: 4,
       target,
-      callback_url: `https://brain.public.example/api/brain/harness/attempts/${ATTEMPT_ID}/callback`,
+      brain_url: 'https://brain.public.example',
+      result_channel: expect.objectContaining({
+        bindings: {
+          attempt_id: ATTEMPT_ID,
+          task_id: TASK_ID,
+          run_id: RUN_ID,
+          role: 'generator',
+        },
+      }),
       workspace_spec: expect.objectContaining({
         repo: 'perfectuser21/cecelia',
         attempt_id: ATTEMPT_ID,
       }),
     });
+    expect(bridgeRequest).not.toHaveProperty('callback_url');
     expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'xian-mac-m4',
     }));
