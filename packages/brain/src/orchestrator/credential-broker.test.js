@@ -10,8 +10,12 @@ import {
 } from './credential-broker.js';
 
 const ATTEMPT_ID = '11111111-1111-4111-8111-111111111111';
+const RUN_ID = '22222222-2222-4222-8222-222222222222';
+const CREDENTIAL_REF = '33333333-3333-4333-8333-333333333333';
+const DELIVERY_NONCE = '44444444-4444-4444-8444-444444444444';
 const NOW = Date.parse('2026-07-27T15:00:00.000Z');
 const DEADLINE = new Date(NOW + 60 * 60 * 1000).toISOString();
+const SIGNING_SECRET = 'provider-envelope-signing-secret-at-least-32-bytes';
 const SECRET = 'broker-access-token-must-never-leak';
 
 function jwt(expSeconds) {
@@ -20,7 +24,7 @@ function jwt(expSeconds) {
   return `header.${encoded}.signature`;
 }
 
-function authJson(expMs = NOW + 2 * 60 * 60 * 1000) {
+function codexAuth(expMs = NOW + 2 * 60 * 60 * 1000) {
   return JSON.stringify({
     auth_mode: 'chatgpt',
     tokens: {
@@ -31,104 +35,180 @@ function authJson(expMs = NOW + 2 * 60 * 60 * 1000) {
   });
 }
 
+function claudeAuth(expMs = NOW + 2 * 60 * 60 * 1000) {
+  return JSON.stringify({
+    claudeAiOauth: {
+      accessToken: SECRET,
+      refreshToken: 'claude-refresh-secret',
+      expiresAt: expMs,
+    },
+  });
+}
+
+function grokAuth(expMs = NOW + 2 * 60 * 60 * 1000) {
+  return JSON.stringify({
+    'https://auth.x.ai::principal': {
+      key: SECRET,
+      refresh_token: 'grok-refresh-secret',
+      expires_at: new Date(expMs).toISOString(),
+    },
+  });
+}
+
+function input(overrides = {}) {
+  return {
+    attemptId: ATTEMPT_ID,
+    runId: RUN_ID,
+    provider: 'codex',
+    accountId: 'team4',
+    machineId: 'xian-mac-m4',
+    leaseOwner: 'kernel-controller:1234',
+    leaseGeneration: 7,
+    deadlineAt: DEADLINE,
+    ...overrides,
+  };
+}
+
 function broker(overrides = {}) {
+  const ids = [CREDENTIAL_REF, DELIVERY_NONCE];
   return createCredentialBroker({
     controllerMachineId: 'us-mac-m4',
-    loadCredential: vi.fn(async () => authJson()),
+    signingSecret: SIGNING_SECRET,
+    loadCredential: vi.fn(async (provider) => ({
+      codex: codexAuth(),
+      claude: claudeAuth(),
+      grok: grokAuth(),
+    })[provider]),
     now: () => NOW,
-    randomUUID: () => '22222222-2222-4222-8222-222222222222',
+    randomUUID: () => ids.shift(),
     safetyMarginMs: 5 * 60 * 1000,
+    deliveryTtlMs: 60_000,
     ...overrides,
   });
 }
 
-describe('central Codex Credential Broker', () => {
-  it('issues one immutable envelope bound to the selected Attempt, account, and machine', async () => {
-    const loadCredential = vi.fn(async () => authJson());
-    const result = await broker({ loadCredential }).issue({
-      attemptId: ATTEMPT_ID,
-      accountId: 'team4',
-      machineId: 'xian-mac-m4',
-      deadlineAt: DEADLINE,
-    });
+describe('central provider Credential Broker', () => {
+  it.each([
+    ['codex', 'team4', codexAuth()],
+    ['claude', 'account2', claudeAuth()],
+    ['grok', 'grok', grokAuth()],
+  ])('issues one signed short-lived %s envelope bound to run and lease', async (
+    provider,
+    accountId,
+    payload,
+  ) => {
+    const loadCredential = vi.fn(async () => payload);
+    const result = await broker({ loadCredential }).issue(input({
+      provider,
+      accountId,
+    }));
 
     expect(loadCredential).toHaveBeenCalledTimes(1);
-    expect(loadCredential).toHaveBeenCalledWith('team4');
+    expect(loadCredential).toHaveBeenCalledWith(provider, accountId);
     expect(result).toMatchObject({
-      contract_version: 'credential-envelope/v1',
-      credential_ref: '22222222-2222-4222-8222-222222222222',
+      contract_version: 'provider-credential-envelope/v2',
+      credential_ref: CREDENTIAL_REF,
+      delivery_nonce: DELIVERY_NONCE,
       attempt_id: ATTEMPT_ID,
-      account_id: 'team4',
+      run_id: RUN_ID,
+      provider,
+      account_id: accountId,
       machine_id: 'xian-mac-m4',
+      lease_owner: 'kernel-controller:1234',
+      lease_generation: 7,
       issued_at: '2026-07-27T15:00:00.000Z',
-      expires_at: new Date(NOW + 2 * 60 * 60 * 1000).toISOString(),
+      expires_at: '2026-07-27T15:01:00.000Z',
       payload_hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
-      payload: Buffer.from(authJson()).toString('base64'),
+      payload: Buffer.from(payload).toString('base64'),
+      signature: expect.stringMatching(/^hmac-sha256:[a-f0-9]{64}$/),
     });
+    expect(Object.keys(result)).toEqual([
+      'contract_version',
+      'credential_ref',
+      'delivery_nonce',
+      'attempt_id',
+      'run_id',
+      'provider',
+      'account_id',
+      'machine_id',
+      'lease_owner',
+      'lease_generation',
+      'issued_at',
+      'expires_at',
+      'payload_hash',
+      'payload',
+      'signature',
+    ]);
     expect(Object.isFrozen(result)).toBe(true);
-    expect(JSON.stringify({
-      credential_ref: result.credential_ref,
-      attempt_id: result.attempt_id,
-      account_id: result.account_id,
-      machine_id: result.machine_id,
-      issued_at: result.issued_at,
-      expires_at: result.expires_at,
-      payload_hash: result.payload_hash,
-    })).not.toContain(SECRET);
+    const metadata = { ...result };
+    delete metadata.payload;
+    expect(JSON.stringify(metadata)).not.toContain(SECRET);
+  });
+
+  it('signs every execution binding and payload byte', async () => {
+    const first = await broker().issue(input());
+    const second = await broker().issue(input({ leaseGeneration: 8 }));
+    const third = await broker({
+      loadCredential: vi.fn(async () => codexAuth().replace(SECRET, `${SECRET}-changed`)),
+    }).issue(input());
+
+    expect(first.signature).not.toBe(second.signature);
+    expect(first.signature).not.toBe(third.signature);
   });
 
   it.each([
     ['non-US controller', { controllerMachineId: 'xian-mac-m4' }, {}, 'credential_broker_us_authority_required'],
-    ['unknown account', {}, { accountId: 'team6' }, 'credential_account_not_allowed'],
+    ['unknown provider', {}, { provider: 'other' }, 'credential_provider_not_allowed'],
+    ['unknown Codex account', {}, { accountId: 'team6' }, 'credential_account_not_allowed'],
+    ['wrong Claude account namespace', {}, {
+      provider: 'claude', accountId: 'team1',
+    }, 'credential_account_not_allowed'],
+    ['wrong Grok account', {}, {
+      provider: 'grok', accountId: 'account1',
+    }, 'credential_account_not_allowed'],
     ['unknown machine', {}, { machineId: 'moon-base' }, 'credential_machine_not_allowed'],
     ['invalid Attempt', {}, { attemptId: 'not-a-uuid' }, 'credential_attempt_invalid'],
-  ])('rejects %s before reading credential bytes', async (_label, options, input, code) => {
-    const loadCredential = vi.fn(async () => authJson());
+    ['invalid Run', {}, { runId: 'not-a-uuid' }, 'credential_run_invalid'],
+    ['invalid lease owner', {}, { leaseOwner: 'bad\nowner' }, 'credential_lease_owner_invalid'],
+    ['invalid lease generation', {}, { leaseGeneration: -1 }, 'credential_lease_generation_invalid'],
+  ])('rejects %s before reading credential bytes', async (_label, options, changes, code) => {
+    const loadCredential = vi.fn(async () => codexAuth());
     const instance = broker({ loadCredential, ...options });
-    await expect(instance.issue({
-      attemptId: ATTEMPT_ID,
-      accountId: 'team4',
-      machineId: 'xian-mac-m4',
-      deadlineAt: DEADLINE,
-      ...input,
-    })).rejects.toThrow(code);
+    await expect(instance.issue(input(changes))).rejects.toThrow(code);
     expect(loadCredential).not.toHaveBeenCalled();
   });
 
-  it('fails closed when access-token lifetime does not cover deadline plus margin', async () => {
-    const loadCredential = vi.fn(async () => authJson(NOW + 62 * 60 * 1000));
-    await expect(broker({ loadCredential }).issue({
-      attemptId: ATTEMPT_ID,
-      accountId: 'team4',
-      machineId: 'xian-mac-m4',
-      deadlineAt: DEADLINE,
-    })).rejects.toThrow('credential_lifetime_insufficient');
+  it.each([
+    ['codex', 'team4', codexAuth(NOW + 62 * 60 * 1000)],
+    ['claude', 'account1', claudeAuth(NOW + 62 * 60 * 1000)],
+    ['grok', 'grok', grokAuth(NOW + 62 * 60 * 1000)],
+  ])('fails closed when %s lifetime does not cover deadline plus margin', async (
+    provider,
+    accountId,
+    payload,
+  ) => {
+    await expect(broker({
+      loadCredential: vi.fn(async () => payload),
+    }).issue(input({ provider, accountId }))).rejects.toThrow(
+      'credential_lifetime_insufficient',
+    );
   });
 
   it('fails closed when the controller clock cannot produce an ISO timestamp', async () => {
-    const loadCredential = vi.fn(async () => authJson());
+    const loadCredential = vi.fn(async () => codexAuth());
     await expect(broker({
       loadCredential,
       now: () => Number.MAX_VALUE,
-    }).issue({
-      attemptId: ATTEMPT_ID,
-      accountId: 'team4',
-      machineId: 'xian-mac-m4',
-      deadlineAt: DEADLINE,
-    })).rejects.toThrow('credential_clock_invalid');
+    }).issue(input())).rejects.toThrow('credential_clock_invalid');
     expect(loadCredential).not.toHaveBeenCalled();
   });
 
   it('never includes credential bytes in a parse error', async () => {
-    const loadCredential = vi.fn(async () => `{${SECRET}`);
     let error;
     try {
-      await broker({ loadCredential }).issue({
-        attemptId: ATTEMPT_ID,
-        accountId: 'team4',
-        machineId: 'xian-mac-m4',
-        deadlineAt: DEADLINE,
-      });
+      await broker({
+        loadCredential: vi.fn(async () => `{${SECRET}`),
+      }).issue(input());
     } catch (caught) {
       error = caught;
     }
@@ -143,30 +223,72 @@ describe('central Codex Credential Broker', () => {
     });
     await expect(broker({
       loadCredential: vi.fn(async () => oversized),
-    }).issue({
-      attemptId: ATTEMPT_ID,
-      accountId: 'team4',
-      machineId: 'xian-mac-m4',
-      deadlineAt: DEADLINE,
-    })).rejects.toThrow('credential_payload_too_large');
+    }).issue(input())).rejects.toThrow('credential_payload_too_large');
+  });
+
+  it.each([
+    ['short signer', 'short'],
+    ['newline signer', `${SIGNING_SECRET}\n`],
+  ])('rejects a %s before broker construction', (_label, signingSecret) => {
+    expect(() => broker({ signingSecret })).toThrow('credential_signing_secret_invalid');
   });
 });
 
-describe('protected US M4 credential source', () => {
-  it('reads only the selected account auth.json from a protected regular file', async () => {
+describe('protected controller credential source', () => {
+  function fixture() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-loader-'));
-    const team4 = path.join(root, '.codex-team4');
-    fs.mkdirSync(team4, { mode: 0o700 });
-    fs.writeFileSync(path.join(team4, 'auth.json'), authJson(), { mode: 0o600 });
-    const accountHomeResolver = vi.fn((accountId) => path.join(root, `.codex-${accountId}`));
-    const load = createFileCredentialLoader({ accountHomeResolver });
+    const homes = {
+      'codex:team4': path.join(root, '.codex-team4'),
+      'claude:account2': path.join(root, '.claude-account2'),
+      'grok:grok': path.join(root, '.grok'),
+    };
+    for (const home of Object.values(homes)) fs.mkdirSync(home, { mode: 0o700 });
+    fs.writeFileSync(path.join(homes['codex:team4'], 'auth.json'), codexAuth(), {
+      mode: 0o600,
+    });
+    fs.writeFileSync(
+      path.join(homes['claude:account2'], '.credentials.json'),
+      claudeAuth(),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(path.join(homes['grok:grok'], 'auth.json'), grokAuth(), {
+      mode: 0o600,
+    });
+    return { root, homes };
+  }
 
+  it.each([
+    ['codex', 'team4', 'auth.json', codexAuth()],
+    ['claude', 'account2', '.credentials.json', claudeAuth()],
+    ['grok', 'grok', 'auth.json', grokAuth()],
+  ])('reads only the selected protected %s credential file', async (
+    provider,
+    account,
+    _filename,
+    expected,
+  ) => {
+    const { root, homes } = fixture();
+    const accountHomeResolver = vi.fn((p, a) => homes[`${p}:${a}`]);
+    const load = createFileCredentialLoader({ accountHomeResolver });
     try {
-      await expect(load('team4')).resolves.toBe(authJson());
-      expect(accountHomeResolver).toHaveBeenCalledWith('team4');
+      await expect(load(provider, account)).resolves.toBe(expected);
+      expect(accountHomeResolver).toHaveBeenCalledWith(provider, account);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    ['unknown provider', 'other', 'team4'],
+    ['wrong account namespace', 'claude', 'team4'],
+    ['unknown account', 'grok', 'account1'],
+  ])('rejects %s before resolving a home', async (_label, provider, account) => {
+    const accountHomeResolver = vi.fn();
+    const load = createFileCredentialLoader({ accountHomeResolver });
+    await expect(load(provider, account)).rejects.toThrow(
+      /credential_(provider|account)_not_allowed/,
+    );
+    expect(accountHomeResolver).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -176,19 +298,21 @@ describe('protected US M4 credential source', () => {
     ['symlink file', 0o600, true],
   ])('rejects a %s without returning credential bytes', async (_case, mode, symlink) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-loader-'));
-    const team4 = path.join(root, '.codex-team4');
-    fs.mkdirSync(team4, { mode: 0o700 });
-    const target = path.join(team4, 'auth-target.json');
-    const authFile = path.join(team4, 'auth.json');
-    fs.writeFileSync(target, authJson(), { mode });
-    if (symlink) fs.symlinkSync(target, authFile);
-    else fs.renameSync(target, authFile);
+    const home = path.join(root, '.claude-account2');
+    fs.mkdirSync(home, { mode: 0o700 });
+    const target = path.join(home, 'credential-target.json');
+    const credentialFile = path.join(home, '.credentials.json');
+    fs.writeFileSync(target, claudeAuth(), { mode });
+    if (symlink) fs.symlinkSync(target, credentialFile);
+    else fs.renameSync(target, credentialFile);
     const load = createFileCredentialLoader({
-      accountHomeResolver: (accountId) => path.join(root, `.codex-${accountId}`),
+      accountHomeResolver: () => home,
     });
 
     try {
-      await expect(load('team4')).rejects.toThrow('credential_source_permissions');
+      await expect(load('claude', 'account2')).rejects.toThrow(
+        'credential_source_permissions',
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
