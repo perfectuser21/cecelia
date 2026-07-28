@@ -145,6 +145,10 @@ function executionFixture() {
       calls.push('observe');
       return value;
     }),
+    cancel: vi.fn(async () => {
+      calls.push('cancel');
+      return { confirmed: true };
+    }),
     cleanup: vi.fn(async () => {
       calls.push('cleanup');
       return { confirmed: true };
@@ -263,6 +267,82 @@ describe('executeDrillCell', () => {
     expect(value.collector).not.toHaveBeenCalled();
   });
 
+  it('compensates and cleans up resources registered before prepare fails', async () => {
+    const value = executionFixture();
+    const partial = { resource_id: value.grant.resource_id };
+    value.adapter.prepare.mockImplementation(async ({
+      registerCompensation,
+    }) => {
+      registerCompensation(partial);
+      throw new Error('prepare failed after resource allocation');
+    });
+    value.adapter.cleanup.mockImplementation(async (context) => {
+      expect(context.compensations).toEqual([partial]);
+      return { confirmed: true };
+    });
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'adapter_prepare_failed',
+    });
+    expect(value.adapter.cleanup).toHaveBeenCalledTimes(1);
+    expect(value.adapter.invokeActualSeam).not.toHaveBeenCalled();
+  });
+
+  it('aborts and confirms cancellation so a delayed effect cannot fire after timeout', async () => {
+    const value = executionFixture();
+    let lateEffect = false;
+    value.adapter.invokeActualSeam.mockImplementation(({ signal }) => (
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          lateEffect = true;
+          resolve(value.receipt);
+        }, 30);
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new Error('cancelled'));
+        }, { once: true });
+      })
+    ));
+    value.adapter.cancel.mockImplementation(async ({ signal, phase }) => {
+      expect(phase).toBe('invoke');
+      expect(signal.aborted).toBe(true);
+      return { confirmed: true };
+    });
+
+    const result = await execute(value, { timeoutMs: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(result).toMatchObject({
+      status: 'blocked',
+      code: 'adapter_timeout',
+    });
+    expect(lateEffect).toBe(false);
+    expect(value.adapter.cancel).toHaveBeenCalledTimes(1);
+    expect(value.adapter.cleanup).toHaveBeenCalledTimes(1);
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('records late-effect risk when timeout cancellation is not confirmed', async () => {
+    const value = executionFixture();
+    value.adapter.invokeActualSeam.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    value.adapter.cancel.mockResolvedValue({ confirmed: false });
+
+    const result = await execute(value, { timeoutMs: 5 });
+
+    expect(result).toMatchObject({
+      status: 'blocked',
+      code: 'adapter_cancellation_unconfirmed',
+      audit: {
+        late_effect_risk: true,
+      },
+    });
+    expect(value.adapter.cleanup).toHaveBeenCalledTimes(1);
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['unsigned output', () => ({ effect_code: 'ordinary object' }), 'effect_fields_invalid'],
     [
@@ -349,6 +429,7 @@ describe('executeDrillCell', () => {
         calls.push('observe');
         return output;
       }),
+      cancel: vi.fn(async () => ({ confirmed: true })),
       cleanup: vi.fn(async () => {
         calls.push('cleanup');
         return { confirmed: true };
