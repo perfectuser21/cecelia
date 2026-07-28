@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.108
+**Brain 版本**: 1.267.109
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.109 — Fleet OrbStack service-user path ACL hotfix
+
+- Fleet Worker installer 在低权限 node probe 前，为 OrbStack owner home、
+  `.orbstack` 与 `.orbstack/run` 授予 `_cecelia` 最小 search ACL，再授予
+  Docker socket read/write ACL，修复真实节点 `prerequisite_orbstack`。
+- 安装失败只回滚本次新增 ACL；Worker 仍是 system LaunchDaemon，不引入 GUI
+  LaunchAgent，不改变 Runner pin、Provider 凭据或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.108`；节点保持 drain 后再回退。
 
 ## Brain 1.267.108 — Fleet OrbStack user-domain startup hotfix
 

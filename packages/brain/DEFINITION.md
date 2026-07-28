@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.108
+**版本**: 1.267.109
+
+## Fleet OrbStack service-user path ACL hotfix
+
+- installer 在低权限 node probe 前，为 OrbStack owner home、`.orbstack` 和
+  `.orbstack/run` 授予 `_cecelia` 最小 search ACL，再授予 socket
+  read/write ACL，避免 `orbctl` 因路径不可遍历而误报 unavailable。
+- 安装失败按反向顺序撤销且仅撤销本次新增 ACL；Worker 继续使用
+  `_cecelia` system LaunchDaemon，不依赖 GUI LaunchAgent。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.108`。
 
 ## Fleet OrbStack user-domain startup hotfix
 
