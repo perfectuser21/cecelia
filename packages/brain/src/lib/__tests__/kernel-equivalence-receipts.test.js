@@ -3,7 +3,7 @@ import {
   randomUUID,
   sign as signBytes,
 } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   assembleUnsignedBundle,
   canonicalJson,
@@ -528,6 +528,30 @@ describe('receipt bundle and recovery lineage', () => {
       now: NOW,
       maximumBundleDepth: 198,
     })).rejects.toMatchObject({ code: 'bundle_hash_chain_invalid' });
+  });
+
+  it('fails closed when an adversarial resolver materializes a cycle', async () => {
+    let previousReads = 0;
+    let headHash;
+    const adversarial = {};
+    Object.defineProperty(adversarial, 'previous_bundle_hash', {
+      enumerable: true,
+      get() {
+        previousReads += 1;
+        return previousReads <= 4 ? null : headHash;
+      },
+    });
+    headHash = sha256Canonical(adversarial);
+    const readBundle = vi.fn(async () => adversarial);
+
+    await expect(preloadReceiptBundleAncestry({
+      headHash,
+      readBundle,
+      trustRegistry: trustFixture().registry,
+      now: NOW,
+      maximumBundleDepth: 1_000,
+    })).rejects.toMatchObject({ code: 'bundle_hash_chain_invalid' });
+    expect(readBundle).toHaveBeenCalledOnce();
   });
 
   it('requires recovery to reference the matching violation cell receipt id and hash', () => {

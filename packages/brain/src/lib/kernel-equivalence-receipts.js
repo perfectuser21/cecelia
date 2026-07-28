@@ -18,6 +18,11 @@ const DENIAL_OUTCOMES = new Set(['denied', 'blocked', 'rejected', 'failed']);
 const HISTORICAL_BUNDLE_VERIFICATION = Symbol(
   'kernel-equivalence-historical-bundle-verification',
 );
+const SKIP_BUNDLE_ANCESTRY_VERIFICATION = Symbol(
+  'kernel-equivalence-skip-bundle-ancestry-verification',
+);
+const DEFAULT_MAXIMUM_BUNDLE_DEPTH = 10_000;
+const ABSOLUTE_MAXIMUM_BUNDLE_DEPTH = 100_000;
 const KEY_PURPOSES = new Set([
   'execution_grant',
   'effect_receipt',
@@ -335,6 +340,16 @@ function verifyWindow(value, now, maximumAgeSeconds, prefix) {
 function verifyNow(now) {
   if (typeof now !== 'number' || !Number.isFinite(now)) {
     fail('verification_time_invalid');
+  }
+}
+
+function verifyMaximumBundleDepth(value) {
+  if (
+    !Number.isSafeInteger(value)
+    || value < 1
+    || value > ABSOLUTE_MAXIMUM_BUNDLE_DEPTH
+  ) {
+    fail('bundle_hash_chain_invalid');
   }
 }
 
@@ -750,9 +765,10 @@ export function verifyReceiptBundle(
   const {
     now = Date.now(),
     resolvePreviousBundle = null,
-    _seenBundleHashes = new Set(),
+    maximumBundleDepth = DEFAULT_MAXIMUM_BUNDLE_DEPTH,
   } = options;
   verifyNow(now);
+  verifyMaximumBundleDepth(maximumBundleDepth);
   exactFields(bundle, BUNDLE_FIELDS, 'bundle_fields_invalid');
   if (
     bundle.schema_version !== 'kernel-equivalence-receipt-bundle/v1'
@@ -913,41 +929,50 @@ export function verifyReceiptBundle(
     adapter_id: bundle.adapter_id,
   });
 
-  if (bundle.previous_bundle_hash != null) {
+  if (
+    bundle.previous_bundle_hash != null
+    && options[SKIP_BUNDLE_ANCESTRY_VERIFICATION] !== true
+  ) {
     if (typeof resolvePreviousBundle !== 'function') {
       fail('bundle_previous_unresolved');
     }
-    if (
-      _seenBundleHashes.size >= 100
-      || _seenBundleHashes.has(bundle.previous_bundle_hash)
-    ) {
-      fail('bundle_hash_chain_invalid');
+    const seen = new Set([sha256Canonical(bundle)]);
+    let previousHash = bundle.previous_bundle_hash;
+    let depth = 1;
+    while (previousHash != null) {
+      if (
+        depth >= maximumBundleDepth
+        || seen.has(previousHash)
+      ) {
+        fail('bundle_hash_chain_invalid');
+      }
+      let previous;
+      try {
+        previous = resolvePreviousBundle(previousHash);
+      } catch {
+        fail('bundle_previous_unresolved');
+      }
+      if (
+        !asObject(previous)
+        || sha256Canonical(previous) !== previousHash
+      ) {
+        fail('bundle_previous_unresolved');
+      }
+      seen.add(previousHash);
+      verifyReceiptBundle(
+        previous,
+        registry,
+        expectedFromReceiptBundle(previous),
+        {
+          now,
+          maximumBundleDepth,
+          [HISTORICAL_BUNDLE_VERIFICATION]: true,
+          [SKIP_BUNDLE_ANCESTRY_VERIFICATION]: true,
+        },
+      );
+      depth += 1;
+      previousHash = previous.previous_bundle_hash;
     }
-    let previous;
-    try {
-      previous = resolvePreviousBundle(bundle.previous_bundle_hash);
-    } catch {
-      fail('bundle_previous_unresolved');
-    }
-    if (
-      !asObject(previous)
-      || sha256Canonical(previous) !== bundle.previous_bundle_hash
-    ) {
-      fail('bundle_previous_unresolved');
-    }
-    const seen = new Set(_seenBundleHashes);
-    seen.add(bundle.previous_bundle_hash);
-    verifyReceiptBundle(
-      previous,
-      registry,
-      expectedFromReceiptBundle(previous),
-      {
-        now,
-        resolvePreviousBundle,
-        _seenBundleHashes: seen,
-        [HISTORICAL_BUNDLE_VERIFICATION]: true,
-      },
-    );
   }
 
   return Object.freeze({
@@ -965,8 +990,10 @@ export async function preloadReceiptBundleAncestry({
   readBundle,
   trustRegistry,
   now = Date.now(),
+  maximumBundleDepth = DEFAULT_MAXIMUM_BUNDLE_DEPTH,
 } = {}) {
   verifyNow(now);
+  verifyMaximumBundleDepth(maximumBundleDepth);
   if (
     !HASH_PATTERN.test(headHash ?? '')
     || (
@@ -980,7 +1007,10 @@ export async function preloadReceiptBundleAncestry({
   const bundles = new Map();
   let currentHash = headHash;
   let discoveredGenesis = null;
-  for (let depth = 0; depth < 100; depth += 1) {
+  while (true) {
+    if (bundles.size >= maximumBundleDepth) {
+      fail('bundle_hash_chain_invalid');
+    }
     if (bundles.has(currentHash)) fail('bundle_hash_chain_invalid');
     let raw;
     try {
@@ -1027,6 +1057,7 @@ export async function preloadReceiptBundleAncestry({
     {
       now,
       resolvePreviousBundle,
+      maximumBundleDepth,
       [HISTORICAL_BUNDLE_VERIFICATION]: true,
     },
   );

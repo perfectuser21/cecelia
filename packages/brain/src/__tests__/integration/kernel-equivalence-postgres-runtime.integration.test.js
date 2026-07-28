@@ -250,6 +250,41 @@ describe('trusted equivalence runtime on real PostgreSQL', () => {
       });
   });
 
+  it('appends and reloads more than 198 bundles through a fresh store', async () => {
+    const writer = createPostgresBundleChainStore({ pool });
+    const startingCheckpoint = await writer.getCheckpoint();
+    let previousHash = startingCheckpoint.head_hash;
+    const appendedHashes = [];
+
+    for (let index = 0; index < 199; index += 1) {
+      const value = bundleValue(
+        `KERNEL-P0-DEEP-${String(index).padStart(3, '0')}`,
+        'normal',
+        previousHash,
+      );
+      await expect(writer.commit({
+        bundle: value.bundle,
+        bundle_hash: value.hash,
+        previous_head_hash: previousHash,
+      })).resolves.toMatchObject({ committed: true });
+      appendedHashes.push(value.hash);
+      previousHash = value.hash;
+    }
+
+    const reader = createPostgresBundleChainStore({ pool });
+    await expect(reader.getCheckpoint()).resolves.toMatchObject({
+      genesis_hash: startingCheckpoint.genesis_hash,
+      head_hash: previousHash,
+    });
+    let currentHash = previousHash;
+    for (const expectedHash of [...appendedHashes].reverse()) {
+      expect(currentHash).toBe(expectedHash);
+      const bundle = await reader.readBundle(currentHash);
+      currentHash = bundle.previous_bundle_hash;
+    }
+    expect(currentHash).toBe(startingCheckpoint.head_hash);
+  }, 30_000);
+
   it('rejects mutation and truncation of every append-only ledger', async () => {
     const persistAudit = createPostgresAuditSink({
       pool,
