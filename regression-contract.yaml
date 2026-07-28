@@ -150,7 +150,7 @@ golden_paths:
     priority: P0
     trigger: [PR, Release]
     method: auto
-    test_command: "node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report"
+    test_command: "node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report && node scripts/ci/run-kernel-equivalence-drill.mjs --check --format=json"
     must_never_break: true
 
 # ============================================================================

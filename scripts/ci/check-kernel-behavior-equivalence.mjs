@@ -15,6 +15,9 @@ import {
   formatEquivalenceMarkdown,
   validateBehaviorEquivalence,
 } from '../../packages/brain/src/lib/kernel-behavior-equivalence.js';
+import {
+  compileDrillPlan,
+} from '../../packages/brain/src/lib/kernel-equivalence-drills.js';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, '../..');
@@ -86,6 +89,10 @@ function main() {
   const validation = validateBehaviorEquivalence(contract, {
     now: Date.parse(evaluatedAt),
   });
+  const drillPlan = compileDrillPlan(contract);
+  const drillBlockers = drillPlan.cells.filter(
+    (cell) => cell.blocked_by != null,
+  ).length;
   const forbiddenTables = findForbiddenLedgerTables();
   const report = buildEquivalenceReport(validation, { evaluatedAt });
   const markdown = formatEquivalenceMarkdown(report);
@@ -104,6 +111,10 @@ function main() {
   } else {
     process.stdout.write(`${JSON.stringify({
       ...report,
+      drill_behavior_count: drillPlan.behavior_count,
+      drill_cell_count: drillPlan.cells.length,
+      drill_blocker_count: drillBlockers,
+      drill_execution_ready: drillBlockers === 0,
       forbidden_behavior_ledger_tables: forbiddenTables,
       report_drift: drift,
     }, null, 2)}\n`);

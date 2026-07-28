@@ -1,6 +1,22 @@
 # Brain 模块定义
 
-**版本**: 1.268.6
+**版本**: 1.268.7
+
+## Signed Kernel equivalence drills
+
+- `kernel-equivalence-drills.js` 把根 11 条行为描述编译为 99 个固定 cell，并执行
+  signer preflight、signed grant、atomic nonce、actual seam、observation、
+  compensation cleanup 和 collector 流程。
+- `kernel-equivalence-receipts.js` 使用 Ed25519 public-key registry 验证 grant、
+  seam effect receipt、collector bundle、资源/版本/Run/Attempt 轴与 recovery/hash
+  lineage；collector 不能替 seam 签名。
+- timeout 必须由 AbortSignal + adapter cancellation confirmation 收口；prepare
+  失败也必须清理已登记的 partial resource。未确认的取消保持 blocked，并标记
+  late-effect risk。
+- `run-kernel-equivalence-drill.mjs --plan|--check` 只读；`--execute` 仅接受 canonical
+  单 cell 参数。本版本不注册假 key，99 个 cell 均由
+  `seam_receipt_signer_missing` fail-closed。
+- 回退：`bash scripts/brain-rollback.sh 1.268.6`；没有数据库迁移。
 
 ## Kernel P0/P1 behavior equivalence contract
 
