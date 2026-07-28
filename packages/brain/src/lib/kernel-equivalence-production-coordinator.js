@@ -652,12 +652,18 @@ export function createPostgresKernelEquivalenceCoordinator({
   };
 
   const reconcileStartup = async () => {
-    const result = await pool.query(
-      `WITH latest AS (
+    let cursor = null;
+    let inspected = 0;
+    let settled = 0;
+    let retainedUnknown = 0;
+    for (;;) {
+      const result = await pool.query(
+        `WITH latest AS (
          SELECT DISTINCT ON (events.case_id)
            events.case_id,
            events.generation,
            events.state,
+           events.controller_instance_id,
            events.controller_lease_expires_at,
            cases.cell_id,
            cases.behavior_id,
@@ -704,62 +710,79 @@ export function createPostgresKernelEquivalenceCoordinator({
          'claimed', 'grant_issued', 'executing', 'reconciling',
          'settlement_unknown'
        )
+         AND ($1::uuid IS NULL OR latest.case_id > $1::uuid)
        ORDER BY latest.case_id
        LIMIT 100`,
-    );
-    const rows = Array.isArray(result?.rows) ? result.rows : [];
-    let settled = 0;
-    let retainedUnknown = 0;
-    for (const row of rows) {
-      const generation = Number(row.generation);
-      if (
-        !UUID_PATTERN.test(row.case_id ?? '')
-        || !Number.isSafeInteger(generation)
-        || generation < 1
-      ) {
-        fail('production_controller_reconcile_readback_invalid');
-      }
-      if (HASH_PATTERN.test(row.bundle_hash ?? '')) {
-        const appended = await appendEvent(pool, {
-          randomUUID,
-          caseId: row.case_id,
-          generation: generation + 1,
-          controllerInstanceId,
-          state: 'succeeded',
-          bundleHash: row.bundle_hash,
-          lateEffectRisk: false,
-        });
-        settled += appended ? 1 : 0;
-      } else if (row.state !== 'settlement_unknown') {
-        if (row.lease_expired === true) {
-          const tookOver = await appendEvent(pool, {
+        [cursor],
+      );
+      const rows = Array.isArray(result?.rows) ? result.rows : [];
+      inspected += rows.length;
+      for (const row of rows) {
+        const generation = Number(row.generation);
+        if (
+          !UUID_PATTERN.test(row.case_id ?? '')
+          || !UUID_PATTERN.test(row.controller_instance_id ?? '')
+          || !Number.isSafeInteger(generation)
+          || generation < 1
+        ) {
+          fail('production_controller_reconcile_readback_invalid');
+        }
+        if (HASH_PATTERN.test(row.bundle_hash ?? '')) {
+          const appended = await appendEvent(pool, {
             randomUUID,
             caseId: row.case_id,
             generation: generation + 1,
             controllerInstanceId,
-            state: 'reconciling',
+            state: 'succeeded',
+            bundleHash: row.bundle_hash,
             lateEffectRisk: false,
-            controllerLeaseSeconds: grantTtlSeconds,
           });
-          if (tookOver) {
-            await appendEvent(pool, {
-              randomUUID,
-              caseId: row.case_id,
-              generation: generation + 2,
-              controllerInstanceId,
-              state: 'settlement_unknown',
-              code: 'startup_settlement_unresolved',
-              lateEffectRisk: true,
-            });
+          settled += appended ? 1 : 0;
+        } else if (row.state !== 'settlement_unknown') {
+          if (row.lease_expired === true) {
+            if (row.controller_instance_id === controllerInstanceId) {
+              await appendEvent(pool, {
+                randomUUID,
+                caseId: row.case_id,
+                generation: generation + 1,
+                controllerInstanceId,
+                state: 'settlement_unknown',
+                code: 'startup_settlement_unresolved',
+                lateEffectRisk: true,
+              });
+            } else {
+              const tookOver = await appendEvent(pool, {
+                randomUUID,
+                caseId: row.case_id,
+                generation: generation + 1,
+                controllerInstanceId,
+                state: 'reconciling',
+                lateEffectRisk: false,
+                controllerLeaseSeconds: grantTtlSeconds,
+              });
+              if (tookOver) {
+                await appendEvent(pool, {
+                  randomUUID,
+                  caseId: row.case_id,
+                  generation: generation + 2,
+                  controllerInstanceId,
+                  state: 'settlement_unknown',
+                  code: 'startup_settlement_unresolved',
+                  lateEffectRisk: true,
+                });
+              }
+            }
           }
+          retainedUnknown += 1;
+        } else {
+          retainedUnknown += 1;
         }
-        retainedUnknown += 1;
-      } else {
-        retainedUnknown += 1;
       }
+      if (rows.length < 100) break;
+      cursor = rows.at(-1).case_id;
     }
     return Object.freeze({
-      inspected: rows.length,
+      inspected,
       settled,
       retained_unknown: retainedUnknown,
     });

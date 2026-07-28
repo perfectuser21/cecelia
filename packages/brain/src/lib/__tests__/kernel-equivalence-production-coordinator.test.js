@@ -120,6 +120,55 @@ describe('production Kernel equivalence coordinator', () => {
     );
   });
 
+  it('keyset-pages through every active startup settlement candidate', async () => {
+    const pages = [
+      Array.from({ length: 100 }, (_, index) => ({
+        case_id:
+          `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        generation: '4',
+        state: 'settlement_unknown',
+        controller_instance_id:
+          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        lease_expired: true,
+        bundle_hash: null,
+      })),
+      [{
+        case_id: '00000000-0000-4000-8000-000000000101',
+        generation: '4',
+        state: 'settlement_unknown',
+        controller_instance_id:
+          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        lease_expired: true,
+        bundle_hash: null,
+      }],
+    ];
+    const statements = [];
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        return {
+          rows: pages.shift() ?? [],
+          rowCount: 0,
+        };
+      },
+    };
+    const value = coordinator(pool);
+
+    await expect(value.reconcileStartup()).resolves.toEqual({
+      inspected: 101,
+      settled: 0,
+      retained_unknown: 101,
+    });
+    expect(statements).toHaveLength(2);
+    expect(statements[0].values).toEqual([null]);
+    expect(statements[1].values).toEqual([
+      '00000000-0000-4000-8000-000000000100',
+    ]);
+    expect(statements[0].text).toMatch(
+      /latest\.case_id > \$1::uuid/i,
+    );
+  });
+
   it('revalidates current lease and Attempt state for an existing binding', async () => {
     const pool = emptyPool();
     const value = coordinator(pool);
@@ -149,6 +198,8 @@ describe('production Kernel equivalence coordinator', () => {
               case_id: '22222222-2222-4222-8222-222222222222',
               generation: '3',
               state: 'executing',
+              controller_instance_id:
+                '88888888-8888-4888-8888-888888888888',
               lease_expired: true,
               bundle_hash: null,
             }],
@@ -182,6 +233,51 @@ describe('production Kernel equivalence coordinator', () => {
     );
     expect(statements[2].values[3]).toBe(
       '11111111-1111-4111-8111-111111111111',
+    );
+  });
+
+  it('settles its own expired active lease without a false restart takeover', async () => {
+    const statements = [];
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        if (statements.length === 1) {
+          return {
+            rows: [{
+              case_id: '22222222-2222-4222-8222-222222222222',
+              generation: '3',
+              state: 'executing',
+              controller_instance_id:
+                '11111111-1111-4111-8111-111111111111',
+              lease_expired: true,
+              bundle_hash: null,
+            }],
+            rowCount: 1,
+          };
+        }
+        return {
+          rows: [{ generation: values[2], state: values[4] }],
+          rowCount: 1,
+        };
+      },
+    };
+    const ids = [
+      '11111111-1111-4111-8111-111111111111',
+      '33333333-3333-4333-8333-333333333333',
+      '44444444-4444-4444-8444-444444444444',
+    ];
+    const value = coordinator(pool, grantIssuer(), () => ids.shift());
+
+    await expect(value.reconcileStartup()).resolves.toEqual({
+      inspected: 1,
+      settled: 0,
+      retained_unknown: 1,
+    });
+    expect(statements.slice(1).map(({ values }) => values[4])).toEqual([
+      'settlement_unknown',
+    ]);
+    expect(statements[1].values[8]).toBe(
+      'startup_settlement_unresolved',
     );
   });
 

@@ -21,6 +21,7 @@ const ENGINE_VERSION = readFileSync(
   new URL('../../../engine/VERSION', import.meta.url),
   'utf8',
 ).trim();
+const RECONCILIATION_INTERVAL_MS = 1_000;
 
 function readiness(ready, code, socketPath) {
   return Object.freeze({
@@ -106,12 +107,6 @@ export async function bootProductionBrainTrustedExecution({
       close: async () => {},
     });
   }
-  const listener = await bootBrainTrustedExecution({
-    createService: wiring.createService,
-    readinessSigner: wiring.readinessSigner,
-    socketPath: wiring.socket_path,
-  });
-  if (!listener.getReadiness().ready) return listener;
 
   let controller;
   try {
@@ -125,9 +120,9 @@ export async function bootProductionBrainTrustedExecution({
       grantTtlSeconds: wiring.grant_ttl_seconds,
       now,
     });
+    await wiring.grantIssuer.cleanupExpiredGrants();
     await controller.reconcileStartup();
   } catch (error) {
-    await listener.close();
     const code = stableProductionFailureCode(
       error,
       'trusted_execution_controller_unavailable',
@@ -137,10 +132,76 @@ export async function bootProductionBrainTrustedExecution({
       close: async () => {},
     });
   }
+  const listener = await bootBrainTrustedExecution({
+    createService: wiring.createService,
+    readinessSigner: wiring.readinessSigner,
+    socketPath: wiring.socket_path,
+  });
+  if (!listener.getReadiness().ready) return listener;
+
+  let available = true;
+  let closed = false;
+  let listenerClosed = false;
+  let maintenanceFailure = null;
+  let maintenancePromise = null;
+  let interval = null;
+
+  const closeListener = async () => {
+    if (listenerClosed) return;
+    listenerClosed = true;
+    await listener.close();
+  };
+  const stopInterval = () => {
+    if (interval == null) return;
+    clearInterval(interval);
+    interval = null;
+  };
+  const failClosed = async () => {
+    if (!available) return;
+    available = false;
+    maintenanceFailure =
+      'trusted_execution_controller_reconcile_failed';
+    stopInterval();
+    await closeListener();
+  };
+  const maintain = async () => {
+    if (closed || !available) return;
+    if (maintenancePromise) return maintenancePromise;
+    maintenancePromise = (async () => {
+      try {
+        await wiring.grantIssuer.cleanupExpiredGrants();
+        await controller.reconcileStartup();
+      } catch {
+        await failClosed();
+      } finally {
+        maintenancePromise = null;
+      }
+    })();
+    return maintenancePromise;
+  };
+
+  interval = setInterval(async () => {
+    await maintain();
+  }, RECONCILIATION_INTERVAL_MS);
+  interval.unref?.();
+
   return Object.freeze({
-    getReadiness: listener.getReadiness,
-    close: listener.close,
+    getReadiness: () => (
+      available
+        ? listener.getReadiness()
+        : readiness(false, maintenanceFailure, null)
+    ),
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      available = false;
+      stopInterval();
+      await maintenancePromise;
+      await closeListener();
+    },
     grantIssuer: wiring.grantIssuer,
-    controller,
+    get controller() {
+      return available ? controller : null;
+    },
   });
 }
