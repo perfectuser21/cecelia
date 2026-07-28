@@ -27,6 +27,7 @@ const CONTRACT_CONTENT = Object.freeze({ acceptance: ['dashboard remains green']
 const CONTRACT_DIGEST = canonicalContractDigest(CONTRACT_CONTENT);
 const CONTRACT_ID = '55555555-5555-4555-8555-555555555555';
 const CONTRACT_APPROVED_AT = '2026-07-27T07:00:00.000Z';
+const TEST_NOW = Date.parse('2026-07-28T08:05:00.000Z');
 const REQUIRED_CHECKS = Object.freeze([Object.freeze({
   context: 'ci-passed',
   app_slug: 'github-actions',
@@ -207,6 +208,7 @@ function deps(overrides = {}) {
     store,
     observePullRequest,
     mergePullRequest,
+    now: () => TEST_NOW,
     ...overrides,
   };
 }
@@ -265,6 +267,19 @@ describe('merge effect executor', () => {
 
     await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).rejects.toMatchObject({
       code: 'stale_evaluator',
+    });
+    expect(d.store.createAuthorizationIntent).not.toHaveBeenCalled();
+    expect(d.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects an expired post-diff risk proof before creating merge authority', async () => {
+    const d = deps({
+      now: () => Date.parse('2026-07-28T08:16:00.000Z'),
+    });
+    const execute = createMergeEffectExecutor(d);
+
+    await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).rejects.toMatchObject({
+      code: 'post_diff_risk_expired',
     });
     expect(d.store.createAuthorizationIntent).not.toHaveBeenCalled();
     expect(d.mergePullRequest).not.toHaveBeenCalled();
