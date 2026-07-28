@@ -1,6 +1,20 @@
 # Brain 模块定义
 
-**版本**: 1.268.0
+**版本**: 1.268.1
+
+## Fleet Worker-owned GitHub read authority
+
+- evaluator 与非 canary reporter 的 TaskBundle 冻结 repo、PR number、head ref、
+  head SHA 和 state，并把只读策略纳入 bundle hash；Worker 只用 argv-only
+  `gh pr view` 获取该最小事实，逐轴不一致即 fail-closed。
+- 每个 Attempt 的 observation 以 mode 0600 append-only hash-chain audit 持久化；
+  相同 request 崩溃重放复用原 authority，冲突重放在任何 GitHub 调用前拒绝。
+- authority 以固定 mode 0600 文件只读挂载给 provider/Runner；Runner 对
+  TaskBundle、Attempt、角色、request digest 与 PR 事实逐字段复核。provider 不接收
+  GitHub token、`~/.config/gh`，managed entrypoint 不执行 `gh`。
+- installer、generation rollback 与 Fleet rollout 均包含 broker 文件及预检；
+  任一缺失不会启动 provider。
+- 回退：`bash scripts/brain-rollback.sh 1.268.0`。
 
 ## Fleet Worker-owned GitHub mutation
 

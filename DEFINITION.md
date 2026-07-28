@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.268.0
+**Brain 版本**: 1.268.1
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.1 — Fleet Worker-owned GitHub read authority
+
+- Fleet evaluator/reporter 的 PR 只读事实由 Worker broker 获取并冻结到精确的
+  repo/PR/head/state 轴；provider 不接收 GitHub credential，也不直接执行 `gh`。
+- mode 0600 append-only hash-chain audit、request digest 与 Attempt 绑定提供崩溃
+  重放幂等；Runner 只接受与 TaskBundle 完全一致的 authority 文件。
+- Brain 回退目标：`1.268.0`。
 
 ## Brain 1.268.0 — Kernel Fleet Provider Credential Broker
 
