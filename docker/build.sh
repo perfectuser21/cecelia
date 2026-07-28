@@ -53,9 +53,10 @@ if [[ ! "$runner_revision" =~ ^[0-9a-f]{40}$ \
   exit 1
 fi
 
-EXTRA_ARGS=()
 if [[ "${1:-}" == "--no-cache" ]]; then
-  EXTRA_ARGS+=(--no-cache)
+  set -- --no-cache
+else
+  set --
 fi
 
 echo "[build.sh] 构建镜像 $IMAGE_TAG"
@@ -64,7 +65,7 @@ docker build \
   -t "$IMAGE_TAG" \
   --build-arg "CECELIA_RUNNER_REVISION=$runner_revision" \
   --build-arg "CECELIA_RUNNER_SOURCE_SHA256=$runner_source_sha256" \
-  "${EXTRA_ARGS[@]}" \
+  "$@" \
   "$SCRIPT_DIR/cecelia-runner"
 
 observed_revision="$(
