@@ -30,7 +30,7 @@ const SKILLS = {
   },
   reviewer: {
     path: 'packages/workflows/skills/harness-contract-reviewer/SKILL.md',
-    version: '9.7.0',
+    version: '9.7.1',
   },
   generator: {
     path: 'packages/workflows/skills/harness-generator/SKILL.md',
