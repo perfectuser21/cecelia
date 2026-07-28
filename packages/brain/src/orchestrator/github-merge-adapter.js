@@ -231,9 +231,13 @@ function assessRequiredChecks(checkRuns, {
   };
 }
 
-function repositoryName(value) {
-  if (typeof value === 'string') return value;
-  return value?.nameWithOwner ?? null;
+function headRepositoryName(observed, baseRepository) {
+  if (observed?.isCrossRepository === false) return baseRepository;
+  if (observed?.isCrossRepository !== true) return null;
+  const owner = observed?.headRepositoryOwner?.login;
+  const name = observed?.headRepository?.name;
+  const repository = `${owner ?? ''}/${name ?? ''}`;
+  return validRepository(repository) ? repository : null;
 }
 
 export function createGitHubMergeAdapter({
@@ -250,7 +254,7 @@ export function createGitHubMergeAdapter({
         'view',
         prUrl,
         '--json',
-        'url,number,headRefName,headRefOid,headRepository,baseRefName,baseRefOid,baseRepository,state,isDraft,mergeStateStatus,changedFiles,mergeCommit',
+        'url,number,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,baseRefName,baseRefOid,state,isDraft,mergeStateStatus,changedFiles,mergeCommit',
       ]);
       const observed = parseJson(output);
       if (observed.url !== prUrl || Number(observed.number) !== identity.number) {
@@ -259,8 +263,12 @@ export function createGitHubMergeAdapter({
       if (!SHA_PATTERN.test(observed.headRefOid ?? '')) {
         throw new Error('github_pr_head_invalid');
       }
-      const headRepository = repositoryName(observed.headRepository);
-      const baseRepository = repositoryName(observed.baseRepository);
+      // A PR URL is rooted in its base repository. gh's supported JSON fields
+      // do not include baseRepository, and same-repository headRepository may
+      // return an empty nameWithOwner. Bind the base to the parsed URL and use
+      // explicit cross-repository metadata only when GitHub says it is a fork.
+      const baseRepository = identity.repository;
+      const headRepository = headRepositoryName(observed, baseRepository);
       if (
         !validRepository(headRepository)
         || !validRepository(baseRepository)

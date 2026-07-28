@@ -24,10 +24,18 @@ function prView(overrides = {}) {
     number: 4400,
     headRefName: 'cp-safe',
     headRefOid: HEAD_SHA,
-    headRepository: { nameWithOwner: 'perfectuser21/cecelia' },
+    headRepository: {
+      id: 'R_fixture',
+      name: 'cecelia',
+      nameWithOwner: '',
+    },
+    headRepositoryOwner: {
+      id: 'U_fixture',
+      login: 'perfectuser21',
+    },
+    isCrossRepository: false,
     baseRefName: 'main',
     baseRefOid: BASE_SHA,
-    baseRepository: { nameWithOwner: 'perfectuser21/cecelia' },
     state: 'OPEN',
     isDraft: false,
     mergeStateStatus: 'CLEAN',
@@ -257,6 +265,12 @@ describe('GitHub merge adapter', () => {
       '--json',
       expect.stringContaining('baseRefOid'),
     ]);
+    const prViewFields = execFile.mock.calls.find(
+      ([, args]) => args[0] === 'pr' && args[1] === 'view',
+    )[1][4];
+    expect(prViewFields).not.toContain('baseRepository');
+    expect(prViewFields).toContain('headRepositoryOwner');
+    expect(prViewFields).toContain('isCrossRepository');
     expect(execFile).toHaveBeenCalledWith('gh', [
       'api',
       'repos/perfectuser21/cecelia/pulls/4400/files?per_page=100',
