@@ -61,6 +61,27 @@ describe('kernel equivalence drill CLI', () => {
     });
   });
 
+  it('accepts an explicit safe read-only bundle directory in check mode', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'kernel-eq-cli-store-'));
+    try {
+      const result = run([
+        '--check',
+        '--bundle-dir',
+        temporaryRoot,
+        '--format=json',
+      ]);
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        mode: 'check',
+        configured_bundle_ref_count: 0,
+        trusted_bundle_count: 0,
+      });
+      expect(existsSync(temporaryRoot)).toBe(true);
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     [[]],
     [['--plan', '--check']],

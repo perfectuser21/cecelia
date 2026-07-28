@@ -14,6 +14,9 @@ import {
   compileDrillPlan,
   executeDrillCell,
 } from '../../packages/brain/src/lib/kernel-equivalence-drills.js';
+import {
+  createReadOnlyBundleReader,
+} from '../../packages/brain/src/lib/kernel-equivalence-file-store.js';
 
 const repositoryRoot = resolve(
   new URL('../..', import.meta.url).pathname,
@@ -53,6 +56,36 @@ function parseArguments(argv) {
       stateDir: safeAbsolutePath(argv[6], 'state-dir'),
       receiptDir: safeAbsolutePath(argv[8], 'receipt-dir'),
       format: 'json',
+    };
+  }
+
+  if (mode === 'check' && argv[0] === '--check') {
+    const bundleDirIndex = argv.indexOf('--bundle-dir');
+    const formatArgument = argv.find((argument) => argument.startsWith('--format='));
+    const allowedLength =
+      1 + (bundleDirIndex === -1 ? 0 : 2) + (formatArgument ? 1 : 0);
+    if (
+      argv.length !== allowedLength
+      || (bundleDirIndex !== -1 && bundleDirIndex !== 1)
+      || (
+        formatArgument
+        && !['--format=json', '--format=markdown'].includes(formatArgument)
+      )
+      || argv.some((argument, index) => (
+        index !== 0
+        && index !== bundleDirIndex
+        && index !== bundleDirIndex + 1
+        && argument !== formatArgument
+      ))
+    ) {
+      usage('check accepts --bundle-dir <absolute-dir> and --format=json|markdown');
+    }
+    return {
+      mode,
+      bundleDir: bundleDirIndex === -1
+        ? null
+        : safeAbsolutePath(argv[bundleDirIndex + 1], 'bundle-dir'),
+      format: formatArgument?.slice('--format='.length) ?? 'json',
     };
   }
 
@@ -166,15 +199,22 @@ function configuredBundleReferenceCount(contract) {
   );
 }
 
-function checkReport(contract, plan) {
+function checkReport(contract, plan, { bundleDir = null } = {}) {
   const reportAsOf = Date.parse(contract.behavior_equivalence?.report_as_of);
+  const configuredBundleRefs = configuredBundleReferenceCount(contract);
+  if (configuredBundleRefs > 0 && bundleDir == null) {
+    throw new Error('trusted_bundle_store_required');
+  }
+  const readBundle = bundleDir == null
+    ? null
+    : createReadOnlyBundleReader({ directory: bundleDir });
   const validation = validateBehaviorEquivalence(contract, {
     now: Number.isFinite(reportAsOf) ? reportAsOf : Date.now(),
+    readBundle,
   });
-  const configuredBundleRefs = configuredBundleReferenceCount(contract);
-  if (configuredBundleRefs > 0) {
-    throw new Error('trusted_bundle_resolver_required');
-  }
+  const trustedBundleFailures = validation.findings.filter((finding) => (
+    finding.code.startsWith('trusted_receipt_')
+  )).length;
   const blockerCount = plan.cells.filter((cell) => cell.blocked_by != null).length;
   return {
     schema_version: 'kernel-equivalence-drill-cli/v1',
@@ -188,7 +228,9 @@ function checkReport(contract, plan) {
     cell_count: plan.cells.length,
     cell_blocker_count: blockerCount,
     configured_bundle_ref_count: configuredBundleRefs,
-    trusted_bundle_count: 0,
+    trusted_bundle_count: trustedBundleFailures === 0
+      ? configuredBundleRefs
+      : 0,
     trust_key_count:
       contract.behavior_equivalence?.drill_trust_registry?.keys?.length ?? 0,
     findings: validation.findings,
@@ -230,7 +272,9 @@ async function main() {
     return;
   }
   if (options.mode === 'check') {
-    const report = checkReport(contract, plan);
+    const report = checkReport(contract, plan, {
+      bundleDir: options.bundleDir,
+    });
     output(report, options.format);
     if (!report.contract_valid) process.exitCode = 1;
     return;
