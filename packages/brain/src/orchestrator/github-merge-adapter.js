@@ -152,10 +152,17 @@ function normalizeRequiredCheckPolicy(policy) {
 
 function verifyRepositoryPolicy(protection, policy) {
   const configured = protection?.required_status_checks?.checks;
-  const bypass = protection?.required_pull_request_reviews?.bypass_pull_request_allowances;
-  const noBypass = bypass != null
-    && ['apps', 'teams', 'users'].every(
-      (kind) => Array.isArray(bypass[kind]) && bypass[kind].length === 0,
+  const reviews = protection?.required_pull_request_reviews;
+  const bypass = reviews?.bypass_pull_request_allowances;
+  // GitHub's production API omits bypass_pull_request_allowances entirely
+  // when no actor is allowed to bypass. A missing reviews policy remains
+  // unknown and therefore fail-closed.
+  const noBypass = reviews != null
+    && (
+      bypass == null
+      || ['apps', 'teams', 'users'].every(
+        (kind) => Array.isArray(bypass[kind]) && bypass[kind].length === 0,
+      )
     );
   const exactChecks = Array.isArray(configured)
     && configured.length === policy.length

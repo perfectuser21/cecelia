@@ -145,6 +145,37 @@ describe('GitHub merge adapter', () => {
     ]);
   });
 
+  it('accepts GitHub production protection payloads that omit empty bypass allowances', async () => {
+    const adapter = createGitHubMergeAdapter({
+      execFile: makeExec({
+        protection: {
+          required_status_checks: {
+            strict: true,
+            checks: [{ context: 'ci-passed', app_id: 15368 }],
+          },
+          required_pull_request_reviews: {
+            dismiss_stale_reviews: false,
+            require_code_owner_reviews: false,
+            require_last_push_approval: false,
+            required_approving_review_count: 0,
+          },
+          enforce_admins: { enabled: true },
+          allow_force_pushes: { enabled: false },
+          allow_deletions: { enabled: false },
+        },
+      }),
+      requiredCheckPolicy: REQUIRED_CHECK_POLICY,
+    });
+
+    await expect(adapter.observePullRequest(PR_URL)).resolves.toMatchObject({
+      ci: 'pass',
+      repository_policy: {
+        atomic_merge_backstop: true,
+        bypass_disabled: true,
+      },
+    });
+  });
+
   it('fails closed when branch protection is not strict and admin-enforced', async () => {
     const adapter = createGitHubMergeAdapter({
       execFile: makeExec({
