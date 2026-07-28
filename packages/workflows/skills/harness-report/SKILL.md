@@ -6,10 +6,11 @@ description: |
   → 更新Notion Feature Registry → 飞书通知 → 写本地harness-report.md备份。
   Phase B（Sprint状态同步）：写本地Brain DB → 通过 db-update skill 触发 notion-push-sync.js 的 8 个 push 函数（journeys/journey_features/issues/skill_registry/journey_steps/journey_step_links/decisions/initiative_contracts）→ git commit。
   由 harness-evaluator PASS 后 Brain reportNode 自动 spawn；relay 模式由 harness-controller 调 Skill 触发（变量走「Relay 入口段」自取）；也可手动触发补同步。
-version: 6.9.0
+version: 6.9.1
 created: 2026-04-08
 updated: 2026-07-28
 changelog:
+  - 6.9.1: Worker-owned GitHub read authority — `execution_surface=fleet-worker` 时 provider 禁止执行 gh、读取 GitHub credential 或实时推断 PR；PR_URL 只从固定的 `HARNESS_GITHUB_READ_AUTHORITY_FILE` 最小事实读取，缺失/不一致 fail-closed
   - 6.9.0: Kernel raw result channel — channel version presence 判 managed，显式 result file 的六字段 claimed JSON 经 runner-owned writer；Phase B 后重算 concern/verdict 并覆写；channel/file 均 unset 保留 git 根 .brain-result.json
   - 6.7.0: 翻牌义务（handoff 0714 刀3 — 台账只点火时写、交付后不翻牌根治）— Phase B 新增三件强制动作：(1) Feature 翻牌：本 sprint 推进的 journey_features 按 evaluator verdict 翻 status（PASS+merged→done / 真机段未验→working+logic-done-pending 备注 / 部分交付→working），禁止交付后仍留 planned；(2) Journey 回写：journey step 状态回写 + journeys.updated_at 刷新；description 与最新 decisions 冲突 → 标待人工确认并开 issue，不静默改写不静默跳过；(3) smoke 一致性核对：journey.e2e_test_path 指向的脚本是否还测现行方案（对照 decisions 近期废弃决策），测已废弃方案 → 开 issue。完成标志追加「翻牌清单」输出。实证：Path2/Path4 journeys.updated_at 停在 05-22、飞书版定义与 07-07 决策打架 46 天、「内容判定门槛」planned 而现实已合并 11 个 PR
   - 6.8.0: EVA v2 四修（背景：a85e0582 全通 run 里 harness-report.md/learning.md/notes 全是 Brain 侧 harness-report.mjs 降级脚本产的英文 Placeholder，本 skill 被架空；mjs 侧修复另立案，本条先修 skill 侧可自防部分）— (a) RP4 占位符守卫指纹扩大：Step 8c 与出口核验各加英文指纹 `grep -qi "placeholder"`（英文 "## Insights (Placeholder)" 字面逃逸中文守卫实证）；(b) RP5 .brain-result.json 落点参数化：BRAIN_RESULT_FILE 优先、默认 git 仓库根，headed mac 无 /workspace 场景出口协议不再无落地痕迹；(c) RP-learn 出口核验追加 learnings 表落库计数（全通 run learnings 表 0 条实证）；(d) RP6 新增「Phase B 核验」小节：journey_features/notes 各查一条本 sprint 记录，查不到记 concern；(e) 触发条件段声明与 mjs 降级脚本共存关系（以本 skill 产物为准 + 必留痕迹供区分来源）
@@ -29,6 +30,19 @@ changelog:
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
 
 # /harness-report — Harness Report 完成报告 + Sprint 状态同步
+
+## Fleet GitHub 只读权限边界（v6.9.1）
+
+当 TaskBundle 的 `execution_surface=fleet-worker`（运行时表现为
+`HARNESS_GITHUB_READ_AUTHORITY_FILE` 已设置）时：
+
+- provider **禁止执行 `gh`**，禁止读取 `GH_TOKEN`、`GITHUB_TOKEN` 或
+  `~/.config/gh`，禁止用公网查询替代冻结事实。
+- PR 事实只能读取固定路径的 Worker-owned GitHub read authority。它只包含冻结
+  repo/PR/head/state 轴上的最小观测，且由 Runner 与 TaskBundle 逐字段核对。
+- authority 文件缺失、不是普通 mode 0600 文件、JSON 无效或事实不满足任务时必须
+  fail-closed；不得回退到 legacy `gh` 路径。评论/checks 等当前 broker 未提供的事实
+  必须记 concern，不能自行联网补读。
 
 **角色**: Reporter + Sprint State Syncer  
 **对应 task_type**: `harness_report`  
@@ -83,9 +97,23 @@ if [ -z "$FEATURE_NAME" ] || [ -z "$PR_URL" ]; then
   # FEATURE_NAME：sprint-prd.md 一级标题
   [ -z "$FEATURE_NAME" ] && FEATURE_NAME=$(grep -m1 '^# ' "${SPRINT_DIR}/sprint-prd.md" 2>/dev/null | sed 's/^# *//')
 
-  # PR_URL：台账 → gh pr view
-  [ -z "$PR_URL" ] && PR_URL=$(grep -oE 'https://github.com/[^ )>]+/pull/[0-9]+' .harness/progress.md 2>/dev/null | tail -1)
-  [ -z "$PR_URL" ] && PR_URL=$(gh pr view --json url -q .url 2>/dev/null || echo "")
+  # PR_URL：Fleet 只读 authority；legacy 才允许台账 → gh pr view
+  if [ -n "${HARNESS_GITHUB_READ_AUTHORITY_FILE:-}" ]; then
+    [ -f "$HARNESS_GITHUB_READ_AUTHORITY_FILE" ] && [ ! -L "$HARNESS_GITHUB_READ_AUTHORITY_FILE" ] \
+      || { echo "FATAL: Fleet GitHub read authority 缺失/非法（fail-closed）"; exit 1; }
+    PR_URL=$(node -e '
+      const fs = require("node:fs");
+      const p = process.env.HARNESS_GITHUB_READ_AUTHORITY_FILE;
+      const s = fs.statSync(p);
+      if ((s.mode & 0o777) !== 0o600) process.exit(2);
+      const a = JSON.parse(fs.readFileSync(p, "utf8"));
+      if (a.schema_version !== "github-read-authority/v1" || typeof a.pull_request?.url !== "string") process.exit(3);
+      process.stdout.write(a.pull_request.url);
+    ') || { echo "FATAL: Fleet GitHub read authority 无效（fail-closed）"; exit 1; }
+  else
+    [ -z "$PR_URL" ] && PR_URL=$(grep -oE 'https://github.com/[^ )>]+/pull/[0-9]+' .harness/progress.md 2>/dev/null | tail -1)
+    [ -z "$PR_URL" ] && PR_URL=$(gh pr view --json url -q .url 2>/dev/null || echo "")
+  fi
 
   # TOTAL_COST：relay-runs API 求和
   if [ -z "$TOTAL_COST" ] && [ -n "$TASK_ID" ]; then
@@ -461,7 +489,8 @@ COMPLETED_AT_SHORT=$(TZ=Asia/Shanghai date '+%m%d%H%M')
 
 1. 进度台账 / relay 各 phase 记录（GAN 对抗轮次、reviewer 挑了什么、proposer 怎么改的）
 2. generator / evaluator 阶段的失败与修复过程（本 session 上下文、fix commit 记录）
-3. PR 的 CI 失败与 review 往返（`gh pr view "$PR_URL" --comments` / checks 记录）
+3. PR 的 CI 失败与 review 往返（Fleet 仅使用已有本地记录；非 Fleet legacy
+   才可用 `gh pr view "$PR_URL" --comments`，Fleet 不得执行）
 4. `${SPRINT_DIR}/contract-draft.md` 对抗批注与 `${SPRINT_DIR}/.report-concerns`（如有）
 
 **Step 8b — AI 亲自撰写 learning.md**（用 Write 工具写 `${SPRINT_DIR}/learning.md`，骨架如下）：

@@ -38,11 +38,11 @@ const SKILLS = {
   },
   evaluator: {
     path: 'packages/workflows/skills/harness-evaluator/SKILL.md',
-    version: '1.32.3',
+    version: '1.32.4',
   },
   report: {
     path: 'packages/workflows/skills/harness-report/SKILL.md',
-    version: '6.9.0',
+    version: '6.9.1',
   },
 };
 
@@ -206,6 +206,19 @@ test('all six production Skills expose exactly one executable writer marker and 
     );
     assert.match(writer, /printf '%s' "\$RAW_RESULT_JSON" \| node/);
     assert.ok(writer.trim().length > 0);
+  }
+});
+
+test('Fleet evaluator and reporter prohibit provider-owned GitHub reads', () => {
+  for (const role of ['evaluator', 'report']) {
+    const source = skillSource(role);
+    assert.match(source, /Worker-owned GitHub read authority/);
+    assert.match(source, /execution_surface=fleet-worker/);
+    assert.match(source, /禁止(?:直接)?执行 `gh`/);
+    assert.match(source, /GH_TOKEN/);
+    assert.match(source, /GITHUB_TOKEN/);
+    assert.match(source, /HARNESS_GITHUB_READ_AUTHORITY_FILE/);
+    assert.match(source, /fail-closed/);
   }
 });
 

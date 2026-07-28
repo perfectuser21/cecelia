@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.32.3
+version: 1.32.4
 created: 2026-05-06
 updated: 2026-07-28
 changelog:
+  - 1.32.4: Worker-owned GitHub read authority — `execution_surface=fleet-worker` 时 provider 禁止执行 gh、读取 GitHub credential 或实时推断 PR；只读固定的 `HARNESS_GITHUB_READ_AUTHORITY_FILE` 最小事实，缺失/不一致 fail-closed，需 workflow dispatch 的验收明确退回 controller 扩展 broker
   - 1.32.3: Kernel raw result channel — channel version presence 判 managed，显式 result file 的 PASS/FAIL claimed evidence 统一经 runner-owned writer；全部真实早退在 exit 前调用唯一 writer；channel/file 均 unset 保留 WORKSPACE/.brain-result.json
   - 1.32.2: attempt evidence fail-closed 补全——所有最终 PASS/FAIL verdict（含 dispatch/setup、环境/URL/workflow、timeout 与示例模板）都显式写当前 `HARNESS_ATTEMPT_ID`，避免早退失败证据因缺 attempt_id 被 runner 拒收后空转
   - 1.32.1: cross-repo bundled runtime——默认非 Windows Step B-1 用 quoted here-doc 随 Skill 内容落地自包含 extractor，不再依赖目标仓库存在 Cecelia `scripts/`；内嵌资产与 canonical extractor 逐字节契约锁定
@@ -53,6 +54,21 @@ changelog:
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，直接按本文档流程操作。**
 
 # /harness-evaluator — Harness Evaluator（阶段 B · 验证层）
+
+## Fleet GitHub 只读权限边界（v1.32.4）
+
+当 TaskBundle 的 `execution_surface=fleet-worker`（运行时表现为
+`HARNESS_GITHUB_READ_AUTHORITY_FILE` 已设置）时：
+
+- provider **禁止执行 `gh`**，禁止读取 `GH_TOKEN`、`GITHUB_TOKEN` 或
+  `~/.config/gh`，禁止用公网查询替代冻结事实。
+- PR 事实只能读取固定路径的 Worker-owned GitHub read authority。它只包含冻结
+  repo/PR/head/state 轴上的最小观测，且由 Runner 与 TaskBundle 逐字段核对。
+- authority 文件缺失、不是普通 mode 0600 文件、JSON 无效或事实不满足任务时必须
+  fail-closed；不得回退到 legacy `gh` 路径。
+- 现有 `gh workflow run`/`gh run list` 是非 Fleet legacy 路径。Fleet 任务若需要
+  workflow dispatch，当前 broker 合同尚未授权该动作，必须返回
+  `CANNOT_VERIFY`/FAIL 交 controller 扩展合同，不能绕过 broker。
 
 ## 调用时机（v1.3 — pre-merge gate）
 
@@ -199,6 +215,9 @@ if [ -n "$PR_BRANCH" ]; then
     # 分支不存在 ≠ 终局（issue a638f840 实证）：PR 一 merge GitHub 就自动删分支，任何验收时机
     # 晚于合并的场景（重跑/补验/controller 异步派发慢于自动合并）都会走到这里。此时改在
     # merge commit（拿不到就 origin/main）上验收——post-merge 补验模式，验收标准不变。
+    if [ -n "${HARNESS_GITHUB_READ_AUTHORITY_FILE:-}" ]; then
+      echo "FATAL: Fleet evaluator 的冻结 PR 必须保持 OPEN 且分支可取；禁止回退执行 gh"; exit 1
+    fi
     PR_INFO=$(gh pr view "$PR_BRANCH" --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "")' 2>/dev/null || echo "")
     MERGE_SHA=$(echo "$PR_INFO" | awk '{print $2}')
     if echo "$PR_INFO" | grep -q '^MERGED'; then
@@ -890,6 +909,13 @@ case "$TARGET_ENV" in
     ;;
 
   windows_cloud|windows_wechat|android_realmachine)
+    if [[ -n "${HARNESS_GITHUB_READ_AUTHORITY_FILE:-}" ]]; then
+      EVALUATOR_VERDICT=FAIL
+      FAILED_STEP=github_workflow_broker_unavailable
+      LOG_EXCERPT="Fleet evaluator 禁止直接执行 gh；当前 Worker-owned GitHub read authority 只授权 PR 读取，尚未授权 workflow dispatch/status"
+      write_evaluator_result
+      exit 0
+    fi
     # GitHub Actions runner（ZenithJoy Agent 等连公网产品）
     # windows_cloud        → GHA windows-latest 云端 runner（全新干净 VM）
     # windows_wechat       → xian-rog self-hosted runner（微信已登录的 Windows 环境）
