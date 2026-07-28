@@ -6,6 +6,7 @@ import {
   verifyEffectReceipt,
   verifyExecutionGrant,
   verifyReceiptBundle,
+  validateTrustRegistry,
 } from './kernel-equivalence-receipts.js';
 
 const REQUIRED_BEHAVIOR_COUNT = 11;
@@ -96,6 +97,7 @@ export function compileDrillPlan(contract) {
   ) {
     fail('drill_behavior_count_invalid');
   }
+  validateTrustRegistry(section.drill_trust_registry);
 
   const ids = new Set();
   const descriptors = behaviors.map((behavior) => {

@@ -11,6 +11,24 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/;
 const SAFE_RESOURCE_REF = /^(?:refs\/heads\/)?equivalence-drill\/[A-Za-z0-9_{}./:-]+$/;
 const FORBIDDEN_RESOURCE = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
 const DENIAL_OUTCOMES = new Set(['denied', 'blocked', 'rejected', 'failed']);
+const KEY_PURPOSES = new Set([
+  'execution_grant',
+  'effect_receipt',
+  'collector_bundle',
+]);
+const REGISTRY_FIELDS = Object.freeze([
+  'algorithm',
+  'collector_bundle_max_age_seconds',
+  'effect_receipt_max_age_seconds',
+  'grant_max_age_seconds',
+  'keys',
+  'replay_nonce',
+  'schema_version',
+]);
+const REPLAY_FIELDS = Object.freeze([
+  'atomic_consumer_required',
+  'single_use',
+]);
 
 const KEY_FIELDS = Object.freeze([
   'key_id',
@@ -182,6 +200,92 @@ function parseTime(value, code) {
   return parsed;
 }
 
+export function validateTrustRegistry(registry) {
+  try {
+    exactFields(registry, REGISTRY_FIELDS, 'trust_registry_invalid');
+    exactFields(
+      registry.replay_nonce,
+      REPLAY_FIELDS,
+      'trust_registry_invalid',
+    );
+    if (
+      registry.schema_version !== 'kernel-equivalence-trust-registry/v1'
+      || registry.algorithm !== 'ed25519'
+      || !Number.isInteger(registry.grant_max_age_seconds)
+      || registry.grant_max_age_seconds < 1
+      || !Number.isInteger(registry.effect_receipt_max_age_seconds)
+      || registry.effect_receipt_max_age_seconds < 1
+      || !Number.isInteger(registry.collector_bundle_max_age_seconds)
+      || registry.collector_bundle_max_age_seconds < 1
+      || registry.replay_nonce.single_use !== true
+      || registry.replay_nonce.atomic_consumer_required !== true
+      || !Array.isArray(registry.keys)
+    ) {
+      fail('trust_registry_invalid');
+    }
+
+    const keyIds = new Set();
+    for (const key of registry.keys) {
+      exactFields(key, KEY_FIELDS, 'trust_registry_invalid');
+      const notBefore = parseTime(key.not_before, 'trust_registry_invalid');
+      const notAfter = parseTime(key.not_after, 'trust_registry_invalid');
+      const revokedAt = key.revoked_at == null
+        ? null
+        : parseTime(key.revoked_at, 'trust_registry_invalid');
+      if (
+        !nonEmpty(key.key_id)
+        || keyIds.has(key.key_id)
+        || !KEY_PURPOSES.has(key.purpose)
+        || !nonEmpty(key.service_id)
+        || notAfter <= notBefore
+        || (revokedAt != null && revokedAt < notBefore)
+        || (
+          key.rotates_key_id != null
+          && !nonEmpty(key.rotates_key_id)
+        )
+        || !nonEmpty(key.public_key_pem)
+        || !key.public_key_pem.startsWith('-----BEGIN PUBLIC KEY-----')
+        || key.public_key_pem.includes('PRIVATE KEY')
+        || (
+          key.purpose === 'execution_grant'
+          && key.service_id !== 'brain.authority'
+        )
+        || (
+          key.purpose === 'collector_bundle'
+          && key.service_id !== 'kernel.equivalence.collector'
+        )
+      ) {
+        fail('trust_registry_invalid');
+      }
+      let publicKey;
+      try {
+        publicKey = createPublicKey(key.public_key_pem);
+      } catch {
+        fail('trust_registry_invalid');
+      }
+      if (publicKey.asymmetricKeyType !== 'ed25519') {
+        fail('trust_registry_invalid');
+      }
+      keyIds.add(key.key_id);
+    }
+    for (const key of registry.keys) {
+      if (
+        key.rotates_key_id != null
+        && (
+          key.rotates_key_id === key.key_id
+          || !keyIds.has(key.rotates_key_id)
+        )
+      ) {
+        fail('trust_registry_invalid');
+      }
+    }
+    return Object.freeze(structuredClone(registry));
+  } catch (error) {
+    if (error?.code === 'trust_registry_invalid') throw error;
+    fail('trust_registry_invalid');
+  }
+}
+
 function verifyWindow(value, now, maximumAgeSeconds, prefix) {
   const issuedAt = parseTime(value.issued_at, `${prefix}_time_invalid`);
   const expiresAt = parseTime(value.expires_at, `${prefix}_time_invalid`);
@@ -204,13 +308,7 @@ function findKey(registry, {
   now,
   code,
 }) {
-  if (
-    registry?.schema_version !== 'kernel-equivalence-trust-registry/v1'
-    || registry?.algorithm !== 'ed25519'
-    || !Array.isArray(registry?.keys)
-  ) {
-    fail('trust_registry_invalid');
-  }
+  validateTrustRegistry(registry);
   const key = registry.keys.find((candidate) => candidate?.key_id === keyId);
   if (!key) fail(code);
   exactFields(key, KEY_FIELDS, 'trust_key_fields_invalid');

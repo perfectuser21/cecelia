@@ -229,6 +229,7 @@ describe('canonical signed envelopes', () => {
 
     const wrongPurpose = structuredClone(keys.registry);
     wrongPurpose.keys[0].purpose = 'collector_bundle';
+    wrongPurpose.keys[0].service_id = 'kernel.equivalence.collector';
     expect(() => verifyExecutionGrant(value, wrongPurpose, expected(), { now: NOW }))
       .toThrowError(expect.objectContaining({ code: 'grant_key_invalid' }));
   });
