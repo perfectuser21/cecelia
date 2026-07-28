@@ -641,6 +641,9 @@ export function createDispatcher(deps) {
         await deps.attemptStore.fail(attempt.id, {
           code: 'launch_failed',
           message,
+          ...(spec.role === 'commander'
+            ? { failureClass: 'infrastructure_blocked' }
+            : {}),
         }, {
           leaseOwner: attempt.lease_owner,
           leaseGeneration: attempt.lease_generation,
