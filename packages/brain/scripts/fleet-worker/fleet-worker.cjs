@@ -484,7 +484,7 @@ function createFleetMaintenance({
       const states = await stateStore.list();
       const live = states.filter((state) => (
         state.worker_id === workerId
-        && ['running', 'callback_pending'].includes(state.status)
+        && ['running', 'cancel_pending', 'callback_pending'].includes(state.status)
       ));
       let accepted = 0;
       let failed = 0;
@@ -667,9 +667,12 @@ function createFleetWorkerServer(options = {}) {
     reconciliationInFlight = true;
     try {
       await attemptRunner.reconcile();
-      if (startup) attemptReady = true;
+      if (startup || !attemptReady) {
+        attemptReady = true;
+        reconciliationFailed = false;
+      }
     } catch {
-      if (startup) reconciliationFailed = true;
+      if (startup || !attemptReady) reconciliationFailed = true;
     } finally {
       reconciliationInFlight = false;
     }
@@ -678,7 +681,7 @@ function createFleetWorkerServer(options = {}) {
   if (attemptRunner) {
     void Promise.resolve().then(() => reconcile({ startup: true }));
     const retryTimer = setIntervalFn(() => {
-      if (attemptReady && !reconciliationFailed) void reconcile();
+      void reconcile({ startup: !attemptReady });
     }, 30_000);
     retryTimer?.unref?.();
     timers.push(retryTimer);

@@ -225,13 +225,14 @@ test('Fleet-owned heartbeat verifies the exact signed Brain ACK', async () => {
   assert.equal(JSON.stringify(captured).includes(SECRET), false);
 });
 
-test('maintenance heartbeats only owned live or callback-pending attempts', async () => {
+test('maintenance heartbeats owned running, callback and cancellation-pending attempts', async () => {
   const foreign = { ...STATE, attempt_id: '33333333-3333-4333-8333-333333333333', worker_id: 'xian-mac-m4' };
   const cleaned = { ...STATE, attempt_id: '44444444-4444-4444-8444-444444444444', status: 'cleanup_pending' };
   const running = { ...STATE, status: 'running' };
   const pending = { ...STATE, attempt_id: '55555555-5555-4555-8555-555555555555', status: 'callback_pending' };
+  const cancelling = { ...STATE, attempt_id: '66666666-6666-4666-8666-666666666666', status: 'cancel_pending' };
   const stateStore = {
-    list: async () => [foreign, cleaned, running, pending],
+    list: async () => [foreign, cleaned, running, pending, cancelling],
   };
   const docker = {
     readSession: async ({ attemptId }) => (
@@ -262,11 +263,11 @@ test('maintenance heartbeats only owned live or callback-pending attempts', asyn
 
   assert.deepEqual(
     delivered.map(({ state }) => state.attempt_id),
-    [ATTEMPT_ID, pending.attempt_id],
+    [ATTEMPT_ID, pending.attempt_id, cancelling.attempt_id],
   );
   assert.deepEqual(outcome, {
-    attempted: 2,
-    accepted: 2,
+    attempted: 3,
+    accepted: 3,
     failed: 0,
   });
 });

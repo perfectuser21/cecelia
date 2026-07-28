@@ -622,6 +622,193 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.cleanupRuntime).not.toHaveBeenCalled();
   });
 
+  it('durably fences running cancellation before kill and only reports cancelled after cleanup', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.launch(request());
+    deps.events.length = 0;
+    deps.stateStore.save.mockClear();
+    deps.docker.remove.mockImplementationOnce(async () => {
+      deps.events.push('docker.remove');
+      expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+        status: 'cancel_pending',
+        container_removed: false,
+      });
+      return { removed: true };
+    });
+
+    await expect(runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toEqual({
+      status: 'cancelled',
+      attempt_id: ATTEMPT_ID,
+    });
+
+    expect(deps.stateStore.save.mock.calls.map(([state]) => ({
+      status: state.status,
+      container_removed: state.container_removed,
+    }))).toEqual([
+      { status: 'cancel_pending', container_removed: false },
+      { status: 'cancel_pending', container_removed: true },
+    ]);
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+      preserveRuntime: true,
+    });
+    expect(deps.events).toEqual([
+      'docker.remove',
+      'workspace.cleanup',
+      'docker.cleanupRuntime',
+    ]);
+    expect(deps.docker.readResult).not.toHaveBeenCalled();
+    expect(deps.resultDelivery.prepare).not.toHaveBeenCalled();
+    expect(deps.resultDelivery.deliver).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.quarantine).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+  });
+
+  it('retries cancel_pending after kill failure without reading a result', async () => {
+    const deps = dependencies();
+    deps.docker.remove
+      .mockRejectedValueOnce(new Error('docker unavailable'))
+      .mockResolvedValueOnce({ removed: true });
+    const runner = createRunner(deps);
+    await runner.launch(request());
+    const lease = { owner: 'dispatcher-1', generation: 0 };
+
+    await expect(runner.cancel(ATTEMPT_ID, lease)).resolves.toEqual({
+      status: 'cancel_pending',
+      attempt_id: ATTEMPT_ID,
+    });
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'cancel_pending',
+      container_removed: false,
+    });
+
+    await expect(runner.cancel(ATTEMPT_ID, lease)).resolves.toEqual({
+      status: 'cancelled',
+      attempt_id: ATTEMPT_ID,
+    });
+    expect(deps.docker.remove).toHaveBeenCalledTimes(2);
+    expect(deps.docker.readResult).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.quarantine).not.toHaveBeenCalled();
+  });
+
+  it('restart reconciliation resumes cancel_pending and reports it separately from crashes', async () => {
+    const cancelPending = {
+      ...durableState(),
+      status: 'cancel_pending',
+      container_removed: false,
+      cancel_requested_at: '2026-07-28T01:01:00.000Z',
+    };
+    const stateStore = inMemoryStateStore([cancelPending]);
+    const deps = dependencies({ stateStore });
+    deps.docker.inspect.mockResolvedValueOnce({ status: 'missing' });
+    const runner = createRunner(deps);
+
+    await expect(runner.reconcile()).resolves.toMatchObject({
+      cleaned_attempts: [],
+      cancelled_attempts: [ATTEMPT_ID],
+    });
+
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: cancelPending.container_id,
+      attemptId: ATTEMPT_ID,
+      containerMissing: true,
+      preserveRuntime: true,
+    });
+    expect(deps.docker.readResult).not.toHaveBeenCalled();
+    expect(deps.resultDelivery.prepare).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.quarantine).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+  });
+
+  it('keeps cancel_pending when cleanup fails and never reports cancelled', async () => {
+    const deps = dependencies();
+    deps.workspaceManager.cleanup.mockRejectedValueOnce(
+      new Error('cleanup unavailable'),
+    );
+    const runner = createRunner(deps);
+    await runner.launch(request());
+
+    await expect(runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toEqual({
+      status: 'cancel_pending',
+      attempt_id: ATTEMPT_ID,
+    });
+
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'cancel_pending',
+      container_removed: true,
+    });
+    expect(deps.docker.cleanupRuntime).not.toHaveBeenCalled();
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
+    expect(deps.docker.readResult).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.quarantine).not.toHaveBeenCalled();
+  });
+
+  it('retains cancel_pending quarantine evidence instead of reporting cancelled', async () => {
+    const deps = dependencies();
+    deps.workspaceManager.cleanup.mockResolvedValueOnce({
+      status: 'quarantined',
+      attempt_id: ATTEMPT_ID,
+      path: `/controlled/quarantine/${ATTEMPT_ID}`,
+      admin_path: `/controlled/quarantine/${ATTEMPT_ID}.git`,
+      reason: 'attempt_cleanup_failed',
+    });
+    const runner = createRunner(deps);
+    await runner.launch(request());
+
+    await expect(runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toEqual({
+      status: 'cancel_pending',
+      attempt_id: ATTEMPT_ID,
+    });
+
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'cancel_pending',
+      container_removed: true,
+      quarantine: {
+        status: 'quarantined',
+        reason: 'attempt_cleanup_failed',
+      },
+    });
+    expect(deps.docker.cleanupRuntime).not.toHaveBeenCalled();
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
+  });
+
+  it('rejects cancellation after a cleanup receipt without deleting evidence', async () => {
+    const cleanupPending = {
+      ...durableState(),
+      status: 'cleanup_pending',
+      container_removed: true,
+      delivery: DELIVERY_METADATA,
+      receipt: {
+        receipt_id: RESULT_RECEIPT.receipt_id,
+        receipt_status: RESULT_RECEIPT.receipt_status,
+        persisted_at: RESULT_RECEIPT.persisted_at,
+      },
+    };
+    const deps = dependencies({
+      stateStore: inMemoryStateStore([cleanupPending]),
+    });
+    const runner = createRunner(deps);
+
+    await expect(runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).rejects.toThrow(/attempt_callback_pending/);
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    expect(deps.docker.cleanupRuntime).not.toHaveBeenCalled();
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
+  });
+
   it('restart reconciliation replays callback_pending before cleanup', async () => {
     const deps = dependencies();
     deps.resultDelivery.deliver.mockRejectedValueOnce(new Error('Brain unavailable'));
@@ -1203,6 +1390,24 @@ describe('Fleet Worker durable runtime adapters', () => {
 
       await store.delete(ATTEMPT_ID);
       await expect(store.get(ATTEMPT_ID)).resolves.toBeNull();
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('persists the exact durable cancel_pending state shape', async () => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-cancel-'));
+    const store = createFileAttemptStateStore({ stateRoot });
+    const state = durableState({
+      status: 'cancel_pending',
+      container_removed: false,
+      cancel_requested_at: '2026-07-28T01:01:00.000Z',
+    });
+
+    try {
+      await expect(store.save(state)).resolves.toEqual(state);
+      await expect(store.get(ATTEMPT_ID)).resolves.toEqual(state);
     } finally {
       fs.rmSync(stateRoot, { recursive: true, force: true });
     }

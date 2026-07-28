@@ -539,7 +539,7 @@ describe('Fleet Worker Attempt API', () => {
         remote_job_id: 'container-1',
       })),
       inspect: vi.fn(async () => ({ attempt_id: attemptId, status: 'running' })),
-      cancel: vi.fn(async () => ({ attempt_id: attemptId, status: 'cleaned' })),
+      cancel: vi.fn(async () => ({ attempt_id: attemptId, status: 'cancelled' })),
       terminal: vi.fn(async () => ({ attempt_id: attemptId, status: 'cleaned' })),
       reconcile: vi.fn(async () => ({
         cleaned_attempts: [],
@@ -693,6 +693,10 @@ describe('Fleet Worker Attempt API', () => {
 
     expect(inspected.statusCode).toBe(200);
     expect(cancelled.statusCode).toBe(200);
+    expect(JSON.parse(cancelled.body)).toEqual({
+      attempt_id: attemptId,
+      status: 'cancelled',
+    });
     expect(terminal.statusCode).toBe(200);
     expect(attemptRunner.inspect).toHaveBeenCalledWith(attemptId);
     expect(attemptRunner.cancel).toHaveBeenCalledWith(attemptId, {
@@ -761,6 +765,54 @@ describe('Fleet Worker Attempt API', () => {
       removed_orphan_containers: [],
     });
     await vi.waitFor(() => expect(attemptRunner.reconcile).toHaveBeenCalledOnce());
+    const accepted = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: launchBody(),
+    });
+    expect(accepted.statusCode).toBe(202);
+    server.close();
+  });
+
+  it('self-heals a transient startup reconciliation failure on the retry timer', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    attemptRunner.reconcile
+      .mockRejectedValueOnce(new Error('transient state IO failure'))
+      .mockResolvedValueOnce({
+        cleaned_attempts: [],
+        cancelled_attempts: [],
+        removed_orphan_containers: [],
+      });
+    const intervals = [];
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+      setIntervalFn: (callback, milliseconds) => {
+        const timer = { callback, milliseconds, unref: vi.fn() };
+        intervals.push(timer);
+        return timer;
+      },
+      clearIntervalFn: vi.fn(),
+    });
+    await vi.waitFor(() => expect(attemptRunner.reconcile).toHaveBeenCalledOnce());
+
+    const failed = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: launchBody(),
+    });
+    expect(failed.statusCode).toBe(503);
+    expect(JSON.parse(failed.body)).toEqual({
+      error: 'worker_reconciliation_failed',
+    });
+
+    const retryTimer = intervals.find(({ milliseconds }) => milliseconds === 30_000);
+    retryTimer.callback();
+    await vi.waitFor(() => {
+      expect(attemptRunner.reconcile).toHaveBeenCalledTimes(2);
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
     const accepted = await request(server, 'POST', '/harness/attempts', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: launchBody(),

@@ -92,6 +92,7 @@ const ATTEMPT_STATE_FIELDS = new Set([
   'workspace',
   'labels',
   'status',
+  'cancel_requested_at',
   'delivery',
   'receipt',
   'quarantine',
@@ -380,7 +381,13 @@ function validateDurableAttemptState(state, attemptId = state?.attempt_id) {
       || state.container_id.length < 1
       || state.container_id.length > 256
       || /[\r\n]/.test(state.container_id)
-      || !['running', 'callback_pending', 'cleanup_pending', 'quarantined']
+      || ![
+        'running',
+        'cancel_pending',
+        'callback_pending',
+        'cleanup_pending',
+        'quarantined',
+      ]
         .includes(state.status)
       || requiredFields.some((field) => !Object.hasOwn(state, field))
       || Object.keys(state).some((field) => !ATTEMPT_STATE_FIELDS.has(field))
@@ -409,25 +416,46 @@ function validateDurableAttemptState(state, attemptId = state?.attempt_id) {
         || Object.hasOwn(state, 'delivery')
         || Object.hasOwn(state, 'receipt')
         || Object.hasOwn(state, 'quarantine')
+        || Object.hasOwn(state, 'cancel_requested_at')
       ) {
         throw new Error('invalid running state');
+      }
+    } else if (state.status === 'cancel_pending') {
+      if (
+        typeof state.container_removed !== 'boolean'
+        || !isCanonicalTimestamp(state.cancel_requested_at)
+        || Object.hasOwn(state, 'delivery')
+        || Object.hasOwn(state, 'receipt')
+      ) {
+        throw new Error('invalid cancel state');
+      }
+      if (Object.hasOwn(state, 'quarantine')) {
+        validateStoredQuarantine(state.quarantine, state);
       }
     } else if (state.status === 'callback_pending') {
       if (
         typeof state.container_removed !== 'boolean'
         || Object.hasOwn(state, 'receipt')
         || Object.hasOwn(state, 'quarantine')
+        || Object.hasOwn(state, 'cancel_requested_at')
       ) {
         throw new Error('invalid callback state');
       }
       validateStoredDelivery(state.delivery, resultChannel);
     } else if (state.status === 'cleanup_pending') {
-      if (state.container_removed !== true || Object.hasOwn(state, 'quarantine')) {
+      if (
+        state.container_removed !== true
+        || Object.hasOwn(state, 'quarantine')
+        || Object.hasOwn(state, 'cancel_requested_at')
+      ) {
         throw new Error('invalid cleanup state');
       }
       validateStoredDelivery(state.delivery, resultChannel);
       validateStoredReceipt(state.receipt);
     } else {
+      if (Object.hasOwn(state, 'cancel_requested_at')) {
+        throw new Error('invalid quarantine state');
+      }
       validateStoredQuarantine(state.quarantine, state);
       if (
         Object.hasOwn(state, 'container_removed')
@@ -1597,6 +1625,53 @@ function createAttemptRunner({
     return deliverPendingState(callbackPending, observed, { containerMissing });
   }
 
+  function cancelPendingResult(state) {
+    return Object.freeze({
+      status: 'cancel_pending',
+      attempt_id: state.attempt_id,
+    });
+  }
+
+  async function continueCancellation(inputState) {
+    let state = inputState;
+    if (state.quarantine) return cancelPendingResult(state);
+    if (state.container_removed !== true) {
+      try {
+        const inspected = await docker.inspect({ containerId: state.container_id });
+        state = await ensurePendingContainerRemoved(state, {
+          containerMissing: inspected.status === 'missing',
+        });
+      } catch {
+        return cancelPendingResult(state);
+      }
+    }
+    let cleaned;
+    try {
+      cleaned = await workspaceManager.cleanup(state.workspace);
+    } catch {
+      return cancelPendingResult(state);
+    }
+    if (cleaned.status === 'quarantined') {
+      const retained = {
+        ...state,
+        quarantine: safeQuarantineMetadata(cleaned, state),
+        updated_at: new Date().toISOString(),
+      };
+      await stateStore.save(retained);
+      return cancelPendingResult(retained);
+    }
+    try {
+      await docker.cleanupRuntime({ attemptId: state.attempt_id });
+      await stateStore.delete(state.attempt_id);
+    } catch {
+      return cancelPendingResult(state);
+    }
+    return Object.freeze({
+      status: 'cancelled',
+      attempt_id: state.attempt_id,
+    });
+  }
+
   const unlockedRunner = {
     async launch(input) {
       const {
@@ -1746,6 +1821,9 @@ function createAttemptRunner({
       if (lease !== null) {
         assertLeaseFence(state, lease);
       }
+      if (state.status === 'cancel_pending') {
+        return continueCancellation(state);
+      }
       if (state.status === 'callback_pending') {
         return deliverPendingState(state);
       }
@@ -1774,7 +1852,29 @@ function createAttemptRunner({
       if (['callback_pending', 'cleanup_pending'].includes(state.status)) {
         throw new Error('attempt_callback_pending');
       }
-      return this.terminal(attemptId, lease);
+      if (state.status === 'quarantined') {
+        return Object.freeze({
+          status: 'quarantined',
+          attempt_id: state.attempt_id,
+          reason: state.quarantine?.reason ?? 'retained',
+        });
+      }
+      if (state.status === 'cancel_pending') {
+        return continueCancellation(state);
+      }
+      if (state.status !== 'running') {
+        throw new Error('attempt_state_status_invalid');
+      }
+      const now = new Date().toISOString();
+      const cancelPending = {
+        ...state,
+        status: 'cancel_pending',
+        container_removed: false,
+        cancel_requested_at: now,
+        updated_at: now,
+      };
+      await stateStore.save(cancelPending);
+      return continueCancellation(cancelPending);
     },
 
     async reconcile() {
@@ -1783,6 +1883,7 @@ function createAttemptRunner({
       const knownAttemptIds = new Set(ownedStates.map((state) => state.attempt_id));
       const retainedAttemptIds = new Set(states.map((state) => state.attempt_id));
       const cleanedAttempts = [];
+      const cancelledAttempts = [];
 
       for (const listedState of ownedStates) {
         await withAttemptLock(listedState.attempt_id, async () => {
@@ -1793,6 +1894,14 @@ function createAttemptRunner({
             return;
           }
           if (state.worker_id !== workerId || state.status === 'quarantined') return;
+          if (state.status === 'cancel_pending') {
+            const result = await continueCancellation(state);
+            if (result.status === 'cancelled') {
+              cancelledAttempts.push(state.attempt_id);
+              retainedAttemptIds.delete(state.attempt_id);
+            }
+            return;
+          }
           if (state.status === 'callback_pending') {
             const inspected = state.container_removed === true
               ? null
@@ -1857,6 +1966,7 @@ function createAttemptRunner({
 
       return Object.freeze({
         cleaned_attempts: Object.freeze(cleanedAttempts),
+        cancelled_attempts: Object.freeze(cancelledAttempts),
         removed_orphan_containers: Object.freeze(removedOrphanContainers),
         cleaned_orphan_workspaces: Object.freeze(
           workspaceReconciliation.cleaned_attempts ?? [],
