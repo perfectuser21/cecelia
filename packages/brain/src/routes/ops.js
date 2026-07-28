@@ -26,6 +26,7 @@ import {
 import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from '../pr-callback-handler.js';
 import { getAllStates as getAllCBStates } from '../circuit-breaker.js';
 import { getActiveExecutionPaths, INVENTORY_CONFIG } from './shared.js';
+import { authorizeReleaseEffect } from '../orchestrator/release-run-authorization.js';
 
 const router = Router();
 
@@ -2741,8 +2742,29 @@ router.post('/deploy', async (req, res) => {
     return res.status(401).json({ error: 'Invalid or missing deploy token' });
   }
 
-  const { changed_paths, staging, mode } = req.body || {};
+  const {
+    changed_paths,
+    staging,
+    mode,
+    release_run_id,
+    merge_sha,
+    release_authorization,
+  } = req.body || {};
   const isStagingDeploy = staging === true || mode === 'staging';
+  const effectKind = isStagingDeploy ? 'staging' : 'production';
+
+  try {
+    await authorizeReleaseEffect(pool, {
+      release_run_id,
+      merge_sha,
+      release_authorization,
+      effect_kind: effectKind,
+    });
+  } catch (error) {
+    return res.status(403).json({
+      error: error?.code ?? 'release_effect_unauthorized',
+    });
+  }
 
   // ── Staging 分支（Safe Lane）──────────────────────────────────────────────
   if (isStagingDeploy) {
