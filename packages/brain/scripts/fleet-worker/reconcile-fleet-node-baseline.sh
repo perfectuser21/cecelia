@@ -10,7 +10,8 @@ CODEX_VERSION='0.145.0'
 ORBSTACK_VERSION='2.2.1'
 ORBSTACK_URL='https://cdn-updates.orbstack.dev/arm64/OrbStack_v2.2.1_20628_arm64.dmg'
 ORBSTACK_SHA256='5bc1719c3c987c4c60c65be9fdd65b4730990e1697ec1cb1c33e6bba31bf92b5'
-MACOS_VERSION='15.7.4'
+MACOS_MINIMUM_VERSION='15.6.1'
+MACOS_RECOMMENDED_VERSION='15.7.4'
 RUNNER_DIGEST='sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7'
 SERVICE_UID=450
 SERVICE_GID=450
@@ -410,7 +411,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 if [[ "$mode" == 'dry-run' ]]; then
-  echo "dry-run: would reconcile $machine_id with macOS $MACOS_VERSION, OrbStack $ORBSTACK_VERSION, Node $NODE_VERSION, Codex $CODEX_VERSION, and Runner $RUNNER_DIGEST"
+  echo "dry-run: would reconcile $machine_id with macOS minimum $MACOS_MINIMUM_VERSION (recommended $MACOS_RECOMMENDED_VERSION), OrbStack $ORBSTACK_VERSION, Node $NODE_VERSION, Codex $CODEX_VERSION, and Runner $RUNNER_DIGEST"
   exit 0
 fi
 
@@ -442,22 +443,18 @@ ensure_runner
 ensure_worker_token
 
 observed_os="$("$SW_VERS" -productVersion 2>/dev/null || true)"
-IFS=. read -r expected_major expected_minor expected_patch <<<"$MACOS_VERSION"
+IFS=. read -r expected_major expected_minor expected_patch <<<"$MACOS_MINIMUM_VERSION"
 IFS=. read -r observed_major observed_minor observed_patch <<<"$observed_os"
 if [[ ! "$observed_major" =~ ^[0-9]+$ \
   || ! "$observed_minor" =~ ^[0-9]+$ \
   || ! "$observed_patch" =~ ^[0-9]+$ ]]; then
-  echo "warning: os_version_drift expected=$MACOS_VERSION observed=${observed_os:-unavailable}" >&2
-elif (( 10#$observed_major < 10#$expected_major \
-  || (10#$observed_major == 10#$expected_major \
-    && 10#$observed_minor < 10#$expected_minor) \
-  || (10#$observed_major == 10#$expected_major \
-    && 10#$observed_minor == 10#$expected_minor \
-    && 10#$observed_patch < 10#$expected_patch) )); then
-  echo "warning: os_version_below_floor expected=$MACOS_VERSION observed=$observed_os" >&2
-elif [[ "$observed_major" != "$expected_major" \
-  || "$observed_minor" != "$expected_minor" ]]; then
-  echo "warning: os_version_drift expected=$MACOS_VERSION observed=$observed_os" >&2
+  echo "warning: os_version_drift expected=$MACOS_MINIMUM_VERSION observed=${observed_os:-unavailable}" >&2
+elif [[ "$(version_compare "$observed_os" "$MACOS_MINIMUM_VERSION")" == '-1' ]]; then
+  echo "warning: os_version_below_floor expected=$MACOS_MINIMUM_VERSION observed=$observed_os" >&2
+elif [[ "$observed_major" != "$expected_major" ]]; then
+  echo "warning: os_version_drift expected=$MACOS_MINIMUM_VERSION observed=$observed_os" >&2
+elif [[ "$(version_compare "$observed_os" "$MACOS_RECOMMENDED_VERSION")" == '-1' ]]; then
+  echo "warning: os_security_update_recommended recommended=$MACOS_RECOMMENDED_VERSION observed=$observed_os" >&2
 fi
 
 PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
