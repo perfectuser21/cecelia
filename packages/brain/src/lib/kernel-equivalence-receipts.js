@@ -12,6 +12,9 @@ const SAFE_RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const SAFE_RESOURCE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const FORBIDDEN_RESOURCE = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
 const DENIAL_OUTCOMES = new Set(['denied', 'blocked', 'rejected', 'failed']);
+const HISTORICAL_BUNDLE_VERIFICATION = Symbol(
+  'kernel-equivalence-historical-bundle-verification',
+);
 const KEY_PURPOSES = new Set([
   'execution_grant',
   'effect_receipt',
@@ -715,12 +718,13 @@ export function verifyReceiptBundle(
   bundle,
   registry,
   expected,
-  {
+  options = {},
+) {
+  const {
     now = Date.now(),
     resolvePreviousBundle = null,
     _seenBundleHashes = new Set(),
-  } = {},
-) {
+  } = options;
   verifyNow(now);
   exactFields(bundle, BUNDLE_FIELDS, 'bundle_fields_invalid');
   if (
@@ -738,9 +742,12 @@ export function verifyReceiptBundle(
     fail('bundle_axis_mismatch');
   }
   validateIdentity(bundle, 'bundle');
+  const verificationNow = options[HISTORICAL_BUNDLE_VERIFICATION] === true
+    ? parseTime(bundle.issued_at, 'bundle_time_invalid')
+    : now;
   verifyWindow(
     bundle,
-    now,
+    verificationNow,
     registry?.collector_bundle_max_age_seconds,
     'bundle',
   );
@@ -748,7 +755,7 @@ export function verifyReceiptBundle(
     keyId: bundle.key_id,
     purpose: 'collector_bundle',
     serviceId: 'kernel.equivalence.collector',
-    now,
+    now: verificationNow,
     code: 'bundle_key_invalid',
   });
   if (bundle.collector_service_id !== key.service_id) fail('bundle_key_invalid');
@@ -765,13 +772,13 @@ export function verifyReceiptBundle(
       bundle.execution_grants[0],
       registry,
       { ...expected, cell: violationCell },
-      { now },
+      { now: verificationNow },
     );
     const recoveryGrant = verifyExecutionGrant(
       bundle.execution_grants[1],
       registry,
       expected,
-      { now },
+      { now: verificationNow },
     );
     if (
       violationGrant.run_id !== recoveryGrant.run_id
@@ -790,7 +797,12 @@ export function verifyReceiptBundle(
     verifiedGrants = [violationGrant, recoveryGrant];
   } else {
     verifiedGrants = [
-      verifyExecutionGrant(bundle.execution_grants[0], registry, expected, { now }),
+      verifyExecutionGrant(
+        bundle.execution_grants[0],
+        registry,
+        expected,
+        { now: verificationNow },
+      ),
     ];
   }
   const currentGrant = verifiedGrants.at(-1);
@@ -817,7 +829,7 @@ export function verifyReceiptBundle(
         ),
         predecessor: null,
       },
-      { now },
+      { now: verificationNow },
     );
     const recovery = verifyEffectReceipt(
       bundle.effect_receipts[1],
@@ -826,7 +838,7 @@ export function verifyReceiptBundle(
         ...expectedForGrant(bundle, verifiedGrants[1], expected.cell),
         predecessor: violation,
       },
-      { now },
+      { now: verificationNow },
     );
     verifiedReceipts = [violation, recovery];
   } else {
@@ -836,7 +848,7 @@ export function verifyReceiptBundle(
         bundle.effect_receipts[0],
         registry,
         expectedForGrant(bundle, verifiedGrants[0], expected.cell),
-        { now },
+        { now: verificationNow },
       ),
     ];
   }
@@ -890,7 +902,12 @@ export function verifyReceiptBundle(
       previous,
       registry,
       expectedFromReceiptBundle(previous),
-      { now, resolvePreviousBundle, _seenBundleHashes: seen },
+      {
+        now,
+        resolvePreviousBundle,
+        _seenBundleHashes: seen,
+        [HISTORICAL_BUNDLE_VERIFICATION]: true,
+      },
     );
   }
 
@@ -968,7 +985,11 @@ export async function preloadReceiptBundleAncestry({
     head,
     trustRegistry,
     expectedFromReceiptBundle(head),
-    { now, resolvePreviousBundle },
+    {
+      now,
+      resolvePreviousBundle,
+      [HISTORICAL_BUNDLE_VERIFICATION]: true,
+    },
   );
   return Object.freeze({
     schema_version: 'kernel-equivalence-bundle-snapshot/v1',

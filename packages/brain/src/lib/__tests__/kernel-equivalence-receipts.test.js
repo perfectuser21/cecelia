@@ -429,6 +429,21 @@ describe('receipt bundle and recovery lineage', () => {
       genesis_hash: bundleHash,
       bundle_hashes: [bundleHash],
     });
+
+    for (const key of keys.registry.keys) {
+      key.revoked_at = '2026-07-30T00:00:00.000Z';
+    }
+    await expect(preloadReceiptBundleAncestry({
+      headHash: bundleHash,
+      genesisHash: bundleHash,
+      readBundle: async (hash) => (hash === bundleHash ? bundle : null),
+      trustRegistry: keys.registry,
+      now: Date.parse('2026-08-01T00:00:00.000Z'),
+    })).resolves.toMatchObject({
+      head_hash: bundleHash,
+      genesis_hash: bundleHash,
+      bundle_hashes: [bundleHash],
+    });
   });
 
   it('requires recovery to reference the matching violation cell receipt id and hash', () => {
