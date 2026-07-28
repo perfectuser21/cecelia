@@ -218,6 +218,10 @@ write_executable "$fake_bin/nodectl" \
   '  : > "$FLEET_TEST_NODE_ADMIT_READY"' \
   '  sleep 2' \
   'fi' \
+  'if [[ "$command_name" == "admit" && -n "${FLEET_TEST_NODE_ADMIT_FAIL_ONCE_STATE:-}" && ! -e "$FLEET_TEST_NODE_ADMIT_FAIL_ONCE_STATE" ]]; then' \
+  '  : > "$FLEET_TEST_NODE_ADMIT_FAIL_ONCE_STATE"' \
+  '  exit 23' \
+  'fi' \
   'if [[ "$command_name" == "${FLEET_TEST_NODE_FAIL:-}" ]]; then exit 23; fi' \
   'if [[ "$command_name" == "admit" ]]; then' \
   '  printf "%s\n" '"'"'{"base_admitted":true,"dispatch_ready":false}'"'"'' \
@@ -643,9 +647,23 @@ grep -Fq 'admit xian-mac-m4 xian-mac-m4' "$node_log" \
   || fail "node-local command lost the physical machine identity"
 
 : > "$node_log"
+admit_retry_state="$test_root/admit-retry.state"
+rm -f "$admit_retry_state"
+FLEET_TEST_NODE_LOG="$node_log" \
+FLEET_TEST_NODE_ADMIT_FAIL_ONCE_STATE="$admit_retry_state" \
+FLEET_ROLLOUT_SLEEP=/usr/bin/true \
+  run_node_apply_for_test xian-mac-m4 "$payload_root" \
+    "$node_source/fleet-nodectl.sh" >/dev/null \
+  || fail "node-local apply did not recover from a transient first admission probe"
+node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,admit' ]] \
+  || fail "node-local admission retry order drifted: $node_sequence"
+
+: > "$node_log"
 if FLEET_TEST_NODE_LOG="$node_log" \
   FLEET_TEST_TRANSPORT_LOG="$transport_log" \
   FLEET_TEST_NODE_FAIL=admit \
+  FLEET_ROLLOUT_SLEEP=/usr/bin/true \
   FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
   FLEET_ROLLOUT_NODECTL="$node_source/fleet-nodectl.sh" \
   run_node_apply_for_test xian-mac-m4 "$payload_root" \
@@ -654,7 +672,7 @@ if FLEET_TEST_NODE_LOG="$node_log" \
   fail "failed admission was hidden"
 fi
 node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
-[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,admit,admit,drain' ]] \
   || fail "failed admission did not restore drain: $node_sequence"
 
 : > "$node_log"

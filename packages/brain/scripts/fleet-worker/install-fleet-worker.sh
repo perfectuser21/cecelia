@@ -74,6 +74,7 @@ ACCESS_HELPER="$RUNTIME_DIR/refresh-fleet-worker-docker-access.sh"
 WORKTREE_ROOT="${FLEET_WORKER_REPO_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/repository}"
 FLEET_DATA_ROOT="${FLEET_WORKER_DATA_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/fleet-worker}"
 WORKER_TOKEN_FILE="${FLEET_WORKER_TOKEN_FILE:-$FLEET_DATA_ROOT/worker-token}"
+ORBSTACK_HOME="${FLEET_WORKER_ORBSTACK_HOME:-/var/empty}"
 
 usage() {
   echo "usage: $0 <us-mac-m4|xian-mac-m4|xian-mac-m1> [--render-to PATH|--apply]" >&2
@@ -434,6 +435,7 @@ render_plist() {
   local target="$1"
   local target_dir temporary line
   local escaped_machine escaped_digest escaped_bind_host escaped_brain_health
+  local escaped_orbstack_home
   local escaped_node escaped_worker
   local escaped_marker escaped_root escaped_token_file escaped_data_root
   local escaped_stdout escaped_stderr
@@ -449,6 +451,7 @@ render_plist() {
   temporary="$(mktemp "$target_dir/.fleet-worker.plist.XXXXXX")"
 
   escaped_machine="$(xml_escape "$machine_id")"
+  escaped_orbstack_home="$(xml_escape "$ORBSTACK_HOME")"
   escaped_digest="$(xml_escape "$RUNNER_DIGEST")"
   escaped_bind_host="$(xml_escape "$WORKER_BIND_HOST")"
   escaped_brain_health="$(xml_escape "$BRAIN_HEALTH_URL")"
@@ -465,6 +468,7 @@ render_plist() {
     trap 'rm -f "$temporary"' EXIT
     while IFS= read -r line || [[ -n "$line" ]]; do
       line="${line//@@MACHINE_ID@@/$escaped_machine}"
+      line="${line//@@ORBSTACK_HOME@@/$escaped_orbstack_home}"
       line="${line//@@RUNNER_DIGEST@@/$escaped_digest}"
       line="${line//@@WORKER_BIND_HOST@@/$escaped_bind_host}"
       line="${line//@@BRAIN_HEALTH_URL@@/$escaped_brain_health}"

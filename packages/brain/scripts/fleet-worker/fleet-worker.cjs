@@ -344,6 +344,16 @@ function requestErrorStatus(error) {
   return 500;
 }
 
+function healthSelfChecksReady(report) {
+  return typeof report?.orbstack?.version === 'string'
+    && report.orbstack.version !== 'unavailable'
+    && report?.docker?.available === true
+    && report?.tailscale?.connected === true
+    && report?.callback?.reachable === true
+    && report?.worktree?.root_ready === true
+    && report?.container?.probe_succeeded === true;
+}
+
 function createFleetWorkerServer(options = {}) {
   const probeHealth = typeof options.probeHealth === 'function'
     ? options.probeHealth
@@ -400,7 +410,10 @@ function createFleetWorkerServer(options = {}) {
       try {
         const health = await probeHealth();
         if (healthCacheTtlMs > 0) {
-          healthCache = { report: health, expiresAt: nowFn() + healthCacheTtlMs };
+          const effectiveTtl = healthSelfChecksReady(health)
+            ? healthCacheTtlMs
+            : Math.min(healthCacheTtlMs, 1_000);
+          healthCache = { report: health, expiresAt: nowFn() + effectiveTtl };
         }
         writeJson(response, 200, projectHealth(health));
       } catch {

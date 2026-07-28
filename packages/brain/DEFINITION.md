@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.267.115
+**版本**: 1.267.116
+
+## Fleet Worker production admission stabilization
+
+- system LaunchDaemon 显式记录 OrbStack owner 的 home，仅对 `orbctl`
+  子进程设置 HOME，使 `_cecelia` 通过已授权的 OrbStack 路径读取 pinned
+  版本；不向 Codex、Docker 或整个 Worker 环境暴露该 HOME，也不复制长期凭据。
+- GUI Tailscale CLI 拒绝 system service 用户时，以节点精确的 100.64/10
+  listener 地址和成功的 Brain callback 双证据判定连接，任一缺失继续
+  fail closed。
+- 瞬态失败 health 只短缓存，并在 rollout admission 做 3 次有界重试；最终
+  失败仍恢复 drain。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.115`。
 
 ## Fleet admission evaluator artifact hotfix
 

@@ -55,6 +55,7 @@ run_installer() {
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
+    FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
     FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
     FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
     "$INSTALLER" "$@"
@@ -81,6 +82,7 @@ run_installer_with_id() {
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
+    FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
     FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
     FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
     "$INSTALLER" "$@"
@@ -319,6 +321,8 @@ tool_path = plist.get('EnvironmentVariables', {}).get('PATH')
 worker_host = plist.get('EnvironmentVariables', {}).get('CECELIA_FLEET_WORKER_HOST')
 docker_host = plist.get('EnvironmentVariables', {}).get('DOCKER_HOST')
 callback_url = plist.get('EnvironmentVariables', {}).get('CECELIA_CALLBACK_URL')
+orbstack_home = plist.get('EnvironmentVariables', {}).get('CECELIA_ORBSTACK_HOME')
+service_home = plist.get('EnvironmentVariables', {}).get('HOME')
 print(
     ('true' if run_at_load is True else repr(run_at_load))
     + '|'
@@ -333,10 +337,14 @@ print(
     + str(docker_host)
     + '|'
     + str(callback_url)
+    + '|'
+    + str(orbstack_home)
+    + '|'
+    + str(service_home)
 )
 PY
 )" || fail "rendered file is not a valid plist"
-[[ "$plist_contract" == 'true|true|_cecelia|/usr/local/libexec/cecelia/toolchain/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|100.86.57.69|unix:///var/run/docker.sock|http://100.71.151.105:5221/api/brain/health' ]] \
+[[ "$plist_contract" == 'true|true|_cecelia|/usr/local/libexec/cecelia/toolchain/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|100.86.57.69|unix:///var/run/docker.sock|http://100.71.151.105:5221/api/brain/health|/Users/orbstack-owner|None' ]] \
   || fail "plist contract drifted: $plist_contract"
 validated_plist="$test_root/validated-fleet-worker.plist"
 cp "$plist" "$validated_plist"
