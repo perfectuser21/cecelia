@@ -54,4 +54,12 @@ describe('skill-contract — 5 类不变量守现网快照', () => {
     expect(evaluatorBody).not.toMatch(/\bgit\s+commit\b/);
     expect(evaluatorBody).not.toMatch(/\bgit\s+push\b/);
   });
+
+  it('不变量7: reviewer judgment 写入与回读都使用 task-bound authority', () => {
+    expect(reviewer).toContain("source_ref: SPRINT_ID");
+    expect(reviewer).toContain(
+      '/api/brain/strategic-decisions?category=judgment&source_ref=$TASK_ID',
+    );
+    expect(reviewer).not.toContain('/api/brain/decisions?category=judgment');
+  });
 });
