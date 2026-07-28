@@ -28,11 +28,17 @@ const MAXIMUM_TOTAL_DEADLINE_MS = 30_000;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const READINESS_REQUEST_FIELDS = Object.freeze([
   'brain_identity',
-  'challenge',
   'expected_plan_digest',
+  'nonce',
   'schema_version',
-  'service_identity',
+  'service_id',
   'service_schema_version',
+]);
+const READINESS_SIGNER_FIELDS = Object.freeze([
+  'capability_id',
+  'key_id',
+  'owner_service',
+  'signReadiness',
 ]);
 
 export class KernelTrustedExecutionSocketServerError extends Error {
@@ -49,6 +55,8 @@ function fail(code) {
 
 function validateConfiguration({
   service,
+  readinessSigner,
+  now,
   socketPath,
   requestDeadlineMs,
   totalDeadlineMs,
@@ -65,6 +73,24 @@ function validateConfiguration({
     || typeof service.execute !== 'function'
   ) {
     fail('trusted_execution_service_invalid');
+  }
+  if (
+    !Object.isFrozen(readinessSigner)
+    || !readinessSigner
+    || typeof readinessSigner !== 'object'
+    || Object.keys(readinessSigner).sort().some(
+      (field, index) => field !== READINESS_SIGNER_FIELDS[index],
+    )
+    || Object.keys(readinessSigner).length
+      !== READINESS_SIGNER_FIELDS.length
+    || readinessSigner.owner_service
+      !== 'brain.kernel_equivalence.readiness_signer'
+    || typeof readinessSigner.capability_id !== 'string'
+    || typeof readinessSigner.key_id !== 'string'
+    || typeof readinessSigner.signReadiness !== 'function'
+    || typeof now !== 'function'
+  ) {
+    fail('trusted_execution_readiness_signer_invalid');
   }
   if (
     typeof socketPath !== 'string'
@@ -270,7 +296,14 @@ function restoreQuarantinedReplacement(
   }
 }
 
-async function recoverPinnedStaleSocket(socketPath, parentIdentity) {
+async function recoverPinnedStaleSocket(
+  socketPath,
+  parentIdentity,
+  { afterQuarantine = async () => {} } = {},
+) {
+  if (typeof afterQuarantine !== 'function') {
+    fail('trusted_execution_socket_configuration_invalid');
+  }
   const stale = recoverableSocketIdentity(socketPath);
   if (stale == null) return;
   if (!await proveSocketInactive(socketPath)) {
@@ -288,12 +321,11 @@ async function recoverPinnedStaleSocket(socketPath, parentIdentity) {
   } catch {
     fail('trusted_execution_socket_path_occupied');
   }
-  await new Promise((resolveRaceWindow) => {
-    setTimeout(resolveRaceWindow, 25);
-  });
   try {
+    await afterQuarantine();
     sameRecoverableSocket(quarantinePath, stale);
     sameParentDirectory(parentIdentity);
+    assertTargetAbsent(socketPath);
   } catch (error) {
     restoreQuarantinedReplacement(quarantinePath, socketPath);
     throw error;
@@ -316,6 +348,20 @@ async function recoverPinnedStaleSocket(socketPath, parentIdentity) {
   }
   sameParentDirectory(parentIdentity);
 }
+
+export const __trustedExecutionSocketServerTest = Object.freeze({
+  recoverPinnedStaleSocket: async ({
+    socketPath,
+    afterQuarantine,
+  } = {}) => {
+    const parentIdentity = protectedParentDirectory(socketPath);
+    await recoverPinnedStaleSocket(
+      socketPath,
+      parentIdentity,
+      { afterQuarantine },
+    );
+  },
+});
 
 function unlinkOwnedSocket(socketPath, identity) {
   if (!identity) return;
@@ -391,26 +437,59 @@ function validReadinessChallenge(value, service) {
     )
     && value.schema_version
       === 'kernel-equivalence-trusted-execution-readiness-challenge/v1'
-    && /^[a-f0-9]{64}$/.test(value.challenge ?? '')
+    && /^[a-f0-9]{64}$/.test(value.nonce ?? '')
     && value.expected_plan_digest === service.plan_digest
     && value.brain_identity === 'cecelia.brain'
-    && value.service_identity
+    && value.service_id
       === 'brain.kernel_equivalence.trusted_execution'
     && value.service_schema_version === service.schema_version
   );
 }
 
-function readinessSucceeded(request, service) {
-  return {
+function readinessSucceeded(
+  request,
+  service,
+  readinessSigner,
+  identity,
+  now,
+) {
+  const issuedAt = now();
+  if (!Number.isFinite(issuedAt)) {
+    fail('trusted_execution_readiness_signing_failed');
+  }
+  const unsigned = {
     schema_version:
       'kernel-equivalence-trusted-execution-readiness-response/v1',
     status: 'ready',
-    challenge: request.challenge,
+    nonce: request.nonce,
     brain_identity: 'cecelia.brain',
-    service_identity:
+    service_id:
       'brain.kernel_equivalence.trusted_execution',
     service_schema_version: service.schema_version,
     plan_digest: service.plan_digest,
+    socket_device: String(identity.device),
+    socket_inode: String(identity.inode),
+    key_id: readinessSigner.key_id,
+    issued_at: new Date(issuedAt).toISOString(),
+    expires_at: new Date(issuedAt + 2_000).toISOString(),
+  };
+  let signature;
+  try {
+    signature = readinessSigner.signReadiness(
+      Object.freeze(structuredClone(unsigned)),
+    );
+  } catch {
+    fail('trusted_execution_readiness_signing_failed');
+  }
+  if (
+    typeof signature !== 'string'
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(signature)
+  ) {
+    fail('trusted_execution_readiness_signing_failed');
+  }
+  return {
+    ...unsigned,
+    signature,
   };
 }
 
@@ -438,6 +517,8 @@ function abortReason(code) {
 
 export function createBrainTrustedExecutionSocketServer({
   service,
+  readinessSigner,
+  now = Date.now,
   socketPath = BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
   requestDeadlineMs = 5_000,
   totalDeadlineMs = MAXIMUM_TOTAL_DEADLINE_MS,
@@ -446,6 +527,8 @@ export function createBrainTrustedExecutionSocketServer({
 } = {}) {
   validateConfiguration({
     service,
+    readinessSigner,
+    now,
     socketPath,
     requestDeadlineMs,
     totalDeadlineMs,
@@ -612,7 +695,19 @@ export function createBrainTrustedExecutionSocketServer({
         return;
       }
       if (validReadinessChallenge(request, service)) {
-        writeResponse(readinessSucceeded(request, service));
+        try {
+          writeResponse(readinessSucceeded(
+            request,
+            service,
+            readinessSigner,
+            identity,
+            now,
+          ));
+        } catch {
+          writeResponse(blocked(
+            'trusted_execution_readiness_signing_failed',
+          ));
+        }
         return;
       }
       if (!validBinding(request)) {

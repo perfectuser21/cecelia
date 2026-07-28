@@ -1,7 +1,11 @@
 import {
   lstatSync,
 } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import {
+  createPublicKey,
+  randomBytes,
+  verify as verifyBytes,
+} from 'node:crypto';
 import { createConnection } from 'node:net';
 import {
   dirname,
@@ -12,6 +16,9 @@ import {
 import {
   assertPathAclFree,
 } from './kernel-equivalence-protected-filesystem.js';
+import {
+  canonicalJson,
+} from './kernel-equivalence-receipts.js';
 
 const DEFAULT_SOCKET_PATH =
   '/var/run/cecelia/kernel-equivalence.sock';
@@ -23,12 +30,28 @@ const MAXIMUM_READINESS_RESPONSE_BYTES = 1_024;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const READINESS_RESPONSE_FIELDS = Object.freeze([
   'brain_identity',
-  'challenge',
+  'expires_at',
+  'issued_at',
+  'key_id',
+  'nonce',
   'plan_digest',
   'schema_version',
-  'service_identity',
+  'service_id',
   'service_schema_version',
+  'signature',
+  'socket_device',
+  'socket_inode',
   'status',
+]);
+const READINESS_TRUST_ANCHOR_FIELDS = Object.freeze([
+  'key_id',
+  'not_after',
+  'not_before',
+  'public_key_pem',
+  'purpose',
+  'revoked_at',
+  'rotates_key_id',
+  'service_id',
 ]);
 // Server execution may consume its 30s budget, then use bounded cancellation,
 // settlement, cleanup verification, and denial-audit windows before replying.
@@ -87,6 +110,99 @@ function exactKeys(value, expected) {
     actual.length === expected.length
     && actual.every((field, index) => field === expected[index])
   );
+}
+
+function validateReadinessTrustAnchor(anchor, now) {
+  if (
+    !Object.isFrozen(anchor)
+    || !exactKeys(anchor, READINESS_TRUST_ANCHOR_FIELDS)
+    || anchor.purpose !== 'trusted_execution_readiness'
+    || anchor.service_id
+      !== 'brain.kernel_equivalence.trusted_execution'
+    || !/^[a-z0-9][a-z0-9_.:-]{0,127}$/.test(anchor.key_id ?? '')
+    || !Number.isFinite(Date.parse(anchor.not_before))
+    || !Number.isFinite(Date.parse(anchor.not_after))
+    || now < Date.parse(anchor.not_before)
+    || now >= Date.parse(anchor.not_after)
+    || (
+      anchor.revoked_at != null
+      && (
+        !Number.isFinite(Date.parse(anchor.revoked_at))
+        || now >= Date.parse(anchor.revoked_at)
+      )
+    )
+    || (
+      anchor.rotates_key_id != null
+      && typeof anchor.rotates_key_id !== 'string'
+    )
+  ) {
+    fail('trusted_execution_readiness_anchor_invalid');
+  }
+  try {
+    const key = createPublicKey(anchor.public_key_pem);
+    if (key.asymmetricKeyType !== 'ed25519') {
+      fail('trusted_execution_readiness_anchor_invalid');
+    }
+    return key;
+  } catch (error) {
+    if (error instanceof KernelTrustedExecutionClientError) throw error;
+    fail('trusted_execution_readiness_anchor_invalid');
+  }
+}
+
+function verifyReadinessResponse({
+  response,
+  nonce,
+  expectedPlanDigest,
+  readinessTrustAnchor,
+  publicKey,
+  socketIdentity,
+  now,
+}) {
+  if (
+    !exactKeys(response, READINESS_RESPONSE_FIELDS)
+    || response.schema_version
+      !== 'kernel-equivalence-trusted-execution-readiness-response/v1'
+    || response.status !== 'ready'
+    || response.nonce !== nonce
+    || response.brain_identity !== 'cecelia.brain'
+    || response.service_id
+      !== 'brain.kernel_equivalence.trusted_execution'
+    || response.service_schema_version
+      !== 'kernel-equivalence-trusted-execution-service/v1'
+    || response.plan_digest !== expectedPlanDigest
+    || response.key_id !== readinessTrustAnchor.key_id
+    || response.socket_device !== String(socketIdentity.device)
+    || response.socket_inode !== String(socketIdentity.inode)
+    || typeof response.signature !== 'string'
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(response.signature)
+  ) {
+    return false;
+  }
+  const issuedAt = Date.parse(response.issued_at);
+  const expiresAt = Date.parse(response.expires_at);
+  if (
+    !Number.isFinite(issuedAt)
+    || !Number.isFinite(expiresAt)
+    || issuedAt > now
+    || expiresAt <= now
+    || expiresAt <= issuedAt
+    || expiresAt - issuedAt > 5_000
+  ) {
+    return false;
+  }
+  const unsigned = structuredClone(response);
+  delete unsigned.signature;
+  try {
+    return verifyBytes(
+      null,
+      Buffer.from(canonicalJson(unsigned), 'utf8'),
+      publicKey,
+      Buffer.from(response.signature, 'base64'),
+    );
+  } catch {
+    return false;
+  }
 }
 
 function unwrapResponseEnvelope(response, request) {
@@ -228,9 +344,12 @@ export function inspectBrainTrustedExecutionSocketReadiness({
 export async function probeBrainTrustedExecutionSocketReadiness({
   socketPath = DEFAULT_SOCKET_PATH,
   expectedPlanDigest,
+  readinessTrustAnchor,
+  now = Date.now,
   timeoutMs = 1_000,
 } = {}) {
   let identity;
+  let publicKey;
   try {
     validateSocketPath(socketPath);
     if (
@@ -244,6 +363,17 @@ export async function probeBrainTrustedExecutionSocketReadiness({
     if (!HASH_PATTERN.test(expectedPlanDigest ?? '')) {
       fail('trusted_execution_plan_digest_unconfigured');
     }
+    if (typeof now !== 'function') {
+      fail('trusted_execution_transport_configuration_invalid');
+    }
+    const sampledNow = now();
+    if (!Number.isFinite(sampledNow)) {
+      fail('trusted_execution_transport_configuration_invalid');
+    }
+    publicKey = validateReadinessTrustAnchor(
+      readinessTrustAnchor,
+      sampledNow,
+    );
   } catch (error) {
     const code = (
       error instanceof KernelTrustedExecutionClientError
@@ -262,14 +392,14 @@ export async function probeBrainTrustedExecutionSocketReadiness({
     let settled = false;
     let ended = false;
     let response = Buffer.alloc(0);
-    const challenge = randomBytes(32).toString('hex');
+    const nonce = randomBytes(32).toString('hex');
     const request = Object.freeze({
       schema_version:
         'kernel-equivalence-trusted-execution-readiness-challenge/v1',
-      challenge,
+      nonce,
       expected_plan_digest: expectedPlanDigest,
       brain_identity: 'cecelia.brain',
-      service_identity:
+      service_id:
         'brain.kernel_equivalence.trusted_execution',
       service_schema_version:
         'kernel-equivalence-trusted-execution-service/v1',
@@ -322,18 +452,18 @@ export async function probeBrainTrustedExecutionSocketReadiness({
         unavailable();
         return;
       }
+      const verificationNow = now();
       if (
-        !exactKeys(parsed, READINESS_RESPONSE_FIELDS)
-        || parsed.schema_version
-          !== 'kernel-equivalence-trusted-execution-readiness-response/v1'
-        || parsed.status !== 'ready'
-        || parsed.challenge !== challenge
-        || parsed.brain_identity !== 'cecelia.brain'
-        || parsed.service_identity
-          !== 'brain.kernel_equivalence.trusted_execution'
-        || parsed.service_schema_version
-          !== 'kernel-equivalence-trusted-execution-service/v1'
-        || parsed.plan_digest !== expectedPlanDigest
+        !Number.isFinite(verificationNow)
+        || !verifyReadinessResponse({
+          response: parsed,
+          nonce,
+          expectedPlanDigest,
+          readinessTrustAnchor,
+          publicKey,
+          socketIdentity: identity,
+          now: verificationNow,
+        })
       ) {
         unavailable();
         return;

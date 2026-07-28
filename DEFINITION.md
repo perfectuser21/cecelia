@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.268.21
+**Brain 版本**: 1.268.22
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.22 — Kernel authenticated readiness and metadata closure
+
+- production readiness 使用 manifest-pinned Ed25519 trust anchor；签名 envelope
+  绑定 nonce、schema、plan digest、Brain/service identity、socket inode 与短
+  expiry，错 key、重放、过期、digest drift 和 adaptive echo 均零执行阻断。
+- Brain boot 显式注入受保护 signer capability；CLI 只读 protected manifest
+  的 public anchor，不接受 raw socket/digest/key override。
+- manifest、全部 private keys、grant root/file 和 UDS parent/socket 使用
+  Darwin `ls -lde@` 或 Linux `getfacl/getfattr` 全枚举，拒绝 ACL/xattr。
+- stale socket recovery 以 atomic quarantine + 确定性 post-rename 重验代替
+  时间窗口；replacement 保留且启动 fail-closed。
 
 ## Brain 1.268.21 — Kernel boot control review closure
 

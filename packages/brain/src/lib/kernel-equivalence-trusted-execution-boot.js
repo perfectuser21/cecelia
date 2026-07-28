@@ -29,6 +29,7 @@ function stableProductionFailureCode(error, fallback) {
 
 export async function bootBrainTrustedExecution({
   createService,
+  readinessSigner,
   socketPath = BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
 } = {}) {
   if (typeof createService !== 'function') {
@@ -46,6 +47,7 @@ export async function bootBrainTrustedExecution({
   try {
     const service = await createService();
     listener = await startBrainTrustedExecutionSocketServer({
+      readinessSigner,
       service,
       socketPath,
     });
@@ -92,6 +94,7 @@ export async function bootProductionBrainTrustedExecution({
   }
   return bootBrainTrustedExecution({
     createService: wiring.createService,
+    readinessSigner: wiring.readinessSigner,
     socketPath: wiring.socket_path,
   });
 }

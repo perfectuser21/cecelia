@@ -108,6 +108,7 @@ function validateRoot(grantRoot) {
       assertPathAclFree(
         ancestor,
         () => fail('protected_grant_root_unsafe'),
+        { allowSystemRootless: true },
       );
       const ancestorStatus = lstatSync(ancestor);
       if (

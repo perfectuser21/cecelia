@@ -1,6 +1,25 @@
 # Brain 模块定义
 
-**版本**: 1.268.21
+**版本**: 1.268.22
+
+## Kernel authenticated readiness and metadata closure
+
+- production manifest 新增独立 readiness Ed25519 key purpose；Brain 只持有受保护
+  private-key signer，CLI 只从 mode-0600 manifest 读取固定 public trust anchor。
+  readiness 签名绑定 nonce、schema、plan digest、Brain/service identity、socket
+  device/inode 与 2 秒有效期；错密钥、重放、过期、plan mismatch 和 adaptive echo
+  全部 fail-closed 且不执行 effect。
+- CLI 不再接受 raw socket/digest/key override；缺 protected manifest 时只报告
+  稳定 config blocker。真实 production boot 把 signer capability 显式交给 UDS
+  listener，未配置或签名失败时不声称 ready。
+- 受保护 manifest、全部 signer key、grant root/file、UDS parent/socket 共用
+  完整 metadata 枚举：Darwin `ls -lde@`、Linux `getfacl/getfattr`；受保护目标
+  的 ACL、任意 xattr 或二者组合均拒绝。仅 ancestor walk 可接受 OS-owned
+  `com.apple.rootless`，仍拒绝所有用户 metadata。
+- stale socket recovery 移除时间猜测窗口；quarantine 后通过确定性 seam 重验
+  parent/stale inode 并确认原路径仍为空。攻击者插入 symlink/replacement 时保留
+  replacement、停止启动且不扩大 unlink。
+- 回退：`bash scripts/brain-rollback.sh 1.268.21`；无数据库迁移。
 
 ## Kernel boot control review closure
 

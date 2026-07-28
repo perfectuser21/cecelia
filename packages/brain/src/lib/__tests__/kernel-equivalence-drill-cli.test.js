@@ -73,7 +73,7 @@ describe('kernel equivalence drill CLI', () => {
       proof_matrix_ready: false,
       execution_wiring_ready: false,
       execution_wiring_blockers: [
-        'trusted_execution_socket_unavailable',
+        'trusted_execution_config_file_missing',
       ],
     });
   });
@@ -115,7 +115,7 @@ describe('kernel equivalence drill CLI', () => {
     );
   });
 
-  it('does not treat a connect-only mode-0600 listener as Brain readiness', async () => {
+  it('ignores raw socket and digest overrides without a protected manifest', async () => {
     const temporaryRoot = mkdtempSync('/tmp/keq-cli-');
     const socketPath = join(temporaryRoot, 'brain.sock');
     const listener = createServer((socket) => {
@@ -137,7 +137,7 @@ describe('kernel equivalence drill CLI', () => {
         execution_ready: false,
         execution_wiring_ready: false,
         execution_wiring_blockers: [
-          'trusted_execution_socket_unavailable',
+          'trusted_execution_config_file_missing',
         ],
         proof_matrix_ready: false,
       });
@@ -147,7 +147,7 @@ describe('kernel equivalence drill CLI', () => {
     }
   });
 
-  it('does not report a stale mode-0600 Unix socket inode as ready', () => {
+  it('ignores a raw stale socket override without a protected manifest', () => {
     const temporaryRoot = mkdtempSync('/tmp/keq-cli-stale-');
     const socketPath = join(temporaryRoot, 'brain.sock');
     try {
@@ -179,7 +179,7 @@ describe('kernel equivalence drill CLI', () => {
         execution_ready: false,
         execution_wiring_ready: false,
         execution_wiring_blockers: [
-          'trusted_execution_socket_unavailable',
+          'trusted_execution_config_file_missing',
         ],
       });
     } finally {
@@ -289,5 +289,17 @@ describe('kernel equivalence drill CLI', () => {
       /KERNEL_EQ_(?:COLLECTOR|EFFECT|GRANT_AUTHORITY)_[A-Z_]+/,
     );
     expect(source).not.toContain('--trusted-runtime');
+    expect(source).not.toContain(
+      'KERNEL_EQ_TRUSTED_EXECUTION_PLAN_DIGEST',
+    );
+    expect(source).toContain(
+      'loadProductionTrustedExecutionReadinessConfiguration',
+    );
+    expect(source).toContain(
+      'kernel-equivalence-readiness-configuration.js',
+    );
+    expect(source).not.toContain(
+      'kernel-equivalence-production-wiring.js',
+    );
   });
 });

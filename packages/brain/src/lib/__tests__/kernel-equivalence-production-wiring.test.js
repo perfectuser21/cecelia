@@ -25,6 +25,8 @@ import {
 } from 'vitest';
 import * as productionWiring
   from '../kernel-equivalence-production-wiring.js';
+import * as readinessConfiguration
+  from '../kernel-equivalence-readiness-configuration.js';
 import * as trustedExecutionBoot
   from '../kernel-equivalence-trusted-execution-boot.js';
 import {
@@ -137,6 +139,19 @@ function fixture() {
     'brain.authority',
     executionGrant.publicKey,
   ));
+  const readiness = generateKeyPairSync('ed25519');
+  const readinessKeyId = 'trusted-readiness-2026-07';
+  const readinessSecretFile = privateKeyFile(
+    root,
+    readinessKeyId,
+    readiness.privateKey,
+  );
+  registryKeys.push(keyRecord(
+    readinessKeyId,
+    'trusted_execution_readiness',
+    'brain.kernel_equivalence.trusted_execution',
+    readiness.publicKey,
+  ));
   const trustRegistry = {
     schema_version: 'kernel-equivalence-trust-registry/v1',
     algorithm: 'ed25519',
@@ -161,6 +176,10 @@ function fixture() {
     execution_grant_key: {
       key_id: executionGrantKeyId,
       secret_file: executionGrantSecretFile,
+    },
+    readiness_signing_key: {
+      key_id: readinessKeyId,
+      secret_file: readinessSecretFile,
     },
     effect_signing_keys: effectSigningKeys,
     grant_root: grantRoot,
@@ -526,11 +545,52 @@ describe('kernel equivalence production wiring', () => {
       grantIssuer: expect.objectContaining({
         owner_service: 'brain.kernel_equivalence.grant_issuer',
       }),
+      readinessSigner: expect.objectContaining({
+        owner_service: 'brain.kernel_equivalence.readiness_signer',
+        key_id: 'trusted-readiness-2026-07',
+      }),
+      readinessTrustAnchor: expect.objectContaining({
+        purpose: 'trusted_execution_readiness',
+        service_id:
+          'brain.kernel_equivalence.trusted_execution',
+      }),
     });
     expect(Object.isFrozen(wiring)).toBe(true);
     expect(JSON.stringify(wiring)).not.toMatch(
       /secret_file|BEGIN PRIVATE KEY|production-wiring\.json/,
     );
+  });
+
+  it('loads only the pinned public readiness configuration for unprivileged clients', () => {
+    const value = fixture();
+
+    const readiness = readinessConfiguration
+      .loadProductionTrustedExecutionReadinessConfiguration({
+        env: value.env,
+        now: () => NOW,
+      });
+
+    expect(Object.isFrozen(readiness)).toBe(true);
+    expect(Object.keys(readiness).sort()).toEqual([
+      'expected_plan_digest',
+      'readiness_trust_anchor',
+      'socket_path',
+    ]);
+    expect(readiness).toMatchObject({
+      expected_plan_digest: value.manifest.expected_plan_digest,
+      readiness_trust_anchor: {
+        key_id:
+          value.manifest.readiness_signing_key.key_id,
+        purpose: 'trusted_execution_readiness',
+        service_id:
+          'brain.kernel_equivalence.trusted_execution',
+      },
+      socket_path: value.manifest.socket_path,
+    });
+    expect(Object.isFrozen(
+      readiness.readiness_trust_anchor,
+    )).toBe(true);
+    expect(JSON.stringify(readiness)).not.toContain('secret_file');
   });
 
   it.each([
@@ -607,9 +667,15 @@ describe('kernel equivalence production wiring', () => {
   });
 
   it.runIf(process.platform === 'darwin')(
-    'rejects an ACL-bearing production manifest even when mode is 0600',
+    'rejects a production manifest bearing both an xattr and ACL even when mode is 0600',
     () => {
       const value = fixture();
+      execFileSync('/usr/bin/xattr', [
+        '-w',
+        'com.cecelia.kernel-equivalence-test',
+        'present',
+        value.configFile,
+      ]);
       execFileSync('/bin/chmod', [
         '+a',
         'everyone allow read',

@@ -27,6 +27,7 @@ const KEY_PURPOSES = new Set([
   'execution_grant',
   'effect_receipt',
   'collector_bundle',
+  'trusted_execution_readiness',
 ]);
 const REGISTRY_FIELDS = Object.freeze([
   'algorithm',
@@ -267,6 +268,11 @@ export function validateTrustRegistry(registry) {
         || (
           key.purpose === 'collector_bundle'
           && key.service_id !== 'kernel.equivalence.collector'
+        )
+        || (
+          key.purpose === 'trusted_execution_readiness'
+          && key.service_id
+            !== 'brain.kernel_equivalence.trusted_execution'
         )
       ) {
         fail('trust_registry_invalid');

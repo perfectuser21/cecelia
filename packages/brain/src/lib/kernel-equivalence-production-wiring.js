@@ -29,6 +29,7 @@ import {
 } from './kernel-equivalence-receipts.js';
 import {
   loadExecutionGrantAuthority,
+  loadTrustedExecutionReadinessSigner,
 } from './kernel-equivalence-signers.js';
 import {
   TRUSTED_NON_RELEASE_EQUIVALENCE_DESCRIPTORS,
@@ -55,6 +56,7 @@ const MANIFEST_FIELDS = Object.freeze([
   'expected_plan_digest',
   'grant_root',
   'grant_ttl_seconds',
+  'readiness_signing_key',
   'resource_ports',
   'schema_version',
   'socket_path',
@@ -318,6 +320,10 @@ function pinManifest(value, now) {
     value.execution_grant_key,
     'trusted_execution_grant_key_invalid',
   );
+  const readinessSigningKey = keyMetadata(
+    value.readiness_signing_key,
+    'trusted_execution_readiness_key_invalid',
+  );
   exactObject(
     value.effect_signing_keys,
     REQUIRED_SEAMS,
@@ -360,6 +366,13 @@ function pinManifest(value, now) {
     now,
   });
   activeKey(trustRegistry, {
+    keyId: readinessSigningKey.key_id,
+    purpose: 'trusted_execution_readiness',
+    serviceId:
+      'brain.kernel_equivalence.trusted_execution',
+    now,
+  });
+  activeKey(trustRegistry, {
     keyId: executionGrantKey.key_id,
     purpose: 'execution_grant',
     serviceId: 'brain.authority',
@@ -395,6 +408,15 @@ function pinManifest(value, now) {
       profile_id: value.resource_ports.profile_id,
       schema_version: value.resource_ports.schema_version,
     }),
+    readinessSigningKey:
+      Object.freeze(readinessSigningKey),
+    readinessTrustAnchor: Object.freeze(structuredClone(
+      trustRegistry.keys.find(
+        ({ key_id: keyId }) => (
+          keyId === readinessSigningKey.key_id
+        ),
+      ),
+    )),
     socketPath: value.socket_path,
     trustRegistry,
   });
@@ -449,10 +471,8 @@ export function createBrainOwnedDatabasePort(pool) {
   });
 }
 
-export function loadProductionTrustedExecutionWiring({
+function loadPinnedProductionManifest({
   env = process.env,
-  pool,
-  assemblyPorts,
   now = Date.now,
 } = {}) {
   if (!env || typeof env !== 'object' || Array.isArray(env)) {
@@ -477,6 +497,16 @@ export function loadProductionTrustedExecutionWiring({
     protectedManifest(configFile),
     pinnedNow,
   );
+  return manifest;
+}
+
+export function loadProductionTrustedExecutionWiring({
+  env = process.env,
+  pool,
+  assemblyPorts,
+  now = Date.now,
+} = {}) {
+  const manifest = loadPinnedProductionManifest({ env, now });
   const ports = pinAssemblyPorts(
     assemblyPorts,
     manifest.resourcePorts.profile_id,
@@ -495,6 +525,12 @@ export function loadProductionTrustedExecutionWiring({
     grantRoot: manifest.grantRoot,
     executionGrantAuthority,
     maximumTtlSeconds: manifest.grantTtlSeconds,
+    now,
+  });
+  const readinessSigner = loadTrustedExecutionReadinessSigner({
+    secretFile: manifest.readinessSigningKey.secret_file,
+    keyId: manifest.readinessSigningKey.key_id,
+    trustRegistry: manifest.trustRegistry,
     now,
   });
   const createService = createProductionTrustedExecutionServiceFactory({
@@ -519,6 +555,8 @@ export function loadProductionTrustedExecutionWiring({
   return Object.freeze({
     createService,
     grantIssuer,
+    readinessSigner,
+    readinessTrustAnchor: manifest.readinessTrustAnchor,
     resource_port_profile_id:
       manifest.resourcePorts.profile_id,
     socket_path: manifest.socketPath,

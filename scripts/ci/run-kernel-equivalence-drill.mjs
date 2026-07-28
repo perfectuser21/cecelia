@@ -18,10 +18,12 @@ import {
   compileReportDrillPlan,
 } from '../../packages/brain/src/lib/kernel-equivalence-report-clock.js';
 import {
-  BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
   createBrainTrustedExecutionClient,
   probeBrainTrustedExecutionSocketReadiness,
 } from '../../packages/brain/src/lib/kernel-equivalence-trusted-execution-client.js';
+import {
+  loadProductionTrustedExecutionReadinessConfiguration,
+} from '../../packages/brain/src/lib/kernel-equivalence-readiness-configuration.js';
 
 const repositoryRoot = resolve(
   new URL('../..', import.meta.url).pathname,
@@ -267,14 +269,31 @@ async function main() {
 
   if (['check', 'gate'].includes(options.mode)) {
     const { now, plan } = compileReportDrillPlan(contract);
-    const executionReadiness =
-      await probeBrainTrustedExecutionSocketReadiness({
-        socketPath:
-          process.env.KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH
-            || BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
-        expectedPlanDigest:
-          process.env.KERNEL_EQ_TRUSTED_EXECUTION_PLAN_DIGEST,
+    let executionReadiness;
+    try {
+      const readiness =
+        loadProductionTrustedExecutionReadinessConfiguration();
+      executionReadiness =
+        await probeBrainTrustedExecutionSocketReadiness({
+          socketPath: readiness.socket_path,
+          expectedPlanDigest:
+            readiness.expected_plan_digest,
+          readinessTrustAnchor:
+            readiness.readiness_trust_anchor,
+        });
+    } catch (error) {
+      const code = (
+        typeof error?.code === 'string'
+        && error.code.startsWith('trusted_execution_')
+      )
+        ? error.code
+        : 'trusted_execution_config_unavailable';
+      executionReadiness = Object.freeze({
+        ready: false,
+        code,
+        socket_path: null,
       });
+    }
     const report = checkReport(contract, plan, {
       bundleDir: options.bundleDir,
       executionReadiness,

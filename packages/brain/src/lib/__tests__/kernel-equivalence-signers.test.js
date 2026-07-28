@@ -97,7 +97,7 @@ function expected(cell, grant) {
 
 describe('protected Ed25519 equivalence signers', () => {
   it.runIf(process.platform === 'darwin')(
-    'rejects an ACL-bearing private key even when mode is 0600',
+    'rejects a private key bearing both an xattr and ACL even when mode is 0600',
     () => {
       const root = temporaryRoot();
       const keys = createTrustFixture();
@@ -106,6 +106,12 @@ describe('protected Ed25519 equivalence signers', () => {
         'acl-grant-authority.pem',
         keys.authority.privateKey,
       );
+      execFileSync('/usr/bin/xattr', [
+        '-w',
+        'com.cecelia.kernel-equivalence-test',
+        'present',
+        secretFile,
+      ]);
       execFileSync('/bin/chmod', [
         '+a',
         'everyone allow read',

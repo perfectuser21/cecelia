@@ -287,6 +287,33 @@ function expectedFromGrant(cell, grant) {
   };
 }
 
+export function loadTrustedExecutionReadinessSigner({
+  secretFile,
+  keyId,
+  trustRegistry,
+  now = Date.now,
+} = {}) {
+  const signer = loadSigner({
+    secretFile,
+    keyId,
+    purpose: 'trusted_execution_readiness',
+    serviceId:
+      'brain.kernel_equivalence.trusted_execution',
+    trustRegistry,
+    now,
+  });
+  return Object.freeze({
+    owner_service: 'brain.kernel_equivalence.readiness_signer',
+    capability_id:
+      'brain.kernel_equivalence.readiness_signer.v1',
+    key_id: signer.record.key_id,
+    signReadiness: (payload) => signer.signCanonical(
+      payload,
+      finiteNow(now),
+    ),
+  });
+}
+
 function violationCellFor(recoveryCell) {
   return {
     ...recoveryCell,

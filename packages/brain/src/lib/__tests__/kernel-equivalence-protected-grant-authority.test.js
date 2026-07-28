@@ -227,9 +227,15 @@ describe('protected execution grant file authority', () => {
   });
 
   it.runIf(process.platform === 'darwin')(
-    'rejects extended ACLs that grant access beyond mode bits',
+    'rejects grant files bearing both an xattr and extended ACL',
     async () => {
       const value = fixture();
+      execFileSync('/usr/bin/xattr', [
+        '-w',
+        'com.cecelia.kernel-equivalence-test',
+        'present',
+        value.grantPath,
+      ]);
       execFileSync('/bin/chmod', [
         '+a',
         'everyone allow read',
@@ -249,9 +255,15 @@ describe('protected execution grant file authority', () => {
   );
 
   it.runIf(process.platform === 'darwin')(
-    'rejects an ACL-bearing protected root even when mode remains 0700',
+    'rejects a protected root bearing both an xattr and ACL',
     () => {
       const value = fixture();
+      execFileSync('/usr/bin/xattr', [
+        '-w',
+        'com.cecelia.kernel-equivalence-test',
+        'present',
+        value.root,
+      ]);
       execFileSync('/bin/chmod', [
         '+a',
         'everyone allow list,search',
