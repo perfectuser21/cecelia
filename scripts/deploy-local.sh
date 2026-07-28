@@ -359,7 +359,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             rm -f "$SLOT_PID_FILE" "$PENDING_FILE"
         }
 
-        # 旧 slot 只能用 loopback identity + nonce 请求它自行退出；任何不确定性都阻断。
+        # 旧 slot 只能用 identity + nonce 请求它自行退出；任何不确定性都阻断。
         stop_previous_staging_slot
         rm -rf "$STAGING_DIST"
         rm -f "$DASH_DIR/.staging-notify.log" 2>/dev/null || true

@@ -88,7 +88,7 @@ stop_verified_staging_slot() {
     [[ "${STAGED_PORT:-}" =~ ^[1-9][0-9]*$ \
       && "${STAGED_PID:-}" =~ ^[1-9][0-9]*$ \
       && "${STAGED_SLOT_NONCE:-}" =~ ^[0-9a-f]{64}$ \
-      && "${STAGED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || return 0
+      && "${STAGED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || return 1
     staging_slot_host=$(BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" \
       node -e '
         try {
@@ -97,15 +97,15 @@ stop_verified_staging_slot() {
       ')
     [[ "$staging_slot_host" =~ ^[A-Za-z0-9.-]+$ ]] || {
         echo "⚠️  staging slot host invalid; refusing slot shutdown"
-        return 0
+        return 1
     }
     identity=$(curl -sf --max-time 2 \
       -H "X-Cecelia-Slot-Nonce: ${STAGED_SLOT_NONCE}" \
       -H "X-Cecelia-Slot-Commit: ${STAGED_COMMIT}" \
       "http://${staging_slot_host}:${STAGED_PORT}/.cecelia-staging-identity" \
       2>/dev/null) || {
-        echo "⚠️  staging slot identity unavailable; refusing PID kill"
-        return 0
+        echo "⚠️  staging slot identity unavailable; refusing slot shutdown"
+        return 1
     }
     if STAGING_IDENTITY_JSON="$identity" \
       EXPECTED_STAGING_PID="$STAGED_PID" \
@@ -125,9 +125,12 @@ stop_verified_staging_slot() {
           "http://${staging_slot_host}:${STAGED_PORT}/.cecelia-staging-shutdown" \
           -o /dev/null; then
             echo "⚠️  verified staging slot refused owned shutdown"
+            return 1
         fi
+        return 0
     else
-        echo "⚠️  staging slot identity mismatch; refusing PID kill"
+        echo "⚠️  staging slot identity mismatch; refusing slot shutdown"
+        return 1
     fi
 }
 
@@ -377,9 +380,12 @@ do_deploy() {
     fi
 
     # 停常驻 staging 服务 + 清放行标记/通知（防重复 promote）。
-    stop_verified_staging_slot
-    rm -f "$SLOT_PID_FILE"
-    rm -f "$PENDING_FILE" "$SLOT_LOG_FILE" "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
+    if stop_verified_staging_slot; then
+        rm -f "$SLOT_PID_FILE" "$PENDING_FILE" "$SLOT_LOG_FILE" \
+          "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
+    else
+        echo "⚠️  staging slot authority retained for verified cleanup on next deploy"
+    fi
 
     # ── HK 同步：rsync 本机 live dist → HK /opt/cecelia/frontend/dist/ ───────────
     if [[ -z "${CECELIA_SKIP_HK:-}" ]]; then

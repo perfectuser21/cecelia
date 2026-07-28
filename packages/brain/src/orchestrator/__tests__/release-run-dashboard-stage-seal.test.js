@@ -274,6 +274,7 @@ describe('sealed Dashboard staging identity', () => {
       current_deployed_digest: digestTree(exact.live),
     });
     expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+    expect(existsSync(exact.pending)).toBe(true);
   });
 
   it('rejects even an exact retained release and never kills an unverified reused PID', () => {
