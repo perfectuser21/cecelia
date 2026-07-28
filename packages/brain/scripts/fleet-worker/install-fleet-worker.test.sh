@@ -238,6 +238,7 @@ printf '%s\n' \
   'if [[ "${1:-}" == "-" ]]; then' \
   '  cat >/dev/null' \
   '  printf "%s\n" "$PATH" > "${FLEET_WORKER_TEST_DEFAULT_PROBE_PATH:?}"' \
+  '  [[ "${CECELIA_ORBSTACK_HOME:-}" == "/Users/orbstack-owner" ]] || { echo prerequisite_orbstack_home >&2; exit 1; }' \
   '  [[ "$(command -v orbctl || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/orbctl" ]] || { echo prerequisite_orbstack >&2; exit 1; }' \
   '  [[ "$(command -v docker || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/docker" ]] || { echo prerequisite_docker >&2; exit 1; }' \
   '  exit 0' \
@@ -267,6 +268,7 @@ FLEET_WORKER_ID="$test_root/id-default-probe" \
 FLEET_WORKER_PLUTIL="$test_root/plutil" \
 FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
 FLEET_WORKER_DATA_ROOT="$worker_data_root" \
+FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
   env -u FLEET_WORKER_NODE_PROBE \
   "$INSTALLER" xian-mac-m4 --render-to "$default_probe_plist" >/dev/null \
   || fail "default preflight could not resolve reconciled OrbStack commands"
