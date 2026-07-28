@@ -93,6 +93,26 @@ describe('compileDrillPlan', () => {
       'drill_effect_signer_key_missing',
     );
   });
+
+  it.each([
+    ['algorithm', (registry) => { registry.algorithm = 'rsa'; }],
+    ['grant freshness', (registry) => { registry.grant_max_age_seconds = 0; }],
+    ['effect freshness', (registry) => { registry.effect_receipt_max_age_seconds = '86400'; }],
+    ['collector freshness', (registry) => { delete registry.collector_bundle_max_age_seconds; }],
+    ['single-use nonce', (registry) => { registry.replay_nonce.single_use = false; }],
+    ['atomic nonce', (registry) => { registry.replay_nonce.atomic_consumer_required = false; }],
+  ])('rejects an invalid trust registry even while every signer is missing: %s', (
+    _label,
+    mutate,
+  ) => {
+    const contract = clone(rootContract());
+    mutate(contract.behavior_equivalence.drill_trust_registry);
+
+    expectDrillError(
+      () => compileDrillPlan(contract),
+      'trust_registry_invalid',
+    );
+  });
 });
 
 function executionFixture() {
