@@ -4,13 +4,24 @@
 # - changelog: 每次改动追加（细粒度变更历史）
 
 version: "1.3.0"
-updated: "2026-07-26"
+updated: "2026-07-27"
 
 # ============================================================================
 # Features 注册（v18.22.2 新增）
 # 每个 feature 是 Cecelia 的"完整能力单元"，比 changelog 单条改动粒度大
 # ============================================================================
 features:
+  - id: kernel-merge-authority-guard
+    type: hook
+    path: packages/engine/hooks/bash-guard.sh
+    description: 拒绝所有 Agent/Hook/Skill 的直接 PR merge；唯一授权路径是 Kernel exact-SHA authorization + effect receipt
+    status: active
+    introduced_in: "19.7.0"
+    test: packages/engine/tests/hooks/bash-guard.test.ts
+    changelog:
+      - version: "19.7.0"
+        change: 撤销 Claude Code 旧 auto-merge/Stop Hook merge authority，统一到 Kernel
+
   - id: light-evaluator
     type: script
     path: packages/engine/scripts/devgate/light-evaluator.cjs
@@ -84,7 +95,7 @@ features:
         - P1 PR 未创建 → block: 立即 push + gh pr create
         - P2 CI 进行中 → block: 等 CI（gh pr checks --watch）
         - P3 CI 失败 → block: fail job 名 + log URL（修代码 → push 触发新 CI）
-        - P4 PR 通过未合 → block: auto-merge
+        - P4 PR 通过未合 → release session；Kernel evaluator/judge/merge gate 继续
         - P5 deploy workflow conclusion=success（VERIFY_DEPLOY_WORKFLOW=1，engine-only PR 跳过）
         - P6 health probe /api/brain/health 200（VERIFY_HEALTH_PROBE=1，60×5s）
         - P7 Learning 文件存在 + 含 ### 根本原因
@@ -148,6 +159,15 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.7.0"
+    date: "2026-07-27"
+    change: "[CONFIG] 统一 Kernel merge authority"
+    description: "Bash guard 拒绝直接 PR merge；quality post-create/stop hooks 与 CI 兼容 job 撤销 auto-merge 权威，PR 仅由 Kernel exact-SHA authorization/effect receipt 合并。"
+    files:
+      - "hooks/bash-guard.sh"
+      - "../quality/hooks/post-pr-create.sh"
+      - "../quality/hooks/stop.sh"
+      - "../../.github/workflows/ci.yml"
   - version: "19.4.4"
     date: "2026-07-09"
     change: '[CONFIG] pre-commit hook zenithjoy-skills 豁免收紧 + 测试接入CI'
