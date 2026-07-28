@@ -109,6 +109,22 @@
   留证: exit code 输出
   Test: manual:bash -c 'TMP7=$(mktemp -d); TRANSCRIPT7="$TMP7/transcript.jsonl"; printf '"'"'{"role":"assistant","content":"[TURN: pending_user]"}\n'"'"' > "$TRANSCRIPT7"; CLAUDE_HOOK_TRANSCRIPT_PATH="$TRANSCRIPT7" bash -c "cd $TMP7 && bash /workspace/packages/engine/hooks/stop-conversation.sh" > /tmp/b07_out.txt 2>&1; RC=$?; rm -rf "$TMP7"; [ $RC -eq 0 ] && echo "B-07 PASS exit=0（无锁文件不阻断）" || { echo "FAIL exit=$RC"; cat /tmp/b07_out.txt; exit 1; }'
 
+- [ ] [BEHAVIOR] [L2] B-08: conversation-agent.js spawn 路径写入 .conversation-mode / resolve 路径删除（TDD Red — D2 待实现）[接缝×1]
+  动作: 调用 conversation-agent.js 的 spawn 路径（createConversation/startConversation），检查工作目录下 .conversation-mode 文件被创建；再调用 resolve/archive 路径，检查文件被删除
+  预期观察: spawn 后 .conversation-mode 存在，内含 conversation_id；resolve/archive 后 .conversation-mode 不存在
+  等待预算: 5s
+  留证: 文件 stat 输出（存在/不存在）
+  TDD Red: conversation-agent.js 当前无 .conversation-mode 写/删逻辑（D2 待实现），此断言在 D2 实现前故意 FAIL
+  Test: vitest:sprints/07281915-relay-2a4ead8d/tests/conversation-agent-lock.test.ts
+
+- [ ] [BEHAVIOR] [L2] B-09: .conversation-mode 存在 + 末轮无 [TURN:...] → exit 2（无标记 block，TDD Red — D3 待实现）[接缝×1]
+  动作: 构造末轮无任何 [TURN:...] 的 transcript JSONL + .conversation-mode 文件，调用 stop-conversation.sh
+  预期观察: exit code = 2（有锁文件但无标记，必须阻断，防止 agent 静默退出）
+  等待预算: 5s
+  留证: /tmp/b09_out.txt + exit code 输出
+  TDD Red: stop-conversation.sh 当前对无标记内容仅 exit 0（D3 尚未实现无标记 block 分支），此断言在 D3 实现前故意 FAIL
+  Test: manual:bash -c 'TMP9=$(mktemp -d); TRANSCRIPT9="$TMP9/transcript.jsonl"; printf '"'"'{"role":"assistant","content":"这是普通回复，没有任何 TURN 标记"}\n'"'"' > "$TRANSCRIPT9"; touch "$TMP9/.conversation-mode"; CLAUDE_HOOK_TRANSCRIPT_PATH="$TRANSCRIPT9" bash -c "cd $TMP9 && bash /workspace/packages/engine/hooks/stop-conversation.sh" > /tmp/b09_out.txt 2>&1; RC=$?; rm -rf "$TMP9"; [ $RC -eq 2 ] && echo "B-09 PASS exit=2（无标记 block）" || { echo "FAIL exit=$RC（D3 无标记 block 未实现，TDD Red）"; cat /tmp/b09_out.txt; exit 1; }'
+
 ---
 
 ## 失败语义声明

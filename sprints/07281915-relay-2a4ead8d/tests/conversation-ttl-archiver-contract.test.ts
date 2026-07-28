@@ -5,8 +5,29 @@
  * [BEHAVIOR] B-03: TTL archiver 单测全通过
  * [BEHAVIOR] B-05: SQL 只软归档（status→archived），不 DELETE
  *
- * 补强 packages/brain/src/__tests__/conversation-ttl-archiver.test.js 已有测试，
- * 增加合同层面的集成视角断言。
+ * ── 差异化价值说明（F-04 修复）──────────────────────────────────────
+ * 本文件与 packages/brain/src/__tests__/conversation-ttl-archiver.test.js 均测试
+ * TTL archiver，但关注层不同：
+ *
+ * 【已有单测】conversation-ttl-archiver.test.js（单元层）
+ *   - 关注：函数级行为（gate 是否触发 / archived 条数 / skipped 标志）
+ *   - 断言粒度：返回值（result.archived / result.skipped）
+ *   - 目标：保证函数逻辑正确，回归防护
+ *
+ * 【本合同测试】conversation-ttl-archiver-contract.test.ts（合同层）
+ *   - 关注 1：SQL 字面量语义（B-05）
+ *     * UPDATE 含 status='archived'（非 DELETE，对应 INV-7）
+ *     * 含 ttl_expires_at < NOW() 时间过滤（只归档到期的）
+ *     * 含 status IN ('active','suspended')（不归档已终态）
+ *   - 关注 2：INV-7 铁律绑定
+ *     * "只软归档" 语义在合同层显式 assert，evaluator 可单独对此 judgment
+ *     * 若将来有人把 SQL 改成 DELETE + INSERT（等价但违反 INV-7），单测不感知，合同测试必 FAIL
+ *   - 关注 3：合同责任归属
+ *     * 本文件是 PR4 合同的正式组成部分，evaluator 凭此判定 D4 是否通过
+ *     * 已有单测是 Brain 内部质量保障，不属于合同层
+ *
+ * 总结：两个文件互补，不冲突。合同层的唯一价值是：SQL 字面量 + INV-7 语义锁定。
+ * ──────────────────────────────────────────────────────────────────
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

@@ -151,6 +151,60 @@ cd /workspace && node --experimental-vm-modules node_modules/.bin/vitest run \
 
 Dashboard 对话回路全流程验证（Playwright，localhost:5174）。
 
+**声明（F-02 修复）**：Playwright E2E-4 全流程依赖真实 claude headless agent + Dashboard UI（localhost:5174），
+无法在 local_api 纯 shell 环境中执行，**延至 staging 阶段由 evaluator 执行**。
+合同责任归属：generator 交付可运行的 Playwright 测试脚本；evaluator 在 staging 环境执行验收并判定。
+
+**Playwright E2E-4 全流程步骤**（staging 预览闸步骤 B 执行）：
+
+```bash
+# 前置条件：
+#   1. Dashboard 已在 localhost:5174 运行（npm run dev 或 staging 部署）
+#   2. Brain API 已在 localhost:5221 运行
+#   3. 已有至少一条 golden_path 记录（gp_id 不为空）
+#   4. 真实 claude CLI 已安装且 API key 有效
+
+# E2E-4 Playwright 验收命令（mac_web，target_environment）
+cd /workspace && npx playwright test \
+  --project=mac_web \
+  --grep "E2E-4|对话回路全流程|WarRoomLineCommand" \
+  --reporter=line \
+  2>&1 | tee /tmp/e2e4_playwright_out.txt
+
+# 若无专用 spec，使用以下内联验证脚本：
+node -e "
+const { chromium } = require('@playwright/test');
+(async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  // Step 1: 导航到 Dashboard
+  await page.goto('http://localhost:5174');
+  // Step 2: 等待 ConversationsPanel 加载
+  await page.waitForSelector('[data-testid=\"conversations-panel\"], .conversations-panel', { timeout: 10000 });
+  // Step 3: 开启新对话（触发 conversation-agent spawn + .conversation-mode 写入）
+  const newConvBtn = await page.$('[data-testid=\"new-conversation\"], button:has-text(\"新建对话\")');
+  if (newConvBtn) await newConvBtn.click();
+  // Step 4: 等待 agent 回复含 decision_saved（最长 60s）
+  await page.waitForFunction(
+    () => document.body.innerText.includes('decision_saved'),
+    { timeout: 60000 }
+  );
+  // Step 5: DB 验证 decisions 表
+  const { execSync } = require('child_process');
+  const count = JSON.parse(execSync('curl -sf localhost:5221/api/brain/decisions?limit=1', { encoding: 'utf-8' })).length;
+  if (count < 1) throw new Error('E2E-4 FAIL: decisions 表无记录');
+  console.log('E2E-4 PASS: 全流程验收通过，decisions 落库已验证');
+  await browser.close();
+})().catch(err => { console.error('E2E-4 FAIL:', err.message); process.exit(1); });
+" 2>&1 | tee /tmp/e2e4_inline_out.txt
+```
+
+**E2E-4 通过标准**：
+- ConversationsPanel 加载无报错
+- agent 回复含 `[TURN: decision_saved=<uuid>]`
+- decisions 表存在对应 uuid 记录
+- 会话结束 stop-conversation.sh exit 0
+
 ---
 
 ## E2E 验收
@@ -280,8 +334,35 @@ bash scripts/deploy.sh staging 2>/dev/null || echo "staging deploy 脚本不存�
 ### 步骤 B：Final E2E 在 staging 跑 + 截图
 
 ```bash
+# B-1: Shell Hook + TTL archiver E2E（E2E-1~3 + E2E-5）
 BASE_URL=http://localhost:5212 bash sprints/07281915-relay-2a4ead8d/contract-e2e.sh
 # 截图存至 sprints/07281915-relay-2a4ead8d/screenshots/staging-*.png
+
+# B-2: Playwright 全流程 E2E-4（user_facing mac_web，延至此处执行）
+# 前置：Dashboard 在 localhost:5212 或 localhost:5174 已启动，Brain 在 localhost:5221 已启动
+cd /workspace && BASE_URL=http://localhost:5212 npx playwright test \
+  --project=mac_web \
+  --grep "E2E-4|对话回路全流程|WarRoomLineCommand" \
+  --reporter=line \
+  2>&1 | tee /tmp/staging_e2e4_playwright_out.txt || \
+node -e "
+const { chromium } = require('@playwright/test');
+(async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  await page.goto('http://localhost:5174');
+  await page.waitForSelector('[data-testid=\"conversations-panel\"], .conversations-panel', { timeout: 10000 });
+  const newConvBtn = await page.$('[data-testid=\"new-conversation\"], button:has-text(\"新建对话\")');
+  if (newConvBtn) await newConvBtn.click();
+  await page.waitForFunction(() => document.body.innerText.includes('decision_saved'), { timeout: 60000 });
+  const { execSync } = require('child_process');
+  const count = JSON.parse(execSync('curl -sf localhost:5221/api/brain/decisions?limit=1', { encoding: 'utf-8' })).length;
+  if (count < 1) throw new Error('E2E-4 FAIL: decisions 表无记录');
+  await page.screenshot({ path: 'sprints/07281915-relay-2a4ead8d/screenshots/staging-e2e4-decision-saved.png' });
+  console.log('E2E-4 PASS: 全流程验收通过');
+  await browser.close();
+})().catch(err => { console.error('E2E-4 FAIL:', err.message); process.exit(1); });
+" 2>&1 | tee /tmp/staging_e2e4_inline_out.txt
 ```
 
 ### 步骤 C：Bark 推主理人预览链接（通知式）
