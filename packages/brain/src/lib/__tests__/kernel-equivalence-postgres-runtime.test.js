@@ -81,7 +81,7 @@ function transactionPool({ updateRows, readbackBundle }) {
       if (/UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)) {
         return { rows: updateRows, rowCount: updateRows.length };
       }
-      if (/SELECT bundle FROM kernel_equivalence_receipt_bundles/i.test(text)) {
+      if (/SELECT bundle\s+FROM kernel_equivalence_receipt_bundles/i.test(text)) {
         return {
           rows: readbackBundle == null ? [] : [{ bundle: readbackBundle }],
           rowCount: readbackBundle == null ? 0 : 1,
@@ -92,7 +92,30 @@ function transactionPool({ updateRows, readbackBundle }) {
     release: vi.fn(),
   };
   return {
-    pool: { connect: vi.fn(async () => client) },
+    pool: {
+      connect: vi.fn(async () => client),
+      query: vi.fn(async (text, params) => {
+        if (/SELECT genesis_hash, head_hash, revision/i.test(text)) {
+          return {
+            rows: [{
+              genesis_hash: null,
+              head_hash: null,
+              revision: 0,
+            }],
+            rowCount: 1,
+          };
+        }
+        if (/SELECT bundle\s+FROM kernel_equivalence_receipt_bundles/i.test(text)) {
+          return {
+            rows: readbackBundle == null
+              ? []
+              : [{ bundle: readbackBundle }],
+            rowCount: readbackBundle == null ? 0 : 1,
+          };
+        }
+        throw new Error(`unexpected pool SQL: ${text} ${params}`);
+      }),
+    },
     client,
     calls,
   };
@@ -160,6 +183,7 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       readbackBundle: value.bundle,
     });
     const store = createPostgresBundleChainStore({ pool: runtime.pool });
+    await store.getCheckpoint();
 
     await expect(store.commit({
       bundle: value.bundle,
@@ -175,7 +199,10 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     });
     expect(runtime.calls.map(({ text }) => text.trim().split(/\s+/)[0]))
       .toEqual(['BEGIN', 'INSERT', 'UPDATE', 'SELECT', 'COMMIT']);
-    expect(store.readBundle(value.hash)).toEqual(value.bundle);
+    await expect(store.readBundle(value.hash)).resolves.toEqual(value.bundle);
+    expect(runtime.calls.find(({ text }) => (
+      /UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)
+    )).text).toMatch(/revision = \$4/i);
     expect(runtime.client.release).toHaveBeenCalledOnce();
   });
 
@@ -186,6 +213,7 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       readbackBundle: null,
     });
     const store = createPostgresBundleChainStore({ pool: runtime.pool });
+    await store.getCheckpoint();
 
     await expect(store.commit({
       bundle: value.bundle,
@@ -197,10 +225,10 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     });
     expect(runtime.calls.map(({ text }) => text.trim()))
       .toContain('ROLLBACK');
-    expect(() => store.readBundle(value.hash))
-      .toThrowError(expect.objectContaining({
+    await expect(store.readBundle(value.hash))
+      .rejects.toMatchObject({
         code: 'bundle_chain_read_unavailable',
-      }));
+      });
   });
 
   it('rolls back when durable readback differs from the canonical bundle', async () => {
@@ -214,6 +242,7 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       readbackBundle: { tampered: true },
     });
     const store = createPostgresBundleChainStore({ pool: runtime.pool });
+    await store.getCheckpoint();
 
     await expect(store.commit({
       bundle: value.bundle,
@@ -222,6 +251,28 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     })).rejects.toMatchObject({ code: 'bundle_chain_readback_invalid' });
     expect(runtime.calls.map(({ text }) => text.trim()))
       .toContain('ROLLBACK');
+  });
+
+  it('reads and canonical-verifies a durable bundle from a fresh store instance', async () => {
+    const value = bundleFixture();
+    const pool = {
+      connect: vi.fn(),
+      query: vi.fn(async () => ({
+        rows: [{ bundle: value.bundle }],
+        rowCount: 1,
+      })),
+    };
+    const freshStore = createPostgresBundleChainStore({ pool });
+
+    await expect(freshStore.readBundle(value.hash)).resolves.toEqual(value.bundle);
+    expect(pool.query).toHaveBeenCalledOnce();
+    pool.query.mockResolvedValue({
+      rows: [{ bundle: { tampered: true } }],
+      rowCount: 1,
+    });
+    await expect(freshStore.readBundle(value.hash)).rejects.toMatchObject({
+      code: 'bundle_chain_readback_invalid',
+    });
   });
 
   it('resolves one exact committed violation predecessor and rejects ambiguity', async () => {
@@ -240,7 +291,9 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       adapter_id: value.cell.adapter_id,
     };
     const pool = {
-      query: vi.fn(async () => ({ rows: [{ bundle: value.bundle }] })),
+      query: vi.fn(async () => ({
+        rows: [{ bundle_hash: value.hash, bundle: value.bundle }],
+      })),
     };
     const resolve = createPostgresPredecessorResolver({ pool });
 
@@ -250,10 +303,19 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     });
     expect(pool.query.mock.calls[0][0]).toMatch(/LIMIT 2/i);
     pool.query.mockResolvedValue({
-      rows: [{ bundle: value.bundle }, { bundle: value.bundle }],
+      rows: [
+        { bundle_hash: value.hash, bundle: value.bundle },
+        { bundle_hash: value.hash, bundle: value.bundle },
+      ],
     });
     await expect(resolve(request)).rejects.toMatchObject({
       code: 'recovery_predecessor_ambiguous',
+    });
+    pool.query.mockResolvedValue({
+      rows: [{ bundle_hash: 'f'.repeat(64), bundle: value.bundle }],
+    });
+    await expect(resolve(request)).rejects.toMatchObject({
+      code: 'recovery_predecessor_invalid',
     });
   });
 });

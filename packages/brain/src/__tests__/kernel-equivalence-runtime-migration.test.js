@@ -27,7 +27,33 @@ describe('provisional migration 375 Kernel equivalence runtime', () => {
     expect(sql).toMatch(/BEFORE UPDATE OR DELETE ON kernel_equivalence_execution_nonces/i);
     expect(sql).toMatch(/BEFORE UPDATE OR DELETE ON kernel_equivalence_denial_audits/i);
     expect(sql).toMatch(/BEFORE UPDATE OR DELETE ON kernel_equivalence_receipt_bundles/i);
+    expect(sql).toMatch(/BEFORE TRUNCATE ON kernel_equivalence_execution_nonces/i);
+    expect(sql).toMatch(/BEFORE TRUNCATE ON kernel_equivalence_denial_audits/i);
+    expect(sql).toMatch(/BEFORE TRUNCATE ON kernel_equivalence_receipt_bundles/i);
     expect(sql).toMatch(/append-only/i);
+  });
+
+  it.each([
+    ['behavior_id', 'behavior_id'],
+    ['provider', 'provider'],
+    ['scenario', 'scenario'],
+    ['artifact_sha', 'artifact_sha'],
+    ['resource_id', 'resource_id'],
+    ['resource_ref', 'resource_ref'],
+    ['seam_id', 'seam_id'],
+    ['adapter_id', 'adapter_id'],
+    ['grant_id', 'grant_id::text'],
+  ])('binds extracted %s to the signed bundle JSON', (_label, expression) => {
+    expect(sql).toMatch(new RegExp(
+      `bundle->>'${_label}'\\s*=\\s*${expression.replace('::', '\\\\:\\\\:')}`,
+      'i',
+    ));
+  });
+
+  it('binds nonce and bundle ownership to authoritative Run and Attempt rows', () => {
+    expect(sql).toMatch(/run_id UUID NOT NULL REFERENCES initiative_runs\(id\)/i);
+    expect(sql).toMatch(/attempt_id UUID NOT NULL REFERENCES harness_attempts\(id\)/i);
+    expect(sql).toMatch(/kernel_equivalence_attempt_run_guard/i);
   });
 
   it('keeps a dedicated CAS head and indexes exact violation predecessors', () => {
