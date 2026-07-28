@@ -18,9 +18,8 @@ import {
   compileReportDrillPlan,
 } from '../../packages/brain/src/lib/kernel-equivalence-report-clock.js';
 import {
-  loadTrustedEquivalenceRuntime,
-  validateTrustedRuntimeEnvironment,
-} from '../../packages/brain/src/lib/kernel-equivalence-runtime-loader.js';
+  createBrainTrustedExecutionClient,
+} from '../../packages/brain/src/lib/kernel-equivalence-trusted-execution-client.js';
 
 const repositoryRoot = resolve(
   new URL('../..', import.meta.url).pathname,
@@ -50,25 +49,18 @@ function parseArguments(argv) {
   const mode = modeArguments[0].slice(2);
 
   if (mode === 'execute') {
-    const trustedRuntime = argv.at(-1) === '--trusted-runtime';
     if (
-      argv.length !== (trustedRuntime ? 10 : 9)
+      argv.length !== 5
       || argv[0] !== '--execute'
       || argv[1] !== '--cell'
-      || argv[3] !== '--grant'
-      || argv[5] !== '--state-dir'
-      || argv[7] !== '--receipt-dir'
-      || (trustedRuntime && argv[9] !== '--trusted-runtime')
+      || argv[3] !== '--grant-ref'
     ) {
-      usage('execute requires canonical --cell/--grant/--state-dir/--receipt-dir order');
+      usage('execute requires canonical --cell/--grant-ref order');
     }
     return {
       mode,
       cellId: argv[2],
-      grantPath: safeAbsolutePath(argv[4], 'grant'),
-      stateDir: safeAbsolutePath(argv[6], 'state-dir'),
-      receiptDir: safeAbsolutePath(argv[8], 'receipt-dir'),
-      trustedRuntime,
+      grantRef: argv[4],
       format: 'json',
     };
   }
@@ -288,65 +280,36 @@ async function main() {
 
   const cell = plan.cells.find((candidate) => candidate.cell_id === options.cellId);
   if (!cell) usage('cell is not in the canonical 99-cell plan');
-  if (options.trustedRuntime) {
-    try {
-      validateTrustedRuntimeEnvironment(process.env);
-      const originalLog = console.log;
-      let pool;
-      try {
-        console.log = () => {};
-        pool = (await import('../../packages/brain/src/db.js')).default;
-      } finally {
-        console.log = originalLog;
-      }
-      const runtime = await loadTrustedEquivalenceRuntime({
-        env: process.env,
-        trustRegistry:
-          contract.behavior_equivalence?.drill_trust_registry,
-        pool,
-      });
-      const result = await runtime.executeCell({
-        cell,
-        grantPath: options.grantPath,
-      });
-      output({
-        schema_version: 'kernel-equivalence-drill-cli/v1',
-        mode: 'execute',
-        cell_id: cell.cell_id,
-        execution_ready: result.status === 'collected',
-        ...result,
-      }, 'json');
-      if (result.status !== 'collected') process.exitCode = 1;
-      return;
-    } catch (error) {
-      const code = typeof error?.code === 'string'
-        && error.code.startsWith('trusted_runtime_')
-        ? error.code
-        : 'trusted_runtime_wiring_failed';
-      output({
-        schema_version: 'kernel-equivalence-drill-cli/v1',
-        mode: 'execute',
-        cell_id: cell.cell_id,
-        status: 'blocked',
-        code,
-        execution_ready: false,
-        audit: null,
-      }, 'json');
-      process.exitCode = 1;
-      return;
-    }
+  try {
+    const client = createBrainTrustedExecutionClient();
+    const result = await client.execute({
+      cell_id: cell.cell_id,
+      grant_ref: options.grantRef,
+    });
+    output({
+      ...result,
+      schema_version: 'kernel-equivalence-drill-cli/v1',
+      mode: 'execute',
+      cell_id: cell.cell_id,
+      execution_ready: result.status === 'collected',
+    }, 'json');
+    if (result.status !== 'collected') process.exitCode = 1;
+  } catch (error) {
+    const code = typeof error?.code === 'string'
+      && error.code.startsWith('trusted_execution_')
+      ? error.code
+      : 'trusted_execution_client_failed';
+    output({
+      schema_version: 'kernel-equivalence-drill-cli/v1',
+      mode: 'execute',
+      cell_id: cell.cell_id,
+      status: 'blocked',
+      code,
+      execution_ready: false,
+      audit: null,
+    }, 'json');
+    process.exitCode = 1;
   }
-  output({
-    schema_version: 'kernel-equivalence-drill-cli/v1',
-    mode: 'execute',
-    cell_id: cell.cell_id,
-    status: 'blocked',
-    code: 'trusted_execution_wiring_unavailable',
-    execution_ready: false,
-    missing_wiring: EXECUTION_WIRING_BLOCKERS,
-    audit: null,
-  }, 'json');
-  process.exitCode = 1;
 }
 
 try {

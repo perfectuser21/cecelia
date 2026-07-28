@@ -130,6 +130,21 @@ describe('kernel equivalence drill CLI', () => {
     [['--plan', '--unknown']],
     [['--plan', '--cell', 'anything']],
     [['--execute']],
+    [[
+      '--execute',
+      '--cell',
+      'KERNEL-P0-01-BRANCH-PROTECTION::codex::normal',
+      '--grant',
+      '/tmp/caller.grant.json',
+    ]],
+    [[
+      '--execute',
+      '--cell',
+      'KERNEL-P0-01-BRANCH-PROTECTION::codex::normal',
+      '--grant-ref',
+      'kernel-equivalence-grant:11111111-1111-4111-8111-111111111111',
+      '--trusted-runtime',
+    ]],
   ])('rejects invalid or incomplete arguments: %j', (args) => {
     const result = run(args);
 
@@ -137,76 +152,34 @@ describe('kernel equivalence drill CLI', () => {
     expect(result.stderr).toMatch(/^kernel_equivalence_cli_usage:/);
   });
 
-  it('fails a root execute cell at the explicit trusted-wiring gate without writes', () => {
-    const temporaryRoot = mkdtempSync(join(tmpdir(), 'kernel-eq-cli-'));
-    try {
-      const stateDir = join(temporaryRoot, 'state');
-      const receiptDir = join(temporaryRoot, 'receipts');
-      const grantPath = join(temporaryRoot, 'missing.grant.json');
-      const result = run([
-        '--execute',
-        '--cell',
-        'KERNEL-P0-01-BRANCH-PROTECTION::codex::normal',
-        '--grant',
-        grantPath,
-        '--state-dir',
-        stateDir,
-        '--receipt-dir',
-        receiptDir,
-      ]);
+  it('sends only a canonical cell id and protected grant ref to Brain', () => {
+    const result = run([
+      '--execute',
+      '--cell',
+      'KERNEL-P0-01-BRANCH-PROTECTION::codex::normal',
+      '--grant-ref',
+      'kernel-equivalence-grant:11111111-1111-4111-8111-111111111111',
+    ]);
 
-      expect(result.status).toBe(1);
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        mode: 'execute',
-        status: 'blocked',
-        code: 'trusted_execution_wiring_unavailable',
-        execution_ready: false,
-        missing_wiring: [
-          'trusted_nonce_consumer_unavailable',
-          'trusted_adapter_registry_unavailable',
-          'trusted_collector_unavailable',
-          'trusted_bundle_chain_store_unavailable',
-          'trusted_cleanup_verifier_unavailable',
-        ],
-      });
-      expect(existsSync(stateDir)).toBe(false);
-      expect(existsSync(receiptDir)).toBe(false);
-    } finally {
-      rmSync(temporaryRoot, { recursive: true, force: true });
-    }
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      mode: 'execute',
+      status: 'blocked',
+      code: 'trusted_execution_socket_unavailable',
+      execution_ready: false,
+    });
   });
 
-  it('invokes trusted loading only behind the explicit opt-in flag', () => {
-    const temporaryRoot = mkdtempSync(join(tmpdir(), 'kernel-eq-cli-trusted-'));
-    try {
-      const secret = 'credential-must-not-escape';
-      const result = run([
-        '--execute',
-        '--cell',
-        'KERNEL-P0-01-BRANCH-PROTECTION::codex::normal',
-        '--grant',
-        join(temporaryRoot, 'missing.grant.json'),
-        '--state-dir',
-        join(temporaryRoot, 'state'),
-        '--receipt-dir',
-        join(temporaryRoot, 'receipts'),
-        '--trusted-runtime',
-      ], {
-        KERNEL_EQ_COLLECTOR_PRIVATE_KEY: secret,
-      });
+  it('does not import trusted runtime, key, database, or registry code', () => {
+    const source = readFileSync(scriptPath, 'utf8');
 
-      expect(result.status).toBe(1);
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        mode: 'execute',
-        status: 'blocked',
-        code: 'trusted_runtime_raw_secret_forbidden',
-        execution_ready: false,
-      });
-      expect(`${result.stdout}${result.stderr}`).not.toContain(secret);
-      expect(existsSync(join(temporaryRoot, 'state'))).toBe(false);
-      expect(existsSync(join(temporaryRoot, 'receipts'))).toBe(false);
-    } finally {
-      rmSync(temporaryRoot, { recursive: true, force: true });
-    }
+    expect(source).not.toMatch(
+      /kernel-equivalence-(?:runtime-loader|signers|runtime-registry)/,
+    );
+    expect(source).not.toMatch(/packages\/brain\/src\/db\.js/);
+    expect(source).not.toMatch(
+      /KERNEL_EQ_(?:COLLECTOR|EFFECT|GRANT_AUTHORITY)_[A-Z_]+/,
+    );
+    expect(source).not.toContain('--trusted-runtime');
   });
 });
