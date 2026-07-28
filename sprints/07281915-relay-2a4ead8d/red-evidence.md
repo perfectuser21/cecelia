@@ -10,3 +10,4 @@ task_id: 2a4ead8d-a979-48e6-b317-676129e45f6a
 - sprints/07281915-relay-2a4ead8d/tests/conversation-agent-lock.test.ts (B-08)
 
 TDD 起跑点：测试均为 Red 状态（D2/D3 实现前故意 FAIL）
+
