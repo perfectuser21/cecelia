@@ -6,6 +6,7 @@ import { reviewClassForReason } from '../orchestrator/human-review-class.js';
 import { authenticateApprover } from './harness-pending-reviews.js';
 
 const router = Router();
+const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const approvalRateLimit = rateLimit({
   windowMs: 60_000,
   limit: 10,
@@ -19,6 +20,44 @@ function asJson(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch { return {}; }
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(
+      (key) => `${JSON.stringify(key)}:${stableJson(value[key])}`,
+    ).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function validMergeReviewProof(proof, {
+  taskId,
+  runId,
+  reviewRequestHop,
+  headSha,
+}) {
+  const bindings = proof?.bindings;
+  return proof?.schema_version === 'kernel-post-diff-risk/v1'
+    && proof.policy_version === 'kernel-post-diff-risk/v1'
+    && proof.human_review_required === true
+    && proof.auto_eligible === false
+    && ['medium', 'high'].includes(proof.risk_level)
+    && Number.isFinite(Date.parse(proof.expires_at))
+    && Date.parse(proof.expires_at) > Date.now()
+    && bindings?.task_id === taskId
+    && bindings?.run_id === runId
+    && bindings?.hop === reviewRequestHop
+    && bindings?.head_sha === headSha
+    && SHA256_PATTERN.test(bindings?.diff_hash ?? '')
+    && Number.isInteger(bindings?.contract_version)
+    && bindings.contract_version > 0
+    && SHA256_PATTERN.test(bindings?.contract_digest ?? '')
+    && typeof bindings?.behavior_version === 'string'
+    && bindings.behavior_version.length > 0
+    && typeof bindings?.path_class === 'string'
+    && bindings.path_class.length > 0;
 }
 
 async function handleReviewDecision(req, res, { approved }) {
@@ -79,6 +118,25 @@ async function handleReviewDecision(req, res, { approved }) {
       return res.status(409).json({ error: 'human_review_request_not_found_for_sha' });
     }
     const reviewClass = reviewClassForReason(requestDetail.review_reason);
+    let postDiffRisk = null;
+    if (reviewClass === 'merge_gate') {
+      const observedRisk = asJson(requestObserved.post_diff_risk);
+      const detailRisk = asJson(requestDetail.post_diff_risk);
+      const requestedRisk = asJson(req.body?.post_diff_risk);
+      if (
+        !validMergeReviewProof(observedRisk, {
+          taskId,
+          runId,
+          reviewRequestHop,
+          headSha: currentSha,
+        })
+        || stableJson(observedRisk) !== stableJson(detailRisk)
+        || stableJson(observedRisk) !== stableJson(requestedRisk)
+      ) {
+        return res.status(409).json({ error: 'stale_post_diff_risk_proof' });
+      }
+      postDiffRisk = observedRisk;
+    }
 
     const transactional = typeof dbPool.connect === 'function';
     const client = transactional ? await dbPool.connect() : dbPool;
@@ -135,6 +193,7 @@ async function handleReviewDecision(req, res, { approved }) {
       const observed = {
         pr: { head_sha: currentSha },
         review_request_hop: reviewRequestHop,
+        ...(postDiffRisk ? { post_diff_risk: postDiffRisk } : {}),
       };
       const detail = approved
         ? {
@@ -145,6 +204,7 @@ async function handleReviewDecision(req, res, { approved }) {
             review_request_hop: reviewRequestHop,
             approved_by: auth.approvedBy,
             approved_at: decidedAt,
+            ...(postDiffRisk ? { post_diff_risk: postDiffRisk } : {}),
           }
         : {
             verdict: 'REJECTED',
@@ -155,6 +215,7 @@ async function handleReviewDecision(req, res, { approved }) {
             review_request_hop: reviewRequestHop,
             rejected_by: auth.approvedBy,
             rejected_at: decidedAt,
+            ...(postDiffRisk ? { post_diff_risk: postDiffRisk } : {}),
           };
       await client.query(
         `INSERT INTO orchestrator_decision_log

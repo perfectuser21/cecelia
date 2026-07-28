@@ -10,16 +10,51 @@ const TASK_ID = '22222222-2222-4222-8222-222222222222';
 const HEAD_SHA = 'a'.repeat(40);
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4400';
 
+function riskProof(reviewRequired, overrides = {}) {
+  return {
+    schema_version: 'kernel-post-diff-risk/v1',
+    policy_version: 'kernel-post-diff-risk/v1',
+    risk_level: reviewRequired ? 'high' : 'low',
+    human_review_required: reviewRequired,
+    auto_eligible: !reviewRequired,
+    reasons: reviewRequired ? ['caller_risk_elevated'] : [],
+    bindings: {
+      task_id: TASK_ID,
+      run_id: RUN_ID,
+      hop: 5,
+      head_sha: HEAD_SHA,
+      diff_hash: `sha256:${'b'.repeat(64)}`,
+      contract_version: 7,
+      contract_digest: `sha256:${'c'.repeat(64)}`,
+      behavior_version: 'status-card/v3',
+      path_class: 'application',
+    },
+    expires_at: '2099-07-28T08:15:00.000Z',
+    ...overrides,
+  };
+}
+
 function row(hop, action, detail = {}, extra = {}) {
   return { hop, action, detail, observed: {}, gate_verdict: null, ...extra };
 }
 
 function evidence(overrides = {}) {
   const reviewRequired = overrides.reviewRequired ?? true;
+  const postDiffRisk = overrides.postDiffRisk ?? riskProof(reviewRequired);
   const reviewRequest = row(3, 'effect:human_review_requested', {
     review_reason: 'awaiting_human_review',
+    post_diff_risk: {
+      ...postDiffRisk,
+      bindings: { ...postDiffRisk.bindings, hop: 3 },
+    },
   }, {
-    observed: { pr: { url: PR_URL, head_sha: HEAD_SHA } },
+    observed: {
+      pr: { url: PR_URL, head_sha: HEAD_SHA },
+      post_diff_risk: {
+        ...postDiffRisk,
+        bindings: { ...postDiffRisk.bindings, hop: 3 },
+      },
+    },
   });
   return {
     run: {
@@ -58,6 +93,10 @@ function evidence(overrides = {}) {
               review_class: 'merge_gate',
               review_request_hop: 3,
               pr_head_sha: HEAD_SHA,
+              post_diff_risk: {
+                ...postDiffRisk,
+                bindings: { ...postDiffRisk.bindings, hop: 3 },
+              },
             }),
           ]
         : []),
@@ -71,9 +110,12 @@ function evidence(overrides = {}) {
             merged: false,
             head_sha: HEAD_SHA,
           },
+          post_diff_risk: postDiffRisk,
         },
       }),
     ],
+    postDiffRisk,
+    revalidatedPostDiffRisk: postDiffRisk,
     policyVersion: 'kernel-merge/v1',
     ...overrides,
   };
@@ -104,6 +146,7 @@ describe('validateMergeAuthorizationEvidence', () => {
       judge_hop: 2,
       human_review_hop: 4,
       merge_intent_hop: 5,
+      post_diff_risk: riskProof(true),
     });
   });
 
@@ -152,6 +195,67 @@ describe('validateMergeAuthorizationEvidence', () => {
       pr: { ...evidence().pr, head_sha: 'c'.repeat(40) },
     });
     expectDenied(input, 'stale_evaluator');
+  });
+
+  it.each([
+    ['diff hash', {
+      bindings: {
+        ...riskProof(true).bindings,
+        diff_hash: `sha256:${'d'.repeat(64)}`,
+      },
+    }],
+    ['contract digest', {
+      bindings: {
+        ...riskProof(true).bindings,
+        contract_digest: `sha256:${'d'.repeat(64)}`,
+      },
+    }],
+    ['policy version', { policy_version: 'kernel-post-diff-risk/v2' }],
+    ['task', {
+      bindings: {
+        ...riskProof(true).bindings,
+        task_id: '33333333-3333-4333-8333-333333333333',
+      },
+    }],
+    ['run', {
+      bindings: {
+        ...riskProof(true).bindings,
+        run_id: '33333333-3333-4333-8333-333333333333',
+      },
+    }],
+    ['hop', {
+      bindings: { ...riskProof(true).bindings, hop: 6 },
+    }],
+  ])('rejects a stale %s post-diff authority at the merge boundary', (
+    _label,
+    patch,
+  ) => {
+    const input = evidence();
+    input.postDiffRisk = {
+      ...input.postDiffRisk,
+      ...patch,
+    };
+    expectDenied(input, 'stale_post_diff_risk');
+  });
+
+  it('rejects missing and expired risk authority', () => {
+    expectDenied(evidence({ postDiffRisk: null }), 'post_diff_risk_missing');
+    expectDenied(evidence({
+      postDiffRisk: riskProof(true, {
+        expires_at: '2020-01-01T00:00:00.000Z',
+      }),
+    }), 'post_diff_risk_expired');
+  });
+
+  it('rejects a merge-time revalidation that no longer matches the logged diff proof', () => {
+    expectDenied(evidence({
+      revalidatedPostDiffRisk: riskProof(true, {
+        bindings: {
+          ...riskProof(true).bindings,
+          diff_hash: `sha256:${'d'.repeat(64)}`,
+        },
+      }),
+    }), 'post_diff_risk_revalidation_failed');
   });
 
   it('missing or denied merge intent cannot issue an authorization', () => {

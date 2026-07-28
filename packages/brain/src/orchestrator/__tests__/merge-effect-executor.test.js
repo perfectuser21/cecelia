@@ -1,11 +1,43 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createMergeEffectExecutor } from '../merge-effect-executor.js';
+import { canonicalContractDigest, canonicalDiffHash } from '../post-diff-risk-policy.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
 const HEAD_SHA = 'a'.repeat(40);
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4400';
+const FILES = Object.freeze([{
+  path: 'apps/dashboard/src/App.jsx',
+  additions: 12,
+  deletions: 3,
+}]);
+const CONTRACT_CONTENT = Object.freeze({ acceptance: ['dashboard remains green'] });
+const CONTRACT_DIGEST = canonicalContractDigest(CONTRACT_CONTENT);
+
+function postDiffRisk(overrides = {}) {
+  return {
+    schema_version: 'kernel-post-diff-risk/v1',
+    policy_version: 'kernel-post-diff-risk/v1',
+    risk_level: 'low',
+    human_review_required: false,
+    auto_eligible: true,
+    reasons: [],
+    bindings: {
+      task_id: TASK_ID,
+      run_id: RUN_ID,
+      hop: 3,
+      head_sha: HEAD_SHA,
+      diff_hash: canonicalDiffHash(FILES),
+      contract_version: 7,
+      contract_digest: CONTRACT_DIGEST,
+      behavior_version: 'dashboard/v3',
+      path_class: 'application',
+    },
+    expires_at: '2099-07-28T08:15:00.000Z',
+    ...overrides,
+  };
+}
 
 function currentPr(overrides = {}) {
   return {
@@ -17,6 +49,7 @@ function currentPr(overrides = {}) {
     state: 'OPEN',
     ci: 'pass',
     merged: false,
+    files: FILES,
     ...overrides,
   };
 }
@@ -24,7 +57,28 @@ function currentPr(overrides = {}) {
 function evidence() {
   return {
     run: { id: RUN_ID, current_task_id: TASK_ID, pr_url: PR_URL },
-    task: { id: TASK_ID, payload: { review_required: false } },
+    task: {
+      id: TASK_ID,
+      payload: {
+        review_required: false,
+        behavior_version: 'dashboard/v3',
+        risk_level: 'low',
+      },
+    },
+    contract: {
+      version: 7,
+      contract_content: CONTRACT_CONTENT,
+    },
+    productionReceipt: {
+      receipt_status: 'confirmed',
+      behavior_version: 'dashboard/v3',
+      contract_version: 7,
+      contract_digest: CONTRACT_DIGEST,
+      path_class: 'application',
+      production_head_sha: 'b'.repeat(40),
+      deployed_at: '2026-07-27T08:00:00.000Z',
+      expires_at: '2099-07-27T08:00:00.000Z',
+    },
     decisionLog: [
       {
         hop: 1,
@@ -48,6 +102,7 @@ function evidence() {
             ci: 'pass',
             merged: false,
           },
+          post_diff_risk: postDiffRisk(),
         },
       },
     ],
@@ -135,6 +190,24 @@ describe('merge effect executor', () => {
 
     await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).rejects.toMatchObject({
       code: 'stale_evaluator',
+    });
+    expect(d.store.createAuthorizationIntent).not.toHaveBeenCalled();
+    expect(d.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('recomputes the current diff risk and rejects changed diff bytes before persistence', async () => {
+    const d = deps();
+    d.observePullRequest = vi.fn(async () => currentPr({
+      files: [{
+        path: 'apps/dashboard/src/App.jsx',
+        additions: 13,
+        deletions: 3,
+      }],
+    }));
+    const execute = createMergeEffectExecutor(d);
+
+    await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).rejects.toMatchObject({
+      code: 'post_diff_risk_revalidation_failed',
     });
     expect(d.store.createAuthorizationIntent).not.toHaveBeenCalled();
     expect(d.mergePullRequest).not.toHaveBeenCalled();

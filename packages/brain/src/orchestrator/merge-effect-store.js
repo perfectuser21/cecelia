@@ -76,7 +76,7 @@ export function createPostgresMergeEffectStore(pool) {
 
     async loadEvidence(client, { runId, taskId }) {
       const runResult = await client.query(
-        `SELECT id, current_task_id, pr_url
+        `SELECT id, current_task_id, pr_url, contract_id
            FROM initiative_runs
           WHERE id = $1
             AND orchestrator_version = 'v2'`,
@@ -91,6 +91,35 @@ export function createPostgresMergeEffectStore(pool) {
       );
       const task = taskResult.rows[0];
       if (!task) deny('task_authority_invalid');
+      const parsedTask = { ...task, payload: parsePayload(task.payload) };
+
+      let contract = null;
+      if (run.contract_id) {
+        const contractResult = await client.query(
+          `SELECT id, version, status, contract_content
+             FROM initiative_contracts
+            WHERE id = $1`,
+          [run.contract_id],
+        );
+        contract = contractResult.rows[0] ?? null;
+      }
+
+      let productionReceipt = null;
+      const behaviorVersion = parsedTask.payload.behavior_version;
+      if (typeof behaviorVersion === 'string' && behaviorVersion.length > 0) {
+        const receiptResult = await client.query(
+          `SELECT id, receipt_status, behavior_version, contract_version,
+                  contract_digest, path_class, production_head_sha,
+                  deployed_at, expires_at
+             FROM kernel_behavior_production_receipts
+            WHERE behavior_version = $1
+              AND receipt_status = 'confirmed'
+            ORDER BY deployed_at DESC, id DESC
+            LIMIT 1`,
+          [behaviorVersion],
+        );
+        productionReceipt = receiptResult.rows[0] ?? null;
+      }
 
       const logResult = await client.query(
         `SELECT hop, action, observed, derived_phase, gate_verdict, detail, created_at
@@ -102,7 +131,9 @@ export function createPostgresMergeEffectStore(pool) {
 
       return {
         run,
-        task: { ...task, payload: parsePayload(task.payload) },
+        task: parsedTask,
+        contract,
+        productionReceipt,
         decisionLog: logResult.rows,
       };
     },
@@ -151,11 +182,62 @@ export function createPostgresMergeEffectStore(pool) {
           ],
         );
 
+        const risk = proof.post_diff_risk;
+        const riskBindings = risk?.bindings ?? {};
+        let riskAssessmentResult = await client.query(
+          `INSERT INTO kernel_post_diff_risk_assessments
+             (run_id, task_id, assessment_hop, head_sha, diff_hash,
+              contract_version, contract_digest, behavior_version, path_class,
+              risk_level, human_review_required, auto_eligible, policy_version,
+              proof_expires_at, evidence)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
+           ON CONFLICT (run_id, head_sha, diff_hash, contract_digest, policy_version)
+           DO NOTHING
+           RETURNING id`,
+          [
+            proof.run_id,
+            proof.task_id,
+            riskBindings.hop,
+            riskBindings.head_sha,
+            riskBindings.diff_hash,
+            riskBindings.contract_version,
+            riskBindings.contract_digest,
+            riskBindings.behavior_version,
+            riskBindings.path_class,
+            risk.risk_level,
+            risk.human_review_required,
+            risk.auto_eligible,
+            risk.policy_version,
+            risk.expires_at,
+            JSON.stringify(risk),
+          ],
+        );
+        if (!riskAssessmentResult.rows[0]) {
+          riskAssessmentResult = await client.query(
+            `SELECT id
+               FROM kernel_post_diff_risk_assessments
+              WHERE run_id = $1
+                AND head_sha = $2
+                AND diff_hash = $3
+                AND contract_digest = $4
+                AND policy_version = $5`,
+            [
+              proof.run_id,
+              riskBindings.head_sha,
+              riskBindings.diff_hash,
+              riskBindings.contract_digest,
+              risk.policy_version,
+            ],
+          );
+        }
+        const riskAssessment = riskAssessmentResult.rows[0];
+        if (!riskAssessment) deny('post_diff_risk_persist_failed');
+
         await client.query(
           `INSERT INTO kernel_merge_authorizations
              (ownership_id, run_id, task_id, repository, pr_number, pr_url,
-              head_ref, head_sha, policy_version, evidence)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+              head_ref, head_sha, policy_version, risk_assessment_id, evidence)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
            ON CONFLICT (ownership_id, head_sha, policy_version) DO NOTHING`,
           [
             ownership.id,
@@ -167,6 +249,7 @@ export function createPostgresMergeEffectStore(pool) {
             proof.head_ref,
             proof.head_sha,
             proof.policy_version,
+            riskAssessment.id,
             JSON.stringify(proof),
           ],
         );

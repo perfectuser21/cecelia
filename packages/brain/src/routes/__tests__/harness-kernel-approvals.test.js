@@ -10,6 +10,27 @@ const HEAD_SHA = 'a'.repeat(40);
 const NEXT_HEAD_SHA = 'b'.repeat(40);
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4226';
 const REVIEW_REQUESTED_AT = new Date('2026-07-23T00:00:00.000Z');
+let requestIpCounter = 1;
+const POST_DIFF_RISK = Object.freeze({
+  schema_version: 'kernel-post-diff-risk/v1',
+  policy_version: 'kernel-post-diff-risk/v1',
+  risk_level: 'high',
+  human_review_required: true,
+  auto_eligible: false,
+  reasons: Object.freeze(['first_behavior']),
+  bindings: Object.freeze({
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    hop: 3,
+    head_sha: HEAD_SHA,
+    diff_hash: `sha256:${'b'.repeat(64)}`,
+    contract_version: 7,
+    contract_digest: `sha256:${'c'.repeat(64)}`,
+    behavior_version: 'status-card/v1',
+    path_class: 'application',
+  }),
+  expires_at: '2099-07-28T08:15:00.000Z',
+});
 
 function createApprovalDatabase() {
   const state = {
@@ -21,8 +42,12 @@ function createApprovalDatabase() {
     decisionLog: [{
       hop: 3,
       action: 'effect:human_review_requested',
-      observed: { pr: { head_sha: HEAD_SHA } },
-      detail: { dispatch_hop: 2, review_reason: 'awaiting_human_review' },
+      observed: { pr: { head_sha: HEAD_SHA }, post_diff_risk: POST_DIFF_RISK },
+      detail: {
+        dispatch_hop: 2,
+        review_reason: 'awaiting_human_review',
+        post_diff_risk: POST_DIFF_RISK,
+      },
       created_at: REVIEW_REQUESTED_AT,
     }],
     currentSha: HEAD_SHA,
@@ -118,6 +143,7 @@ function createApprovalDatabase() {
 
 function createApp(database, state) {
   const app = express();
+  app.set('trust proxy', 'loopback');
   app.use(express.json());
   app.set('pool', database);
   app.set('kernelPrHeadResolver', async (prUrl) => {
@@ -132,6 +158,7 @@ function approvalRequest(app, {
   token = APPROVER_TOKEN,
   sha = HEAD_SHA,
   reviewRequestHop = 3,
+  postDiffRisk = POST_DIFF_RISK,
 } = {}) {
   const call = request(app)
     .post(`/kernel-reviews/${RUN_ID}/approve`)
@@ -139,9 +166,11 @@ function approvalRequest(app, {
       task_id: TASK_ID,
       pr_head_sha: sha,
       review_request_hop: reviewRequestHop,
+      post_diff_risk: postDiffRisk,
       approved_by: 'review-owner',
     });
   if (token !== null) call.set('x-approver-token', token);
+  call.set('x-forwarded-for', `192.0.2.${requestIpCounter++}`);
   return call;
 }
 
@@ -156,9 +185,11 @@ function rejectionRequest(app, {
       task_id: TASK_ID,
       pr_head_sha: sha,
       review_request_hop: reviewRequestHop,
+      post_diff_risk: POST_DIFF_RISK,
       rejected_by: 'review-owner',
     });
   if (token !== null) call.set('x-approver-token', token);
+  call.set('x-forwarded-for', `198.51.100.${requestIpCounter++}`);
   return call;
 }
 
@@ -196,6 +227,7 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
     expect(state.insertedObserved).toEqual({
       pr: { head_sha: HEAD_SHA },
       review_request_hop: 3,
+      post_diff_risk: POST_DIFF_RISK,
     });
     expect(state.insertedDetail).toMatchObject({
       verdict: 'APPROVED',
@@ -204,6 +236,7 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
       pr_head_sha: HEAD_SHA,
       review_request_hop: 3,
       approved_by: 'review-owner',
+      post_diff_risk: POST_DIFF_RISK,
     });
     expect(state.transactionCommands).toEqual(['BEGIN', 'COMMIT']);
     expect(state.released).toBe(true);
@@ -322,5 +355,77 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
       (row) => row.action === 'verdict:human_review',
     )).toHaveLength(1);
     expect((await rejectionRequest(app)).status).toBe(409);
+  });
+
+  it.each([
+    ['diff hash', {
+      ...POST_DIFF_RISK,
+      bindings: { ...POST_DIFF_RISK.bindings, diff_hash: `sha256:${'d'.repeat(64)}` },
+    }],
+    ['contract digest', {
+      ...POST_DIFF_RISK,
+      bindings: { ...POST_DIFF_RISK.bindings, contract_digest: `sha256:${'d'.repeat(64)}` },
+    }],
+    ['policy version', {
+      ...POST_DIFF_RISK,
+      policy_version: 'kernel-post-diff-risk/v2',
+    }],
+    ['task', {
+      ...POST_DIFF_RISK,
+      bindings: {
+        ...POST_DIFF_RISK.bindings,
+        task_id: '33333333-3333-4333-8333-333333333333',
+      },
+    }],
+    ['run', {
+      ...POST_DIFF_RISK,
+      bindings: {
+        ...POST_DIFF_RISK.bindings,
+        run_id: '33333333-3333-4333-8333-333333333333',
+      },
+    }],
+    ['hop', {
+      ...POST_DIFF_RISK,
+      bindings: { ...POST_DIFF_RISK.bindings, hop: 4 },
+    }],
+    ['head SHA', {
+      ...POST_DIFF_RISK,
+      bindings: { ...POST_DIFF_RISK.bindings, head_sha: NEXT_HEAD_SHA },
+    }],
+  ])('rejects an approval whose %s proof binding differs from the request', async (
+    _label,
+    postDiffRisk,
+  ) => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    const { database, state } = createApprovalDatabase();
+    const response = await approvalRequest(
+      createApp(database, state),
+      { postDiffRisk },
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({ error: 'stale_post_diff_risk_proof' });
+    expect(state.decisionLog.filter(
+      (row) => row.action === 'verdict:human_review',
+    )).toHaveLength(0);
+  });
+
+  it('rejects an expired or missing server review proof', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    const expired = createApprovalDatabase();
+    expired.state.decisionLog[0].observed.post_diff_risk = {
+      ...POST_DIFF_RISK,
+      expires_at: '2020-01-01T00:00:00.000Z',
+    };
+    expired.state.decisionLog[0].detail.post_diff_risk =
+      expired.state.decisionLog[0].observed.post_diff_risk;
+    expect((await approvalRequest(createApp(expired.database, expired.state))).status)
+      .toBe(409);
+
+    const missing = createApprovalDatabase();
+    delete missing.state.decisionLog[0].observed.post_diff_risk;
+    delete missing.state.decisionLog[0].detail.post_diff_risk;
+    expect((await approvalRequest(createApp(missing.database, missing.state))).status)
+      .toBe(409);
   });
 });

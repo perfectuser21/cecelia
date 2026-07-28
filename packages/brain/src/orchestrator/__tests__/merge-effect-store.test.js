@@ -22,6 +22,26 @@ function proof() {
     judge_hop: 2,
     human_review_hop: null,
     merge_intent_hop: 3,
+    post_diff_risk: {
+      schema_version: 'kernel-post-diff-risk/v1',
+      policy_version: 'kernel-post-diff-risk/v1',
+      risk_level: 'low',
+      human_review_required: false,
+      auto_eligible: true,
+      reasons: [],
+      bindings: {
+        task_id: TASK_ID,
+        run_id: RUN_ID,
+        hop: 3,
+        head_sha: HEAD_SHA,
+        diff_hash: `sha256:${'b'.repeat(64)}`,
+        contract_version: 7,
+        contract_digest: `sha256:${'c'.repeat(64)}`,
+        behavior_version: 'dashboard/v3',
+        path_class: 'application',
+      },
+      expires_at: '2099-07-28T08:15:00.000Z',
+    },
   };
 }
 
@@ -88,8 +108,34 @@ describe('PostgreSQL merge effect store', () => {
   it('loads run, task, and append-only decision evidence from the database', async () => {
     const client = {
       query: vi.fn()
-        .mockResolvedValueOnce({ rows: [{ id: RUN_ID, current_task_id: TASK_ID, pr_url: PR_URL }] })
-        .mockResolvedValueOnce({ rows: [{ id: TASK_ID, payload: {} }] })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: RUN_ID,
+            current_task_id: TASK_ID,
+            pr_url: PR_URL,
+            contract_id: '33333333-3333-4333-8333-333333333333',
+          }],
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: TASK_ID,
+            payload: { behavior_version: 'dashboard/v3' },
+          }],
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: '33333333-3333-4333-8333-333333333333',
+            version: 7,
+            status: 'approved',
+            contract_content: { acceptance: ['green'] },
+          }],
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            receipt_status: 'confirmed',
+            behavior_version: 'dashboard/v3',
+          }],
+        })
         .mockResolvedValueOnce({ rows: [{ hop: 1, action: 'merge_pr' }] }),
     };
     const store = createPostgresMergeEffectStore({});
@@ -98,12 +144,34 @@ describe('PostgreSQL merge effect store', () => {
       runId: RUN_ID,
       taskId: TASK_ID,
     })).resolves.toEqual({
-      run: { id: RUN_ID, current_task_id: TASK_ID, pr_url: PR_URL },
-      task: { id: TASK_ID, payload: {} },
+      run: {
+        id: RUN_ID,
+        current_task_id: TASK_ID,
+        pr_url: PR_URL,
+        contract_id: '33333333-3333-4333-8333-333333333333',
+      },
+      task: {
+        id: TASK_ID,
+        payload: { behavior_version: 'dashboard/v3' },
+      },
+      contract: {
+        id: '33333333-3333-4333-8333-333333333333',
+        version: 7,
+        status: 'approved',
+        contract_content: { acceptance: ['green'] },
+      },
+      productionReceipt: {
+        receipt_status: 'confirmed',
+        behavior_version: 'dashboard/v3',
+      },
       decisionLog: [{ hop: 1, action: 'merge_pr' }],
     });
 
-    expect(client.query.mock.calls[2][0]).toMatch(
+    expect(client.query.mock.calls[2][0]).toMatch(/FROM initiative_contracts/i);
+    expect(client.query.mock.calls[3][0]).toMatch(
+      /FROM kernel_behavior_production_receipts/i,
+    );
+    expect(client.query.mock.calls[4][0]).toMatch(
       /FROM orchestrator_decision_log[\s\S]*ORDER BY hop/i,
     );
   });
@@ -120,6 +188,7 @@ describe('PostgreSQL merge effect store', () => {
       head_ref: 'cp-safe',
     };
     const authorization = { id: '44444444-4444-4444-8444-444444444444' };
+    const riskAssessment = { id: '66666666-6666-4666-8666-666666666666' };
     const intent = {
       intent_id: '55555555-5555-4555-8555-555555555555',
       requested_head_sha: HEAD_SHA,
@@ -132,6 +201,9 @@ describe('PostgreSQL merge effect store', () => {
         if (/INSERT INTO kernel_pr_ownership/.test(sql)) return { rows: [] };
         if (/SELECT \* FROM kernel_pr_ownership/.test(sql)) return { rows: [ownership] };
         if (/INSERT INTO kernel_merge_authorizations/.test(sql)) return { rows: [] };
+        if (/INSERT INTO kernel_post_diff_risk_assessments/.test(sql)) {
+          return { rows: [riskAssessment] };
+        }
         if (/SELECT id FROM kernel_merge_authorizations/.test(sql)) {
           return { rows: [authorization] };
         }
@@ -154,7 +226,7 @@ describe('PostgreSQL merge effect store', () => {
     })).resolves.toEqual(intent);
 
     expect(calls.join('\n')).toMatch(
-      /INSERT INTO kernel_pr_ownership[\s\S]*INSERT INTO kernel_pr_head_observations[\s\S]*INSERT INTO kernel_merge_authorizations[\s\S]*INSERT INTO kernel_merge_effect_intents/,
+      /INSERT INTO kernel_pr_ownership[\s\S]*INSERT INTO kernel_pr_head_observations[\s\S]*INSERT INTO kernel_post_diff_risk_assessments[\s\S]*INSERT INTO kernel_merge_authorizations[\s\S]*INSERT INTO kernel_merge_effect_intents/,
     );
     expect(calls.at(-1)).toBe('COMMIT');
   });

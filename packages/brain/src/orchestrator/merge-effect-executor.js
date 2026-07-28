@@ -2,11 +2,74 @@ import {
   MergeAuthorizationError,
   validateMergeAuthorizationEvidence,
 } from './merge-authority.js';
+import {
+  assessPostDiffRisk,
+  canonicalContractDigest,
+} from './post-diff-risk-policy.js';
 
 const POLICY_VERSION = 'kernel-merge/v1';
 
 function deny(code) {
   throw new MergeAuthorizationError(code);
+}
+
+function asObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+function latestRow(rows, action) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row?.action === action)
+    .sort((left, right) => Number(right.hop) - Number(left.hop))[0] ?? null;
+}
+
+function recomputePostDiffRisk(authority, current, now) {
+  const intent = (Array.isArray(authority.decisionLog) ? authority.decisionLog : [])
+    .filter((row) => row?.action === 'merge_pr' && row.gate_verdict === 'allow')
+    .sort((left, right) => Number(right.hop) - Number(left.hop))[0];
+  if (!intent) deny('merge_intent_missing');
+  const original = asObject(asObject(intent.observed).post_diff_risk);
+  if (!original.schema_version) deny('post_diff_risk_missing');
+  const evaluator = latestRow(authority.decisionLog, 'verdict:evaluate');
+  const judge = latestRow(authority.decisionLog, 'verdict:judge');
+  const payload = asObject(authority.task?.payload);
+  let contractDigest = null;
+  try {
+    contractDigest = canonicalContractDigest(authority.contract?.contract_content);
+  } catch {
+    contractDigest = null;
+  }
+  const revalidated = assessPostDiffRisk({
+    taskId: authority.task?.id,
+    runId: authority.run?.id,
+    hop: Number(intent.hop),
+    headSha: current.head_sha,
+    files: current.files,
+    contract: {
+      version: authority.contract?.version ?? null,
+      digest: contractDigest,
+    },
+    behaviorVersion: payload.behavior_version ?? null,
+    productionReceipt: authority.productionReceipt ?? null,
+    callerRisk: payload.review_required === true
+      ? 'high'
+      : payload.risk_level ?? 'low',
+    changeSignals: {
+      newCapability: payload.new_capability === true,
+    },
+    evidence: {
+      ci: current.ci,
+      evaluator: asObject(evaluator?.detail).pr_head_sha === current.head_sha
+        ? asObject(evaluator.detail).verdict
+        : null,
+      judge: asObject(judge?.detail).pr_head_sha === current.head_sha
+        ? asObject(judge.detail).verdict
+        : null,
+    },
+    now,
+  });
+  return { original, revalidated };
 }
 
 function confirmedReceipt(intentId, pr, source) {
@@ -65,6 +128,7 @@ export function createMergeEffectExecutor({
   observePullRequest,
   mergePullRequest,
   policyVersion = POLICY_VERSION,
+  now = Date.now,
 }) {
   return async function executeMerge({ runId, taskId }) {
     return store.withRunLock(runId, async (client) => {
@@ -88,10 +152,14 @@ export function createMergeEffectExecutor({
         }
       }
 
+      const risk = recomputePostDiffRisk(authority, current, now);
       const proof = validateMergeAuthorizationEvidence({
         ...authority,
         pr: current,
         policyVersion,
+        postDiffRisk: risk.original,
+        revalidatedPostDiffRisk: risk.revalidated,
+        now,
       });
       const effect = existing ?? await store.createAuthorizationIntent(
         client,
@@ -140,4 +208,5 @@ export const __test__ = {
   confirmedReceipt,
   failedReceipt,
   unconfirmedReceipt,
+  recomputePostDiffRisk,
 };

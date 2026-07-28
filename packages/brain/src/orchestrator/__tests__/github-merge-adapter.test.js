@@ -18,6 +18,11 @@ describe('GitHub merge adapter', () => {
         { name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' },
         { context: 'lint', state: 'SUCCESS' },
       ],
+      files: [{
+        path: 'apps/dashboard/src/App.jsx',
+        additions: 12,
+        deletions: 3,
+      }],
       mergeCommit: null,
     }));
     const adapter = createGitHubMergeAdapter({ execFile });
@@ -33,6 +38,11 @@ describe('GitHub merge adapter', () => {
       ci: 'pass',
       merged: false,
       merge_commit_sha: null,
+      files: [{
+        path: 'apps/dashboard/src/App.jsx',
+        additions: 12,
+        deletions: 3,
+      }],
     });
     expect(execFile).toHaveBeenCalledWith('gh', [
       'pr',
@@ -52,6 +62,11 @@ describe('GitHub merge adapter', () => {
       state: 'OPEN',
       mergeStateStatus: 'CLEAN',
       statusCheckRollup: [],
+      files: [{
+        path: 'apps/dashboard/src/App.jsx',
+        additions: 1,
+        deletions: 0,
+      }],
       mergeCommit: null,
     };
     const execFile = vi.fn(() => JSON.stringify(response));

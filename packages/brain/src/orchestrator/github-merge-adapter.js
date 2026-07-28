@@ -38,6 +38,29 @@ function parseJson(value) {
   }
 }
 
+function changedFiles(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('github_pr_files_invalid');
+  }
+  return value.map((file) => {
+    if (
+      typeof file?.path !== 'string'
+      || file.path.length === 0
+      || !Number.isInteger(file.additions)
+      || file.additions < 0
+      || !Number.isInteger(file.deletions)
+      || file.deletions < 0
+    ) {
+      throw new Error('github_pr_files_invalid');
+    }
+    return {
+      path: file.path,
+      additions: file.additions,
+      deletions: file.deletions,
+    };
+  });
+}
+
 export function createGitHubMergeAdapter({ execFile }) {
   if (typeof execFile !== 'function') throw new Error('github_exec_file_required');
 
@@ -49,7 +72,7 @@ export function createGitHubMergeAdapter({ execFile }) {
         'view',
         prUrl,
         '--json',
-        'url,number,headRefName,headRefOid,state,mergeStateStatus,statusCheckRollup,mergeCommit',
+        'url,number,headRefName,headRefOid,state,mergeStateStatus,statusCheckRollup,mergeCommit,files',
       ]);
       const observed = parseJson(output);
       if (observed.url !== prUrl || Number(observed.number) !== identity.number) {
@@ -69,6 +92,7 @@ export function createGitHubMergeAdapter({ execFile }) {
         ci: ciStatus(observed.statusCheckRollup),
         merged: observed.state === 'MERGED',
         merge_commit_sha: observed.mergeCommit?.oid ?? null,
+        files: changedFiles(observed.files),
       };
     },
 
@@ -91,5 +115,6 @@ export function createGitHubMergeAdapter({ execFile }) {
 
 export const __test__ = {
   ciStatus,
+  changedFiles,
   parseIdentity,
 };
