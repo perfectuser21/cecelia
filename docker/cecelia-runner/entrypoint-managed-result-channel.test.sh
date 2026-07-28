@@ -86,9 +86,19 @@ configure_managed_bundle_runtime
 printf '%s' \
   '{"task_bundle":{"role":"evaluator","skill":{"name":"harness-evaluator"},"expected_output":"harness-result/evaluator-v1","inputs":{"sprint_dir":"sprints/r7","pr_branch":"cp-result-channel","pr_head_sha":"0123456789abcdef0123456789abcdef01234567"}}}' \
   > "$BUNDLE_FILE"
+AUTHORITY_FILE="$RUNTIME_DIR/github-read-authority.json"
+printf '%s' '{"schema_version":"github-read-authority/v1"}' > "$AUTHORITY_FILE"
+chmod 600 "$AUTHORITY_FILE"
+HARNESS_GITHUB_READ_AUTHORITY_FILE="$AUTHORITY_FILE"
 configure_managed_bundle_runtime
 [[ "$PR_BRANCH" == 'cp-result-channel' ]]
 [[ "$PR_HEAD_SHA" == '0123456789abcdef0123456789abcdef01234567' ]]
+[[ "$HARNESS_GITHUB_READ_AUTHORITY_FILE" == "$AUTHORITY_FILE" ]]
+rm -f "$AUTHORITY_FILE"
+if configure_managed_bundle_runtime; then
+  echo 'evaluator accepted a missing Worker GitHub authority file' >&2
+  exit 1
+fi
 
 printf '%s' \
   '{"task_bundle":{"role":"generator","skill":{"name":"harness-generator"},"expected_output":"harness-result/generator-v1","inputs":{"sprint_dir":"sprints/r7","attempt_kind":"initial","github_mutation_policy":{"version":"github-mutation/v1","repo":"perfectuser21/cecelia","branch":"cp-result-channel","base_sha":"0123456789abcdef0123456789abcdef01234567","expected_remote_sha":null,"operation":"push-and-create-draft","pr_base":"main","pr_title":"bounded title","pr_body":"bounded body","allowed_paths":["packages/"]}}}}' \
@@ -207,6 +217,6 @@ grep -q 'COPY result-channel-driver.cjs /usr/local/bin/result-channel-driver.cjs
 grep -q 'chmod 0755 /usr/local/bin/result-channel-finalizer.cjs' "$DOCKERFILE"
 grep -q 'chmod 0755 /usr/local/bin/result-channel-driver.cjs' "$DOCKERFILE"
 
-rm -f "$RESULT_FILE" "$PROVIDER_RESULT" "$NORMALIZED_RESULT_FILE" "$BUNDLE_FILE"
+rm -f "$RESULT_FILE" "$PROVIDER_RESULT" "$NORMALIZED_RESULT_FILE" "$BUNDLE_FILE" "$AUTHORITY_FILE"
 rm -rf "$FAKE_BIN"
 echo 'managed result channel entrypoint: PASS'

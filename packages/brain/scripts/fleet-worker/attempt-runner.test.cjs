@@ -1729,6 +1729,76 @@ describe('Fleet Worker durable runtime adapters', () => {
     }
   });
 
+  it('mounts audited GitHub read authority as one read-only public fact file', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-github-read-'));
+    const runCommand = vi.fn(async (_command, args) => (
+      args[0] === 'create' ? { stdout: 'container-created\n' } : { stdout: '' }
+    ));
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      writeCredential: vi.fn(async () => undefined),
+    });
+    const evaluatorChannel = {
+      ...RESULT_CHANNEL,
+      bindings: { ...RESULT_CHANNEL.bindings, role: 'evaluator' },
+    };
+
+    try {
+      await docker.launch({
+        attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        image: IMAGE_DIGEST,
+        providerSpec: request().provider_spec,
+        role: 'evaluator',
+        model: 'gpt-5',
+        workspaceMount: {
+          source: `/controlled/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: false,
+        },
+        workspaceAdminMount: {
+          source: '/controlled/mirrors/perfectuser21__cecelia.git',
+          target: '/controlled/mirrors/perfectuser21__cecelia.git',
+          readOnly: false,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        taskId: TASK_ID,
+        brainUrl: BRAIN_URL,
+        resultChannel: evaluatorChannel,
+        lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: CREDENTIAL,
+        githubReadAuthority: GITHUB_READ_AUTHORITY,
+      });
+
+      const createArgs = runCommand.mock.calls[0][1];
+      const hostAuthority = path.join(
+        runtimeRoot,
+        ATTEMPT_ID,
+        'github-read-authority.json',
+      );
+      expect(createArgs).toContain(
+        `type=bind,src=${hostAuthority},dst=/tmp/cecelia-prompts/github-read-authority.json,readonly`,
+      );
+      expect(createArgs).toEqual(expect.arrayContaining([
+        '--env',
+        'HARNESS_GITHUB_READ_AUTHORITY_FILE=/tmp/cecelia-prompts/github-read-authority.json',
+      ]));
+      expect(createArgs.join(' ')).not.toMatch(/GH_TOKEN|GITHUB_TOKEN|\.config\/gh/);
+      expect(fs.lstatSync(hostAuthority).mode & 0o777).toBe(0o600);
+      expect(JSON.parse(fs.readFileSync(hostAuthority, 'utf8')))
+        .toEqual(GITHUB_READ_AUTHORITY);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a symlink result target and freshens a stale regular target', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-result-target-'));

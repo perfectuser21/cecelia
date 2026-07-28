@@ -64,6 +64,21 @@ function pullRequest(overrides = {}) {
   };
 }
 
+function githubReadAuthority(role = 'evaluator', overrides = {}) {
+  return {
+    schema_version: 'github-read-authority/v1',
+    attempt_id: ATTEMPT_ID,
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    role,
+    request_sha256: 'c'.repeat(64),
+    observed_at: '2026-07-28T05:00:00.000Z',
+    pull_request: pullRequest(),
+    audit_record_sha256: 'd'.repeat(64),
+    ...overrides,
+  };
+}
+
 function taskBundle(role, inputs = {}, overrides = {}) {
   return {
     contract_version: '1.0',
@@ -888,6 +903,98 @@ test('evaluator PASS fails closed when TaskBundle has no verification commands',
     }),
     /TaskBundle verification_commands must be non-empty/,
   );
+});
+
+test('production Evaluator consumes the Worker authority file and never invokes gh', async (t) => {
+  const workspace = fixtureWorkspace();
+  const authorityFile = path.join(workspace, 'github-read-authority.json');
+  const ghMarker = path.join(workspace, 'gh-invoked');
+  const fakeBin = path.join(workspace, 'fake-bin');
+  fs.mkdirSync(fakeBin);
+  const fakeGh = path.join(fakeBin, 'gh');
+  fs.writeFileSync(fakeGh, `#!/bin/sh\nprintf invoked > ${JSON.stringify(ghMarker)}\nexit 97\n`, {
+    mode: 0o755,
+  });
+  fs.writeFileSync(authorityFile, JSON.stringify(githubReadAuthority()), {
+    mode: 0o600,
+  });
+  const injected = dependencies();
+  delete injected.inspectPullRequest;
+
+  const value = await buildVerifierEnvelope({
+    bundle: taskBundle('evaluator', {
+      contract_sha: SHA,
+      pull_request: pullRequest(),
+      pr_branch: 'cp-result-channel',
+      pr_head_sha: SHA,
+    }),
+    rawEnvelope: {
+      verdict: 'PASS',
+      task_id: TASK_ID,
+      attempt_id: ATTEMPT_ID,
+      behavior_tests: [],
+    },
+    workspacePath: workspace,
+    deps: injected,
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}:${process.env.PATH}`,
+      HARNESS_GITHUB_READ_AUTHORITY_FILE: authorityFile,
+      HARNESS_ATTEMPT_ID: ATTEMPT_ID,
+      HARNESS_RUN_ID: RUN_ID,
+      HARNESS_TASK_ID: TASK_ID,
+      HARNESS_NODE: 'evaluator',
+    },
+  });
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+
+  assert.deepEqual(value.pull_request, pullRequest());
+  assert.equal(fs.existsSync(ghMarker), false);
+});
+
+test('production Evaluator fails closed on missing or conflicting Worker authority', async () => {
+  const workspace = fixtureWorkspace();
+  const injected = dependencies();
+  delete injected.inspectPullRequest;
+  const base = {
+    bundle: taskBundle('evaluator', {
+      contract_sha: SHA,
+      pull_request: pullRequest(),
+      pr_branch: 'cp-result-channel',
+      pr_head_sha: SHA,
+    }),
+    rawEnvelope: {
+      verdict: 'PASS',
+      task_id: TASK_ID,
+      attempt_id: ATTEMPT_ID,
+      behavior_tests: [],
+    },
+    workspacePath: workspace,
+    deps: injected,
+    env: {
+      HARNESS_ATTEMPT_ID: ATTEMPT_ID,
+      HARNESS_RUN_ID: RUN_ID,
+      HARNESS_TASK_ID: TASK_ID,
+      HARNESS_NODE: 'evaluator',
+    },
+  };
+
+  await assert.rejects(buildVerifierEnvelope(base), /GitHub read authority/);
+  const authorityFile = path.join(workspace, 'github-read-authority.json');
+  fs.writeFileSync(authorityFile, JSON.stringify(githubReadAuthority('evaluator', {
+    pull_request: pullRequest({ head_sha: 'f'.repeat(40) }),
+  })));
+  await assert.rejects(
+    buildVerifierEnvelope({
+      ...base,
+      env: {
+        ...base.env,
+        HARNESS_GITHUB_READ_AUTHORITY_FILE: authorityFile,
+      },
+    }),
+    /pull request differs from frozen TaskBundle authority/,
+  );
+  fs.rmSync(workspace, { recursive: true, force: true });
 });
 
 test('Runner-owned evaluator execution kills its own background process group', async () => {
