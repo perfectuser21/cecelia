@@ -145,6 +145,28 @@ describe('protected Ed25519 equivalence signers', () => {
     expect(JSON.stringify(authority)).not.toMatch(/PRIVATE KEY/);
   });
 
+  it('refuses to issue an isolated grant for a protected resource id', () => {
+    const root = temporaryRoot();
+    const keys = createTrustFixture();
+    const authority = loadExecutionGrantAuthority({
+      secretFile: writePrivateKey(
+        root,
+        'grant-authority.pem',
+        keys.authority.privateKey,
+      ),
+      keyId: keys.authority.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+    });
+
+    expect(() => authority.issue({
+      ...grantInput(fixtureCell()),
+      resource_id: 'production',
+    })).toThrowError(expect.objectContaining({
+      code: 'grant_environment_unsafe',
+    }));
+  });
+
   it('loads a separate collector key and emits a verifiable bundle', async () => {
     const root = temporaryRoot();
     const keys = createTrustFixture();

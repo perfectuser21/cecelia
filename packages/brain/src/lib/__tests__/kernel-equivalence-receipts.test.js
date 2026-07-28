@@ -230,6 +230,7 @@ describe('canonical signed envelopes', () => {
     ['unknown field', (value) => { value.debug = true; }, 'grant_fields_invalid'],
     ['axis mismatch', (value) => { value.provider = 'grok'; }, 'grant_axis_mismatch'],
     ['unsafe environment', (value) => { value.environment = 'production'; }, 'grant_environment_unsafe'],
+    ['protected resource id', (value) => { value.resource_id = 'production'; }, 'grant_environment_unsafe'],
     ['expired grant', (value) => { value.expires_at = '2026-07-28T11:59:59.000Z'; }, 'grant_expired'],
   ])('rejects %s even when the object remains signed', (_label, mutate, code) => {
     const keys = trustFixture();
@@ -363,6 +364,25 @@ describe('canonical signed envelopes', () => {
       expected(cell(), executionGrant),
       { now: NOW },
     )).toThrowError(expect.objectContaining({ code: 'effect_key_invalid' }));
+  });
+
+  it('rejects a seam-signed effect that targets a protected resource id', () => {
+    const keys = trustFixture();
+    const target = cell();
+    const executionGrant = {
+      ...grant(keys, target),
+      resource_id: 'production',
+    };
+    const receipt = effectReceipt(keys, executionGrant, target);
+
+    expect(() => verifyEffectReceipt(
+      receipt,
+      keys.registry,
+      expected(target, executionGrant),
+      { now: NOW },
+    )).toThrowError(expect.objectContaining({
+      code: 'effect_outcome_invalid',
+    }));
   });
 });
 
