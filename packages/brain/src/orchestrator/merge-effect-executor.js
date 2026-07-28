@@ -246,7 +246,13 @@ export function createCiMergeAuthorityEquivalenceSeam({
         signal,
       });
       signal?.throwIfAborted();
-      const result = await mergeEffectExecutor(execution);
+      let result = null;
+      let executionError = null;
+      try {
+        result = await mergeEffectExecutor(execution);
+      } catch (error) {
+        executionError = error;
+      }
       signal?.throwIfAborted();
       const after = await mergeDrillAuthority.snapshot({
         phase: 'after',
@@ -255,6 +261,7 @@ export function createCiMergeAuthorityEquivalenceSeam({
         resource: authorityResource,
         execution,
         result,
+        execution_error_code: executionError?.code ?? null,
         predecessor,
         signal,
       });
@@ -267,12 +274,16 @@ export function createCiMergeAuthorityEquivalenceSeam({
           resource: authorityResource,
           execution,
           result,
+          error: executionError,
           before,
           after,
           signal,
         });
         signal?.throwIfAborted();
-        if (result?.status !== 'BLOCKED' || denied !== true) {
+        if (
+          (executionError == null && result?.status !== 'BLOCKED')
+          || denied !== true
+        ) {
           mergeEquivalenceFail('ci_merge_denial_unconfirmed');
         }
       } else {
@@ -282,6 +293,7 @@ export function createCiMergeAuthorityEquivalenceSeam({
           resource: authorityResource,
           execution,
           result,
+          error: executionError,
           before,
           after,
           predecessor,
@@ -289,6 +301,8 @@ export function createCiMergeAuthorityEquivalenceSeam({
         });
         signal?.throwIfAborted();
         if (
+          executionError != null
+          ||
           !['DONE', 'DONE_WITH_CONCERNS'].includes(result?.status)
           || confirmed !== true
         ) {
