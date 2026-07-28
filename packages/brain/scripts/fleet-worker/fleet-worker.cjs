@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const process = require('node:process');
+const { TextDecoder } = require('node:util');
 const {
   createAttemptRunner,
   createDockerAdapter,
@@ -48,6 +49,48 @@ const CANONICAL_MACHINE_IDS = new Set([
 ]);
 const RUNNER_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const MAX_RECEIPT_RESPONSE_BYTES = 65_536;
+
+async function readBoundedUtf8Response(response, errorCode) {
+  const declaredLength = response?.headers?.get?.('content-length');
+  if (
+    declaredLength !== null
+    && declaredLength !== undefined
+    && (
+      !/^(?:0|[1-9][0-9]*)$/.test(declaredLength)
+      || Number(declaredLength) > MAX_RECEIPT_RESPONSE_BYTES
+    )
+  ) {
+    throw new Error(errorCode);
+  }
+  const reader = response?.body?.getReader?.();
+  if (!reader) throw new Error(errorCode);
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      size += chunk.length;
+      if (size > MAX_RECEIPT_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new Error(errorCode);
+      }
+      chunks.push(chunk);
+    }
+  } catch (error) {
+    if (error?.message === errorCode) throw error;
+    throw new Error(errorCode);
+  }
+  if (size === 0) throw new Error(errorCode);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(
+      Buffer.concat(chunks, size),
+    );
+  } catch {
+    throw new Error(errorCode);
+  }
+}
 
 function safeString(value, fallback = 'unavailable') {
   if (typeof value !== 'string' || value.length === 0) return fallback;
@@ -313,13 +356,10 @@ function createResultDeliveryClient({
       if (!response?.ok) {
         throw new Error(`fleet_result_delivery_http_${response?.status ?? 'invalid'}`);
       }
-      const receiptText = await response.text();
-      if (
-        Buffer.byteLength(receiptText, 'utf8') > MAX_RECEIPT_RESPONSE_BYTES
-        || receiptText.length === 0
-      ) {
-        throw new Error('fleet_result_receipt_response_invalid');
-      }
+      const receiptText = await readBoundedUtf8Response(
+        response,
+        'fleet_result_receipt_response_invalid',
+      );
       let receipt;
       try {
         receipt = JSON.parse(receiptText);
@@ -397,13 +437,10 @@ function createFleetHeartbeatClient({
       if (!response?.ok) {
         throw new Error(`fleet_heartbeat_http_${response?.status ?? 'invalid'}`);
       }
-      const responseText = await response.text();
-      if (
-        responseText.length === 0
-        || Buffer.byteLength(responseText, 'utf8') > MAX_RECEIPT_RESPONSE_BYTES
-      ) {
-        throw new Error('fleet_heartbeat_ack_response_invalid');
-      }
+      const responseText = await readBoundedUtf8Response(
+        response,
+        'fleet_heartbeat_ack_response_invalid',
+      );
       let ack;
       try {
         ack = JSON.parse(responseText);
