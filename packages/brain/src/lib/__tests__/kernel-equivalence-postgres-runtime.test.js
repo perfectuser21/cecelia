@@ -67,7 +67,7 @@ function bundleFixture(scenario = 'normal') {
   };
 }
 
-function transactionPool({ updateRows, readbackBundle }) {
+function transactionPool({ updateRows, readbackBundle, updateError = null }) {
   const calls = [];
   const client = {
     query: vi.fn(async (text, params) => {
@@ -75,10 +75,14 @@ function transactionPool({ updateRows, readbackBundle }) {
       if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
       if (/^ROLLBACK$/i.test(text)) return { rows: [], rowCount: null };
       if (/^COMMIT$/i.test(text)) return { rows: [], rowCount: null };
+      if (/set_config\('statement_timeout'/i.test(text)) {
+        return { rows: [{}], rowCount: 1 };
+      }
       if (/INSERT INTO kernel_equivalence_receipt_bundles/i.test(text)) {
         return { rows: [{ bundle_hash: params[1] }], rowCount: 1 };
       }
       if (/UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)) {
+        if (updateError) throw updateError;
         return { rows: updateRows, rowCount: updateRows.length };
       }
       if (/SELECT bundle\s+FROM kernel_equivalence_receipt_bundles/i.test(text)) {
@@ -198,7 +202,9 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       },
     });
     expect(runtime.calls.map(({ text }) => text.trim().split(/\s+/)[0]))
-      .toEqual(['BEGIN', 'INSERT', 'UPDATE', 'SELECT', 'COMMIT']);
+      .toEqual(['BEGIN', 'SELECT', 'INSERT', 'UPDATE', 'SELECT', 'COMMIT']);
+    expect(runtime.calls[1].text).toMatch(/set_config\('statement_timeout'/i);
+    expect(runtime.calls[1].text).toMatch(/set_config\('lock_timeout'/i);
     await expect(store.readBundle(value.hash)).resolves.toEqual(value.bundle);
     expect(runtime.calls.find(({ text }) => (
       /UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)
@@ -251,6 +257,30 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     })).rejects.toMatchObject({ code: 'bundle_chain_readback_invalid' });
     expect(runtime.calls.map(({ text }) => text.trim()))
       .toContain('ROLLBACK');
+  });
+
+  it('rolls back and reports a settled transaction-local timeout', async () => {
+    const value = bundleFixture();
+    const timeout = new Error('canceling statement due to statement timeout');
+    timeout.code = '57014';
+    const runtime = transactionPool({
+      updateRows: [],
+      readbackBundle: null,
+      updateError: timeout,
+    });
+    const store = createPostgresBundleChainStore({ pool: runtime.pool });
+    await store.getCheckpoint();
+
+    await expect(store.commit({
+      bundle: value.bundle,
+      bundle_hash: value.hash,
+      previous_head_hash: null,
+      timeout_ms: 17,
+    })).rejects.toMatchObject({
+      code: 'bundle_chain_commit_timeout',
+    });
+    expect(runtime.calls.map(({ text }) => text.trim())).toContain('ROLLBACK');
+    expect(runtime.client.release).toHaveBeenCalledOnce();
   });
 
   it('reads and canonical-verifies a durable bundle from a fresh store instance', async () => {

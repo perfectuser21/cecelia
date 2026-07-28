@@ -290,4 +290,62 @@ describe('trusted equivalence runtime on real PostgreSQL', () => {
       });
     }
   });
+
+  it('settles a lock timeout without a late bundle or head commit', async () => {
+    const before = await pool.query(
+      `SELECT genesis_hash, head_hash, revision
+         FROM kernel_equivalence_bundle_chain_heads
+        WHERE chain_id = 'kernel-equivalence-v1'`,
+    );
+    const checkpoint = before.rows[0];
+    const value = bundleValue(
+      'KERNEL-P0-TIMEOUT-SETTLEMENT',
+      'normal',
+      checkpoint.head_hash,
+    );
+    const store = createPostgresBundleChainStore({ pool });
+    await store.getCheckpoint();
+    const blocker = await pool.connect();
+    await blocker.query('BEGIN');
+    await blocker.query(
+      `SELECT 1
+         FROM kernel_equivalence_bundle_chain_heads
+        WHERE chain_id = 'kernel-equivalence-v1'
+        FOR UPDATE`,
+    );
+    let released = false;
+    const delayedRelease = new Promise((resolve) => {
+      setTimeout(async () => {
+        await blocker.query('ROLLBACK');
+        blocker.release();
+        released = true;
+        resolve();
+      }, 150);
+    });
+
+    await expect(store.commit({
+      bundle: value.bundle,
+      bundle_hash: value.hash,
+      previous_head_hash: checkpoint.head_hash,
+      timeout_ms: 30,
+    })).rejects.toMatchObject({
+      code: 'bundle_chain_commit_timeout',
+    });
+    expect(released).toBe(false);
+    await delayedRelease;
+
+    const after = await pool.query(
+      `SELECT genesis_hash, head_hash, revision
+         FROM kernel_equivalence_bundle_chain_heads
+        WHERE chain_id = 'kernel-equivalence-v1'`,
+    );
+    expect(after.rows).toEqual(before.rows);
+    const bundle = await pool.query(
+      `SELECT 1
+         FROM kernel_equivalence_receipt_bundles
+        WHERE bundle_hash = $1`,
+      [value.hash],
+    );
+    expect(bundle.rowCount).toBe(0);
+  });
 });

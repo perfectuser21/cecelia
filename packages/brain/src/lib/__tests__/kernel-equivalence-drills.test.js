@@ -679,6 +679,31 @@ describe('executeDrillCell', () => {
     });
   });
 
+  it('waits for a timed-out bundle transaction to settle before auditing', async () => {
+    const value = executionFixture();
+    let settled = false;
+    value.bundleChainStore.commit.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      settled = true;
+      const error = new Error('transaction rolled back');
+      error.code = 'bundle_chain_commit_timeout';
+      throw error;
+    });
+    value.auditSink = vi.fn(async () => {
+      if (!settled) throw new Error('audit raced an unsettled transaction');
+    });
+
+    await expect(execute(value, { timeoutMs: 5 })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'bundle_chain_commit_timeout',
+      audit_delivery: 'delivered',
+    });
+    expect(settled).toBe(true);
+    expect(value.bundleChainStore.commit).toHaveBeenCalledWith(
+      expect.objectContaining({ timeout_ms: 5 }),
+    );
+  });
+
   it.each([
     ['unsigned output', () => ({ effect_code: 'ordinary object' }), 'effect_fields_invalid'],
     [
