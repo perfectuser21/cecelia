@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
+
 const ADAPTER_ID_PATTERN = /^kernel\.drill\.[a-z0-9_.-]+\.v[1-9][0-9]*$/;
 const VERIFIER_ID_PATTERN = /^kernel\.cleanup\.[a-z0-9_.-]+\.v[1-9][0-9]*$/;
 const SERVICE_ID_PATTERN = /^kernel\.[a-z0-9_.-]+$/;
-const CLEANUP_EVIDENCE_PATTERN = /^cleanup-evidence:[a-f0-9]{64}$/;
 const ADAPTER_FIELDS = Object.freeze([
   'adapter_id',
   'cancel',
@@ -19,8 +20,19 @@ const VERIFIER_FIELDS = Object.freeze([
 ]);
 const RESULT_FIELDS = Object.freeze([
   'confirmed',
-  'evidence_ref',
+  'evidence',
 ]);
+const EVIDENCE_FIELDS = Object.freeze([
+  'adapter_id',
+  'cell_id',
+  'context_hash',
+  'evidence_ref',
+  'grant_id',
+  'resource_id',
+  'resource_ref',
+  'schema_version',
+]);
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
 
 export class EquivalenceRuntimeRegistryError extends Error {
   constructor(code) {
@@ -40,6 +52,103 @@ function exactFields(value, fields) {
   const expected = [...fields].sort();
   return actual.length === expected.length
     && actual.every((field, index) => field === expected[index]);
+}
+
+function canonicalValue(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]),
+    );
+  }
+  fail('cleanup_evidence_context_invalid');
+}
+
+function canonicalHash(value) {
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalValue(value)), 'utf8')
+    .digest('hex');
+}
+
+function evidenceBinding(context) {
+  const binding = {
+    schema_version: 'kernel-equivalence-cleanup-evidence/v1',
+    cell_id: context?.cell?.cell_id,
+    grant_id: context?.grant?.grant_id,
+    resource_id: context?.grant?.resource_id,
+    resource_ref: context?.grant?.resource_ref,
+    adapter_id: context?.cell?.adapter_id,
+    context_hash: canonicalHash({
+      cleanup: context?.cleanup ?? null,
+      compensations: context?.compensations ?? [],
+      prepared: context?.prepared ?? null,
+    }),
+  };
+  if (
+    !boundedBinding(binding.cell_id)
+    || !boundedBinding(binding.grant_id)
+    || !boundedBinding(binding.resource_id)
+    || !boundedBinding(binding.resource_ref)
+    || !ADAPTER_ID_PATTERN.test(binding.adapter_id ?? '')
+  ) {
+    fail('cleanup_evidence_context_invalid');
+  }
+  return binding;
+}
+
+function boundedBinding(value) {
+  return (
+    typeof value === 'string'
+    && value.length > 0
+    && value.length <= 2_048
+    && !/[\0\r\n]/.test(value)
+  );
+}
+
+export function createCleanupEvidence(context) {
+  const binding = evidenceBinding(context);
+  return Object.freeze({
+    ...binding,
+    evidence_ref: `cleanup-evidence:${canonicalHash(binding)}`,
+  });
+}
+
+export function verifyCleanupEvidence(evidence, contextOrBinding) {
+  if (
+    !exactFields(evidence, EVIDENCE_FIELDS)
+    || evidence.schema_version !== 'kernel-equivalence-cleanup-evidence/v1'
+    || !HASH_PATTERN.test(evidence.context_hash ?? '')
+  ) {
+    fail('cleanup_evidence_invalid');
+  }
+  const expected = contextOrBinding?.cell
+    ? createCleanupEvidence(contextOrBinding)
+    : Object.freeze({
+      schema_version: 'kernel-equivalence-cleanup-evidence/v1',
+      cell_id: contextOrBinding?.cell_id,
+      grant_id: contextOrBinding?.grant_id,
+      resource_id: contextOrBinding?.resource_id,
+      resource_ref: contextOrBinding?.resource_ref,
+      adapter_id: contextOrBinding?.adapter_id,
+      context_hash: evidence.context_hash,
+      evidence_ref: `cleanup-evidence:${canonicalHash({
+        schema_version: 'kernel-equivalence-cleanup-evidence/v1',
+        cell_id: contextOrBinding?.cell_id,
+        grant_id: contextOrBinding?.grant_id,
+        resource_id: contextOrBinding?.resource_id,
+        resource_ref: contextOrBinding?.resource_ref,
+        adapter_id: contextOrBinding?.adapter_id,
+        context_hash: evidence.context_hash,
+      })}`,
+    });
+  if (canonicalHash(evidence) !== canonicalHash(expected)) {
+    fail('cleanup_evidence_invalid');
+  }
+  return Object.freeze(structuredClone(evidence));
 }
 
 function completeAdapter(value) {
@@ -103,18 +212,16 @@ function validateResult(result) {
   if (
     !exactFields(result, RESULT_FIELDS)
     || typeof result.confirmed !== 'boolean'
-    || (
-      result.confirmed
-      && !CLEANUP_EVIDENCE_PATTERN.test(result.evidence_ref ?? '')
-    )
-    || (!result.confirmed && result.evidence_ref !== null)
+    || (result.confirmed && (
+      !result.evidence
+      || typeof result.evidence !== 'object'
+      || Array.isArray(result.evidence)
+    ))
+    || (!result.confirmed && result.evidence !== null)
   ) {
     fail('cleanup_verifier_result_invalid');
   }
-  return Object.freeze({
-    confirmed: result.confirmed,
-    evidence_ref: result.evidence_ref,
-  });
+  return result.confirmed;
 }
 
 export function createIndependentCleanupVerifierRegistry({
@@ -163,7 +270,14 @@ export function createIndependentCleanupVerifierRegistry({
       const adapterId = context?.cell?.adapter_id;
       const verifier = entries.get(adapterId);
       if (!verifier) fail('cleanup_verifier_unavailable');
-      return validateResult(await verifier.verifyCleanup(context));
+      const result = await verifier.verifyCleanup(context);
+      if (!validateResult(result)) {
+        return Object.freeze({ confirmed: false, evidence: null });
+      }
+      return Object.freeze({
+        confirmed: true,
+        evidence: verifyCleanupEvidence(result.evidence, context),
+      });
     },
   });
 }

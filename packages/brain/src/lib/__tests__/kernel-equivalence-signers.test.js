@@ -31,6 +31,7 @@ import {
   FIXTURE_SHA,
   createTrustFixture,
   fixtureCell,
+  fixtureCleanupEvidence,
   fixtureReceipt,
 } from './kernel-equivalence-test-fixtures.js';
 
@@ -219,6 +220,7 @@ describe('protected Ed25519 equivalence signers', () => {
       grant,
       executionGrants: [grant],
       receipts: [receipt],
+      cleanupEvidence: fixtureCleanupEvidence(cell, grant),
       previousBundleHash: null,
     });
 
@@ -444,6 +446,7 @@ describe('protected Ed25519 equivalence signers', () => {
       grant,
       executionGrants: [grant],
       receipts: [{ ...receipt, signature: 'invalid' }],
+      cleanupEvidence: fixtureCleanupEvidence(cell, grant),
       previousBundleHash: null,
     })).rejects.toMatchObject({ code: 'effect_signature_invalid' });
     await expect(noResolver({
@@ -451,6 +454,7 @@ describe('protected Ed25519 equivalence signers', () => {
       grant,
       executionGrants: [grant],
       receipts: [receipt],
+      cleanupEvidence: fixtureCleanupEvidence(cell, grant),
       previousBundleHash: 'c'.repeat(64),
     })).rejects.toMatchObject({ code: 'collector_previous_bundle_unavailable' });
 
@@ -459,6 +463,7 @@ describe('protected Ed25519 equivalence signers', () => {
       grant,
       executionGrants: [grant],
       receipts: [receipt],
+      cleanupEvidence: fixtureCleanupEvidence(cell, grant),
       previousBundleHash: null,
     });
     const previousHash = sha256Canonical(previous);
@@ -476,6 +481,7 @@ describe('protected Ed25519 equivalence signers', () => {
       grant,
       executionGrants: [grant],
       receipts: [receipt],
+      cleanupEvidence: fixtureCleanupEvidence(cell, grant),
       previousBundleHash: previousHash,
     })).resolves.toMatchObject({
       previous_bundle_hash: previousHash,
@@ -496,6 +502,7 @@ describe('protected Ed25519 equivalence signers', () => {
       grant,
       executionGrants: [grant],
       receipts: [receipt],
+      cleanupEvidence: fixtureCleanupEvidence(cell, grant),
       previousBundleHash: previousHash,
     })).resolves.toMatchObject({
       previous_bundle_hash: previousHash,

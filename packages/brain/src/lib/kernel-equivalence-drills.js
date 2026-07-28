@@ -10,6 +10,9 @@ import {
   verifyReceiptBundle,
   validateTrustRegistry,
 } from './kernel-equivalence-receipts.js';
+import {
+  verifyCleanupEvidence,
+} from './kernel-equivalence-runtime-registry.js';
 
 const REQUIRED_BEHAVIOR_COUNT = 11;
 const SAFE_ENVIRONMENTS = new Set(['isolated', 'ephemeral']);
@@ -492,7 +495,7 @@ async function confirmCleanup(
   cleanupVerifier,
 ) {
   if (typeof cleanupVerifier !== 'function') {
-    return 'cleanup_verifier_unavailable';
+    return { error: 'cleanup_verifier_unavailable', evidence: null };
   }
   try {
     const cleanup = await withTimeout(
@@ -504,15 +507,27 @@ async function confirmCleanup(
       timeoutMs,
       'cleanup_verifier_timeout',
     );
-    return verification?.confirmed === true
-      ? null
-      : 'adapter_cleanup_unconfirmed';
-  } catch (error) {
-    if (error?.code === 'adapter_timeout') return 'adapter_cleanup_timeout';
-    if (error?.code === 'cleanup_verifier_timeout') {
-      return 'cleanup_verifier_timeout';
+    if (verification?.confirmed !== true) {
+      return { error: 'adapter_cleanup_unconfirmed', evidence: null };
     }
-    return 'adapter_cleanup_failed';
+    return {
+      error: null,
+      evidence: verifyCleanupEvidence(
+        verification.evidence,
+        { ...context, cleanup },
+      ),
+    };
+  } catch (error) {
+    if (error?.code === 'cleanup_evidence_invalid') {
+      return { error: 'cleanup_evidence_invalid', evidence: null };
+    }
+    if (error?.code === 'adapter_timeout') {
+      return { error: 'adapter_cleanup_timeout', evidence: null };
+    }
+    if (error?.code === 'cleanup_verifier_timeout') {
+      return { error: 'cleanup_verifier_timeout', evidence: null };
+    }
+    return { error: 'adapter_cleanup_failed', evidence: null };
   }
 }
 
@@ -850,7 +865,7 @@ export async function executeDrillCell({
         timeoutMs,
       )
       : true;
-    const cleanupError = await confirmCleanup(
+    const cleanupResult = await confirmCleanup(
       adapter,
       {
         ...context,
@@ -866,7 +881,9 @@ export async function executeDrillCell({
         'adapter_prepare_cancellation',
       );
     }
-    if (cleanupError) return deny(cleanupError, 'adapter_cleanup');
+    if (cleanupResult.error) {
+      return deny(cleanupResult.error, 'adapter_cleanup');
+    }
     return deny(code, 'adapter_prepare');
   }
 
@@ -916,17 +933,17 @@ export async function executeDrillCell({
       executionError = 'adapter_cancellation_unconfirmed';
     }
   }
-  const cleanupError = await confirmCleanup(
+  const cleanupResult = await confirmCleanup(
     adapter,
     { ...context, prepared, compensations },
     timeoutMs,
     selectedCleanupVerifier,
   );
   if (
-    cleanupError
+    cleanupResult.error
     && executionError !== 'adapter_cancellation_unconfirmed'
   ) {
-    return deny(cleanupError, 'adapter_cleanup');
+    return deny(cleanupResult.error, 'adapter_cleanup');
   }
   if (executionError) return deny(executionError, 'seam_execution');
 
@@ -976,6 +993,7 @@ export async function executeDrillCell({
       grant: verifiedGrant,
       executionGrants,
       receipts,
+      cleanupEvidence: cleanupResult.evidence,
       previousBundleHash: chainCheckpoint.head_hash,
     }), timeoutMs, 'collector_timeout');
     bundle = structuredClone(collectedBundle);
@@ -1050,6 +1068,12 @@ export async function executeDrillCell({
       errorCode(error, 'bundle_invalid', { trusted: true }),
       'collector',
     );
+  }
+  if (
+    sha256Canonical(bundle.cleanup_evidence)
+      !== sha256Canonical(cleanupResult.evidence)
+  ) {
+    return deny('cleanup_evidence_invalid', 'collector');
   }
   let committed;
   try {

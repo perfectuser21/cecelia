@@ -14,6 +14,7 @@ import {
   createTrustFixture,
   fixtureBundle,
   fixtureCell,
+  fixtureCleanupEvidence,
   fixtureGrant,
   fixtureReceipt,
 } from './kernel-equivalence-test-fixtures.js';
@@ -211,8 +212,9 @@ function executionFixture() {
     return bundle;
   });
   const auditSink = vi.fn((audit) => audits.push(audit));
-  const cleanupVerifier = vi.fn(async ({ cleanup }) => ({
-    confirmed: cleanup?.confirmed === true,
+  const cleanupVerifier = vi.fn(async (context) => ({
+    confirmed: context.cleanup?.confirmed === true,
+    evidence: fixtureCleanupEvidence(cell, grant, context),
   }));
   const chainBundles = new Map();
   let chainCheckpoint = {
@@ -378,7 +380,10 @@ describe('executeDrillCell', () => {
     });
     value.cleanupVerifier.mockImplementation(async (context) => {
       expect(context.compensations).toEqual([partial]);
-      return { confirmed: context.cleanup?.confirmed === true };
+      return {
+        confirmed: context.cleanup?.confirmed === true,
+        evidence: fixtureCleanupEvidence(value.cell, value.grant, context),
+      };
     });
 
     await expect(execute(value)).resolves.toMatchObject({
@@ -491,7 +496,7 @@ describe('executeDrillCell', () => {
     const value = executionFixture();
     const serverVerifier = vi.fn(async () => ({
       confirmed: false,
-      evidence_ref: null,
+      evidence: null,
     }));
     const runtimeRegistry = createServerOwnedRuntimeRegistry({
       adapters: [{
@@ -512,7 +517,7 @@ describe('executeDrillCell', () => {
     });
     const callerSelectedVerifier = vi.fn(async () => ({
       confirmed: true,
-      evidence_ref: `cleanup-evidence:${'c'.repeat(64)}`,
+      evidence: fixtureCleanupEvidence(value.cell, value.grant),
     }));
 
     await expect(execute(value, {
@@ -864,7 +869,7 @@ describe('executeDrillCell', () => {
       prepare: vi.fn(async (context) => {
         assertPredecessor(context);
         calls.push('prepare');
-        return {};
+        return { resource_id: recoveryGrant.resource_id };
       }),
       invokeActualSeam: vi.fn(async (context) => {
         assertPredecessor(context);
@@ -928,8 +933,9 @@ describe('executeDrillCell', () => {
       adapters: new Map([[recoveryCell.adapter_id, adapter]]),
       collector,
       bundleChainStore,
-      cleanupVerifier: async ({ cleanup }) => ({
-        confirmed: cleanup?.confirmed === true,
+      cleanupVerifier: async (context) => ({
+        confirmed: context.cleanup?.confirmed === true,
+        evidence: fixtureCleanupEvidence(recoveryCell, recoveryGrant, context),
       }),
       now: FIXTURE_NOW,
       timeoutMs: 25,

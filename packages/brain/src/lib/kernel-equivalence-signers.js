@@ -644,6 +644,7 @@ export function loadCollectorSigner({
     grant,
     executionGrants,
     receipts,
+    cleanupEvidence,
     previousBundleHash,
   } = {}) => {
     const issuedAt = finiteNow(now);
@@ -702,6 +703,7 @@ export function loadCollectorSigner({
       },
       executionGrants: verifiedMaterial.executionGrants,
       receipts: verifiedMaterial.receipts,
+      cleanupEvidence,
       previousBundleHash,
     });
     const bundle = signRecord(unsigned, signer, issuedAt);

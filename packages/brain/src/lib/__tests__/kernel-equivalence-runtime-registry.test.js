@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createCleanupEvidence,
   createIndependentCleanupVerifierRegistry,
   createServerOwnedAdapterRegistry,
   createServerOwnedRuntimeRegistry,
@@ -26,10 +27,26 @@ function verifier(overrides = {}) {
     verifier_id: 'kernel.cleanup.ci_merge_authority.v1',
     adapter_id: 'kernel.drill.ci_merge_authority.v1',
     owner_service: 'kernel.cleanup.observer',
-    verifyCleanup: vi.fn(async () => ({
+    verifyCleanup: vi.fn(async (context) => ({
       confirmed: true,
-      evidence_ref: `cleanup-evidence:${'a'.repeat(64)}`,
+      evidence: createCleanupEvidence(context),
     })),
+    ...overrides,
+  };
+}
+
+function cleanupContext(overrides = {}) {
+  const cell = fixtureCell();
+  return {
+    cell,
+    grant: {
+      grant_id: '33333333-3333-4333-8333-333333333333',
+      resource_id: 'eq-cleanup',
+      resource_ref: 'refs/heads/equivalence-drill/run/attempt/case',
+    },
+    prepared: {},
+    compensations: [],
+    cleanup: { adapter_claim: true },
     ...overrides,
   };
 }
@@ -117,14 +134,11 @@ describe('server-owned equivalence runtime registries', () => {
       adapterRegistry,
       verifiers: [cleanup],
     });
-    const context = {
-      cell: fixtureCell(),
-      cleanup: { adapter_claim: true },
-    };
+    const context = cleanupContext();
 
     await expect(registry.verify(context)).resolves.toEqual({
       confirmed: true,
-      evidence_ref: `cleanup-evidence:${'a'.repeat(64)}`,
+      evidence: createCleanupEvidence(context),
     });
     expect(cleanup.verifyCleanup).toHaveBeenCalledWith(context);
     await expect(registry.verify({
@@ -134,16 +148,67 @@ describe('server-owned equivalence runtime registries', () => {
   });
 
   it.each([
+    ['cell', (context) => ({
+      ...context,
+      cell: { ...context.cell, cell_id: `${context.cell.cell_id}-other` },
+    })],
+    ['grant', (context) => ({
+      ...context,
+      grant: {
+        ...context.grant,
+        grant_id: '44444444-4444-4444-8444-444444444444',
+      },
+    })],
+    ['resource', (context) => ({
+      ...context,
+      grant: { ...context.grant, resource_id: 'eq-other' },
+    })],
+    ['resource ref', (context) => ({
+      ...context,
+      grant: {
+        ...context.grant,
+        resource_ref: `${context.grant.resource_ref}-other`,
+      },
+    })],
+    ['prepared context', (context) => ({
+      ...context,
+      prepared: { injected: true },
+    })],
+    ['cleanup context', (context) => ({
+      ...context,
+      cleanup: { adapter_claim: false },
+    })],
+  ])('rejects evidence replayed across a different %s binding', async (_axis, alter) => {
+    const original = cleanupContext();
+    const adapterRegistry = createServerOwnedAdapterRegistry({
+      adapters: [adapter()],
+    });
+    const registry = createIndependentCleanupVerifierRegistry({
+      adapterRegistry,
+      verifiers: [verifier({
+        verifyCleanup: vi.fn(async () => ({
+          confirmed: true,
+          evidence: createCleanupEvidence(original),
+        })),
+      })],
+    });
+
+    await expect(registry.verify(alter(original))).rejects.toMatchObject({
+      code: 'cleanup_evidence_invalid',
+    });
+  });
+
+  it.each([
     [{ confirmed: true }, 'cleanup_verifier_result_invalid'],
-    [{ confirmed: true, evidence_ref: 'ordinary string' }, 'cleanup_verifier_result_invalid'],
+    [{ confirmed: true, evidence: 'ordinary string' }, 'cleanup_verifier_result_invalid'],
     [{
       confirmed: true,
-      evidence_ref: `cleanup-evidence:${'a'.repeat(64)}`,
+      evidence: createCleanupEvidence(cleanupContext()),
       adapter_says: true,
     }, 'cleanup_verifier_result_invalid'],
     [{
       confirmed: false,
-      evidence_ref: `cleanup-evidence:${'a'.repeat(64)}`,
+      evidence: createCleanupEvidence(cleanupContext()),
     }, 'cleanup_verifier_result_invalid'],
   ])('rejects malformed verifier output: %j', async (result, code) => {
     const adapterRegistry = createServerOwnedAdapterRegistry({
@@ -157,8 +222,7 @@ describe('server-owned equivalence runtime registries', () => {
     });
 
     await expect(registry.verify({
-      cell: fixtureCell(),
-      cleanup: {},
+      ...cleanupContext(),
     })).rejects.toMatchObject({ code });
   });
 
@@ -171,17 +235,16 @@ describe('server-owned equivalence runtime registries', () => {
       verifiers: [verifier({
         verifyCleanup: vi.fn(async () => ({
           confirmed: false,
-          evidence_ref: null,
+          evidence: null,
         })),
       })],
     });
 
     await expect(registry.verify({
-      cell: fixtureCell(),
-      cleanup: {},
+      ...cleanupContext(),
     })).resolves.toEqual({
       confirmed: false,
-      evidence_ref: null,
+      evidence: null,
     });
   });
 
@@ -196,12 +259,10 @@ describe('server-owned equivalence runtime registries', () => {
       adapter_id: fixtureCell().adapter_id,
       owner_service: fixtureCell().seam_id,
     });
-    await expect(selected.verifyCleanup({
-      cell: fixtureCell(),
-      cleanup: {},
-    })).resolves.toEqual({
+    const context = cleanupContext();
+    await expect(selected.verifyCleanup(context)).resolves.toEqual({
       confirmed: true,
-      evidence_ref: `cleanup-evidence:${'a'.repeat(64)}`,
+      evidence: createCleanupEvidence(context),
     });
     expect(selected).not.toHaveProperty('selectCleanupVerifier');
     expect(Object.isFrozen(selected)).toBe(true);

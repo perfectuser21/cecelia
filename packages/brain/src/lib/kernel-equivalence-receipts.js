@@ -3,6 +3,9 @@ import {
   createPublicKey,
   verify as verifyBytes,
 } from 'node:crypto';
+import {
+  verifyCleanupEvidence,
+} from './kernel-equivalence-runtime-registry.js';
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
@@ -115,6 +118,7 @@ const BUNDLE_FIELDS = Object.freeze([
   'bundle_payload_hash',
   'cell_id',
   'collector_service_id',
+  'cleanup_evidence',
   'effect_receipts',
   'engine_version',
   'environment',
@@ -610,11 +614,17 @@ export function verifyEffectReceipt(receipt, registry, expected, { now = Date.no
   return Object.freeze(structuredClone(receipt));
 }
 
-function bundlePayload(previousBundleHash, grantHashes, receiptHashes) {
+function bundlePayload(
+  previousBundleHash,
+  grantHashes,
+  receiptHashes,
+  cleanupEvidenceHash,
+) {
   return {
     previous_bundle_hash: previousBundleHash,
     grant_hashes: grantHashes,
     receipt_hashes: receiptHashes,
+    cleanup_evidence_hash: cleanupEvidenceHash,
   };
 }
 
@@ -626,12 +636,19 @@ export function assembleUnsignedBundle({
   expected,
   executionGrants,
   receipts,
+  cleanupEvidence,
   previousBundleHash = null,
 }) {
   const grantHashes = executionGrants.map(sha256Canonical);
   const receiptHashes = receipts.map(sha256Canonical);
+  const cleanupEvidenceHash = sha256Canonical(cleanupEvidence);
   const payloadHash = sha256Canonical(
-    bundlePayload(previousBundleHash, grantHashes, receiptHashes),
+    bundlePayload(
+      previousBundleHash,
+      grantHashes,
+      receiptHashes,
+      cleanupEvidenceHash,
+    ),
   );
   return {
     schema_version: 'kernel-equivalence-receipt-bundle/v1',
@@ -661,6 +678,7 @@ export function assembleUnsignedBundle({
     grant_hashes: grantHashes,
     effect_receipts: structuredClone(receipts),
     receipt_hashes: receiptHashes,
+    cleanup_evidence: structuredClone(cleanupEvidence),
     bundle_payload_hash: payloadHash,
   };
 }
@@ -856,7 +874,12 @@ export function verifyReceiptBundle(
   const grantHashes = verifiedGrants.map(sha256Canonical);
   const hashes = verifiedReceipts.map(sha256Canonical);
   const payloadHash = sha256Canonical(
-    bundlePayload(bundle.previous_bundle_hash, grantHashes, hashes),
+    bundlePayload(
+      bundle.previous_bundle_hash,
+      grantHashes,
+      hashes,
+      sha256Canonical(bundle.cleanup_evidence),
+    ),
   );
   if (
     grantHashes.length !== bundle.grant_hashes.length
@@ -873,6 +896,13 @@ export function verifyReceiptBundle(
   ) {
     fail('bundle_hash_chain_invalid');
   }
+  verifyCleanupEvidence(bundle.cleanup_evidence, {
+    cell_id: bundle.cell_id,
+    grant_id: bundle.grant_id,
+    resource_id: bundle.resource_id,
+    resource_ref: bundle.resource_ref,
+    adapter_id: bundle.adapter_id,
+  });
 
   if (bundle.previous_bundle_hash != null) {
     if (typeof resolvePreviousBundle !== 'function') {

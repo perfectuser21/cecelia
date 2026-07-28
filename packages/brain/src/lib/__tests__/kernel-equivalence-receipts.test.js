@@ -14,6 +14,9 @@ import {
   verifyExecutionGrant,
   verifyReceiptBundle,
 } from '../kernel-equivalence-receipts.js';
+import {
+  createCleanupEvidence,
+} from '../kernel-equivalence-runtime-registry.js';
 
 const NOW = Date.parse('2026-07-28T12:02:00.000Z');
 const SHA = '8e034654d196221ddca25a7f032612b526bad031';
@@ -66,6 +69,16 @@ function trustFixture() {
       keys: [authority.record, effect.record, collector.record],
     },
   };
+}
+
+function cleanupEvidence(target, executionGrant) {
+  return createCleanupEvidence({
+    cell: target,
+    grant: executionGrant,
+    prepared: { resource_id: executionGrant.resource_id },
+    compensations: [],
+    cleanup: { confirmed: true },
+  });
 }
 
 function cell(scenario = 'normal') {
@@ -405,6 +418,7 @@ describe('receipt bundle and recovery lineage', () => {
       expected: expected(target, executionGrant),
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: null,
     });
     const bundle = signed(unsigned, keys.collector.privateKey);
@@ -502,6 +516,7 @@ describe('receipt bundle and recovery lineage', () => {
       expected: expected(target, executionGrant),
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: null,
     });
     const bundle = signed(unsigned, keys.collector.privateKey);
@@ -548,6 +563,7 @@ describe('receipt bundle and recovery lineage', () => {
       expected: expected(target, executionGrant),
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: null,
     });
 
@@ -589,6 +605,7 @@ describe('receipt bundle and recovery lineage', () => {
       expected: expected(target, executionGrant),
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: null,
     });
 
@@ -630,6 +647,7 @@ describe('receipt bundle and recovery lineage', () => {
       },
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: null,
     });
     const wrapped = signed(unsigned, keys.collector.privateKey);
@@ -659,6 +677,7 @@ describe('receipt bundle and recovery lineage', () => {
       expected: expected(target, executionGrant),
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: 'f'.repeat(64),
     });
     const wrapped = signed(unsigned, keys.collector.privateKey);
