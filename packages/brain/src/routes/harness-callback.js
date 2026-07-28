@@ -678,6 +678,18 @@ async function handleFleetHeartbeat(req, res) {
   ) {
     return res.status(409).json({ ok: false, error: 'provider_session_mismatch' });
   }
+  if (heartbeat.providerSessionId) {
+    try {
+      await attemptStore.assertFreshRoleSession({
+        runId: attempt.run_id,
+        attemptId: attempt.id,
+        role: attempt.role,
+        sessionId: heartbeat.providerSessionId,
+      });
+    } catch (error) {
+      return res.status(409).json({ ok: false, error: error.message });
+    }
+  }
   try {
     const renewed = heartbeat.providerSessionId
       ? await attemptStore.markRunning(req.params.attemptId, {
