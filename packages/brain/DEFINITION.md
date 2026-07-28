@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.268.2
+**版本**: 1.268.5
+
+## Durable Kernel ReleaseRun
+
+- confirmed merge receipt 唯一创建不可变 ReleaseRun，绑定 source/merge SHA、
+  artifact versions 与 `kernel-release/v1` policy；migration 374 的 append-only
+  ledger 强制六状态顺序。
+- staging/production 共用 release advisory lease；intent 先写、effect 后验，
+  重放先观察。只有 exact PASS receipt 才推进，unknown/skipped/idle/fail 均阻断。
+- Kernel `report/done` 只消费 `production_verified`。部署 API、历史 workflows、
+  drift sentinel 与直接生产脚本没有 ReleaseRun authorization 时全部 fail closed。
+- 回退：`bash scripts/brain-rollback.sh 1.268.3`（保留 migration 374 审计账本）。
 
 ## Kernel controller contract and intervention evidence
 
