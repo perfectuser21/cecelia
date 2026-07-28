@@ -163,7 +163,8 @@ describe('legacy release surfaces fail closed', () => {
     const source = readFileSync(script, 'utf8');
     expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL');
     expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT');
-    expect(source).toMatch(/psql "\$database_url"/);
+    expect(source).toMatch(/PGDATABASE="\$database_url" psql/);
+    expect(source).not.toMatch(/psql "\$database_url"/);
     expect(source).toMatch(/git -C "\$deploy_root"/);
   });
 
@@ -191,6 +192,7 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).toContain('gh api --method GET');
     expect(source).toContain('validate-bootstrap-pr.mjs');
     expect(source).toMatch(/"\$\{source_head_sha\}:\$\{source_ref\}"/);
+    expect(source).toMatch(/"\$\{merge_sha\}:\$\{merge_ref\}"/);
     expect(source).toMatch(/"refs\/heads\/main:\$\{main_ref\}"/);
     expect(source).toMatch(
       /git -C "\$deploy_root" merge-base --is-ancestor "\$merge_sha" "\$main_ref"/,
@@ -260,7 +262,11 @@ describe('legacy release surfaces fail closed', () => {
     expect(productionDeployPosition).toBeGreaterThan(stagingDeployPosition);
     expect(source).toMatch(/state" != "production_verified"/);
     expect(source).toMatch(/one-time bootstrap is terminal and permanently closed/);
-    expect(source).toMatch(/canonical migration 369-374 sequence failed/);
+    expect(source).toMatch(/canonical migration 369-375 sequence failed/);
+    expect(source).toMatch(/release-run-bootstrap-e2e\.mjs" materialize/);
+    expect(source.match(/execute_manifest (?:staging|production)/g)?.length)
+      .toBeGreaterThanOrEqual(2);
+    expect(source).toContain('KERNEL_RELEASE_ARTIFACT_VERSIONS');
   });
 
   it('bootstrap guard claims a leased generation for the current stage', () => {
@@ -273,8 +279,18 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).toContain('kernel_release_bootstrap_effect_attempts');
     expect(source).toContain('generation');
     expect(source).toContain('lease_expires_at');
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_ATTEMPT_FILE');
+    expect(source).toMatch(
+      /latest_attempt AS \([\s\S]*?effective_lease_expires_at[\s\S]*?ORDER BY a\.generation DESC/i,
+    );
+    expect(source).toMatch(
+      /SELECT effective_lease_expires_at <= clock_timestamp\(\) FROM latest_attempt/i,
+    );
     expect(source).toContain('verify-bootstrap-approval.mjs');
     expect(source).toContain('approval_digest');
+    expect(source).toMatch(/PGDATABASE="\$bootstrap_database_url" psql/);
+    expect(source).not.toMatch(/psql "\$bootstrap_database_url"/);
+    expect(source).toContain('kernel_release_bootstrap_e2e_manifests');
     expect(source).toMatch(/staging_intent/);
     expect(source).toMatch(/production_intent/);
     expect(source).not.toContain('kernel_release_bootstrap_consumptions');
@@ -290,6 +306,10 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).toContain('kernel_release_bootstrap_transitions');
     expect(source).toContain('kernel_release_bootstrap_effect_attempts');
     expect(source).toContain('kernel_release_bootstrap_effect_receipts');
+    expect(source).toContain('run_bootstrap_effect');
+    expect(source).toContain('start_attempt_renewal');
+    expect(source).toContain('stop_attempt_renewal');
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_ATTEMPT_FILE');
     expect(source).not.toContain('KERNEL_RELEASE_BOOTSTRAP_RECEIPT');
 
     const migration = readFileSync(
@@ -320,19 +340,35 @@ describe('legacy release surfaces fail closed', () => {
     expect(build).toMatch(/BUILD_SHA=.*rev-parse "\$BUILD_REF"/);
   });
 
-  it('persists exact production E2E evidence outside container tmpfs', () => {
+  it('checks out the exact authorized merge before artifact routing', () => {
+    const worker = readFileSync(
+      resolve(root, 'scripts/lib/release-run-effect-worker.mjs'),
+      'utf8',
+    );
+    const checkoutPosition = worker.indexOf('release-run-checkout.sh');
+    const routePosition = worker.lastIndexOf('planReleaseArtifactRoutes');
+    expect(checkoutPosition).toBeGreaterThan(-1);
+    expect(routePosition).toBeGreaterThan(checkoutPosition);
+
+    const deployLocal = readFileSync(resolve(root, 'scripts/deploy-local.sh'), 'utf8');
+    expect(deployLocal).toMatch(
+      /release-run-checkout\.sh"[\s\\]*"\$\{KERNEL_RELEASE_EFFECT_KIND:-production\}"/,
+    );
+  });
+
+  it('leaves ReleaseRun contract E2E evidence to the server-owned manifest executor', () => {
     const deploy = readFileSync(resolve(root, 'scripts/brain-deploy.sh'), 'utf8');
     expect(deploy).not.toMatch(/run_post_deploy_smoke\s*\|\|\s*true/);
-    expect(deploy).toMatch(/required[\s\S]+?KERNEL_RELEASE_RUN_ID/);
-    expect(deploy).toMatch(/required[\s\S]+?ran" -eq 0[\s\S]+?return 1/);
-    expect(deploy).toMatch(/failed" -ne 0[\s\S]+?return 1/);
-    expect(deploy).toContain('e2e_receipt');
+    expect(deploy).toMatch(
+      /KERNEL_RELEASE_RUN_ID[\s\S]+?server-owned contract E2E manifest executor/,
+    );
+    expect(deploy).not.toContain('e2e_receipt');
     expect(deploy).toContain('deployed_artifact_versions');
     expect(deploy).toMatch(/logs\/cecelia-deploy-status\.json/);
 
     const ops = readFileSync(resolve(root, 'packages/brain/src/routes/ops.js'), 'utf8');
     expect(ops).not.toContain("const DEPLOY_STATUS_FILE = '/tmp/cecelia-deploy-status.json'");
-    expect(ops).toContain('e2e_receipt');
+    expect(ops).not.toMatch(/stagingDeployState\.e2e_receipt\s*=/);
     expect(ops).toContain('deployed_artifact_versions');
   });
 });

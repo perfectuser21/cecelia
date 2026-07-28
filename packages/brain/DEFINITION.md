@@ -1,6 +1,18 @@
 # Brain 模块定义
 
-**版本**: 1.268.5
+**版本**: 1.268.6
+
+## Fenced Kernel ReleaseRun closure
+
+- approved contract E2E manifest、typed per-scenario receipt、dispatch renewal /
+  generation / outcome fencing 和 DB transition guards 组成唯一 PASS 权威。
+- production 在 effect 前写 rollback intent，在 live readback 后写 rollback receipt；
+  terminal transition 必须引用 exact effect、E2E 与 rollback receipts。
+- artifact routes 由数据库持久 manifest 驱动，分别执行 Brain、Dashboard 与
+  Workflow Skills runtime；unknown/no-runtime fail closed。
+- bootstrap 使用同一 manifest executor 和 append-only lease renewal，exact merge
+  fetch、private output 与无 DB URL argv；BLOCKED report 写 durable dedup P0 escalation。
+- 回退：`bash scripts/brain-rollback.sh 1.268.5`（保留 migrations 374–375 审计账本）。
 
 ## Durable Kernel ReleaseRun
 

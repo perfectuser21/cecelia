@@ -1,4 +1,8 @@
--- Migration 374: durable exact-SHA Kernel ReleaseRun authority.
+-- Migration 375: reconcile installed ReleaseRun v374 with fenced closure.
+--
+-- Migration 374 shipped before the complete fencing and evidence schema. This
+-- migration is intentionally safe after both the original and hardened v374:
+-- it adds missing columns/tables and replaces all guards with the exact form.
 --
 -- A confirmed Kernel merge receipt may create one immutable ReleaseRun. The
 -- state ledger and effect ledgers are append-only. Staging and production
@@ -150,6 +154,32 @@ CREATE TABLE IF NOT EXISTS kernel_release_effect_intents (
   UNIQUE (release_run_id, effect_kind)
 );
 
+-- Existing v374 dispatch claims predate claim modes. Temporarily remove the
+-- append-only row trigger only for the deterministic schema backfill; the
+-- hardened trigger is recreated below before this transaction commits.
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_dispatch_claims_append_only
+  ON kernel_release_effect_dispatch_claims;
+ALTER TABLE kernel_release_effect_dispatch_claims
+  ADD COLUMN IF NOT EXISTS claim_mode TEXT;
+UPDATE kernel_release_effect_dispatch_claims
+   SET claim_mode = 'dispatch'
+ WHERE claim_mode IS NULL;
+ALTER TABLE kernel_release_effect_dispatch_claims
+  ALTER COLUMN claim_mode SET NOT NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'kernel_release_effect_dispatch_claims'::regclass
+       AND conname = 'kernel_release_effect_dispatch_claims_claim_mode_check'
+  ) THEN
+    ALTER TABLE kernel_release_effect_dispatch_claims
+      ADD CONSTRAINT kernel_release_effect_dispatch_claims_claim_mode_check
+      CHECK (claim_mode IN ('dispatch', 'verification'));
+  END IF;
+END;
+$$;
+
 CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_claims (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   intent_id UUID NOT NULL REFERENCES kernel_release_effect_intents(id),
@@ -171,6 +201,27 @@ CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_renewals (
   renewed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
+ALTER TABLE kernel_release_effect_dispatch_outcomes
+  DROP CONSTRAINT IF EXISTS kernel_release_effect_dispatch_outcomes_outcome_check;
+ALTER TABLE kernel_release_effect_dispatch_outcomes
+  ADD CONSTRAINT kernel_release_effect_dispatch_outcomes_outcome_check
+  CHECK (outcome IN ('dispatched', 'failed', 'observed'));
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT dispatch_claim_id
+      FROM kernel_release_effect_dispatch_outcomes
+     GROUP BY dispatch_claim_id
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION
+      'cannot fence ReleaseRun dispatch outcomes: duplicate claim outcomes exist';
+  END IF;
+END;
+$$;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_dispatch_outcome_claim
+  ON kernel_release_effect_dispatch_outcomes (dispatch_claim_id);
+
 CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_outcomes (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   dispatch_claim_id BIGINT NOT NULL UNIQUE
@@ -179,6 +230,37 @@ CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_outcomes (
   evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
+
+ALTER TABLE kernel_release_effect_receipts
+  ADD COLUMN IF NOT EXISTS dispatch_claim_id BIGINT
+    REFERENCES kernel_release_effect_dispatch_claims(id),
+  ADD COLUMN IF NOT EXISTS dispatch_generation INTEGER CHECK (
+    dispatch_generation IS NULL OR dispatch_generation > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_manifest_id UUID
+    REFERENCES kernel_release_e2e_manifests(id),
+  ADD COLUMN IF NOT EXISTS e2e_manifest_digest TEXT CHECK (
+    e2e_manifest_digest IS NULL
+    OR e2e_manifest_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenarios_total INTEGER CHECK (
+    e2e_scenarios_total IS NULL OR e2e_scenarios_total > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenarios_passed INTEGER CHECK (
+    e2e_scenarios_passed IS NULL OR e2e_scenarios_passed > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_environment TEXT CHECK (
+    e2e_environment IS NULL OR e2e_environment IN ('staging', 'production')
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenario_results JSONB CHECK (
+    e2e_scenario_results IS NULL
+    OR jsonb_typeof(e2e_scenario_results) = 'array'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_started_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS e2e_finished_at TIMESTAMPTZ CHECK (
+    e2e_finished_at IS NULL OR e2e_started_at IS NULL
+    OR e2e_finished_at >= e2e_started_at
+  );
 
 CREATE TABLE IF NOT EXISTS kernel_release_effect_receipts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -381,6 +463,36 @@ CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_effect_attempt_renewals (
 CREATE INDEX IF NOT EXISTS idx_kernel_release_bootstrap_attempt_renewals
   ON kernel_release_bootstrap_effect_attempt_renewals
     (effect_attempt_id, generation, renewed_at DESC);
+
+ALTER TABLE kernel_release_bootstrap_effect_receipts
+  ADD COLUMN IF NOT EXISTS observed_merge_sha TEXT CHECK (
+    observed_merge_sha IS NULL OR observed_merge_sha ~ '^[0-9a-f]{40}$'
+  ),
+  ADD COLUMN IF NOT EXISTS observed_artifact_versions JSONB,
+  ADD COLUMN IF NOT EXISTS e2e_manifest_id UUID
+    REFERENCES kernel_release_bootstrap_e2e_manifests(id),
+  ADD COLUMN IF NOT EXISTS e2e_manifest_digest TEXT CHECK (
+    e2e_manifest_digest IS NULL
+    OR e2e_manifest_digest ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenarios_total INTEGER CHECK (
+    e2e_scenarios_total IS NULL OR e2e_scenarios_total > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenarios_passed INTEGER CHECK (
+    e2e_scenarios_passed IS NULL OR e2e_scenarios_passed > 0
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_environment TEXT CHECK (
+    e2e_environment IS NULL OR e2e_environment IN ('staging', 'production')
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_scenario_results JSONB CHECK (
+    e2e_scenario_results IS NULL
+    OR jsonb_typeof(e2e_scenario_results) = 'array'
+  ),
+  ADD COLUMN IF NOT EXISTS e2e_started_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS e2e_finished_at TIMESTAMPTZ CHECK (
+    e2e_finished_at IS NULL OR e2e_started_at IS NULL
+    OR e2e_finished_at >= e2e_started_at
+  );
 
 CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_effect_receipts (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -1181,5 +1293,5 @@ CREATE TRIGGER trg_kernel_release_bootstrap_effect_receipts_truncate
   FOR EACH STATEMENT EXECUTE FUNCTION kernel_release_ledger_append_only();
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('374', 'Kernel ReleaseRun exact-SHA authority and receipts', NOW())
+VALUES ('375', 'Fence and close Kernel ReleaseRun authority and receipts', NOW())
 ON CONFLICT (version) DO NOTHING;

@@ -44,7 +44,7 @@ if [[ "${KERNEL_RELEASE_BOOTSTRAP:-0}" == "1" ]]; then
 
   expected_state="staging_intent"
   [[ "$effect_kind" == "production" ]] && expected_state="production_intent"
-  attempt_id=$(psql "$bootstrap_database_url" -XqAtv ON_ERROR_STOP=1 \
+  attempt_id=$(PGDATABASE="$bootstrap_database_url" psql -XqAtv ON_ERROR_STOP=1 \
     -v run_id="$bootstrap_run_id" \
     -v merge_sha="$merge_sha" \
     -v repository="$bootstrap_repository" \
@@ -66,8 +66,15 @@ WITH latest_state AS (
 ),
 latest_attempt AS (
   SELECT a.*,
+         GREATEST(
+           a.lease_expires_at,
+           COALESCE(MAX(renewal.lease_expires_at), a.lease_expires_at)
+         ) AS effective_lease_expires_at,
          r.receipt_status
     FROM kernel_release_bootstrap_effect_attempts a
+    LEFT JOIN kernel_release_bootstrap_effect_attempt_renewals renewal
+      ON renewal.effect_attempt_id = a.id
+     AND renewal.generation = a.generation
     LEFT JOIN LATERAL (
       SELECT receipt_status
         FROM kernel_release_bootstrap_effect_receipts
@@ -77,6 +84,7 @@ latest_attempt AS (
     ) r ON TRUE
    WHERE a.bootstrap_run_id = :'run_id'
      AND a.effect_kind = :'effect_kind'
+   GROUP BY a.id, r.receipt_status
    ORDER BY a.generation DESC
    LIMIT 1
 ),
@@ -86,7 +94,7 @@ claimed AS (
   )
   SELECT r.id, :'effect_kind',
          COALESCE((SELECT generation FROM latest_attempt), 0) + 1,
-         clock_timestamp() + interval '5 minutes'
+         clock_timestamp() + interval '15 minutes'
     FROM kernel_release_bootstrap_runs r
    WHERE r.id = :'run_id'
      AND r.merge_sha = :'merge_sha'
@@ -96,10 +104,17 @@ claimed AS (
      AND r.approved_by = :'actor'
      AND r.approval_key_id = :'key_id'
      AND r.approval_digest = :'approval_digest'
+     AND EXISTS (
+       SELECT 1
+         FROM kernel_release_bootstrap_e2e_manifests manifest
+        WHERE manifest.bootstrap_run_id = r.id
+          AND manifest.repository = r.repository
+          AND manifest.merge_sha = r.merge_sha
+     )
      AND (SELECT state FROM latest_state) = :'expected_state'
      AND (
        NOT EXISTS (SELECT 1 FROM latest_attempt)
-       OR (SELECT lease_expires_at <= clock_timestamp() FROM latest_attempt)
+       OR (SELECT effective_lease_expires_at <= clock_timestamp() FROM latest_attempt)
        OR (SELECT receipt_status IN ('failed', 'observed_unconfirmed') FROM latest_attempt)
      )
   RETURNING id
@@ -111,6 +126,13 @@ SQL
   attempt_id=$(printf '%s\n' "$attempt_id" | grep -E '^[0-9]+$' | tail -1 || true)
   [[ -n "$attempt_id" ]] \
     || release_run_deny "bootstrap stage is invalid, terminal, or already has a live attempt"
+  bootstrap_attempt_file="${KERNEL_RELEASE_BOOTSTRAP_ATTEMPT_FILE:-}"
+  [[ "$bootstrap_attempt_file" == /*
+    && -f "$bootstrap_attempt_file"
+    && ! -L "$bootstrap_attempt_file" ]] \
+    || release_run_deny "private bootstrap attempt handoff unavailable"
+  printf '%s\n' "$attempt_id" > "$bootstrap_attempt_file"
+  chmod 600 "$bootstrap_attempt_file"
   return 0
 fi
 

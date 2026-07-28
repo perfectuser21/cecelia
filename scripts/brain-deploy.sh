@@ -7,7 +7,6 @@ VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 BRAIN_DIR="$ROOT_DIR/packages/brain"
 DEPLOY_STATUS_FILE="${DEPLOY_STATUS_FILE:-$ROOT_DIR/logs/cecelia-deploy-status.json}"
 DEPLOY_STARTED_AT="${KERNEL_RELEASE_STARTED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-E2E_EVIDENCE_DIGEST=""
 
 # 蓝绿切换 + Bark 告警工具（顶层 source，保证 Docker/launchd 两模式都有 send_bark/bluegreen_swap）
 # shellcheck disable=SC1091
@@ -39,7 +38,7 @@ _write_deploy_status() {
         mkdir -p "$(dirname "$DEPLOY_STATUS_FILE")"
         DEPLOY_VERSION="$VERSION" DEPLOYED_IMAGE_DIGEST="$deployed_image_digest" \
         ROLLBACK_IMAGE_EXISTS="$rollback_image_exists" ROLLBACK_PROBE="$rollback_probe" \
-        ROLLBACK_COMMAND="$rollback_command" E2E_EVIDENCE_DIGEST="$E2E_EVIDENCE_DIGEST" \
+        ROLLBACK_COMMAND="$rollback_command" \
         ROLLBACK_IMAGE_DIGEST="$ROLLBACK_IMAGE_DIGEST" ROLLBACK_IMAGE_TAG="$ROLLBACK_IMAGE_TAG" \
         DEPLOY_STARTED_AT="$DEPLOY_STARTED_AT" DEPLOY_STATUS_FILE="$DEPLOY_STATUS_FILE" \
         node -e '
@@ -50,7 +49,8 @@ _write_deploy_status() {
             version: process.env.DEPLOY_VERSION,
             release_run_id: process.env.KERNEL_RELEASE_RUN_ID || "",
             merge_sha: process.env.KERNEL_RELEASE_MERGE_SHA || "",
-            release_authorization: process.env.KERNEL_RELEASE_AUTHORIZATION || "",
+            dispatch_claim_id: Number(process.env.KERNEL_RELEASE_DISPATCH_CLAIM_ID || 0) || null,
+            dispatch_generation: Number(process.env.KERNEL_RELEASE_DISPATCH_GENERATION || 0) || null,
             deployed_artifact_versions: artifacts,
             deployed_image_digest: process.env.DEPLOYED_IMAGE_DIGEST || "",
             rollback_image_digest: process.env.ROLLBACK_IMAGE_DIGEST || "",
@@ -59,13 +59,6 @@ _write_deploy_status() {
             rollback_image_exists: process.env.ROLLBACK_IMAGE_EXISTS === "true",
             rollback_probe: process.env.ROLLBACK_PROBE,
             rollback_command: process.env.ROLLBACK_COMMAND || "",
-            e2e_receipt: {
-              status: "pass",
-              release_run_id: process.env.KERNEL_RELEASE_RUN_ID || "",
-              merge_sha: process.env.KERNEL_RELEASE_MERGE_SHA || "",
-              artifact_versions: artifacts,
-              evidence_digest: process.env.E2E_EVIDENCE_DIGEST || "",
-            },
             started_at: process.env.DEPLOY_STARTED_AT,
             finished_at: new Date().toISOString(),
           };
@@ -86,18 +79,19 @@ trap '_write_deploy_status' EXIT
 #   SKIP_POST_DEPLOY_SMOKE=1  仅允许非 ReleaseRun 运维调用跳过
 #   RECENT_PRS="2651 2650"    强制指定 PR 列表，绕过 gh pr list（测试用 / mock）
 #
-# ReleaseRun 路径严格要求至少一条真实 smoke，任何 skip/zero/failure 都失败。
+# ReleaseRun contract E2E 由服务端持久化 manifest executor 执行；本函数只保留
+# 非 ReleaseRun 的兼容 smoke。
 run_post_deploy_smoke() {
-    local required=0
-    [[ -n "${KERNEL_RELEASE_RUN_ID:-}" ]] && required=1
+    if [[ -n "${KERNEL_RELEASE_RUN_ID:-}" ]]; then
+        echo "  ReleaseRun E2E is owned by the server-owned contract E2E manifest executor"
+        return 0
+    fi
     if [[ "${SKIP_POST_DEPLOY_SMOKE:-0}" == "1" ]]; then
         echo "  [skip] SKIP_POST_DEPLOY_SMOKE=1"
-        [[ "$required" -eq 1 ]] && return 1
         return 0
     fi
     if ! command -v gh >/dev/null 2>&1 && [[ -z "${RECENT_PRS:-}" ]]; then
         echo "  [skip] gh CLI 不存在且未提供 RECENT_PRS 覆盖 — 跳过 smoke 扫描"
-        [[ "$required" -eq 1 ]] && return 1
         return 0
     fi
 
@@ -107,7 +101,6 @@ run_post_deploy_smoke() {
     fi
     if [[ -z "$recent_prs" ]]; then
         echo "  没找到最近合并 PR — 跳过"
-        [[ "$required" -eq 1 ]] && return 1
         return 0
     fi
 
@@ -149,7 +142,7 @@ run_post_deploy_smoke() {
     else
         echo "  Post-deploy smoke 总计：跑 $ran 条，失败 $failed 条"
     fi
-    if [[ "$required" -eq 1 && ( "$ran" -eq 0 || "$failed" -ne 0 ) ]]; then
+    if [[ "$failed" -ne 0 ]]; then
         return 1
     fi
     return 0
@@ -670,8 +663,6 @@ while [ $TRIES -lt $MAX_TRIES ]; do
       echo "[FAIL] required post-deploy E2E failed"
       exit 1
     fi
-    E2E_EVIDENCE_DIGEST="sha256:$(printf '%s' "$SMOKE_OUTPUT" | shasum -a 256 | awk '{print $1}')"
-
     exit 0
   fi
   echo "  Attempt ${TRIES}/${MAX_TRIES}..."

@@ -30,7 +30,10 @@ import {
   authorizeReleaseEffect,
   appendDispatchOutcome,
   claimReleaseEffect,
+  claimReleaseVerification,
+  renewReleaseEffectClaim,
 } from '../orchestrator/release-run-authorization.js';
+import { planReleaseArtifactRoutes } from '../orchestrator/release-run-routing.js';
 
 const router = Router();
 
@@ -2695,7 +2698,6 @@ const DEPLOY_STATUS_FILE = process.env.DEPLOY_STATUS_FILE
 function readDeployStatusFile() {
   try {
     const data = JSON.parse(readFileSync(DEPLOY_STATUS_FILE, 'utf8'));
-    const age = Date.now() - new Date(data.started_at || 0).getTime();
     if (data.status && data.status !== 'idle') return data;
   } catch {}
   return null;
@@ -2703,6 +2705,15 @@ function readDeployStatusFile() {
 
 function writeDeployStatusFile(data) {
   try { writeFileSync(DEPLOY_STATUS_FILE, JSON.stringify(data)); } catch {}
+}
+
+function publicDeployStatus(state) {
+  const {
+    release_authorization: _releaseAuthorization,
+    log_path: _logPath,
+    ...safe
+  } = state;
+  return safe;
 }
 
 // Deploy state — 启动时从文件恢复（Brain 重启后可延续上次 deploy 状态）
@@ -2734,7 +2745,10 @@ router.get('/deploy/status', (req, res) => {
     Object.assign(deployState, fileStatus);
   }
   // FR-02/Gate3 SHA 对账：deploy status 附带当前运行实例的 git_sha（构建期烙入）
-  res.json({ ...deployState, git_sha: process.env.GIT_SHA || 'unknown' });
+  res.json({
+    ...publicDeployStatus(deployState),
+    git_sha: process.env.GIT_SHA || 'unknown',
+  });
 });
 
 // Direct deploy scripts consume the same persisted ReleaseRun intent.
@@ -2753,6 +2767,22 @@ router.post('/release-runs/authorize', async (req, res) => {
   } catch (error) {
     return res.status(403).json({
       error: error?.code ?? 'release_effect_unauthorized',
+    });
+  }
+});
+
+router.post('/release-runs/verification-claim', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const expectedToken = process.env.DEPLOY_TOKEN;
+  if (!expectedToken || !token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid or missing deploy token' });
+  }
+  try {
+    const claim = await claimReleaseVerification(pool, req.body);
+    return res.json(claim);
+  } catch (error) {
+    return res.status(409).json({
+      error: error?.code ?? 'release_verification_claim_denied',
     });
   }
 });
@@ -2777,11 +2807,13 @@ router.post('/deploy', async (req, res) => {
     release_run_id,
     merge_sha,
     release_authorization,
-    artifact_versions,
   } = req.body || {};
   const isStagingDeploy = staging === true || mode === 'staging';
   const effectKind = isStagingDeploy ? 'staging' : 'production';
   let dispatchClaim;
+  let artifactVersions;
+  let artifactRoutes;
+  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
 
   try {
     dispatchClaim = await claimReleaseEffect(pool, {
@@ -2796,9 +2828,25 @@ router.post('/deploy', async (req, res) => {
         deduped: true,
         release_run_id,
         merge_sha,
+        dispatch_claim_id: dispatchClaim.dispatch_claim_id,
+        generation: dispatchClaim.generation,
       });
     }
+    artifactVersions = dispatchClaim.artifact_versions;
+    artifactRoutes = planReleaseArtifactRoutes(effectKind, artifactVersions, {
+      repoRoot,
+      mergeSha: merge_sha,
+    });
   } catch (error) {
+    if (dispatchClaim?.dispatch_claim_id) {
+      await appendDispatchOutcome(
+        pool,
+        dispatchClaim.dispatch_claim_id,
+        dispatchClaim.generation,
+        'failed',
+        { error_code: error?.code ?? 'release_artifact_route_denied' },
+      ).catch(() => {});
+    }
     return res.status(403).json({
       error: error?.code ?? 'release_effect_unauthorized',
     });
@@ -2822,15 +2870,27 @@ router.post('/deploy', async (req, res) => {
     stagingDeployState.skip_reason = null;
     stagingDeployState.release_run_id = release_run_id;
     stagingDeployState.merge_sha = merge_sha;
-    stagingDeployState.release_authorization = release_authorization;
-    stagingDeployState.artifact_versions = artifact_versions;
+    stagingDeployState.artifact_versions = artifactVersions;
+    stagingDeployState.dispatch_claim_id = dispatchClaim.dispatch_claim_id;
+    stagingDeployState.dispatch_generation = dispatchClaim.generation;
 
     res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging' });
 
-    const { execSync } = await import('child_process');
-    const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
     const startTime = Date.now();
     let stagingReceiptId = null;
+    let renewalFailure = null;
+    const renewalTimer = setInterval(() => {
+      renewReleaseEffectClaim(pool, {
+        dispatch_claim_id: dispatchClaim.dispatch_claim_id,
+        generation: dispatchClaim.generation,
+      }).catch((error) => {
+        renewalFailure = error;
+      });
+    }, 60_000);
+    renewalTimer.unref?.();
 
     try {
       stagingReceiptId = await recordActionReceipt({
@@ -2838,44 +2898,31 @@ router.post('/deploy', async (req, res) => {
         target: 'staging',
         evidence: { changed_paths: changed_paths || [] },
       });
-      const stagingScript = `${repoRoot}/scripts/staging-deploy.sh`;
-      const { existsSync } = await import('fs');
-      let cmd;
-
-      if (existsSync(stagingScript)) {
-        let args = '';
-        if (changed_paths && changed_paths.length > 0) {
-          args = ` --changed="${changed_paths.join(' ').replace(/"/g, '\\"')}"`;
-        }
-        cmd = `bash "${stagingScript}"${args}`;
-      } else {
-        // 降级：用 PM2 在端口 5222 启动 staging 实例
-        cmd = [
-          'BRAIN_PORT=5222',
-          'NODE_ENV=staging',
-          'pm2 start packages/brain/src/server.js',
-          '--name brain-staging',
-          '--env staging',
-          '-- --port 5222',
-          '2>/dev/null || pm2 restart brain-staging 2>/dev/null || true',
-        ].join(' ');
-      }
-
-      console.log(`[staging-deploy] 开始 staging 部署: ${cmd}`);
+      const workerScript = `${repoRoot}/scripts/lib/release-run-effect-worker.mjs`;
+      console.log(`[staging-deploy] 开始 server-owned artifact routes: ${artifactRoutes.map((route) => route.artifact).join(',')}`);
       // 捕获输出以检测 STAGING_SKIP_REASON（脚本 exit 0 时正常完成，但可能是跳过）
-      const output = execSync(cmd, {
+      const { stdout = '' } = await execFileAsync(process.execPath, [workerScript], {
         cwd: repoRoot,
         timeout: 600_000,
-        shell: true,
         env: {
           ...process.env,
           KERNEL_RELEASE_RUN_ID: release_run_id,
           KERNEL_RELEASE_MERGE_SHA: merge_sha,
           KERNEL_RELEASE_AUTHORIZATION: release_authorization,
-          KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifact_versions ?? []),
+          KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifactVersions),
+          KERNEL_RELEASE_EFFECT_KIND: effectKind,
+          KERNEL_RELEASE_DEPLOY_ROOT: repoRoot,
         },
-      }).toString();
-      await appendDispatchOutcome(pool, dispatchClaim.dispatch_claim_id, 'dispatched');
+        maxBuffer: 20 * 1024 * 1024,
+      });
+      if (renewalFailure) throw renewalFailure;
+      const output = stdout.toString();
+      await appendDispatchOutcome(
+        pool,
+        dispatchClaim.dispatch_claim_id,
+        dispatchClaim.generation,
+        'dispatched',
+      );
       console.log(output);
 
       const elapsed = Date.now() - startTime;
@@ -2892,18 +2939,10 @@ router.post('/deploy', async (req, res) => {
         await resolveActionReceipt(stagingReceiptId, 'failed', { elapsed_ms: elapsed, skip_reason: skipReason });
         console.log(`[staging-deploy] Staging 部署已跳过 (${skipReason})，ReleaseRun 保持阻断`);
       } else {
-        const { createHash } = await import('node:crypto');
         stagingDeployState.status = 'success';
         stagingDeployState.finished_at = new Date().toISOString();
         stagingDeployState.elapsed_ms = elapsed;
-        stagingDeployState.deployed_artifact_versions = artifact_versions;
-        stagingDeployState.e2e_receipt = {
-          status: 'pass',
-          release_run_id,
-          merge_sha,
-          artifact_versions,
-          evidence_digest: `sha256:${createHash('sha256').update(output).digest('hex')}`,
-        };
+        stagingDeployState.deployed_artifact_versions = artifactVersions;
         await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed });
         console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
       }
@@ -2911,6 +2950,7 @@ router.post('/deploy', async (req, res) => {
       await appendDispatchOutcome(
         pool,
         dispatchClaim.dispatch_claim_id,
+        dispatchClaim.generation,
         'failed',
         { error_code: 'staging_dispatch_failed' },
       ).catch(() => {});
@@ -2918,9 +2958,14 @@ router.post('/deploy', async (req, res) => {
       stagingDeployState.status = 'failed';
       stagingDeployState.finished_at = new Date().toISOString();
       stagingDeployState.elapsed_ms = elapsed;
-      stagingDeployState.error = err.message;
-      await resolveActionReceipt(stagingReceiptId, 'failed', { elapsed_ms: elapsed, error: err.message });
+      stagingDeployState.error = 'staging_dispatch_failed';
+      await resolveActionReceipt(stagingReceiptId, 'failed', {
+        elapsed_ms: elapsed,
+        error_code: 'staging_dispatch_failed',
+      });
       console.error(`[staging-deploy] ❌ Staging 部署失败（真实错误，非环境未配置）(${(elapsed / 1000).toFixed(1)}s):`, err.message);
+    } finally {
+      clearInterval(renewalTimer);
     }
     return;
   }
@@ -2945,8 +2990,9 @@ router.post('/deploy', async (req, res) => {
   deployState.log_path = null;
   deployState.release_run_id = release_run_id;
   deployState.merge_sha = merge_sha;
-  deployState.release_authorization = release_authorization;
-  deployState.artifact_versions = artifact_versions;
+  deployState.artifact_versions = artifactVersions;
+  deployState.dispatch_claim_id = dispatchClaim.dispatch_claim_id;
+  deployState.dispatch_generation = dispatchClaim.generation;
 
   res.status(202).json({ status: 'accepted', message: 'Deploy triggered' });
 
@@ -2954,15 +3000,8 @@ router.post('/deploy', async (req, res) => {
   writeDeployStatusFile({ ...deployState });
 
   const { spawn } = await import('child_process');
-  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
-  const scriptDir = `${repoRoot}/scripts/deploy-local.sh`;
-
-  const args = ['bash', scriptDir];
-  if (changed_paths && changed_paths.length > 0) {
-    const escaped = changed_paths.join(' ').replace(/"/g, '\\"');
-    args.push(`--changed=${escaped}`);
-  }
-  args.push('main');
+  const scriptDir = `${repoRoot}/scripts/lib/release-run-effect-worker.mjs`;
+  const args = [process.execPath, scriptDir];
 
   // 部署日志写到宿主机挂载目录（repoRoot/logs/），容器死亡后日志不丢失。
   // 历史：原先写 /tmp/（容器 tmpfs），brain 容器自杀后日志随容器消失，失败根因不可考。
@@ -2974,7 +3013,8 @@ router.post('/deploy', async (req, res) => {
   try {
     logFd = openSync(logFile, 'a');
     writeSync(logFd, `[deploy-webhook] starting at ${new Date().toISOString()}\n`);
-    writeSync(logFd, `[deploy-webhook] cmd: bash ${scriptDir} ${args.slice(2).join(' ')}\n`);
+    writeSync(logFd, `[deploy-webhook] worker: ${scriptDir}\n`);
+    writeSync(logFd, `[deploy-webhook] routes: ${artifactRoutes.map((route) => route.artifact).join(',')}\n`);
     writeSync(logFd, `[deploy-webhook] cwd: ${repoRoot}\n\n`);
   } catch (err) {
     console.error(`[deploy-webhook] 创建 log 文件失败 ${logFile}: ${err.message}，回退 stdio:'ignore'`);
@@ -2989,7 +3029,7 @@ router.post('/deploy', async (req, res) => {
     evidence: { changed_paths: changed_paths || [], log_path: logFile },
   });
 
-  console.log(`[deploy-webhook] 开始部署（detached）: bash ${scriptDir}`);
+  console.log(`[deploy-webhook] 开始 server-owned artifact routes（detached）: ${artifactRoutes.map((route) => route.artifact).join(',')}`);
   console.log(`[deploy-webhook] log: ${logFile}`);
 
   // 使用 detached spawn：Brain 重启自身时不阻塞事件循环，避免 EADDRINUSE
@@ -3006,11 +3046,20 @@ router.post('/deploy', async (req, res) => {
       KERNEL_RELEASE_RUN_ID: release_run_id,
       KERNEL_RELEASE_MERGE_SHA: merge_sha,
       KERNEL_RELEASE_AUTHORIZATION: release_authorization,
-      KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifact_versions ?? []),
+      KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifactVersions),
+      KERNEL_RELEASE_EFFECT_KIND: effectKind,
+      KERNEL_RELEASE_DEPLOY_ROOT: repoRoot,
       KERNEL_RELEASE_STARTED_AT: deployState.started_at,
+      KERNEL_RELEASE_DISPATCH_CLAIM_ID: String(dispatchClaim.dispatch_claim_id),
+      KERNEL_RELEASE_DISPATCH_GENERATION: String(dispatchClaim.generation),
     },
   });
-  await appendDispatchOutcome(pool, dispatchClaim.dispatch_claim_id, 'dispatched');
+  await appendDispatchOutcome(
+    pool,
+    dispatchClaim.dispatch_claim_id,
+    dispatchClaim.generation,
+    'dispatched',
+  );
   // log fd 被子进程接管后父进程可以关闭（数据继续写入文件）
   if (typeof logFd === 'number') {
     try { closeSync(logFd); } catch { /* noop */ }
@@ -3023,6 +3072,7 @@ router.post('/deploy', async (req, res) => {
     const elapsed = Date.now() - startTime;
     if (code === 0) {
       deployState.status = 'success';
+      deployState.deployed_artifact_versions = artifactVersions;
       deployState.elapsed_ms = elapsed;
       deployState.finished_at = new Date().toISOString();
       // close 回调是同步函数，不 await；Brain 若在 close 前重启 → 无人核销 → collector 30min 后标 timeout
@@ -3031,7 +3081,7 @@ router.post('/deploy', async (req, res) => {
       console.log(`[deploy-webhook] ✅ 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
     } else {
       deployState.status = 'failed';
-      deployState.error = `deploy-local.sh exited code=${code} signal=${signal}`;
+      deployState.error = 'production_dispatch_failed';
       deployState.elapsed_ms = elapsed;
       deployState.finished_at = new Date().toISOString();
       resolveActionReceipt(receiptId, 'failed', { exit_code: code, signal, elapsed_ms: elapsed })
@@ -3049,7 +3099,6 @@ router.post('/deploy', async (req, res) => {
         'rollback_probe',
         'rollback_command',
         'deployed_artifact_versions',
-        'e2e_receipt',
       ]) {
         if (scriptEvidence[key] !== undefined) deployState[key] = scriptEvidence[key];
       }
@@ -3060,7 +3109,7 @@ router.post('/deploy', async (req, res) => {
 
 // GET /api/brain/deploy/staging/status — 查询 staging 部署状态（Safe Lane 轮询用）
 router.get('/deploy/staging/status', (req, res) => {
-  res.json({ ...stagingDeployState });
+  res.json(publicDeployStatus(stagingDeployState));
 });
 
 // POST /api/brain/deploy/staging/cleanup — 清理 staging 环境（Safe Lane 失败时触发）

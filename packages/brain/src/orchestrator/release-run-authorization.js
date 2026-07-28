@@ -27,6 +27,7 @@ export async function authorizeReleaseEffect(pool, request) {
 
   const { rows } = await pool.query(
     `SELECT release.merge_sha,
+            release.artifact_versions,
             transition.state,
             intent.effect_kind,
             intent.idempotency_key,
@@ -65,59 +66,222 @@ export async function authorizeReleaseEffect(pool, request) {
     merge_sha: mergeSha,
     effect_kind: effectKind,
     idempotency_key: idempotencyKey,
+    artifact_versions: row.artifact_versions,
   };
+}
+
+async function claimReleaseGeneration(pool, request, claimMode, claimOutcome = null) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))',
+      [`kernel-release/effect/${request?.release_run_id ?? ''}/${request?.effect_kind ?? ''}`],
+    );
+    const authorization = await authorizeReleaseEffect(client, request);
+    const claimed = await client.query(
+      `WITH matching_intent AS (
+         SELECT intent.*
+           FROM kernel_release_effect_intents intent
+          WHERE intent.release_run_id = $1
+            AND intent.effect_kind = $2
+            AND intent.idempotency_key = $3
+       ),
+       latest AS (
+         SELECT claim.*,
+                GREATEST(
+                  claim.lease_expires_at,
+                  COALESCE(MAX(renewal.lease_expires_at), claim.lease_expires_at)
+                ) AS effective_lease_expires_at,
+                outcome.id AS outcome_id
+           FROM kernel_release_effect_dispatch_claims claim
+           LEFT JOIN kernel_release_effect_dispatch_renewals renewal
+             ON renewal.dispatch_claim_id = claim.id
+            AND renewal.generation = claim.generation
+           LEFT JOIN kernel_release_effect_dispatch_outcomes outcome
+             ON outcome.dispatch_claim_id = claim.id
+          WHERE claim.intent_id = (SELECT id FROM matching_intent)
+          GROUP BY claim.id, outcome.id
+          ORDER BY claim.generation DESC
+          LIMIT 1
+       ),
+       inserted AS (
+         INSERT INTO kernel_release_effect_dispatch_claims
+           (intent_id, generation, idempotency_key, effect_kind, claim_mode,
+            lease_expires_at)
+         SELECT intent.id,
+                COALESCE(MAX(claim.generation), 0) + 1,
+                intent.idempotency_key,
+                intent.effect_kind,
+                $4,
+                clock_timestamp() + INTERVAL '15 minutes'
+           FROM matching_intent intent
+           LEFT JOIN kernel_release_effect_dispatch_claims claim
+             ON claim.intent_id = intent.id
+          WHERE NOT EXISTS (
+            SELECT 1
+              FROM latest
+             WHERE outcome_id IS NULL
+               AND effective_lease_expires_at > clock_timestamp()
+          )
+          GROUP BY intent.id, intent.idempotency_key, intent.effect_kind
+         RETURNING id, generation, lease_expires_at
+       )
+       SELECT id, generation, lease_expires_at, TRUE AS inserted
+         FROM inserted
+       UNION ALL
+       SELECT id, generation, effective_lease_expires_at, FALSE AS inserted
+         FROM latest
+        WHERE outcome_id IS NULL
+          AND effective_lease_expires_at > clock_timestamp()
+          AND claim_mode = $4
+       LIMIT 1`,
+      [
+        authorization.release_run_id,
+        authorization.effect_kind,
+        authorization.idempotency_key,
+        claimMode,
+      ],
+    );
+    const row = claimed.rows[0];
+    if (!row) deny('release_effect_claim_unavailable');
+    if (claimOutcome) {
+      await appendDispatchOutcome(
+        client,
+        row.id,
+        Number(row.generation),
+        claimOutcome,
+        { source: 'server_owned_live_readback' },
+      );
+    }
+    await client.query('COMMIT');
+    return {
+      ...authorization,
+      claimed: row.inserted === true,
+      deduped: row.inserted !== true,
+      dispatch_claim_id: row.id,
+      generation: Number(row.generation),
+      lease_expires_at: new Date(row.lease_expires_at).toISOString(),
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function claimReleaseEffect(pool, request) {
-  const authorization = await authorizeReleaseEffect(pool, request);
-  const inserted = await pool.query(
-    `INSERT INTO kernel_release_effect_dispatch_claims
-       (intent_id, generation, idempotency_key, effect_kind, lease_expires_at)
-     SELECT intent.id,
-            COALESCE(MAX(claim.generation), 0) + 1,
-            intent.idempotency_key,
-            intent.effect_kind,
-            clock_timestamp() + INTERVAL '5 minutes'
-       FROM kernel_release_effect_intents intent
-       LEFT JOIN kernel_release_effect_dispatch_claims claim
-         ON claim.intent_id = intent.id
-      WHERE intent.release_run_id = $1
-        AND intent.effect_kind = $2
-        AND intent.idempotency_key = $3
-        AND NOT EXISTS (
-          SELECT 1
-            FROM kernel_release_effect_dispatch_claims active
-           WHERE active.intent_id = intent.id
-             AND active.lease_expires_at > clock_timestamp()
+  return claimReleaseGeneration(pool, request, 'dispatch');
+}
+
+export async function renewReleaseEffectClaim(pool, {
+  dispatch_claim_id: claimId,
+  generation,
+}) {
+  if (!Number.isInteger(Number(claimId)) || !Number.isInteger(Number(generation))) {
+    deny('release_dispatch_renewal_invalid');
+  }
+  const renewed = await pool.query(
+    `WITH latest AS (
+       SELECT intent_id, MAX(generation) AS generation
+         FROM kernel_release_effect_dispatch_claims
+        WHERE intent_id = (
+          SELECT intent_id
+            FROM kernel_release_effect_dispatch_claims
+           WHERE id = $1
         )
-      GROUP BY intent.id, intent.idempotency_key, intent.effect_kind
-     ON CONFLICT (intent_id, generation) DO NOTHING
-     RETURNING id, generation`,
-    [
-      authorization.release_run_id,
-      authorization.effect_kind,
-      authorization.idempotency_key,
-    ],
+        GROUP BY intent_id
+     ),
+     effective AS (
+       SELECT claim.id,
+              GREATEST(
+                claim.lease_expires_at,
+                COALESCE(MAX(renewal.lease_expires_at), claim.lease_expires_at)
+              ) AS effective_lease_expires_at
+         FROM kernel_release_effect_dispatch_claims claim
+         JOIN latest
+           ON latest.intent_id = claim.intent_id
+          AND claim.generation = latest.generation
+         LEFT JOIN kernel_release_effect_dispatch_renewals renewal
+           ON renewal.dispatch_claim_id = claim.id
+          AND renewal.generation = claim.generation
+         LEFT JOIN kernel_release_effect_dispatch_outcomes outcome
+           ON outcome.dispatch_claim_id = claim.id
+        WHERE claim.id = $1
+          AND claim.generation = $2
+          AND outcome.id IS NULL
+        GROUP BY claim.id
+     )
+     INSERT INTO kernel_release_effect_dispatch_renewals
+       (dispatch_claim_id, generation, lease_expires_at)
+     SELECT $1, $2, clock_timestamp() + INTERVAL '15 minutes'
+       FROM effective
+      WHERE effective_lease_expires_at > clock_timestamp()
+     RETURNING lease_expires_at`,
+    [claimId, Number(generation)],
   );
+  const row = renewed.rows[0];
+  if (!row) deny('release_dispatch_renewal_fenced');
   return {
-    ...authorization,
-    claimed: inserted.rowCount === 1,
-    deduped: inserted.rowCount !== 1,
-    dispatch_claim_id: inserted.rows[0]?.id ?? null,
-    generation: inserted.rows[0]?.generation ?? null,
+    dispatch_claim_id: Number(claimId),
+    generation: Number(generation),
+    lease_expires_at: new Date(row.lease_expires_at).toISOString(),
   };
 }
 
-export async function appendDispatchOutcome(pool, claimId, outcome, evidence = {}) {
-  if (!claimId || !['dispatched', 'failed'].includes(outcome)) {
+export async function appendDispatchOutcome(
+  pool,
+  claimId,
+  generation,
+  outcome,
+  evidence = {},
+) {
+  if (
+    !Number.isInteger(Number(claimId))
+    || !Number.isInteger(Number(generation))
+    || !['dispatched', 'failed', 'observed'].includes(outcome)
+  ) {
     throw new ReleaseRunError('release_dispatch_outcome_invalid');
   }
-  await pool.query(
+  const inserted = await pool.query(
     `INSERT INTO kernel_release_effect_dispatch_outcomes
        (dispatch_claim_id, outcome, evidence)
-     VALUES ($1, $2, $3::jsonb)`,
-    [claimId, outcome, JSON.stringify(evidence)],
+     SELECT claim.id, $3, $4::jsonb
+       FROM kernel_release_effect_dispatch_claims claim
+       JOIN LATERAL (
+         SELECT GREATEST(
+           claim.lease_expires_at,
+           COALESCE(MAX(renewal.lease_expires_at), claim.lease_expires_at)
+         ) AS effective_lease_expires_at
+           FROM kernel_release_effect_dispatch_renewals renewal
+          WHERE renewal.dispatch_claim_id = claim.id
+            AND renewal.generation = claim.generation
+       ) lease ON TRUE
+      WHERE claim.id = $1
+        AND claim.generation = $2
+        AND claim.generation = (
+          SELECT MAX(latest.generation)
+            FROM kernel_release_effect_dispatch_claims latest
+           WHERE latest.intent_id = claim.intent_id
+        )
+        AND lease.effective_lease_expires_at > clock_timestamp()
+     ON CONFLICT (dispatch_claim_id) DO NOTHING
+     RETURNING id`,
+    [Number(claimId), Number(generation), outcome, JSON.stringify(evidence)],
   );
+  if (inserted.rowCount !== 1) deny('release_dispatch_outcome_fenced');
+  return { dispatch_claim_id: Number(claimId), generation: Number(generation), outcome };
+}
+
+export async function claimReleaseVerification(pool, request) {
+  const claim = await claimReleaseGeneration(
+    pool,
+    request,
+    'verification',
+    'observed',
+  );
+  return { ...claim, outcome: 'observed' };
 }
 
 export const __test__ = { REQUIRED_STATE };

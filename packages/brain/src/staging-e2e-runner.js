@@ -17,6 +17,7 @@
  */
 
 import { execSync, spawnSync } from 'child_process';
+import { createHash } from 'node:crypto';
 import fs, { existsSync } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -166,6 +167,9 @@ export function runStagingCommand(command, opts = {}) {
   if (!command || typeof command.cmd !== 'string' || !command.cmd.trim()) {
     return { exitCode: 1, output: '(empty cmd)' };
   }
+  if (opts.releaseEnvironment && command.type !== 'bash') {
+    return { exitCode: 1, output: '(unsupported release command type)' };
+  }
   // 此脚本在生产 brain 容器内跑，容器内 localhost 不通 staging 容器；重写目标用
   // host.docker.internal（容器内访问 host 的 staging :5222）。env STAGING_HOST 可覆盖（host 直跑传 localhost）。
   const host = opts.host || process.env.STAGING_HOST || 'host.docker.internal';
@@ -190,12 +194,23 @@ export function runStagingCommand(command, opts = {}) {
       .replace(/127\.0\.0\.1:5221/g, `${host}:${port}`);
   }
   try {
+    const releaseEnv = opts.releaseEnvironment
+      ? {
+          LANG: 'C',
+          LC_ALL: 'C',
+          NO_COLOR: '1',
+          PATH: process.env.PATH,
+          RELEASE_E2E_ENVIRONMENT: opts.releaseEnvironment,
+          RELEASE_E2E_TARGET_URL: `http://${host}:${port}`,
+        }
+      : undefined;
     const raw = exec(cmd, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: opts.cwd,
       timeout: SCENARIO_TIMEOUT_MS,
       maxBuffer: 20 * 1024 * 1024,
+      ...(releaseEnv == null ? {} : { env: releaseEnv }),
     });
     const str = typeof raw === 'string' ? raw : (raw ? raw.toString('utf8') : '');
     return { exitCode: 0, output: cap(str) };
@@ -212,16 +227,34 @@ export function runStagingCommand(command, opts = {}) {
 export function runScenarios(acceptance, opts = {}) {
   const { scenarios } = normalizeAcceptance(acceptance);
   const failedScenarios = [];
+  const scenarioResults = [];
   let scenariosPassed = 0;
   for (const sc of scenarios) {
+    const now = opts.now || (() => new Date());
+    const startedAt = new Date(now()).toISOString();
     let failure = null;
+    const commandOutputs = [];
     for (const command of sc.commands) {
       const r = runStagingCommand(command, opts);
+      commandOutputs.push(r.output);
       if (r.exitCode !== 0) {
-        failure = { name: sc.name, exitCode: r.exitCode, output: r.output };
+        const output = opts.releaseEnvironment
+          ? '(release output redacted; inspect digest)'
+          : r.output;
+        failure = { name: sc.name, exitCode: r.exitCode, output };
         break;
       }
     }
+    const finishedAt = new Date(now()).toISOString();
+    scenarioResults.push({
+      name: sc.name,
+      status: failure ? 'fail' : 'pass',
+      started_at: startedAt,
+      finished_at: finishedAt,
+      log_digest: `sha256:${createHash('sha256')
+        .update(commandOutputs.join('\n--- command boundary ---\n'))
+        .digest('hex')}`,
+    });
     if (failure) failedScenarios.push(failure);
     else scenariosPassed++;
   }
@@ -230,6 +263,7 @@ export function runScenarios(acceptance, opts = {}) {
     scenariosTotal: scenarios.length,
     scenariosPassed,
     failedScenarios,
+    scenarioResults,
   };
 }
 

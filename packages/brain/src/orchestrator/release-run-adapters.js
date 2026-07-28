@@ -1,11 +1,11 @@
-import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { sameArtifactVersions } from './release-run-contract.js';
-
-function sha256(value) {
-  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
-}
+import { executeRequiredE2EManifest } from './release-run-e2e.js';
+import { resolveReleaseArtifactVersions } from './release-run-artifacts.js';
+import { runScenarios as defaultContractE2ERunner } from '../staging-e2e-runner.js';
 
 async function json(fetchFn, url, options) {
   const response = await fetchFn(url, options);
@@ -15,61 +15,81 @@ async function json(fetchFn, url, options) {
 
 function exactStatus(status, request) {
   return status?.release_run_id === request.release_run_id
-    && status?.merge_sha === request.merge_sha
-    && status?.release_authorization === request.idempotency_key;
-}
-
-function exactE2EReceipt(receipt, request) {
-  return receipt?.status === 'pass'
-    && receipt.release_run_id === request.release_run_id
-    && receipt.merge_sha === request.merge_sha
-    && /^sha256:[0-9a-f]{64}$/.test(receipt.evidence_digest ?? '')
-    && sameArtifactVersions(receipt.artifact_versions, request.artifact_versions);
+    && status?.merge_sha === request.merge_sha;
 }
 
 export function createReleaseRunAdapters({
   fetchFn = globalThis.fetch,
   gitExecFile = (args) => execFileSync('git', args, { encoding: 'utf8' }),
-  readDashboardRollback = () => readFileSync('.production-release', 'utf8'),
+  repoRoot = process.env.REPO_ROOT
+    ?? fileURLToPath(new URL('../../../..', import.meta.url)),
+  readDashboardRollback = () => readFileSync(
+    join(repoRoot, '.production-release'),
+    'utf8',
+  ),
   brainUrl = process.env.BRAIN_URL ?? 'http://localhost:5221',
   stagingUrl = process.env.BRAIN_STAGING_URL ?? 'http://localhost:5222',
   dashboardUrl = process.env.DASHBOARD_URL ?? 'http://localhost:5211',
   deployToken = process.env.DEPLOY_TOKEN,
+  contractE2ERunner = defaultContractE2ERunner,
+  releaseE2EHost = process.env.RELEASE_E2E_HOST ?? 'localhost',
 } = {}) {
-  const resolveArtifactVersions = async ({ merge_sha: mergeSha }) => {
-    const packageJson = JSON.parse(gitExecFile([
-      'show',
-      `${mergeSha}:packages/brain/package.json`,
-    ]));
-    const paths = gitExecFile(['diff-tree', '--no-commit-id', '--name-only', '-r', `${mergeSha}^`, mergeSha])
-      .trim().split('\n').filter(Boolean);
-    const artifacts = [];
-    if (paths.some((path) => path.startsWith('packages/brain/')
-      || ['DEFINITION.md', '.brain-versions'].includes(path))) {
-      artifacts.push({
-        name: 'brain',
-        version: packageJson.version,
-        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha, 'packages/brain'])),
-      });
+  const runRequiredE2E = (request, environment, artifactReadback, port) => {
+    const { id: _manifestId, ...manifest } = request.e2e_manifest ?? {};
+    const receipt = executeRequiredE2EManifest(manifest, {
+      runScenarios: contractE2ERunner,
+      environment,
+      artifact_readback: artifactReadback,
+      runnerOptions: {
+        host: releaseE2EHost,
+        port,
+      },
+    });
+    return {
+      required_e2e: 'pass',
+      e2e_manifest_digest: receipt.manifest_digest,
+      e2e_environment: receipt.environment,
+      e2e_scenarios_total: receipt.scenarios_total,
+      e2e_scenarios_passed: receipt.scenarios_passed,
+      e2e_scenario_results: receipt.scenario_results,
+      e2e_started_at: receipt.started_at,
+      e2e_finished_at: receipt.finished_at,
+      e2e_artifact_readback: receipt.artifact_readback,
+    };
+  };
+  const resolveArtifactVersions = (request) => resolveReleaseArtifactVersions(
+    request,
+    { gitExecFile },
+  );
+  const claimVerification = async (request, effectKind) => {
+    if (!deployToken) throw new Error('release_deploy_token_unavailable');
+    const claim = await json(
+      fetchFn,
+      `${brainUrl}/api/brain/release-runs/verification-claim`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${deployToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          release_run_id: request.release_run_id,
+          merge_sha: request.merge_sha,
+          release_authorization: request.idempotency_key,
+          effect_kind: effectKind,
+        }),
+      },
+    );
+    if (
+      !Number.isInteger(Number(claim.dispatch_claim_id))
+      || !Number.isInteger(Number(claim.generation))
+    ) {
+      throw new Error('release_verification_claim_invalid');
     }
-    if (paths.some((path) => path.startsWith('apps/'))) {
-      artifacts.push({
-        name: 'workspace',
-        version: mergeSha.slice(0, 12),
-        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha, 'apps'])),
-      });
-    }
-    if (paths.some((path) => path.startsWith('packages/workflows/skills/'))) {
-      artifacts.push({
-        name: 'workflow-skills',
-        version: mergeSha.slice(0, 12),
-        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha, 'packages/workflows/skills'])),
-      });
-    }
-    if (artifacts.length === 0) {
-      throw new Error('release_non_deployable_change_blocked');
-    }
-    return artifacts;
+    return {
+      dispatch_claim_id: Number(claim.dispatch_claim_id),
+      dispatch_generation: Number(claim.generation),
+    };
   };
 
   const run = (staging) => async (request) => {
@@ -101,20 +121,33 @@ export function createReleaseRunAdapters({
     if (status.status !== 'success' || !exactStatus(status, request)) {
       return { status: status.status ?? 'unknown' };
     }
-    if (
-      !exactE2EReceipt(status.e2e_receipt, request)
-      || !sameArtifactVersions(status.deployed_artifact_versions, request.artifact_versions)
-    ) return { status: 'fail' };
+    if (!sameArtifactVersions(
+      status.deployed_artifact_versions,
+      request.artifact_versions,
+    )) return { status: 'fail' };
     const health = await json(fetchFn, `${stagingUrl}/api/brain/health`);
     const brain = request.artifact_versions.find((item) => item.name === 'brain');
     if (brain && (health.git_sha !== request.merge_sha
       || health.status !== 'healthy'
       || health.version !== brain.version)) return { status: 'fail' };
-    return {
-      status: 'pass',
-      merge_sha: health.git_sha,
-      artifact_versions: request.artifact_versions,
-    };
+    try {
+      const e2e = runRequiredE2E(
+        request,
+        'staging',
+        status.deployed_artifact_versions,
+        5222,
+      );
+      const verificationClaim = await claimVerification(request, 'staging');
+      return {
+        status: 'pass',
+        ...e2e,
+        ...verificationClaim,
+        merge_sha: brain ? health.git_sha : status.merge_sha,
+        artifact_versions: request.artifact_versions,
+      };
+    } catch {
+      return { status: 'fail' };
+    }
   };
 
   const observeProduction = async (request) => {
@@ -129,16 +162,19 @@ export function createReleaseRunAdapters({
     ]);
     const brain = request.artifact_versions.find((item) => item.name === 'brain');
     const dashboard = request.artifact_versions.find((item) => item.name === 'workspace');
+    const workflowSkills = request.artifact_versions.find(
+      (item) => item.name === 'workflow-skills',
+    );
     if (brain && (health.git_sha !== request.merge_sha
       || health.status !== 'healthy'
       || health.version !== brain.version)) {
       return { status: 'fail' };
     }
     if (full == null || full.error != null) return { status: 'fail' };
-    if (
-      !exactE2EReceipt(status.e2e_receipt, request)
-      || !sameArtifactVersions(status.deployed_artifact_versions, request.artifact_versions)
-    ) return { status: 'fail' };
+    if (!sameArtifactVersions(
+      status.deployed_artifact_versions,
+      request.artifact_versions,
+    )) return { status: 'fail' };
     if (dashboard) {
       const build = await json(fetchFn, `${dashboardUrl}/build-info.json`);
       if (build.git_sha !== request.merge_sha) return { status: 'fail' };
@@ -176,23 +212,46 @@ export function createReleaseRunAdapters({
       anchors.push(`dashboard:${rollback.current}`);
       previousVersions.push(`dashboard:${rollback.history.split(',').at(-1)}`);
     }
-    return {
-      status: 'pass',
-      health: 'pass',
-      required_e2e: 'pass',
-      merge_sha: health.git_sha,
-      deployed_versions: request.artifact_versions,
-      rollback_metadata: {
-        anchor: anchors.join('+'),
-        previous_version: previousVersions.join('+'),
-        ...(brain ? {
-          image_reference: status.rollback_image_reference,
-          image_tag: status.rollback_image_tag,
-          rollback_command: status.rollback_command,
-          probe: status.rollback_probe,
-        } : {}),
-      },
-    };
+    if (workflowSkills) {
+      const workflowRollback = status.workflow_rollback_metadata;
+      if (
+        workflowRollback?.anchor !== `workflow-skills:${workflowSkills.digest}`
+        || !/^workflow-skills:sha256:[0-9a-f]{64}$/.test(
+          workflowRollback?.previous_version ?? '',
+        )
+      ) return { status: 'fail' };
+      anchors.push(workflowRollback.anchor);
+      previousVersions.push(workflowRollback.previous_version);
+    }
+    try {
+      const e2e = runRequiredE2E(
+        request,
+        'production',
+        status.deployed_artifact_versions,
+        5221,
+      );
+      const verificationClaim = await claimVerification(request, 'production');
+      return {
+        status: 'pass',
+        health: 'pass',
+        ...e2e,
+        ...verificationClaim,
+        merge_sha: brain ? health.git_sha : status.merge_sha,
+        deployed_versions: request.artifact_versions,
+        rollback_metadata: {
+          anchor: anchors.join('+'),
+          previous_version: previousVersions.join('+'),
+          ...(brain ? {
+            image_reference: status.rollback_image_reference,
+            image_tag: status.rollback_image_tag,
+            rollback_command: status.rollback_command,
+            probe: status.rollback_probe,
+          } : {}),
+        },
+      };
+    } catch {
+      return { status: 'fail' };
+    }
   };
 
   return Object.freeze({
@@ -204,4 +263,4 @@ export function createReleaseRunAdapters({
   });
 }
 
-export const __test__ = { exactStatus, sha256 };
+export const __test__ = { exactStatus };

@@ -5,6 +5,10 @@ const sql = readFileSync(
   new URL('../../../migrations/374_kernel_release_runs.sql', import.meta.url),
   'utf8',
 );
+const closureSql = readFileSync(
+  new URL('../../../migrations/375_kernel_release_run_closure.sql', import.meta.url),
+  'utf8',
+);
 
 describe('migration 374 Kernel ReleaseRun', () => {
   const releaseLedgerTables = [
@@ -12,12 +16,18 @@ describe('migration 374 Kernel ReleaseRun', () => {
     'kernel_release_transitions',
     'kernel_release_effect_intents',
     'kernel_release_effect_receipts',
+    'kernel_release_e2e_manifests',
+    'kernel_release_rollback_intents',
+    'kernel_release_rollback_receipts',
+    'kernel_release_blocked_escalations',
   ];
   const bootstrapLedgerTables = [
     'kernel_release_bootstrap_runs',
     'kernel_release_bootstrap_transitions',
     'kernel_release_bootstrap_effect_attempts',
+    'kernel_release_bootstrap_effect_attempt_renewals',
     'kernel_release_bootstrap_effect_receipts',
+    'kernel_release_bootstrap_e2e_manifests',
   ];
 
   it.each([...releaseLedgerTables, ...bootstrapLedgerTables])(
@@ -26,6 +36,10 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`, 'i'));
     expect(sql).toMatch(new RegExp(
       `CREATE TRIGGER[\\s\\S]+?BEFORE UPDATE OR DELETE ON ${table}`,
+      'i',
+    ));
+    expect(sql).toMatch(new RegExp(
+      `CREATE TRIGGER[\\s\\S]+?BEFORE TRUNCATE ON ${table}`,
       'i',
     ));
   });
@@ -38,6 +52,10 @@ describe('migration 374 Kernel ReleaseRun', () => {
       .toBeGreaterThanOrEqual(4);
     expect(sql).toMatch(/artifact_versions JSONB NOT NULL/i);
     expect(sql).toMatch(/policy_version TEXT NOT NULL/i);
+    expect(sql).toMatch(/kernel_release_run_identity_guard/i);
+    expect(sql).toMatch(/receipt\.id = NEW\.merge_receipt_id/i);
+    expect(sql).toMatch(/intent\.id = NEW\.merge_intent_id/i);
+    expect(sql).toMatch(/receipt\.evidence->>'merge_commit_sha' = NEW\.merge_sha/i);
   });
 
   it('accepts only the exact six-state sequence', () => {
@@ -72,11 +90,75 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/confirmed production receipt requires health and E2E verification/i);
     expect(sql).toMatch(/staging_passed requires confirmed staging effect receipt/i);
     expect(sql).toMatch(/production_verified requires confirmed production effect receipt/i);
+    expect(sql).toMatch(/NEW\.evidence->>'effect_receipt_id' = receipt\.id::text/i);
+    expect(sql).toMatch(/NEW\.evidence->>'e2e_manifest_digest' = receipt\.e2e_manifest_digest/i);
+  });
+
+  it('persists exact rollback intent before production and receipt before success', () => {
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_rollback_intents/i);
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_rollback_receipts/i);
+    expect(sql).toMatch(/rollback intent requires exact ReleaseRun identity/i);
+    expect(sql).toMatch(/rollback receipt requires exact confirmed production readback/i);
+    expect(sql).toMatch(/production_verified requires exact durable rollback receipt/i);
+    expect(sql).toMatch(/NEW\.evidence->>'rollback_receipt_id' = rollback_receipt\.id::text/i);
+  });
+
+  it('persists a unique P0 escalation for every ReleaseRun BLOCKED condition', () => {
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations/i);
+    expect(sql).toMatch(/severity TEXT NOT NULL CHECK \(severity = 'P0'\)/i);
+    expect(sql).toMatch(/dedup_key TEXT NOT NULL UNIQUE/i);
+  });
+
+  it('freezes one non-empty contract E2E manifest per exact release authority', () => {
+    expect(sql).toMatch(
+      /CREATE TABLE IF NOT EXISTS kernel_release_e2e_manifests[\s\S]+?release_run_id UUID NOT NULL UNIQUE REFERENCES kernel_release_runs\(id\)/i,
+    );
+    expect(sql).toMatch(/contract_id UUID NOT NULL REFERENCES initiative_contracts\(id\)/i);
+    expect(sql).toMatch(/run_id UUID NOT NULL REFERENCES initiative_runs\(id\)/i);
+    expect(sql).toMatch(/repository TEXT NOT NULL/i);
+    expect(sql).toMatch(/artifact_versions JSONB NOT NULL/i);
+    expect(sql).toMatch(/artifact_set_digest TEXT NOT NULL/i);
+    expect(sql).toMatch(/contract_version INTEGER NOT NULL/i);
+    expect(sql).toMatch(/contract_approved_at TIMESTAMPTZ NOT NULL/i);
+    expect(sql).toMatch(/contract_content TEXT NOT NULL/i);
+    expect(sql).toMatch(/contract_digest TEXT NOT NULL/i);
+    expect(sql).toMatch(/e2e_acceptance_digest TEXT NOT NULL/i);
+    expect(sql).toMatch(/policy_version TEXT NOT NULL CHECK \(policy_version = 'kernel-release-e2e\/v1'\)/i);
+    expect(sql).toMatch(/manifest_digest TEXT NOT NULL UNIQUE/i);
+    expect(sql).toMatch(/scenarios_total INTEGER NOT NULL CHECK \([\s\S]+?scenarios_total > 0/i);
+    expect(sql).toMatch(/e2e_manifest_id UUID[\s\S]+?REFERENCES kernel_release_e2e_manifests\(id\)/i);
+    expect(sql).toMatch(/confirmed release receipt requires exact E2E manifest/i);
+    expect(sql).toMatch(/kernel_release_contract_immutability_guard/i);
+    expect(sql).toMatch(/referenced approved contract is immutable/i);
+  });
+
+  it('types exact environment and per-scenario E2E receipt evidence', () => {
+    expect(sql).toMatch(/e2e_environment TEXT CHECK[\s\S]+?'staging', 'production'/i);
+    expect(sql).toMatch(/e2e_scenario_results JSONB/i);
+    expect(sql).toMatch(/e2e_started_at TIMESTAMPTZ/i);
+    expect(sql).toMatch(/e2e_finished_at TIMESTAMPTZ/i);
+    expect(sql).toMatch(/jsonb_array_length\(NEW\.e2e_scenario_results\)/i);
+    expect(sql).toMatch(/result->>'status' IS DISTINCT FROM 'pass'/i);
+    expect(sql).toMatch(/result->>'log_digest'/i);
+    expect(sql).toMatch(/count\(\*\)[\s\S]+?FROM jsonb_object_keys\(/i);
+    expect(sql).toMatch(/result->>'name'[\s\S]+?manifest\.e2e_acceptance->'scenarios'/i);
+  });
+
+  it('fences confirmed receipts to the latest live observed dispatch generation', () => {
+    expect(sql).toMatch(/kernel_release_effect_dispatch_renewals/i);
+    expect(sql).toMatch(/dispatch_claim_id BIGINT[\s\S]+?REFERENCES kernel_release_effect_dispatch_claims\(id\)/i);
+    expect(sql).toMatch(/dispatch_generation INTEGER/i);
+    expect(sql).toMatch(/generation = NEW\.dispatch_generation/i);
+    expect(sql).toMatch(/claim\.claim_mode IS DISTINCT FROM 'verification'/i);
+    expect(sql).toMatch(/outcome\.outcome IS DISTINCT FROM 'observed'/i);
+    expect(sql).toMatch(/effective_lease_expires_at <= clock_timestamp\(\)/i);
+    expect(sql).toMatch(/dispatch_claim_id BIGINT NOT NULL UNIQUE/i);
   });
 
   it('makes every ledger table immutable', () => {
     expect(sql).toMatch(/kernel_release_ledger_append_only/i);
     expect(sql).toMatch(/append_seq BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE/i);
+    expect(sql).toMatch(/BEFORE TRUNCATE ON kernel_release_effect_receipts/i);
   });
 
   it('defines a one-time bootstrap identity bound to all approved release axes', () => {
@@ -94,6 +176,24 @@ describe('migration 374 Kernel ReleaseRun', () => {
     ]) {
       expect(sql).toMatch(new RegExp(column, 'i'));
     }
+  });
+
+  it('binds bootstrap to a frozen approved contract E2E manifest', () => {
+    expect(sql).toMatch(
+      /CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_e2e_manifests[\s\S]+?bootstrap_run_id UUID NOT NULL UNIQUE REFERENCES kernel_release_bootstrap_runs\(id\)/i,
+    );
+    expect(sql).toMatch(/contract_id UUID NOT NULL REFERENCES initiative_contracts\(id\)/i);
+    expect(sql).toMatch(/artifact_versions JSONB NOT NULL/i);
+    expect(sql).toMatch(/artifact_set_digest TEXT NOT NULL/i);
+    expect(sql).toMatch(/contract_version INTEGER NOT NULL/i);
+    expect(sql).toMatch(/contract_approved_at TIMESTAMPTZ NOT NULL/i);
+    expect(sql).toMatch(/contract_digest TEXT NOT NULL/i);
+    expect(sql).toMatch(/e2e_acceptance_digest TEXT NOT NULL/i);
+    expect(sql).toMatch(/merge_sha TEXT NOT NULL CHECK/i);
+    expect(sql).toMatch(/manifest_digest TEXT NOT NULL UNIQUE/i);
+    expect(sql).toMatch(/scenarios_total INTEGER NOT NULL CHECK \([\s\S]+?scenarios_total > 0/i);
+    expect(sql).toMatch(/e2e_manifest_digest TEXT CHECK/i);
+    expect(sql).toMatch(/confirmed bootstrap receipt requires exact E2E manifest/i);
   });
 
   it('enforces the bootstrap staging-before-production transition sequence', () => {
@@ -115,6 +215,9 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(/UNIQUE \(bootstrap_run_id, state\)/i);
     expect(sql).toMatch(/staging_passed requires confirmed staging effect receipt/i);
     expect(sql).toMatch(/production_verified requires confirmed production effect receipt/i);
+    expect(sql).toMatch(/bootstrap transition requires exact merge SHA evidence/i);
+    expect(sql).toMatch(/NEW\.evidence->>'effect_receipt_id' = r\.id::text/i);
+    expect(sql).toMatch(/NEW\.evidence->>'e2e_manifest_digest' = r\.e2e_manifest_digest/i);
   });
 
   it('persists expiring generations and durable receipts for crash recovery', () => {
@@ -122,6 +225,8 @@ describe('migration 374 Kernel ReleaseRun', () => {
       /CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_effect_attempts[\s\S]+?generation INTEGER NOT NULL/i,
     );
     expect(sql).toMatch(/lease_expires_at TIMESTAMPTZ NOT NULL/i);
+    expect(sql).toMatch(/kernel_release_bootstrap_effect_attempt_renewals/i);
+    expect(sql).toMatch(/effective_lease_expires_at/i);
     expect(sql).toMatch(/idempotency_key UUID NOT NULL/i);
     expect(sql).toMatch(/UNIQUE \(bootstrap_run_id, effect_kind, generation\)/i);
     expect(sql).toMatch(
@@ -132,9 +237,44 @@ describe('migration 374 Kernel ReleaseRun', () => {
     expect(sql).toMatch(
       /ON kernel_release_bootstrap_effect_receipts \(effect_attempt_id\)[\s\S]+?WHERE receipt_status = 'confirmed'/i,
     );
+    expect(sql).toMatch(/confirmed bootstrap receipt requires latest live attempt generation/i);
   });
 
   it('registers migration 374', () => {
     expect(sql).toMatch(/VALUES \('374', 'Kernel ReleaseRun exact-SHA authority and receipts', NOW\(\)\)/i);
+  });
+});
+
+describe('migration 375 installed-v374 reconciliation', () => {
+  it('adds every field that did not exist in the shipped v374 schema', () => {
+    expect(closureSql).toMatch(
+      /ALTER TABLE kernel_release_effect_dispatch_claims[\s\S]+?ADD COLUMN IF NOT EXISTS claim_mode/i,
+    );
+    expect(closureSql).toMatch(
+      /ALTER TABLE kernel_release_effect_receipts[\s\S]+?ADD COLUMN IF NOT EXISTS dispatch_claim_id/i,
+    );
+    expect(closureSql).toMatch(
+      /ALTER TABLE kernel_release_effect_receipts[\s\S]+?ADD COLUMN IF NOT EXISTS e2e_manifest_id/i,
+    );
+    expect(closureSql).toMatch(
+      /ALTER TABLE kernel_release_bootstrap_effect_receipts[\s\S]+?ADD COLUMN IF NOT EXISTS observed_merge_sha/i,
+    );
+    expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_renewals/i);
+    expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_e2e_manifests/i);
+    expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_bootstrap_e2e_manifests/i);
+    expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_rollback_intents/i);
+    expect(closureSql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_release_blocked_escalations/i);
+  });
+
+  it('replaces the guards and registers migration 375', () => {
+    expect(closureSql).toMatch(/kernel_release_run_identity_guard/i);
+    expect(closureSql).toMatch(
+      /confirmed release receipt requires latest live observed dispatch generation/i,
+    );
+    expect(closureSql).toMatch(/confirmed bootstrap receipt requires latest live attempt generation/i);
+    expect(closureSql).toMatch(/BEFORE TRUNCATE ON kernel_release_effect_receipts/i);
+    expect(closureSql).toMatch(
+      /VALUES \('375', 'Fence and close Kernel ReleaseRun authority and receipts', NOW\(\)\)/i,
+    );
   });
 });

@@ -186,18 +186,32 @@ export function createKernelHandlers(deps) {
     },
 
     async report(ctx) {
+      const blockRelease = async (detail, receipt = null) => {
+        if (typeof deps.escalateReleaseBlocked !== 'function') {
+          throw new Error('release_blocked_escalation_unavailable');
+        }
+        await deps.escalateReleaseBlocked({
+          run_id: ctx.runId,
+          task_id: ctx.taskId,
+          release_run_id: receipt?.release_run_id ?? null,
+          merge_sha: receipt?.merge_sha ?? null,
+          release_state: receipt?.release_state ?? null,
+          detail,
+        });
+        return { status: 'BLOCKED', detail };
+      };
       if (typeof deps.releaseEffect !== 'function') {
-        return { status: 'BLOCKED', detail: 'ReleaseRun authority unavailable' };
+        return blockRelease('ReleaseRun authority unavailable');
       }
       const releaseReceipt = await deps.releaseEffect({
         runId: ctx.runId,
         taskId: ctx.taskId,
       });
       if (!isVerifiedReleaseReceipt(releaseReceipt)) {
-        return {
-          status: 'BLOCKED',
-          detail: releaseReceipt?.detail ?? 'production_verified ReleaseRun receipt required',
-        };
+        return blockRelease(
+          releaseReceipt?.detail ?? 'production_verified ReleaseRun receipt required',
+          releaseReceipt,
+        );
       }
 
       const { observed } = ctx;

@@ -396,8 +396,9 @@ describe('buildDefaultHandlers merge authority', () => {
       release_state: 'production_deploying',
       detail: 'verification pending',
     }));
+    const query = vi.fn(async () => ({ rows: [] }));
     const handlers = await buildDefaultHandlers({
-      pool: { query: vi.fn() },
+      pool: { query },
       execCmd: vi.fn(),
       attemptStore: { complete: vi.fn() },
       judgeGate: vi.fn(),
@@ -433,5 +434,9 @@ describe('buildDefaultHandlers merge authority', () => {
       detail: 'verification pending',
     });
     expect(releaseEffect).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO kernel_release_blocked_escalations'),
+      expect.any(Array),
+    );
   });
 });

@@ -50,6 +50,7 @@ function deps() {
       release_run_id: '44444444-4444-4444-8444-444444444444',
       merge_sha: 'f'.repeat(40),
     })),
+    escalateReleaseBlocked: vi.fn(async () => ({ deduped: false })),
     attemptStore: { complete: vi.fn(async () => ({ deduped: false })) },
     judgeGate: vi.fn(async () => ({ verdict: 'PASS', feedback: null, judged: true })),
     promptDir: '/host/cecelia-prompts',
@@ -299,6 +300,12 @@ describe('kernel deterministic handlers', () => {
     expect(d.syncOkr).not.toHaveBeenCalled();
     expect(d.cleanup).not.toHaveBeenCalled();
     expect(d.pool.connect).not.toHaveBeenCalled();
+    expect(d.escalateReleaseBlocked).toHaveBeenCalledOnce();
+    expect(d.escalateReleaseBlocked).toHaveBeenCalledWith(expect.objectContaining({
+      run_id: runId,
+      task_id: taskId,
+      detail: expect.any(String),
+    }));
   });
 
   it('report 事务失败时在同一 client 回滚并归还连接', async () => {

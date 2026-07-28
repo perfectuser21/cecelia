@@ -36,6 +36,7 @@ import { createGitHubMergeAdapter } from './github-merge-adapter.js';
 import { createMergeEffectExecutor } from './merge-effect-executor.js';
 import { createPostgresMergeEffectStore } from './merge-effect-store.js';
 import { createReleaseRunExecutor } from './release-run-executor.js';
+import { createReleaseBlockedEscalator } from './release-run-escalation.js';
 import { createPostgresReleaseRunStore } from './release-run-store.js';
 import { createReleaseRunAdapters } from './release-run-adapters.js';
 import { readGitArtifact } from './git-artifact-reader.js';
@@ -94,6 +95,7 @@ export async function buildDefaultHandlers({
     okr,
     cleanup,
     dockerExecutor,
+    alerting,
   ] = await Promise.all([
     import('../harness-judge.js'),
     import('../preview-manager.js'),
@@ -104,6 +106,7 @@ export async function buildDefaultHandlers({
     import('../okr-initiative-sync.js'),
     import('../harness-container-cleanup.js'),
     import('../docker-executor.js'),
+    import('../alerting.js'),
   ]);
 
   let resolvedMergeEffect = mergeEffect;
@@ -137,6 +140,10 @@ export async function buildDefaultHandlers({
     attemptStore,
     mergeEffect: resolvedMergeEffect,
     releaseEffect: resolvedReleaseEffect,
+    escalateReleaseBlocked: createReleaseBlockedEscalator({
+      pool,
+      raiseAlert: alerting.raise,
+    }),
     promptDir: dockerExecutor.getHostPromptDir(),
     judgeGate: judgeGate ?? judge.runJudgeGate,
     allocatePort: previewManager.allocatePort,

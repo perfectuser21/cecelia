@@ -77,6 +77,67 @@ export function sameArtifactVersions(left, right) {
   }
 }
 
+function validateRequiredE2EObservation(observation, expected, scope) {
+  if (observation.required_e2e !== 'pass') {
+    deny(`release_${scope}_e2e_not_passed`);
+  }
+  if (
+    !DIGEST_RE.test(expected.e2e_manifest_digest ?? '')
+    || observation.e2e_manifest_digest !== expected.e2e_manifest_digest
+  ) {
+    deny(`release_${scope}_e2e_manifest_mismatch`);
+  }
+  if (
+    !Number.isInteger(expected.e2e_scenarios_total)
+    || expected.e2e_scenarios_total < 1
+    || observation.e2e_scenarios_total !== expected.e2e_scenarios_total
+    || observation.e2e_scenarios_passed !== expected.e2e_scenarios_total
+  ) {
+    deny(`release_${scope}_e2e_count_mismatch`);
+  }
+  if (observation.e2e_environment !== expected.e2e_environment) {
+    deny(`release_${scope}_e2e_environment_mismatch`);
+  }
+  if (!sameArtifactVersions(observation.e2e_artifact_readback, expected.artifact_versions)) {
+    deny(`release_${scope}_e2e_artifacts_mismatch`);
+  }
+  if (
+    !Array.isArray(observation.e2e_scenario_results)
+    || observation.e2e_scenario_results.length !== expected.e2e_scenarios_total
+    || observation.e2e_scenario_results.some((result, index) => (
+      !result
+      || typeof result !== 'object'
+      || Array.isArray(result)
+      || Object.keys(result).sort().join(',')
+        !== 'finished_at,log_digest,name,started_at,status'
+      || result.name !== expected.e2e_scenario_names[index]
+      || result.status !== 'pass'
+      || !DIGEST_RE.test(result.log_digest ?? '')
+      || Number.isNaN(Date.parse(result.started_at))
+      || Number.isNaN(Date.parse(result.finished_at))
+      || Date.parse(result.finished_at) < Date.parse(result.started_at)
+    ))
+    || observation.e2e_started_at !== observation.e2e_scenario_results[0]?.started_at
+    || observation.e2e_finished_at
+      !== observation.e2e_scenario_results.at(-1)?.finished_at
+  ) {
+    deny(`release_${scope}_e2e_receipt_invalid`);
+  }
+  return {
+    required_e2e: 'pass',
+    e2e_manifest_digest: observation.e2e_manifest_digest,
+    e2e_environment: observation.e2e_environment,
+    e2e_scenarios_total: observation.e2e_scenarios_total,
+    e2e_scenarios_passed: observation.e2e_scenarios_passed,
+    e2e_scenario_results: Object.freeze(
+      observation.e2e_scenario_results.map((result) => Object.freeze({ ...result })),
+    ),
+    e2e_started_at: observation.e2e_started_at,
+    e2e_finished_at: observation.e2e_finished_at,
+    e2e_artifact_readback: normalizeArtifactVersions(observation.e2e_artifact_readback),
+  };
+}
+
 export function validateReleaseIdentity(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     deny('release_identity_invalid');
@@ -128,12 +189,24 @@ export function nextReleaseState(current) {
 
 export function validateStagingObservation(observation, expected) {
   if (observation?.status !== 'pass') deny('release_staging_not_passed');
+  if (
+    !Number.isSafeInteger(observation.dispatch_claim_id)
+    || observation.dispatch_claim_id < 1
+    || !Number.isSafeInteger(observation.dispatch_generation)
+    || observation.dispatch_generation < 1
+  ) {
+    deny('release_staging_dispatch_claim_invalid');
+  }
+  const e2e = validateRequiredE2EObservation(observation, expected, 'staging');
   if (observation.merge_sha !== expected.merge_sha) deny('release_staging_sha_mismatch');
   if (!sameArtifactVersions(observation.artifact_versions, expected.artifact_versions)) {
     deny('release_staging_artifacts_mismatch');
   }
   return Object.freeze({
     status: 'pass',
+    dispatch_claim_id: observation.dispatch_claim_id,
+    dispatch_generation: observation.dispatch_generation,
+    ...e2e,
     merge_sha: observation.merge_sha,
     artifact_versions: normalizeArtifactVersions(observation.artifact_versions),
   });
@@ -142,7 +215,15 @@ export function validateStagingObservation(observation, expected) {
 export function validateProductionObservation(observation, expected) {
   if (observation?.status !== 'pass') deny('release_production_not_passed');
   if (observation.health !== 'pass') deny('release_production_health_not_passed');
-  if (observation.required_e2e !== 'pass') deny('release_production_e2e_not_passed');
+  if (
+    !Number.isSafeInteger(observation.dispatch_claim_id)
+    || observation.dispatch_claim_id < 1
+    || !Number.isSafeInteger(observation.dispatch_generation)
+    || observation.dispatch_generation < 1
+  ) {
+    deny('release_production_dispatch_claim_invalid');
+  }
+  const e2e = validateRequiredE2EObservation(observation, expected, 'production');
   if (observation.merge_sha !== expected.merge_sha) deny('release_production_sha_mismatch');
 
   let deployedVersions;
@@ -170,7 +251,9 @@ export function validateProductionObservation(observation, expected) {
   return Object.freeze({
     status: 'pass',
     health: 'pass',
-    required_e2e: 'pass',
+    dispatch_claim_id: observation.dispatch_claim_id,
+    dispatch_generation: observation.dispatch_generation,
+    ...e2e,
     merge_sha: observation.merge_sha,
     deployed_versions: deployedVersions,
     rollback_metadata: Object.freeze({

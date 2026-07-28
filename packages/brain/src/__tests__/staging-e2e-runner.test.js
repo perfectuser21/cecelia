@@ -250,6 +250,32 @@ describe('runStagingCommand', () => {
     expect(r.output).toContain('boom');
   });
 
+  it('ReleaseRun command receives only bounded target environment without inherited secrets', () => {
+    let options;
+    const exec = (_cmd, received) => {
+      options = received;
+      return 'ok';
+    };
+    runStagingCommand(
+      { type: 'bash', cmd: 'curl "$RELEASE_E2E_TARGET_URL/api/brain/health"' },
+      {
+        exec,
+        host: 'localhost',
+        port: STAGING_PORT,
+        releaseEnvironment: 'staging',
+      },
+    );
+    expect(options.env).toEqual({
+      LANG: 'C',
+      LC_ALL: 'C',
+      NO_COLOR: '1',
+      PATH: process.env.PATH,
+      RELEASE_E2E_ENVIRONMENT: 'staging',
+      RELEASE_E2E_TARGET_URL: `http://localhost:${STAGING_PORT}`,
+    });
+    expect(options.timeout).toBeLessThanOrEqual(5 * 60 * 1000);
+  });
+
   // P1#5（2026-06-27 审计）：内部线 dashboard staging（:5223 是静态站，无 /api/brain）。
   // mac_web 合同实际引用 localhost:5174(dashboard) + localhost:5221(brain)。旧逻辑把 5221→5223
   // → brain 断言打到 dashboard 静态站必 FAIL，且 5174 完全不映射。正确：5174→5223，5221 保持活 brain。
@@ -298,6 +324,31 @@ describe('runScenarios', () => {
     expect(r.scenariosTotal).toBe(1);
     expect(r.scenariosPassed).toBe(1);
     expect(r.failedScenarios).toHaveLength(0);
+  });
+
+  it('returns ordered per-scenario timestamp and log-digest evidence', () => {
+    const times = [
+      new Date('2026-07-28T06:01:00.000Z'),
+      new Date('2026-07-28T06:01:01.000Z'),
+    ];
+    const r = runScenarios({
+      scenarios: [{
+        ...ACCEPTANCE.scenarios[0],
+        commands: [{ type: 'bash', cmd: 'curl localhost:5221/api/brain/tick/status' }],
+      }],
+    }, {
+      exec: () => 'bounded output',
+      now: () => times.shift(),
+      releaseEnvironment: 'staging',
+    });
+    expect(r.scenarioResults).toEqual([{
+      name: 'health',
+      status: 'pass',
+      started_at: '2026-07-28T06:01:00.000Z',
+      finished_at: '2026-07-28T06:01:01.000Z',
+      log_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+    }]);
+    expect(JSON.stringify(r.scenarioResults)).not.toContain('bounded output');
   });
 
   it('某命令非 0 → FAIL + failedScenarios 记录场景名', () => {

@@ -1,18 +1,63 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createReleaseRunAdapters } from '../release-run-adapters.js';
+import { createRequiredE2EManifest } from '../release-run-e2e.js';
 
 const sha = 'b'.repeat(40);
 const deployedImage = `sha256:${'d'.repeat(64)}`;
 const rollbackImage = `sha256:${'e'.repeat(64)}`;
 const rollbackTag = `cecelia-brain:rollback-${'e'.repeat(12)}`;
 const rollbackCommand = `BRAIN_VERSION=rollback-${'e'.repeat(12)} docker compose -f docker-compose.yml up -d`;
+const verificationClaim = { dispatch_claim_id: 21, generation: 3 };
 const artifacts = [{ name: 'brain', version: '1.268.5', digest: `sha256:${'c'.repeat(64)}` }];
+const e2eManifest = {
+  id: '66666666-6666-4666-8666-666666666666',
+  ...createRequiredE2EManifest({
+    release_run_id: '44444444-4444-4444-8444-444444444444',
+    run_id: '77777777-7777-4777-8777-777777777777',
+    repository: 'perfectuser21/cecelia',
+    merge_sha: sha,
+    artifact_versions: artifacts,
+    contract: {
+      id: '88888888-8888-4888-8888-888888888888',
+      version: 3,
+      approved_at: '2026-07-28T06:00:00.000Z',
+      contract_content: '# frozen approved contract',
+      e2e_acceptance: {
+        scenarios: [{
+          name: 'release behavior',
+          covered_tasks: ['99999999-9999-4999-8999-999999999999'],
+          commands: [{
+            type: 'bash',
+            cmd: 'curl -fsS "$RELEASE_E2E_TARGET_URL/api/brain/health"',
+          }],
+        }],
+      },
+    },
+  }),
+};
 const request = {
   release_run_id: '44444444-4444-4444-8444-444444444444',
   merge_sha: sha,
   idempotency_key: '55555555-5555-4555-8555-555555555555',
   artifact_versions: artifacts,
+  e2e_manifest: e2eManifest,
 };
+
+function passingScenarios() {
+  return {
+    verdict: 'PASS',
+    scenariosTotal: 1,
+    scenariosPassed: 1,
+    failedScenarios: [],
+    scenarioResults: [{
+      name: 'release behavior',
+      status: 'pass',
+      started_at: '2026-07-28T06:01:00.000Z',
+      finished_at: '2026-07-28T06:01:01.000Z',
+      log_digest: `sha256:${'f'.repeat(64)}`,
+    }],
+  };
+}
 
 function response(body) {
   return { ok: true, json: vi.fn(async () => body) };
@@ -83,6 +128,7 @@ describe('production ReleaseRun adapters', () => {
   });
 
   it('observes exact production health, E2E and rollback evidence', async () => {
+    const contractE2ERunner = vi.fn(() => passingScenarios());
     const fetchFn = vi.fn()
       .mockResolvedValueOnce(response({
         status: 'success',
@@ -106,17 +152,29 @@ describe('production ReleaseRun adapters', () => {
         },
       }))
       .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
-      .mockResolvedValueOnce(response({ ok: true, queue: {} }));
+      .mockResolvedValueOnce(response({ ok: true, queue: {} }))
+      .mockResolvedValueOnce(response(verificationClaim));
     const adapters = createReleaseRunAdapters({
       fetchFn,
       brainUrl: 'http://brain',
+      deployToken: 'token',
+      contractE2ERunner,
+      releaseE2EHost: 'localhost',
     });
     await expect(adapters.observeProduction(request)).resolves.toMatchObject({
       status: 'pass',
       health: 'pass',
       required_e2e: 'pass',
+      e2e_manifest_digest: e2eManifest.manifest_digest,
+      e2e_environment: 'production',
+      e2e_scenarios_total: 1,
+      e2e_scenarios_passed: 1,
+      e2e_scenario_results: passingScenarios().scenarioResults,
+      e2e_artifact_readback: artifacts,
       merge_sha: sha,
       deployed_versions: artifacts,
+      dispatch_claim_id: verificationClaim.dispatch_claim_id,
+      dispatch_generation: verificationClaim.generation,
       rollback_metadata: {
         anchor: `brain-image:${deployedImage}`,
         previous_version: `brain-image:${rollbackImage}`,
@@ -126,9 +184,149 @@ describe('production ReleaseRun adapters', () => {
         probe: 'pass',
       },
     });
+    expect(contractE2ERunner).toHaveBeenCalledWith(
+      e2eManifest.e2e_acceptance,
+      expect.objectContaining({
+        host: 'localhost',
+        port: 5221,
+        releaseEnvironment: 'production',
+      }),
+    );
   });
 
-  it('rejects healthy production without a fresh exact E2E receipt', async () => {
+  it('uses exact deploy status SHA for a workspace-only production receipt', async () => {
+    const workspaceArtifact = {
+      name: 'workspace',
+      version: sha.slice(0, 12),
+      digest: `sha256:${'7'.repeat(64)}`,
+    };
+    const workspaceManifest = {
+      id: e2eManifest.id,
+      ...createRequiredE2EManifest({
+        release_run_id: request.release_run_id,
+        run_id: e2eManifest.run_id,
+        repository: e2eManifest.repository,
+        merge_sha: sha,
+        artifact_versions: [workspaceArtifact],
+        contract: {
+          id: e2eManifest.contract_id,
+          version: e2eManifest.contract_version,
+          approved_at: e2eManifest.contract_approved_at,
+          contract_content: '# frozen approved contract',
+          e2e_acceptance: e2eManifest.e2e_acceptance,
+        },
+      }),
+    };
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(response({
+        status: 'success',
+        release_run_id: request.release_run_id,
+        merge_sha: sha,
+        deployed_artifact_versions: [workspaceArtifact],
+      }))
+      .mockResolvedValueOnce(response({
+        status: 'healthy',
+        version: '1.268.5',
+        git_sha: 'a'.repeat(40),
+      }))
+      .mockResolvedValueOnce(response({ ok: true, queue: {} }))
+      .mockResolvedValueOnce(response({ git_sha: sha }))
+      .mockResolvedValueOnce(response(verificationClaim));
+    const adapters = createReleaseRunAdapters({
+      fetchFn,
+      brainUrl: 'http://brain',
+      dashboardUrl: 'http://dashboard',
+      deployToken: 'token',
+      readDashboardRollback: () => [
+        'current=release-current',
+        'history=release-previous',
+        `commit=${sha}`,
+      ].join('\n'),
+      contractE2ERunner: vi.fn(() => passingScenarios()),
+    });
+
+    await expect(adapters.observeProduction({
+      ...request,
+      artifact_versions: [workspaceArtifact],
+      e2e_manifest: workspaceManifest,
+    })).resolves.toMatchObject({
+      status: 'pass',
+      merge_sha: sha,
+      deployed_versions: [workspaceArtifact],
+      rollback_metadata: {
+        anchor: 'dashboard:release-current',
+        previous_version: 'dashboard:release-previous',
+      },
+    });
+  });
+
+  it('requires live Workflow Skills rollback readback for a routed artifact', async () => {
+    const workflowArtifact = {
+      name: 'workflow-skills',
+      version: sha.slice(0, 12),
+      digest: `sha256:${'9'.repeat(64)}`,
+    };
+    const mixedArtifacts = [...artifacts, workflowArtifact];
+    const mixedManifest = {
+      id: e2eManifest.id,
+      ...createRequiredE2EManifest({
+        release_run_id: request.release_run_id,
+        run_id: e2eManifest.run_id,
+        repository: e2eManifest.repository,
+        merge_sha: sha,
+        artifact_versions: mixedArtifacts,
+        contract: {
+          id: e2eManifest.contract_id,
+          version: e2eManifest.contract_version,
+          approved_at: e2eManifest.contract_approved_at,
+          contract_content: '# frozen approved contract',
+          e2e_acceptance: e2eManifest.e2e_acceptance,
+        },
+      }),
+    };
+    const mixedRequest = {
+      ...request,
+      artifact_versions: mixedArtifacts,
+      e2e_manifest: mixedManifest,
+    };
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(response({
+        status: 'success',
+        release_run_id: request.release_run_id,
+        merge_sha: sha,
+        deployed_image_digest: deployedImage,
+        rollback_image_digest: rollbackImage,
+        rollback_image_reference: rollbackImage,
+        rollback_image_tag: rollbackTag,
+        rollback_image_exists: true,
+        rollback_probe: 'pass',
+        rollback_command: rollbackCommand,
+        deployed_artifact_versions: mixedArtifacts,
+        workflow_rollback_metadata: {
+          anchor: `workflow-skills:${workflowArtifact.digest}`,
+          previous_version: `workflow-skills:sha256:${'8'.repeat(64)}`,
+        },
+      }))
+      .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
+      .mockResolvedValueOnce(response({ ok: true, queue: {} }))
+      .mockResolvedValueOnce(response(verificationClaim));
+    const adapters = createReleaseRunAdapters({
+      fetchFn,
+      brainUrl: 'http://brain',
+      deployToken: 'token',
+      contractE2ERunner: vi.fn(() => passingScenarios()),
+    });
+    await expect(adapters.observeProduction(mixedRequest)).resolves.toMatchObject({
+      status: 'pass',
+      rollback_metadata: {
+        anchor: `brain-image:${deployedImage}+workflow-skills:${workflowArtifact.digest}`,
+        previous_version:
+          `brain-image:${rollbackImage}+workflow-skills:sha256:${'8'.repeat(64)}`,
+      },
+    });
+  });
+
+  it('rejects healthy production when the exact contract E2E fails', async () => {
     const fetchFn = vi.fn()
       .mockResolvedValueOnce(response({
         status: 'success',
@@ -146,8 +344,61 @@ describe('production ReleaseRun adapters', () => {
       }))
       .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
       .mockResolvedValueOnce(response({ ok: true }));
-    const adapters = createReleaseRunAdapters({ fetchFn, brainUrl: 'http://brain' });
+    const adapters = createReleaseRunAdapters({
+      fetchFn,
+      brainUrl: 'http://brain',
+      contractE2ERunner: () => ({
+        verdict: 'FAIL',
+        scenariosTotal: 1,
+        scenariosPassed: 0,
+        scenarioResults: [],
+      }),
+    });
     await expect(adapters.observeProduction(request)).resolves.toEqual({ status: 'fail' });
+  });
+
+  it('observes staging only after exact contract E2E runs against staging', async () => {
+    const contractE2ERunner = vi.fn(() => passingScenarios());
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(response({
+        status: 'success',
+        release_run_id: request.release_run_id,
+        merge_sha: sha,
+        release_authorization: request.idempotency_key,
+        deployed_artifact_versions: artifacts,
+      }))
+      .mockResolvedValueOnce(response({
+        status: 'healthy',
+        version: '1.268.5',
+        git_sha: sha,
+      }))
+      .mockResolvedValueOnce(response(verificationClaim));
+    const adapters = createReleaseRunAdapters({
+      fetchFn,
+      brainUrl: 'http://brain',
+      stagingUrl: 'http://staging',
+      deployToken: 'token',
+      contractE2ERunner,
+      releaseE2EHost: 'localhost',
+    });
+    await expect(adapters.observeStaging(request)).resolves.toMatchObject({
+      status: 'pass',
+      required_e2e: 'pass',
+      e2e_environment: 'staging',
+      e2e_manifest_digest: e2eManifest.manifest_digest,
+      e2e_scenarios_total: 1,
+      e2e_scenarios_passed: 1,
+      dispatch_claim_id: verificationClaim.dispatch_claim_id,
+      dispatch_generation: verificationClaim.generation,
+    });
+    expect(contractE2ERunner).toHaveBeenCalledWith(
+      e2eManifest.e2e_acceptance,
+      expect.objectContaining({
+        host: 'localhost',
+        port: 5222,
+        releaseEnvironment: 'staging',
+      }),
+    );
   });
 
   it('rejects production evidence without a distinct recoverable image', async () => {
@@ -167,7 +418,11 @@ describe('production ReleaseRun adapters', () => {
       }))
       .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
       .mockResolvedValueOnce(response({ ok: true, queue: {} }));
-    const adapters = createReleaseRunAdapters({ fetchFn, brainUrl: 'http://brain' });
+    const adapters = createReleaseRunAdapters({
+      fetchFn,
+      brainUrl: 'http://brain',
+      contractE2ERunner: () => passingScenarios(),
+    });
     await expect(adapters.observeProduction(request)).resolves.toEqual({ status: 'fail' });
   });
 });

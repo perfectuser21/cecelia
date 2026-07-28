@@ -6,11 +6,26 @@
 
 
 
-**Brain 版本**: 1.268.5
+**Brain 版本**: 1.268.6
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.6 — Fenced Kernel ReleaseRun closure
+
+- ReleaseRun 从 approved contract 固化 exact E2E manifest；typed scenario receipts、
+  dispatch generation/lease renewal/verification outcome 与数据库 transition guard
+  共同拒绝陈旧、跨配对或伪造的 PASS。
+- production effect 前先持久化 rollback intent，live readback 后追加 rollback
+  receipt；`production_verified` 必须同时引用 exact effect/E2E/rollback receipts。
+- 部署由服务端持久 artifact manifest 分路到 Brain、Dashboard 与 Workflow Skills；
+  unknown 或无 runtime owner 的 artifact 在 spawn 前阻断。公开状态不返回 release
+  authorization，Dashboard rollback readback 固定使用部署根绝对路径。
+- BLOCKED release gate 先写 durable unique P0 escalation 再通知。N-1 bootstrap
+  显式 fetch merge SHA，使用 append-only 续租世代、同一 typed manifest executor
+  与 exact receipt/digest transition evidence，数据库 URL 不进入进程 argv。
+- 回退：`bash scripts/brain-rollback.sh 1.268.5`（保留 migrations 374–375 审计账本）。
 
 ## Brain 1.268.5 — Durable Kernel ReleaseRun
 

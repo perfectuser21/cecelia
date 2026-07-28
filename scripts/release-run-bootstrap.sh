@@ -54,7 +54,7 @@ fi
   || deny "owner trust root must be root-owned, non-writable, mode 0444"
 
 # Prevalidate the dedicated deployment root and the exact GitHub merge relation
-# before migration 374 or any bootstrap ledger row can be created.
+# before migration 375 or any bootstrap ledger row can be created.
 [[ -z "$(git -C "$deploy_root" status --porcelain --untracked-files=no)" ]] \
   || deny "dedicated deploy root is dirty"
 origin_url=$(git -C "$deploy_root" remote get-url origin)
@@ -75,29 +75,53 @@ IFS=$'\t' read -r pr_state pr_merged pr_head_sha pr_merge_sha pr_base <<< "$pr_f
   || deny "GitHub PR facts do not match approved release axes"
 
 source_ref="refs/kernel-bootstrap/pr-${pr_number}-source"
+merge_ref="refs/kernel-bootstrap/pr-${pr_number}-merge"
 main_ref="refs/kernel-bootstrap/pr-${pr_number}-main"
+manifest_file=""
+receipt_file=""
+attempt_file=""
+attempt_renewal_pid=""
+stop_attempt_renewal() {
+  if [[ -n "$attempt_renewal_pid" ]]; then
+    kill "$attempt_renewal_pid" >/dev/null 2>&1 || true
+    wait "$attempt_renewal_pid" >/dev/null 2>&1 || true
+    attempt_renewal_pid=""
+  fi
+}
 cleanup_refs() {
+  stop_attempt_renewal
   git -C "$deploy_root" update-ref -d "$source_ref" >/dev/null 2>&1 || true
+  git -C "$deploy_root" update-ref -d "$merge_ref" >/dev/null 2>&1 || true
   git -C "$deploy_root" update-ref -d "$main_ref" >/dev/null 2>&1 || true
+  [[ -z "$manifest_file" ]] || rm -f "$manifest_file"
+  [[ -z "$receipt_file" ]] || rm -f "$receipt_file"
+  [[ -z "$attempt_file" ]] || rm -f "$attempt_file"
 }
 trap cleanup_refs EXIT
 git -C "$deploy_root" fetch --no-tags origin \
   "${source_head_sha}:${source_ref}" >/dev/null 2>&1 \
   || deny "exact source SHA could not be fetched"
 git -C "$deploy_root" fetch --no-tags origin \
+  "${merge_sha}:${merge_ref}" >/dev/null 2>&1 \
+  || deny "exact merge SHA could not be fetched"
+git -C "$deploy_root" fetch --no-tags origin \
   "refs/heads/main:${main_ref}" >/dev/null 2>&1 \
   || deny "origin/main could not be fetched"
 [[ "$(git -C "$deploy_root" rev-parse "$source_ref")" == "$source_head_sha" ]] \
   || deny "fetched source ref does not match approved source SHA"
-git -C "$deploy_root" cat-file -e "${merge_sha}^{commit}" \
-  || deny "approved merge SHA is not present in origin/main"
+[[ "$(git -C "$deploy_root" rev-parse "$merge_ref")" == "$merge_sha" ]] \
+  || deny "fetched merge ref does not match approved merge SHA"
 git -C "$deploy_root" merge-base --is-ancestor "$merge_sha" "$main_ref" \
   || deny "approved merge SHA is not reachable from origin/main"
 git -C "$deploy_root" switch --detach "$merge_sha" >/dev/null
 [[ "$(git -C "$deploy_root" rev-parse HEAD)" == "$merge_sha" ]] \
   || deny "dedicated deploy root checkout is not exact merge SHA"
 
-production_database=$(psql "$database_url" -XqAtv ON_ERROR_STOP=1 \
+psql_bootstrap() {
+  PGDATABASE="$database_url" psql "$@"
+}
+
+production_database=$(psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
   -c 'SELECT current_database()') || deny "production database unavailable"
 [[ "$production_database" == "cecelia" ]] \
   || deny "bootstrap database must be the production cecelia database"
@@ -108,14 +132,14 @@ approval_digest=$(node "$bootstrap_root/scripts/lib/verify-bootstrap-approval.mj
   || deny "owner approval signature invalid"
 
 # The exact merge tree's canonical runner is the SSOT. Starting from the
-# deployed N-1 schema, it applies every missing dependency in order (369..374);
-# invoking migration 374 alone is forbidden because its merge-receipt FKs
+# deployed N-1 schema, it applies every missing dependency in order (369..375);
+# invoking the ReleaseRun migrations alone is forbidden because their merge-receipt FKs
 # depend on migration 372.
-pre_cutover_schema=$(psql "$database_url" -XqAtv ON_ERROR_STOP=1 \
+pre_cutover_schema=$(psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
   -c "SELECT COALESCE(max(version::integer), 0) FROM schema_version
        WHERE version ~ '^[0-9]+$'") \
   || deny "could not read production schema version"
-[[ "$pre_cutover_schema" -ge 368 && "$pre_cutover_schema" -le 374 ]] \
+[[ "$pre_cutover_schema" -ge 368 && "$pre_cutover_schema" -le 375 ]] \
   || deny "production schema is outside the supported N-1 cutover window"
 (
   cd "$deploy_root/packages/brain"
@@ -134,9 +158,9 @@ try {
   await pool.end();
 }
 NODE
-) || deny "canonical migration 369-374 sequence failed"
+) || deny "canonical migration 369-375 sequence failed"
 
-run_record=$(psql "$database_url" -XqAtv ON_ERROR_STOP=1 \
+run_record=$(psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
   -v repository="$repository" \
   -v pr_number="$pr_number" \
   -v source_sha="$source_head_sha" \
@@ -172,7 +196,7 @@ IFS=$'\t' read -r bootstrap_run_id stored_repository stored_pr stored_source \
   || deny "a different bootstrap cutover already exists"
 
 latest_state() {
-  psql "$database_url" -XqAtv ON_ERROR_STOP=1 \
+  psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
     -v run_id="$bootstrap_run_id" -c \
     "SELECT state FROM kernel_release_bootstrap_transitions
       WHERE bootstrap_run_id = :'run_id'
@@ -180,16 +204,31 @@ latest_state() {
 }
 
 append_transition() {
-  local state="$1"
-  psql "$database_url" -Xqv ON_ERROR_STOP=1 \
-    -v run_id="$bootstrap_run_id" -v state="$state" -v merge_sha="$merge_sha" <<'SQL' \
+  local state="$1" effect_receipt_id="" e2e_manifest_digest=""
+  if [[ -n "${2:-}" ]]; then
+    IFS=$'\t' read -r effect_receipt_id e2e_manifest_digest < <(
+      node -e '
+        const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(`${value.receipt_id}\t${value.manifest_digest}\n`);
+      ' "$2"
+    )
+  fi
+  psql_bootstrap -Xqv ON_ERROR_STOP=1 \
+    -v run_id="$bootstrap_run_id" -v state="$state" -v merge_sha="$merge_sha" \
+    -v effect_receipt_id="$effect_receipt_id" \
+    -v e2e_manifest_digest="$e2e_manifest_digest" <<'SQL' \
     >/dev/null
 INSERT INTO kernel_release_bootstrap_transitions (
   bootstrap_run_id, state, evidence
 )
 VALUES (
   :'run_id', :'state',
-  jsonb_build_object('merge_sha', :'merge_sha', 'recorded_by', 'bootstrap-controller')
+  jsonb_strip_nulls(jsonb_build_object(
+    'merge_sha', :'merge_sha',
+    'recorded_by', 'bootstrap-controller',
+    'effect_receipt_id', NULLIF(:'effect_receipt_id', ''),
+    'e2e_manifest_digest', NULLIF(:'e2e_manifest_digest', '')
+  ))
 )
 ON CONFLICT (bootstrap_run_id, state) DO NOTHING;
 SQL
@@ -197,7 +236,7 @@ SQL
 
 latest_attempt_id() {
   local effect_kind="$1"
-  psql "$database_url" -XqAtv ON_ERROR_STOP=1 \
+  psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
     -v run_id="$bootstrap_run_id" -v effect_kind="$effect_kind" -c \
     "SELECT id FROM kernel_release_bootstrap_effect_attempts
       WHERE bootstrap_run_id = :'run_id' AND effect_kind = :'effect_kind'
@@ -207,7 +246,7 @@ latest_attempt_id() {
 record_receipt() {
   local attempt_id="$1" receipt_status="$2" detail="$3"
   [[ "$attempt_id" =~ ^[0-9]+$ ]] || deny "effect attempt receipt is missing"
-  psql "$database_url" -Xqv ON_ERROR_STOP=1 \
+  psql_bootstrap -Xqv ON_ERROR_STOP=1 \
     -v attempt_id="$attempt_id" -v status="$receipt_status" \
     -v detail="$detail" -v merge_sha="$merge_sha" <<'SQL' >/dev/null
 INSERT INTO kernel_release_bootstrap_effect_receipts (
@@ -221,57 +260,154 @@ ON CONFLICT DO NOTHING;
 SQL
 }
 
-expected_version=$(node -e \
-  "process.stdout.write(require('$deploy_root/packages/brain/package.json').version)")
+manifest_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-manifest.XXXXXX")
+chmod 600 "$manifest_file"
+KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
+KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
+KERNEL_RELEASE_REPOSITORY="$repository" \
+KERNEL_RELEASE_SOURCE_HEAD_SHA="$source_head_sha" \
+KERNEL_RELEASE_MERGE_SHA="$merge_sha" \
+KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT="$deploy_root" \
+KERNEL_RELEASE_BOOTSTRAP_E2E_OUTPUT_FILE="$manifest_file" \
+  node "$deploy_root/scripts/lib/release-run-bootstrap-e2e.mjs" materialize \
+  || deny "exact approved E2E manifest could not be materialized"
+artifact_versions=$(node -e '
+  const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  process.stdout.write(JSON.stringify(value.artifact_versions));
+' "$manifest_file") || deny "materialized artifact versions could not be read"
 
-observe_environment() {
-  local base_url="$1" require_rollback="$2"
-  local health_file full_file deploy_file
-  health_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-health.XXXXXX")
-  full_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-full.XXXXXX")
-  deploy_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-deploy.XXXXXX")
-  curl -fsS --connect-timeout 5 --max-time 20 \
-    "${base_url}/api/brain/health" > "$health_file" || {
-      rm -f "$health_file" "$full_file" "$deploy_file"; return 1;
-    }
-  curl -fsS --connect-timeout 5 --max-time 20 \
-    "${base_url}/api/brain/status/full" > "$full_file" || {
-      rm -f "$health_file" "$full_file" "$deploy_file"; return 1;
-    }
-  if [[ "$require_rollback" == "true" ]]; then
-    curl -fsS --connect-timeout 5 --max-time 20 \
-      "${base_url}/api/brain/deploy/status" > "$deploy_file" || {
-        rm -f "$health_file" "$full_file" "$deploy_file"; return 1;
-      }
-  else
-    printf '{}' > "$deploy_file"
+attempt_is_live() {
+  local attempt_id="$1"
+  [[ "$attempt_id" =~ ^[0-9]+$ ]] || return 1
+  [[ "$(psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
+    -v attempt_id="$attempt_id" -c \
+    "SELECT GREATEST(
+              attempt.lease_expires_at,
+              COALESCE(MAX(renewal.lease_expires_at), attempt.lease_expires_at)
+            ) > clock_timestamp()
+       FROM kernel_release_bootstrap_effect_attempts attempt
+       LEFT JOIN kernel_release_bootstrap_effect_attempt_renewals renewal
+         ON renewal.effect_attempt_id = attempt.id
+        AND renewal.generation = attempt.generation
+      WHERE attempt.id = :'attempt_id'::bigint
+      GROUP BY attempt.id, attempt.lease_expires_at")" == "t" ]]
+}
+
+renew_attempt_once() {
+  local attempt_id="$1"
+  psql_bootstrap -XqAtv ON_ERROR_STOP=1 \
+    -v attempt_id="$attempt_id" <<'SQL'
+INSERT INTO kernel_release_bootstrap_effect_attempt_renewals (
+  effect_attempt_id, generation, lease_expires_at
+)
+SELECT attempt.id, attempt.generation,
+       clock_timestamp() + interval '15 minutes'
+  FROM kernel_release_bootstrap_effect_attempts attempt
+ WHERE attempt.id = :'attempt_id'::bigint
+   AND attempt.generation = (
+     SELECT MAX(latest.generation)
+       FROM kernel_release_bootstrap_effect_attempts latest
+      WHERE latest.bootstrap_run_id = attempt.bootstrap_run_id
+        AND latest.effect_kind = attempt.effect_kind
+   )
+   AND GREATEST(
+     attempt.lease_expires_at,
+     COALESCE((
+       SELECT MAX(renewal.lease_expires_at)
+         FROM kernel_release_bootstrap_effect_attempt_renewals renewal
+        WHERE renewal.effect_attempt_id = attempt.id
+          AND renewal.generation = attempt.generation
+     ), attempt.lease_expires_at)
+   ) > clock_timestamp()
+   AND NOT EXISTS (
+     SELECT 1
+       FROM kernel_release_bootstrap_effect_receipts receipt
+      WHERE receipt.effect_attempt_id = attempt.id
+    )
+RETURNING id;
+SQL
+}
+
+start_attempt_renewal() {
+  local attempt_id="$1" renewal_id
+  [[ "$attempt_id" =~ ^[0-9]+$ ]] || deny "effect attempt renewal is missing"
+  stop_attempt_renewal
+  renewal_id=$(renew_attempt_once "$attempt_id") || return 1
+  [[ "$renewal_id" =~ ^[0-9]+$ ]] || return 1
+  (
+    while sleep 60; do
+      renewal_id=$(renew_attempt_once "$attempt_id") || exit 0
+      [[ "$renewal_id" =~ ^[0-9]+$ ]] || exit 0
+    done
+  ) &
+  attempt_renewal_pid=$!
+}
+
+run_bootstrap_effect() {
+  local effect_kind="$1" effect_script="$2" effect_pid wait_round
+  attempt_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-attempt.XXXXXX")
+  chmod 600 "$attempt_file"
+  KERNEL_RELEASE_BOOTSTRAP=1 \
+    KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
+    KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
+    KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT="$deploy_root" \
+    KERNEL_RELEASE_BOOTSTRAP_ATTEMPT_FILE="$attempt_file" \
+    KERNEL_RELEASE_RUN_ID="$bootstrap_run_id" \
+    KERNEL_RELEASE_ARTIFACT_VERSIONS="$artifact_versions" \
+    KERNEL_RELEASE_REPOSITORY="$repository" \
+    KERNEL_RELEASE_PR_NUMBER="$pr_number" \
+    KERNEL_RELEASE_SOURCE_HEAD_SHA="$source_head_sha" \
+    KERNEL_RELEASE_MERGE_SHA="$merge_sha" \
+    KERNEL_RELEASE_BOOTSTRAP_ACTOR="$actor" \
+    KERNEL_RELEASE_BOOTSTRAP_APPROVAL_KEY_ID="$approval_key_id" \
+    KERNEL_RELEASE_BOOTSTRAP_APPROVAL_SIGNATURE="$approval_signature" \
+    bash "$effect_script" &
+  effect_pid=$!
+
+  attempt_id=""
+  for wait_round in $(seq 1 300); do
+    attempt_id=$(grep -E '^[0-9]+$' "$attempt_file" | tail -1 || true)
+    [[ -z "$attempt_id" ]] || break
+    kill -0 "$effect_pid" >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  if [[ -n "$attempt_id" ]]; then
+    if ! start_attempt_renewal "$attempt_id"; then
+      kill "$effect_pid" >/dev/null 2>&1 || true
+      wait "$effect_pid" >/dev/null 2>&1 || true
+      effect_rc=78
+      rm -f "$attempt_file"
+      attempt_file=""
+      return 0
+    fi
   fi
-  node - "$health_file" "$full_file" "$deploy_file" "$merge_sha" \
-    "$expected_version" "$require_rollback" <<'NODE'
-const fs = require('node:fs');
-const [healthPath, fullPath, deployPath, mergeSha, version, requireRollback] = process.argv.slice(2);
-const health = JSON.parse(fs.readFileSync(healthPath, 'utf8'));
-const full = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-const deploy = JSON.parse(fs.readFileSync(deployPath, 'utf8'));
-const digest = /^sha256:[0-9a-f]{64}$/;
-if (health.status !== 'healthy' || health.git_sha !== mergeSha || health.version !== version) process.exit(1);
-if (!full || full.error != null) process.exit(1);
-if (requireRollback === 'true' && (
-  deploy.status !== 'success'
-  || deploy.merge_sha !== mergeSha
-  || !digest.test(deploy.deployed_image_digest || '')
-  || !digest.test(deploy.rollback_image_digest || '')
-  || deploy.deployed_image_digest === deploy.rollback_image_digest
-  || !/^cecelia-brain:rollback-[0-9a-f]{12}$/.test(deploy.rollback_image_tag || '')
-  || deploy.rollback_image_exists !== true
-  || deploy.rollback_probe !== 'pass'
-  || typeof deploy.rollback_command !== 'string'
-  || !deploy.rollback_command.includes(deploy.rollback_image_tag.replace('cecelia-brain:', ''))
-)) process.exit(1);
-NODE
-  local result=$?
-  rm -f "$health_file" "$full_file" "$deploy_file"
-  return "$result"
+
+  set +e
+  wait "$effect_pid"
+  effect_rc=$?
+  set -e
+  rm -f "$attempt_file"
+  attempt_file=""
+  if [[ -z "$attempt_id" && "$effect_rc" -eq 0 ]]; then
+    effect_rc=78
+  fi
+}
+
+execute_manifest() {
+  local environment="$1" attempt_id="$2"
+  receipt_file=$(mktemp "${TMPDIR:-/tmp}/kernel-bootstrap-receipt.XXXXXX")
+  chmod 600 "$receipt_file"
+  KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
+  KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
+  KERNEL_RELEASE_REPOSITORY="$repository" \
+  KERNEL_RELEASE_MERGE_SHA="$merge_sha" \
+  KERNEL_RELEASE_BOOTSTRAP_DEPLOY_ROOT="$deploy_root" \
+  KERNEL_RELEASE_BOOTSTRAP_EFFECT_ATTEMPT_ID="$attempt_id" \
+  KERNEL_RELEASE_BOOTSTRAP_E2E_ENVIRONMENT="$environment" \
+  KERNEL_RELEASE_BOOTSTRAP_E2E_OUTPUT_FILE="$receipt_file" \
+  BRAIN_STAGING_URL="${BRAIN_STAGING_URL:-http://localhost:5222}" \
+  BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" \
+    node "$deploy_root/scripts/lib/release-run-bootstrap-e2e.mjs" execute
 }
 
 state=$(latest_state)
@@ -288,33 +424,32 @@ if [[ "$state" == "approved" ]]; then
 fi
 if [[ "$state" == "staging_intent" ]]; then
   attempt_id=$(latest_attempt_id staging)
-  if [[ -z "$attempt_id" ]] \
-    || ! observe_environment "${BRAIN_STAGING_URL:-http://localhost:5222}" false; then
-    set +e
-    KERNEL_RELEASE_BOOTSTRAP=1 \
-      KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
-      KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
-      KERNEL_RELEASE_REPOSITORY="$repository" \
-      KERNEL_RELEASE_PR_NUMBER="$pr_number" \
-      KERNEL_RELEASE_SOURCE_HEAD_SHA="$source_head_sha" \
-      KERNEL_RELEASE_MERGE_SHA="$merge_sha" \
-      KERNEL_RELEASE_BOOTSTRAP_ACTOR="$actor" \
-      KERNEL_RELEASE_BOOTSTRAP_APPROVAL_KEY_ID="$approval_key_id" \
-      KERNEL_RELEASE_BOOTSTRAP_APPROVAL_SIGNATURE="$approval_signature" \
-      bash "$deploy_root/scripts/staging-deploy.sh"
-    effect_rc=$?
-    set -e
-    attempt_id=$(latest_attempt_id staging)
+  recovered_staging=false
+  if [[ -n "$attempt_id" ]]; then
+    start_attempt_renewal "$attempt_id" || true
+  fi
+  if [[ -n "$attempt_id" ]] && execute_manifest staging "$attempt_id"; then
+    stop_attempt_renewal
+    append_transition staging_passed "$receipt_file"
+    state=staging_passed
+    recovered_staging=true
+  fi
+  if [[ "$recovered_staging" != "true" ]]; then
+    stop_attempt_renewal
+    if [[ -n "$attempt_id" ]] && attempt_is_live "$attempt_id"; then
+      deny "staging effect outcome is ambiguous while its lease is live"
+    fi
+    run_bootstrap_effect staging "$deploy_root/scripts/staging-deploy.sh"
     if [[ "$effect_rc" -ne 0 ]]; then
       record_receipt "$attempt_id" failed "staging deploy exit ${effect_rc}"
       deny "staging deploy failed"
     fi
-    observe_environment "${BRAIN_STAGING_URL:-http://localhost:5222}" false \
-      || { record_receipt "$attempt_id" observed_unconfirmed "staging observation failed"; deny "staging E2E evidence failed"; }
+    execute_manifest staging "$attempt_id" \
+      || { record_receipt "$attempt_id" observed_unconfirmed "staging manifest execution failed"; deny "staging E2E evidence failed"; }
+    stop_attempt_renewal
+    append_transition staging_passed "$receipt_file"
+    state=staging_passed
   fi
-  record_receipt "$attempt_id" confirmed "staging exact-SHA health and E2E passed"
-  append_transition staging_passed
-  state=staging_passed
 fi
 
 if [[ "$state" == "staging_passed" ]]; then
@@ -323,32 +458,30 @@ if [[ "$state" == "staging_passed" ]]; then
 fi
 if [[ "$state" == "production_intent" ]]; then
   attempt_id=$(latest_attempt_id production)
-  if [[ -z "$attempt_id" ]] \
-    || ! observe_environment "${BRAIN_URL:-http://localhost:5221}" true; then
-    set +e
-    KERNEL_RELEASE_BOOTSTRAP=1 \
-      KERNEL_RELEASE_BOOTSTRAP_RUN_ID="$bootstrap_run_id" \
-      KERNEL_RELEASE_BOOTSTRAP_DATABASE_URL="$database_url" \
-      KERNEL_RELEASE_REPOSITORY="$repository" \
-      KERNEL_RELEASE_PR_NUMBER="$pr_number" \
-      KERNEL_RELEASE_SOURCE_HEAD_SHA="$source_head_sha" \
-      KERNEL_RELEASE_MERGE_SHA="$merge_sha" \
-      KERNEL_RELEASE_BOOTSTRAP_ACTOR="$actor" \
-      KERNEL_RELEASE_BOOTSTRAP_APPROVAL_KEY_ID="$approval_key_id" \
-      KERNEL_RELEASE_BOOTSTRAP_APPROVAL_SIGNATURE="$approval_signature" \
-      bash "$deploy_root/scripts/brain-deploy.sh"
-    effect_rc=$?
-    set -e
-    attempt_id=$(latest_attempt_id production)
+  recovered_production=false
+  if [[ -n "$attempt_id" ]]; then
+    start_attempt_renewal "$attempt_id" || true
+  fi
+  if [[ -n "$attempt_id" ]] && execute_manifest production "$attempt_id"; then
+    stop_attempt_renewal
+    append_transition production_verified "$receipt_file"
+    recovered_production=true
+  fi
+  if [[ "$recovered_production" != "true" ]]; then
+    stop_attempt_renewal
+    if [[ -n "$attempt_id" ]] && attempt_is_live "$attempt_id"; then
+      deny "production effect outcome is ambiguous while its lease is live"
+    fi
+    run_bootstrap_effect production "$deploy_root/scripts/brain-deploy.sh"
     if [[ "$effect_rc" -ne 0 ]]; then
       record_receipt "$attempt_id" failed "production deploy exit ${effect_rc}"
       deny "production deploy failed"
     fi
-    observe_environment "${BRAIN_URL:-http://localhost:5221}" true \
-      || { record_receipt "$attempt_id" observed_unconfirmed "production observation failed"; deny "production evidence failed"; }
+    execute_manifest production "$attempt_id" \
+      || { record_receipt "$attempt_id" observed_unconfirmed "production manifest execution failed"; deny "production evidence failed"; }
+    stop_attempt_renewal
+    append_transition production_verified "$receipt_file"
   fi
-  record_receipt "$attempt_id" confirmed "production exact-SHA health, E2E, and rollback passed"
-  append_transition production_verified
 fi
 
 echo "Kernel ReleaseRun bootstrap completed: ${bootstrap_run_id} ${merge_sha}"

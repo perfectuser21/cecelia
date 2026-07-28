@@ -12,10 +12,43 @@ import {
 
 const MERGE_SHA = 'b'.repeat(40);
 const HEAD_SHA = 'a'.repeat(40);
+const E2E_DIGEST = `sha256:${'e'.repeat(64)}`;
 const artifacts = [
   { name: 'brain', version: '1.268.2', digest: `sha256:${'1'.repeat(64)}` },
   { name: 'dashboard', version: 'prod-4401', digest: `sha256:${'2'.repeat(64)}` },
 ];
+const scenarioResult = {
+  name: 'exact contract behavior',
+  status: 'pass',
+  started_at: '2026-07-28T06:01:00.000Z',
+  finished_at: '2026-07-28T06:01:01.000Z',
+  log_digest: `sha256:${'f'.repeat(64)}`,
+};
+
+function e2eObservation(environment) {
+  return {
+    dispatch_claim_id: 21,
+    dispatch_generation: 3,
+    required_e2e: 'pass',
+    e2e_manifest_digest: E2E_DIGEST,
+    e2e_environment: environment,
+    e2e_scenarios_total: 1,
+    e2e_scenarios_passed: 1,
+    e2e_scenario_results: [scenarioResult],
+    e2e_started_at: scenarioResult.started_at,
+    e2e_finished_at: scenarioResult.finished_at,
+    e2e_artifact_readback: artifacts,
+  };
+}
+
+function e2eExpected(environment) {
+  return {
+    e2e_manifest_digest: E2E_DIGEST,
+    e2e_scenarios_total: 1,
+    e2e_environment: environment,
+    e2e_scenario_names: [scenarioResult.name],
+  };
+}
 
 describe('ReleaseRun contract', () => {
   it('accepts and freezes exact identity axes with canonical artifact order', () => {
@@ -89,10 +122,17 @@ describe('ReleaseRun contract', () => {
   it('confirms staging only for exact PASS SHA and artifacts', () => {
     expect(validateStagingObservation({
       status: 'pass',
+      ...e2eObservation('staging'),
       merge_sha: MERGE_SHA,
       artifact_versions: artifacts,
-    }, { merge_sha: MERGE_SHA, artifact_versions: artifacts })).toMatchObject({
+    }, {
+      merge_sha: MERGE_SHA,
+      artifact_versions: artifacts,
+      ...e2eExpected('staging'),
+    })).toMatchObject({
       status: 'pass',
+      required_e2e: 'pass',
+      e2e_manifest_digest: E2E_DIGEST,
       merge_sha: MERGE_SHA,
     });
   });
@@ -102,9 +142,14 @@ describe('ReleaseRun contract', () => {
     (status) => {
       expect(() => validateStagingObservation({
         status,
+        ...e2eObservation('staging'),
         merge_sha: MERGE_SHA,
         artifact_versions: artifacts,
-      }, { merge_sha: MERGE_SHA, artifact_versions: artifacts }))
+      }, {
+        merge_sha: MERGE_SHA,
+        artifact_versions: artifacts,
+        ...e2eExpected('staging'),
+      }))
         .toThrow('release_staging_not_passed');
     },
   );
@@ -112,23 +157,56 @@ describe('ReleaseRun contract', () => {
   it('denies stale staging SHA and artifact drift', () => {
     expect(() => validateStagingObservation({
       status: 'pass',
+      ...e2eObservation('staging'),
       merge_sha: HEAD_SHA,
       artifact_versions: artifacts,
-    }, { merge_sha: MERGE_SHA, artifact_versions: artifacts }))
+    }, {
+      merge_sha: MERGE_SHA,
+      artifact_versions: artifacts,
+      ...e2eExpected('staging'),
+    }))
       .toThrow('release_staging_sha_mismatch');
     expect(() => validateStagingObservation({
       status: 'pass',
+      ...e2eObservation('staging'),
       merge_sha: MERGE_SHA,
       artifact_versions: [{ ...artifacts[0], version: 'drift' }, artifacts[1]],
-    }, { merge_sha: MERGE_SHA, artifact_versions: artifacts }))
+    }, {
+      merge_sha: MERGE_SHA,
+      artifact_versions: artifacts,
+      ...e2eExpected('staging'),
+    }))
       .toThrow('release_staging_artifacts_mismatch');
+  });
+
+  it.each([
+    ['required_e2e', 'skipped', 'release_staging_e2e_not_passed'],
+    ['e2e_manifest_digest', `sha256:${'f'.repeat(64)}`, 'release_staging_e2e_manifest_mismatch'],
+    ['e2e_scenarios_total', 0, 'release_staging_e2e_count_mismatch'],
+    ['e2e_scenarios_passed', 0, 'release_staging_e2e_count_mismatch'],
+    ['e2e_environment', 'production', 'release_staging_e2e_environment_mismatch'],
+    ['e2e_scenario_results', [], 'release_staging_e2e_receipt_invalid'],
+    ['dispatch_claim_id', null, 'release_staging_dispatch_claim_invalid'],
+    ['dispatch_generation', 0, 'release_staging_dispatch_claim_invalid'],
+  ])('denies incomplete staging E2E field %s', (field, value, code) => {
+    expect(() => validateStagingObservation({
+      status: 'pass',
+      ...e2eObservation('staging'),
+      merge_sha: MERGE_SHA,
+      artifact_versions: artifacts,
+      [field]: value,
+    }, {
+      merge_sha: MERGE_SHA,
+      artifact_versions: artifacts,
+      ...e2eExpected('staging'),
+    })).toThrow(code);
   });
 
   it('requires complete production verification and rollback metadata', () => {
     const observation = {
       status: 'pass',
       health: 'pass',
-      required_e2e: 'pass',
+      ...e2eObservation('production'),
       merge_sha: MERGE_SHA,
       deployed_versions: artifacts,
       rollback_metadata: {
@@ -139,6 +217,7 @@ describe('ReleaseRun contract', () => {
     expect(validateProductionObservation(observation, {
       merge_sha: MERGE_SHA,
       artifact_versions: artifacts,
+      ...e2eExpected('production'),
     })).toEqual({
       ...observation,
       deployed_versions: artifacts,
@@ -149,6 +228,13 @@ describe('ReleaseRun contract', () => {
     ['status', 'unknown', 'release_production_not_passed'],
     ['health', 'idle', 'release_production_health_not_passed'],
     ['required_e2e', 'skipped', 'release_production_e2e_not_passed'],
+    ['e2e_manifest_digest', `sha256:${'f'.repeat(64)}`, 'release_production_e2e_manifest_mismatch'],
+    ['e2e_scenarios_total', 0, 'release_production_e2e_count_mismatch'],
+    ['e2e_scenarios_passed', 0, 'release_production_e2e_count_mismatch'],
+    ['e2e_environment', 'staging', 'release_production_e2e_environment_mismatch'],
+    ['e2e_scenario_results', [], 'release_production_e2e_receipt_invalid'],
+    ['dispatch_claim_id', null, 'release_production_dispatch_claim_invalid'],
+    ['dispatch_generation', 0, 'release_production_dispatch_claim_invalid'],
     ['merge_sha', HEAD_SHA, 'release_production_sha_mismatch'],
     ['deployed_versions', [], 'release_artifact_versions_invalid'],
     ['rollback_metadata', null, 'release_production_rollback_invalid'],
@@ -157,11 +243,15 @@ describe('ReleaseRun contract', () => {
     expect(() => validateProductionObservation({
       status: 'pass',
       health: 'pass',
-      required_e2e: 'pass',
+      ...e2eObservation('production'),
       merge_sha: MERGE_SHA,
       deployed_versions: artifacts,
       rollback_metadata: { anchor: 'v2', previous_version: 'v1' },
       [field]: value,
-    }, { merge_sha: MERGE_SHA, artifact_versions: artifacts })).toThrow(code);
+    }, {
+      merge_sha: MERGE_SHA,
+      artifact_versions: artifacts,
+      ...e2eExpected('production'),
+    })).toThrow(code);
   });
 });

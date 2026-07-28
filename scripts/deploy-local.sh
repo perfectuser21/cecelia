@@ -71,7 +71,8 @@ RUN_GUARD=true
 if [[ "$RUN_GUARD" == true ]]; then
     if [[ -n "${KERNEL_RELEASE_MERGE_SHA:-}" ]]; then
         echo "🔒 ReleaseRun exact-SHA checkout: ${KERNEL_RELEASE_MERGE_SHA}"
-        bash "$SCRIPT_DIR/lib/release-run-checkout.sh" production "$MAIN_ROOT"
+        bash "$SCRIPT_DIR/lib/release-run-checkout.sh" \
+            "${KERNEL_RELEASE_EFFECT_KIND:-production}" "$MAIN_ROOT"
     elif [[ "${CECELIA_DEPLOY_AUTORESET:-0}" == "1" ]]; then
         # 专用部署根（机器独占，无人类工作）：自愈到 origin/main
         echo "🔒 部署根守卫（专用根自愈）: fetch + checkout -f + reset --hard origin/$BASE_BRANCH"
