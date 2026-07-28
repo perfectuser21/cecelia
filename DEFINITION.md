@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.102
+**Brain 版本**: 1.267.103
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.103 — Fleet rollout transfer-interruption cleanup
+
+- Xian SSH rollout 在 payload 解包前即安装 EXIT/HUP/INT/TERM 清理：截断传输、
+  tar 失败或控制器中断都会先 fail-closed drain，再删除精确的 root staging。
+- 成功路径仍只清理一次性 staging，不改变 NodeProfile、bootstrap、admission、
+  Runner digest 或 Phase 4B/4C/4D/5 边界。
+- Brain 回退目标：`1.267.102`；节点保持 drain 后再回退。
 
 ## Brain 1.267.102 — Fleet rollout protected-token staging
 

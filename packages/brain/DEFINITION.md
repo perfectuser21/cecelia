@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.102
+**版本**: 1.267.103
+
+## Fleet rollout transfer-interruption cleanup hotfix
+
+- Xian SSH payload 在读取 tar stdin 前即受 EXIT/HUP/INT/TERM cleanup 保护；传输
+  截断、解包失败或控制器中断都会写入 drain 并删除精确 root staging。
+- 成功 rollout 只删除一次性 staging，不误设 drain；NodeProfile、Runner pin、
+  bootstrap/admission 和 Phase 4B/4C/4D/5 语义均未扩展。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.102`。
 
 ## Fleet rollout protected-token staging hotfix
 

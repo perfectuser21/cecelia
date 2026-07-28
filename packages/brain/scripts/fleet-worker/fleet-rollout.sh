@@ -404,6 +404,19 @@ emergency_drain_remote() {
     return 1
   fi
 }
+cleanup_remote() {
+  local status=$?
+
+  trap - EXIT HUP INT TERM
+  if [[ "$status" -ne 0 ]]; then
+    emergency_drain_remote || true
+  fi
+  if ! "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1; then
+    emergency_drain_remote || true
+    status=1
+  fi
+  exit "$status"
+}
 validate_remote_staging() {
   staged_root="$1"
   canonical_root=''
@@ -440,10 +453,12 @@ interrupt_remote() {
       "$controller_pid" >/dev/null 2>&1 || true
     wait "$controller_pid" >/dev/null 2>&1 || true
   fi
-  emergency_drain_remote || true
-  "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1 || true
   exit "$signal_status"
 }
+trap cleanup_remote EXIT
+trap 'interrupt_remote HUP 129' HUP
+trap 'interrupt_remote INT 130' INT
+trap 'interrupt_remote TERM 143' TERM
 "$sudo_command" -n /usr/bin/tar -xf - -C "$remote_root"
 "$sudo_command" -n /bin/mkdir -p "$remote_root/source"
 "$sudo_command" -n /usr/bin/tar \
@@ -451,24 +466,15 @@ interrupt_remote() {
 controller="$remote_root/source/packages/brain/scripts/fleet-worker/fleet-rollout.sh"
 if ! validate_remote_staging "$remote_root"; then
   echo "rollout_staging_invalid" >&2
-  "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1 || true
   exit 1
 fi
 "$sudo_command" -n /bin/chmod \
   +x "$remote_root/source/packages/brain/scripts/fleet-worker/"*.sh
-trap 'interrupt_remote HUP 129' HUP
-trap 'interrupt_remote INT 130' INT
-trap 'interrupt_remote TERM 143' TERM
 status=0
 "$sudo_command" -n "$controller" __node-apply "$machine_id" "$remote_root" &
 controller_pid=$!
 wait "$controller_pid" || status=$?
 controller_pid=''
-if ! "$sudo_command" -n /bin/rm -rf -- "$remote_root" >/dev/null 2>&1; then
-  emergency_drain_remote || true
-  status=1
-fi
-trap - HUP INT TERM
 exit "$status"
 REMOTE
 )"
