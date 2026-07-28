@@ -3,7 +3,14 @@ import express from 'express';
 import request from 'supertest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { signMachineAttestation } from '../../orchestrator/machine-attestation.js';
+import { computeRoleResultRawSha256 } from '../../orchestrator/execution-contract.js';
+
+const require = createRequire(import.meta.url);
+const { finalizeRoleResult } = require(
+  '../../../../../docker/cecelia-runner/result-channel-finalizer.cjs',
+);
 
 const mocks = vi.hoisted(() => ({
   store: {
@@ -31,6 +38,7 @@ const attemptId = '22222222-2222-4222-8222-222222222222';
 const runId = '11111111-1111-4111-8111-111111111111';
 const taskId = '44444444-4444-4444-8444-444444444444';
 const prHeadSha = '0123456789abcdef0123456789abcdef01234567';
+const contractSha = 'abcdef0123456789abcdef0123456789abcdef01';
 const callbackToken = 'attempt-callback-secret';
 const leaseOwner = 'brain-1:123';
 const fleetSecret = 'kernel-fleet-bridge-secret-at-least-32-bytes';
@@ -182,31 +190,74 @@ function evaluatorRoleCallback() {
     exit_code: 0,
     log_tail: 'green',
   }];
+  const claimed = {
+    verdict: 'PASS',
+    task_id: taskId,
+    attempt_id: attemptId,
+    behavior_tests: behaviorTests,
+  };
+  const pullRequest = {
+    type: 'pull_request',
+    url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+    number: 4391,
+    head_ref: 'cp-result-channel',
+    head_sha: prHeadSha,
+    state: 'OPEN',
+  };
   return {
     ...validResult,
-    artifacts: [{ type: 'evaluation_target', head_sha: prHeadSha }],
+    artifacts: [{
+      type: 'evaluation_target',
+      url: pullRequest.url,
+      number: pullRequest.number,
+      head_ref: pullRequest.head_ref,
+      head_sha: pullRequest.head_sha,
+      contract_sha: contractSha,
+    }],
     checks: behaviorTests,
     decision: {
       outcome: 'PASS',
       reason: '',
       pr_head_sha: prHeadSha,
+      contract_sha: contractSha,
       unverifiable: [],
     },
     role_result: {
       kind: 'evaluator',
-      raw_sha256: 'a'.repeat(64),
-      claimed: {
-        verdict: 'PASS',
-        task_id: taskId,
-        attempt_id: attemptId,
-        behavior_tests: behaviorTests,
-      },
+      raw_sha256: computeRoleResultRawSha256(claimed),
+      claimed,
       verified: {
-        pr_head_sha: prHeadSha,
+        contract_sha: contractSha,
+        pull_request: pullRequest,
         behavior_tests: behaviorTests,
       },
     },
   };
+}
+
+function finalizedRoleCallback(role, rawEnvelope, verifierEnvelope) {
+  return finalizeRoleResult({
+    expectedOutput: `harness-result/${role}-v1`,
+    binding: {
+      task_id: taskId,
+      run_id: runId,
+      attempt_id: attemptId,
+      role,
+    },
+    providerResult: {
+      contract_version: '1.0',
+      attempt_id: attemptId,
+      status: 'completed',
+      summary: `${role} completed`,
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex', session_id: 'thread-1' },
+    },
+    rawEnvelope,
+    verifierEnvelope,
+  });
 }
 
 it('production server 从环境注入 bridge token 且不记录 secret', () => {
@@ -437,6 +488,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
         expected_output: 'harness-result/evaluator-v1',
         inputs: {
           task_id: taskId,
+          contract_sha: contractSha,
           pull_request: { head_sha: prHeadSha },
         },
       },
@@ -461,6 +513,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
         expected_output: 'harness-result/evaluator-v1',
         inputs: {
           task_id: runId,
+          contract_sha: contractSha,
           pull_request: { head_sha: prHeadSha },
         },
       },
@@ -471,6 +524,217 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(400);
     expect(response.body.error).toMatch(/task_id authority mismatch/);
     expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['reviewer contract SHA', () => {
+      const rubric = {
+        dod_machineability: 10,
+        scope_match_prd: 10,
+        test_is_red: 10,
+        internal_consistency: 10,
+        risk_registered: 10,
+        verification_oracle_completeness: 10,
+        ci_workflow_alignment: 10,
+      };
+      return {
+        attempt: {
+          ...attempt,
+          role: 'reviewer',
+          task_bundle: {
+            expected_output: 'harness-result/reviewer-v1',
+            inputs: {
+              task_id: taskId,
+              sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+              contract_sha: 'a'.repeat(40),
+            },
+          },
+        },
+        body: finalizedRoleCallback('reviewer', {
+          verdict: 'REVISION',
+          rubric_scores: rubric,
+          judgments_written: 0,
+          feedback: 'fix contract',
+        }, {
+          contract_sha: 'b'.repeat(40),
+          verdict: 'REVISION',
+          rubric_scores: rubric,
+          judgments_written: 0,
+        }),
+      };
+    }],
+    ['proposer expected branch', () => {
+      const sprintDir = 'sprints/07280905-kernel-result-channel-bootstrap';
+      const artifact = (path) => ({
+        path,
+        sha256: `sha256:${'c'.repeat(64)}`,
+      });
+      return {
+        attempt: {
+          ...attempt,
+          role: 'proposer',
+          task_bundle: {
+            expected_output: 'harness-result/proposer-v1',
+            inputs: {
+              task_id: taskId,
+              sprint_dir: sprintDir,
+              propose_branch: 'cp-authoritative-proposer',
+            },
+          },
+        },
+        body: finalizedRoleCallback('proposer', {
+          propose_branch: 'cp-forged-proposer',
+          workstream_count: 1,
+          task_plan_path: `${sprintDir}/task-plan.json`,
+        }, {
+          propose_branch: 'cp-forged-proposer',
+          head_sha: prHeadSha,
+          artifacts: {
+            contract_draft: artifact(`${sprintDir}/contract-draft.md`),
+            contract_dod: artifact(`${sprintDir}/contract-dod.md`),
+            task_plan: artifact(`${sprintDir}/task-plan.json`),
+            contract_tests: artifact(`${sprintDir}/tests`),
+          },
+        }),
+      };
+    }],
+    ['evaluator PR head', () => {
+      const body = evaluatorRoleCallback();
+      return {
+        attempt: {
+          ...attempt,
+          task_bundle: {
+            expected_output: 'harness-result/evaluator-v1',
+            inputs: {
+              task_id: taskId,
+              sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+              contract_sha: contractSha,
+              pull_request: { head_sha: 'f'.repeat(40) },
+            },
+          },
+        },
+        body,
+      };
+    }],
+    ['generator-fix existing PR', () => {
+      const pullRequest = {
+        type: 'pull_request',
+        url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+        number: 4391,
+        head_ref: 'cp-result-channel',
+        head_sha: prHeadSha,
+        state: 'OPEN',
+      };
+      return {
+        attempt: {
+          ...attempt,
+          role: 'generator',
+          task_bundle: {
+            expected_output: 'harness-result/generator-v1',
+            inputs: {
+              task_id: taskId,
+              sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+              attempt_kind: 'fix',
+              pull_request: { ...pullRequest, head_sha: 'f'.repeat(40) },
+            },
+          },
+        },
+        body: finalizedRoleCallback('generator', {
+          verdict: 'DONE',
+          pr_url: pullRequest.url,
+        }, {
+          pull_request: pullRequest,
+        }),
+      };
+    }],
+  ])('拒绝 %s 与 persisted TaskBundle authority 不一致且不产生副作用', async (_name, fixture) => {
+    const value = fixture();
+    mocks.store.getById.mockResolvedValue(value.attempt);
+
+    const response = await postCallback(app, value.body);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/authority mismatch/);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.pool.query).not.toHaveBeenCalled();
+  });
+
+  it('generator-fix 缺 persisted existing PR authority 时 fail closed', async () => {
+    const pullRequest = {
+      type: 'pull_request',
+      url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+      number: 4391,
+      head_ref: 'cp-result-channel',
+      head_sha: prHeadSha,
+      state: 'OPEN',
+    };
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      role: 'generator',
+      task_bundle: {
+        expected_output: 'harness-result/generator-v1',
+        inputs: {
+          task_id: taskId,
+          sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+          attempt_kind: 'fix',
+        },
+      },
+    });
+
+    const response = await postCallback(app, finalizedRoleCallback('generator', {
+      verdict: 'DONE',
+      pr_url: pullRequest.url,
+    }, {
+      pull_request: pullRequest,
+    }));
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/generator PR authority is required/);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.pool.query).not.toHaveBeenCalled();
+  });
+
+  it('reporter-v1 缺 persisted PR/sprint authority 时 fail closed，canary 路径不受影响', async () => {
+    const pullRequest = {
+      type: 'pull_request',
+      url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+      number: 4391,
+      head_ref: 'cp-result-channel',
+      head_sha: prHeadSha,
+      state: 'OPEN',
+    };
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      role: 'reporter',
+      task_bundle: {
+        expected_output: 'harness-result/reporter-v1',
+        inputs: { task_id: taskId },
+      },
+    });
+    const reportPath = 'sprints/07280905-kernel-result-channel-bootstrap/harness-report.md';
+
+    const response = await postCallback(app, finalizedRoleCallback('reporter', {
+      verdict: 'DONE',
+      task_id: taskId,
+      report_path: reportPath,
+      pr_url: pullRequest.url,
+      screenshots: [],
+      concerns: '',
+    }, {
+      pull_request: pullRequest,
+      report: { path: reportPath, sha256: `sha256:${'a'.repeat(64)}` },
+      learning: {
+        path: 'sprints/07280905-kernel-result-channel-bootstrap/learning.md',
+        sha256: `sha256:${'b'.repeat(64)}`,
+      },
+      screenshots: [],
+      learnings_inserted: 1,
+    }));
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/reporter sprint authority is required/);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.pool.query).not.toHaveBeenCalled();
   });
 
   it('launch receipt 尚未确认时拒绝 callback，避免远端先回调绕过验签', async () => {

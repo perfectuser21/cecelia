@@ -4,6 +4,7 @@ import * as executionContract from '../execution-contract.js';
 import {
   parseTaskBundle,
   parseHarnessResult,
+  computeRoleResultRawSha256,
   toKernelStatus,
   TASK_CONTRACT_VERSION,
   RESULT_CONTRACT_VERSION,
@@ -147,6 +148,25 @@ function validCommanderDirective(overrides = {}) {
     action: 'continue_default',
     reason: 'The current Kernel decision remains within all fences.',
     evidence_refs: ['event:1'],
+    ...overrides,
+  };
+}
+
+function withRoleDigest(roleResult) {
+  return {
+    ...roleResult,
+    raw_sha256: computeRoleResultRawSha256(roleResult.claimed),
+  };
+}
+
+function verifiedPullRequest(overrides = {}) {
+  return {
+    type: 'pull_request',
+    url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+    number: 4391,
+    head_ref: 'cp-07280905-result-channel',
+    head_sha: BASE_SHA,
+    state: 'OPEN',
     ...overrides,
   };
 }
@@ -399,9 +419,8 @@ describe('TaskBundle contract', () => {
 });
 
 describe('HarnessResult contract', () => {
-  const reviewerRoleResult = {
+  const reviewerRoleResult = withRoleDigest({
     kind: 'reviewer',
-    raw_sha256: 'a'.repeat(64),
     claimed: {
       verdict: 'REVISION',
       rubric_scores: {
@@ -430,7 +449,7 @@ describe('HarnessResult contract', () => {
       },
       judgments_written: 0,
     },
-  };
+  });
 
   it('preserves an exact role_result instead of stripping it from the callback', () => {
     const parsed = parseHarnessResult(validResult({
@@ -443,7 +462,9 @@ describe('HarnessResult contract', () => {
       checks: Object.entries(reviewerRoleResult.verified.rubric_scores)
         .map(([name, score]) => ({ name, score })),
       role_result: reviewerRoleResult,
-    }), 'reviewer', 'harness-result/reviewer-v1');
+    }), 'reviewer', 'harness-result/reviewer-v1', {
+      contractSha: BASE_SHA,
+    });
 
     expect(parsed.role_result).toEqual(reviewerRoleResult);
   });
@@ -477,6 +498,25 @@ describe('HarnessResult contract', () => {
     })).toThrow(/judgment/i);
   });
 
+  it('recomputes claimed canonical raw_sha256 instead of trusting the callback digest', () => {
+    expect(() => parseHarnessResult(validResult({
+      decision: {
+        outcome: 'REVISION',
+        reason: reviewerRoleResult.claimed.feedback,
+        contract_sha: BASE_SHA,
+        judgments_written: 0,
+      },
+      checks: Object.entries(reviewerRoleResult.verified.rubric_scores)
+        .map(([name, score]) => ({ name, score })),
+      role_result: {
+        ...reviewerRoleResult,
+        raw_sha256: '0'.repeat(64),
+      },
+    }), 'reviewer', 'harness-result/reviewer-v1', {
+      contractSha: BASE_SHA,
+    })).toThrow(/raw_sha256/);
+  });
+
   it('keeps legacy callback envelopes valid when role_result is absent', () => {
     expect(parseHarnessResult(
       validResult({ decision: { verdict: 'REVISION', feedback: 'legacy' } }),
@@ -486,9 +526,8 @@ describe('HarnessResult contract', () => {
   });
 
   it('accepts the evaluator Skill cascade assertion object without a permissive passthrough', () => {
-    const evaluatorRoleResult = {
+    const evaluatorRoleResult = withRoleDigest({
       kind: 'evaluator',
-      raw_sha256: 'b'.repeat(64),
       claimed: {
         verdict: 'PASS',
         task_id: TASK_ID,
@@ -506,35 +545,45 @@ describe('HarnessResult contract', () => {
         }],
       },
       verified: {
-        pr_head_sha: BASE_SHA,
+        contract_sha: BASE_SHA,
+        pull_request: verifiedPullRequest(),
         behavior_tests: [{
           command: 'npm test',
           exit_code: 0,
           log_tail: 'green',
         }],
       },
-    };
+    });
 
     expect(parseHarnessResult(validResult({
       decision: {
         outcome: 'PASS',
         reason: '',
         pr_head_sha: BASE_SHA,
+        contract_sha: BASE_SHA,
         unverifiable: [],
       },
-      artifacts: [{ type: 'evaluation_target', head_sha: BASE_SHA }],
+      artifacts: [{
+        type: 'evaluation_target',
+        url: verifiedPullRequest().url,
+        number: verifiedPullRequest().number,
+        head_ref: verifiedPullRequest().head_ref,
+        head_sha: BASE_SHA,
+        contract_sha: BASE_SHA,
+      }],
       checks: evaluatorRoleResult.verified.behavior_tests,
       role_result: evaluatorRoleResult,
     }), 'evaluator', 'harness-result/evaluator-v1', {
       taskId: TASK_ID,
+      contractSha: BASE_SHA,
+      pullRequest: verifiedPullRequest(),
     }).role_result)
       .toEqual(evaluatorRoleResult);
   });
 
   it('accepts exact evaluator Skill feedback-only, segmented and relative screenshot fields', () => {
-    const evaluatorRoleResult = {
+    const evaluatorRoleResult = withRoleDigest({
       kind: 'evaluator',
-      raw_sha256: 'b'.repeat(64),
       claimed: {
         verdict: 'FAIL',
         task_id: TASK_ID,
@@ -546,23 +595,34 @@ describe('HarnessResult contract', () => {
         ],
       },
       verified: {
-        pr_head_sha: BASE_SHA,
+        contract_sha: BASE_SHA,
+        pull_request: verifiedPullRequest(),
         behavior_tests: [],
       },
-    };
+    });
 
     expect(parseHarnessResult(validResult({
       decision: {
         outcome: 'FAIL',
         reason: evaluatorRoleResult.claimed.feedback,
         pr_head_sha: BASE_SHA,
+        contract_sha: BASE_SHA,
         unverifiable: [],
       },
-      artifacts: [{ type: 'evaluation_target', head_sha: BASE_SHA }],
+      artifacts: [{
+        type: 'evaluation_target',
+        url: verifiedPullRequest().url,
+        number: verifiedPullRequest().number,
+        head_ref: verifiedPullRequest().head_ref,
+        head_sha: BASE_SHA,
+        contract_sha: BASE_SHA,
+      }],
       checks: [],
       role_result: evaluatorRoleResult,
     }), 'evaluator', 'harness-result/evaluator-v1', {
       taskId: TASK_ID,
+      contractSha: BASE_SHA,
+      pullRequest: verifiedPullRequest(),
     }).role_result).toEqual(evaluatorRoleResult);
   });
 
@@ -627,7 +687,8 @@ describe('HarnessResult contract', () => {
           }],
         },
         verified: {
-          pr_head_sha: BASE_SHA,
+          contract_sha: BASE_SHA,
+          pull_request: verifiedPullRequest(),
           behavior_tests: [],
         },
       },
@@ -654,13 +715,14 @@ describe('HarnessResult contract', () => {
       },
     ],
   ])('rejects cross-field role_result parity violation: %s', (_name, roleResult) => {
-    expect(() => executionContract.__test__.roleResultSchema.parse(roleResult)).toThrow();
+    expect(() => executionContract.__test__.roleResultSchema.parse(
+      withRoleDigest(roleResult),
+    )).toThrow();
   });
 
   it('requires evaluator role_result task authority and rejects a mismatched task binding', () => {
-    const evaluatorRoleResult = {
+    const evaluatorRoleResult = withRoleDigest({
       kind: 'evaluator',
-      raw_sha256: 'e'.repeat(64),
       claimed: {
         verdict: 'FAIL',
         task_id: TASK_ID,
@@ -668,18 +730,27 @@ describe('HarnessResult contract', () => {
         feedback: 'failed safely',
       },
       verified: {
-        pr_head_sha: BASE_SHA,
+        contract_sha: BASE_SHA,
+        pull_request: verifiedPullRequest(),
         behavior_tests: [],
       },
-    };
+    });
     const envelope = validResult({
       decision: {
         outcome: 'FAIL',
         reason: 'failed safely',
         pr_head_sha: BASE_SHA,
+        contract_sha: BASE_SHA,
         unverifiable: [],
       },
-      artifacts: [{ type: 'evaluation_target', head_sha: BASE_SHA }],
+      artifacts: [{
+        type: 'evaluation_target',
+        url: verifiedPullRequest().url,
+        number: verifiedPullRequest().number,
+        head_ref: verifiedPullRequest().head_ref,
+        head_sha: BASE_SHA,
+        contract_sha: BASE_SHA,
+      }],
       role_result: evaluatorRoleResult,
     });
 
@@ -700,10 +771,11 @@ describe('HarnessResult contract', () => {
     ['planner lifecycle', {
       role: 'planner',
       expectedOutput: 'harness-result/planner-v1',
-      authority: undefined,
-      roleResult: {
+      authority: {
+        sprintDir: 'sprints/07280905-kernel-result-channel-bootstrap',
+      },
+      roleResult: withRoleDigest({
         kind: 'planner',
-        raw_sha256: 'c'.repeat(64),
         claimed: {
           verdict: 'DONE',
           branch: 'cp-planner',
@@ -719,7 +791,7 @@ describe('HarnessResult contract', () => {
           prd_sha256: `sha256:${'d'.repeat(64)}`,
           effective_review_required: false,
         },
-      },
+      }),
       patch: {
         status: 'failed',
         decision: { outcome: 'DONE', reason: '', review_required: false },
@@ -734,7 +806,7 @@ describe('HarnessResult contract', () => {
     ['reviewer decision/checks', {
       role: 'reviewer',
       expectedOutput: 'harness-result/reviewer-v1',
-      authority: undefined,
+      authority: { contractSha: BASE_SHA },
       roleResult: reviewerRoleResult,
       patch: {
         decision: { outcome: 'APPROVED', reason: 'forged' },
@@ -744,10 +816,13 @@ describe('HarnessResult contract', () => {
     ['evaluator observed checks', {
       role: 'evaluator',
       expectedOutput: 'harness-result/evaluator-v1',
-      authority: { taskId: TASK_ID },
-      roleResult: {
+      authority: {
+        taskId: TASK_ID,
+        contractSha: BASE_SHA,
+        pullRequest: verifiedPullRequest(),
+      },
+      roleResult: withRoleDigest({
         kind: 'evaluator',
-        raw_sha256: 'e'.repeat(64),
         claimed: {
           verdict: 'PASS',
           task_id: TASK_ID,
@@ -759,22 +834,31 @@ describe('HarnessResult contract', () => {
           }],
         },
         verified: {
-          pr_head_sha: BASE_SHA,
+          contract_sha: BASE_SHA,
+          pull_request: verifiedPullRequest(),
           behavior_tests: [{
             command: 'npm test',
             exit_code: 0,
             log_tail: 'green',
           }],
         },
-      },
+      }),
       patch: {
         decision: {
           outcome: 'PASS',
           reason: '',
           pr_head_sha: BASE_SHA,
+          contract_sha: BASE_SHA,
           unverifiable: [],
         },
-        artifacts: [{ type: 'evaluation_target', head_sha: BASE_SHA }],
+        artifacts: [{
+          type: 'evaluation_target',
+          url: verifiedPullRequest().url,
+          number: verifiedPullRequest().number,
+          head_ref: verifiedPullRequest().head_ref,
+          head_sha: BASE_SHA,
+          contract_sha: BASE_SHA,
+        }],
         checks: [{ command: 'forged', exit_code: 0, log_tail: 'green' }],
       },
     }],
@@ -782,9 +866,8 @@ describe('HarnessResult contract', () => {
       role: 'generator',
       expectedOutput: 'harness-result/generator-v1',
       authority: undefined,
-      roleResult: {
+      roleResult: withRoleDigest({
         kind: 'generator',
-        raw_sha256: 'f'.repeat(64),
         claimed: {
           verdict: 'DONE',
           pr_url: 'https://github.com/perfectuser21/cecelia/pull/4391',
@@ -799,7 +882,7 @@ describe('HarnessResult contract', () => {
             state: 'OPEN',
           },
         },
-      },
+      }),
       patch: {
         decision: { outcome: 'DONE', reason: '', pr_head_sha: BASE_SHA },
         artifacts: [{
@@ -892,7 +975,7 @@ describe('HarnessResult contract', () => {
         concerns: '',
       },
       verified: {
-        pull_request_url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+        pull_request: verifiedPullRequest(),
         report: {
           path: 'sprints/07280905-kernel-result-channel-bootstrap/harness-report.md',
           sha256: `sha256:${'d'.repeat(64)}`,
@@ -906,8 +989,9 @@ describe('HarnessResult contract', () => {
       },
     },
   ])('accepts the exact $kind role_result branch of the discriminated union', (roleResult) => {
-    expect(executionContract.__test__.roleResultSchema.parse(roleResult))
-      .toEqual(roleResult);
+    const bound = withRoleDigest(roleResult);
+    expect(executionContract.__test__.roleResultSchema.parse(bound))
+      .toEqual(bound);
   });
 
   it('accepts the exact deterministic proposer envelope emitted by the Runner finalizer', () => {
@@ -957,6 +1041,10 @@ describe('HarnessResult contract', () => {
       finalized,
       'proposer',
       'harness-result/proposer-v1',
+      {
+        proposerBranch: proposeBranch,
+        sprintDir: 'sprints/07280905-kernel-result-channel-bootstrap',
+      },
     ).role_result.kind).toBe('proposer');
   });
 

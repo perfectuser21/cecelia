@@ -789,6 +789,72 @@ describe('createDispatcher', () => {
     }));
   });
 
+  it('evaluator TaskBundle 冻结 GAN contract SHA 与完整 PR authority', async () => {
+    const deps = makeDeps();
+    const pullRequest = {
+      type: 'pull_request',
+      url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+      number: 4391,
+      head_ref: 'cp-result-channel',
+      head_sha: 'b'.repeat(40),
+      state: 'OPEN',
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: { ...observed, pr: pullRequest },
+      decision: { phase: 'evaluate' },
+    });
+
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs).toMatchObject({
+      contract_sha: observed.proposeBranchSha,
+      pull_request: pullRequest,
+      pr_branch: pullRequest.head_ref,
+      pr_head_sha: pullRequest.head_sha,
+    });
+  });
+
+  it('generator-fix 冻结 existing PR；缺 PR 时在创建 attempt 前 fail closed', async () => {
+    const pullRequest = {
+      type: 'pull_request',
+      url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+      number: 4391,
+      head_ref: 'cp-result-channel',
+      head_sha: 'b'.repeat(40),
+      state: 'OPEN',
+    };
+    const deps = makeDeps();
+    await createDispatcher(deps)('spawn:generator-fix', {
+      taskId,
+      runId,
+      hop: 8,
+      observed: { ...observed, pr: pullRequest },
+      decision: { phase: 'generate' },
+    });
+
+    expect(deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs)
+      .toMatchObject({
+        attempt_kind: 'fix',
+        contract_sha: observed.proposeBranchSha,
+        pull_request: pullRequest,
+        pr_branch: pullRequest.head_ref,
+        pr_head_sha: pullRequest.head_sha,
+      });
+
+    const missingDeps = makeDeps();
+    await expect(createDispatcher(missingDeps)('spawn:generator-fix', {
+      taskId,
+      runId,
+      hop: 9,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow(/generator_fix_pr_authority_required/);
+    expect(missingDeps.attemptStore.createAttempt).not.toHaveBeenCalled();
+  });
+
   it('按 role_assignments 为同一 run 的 generator/evaluator 选择不同 provider 与账户 home', async () => {
     const attempts = ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
     const adapters = Object.fromEntries(['codex', 'claude'].map((provider) => [provider, {

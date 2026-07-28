@@ -23,6 +23,19 @@ const RUBRIC = {
   verification_oracle_completeness: 8,
   ci_workflow_alignment: 10,
 };
+const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4391';
+
+function verifiedPullRequest(overrides = {}) {
+  return {
+    type: 'pull_request',
+    url: PR_URL,
+    number: 4391,
+    head_ref: 'cp-07280905-result-channel',
+    head_sha: SHA,
+    state: 'OPEN',
+    ...overrides,
+  };
+}
 
 function providerResult(overrides = {}) {
   return {
@@ -220,7 +233,8 @@ test('evaluator FAIL remains a completed decision and checks come from verifierE
     }],
   };
   const verifierEnvelope = {
-    pr_head_sha: SHA,
+    contract_sha: SHA,
+    pull_request: verifiedPullRequest(),
     behavior_tests: [behaviorTest],
   };
 
@@ -232,7 +246,7 @@ test('evaluator FAIL remains a completed decision and checks come from verifierE
 });
 
 test('reporter maps observed report, learning, screenshots and DB count without upgrading raw claims', () => {
-  const prUrl = 'https://github.com/perfectuser21/cecelia/pull/4391';
+  const prUrl = PR_URL;
   const rawEnvelope = {
     verdict: 'DONE_WITH_CONCERNS',
     task_id: TASK_ID,
@@ -242,7 +256,7 @@ test('reporter maps observed report, learning, screenshots and DB count without 
     concerns: 'Notion sync unavailable.',
   };
   const verifierEnvelope = {
-    pull_request_url: prUrl,
+    pull_request: verifiedPullRequest(),
     report: { path: rawEnvelope.report_path, sha256: DIGEST },
     learning: {
       path: 'sprints/07280905-kernel-result-channel-bootstrap/learning.md',
@@ -255,7 +269,7 @@ test('reporter maps observed report, learning, screenshots and DB count without 
   const result = finalizeRoleResult(input('reporter', rawEnvelope, verifierEnvelope));
 
   assert.equal(result.status, 'completed_with_concerns');
-  assert.equal(result.artifacts.length, 3);
+  assert.equal(result.artifacts.length, 4);
   assert.equal(result.role_result.verified.learnings_inserted, 1);
 });
 
@@ -349,7 +363,8 @@ test('accepts the exact feedback-only segmented FAIL and relative mac_web screen
     ],
   };
   const verifierEnvelope = {
-    pr_head_sha: SHA,
+    contract_sha: SHA,
+    pull_request: verifiedPullRequest(),
     behavior_tests: [],
   };
 
@@ -381,21 +396,24 @@ test('rejects identity, SHA, artifact, judgment, test and PR claims not establis
       ...evaluatorRaw,
       attempt_id: RUN_ID,
     }, {
-      pr_head_sha: SHA,
+      contract_sha: SHA,
+      pull_request: verifiedPullRequest(),
       behavior_tests: evaluatorRaw.behavior_tests,
     })),
     /attempt_id mismatch/,
   );
   assert.throws(
     () => finalizeRoleResult(input('evaluator', evaluatorRaw, {
-      pr_head_sha: 'short-sha',
+      contract_sha: SHA,
+      pull_request: verifiedPullRequest({ head_sha: 'short-sha' }),
       behavior_tests: evaluatorRaw.behavior_tests,
     })),
     /sha/,
   );
   assert.throws(
     () => finalizeRoleResult(input('evaluator', evaluatorRaw, {
-      pr_head_sha: SHA,
+      contract_sha: SHA,
+      pull_request: verifiedPullRequest(),
       behavior_tests: [{ ...evaluatorRaw.behavior_tests[0], log_tail: 'fabricated' }],
     })),
     /behavior_tests mismatch/,
