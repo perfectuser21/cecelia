@@ -30,6 +30,11 @@ describe('createTrustedReceiptResolver', () => {
     const resolve = createTrustedReceiptResolver({
       readBundle,
       trustRegistry: value.keys.registry,
+      bundleChain: {
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: value.hash,
+        head_hash: value.hash,
+      },
       now: FIXTURE_NOW,
     });
 
@@ -53,6 +58,11 @@ describe('createTrustedReceiptResolver', () => {
     const resolve = createTrustedReceiptResolver({
       readBundle: () => structuredClone(value.bundle),
       trustRegistry: value.keys.registry,
+      bundleChain: {
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: value.hash,
+        head_hash: value.hash,
+      },
       now: FIXTURE_NOW,
     });
 
@@ -68,6 +78,11 @@ describe('createTrustedReceiptResolver', () => {
       const resolve = createTrustedReceiptResolver({
         readBundle: () => raw,
         trustRegistry: value.keys.registry,
+        bundleChain: {
+          schema_version: 'kernel-equivalence-bundle-chain/v1',
+          genesis_hash: value.hash,
+          head_hash: value.hash,
+        },
         now: FIXTURE_NOW,
       });
       expect(() => resolve(
@@ -75,5 +90,31 @@ describe('createTrustedReceiptResolver', () => {
         fixtureExpected(value.cell, value.grant),
       )).toThrowError(expect.objectContaining({ code: 'receipt_bundle_unavailable' }));
     }
+  });
+
+  it('rejects a valid signed bundle that is not in the trusted head ancestry', () => {
+    const trusted = fixture();
+    const rogue = fixture();
+    const bundles = new Map([
+      [trusted.hash, trusted.bundle],
+      [rogue.hash, rogue.bundle],
+    ]);
+    const resolve = createTrustedReceiptResolver({
+      readBundle: (hash) => bundles.get(hash),
+      trustRegistry: trusted.keys.registry,
+      bundleChain: {
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: trusted.hash,
+        head_hash: trusted.hash,
+      },
+      now: FIXTURE_NOW,
+    });
+
+    expect(() => resolve(
+      `receipt-bundle:${rogue.hash}`,
+      fixtureExpected(rogue.cell, rogue.grant),
+    )).toThrowError(expect.objectContaining({
+      code: 'receipt_bundle_not_in_trusted_chain',
+    }));
   });
 });

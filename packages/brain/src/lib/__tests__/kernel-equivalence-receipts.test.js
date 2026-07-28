@@ -8,6 +8,7 @@ import {
   assembleUnsignedBundle,
   canonicalJson,
   sha256Canonical,
+  validateTrustRegistry,
   verifyEffectReceipt,
   verifyExecutionGrant,
   verifyReceiptBundle,
@@ -74,6 +75,17 @@ function cell(scenario = 'normal') {
     scenario,
     seam_id: 'kernel.merge.effect_executor',
     adapter_id: 'kernel.drill.ci_merge_authority.v1',
+    effect_key_id: 'merge-effect-2026-07',
+    expected: {
+      expected_outcome: scenario === 'recovery'
+        ? 'recovered'
+        : scenario === 'violation' ? 'denied' : 'confirmed',
+      effect_code: scenario === 'recovery'
+        ? 'renewed_authority_merge_confirmed'
+        : scenario === 'violation'
+          ? 'stale_sha_merge_denied'
+          : 'exact_sha_merge_confirmed',
+    },
     isolation: {
       environment: 'isolated',
       resource_type: 'ephemeral_branch',
@@ -177,6 +189,21 @@ function expected(target = cell(), executionGrant = null) {
 }
 
 describe('canonical signed envelopes', () => {
+  it.each([NaN, Infinity, -Infinity, '2026-07-28'])(
+    'rejects a non-finite numeric clock: %s',
+    (now) => {
+      const keys = trustFixture();
+      const target = cell();
+      const value = grant(keys, target);
+      expect(() => verifyExecutionGrant(
+        value,
+        keys.registry,
+        expected(target),
+        { now },
+      )).toThrowError(expect.objectContaining({ code: 'verification_time_invalid' }));
+    },
+  );
+
   it('uses deterministic recursive key ordering', () => {
     expect(canonicalJson({ z: 1, a: { d: 4, b: 2 }, c: [3, { y: 2, x: 1 }] }))
       .toBe('{"a":{"b":2,"d":4},"c":[3,{"x":1,"y":2}],"z":1}');
@@ -232,6 +259,47 @@ describe('canonical signed envelopes', () => {
     wrongPurpose.keys[0].service_id = 'kernel.equivalence.collector';
     expect(() => verifyExecutionGrant(value, wrongPurpose, expected(), { now: NOW }))
       .toThrowError(expect.objectContaining({ code: 'grant_key_invalid' }));
+  });
+
+  it('rejects rotation cycles and cross-authority rotation edges', () => {
+    const cycle = trustFixture();
+    cycle.registry.keys[0].rotates_key_id = cycle.registry.keys[1].key_id;
+    cycle.registry.keys[1].rotates_key_id = cycle.registry.keys[0].key_id;
+    expect(() => validateTrustRegistry(cycle.registry))
+      .toThrowError(expect.objectContaining({ code: 'trust_registry_invalid' }));
+
+    const crossAuthority = trustFixture();
+    crossAuthority.registry.keys[1].rotates_key_id =
+      crossAuthority.registry.keys[2].key_id;
+    expect(() => validateTrustRegistry(crossAuthority.registry))
+      .toThrowError(expect.objectContaining({ code: 'trust_registry_invalid' }));
+  });
+
+  it('binds the effect receipt to the manifest-pinned signer key', () => {
+    const current = trustFixture();
+    const old = keyPair(
+      'merge-effect-old',
+      'effect_receipt',
+      'kernel.merge.effect_executor',
+    );
+    current.registry.keys.push(old.record);
+    const target = {
+      ...cell(),
+      effect_key_id: current.effect.record.key_id,
+    };
+    const executionGrant = grant(current, target);
+    const receipt = effectReceipt(
+      { ...current, effect: old },
+      executionGrant,
+      target,
+    );
+
+    expect(() => verifyEffectReceipt(
+      receipt,
+      current.registry,
+      expected(target, executionGrant),
+      { now: NOW },
+    )).toThrowError(expect.objectContaining({ code: 'effect_key_invalid' }));
   });
 
   it('requires a live, seam-signed violation denial', () => {

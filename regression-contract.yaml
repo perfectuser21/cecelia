@@ -176,6 +176,10 @@ behavior_equivalence:
     # Public keys are registered only after the owning service deploys a signer.
     # No private or synthetic key may be committed here.
     keys: []
+  drill_bundle_chain:
+    schema_version: "kernel-equivalence-bundle-chain/v1"
+    genesis_hash:
+    head_hash:
 
   journey:
     key: "kernel-harness-golden-path"

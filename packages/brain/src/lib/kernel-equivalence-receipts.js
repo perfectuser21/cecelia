@@ -268,15 +268,29 @@ export function validateTrustRegistry(registry) {
       }
       keyIds.add(key.key_id);
     }
+    const keysById = new Map(registry.keys.map((key) => [key.key_id, key]));
     for (const key of registry.keys) {
       if (
         key.rotates_key_id != null
         && (
           key.rotates_key_id === key.key_id
           || !keyIds.has(key.rotates_key_id)
+          || keysById.get(key.rotates_key_id)?.purpose !== key.purpose
+          || keysById.get(key.rotates_key_id)?.service_id !== key.service_id
+          || Date.parse(key.not_before)
+            < Date.parse(keysById.get(key.rotates_key_id)?.not_before)
         )
       ) {
         fail('trust_registry_invalid');
+      }
+    }
+    for (const start of registry.keys) {
+      const seen = new Set();
+      let current = start;
+      while (current?.rotates_key_id != null) {
+        if (seen.has(current.key_id)) fail('trust_registry_invalid');
+        seen.add(current.key_id);
+        current = keysById.get(current.rotates_key_id);
       }
     }
     return Object.freeze(structuredClone(registry));
@@ -298,6 +312,12 @@ function verifyWindow(value, now, maximumAgeSeconds, prefix) {
     || expiresAt - issuedAt > maximumAgeSeconds * 1000
   ) {
     fail(`${prefix}_freshness_invalid`);
+  }
+}
+
+function verifyNow(now) {
+  if (typeof now !== 'number' || !Number.isFinite(now)) {
+    fail('verification_time_invalid');
   }
 }
 
@@ -408,6 +428,7 @@ function validateIdentity(value, prefix) {
 }
 
 export function verifyExecutionGrant(grant, registry, expected, { now = Date.now() } = {}) {
+  verifyNow(now);
   exactFields(grant, GRANT_FIELDS, 'grant_fields_invalid');
   if (
     grant.schema_version !== 'kernel-equivalence-execution-grant/v1'
@@ -472,6 +493,7 @@ function verifyRecoveryLineage(receipt, expected) {
 }
 
 export function verifyEffectReceipt(receipt, registry, expected, { now = Date.now() } = {}) {
+  verifyNow(now);
   exactFields(receipt, EFFECT_FIELDS, 'effect_fields_invalid');
   if (
     receipt.schema_version !== 'kernel-equivalence-effect-receipt/v1'
@@ -507,7 +529,13 @@ export function verifyEffectReceipt(receipt, registry, expected, { now = Date.no
     now,
     code: 'effect_key_invalid',
   });
-  if (receipt.service_id !== key.service_id) fail('effect_key_invalid');
+  if (
+    receipt.service_id !== key.service_id
+    || !nonEmpty(expected?.cell?.effect_key_id)
+    || receipt.key_id !== expected.cell.effect_key_id
+  ) {
+    fail('effect_key_invalid');
+  }
   verifySignature(receipt, key, 'effect_signature_invalid');
 
   if (
@@ -617,7 +645,7 @@ function expectedForGrant(bundle, grant, cell) {
   };
 }
 
-function deriveExpectedFromBundle(bundle) {
+export function expectedFromReceiptBundle(bundle) {
   const grants = Array.isArray(bundle?.execution_grants)
     ? bundle.execution_grants
     : [];
@@ -630,6 +658,7 @@ function deriveExpectedFromBundle(bundle) {
       scenario: bundle?.scenario,
       seam_id: bundle?.seam_id,
       adapter_id: bundle?.adapter_id,
+      effect_key_id: bundle?.effect_receipts?.at(-1)?.key_id,
       isolation: {
         environment: currentGrant?.environment,
         resource_type: 'verified_previous_bundle',
@@ -659,6 +688,7 @@ export function verifyReceiptBundle(
     _seenBundleHashes = new Set(),
   } = {},
 ) {
+  verifyNow(now);
   exactFields(bundle, BUNDLE_FIELDS, 'bundle_fields_invalid');
   if (
     bundle.schema_version !== 'kernel-equivalence-receipt-bundle/v1'
@@ -826,7 +856,7 @@ export function verifyReceiptBundle(
     verifyReceiptBundle(
       previous,
       registry,
-      deriveExpectedFromBundle(previous),
+      expectedFromReceiptBundle(previous),
       { now, resolvePreviousBundle, _seenBundleHashes: seen },
     );
   }

@@ -94,6 +94,42 @@ describe('compileDrillPlan', () => {
     );
   });
 
+  it('keeps a future or expired effect key blocked at the evaluation clock', () => {
+    for (const [notBefore, notAfter] of [
+      ['2030-01-01T00:00:00.000Z', '2031-01-01T00:00:00.000Z'],
+      ['2025-01-01T00:00:00.000Z', '2025-02-01T00:00:00.000Z'],
+    ]) {
+      const contract = clone(rootContract());
+      const keys = createTrustFixture(
+        contract.behavior_equivalence.behaviors[0].drill.seam_id,
+      );
+      keys.effect.record.not_before = notBefore;
+      keys.effect.record.not_after = notAfter;
+      contract.behavior_equivalence.drill_trust_registry.keys = [
+        keys.effect.record,
+      ];
+      const drill = contract.behavior_equivalence.behaviors[0].drill;
+      drill.effect_signer_status = 'available';
+      drill.effect_key_id = keys.effect.record.key_id;
+      drill.blocked_by = null;
+
+      expectDrillError(
+        () => compileDrillPlan(contract, { now: FIXTURE_NOW }),
+        'drill_effect_signer_key_inactive',
+      );
+    }
+  });
+
+  it('rejects a partial or malformed trusted bundle chain checkpoint', () => {
+    const contract = clone(rootContract());
+    contract.behavior_equivalence.drill_bundle_chain.head_hash = 'a'.repeat(64);
+
+    expectDrillError(
+      () => compileDrillPlan(contract, { now: FIXTURE_NOW }),
+      'drill_bundle_chain_invalid',
+    );
+  });
+
   it.each([
     ['algorithm', (registry) => { registry.algorithm = 'rsa'; }],
     ['grant freshness', (registry) => { registry.grant_max_age_seconds = 0; }],
@@ -159,6 +195,29 @@ function executionFixture() {
     return bundle;
   });
   const auditSink = vi.fn((audit) => audits.push(audit));
+  const cleanupVerifier = vi.fn(async ({ cleanup }) => ({
+    confirmed: cleanup?.confirmed === true,
+  }));
+  const chainBundles = new Map();
+  let chainCheckpoint = {
+    schema_version: 'kernel-equivalence-bundle-chain/v1',
+    genesis_hash: null,
+    head_hash: null,
+  };
+  const bundleChainStore = {
+    getCheckpoint: vi.fn(async () => structuredClone(chainCheckpoint)),
+    readBundle: vi.fn((hash) => chainBundles.get(hash)),
+    commit: vi.fn(async ({ bundle: committedBundle, bundle_hash: hash, previous_head_hash: previous }) => {
+      if (previous !== chainCheckpoint.head_hash) return { committed: false };
+      chainBundles.set(hash, committedBundle);
+      chainCheckpoint = {
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: chainCheckpoint.genesis_hash ?? hash,
+        head_hash: hash,
+      };
+      return { committed: true, checkpoint: structuredClone(chainCheckpoint) };
+    }),
+  };
   return {
     keys,
     cell,
@@ -172,6 +231,8 @@ function executionFixture() {
     adapters: new Map([[cell.adapter_id, adapter]]),
     collector,
     auditSink,
+    cleanupVerifier,
+    bundleChainStore,
   };
 }
 
@@ -185,6 +246,8 @@ async function execute(value, overrides = {}) {
     collector: value.collector,
     predecessorResolver: value.predecessorResolver,
     auditSink: value.auditSink,
+    cleanupVerifier: value.cleanupVerifier,
+    bundleChainStore: value.bundleChainStore,
     now: FIXTURE_NOW,
     timeoutMs: 25,
     ...overrides,
@@ -261,7 +324,8 @@ describe('executeDrillCell', () => {
 
     await expect(execute(value, { timeoutMs: 5 })).resolves.toMatchObject({
       status: 'blocked',
-      code: 'adapter_timeout',
+      code: 'adapter_cancellation_unconfirmed',
+      audit: { late_effect_risk: true },
     });
     expect(value.adapter.cleanup).toHaveBeenCalledTimes(1);
     expect(value.collector).not.toHaveBeenCalled();
@@ -279,6 +343,10 @@ describe('executeDrillCell', () => {
     value.adapter.cleanup.mockImplementation(async (context) => {
       expect(context.compensations).toEqual([partial]);
       return { confirmed: true };
+    });
+    value.cleanupVerifier.mockImplementation(async (context) => {
+      expect(context.compensations).toEqual([partial]);
+      return { confirmed: context.cleanup?.confirmed === true };
     });
 
     await expect(execute(value)).resolves.toMatchObject({
@@ -343,6 +411,174 @@ describe('executeDrillCell', () => {
     expect(value.collector).not.toHaveBeenCalled();
   });
 
+  it('does not trust a positive cancel response while the original effect is unsettled', async () => {
+    const value = executionFixture();
+    let lateEffect = false;
+    value.adapter.invokeActualSeam.mockImplementation(
+      () => new Promise((resolve) => {
+        setTimeout(() => {
+          lateEffect = true;
+          resolve(value.receipt);
+        }, 30);
+      }),
+    );
+    value.adapter.cancel.mockResolvedValue({ confirmed: true });
+
+    const result = await execute(value, { timeoutMs: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 35));
+
+    expect(result).toMatchObject({
+      status: 'blocked',
+      code: 'adapter_cancellation_unconfirmed',
+      audit: { late_effect_risk: true },
+    });
+    expect(lateEffect).toBe(true);
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('requires an independent cleanup verifier instead of trusting adapter boolean output', async () => {
+    const missing = executionFixture();
+    await expect(execute(missing, {
+      cleanupVerifier: null,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'cleanup_verifier_unavailable',
+    });
+    expect(missing.collector).not.toHaveBeenCalled();
+
+    const contradicted = executionFixture();
+    contradicted.adapter.cleanup.mockResolvedValue({ confirmed: true });
+    contradicted.cleanupVerifier.mockResolvedValue({ confirmed: false });
+    await expect(execute(contradicted)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'adapter_cleanup_unconfirmed',
+    });
+  });
+
+  it('maps untrusted error codes and sanitizes invalid audit identifiers', async () => {
+    const value = executionFixture();
+    value.adapter.invokeActualSeam.mockImplementation(async () => {
+      const error = new Error('adapter failed');
+      error.code = 'ghp_EXAMPLE_SECRET_SHOULD_NOT_LOG';
+      throw error;
+    });
+
+    const result = await execute(value);
+    expect(result).toMatchObject({
+      code: 'adapter_execution_failed',
+      audit: { code: 'adapter_execution_failed' },
+    });
+    expect(JSON.stringify(result.audit)).not.toContain('ghp_');
+
+    const invalid = executionFixture();
+    invalid.grant = {
+      ...invalid.grant,
+      run_id: { secret: 'credential-should-not-log' },
+      attempt_id: 'terminal\\u001b[2J',
+    };
+    const denied = await execute(invalid);
+    expect(denied.audit).toMatchObject({
+      run_id: null,
+      attempt_id: null,
+    });
+    expect(JSON.stringify(denied.audit)).not.toContain('credential-should-not-log');
+  });
+
+  it('rejects a signed effect whose exact outcome contract differs from the cell', async () => {
+    const value = executionFixture();
+    value.cell.expected = {
+      expected_outcome: 'confirmed',
+      effect_code: 'exact_sha_merge_confirmed',
+    };
+    value.receipt = fixtureReceipt(
+      value.keys,
+      value.grant,
+      value.cell,
+      null,
+      { effect_code: 'different_effect' },
+    );
+    value.adapter.invokeActualSeam.mockResolvedValue(value.receipt);
+    value.adapter.observe.mockImplementation(async (output) => output);
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'effect_contract_mismatch',
+    });
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('requires an atomic trusted bundle chain store', async () => {
+    const value = executionFixture();
+    await expect(execute(value, {
+      bundleChainStore: null,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'bundle_chain_store_unavailable',
+    });
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('rejects an independent bundle root after a trusted chain head exists', async () => {
+    const value = executionFixture();
+    value.bundleChainStore.getCheckpoint.mockResolvedValue({
+      schema_version: 'kernel-equivalence-bundle-chain/v1',
+      genesis_hash: 'a'.repeat(64),
+      head_hash: 'a'.repeat(64),
+    });
+    value.bundleChainStore.readBundle.mockReturnValue(null);
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'bundle_previous_head_mismatch',
+    });
+    expect(value.bundleChainStore.commit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['nonce consumer', 'nonce_consumer_timeout', (value) => {
+      value.nonceConsumer.mockImplementation(() => new Promise(() => {}));
+    }],
+    ['collector', 'collector_timeout', (value) => {
+      value.collector.mockImplementation(() => new Promise(() => {}));
+    }],
+  ])('bounds a hung %s', async (_label, code, arrange) => {
+    const value = executionFixture();
+    arrange(value);
+    await expect(execute(value, { timeoutMs: 5 })).resolves.toMatchObject({
+      status: 'blocked',
+      code,
+    });
+  });
+
+  it('bounds a hung predecessor resolver before consuming the recovery nonce', async () => {
+    const value = executionFixture();
+    value.cell = {
+      ...value.cell,
+      cell_id: value.cell.cell_id.replace(/::normal$/, '::recovery'),
+      scenario: 'recovery',
+    };
+    value.grant = fixtureGrant(value.keys, value.cell);
+    value.predecessorResolver = () => new Promise(() => {});
+
+    await expect(execute(value, { timeoutMs: 5 })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'recovery_predecessor_timeout',
+    });
+    expect(value.nonceConsumer).not.toHaveBeenCalled();
+  });
+
+  it('does not let a hung audit sink suppress a fail-closed result', async () => {
+    const value = executionFixture();
+    value.grant = { ...value.grant, provider: 'grok' };
+    value.auditSink = () => new Promise(() => {});
+
+    await expect(execute(value, { timeoutMs: 5 })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'grant_axis_mismatch',
+      audit_delivery: 'timed_out',
+    });
+  });
+
   it.each([
     ['unsigned output', () => ({ effect_code: 'ordinary object' }), 'effect_fields_invalid'],
     [
@@ -378,6 +614,38 @@ describe('executeDrillCell', () => {
     await expect(execute(collector)).resolves.toMatchObject({
       status: 'blocked',
       code: 'bundle_fields_invalid',
+    });
+  });
+
+  it('does not trust safe-looking error codes thrown by external collaborators', async () => {
+    const collector = executionFixture();
+    collector.collector.mockImplementation(async () => {
+      const error = new Error('contains untrusted collector detail');
+      error.code = 'effect_secret_should_not_log';
+      throw error;
+    });
+    await expect(execute(collector)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'collector_failed',
+      audit: { code: 'collector_failed' },
+    });
+
+    const predecessor = executionFixture();
+    predecessor.cell = {
+      ...predecessor.cell,
+      cell_id: predecessor.cell.cell_id.replace(/::normal$/, '::recovery'),
+      scenario: 'recovery',
+    };
+    predecessor.grant = fixtureGrant(predecessor.keys, predecessor.cell);
+    predecessor.predecessorResolver = async () => {
+      const error = new Error('contains untrusted predecessor detail');
+      error.code = 'grant_secret_should_not_log';
+      throw error;
+    };
+    await expect(execute(predecessor)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'recovery_predecessor_unavailable',
+      audit: { code: 'recovery_predecessor_unavailable' },
     });
   });
 
@@ -452,6 +720,22 @@ describe('executeDrillCell', () => {
       expect(input.receipts).toEqual([violationReceipt, recoveryReceipt]);
       return bundle;
     });
+    const bundleChainStore = {
+      getCheckpoint: vi.fn(async () => ({
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: null,
+        head_hash: null,
+      })),
+      readBundle: vi.fn(() => null),
+      commit: vi.fn(async ({ bundle_hash: hash }) => ({
+        committed: true,
+        checkpoint: {
+          schema_version: 'kernel-equivalence-bundle-chain/v1',
+          genesis_hash: hash,
+          head_hash: hash,
+        },
+      })),
+    };
 
     await expect(executeDrillCell({
       cell: recoveryCell,
@@ -461,6 +745,10 @@ describe('executeDrillCell', () => {
       nonceConsumer,
       adapters: new Map([[recoveryCell.adapter_id, adapter]]),
       collector,
+      bundleChainStore,
+      cleanupVerifier: async ({ cleanup }) => ({
+        confirmed: cleanup?.confirmed === true,
+      }),
       now: FIXTURE_NOW,
       timeoutMs: 25,
     })).resolves.toMatchObject({

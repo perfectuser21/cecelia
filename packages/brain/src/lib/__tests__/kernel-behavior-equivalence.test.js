@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { load } from 'js-yaml';
 import { describe, expect, it } from 'vitest';
 import {
   BEHAVIOR_DIMENSIONS,
@@ -107,18 +109,39 @@ function provenBehavior(overrides = {}) {
 }
 
 function contract(behaviors = [provenBehavior()]) {
+  const root = load(readFileSync(
+    new URL('../../../../../regression-contract.yaml', import.meta.url),
+    'utf8',
+  ));
+  const normalized = behaviors.map((behavior) => {
+    const value = structuredClone(behavior);
+    if (value.status === 'gap') {
+      value.drill.effect_signer_status = 'missing';
+      value.drill.effect_key_id = null;
+      value.drill.blocked_by = 'seam_receipt_signer_missing';
+    }
+    return value;
+  });
+  const usedIds = new Set(normalized.map((behavior) => behavior.behavior_id));
+  const fillers = root.behavior_equivalence.behaviors
+    .filter((behavior) => !usedIds.has(behavior.behavior_id))
+    .slice(0, 11 - normalized.length);
+  const customGoldenPaths = normalized
+    .map((behavior) => behavior.assertion_id)
+    .filter((id) => !root.golden_paths.some((path) => path.id === id))
+    .map((id) => ({ id }));
   return {
-    golden_paths: [{ id: 'KERNEL-MERGE-AUTHORITY-01' }],
+    golden_paths: [...root.golden_paths, ...customGoldenPaths],
     behavior_equivalence: {
-      schema_version: '1.0.0',
+      ...root.behavior_equivalence,
       contract_version: '2026-07-28.1',
-      required_behavior_count: behaviors.length,
+      required_behavior_count: 11,
       journey: {
         key: 'kernel-harness-delivery',
         steps: steps(),
       },
       dimensions: [...BEHAVIOR_DIMENSIONS],
-      behaviors,
+      behaviors: [...normalized, ...fillers],
     },
   };
 }
@@ -133,6 +156,8 @@ function trustedContract(
   behavior.drill.effect_key_id = keys.effect.record.key_id;
   const bundles = new Map();
   const matrix = {};
+  let genesisHash = null;
+  let previousBundleHash = null;
 
   for (const provider of PROOF_PROVIDERS) {
     matrix[provider] = {};
@@ -170,8 +195,11 @@ function trustedContract(
         executionGrant,
         receipts,
         executionGrants,
+        previousBundleHash,
       );
       const bundleHash = sha256Canonical(bundle);
+      genesisHash ??= bundleHash;
+      previousBundleHash = bundleHash;
       const bundleReference = `receipt-bundle:${bundleHash}`;
       bundles.set(bundleHash, bundle);
       matrix[provider][scenario] = {
@@ -206,12 +234,23 @@ function trustedContract(
   behavior.proof_identity.effect_receipt_id = 'signed-3x3-bundle-set';
   const value = contract([behavior, ...extraBehaviors]);
   value.behavior_equivalence.drill_trust_registry = keys.registry;
+  value.behavior_equivalence.drill_bundle_chain = {
+    schema_version: 'kernel-equivalence-bundle-chain/v1',
+    genesis_hash: genesisHash,
+    head_hash: previousBundleHash,
+  };
   const receiptResolver = createTrustedReceiptResolver({
     readBundle: (hash) => bundles.get(hash),
     trustRegistry: keys.registry,
+    bundleChain: value.behavior_equivalence.drill_bundle_chain,
     now: NOW,
   });
-  return { contract: value, receiptResolver, behavior };
+  return {
+    contract: value,
+    receiptResolver,
+    readBundle: (hash) => bundles.get(hash),
+    behavior,
+  };
 }
 
 describe('canonical behavior equivalence axes', () => {
@@ -226,12 +265,84 @@ describe('canonical behavior equivalence axes', () => {
 });
 
 describe('validateBehaviorEquivalence', () => {
+  it('does not trust a caller-supplied resolver as a proof authority', () => {
+    const trusted = trustedContract();
+    const fabricatedResolver = (_reference, expected) => {
+      const proof = trusted.behavior.proof_matrix
+        [expected.cell.provider][expected.cell.scenario];
+      return {
+        receipt_ids: [proof.effect_receipt_id],
+        effect_receipts: [{
+          receipt_id: proof.effect_receipt_id,
+          observed_outcome:
+            trusted.behavior.drill.scenarios[expected.cell.scenario].expected_outcome,
+          effect_code:
+            trusted.behavior.drill.scenarios[expected.cell.scenario].effect_code,
+        }],
+      };
+    };
+
+    const result = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      receiptResolver: fabricatedResolver,
+    });
+
+    expect(result.behaviors[0].effective_status).toBe('gap');
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'trusted_receipt_reader_required' }),
+    ]));
+  });
+
+  it('verifies raw bundles internally against the root trust registry', () => {
+    const trusted = trustedContract();
+
+    const result = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      readBundle: trusted.readBundle,
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.behaviors[0].effective_status).toBe('proven');
+  });
+
+  it('requires the canonical exact eleven unique behavior manifest', () => {
+    const trusted = trustedContract();
+    const truncated = structuredClone(trusted.contract);
+    truncated.behavior_equivalence.behaviors =
+      truncated.behavior_equivalence.behaviors.slice(0, 1);
+    truncated.behavior_equivalence.required_behavior_count = 1;
+    const short = validateBehaviorEquivalence(truncated, {
+      now: NOW,
+      readBundle: trusted.readBundle,
+    });
+    expect(short.valid).toBe(false);
+    expect(short.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'drill_behavior_count_invalid' }),
+    ]));
+    expect(short.behaviors[0].effective_status).toBe('gap');
+    expect(projectJourneyCells(short).every(
+      (cell) => cell.cell_status !== 'green',
+    )).toBe(true);
+
+    const duplicate = load(readFileSync(
+      new URL('../../../../../regression-contract.yaml', import.meta.url),
+      'utf8',
+    ));
+    duplicate.behavior_equivalence.behaviors[1].behavior_id =
+      duplicate.behavior_equivalence.behaviors[0].behavior_id;
+    const repeated = validateBehaviorEquivalence(duplicate, { now: NOW });
+    expect(repeated.valid).toBe(false);
+    expect(repeated.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'drill_behavior_id_duplicate' }),
+    ]));
+  });
+
   it('never treats non-empty receipt strings or unit-test commands as live proof', () => {
     const result = validateBehaviorEquivalence(contract(), { now: NOW });
 
     expect(result.behaviors[0].effective_status).toBe('gap');
     expect(result.findings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'trusted_receipt_bundle_required' }),
+      expect.objectContaining({ code: 'trusted_receipt_reader_required' }),
       expect.objectContaining({ code: 'non_live_proof_command' }),
     ]));
   });
@@ -252,7 +363,7 @@ describe('validateBehaviorEquivalence', () => {
     const trusted = trustedContract();
     const result = validateBehaviorEquivalence(trusted.contract, {
       now: NOW,
-      receiptResolver: trusted.receiptResolver,
+      readBundle: trusted.readBundle,
     });
 
     expect(result.valid).toBe(true);
@@ -272,7 +383,7 @@ describe('validateBehaviorEquivalence', () => {
     });
     const result = validateBehaviorEquivalence(trusted.contract, {
       now: NOW,
-      receiptResolver: trusted.receiptResolver,
+      readBundle: trusted.readBundle,
     });
 
     expect(result.valid).toBe(true);
@@ -355,14 +466,16 @@ describe('validateBehaviorEquivalence', () => {
     });
     const result = validateBehaviorEquivalence(trusted.contract, {
       now: NOW,
-      receiptResolver: trusted.receiptResolver,
+      readBundle: trusted.readBundle,
     });
     const cells = projectJourneyCells(result);
 
     expect(result.behaviors[0].effective_status).toBe('gap');
     expect(result.findings).toContainEqual(expect.objectContaining({ code: 'proof_stale' }));
     expect(cells.every((cell) => cell.cell_status !== 'green')).toBe(true);
-    expect(cells.every((cell) => cell.cell_status === 'pending')).toBe(true);
+    expect(cells.filter((cell) => (
+      cell.behavior_id === trusted.behavior.behavior_id
+    )).every((cell) => cell.cell_status === 'pending')).toBe(true);
   });
 
   it('requires intentional replacement rationale and complete replacement proof', () => {
@@ -413,7 +526,9 @@ describe('evidence envelope and journey projection', () => {
     const behavior = provenBehavior();
     behavior.proof_matrix.grok.recovery.effect_receipt_id = undefined;
     const result = validateBehaviorEquivalence(contract([behavior]), { now: NOW });
-    const envelopes = buildEvidenceEnvelopes(result);
+    const envelopes = buildEvidenceEnvelopes(result).filter(
+      (item) => item.behavior_id === behavior.behavior_id,
+    );
 
     expect(envelopes).toHaveLength(9);
     expect(envelopes.find(
@@ -432,9 +547,11 @@ describe('evidence envelope and journey projection', () => {
     const trusted = trustedContract();
     const result = validateBehaviorEquivalence(trusted.contract, {
       now: NOW,
-      receiptResolver: trusted.receiptResolver,
+      readBundle: trusted.readBundle,
     });
-    const cells = projectJourneyCells(result);
+    const cells = projectJourneyCells(result).filter(
+      (cell) => cell.behavior_id === trusted.behavior.behavior_id,
+    );
 
     expect(cells).toHaveLength(BEHAVIOR_DIMENSIONS.length);
     expect(cells[0]).toEqual(expect.objectContaining({
@@ -465,7 +582,7 @@ describe('honest equivalence report', () => {
     const trusted = trustedContract([gap]);
     const validation = validateBehaviorEquivalence(trusted.contract, {
       now: NOW,
-      receiptResolver: trusted.receiptResolver,
+      readBundle: trusted.readBundle,
     });
 
     const report = buildEquivalenceReport(validation, {
@@ -473,9 +590,9 @@ describe('honest equivalence report', () => {
     });
 
     expect(report.summary).toEqual({
-      total: 2,
-      by_priority: { P0: 1, P1: 1 },
-      by_effective_status: { proven: 1, gap: 1, intentional_replacement: 0 },
+      total: 11,
+      by_priority: { P0: 8, P1: 3 },
+      by_effective_status: { proven: 1, gap: 10, intentional_replacement: 0 },
       findings: 0,
     });
     expect(report.axes).toMatchObject({
@@ -486,9 +603,9 @@ describe('honest equivalence report', () => {
       possible_cells: 143,
     });
     expect(report.provider_matrix).toMatchObject({
-      required_cells: 18,
+      required_cells: 99,
       receipted_cells: 9,
-      missing_cells: 9,
+      missing_cells: 90,
     });
     expect(report.proven_to_fire_commands).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -497,13 +614,13 @@ describe('honest equivalence report', () => {
         scenario: 'violation',
       }),
     ]));
-    expect(report.gaps).toEqual([
+    expect(report.gaps).toEqual(expect.arrayContaining([
       expect.objectContaining({
         behavior_id: 'KERNEL-P1-REPORT-CLOSURE',
         owner: 'kernel.reports',
         closure_plan: 'Run the production closure drill.',
       }),
-    ]);
+    ]));
   });
 
   it('renders deterministic Markdown that says gaps are not proof', () => {

@@ -74,6 +74,17 @@ export function fixtureCell({
     scenario,
     seam_id: seamId,
     adapter_id: adapterId,
+    effect_key_id: 'effect-2026-07',
+    expected: {
+      expected_outcome: scenario === 'recovery'
+        ? 'recovered'
+        : scenario === 'violation' ? 'denied' : 'confirmed',
+      effect_code: scenario === 'recovery'
+        ? 'renewed_authority_merge_confirmed'
+        : scenario === 'violation'
+          ? 'stale_sha_merge_denied'
+          : 'exact_sha_merge_confirmed',
+    },
     isolation: {
       environment: 'isolated',
       resource_type: 'ephemeral_branch',
@@ -193,6 +204,7 @@ export function fixtureBundle(
   grant,
   receipts,
   executionGrants = [grant],
+  previousBundleHash = null,
 ) {
   const unsigned = assembleUnsignedBundle({
     keyId: keys.collector.record.key_id,
@@ -202,7 +214,7 @@ export function fixtureBundle(
     expected: fixtureExpected(cell, grant),
     executionGrants,
     receipts,
-    previousBundleHash: null,
+    previousBundleHash,
   });
   return signFixture(unsigned, keys.collector.privateKey);
 }

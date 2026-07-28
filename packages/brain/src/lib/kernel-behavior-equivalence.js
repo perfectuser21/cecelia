@@ -1,3 +1,14 @@
+import {
+  BEHAVIOR_DIMENSIONS,
+  GOLDEN_PATH_STEPS,
+  PROOF_PROVIDERS,
+  PROOF_SCENARIOS,
+} from './kernel-equivalence-axes.js';
+import { compileDrillPlan } from './kernel-equivalence-drills.js';
+import {
+  createTrustedReceiptResolver,
+} from './kernel-equivalence-receipt-resolver.js';
+
 /**
  * Pure validator/projector for the Kernel P0/P1 equivalence section embedded in
  * the root regression-contract.yaml.
@@ -6,26 +17,12 @@
  * proposed projection into the existing journey_step_links cell vocabulary.
  */
 
-export const GOLDEN_PATH_STEPS = Object.freeze(
-  Array.from({ length: 13 }, (_, index) => `S${index}`),
-);
-
-export const BEHAVIOR_DIMENSIONS = Object.freeze([
-  'fr',
-  'nfr',
-  'invariant',
-  'checkpoint',
-  'freshness',
-  'death_alert',
-  'failure_semantics',
-  'effect_confirmation',
-  'adversarial_surface',
-  'ledger_freshness',
-  'axis_alignment',
-]);
-
-export const PROOF_PROVIDERS = Object.freeze(['claude', 'codex', 'grok']);
-export const PROOF_SCENARIOS = Object.freeze(['normal', 'violation', 'recovery']);
+export {
+  BEHAVIOR_DIMENSIONS,
+  GOLDEN_PATH_STEPS,
+  PROOF_PROVIDERS,
+  PROOF_SCENARIOS,
+};
 
 const CLAIMED_STATUSES = new Set(['proven', 'gap', 'intentional_replacement']);
 const DENIAL_RESULTS = new Set(['blocked', 'denied', 'failed', 'rejected']);
@@ -379,7 +376,9 @@ function validateProofMatrix(behavior, behaviorFindings, receiptResolver) {
         addFinding(
           behaviorFindings,
           id,
-          'trusted_receipt_bundle_required',
+          typeof receiptResolver === 'function'
+            ? 'trusted_receipt_bundle_required'
+            : 'trusted_receipt_reader_required',
           `${path}.receipt_bundle_ref`,
           'a content-addressed bundle and trusted resolver are required',
         );
@@ -395,6 +394,7 @@ function validateProofMatrix(behavior, behaviorFindings, receiptResolver) {
           scenario,
           seam_id: drill.seam_id,
           adapter_id: drill.adapter_id,
+          effect_key_id: drill.effect_key_id,
           isolation: structuredClone(asObject(drill.isolation)),
         },
         run_id: proof.run_id,
@@ -514,7 +514,10 @@ function validateSupersession(behaviors, findings) {
 
 export function validateBehaviorEquivalence(
   contract,
-  { now = Date.now(), receiptResolver = null } = {},
+  {
+    now = Date.now(),
+    readBundle = null,
+  } = {},
 ) {
   const findings = [];
   const section = contract?.behavior_equivalence;
@@ -535,6 +538,45 @@ export function validateBehaviorEquivalence(
   }
 
   validateCatalog(section, findings);
+  let manifestValid = true;
+  try {
+    compileDrillPlan(contract, { now });
+  } catch (error) {
+    manifestValid = false;
+    addFinding(
+      findings,
+      null,
+      error?.code ?? 'drill_manifest_invalid',
+      'behavior_equivalence.behaviors',
+      `canonical drill manifest invalid: ${error?.code ?? 'unknown'}`,
+    );
+  }
+  let receiptResolver = null;
+  const hasBundleReferences = asArray(section.behaviors).some((behavior) => (
+    PROOF_PROVIDERS.some((provider) => (
+      PROOF_SCENARIOS.some((scenario) => (
+        nonEmpty(behavior?.proof_matrix?.[provider]?.[scenario]?.receipt_bundle_ref)
+      ))
+    ))
+  ));
+  if (typeof readBundle === 'function' && hasBundleReferences) {
+    try {
+      receiptResolver = createTrustedReceiptResolver({
+        readBundle,
+        trustRegistry: section.drill_trust_registry,
+        bundleChain: section.drill_bundle_chain,
+        now,
+      });
+    } catch (error) {
+      addFinding(
+        findings,
+        null,
+        error?.code ?? 'trusted_receipt_reader_invalid',
+        'behavior_equivalence.drill_trust_registry',
+        'trusted receipt reader could not be initialized',
+      );
+    }
+  }
   const goldenPathIds = new Set(asArray(contract.golden_paths).map((item) => item?.id));
   const sourceBehaviors = asArray(section.behaviors);
   const normalizedBehaviors = sourceBehaviors.map((source) => {
@@ -556,7 +598,10 @@ export function validateBehaviorEquivalence(
     return {
       ...behavior,
       claimed_status: behavior.status ?? null,
-      effective_status: behavior.status === 'gap' || behaviorFindings.length > 0
+      effective_status:
+        behavior.status === 'gap'
+        || behaviorFindings.length > 0
+        || !manifestValid
         ? 'gap'
         : behavior.status,
       findings: behaviorFindings,
