@@ -39,10 +39,12 @@ import {
 } from '../orchestrator/execution-contract.js';
 import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
 import {
+  buildFleetHeartbeatAck,
   buildFleetResultReceiptAck,
   computeFleetAuthoritySha256,
   FleetCallbackProtocolError,
   FLEET_CALLBACK_AUTH_SCHEME,
+  parseFleetHeartbeat,
   parseFleetResultDelivery,
 } from '../orchestrator/fleet-callback-auth.js';
 import { verifyMachineAttestation } from '../orchestrator/machine-attestation.js';
@@ -101,6 +103,12 @@ function callbackAuthorized(req, attempt) {
 }
 
 function isFleetCallbackRequest(req) {
+  const authorization = req.get('authorization') ?? '';
+  return req.get('x-cecelia-fleet-protocol') !== undefined
+    || authorization.startsWith(`${FLEET_CALLBACK_AUTH_SCHEME} `);
+}
+
+function isFleetHeartbeatRequest(req) {
   const authorization = req.get('authorization') ?? '';
   return req.get('x-cecelia-fleet-protocol') !== undefined
     || authorization.startsWith(`${FLEET_CALLBACK_AUTH_SCHEME} `);
@@ -626,11 +634,91 @@ async function handleFleetResultCallback(req, res) {
   }
 }
 
+async function handleFleetHeartbeat(req, res) {
+  const db = requestDatabase(req);
+  const secret = req.app.get('kernelFleetBridgeToken');
+  let heartbeat;
+  try {
+    heartbeat = parseFleetHeartbeat({
+      attemptId: req.params.attemptId,
+      rawHeaders: req.rawHeaders,
+      body: req.body,
+      secret,
+    });
+  } catch (error) {
+    if (error instanceof FleetCallbackProtocolError) {
+      return res.status(error.status).json({ ok: false, error: error.code });
+    }
+    return res.status(400).json({ ok: false, error: 'fleet_heartbeat_invalid' });
+  }
+  const attemptStore = createAttemptStore(db);
+  const attempt = await attemptStore.getById(req.params.attemptId);
+  if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
+  if (
+    attempt.execution_transport !== 'fleet-worker'
+    || !attempt.actual_machine_id
+    || !attempt.remote_job_id
+    || attempt.machine_attestation_status !== 'verified'
+  ) {
+    return res.status(409).json({ ok: false, error: 'launch_receipt_unconfirmed' });
+  }
+  if (
+    heartbeat.runId !== attempt.run_id
+    || heartbeat.workerId !== attempt.actual_machine_id
+    || heartbeat.jobId !== attempt.remote_job_id
+    || heartbeat.leaseOwner !== attempt.lease_owner
+    || heartbeat.leaseGeneration !== attempt.lease_generation
+  ) {
+    return res.status(409).json({ ok: false, error: 'fleet_heartbeat_authority_mismatch' });
+  }
+  if (
+    attempt.provider_session_id
+    && heartbeat.providerSessionId
+    && attempt.provider_session_id !== heartbeat.providerSessionId
+  ) {
+    return res.status(409).json({ ok: false, error: 'provider_session_mismatch' });
+  }
+  try {
+    const renewed = heartbeat.providerSessionId
+      ? await attemptStore.markRunning(req.params.attemptId, {
+          leaseOwner: heartbeat.leaseOwner,
+          leaseGeneration: heartbeat.leaseGeneration,
+          providerSessionId: heartbeat.providerSessionId,
+          leaseSeconds: heartbeat.leaseSeconds,
+        })
+      : await attemptStore.heartbeat(req.params.attemptId, {
+          leaseOwner: heartbeat.leaseOwner,
+          leaseGeneration: heartbeat.leaseGeneration,
+          leaseSeconds: heartbeat.leaseSeconds,
+        });
+    if (!renewed) {
+      return res.status(409).json({ ok: false, error: 'attempt lease lost or terminal' });
+    }
+    return res.json(buildFleetHeartbeatAck({
+      heartbeat,
+      attempt: renewed,
+      attemptId: req.params.attemptId,
+      secret,
+    }));
+  } catch (error) {
+    if (error instanceof FleetCallbackProtocolError) {
+      return res.status(error.status).json({ ok: false, error: error.code });
+    }
+    return res.status(500).json({ ok: false, error: 'attempt heartbeat persistence failed' });
+  }
+}
+
 router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async (req, res) => {
+  if (isFleetHeartbeatRequest(req)) {
+    return handleFleetHeartbeat(req, res);
+  }
   const db = requestDatabase(req);
   const attemptStore = createAttemptStore(db);
   const attempt = await attemptStore.getById(req.params.attemptId);
   if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
+  if (attempt.execution_transport === 'fleet-worker') {
+    return res.status(401).json({ ok: false, error: 'fleet_heartbeat_hmac_required' });
+  }
   if (!callbackAuthorized(req, attempt)) {
     return res.status(401).json({ ok: false, error: 'invalid attempt callback credential' });
   }

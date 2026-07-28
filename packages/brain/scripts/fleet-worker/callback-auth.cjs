@@ -8,6 +8,9 @@ const {
 } = require('node:crypto');
 
 const CALLBACK_PROTOCOL = 'fleet-callback/v1';
+const HEARTBEAT_PROTOCOL = 'fleet-heartbeat/v1';
+const HEARTBEAT_SCHEMA = 'fleet-attempt-heartbeat/v1';
+const HEARTBEAT_ACK_SCHEMA = 'fleet-attempt-heartbeat-ack/v1';
 const DELIVERY_SCHEMA = 'fleet-attempt-result-delivery/v1';
 const RECEIPT_SCHEMA = 'fleet-attempt-result-receipt/v1';
 const AUTH_SCHEME = 'Cecelia-Fleet-HMAC-SHA256';
@@ -39,6 +42,20 @@ const RECEIPT_FIELDS = Object.freeze([
   'terminal_status',
   'receipt_status',
   'persisted_at',
+  'receipt_hmac',
+]);
+const HEARTBEAT_ACK_FIELDS = Object.freeze([
+  'schema_version',
+  'attempt_id',
+  'run_id',
+  'worker_id',
+  'job_id',
+  'lease_owner',
+  'lease_generation',
+  'heartbeat_nonce',
+  'provider_session_id',
+  'heartbeat_at',
+  'lease_expires_at',
   'receipt_hmac',
 ]);
 
@@ -94,6 +111,30 @@ function terminalStatus(value) {
   return value;
 }
 
+function canonicalTimestamp(value, code) {
+  if (
+    typeof value !== 'string'
+    || Number.isNaN(Date.parse(value))
+    || new Date(value).toISOString() !== value
+  ) {
+    fail(code);
+  }
+  return value;
+}
+
+function nullableSession(value, code) {
+  if (value === null) return value;
+  if (
+    typeof value !== 'string'
+    || value.length < 1
+    || value.length > 512
+    || /[\r\n\0]/.test(value)
+  ) {
+    fail(code);
+  }
+  return value;
+}
+
 function safeHexEqual(actual, expected) {
   if (!SHA256_PATTERN.test(actual ?? '') || !SHA256_PATTERN.test(expected ?? '')) {
     return false;
@@ -137,6 +178,128 @@ function receiptSigningPayload(receipt) {
     receipt.receipt_status,
     receipt.persisted_at,
   ].join('\n')}\n`;
+}
+
+function heartbeatSigningPayload(input, body) {
+  return `${[
+    'cecelia-fleet-heartbeat/v1',
+    input.attemptId,
+    input.workerId,
+    input.runId,
+    input.jobId,
+    input.leaseOwner,
+    String(input.leaseGeneration),
+    input.heartbeatNonce,
+    body.observed_at,
+    String(body.lease_seconds),
+    body.provider_session_id ?? '',
+  ].join('\n')}\n`;
+}
+
+function heartbeatAckSigningPayload(ack) {
+  return `${[
+    'cecelia-fleet-heartbeat-ack/v1',
+    ack.attempt_id,
+    ack.run_id,
+    ack.worker_id,
+    ack.job_id,
+    ack.lease_owner,
+    String(ack.lease_generation),
+    ack.heartbeat_nonce,
+    ack.provider_session_id ?? '',
+    ack.heartbeat_at,
+    ack.lease_expires_at,
+  ].join('\n')}\n`;
+}
+
+function buildFleetHeartbeat(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    fail('heartbeat_input_invalid');
+  }
+  const signingSecret = secret(input.secret);
+  uuid(input.attemptId, 'heartbeat_attempt_id_invalid');
+  uuid(input.runId, 'heartbeat_run_id_invalid');
+  identifier(input.workerId, 'heartbeat_worker_id_invalid');
+  identifier(input.jobId, 'heartbeat_job_id_invalid');
+  identifier(input.leaseOwner, 'heartbeat_lease_owner_invalid');
+  unsignedInteger(input.leaseGeneration, 'heartbeat_lease_generation_invalid');
+  uuid(input.heartbeatNonce, 'heartbeat_nonce_invalid');
+  canonicalTimestamp(input.observedAt, 'heartbeat_observed_at_invalid');
+  positiveInteger(input.leaseSeconds, 'heartbeat_lease_seconds_invalid', 600);
+  if (input.leaseSeconds < 30) fail('heartbeat_lease_seconds_invalid');
+  nullableSession(input.providerSessionId, 'heartbeat_provider_session_id_invalid');
+
+  const body = Object.freeze({
+    schema_version: HEARTBEAT_SCHEMA,
+    heartbeat_nonce: input.heartbeatNonce,
+    observed_at: input.observedAt,
+    lease_seconds: input.leaseSeconds,
+    provider_session_id: input.providerSessionId,
+  });
+  const signature = createHmac('sha256', signingSecret)
+    .update(heartbeatSigningPayload(input, body), 'utf8')
+    .digest('hex');
+  return Object.freeze({
+    body,
+    headers: Object.freeze({
+      'Content-Type': 'application/json',
+      'X-Cecelia-Fleet-Protocol': HEARTBEAT_PROTOCOL,
+      'X-Cecelia-Fleet-Worker-Id': input.workerId,
+      'X-Cecelia-Fleet-Run-Id': input.runId,
+      'X-Cecelia-Fleet-Job-Id': input.jobId,
+      'X-Cecelia-Fleet-Lease-Owner': input.leaseOwner,
+      'X-Cecelia-Fleet-Lease-Generation': String(input.leaseGeneration),
+      'X-Cecelia-Fleet-Heartbeat-Nonce': input.heartbeatNonce,
+      Authorization: `${AUTH_SCHEME} ${signature}`,
+    }),
+  });
+}
+
+function verifyFleetHeartbeatAck({ ack, secret: rawSecret, expected } = {}) {
+  const signingSecret = secret(rawSecret);
+  exactObject(ack, HEARTBEAT_ACK_FIELDS, 'heartbeat_ack_fields_invalid');
+  if (ack.schema_version !== HEARTBEAT_ACK_SCHEMA) {
+    fail('heartbeat_ack_schema_invalid');
+  }
+  uuid(ack.attempt_id, 'heartbeat_ack_attempt_id_invalid');
+  uuid(ack.run_id, 'heartbeat_ack_run_id_invalid');
+  identifier(ack.worker_id, 'heartbeat_ack_worker_id_invalid');
+  identifier(ack.job_id, 'heartbeat_ack_job_id_invalid');
+  identifier(ack.lease_owner, 'heartbeat_ack_lease_owner_invalid');
+  unsignedInteger(
+    ack.lease_generation,
+    'heartbeat_ack_lease_generation_invalid',
+  );
+  uuid(ack.heartbeat_nonce, 'heartbeat_ack_nonce_invalid');
+  nullableSession(
+    ack.provider_session_id,
+    'heartbeat_ack_provider_session_id_invalid',
+  );
+  canonicalTimestamp(ack.heartbeat_at, 'heartbeat_ack_heartbeat_at_invalid');
+  canonicalTimestamp(
+    ack.lease_expires_at,
+    'heartbeat_ack_lease_expires_at_invalid',
+  );
+  const pairs = [
+    ['attempt_id', expected?.attemptId],
+    ['run_id', expected?.runId],
+    ['worker_id', expected?.workerId],
+    ['job_id', expected?.jobId],
+    ['lease_owner', expected?.leaseOwner],
+    ['lease_generation', expected?.leaseGeneration],
+    ['heartbeat_nonce', expected?.heartbeatNonce],
+    ['provider_session_id', expected?.providerSessionId],
+  ];
+  if (pairs.some(([field, value]) => ack[field] !== value)) {
+    fail('heartbeat_ack_binding_mismatch');
+  }
+  const expectedHmac = createHmac('sha256', signingSecret)
+    .update(heartbeatAckSigningPayload(ack), 'utf8')
+    .digest('hex');
+  if (!safeHexEqual(ack.receipt_hmac, expectedHmac)) {
+    fail('heartbeat_ack_hmac_invalid');
+  }
+  return Object.freeze({ ...ack });
 }
 
 function buildFleetResultDelivery(input) {
@@ -249,8 +412,13 @@ module.exports = {
   AUTH_SCHEME,
   CALLBACK_PROTOCOL,
   DELIVERY_SCHEMA,
+  HEARTBEAT_ACK_SCHEMA,
+  HEARTBEAT_PROTOCOL,
+  HEARTBEAT_SCHEMA,
   MAX_RESULT_BYTES,
   RECEIPT_SCHEMA,
+  buildFleetHeartbeat,
   buildFleetResultDelivery,
+  verifyFleetHeartbeatAck,
   verifyFleetResultReceiptAck,
 };

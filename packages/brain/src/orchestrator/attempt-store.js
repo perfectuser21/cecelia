@@ -220,7 +220,15 @@ export function createAttemptStore(pool) {
       return firstRow(result);
     },
 
-    async markRunning(id, { leaseOwner, providerSessionId, leaseSeconds }) {
+    async markRunning(
+      id,
+      {
+        leaseOwner,
+        providerSessionId,
+        leaseSeconds,
+        leaseGeneration = null,
+      },
+    ) {
       const result = await pool.query(
         `UPDATE harness_attempts
             SET status = 'running',
@@ -231,14 +239,22 @@ export function createAttemptStore(pool) {
                 updated_at = NOW()
           WHERE id = $1
             AND lease_owner = $2
+            AND ($5::integer IS NULL OR lease_generation = $5)
             AND status IN ('starting','running')
           RETURNING *`,
-        [id, leaseOwner, providerSessionId, leaseSeconds],
+        [id, leaseOwner, providerSessionId, leaseSeconds, leaseGeneration],
       );
       return firstRow(result);
     },
 
-    async heartbeat(id, { leaseOwner, leaseSeconds }) {
+    async heartbeat(
+      id,
+      {
+        leaseOwner,
+        leaseSeconds,
+        leaseGeneration = null,
+      },
+    ) {
       const result = await pool.query(
         `UPDATE harness_attempts
             SET heartbeat_at = NOW(),
@@ -246,9 +262,10 @@ export function createAttemptStore(pool) {
                 updated_at = NOW()
           WHERE id = $1
             AND lease_owner = $2
+            AND ($4::integer IS NULL OR lease_generation = $4)
             AND status IN ('starting','running')
           RETURNING *`,
-        [id, leaseOwner, leaseSeconds],
+        [id, leaseOwner, leaseSeconds, leaseGeneration],
       );
       return firstRow(result);
     },
