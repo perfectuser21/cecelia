@@ -164,7 +164,7 @@ type normalize_provider_success >/dev/null 2>&1 || {
 
 COMMANDER_TMP="$(mktemp -d)"
 cat > "$COMMANDER_TMP/task.json" <<'JSON'
-{"task_bundle":{"contract_version":"1.0","run_id":"11111111-1111-4111-8111-111111111111","attempt_id":"22222222-2222-4222-8222-222222222222","role":"commander","skill":null,"inputs":{"commander_bundle":{"schema":"commander-bundle/v1","run_id":"11111111-1111-4111-8111-111111111111","commander_attempt_id":"22222222-2222-4222-8222-222222222222"}},"constraints":{"read_only":true,"fresh_session":true,"timeout_seconds":600},"expected_output":"commander-directive/v1"}}
+{"task_bundle":{"contract_version":"1.0","run_id":"11111111-1111-4111-8111-111111111111","attempt_id":"22222222-2222-4222-8222-222222222222","role":"commander","skill":null,"inputs":{"commander_bundle":{"schema":"commander-bundle/v1","run_id":"11111111-1111-4111-8111-111111111111","commander_attempt_id":"22222222-2222-4222-8222-222222222222","output_schema":"commander-directive/v1"}},"constraints":{"read_only":true,"fresh_session":true,"timeout_seconds":600},"expected_output":"commander-directive/v1"}}
 JSON
 cat > "$COMMANDER_TMP/directive.json" <<'JSON'
 {"schema":"commander-directive/v1","run_id":"11111111-1111-4111-8111-111111111111","event_cursor":9,"action":"continue_default","reason":"The fresh Kernel decision remains legal.","evidence_refs":["event:9"]}
@@ -204,6 +204,37 @@ jq -e '
   and .provider_metadata.session_id == "thread-commander"
 ' "$COMMANDER_TMP/normalized.json" >/dev/null || {
   echo 'runner did not wrap the direct Commander Directive' >&2
+  exit 1
+}
+
+cat > "$COMMANDER_TMP/ordinary-task.json" <<'JSON'
+{"task_bundle":{"expected_output":"harness-result/planner-v1"}}
+JSON
+cat > "$COMMANDER_TMP/ordinary-result.json" <<'JSON'
+{"status":"completed","summary":"unchanged","artifacts":[],"checks":[],"decision":null,"error":null}
+JSON
+normalize_provider_success \
+  "$COMMANDER_TMP/ordinary-task.json" \
+  "$COMMANDER_TMP/ordinary-result.json" \
+  "$COMMANDER_TMP/ordinary-normalized.json" \
+  "22222222-2222-4222-8222-222222222222" \
+  "codex" \
+  "thread-ordinary" \
+  "" \
+  "false"
+jq \
+  --arg attempt "22222222-2222-4222-8222-222222222222" \
+  --arg provider "codex" \
+  --arg session "thread-ordinary" \
+  '.contract_version = (.contract_version // "1.0")
+   | .attempt_id = $attempt
+   | .provider_metadata = ((.provider_metadata // {}) + {
+       provider: $provider,
+       session_id: $session
+     })' \
+  "$COMMANDER_TMP/ordinary-result.json" > "$COMMANDER_TMP/ordinary-expected.json"
+cmp "$COMMANDER_TMP/ordinary-expected.json" "$COMMANDER_TMP/ordinary-normalized.json" || {
+  echo 'runner changed the ordinary HarnessResult normalization path' >&2
   exit 1
 }
 
