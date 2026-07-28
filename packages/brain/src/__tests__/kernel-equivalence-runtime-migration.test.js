@@ -67,6 +67,11 @@ describe('provisional migration 375 Kernel equivalence runtime', () => {
     expect(sql).toMatch(/head_hash TEXT/i);
     expect(sql).toMatch(/idx_kernel_equivalence_predecessor/i);
     expect(sql).toMatch(/cell_id, run_id, attempt_id, artifact_sha/i);
+    expect(sql).toMatch(/kernel_equivalence_head_advance_guard/i);
+    expect(sql).toMatch(/NEW\.revision\s*<>\s*OLD\.revision\s*\+\s*1/i);
+    expect(sql).toMatch(/NEW\.genesis_hash\s*<>\s*OLD\.genesis_hash/i);
+    expect(sql).toMatch(/previous_bundle_hash IS NOT DISTINCT FROM OLD\.head_hash/i);
+    expect(sql).toMatch(/BEFORE UPDATE ON kernel_equivalence_bundle_chain_heads/i);
   });
 
   it('is rerunnable and registers its provisional schema version', () => {

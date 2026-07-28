@@ -62,6 +62,51 @@ function bundleValue(behaviorId, scenario = 'normal', previousBundleHash = null)
   };
 }
 
+async function insertOffChainBundle(value) {
+  await pool.query(
+    `INSERT INTO kernel_equivalence_receipt_bundles
+       (chain_id, bundle_hash, previous_bundle_hash, bundle_id, cell_id,
+        behavior_id, provider, scenario, run_id, attempt_id, artifact_sha,
+        resource_id, resource_ref, seam_id, adapter_id, grant_id, bundle)
+     VALUES
+       ('kernel-equivalence-v1', $1, NULL, $2, $3, $4, $5, $6, $7::uuid,
+        $8::uuid, $9, $10, $11, $12, $13, $14::uuid, $15::jsonb)`,
+    [
+      value.hash,
+      value.bundle.bundle_id,
+      value.bundle.cell_id,
+      value.bundle.behavior_id,
+      value.bundle.provider,
+      value.bundle.scenario,
+      value.bundle.run_id,
+      value.bundle.attempt_id,
+      value.bundle.artifact_sha,
+      value.bundle.resource_id,
+      value.bundle.resource_ref,
+      value.bundle.seam_id,
+      value.bundle.adapter_id,
+      value.bundle.grant_id,
+      JSON.stringify(value.bundle),
+    ],
+  );
+}
+
+function predecessorRequest(value) {
+  return {
+    cell_id: value.cell.cell_id,
+    behavior_id: value.cell.behavior_id,
+    provider: value.cell.provider,
+    scenario: 'violation',
+    run_id: value.grant.run_id,
+    attempt_id: value.grant.attempt_id,
+    artifact_sha: value.grant.artifact_sha,
+    resource_id: value.grant.resource_id,
+    resource_ref: value.grant.resource_ref,
+    seam_id: value.cell.seam_id,
+    adapter_id: value.cell.adapter_id,
+  };
+}
+
 beforeAll(async () => {
   adminPool = new pg.Pool({ ...DB_DEFAULTS, max: 4 });
   await adminPool.query(`CREATE SCHEMA ${quotedSchema}`);
@@ -188,22 +233,21 @@ describe('trusted equivalence runtime on real PostgreSQL', () => {
       previous_head_hash: winners[0].value.hash,
     })).resolves.toMatchObject({ committed: true });
     const resolvePredecessor = createPostgresPredecessorResolver({ pool });
-    await expect(resolvePredecessor({
-      cell_id: violation.cell.cell_id,
-      behavior_id: violation.cell.behavior_id,
-      provider: violation.cell.provider,
-      scenario: 'violation',
-      run_id: violation.grant.run_id,
-      attempt_id: violation.grant.attempt_id,
-      artifact_sha: violation.grant.artifact_sha,
-      resource_id: violation.grant.resource_id,
-      resource_ref: violation.grant.resource_ref,
-      seam_id: violation.cell.seam_id,
-      adapter_id: violation.cell.adapter_id,
-    })).resolves.toEqual({
+    await expect(resolvePredecessor(predecessorRequest(violation)))
+      .resolves.toEqual({
       grant: violation.grant,
       receipt: violation.receipt,
     });
+
+    const rogue = bundleValue(
+      'KERNEL-P0-ROGUE-VIOLATION',
+      'violation',
+    );
+    await insertOffChainBundle(rogue);
+    await expect(resolvePredecessor(predecessorRequest(rogue)))
+      .rejects.toMatchObject({
+        code: 'recovery_predecessor_unavailable',
+      });
   });
 
   it('rejects mutation and truncation of every append-only ledger', async () => {
@@ -236,6 +280,10 @@ describe('trusted equivalence runtime on real PostgreSQL', () => {
       'TRUNCATE kernel_equivalence_denial_audits',
       'TRUNCATE kernel_equivalence_receipt_bundles',
       'DELETE FROM kernel_equivalence_bundle_chain_heads',
+      `UPDATE kernel_equivalence_bundle_chain_heads
+          SET genesis_hash = repeat('f', 64)`,
+      `UPDATE kernel_equivalence_bundle_chain_heads
+          SET revision = revision + 2`,
     ]) {
       await expect(pool.query(statement)).rejects.toMatchObject({
         code: 'P0001',

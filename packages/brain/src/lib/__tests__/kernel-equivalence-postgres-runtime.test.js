@@ -301,6 +301,9 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       grant: value.grant,
       receipt: value.receipt,
     });
+    expect(pool.query.mock.calls[0][0]).toMatch(/WITH RECURSIVE trusted_chain/i);
+    expect(pool.query.mock.calls[0][0])
+      .toMatch(/kernel_equivalence_bundle_chain_heads/i);
     expect(pool.query.mock.calls[0][0]).toMatch(/LIMIT 2/i);
     pool.query.mockResolvedValue({
       rows: [
