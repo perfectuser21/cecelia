@@ -251,6 +251,57 @@ describe('migration 367 through the real PostgreSQL migration runner', () => {
     ).rejects.toMatchObject({ code: 'P0001' });
   });
 
+  it('blocks direct audit deletion while allowing authoritative Run cascade cleanup', async () => {
+    const runId = randomUUID();
+    await migrationPool.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await migrationPool.query(
+      `INSERT INTO harness_commander_state (
+         run_id,message_budget,message_token_budget
+       ) VALUES ($1,2,1000)`,
+      [runId],
+    );
+    const messageId = randomUUID();
+    await createActorInbox(migrationPool, { estimateTokens: () => 10 }).send({
+      schema: 'harness-actor-message/v1',
+      message_id: messageId,
+      run_id: runId,
+      sender_role: 'commander',
+      recipient_role: 'planner',
+      thread_id: randomUUID(),
+      correlation_id: randomUUID(),
+      source_attempt_id: null,
+      event_cursor: 1,
+      message_type: 'instruction',
+      payload: { guidance: 'Preserve the approved contract.' },
+      evidence_refs: ['event:1'],
+      dedupe_key: 'cascade-cleanup:1',
+    });
+
+    await expect(
+      migrationPool.query(
+        'DELETE FROM harness_run_events WHERE run_id=$1 AND cursor=1',
+        [runId],
+      ),
+    ).rejects.toMatchObject({ code: 'P0001' });
+    await expect(
+      migrationPool.query(
+        'DELETE FROM harness_actor_messages WHERE message_id=$1',
+        [messageId],
+      ),
+    ).rejects.toMatchObject({ code: 'P0001' });
+
+    await expect(
+      migrationPool.query('DELETE FROM initiative_runs WHERE id=$1', [runId]),
+    ).resolves.toMatchObject({ rowCount: 1 });
+    const remaining = await migrationPool.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM harness_run_events WHERE run_id=$1) AS events,
+         (SELECT COUNT(*)::int FROM harness_actor_messages WHERE run_id=$1) AS messages`,
+      [runId],
+    );
+    expect(remaining.rows[0]).toEqual({ events: 0, messages: 0 });
+  });
+
   it('rejects token overflow and source Attempts outside the sender identity fence', async () => {
     const runId = randomUUID();
     const attemptId = randomUUID();

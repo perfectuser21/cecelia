@@ -161,4 +161,16 @@ describe('Harness Commander read-only routes', () => {
       .get(`/api/brain/harness/runs/${runId}/actors/planner/inbox`)
       .expect(404);
   });
+
+  it('rate-limits repeated database-backed observability reads', async () => {
+    const app = makeApp(poolForReads());
+    for (let requestNumber = 1; requestNumber <= 120; requestNumber += 1) {
+      await request(app)
+        .get(`/api/brain/harness/runs/${runId}/commander`)
+        .expect(200);
+    }
+    await request(app)
+      .get(`/api/brain/harness/runs/${runId}/commander`)
+      .expect(429);
+  });
 });
