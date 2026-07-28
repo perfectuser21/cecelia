@@ -606,7 +606,8 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
         .map((entry) => {
           const attemptId = entry.name.slice(0, -'.json'.length);
           return readStateFile(path.join(root, entry.name), attemptId);
-        });
+        })
+        .filter((state) => state !== null);
     },
   });
 }
@@ -1381,11 +1382,15 @@ function safeReceiptMetadata(receipt) {
   });
 }
 
-function safeQuarantineMetadata(value, state) {
-  const rawReason = String(value?.reason ?? '');
+function safeQuarantineReason(value) {
+  const rawReason = String(value?.message ?? value?.reason ?? value ?? '');
   const reason = rawReason.match(/\battempt_[a-z0-9_:-]{1,240}\b/i)?.[0]
     ?.toLowerCase()
     ?? 'attempt_quarantined';
+  return reason.slice(0, 256);
+}
+
+function safeQuarantineMetadata(value, state) {
   return Object.freeze({
     status: 'quarantined',
     attempt_id: state.attempt_id,
@@ -1393,7 +1398,7 @@ function safeQuarantineMetadata(value, state) {
     admin_path: typeof value?.admin_path === 'string'
       ? value.admin_path
       : state.workspace.admin_path,
-    reason: reason.slice(0, 256),
+    reason: safeQuarantineReason(value),
   });
 }
 
@@ -1435,8 +1440,9 @@ function createAttemptRunner({
   }
 
   async function quarantineState(state, error) {
+    const reason = safeQuarantineReason(error);
     const quarantined = safeQuarantineMetadata(
-      await workspaceManager.quarantine(state.workspace, error),
+      await workspaceManager.quarantine(state.workspace, new Error(reason)),
       state,
     );
     const nextState = {

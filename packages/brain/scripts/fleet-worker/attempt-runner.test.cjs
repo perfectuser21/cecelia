@@ -708,10 +708,14 @@ describe('Fleet Worker Attempt runner', () => {
     await runner.terminal(ATTEMPT_ID);
 
     const quarantine = deps.stateStore.states.get(ATTEMPT_ID).quarantine;
+    const passedReason = deps.workspaceManager.quarantine.mock.calls[0][1];
     expect(quarantine.reason.length).toBeLessThanOrEqual(256);
     expect(quarantine.reason).not.toContain('authorization');
     expect(quarantine.reason).not.toContain('Bearer');
     expect(quarantine.reason).not.toContain('s'.repeat(32));
+    expect(passedReason).toBeInstanceOf(Error);
+    expect(passedReason.message).toBe(quarantine.reason);
+    expect(passedReason.message.length).toBeLessThanOrEqual(256);
   });
 
   it('quarantines the workspace and retains evidence when container cleanup fails', async () => {
@@ -1413,6 +1417,32 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(readFileSpy).not.toHaveBeenCalled();
     } finally {
       readFileSpy.mockRestore();
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('skips a state entry that vanishes after directory enumeration', async () => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-race-'));
+    const stateFile = path.join(stateRoot, `${ATTEMPT_ID}.json`);
+    fs.writeFileSync(stateFile, JSON.stringify(durableState()), { mode: 0o600 });
+    const store = createFileAttemptStateStore({ stateRoot });
+    const realReaddir = fs.readdirSync;
+    const readdirSpy = vi.spyOn(fs, 'readdirSync').mockImplementation((
+      target,
+      options,
+    ) => {
+      const entries = realReaddir(target, options);
+      if (path.resolve(String(target)) === path.resolve(stateRoot)) {
+        fs.rmSync(stateFile);
+      }
+      return entries;
+    });
+
+    try {
+      await expect(store.list()).resolves.toEqual([]);
+    } finally {
+      readdirSpy.mockRestore();
       fs.rmSync(stateRoot, { recursive: true, force: true });
     }
   });
