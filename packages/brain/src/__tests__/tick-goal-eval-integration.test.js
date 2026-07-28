@@ -62,6 +62,22 @@ vi.mock('../quarantine.js', () => ({
 vi.mock('../dispatch-stats.js', () => ({ recordDispatchResult: vi.fn(), getDispatchStats: vi.fn().mockResolvedValue({}) }));
 vi.mock('../health-monitor.js', () => ({ runLayer2HealthCheck: vi.fn().mockResolvedValue({ summary: 'ok' }) }));
 vi.mock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue({}) }));
+vi.mock('../heartbeat-plugin.js', () => ({
+  tick: vi.fn().mockResolvedValue({ triggered: false, actions: [] }),
+}));
+vi.mock('../zombie-sweep.js', () => ({
+  zombieSweep: vi.fn().mockResolvedValue({
+    worktreesRemoved: 0,
+    processesKilled: 0,
+    lockSlotsRemoved: 0,
+  }),
+}));
+vi.mock('../zombie-cleaner.js', () => ({
+  runZombieCleanup: vi.fn().mockResolvedValue({
+    slotsReclaimed: 0,
+    worktreesRemoved: 0,
+  }),
+}));
 vi.mock('../daily-review-scheduler.js', () => ({ triggerDailyReview: vi.fn().mockResolvedValue({}) }));
 vi.mock('../desire/index.js', () => ({ runDesireSystem: vi.fn().mockResolvedValue({}) }));
 vi.mock('../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({}) }));
