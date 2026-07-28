@@ -62,6 +62,12 @@ describe('GitHub merge adapter', () => {
     response.statusCheckRollup = [{ name: 'test', conclusion: 'CANCELLED' }];
     await expect(adapter.observePullRequest(PR_URL)).resolves.toMatchObject({ ci: 'fail' });
 
+    response.statusCheckRollup = [{ name: 'test', conclusion: 'SKIPPED' }];
+    await expect(adapter.observePullRequest(PR_URL)).resolves.toMatchObject({ ci: 'pending' });
+
+    response.statusCheckRollup = [{ name: 'test', conclusion: 'NEUTRAL' }];
+    await expect(adapter.observePullRequest(PR_URL)).resolves.toMatchObject({ ci: 'pending' });
+
     response.url = 'https://github.com/perfectuser21/cecelia/pull/4401';
     await expect(adapter.observePullRequest(PR_URL)).rejects.toThrow('github_pr_identity_mismatch');
   });
