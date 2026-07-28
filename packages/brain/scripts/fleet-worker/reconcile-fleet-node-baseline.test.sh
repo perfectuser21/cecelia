@@ -39,6 +39,7 @@ write_executable "$tailscale_app" \
 write_executable "$fake_bin/id" \
   '#!/usr/bin/env bash' \
   'if [[ "$1" == "-u" && $# -eq 1 ]]; then echo "${FLEET_TEST_EFFECTIVE_UID:-0}"; exit 0; fi' \
+  'if [[ "$1" == "-u" && "${2:-}" == "fleet-admin" ]]; then echo 501; exit 0; fi' \
   'if [[ "$1" == "-u" && "${2:-}" == "_cecelia" && -f "${FLEET_TEST_SERVICE_STATE:?}" ]]; then echo 450; exit 0; fi' \
   'if [[ "$1" == "-g" && "${2:-}" == "_cecelia" && -f "${FLEET_TEST_SERVICE_STATE:?}" ]]; then echo 450; exit 0; fi' \
   'exit 1'
@@ -249,6 +250,20 @@ write_executable "$fake_bin/chown" \
   '#!/usr/bin/env bash' \
   'printf "chown %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"'
 
+write_executable "$fake_bin/launchctl" \
+  '#!/usr/bin/env bash' \
+  'printf "launchctl %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"' \
+  '[[ "${1:-}" == asuser && "${2:-}" =~ ^[0-9]+$ ]] || exit 64' \
+  'shift 2' \
+  'exec "$@"'
+
+write_executable "$fake_bin/sudo" \
+  '#!/usr/bin/env bash' \
+  'printf "sudo %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"' \
+  '[[ "${1:-}" == -H && "${2:-}" == -u && -n "${3:-}" ]] || exit 64' \
+  'shift 3' \
+  'exec "$@"'
+
 write_executable "$fake_bin/installer" \
   '#!/usr/bin/env bash' \
   'printf "installer %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"'
@@ -304,6 +319,9 @@ run_reconciler() {
   FLEET_BASELINE_DOCKER="$docker_command" \
   FLEET_BASELINE_GIT="$(command -v git)" \
   FLEET_BASELINE_CHOWN="$fake_bin/chown" \
+  FLEET_BASELINE_LAUNCHCTL="$fake_bin/launchctl" \
+  FLEET_BASELINE_SUDO="$fake_bin/sudo" \
+  FLEET_BASELINE_ORBSTACK_OWNER=fleet-admin \
   FLEET_BASELINE_INSTALLER="$fake_bin/installer" \
   FLEET_BASELINE_SYSTEM_ROOT="$root" \
   FLEET_BASELINE_TMPDIR="$root/tmp" \
@@ -388,6 +406,12 @@ grep -Fq 'orb start' "$mutation_log" \
   || fail "asynchronous OrbStack fixture did not exercise start"
 grep -Fq 'orb status' "$mutation_log" \
   || fail "OrbStack start failure was not reconciled with bounded status checks"
+grep -Eq "launchctl asuser 501 $fake_bin/sudo -H -u fleet-admin .*/orb start" \
+  "$mutation_log" \
+  || fail "OrbStack was not started in the rollout user's launchd domain"
+grep -Eq "launchctl asuser 501 $fake_bin/sudo -H -u fleet-admin .*/orb status" \
+  "$mutation_log" \
+  || fail "OrbStack readiness was not checked in the rollout user's launchd domain"
 /bin/rm -f "$service_state" "$runner_state" "$state_root/orbstack-running"
 
 : > "$mutation_log"
