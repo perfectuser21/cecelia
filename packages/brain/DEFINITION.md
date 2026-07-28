@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.112
+**版本**: 1.267.113
+
+## Fleet rollout bundle HEAD contract hotfix
+
+- rollout 产物仓库将 `HEAD` 指向冻结的 `fleet-rollout` ref，并从 `HEAD`
+  创建 Git bundle，使节点 baseline 的既有 `fetch ... HEAD` 契约得到同一
+  rollout commit。
+- bundle 仍只包含冻结提交；不改变 Runner pin、Worker token、admission 或
+  Phase 4B/4C/4D/5 范围，失败继续保持节点 drain。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.112`。
 
 ## Fleet disposable bind-mount traversal hotfix
 

@@ -371,8 +371,10 @@ stage_worker_token "$worker_token"
   "$REPO_ROOT" "$rollout_commit" >/dev/null
 "$GIT" --git-dir="$bundle_repository" update-ref \
   refs/heads/fleet-rollout "$rollout_commit"
+"$GIT" --git-dir="$bundle_repository" symbolic-ref \
+  HEAD refs/heads/fleet-rollout
 "$GIT" --git-dir="$bundle_repository" bundle create \
-  "$repository_bundle" refs/heads/fleet-rollout
+  "$repository_bundle" HEAD
 "$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST"
 "$TAR" -cf "$payload_tar" -C "$TEMP_ROOT" \
   source.tar repository.bundle runner.tar worker-token

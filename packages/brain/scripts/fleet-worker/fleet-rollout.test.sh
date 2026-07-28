@@ -59,7 +59,7 @@ write_executable "$fake_bin/git" \
   '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/scripts/fleet-worker' \
   '  fi' \
   '  if [[ "${1:-}" == "init" && "${2:-}" == "--bare" ]]; then mkdir -p "$3"; exit 0; fi' \
-  '  if [[ "$*" == *" fetch --no-tags "* || "$*" == *" update-ref "* ]]; then exit 0; fi' \
+  '  if [[ "$*" == *" fetch --no-tags "* || "$*" == *" update-ref "* || "$*" == *" symbolic-ref HEAD "* ]]; then exit 0; fi' \
   '  if [[ "$*" == *" bundle create "* ]]; then' \
   '    while [[ $# -gt 0 && "$1" != "create" ]]; do shift; done' \
   '    shift' \
@@ -307,6 +307,10 @@ grep -Eq 'archive --format=tar --output .* 0000000000000000000000000000000000000
   || fail "rollout archive did not use the frozen commit"
 grep -Fq 'bundle create' "$artifact_log" \
   || fail "rollout did not create a Git bundle"
+grep -Eq 'symbolic-ref HEAD refs/heads/fleet-rollout$' "$artifact_log" \
+  || fail "rollout bundle repository HEAD did not resolve to the frozen rollout ref"
+grep -Eq 'bundle create .* HEAD$' "$artifact_log" \
+  || fail "rollout bundle did not publish the HEAD ref consumed by baseline"
 grep -Eq 'fetch --no-tags .* 0000000000000000000000000000000000000001$' \
   "$artifact_log" \
   || fail "rollout bundle did not fetch the frozen commit"
