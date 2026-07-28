@@ -869,3 +869,79 @@ export function verifyReceiptBundle(
     effect_receipts: verifiedReceipts,
   });
 }
+
+export async function preloadReceiptBundleAncestry({
+  headHash,
+  genesisHash = null,
+  readBundle,
+  trustRegistry,
+  now = Date.now(),
+} = {}) {
+  verifyNow(now);
+  if (
+    !HASH_PATTERN.test(headHash ?? '')
+    || (
+      genesisHash !== null
+      && !HASH_PATTERN.test(genesisHash ?? '')
+    )
+    || typeof readBundle !== 'function'
+  ) {
+    fail('bundle_hash_chain_invalid');
+  }
+  const bundles = new Map();
+  let currentHash = headHash;
+  let discoveredGenesis = null;
+  for (let depth = 0; depth < 100; depth += 1) {
+    if (bundles.has(currentHash)) fail('bundle_hash_chain_invalid');
+    let raw;
+    try {
+      raw = await readBundle(currentHash);
+    } catch {
+      fail('bundle_previous_unresolved');
+    }
+    if (
+      !asObject(raw)
+      || sha256Canonical(raw) !== currentHash
+    ) {
+      fail('bundle_previous_unresolved');
+    }
+    const stored = Object.freeze(structuredClone(raw));
+    bundles.set(currentHash, stored);
+    if (stored.previous_bundle_hash == null) {
+      discoveredGenesis = currentHash;
+      break;
+    }
+    if (!HASH_PATTERN.test(stored.previous_bundle_hash)) {
+      fail('bundle_hash_chain_invalid');
+    }
+    currentHash = stored.previous_bundle_hash;
+  }
+  if (
+    discoveredGenesis == null
+    || (
+      genesisHash !== null
+      && discoveredGenesis !== genesisHash
+    )
+  ) {
+    fail('bundle_hash_chain_invalid');
+  }
+  const resolvePreviousBundle = Object.freeze((hash) => {
+    const bundle = bundles.get(hash);
+    if (bundle == null) fail('bundle_previous_unresolved');
+    return structuredClone(bundle);
+  });
+  const head = bundles.get(headHash);
+  verifyReceiptBundle(
+    head,
+    trustRegistry,
+    expectedFromReceiptBundle(head),
+    { now, resolvePreviousBundle },
+  );
+  return Object.freeze({
+    schema_version: 'kernel-equivalence-bundle-snapshot/v1',
+    genesis_hash: discoveredGenesis,
+    head_hash: headHash,
+    bundle_hashes: Object.freeze([...bundles.keys()]),
+    readBundle: resolvePreviousBundle,
+  });
+}

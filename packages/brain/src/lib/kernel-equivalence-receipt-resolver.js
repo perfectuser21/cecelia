@@ -1,6 +1,7 @@
 import {
   EquivalenceReceiptError,
   expectedFromReceiptBundle,
+  preloadReceiptBundleAncestry,
   sha256Canonical,
   verifyReceiptBundle,
 } from './kernel-equivalence-receipts.js';
@@ -88,7 +89,7 @@ export function createTrustedReceiptResolver({
     fail('receipt_bundle_chain_invalid');
   }
 
-  return function resolve(reference, expected) {
+  return Object.freeze(function resolve(reference, expected) {
     const match = REFERENCE_PATTERN.exec(reference ?? '');
     if (!match) fail('receipt_reference_invalid');
     const expectedHash = match[1];
@@ -121,5 +122,31 @@ export function createTrustedReceiptResolver({
       bundle_hash: expectedHash,
       reference,
     });
-  };
+  });
+}
+
+export async function loadTrustedReceiptResolver({
+  readBundle,
+  trustRegistry,
+  bundleChain,
+  now = Date.now(),
+} = {}) {
+  if (typeof readBundle !== 'function') fail('receipt_reader_required');
+  const snapshot = await preloadReceiptBundleAncestry({
+    headHash: bundleChain?.head_hash,
+    genesisHash: bundleChain?.genesis_hash,
+    readBundle,
+    trustRegistry,
+    now,
+  });
+  return createTrustedReceiptResolver({
+    readBundle: snapshot.readBundle,
+    trustRegistry,
+    bundleChain: {
+      schema_version: 'kernel-equivalence-bundle-chain/v1',
+      genesis_hash: snapshot.genesis_hash,
+      head_hash: snapshot.head_hash,
+    },
+    now,
+  });
 }

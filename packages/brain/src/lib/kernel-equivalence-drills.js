@@ -3,6 +3,7 @@ import {
   PROOF_SCENARIOS,
 } from './kernel-equivalence-axes.js';
 import {
+  preloadReceiptBundleAncestry,
   verifyEffectReceipt,
   verifyExecutionGrant,
   verifyReceiptBundle,
@@ -898,6 +899,48 @@ export async function executeDrillCell({
     );
   }
 
+  if (bundle.previous_bundle_hash !== chainCheckpoint.head_hash) {
+    if (bundle?.previous_bundle_hash == null) {
+      try {
+        verifyReceiptBundle(
+          bundle,
+          trustRegistry,
+          expectedFromGrant(cell, verifiedGrant),
+          { now },
+        );
+      } catch (error) {
+        return deny(
+          errorCode(error, 'bundle_invalid', { trusted: true }),
+          'collector',
+        );
+      }
+    }
+    return deny('bundle_previous_head_mismatch', 'collector');
+  }
+  let previousSnapshot = null;
+  if (chainCheckpoint.head_hash != null) {
+    try {
+      previousSnapshot = await withTimeout(
+        () => preloadReceiptBundleAncestry({
+          headHash: chainCheckpoint.head_hash,
+          genesisHash: chainCheckpoint.genesis_hash,
+          readBundle: bundleChainStore.readBundle,
+          trustRegistry,
+          now,
+        }),
+        timeoutMs,
+        'bundle_chain_read_timeout',
+      );
+    } catch (error) {
+      return deny(
+        isInternalTimeout(error, 'bundle_chain_read_timeout')
+          ? 'bundle_chain_read_timeout'
+          : errorCode(error, 'bundle_previous_unresolved', { trusted: true }),
+        'bundle_chain',
+      );
+    }
+  }
+
   let verifiedBundle;
   try {
     verifiedBundle = verifyReceiptBundle(
@@ -906,15 +949,7 @@ export async function executeDrillCell({
       expectedFromGrant(cell, verifiedGrant),
       {
         now,
-        resolvePreviousBundle: chainCheckpoint.head_hash == null
-          ? null
-          : (hash) => {
-            try {
-              return bundleChainStore.readBundle(hash);
-            } catch {
-              throw new EquivalenceDrillError('bundle_previous_unresolved');
-            }
-          },
+        resolvePreviousBundle: previousSnapshot?.readBundle ?? null,
       },
     );
   } catch (error) {
@@ -923,10 +958,6 @@ export async function executeDrillCell({
       'collector',
     );
   }
-  if (bundle.previous_bundle_hash !== chainCheckpoint.head_hash) {
-    return deny('bundle_previous_head_mismatch', 'collector');
-  }
-
   let committed;
   try {
     const commitResult = await withTimeout(

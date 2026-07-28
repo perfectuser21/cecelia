@@ -20,6 +20,7 @@ import {
   EquivalenceReceiptError,
   assembleUnsignedBundle,
   canonicalJson,
+  preloadReceiptBundleAncestry,
   sha256Canonical,
   validateTrustRegistry,
   verifyEffectReceipt,
@@ -668,6 +669,14 @@ export function loadCollectorSigner({
     ) {
       fail('collector_previous_bundle_unavailable');
     }
+    const previousSnapshot = previousBundleHash == null
+      ? null
+      : await preloadReceiptBundleAncestry({
+        headHash: previousBundleHash,
+        readBundle: resolvePreviousBundle,
+        trustRegistry,
+        now: issuedAt,
+      });
     const lifetimeSeconds = Math.min(
       trustRegistry.collector_bundle_max_age_seconds,
       Math.floor((Date.parse(activeRecord.not_after) - issuedAt) / 1000),
@@ -702,7 +711,7 @@ export function loadCollectorSigner({
       expectedFromGrant(cell, grant),
       {
         now: issuedAt,
-        resolvePreviousBundle,
+        resolvePreviousBundle: previousSnapshot?.readBundle ?? null,
       },
     );
     return bundle;
