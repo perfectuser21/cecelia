@@ -635,6 +635,65 @@ describe('PostgreSQL grant execution authority', () => {
     expect(client.release).toHaveBeenCalledWith(true);
   });
 
+  it('does not double-release when aborted unlock later rejects', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const controller = new AbortController();
+    let announceUnlock;
+    let rejectUnlock;
+    const unlockStarted = new Promise((resolve) => {
+      announceUnlock = resolve;
+    });
+    const unlockBarrier = new Promise((_resolve, reject) => {
+      rejectUnlock = reject;
+    });
+    const client = clientFixture(async (sql) => {
+      if (
+        sql === 'BEGIN'
+        || sql === 'COMMIT'
+        || /set_config\('statement_timeout'/.test(sql)
+        || /pg_advisory_lock_shared/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_resolve_active_grant/.test(sql)) {
+        return { rowCount: 1, rows: [activeRow(grantSha256)] };
+      }
+      if (/INSERT INTO kernel_equivalence_execution_nonces/.test(sql)) {
+        return { rowCount: 1, rows: [{ grant_id: GRANT_ID }] };
+      }
+      if (/pg_advisory_unlock_shared/.test(sql)) {
+        announceUnlock();
+        await unlockBarrier;
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    client.release.mockImplementation(() => {
+      if (client.release.mock.calls.length > 1) {
+        throw new Error('Release called on client which has already been released');
+      }
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    const consumption = authority.consumeNonceIfActive({
+      grant: grantFixture(),
+      signal: controller.signal,
+    });
+    await unlockStarted;
+    controller.abort();
+    rejectUnlock(new Error('socket destroyed during unlock'));
+
+    await expect(consumption).rejects.toMatchObject({
+      disposition: 'effect_unknown',
+      safe_no_effect: false,
+      effect_possible: true,
+    });
+    expect(client.release).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledWith(true);
+  });
+
   it('commits durable intent before invoke and records completion before shared unlock', async () => {
     const grantSha256 = sha256Canonical(grantFixture());
     const cellId = grantFixture().cell_id;

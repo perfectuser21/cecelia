@@ -414,16 +414,34 @@ async function beginTransaction(session, timeoutMs) {
   await setTransactionTimeout(session.client, timeoutMs);
 }
 
+function destroyLockedSession(session) {
+  session.destroyed = true;
+  session.inTransaction = false;
+  if (session.released) return;
+  session.released = true;
+  try {
+    session.client.release(true);
+  } catch (error) {
+    session.releaseError = error;
+  }
+}
+
+function releaseLockedSession(session) {
+  if (session.released) return;
+  session.released = true;
+  try {
+    session.client.release();
+  } catch (error) {
+    failUnknown('grant_release_outcome_unknown', error);
+  }
+}
+
 async function commitTransaction(session) {
   try {
     await session.client.query('COMMIT');
     session.inTransaction = false;
   } catch (error) {
-    session.inTransaction = false;
-    if (!session.destroyed) {
-      session.destroyed = true;
-      session.client.release(true);
-    }
+    destroyLockedSession(session);
     failUnknown('grant_transaction_outcome_unknown', error);
   }
 }
@@ -455,16 +473,13 @@ async function openLockedSession({
     key: advisoryKey(grantId),
     lockSql: shared ? SQL.sharedLock : SQL.exclusiveLock,
     locked: false,
+    released: false,
     signal,
     unlockSql: shared ? SQL.sharedUnlock : SQL.exclusiveUnlock,
   };
   session.abortHandler = () => {
     session.aborted = true;
-    session.inTransaction = false;
-    if (!session.destroyed) {
-      session.destroyed = true;
-      client.release(true);
-    }
+    destroyLockedSession(session);
   };
   signal?.addEventListener('abort', session.abortHandler, { once: true });
   if (signal?.aborted) session.abortHandler();
@@ -476,10 +491,7 @@ async function openLockedSession({
     return session;
   } catch (error) {
     await rollbackTransaction(session);
-    if (!session.destroyed) {
-      session.destroyed = true;
-      client.release(true);
-    }
+    destroyLockedSession(session);
     if (session.aborted && abortCode) {
       signal?.removeEventListener('abort', session.abortHandler);
       fail(abortCode, error);
@@ -508,12 +520,11 @@ async function closeLockedSession(session) {
         }
         session.locked = false;
       } catch (error) {
-        session.destroyed = true;
-        session.client.release(true);
+        destroyLockedSession(session);
         failUnknown('grant_unlock_outcome_unknown', error);
       }
     }
-    session.client.release();
+    releaseLockedSession(session);
   } finally {
     session.signal?.removeEventListener(
       'abort',
