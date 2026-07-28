@@ -255,6 +255,15 @@ describe('external ReleaseRun controller launcher', () => {
         '/run': 'size=1M',
       };
     }],
+    ['case-changed tmpfs key', (observed) => {
+      observed.HostConfig.Tmpfs = { '/tmp': 'SIZE=100M' };
+    }],
+    ['lowercase tmpfs unit', (observed) => {
+      observed.HostConfig.Tmpfs = { '/tmp': 'size=100m' };
+    }],
+    ['malformed byte suffix', (observed) => {
+      observed.HostConfig.Tmpfs = { '/tmp': 'size=104857600iB' };
+    }],
     ['active healthcheck', (observed) => {
       observed.Config.Healthcheck = { Test: ['CMD', 'curl', 'localhost'] };
     }],

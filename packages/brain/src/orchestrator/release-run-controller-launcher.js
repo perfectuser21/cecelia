@@ -39,12 +39,10 @@ function hasExactControllerTmpfs(tmpfs) {
   }
   const option = tmpfs['/tmp'];
   if (typeof option !== 'string' || option.includes(',')) return false;
-  const match = option.match(
-    /^size=([1-9][0-9]*)([kmgt]?)(?:i?b)?$/i,
-  );
+  const match = option.match(/^size=([1-9][0-9]*)([KMGT]?)$/);
   if (!match) return false;
-  const powers = { '': 0n, k: 1n, m: 2n, g: 3n, t: 4n };
-  const exponent = powers[match[2].toLowerCase()];
+  const powers = { '': 0n, K: 1n, M: 2n, G: 3n, T: 4n };
+  const exponent = powers[match[2]];
   const bytes = BigInt(match[1]) * (1024n ** exponent);
   return bytes === 100n * 1024n * 1024n;
 }
