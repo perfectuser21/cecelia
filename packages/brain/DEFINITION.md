@@ -11,7 +11,8 @@
   挂载，root filesystem 只读，drop all capabilities，无 Docker socket、主仓、
   部署仓、SSH/gh/数据库/人工审批/Kernel controller 凭据；容器 image 先解析成
   immutable digest，Docker client 也只接收本地 transport allowlist env。
-- 容器内 Codex 固定使用 `--sandbox read-only --ephemeral`，prompt 走 stdin；
+- 容器内 Codex 固定使用已验证的 `gpt-5.4` 与
+  `--sandbox read-only --ephemeral`，prompt 经 Docker interactive stdin；
   此时才允许
   `--skip-git-repo-check` 绕过 CLI 自身的重复 admission。
 - review slot 使用私有目录下的原子 `mkdir`，没有 shell runner、可预测 prompt

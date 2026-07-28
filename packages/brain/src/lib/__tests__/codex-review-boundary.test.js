@@ -84,6 +84,8 @@ describe('Codex review process boundary', () => {
   it('uses an exact read-only argv and does not expose the prompt in argv', () => {
     expect(buildCodexReviewArguments()).toEqual([
       'exec',
+      '--model',
+      'gpt-5.4',
       '--skip-git-repo-check',
       '--sandbox',
       'read-only',
@@ -194,6 +196,7 @@ describe('Codex review process boundary', () => {
       imageId: `sha256:${'a'.repeat(64)}`,
     });
     expect(args).toEqual(expect.arrayContaining([
+      '--interactive',
       '--read-only',
       '--cap-drop=ALL',
       '--security-opt=no-new-privileges',

@@ -47,6 +47,7 @@ vi.mock('../lib/codex-review-boundary.js', () => ({
   buildCodexReviewDockerArguments: vi.fn(() => [
     'run',
     '--rm',
+    '--interactive',
     '--read-only',
     '--cap-drop=ALL',
     '--user',
@@ -110,6 +111,7 @@ describe('triggerCodexReview process boundary', () => {
       [
         'run',
         '--rm',
+        '--interactive',
         '--read-only',
         '--cap-drop=ALL',
         '--user',

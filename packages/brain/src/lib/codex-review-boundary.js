@@ -246,6 +246,8 @@ export function resolveCodexReviewImage({
 export function buildCodexReviewArguments() {
   return Object.freeze([
     'exec',
+    '--model',
+    'gpt-5.4',
     '--skip-git-repo-check',
     '--sandbox',
     'read-only',
@@ -284,6 +286,7 @@ export function buildCodexReviewDockerArguments({
     'run',
     '--rm',
     '--init',
+    '--interactive',
     '--read-only',
     '--cap-drop=ALL',
     '--security-opt=no-new-privileges',
