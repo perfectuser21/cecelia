@@ -8,7 +8,8 @@ const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/;
-const SAFE_RESOURCE_REF = /^(?:refs\/heads\/)?equivalence-drill\/[A-Za-z0-9_{}./:-]+$/;
+const SAFE_RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SAFE_RESOURCE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const FORBIDDEN_RESOURCE = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
 const DENIAL_OUTCOMES = new Set(['denied', 'blocked', 'rejected', 'failed']);
 const KEY_PURPOSES = new Set([
@@ -384,17 +385,49 @@ function expectedPrefix(cell, runId, attemptId) {
     .replaceAll('{attempt_id}', attemptId);
 }
 
+function validRuntimePrefix(prefix) {
+  if (
+    !nonEmpty(prefix)
+    || prefix.length > 512
+    || !prefix.endsWith('/')
+    || /[^\x20-\x7e]/.test(prefix)
+    || /[{}:]/.test(prefix)
+  ) {
+    return false;
+  }
+  const relative = prefix.startsWith('refs/heads/')
+    ? prefix.slice('refs/heads/'.length)
+    : prefix;
+  const segments = relative.slice(0, -1).split('/');
+  return (
+    segments.length >= 3
+    && segments[0] === 'equivalence-drill'
+    && UUID_PATTERN.test(segments[1] ?? '')
+    && UUID_PATTERN.test(segments[2] ?? '')
+    && segments.slice(3).every((segment) => SAFE_RESOURCE_SEGMENT.test(segment))
+  );
+}
+
 function validResource(value, prefix) {
+  const resourceRef = value?.resource_ref;
+  const resourceId = value?.resource_id;
+  const suffix = typeof resourceRef === 'string'
+    && typeof prefix === 'string'
+    && resourceRef.startsWith(prefix)
+    ? resourceRef.slice(prefix.length)
+    : '';
   return (
     value.environment === 'isolated'
-    && nonEmpty(value.resource_id)
-    && nonEmpty(value.resource_ref)
-    && nonEmpty(prefix)
-    && SAFE_RESOURCE_REF.test(prefix)
-    && SAFE_RESOURCE_REF.test(value.resource_ref)
-    && value.resource_ref.startsWith(prefix)
+    && SAFE_RESOURCE_ID.test(resourceId ?? '')
+    && validRuntimePrefix(prefix)
+    && nonEmpty(resourceRef)
+    && resourceRef.length <= 1_024
+    && !/[^\x20-\x7e]/.test(resourceRef)
+    && suffix.length > 0
+    && suffix.split('/').every((segment) => SAFE_RESOURCE_SEGMENT.test(segment))
+    && !FORBIDDEN_RESOURCE.test(resourceId)
     && !FORBIDDEN_RESOURCE.test(prefix)
-    && !FORBIDDEN_RESOURCE.test(value.resource_ref)
+    && !FORBIDDEN_RESOURCE.test(resourceRef)
   );
 }
 

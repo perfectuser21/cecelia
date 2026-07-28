@@ -20,7 +20,8 @@ const SAFE_RESOURCE_TYPES = new Set([
   'ephemeral_staging',
   'ephemeral_workspace',
 ]);
-const SAFE_PREFIX = /^(?:refs\/heads\/)?equivalence-drill\/[a-z0-9_{}./:-]+$/;
+const SAFE_PREFIX_TEMPLATE =
+  /^(?:refs\/heads\/)?equivalence-drill\/\{run_id\}\/\{attempt_id\}\/(?:[a-z0-9][a-z0-9_-]{0,127}\/)*$/;
 const FORBIDDEN_RESOURCE = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const TRUSTED_VERIFICATION_ERROR_CODES = new Set([
@@ -105,7 +106,8 @@ function validateIsolation(isolation, behaviorId) {
     !SAFE_ENVIRONMENTS.has(isolation.environment)
     || !SAFE_RESOURCE_TYPES.has(isolation.resource_type)
     || !nonEmpty(isolation.resource_prefix)
-    || !SAFE_PREFIX.test(isolation.resource_prefix)
+    || isolation.resource_prefix.length > 512
+    || !SAFE_PREFIX_TEMPLATE.test(isolation.resource_prefix)
     || FORBIDDEN_RESOURCE.test(isolation.resource_prefix)
   ) {
     fail('drill_isolation_unsafe', behaviorId);
