@@ -556,6 +556,74 @@ function verifyRecoveryLineage(receipt, expected) {
   }
 }
 
+function matchesRecoveryPredecessorContract(receipt, recoveryCell) {
+  const descriptor = recoveryCell?.expected?.predecessor_expected;
+  return (
+    asObject(descriptor)
+    && Object.keys(descriptor).sort().join(',')
+      === 'effect_code,expected_outcome'
+    && receipt?.observed_outcome === descriptor.expected_outcome
+    && receipt?.effect_code === descriptor.effect_code
+  );
+}
+
+export function receiptBundleContainsViolationMaterial(
+  bundle,
+  grant,
+  receipt,
+) {
+  try {
+    const grantHash = sha256Canonical(grant);
+    const receiptHash = sha256Canonical(receipt);
+    return (
+      asObject(bundle)
+      && bundle.scenario === 'violation'
+      && bundle.cell_id === grant?.cell_id
+      && bundle.cell_id === receipt?.cell_id
+      && bundle.behavior_id === grant?.behavior_id
+      && bundle.behavior_id === receipt?.behavior_id
+      && bundle.provider === grant?.provider
+      && bundle.provider === receipt?.provider
+      && bundle.run_id === grant?.run_id
+      && bundle.run_id === receipt?.run_id
+      && bundle.attempt_id === grant?.attempt_id
+      && bundle.attempt_id === receipt?.attempt_id
+      && bundle.artifact_sha === grant?.artifact_sha
+      && bundle.artifact_sha === receipt?.artifact_sha
+      && bundle.brain_version === grant?.brain_version
+      && bundle.brain_version === receipt?.brain_version
+      && bundle.engine_version === grant?.engine_version
+      && bundle.engine_version === receipt?.engine_version
+      && bundle.grant_id === grant?.grant_id
+      && bundle.nonce === grant?.nonce
+      && receipt?.grant_id === grant?.grant_id
+      && receipt?.nonce === grant?.nonce
+      && bundle.resource_id === grant?.resource_id
+      && bundle.resource_id === receipt?.resource_id
+      && bundle.resource_ref === grant?.resource_ref
+      && bundle.resource_ref === receipt?.resource_ref
+      && bundle.seam_id === grant?.seam_id
+      && bundle.seam_id === receipt?.seam_id
+      && bundle.adapter_id === grant?.adapter_id
+      && bundle.adapter_id === receipt?.adapter_id
+      && Array.isArray(bundle.execution_grants)
+      && bundle.execution_grants.length === 1
+      && sha256Canonical(bundle.execution_grants[0]) === grantHash
+      && Array.isArray(bundle.grant_hashes)
+      && bundle.grant_hashes.length === 1
+      && bundle.grant_hashes[0] === grantHash
+      && Array.isArray(bundle.effect_receipts)
+      && bundle.effect_receipts.length === 1
+      && sha256Canonical(bundle.effect_receipts[0]) === receiptHash
+      && Array.isArray(bundle.receipt_hashes)
+      && bundle.receipt_hashes.length === 1
+      && bundle.receipt_hashes[0] === receiptHash
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function verifyEffectReceipt(receipt, registry, expected, { now = Date.now() } = {}) {
   verifyNow(now);
   exactFields(receipt, EFFECT_FIELDS, 'effect_fields_invalid');
@@ -859,6 +927,10 @@ export function verifyReceiptBundle(
   }
 
   let verifiedReceipts;
+  const enforceRecoveryPredecessor = (
+    expected.cell.scenario === 'recovery'
+    && options[SKIP_BUNDLE_ANCESTRY_VERIFICATION] !== true
+  );
   if (expected.cell.scenario === 'recovery') {
     if (bundle.effect_receipts.length !== 2) fail('bundle_recovery_receipts_invalid');
     const violation = verifyEffectReceipt(
@@ -874,6 +946,12 @@ export function verifyReceiptBundle(
       },
       { now: verificationNow },
     );
+    if (
+      enforceRecoveryPredecessor
+      && !matchesRecoveryPredecessorContract(violation, expected.cell)
+    ) {
+      fail('bundle_recovery_predecessor_contract_mismatch');
+    }
     const recovery = verifyEffectReceipt(
       bundle.effect_receipts[1],
       registry,
@@ -929,6 +1007,10 @@ export function verifyReceiptBundle(
     adapter_id: bundle.adapter_id,
   });
 
+  if (enforceRecoveryPredecessor && bundle.previous_bundle_hash == null) {
+    fail('bundle_recovery_predecessor_uncommitted');
+  }
+  let committedRecoveryPredecessor = false;
   if (
     bundle.previous_bundle_hash != null
     && options[SKIP_BUNDLE_ANCESTRY_VERIFICATION] !== true
@@ -970,9 +1052,22 @@ export function verifyReceiptBundle(
           [SKIP_BUNDLE_ANCESTRY_VERIFICATION]: true,
         },
       );
+      if (
+        enforceRecoveryPredecessor
+        && receiptBundleContainsViolationMaterial(
+          previous,
+          verifiedGrants[0],
+          verifiedReceipts[0],
+        )
+      ) {
+        committedRecoveryPredecessor = true;
+      }
       depth += 1;
       previousHash = previous.previous_bundle_hash;
     }
+  }
+  if (enforceRecoveryPredecessor && !committedRecoveryPredecessor) {
+    fail('bundle_recovery_predecessor_uncommitted');
   }
 
   return Object.freeze({
