@@ -101,9 +101,19 @@ function fixture(scenario) {
     result: { status: 'forged' },
   };
   const effectSigner = {
-    signEffectResult: vi.fn(async (effect) => ({
+    signEffectResult: vi.fn(async ({
+      cell: signedCell,
+      grant: signedGrant,
+      observation,
+      predecessor: signedPredecessor,
+    }) => ({
       schema_version: 'kernel-equivalence-effect-receipt/v1',
-      ...effect,
+      seam_id: signedCell.seam_id,
+      adapter_id: signedCell.adapter_id,
+      resource_id: signedGrant.resource_id,
+      resource_ref: signedGrant.resource_ref,
+      ...observation,
+      predecessor: signedPredecessor,
       signature: 'test-signature',
     })),
   };
@@ -170,12 +180,17 @@ describe('Attempt ownership equivalence seam', () => {
     );
     expect(value.ownershipAuthority.snapshot).toHaveBeenCalledTimes(2);
     expect(value.effectSigner.signEffectResult).toHaveBeenCalledWith(
-      expect.objectContaining({
-        service_id: value.cell.seam_id,
+      {
+        cell: value.cell,
+        grant: value.grant,
+        observation: {
+          observed_outcome: observedOutcome,
+          effect_code: effectCode,
+          before_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          after_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
         predecessor: lineage,
-        before_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        after_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
-      }),
+      },
     );
   });
 

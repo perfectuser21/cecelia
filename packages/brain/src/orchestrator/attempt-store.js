@@ -26,6 +26,22 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
 const TERMINAL_SQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
 const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
 const MAX_FLEET_HEARTBEAT_CLOCK_SKEW_MS = 120_000;
+const ATTEMPT_OWNERSHIP_SEAM_ID =
+  'kernel.controller.attempt_ownership';
+const ATTEMPT_OWNERSHIP_EFFECTS = Object.freeze({
+  normal: Object.freeze({
+    observed_outcome: 'confirmed',
+    effect_code: 'single_controller_ownership_confirmed',
+  }),
+  violation: Object.freeze({
+    observed_outcome: 'denied',
+    effect_code: 'cross_session_callback_denied',
+  }),
+  recovery: Object.freeze({
+    observed_outcome: 'recovered',
+    effect_code: 'controller_ownership_recovered',
+  }),
+});
 
 function firstRow(queryResult) {
   return queryResult.rows?.[0] ?? null;
@@ -862,6 +878,225 @@ export function createAttemptStore(pool, { now = () => Date.now() } = {}) {
         );
       }
       return true;
+    },
+  });
+}
+
+function attemptOwnershipError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
+function validOwnershipTarget(target) {
+  return (
+    target
+    && typeof target.attempt_id === 'string'
+    && typeof target.lease_owner === 'string'
+    && target.lease_owner.length > 0
+    && typeof target.callback_owner === 'string'
+    && target.callback_owner.length > 0
+    && Number.isInteger(target.lease_generation)
+    && target.lease_generation >= 0
+    && SUCCESS_TERMINAL_STATUSES.has(target.result?.status)
+    && target.result?.attempt_id === target.attempt_id
+  );
+}
+
+export function createAttemptOwnershipEquivalenceSeam({
+  attemptStore,
+  ownershipAuthority,
+  effectSigner,
+} = {}) {
+  if (typeof effectSigner?.signEffectResult !== 'function') {
+    throw attemptOwnershipError('seam_effect_signer_unavailable');
+  }
+  if (
+    ownershipAuthority?.owner_service !== ATTEMPT_OWNERSHIP_SEAM_ID
+    || typeof ownershipAuthority?.loadTarget !== 'function'
+    || typeof ownershipAuthority?.snapshot !== 'function'
+    || typeof ownershipAuthority?.loadPredecessorOwnershipBinding
+      !== 'function'
+  ) {
+    throw attemptOwnershipError(
+      'attempt_ownership_authority_port_unavailable',
+    );
+  }
+  if (
+    typeof attemptStore?.complete !== 'function'
+    || typeof attemptStore?.getById !== 'function'
+  ) {
+    throw attemptOwnershipError('attempt_ownership_store_unavailable');
+  }
+
+  return Object.freeze({
+    owner_service: ATTEMPT_OWNERSHIP_SEAM_ID,
+
+    async invoke({
+      cell,
+      grant,
+      resource,
+      predecessor = null,
+      signal,
+    }) {
+      signal?.throwIfAborted();
+      if (
+        cell?.seam_id !== ATTEMPT_OWNERSHIP_SEAM_ID
+        || resource?.resource_id !== grant?.resource_id
+        || resource?.resource_ref !== grant?.resource_ref
+      ) {
+        throw attemptOwnershipError(
+          'attempt_ownership_equivalence_resource_invalid',
+        );
+      }
+      const effect = ATTEMPT_OWNERSHIP_EFFECTS[cell.scenario];
+      if (!effect) {
+        throw attemptOwnershipError(
+          'attempt_ownership_equivalence_scenario_invalid',
+        );
+      }
+      const authorityResource = Object.freeze({
+        resource_id: resource.resource_id,
+        resource_ref: resource.resource_ref,
+      });
+      const target = await ownershipAuthority.loadTarget({
+        cell,
+        grant,
+        resource: authorityResource,
+        signal,
+      });
+      signal?.throwIfAborted();
+      if (
+        !validOwnershipTarget(target)
+        || target.attempt_id !== grant.attempt_id
+      ) {
+        throw attemptOwnershipError(
+          'attempt_ownership_target_unavailable',
+        );
+      }
+      const shouldOwn = cell.scenario !== 'violation';
+      if (
+        (target.callback_owner === target.lease_owner) !== shouldOwn
+      ) {
+        throw attemptOwnershipError(
+          'attempt_ownership_scenario_invalid',
+        );
+      }
+
+      if (cell.scenario === 'recovery') {
+        const predecessorGrantId = predecessor?.grant?.grant_id;
+        const predecessorReceiptId = predecessor?.receipt?.receipt_id;
+        const binding =
+          await ownershipAuthority.loadPredecessorOwnershipBinding({
+            cell,
+            grant,
+            predecessor,
+            signal,
+          });
+        signal?.throwIfAborted();
+        if (
+          !predecessorGrantId
+          || !predecessorReceiptId
+          || binding?.owner_service !== ATTEMPT_OWNERSHIP_SEAM_ID
+          || binding?.predecessor_grant_id !== predecessorGrantId
+          || binding?.predecessor_receipt_id !== predecessorReceiptId
+          || binding?.denial_code !== 'cross_session_callback_denied'
+          || binding?.evidence_ref
+            !== `db:kernel-equivalence-receipts/${predecessorReceiptId}`
+        ) {
+          throw attemptOwnershipError(
+            'attempt_ownership_recovery_unproven',
+          );
+        }
+      } else if (predecessor !== null) {
+        throw attemptOwnershipError(
+          'attempt_ownership_predecessor_invalid',
+        );
+      }
+
+      const current = await attemptStore.getById(target.attempt_id);
+      signal?.throwIfAborted();
+      if (
+        current?.id !== target.attempt_id
+        || current.run_id !== grant.run_id
+        || !['starting', 'running'].includes(current.status)
+        || current.lease_owner !== target.lease_owner
+        || current.lease_generation !== target.lease_generation
+      ) {
+        throw attemptOwnershipError(
+          'attempt_ownership_target_changed',
+        );
+      }
+      const before = await ownershipAuthority.snapshot({
+        phase: 'before',
+        cell,
+        grant,
+        target,
+        signal,
+      });
+      signal?.throwIfAborted();
+      const outcome = await attemptStore.complete(
+        target.attempt_id,
+        target.result,
+        {
+          leaseOwner: target.callback_owner,
+          leaseGeneration: target.lease_generation,
+        },
+      );
+      signal?.throwIfAborted();
+      const persisted = await attemptStore.getById(target.attempt_id);
+      signal?.throwIfAborted();
+      const completed = (
+        outcome?.attempt?.id === target.attempt_id
+        && SUCCESS_TERMINAL_STATUSES.has(persisted?.status)
+        && stableJsonSha256(persisted?.result)
+          === stableJsonSha256(target.result)
+      );
+      const denied = (
+        outcome?.attempt == null
+        && outcome?.deduped === true
+        && persisted?.status === current.status
+        && stableJsonSha256(persisted?.result)
+          === stableJsonSha256(current.result)
+      );
+      if (
+        (cell.scenario === 'violation' && !denied)
+        || (cell.scenario !== 'violation' && !completed)
+      ) {
+        throw attemptOwnershipError(
+          'attempt_ownership_outcome_unexpected',
+        );
+      }
+      const after = await ownershipAuthority.snapshot({
+        phase: 'after',
+        cell,
+        grant,
+        target,
+        outcome,
+        persisted,
+        signal,
+      });
+      signal?.throwIfAborted();
+
+      return effectSigner.signEffectResult({
+        cell,
+        grant,
+        observation: {
+          observed_outcome: effect.observed_outcome,
+          effect_code: effect.effect_code,
+          before_hash: stableJsonSha256(before),
+          after_hash: stableJsonSha256(after),
+        },
+        predecessor,
+      });
+    },
+
+    async cancel({ signal } = {}) {
+      return { confirmed: signal?.aborted === true };
+    },
+
+    async cleanup() {
+      return { confirmed: true };
     },
   });
 }
