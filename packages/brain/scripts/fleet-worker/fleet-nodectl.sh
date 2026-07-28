@@ -10,7 +10,15 @@ HEALTH_FILE="${FLEET_NODECTL_HEALTH_FILE:-}"
 LOCAL_MACHINE="${CECELIA_MACHINE_ID:-}"
 PLIST="${FLEET_NODECTL_PLIST:-/Library/LaunchDaemons/com.perfect21.fleet-worker.plist}"
 LABEL='com.perfect21.fleet-worker'
-NODE_EXECUTABLE="${FLEET_NODECTL_NODE:-$(command -v node || true)}"
+PINNED_NODE="${FLEET_NODECTL_PINNED_NODE:-/usr/local/libexec/cecelia/toolchain/bin/node}"
+PATH_NODE="${FLEET_NODECTL_PATH_NODE-$(command -v node || true)}"
+if [[ -n "${FLEET_NODECTL_NODE:-}" ]]; then
+  NODE_EXECUTABLE="$FLEET_NODECTL_NODE"
+elif [[ -x "$PINNED_NODE" ]]; then
+  NODE_EXECUTABLE="$PINNED_NODE"
+else
+  NODE_EXECUTABLE="$PATH_NODE"
+fi
 
 usage() {
   cat <<'USAGE'

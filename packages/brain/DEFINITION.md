@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.120
+**版本**: 1.267.121
+
+## Clean-node nodectl pinned Node resolution
+
+- `fleet-nodectl` 在执行 admission evaluator 时优先使用 Fleet baseline
+  安装的 pinned Node toolchain；只有固定工具链不存在时才回退交互式 PATH。
+- 显式测试/运维 override 仍具有最高优先级；该修正不改变 admission
+  判定、不放宽健康合同，也不引入长期凭据。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.120`。
 
 ## Clean-node OrbStack Docker socket link
 
