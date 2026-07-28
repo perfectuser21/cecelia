@@ -6,6 +6,9 @@ import {
   executeDrillCell,
 } from '../kernel-equivalence-drills.js';
 import {
+  createServerOwnedRuntimeRegistry,
+} from '../kernel-equivalence-runtime-registry.js';
+import {
   FIXTURE_NOW,
   createTrustFixture,
   fixtureBundle,
@@ -455,6 +458,45 @@ describe('executeDrillCell', () => {
     });
   });
 
+  it('cannot override cleanup authority selected by the server-owned runtime registry', async () => {
+    const value = executionFixture();
+    const serverVerifier = vi.fn(async () => ({
+      confirmed: false,
+      evidence_ref: null,
+    }));
+    const runtimeRegistry = createServerOwnedRuntimeRegistry({
+      adapters: [{
+        adapter_id: value.cell.adapter_id,
+        owner_service: value.cell.seam_id,
+        prepare: value.adapter.prepare,
+        invokeActualSeam: value.adapter.invokeActualSeam,
+        observe: value.adapter.observe,
+        cancel: value.adapter.cancel,
+        cleanup: value.adapter.cleanup,
+      }],
+      cleanupVerifiers: [{
+        verifier_id: 'kernel.cleanup.ci_merge_authority.v1',
+        adapter_id: value.cell.adapter_id,
+        owner_service: 'kernel.cleanup.observer',
+        verifyCleanup: serverVerifier,
+      }],
+    });
+    const callerSelectedVerifier = vi.fn(async () => ({
+      confirmed: true,
+      evidence_ref: `cleanup-evidence:${'c'.repeat(64)}`,
+    }));
+
+    await expect(execute(value, {
+      adapters: runtimeRegistry,
+      cleanupVerifier: callerSelectedVerifier,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'adapter_cleanup_unconfirmed',
+    });
+    expect(serverVerifier).toHaveBeenCalledOnce();
+    expect(callerSelectedVerifier).not.toHaveBeenCalled();
+  });
+
   it('maps untrusted error codes and sanitizes invalid audit identifiers', async () => {
     const value = executionFixture();
     value.adapter.invokeActualSeam.mockImplementation(async () => {
@@ -684,21 +726,36 @@ describe('executeDrillCell', () => {
       [violationGrant, recoveryGrant],
     );
     const calls = [];
+    const assertPredecessor = (context) => {
+      expect(context.predecessor).toEqual({
+        grant: violationGrant,
+        receipt: violationReceipt,
+      });
+      expect(Object.isFrozen(context.predecessor)).toBe(true);
+      expect(Object.isFrozen(context.predecessor.grant)).toBe(true);
+      expect(Object.isFrozen(context.predecessor.receipt)).toBe(true);
+      expect(context).not.toHaveProperty('predecessorResolver');
+      expect(context).not.toHaveProperty('predecessorLoader');
+    };
     const adapter = {
-      prepare: vi.fn(async () => {
+      prepare: vi.fn(async (context) => {
+        assertPredecessor(context);
         calls.push('prepare');
         return {};
       }),
-      invokeActualSeam: vi.fn(async () => {
+      invokeActualSeam: vi.fn(async (context) => {
+        assertPredecessor(context);
         calls.push('seam');
         return recoveryReceipt;
       }),
-      observe: vi.fn(async (output) => {
+      observe: vi.fn(async (output, context) => {
+        assertPredecessor(context);
         calls.push('observe');
         return output;
       }),
       cancel: vi.fn(async () => ({ confirmed: true })),
-      cleanup: vi.fn(async () => {
+      cleanup: vi.fn(async (context) => {
+        assertPredecessor(context);
         calls.push('cleanup');
         return { confirmed: true };
       }),
@@ -764,6 +821,7 @@ describe('executeDrillCell', () => {
       'cleanup',
       'collector',
     ]);
+    expect(predecessorResolver).toHaveBeenCalledOnce();
   });
 
   it('blocks recovery without a trusted violation predecessor before nonce use', async () => {
