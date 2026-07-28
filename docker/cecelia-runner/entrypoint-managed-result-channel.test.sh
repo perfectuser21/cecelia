@@ -59,16 +59,17 @@ export TRACE_FILE
 unset HARNESS_CALLBACK_TOKEN HARNESS_CALLBACK_URL
 NORMALIZED_RESULT_FILE="/tmp/harness-result-$ATTEMPT_ID.normalized.json"
 PATH="$FAKE_BIN:$PATH" finalize_managed_result "$NORMALIZED_RESULT_FILE"
-mapfile -t DRIVER_ARGS < "$TRACE_FILE"
-[[ "${DRIVER_ARGS[0]}" == '/usr/local/bin/result-channel-driver.cjs' ]]
-[[ "${DRIVER_ARGS[1]}" == '--provider-result' ]]
-[[ "${DRIVER_ARGS[2]}" == "$NORMALIZED_RESULT_FILE" ]]
+[[ "$(sed -n '1p' "$TRACE_FILE")" == '/usr/local/bin/result-channel-driver.cjs' ]]
+[[ "$(sed -n '2p' "$TRACE_FILE")" == '--provider-result' ]]
+[[ "$(sed -n '3p' "$TRACE_FILE")" == "$NORMALIZED_RESULT_FILE" ]]
 
 PROVIDER_SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
 grep -q 'validate_managed_result_channel' <<<"$PROVIDER_SECTION"
 grep -q 'finalize_managed_result "\$NORMALIZED_RESULT_FILE"' <<<"$PROVIDER_SECTION"
 grep -q '! managed_result_channel_active.*HARNESS_LEASE_OWNER' <<<"$PROVIDER_SECTION"
 grep -q '! managed_result_channel_active.*persist_provider_session' <<<"$PROVIDER_SECTION"
+grep -q 'write_managed_provider_session "\$provider_session_id"' <<<"$PROVIDER_SECTION"
+grep -q 'write_managed_provider_session "\$live_session"' <<<"$PROVIDER_SECTION"
 
 # Once provider execution returns, managed mode exits before callback body/URL,
 # callback token, retry loop, or any legacy callback HTTP can be evaluated.

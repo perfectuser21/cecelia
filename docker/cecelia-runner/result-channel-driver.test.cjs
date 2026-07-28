@@ -10,6 +10,7 @@ const {
   buildVerifierEnvelope,
   finalizeManagedResult,
   isManagedResultChannel,
+  writeManagedSession,
 } = require('./result-channel-driver.cjs');
 
 const TASK_ID = 'task-result-channel';
@@ -364,6 +365,34 @@ test('atomically replaces raw result with canonical HarnessResult and writes ses
   });
   assert.equal(fs.statSync(SESSION_FILE).mode & 0o777, 0o600);
   assert.equal(fs.existsSync(path.join(workspace, '.brain-result.json')), false);
+});
+
+test('writes a live provider session handoff without provider result or callback authority', () => {
+  fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
+  fs.rmSync(SESSION_FILE, { force: true });
+  const workspace = fixtureWorkspace();
+  const bundleFile = path.join(workspace, 'task-bundle.json');
+  fs.writeFileSync(
+    bundleFile,
+    JSON.stringify({ instruction: 'bounded', task_bundle: taskBundle('planner') }),
+    { mode: 0o600 },
+  );
+  const env = managedEnv('planner', workspace, bundleFile);
+  env.CECELIA_EXECUTOR = 'claude';
+
+  writeManagedSession({
+    env,
+    provider: 'claude',
+    sessionId: 'live-session-before-exit',
+  });
+
+  assert.deepEqual(JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8')), {
+    contract_version: 'provider-session/v1',
+    attempt_id: ATTEMPT_ID,
+    provider: 'claude',
+    session_id: 'live-session-before-exit',
+  });
+  assert.equal(fs.statSync(SESSION_FILE).mode & 0o777, 0o600);
 });
 
 test('empty, unknown, missing, oversized and authority-mismatched managed inputs fail closed', async () => {
