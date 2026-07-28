@@ -245,7 +245,12 @@ describe('buildRealDeps', () => {
         },
         run: { phase: 'evaluate' },
         contract: { row: {} },
-        pr: { url: 'https://github.com/o/r/pull/1' },
+        pr: {
+          url: 'https://github.com/o/r/pull/1',
+          state: 'OPEN',
+          head_ref: 'cp-cross-vendor-review',
+          head_sha: 'b'.repeat(40),
+        },
       },
     });
 

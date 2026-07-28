@@ -761,6 +761,7 @@ describe('createDispatcher', () => {
 
   it('evaluator 工作树可写，以便切 PR 分支、真启服务并固化验收证据', async () => {
     const deps = makeDeps();
+    const headSha = 'b'.repeat(40);
 
     await createDispatcher(deps)('spawn:evaluator', {
       taskId,
@@ -771,7 +772,8 @@ describe('createDispatcher', () => {
         pr: {
           url: 'https://github.com/o/r/pull/42',
           head_ref: 'cp-evaluator-target',
-          head_sha: 'sha-1',
+          head_sha: headSha,
+          state: 'OPEN',
           ci: 'pass',
         },
       },
@@ -782,7 +784,7 @@ describe('createDispatcher', () => {
     expect(created.bundle.constraints).toMatchObject({ fresh_session: true, read_only: false });
     expect(created.bundle.inputs).toMatchObject({
       pr_branch: 'cp-evaluator-target',
-      pr_head_sha: 'sha-1',
+      pr_head_sha: headSha,
     });
     expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
       bundle: expect.objectContaining({ constraints: expect.objectContaining({ read_only: false }) }),
@@ -855,6 +857,91 @@ describe('createDispatcher', () => {
     expect(missingDeps.attemptStore.createAttempt).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['spawn:generator-fix', 'url'],
+    ['spawn:generator-fix', 'head_ref'],
+    ['spawn:generator-fix', 'head_sha'],
+    ['spawn:generator-fix', 'state'],
+    ['spawn:evaluator', 'url'],
+    ['spawn:evaluator', 'head_ref'],
+    ['spawn:evaluator', 'head_sha'],
+    ['spawn:evaluator', 'state'],
+  ])('%s 缺 persisted PR %s 时在创建 attempt 前 fail closed', async (action, missing) => {
+    const pullRequest = {
+      url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+      head_ref: 'cp-result-channel',
+      head_sha: 'b'.repeat(40),
+      state: 'OPEN',
+    };
+    delete pullRequest[missing];
+    const deps = makeDeps();
+
+    await expect(createDispatcher(deps)(action, {
+      taskId,
+      runId,
+      hop: 9,
+      observed: { ...observed, pr: pullRequest },
+      decision: { phase: action === 'spawn:evaluator' ? 'evaluate' : 'generate' },
+    })).rejects.toThrow(/pr_authority_required/);
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+  });
+
+  it.each(['spawn:generator-fix', 'spawn:evaluator'])(
+    '%s 从 server-owned URL 严格解析 PR number 并固定 type',
+    async (action) => {
+      const deps = makeDeps();
+      await createDispatcher(deps)(action, {
+        taskId,
+        runId,
+        hop: 9,
+        observed: {
+          ...observed,
+          pr: {
+            url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+            head_ref: 'cp-result-channel',
+            head_sha: 'b'.repeat(40),
+            state: 'OPEN',
+          },
+        },
+        decision: { phase: action === 'spawn:evaluator' ? 'evaluate' : 'generate' },
+      });
+
+      expect(deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs.pull_request)
+        .toEqual({
+          type: 'pull_request',
+          url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+          number: 4391,
+          head_ref: 'cp-result-channel',
+          head_sha: 'b'.repeat(40),
+          state: 'OPEN',
+        });
+    },
+  );
+
+  it.each([
+    'https://github.com/perfectuser21/cecelia/pull/not-a-number',
+    'https://github.com/perfectuser21/cecelia/pull/4391?number=9999',
+    'https://github.com/perfectuser21/cecelia/issues/4391',
+  ])('evaluator 拒绝不能严格解析 number 的 server-owned PR URL: %s', async (url) => {
+    const deps = makeDeps();
+    await expect(createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        pr: {
+          url,
+          head_ref: 'cp-result-channel',
+          head_sha: 'b'.repeat(40),
+          state: 'OPEN',
+        },
+      },
+      decision: { phase: 'evaluate' },
+    })).rejects.toThrow(/pr_authority_required/);
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+  });
+
   it('按 role_assignments 为同一 run 的 generator/evaluator 选择不同 provider 与账户 home', async () => {
     const attempts = ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
     const adapters = Object.fromEntries(['codex', 'claude'].map((provider) => [provider, {
@@ -905,7 +992,16 @@ describe('createDispatcher', () => {
     const baseCtx = {
       taskId,
       runId,
-      observed: { ...observed, task: { ...observed.task, payload } },
+      observed: {
+        ...observed,
+        task: { ...observed.task, payload },
+        pr: {
+          url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+          head_ref: 'cp-result-channel',
+          head_sha: 'b'.repeat(40),
+          state: 'OPEN',
+        },
+      },
     };
 
     await dispatch('spawn:generator', { ...baseCtx, hop: 5, decision: { phase: 'generate' } });

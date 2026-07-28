@@ -489,7 +489,12 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
         inputs: {
           task_id: taskId,
           contract_sha: contractSha,
-          pull_request: { head_sha: prHeadSha },
+          pull_request: {
+            url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+            head_ref: 'cp-result-channel',
+            head_sha: prHeadSha,
+            state: 'OPEN',
+          },
         },
       },
     });
@@ -609,7 +614,12 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
               task_id: taskId,
               sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
               contract_sha: contractSha,
-              pull_request: { head_sha: 'f'.repeat(40) },
+              pull_request: {
+                url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+                head_ref: 'cp-result-channel',
+                head_sha: 'f'.repeat(40),
+                state: 'OPEN',
+              },
             },
           },
         },
@@ -690,6 +700,108 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error).toMatch(/generator PR authority is required/);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.pool.query).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['generator', 'url'],
+    ['generator', 'head_ref'],
+    ['generator', 'head_sha'],
+    ['generator', 'state'],
+    ['evaluator', 'url'],
+    ['evaluator', 'head_ref'],
+    ['evaluator', 'head_sha'],
+    ['evaluator', 'state'],
+    ['reporter', 'url'],
+    ['reporter', 'head_ref'],
+    ['reporter', 'head_sha'],
+    ['reporter', 'state'],
+  ])('%s 的 persisted PR 只有 %s 时 fail closed 且无副作用', async (role, onlyField) => {
+    const sprintDir = 'sprints/07280905-kernel-result-channel-bootstrap';
+    const reportPath = `${sprintDir}/harness-report.md`;
+    const pullRequest = {
+      type: 'pull_request',
+      url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+      number: 4391,
+      head_ref: 'cp-result-channel',
+      head_sha: prHeadSha,
+      state: 'OPEN',
+    };
+    const bodyByRole = {
+      generator: () => finalizedRoleCallback('generator', {
+        verdict: 'DONE',
+        pr_url: pullRequest.url,
+      }, { pull_request: pullRequest }),
+      evaluator: evaluatorRoleCallback,
+      reporter: () => finalizedRoleCallback('reporter', {
+        verdict: 'DONE',
+        task_id: taskId,
+        report_path: reportPath,
+        pr_url: pullRequest.url,
+        screenshots: [],
+        concerns: '',
+      }, {
+        pull_request: pullRequest,
+        report: { path: reportPath, sha256: `sha256:${'a'.repeat(64)}` },
+        learning: {
+          path: `${sprintDir}/learning.md`,
+          sha256: `sha256:${'b'.repeat(64)}`,
+        },
+        screenshots: [],
+        learnings_inserted: 1,
+      }),
+    };
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      role,
+      task_bundle: {
+        expected_output: `harness-result/${role}-v1`,
+        inputs: {
+          task_id: taskId,
+          sprint_dir: sprintDir,
+          contract_sha: contractSha,
+          attempt_kind: role === 'generator' ? 'fix' : 'initial',
+          pull_request: { [onlyField]: pullRequest[onlyField] },
+        },
+      },
+    });
+
+    const response = await postCallback(app, bodyByRole[role]());
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/PR authority is required/);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.pool.query).not.toHaveBeenCalled();
+  });
+
+  it('callback PR number 必须匹配 server-owned URL 解析值', async () => {
+    const body = evaluatorRoleCallback();
+    body.role_result.verified.pull_request.number = 9999;
+    body.artifacts[0].number = 9999;
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      role: 'evaluator',
+      task_bundle: {
+        expected_output: 'harness-result/evaluator-v1',
+        inputs: {
+          task_id: taskId,
+          sprint_dir: 'sprints/07280905-kernel-result-channel-bootstrap',
+          contract_sha: contractSha,
+          pull_request: {
+            url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+            head_ref: 'cp-result-channel',
+            head_sha: prHeadSha,
+            state: 'OPEN',
+          },
+        },
+      },
+    });
+
+    const response = await postCallback(app, body);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/PR number authority mismatch/);
     expect(mocks.store.complete).not.toHaveBeenCalled();
     expect(mocks.pool.query).not.toHaveBeenCalled();
   });

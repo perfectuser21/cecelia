@@ -273,6 +273,51 @@ test('reporter maps observed report, learning, screenshots and DB count without 
   assert.equal(result.role_result.verified.learnings_inserted, 1);
 });
 
+test('reporter accepts a verified MERGED PR while generator and evaluator remain OPEN-only', () => {
+  const reportPath = 'sprints/07280905-kernel-result-channel-bootstrap/harness-report.md';
+  const mergedPr = verifiedPullRequest({ state: 'MERGED' });
+  const reporterResult = finalizeRoleResult(input('reporter', {
+    verdict: 'DONE',
+    task_id: TASK_ID,
+    report_path: reportPath,
+    pr_url: mergedPr.url,
+    screenshots: [],
+    concerns: '',
+  }, {
+    pull_request: mergedPr,
+    report: { path: reportPath, sha256: DIGEST },
+    learning: {
+      path: 'sprints/07280905-kernel-result-channel-bootstrap/learning.md',
+      sha256: DIGEST,
+    },
+    screenshots: [],
+    learnings_inserted: 1,
+  }));
+
+  assert.equal(reporterResult.role_result.verified.pull_request.state, 'MERGED');
+
+  assert.throws(
+    () => finalizeRoleResult(input('generator', {
+      verdict: 'DONE',
+      pr_url: mergedPr.url,
+    }, { pull_request: mergedPr })),
+    /state must be OPEN/,
+  );
+  assert.throws(
+    () => finalizeRoleResult(input('evaluator', {
+      verdict: 'FAIL',
+      task_id: TASK_ID,
+      attempt_id: ATTEMPT_ID,
+      feedback: 'not applicable',
+    }, {
+      contract_sha: SHA,
+      pull_request: mergedPr,
+      behavior_tests: [],
+    })),
+    /state must be OPEN/,
+  );
+});
+
 test('canonical JSON and raw_sha256 are deterministic across input key order', () => {
   const rawA = {
     verdict: 'DONE',

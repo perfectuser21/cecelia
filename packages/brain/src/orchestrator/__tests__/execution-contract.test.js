@@ -768,6 +768,215 @@ describe('HarnessResult contract', () => {
   });
 
   it.each([
+    ['generator', 'url'],
+    ['generator', 'head_ref'],
+    ['generator', 'head_sha'],
+    ['generator', 'state'],
+    ['evaluator', 'url'],
+    ['evaluator', 'head_ref'],
+    ['evaluator', 'head_sha'],
+    ['evaluator', 'state'],
+    ['reporter', 'url'],
+    ['reporter', 'head_ref'],
+    ['reporter', 'head_sha'],
+    ['reporter', 'state'],
+  ])(
+    'rejects %s role_result when required server PR authority contains only %s',
+    (role, onlyField) => {
+      const pr = verifiedPullRequest();
+      const rawByRole = {
+        generator: {
+          verdict: 'DONE',
+          pr_url: pr.url,
+        },
+        evaluator: {
+          verdict: 'FAIL',
+          task_id: TASK_ID,
+          attempt_id: ATTEMPT_ID,
+          feedback: 'failed safely',
+        },
+        reporter: {
+          verdict: 'DONE',
+          task_id: TASK_ID,
+          report_path: 'sprints/07280905-kernel-result-channel-bootstrap/harness-report.md',
+          pr_url: pr.url,
+          screenshots: [],
+          concerns: '',
+        },
+      };
+      const verifiedByRole = {
+        generator: { pull_request: pr },
+        evaluator: {
+          contract_sha: BASE_SHA,
+          pull_request: pr,
+          behavior_tests: [],
+        },
+        reporter: {
+          pull_request: pr,
+          report: {
+            path: rawByRole.reporter.report_path,
+            sha256: `sha256:${'d'.repeat(64)}`,
+          },
+          learning: {
+            path: 'sprints/07280905-kernel-result-channel-bootstrap/learning.md',
+            sha256: `sha256:${'e'.repeat(64)}`,
+          },
+          screenshots: [],
+          learnings_inserted: 1,
+        },
+      };
+      const finalized = finalizeRoleResult({
+        expectedOutput: `harness-result/${role}-v1`,
+        binding: {
+          task_id: TASK_ID,
+          run_id: RUN_ID,
+          attempt_id: ATTEMPT_ID,
+          role,
+        },
+        providerResult: validResult(),
+        rawEnvelope: rawByRole[role],
+        verifierEnvelope: verifiedByRole[role],
+      });
+      const authority = {
+        taskId: TASK_ID,
+        sprintDir: 'sprints/07280905-kernel-result-channel-bootstrap',
+        contractSha: BASE_SHA,
+        attemptKind: role === 'generator' ? 'fix' : 'initial',
+        pullRequest: { [onlyField]: pr[onlyField] },
+      };
+
+      expect(() => parseHarnessResult(
+        finalized,
+        role,
+        `harness-result/${role}-v1`,
+        authority,
+      )).toThrow(/PR authority is required/);
+    },
+  );
+
+  it('derives PR number and fixed type from complete server-owned authority, then rejects callback number forgery', () => {
+    const pr = verifiedPullRequest();
+    const roleResult = withRoleDigest({
+      kind: 'generator',
+      claimed: { verdict: 'DONE', pr_url: pr.url },
+      verified: { pull_request: pr },
+    });
+    const envelope = validResult({
+      artifacts: [pr],
+      decision: { outcome: 'DONE', reason: '', pr_head_sha: pr.head_sha },
+      role_result: roleResult,
+    });
+    const authority = {
+      attemptKind: 'fix',
+      pullRequest: {
+        url: pr.url,
+        head_ref: pr.head_ref,
+        head_sha: pr.head_sha,
+        state: pr.state,
+      },
+    };
+
+    expect(parseHarnessResult(
+      envelope,
+      'generator',
+      'harness-result/generator-v1',
+      authority,
+    ).role_result).toEqual(roleResult);
+
+    const forgedPr = { ...pr, number: pr.number + 1 };
+    expect(() => parseHarnessResult(validResult({
+      artifacts: [forgedPr],
+      decision: { outcome: 'DONE', reason: '', pr_head_sha: pr.head_sha },
+      role_result: withRoleDigest({
+        ...roleResult,
+        verified: { pull_request: forgedPr },
+      }),
+    }), 'generator', 'harness-result/generator-v1', authority)).toThrow(
+      /PR number authority mismatch/,
+    );
+
+    expect(() => parseHarnessResult(
+      envelope,
+      'generator',
+      'harness-result/generator-v1',
+      {
+        ...authority,
+        pullRequest: { ...authority.pullRequest, state: 'open' },
+      },
+    )).toThrow(/PR state authority mismatch/);
+  });
+
+  it('accepts MERGED PR evidence only for reporter role_result', () => {
+    const pr = verifiedPullRequest({ state: 'MERGED' });
+    const reportPath = 'sprints/07280905-kernel-result-channel-bootstrap/harness-report.md';
+    const roleResult = withRoleDigest({
+      kind: 'reporter',
+      claimed: {
+        verdict: 'DONE',
+        task_id: TASK_ID,
+        report_path: reportPath,
+        pr_url: pr.url,
+        screenshots: [],
+        concerns: '',
+      },
+      verified: {
+        pull_request: pr,
+        report: { path: reportPath, sha256: `sha256:${'d'.repeat(64)}` },
+        learning: {
+          path: 'sprints/07280905-kernel-result-channel-bootstrap/learning.md',
+          sha256: `sha256:${'e'.repeat(64)}`,
+        },
+        screenshots: [],
+        learnings_inserted: 1,
+      },
+    });
+    const envelope = validResult({
+      artifacts: [
+        pr,
+        { type: 'harness_report', ...roleResult.verified.report },
+        { type: 'learning', ...roleResult.verified.learning },
+      ],
+      checks: [{ type: 'learnings_inserted', count: 1 }],
+      decision: { outcome: 'DONE', reason: '' },
+      role_result: roleResult,
+    });
+
+    expect(parseHarnessResult(
+      envelope,
+      'reporter',
+      'harness-result/reporter-v1',
+      {
+        taskId: TASK_ID,
+        sprintDir: 'sprints/07280905-kernel-result-channel-bootstrap',
+        pullRequest: {
+          url: pr.url,
+          head_ref: pr.head_ref,
+          head_sha: pr.head_sha,
+          state: pr.state,
+        },
+      },
+    ).role_result).toEqual(roleResult);
+    for (const role of ['generator', 'evaluator']) {
+      const incompatible = withRoleDigest({
+        kind: role,
+        claimed: role === 'generator'
+          ? { verdict: 'DONE', pr_url: pr.url }
+          : {
+            verdict: 'FAIL',
+            task_id: TASK_ID,
+            attempt_id: ATTEMPT_ID,
+            feedback: 'not applicable',
+          },
+        verified: role === 'generator'
+          ? { pull_request: pr }
+          : { contract_sha: BASE_SHA, pull_request: pr, behavior_tests: [] },
+      });
+      expect(() => executionContract.__test__.roleResultSchema.parse(incompatible))
+        .toThrow();
+    }
+  });
+
+  it.each([
     ['planner lifecycle', {
       role: 'planner',
       expectedOutput: 'harness-result/planner-v1',
