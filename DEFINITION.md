@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.105
+**Brain 版本**: 1.267.106
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.106 — Fleet rollout root-staging executable hotfix
+
+- 修复 Xian rollout 在 root-owned `0700` staging 外由普通 SSH 用户展开
+  `*.sh`、导致生产 bootstrap 在执行前失败的问题；现在由 root 在已校验子树内
+  设置脚本执行位。
+- 变更只恢复 Phase 4A 既有生产入口；不扩展 Phase 4B/4C/4D/5，也不复制 Xian
+  长期 Provider 凭据。
+- Brain 回退目标：`1.267.105`；节点保持 drain 后再回退。
 
 ## Brain 1.267.105 — Fleet Node macOS admission policy correction
 

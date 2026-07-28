@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.105
+**版本**: 1.267.106
+
+## Fleet rollout root-staging executable hotfix
+
+- root-owned `0700` rollout staging 不再由 SSH 普通用户预展开 `*.sh`；脚本权限
+  现在由非交互 sudo 下的固定 `/usr/bin/find` 在已校验 staging 子树内设置。
+- 该修复只恢复 Phase 4A 既有 drain/bootstrap/admission 生产入口，不改变
+  NodeProfile、Runner digest、Provider 凭据或 Phase 4B/4C/4D/5 语义。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.105`。
 
 ## Fleet Node macOS admission policy correction
 

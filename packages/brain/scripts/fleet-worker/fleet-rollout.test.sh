@@ -193,7 +193,7 @@ write_executable "$fake_bin/sudo" \
   'fi' \
   'if [[ "${FLEET_TEST_SUDO_NOEXEC:-0}" == 1 ]]; then' \
   '  case "${1:-}" in' \
-  '    /usr/bin/mktemp|/usr/bin/tar|/bin/mkdir|/bin/chmod|/bin/rm|/bin/kill|/bin/test|/bin/realpath) exec "$@" ;;' \
+  '    /usr/bin/mktemp|/usr/bin/tar|/usr/bin/find|/bin/mkdir|/bin/chmod|/bin/rm|/bin/kill|/bin/test|/bin/realpath) exec "$@" ;;' \
   '    */fleet-rollout.sh)' \
   '      if [[ "${2:-}" == "__node-apply" ]]; then' \
   '        exec /bin/bash -c '"'"'source "$1"; run_node_apply "$2" "$3" "${FLEET_ROLLOUT_NODECTL:-}"'"'"' -- "$1" "$3" "$4"' \
