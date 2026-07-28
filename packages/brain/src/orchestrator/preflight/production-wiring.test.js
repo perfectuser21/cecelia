@@ -760,6 +760,11 @@ describe('production capability wiring', () => {
       spawnDetached,
       removeContainer: vi.fn(),
       fetchFn,
+      credentialBroker: {
+        issue: vi.fn(async () => {
+          throw new Error('credential_broker_must_not_run');
+        }),
+      },
       randomUUID: () => ATTEMPT_ID,
       leaseOwner: LEASE_OWNER,
       brainUrl: 'http://brain.internal:5221',
@@ -811,6 +816,11 @@ describe('production capability wiring', () => {
       })),
       spawnDetached,
       removeContainer: vi.fn(),
+      credentialBroker: {
+        issue: vi.fn(async () => {
+          throw new Error('credential_broker_must_not_run');
+        }),
+      },
       randomUUID: () => ATTEMPT_ID,
       leaseOwner: LEASE_OWNER,
       env: {

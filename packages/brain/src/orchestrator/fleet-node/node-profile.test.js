@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const CANONICAL_IDS = ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'];
-const EXPECTED_RUNNER_DIGEST = 'sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7';
+const REGISTRY = JSON.parse(readFileSync(
+  new URL('../../../config/fleet-node-profiles.json', import.meta.url),
+  'utf8',
+));
+const EXPECTED_RUNNER_DIGEST = REGISTRY.profiles[0].runner_image_digest;
 const EXPECTED_CAPACITIES = {
   'us-mac-m4': 7,
   'xian-mac-m4': 8,
@@ -90,8 +94,10 @@ describe('Fleet NodeProfile registry', () => {
         EXPECTED_RUNNER_DIGEST,
         EXPECTED_RUNNER_DIGEST,
       ]);
-    expect(rollout).toContain(`RUNNER_DIGEST='${EXPECTED_RUNNER_DIGEST}'`);
-    expect(reconciler).toContain(`RUNNER_DIGEST='${EXPECTED_RUNNER_DIGEST}'`);
+    expect(rollout).toContain('RUNNER_PROFILE_READER=');
+    expect(reconciler).toContain('RUNNER_PROFILE_READER=');
+    expect(rollout).not.toMatch(/RUNNER_DIGEST='sha256:/);
+    expect(reconciler).not.toMatch(/RUNNER_DIGEST='sha256:/);
   });
 
   it('requires the shared resource floor, disk guard, and system LaunchDaemon', async () => {
