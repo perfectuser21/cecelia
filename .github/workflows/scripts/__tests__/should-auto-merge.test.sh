@@ -8,6 +8,8 @@ set -euo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/should-auto-merge.sh"
 WORKFLOW="$(cd "$(dirname "$0")/../.." && pwd)/ci.yml"
+AUTO_VERSION_WORKFLOW="$(cd "$(dirname "$0")/../.." && pwd)/auto-version.yml"
+CLEANUP_WORKFLOW="$(cd "$(dirname "$0")/../.." && pwd)/cleanup-merged-artifacts.yml"
 AUTO_MERGE_JOB="$(awk '
   /^  auto-merge:/ { capture=1; next }
   capture && /^  [a-zA-Z0-9_-]+:/ { exit }
@@ -82,6 +84,16 @@ if grep -Fq 'case "$r" in' "$WORKFLOW" \
 else
   echo "FAIL: ci-passed 仍可能把 cancelled/timed_out/unknown 当绿"; FAIL=$((FAIL+1))
 fi
+
+# Scheduled/bot automation also lacks a Kernel merge receipt. It may open only
+# draft PRs and must not request auto-merge independently.
+for workflow in "$AUTO_VERSION_WORKFLOW" "$CLEANUP_WORKFLOW"; do
+  if grep -Fq -- '--draft' "$workflow" && ! grep -Eq '^[[:space:]]*gh pr merge ' "$workflow"; then
+    echo "PASS: $(basename "$workflow") 只开 draft，不自授 merge"; PASS=$((PASS+1))
+  else
+    echo "FAIL: $(basename "$workflow") 仍可绕过 Kernel merge authorization"; FAIL=$((FAIL+1))
+  fi
+done
 
 echo ""
 echo "Results: PASS=$PASS FAIL=$FAIL"
