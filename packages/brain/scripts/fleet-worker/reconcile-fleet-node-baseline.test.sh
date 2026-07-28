@@ -194,6 +194,17 @@ write_executable "$fake_bin/orbstack-orbctl" \
 
 write_executable "$fake_bin/orbstack-orb" \
   '#!/usr/bin/env bash' \
+  'printf "orb %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"' \
+  'if [[ "${FLEET_TEST_ORB_ASYNC_START:-0}" == 1 ]]; then' \
+  '  if [[ "${1:-}" == start ]]; then' \
+  '    touch "${FLEET_TEST_ORB_STATE:?}"' \
+  '    exit 1' \
+  '  fi' \
+  '  if [[ "${1:-}" == status ]]; then' \
+  '    [[ -f "${FLEET_TEST_ORB_STATE:?}" ]]' \
+  '    exit $?' \
+  '  fi' \
+  'fi' \
   'exit 0'
 
 write_executable "$fake_bin/hdiutil" \
@@ -269,6 +280,7 @@ run_reconciler() {
   FLEET_TEST_MUTATION_LOG="$mutation_log" \
   FLEET_TEST_SERVICE_STATE="$service_state" \
   FLEET_TEST_RUNNER_STATE="$runner_state" \
+  FLEET_TEST_ORB_STATE="$state_root/orbstack-running" \
   FLEET_TEST_UUID_STATE="$state_root/uuid-count" \
   FLEET_TEST_FAKE_NODE="$fake_bin/toolchain-node" \
   FLEET_TEST_FAKE_NPM="$fake_bin/toolchain-npm" \
@@ -363,6 +375,20 @@ grep -Fq 'docker_unavailable' "$test_root/rollback.out" \
 [[ ! -e "$rollback_root/Applications/OrbStack.app" ]] \
   || fail "failed first OrbStack install was not rolled back"
 /bin/rm -f "$service_state" "$runner_state"
+
+: > "$mutation_log"
+/bin/rm -f "$state_root/orbstack-running"
+async_root="$test_root/async-orbstack-system"
+FLEET_TEST_ORB_ASYNC_START=1 \
+FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
+run_reconciler "$async_root" xian-mac-m4 --apply \
+  >"$test_root/async-orbstack.out" 2>&1 \
+  || fail "eventually running OrbStack was rejected after start returned nonzero"
+grep -Fq 'orb start' "$mutation_log" \
+  || fail "asynchronous OrbStack fixture did not exercise start"
+grep -Fq 'orb status' "$mutation_log" \
+  || fail "OrbStack start failure was not reconciled with bounded status checks"
+/bin/rm -f "$service_state" "$runner_state" "$state_root/orbstack-running"
 
 : > "$mutation_log"
 /bin/rm -f "$state_root/uuid-count"
