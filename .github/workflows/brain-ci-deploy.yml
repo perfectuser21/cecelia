@@ -17,7 +17,10 @@ on:
       - 'packages/workflows/skills/**'
       - 'packages/brain/scripts/ci/**'
       - 'packages/brain/src/**'
+      - 'packages/engine/tests/integration/release-deploy-stage.test.sh'
+      - 'tests/regression/gate3-sha-truth/sha-account.test.sh'
       - '.github/workflows/brain-ci-deploy.yml'
+      - '.github/workflows/deploy.yml'
 
 concurrency:
   group: kernel-release-${{ github.event_name }}-${{ github.ref }}
@@ -98,7 +101,7 @@ jobs:
           node packages/brain/scripts/ci/island-gate.mjs --fixture-files="${ADDED_FILES}"
 
   sha-account-l1:
-    name: L1 SHA Account Tests
+    name: L1 Kernel ReleaseRun Authority Contract
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -106,9 +109,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
       - run: bash tests/regression/gate3-sha-truth/sha-account.test.sh
-        env:
-          BRAIN_URL: ''
+      - run: bash packages/engine/tests/integration/release-deploy-stage.test.sh
 
   deploy:
     name: Authorized Brain Production Effect

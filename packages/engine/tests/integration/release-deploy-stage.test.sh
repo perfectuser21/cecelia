@@ -1,76 +1,120 @@
 #!/usr/bin/env bash
-# release-deploy-stage.test.sh — promote-dashboard.sh 三模式回归（staging → release → deploy）。
+# release-deploy-stage.test.sh — durable Kernel ReleaseRun stage contract.
 #
-# 守死：--release-only 冻结产物进库 + 打 tag + 写 manifest，但【不动 live、不动 current】；
-#       --deploy <tag> 从产物库换入 live + 写 current；--deploy <不存在> 报错不动生产；
-#       两步(release-only → deploy) 末态 == 无参(full)。
-set -uo pipefail
-PASS=0; FAIL=0
-pass() { echo "✅ $1"; PASS=$((PASS+1)); }
-fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
+# The former contract drove promote-dashboard.sh through --release-only and
+# --deploy <tag>, then inspected mutable tag/live/current files. ReleaseRun
+# replaces those axes with an immutable merge receipt, staging and production
+# effect receipts, an exact state ledger, and durable rollback authority.
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
-PROMOTE="$REPO_ROOT/scripts/promote-dashboard.sh"
-[[ -f "$PROMOTE" ]] || { echo "缺 $PROMOTE"; exit 1; }
+set -euo pipefail
 
-new_root() {
-    local R; R=$(mktemp -d)
-    local D="$R/apps/dashboard"; mkdir -p "$D" "$R/scripts"
-    ( cd "$R" && git init -q -b main && git config user.email t@t && git config user.name t \
-        && git config core.hooksPath /dev/null && echo seed > seed.txt && git add -A && git commit -q -m seed )
-    printf '1.230.18\n' > "$R/.brain-versions"
-    echo "$R"
-}
-stage() {  # <root> <content>
-    local R="$1" C="$2" D="$1/apps/dashboard"
-    rm -rf "$D/.dist-staging"; mkdir -p "$D/.dist-staging"; echo "$C" > "$D/.dist-staging/index.html"
-    { echo "staging_dist=$D/.dist-staging"; echo "staging_port=5223"; echo "commit=testcommit"; } > "$D/.staging-pending"
-}
-run() {  # <root> args...
-    local R="$1"; shift
-    CECELIA_DEPLOY_ROOT="$R" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
-        bash "$PROMOTE" "$@" >/dev/null 2>&1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+WORKFLOW="$ROOT_DIR/.github/workflows/brain-ci-deploy.yml"
+MIGRATION_374="$ROOT_DIR/packages/brain/migrations/374_kernel_release_runs.sql"
+MIGRATION_375="$ROOT_DIR/packages/brain/migrations/375_kernel_release_run_closure.sql"
+MIGRATION_380="$ROOT_DIR/packages/brain/migrations/380_kernel_release_rollback_execution.sql"
+RELEASE_STORE="$ROOT_DIR/packages/brain/src/orchestrator/release-run-store.js"
+RELEASE_EXECUTOR="$ROOT_DIR/packages/brain/src/orchestrator/release-run-executor.js"
+
+PASS=0
+FAIL=0
+
+pass() {
+  printf '[PASS] %s\n' "$1"
+  PASS=$((PASS + 1))
 }
 
-# ── 1) --release-only：冻结+tag+manifest，不动 live/current ────────────────────
-R=$(new_root); D="$R/apps/dashboard"
-stage "$R" "REL-1"
-if run "$R" --release-only; then pass "--release-only 退出 0"; else fail "--release-only 退出非 0"; fi
-if [[ "$(cat "$D/.dist-releases/prod-cecelia-v1/index.html" 2>/dev/null)" == "REL-1" ]]; then
-    pass "release 冻结产物进 .dist-releases/prod-cecelia-v1"; else fail "release 未冻结产物进库"; fi
-if git -C "$R" rev-parse "prod-cecelia-v1" >/dev/null 2>&1; then pass "release 打了 git tag prod-cecelia-v1"; else fail "release 未打 git tag"; fi
-if grep -q "^manifest=prod-cecelia-v1 " "$R/.production-release" 2>/dev/null; then pass "release 写了 manifest"; else fail "release 未写 manifest"; fi
-if [[ ! -d "$D/dist" ]]; then pass "★ release 不动 live dist/（未部署）"; else fail "★ release 误动了 live dist/"; fi
-if ! grep -q "^current=" "$R/.production-release" 2>/dev/null; then pass "★ release 不写 current（还没部署）"; else fail "★ release 误写了 current"; fi
-rm -rf "$R"
+fail() {
+  printf '[FAIL] %s\n' "$1"
+  FAIL=$((FAIL + 1))
+}
 
-# ── 2) --deploy <tag>：从库换入 live + 写 current ──────────────────────────────
-R=$(new_root); D="$R/apps/dashboard"
-stage "$R" "DEP-1"
-run "$R" --release-only
-if run "$R" --deploy prod-cecelia-v1; then pass "--deploy <tag> 退出 0"; else fail "--deploy <tag> 退出非 0"; fi
-if [[ "$(cat "$D/dist/index.html" 2>/dev/null)" == "DEP-1" ]]; then pass "deploy 把库版本换入 live dist/"; else fail "deploy 未换入 live"; fi
-if [[ "$(grep '^current=' "$R/.production-release" | head -1 | cut -d= -f2)" == "prod-cecelia-v1" ]]; then
-    pass "deploy 写了 current=prod-cecelia-v1"; else fail "deploy 未写 current"; fi
-rm -rf "$R"
+require_pattern() {
+  local file="$1"
+  local pattern="$2"
+  local label="$3"
+  if grep -Eq -- "$pattern" "$file"; then
+    pass "$label"
+  else
+    fail "$label"
+  fi
+}
 
-# ── 3) --deploy <不存在 tag>：报错退，不动生产（不猜）─────────────────────────
-R=$(new_root); D="$R/apps/dashboard"
-mkdir -p "$D/dist"; echo "LIVE-OLD" > "$D/dist/index.html"
-if run "$R" --deploy prod-cecelia-v999; then fail "★ --deploy 不存在 tag 竟退出 0"; else pass "★ --deploy 不存在 tag 报错退出"; fi
-if [[ "$(cat "$D/dist/index.html" 2>/dev/null)" == "LIVE-OLD" ]]; then pass "★ 部署源缺失时 live dist/ 未被动"; else fail "★ 部署源缺失却动了 live"; fi
-rm -rf "$R"
+printf '=== Durable Kernel ReleaseRun stage mapping ===\n'
 
-# ── 4) 两步(release-only→deploy) 末态 == 无参(full) ───────────────────────────
-RA=$(new_root); DA="$RA/apps/dashboard"; stage "$RA" "SAME"; run "$RA" --release-only; run "$RA" --deploy prod-cecelia-v1
-RB=$(new_root); DB="$RB/apps/dashboard"; stage "$RB" "SAME"; run "$RB"   # 无参=full
-A_CUR=$(grep '^current=' "$RA/.production-release" | head -1 | cut -d= -f2)
-B_CUR=$(grep '^current=' "$RB/.production-release" | head -1 | cut -d= -f2)
-A_LIVE=$(cat "$DA/dist/index.html" 2>/dev/null); B_LIVE=$(cat "$DB/dist/index.html" 2>/dev/null)
-if [[ "$A_CUR" == "$B_CUR" && "$A_LIVE" == "$B_LIVE" && "$A_LIVE" == "SAME" ]]; then
-    pass "★ 两步 == 无参(full) 末态一致 current=${A_CUR} live=${A_LIVE}"; else fail "★ 两步与 full 末态不一致: A(cur=${A_CUR} live=${A_LIVE}) B(cur=${B_CUR} live=${B_LIVE})"; fi
-rm -rf "$RA" "$RB"
+# Old release-only => immutable release identity and staging intent/receipt.
+require_pattern "$MIGRATION_374" \
+  'CREATE TABLE IF NOT EXISTS kernel_release_runs' \
+  'release identity is durable'
+require_pattern "$MIGRATION_374" \
+  'CREATE TABLE IF NOT EXISTS kernel_release_effect_intents' \
+  'staging intent exists before the staging effect'
+require_pattern "$RELEASE_EXECUTOR" "effectKind: 'staging'" \
+  'executor uses the staging effect ledger'
+require_pattern "$RELEASE_EXECUTOR" "'staging_passed'" \
+  'staging success is an explicit state transition'
 
-echo ""
-echo "=== release-deploy-stage: $PASS PASS / $FAIL FAIL ==="
-[[ "$FAIL" -eq 0 ]] || exit 1
+# Old deploy <tag> => exact production intent/receipt, never a mutable tag.
+require_pattern "$RELEASE_EXECUTOR" "effectKind: 'production'" \
+  'executor uses the production effect ledger'
+require_pattern "$MIGRATION_375" \
+  'kernel_release_effect_receipt_guard' \
+  'production receipt is database-fenced'
+require_pattern "$MIGRATION_375" \
+  'observed_merge_sha.*expected_merge_sha' \
+  'receipt is bound to the exact merge SHA'
+require_pattern "$MIGRATION_375" \
+  'observed_artifact_versions.*expected_artifact_versions' \
+  'receipt is bound to exact artifact versions'
+
+# Old missing-tag denial => missing or conflicting durable authority blocks.
+require_pattern "$RELEASE_STORE" "deny\\('release_merge_receipt_missing'\\)" \
+  'missing merge authority fails closed'
+require_pattern "$RELEASE_STORE" "deny\\('release_identity_conflict'\\)" \
+  'conflicting release identity fails closed'
+require_pattern "$RELEASE_EXECUTOR" 'release_merge_authority_conflict' \
+  'executor blocks cross-paired authority'
+
+# Old two-step/full final-state equality => one production_verified root with
+# durable rollback evidence, independent of invocation history.
+require_pattern "$RELEASE_EXECUTOR" "'production_verified'" \
+  'production verification is the only successful terminal state'
+require_pattern "$MIGRATION_375" \
+  'CREATE TABLE IF NOT EXISTS kernel_release_rollback_receipts' \
+  'rollback receipt exists before success'
+require_pattern "$MIGRATION_380" \
+  'CREATE TABLE IF NOT EXISTS kernel_release_rollback_execution_authorities' \
+  'post-production rollback execution has durable authority'
+
+# The migrated Engine contract is also a mandatory PR guard; it must not live
+# only as a manually invoked historical script.
+require_pattern "$WORKFLOW" '^  sha-account-l1:$' \
+  'ReleaseRun contract is wired into PR CI'
+require_pattern "$WORKFLOW" \
+  'bash tests/regression/gate3-sha-truth/sha-account\.test\.sh' \
+  'PR CI runs the exact-SHA receipt contract'
+require_pattern "$WORKFLOW" \
+  'bash packages/engine/tests/integration/release-deploy-stage\.test\.sh' \
+  'PR CI runs this durable stage-mapping contract'
+require_pattern "$WORKFLOW" \
+  "^[[:space:]]+- 'packages/engine/tests/integration/release-deploy-stage\\.test\\.sh'$" \
+  'changes to this stage contract trigger the PR guard'
+
+if [[ "$FAIL" -ne 0 ]]; then
+  printf 'RELEASE_RUN_STAGE_STATIC_FAIL: %s passed / %s failed\n' "$PASS" "$FAIL"
+  exit 1
+fi
+
+(
+  cd "$ROOT_DIR/packages/brain"
+  npx --no-install vitest run \
+    src/orchestrator/__tests__/release-run-contract.test.js \
+    src/orchestrator/__tests__/release-run-store.test.js \
+    src/orchestrator/__tests__/release-run-executor.test.js \
+    src/orchestrator/__tests__/release-run-migration.test.js \
+    src/orchestrator/__tests__/release-run-workflow-deploy.test.js \
+    --reporter=dot
+)
+
+printf 'RELEASE_RUN_STAGE_CONTRACT_PASS: %s static assertions\n' "$PASS"
