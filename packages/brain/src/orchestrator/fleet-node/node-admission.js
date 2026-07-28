@@ -357,11 +357,11 @@ export function evaluateBaseAdmission(report, options = {}) {
           'os.version',
           'Reported macOS version is below the node policy floor.',
         );
-      } else if (observed[0] !== floor[0] || observed[1] !== floor[1]) {
+      } else if (observed[0] !== floor[0]) {
         collector.add(
           'os_version_drift',
           'os.version',
-          'Reported macOS version is outside the supported release line.',
+          'Reported macOS version is outside the supported major release.',
         );
       }
     }
