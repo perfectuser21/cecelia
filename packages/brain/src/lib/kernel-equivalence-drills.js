@@ -335,6 +335,15 @@ function isInternalTimeout(error, code) {
   return error instanceof EquivalenceDrillError && error.code === code;
 }
 
+function sampleTrustedClock(clock) {
+  try {
+    const value = typeof clock === 'function' ? clock() : clock;
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 async function withTimeout(
   operation,
   timeoutMs,
@@ -551,20 +560,20 @@ export async function executeDrillCell({
   cleanupVerifier = null,
   predecessorResolver = null,
   auditSink = null,
-  now = Date.now(),
+  now = Date.now,
   timeoutMs = 30_000,
 } = {}) {
-  const auditNow = Number.isFinite(now) ? now : Date.now();
+  const auditNow = sampleTrustedClock(now);
   const deny = (code, stage) => blocked({
     cell,
     grant,
     code,
     stage,
-    now: auditNow,
+    now: auditNow ?? Date.now(),
     auditSink,
     timeoutMs,
   });
-  if (!Number.isFinite(now)) {
+  if (auditNow == null) {
     return deny('verification_time_invalid', 'clock_validation');
   }
 
@@ -606,12 +615,16 @@ export async function executeDrillCell({
   }
 
   let verifiedGrant;
+  const grantVerificationNow = sampleTrustedClock(now);
+  if (grantVerificationNow == null) {
+    return deny('verification_time_invalid', 'clock_validation');
+  }
   try {
     verifiedGrant = verifyExecutionGrant(
       grant,
       trustRegistry,
       expectedFromGrant(cell, grant),
-      { now },
+      { now: grantVerificationNow },
     );
   } catch (error) {
     return deny(
@@ -678,12 +691,16 @@ export async function executeDrillCell({
       );
     }
     try {
+      const predecessorVerificationNow = sampleTrustedClock(now);
+      if (predecessorVerificationNow == null) {
+        return deny('verification_time_invalid', 'clock_validation');
+      }
       const violationCell = violationCellFor(cell);
       predecessorGrant = verifyExecutionGrant(
         predecessor?.grant,
         trustRegistry,
         expectedFromGrant(violationCell, predecessor?.grant),
-        { now },
+        { now: predecessorVerificationNow },
       );
       if (!sameRecoveryBoundary(predecessorGrant, verifiedGrant)) {
         return deny(
@@ -695,7 +712,7 @@ export async function executeDrillCell({
         predecessor?.receipt,
         trustRegistry,
         expectedFromGrant(violationCell, predecessorGrant),
-        { now },
+        { now: predecessorVerificationNow },
       );
     } catch (error) {
       return deny(
@@ -847,6 +864,10 @@ export async function executeDrillCell({
   }
   if (executionError) return deny(executionError, 'seam_execution');
 
+  const effectVerificationNow = sampleTrustedClock(now);
+  if (effectVerificationNow == null) {
+    return deny('verification_time_invalid', 'clock_validation');
+  }
   try {
     receipt = verifyEffectReceipt(
       receipt,
@@ -855,7 +876,7 @@ export async function executeDrillCell({
         ...expectedFromGrant(cell, verifiedGrant),
         predecessor: predecessorReceipt,
       },
-      { now },
+      { now: effectVerificationNow },
     );
   } catch (error) {
     return deny(
@@ -901,6 +922,10 @@ export async function executeDrillCell({
     );
   }
 
+  const bundleVerificationNow = sampleTrustedClock(now);
+  if (bundleVerificationNow == null) {
+    return deny('verification_time_invalid', 'clock_validation');
+  }
   if (bundle.previous_bundle_hash !== chainCheckpoint.head_hash) {
     if (bundle?.previous_bundle_hash == null) {
       try {
@@ -908,7 +933,7 @@ export async function executeDrillCell({
           bundle,
           trustRegistry,
           expectedFromGrant(cell, verifiedGrant),
-          { now },
+          { now: bundleVerificationNow },
         );
       } catch (error) {
         return deny(
@@ -928,7 +953,7 @@ export async function executeDrillCell({
           genesisHash: chainCheckpoint.genesis_hash,
           readBundle: bundleChainStore.readBundle,
           trustRegistry,
-          now,
+          now: bundleVerificationNow,
         }),
         timeoutMs,
         'bundle_chain_read_timeout',
@@ -950,7 +975,7 @@ export async function executeDrillCell({
       trustRegistry,
       expectedFromGrant(cell, verifiedGrant),
       {
-        now,
+        now: bundleVerificationNow,
         resolvePreviousBundle: previousSnapshot?.readBundle ?? null,
       },
     );

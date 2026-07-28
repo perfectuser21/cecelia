@@ -197,7 +197,6 @@ export async function loadTrustedEquivalenceRuntime({
     timeoutMs = 30_000,
   } = {}) => {
     const grant = loadProtectedExecutionGrant({ grantPath });
-    const executionNow = typeof now === 'function' ? now() : now;
     return executeDrillCell({
       cell,
       grant,
@@ -208,7 +207,7 @@ export async function loadTrustedEquivalenceRuntime({
       bundleChainStore,
       predecessorResolver,
       auditSink,
-      now: executionNow,
+      now,
       timeoutMs,
     });
   };
