@@ -428,6 +428,50 @@ describe('executeDrillCell', () => {
     expect(value.collector).not.toHaveBeenCalled();
   });
 
+  it('links an external abort to seam cancellation before returning', async () => {
+    const value = executionFixture();
+    const controller = new AbortController();
+    let lateEffect = false;
+    let cancellationConfirmedAt = 0;
+    value.adapter.invokeActualSeam.mockImplementation(({ signal }) => (
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          lateEffect = true;
+          resolve(value.receipt);
+        }, 40);
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new Error('cancelled'));
+        }, { once: true });
+      })
+    ));
+    value.adapter.cancel.mockImplementation(async ({ signal, phase }) => {
+      expect(phase).toBe('invoke');
+      expect(signal.aborted).toBe(true);
+      cancellationConfirmedAt = Date.now();
+      return { confirmed: true };
+    });
+    const running = execute(value, {
+      signal: controller.signal,
+      timeoutMs: 100,
+    });
+    setTimeout(() => controller.abort(), 5);
+
+    const result = await running;
+    const responseAt = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(result).toMatchObject({
+      status: 'blocked',
+      code: 'execution_aborted',
+    });
+    expect(cancellationConfirmedAt).toBeGreaterThan(0);
+    expect(responseAt).toBeGreaterThanOrEqual(cancellationConfirmedAt);
+    expect(lateEffect).toBe(false);
+    expect(value.adapter.cleanup).toHaveBeenCalledTimes(1);
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
   it('records late-effect risk when timeout cancellation is not confirmed', async () => {
     const value = executionFixture();
     value.adapter.invokeActualSeam.mockImplementation(

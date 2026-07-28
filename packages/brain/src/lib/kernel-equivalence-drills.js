@@ -380,18 +380,58 @@ async function withTimeout(
   }
 }
 
-async function withAbortableTimeout(operation, timeoutMs) {
+function validAbortSignal(signal) {
+  return (
+    signal == null
+    || (
+      typeof signal === 'object'
+      && typeof signal.aborted === 'boolean'
+      && typeof signal.addEventListener === 'function'
+      && typeof signal.removeEventListener === 'function'
+    )
+  );
+}
+
+async function withAbortableTimeout(
+  operation,
+  timeoutMs,
+  externalSignal = null,
+) {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
     fail('adapter_timeout_invalid');
   }
+  if (!validAbortSignal(externalSignal)) {
+    fail('adapter_abort_signal_invalid');
+  }
   const controller = new AbortController();
+  if (externalSignal?.aborted) {
+    controller.abort(externalSignal.reason);
+    fail('adapter_aborted');
+  }
   const operationPromise = Promise.resolve().then(
     () => operation(controller.signal),
   );
   let timer;
+  let rejectExternal;
+  const externalAbort = new Promise((_, reject) => {
+    rejectExternal = reject;
+  });
+  const onExternalAbort = () => {
+    const error = new EquivalenceDrillError('adapter_aborted');
+    error.abortContext = {
+      signal: controller.signal,
+      operationPromise,
+    };
+    controller.abort(externalSignal.reason);
+    rejectExternal(error);
+  };
+  externalSignal?.addEventListener('abort', onExternalAbort, {
+    once: true,
+  });
   try {
     return await Promise.race([
       operationPromise,
+      externalAbort,
       new Promise((_, reject) => {
         timer = setTimeout(() => {
           const error = new EquivalenceDrillError('adapter_timeout');
@@ -406,6 +446,7 @@ async function withAbortableTimeout(operation, timeoutMs) {
     ]);
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', onExternalAbort);
     operationPromise.catch(() => {});
   }
 }
@@ -555,7 +596,7 @@ async function confirmCancellation(
   timeoutMs,
 ) {
   if (
-    timeoutError?.code !== 'adapter_timeout'
+    !['adapter_timeout', 'adapter_aborted'].includes(timeoutError?.code)
     || typeof adapter.cancel !== 'function'
   ) {
     return false;
@@ -588,8 +629,10 @@ export async function executeDrillCell({
   predecessorResolver = null,
   auditSink = null,
   now = Date.now,
+  signal = null,
   timeoutMs = 30_000,
 } = {}) {
+  if (!validAbortSignal(signal)) fail('adapter_abort_signal_invalid');
   const auditNow = sampleTrustedClock(now);
   const deny = (code, stage) => blocked({
     cell,
@@ -602,6 +645,9 @@ export async function executeDrillCell({
   });
   if (auditNow == null) {
     return deny('verification_time_invalid', 'clock_validation');
+  }
+  if (signal?.aborted) {
+    return deny('execution_aborted', 'request_cancellation');
   }
 
   if (
@@ -639,6 +685,9 @@ export async function executeDrillCell({
   }
   if (!validChainCheckpoint(chainCheckpoint)) {
     return deny('bundle_chain_checkpoint_invalid', 'bundle_chain');
+  }
+  if (signal?.aborted) {
+    return deny('execution_aborted', 'request_cancellation');
   }
 
   let verifiedGrant;
@@ -806,6 +855,9 @@ export async function executeDrillCell({
   if (typeof nonceConsumer !== 'function') {
     return deny('nonce_consumer_unavailable', 'nonce_consumption');
   }
+  if (signal?.aborted) {
+    return deny('execution_aborted', 'request_cancellation');
+  }
   try {
     const nonceResult = await withTimeout(() => nonceConsumer({
       grant_id: verifiedGrant.grant_id,
@@ -825,6 +877,9 @@ export async function executeDrillCell({
         : 'grant_nonce_replay',
       'nonce_consumption',
     );
+  }
+  if (signal?.aborted) {
+    return deny('execution_aborted', 'request_cancellation');
   }
 
   const verifiedPredecessor = predecessorGrant == null
@@ -851,12 +906,18 @@ export async function executeDrillCell({
         registerCompensation,
       }),
       timeoutMs,
+      signal,
     );
   } catch (error) {
     const code = isInternalTimeout(error, 'adapter_timeout')
       ? 'adapter_timeout'
-      : 'adapter_prepare_failed';
-    const cancellationConfirmed = code === 'adapter_timeout'
+      : isInternalTimeout(error, 'adapter_aborted')
+        ? 'execution_aborted'
+        : 'adapter_prepare_failed';
+    const cancellationConfirmed = [
+      'adapter_timeout',
+      'execution_aborted',
+    ].includes(code)
       ? await confirmCancellation(
         adapter,
         'prepare',
@@ -887,6 +948,19 @@ export async function executeDrillCell({
     return deny(code, 'adapter_prepare');
   }
 
+  if (signal?.aborted) {
+    const cleanupResult = await confirmCleanup(
+      adapter,
+      { ...context, prepared, compensations },
+      timeoutMs,
+      selectedCleanupVerifier,
+    );
+    if (cleanupResult.error) {
+      return deny(cleanupResult.error, 'adapter_cleanup');
+    }
+    return deny('execution_aborted', 'request_cancellation');
+  }
+
   let receipt;
   let executionError = null;
   let executionStage = 'invoke';
@@ -900,6 +974,7 @@ export async function executeDrillCell({
         signal,
       }),
       timeoutMs,
+      signal,
     );
     executionStage = 'observe';
     receipt = await withAbortableTimeout(
@@ -913,12 +988,19 @@ export async function executeDrillCell({
         },
       ),
       timeoutMs,
+      signal,
     );
   } catch (error) {
     executionError = isInternalTimeout(error, 'adapter_timeout')
       ? 'adapter_timeout'
-      : 'adapter_execution_failed';
-    if (executionError === 'adapter_timeout') timeoutError = error;
+      : isInternalTimeout(error, 'adapter_aborted')
+        ? 'execution_aborted'
+        : 'adapter_execution_failed';
+    if (
+      ['adapter_timeout', 'execution_aborted'].includes(executionError)
+    ) {
+      timeoutError = error;
+    }
   }
 
   if (timeoutError) {
@@ -944,6 +1026,9 @@ export async function executeDrillCell({
     && executionError !== 'adapter_cancellation_unconfirmed'
   ) {
     return deny(cleanupResult.error, 'adapter_cleanup');
+  }
+  if (signal?.aborted && executionError == null) {
+    executionError = 'execution_aborted';
   }
   if (executionError) return deny(executionError, 'seam_execution');
 
@@ -979,6 +1064,9 @@ export async function executeDrillCell({
 
   if (typeof collector !== 'function') {
     return deny('collector_unavailable', 'collector');
+  }
+  if (signal?.aborted) {
+    return deny('execution_aborted', 'request_cancellation');
   }
   let bundle;
   const executionGrants = predecessorGrant
@@ -1075,6 +1163,9 @@ export async function executeDrillCell({
   ) {
     return deny('cleanup_evidence_invalid', 'collector');
   }
+  if (signal?.aborted) {
+    return deny('execution_aborted', 'request_cancellation');
+  }
   let committed;
   try {
     const commitResult = await bundleChainStore.commit({
@@ -1091,6 +1182,9 @@ export async function executeDrillCell({
         : 'bundle_chain_commit_failed',
       'bundle_chain',
     );
+  }
+  if (signal?.aborted) {
+    return deny('execution_aborted', 'request_cancellation');
   }
   const expectedGenesis =
     chainCheckpoint.genesis_hash ?? verifiedBundle.bundle_hash;

@@ -158,6 +158,7 @@ export async function loadTrustedEquivalenceRuntime({
   const executeCell = async ({
     cell,
     grant: protectedGrant,
+    signal = null,
     timeoutMs = 30_000,
   } = {}) => {
     const grant = pinProtectedExecutionGrant({
@@ -174,6 +175,7 @@ export async function loadTrustedEquivalenceRuntime({
       predecessorResolver,
       auditSink,
       now,
+      signal,
       timeoutMs,
     });
   };

@@ -2,6 +2,9 @@ import {
   PROOF_PROVIDERS,
   PROOF_SCENARIOS,
 } from './kernel-equivalence-axes.js';
+import {
+  sha256Canonical,
+} from './kernel-equivalence-receipts.js';
 
 const REQUEST_FIELDS = Object.freeze(['cell_id', 'grant_ref']);
 const GRANT_AUTHORITY_FIELDS = Object.freeze([
@@ -16,6 +19,8 @@ const GRANT_RESOLUTION_FIELDS = Object.freeze([
 ]);
 const GRANT_REF_PATTERN =
   /^kernel-equivalence-grant:([a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/;
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const MAXIMUM_EXECUTION_TIMEOUT_MS = 30_000;
 
 export class KernelTrustedExecutionServiceError extends Error {
   constructor(code) {
@@ -57,7 +62,15 @@ function deepFreeze(value) {
   return value;
 }
 
-function pinPlan(plan) {
+export function digestTrustedExecutionPlan(plan) {
+  try {
+    return sha256Canonical(plan);
+  } catch {
+    fail('trusted_execution_plan_invalid');
+  }
+}
+
+function pinPlan(plan, expectedPlanDigest) {
   let pinned;
   try {
     pinned = structuredClone(plan);
@@ -71,6 +84,12 @@ function pinPlan(plan) {
     || pinned.cells.length !== 99
   ) {
     fail('trusted_execution_plan_invalid');
+  }
+  if (!HASH_PATTERN.test(expectedPlanDigest ?? '')) {
+    fail('trusted_execution_plan_digest_invalid');
+  }
+  if (digestTrustedExecutionPlan(pinned) !== expectedPlanDigest) {
+    fail('trusted_execution_plan_digest_mismatch');
   }
   const cellIds = new Set();
   const axesByBehavior = new Map();
@@ -153,10 +172,21 @@ function validGrant(value, request) {
 
 export function createBrainTrustedExecutionService({
   plan,
+  expectedPlanDigest,
   runtime,
   grantAuthority,
+  now = Date.now,
+  maximumExecutionTimeoutMs = MAXIMUM_EXECUTION_TIMEOUT_MS,
 } = {}) {
-  const pinnedPlan = pinPlan(plan);
+  if (
+    typeof now !== 'function'
+    || !Number.isInteger(maximumExecutionTimeoutMs)
+    || maximumExecutionTimeoutMs < 1
+    || maximumExecutionTimeoutMs > MAXIMUM_EXECUTION_TIMEOUT_MS
+  ) {
+    fail('trusted_execution_service_configuration_invalid');
+  }
+  const pinnedPlan = pinPlan(plan, expectedPlanDigest);
   validateRuntime(runtime);
   validateGrantAuthority(grantAuthority);
   const cellsById = new Map(pinnedPlan.cells.map((cell) => [
@@ -164,9 +194,42 @@ export function createBrainTrustedExecutionService({
     cell,
   ]));
 
-  const execute = async (request) => {
+  const execute = async (
+    request,
+    {
+      signal = null,
+      deadlineMs = null,
+    } = {},
+  ) => {
     if (!validRequest(request)) {
       fail('trusted_execution_request_invalid');
+    }
+    if (
+      signal != null
+      && (
+        typeof signal !== 'object'
+        || typeof signal.aborted !== 'boolean'
+        || typeof signal.addEventListener !== 'function'
+      )
+    ) {
+      fail('trusted_execution_signal_invalid');
+    }
+    const sampledNow = now();
+    const effectiveDeadline = deadlineMs == null
+      ? sampledNow + maximumExecutionTimeoutMs
+      : deadlineMs;
+    if (
+      !Number.isFinite(sampledNow)
+      || !Number.isFinite(effectiveDeadline)
+    ) {
+      fail('trusted_execution_deadline_invalid');
+    }
+    const remainingMs = Math.min(
+      maximumExecutionTimeoutMs,
+      Math.floor(effectiveDeadline - sampledNow),
+    );
+    if (remainingMs < 1 || signal?.aborted) {
+      fail('trusted_execution_request_aborted');
     }
     const cell = cellsById.get(request.cell_id);
     if (!cell) fail('trusted_execution_cell_not_found');
@@ -188,9 +251,22 @@ export function createBrainTrustedExecutionService({
     ) {
       fail('trusted_execution_grant_resolution_invalid');
     }
+    const resolutionNow = now();
+    if (!Number.isFinite(resolutionNow)) {
+      fail('trusted_execution_deadline_invalid');
+    }
+    const remainingAfterResolution = Math.min(
+      remainingMs,
+      Math.floor(effectiveDeadline - resolutionNow),
+    );
+    if (signal?.aborted || remainingAfterResolution < 1) {
+      fail('trusted_execution_request_aborted');
+    }
     return runtime.executeCell({
       cell,
       grant: deepFreeze(structuredClone(resolution.grant)),
+      signal,
+      timeoutMs: remainingAfterResolution,
     });
   };
 
@@ -199,6 +275,7 @@ export function createBrainTrustedExecutionService({
       'kernel-equivalence-trusted-execution-service/v1',
     cell_count: cellsById.size,
     adapter_count: runtime.adapter_count,
+    plan_digest: expectedPlanDigest,
     execute,
   });
 }
