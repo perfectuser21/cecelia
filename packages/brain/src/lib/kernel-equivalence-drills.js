@@ -273,6 +273,29 @@ function expectedFromGrant(cell, grant) {
   };
 }
 
+function violationCellFor(recoveryCell) {
+  return {
+    ...recoveryCell,
+    cell_id: recoveryCell.cell_id.replace(/::recovery$/, '::violation'),
+    scenario: 'violation',
+  };
+}
+
+function sameRecoveryBoundary(violationGrant, recoveryGrant) {
+  return (
+    violationGrant.run_id === recoveryGrant.run_id
+    && violationGrant.attempt_id === recoveryGrant.attempt_id
+    && violationGrant.artifact_sha === recoveryGrant.artifact_sha
+    && violationGrant.brain_version === recoveryGrant.brain_version
+    && violationGrant.engine_version === recoveryGrant.engine_version
+    && violationGrant.resource_id === recoveryGrant.resource_id
+    && violationGrant.resource_ref === recoveryGrant.resource_ref
+    && violationGrant.resource_prefix === recoveryGrant.resource_prefix
+    && violationGrant.seam_id === recoveryGrant.seam_id
+    && violationGrant.adapter_id === recoveryGrant.adapter_id
+  );
+}
+
 async function confirmCleanup(adapter, context, timeoutMs) {
   try {
     const cleanup = await withTimeout(
@@ -296,6 +319,7 @@ export async function executeDrillCell({
   nonceConsumer,
   adapters,
   collector,
+  predecessorResolver = null,
   auditSink = null,
   now = Date.now(),
   timeoutMs = 30_000,
@@ -331,6 +355,67 @@ export async function executeDrillCell({
     return deny(errorCode(error, 'grant_invalid'), 'grant_verification');
   }
 
+  const adapter = resolveAdapter(adapters, cell.adapter_id);
+  if (
+    !adapter
+    || typeof adapter.prepare !== 'function'
+    || typeof adapter.invokeActualSeam !== 'function'
+    || typeof adapter.observe !== 'function'
+    || typeof adapter.cleanup !== 'function'
+  ) {
+    return deny('drill_adapter_unavailable', 'adapter_preflight');
+  }
+
+  let predecessorGrant = null;
+  let predecessorReceipt = null;
+  if (cell.scenario === 'recovery') {
+    if (typeof predecessorResolver !== 'function') {
+      return deny(
+        'recovery_predecessor_unavailable',
+        'recovery_predecessor',
+      );
+    }
+    try {
+      const predecessor = await predecessorResolver({
+        cell_id: violationCellFor(cell).cell_id,
+        behavior_id: cell.behavior_id,
+        provider: cell.provider,
+        scenario: 'violation',
+        run_id: verifiedGrant.run_id,
+        attempt_id: verifiedGrant.attempt_id,
+        artifact_sha: verifiedGrant.artifact_sha,
+        resource_id: verifiedGrant.resource_id,
+        resource_ref: verifiedGrant.resource_ref,
+        seam_id: cell.seam_id,
+        adapter_id: cell.adapter_id,
+      });
+      const violationCell = violationCellFor(cell);
+      predecessorGrant = verifyExecutionGrant(
+        predecessor?.grant,
+        trustRegistry,
+        expectedFromGrant(violationCell, predecessor?.grant),
+        { now },
+      );
+      if (!sameRecoveryBoundary(predecessorGrant, verifiedGrant)) {
+        return deny(
+          'recovery_predecessor_axis_mismatch',
+          'recovery_predecessor',
+        );
+      }
+      predecessorReceipt = verifyEffectReceipt(
+        predecessor?.receipt,
+        trustRegistry,
+        expectedFromGrant(violationCell, predecessorGrant),
+        { now },
+      );
+    } catch (error) {
+      return deny(
+        errorCode(error, 'recovery_predecessor_unavailable'),
+        'recovery_predecessor',
+      );
+    }
+  }
+
   if (typeof nonceConsumer !== 'function') {
     return deny('nonce_consumer_unavailable', 'nonce_consumption');
   }
@@ -348,17 +433,6 @@ export async function executeDrillCell({
     }
   } catch {
     return deny('grant_nonce_replay', 'nonce_consumption');
-  }
-
-  const adapter = resolveAdapter(adapters, cell.adapter_id);
-  if (
-    !adapter
-    || typeof adapter.prepare !== 'function'
-    || typeof adapter.invokeActualSeam !== 'function'
-    || typeof adapter.observe !== 'function'
-    || typeof adapter.cleanup !== 'function'
-  ) {
-    return deny('drill_adapter_unavailable', 'adapter_preflight');
   }
 
   const context = Object.freeze({
@@ -389,7 +463,10 @@ export async function executeDrillCell({
     receipt = verifyEffectReceipt(
       receipt,
       trustRegistry,
-      expectedFromGrant(cell, verifiedGrant),
+      {
+        ...expectedFromGrant(cell, verifiedGrant),
+        predecessor: predecessorReceipt,
+      },
       { now },
     );
   } catch (error) {
@@ -409,10 +486,17 @@ export async function executeDrillCell({
   }
   let bundle;
   try {
+    const executionGrants = predecessorGrant
+      ? [predecessorGrant, verifiedGrant]
+      : [verifiedGrant];
+    const receipts = predecessorReceipt
+      ? [predecessorReceipt, receipt]
+      : [receipt];
     bundle = await collector({
       cell,
       grant: verifiedGrant,
-      receipts: [receipt],
+      executionGrants,
+      receipts,
     });
     const verifiedBundle = verifyReceiptBundle(
       bundle,
