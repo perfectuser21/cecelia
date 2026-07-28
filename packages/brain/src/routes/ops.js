@@ -2729,6 +2729,26 @@ router.get('/deploy/status', (req, res) => {
   res.json({ ...deployState, git_sha: process.env.GIT_SHA || 'unknown' });
 });
 
+// Direct deploy scripts consume the same persisted ReleaseRun intent.
+router.post('/release-runs/authorize', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const expectedToken = process.env.DEPLOY_TOKEN;
+  if (!expectedToken) {
+    return res.status(500).json({ error: 'DEPLOY_TOKEN not configured on server' });
+  }
+  if (!token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid or missing deploy token' });
+  }
+  try {
+    const authorization = await authorizeReleaseEffect(pool, req.body);
+    return res.json(authorization);
+  } catch (error) {
+    return res.status(403).json({
+      error: error?.code ?? 'release_effect_unauthorized',
+    });
+  }
+});
+
 // POST /api/brain/deploy — GitHub Actions 合并后触发本地部署
 // 支持 mode='staging' 或 staging=true 走 Safe Lane staging 分支（端口 5222）
 router.post('/deploy', async (req, res) => {
@@ -2928,6 +2948,12 @@ router.post('/deploy', async (req, res) => {
     detached: true,
     stdio: stdioOption,
     cwd: repoRoot,
+    env: {
+      ...process.env,
+      KERNEL_RELEASE_RUN_ID: release_run_id,
+      KERNEL_RELEASE_MERGE_SHA: merge_sha,
+      KERNEL_RELEASE_AUTHORIZATION: release_authorization,
+    },
   });
   // log fd 被子进程接管后父进程可以关闭（数据继续写入文件）
   if (typeof logFd === 'number') {

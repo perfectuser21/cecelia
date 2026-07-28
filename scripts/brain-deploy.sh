@@ -206,6 +206,9 @@ if [[ "$SHA_CHECK_ONLY" == true ]]; then
     exit 0
 fi
 
+# 所有真实生产副作用必须消费 server-owned ReleaseRun intent；直接手工调用默认拒绝。
+bash "$SCRIPT_DIR/lib/release-run-guard.sh" production
+
 # ── 部署模式检测：Docker vs launchd ─────────────────────────────────────────
 DEPLOY_MODE="docker"
 LAUNCHD_SERVICE="com.cecelia.brain"

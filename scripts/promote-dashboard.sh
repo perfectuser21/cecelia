@@ -19,6 +19,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# dashboard 换入 production（包括 release-only/tag）必须属于同一个 ReleaseRun。
+bash "$SCRIPT_DIR/lib/release-run-guard.sh" production
+
 # 部署根：测试钩子 CECELIA_DEPLOY_ROOT 优先，否则按 worktree/主仓库解析（与 deploy-local.sh 一致）
 if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     MAIN_ROOT="$(cd "$CECELIA_DEPLOY_ROOT" && pwd)"
