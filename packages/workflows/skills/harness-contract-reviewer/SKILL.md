@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.6.0
+version: 9.7.0
 created: 2026-04-08
-updated: 2026-07-14
+updated: 2026-07-28
 changelog:
+  - 9.7.0: Kernel raw result channel — reviewer 最终 claimed verdict/rubric/feedback 统一经 runner-owned raw-result-writer；managed 模式不直接打开 BRAIN_RESULT_FILE，legacy 仍落 /workspace/.brain-result.json；判定点回读通过重跑唯一 writer 更新
   - 9.5.0: 真实链路四硬规则审查（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证，与 proposer 9.10.0 对齐）— Golden Path 覆盖审查新增第 14/15/16/17 条：(14) 设备/agent 调服务端缺「真实调用方请求 shape」段或 DoD 认证字段与生产调用方不逐字段一致 → 打回（规则A）；(15) 第三方 API 全 mock 零真调 → 打回（规则B）；(16) DoD 含 force_*/stub/假数据但无「未覆盖真实链路清单」段 → 打回（规则C）；(17) target_environment 与 ability 真实运行环境不匹配 → 第 7 维 0 分打回（规则D：微信 UI/RPA 必 windows_wechat；Android 通道未落地前真机段必登记未覆盖）；第 6 维领域验证核对清单同步补「真实调用方 shape」「第三方真调」两行
   - 9.6.0: EVA v2 审计五修 — (R1) Step 5 判定点写库后必须回读自证，judgments_written 作为必含字段写进最终 verdict JSON，登记表有行但写入 0 条 → verdict 必带 WARN（a85e0582 实证 3 行登记表全静默漏写）；(R2) Step 4 结果文件路径参数化 RESULT_FILE=${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}，headed/relay 由 controller 注入（gan-7b17211.json 实证）；(R3) Golden Path 覆盖审查新增第 18 条：e2e 脚本/manual:bash 必须 bash -n 通过 + 全角标点紧贴 $VAR 检测，命中即第 6 维低分（issue a638f840 实证）；(R4) 第 6 维口径收紧：PRD 无 HTTP 响应不自动满分，改审等价 oracle codify 与 E2E 真执行断言占比（d063b3e5 实证判例）；(R5) Step 3 明确 gan-feedback-rN.md 与 verdict feedback 字段必须简体中文（r4 全英文反馈实证违规）
   - 9.4.0: 判定点写库通电（九要素 T5 — decisions e035dad8）— Step 5 APPROVED 后新增第 2 件事：逐行解析合同「判定点登记表」写入 decisions category=judgment（账本保鲜守卫「判定点活性」指标唯一数据源）；解析跳过表头/分隔线/示例行/N-A；失败只 WARN 不阻塞结果文件
@@ -301,23 +302,30 @@ Round N, 阈值固定 7/10（不随 round 衰减）。
 
 ### Step 4: 写结果文件（Brain 读文件而非 stdout）
 
-**输出协议（v6.6.0 — 强制 Bash 工具写文件；v9.5 — EVA v2 路径参数化）**：
+**输出协议（v9.7.0 — managed raw result channel）**：
 
-最终输出必须通过 **Bash 工具**写入结果文件。路径不再写死：`RESULT_FILE="${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}"`，headed/relay 本地场景由 controller 注入 `BRAIN_RESULT_FILE`（gan-7b17211.json 实证容器路径写失败靠 controller 代持久化）。Brain 读文件不读 stdout，文本输出的命令不生效：
+最终输出必须通过 **Bash 工具**执行下面的唯一 writer。managed Kernel
+模式只提交 claimed JSON 给 runner-owned helper；Skill 不得自行打开
+`BRAIN_RESULT_FILE`，Brain 也不从 stdout 猜 verdict。只有变量完全 unset
+时才保留 `/workspace/.brain-result.json` legacy 落点：
 
 ⚠️ **关键：必须在 Claude Code 的 Bash 工具中执行以下命令，不能只在文本里描述它**
 
 ```bash
-# [必须通过 Bash 工具执行，不是文字描述] 写结果文件
-RESULT_FILE="${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}"
-cat > "$RESULT_FILE" << 'BREOF'
-{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"ci_workflow_alignment":X},"judgments_written":0,"feedback":"<feedback text or empty>"}
-BREOF
-```
-
-写完后用 Bash 工具验证文件存在（对 $RESULT_FILE 生效）：
-```bash
-test -f "$RESULT_FILE" && echo "OK: result file written" || echo "FAIL: file missing!"
+# reviewer-result-writer:start
+RAW_RESULT_JSON=$(jq -cn \
+  --arg verdict "${REVIEWER_VERDICT:?APPROVED or REVISION required}" \
+  --argjson rubric_scores "${RUBRIC_SCORES_JSON:?seven rubric scores required}" \
+  --argjson judgments_written "${JUDGMENTS_WRITTEN:-0}" \
+  --arg feedback "${FEEDBACK:-}" \
+  '{verdict:$verdict,rubric_scores:$rubric_scores,
+    judgments_written:$judgments_written,feedback:$feedback}')
+if [ "${BRAIN_RESULT_FILE+x}" = x ]; then
+  printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
+else
+  printf '%s\n' "$RAW_RESULT_JSON" > /workspace/.brain-result.json
+fi
+# reviewer-result-writer:end
 ```
 
 - `judgments_written` 是**必含字段**（v9.5 — EVA v2）：初始写 0；APPROVED 走 Step 5 判定点写库后回读真实条数更新此字段（见 Step 5「回读自证」段）；REVISION 保持 0。
@@ -432,16 +440,16 @@ writePlanned().then(() => console.log('Step 5 完成：', apis.length, 'API +', 
 ```bash
 # 回读本 task 的 judgment 条数（等价查询亦可）
 N=$(curl -s "$BRAIN/api/brain/decisions?category=judgment" | jq "[.[]|select(.reason|contains(\"$TASK_ID\"))] | length")
-# 把真实条数写回结果文件（对 $RESULT_FILE 生效，与 Step 4 同一路径）
-RESULT_FILE="${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}"
-jq --argjson n "$N" '.judgments_written = $n' "$RESULT_FILE" > "$RESULT_FILE.tmp" && mv "$RESULT_FILE.tmp" "$RESULT_FILE"
-echo "judgments_written=$N"
+# 用真实条数重跑 Step 4 的唯一 writer，禁止 jq 就地改 managed 结果文件
+JUDGMENTS_WRITTEN="$N"
+export JUDGMENTS_WRITTEN
+# 然后原样执行 Step 4 marker 内命令
 ```
 
 - 合同有判定点登记表（非空、非全 N/A）但回读 N=0 → **verdict JSON 的 feedback 必须带 WARN 说明**（如 `WARN: 判定点登记表 3 行但写库 0 条，学习回路断电`）——a85e0582 实证 3 行登记表全静默漏写，「只 WARN 不阻塞」设计零感知，回读自证是唯一暴露口。
 
 **注意**：
-- 写入失败只 WARN，不阻塞结果文件（Brain 的 APPROVED 判定以 `/workspace/.brain-result.json` 为准）
+- legacy 写入失败只 WARN；managed helper 失败必须让本次角色失败，禁止降级 stdout
 - Report 阶段（harness-sprint-state）会把 planned → done 状态更新 + 推 Notion
 - 判定点写入是幂等宽松的（同名重复写只是多一条记录，不炸）；合同无登记表或全 N/A → 0 条，正常
 - ⚠️ 判定点被 Alex/用户纠正（❌ 打回换方法）时，纠正后的方法走 Invariant Gate 升铁律（e035dad8 第④条），不在本 Step 处理

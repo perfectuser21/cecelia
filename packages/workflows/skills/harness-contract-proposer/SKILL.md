@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.16.0
+version: 9.17.0
 created: 2026-04-08
-updated: 2026-07-17
+updated: 2026-07-28
 changelog:
+  - 9.17.0: Kernel raw result channel — proposer 最终 claimed JSON 统一经 runner-owned raw-result-writer 写入 BRAIN_RESULT_FILE；managed 模式禁 stdout 猜测，unset 时保留 WORKSPACE_PATH/.brain-result.json legacy 落点
   - 9.16.0: target_environment 枚举加 android_realmachine（洞①）— E2E 模板 target_environment 占位符同步补入
   - 9.15.0: gear 档位：新增 Step 3.1 HARNESS_GEAR=segmented 档位分支（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策6），恢复 v7 前多 workstream task-plan.json schema（tasks[]/depends_on 线性链/estimated_minutes 20-60），段划分依据=Golden Path"后段依赖前段真机产物"接缝；default（缺省或非 segmented）保持单 ws1 现行为不变
   - 9.14.0: 三段式 [BEHAVIOR] 剧本格式升级——每条 BEHAVIOR 须含三段：①「动作」（操作步骤）②「预期观察」（用户/系统可见状态变化）③「验证命令」（可执行断言）；新增 until-loop 等待预算范式（within 预算轮询，如 within 60s 收到消息确认）；legacy 兼容标记（存量纯命令写法保留但标为 legacy，不强制迁移）；样例剧本：点设置 → within 60s 收到消息
@@ -1506,16 +1507,25 @@ git push origin "${PROPOSE_BRANCH}"
 **结果文件写入**（每轮 — 含被 REVISION 打回轮）：
 
 ```bash
-# 写结果文件（Brain 读文件，不读 stdout；容器内 /workspace，宿主 fallback 用 WORKSPACE_PATH）
-cat > "${WORKSPACE_PATH:-/workspace}/.brain-result.json" << BREOF
-{"propose_branch":"${PROPOSE_BRANCH}","workstream_count":1,"task_plan_path":"${SPRINT_DIR}/task-plan.json"}
-BREOF
-echo "[proposer] .brain-result.json 写入完成 propose_branch=${PROPOSE_BRANCH}"
+# proposer-result-writer:start
+RAW_RESULT_JSON=$(jq -cn \
+  --arg propose_branch "$PROPOSE_BRANCH" \
+  --arg task_plan_path "${SPRINT_DIR}/task-plan.json" \
+  '{propose_branch:$propose_branch,workstream_count:1,task_plan_path:$task_plan_path}')
+if [ "${BRAIN_RESULT_FILE+x}" = x ]; then
+  printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
+else
+  printf '%s\n' "$RAW_RESULT_JSON" > "${WORKSPACE_PATH:-/workspace}/.brain-result.json"
+fi
+# proposer-result-writer:end
 ```
 
 **输出契约（v8.0.0+ — 文件协议）**：
 
-proposer 调用结束时必须向 `${WORKSPACE_PATH:-/workspace}/.brain-result.json` 写入 JSON（与 evaluator 同款宿主 fallback 写法）：
+managed Kernel 调用必须把 claimed JSON 经 stdin 交给固定的 runner helper；Skill
+不得自行打开 `BRAIN_RESULT_FILE`，也不得把 JSON 打到 stdout。仅当
+`BRAIN_RESULT_FILE` 完全 unset 时，保留向
+`${WORKSPACE_PATH:-/workspace}/.brain-result.json` 写入的 legacy 行为：
 - `propose_branch`：Brain 注入的 `$PROPOSE_BRANCH` 值
 - `workstream_count`：固定为 1（一个 Sprint = 一个 Generator）
 - `task_plan_path`：`${SPRINT_DIR}/task-plan.json`

@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.11.0
+version: 7.12.0
 created: 2026-04-08
-updated: 2026-07-17
+updated: 2026-07-28
 changelog:
+  - 7.12.0: Kernel raw result channel — DONE/FIXED/FAILED 三态 claimed JSON 统一经 runner-owned raw-result-writer；managed 模式禁 stdout verdict，BRAIN_RESULT_FILE unset 时保持原 stdout-only
   - 7.11.0: gear 档位：Step 0 IS_SKELETON 检测旁新增 WORKSTREAM_INDEX 检测（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策7）——segmented 档位下存在时只实现 task-plan.json 对应段的 scope/files，禁碰其他段实现文件；测试棋盘共享只许点绿禁改断言（CONTRACT IS LAW 不变）；TDD 两 commit 纪律照旧；default（未设置）保持现行整份 Sprint 一口气实现不变
   - 7.10.0: TDD 纪律新增「禁 mock 边执行规则」（刀2，配套 proposer 9.12.0）——合同 ## 禁 mock 边清单 列出的边，测试代码中 vi.mock/jest.mock/stub 命中即违约（CONTRACT IS LAW 的一部分，evaluator 机械 grep 核查，命中 = CONTRACT-IS-LAW FAIL）；需要真 PG 的测试按合同指定放 integration 命名/位置，CI 由 brain-integration job 起真 Postgres 跑
   - 7.9.0: EVA v2 审计五处修法 — G1 Red 阶段 relay 现实双分支（合同测试已随 contract import 存在则 Red commit=DoD.md+red-evidence 摘要，不重复 checkout；Red 验证按测试类型分派，.test.sh 合同逐个 bash 执行预期非零退出码即为红，替代 numTotalTests=0 即 exit 1 的死路）；G2 防事后补标（(Red) commit committer date 必须早于实现 commit）+ lint-tdd-commit-order 表述如实化（只校验文件序不校验标签顺序）；G3 新增 Step 6.7 push 前 CI 门禁自查（smoke 存在且登记/DoD 全勾/[BEHAVIOR] 测试覆盖，3827 实证）；G4 BEHIND 统一 gh pr update-branch，禁 merge commit 限定开工 rebase 阶段；G5 MAX_FIXES 用尽接线 Step 8 FAILED verdict + RELAY_STATUS BLOCKED
@@ -94,8 +95,11 @@ PLANNER_BRANCH={planner_branch}
 # 自检 — Brain dispatch 必须把这 3 个 env 都注入进来
 for var in CONTRACT_BRANCH SPRINT_DIR BRAIN_URL; do
   if [ -z "${!var:-}" ]; then
-    echo "ERROR: env $var 未定义 — Brain dispatch 协议失败 (harness-task-dispatch.js 应注入)"
-    echo "{\"verdict\": \"ABORTED\", \"reason\": \"missing env $var\"}"
+    echo "ERROR: env $var 未定义 — Brain dispatch 协议失败 (harness-task-dispatch.js 应注入)" >&2
+    # managed Kernel 不向 stdout 伪造 raw result；非零进程退出由 controller 处理。
+    if [ "${BRAIN_RESULT_FILE+x}" != x ]; then
+      echo "{\"verdict\": \"ABORTED\", \"reason\": \"missing env $var\"}"
+    fi
     exit 1
   fi
 done
@@ -132,8 +136,11 @@ entrypoint.sh 已自动重写 origin URL，但保险起见在容器内自检 —
 ```bash
 ORIGIN_URL=$(git remote get-url origin)
 if [[ "$ORIGIN_URL" =~ ^/ ]]; then
-  echo "ERROR: git remote 仍是宿主路径 $ORIGIN_URL — entrypoint 重写失败"
-  echo "{\"verdict\": \"ABORTED\", \"reason\": \"git remote points to host filesystem path\"}"
+  echo "ERROR: git remote 仍是宿主路径 $ORIGIN_URL — entrypoint 重写失败" >&2
+  # managed Kernel 不向 stdout 伪造 raw result；非零进程退出由 controller 处理。
+  if [ "${BRAIN_RESULT_FILE+x}" != x ]; then
+    echo "{\"verdict\": \"ABORTED\", \"reason\": \"git remote points to host filesystem path\"}"
+  fi
   exit 1
 fi
 ```
@@ -602,10 +609,11 @@ done
 
 > **EVA v2（G5）MAX_FIXES 用尽出口（死规则）**：CI 修复 3 次用尽走到 `giving up` 分支后，禁止静默结束——**立即执行 Step 8**，输出 `{"verdict":"FAILED","pr_url":"<url>","reason":"<最后一轮 CI 失败摘要>"}`；relay 模式下报告末尾输出 `RELAY_STATUS: BLOCKED`。消除 break 后的流程真空。
 
-### Step 8: 输出 verdict JSON（⚠️ Brain 通过此提取 pr_url，CI 全绿后执行）
+### Step 8: 提交 raw verdict JSON（CI 全绿后执行）
 
-> **CRITICAL**: 最后一条消息必须是**纯 JSON**，禁止任何其他文字（不加 markdown、不加说明）。
-> Brain 的 execution.js 依赖此 JSON 提取 pr_url。
+> managed Kernel 模式不再从最后一条 stdout 猜 JSON；它只接受 runner-owned
+> helper 原子落下的 raw result。仅当 `BRAIN_RESULT_FILE` 完全 unset 时，
+> 保持最后一条消息 stdout-only 的旧行为。
 
 **verdict JSON schema（三态，各自必带字段）**：
 
@@ -616,10 +624,37 @@ done
 | `FAILED` | 连续 3 轮自验/CI 仍 FAIL，放弃 | `verdict`, `pr_url`, `reason`（失败根因）| PR body 已标 [BEHAVIOR_FAIL]，交 evaluator/人处理 |
 
 ```bash
-echo "{\"verdict\": \"DONE\", \"pr_url\": \"$PR_URL\"}"
+# generator-result-writer:start
+case "${GENERATOR_VERDICT:-DONE}" in
+  DONE)
+    RAW_RESULT_JSON=$(jq -cn --arg pr_url "$PR_URL" \
+      '{verdict:"DONE",pr_url:$pr_url}')
+    ;;
+  FIXED)
+    jq -e 'type == "array" and length > 0' <<<"${FIXES_JSON:?non-empty fixes array required}" >/dev/null
+    RAW_RESULT_JSON=$(jq -cn --arg pr_url "$PR_URL" \
+      --argjson fixes "$FIXES_JSON" \
+      '{verdict:"FIXED",pr_url:$pr_url,fixes:$fixes}')
+    ;;
+  FAILED)
+    RAW_RESULT_JSON=$(jq -cn --arg pr_url "$PR_URL" \
+      --arg reason "${FAILURE_REASON:?failure reason required}" \
+      '{verdict:"FAILED",pr_url:$pr_url,reason:$reason}')
+    ;;
+  *)
+    echo "invalid GENERATOR_VERDICT" >&2
+    exit 1
+    ;;
+esac
+if [ "${BRAIN_RESULT_FILE+x}" = x ]; then
+  printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
+else
+  printf '%s\n' "$RAW_RESULT_JSON"
+fi
+# generator-result-writer:end
 ```
 
-输出这一行作为最后消息（纯 JSON，不加其他内容）。
+先设置 `GENERATOR_VERDICT` 及对应字段，再执行上面的唯一 writer。
 
 > 🚫 **严禁照抄示例占位 URL**：任何含 `x/y`、`OWNER/REPO`、`org/repo`、`pull/123` 的 URL 都是占位符，原样输出会让 Brain 报 `generator_pr_not_found`、整条 harness 线作废。`pr_url` 必须取自你刚 `gh pr create` 实际返回的 `$PR_URL`（或 `gh pr view --json url -q .url`），不是从本文档示例里复制的字面值。
 
@@ -647,11 +682,8 @@ git commit -m "fix(harness): <修复说明> (Green after fix)"
 git push origin HEAD
 ```
 
-**最后一条消息（纯 JSON，禁止其他文字）**：
-
-```bash
-echo "{\"verdict\": \"FIXED\", \"fixes\": [\"<Feature X: 修复说明>\"], \"pr_url\": \"$PR_URL\"}"
-```
+**最终提交**：设置 `GENERATOR_VERDICT=FIXED`，把真实修复说明放进非空
+`FIXES_JSON` 数组，然后执行 Step 8 的唯一 writer。
 
 ---
 

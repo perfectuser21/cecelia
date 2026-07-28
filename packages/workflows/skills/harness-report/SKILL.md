@@ -6,10 +6,11 @@ description: |
   → 更新Notion Feature Registry → 飞书通知 → 写本地harness-report.md备份。
   Phase B（Sprint状态同步）：写本地Brain DB → 通过 db-update skill 触发 notion-push-sync.js 的 8 个 push 函数（journeys/journey_features/issues/skill_registry/journey_steps/journey_step_links/decisions/initiative_contracts）→ git commit。
   由 harness-evaluator PASS 后 Brain reportNode 自动 spawn；relay 模式由 harness-controller 调 Skill 触发（变量走「Relay 入口段」自取）；也可手动触发补同步。
-version: 6.8.0
+version: 6.9.0
 created: 2026-04-08
-updated: 2026-07-14
+updated: 2026-07-28
 changelog:
+  - 6.9.0: Kernel raw result channel — reporter 六字段 claimed JSON 统一经 runner-owned raw-result-writer；managed 模式禁 Skill 直写 BRAIN_RESULT_FILE，unset 时保留 git 根目录 .brain-result.json legacy 落点
   - 6.7.0: 翻牌义务（handoff 0714 刀3 — 台账只点火时写、交付后不翻牌根治）— Phase B 新增三件强制动作：(1) Feature 翻牌：本 sprint 推进的 journey_features 按 evaluator verdict 翻 status（PASS+merged→done / 真机段未验→working+logic-done-pending 备注 / 部分交付→working），禁止交付后仍留 planned；(2) Journey 回写：journey step 状态回写 + journeys.updated_at 刷新；description 与最新 decisions 冲突 → 标待人工确认并开 issue，不静默改写不静默跳过；(3) smoke 一致性核对：journey.e2e_test_path 指向的脚本是否还测现行方案（对照 decisions 近期废弃决策），测已废弃方案 → 开 issue。完成标志追加「翻牌清单」输出。实证：Path2/Path4 journeys.updated_at 停在 05-22、飞书版定义与 07-07 决策打架 46 天、「内容判定门槛」planned 而现实已合并 11 个 PR
   - 6.8.0: EVA v2 四修（背景：a85e0582 全通 run 里 harness-report.md/learning.md/notes 全是 Brain 侧 harness-report.mjs 降级脚本产的英文 Placeholder，本 skill 被架空；mjs 侧修复另立案，本条先修 skill 侧可自防部分）— (a) RP4 占位符守卫指纹扩大：Step 8c 与出口核验各加英文指纹 `grep -qi "placeholder"`（英文 "## Insights (Placeholder)" 字面逃逸中文守卫实证）；(b) RP5 .brain-result.json 落点参数化：BRAIN_RESULT_FILE 优先、默认 git 仓库根，headed mac 无 /workspace 场景出口协议不再无落地痕迹；(c) RP-learn 出口核验追加 learnings 表落库计数（全通 run learnings 表 0 条实证）；(d) RP6 新增「Phase B 核验」小节：journey_features/notes 各查一条本 sprint 记录，查不到记 concern；(e) 触发条件段声明与 mjs 降级脚本共存关系（以本 skill 产物为准 + 必留痕迹供区分来源）
   - 6.6.0: a638f840 两修——(a) TOTAL_COST fallback 端点修正为 /api/brain/orchestrator/relay-runs?task_id=（旧 URL 缺 orchestrator 前缀 Cannot GET，fallback 链空环；brain 1.259.0 起支持 task_id 过滤）；(b) Step 1 回写加降级链：status+result 被拒（老 brain 的 completed 409 / task 卡异常态）→ 纯 result 补写（brain 1.259.0 起合法）→ 仍失败才落 .report-concerns，pr_url/cost 不再静默丢失
@@ -728,13 +729,24 @@ LEARN_N=$(curl -s "localhost:5221/api/brain/learnings?task_id=$TASK_ID" 2>/dev/n
 
 if [ -n "$CONCERNS" ]; then VERDICT="DONE_WITH_CONCERNS"; else VERDICT="DONE"; fi
 
-# EVA v2 RP5：落点参数化——headed mac 场景 /workspace 不存在，a85e0582 实证该路径残留的
-# .brain-result.json 是 evaluator 的 verdict，report 出口协议无落地痕迹；默认落 git 仓库根，BRAIN_RESULT_FILE 可覆盖
-RESULT_FILE="${BRAIN_RESULT_FILE:-$(git rev-parse --show-toplevel 2>/dev/null || echo /workspace)/.brain-result.json}"
-cat > "$RESULT_FILE" << BREOF
-{"verdict":"$VERDICT","task_id":"$TASK_ID","report_path":"${SPRINT_DIR}/harness-report.md","pr_url":"$PR_URL","screenshots":$SCREENSHOTS,"concerns":$(echo "$CONCERNS" | jq -Rs . 2>/dev/null || echo '""')}
-BREOF
-echo "[harness-report Phase A] 交付完成，verdict=$VERDICT，出口协议已落 $RESULT_FILE${CONCERNS:+，concerns: $CONCERNS}"
+# report-result-writer:start
+RAW_RESULT_JSON=$(jq -cn \
+  --arg verdict "${REPORT_VERDICT:-$VERDICT}" \
+  --arg task_id "$TASK_ID" \
+  --arg report_path "${SPRINT_DIR}/harness-report.md" \
+  --arg pr_url "$PR_URL" \
+  --argjson screenshots "${SCREENSHOTS_JSON:-${SCREENSHOTS:-[]}}" \
+  --arg concerns "${CONCERNS:-}" \
+  '{verdict:$verdict,task_id:$task_id,report_path:$report_path,
+    pr_url:$pr_url,screenshots:$screenshots,concerns:$concerns}')
+if [ "${BRAIN_RESULT_FILE+x}" = x ]; then
+  printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
+else
+  LEGACY_RESULT_FILE="$(git rev-parse --show-toplevel 2>/dev/null || echo /workspace)/.brain-result.json"
+  printf '%s\n' "$RAW_RESULT_JSON" > "$LEGACY_RESULT_FILE"
+fi
+# report-result-writer:end
+echo "[harness-report Phase A] 交付完成，verdict=${REPORT_VERDICT:-$VERDICT}${CONCERNS:+，concerns: $CONCERNS}"
 ```
 
 > **给调用方（controller / Brain）的约定**：`DONE_WITH_CONCERNS` ≠ 失败，PR 已合并、流程可收尾，但表示交付报告不完整——controller 应把 concerns 原样写入台账，最终报告必须列明，不得折叠成 DONE。非关键步（Notion/飞书）失败同样要出现在最终报告的列明清单里。

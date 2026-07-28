@@ -7,10 +7,11 @@ description: |
   人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，payload 必须带 orchestrator=skill-relay）。
   直接调本 skill = 绕过 controller 接力链，违反 zero-human-gate 原则。
   （2026-07-05 cecelia #3554 起 LangGraph 图编排已废弃，"Brain executor Layer 1 节点"为过时语义。）
-version: 8.16.0
+version: 8.17.0
 created: 2026-04-08
-updated: 2026-07-16
+updated: 2026-07-28
 changelog:
+  - 8.17.0: Kernel raw result channel — Step 3 新增可执行 planner writer；BRAIN_RESULT_FILE 只要存在（空值也算 managed）即把 exact raw JSON 经 stdin 交 runner-owned raw-result-writer，unset 时保持原 stdout-only；planner raw 强制含 status + review_required
   - 8.16.0: target_environment 枚举加 android_realmachine（洞①）— PRD 模板枚举行 + 发货前机械闸正则同步补，Path2 安卓获客真机验收（xian-rog）此前无枚举可路由
   - 8.15.0: EVA v2 审计五修 — ① 修 Step 0.3 THIN_PRD 引用未定义变量 bug（TASK_PAYLOAD→TASK_JSON）；② Step 2 后新增「发货前机械闸」（journey_type/target_environment 枚举 + Invariant/累积FR/NFR/journey_id/step_id 五段结构 + thin-slice 行数自查，任一 FAIL 禁进 Step 3，恢复/重跑同样过闸——d063b3e5 实证 299 行 PRD 穿透）；③ 执行规则加防漂移铁律（输入真相只来自 task payload API，Step 0-3 不可跳）；④ 累积 FR 段加语义反例（禁表格、禁写本 sprint 新行为）；⑤ Step 3 出口 JSON 增 status 四态（DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED）
   - 8.14.0: 跨 repo 化刀3 — Step 0.5 环境映射加前置护栏：路径→环境映射表仅适用 base_repo=cecelia；zenithjoy 走既有布局约定（apps/dashboard→windows_cloud 等）；其他第三方 repo 禁止路径猜测，target_environment 必须由 payload 显式提供，缺失时 PRD 标注 environment: unresolved 交 controller 上报；映射表本体与 Brain API（localhost:5221）调用不动
@@ -478,11 +479,32 @@ git commit -m "feat(harness): Initiative PRD — {目标}"
 git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no creds), commit retained on local branch"
 ```
 
-**最后一条消息**：
+**最终 writer（必须通过 Bash 工具执行）**：
 
+先按真实结果设置 `PLANNER_VERDICT`、`PLANNER_STATUS`、`BRANCH`、
+`PLANNER_BRANCH`、`SPRINT_DIR`、`REVIEW_REQUIRED=true|false`，再执行：
+
+```bash
+# planner-result-writer:start
+RAW_RESULT_JSON=$(jq -cn \
+  --arg verdict "${PLANNER_VERDICT:-DONE}" \
+  --arg branch "${BRANCH:-${PLANNER_BRANCH:-}}" \
+  --arg sprint_dir "${SPRINT_DIR:-}" \
+  --arg planner_branch "${PLANNER_BRANCH:-${BRANCH:-}}" \
+  --argjson review_required "${REVIEW_REQUIRED:-false}" \
+  --arg status "${PLANNER_STATUS:-${PLANNER_VERDICT:-DONE}}" \
+  '{verdict:$verdict, branch:$branch, sprint_dir:$sprint_dir,
+    planner_branch:$planner_branch, review_required:$review_required, status:$status}')
+if [ "${BRAIN_RESULT_FILE+x}" = x ]; then
+  printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
+else
+  printf '%s\n' "$RAW_RESULT_JSON"
+fi
+# planner-result-writer:end
 ```
-{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-...", "planner_branch": "cp-...", "review_required": false, "status": "DONE"}
-```
+
+Managed Kernel 模式只认 `BRAIN_RESULT_FILE`，不得从 stdout 猜 JSON；unset
+是 legacy 模式，保持原 stdout-only，不新建 workspace result 文件。
 
 说明：`planner_branch` 字段供 Brain `runGanLoopNode` 读取，作为 GAN proposer 的 `PLANNER_BRANCH` env，避免回退到 main 读 PRD。
 
