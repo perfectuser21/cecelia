@@ -72,4 +72,37 @@ describe('strategic-decisions routes', () => {
       expect(res.body.success).toBe(true);
     });
   });
+
+  describe('GET /', () => {
+    it('filters judgment authority by exact source_ref and returns the binding', async () => {
+      const taskId = 'task-result-channel';
+      pool.query.mockResolvedValueOnce({
+        rows: [{
+          id: 'decision-1',
+          category: 'judgment',
+          topic: 'bounded',
+          decision: 'accepted',
+          status: 'active',
+          source_ref: taskId,
+        }],
+      });
+
+      const res = await request(makeApp())
+        .get(`/?category=judgment&source_ref=${taskId}&limit=10000`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        data: [expect.objectContaining({
+          category: 'judgment',
+          source_ref: taskId,
+        })],
+        total: 1,
+      });
+      const [sql, params] = pool.query.mock.calls[0];
+      expect(sql).toMatch(/source_ref/);
+      expect(sql).toMatch(/source_ref = \$\d+/);
+      expect(params).toContain(taskId);
+    });
+  });
 });
