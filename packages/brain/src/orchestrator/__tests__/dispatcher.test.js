@@ -7,12 +7,15 @@ import {
 } from '../dispatcher.js';
 import { createKernelHandlers } from '../kernel-handlers.js';
 import { createCapabilityGate } from '../preflight/capability-gate.js';
+import { sha256Canonical } from '../../lib/kernel-equivalence-receipts.js';
 
 const { buildDockerArgs } = (await import('../../docker-executor.js')).__test__;
 
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const runId = '11111111-1111-4111-8111-111111111111';
 const attemptId = '22222222-2222-4222-8222-222222222222';
+const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
+const evaluatorReceiptId = '66666666-6666-4666-8666-666666666666';
 const verificationCommands = Object.freeze([
   'npm test',
   'bash scripts/smoke/kernel-result-channel.sh',
@@ -69,6 +72,62 @@ function fakeSkill(name) {
     digest: `sha256:${'a'.repeat(64)}`,
     content: `${name} instructions`,
   });
+}
+
+function authorizeJudgeObserved(deps, source) {
+  const evaluateResult = {
+    contract_version: '1.0',
+    attempt_id: evaluatorAttemptId,
+    status: 'completed',
+    checks: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
+    decision: {
+      outcome: 'PASS',
+      reason: 'verified',
+      pr_head_sha: source.pr.head_sha,
+    },
+  };
+  const evaluateVerdict = {
+    attempt_id: evaluatorAttemptId,
+    verdict: 'PASS',
+    pr_head_sha: source.pr.head_sha,
+    feedback: 'verified',
+    failure_class: null,
+    executor_kind: 'fleet-worker',
+    result_digest: sha256Canonical(evaluateResult),
+    result_receipt_id: evaluatorReceiptId,
+    result_sha256: 'b'.repeat(64),
+  };
+  deps.attemptStore.getById = vi.fn(async (id) => {
+    if (id === attemptId) {
+      return { id, run_id: runId, role: 'judge', status: 'running' };
+    }
+    if (id === evaluatorAttemptId) {
+      return {
+        id,
+        run_id: runId,
+        role: 'evaluator',
+        status: 'completed',
+        execution_transport: 'fleet-worker',
+        lease_owner: 'worker-1',
+        lease_generation: 1,
+        completed_at: '2026-07-28T12:00:00.000Z',
+        task_bundle: {
+          inputs: {
+            pull_request: { head_sha: source.pr.head_sha },
+          },
+        },
+        result_receipt_id: evaluatorReceiptId,
+        result_sha256: 'b'.repeat(64),
+        result: evaluateResult,
+      };
+    }
+    return null;
+  });
+  return {
+    ...source,
+    evaluateVerdict,
+    evaluateResult,
+  };
 }
 
 function makeDeps(order = []) {
@@ -452,7 +511,7 @@ describe('createDispatcher', () => {
     };
     d.handlers = createKernelHandlers(handlerDeps);
     const dispatch = createDispatcher(d);
-    const judgeObserved = {
+    const judgeObserved = authorizeJudgeObserved(d, {
       ...observed,
       task: {
         ...observed.task,
@@ -467,12 +526,7 @@ describe('createDispatcher', () => {
         head_sha: 'a'.repeat(40),
         merged: false,
       },
-      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'a'.repeat(40) },
-      evaluateResult: {
-        decision: { outcome: 'PASS', reason: 'verified' },
-        checks: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
-      },
-    };
+    });
 
     await dispatch('spawn:judge', {
       taskId,
@@ -519,7 +573,7 @@ describe('createDispatcher', () => {
       taskId,
       runId,
       hop: 9,
-      observed: {
+      observed: authorizeJudgeObserved(d, {
         ...observed,
         task: {
           ...observed.task,
@@ -534,12 +588,7 @@ describe('createDispatcher', () => {
           head_sha: 'a'.repeat(40),
           merged: false,
         },
-        evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'a'.repeat(40) },
-        evaluateResult: {
-          decision: { outcome: 'PASS', reason: 'verified' },
-          checks: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
-        },
-      },
+      }),
       decision: { phase: 'judge', reason: 'evaluator_passed' },
     });
 

@@ -61,6 +61,12 @@ function evaluatorAttempt(id) {
     id,
     run_id: RUN_ID,
     role: 'evaluator',
+    status: 'completed',
+    execution_transport: 'fleet-worker',
+    lease_owner: 'fleet-worker:regression',
+    lease_generation: 1,
+    result_receipt_id: '66000000-0000-4000-8000-000000000066',
+    result_sha256: 'b'.repeat(64),
     task_bundle: {
       inputs: {
         pull_request: {
