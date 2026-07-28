@@ -1,4 +1,5 @@
 import { verifyMachineAttestation } from './machine-attestation.js';
+import { parseResultChannelDescriptor } from './execution-contract.js';
 
 const JSON_HEADERS = Object.freeze({
   'Content-Type': 'application/json',
@@ -201,7 +202,7 @@ export function createRemoteBridgeTransport({
       requireNonempty(attempt?.id, 'attempt_id');
       requireNonempty(attempt?.run_id, 'run_id');
       requireNonempty(attempt?.lease_owner, 'lease_owner');
-      requireNonempty(attempt?.callbackSecret, 'callback_token');
+      requireNonempty(bundle?.inputs?.task_id, 'task_id');
 
       const leaseGeneration = attempt.lease_generation ?? 0;
       if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
@@ -211,6 +212,18 @@ export function createRemoteBridgeTransport({
       const normalizedBrainUrl = normalizeHttpUrl(
         configuredBrainUrl,
         'remote_bridge_invalid_brain_url',
+      );
+      if (new URL(normalizedBrainUrl).origin !== normalizedBrainUrl) {
+        throw new Error('remote_bridge_invalid_brain_url');
+      }
+      const resultChannel = parseResultChannelDescriptor(
+        bundle?.result_channel,
+        {
+          taskId: bundle.inputs.task_id,
+          runId: attempt.run_id,
+          attemptId: attempt.id,
+          role: bundle?.role,
+        },
       );
       let credentialEnvelope;
       if (target?.provider === 'codex') {
@@ -256,6 +269,7 @@ export function createRemoteBridgeTransport({
           headers: authHeaders(true),
           body: JSON.stringify({
             attempt_id: attempt.id,
+            task_id: bundle.inputs.task_id,
             run_id: attempt.run_id,
             lease_owner: attempt.lease_owner,
             lease_generation: leaseGeneration,
@@ -278,8 +292,8 @@ export function createRemoteBridgeTransport({
             ...(credentialEnvelope
               ? { credential_envelope: credentialEnvelope }
               : {}),
-            callback_url: `${normalizedBrainUrl}/api/brain/harness/attempts/${encodeURIComponent(attempt.id)}/callback`,
-            callback_token: attempt.callbackSecret,
+            result_channel: resultChannel,
+            brain_url: normalizedBrainUrl,
           }),
         },
         async (response, signal) => {

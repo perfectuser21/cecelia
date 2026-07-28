@@ -22,7 +22,52 @@ const PROVIDER_FIELDS = new Set([
   'stdin',
   'output',
 ]);
+const LAUNCH_FIELDS = new Set([
+  'attempt_id',
+  'task_id',
+  'run_id',
+  'lease_owner',
+  'lease_generation',
+  'target',
+  'workspace_spec',
+  'provider_spec',
+  'credential_envelope',
+  'result_channel',
+  'brain_url',
+]);
+const TARGET_FIELDS = new Set([
+  'machine',
+  'provider',
+  'account',
+  'model',
+  'role',
+]);
+const WORKSPACE_SPEC_FIELDS = new Set([
+  'repo',
+  'base_sha',
+  'branch',
+  'expected_head_sha',
+  'mode',
+  'run_id',
+  'attempt_id',
+]);
+const RESULT_CHANNEL_FIELDS = new Set([
+  'version',
+  'path',
+  'max_bytes',
+  'bindings',
+]);
+const RESULT_CHANNEL_BINDING_FIELDS = new Set([
+  'task_id',
+  'run_id',
+  'attempt_id',
+  'role',
+]);
+const RESULT_CHANNEL_VERSION = 'attempt-result-file/v1';
+const RESULT_CHANNEL_ROOT = '/tmp/cecelia-prompts';
+const RESULT_CHANNEL_MAX_BYTES = 1024 * 1024;
 const PROVIDER_PATTERN = /^(codex|claude|grok)$/;
+const ROLE_PATTERN = /^(planner|proposer|reviewer|generator|evaluator|judge|reporter)$/;
 const MAX_STATE_BYTES = 1_048_576;
 
 async function defaultRunCommand(command, args, options) {
@@ -201,13 +246,155 @@ function labelArgs(labels) {
   return args;
 }
 
-function callbackBrainUrl(callbackUrl) {
-  try {
-    const parsed = new URL(callbackUrl);
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    throw new Error('attempt_callback_url_invalid');
+function validateBrainUrl(value) {
+  if (typeof value !== 'string' || value.length === 0 || /[\r\n]/.test(value)) {
+    throw new Error('attempt_brain_url_invalid');
   }
+  try {
+    const parsed = new URL(value);
+    if (
+      !['http:', 'https:'].includes(parsed.protocol)
+      || parsed.username
+      || parsed.password
+      || parsed.search
+      || parsed.hash
+      || parsed.pathname !== '/'
+      || parsed.origin !== value
+    ) {
+      throw new Error('attempt_brain_url_invalid');
+    }
+    return parsed.origin;
+  } catch {
+    throw new Error('attempt_brain_url_invalid');
+  }
+}
+
+function assertExactFields(value, allowed, errorPrefix) {
+  for (const field of Object.keys(value)) {
+    if (!allowed.has(field)) {
+      throw new Error(`${errorPrefix}:${field}`);
+    }
+  }
+}
+
+function validateResultChannel(value, expected) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('attempt_result_channel_invalid');
+  }
+  assertExactFields(
+    value,
+    RESULT_CHANNEL_FIELDS,
+    'attempt_result_channel_unknown_field',
+  );
+  if (value.version !== RESULT_CHANNEL_VERSION) {
+    throw new Error('attempt_result_channel_version_invalid');
+  }
+  if (
+    !Number.isInteger(value.max_bytes)
+    || value.max_bytes <= 0
+    || value.max_bytes > RESULT_CHANNEL_MAX_BYTES
+  ) {
+    throw new Error('attempt_result_channel_max_bytes_invalid');
+  }
+  if (
+    !value.bindings
+    || typeof value.bindings !== 'object'
+    || Array.isArray(value.bindings)
+  ) {
+    throw new Error('attempt_result_channel_bindings_invalid');
+  }
+  assertExactFields(
+    value.bindings,
+    RESULT_CHANNEL_BINDING_FIELDS,
+    'attempt_result_channel_binding_unknown_field',
+  );
+  if (
+    typeof value.bindings.task_id !== 'string'
+    || value.bindings.task_id.length === 0
+    || /[\r\n]/.test(value.bindings.task_id)
+  ) {
+    throw new Error('attempt_result_channel_task_id_invalid');
+  }
+  if (!UUID_PATTERN.test(value.bindings.run_id ?? '')) {
+    throw new Error('attempt_result_channel_run_id_invalid');
+  }
+  if (!UUID_PATTERN.test(value.bindings.attempt_id ?? '')) {
+    throw new Error('attempt_result_channel_attempt_id_invalid');
+  }
+  if (!ROLE_PATTERN.test(value.bindings.role ?? '')) {
+    throw new Error('attempt_result_channel_role_invalid');
+  }
+  const expectedPath = `${RESULT_CHANNEL_ROOT}/${value.bindings.attempt_id}.result.json`;
+  if (
+    value.path !== expectedPath
+    || value.path.includes('..')
+    || /[\r\n]/.test(value.path)
+  ) {
+    throw new Error('attempt_result_channel_path_mismatch');
+  }
+  for (const [field, expectedValue] of Object.entries(expected)) {
+    if (value.bindings[field] !== expectedValue) {
+      throw new Error(`attempt_result_channel_${field}_mismatch`);
+    }
+  }
+  return Object.freeze({
+    version: value.version,
+    path: value.path,
+    max_bytes: value.max_bytes,
+    bindings: Object.freeze({
+      task_id: value.bindings.task_id,
+      run_id: value.bindings.run_id,
+      attempt_id: value.bindings.attempt_id,
+      role: value.bindings.role,
+    }),
+  });
+}
+
+function freshenResultTarget(attemptRuntime, resultChannel) {
+  const resultTarget = path.join(attemptRuntime, path.basename(resultChannel.path));
+  const expectedTarget = path.join(
+    attemptRuntime,
+    `${resultChannel.bindings.attempt_id}.result.json`,
+  );
+  if (resultTarget !== expectedTarget) {
+    throw new Error('attempt_result_target_path_mismatch');
+  }
+
+  let descriptor;
+  try {
+    let existing;
+    try {
+      existing = fs.lstatSync(resultTarget);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    if (existing?.isSymbolicLink()) {
+      throw new Error('attempt_result_target_symlink');
+    }
+    if (existing && !existing.isFile()) {
+      throw new Error('attempt_result_target_not_regular');
+    }
+    const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+    descriptor = fs.openSync(
+      resultTarget,
+      fs.constants.O_WRONLY
+        | fs.constants.O_TRUNC
+        | noFollow
+        | (existing ? 0 : fs.constants.O_CREAT | fs.constants.O_EXCL),
+      0o600,
+    );
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error('attempt_result_target_not_regular');
+    }
+    fs.fchmodSync(descriptor, 0o600);
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+  const finalStat = fs.lstatSync(resultTarget);
+  if (!finalStat.isFile() || finalStat.isSymbolicLink()) {
+    throw new Error('attempt_result_target_not_regular');
+  }
+  return resultTarget;
 }
 
 function parseDockerLabels(serialized) {
@@ -238,6 +425,20 @@ function createDockerAdapter({
       const attemptId = input?.attemptId;
       assertAttemptId(attemptId);
       if (
+        typeof input.taskId !== 'string'
+        || input.taskId.length === 0
+        || /[\r\n]/.test(input.taskId)
+      ) {
+        throw new Error('attempt_task_id_invalid');
+      }
+      const brainUrl = validateBrainUrl(input.brainUrl);
+      const resultChannel = validateResultChannel(input.resultChannel, {
+        task_id: input.taskId,
+        run_id: input.runId,
+        attempt_id: attemptId,
+        role: input.role,
+      });
+      if (
         input.workspaceMount?.target !== '/workspace'
         || typeof input.workspaceMount?.source !== 'string'
         || !path.isAbsolute(input.workspaceMount.source)
@@ -253,8 +454,16 @@ function createDockerAdapter({
       }
       const attemptRuntime = path.join(root, attemptId);
       fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
+      const runtimeStat = fs.lstatSync(attemptRuntime);
+      if (runtimeStat.isSymbolicLink()) {
+        throw new Error('attempt_runtime_symlink');
+      }
+      if (!runtimeStat.isDirectory()) {
+        throw new Error('attempt_runtime_not_directory');
+      }
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
+      freshenResultTarget(attemptRuntime, resultChannel);
       const isCodex = input.providerSpec?.provider === 'codex';
       if (
         isCodex
@@ -308,12 +517,10 @@ function createDockerAdapter({
         'host.docker.internal:host-gateway',
         ...envArgs({
           CECELIA_EXECUTOR: input.providerSpec.provider,
-          CECELIA_TASK_ID: attemptId,
-          HARNESS_TASK_ID: attemptId,
+          CECELIA_TASK_ID: input.taskId,
+          HARNESS_TASK_ID: input.taskId,
           HARNESS_ATTEMPT_ID: attemptId,
           HARNESS_RUN_ID: input.runId,
-          HARNESS_CALLBACK_URL: input.callback.url,
-          HARNESS_CALLBACK_TOKEN: input.callback.token,
           HARNESS_LEASE_OWNER: input.lease.owner,
           HARNESS_LEASE_GENERATION: input.lease.generation,
           HARNESS_READ_ONLY: String(input.workspaceMount.readOnly),
@@ -322,6 +529,9 @@ function createDockerAdapter({
           HARNESS_TASK_BUNDLE_FILE: containerPrompt,
           CECELIA_PROMPT_FILE: containerPrompt,
           CECELIA_STDOUT_FILE: containerStdout,
+          BRAIN_RESULT_FILE: resultChannel.path,
+          BRAIN_RESULT_MAX_BYTES: resultChannel.max_bytes,
+          BRAIN_RESULT_CHANNEL_VERSION: resultChannel.version,
           CECELIA_CREDENTIAL_FIFO: isCodex
             ? containerCredentialFifo
             : undefined,
@@ -329,7 +539,7 @@ function createDockerAdapter({
             ? input.credential.credentialRef
             : undefined,
           WORKTREE_PATH: '/workspace',
-          BRAIN_URL: callbackBrainUrl(input.callback.url),
+          BRAIN_URL: brainUrl,
         }),
         input.image,
       ];
@@ -506,6 +716,7 @@ function validateTarget(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('attempt_target_invalid');
   }
+  assertExactFields(value, TARGET_FIELDS, 'attempt_target_unknown_field');
   if (!CANONICAL_MACHINE_IDS.has(value.machine)) {
     throw new Error('attempt_target_machine_invalid');
   }
@@ -514,8 +725,7 @@ function validateTarget(value) {
   }
   if (
     typeof value.role !== 'string'
-    || !/^(planner|proposer|reviewer|generator|evaluator|judge|reporter)$/
-      .test(value.role)
+    || !ROLE_PATTERN.test(value.role)
   ) {
     throw new Error('attempt_target_role_invalid');
   }
@@ -539,12 +749,39 @@ function validateLaunchRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('attempt_launch_request_invalid');
   }
+  assertExactFields(value, LAUNCH_FIELDS, 'attempt_launch_request_unknown_field');
   if (!UUID_PATTERN.test(value.attempt_id ?? '')) {
     throw new Error('attempt_id_invalid');
   }
   if (!UUID_PATTERN.test(value.run_id ?? '')) {
     throw new Error('attempt_run_id_invalid');
   }
+  if (
+    typeof value.task_id !== 'string'
+    || value.task_id.length === 0
+    || /[\r\n]/.test(value.task_id)
+  ) {
+    throw new Error('attempt_task_id_invalid');
+  }
+  const target = validateTarget(value.target);
+  const resultChannel = validateResultChannel(value.result_channel, {
+    task_id: value.task_id,
+    run_id: value.run_id,
+    attempt_id: value.attempt_id,
+    role: target.role,
+  });
+  if (
+    !value.workspace_spec
+    || typeof value.workspace_spec !== 'object'
+    || Array.isArray(value.workspace_spec)
+  ) {
+    throw new Error('attempt_workspace_spec_invalid');
+  }
+  assertExactFields(
+    value.workspace_spec,
+    WORKSPACE_SPEC_FIELDS,
+    'attempt_workspace_spec_unknown_field',
+  );
   if (
     value.workspace_spec?.attempt_id !== value.attempt_id
     || value.workspace_spec?.run_id !== value.run_id
@@ -557,10 +794,17 @@ function validateLaunchRequest(value) {
   if (!Number.isInteger(value.lease_generation) || value.lease_generation < 0) {
     throw new Error('attempt_lease_generation_invalid');
   }
+  const brainUrl = validateBrainUrl(value.brain_url);
+  const providerSpec = validateProviderSpec(value.provider_spec);
+  if (providerSpec.provider !== target.provider) {
+    throw new Error('attempt_provider_target_mismatch');
+  }
   return {
     request: value,
-    providerSpec: validateProviderSpec(value.provider_spec),
-    target: validateTarget(value.target),
+    providerSpec,
+    target,
+    resultChannel,
+    brainUrl,
   };
 }
 
@@ -643,7 +887,13 @@ function createAttemptRunner({
 
   const runner = {
     async launch(input) {
-      const { request, providerSpec, target } = validateLaunchRequest(input);
+      const {
+        request,
+        providerSpec,
+        target,
+        resultChannel,
+        brainUrl,
+      } = validateLaunchRequest(input);
       if (target.machine !== workerId) {
         throw new Error('attempt_target_worker_mismatch');
       }
@@ -674,6 +924,7 @@ function createAttemptRunner({
       try {
         launched = await docker.launch({
           attemptId: request.attempt_id,
+          taskId: request.task_id,
           runId: request.run_id,
           workerId,
           image: runnerImageDigest,
@@ -691,10 +942,8 @@ function createAttemptRunner({
             readOnly: workspace.mode === 'read-only',
           },
           labels,
-          callback: {
-            url: request.callback_url,
-            token: request.callback_token,
-          },
+          resultChannel,
+          brainUrl,
           lease: {
             owner: request.lease_owner,
             generation: request.lease_generation,
@@ -712,11 +961,14 @@ function createAttemptRunner({
 
       const state = {
         attempt_id: request.attempt_id,
+        task_id: request.task_id,
         run_id: request.run_id,
         worker_id: workerId,
         lease_owner: request.lease_owner,
         lease_generation: request.lease_generation,
         provider: providerSpec.provider,
+        brain_url: brainUrl,
+        result_channel: resultChannel,
         ...(credential ? { credential: credential.metadata } : {}),
         container_id: launched.containerId,
         workspace,
