@@ -137,6 +137,10 @@ function protectedIssuer() {
     issueProtectedGrant: async () => {
       throw new Error('startup reconciliation must not issue a grant');
     },
+    revokeProtectedGrant: async ({ grant_ref: grantRef }) => ({
+      grant_ref: grantRef,
+      revoked: true,
+    }),
     cleanupExpiredGrants: async () => ({ removed: 0, retained: 0 }),
   });
 }
@@ -252,7 +256,15 @@ async function insertClaim({
         late_effect_risk, occurred_at, controller_lease_expires_at)
      VALUES
        ($1::uuid, $2::uuid, 1, $3::uuid, 'claimed', false,
-        clock_timestamp() - interval '2 minutes', ${leaseSql})`,
+        clock_timestamp() - interval '2 minutes',
+        LEAST(
+          ${leaseSql},
+          (
+            SELECT lease_expires_at
+              FROM kernel_equivalence_production_case_leases
+             WHERE case_id = $2::uuid
+          )
+        ))`,
     [eventId, caseId, OLD_CONTROLLER],
   );
 }
@@ -373,6 +385,12 @@ beforeAll(async () => {
     receiptId: EXPIRED_RECEIPT,
     sessionId: 'expired-session',
   });
+  await pool.query(
+    `UPDATE kernel_equivalence_production_case_leases
+        SET lease_expires_at = clock_timestamp() + interval '10 seconds'
+      WHERE case_id = $1::uuid`,
+    [EXPIRED_CASE],
+  );
   await insertAuthority({
     attemptId: TERMINAL_ATTEMPT,
     caseId: TERMINAL_CASE,
@@ -411,8 +429,9 @@ beforeAll(async () => {
   await insertClaim({
     caseId: EXPIRED_CASE,
     eventId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    leaseSql: "clock_timestamp() - interval '1 minute'",
+    leaseSql: "clock_timestamp() + interval '25 milliseconds'",
   });
+  await new Promise((resolve) => setTimeout(resolve, 50));
   await pool.query(
     `INSERT INTO kernel_equivalence_production_execution_events
        (event_id, case_id, generation, controller_instance_id, state,
@@ -420,10 +439,11 @@ beforeAll(async () => {
      VALUES
        ('bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc', $1::uuid, 2,
         $2::uuid, 'reconciling', false,
-        clock_timestamp() - interval '30 seconds',
-        clock_timestamp() - interval '1 second')`,
+        clock_timestamp(),
+        clock_timestamp() + interval '25 milliseconds')`,
     [EXPIRED_CASE, CRASHED_RECOVERY_CONTROLLER],
   );
+  await new Promise((resolve) => setTimeout(resolve, 50));
   await insertClaim({
     caseId: TERMINAL_CASE,
     eventId: 'afafafaf-afaf-4faf-8faf-afafafafafaf',
@@ -449,6 +469,151 @@ afterAll(async () => {
 });
 
 describe('production controller restart fencing on real PostgreSQL', () => {
+  it('samples DB time after locking the production lease', async () => {
+    const caseId = '01010101-0101-4101-8101-010101010101';
+    await insertAuthority({
+      attemptId: '02020202-0202-4202-8202-020202020202',
+      caseId,
+      receiptId: '03030303-0303-4303-8303-030303030303',
+      sessionId: 'post-lock-db-time-session',
+    });
+    const locker = await pool.connect();
+    const claimant = await pool.connect();
+    try {
+      await locker.query('BEGIN');
+      await locker.query(
+        `SELECT case_id
+           FROM kernel_equivalence_production_case_leases
+          WHERE case_id = $1::uuid
+          FOR UPDATE`,
+        [caseId],
+      );
+      const claim = claimant.query(
+        `INSERT INTO kernel_equivalence_production_execution_events
+           (event_id, case_id, generation, controller_instance_id, state,
+            late_effect_risk, occurred_at,
+            controller_lease_expires_at)
+         VALUES
+           ('04040404-0404-4404-8404-040404040404', $1::uuid, 1,
+            $2::uuid, 'claimed', false, clock_timestamp(),
+            clock_timestamp() + interval '100 milliseconds')`,
+        [caseId, OLD_CONTROLLER],
+      ).then(
+        (value) => ({ status: 'fulfilled', value }),
+        (error) => ({ status: 'rejected', error }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await locker.query('COMMIT');
+
+      const outcome = await claim;
+      expect(outcome.status).toBe('rejected');
+      expect(outcome.error?.message).toMatch(
+        /claim authority unavailable/i,
+      );
+    } finally {
+      await locker.query('ROLLBACK').catch(() => {});
+      locker.release();
+      claimant.release();
+    }
+  });
+
+  it('rejects expired active authority but permits terminal history', async () => {
+    const claimCaseId = '05050505-0505-4505-8505-050505050505';
+    await insertAuthority({
+      attemptId: '06060606-0606-4606-8606-060606060606',
+      caseId: claimCaseId,
+      receiptId: '07070707-0707-4707-8707-070707070707',
+      sessionId: 'expired-active-claim-session',
+    });
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          late_effect_risk, occurred_at, controller_lease_expires_at)
+       VALUES
+         ('08080808-0808-4808-8808-080808080808', $1::uuid, 1,
+          $2::uuid, 'claimed', false,
+          clock_timestamp() - interval '2 minutes',
+          clock_timestamp() - interval '1 minute')`,
+      [claimCaseId, OLD_CONTROLLER],
+    )).rejects.toThrow(/claim authority unavailable/i);
+
+    const grantCaseId = '09090909-0909-4909-8909-090909090909';
+    await insertAuthority({
+      attemptId: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a',
+      caseId: grantCaseId,
+      receiptId: '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b',
+      sessionId: 'expired-active-grant-session',
+    });
+    await insertClaim({
+      caseId: grantCaseId,
+      eventId: '0c0c0c0c-0c0c-4c0c-8c0c-0c0c0c0c0c0c',
+      leaseSql: "clock_timestamp() + interval '1 minute'",
+    });
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          grant_ref, grant_expires_at, late_effect_risk, occurred_at,
+          controller_lease_expires_at)
+       VALUES
+         ('0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d', $1::uuid, 2,
+          $2::uuid, 'grant_issued', $3,
+          clock_timestamp() - interval '1 minute', false,
+          clock_timestamp() - interval '2 minutes',
+          clock_timestamp() + interval '1 minute')`,
+      [
+        grantCaseId,
+        OLD_CONTROLLER,
+        `kernel-equivalence-grant:${GRANT_A}`,
+      ],
+    )).rejects.toThrow(/authority (?:expiry )?unavailable/i);
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          grant_ref, grant_expires_at, code, late_effect_risk)
+       VALUES
+         ('0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e', $1::uuid, 2,
+          $2::uuid, 'blocked', NULL,
+          clock_timestamp() - interval '1 minute',
+          'expired_terminal_history', false)`,
+      [grantCaseId, OLD_CONTROLLER],
+    )).resolves.toMatchObject({ rowCount: 1 });
+
+    const reconcileCaseId = '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f';
+    await insertAuthority({
+      attemptId: '12121212-1212-4212-8212-121212121212',
+      caseId: reconcileCaseId,
+      receiptId: '13131313-1313-4313-8313-131313131313',
+      sessionId: 'expired-active-reconcile-session',
+    });
+    await insertClaim({
+      caseId: reconcileCaseId,
+      eventId: '14141414-1414-4414-8414-141414141414',
+      leaseSql: "clock_timestamp() + interval '25 milliseconds'",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          late_effect_risk, occurred_at, controller_lease_expires_at)
+       VALUES
+         ('15151515-1515-4515-8515-151515151515', $1::uuid, 2,
+          $2::uuid, 'reconciling', false,
+          clock_timestamp() - interval '2 minutes',
+          clock_timestamp() - interval '1 minute')`,
+      [reconcileCaseId, NEW_CONTROLLER],
+    )).rejects.toThrow(/authority expiry unavailable/i);
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          code, late_effect_risk)
+       VALUES
+         ('16161616-1616-4616-8616-161616161616', $1::uuid, 2,
+          $2::uuid, 'settlement_unknown',
+          'expired_reconcile_fixture', true)`,
+      [reconcileCaseId, OLD_CONTROLLER],
+    );
+  });
+
   it('rejects a binding whose durable receipt contradicts Attempt authority', async () => {
     await insertAuthority({
       attemptId: RECEIPT_MISMATCH_ATTEMPT,
@@ -639,8 +804,9 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     await insertClaim({
       caseId: CLAIM_ONLY_CASE,
       eventId: '30303030-3030-4030-8030-303030303030',
-      leaseSql: "clock_timestamp() - interval '1 minute'",
+      leaseSql: "clock_timestamp() + interval '25 milliseconds'",
     });
+    await new Promise((resolve) => setTimeout(resolve, 50));
     await pool.query(
       `INSERT INTO kernel_equivalence_production_execution_events
          (event_id, case_id, generation, controller_instance_id, state,
@@ -698,8 +864,8 @@ describe('production controller restart fencing on real PostgreSQL', () => {
        VALUES
          ('70707070-7070-4070-8070-707070707070', $1::uuid, 2,
           $2::uuid, 'grant_issued', $3,
-          clock_timestamp() + interval '5 minutes', false,
-          clock_timestamp() + interval '5 minutes')`,
+          clock_timestamp() + interval '4 minutes', false,
+          clock_timestamp() + interval '4 minutes')`,
       [
         LINEAGE_CASE,
         OLD_CONTROLLER,
@@ -715,8 +881,8 @@ describe('production controller restart fencing on real PostgreSQL', () => {
        VALUES
          ('80808080-8080-4080-8080-808080808080', $1::uuid, 3,
           $2::uuid, 'executing', $3,
-          clock_timestamp() + interval '5 minutes', false,
-          clock_timestamp() + interval '5 minutes')`,
+          clock_timestamp() + interval '4 minutes', false,
+          clock_timestamp() + interval '4 minutes')`,
       [
         LINEAGE_CASE,
         OLD_CONTROLLER,
@@ -731,8 +897,8 @@ describe('production controller restart fencing on real PostgreSQL', () => {
        VALUES
          ('81818181-8181-4181-8181-818181818181', $1::uuid, 3,
           $2::uuid, 'executing', $3,
-          clock_timestamp() + interval '5 minutes', false,
-          clock_timestamp() + interval '5 minutes')`,
+          clock_timestamp() + interval '4 minutes', false,
+          clock_timestamp() + interval '4 minutes')`,
       [
         LINEAGE_CASE,
         OLD_CONTROLLER,
@@ -746,7 +912,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
        VALUES
          ('82828282-8282-4282-8282-828282828282', $1::uuid, 4,
           $2::uuid, 'blocked', $3,
-          clock_timestamp() + interval '5 minutes',
+          clock_timestamp() + interval '4 minutes',
           'terminal_fixture', false)`,
       [
         LINEAGE_CASE,
@@ -761,7 +927,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
        VALUES
          ('83838383-8383-4383-8383-838383838383', $1::uuid, 4,
           $2::uuid, 'blocked', $3,
-          clock_timestamp() + interval '5 minutes',
+          clock_timestamp() + interval '4 minutes',
           'terminal_fixture', false)`,
       [
         LINEAGE_CASE,
@@ -769,6 +935,75 @@ describe('production controller restart fencing on real PostgreSQL', () => {
         `kernel-equivalence-grant:${GRANT_A}`,
       ],
     );
+  });
+
+  it('rejects a grant whose expiry exceeds the production lease', async () => {
+    const caseId = '84848484-8484-4484-8484-848484848484';
+    await insertAuthority({
+      attemptId: '85858585-8585-4585-8585-858585858585',
+      caseId,
+      receiptId: '86868686-8686-4686-8686-868686868686',
+      sessionId: 'lease-cap-session',
+    });
+    await insertClaim({
+      caseId,
+      eventId: '87878787-8787-4787-8787-878787878787',
+      leaseSql: "clock_timestamp() + interval '1 minute'",
+    });
+
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          grant_ref, grant_expires_at, late_effect_risk,
+          controller_lease_expires_at)
+       VALUES
+         ('89898989-8989-4989-8989-898989898989', $1::uuid, 2,
+          $2::uuid, 'grant_issued', $3,
+          clock_timestamp() + interval '6 minutes', false,
+          clock_timestamp() + interval '1 minute')`,
+      [
+        caseId,
+        OLD_CONTROLLER,
+        `kernel-equivalence-grant:${GRANT_A}`,
+      ],
+    )).rejects.toThrow(/authority expiry unavailable/i);
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          code, late_effect_risk)
+       VALUES
+         ('8a8a8a8a-8a8a-4a8a-8a8a-8a8a8a8a8a8a', $1::uuid, 2,
+          $2::uuid, 'blocked', 'lease_cap_fixture', false)`,
+      [caseId, OLD_CONTROLLER],
+    );
+  });
+
+  it('records the exact live grant when revocation cannot be confirmed', async () => {
+    const caseId = '90909090-9090-4090-8090-909090909090';
+    const grantRef = `kernel-equivalence-grant:${GRANT_A}`;
+    await insertAuthority({
+      attemptId: '91919191-9191-4191-8191-919191919191',
+      caseId,
+      receiptId: '92929292-9292-4292-8292-929292929292',
+      sessionId: 'revoke-unknown-session',
+    });
+    await insertClaim({
+      caseId,
+      eventId: '93939393-9393-4393-8393-939393939393',
+      leaseSql: "clock_timestamp() + interval '1 minute'",
+    });
+
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          grant_ref, grant_expires_at, code, late_effect_risk)
+       VALUES
+         ('94949494-9494-4494-8494-949494949494', $1::uuid, 2,
+          $2::uuid, 'settlement_unknown', $3,
+          clock_timestamp() + interval '1 minute',
+          'grant_revoke_unconfirmed', true)`,
+      [caseId, OLD_CONTROLLER, grantRef],
+    )).resolves.toMatchObject({ rowCount: 1 });
   });
 
   it('rejects an existing binding after its case lease is revoked', async () => {
@@ -824,6 +1059,43 @@ describe('production controller restart fencing on real PostgreSQL', () => {
           clock_timestamp() + interval '1 minute')`,
       [ACTIVE_CASE, NEW_CONTROLLER],
     )).rejects.toThrow(/controller ownership mismatch/i);
+  });
+
+  it('rejects a reconciliation lease beyond production authority', async () => {
+    const caseId = 'a4a4a4a4-a4a4-44a4-84a4-a4a4a4a4a4a4';
+    await insertAuthority({
+      attemptId: 'a5a5a5a5-a5a5-45a5-85a5-a5a5a5a5a5a5',
+      caseId,
+      receiptId: 'a6a6a6a6-a6a6-46a6-86a6-a6a6a6a6a6a6',
+      sessionId: 'reconcile-cap-session',
+    });
+    await insertClaim({
+      caseId,
+      eventId: 'a7a7a7a7-a7a7-47a7-87a7-a7a7a7a7a7a7',
+      leaseSql: "clock_timestamp() + interval '25 milliseconds'",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          late_effect_risk, controller_lease_expires_at)
+       VALUES
+         ('a8a8a8a8-a8a8-48a8-88a8-a8a8a8a8a8a8', $1::uuid, 2,
+          $2::uuid, 'reconciling', false,
+          clock_timestamp() + interval '6 minutes')`,
+      [caseId, NEW_CONTROLLER],
+    )).rejects.toThrow(/authority expiry unavailable/i);
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          code, late_effect_risk)
+       VALUES
+         ('a9a9a9a9-a9a9-49a9-89a9-a9a9a9a9a9a9', $1::uuid, 2,
+          $2::uuid, 'settlement_unknown',
+          'reconcile_cap_fixture', true)`,
+      [caseId, OLD_CONTROLLER],
+    );
   });
 
   it('serializes case cancellation behind active execution settlement', async () => {
@@ -965,6 +1237,17 @@ describe('production controller restart fencing on real PostgreSQL', () => {
       controller_instance_id: NEW_CONTROLLER,
       controller_lease_expires_at: expect.any(Date),
     });
+    const productionLease = await pool.query(
+      `SELECT lease_expires_at
+         FROM kernel_equivalence_production_case_leases
+        WHERE case_id = $1::uuid`,
+      [EXPIRED_CASE],
+    );
+    expect(
+      result.rows[2].controller_lease_expires_at.getTime(),
+    ).toBeLessThanOrEqual(
+      productionLease.rows[0].lease_expires_at.getTime(),
+    );
     expect(result.rows[3]).toMatchObject({
       controller_instance_id: NEW_CONTROLLER,
       controller_lease_expires_at: null,
@@ -998,8 +1281,9 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     await insertClaim({
       caseId: RECONCILE_CASE,
       eventId: 'a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1',
-      leaseSql: "clock_timestamp() - interval '1 minute'",
+      leaseSql: "clock_timestamp() + interval '25 milliseconds'",
     });
+    await new Promise((resolve) => setTimeout(resolve, 50));
     await pool.query(
       `INSERT INTO kernel_equivalence_production_execution_events
          (event_id, case_id, generation, controller_instance_id, state,
@@ -1008,7 +1292,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
        VALUES
          ('a2a2a2a2-a2a2-42a2-82a2-a2a2a2a2a2a2', $1::uuid, 2,
           $2::uuid, 'grant_issued', $3,
-          clock_timestamp() + interval '5 minutes', false,
+          clock_timestamp() + interval '4 minutes', false,
           clock_timestamp() - interval '2 minutes',
           clock_timestamp() - interval '1 minute')`,
       [
@@ -1025,7 +1309,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
        VALUES
          ('a3a3a3a3-a3a3-43a3-83a3-a3a3a3a3a3a3', $1::uuid, 3,
           $2::uuid, 'executing', $3,
-          clock_timestamp() + interval '5 minutes', false,
+          clock_timestamp() + interval '4 minutes', false,
           clock_timestamp() - interval '90 seconds',
           clock_timestamp() - interval '30 seconds')`,
       [

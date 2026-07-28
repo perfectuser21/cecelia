@@ -83,6 +83,25 @@ describe('migration 381 Kernel equivalence production controller', () => {
     expect(sql).toMatch(
       /kernel equivalence production execution claim authority unavailable/i,
     );
+    expect(sql).toMatch(/authority_now TIMESTAMPTZ/i);
+    expect(sql).toMatch(
+      /FOR UPDATE OF leases[\s\S]*authority_now := clock_timestamp\(\)/i,
+    );
+    expect(sql).toMatch(
+      /NEW\.state IN \('claimed', 'reconciling'\)[\s\S]*NEW\.controller_lease_expires_at <= authority_now/i,
+    );
+    expect(sql).toMatch(
+      /NEW\.state IN \('grant_issued', 'executing'\)[\s\S]*NEW\.grant_expires_at > authority_now/i,
+    );
+    expect(sql).toMatch(
+      /NEW\.controller_lease_expires_at\s*<=\s*LEAST\(\s*cases\.expires_at,\s*leases\.lease_expires_at\s*\)/i,
+    );
+    expect(sql).toMatch(
+      /NEW\.state IN \('grant_issued', 'executing'\)[\s\S]*NEW\.grant_expires_at\s*<=\s*LEAST\(\s*cases\.expires_at,\s*leases\.lease_expires_at\s*\)[\s\S]*FOR UPDATE OF leases\s+FOR SHARE OF cases, attempts, bindings, receipts/i,
+    );
+    expect(sql).toMatch(
+      /kernel equivalence production execution grant authority unavailable/i,
+    );
     expect(sql).toMatch(
       /JOIN kernel_equivalence_production_case_bindings bindings[\s\S]*bindings\.provider_session_id = attempts\.provider_session_id[\s\S]*bindings\.actual_machine_id = attempts\.actual_machine_id[\s\S]*bindings\.execution_transport = attempts\.execution_transport[\s\S]*bindings\.remote_job_id = attempts\.remote_job_id/is,
     );
@@ -120,7 +139,7 @@ describe('migration 381 Kernel equivalence production controller', () => {
       /CREATE OR REPLACE FUNCTION kernel_equivalence_execution_event_guard\(\)/i,
     );
     expect(sql).toMatch(
-      /NEW\.state = 'reconciling'[\s\S]*previous_lease_expires_at <= clock_timestamp\(\)/i,
+      /NEW\.state = 'reconciling'[\s\S]*previous_lease_expires_at <= authority_now/i,
     );
     expect(sql).toMatch(
       /previous_state IN \(\s*'claimed',\s*'grant_issued',\s*'executing',\s*'reconciling'\s*\)/is,

@@ -18,6 +18,7 @@ const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const CODE_PATTERN = /^[a-z][a-z0-9_]{0,127}$/;
+const MINIMUM_GRANT_TTL_SECONDS = 2;
 const MAXIMUM_GRANT_TTL_SECONDS = 3_600;
 const CONTROLLER_OWNER = 'brain.kernel_equivalence.controller';
 
@@ -50,6 +51,7 @@ function validateGrantIssuer(value) {
     || value?.capability_id
       !== 'brain.kernel_equivalence.protected_grant_issuer.v1'
     || typeof value?.issueProtectedGrant !== 'function'
+    || typeof value?.revokeProtectedGrant !== 'function'
     || typeof value?.cleanupExpiredGrants !== 'function'
   ) {
     fail('production_controller_grant_issuer_invalid');
@@ -91,10 +93,14 @@ function validateAuthority(row, {
   cells,
   brainVersion,
   engineVersion,
-  now,
 }) {
   const cell = cells.get(row?.cell_id);
   const expiresAt = timestamp(row?.expires_at);
+  const caseExpiresAt = timestamp(row?.case_expires_at);
+  const productionLeaseExpiresAt = timestamp(
+    row?.production_lease_expires_at,
+  );
+  const authorityObservedAt = timestamp(row?.authority_observed_at);
   const taskBundle = typeof row?.task_bundle === 'string'
     ? (() => {
       try {
@@ -142,7 +148,12 @@ function validateAuthority(row, {
     || taskBundle?.inputs?.workspace_spec?.expected_head_sha
       !== row.artifact_sha
     || expiresAt == null
-    || expiresAt <= now
+    || caseExpiresAt == null
+    || productionLeaseExpiresAt == null
+    || authorityObservedAt == null
+    || caseExpiresAt !== expiresAt
+    || caseExpiresAt <= authorityObservedAt
+    || productionLeaseExpiresAt <= authorityObservedAt
   ) {
     fail('production_controller_authority_invalid');
   }
@@ -151,13 +162,16 @@ function validateAuthority(row, {
       'adapter_id',
       'artifact_sha',
       'attempt_id',
+      'authority_observed_at',
       'behavior_id',
       'brain_version',
       'case_id',
+      'case_expires_at',
       'cell_id',
       'engine_version',
       'expires_at',
       'provider',
+      'production_lease_expires_at',
       'resource_id',
       'resource_prefix',
       'resource_ref',
@@ -247,7 +261,10 @@ async function bindAndLoadAuthority(pool, caseId, context) {
        attempts.task_bundle, attempts.status AS attempt_status,
        receipts.worker_id AS receipt_worker_id,
        receipts.job_id AS receipt_job_id,
-       receipts.terminal_status AS receipt_terminal_status
+       receipts.terminal_status AS receipt_terminal_status,
+       cases.expires_at AS case_expires_at,
+       leases.lease_expires_at AS production_lease_expires_at,
+       clock_timestamp() AS authority_observed_at
      FROM kernel_equivalence_production_cases cases
      JOIN kernel_equivalence_production_case_bindings bindings
        ON bindings.case_id = cases.case_id
@@ -291,7 +308,6 @@ async function bindAndLoadAuthority(pool, caseId, context) {
   }
   return validateAuthority(result.rows[0], {
     ...context,
-    now: context.now(),
   });
 }
 
@@ -306,7 +322,7 @@ async function appendEvent(pool, {
   bundleHash = null,
   code = null,
   lateEffectRisk,
-  controllerLeaseSeconds = null,
+  controllerLeaseExpiresAt = null,
 }) {
   const eventId = randomUUID();
   if (!UUID_PATTERN.test(eventId ?? '')) {
@@ -320,10 +336,7 @@ async function appendEvent(pool, {
      SELECT
        $1::uuid, $2::uuid, $3, $4::uuid, $5,
        $6, $7::timestamptz, $8, $9, $10,
-       CASE
-         WHEN $11::integer IS NULL THEN NULL
-         ELSE clock_timestamp() + make_interval(secs => $11::integer)
-       END
+       $11::timestamptz
      WHERE (
        $3::bigint <> 1
        OR EXISTS (
@@ -366,7 +379,7 @@ async function appendEvent(pool, {
       bundleHash,
       code,
       lateEffectRisk,
-      controllerLeaseSeconds,
+      controllerLeaseExpiresAt,
     ],
   );
   return result?.rowCount === 1;
@@ -376,6 +389,57 @@ async function appendRequiredEvent(pool, event) {
   if (!await appendEvent(pool, event)) {
     fail('production_controller_event_append_conflict');
   }
+}
+
+async function revokePublishedGrant(grantIssuer, grantRef) {
+  try {
+    const result = await grantIssuer.revokeProtectedGrant({
+      grant_ref: grantRef,
+    });
+    return (
+      result?.revoked === true
+      && result?.grant_ref === grantRef
+      && Object.keys(result).sort().join(',')
+        === 'grant_ref,revoked'
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function denyAfterPublishedGrant({
+  pool,
+  grantIssuer,
+  randomUUID,
+  caseId,
+  generation,
+  controllerInstanceId,
+  issued,
+  lineageRecorded,
+  error,
+}) {
+  const revoked = await revokePublishedGrant(
+    grantIssuer,
+    issued.grant_ref,
+  );
+  const recordGrant = lineageRecorded || !revoked;
+  await appendRequiredEvent(pool, {
+    randomUUID,
+    caseId,
+    generation,
+    controllerInstanceId,
+    state: revoked ? 'blocked' : 'settlement_unknown',
+    grantRef: recordGrant ? issued.grant_ref : undefined,
+    grantExpiresAt: recordGrant ? issued.expires_at : undefined,
+    code: revoked
+      ? stableCode(error, 'authority_revalidation_failed')
+      : 'grant_revoke_unconfirmed',
+    lateEffectRisk: !revoked,
+  });
+  if (!revoked) {
+    fail('production_controller_grant_revoke_unconfirmed');
+  }
+  throw error;
 }
 
 async function confirmBundle(
@@ -445,7 +509,7 @@ function validateConfiguration({
     || !VERSION_PATTERN.test(brainVersion ?? '')
     || !VERSION_PATTERN.test(engineVersion ?? '')
     || !Number.isInteger(grantTtlSeconds)
-    || grantTtlSeconds < 1
+    || grantTtlSeconds < MINIMUM_GRANT_TTL_SECONDS
     || grantTtlSeconds > MAXIMUM_GRANT_TTL_SECONDS
     || typeof randomUUID !== 'function'
     || typeof now !== 'function'
@@ -454,6 +518,39 @@ function validateConfiguration({
     fail('production_controller_configuration_invalid');
   }
   validateGrantIssuer(grantIssuer);
+}
+
+function effectiveAuthorityTtlMs(authority, maximumTtlSeconds) {
+  const caseExpiresAt = timestamp(authority?.case_expires_at);
+  const productionLeaseExpiresAt = timestamp(
+    authority?.production_lease_expires_at,
+  );
+  const observedAt = timestamp(authority?.authority_observed_at);
+  if (
+    caseExpiresAt == null
+    || productionLeaseExpiresAt == null
+    || observedAt == null
+  ) {
+    return 0;
+  }
+  return Math.min(
+    maximumTtlSeconds * 1_000,
+    caseExpiresAt - observedAt,
+    productionLeaseExpiresAt - observedAt,
+  );
+}
+
+function authorityDeadline(authority, ttlMs) {
+  const observedAt = timestamp(authority?.authority_observed_at);
+  if (observedAt == null || !Number.isFinite(ttlMs)) return null;
+  return new Date(observedAt + ttlMs).toISOString();
+}
+
+function authorityExpiry(authority) {
+  return Math.min(
+    timestamp(authority?.case_expires_at),
+    timestamp(authority?.production_lease_expires_at),
+  );
 }
 
 export function createPostgresKernelEquivalenceCoordinator({
@@ -491,27 +588,28 @@ export function createPostgresKernelEquivalenceCoordinator({
     brainVersion,
     cells,
     engineVersion,
-    now,
   });
 
   const executeCase = async (caseId) => {
     if (!UUID_PATTERN.test(caseId ?? '')) {
       fail('production_controller_case_id_invalid');
     }
-    const authority = await bindAndLoadAuthority(
+    let authority = await bindAndLoadAuthority(
       pool,
       caseId,
       authorityContext,
     );
-    const operationNow = now();
-    const expiresAt = timestamp(authority.expires_at);
-    const ttlSeconds = Math.min(
+    let effectiveTtlMs = effectiveAuthorityTtlMs(
+      authority,
       grantTtlSeconds,
-      Math.floor((expiresAt - operationNow) / 1_000),
     );
-    if (ttlSeconds < 1) {
+    if (effectiveTtlMs < MINIMUM_GRANT_TTL_SECONDS * 1_000) {
       fail('production_controller_case_expired');
     }
+    let controllerLeaseExpiresAt = authorityDeadline(
+      authority,
+      effectiveTtlMs,
+    );
     const claimed = await appendEvent(pool, {
       randomUUID,
       caseId,
@@ -519,9 +617,42 @@ export function createPostgresKernelEquivalenceCoordinator({
       controllerInstanceId,
       state: 'claimed',
       lateEffectRisk: false,
-      controllerLeaseSeconds: ttlSeconds,
+      controllerLeaseExpiresAt,
     });
     if (!claimed) fail('production_controller_case_already_claimed');
+
+    try {
+      authority = await bindAndLoadAuthority(
+        pool,
+        caseId,
+        authorityContext,
+      );
+      effectiveTtlMs = effectiveAuthorityTtlMs(
+        authority,
+        grantTtlSeconds,
+      );
+      if (effectiveTtlMs < MINIMUM_GRANT_TTL_SECONDS * 1_000) {
+        fail('production_controller_authority_unavailable');
+      }
+      controllerLeaseExpiresAt = authorityDeadline(
+        authority,
+        effectiveTtlMs,
+      );
+    } catch (error) {
+      await appendRequiredEvent(pool, {
+        randomUUID,
+        caseId,
+        generation: 2,
+        controllerInstanceId,
+        state: 'blocked',
+        code: stableCode(
+          error,
+          'authority_revalidation_failed',
+        ),
+        lateEffectRisk: false,
+      });
+      throw error;
+    }
 
     let issued;
     try {
@@ -534,7 +665,7 @@ export function createPostgresKernelEquivalenceCoordinator({
         engine_version: authority.engine_version,
         resource_id: authority.resource_id,
         resource_ref: authority.resource_ref,
-        ttl_seconds: ttlSeconds,
+        ttl_seconds: Math.floor(effectiveTtlMs / 1_000),
       });
     } catch (error) {
       await appendRequiredEvent(pool, {
@@ -548,34 +679,140 @@ export function createPostgresKernelEquivalenceCoordinator({
       });
       throw error;
     }
+    const issueObservedAt = timestamp(authority.authority_observed_at);
+    const authorityExpiresAt = authorityExpiry(authority);
+    const validIssuedGrantRef = GRANT_REF_PATTERN.test(
+      issued?.grant_ref ?? '',
+    );
     if (
-      !GRANT_REF_PATTERN.test(issued?.grant_ref ?? '')
+      !validIssuedGrantRef
       || timestamp(issued.expires_at) == null
-      || timestamp(issued.expires_at) <= operationNow
-      || timestamp(issued.expires_at) > expiresAt
+      || timestamp(issued.expires_at) <= issueObservedAt
+      || timestamp(issued.expires_at) > authorityExpiresAt
     ) {
+      const revoked = validIssuedGrantRef
+        ? await revokePublishedGrant(grantIssuer, issued.grant_ref)
+        : false;
       await appendRequiredEvent(pool, {
         randomUUID,
         caseId,
         generation: 2,
         controllerInstanceId,
-        state: 'blocked',
-        code: 'grant_issue_invalid',
-        lateEffectRisk: false,
+        state: revoked ? 'blocked' : 'settlement_unknown',
+        grantRef: validIssuedGrantRef && !revoked
+          ? issued.grant_ref
+          : undefined,
+        grantExpiresAt: undefined,
+        code: validIssuedGrantRef
+          ? revoked
+            ? 'grant_issue_invalid'
+            : 'grant_revoke_unconfirmed'
+          : 'grant_issue_invalid_unresolved',
+        lateEffectRisk: !revoked,
       });
       fail('production_controller_grant_issue_invalid');
     }
-    await appendRequiredEvent(pool, {
-      randomUUID,
-      caseId,
-      generation: 2,
-      controllerInstanceId,
-      state: 'grant_issued',
-      grantRef: issued.grant_ref,
-      grantExpiresAt: issued.expires_at,
-      lateEffectRisk: false,
-      controllerLeaseSeconds: ttlSeconds,
-    });
+    try {
+      authority = await bindAndLoadAuthority(
+        pool,
+        caseId,
+        authorityContext,
+      );
+      const issuedExpiresAt = timestamp(issued.expires_at);
+      const currentObservedAt = timestamp(
+        authority.authority_observed_at,
+      );
+      const currentAuthorityExpiresAt = authorityExpiry(authority);
+      effectiveTtlMs = Math.min(
+        effectiveAuthorityTtlMs(authority, grantTtlSeconds),
+        issuedExpiresAt - currentObservedAt,
+      );
+      controllerLeaseExpiresAt = authorityDeadline(
+        authority,
+        effectiveTtlMs,
+      );
+      if (
+        effectiveTtlMs <= 0
+        || issuedExpiresAt > currentAuthorityExpiresAt
+      ) {
+        fail('production_controller_authority_unavailable');
+      }
+    } catch (error) {
+      await denyAfterPublishedGrant({
+        pool,
+        grantIssuer,
+        randomUUID,
+        caseId,
+        generation: 2,
+        controllerInstanceId,
+        issued,
+        lineageRecorded: false,
+        error,
+      });
+    }
+    try {
+      await appendRequiredEvent(pool, {
+        randomUUID,
+        caseId,
+        generation: 2,
+        controllerInstanceId,
+        state: 'grant_issued',
+        grantRef: issued.grant_ref,
+        grantExpiresAt: issued.expires_at,
+        lateEffectRisk: false,
+        controllerLeaseExpiresAt,
+      });
+    } catch (error) {
+      await denyAfterPublishedGrant({
+        pool,
+        grantIssuer,
+        randomUUID,
+        caseId,
+        generation: 2,
+        controllerInstanceId,
+        issued,
+        lineageRecorded: false,
+        error,
+      });
+    }
+    try {
+      authority = await bindAndLoadAuthority(
+        pool,
+        caseId,
+        authorityContext,
+      );
+      const issuedExpiresAt = timestamp(issued.expires_at);
+      const currentObservedAt = timestamp(
+        authority.authority_observed_at,
+      );
+      const currentAuthorityExpiresAt = authorityExpiry(authority);
+      effectiveTtlMs = Math.min(
+        effectiveAuthorityTtlMs(authority, grantTtlSeconds),
+        issuedExpiresAt - currentObservedAt,
+      );
+      controllerLeaseExpiresAt = authorityDeadline(
+        authority,
+        effectiveTtlMs,
+      );
+      if (
+        effectiveTtlMs <= 0
+        || issuedExpiresAt > currentAuthorityExpiresAt
+      ) {
+        fail('production_controller_authority_unavailable');
+      }
+    } catch (error) {
+      await denyAfterPublishedGrant({
+        pool,
+        grantIssuer,
+        randomUUID,
+        caseId,
+        generation: 3,
+        controllerInstanceId,
+        issued,
+        lineageRecorded: true,
+        error,
+      });
+    }
     await appendRequiredEvent(pool, {
       randomUUID,
       caseId,
@@ -585,7 +822,7 @@ export function createPostgresKernelEquivalenceCoordinator({
       grantRef: issued.grant_ref,
       grantExpiresAt: issued.expires_at,
       lateEffectRisk: false,
-      controllerLeaseSeconds: ttlSeconds,
+      controllerLeaseExpiresAt,
     });
 
     let result;
@@ -697,7 +934,10 @@ export function createPostgresKernelEquivalenceCoordinator({
            cases.resource_id,
            cases.resource_ref,
            cases.seam_id,
-           cases.adapter_id
+           cases.adapter_id,
+           cases.expires_at AS case_expires_at,
+           production_leases.lease_expires_at
+             AS production_lease_expires_at
          FROM kernel_equivalence_production_execution_events events
          LEFT JOIN LATERAL (
            SELECT
@@ -714,10 +954,17 @@ export function createPostgresKernelEquivalenceCoordinator({
            ON bindings.case_id = events.case_id
          JOIN kernel_equivalence_production_cases cases
            ON cases.case_id = bindings.case_id
+         JOIN kernel_equivalence_production_case_leases
+                production_leases
+           ON production_leases.case_id = cases.case_id
+          AND production_leases.owner_id
+                = 'brain.kernel_equivalence.production_cases'
+          AND production_leases.state = 'prepared'
          ORDER BY events.case_id, events.generation DESC
        )
        SELECT
          latest.*,
+         clock_timestamp() AS authority_observed_at,
          latest.controller_lease_expires_at <= clock_timestamp()
            AS lease_expired,
          bundles.bundle_hash
@@ -790,27 +1037,36 @@ export function createPostgresKernelEquivalenceCoordinator({
                 lateEffectRisk: true,
               });
             } else {
-              const tookOver = await appendEvent(pool, {
-                randomUUID,
-                caseId: row.case_id,
-                generation: generation + 1,
-                controllerInstanceId,
-                state: 'reconciling',
-                lateEffectRisk: false,
-                controllerLeaseSeconds: grantTtlSeconds,
-              });
-              if (tookOver) {
-                await appendEvent(pool, {
+              const effectiveTtlMs = effectiveAuthorityTtlMs(
+                row,
+                grantTtlSeconds,
+              );
+              if (effectiveTtlMs > 0) {
+                const tookOver = await appendEvent(pool, {
                   randomUUID,
                   caseId: row.case_id,
-                  generation: generation + 2,
+                  generation: generation + 1,
                   controllerInstanceId,
-                  state: 'settlement_unknown',
-                  grantRef: row.grant_ref,
-                  grantExpiresAt: row.grant_expires_at,
-                  code: 'startup_settlement_unresolved',
-                  lateEffectRisk: true,
+                  state: 'reconciling',
+                  lateEffectRisk: false,
+                  controllerLeaseExpiresAt: authorityDeadline(
+                    row,
+                    effectiveTtlMs,
+                  ),
                 });
+                if (tookOver) {
+                  await appendEvent(pool, {
+                    randomUUID,
+                    caseId: row.case_id,
+                    generation: generation + 2,
+                    controllerInstanceId,
+                    state: 'settlement_unknown',
+                    grantRef: row.grant_ref,
+                    grantExpiresAt: row.grant_expires_at,
+                    code: 'startup_settlement_unresolved',
+                    lateEffectRisk: true,
+                  });
+                }
               }
             }
           }

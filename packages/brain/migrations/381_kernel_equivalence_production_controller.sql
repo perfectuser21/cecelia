@@ -295,6 +295,11 @@ DECLARE
   previous_grant_ref TEXT;
   lineage_grant_ref TEXT;
   fence_active BOOLEAN;
+  authority_now TIMESTAMPTZ;
+  case_expires_at TIMESTAMPTZ;
+  production_lease_expires_at TIMESTAMPTZ;
+  production_lease_owner TEXT;
+  production_lease_state TEXT;
 BEGIN
   SELECT
       generation,
@@ -318,11 +323,15 @@ BEGIN
       RAISE EXCEPTION
         'kernel equivalence execution must start with a claim';
     END IF;
-    PERFORM leases.case_id
+    SELECT
+        cases.expires_at,
+        leases.lease_expires_at
+      INTO
+        case_expires_at,
+        production_lease_expires_at
       FROM kernel_equivalence_production_case_leases leases
       JOIN kernel_equivalence_production_cases cases
         ON cases.case_id = leases.case_id
-       AND cases.expires_at > clock_timestamp()
       JOIN harness_attempts attempts
         ON attempts.id = cases.attempt_id
        AND attempts.run_id = cases.run_id
@@ -351,10 +360,30 @@ BEGIN
        AND leases.owner_id
              = 'brain.kernel_equivalence.production_cases'
        AND leases.state = 'prepared'
-       AND leases.lease_expires_at > clock_timestamp()
+       AND attempts.provider = cases.provider
+       AND attempts.execution_transport = 'fleet-worker'
+       AND bindings.result_receipt_id = attempts.result_receipt_id
+       AND attempts.task_bundle
+             #>> '{inputs,workspace_spec,expected_head_sha}'
+             = cases.artifact_sha
+       AND cases.resource_type = 'ephemeral_run'
+       AND cases.resource_id = attempts.id::text
+       AND cases.resource_ref =
+             cases.resource_prefix || attempts.id::text
      FOR UPDATE OF leases
      FOR SHARE OF cases, attempts, bindings, receipts;
     IF NOT FOUND THEN
+      RAISE EXCEPTION
+        'kernel equivalence production execution claim authority unavailable';
+    END IF;
+    authority_now := clock_timestamp();
+    IF case_expires_at <= authority_now
+       OR production_lease_expires_at <= authority_now
+       OR NEW.controller_lease_expires_at <= authority_now
+       OR NEW.controller_lease_expires_at > LEAST(
+         case_expires_at,
+         production_lease_expires_at
+       ) THEN
       RAISE EXCEPTION
         'kernel equivalence production execution claim authority unavailable';
     END IF;
@@ -404,7 +433,15 @@ BEGIN
   END IF;
   IF NEW.state IN ('blocked', 'settlement_unknown')
      AND (
-       (lineage_grant_ref IS NULL AND NEW.grant_ref IS NOT NULL)
+       (
+         lineage_grant_ref IS NULL
+         AND NEW.grant_ref IS NOT NULL
+         AND NOT (
+           previous_state = 'claimed'
+           AND NEW.state = 'settlement_unknown'
+           AND NEW.code = 'grant_revoke_unconfirmed'
+         )
+       )
        OR (
          lineage_grant_ref IS NOT NULL
          AND NEW.grant_ref IS DISTINCT FROM lineage_grant_ref
@@ -437,6 +474,125 @@ BEGIN
   ) THEN
     RAISE EXCEPTION
       'kernel equivalence execution event transition mismatch';
+  END IF;
+
+  SELECT
+      cases.expires_at,
+      leases.lease_expires_at,
+      leases.owner_id,
+      leases.state
+    INTO
+      case_expires_at,
+      production_lease_expires_at,
+      production_lease_owner,
+      production_lease_state
+    FROM kernel_equivalence_production_case_leases leases
+    JOIN kernel_equivalence_production_cases cases
+      ON cases.case_id = leases.case_id
+   WHERE leases.case_id = NEW.case_id
+   FOR UPDATE OF leases
+   FOR SHARE OF cases;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION
+      'kernel equivalence production execution authority expiry unavailable';
+  END IF;
+  authority_now := clock_timestamp();
+  IF (
+       NEW.controller_lease_expires_at IS NOT NULL
+       AND NEW.controller_lease_expires_at > LEAST(
+         case_expires_at,
+         production_lease_expires_at
+       )
+     )
+     OR (
+       NEW.grant_expires_at IS NOT NULL
+       AND NEW.grant_expires_at > LEAST(
+         case_expires_at,
+         production_lease_expires_at
+       )
+     )
+     OR (
+       NEW.state IN ('claimed', 'reconciling')
+       AND NEW.controller_lease_expires_at <= authority_now
+     )
+     OR (
+       NEW.state IN ('grant_issued', 'executing')
+       AND NEW.grant_expires_at <= authority_now
+     )
+     OR (
+       NEW.state = 'reconciling'
+       AND (
+         production_lease_owner
+           IS DISTINCT FROM 'brain.kernel_equivalence.production_cases'
+         OR production_lease_state IS DISTINCT FROM 'prepared'
+         OR production_lease_expires_at <= authority_now
+         OR case_expires_at <= authority_now
+       )
+     ) THEN
+    RAISE EXCEPTION
+      'kernel equivalence production execution authority expiry unavailable';
+  END IF;
+
+  IF NEW.state IN ('grant_issued', 'executing') THEN
+    PERFORM leases.case_id
+      FROM kernel_equivalence_production_case_leases leases
+      JOIN kernel_equivalence_production_cases cases
+        ON cases.case_id = leases.case_id
+       AND cases.expires_at > authority_now
+      JOIN harness_attempts attempts
+        ON attempts.id = cases.attempt_id
+       AND attempts.run_id = cases.run_id
+       AND attempts.machine_attestation_status = 'verified'
+       AND attempts.status IN ('completed', 'completed_with_concerns')
+      JOIN kernel_equivalence_production_case_bindings bindings
+        ON bindings.case_id = cases.case_id
+       AND bindings.provider_session_id = attempts.provider_session_id
+       AND bindings.actual_machine_id = attempts.actual_machine_id
+       AND bindings.execution_transport = attempts.execution_transport
+       AND bindings.remote_job_id = attempts.remote_job_id
+       AND bindings.artifact_sha = cases.artifact_sha
+      JOIN harness_result_receipts receipts
+        ON receipts.receipt_id = bindings.result_receipt_id
+       AND receipts.receipt_id = attempts.result_receipt_id
+       AND receipts.attempt_id = attempts.id
+       AND receipts.run_id = attempts.run_id
+       AND receipts.provider = cases.provider
+       AND receipts.requested_provider = cases.provider
+       AND receipts.provider_session_id = attempts.provider_session_id
+       AND receipts.worker_id = attempts.actual_machine_id
+       AND receipts.job_id = attempts.remote_job_id
+       AND receipts.terminal_status = attempts.status
+       AND receipts.task_bundle_sha256 = bindings.task_bundle_sha256
+     WHERE leases.case_id = NEW.case_id
+       AND leases.owner_id
+             = 'brain.kernel_equivalence.production_cases'
+       AND leases.state = 'prepared'
+       AND leases.lease_expires_at > authority_now
+       AND attempts.provider = cases.provider
+       AND attempts.execution_transport = 'fleet-worker'
+       AND bindings.result_receipt_id = attempts.result_receipt_id
+       AND attempts.task_bundle
+             #>> '{inputs,workspace_spec,expected_head_sha}'
+             = cases.artifact_sha
+       AND cases.resource_type = 'ephemeral_run'
+       AND cases.resource_id = attempts.id::text
+       AND cases.resource_ref =
+             cases.resource_prefix || attempts.id::text
+       AND NEW.grant_expires_at <= LEAST(
+             cases.expires_at,
+             leases.lease_expires_at
+           )
+       AND NEW.grant_expires_at > authority_now
+       AND NEW.controller_lease_expires_at <= LEAST(
+             cases.expires_at,
+             leases.lease_expires_at
+           )
+     FOR UPDATE OF leases
+     FOR SHARE OF cases, attempts, bindings, receipts;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION
+        'kernel equivalence production execution grant authority unavailable';
+    END IF;
   END IF;
 
   SELECT execution_active
@@ -483,7 +639,7 @@ BEGIN
        AND previous_state IN (
          'claimed', 'grant_issued', 'executing', 'reconciling'
        )
-       AND previous_lease_expires_at <= clock_timestamp() THEN
+       AND previous_lease_expires_at <= authority_now THEN
       NULL; -- Explicit DB-time lease takeover.
     ELSE
       RAISE EXCEPTION
