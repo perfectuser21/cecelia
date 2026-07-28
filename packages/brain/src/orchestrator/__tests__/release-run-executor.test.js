@@ -220,6 +220,7 @@ describe('ReleaseRun executor', () => {
       run_id: RUN_ID,
       task_id: TASK_ID,
       state: 'production_verified',
+      source_head_sha: HEAD_SHA,
       merge_sha: MERGE_SHA,
       artifact_versions: artifacts,
     });
