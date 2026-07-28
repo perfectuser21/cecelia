@@ -1,7 +1,7 @@
 # Kernel P0/P1 Behavior Equivalence Contract Design
 
-日期：2026-07-28  
-状态：已批准  
+日期：2026-07-28
+状态：已批准
 范围：Phase 4 最终 11 要素等价证明收账
 
 ## 决策
