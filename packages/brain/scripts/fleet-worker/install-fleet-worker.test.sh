@@ -684,6 +684,7 @@ installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
 installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
 installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
+installed_credential_envelope="$runtime_dir/credential-envelope.cjs"
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
 installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
@@ -691,6 +692,8 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
   || fail "--apply did not install a stable Worker runtime"
 [[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
   || fail "--apply omitted the Workspace/Attempt runtime modules"
+[[ -f "$installed_credential_envelope" ]] \
+  || fail "--apply omitted the credential envelope runtime module"
 [[ -d "$worker_data_root" ]] \
   || fail "--apply did not create the Worker-owned data root"
 grep -Fxq "_cecelia:_cecelia $worker_data_root" "$chown_log" \
@@ -785,11 +788,13 @@ seed_prior_generation() {
   local tag="$1"
   printf '%s\n' "prior-worker-$tag" > "$installed_worker"
   printf '%s\n' "prior-probe-$tag" > "$installed_probe"
+  printf '%s\n' "prior-credential-envelope-$tag" > "$installed_credential_envelope"
   printf '%s\n' "prior-plist-$tag" > "$installed_plist"
   printf '%s\n' "prior-access-helper-$tag" > "$installed_access_helper"
   printf '%s\n' "prior-access-plist-$tag" > "$installed_access_plist"
   chmod 0711 "$installed_worker"
   chmod 0600 "$installed_probe"
+  chmod 0644 "$installed_credential_envelope"
   chmod 0640 "$installed_plist"
   chmod 0700 "$installed_access_helper"
   chmod 0600 "$installed_access_plist"
@@ -798,18 +803,20 @@ seed_prior_generation() {
 
 assert_support_placement_failure_rolled_back() {
   local snapshot_dir="$test_root/snapshot-placement"
-  local worker_mode probe_mode plist_mode helper_mode access_plist_mode
+  local worker_mode probe_mode credential_mode plist_mode helper_mode access_plist_mode
   local failure_output
 
   seed_prior_generation placement
   mkdir -p "$snapshot_dir"
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_credential_envelope" "$snapshot_dir/credential-envelope"
   cp "$installed_plist" "$snapshot_dir/plist"
   cp "$installed_access_helper" "$snapshot_dir/access-helper"
   cp "$installed_access_plist" "$snapshot_dir/access-plist"
   worker_mode="$(mode_of "$installed_worker")"
   probe_mode="$(mode_of "$installed_probe")"
+  credential_mode="$(mode_of "$installed_credential_envelope")"
   plist_mode="$(mode_of "$installed_plist")"
   helper_mode="$(mode_of "$installed_access_helper")"
   access_plist_mode="$(mode_of "$installed_access_plist")"
@@ -835,6 +842,8 @@ assert_support_placement_failure_rolled_back() {
     || fail "placement failure did not restore Worker bytes"
   cmp -s "$snapshot_dir/probe" "$installed_probe" \
     || fail "placement failure did not restore probe bytes"
+  cmp -s "$snapshot_dir/credential-envelope" "$installed_credential_envelope" \
+    || fail "placement failure did not restore credential envelope bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "placement failure did not restore Worker plist bytes"
   cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
@@ -843,6 +852,7 @@ assert_support_placement_failure_rolled_back() {
     || fail "placement failure did not restore access plist bytes"
   [[ "$(mode_of "$installed_worker")" == "$worker_mode" \
     && "$(mode_of "$installed_probe")" == "$probe_mode" \
+    && "$(mode_of "$installed_credential_envelope")" == "$credential_mode" \
     && "$(mode_of "$installed_plist")" == "$plist_mode" \
     && "$(mode_of "$installed_access_helper")" == "$helper_mode" \
     && "$(mode_of "$installed_access_plist")" == "$access_plist_mode" ]] \
@@ -863,18 +873,20 @@ assert_failed_upgrade_rolled_back() {
   local expected_mutations="$2"
   local tag="$3"
   local snapshot_dir="$test_root/snapshot-$tag"
-  local worker_mode probe_mode plist_mode access_helper_mode access_plist_mode
+  local worker_mode probe_mode credential_mode plist_mode access_helper_mode access_plist_mode
   local failure_output
 
   seed_prior_generation "$tag"
   mkdir -p "$snapshot_dir"
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_credential_envelope" "$snapshot_dir/credential-envelope"
   cp "$installed_plist" "$snapshot_dir/plist"
   cp "$installed_access_helper" "$snapshot_dir/access-helper"
   cp "$installed_access_plist" "$snapshot_dir/access-plist"
   worker_mode="$(mode_of "$installed_worker")"
   probe_mode="$(mode_of "$installed_probe")"
+  credential_mode="$(mode_of "$installed_credential_envelope")"
   plist_mode="$(mode_of "$installed_plist")"
   access_helper_mode="$(mode_of "$installed_access_helper")"
   access_plist_mode="$(mode_of "$installed_access_plist")"
@@ -897,6 +909,8 @@ assert_failed_upgrade_rolled_back() {
     || fail "$tag failure did not restore exact Worker bytes"
   cmp -s "$snapshot_dir/probe" "$installed_probe" \
     || fail "$tag failure did not restore exact probe bytes"
+  cmp -s "$snapshot_dir/credential-envelope" "$installed_credential_envelope" \
+    || fail "$tag failure did not restore exact credential envelope bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "$tag failure did not restore exact plist bytes"
   cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
@@ -907,6 +921,8 @@ assert_failed_upgrade_rolled_back() {
     || fail "$tag failure did not restore the Worker mode"
   [[ "$(mode_of "$installed_probe")" == "$probe_mode" ]] \
     || fail "$tag failure did not restore the probe mode"
+  [[ "$(mode_of "$installed_credential_envelope")" == "$credential_mode" ]] \
+    || fail "$tag failure did not restore the credential envelope mode"
   [[ "$(mode_of "$installed_plist")" == "$plist_mode" ]] \
     || fail "$tag failure did not restore the plist mode"
   [[ "$(mode_of "$installed_access_helper")" == "$access_helper_mode" ]] \
@@ -940,6 +956,7 @@ assert_started_but_unhealthy_generation_rolled_back() {
   mkdir -p "$snapshot_dir"
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_credential_envelope" "$snapshot_dir/credential-envelope"
   cp "$installed_plist" "$snapshot_dir/plist"
   cp "$installed_access_helper" "$snapshot_dir/access-helper"
   cp "$installed_access_plist" "$snapshot_dir/access-plist"
@@ -960,6 +977,8 @@ assert_started_but_unhealthy_generation_rolled_back() {
     || fail "startup health failure did not restore Worker bytes"
   cmp -s "$snapshot_dir/probe" "$installed_probe" \
     || fail "startup health failure did not restore probe bytes"
+  cmp -s "$snapshot_dir/credential-envelope" "$installed_credential_envelope" \
+    || fail "startup health failure did not restore credential envelope bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "startup health failure did not restore Worker plist bytes"
   cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
@@ -981,7 +1000,7 @@ assert_stopped_upgrade_remains_stopped() {
   local expected_mutations="$2"
   local tag="$3"
   local snapshot_dir="$test_root/snapshot-stopped-$tag"
-  local worker_mode probe_mode plist_mode access_helper_mode access_plist_mode
+  local worker_mode probe_mode credential_mode plist_mode access_helper_mode access_plist_mode
   local failure_output
 
   seed_prior_generation "stopped-$tag"
@@ -989,11 +1008,13 @@ assert_stopped_upgrade_remains_stopped() {
   mkdir -p "$snapshot_dir"
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_credential_envelope" "$snapshot_dir/credential-envelope"
   cp "$installed_plist" "$snapshot_dir/plist"
   cp "$installed_access_helper" "$snapshot_dir/access-helper"
   cp "$installed_access_plist" "$snapshot_dir/access-plist"
   worker_mode="$(mode_of "$installed_worker")"
   probe_mode="$(mode_of "$installed_probe")"
+  credential_mode="$(mode_of "$installed_credential_envelope")"
   plist_mode="$(mode_of "$installed_plist")"
   access_helper_mode="$(mode_of "$installed_access_helper")"
   access_plist_mode="$(mode_of "$installed_access_plist")"
@@ -1016,6 +1037,8 @@ assert_stopped_upgrade_remains_stopped() {
     || fail "stopped $tag failure did not restore exact Worker bytes"
   cmp -s "$snapshot_dir/probe" "$installed_probe" \
     || fail "stopped $tag failure did not restore exact probe bytes"
+  cmp -s "$snapshot_dir/credential-envelope" "$installed_credential_envelope" \
+    || fail "stopped $tag failure did not restore exact credential envelope bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "stopped $tag failure did not restore exact plist bytes"
   cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
@@ -1026,6 +1049,8 @@ assert_stopped_upgrade_remains_stopped() {
     || fail "stopped $tag failure did not restore the Worker mode"
   [[ "$(mode_of "$installed_probe")" == "$probe_mode" ]] \
     || fail "stopped $tag failure did not restore the probe mode"
+  [[ "$(mode_of "$installed_credential_envelope")" == "$credential_mode" ]] \
+    || fail "stopped $tag failure did not restore the credential envelope mode"
   [[ "$(mode_of "$installed_plist")" == "$plist_mode" ]] \
     || fail "stopped $tag failure did not restore the plist mode"
   [[ "$(mode_of "$installed_access_helper")" == "$access_helper_mode" ]] \
