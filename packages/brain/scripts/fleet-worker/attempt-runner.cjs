@@ -1799,6 +1799,16 @@ function validateLaunchRequest(value) {
   ) {
     throw new Error('attempt_workspace_owner_mismatch');
   }
+  const providerSpec = validateProviderSpec(value.provider_spec);
+  if (providerSpec.provider !== target.provider) {
+    throw new Error('attempt_provider_target_mismatch');
+  }
+  const isCanary = isFrozenFleetCanary(providerSpec.stdin, {
+    attemptId: value.attempt_id,
+    runId: value.run_id,
+    taskId: value.task_id,
+    role: target.role,
+  });
   const githubMutationPolicy = target.role === 'generator'
     && value.workspace_spec.mode === 'read-write'
     ? validateGithubMutationPolicy(
@@ -1813,7 +1823,10 @@ function validateLaunchRequest(value) {
   ) {
     throw new Error('attempt_github_mutation_policy_role_mismatch');
   }
-  const githubReadPolicy = ['evaluator', 'reporter'].includes(target.role)
+  const githubReadPolicy = (
+    ['evaluator', 'reporter'].includes(target.role)
+    && !isCanary
+  )
     ? validateGithubReadPolicy(
         value.github_read_policy,
         value.workspace_spec,
@@ -1833,19 +1846,6 @@ function validateLaunchRequest(value) {
     throw new Error('attempt_lease_generation_invalid');
   }
   const brainUrl = validateBrainUrl(value.brain_url);
-  const providerSpec = validateProviderSpec(value.provider_spec);
-  if (providerSpec.provider !== target.provider) {
-    throw new Error('attempt_provider_target_mismatch');
-  }
-  const isCanary = isFrozenFleetCanary(providerSpec.stdin, {
-    attemptId: value.attempt_id,
-    runId: value.run_id,
-    taskId: value.task_id,
-    role: target.role,
-  });
-  if (['evaluator', 'reporter'].includes(target.role) && !isCanary) {
-    throw new Error('attempt_github_read_broker_required');
-  }
   return {
     request: value,
     providerSpec,

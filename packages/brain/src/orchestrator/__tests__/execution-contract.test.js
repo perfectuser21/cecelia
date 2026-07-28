@@ -386,6 +386,9 @@ describe('TaskBundle contract', () => {
           execution_surface: 'fleet-worker',
           workspace_spec: workspaceSpec,
           pull_request: verifiedPullRequest(),
+          ...(role === 'evaluator'
+            ? { verification_commands: ['npm test'] }
+            : {}),
         },
         result_channel: validResultChannel({
           bindings: { ...validResultChannel().bindings, role },

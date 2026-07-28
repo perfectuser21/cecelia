@@ -934,7 +934,7 @@ test('production Evaluator consumes the Worker authority file and never invokes 
       verdict: 'PASS',
       task_id: TASK_ID,
       attempt_id: ATTEMPT_ID,
-      behavior_tests: [],
+      behavior_tests: [{ command: 'npm test', exit_code: 0, log_tail: '' }],
     },
     workspacePath: workspace,
     deps: injected,
