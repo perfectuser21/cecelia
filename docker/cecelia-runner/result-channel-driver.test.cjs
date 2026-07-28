@@ -532,6 +532,14 @@ test('canary and non-success pass-through reject unverified side-effect claims',
       decision: null,
       artifacts: ['unverified'],
     }),
+    providerResult({
+      status: 'blocked',
+      provider_metadata: {
+        provider: 'codex',
+        session_id: null,
+        credential_copy_mutated: 'false',
+      },
+    }),
   ]) {
     fs.writeFileSync(RESULT_FILE, '', { mode: 0o600 });
     fs.writeFileSync(PROVIDER_FILE, JSON.stringify(dirty), { mode: 0o600 });
