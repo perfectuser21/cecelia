@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
   npx vitest run \
     src/__tests__/migration-367-harness-commander-phase1.test.js \
     src/orchestrator/__tests__/commander-contract.test.js \
+    src/orchestrator/__tests__/commander-zod-compat.test.js \
     src/orchestrator/__tests__/commander-store.test.js \
     src/orchestrator/__tests__/run-event-store.test.js \
     src/orchestrator/__tests__/actor-inbox.test.js \

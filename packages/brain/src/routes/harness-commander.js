@@ -7,7 +7,7 @@ import { ACTOR_KEYS } from '../orchestrator/commander-contract.js';
 import { createActorInbox } from '../orchestrator/actor-inbox.js';
 import { createRunEventStore } from '../orchestrator/run-event-store.js';
 
-const uuidSchema = z.uuid();
+const uuidSchema = z.string().uuid();
 const PRIVATE_RESPONSE_KEY = /token|secret|password|api[_-]?key|auth(?:entication|orization)?|credential|provider_session_id|task_bundle|callback_secret_hash|error_message|raw_prompt|prompt|^result$/i;
 
 function publicValue(value) {

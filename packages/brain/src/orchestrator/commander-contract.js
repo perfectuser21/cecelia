@@ -106,13 +106,13 @@ const commanderActionSchema = z.enum(COMMANDER_ACTIONS);
 
 const actorMessageSchema = z.object({
   schema: z.literal('harness-actor-message/v1'),
-  message_id: z.uuid(),
-  run_id: z.uuid(),
+  message_id: z.string().uuid(),
+  run_id: z.string().uuid(),
   sender_role: actorKeySchema,
   recipient_role: actorKeySchema,
-  thread_id: z.uuid(),
+  thread_id: z.string().uuid(),
   correlation_id: z.string().min(1).max(512),
-  source_attempt_id: z.uuid().nullable(),
+  source_attempt_id: z.string().uuid().nullable(),
   event_cursor: z.number().int().nonnegative(),
   message_type: z.enum(ACTOR_MESSAGE_TYPES),
   payload: structuredObject({ forbidActorEffects: true }),
@@ -129,11 +129,11 @@ const routeSchema = z.object({
 
 const commanderDirectiveSchema = z.object({
   schema: z.literal('commander-directive/v1'),
-  run_id: z.uuid(),
+  run_id: z.string().uuid(),
   event_cursor: z.number().int().nonnegative(),
   action: commanderActionSchema,
   target_role: actorKeySchema.optional(),
-  target_attempt_id: z.uuid().optional(),
+  target_attempt_id: z.string().uuid().optional(),
   reason: z.string().min(1).max(MAX_TEXT_LENGTH),
   guidance: z.string().max(MAX_TEXT_LENGTH).optional(),
   route: routeSchema.optional(),
@@ -143,7 +143,7 @@ const commanderDirectiveSchema = z.object({
 });
 
 const commanderEventSchema = z.object({
-  run_id: z.uuid(),
+  run_id: z.string().uuid(),
   cursor: z.number().int().positive(),
   event_type: z.string().min(1).max(256),
   source_type: z.string().min(1).max(256),
@@ -156,8 +156,8 @@ const commanderEventSchema = z.object({
 
 const commanderBundleSchema = z.object({
   schema: z.literal('commander-bundle/v1'),
-  run_id: z.uuid(),
-  commander_attempt_id: z.uuid(),
+  run_id: z.string().uuid(),
+  commander_attempt_id: z.string().uuid(),
   event_cursor: z.number().int().nonnegative(),
   run_profile: structuredObject(),
   objective: structuredObject(),
