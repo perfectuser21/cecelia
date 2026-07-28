@@ -100,8 +100,8 @@
 - Modify: `packages/brain/src/orchestrator/attempt-store.js`
 - Modify: `packages/brain/src/orchestrator/__tests__/attempt-store.test.js`
 - Add: `packages/brain/src/routes/__tests__/harness-result-channel.test.js`
-- Add: `packages/brain/migrations/368_allow_fleet_worker_execution_transport.sql`
-- Add: `packages/brain/migrations/369_kernel_result_channel_receipts.sql`
+- Add: `packages/brain/migrations/369_allow_fleet_worker_execution_transport.sql`
+- Add: `packages/brain/migrations/370_kernel_result_channel_receipts.sql`
 - Add: `packages/brain/src/__tests__/kernel-result-channel-migration.test.js`
 
 **Steps:**
@@ -120,8 +120,8 @@
 5. Return a strict ack envelope used by Runner readback.
 6. Preserve existing verdict-log and Generator PR side effects after the
    durable write, making each independently idempotent.
-7. Migration 368 replaces the migration-363 execution transport CHECK with one
-   that includes `fleet-worker`; migration 369 adds server-owned result binding
+7. Migration 369 replaces the migration-363 execution transport CHECK with one
+   that includes `fleet-worker`; migration 370 adds server-owned result binding
    fields plus the append-only receipt table. Before rebase/deploy, re-read the
    repository and production `schema_version` ledger and abort on any number or
    description collision.
