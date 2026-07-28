@@ -95,6 +95,13 @@ describe('migration 377 Kernel equivalence production cases', () => {
     expect(sql).toMatch(/before_hash TEXT/i);
     expect(sql).toMatch(/after_hash TEXT/i);
     expect(sql).toMatch(/late_effect_risk BOOLEAN NOT NULL/i);
+    expect(sql).toMatch(
+      /evidence_ref\s*=\s*'db:kernel-equivalence-production-cases\/'\s*\|\|\s*case_id::text/i,
+    );
+    expect(sql).toMatch(/kernel_equivalence_case_event_guard/i);
+    expect(sql).toMatch(
+      /BEFORE INSERT ON kernel_equivalence_production_case_events/i,
+    );
     expect(sql).not.toMatch(/\bevidence\s+JSONB/i);
     for (const table of [
       'kernel_equivalence_production_cases',

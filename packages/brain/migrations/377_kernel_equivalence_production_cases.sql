@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS kernel_equivalence_production_case_events (
   evidence_ref TEXT NOT NULL CHECK (
     length(evidence_ref) BETWEEN 1 AND 2048
     AND evidence_ref !~ E'[\\000\\r\\n]'
+    AND evidence_ref =
+      'db:kernel-equivalence-production-cases/' || case_id::text
+      || '/' || generation::text || '/' || event_type
   ),
   before_hash TEXT CHECK (
     before_hash IS NULL OR before_hash ~ '^[0-9a-f]{64}$'
@@ -197,12 +200,69 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION kernel_equivalence_case_event_guard()
+RETURNS trigger AS $$
+DECLARE
+  lease_generation BIGINT;
+  lease_state TEXT;
+BEGIN
+  SELECT generation, state
+    INTO lease_generation, lease_state
+    FROM kernel_equivalence_production_case_leases
+   WHERE case_id = NEW.case_id;
+
+  IF NOT FOUND
+     OR NEW.generation <> lease_generation THEN
+    RAISE EXCEPTION
+      'kernel equivalence production case event/lease generation mismatch';
+  END IF;
+
+  IF NOT (
+    (NEW.event_type = 'prepared'
+      AND NEW.generation = 1
+      AND lease_state = 'prepared'
+      AND NEW.status = 'confirmed'
+      AND NEW.late_effect_risk = false)
+    OR (NEW.event_type = 'cancel_requested'
+      AND lease_state = 'cancelling'
+      AND NEW.status = 'confirmed'
+      AND NEW.late_effect_risk = false)
+    OR (NEW.event_type = 'cancel_confirmed'
+      AND lease_state = 'cancelled'
+      AND NEW.status = 'confirmed'
+      AND NEW.late_effect_risk = false)
+    OR (NEW.event_type = 'cleanup_confirmed'
+      AND lease_state = 'cleaned'
+      AND NEW.status = 'confirmed'
+      AND NEW.late_effect_risk = false)
+    OR (NEW.event_type = 'cleanup_unconfirmed'
+      AND lease_state = 'cleanup_unconfirmed'
+      AND NEW.status = 'unconfirmed'
+      AND NEW.late_effect_risk = true)
+    OR (NEW.event_type = 'inspection'
+      AND NEW.status IN ('confirmed', 'unconfirmed')
+      AND NEW.late_effect_risk = (NEW.status = 'unconfirmed'))
+  ) THEN
+    RAISE EXCEPTION
+      'kernel equivalence production case event/lease state mismatch';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_production_case_run_guard
   ON kernel_equivalence_production_cases;
 CREATE TRIGGER trg_kernel_equivalence_production_case_run_guard
   BEFORE INSERT ON kernel_equivalence_production_cases
   FOR EACH ROW
   EXECUTE FUNCTION kernel_equivalence_production_case_run_guard();
+
+DROP TRIGGER IF EXISTS trg_kernel_equivalence_case_event_guard
+  ON kernel_equivalence_production_case_events;
+CREATE TRIGGER trg_kernel_equivalence_case_event_guard
+  BEFORE INSERT ON kernel_equivalence_production_case_events
+  FOR EACH ROW
+  EXECUTE FUNCTION kernel_equivalence_case_event_guard();
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_production_cases_append_only
   ON kernel_equivalence_production_cases;

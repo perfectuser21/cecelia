@@ -125,7 +125,7 @@ describe('production equivalence cases on real PostgreSQL', () => {
       [
         EVENT_ID,
         CASE_ID,
-        `db:kernel-equivalence-production-cases/${CASE_ID}/1`,
+        `db:kernel-equivalence-production-cases/${CASE_ID}/1/prepared`,
         'b'.repeat(64),
       ],
     )).resolves.toMatchObject({ rowCount: 1 });
@@ -199,6 +199,20 @@ describe('production equivalence cases on real PostgreSQL', () => {
   });
 
   it('blocks mutation and erasure of immutable evidence', async () => {
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_production_case_events
+         (event_id, case_id, generation, event_type, status, evidence_ref,
+          before_hash, after_hash, late_effect_risk)
+       VALUES
+         ($1, $2, 2, 'cleanup_confirmed', 'confirmed', $3,
+          NULL, NULL, false)`,
+      [
+        'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        CASE_ID,
+        `db:kernel-equivalence-production-cases/${CASE_ID}/2/cleanup_confirmed`,
+      ],
+    )).rejects.toThrow(/event\/lease state mismatch/i);
+
     for (const statement of [
       `UPDATE kernel_equivalence_production_cases
           SET artifact_sha = '${'c'.repeat(40)}'
