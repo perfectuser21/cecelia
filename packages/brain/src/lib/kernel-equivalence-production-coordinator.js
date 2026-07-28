@@ -51,7 +51,6 @@ function validateGrantIssuer(value) {
     || value?.capability_id
       !== 'brain.kernel_equivalence.protected_grant_issuer.v1'
     || typeof value?.issueProtectedGrant !== 'function'
-    || typeof value?.revokeProtectedGrant !== 'function'
     || typeof value?.cleanupExpiredGrants !== 'function'
   ) {
     fail('production_controller_grant_issuer_invalid');
@@ -391,55 +390,26 @@ async function appendRequiredEvent(pool, event) {
   }
 }
 
-async function revokePublishedGrant(grantIssuer, grantRef) {
-  try {
-    const result = await grantIssuer.revokeProtectedGrant({
-      grant_ref: grantRef,
-    });
-    return (
-      result?.revoked === true
-      && result?.grant_ref === grantRef
-      && Object.keys(result).sort().join(',')
-        === 'grant_ref,revoked'
-    );
-  } catch {
-    return false;
-  }
-}
-
 async function denyAfterPublishedGrant({
   pool,
-  grantIssuer,
   randomUUID,
   caseId,
   generation,
   controllerInstanceId,
   issued,
-  lineageRecorded,
-  error,
 }) {
-  const revoked = await revokePublishedGrant(
-    grantIssuer,
-    issued.grant_ref,
-  );
-  const recordGrant = lineageRecorded || !revoked;
   await appendRequiredEvent(pool, {
     randomUUID,
     caseId,
     generation,
     controllerInstanceId,
-    state: revoked ? 'blocked' : 'settlement_unknown',
-    grantRef: recordGrant ? issued.grant_ref : undefined,
-    grantExpiresAt: recordGrant ? issued.expires_at : undefined,
-    code: revoked
-      ? stableCode(error, 'authority_revalidation_failed')
-      : 'grant_revoke_unconfirmed',
-    lateEffectRisk: !revoked,
+    state: 'settlement_unknown',
+    grantRef: issued.grant_ref,
+    grantExpiresAt: issued.expires_at,
+    code: 'grant_revoke_unconfirmed',
+    lateEffectRisk: true,
   });
-  if (!revoked) {
-    fail('production_controller_grant_revoke_unconfirmed');
-  }
-  throw error;
+  fail('production_controller_grant_revoke_unconfirmed');
 }
 
 async function confirmBundle(
@@ -690,25 +660,18 @@ export function createPostgresKernelEquivalenceCoordinator({
       || timestamp(issued.expires_at) <= issueObservedAt
       || timestamp(issued.expires_at) > authorityExpiresAt
     ) {
-      const revoked = validIssuedGrantRef
-        ? await revokePublishedGrant(grantIssuer, issued.grant_ref)
-        : false;
       await appendRequiredEvent(pool, {
         randomUUID,
         caseId,
         generation: 2,
         controllerInstanceId,
-        state: revoked ? 'blocked' : 'settlement_unknown',
-        grantRef: validIssuedGrantRef && !revoked
-          ? issued.grant_ref
-          : undefined,
+        state: 'settlement_unknown',
+        grantRef: undefined,
         grantExpiresAt: undefined,
         code: validIssuedGrantRef
-          ? revoked
-            ? 'grant_issue_invalid'
-            : 'grant_revoke_unconfirmed'
+          ? 'grant_revoke_unconfirmed'
           : 'grant_issue_invalid_unresolved',
-        lateEffectRisk: !revoked,
+        lateEffectRisk: true,
       });
       fail('production_controller_grant_issue_invalid');
     }
@@ -937,7 +900,12 @@ export function createPostgresKernelEquivalenceCoordinator({
            cases.adapter_id,
            cases.expires_at AS case_expires_at,
            production_leases.lease_expires_at
-             AS production_lease_expires_at
+             AS production_lease_expires_at,
+           (
+             production_leases.owner_id
+               = 'brain.kernel_equivalence.production_cases'
+             AND production_leases.state = 'prepared'
+           ) AS production_lease_prepared
          FROM kernel_equivalence_production_execution_events events
          LEFT JOIN LATERAL (
            SELECT
@@ -957,9 +925,6 @@ export function createPostgresKernelEquivalenceCoordinator({
          JOIN kernel_equivalence_production_case_leases
                 production_leases
            ON production_leases.case_id = cases.case_id
-          AND production_leases.owner_id
-                = 'brain.kernel_equivalence.production_cases'
-          AND production_leases.state = 'prepared'
          ORDER BY events.case_id, events.generation DESC
        )
        SELECT
@@ -1041,7 +1006,19 @@ export function createPostgresKernelEquivalenceCoordinator({
                 row,
                 grantTtlSeconds,
               );
-              if (effectiveTtlMs > 0) {
+              if (effectiveTtlMs <= 0) {
+                await appendEvent(pool, {
+                  randomUUID,
+                  caseId: row.case_id,
+                  generation: generation + 1,
+                  controllerInstanceId,
+                  state: 'settlement_unknown',
+                  grantRef: row.grant_ref,
+                  grantExpiresAt: row.grant_expires_at,
+                  code: 'startup_authority_expired',
+                  lateEffectRisk: true,
+                });
+              } else if (row.production_lease_prepared === true) {
                 const tookOver = await appendEvent(pool, {
                   randomUUID,
                   caseId: row.case_id,

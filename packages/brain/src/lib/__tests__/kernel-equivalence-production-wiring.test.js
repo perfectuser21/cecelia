@@ -33,6 +33,9 @@ import {
   compileDrillPlan,
 } from '../kernel-equivalence-drills.js';
 import {
+  createPostgresKernelEquivalenceCoordinator,
+} from '../kernel-equivalence-production-coordinator.js';
+import {
   TRUSTED_NON_RELEASE_EQUIVALENCE_DESCRIPTORS,
 } from '../kernel-equivalence-trusted-assembly.js';
 import {
@@ -570,6 +573,45 @@ describe('kernel equivalence production wiring', () => {
     expect(JSON.stringify(wiring)).not.toMatch(
       /secret_file|BEGIN PRIVATE KEY|production-wiring\.json/,
     );
+  });
+
+  it('constructs the controller with the committed issuer contract', () => {
+    const value = fixture();
+    const database = databasePort();
+    const wiring =
+      productionWiring.loadProductionTrustedExecutionWiring({
+        env: value.env,
+        pool: database,
+        assemblyPorts: assemblyPorts(),
+        now: () => NOW,
+      });
+    const committedIssuer = Object.freeze({
+      owner_service: wiring.grantIssuer.owner_service,
+      capability_id: wiring.grantIssuer.capability_id,
+      issueProtectedGrant:
+        wiring.grantIssuer.issueProtectedGrant,
+      cleanupExpiredGrants:
+        wiring.grantIssuer.cleanupExpiredGrants,
+    });
+
+    expect(Object.keys(committedIssuer).sort()).toEqual([
+      'capability_id',
+      'cleanupExpiredGrants',
+      'issueProtectedGrant',
+      'owner_service',
+    ]);
+    expect(() => createPostgresKernelEquivalenceCoordinator({
+      pool: database,
+      grantIssuer: committedIssuer,
+      plan: wiring.plan,
+      socketPath: wiring.socket_path,
+      brainVersion: '1.268.30',
+      engineVersion: '19.7.1',
+      grantTtlSeconds: wiring.grant_ttl_seconds,
+      randomUUID: () =>
+        '11111111-1111-4111-8111-111111111111',
+      now: () => NOW,
+    })).not.toThrow();
   });
 
   it('loads only the pinned public readiness configuration for unprivileged clients', () => {

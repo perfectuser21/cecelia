@@ -94,6 +94,9 @@ describe('migration 381 Kernel equivalence production controller', () => {
       /NEW\.state IN \('grant_issued', 'executing'\)[\s\S]*NEW\.grant_expires_at > authority_now/i,
     );
     expect(sql).toMatch(
+      /NEW\.state IN \('grant_issued', 'executing'\)[\s\S]*NEW\.controller_lease_expires_at <= authority_now/i,
+    );
+    expect(sql).toMatch(
       /NEW\.controller_lease_expires_at\s*<=\s*LEAST\(\s*cases\.expires_at,\s*leases\.lease_expires_at\s*\)/i,
     );
     expect(sql).toMatch(
@@ -143,6 +146,9 @@ describe('migration 381 Kernel equivalence production controller', () => {
     );
     expect(sql).toMatch(
       /previous_state IN \(\s*'claimed',\s*'grant_issued',\s*'executing',\s*'reconciling'\s*\)/is,
+    );
+    expect(sql).toMatch(
+      /NEW\.state = 'settlement_unknown'[\s\S]*NEW\.code = 'startup_authority_expired'[\s\S]*previous_lease_expires_at <= authority_now[\s\S]*LEAST\(\s*case_expires_at,\s*production_lease_expires_at\s*\) <= authority_now/i,
     );
     expect(sql).toMatch(/previous_grant_ref TEXT/i);
     expect(sql).toMatch(

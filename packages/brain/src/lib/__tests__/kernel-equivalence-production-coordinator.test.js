@@ -29,9 +29,6 @@ function grantIssuer() {
     issueProtectedGrant: async () => {
       throw new Error('not reached without an authoritative case');
     },
-    revokeProtectedGrant: async () => {
-      throw new Error('not reached without an issued grant');
-    },
     cleanupExpiredGrants: async () => ({ removed: 0, retained: 0 }),
   });
 }
@@ -397,6 +394,12 @@ describe('production Kernel equivalence coordinator', () => {
     expect(pool.statements[0].text).not.toMatch(
       /\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/i,
     );
+    expect(pool.statements[0].text).toMatch(
+      /AS production_lease_prepared/i,
+    );
+    expect(pool.statements[0].text).not.toMatch(
+      /ON production_leases\.case_id = cases\.case_id\s+AND production_leases\.state = 'prepared'/i,
+    );
   });
 
   it('keyset-pages through every active startup settlement candidate', async () => {
@@ -496,6 +499,7 @@ describe('production Kernel equivalence coordinator', () => {
               case_expires_at: '2026-07-29T00:10:00.000Z',
               production_lease_expires_at:
                 '2026-07-29T00:00:30.000Z',
+              production_lease_prepared: true,
               bundle_hash: null,
             }],
             rowCount: 1,
@@ -556,6 +560,7 @@ describe('production Kernel equivalence coordinator', () => {
               case_expires_at: '2026-07-29T00:10:00.000Z',
               production_lease_expires_at:
                 '2026-07-29T00:00:01.500Z',
+              production_lease_prepared: true,
               bundle_hash: null,
             }],
             rowCount: 1,
@@ -595,6 +600,65 @@ describe('production Kernel equivalence coordinator', () => {
     expect(statements[1].values[10]).toBe(
       '2026-07-29T00:00:01.500Z',
     );
+  });
+
+  it('directly releases an expired authority fence on restart', async () => {
+    const statements = [];
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        if (statements.length === 1) {
+          return {
+            rows: [{
+              case_id: '22222222-2222-4222-8222-222222222222',
+              generation: '3',
+              state: 'executing',
+              controller_instance_id:
+                '88888888-8888-4888-8888-888888888888',
+              grant_ref:
+                'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+              grant_expires_at: '2026-07-28T23:59:59.000Z',
+              lease_expired: true,
+              authority_observed_at: '2026-07-29T00:00:00.000Z',
+              case_expires_at: '2026-07-28T23:59:59.000Z',
+              production_lease_expires_at:
+                '2026-07-28T23:59:59.000Z',
+              production_lease_prepared: true,
+              bundle_hash: null,
+            }],
+            rowCount: 1,
+          };
+        }
+        return {
+          rows: [{ generation: values[2], state: values[4] }],
+          rowCount: 1,
+        };
+      },
+    };
+    const ids = [
+      '11111111-1111-4111-8111-111111111111',
+      '33333333-3333-4333-8333-333333333333',
+    ];
+    const value = coordinator(pool, grantIssuer(), () => ids.shift());
+
+    await expect(value.reconcileStartup()).resolves.toEqual({
+      inspected: 1,
+      settled: 0,
+      retained_unknown: 1,
+    });
+    expect(statements.slice(1).map(({ values }) => values[4])).toEqual([
+      'settlement_unknown',
+    ]);
+    expect(statements[1].values[3]).toBe(
+      '11111111-1111-4111-8111-111111111111',
+    );
+    expect(statements[1].values[5]).toBe(
+      'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+    );
+    expect(statements[1].values[8]).toBe(
+      'startup_authority_expired',
+    );
+    expect(statements[1].values[9]).toBe(true);
   });
 
   it('settles its own expired active lease without a false restart takeover', async () => {
@@ -744,36 +808,7 @@ describe('production Kernel equivalence coordinator', () => {
     expect(statements.at(-1).values[9]).toBe(true);
   });
 
-  it.each([
-    {
-      label: 'exactly revokes a published grant before denial',
-      revoke: async ({ grant_ref: value }) => ({
-        grant_ref: value,
-        revoked: true,
-      }),
-      expectedCode: 'production_controller_authority_unavailable',
-      expectedState: 'blocked',
-      expectedGrantRef: null,
-      expectedLateRisk: false,
-    },
-    {
-      label: 'records unknown settlement when exact revocation fails',
-      revoke: async () => {
-        throw new Error('fixture revoke failure');
-      },
-      expectedCode: 'production_controller_grant_revoke_unconfirmed',
-      expectedState: 'settlement_unknown',
-      expectedGrantRef:
-        'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
-      expectedLateRisk: true,
-    },
-  ])('$label after authority revalidation fails', async ({
-    revoke,
-    expectedCode,
-    expectedState,
-    expectedGrantRef,
-    expectedLateRisk,
-  }) => {
+  it('retains unknown settlement after a published grant cannot be durably revoked', async () => {
     const caseId = '22222222-2222-4222-8222-222222222222';
     const runId = '33333333-3333-4333-8333-333333333333';
     const attemptId = '44444444-4444-4444-8444-444444444444';
@@ -847,7 +882,10 @@ describe('production Kernel equivalence coordinator', () => {
         };
       },
     };
-    const revokeProtectedGrant = vi.fn(revoke);
+    const revokeProtectedGrant = vi.fn(async ({ grant_ref: value }) => ({
+      grant_ref: value,
+      revoked: true,
+    }));
     const issuer = Object.freeze({
       ...grantIssuer(),
       issueProtectedGrant: vi.fn(async () => ({
@@ -864,13 +902,14 @@ describe('production Kernel equivalence coordinator', () => {
     const value = coordinator(pool, issuer, () => ids.shift());
 
     await expect(value.executeCase(caseId)).rejects.toMatchObject({
-      code: expectedCode,
+      code: 'production_controller_grant_revoke_unconfirmed',
     });
-    expect(revokeProtectedGrant).toHaveBeenCalledWith({
-      grant_ref: grantRef,
-    });
-    expect(statements.at(-1).values[4]).toBe(expectedState);
-    expect(statements.at(-1).values[5]).toBe(expectedGrantRef);
-    expect(statements.at(-1).values[9]).toBe(expectedLateRisk);
+    expect(revokeProtectedGrant).not.toHaveBeenCalled();
+    expect(statements.at(-1).values[4]).toBe('settlement_unknown');
+    expect(statements.at(-1).values[5]).toBe(grantRef);
+    expect(statements.at(-1).values[8]).toBe(
+      'grant_revoke_unconfirmed',
+    );
+    expect(statements.at(-1).values[9]).toBe(true);
   });
 });

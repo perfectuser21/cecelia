@@ -517,7 +517,10 @@ BEGIN
      )
      OR (
        NEW.state IN ('grant_issued', 'executing')
-       AND NEW.grant_expires_at <= authority_now
+       AND (
+         NEW.grant_expires_at <= authority_now
+         OR NEW.controller_lease_expires_at <= authority_now
+       )
      )
      OR (
        NEW.state = 'reconciling'
@@ -587,6 +590,7 @@ BEGIN
              cases.expires_at,
              leases.lease_expires_at
            )
+       AND NEW.controller_lease_expires_at > authority_now
      FOR UPDATE OF leases
      FOR SHARE OF cases, attempts, bindings, receipts;
     IF NOT FOUND THEN
@@ -635,6 +639,17 @@ BEGIN
   IF NEW.controller_instance_id <> previous_controller THEN
     IF NEW.state = 'succeeded' THEN
       NULL; -- Exact durable bundle readback is monotonic across restarts.
+    ELSIF NEW.state = 'settlement_unknown'
+       AND NEW.code = 'startup_authority_expired'
+       AND previous_state IN (
+         'claimed', 'grant_issued', 'executing', 'reconciling'
+       )
+       AND previous_lease_expires_at <= authority_now
+       AND LEAST(
+         case_expires_at,
+         production_lease_expires_at
+       ) <= authority_now THEN
+      NULL; -- Expired production authority can only release its fence.
     ELSIF NEW.state = 'reconciling'
        AND previous_state IN (
          'claimed', 'grant_issued', 'executing', 'reconciling'
