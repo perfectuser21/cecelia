@@ -1,9 +1,4 @@
 import {
-  isAbsolute,
-  parse,
-  resolve,
-} from 'node:path';
-import {
   PROOF_PROVIDERS,
   PROOF_SCENARIOS,
 } from './kernel-equivalence-axes.js';
@@ -16,11 +11,11 @@ const GRANT_AUTHORITY_FIELDS = Object.freeze([
 ]);
 const GRANT_RESOLUTION_FIELDS = Object.freeze([
   'cell_id',
-  'grant_path',
+  'grant',
   'grant_ref',
 ]);
 const GRANT_REF_PATTERN =
-  /^kernel-equivalence-grant:[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+  /^kernel-equivalence-grant:([a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/;
 
 export class KernelTrustedExecutionServiceError extends Error {
   constructor(code) {
@@ -145,12 +140,14 @@ function validRequest(request) {
   );
 }
 
-function validGrantPath(value) {
+function validGrant(value, request) {
+  const grantId = request.grant_ref.match(GRANT_REF_PATTERN)?.[1];
   return (
-    nonEmpty(value)
-    && isAbsolute(value)
-    && resolve(value) === value
-    && value !== parse(value).root
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && value.grant_id === grantId
+    && value.cell_id === request.cell_id
   );
 }
 
@@ -187,13 +184,13 @@ export function createBrainTrustedExecutionService({
       !exactKeys(resolution, [...GRANT_RESOLUTION_FIELDS].sort())
       || resolution.cell_id !== request.cell_id
       || resolution.grant_ref !== request.grant_ref
-      || !validGrantPath(resolution.grant_path)
+      || !validGrant(resolution.grant, request)
     ) {
       fail('trusted_execution_grant_resolution_invalid');
     }
     return runtime.executeCell({
       cell,
-      grantPath: resolution.grant_path,
+      grant: deepFreeze(structuredClone(resolution.grant)),
     });
   };
 

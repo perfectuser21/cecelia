@@ -58,16 +58,21 @@ function plan() {
 }
 
 function fixture() {
-  const executeCell = vi.fn(async ({ cell, grantPath }) => ({
+  const protectedGrant = Object.freeze({
+    schema_version: 'kernel-equivalence-execution-grant/v1',
+    grant_id: '11111111-1111-4111-8111-111111111111',
+    cell_id: CELL_ID,
+    signature: 'protected-signature',
+  });
+  const executeCell = vi.fn(async ({ cell, grant }) => ({
     status: 'collected',
     cell_id: cell.cell_id,
-    grant_path_used: grantPath,
+    grant_id_used: grant.grant_id,
   }));
   const resolveProtectedGrant = vi.fn(async ({ cellId, grantRef }) => ({
     cell_id: cellId,
     grant_ref: grantRef,
-    grant_path:
-      '/var/lib/cecelia/kernel-equivalence/grants/11111111.json',
+    grant: protectedGrant,
   }));
   return {
     plan: plan(),
@@ -113,8 +118,10 @@ describe('Brain trusted execution service', () => {
         cell_id: CELL_ID,
         adapter_id: BEHAVIORS[0].adapter_id,
       }),
-      grantPath:
-        '/var/lib/cecelia/kernel-equivalence/grants/11111111.json',
+      grant: expect.objectContaining({
+        grant_id: '11111111-1111-4111-8111-111111111111',
+        cell_id: CELL_ID,
+      }),
     });
     expect(result).toMatchObject({
       status: 'collected',
@@ -154,7 +161,10 @@ describe('Brain trusted execution service', () => {
     value.grantAuthority.resolveProtectedGrant = vi.fn(async () => ({
       cell_id: BEHAVIORS[1].behavior_id,
       grant_ref: GRANT_REF,
-      grant_path: '/var/lib/cecelia/kernel-equivalence/grants/grant.json',
+      grant: {
+        grant_id: '11111111-1111-4111-8111-111111111111',
+        cell_id: BEHAVIORS[1].behavior_id,
+      },
     }));
     const service = createBrainTrustedExecutionService(value);
 

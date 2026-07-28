@@ -7,8 +7,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import * as runtimeLoader from '../kernel-equivalence-runtime-loader.js';
 import {
-  loadProtectedExecutionGrant,
   loadTrustedEquivalenceRuntime,
   validateTrustedRuntimeEnvironment,
 } from '../kernel-equivalence-runtime-loader.js';
@@ -75,19 +75,20 @@ describe('trusted equivalence runtime loader', () => {
     });
   });
 
-  it('loads a protected signed grant without exposing its source path', () => {
-    const root = temporaryRoot();
+  it('pins an authority-delivered grant without accepting a path capability', () => {
     const keys = createTrustFixture();
     const grant = fixtureGrant(keys, fixtureCell());
-    const grantPath = join(root, 'grant.json');
-    writeFileSync(grantPath, JSON.stringify(grant), { mode: 0o600 });
-    chmodSync(grantPath, 0o600);
-
-    const loaded = loadProtectedExecutionGrant({ grantPath });
+    expect(runtimeLoader.pinProtectedExecutionGrant)
+      .toEqual(expect.any(Function));
+    const loaded = runtimeLoader.pinProtectedExecutionGrant({ grant });
 
     expect(loaded).toEqual(grant);
     expect(Object.isFrozen(loaded)).toBe(true);
-    expect(JSON.stringify(loaded)).not.toContain(grantPath);
+    expect(() => runtimeLoader.pinProtectedExecutionGrant({
+      grantPath: '/tmp/caller-controlled.json',
+    })).toThrowError(expect.objectContaining({
+      code: 'trusted_runtime_grant_invalid',
+    }));
   });
 
   it('composes database authorities and a collector without leaking metadata', async () => {

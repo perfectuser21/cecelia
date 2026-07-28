@@ -1,10 +1,3 @@
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  openSync,
-  readFileSync,
-} from 'node:fs';
 import { isAbsolute, parse, resolve } from 'node:path';
 import {
   executeDrillCell,
@@ -19,7 +12,6 @@ import {
   loadCollectorSigner,
 } from './kernel-equivalence-signers.js';
 
-const GRANT_MAXIMUM_BYTES = 65_536;
 const FORBIDDEN_RAW_SECRET = /^KERNEL_EQ_.*(?:PRIVATE_KEY|SECRET|KEY_PEM|KEY_VALUE)$/;
 const SAFE_KEY_ID = /^[a-z0-9][a-z0-9_.:-]{0,127}$/;
 
@@ -84,56 +76,31 @@ export function validateTrustedRuntimeEnvironment(env = {}) {
   });
 }
 
-function readProtectedFile(path, maximumBytes, errorCode) {
-  if (!secureAbsolutePath(path)) fail(errorCode);
-  let descriptor;
-  let bytes;
-  try {
-    descriptor = openSync(
-      path,
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-    );
-    const status = fstatSync(descriptor);
-    const permittedOwner = typeof process.geteuid !== 'function'
-      || status.uid === process.geteuid();
-    if (
-      !status.isFile()
-      || status.nlink !== 1
-      || !permittedOwner
-      || ![0o400, 0o600].includes(status.mode & 0o777)
-      || status.size < 1
-      || status.size > maximumBytes
-    ) {
-      fail(errorCode);
-    }
-    bytes = readFileSync(descriptor);
-    if (bytes.length < 1 || bytes.length > maximumBytes) fail(errorCode);
-    return bytes;
-  } catch (error) {
-    if (error instanceof EquivalenceTrustedRuntimeError) throw error;
-    fail(errorCode);
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+function deepFreeze(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
   }
+  return value;
 }
 
-export function loadProtectedExecutionGrant({ grantPath } = {}) {
-  const bytes = readProtectedFile(
-    grantPath,
-    GRANT_MAXIMUM_BYTES,
-    'trusted_runtime_grant_file_invalid',
-  );
+export function pinProtectedExecutionGrant(value = {}) {
   try {
-    const grant = JSON.parse(bytes.toString('utf8'));
-    if (!grant || typeof grant !== 'object' || Array.isArray(grant)) {
-      fail('trusted_runtime_grant_file_invalid');
+    if (
+      !value
+      || typeof value !== 'object'
+      || Array.isArray(value)
+      || Object.keys(value).join(',') !== 'grant'
+      || !value.grant
+      || typeof value.grant !== 'object'
+      || Array.isArray(value.grant)
+    ) {
+      fail('trusted_runtime_grant_invalid');
     }
-    return Object.freeze(structuredClone(grant));
+    return deepFreeze(structuredClone(value.grant));
   } catch (error) {
     if (error instanceof EquivalenceTrustedRuntimeError) throw error;
-    fail('trusted_runtime_grant_file_invalid');
-  } finally {
-    bytes.fill(0);
+    fail('trusted_runtime_grant_invalid');
   }
 }
 
@@ -190,10 +157,12 @@ export async function loadTrustedEquivalenceRuntime({
 
   const executeCell = async ({
     cell,
-    grantPath,
+    grant: protectedGrant,
     timeoutMs = 30_000,
   } = {}) => {
-    const grant = loadProtectedExecutionGrant({ grantPath });
+    const grant = pinProtectedExecutionGrant({
+      grant: protectedGrant,
+    });
     return executeDrillCell({
       cell,
       grant,
