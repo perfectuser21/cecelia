@@ -99,6 +99,14 @@ function cell(scenario = 'normal') {
         : scenario === 'violation'
           ? 'stale_sha_merge_denied'
           : 'exact_sha_merge_confirmed',
+      ...(scenario === 'recovery'
+        ? {
+          predecessor_expected: {
+            expected_outcome: 'denied',
+            effect_code: 'stale_sha_merge_denied',
+          },
+        }
+        : {}),
     },
     isolation: {
       environment: 'isolated',
@@ -595,6 +603,80 @@ describe('receipt bundle and recovery lineage', () => {
       },
       { now: NOW },
     )).toThrowError(expect.objectContaining({ code: 'recovery_lineage_invalid' }));
+  });
+
+  it('rejects a collector-signed recovery bundle for a different denial contract', () => {
+    const keys = trustFixture();
+    const violationCell = cell('violation');
+    const recoveryCell = cell('recovery');
+    const violationGrant = grant(keys, violationCell);
+    const differentDenial = effectReceipt(
+      keys,
+      violationGrant,
+      violationCell,
+      {
+        observed_outcome: 'blocked',
+        effect_code: 'different_denial',
+      },
+    );
+    const violationUnsigned = assembleUnsignedBundle({
+      keyId: keys.collector.record.key_id,
+      collectorServiceId: keys.collector.record.service_id,
+      issuedAt: '2026-07-28T12:01:00.000Z',
+      expiresAt: '2026-07-29T12:01:00.000Z',
+      expected: expected(violationCell, violationGrant),
+      executionGrants: [violationGrant],
+      receipts: [differentDenial],
+      cleanupEvidence: cleanupEvidence(violationCell, violationGrant),
+      previousBundleHash: null,
+    });
+    const violationBundle = signed(
+      violationUnsigned,
+      keys.collector.privateKey,
+    );
+    const violationHash = sha256Canonical(violationBundle);
+    const recoveryGrant = grant(keys, recoveryCell);
+    const recoveryReceipt = effectReceipt(
+      keys,
+      recoveryGrant,
+      recoveryCell,
+      {
+        observed_outcome: 'recovered',
+        effect_code: 'renewed_authority_merge_confirmed',
+        predecessor_cell_id: violationCell.cell_id,
+        predecessor_receipt_id: differentDenial.receipt_id,
+        predecessor_receipt_hash: sha256Canonical(differentDenial),
+      },
+    );
+    const recoveryUnsigned = assembleUnsignedBundle({
+      keyId: keys.collector.record.key_id,
+      collectorServiceId: keys.collector.record.service_id,
+      issuedAt: '2026-07-28T12:01:00.000Z',
+      expiresAt: '2026-07-29T12:01:00.000Z',
+      expected: expected(recoveryCell, recoveryGrant),
+      executionGrants: [violationGrant, recoveryGrant],
+      receipts: [differentDenial, recoveryReceipt],
+      cleanupEvidence: cleanupEvidence(recoveryCell, recoveryGrant),
+      previousBundleHash: violationHash,
+    });
+    const recoveryBundle = signed(
+      recoveryUnsigned,
+      keys.collector.privateKey,
+    );
+
+    expect(() => verifyReceiptBundle(
+      recoveryBundle,
+      keys.registry,
+      expected(recoveryCell, recoveryGrant),
+      {
+        now: NOW,
+        resolvePreviousBundle: (hash) => (
+          hash === violationHash ? violationBundle : null
+        ),
+      },
+    )).toThrowError(expect.objectContaining({
+      code: 'bundle_recovery_predecessor_contract_mismatch',
+    }));
   });
 
   it('verifies both seam receipts before accepting the collector-signed hash chain', () => {

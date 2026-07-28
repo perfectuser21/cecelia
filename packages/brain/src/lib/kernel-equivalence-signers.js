@@ -21,6 +21,7 @@ import {
   assembleUnsignedBundle,
   canonicalJson,
   preloadReceiptBundleAncestry,
+  receiptBundleContainsViolationMaterial,
   sha256Canonical,
   validateTrustRegistry,
   verifyEffectReceipt,
@@ -38,6 +39,10 @@ const OBSERVATION_FIELDS = Object.freeze([
   'before_hash',
   'effect_code',
   'observed_outcome',
+]);
+const PREDECESSOR_EXPECTED_FIELDS = Object.freeze([
+  'effect_code',
+  'expected_outcome',
 ]);
 
 function fail(code) {
@@ -339,6 +344,15 @@ function verifyMaterial({
       expectedFromGrant(violationCell, violationGrant),
       { now },
     );
+    const predecessorExpected = cell?.expected?.predecessor_expected;
+    if (
+      !exactFields(predecessorExpected, PREDECESSOR_EXPECTED_FIELDS)
+      || violationReceipt.observed_outcome
+        !== predecessorExpected.expected_outcome
+      || violationReceipt.effect_code !== predecessorExpected.effect_code
+    ) {
+      fail('collector_recovery_predecessor_contract_mismatch');
+    }
     const recoveryReceipt = verifyEffectReceipt(
       receipts[1],
       trustRegistry,
@@ -665,6 +679,12 @@ export function loadCollectorSigner({
       fail('collector_effect_contract_mismatch');
     }
     if (
+      cell?.scenario === 'recovery'
+      && previousBundleHash == null
+    ) {
+      fail('collector_recovery_predecessor_uncommitted');
+    }
+    if (
       previousBundleHash != null
       && typeof resolvePreviousBundle !== 'function'
     ) {
@@ -678,6 +698,18 @@ export function loadCollectorSigner({
         trustRegistry,
         now: issuedAt,
       });
+    if (
+      cell?.scenario === 'recovery'
+      && !previousSnapshot.bundle_hashes.some((hash) => (
+        receiptBundleContainsViolationMaterial(
+          previousSnapshot.readBundle(hash),
+          verifiedMaterial.executionGrants[0],
+          verifiedMaterial.receipts[0],
+        )
+      ))
+    ) {
+      fail('collector_recovery_predecessor_uncommitted');
+    }
     const lifetimeSeconds = Math.min(
       trustRegistry.collector_bundle_max_age_seconds,
       Math.floor((Date.parse(activeRecord.not_after) - issuedAt) / 1000),
