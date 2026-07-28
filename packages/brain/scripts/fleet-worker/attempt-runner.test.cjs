@@ -1506,6 +1506,91 @@ describe('Fleet Worker durable runtime adapters', () => {
     }
   });
 
+  it.each([
+    ['claude', '/home/cecelia/.claude', 'account2'],
+    ['grok', '/home/cecelia/.grok', 'grok'],
+  ])('delivers %s credentials only through FIFO into provider tmpfs', async (
+    provider,
+    providerHome,
+    accountId,
+  ) => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-provider-fifo-'));
+    const runCommand = vi.fn(async (_command, args) => (
+      args[0] === 'create'
+        ? { stdout: `container-${provider}\n` }
+        : { stdout: '' }
+    ));
+    const writeCredential = vi.fn(async () => undefined);
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      writeCredential,
+    });
+    const providerCredential = {
+      ...CREDENTIAL,
+      provider,
+      accountId,
+      authJson: JSON.stringify({ secret: `${provider}-secret-must-not-enter-argv` }),
+    };
+
+    try {
+      await docker.launch({
+        attemptId: ATTEMPT_ID,
+        taskId: TASK_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        brainUrl: BRAIN_URL,
+        resultChannel: RESULT_CHANNEL,
+        image: IMAGE_DIGEST,
+        providerSpec: {
+          ...request().provider_spec,
+          provider,
+          command: provider,
+        },
+        role: 'generator',
+        model: `${provider}-model`,
+        workspaceMount: {
+          source: `/controlled/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: true,
+        },
+        workspaceAdminMount: {
+          source: '/controlled/mirrors/perfectuser21__cecelia.git',
+          target: '/controlled/mirrors/perfectuser21__cecelia.git',
+          readOnly: true,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: providerCredential,
+      });
+
+      const createArgs = runCommand.mock.calls[0][1];
+      expect(createArgs).toEqual(expect.arrayContaining([
+        '--tmpfs', `${providerHome}:rw,noexec,nosuid,nodev,mode=0700`,
+        '--env', 'CECELIA_CREDENTIAL_FIFO=/tmp/cecelia-prompts/credential.fifo',
+        '--env', `CECELIA_CREDENTIAL_REF=${providerCredential.credentialRef}`,
+      ]));
+      expect(createArgs.join(' ')).not.toContain(providerCredential.authJson);
+      expect(createArgs.join(' ')).not.toMatch(
+        /host-claude-config|\.claude-account|\/Users\/administrator\/\.grok/,
+      );
+      expect(writeCredential).toHaveBeenCalledWith(
+        path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo'),
+        providerCredential.authJson,
+      );
+      expect(fs.existsSync(
+        path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo'),
+      )).toBe(false);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a symlink result target and freshens a stale regular target', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-result-target-'));

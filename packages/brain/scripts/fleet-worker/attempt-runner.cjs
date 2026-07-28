@@ -293,18 +293,28 @@ function validateStoredCredential(value, state) {
   if (
     !hasExactFields(value, [
       'credential_ref',
+      'delivery_nonce',
       'attempt_id',
+      'run_id',
+      'provider',
       'account_id',
       'machine_id',
+      'lease_owner',
+      'lease_generation',
       'issued_at',
       'expires_at',
       'payload_hash',
     ])
     || !UUID_PATTERN.test(value.credential_ref ?? '')
+    || !UUID_PATTERN.test(value.delivery_nonce ?? '')
     || value.attempt_id !== state.attempt_id
+    || value.run_id !== state.run_id
+    || value.provider !== state.provider
     || typeof value.account_id !== 'string'
     || value.account_id.length < 1
     || value.machine_id !== state.worker_id
+    || value.lease_owner !== state.lease_owner
+    || value.lease_generation !== state.lease_generation
     || !isCanonicalTimestamp(value.issued_at)
     || !isCanonicalTimestamp(value.expires_at)
     || !/^sha256:[a-f0-9]{64}$/.test(value.payload_hash ?? '')
@@ -457,7 +467,6 @@ function validateDurableAttemptState(state, attemptId = state?.attempt_id) {
     validateStoredWorkspace(state.workspace, state);
     validateStoredLabels(state.labels, state);
     if (Object.hasOwn(state, 'credential')) {
-      if (state.provider !== 'codex') throw new Error('unexpected credential');
       validateStoredCredential(state.credential, state);
     }
     if (Object.hasOwn(state, 'github_mutation_policy')) {
@@ -1063,18 +1072,17 @@ function createDockerAdapter({
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
       freshenResultTarget(attemptRuntime, resultChannel);
-      const isCodex = input.providerSpec?.provider === 'codex';
       const isCanary = isFrozenFleetCanary(input.providerSpec?.stdin, {
         attemptId,
         runId: input.runId,
         taskId: input.taskId,
         role: input.role,
       });
-      const usesCredential = isCodex && !isCanary;
       if (
-        usesCredential
+        !isCanary
         && (
           !UUID_PATTERN.test(input.credential?.credentialRef ?? '')
+          || input.credential?.provider !== input.providerSpec?.provider
           || typeof input.credential?.authJson !== 'string'
           || input.credential.authJson.length === 0
           || Buffer.byteLength(input.credential.authJson, 'utf8') > 196_608
@@ -1093,6 +1101,11 @@ function createDockerAdapter({
       const containerStdout = '/tmp/cecelia-prompts/stdout.jsonl';
       const credentialFifo = path.join(attemptRuntime, 'credential.fifo');
       const containerCredentialFifo = '/tmp/cecelia-prompts/credential.fifo';
+      const providerCredentialHome = {
+        codex: '/home/cecelia/.codex',
+        claude: '/home/cecelia/.claude',
+        grok: '/home/cecelia/.grok',
+      }[input.providerSpec?.provider];
       const workspaceMount = [
         `type=bind,src=${input.workspaceMount.source},dst=/workspace`,
         input.workspaceMount.readOnly ? 'readonly' : null,
@@ -1113,10 +1126,10 @@ function createDockerAdapter({
         workspaceAdminMount,
         '--mount',
         runtimeMount,
-        ...(usesCredential
+        ...(!isCanary
           ? [
               '--tmpfs',
-              '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700',
+              `${providerCredentialHome}:rw,noexec,nosuid,nodev,mode=0700`,
             ]
           : []),
         '--add-host',
@@ -1139,10 +1152,10 @@ function createDockerAdapter({
           BRAIN_RESULT_FILE: resultChannel.path,
           BRAIN_RESULT_MAX_BYTES: resultChannel.max_bytes,
           BRAIN_RESULT_CHANNEL_VERSION: resultChannel.version,
-          CECELIA_CREDENTIAL_FIFO: usesCredential
+          CECELIA_CREDENTIAL_FIFO: !isCanary
             ? containerCredentialFifo
             : undefined,
-          CECELIA_CREDENTIAL_REF: usesCredential
+          CECELIA_CREDENTIAL_REF: !isCanary
             ? input.credential.credentialRef
             : undefined,
           WORKTREE_PATH: '/workspace',
@@ -1156,11 +1169,11 @@ function createDockerAdapter({
         if (!String(created?.stdout ?? '').trim()) {
           throw new Error('attempt_container_id_missing');
         }
-        if (usesCredential) {
+        if (!isCanary) {
           await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
         }
         await runCommand('docker', ['start', containerName], undefined);
-        if (usesCredential) {
+        if (!isCanary) {
           try {
             await writeCredential(credentialFifo, input.credential.authJson);
           } finally {
@@ -1526,9 +1539,6 @@ function validateLaunchRequest(value) {
     throw new Error('attempt_task_id_invalid');
   }
   const target = validateTarget(value.target);
-  if (target.provider !== 'codex') {
-    throw new Error('attempt_provider_credential_broker_required');
-  }
   const resultChannel = validateResultChannel(value.result_channel, {
     task_id: value.task_id,
     run_id: value.run_id,
@@ -1976,14 +1986,14 @@ function createAttemptRunner({
         throw new Error('attempt_already_exists');
       }
 
-      let credential = null;
       const isCanary = isFrozenFleetCanary(providerSpec.stdin, {
         attemptId: request.attempt_id,
         runId: request.run_id,
         taskId: request.task_id,
         role: target.role,
       });
-      if (target.provider === 'codex' && !isCanary) {
+      let credential = null;
+      if (!isCanary) {
         if (
           !request.credential_envelope
           || typeof request.credential_envelope !== 'object'
@@ -1993,8 +2003,12 @@ function createAttemptRunner({
         }
         credential = credentialConsumer.consume(request.credential_envelope, {
           attemptId: request.attempt_id,
+          runId: request.run_id,
+          provider: target.provider,
           accountId: target.account,
           machineId: workerId,
+          leaseOwner: request.lease_owner,
+          leaseGeneration: request.lease_generation,
         });
       }
       const workspace = await workspaceManager.prepare(request.workspace_spec);

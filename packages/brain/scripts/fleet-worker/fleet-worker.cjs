@@ -600,6 +600,7 @@ function createFleetWorkerRuntime({
   const stateStore = createFileAttemptStateStore({ stateRoot: roots.state });
   const credentialConsumer = createCredentialEnvelopeConsumer({
     consumptionRoot: roots.credentials,
+    signingSecret: attemptToken,
   });
   const runnerImageDigest = env.CECELIA_RUNNER_IMAGE
     ?? `cecelia/runner@${digest}`;
