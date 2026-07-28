@@ -30,7 +30,6 @@ import {
   FIXTURE_RUN_ID,
   FIXTURE_SHA,
   createTrustFixture,
-  fixtureBundle,
   fixtureCell,
   fixtureReceipt,
 } from './kernel-equivalence-test-fixtures.js';
@@ -418,7 +417,13 @@ describe('protected Ed25519 equivalence signers', () => {
       previousBundleHash: 'c'.repeat(64),
     })).rejects.toMatchObject({ code: 'collector_previous_bundle_unavailable' });
 
-    const previous = fixtureBundle(keys, cell, grant, [receipt]);
+    const previous = await noResolver({
+      cell,
+      grant,
+      executionGrants: [grant],
+      receipts: [receipt],
+      previousBundleHash: null,
+    });
     const previousHash = sha256Canonical(previous);
     const collector = loadCollectorSigner({
       secretFile,

@@ -386,10 +386,28 @@ async function withAbortableTimeout(operation, timeoutMs) {
   }
 }
 
-function resolveAdapter(adapters, adapterId) {
-  if (adapters instanceof Map) return adapters.get(adapterId);
-  if (adapters && typeof adapters === 'object') return adapters[adapterId];
-  return null;
+function resolveExecutionAuthorities(adapters, cell, cleanupVerifier) {
+  if (typeof adapters?.resolveForCell === 'function') {
+    const selected = adapters.resolveForCell(cell);
+    if (selected?.adapter && typeof selected.verifyCleanup === 'function') {
+      return {
+        adapter: selected.adapter,
+        cleanupVerifier: selected.verifyCleanup,
+      };
+    }
+    return {
+      adapter: selected,
+      cleanupVerifier,
+    };
+  }
+  const adapter = adapters instanceof Map
+    ? adapters.get(cell?.adapter_id)
+    : (
+      adapters && typeof adapters === 'object'
+        ? adapters[cell?.adapter_id]
+        : null
+    );
+  return { adapter, cleanupVerifier };
 }
 
 function expectedFromGrant(cell, grant) {
@@ -599,7 +617,20 @@ export async function executeDrillCell({
     );
   }
 
-  const adapter = resolveAdapter(adapters, cell.adapter_id);
+  let executionAuthorities;
+  try {
+    executionAuthorities = resolveExecutionAuthorities(
+      adapters,
+      cell,
+      cleanupVerifier,
+    );
+  } catch {
+    return deny('drill_adapter_unavailable', 'adapter_preflight');
+  }
+  const {
+    adapter,
+    cleanupVerifier: selectedCleanupVerifier,
+  } = executionAuthorities;
   if (
     !adapter
     || typeof adapter.prepare !== 'function'
@@ -695,9 +726,16 @@ export async function executeDrillCell({
     );
   }
 
+  const verifiedPredecessor = predecessorGrant == null
+    ? null
+    : Object.freeze({
+      grant: predecessorGrant,
+      receipt: predecessorReceipt,
+    });
   const context = Object.freeze({
     cell,
     grant: verifiedGrant,
+    predecessor: verifiedPredecessor,
   });
   const compensations = [];
   const registerCompensation = (compensation) => {
@@ -734,7 +772,7 @@ export async function executeDrillCell({
         compensations,
       },
       timeoutMs,
-      cleanupVerifier,
+      selectedCleanupVerifier,
     );
     if (!cancellationConfirmed) {
       return deny(
@@ -796,7 +834,7 @@ export async function executeDrillCell({
     adapter,
     { ...context, prepared, compensations },
     timeoutMs,
-    cleanupVerifier,
+    selectedCleanupVerifier,
   );
   if (
     cleanupError

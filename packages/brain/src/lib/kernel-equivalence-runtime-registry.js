@@ -78,6 +78,14 @@ export function createServerOwnedAdapterRegistry({ adapters = [] } = {}) {
     resolve(adapterId) {
       return entries.get(adapterId) ?? null;
     },
+    resolveForCell(cell) {
+      const adapter = entries.get(cell?.adapter_id);
+      if (!adapter) return null;
+      if (adapter.owner_service !== cell?.seam_id) {
+        fail('adapter_seam_owner_mismatch');
+      }
+      return adapter;
+    },
   });
 }
 
@@ -156,6 +164,29 @@ export function createIndependentCleanupVerifierRegistry({
       const verifier = entries.get(adapterId);
       if (!verifier) fail('cleanup_verifier_unavailable');
       return validateResult(await verifier.verifyCleanup(context));
+    },
+  });
+}
+
+export function createServerOwnedRuntimeRegistry({
+  adapters = [],
+  cleanupVerifiers = [],
+} = {}) {
+  const adapterRegistry = createServerOwnedAdapterRegistry({ adapters });
+  const cleanupRegistry = createIndependentCleanupVerifierRegistry({
+    adapterRegistry,
+    verifiers: cleanupVerifiers,
+  });
+  return Object.freeze({
+    ids: adapterRegistry.ids,
+    size: adapterRegistry.size,
+    resolveForCell(cell) {
+      const adapter = adapterRegistry.resolveForCell(cell);
+      if (!adapter) return null;
+      return Object.freeze({
+        adapter,
+        verifyCleanup: (context) => cleanupRegistry.verify(context),
+      });
     },
   });
 }
