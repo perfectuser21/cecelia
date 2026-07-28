@@ -44,6 +44,12 @@ function deps() {
     },
     execCmd: vi.fn(() => ''),
     mergeEffect: vi.fn(async () => ({ status: 'DONE', detail: 'merge confirmed' })),
+    releaseEffect: vi.fn(async () => ({
+      status: 'DONE',
+      release_state: 'production_verified',
+      release_run_id: '44444444-4444-4444-8444-444444444444',
+      merge_sha: 'f'.repeat(40),
+    })),
     attemptStore: { complete: vi.fn(async () => ({ deduped: false })) },
     judgeGate: vi.fn(async () => ({ verdict: 'PASS', feedback: null, judged: true })),
     promptDir: '/host/cecelia-prompts',
@@ -54,7 +60,6 @@ function deps() {
     buildHandoff: vi.fn((x) => x),
     saveHandoff: vi.fn(async () => ({ dbWritten: true })),
     syncOkr: vi.fn(async () => true),
-    spawnStaging: vi.fn(async () => ({ created: true })),
     cleanup: vi.fn(async () => undefined),
   };
 }
@@ -253,7 +258,7 @@ describe('kernel deterministic handlers', () => {
     expect(d.promote).toHaveBeenCalledOnce();
     expect(d.saveHandoff).toHaveBeenCalledOnce();
     expect(d.syncOkr).toHaveBeenCalledOnce();
-    expect(d.spawnStaging).toHaveBeenCalledOnce();
+    expect(d.releaseEffect).toHaveBeenCalledWith({ runId, taskId });
     expect(d.cleanup).toHaveBeenCalledWith(runId);
     expect(d.pool.connect).toHaveBeenCalledOnce();
     const sql = d.pool.transactionQuery.mock.calls.map(([statement]) => statement).join('\n');
@@ -263,6 +268,37 @@ describe('kernel deterministic handlers', () => {
     expect(d.pool.transactionQuery.mock.calls.at(-1)[0]).toBe('COMMIT');
     expect(d.pool.releaseTransaction).toHaveBeenCalledOnce();
     expect(result.status).toBe('DONE');
+  });
+
+  it.each([
+    ['missing authority', null],
+    ['blocked release', { status: 'BLOCKED', release_state: 'production_deploying' }],
+    ['nonterminal release', {
+      status: 'DONE',
+      release_state: 'staging_passed',
+      release_run_id: '44444444-4444-4444-8444-444444444444',
+      merge_sha: 'f'.repeat(40),
+    }],
+    ['malformed receipt', {
+      status: 'DONE',
+      release_state: 'production_verified',
+      release_run_id: 'not-a-uuid',
+      merge_sha: 'not-a-sha',
+    }],
+  ])('report fail-closes before every side effect for %s', async (_label, receipt) => {
+    const d = deps();
+    if (receipt === null) delete d.releaseEffect;
+    else d.releaseEffect.mockResolvedValueOnce(receipt);
+
+    await expect(createKernelHandlers(d).report(context())).resolves.toMatchObject({
+      status: 'BLOCKED',
+    });
+
+    expect(d.promote).not.toHaveBeenCalled();
+    expect(d.saveHandoff).not.toHaveBeenCalled();
+    expect(d.syncOkr).not.toHaveBeenCalled();
+    expect(d.cleanup).not.toHaveBeenCalled();
+    expect(d.pool.connect).not.toHaveBeenCalled();
   });
 
   it('report 事务失败时在同一 client 回滚并归还连接', async () => {

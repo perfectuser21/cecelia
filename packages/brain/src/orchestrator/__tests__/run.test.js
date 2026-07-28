@@ -389,14 +389,21 @@ describe('buildRealDeps', () => {
 });
 
 describe('buildDefaultHandlers merge authority', () => {
-  it('wires merge_pr only to the receipted merge effect', async () => {
+  it('wires merge_pr and report only to their receipted effects', async () => {
     const mergeEffect = vi.fn(async () => ({ status: 'DONE', detail: 'merge confirmed' }));
+    const releaseEffect = vi.fn(async () => ({
+      status: 'DONE',
+      release_state: 'production_verified',
+      release_run_id: '44444444-4444-4444-8444-444444444444',
+      merge_sha: 'f'.repeat(40),
+    }));
     const handlers = await buildDefaultHandlers({
       pool: { query: vi.fn() },
       execCmd: vi.fn(),
       attemptStore: { complete: vi.fn() },
       judgeGate: vi.fn(),
       mergeEffect,
+      releaseEffect,
     });
 
     await expect(handlers.merge_pr({
@@ -413,5 +420,16 @@ describe('buildDefaultHandlers merge authority', () => {
       },
     })).resolves.toEqual({ status: 'DONE', detail: 'merge confirmed' });
     expect(mergeEffect).toHaveBeenCalledOnce();
+
+    await handlers.report({
+      runId: '11111111-1111-4111-8111-111111111111',
+      taskId: '22222222-2222-4222-8222-222222222222',
+      observed: {
+        task: { title: 'T', payload: {} },
+        run: {},
+        pr: { url: 'https://github.com/perfectuser21/cecelia/pull/4400' },
+      },
+    });
+    expect(releaseEffect).toHaveBeenCalledOnce();
   });
 });
