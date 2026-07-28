@@ -498,7 +498,7 @@ export function loadEffectReceiptSigner({
     maximumBytes,
   });
 
-  const effectSigner = ({
+  const signEffectResult = ({
     cell,
     grant,
     observation,
@@ -612,19 +612,12 @@ export function loadEffectReceiptSigner({
     );
     return receipt;
   };
-  Object.defineProperties(effectSigner, {
-    key_id: { value: signer.record.key_id, enumerable: true },
-    purpose: { value: signer.record.purpose, enumerable: true },
-    service_id: { value: signer.record.service_id, enumerable: true },
-    toJSON: {
-      value: () => ({
-        key_id: signer.record.key_id,
-        purpose: signer.record.purpose,
-        service_id: signer.record.service_id,
-      }),
-    },
+  return Object.freeze({
+    key_id: signer.record.key_id,
+    purpose: signer.record.purpose,
+    service_id: signer.record.service_id,
+    signEffectResult,
   });
-  return Object.freeze(effectSigner);
 }
 
 export function loadCollectorSigner({
