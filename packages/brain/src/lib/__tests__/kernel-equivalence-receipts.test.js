@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assembleUnsignedBundle,
   canonicalJson,
+  preloadReceiptBundleAncestry,
   sha256Canonical,
   validateTrustRegistry,
   verifyEffectReceipt,
@@ -391,6 +392,45 @@ describe('canonical signed envelopes', () => {
 });
 
 describe('receipt bundle and recovery lineage', () => {
+  it('preloads committed ancestry after its execution grant has expired', async () => {
+    const keys = trustFixture();
+    const target = cell();
+    const executionGrant = grant(keys, target);
+    const receipt = effectReceipt(keys, executionGrant, target);
+    const unsigned = assembleUnsignedBundle({
+      keyId: keys.collector.record.key_id,
+      collectorServiceId: keys.collector.record.service_id,
+      issuedAt: '2026-07-28T12:01:00.000Z',
+      expiresAt: '2026-07-29T12:01:00.000Z',
+      expected: expected(target, executionGrant),
+      executionGrants: [executionGrant],
+      receipts: [receipt],
+      previousBundleHash: null,
+    });
+    const bundle = signed(unsigned, keys.collector.privateKey);
+    const bundleHash = sha256Canonical(bundle);
+    const afterGrantExpiry = Date.parse('2026-07-28T12:06:00.000Z');
+
+    expect(() => verifyReceiptBundle(
+      bundle,
+      keys.registry,
+      expected(target, executionGrant),
+      { now: afterGrantExpiry },
+    )).toThrowError(expect.objectContaining({ code: 'grant_expired' }));
+
+    await expect(preloadReceiptBundleAncestry({
+      headHash: bundleHash,
+      genesisHash: bundleHash,
+      readBundle: async (hash) => (hash === bundleHash ? bundle : null),
+      trustRegistry: keys.registry,
+      now: afterGrantExpiry,
+    })).resolves.toMatchObject({
+      head_hash: bundleHash,
+      genesis_hash: bundleHash,
+      bundle_hashes: [bundleHash],
+    });
+  });
+
   it('requires recovery to reference the matching violation cell receipt id and hash', () => {
     const keys = trustFixture();
     const violationCell = cell('violation');
