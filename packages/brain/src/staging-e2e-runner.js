@@ -482,7 +482,9 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
     return PROMOTE_STATUS.PENDING_PROMOTE;
   } catch (err) {
     console.warn(`[staging-e2e] handlePromote 失败（best-effort，verdict 已落库）: ${err.message}`);
-    return decision.promoteStatus;
+    return decision.action === 'auto'
+      ? PROMOTE_STATUS.PROMOTE_FAILED
+      : decision.promoteStatus;
   }
 }
 
