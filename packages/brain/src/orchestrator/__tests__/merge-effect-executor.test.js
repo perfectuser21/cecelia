@@ -62,7 +62,11 @@ function deps(overrides = {}) {
     findIntent: vi.fn(async () => null),
     createAuthorizationIntent: vi.fn(async () => {
       order.push('intent');
-      return { intent_id: 'intent-1', confirmed_receipt: null };
+      return {
+        intent_id: 'intent-1',
+        requested_head_sha: HEAD_SHA,
+        confirmed_receipt: null,
+      };
     }),
     appendReceipt: vi.fn(async (_client, receipt) => {
       order.push(`receipt:${receipt.receipt_status}`);
