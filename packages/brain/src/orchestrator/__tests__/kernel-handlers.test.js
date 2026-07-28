@@ -252,8 +252,23 @@ describe('kernel deterministic handlers', () => {
           verdict: 'FAIL',
           failure_class: 'product_failure',
         },
+        evaluateResult: {
+          ...context().observed.evaluateResult,
+          decision: { outcome: 'FAIL', reason: 'product failed' },
+        },
       },
     });
+    d.attemptStore.getById.mockImplementation(async (id) => (
+      id === attemptId
+        ? { id, run_id: runId, role: 'judge', status: 'running' }
+        : {
+            id,
+            run_id: runId,
+            role: 'evaluator',
+            status: 'completed',
+            result: ctx.observed.evaluateResult,
+          }
+    ));
 
     await createKernelHandlers(d)['spawn:judge'](ctx);
 

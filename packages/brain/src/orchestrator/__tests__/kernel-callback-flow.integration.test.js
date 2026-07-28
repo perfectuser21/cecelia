@@ -369,11 +369,15 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
     await handlers['spawn:judge']({
       taskId: TASK_ID,
       runId: RUN_ID,
-      attempt: { id: judgeAttemptId },
+      attempt: { id: judgeAttemptId, run_id: RUN_ID, role: 'judge' },
       bundle: { inputs: { worktree_path: '/workspace', sprint_dir: SPRINT_DIR } },
       observed: {
         pr: { head_sha: 'sha-evidence' },
-        evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-evidence' },
+        evaluateVerdict: {
+          attempt_id: evaluatorAttemptId,
+          verdict: 'PASS',
+          pr_head_sha: 'sha-evidence',
+        },
         evaluateResult: runtime.attempts.get(evaluatorAttemptId).result,
       },
     });
