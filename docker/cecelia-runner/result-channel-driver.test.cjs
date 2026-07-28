@@ -18,6 +18,7 @@ const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const SHA = '0123456789abcdef0123456789abcdef01234567';
 const RESULT_FILE = `/tmp/cecelia-prompts/${ATTEMPT_ID}.result.json`;
 const SESSION_FILE = `/tmp/cecelia-prompts/${ATTEMPT_ID}.session.json`;
+const PROVIDER_FILE = `/tmp/harness-result-${ATTEMPT_ID}.normalized.json`;
 const SPRINT_DIR = 'sprints/07280905-result-channel';
 const RUBRIC = Object.freeze({
   dod_machineability: 8,
@@ -107,7 +108,7 @@ function taskBundle(role, inputs = {}, overrides = {}) {
   };
 }
 
-function managedEnv(role, workspacePath, bundleFile, providerFile) {
+function managedEnv(role, workspacePath, bundleFile) {
   return {
     BRAIN_RESULT_CHANNEL_VERSION: 'attempt-result-file/v1',
     BRAIN_RESULT_FILE: RESULT_FILE,
@@ -118,7 +119,6 @@ function managedEnv(role, workspacePath, bundleFile, providerFile) {
     HARNESS_NODE: role,
     HARNESS_TASK_ID: TASK_ID,
     CECELIA_TASK_ID: TASK_ID,
-    CECELIA_PROVIDER_RESULT_FILE: providerFile,
     WORKTREE_PATH: workspacePath,
     BRAIN_URL: 'http://brain.internal:5221',
   };
@@ -331,7 +331,6 @@ test('atomically replaces raw result with canonical HarnessResult and writes ses
   fs.rmSync(SESSION_FILE, { force: true });
   const workspace = fixtureWorkspace();
   const bundleFile = path.join(workspace, 'task-bundle.json');
-  const providerFile = path.join(workspace, 'provider-result.json');
   const raw = {
     verdict: 'DONE',
     branch: 'cp-result-channel',
@@ -345,11 +344,12 @@ test('atomically replaces raw result with canonical HarnessResult and writes ses
     JSON.stringify({ instruction: 'bounded', task_bundle: taskBundle('planner') }),
     { mode: 0o600 },
   );
-  fs.writeFileSync(providerFile, JSON.stringify(providerResult()), { mode: 0o600 });
+  fs.writeFileSync(PROVIDER_FILE, JSON.stringify(providerResult()), { mode: 0o600 });
   fs.writeFileSync(RESULT_FILE, JSON.stringify(raw), { mode: 0o600 });
 
   const result = await finalizeManagedResult({
-    env: managedEnv('planner', workspace, bundleFile, providerFile),
+    env: managedEnv('planner', workspace, bundleFile),
+    providerResultPath: PROVIDER_FILE,
     deps: dependencies(),
   });
 
@@ -369,7 +369,6 @@ test('atomically replaces raw result with canonical HarnessResult and writes ses
 test('empty, unknown, missing, oversized and authority-mismatched managed inputs fail closed', async () => {
   const workspace = fixtureWorkspace();
   const bundleFile = path.join(workspace, 'task-bundle.json');
-  const providerFile = path.join(workspace, 'provider-result.json');
   const raw = {
     verdict: 'DONE',
     branch: 'cp-result-channel',
@@ -383,7 +382,7 @@ test('empty, unknown, missing, oversized and authority-mismatched managed inputs
     JSON.stringify({ instruction: 'bounded', task_bundle: taskBundle('planner') }),
     { mode: 0o600 },
   );
-  fs.writeFileSync(providerFile, JSON.stringify(providerResult()), { mode: 0o600 });
+  fs.writeFileSync(PROVIDER_FILE, JSON.stringify(providerResult()), { mode: 0o600 });
 
   const cases = [
     ['empty version', { BRAIN_RESULT_CHANNEL_VERSION: '' }],
@@ -397,12 +396,124 @@ test('empty, unknown, missing, oversized and authority-mismatched managed inputs
   for (const [_name, envPatch, rawContents = JSON.stringify(raw)] of cases) {
     fs.mkdirSync(path.dirname(RESULT_FILE), { recursive: true });
     fs.writeFileSync(RESULT_FILE, rawContents, { mode: 0o600 });
-    const env = { ...managedEnv('planner', workspace, bundleFile, providerFile), ...envPatch };
+    const env = { ...managedEnv('planner', workspace, bundleFile), ...envPatch };
     await assert.rejects(
-      finalizeManagedResult({ env, deps: dependencies() }),
+      finalizeManagedResult({
+        env,
+        providerResultPath: PROVIDER_FILE,
+        deps: dependencies(),
+      }),
       /result_channel_driver:/,
     );
     assert.equal(fs.existsSync(path.join(workspace, '.brain-result.json')), false);
+  }
+});
+
+test('successful canary uses the frozen canary contract and does not require a raw role result', async () => {
+  fs.mkdirSync(path.dirname(RESULT_FILE), { recursive: true });
+  fs.writeFileSync(RESULT_FILE, '', { mode: 0o600 });
+  const workspace = fixtureWorkspace();
+  const bundleFile = path.join(workspace, 'task-bundle.json');
+  const canaryBundle = taskBundle('reporter', {}, {
+    skill: null,
+    expected_output: 'harness-result/canary-v1',
+  });
+  const canaryProviderResult = providerResult({
+    decision: { outcome: 'CANARY_OK', reason: 'transport probe completed' },
+  });
+  fs.writeFileSync(
+    bundleFile,
+    JSON.stringify({ instruction: 'bounded', task_bundle: canaryBundle }),
+    { mode: 0o600 },
+  );
+  fs.writeFileSync(PROVIDER_FILE, JSON.stringify(canaryProviderResult), { mode: 0o600 });
+
+  const result = await finalizeManagedResult({
+    env: managedEnv('reporter', workspace, bundleFile),
+    providerResultPath: PROVIDER_FILE,
+    deps: dependencies({
+      inspectPullRequest: async () => {
+        throw new Error('canary must not inspect a pull request');
+      },
+    }),
+  });
+
+  assert.deepEqual(result, canaryProviderResult);
+  assert.equal(Object.hasOwn(result, 'role_result'), false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(RESULT_FILE, 'utf8')), canaryProviderResult);
+});
+
+test('non-success generic terminal result is persisted without raw evidence or role_result', async () => {
+  fs.mkdirSync(path.dirname(RESULT_FILE), { recursive: true });
+  fs.writeFileSync(RESULT_FILE, '', { mode: 0o600 });
+  const workspace = fixtureWorkspace();
+  const bundleFile = path.join(workspace, 'task-bundle.json');
+  const failed = providerResult({
+    status: 'failed',
+    summary: 'provider process failed',
+    error: {
+      code: 'provider_exit',
+      message: 'bounded stderr',
+      exit_code: 1,
+    },
+  });
+  fs.writeFileSync(
+    bundleFile,
+    JSON.stringify({ instruction: 'bounded', task_bundle: taskBundle('generator') }),
+    { mode: 0o600 },
+  );
+  fs.writeFileSync(PROVIDER_FILE, JSON.stringify(failed), { mode: 0o600 });
+
+  const result = await finalizeManagedResult({
+    env: managedEnv('generator', workspace, bundleFile),
+    providerResultPath: PROVIDER_FILE,
+    deps: dependencies({
+      inspectPullRequest: async () => {
+        throw new Error('terminal failure must not inspect a pull request');
+      },
+    }),
+  });
+
+  assert.deepEqual(result, failed);
+  assert.equal(Object.hasOwn(result, 'role_result'), false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(RESULT_FILE, 'utf8')), failed);
+});
+
+test('canary and non-success pass-through reject unverified side-effect claims', async () => {
+  fs.mkdirSync(path.dirname(RESULT_FILE), { recursive: true });
+  const workspace = fixtureWorkspace();
+  const bundleFile = path.join(workspace, 'task-bundle.json');
+  const canaryBundle = taskBundle('reporter', {}, {
+    skill: null,
+    expected_output: 'harness-result/canary-v1',
+  });
+  fs.writeFileSync(
+    bundleFile,
+    JSON.stringify({ instruction: 'bounded', task_bundle: canaryBundle }),
+    { mode: 0o600 },
+  );
+
+  for (const dirty of [
+    providerResult({
+      decision: { outcome: 'CANARY_OK', reason: '' },
+      artifacts: ['unexpected'],
+    }),
+    providerResult({
+      status: 'blocked',
+      decision: null,
+      artifacts: ['unverified'],
+    }),
+  ]) {
+    fs.writeFileSync(RESULT_FILE, '', { mode: 0o600 });
+    fs.writeFileSync(PROVIDER_FILE, JSON.stringify(dirty), { mode: 0o600 });
+    await assert.rejects(
+      finalizeManagedResult({
+        env: managedEnv('reporter', workspace, bundleFile),
+        providerResultPath: PROVIDER_FILE,
+        deps: dependencies(),
+      }),
+      /result_channel_driver:/,
+    );
   }
 });
 
