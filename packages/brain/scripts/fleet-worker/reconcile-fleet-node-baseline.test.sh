@@ -165,6 +165,9 @@ write_executable "$fake_bin/toolchain-codex" \
 
 write_executable "$fake_bin/toolchain-npm" \
   '#!/usr/bin/env bash' \
+  'if [[ "${FLEET_TEST_REQUIRE_TOOLCHAIN_NODE_PATH:-0}" == 1 ]]; then' \
+  '  [[ "$(command -v node || true)" == "${FLEET_TEST_EXPECTED_NODE:?}" ]] || { echo "clean-node-path-missing" >&2; exit 127; }' \
+  'fi' \
   'prefix=""' \
   'while [[ $# -gt 0 ]]; do' \
   '  if [[ "$1" == "--prefix" ]]; then prefix="$2"; shift 2; continue; fi' \
@@ -322,6 +325,7 @@ run_reconciler() {
   FLEET_TEST_FAKE_NODE="$fake_bin/toolchain-node" \
   FLEET_TEST_FAKE_NPM="$fake_bin/toolchain-npm" \
   FLEET_TEST_FAKE_CODEX="$fake_bin/toolchain-codex" \
+  FLEET_TEST_EXPECTED_NODE="$root/usr/local/libexec/cecelia/toolchain/bin/node" \
   FLEET_TEST_FAKE_ORBCTL="$fake_bin/orbstack-orbctl" \
   FLEET_TEST_FAKE_ORB="$fake_bin/orbstack-orb" \
   FLEET_TEST_FAKE_DOCKER="$fake_bin/docker" \
@@ -441,9 +445,10 @@ grep -Eq "launchctl asuser 501 $fake_bin/sudo -H -u fleet-admin .*/orb status" \
 /bin/rm -f "$state_root/uuid-count"
 FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
 FLEET_TEST_OS_VERSION=15.6.1 \
+FLEET_TEST_REQUIRE_TOOLCHAIN_NODE_PATH=1 \
 run_reconciler "$system_root" xian-mac-m1 --apply \
   >"$test_root/supported-os.out" 2>&1 \
-  || fail "valid baseline apply failed"
+  || { cat "$test_root/supported-os.out" >&2; fail "clean node baseline apply failed"; }
 grep -Fq 'os_security_update_recommended recommended=15.7.4 observed=15.6.1' \
   "$test_root/supported-os.out" \
   || fail "supported older macOS did not receive the security recommendation"

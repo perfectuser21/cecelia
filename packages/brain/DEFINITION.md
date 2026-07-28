@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.117
+**版本**: 1.267.118
+
+## Clean-node Codex bootstrap PATH propagation
+
+- reconciler 安装 pinned Codex CLI 时，仅为 npm 子进程把刚安装的 pinned
+  Node toolchain 目录前置到 PATH，支持没有任何全局 Node 的干净 Fleet
+  节点。
+- 不修改 Worker 或 Codex 的长期环境，不引入 HOME，不复制凭据；失败继续
+  保持节点 drain。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.117`。
 
 ## Fleet Worker preflight OrbStack home propagation
 

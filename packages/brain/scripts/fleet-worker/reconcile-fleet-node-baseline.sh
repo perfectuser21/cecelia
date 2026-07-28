@@ -284,7 +284,8 @@ ensure_codex_toolchain() {
   if [[ "$installed_version" != "codex-cli $CODEX_VERSION" ]]; then
     [[ ! -e "$codex_prefix" && ! -L "$codex_prefix" ]] \
       || die "codex_install_conflict"
-    "$node_target/bin/npm" install --global --prefix "$codex_prefix" \
+    PATH="$TOOLCHAIN_BIN:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" \
+      "$node_target/bin/npm" install --global --prefix "$codex_prefix" \
       "@openai/codex@$CODEX_VERSION"
     [[ -x "$codex_bin" \
       && "$("$codex_bin" --version 2>/dev/null)" == "codex-cli $CODEX_VERSION" ]] \
