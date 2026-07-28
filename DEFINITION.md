@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.268.2
+**Brain 版本**: 1.268.5
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.5 — Durable Kernel ReleaseRun
+
+- Kernel 将 confirmed merge receipt 固化为不可变 ReleaseRun，绑定 source/merge SHA、
+  artifact versions 与统一 release policy；migration 374 的 append-only ledger 只允许
+  `merged → staging_queued → staging_running → staging_passed →
+  production_deploying → production_verified`。
+- staging 与 production effect 共用单一 advisory lease；effect intent 先于副作用，
+  observation receipt 后于副作用，重放先观察再执行，unknown/skipped/idle/fail 全部拒绝。
+- `report/done` 只接受 `production_verified` receipt。部署 API、五条历史 workflow、
+  drift sentinel、`brain-deploy.sh` 与 `promote-dashboard.sh` 都必须消费服务端持久化的
+  exact-SHA ReleaseRun authorization，缺失时 fail closed。
+- Brain 回退目标：`1.268.3`；回退只影响执行代码，不删除 migration 374 账本。
 
 ## Brain 1.268.2 — Kernel controller guard migration
 
