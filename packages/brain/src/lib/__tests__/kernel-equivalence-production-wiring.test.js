@@ -1,0 +1,534 @@
+import { generateKeyPairSync } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { load } from 'js-yaml';
+import {
+  afterEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
+import * as productionWiring
+  from '../kernel-equivalence-production-wiring.js';
+import {
+  compileDrillPlan,
+} from '../kernel-equivalence-drills.js';
+import {
+  TRUSTED_NON_RELEASE_EQUIVALENCE_DESCRIPTORS,
+} from '../kernel-equivalence-trusted-assembly.js';
+import {
+  digestTrustedExecutionPlan,
+} from '../kernel-equivalence-trusted-execution-service.js';
+
+const NOW = Date.parse('2026-07-28T12:02:00.000Z');
+const roots = [];
+
+function keyRecord(keyId, purpose, serviceId, publicKey) {
+  return {
+    key_id: keyId,
+    purpose,
+    service_id: serviceId,
+    public_key_pem: publicKey.export({
+      type: 'spki',
+      format: 'pem',
+    }),
+    not_before: '2026-07-28T00:00:00.000Z',
+    not_after: '2026-08-28T00:00:00.000Z',
+    revoked_at: null,
+    rotates_key_id: null,
+  };
+}
+
+function privateKeyFile(root, keyId, privateKey) {
+  const path = join(root, `${keyId}.pem`);
+  writeFileSync(
+    path,
+    privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    { mode: 0o600 },
+  );
+  chmodSync(path, 0o600);
+  return path;
+}
+
+function fixture() {
+  const root = realpathSync(
+    mkdtempSync(join(tmpdir(), 'kernel-eq-production-wiring-')),
+  );
+  roots.push(root);
+  const grantRoot = join(root, 'grants');
+  mkdirSync(grantRoot, { mode: 0o700 });
+  chmodSync(grantRoot, 0o700);
+  const contract = load(readFileSync(
+    new URL('../../../../../regression-contract.yaml', import.meta.url),
+    'utf8',
+  ));
+  const plan = compileDrillPlan(contract, { now: NOW });
+  const registryKeys = [];
+  const effectSigningKeys = {};
+  for (
+    const [index, descriptor]
+    of TRUSTED_NON_RELEASE_EQUIVALENCE_DESCRIPTORS.entries()
+  ) {
+    const pair = generateKeyPairSync('ed25519');
+    const keyId = `effect-${String(index + 1).padStart(2, '0')}`;
+    effectSigningKeys[descriptor.seam_id] = {
+      key_id: keyId,
+      secret_file: privateKeyFile(root, keyId, pair.privateKey),
+    };
+    registryKeys.push(keyRecord(
+      keyId,
+      'effect_receipt',
+      descriptor.seam_id,
+      pair.publicKey,
+    ));
+    for (const cell of plan.cells) {
+      if (cell.behavior_id !== descriptor.behavior_id) continue;
+      cell.effect_signer_status = 'available';
+      cell.effect_key_id = keyId;
+      cell.blocked_by = null;
+      cell.assembly_status = 'assembled';
+    }
+  }
+  const collector = generateKeyPairSync('ed25519');
+  const collectorKeyId = 'collector-2026-07';
+  const collectorSecretFile = privateKeyFile(
+    root,
+    collectorKeyId,
+    collector.privateKey,
+  );
+  registryKeys.push(keyRecord(
+    collectorKeyId,
+    'collector_bundle',
+    'kernel.equivalence.collector',
+    collector.publicKey,
+  ));
+  const executionGrant = generateKeyPairSync('ed25519');
+  const executionGrantKeyId = 'grant-authority-2026-07';
+  const executionGrantSecretFile = privateKeyFile(
+    root,
+    executionGrantKeyId,
+    executionGrant.privateKey,
+  );
+  registryKeys.push(keyRecord(
+    executionGrantKeyId,
+    'execution_grant',
+    'brain.authority',
+    executionGrant.publicKey,
+  ));
+  const trustRegistry = {
+    schema_version: 'kernel-equivalence-trust-registry/v1',
+    algorithm: 'ed25519',
+    grant_max_age_seconds: 900,
+    effect_receipt_max_age_seconds: 86_400,
+    collector_bundle_max_age_seconds: 86_400,
+    replay_nonce: {
+      single_use: true,
+      atomic_consumer_required: true,
+    },
+    keys: registryKeys,
+  };
+  const manifest = {
+    schema_version:
+      'kernel-equivalence-production-wiring/v1',
+    expected_plan_digest: digestTrustedExecutionPlan(plan),
+    trust_registry: trustRegistry,
+    collector_key: {
+      key_id: collectorKeyId,
+      secret_file: collectorSecretFile,
+    },
+    execution_grant_key: {
+      key_id: executionGrantKeyId,
+      secret_file: executionGrantSecretFile,
+    },
+    effect_signing_keys: effectSigningKeys,
+    grant_root: grantRoot,
+    grant_ttl_seconds: 300,
+    socket_path: join(root, 'socket', 'trusted-execution.sock'),
+    resource_ports: {
+      schema_version:
+        'kernel-equivalence-resource-ports/v1',
+      profile_id: 'local-isolated-test',
+    },
+  };
+  const configFile = join(root, 'production-wiring.json');
+  writeFileSync(
+    configFile,
+    `${JSON.stringify(manifest)}\n`,
+    { mode: 0o600 },
+  );
+  chmodSync(configFile, 0o600);
+  return {
+    configFile,
+    env: {
+      KERNEL_EQ_PRODUCTION_CONFIG_FILE: configFile,
+    },
+    manifest,
+    plan,
+  };
+}
+
+function operation() {
+  return async () => undefined;
+}
+
+function authority(owner_service, functions) {
+  return Object.fromEntries([
+    ['owner_service', owner_service],
+    ...functions.map((name) => [name, operation()]),
+  ]);
+}
+
+function seamPorts() {
+  const dependencies = {
+    protectedRefGuard: { execute: operation() },
+    credentialGuard: { issue: operation() },
+    branchPushGuard: { execute: operation() },
+    ciMergeEffect: { execute: operation() },
+    independentJudge: {
+      pool: { query: operation() },
+      attemptStore: {
+        complete: operation(),
+        getById: operation(),
+      },
+      judgeGate: operation(),
+      promptDir: '/var/lib/cecelia/equivalence-prompts',
+    },
+    devgate: { spawnGuarded: operation() },
+    attemptOwnership: {
+      complete: operation(),
+      getById: operation(),
+    },
+    reportLearning: {
+      dbQuery: operation(),
+      learningQuery: operation(),
+    },
+  };
+  const authorities = {
+    protectedRefGuard: authority(
+      'kernel.workspace.protected_ref_guard',
+      [
+        'loadInput',
+        'snapshot',
+        'confirmDenial',
+        'confirmSuccess',
+        'confirmRecovery',
+        'cancel',
+        'cleanup',
+      ],
+    ),
+    credentialGuard: authority(
+      'kernel.credential.attempt_lease',
+      [
+        'loadIssueRequest',
+        'snapshot',
+        'confirmDenial',
+        'confirmRefresh',
+        'cancel',
+        'cleanup',
+      ],
+    ),
+    branchPushGuard: authority(
+      'kernel.github.mutation_broker',
+      [
+        'loadInput',
+        'snapshot',
+        'confirmDenial',
+        'confirmSuccess',
+        'confirmRecovery',
+        'cancel',
+        'cleanup',
+      ],
+    ),
+    ciMergeEffect: authority(
+      'kernel.merge.effect_executor',
+      [
+        'loadExecution',
+        'snapshot',
+        'confirmDenial',
+        'confirmSuccess',
+        'confirmRecovery',
+        'cancel',
+        'cleanup',
+      ],
+    ),
+    humanReview: authority(
+      'kernel.merge.human_review_authority',
+      [
+        'loadEvidence',
+        'snapshot',
+        'confirmDenial',
+        'confirmRenewal',
+        'cancel',
+        'cleanup',
+      ],
+    ),
+    independentJudge: authority(
+      'kernel.evaluation.independent_judge',
+      ['loadContext', 'snapshot', 'loadPredecessorActorBinding'],
+    ),
+    orphanLiveness: authority(
+      'kernel.liveness.orphan_recovery',
+      [
+        'loadTarget',
+        'snapshot',
+        'recoverDeadAttempt',
+        'now',
+        'hostFn',
+        'killFn',
+      ],
+    ),
+    devgate: authority(
+      'kernel.quality.devgate',
+      ['loadTarget'],
+    ),
+    attemptOwnership: authority(
+      'kernel.controller.attempt_ownership',
+      [
+        'loadTarget',
+        'snapshot',
+        'loadPredecessorOwnershipBinding',
+      ],
+    ),
+    reportLearning: authority(
+      'kernel.closure.report_learning',
+      [
+        'now',
+        'loadEvidence',
+        'snapshot',
+        'loadPredecessorEvidenceBinding',
+      ],
+    ),
+  };
+  authorities.protectedRefGuard.sandbox_repo =
+    'perfectuser21/cecelia-kernel-equivalence-drills';
+  authorities.branchPushGuard.sandbox_repo =
+    'perfectuser21/cecelia-kernel-equivalence-drills';
+  return { authorities, dependencies };
+}
+
+function assemblyPorts(profileId = 'local-isolated-test') {
+  return {
+    cleanupInspector: Object.freeze({
+      owner_service: 'kernel.equivalence.cleanup_inspector',
+      capability_id: 'local-cleanup-inspector-v1',
+      inspect: operation(),
+    }),
+    profile_id: profileId,
+    qualityIsolation: Object.freeze({
+      owner_service: 'kernel.equivalence.quality_isolation',
+      capability_id: 'local-quality-isolation-v1',
+      prepare: operation(),
+      cancel: operation(),
+      cleanup: operation(),
+    }),
+    seamPorts: seamPorts(),
+    securityIsolation: Object.freeze({
+      owner_service: 'kernel.equivalence.isolation',
+      capability_id: 'local-security-isolation-v1',
+      prepare: operation(),
+      cancel: operation(),
+      cleanup: operation(),
+    }),
+  };
+}
+
+function databasePort() {
+  return {
+    connect: operation(),
+    query: async () => ({
+      rows: [{
+        genesis_hash: null,
+        head_hash: null,
+        revision: 0,
+      }],
+      rowCount: 1,
+    }),
+  };
+}
+
+function rewriteManifest(value) {
+  writeFileSync(
+    value.configFile,
+    `${JSON.stringify(value.manifest)}\n`,
+    { mode: 0o600 },
+  );
+  chmodSync(value.configFile, 0o600);
+}
+
+afterEach(() => {
+  while (roots.length > 0) {
+    rmSync(roots.pop(), { recursive: true, force: true });
+  }
+});
+
+describe('kernel equivalence production wiring', () => {
+  it('provides one dedicated production wiring boundary', () => {
+    expect(existsSync(new URL(
+      '../kernel-equivalence-production-wiring.js',
+      import.meta.url,
+    ))).toBe(true);
+  });
+
+  it('fails closed with an exact code when the protected manifest is not configured', () => {
+    expect(
+      typeof productionWiring.loadProductionTrustedExecutionWiring,
+    ).toBe('function');
+    expect(() => (
+      productionWiring.loadProductionTrustedExecutionWiring({
+        env: {},
+      })
+    )).toThrowError(expect.objectContaining({
+      code: 'trusted_execution_config_file_missing',
+    }));
+  });
+
+  it('rejects raw Kernel private-key material before opening a manifest', () => {
+    expect(() => (
+      productionWiring.loadProductionTrustedExecutionWiring({
+        env: {
+          KERNEL_EQ_PRODUCTION_CONFIG_FILE:
+            '/does/not/exist.json',
+          KERNEL_EQ_EXECUTION_PRIVATE_KEY:
+            '-----BEGIN PRIVATE KEY-----',
+        },
+      })
+    )).toThrowError(expect.objectContaining({
+      code: 'trusted_execution_raw_secret_forbidden',
+    }));
+  });
+
+  it('validates and pins a complete manifest before reporting missing Phase 5 B ports', () => {
+    const value = fixture();
+
+    expect(() => (
+      productionWiring.loadProductionTrustedExecutionWiring({
+        env: value.env,
+        now: () => NOW,
+      })
+    )).toThrowError(expect.objectContaining({
+      code: 'trusted_execution_ports_unconfigured',
+    }));
+  });
+
+  it('assembles one service and separate grant issuer from a complete isolated outer port set', async () => {
+    const value = fixture();
+    const wiring =
+      productionWiring.loadProductionTrustedExecutionWiring({
+        env: value.env,
+        pool: databasePort(),
+        assemblyPorts: assemblyPorts(),
+        now: () => NOW,
+      });
+    value.manifest.expected_plan_digest = 'f'.repeat(64);
+    rewriteManifest(value);
+
+    const service = await wiring.createService();
+
+    expect(service).toMatchObject({
+      schema_version:
+        'kernel-equivalence-trusted-execution-service/v1',
+      cell_count: 99,
+      adapter_count: 10,
+      plan_digest: digestTrustedExecutionPlan(value.plan),
+    });
+    expect(wiring).toMatchObject({
+      socket_path: expect.stringMatching(
+        /trusted-execution\.sock$/,
+      ),
+      resource_port_profile_id: 'local-isolated-test',
+      createService: expect.any(Function),
+      grantIssuer: expect.objectContaining({
+        owner_service: 'brain.kernel_equivalence.grant_issuer',
+      }),
+    });
+    expect(Object.isFrozen(wiring)).toBe(true);
+    expect(JSON.stringify(wiring)).not.toMatch(
+      /secret_file|BEGIN PRIVATE KEY|production-wiring\.json/,
+    );
+  });
+
+  it.each([
+    ['plan digest drift', (value) => {
+      value.manifest.expected_plan_digest = 'f'.repeat(64);
+    }, 'trusted_execution_plan_digest_mismatch'],
+    ['extra manifest field', (value) => {
+      value.manifest.private_key = 'forbidden';
+    }, 'trusted_execution_config_invalid'],
+    ['wrong port profile', () => {}, 'trusted_execution_ports_profile_mismatch'],
+  ])('rejects %s before listener creation', (
+    _label,
+    mutate,
+    code,
+  ) => {
+    const value = fixture();
+    mutate(value);
+    rewriteManifest(value);
+
+    expect(() => (
+      productionWiring.loadProductionTrustedExecutionWiring({
+        env: value.env,
+        pool: databasePort(),
+        assemblyPorts: assemblyPorts(
+          code === 'trusted_execution_ports_profile_mismatch'
+            ? 'wrong-profile'
+            : 'local-isolated-test',
+        ),
+        now: () => NOW,
+      })
+    )).toThrowError(expect.objectContaining({ code }));
+  });
+
+  it.each([
+    ['world-readable manifest', (value) => {
+      chmodSync(value.configFile, 0o644);
+    }],
+    ['symlink manifest', (value) => {
+      const target = join(
+        dirname(value.configFile),
+        'manifest-target.json',
+      );
+      writeFileSync(
+        target,
+        `${JSON.stringify(value.manifest)}\n`,
+        { mode: 0o600 },
+      );
+      rmSync(value.configFile);
+      symlinkSync(target, value.configFile);
+    }],
+    ['hard-linked manifest', (value) => {
+      linkSync(
+        value.configFile,
+        `${value.configFile}.second-link`,
+      );
+    }],
+  ])('rejects a %s before key or port loading', (
+    _label,
+    mutate,
+  ) => {
+    const value = fixture();
+    mutate(value);
+
+    expect(() => (
+      productionWiring.loadProductionTrustedExecutionWiring({
+        env: value.env,
+        pool: databasePort(),
+        assemblyPorts: assemblyPorts(),
+        now: () => NOW,
+      })
+    )).toThrowError(expect.objectContaining({
+      code: 'trusted_execution_config_file_unsafe',
+    }));
+  });
+});
