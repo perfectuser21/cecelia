@@ -16,6 +16,7 @@ TAR="${FLEET_ROLLOUT_TAR:-/usr/bin/tar}"
 SUDO="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 ROLLOUT_TMPDIR="${FLEET_ROLLOUT_TMPDIR:-${TMPDIR:-/tmp}}"
 WORKER_TOKEN_SOURCE="${FLEET_ROLLOUT_WORKER_TOKEN_FILE:-/var/lib/cecelia/fleet-worker/worker-auth}"
+GITHUB_READ_BROKER_SOURCE="${FLEET_ROLLOUT_GITHUB_READ_BROKER_SOURCE:-$SCRIPT_DIR/github-read-broker.cjs}"
 
 TEMP_ROOT=''
 
@@ -297,6 +298,8 @@ fi
 [[ -f "$PROFILE_REGISTRY" && ! -L "$PROFILE_REGISTRY" \
   && -f "$RUNNER_PROFILE_READER" && ! -L "$RUNNER_PROFILE_READER" ]] \
   || die "runner_profile_invalid"
+[[ -f "$GITHUB_READ_BROKER_SOURCE" && ! -L "$GITHUB_READ_BROKER_SOURCE" ]] \
+  || die "rollout_github_read_broker_missing"
 [[ -f "$WORKER_TOKEN_SOURCE" && ! -L "$WORKER_TOKEN_SOURCE" ]] \
   || die "worker_token_file_required"
 case "$(local_file_mode "$WORKER_TOKEN_SOURCE")" in
