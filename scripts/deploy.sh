@@ -4,6 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# 总部署入口在改动检测、重建和 smoke 之前消费同一份 production authority。
+bash "$SCRIPT_DIR/lib/release-run-guard.sh" production
+
 # ── 参数解析 ─────────────────────────────────────────────────────────────────
 BRAIN_ONLY=false
 DASHBOARD_ONLY=false
