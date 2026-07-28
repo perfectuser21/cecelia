@@ -200,6 +200,7 @@ function denialAudit(cell, grant, code, stage, now) {
     scenario: cell?.scenario ?? null,
     run_id: grant?.run_id ?? null,
     attempt_id: grant?.attempt_id ?? null,
+    late_effect_risk: code === 'adapter_cancellation_unconfirmed',
   });
 }
 
@@ -248,6 +249,36 @@ async function withTimeout(operation, timeoutMs) {
     ]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function withAbortableTimeout(operation, timeoutMs) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    fail('adapter_timeout_invalid');
+  }
+  const controller = new AbortController();
+  const operationPromise = Promise.resolve().then(
+    () => operation(controller.signal),
+  );
+  let timer;
+  try {
+    return await Promise.race([
+      operationPromise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new EquivalenceDrillError('adapter_timeout');
+          error.abortContext = {
+            signal: controller.signal,
+            operationPromise,
+          };
+          controller.abort();
+          reject(error);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    operationPromise.catch(() => {});
   }
 }
 
@@ -309,6 +340,34 @@ async function confirmCleanup(adapter, context, timeoutMs) {
     return errorCode(error, 'adapter_cleanup_failed') === 'adapter_timeout'
       ? 'adapter_cleanup_timeout'
       : 'adapter_cleanup_failed';
+  }
+}
+
+async function confirmCancellation(
+  adapter,
+  phase,
+  context,
+  timeoutError,
+  timeoutMs,
+) {
+  if (
+    timeoutError?.code !== 'adapter_timeout'
+    || typeof adapter.cancel !== 'function'
+  ) {
+    return false;
+  }
+  try {
+    const cancellation = await withTimeout(
+      () => adapter.cancel({
+        ...context,
+        phase,
+        signal: timeoutError.abortContext?.signal,
+      }),
+      timeoutMs,
+    );
+    return cancellation?.confirmed === true;
+  } catch {
+    return false;
   }
 }
 
@@ -439,25 +498,75 @@ export async function executeDrillCell({
     cell,
     grant: verifiedGrant,
   });
+  const compensations = [];
+  const registerCompensation = (compensation) => {
+    if (compensation != null) compensations.push(compensation);
+  };
   let prepared;
   try {
-    prepared = await withTimeout(
-      () => adapter.prepare(context),
+    prepared = await withAbortableTimeout(
+      (signal) => adapter.prepare({
+        ...context,
+        signal,
+        registerCompensation,
+      }),
       timeoutMs,
     );
   } catch (error) {
-    return deny(errorCode(error, 'adapter_prepare_failed'), 'adapter_prepare');
+    const code = errorCode(error, 'adapter_prepare_failed');
+    const cancellationConfirmed = code === 'adapter_timeout'
+      ? await confirmCancellation(
+        adapter,
+        'prepare',
+        { ...context, compensations },
+        error,
+        timeoutMs,
+      )
+      : true;
+    const cleanupError = await confirmCleanup(
+      adapter,
+      {
+        ...context,
+        prepared: null,
+        compensations,
+      },
+      timeoutMs,
+    );
+    if (!cancellationConfirmed) {
+      return deny(
+        'adapter_cancellation_unconfirmed',
+        'adapter_prepare_cancellation',
+      );
+    }
+    if (cleanupError) return deny(cleanupError, 'adapter_cleanup');
+    return deny(code, 'adapter_prepare');
   }
 
   let receipt;
   let executionError = null;
+  let executionStage = 'invoke';
+  let timeoutError = null;
   try {
-    const seamOutput = await withTimeout(
-      () => adapter.invokeActualSeam({ ...context, prepared }),
+    const seamOutput = await withAbortableTimeout(
+      (signal) => adapter.invokeActualSeam({
+        ...context,
+        prepared,
+        compensations,
+        signal,
+      }),
       timeoutMs,
     );
-    receipt = await withTimeout(
-      () => adapter.observe(seamOutput, { ...context, prepared }),
+    executionStage = 'observe';
+    receipt = await withAbortableTimeout(
+      (signal) => adapter.observe(
+        seamOutput,
+        {
+          ...context,
+          prepared,
+          compensations,
+          signal,
+        },
+      ),
       timeoutMs,
     );
     receipt = verifyEffectReceipt(
@@ -471,14 +580,32 @@ export async function executeDrillCell({
     );
   } catch (error) {
     executionError = errorCode(error, 'adapter_execution_failed');
+    if (executionError === 'adapter_timeout') timeoutError = error;
   }
 
+  if (timeoutError) {
+    const cancellationConfirmed = await confirmCancellation(
+      adapter,
+      executionStage,
+      { ...context, prepared, compensations },
+      timeoutError,
+      timeoutMs,
+    );
+    if (!cancellationConfirmed) {
+      executionError = 'adapter_cancellation_unconfirmed';
+    }
+  }
   const cleanupError = await confirmCleanup(
     adapter,
-    { ...context, prepared },
+    { ...context, prepared, compensations },
     timeoutMs,
   );
-  if (cleanupError) return deny(cleanupError, 'adapter_cleanup');
+  if (
+    cleanupError
+    && executionError !== 'adapter_cancellation_unconfirmed'
+  ) {
+    return deny(cleanupError, 'adapter_cleanup');
+  }
   if (executionError) return deny(executionError, 'seam_execution');
 
   if (typeof collector !== 'function') {
