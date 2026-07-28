@@ -362,4 +362,49 @@ describe('attempt store', () => {
       [input.runId, 'generator'],
     );
   });
+
+  it('uses bounded SQL to read the latest Commander Attempt', async () => {
+    const row = {
+      id: input.id,
+      run_id: input.runId,
+      role: 'commander',
+      status: 'completed',
+    };
+    const pool = poolWith({ rows: [row] });
+
+    await expect(
+      createAttemptStore(pool).getLatestCommanderAttempt(input.runId),
+    ).resolves.toEqual(row);
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/WHERE run_id=\$1\s+AND role='commander'/i);
+    expect(sql).toMatch(/ORDER BY hop DESC\s+LIMIT 1/i);
+    expect(sql).not.toMatch(/SELECT \*/i);
+    expect(sql).not.toMatch(/callback_secret_hash|error_message/i);
+    expect(values).toEqual([input.runId]);
+  });
+
+  it('reads only one Commander logical-cycle failover lineage', async () => {
+    const rows = [{
+      id: input.id,
+      logical_cycle_id: 'commander-wakeup:5',
+      retry_of_attempt_id: null,
+      provider: 'codex',
+      status: 'failed',
+      failure_class: 'infrastructure_blocked',
+      error_code: 'provider_unavailable',
+    }];
+    const pool = poolWith({ rows });
+
+    await expect(createAttemptStore(pool).listCommanderFailoverLineage(
+      input.runId,
+      'commander-wakeup:5',
+    )).resolves.toEqual(rows);
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).toMatch(
+      /WHERE run_id=\$1\s+AND role='commander'\s+AND logical_cycle_id=\$2/i,
+    );
+    expect(sql).toMatch(/ORDER BY hop ASC/i);
+    expect(sql).not.toMatch(/task_bundle|result|callback_secret_hash|error_message/i);
+    expect(values).toEqual([input.runId, 'commander-wakeup:5']);
+  });
 });
