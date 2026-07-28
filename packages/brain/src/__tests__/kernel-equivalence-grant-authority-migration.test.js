@@ -101,7 +101,18 @@ describe('migration 382 Kernel equivalence grant authority', () => {
       expect(sql).toContain(`'${functionName}(`);
     }
     expect(sql.match(/SECURITY DEFINER/gi)).toHaveLength(4);
-    expect(sql.match(/SET search_path = public, pg_temp/gi)).toHaveLength(4);
+    expect(sql.match(/SET search_path = public, pg_temp/gi)).toHaveLength(8);
+    for (const guardFunction of [
+      'kernel_equivalence_grant_append_only',
+      'kernel_equivalence_grant_authority_insert_guard',
+      'kernel_equivalence_grant_event_insert_guard',
+      'kernel_equivalence_grant_revocation_insert_guard',
+    ]) {
+      expect(sql).toMatch(new RegExp(
+        `FUNCTION ${guardFunction}\\(\\)[\\s\\S]*?LANGUAGE plpgsql\\s+SET search_path = public, pg_temp`,
+        'i',
+      ));
+    }
     expect(sql).toMatch(
       /CREATE TEMP TABLE kernel_equivalence_grant_migration_context[\s\S]*current_user::name AS runtime_role/i,
     );
@@ -109,6 +120,9 @@ describe('migration 382 Kernel equivalence grant authority', () => {
       /format\(\s*'GRANT EXECUTE ON FUNCTION %s TO %I'/i,
     );
     expect(sql).not.toMatch(/GRANT EXECUTE[\s\S]*TO PUBLIC/i);
+    expect(sql).toMatch(
+      /aclexplode\([\s\S]*pg_get_userbyid\([\s\S]*REVOKE ALL ON FUNCTION %s FROM %I/i,
+    );
     expect(sql).not.toMatch(
       /kernel_equivalence_revoke_grant\(\s*p_grant_id UUID,\s*p_grant_sha256 TEXT,\s*p_controller_instance_id UUID,\s*p_reason TEXT\s*\)[\s\S]*p_execution_disposition/i,
     );

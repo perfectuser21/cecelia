@@ -131,7 +131,8 @@ BEGIN
     'kernel equivalence grant authority is append-only (% blocked)',
     TG_OP;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 CREATE OR REPLACE FUNCTION kernel_equivalence_grant_authority_insert_guard()
 RETURNS trigger AS $$
@@ -281,7 +282,8 @@ BEGIN
   NEW.registered_at := database_now;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 CREATE OR REPLACE FUNCTION kernel_equivalence_grant_event_insert_guard()
 RETURNS trigger AS $$
@@ -419,7 +421,8 @@ BEGIN
   NEW.occurred_at := database_now;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 CREATE OR REPLACE FUNCTION kernel_equivalence_grant_revocation_insert_guard()
 RETURNS trigger AS $$
@@ -465,7 +468,8 @@ BEGIN
   NEW.revoked_at := clock_timestamp();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_grant_authority_insert_guard
   ON kernel_equivalence_grant_authorities;
@@ -1029,12 +1033,22 @@ SET search_path = public, pg_temp;
 DO $$
 DECLARE
   migration_runtime_role NAME;
+  migration_runtime_oid OID;
   function_signature TEXT;
+  function_oid OID;
+  function_owner_oid OID;
+  stale_grantee_oid OID;
+  stale_grantee_role NAME;
 BEGIN
   SELECT runtime_role
     INTO migration_runtime_role
     FROM kernel_equivalence_grant_migration_context;
-  IF migration_runtime_role IS NULL THEN
+  SELECT oid
+    INTO migration_runtime_oid
+    FROM pg_roles
+   WHERE rolname = migration_runtime_role;
+  IF migration_runtime_role IS NULL
+     OR migration_runtime_oid IS NULL THEN
     RAISE EXCEPTION
       'kernel equivalence grant migration runtime role is unavailable';
   END IF;
@@ -1045,10 +1059,41 @@ BEGIN
     'kernel_equivalence_revoke_grant(UUID, TEXT, UUID, TEXT)'
   ]::TEXT[]
   LOOP
+    SELECT procedures.oid, procedures.proowner
+      INTO function_oid, function_owner_oid
+      FROM pg_proc procedures
+     WHERE procedures.oid = to_regprocedure(function_signature);
+    IF function_oid IS NULL THEN
+      RAISE EXCEPTION
+        'kernel equivalence grant function ACL target is unavailable: %',
+        function_signature;
+    END IF;
     EXECUTE format(
       'REVOKE ALL ON FUNCTION %s FROM PUBLIC',
       function_signature
     );
+    FOR stale_grantee_oid IN
+      SELECT DISTINCT acl.grantee
+        FROM pg_proc procedures
+        CROSS JOIN LATERAL aclexplode(
+          COALESCE(
+            procedures.proacl,
+            acldefault('f', procedures.proowner)
+          )
+        ) acl
+       WHERE procedures.oid = function_oid
+         AND acl.privilege_type = 'EXECUTE'
+         AND acl.grantee <> 0
+         AND acl.grantee <> function_owner_oid
+         AND acl.grantee <> migration_runtime_oid
+    LOOP
+      stale_grantee_role := pg_get_userbyid(stale_grantee_oid);
+      EXECUTE format(
+        'REVOKE ALL ON FUNCTION %s FROM %I',
+        function_signature,
+        stale_grantee_role
+      );
+    END LOOP;
     EXECUTE format(
       'GRANT EXECUTE ON FUNCTION %s TO %I',
       function_signature,

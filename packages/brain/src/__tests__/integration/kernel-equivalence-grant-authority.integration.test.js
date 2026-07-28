@@ -24,6 +24,9 @@ const migration = existsSync(migrationUrl)
 const schemaName =
   `kernel_grant_${process.pid}_${randomUUID().replaceAll('-', '')}`;
 const quotedSchema = `"${schemaName}"`;
+const staleRole =
+  `kernel_grant_stale_${process.pid}_${randomUUID().replaceAll('-', '')}`;
+const quotedStaleRole = `"${staleRole}"`;
 const integrationMigration = migration.replaceAll(
   'SET search_path = public, pg_temp',
   `SET search_path = ${schemaName}, pg_temp`,
@@ -136,6 +139,38 @@ async function revokeGrant({
   );
 }
 
+async function waitForGrantExpiry(grantId) {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    const result = await pool.query(
+      `SELECT clock_timestamp() >= expires_at AS expired
+         FROM kernel_equivalence_grant_authorities
+        WHERE grant_id = $1`,
+      [grantId],
+    );
+    if (result.rows[0]?.expired) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('grant did not expire against PostgreSQL clock');
+}
+
+async function copyFrom(client, statement, data) {
+  return new Promise((resolve, reject) => {
+    const query = new pg.Query({
+      text: statement,
+      callback: (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      },
+    });
+    query.handleCopyInResponse = (connection) => {
+      connection.sendCopyFromChunk(Buffer.from(data));
+      connection.endCopyFrom();
+    };
+    client.query(query);
+  });
+}
+
 beforeAll(async () => {
   expect(migration).not.toBe('');
   adminPool = new pg.Pool({ ...DB_DEFAULTS, max: 2 });
@@ -195,6 +230,7 @@ afterAll(async () => {
   if (pool) await pool.end();
   if (adminPool) {
     await adminPool.query(`DROP SCHEMA IF EXISTS ${quotedSchema} CASCADE`);
+    await adminPool.query(`DROP ROLE IF EXISTS ${quotedStaleRole}`);
     await adminPool.end();
   }
 });
@@ -288,8 +324,8 @@ describe('migration 382 grant authority on real PostgreSQL', () => {
   });
 
   it('uses DB time, not details evidence, for active publication', async () => {
-    const grantId = await registerGrant({ expiresInMs: 150 });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    const grantId = await registerGrant({ expiresInMs: 750 });
+    await waitForGrantExpiry(grantId);
     await expect(appendEvent({
       details: { occurred_at: '2000-01-01T00:00:00.000Z' },
       grantId,
@@ -401,6 +437,9 @@ describe('migration 382 grant authority on real PostgreSQL', () => {
       FROM pg_class t
       JOIN pg_proc p
         ON p.proname = 'kernel_equivalence_register_grant_authority'
+       AND p.pronamespace = current_schema()::regnamespace
+       AND pg_get_function_identity_arguments(p.oid) =
+             'p_case_id uuid, p_grant jsonb, p_grant_sha256 text'
       WHERE t.oid = 'kernel_equivalence_grant_authorities'::regclass
     `);
     expect(topology.rows).toEqual([{
@@ -409,6 +448,97 @@ describe('migration 382 grant authority on real PostgreSQL', () => {
       function_owner: DB_DEFAULTS.user,
       public_execute: false,
     }]);
+  });
+
+  it('removes stale function EXECUTE grants when the ACL helper reruns', async () => {
+    await adminPool.query(`CREATE ROLE ${quotedStaleRole} NOLOGIN`);
+    await pool.query(
+      `GRANT EXECUTE ON FUNCTION
+         kernel_equivalence_register_grant_authority(UUID, JSONB, TEXT)
+       TO ${quotedStaleRole}`,
+    );
+    let staleAccess = await pool.query(
+      `SELECT has_function_privilege(
+         $1,
+         $2,
+         'EXECUTE'
+       ) AS allowed`,
+      [
+        staleRole,
+        `${schemaName}.kernel_equivalence_register_grant_authority(uuid,jsonb,text)`,
+      ],
+    );
+    expect(staleAccess.rows).toEqual([{ allowed: true }]);
+
+    await pool.query(integrationMigration);
+    staleAccess = await pool.query(
+      `SELECT has_function_privilege(
+         $1,
+         $2,
+         'EXECUTE'
+       ) AS allowed`,
+      [
+        staleRole,
+        `${schemaName}.kernel_equivalence_register_grant_authority(uuid,jsonb,text)`,
+      ],
+    );
+    expect(staleAccess.rows).toEqual([{ allowed: false }]);
+  });
+
+  it('pins owner insert guards to the authority schema under hostile search_path', async () => {
+    const grantId = await registerGrant();
+    await appendEvent({ grantId, state: 'published' });
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        CREATE TEMP TABLE kernel_equivalence_grant_authorities (
+          grant_id UUID PRIMARY KEY,
+          case_id UUID NOT NULL,
+          grant_digest TEXT NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE TEMP TABLE kernel_equivalence_grant_events (
+          grant_id UUID NOT NULL,
+          generation BIGINT NOT NULL,
+          state TEXT NOT NULL
+        );
+        CREATE TEMP TABLE kernel_equivalence_grant_revocations (
+          grant_id UUID PRIMARY KEY
+        );
+      `);
+      await client.query(
+        `INSERT INTO pg_temp.kernel_equivalence_grant_authorities
+           (grant_id, case_id, grant_digest, expires_at)
+         VALUES
+           ($1::uuid, $2::uuid, $3, clock_timestamp() + interval '1 minute')`,
+        [grantId, CASE_ID, DIGEST],
+      );
+      await client.query(
+        `INSERT INTO pg_temp.kernel_equivalence_grant_events
+           (grant_id, generation, state)
+         VALUES
+           ($1::uuid, 98, 'published')`,
+        [grantId],
+      );
+      await client.query(`SET search_path TO pg_temp, ${quotedSchema}`);
+      await expect(client.query(
+        `INSERT INTO ${quotedSchema}.kernel_equivalence_grant_events
+           (grant_id, generation, state, actor_instance_id, actor_kind,
+            grant_digest, details)
+         VALUES
+           ($1::uuid, 99, 'execution_intent', $2::uuid, 'runtime',
+            $3, '{}')`,
+        [grantId, RUNTIME_ID, DIGEST],
+      )).rejects.toThrow(/generation|contract/i);
+    } finally {
+      await client.query(`SET search_path TO ${quotedSchema}`);
+      await client.query(`
+        DROP TABLE IF EXISTS pg_temp.kernel_equivalence_grant_revocations;
+        DROP TABLE IF EXISTS pg_temp.kernel_equivalence_grant_events;
+        DROP TABLE IF EXISTS pg_temp.kernel_equivalence_grant_authorities;
+      `);
+      client.release();
+    }
   });
 
   it('constrains default-owner direct INSERT through table contract triggers', async () => {
@@ -488,6 +618,86 @@ describe('migration 382 grant authority on real PostgreSQL', () => {
       effect_possible: true,
       safe_no_effect: false,
     });
+  });
+
+  it('linearizes concurrent automatic intent and revoke outcomes', async () => {
+    const grantId = await registerGrant();
+    await appendEvent({ grantId, state: 'published' });
+    const [intent, revoke] = await Promise.allSettled([
+      appendEvent({ grantId, state: 'execution_intent' }),
+      revokeGrant({ grantId, reason: 'concurrent_cancel' }),
+    ]);
+    expect(revoke.status).toBe('fulfilled');
+    if (intent.status === 'fulfilled') {
+      expect(revoke.value.rows[0]).toMatchObject({
+        disposition: 'effect_possible',
+        effect_possible: true,
+      });
+    } else {
+      expect(intent.reason?.message).toMatch(/revoked/i);
+      expect(revoke.value.rows[0]).toMatchObject({
+        disposition: 'safe_no_effect',
+        safe_no_effect: true,
+      });
+    }
+  });
+
+  it('guards COPY, ON CONFLICT, and supported MERGE insert paths', async () => {
+    const grantId = await registerGrant();
+    const client = await pool.connect();
+    const row = [
+      grantId,
+      '99',
+      'published',
+      CONTROLLER_ID,
+      'controller',
+      DIGEST,
+      '{}',
+    ].join(',');
+    try {
+      await expect(copyFrom(
+        client,
+        `COPY ${quotedSchema}.kernel_equivalence_grant_events
+           (grant_id, generation, state, actor_instance_id, actor_kind,
+            grant_digest, details)
+         FROM STDIN WITH (FORMAT csv)`,
+        `${row}\n`,
+      )).rejects.toThrow(/generation|contract/i);
+
+      await expect(client.query(
+        `INSERT INTO ${quotedSchema}.kernel_equivalence_grant_events
+           (grant_id, generation, state, actor_instance_id, actor_kind,
+            grant_digest, details)
+         VALUES
+           ($1::uuid, 99, 'published', $2::uuid, 'controller', $3, '{}')
+         ON CONFLICT (grant_id, generation) DO NOTHING`,
+        [grantId, CONTROLLER_ID, DIGEST],
+      )).rejects.toThrow(/generation|contract/i);
+
+      const version = await client.query(
+        'SELECT current_setting(\'server_version_num\')::integer AS value',
+      );
+      if (version.rows[0].value >= 150000) {
+        await expect(client.query(
+          `MERGE INTO ${quotedSchema}.kernel_equivalence_grant_events target
+           USING (
+             VALUES ($1::uuid, 99::bigint, $2::uuid, $3::text)
+           ) source(grant_id, generation, actor_instance_id, grant_digest)
+           ON false
+           WHEN NOT MATCHED THEN
+             INSERT
+               (grant_id, generation, state, actor_instance_id, actor_kind,
+                grant_digest, details)
+             VALUES
+               (source.grant_id, source.generation, 'published',
+                source.actor_instance_id, 'controller',
+                source.grant_digest, '{}')`,
+          [grantId, CONTROLLER_ID, DIGEST],
+        )).rejects.toThrow(/generation|contract/i);
+      }
+    } finally {
+      client.release();
+    }
   });
 
   it('rejects UPDATE, DELETE, and TRUNCATE on every durable relation', async () => {
