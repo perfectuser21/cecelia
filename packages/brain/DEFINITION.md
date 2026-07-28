@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.268.7
+**版本**: 1.268.8
+
+## Brain-owned Kernel equivalence trusted execution
+
+- Drill CLI 不再加载 Brain runtime、数据库、registry 或 signer，也不接收 grant
+  文件路径；execute 只向固定 Brain Unix socket 发送 canonical
+  `{cell_id, grant_ref}`。
+- Brain trusted service 从 pinned 99-cell plan 解析 cell，经独立 protected-grant
+  authority 解析 grant ref，再调用已装配的 10 个 non-release adapter。
+- Unix listener 使用安全 owner parent、私有 bind 名称、0600 发布路径、请求/响应
+  大小与超时上限；关闭时只按 exact inode 删除自己发布的 socket。
+- 生产 assembly/secrets 未配置时 boot readiness 明确 fail-closed，不建立 listener；
+  `execution_wiring_ready` 仍为 false，不把机械 wiring 冒充等价证明。
+- 回退：`bash scripts/brain-rollback.sh 1.268.7`；没有数据库迁移。
 
 ## Signed Kernel equivalence drills
 

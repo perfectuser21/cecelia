@@ -114,6 +114,9 @@ import { getScanStatus } from './src/task-generator-scheduler.js';
 import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
 import { setupGitCredentials } from './src/lib/git-credentials-setup.js';
 import { bootDurable } from './src/durable/dbos-runtime.js';
+import {
+  bootBrainTrustedExecution,
+} from './src/lib/kernel-equivalence-trusted-execution-boot.js';
 
 // 容器 git 凭据初始化（必须在任何 git clone/fetch/push 之前）：
 // 宿主 ~/.gitconfig 只读挂载进容器、配了容器内不存在的 credential.helper，
@@ -156,6 +159,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // Graceful shutdown — release port + close pg pool + close WS so launchd restart doesn't
 // collide with a still-bound socket on 5221.
 let __shuttingDown = false;
+let __trustedExecutionBoot = null;
 const __startedAtMs = Date.now();
 async function gracefulShutdown(signal) {
   if (__shuttingDown) return;
@@ -215,7 +219,17 @@ async function gracefulShutdown(signal) {
     console.warn('[shutdown] websocket close error:', e && e.message);
   }
 
-  // 3) Drain pg pool
+  // 3) Close the Brain-owned trusted execution Unix listener.
+  try {
+    await __trustedExecutionBoot?.close();
+  } catch (e) {
+    console.warn(
+      '[shutdown] trusted execution listener close error:',
+      e && e.message,
+    );
+  }
+
+  // 4) Drain pg pool
   try {
     await Promise.race([
       pool.end(),
@@ -625,6 +639,16 @@ if (!process.env.VITEST) {
   // DBOS durable 底座（flag 门控，默认关=行为零变化）。bootDurable 内部 try/catch degrade，
   // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
   await bootDurable();
+
+  __trustedExecutionBoot = await bootBrainTrustedExecution();
+  const trustedExecutionReadiness =
+    __trustedExecutionBoot.getReadiness();
+  if (!trustedExecutionReadiness.ready) {
+    console.warn(
+      '[Server] Kernel trusted execution disabled (fail-closed):',
+      trustedExecutionReadiness.code,
+    );
+  }
 
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
   // Fire the onListening body now that we own the port.
