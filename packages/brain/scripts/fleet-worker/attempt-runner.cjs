@@ -1416,6 +1416,24 @@ function createAttemptRunner({
     resultDelivery,
   });
 
+  const attemptLocks = new Map();
+
+  function withAttemptLock(attemptId, operation) {
+    const previous = attemptLocks.get(attemptId) ?? Promise.resolve();
+    const result = previous.then(operation);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    attemptLocks.set(attemptId, tail);
+    void tail.then(() => {
+      if (attemptLocks.get(attemptId) === tail) {
+        attemptLocks.delete(attemptId);
+      }
+    });
+    return result;
+  }
+
   async function quarantineState(state, error) {
     const quarantined = safeQuarantineMetadata(
       await workspaceManager.quarantine(state.workspace, error),
@@ -1573,7 +1591,7 @@ function createAttemptRunner({
     return deliverPendingState(callbackPending, observed, { containerMissing });
   }
 
-  const runner = {
+  const unlockedRunner = {
     async launch(input) {
       const {
         request,
@@ -1760,42 +1778,50 @@ function createAttemptRunner({
       const retainedAttemptIds = new Set(states.map((state) => state.attempt_id));
       const cleanedAttempts = [];
 
-      for (const state of ownedStates) {
-        if (state.status === 'quarantined') continue;
-        if (state.status === 'callback_pending') {
-          const inspected = state.container_removed === true
-            ? null
-            : await docker.inspect({ containerId: state.container_id });
-          const result = await deliverPendingState(state, null, {
-            containerMissing: inspected?.status === 'missing',
+      for (const listedState of ownedStates) {
+        await withAttemptLock(listedState.attempt_id, async () => {
+          const state = await stateStore.get(listedState.attempt_id);
+          if (!state) {
+            knownAttemptIds.delete(listedState.attempt_id);
+            retainedAttemptIds.delete(listedState.attempt_id);
+            return;
+          }
+          if (state.worker_id !== workerId || state.status === 'quarantined') return;
+          if (state.status === 'callback_pending') {
+            const inspected = state.container_removed === true
+              ? null
+              : await docker.inspect({ containerId: state.container_id });
+            const result = await deliverPendingState(state, null, {
+              containerMissing: inspected?.status === 'missing',
+            });
+            if (result.status === 'cleaned') {
+              cleanedAttempts.push(state.attempt_id);
+              retainedAttemptIds.delete(state.attempt_id);
+            }
+            return;
+          }
+          if (state.status === 'cleanup_pending') {
+            const result = await cleanupAckedState(state);
+            if (result.status === 'cleaned') {
+              cleanedAttempts.push(state.attempt_id);
+              retainedAttemptIds.delete(state.attempt_id);
+            }
+            return;
+          }
+          if (state.status !== 'running') {
+            await quarantineState(state, new Error('attempt_state_status_invalid'));
+            return;
+          }
+          const inspected = await docker.inspect({ containerId: state.container_id });
+          if (!isTerminalContainerStatus(inspected.status)) return;
+          const result = await beginCallbackPending(state, {
+            containerMissing: inspected.status === 'missing',
           });
           if (result.status === 'cleaned') {
             cleanedAttempts.push(state.attempt_id);
             retainedAttemptIds.delete(state.attempt_id);
           }
-          continue;
-        }
-        if (state.status === 'cleanup_pending') {
-          const result = await cleanupAckedState(state);
-          if (result.status === 'cleaned') {
-            cleanedAttempts.push(state.attempt_id);
-            retainedAttemptIds.delete(state.attempt_id);
-          }
-          continue;
-        }
-        if (state.status !== 'running') {
-          await quarantineState(state, new Error('attempt_state_status_invalid'));
-          continue;
-        }
-        const inspected = await docker.inspect({ containerId: state.container_id });
-        if (!isTerminalContainerStatus(inspected.status)) continue;
-        const result = await beginCallbackPending(state, {
-          containerMissing: inspected.status === 'missing',
         });
-        if (result.status === 'cleaned') {
-          cleanedAttempts.push(state.attempt_id);
-          retainedAttemptIds.delete(state.attempt_id);
-        }
       }
 
       const removedOrphanContainers = [];
@@ -1830,6 +1856,31 @@ function createAttemptRunner({
           workspaceReconciliation.cleaned_attempts ?? [],
         ),
       });
+    },
+  };
+
+  const runner = {
+    launch(input) {
+      const attemptId = String(input?.request?.attempt_id ?? '__invalid_attempt__');
+      return withAttemptLock(attemptId, () => unlockedRunner.launch(input));
+    },
+    inspect(attemptId) {
+      return unlockedRunner.inspect(attemptId);
+    },
+    terminal(attemptId, lease = null) {
+      return withAttemptLock(
+        String(attemptId ?? '__invalid_attempt__'),
+        () => unlockedRunner.terminal(attemptId, lease),
+      );
+    },
+    cancel(attemptId, lease) {
+      return withAttemptLock(
+        String(attemptId ?? '__invalid_attempt__'),
+        () => unlockedRunner.cancel(attemptId, lease),
+      );
+    },
+    reconcile() {
+      return unlockedRunner.reconcile();
     },
   };
 

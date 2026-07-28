@@ -125,6 +125,16 @@ function loadAttemptRunner() {
   return require('./attempt-runner.cjs');
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function request(overrides = {}) {
   return {
     attempt_id: ATTEMPT_ID,
@@ -354,6 +364,37 @@ describe('Fleet Worker Attempt runner', () => {
     expect(JSON.stringify(state)).not.toContain('sensitive');
     expect(state.credential).not.toHaveProperty('payload');
     expect(JSON.stringify(state)).not.toMatch(/callback|callback-secret/i);
+  });
+
+  it('single-flights concurrent launch for the same Attempt identity', async () => {
+    const deps = dependencies();
+    const prepareGate = deferred();
+    deps.workspaceManager.prepare.mockImplementation(async () => {
+      deps.events.push('workspace.prepare');
+      await prepareGate.promise;
+      return deps.workspace;
+    });
+    const runner = createRunner(deps);
+
+    const first = runner.launch(request());
+    await vi.waitFor(() => {
+      expect(deps.workspaceManager.prepare).toHaveBeenCalledOnce();
+    });
+    const second = runner.launch(request());
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(deps.workspaceManager.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.launch).not.toHaveBeenCalled();
+
+    prepareGate.resolve();
+    const outcomes = await Promise.allSettled([first, second]);
+
+    expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+    const rejected = outcomes.find(({ status }) => status === 'rejected');
+    expect(rejected.reason).toMatchObject({
+      message: 'attempt_already_exists',
+    });
+    expect(deps.workspaceManager.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.launch).toHaveBeenCalledOnce();
   });
 
   it.each(['claude', 'codex', 'grok'])(
@@ -598,6 +639,46 @@ describe('Fleet Worker Attempt runner', () => {
       'workspace.cleanup',
       'docker.cleanupRuntime',
     ]);
+  });
+
+  it('single-flights Docker wait, explicit terminal and reconcile delivery', async () => {
+    const deps = dependencies();
+    const waitExit = deferred();
+    const deliveryGate = deferred();
+    const delivered = [];
+    deps.docker.wait.mockReturnValue(waitExit.promise);
+    deps.resultDelivery.deliver.mockImplementation(async (input) => {
+      deps.events.push('delivery.deliver');
+      delivered.push(input);
+      return deliveryGate.promise;
+    });
+    const runner = createRunner(deps);
+    await runner.launch(request());
+
+    waitExit.resolve({ statusCode: 0 });
+    await vi.waitFor(() => {
+      expect(deps.resultDelivery.prepare).toHaveBeenCalledOnce();
+      expect(deps.resultDelivery.deliver).toHaveBeenCalledOnce();
+    });
+    const reconcile = runner.reconcile();
+    const explicitTerminal = runner.terminal(ATTEMPT_ID);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(deps.resultDelivery.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.remove).toHaveBeenCalledOnce();
+    expect(deps.resultDelivery.deliver).toHaveBeenCalledOnce();
+    expect(delivered[0].delivery).toEqual(DELIVERY_METADATA);
+
+    deliveryGate.resolve(RESULT_RECEIPT);
+    await Promise.all([reconcile, explicitTerminal]);
+    await vi.waitFor(() => {
+      expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+    });
+
+    expect(deps.resultDelivery.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.remove).toHaveBeenCalledOnce();
+    expect(deps.resultDelivery.deliver).toHaveBeenCalledOnce();
+    expect(deps.workspaceManager.quarantine).not.toHaveBeenCalled();
   });
 
   it('quarantines corrupt or missing canonical result without deleting runtime evidence', async () => {
