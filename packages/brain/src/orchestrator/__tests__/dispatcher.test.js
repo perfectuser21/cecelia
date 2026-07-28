@@ -5,6 +5,7 @@ import {
   createDispatcher,
   resolveAction,
 } from '../dispatcher.js';
+import { createKernelHandlers } from '../kernel-handlers.js';
 import { createCapabilityGate } from '../preflight/capability-gate.js';
 
 const { buildDockerArgs } = (await import('../../docker-executor.js')).__test__;
@@ -406,6 +407,70 @@ describe('createDispatcher', () => {
       should_create_attempt: false,
     });
     expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+  });
+
+  it('keeps Fleet bundle path-free while passing server-resolved worktree to internal judge', async () => {
+    const d = makeDeps();
+    d.attemptStore.complete = vi.fn(async () => ({ deduped: false }));
+    const hostWorktree = '/srv/cecelia/worktrees/judge-authority';
+    const judgeGate = vi.fn(async () => ({
+      judged: true,
+      verdict: 'PASS',
+      feedback: 'independent pass',
+    }));
+    d.resolveWorkspaceSpec = vi.fn(async ({ attemptId: resolvedAttemptId }) => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-result-channel',
+      expected_head_sha: 'a'.repeat(40),
+      mode: 'read-only',
+      run_id: runId,
+      attempt_id: resolvedAttemptId,
+    }));
+    const handlerDeps = {
+      pool: { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) },
+      attemptStore: d.attemptStore,
+      judgeGate,
+      promptDir: '/srv/cecelia/prompts',
+    };
+    d.handlers = createKernelHandlers(handlerDeps);
+    const dispatch = createDispatcher(d);
+    const judgeObserved = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: {
+          ...observed.task.payload,
+          worktree_path: hostWorktree,
+        },
+      },
+      pr: {
+        url: 'https://github.com/perfectuser21/cecelia/pull/4391',
+        state: 'OPEN',
+        head_sha: 'a'.repeat(40),
+        merged: false,
+      },
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'a'.repeat(40) },
+      evaluateResult: {
+        decision: { outcome: 'PASS', reason: 'verified' },
+        checks: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
+      },
+    };
+
+    await dispatch('spawn:judge', {
+      taskId,
+      runId,
+      hop: 9,
+      worktreePath: hostWorktree,
+      observed: judgeObserved,
+      decision: { phase: 'evaluate', reason: 'evaluator_passed' },
+    });
+
+    const created = d.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).not.toHaveProperty('worktree_path');
+    expect(judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      worktreePath: hostWorktree,
+    }), expect.objectContaining({ strict: true }));
   });
 
   it('replaces caller paths with a resolved WorkspaceSpec before Fleet launch', async () => {
