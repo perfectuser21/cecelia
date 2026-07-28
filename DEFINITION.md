@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.110
+**Brain 版本**: 1.267.111
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.111 — Fleet canonical repository safe-path hotfix
+
+- baseline 在设置进程级 `safe.directory` 前先用 `realpath` 规范化受控 bare
+  repository，兼容 macOS `/var` → `/private/var` 的系统符号链接。
+- 不放宽全局 Git 配置，不信任其他目录；失败仍保持节点 drain，不改变 Runner pin、
+  Provider 凭据或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.110`；节点保持 drain 后再回退。
 
 ## Brain 1.267.110 — Fleet repeat-bootstrap repository ownership hotfix
 

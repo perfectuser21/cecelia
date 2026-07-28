@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.110
+**版本**: 1.267.111
+
+## Fleet canonical repository safe-path hotfix
+
+- baseline 先用 `realpath` 规范化 NodeProfile 的受控 bare repository，再把
+  规范路径作为进程级 `safe.directory`，兼容 macOS `/var` 指向
+  `/private/var` 的系统路径布局。
+- 不写入系统/用户 Git 配置；失败继续保持节点 drain，Runner pin、
+  Provider 凭据和 Phase 4B/4C/4D/5 范围不变。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.110`。
 
 ## Fleet repeat-bootstrap repository ownership hotfix
 

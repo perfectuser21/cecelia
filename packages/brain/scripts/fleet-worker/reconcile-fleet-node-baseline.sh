@@ -391,7 +391,7 @@ ensure_orbstack() {
 }
 
 ensure_repository() {
-  local repository_parent
+  local repository_parent repository_safe_path
 
   repository_parent="$(dirname "$REPOSITORY_ROOT")"
   [[ ! -L "$repository_parent" && ! -L "$REPOSITORY_ROOT" ]] \
@@ -400,16 +400,18 @@ ensure_repository() {
   if [[ ! -e "$REPOSITORY_ROOT" ]]; then
     "$GIT" init --bare "$REPOSITORY_ROOT" >/dev/null
   fi
+  repository_safe_path="$(/bin/realpath "$REPOSITORY_ROOT")" \
+    || die "repository_path_invalid"
   [[ -d "$REPOSITORY_ROOT" \
-    && "$("$GIT" -c "safe.directory=$REPOSITORY_ROOT" \
+    && "$("$GIT" -c "safe.directory=$repository_safe_path" \
       -C "$REPOSITORY_ROOT" rev-parse --is-bare-repository)" == true ]] \
     || die "repository_path_invalid"
-  "$GIT" -c "safe.directory=$REPOSITORY_ROOT" \
+  "$GIT" -c "safe.directory=$repository_safe_path" \
     -C "$REPOSITORY_ROOT" fetch --force "$REPOSITORY_BUNDLE" \
     HEAD:refs/heads/fleet-baseline >/dev/null
-  "$GIT" -c "safe.directory=$REPOSITORY_ROOT" \
+  "$GIT" -c "safe.directory=$repository_safe_path" \
     -C "$REPOSITORY_ROOT" symbolic-ref HEAD refs/heads/fleet-baseline
-  "$GIT" -c "safe.directory=$REPOSITORY_ROOT" \
+  "$GIT" -c "safe.directory=$repository_safe_path" \
     -C "$REPOSITORY_ROOT" rev-parse --verify HEAD >/dev/null \
     || die "repository_import_failed"
   "$CHOWN" -R _cecelia:_cecelia "$REPOSITORY_ROOT"
