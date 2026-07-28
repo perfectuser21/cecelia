@@ -28,6 +28,27 @@ function isCanonicalAbsolutePath(path) {
   return isAbsolute(path ?? '') && resolve(path) === path;
 }
 
+function hasExactControllerTmpfs(tmpfs) {
+  if (
+    tmpfs == null
+    || typeof tmpfs !== 'object'
+    || Array.isArray(tmpfs)
+    || JSON.stringify(Object.keys(tmpfs).sort()) !== JSON.stringify(['/tmp'])
+  ) {
+    return false;
+  }
+  const option = tmpfs['/tmp'];
+  if (typeof option !== 'string' || option.includes(',')) return false;
+  const match = option.match(
+    /^size=([1-9][0-9]*)([kmgt]?)(?:i?b)?$/i,
+  );
+  if (!match) return false;
+  const powers = { '': 0n, k: 1n, m: 2n, g: 3n, t: 4n };
+  const exponent = powers[match[2].toLowerCase()];
+  const bytes = BigInt(match[1]) * (1024n ** exponent);
+  return bytes === 100n * 1024n * 1024n;
+}
+
 export function resolveRollbackControllerRuntime({
   exec = execFileSync,
 } = {}) {
@@ -275,8 +296,7 @@ function reconcileController(planned, {
     || JSON.stringify(observed?.HostConfig?.CapDrop) !== JSON.stringify(['ALL'])
     || JSON.stringify(observedSecurity)
       !== JSON.stringify(['no-new-privileges'])
-    || JSON.stringify(observed?.HostConfig?.Tmpfs)
-      !== JSON.stringify({ '/tmp': 'size=104857600' })
+    || !hasExactControllerTmpfs(observed?.HostConfig?.Tmpfs)
     || JSON.stringify(observed?.Config?.Healthcheck?.Test)
       !== JSON.stringify(['NONE'])
     || Number(observed?.HostConfig?.PidsLimit) !== 128

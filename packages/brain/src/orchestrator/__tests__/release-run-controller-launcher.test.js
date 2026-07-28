@@ -24,7 +24,9 @@ const base = {
   },
 };
 
-function exactReconcileExec(planned) {
+function exactReconcileExec(planned, {
+  tmpfs = { '/tmp': 'size=104857600' },
+} = {}) {
   return vi.fn((_command, args) => {
     if (args[0] === 'ps') return 'controller-id\n';
     if (args[0] === 'image') {
@@ -62,7 +64,7 @@ function exactReconcileExec(planned) {
         Memory: 512 * 1024 * 1024,
         NanoCpus: 1_000_000_000,
         RestartPolicy: { Name: 'on-failure', MaximumRetryCount: 3 },
-        Tmpfs: { '/tmp': 'size=104857600' },
+        Tmpfs: tmpfs,
       },
     });
   });
@@ -138,6 +140,23 @@ describe('external ReleaseRun controller launcher', () => {
       expect.arrayContaining(['inspect', planned.name]),
       { encoding: 'utf8' },
     );
+  });
+
+  it('accepts the exact 100 MiB tmpfs when Docker preserves the CLI unit', async () => {
+    const child = {
+      once: vi.fn((event, callback) => {
+        if (event === 'close') queueMicrotask(() => callback(0));
+      }),
+    };
+    const planned = buildRollbackControllerArgs(base);
+    await expect(launchRollbackController(base, {
+      spawnFn: vi.fn(() => child),
+      execFn: exactReconcileExec(planned, {
+        tmpfs: { '/tmp': 'size=100M' },
+      }),
+    })).resolves.toEqual({
+      name: 'cecelia-release-rollback-72-1',
+    });
   });
 
   it('allows a later production generation while rollback remains generation one only', () => {
@@ -224,6 +243,18 @@ describe('external ReleaseRun controller launcher', () => {
     ['missing exact environment', (observed) => { observed.Config.Env.pop(); }],
     ['changed environment', (observed) => { observed.Config.Env.push('EXTRA=1'); }],
     ['missing tmpfs', (observed) => { observed.HostConfig.Tmpfs = {}; }],
+    ['undersized tmpfs', (observed) => {
+      observed.HostConfig.Tmpfs = { '/tmp': 'size=99M' };
+    }],
+    ['extra tmpfs option', (observed) => {
+      observed.HostConfig.Tmpfs = { '/tmp': 'size=100M,rw' };
+    }],
+    ['extra tmpfs mount', (observed) => {
+      observed.HostConfig.Tmpfs = {
+        '/tmp': 'size=100M',
+        '/run': 'size=1M',
+      };
+    }],
     ['active healthcheck', (observed) => {
       observed.Config.Healthcheck = { Test: ['CMD', 'curl', 'localhost'] };
     }],
