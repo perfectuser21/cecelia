@@ -314,6 +314,14 @@ fi
 grep -Fq 'runner_image_source_mismatch' "$test_root/image-label.out" \
   || fail "Runner source label mismatch was not explicit"
 
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_ROLLOUT_GITHUB_READ_BROKER_SOURCE="$test_root/missing-read-broker.cjs" \
+  run_rollout xian-mac-m4 --apply >"$test_root/read-broker.out" 2>&1; then
+  fail "rollout accepted source without the GitHub read broker"
+fi
+grep -Fq 'rollout_github_read_broker_missing' "$test_root/read-broker.out" \
+  || fail "missing GitHub read broker failure was not explicit"
+
 rm -f "$test_root/git.state"
 : > "$transport_log"
 if CECELIA_MACHINE_ID=us-mac-m4 \
