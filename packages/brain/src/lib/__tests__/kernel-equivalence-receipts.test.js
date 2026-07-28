@@ -505,6 +505,12 @@ describe('receipt bundle and recovery lineage', () => {
       previousBundleHash: null,
     });
     const bundle = signed(unsigned, keys.collector.privateKey);
+    expect(bundle.cleanup_evidence).toMatchObject({
+      schema_version: 'kernel-equivalence-cleanup-evidence/v1',
+      cell_id: target.cell_id,
+      grant_id: executionGrant.grant_id,
+      resource_id: executionGrant.resource_id,
+    });
 
     expect(verifyReceiptBundle(
       bundle,

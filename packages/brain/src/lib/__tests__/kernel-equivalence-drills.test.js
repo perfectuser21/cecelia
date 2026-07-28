@@ -751,6 +751,29 @@ describe('executeDrillCell', () => {
     });
   });
 
+  it('rejects cleanup evidence that is not bound to the executing grant', async () => {
+    const value = executionFixture();
+    value.cleanupVerifier.mockResolvedValue({
+      confirmed: true,
+      evidence: {
+        schema_version: 'kernel-equivalence-cleanup-evidence/v1',
+        evidence_ref: `cleanup-evidence:${'a'.repeat(64)}`,
+        cell_id: value.cell.cell_id,
+        grant_id: '33333333-3333-4333-8333-333333333333',
+        resource_id: value.grant.resource_id,
+        resource_ref: value.grant.resource_ref,
+        adapter_id: value.cell.adapter_id,
+        context_hash: 'b'.repeat(64),
+      },
+    });
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'cleanup_evidence_invalid',
+    });
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
   it('does not trust safe-looking error codes thrown by external collaborators', async () => {
     const collector = executionFixture();
     collector.collector.mockImplementation(async () => {

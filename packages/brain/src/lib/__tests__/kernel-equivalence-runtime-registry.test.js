@@ -35,6 +35,15 @@ function verifier(overrides = {}) {
 }
 
 describe('server-owned equivalence runtime registries', () => {
+  it('exports a content-addressed cleanup evidence builder', async () => {
+    const runtimeRegistry = await import(
+      '../kernel-equivalence-runtime-registry.js'
+    );
+    expect(runtimeRegistry.createCleanupEvidence).toEqual(
+      expect.any(Function),
+    );
+  });
+
   it('resolves a complete immutable adapter snapshot by exact ID', () => {
     const registered = adapter();
     const source = [registered];
