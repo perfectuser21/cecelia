@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import * as executionContract from '../execution-contract.js';
 import {
   parseTaskBundle,
   parseHarnessResult,
@@ -10,7 +11,24 @@ import {
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
+const TASK_ID = '33333333-3333-4333-8333-333333333333';
 const BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
+const RESULT_CHANNEL_PATH = `/tmp/cecelia-prompts/${ATTEMPT_ID}.result.json`;
+
+function validResultChannel(overrides = {}) {
+  return {
+    version: 'attempt-result-file/v1',
+    path: RESULT_CHANNEL_PATH,
+    max_bytes: 1024 * 1024,
+    bindings: {
+      task_id: TASK_ID,
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+      role: 'planner',
+    },
+    ...overrides,
+  };
+}
 
 function validWorkspaceSpec(overrides = {}) {
   return {
@@ -41,7 +59,7 @@ function validBundle(overrides = {}) {
       content: 'Provider-neutral planner instructions.',
     },
     inputs: {
-      task_id: '33333333-3333-4333-8333-333333333333',
+      task_id: TASK_ID,
       sprint_dir: 'sprints/07210000-example',
       worktree_path: '/workspace',
       artifacts: [],
@@ -165,8 +183,139 @@ describe('TaskBundle contract', () => {
     delete bundle.inputs.worktree_path;
     bundle.inputs.execution_surface = 'fleet-worker';
     bundle.inputs.workspace_spec = validWorkspaceSpec();
+    bundle.result_channel = validResultChannel();
 
     expect(parseTaskBundle(bundle).inputs.workspace_spec).toEqual(validWorkspaceSpec());
+  });
+
+  it('exports a builder that freezes the exact Attempt-owned result descriptor', () => {
+    expect(executionContract.buildResultChannelDescriptor).toBeTypeOf('function');
+
+    const descriptor = executionContract.buildResultChannelDescriptor({
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      attemptId: ATTEMPT_ID,
+      role: 'planner',
+    });
+
+    expect(descriptor).toEqual(validResultChannel());
+    expect(Object.isFrozen(descriptor)).toBe(true);
+    expect(Object.isFrozen(descriptor.bindings)).toBe(true);
+    expect(() => {
+      descriptor.path = '/tmp/cecelia-prompts/caller-controlled.result.json';
+    }).toThrow(TypeError);
+    expect(() => {
+      descriptor.bindings.role = 'reviewer';
+    }).toThrow(TypeError);
+  });
+
+  it('requires the v1 result channel for Fleet bundles but keeps legacy bundles compatible', () => {
+    const fleetBundle = validBundle();
+    delete fleetBundle.inputs.worktree_path;
+    fleetBundle.inputs.execution_surface = 'fleet-worker';
+    fleetBundle.inputs.workspace_spec = validWorkspaceSpec();
+
+    expect(() => parseTaskBundle(fleetBundle)).toThrow(/result_channel_required/);
+    expect(parseTaskBundle(validBundle())).not.toHaveProperty('result_channel');
+  });
+
+  it.each([
+    ['null', null],
+    ['false', false],
+    ['zero', 0],
+    ['empty string', ''],
+    ['explicit undefined', undefined],
+  ])('rejects a legacy result_channel explicitly set to %s', (_name, resultChannel) => {
+    const bundle = validBundle();
+    bundle.result_channel = resultChannel;
+
+    expect(() => parseTaskBundle(bundle)).toThrow();
+  });
+
+  it('accepts only the exact attempt-result-file/v1 protocol and a bounded positive max_bytes', () => {
+    expect(executionContract.parseResultChannelDescriptor).toBeTypeOf('function');
+    const expected = {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      attemptId: ATTEMPT_ID,
+      role: 'planner',
+    };
+
+    expect(executionContract.parseResultChannelDescriptor(
+      validResultChannel(),
+      expected,
+    )).toEqual(validResultChannel());
+
+    for (const value of ['attempt-result-file/v0', 'attempt-result-file/v1\r\n']) {
+      expect(() => executionContract.parseResultChannelDescriptor(
+        validResultChannel({ version: value }),
+        expected,
+      )).toThrow();
+    }
+    for (const value of [0, -1, 1024 * 1024 + 1]) {
+      expect(() => executionContract.parseResultChannelDescriptor(
+        validResultChannel({ max_bytes: value }),
+        expected,
+      )).toThrow();
+    }
+  });
+
+  it('rejects unknown descriptor and binding fields', () => {
+    expect(executionContract.parseResultChannelDescriptor).toBeTypeOf('function');
+    const expected = {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      attemptId: ATTEMPT_ID,
+      role: 'planner',
+    };
+
+    expect(() => executionContract.parseResultChannelDescriptor({
+      ...validResultChannel(),
+      callback_url: 'https://attacker.invalid/callback',
+    }, expected)).toThrow();
+    expect(() => executionContract.parseResultChannelDescriptor({
+      ...validResultChannel(),
+      bindings: {
+        ...validResultChannel().bindings,
+        lease_owner: 'caller-controlled',
+      },
+    }, expected)).toThrow();
+  });
+
+  it.each([
+    ['CR in path', `${RESULT_CHANNEL_PATH}\r`],
+    ['LF in path', `${RESULT_CHANNEL_PATH}\n`],
+    ['path traversal', `/tmp/cecelia-prompts/${ATTEMPT_ID}/../stolen.result.json`],
+    ['another Attempt path', '/tmp/cecelia-prompts/44444444-4444-4444-8444-444444444444.result.json'],
+    ['outside runtime mount', `/tmp/${ATTEMPT_ID}.result.json`],
+  ])('rejects %s fail-closed', (_name, resultPath) => {
+    expect(executionContract.parseResultChannelDescriptor).toBeTypeOf('function');
+    expect(() => executionContract.parseResultChannelDescriptor(
+      validResultChannel({ path: resultPath }),
+      {
+        taskId: TASK_ID,
+        runId: RUN_ID,
+        attemptId: ATTEMPT_ID,
+        role: 'planner',
+      },
+    )).toThrow();
+  });
+
+  it.each([
+    ['task', 'task_id', '44444444-4444-4444-8444-444444444444'],
+    ['run', 'run_id', '44444444-4444-4444-8444-444444444444'],
+    ['attempt', 'attempt_id', '44444444-4444-4444-8444-444444444444'],
+    ['role', 'role', 'reviewer'],
+  ])('rejects a mismatched server-derived %s binding', (_name, field, value) => {
+    const bundle = validBundle();
+    delete bundle.inputs.worktree_path;
+    bundle.inputs.execution_surface = 'fleet-worker';
+    bundle.inputs.workspace_spec = validWorkspaceSpec();
+    bundle.result_channel = validResultChannel({
+      bindings: { ...validResultChannel().bindings, [field]: value },
+    });
+
+    expect(() => parseTaskBundle(bundle)).toThrow(/result_channel_.*_mismatch/);
   });
 
   it('rejects a Fleet bundle that only carries a caller-owned absolute worktree path', () => {

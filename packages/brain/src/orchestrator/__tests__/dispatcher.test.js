@@ -456,7 +456,72 @@ describe('createDispatcher', () => {
       },
     });
     expect(created.bundle.inputs).not.toHaveProperty('worktree_path');
+    expect(created.bundle.result_channel).toEqual({
+      version: 'attempt-result-file/v1',
+      path: `/tmp/cecelia-prompts/${attemptId}.result.json`,
+      max_bytes: 1024 * 1024,
+      bindings: {
+        task_id: taskId,
+        run_id: runId,
+        attempt_id: attemptId,
+        role: 'reviewer',
+      },
+    });
     expect(deps.launcher.launch.mock.calls[0][0].bundle).toBe(created.bundle);
+  });
+
+  it('freezes the server-derived Fleet result channel before createAttempt persistence', async () => {
+    const deps = makeDeps();
+    deps.machineId = 'us-mac-m4';
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: observed.proposeBranch,
+      expected_head_sha: 'a'.repeat(40),
+      mode: 'read-only',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    deps.launcher.launch.mockResolvedValueOnce({
+      jobId: 'worker-job-1',
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'worker-job-1',
+      attestationStatus: 'verified',
+    });
+    deps.attemptStore.createAttempt.mockImplementationOnce(async (input) => {
+      const descriptor = input.bundle.result_channel;
+      expect(descriptor).toEqual({
+        version: 'attempt-result-file/v1',
+        path: `/tmp/cecelia-prompts/${attemptId}.result.json`,
+        max_bytes: 1024 * 1024,
+        bindings: {
+          task_id: taskId,
+          run_id: runId,
+          attempt_id: attemptId,
+          role: 'reviewer',
+        },
+      });
+      expect(Object.isFrozen(descriptor)).toBe(true);
+      expect(Object.isFrozen(descriptor.bindings)).toBe(true);
+      expect(() => {
+        descriptor.path = '/tmp/cecelia-prompts/caller-controlled.result.json';
+      }).toThrow(TypeError);
+      expect(() => {
+        descriptor.bindings.role = 'planner';
+      }).toThrow(TypeError);
+      return { id: input.id, ...input, task_bundle: input.bundle };
+    });
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 2,
+      observed,
+      decision: { phase: 'gan', reason: 'awaiting_review' },
+    });
+
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledTimes(1);
   });
 
   it('dispatches the fleet canary without a role Skill or workspace dependency', async () => {
