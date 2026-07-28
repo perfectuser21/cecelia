@@ -45,6 +45,10 @@ STAGED_ACCESS_HELPER=''
 STAGED_ACCESS_PLIST=''
 ACL_ADDED=false
 ACL_HOME=''
+ORBSTACK_DIR_ACL_ADDED=false
+ACL_ORBSTACK_DIR=''
+RUN_DIR_ACL_ADDED=false
+ACL_RUN_DIR=''
 SOCKET_ACL_ADDED=false
 DOCKER_SOCKET_TARGET=''
 INSTALL_SUCCEEDED=false
@@ -289,6 +293,16 @@ has_managed_orbstack_acl() {
     | /usr/bin/grep -Eq '^[[:space:]]*[0-9]+: user:_cecelia allow search$'
 }
 
+has_managed_orbstack_dir_acl() {
+  "$ACL_LIST" -lde "$ACL_ORBSTACK_DIR" 2>/dev/null \
+    | /usr/bin/grep -Eq '^[[:space:]]*[0-9]+: user:_cecelia allow search$'
+}
+
+has_managed_orbstack_run_acl() {
+  "$ACL_LIST" -lde "$ACL_RUN_DIR" 2>/dev/null \
+    | /usr/bin/grep -Eq '^[[:space:]]*[0-9]+: user:_cecelia allow search$'
+}
+
 has_managed_orbstack_socket_acl() {
   "$ACL_LIST" -lde "$DOCKER_SOCKET_TARGET" 2>/dev/null \
     | /usr/bin/grep -Eq \
@@ -307,6 +321,37 @@ rollback_new_orbstack_socket_acl() {
       return 1
     fi
     SOCKET_ACL_ADDED=false
+  fi
+}
+
+rollback_new_orbstack_run_acl() {
+  if [[ "$RUN_DIR_ACL_ADDED" == true && "$INSTALL_SUCCEEDED" != true ]]; then
+    if ! has_managed_orbstack_run_acl; then
+      RUN_DIR_ACL_ADDED=false
+      return
+    fi
+    if ! "$CHMOD" -a '_cecelia allow search' \
+      "$ACL_RUN_DIR" >/dev/null 2>&1; then
+      echo "docker_acl_rollback_incomplete" >&2
+      return 1
+    fi
+    RUN_DIR_ACL_ADDED=false
+  fi
+}
+
+rollback_new_orbstack_dir_acl() {
+  if [[ "$ORBSTACK_DIR_ACL_ADDED" == true \
+    && "$INSTALL_SUCCEEDED" != true ]]; then
+    if ! has_managed_orbstack_dir_acl; then
+      ORBSTACK_DIR_ACL_ADDED=false
+      return
+    fi
+    if ! "$CHMOD" -a '_cecelia allow search' \
+      "$ACL_ORBSTACK_DIR" >/dev/null 2>&1; then
+      echo "docker_acl_rollback_incomplete" >&2
+      return 1
+    fi
+    ORBSTACK_DIR_ACL_ADDED=false
   fi
 }
 
@@ -336,6 +381,8 @@ prepare_orbstack_access() {
   esac
 
   ACL_HOME="${DOCKER_SOCKET_TARGET%/.orbstack/run/docker.sock}"
+  ACL_ORBSTACK_DIR="$ACL_HOME/.orbstack"
+  ACL_RUN_DIR="$ACL_ORBSTACK_DIR/run"
   owner_name="${ACL_HOME#/Users/}"
   if [[ -z "$owner_name" || "$owner_name" == */* || "$owner_name" == '.' \
     || "$owner_name" == '..' || ! "$owner_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
@@ -346,6 +393,21 @@ prepare_orbstack_access() {
     trap cleanup_transaction EXIT
     ACL_ADDED=true
     "$CHMOD" +a '_cecelia allow search' "$ACL_HOME" >/dev/null 2>&1 \
+      || die "prerequisite_docker_acl"
+  fi
+
+  if ! has_managed_orbstack_dir_acl; then
+    trap cleanup_transaction EXIT
+    ORBSTACK_DIR_ACL_ADDED=true
+    "$CHMOD" +a '_cecelia allow search' \
+      "$ACL_ORBSTACK_DIR" >/dev/null 2>&1 \
+      || die "prerequisite_docker_acl"
+  fi
+
+  if ! has_managed_orbstack_run_acl; then
+    trap cleanup_transaction EXIT
+    RUN_DIR_ACL_ADDED=true
+    "$CHMOD" +a '_cecelia allow search' "$ACL_RUN_DIR" >/dev/null 2>&1 \
       || die "prerequisite_docker_acl"
   fi
 
@@ -467,6 +529,8 @@ cleanup_transaction() {
   fi
   [[ -z "$LOCK_DIR" ]] || rmdir "$LOCK_DIR" 2>/dev/null || true
   rollback_new_orbstack_socket_acl || true
+  rollback_new_orbstack_run_acl || true
+  rollback_new_orbstack_dir_acl || true
   rollback_new_orbstack_acl || true
 }
 
