@@ -157,7 +157,8 @@ const SKILL_WHITELIST = {
 
 // Internal task handlers — Brain tick 内联处理的 task_type（skill='/_internal'），
 // 不派外部 agent，由 Brain 进程内的 handler 函数直接处理。
-// WS5: harness_intervention → harness-intervention-handler（读 Docker logs + LLM 分析 → retry/skip/alert）
+// harness_intervention → 内联 handler：Kernel 读 harness_attempts evidence；
+// 旧 relay 读 Docker logs。两条路径均由 LLM 分析为 retry/skip/alert。
 const INTERNAL_TASK_HANDLERS = {
   'harness_intervention': handleIntervention,
 };

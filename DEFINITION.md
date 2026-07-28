@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.268.1
+**Brain 版本**: 1.268.2
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.2 — Kernel controller guard migration
+
+- Harness controller 合同统一为每 `run_id` 一个确定性 Kernel Run Controller；
+  Planner、Proposer、Reviewer、Generator、Evaluator、Judge、Reporter 都是
+  受 TaskBundle 和 receipt 约束的 Attempt。
+- Fleet Supervisor 只负责机器准入、容量、公平性和放置，不拥有合同、merge 或
+  release 权威；所有副作用必须消费 exact-SHA authorization 并追加 effect receipt。
+- Kernel intervention 不再读取不存在的 relay 容器。巡检把 `run_id` 和
+  `harness_runtime` 固化进任务，handler 从 `harness_attempts`
+  result/receipt/telemetry 取脱敏证据；旧 relay Docker 日志路径保持兼容。
+- Brain 回退目标：`1.268.1`。
 
 ## Brain 1.268.1 — Fleet Worker-owned GitHub read authority
 

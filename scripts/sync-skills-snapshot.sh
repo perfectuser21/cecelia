@@ -3,8 +3,9 @@
 #
 # 背景：所有 skill 的唯一 SSOT = zenithjoy-skills repo（见 ~/.claude/CLAUDE.md skills-architecture）。
 # packages/workflows/skills/ 是给 monorepo CI / evaluator 读的「快照拷贝」，不是 SSOT。
-# Brain 的 harness graph 用 loadSkillContent() 读快照里的 SKILL.md 注入给 agent，
-# 快照漂移 = agent 跑的是旧 skill。本脚本负责把 6 个 harness skill 的 SKILL.md 刷成最新。
+# Brain 的角色 Attempt 用 loadSkillContent() 读快照里的 SKILL.md 注入给 agent；
+# harness-controller 快照只承载统一 Kernel 合同/审计兼容，不是运行时编排者。
+# 快照漂移仍会让角色或审计读取旧合同，本脚本负责统一刷新 harness skill。
 #
 # 用法：
 #   bash scripts/sync-skills-snapshot.sh

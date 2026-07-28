@@ -3176,7 +3176,8 @@ async function triggerCeceliaRun(task) {
   }
 
   // 0.6 Slice5: internal task handler 内联短路 —— harness_intervention 等注册的 internal type 被
-  //     pick up 后直接在 brain 内跑 handler（读 docker logs + LLM 诊断），不当普通任务派 claude/codex。
+  //     pick up 后直接在 brain 内跑 handler（Kernel Attempt evidence / legacy Docker logs
+  //     + LLM 诊断），不当普通任务派 claude/codex。
   //     否则 pipeline-patrol 建的 harness_intervention 永远无人执行，整条干预通道是死代码。
   //     必须传 deps.updateTaskResult，否则 handler 无法把诊断结论写回 task.result。
   const internalHandler = getInternalTaskHandler(task.task_type);

@@ -1,6 +1,20 @@
 # Brain 模块定义
 
-**版本**: 1.268.1
+**版本**: 1.268.2
+
+## Kernel controller contract and intervention evidence
+
+- `harness-controller` 的运行语义已从供应商会话编排收敛为确定性 Kernel Run
+  Controller：每个 `run_id` 一个逻辑 Controller，角色均为独立 Attempt，
+  Fleet Supervisor 只拥有机器准入、容量和放置权。
+- Kernel merge/release 合同只接受绑定当前 SHA 的 authorization 与 append-only
+  effect receipt；Skill、Provider、CI、Fleet 和人工终端都不是旁路权威。
+- `harness_intervention` 任务为 Kernel Run 持久携带 `run_id` 与
+  `harness_runtime=kernel-v1`。handler 只读取该 Run 的 `harness_attempts`
+  result/receipt/telemetry 白名单并脱敏后分析；缺失或查询失败 fail-closed，
+  绝不回落到 relay 容器日志。
+- 旧 relay 继续读取 Docker logs，保持回滚兼容。
+- 回退：`bash scripts/brain-rollback.sh 1.268.1`。
 
 ## Fleet Worker-owned GitHub read authority
 
