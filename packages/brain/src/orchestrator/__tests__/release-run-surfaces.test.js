@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(import.meta.dirname, '../../../../..');
@@ -48,5 +49,21 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).not.toContain('scripts/brain-deploy.sh');
     expect(source).not.toMatch(/\bexec\(['"]bash .*deploy/);
     expect(source).toContain('blocked_unowned_release');
+  });
+
+  it('direct production scripts share an executable fail-closed guard', () => {
+    const guard = resolve(root, 'scripts/lib/release-run-guard.sh');
+    const result = spawnSync('bash', [guard, 'production'], {
+      env: { PATH: process.env.PATH },
+      encoding: 'utf8',
+    });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/ReleaseRun authority required/);
+
+    for (const file of ['brain-deploy.sh', 'promote-dashboard.sh']) {
+      const source = readFileSync(resolve(root, 'scripts', file), 'utf8');
+      expect(source).toContain('release-run-guard.sh');
+      expect(source).toContain('production');
+    }
   });
 });
