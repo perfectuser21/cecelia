@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createKernelHandlers } from '../kernel-handlers.js';
+import {
+  createIndependentJudgeEquivalenceSeam,
+  createKernelHandlers,
+} from '../kernel-handlers.js';
 
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const runId = '11111111-1111-4111-8111-111111111111';
@@ -100,6 +103,26 @@ describe('kernel deterministic handlers', () => {
       decision: { outcome: 'PASS', reason: 'independent judge verdict' },
     }));
     expect(d.pool.query.mock.calls.some(([sql]) => /verdict:judge/.test(sql))).toBe(true);
+  });
+
+  it('judge blocks an evaluator attempt from certifying itself', async () => {
+    const d = deps();
+    const ctx = context({
+      observed: {
+        ...context().observed,
+        evaluateVerdict: {
+          ...context().observed.evaluateVerdict,
+          attempt_id: attemptId,
+        },
+      },
+    });
+
+    await expect(createKernelHandlers(d)['spawn:judge'](ctx)).resolves.toEqual({
+      status: 'BLOCKED',
+      detail: 'self-certification denied',
+    });
+    expect(d.judgeGate).not.toHaveBeenCalled();
+    expect(d.attemptStore.complete).not.toHaveBeenCalled();
   });
 
   it('judge 优先使用 evaluator attempt result，并把 checks 适配为机械闸证据', async () => {
@@ -282,5 +305,116 @@ describe('kernel deterministic handlers', () => {
       'ROLLBACK',
     ]);
     expect(d.pool.releaseTransaction).toHaveBeenCalledOnce();
+  });
+});
+
+describe('independent judge equivalence seam', () => {
+  function seamFixture(scenario) {
+    const d = deps();
+    const effectSigner = {
+      signEffectResult: vi.fn(async (effect) => ({
+        schema_version: 'kernel-equivalence-effect-receipt/v1',
+        ...effect,
+        signature: 'test-signature',
+      })),
+    };
+    const evaluatorAttemptId = scenario === 'violation'
+      ? attemptId
+      : '33333333-3333-4333-8333-333333333333';
+    const handlerContext = context({
+      observed: {
+        ...context().observed,
+        evaluateVerdict: {
+          ...context().observed.evaluateVerdict,
+          attempt_id: evaluatorAttemptId,
+        },
+      },
+    });
+    const snapshots = [
+      { judge_status: 'queued' },
+      { judge_status: scenario === 'violation' ? 'blocked' : 'completed' },
+    ];
+    const resource = {
+      resource_id: `eq-${attemptId}`,
+      resource_ref: `equivalence-drill/${runId}/${attemptId}/judge/case`,
+      handler_context: handlerContext,
+      snapshot: vi.fn(async () => snapshots.shift()),
+    };
+    const cell = {
+      cell_id: `KERNEL-P0-05-INDEPENDENT-EVALUATOR-JUDGE::codex::${scenario}`,
+      behavior_id: 'KERNEL-P0-05-INDEPENDENT-EVALUATOR-JUDGE',
+      provider: 'codex',
+      scenario,
+      seam_id: 'kernel.evaluation.independent_judge',
+      adapter_id: 'kernel.drill.independent_evaluator_judge.v1',
+    };
+    const grant = {
+      run_id: runId,
+      attempt_id: attemptId,
+      resource_id: resource.resource_id,
+      resource_ref: resource.resource_ref,
+    };
+    return {
+      d,
+      effectSigner,
+      resource,
+      cell,
+      grant,
+      seam: createIndependentJudgeEquivalenceSeam({
+        handlerDeps: d,
+        effectSigner,
+      }),
+    };
+  }
+
+  it.each([
+    ['normal', 'confirmed', 'independent_verdict_recorded'],
+    ['violation', 'denied', 'self_certification_denied'],
+    ['recovery', 'recovered', 'reassigned_evaluator_verdict_recorded'],
+  ])('signs the exact %s outcome only at the judge seam', async (
+    scenario,
+    observedOutcome,
+    effectCode,
+  ) => {
+    const value = seamFixture(scenario);
+    const predecessor = scenario === 'recovery'
+      ? { receipt_id: '44444444-4444-4444-8444-444444444444' }
+      : null;
+
+    const receipt = await value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      predecessor,
+      signal: new AbortController().signal,
+    });
+
+    expect(receipt).toMatchObject({
+      observed_outcome: observedOutcome,
+      effect_code: effectCode,
+      signature: 'test-signature',
+    });
+    expect(value.effectSigner.signEffectResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        service_id: value.cell.seam_id,
+        cell: value.cell,
+        grant: value.grant,
+        resource_id: value.grant.resource_id,
+        resource_ref: value.grant.resource_ref,
+        observed_outcome: observedOutcome,
+        effect_code: effectCode,
+        predecessor,
+        before_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        after_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    );
+  });
+
+  it('requires a seam-owned signer at construction', () => {
+    expect(() => createIndependentJudgeEquivalenceSeam({
+      handlerDeps: deps(),
+    })).toThrowError(expect.objectContaining({
+      code: 'seam_effect_signer_unavailable',
+    }));
   });
 });
