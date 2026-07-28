@@ -1,3 +1,5 @@
+import { sha256Canonical } from './kernel-equivalence-receipts.js';
+
 const DESCRIPTORS = [
   {
     behavior_id: 'KERNEL-P0-05-INDEPENDENT-EVALUATOR-JUDGE',
@@ -264,18 +266,26 @@ function createAdapter({
 
     async cleanup(context) {
       const resources = cleanupResources(context);
-      await seam.cleanup({
-        ...context,
-        resource: context?.prepared?.resource ?? null,
-      });
-      const cleanup = await isolation.cleanup({
-        ...context,
-        descriptor,
-        resources,
-      });
+      const [seamResult, isolationResult] = await Promise.allSettled([
+        Promise.resolve().then(() => seam.cleanup({
+          ...context,
+          resource: context?.prepared?.resource ?? null,
+        })),
+        Promise.resolve().then(() => isolation.cleanup({
+          ...context,
+          descriptor,
+          resources,
+        })),
+      ]);
+      if (
+        seamResult.status === 'rejected'
+        || isolationResult.status === 'rejected'
+      ) {
+        fail('adapter_cleanup_failed');
+      }
       return Object.freeze({
         resources: resources.map((resource) => structuredClone(resource)),
-        isolation_cleanup: structuredClone(cleanup),
+        isolation_cleanup: structuredClone(isolationResult.value),
       });
     },
   });
@@ -391,4 +401,3 @@ export function createQualityCleanupVerifiers({ inspector } = {}) {
     )),
   );
 }
-import { sha256Canonical } from './kernel-equivalence-receipts.js';
