@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.118
+**版本**: 1.267.119
+
+## Clean-node Codex runtime PATH propagation
+
+- reconciler 在检查 pinned Codex CLI 版本时，同样把 pinned Node toolchain
+  目录前置到该短生命周期子进程的 PATH，覆盖首次安装后的检查和后续幂等
+  检查。
+- 不修改 Worker 的长期环境，不引入 HOME，不复制凭据；检查失败继续保持
+  节点 drain。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.118`。
 
 ## Clean-node Codex bootstrap PATH propagation
 

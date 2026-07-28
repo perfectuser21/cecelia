@@ -161,6 +161,9 @@ write_executable "$fake_bin/toolchain-node" \
 
 write_executable "$fake_bin/toolchain-codex" \
   '#!/usr/bin/env bash' \
+  'if [[ "${FLEET_TEST_REQUIRE_TOOLCHAIN_NODE_PATH:-0}" == 1 ]]; then' \
+  '  [[ "$(command -v node || true)" == "${FLEET_TEST_EXPECTED_NODE:?}" ]] || { echo "clean-codex-node-path-missing" >&2; exit 127; }' \
+  'fi' \
   'echo "codex-cli 0.145.0"'
 
 write_executable "$fake_bin/toolchain-npm" \

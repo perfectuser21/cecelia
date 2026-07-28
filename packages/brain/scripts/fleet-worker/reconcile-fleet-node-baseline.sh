@@ -279,7 +279,10 @@ ensure_codex_toolchain() {
   local installed_version=''
 
   if [[ -x "$codex_bin" ]]; then
-    installed_version="$("$codex_bin" --version 2>/dev/null || true)"
+    installed_version="$(
+      PATH="$TOOLCHAIN_BIN:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" \
+        "$codex_bin" --version 2>/dev/null || true
+    )"
   fi
   if [[ "$installed_version" != "codex-cli $CODEX_VERSION" ]]; then
     [[ ! -e "$codex_prefix" && ! -L "$codex_prefix" ]] \
@@ -288,7 +291,10 @@ ensure_codex_toolchain() {
       "$node_target/bin/npm" install --global --prefix "$codex_prefix" \
       "@openai/codex@$CODEX_VERSION"
     [[ -x "$codex_bin" \
-      && "$("$codex_bin" --version 2>/dev/null)" == "codex-cli $CODEX_VERSION" ]] \
+      && "$(
+        PATH="$TOOLCHAIN_BIN:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" \
+          "$codex_bin" --version 2>/dev/null
+      )" == "codex-cli $CODEX_VERSION" ]] \
       || die "codex_version_mismatch"
   fi
   /bin/ln -sfn "$codex_bin" "$TOOLCHAIN_BIN/codex"
