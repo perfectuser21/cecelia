@@ -207,10 +207,14 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
       ?? observed.contract?.row?.sha
       ?? null;
   }
-  if (action === 'spawn:generator-fix' || spec.role === 'evaluator') {
+  if (
+    action === 'spawn:generator-fix'
+    || spec.role === 'evaluator'
+    || (spec.role === 'reporter' && action !== 'spawn:canary')
+  ) {
     const errorCode = action === 'spawn:generator-fix'
       ? 'generator_fix_pr_authority_required'
-      : 'evaluator_pr_authority_required';
+      : `${spec.role}_pr_authority_required`;
     const pullRequest = freezeRequiredPullRequest(observed.pr, errorCode);
     common.pull_request = pullRequest;
     common.pr_branch = pullRequest.head_ref;

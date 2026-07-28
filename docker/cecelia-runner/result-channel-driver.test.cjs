@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const test = require('node:test');
 
 const {
@@ -80,7 +81,7 @@ function taskBundle(role, inputs = {}, overrides = {}) {
         base_sha: SHA,
         branch: 'cp-result-channel',
         expected_head_sha: SHA,
-        mode: ['reviewer', 'evaluator', 'reporter'].includes(role)
+        mode: ['reviewer', 'reporter'].includes(role)
           ? 'read-only'
           : 'read-write',
         run_id: RUN_ID,
@@ -89,7 +90,7 @@ function taskBundle(role, inputs = {}, overrides = {}) {
       ...inputs,
     },
     constraints: {
-      read_only: ['reviewer', 'evaluator', 'reporter'].includes(role),
+      read_only: ['reviewer', 'reporter'].includes(role),
       fresh_session: true,
       timeout_seconds: 5400,
     },
@@ -110,16 +111,24 @@ function taskBundle(role, inputs = {}, overrides = {}) {
 }
 
 function managedEnv(role, workspacePath, bundleFile) {
+  const bundleSha256 = crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(bundleFile))
+    .digest('hex');
   return {
     BRAIN_RESULT_CHANNEL_VERSION: 'attempt-result-file/v1',
+    BRAIN_TASK_BUNDLE_SHA256: bundleSha256,
     BRAIN_RESULT_FILE: RESULT_FILE,
     BRAIN_RESULT_MAX_BYTES: String(1024 * 1024),
     HARNESS_TASK_BUNDLE_FILE: bundleFile,
     HARNESS_ATTEMPT_ID: ATTEMPT_ID,
     HARNESS_RUN_ID: RUN_ID,
     HARNESS_NODE: role,
+    HARNESS_READ_ONLY: String(['reviewer', 'reporter'].includes(role)),
     HARNESS_TASK_ID: TASK_ID,
     CECELIA_TASK_ID: TASK_ID,
+    CECELIA_EXECUTOR: 'codex',
+    BRAIN_PROVIDER_SESSION_ID: 'thread-result-channel',
     WORKTREE_PATH: workspacePath,
     BRAIN_URL: 'http://brain.internal:5221',
   };
@@ -150,6 +159,9 @@ function dependencies(overrides = {}) {
     git: async (_workspace, args) => {
       if (args.join(' ') === 'rev-parse HEAD') return `${SHA}\n`;
       if (args.join(' ') === 'branch --show-current') return 'cp-result-channel\n';
+      if (args.join(' ') === 'remote get-url origin') {
+        return 'https://github.com/perfectuser21/cecelia.git\n';
+      }
       if (args[0] === 'ls-remote') return `${SHA}\trefs/heads/cp-result-channel\n`;
       throw new Error(`unexpected git command: ${args.join(' ')}`);
     },
@@ -272,7 +284,9 @@ test('builds mechanically bound verifier envelopes for all six roles', async () 
     },
     {
       role: 'reporter',
-      bundle: taskBundle('reporter'),
+      bundle: taskBundle('reporter', {
+        pull_request: pullRequest({ state: 'MERGED' }),
+      }),
       raw: {
         verdict: 'DONE',
         task_id: TASK_ID,
@@ -420,6 +434,7 @@ test('empty, unknown, missing, oversized and authority-mismatched managed inputs
     ['wrong result path', { BRAIN_RESULT_FILE: `${RESULT_FILE}.attacker` }],
     ['oversized raw', {}, 'x'.repeat(1024 * 1024 + 1)],
     ['task authority mismatch', { CECELIA_TASK_ID: 'attacker-task' }],
+    ['workspace mode mismatch', { HARNESS_READ_ONLY: 'true' }],
   ];
 
   for (const [_name, envPatch, rawContents = JSON.stringify(raw)] of cases) {
@@ -540,6 +555,17 @@ test('canary and non-success pass-through reject unverified side-effect claims',
         credential_copy_mutated: 'false',
       },
     }),
+    providerResult({
+      status: 'blocked',
+      provider_metadata: {
+        provider: 'claude',
+        session_id: 'forged-session',
+      },
+    }),
+    providerResult({
+      status: 'completed_with_concerns',
+      decision: { outcome: 'CANARY_OK', reason: '' },
+    }),
   ]) {
     fs.writeFileSync(RESULT_FILE, '', { mode: 0o600 });
     fs.writeFileSync(PROVIDER_FILE, JSON.stringify(dirty), { mode: 0o600 });
@@ -552,6 +578,33 @@ test('canary and non-success pass-through reject unverified side-effect claims',
       /result_channel_driver:/,
     );
   }
+});
+
+test('frozen TaskBundle digest rejects provider-time mutation', async () => {
+  fs.mkdirSync(path.dirname(RESULT_FILE), { recursive: true });
+  fs.writeFileSync(RESULT_FILE, '', { mode: 0o600 });
+  const workspace = fixtureWorkspace();
+  const bundleFile = path.join(workspace, 'task-bundle.json');
+  fs.writeFileSync(
+    bundleFile,
+    JSON.stringify({ instruction: 'bounded', task_bundle: taskBundle('generator') }),
+    { mode: 0o600 },
+  );
+  const env = managedEnv('generator', workspace, bundleFile);
+  fs.appendFileSync(bundleFile, ' ');
+  fs.writeFileSync(
+    PROVIDER_FILE,
+    JSON.stringify(providerResult({ status: 'failed', error: { code: 'x', message: 'x' } })),
+    { mode: 0o600 },
+  );
+  await assert.rejects(
+    finalizeManagedResult({
+      env,
+      providerResultPath: PROVIDER_FILE,
+      deps: dependencies(),
+    }),
+    /TaskBundle digest mismatch/,
+  );
 });
 
 test('unknown authority response shapes fail closed', async () => {
@@ -575,7 +628,9 @@ test('unknown authority response shapes fail closed', async () => {
   );
   await assert.rejects(
     buildVerifierEnvelope({
-      bundle: taskBundle('reporter'),
+      bundle: taskBundle('reporter', {
+        pull_request: pullRequest(),
+      }),
       rawEnvelope: {
         verdict: 'DONE',
         task_id: TASK_ID,

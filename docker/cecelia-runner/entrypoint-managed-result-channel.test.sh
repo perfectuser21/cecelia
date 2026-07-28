@@ -39,7 +39,7 @@ printf '%s' '{}' > "$RESULT_FILE"
 chmod 600 "$RESULT_FILE"
 BUNDLE_FILE="$(mktemp)"
 printf '%s' \
-  '{"task_bundle":{"role":"reporter","skill":null,"expected_output":"harness-result/canary-v1"}}' \
+  '{"task_bundle":{"role":"reporter","skill":null,"expected_output":"harness-result/canary-v1","inputs":{"sprint_dir":"sprints/canary"}}}' \
   > "$BUNDLE_FILE"
 BRAIN_RESULT_CHANNEL_VERSION='attempt-result-file/v1'
 BRAIN_RESULT_FILE="$RESULT_FILE"
@@ -52,6 +52,30 @@ configure_managed_bundle_runtime
   echo 'canary isolation was not derived from the frozen TaskBundle' >&2
   exit 1
 }
+[[ "$SPRINT_DIR" == 'sprints/canary' && "$WORKSPACE_PATH" == '/workspace' ]] || {
+  echo 'shared role runtime was not derived from the frozen TaskBundle' >&2
+  exit 1
+}
+
+# Fleet does not inject legacy/local role convenience variables. Managed mode
+# must derive their exact equivalents from the immutable TaskBundle so Skills
+# behave identically on local and Fleet transports.
+printf '%s' \
+  '{"task_bundle":{"role":"proposer","skill":{"name":"harness-proposer"},"expected_output":"harness-result/proposer-v1","inputs":{"sprint_dir":"sprints/r7","contract_round":7,"propose_branch":"cp-harness-propose-r7-22222222-a9","contract_branch":"cp-harness-propose-r6-22222222-a8"}}}' \
+  > "$BUNDLE_FILE"
+configure_managed_bundle_runtime
+[[ "$HARNESS_CANARY" == 'false' ]]
+[[ "$SPRINT_DIR" == 'sprints/r7' ]]
+[[ "$PROPOSE_ROUND" == '7' ]]
+[[ "$PROPOSE_BRANCH" == 'cp-harness-propose-r7-22222222-a9' ]]
+[[ "$CONTRACT_BRANCH" == 'cp-harness-propose-r6-22222222-a8' ]]
+
+printf '%s' \
+  '{"task_bundle":{"role":"evaluator","skill":{"name":"harness-evaluator"},"expected_output":"harness-result/evaluator-v1","inputs":{"sprint_dir":"sprints/r7","pr_branch":"cp-result-channel","pr_head_sha":"0123456789abcdef0123456789abcdef01234567"}}}' \
+  > "$BUNDLE_FILE"
+configure_managed_bundle_runtime
+[[ "$PR_BRANCH" == 'cp-result-channel' ]]
+[[ "$PR_HEAD_SHA" == '0123456789abcdef0123456789abcdef01234567' ]]
 
 # The production seam must invoke only the fixed, image-owned driver with the
 # fixed attempt-owned normalized provider path. No callback credential exists.
@@ -80,6 +104,14 @@ grep -q 'finalize_managed_result "\$NORMALIZED_RESULT_FILE"' <<<"$PROVIDER_SECTI
 grep -q '! managed_result_channel_active.*HARNESS_LEASE_OWNER' <<<"$PROVIDER_SECTION"
 grep -q 'write_managed_provider_session "\$provider_session_id"' <<<"$PROVIDER_SECTION"
 grep -q 'write_managed_provider_session "\$live_session"' <<<"$PROVIDER_SECTION"
+grep -q 'configure_managed_bundle_runtime' <<<"$PROVIDER_SECTION"
+grep -q 'unset HARNESS_CALLBACK_TOKEN HARNESS_CALLBACK_URL' <<<"$MANAGED_SECTION"
+grep -q 'export BRAIN_TASK_BUNDLE_SHA256=' <<<"$MANAGED_SECTION"
+
+# The legacy proposer transport effect writes /workspace/.brain-result.json.
+# Managed mode must skip that function completely.
+grep -A6 'if ! managed_result_channel_active; then' <<<"$PROVIDER_SECTION" \
+  | grep -q 'finalize_proposer_output'
 
 # Once provider execution returns, managed mode exits before callback body/URL,
 # callback token, retry loop, or any legacy callback HTTP can be evaluated.

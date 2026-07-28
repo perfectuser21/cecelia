@@ -193,6 +193,79 @@ validate_managed_result_channel() {
     || return 1
 }
 
+configure_managed_bundle_runtime() {
+  local role=""
+  local expected_output=""
+  local sprint_dir=""
+  local contract_round=""
+  local propose_branch=""
+  local contract_branch=""
+  local pr_branch=""
+  local pr_head_sha=""
+  local bundle_sha256=""
+
+  bundle_sha256="$(sha256sum "$HARNESS_TASK_BUNDLE_FILE" | awk '{print $1}')" || return 1
+  [[ "$bundle_sha256" =~ ^[a-f0-9]{64}$ ]] || return 1
+  export BRAIN_TASK_BUNDLE_SHA256="$bundle_sha256"
+
+  role="$(jq -er '.task_bundle.role | strings' "$HARNESS_TASK_BUNDLE_FILE")" \
+    || return 1
+  expected_output="$(jq -er '.task_bundle.expected_output' "$HARNESS_TASK_BUNDLE_FILE")" \
+    || return 1
+  if [[ "$expected_output" == "harness-result/canary-v1" ]]; then
+    jq -e '
+      .task_bundle.role == "reporter"
+      and .task_bundle.skill == null
+    ' "$HARNESS_TASK_BUNDLE_FILE" >/dev/null || return 1
+    export HARNESS_CANARY=true
+  else
+    [[ "$role" =~ ^(planner|proposer|reviewer|generator|evaluator|reporter)$ ]] || return 1
+    [[ "$expected_output" == "harness-result/${role}-v1" ]] || return 1
+    jq -e '.task_bundle.skill != null' "$HARNESS_TASK_BUNDLE_FILE" >/dev/null || return 1
+    export HARNESS_CANARY=false
+  fi
+
+  # Local and Fleet transports expose the same role runtime contract. Values
+  # come only from the frozen TaskBundle; provider output and ambient caller
+  # variables cannot choose branches, SHAs, or artifact roots.
+  sprint_dir="$(jq -er '.task_bundle.inputs.sprint_dir | strings' "$HARNESS_TASK_BUNDLE_FILE")" \
+    || return 1
+  [[ -n "$sprint_dir" && "$sprint_dir" != *$'\n'* && "$sprint_dir" != *$'\r'* ]] || return 1
+  contract_round="$(jq -r '.task_bundle.inputs.contract_round // empty' "$HARNESS_TASK_BUNDLE_FILE")" \
+    || return 1
+  propose_branch="$(jq -r '.task_bundle.inputs.propose_branch // empty' "$HARNESS_TASK_BUNDLE_FILE")" \
+    || return 1
+  contract_branch="$(jq -r '.task_bundle.inputs.contract_branch // empty' "$HARNESS_TASK_BUNDLE_FILE")" \
+    || return 1
+  pr_branch="$(jq -r '.task_bundle.inputs.pr_branch // empty' "$HARNESS_TASK_BUNDLE_FILE")" \
+    || return 1
+  pr_head_sha="$(jq -r '.task_bundle.inputs.pr_head_sha // empty' "$HARNESS_TASK_BUNDLE_FILE")" \
+    || return 1
+
+  local derived
+  for derived in "$contract_round" "$propose_branch" "$contract_branch" "$pr_branch" "$pr_head_sha"; do
+    [[ "$derived" != *$'\n'* && "$derived" != *$'\r'* ]] || return 1
+  done
+  [[ -z "$contract_round" || "$contract_round" =~ ^[0-9]+$ ]] || return 1
+  [[ -z "$pr_head_sha" || "$pr_head_sha" =~ ^[a-f0-9]{40}$ ]] || return 1
+
+  unset PROPOSE_ROUND PROPOSE_BRANCH CONTRACT_BRANCH PR_BRANCH PR_HEAD_SHA
+  export SPRINT_DIR="$sprint_dir"
+  export WORKSPACE_PATH=/workspace
+  [[ -z "$contract_round" ]] || export PROPOSE_ROUND="$contract_round"
+  [[ -z "$propose_branch" ]] || export PROPOSE_BRANCH="$propose_branch"
+  [[ -z "$contract_branch" ]] || export CONTRACT_BRANCH="$contract_branch"
+  if [[ "$role" == "evaluator" ]]; then
+    [[ -z "$pr_branch" ]] || export PR_BRANCH="$pr_branch"
+    [[ -z "$pr_head_sha" ]] || export PR_HEAD_SHA="$pr_head_sha"
+  fi
+
+  # Managed transport owns no callback capability. Remove any inherited legacy
+  # secret/URL before spawning the provider; the parent shell retains only the
+  # immutable file-channel authority.
+  unset HARNESS_CALLBACK_TOKEN HARNESS_CALLBACK_URL
+}
+
 finalize_managed_result() {
   local provider_result_file="$1"
   local expected="/tmp/harness-result-${HARNESS_ATTEMPT_ID}.normalized.json"
@@ -627,15 +700,22 @@ run_provider_contract() {
   fi
   if managed_result_channel_active; then
     umask 077
+    if ! configure_managed_bundle_runtime; then
+      echo "[entrypoint] invalid managed TaskBundle runtime authority" >&2
+      return 1
+    fi
   fi
 
   if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
     jq -n \
       --arg attempt "$HARNESS_ATTEMPT_ID" \
       --arg provider "$provider" \
-      --arg credential_ref "${CECELIA_CREDENTIAL_REF:-}" \
-      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"CredentialEnvelope rejected",artifacts:[],checks:[],decision:null,error:{code:"credential_envelope_invalid",message:"runner rejected the bounded credential envelope"},provider_metadata:{provider:$provider,session_id:null,credential_ref:$credential_ref,credential_copy_mutated:false}}' \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"CredentialEnvelope rejected",artifacts:[],checks:[],decision:null,error:{code:"credential_envelope_invalid",message:"runner rejected the bounded credential envelope"},provider_metadata:{provider:$provider,session_id:null}}' \
       > "$NORMALIZED_RESULT_FILE"
+    if managed_result_channel_active; then
+      unset CECELIA_CREDENTIAL_REF BRAIN_CREDENTIAL_COPY_MUTATED
+      finalize_managed_result "$NORMALIZED_RESULT_FILE" || return 1
+    fi
     return 1
   fi
   if [[ "$provider" == "codex" ]]; then
@@ -878,6 +958,12 @@ run_provider_contract() {
   if [[ "$provider" == "codex" ]]; then
     record_codex_credential_mutation
   fi
+  export BRAIN_PROVIDER_SESSION_ID="$provider_session_id"
+  if [[ -n "$CREDENTIAL_REF" ]]; then
+    export BRAIN_CREDENTIAL_COPY_MUTATED="$CREDENTIAL_COPY_MUTATED"
+  else
+    unset BRAIN_CREDENTIAL_COPY_MUTATED
+  fi
 
   local provider_success=false
   if [[ $provider_exit -eq 0 ]]; then
@@ -890,9 +976,11 @@ run_provider_contract() {
     fi
   fi
   if [[ "$provider_success" == "true" ]]; then
-    finalize_proposer_output || {
-      echo "[entrypoint] proposer finalizer did not establish remote branch; Kernel no-push detector remains authoritative" >&2
-    }
+    if ! managed_result_channel_active; then
+      finalize_proposer_output || {
+        echo "[entrypoint] proposer finalizer did not establish remote branch; Kernel no-push detector remains authoritative" >&2
+      }
+    fi
     normalize_provider_success \
       "$task_bundle_file" \
       "$result_file" \

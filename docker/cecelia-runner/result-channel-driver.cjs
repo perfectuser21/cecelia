@@ -17,6 +17,8 @@ const execFileAsync = promisify(execFile);
 const CHANNEL_VERSION = 'attempt-result-file/v1';
 const RUNTIME_ROOT = '/tmp/cecelia-prompts';
 const MAX_BYTES = 1024 * 1024;
+const MAX_EVIDENCE_BYTES = 16 * 1024 * 1024;
+const MAX_EVIDENCE_FILES = 4096;
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const ROLE_VALUES = new Set([
@@ -126,17 +128,20 @@ function assertExactKeys(value, keys, label) {
 }
 
 function readBoundedJson(file, maxBytes, label, { allowEmpty = false } = {}) {
-  let descriptor;
+  let fd;
+  let bytes;
   try {
-    descriptor = fs.lstatSync(file);
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const descriptor = fs.fstatSync(fd);
+    if (!descriptor.isFile()) invalid(`${label} must be a regular file`);
+    if (descriptor.size > maxBytes) invalid(`${label} exceeds byte limit`);
+    bytes = fs.readFileSync(fd);
   } catch (error) {
-    invalid(`${label} is unavailable: ${error.code ?? error.message}`);
+    if (String(error?.message ?? '').startsWith('result_channel_driver:')) throw error;
+    invalid(`${label} cannot be read safely: ${error.code ?? error.message}`);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
-  if (!descriptor.isFile() || descriptor.isSymbolicLink()) {
-    invalid(`${label} must be a regular file`);
-  }
-  if (descriptor.size > maxBytes) invalid(`${label} exceeds byte limit`);
-  const bytes = fs.readFileSync(file);
   if (bytes.length === 0 && allowEmpty) return null;
   let text;
   try {
@@ -148,6 +153,43 @@ function readBoundedJson(file, maxBytes, label, { allowEmpty = false } = {}) {
     return JSON.parse(text);
   } catch {
     invalid(`${label} is not valid JSON`);
+  }
+}
+
+function readPinnedBundle(binding) {
+  let fd;
+  try {
+    fd = fs.openSync(
+      binding.bundleFile,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    const descriptor = fs.fstatSync(fd);
+    if (
+      !descriptor.isFile()
+      || (descriptor.mode & 0o777) !== 0o600
+      || descriptor.size > MAX_BYTES
+    ) {
+      invalid('TaskBundle file must be a bounded 0600 regular file');
+    }
+    const bytes = fs.readFileSync(fd);
+    const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+    if (digest !== binding.bundleSha256) invalid('TaskBundle digest mismatch');
+    let text;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      invalid('TaskBundle file is not valid UTF-8');
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      invalid('TaskBundle file is not valid JSON');
+    }
+  } catch (error) {
+    if (String(error?.message ?? '').startsWith('result_channel_driver:')) throw error;
+    invalid(`TaskBundle file cannot be read safely: ${error.code ?? error.message}`);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
 }
 
@@ -246,8 +288,30 @@ function validateManagedContext(
     { max: 4096 },
   );
   if (!path.isAbsolute(bundleFile)) invalid('HARNESS_TASK_BUNDLE_FILE must be absolute');
+  let bundleDescriptor;
+  try {
+    bundleDescriptor = fs.lstatSync(bundleFile);
+  } catch (error) {
+    invalid(`TaskBundle file is unavailable: ${error.code ?? error.message}`);
+  }
+  if (
+    !bundleDescriptor.isFile()
+    || bundleDescriptor.isSymbolicLink()
+    || (bundleDescriptor.mode & 0o777) !== 0o600
+    || bundleDescriptor.size > MAX_BYTES
+  ) {
+    invalid('TaskBundle file must be a bounded 0600 regular file');
+  }
   const workspacePath = boundedString(env.WORKTREE_PATH, 'WORKTREE_PATH', { max: 4096 });
   if (!path.isAbsolute(workspacePath)) invalid('WORKTREE_PATH must be absolute');
+  const readOnly = env.HARNESS_READ_ONLY;
+  if (!['true', 'false'].includes(readOnly)) invalid('HARNESS_READ_ONLY is invalid');
+  const bundleSha256 = boundedString(
+    env.BRAIN_TASK_BUNDLE_SHA256,
+    'BRAIN_TASK_BUNDLE_SHA256',
+    { max: 64 },
+  );
+  if (!/^[a-f0-9]{64}$/.test(bundleSha256)) invalid('TaskBundle digest is invalid');
   let resultDescriptor;
   try {
     resultDescriptor = fs.lstatSync(expectedResultFile);
@@ -271,7 +335,9 @@ function validateManagedContext(
     sessionFile: `${RUNTIME_ROOT}/${attemptId}.session.json`,
     maxBytes,
     bundleFile,
+    bundleSha256,
     workspacePath,
+    readOnly: readOnly === 'true',
   };
 }
 
@@ -304,6 +370,31 @@ function validateBundleEnvelope(envelope, binding) {
   object(bundle.inputs, 'TaskBundle.inputs');
   if (bundle.inputs.task_id !== binding.taskId) invalid('TaskBundle task binding mismatch');
   object(bundle.constraints, 'TaskBundle.constraints');
+  if (typeof bundle.constraints.read_only !== 'boolean') {
+    invalid('TaskBundle read-only authority is invalid');
+  }
+  if (bundle.constraints.read_only !== binding.readOnly) {
+    invalid('TaskBundle read-only authority mismatch');
+  }
+  const workspace = exact(
+    bundle.inputs.workspace_spec,
+    ['repo', 'base_sha', 'branch', 'expected_head_sha', 'mode', 'run_id', 'attempt_id'],
+    [],
+    'TaskBundle workspace authority',
+  );
+  if (workspace.repo !== 'perfectuser21/cecelia') {
+    invalid('TaskBundle workspace repo authority mismatch');
+  }
+  gitSha(workspace.base_sha, 'TaskBundle workspace base SHA');
+  boundedString(workspace.branch, 'TaskBundle workspace branch', { max: 255 });
+  if (workspace.expected_head_sha !== null) {
+    gitSha(workspace.expected_head_sha, 'TaskBundle workspace expected HEAD');
+  }
+  if (workspace.run_id !== binding.runId || workspace.attempt_id !== binding.attemptId) {
+    invalid('TaskBundle workspace execution binding mismatch');
+  }
+  const expectedMode = binding.readOnly ? 'read-only' : 'read-write';
+  if (workspace.mode !== expectedMode) invalid('TaskBundle workspace mode mismatch');
   const channel = exact(
     bundle.result_channel,
     ['version', 'path', 'max_bytes', 'bindings'],
@@ -338,25 +429,46 @@ function validateBundleEnvelope(envelope, binding) {
   return { bundle, isCanary };
 }
 
-function validateProviderMetadata(value) {
-  const allowed = [
-    'provider',
-    'session_id',
-    'credential_ref',
-    'credential_copy_mutated',
-    'machine_id',
-    'machine_attestation',
-    'pr_head_sha',
-  ];
-  exact(value, ['provider'], allowed.slice(1), 'provider result metadata');
-  boundedString(value.provider, 'provider result provider', { max: 64 });
-  if (Object.hasOwn(value, 'session_id') && value.session_id !== null) {
-    boundedString(value.session_id, 'provider result session_id', { max: 512 });
+function validateProviderMetadata(value, env) {
+  const expectedProvider = boundedString(
+    env.CECELIA_EXECUTOR,
+    'CECELIA_EXECUTOR',
+    { max: 64 },
+  );
+  if (!['claude', 'codex', 'grok'].includes(expectedProvider)) {
+    invalid('provider runtime authority is invalid');
+  }
+  const expectedSession = env.BRAIN_PROVIDER_SESSION_ID || null;
+  if (expectedSession !== null) {
+    boundedString(expectedSession, 'BRAIN_PROVIDER_SESSION_ID', { max: 512 });
+  }
+  const credentialRef = UUID_PATTERN.test(env.CECELIA_CREDENTIAL_REF ?? '')
+    ? env.CECELIA_CREDENTIAL_REF
+    : null;
+  const expectedKeys = ['provider', 'session_id'];
+  if (credentialRef !== null) {
+    expectedKeys.push('credential_ref', 'credential_copy_mutated');
+  }
+  assertExactKeys(value, expectedKeys, 'provider result metadata');
+  if (value.provider !== expectedProvider || value.session_id !== expectedSession) {
+    invalid('provider result runtime authority mismatch');
+  }
+  if (credentialRef !== null) {
+    if (value.credential_ref !== credentialRef) {
+      invalid('provider result credential authority mismatch');
+    }
+    const mutation = env.BRAIN_CREDENTIAL_COPY_MUTATED;
+    if (!['true', 'false'].includes(mutation)) {
+      invalid('credential mutation runtime authority is invalid');
+    }
+    if (value.credential_copy_mutated !== (mutation === 'true')) {
+      invalid('provider result credential mutation mismatch');
+    }
   }
   return value;
 }
 
-function validateProviderResult(value, binding) {
+function validateProviderResult(value, binding, env) {
   exact(value, [
     'contract_version',
     'attempt_id',
@@ -378,9 +490,16 @@ function validateProviderResult(value, binding) {
   if (!Array.isArray(value.checks) || value.checks.length > 256) {
     invalid('provider result checks must be a bounded array');
   }
-  if (value.decision !== null) object(value.decision, 'provider result decision');
+  if (value.decision !== null) {
+    exact(value.decision, ['outcome', 'reason'], [], 'provider result decision');
+    boundedString(value.decision.outcome, 'provider result decision outcome', { max: 4096 });
+    boundedString(value.decision.reason, 'provider result decision reason', {
+      min: 0,
+      max: 8192,
+    });
+  }
   if (value.error !== null) object(value.error, 'provider result error');
-  validateProviderMetadata(value.provider_metadata);
+  validateProviderMetadata(value.provider_metadata, env);
   canonicalJson(value);
   return value;
 }
@@ -393,40 +512,87 @@ function safeWorkspacePath(workspacePath, relative, label) {
   return { relative: parsed, absolute: resolved };
 }
 
+function realWorkspaceDescendant(workspacePath, absolute, label) {
+  let root;
+  let target;
+  try {
+    root = fs.realpathSync(workspacePath);
+    target = fs.realpathSync(absolute);
+  } catch (error) {
+    invalid(`${label} is unavailable: ${error.code ?? error.message}`);
+  }
+  if (!target.startsWith(`${root}${path.sep}`)) {
+    invalid(`${label} escapes workspace through a symbolic link`);
+  }
+  return target;
+}
+
+function readRegularFileNoFollow(absolute, maxBytes, label) {
+  let fd;
+  try {
+    fd = fs.openSync(absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const descriptor = fs.fstatSync(fd);
+    if (!descriptor.isFile()) invalid(`${label} must be a regular file`);
+    if (descriptor.size > maxBytes) invalid(`${label} exceeds evidence byte limit`);
+    return { bytes: fs.readFileSync(fd), size: descriptor.size };
+  } catch (error) {
+    if (String(error?.message ?? '').startsWith('result_channel_driver:')) throw error;
+    invalid(`${label} cannot be read safely: ${error.code ?? error.message}`);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 function hashFile(workspacePath, relative, label) {
   const resolved = safeWorkspacePath(workspacePath, relative, label);
-  const descriptor = fs.lstatSync(resolved.absolute);
-  if (!descriptor.isFile() || descriptor.isSymbolicLink()) {
-    invalid(`${label} must be a regular file`);
-  }
-  const digest = crypto.createHash('sha256').update(fs.readFileSync(resolved.absolute)).digest('hex');
+  const real = realWorkspaceDescendant(workspacePath, resolved.absolute, label);
+  const expectedReal = path.resolve(fs.realpathSync(workspacePath), resolved.relative);
+  if (real !== expectedReal) invalid(`${label} must not use symbolic links`);
+  const { bytes } = readRegularFileNoFollow(real, MAX_EVIDENCE_BYTES, label);
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
   return { path: resolved.relative, sha256: `sha256:${digest}` };
 }
 
 function hashDirectory(workspacePath, relative, label) {
   const resolved = safeWorkspacePath(workspacePath, relative, label);
-  const rootDescriptor = fs.lstatSync(resolved.absolute);
+  const realRoot = realWorkspaceDescendant(workspacePath, resolved.absolute, label);
+  const expectedReal = path.resolve(fs.realpathSync(workspacePath), resolved.relative);
+  if (realRoot !== expectedReal) invalid(`${label} must not use symbolic links`);
+  const rootDescriptor = fs.lstatSync(realRoot);
   if (!rootDescriptor.isDirectory() || rootDescriptor.isSymbolicLink()) {
     invalid(`${label} must be a directory`);
   }
   const entries = [];
+  let totalBytes = 0;
+  let totalFiles = 0;
   const visit = (directory, prefix) => {
     for (const name of fs.readdirSync(directory).sort()) {
       const absolute = path.join(directory, name);
       const child = fs.lstatSync(absolute);
       const childRelative = prefix ? `${prefix}/${name}` : name;
       if (child.isSymbolicLink()) invalid(`${label} contains a symbolic link`);
+      const realChild = realWorkspaceDescendant(workspacePath, absolute, label);
+      if (realChild !== absolute) invalid(`${label} contains a symbolic link`);
       if (child.isDirectory()) {
-        visit(absolute, childRelative);
+        visit(realChild, childRelative);
       } else if (child.isFile()) {
-        const digest = crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
+        totalFiles += 1;
+        const file = readRegularFileNoFollow(realChild, MAX_EVIDENCE_BYTES, label);
+        totalBytes += file.size;
+        if (
+          totalFiles > MAX_EVIDENCE_FILES
+          || totalBytes > MAX_EVIDENCE_BYTES
+        ) {
+          invalid(`${label} exceeds evidence byte limit`);
+        }
+        const digest = crypto.createHash('sha256').update(file.bytes).digest('hex');
         entries.push(`${childRelative}\0${digest}\0`);
       } else {
         invalid(`${label} contains a non-regular entry`);
       }
     }
   };
-  visit(resolved.absolute, '');
+  visit(realRoot, '');
   const digest = crypto.createHash('sha256').update(entries.join('')).digest('hex');
   return { path: resolved.relative, sha256: `sha256:${digest}` };
 }
@@ -452,7 +618,11 @@ async function localAndRemoteGit(deps, workspacePath, branch, expectedSha = null
     invalid('workspace HEAD authority mismatch');
   }
   const remote = String(
-    await deps.git(workspacePath, ['ls-remote', 'origin', `refs/heads/${branch}`]),
+    await deps.git(workspacePath, [
+      'ls-remote',
+      'https://github.com/perfectuser21/cecelia.git',
+      `refs/heads/${branch}`,
+    ]),
   ).trim();
   const remoteLines = remote.split('\n').filter(Boolean);
   if (
@@ -462,6 +632,21 @@ async function localAndRemoteGit(deps, workspacePath, branch, expectedSha = null
     invalid('remote branch authority mismatch');
   }
   return localSha;
+}
+
+async function validateWorkspaceOrigin(bundle, deps, workspacePath) {
+  if (bundle.inputs.workspace_spec?.repo !== 'perfectuser21/cecelia') {
+    invalid('workspace repo authority mismatch');
+  }
+  const origin = String(
+    await deps.git(workspacePath, ['remote', 'get-url', 'origin']),
+  ).trim();
+  if (![
+    'https://github.com/perfectuser21/cecelia.git',
+    'git@github.com:perfectuser21/cecelia.git',
+  ].includes(origin)) {
+    invalid('workspace origin authority mismatch');
+  }
 }
 
 function normalizePullRequest(value, allowedStates) {
@@ -474,6 +659,16 @@ function normalizePullRequest(value, allowedStates) {
   webUrl(value.url, 'pull request authority url');
   if (!Number.isInteger(value.number) || value.number < 1) {
     invalid('pull request authority number is invalid');
+  }
+  const parsedUrl = new URL(value.url);
+  if (
+    parsedUrl.protocol !== 'https:'
+    || parsedUrl.hostname !== 'github.com'
+    || parsedUrl.pathname !== `/perfectuser21/cecelia/pull/${value.number}`
+    || parsedUrl.search
+    || parsedUrl.hash
+  ) {
+    invalid('pull request repo authority mismatch');
   }
   boundedString(value.head_ref, 'pull request authority head_ref', { max: 255 });
   gitSha(value.head_sha, 'pull request authority head_sha');
@@ -630,9 +825,9 @@ function validateRubric(value) {
   return value;
 }
 
-function assertFrozenPullRequest(observed, frozen) {
-  const expected = normalizePullRequest(frozen, ['OPEN']);
-  const actual = normalizePullRequest(observed, ['OPEN']);
+function assertFrozenPullRequest(observed, frozen, allowedStates = ['OPEN']) {
+  const expected = normalizePullRequest(frozen, allowedStates);
+  const actual = normalizePullRequest(observed, allowedStates);
   if (canonicalJson(actual) !== canonicalJson(expected)) {
     invalid('pull request differs from frozen TaskBundle authority');
   }
@@ -650,6 +845,7 @@ async function buildVerifierEnvelope({
   object(rawEnvelope, 'raw result');
   const inputs = object(bundle.inputs, 'TaskBundle.inputs');
   const deps = resolveDependencies(injectedDeps, env);
+  await validateWorkspaceOrigin(bundle, deps, workspacePath);
   const sprintDir = relativePath(inputs.sprint_dir, 'TaskBundle.inputs.sprint_dir');
   const taskId = boundedString(inputs.task_id, 'TaskBundle.inputs.task_id', { max: 128 });
 
@@ -727,8 +923,15 @@ async function buildVerifierEnvelope({
 
   if (bundle.role === 'generator') {
     const observed = await deps.inspectPullRequest(rawEnvelope.pr_url);
+    const pullRequest = normalizePullRequest(observed, ['OPEN']);
+    await localAndRemoteGit(
+      deps,
+      workspacePath,
+      pullRequest.head_ref,
+      pullRequest.head_sha,
+    );
     return {
-      pull_request: normalizePullRequest(observed, ['OPEN']),
+      pull_request: pullRequest,
     };
   }
 
@@ -736,6 +939,12 @@ async function buildVerifierEnvelope({
     const contractSha = gitSha(inputs.contract_sha, 'evaluator frozen contract SHA');
     const observedPr = await deps.inspectPullRequest(inputs.pull_request?.url);
     const pullRequest = assertFrozenPullRequest(observedPr, inputs.pull_request);
+    await localAndRemoteGit(
+      deps,
+      workspacePath,
+      pullRequest.head_ref,
+      pullRequest.head_sha,
+    );
     const claimed = Array.isArray(rawEnvelope.behavior_tests)
       ? rawEnvelope.behavior_tests
       : [];
@@ -777,8 +986,16 @@ async function buildVerifierEnvelope({
   }
 
   if (bundle.role === 'reporter') {
-    const observedPr = await deps.inspectPullRequest(rawEnvelope.pr_url);
-    const pullRequest = normalizePullRequest(observedPr, ['OPEN', 'MERGED']);
+    const frozenPr = normalizePullRequest(inputs.pull_request, ['OPEN', 'MERGED']);
+    if (rawEnvelope.pr_url !== frozenPr.url) {
+      invalid('reporter pull request claim differs from frozen authority');
+    }
+    const observedPr = await deps.inspectPullRequest(frozenPr.url);
+    const pullRequest = assertFrozenPullRequest(
+      observedPr,
+      frozenPr,
+      ['OPEN', 'MERGED'],
+    );
     const reportPath = relativePath(rawEnvelope.report_path, 'reporter report path');
     if (!reportPath.startsWith(`${sprintDir}/`)) invalid('reporter report path authority mismatch');
     const learningCount = await deps.readLearningCount(taskId);
@@ -815,21 +1032,27 @@ function validatePassThroughResult(providerResult, { isCanary }) {
   if (SUCCESS_STATUSES.has(providerResult.status) && !isCanary) {
     invalid('successful role result requires raw verification');
   }
-  if (isCanary && providerResult.status === 'completed') {
+  if (isCanary && SUCCESS_STATUSES.has(providerResult.status)) {
     if (
-      providerResult.decision?.outcome !== 'CANARY_OK'
+      providerResult.status !== 'completed'
+      || providerResult.decision?.outcome !== 'CANARY_OK'
       || providerResult.error !== null
     ) {
       invalid('successful canary proof is invalid');
     }
-  } else if (providerResult.decision !== null) {
-    invalid('non-success pass-through decision must be null');
+  } else if (
+    !isCanary
+    && ['failed', 'cancelled'].includes(providerResult.status)
+    && providerResult.decision !== null
+  ) {
+    invalid('runner failure pass-through decision must be null');
   }
   return JSON.parse(canonicalJson(providerResult));
 }
 
 function writeSessionHandoff(binding, providerResult) {
   const metadata = providerResult.provider_metadata;
+  if (metadata.session_id == null) return;
   const handoff = {
     contract_version: 'provider-session/v1',
     attempt_id: binding.attemptId,
@@ -846,7 +1069,7 @@ function writeManagedSession({
   sessionId,
 }) {
   const binding = validateManagedContext(env, null, { requireProviderResult: false });
-  const bundleEnvelope = readBoundedJson(binding.bundleFile, MAX_BYTES, 'TaskBundle file');
+  const bundleEnvelope = readPinnedBundle(binding);
   validateBundleEnvelope(bundleEnvelope, binding);
   const expectedProvider = boundedString(
     env.CECELIA_EXECUTOR ?? provider,
@@ -872,11 +1095,12 @@ async function finalizeManagedResult({
   deps,
 }) {
   const binding = validateManagedContext(env, providerResultPath);
-  const bundleEnvelope = readBoundedJson(binding.bundleFile, MAX_BYTES, 'TaskBundle file');
+  const bundleEnvelope = readPinnedBundle(binding);
   const { bundle, isCanary } = validateBundleEnvelope(bundleEnvelope, binding);
   const providerResult = validateProviderResult(
     readBoundedJson(providerResultPath, binding.maxBytes, 'provider result file'),
     binding,
+    env,
   );
   let result;
   if (!SUCCESS_STATUSES.has(providerResult.status) || isCanary) {
