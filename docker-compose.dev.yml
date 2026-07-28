@@ -17,6 +17,7 @@ services:
     working_dir: /app
     volumes:
       - ./packages/brain:/app
+      - ./node_modules:/node_modules:ro  # npm workspaces 提升依赖(含dotenv)到根，需只读挂载
     env_file:
       - .env.docker
     environment:
@@ -31,7 +32,7 @@ services:
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
-    command: sh -c "apk add --no-cache curl bash procps && (test -d node_modules || npm install --production --legacy-peer-deps) && node server.js"
+    command: sh -c "apk add --no-cache curl bash procps && (test -f /node_modules/dotenv/package.json || npm install --production --legacy-peer-deps) && node server.js"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5220/api/brain/health"]
       interval: 30s
