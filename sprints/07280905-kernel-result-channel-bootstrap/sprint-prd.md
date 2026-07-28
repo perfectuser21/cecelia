@@ -27,15 +27,17 @@ Worker 重启时，结果证据必须保留并可重放；只有收到与 Attemp
    `task_bundle` 的 task/run/attempt/role/lease/session/contract/PR/skill 绑定一致。
 5. terminal result 与 receipt 同一条持久化写入；相同 digest 重试返回同一 receipt，
    不同 digest 重试返回 409。
-6. Brain ack 必须回读 exact attempt id、digest、receipt id、persisted time。Runner
-   只有验证 ack 后才写 ack marker。
+6. Brain ack 必须回读 exact attempt/run/worker/job/lease/digest/delivery/status，并
+   由 Fleet transport secret 做 domain-separated receipt HMAC。只有 Worker 验签
+   accepted/deduped receipt 后才允许清理。
 7. callback 失败时 Worker 删除已退出容器但保留 runtime/workspace/state，进入
    `callback_pending`；Worker 重启后使用节点 transport 身份和 mode 0600 的受限
    replay envelope 重试，不持久化 per-Attempt callback token。
 8. receipt 验证成功后 container/runtime/workspace/state 恰好一次清理。
 9. Claude、Codex、Grok 使用相同 result-channel 协议；legacy 非 Kernel 路径保持兼容。
-10. per-Attempt callback token 不得进入 Docker inspectable env；Runner 从 mode 0600
-    一次性 secret file 读入内存并立即删除。跨重启重放由 Worker transport 身份签名。
+10. Fleet launch 与 Docker env/state 不再携带 per-Attempt callback token。Callback
+    与 heartbeat 由 Worker 使用 file-backed 节点 transport 身份签名；provider
+    只写 result/session 文件，永远看不到节点 secret。
 11. migration history 必须从空库可复现：forward-only migration 放宽
     `harness_attempts.execution_transport` CHECK 以接受 `fleet-worker`，不得依赖生产手改。
 

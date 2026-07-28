@@ -9,7 +9,7 @@
 - [ ] Callback 使用 DB/TaskBundle 权威绑定并原子落 terminal result + receipt。
 - [ ] 同 digest 幂等；conflicting digest 409；ack 含 exact receipt readback。
 - [ ] callback 未 ack 时进入 durable `callback_pending`，重启可重放。
-- [ ] per-Attempt token 不落 Docker env/state；Worker 用节点 transport 身份重放。
+- [ ] Fleet launch/Docker/state 无 per-Attempt token；Worker 独占节点身份做 heartbeat/callback。
 - [ ] ack 前不得删除 runtime/workspace/state；ack 后恰好一次清理。
 - [ ] provider-neutral 与 legacy compatibility 回归通过。
 - [ ] forward-only migration 让 fresh schema 合法写入 `execution_transport='fleet-worker'`。

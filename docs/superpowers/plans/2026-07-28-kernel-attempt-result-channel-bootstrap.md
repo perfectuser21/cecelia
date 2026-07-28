@@ -50,11 +50,14 @@
    mismatch, path escape, symlink/stale file, and oversized result.
 3. Validate the launch request before workspace preparation or credential
    consumption.
-4. Inject `CECELIA_TASK_ID=<true task id>`, `HARNESS_TASK_ID=<true task id>`,
+4. Remove Fleet `callback_token`/`callback_url` from the launch body and Docker
+   environment. The provider container must never receive a callback or Worker
+   transport secret.
+5. Inject `CECELIA_TASK_ID=<true task id>`, `HARNESS_TASK_ID=<true task id>`,
    `BRAIN_RESULT_FILE=<frozen path>` and bounded channel metadata.
-5. Create/freshen the host-side result target mode 0600 without following
+6. Create/freshen the host-side result target mode 0600 without following
    symlinks; keep the existing `/tmp/cecelia-prompts` mount.
-6. Run transport and Fleet Worker focused tests.
+7. Run transport and Fleet Worker focused tests.
 
 ## Task 3: Finalize provider-neutral role output into a replay envelope
 
@@ -85,14 +88,9 @@
    validation; never rely on permissive passthrough or fields stripped by Zod.
    Server/Runner must verify branch, PR, SHA, artifact, judgment-count and test
    claims before upgrading them to observed evidence.
-5. Write a mode-0600 replay envelope in the Attempt runtime before network
-   delivery. Include raw bytes, SHA-256, normalized result and injected bindings.
-6. Read the per-Attempt callback token from a mode-0600 one-shot file, delete the
-   file immediately, and never expose the token through Docker environment or
-   provider child environment.
-7. Parse the Brain response and write the ack marker only when attempt id,
-   digest and receipt id all match.
-8. Keep legacy non-Attempt callback behavior unchanged.
+5. Write the canonical HarnessResult plus provider-session handoff atomically to
+   the Attempt runtime. The provider container performs no Fleet callback.
+6. Keep legacy non-Fleet callback behavior unchanged.
 
 ## Task 4: Persist a durable, idempotent Brain receipt
 
@@ -134,24 +132,31 @@
 
 - Modify: `packages/brain/scripts/fleet-worker/attempt-runner.cjs`
 - Modify: `packages/brain/scripts/fleet-worker/attempt-runner.test.cjs`
+- Add: `packages/brain/scripts/fleet-worker/callback-auth.cjs`
+- Add: `packages/brain/scripts/fleet-worker/callback-auth.test.cjs`
+- Add: `packages/brain/src/orchestrator/fleet-callback-auth.js`
+- Modify: `packages/brain/scripts/fleet-worker/fleet-worker.cjs`
+- Modify: `packages/brain/scripts/fleet-worker/fleet-worker.test.js`
 
 **Steps:**
 
 1. Add failing tests that an exited container without an ack removes only the
    container and retains runtime/workspace/state as `callback_pending`.
-2. Persist the callback URL and immutable result-channel descriptor, but never
-   the per-Attempt callback token. The protected Fleet transport token remains
-   file-backed and is injected into the Worker process only.
-3. Add a Worker-signed callback authorization bound to machine, Attempt, lease
-   generation and result digest. Brain verifies it with the existing Fleet
-   transport secret. Add bounded replay of the mode-0600 envelope, validate the
-   exact Brain ack, write the marker atomically, then clean
-   runtime/workspace/state once.
-4. Add restart reconciliation tests for pending replay, same receipt retry,
+2. Persist the immutable result channel and canonical result, but never a
+   per-Attempt or Worker token. The protected Fleet transport token remains
+   file-backed and exists only in the Worker process.
+3. Add domain-separated HMAC for Worker heartbeat/callback and Brain receipt,
+   bound to attempt/run/worker/job/lease generation/result digest/delivery id.
+   The same canonical request replay is deterministic.
+4. Add bounded Worker delivery of the mode-0600 result. Brain verifies the
+   Worker signature and launch-receipt tuple; Worker verifies the signed exact
+   accepted/deduped receipt before cleanup.
+5. Add restart reconciliation tests for pending replay, same receipt retry,
    conflicting ack, missing/corrupt envelope, cancellation and quarantine.
-5. Ensure orphan cleanup treats `callback_pending` as retained and never removes
+6. Ensure orphan cleanup treats `callback_pending` as retained and never removes
    its runtime directory.
-6. Add regression tests proving callback secrets are absent from Docker create
+7. Add regression tests proving callback secrets are absent from launch JSON,
+   Docker create
    argv, durable state, logs and alert payloads.
 
 ## Task 6: Version, regression, independent review and Draft PR
