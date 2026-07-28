@@ -3,7 +3,7 @@
 const { Buffer } = require('node:buffer');
 const { execFile } = require('node:child_process');
 const { createHash } = require('node:crypto');
-const { access, mkdtemp, rm } = require('node:fs/promises');
+const { access, chmod, mkdtemp, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const process = require('node:process');
@@ -224,6 +224,7 @@ async function probeDisposableResources({
   repoRoot,
   runnerImageDigest,
   makeTempDirFn,
+  chmodTempDirFn,
   removeTempDirFn,
 }) {
   let tempRoot = null;
@@ -240,6 +241,7 @@ async function probeDisposableResources({
 
   try {
     tempRoot = await makeTempDirFn();
+    await chmodTempDirFn(tempRoot, 0o755);
     worktreePath = path.join(tempRoot, 'worktree');
     containerName = disposableContainerName(tempRoot);
     worktreeAddAttempted = true;
@@ -423,6 +425,7 @@ async function probeFleetWorkerHealth(options = {}) {
     );
     const makeTempDirFn = options.makeTempDirFn
       ?? (() => mkdtemp(path.join(tmpdir(), 'fleet-node-probe-')));
+    const chmodTempDirFn = options.chmodTempDirFn ?? chmod;
     const removeTempDirFn = options.removeTempDirFn
       ?? ((target) => rm(target, { recursive: true, force: true }));
     const statFn = options.statFn ?? access;
@@ -481,6 +484,7 @@ async function probeFleetWorkerHealth(options = {}) {
         repoRoot,
         runnerImageDigest: commandDigest,
         makeTempDirFn,
+        chmodTempDirFn,
         removeTempDirFn,
       }),
     ]);

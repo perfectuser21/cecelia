@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.111
+**Brain 版本**: 1.267.112
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.112 — Fleet disposable bind-mount traversal hotfix
+
+- node probe 在创建一次性 Git worktree 前把随机临时根目录从 `0700` 收敛为
+  `0755`，让宿主用户域的 OrbStack daemon 可以遍历路径并执行只读 bind mount。
+- 临时目录仍使用不可预测名称，容器挂载仍为 readonly，探针结束仍删除 worktree、
+  容器和临时根目录；不扩大 repository、凭据或 Docker socket 权限。
+- Brain 回退目标：`1.267.111`；节点保持 drain 后再回退。
 
 ## Brain 1.267.111 — Fleet canonical repository safe-path hotfix
 
