@@ -109,6 +109,13 @@ RUN chmod +x /opt/cecelia-skills/*.sh
 COPY raw-result-writer.cjs /usr/local/bin/raw-result-writer.cjs
 RUN chmod 0755 /usr/local/bin/raw-result-writer.cjs
 
+# Runner-owned finalization seam. The driver observes frozen TaskBundle,
+# workspace/Git/PR/Brain read authorities, then calls the pure finalizer.
+COPY result-channel-finalizer.cjs /usr/local/bin/result-channel-finalizer.cjs
+COPY result-channel-driver.cjs /usr/local/bin/result-channel-driver.cjs
+RUN chmod 0755 /usr/local/bin/result-channel-finalizer.cjs \
+  && chmod 0755 /usr/local/bin/result-channel-driver.cjs
+
 # 入口脚本：复制 host-claude-config → 可写副本 + safe.directory + 启动 claude
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \

@@ -34,6 +34,14 @@
   也不允许 Xian 本地长期 Codex credential。
 - 回退：`bash scripts/brain-rollback.sh 1.267.98`；或将 Run 保持/恢复为
   `commander_mode=kernel-only` 立即旁路 Commander。
+## Kernel result authority read surface
+
+- `GET /api/brain/strategic-decisions` 支持按 `source_ref` 精确过滤并回传该
+  binding，Runner 只读回查 reviewer judgment 数量时不再依赖 reason 文本。
+- `GET /api/brain/learnings` 支持按 `task_id` 精确过滤并在每条结果回传
+  `task_id`，Reporter finalizer 可 fail-closed 验证 learning 真实落库数。
+- 两个读取面都只增加可选过滤条件；不带参数的现有调用保持原行为。
+- 回退：`bash scripts/brain-rollback.sh 1.267.98`。
 
 ## Reviewer zero-judgment contract
 

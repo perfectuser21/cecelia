@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.7.0
+version: 9.7.1
 created: 2026-04-08
 updated: 2026-07-28
 changelog:
+  - 9.7.1: Kernel reviewer authority binding — judgment 写入显式携带 `source_ref=TASK_ID`；写后回读改走 strategic-decisions 的 category+source_ref 精确过滤，并校验每条返回 binding，禁止错误的 decision_log `/decisions` 路由把全局噪声计入本 task
   - 9.7.0: Kernel raw result channel — channel version presence 判 managed，显式 result file 统一经 runner-owned raw-result-writer；两者 unset 仍落 /workspace/.brain-result.json；判定点回读通过重跑唯一 writer 更新
   - 9.5.0: 真实链路四硬规则审查（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证，与 proposer 9.10.0 对齐）— Golden Path 覆盖审查新增第 14/15/16/17 条：(14) 设备/agent 调服务端缺「真实调用方请求 shape」段或 DoD 认证字段与生产调用方不逐字段一致 → 打回（规则A）；(15) 第三方 API 全 mock 零真调 → 打回（规则B）；(16) DoD 含 force_*/stub/假数据但无「未覆盖真实链路清单」段 → 打回（规则C）；(17) target_environment 与 ability 真实运行环境不匹配 → 第 7 维 0 分打回（规则D：微信 UI/RPA 必 windows_wechat；Android 通道未落地前真机段必登记未覆盖）；第 6 维领域验证核对清单同步补「真实调用方 shape」「第三方真调」两行
   - 9.6.0: EVA v2 审计五修 — (R1) Step 5 判定点写库后必须回读自证，judgments_written 作为必含字段写进最终 verdict JSON，登记表有行但写入 0 条 → verdict 必带 WARN（a85e0582 实证 3 行登记表全静默漏写）；(R2) Step 4 结果文件路径参数化 RESULT_FILE=${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}，headed/relay 由 controller 注入（gan-7b17211.json 实证）；(R3) Golden Path 覆盖审查新增第 18 条：e2e 脚本/manual:bash 必须 bash -n 通过 + 全角标点紧贴 $VAR 检测，命中即第 6 维低分（issue a638f840 实证）；(R4) 第 6 维口径收紧：PRD 无 HTTP 响应不自动满分，改审等价 oracle codify 与 E2E 真执行断言占比（d063b3e5 实证判例）；(R5) Step 3 明确 gan-feedback-rN.md 与 verdict feedback 字段必须简体中文（r4 全英文反馈实证违规）
@@ -422,7 +423,8 @@ async function writePlanned() {
           category: 'judgment',   // ⚠️ 必须是 category=judgment，禁止改成 type（type 被 Brain API 忽略）
           topic: `判定点: ${jp.replace(/^⚠️\s*/, '')}`,
           decision: `所选方法: ${chosen}｜候选: ${candidates}`,
-          reason: `依据: ${basis}｜误判后果: ${consequence}｜task_id=${SPRINT_ID}`,
+           reason: `依据: ${basis}｜误判后果: ${consequence}｜task_id=${SPRINT_ID}`,
+          source_ref: SPRINT_ID,
           author: 'harness-contract-reviewer',
           made_by: 'cecelia'   // ⚠️ decisions_made_by_check 只允许 user|cecelia|system，'ai' 会被 DB 拒
         })
@@ -439,8 +441,17 @@ writePlanned().then(() => console.log('Step 5 完成：', apis.length, 'API +', 
 **判定点写库回读自证（v9.5 — EVA v2，写完必做）**：不信任「写入成功」的 console.log，必须回读 Brain 真实条数，并把 `judgments_written: N` 更新进最终 verdict JSON（必含字段）：
 
 ```bash
-# 回读本 task 的 judgment 条数（等价查询亦可）
-N=$(curl -s "$BRAIN/api/brain/decisions?category=judgment" | jq "[.[]|select(.reason|contains(\"$TASK_ID\"))] | length")
+# 回读本 task 的 judgment 条数；必须使用 decisions 表的 task binding，禁止从
+# decision_log 审计路由按 reason 文本猜测。
+N=$(curl -sf "$BRAIN/api/brain/strategic-decisions?category=judgment&source_ref=$TASK_ID&limit=10000" \
+  | jq --arg task_id "$TASK_ID" '
+      if .success == true
+         and (.data | type) == "array"
+         and ([.data[] | select(.category != "judgment" or .source_ref != $task_id)] | length) == 0
+      then (.data | length)
+      else error("judgment authority response invalid")
+      end
+    ')
 # 用真实条数重跑 Step 4 的唯一 writer，禁止 jq 就地改 managed 结果文件
 JUDGMENTS_WRITTEN="$N"
 export JUDGMENTS_WRITTEN

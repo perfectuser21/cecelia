@@ -23,7 +23,14 @@ const VALID_STATUSES = ['active', 'executed', 'expired'];
  */
 router.get('/', async (req, res) => {
   try {
-    const { status, category, made_by, author, limit = '100' } = req.query;
+    const {
+      status,
+      category,
+      made_by,
+      author,
+      source_ref,
+      limit = '100',
+    } = req.query;
     const params = [];
     const conditions = ['category IS NOT NULL'];
 
@@ -43,6 +50,10 @@ router.get('/', async (req, res) => {
       params.push(author);
       conditions.push(`author = $${params.length}`);
     }
+    if (source_ref) {
+      params.push(source_ref);
+      conditions.push(`source_ref = $${params.length}`);
+    }
 
     params.push(parseInt(limit, 10) || 100);
     const where = `WHERE ${conditions.join(' AND ')}`;
@@ -50,7 +61,7 @@ router.get('/', async (req, res) => {
     const result = await pool.query(
       `SELECT id, category, topic, decision, reason, status, confidence,
               author, made_by, priority, area, alternatives, decided_at,
-              executed_at, created_at, updated_at
+              executed_at, source_ref, created_at, updated_at
        FROM decisions
        ${where}
        ORDER BY created_at DESC

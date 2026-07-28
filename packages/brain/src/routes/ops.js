@@ -404,6 +404,11 @@ router.get('/learnings', async (req, res) => {
       params.push(req.query.date);
     }
 
+    if (req.query.task_id) {
+      conditions.push(`task_id = $${paramIdx++}`);
+      params.push(req.query.task_id);
+    }
+
     const orderDir = req.query.date ? 'ASC' : 'DESC';
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -415,7 +420,7 @@ router.get('/learnings', async (req, res) => {
 
     params.push(limit, offset);
     const dataResult = await pool.query(
-      `SELECT id, title, content, category, digested, archived, created_at
+      `SELECT id, title, content, category, digested, archived, created_at, task_id
        FROM learnings ${where}
        ORDER BY created_at ${orderDir}
        LIMIT $${paramIdx++} OFFSET $${paramIdx}`,

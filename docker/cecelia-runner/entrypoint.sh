@@ -171,6 +171,44 @@ if [[ "${CECELIA_ENTRYPOINT_TEST:-}" == "1" ]]; then
   exit 0
 fi
 
+# managed-result-channel:start
+# Fleet managed mode is selected only by channel-version presence. Validation is
+# deliberately separate: an empty or unknown present value remains managed and
+# fails closed instead of falling through to the legacy callback transport.
+managed_result_channel_active() {
+  [[ "${BRAIN_RESULT_CHANNEL_VERSION+x}" == "x" ]]
+}
+
+validate_managed_result_channel() {
+  managed_result_channel_active || return 1
+  [[ "${BRAIN_RESULT_CHANNEL_VERSION:-}" == "attempt-result-file/v1" ]] || return 1
+  [[ "${HARNESS_ATTEMPT_ID:-}" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] \
+    || return 1
+  [[ "${BRAIN_RESULT_FILE:-}" == "/tmp/cecelia-prompts/${HARNESS_ATTEMPT_ID}.result.json" ]] \
+    || return 1
+  [[ "${BRAIN_RESULT_MAX_BYTES:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+  (( BRAIN_RESULT_MAX_BYTES <= 1048576 )) || return 1
+  [[ -f "$BRAIN_RESULT_FILE" && ! -L "$BRAIN_RESULT_FILE" ]] || return 1
+  [[ -f "${HARNESS_TASK_BUNDLE_FILE:-}" && ! -L "${HARNESS_TASK_BUNDLE_FILE:-}" ]] \
+    || return 1
+}
+
+finalize_managed_result() {
+  local provider_result_file="$1"
+  local expected="/tmp/harness-result-${HARNESS_ATTEMPT_ID}.normalized.json"
+  [[ "$provider_result_file" == "$expected" ]] || return 1
+  node /usr/local/bin/result-channel-driver.cjs \
+    --provider-result "$provider_result_file"
+}
+
+write_managed_provider_session() {
+  local session_id="$1"
+  [[ -n "$session_id" ]] || return 1
+  node /usr/local/bin/result-channel-driver.cjs \
+    --provider-session "$session_id"
+}
+# managed-result-channel:end
+
 # provider-neutral:start
 # Kernel attempt path. The prompt file is the frozen TaskBundle envelope written by
 # spawnDockerDetached; provider CLIs are only transports and never own workflow state.
@@ -583,6 +621,14 @@ run_provider_contract() {
   local safe_line=""
   local commander_contract=false
 
+  if managed_result_channel_active && ! validate_managed_result_channel; then
+    echo "[entrypoint] invalid managed result channel; provider was not started" >&2
+    return 1
+  fi
+  if managed_result_channel_active; then
+    umask 077
+  fi
+
   if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
     jq -n \
       --arg attempt "$HARNESS_ATTEMPT_ID" \
@@ -631,7 +677,7 @@ run_provider_contract() {
   # established by the exact attempt_id written by the evaluator Skill.
   prepare_evaluator_evidence
 
-  if [[ -n "${HARNESS_LEASE_OWNER:-}" ]]; then
+  if ! managed_result_channel_active && [[ -n "${HARNESS_LEASE_OWNER:-}" ]]; then
     (
       while :; do
         curl -sf -m 10 -X POST \
@@ -734,7 +780,13 @@ run_provider_contract() {
           live_session=$(printf '%s\n' "$safe_line" \
             | jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' 2>/dev/null \
             || true)
-          [[ -z "$live_session" ]] || persist_provider_session "$live_session" || true
+          if [[ -n "$live_session" ]]; then
+            if managed_result_channel_active; then
+              write_managed_provider_session "$live_session" || true
+            else
+              persist_provider_session "$live_session" || true
+            fi
+          fi
         done
     provider_exit=${PIPESTATUS[0]}
     redact_codex_credential_file "$result_file" || provider_exit=1
@@ -753,7 +805,11 @@ run_provider_contract() {
       # deterministic UUID so watchdog can resume even if the container dies mid-run.
       provider_session_id="$HARNESS_ATTEMPT_ID"
       claude_args+=(--session-id "$provider_session_id")
-      persist_provider_session "$provider_session_id" || true
+      if managed_result_channel_active; then
+        write_managed_provider_session "$provider_session_id" || true
+      else
+        persist_provider_session "$provider_session_id" || true
+      fi
     fi
     claude_args+=("${model_args[@]}")
     claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"
@@ -779,7 +835,11 @@ run_provider_contract() {
     else
       provider_session_id="$HARNESS_ATTEMPT_ID"
       grok_args+=(--session-id "$provider_session_id")
-      persist_provider_session "$provider_session_id" || true
+      if managed_result_channel_active; then
+        write_managed_provider_session "$provider_session_id" || true
+      else
+        persist_provider_session "$provider_session_id" || true
+      fi
     fi
     grok_args+=("${model_args[@]}")
     grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 | tee "$STDOUT_FILE"
@@ -802,7 +862,13 @@ run_provider_contract() {
 
   # Persist the session before the terminal callback. If callback delivery fails after
   # the CLI exits, watchdog can still reclaim and resume this exact attempt/session.
-  [[ -z "$provider_session_id" ]] || persist_provider_session "$provider_session_id" || true
+  if [[ -n "$provider_session_id" ]]; then
+    if managed_result_channel_active; then
+      write_managed_provider_session "$provider_session_id" || true
+    else
+      persist_provider_session "$provider_session_id" || true
+    fi
+  fi
 
   if [[ -n "$heartbeat_pid" ]]; then
     kill "$heartbeat_pid" >/dev/null 2>&1 || true
@@ -850,7 +916,11 @@ run_provider_contract() {
       '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
       > "$NORMALIZED_RESULT_FILE"
   fi
-  merge_evaluator_evidence "$NORMALIZED_RESULT_FILE" || true
+  if managed_result_channel_active; then
+    finalize_managed_result "$NORMALIZED_RESULT_FILE" || return 1
+  else
+    merge_evaluator_evidence "$NORMALIZED_RESULT_FILE" || true
+  fi
   return "$provider_exit"
 }
 # provider-neutral:end
@@ -947,6 +1017,11 @@ else
   exit 1
 fi
 set -e
+
+# managed-result-channel:terminal-exit
+if managed_result_channel_active; then
+  exit "$EXIT_CODE"
+fi
 
 if [[ $PROVIDER_CONTRACT -eq 1 ]]; then
   CALLBACK_BODY=$(cat "$NORMALIZED_RESULT_FILE")

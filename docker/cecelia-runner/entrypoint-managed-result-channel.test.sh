@@ -62,12 +62,15 @@ PATH="$FAKE_BIN:$PATH" finalize_managed_result "$NORMALIZED_RESULT_FILE"
 [[ "$(sed -n '1p' "$TRACE_FILE")" == '/usr/local/bin/result-channel-driver.cjs' ]]
 [[ "$(sed -n '2p' "$TRACE_FILE")" == '--provider-result' ]]
 [[ "$(sed -n '3p' "$TRACE_FILE")" == "$NORMALIZED_RESULT_FILE" ]]
+PATH="$FAKE_BIN:$PATH" write_managed_provider_session 'live-session-id'
+[[ "$(sed -n '1p' "$TRACE_FILE")" == '/usr/local/bin/result-channel-driver.cjs' ]]
+[[ "$(sed -n '2p' "$TRACE_FILE")" == '--provider-session' ]]
+[[ "$(sed -n '3p' "$TRACE_FILE")" == 'live-session-id' ]]
 
 PROVIDER_SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
 grep -q 'validate_managed_result_channel' <<<"$PROVIDER_SECTION"
 grep -q 'finalize_managed_result "\$NORMALIZED_RESULT_FILE"' <<<"$PROVIDER_SECTION"
 grep -q '! managed_result_channel_active.*HARNESS_LEASE_OWNER' <<<"$PROVIDER_SECTION"
-grep -q '! managed_result_channel_active.*persist_provider_session' <<<"$PROVIDER_SECTION"
 grep -q 'write_managed_provider_session "\$provider_session_id"' <<<"$PROVIDER_SECTION"
 grep -q 'write_managed_provider_session "\$live_session"' <<<"$PROVIDER_SECTION"
 
