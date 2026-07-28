@@ -90,6 +90,8 @@ const GITHUB_READ_POLICY_FIELDS = new Set([
 const RESULT_CHANNEL_VERSION = 'attempt-result-file/v1';
 const RESULT_CHANNEL_ROOT = '/tmp/cecelia-prompts';
 const RESULT_CHANNEL_MAX_BYTES = 1024 * 1024;
+const GITHUB_READ_AUTHORITY_CONTAINER_PATH =
+  '/tmp/cecelia-prompts/github-read-authority.json';
 const ATTEMPT_STATE_VERSION = 'fleet-attempt-state/v2';
 const DELIVERY_METADATA_FIELDS = Object.freeze([
   'delivery_id',
@@ -1092,6 +1094,71 @@ function freshenResultTarget(attemptRuntime, resultChannel) {
   return resultTarget;
 }
 
+function materializeGithubReadAuthority(attemptRuntime, authority, {
+  attemptId,
+  taskId,
+  runId,
+  role,
+} = {}) {
+  if (authority == null) return null;
+  if (
+    !hasExactFields(authority, [
+      'schema_version',
+      'attempt_id',
+      'task_id',
+      'run_id',
+      'role',
+      'request_sha256',
+      'observed_at',
+      'pull_request',
+      'audit_record_sha256',
+    ])
+    || authority.schema_version !== 'github-read-authority/v1'
+    || authority.attempt_id !== attemptId
+    || authority.task_id !== taskId
+    || authority.run_id !== runId
+    || authority.role !== role
+    || !SHA256_PATTERN.test(authority.request_sha256 ?? '')
+    || !SHA256_PATTERN.test(authority.audit_record_sha256 ?? '')
+    || !isCanonicalTimestamp(authority.observed_at)
+    || !hasExactFields(authority.pull_request, [
+      'type',
+      'url',
+      'number',
+      'head_ref',
+      'head_sha',
+      'state',
+    ])
+  ) {
+    throw new Error('attempt_github_read_authority_invalid');
+  }
+  const encoded = `${canonicalJson(authority)}\n`;
+  if (Buffer.byteLength(encoded, 'utf8') > 65_536) {
+    throw new Error('attempt_github_read_authority_invalid');
+  }
+  const target = path.join(attemptRuntime, 'github-read-authority.json');
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      target,
+      fs.constants.O_WRONLY
+        | fs.constants.O_CREAT
+        | fs.constants.O_EXCL
+        | (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    fs.fchmodSync(descriptor, 0o600);
+    fs.writeSync(descriptor, encoded);
+    fs.fsyncSync(descriptor);
+  } catch (error) {
+    if (error?.message === 'attempt_github_read_authority_invalid') throw error;
+    throw new Error('attempt_github_read_authority_invalid');
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+  return target;
+}
+
 function parseDockerLabels(serialized) {
   const labels = {};
   for (const pair of String(serialized ?? '').split(',')) {
@@ -1220,6 +1287,16 @@ function createDockerAdapter({
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
       freshenResultTarget(attemptRuntime, resultChannel);
+      const githubReadAuthorityFile = materializeGithubReadAuthority(
+        attemptRuntime,
+        input.githubReadAuthority,
+        {
+          attemptId,
+          taskId: input.taskId,
+          runId: input.runId,
+          role: input.role,
+        },
+      );
       const isCanary = isFrozenFleetCanary(input.providerSpec?.stdin, {
         attemptId,
         runId: input.runId,
@@ -1259,6 +1336,9 @@ function createDockerAdapter({
         input.workspaceMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
       const runtimeMount = `type=bind,src=${attemptRuntime},dst=/tmp/cecelia-prompts`;
+      const githubReadAuthorityMount = githubReadAuthorityFile
+        ? `type=bind,src=${githubReadAuthorityFile},dst=${GITHUB_READ_AUTHORITY_CONTAINER_PATH},readonly`
+        : null;
       const workspaceAdminMount = [
         `type=bind,src=${input.workspaceAdminMount.source},dst=${input.workspaceAdminMount.target}`,
         input.workspaceAdminMount.readOnly ? 'readonly' : null,
@@ -1274,6 +1354,9 @@ function createDockerAdapter({
         workspaceAdminMount,
         '--mount',
         runtimeMount,
+        ...(githubReadAuthorityMount
+          ? ['--mount', githubReadAuthorityMount]
+          : []),
         ...(!isCanary
           ? [
               '--tmpfs',
@@ -1300,6 +1383,9 @@ function createDockerAdapter({
           BRAIN_RESULT_FILE: resultChannel.path,
           BRAIN_RESULT_MAX_BYTES: resultChannel.max_bytes,
           BRAIN_RESULT_CHANNEL_VERSION: resultChannel.version,
+          HARNESS_GITHUB_READ_AUTHORITY_FILE: githubReadAuthorityFile
+            ? GITHUB_READ_AUTHORITY_CONTAINER_PATH
+            : undefined,
           CECELIA_CREDENTIAL_FIFO: !isCanary
             ? containerCredentialFifo
             : undefined,

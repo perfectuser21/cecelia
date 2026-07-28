@@ -907,7 +907,9 @@ test('evaluator PASS fails closed when TaskBundle has no verification commands',
 
 test('production Evaluator consumes the Worker authority file and never invokes gh', async (t) => {
   const workspace = fixtureWorkspace();
-  const authorityFile = path.join(workspace, 'github-read-authority.json');
+  const authorityFile = '/tmp/cecelia-prompts/github-read-authority.json';
+  fs.mkdirSync(path.dirname(authorityFile), { recursive: true });
+  fs.rmSync(authorityFile, { force: true });
   const ghMarker = path.join(workspace, 'gh-invoked');
   const fakeBin = path.join(workspace, 'fake-bin');
   fs.mkdirSync(fakeBin);
@@ -946,7 +948,10 @@ test('production Evaluator consumes the Worker authority file and never invokes 
       HARNESS_NODE: 'evaluator',
     },
   });
-  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  t.after(() => {
+    fs.rmSync(workspace, { recursive: true, force: true });
+    fs.rmSync(authorityFile, { force: true });
+  });
 
   assert.deepEqual(value.pull_request, pullRequest());
   assert.equal(fs.existsSync(ghMarker), false);
@@ -980,10 +985,12 @@ test('production Evaluator fails closed on missing or conflicting Worker authori
   };
 
   await assert.rejects(buildVerifierEnvelope(base), /GitHub read authority/);
-  const authorityFile = path.join(workspace, 'github-read-authority.json');
+  const authorityFile = '/tmp/cecelia-prompts/github-read-authority.json';
+  fs.mkdirSync(path.dirname(authorityFile), { recursive: true });
+  fs.rmSync(authorityFile, { force: true });
   fs.writeFileSync(authorityFile, JSON.stringify(githubReadAuthority('evaluator', {
     pull_request: pullRequest({ head_sha: 'f'.repeat(40) }),
-  })));
+  })), { mode: 0o600 });
   await assert.rejects(
     buildVerifierEnvelope({
       ...base,
@@ -994,6 +1001,7 @@ test('production Evaluator fails closed on missing or conflicting Worker authori
     }),
     /pull request differs from frozen TaskBundle authority/,
   );
+  fs.rmSync(authorityFile, { force: true });
   fs.rmSync(workspace, { recursive: true, force: true });
 });
 

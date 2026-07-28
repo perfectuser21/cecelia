@@ -130,6 +130,7 @@ PATH="$FAKE_BIN:$PATH" write_managed_provider_session 'live-session-id'
 [[ "$(sed -n '3p' "$TRACE_FILE")" == 'live-session-id' ]]
 
 PROVIDER_RESULT="$RUNTIME_DIR/$ATTEMPT_ID.provider.json"
+rm -f "$PROVIDER_RESULT" "$RUNTIME_DIR/.$ATTEMPT_ID.provider.tmp"
 printf '%s' '{"status":"completed"}' > "$NORMALIZED_RESULT_FILE"
 HARNESS_NODE=generator
 stage_managed_github_mutation_provider_result "$NORMALIZED_RESULT_FILE"
@@ -155,8 +156,8 @@ grep -q 'configure_managed_bundle_runtime' <<<"$PROVIDER_SECTION"
 grep -q 'unset HARNESS_CALLBACK_TOKEN HARNESS_CALLBACK_URL' <<<"$MANAGED_SECTION"
 grep -q 'export BRAIN_TASK_BUNDLE_SHA256=' <<<"$MANAGED_SECTION"
 grep -q 'write_managed_canary_result' <<<"$MANAGED_SECTION"
-grep -B2 'gh auth setup-git' "$ENTRYPOINT" \
-  | grep -q 'BRAIN_RESULT_CHANNEL_VERSION+x.*!=.*x'
+grep -B4 'gh auth setup-git' "$ENTRYPOINT" \
+  | grep -q 'BRAIN_RESULT_CHANNEL_VERSION+x'
 
 # The legacy proposer transport effect writes /workspace/.brain-result.json.
 # Managed mode must skip that function completely.

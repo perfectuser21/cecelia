@@ -22,6 +22,8 @@ const MAX_EVIDENCE_FILES = 4096;
 const MAX_VERIFICATION_COMMANDS = 16;
 const MAX_VERIFICATION_COMMAND_BYTES = 8192;
 const EVALUATOR_COMMAND_TIMEOUT_MS = 120_000;
+const GITHUB_READ_AUTHORITY_FILE = `${RUNTIME_ROOT}/github-read-authority.json`;
+const MAX_GITHUB_READ_AUTHORITY_BYTES = 65_536;
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const ROLE_VALUES = new Set([
@@ -745,37 +747,74 @@ function normalizePullRequest(value, allowedStates) {
   return JSON.parse(canonicalJson(value));
 }
 
-async function defaultInspectPullRequest(reference) {
-  webUrl(reference, 'pull request reference');
-  let result;
+function readGithubReadAuthority(env) {
+  if (env.HARNESS_GITHUB_READ_AUTHORITY_FILE !== GITHUB_READ_AUTHORITY_FILE) {
+    invalid('GitHub read authority path is invalid');
+  }
+  let descriptor;
   try {
-    result = await execFileAsync(
-      'gh',
-      ['pr', 'view', reference, '--json', 'url,number,headRefName,headRefOid,state'],
-      { encoding: 'utf8', maxBuffer: 131072 },
-    );
+    descriptor = fs.lstatSync(GITHUB_READ_AUTHORITY_FILE);
   } catch (error) {
-    invalid(`pull request authority query failed: ${error.message}`);
+    invalid(`GitHub read authority is unavailable: ${error.code ?? error.message}`);
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch {
-    invalid('pull request authority response is invalid JSON');
+  if (
+    descriptor.isSymbolicLink()
+    || !descriptor.isFile()
+    || (descriptor.mode & 0o777) !== 0o600
+    || descriptor.size < 2
+    || descriptor.size > MAX_GITHUB_READ_AUTHORITY_BYTES
+  ) {
+    invalid('GitHub read authority must be a bounded 0600 regular file');
   }
-  assertExactKeys(
-    parsed,
-    ['url', 'number', 'headRefName', 'headRefOid', 'state'],
-    'gh pull request response',
+  const authority = readBoundedJson(
+    GITHUB_READ_AUTHORITY_FILE,
+    MAX_GITHUB_READ_AUTHORITY_BYTES,
+    'GitHub read authority',
   );
-  return {
-    type: 'pull_request',
-    url: parsed.url,
-    number: parsed.number,
-    head_ref: parsed.headRefName,
-    head_sha: parsed.headRefOid,
-    state: parsed.state,
-  };
+  assertExactKeys(authority, [
+    'schema_version',
+    'attempt_id',
+    'task_id',
+    'run_id',
+    'role',
+    'request_sha256',
+    'observed_at',
+    'pull_request',
+    'audit_record_sha256',
+  ], 'GitHub read authority');
+  if (
+    authority.schema_version !== 'github-read-authority/v1'
+    || authority.attempt_id !== env.HARNESS_ATTEMPT_ID
+    || authority.task_id !== (env.HARNESS_TASK_ID ?? env.CECELIA_TASK_ID)
+    || authority.run_id !== env.HARNESS_RUN_ID
+    || authority.role !== env.HARNESS_NODE
+    || !/^[a-f0-9]{64}$/.test(authority.request_sha256 ?? '')
+    || !/^[a-f0-9]{64}$/.test(authority.audit_record_sha256 ?? '')
+  ) {
+    invalid('GitHub read authority binding is invalid');
+  }
+  const observedAt = new Date(authority.observed_at);
+  if (
+    Number.isNaN(observedAt.getTime())
+    || observedAt.toISOString() !== authority.observed_at
+  ) {
+    invalid('GitHub read authority timestamp is invalid');
+  }
+  return Object.freeze({
+    ...authority,
+    pull_request: Object.freeze(
+      normalizePullRequest(authority.pull_request, ['OPEN', 'MERGED']),
+    ),
+  });
+}
+
+async function defaultInspectPullRequest(reference, env) {
+  const expectedReference = webUrl(reference, 'pull request reference');
+  const authority = readGithubReadAuthority(env);
+  if (authority.pull_request.url !== expectedReference) {
+    invalid('GitHub read authority reference mismatch');
+  }
+  return authority.pull_request;
 }
 
 function validateBrainUrl(value) {
@@ -961,7 +1000,8 @@ exit "$command_status"
 function resolveDependencies(injected, env) {
   const resolved = {
     git: injected?.git ?? defaultGit,
-    inspectPullRequest: injected?.inspectPullRequest ?? defaultInspectPullRequest,
+    inspectPullRequest: injected?.inspectPullRequest
+      ?? ((reference) => defaultInspectPullRequest(reference, env)),
     readJudgmentCount: injected?.readJudgmentCount
       ?? ((taskId) => defaultReadJudgmentCount(taskId, env.BRAIN_URL)),
     readLearningCount: injected?.readLearningCount
