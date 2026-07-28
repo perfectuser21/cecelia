@@ -4,11 +4,14 @@ import {
   createIndependentJudgeEquivalenceSeam,
   createKernelHandlers,
 } from '../kernel-handlers.js';
+import { sha256Canonical } from '../../lib/kernel-equivalence-receipts.js';
 
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const runId = '11111111-1111-4111-8111-111111111111';
 const attemptId = '22222222-2222-4222-8222-222222222222';
 const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
+const evaluatorReceiptId = '66666666-6666-4666-8666-666666666666';
+const evaluatorResultSha256 = 'a'.repeat(64);
 
 function context(overrides = {}) {
   return {
@@ -28,23 +31,38 @@ function context(overrides = {}) {
         merged: false,
       },
       reviewApproved: false,
-      evaluateVerdict: {
-        attempt_id: evaluatorAttemptId,
-        verdict: 'PASS',
-        pr_head_sha: 'sha-1',
-      },
       evaluateResult: {
         contract_version: '1.0',
         attempt_id: evaluatorAttemptId,
         status: 'completed',
         checks: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
-        decision: { outcome: 'PASS', reason: 'verified' },
+        decision: {
+          outcome: 'PASS',
+          reason: 'verified',
+          pr_head_sha: 'sha-1',
+        },
       },
       callbackResult: { verdict: 'PASS', behavior_tests: [{ exit_code: 0, log_tail: 'ok' }] },
       decisionLog: [],
     },
     ...overrides,
   };
+}
+
+function authorizedContext(overrides = {}) {
+  const value = context(overrides);
+  const claimedVerdict = value.observed.evaluateVerdict ?? {};
+  value.observed.evaluateVerdict = {
+    attempt_id: value.observed.evaluateResult.attempt_id,
+    verdict: value.observed.evaluateResult.decision.outcome,
+    pr_head_sha: value.observed.pr.head_sha,
+    executor_kind: 'fleet-worker',
+    result_digest: sha256Canonical(value.observed.evaluateResult),
+    result_receipt_id: evaluatorReceiptId,
+    result_sha256: evaluatorResultSha256,
+    ...claimedVerdict,
+  };
+  return value;
 }
 
 function deps() {
@@ -71,7 +89,10 @@ function deps() {
             run_id: runId,
             role: 'evaluator',
             status: 'completed',
-            result: context().observed.evaluateResult,
+            execution_transport: 'fleet-worker',
+            result_receipt_id: evaluatorReceiptId,
+            result_sha256: evaluatorResultSha256,
+            result: authorizedContext().observed.evaluateResult,
           };
         }
         return null;
@@ -95,7 +116,7 @@ describe('kernel deterministic handlers', () => {
   it('judge receives the host forensics directory and server-derived stage facts', async () => {
     const d = deps();
 
-    await createKernelHandlers(d)['spawn:judge'](context());
+    await createKernelHandlers(d)['spawn:judge'](authorizedContext());
 
     expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
       promptDir: '/host/cecelia-prompts',
@@ -113,7 +134,7 @@ describe('kernel deterministic handlers', () => {
     const d = deps();
     const handlers = createKernelHandlers(d);
 
-    const result = await handlers['spawn:judge'](context());
+    const result = await handlers['spawn:judge'](authorizedContext());
 
     expect(result).toMatchObject({ status: 'DONE', detail: 'judge:PASS' });
     expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
@@ -136,15 +157,15 @@ describe('kernel deterministic handlers', () => {
 
   it('judge blocks an evaluator attempt from certifying itself', async () => {
     const d = deps();
-    const ctx = context({
+    const ctx = authorizedContext({
       observed: {
-        ...context().observed,
+        ...authorizedContext().observed,
         evaluateVerdict: {
-          ...context().observed.evaluateVerdict,
+          ...authorizedContext().observed.evaluateVerdict,
           attempt_id: attemptId,
         },
         evaluateResult: {
-          ...context().observed.evaluateResult,
+          ...authorizedContext().observed.evaluateResult,
           attempt_id: attemptId,
         },
       },
@@ -182,7 +203,7 @@ describe('kernel deterministic handlers', () => {
     mutate,
   ) => {
     const d = deps();
-    const ctx = structuredClone(context());
+    const ctx = structuredClone(authorizedContext());
     mutate(ctx, d);
 
     await expect(createKernelHandlers(d)['spawn:judge'](ctx)).resolves.toEqual({
@@ -193,6 +214,42 @@ describe('kernel deterministic handlers', () => {
     expect(d.attemptStore.complete).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['checks', (ctx) => {
+      ctx.observed.evaluateResult.checks[0].log_tail = 'forged checks';
+      ctx.observed.evaluateVerdict.result_digest =
+        sha256Canonical(ctx.observed.evaluateResult);
+    }],
+    ['summary', (ctx) => {
+      ctx.observed.evaluateResult.summary = 'forged summary';
+      ctx.observed.evaluateVerdict.result_digest =
+        sha256Canonical(ctx.observed.evaluateResult);
+    }],
+    ['PR head', (ctx) => {
+      ctx.observed.evaluateVerdict.pr_head_sha = 'sha-forged';
+    }],
+    ['Fleet receipt', (ctx) => {
+      ctx.observed.evaluateVerdict.result_receipt_id =
+        '77777777-7777-4777-8777-777777777777';
+    }],
+    ['Fleet result digest', (ctx) => {
+      ctx.observed.evaluateVerdict.result_sha256 = 'b'.repeat(64);
+    }],
+    ['executor kind', (ctx) => {
+      ctx.observed.evaluateVerdict.executor_kind = 'local-docker';
+    }],
+  ])('judge rejects tampered evaluator %s authority', async (_label, mutate) => {
+    const d = deps();
+    const ctx = structuredClone(authorizedContext());
+    mutate(ctx);
+
+    await expect(createKernelHandlers(d)['spawn:judge'](ctx)).resolves.toEqual({
+      status: 'BLOCKED',
+      detail: 'independent judge Attempt authority invalid',
+    });
+    expect(d.judgeGate).not.toHaveBeenCalled();
+  });
+
   it('judge 优先使用 evaluator attempt result，并把 checks 适配为机械闸证据', async () => {
     const d = deps();
     const evaluatorResult = {
@@ -201,16 +258,41 @@ describe('kernel deterministic handlers', () => {
       status: 'completed',
       summary: 'all checks passed',
       checks: [{ command: 'npm test', exit_code: 0, log_tail: '12 tests passed' }],
-      decision: { outcome: 'PASS', reason: 'verified' },
+      decision: {
+        outcome: 'PASS',
+        reason: 'verified',
+        pr_head_sha: 'sha-1',
+      },
       judgments_written: 2,
     };
-    const ctx = context({
+    const ctx = authorizedContext({
       observed: {
-        ...context().observed,
+        ...authorizedContext().observed,
         evaluateResult: evaluatorResult,
         callbackResult: null,
       },
     });
+    ctx.observed.evaluateVerdict.result_digest =
+      sha256Canonical(evaluatorResult);
+    d.attemptStore.getById.mockImplementation(async (id) => (
+      id === attemptId
+        ? {
+            id,
+            run_id: runId,
+            role: 'judge',
+            status: 'running',
+          }
+        : {
+            id,
+            run_id: runId,
+            role: 'evaluator',
+            status: 'completed',
+            execution_transport: 'fleet-worker',
+            result_receipt_id: evaluatorReceiptId,
+            result_sha256: evaluatorResultSha256,
+            result: evaluatorResult,
+          }
+    ));
 
     await createKernelHandlers(d)['spawn:judge'](ctx);
 
@@ -231,7 +313,7 @@ describe('kernel deterministic handlers', () => {
     d.judgeGate.mockResolvedValueOnce({ verdict: 'PASS', judged: false, feedback: null });
     const handlers = createKernelHandlers(d);
 
-    await expect(handlers['spawn:judge'](context())).resolves.toMatchObject({
+    await expect(handlers['spawn:judge'](authorizedContext())).resolves.toMatchObject({
       status: 'NEEDS_CONTEXT',
     });
     expect(d.pool.query.mock.calls.some(([sql]) => /verdict:judge/.test(sql))).toBe(false);
@@ -244,20 +326,26 @@ describe('kernel deterministic handlers', () => {
       judged: true,
       feedback: 'judge omitted classification',
     });
-    const ctx = context({
+    const ctx = authorizedContext({
       observed: {
-        ...context().observed,
+        ...authorizedContext().observed,
         evaluateVerdict: {
-          ...context().observed.evaluateVerdict,
+          ...authorizedContext().observed.evaluateVerdict,
           verdict: 'FAIL',
           failure_class: 'product_failure',
         },
         evaluateResult: {
-          ...context().observed.evaluateResult,
-          decision: { outcome: 'FAIL', reason: 'product failed' },
+          ...authorizedContext().observed.evaluateResult,
+          decision: {
+            outcome: 'FAIL',
+            reason: 'product failed',
+            pr_head_sha: 'sha-1',
+          },
         },
       },
     });
+    ctx.observed.evaluateVerdict.result_digest =
+      sha256Canonical(ctx.observed.evaluateResult);
     d.attemptStore.getById.mockImplementation(async (id) => (
       id === attemptId
         ? { id, run_id: runId, role: 'judge', status: 'running' }
@@ -266,6 +354,9 @@ describe('kernel deterministic handlers', () => {
             run_id: runId,
             role: 'evaluator',
             status: 'completed',
+            execution_transport: 'fleet-worker',
+            result_receipt_id: evaluatorReceiptId,
+            result_sha256: evaluatorResultSha256,
             result: ctx.observed.evaluateResult,
           }
     ));
@@ -406,19 +497,21 @@ describe('independent judge equivalence seam', () => {
     const currentEvaluatorAttemptId = scenario === 'violation'
       ? attemptId
       : evaluatorAttemptId;
-    const handlerContext = context({
+    const handlerContext = authorizedContext({
       observed: {
-        ...context().observed,
+        ...authorizedContext().observed,
         evaluateVerdict: {
-          ...context().observed.evaluateVerdict,
+          ...authorizedContext().observed.evaluateVerdict,
           attempt_id: currentEvaluatorAttemptId,
         },
         evaluateResult: {
-          ...context().observed.evaluateResult,
+          ...authorizedContext().observed.evaluateResult,
           attempt_id: currentEvaluatorAttemptId,
         },
       },
     });
+    handlerContext.observed.evaluateVerdict.result_digest =
+      sha256Canonical(handlerContext.observed.evaluateResult);
     const snapshots = [
       { judge_status: 'queued' },
       { judge_status: scenario === 'violation' ? 'blocked' : 'completed' },
@@ -433,10 +526,16 @@ describe('independent judge equivalence seam', () => {
       owner_service: 'kernel.evaluation.independent_judge',
       loadContext: vi.fn(async () => handlerContext),
       snapshot: vi.fn(async () => snapshots.shift()),
-      loadPredecessorActors: vi.fn(async () => ({
-        receipt_id: '44444444-4444-4444-8444-444444444444',
+      loadPredecessorActorBinding: vi.fn(async () => ({
+        owner_service: 'kernel.evaluation.independent_judge',
+        predecessor_receipt_id:
+          '44444444-4444-4444-8444-444444444444',
+        predecessor_grant_id:
+          '77777777-7777-4777-8777-777777777777',
         evaluator_attempt_id:
           '55555555-5555-4555-8555-555555555555',
+        evidence_ref:
+          'db:kernel-equivalence-receipts/44444444-4444-4444-8444-444444444444',
       })),
     };
     const cell = {
@@ -479,7 +578,14 @@ describe('independent judge equivalence seam', () => {
   ) => {
     const value = seamFixture(scenario);
     const predecessor = scenario === 'recovery'
-      ? { receipt_id: '44444444-4444-4444-8444-444444444444' }
+      ? {
+          grant: {
+            grant_id: '77777777-7777-4777-8777-777777777777',
+          },
+          receipt: {
+            receipt_id: '44444444-4444-4444-8444-444444444444',
+          },
+        }
       : null;
 
     const receipt = await value.seam.invoke({
@@ -513,7 +619,9 @@ describe('independent judge equivalence seam', () => {
     expect(value.judgeAuthority.snapshot).toHaveBeenCalledTimes(2);
     expect(value.resource.snapshot).not.toHaveBeenCalled();
     if (scenario === 'recovery') {
-      expect(value.judgeAuthority.loadPredecessorActors).toHaveBeenCalledWith(
+      expect(
+        value.judgeAuthority.loadPredecessorActorBinding,
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           predecessor,
           current_evaluator_attempt_id: evaluatorAttemptId,
@@ -524,9 +632,15 @@ describe('independent judge equivalence seam', () => {
 
   it('rejects recovery when no newly assigned evaluator is proven', async () => {
     const value = seamFixture('recovery');
-    value.judgeAuthority.loadPredecessorActors.mockResolvedValue({
-      receipt_id: '44444444-4444-4444-8444-444444444444',
+    value.judgeAuthority.loadPredecessorActorBinding.mockResolvedValue({
+      owner_service: 'kernel.evaluation.independent_judge',
+      predecessor_receipt_id:
+        '44444444-4444-4444-8444-444444444444',
+      predecessor_grant_id:
+        '77777777-7777-4777-8777-777777777777',
       evaluator_attempt_id: evaluatorAttemptId,
+      evidence_ref:
+        'db:kernel-equivalence-receipts/44444444-4444-4444-8444-444444444444',
     });
 
     await expect(value.seam.invoke({
@@ -534,7 +648,45 @@ describe('independent judge equivalence seam', () => {
       grant: value.grant,
       resource: value.resource,
       predecessor: {
-        receipt_id: '44444444-4444-4444-8444-444444444444',
+        grant: {
+          grant_id: '77777777-7777-4777-8777-777777777777',
+        },
+        receipt: {
+          receipt_id: '44444444-4444-4444-8444-444444444444',
+        },
+      },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'judge_recovery_reassignment_unproven',
+    });
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
+  });
+
+  it('rejects recovery evidence not DB-bound to the verified predecessor', async () => {
+    const value = seamFixture('recovery');
+    value.judgeAuthority.loadPredecessorActorBinding.mockResolvedValue({
+      owner_service: 'kernel.evaluation.independent_judge',
+      predecessor_receipt_id:
+        '88888888-8888-4888-8888-888888888888',
+      predecessor_grant_id:
+        '77777777-7777-4777-8777-777777777777',
+      evaluator_attempt_id:
+        '55555555-5555-4555-8555-555555555555',
+      evidence_ref:
+        'db:kernel-equivalence-receipts/88888888-8888-4888-8888-888888888888',
+    });
+
+    await expect(value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      predecessor: {
+        grant: {
+          grant_id: '77777777-7777-4777-8777-777777777777',
+        },
+        receipt: {
+          receipt_id: '44444444-4444-4444-8444-444444444444',
+        },
       },
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
