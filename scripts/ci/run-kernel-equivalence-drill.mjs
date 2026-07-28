@@ -18,7 +18,9 @@ import {
   compileReportDrillPlan,
 } from '../../packages/brain/src/lib/kernel-equivalence-report-clock.js';
 import {
+  BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
   createBrainTrustedExecutionClient,
+  inspectBrainTrustedExecutionSocketReadiness,
 } from '../../packages/brain/src/lib/kernel-equivalence-trusted-execution-client.js';
 
 const repositoryRoot = resolve(
@@ -26,13 +28,6 @@ const repositoryRoot = resolve(
 );
 const contractPath = resolve(repositoryRoot, 'regression-contract.yaml');
 const FORBIDDEN_PATH = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
-const EXECUTION_WIRING_BLOCKERS = Object.freeze([
-  'trusted_nonce_consumer_unavailable',
-  'trusted_adapter_registry_unavailable',
-  'trusted_collector_unavailable',
-  'trusted_bundle_chain_store_unavailable',
-  'trusted_cleanup_verifier_unavailable',
-]);
 
 class UsageError extends Error {}
 
@@ -186,7 +181,11 @@ function configuredBundleReferenceCount(contract) {
   );
 }
 
-function checkReport(contract, plan, { bundleDir = null, now } = {}) {
+function checkReport(contract, plan, {
+  bundleDir = null,
+  executionReadiness,
+  now,
+} = {}) {
   const configuredBundleRefs = configuredBundleReferenceCount(contract);
   if (configuredBundleRefs > 0 && bundleDir == null) {
     throw new Error('trusted_bundle_store_required');
@@ -203,7 +202,7 @@ function checkReport(contract, plan, { bundleDir = null, now } = {}) {
   const proofMatrixReady =
     plan.cells.length === 99
     && verifiedCellCount === plan.cells.length;
-  const executionWiringReady = false;
+  const executionWiringReady = executionReadiness.ready;
   return {
     schema_version: 'kernel-equivalence-drill-cli/v1',
     mode: 'check',
@@ -214,7 +213,9 @@ function checkReport(contract, plan, { bundleDir = null, now } = {}) {
       && proofMatrixReady
       && executionWiringReady,
     execution_wiring_ready: executionWiringReady,
-    execution_wiring_blockers: EXECUTION_WIRING_BLOCKERS,
+    execution_wiring_blockers: executionReadiness.ready
+      ? []
+      : [executionReadiness.code],
     behavior_count: validation.behaviors.length,
     behavior_gap_count: validation.behaviors.filter(
       (behavior) => behavior.effective_status === 'gap',
@@ -262,8 +263,15 @@ async function main() {
 
   if (options.mode === 'check') {
     const { now, plan } = compileReportDrillPlan(contract);
+    const executionReadiness =
+      inspectBrainTrustedExecutionSocketReadiness({
+        socketPath:
+          process.env.KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH
+            || BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
+      });
     const report = checkReport(contract, plan, {
       bundleDir: options.bundleDir,
+      executionReadiness,
       now,
     });
     output(report, options.format);

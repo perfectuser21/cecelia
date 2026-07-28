@@ -172,6 +172,32 @@ function sameSocket(socketPath, expected) {
   }
 }
 
+export function inspectBrainTrustedExecutionSocketReadiness({
+  socketPath = DEFAULT_SOCKET_PATH,
+} = {}) {
+  try {
+    validateSocketPath(socketPath);
+    inspectSocket(socketPath);
+    return Object.freeze({
+      ready: true,
+      code: null,
+      socket_path: socketPath,
+    });
+  } catch (error) {
+    const code = (
+      error instanceof KernelTrustedExecutionClientError
+      && typeof error.code === 'string'
+    )
+      ? error.code
+      : 'trusted_execution_socket_unavailable';
+    return Object.freeze({
+      ready: false,
+      code,
+      socket_path: null,
+    });
+  }
+}
+
 export function createUnixSocketTrustedExecutionTransport({
   socketPath = DEFAULT_SOCKET_PATH,
   timeoutMs = DEFAULT_CLIENT_DEADLINE_MS,

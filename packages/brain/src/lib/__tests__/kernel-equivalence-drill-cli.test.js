@@ -1,9 +1,11 @@
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
 } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,13 +73,36 @@ describe('kernel equivalence drill CLI', () => {
       proof_matrix_ready: false,
       execution_wiring_ready: false,
       execution_wiring_blockers: [
-        'trusted_nonce_consumer_unavailable',
-        'trusted_adapter_registry_unavailable',
-        'trusted_collector_unavailable',
-        'trusted_bundle_chain_store_unavailable',
-        'trusted_cleanup_verifier_unavailable',
+        'trusted_execution_socket_unavailable',
       ],
     });
+  });
+
+  it('reports live wiring readiness from an exact mode-0600 Brain socket', async () => {
+    const temporaryRoot = mkdtempSync('/tmp/keq-cli-');
+    const socketPath = join(temporaryRoot, 'brain.sock');
+    const listener = createServer();
+    await new Promise((resolve, reject) => {
+      listener.once('error', reject);
+      listener.listen(socketPath, resolve);
+    });
+    chmodSync(socketPath, 0o600);
+    try {
+      const result = run(['--check', '--format=json'], {
+        KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH: socketPath,
+      });
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        execution_ready: false,
+        execution_wiring_ready: true,
+        execution_wiring_blockers: [],
+        proof_matrix_ready: false,
+      });
+    } finally {
+      await new Promise((resolve) => listener.close(resolve));
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   it('compiles a historical check with the same finite report_as_of clock', () => {
