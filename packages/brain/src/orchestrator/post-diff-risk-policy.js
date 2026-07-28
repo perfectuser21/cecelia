@@ -1,15 +1,20 @@
 import { createHash } from 'node:crypto';
 
 export const POST_DIFF_RISK_POLICY_VERSION = 'kernel-post-diff-risk/v1';
+export const PRODUCTION_RECEIPT_ISSUER = 'kernel-release-controller/v1';
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
-const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const UUID_PATTERN = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const REF_PATTERN = /^(?![./])(?!.*(?:\.\.|\/\/|@\{|[~^:?*\\\s]))(?!.*[./]$)[A-Za-z0-9._/-]+$/;
+const FILE_STATUS = new Set(['added', 'changed', 'copied', 'modified', 'removed', 'renamed', 'unchanged']);
 const RISK_SCORE = Object.freeze({ low: 0, medium: 1, high: 2 });
 const MAX_SMALL_FILES = 5;
 const MAX_SMALL_CHANGED_LINES = 200;
 const ASSESSMENT_TTL_MS = 15 * 60_000;
+const MAX_PRODUCTION_RECEIPT_TTL_MS = 30 * 24 * 60 * 60_000;
 
 function immutable(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -27,6 +32,12 @@ function stableValue(value) {
     );
   }
   return value;
+}
+
+function digestValue(value) {
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify(stableValue(value)), 'utf8')
+    .digest('hex')}`;
 }
 
 export function canonicalContractDigest(value) {
@@ -53,34 +64,58 @@ function normalizedFiles(files) {
     throw new Error('post_diff_files_invalid');
   }
   const normalized = files.map((file) => {
+    const previousPath = file?.previous_path ?? null;
+    const status = file?.status ?? 'modified';
+    const blobSha = file?.blob_sha ?? null;
+    const patchDigest = file?.patch_digest ?? null;
     if (
       !file
       || typeof file !== 'object'
       || Array.isArray(file)
       || !validPath(file.path)
+      || (previousPath != null && !validPath(previousPath))
+      || !FILE_STATUS.has(status)
+      || (blobSha != null && !SHA_PATTERN.test(blobSha))
+      || (patchDigest != null && !DIGEST_PATTERN.test(patchDigest))
       || !Number.isInteger(file.additions)
       || file.additions < 0
       || !Number.isInteger(file.deletions)
       || file.deletions < 0
+      || (status === 'renamed' && previousPath == null)
     ) {
       throw new Error('post_diff_file_invalid');
     }
     return {
       path: file.path,
+      previous_path: previousPath,
+      status,
+      blob_sha: blobSha,
+      patch_digest: patchDigest,
       additions: file.additions,
       deletions: file.deletions,
     };
-  }).sort((left, right) => left.path.localeCompare(right.path));
+  }).sort((left, right) => (
+    left.path.localeCompare(right.path)
+    || String(left.previous_path).localeCompare(String(right.previous_path))
+  ));
   if (new Set(normalized.map(({ path }) => path)).size !== normalized.length) {
     throw new Error('post_diff_file_duplicate');
   }
   return normalized;
 }
 
+/**
+ * Compatibility digest for callers that do not yet carry GitHub blob/patch
+ * authority. It is never sufficient for automatic eligibility; the caller
+ * must separately supply the adapter-produced diffDigest and base identity.
+ */
 export function canonicalDiffHash(files) {
-  return `sha256:${createHash('sha256')
-    .update(JSON.stringify(normalizedFiles(files)), 'utf8')
-    .digest('hex')}`;
+  const compact = normalizedFiles(files).map((file) => ({
+    path: file.path,
+    additions: file.additions,
+    deletions: file.deletions,
+  }));
+  return digestValue(compact);
 }
 
 function classForPath(path) {
@@ -93,7 +128,8 @@ function classForPath(path) {
     || /(?:^|\/)ci(?:\.|\/|-)/.test(lower)
   ) return 'ci_workflow';
   if (
-    /(?:credential|secret|security|oauth|auth-token|token-broker|credential-broker)/.test(lower)
+    /(?:credential|secret|security|oauth|auth(?:entication|orization)?|token|permission|rbac|acl)/.test(lower)
+    || /(?:^|[-_/])(?:guard|policy|branch-protect|stop-hook|controller)(?:\/|[-_.])/.test(lower)
   ) return 'security_credential';
   if (
     /(?:^|[-_/])(?:deploy|deployment|release|rollout|promote)(?:\/|[-_.])/.test(lower)
@@ -132,6 +168,147 @@ export function classifyChangedPaths(paths) {
   });
 }
 
+export function deriveBehaviorAuthority({
+  repository,
+  contract,
+  files,
+}) {
+  if (
+    !REPOSITORY_PATTERN.test(repository ?? '')
+    || !Number.isInteger(contract?.version)
+    || contract.version < 1
+    || !DIGEST_PATTERN.test(contract?.digest ?? '')
+  ) {
+    throw new Error('post_diff_behavior_authority_invalid');
+  }
+  const normalized = normalizedFiles(files);
+  const pathSurface = normalized.map(({ path, previous_path: previousPath }) => ({
+    path,
+    previous_path: previousPath,
+  }));
+  const pathSurfaceDigest = digestValue(pathSurface);
+  const contentSurfaceDigest = digestValue(normalized.map((file) => ({
+    path: file.path,
+    previous_path: file.previous_path,
+    status: file.status,
+    blob_sha: file.blob_sha,
+    patch_digest: file.patch_digest,
+    additions: file.additions,
+    deletions: file.deletions,
+  })));
+  const capabilityFingerprint = digestValue({
+    repository,
+    contract_version: contract.version,
+    contract_digest: contract.digest,
+  });
+  return Object.freeze({
+    capability_fingerprint: capabilityFingerprint,
+    behavior_fingerprint: digestValue({
+      capability_fingerprint: capabilityFingerprint,
+      path_surface_digest: pathSurfaceDigest,
+      content_surface_digest: contentSurfaceDigest,
+    }),
+    path_surface_digest: pathSurfaceDigest,
+  });
+}
+
+function receiptAuthority(receipt) {
+  return {
+    receipt_status: receipt?.receipt_status ?? null,
+    repository: receipt?.repository ?? null,
+    behavior_fingerprint: receipt?.behavior_fingerprint ?? null,
+    capability_fingerprint: receipt?.capability_fingerprint ?? null,
+    path_surface_digest: receipt?.path_surface_digest ?? null,
+    path_class: receipt?.path_class ?? null,
+    contract_version: receipt?.contract_version ?? null,
+    contract_digest: receipt?.contract_digest ?? null,
+    artifact_digest: receipt?.artifact_digest ?? null,
+    release_run_id: receipt?.release_run_id ?? null,
+    release_effect_receipt_id: receipt?.release_effect_receipt_id ?? null,
+    issuer: receipt?.issuer ?? null,
+    production_head_sha: receipt?.production_head_sha ?? null,
+    deployed_at: receipt?.deployed_at ?? null,
+    expires_at: receipt?.expires_at ?? null,
+  };
+}
+
+export function canonicalProductionReceiptDigest(receipt) {
+  return digestValue(receiptAuthority(receipt));
+}
+
+export function canonicalRequiredChecksDigest(checks, headSha) {
+  if (!Array.isArray(checks) || checks.length === 0 || !SHA_PATTERN.test(headSha ?? '')) {
+    throw new Error('post_diff_required_checks_invalid');
+  }
+  const normalized = checks.map((check) => {
+    const checkRun = check?.source === 'github-actions'
+      && check.app_slug === 'github-actions'
+      && /^[1-9][0-9]*$/.test(check.run_id ?? '')
+      && /^[1-9][0-9]*$/.test(check.job_id ?? '');
+    const commitStatus = check?.source === 'github-status'
+      && check.app_slug == null
+      && /^[1-9][0-9]*$/.test(check.status_id ?? '');
+    if (
+      typeof check?.context !== 'string'
+      || check.context.length === 0
+      || (!checkRun && !commitStatus)
+      || check.head_sha !== headSha
+      || check.conclusion !== 'SUCCESS'
+    ) {
+      throw new Error('post_diff_required_checks_invalid');
+    }
+    return {
+      context: check.context,
+      app_slug: check.app_slug,
+      source: check.source,
+      ...(checkRun ? { run_id: check.run_id, job_id: check.job_id } : {}),
+      ...(commitStatus ? { status_id: check.status_id } : {}),
+      head_sha: check.head_sha,
+      conclusion: check.conclusion,
+    };
+  }).sort((left, right) => left.context.localeCompare(right.context));
+  if (new Set(normalized.map(({ context }) => context)).size !== normalized.length) {
+    throw new Error('post_diff_required_checks_invalid');
+  }
+  return digestValue(normalized);
+}
+
+function validReceipt(receipt, {
+  repository,
+  contract,
+  behavior,
+  pathClass,
+  nowMs,
+}) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return false;
+  const deployedAt = Date.parse(receipt.deployed_at);
+  const expiresAt = Date.parse(receipt.expires_at);
+  return receipt.receipt_status === 'confirmed'
+    // This flag is server-owned output from an authoritative ReleaseRun join.
+    // Migration 373 deliberately creates no release writer/table, so current
+    // queries return false and therefore remain fail-closed until that SSOT exists.
+    && receipt.release_authority_valid === true
+    && receipt.repository === repository
+    && receipt.behavior_fingerprint === behavior.behavior_fingerprint
+    && receipt.capability_fingerprint === behavior.capability_fingerprint
+    && receipt.path_surface_digest === behavior.path_surface_digest
+    && receipt.path_class === pathClass
+    && receipt.contract_version === contract.version
+    && receipt.contract_digest === contract.digest
+    && DIGEST_PATTERN.test(receipt.artifact_digest ?? '')
+    && UUID_PATTERN.test(receipt.release_run_id ?? '')
+    && UUID_PATTERN.test(receipt.release_effect_receipt_id ?? '')
+    && receipt.issuer === PRODUCTION_RECEIPT_ISSUER
+    && SHA_PATTERN.test(receipt.production_head_sha ?? '')
+    && Number.isFinite(deployedAt)
+    && deployedAt <= nowMs
+    && Number.isFinite(expiresAt)
+    && expiresAt > nowMs
+    && expiresAt > deployedAt
+    && expiresAt - deployedAt <= MAX_PRODUCTION_RECEIPT_TTL_MS
+    && receipt.receipt_digest === canonicalProductionReceiptDigest(receipt);
+}
+
 function elevate(current, requested) {
   if (!Object.hasOwn(RISK_SCORE, requested)) return 'high';
   return RISK_SCORE[requested] > RISK_SCORE[current] ? requested : current;
@@ -142,44 +319,60 @@ function addReason(state, reason, risk) {
   state.risk = elevate(state.risk, risk);
 }
 
-function validReceipt(receipt) {
-  return receipt
-    && typeof receipt === 'object'
-    && !Array.isArray(receipt)
-    && receipt.receipt_status === 'confirmed';
-}
-
 export function assessPostDiffRisk(input = {}) {
   const state = { risk: 'low', reasons: [] };
   const nowMs = typeof input.now === 'function' ? input.now() : Date.now();
   const policyVersion = input.policyVersion ?? POST_DIFF_RISK_POLICY_VERSION;
   let files = null;
   let diffHash = null;
+  let requiredChecksDigest = null;
+  let behavior = null;
   let classification = {
     path_class: 'unknown',
     protected: true,
     classes: ['unknown'],
   };
+  const contract = input.contract ?? {};
+  const repository = input.repository ?? null;
 
   try {
     files = normalizedFiles(input.files);
-    diffHash = canonicalDiffHash(files);
-    classification = classifyChangedPaths(files.map(({ path }) => path));
+    const allPaths = files.flatMap(({ path, previous_path: previousPath }) => (
+      previousPath == null ? [path] : [path, previousPath]
+    ));
+    classification = classifyChangedPaths(allPaths);
+    behavior = deriveBehaviorAuthority({ repository, contract, files });
+    diffHash = input.diffDigest;
+    requiredChecksDigest = canonicalRequiredChecksDigest(
+      input.requiredChecks,
+      input.headSha,
+    );
   } catch {
     addReason(state, 'ground_truth_unknown', 'high');
   }
 
-  const contract = input.contract ?? {};
+  const exactPrAuthority = REPOSITORY_PATTERN.test(repository ?? '')
+    && REPOSITORY_PATTERN.test(input.headRepository ?? '')
+    && REF_PATTERN.test(input.headRef ?? '')
+    && SHA_PATTERN.test(input.headSha ?? '')
+    && REPOSITORY_PATTERN.test(input.baseRepository ?? '')
+    && REF_PATTERN.test(input.baseRef ?? '')
+    && SHA_PATTERN.test(input.baseSha ?? '')
+    && DIGEST_PATTERN.test(diffHash ?? '')
+    && DIGEST_PATTERN.test(requiredChecksDigest ?? '');
   const bindingsKnown = UUID_PATTERN.test(input.taskId ?? '')
     && UUID_PATTERN.test(input.runId ?? '')
     && Number.isInteger(input.hop)
     && input.hop > 0
-    && SHA_PATTERN.test(input.headSha ?? '')
-    && DIGEST_PATTERN.test(diffHash ?? '')
+    && exactPrAuthority
     && Number.isInteger(contract.version)
     && contract.version > 0
     && DIGEST_PATTERN.test(contract.digest ?? '')
-    && VERSION_PATTERN.test(input.behaviorVersion ?? '')
+    && UUID_PATTERN.test(contract.id ?? '')
+    && contract.status === 'approved'
+    && Number.isFinite(Date.parse(contract.approved_at))
+    && Date.parse(contract.approved_at) <= nowMs
+    && behavior != null
     && VERSION_PATTERN.test(policyVersion)
     && Number.isFinite(nowMs);
   if (!bindingsKnown) addReason(state, 'ground_truth_unknown', 'high');
@@ -198,35 +391,17 @@ export function assessPostDiffRisk(input = {}) {
     }
   }
 
-  if (input.changeSignals?.newCapability === true) {
-    addReason(state, 'new_capability', 'high');
-  }
-
   const receipt = input.productionReceipt;
   if (receipt == null) {
     addReason(state, 'first_behavior', 'medium');
-  } else if (!validReceipt(receipt)) {
+  } else if (!behavior || !validReceipt(receipt, {
+    repository,
+    contract,
+    behavior,
+    pathClass: classification.path_class,
+    nowMs,
+  })) {
     addReason(state, 'production_proof_unknown', 'high');
-  } else {
-    const receiptExpiry = Date.parse(receipt.expires_at);
-    if (!Number.isFinite(receiptExpiry) || receiptExpiry <= nowMs) {
-      addReason(state, 'production_proof_expired', 'high');
-    }
-    if (receipt.behavior_version !== input.behaviorVersion) {
-      addReason(state, 'behavior_version_changed', 'high');
-    }
-    if (
-      receipt.contract_version !== contract.version
-      || receipt.contract_digest !== contract.digest
-    ) {
-      addReason(state, 'contract_changed', 'high');
-    }
-    if (receipt.path_class !== classification.path_class) {
-      addReason(state, 'path_class_changed', 'high');
-    }
-    if (!SHA_PATTERN.test(receipt.production_head_sha ?? '')) {
-      addReason(state, 'production_proof_unknown', 'high');
-    }
   }
 
   if (input.evidence?.ci !== 'pass') addReason(state, 'ci_not_green', 'medium');
@@ -235,6 +410,10 @@ export function assessPostDiffRisk(input = {}) {
   }
   if (input.evidence?.judge !== 'PASS') addReason(state, 'judge_not_green', 'medium');
 
+  // Caller metadata is never capability evidence. It may only elevate risk.
+  if (input.changeSignals?.newCapability === true) {
+    addReason(state, 'caller_new_capability', 'high');
+  }
   const callerRisk = input.callerRisk ?? 'low';
   if (!Object.hasOwn(RISK_SCORE, callerRisk)) {
     addReason(state, 'caller_risk_unknown', 'high');
@@ -257,11 +436,22 @@ export function assessPostDiffRisk(input = {}) {
       task_id: input.taskId ?? null,
       run_id: input.runId ?? null,
       hop: Number.isInteger(input.hop) ? input.hop : null,
+      repository,
+      head_repository: input.headRepository ?? null,
+      head_ref: input.headRef ?? null,
       head_sha: input.headSha ?? null,
+      base_repository: input.baseRepository ?? null,
+      base_ref: input.baseRef ?? null,
+      base_sha: input.baseSha ?? null,
       diff_hash: diffHash,
+      required_checks_digest: requiredChecksDigest,
+      contract_id: contract.id ?? null,
       contract_version: Number.isInteger(contract.version) ? contract.version : null,
       contract_digest: contract.digest ?? null,
-      behavior_version: input.behaviorVersion ?? null,
+      contract_approved_at: contract.approved_at ?? null,
+      behavior_fingerprint: behavior?.behavior_fingerprint ?? null,
+      capability_fingerprint: behavior?.capability_fingerprint ?? null,
+      path_surface_digest: behavior?.path_surface_digest ?? null,
       path_class: classification.path_class,
     },
     expires_at: Number.isFinite(nowMs)
@@ -274,4 +464,5 @@ export function assessPostDiffRisk(input = {}) {
 export const __test__ = {
   classForPath,
   normalizedFiles,
+  validReceipt,
 };

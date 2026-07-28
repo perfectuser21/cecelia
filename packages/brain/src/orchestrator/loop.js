@@ -782,6 +782,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
           fullCounters,
           decision.action,
           decision.reason,
+          decision.action === ACTION.MERGE_PR ? hop : null,
         ),
         derivedPhase: decision.phase,
         gateVerdict,
@@ -789,7 +790,11 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         detail: {
           reason: decision.reason,
           crossCheckMismatch: counters.crossCheckMismatch,
-          ...humanReviewDetail(observed, decision.reason),
+          ...humanReviewDetail(
+            observed,
+            decision.reason,
+            decision.action === ACTION.MERGE_PR ? hop : null,
+          ),
         },
       });
     } catch (err) {

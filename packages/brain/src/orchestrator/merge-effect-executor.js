@@ -44,13 +44,23 @@ function recomputePostDiffRisk(authority, current, now) {
     taskId: authority.task?.id,
     runId: authority.run?.id,
     hop: Number(intent.hop),
+    repository: current.repository,
+    headRepository: current.head_repository,
+    headRef: current.head_ref,
     headSha: current.head_sha,
+    baseRepository: current.base_repository,
+    baseRef: current.base_ref,
+    baseSha: current.base_sha,
+    diffDigest: current.diff_digest,
+    requiredChecks: current.required_checks,
     files: current.files,
     contract: {
+      id: authority.contract?.id ?? null,
       version: authority.contract?.version ?? null,
+      status: authority.contract?.status ?? null,
+      approved_at: authority.contract?.approved_at ?? null,
       digest: contractDigest,
     },
-    behaviorVersion: payload.behavior_version ?? null,
     productionReceipt: authority.productionReceipt ?? null,
     callerRisk: payload.review_required === true
       ? 'high'
@@ -140,9 +150,10 @@ export function createMergeEffectExecutor({
         if (existing.requested_head_sha !== current.head_sha) {
           deny('stale_effect_intent');
         }
-        if (existing.confirmed_receipt) {
+        if (existing.confirmed_receipt && (current.merged === true || current.state === 'MERGED')) {
           return { status: 'DONE', detail: 'merge already confirmed' };
         }
+        if (existing.confirmed_receipt) deny('confirmed_receipt_conflicts_with_github');
         if (current.merged === true || current.state === 'MERGED') {
           await store.appendReceipt(
             client,
@@ -166,11 +177,30 @@ export function createMergeEffectExecutor({
         { proof, currentPr: current },
       );
 
+      // The durable intent is not external authority. Re-read both DB contract
+      // authority and GitHub required-check/base authority immediately before
+      // the effect. GitHub rulesets remain the atomic remote-side backstop;
+      // this controller never uses --admin or another bypass mode.
+      const freshAuthority = await store.loadEvidence(client, { runId, taskId });
+      const freshCurrent = await observePullRequest(current.url);
+      const freshRisk = recomputePostDiffRisk(freshAuthority, freshCurrent, now);
+      validateMergeAuthorizationEvidence({
+        ...freshAuthority,
+        pr: freshCurrent,
+        policyVersion,
+        postDiffRisk: freshRisk.original,
+        revalidatedPostDiffRisk: freshRisk.revalidated,
+        now,
+      });
+      if (effect.requested_head_sha !== freshCurrent.head_sha) {
+        deny('stale_effect_intent');
+      }
+
       let commandFailed = false;
       try {
         await mergePullRequest({
-          pr_url: current.url,
-          expected_head_sha: current.head_sha,
+          pr_url: freshCurrent.url,
+          expected_head_sha: freshCurrent.head_sha,
           method: 'squash',
         });
       } catch {
@@ -179,7 +209,7 @@ export function createMergeEffectExecutor({
         commandFailed = true;
       }
 
-      const observed = await observePullRequest(current.url);
+      const observed = await observePullRequest(freshCurrent.url);
       if (
         observed.head_sha === effect.requested_head_sha
         && (observed.merged === true || observed.state === 'MERGED')

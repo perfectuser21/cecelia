@@ -1,42 +1,97 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createMergeEffectExecutor } from '../merge-effect-executor.js';
-import { canonicalContractDigest, canonicalDiffHash } from '../post-diff-risk-policy.js';
+import {
+  assessPostDiffRisk,
+  canonicalContractDigest,
+  canonicalProductionReceiptDigest,
+  deriveBehaviorAuthority,
+} from '../post-diff-risk-policy.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
 const HEAD_SHA = 'a'.repeat(40);
+const BASE_SHA = '9'.repeat(40);
+const DIFF_DIGEST = `sha256:${'8'.repeat(64)}`;
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4400';
 const FILES = Object.freeze([{
   path: 'apps/dashboard/src/App.jsx',
+  previous_path: null,
+  status: 'modified',
+  blob_sha: '7'.repeat(40),
+  patch_digest: `sha256:${'6'.repeat(64)}`,
   additions: 12,
   deletions: 3,
 }]);
 const CONTRACT_CONTENT = Object.freeze({ acceptance: ['dashboard remains green'] });
 const CONTRACT_DIGEST = canonicalContractDigest(CONTRACT_CONTENT);
+const CONTRACT_ID = '55555555-5555-4555-8555-555555555555';
+const CONTRACT_APPROVED_AT = '2026-07-27T07:00:00.000Z';
+const REQUIRED_CHECKS = Object.freeze([Object.freeze({
+  context: 'ci-passed',
+  app_slug: 'github-actions',
+  source: 'github-actions',
+  run_id: '123456',
+  job_id: '789012',
+  head_sha: HEAD_SHA,
+  conclusion: 'SUCCESS',
+})]);
+
+function productionReceipt() {
+  const behavior = deriveBehaviorAuthority({
+    repository: 'perfectuser21/cecelia',
+    contract: { version: 7, digest: CONTRACT_DIGEST },
+    files: FILES,
+  });
+  const value = {
+    receipt_status: 'confirmed',
+    release_authority_valid: true,
+    repository: 'perfectuser21/cecelia',
+    behavior_fingerprint: behavior.behavior_fingerprint,
+    capability_fingerprint: behavior.capability_fingerprint,
+    path_surface_digest: behavior.path_surface_digest,
+    contract_version: 7,
+    contract_digest: CONTRACT_DIGEST,
+    path_class: 'application',
+    artifact_digest: `sha256:${'5'.repeat(64)}`,
+    release_run_id: '33333333-3333-4333-8333-333333333333',
+    release_effect_receipt_id: '44444444-4444-4444-8444-444444444444',
+    issuer: 'kernel-release-controller/v1',
+    production_head_sha: 'b'.repeat(40),
+    deployed_at: '2026-07-27T08:00:00.000Z',
+    expires_at: '2026-08-03T08:00:00.000Z',
+  };
+  return { ...value, receipt_digest: canonicalProductionReceiptDigest(value) };
+}
 
 function postDiffRisk(overrides = {}) {
-  return {
-    schema_version: 'kernel-post-diff-risk/v1',
-    policy_version: 'kernel-post-diff-risk/v1',
-    risk_level: 'low',
-    human_review_required: false,
-    auto_eligible: true,
-    reasons: [],
-    bindings: {
-      task_id: TASK_ID,
-      run_id: RUN_ID,
-      hop: 3,
-      head_sha: HEAD_SHA,
-      diff_hash: canonicalDiffHash(FILES),
-      contract_version: 7,
-      contract_digest: CONTRACT_DIGEST,
-      behavior_version: 'dashboard/v3',
-      path_class: 'application',
+  const proof = assessPostDiffRisk({
+    taskId: TASK_ID,
+    runId: RUN_ID,
+    hop: 3,
+    repository: 'perfectuser21/cecelia',
+    headRepository: 'perfectuser21/cecelia',
+    headRef: 'cp-kernel-safe-merge',
+    headSha: HEAD_SHA,
+    baseRepository: 'perfectuser21/cecelia',
+    baseRef: 'main',
+    baseSha: BASE_SHA,
+    diffDigest: DIFF_DIGEST,
+    requiredChecks: REQUIRED_CHECKS,
+    files: FILES,
+    contract: {
+      id: CONTRACT_ID,
+      version: 7,
+      status: 'approved',
+      approved_at: CONTRACT_APPROVED_AT,
+      digest: CONTRACT_DIGEST,
     },
-    expires_at: '2099-07-28T08:15:00.000Z',
-    ...overrides,
-  };
+    productionReceipt: productionReceipt(),
+    callerRisk: 'low',
+    evidence: { ci: 'pass', evaluator: 'PASS', judge: 'PASS' },
+    now: () => Date.parse('2026-07-28T08:00:00.000Z'),
+  });
+  return { ...proof, ...overrides };
 }
 
 function currentPr(overrides = {}) {
@@ -44,10 +99,18 @@ function currentPr(overrides = {}) {
     url: PR_URL,
     repository: 'perfectuser21/cecelia',
     number: 4400,
+    head_repository: 'perfectuser21/cecelia',
     head_ref: 'cp-kernel-safe-merge',
     head_sha: HEAD_SHA,
+    base_repository: 'perfectuser21/cecelia',
+    base_ref: 'main',
+    base_sha: BASE_SHA,
+    diff_digest: DIFF_DIGEST,
     state: 'OPEN',
+    is_draft: false,
+    merge_state_status: 'CLEAN',
     ci: 'pass',
+    required_checks: REQUIRED_CHECKS,
     merged: false,
     files: FILES,
     ...overrides,
@@ -66,19 +129,13 @@ function evidence() {
       },
     },
     contract: {
+      id: CONTRACT_ID,
       version: 7,
+      status: 'approved',
+      approved_at: CONTRACT_APPROVED_AT,
       contract_content: CONTRACT_CONTENT,
     },
-    productionReceipt: {
-      receipt_status: 'confirmed',
-      behavior_version: 'dashboard/v3',
-      contract_version: 7,
-      contract_digest: CONTRACT_DIGEST,
-      path_class: 'application',
-      production_head_sha: 'b'.repeat(40),
-      deployed_at: '2026-07-27T08:00:00.000Z',
-      expires_at: '2099-07-27T08:00:00.000Z',
-    },
+    productionReceipt: productionReceipt(),
     decisionLog: [
       {
         hop: 1,
@@ -97,8 +154,18 @@ function evidence() {
         observed: {
           pr: {
             url: PR_URL,
+            repository: 'perfectuser21/cecelia',
+            number: 4400,
+            head_repository: 'perfectuser21/cecelia',
+            head_ref: 'cp-kernel-safe-merge',
             head_sha: HEAD_SHA,
+            base_repository: 'perfectuser21/cecelia',
+            base_ref: 'main',
+            base_sha: BASE_SHA,
+            diff_digest: DIFF_DIGEST,
             state: 'OPEN',
+            is_draft: false,
+            merge_state_status: 'CLEAN',
             ci: 'pass',
             merged: false,
           },
@@ -129,6 +196,7 @@ function deps(overrides = {}) {
     }),
   };
   const observePullRequest = vi.fn()
+    .mockResolvedValueOnce(currentPr())
     .mockResolvedValueOnce(currentPr())
     .mockResolvedValueOnce(currentPr({ state: 'MERGED', merged: true }));
   const mergePullRequest = vi.fn(async () => {
@@ -185,7 +253,14 @@ describe('merge effect executor', () => {
 
   it('does not create authority when current GitHub head differs from signed evidence', async () => {
     const d = deps();
-    d.observePullRequest = vi.fn(async () => currentPr({ head_sha: 'b'.repeat(40) }));
+    const changedHead = 'b'.repeat(40);
+    d.observePullRequest = vi.fn(async () => currentPr({
+      head_sha: changedHead,
+      required_checks: REQUIRED_CHECKS.map((check) => ({
+        ...check,
+        head_sha: changedHead,
+      })),
+    }));
     const execute = createMergeEffectExecutor(d);
 
     await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).rejects.toMatchObject({
@@ -198,8 +273,9 @@ describe('merge effect executor', () => {
   it('recomputes the current diff risk and rejects changed diff bytes before persistence', async () => {
     const d = deps();
     d.observePullRequest = vi.fn(async () => currentPr({
+      diff_digest: `sha256:${'4'.repeat(64)}`,
       files: [{
-        path: 'apps/dashboard/src/App.jsx',
+        ...FILES[0],
         additions: 13,
         deletions: 3,
       }],
@@ -207,9 +283,38 @@ describe('merge effect executor', () => {
     const execute = createMergeEffectExecutor(d);
 
     await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).rejects.toMatchObject({
-      code: 'post_diff_risk_revalidation_failed',
+      code: 'stale_merge_intent',
     });
     expect(d.store.createAuthorizationIntent).not.toHaveBeenCalled();
+    expect(d.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('re-observes base and required checks immediately before the merge effect', async () => {
+    const d = deps();
+    d.observePullRequest = vi.fn()
+      .mockResolvedValueOnce(currentPr())
+      .mockResolvedValueOnce(currentPr({ base_sha: '4'.repeat(40) }));
+    const execute = createMergeEffectExecutor(d);
+
+    await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).rejects.toMatchObject({
+      code: expect.stringMatching(/stale|risk|base/),
+    });
+    expect(d.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('re-loads the approved contract immediately before the merge effect', async () => {
+    const d = deps();
+    d.store.loadEvidence
+      .mockResolvedValueOnce(evidence())
+      .mockResolvedValueOnce({
+        ...evidence(),
+        contract: { ...evidence().contract, status: 'superseded' },
+      });
+    const execute = createMergeEffectExecutor(d);
+
+    await expect(execute({ runId: RUN_ID, taskId: TASK_ID })).rejects.toMatchObject({
+      code: 'contract_not_approved',
+    });
     expect(d.mergePullRequest).not.toHaveBeenCalled();
   });
 

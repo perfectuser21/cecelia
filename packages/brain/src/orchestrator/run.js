@@ -154,6 +154,15 @@ export async function buildRealDeps(overrides = {}) {
     ?? (await import('../db.js')).default; // 延迟 import：--help/参数错误时不连库
   const execCmd = overrides.execCmd
     ?? ((cmd) => execSync(cmd, { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 60_000 }));
+  const githubExecFile = overrides.githubExecFile
+    ?? ((file, args) => execFileSync(file, args, {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 60_000,
+    }));
+  const githubAdapter = createGitHubMergeAdapter({ execFile: githubExecFile });
+  const observePullRequest = overrides.observePullRequest
+    ?? githubAdapter.observePullRequest;
   const attemptStore = overrides.attemptStore ?? createAttemptStore(pool);
   const commanderStore = overrides.commanderStore ?? createCommanderStore(pool);
   const eventStore = overrides.eventStore ?? createRunEventStore(pool);
@@ -252,7 +261,7 @@ export async function buildRealDeps(overrides = {}) {
       });
     }
     const handlers = overrides.handlers
-      ?? await buildDefaultHandlers({ pool, execCmd, attemptStore });
+      ?? await buildDefaultHandlers({ pool, attemptStore, githubExecFile });
     const shouldResolveWorkspace = overrides.resolveWorkspaceSpec !== undefined
       || typeof overrides.resolveRepoHead === 'function'
       || !overrides.launcher;
@@ -325,6 +334,7 @@ export async function buildRealDeps(overrides = {}) {
     fileExists: overrides.fileExists ?? ((p) => existsSync(p)),
     readFile: overrides.readFile ?? ((p) => readFileSync(p, 'utf-8')),
     readGitFile: overrides.readGitFile ?? ((sha, p) => readGitArtifact(sha, p)),
+    observePullRequest,
     dispatch,
     commanderCoordinator,
     commanderDirectiveExecutor,

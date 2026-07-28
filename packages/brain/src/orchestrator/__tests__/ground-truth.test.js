@@ -9,6 +9,8 @@ import { derive } from '../derive.js';
 import {
   assessPostDiffRisk,
   canonicalContractDigest,
+  canonicalProductionReceiptDigest,
+  deriveBehaviorAuthority,
 } from '../post-diff-risk-policy.js';
 
 const RUN_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -83,7 +85,13 @@ function fakeExecCmd(handlers = {}) {
   return fn;
 }
 
-function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
+function makeDeps({
+  rows = {},
+  exec = {},
+  files = {},
+  readAuthCircuit,
+  observePullRequest,
+} = {}) {
   const runRow = {
     id: RUN_ID, contract_id: CONTRACT_ID, phase: 'generate', pr_url: null,
     cost_usd: '1.50', current_task_id: TASK_ID,
@@ -114,6 +122,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
     }),
     now: () => Date.parse('2026-07-28T08:00:00.000Z'),
     ...(readAuthCircuit ? { readAuthCircuit } : {}),
+    ...(observePullRequest ? { observePullRequest } : {}),
   };
 }
 
@@ -858,8 +867,41 @@ describe('collectGroundTruth：决策日志推导字段', () => {
 
   it('computes auto eligibility from the exact server-observed diff, contract and production receipt', async () => {
     const headSha = 'a'.repeat(40);
+    const baseSha = 'b'.repeat(40);
     const contractContent = { acceptance: ['status card remains green'] };
     const contractDigest = canonicalContractDigest(contractContent);
+    const exactFiles = [{
+      path: 'apps/dashboard/src/components/StatusCard.jsx',
+      previous_path: null,
+      status: 'modified',
+      blob_sha: 'c'.repeat(40),
+      patch_digest: `sha256:${'d'.repeat(64)}`,
+      additions: 12,
+      deletions: 3,
+    }];
+    const behavior = deriveBehaviorAuthority({
+      repository: 'o/r',
+      contract: { version: 7, digest: contractDigest },
+      files: exactFiles,
+    });
+    const receiptAuthority = {
+      receipt_status: 'confirmed',
+      release_authority_valid: true,
+      repository: 'o/r',
+      behavior_fingerprint: behavior.behavior_fingerprint,
+      capability_fingerprint: behavior.capability_fingerprint,
+      path_surface_digest: behavior.path_surface_digest,
+      contract_version: 7,
+      contract_digest: contractDigest,
+      path_class: 'application',
+      artifact_digest: `sha256:${'e'.repeat(64)}`,
+      release_run_id: '33333333-3333-4333-8333-333333333333',
+      release_effect_receipt_id: '44444444-4444-4444-8444-444444444444',
+      issuer: 'kernel-release-controller/v1',
+      production_head_sha: 'f'.repeat(40),
+      deployed_at: '2026-07-27T08:00:00.000Z',
+      expires_at: '2026-08-03T08:00:00.000Z',
+    };
     const deps = makeDeps({
       rows: {
         run: { pr_url: PR_URL },
@@ -867,6 +909,7 @@ describe('collectGroundTruth：决策日志推导字段', () => {
           id: CONTRACT_ID,
           status: 'approved',
           version: 7,
+          approved_at: '2026-07-27T07:00:00.000Z',
           contract_content: contractContent,
         }],
         tasks: [{
@@ -891,30 +934,36 @@ describe('collectGroundTruth：决策日志推导字段', () => {
           },
         ],
         productionReceipts: [{
-          receipt_status: 'confirmed',
-          behavior_version: 'dashboard-status-card/v3',
-          contract_version: 7,
-          contract_digest: contractDigest,
-          path_class: 'application',
-          production_head_sha: 'b'.repeat(40),
-          deployed_at: '2026-07-27T08:00:00.000Z',
-          expires_at: '2026-08-27T08:00:00.000Z',
+          ...receiptAuthority,
+          receipt_digest: canonicalProductionReceiptDigest(receiptAuthority),
         }],
       },
-      exec: {
-        prView: JSON.stringify({
-          state: 'OPEN',
-          mergeStateStatus: 'CLEAN',
-          headRefName: 'cp-status-card',
-          headRefOid: headSha,
-          statusCheckRollup: [{ state: 'SUCCESS' }],
-          files: [{
-            path: 'apps/dashboard/src/components/StatusCard.jsx',
-            additions: 12,
-            deletions: 3,
-          }],
-        }),
-      },
+      observePullRequest: vi.fn(async () => ({
+        url: PR_URL,
+        repository: 'o/r',
+        number: 42,
+        head_repository: 'o/r',
+        head_ref: 'cp-status-card',
+        head_sha: headSha,
+        base_repository: 'o/r',
+        base_ref: 'main',
+        base_sha: baseSha,
+        diff_digest: `sha256:${'1'.repeat(64)}`,
+        required_checks: [{
+          context: 'ci-passed',
+          app_slug: 'github-actions',
+          source: 'github-actions',
+          run_id: '123456',
+          job_id: '789012',
+          head_sha: headSha,
+          conclusion: 'SUCCESS',
+        }],
+        state: 'OPEN',
+        merge_state_status: 'CLEAN',
+        ci: 'pass',
+        merged: false,
+        files: exactFiles,
+      })),
     });
 
     const observed = await collectGroundTruth(deps, {
@@ -925,23 +974,25 @@ describe('collectGroundTruth：决策日志推导字段', () => {
     expect(observed.postDiffRisk).toMatchObject({
       auto_eligible: true,
       human_review_required: false,
+      reasons: [],
       bindings: {
         task_id: TASK_ID,
         run_id: RUN_ID,
         hop: 11,
+        repository: 'o/r',
         head_sha: headSha,
+        base_sha: baseSha,
         contract_version: 7,
         contract_digest: contractDigest,
-        behavior_version: 'dashboard-status-card/v3',
+        behavior_fingerprint: behavior.behavior_fingerprint,
         path_class: 'application',
       },
     });
     expect(observed.reviewRequired).toBe(false);
-    expect(deps.execCmd.calls.find((command) => command.includes('gh pr view')))
-      .toContain('files');
     expect(deps.pool.calls.some(([sql, params]) => (
       sql.includes('FROM kernel_behavior_production_receipts')
-      && params[0] === 'dashboard-status-card/v3'
+      && params[0] === 'o/r'
+      && params[1] === behavior.behavior_fingerprint
     ))).toBe(true);
   });
 
@@ -954,6 +1005,7 @@ describe('collectGroundTruth：决策日志推导字段', () => {
           id: CONTRACT_ID,
           status: 'approved',
           version: 7,
+          approved_at: '2026-07-27T07:00:00.000Z',
           contract_content: { acceptance: ['safe'] },
         }],
         tasks: [{
@@ -978,19 +1030,40 @@ describe('collectGroundTruth：决策日志推导字段', () => {
           },
         ],
       },
-      exec: {
-        prView: JSON.stringify({
-          state: 'OPEN',
-          mergeStateStatus: 'CLEAN',
-          headRefOid: headSha,
-          statusCheckRollup: [{ state: 'SUCCESS' }],
-          files: [{
-            path: 'apps/dashboard/src/App.jsx',
-            additions: 2,
-            deletions: 1,
-          }],
-        }),
-      },
+      observePullRequest: vi.fn(async () => ({
+        url: PR_URL,
+        repository: 'o/r',
+        number: 42,
+        head_repository: 'o/r',
+        head_ref: 'cp-new',
+        head_sha: headSha,
+        base_repository: 'o/r',
+        base_ref: 'main',
+        base_sha: 'b'.repeat(40),
+        diff_digest: `sha256:${'1'.repeat(64)}`,
+        required_checks: [{
+          context: 'ci-passed',
+          app_slug: 'github-actions',
+          source: 'github-actions',
+          run_id: '123456',
+          job_id: '789012',
+          head_sha: headSha,
+          conclusion: 'SUCCESS',
+        }],
+        state: 'OPEN',
+        merge_state_status: 'CLEAN',
+        ci: 'pass',
+        merged: false,
+        files: [{
+          path: 'apps/dashboard/src/App.jsx',
+          previous_path: null,
+          status: 'modified',
+          blob_sha: 'c'.repeat(40),
+          patch_digest: `sha256:${'d'.repeat(64)}`,
+          additions: 2,
+          deletions: 1,
+        }],
+      })),
     });
 
     const observed = await collectGroundTruth(deps, {

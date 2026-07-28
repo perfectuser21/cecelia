@@ -1,4 +1,8 @@
 import { isPassVerdict } from './gates.js';
+import {
+  canonicalContractDigest,
+  canonicalRequiredChecksDigest,
+} from './post-diff-risk-policy.js';
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -71,7 +75,8 @@ function sameRiskDecision(left, right) {
 function assertPostDiffRisk(proof, {
   runId,
   taskId,
-  headSha,
+  pr,
+  contract,
   mergeIntentHop,
   nowMs,
 }) {
@@ -89,13 +94,28 @@ function assertPostDiffRisk(proof, {
     || bindings.run_id !== runId
     || bindings.task_id !== taskId
     || bindings.hop !== mergeIntentHop
-    || bindings.head_sha !== headSha
+    || bindings.repository !== pr.repository
+    || bindings.head_repository !== pr.head_repository
+    || bindings.head_ref !== pr.head_ref
+    || bindings.head_sha !== pr.head_sha
+    || bindings.base_repository !== pr.base_repository
+    || bindings.base_ref !== pr.base_ref
+    || bindings.base_sha !== pr.base_sha
+    || bindings.diff_hash !== pr.diff_digest
+    || bindings.required_checks_digest
+      !== canonicalRequiredChecksDigest(pr.required_checks, pr.head_sha)
+    || bindings.contract_id !== contract.id
     || !SHA256_PATTERN.test(bindings.diff_hash ?? '')
+    || !SHA_PATTERN.test(bindings.base_sha ?? '')
     || !Number.isInteger(bindings.contract_version)
     || bindings.contract_version < 1
+    || bindings.contract_version !== contract.version
     || !SHA256_PATTERN.test(bindings.contract_digest ?? '')
-    || typeof bindings.behavior_version !== 'string'
-    || bindings.behavior_version.length === 0
+    || bindings.contract_digest !== contract.digest
+    || bindings.contract_approved_at !== contract.approved_at
+    || !SHA256_PATTERN.test(bindings.behavior_fingerprint ?? '')
+    || !SHA256_PATTERN.test(bindings.capability_fingerprint ?? '')
+    || !SHA256_PATTERN.test(bindings.path_surface_digest ?? '')
     || typeof bindings.path_class !== 'string'
     || bindings.path_class.length === 0
   ) {
@@ -132,16 +152,59 @@ function exactPrUrl(value, repository, number) {
 function assertCurrentPr(pr) {
   if (
     !REPOSITORY_PATTERN.test(pr.repository ?? '')
+    || !REPOSITORY_PATTERN.test(pr.head_repository ?? '')
     || !Number.isInteger(pr.number)
     || pr.number < 1
     || !exactPrUrl(pr.url, pr.repository, pr.number)
     || !BRANCH_PATTERN.test(pr.head_ref ?? '')
     || !SHA_PATTERN.test(pr.head_sha ?? '')
+    || !REPOSITORY_PATTERN.test(pr.base_repository ?? '')
+    || !BRANCH_PATTERN.test(pr.base_ref ?? '')
+    || !SHA_PATTERN.test(pr.base_sha ?? '')
+    || !SHA256_PATTERN.test(pr.diff_digest ?? '')
   ) {
     deny('pr_authority_invalid');
   }
   if (pr.state !== 'OPEN' || pr.merged !== false) deny('pr_not_open');
+  if (pr.is_draft !== false) deny('pr_not_ready');
+  if (pr.merge_state_status !== 'CLEAN') deny('pr_not_clean');
   if (pr.ci !== 'pass') deny('ci_not_pass');
+  try {
+    canonicalRequiredChecksDigest(pr.required_checks, pr.head_sha);
+  } catch {
+    deny('ci_authority_invalid');
+  }
+}
+
+function assertApprovedContract(contract, nowMs) {
+  const value = asObject(contract);
+  let digest = value.contract_digest ?? null;
+  if (!digest) {
+    try {
+      digest = canonicalContractDigest(value.contract_content);
+    } catch {
+      digest = null;
+    }
+  }
+  const approvedAt = Date.parse(value.approved_at);
+  if (
+    !UUID_PATTERN.test(value.id ?? '')
+    || value.status !== 'approved'
+    || !Number.isInteger(value.version)
+    || value.version < 1
+    || !SHA256_PATTERN.test(digest ?? '')
+    || !Number.isFinite(approvedAt)
+    || approvedAt > nowMs
+  ) {
+    deny('contract_not_approved');
+  }
+  return {
+    id: value.id,
+    version: value.version,
+    status: value.status,
+    approved_at: value.approved_at,
+    digest,
+  };
 }
 
 function assertVerdict(rows, action, headSha, {
@@ -206,6 +269,10 @@ function assertMergeIntent(rows, pr) {
   if (
     observedPr.url !== pr.url
     || observedPr.head_sha !== pr.head_sha
+    || observedPr.base_repository !== pr.base_repository
+    || observedPr.base_ref !== pr.base_ref
+    || observedPr.base_sha !== pr.base_sha
+    || observedPr.diff_digest !== pr.diff_digest
     || observedPr.state !== 'OPEN'
     || observedPr.merged !== false
     || observedPr.ci !== 'pass'
@@ -239,6 +306,7 @@ export function validateMergeAuthorizationEvidence(input) {
     deny('policy_version_invalid');
   }
   assertCurrentPr(pr);
+  const contract = assertApprovedContract(input?.contract, nowMs);
 
   const evaluator = assertVerdict(rows, 'verdict:evaluate', pr.head_sha, {
     missingCode: 'evaluator_missing',
@@ -256,7 +324,8 @@ export function validateMergeAuthorizationEvidence(input) {
   const postDiffRisk = assertPostDiffRisk(input?.postDiffRisk, {
     runId: run.id,
     taskId: task.id,
-    headSha: pr.head_sha,
+    pr,
+    contract,
     mergeIntentHop: Number(intent.hop),
     nowMs,
   });
@@ -266,7 +335,8 @@ export function validateMergeAuthorizationEvidence(input) {
     {
       runId: run.id,
       taskId: task.id,
-      headSha: pr.head_sha,
+      pr,
+      contract,
       mergeIntentHop: Number(intent.hop),
       nowMs,
     },
@@ -291,6 +361,14 @@ export function validateMergeAuthorizationEvidence(input) {
     pr_url: pr.url,
     head_ref: pr.head_ref,
     head_sha: pr.head_sha,
+    base_repository: pr.base_repository,
+    base_ref: pr.base_ref,
+    base_sha: pr.base_sha,
+    diff_digest: pr.diff_digest,
+    contract_id: contract.id,
+    contract_version: contract.version,
+    contract_digest: contract.digest,
+    contract_approved_at: contract.approved_at,
     policy_version: policyVersion,
     review_required: reviewRequired,
     evaluator_hop: Number(evaluator.hop),

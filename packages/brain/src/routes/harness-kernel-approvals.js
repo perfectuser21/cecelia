@@ -7,6 +7,9 @@ import { authenticateApprover } from './harness-pending-reviews.js';
 
 const router = Router();
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const SHA_PATTERN = /^[a-f0-9]{40}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const approvalRateLimit = rateLimit({
   windowMs: 60_000,
   limit: 10,
@@ -49,13 +52,25 @@ function validMergeReviewProof(proof, {
     && bindings?.task_id === taskId
     && bindings?.run_id === runId
     && bindings?.hop === reviewRequestHop
+    && REPOSITORY_PATTERN.test(bindings?.repository ?? '')
+    && REPOSITORY_PATTERN.test(bindings?.head_repository ?? '')
+    && typeof bindings?.head_ref === 'string'
+    && bindings.head_ref.length > 0
     && bindings?.head_sha === headSha
+    && REPOSITORY_PATTERN.test(bindings?.base_repository ?? '')
+    && typeof bindings?.base_ref === 'string'
+    && bindings.base_ref.length > 0
+    && SHA_PATTERN.test(bindings?.base_sha ?? '')
     && SHA256_PATTERN.test(bindings?.diff_hash ?? '')
+    && SHA256_PATTERN.test(bindings?.required_checks_digest ?? '')
+    && UUID_PATTERN.test(bindings?.contract_id ?? '')
     && Number.isInteger(bindings?.contract_version)
     && bindings.contract_version > 0
     && SHA256_PATTERN.test(bindings?.contract_digest ?? '')
-    && typeof bindings?.behavior_version === 'string'
-    && bindings.behavior_version.length > 0
+    && Number.isFinite(Date.parse(bindings?.contract_approved_at))
+    && SHA256_PATTERN.test(bindings?.behavior_fingerprint ?? '')
+    && SHA256_PATTERN.test(bindings?.capability_fingerprint ?? '')
+    && SHA256_PATTERN.test(bindings?.path_surface_digest ?? '')
     && typeof bindings?.path_class === 'string'
     && bindings.path_class.length > 0;
 }

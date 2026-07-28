@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPostgresMergeEffectStore } from '../merge-effect-store.js';
+import { __test__, createPostgresMergeEffectStore } from '../merge-effect-store.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
@@ -33,11 +33,17 @@ function proof() {
         task_id: TASK_ID,
         run_id: RUN_ID,
         hop: 3,
+        repository: 'perfectuser21/cecelia',
         head_sha: HEAD_SHA,
+        base_repository: 'perfectuser21/cecelia',
+        base_ref: 'main',
+        base_sha: 'b'.repeat(40),
         diff_hash: `sha256:${'b'.repeat(64)}`,
         contract_version: 7,
         contract_digest: `sha256:${'c'.repeat(64)}`,
-        behavior_version: 'dashboard/v3',
+        behavior_fingerprint: `sha256:${'d'.repeat(64)}`,
+        capability_fingerprint: `sha256:${'e'.repeat(64)}`,
+        path_surface_digest: `sha256:${'f'.repeat(64)}`,
         path_class: 'application',
       },
       expires_at: '2099-07-28T08:15:00.000Z',
@@ -130,13 +136,22 @@ describe('PostgreSQL merge effect store', () => {
             contract_content: { acceptance: ['green'] },
           }],
         })
+        .mockResolvedValueOnce({ rows: [{
+          hop: 1,
+          action: 'merge_pr',
+          gate_verdict: 'allow',
+          observed: { post_diff_risk: { bindings: {
+            repository: 'perfectuser21/cecelia',
+            behavior_fingerprint: `sha256:${'d'.repeat(64)}`,
+          } } },
+        }] })
         .mockResolvedValueOnce({
           rows: [{
             receipt_status: 'confirmed',
-            behavior_version: 'dashboard/v3',
+            repository: 'perfectuser21/cecelia',
+            behavior_fingerprint: `sha256:${'d'.repeat(64)}`,
           }],
-        })
-        .mockResolvedValueOnce({ rows: [{ hop: 1, action: 'merge_pr' }] }),
+        }),
     };
     const store = createPostgresMergeEffectStore({});
 
@@ -162,17 +177,26 @@ describe('PostgreSQL merge effect store', () => {
       },
       productionReceipt: {
         receipt_status: 'confirmed',
-        behavior_version: 'dashboard/v3',
+        repository: 'perfectuser21/cecelia',
+        behavior_fingerprint: `sha256:${'d'.repeat(64)}`,
       },
-      decisionLog: [{ hop: 1, action: 'merge_pr' }],
+      decisionLog: [{
+        hop: 1,
+        action: 'merge_pr',
+        gate_verdict: 'allow',
+        observed: { post_diff_risk: { bindings: {
+          repository: 'perfectuser21/cecelia',
+          behavior_fingerprint: `sha256:${'d'.repeat(64)}`,
+        } } },
+      }],
     });
 
     expect(client.query.mock.calls[2][0]).toMatch(/FROM initiative_contracts/i);
     expect(client.query.mock.calls[3][0]).toMatch(
-      /FROM kernel_behavior_production_receipts/i,
+      /FROM orchestrator_decision_log[\s\S]*ORDER BY hop/i,
     );
     expect(client.query.mock.calls[4][0]).toMatch(
-      /FROM orchestrator_decision_log[\s\S]*ORDER BY hop/i,
+      /FROM kernel_behavior_production_receipts[\s\S]*repository = \$1[\s\S]*behavior_fingerprint = \$2/i,
     );
   });
 
@@ -187,10 +211,51 @@ describe('PostgreSQL merge effect store', () => {
       pr_url: PR_URL,
       head_ref: 'cp-safe',
     };
-    const authorization = { id: '44444444-4444-4444-8444-444444444444' };
-    const riskAssessment = { id: '66666666-6666-4666-8666-666666666666' };
+    const expectedProof = proof();
+    const binding = expectedProof.post_diff_risk.bindings;
+    const riskAssessment = {
+      id: '66666666-6666-4666-8666-666666666666',
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      assessment_hop: binding.hop,
+      repository: binding.repository,
+      head_sha: binding.head_sha,
+      base_repository: binding.base_repository,
+      base_ref: binding.base_ref,
+      base_sha: binding.base_sha,
+      diff_hash: binding.diff_hash,
+      contract_version: binding.contract_version,
+      contract_digest: binding.contract_digest,
+      behavior_fingerprint: binding.behavior_fingerprint,
+      capability_fingerprint: binding.capability_fingerprint,
+      path_surface_digest: binding.path_surface_digest,
+      path_class: binding.path_class,
+      risk_level: expectedProof.post_diff_risk.risk_level,
+      human_review_required: expectedProof.post_diff_risk.human_review_required,
+      auto_eligible: expectedProof.post_diff_risk.auto_eligible,
+      policy_version: expectedProof.post_diff_risk.policy_version,
+      proof_expires_at: expectedProof.post_diff_risk.expires_at,
+      proof_digest: __test__.proofDigest(expectedProof.post_diff_risk),
+      evidence: expectedProof.post_diff_risk,
+    };
+    const authorization = {
+      id: '44444444-4444-4444-8444-444444444444',
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      repository: 'perfectuser21/cecelia',
+      pr_number: 4400,
+      pr_url: PR_URL,
+      head_ref: 'cp-safe',
+      head_sha: HEAD_SHA,
+      policy_version: 'kernel-merge/v1',
+      risk_assessment_id: riskAssessment.id,
+      evidence: expectedProof,
+    };
     const intent = {
       intent_id: '55555555-5555-4555-8555-555555555555',
+      authorization_id: authorization.id,
+      run_id: RUN_ID,
+      target: PR_URL,
       requested_head_sha: HEAD_SHA,
       confirmed_receipt: null,
     };
@@ -204,7 +269,7 @@ describe('PostgreSQL merge effect store', () => {
         if (/INSERT INTO kernel_post_diff_risk_assessments/.test(sql)) {
           return { rows: [riskAssessment] };
         }
-        if (/SELECT id FROM kernel_merge_authorizations/.test(sql)) {
+        if (/SELECT \*[\s\S]*FROM kernel_merge_authorizations/.test(sql)) {
           return { rows: [authorization] };
         }
         if (/SELECT intent\.id AS intent_id/.test(sql)) return { rows: [intent] };
@@ -214,7 +279,7 @@ describe('PostgreSQL merge effect store', () => {
     const store = createPostgresMergeEffectStore({});
 
     await expect(store.createAuthorizationIntent(client, {
-      proof: proof(),
+      proof: expectedProof,
       currentPr: {
         url: PR_URL,
         head_sha: HEAD_SHA,
@@ -229,5 +294,69 @@ describe('PostgreSQL merge effect store', () => {
       /INSERT INTO kernel_pr_ownership[\s\S]*INSERT INTO kernel_pr_head_observations[\s\S]*INSERT INTO kernel_post_diff_risk_assessments[\s\S]*INSERT INTO kernel_merge_authorizations[\s\S]*INSERT INTO kernel_merge_effect_intents/,
     );
     expect(calls.at(-1)).toBe('COMMIT');
+  });
+
+  it('rolls back when a conflicting assessment reuses the same proof digest', async () => {
+    const expectedProof = proof();
+    const binding = expectedProof.post_diff_risk.bindings;
+    const ownership = {
+      id: '33333333-3333-4333-8333-333333333333',
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      repository: expectedProof.repository,
+      pr_number: expectedProof.pr_number,
+      pr_url: PR_URL,
+      head_ref: expectedProof.head_ref,
+    };
+    const conflicting = {
+      id: '66666666-6666-4666-8666-666666666666',
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      assessment_hop: binding.hop,
+      repository: binding.repository,
+      head_sha: binding.head_sha,
+      base_repository: binding.base_repository,
+      base_ref: binding.base_ref,
+      base_sha: binding.base_sha,
+      diff_hash: binding.diff_hash,
+      contract_version: binding.contract_version,
+      contract_digest: binding.contract_digest,
+      behavior_fingerprint: binding.behavior_fingerprint,
+      capability_fingerprint: binding.capability_fingerprint,
+      path_surface_digest: binding.path_surface_digest,
+      path_class: 'security_credential',
+      risk_level: expectedProof.post_diff_risk.risk_level,
+      human_review_required: expectedProof.post_diff_risk.human_review_required,
+      auto_eligible: expectedProof.post_diff_risk.auto_eligible,
+      policy_version: expectedProof.post_diff_risk.policy_version,
+      proof_expires_at: expectedProof.post_diff_risk.expires_at,
+      proof_digest: __test__.proofDigest(expectedProof.post_diff_risk),
+      evidence: expectedProof.post_diff_risk,
+    };
+    const client = {
+      query: vi.fn(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [] };
+        if (/SELECT \* FROM kernel_pr_ownership/.test(sql)) return { rows: [ownership] };
+        if (/INSERT INTO kernel_post_diff_risk_assessments/.test(sql)) return { rows: [] };
+        if (/SELECT \*[\s\S]*FROM kernel_post_diff_risk_assessments/.test(sql)) {
+          return { rows: [conflicting] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const store = createPostgresMergeEffectStore({});
+
+    await expect(store.createAuthorizationIntent(client, {
+      proof: expectedProof,
+      currentPr: {
+        url: PR_URL,
+        head_sha: HEAD_SHA,
+        head_ref: 'cp-safe',
+        state: 'OPEN',
+        ci: 'pass',
+        merged: false,
+      },
+    })).rejects.toMatchObject({ code: 'post_diff_risk_conflict' });
+    expect(client.query.mock.calls.at(-1)[0]).toBe('ROLLBACK');
   });
 });

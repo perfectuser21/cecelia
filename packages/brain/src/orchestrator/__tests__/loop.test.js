@@ -904,6 +904,57 @@ describe('runLoop：wait:* 不灌水', () => {
     );
   });
 
+  it('rebinds an approved review proof to the fresh merge-intent hop', async () => {
+    const headSha = 'a'.repeat(40);
+    const pr = {
+      url: 'https://github.com/o/r/pull/42',
+      state: 'OPEN',
+      ci: 'pass',
+      merged: false,
+      head_sha: headSha,
+    };
+    const postDiffRisk = {
+      schema_version: 'kernel-post-diff-risk/v1',
+      policy_version: 'kernel-post-diff-risk/v1',
+      risk_level: 'high',
+      human_review_required: true,
+      auto_eligible: false,
+      reasons: ['first_behavior'],
+      bindings: {
+        task_id: TASK_ID,
+        run_id: RUN_ID,
+        hop: 9,
+        head_sha: headSha,
+        diff_hash: `sha256:${'b'.repeat(64)}`,
+        contract_version: 7,
+        contract_digest: `sha256:${'c'.repeat(64)}`,
+        path_class: 'application',
+      },
+      expires_at: '2026-07-04T12:15:00.000Z',
+    };
+    const current = obs({
+      generatorSpawned: true,
+      pr,
+      postDiffRisk,
+      reviewRequired: true,
+      reviewApproved: true,
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+    });
+    const { deps, appended } = makeEnv({
+      observedSeq: [
+        current,
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    const mergeIntent = appended.find((entry) => entry.action === 'merge_pr');
+    expect(mergeIntent.observed.post_diff_risk.bindings.hop).toBe(mergeIntent.hop);
+    expect(mergeIntent.detail.post_diff_risk.bindings.hop).toBe(mergeIntent.hop);
+  });
+
   it('human review 首次派发失败只有 intent 时会重试，成功后才写 effect marker', async () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-review' };
     const verdicts = {

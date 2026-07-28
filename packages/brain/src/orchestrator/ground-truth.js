@@ -23,6 +23,7 @@ import { normalizeFailureSet } from './convergence-signatures.js';
 import {
   assessPostDiffRisk,
   canonicalContractDigest,
+  deriveBehaviorAuthority,
 } from './post-diff-risk-policy.js';
 
 /** gh check state → 三态 ci 映射 */
@@ -220,21 +221,6 @@ export async function collectGroundTruth(deps, opts) {
   const task = tRes.rows[0] ?? null;
   if (!task) throw new Error(`collectGroundTruth: tasks 无此 task 行: ${taskId}`);
   const payload = asJson(task.payload) ?? {};
-  let productionReceipt = null;
-  if (typeof payload.behavior_version === 'string' && payload.behavior_version.length > 0) {
-    const receiptResult = await pool.query(
-      `SELECT id, receipt_status, behavior_version, contract_version, contract_digest,
-              path_class, production_head_sha, deployed_at, expires_at
-         FROM kernel_behavior_production_receipts
-        WHERE behavior_version = $1
-          AND receipt_status = 'confirmed'
-        ORDER BY deployed_at DESC, id DESC
-        LIMIT 1`,
-      [payload.behavior_version],
-    );
-    productionReceipt = receiptResult.rows[0] ?? null;
-  }
-
   const logRes = await pool.query(
     'SELECT hop, action, observed, derived_phase, gate_verdict, detail, created_at FROM orchestrator_decision_log WHERE run_id = $1 ORDER BY hop',
     [runId],
@@ -331,28 +317,32 @@ export async function collectGroundTruth(deps, opts) {
     }
   }
   if (prUrl) {
-    const view = asJson(execTolerant(
-      execCmd,
-      `gh pr view ${prUrl} --json state,mergeStateStatus,headRefName,headRefOid,statusCheckRollup,files`,
-    )) ?? {};
-    const checks = normalizeStatusCheckRollup(view.statusCheckRollup);
-    pr = {
-      url: prUrl,
-      state: view.state ?? null,
-      mergeStateStatus: view.mergeStateStatus ?? null,
-      merged: view.state === 'MERGED',
-      head_ref: view.headRefName ?? null,
-      head_sha: view.headRefOid ?? null,
-      ci: mapCiStatus(checks),
-      failed_checks: failedCheckNames(checks),
-      files: Array.isArray(view.files)
-        ? view.files.map((file) => ({
-            path: file.path,
-            additions: file.additions,
-            deletions: file.deletions,
-          }))
-        : null,
-    };
+    if (typeof deps.observePullRequest === 'function') {
+      pr = await deps.observePullRequest(prUrl);
+    } else {
+      const view = asJson(execTolerant(
+        execCmd,
+        `gh pr view ${prUrl} --json state,mergeStateStatus,headRefName,headRefOid,statusCheckRollup,files`,
+      )) ?? {};
+      const checks = normalizeStatusCheckRollup(view.statusCheckRollup);
+      pr = {
+        url: prUrl,
+        state: view.state ?? null,
+        mergeStateStatus: view.mergeStateStatus ?? null,
+        merged: view.state === 'MERGED',
+        head_ref: view.headRefName ?? null,
+        head_sha: view.headRefOid ?? null,
+        ci: mapCiStatus(checks),
+        failed_checks: failedCheckNames(checks),
+        files: Array.isArray(view.files)
+          ? view.files.map((file) => ({
+              path: file.path,
+              additions: file.additions,
+              deletions: file.deletions,
+            }))
+          : null,
+      };
+    }
   }
 
   // ---- propose 分支 rN（外部真相，ganRound 唯一权威）----
@@ -430,6 +420,40 @@ export async function collectGroundTruth(deps, opts) {
   } catch {
     contractDigest = null;
   }
+  let productionReceipt = null;
+  if (pr && contractDigest) {
+    try {
+      const behavior = deriveBehaviorAuthority({
+        repository: pr.repository,
+        contract: {
+          id: contractRow?.id ?? null,
+          version: contractRow?.version ?? null,
+          status: contractRow?.status ?? null,
+          approved_at: contractRow?.approved_at ?? null,
+          digest: contractDigest,
+        },
+        files: pr.files,
+      });
+      const receiptResult = await pool.query(
+        `SELECT id, receipt_status, repository, behavior_version,
+                behavior_fingerprint, capability_fingerprint, path_surface_digest,
+                contract_version, contract_digest, path_class, production_head_sha,
+                artifact_digest, release_run_id, release_effect_receipt_id,
+                issuer, receipt_digest, deployed_at, expires_at,
+                FALSE AS release_authority_valid
+           FROM kernel_behavior_production_receipts
+          WHERE repository = $1
+            AND behavior_fingerprint = $2
+            AND receipt_status = 'confirmed'
+          ORDER BY deployed_at DESC, id DESC
+          LIMIT 1`,
+        [pr.repository, behavior.behavior_fingerprint],
+      );
+      productionReceipt = receiptResult.rows[0] ?? null;
+    } catch {
+      productionReceipt = null;
+    }
+  }
   const riskNow = Number((deps.now ?? Date.now)());
   const priorRiskRow = latestRow(decisionLog, (row) => {
     if (![LOG_ACTION.HUMAN_REVIEW_REQUESTED, ACTION.MERGE_PR].includes(row.action)) {
@@ -447,13 +471,23 @@ export async function collectGroundTruth(deps, opts) {
         taskId,
         runId,
         hop: riskHop,
+        repository: pr.repository,
+        headRepository: pr.head_repository,
+        headRef: pr.head_ref,
         headSha: pr.head_sha,
+        baseRepository: pr.base_repository,
+        baseRef: pr.base_ref,
+        baseSha: pr.base_sha,
+        diffDigest: pr.diff_digest,
+        requiredChecks: pr.required_checks,
         files: pr.files,
         contract: {
+          id: contractRow?.id ?? null,
           version: contractRow?.version ?? null,
+          status: contractRow?.status ?? null,
+          approved_at: contractRow?.approved_at ?? null,
           digest: contractDigest,
         },
-        behaviorVersion: payload.behavior_version ?? null,
         productionReceipt,
         callerRisk: payload.review_required === true
           ? 'high'

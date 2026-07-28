@@ -4,11 +4,23 @@ import {
   MergeAuthorizationError,
   validateMergeAuthorizationEvidence,
 } from '../merge-authority.js';
+import { canonicalRequiredChecksDigest } from '../post-diff-risk-policy.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
 const HEAD_SHA = 'a'.repeat(40);
+const BASE_SHA = '9'.repeat(40);
+const DIFF_DIGEST = `sha256:${'8'.repeat(64)}`;
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4400';
+const REQUIRED_CHECKS = Object.freeze([Object.freeze({
+  context: 'ci-passed',
+  app_slug: 'github-actions',
+  source: 'github-actions',
+  run_id: '123456',
+  job_id: '789012',
+  head_sha: HEAD_SHA,
+  conclusion: 'SUCCESS',
+})]);
 
 function riskProof(reviewRequired, overrides = {}) {
   return {
@@ -22,11 +34,22 @@ function riskProof(reviewRequired, overrides = {}) {
       task_id: TASK_ID,
       run_id: RUN_ID,
       hop: 5,
+      repository: 'perfectuser21/cecelia',
+      head_repository: 'perfectuser21/cecelia',
+      head_ref: 'cp-07280905-result-channel',
       head_sha: HEAD_SHA,
-      diff_hash: `sha256:${'b'.repeat(64)}`,
+      base_repository: 'perfectuser21/cecelia',
+      base_ref: 'main',
+      base_sha: BASE_SHA,
+      diff_hash: DIFF_DIGEST,
+      required_checks_digest: canonicalRequiredChecksDigest(REQUIRED_CHECKS, HEAD_SHA),
+      contract_id: '33333333-3333-4333-8333-333333333333',
       contract_version: 7,
       contract_digest: `sha256:${'c'.repeat(64)}`,
-      behavior_version: 'status-card/v3',
+      contract_approved_at: '2026-07-28T07:00:00.000Z',
+      behavior_fingerprint: `sha256:${'d'.repeat(64)}`,
+      capability_fingerprint: `sha256:${'e'.repeat(64)}`,
+      path_surface_digest: `sha256:${'f'.repeat(64)}`,
       path_class: 'application',
     },
     expires_at: '2099-07-28T08:15:00.000Z',
@@ -66,14 +89,29 @@ function evidence(overrides = {}) {
       id: TASK_ID,
       payload: { review_required: reviewRequired },
     },
+    contract: {
+      id: '33333333-3333-4333-8333-333333333333',
+      version: 7,
+      status: 'approved',
+      approved_at: '2026-07-28T07:00:00.000Z',
+      contract_digest: `sha256:${'c'.repeat(64)}`,
+    },
     pr: {
       url: PR_URL,
       repository: 'perfectuser21/cecelia',
       number: 4400,
+      head_repository: 'perfectuser21/cecelia',
       head_ref: 'cp-07280905-result-channel',
       head_sha: HEAD_SHA,
+      base_repository: 'perfectuser21/cecelia',
+      base_ref: 'main',
+      base_sha: BASE_SHA,
+      diff_digest: DIFF_DIGEST,
       state: 'OPEN',
+      is_draft: false,
+      merge_state_status: 'CLEAN',
       ci: 'pass',
+      required_checks: REQUIRED_CHECKS,
       merged: false,
     },
     decisionLog: [
@@ -108,7 +146,17 @@ function evidence(overrides = {}) {
             state: 'OPEN',
             ci: 'pass',
             merged: false,
+            repository: 'perfectuser21/cecelia',
+            number: 4400,
+            head_repository: 'perfectuser21/cecelia',
+            head_ref: 'cp-07280905-result-channel',
             head_sha: HEAD_SHA,
+            base_repository: 'perfectuser21/cecelia',
+            base_ref: 'main',
+            base_sha: BASE_SHA,
+            diff_digest: DIFF_DIGEST,
+            merge_state_status: 'CLEAN',
+            is_draft: false,
           },
           post_diff_risk: postDiffRisk,
         },
@@ -140,6 +188,14 @@ describe('validateMergeAuthorizationEvidence', () => {
       pr_url: PR_URL,
       head_ref: 'cp-07280905-result-channel',
       head_sha: HEAD_SHA,
+      base_repository: 'perfectuser21/cecelia',
+      base_ref: 'main',
+      base_sha: BASE_SHA,
+      diff_digest: DIFF_DIGEST,
+      contract_id: '33333333-3333-4333-8333-333333333333',
+      contract_version: 7,
+      contract_digest: `sha256:${'c'.repeat(64)}`,
+      contract_approved_at: '2026-07-28T07:00:00.000Z',
       policy_version: 'kernel-merge/v1',
       review_required: true,
       evaluator_hop: 1,
@@ -191,10 +247,36 @@ describe('validateMergeAuthorizationEvidence', () => {
   });
 
   it('a new PR head invalidates every old verdict and merge intent', () => {
+    const newHead = 'c'.repeat(40);
     const input = evidence({
-      pr: { ...evidence().pr, head_sha: 'c'.repeat(40) },
+      pr: {
+        ...evidence().pr,
+        head_sha: newHead,
+        required_checks: REQUIRED_CHECKS.map((check) => ({
+          ...check,
+          head_sha: newHead,
+        })),
+      },
     });
     expectDenied(input, 'stale_evaluator');
+  });
+
+  it.each([
+    ['retargeted base', { base_ref: 'release' }, 'stale_merge_intent'],
+    ['advanced base', { base_sha: '7'.repeat(40) }, 'stale_merge_intent'],
+    ['changed exact diff', { diff_digest: `sha256:${'7'.repeat(64)}` }, 'stale_merge_intent'],
+    ['draft', { is_draft: true }, 'pr_not_ready'],
+    ['unstable merge state', { merge_state_status: 'UNSTABLE' }, 'pr_not_clean'],
+    ['missing required evidence', { required_checks: [] }, 'ci_authority_invalid'],
+  ])('rejects %s at the merge boundary', (_label, patch, code) => {
+    const input = evidence({ pr: { ...evidence().pr, ...patch } });
+    expectDenied(input, code);
+  });
+
+  it('revalidates that the immutable approved contract is still approved', () => {
+    expectDenied(evidence({
+      contract: { ...evidence().contract, status: 'superseded' },
+    }), 'contract_not_approved');
   });
 
   it.each([
@@ -255,7 +337,7 @@ describe('validateMergeAuthorizationEvidence', () => {
           diff_hash: `sha256:${'d'.repeat(64)}`,
         },
       }),
-    }), 'post_diff_risk_revalidation_failed');
+    }), 'stale_post_diff_risk');
   });
 
   it('missing or denied merge intent cannot issue an authorization', () => {

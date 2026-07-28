@@ -23,6 +23,17 @@ describe('parseArgs', () => {
 });
 
 describe('buildRealDeps', () => {
+  it('shares the exact GitHub observer with GroundTruth instead of shell reconstruction', async () => {
+    const observePullRequest = vi.fn();
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      dispatch: vi.fn(),
+      execCmd: vi.fn(),
+      observePullRequest,
+    });
+    expect(deps.observePullRequest).toBe(observePullRequest);
+  });
+
   it('组装真实 dispatcher，不再返回 T3 NotImplemented 占位', async () => {
     const dispatch = vi.fn();
     const deps = await buildRealDeps({
