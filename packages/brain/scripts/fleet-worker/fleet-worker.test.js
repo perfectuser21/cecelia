@@ -239,6 +239,7 @@ describe('Fleet Worker health-only service', () => {
     let tempSequence = 0;
     const createdContainerNames = [];
     const makeTempDirFn = vi.fn(async () => `/private/tmp/fleet-node-probe-${++tempSequence}`);
+    const chmodTempDirFn = vi.fn(async () => undefined);
     const removeTempDirFn = vi.fn(async () => undefined);
     const fetchFn = vi.fn(async (url, options) => {
       expect(url).toBe('http://brain.internal:5221/api/brain/health');
@@ -312,6 +313,7 @@ describe('Fleet Worker health-only service', () => {
       fetchFn,
       callbackUrl: 'http://brain.internal:5221/api/brain/health',
       makeTempDirFn,
+      chmodTempDirFn,
       removeTempDirFn,
     };
     const first = await probeFleetWorkerHealth(input);
@@ -391,6 +393,17 @@ describe('Fleet Worker health-only service', () => {
     }
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(makeTempDirFn).toHaveBeenCalledTimes(2);
+    expect(chmodTempDirFn).toHaveBeenCalledTimes(2);
+    expect(chmodTempDirFn).toHaveBeenNthCalledWith(
+      1,
+      '/private/tmp/fleet-node-probe-1',
+      0o755,
+    );
+    expect(chmodTempDirFn).toHaveBeenNthCalledWith(
+      2,
+      '/private/tmp/fleet-node-probe-2',
+      0o755,
+    );
     expect(removeTempDirFn).toHaveBeenCalledTimes(2);
     expect(removeTempDirFn).toHaveBeenNthCalledWith(1, '/private/tmp/fleet-node-probe-1');
     expect(removeTempDirFn).toHaveBeenNthCalledWith(2, '/private/tmp/fleet-node-probe-2');
@@ -446,6 +459,7 @@ describe('Fleet Worker health-only service', () => {
       execFileFn,
       fetchFn: vi.fn(async () => new Response('{}', { status: 200 })),
       makeTempDirFn: vi.fn(async () => tempRoot),
+      chmodTempDirFn: vi.fn(async () => undefined),
       removeTempDirFn,
       statFn: missingDrainMarker,
     });

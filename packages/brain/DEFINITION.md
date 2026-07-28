@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.111
+**版本**: 1.267.112
+
+## Fleet disposable bind-mount traversal hotfix
+
+- node probe 在随机临时根目录创建后显式设置 `0755`，允许宿主用户域的
+  OrbStack daemon 遍历 `_cecelia` 的 disposable worktree 路径；容器挂载仍为
+  readonly，结束时仍清理容器、worktree 和临时根目录。
+- 不放宽 repository、凭据或 Docker socket 权限；失败继续保持节点 drain，
+  Phase 4B/4C/4D/5 范围不变。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.111`。
 
 ## Fleet canonical repository safe-path hotfix
 
