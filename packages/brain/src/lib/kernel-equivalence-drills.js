@@ -3,11 +3,16 @@ import {
   PROOF_SCENARIOS,
 } from './kernel-equivalence-axes.js';
 import {
+  preloadReceiptBundleAncestry,
+  sha256Canonical,
   verifyEffectReceipt,
   verifyExecutionGrant,
   verifyReceiptBundle,
   validateTrustRegistry,
 } from './kernel-equivalence-receipts.js';
+import {
+  verifyCleanupEvidence,
+} from './kernel-equivalence-runtime-registry.js';
 
 const REQUIRED_BEHAVIOR_COUNT = 11;
 const SAFE_ENVIRONMENTS = new Set(['isolated', 'ephemeral']);
@@ -19,7 +24,8 @@ const SAFE_RESOURCE_TYPES = new Set([
   'ephemeral_staging',
   'ephemeral_workspace',
 ]);
-const SAFE_PREFIX = /^(?:refs\/heads\/)?equivalence-drill\/[a-z0-9_{}./:-]+$/;
+const SAFE_PREFIX_TEMPLATE =
+  /^(?:refs\/heads\/)?equivalence-drill\/\{run_id\}\/\{attempt_id\}\/(?:[a-z0-9][a-z0-9_-]{0,127}\/)*$/;
 const FORBIDDEN_RESOURCE = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const TRUSTED_VERIFICATION_ERROR_CODES = new Set([
@@ -104,7 +110,8 @@ function validateIsolation(isolation, behaviorId) {
     !SAFE_ENVIRONMENTS.has(isolation.environment)
     || !SAFE_RESOURCE_TYPES.has(isolation.resource_type)
     || !nonEmpty(isolation.resource_prefix)
-    || !SAFE_PREFIX.test(isolation.resource_prefix)
+    || isolation.resource_prefix.length > 512
+    || !SAFE_PREFIX_TEMPLATE.test(isolation.resource_prefix)
     || FORBIDDEN_RESOURCE.test(isolation.resource_prefix)
   ) {
     fail('drill_isolation_unsafe', behaviorId);
@@ -244,7 +251,15 @@ export function compileDrillPlan(
         effect_key_id: descriptor.effect_key_id,
         blocked_by: descriptor.blocked_by,
         isolation: structuredClone(descriptor.isolation),
-        expected: structuredClone(descriptor.scenarios[scenario]),
+        expected: {
+          ...structuredClone(descriptor.scenarios[scenario]),
+          ...(scenario === 'recovery'
+            ? {
+              predecessor_expected:
+                structuredClone(descriptor.scenarios.violation),
+            }
+            : {}),
+        },
       }))
     ))
   )).sort((left, right) => left.cell_id.localeCompare(right.cell_id));
@@ -332,6 +347,15 @@ function isInternalTimeout(error, code) {
   return error instanceof EquivalenceDrillError && error.code === code;
 }
 
+function sampleTrustedClock(clock) {
+  try {
+    const value = typeof clock === 'function' ? clock() : clock;
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 async function withTimeout(
   operation,
   timeoutMs,
@@ -386,10 +410,28 @@ async function withAbortableTimeout(operation, timeoutMs) {
   }
 }
 
-function resolveAdapter(adapters, adapterId) {
-  if (adapters instanceof Map) return adapters.get(adapterId);
-  if (adapters && typeof adapters === 'object') return adapters[adapterId];
-  return null;
+function resolveExecutionAuthorities(adapters, cell, cleanupVerifier) {
+  if (typeof adapters?.resolveForCell === 'function') {
+    const selected = adapters.resolveForCell(cell);
+    if (selected?.adapter && typeof selected.verifyCleanup === 'function') {
+      return {
+        adapter: selected.adapter,
+        cleanupVerifier: selected.verifyCleanup,
+      };
+    }
+    return {
+      adapter: selected,
+      cleanupVerifier,
+    };
+  }
+  const adapter = adapters instanceof Map
+    ? adapters.get(cell?.adapter_id)
+    : (
+      adapters && typeof adapters === 'object'
+        ? adapters[cell?.adapter_id]
+        : null
+    );
+  return { adapter, cleanupVerifier };
 }
 
 function expectedFromGrant(cell, grant) {
@@ -413,6 +455,9 @@ function violationCellFor(recoveryCell) {
     ...recoveryCell,
     cell_id: recoveryCell.cell_id.replace(/::recovery$/, '::violation'),
     scenario: 'violation',
+    expected: structuredClone(
+      recoveryCell?.expected?.predecessor_expected ?? {},
+    ),
   };
 }
 
@@ -450,7 +495,7 @@ async function confirmCleanup(
   cleanupVerifier,
 ) {
   if (typeof cleanupVerifier !== 'function') {
-    return 'cleanup_verifier_unavailable';
+    return { error: 'cleanup_verifier_unavailable', evidence: null };
   }
   try {
     const cleanup = await withTimeout(
@@ -462,15 +507,27 @@ async function confirmCleanup(
       timeoutMs,
       'cleanup_verifier_timeout',
     );
-    return verification?.confirmed === true
-      ? null
-      : 'adapter_cleanup_unconfirmed';
-  } catch (error) {
-    if (error?.code === 'adapter_timeout') return 'adapter_cleanup_timeout';
-    if (error?.code === 'cleanup_verifier_timeout') {
-      return 'cleanup_verifier_timeout';
+    if (verification?.confirmed !== true) {
+      return { error: 'adapter_cleanup_unconfirmed', evidence: null };
     }
-    return 'adapter_cleanup_failed';
+    return {
+      error: null,
+      evidence: verifyCleanupEvidence(
+        verification.evidence,
+        { ...context, cleanup },
+      ),
+    };
+  } catch (error) {
+    if (error?.code === 'cleanup_evidence_invalid') {
+      return { error: 'cleanup_evidence_invalid', evidence: null };
+    }
+    if (error?.code === 'adapter_timeout') {
+      return { error: 'adapter_cleanup_timeout', evidence: null };
+    }
+    if (error?.code === 'cleanup_verifier_timeout') {
+      return { error: 'cleanup_verifier_timeout', evidence: null };
+    }
+    return { error: 'adapter_cleanup_failed', evidence: null };
   }
 }
 
@@ -530,20 +587,20 @@ export async function executeDrillCell({
   cleanupVerifier = null,
   predecessorResolver = null,
   auditSink = null,
-  now = Date.now(),
+  now = Date.now,
   timeoutMs = 30_000,
 } = {}) {
-  const auditNow = Number.isFinite(now) ? now : Date.now();
+  const auditNow = sampleTrustedClock(now);
   const deny = (code, stage) => blocked({
     cell,
     grant,
     code,
     stage,
-    now: auditNow,
+    now: auditNow ?? Date.now(),
     auditSink,
     timeoutMs,
   });
-  if (!Number.isFinite(now)) {
+  if (auditNow == null) {
     return deny('verification_time_invalid', 'clock_validation');
   }
 
@@ -585,12 +642,16 @@ export async function executeDrillCell({
   }
 
   let verifiedGrant;
+  const grantVerificationNow = sampleTrustedClock(now);
+  if (grantVerificationNow == null) {
+    return deny('verification_time_invalid', 'clock_validation');
+  }
   try {
     verifiedGrant = verifyExecutionGrant(
       grant,
       trustRegistry,
       expectedFromGrant(cell, grant),
-      { now },
+      { now: grantVerificationNow },
     );
   } catch (error) {
     return deny(
@@ -599,7 +660,20 @@ export async function executeDrillCell({
     );
   }
 
-  const adapter = resolveAdapter(adapters, cell.adapter_id);
+  let executionAuthorities;
+  try {
+    executionAuthorities = resolveExecutionAuthorities(
+      adapters,
+      cell,
+      cleanupVerifier,
+    );
+  } catch {
+    return deny('drill_adapter_unavailable', 'adapter_preflight');
+  }
+  const {
+    adapter,
+    cleanupVerifier: selectedCleanupVerifier,
+  } = executionAuthorities;
   if (
     !adapter
     || typeof adapter.prepare !== 'function'
@@ -644,12 +718,59 @@ export async function executeDrillCell({
       );
     }
     try {
+      const ancestryVerificationNow = sampleTrustedClock(now);
+      if (ancestryVerificationNow == null) {
+        return deny('verification_time_invalid', 'clock_validation');
+      }
       const violationCell = violationCellFor(cell);
+      if (
+        chainCheckpoint.head_hash == null
+        || !HASH_PATTERN.test(predecessor?.bundle_hash ?? '')
+        || sha256Canonical(predecessor?.bundle) !== predecessor.bundle_hash
+      ) {
+        return deny(
+          'recovery_predecessor_unavailable',
+          'recovery_predecessor',
+        );
+      }
+      const ancestry = await withTimeout(
+        () => preloadReceiptBundleAncestry({
+          headHash: chainCheckpoint.head_hash,
+          genesisHash: chainCheckpoint.genesis_hash,
+          readBundle: bundleChainStore.readBundle,
+          trustRegistry,
+          now: ancestryVerificationNow,
+        }),
+        timeoutMs,
+        'recovery_predecessor_timeout',
+      );
+      if (!ancestry.bundle_hashes.includes(predecessor.bundle_hash)) {
+        return deny(
+          'recovery_predecessor_unavailable',
+          'recovery_predecessor',
+        );
+      }
+      const trustedPredecessorBundle =
+        ancestry.readBundle(predecessor.bundle_hash);
+      if (
+        sha256Canonical(trustedPredecessorBundle)
+          !== sha256Canonical(predecessor.bundle)
+      ) {
+        return deny(
+          'recovery_predecessor_unavailable',
+          'recovery_predecessor',
+        );
+      }
+      const predecessorVerificationNow =
+        Date.parse(trustedPredecessorBundle.issued_at);
       predecessorGrant = verifyExecutionGrant(
-        predecessor?.grant,
+        trustedPredecessorBundle.execution_grants?.[0],
         trustRegistry,
-        expectedFromGrant(violationCell, predecessor?.grant),
-        { now },
+        expectedFromGrant(
+          violationCell,
+          trustedPredecessorBundle.execution_grants?.[0],
+        ),
+        { now: predecessorVerificationNow },
       );
       if (!sameRecoveryBoundary(predecessorGrant, verifiedGrant)) {
         return deny(
@@ -658,11 +779,22 @@ export async function executeDrillCell({
         );
       }
       predecessorReceipt = verifyEffectReceipt(
-        predecessor?.receipt,
+        trustedPredecessorBundle.effect_receipts?.[0],
         trustRegistry,
         expectedFromGrant(violationCell, predecessorGrant),
-        { now },
+        { now: predecessorVerificationNow },
       );
+      if (
+        predecessorReceipt.observed_outcome
+          !== violationCell.expected.expected_outcome
+        || predecessorReceipt.effect_code
+          !== violationCell.expected.effect_code
+      ) {
+        return deny(
+          'recovery_predecessor_contract_mismatch',
+          'recovery_predecessor',
+        );
+      }
     } catch (error) {
       return deny(
         errorCode(error, 'recovery_predecessor_unavailable', { trusted: true }),
@@ -695,9 +827,16 @@ export async function executeDrillCell({
     );
   }
 
+  const verifiedPredecessor = predecessorGrant == null
+    ? null
+    : Object.freeze({
+      grant: predecessorGrant,
+      receipt: predecessorReceipt,
+    });
   const context = Object.freeze({
     cell,
     grant: verifiedGrant,
+    predecessor: verifiedPredecessor,
   });
   const compensations = [];
   const registerCompensation = (compensation) => {
@@ -726,7 +865,7 @@ export async function executeDrillCell({
         timeoutMs,
       )
       : true;
-    const cleanupError = await confirmCleanup(
+    const cleanupResult = await confirmCleanup(
       adapter,
       {
         ...context,
@@ -734,7 +873,7 @@ export async function executeDrillCell({
         compensations,
       },
       timeoutMs,
-      cleanupVerifier,
+      selectedCleanupVerifier,
     );
     if (!cancellationConfirmed) {
       return deny(
@@ -742,7 +881,9 @@ export async function executeDrillCell({
         'adapter_prepare_cancellation',
       );
     }
-    if (cleanupError) return deny(cleanupError, 'adapter_cleanup');
+    if (cleanupResult.error) {
+      return deny(cleanupResult.error, 'adapter_cleanup');
+    }
     return deny(code, 'adapter_prepare');
   }
 
@@ -792,20 +933,24 @@ export async function executeDrillCell({
       executionError = 'adapter_cancellation_unconfirmed';
     }
   }
-  const cleanupError = await confirmCleanup(
+  const cleanupResult = await confirmCleanup(
     adapter,
     { ...context, prepared, compensations },
     timeoutMs,
-    cleanupVerifier,
+    selectedCleanupVerifier,
   );
   if (
-    cleanupError
+    cleanupResult.error
     && executionError !== 'adapter_cancellation_unconfirmed'
   ) {
-    return deny(cleanupError, 'adapter_cleanup');
+    return deny(cleanupResult.error, 'adapter_cleanup');
   }
   if (executionError) return deny(executionError, 'seam_execution');
 
+  const effectVerificationNow = sampleTrustedClock(now);
+  if (effectVerificationNow == null) {
+    return deny('verification_time_invalid', 'clock_validation');
+  }
   try {
     receipt = verifyEffectReceipt(
       receipt,
@@ -814,7 +959,7 @@ export async function executeDrillCell({
         ...expectedFromGrant(cell, verifiedGrant),
         predecessor: predecessorReceipt,
       },
-      { now },
+      { now: effectVerificationNow },
     );
   } catch (error) {
     return deny(
@@ -848,6 +993,7 @@ export async function executeDrillCell({
       grant: verifiedGrant,
       executionGrants,
       receipts,
+      cleanupEvidence: cleanupResult.evidence,
       previousBundleHash: chainCheckpoint.head_hash,
     }), timeoutMs, 'collector_timeout');
     bundle = structuredClone(collectedBundle);
@@ -860,6 +1006,52 @@ export async function executeDrillCell({
     );
   }
 
+  const bundleVerificationNow = sampleTrustedClock(now);
+  if (bundleVerificationNow == null) {
+    return deny('verification_time_invalid', 'clock_validation');
+  }
+  if (bundle.previous_bundle_hash !== chainCheckpoint.head_hash) {
+    if (bundle?.previous_bundle_hash == null) {
+      try {
+        verifyReceiptBundle(
+          bundle,
+          trustRegistry,
+          expectedFromGrant(cell, verifiedGrant),
+          { now: bundleVerificationNow },
+        );
+      } catch (error) {
+        return deny(
+          errorCode(error, 'bundle_invalid', { trusted: true }),
+          'collector',
+        );
+      }
+    }
+    return deny('bundle_previous_head_mismatch', 'collector');
+  }
+  let previousSnapshot = null;
+  if (chainCheckpoint.head_hash != null) {
+    try {
+      previousSnapshot = await withTimeout(
+        () => preloadReceiptBundleAncestry({
+          headHash: chainCheckpoint.head_hash,
+          genesisHash: chainCheckpoint.genesis_hash,
+          readBundle: bundleChainStore.readBundle,
+          trustRegistry,
+          now: bundleVerificationNow,
+        }),
+        timeoutMs,
+        'bundle_chain_read_timeout',
+      );
+    } catch (error) {
+      return deny(
+        isInternalTimeout(error, 'bundle_chain_read_timeout')
+          ? 'bundle_chain_read_timeout'
+          : errorCode(error, 'bundle_previous_unresolved', { trusted: true }),
+        'bundle_chain',
+      );
+    }
+  }
+
   let verifiedBundle;
   try {
     verifiedBundle = verifyReceiptBundle(
@@ -867,16 +1059,8 @@ export async function executeDrillCell({
       trustRegistry,
       expectedFromGrant(cell, verifiedGrant),
       {
-        now,
-        resolvePreviousBundle: chainCheckpoint.head_hash == null
-          ? null
-          : (hash) => {
-            try {
-              return bundleChainStore.readBundle(hash);
-            } catch {
-              throw new EquivalenceDrillError('bundle_previous_unresolved');
-            }
-          },
+        now: bundleVerificationNow,
+        resolvePreviousBundle: previousSnapshot?.readBundle ?? null,
       },
     );
   } catch (error) {
@@ -885,25 +1069,24 @@ export async function executeDrillCell({
       'collector',
     );
   }
-  if (bundle.previous_bundle_hash !== chainCheckpoint.head_hash) {
-    return deny('bundle_previous_head_mismatch', 'collector');
+  if (
+    sha256Canonical(bundle.cleanup_evidence)
+      !== sha256Canonical(cleanupResult.evidence)
+  ) {
+    return deny('cleanup_evidence_invalid', 'collector');
   }
-
   let committed;
   try {
-    const commitResult = await withTimeout(
-      () => bundleChainStore.commit({
-        bundle,
-        bundle_hash: verifiedBundle.bundle_hash,
-        previous_head_hash: chainCheckpoint.head_hash,
-      }),
-      timeoutMs,
-      'bundle_chain_commit_timeout',
-    );
+    const commitResult = await bundleChainStore.commit({
+      bundle,
+      bundle_hash: verifiedBundle.bundle_hash,
+      previous_head_hash: chainCheckpoint.head_hash,
+      timeout_ms: timeoutMs,
+    });
     committed = structuredClone(commitResult);
   } catch (error) {
     return deny(
-      isInternalTimeout(error, 'bundle_chain_commit_timeout')
+      error?.code === 'bundle_chain_commit_timeout'
         ? 'bundle_chain_commit_timeout'
         : 'bundle_chain_commit_failed',
       'bundle_chain',

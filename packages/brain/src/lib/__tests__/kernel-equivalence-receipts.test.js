@@ -3,16 +3,20 @@ import {
   randomUUID,
   sign as signBytes,
 } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   assembleUnsignedBundle,
   canonicalJson,
+  preloadReceiptBundleAncestry,
   sha256Canonical,
   validateTrustRegistry,
   verifyEffectReceipt,
   verifyExecutionGrant,
   verifyReceiptBundle,
 } from '../kernel-equivalence-receipts.js';
+import {
+  createCleanupEvidence,
+} from '../kernel-equivalence-runtime-registry.js';
 
 const NOW = Date.parse('2026-07-28T12:02:00.000Z');
 const SHA = '8e034654d196221ddca25a7f032612b526bad031';
@@ -65,6 +69,16 @@ function trustFixture() {
       keys: [authority.record, effect.record, collector.record],
     },
   };
+}
+
+function cleanupEvidence(target, executionGrant) {
+  return createCleanupEvidence({
+    cell: target,
+    grant: executionGrant,
+    prepared: { resource_id: executionGrant.resource_id },
+    compensations: [],
+    cleanup: { confirmed: true },
+  });
 }
 
 function cell(scenario = 'normal') {
@@ -230,6 +244,11 @@ describe('canonical signed envelopes', () => {
     ['unknown field', (value) => { value.debug = true; }, 'grant_fields_invalid'],
     ['axis mismatch', (value) => { value.provider = 'grok'; }, 'grant_axis_mismatch'],
     ['unsafe environment', (value) => { value.environment = 'production'; }, 'grant_environment_unsafe'],
+    ['protected resource id', (value) => { value.resource_id = 'production'; }, 'grant_environment_unsafe'],
+    ['protected token in resource id', (value) => { value.resource_id = 'eq:production'; }, 'grant_environment_unsafe'],
+    ['path-like resource id', (value) => { value.resource_id = 'eq/case'; }, 'grant_environment_unsafe'],
+    ['traversal resource ref', (value) => { value.resource_ref = `${value.resource_prefix}../../victim`; }, 'grant_environment_unsafe'],
+    ['empty resource ref segment', (value) => { value.resource_ref = `${value.resource_prefix}case//victim`; }, 'grant_environment_unsafe'],
     ['expired grant', (value) => { value.expires_at = '2026-07-28T11:59:59.000Z'; }, 'grant_expired'],
   ])('rejects %s even when the object remains signed', (_label, mutate, code) => {
     const keys = trustFixture();
@@ -272,6 +291,25 @@ describe('canonical signed envelopes', () => {
     crossAuthority.registry.keys[1].rotates_key_id =
       crossAuthority.registry.keys[2].key_id;
     expect(() => validateTrustRegistry(crossAuthority.registry))
+      .toThrowError(expect.objectContaining({ code: 'trust_registry_invalid' }));
+  });
+
+  it.each([
+    ['purposes', (keys) => {
+      keys.effect.record.public_key_pem = keys.authority.record.public_key_pem;
+    }],
+    ['authorities', (keys) => {
+      keys.registry.keys.push({
+        ...keys.effect.record,
+        key_id: 'other-effect-2026-07',
+        service_id: 'kernel.other.effect_executor',
+      });
+    }],
+  ])('rejects public-key material reused across %s', (_axis, reuseKey) => {
+    const keys = trustFixture();
+    reuseKey(keys);
+
+    expect(() => validateTrustRegistry(keys.registry))
       .toThrowError(expect.objectContaining({ code: 'trust_registry_invalid' }));
   });
 
@@ -364,9 +402,158 @@ describe('canonical signed envelopes', () => {
       { now: NOW },
     )).toThrowError(expect.objectContaining({ code: 'effect_key_invalid' }));
   });
+
+  it('rejects a seam-signed effect that targets a protected resource id', () => {
+    const keys = trustFixture();
+    const target = cell();
+    const executionGrant = {
+      ...grant(keys, target),
+      resource_id: 'production',
+    };
+    const receipt = effectReceipt(keys, executionGrant, target);
+
+    expect(() => verifyEffectReceipt(
+      receipt,
+      keys.registry,
+      expected(target, executionGrant),
+      { now: NOW },
+    )).toThrowError(expect.objectContaining({
+      code: 'effect_outcome_invalid',
+    }));
+  });
 });
 
 describe('receipt bundle and recovery lineage', () => {
+  it('preloads committed ancestry after its execution grant has expired', async () => {
+    const keys = trustFixture();
+    const target = cell();
+    const executionGrant = grant(keys, target);
+    const receipt = effectReceipt(keys, executionGrant, target);
+    const unsigned = assembleUnsignedBundle({
+      keyId: keys.collector.record.key_id,
+      collectorServiceId: keys.collector.record.service_id,
+      issuedAt: '2026-07-28T12:01:00.000Z',
+      expiresAt: '2026-07-29T12:01:00.000Z',
+      expected: expected(target, executionGrant),
+      executionGrants: [executionGrant],
+      receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
+      previousBundleHash: null,
+    });
+    const bundle = signed(unsigned, keys.collector.privateKey);
+    const bundleHash = sha256Canonical(bundle);
+    const afterGrantExpiry = Date.parse('2026-07-28T12:06:00.000Z');
+
+    expect(() => verifyReceiptBundle(
+      bundle,
+      keys.registry,
+      expected(target, executionGrant),
+      { now: afterGrantExpiry },
+    )).toThrowError(expect.objectContaining({ code: 'grant_expired' }));
+
+    await expect(preloadReceiptBundleAncestry({
+      headHash: bundleHash,
+      genesisHash: bundleHash,
+      readBundle: async (hash) => (hash === bundleHash ? bundle : null),
+      trustRegistry: keys.registry,
+      now: afterGrantExpiry,
+    })).resolves.toMatchObject({
+      head_hash: bundleHash,
+      genesis_hash: bundleHash,
+      bundle_hashes: [bundleHash],
+    });
+
+    for (const key of keys.registry.keys) {
+      key.revoked_at = '2026-07-30T00:00:00.000Z';
+    }
+    await expect(preloadReceiptBundleAncestry({
+      headHash: bundleHash,
+      genesisHash: bundleHash,
+      readBundle: async (hash) => (hash === bundleHash ? bundle : null),
+      trustRegistry: keys.registry,
+      now: Date.parse('2026-08-01T00:00:00.000Z'),
+    })).resolves.toMatchObject({
+      head_hash: bundleHash,
+      genesis_hash: bundleHash,
+      bundle_hashes: [bundleHash],
+    });
+  });
+
+  it('iteratively verifies ancestry beyond 198 bundles with a safe bound', async () => {
+    const keys = trustFixture();
+    const target = cell();
+    const executionGrant = grant(keys, target);
+    const receipt = effectReceipt(keys, executionGrant, target);
+    const bundles = new Map();
+    let previousBundleHash = null;
+    let genesisHash = null;
+    for (let index = 0; index < 199; index += 1) {
+      const unsigned = assembleUnsignedBundle({
+        keyId: keys.collector.record.key_id,
+        collectorServiceId: keys.collector.record.service_id,
+        issuedAt: '2026-07-28T12:01:00.000Z',
+        expiresAt: '2026-07-29T12:01:00.000Z',
+        expected: expected(target, executionGrant),
+        executionGrants: [executionGrant],
+        receipts: [receipt],
+        cleanupEvidence: cleanupEvidence(target, executionGrant),
+        previousBundleHash,
+      });
+      const bundle = signed(unsigned, keys.collector.privateKey);
+      const hash = sha256Canonical(bundle);
+      bundles.set(hash, bundle);
+      genesisHash ??= hash;
+      previousBundleHash = hash;
+    }
+    const headHash = previousBundleHash;
+    const readBundle = async (hash) => bundles.get(hash) ?? null;
+
+    await expect(preloadReceiptBundleAncestry({
+      headHash,
+      genesisHash,
+      readBundle,
+      trustRegistry: keys.registry,
+      now: NOW,
+      maximumBundleDepth: 1_000,
+    })).resolves.toMatchObject({
+      head_hash: headHash,
+      genesis_hash: genesisHash,
+      bundle_hashes: expect.arrayContaining([headHash, genesisHash]),
+    });
+    await expect(preloadReceiptBundleAncestry({
+      headHash,
+      genesisHash,
+      readBundle,
+      trustRegistry: keys.registry,
+      now: NOW,
+      maximumBundleDepth: 198,
+    })).rejects.toMatchObject({ code: 'bundle_hash_chain_invalid' });
+  });
+
+  it('fails closed when an adversarial resolver materializes a cycle', async () => {
+    let previousReads = 0;
+    let headHash;
+    const adversarial = {};
+    Object.defineProperty(adversarial, 'previous_bundle_hash', {
+      enumerable: true,
+      get() {
+        previousReads += 1;
+        return previousReads <= 4 ? null : headHash;
+      },
+    });
+    headHash = sha256Canonical(adversarial);
+    const readBundle = vi.fn(async () => adversarial);
+
+    await expect(preloadReceiptBundleAncestry({
+      headHash,
+      readBundle,
+      trustRegistry: trustFixture().registry,
+      now: NOW,
+      maximumBundleDepth: 1_000,
+    })).rejects.toMatchObject({ code: 'bundle_hash_chain_invalid' });
+    expect(readBundle).toHaveBeenCalledOnce();
+  });
+
   it('requires recovery to reference the matching violation cell receipt id and hash', () => {
     const keys = trustFixture();
     const violationCell = cell('violation');
@@ -423,9 +610,16 @@ describe('receipt bundle and recovery lineage', () => {
       expected: expected(target, executionGrant),
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: null,
     });
     const bundle = signed(unsigned, keys.collector.privateKey);
+    expect(bundle.cleanup_evidence).toMatchObject({
+      schema_version: 'kernel-equivalence-cleanup-evidence/v1',
+      cell_id: target.cell_id,
+      grant_id: executionGrant.grant_id,
+      resource_id: executionGrant.resource_id,
+    });
 
     expect(verifyReceiptBundle(
       bundle,
@@ -463,6 +657,7 @@ describe('receipt bundle and recovery lineage', () => {
       expected: expected(target, executionGrant),
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: null,
     });
 
@@ -504,6 +699,7 @@ describe('receipt bundle and recovery lineage', () => {
       expected: expected(target, executionGrant),
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: null,
     });
 
@@ -545,6 +741,7 @@ describe('receipt bundle and recovery lineage', () => {
       },
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: null,
     });
     const wrapped = signed(unsigned, keys.collector.privateKey);
@@ -574,6 +771,7 @@ describe('receipt bundle and recovery lineage', () => {
       expected: expected(target, executionGrant),
       executionGrants: [executionGrant],
       receipts: [receipt],
+      cleanupEvidence: cleanupEvidence(target, executionGrant),
       previousBundleHash: 'f'.repeat(64),
     });
     const wrapped = signed(unsigned, keys.collector.privateKey);

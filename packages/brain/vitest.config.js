@@ -6,6 +6,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/capacity-gate.test.js',
   'src/__tests__/integration/preview-destroyer.test.js',
   'src/__tests__/integration/migration-364-kernel-local-container-naming.integration.test.js',
+  'src/__tests__/integration/kernel-equivalence-postgres-runtime.integration.test.js',
   'src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js',
   '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
 ];
@@ -147,6 +148,7 @@ export default defineConfig({
       // capacity-gate/preview-destroyer: 真连 cecelia_test Postgres（禁 mock db.js），走 brain-integration
       'src/__tests__/integration/capacity-gate.test.js',
       'src/__tests__/integration/preview-destroyer.test.js',
+      'src/__tests__/integration/kernel-equivalence-postgres-runtime.integration.test.js',
       // 同上，毕业池 tests/regression/ 下的永久回归副本，同样需要真实 Postgres
       '../../tests/regression/relay-1b1f1ffa/capacity-gate.test.js',
       '../../tests/regression/relay-1b1f1ffa/preview-destroyer.test.js',

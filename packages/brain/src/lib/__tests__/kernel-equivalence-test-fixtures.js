@@ -8,6 +8,9 @@ import {
   canonicalJson,
   sha256Canonical,
 } from '../kernel-equivalence-receipts.js';
+import {
+  createCleanupEvidence,
+} from '../kernel-equivalence-runtime-registry.js';
 
 export const FIXTURE_NOW = Date.parse('2026-07-28T12:02:00.000Z');
 export const FIXTURE_SHA = '8e034654d196221ddca25a7f032612b526bad031';
@@ -84,6 +87,14 @@ export function fixtureCell({
         : scenario === 'violation'
           ? 'stale_sha_merge_denied'
           : 'exact_sha_merge_confirmed',
+      ...(scenario === 'recovery'
+        ? {
+          predecessor_expected: {
+            expected_outcome: 'denied',
+            effect_code: 'stale_sha_merge_denied',
+          },
+        }
+        : {}),
     },
     isolation: {
       environment: 'isolated',
@@ -205,6 +216,7 @@ export function fixtureBundle(
   receipts,
   executionGrants = [grant],
   previousBundleHash = null,
+  cleanupEvidence = fixtureCleanupEvidence(cell, grant),
 ) {
   const unsigned = assembleUnsignedBundle({
     keyId: keys.collector.record.key_id,
@@ -214,7 +226,19 @@ export function fixtureBundle(
     expected: fixtureExpected(cell, grant),
     executionGrants,
     receipts,
+    cleanupEvidence,
     previousBundleHash,
   });
   return signFixture(unsigned, keys.collector.privateKey);
+}
+
+export function fixtureCleanupEvidence(cell, grant, overrides = {}) {
+  return createCleanupEvidence({
+    cell,
+    grant,
+    prepared: { resource_id: grant.resource_id },
+    compensations: [],
+    cleanup: { confirmed: true },
+    ...overrides,
+  });
 }

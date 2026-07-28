@@ -3,14 +3,26 @@ import {
   createPublicKey,
   verify as verifyBytes,
 } from 'node:crypto';
+import {
+  verifyCleanupEvidence,
+} from './kernel-equivalence-runtime-registry.js';
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/;
-const SAFE_RESOURCE_REF = /^(?:refs\/heads\/)?equivalence-drill\/[A-Za-z0-9_{}./:-]+$/;
+const SAFE_RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SAFE_RESOURCE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const FORBIDDEN_RESOURCE = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
 const DENIAL_OUTCOMES = new Set(['denied', 'blocked', 'rejected', 'failed']);
+const HISTORICAL_BUNDLE_VERIFICATION = Symbol(
+  'kernel-equivalence-historical-bundle-verification',
+);
+const SKIP_BUNDLE_ANCESTRY_VERIFICATION = Symbol(
+  'kernel-equivalence-skip-bundle-ancestry-verification',
+);
+const DEFAULT_MAXIMUM_BUNDLE_DEPTH = 10_000;
+const ABSOLUTE_MAXIMUM_BUNDLE_DEPTH = 100_000;
 const KEY_PURPOSES = new Set([
   'execution_grant',
   'effect_receipt',
@@ -111,6 +123,7 @@ const BUNDLE_FIELDS = Object.freeze([
   'bundle_payload_hash',
   'cell_id',
   'collector_service_id',
+  'cleanup_evidence',
   'effect_receipts',
   'engine_version',
   'environment',
@@ -225,6 +238,7 @@ export function validateTrustRegistry(registry) {
     }
 
     const keyIds = new Set();
+    const publicKeyMaterials = new Set();
     for (const key of registry.keys) {
       exactFields(key, KEY_FIELDS, 'trust_registry_invalid');
       const notBefore = parseTime(key.not_before, 'trust_registry_invalid');
@@ -266,6 +280,14 @@ export function validateTrustRegistry(registry) {
       if (publicKey.asymmetricKeyType !== 'ed25519') {
         fail('trust_registry_invalid');
       }
+      const publicKeyMaterial = publicKey.export({
+        type: 'spki',
+        format: 'der',
+      }).toString('base64');
+      if (publicKeyMaterials.has(publicKeyMaterial)) {
+        fail('trust_registry_invalid');
+      }
+      publicKeyMaterials.add(publicKeyMaterial);
       keyIds.add(key.key_id);
     }
     const keysById = new Map(registry.keys.map((key) => [key.key_id, key]));
@@ -318,6 +340,16 @@ function verifyWindow(value, now, maximumAgeSeconds, prefix) {
 function verifyNow(now) {
   if (typeof now !== 'number' || !Number.isFinite(now)) {
     fail('verification_time_invalid');
+  }
+}
+
+function verifyMaximumBundleDepth(value) {
+  if (
+    !Number.isSafeInteger(value)
+    || value < 1
+    || value > ABSOLUTE_MAXIMUM_BUNDLE_DEPTH
+  ) {
+    fail('bundle_hash_chain_invalid');
   }
 }
 
@@ -384,17 +416,49 @@ function expectedPrefix(cell, runId, attemptId) {
     .replaceAll('{attempt_id}', attemptId);
 }
 
+function validRuntimePrefix(prefix) {
+  if (
+    !nonEmpty(prefix)
+    || prefix.length > 512
+    || !prefix.endsWith('/')
+    || /[^\x20-\x7e]/.test(prefix)
+    || /[{}:]/.test(prefix)
+  ) {
+    return false;
+  }
+  const relative = prefix.startsWith('refs/heads/')
+    ? prefix.slice('refs/heads/'.length)
+    : prefix;
+  const segments = relative.slice(0, -1).split('/');
+  return (
+    segments.length >= 3
+    && segments[0] === 'equivalence-drill'
+    && UUID_PATTERN.test(segments[1] ?? '')
+    && UUID_PATTERN.test(segments[2] ?? '')
+    && segments.slice(3).every((segment) => SAFE_RESOURCE_SEGMENT.test(segment))
+  );
+}
+
 function validResource(value, prefix) {
+  const resourceRef = value?.resource_ref;
+  const resourceId = value?.resource_id;
+  const suffix = typeof resourceRef === 'string'
+    && typeof prefix === 'string'
+    && resourceRef.startsWith(prefix)
+    ? resourceRef.slice(prefix.length)
+    : '';
   return (
     value.environment === 'isolated'
-    && nonEmpty(value.resource_id)
-    && nonEmpty(value.resource_ref)
-    && nonEmpty(prefix)
-    && SAFE_RESOURCE_REF.test(prefix)
-    && SAFE_RESOURCE_REF.test(value.resource_ref)
-    && value.resource_ref.startsWith(prefix)
+    && SAFE_RESOURCE_ID.test(resourceId ?? '')
+    && validRuntimePrefix(prefix)
+    && nonEmpty(resourceRef)
+    && resourceRef.length <= 1_024
+    && !/[^\x20-\x7e]/.test(resourceRef)
+    && suffix.length > 0
+    && suffix.split('/').every((segment) => SAFE_RESOURCE_SEGMENT.test(segment))
+    && !FORBIDDEN_RESOURCE.test(resourceId)
     && !FORBIDDEN_RESOURCE.test(prefix)
-    && !FORBIDDEN_RESOURCE.test(value.resource_ref)
+    && !FORBIDDEN_RESOURCE.test(resourceRef)
   );
 }
 
@@ -574,11 +638,17 @@ export function verifyEffectReceipt(receipt, registry, expected, { now = Date.no
   return Object.freeze(structuredClone(receipt));
 }
 
-function bundlePayload(previousBundleHash, grantHashes, receiptHashes) {
+function bundlePayload(
+  previousBundleHash,
+  grantHashes,
+  receiptHashes,
+  cleanupEvidenceHash,
+) {
   return {
     previous_bundle_hash: previousBundleHash,
     grant_hashes: grantHashes,
     receipt_hashes: receiptHashes,
+    cleanup_evidence_hash: cleanupEvidenceHash,
   };
 }
 
@@ -590,12 +660,19 @@ export function assembleUnsignedBundle({
   expected,
   executionGrants,
   receipts,
+  cleanupEvidence,
   previousBundleHash = null,
 }) {
   const grantHashes = executionGrants.map(sha256Canonical);
   const receiptHashes = receipts.map(sha256Canonical);
+  const cleanupEvidenceHash = sha256Canonical(cleanupEvidence);
   const payloadHash = sha256Canonical(
-    bundlePayload(previousBundleHash, grantHashes, receiptHashes),
+    bundlePayload(
+      previousBundleHash,
+      grantHashes,
+      receiptHashes,
+      cleanupEvidenceHash,
+    ),
   );
   return {
     schema_version: 'kernel-equivalence-receipt-bundle/v1',
@@ -625,6 +702,7 @@ export function assembleUnsignedBundle({
     grant_hashes: grantHashes,
     effect_receipts: structuredClone(receipts),
     receipt_hashes: receiptHashes,
+    cleanup_evidence: structuredClone(cleanupEvidence),
     bundle_payload_hash: payloadHash,
   };
 }
@@ -682,13 +760,15 @@ export function verifyReceiptBundle(
   bundle,
   registry,
   expected,
-  {
+  options = {},
+) {
+  const {
     now = Date.now(),
     resolvePreviousBundle = null,
-    _seenBundleHashes = new Set(),
-  } = {},
-) {
+    maximumBundleDepth = DEFAULT_MAXIMUM_BUNDLE_DEPTH,
+  } = options;
   verifyNow(now);
+  verifyMaximumBundleDepth(maximumBundleDepth);
   exactFields(bundle, BUNDLE_FIELDS, 'bundle_fields_invalid');
   if (
     bundle.schema_version !== 'kernel-equivalence-receipt-bundle/v1'
@@ -705,9 +785,12 @@ export function verifyReceiptBundle(
     fail('bundle_axis_mismatch');
   }
   validateIdentity(bundle, 'bundle');
+  const verificationNow = options[HISTORICAL_BUNDLE_VERIFICATION] === true
+    ? parseTime(bundle.issued_at, 'bundle_time_invalid')
+    : now;
   verifyWindow(
     bundle,
-    now,
+    verificationNow,
     registry?.collector_bundle_max_age_seconds,
     'bundle',
   );
@@ -715,7 +798,7 @@ export function verifyReceiptBundle(
     keyId: bundle.key_id,
     purpose: 'collector_bundle',
     serviceId: 'kernel.equivalence.collector',
-    now,
+    now: verificationNow,
     code: 'bundle_key_invalid',
   });
   if (bundle.collector_service_id !== key.service_id) fail('bundle_key_invalid');
@@ -732,13 +815,13 @@ export function verifyReceiptBundle(
       bundle.execution_grants[0],
       registry,
       { ...expected, cell: violationCell },
-      { now },
+      { now: verificationNow },
     );
     const recoveryGrant = verifyExecutionGrant(
       bundle.execution_grants[1],
       registry,
       expected,
-      { now },
+      { now: verificationNow },
     );
     if (
       violationGrant.run_id !== recoveryGrant.run_id
@@ -757,7 +840,12 @@ export function verifyReceiptBundle(
     verifiedGrants = [violationGrant, recoveryGrant];
   } else {
     verifiedGrants = [
-      verifyExecutionGrant(bundle.execution_grants[0], registry, expected, { now }),
+      verifyExecutionGrant(
+        bundle.execution_grants[0],
+        registry,
+        expected,
+        { now: verificationNow },
+      ),
     ];
   }
   const currentGrant = verifiedGrants.at(-1);
@@ -784,7 +872,7 @@ export function verifyReceiptBundle(
         ),
         predecessor: null,
       },
-      { now },
+      { now: verificationNow },
     );
     const recovery = verifyEffectReceipt(
       bundle.effect_receipts[1],
@@ -793,7 +881,7 @@ export function verifyReceiptBundle(
         ...expectedForGrant(bundle, verifiedGrants[1], expected.cell),
         predecessor: violation,
       },
-      { now },
+      { now: verificationNow },
     );
     verifiedReceipts = [violation, recovery];
   } else {
@@ -803,7 +891,7 @@ export function verifyReceiptBundle(
         bundle.effect_receipts[0],
         registry,
         expectedForGrant(bundle, verifiedGrants[0], expected.cell),
-        { now },
+        { now: verificationNow },
       ),
     ];
   }
@@ -811,7 +899,12 @@ export function verifyReceiptBundle(
   const grantHashes = verifiedGrants.map(sha256Canonical);
   const hashes = verifiedReceipts.map(sha256Canonical);
   const payloadHash = sha256Canonical(
-    bundlePayload(bundle.previous_bundle_hash, grantHashes, hashes),
+    bundlePayload(
+      bundle.previous_bundle_hash,
+      grantHashes,
+      hashes,
+      sha256Canonical(bundle.cleanup_evidence),
+    ),
   );
   if (
     grantHashes.length !== bundle.grant_hashes.length
@@ -828,37 +921,58 @@ export function verifyReceiptBundle(
   ) {
     fail('bundle_hash_chain_invalid');
   }
+  verifyCleanupEvidence(bundle.cleanup_evidence, {
+    cell_id: bundle.cell_id,
+    grant_id: bundle.grant_id,
+    resource_id: bundle.resource_id,
+    resource_ref: bundle.resource_ref,
+    adapter_id: bundle.adapter_id,
+  });
 
-  if (bundle.previous_bundle_hash != null) {
+  if (
+    bundle.previous_bundle_hash != null
+    && options[SKIP_BUNDLE_ANCESTRY_VERIFICATION] !== true
+  ) {
     if (typeof resolvePreviousBundle !== 'function') {
       fail('bundle_previous_unresolved');
     }
-    if (
-      _seenBundleHashes.size >= 100
-      || _seenBundleHashes.has(bundle.previous_bundle_hash)
-    ) {
-      fail('bundle_hash_chain_invalid');
+    const seen = new Set([sha256Canonical(bundle)]);
+    let previousHash = bundle.previous_bundle_hash;
+    let depth = 1;
+    while (previousHash != null) {
+      if (
+        depth >= maximumBundleDepth
+        || seen.has(previousHash)
+      ) {
+        fail('bundle_hash_chain_invalid');
+      }
+      let previous;
+      try {
+        previous = resolvePreviousBundle(previousHash);
+      } catch {
+        fail('bundle_previous_unresolved');
+      }
+      if (
+        !asObject(previous)
+        || sha256Canonical(previous) !== previousHash
+      ) {
+        fail('bundle_previous_unresolved');
+      }
+      seen.add(previousHash);
+      verifyReceiptBundle(
+        previous,
+        registry,
+        expectedFromReceiptBundle(previous),
+        {
+          now,
+          maximumBundleDepth,
+          [HISTORICAL_BUNDLE_VERIFICATION]: true,
+          [SKIP_BUNDLE_ANCESTRY_VERIFICATION]: true,
+        },
+      );
+      depth += 1;
+      previousHash = previous.previous_bundle_hash;
     }
-    let previous;
-    try {
-      previous = resolvePreviousBundle(bundle.previous_bundle_hash);
-    } catch {
-      fail('bundle_previous_unresolved');
-    }
-    if (
-      !asObject(previous)
-      || sha256Canonical(previous) !== bundle.previous_bundle_hash
-    ) {
-      fail('bundle_previous_unresolved');
-    }
-    const seen = new Set(_seenBundleHashes);
-    seen.add(bundle.previous_bundle_hash);
-    verifyReceiptBundle(
-      previous,
-      registry,
-      expectedFromReceiptBundle(previous),
-      { now, resolvePreviousBundle, _seenBundleHashes: seen },
-    );
   }
 
   return Object.freeze({
@@ -867,5 +981,91 @@ export function verifyReceiptBundle(
     grant_ids: verifiedGrants.map((grant) => grant.grant_id),
     receipt_ids: verifiedReceipts.map((receipt) => receipt.receipt_id),
     effect_receipts: verifiedReceipts,
+  });
+}
+
+export async function preloadReceiptBundleAncestry({
+  headHash,
+  genesisHash = null,
+  readBundle,
+  trustRegistry,
+  now = Date.now(),
+  maximumBundleDepth = DEFAULT_MAXIMUM_BUNDLE_DEPTH,
+} = {}) {
+  verifyNow(now);
+  verifyMaximumBundleDepth(maximumBundleDepth);
+  if (
+    !HASH_PATTERN.test(headHash ?? '')
+    || (
+      genesisHash !== null
+      && !HASH_PATTERN.test(genesisHash ?? '')
+    )
+    || typeof readBundle !== 'function'
+  ) {
+    fail('bundle_hash_chain_invalid');
+  }
+  const bundles = new Map();
+  let currentHash = headHash;
+  let discoveredGenesis = null;
+  while (true) {
+    if (bundles.size >= maximumBundleDepth) {
+      fail('bundle_hash_chain_invalid');
+    }
+    if (bundles.has(currentHash)) fail('bundle_hash_chain_invalid');
+    let raw;
+    try {
+      raw = await readBundle(currentHash);
+    } catch {
+      fail('bundle_previous_unresolved');
+    }
+    if (
+      !asObject(raw)
+      || sha256Canonical(raw) !== currentHash
+    ) {
+      fail('bundle_previous_unresolved');
+    }
+    const stored = Object.freeze(structuredClone(raw));
+    bundles.set(currentHash, stored);
+    if (stored.previous_bundle_hash == null) {
+      discoveredGenesis = currentHash;
+      break;
+    }
+    if (!HASH_PATTERN.test(stored.previous_bundle_hash)) {
+      fail('bundle_hash_chain_invalid');
+    }
+    currentHash = stored.previous_bundle_hash;
+  }
+  if (
+    discoveredGenesis == null
+    || (
+      genesisHash !== null
+      && discoveredGenesis !== genesisHash
+    )
+  ) {
+    fail('bundle_hash_chain_invalid');
+  }
+  const resolvePreviousBundle = Object.freeze((hash) => {
+    const bundle = bundles.get(hash);
+    if (bundle == null) fail('bundle_previous_unresolved');
+    return structuredClone(bundle);
+  });
+  const head = bundles.get(headHash);
+  verifyReceiptBundle(
+    head,
+    trustRegistry,
+    expectedFromReceiptBundle(head),
+    {
+      now,
+      resolvePreviousBundle,
+      maximumBundleDepth,
+      [HISTORICAL_BUNDLE_VERIFICATION]: true,
+    },
+  );
+  return Object.freeze({
+    schema_version: 'kernel-equivalence-bundle-snapshot/v1',
+    genesis_hash: discoveredGenesis,
+    head_hash: headHash,
+    bundle_hashes: Object.freeze([...bundles.keys()]),
+    readBundle: resolvePreviousBundle,
   });
 }

@@ -1,0 +1,306 @@
+import { createHash } from 'node:crypto';
+
+const ADAPTER_ID_PATTERN = /^kernel\.drill\.[a-z0-9_.-]+\.v[1-9][0-9]*$/;
+const VERIFIER_ID_PATTERN = /^kernel\.cleanup\.[a-z0-9_.-]+\.v[1-9][0-9]*$/;
+const SERVICE_ID_PATTERN = /^kernel\.[a-z0-9_.-]+$/;
+const ADAPTER_FIELDS = Object.freeze([
+  'adapter_id',
+  'cancel',
+  'cleanup',
+  'invokeActualSeam',
+  'observe',
+  'owner_service',
+  'prepare',
+]);
+const VERIFIER_FIELDS = Object.freeze([
+  'adapter_id',
+  'owner_service',
+  'verifier_id',
+  'verifyCleanup',
+]);
+const RESULT_FIELDS = Object.freeze([
+  'confirmed',
+  'evidence',
+]);
+const EVIDENCE_FIELDS = Object.freeze([
+  'adapter_id',
+  'cell_id',
+  'context_hash',
+  'evidence_ref',
+  'grant_id',
+  'resource_id',
+  'resource_ref',
+  'schema_version',
+]);
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
+
+export class EquivalenceRuntimeRegistryError extends Error {
+  constructor(code) {
+    super(code);
+    this.name = 'EquivalenceRuntimeRegistryError';
+    this.code = code;
+  }
+}
+
+function fail(code) {
+  throw new EquivalenceRuntimeRegistryError(code);
+}
+
+function exactFields(value, fields) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...fields].sort();
+  return actual.length === expected.length
+    && actual.every((field, index) => field === expected[index]);
+}
+
+function canonicalValue(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]),
+    );
+  }
+  fail('cleanup_evidence_context_invalid');
+}
+
+function canonicalHash(value) {
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalValue(value)), 'utf8')
+    .digest('hex');
+}
+
+function evidenceBinding(context) {
+  const binding = {
+    schema_version: 'kernel-equivalence-cleanup-evidence/v1',
+    cell_id: context?.cell?.cell_id,
+    grant_id: context?.grant?.grant_id,
+    resource_id: context?.grant?.resource_id,
+    resource_ref: context?.grant?.resource_ref,
+    adapter_id: context?.cell?.adapter_id,
+    context_hash: canonicalHash({
+      cleanup: context?.cleanup ?? null,
+      compensations: context?.compensations ?? [],
+      prepared: context?.prepared ?? null,
+    }),
+  };
+  if (
+    !boundedBinding(binding.cell_id)
+    || !boundedBinding(binding.grant_id)
+    || !boundedBinding(binding.resource_id)
+    || !boundedBinding(binding.resource_ref)
+    || !ADAPTER_ID_PATTERN.test(binding.adapter_id ?? '')
+  ) {
+    fail('cleanup_evidence_context_invalid');
+  }
+  return binding;
+}
+
+function boundedBinding(value) {
+  return (
+    typeof value === 'string'
+    && value.length > 0
+    && value.length <= 2_048
+    && !/[\0\r\n]/.test(value)
+  );
+}
+
+export function createCleanupEvidence(context) {
+  const binding = evidenceBinding(context);
+  return Object.freeze({
+    ...binding,
+    evidence_ref: `cleanup-evidence:${canonicalHash(binding)}`,
+  });
+}
+
+export function verifyCleanupEvidence(evidence, contextOrBinding) {
+  if (
+    !exactFields(evidence, EVIDENCE_FIELDS)
+    || evidence.schema_version !== 'kernel-equivalence-cleanup-evidence/v1'
+    || !HASH_PATTERN.test(evidence.context_hash ?? '')
+  ) {
+    fail('cleanup_evidence_invalid');
+  }
+  const expected = contextOrBinding?.cell
+    ? createCleanupEvidence(contextOrBinding)
+    : Object.freeze({
+      schema_version: 'kernel-equivalence-cleanup-evidence/v1',
+      cell_id: contextOrBinding?.cell_id,
+      grant_id: contextOrBinding?.grant_id,
+      resource_id: contextOrBinding?.resource_id,
+      resource_ref: contextOrBinding?.resource_ref,
+      adapter_id: contextOrBinding?.adapter_id,
+      context_hash: evidence.context_hash,
+      evidence_ref: `cleanup-evidence:${canonicalHash({
+        schema_version: 'kernel-equivalence-cleanup-evidence/v1',
+        cell_id: contextOrBinding?.cell_id,
+        grant_id: contextOrBinding?.grant_id,
+        resource_id: contextOrBinding?.resource_id,
+        resource_ref: contextOrBinding?.resource_ref,
+        adapter_id: contextOrBinding?.adapter_id,
+        context_hash: evidence.context_hash,
+      })}`,
+    });
+  if (canonicalHash(evidence) !== canonicalHash(expected)) {
+    fail('cleanup_evidence_invalid');
+  }
+  return Object.freeze(structuredClone(evidence));
+}
+
+function completeAdapter(value) {
+  return (
+    exactFields(value, ADAPTER_FIELDS)
+    && ADAPTER_ID_PATTERN.test(value.adapter_id ?? '')
+    && SERVICE_ID_PATTERN.test(value.owner_service ?? '')
+    && typeof value.prepare === 'function'
+    && typeof value.invokeActualSeam === 'function'
+    && typeof value.observe === 'function'
+    && typeof value.cancel === 'function'
+    && typeof value.cleanup === 'function'
+  );
+}
+
+export function createServerOwnedAdapterRegistry({ adapters = [] } = {}) {
+  if (!Array.isArray(adapters)) fail('adapter_registry_invalid');
+  const entries = new Map();
+  for (const adapter of adapters) {
+    if (!completeAdapter(adapter)) fail('adapter_registry_invalid');
+    if (entries.has(adapter.adapter_id)) fail('adapter_registry_duplicate');
+    entries.set(adapter.adapter_id, Object.freeze({
+      adapter_id: adapter.adapter_id,
+      owner_service: adapter.owner_service,
+      prepare: adapter.prepare,
+      invokeActualSeam: adapter.invokeActualSeam,
+      observe: adapter.observe,
+      cancel: adapter.cancel,
+      cleanup: adapter.cleanup,
+    }));
+  }
+  const ids = Object.freeze([...entries.keys()].sort());
+  return Object.freeze({
+    ids,
+    size: ids.length,
+    resolve(adapterId) {
+      return entries.get(adapterId) ?? null;
+    },
+    resolveForCell(cell) {
+      const adapter = entries.get(cell?.adapter_id);
+      if (!adapter) return null;
+      if (adapter.owner_service !== cell?.seam_id) {
+        fail('adapter_seam_owner_mismatch');
+      }
+      return adapter;
+    },
+  });
+}
+
+function completeVerifier(value) {
+  return (
+    exactFields(value, VERIFIER_FIELDS)
+    && VERIFIER_ID_PATTERN.test(value.verifier_id ?? '')
+    && ADAPTER_ID_PATTERN.test(value.adapter_id ?? '')
+    && SERVICE_ID_PATTERN.test(value.owner_service ?? '')
+    && typeof value.verifyCleanup === 'function'
+  );
+}
+
+function validateResult(result) {
+  if (
+    !exactFields(result, RESULT_FIELDS)
+    || typeof result.confirmed !== 'boolean'
+    || (result.confirmed && (
+      !result.evidence
+      || typeof result.evidence !== 'object'
+      || Array.isArray(result.evidence)
+    ))
+    || (!result.confirmed && result.evidence !== null)
+  ) {
+    fail('cleanup_verifier_result_invalid');
+  }
+  return result.confirmed;
+}
+
+export function createIndependentCleanupVerifierRegistry({
+  adapterRegistry,
+  verifiers = [],
+} = {}) {
+  if (
+    !adapterRegistry
+    || !Array.isArray(adapterRegistry.ids)
+    || typeof adapterRegistry.resolve !== 'function'
+    || !Array.isArray(verifiers)
+  ) {
+    fail('cleanup_verifier_registry_invalid');
+  }
+  const entries = new Map();
+  const verifierIds = new Set();
+  for (const verifier of verifiers) {
+    if (!completeVerifier(verifier)) fail('cleanup_verifier_registry_invalid');
+    if (
+      verifierIds.has(verifier.verifier_id)
+      || entries.has(verifier.adapter_id)
+    ) {
+      fail('cleanup_verifier_duplicate');
+    }
+    const adapter = adapterRegistry.resolve(verifier.adapter_id);
+    if (!adapter) fail('cleanup_verifier_adapter_unknown');
+    if (adapter.owner_service === verifier.owner_service) {
+      fail('cleanup_verifier_not_independent');
+    }
+    verifierIds.add(verifier.verifier_id);
+    entries.set(verifier.adapter_id, Object.freeze({
+      verifier_id: verifier.verifier_id,
+      adapter_id: verifier.adapter_id,
+      owner_service: verifier.owner_service,
+      verifyCleanup: verifier.verifyCleanup,
+    }));
+  }
+  if (adapterRegistry.ids.some((adapterId) => !entries.has(adapterId))) {
+    fail('cleanup_verifier_missing');
+  }
+  const ids = Object.freeze([...verifierIds].sort());
+  return Object.freeze({
+    ids,
+    size: ids.length,
+    async verify(context) {
+      const adapterId = context?.cell?.adapter_id;
+      const verifier = entries.get(adapterId);
+      if (!verifier) fail('cleanup_verifier_unavailable');
+      const result = await verifier.verifyCleanup(context);
+      if (!validateResult(result)) {
+        return Object.freeze({ confirmed: false, evidence: null });
+      }
+      return Object.freeze({
+        confirmed: true,
+        evidence: verifyCleanupEvidence(result.evidence, context),
+      });
+    },
+  });
+}
+
+export function createServerOwnedRuntimeRegistry({
+  adapters = [],
+  cleanupVerifiers = [],
+} = {}) {
+  const adapterRegistry = createServerOwnedAdapterRegistry({ adapters });
+  const cleanupRegistry = createIndependentCleanupVerifierRegistry({
+    adapterRegistry,
+    verifiers: cleanupVerifiers,
+  });
+  return Object.freeze({
+    ids: adapterRegistry.ids,
+    size: adapterRegistry.size,
+    resolveForCell(cell) {
+      const adapter = adapterRegistry.resolveForCell(cell);
+      if (!adapter) return null;
+      return Object.freeze({
+        adapter,
+        verifyCleanup: (context) => cleanupRegistry.verify(context),
+      });
+    },
+  });
+}
