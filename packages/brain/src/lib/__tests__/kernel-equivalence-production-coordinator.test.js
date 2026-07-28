@@ -233,6 +233,10 @@ describe('production Kernel equivalence coordinator', () => {
               actual_machine_id: 'xian-mac-m4',
               execution_transport: 'fleet-worker',
               remote_job_id: 'job-1',
+              attempt_status: 'completed',
+              receipt_worker_id: 'xian-mac-m4',
+              receipt_job_id: 'job-1',
+              receipt_terminal_status: 'completed',
               task_bundle_sha256:
                 computeFleetAuthoritySha256(taskBundle),
               task_bundle: taskBundle,

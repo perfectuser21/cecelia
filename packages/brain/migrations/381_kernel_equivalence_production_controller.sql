@@ -59,6 +59,9 @@ BEGIN
        AND receipts.requested_provider = cases.provider
        AND attempts.provider_session_id IS NOT NULL
        AND receipts.provider_session_id = attempts.provider_session_id
+       AND receipts.worker_id = attempts.actual_machine_id
+       AND receipts.job_id = attempts.remote_job_id
+       AND receipts.terminal_status = attempts.status
        AND NEW.provider_session_id = attempts.provider_session_id
        AND attempts.actual_machine_id = NEW.actual_machine_id
        AND attempts.execution_transport = NEW.execution_transport
@@ -336,6 +339,9 @@ BEGIN
        AND receipts.provider = cases.provider
        AND receipts.requested_provider = cases.provider
        AND receipts.provider_session_id = attempts.provider_session_id
+       AND receipts.worker_id = attempts.actual_machine_id
+       AND receipts.job_id = attempts.remote_job_id
+       AND receipts.terminal_status = attempts.status
        AND receipts.task_bundle_sha256 = bindings.task_bundle_sha256
      WHERE leases.case_id = NEW.case_id
        AND leases.owner_id

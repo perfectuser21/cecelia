@@ -134,6 +134,9 @@ function validateAuthority(row, {
     || row.execution_transport !== 'fleet-worker'
     || typeof row.remote_job_id !== 'string'
     || row.remote_job_id.length === 0
+    || row.receipt_worker_id !== row.actual_machine_id
+    || row.receipt_job_id !== row.remote_job_id
+    || row.receipt_terminal_status !== row.attempt_status
     || !HASH_PATTERN.test(row.task_bundle_sha256 ?? '')
     || taskBundleSha256 !== row.task_bundle_sha256
     || taskBundle?.inputs?.workspace_spec?.expected_head_sha
@@ -177,6 +180,9 @@ async function bindAndLoadAuthority(pool, caseId, context) {
          attempts.execution_transport,
          attempts.remote_job_id,
          receipts.task_bundle_sha256,
+         receipts.worker_id AS receipt_worker_id,
+         receipts.job_id AS receipt_job_id,
+         receipts.terminal_status AS receipt_terminal_status,
          cases.artifact_sha
        FROM kernel_equivalence_production_cases cases
        JOIN kernel_equivalence_production_case_leases leases
@@ -201,6 +207,9 @@ async function bindAndLoadAuthority(pool, caseId, context) {
          AND cases.provider = receipts.requested_provider
          AND attempts.provider_session_id IS NOT NULL
          AND receipts.provider_session_id = attempts.provider_session_id
+         AND receipts.worker_id = attempts.actual_machine_id
+         AND receipts.job_id = attempts.remote_job_id
+         AND receipts.terminal_status = attempts.status
          AND attempts.actual_machine_id IS NOT NULL
          AND attempts.execution_transport = 'fleet-worker'
          AND attempts.remote_job_id IS NOT NULL
@@ -235,7 +244,10 @@ async function bindAndLoadAuthority(pool, caseId, context) {
        bindings.result_receipt_id, bindings.provider_session_id,
        bindings.actual_machine_id, bindings.execution_transport,
        bindings.remote_job_id, bindings.task_bundle_sha256,
-       attempts.task_bundle
+       attempts.task_bundle, attempts.status AS attempt_status,
+       receipts.worker_id AS receipt_worker_id,
+       receipts.job_id AS receipt_job_id,
+       receipts.terminal_status AS receipt_terminal_status
      FROM kernel_equivalence_production_cases cases
      JOIN kernel_equivalence_production_case_bindings bindings
        ON bindings.case_id = cases.case_id
@@ -267,6 +279,9 @@ async function bindAndLoadAuthority(pool, caseId, context) {
        AND bindings.execution_transport = attempts.execution_transport
        AND bindings.remote_job_id = attempts.remote_job_id
        AND bindings.task_bundle_sha256 = receipts.task_bundle_sha256
+       AND receipts.worker_id = attempts.actual_machine_id
+       AND receipts.job_id = attempts.remote_job_id
+       AND receipts.terminal_status = attempts.status
        AND bindings.artifact_sha = cases.artifact_sha
        AND cases.expires_at > clock_timestamp()`,
     [caseId, context.brainVersion, context.engineVersion],

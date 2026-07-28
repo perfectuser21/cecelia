@@ -92,6 +92,9 @@ const LOCKED_RECEIPT = 'dededede-dede-4ede-8ede-dededededede';
 const RACING_CASE = 'eaeaeaea-eaea-4aea-8aea-eaeaeaeaeaea';
 const RACING_ATTEMPT = 'ebebebeb-ebeb-4beb-8beb-ebebebebebeb';
 const RACING_RECEIPT = 'ecececec-ecec-4cec-8cec-ecececececec';
+const MISMATCH_CASE = 'edededed-eded-4ded-8ded-edededededed';
+const MISMATCH_ATTEMPT = 'efefefef-efef-4fef-8fef-efefefefefef';
+const MISMATCH_RECEIPT = 'fafafafa-fafa-4afa-8afa-fafafafafafa';
 const ARTIFACT_SHA = 'a'.repeat(40);
 const CELL_ID =
   'KERNEL-P1-10-CONTROLLER-SESSION-ISOLATION::codex::normal';
@@ -127,6 +130,9 @@ async function insertAuthority({
   bind = true,
   caseId,
   receiptId,
+  receiptJobId = `job-${attemptId}`,
+  receiptStatus = 'completed',
+  receiptWorkerId = 'xian-mac-m4',
   sessionId,
 }) {
   const resourcePrefix =
@@ -152,10 +158,21 @@ async function insertAuthority({
   await pool.query(
     `INSERT INTO harness_result_receipts
        (receipt_id, attempt_id, run_id, provider, requested_provider,
-        provider_session_id, task_bundle_sha256)
+        provider_session_id, task_bundle_sha256, worker_id, job_id,
+        terminal_status)
      VALUES
-       ($1::uuid, $2::uuid, $3::uuid, 'codex', 'codex', $4, $5)`,
-    [receiptId, attemptId, RUN_ID, sessionId, TASK_BUNDLE_SHA],
+       ($1::uuid, $2::uuid, $3::uuid, 'codex', 'codex', $4, $5,
+        $6, $7, $8)`,
+    [
+      receiptId,
+      attemptId,
+      RUN_ID,
+      sessionId,
+      TASK_BUNDLE_SHA,
+      receiptWorkerId,
+      receiptJobId,
+      receiptStatus,
+    ],
   );
   await pool.query(
     `INSERT INTO kernel_equivalence_production_cases
@@ -258,7 +275,10 @@ beforeAll(async () => {
       provider TEXT NOT NULL,
       requested_provider TEXT NOT NULL,
       provider_session_id TEXT NOT NULL,
-      task_bundle_sha256 TEXT NOT NULL
+      task_bundle_sha256 TEXT NOT NULL,
+      worker_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      terminal_status TEXT NOT NULL
     );
     CREATE TABLE kernel_equivalence_production_cases (
       case_id UUID PRIMARY KEY,
@@ -386,6 +406,36 @@ afterAll(async () => {
 });
 
 describe('production controller restart fencing on real PostgreSQL', () => {
+  it('rejects a binding whose durable receipt contradicts Attempt authority', async () => {
+    await insertAuthority({
+      attemptId: MISMATCH_ATTEMPT,
+      bind: false,
+      caseId: MISMATCH_CASE,
+      receiptId: MISMATCH_RECEIPT,
+      receiptJobId: 'forged-job',
+      receiptStatus: 'failed',
+      receiptWorkerId: 'forged-machine',
+      sessionId: 'mismatch-session',
+    });
+
+    await expect(pool.query(
+      `INSERT INTO kernel_equivalence_production_case_bindings
+         (case_id, result_receipt_id, provider_session_id,
+          actual_machine_id, execution_transport, remote_job_id,
+          task_bundle_sha256, artifact_sha)
+       VALUES
+         ($1::uuid, $2::uuid, 'mismatch-session', 'xian-mac-m4',
+          'fleet-worker', $3, $4, $5)`,
+      [
+        MISMATCH_CASE,
+        MISMATCH_RECEIPT,
+        `job-${MISMATCH_ATTEMPT}`,
+        TASK_BUNDLE_SHA,
+        ARTIFACT_SHA,
+      ],
+    )).rejects.toThrow(/authority binding mismatch/i);
+  });
+
   it('serializes first authority binding against an in-flight Attempt rewrite', async () => {
     await insertAuthority({
       attemptId: RACING_ATTEMPT,
