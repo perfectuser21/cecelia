@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.268.22
+**Brain 版本**: 1.268.23
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.23 — Kernel Alpine metadata runtime closure
+
+- Brain Alpine runtime 安装 `acl/attr`，exact-image contract 在真实容器内验证
+  `getfacl/getfattr` 与 normal/ACL/xattr shared-inspector 行为。
+- Ubuntu unit/integration runners 显式安装同一依赖；Docker 缺失只能显式
+  required-fail 或 allow-skip。
+- stale socket recovery 不再执行非 inode-bound quarantine unlink，保留
+  forensic stale inode，replacement 一律保留并 fail-closed。
 
 ## Brain 1.268.22 — Kernel authenticated readiness and metadata closure
 

@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.268.22
+**版本**: 1.268.23
+
+## Kernel Alpine metadata runtime closure
+
+- Brain `node:20-alpine` runtime 显式安装 `acl` 与 `attr`，使 Linux
+  protected-path inspector 的 `getfacl/getfattr` 依赖不再在生产镜像缺失。
+- Docker image contract 必须对 exact built image 验证两个命令存在，并在容器内
+  真实调用 shared inspector：normal file 放行，ACL、xattr 及组合全部拒绝。
+  Ubuntu brain-unit/integration 同样显式安装依赖；本地 contract 只能选择
+  `--require-docker` fail 或 `--allow-skip` 显式跳过，不允许偶然假绿。
+- stale socket quarantine 不再调用 path-based unlink。Node 无 inode-bound
+  `unlinkat` 能力时保留 pinned stale inode 作为 forensic artifact，replacement
+  继续保留并 fail-closed；artifact 只允许 Brain 离线生命周期清理。
+- 回退：`bash scripts/brain-rollback.sh 1.268.22`；无数据库迁移。
 
 ## Kernel authenticated readiness and metadata closure
 

@@ -330,22 +330,10 @@ async function recoverPinnedStaleSocket(
     restoreQuarantinedReplacement(quarantinePath, socketPath);
     throw error;
   }
-  try {
-    unlinkSync(quarantinePath);
-  } catch {
-    fail('trusted_execution_socket_path_unavailable');
-  }
-  try {
-    lstatSync(quarantinePath);
-    fail('trusted_execution_socket_path_unavailable');
-  } catch (error) {
-    if (error instanceof KernelTrustedExecutionSocketServerError) {
-      throw error;
-    }
-    if (error?.code !== 'ENOENT') {
-      fail('trusted_execution_socket_path_unavailable');
-    }
-  }
+  // Node exposes only path-based unlink here, so lstat → unlink would retain
+  // a narrow replacement race. Keep the exact pinned stale inode under its
+  // unpredictable quarantine name as a forensic, fail-closed artifact.
+  // Lifecycle cleanup may remove it only while the Brain is offline.
   sameParentDirectory(parentIdentity);
 }
 

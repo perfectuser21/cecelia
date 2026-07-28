@@ -4,6 +4,7 @@ import {
   existsSync,
   lstatSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -1158,7 +1159,7 @@ describe('Brain trusted execution client', () => {
     expect(lstatSync(socketPath).isSymbolicLink()).toBe(true);
   });
 
-  it('recovers one pinned inactive Unix socket without touching an active socket', async () => {
+  it('recovers one pinned inactive Unix socket by retaining its exact quarantined inode', async () => {
     const root = mkdtempSync(join(tmpdir(), 'kernel-eq-stale-'));
     roots.push(root);
     const stalePath = join(root, 'stale.sock');
@@ -1179,7 +1180,7 @@ describe('Brain trusted execution client', () => {
       },
     });
     expect(created.status).toBe(0);
-    const staleIdentity = lstatSync(stalePath).ino;
+    const staleIdentity = lstatSync(stalePath);
 
     const recovered = await startBrainTrustedExecutionSocketServer({
       service: createBrainTrustedExecutionService(fixture()),
@@ -1187,7 +1188,22 @@ describe('Brain trusted execution client', () => {
     });
     try {
       expect(lstatSync(stalePath).isSocket()).toBe(true);
-      expect(lstatSync(stalePath).ino).not.toBe(staleIdentity);
+      expect(lstatSync(stalePath).ino).not.toBe(
+        staleIdentity.ino,
+      );
+      const quarantine = readdirSync(root).filter((name) => (
+        name.startsWith('.stale-')
+      ));
+      expect(quarantine).toHaveLength(1);
+      const retained = lstatSync(join(root, quarantine[0]));
+      expect(retained.isSocket()).toBe(true);
+      expect({
+        device: retained.dev,
+        inode: retained.ino,
+      }).toEqual({
+        device: staleIdentity.dev,
+        inode: staleIdentity.ino,
+      });
     } finally {
       await recovered.close();
     }
