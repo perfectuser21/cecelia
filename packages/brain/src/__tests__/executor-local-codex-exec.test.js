@@ -2,10 +2,10 @@
  * executor-local-codex-exec.test.js
  *
  * 测试 triggerLocalCodexExec 独立审查池：
- * - REVIEW_LOCK_DIR 和 MAX_REVIEW_SLOTS 常量
+ * - 与 triggerCodexReview 共享唯一 2-slot 边界
  * - 路由规则：spec_review / code_review_gate → triggerLocalCodexExec
  * - 独立 2-slot 池（不占用 cecelia-run 的 10-slot 池）
- * - codex-bin exec 调用方式
+ * - 隔离 Docker review container 调用方式
  */
 
 import { describe, it, expect } from 'vitest';
@@ -25,12 +25,17 @@ const executorSrc = readFileSync(
 
 describe('executor: triggerLocalCodexExec 独立审查池', () => {
   describe('常量定义', () => {
-    it('REVIEW_LOCK_DIR 指向 codex-review-locks', () => {
-      expect(executorSrc).toContain("REVIEW_LOCK_DIR = '/tmp/codex-review-locks'");
+    it('CODEX_REVIEW_LOCK_DIR 指向宿主持久化的 codex-review-locks', () => {
+      expect(executorSrc).toContain(
+        "path.join(WORK_DIR, 'logs', '.kernel-codex-review-locks')"
+      );
+      expect(executorSrc).not.toContain(
+        "CODEX_REVIEW_LOCK_DIR = '/tmp/codex-review-locks'"
+      );
     });
 
-    it('MAX_REVIEW_SLOTS = 2（独立 2-slot 池）', () => {
-      expect(executorSrc).toContain('MAX_REVIEW_SLOTS = 2');
+    it('CODEX_REVIEW_MAX = 2（独立 2-slot 池）', () => {
+      expect(executorSrc).toContain('CODEX_REVIEW_MAX = 2');
     });
   });
 
@@ -39,10 +44,48 @@ describe('executor: triggerLocalCodexExec 独立审查池', () => {
       expect(executorSrc).toContain('async function triggerLocalCodexExec(task)');
     });
 
-    it('使用 codex-bin exec 模式（通过 shell 脚本启动）', () => {
-      // triggerLocalCodexExec 通过 bash 脚本调用 codex-bin exec
-      expect(executorSrc).toContain("codex-bin");
-      expect(executorSrc).toContain("exec --model");
+    it('旧 alias 委托给唯一的 triggerCodexReview 实现', () => {
+      const start = executorSrc.indexOf('async function triggerLocalCodexExec(task)');
+      const end = executorSrc.indexOf('\nasync function ', start + 1);
+      const triggerLocalCodexExecSrc = executorSrc.slice(start, end);
+
+      expect(triggerLocalCodexExecSrc).toContain(
+        'return triggerCodexReview(task)'
+      );
+    });
+
+    it('共享实现只把 exact worktree 只读挂入隔离容器', () => {
+      const start = executorSrc.indexOf('async function triggerCodexReview(task)');
+      const end = executorSrc.indexOf('\nasync function ', start + 1);
+      const triggerCodexReviewSrc = executorSrc.slice(start, end);
+
+      expect(triggerCodexReviewSrc).toContain(
+        'resolveCodexReviewWorktree'
+      );
+      expect(triggerCodexReviewSrc).toContain(
+        'spawn(dockerBin, buildCodexReviewDockerArguments({'
+      );
+      expect(triggerCodexReviewSrc).toContain(
+        'worktreePath: reviewWorktreePath'
+      );
+    });
+
+    it('找不到 exact worktree 时在 spawn 前 fail-closed 并归还 slot', () => {
+      const start = executorSrc.indexOf('async function triggerCodexReview(task)');
+      const end = executorSrc.indexOf('\nasync function ', start + 1);
+      const triggerCodexReviewSrc = executorSrc.slice(start, end);
+      const boundary = triggerCodexReviewSrc.indexOf(
+        'resolveCodexReviewWorktree'
+      );
+      const spawn = triggerCodexReviewSrc.indexOf(
+        'spawn(dockerBin, buildCodexReviewDockerArguments({'
+      );
+
+      expect(boundary).toBeGreaterThan(-1);
+      expect(boundary).toBeLessThan(spawn);
+      expect(triggerCodexReviewSrc.slice(boundary, spawn)).toContain(
+        "configError: true"
+      );
     });
   });
 
@@ -67,7 +110,7 @@ describe('executor: triggerLocalCodexExec 独立审查池', () => {
     });
 
     it('pool full 时返回 review_slots_full 错误', () => {
-      expect(executorSrc).toContain('review_slots_full');
+      expect(executorSrc).toContain('codex_review_pool_full');
     });
   });
 });

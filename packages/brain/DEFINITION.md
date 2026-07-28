@@ -1,6 +1,34 @@
 # Brain 模块定义
 
-**版本**: 1.268.18
+**版本**: 1.268.19
+
+## Kernel Codex review trust boundary
+
+- Controller 只接纳已登记、非主仓、clean 的 exact Git worktree，并把已持久化的
+  head/base、merge-base、tree digest、Skill/evidence digest 与 immutable image
+  ID 写入证据 receipt；Reviewer 从固定 commit archive 解包到 tmpfs，不挂载 live
+  worktree。
+- Reviewer 固定 `codex 0.145.0 / gpt-5.4`，non-root、read-only、cap-drop、
+  no-new-privileges、最小 mounts、permission profile 与 `--network none`。Auth
+  通过 `O_NOFOLLOW` pinned descriptor 复制到每次运行的 mode-0600 临时文件；
+  Codex tool 看不到 auth、Git object store、Brain `/app`、broker socket、
+  Docker socket、Brain/DB/部署凭据。
+- 每次 review 使用带 owner/expiry 标签的独占 Docker volume 与无凭据 egress
+  broker sidecar。Broker 仅接受 HTTP/1.1 exact CONNECT
+  `chatgpt.com:443`/`auth.openai.com:443`，只连接已校验的 global-unicast IPv4；
+  DNS、握手、idle、absolute TTL、header、连接数均有界。
+- Cleanup 严格等待 reviewer → broker → volume 并验证零残留；失败保留 slot
+  fail-closed；删除前逐资源核对 kind/run/owner nonce。启动/巡检 TTL reaper 从
+  Docker labels 收敛 crash-window 半资源。
+- Review run intent 与 terminal journal 位于宿主持久目录，并执行
+  file fsync → atomic rename → directory fsync。缺 terminal 的 confirmed-dead
+  reviewer 合成 FAIL；callback queue 以 task/run 幂等键 fail-dominant UPSERT，
+  worker 用 `FOR UPDATE SKIP LOCKED`，且只有 current run 能落终态和 gate verdict。
+- Spec task card 与 diff 均从 admitted commit 读取；最终输出必须是 exact
+  PASS/FAIL JSON。缺失/畸形 verdict、非零退出、boundary/cleanup 失败均写 FAIL，
+  合法 FAIL 不会被 callback 改写成 PASS。
+- 回退：`bash scripts/brain-rollback.sh 1.268.18`；migration 379 仅增加 nullable
+  `callback_queue.idempotency_key` 与 partial unique index，可向后兼容保留。
 
 ## Kernel zero-Attempt patrol coverage
 

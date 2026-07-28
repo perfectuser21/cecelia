@@ -89,14 +89,42 @@ export async function writeReviewResult(task_id, result, pool) {
   const parentTaskId = reviewPayload.parent_task_id;
 
   const resultObj = typeof result === 'object' && result !== null ? result : {};
-  const decision = resultObj.decision || (typeof result === 'string' ? result : 'PASS');
+  const gateVerdict = ['PASS', 'FAIL'].includes(resultObj.verdict)
+    ? resultObj.verdict
+    : 'FAIL';
+  const legacyDecision = (
+    typeof resultObj.decision === 'string'
+      && resultObj.decision.length > 0
+      && resultObj.decision.length <= 100
+  )
+    ? resultObj.decision
+    : (
+      typeof result === 'string'
+        && result.length > 0
+        && result.length <= 100
+    )
+      ? result
+      : 'FAIL';
+  const decision = ['spec_review', 'code_review_gate'].includes(reviewTask.task_type)
+    ? gateVerdict
+    : legacyDecision;
   const summary = resultObj.summary || (typeof result === 'string' ? result : '');
   const l1Count = resultObj.l1_count ?? 0;
   const l2Count = resultObj.l2_count ?? 0;
+  const reviewEvidence = (
+    resultObj.review_evidence !== null
+    && typeof resultObj.review_evidence === 'object'
+  )
+    ? resultObj.review_evidence
+    : null;
 
   const reviewResultText = [
     `决定: ${decision}`,
     summary ? `摘要: ${summary}` : '',
+    reviewEvidence?.head_sha ? `Head SHA: ${reviewEvidence.head_sha}` : '',
+    reviewEvidence?.snapshot_digest
+      ? `Snapshot Digest: ${reviewEvidence.snapshot_digest}`
+      : '',
     `L1问题: ${l1Count}, L2问题: ${l2Count}`,
   ].filter(Boolean).join('\n');
 

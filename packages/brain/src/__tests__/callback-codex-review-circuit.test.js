@@ -29,7 +29,9 @@ import * as circuitBreaker from '../circuit-breaker.js';
 
 function makePool(task_type) {
   const mockClient = {
-    query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+    // This suite exercises circuit classification after a callback was
+    // actually applied. Late/duplicate rowCount=0 behavior has its own tests.
+    query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
     release: vi.fn(),
   };
   return {

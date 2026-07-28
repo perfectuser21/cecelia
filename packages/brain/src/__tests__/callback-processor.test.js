@@ -191,6 +191,57 @@ describe('callback-processor — WHERE 守卫白名单（harness_evaluate 84% ve
     // client 被释放
     expect(mockClient.release, 'client.release 应被调用').toHaveBeenCalled();
   });
+
+  it('Codex review 只允许 current_run_id 匹配的回调覆盖精确 verdict', async () => {
+    await processExecutionCallback(
+      {
+        task_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        run_id: '11111111-2222-4333-8444-555555555555',
+        status: 'AI Done',
+        result: { verdict: 'PASS', summary: 'exact current run' },
+        coding_type: 'codex-review',
+      },
+      mockPool,
+    );
+
+    const updateCall = mockClient.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('UPDATE tasks'),
+    );
+    expect(updateCall[0]).toContain("payload->>'current_run_id' = $15");
+    expect(updateCall[0]).toContain('WHEN $14::boolean');
+    expect(updateCall[1][13]).toBe(true);
+    expect(updateCall[1][14]).toBe(
+      '11111111-2222-4333-8444-555555555555',
+    );
+  });
+
+  it('迟到或重复回调未落地时不写 decision_log 且不触发下游副作用', async () => {
+    mockClient.query.mockImplementation(async (sql) => {
+      if (String(sql).includes('UPDATE tasks')) {
+        return { rows: [], rowCount: 0 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    const outcome = await processExecutionCallback(
+      {
+        task_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        run_id: '11111111-2222-4333-8444-555555555555',
+        status: 'AI Done',
+        result: { verdict: 'PASS' },
+        coding_type: 'codex-review',
+      },
+      mockPool,
+    );
+
+    expect(outcome).toMatchObject({
+      skipped: true,
+      reason: 'late_or_duplicate_callback',
+    });
+    expect(mockClient.query.mock.calls.some(([sql]) => (
+      String(sql).includes('INSERT INTO decision_log')
+    ))).toBe(false);
+  });
 });
 
 /**

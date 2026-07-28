@@ -160,6 +160,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // collide with a still-bound socket on 5221.
 let __shuttingDown = false;
 let __trustedExecutionBoot = null;
+let __codexReviewEgressReaper = null;
 const __startedAtMs = Date.now();
 async function gracefulShutdown(signal) {
   if (__shuttingDown) return;
@@ -229,7 +230,15 @@ async function gracefulShutdown(signal) {
     );
   }
 
-  // 4) Drain pg pool
+  // 4) Stop the Codex review TTL loop and remove any active reviewer,
+  // broker, and socket volume before this callback authority disappears.
+  try {
+    await __codexReviewEgressReaper?.stop({ cleanupActive: true });
+  } catch (e) {
+    console.warn('[shutdown] Codex review egress cleanup error:', e && e.message);
+  }
+
+  // 5) Drain pg pool
   try {
     await Promise.race([
       pool.end(),
@@ -952,6 +961,21 @@ async function onBrainListening() {
     console.log('[Server] Zombie Reaper started (5min interval) - auto-reap in_progress tasks idle >30min');
   } catch (e) {
     console.warn('[Server] Zombie Reaper init failed (non-fatal):', e.message);
+  }
+
+  // Codex review sidecars survive a Brain process crash unless reconciled
+  // against Docker labels. Run once at boot, every minute, and force cleanup
+  // during graceful shutdown.
+  try {
+    const { startCodexReviewEgressReaper } = await import(
+      './src/lib/codex-review-egress-runtime.js'
+    );
+    __codexReviewEgressReaper = startCodexReviewEgressReaper({
+      dockerBin: process.env.DOCKER_BIN || '/usr/bin/docker',
+    });
+    console.log('[Server] Codex review egress reaper started (60s interval)');
+  } catch (e) {
+    console.warn('[Server] Codex review egress reaper init failed (non-fatal):', e.message);
   }
 
   // Auto-start cecelia-bridge if not already running

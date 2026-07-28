@@ -53,4 +53,47 @@ describe('writeReviewResult(5c8b)', () => {
     const writeCall = pool.query.mock.calls.find((c) => /review_result/.test(c[0]));
     expect(writeCall).toBeUndefined();
   });
+
+  it('persists the spec/code gate verdict field exactly, including FAIL', async () => {
+    const pool = makePool();
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          task_type: 'code_review_gate',
+          payload: { parent_task_id: 'parent-dev' },
+        }],
+      })
+      .mockResolvedValue({ rows: [], rowCount: 1 });
+
+    await writeReviewResult('review-task', {
+      verdict: 'FAIL',
+      summary: 'blocker found',
+      issues: [{ severity: 'blocker' }],
+    }, pool);
+
+    const writes = pool.query.mock.calls.filter((call) => (
+      /UPDATE tasks SET review_result/.test(call[0])
+    ));
+    expect(writes).toHaveLength(2);
+    expect(writes[0][1][0]).toContain('决定: FAIL');
+    expect(writes[0][1][0]).toContain('摘要: blocker found');
+    expect(writes[1][1][1]).toBe('parent-dev');
+  });
+
+  it('fails closed instead of writing PASS when a gate result has no verdict', async () => {
+    const pool = makePool();
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [{ task_type: 'spec_review', payload: {} }],
+      })
+      .mockResolvedValue({ rows: [], rowCount: 1 });
+
+    await writeReviewResult('review-task', { summary: 'ambiguous' }, pool);
+
+    const write = pool.query.mock.calls.find((call) => (
+      /UPDATE tasks SET review_result/.test(call[0])
+    ));
+    expect(write[1][0]).toContain('决定: FAIL');
+    expect(write[1][0]).not.toContain('决定: PASS');
+  });
 });
