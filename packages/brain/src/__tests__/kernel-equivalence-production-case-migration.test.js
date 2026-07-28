@@ -74,6 +74,12 @@ describe('migration 377 Kernel equivalence production cases', () => {
     ]) {
       expect(sql).toContain(`'${resourceType}'`);
     }
+    expect(sql).toMatch(
+      /resource_prefix\s+~\s+'\^\(\?:refs\/heads\/\)\?equivalence-drill\//i,
+    );
+    expect(sql).toMatch(
+      /cell_id\s*=\s*behavior_id\s*\|\|\s*'::'\s*\|\|\s*provider\s*\|\|\s*'::'\s*\|\|\s*scenario/i,
+    );
   });
 
   it('keeps identity and lifecycle evidence append-only', () => {

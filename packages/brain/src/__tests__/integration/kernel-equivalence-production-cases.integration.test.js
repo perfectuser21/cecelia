@@ -148,6 +148,16 @@ describe('production equivalence cases on real PostgreSQL', () => {
     await expect(insertCase(duplicateRef)).rejects.toMatchObject({
       code: '23505',
     });
+
+    const arbitraryBranch = caseColumns(
+      'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      'resource-3',
+    );
+    arbitraryBranch[13] = 'refs/heads/feature/';
+    arbitraryBranch[15] = 'refs/heads/feature/resource-3';
+    await expect(insertCase(arbitraryBranch)).rejects.toMatchObject({
+      code: '23514',
+    });
   });
 
   it('fences lease owner, generation, transition, and database expiry', async () => {

@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS kernel_equivalence_production_cases (
   resource_prefix TEXT NOT NULL CHECK (
     length(resource_prefix) BETWEEN 1 AND 512
     AND resource_prefix !~ E'[\\000\\r\\n]'
+    AND resource_prefix ~ '^(?:refs/heads/)?equivalence-drill/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/(?:[a-z0-9][a-z0-9_-]{0,127}/)*$'
     AND resource_prefix !~* '(^|[/_.:-])(main|master|production|prod|release)($|[/_.:-])'
   ),
   resource_id TEXT NOT NULL CHECK (
