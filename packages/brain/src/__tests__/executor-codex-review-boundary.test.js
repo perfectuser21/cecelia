@@ -2,15 +2,21 @@ import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnMock = vi.fn();
+const execFileSyncMock = vi.fn();
 const accessMock = vi.fn();
 const writeFileMock = vi.fn();
 const mkdirMock = vi.fn();
 const unlinkSyncMock = vi.fn();
 const rmMock = vi.fn();
 const resolveWorktreeMock = vi.fn(() => '/allowed/cp-safe-review');
+const readReviewFileMock = vi.fn(() => 'trusted task card');
+const readFileSyncMock = vi.fn(() => {
+  throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+});
 
 vi.mock('child_process', () => ({
   spawn: (...args) => spawnMock(...args),
+  execFileSync: (...args) => execFileSyncMock(...args),
   execSync: vi.fn(() => ''),
   exec: vi.fn(),
 }));
@@ -24,9 +30,7 @@ vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    readFileSync: vi.fn(() => {
-      throw Object.assign(new Error('not found'), { code: 'ENOENT' });
-    }),
+    readFileSync: (...args) => readFileSyncMock(...args),
     readdirSync: vi.fn(() => []),
     unlinkSync: (...args) => unlinkSyncMock(...args),
   };
@@ -42,6 +46,7 @@ vi.mock('../decisions-context.js', () => ({
 vi.mock('../lib/codex-review-boundary.js', () => ({
   extractCodexReviewBranch: vi.fn(() => 'cp-safe-review'),
   resolveCodexReviewWorktree: (...args) => resolveWorktreeMock(...args),
+  readCodexReviewFile: (...args) => readReviewFileMock(...args),
   resolveCodexReviewAuthFile: vi.fn(() => '/review-auth/auth.json'),
   resolveCodexReviewImage: vi.fn(() => `sha256:${'a'.repeat(64)}`),
   buildCodexReviewDockerArguments: vi.fn(() => [
@@ -135,7 +140,40 @@ describe('triggerCodexReview process boundary', () => {
       },
     );
     expect(child.stdin.end).toHaveBeenCalledWith(
-      expect.stringContaining('review only'),
+      expect.stringContaining('trusted task card'),
+    );
+    expect(readReviewFileMock).toHaveBeenCalledWith({
+      worktreePath: '/allowed/cp-safe-review',
+      fileName: '.task-cp-safe-review.md',
+    });
+  });
+
+  it('builds code review diff from the exact admitted worktree without a shell', async () => {
+    execFileSyncMock.mockReturnValueOnce('diff --git a/a.js b/a.js\n');
+    await triggerCodexReview({
+      id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      task_type: 'code_review_gate',
+      metadata: { branch: 'cp-safe-review' },
+      description: 'review code',
+    });
+
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      'git',
+      [
+        '-C',
+        '/allowed/cp-safe-review',
+        'diff',
+        '--no-ext-diff',
+        '--no-textconv',
+        'origin/main..HEAD',
+      ],
+      expect.objectContaining({
+        encoding: 'utf-8',
+        timeout: 15_000,
+      }),
+    );
+    expect(child.stdin.end).toHaveBeenCalledWith(
+      expect.stringContaining('diff --git a/a.js b/a.js'),
     );
   });
 

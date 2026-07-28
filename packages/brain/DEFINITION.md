@@ -15,6 +15,10 @@
   `--sandbox read-only --ephemeral`，prompt 经 Docker interactive stdin；
   此时才允许
   `--skip-git-repo-check` 绕过 CLI 自身的重复 admission。
+- Spec task card 通过 `O_NOFOLLOW`、regular-file、single-link、512 KiB 上限从
+  已 admission 的 exact worktree 读取；Code gate 用无 shell 的 `git
+  --no-ext-diff --no-textconv` 从同一 worktree 生成有界 diff，不再从旧固定目录
+  猜 branch 路径。
 - review slot 使用私有目录下的原子 `mkdir`，没有 shell runner、可预测 prompt
   文件或 count-then-write 竞态；Docker runtime/image/auth 缺失和非零退出都
   fail-closed。

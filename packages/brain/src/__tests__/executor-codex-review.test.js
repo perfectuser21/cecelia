@@ -89,8 +89,10 @@ describe('executor: Codex 独立审查加固', () => {
       expect(executorSrc).toContain('readFileSync');
     });
 
-    it('code_review_gate buildPrompt 包含 git diff origin/main..HEAD', () => {
-      expect(executorSrc).toContain('git diff origin/main..HEAD');
+    it('code_review_gate 用无 shell 的 git diff 从 exact worktree 取完整改动', () => {
+      expect(executorSrc).toContain("'--no-ext-diff'");
+      expect(executorSrc).toContain("'origin/main..HEAD'");
+      expect(executorSrc).toContain('execFileSync');
     });
   });
 

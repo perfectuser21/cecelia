@@ -14,7 +14,12 @@
  */
 
 import crypto from 'crypto';
-import { spawn, execSync, exec } from 'child_process';
+import {
+  spawn,
+  execFileSync,
+  execSync,
+  exec,
+} from 'child_process';
 import { writeFile, mkdir, access, rm } from 'fs/promises';
 import {
   constants as fsConstants,
@@ -44,6 +49,7 @@ import {
   buildCodexReviewDockerArguments,
   buildCodexReviewDockerEnvironment,
   extractCodexReviewBranch,
+  readCodexReviewFile,
   resolveCodexReviewAuthFile,
   resolveCodexReviewImage,
   resolveCodexReviewWorktree,
@@ -2014,15 +2020,27 @@ async function _prepareHarnessEvaluatePrompt(task) {
 写入 ${sprintDir}/eval-round-${evalRound}.md。${contractContent}`;
 }
 
-function _prepareSpecReviewPrompt(task) {
+function _prepareSpecReviewPrompt(task, trustedWorktreePath = null) {
   // payload.branch 优先，兼容 metadata.branch（两种派发方式）
   const branch = task.payload?.branch || task.metadata?.branch || '';
   let taskCardContent = task.description || task.title || '';
   if (branch) {
-    const worktreeSlug = branch.replace(/^cp-\d{8}-/, '');
-    const taskCardPath = path.join(WORK_DIR, '.claude/worktrees', worktreeSlug, `.task-${branch}.md`);
     try {
-      taskCardContent = readFileSync(taskCardPath, 'utf-8');
+      if (trustedWorktreePath) {
+        taskCardContent = readCodexReviewFile({
+          worktreePath: trustedWorktreePath,
+          fileName: `.task-${branch}.md`,
+        });
+      } else {
+        const worktreeSlug = branch.replace(/^cp-\d{8}-/, '');
+        const taskCardPath = path.join(
+          WORK_DIR,
+          '.claude/worktrees',
+          worktreeSlug,
+          `.task-${branch}.md`,
+        );
+        taskCardContent = readFileSync(taskCardPath, 'utf-8');
+      }
     } catch {
       // 降级使用 task.description（description 中已含 Task Card 内容时也有效）
     }
@@ -2030,19 +2048,30 @@ function _prepareSpecReviewPrompt(task) {
   return `/spec-review\n\n${taskCardContent}`;
 }
 
-function _prepareCodeReviewGatePrompt(task) {
+function _prepareCodeReviewGatePrompt(task, trustedWorktreePath = null) {
   // payload.branch 优先，兼容 metadata.branch
   const branch = task.payload?.branch || task.metadata?.branch || '';
   let diffContent = '';
   if (branch) {
     const worktreeSlug = branch.replace(/^cp-\d{8}-/, '');
-    const worktreePath = path.join(WORK_DIR, '.claude/worktrees', worktreeSlug);
+    const worktreePath = trustedWorktreePath || path.join(
+      WORK_DIR,
+      '.claude/worktrees',
+      worktreeSlug,
+    );
     try {
       // 用 origin/main..HEAD 确保拿到完整的分支改动（不含 origin/main 本身）
-      diffContent = execSync('git diff origin/main..HEAD', {
-        cwd: worktreePath,
+      diffContent = execFileSync('git', [
+        '-C',
+        worktreePath,
+        'diff',
+        '--no-ext-diff',
+        '--no-textconv',
+        'origin/main..HEAD',
+      ], {
         encoding: 'utf-8',
         timeout: 15000,
+        maxBuffer: 512 * 1024,
       });
     } catch {
       // ignore diff errors
@@ -2455,7 +2484,11 @@ async function triggerCodexReview(task) {
     }
 
     // 在占用 slot 前完成纯读取 prompt 构造；构造失败不会泄漏容量。
-    const promptContent = await preparePrompt(task);
+    const promptContent = task.task_type === 'spec_review'
+      ? _prepareSpecReviewPrompt(task, reviewWorktreePath)
+      : task.task_type === 'code_review_gate'
+        ? _prepareCodeReviewGatePrompt(task, reviewWorktreePath)
+        : await preparePrompt(task);
 
     // 原子获取独立 review slot。mkdir 不跟随同名 symlink，避免 /tmp
     // predictable-file 覆盖和 count-then-write 竞态。

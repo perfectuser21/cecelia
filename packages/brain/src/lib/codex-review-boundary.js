@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { lstatSync, realpathSync } from 'node:fs';
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -208,6 +216,53 @@ export function resolveCodexReviewAuthFile({
   } catch (error) {
     if (error instanceof CodexReviewBoundaryError) throw error;
     fail('review_auth_file_unavailable');
+  }
+}
+
+export function readCodexReviewFile({
+  worktreePath,
+  fileName,
+  open = openSync,
+  inspect = fstatSync,
+  read = readFileSync,
+  close = closeSync,
+} = {}) {
+  assertMountSource(worktreePath, 'review_worktree_path_unsafe');
+  if (
+    !bounded(fileName, 300)
+    || path.basename(fileName) !== fileName
+    || !/^\.task-[A-Za-z0-9][A-Za-z0-9._-]{0,254}\.md$/.test(fileName)
+  ) {
+    fail('review_file_name_invalid');
+  }
+  let descriptor;
+  try {
+    descriptor = open(
+      path.join(worktreePath, fileName),
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+    const metadata = inspect(descriptor);
+    if (
+      !metadata.isFile()
+      || metadata.nlink !== 1
+      || !Number.isSafeInteger(metadata.size)
+      || metadata.size < 0
+      || metadata.size > 512 * 1024
+    ) {
+      fail('review_file_unsafe');
+    }
+    return String(read(descriptor, 'utf-8'));
+  } catch (error) {
+    if (error instanceof CodexReviewBoundaryError) throw error;
+    fail('review_file_unavailable');
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        close(descriptor);
+      } catch {
+        // Read access was already bounded; close errors cannot widen it.
+      }
+    }
   }
 }
 

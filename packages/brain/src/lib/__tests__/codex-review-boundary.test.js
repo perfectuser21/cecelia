@@ -4,6 +4,7 @@ import {
   buildCodexReviewDockerArguments,
   buildCodexReviewDockerEnvironment,
   extractCodexReviewBranch,
+  readCodexReviewFile,
   resolveCodexReviewAuthFile,
   resolveCodexReviewImage,
   resolveCodexReviewWorktree,
@@ -168,6 +169,53 @@ describe('Codex review process boundary', () => {
         code: 'review_auth_file_unsafe',
       }));
     }
+  });
+
+  it('reads only a bounded regular task card through O_NOFOLLOW', () => {
+    const close = vi.fn();
+    const open = vi.fn(() => 17);
+    expect(readCodexReviewFile({
+      worktreePath: '/allowed/cp-safe',
+      fileName: '.task-cp-safe.md',
+      open,
+      inspect: () => ({
+        isFile: () => true,
+        nlink: 1,
+        size: 12,
+      }),
+      read: (descriptor, encoding) => {
+        expect(descriptor).toBe(17);
+        expect(encoding).toBe('utf-8');
+        return 'trusted card';
+      },
+      close,
+    })).toBe('trusted card');
+    expect(open.mock.calls[0][0]).toBe('/allowed/cp-safe/.task-cp-safe.md');
+    expect(open.mock.calls[0][1]).toBeGreaterThan(0);
+    expect(close).toHaveBeenCalledWith(17);
+  });
+
+  it('rejects traversal and unsafe task-card file metadata', () => {
+    expect(() => readCodexReviewFile({
+      worktreePath: '/allowed/cp-safe',
+      fileName: '../auth.json',
+    })).toThrowError(expect.objectContaining({
+      code: 'review_file_name_invalid',
+    }));
+    expect(() => readCodexReviewFile({
+      worktreePath: '/allowed/cp-safe',
+      fileName: '.task-cp-safe.md',
+      open: () => 17,
+      inspect: () => ({
+        isFile: () => true,
+        nlink: 2,
+        size: 12,
+      }),
+      read: () => 'forbidden',
+      close: () => {},
+    })).toThrowError(expect.objectContaining({
+      code: 'review_file_unsafe',
+    }));
   });
 
   it('pins the review image to an inspected immutable image ID', () => {
