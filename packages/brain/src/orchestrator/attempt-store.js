@@ -25,6 +25,7 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
 
 const TERMINAL_SQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
 const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
+const MAX_FLEET_HEARTBEAT_CLOCK_SKEW_MS = 120_000;
 
 function firstRow(queryResult) {
   return queryResult.rows?.[0] ?? null;
@@ -38,8 +39,67 @@ export class FleetResultReceiptConflictError extends Error {
   }
 }
 
+export class FleetHeartbeatReceiptConflictError extends Error {
+  constructor(message = 'conflicting Fleet heartbeat receipt') {
+    super(message);
+    this.name = 'FleetHeartbeatReceiptConflictError';
+    this.code = 'fleet_heartbeat_conflict';
+  }
+}
+
+export class FleetHeartbeatStaleError extends Error {
+  constructor(message = 'stale Fleet heartbeat') {
+    super(message);
+    this.name = 'FleetHeartbeatStaleError';
+    this.code = 'fleet_heartbeat_stale';
+  }
+}
+
 function fleetReceiptConflict(message) {
   throw new FleetResultReceiptConflictError(message);
+}
+
+function fleetHeartbeatConflict(message) {
+  throw new FleetHeartbeatReceiptConflictError(message);
+}
+
+function timestampMillis(value) {
+  if (value instanceof Date) return value.getTime();
+  return Date.parse(value);
+}
+
+function exactFleetHeartbeatReceipt(receipt, input) {
+  return Boolean(receipt)
+    && receipt.attempt_id === input.attemptId
+    && receipt.run_id === input.runId
+    && receipt.worker_id === input.workerId
+    && receipt.job_id === input.jobId
+    && receipt.lease_owner === input.leaseOwner
+    && receipt.lease_generation === input.leaseGeneration
+    && receipt.heartbeat_nonce === input.heartbeatNonce
+    && receipt.request_sha256 === input.requestSha256
+    && timestampMillis(receipt.observed_at) === timestampMillis(input.observedAt)
+    && receipt.lease_seconds === input.leaseSeconds
+    && (receipt.provider_session_id ?? null) === (input.providerSessionId ?? null);
+}
+
+function assertFleetHeartbeatAuthority(attempt, input) {
+  const exact = Boolean(attempt)
+    && attempt.id === input.attemptId
+    && attempt.run_id === input.runId
+    && attempt.execution_transport === 'fleet-worker'
+    && attempt.actual_machine_id === input.workerId
+    && attempt.remote_job_id === input.jobId
+    && attempt.lease_owner === input.leaseOwner
+    && attempt.lease_generation === input.leaseGeneration
+    && attempt.machine_attestation_status === 'verified'
+    && ['starting', 'running'].includes(attempt.status)
+    && (
+      !attempt.provider_session_id
+      || !input.providerSessionId
+      || attempt.provider_session_id === input.providerSessionId
+    );
+  if (!exact) fleetHeartbeatConflict('Fleet heartbeat authority changed');
 }
 
 function parsedTaskBundle(attempt) {
@@ -150,9 +210,12 @@ async function readConcurrentAttemptWinner(pool, runId, hop) {
   return null;
 }
 
-export function createAttemptStore(pool) {
+export function createAttemptStore(pool, { now = () => Date.now() } = {}) {
   if (!pool || typeof pool.query !== 'function') {
     throw new Error('createAttemptStore requires a PostgreSQL pool');
+  }
+  if (typeof now !== 'function') {
+    throw new Error('createAttemptStore now must be a function');
   }
 
   return Object.freeze({
@@ -268,6 +331,155 @@ export function createAttemptStore(pool) {
         [id, leaseOwner, leaseSeconds, leaseGeneration],
       );
       return firstRow(result);
+    },
+
+    async persistFleetHeartbeat(input) {
+      if (typeof pool.connect !== 'function') {
+        throw new Error('persistFleetHeartbeat requires a transactional PostgreSQL pool');
+      }
+      if (
+        !/^[a-f0-9]{64}$/.test(input?.requestSha256 ?? '')
+        || !Number.isInteger(input?.leaseGeneration)
+        || input.leaseGeneration < 0
+        || !Number.isInteger(input?.leaseSeconds)
+        || input.leaseSeconds < 30
+        || input.leaseSeconds > 600
+        || !Number.isFinite(timestampMillis(input?.observedAt))
+      ) {
+        fleetHeartbeatConflict('Fleet heartbeat persistence input invalid');
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const current = firstRow(await client.query(
+          'SELECT * FROM harness_attempts WHERE id=$1 FOR UPDATE',
+          [input.attemptId],
+        ));
+        if (!current) fleetHeartbeatConflict('Fleet heartbeat Attempt missing');
+        const existing = firstRow(await client.query(
+          `SELECT *
+             FROM harness_heartbeat_receipts
+            WHERE attempt_id=$1
+              AND lease_generation=$2
+              AND heartbeat_nonce=$3`,
+          [
+            input.attemptId,
+            input.leaseGeneration,
+            input.heartbeatNonce,
+          ],
+        ));
+        if (existing) {
+          if (!exactFleetHeartbeatReceipt(existing, input)) {
+            fleetHeartbeatConflict('Fleet heartbeat nonce payload conflict');
+          }
+          await client.query('COMMIT');
+          return { attempt: current, receipt: existing, deduped: true };
+        }
+
+        assertFleetHeartbeatAuthority(current, input);
+        const currentTime = now();
+        const currentTimeMs = currentTime instanceof Date
+          ? currentTime.getTime()
+          : currentTime;
+        if (
+          !Number.isFinite(currentTimeMs)
+          || Math.abs(currentTimeMs - timestampMillis(input.observedAt))
+            > MAX_FLEET_HEARTBEAT_CLOCK_SKEW_MS
+        ) {
+          throw new FleetHeartbeatStaleError();
+        }
+        if (input.providerSessionId) {
+          const sessionRows = await client.query(
+            `SELECT id, role, provider_session_id
+               FROM harness_attempts
+              WHERE run_id=$1 AND provider_session_id=$2`,
+            [input.runId, input.providerSessionId],
+          );
+          const conflict = (sessionRows.rows ?? []).find(
+            (attempt) => attempt.id !== input.attemptId,
+          );
+          if (conflict) {
+            fleetHeartbeatConflict(
+              `provider session belongs to another Attempt ${conflict.id}`,
+            );
+          }
+        }
+
+        const renewed = firstRow(await client.query(
+          `UPDATE harness_attempts
+              SET status = CASE WHEN $4::text IS NULL THEN status ELSE 'running' END,
+                  provider_session_id = COALESCE($4, provider_session_id),
+                  heartbeat_at = NOW(),
+                  lease_expires_at = NOW() + ($5 * INTERVAL '1 second'),
+                  started_at = CASE
+                    WHEN $4::text IS NULL THEN started_at
+                    ELSE COALESCE(started_at, NOW())
+                  END,
+                  updated_at = NOW()
+            WHERE id = $1
+              AND lease_owner = $2
+              AND lease_generation = $3
+              AND status IN ('starting','running')
+              AND (
+                provider_session_id IS NULL
+                OR $4::text IS NULL
+                OR provider_session_id = $4
+              )
+            RETURNING *`,
+          [
+            input.attemptId,
+            input.leaseOwner,
+            input.leaseGeneration,
+            input.providerSessionId ?? null,
+            input.leaseSeconds,
+          ],
+        ));
+        if (!renewed) fleetHeartbeatConflict('Fleet heartbeat lost its lease');
+
+        const receipt = firstRow(await client.query(
+          `INSERT INTO harness_heartbeat_receipts (
+             attempt_id, run_id, worker_id, job_id, lease_owner,
+             lease_generation, heartbeat_nonce, request_sha256,
+             observed_at, lease_seconds, provider_session_id,
+             heartbeat_at, lease_expires_at
+           ) VALUES (
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+           )
+           RETURNING *`,
+          [
+            input.attemptId,
+            input.runId,
+            input.workerId,
+            input.jobId,
+            input.leaseOwner,
+            input.leaseGeneration,
+            input.heartbeatNonce,
+            input.requestSha256,
+            input.observedAt,
+            input.leaseSeconds,
+            input.providerSessionId ?? null,
+            renewed.heartbeat_at,
+            renewed.lease_expires_at,
+          ],
+        ));
+        if (!receipt) fleetHeartbeatConflict('Fleet heartbeat receipt insert returned no row');
+        await client.query('COMMIT');
+        return { attempt: renewed, receipt, deduped: false };
+      } catch (error) {
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          // Preserve the original persistence error.
+        }
+        if (error?.code === '23505') {
+          throw new FleetHeartbeatReceiptConflictError(
+            'Fleet heartbeat receipt uniqueness conflict',
+          );
+        }
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async recordLaunchReceipt(id, {

@@ -217,6 +217,26 @@ describe('Fleet callback transport authentication', () => {
       heartbeatNonce,
       providerSessionId: 'thread-live',
       leaseSeconds: 180,
+      requestSha256: createHash('sha256').update(payload).digest('hex'),
+    });
+
+    expect(() => parseFleetHeartbeat({
+      attemptId,
+      rawHeaders,
+      body,
+      secret,
+      nowMs: Date.parse('2026-07-29T01:00:00.000Z'),
+    })).toThrow(/fleet_heartbeat_stale/);
+    expect(parseFleetHeartbeat({
+      attemptId,
+      rawHeaders,
+      body,
+      secret,
+      nowMs: Date.parse('2026-07-29T01:00:00.000Z'),
+      allowStale: true,
+    })).toMatchObject({
+      heartbeatNonce,
+      requestSha256: createHash('sha256').update(payload).digest('hex'),
     });
 
     const ack = buildFleetHeartbeatAck({

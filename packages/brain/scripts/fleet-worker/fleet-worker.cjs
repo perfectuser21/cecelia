@@ -415,35 +415,64 @@ function createFleetHeartbeatClient({
   ) {
     throw new Error('fleet_heartbeat_dependency_invalid');
   }
-  return Object.freeze({
-    async deliver({ state, session = null } = {}) {
-      const heartbeatNonce = randomUuid();
-      const observedAt = now();
-      if (!(observedAt instanceof Date) || Number.isNaN(observedAt.getTime())) {
-        throw new Error('fleet_heartbeat_clock_invalid');
-      }
-      const providerSessionId = session?.session_id ?? null;
-      const wire = buildFleetHeartbeat({
-        secret,
-        attemptId: state?.attempt_id,
-        runId: state?.run_id,
-        workerId: state?.worker_id,
-        jobId: state?.container_id,
-        leaseOwner: state?.lease_owner,
-        leaseGeneration: state?.lease_generation,
-        heartbeatNonce,
-        observedAt: observedAt.toISOString(),
-        leaseSeconds: 180,
-        providerSessionId,
-      });
-      const target = new URL(
+  const pendingByAttempt = new Map();
+
+  function authorityKey(state, providerSessionId) {
+    return JSON.stringify([
+      state?.attempt_id,
+      state?.run_id,
+      state?.worker_id,
+      state?.container_id,
+      state?.lease_owner,
+      state?.lease_generation,
+      providerSessionId,
+    ]);
+  }
+
+  function preparePending(state, providerSessionId) {
+    const heartbeatNonce = randomUuid();
+    const observedAt = now();
+    if (!(observedAt instanceof Date) || Number.isNaN(observedAt.getTime())) {
+      throw new Error('fleet_heartbeat_clock_invalid');
+    }
+    const wire = buildFleetHeartbeat({
+      secret,
+      attemptId: state?.attempt_id,
+      runId: state?.run_id,
+      workerId: state?.worker_id,
+      jobId: state?.container_id,
+      leaseOwner: state?.lease_owner,
+      leaseGeneration: state?.lease_generation,
+      heartbeatNonce,
+      observedAt: observedAt.toISOString(),
+      leaseSeconds: 180,
+      providerSessionId,
+    });
+    return Object.freeze({
+      authority: authorityKey(state, providerSessionId),
+      heartbeatNonce,
+      providerSessionId,
+      target: new URL(
         `/api/brain/harness/attempts/${state.attempt_id}/heartbeat`,
         new URL(state.brain_url),
-      );
-      const response = await fetchFn(target, {
+      ),
+      wire,
+    });
+  }
+
+  return Object.freeze({
+    async deliver({ state, session = null } = {}) {
+      const providerSessionId = session?.session_id ?? null;
+      const expectedAuthority = authorityKey(state, providerSessionId);
+      let pending = pendingByAttempt.get(state?.attempt_id);
+      if (!pending || pending.authority !== expectedAuthority) {
+        pending = preparePending(state, providerSessionId);
+        pendingByAttempt.set(state.attempt_id, pending);
+      }
+      const response = await fetchFn(pending.target, {
         method: 'POST',
-        headers: wire.headers,
-        body: JSON.stringify(wire.body),
+        headers: pending.wire.headers,
+        body: JSON.stringify(pending.wire.body),
         signal: AbortSignal.timeout(10_000),
       });
       if (!response?.ok) {
@@ -459,7 +488,7 @@ function createFleetHeartbeatClient({
       } catch {
         throw new Error('fleet_heartbeat_ack_response_invalid');
       }
-      return verifyFleetHeartbeatAck({
+      const verified = verifyFleetHeartbeatAck({
         ack,
         secret,
         expected: {
@@ -469,10 +498,14 @@ function createFleetHeartbeatClient({
           jobId: state.container_id,
           leaseOwner: state.lease_owner,
           leaseGeneration: state.lease_generation,
-          heartbeatNonce,
+          heartbeatNonce: pending.heartbeatNonce,
           providerSessionId,
         },
       });
+      if (pendingByAttempt.get(state.attempt_id) === pending) {
+        pendingByAttempt.delete(state.attempt_id);
+      }
+      return verified;
     },
   });
 }

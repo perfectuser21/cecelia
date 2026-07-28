@@ -217,6 +217,7 @@ export function parseFleetHeartbeat({
   body,
   secret,
   nowMs = Date.now(),
+  allowStale = false,
 }) {
   if (!UUID_PATTERN.test(attemptId ?? '')) fail('fleet_attempt_id_invalid');
   if (typeof secret !== 'string' || Buffer.byteLength(secret, 'utf8') < 32) {
@@ -266,8 +267,12 @@ export function parseFleetHeartbeat({
     'fleet_heartbeat_provider_session_id_invalid',
   );
   if (
-    !Number.isSafeInteger(nowMs)
-    || Math.abs(nowMs - Date.parse(body.observed_at)) > MAX_HEARTBEAT_CLOCK_SKEW_MS
+    typeof allowStale !== 'boolean'
+    || !Number.isSafeInteger(nowMs)
+    || (
+      !allowStale
+      && Math.abs(nowMs - Date.parse(body.observed_at)) > MAX_HEARTBEAT_CLOCK_SKEW_MS
+    )
   ) {
     fail('fleet_heartbeat_stale', 409);
   }
@@ -275,8 +280,9 @@ export function parseFleetHeartbeat({
     new RegExp(`^${FLEET_CALLBACK_AUTH_SCHEME} ([a-f0-9]{64})$`),
   );
   if (!authorizationMatch) fail('fleet_callback_credential_invalid', 401);
+  const signingPayload = heartbeatSigningPayload(attemptId, header, body);
   const expectedHmac = createHmac('sha256', secret)
-    .update(heartbeatSigningPayload(attemptId, header, body), 'utf8')
+    .update(signingPayload, 'utf8')
     .digest('hex');
   if (!secureHexEqual(authorizationMatch[1], expectedHmac)) {
     fail('fleet_callback_credential_invalid', 401);
@@ -286,6 +292,7 @@ export function parseFleetHeartbeat({
     observedAt: body.observed_at,
     leaseSeconds: body.lease_seconds,
     providerSessionId: body.provider_session_id,
+    requestSha256: createHash('sha256').update(signingPayload, 'utf8').digest('hex'),
   });
 }
 

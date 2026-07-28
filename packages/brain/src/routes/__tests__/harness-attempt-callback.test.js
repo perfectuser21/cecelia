@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     fail: vi.fn(),
     heartbeat: vi.fn(),
     markRunning: vi.fn(),
+    persistFleetHeartbeat: vi.fn(),
   },
   pool: { query: vi.fn() },
 }));
@@ -188,14 +189,15 @@ function postCallback(app, body = validResult, token = callbackToken, owner = le
 function postFleetHeartbeat(app, {
   providerSessionId = null,
   attemptRecord = fleetAttempt(),
+  heartbeatNonce = randomUUID(),
+  observedAt = new Date().toISOString(),
+  leaseSeconds = 180,
 } = {}) {
-  const heartbeatNonce = randomUUID();
-  const observedAt = new Date().toISOString();
   const body = {
     schema_version: 'fleet-attempt-heartbeat/v1',
     heartbeat_nonce: heartbeatNonce,
     observed_at: observedAt,
-    lease_seconds: 180,
+    lease_seconds: leaseSeconds,
     provider_session_id: providerSessionId,
   };
   const signingPayload = `${[
@@ -208,7 +210,7 @@ function postFleetHeartbeat(app, {
     String(attemptRecord.lease_generation),
     heartbeatNonce,
     observedAt,
-    '180',
+    String(leaseSeconds),
     providerSessionId ?? '',
   ].join('\n')}\n`;
   mocks.store.getById.mockResolvedValue(attemptRecord);
@@ -334,6 +336,27 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     mocks.store.fail.mockResolvedValue({ attempt: { ...attempt, status: 'failed' }, deduped: false });
     mocks.store.heartbeat.mockResolvedValue({ ...attempt, heartbeat_at: new Date().toISOString() });
     mocks.store.markRunning.mockResolvedValue({ ...attempt, provider_session_id: 'thread-live' });
+    mocks.store.persistFleetHeartbeat.mockImplementation(async (heartbeat) => ({
+      attempt: fleetAttempt(),
+      receipt: {
+        ...heartbeat,
+        receipt_id: randomUUID(),
+        attempt_id: heartbeat.attemptId,
+        run_id: heartbeat.runId,
+        worker_id: heartbeat.workerId,
+        job_id: heartbeat.jobId,
+        lease_owner: heartbeat.leaseOwner,
+        lease_generation: heartbeat.leaseGeneration,
+        heartbeat_nonce: heartbeat.heartbeatNonce,
+        request_sha256: heartbeat.requestSha256,
+        observed_at: heartbeat.observedAt,
+        lease_seconds: heartbeat.leaseSeconds,
+        provider_session_id: heartbeat.providerSessionId,
+        heartbeat_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 180_000).toISOString(),
+      },
+      deduped: false,
+    }));
     mocks.pool.query.mockResolvedValue({ rows: [], rowCount: 1 });
 
     const { default: router } = await import('../harness-callback.js');
@@ -1201,20 +1224,32 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   it('Fleet Worker 用 launch receipt 全绑定 HMAC 续租并拿签名 ACK', async () => {
     const heartbeatAt = new Date().toISOString();
     const leaseExpiresAt = new Date(Date.now() + 180_000).toISOString();
-    mocks.store.heartbeat.mockResolvedValue({
-      ...fleetAttempt(),
-      heartbeat_at: heartbeatAt,
-      lease_expires_at: leaseExpiresAt,
+    mocks.store.persistFleetHeartbeat.mockResolvedValue({
+      attempt: fleetAttempt(),
+      receipt: {
+        heartbeat_at: heartbeatAt,
+        lease_expires_at: leaseExpiresAt,
+      },
+      deduped: false,
     });
 
     const response = await postFleetHeartbeat(app);
 
     expect(response.status).toBe(200);
-    expect(mocks.store.heartbeat).toHaveBeenCalledWith(attemptId, {
+    expect(mocks.store.persistFleetHeartbeat).toHaveBeenCalledWith({
+      attemptId,
+      runId,
+      workerId: remoteMachineId,
+      jobId: remoteJobId,
       leaseOwner,
       leaseGeneration: 2,
+      heartbeatNonce: expect.any(String),
+      requestSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      observedAt: expect.any(String),
       leaseSeconds: 180,
+      providerSessionId: null,
     });
+    expect(mocks.store.heartbeat).not.toHaveBeenCalled();
     expect(response.body).toMatchObject({
       schema_version: 'fleet-attempt-heartbeat-ack/v1',
       attempt_id: attemptId,
@@ -1231,30 +1266,95 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   });
 
   it('Fleet heartbeat 首次观察 session 时以同一 generation 转 running', async () => {
-    mocks.store.markRunning.mockResolvedValue({
-      ...fleetAttempt(),
-      provider_session_id: 'thread-live',
-      heartbeat_at: new Date().toISOString(),
-      lease_expires_at: new Date(Date.now() + 180_000).toISOString(),
-    });
-
     const response = await postFleetHeartbeat(app, {
       providerSessionId: 'thread-live',
     });
 
     expect(response.status).toBe(200);
-    expect(mocks.store.markRunning).toHaveBeenCalledWith(attemptId, {
-      leaseOwner,
-      leaseGeneration: 2,
-      providerSessionId: 'thread-live',
-      leaseSeconds: 180,
+    expect(mocks.store.persistFleetHeartbeat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attemptId,
+        runId,
+        workerId: remoteMachineId,
+        jobId: remoteJobId,
+        leaseOwner,
+        leaseGeneration: 2,
+        providerSessionId: 'thread-live',
+      }),
+    );
+    expect(mocks.store.markRunning).not.toHaveBeenCalled();
+    expect(mocks.store.assertFreshRoleSession).not.toHaveBeenCalled();
+  });
+
+  it('Fleet heartbeat exact replay returns the same durable signed ACK', async () => {
+    const heartbeatNonce = randomUUID();
+    const observedAt = new Date().toISOString();
+    const heartbeatAt = new Date().toISOString();
+    const leaseExpiresAt = new Date(Date.now() + 180_000).toISOString();
+    const durableReceipt = {
+      heartbeat_at: heartbeatAt,
+      lease_expires_at: leaseExpiresAt,
+    };
+    mocks.store.persistFleetHeartbeat
+      .mockResolvedValueOnce({
+        attempt: fleetAttempt(),
+        receipt: durableReceipt,
+        deduped: false,
+      })
+      .mockResolvedValueOnce({
+        attempt: fleetAttempt({ status: 'completed' }),
+        receipt: durableReceipt,
+        deduped: true,
+      });
+
+    const first = await postFleetHeartbeat(app, { heartbeatNonce, observedAt });
+    const retry = await postFleetHeartbeat(app, { heartbeatNonce, observedAt });
+
+    expect(first.status).toBe(200);
+    expect(retry.status).toBe(200);
+    expect(retry.body).toEqual(first.body);
+    expect(mocks.store.persistFleetHeartbeat).toHaveBeenCalledTimes(2);
+  });
+
+  it('Fleet heartbeat rejects altered reuse of a consumed nonce', async () => {
+    const heartbeatNonce = randomUUID();
+    const observedAt = new Date().toISOString();
+    mocks.store.persistFleetHeartbeat.mockRejectedValueOnce(
+      Object.assign(new Error('conflicting nonce payload'), {
+        code: 'fleet_heartbeat_conflict',
+      }),
+    );
+
+    const response = await postFleetHeartbeat(app, {
+      heartbeatNonce,
+      observedAt,
+      leaseSeconds: 240,
     });
-    expect(mocks.store.assertFreshRoleSession).toHaveBeenCalledWith({
-      runId,
-      attemptId,
-      role: 'evaluator',
-      sessionId: 'thread-live',
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      ok: false,
+      error: 'fleet_heartbeat_conflict',
     });
+  });
+
+  it('Fleet heartbeat lets the durable store reject a new stale nonce', async () => {
+    mocks.store.persistFleetHeartbeat.mockRejectedValueOnce(
+      Object.assign(new Error('stale heartbeat'), {
+        code: 'fleet_heartbeat_stale',
+      }),
+    );
+
+    const response = await postFleetHeartbeat(app, {
+      observedAt: '2026-07-27T01:00:00.000Z',
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      ok: false,
+      error: 'fleet_heartbeat_stale',
+    });
+    expect(mocks.store.persistFleetHeartbeat).toHaveBeenCalledOnce();
   });
 
   it('Fleet attempt 的 heartbeat 不得降级为旧 Bearer token', async () => {

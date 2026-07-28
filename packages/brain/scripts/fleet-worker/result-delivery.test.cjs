@@ -51,6 +51,22 @@ function signReceipt(receipt) {
   ].join('\n')}\n`, 'utf8').digest('hex');
 }
 
+function signHeartbeatAck(ack) {
+  return createHmac('sha256', SECRET).update(`${[
+    'cecelia-fleet-heartbeat-ack/v1',
+    ack.attempt_id,
+    ack.run_id,
+    ack.worker_id,
+    ack.job_id,
+    ack.lease_owner,
+    String(ack.lease_generation),
+    ack.heartbeat_nonce,
+    ack.provider_session_id ?? '',
+    ack.heartbeat_at,
+    ack.lease_expires_at,
+  ].join('\n')}\n`, 'utf8').digest('hex');
+}
+
 test('prepares stable secret-free metadata and verifies the exact Brain ACK', async () => {
   const ids = [DELIVERY_ID, RESULT_NONCE];
   let captured;
@@ -223,6 +239,68 @@ test('Fleet-owned heartbeat verifies the exact signed Brain ACK', async () => {
   );
   assert.equal(captured.options.method, 'POST');
   assert.equal(JSON.stringify(captured).includes(SECRET), false);
+});
+
+test('heartbeat retry reuses the exact wire until ACK then consumes its nonce', async () => {
+  const nonces = [
+    '88888888-8888-4888-8888-888888888888',
+    '99999999-9999-4999-8999-999999999999',
+  ];
+  const observed = [
+    new Date('2026-07-28T01:00:00.000Z'),
+    new Date('2026-07-28T01:01:00.000Z'),
+  ];
+  const randomUuid = () => nonces.shift();
+  const now = () => observed.shift();
+  const requests = [];
+  const fetchFn = async (url, options) => {
+    requests.push({
+      url: String(url),
+      headers: { ...options.headers },
+      body: options.body,
+    });
+    if (requests.length === 1) throw new Error('socket reset after commit');
+    const requestBody = JSON.parse(options.body);
+    const ack = {
+      schema_version: 'fleet-attempt-heartbeat-ack/v1',
+      attempt_id: ATTEMPT_ID,
+      run_id: RUN_ID,
+      worker_id: STATE.worker_id,
+      job_id: STATE.container_id,
+      lease_owner: STATE.lease_owner,
+      lease_generation: STATE.lease_generation,
+      heartbeat_nonce: requestBody.heartbeat_nonce,
+      provider_session_id: null,
+      heartbeat_at: requests.length === 2
+        ? '2026-07-28T01:00:01.000Z'
+        : '2026-07-28T01:01:01.000Z',
+      lease_expires_at: requests.length === 2
+        ? '2026-07-28T01:03:01.000Z'
+        : '2026-07-28T01:04:01.000Z',
+    };
+    ack.receipt_hmac = signHeartbeatAck(ack);
+    return new Response(JSON.stringify(ack), { status: 200 });
+  };
+  const client = createFleetHeartbeatClient({
+    secret: SECRET,
+    fetchFn,
+    randomUuid,
+    now,
+  });
+
+  await assert.rejects(
+    client.deliver({ state: STATE, session: null }),
+    /socket reset after commit/,
+  );
+  const recovered = await client.deliver({ state: STATE, session: null });
+  const next = await client.deliver({ state: STATE, session: null });
+
+  assert.equal(recovered.heartbeat_nonce, '88888888-8888-4888-8888-888888888888');
+  assert.equal(next.heartbeat_nonce, '99999999-9999-4999-8999-999999999999');
+  assert.deepEqual(requests[1], requests[0]);
+  assert.notEqual(requests[2].body, requests[1].body);
+  assert.equal(nonces.length, 0);
+  assert.equal(observed.length, 0);
 });
 
 test('maintenance heartbeats owned running, callback and cancellation-pending attempts', async () => {

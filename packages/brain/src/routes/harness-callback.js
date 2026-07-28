@@ -644,6 +644,7 @@ async function handleFleetHeartbeat(req, res) {
       rawHeaders: req.rawHeaders,
       body: req.body,
       secret,
+      allowStale: true,
     });
   } catch (error) {
     if (error instanceof FleetCallbackProtocolError) {
@@ -652,67 +653,33 @@ async function handleFleetHeartbeat(req, res) {
     return res.status(400).json({ ok: false, error: 'fleet_heartbeat_invalid' });
   }
   const attemptStore = createAttemptStore(db);
-  const attempt = await attemptStore.getById(req.params.attemptId);
-  if (!attempt) return res.status(404).json({ ok: false, error: 'attempt not found' });
-  if (
-    attempt.execution_transport !== 'fleet-worker'
-    || !attempt.actual_machine_id
-    || !attempt.remote_job_id
-    || attempt.machine_attestation_status !== 'verified'
-  ) {
-    return res.status(409).json({ ok: false, error: 'launch_receipt_unconfirmed' });
-  }
-  if (
-    heartbeat.runId !== attempt.run_id
-    || heartbeat.workerId !== attempt.actual_machine_id
-    || heartbeat.jobId !== attempt.remote_job_id
-    || heartbeat.leaseOwner !== attempt.lease_owner
-    || heartbeat.leaseGeneration !== attempt.lease_generation
-  ) {
-    return res.status(409).json({ ok: false, error: 'fleet_heartbeat_authority_mismatch' });
-  }
-  if (
-    attempt.provider_session_id
-    && heartbeat.providerSessionId
-    && attempt.provider_session_id !== heartbeat.providerSessionId
-  ) {
-    return res.status(409).json({ ok: false, error: 'provider_session_mismatch' });
-  }
-  if (heartbeat.providerSessionId) {
-    try {
-      await attemptStore.assertFreshRoleSession({
-        runId: attempt.run_id,
-        attemptId: attempt.id,
-        role: attempt.role,
-        sessionId: heartbeat.providerSessionId,
-      });
-    } catch (error) {
-      return res.status(409).json({ ok: false, error: error.message });
-    }
-  }
   try {
-    const renewed = heartbeat.providerSessionId
-      ? await attemptStore.markRunning(req.params.attemptId, {
-          leaseOwner: heartbeat.leaseOwner,
-          leaseGeneration: heartbeat.leaseGeneration,
-          providerSessionId: heartbeat.providerSessionId,
-          leaseSeconds: heartbeat.leaseSeconds,
-        })
-      : await attemptStore.heartbeat(req.params.attemptId, {
-          leaseOwner: heartbeat.leaseOwner,
-          leaseGeneration: heartbeat.leaseGeneration,
-          leaseSeconds: heartbeat.leaseSeconds,
-        });
-    if (!renewed) {
-      return res.status(409).json({ ok: false, error: 'attempt lease lost or terminal' });
-    }
+    const outcome = await attemptStore.persistFleetHeartbeat({
+      attemptId: req.params.attemptId,
+      runId: heartbeat.runId,
+      workerId: heartbeat.workerId,
+      jobId: heartbeat.jobId,
+      leaseOwner: heartbeat.leaseOwner,
+      leaseGeneration: heartbeat.leaseGeneration,
+      heartbeatNonce: heartbeat.heartbeatNonce,
+      requestSha256: heartbeat.requestSha256,
+      observedAt: heartbeat.observedAt,
+      leaseSeconds: heartbeat.leaseSeconds,
+      providerSessionId: heartbeat.providerSessionId,
+    });
     return res.json(buildFleetHeartbeatAck({
       heartbeat,
-      attempt: renewed,
+      attempt: outcome.receipt,
       attemptId: req.params.attemptId,
       secret,
     }));
   } catch (error) {
+    if (
+      error?.code === 'fleet_heartbeat_conflict'
+      || error?.code === 'fleet_heartbeat_stale'
+    ) {
+      return res.status(409).json({ ok: false, error: error.code });
+    }
     if (error instanceof FleetCallbackProtocolError) {
       return res.status(error.status).json({ ok: false, error: error.code });
     }
