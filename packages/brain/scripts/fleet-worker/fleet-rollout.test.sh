@@ -123,6 +123,12 @@ write_executable "$fake_bin/sudo" \
   '#!/usr/bin/env bash' \
   'printf "sudo %s\n" "$*" >> "${FLEET_TEST_TRANSPORT_LOG:?}"' \
   '[[ "${1:-}" == "-n" ]] && shift' \
+  'if [[ "${1:-}" == "/bin/test" && "${@: -1}" == "${FLEET_TEST_PROTECTED_TOKEN_SOURCE:-}" ]]; then exit 0; fi' \
+  'if [[ "${1:-}" == "/usr/bin/install" && "${@: -2:1}" == "${FLEET_TEST_PROTECTED_TOKEN_SOURCE:-}" ]]; then' \
+  '  /bin/cp "${FLEET_TEST_PROTECTED_TOKEN_BACKING:?}" "${@: -1}"' \
+  '  /bin/chmod 0600 "${@: -1}"' \
+  '  exit 0' \
+  'fi' \
   'if [[ "${1:-}" == "/bin/kill" && "${FLEET_TEST_SUDO_FAIL_KILL:-0}" == 1 ]]; then exit 25; fi' \
   'if [[ "${1:-}" == "/bin/mkdir" && "${*: -1}" == "/var/run/cecelia" ]]; then exit 0; fi' \
   'if [[ "${1:-}" == "/usr/bin/touch" && "${2:-}" == "/var/run/cecelia/fleet-worker.drain" ]]; then' \
@@ -156,7 +162,9 @@ write_executable "$fake_bin/sudo" \
   'if [[ "${1:-}" == "/bin/rm" && "${FLEET_TEST_SUDO_FAIL_RM:-0}" == 1 ]]; then exit 24; fi' \
   'if [[ "${1:-}" == "/usr/bin/stat" ]]; then' \
   '  target="${@: -1}"' \
-  '  if [[ "${FLEET_TEST_STAGE_INVALID_OWNER:-0}" == 1 ]]; then' \
+  '  if [[ "${3:-}" == "%Lp" && "$target" == "${FLEET_TEST_PROTECTED_TOKEN_SOURCE:-}" ]]; then' \
+  '    printf "600\n"' \
+  '  elif [[ "${FLEET_TEST_STAGE_INVALID_OWNER:-0}" == 1 ]]; then' \
   '    printf "501:755\n"' \
   '  elif [[ "${FLEET_TEST_STAGE_WRITABLE:-0}" == 1 && "$target" == */fleet-rollout.sh ]]; then' \
   '    printf "0:777\n"' \
@@ -211,7 +219,7 @@ run_rollout() {
   FLEET_ROLLOUT_SSH="$fake_bin/ssh" \
   FLEET_ROLLOUT_TAR="$(command -v tar)" \
   FLEET_ROLLOUT_TMPDIR="$test_root/tmp" \
-  FLEET_ROLLOUT_WORKER_TOKEN_FILE="$worker_token" \
+  FLEET_ROLLOUT_WORKER_TOKEN_FILE="${FLEET_TEST_TOKEN_SOURCE:-$worker_token}" \
   "$ROLLOUT" "$@"
 }
 
@@ -237,6 +245,19 @@ fi
 grep -Fq 'controller_machine_mismatch' "$test_root/controller.out" \
   || fail "controller identity failure was not explicit"
 [[ ! -s "$artifact_log" ]] || fail "wrong controller built an artifact"
+
+protected_token_source='/var/lib/cecelia/fleet-worker/worker-auth'
+: > "$transport_log"
+CECELIA_MACHINE_ID=us-mac-m4 \
+FLEET_TEST_TOKEN_SOURCE="$protected_token_source" \
+FLEET_TEST_PROTECTED_TOKEN_SOURCE="$protected_token_source" \
+FLEET_TEST_PROTECTED_TOKEN_BACKING="$worker_token" \
+  run_rollout xian-mac-m4 --apply >/dev/null \
+  || fail "controller could not stage the protected production Worker token"
+grep -Fq "sudo -n /bin/test -f $protected_token_source" "$transport_log" \
+  || fail "protected Worker token was not validated across the sudo boundary"
+grep -Fq "sudo -n /usr/bin/install" "$transport_log" \
+  || fail "protected Worker token was not copied through root-owned staging"
 
 if CECELIA_MACHINE_ID=us-mac-m4 \
   FLEET_TEST_DIRTY=1 \
