@@ -2,6 +2,11 @@ import {
   PROOF_PROVIDERS,
   PROOF_SCENARIOS,
 } from './kernel-behavior-equivalence.js';
+import {
+  verifyEffectReceipt,
+  verifyExecutionGrant,
+  verifyReceiptBundle,
+} from './kernel-equivalence-receipts.js';
 
 const REQUIRED_BEHAVIOR_COUNT = 11;
 const SAFE_ENVIRONMENTS = new Set(['isolated', 'ephemeral']);
@@ -180,4 +185,248 @@ export function compileDrillPlan(contract) {
     behavior_count: descriptors.length,
     cells,
   });
+}
+
+function denialAudit(cell, grant, code, stage, now) {
+  return Object.freeze({
+    schema_version: 'kernel-equivalence-denial-audit/v1',
+    occurred_at: new Date(now).toISOString(),
+    status: 'blocked',
+    code,
+    stage,
+    cell_id: cell?.cell_id ?? null,
+    behavior_id: cell?.behavior_id ?? null,
+    provider: cell?.provider ?? null,
+    scenario: cell?.scenario ?? null,
+    run_id: grant?.run_id ?? null,
+    attempt_id: grant?.attempt_id ?? null,
+  });
+}
+
+async function blocked({
+  cell,
+  grant,
+  code,
+  stage,
+  now,
+  auditSink,
+}) {
+  const audit = denialAudit(cell, grant, code, stage, now);
+  if (typeof auditSink === 'function') {
+    try {
+      await auditSink(audit);
+    } catch {
+      // A denial audit sink cannot turn a denied execution into an allowed one.
+    }
+  }
+  return Object.freeze({
+    status: 'blocked',
+    code,
+    bundle: null,
+    audit,
+  });
+}
+
+function errorCode(error, fallback) {
+  return nonEmpty(error?.code) ? error.code : fallback;
+}
+
+async function withTimeout(operation, timeoutMs) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    fail('adapter_timeout_invalid');
+  }
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new EquivalenceDrillError('adapter_timeout')),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function resolveAdapter(adapters, adapterId) {
+  if (adapters instanceof Map) return adapters.get(adapterId);
+  if (adapters && typeof adapters === 'object') return adapters[adapterId];
+  return null;
+}
+
+function expectedFromGrant(cell, grant) {
+  return {
+    cell,
+    run_id: grant?.run_id,
+    attempt_id: grant?.attempt_id,
+    artifact_sha: grant?.artifact_sha,
+    brain_version: grant?.brain_version,
+    engine_version: grant?.engine_version,
+    grant_id: grant?.grant_id,
+    nonce: grant?.nonce,
+    resource_id: grant?.resource_id,
+    resource_ref: grant?.resource_ref,
+    resource_prefix: grant?.resource_prefix,
+  };
+}
+
+async function confirmCleanup(adapter, context, timeoutMs) {
+  try {
+    const cleanup = await withTimeout(
+      () => adapter.cleanup(context),
+      timeoutMs,
+    );
+    return cleanup?.confirmed === true
+      ? null
+      : 'adapter_cleanup_unconfirmed';
+  } catch (error) {
+    return errorCode(error, 'adapter_cleanup_failed') === 'adapter_timeout'
+      ? 'adapter_cleanup_timeout'
+      : 'adapter_cleanup_failed';
+  }
+}
+
+export async function executeDrillCell({
+  cell,
+  grant,
+  trustRegistry,
+  nonceConsumer,
+  adapters,
+  collector,
+  auditSink = null,
+  now = Date.now(),
+  timeoutMs = 30_000,
+} = {}) {
+  const deny = (code, stage) => blocked({
+    cell,
+    grant,
+    code,
+    stage,
+    now,
+    auditSink,
+  });
+
+  if (
+    cell?.effect_signer_status !== 'available'
+    || cell?.blocked_by === 'seam_receipt_signer_missing'
+  ) {
+    return deny(
+      cell?.blocked_by ?? 'seam_receipt_signer_missing',
+      'signer_preflight',
+    );
+  }
+
+  let verifiedGrant;
+  try {
+    verifiedGrant = verifyExecutionGrant(
+      grant,
+      trustRegistry,
+      expectedFromGrant(cell, grant),
+      { now },
+    );
+  } catch (error) {
+    return deny(errorCode(error, 'grant_invalid'), 'grant_verification');
+  }
+
+  if (typeof nonceConsumer !== 'function') {
+    return deny('nonce_consumer_unavailable', 'nonce_consumption');
+  }
+  try {
+    const nonceResult = await nonceConsumer({
+      grant_id: verifiedGrant.grant_id,
+      nonce: verifiedGrant.nonce,
+      cell_id: verifiedGrant.cell_id,
+      run_id: verifiedGrant.run_id,
+      attempt_id: verifiedGrant.attempt_id,
+      expires_at: verifiedGrant.expires_at,
+    });
+    if (nonceResult?.consumed !== true) {
+      return deny('grant_nonce_replay', 'nonce_consumption');
+    }
+  } catch {
+    return deny('grant_nonce_replay', 'nonce_consumption');
+  }
+
+  const adapter = resolveAdapter(adapters, cell.adapter_id);
+  if (
+    !adapter
+    || typeof adapter.prepare !== 'function'
+    || typeof adapter.invokeActualSeam !== 'function'
+    || typeof adapter.observe !== 'function'
+    || typeof adapter.cleanup !== 'function'
+  ) {
+    return deny('drill_adapter_unavailable', 'adapter_preflight');
+  }
+
+  const context = Object.freeze({
+    cell,
+    grant: verifiedGrant,
+  });
+  let prepared;
+  try {
+    prepared = await withTimeout(
+      () => adapter.prepare(context),
+      timeoutMs,
+    );
+  } catch (error) {
+    return deny(errorCode(error, 'adapter_prepare_failed'), 'adapter_prepare');
+  }
+
+  let receipt;
+  let executionError = null;
+  try {
+    const seamOutput = await withTimeout(
+      () => adapter.invokeActualSeam({ ...context, prepared }),
+      timeoutMs,
+    );
+    receipt = await withTimeout(
+      () => adapter.observe(seamOutput, { ...context, prepared }),
+      timeoutMs,
+    );
+    receipt = verifyEffectReceipt(
+      receipt,
+      trustRegistry,
+      expectedFromGrant(cell, verifiedGrant),
+      { now },
+    );
+  } catch (error) {
+    executionError = errorCode(error, 'adapter_execution_failed');
+  }
+
+  const cleanupError = await confirmCleanup(
+    adapter,
+    { ...context, prepared },
+    timeoutMs,
+  );
+  if (cleanupError) return deny(cleanupError, 'adapter_cleanup');
+  if (executionError) return deny(executionError, 'seam_execution');
+
+  if (typeof collector !== 'function') {
+    return deny('collector_unavailable', 'collector');
+  }
+  let bundle;
+  try {
+    bundle = await collector({
+      cell,
+      grant: verifiedGrant,
+      receipts: [receipt],
+    });
+    const verifiedBundle = verifyReceiptBundle(
+      bundle,
+      trustRegistry,
+      expectedFromGrant(cell, verifiedGrant),
+      { now },
+    );
+    return Object.freeze({
+      status: 'collected',
+      code: 'drill_receipt_collected',
+      bundle: verifiedBundle,
+      audit: null,
+    });
+  } catch (error) {
+    return deny(errorCode(error, 'collector_failed'), 'collector');
+  }
 }
