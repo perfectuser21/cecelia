@@ -72,6 +72,8 @@ function fixture(scenario = 'normal') {
   const request = Object.freeze({
     attemptId: ATTEMPT_ID,
     runId: RUN_ID,
+    resourceId: RESOURCE_ID,
+    resourceRef: grant(scenario).resource_ref,
     provider: 'codex',
     accountId: 'team4',
     machineId: 'xian-mac-m4',
@@ -270,5 +272,47 @@ describe('Kernel credential guard equivalence seam', () => {
       signal: AbortSignal.timeout(1_000),
     })).rejects.toMatchObject({ code: 'credential_equivalence_resource_invalid' });
     expect(value.broker.issue).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['runId', { runId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }],
+    ['attemptId', {
+      attemptId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    }],
+    ['resourceId', { resourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }],
+    ['resourceRef', { resourceRef: 'equivalence-drill/forged' }],
+  ])('fails closed when the authority request mismatches grant %s', async (
+    _label,
+    override,
+  ) => {
+    const value = fixture();
+    value.credentialAuthority.loadIssueRequest.mockResolvedValue({
+      attemptId: ATTEMPT_ID,
+      runId: RUN_ID,
+      resourceId: RESOURCE_ID,
+      resourceRef: grant().resource_ref,
+      provider: 'codex',
+      accountId: 'team4',
+      machineId: 'xian-mac-m4',
+      leaseOwner: `kernel-controller:${RUN_ID}`,
+      leaseGeneration: 7,
+      deadlineAt: '2026-07-28T13:00:00.000Z',
+      ...override,
+    });
+
+    await expect(value.seam.invoke({
+      cell: cell(),
+      grant: grant(),
+      resource: {
+        resource_id: RESOURCE_ID,
+        resource_ref: grant().resource_ref,
+      },
+      predecessor: null,
+      signal: AbortSignal.timeout(1_000),
+    })).rejects.toMatchObject({
+      code: 'credential_equivalence_authority_binding_invalid',
+    });
+    expect(value.broker.issue).not.toHaveBeenCalled();
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
   });
 });

@@ -446,6 +446,22 @@ export function createIndependentJudgeEquivalenceSeam({
         signal,
       });
       signal?.throwIfAborted();
+      if (
+        handlerContext?.runId !== grant?.run_id
+        || handlerContext?.attempt?.id !== grant?.attempt_id
+        || handlerContext?.attempt?.run_id !== grant?.run_id
+        || handlerContext?.observed?.run?.id !== grant?.run_id
+        || handlerContext?.observed?.pr?.head_sha
+          !== grant?.artifact_sha
+        || handlerContext?.resource?.resource_id
+          !== grant?.resource_id
+        || handlerContext?.resource?.resource_ref
+          !== grant?.resource_ref
+      ) {
+        throw seamError(
+          'judge_equivalence_authority_binding_invalid',
+        );
+      }
       const currentEvaluatorAttemptId =
         handlerContext?.observed?.evaluateVerdict?.attempt_id;
       if (!UUID_PATTERN.test(currentEvaluatorAttemptId ?? '')) {

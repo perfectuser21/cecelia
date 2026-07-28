@@ -563,6 +563,10 @@ describe('independent judge equivalence seam', () => {
       handler_context: { forged: true },
       snapshot: vi.fn(async () => ({ forged: true })),
     };
+    handlerContext.resource = {
+      resource_id: resource.resource_id,
+      resource_ref: resource.resource_ref,
+    };
     const judgeAuthority = {
       owner_service: 'kernel.evaluation.independent_judge',
       loadContext: vi.fn(async () => handlerContext),
@@ -590,6 +594,7 @@ describe('independent judge equivalence seam', () => {
     const grant = {
       run_id: runId,
       attempt_id: attemptId,
+      artifact_sha: handlerContext.observed.pr.head_sha,
       resource_id: resource.resource_id,
       resource_ref: resource.resource_ref,
     };
@@ -747,5 +752,52 @@ describe('independent judge equivalence seam', () => {
     })).toThrowError(expect.objectContaining({
       code: 'judge_authority_port_unavailable',
     }));
+  });
+
+  it.each([
+    ['run id', (ctx) => {
+      ctx.runId = '99999999-9999-4999-8999-999999999999';
+    }],
+    ['attempt id', (ctx) => {
+      ctx.attempt.id = '99999999-9999-4999-8999-999999999999';
+    }],
+    ['attempt run id', (ctx) => {
+      ctx.attempt.run_id = '99999999-9999-4999-8999-999999999999';
+    }],
+    ['observed run id', (ctx) => {
+      ctx.observed.run.id = '99999999-9999-4999-8999-999999999999';
+    }],
+    ['artifact SHA', (ctx) => {
+      ctx.observed.pr.head_sha = 'forged-artifact';
+    }],
+    ['resource id', (ctx) => {
+      ctx.resource.resource_id = 'eq-forged';
+    }],
+    ['resource ref', (ctx) => {
+      ctx.resource.resource_ref = 'equivalence-drill/forged';
+    }],
+  ])('rejects handler authority context with mismatched %s', async (
+    _label,
+    mutate,
+  ) => {
+    const value = seamFixture('normal');
+    const handlerContext = structuredClone(
+      await value.judgeAuthority.loadContext(),
+    );
+    mutate(handlerContext);
+    value.judgeAuthority.loadContext.mockResolvedValue(handlerContext);
+    value.judgeAuthority.loadContext.mockClear();
+
+    await expect(value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'judge_equivalence_authority_binding_invalid',
+    });
+    expect(value.judgeAuthority.snapshot).not.toHaveBeenCalled();
+    expect(value.d.judgeGate).not.toHaveBeenCalled();
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
   });
 });
