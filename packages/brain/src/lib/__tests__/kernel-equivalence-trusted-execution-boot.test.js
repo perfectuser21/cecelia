@@ -137,6 +137,7 @@ describe('production trusted execution boot lifecycle', () => {
 
     await intervalCallback();
 
+    expect(mocks.cleanupExpiredGrants).toHaveBeenCalledTimes(2);
     expect(listener.close).toHaveBeenCalledOnce();
     expect(boot.controller).toBeNull();
     expect(boot.getReadiness()).toEqual({
