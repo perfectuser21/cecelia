@@ -1,6 +1,21 @@
 # Brain 模块定义
 
-**版本**: 1.267.101
+**版本**: 1.268.0
+
+## Fleet Worker-owned GitHub mutation
+
+- Generator 的 GitHub 写权限从 provider 容器移到 Worker broker；TaskBundle
+  冻结 repo、branch、base/remote SHA、draft PR 文本与 allowed paths，并纳入
+  bundle hash。provider 只提交绑定本地 HEAD 的 DONE/FIXED 声明。
+- Worker 在容器退出并清理后校验 branch/HEAD/base ancestry、changed paths、
+  binary、symlink/submodule、added-line secret、origin 与 frozen remote lease；
+  只允许 argv-only `force-with-lease` push 和 draft PR 创建/读取。
+- mutation 的 prepared/push-confirmed/draft-confirmed receipt 以 mode 0600
+  append-only hash chain 持久化；崩溃恢复与重复 terminal/callback 不重复写动作。
+- evaluator/reporter 在 Worker-owned GitHub read broker 完成前 fail-closed；
+  Claude/Grok 在 provider credential broker 完成前 fail-closed。两者均不会回退到
+  provider 内执行 `gh`。
+- 回退：`bash scripts/brain-rollback.sh 1.267.99`。
 
 ## Fleet Node Phase 4A production convergence
 

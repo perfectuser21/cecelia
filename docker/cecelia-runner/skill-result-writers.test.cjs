@@ -34,7 +34,7 @@ const SKILLS = {
   },
   generator: {
     path: 'packages/workflows/skills/harness-generator/SKILL.md',
-    version: '7.12.0',
+    version: '7.13.0',
   },
   evaluator: {
     path: 'packages/workflows/skills/harness-evaluator/SKILL.md',
@@ -100,6 +100,8 @@ function baseEnv(workspace) {
     FEEDBACK: '',
     GENERATOR_VERDICT: 'DONE',
     PR_URL: 'https://github.com/perfectuser21/cecelia/pull/4391',
+    HARNESS_GITHUB_MUTATION_BRANCH: 'cp-result-channel',
+    HARNESS_GITHUB_MUTATION_HEAD_SHA: '0123456789abcdef0123456789abcdef01234567',
     FIXES_JSON: '["fixed callback binding"]',
     FAILURE_REASON: 'bounded repair budget exhausted',
     EVALUATOR_VERDICT: 'PASS',
@@ -124,6 +126,18 @@ function runWriter(role, overrides = {}, { runtime = true, symlink = false } = {
   mkdirSync(workspace);
   mkdirSync(runtimeDir);
   execFileSync('git', ['init', '-q'], { cwd: workspace });
+  execFileSync('git', ['config', 'user.email', 'kernel-test@example.invalid'], {
+    cwd: workspace,
+  });
+  execFileSync('git', ['config', 'user.name', 'Kernel Test'], { cwd: workspace });
+  execFileSync('git', [
+    '-c', 'core.hooksPath=/dev/null', 'commit', '--allow-empty', '-qm', 'fixture',
+  ], {
+    cwd: workspace,
+  });
+  execFileSync('git', ['checkout', '-qb', 'cp-result-channel'], {
+    cwd: workspace,
+  });
   const script = join(root, `${role}-writer.sh`);
   writeFileSync(script, writerSource(role), { mode: 0o700 });
   const attemptId = randomUUID();
@@ -370,20 +384,49 @@ test('reviewer writes exact APPROVED and REVISION raw shapes', () => {
   }
 });
 
-test('generator writes exact DONE, FIXED and FAILED raw shapes', () => {
+test('generator writes exact managed mutation declarations and legacy PR shapes', () => {
   const cases = [
-    ['DONE', ['pr_url', 'verdict']],
-    ['FIXED', ['fixes', 'pr_url', 'verdict']],
-    ['FAILED', ['pr_url', 'reason', 'verdict']],
+    ['DONE', ['branch', 'contract_version', 'head_sha', 'verdict']],
+    ['FIXED', ['branch', 'contract_version', 'fixes', 'head_sha', 'verdict']],
   ];
   for (const [verdict, keys] of cases) {
-    const result = readResult(runWriter('generator', { GENERATOR_VERDICT: verdict }));
+    const result = readResult(runWriter('generator', {
+      GENERATOR_VERDICT: verdict,
+    }));
     assert.deepEqual(Object.keys(result).sort(), keys);
     assert.equal(result.verdict, verdict);
-    assert.equal(result.pr_url, 'https://github.com/perfectuser21/cecelia/pull/4391');
+    assert.equal(result.branch, 'cp-result-channel');
+    assert.match(result.head_sha, /^[a-f0-9]{40}$/);
+    assert.equal(result.pr_url, undefined);
     if (verdict === 'FIXED') assert.deepEqual(result.fixes, ['fixed callback binding']);
-    if (verdict === 'FAILED') assert.equal(result.reason, 'bounded repair budget exhausted');
   }
+
+  for (const verdict of ['DONE', 'FIXED', 'FAILED']) {
+    const legacy = runWriter('generator', { GENERATOR_VERDICT: verdict }, {
+      runtime: false,
+    });
+    const result = JSON.parse(legacy.execution.stdout);
+    assert.equal(result.verdict, verdict);
+    assert.equal(result.pr_url, 'https://github.com/perfectuser21/cecelia/pull/4391');
+  }
+
+  const failed = runWriter('generator', { GENERATOR_VERDICT: 'FAILED' });
+  assert.notEqual(failed.execution.status, 0);
+  assert.match(failed.execution.stderr, /requires DONE or FIXED/);
+
+  const wrongBranch = runWriter('generator', {
+    HARNESS_GITHUB_MUTATION_BRANCH: 'cp-other-branch',
+  });
+  assert.notEqual(wrongBranch.execution.status, 0);
+  assert.match(wrongBranch.execution.stderr, /frozen mutation branch mismatch/);
+});
+
+test('managed generator instructions prohibit provider-owned GitHub mutation before legacy push', () => {
+  const source = skillSource('generator');
+  const override = source.indexOf('## Managed Kernel GitHub mutation override');
+  const legacyPush = source.indexOf('git push origin HEAD');
+  assert.ok(override > 0 && override < legacyPush);
+  assert.match(source.slice(override, legacyPush), /禁止执行 `git push`、`gh pr create`/);
 });
 
 test('evaluator writes file-owned PASS and FAIL evidence instead of stdout JSON', () => {

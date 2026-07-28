@@ -28,6 +28,10 @@ WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
+CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/credential-envelope.cjs"
+CALLBACK_AUTH_SOURCE="$SCRIPT_DIR/callback-auth.cjs"
+GITHUB_MUTATION_BROKER_SOURCE="$SCRIPT_DIR/github-mutation-broker.cjs"
+RESULT_FINALIZER_SOURCE="$REPO_ROOT/docker/cecelia-runner/result-channel-finalizer.cjs"
 ACCESS_HELPER_SOURCE="$SCRIPT_DIR/refresh-fleet-worker-docker-access.sh"
 ACCESS_TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker-docker-access.plist.template"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
@@ -40,6 +44,10 @@ STAGED_WORKER=''
 STAGED_PROBE=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
+STAGED_CREDENTIAL_ENVELOPE=''
+STAGED_CALLBACK_AUTH=''
+STAGED_GITHUB_MUTATION_BROKER=''
+STAGED_RESULT_FINALIZER=''
 STAGED_PLIST=''
 STAGED_ACCESS_HELPER=''
 STAGED_ACCESS_PLIST=''
@@ -63,6 +71,10 @@ COMMAND_PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
+CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/credential-envelope.cjs"
+CALLBACK_AUTH_SCRIPT="$RUNTIME_DIR/callback-auth.cjs"
+GITHUB_MUTATION_BROKER_SCRIPT="$RUNTIME_DIR/github-mutation-broker.cjs"
+RESULT_FINALIZER_SCRIPT="$RUNTIME_DIR/result-channel-finalizer.cjs"
 ACCESS_HELPER="$RUNTIME_DIR/refresh-fleet-worker-docker-access.sh"
 WORKTREE_ROOT="${FLEET_WORKER_REPO_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/repository}"
 FLEET_DATA_ROOT="${FLEET_WORKER_DATA_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/fleet-worker}"
@@ -376,7 +388,9 @@ render_plist() {
   [[ -f "$TEMPLATE" ]] || die "plist_template_missing"
   [[ -n "$NODE_EXECUTABLE" ]] || die "prerequisite_node"
   [[ -f "$WORKER_SOURCE" && -f "$PROBE_SOURCE" \
-    && -f "$WORKSPACE_MANAGER_SOURCE" && -f "$ATTEMPT_RUNNER_SOURCE" ]] \
+    && -f "$WORKSPACE_MANAGER_SOURCE" && -f "$ATTEMPT_RUNNER_SOURCE" \
+    && -f "$CREDENTIAL_ENVELOPE_SOURCE" && -f "$CALLBACK_AUTH_SOURCE" \
+    && -f "$GITHUB_MUTATION_BROKER_SOURCE" && -f "$RESULT_FINALIZER_SOURCE" ]] \
     || die "worker_script_missing"
   target_dir="$(dirname "$target")"
   [[ -d "$target_dir" ]] || die "render_target_parent_missing"
@@ -451,6 +465,10 @@ cleanup_transaction() {
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
+  [[ -z "$STAGED_CREDENTIAL_ENVELOPE" ]] || rm -f "$STAGED_CREDENTIAL_ENVELOPE"
+  [[ -z "$STAGED_CALLBACK_AUTH" ]] || rm -f "$STAGED_CALLBACK_AUTH"
+  [[ -z "$STAGED_GITHUB_MUTATION_BROKER" ]] || rm -f "$STAGED_GITHUB_MUTATION_BROKER"
+  [[ -z "$STAGED_RESULT_FINALIZER" ]] || rm -f "$STAGED_RESULT_FINALIZER"
   [[ -z "$STAGED_PLIST" ]] || rm -f "$STAGED_PLIST"
   [[ -z "$STAGED_ACCESS_HELPER" ]] || rm -f "$STAGED_ACCESS_HELPER"
   [[ -z "$STAGED_ACCESS_PLIST" ]] || rm -f "$STAGED_ACCESS_PLIST"
@@ -460,6 +478,10 @@ cleanup_transaction() {
       "$BACKUP_DIR/probe" \
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
+      "$BACKUP_DIR/credential-envelope" \
+      "$BACKUP_DIR/callback-auth" \
+      "$BACKUP_DIR/github-mutation-broker" \
+      "$BACKUP_DIR/result-channel-finalizer" \
       "$BACKUP_DIR/plist" \
       "$BACKUP_DIR/access-helper" \
       "$BACKUP_DIR/access-plist"
@@ -487,6 +509,16 @@ prepare_transaction_paths() {
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
   )"
   STAGED_ATTEMPT_RUNNER="$(mktemp "$RUNTIME_DIR/.attempt-runner.cjs.XXXXXX")"
+  STAGED_CREDENTIAL_ENVELOPE="$(
+    mktemp "$RUNTIME_DIR/.credential-envelope.cjs.XXXXXX"
+  )"
+  STAGED_CALLBACK_AUTH="$(mktemp "$RUNTIME_DIR/.callback-auth.cjs.XXXXXX")"
+  STAGED_GITHUB_MUTATION_BROKER="$(
+    mktemp "$RUNTIME_DIR/.github-mutation-broker.cjs.XXXXXX"
+  )"
+  STAGED_RESULT_FINALIZER="$(
+    mktemp "$RUNTIME_DIR/.result-channel-finalizer.cjs.XXXXXX"
+  )"
   STAGED_PLIST="$(mktemp "$INSTALL_DIR/.fleet-worker.plist.XXXXXX")"
   STAGED_ACCESS_HELPER="$(mktemp "$RUNTIME_DIR/.docker-access.sh.XXXXXX")"
   STAGED_ACCESS_PLIST="$(
@@ -499,10 +531,20 @@ stage_generation() {
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
   cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
   cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
+  cp "$CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_CREDENTIAL_ENVELOPE"
+  cp "$CALLBACK_AUTH_SOURCE" "$STAGED_CALLBACK_AUTH"
+  cp "$GITHUB_MUTATION_BROKER_SOURCE" "$STAGED_GITHUB_MUTATION_BROKER"
+  cp "$RESULT_FINALIZER_SOURCE" "$STAGED_RESULT_FINALIZER"
   cp "$ACCESS_HELPER_SOURCE" "$STAGED_ACCESS_HELPER"
   chmod 0755 "$STAGED_WORKER"
   chmod 0644 "$STAGED_PROBE"
-  chmod 0644 "$STAGED_WORKSPACE_MANAGER" "$STAGED_ATTEMPT_RUNNER"
+  chmod 0644 \
+    "$STAGED_WORKSPACE_MANAGER" \
+    "$STAGED_ATTEMPT_RUNNER" \
+    "$STAGED_CREDENTIAL_ENVELOPE" \
+    "$STAGED_CALLBACK_AUTH" \
+    "$STAGED_GITHUB_MUTATION_BROKER" \
+    "$STAGED_RESULT_FINALIZER"
   chmod 0755 "$STAGED_ACCESS_HELPER"
   render_plist "$STAGED_PLIST"
   render_access_plist "$STAGED_ACCESS_PLIST"
@@ -709,7 +751,9 @@ prior_files_complete=false
 if [[ -f "$installed_plist" && ! -L "$installed_plist" \
   && -f "$WORKER_SCRIPT" && ! -L "$WORKER_SCRIPT" \
   && -f "$RUNTIME_DIR/node-probe.cjs" \
-  && ! -L "$RUNTIME_DIR/node-probe.cjs" ]]; then
+  && ! -L "$RUNTIME_DIR/node-probe.cjs" \
+  && -f "$WORKSPACE_MANAGER_SCRIPT" && ! -L "$WORKSPACE_MANAGER_SCRIPT" \
+  && -f "$ATTEMPT_RUNNER_SCRIPT" && ! -L "$ATTEMPT_RUNNER_SCRIPT" ]]; then
   prior_files_complete=true
 fi
 prior_access_files_complete=false
@@ -748,6 +792,18 @@ prior_workspace_manager_mode="$(
 prior_attempt_runner_mode="$(
   snapshot_file "$ATTEMPT_RUNNER_SCRIPT" "$BACKUP_DIR/attempt-runner"
 )"
+prior_credential_envelope_mode="$(
+  snapshot_file "$CREDENTIAL_ENVELOPE_SCRIPT" "$BACKUP_DIR/credential-envelope"
+)"
+prior_callback_auth_mode="$(
+  snapshot_file "$CALLBACK_AUTH_SCRIPT" "$BACKUP_DIR/callback-auth"
+)"
+prior_github_mutation_broker_mode="$(
+  snapshot_file "$GITHUB_MUTATION_BROKER_SCRIPT" "$BACKUP_DIR/github-mutation-broker"
+)"
+prior_result_finalizer_mode="$(
+  snapshot_file "$RESULT_FINALIZER_SCRIPT" "$BACKUP_DIR/result-channel-finalizer"
+)"
 prior_plist_mode="$(snapshot_file "$installed_plist" "$BACKUP_DIR/plist")"
 prior_access_helper_mode="$(
   snapshot_file "$ACCESS_HELPER" "$BACKUP_DIR/access-helper"
@@ -770,6 +826,18 @@ placement_ok=true
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_ATTEMPT_RUNNER" "$ATTEMPT_RUNNER_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_CREDENTIAL_ENVELOPE" "$CREDENTIAL_ENVELOPE_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_CALLBACK_AUTH" "$CALLBACK_AUTH_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_GITHUB_MUTATION_BROKER" "$GITHUB_MUTATION_BROKER_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_RESULT_FINALIZER" "$RESULT_FINALIZER_SCRIPT" \
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_WORKER" "$WORKER_SCRIPT" \
@@ -822,6 +890,26 @@ if [[ "$launch_ok" != true ]]; then
     "$ATTEMPT_RUNNER_SCRIPT" \
     "$BACKUP_DIR/attempt-runner" \
     "$prior_attempt_runner_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$CREDENTIAL_ENVELOPE_SCRIPT" \
+    "$BACKUP_DIR/credential-envelope" \
+    "$prior_credential_envelope_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$CALLBACK_AUTH_SCRIPT" \
+    "$BACKUP_DIR/callback-auth" \
+    "$prior_callback_auth_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$GITHUB_MUTATION_BROKER_SCRIPT" \
+    "$BACKUP_DIR/github-mutation-broker" \
+    "$prior_github_mutation_broker_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$RESULT_FINALIZER_SCRIPT" \
+    "$BACKUP_DIR/result-channel-finalizer" \
+    "$prior_result_finalizer_mode" \
     || rollback_ok=false
   restore_file "$installed_plist" "$BACKUP_DIR/plist" "$prior_plist_mode" \
     || rollback_ok=false

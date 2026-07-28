@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.12.0
+version: 7.13.0
 created: 2026-04-08
 updated: 2026-07-28
 changelog:
+  - 7.13.0: Fleet managed GitHub mutation declaration — provider 只提交绑定 frozen branch/HEAD 的 DONE/FIXED 声明，禁止取得 GitHub credential、push、建 PR 或轮询 CI；容器退出后由 Worker broker 校验并执行 force-with-lease push + draft PR
   - 7.12.0: Kernel raw result channel — DONE/FIXED/FAILED 三态显式 result 统一经 runner-owned writer；MAX_FIXES 用尽前固定 FAILED + FAILURE_REASON；channel version presence 判 managed，channel/file 均 unset 才保持 stdout-only
   - 7.11.0: gear 档位：Step 0 IS_SKELETON 检测旁新增 WORKSTREAM_INDEX 检测（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策7）——segmented 档位下存在时只实现 task-plan.json 对应段的 scope/files，禁碰其他段实现文件；测试棋盘共享只许点绿禁改断言（CONTRACT IS LAW 不变）；TDD 两 commit 纪律照旧；default（未设置）保持现行整份 Sprint 一口气实现不变
   - 7.10.0: TDD 纪律新增「禁 mock 边执行规则」（刀2，配套 proposer 9.12.0）——合同 ## 禁 mock 边清单 列出的边，测试代码中 vi.mock/jest.mock/stub 命中即违约（CONTRACT IS LAW 的一部分，evaluator 机械 grep 核查，命中 = CONTRACT-IS-LAW FAIL）；需要真 PG 的测试按合同指定放 integration 命名/位置，CI 由 brain-integration job 起真 Postgres 跑
@@ -77,6 +78,23 @@ grep -r "tick_stats" packages/brain/src/
 ---
 
 ## Mode 1: harness_generate（首次实现，TDD Red-Green 两次 commit）
+
+## Managed Kernel GitHub mutation override
+
+当 `BRAIN_RESULT_CHANNEL_VERSION` 存在时，本次运行由 Fleet Worker 托管 GitHub
+写操作。此规则覆盖本文后续所有 legacy push/PR/CI 轮询步骤：
+
+- provider 容器禁止执行 `git push`、`gh pr create`、`gh pr view`、`gh pr checks`
+  或任何 GitHub 写/读操作；禁止寻找 token、`~/.config/gh` 或其他宿主 credential。
+- 只在 frozen `HARNESS_GITHUB_MUTATION_BRANCH` 上完成本地 commit。不得改 branch，
+  不得改 remote，不得自行 rebase 到 frozen base 之外的提交。
+- 完成本地 commit 后直接执行 Step 8 的唯一 writer 并结束；writer 会从 Git
+  重新读取并绑定 frozen branch 与本地 HEAD。Worker 会在容器退出后校验 base、
+  HEAD、allowed paths、
+  secret、binary、symlink/submodule 和 remote lease，再执行 push 与 draft PR。
+- `HARNESS_ATTEMPT_KIND=initial` 必须输出 `DONE`；
+  `HARNESS_ATTEMPT_KIND=fix` 必须输出 `FIXED` 和非空 `FIXES_JSON`。
+- managed 模式绝不创建 ready-for-review PR，绝不 merge，绝不等待 CI。
 
 ### Step 0: 解析任务上下文
 
@@ -628,27 +646,56 @@ done
 
 ```bash
 # generator-result-writer:start
-case "${GENERATOR_VERDICT:-DONE}" in
-  DONE)
-    RAW_RESULT_JSON=$(jq -cn --arg pr_url "$PR_URL" \
-      '{verdict:"DONE",pr_url:$pr_url}')
-    ;;
-  FIXED)
-    jq -e 'type == "array" and length > 0' <<<"${FIXES_JSON:?non-empty fixes array required}" >/dev/null
-    RAW_RESULT_JSON=$(jq -cn --arg pr_url "$PR_URL" \
-      --argjson fixes "$FIXES_JSON" \
-      '{verdict:"FIXED",pr_url:$pr_url,fixes:$fixes}')
-    ;;
-  FAILED)
-    RAW_RESULT_JSON=$(jq -cn --arg pr_url "$PR_URL" \
-      --arg reason "${FAILURE_REASON:?failure reason required}" \
-      '{verdict:"FAILED",pr_url:$pr_url,reason:$reason}')
-    ;;
-  *)
-    echo "invalid GENERATOR_VERDICT" >&2
-    exit 1
-    ;;
-esac
+if [ "${BRAIN_RESULT_CHANNEL_VERSION+x}" = x ]; then
+  MANAGED_GENERATOR_BRANCH="$(git branch --show-current)"
+  [ "$MANAGED_GENERATOR_BRANCH" = "${HARNESS_GITHUB_MUTATION_BRANCH:?frozen mutation branch required}" ] \
+    || { echo "frozen mutation branch mismatch" >&2; exit 1; }
+  MANAGED_GENERATOR_HEAD_SHA="$(git rev-parse HEAD)"
+  [[ "$MANAGED_GENERATOR_HEAD_SHA" =~ ^[a-f0-9]{40}$ ]] \
+    || { echo "invalid local HEAD" >&2; exit 1; }
+  case "${GENERATOR_VERDICT:-DONE}" in
+    DONE)
+      RAW_RESULT_JSON=$(jq -cn \
+        --arg branch "$MANAGED_GENERATOR_BRANCH" \
+        --arg head_sha "$MANAGED_GENERATOR_HEAD_SHA" \
+        '{contract_version:"github-mutation-declaration/v1",verdict:"DONE",branch:$branch,head_sha:$head_sha}')
+      ;;
+    FIXED)
+      jq -e 'type == "array" and length > 0' <<<"${FIXES_JSON:?non-empty fixes array required}" >/dev/null
+      RAW_RESULT_JSON=$(jq -cn \
+        --arg branch "$MANAGED_GENERATOR_BRANCH" \
+        --arg head_sha "$MANAGED_GENERATOR_HEAD_SHA" \
+        --argjson fixes "$FIXES_JSON" \
+        '{contract_version:"github-mutation-declaration/v1",verdict:"FIXED",branch:$branch,head_sha:$head_sha,fixes:$fixes}')
+      ;;
+    *)
+      echo "managed generator requires DONE or FIXED mutation declaration" >&2
+      exit 1
+      ;;
+  esac
+else
+  case "${GENERATOR_VERDICT:-DONE}" in
+    DONE)
+      RAW_RESULT_JSON=$(jq -cn --arg pr_url "$PR_URL" \
+        '{verdict:"DONE",pr_url:$pr_url}')
+      ;;
+    FIXED)
+      jq -e 'type == "array" and length > 0' <<<"${FIXES_JSON:?non-empty fixes array required}" >/dev/null
+      RAW_RESULT_JSON=$(jq -cn --arg pr_url "$PR_URL" \
+        --argjson fixes "$FIXES_JSON" \
+        '{verdict:"FIXED",pr_url:$pr_url,fixes:$fixes}')
+      ;;
+    FAILED)
+      RAW_RESULT_JSON=$(jq -cn --arg pr_url "$PR_URL" \
+        --arg reason "${FAILURE_REASON:?failure reason required}" \
+        '{verdict:"FAILED",pr_url:$pr_url,reason:$reason}')
+      ;;
+    *)
+      echo "invalid GENERATOR_VERDICT" >&2
+      exit 1
+      ;;
+  esac
+fi
 if [ "${BRAIN_RESULT_CHANNEL_VERSION+x}" = x ] || [ "${BRAIN_RESULT_FILE+x}" = x ]; then
   printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
 else

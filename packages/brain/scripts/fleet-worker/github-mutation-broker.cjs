@@ -9,6 +9,7 @@ const { promisify, TextDecoder } = require('node:util');
 
 const execFileAsync = promisify(execFile);
 const SHA = /^[a-f0-9]{40}$/;
+const SHA256 = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const BRANCH = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -156,13 +157,20 @@ function recordWithDigest(record, previous) {
 }
 
 function validateRecords(records, requestSha) {
-  if (!Array.isArray(records) || records.length > 16) {
+  const stages = ['prepared', 'push_confirmed', 'draft_pr_confirmed'];
+  if (!Array.isArray(records) || records.length > stages.length) {
     fail('github_mutation_audit_invalid');
   }
   let previous = null;
-  for (const record of records) {
+  for (const [index, record] of records.entries()) {
     if (
       !record
+      || record.schema_version !== 'github-mutation-audit/v1'
+      || record.stage !== stages[index]
+      || !UUID.test(record.attempt_id)
+      || !UUID.test(record.run_id)
+      || !SHA256.test(record.request_sha256)
+      || !SHA256.test(record.record_sha256)
       || record.request_sha256 !== requestSha
       || record.previous_sha256 !== (previous?.record_sha256 ?? null)
       || record.record_sha256 !== digest((({ record_sha256: _, ...rest }) => rest)(record))
@@ -282,6 +290,9 @@ function createFileGithubMutationAuditStore({ auditRoot } = {}) {
           fail('github_mutation_audit_invalid');
         }
         const text = fs.readFileSync(target, 'utf8');
+        if (Buffer.byteLength(text) > MAX_INPUT_BYTES) {
+          fail('github_mutation_audit_invalid');
+        }
         return text.split('\n').filter(Boolean).map((line) => JSON.parse(line));
       } catch (error) {
         if (error?.code === 'ENOENT') return [];
@@ -450,6 +461,26 @@ function createGithubMutationBroker({
       requestSha,
     );
     let receipt = records.find((record) => record.stage === 'draft_pr_confirmed');
+    if (receipt) {
+      if (receipt.head_sha !== declaration.head_sha) {
+        fail('github_mutation_audit_conflict');
+      }
+      exact(receipt.pull_request, [
+        'type', 'url', 'number', 'head_ref', 'head_sha', 'state',
+      ], 'github_mutation_audit_conflict');
+      normalizePullRequest(
+        {
+          url: receipt.pull_request.url,
+          number: receipt.pull_request.number,
+          headRefName: receipt.pull_request.head_ref,
+          headRefOid: receipt.pull_request.head_sha,
+          state: receipt.pull_request.state,
+          isDraft: true,
+        },
+        parsedPolicy,
+        declaration.head_sha,
+      );
+    }
     if (!receipt) {
       await verifyWorkspace(state, parsedPolicy, declaration);
       let prepared = records.find((record) => record.stage === 'prepared');

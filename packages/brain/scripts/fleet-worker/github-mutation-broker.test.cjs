@@ -269,3 +269,13 @@ test('returns the exact completed receipt without any repeated mutation', async 
   assert.equal(h.commands.length, commandCount);
   assert.equal(h.records.length, recordCount);
 });
+
+test('fails closed on reordered durable audit stages before any replay', async () => {
+  const h = harness();
+  await execute(h);
+  const commandCount = h.commands.length;
+  [h.records[0], h.records[1]] = [h.records[1], h.records[0]];
+
+  await assert.rejects(execute(h), /github_mutation_audit_conflict/);
+  assert.equal(h.commands.length, commandCount);
+});

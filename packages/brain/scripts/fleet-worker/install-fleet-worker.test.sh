@@ -646,6 +646,10 @@ installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
 installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
 installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
+installed_credential_envelope="$runtime_dir/credential-envelope.cjs"
+installed_callback_auth="$runtime_dir/callback-auth.cjs"
+installed_github_broker="$runtime_dir/github-mutation-broker.cjs"
+installed_result_finalizer="$runtime_dir/result-channel-finalizer.cjs"
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
 installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
@@ -653,6 +657,9 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
   || fail "--apply did not install a stable Worker runtime"
 [[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
   || fail "--apply omitted the Workspace/Attempt runtime modules"
+[[ -f "$installed_credential_envelope" && -f "$installed_callback_auth" \
+  && -f "$installed_github_broker" && -f "$installed_result_finalizer" ]] \
+  || fail "--apply omitted a Worker authority runtime module"
 [[ -d "$worker_data_root" ]] \
   || fail "--apply did not create the Worker-owned data root"
 grep -Fxq "_cecelia:_cecelia $worker_data_root" "$chown_log" \

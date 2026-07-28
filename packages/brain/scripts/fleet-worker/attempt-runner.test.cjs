@@ -388,6 +388,22 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.stateStore.save.mock.calls.map(([entry]) => entry.status))
       .toContain('mutation_pending');
   });
+
+  it('delivers a failed Generator result without invoking the mutation broker', async () => {
+    const deps = dependencies();
+    deps.docker.readGithubMutation.mockResolvedValueOnce(null);
+    const runner = createRunner(deps);
+    await runner.launch(request());
+    deps.events.length = 0;
+
+    await runner.terminal(ATTEMPT_ID);
+
+    expect(deps.events.indexOf('docker.remove')).toBeGreaterThanOrEqual(0);
+    expect(deps.githubMutationBroker.execute).not.toHaveBeenCalled();
+    expect(deps.docker.writeResult).not.toHaveBeenCalled();
+    expect(deps.docker.readResult).toHaveBeenCalled();
+    expect(deps.resultDelivery.deliver).toHaveBeenCalledOnce();
+  });
   it.each([
     ['read-only', true],
     ['read-write', false],

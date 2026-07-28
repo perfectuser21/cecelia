@@ -202,6 +202,9 @@ configure_managed_bundle_runtime() {
   local contract_branch=""
   local pr_branch=""
   local pr_head_sha=""
+  local attempt_kind=""
+  local github_mutation_operation=""
+  local github_mutation_branch=""
   local bundle_sha256=""
 
   bundle_sha256="$(sha256sum "$HARNESS_TASK_BUNDLE_FILE" | awk '{print $1}')" || return 1
@@ -241,9 +244,11 @@ configure_managed_bundle_runtime() {
     || return 1
   pr_head_sha="$(jq -r '.task_bundle.inputs.pr_head_sha // empty' "$HARNESS_TASK_BUNDLE_FILE")" \
     || return 1
+  attempt_kind="$(jq -r '.task_bundle.inputs.attempt_kind // empty' "$HARNESS_TASK_BUNDLE_FILE")" \
+    || return 1
 
   local derived
-  for derived in "$contract_round" "$propose_branch" "$contract_branch" "$pr_branch" "$pr_head_sha"; do
+  for derived in "$contract_round" "$propose_branch" "$contract_branch" "$pr_branch" "$pr_head_sha" "$attempt_kind"; do
     [[ "$derived" != *$'\n'* && "$derived" != *$'\r'* ]] || return 1
   done
   [[ -z "$contract_round" || "$contract_round" =~ ^[0-9]+$ ]] || return 1
@@ -258,6 +263,24 @@ configure_managed_bundle_runtime() {
   if [[ "$role" == "evaluator" ]]; then
     [[ -z "$pr_branch" ]] || export PR_BRANCH="$pr_branch"
     [[ -z "$pr_head_sha" ]] || export PR_HEAD_SHA="$pr_head_sha"
+  fi
+  unset HARNESS_ATTEMPT_KIND HARNESS_GITHUB_MUTATION_OPERATION HARNESS_GITHUB_MUTATION_BRANCH
+  if [[ "$role" == "generator" ]]; then
+    [[ "$attempt_kind" =~ ^(initial|fix)$ ]] || return 1
+    github_mutation_operation="$(
+      jq -er '.task_bundle.inputs.github_mutation_policy.operation | strings' \
+        "$HARNESS_TASK_BUNDLE_FILE"
+    )" || return 1
+    github_mutation_branch="$(
+      jq -er '.task_bundle.inputs.github_mutation_policy.branch | strings' \
+        "$HARNESS_TASK_BUNDLE_FILE"
+    )" || return 1
+    [[ "$github_mutation_operation" =~ ^(push-and-create-draft|push-existing-draft)$ ]] \
+      || return 1
+    [[ -n "$github_mutation_branch" && "$github_mutation_branch" != *$'\n'* ]] || return 1
+    export HARNESS_ATTEMPT_KIND="$attempt_kind"
+    export HARNESS_GITHUB_MUTATION_OPERATION="$github_mutation_operation"
+    export HARNESS_GITHUB_MUTATION_BRANCH="$github_mutation_branch"
   fi
 
   # Managed transport owns no callback capability. Remove any inherited legacy
@@ -329,6 +352,23 @@ finalize_managed_result() {
   [[ "$provider_result_file" == "$expected" ]] || return 1
   node /usr/local/bin/result-channel-driver.cjs \
     --provider-result "$provider_result_file"
+}
+
+stage_managed_github_mutation_provider_result() {
+  local provider_result_file="$1"
+  local expected="/tmp/harness-result-${HARNESS_ATTEMPT_ID}.normalized.json"
+  local target="/tmp/cecelia-prompts/${HARNESS_ATTEMPT_ID}.provider.json"
+  local temporary="/tmp/cecelia-prompts/.${HARNESS_ATTEMPT_ID}.provider.tmp"
+  [[ "${HARNESS_NODE:-}" == "generator" ]] || return 1
+  [[ "$provider_result_file" == "$expected" ]] || return 1
+  [[ -f "$provider_result_file" && ! -L "$provider_result_file" ]] || return 1
+  [[ -f "${BRAIN_RESULT_FILE:-}" && ! -L "${BRAIN_RESULT_FILE:-}" ]] || return 1
+  [[ ! -e "$target" && ! -L "$target" && ! -e "$temporary" && ! -L "$temporary" ]] \
+    || return 1
+  umask 077
+  cp -- "$provider_result_file" "$temporary" || return 1
+  chmod 0600 "$temporary" || return 1
+  mv -- "$temporary" "$target" || return 1
 }
 
 write_managed_canary_result() {
@@ -1099,7 +1139,14 @@ run_provider_contract() {
       > "$NORMALIZED_RESULT_FILE"
   fi
   if managed_result_channel_active; then
-    finalize_managed_result "$NORMALIZED_RESULT_FILE" || return 1
+    if [[ "${HARNESS_NODE:-}" == "generator" ]] \
+      && [[ $provider_exit -eq 0 ]] \
+      && jq -e '.status == "completed" or .status == "completed_with_concerns"' \
+        "$NORMALIZED_RESULT_FILE" >/dev/null 2>&1; then
+      stage_managed_github_mutation_provider_result "$NORMALIZED_RESULT_FILE" || return 1
+    else
+      finalize_managed_result "$NORMALIZED_RESULT_FILE" || return 1
+    fi
   else
     merge_evaluator_evidence "$NORMALIZED_RESULT_FILE" || true
   fi

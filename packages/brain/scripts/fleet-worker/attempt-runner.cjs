@@ -1288,9 +1288,13 @@ function createDockerAdapter({
           missingIsNull: true,
         },
       );
-      if (declarationBytes === null || providerResultBytes === null) {
+      if (declarationBytes === null) {
         throw new Error('attempt_github_mutation_evidence_missing');
       }
+      // The Runner stages provider.json only for a successful Generator result.
+      // A missing provider result therefore means result.json is already the
+      // canonical failed result and must bypass every GitHub write.
+      if (providerResultBytes === null) return null;
       return Object.freeze({ declarationBytes, providerResultBytes });
     },
 
@@ -1878,6 +1882,9 @@ function createAttemptRunner({
         attemptId: state.attempt_id,
         resultChannel: state.result_channel,
       });
+      if (evidence === null) {
+        return beginCallbackPending(state, { containerRemoved: true });
+      }
       const finalized = await githubMutationBroker.execute({
         state,
         policy: state.github_mutation_policy,

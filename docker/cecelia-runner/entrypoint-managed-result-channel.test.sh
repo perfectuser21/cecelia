@@ -90,6 +90,14 @@ configure_managed_bundle_runtime
 [[ "$PR_BRANCH" == 'cp-result-channel' ]]
 [[ "$PR_HEAD_SHA" == '0123456789abcdef0123456789abcdef01234567' ]]
 
+printf '%s' \
+  '{"task_bundle":{"role":"generator","skill":{"name":"harness-generator"},"expected_output":"harness-result/generator-v1","inputs":{"sprint_dir":"sprints/r7","attempt_kind":"initial","github_mutation_policy":{"version":"github-mutation/v1","repo":"perfectuser21/cecelia","branch":"cp-result-channel","base_sha":"0123456789abcdef0123456789abcdef01234567","expected_remote_sha":null,"operation":"push-and-create-draft","pr_base":"main","pr_title":"bounded title","pr_body":"bounded body","allowed_paths":["packages/"]}}}}' \
+  > "$BUNDLE_FILE"
+configure_managed_bundle_runtime
+[[ "$HARNESS_ATTEMPT_KIND" == 'initial' ]]
+[[ "$HARNESS_GITHUB_MUTATION_OPERATION" == 'push-and-create-draft' ]]
+[[ "$HARNESS_GITHUB_MUTATION_BRANCH" == 'cp-result-channel' ]]
+
 # The production seam must invoke only the fixed, image-owned driver with the
 # fixed attempt-owned normalized provider path. No callback credential exists.
 FAKE_BIN="$(mktemp -d)"
@@ -111,9 +119,25 @@ PATH="$FAKE_BIN:$PATH" write_managed_provider_session 'live-session-id'
 [[ "$(sed -n '2p' "$TRACE_FILE")" == '--provider-session' ]]
 [[ "$(sed -n '3p' "$TRACE_FILE")" == 'live-session-id' ]]
 
+PROVIDER_RESULT="$RUNTIME_DIR/$ATTEMPT_ID.provider.json"
+printf '%s' '{"status":"completed"}' > "$NORMALIZED_RESULT_FILE"
+HARNESS_NODE=generator
+stage_managed_github_mutation_provider_result "$NORMALIZED_RESULT_FILE"
+[[ "$(cat "$PROVIDER_RESULT")" == '{"status":"completed"}' ]]
+PROVIDER_RESULT_MODE="$(
+  stat -f '%Lp' "$PROVIDER_RESULT" 2>/dev/null \
+    || stat -c '%a' "$PROVIDER_RESULT"
+)"
+[[ "$PROVIDER_RESULT_MODE" == '600' ]]
+if stage_managed_github_mutation_provider_result "$NORMALIZED_RESULT_FILE"; then
+  echo 'managed mutation provider evidence overwrote an existing target' >&2
+  exit 1
+fi
+
 PROVIDER_SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
 grep -q 'validate_managed_result_channel' <<<"$PROVIDER_SECTION"
 grep -q 'finalize_managed_result "\$NORMALIZED_RESULT_FILE"' <<<"$PROVIDER_SECTION"
+grep -q 'stage_managed_github_mutation_provider_result "\$NORMALIZED_RESULT_FILE"' <<<"$PROVIDER_SECTION"
 grep -q '! managed_result_channel_active.*HARNESS_LEASE_OWNER' <<<"$PROVIDER_SECTION"
 grep -q 'write_managed_provider_session "\$provider_session_id"' <<<"$PROVIDER_SECTION"
 grep -q 'write_managed_provider_session "\$live_session"' <<<"$PROVIDER_SECTION"
@@ -183,6 +207,6 @@ grep -q 'COPY result-channel-driver.cjs /usr/local/bin/result-channel-driver.cjs
 grep -q 'chmod 0755 /usr/local/bin/result-channel-finalizer.cjs' "$DOCKERFILE"
 grep -q 'chmod 0755 /usr/local/bin/result-channel-driver.cjs' "$DOCKERFILE"
 
-rm -f "$RESULT_FILE" "$BUNDLE_FILE"
+rm -f "$RESULT_FILE" "$PROVIDER_RESULT" "$NORMALIZED_RESULT_FILE" "$BUNDLE_FILE"
 rm -rf "$FAKE_BIN"
 echo 'managed result channel entrypoint: PASS'
