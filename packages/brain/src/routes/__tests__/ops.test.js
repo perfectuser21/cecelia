@@ -12,7 +12,15 @@ import request from 'supertest';
 
 let capturedSpawnArgs = null;
 
-vi.mock('../../db.js', () => ({ default: { query: vi.fn() } }));
+vi.mock('../../db.js', () => ({ default: {
+  query: vi.fn(async () => ({ rows: [{
+    state: 'production_deploying',
+    merge_sha: 'f'.repeat(40),
+    expected_merge_sha: 'f'.repeat(40),
+    effect_kind: 'production',
+    idempotency_key: '55555555-5555-4555-8555-555555555555',
+  }] })),
+} }));
 vi.mock('../../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
 vi.mock('../../llm-caller.js', () => ({ callLLM: vi.fn(), callLLMStream: vi.fn() }));
 vi.mock('../../orchestrator-chat.js', () => ({ handleChat: vi.fn() }));
@@ -81,7 +89,11 @@ describe('ops — deploy REPO_ROOT path', () => {
     const res = await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer test-token')
-      .send({});
+      .send({
+        release_run_id: '44444444-4444-4444-8444-444444444444',
+        merge_sha: 'f'.repeat(40),
+        release_authorization: '55555555-5555-4555-8555-555555555555',
+      });
 
     expect(res.status).toBe(202);
     expect(capturedSpawnArgs).not.toBeNull();
@@ -89,6 +101,22 @@ describe('ops — deploy REPO_ROOT path', () => {
     expect(scriptPath).toBe('/custom/repo/root/scripts/deploy-local.sh');
     const opts = capturedSpawnArgs[2];
     expect(opts.cwd).toBe('/custom/repo/root');
+  });
+
+  it('POST /deploy 缺 ReleaseRun authority 时 fail closed before spawn', async () => {
+    const mod = await import('../ops.js');
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', mod.default);
+
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer test-token')
+      .send({});
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/release_effect_request_invalid/);
+    expect(capturedSpawnArgs).toBeNull();
   });
 
   it('REPO_ROOT 未设置时 path 不崩溃（含 deploy-local.sh 后缀）', () => {
