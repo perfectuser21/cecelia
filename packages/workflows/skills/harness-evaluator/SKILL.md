@@ -10,7 +10,7 @@ version: 1.32.3
 created: 2026-05-06
 updated: 2026-07-28
 changelog:
-  - 1.32.3: Kernel raw result channel — evaluator PASS/FAIL claimed evidence 统一经 runner-owned raw-result-writer；managed 模式只传 stdin、不直写 BRAIN_RESULT_FILE、不靠 stdout heuristic，legacy 保留 WORKSPACE/.brain-result.json
+  - 1.32.3: Kernel raw result channel — channel version presence 判 managed，显式 result file 的 PASS/FAIL claimed evidence 统一经 runner-owned writer；全部真实早退在 exit 前调用唯一 writer；channel/file 均 unset 保留 WORKSPACE/.brain-result.json
   - 1.32.2: attempt evidence fail-closed 补全——所有最终 PASS/FAIL verdict（含 dispatch/setup、环境/URL/workflow、timeout 与示例模板）都显式写当前 `HARNESS_ATTEMPT_ID`，避免早退失败证据因缺 attempt_id 被 runner 拒收后空转
   - 1.32.1: cross-repo bundled runtime——默认非 Windows Step B-1 用 quoted here-doc 随 Skill 内容落地自包含 extractor，不再依赖目标仓库存在 Cecelia `scripts/`；内嵌资产与 canonical extractor 逐字节契约锁定
   - 1.32.0: 默认非 Windows Step B-1 改走仓库共享 `extract-contract-e2e.cjs`，与 evaluator/过渡登记共用唯一 parser；H2+ E2E 标题、多段歧义、空证据及多 bash block 顺序语义不再由 Skill 内 AWK 自建第二口径
@@ -274,6 +274,87 @@ W41 fix loop 5 round 评测：如果用 chromium default profile，第 5 round e
 WORKSPACE="${WORKSPACE_PATH:-/workspace}"
 [ -d "$WORKSPACE" ] || WORKSPACE="$PWD"
 
+# 先定义唯一 evaluator writer；所有 setup/dispatch/timeout 早退与最终 PASS/FAIL
+# 都必须实际调用同一函数。DEFER 只阻止定义时误写，不能阻止终态调用。
+EVALUATOR_RESULT_WRITER_DEFER=1
+# evaluator-result-writer:start
+write_evaluator_result() {
+  EVALUATOR_VERDICT="${EVALUATOR_VERDICT:-PASS}"
+  FAILED_STEP="${FAILED_STEP:-}"
+  LOG_EXCERPT="${LOG_EXCERPT:-}"
+  BEHAVIOR_TESTS_VALUE="${BEHAVIOR_TESTS_JSON:-}"
+  E2E_RESULT_LOG="${E2E_RESULT_LOG:-/tmp/e2e-result.log}"
+  E2E_EXECUTION_FILE="${E2E_EXECUTION_FILE:-/tmp/evaluator-execution-${HARNESS_ATTEMPT_ID:-legacy}.json}"
+
+  # 未显式给 behavior_tests 时，只能从当前 task + attempt 绑定的真执行元数据派生。
+  if [ "$EVALUATOR_VERDICT" = PASS ] && [ -z "$BEHAVIOR_TESTS_VALUE" ]; then
+    if jq -e --arg task_id "${TASK_ID:-}" \
+      --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" '
+        type == "object" and .task_id == $task_id and .attempt_id == $attempt_id
+        and (.command | type == "string" and length > 0)
+        and (.exit_code | type == "number")
+      ' "$E2E_EXECUTION_FILE" >/dev/null 2>&1; then
+      EXECUTION_LOG_TAIL=$(jq -r '.log_tail // empty' "$E2E_EXECUTION_FILE")
+      if [ -z "$EXECUTION_LOG_TAIL" ]; then
+        EXECUTION_LOG_TAIL=$(tail -n 5 "$E2E_RESULT_LOG" 2>/dev/null || true)
+      fi
+      if [ -z "$EXECUTION_LOG_TAIL" ]; then
+        EXECUTION_LOG_TAIL="target_environment=${TARGET_ENV:-unknown} completed"
+      fi
+      BEHAVIOR_TESTS_VALUE=$(jq -c --arg log_tail "$EXECUTION_LOG_TAIL" \
+        '[{command:.command,exit_code:.exit_code,log_tail:$log_tail}]' \
+        "$E2E_EXECUTION_FILE")
+    else
+      EVALUATOR_VERDICT=FAIL
+      FAILED_STEP=evidence_ownership
+      LOG_EXCERPT="当前 attempt 缺少匹配的 evaluator execution metadata，禁止复用旧证据"
+      BEHAVIOR_TESTS_VALUE='[]'
+    fi
+  fi
+
+  BEHAVIOR_TESTS_VALUE="${BEHAVIOR_TESTS_VALUE:-[]}"
+  SCREENSHOTS_VALUE="${SCREENSHOTS_JSON:-[]}"
+  CASCADE_ASSERTIONS_VALUE="${CASCADE_ASSERTIONS:-[]}"
+  UNVERIFIABLE_VALUE="${UNVERIFIABLE_JSON:-[]}"
+  jq -e 'type == "array"' <<<"$BEHAVIOR_TESTS_VALUE" >/dev/null
+  jq -e 'type == "array"' <<<"$SCREENSHOTS_VALUE" >/dev/null
+  jq -e 'type == "array"' <<<"$CASCADE_ASSERTIONS_VALUE" >/dev/null
+  jq -e 'type == "array"' <<<"$UNVERIFIABLE_VALUE" >/dev/null
+
+  RAW_RESULT_JSON=$(jq -cn \
+    --arg verdict "$EVALUATOR_VERDICT" \
+    --arg task_id "$TASK_ID" \
+    --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" \
+    --arg failed_step "$FAILED_STEP" \
+    --arg log_excerpt "$LOG_EXCERPT" \
+    --argjson behavior_tests "$BEHAVIOR_TESTS_VALUE" \
+    --argjson screenshots "$SCREENSHOTS_VALUE" \
+    --argjson cascade_assertions "$CASCADE_ASSERTIONS_VALUE" \
+    --argjson unverifiable "$UNVERIFIABLE_VALUE" \
+    --arg verification_level "${VERIFICATION_LEVEL:-L2}" \
+    --arg notes "${EVALUATOR_NOTES:-}" \
+    --arg feedback "${EVALUATOR_FEEDBACK:-}" \
+    --arg segment_eval "${SEGMENT_EVAL:-}" \
+    '{verdict:$verdict,task_id:$task_id,attempt_id:$attempt_id,
+      failed_step:(if $failed_step=="" then null else $failed_step end),
+      log_excerpt:(if $log_excerpt=="" then null else $log_excerpt end),
+      behavior_tests:$behavior_tests,screenshots:$screenshots,
+      cascade_assertions:$cascade_assertions,unverifiable:$unverifiable,
+      verification_level:$verification_level}
+      + (if $notes=="" then {} else {notes:$notes} end)
+      + (if $feedback=="" then {} else {feedback:$feedback} end)
+      + (if $segment_eval=="" then {} else {segment_eval:$segment_eval} end)')
+  if [ "${BRAIN_RESULT_CHANNEL_VERSION+x}" = x ] || [ "${BRAIN_RESULT_FILE+x}" = x ]; then
+    printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
+  else
+    printf '%s\n' "$RAW_RESULT_JSON" > "$WORKSPACE/.brain-result.json"
+  fi
+}
+if [ "${EVALUATOR_RESULT_WRITER_DEFER:-0}" != 1 ]; then
+  write_evaluator_result
+fi
+# evaluator-result-writer:end
+
 # ── v1.20 relay 分支：env 未注入但派发 prompt 给了 SPRINT_DIR 等参数 = relay 模式 ──
 # 见「Relay 入口协议」段：relay 下 IS_FINAL_E2E 视为 true，不触发下面的 FATAL；
 # 从 prompt 参数中把 SPRINT_DIR/PR_BRANCH/TARGET_ENV/合同路径赋成 shell 变量后继续主体流程。
@@ -291,7 +372,7 @@ if [[ "$IS_FINAL_E2E" != "true" ]]; then
     EVALUATOR_VERDICT=FAIL
     FAILED_STEP=dispatch_error
     LOG_EXCERPT="IS_FINAL_E2E 未注入，Brain evaluateContractNode 配置异常"
-    # 立即执行 Step B-3 的唯一 evaluator writer
+    write_evaluator_result
     exit 1
   fi
 fi
@@ -310,7 +391,7 @@ if [[ ! -f "$CONTRACT" ]]; then
   EVALUATOR_VERDICT=FAIL
   FAILED_STEP=setup
   LOG_EXCERPT="合同文件不存在：$CONTRACT"
-  # 立即执行 Step B-3 的唯一 evaluator writer
+  write_evaluator_result
   exit 0
 fi
 
@@ -333,7 +414,7 @@ if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]]; 
     EVALUATOR_VERDICT=FAIL
     FAILED_STEP=setup
     LOG_EXCERPT="windows_cloud/windows_wechat 合同中未找到 ## E2E 验收 区块或区块内无 ps1/powershell 脚本"
-    # 立即执行 Step B-3 的唯一 evaluator writer
+    write_evaluator_result
     exit 0
   fi
   # evaluator 只执行 /tmp 副本，不改写被评 PR。Windows workflow 需要的永久
@@ -438,7 +519,7 @@ CECELIA_E2E_EXTRACTOR
     EVALUATOR_VERDICT=FAIL
     FAILED_STEP=setup
     LOG_EXCERPT="合同中未找到 ## E2E 验收 区块或区块内无 bash 脚本"
-    # 立即执行 Step B-3 的唯一 evaluator writer
+    write_evaluator_result
     exit 0
   fi
   chmod +x /tmp/e2e-verify.sh
@@ -449,7 +530,7 @@ CECELIA_E2E_EXTRACTOR
     EVALUATOR_VERDICT=FAIL
     FAILED_STEP=setup
     LOG_EXCERPT="E2E 脚本 bash -n 语法检查失败：$ERR_EXCERPT"
-    # 立即执行 Step B-3 的唯一 evaluator writer
+    write_evaluator_result
     exit 0
   fi
   # evaluator 只执行 /tmp 副本，不改写被评 PR。若合同要求永久回归脚本，
@@ -555,7 +636,7 @@ if [[ "$IS_PLAYGROUND_SPRINT" == "true" ]]; then
     EVALUATOR_VERDICT=FAIL
     FAILED_STEP=url_validation
     LOG_EXCERPT="playground sprint 禁止调用 Brain API：$DRIFT_LINE"
-    # 立即执行 Step B-3 的唯一 evaluator writer
+    write_evaluator_result
     exit 0
   fi
 else
@@ -569,7 +650,7 @@ else
         EVALUATOR_VERDICT=FAIL
         FAILED_STEP=url_validation
         LOG_EXCERPT="autonomous sprint 的 E2E 脚本未测真实 Brain API (localhost:5221) 或 DB，检测到可能测了 playground 或未知目标，请改为 curl localhost:5221/api/brain/... 验证真实行为"
-        # 立即执行 Step B-3 的唯一 evaluator writer
+        write_evaluator_result
         exit 0
       fi
     elif [[ -n "$EXPECTED_API_HOST" || -n "$DB_URL" ]]; then
@@ -577,7 +658,7 @@ else
         EVALUATOR_VERDICT=FAIL
         FAILED_STEP=url_validation
         LOG_EXCERPT="autonomous sprint 的 E2E 脚本未测 payload 指定的验证目标（EXPECTED_API_HOST/$DB_URL 已注入但脚本未引用），请让 E2E 真打该 API/DB"
-        # 立即执行 Step B-3 的唯一 evaluator writer
+        write_evaluator_result
         exit 0
       fi
     else
@@ -630,7 +711,7 @@ if [[ "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" ]]; 
       EVALUATOR_VERDICT=FAIL
       FAILED_STEP=env_missing
       LOG_EXCERPT="E2E 脚本需要 $bin 但当前环境未安装（脚本引用行：$MISS_LINE）。这是环境路由问题，Brain 应把本 sprint 派到装有 $bin 的目标环境，evaluator 不改写/降级验证。"
-      # 立即执行 Step B-3 的唯一 evaluator writer
+      write_evaluator_result
       exit 0
     fi
   done
@@ -659,7 +740,8 @@ fi
 EVALUATOR_VERDICT=FAIL
 FAILED_STEP=golden_path_gap
 LOG_EXCERPT="Golden Path 第 N 步「<步骤描述>」在 E2E 脚本中无对应命令/断言。E2E 必须覆盖 Golden Path 每一步，请补该步的真实命令 + 断言。"
-# 立即执行 Step B-3 的唯一 evaluator writer，成功后 exit 0
+write_evaluator_result
+exit 0
 ```
 
 #### Step B-1.8b: 禁 mock 边机械核查（v1.24 — CONTRACT-IS-LAW 执法步）
@@ -683,7 +765,8 @@ grep -rnE "vi\.mock|jest\.mock|\bstub|createMock|mockImplementation" \
 EVALUATOR_VERDICT=FAIL
 FAILED_STEP=contract_is_law_mock_edge
 LOG_EXCERPT="合同禁 mock 边清单第 N 条「<边描述>」被 mock 顶替：<测试文件>:<行号> vi.mock('<目标>')。该边是本单被改的接缝，必须真调（真 Postgres/真相邻模块），只允许 mock 更外层无关依赖。"
-# 立即执行 Step B-3 的唯一 evaluator writer，成功后 exit 0
+write_evaluator_result
+exit 0
 ```
 
 4. 清单为空且带合法理由（纯UI/纯文档类）→ 本步跳过记 notes；**清单段缺失**但本单改动明显涉及调度/状态机/跨模块数据传递/生命周期钩子/DB写路径 → FAIL（failed_step=contract_invalid，责任在 GAN 合同层，不进 generator fix loop）。
@@ -715,7 +798,7 @@ if grep -qE '(/Users/[a-zA-Z]|C:\\\\Users\\\\|C:\\\\Program Files)' /tmp/e2e-ver
   EVALUATOR_VERDICT=FAIL
   FAILED_STEP=absolute_path_in_e2e
   LOG_EXCERPT="E2E 脚本含硬编码绝对路径（/Users/ 或 C:\\Users\\）。请改用 \$CHROME_PATH / \$WECHAT_DATA 等标准化环境变量（由 Machine Probe 注入），不得写死路径。"
-  # 立即执行 Step B-3 的唯一 evaluator writer
+  write_evaluator_result
   exit 0
 fi
 ```
@@ -770,7 +853,8 @@ Write-Host "✅ Machine Probe 完成: Chrome=$CHROME_PATH Node=$NODE_VERSION"
 EVALUATOR_VERDICT=FAIL
 FAILED_STEP=machine_probe
 LOG_EXCERPT="Machine Probe 失败：目标机器 NFR 约束不满足（WeChat 版本不符/Chrome 未找到）。请先确认目标机器环境符合 sprint-prd.md ## NFR 约束 要求。"
-# 立即执行 Step B-3 的唯一 evaluator writer，成功后 exit 0
+write_evaluator_result
+exit 0
 ```
 
 #### Step B-2: 执行 E2E 脚本
@@ -837,7 +921,7 @@ case "$TARGET_ENV" in
       EVALUATOR_VERDICT=FAIL
       FAILED_STEP=workflow_content_check
       LOG_EXCERPT="workflow 文件不存在: $WORKFLOW_FILE — 合同 BEHAVIOR 断言引用了不存在的 workflow，请先创建该文件"
-      # 立即执行 Step B-3 的唯一 evaluator writer
+      write_evaluator_result
       exit 0
     fi
 
@@ -847,7 +931,7 @@ case "$TARGET_ENV" in
       EVALUATOR_VERDICT=FAIL
       FAILED_STEP=workflow_content_check
       LOG_EXCERPT="合同 contract-dod.md 中无 [BEHAVIOR] 条目，无法验证 workflow 覆盖性"
-      # 立即执行 Step B-3 的唯一 evaluator writer
+      write_evaluator_result
       exit 0
     fi
 
@@ -860,7 +944,7 @@ case "$TARGET_ENV" in
       EVALUATOR_VERDICT=FAIL
       FAILED_STEP=workflow_content_check
       LOG_EXCERPT="workflow $WORKFLOW 只包含文件存在/大小检查，不含任何业务逻辑验证（node/npx/vitest/playwright/curl）。合同 BEHAVIOR 断言无法通过此 workflow 真实验证。请更新 workflow 加入业务行为测试。workflow 前30行: $WORKFLOW_PREVIEW"
-      # 立即执行 Step B-3 的唯一 evaluator writer
+      write_evaluator_result
       exit 0
     fi
 
@@ -877,7 +961,7 @@ case "$TARGET_ENV" in
       EVALUATOR_VERDICT=FAIL
       FAILED_STEP=gh_trigger
       LOG_EXCERPT="GitHub Actions 触发失败，检查 gh auth 状态和 repo 权限"
-      # 立即执行 Step B-3 的唯一 evaluator writer
+      write_evaluator_result
       exit 0
     fi
     # 等 Actions 完成（最长 10 分钟，每 30 秒轮询一次）
@@ -948,7 +1032,7 @@ if [[ "$EXIT_CODE" -eq 124 ]]; then
   EVALUATOR_VERDICT=FAIL
   FAILED_STEP=timeout
   LOG_EXCERPT="E2E 脚本执行超时，请检查被测服务是否正常启动或脚本是否有无限等待"
-  # 立即执行 Step B-3 的唯一 evaluator writer
+  write_evaluator_result
   exit 0
 fi
 ```
@@ -1047,78 +1131,8 @@ fi
 **脚本 exit 0（通过）**：
 
 ```bash
-# evaluator-result-writer:start
-EVALUATOR_VERDICT="${EVALUATOR_VERDICT:-PASS}"
-FAILED_STEP="${FAILED_STEP:-}"
-LOG_EXCERPT="${LOG_EXCERPT:-}"
-BEHAVIOR_TESTS_VALUE="${BEHAVIOR_TESTS_JSON:-}"
-E2E_RESULT_LOG="${E2E_RESULT_LOG:-/tmp/e2e-result.log}"
-E2E_EXECUTION_FILE="${E2E_EXECUTION_FILE:-/tmp/evaluator-execution-${HARNESS_ATTEMPT_ID:-legacy}.json}"
-
-# 未显式给 behavior_tests 时，只能从当前 task + attempt 绑定的真执行元数据派生。
-if [ "$EVALUATOR_VERDICT" = PASS ] && [ -z "$BEHAVIOR_TESTS_VALUE" ]; then
-  if jq -e --arg task_id "${TASK_ID:-}" \
-    --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" '
-      type == "object" and .task_id == $task_id and .attempt_id == $attempt_id
-      and (.command | type == "string" and length > 0)
-      and (.exit_code | type == "number")
-    ' "$E2E_EXECUTION_FILE" >/dev/null 2>&1; then
-    EXECUTION_LOG_TAIL=$(jq -r '.log_tail // empty' "$E2E_EXECUTION_FILE")
-    if [ -z "$EXECUTION_LOG_TAIL" ]; then
-      EXECUTION_LOG_TAIL=$(tail -n 5 "$E2E_RESULT_LOG" 2>/dev/null || true)
-    fi
-    if [ -z "$EXECUTION_LOG_TAIL" ]; then
-      EXECUTION_LOG_TAIL="target_environment=${TARGET_ENV:-unknown} completed"
-    fi
-    BEHAVIOR_TESTS_VALUE=$(jq -c --arg log_tail "$EXECUTION_LOG_TAIL" \
-      '[{command:.command,exit_code:.exit_code,log_tail:$log_tail}]' \
-      "$E2E_EXECUTION_FILE")
-  else
-    EVALUATOR_VERDICT=FAIL
-    FAILED_STEP=evidence_ownership
-    LOG_EXCERPT="当前 attempt 缺少匹配的 evaluator execution metadata，禁止复用旧证据"
-    BEHAVIOR_TESTS_VALUE='[]'
-  fi
-fi
-
-BEHAVIOR_TESTS_VALUE="${BEHAVIOR_TESTS_VALUE:-[]}"
-SCREENSHOTS_VALUE="${SCREENSHOTS_JSON:-[]}"
-CASCADE_ASSERTIONS_VALUE="${CASCADE_ASSERTIONS:-[]}"
-UNVERIFIABLE_VALUE="${UNVERIFIABLE_JSON:-[]}"
-jq -e 'type == "array"' <<<"$BEHAVIOR_TESTS_VALUE" >/dev/null
-jq -e 'type == "array"' <<<"$SCREENSHOTS_VALUE" >/dev/null
-jq -e 'type == "array"' <<<"$CASCADE_ASSERTIONS_VALUE" >/dev/null
-jq -e 'type == "array"' <<<"$UNVERIFIABLE_VALUE" >/dev/null
-
-RAW_RESULT_JSON=$(jq -cn \
-  --arg verdict "$EVALUATOR_VERDICT" \
-  --arg task_id "$TASK_ID" \
-  --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" \
-  --arg failed_step "$FAILED_STEP" \
-  --arg log_excerpt "$LOG_EXCERPT" \
-  --argjson behavior_tests "$BEHAVIOR_TESTS_VALUE" \
-  --argjson screenshots "$SCREENSHOTS_VALUE" \
-  --argjson cascade_assertions "$CASCADE_ASSERTIONS_VALUE" \
-  --argjson unverifiable "$UNVERIFIABLE_VALUE" \
-  --arg verification_level "${VERIFICATION_LEVEL:-L2}" \
-  --arg notes "${EVALUATOR_NOTES:-}" \
-  --arg feedback "${EVALUATOR_FEEDBACK:-}" \
-  --arg segment_eval "${SEGMENT_EVAL:-}" \
-  '{verdict:$verdict,task_id:$task_id,attempt_id:$attempt_id,
-    failed_step:(if $failed_step=="" then null else $failed_step end),
-    log_excerpt:(if $log_excerpt=="" then null else $log_excerpt end),
-    behavior_tests:$behavior_tests,screenshots:$screenshots,
-    cascade_assertions:$cascade_assertions,unverifiable:$unverifiable,
-    verification_level:$verification_level}
-    + (if $notes=="" then {} else {notes:$notes} end)
-    + (if $feedback=="" then {} else {feedback:$feedback} end)
-    + (if $segment_eval=="" then {} else {segment_eval:$segment_eval} end)')
-if [ "${BRAIN_RESULT_FILE+x}" = x ]; then
-  printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
-else
-  printf '%s\n' "$RAW_RESULT_JSON" > "$WORKSPACE/.brain-result.json"
-fi
-# evaluator-result-writer:end
+EVALUATOR_VERDICT=PASS
+write_evaluator_result
 ```
 
 **脚本 exit ≠ 0（失败）**：
@@ -1132,12 +1146,13 @@ fi
 
 ## 输出规范
 
-**输出协议（v1.32.3+）**：managed Kernel 最终结果只通过固定
-runner-owned helper 原子落到预创建的 `BRAIN_RESULT_FILE`。Skill 不得直接打开
-该路径，Brain 不读 stdout。变量完全 unset 的 legacy 调用仍写
-`"$WORKSPACE/.brain-result.json"`。kernel 注入 `HARNESS_ATTEMPT_ID` 时，所有
-最终 verdict JSON 顶层必须原样带当前 attempt；缺失、空值或不一致时 runner
-拒绝桥接。
+**输出协议（v1.32.3+）**：`BRAIN_RESULT_CHANNEL_VERSION` 存在时是 managed
+Kernel，最终结果只通过固定 runner-owned helper 原子落到预创建的
+`BRAIN_RESULT_FILE`；空值/未知值或缺 file 都 fail closed。channel version
+unset 但 file 存在时是 headed/relay override，也经中央 helper；两者都 unset
+才写 `"$WORKSPACE/.brain-result.json"`。Brain 不读 stdout。kernel 注入
+`HARNESS_ATTEMPT_ID` 时，所有最终 verdict JSON 顶层必须原样带当前 attempt；
+缺失、空值或不一致时 runner 拒绝桥接。
 
 **behavior_tests 真跑证据（EVA v2 E1 硬要求）**：verdict JSON 必须带 `behavior_tests` 数组，**每条必须是对象 `{command, exit_code, log_tail}`**——`log_tail` = 该命令输出末 5 行（如 `tail -5 /tmp/e2e-result.log`）。缺 `exit_code` 或 `log_tail` 任一 = 该条视为未跑，**禁 PASS**。a85e0582 实证：verdict 只列命令原文时，"真跑"与"声称跑过"从 verdict 本身无法区分——退出码和真实输出尾巴是唯一能自证真跑的东西。
 

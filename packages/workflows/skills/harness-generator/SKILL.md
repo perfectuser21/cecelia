@@ -9,7 +9,7 @@ version: 7.12.0
 created: 2026-04-08
 updated: 2026-07-28
 changelog:
-  - 7.12.0: Kernel raw result channel — DONE/FIXED/FAILED 三态 claimed JSON 统一经 runner-owned raw-result-writer；managed 模式禁 stdout verdict，BRAIN_RESULT_FILE unset 时保持原 stdout-only
+  - 7.12.0: Kernel raw result channel — DONE/FIXED/FAILED 三态显式 result 统一经 runner-owned writer；MAX_FIXES 用尽前固定 FAILED + FAILURE_REASON；channel version presence 判 managed，channel/file 均 unset 才保持 stdout-only
   - 7.11.0: gear 档位：Step 0 IS_SKELETON 检测旁新增 WORKSTREAM_INDEX 检测（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策7）——segmented 档位下存在时只实现 task-plan.json 对应段的 scope/files，禁碰其他段实现文件；测试棋盘共享只许点绿禁改断言（CONTRACT IS LAW 不变）；TDD 两 commit 纪律照旧；default（未设置）保持现行整份 Sprint 一口气实现不变
   - 7.10.0: TDD 纪律新增「禁 mock 边执行规则」（刀2，配套 proposer 9.12.0）——合同 ## 禁 mock 边清单 列出的边，测试代码中 vi.mock/jest.mock/stub 命中即违约（CONTRACT IS LAW 的一部分，evaluator 机械 grep 核查，命中 = CONTRACT-IS-LAW FAIL）；需要真 PG 的测试按合同指定放 integration 命名/位置，CI 由 brain-integration job 起真 Postgres 跑
   - 7.9.0: EVA v2 审计五处修法 — G1 Red 阶段 relay 现实双分支（合同测试已随 contract import 存在则 Red commit=DoD.md+red-evidence 摘要，不重复 checkout；Red 验证按测试类型分派，.test.sh 合同逐个 bash 执行预期非零退出码即为红，替代 numTotalTests=0 即 exit 1 的死路）；G2 防事后补标（(Red) commit committer date 必须早于实现 commit）+ lint-tdd-commit-order 表述如实化（只校验文件序不校验标签顺序）；G3 新增 Step 6.7 push 前 CI 门禁自查（smoke 存在且登记/DoD 全勾/[BEHAVIOR] 测试覆盖，3827 实证）；G4 BEHIND 统一 gh pr update-branch，禁 merge commit 限定开工 rebase 阶段；G5 MAX_FIXES 用尽接线 Step 8 FAILED verdict + RELAY_STATUS BLOCKED
@@ -97,7 +97,7 @@ for var in CONTRACT_BRANCH SPRINT_DIR BRAIN_URL; do
   if [ -z "${!var:-}" ]; then
     echo "ERROR: env $var 未定义 — Brain dispatch 协议失败 (harness-task-dispatch.js 应注入)" >&2
     # managed Kernel 不向 stdout 伪造 raw result；非零进程退出由 controller 处理。
-    if [ "${BRAIN_RESULT_FILE+x}" != x ]; then
+    if [ "${BRAIN_RESULT_CHANNEL_VERSION+x}" != x ] && [ "${BRAIN_RESULT_FILE+x}" != x ]; then
       echo "{\"verdict\": \"ABORTED\", \"reason\": \"missing env $var\"}"
     fi
     exit 1
@@ -138,7 +138,7 @@ ORIGIN_URL=$(git remote get-url origin)
 if [[ "$ORIGIN_URL" =~ ^/ ]]; then
   echo "ERROR: git remote 仍是宿主路径 $ORIGIN_URL — entrypoint 重写失败" >&2
   # managed Kernel 不向 stdout 伪造 raw result；非零进程退出由 controller 处理。
-  if [ "${BRAIN_RESULT_FILE+x}" != x ]; then
+  if [ "${BRAIN_RESULT_CHANNEL_VERSION+x}" != x ] && [ "${BRAIN_RESULT_FILE+x}" != x ]; then
     echo "{\"verdict\": \"ABORTED\", \"reason\": \"git remote points to host filesystem path\"}"
   fi
   exit 1
@@ -569,9 +569,11 @@ while true; do
     if [ "$FIX_COUNT" -ge "$MAX_FIXES" ]; then
       echo "CI failed $MAX_FIXES times, giving up"
       rm -f "$FIX_COUNT_FILE"
-      # EVA v2（G5）：giving up 不是流程真空——break 后立即执行 Step 8 输出
-      # {"verdict":"FAILED","pr_url":"<url>","reason":"<最后一轮 CI 失败摘要>"}
-      # relay 模式下报告末尾输出 RELAY_STATUS: BLOCKED
+      # 必须在 break 前固定 Step 8 输入；否则默认值会把失败误报成 DONE。
+      GENERATOR_VERDICT=FAILED
+      FAILURE_REASON="CI remained red after ${MAX_FIXES} repair attempts: $(printf '%s' "$CHECKS" | tail -5 | tr '\n' ';' | cut -c1-2000)"
+      RELAY_STATUS=BLOCKED
+      export GENERATOR_VERDICT FAILURE_REASON RELAY_STATUS
       break
     fi
     FIX_COUNT=$((FIX_COUNT+1))
@@ -611,8 +613,9 @@ done
 
 ### Step 8: 提交 raw verdict JSON（CI 全绿后执行）
 
-> managed Kernel 模式不再从最后一条 stdout 猜 JSON；它只接受 runner-owned
-> helper 原子落下的 raw result。仅当 `BRAIN_RESULT_FILE` 完全 unset 时，
+> `BRAIN_RESULT_CHANNEL_VERSION` 存在时是 managed Kernel，空值/未知值或缺
+> result file 均 fail closed；channel version unset 但 `BRAIN_RESULT_FILE`
+> 存在时是 headed/relay override，仍经中央 helper 原子写。两者都 unset 才
 > 保持最后一条消息 stdout-only 的旧行为。
 
 **verdict JSON schema（三态，各自必带字段）**：
@@ -646,7 +649,7 @@ case "${GENERATOR_VERDICT:-DONE}" in
     exit 1
     ;;
 esac
-if [ "${BRAIN_RESULT_FILE+x}" = x ]; then
+if [ "${BRAIN_RESULT_CHANNEL_VERSION+x}" = x ] || [ "${BRAIN_RESULT_FILE+x}" = x ]; then
   printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
 else
   printf '%s\n' "$RAW_RESULT_JSON"

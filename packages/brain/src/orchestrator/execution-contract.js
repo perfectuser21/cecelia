@@ -394,19 +394,6 @@ const roleResultSchema = z.discriminatedUnion('kind', [
         'judgments_written',
       ]);
     }
-    if (
-      claimed.verdict === 'APPROVED'
-      && (
-        claimed.judgments_written < 1
-        || verified.judgments_written < 1
-      )
-    ) {
-      parityIssue(
-        context,
-        'APPROVED reviewer role_result requires an observed judgment write',
-        ['verified', 'judgments_written'],
-      );
-    }
   } else if (value.kind === 'generator') {
     if (claimed.pr_url !== verified.pull_request.url) {
       parityIssue(context, 'generator PR URL parity mismatch', [

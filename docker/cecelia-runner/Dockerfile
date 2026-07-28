@@ -104,6 +104,11 @@ RUN mkdir -p /home/cecelia/v6-runtime/node_modules/@resvg \
 COPY skills-bash/ /opt/cecelia-skills/
 RUN chmod +x /opt/cecelia-skills/*.sh
 
+# Runner-owned raw result channel writer. Skills call this fixed in-image seam
+# and never open the managed result file themselves.
+COPY raw-result-writer.cjs /usr/local/bin/raw-result-writer.cjs
+RUN chmod 0755 /usr/local/bin/raw-result-writer.cjs
+
 # 入口脚本：复制 host-claude-config → 可写副本 + safe.directory + 启动 claude
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \

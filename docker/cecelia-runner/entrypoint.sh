@@ -291,11 +291,23 @@ prepare_evaluator_evidence() {
 
 merge_evaluator_evidence() {
   local normalized_result_file="$1"
-  local brain_result_file="${WORKTREE_PATH:-$PWD}/.brain-result.json"
+  local brain_result_file
   local merged_result_file="${normalized_result_file}.evidence"
 
   [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
   [[ "$EVALUATOR_EVIDENCE_PREPARED" == "1" ]] || return 0
+
+  if [[ "${BRAIN_RESULT_CHANNEL_VERSION+x}" == "x" ]]; then
+    [[ "$BRAIN_RESULT_CHANNEL_VERSION" == "attempt-result-file/v1" ]] || return 1
+    [[ "${BRAIN_RESULT_FILE+x}" == "x" && -n "$BRAIN_RESULT_FILE" ]] || return 1
+    brain_result_file="$BRAIN_RESULT_FILE"
+  elif [[ "${BRAIN_RESULT_FILE+x}" == "x" ]]; then
+    [[ -n "$BRAIN_RESULT_FILE" ]] || return 1
+    brain_result_file="$BRAIN_RESULT_FILE"
+  else
+    brain_result_file="${WORKTREE_PATH:-$PWD}/.brain-result.json"
+  fi
+
   [[ -f "$normalized_result_file" && -f "$brain_result_file" ]] || return 0
   jq -e \
     --arg task_id "${CECELIA_TASK_ID:-}" \

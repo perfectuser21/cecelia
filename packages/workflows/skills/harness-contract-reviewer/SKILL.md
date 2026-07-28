@@ -10,7 +10,7 @@ version: 9.7.0
 created: 2026-04-08
 updated: 2026-07-28
 changelog:
-  - 9.7.0: Kernel raw result channel — reviewer 最终 claimed verdict/rubric/feedback 统一经 runner-owned raw-result-writer；managed 模式不直接打开 BRAIN_RESULT_FILE，legacy 仍落 /workspace/.brain-result.json；判定点回读通过重跑唯一 writer 更新
+  - 9.7.0: Kernel raw result channel — channel version presence 判 managed，显式 result file 统一经 runner-owned raw-result-writer；两者 unset 仍落 /workspace/.brain-result.json；判定点回读通过重跑唯一 writer 更新
   - 9.5.0: 真实链路四硬规则审查（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证，与 proposer 9.10.0 对齐）— Golden Path 覆盖审查新增第 14/15/16/17 条：(14) 设备/agent 调服务端缺「真实调用方请求 shape」段或 DoD 认证字段与生产调用方不逐字段一致 → 打回（规则A）；(15) 第三方 API 全 mock 零真调 → 打回（规则B）；(16) DoD 含 force_*/stub/假数据但无「未覆盖真实链路清单」段 → 打回（规则C）；(17) target_environment 与 ability 真实运行环境不匹配 → 第 7 维 0 分打回（规则D：微信 UI/RPA 必 windows_wechat；Android 通道未落地前真机段必登记未覆盖）；第 6 维领域验证核对清单同步补「真实调用方 shape」「第三方真调」两行
   - 9.6.0: EVA v2 审计五修 — (R1) Step 5 判定点写库后必须回读自证，judgments_written 作为必含字段写进最终 verdict JSON，登记表有行但写入 0 条 → verdict 必带 WARN（a85e0582 实证 3 行登记表全静默漏写）；(R2) Step 4 结果文件路径参数化 RESULT_FILE=${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}，headed/relay 由 controller 注入（gan-7b17211.json 实证）；(R3) Golden Path 覆盖审查新增第 18 条：e2e 脚本/manual:bash 必须 bash -n 通过 + 全角标点紧贴 $VAR 检测，命中即第 6 维低分（issue a638f840 实证）；(R4) 第 6 维口径收紧：PRD 无 HTTP 响应不自动满分，改审等价 oracle codify 与 E2E 真执行断言占比（d063b3e5 实证判例）；(R5) Step 3 明确 gan-feedback-rN.md 与 verdict feedback 字段必须简体中文（r4 全英文反馈实证违规）
   - 9.4.0: 判定点写库通电（九要素 T5 — decisions e035dad8）— Step 5 APPROVED 后新增第 2 件事：逐行解析合同「判定点登记表」写入 decisions category=judgment（账本保鲜守卫「判定点活性」指标唯一数据源）；解析跳过表头/分隔线/示例行/N-A；失败只 WARN 不阻塞结果文件
@@ -304,10 +304,11 @@ Round N, 阈值固定 7/10（不随 round 衰减）。
 
 **输出协议（v9.7.0 — managed raw result channel）**：
 
-最终输出必须通过 **Bash 工具**执行下面的唯一 writer。managed Kernel
-模式只提交 claimed JSON 给 runner-owned helper；Skill 不得自行打开
-`BRAIN_RESULT_FILE`，Brain 也不从 stdout 猜 verdict。只有变量完全 unset
-时才保留 `/workspace/.brain-result.json` legacy 落点：
+最终输出必须通过 **Bash 工具**执行下面的唯一 writer。以
+`BRAIN_RESULT_CHANNEL_VERSION` 是否存在判 managed；存在但空值/未知、或缺
+result file 均 fail closed。channel version unset 但 `BRAIN_RESULT_FILE`
+存在时保留 headed/relay override 并经中央 helper 原子写；两者都 unset 才回退
+`/workspace/.brain-result.json`：
 
 ⚠️ **关键：必须在 Claude Code 的 Bash 工具中执行以下命令，不能只在文本里描述它**
 
@@ -320,7 +321,7 @@ RAW_RESULT_JSON=$(jq -cn \
   --arg feedback "${FEEDBACK:-}" \
   '{verdict:$verdict,rubric_scores:$rubric_scores,
     judgments_written:$judgments_written,feedback:$feedback}')
-if [ "${BRAIN_RESULT_FILE+x}" = x ]; then
+if [ "${BRAIN_RESULT_CHANNEL_VERSION+x}" = x ] || [ "${BRAIN_RESULT_FILE+x}" = x ]; then
   printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
 else
   printf '%s\n' "$RAW_RESULT_JSON" > /workspace/.brain-result.json

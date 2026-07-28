@@ -35,6 +35,12 @@
 - 回退：`bash scripts/brain-rollback.sh 1.267.98`；或将 Run 保持/恢复为
   `commander_mode=kernel-only` 立即旁路 Commander。
 
+## Reviewer zero-judgment contract
+
+- Reviewer `APPROVED` 在合同没有判定点时允许 `judgments_written=0`。
+- raw claimed 与 verifier 回读值仍必须完全一致，且两侧继续受 `0..10000`
+  整数边界约束；`REVISION` 仍只能为 0。
+
 ## Provider-neutral Harness Commander Phase 1
 
 - `initiative_runs.commander_mode` 默认保持 `kernel-only`；只有未来显式选择

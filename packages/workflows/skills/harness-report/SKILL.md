@@ -10,7 +10,7 @@ version: 6.9.0
 created: 2026-04-08
 updated: 2026-07-28
 changelog:
-  - 6.9.0: Kernel raw result channel — reporter 六字段 claimed JSON 统一经 runner-owned raw-result-writer；managed 模式禁 Skill 直写 BRAIN_RESULT_FILE，unset 时保留 git 根目录 .brain-result.json legacy 落点
+  - 6.9.0: Kernel raw result channel — channel version presence 判 managed，显式 result file 的六字段 claimed JSON 经 runner-owned writer；Phase B 后重算 concern/verdict 并覆写；channel/file 均 unset 保留 git 根 .brain-result.json
   - 6.7.0: 翻牌义务（handoff 0714 刀3 — 台账只点火时写、交付后不翻牌根治）— Phase B 新增三件强制动作：(1) Feature 翻牌：本 sprint 推进的 journey_features 按 evaluator verdict 翻 status（PASS+merged→done / 真机段未验→working+logic-done-pending 备注 / 部分交付→working），禁止交付后仍留 planned；(2) Journey 回写：journey step 状态回写 + journeys.updated_at 刷新；description 与最新 decisions 冲突 → 标待人工确认并开 issue，不静默改写不静默跳过；(3) smoke 一致性核对：journey.e2e_test_path 指向的脚本是否还测现行方案（对照 decisions 近期废弃决策），测已废弃方案 → 开 issue。完成标志追加「翻牌清单」输出。实证：Path2/Path4 journeys.updated_at 停在 05-22、飞书版定义与 07-07 决策打架 46 天、「内容判定门槛」planned 而现实已合并 11 个 PR
   - 6.8.0: EVA v2 四修（背景：a85e0582 全通 run 里 harness-report.md/learning.md/notes 全是 Brain 侧 harness-report.mjs 降级脚本产的英文 Placeholder，本 skill 被架空；mjs 侧修复另立案，本条先修 skill 侧可自防部分）— (a) RP4 占位符守卫指纹扩大：Step 8c 与出口核验各加英文指纹 `grep -qi "placeholder"`（英文 "## Insights (Placeholder)" 字面逃逸中文守卫实证）；(b) RP5 .brain-result.json 落点参数化：BRAIN_RESULT_FILE 优先、默认 git 仓库根，headed mac 无 /workspace 场景出口协议不再无落地痕迹；(c) RP-learn 出口核验追加 learnings 表落库计数（全通 run learnings 表 0 条实证）；(d) RP6 新增「Phase B 核验」小节：journey_features/notes 各查一条本 sprint 记录，查不到记 concern；(e) 触发条件段声明与 mjs 降级脚本共存关系（以本 skill 产物为准 + 必留痕迹供区分来源）
   - 6.6.0: a638f840 两修——(a) TOTAL_COST fallback 端点修正为 /api/brain/orchestrator/relay-runs?task_id=（旧 URL 缺 orchestrator 前缀 Cannot GET，fallback 链空环；brain 1.259.0 起支持 task_id 过滤）；(b) Step 1 回写加降级链：status+result 被拒（老 brain 的 completed 409 / task 卡异常态）→ 纯 result 补写（brain 1.259.0 起合法）→ 仍失败才落 .report-concerns，pr_url/cost 不再静默丢失
@@ -730,24 +730,32 @@ LEARN_N=$(curl -s "localhost:5221/api/brain/learnings?task_id=$TASK_ID" 2>/dev/n
 if [ -n "$CONCERNS" ]; then VERDICT="DONE_WITH_CONCERNS"; else VERDICT="DONE"; fi
 
 # report-result-writer:start
-RAW_RESULT_JSON=$(jq -cn \
-  --arg verdict "${REPORT_VERDICT:-$VERDICT}" \
-  --arg task_id "$TASK_ID" \
-  --arg report_path "${SPRINT_DIR}/harness-report.md" \
-  --arg pr_url "$PR_URL" \
-  --argjson screenshots "${SCREENSHOTS_JSON:-${SCREENSHOTS:-[]}}" \
-  --arg concerns "${CONCERNS:-}" \
-  '{verdict:$verdict,task_id:$task_id,report_path:$report_path,
-    pr_url:$pr_url,screenshots:$screenshots,concerns:$concerns}')
-if [ "${BRAIN_RESULT_FILE+x}" = x ]; then
-  printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
-else
-  LEGACY_RESULT_FILE="$(git rev-parse --show-toplevel 2>/dev/null || echo /workspace)/.brain-result.json"
-  printf '%s\n' "$RAW_RESULT_JSON" > "$LEGACY_RESULT_FILE"
-fi
+write_report_result() {
+  RAW_RESULT_JSON=$(jq -cn \
+    --arg verdict "${REPORT_VERDICT:-$VERDICT}" \
+    --arg task_id "$TASK_ID" \
+    --arg report_path "${SPRINT_DIR}/harness-report.md" \
+    --arg pr_url "$PR_URL" \
+    --argjson screenshots "${SCREENSHOTS_JSON:-${SCREENSHOTS:-[]}}" \
+    --arg concerns "${CONCERNS:-}" \
+    '{verdict:$verdict,task_id:$task_id,report_path:$report_path,
+      pr_url:$pr_url,screenshots:$screenshots,concerns:$concerns}')
+  if [ "${BRAIN_RESULT_CHANNEL_VERSION+x}" = x ] || [ "${BRAIN_RESULT_FILE+x}" = x ]; then
+    printf '%s' "$RAW_RESULT_JSON" | node /usr/local/bin/raw-result-writer.cjs
+  else
+    LEGACY_RESULT_FILE="$(git rev-parse --show-toplevel 2>/dev/null || echo /workspace)/.brain-result.json"
+    printf '%s\n' "$RAW_RESULT_JSON" > "$LEGACY_RESULT_FILE"
+  fi
+}
+write_report_result
 # report-result-writer:end
 echo "[harness-report Phase A] 交付完成，verdict=${REPORT_VERDICT:-$VERDICT}${CONCERNS:+，concerns: $CONCERNS}"
 ```
+
+`BRAIN_RESULT_CHANNEL_VERSION` 存在时是 managed Kernel；空值/未知值或缺
+result file 必须 fail closed。channel version unset 但 `BRAIN_RESULT_FILE`
+存在时是 headed/relay override，仍经中央 helper；两者都 unset 才使用 git 根
+目录的角色 fallback。
 
 > **给调用方（controller / Brain）的约定**：`DONE_WITH_CONCERNS` ≠ 失败，PR 已合并、流程可收尾，但表示交付报告不完整——controller 应把 concerns 原样写入台账，最终报告必须列明，不得折叠成 DONE。非关键步（Notion/飞书）失败同样要出现在最终报告的列明清单里。
 
@@ -788,7 +796,7 @@ Phase B 调用 db-update 时，以下三件事是**强制动作**（属关键步
 
 ### Phase B 核验（EVA v2）
 
-Phase B 跑完后**事后查实际产物**（与 Phase A 出口核验同风格，不信任 db-update 的过程输出）：journey_features 与 notes 各查一条本 sprint 记录，任一查不到 → 追加 concern。Phase A 出口 verdict 已发出，本节 concerns 追加进 `${SPRINT_DIR}/.report-concerns`，由 controller 台账与最终报告照常汇总（出口三态规约不变）。
+Phase B 跑完后**事后查实际产物**（与 Phase A 出口核验同风格，不信任 db-update 的过程输出）：journey_features 与 notes 各查一条本 sprint 记录，任一查不到 → 追加 concern。核验结束必须重新汇总全部 concern、重算 verdict，并调用 Phase A 定义的唯一 writer 覆写结果；禁止让 Phase A 的早期 DONE 吞掉 Phase B 失败。
 
 ```bash
 # journey_features：本 sprint 推进的 feature 应真实存在（FEATURE_ID 为空 = 无从核验，同样记 concern）
@@ -807,6 +815,23 @@ if [ "$NOTES_OK" -eq 0 ] && command -v psql >/dev/null 2>&1 && [ -n "${DATABASE_
   [ "${NOTE_N:-0}" -ge 1 ] && NOTES_OK=1
 fi
 [ "$NOTES_OK" -eq 1 ] || echo "CONCERN: PhaseB:notes无本 sprint 记录" >> "${SPRINT_DIR}/.report-concerns"
+
+# Phase B 结束后从当前真实证据完整重算，不能沿用 Phase A 的内存字符串。
+CONCERNS=""
+TASK_RESULT=$(curl -s "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null | jq -r '.result // empty' 2>/dev/null)
+[ -z "$TASK_RESULT" ]                       && CONCERNS="${CONCERNS}Step1:task.result未回写;"
+[ ! -f "${SPRINT_DIR}/harness-report.md" ]  && CONCERNS="${CONCERNS}Step6:harness-report.md缺失;"
+[ ! -f "${SPRINT_DIR}/learning.md" ]        && CONCERNS="${CONCERNS}Step8:learning.md缺失;"
+grep -q "（无 / 填写" "${SPRINT_DIR}/learning.md" 2>/dev/null && CONCERNS="${CONCERNS}Step8:learning.md含占位符;"
+grep -qi "placeholder" "${SPRINT_DIR}/learning.md" 2>/dev/null && CONCERNS="${CONCERNS}Step8:learning.md含英文placeholder;"
+LEARN_N=$(curl -s "localhost:5221/api/brain/learnings?task_id=$TASK_ID" 2>/dev/null \
+  | jq 'if type=="array" then length else ((.learnings // .results // []) | length) end' 2>/dev/null || echo 0)
+[ "${LEARN_N:-0}" -ge 1 ] || CONCERNS="${CONCERNS}Step8e:learnings表零落地;"
+[ -f "${SPRINT_DIR}/.report-concerns" ] && CONCERNS="${CONCERNS}$(tr '\n' ';' < "${SPRINT_DIR}/.report-concerns")"
+if [ -n "$CONCERNS" ]; then VERDICT="DONE_WITH_CONCERNS"; else VERDICT="DONE"; fi
+REPORT_VERDICT="$VERDICT"
+export REPORT_VERDICT
+write_report_result
 
 echo "[harness-report Phase B 核验] journey_features=$JF_OK notes=$NOTES_OK（0 项已记 .report-concerns）"
 ```

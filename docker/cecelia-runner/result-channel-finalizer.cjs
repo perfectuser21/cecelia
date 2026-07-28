@@ -452,10 +452,6 @@ function validateReviewer(raw, verified) {
   if (raw.verdict === 'REVISION' && raw.judgments_written !== 0) {
     invalid('REVISION judgments_written must equal 0');
   }
-  if (raw.verdict === 'APPROVED' && raw.judgments_written < 1) {
-    invalid('APPROVED judgments_written must be positive');
-  }
-
   exactObject(
     verified,
     ['contract_sha', 'verdict', 'rubric_scores', 'judgments_written'],
@@ -466,9 +462,6 @@ function validateReviewer(raw, verified) {
   enumeration(verified.verdict, ['APPROVED', 'REVISION'], 'verifierEnvelope.verdict');
   validateRubric(verified.rubric_scores, 'verifierEnvelope.rubric_scores');
   integer(verified.judgments_written, 'verifierEnvelope.judgments_written', { max: 10000 });
-  if (verified.verdict === 'APPROVED' && verified.judgments_written < 1) {
-    invalid('APPROVED judgments_written must be positive');
-  }
   if (verified.verdict !== raw.verdict) invalid('verdict mismatch');
   sameValue(verified.rubric_scores, raw.rubric_scores, 'rubric_scores');
   if (verified.judgments_written !== raw.judgments_written) invalid('judgments_written mismatch');
