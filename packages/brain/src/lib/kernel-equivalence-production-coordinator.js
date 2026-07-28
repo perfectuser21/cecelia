@@ -654,11 +654,12 @@ export function createPostgresKernelEquivalenceCoordinator({
     const validIssuedGrantRef = GRANT_REF_PATTERN.test(
       issued?.grant_ref ?? '',
     );
+    const issuedExpiresAt = timestamp(issued?.expires_at);
     if (
       !validIssuedGrantRef
-      || timestamp(issued.expires_at) == null
-      || timestamp(issued.expires_at) <= issueObservedAt
-      || timestamp(issued.expires_at) > authorityExpiresAt
+      || issuedExpiresAt == null
+      || issuedExpiresAt <= issueObservedAt
+      || issuedExpiresAt > authorityExpiresAt
     ) {
       await appendRequiredEvent(pool, {
         randomUUID,
@@ -666,8 +667,12 @@ export function createPostgresKernelEquivalenceCoordinator({
         generation: 2,
         controllerInstanceId,
         state: 'settlement_unknown',
-        grantRef: undefined,
-        grantExpiresAt: undefined,
+        grantRef: validIssuedGrantRef
+          ? issued.grant_ref
+          : undefined,
+        grantExpiresAt: issuedExpiresAt == null
+          ? undefined
+          : issued.expires_at,
         code: validIssuedGrantRef
           ? 'grant_revoke_unconfirmed'
           : 'grant_issue_invalid_unresolved',

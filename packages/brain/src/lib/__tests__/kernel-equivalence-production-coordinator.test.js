@@ -706,7 +706,47 @@ describe('production Kernel equivalence coordinator', () => {
     );
   });
 
-  it('persists a terminal denial when the protected issuer returns malformed metadata', async () => {
+  it.each([
+    {
+      label: 'unresolved grant identity',
+      issued: {
+        grant_ref: 'not-an-opaque-grant',
+        expires_at: null,
+      },
+      expectedCode: 'grant_issue_invalid_unresolved',
+      expectedGrantExpiresAt: null,
+      expectedGrantRef: null,
+    },
+    {
+      label: 'known grant identity with invalid expiry',
+      issued: {
+        grant_ref:
+          'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+        expires_at: 'not-a-timestamp',
+      },
+      expectedCode: 'grant_revoke_unconfirmed',
+      expectedGrantExpiresAt: null,
+      expectedGrantRef:
+        'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+    },
+    {
+      label: 'known grant identity with out-of-authority expiry',
+      issued: {
+        grant_ref:
+          'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+        expires_at: '2026-07-29T00:01:00.000Z',
+      },
+      expectedCode: 'grant_revoke_unconfirmed',
+      expectedGrantExpiresAt: '2026-07-29T00:01:00.000Z',
+      expectedGrantRef:
+        'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+    },
+  ])('persists $label from malformed issuer metadata', async ({
+    issued,
+    expectedCode,
+    expectedGrantExpiresAt,
+    expectedGrantRef,
+  }) => {
     const caseId = '22222222-2222-4222-8222-222222222222';
     const runId = '33333333-3333-4333-8333-333333333333';
     const attemptId = '44444444-4444-4444-8444-444444444444';
@@ -776,10 +816,7 @@ describe('production Kernel equivalence coordinator', () => {
         };
       },
     };
-    const issueProtectedGrant = vi.fn(async () => ({
-      grant_ref: 'not-an-opaque-grant',
-      expires_at: null,
-    }));
+    const issueProtectedGrant = vi.fn(async () => issued);
     const malformedIssuer = Object.freeze({
       ...grantIssuer(),
       issueProtectedGrant,
@@ -802,9 +839,11 @@ describe('production Kernel equivalence coordinator', () => {
       expect.objectContaining({ ttl_seconds: 30 }),
     );
     expect(statements.at(-1).values[4]).toBe('settlement_unknown');
-    expect(statements.at(-1).values[8]).toBe(
-      'grant_issue_invalid_unresolved',
+    expect(statements.at(-1).values[5]).toBe(expectedGrantRef);
+    expect(statements.at(-1).values[6]).toBe(
+      expectedGrantExpiresAt,
     );
+    expect(statements.at(-1).values[8]).toBe(expectedCode);
     expect(statements.at(-1).values[9]).toBe(true);
   });
 
