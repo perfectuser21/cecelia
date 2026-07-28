@@ -104,6 +104,19 @@ function attemptExpectedOutput(attempt) {
   }
 }
 
+function attemptCommanderCursor(attempt) {
+  const value = attempt?.task_bundle;
+  const bundle = typeof value === 'string' ? (() => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  })() : value;
+  const cursor = bundle?.inputs?.commander_bundle?.event_cursor;
+  return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : undefined;
+}
+
 function normalizeVerdict(role, outcome) {
   const value = String(outcome ?? '').trim().toUpperCase();
   if (role === 'reviewer') {
@@ -368,6 +381,11 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
       req.body,
       attempt.role,
       attemptExpectedOutput(attempt),
+      {
+        runId: attempt.run_id,
+        attemptId,
+        eventCursor: attemptCommanderCursor(attempt),
+      },
     );
     if (result.attempt_id !== attemptId) {
       throw new Error(`attempt_id mismatch: body=${result.attempt_id} path=${attemptId}`);

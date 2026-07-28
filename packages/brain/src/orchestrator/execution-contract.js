@@ -172,6 +172,12 @@ export function parseHarnessResult(
       throw new Error('commander_directive_run_id_mismatch');
     }
     if (
+      expectedIdentity.eventCursor !== undefined
+      && directive.event_cursor !== expectedIdentity.eventCursor
+    ) {
+      throw new Error('commander_directive_event_cursor_mismatch');
+    }
+    if (
       classified.artifacts.length !== 0
       || classified.checks.length !== 0
       || classified.error !== null
