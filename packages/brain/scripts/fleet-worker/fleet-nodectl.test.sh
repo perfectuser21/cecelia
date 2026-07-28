@@ -232,8 +232,22 @@ console.log(JSON.stringify({
   drain: { active: false },
 }));
 NODE
-run_nodectl admit us-mac-m4 >/dev/null \
+pinned_node_log="$test_root/pinned-node.log"
+real_node="$(command -v node)"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "pinned-node\n" >> "${FLEET_NODECTL_TEST_PINNED_NODE_LOG:?}"' \
+  'exec "${FLEET_NODECTL_TEST_REAL_NODE:?}" "$@"' \
+  > "$test_root/pinned-node"
+chmod +x "$test_root/pinned-node"
+FLEET_NODECTL_PINNED_NODE="$test_root/pinned-node" \
+  FLEET_NODECTL_PATH_NODE='' \
+  FLEET_NODECTL_TEST_PINNED_NODE_LOG="$pinned_node_log" \
+  FLEET_NODECTL_TEST_REAL_NODE="$real_node" \
+  run_nodectl admit us-mac-m4 >/dev/null \
   || fail "admit rejected a valid Brain-evaluated base-admission report"
+grep -Fxq 'pinned-node' "$pinned_node_log" \
+  || fail "admit did not prefer the pinned Node executable"
 cp "$health" "$test_root/valid-health.json"
 
 HEALTH_FILE="$health" node --input-type=module > "$test_root/drift-health.json" <<'NODE'
