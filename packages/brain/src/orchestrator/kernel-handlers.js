@@ -16,6 +16,14 @@ function evaluatorBrainResult(result) {
   };
 }
 
+function isVerifiedReleaseReceipt(receipt) {
+  return receipt?.status === 'DONE'
+    && receipt?.release_state === 'production_verified'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(receipt?.release_run_id ?? '')
+    && /^[0-9a-f]{40}$/i.test(receipt?.merge_sha ?? '');
+}
+
 async function appendJudgeVerdict(
   pool,
   ctx,
@@ -178,6 +186,20 @@ export function createKernelHandlers(deps) {
     },
 
     async report(ctx) {
+      if (typeof deps.releaseEffect !== 'function') {
+        return { status: 'BLOCKED', detail: 'ReleaseRun authority unavailable' };
+      }
+      const releaseReceipt = await deps.releaseEffect({
+        runId: ctx.runId,
+        taskId: ctx.taskId,
+      });
+      if (!isVerifiedReleaseReceipt(releaseReceipt)) {
+        return {
+          status: 'BLOCKED',
+          detail: releaseReceipt?.detail ?? 'production_verified ReleaseRun receipt required',
+        };
+      }
+
       const { observed } = ctx;
       const payload = observed.task?.payload ?? {};
       await deps.promote(ctx.taskId, { merged: true, pr_url: observed.pr?.url }, observed.pr?.url, deps.pool);
@@ -197,15 +219,6 @@ export function createKernelHandlers(deps) {
       });
       await deps.saveHandoff({ pool: deps.pool }, handoff);
       await deps.syncOkr(deps.pool, ctx.taskId, 'done');
-      await deps.spawnStaging({
-        pr_url: observed.pr?.url,
-        pr_branch: payload.pr_branch,
-        sub_task_id: ctx.taskId,
-        initiative_id: observed.run?.initiative_id,
-        journey_id: payload.journey_id,
-        base_repo: payload.base_repo,
-        project_id: payload.project_id,
-      });
       await deps.cleanup(ctx.runId);
 
       const client = await deps.pool.connect();
@@ -235,4 +248,4 @@ export function createKernelHandlers(deps) {
   });
 }
 
-export const __test__ = { prNumber, appendJudgeVerdict };
+export const __test__ = { prNumber, appendJudgeVerdict, isVerifiedReleaseReceipt };

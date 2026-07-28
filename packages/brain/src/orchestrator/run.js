@@ -35,6 +35,8 @@ import { createKernelHandlers } from './kernel-handlers.js';
 import { createGitHubMergeAdapter } from './github-merge-adapter.js';
 import { createMergeEffectExecutor } from './merge-effect-executor.js';
 import { createPostgresMergeEffectStore } from './merge-effect-store.js';
+import { createReleaseRunExecutor } from './release-run-executor.js';
+import { createPostgresReleaseRunStore } from './release-run-store.js';
 import { readGitArtifact } from './git-artifact-reader.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
@@ -72,6 +74,12 @@ export async function buildDefaultHandlers({
   attemptStore,
   judgeGate,
   mergeEffect,
+  releaseEffect,
+  resolveArtifactVersions,
+  observeStaging,
+  runStaging,
+  observeProduction,
+  runProduction,
   githubExecFile,
 }) {
   const [
@@ -96,24 +104,6 @@ export async function buildDefaultHandlers({
     import('../docker-executor.js'),
   ]);
 
-  const spawnStaging = async (payload) => {
-    if (!payload.pr_url) return { created: false, reason: 'missing_pr_url' };
-    const result = await pool.query(
-      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       SELECT $1, $2, 'staging_e2e', 'queued', 'P2', $3::jsonb
-       WHERE NOT EXISTS (
-         SELECT 1 FROM tasks WHERE task_type='staging_e2e' AND payload->>'pr_url'=$4
-       )`,
-      [
-        `[Staging E2E] ${payload.pr_branch || payload.pr_url}`,
-        `Kernel post-merge staging verification for ${payload.pr_url}`,
-        JSON.stringify(payload),
-        payload.pr_url,
-      ],
-    );
-    return { created: result.rowCount > 0 };
-  };
-
   let resolvedMergeEffect = mergeEffect;
   if (!resolvedMergeEffect) {
     const execFile = githubExecFile
@@ -130,10 +120,20 @@ export async function buildDefaultHandlers({
     });
   }
 
+  const resolvedReleaseEffect = releaseEffect ?? createReleaseRunExecutor({
+    store: createPostgresReleaseRunStore(pool),
+    resolveArtifactVersions,
+    observeStaging,
+    runStaging,
+    observeProduction,
+    runProduction,
+  });
+
   return createKernelHandlers({
     pool,
     attemptStore,
     mergeEffect: resolvedMergeEffect,
+    releaseEffect: resolvedReleaseEffect,
     promptDir: dockerExecutor.getHostPromptDir(),
     judgeGate: judgeGate ?? judge.runJudgeGate,
     allocatePort: previewManager.allocatePort,
@@ -143,7 +143,6 @@ export async function buildDefaultHandlers({
     buildHandoff: handoff.buildHandoff,
     saveHandoff: handoff.saveHandoff,
     syncOkr: okr.syncOkrInitiativeStatus,
-    spawnStaging,
     cleanup: cleanup.killInitiativeContainers,
   });
 }
