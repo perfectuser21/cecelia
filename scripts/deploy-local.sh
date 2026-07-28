@@ -305,6 +305,62 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         echo "  [dry-run] bash $SELFCHECK $STAGING_DIST $STAGING_SLOT_PORT"
         echo "  [dry-run] 起常驻 staging :$STAGING_SLOT_PORT + 写 ${PENDING_FILE}（不自动 promote）"
     else
+        stop_previous_staging_slot() {
+            local previous previous_port previous_pid previous_nonce previous_commit
+            local identity
+            [[ -f "$SLOT_PID_FILE" ]] || return 0
+            [[ -f "$PENDING_FILE" ]] || {
+                echo "❌ stale staging pidfile lacks verifiable slot identity; refusing PID kill" >&2
+                exit 78
+            }
+            previous=$(RELEASE_DASHBOARD_ACTION=read-slot \
+              RELEASE_DASHBOARD_PENDING_FILE="$PENDING_FILE" \
+              node "$SOURCE_SCRIPTS/lib/release-run-dashboard-stage-seal.mjs") || {
+                echo "❌ prior staging slot identity invalid; refusing PID kill" >&2
+                exit 78
+            }
+            IFS=$'\t' read -r previous_port previous_pid previous_nonce \
+              previous_commit <<< "$previous"
+            [[ "$(cat "$SLOT_PID_FILE" 2>/dev/null)" == "$previous_pid" ]] || {
+                echo "❌ prior staging pidfile mismatch; refusing PID kill" >&2
+                exit 78
+            }
+            identity=$(curl -sf --max-time 2 \
+              -H "X-Cecelia-Slot-Nonce: ${previous_nonce}" \
+              -H "X-Cecelia-Slot-Commit: ${previous_commit}" \
+              "http://127.0.0.1:${previous_port}/.cecelia-staging-identity" \
+              2>/dev/null) || {
+                echo "❌ prior staging slot cannot prove identity; refusing PID kill" >&2
+                exit 78
+            }
+            STAGING_IDENTITY_JSON="$identity" \
+              EXPECTED_STAGING_PID="$previous_pid" \
+              EXPECTED_STAGING_NONCE="$previous_nonce" \
+              EXPECTED_STAGING_COMMIT="$previous_commit" \
+              node -e '
+                const value = JSON.parse(process.env.STAGING_IDENTITY_JSON);
+                if (
+                  String(value.pid) !== process.env.EXPECTED_STAGING_PID
+                  || value.nonce !== process.env.EXPECTED_STAGING_NONCE
+                  || value.commit !== process.env.EXPECTED_STAGING_COMMIT
+                ) process.exit(1);
+              ' >/dev/null 2>&1 || {
+                echo "❌ prior staging slot identity mismatch; refusing PID kill" >&2
+                exit 78
+            }
+            curl -sf --max-time 2 -X POST \
+              -H "X-Cecelia-Slot-Nonce: ${previous_nonce}" \
+              -H "X-Cecelia-Slot-Commit: ${previous_commit}" \
+              "http://127.0.0.1:${previous_port}/.cecelia-staging-shutdown" \
+              -o /dev/null || {
+                echo "❌ prior staging slot refused owned shutdown" >&2
+                exit 78
+            }
+            rm -f "$SLOT_PID_FILE" "$PENDING_FILE"
+        }
+
+        # 旧 slot 只能用 loopback identity + nonce 请求它自行退出；任何不确定性都阻断。
+        stop_previous_staging_slot
         rm -rf "$STAGING_DIST"
         rm -f "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
         if [[ -n "${STAGING_FIXTURE_DIST:-}" ]]; then
@@ -364,12 +420,8 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         echo ""
 
         # ── 起【常驻】staging 服务（perfect21:52xx 私密预览，绑 0.0.0.0 对外像 5211）──
-        # 杀掉上一轮常驻 staging（若有），再起新的。
+        # 上一轮 slot 已在构建前完成自证关闭；这里仅启动本轮。
         # STAGING_BANNER=1：注入"待放行横幅 + 放行按钮"；commit 显示在横幅上。
-        if [[ -f "$SLOT_PID_FILE" ]]; then
-            kill "$(cat "$SLOT_PID_FILE" 2>/dev/null)" 2>/dev/null || true
-            rm -f "$SLOT_PID_FILE"
-        fi
         STAGE_COMMIT="${KERNEL_RELEASE_MERGE_SHA:-}"
         [[ "$STAGE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
             echo "❌ exact staging commit unavailable" >&2

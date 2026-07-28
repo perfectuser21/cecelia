@@ -111,6 +111,8 @@ const server = http.createServer((req, res) => {
   if (reqPath === '/.cecelia-staging-identity') {
     if (
       !BANNER_ON
+      || req.headers['x-cecelia-slot-nonce'] !== STAGING_SLOT_NONCE
+      || req.headers['x-cecelia-slot-commit'] !== STAGING_COMMIT
       || !/^[0-9a-f]{40}$/.test(STAGING_COMMIT)
       || !/^[0-9a-f]{64}$/.test(STAGING_SLOT_NONCE)
     ) {
@@ -127,6 +129,26 @@ const server = http.createServer((req, res) => {
       nonce: STAGING_SLOT_NONCE,
       commit: STAGING_COMMIT,
     }));
+    return;
+  }
+  if (reqPath === '/.cecelia-staging-shutdown' && req.method === 'POST') {
+    if (
+      req.headers['x-cecelia-slot-nonce'] !== STAGING_SLOT_NONCE
+      || req.headers['x-cecelia-slot-commit'] !== STAGING_COMMIT
+      || !/^[0-9a-f]{64}$/.test(STAGING_SLOT_NONCE)
+      || !/^[0-9a-f]{40}$/.test(STAGING_COMMIT)
+    ) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('forbidden');
+      return;
+    }
+    res.writeHead(202, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+    res.end(JSON.stringify({ accepted: true, pid: process.pid }), () => {
+      server.close(() => process.exit(0));
+    });
     return;
   }
 

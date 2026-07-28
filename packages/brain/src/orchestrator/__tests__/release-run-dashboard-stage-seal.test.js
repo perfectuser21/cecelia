@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -21,6 +22,10 @@ import { digestTree } from '../../../../../scripts/lib/release-run-tree-digest.m
 const promoteScript = resolve(
   import.meta.dirname,
   '../../../../../scripts/promote-dashboard.sh',
+);
+const slotServer = resolve(
+  import.meta.dirname,
+  '../../../../../scripts/dashboard-slot-server.cjs',
 );
 const roots = [];
 const childProcesses = [];
@@ -271,18 +276,14 @@ describe('sealed Dashboard staging identity', () => {
     expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
   });
 
-  it('rejects an arbitrary retained release and never kills an unverified reused PID', () => {
+  it('rejects even an exact retained release and never kills an unverified reused PID', () => {
     const fixture = makeFixture();
     const retained = join(
       fixture.dashboard,
       '.dist-releases/prod-cecelia-v9',
     );
-    mkdirSync(retained, { recursive: true });
-    writeFileSync(join(retained, 'index.html'), '<h1>wrong retained</h1>\n');
-    writeFileSync(
-      join(retained, 'build-info.json'),
-      JSON.stringify({ git_sha: previousSha }),
-    );
+    mkdirSync(join(fixture.dashboard, '.dist-releases'), { recursive: true });
+    cpSync(fixture.staging, retained, { recursive: true });
     const unrelated = spawn(process.execPath, [
       '-e',
       'setInterval(() => {}, 1000)',
@@ -317,5 +318,82 @@ describe('sealed Dashboard staging identity', () => {
       .toContain(previousSha);
     expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
     unrelated.kill('SIGTERM');
+  });
+
+  it('lets only the exact slot identity ask the slot to stop itself', async () => {
+    const fixture = makeFixture();
+    const { createServer } = await import('node:net');
+    const port = await new Promise((resolvePort, reject) => {
+      const probe = createServer();
+      probe.once('error', reject);
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address();
+        probe.close(() => resolvePort(address.port));
+      });
+    });
+    const nonce = '2'.repeat(64);
+    const child = spawn(process.execPath, [slotServer], {
+      env: {
+        ...process.env,
+        DIST_DIR: fixture.staging,
+        SLOT_HOST: '127.0.0.1',
+        SLOT_PORT: String(port),
+        STAGING_BANNER: '1',
+        STAGING_COMMIT: mergeSha,
+        STAGING_SLOT_NONCE: nonce,
+      },
+      stdio: 'ignore',
+    });
+    childProcesses.push(child);
+    let identity;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:${port}/.cecelia-staging-identity`,
+          {
+            headers: {
+              'X-Cecelia-Slot-Nonce': nonce,
+              'X-Cecelia-Slot-Commit': mergeSha,
+            },
+          },
+        );
+        if (response.ok) {
+          identity = await response.json();
+          break;
+        }
+      } catch {}
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    }
+    expect(identity).toEqual({
+      pid: child.pid,
+      nonce,
+      commit: mergeSha,
+    });
+    const denied = await fetch(
+      `http://127.0.0.1:${port}/.cecelia-staging-shutdown`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Cecelia-Slot-Nonce': '3'.repeat(64),
+          'X-Cecelia-Slot-Commit': mergeSha,
+        },
+      },
+    );
+    expect(denied.status).toBe(403);
+    expect(() => process.kill(child.pid, 0)).not.toThrow();
+    const exited = new Promise((resolveExit) => child.once('exit', resolveExit));
+    const accepted = await fetch(
+      `http://127.0.0.1:${port}/.cecelia-staging-shutdown`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Cecelia-Slot-Nonce': nonce,
+          'X-Cecelia-Slot-Commit': mergeSha,
+        },
+      },
+    );
+    expect(accepted.status).toBe(202);
+    await exited;
+    expect(() => process.kill(child.pid, 0)).toThrow();
   });
 });

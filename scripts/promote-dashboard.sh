@@ -84,13 +84,25 @@ assert_forward_dashboard_identity() {
 }
 
 stop_verified_staging_slot() {
-    local identity
+    local identity staging_slot_host
     [[ "${STAGED_PORT:-}" =~ ^[1-9][0-9]*$ \
       && "${STAGED_PID:-}" =~ ^[1-9][0-9]*$ \
       && "${STAGED_SLOT_NONCE:-}" =~ ^[0-9a-f]{64}$ \
       && "${STAGED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || return 0
+    staging_slot_host=$(BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" \
+      node -e '
+        try {
+          process.stdout.write(new URL(process.env.BRAIN_URL).hostname);
+        } catch {}
+      ')
+    [[ "$staging_slot_host" =~ ^[A-Za-z0-9.-]+$ ]] || {
+        echo "⚠️  staging slot host invalid; refusing slot shutdown"
+        return 0
+    }
     identity=$(curl -sf --max-time 2 \
-      "http://127.0.0.1:${STAGED_PORT}/.cecelia-staging-identity" \
+      -H "X-Cecelia-Slot-Nonce: ${STAGED_SLOT_NONCE}" \
+      -H "X-Cecelia-Slot-Commit: ${STAGED_COMMIT}" \
+      "http://${staging_slot_host}:${STAGED_PORT}/.cecelia-staging-identity" \
       2>/dev/null) || {
         echo "⚠️  staging slot identity unavailable; refusing PID kill"
         return 0
@@ -107,7 +119,13 @@ stop_verified_staging_slot() {
           || value.commit !== process.env.EXPECTED_STAGING_COMMIT
         ) process.exit(1);
       ' >/dev/null 2>&1; then
-        kill "$STAGED_PID" 2>/dev/null || true
+        if ! curl -sf --max-time 2 -X POST \
+          -H "X-Cecelia-Slot-Nonce: ${STAGED_SLOT_NONCE}" \
+          -H "X-Cecelia-Slot-Commit: ${STAGED_COMMIT}" \
+          "http://${staging_slot_host}:${STAGED_PORT}/.cecelia-staging-shutdown" \
+          -o /dev/null; then
+            echo "⚠️  verified staging slot refused owned shutdown"
+        fi
     else
         echo "⚠️  staging slot identity mismatch; refusing PID kill"
     fi
@@ -428,17 +446,12 @@ echo ""
 
 case "$MODE" in
     release-only)
-        do_release
+        echo "❌ Dashboard release blocked: split forward mode is not authorized" >&2
+        exit 78
         ;;
     deploy)
-        [[ -n "$DEPLOY_TAG" ]] || { echo "❌ --deploy 需要指定 <tag>"; exit 1; }
-        # Forward deploy 必须绑定本轮 sealed staging，不能任选 retained tag 冒充本轮产物。
-        [[ -f "$PENDING_FILE" ]] || {
-            echo "❌ Dashboard promotion blocked: exact staged authority unavailable" >&2
-            exit 78
-        }
-        read_staged
-        do_deploy "$DEPLOY_TAG"
+        echo "❌ Dashboard release blocked: split forward mode is not authorized" >&2
+        exit 78
         ;;
     rollback)
         [[ "$DEPLOY_TAG" =~ ^prod-cecelia-v[1-9][0-9]*$ ]] \

@@ -183,7 +183,40 @@ export function sealDashboardStage({
   }
 }
 
+export function readDashboardSlotIdentity(pendingPath) {
+  const pending = parsePending(pendingPath);
+  if (
+    !POSITIVE_INT_RE.test(pending.staging_port)
+    || Number(pending.staging_port) > 65535
+    || !POSITIVE_INT_RE.test(pending.slot_pid)
+    || !Number.isSafeInteger(Number(pending.slot_pid))
+    || !NONCE_RE.test(pending.slot_nonce)
+    || !SHA_RE.test(pending.commit)
+  ) {
+    deny('release_dashboard_slot_identity_invalid');
+  }
+  return {
+    stagingPort: pending.staging_port,
+    slotPid: pending.slot_pid,
+    slotNonce: pending.slot_nonce,
+    commit: pending.commit,
+  };
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
+  if (process.env.RELEASE_DASHBOARD_ACTION === 'read-slot') {
+    const identity = readDashboardSlotIdentity(
+      process.env.RELEASE_DASHBOARD_PENDING_FILE,
+    );
+    process.stdout.write([
+      identity.stagingPort,
+      identity.slotPid,
+      identity.slotNonce,
+      identity.commit,
+    ].join('\t'));
+    process.stdout.write('\n');
+    process.exit(0);
+  }
   const result = sealDashboardStage({
     pendingPath: process.env.RELEASE_DASHBOARD_PENDING_FILE,
     stagingRoot: process.env.RELEASE_DASHBOARD_STAGING_ROOT,
