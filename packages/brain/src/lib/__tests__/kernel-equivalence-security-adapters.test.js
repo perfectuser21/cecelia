@@ -18,13 +18,13 @@ function cell(descriptor, scenario = 'normal') {
     seam_id: descriptor.seam_id,
     adapter_id: descriptor.adapter_id,
     isolation: {
-      resource_prefix: `equivalence-drill/{run_id}/{attempt_id}/${descriptor.adapter_id}`,
+      resource_prefix: 'equivalence-drill/{run_id}/{attempt_id}/security/',
     },
   };
 }
 
 function grant(descriptor) {
-  const prefix = `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/${descriptor.adapter_id}`;
+  const prefix = `equivalence-drill/${RUN_ID}/${ATTEMPT_ID}/security/`;
   return {
     grant_id: '44444444-4444-4444-8444-444444444444',
     nonce: '55555555-5555-4555-8555-555555555555',
@@ -32,7 +32,7 @@ function grant(descriptor) {
     attempt_id: ATTEMPT_ID,
     resource_id: RESOURCE_ID,
     resource_prefix: prefix,
-    resource_ref: `${prefix}/resource`,
+    resource_ref: `${prefix}resource`,
     seam_id: descriptor.seam_id,
     adapter_id: descriptor.adapter_id,
   };
