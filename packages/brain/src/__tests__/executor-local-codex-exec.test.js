@@ -42,16 +42,44 @@ describe('executor: triggerLocalCodexExec 独立审查池', () => {
     it('使用 codex-bin exec 模式（通过 shell 脚本启动）', () => {
       // triggerLocalCodexExec 通过 bash 脚本调用 codex-bin exec
       expect(executorSrc).toContain("codex-bin");
-      expect(executorSrc).toContain("exec --skip-git-repo-check --model");
+      expect(executorSrc).toContain(
+        "exec --skip-git-repo-check --model"
+      );
     });
 
-    it('显式允许从找到的隔离 worktree 或 controller 根目录执行', () => {
+    it('只从 exact branch 对应的隔离 worktree 以 read-only 启动', () => {
       const start = executorSrc.indexOf('async function triggerLocalCodexExec(task)');
       const end = executorSrc.indexOf('\nasync function ', start + 1);
       const triggerLocalCodexExecSrc = executorSrc.slice(start, end);
 
+      expect(triggerLocalCodexExecSrc).toContain("line === `branch refs/heads/${branch}`");
+      expect(triggerLocalCodexExecSrc).toContain('--sandbox read-only');
+      expect(triggerLocalCodexExecSrc).not.toContain(
+        '--sandbox danger-full-access'
+      );
       expect(triggerLocalCodexExecSrc).toContain(
-        'exec --skip-git-repo-check --model'
+        "spawn('bash', [tmpScriptFile],"
+      );
+      expect(triggerLocalCodexExecSrc).toContain(
+        'cwd: reviewWorktreePath'
+      );
+    });
+
+    it('找不到 exact worktree 时在 spawn 前 fail-closed 并归还 slot', () => {
+      const start = executorSrc.indexOf('async function triggerLocalCodexExec(task)');
+      const end = executorSrc.indexOf('\nasync function ', start + 1);
+      const triggerLocalCodexExecSrc = executorSrc.slice(start, end);
+      const unavailable = triggerLocalCodexExecSrc.indexOf(
+        "reason: 'review_worktree_unavailable'"
+      );
+      const spawn = triggerLocalCodexExecSrc.indexOf(
+        "spawn('bash', [tmpScriptFile]"
+      );
+
+      expect(unavailable).toBeGreaterThan(-1);
+      expect(unavailable).toBeLessThan(spawn);
+      expect(triggerLocalCodexExecSrc.slice(0, spawn)).toContain(
+        'await rm(slotPath, { recursive: true, force: true })'
       );
     });
   });

@@ -51,7 +51,11 @@ describe('executor: Codex 独立审查加固', () => {
       const triggerCodexReviewSrc = executorSrc.slice(start, end);
 
       expect(triggerCodexReviewSrc).toContain(
-        "spawn(codexBin, ['exec', '--skip-git-repo-check'"
+        "spawn(codexBin, ['exec', '--skip-git-repo-check', '--sandbox', 'read-only'"
+      );
+      expect(triggerCodexReviewSrc).toContain('cwd: WORK_DIR');
+      expect(triggerCodexReviewSrc).not.toContain(
+        "'--sandbox', 'danger-full-access'"
       );
     });
 
