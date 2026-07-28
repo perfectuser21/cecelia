@@ -79,4 +79,28 @@ describe('legacy release surfaces fail closed', () => {
       expect(`${denied.stdout}${denied.stderr}`).toMatch(/ReleaseRun authority required/);
     }
   });
+
+  it('bootstrap is explicit, exact-SHA, append-only, one-time, and normally disabled', () => {
+    const script = resolve(root, 'scripts/release-run-bootstrap.sh');
+    const result = spawnSync('bash', [script], {
+      env: { PATH: process.env.PATH },
+      encoding: 'utf8',
+    });
+    expect(result.status).not.toBe(0);
+    const source = readFileSync(script, 'utf8');
+    expect(source).toContain('KERNEL_RELEASE_OWNER_APPROVED_SHA');
+    expect(source).toContain('kernel_release_bootstrap_receipts');
+    expect(source).toContain('kernel_release_bootstrap_consumptions');
+    expect(source).toMatch(/singleton BOOLEAN NOT NULL UNIQUE/);
+    expect(source).toMatch(/BEFORE UPDATE OR DELETE/g);
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_RECEIPT');
+  });
+
+  it('staging builds from an isolated exact-SHA worktree', () => {
+    const source = readFileSync(resolve(root, 'scripts/staging-deploy.sh'), 'utf8');
+    expect(source).toMatch(/worktree add --detach "\$EXACT_ROOT" "\$EXACT_SHA"/);
+    expect(source).toContain('CECELIA_STAGING_EXACT_ROOT');
+    expect(source).toMatch(/worktree remove --force/);
+    expect(source).not.toContain('release-run-checkout.sh" staging');
+  });
 });

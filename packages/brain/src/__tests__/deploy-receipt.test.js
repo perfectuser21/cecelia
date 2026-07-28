@@ -24,7 +24,21 @@ const { recordActionReceipt, resolveActionReceipt, execSyncMock } = vi.hoisted((
 }));
 vi.mock('../receipt-collector.js', () => ({ recordActionReceipt, resolveActionReceipt }));
 
-vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+vi.mock('../db.js', () => ({ default: { query: vi.fn(async (sql, params = []) => {
+  if (/INSERT INTO kernel_release_effect_dispatch_claims/.test(sql)) {
+    return { rows: [{ id: 91, generation: 1 }], rowCount: 1 };
+  }
+  if (/INSERT INTO kernel_release_effect_dispatch_outcomes/.test(sql)) {
+    return { rows: [], rowCount: 1 };
+  }
+  return { rows: [{
+    state: params[1] === 'staging' ? 'staging_running' : 'production_deploying',
+    merge_sha: 'f'.repeat(40),
+    expected_merge_sha: 'f'.repeat(40),
+    effect_kind: params[1] === 'staging' ? 'staging' : 'production',
+    idempotency_key: '55555555-5555-4555-8555-555555555555',
+  }], rowCount: 1 };
+}) } }));
 vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(), callLLMStream: vi.fn() }));
 vi.mock('../orchestrator-chat.js', () => ({ handleChat: vi.fn() }));
@@ -69,6 +83,11 @@ vi.mock('child_process', () => ({
 }));
 
 describe('deploy webhook 回执接线（T4）', () => {
+  const authority = {
+    release_run_id: '44444444-4444-4444-8444-444444444444',
+    merge_sha: 'f'.repeat(40),
+    release_authorization: '55555555-5555-4555-8555-555555555555',
+  };
   const ORIG_REPO_ROOT = process.env.REPO_ROOT;
   let app;
   let tmpRepoRoot;
@@ -111,7 +130,7 @@ describe('deploy webhook 回执接线（T4）', () => {
     const res = await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
-      .send({ changed_paths: ['packages/brain/src/x.js'] });
+      .send({ ...authority, changed_paths: ['packages/brain/src/x.js'] });
     expect(res.status).toBe(202);
     await new Promise((r) => setTimeout(r, 50));
     expect(recordActionReceipt).toHaveBeenCalledWith(
@@ -126,7 +145,7 @@ describe('deploy webhook 回执接线（T4）', () => {
   });
 
   it('production deploy close(1) → 核销 failed', async () => {
-    await request(app).post('/api/brain/deploy').set('Authorization', 'Bearer tok').send({});
+    await request(app).post('/api/brain/deploy').set('Authorization', 'Bearer tok').send(authority);
     await new Promise((r) => setTimeout(r, 50));
     expect(spawnCloseHandler).toBeTypeOf('function');
     spawnCloseHandler(1, null);
@@ -150,7 +169,7 @@ describe('deploy webhook 回执接线（T4）', () => {
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
-      .send({ mode: 'staging' });
+      .send({ ...authority, mode: 'staging' });
     await new Promise((r) => setTimeout(r, 50));
     expect(recordActionReceipt).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'deploy', target: 'staging' })
@@ -163,7 +182,7 @@ describe('deploy webhook 回执接线（T4）', () => {
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
-      .send({ mode: 'staging' });
+      .send({ ...authority, mode: 'staging' });
     await new Promise((r) => setTimeout(r, 50));
     expect(recordActionReceipt).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'deploy', target: 'staging' })
@@ -173,15 +192,15 @@ describe('deploy webhook 回执接线（T4）', () => {
     );
   });
 
-  it('staging 输出 STAGING_SKIP_REASON=no_docker → confirmed 且 evidence 含 skip_reason', async () => {
+  it('staging 输出 STAGING_SKIP_REASON=no_docker → failed 且 evidence 含 skip_reason', async () => {
     execSyncMock.mockReturnValue(Buffer.from('STAGING_SKIP_REASON=no_docker\n'));
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
-      .send({ mode: 'staging' });
+      .send({ ...authority, mode: 'staging' });
     await new Promise((r) => setTimeout(r, 50));
     expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'confirmed', expect.objectContaining({ skip_reason: 'no_docker' })
+      'r-dep', 'failed', expect.objectContaining({ skip_reason: 'no_docker' })
     );
   });
 });

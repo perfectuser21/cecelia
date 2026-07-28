@@ -21,9 +21,11 @@ function exactStatus(status, request) {
 export function createReleaseRunAdapters({
   fetchFn = globalThis.fetch,
   gitExecFile = (args) => execFileSync('git', args, { encoding: 'utf8' }),
-  readRollbackFile = () => readFileSync('.production-release', 'utf8'),
+  readBrainVersions = () => readFileSync('.brain-versions', 'utf8'),
+  readDashboardRollback = () => readFileSync('.production-release', 'utf8'),
   brainUrl = process.env.BRAIN_URL ?? 'http://localhost:5221',
   stagingUrl = process.env.BRAIN_STAGING_URL ?? 'http://localhost:5222',
+  dashboardUrl = process.env.DASHBOARD_URL ?? 'http://localhost:5211',
   deployToken = process.env.DEPLOY_TOKEN,
 } = {}) {
   const resolveArtifactVersions = async ({ merge_sha: mergeSha }) => {
@@ -31,12 +33,32 @@ export function createReleaseRunAdapters({
       'show',
       `${mergeSha}:packages/brain/package.json`,
     ]));
-    const tree = gitExecFile(['ls-tree', '-r', mergeSha]);
-    return [{
-      name: 'cecelia-source',
-      version: packageJson.version,
-      digest: sha256(tree),
-    }];
+    const paths = gitExecFile(['diff-tree', '--no-commit-id', '--name-only', '-r', `${mergeSha}^`, mergeSha])
+      .trim().split('\n').filter(Boolean);
+    const artifacts = [];
+    if (paths.some((path) => path.startsWith('packages/brain/')
+      || ['DEFINITION.md', '.brain-versions'].includes(path))) {
+      artifacts.push({
+        name: 'brain',
+        version: packageJson.version,
+        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha, 'packages/brain'])),
+      });
+    }
+    if (paths.some((path) => path.startsWith('apps/dashboard/'))) {
+      artifacts.push({
+        name: 'dashboard',
+        version: mergeSha.slice(0, 12),
+        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha, 'apps/dashboard'])),
+      });
+    }
+    if (artifacts.length === 0) {
+      artifacts.push({
+        name: 'release-contract',
+        version: packageJson.version,
+        digest: sha256(gitExecFile(['ls-tree', '-r', mergeSha])),
+      });
+    }
+    return artifacts;
   };
 
   const run = (staging) => async (request) => {
@@ -53,7 +75,11 @@ export function createReleaseRunAdapters({
         merge_sha: request.merge_sha,
         release_authorization: request.idempotency_key,
         artifact_versions: request.artifact_versions,
-        changed_paths: ['packages/brain/', 'apps/dashboard/'],
+        changed_paths: request.artifact_versions.flatMap((artifact) => ({
+          brain: ['packages/brain/'],
+          dashboard: ['apps/dashboard/'],
+          'release-contract': ['DEFINITION.md'],
+        })[artifact.name] ?? []),
       }),
     });
   };
@@ -65,7 +91,10 @@ export function createReleaseRunAdapters({
       return { status: status.status ?? 'unknown' };
     }
     const health = await json(fetchFn, `${stagingUrl}/api/brain/health`);
-    if (health.git_sha !== request.merge_sha) return { status: 'fail' };
+    const brain = request.artifact_versions.find((item) => item.name === 'brain');
+    if (brain && (health.git_sha !== request.merge_sha
+      || health.status !== 'healthy'
+      || health.version !== brain.version)) return { status: 'fail' };
     return {
       status: 'pass',
       merge_sha: health.git_sha,
@@ -83,20 +112,35 @@ export function createReleaseRunAdapters({
       json(fetchFn, `${brainUrl}/api/brain/health`),
       json(fetchFn, `${brainUrl}/api/brain/status/full`),
     ]);
-    if (
-      health.git_sha !== request.merge_sha
-      || health.ok !== true
-      || full == null
-      || full.error != null
-    ) {
+    const brain = request.artifact_versions.find((item) => item.name === 'brain');
+    const dashboard = request.artifact_versions.find((item) => item.name === 'dashboard');
+    if (brain && (health.git_sha !== request.merge_sha
+      || health.status !== 'healthy'
+      || health.version !== brain.version)) {
       return { status: 'fail' };
     }
-    const rollback = Object.fromEntries(
-      readRollbackFile().split('\n')
-        .filter((line) => line.includes('='))
-        .map((line) => line.split('=', 2)),
-    );
-    if (!rollback.current || !rollback.history) return { status: 'fail' };
+    if (full == null || full.error != null) return { status: 'fail' };
+    if (dashboard) {
+      const build = await json(fetchFn, `${dashboardUrl}/build-info.json`);
+      if (build.git_sha !== request.merge_sha) return { status: 'fail' };
+    }
+    let anchor;
+    let previousVersion;
+    if (brain) {
+      const versions = readBrainVersions().trim().split('\n').filter(Boolean);
+      if (versions.at(-1) !== brain.version || versions.length < 2) return { status: 'fail' };
+      anchor = `brain:${brain.version}`;
+      previousVersion = `brain:${versions.at(-2)}`;
+    } else {
+      const rollback = Object.fromEntries(
+        readDashboardRollback().split('\n')
+          .filter((line) => line.includes('='))
+          .map((line) => line.split('=', 2)),
+      );
+      if (!rollback.current || !rollback.history) return { status: 'fail' };
+      anchor = rollback.current;
+      previousVersion = rollback.history.split(',').at(-1);
+    }
     return {
       status: 'pass',
       health: 'pass',
@@ -104,8 +148,8 @@ export function createReleaseRunAdapters({
       merge_sha: health.git_sha,
       deployed_versions: request.artifact_versions,
       rollback_metadata: {
-        anchor: rollback.current,
-        previous_version: rollback.history.split(',').at(-1),
+        anchor,
+        previous_version: previousVersion,
       },
     };
   };

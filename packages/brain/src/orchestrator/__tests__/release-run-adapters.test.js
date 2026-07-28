@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createReleaseRunAdapters } from '../release-run-adapters.js';
 
 const sha = 'b'.repeat(40);
-const artifacts = [{ name: 'cecelia-source', version: '1.268.5', digest: `sha256:${'c'.repeat(64)}` }];
+const artifacts = [{ name: 'brain', version: '1.268.5', digest: `sha256:${'c'.repeat(64)}` }];
 const request = {
   release_run_id: '44444444-4444-4444-8444-444444444444',
   merge_sha: sha,
@@ -16,15 +16,17 @@ function response(body) {
 
 describe('production ReleaseRun adapters', () => {
   it('resolves artifact identity from the exact merge tree', async () => {
-    const gitExecFile = vi.fn((args) => args[0] === 'show'
-      ? JSON.stringify({ version: '1.268.5' })
-      : 'exact immutable ls-tree');
+    const gitExecFile = vi.fn((args) => {
+      if (args[0] === 'show') return JSON.stringify({ version: '1.268.5' });
+      if (args[0] === 'diff-tree') return 'packages/brain/src/x.js\n';
+      return 'exact immutable ls-tree';
+    });
     const adapters = createReleaseRunAdapters({ gitExecFile });
     const result = await adapters.resolveArtifactVersions({ merge_sha: sha });
     expect(gitExecFile).toHaveBeenCalledWith(['show', `${sha}:packages/brain/package.json`]);
-    expect(gitExecFile).toHaveBeenCalledWith(['ls-tree', '-r', sha]);
+    expect(gitExecFile).toHaveBeenCalledWith(['ls-tree', '-r', sha, 'packages/brain']);
     expect(result).toEqual([expect.objectContaining({
-      name: 'cecelia-source',
+      name: 'brain',
       version: '1.268.5',
       digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
     })]);
@@ -56,12 +58,12 @@ describe('production ReleaseRun adapters', () => {
         merge_sha: sha,
         release_authorization: request.idempotency_key,
       }))
-      .mockResolvedValueOnce(response({ ok: true, git_sha: sha }))
+      .mockResolvedValueOnce(response({ status: 'healthy', version: '1.268.5', git_sha: sha }))
       .mockResolvedValueOnce(response({ ok: true, queue: {} }));
     const adapters = createReleaseRunAdapters({
       fetchFn,
       brainUrl: 'http://brain',
-      readRollbackFile: () => 'current=prod-v2\nhistory=prod-v1\n',
+      readBrainVersions: () => '1.268.4\n1.268.5\n',
     });
     await expect(adapters.observeProduction(request)).resolves.toMatchObject({
       status: 'pass',
@@ -69,7 +71,7 @@ describe('production ReleaseRun adapters', () => {
       required_e2e: 'pass',
       merge_sha: sha,
       deployed_versions: artifacts,
-      rollback_metadata: { anchor: 'prod-v2', previous_version: 'prod-v1' },
+      rollback_metadata: { anchor: 'brain:1.268.5', previous_version: 'brain:1.268.4' },
     });
   });
 });

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { authorizeReleaseEffect } from '../release-run-authorization.js';
+import {
+  authorizeReleaseEffect,
+  claimReleaseEffect,
+} from '../release-run-authorization.js';
 
 const releaseRunId = '44444444-4444-4444-8444-444444444444';
 const idempotencyKey = '55555555-5555-4555-8555-555555555555';
@@ -57,5 +60,34 @@ describe('server-owned ReleaseRun authorization consumer', () => {
       effect_kind: 'unknown',
     })).rejects.toMatchObject({ code: 'release_effect_request_invalid' });
     expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('uses a durable expiring generation claim so crash-before-spawn can recover', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{
+          state: 'production_deploying',
+          merge_sha: mergeSha,
+          expected_merge_sha: mergeSha,
+          effect_kind: 'production',
+          idempotency_key: idempotencyKey,
+        }] })
+        .mockResolvedValueOnce({ rows: [{ id: 10, generation: 2 }], rowCount: 1 }),
+    };
+    await expect(claimReleaseEffect(pool, {
+      release_run_id: releaseRunId,
+      merge_sha: mergeSha,
+      release_authorization: idempotencyKey,
+      effect_kind: 'production',
+    })).resolves.toMatchObject({
+      claimed: true,
+      deduped: false,
+      dispatch_claim_id: 10,
+      generation: 2,
+    });
+    const sql = pool.query.mock.calls[1][0];
+    expect(sql).toContain("INTERVAL '5 minutes'");
+    expect(sql).toMatch(/lease_expires_at > clock_timestamp\(\)/);
+    expect(sql).toMatch(/MAX\(claim\.generation\)/);
   });
 });

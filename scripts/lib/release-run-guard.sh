@@ -14,6 +14,22 @@ deny() {
   exit 78
 }
 
+if [[ -n "${KERNEL_RELEASE_BOOTSTRAP_RECEIPT:-}" ]]; then
+  command -v psql >/dev/null || deny "bootstrap receipt cannot be verified"
+  consumed=$(psql -XAtv ON_ERROR_STOP=1 \
+    -v receipt_id="$KERNEL_RELEASE_BOOTSTRAP_RECEIPT" \
+    -v merge_sha="$merge_sha" <<'SQL'
+INSERT INTO kernel_release_bootstrap_consumptions (receipt_id)
+SELECT id FROM kernel_release_bootstrap_receipts
+ WHERE id = :'receipt_id' AND merge_sha = :'merge_sha'
+ON CONFLICT (receipt_id) DO NOTHING
+RETURNING id;
+SQL
+  ) || deny "bootstrap receipt verification failed"
+  [[ "$consumed" =~ [0-9]+ ]] || deny "bootstrap receipt already consumed"
+  exit 0
+fi
+
 [[ "$effect_kind" == "production" || "$effect_kind" == "staging" ]] \
   || deny "invalid effect kind"
 [[ "$release_run_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] \
