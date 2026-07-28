@@ -1651,4 +1651,116 @@ describe('Fleet Worker durable runtime adapters', () => {
       fs.rmSync(stateRoot, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ['state', (root) => loadAttemptRunner().createFileAttemptStateStore({
+      stateRoot: root,
+    })],
+    ['runtime', (root) => loadAttemptRunner().createDockerAdapter({
+      runtimeRoot: root,
+    })],
+  ])('rejects a symlink %s root at construction', (_kind, createAdapter) => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-root-link-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-root-outside-'));
+    const root = path.join(parent, 'owned-root');
+    fs.symlinkSync(outside, root);
+
+    try {
+      expect(() => createAdapter(root)).toThrow(/attempt_(?:state|runtime)_root_unsafe/);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['state', (root) => loadAttemptRunner().createFileAttemptStateStore({
+      stateRoot: root,
+    })],
+    ['runtime', (root) => loadAttemptRunner().createDockerAdapter({
+      runtimeRoot: root,
+    })],
+  ])('rejects a group/world-accessible %s root', (_kind, createAdapter) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-root-mode-'));
+    fs.chmodSync(root, 0o755);
+
+    try {
+      expect(() => createAdapter(root)).toThrow(/attempt_(?:state|runtime)_root_unsafe/);
+    } finally {
+      fs.chmodSync(root, 0o700);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['state', (root) => loadAttemptRunner().createFileAttemptStateStore({
+      stateRoot: root,
+    })],
+    ['runtime', (root) => loadAttemptRunner().createDockerAdapter({
+      runtimeRoot: root,
+    })],
+  ])('rejects a foreign-owned %s root', (_kind, createAdapter) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-root-owner-'));
+    const realLstat = fs.lstatSync;
+    const lstatSpy = vi.spyOn(fs, 'lstatSync').mockImplementation((target) => {
+      const stat = realLstat(target);
+      if (path.resolve(String(target)) !== path.resolve(root)) return stat;
+      return Object.assign(
+        Object.create(Object.getPrototypeOf(stat)),
+        stat,
+        { uid: stat.uid + 1 },
+      );
+    });
+
+    try {
+      expect(() => createAdapter(root)).toThrow(/attempt_(?:state|runtime)_root_unsafe/);
+    } finally {
+      lstatSpy.mockRestore();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails state IO closed after its parent path is replaced', async () => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-parent-'));
+    const movedParent = `${parent}-moved`;
+    const outsideParent = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-swap-'));
+    const stateRoot = path.join(parent, 'state');
+    const replacementRoot = path.join(outsideParent, 'state');
+    const store = createFileAttemptStateStore({ stateRoot });
+    fs.renameSync(parent, movedParent);
+    fs.mkdirSync(replacementRoot, { mode: 0o700 });
+    fs.symlinkSync(outsideParent, parent);
+
+    try {
+      await expect(store.get(ATTEMPT_ID))
+        .rejects.toThrow(/attempt_state_root_unsafe/);
+    } finally {
+      fs.rmSync(parent, { force: true });
+      fs.rmSync(movedParent, { recursive: true, force: true });
+      fs.rmSync(outsideParent, { recursive: true, force: true });
+    }
+  });
+
+  it('fails runtime IO closed after its parent path is replaced', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-runtime-parent-'));
+    const movedParent = `${parent}-moved`;
+    const outsideParent = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-runtime-swap-'));
+    const runtimeRoot = path.join(parent, 'runtime');
+    const replacementRoot = path.join(outsideParent, 'runtime');
+    const docker = createDockerAdapter({ runtimeRoot });
+    fs.renameSync(parent, movedParent);
+    fs.mkdirSync(replacementRoot, { mode: 0o700 });
+    fs.symlinkSync(outsideParent, parent);
+
+    try {
+      await expect(docker.readSession({ attemptId: ATTEMPT_ID }))
+        .rejects.toThrow(/attempt_runtime_root_unsafe/);
+    } finally {
+      fs.rmSync(parent, { force: true });
+      fs.rmSync(movedParent, { recursive: true, force: true });
+      fs.rmSync(outsideParent, { recursive: true, force: true });
+    }
+  });
 });

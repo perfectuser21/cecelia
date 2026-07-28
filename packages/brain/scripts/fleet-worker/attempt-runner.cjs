@@ -181,6 +181,41 @@ function assertRuntimeRoot(value, name) {
   return path.resolve(value);
 }
 
+function createOwnedPrivateRootGuard(root, errorCode) {
+  try {
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  } catch {
+    throw new Error(errorCode);
+  }
+  const inspect = () => {
+    let stat;
+    try {
+      stat = fs.lstatSync(root);
+    } catch {
+      throw new Error(errorCode);
+    }
+    const expectedUid = typeof process.getuid === 'function'
+      ? process.getuid()
+      : stat.uid;
+    if (
+      stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || stat.uid !== expectedUid
+      || (stat.mode & 0o777) !== 0o700
+    ) {
+      throw new Error(errorCode);
+    }
+    return Object.freeze({ dev: stat.dev, ino: stat.ino });
+  };
+  const identity = inspect();
+  return () => {
+    const current = inspect();
+    if (current.dev !== identity.dev || current.ino !== identity.ino) {
+      throw new Error(errorCode);
+    }
+  };
+}
+
 function assertAttemptId(value) {
   if (!UUID_PATTERN.test(value ?? '')) {
     throw new Error('attempt_state_invalid_attempt_id');
@@ -541,8 +576,13 @@ function readOwnedRegularFile(filePath, {
 
 function createFileAttemptStateStore({ stateRoot } = {}) {
   const root = assertRuntimeRoot(stateRoot, 'state_root');
+  const assertOwnedRoot = createOwnedPrivateRootGuard(
+    root,
+    'attempt_state_root_unsafe',
+  );
 
   function fileFor(attemptId) {
+    assertOwnedRoot();
     assertAttemptId(attemptId);
     return path.join(root, `${attemptId}.json`);
   }
@@ -620,6 +660,7 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
     },
 
     async list() {
+      assertOwnedRoot();
       let entries;
       try {
         entries = fs.readdirSync(root, { withFileTypes: true });
@@ -843,6 +884,10 @@ function createDockerAdapter({
   writeCredential = defaultWriteCredential,
 } = {}) {
   const root = assertRuntimeRoot(runtimeRoot, 'runtime_root');
+  const assertOwnedRoot = createOwnedPrivateRootGuard(
+    root,
+    'attempt_runtime_root_unsafe',
+  );
   if (typeof runCommand !== 'function') {
     throw new Error('attempt_runner_invalid_docker_command_runner');
   }
@@ -851,6 +896,7 @@ function createDockerAdapter({
   }
 
   async function readSession({ attemptId } = {}) {
+    assertOwnedRoot();
     assertAttemptId(attemptId);
     const sessionPath = path.join(root, attemptId, `${attemptId}.session.json`);
     const sessionBytes = readOwnedRegularFile(sessionPath, {
@@ -887,6 +933,7 @@ function createDockerAdapter({
 
   return Object.freeze({
     async launch(input) {
+      assertOwnedRoot();
       const attemptId = input?.attemptId;
       assertAttemptId(attemptId);
       if (
@@ -1076,6 +1123,7 @@ function createDockerAdapter({
       containerMissing = false,
       preserveRuntime = false,
     } = {}) {
+      assertOwnedRoot();
       assertAttemptId(attemptId);
       if (!containerMissing) {
         await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
@@ -1087,6 +1135,7 @@ function createDockerAdapter({
     },
 
     async readResult({ attemptId, resultChannel } = {}) {
+      assertOwnedRoot();
       assertAttemptId(attemptId);
       const channel = validateResultChannel(resultChannel, {
         task_id: resultChannel?.bindings?.task_id,
@@ -1129,6 +1178,7 @@ function createDockerAdapter({
     readSession,
 
     async cleanupRuntime({ attemptId } = {}) {
+      assertOwnedRoot();
       assertAttemptId(attemptId);
       fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
       return Object.freeze({ cleaned: true });
