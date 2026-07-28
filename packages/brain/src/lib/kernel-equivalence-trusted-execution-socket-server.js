@@ -20,7 +20,7 @@ import {
 const MAXIMUM_REQUEST_BYTES = 65_536;
 const MAXIMUM_RESPONSE_BYTES = 262_144;
 const MAXIMUM_REQUEST_DEADLINE_MS = 30_000;
-const MAXIMUM_EXECUTION_DEADLINE_MS = 30_000;
+const MAXIMUM_TOTAL_DEADLINE_MS = 30_000;
 
 export class KernelTrustedExecutionSocketServerError extends Error {
   constructor(code) {
@@ -38,7 +38,7 @@ function validateConfiguration({
   service,
   socketPath,
   requestDeadlineMs,
-  executionDeadlineMs,
+  totalDeadlineMs,
   maximumRequestBytes,
   maximumResponseBytes,
 }) {
@@ -65,9 +65,9 @@ function validateConfiguration({
     !Number.isInteger(requestDeadlineMs)
     || requestDeadlineMs < 1
     || requestDeadlineMs > MAXIMUM_REQUEST_DEADLINE_MS
-    || !Number.isInteger(executionDeadlineMs)
-    || executionDeadlineMs < 1
-    || executionDeadlineMs > MAXIMUM_EXECUTION_DEADLINE_MS
+    || !Number.isInteger(totalDeadlineMs)
+    || totalDeadlineMs < 1
+    || totalDeadlineMs > MAXIMUM_TOTAL_DEADLINE_MS
     || !Number.isInteger(maximumRequestBytes)
     || maximumRequestBytes < 64
     || maximumRequestBytes > MAXIMUM_REQUEST_BYTES
@@ -224,11 +224,17 @@ function responseTooLarge(binding) {
   );
 }
 
+function abortReason(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
 export function createBrainTrustedExecutionSocketServer({
   service,
   socketPath = BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
   requestDeadlineMs = 5_000,
-  executionDeadlineMs = MAXIMUM_EXECUTION_DEADLINE_MS,
+  totalDeadlineMs = MAXIMUM_TOTAL_DEADLINE_MS,
   maximumRequestBytes = MAXIMUM_REQUEST_BYTES,
   maximumResponseBytes = MAXIMUM_RESPONSE_BYTES,
 } = {}) {
@@ -236,7 +242,7 @@ export function createBrainTrustedExecutionSocketServer({
     service,
     socketPath,
     requestDeadlineMs,
-    executionDeadlineMs,
+    totalDeadlineMs,
     maximumRequestBytes,
     maximumResponseBytes,
   });
@@ -263,20 +269,31 @@ export function createBrainTrustedExecutionSocketServer({
     let requestBytes = Buffer.alloc(0);
     let responseStarted = false;
     let framingComplete = false;
-    let protocolError = null;
     let executionController = null;
-    let executionTimer = null;
+    const absoluteDeadlineMs = Date.now() + totalDeadlineMs;
+    const totalDeadlineTimer = setTimeout(() => {
+      if (executionController) {
+        executionController.abort(
+          abortReason('trusted_execution_deadline_exceeded'),
+        );
+        return;
+      }
+      rejectRequest('trusted_execution_request_timeout');
+    }, totalDeadlineMs);
     const framingTimer = setTimeout(() => {
       rejectRequest('trusted_execution_request_timeout');
-    }, requestDeadlineMs);
+    }, Math.min(requestDeadlineMs, totalDeadlineMs));
     connections.set(socket, () => {
       executionController?.abort(
-        new Error('trusted_execution_server_shutdown'),
+        abortReason('trusted_execution_server_shutdown'),
       );
     });
     const writeResponse = (value, binding = null) => {
-      if (socket.destroyed || responseStarted) return;
+      if (responseStarted) return;
       responseStarted = true;
+      clearTimeout(totalDeadlineTimer);
+      connections.delete(socket);
+      if (socket.destroyed) return;
       let encoded;
       try {
         encoded = Buffer.from(`${JSON.stringify(value)}\n`);
@@ -293,6 +310,11 @@ export function createBrainTrustedExecutionSocketServer({
           `${JSON.stringify(responseTooLarge(binding))}\n`,
         );
       }
+      if (encoded.length > maximumResponseBytes) {
+        encoded = Buffer.from(
+          `${JSON.stringify(responseTooLarge(null))}\n`,
+        );
+      }
       socket.end(encoded);
     };
     const rejectRequest = (code) => {
@@ -304,58 +326,65 @@ export function createBrainTrustedExecutionSocketServer({
 
     const dispatchRequest = async (request) => {
       executionController = new AbortController();
-      const deadlineMs = Date.now() + executionDeadlineMs;
-      executionTimer = setTimeout(() => {
+      if (Date.now() >= absoluteDeadlineMs) {
         executionController.abort(
-          new Error('trusted_execution_deadline_exceeded'),
+          abortReason('trusted_execution_deadline_exceeded'),
         );
-      }, executionDeadlineMs);
+      }
       try {
         const result = await service.execute(request, {
           signal: executionController.signal,
-          deadlineMs,
+          deadlineMs: absoluteDeadlineMs,
         });
-        clearTimeout(executionTimer);
         await new Promise((resolvePendingInput) => {
           setImmediate(resolvePendingInput);
         });
-        if (protocolError) {
-          writeResponse(blocked(protocolError, request), request);
+        if (executionController.signal.aborted) {
+          writeResponse(
+            blocked(
+              stableFailure(executionController.signal.reason),
+              request,
+            ),
+            request,
+          );
           return;
         }
         writeResponse(succeeded(request, result), request);
       } catch (error) {
-        clearTimeout(executionTimer);
         await new Promise((resolvePendingInput) => {
           setImmediate(resolvePendingInput);
         });
         writeResponse(
-          blocked(protocolError ?? stableFailure(error), request),
+          blocked(
+            executionController.signal.aborted
+              ? stableFailure(executionController.signal.reason)
+              : stableFailure(error),
+            request,
+          ),
           request,
         );
       }
     };
 
     socket.on('data', (chunk) => {
-      if (responseStarted) return;
-      if (framingComplete) {
-        protocolError = 'trusted_execution_request_invalid';
-        executionController?.abort(new Error(protocolError));
-        return;
-      }
+      if (responseStarted || framingComplete) return;
       requestBytes = Buffer.concat([requestBytes, chunk]);
       if (requestBytes.length > maximumRequestBytes) {
         rejectRequest('trusted_execution_request_too_large');
-        return;
       }
-      const newline = requestBytes.indexOf(0x0a);
-      if (newline === -1) return;
-      if (newline !== requestBytes.length - 1) {
-        rejectRequest('trusted_execution_request_invalid');
-        return;
-      }
+    });
+    socket.once('end', () => {
+      if (responseStarted || framingComplete) return;
       framingComplete = true;
       clearTimeout(framingTimer);
+      if (
+        requestBytes.length < 2
+        || requestBytes.at(-1) !== 0x0a
+        || requestBytes.indexOf(0x0a) !== requestBytes.length - 1
+      ) {
+        writeResponse(blocked('trusted_execution_request_invalid'));
+        return;
+      }
       let request;
       try {
         request = JSON.parse(
@@ -372,27 +401,20 @@ export function createBrainTrustedExecutionSocketServer({
       }
       void dispatchRequest(request);
     });
-    socket.once('end', () => {
-      if (!framingComplete && !responseStarted) {
-        rejectRequest('trusted_execution_request_invalid');
-        return;
-      }
-      if (framingComplete && executionController && !responseStarted) {
-        executionController.abort(
-          new Error('trusted_execution_client_disconnected'),
-        );
-      }
-    });
     socket.once('error', () => {
       socket.destroy();
     });
     socket.once('close', () => {
       clearTimeout(framingTimer);
-      clearTimeout(executionTimer);
-      executionController?.abort(
-        new Error('trusted_execution_client_disconnected'),
-      );
-      connections.delete(socket);
+      if (!framingComplete || responseStarted) {
+        clearTimeout(totalDeadlineTimer);
+        connections.delete(socket);
+      }
+      if (!responseStarted && !framingComplete) {
+        executionController?.abort(
+          abortReason('trusted_execution_client_disconnected'),
+        );
+      }
     });
   });
   listener.on('error', () => {

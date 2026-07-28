@@ -71,6 +71,7 @@ const TRUSTED_VERIFICATION_ERROR_CODES = new Set([
   'verification_time_invalid',
 ]);
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const MINIMUM_DURABLE_CANCELLATION_CONFIRMATION_MS = 100;
 
 export class EquivalenceDrillError extends Error {
   constructor(code, detail = null) {
@@ -294,7 +295,11 @@ function denialAudit(cell, grant, code, stage, now) {
     scenario: cell?.scenario ?? null,
     run_id: UUID_PATTERN.test(grant?.run_id ?? '') ? grant.run_id : null,
     attempt_id: UUID_PATTERN.test(grant?.attempt_id ?? '') ? grant.attempt_id : null,
-    late_effect_risk: code === 'adapter_cancellation_unconfirmed',
+    late_effect_risk: [
+      'adapter_cancellation_unconfirmed',
+      'bundle_chain_cancellation_unconfirmed',
+      'nonce_cancellation_unconfirmed',
+    ].includes(code),
   });
 }
 
@@ -448,6 +453,47 @@ async function withAbortableTimeout(
     clearTimeout(timer);
     externalSignal?.removeEventListener('abort', onExternalAbort);
     operationPromise.catch(() => {});
+  }
+}
+
+async function withDurableAuthorityCancellation(
+  operation,
+  timeoutMs,
+  externalSignal,
+) {
+  try {
+    return await withAbortableTimeout(
+      operation,
+      timeoutMs,
+      externalSignal,
+    );
+  } catch (error) {
+    if (
+      !isInternalTimeout(error, 'adapter_aborted')
+      && !isInternalTimeout(error, 'adapter_timeout')
+    ) {
+      throw error;
+    }
+    let settlement;
+    try {
+      settlement = await withTimeout(
+        () => error.abortContext.operationPromise.then(
+          () => 'fulfilled',
+          () => 'rejected',
+        ),
+        Math.max(
+          timeoutMs,
+          MINIMUM_DURABLE_CANCELLATION_CONFIRMATION_MS,
+        ),
+        'durable_authority_cancellation_unconfirmed',
+      );
+    } catch {
+      fail('durable_authority_cancellation_unconfirmed');
+    }
+    if (settlement !== 'rejected') {
+      fail('durable_authority_cancellation_unconfirmed');
+    }
+    throw error;
   }
 }
 
@@ -859,22 +905,34 @@ export async function executeDrillCell({
     return deny('execution_aborted', 'request_cancellation');
   }
   try {
-    const nonceResult = await withTimeout(() => nonceConsumer({
-      grant_id: verifiedGrant.grant_id,
-      nonce: verifiedGrant.nonce,
-      cell_id: verifiedGrant.cell_id,
-      run_id: verifiedGrant.run_id,
-      attempt_id: verifiedGrant.attempt_id,
-      expires_at: verifiedGrant.expires_at,
-    }), timeoutMs, 'nonce_consumer_timeout');
+    const nonceResult = await withDurableAuthorityCancellation(
+      (authoritySignal) => nonceConsumer({
+        grant_id: verifiedGrant.grant_id,
+        nonce: verifiedGrant.nonce,
+        cell_id: verifiedGrant.cell_id,
+        run_id: verifiedGrant.run_id,
+        attempt_id: verifiedGrant.attempt_id,
+        expires_at: verifiedGrant.expires_at,
+      }, {
+        signal: authoritySignal,
+        timeoutMs,
+      }),
+      timeoutMs,
+      signal,
+    );
     if (nonceResult?.consumed !== true) {
       return deny('grant_nonce_replay', 'nonce_consumption');
     }
   } catch (error) {
+    if (signal?.aborted || isInternalTimeout(error, 'adapter_aborted')) {
+      return deny('execution_aborted', 'request_cancellation');
+    }
     return deny(
-      error?.code === 'nonce_consumer_timeout'
+      isInternalTimeout(error, 'adapter_timeout')
         ? 'nonce_consumer_timeout'
-        : 'grant_nonce_replay',
+        : error?.code === 'durable_authority_cancellation_unconfirmed'
+          ? 'nonce_cancellation_unconfirmed'
+          : 'grant_nonce_replay',
       'nonce_consumption',
     );
   }
@@ -1168,18 +1226,29 @@ export async function executeDrillCell({
   }
   let committed;
   try {
-    const commitResult = await bundleChainStore.commit({
-      bundle,
-      bundle_hash: verifiedBundle.bundle_hash,
-      previous_head_hash: chainCheckpoint.head_hash,
-      timeout_ms: timeoutMs,
-    });
+    const commitResult = await withDurableAuthorityCancellation(
+      (authoritySignal) => bundleChainStore.commit({
+        bundle,
+        bundle_hash: verifiedBundle.bundle_hash,
+        previous_head_hash: chainCheckpoint.head_hash,
+        timeout_ms: timeoutMs,
+        signal: authoritySignal,
+      }),
+      timeoutMs,
+      signal,
+    );
     committed = structuredClone(commitResult);
   } catch (error) {
+    if (signal?.aborted || isInternalTimeout(error, 'adapter_aborted')) {
+      return deny('execution_aborted', 'request_cancellation');
+    }
     return deny(
-      error?.code === 'bundle_chain_commit_timeout'
+      isInternalTimeout(error, 'adapter_timeout')
+        || error?.code === 'bundle_chain_commit_timeout'
         ? 'bundle_chain_commit_timeout'
-        : 'bundle_chain_commit_failed',
+        : error?.code === 'durable_authority_cancellation_unconfirmed'
+          ? 'bundle_chain_cancellation_unconfirmed'
+          : 'bundle_chain_commit_failed',
       'bundle_chain',
     );
   }

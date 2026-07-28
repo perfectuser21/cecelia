@@ -1,4 +1,5 @@
 import {
+  readFileSync,
   chmodSync,
   existsSync,
   lstatSync,
@@ -7,6 +8,7 @@ import {
   symlinkSync,
   unlinkSync,
 } from 'node:fs';
+import { load } from 'js-yaml';
 import {
   createConnection,
   createServer,
@@ -28,14 +30,19 @@ import {
 import {
   bootBrainTrustedExecution,
 } from '../kernel-equivalence-trusted-execution-boot.js';
+import {
+  compileDrillPlan,
+} from '../kernel-equivalence-drills.js';
 
-const PROVIDERS = ['claude', 'codex', 'grok'];
-const SCENARIOS = ['normal', 'violation', 'recovery'];
-const BEHAVIORS = Array.from({ length: 11 }, (_, index) => ({
-  behavior_id: `KERNEL-P${index < 7 ? 0 : 1}-${String(index + 1).padStart(2, '0')}`,
-  seam_id: `kernel.test.seam_${index + 1}`,
-  adapter_id: `kernel.test.adapter_${index + 1}.v1`,
-}));
+const CANONICAL_PLAN = compileDrillPlan(load(readFileSync(
+  new URL('../../../../../regression-contract.yaml', import.meta.url),
+  'utf8',
+)));
+const BEHAVIORS = CANONICAL_PLAN.cells.filter((cell, index, cells) => (
+  cells.findIndex((candidate) => (
+    candidate.behavior_id === cell.behavior_id
+  )) === index
+));
 const CELL_ID = `${BEHAVIORS[0].behavior_id}::codex::normal`;
 const GRANT_REF =
   'kernel-equivalence-grant:11111111-1111-4111-8111-111111111111';
@@ -53,20 +60,7 @@ function successEnvelope(result, overrides = {}) {
 }
 
 function plan() {
-  return {
-    schema_version: 'kernel-equivalence-drill-plan/v1',
-    behavior_count: 11,
-    cells: BEHAVIORS.flatMap((behavior) => (
-      PROVIDERS.flatMap((provider) => (
-        SCENARIOS.map((scenario) => ({
-          ...behavior,
-          provider,
-          scenario,
-          cell_id: `${behavior.behavior_id}::${provider}::${scenario}`,
-        }))
-      ))
-    )),
-  };
+  return structuredClone(CANONICAL_PLAN);
 }
 
 function fixture() {
@@ -220,6 +214,23 @@ describe('Brain trusted execution service', () => {
       expect.objectContaining({ code }),
     );
   });
+
+  it('rejects an alternate 99-cell plan even when its caller digest matches', () => {
+    const value = fixture();
+    value.plan.cells[0].isolation = {
+      environment: 'isolated',
+      resource_type: 'ephemeral_workspace',
+      resource_prefix:
+        'equivalence-drill/{run_id}/{attempt_id}/invented/',
+    };
+    value.expectedPlanDigest = digestTrustedExecutionPlan(value.plan);
+
+    expect(() => createBrainTrustedExecutionService(value)).toThrowError(
+      expect.objectContaining({
+        code: 'trusted_execution_plan_not_canonical',
+      }),
+    );
+  });
 });
 
 describe('Brain trusted execution client', () => {
@@ -330,6 +341,92 @@ describe('Brain trusted execution client', () => {
     await listener.close();
   });
 
+  it('shares one absolute deadline across framing and execution', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
+    roots.push(root);
+    const socketPath = join(root, 'trusted-execution.sock');
+    const value = fixture();
+    let abortedAt = 0;
+    value.runtime.executeCell = vi.fn(({ signal }) => new Promise((resolve) => {
+      signal.addEventListener('abort', () => {
+        abortedAt = Date.now();
+      }, { once: true });
+      setTimeout(() => resolve({
+        status: 'collected',
+        code: 'must_not_fail_open_after_abort',
+      }), 55);
+    }));
+    const listener = await startBrainTrustedExecutionSocketServer({
+      service: createBrainTrustedExecutionService(value),
+      socketPath,
+      requestDeadlineMs: 70,
+      totalDeadlineMs: 70,
+    });
+    const request = `${JSON.stringify({
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+    })}\n`;
+    const response = await new Promise((resolve) => {
+      const socket = createConnection({ path: socketPath });
+      let output = '';
+      socket.setEncoding('utf8');
+      socket.on('connect', () => {
+        setTimeout(() => socket.end(request), 50);
+      });
+      socket.on('data', (chunk) => {
+        output += chunk;
+      });
+      socket.on('close', () => resolve(JSON.parse(output.trim())));
+    });
+
+    expect(abortedAt).toBeGreaterThan(0);
+    expect(response).toMatchObject({
+      status: 'blocked',
+      code: 'trusted_execution_deadline_exceeded',
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+    });
+    await listener.close();
+  });
+
+  it('waits for EOF and rejects delayed trailing bytes without dispatch', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
+    roots.push(root);
+    const socketPath = join(root, 'trusted-execution.sock');
+    const value = fixture();
+    const listener = await startBrainTrustedExecutionSocketServer({
+      service: createBrainTrustedExecutionService(value),
+      socketPath,
+    });
+    const request = `${JSON.stringify({
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+    })}\n`;
+    const response = await new Promise((resolve) => {
+      const socket = createConnection({ path: socketPath });
+      let output = '';
+      socket.setEncoding('utf8');
+      socket.on('connect', () => {
+        socket.write(request);
+        setTimeout(() => {
+          expect(value.executeCell).not.toHaveBeenCalled();
+          socket.end(' ');
+        }, 20);
+      });
+      socket.on('data', (chunk) => {
+        output += chunk;
+      });
+      socket.on('close', () => resolve(JSON.parse(output.trim())));
+    });
+
+    expect(response).toMatchObject({
+      status: 'blocked',
+      code: 'trusted_execution_request_invalid',
+    });
+    expect(value.executeCell).not.toHaveBeenCalled();
+    await listener.close();
+  });
+
   it('aborts at the total deadline and confirms cancellation before response', async () => {
     const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
     roots.push(root);
@@ -361,7 +458,7 @@ describe('Brain trusted execution client', () => {
     const listener = await startBrainTrustedExecutionSocketServer({
       service: createBrainTrustedExecutionService(value),
       socketPath,
-      executionDeadlineMs: 50,
+      totalDeadlineMs: 50,
     });
     const client = createBrainTrustedExecutionClient({
       transport: createUnixSocketTrustedExecutionTransport({
@@ -371,16 +468,14 @@ describe('Brain trusted execution client', () => {
     });
 
     try {
-      const result = await client.execute({
+      const response = client.execute({
         cell_id: CELL_ID,
         grant_ref: GRANT_REF,
       });
-      const responseAt = Date.now();
-
-      expect(result).toEqual({
-        status: 'blocked',
+      await expect(response).rejects.toMatchObject({
         code: 'trusted_execution_deadline_exceeded',
       });
+      const responseAt = Date.now();
       expect(cancellationConfirmedAt).toBeGreaterThan(0);
       expect(responseAt).toBeGreaterThanOrEqual(cancellationConfirmedAt);
       await new Promise((resolve) => setTimeout(resolve, 70));
@@ -390,7 +485,77 @@ describe('Brain trusted execution client', () => {
     }
   });
 
-  it('aborts runtime execution when the caller disconnects', async () => {
+  it('does not dispatch when the caller disconnects before request EOF', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
+    roots.push(root);
+    const socketPath = join(root, 'trusted-execution.sock');
+    const value = fixture();
+    const listener = await startBrainTrustedExecutionSocketServer({
+      service: createBrainTrustedExecutionService(value),
+      socketPath,
+      totalDeadlineMs: 100,
+    });
+    const socket = createConnection({ path: socketPath });
+    await new Promise((resolve) => socket.once('connect', resolve));
+    socket.write(JSON.stringify({
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+    }));
+    socket.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(value.executeCell).not.toHaveBeenCalled();
+    await listener.close();
+  });
+
+  it('treats valid EOF as acceptance and completes after a later client close', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
+    roots.push(root);
+    const socketPath = join(root, 'trusted-execution.sock');
+    const value = fixture();
+    let resolveStarted;
+    let resolveCompleted;
+    const started = new Promise((resolve) => {
+      resolveStarted = resolve;
+    });
+    const completed = new Promise((resolve) => {
+      resolveCompleted = resolve;
+    });
+    const terminalEffects = [];
+    const executeCell = vi.fn(() => new Promise((resolve) => {
+      resolveStarted();
+      setTimeout(() => {
+        terminalEffects.push('collected');
+        resolve({
+          status: 'collected',
+          code: 'drill_receipt_collected',
+        });
+        resolveCompleted();
+      }, 20);
+    }));
+    value.runtime.executeCell = executeCell;
+    const listener = await startBrainTrustedExecutionSocketServer({
+      service: createBrainTrustedExecutionService(value),
+      socketPath,
+      totalDeadlineMs: 100,
+    });
+    const socket = createConnection({ path: socketPath });
+    await new Promise((resolve) => socket.once('connect', resolve));
+    socket.end(`${JSON.stringify({
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+    })}\n`);
+    await started;
+    socket.destroy();
+
+    await completed;
+    await new Promise((resolve) => setTimeout(resolve, 110));
+    expect(terminalEffects).toEqual(['collected']);
+    expect(executeCell).toHaveBeenCalledOnce();
+    await listener.close();
+  });
+
+  it('keeps the absolute deadline active after an accepted client closes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
     roots.push(root);
     const socketPath = join(root, 'trusted-execution.sock');
@@ -411,21 +576,21 @@ describe('Brain trusted execution client', () => {
       resolveStarted();
       signal.addEventListener('abort', () => {
         clearTimeout(effect);
-        resolveCancelled();
         resolve({
           status: 'blocked',
-          code: 'trusted_execution_client_disconnected',
+          code: 'trusted_execution_deadline_exceeded',
         });
+        resolveCancelled();
       }, { once: true });
     }));
     const listener = await startBrainTrustedExecutionSocketServer({
       service: createBrainTrustedExecutionService(value),
       socketPath,
-      executionDeadlineMs: 250,
+      totalDeadlineMs: 40,
     });
     const socket = createConnection({ path: socketPath });
     await new Promise((resolve) => socket.once('connect', resolve));
-    socket.write(`${JSON.stringify({
+    socket.end(`${JSON.stringify({
       cell_id: CELL_ID,
       grant_ref: GRANT_REF,
     })}\n`);
@@ -433,7 +598,7 @@ describe('Brain trusted execution client', () => {
     socket.destroy();
 
     await cancelled;
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(lateEffect).toBe(false);
     await listener.close();
   });
@@ -508,6 +673,37 @@ describe('Brain trusted execution client', () => {
     } finally {
       await listener.close();
     }
+  });
+
+  it('keeps an oversized bound-error fallback under the configured maximum', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kernel-eq-socket-'));
+    roots.push(root);
+    const socketPath = join(root, 'trusted-execution.sock');
+    const listener = await startBrainTrustedExecutionSocketServer({
+      service: createBrainTrustedExecutionService(fixture()),
+      socketPath,
+      maximumResponseBytes: 512,
+    });
+    const oversizedBinding = {
+      cell_id: `KERNEL-P0-${'X'.repeat(800)}::codex::normal`,
+      grant_ref: GRANT_REF,
+    };
+    const response = await new Promise((resolve) => {
+      const socket = createConnection({ path: socketPath });
+      const chunks = [];
+      socket.on('connect', () => {
+        socket.end(`${JSON.stringify(oversizedBinding)}\n`);
+      });
+      socket.on('data', (chunk) => chunks.push(chunk));
+      socket.on('close', () => resolve(Buffer.concat(chunks)));
+    });
+
+    expect(response.length).toBeLessThanOrEqual(512);
+    expect(JSON.parse(response.toString('utf8').trim())).toMatchObject({
+      status: 'blocked',
+      code: 'trusted_execution_response_too_large',
+    });
+    await listener.close();
   });
 
   it('refuses every pre-existing socket target including a symlink', async () => {

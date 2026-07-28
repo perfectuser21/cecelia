@@ -472,6 +472,64 @@ describe('executeDrillCell', () => {
     expect(value.collector).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['nonce', (value, durableEffects, controller) => {
+      value.nonceConsumer.mockImplementation((_input, { signal }) => (
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            durableEffects.push('nonce');
+            resolve({ consumed: true });
+          }, 40);
+          signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('nonce transaction rolled back'));
+          }, { once: true });
+          setTimeout(() => controller.abort(), 5);
+        })
+      ));
+    }],
+    ['bundle', (value, durableEffects, controller) => {
+      value.bundleChainStore.commit.mockImplementation((input) => (
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            durableEffects.push('bundle');
+            resolve({
+              committed: true,
+              checkpoint: {
+                schema_version: 'kernel-equivalence-bundle-chain/v1',
+                genesis_hash: input.bundle_hash,
+                head_hash: input.bundle_hash,
+              },
+            });
+          }, 40);
+          input.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('bundle transaction rolled back'));
+          }, { once: true });
+          setTimeout(() => controller.abort(), 5);
+        })
+      ));
+    }],
+  ])('cancels and settles an in-flight %s durable write before denial', async (
+    _label,
+    arrange,
+  ) => {
+    const value = executionFixture();
+    const controller = new AbortController();
+    const durableEffects = [];
+    arrange(value, durableEffects, controller);
+
+    await expect(execute(value, {
+      signal: controller.signal,
+      timeoutMs: 100,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'execution_aborted',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(durableEffects).toEqual([]);
+  });
+
   it('records late-effect risk when timeout cancellation is not confirmed', async () => {
     const value = executionFixture();
     value.adapter.invokeActualSeam.mockImplementation(
@@ -693,7 +751,7 @@ describe('executeDrillCell', () => {
   });
 
   it.each([
-    ['nonce consumer', 'nonce_consumer_timeout', (value) => {
+    ['nonce consumer', 'nonce_cancellation_unconfirmed', (value) => {
       value.nonceConsumer.mockImplementation(() => new Promise(() => {}));
     }],
     ['collector', 'collector_timeout', (value) => {

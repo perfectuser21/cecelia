@@ -31,12 +31,24 @@
   authority 对服务专属目录逐级校验 owner/mode、单次 `O_NOFOLLOW` 打开并把
   grant UUID/cell 绑定到 opaque ref；目录、祖先与 grant 文件还必须无 extended
   ACL，避免 mode 0700/0600 被 ACL 旁路。runtime 只接收冻结 grant 对象，不接受
-  裸路径 capability，再调用已装配的 10 个 non-release adapter。
-- Unix listener 使用安全 owner parent、私有 bind 名称、0600 发布路径、请求/响应
-  大小与超时上限；关闭时只按 exact inode 删除自己发布的 socket。
+  裸路径 capability，再调用已装配的 10 个 non-release adapter；启动时绑定
+  caller artifact digest 与 server-owned canonical descriptor digest；任何
+  behavior/seam/adapter/isolation/scenario outcome 漂移直接 fail-closed。
+- Unix listener 使用安全 owner parent、私有 bind 名称、0600 发布路径、严格单行
+  JSON framing 和固定墙钟 deadline；完整有效 EOF 是 server 接受点，EOF 前断连
+  零 dispatch，EOF 后由 server 在同一绝对 deadline 内自主完成。若未来需要
+  post-EOF 人工取消，必须另建 lease/cancellation channel，不能伪称普通 close
+  可观测。超时会传播 AbortSignal，并等待取消确认、cleanup 和审计完成后才返回
+  blocked。响应必须精确绑定 cell id 与 grant ref，
+  缺失、错绑、未知字段及尾随字节均由 client 拒绝。
+- nonce 与 bundle CAS authority 接收同一 deadline 派生的 signal 和剩余时限；
+  PostgreSQL 事务设置 statement/lock/idle timeout，abort 会销毁尚未提交的连接
+  以触发 rollback。deadline 前已提交的 append-only nonce 不删除，deadline 后
+  不允许迟到 COMMIT。
+- 请求/响应都有大小与超时上限；关闭时只按 exact inode 删除自己发布的 socket。
 - 生产 assembly/secrets 未配置时 boot readiness 明确 fail-closed，不建立 listener；
   `execution_wiring_ready` 仍为 false，不把机械 wiring 冒充等价证明。
-- 回退：`bash scripts/brain-rollback.sh 1.268.7`；没有数据库迁移。
+- 回退：`bash scripts/brain-rollback.sh 1.268.8`；没有数据库迁移。
 
 ## Signed Kernel equivalence drills
 

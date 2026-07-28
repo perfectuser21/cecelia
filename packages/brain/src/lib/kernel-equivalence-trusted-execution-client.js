@@ -221,7 +221,7 @@ export function createUnixSocketTrustedExecutionTransport({
       socket.once('connect', () => {
         try {
           sameSocket(socketPath, identity);
-          socket.write(`${JSON.stringify(request)}\n`);
+          socket.end(`${JSON.stringify(request)}\n`);
         } catch (error) {
           settle(rejectResult, error);
         }

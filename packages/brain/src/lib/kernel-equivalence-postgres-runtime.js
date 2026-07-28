@@ -91,6 +91,18 @@ function requireTransactionPool(pool) {
   }
 }
 
+function validAbortSignal(signal) {
+  return (
+    signal == null
+    || (
+      typeof signal === 'object'
+      && typeof signal.aborted === 'boolean'
+      && typeof signal.addEventListener === 'function'
+      && typeof signal.removeEventListener === 'function'
+    )
+  );
+}
+
 function validNonceInput(input) {
   return (
     exactFields(input, NONCE_FIELDS)
@@ -104,11 +116,47 @@ function validNonceInput(input) {
 }
 
 export function createPostgresNonceConsumer({ pool } = {}) {
-  requireQueryPool(pool);
-  return async function consumeNonce(input) {
-    if (!validNonceInput(input)) fail('nonce_record_invalid');
+  requireTransactionPool(pool);
+  return async function consumeNonce(
+    input,
+    {
+      signal = null,
+      timeoutMs = DEFAULT_TRANSACTION_TIMEOUT_MS,
+    } = {},
+  ) {
+    if (
+      !validNonceInput(input)
+      || !validAbortSignal(signal)
+      || !validTransactionTimeout(timeoutMs)
+    ) {
+      fail('nonce_record_invalid');
+    }
+    const client = await pool.connect().catch(() => {
+      fail('nonce_consumer_failed');
+    });
+    let began = false;
+    let released = false;
+    let aborted = signal?.aborted === true;
+    const destroyTransaction = () => {
+      aborted = true;
+      if (!released) {
+        released = true;
+        client.release(true);
+      }
+    };
+    signal?.addEventListener('abort', destroyTransaction, { once: true });
     try {
-      const result = await pool.query(
+      if (aborted) fail('nonce_consumer_aborted');
+      await client.query('BEGIN');
+      began = true;
+      await client.query(
+        `SELECT
+           set_config('statement_timeout', $1, true),
+           set_config('lock_timeout', $1, true),
+           set_config('idle_in_transaction_session_timeout', $1, true)`,
+        [`${timeoutMs}ms`],
+      );
+      const result = await client.query(
         `INSERT INTO kernel_equivalence_execution_nonces
            (grant_id, nonce, cell_id, run_id, attempt_id, expires_at)
          SELECT $1::uuid, $2::uuid, $3, $4::uuid, $5::uuid, $6::timestamptz
@@ -124,10 +172,24 @@ export function createPostgresNonceConsumer({ pool } = {}) {
           input.expires_at,
         ],
       );
+      if (aborted || signal?.aborted) fail('nonce_consumer_aborted');
+      await client.query('COMMIT');
+      began = false;
       return Object.freeze({ consumed: result.rowCount === 1 });
     } catch (error) {
+      if (began && !released) {
+        await client.query('ROLLBACK').catch(() => {});
+        began = false;
+      }
       if (error instanceof EquivalencePostgresRuntimeError) throw error;
+      if (aborted || signal?.aborted) fail('nonce_consumer_aborted');
+      if (POSTGRES_TIMEOUT_CODES.has(error?.code)) {
+        fail('nonce_consumer_timeout');
+      }
       fail('nonce_consumer_failed');
+    } finally {
+      signal?.removeEventListener('abort', destroyTransaction);
+      if (!released) client.release();
     }
   };
 }
@@ -346,10 +408,12 @@ export function createPostgresBundleChainStore({
       bundle_hash: bundleHash,
       previous_head_hash: previousHead,
       timeout_ms: timeoutMs = DEFAULT_TRANSACTION_TIMEOUT_MS,
+      signal = null,
     } = {}) {
       if (
         !validBundleCommit(bundle, bundleHash, previousHead)
         || !validTransactionTimeout(timeoutMs)
+        || !validAbortSignal(signal)
       ) {
         fail('bundle_chain_commit_invalid');
       }
@@ -364,7 +428,18 @@ export function createPostgresBundleChainStore({
         fail('bundle_chain_commit_failed');
       });
       let began = false;
+      let released = false;
+      let aborted = signal?.aborted === true;
+      const destroyTransaction = () => {
+        aborted = true;
+        if (!released) {
+          released = true;
+          client.release(true);
+        }
+      };
+      signal?.addEventListener('abort', destroyTransaction, { once: true });
       try {
+        if (aborted) fail('bundle_chain_commit_aborted');
         await client.query('BEGIN');
         began = true;
         await client.query(
@@ -436,6 +511,9 @@ export function createPostgresBundleChainStore({
         ) {
           fail('bundle_chain_readback_invalid');
         }
+        if (aborted || signal?.aborted) {
+          fail('bundle_chain_commit_aborted');
+        }
         await client.query('COMMIT');
         began = false;
         observedHead = advanced.rows[0].head_hash;
@@ -445,14 +523,20 @@ export function createPostgresBundleChainStore({
           checkpoint: checkpoint(advanced.rows[0]),
         });
       } catch (error) {
-        if (began) await client.query('ROLLBACK').catch(() => {});
+        if (began && !released) {
+          await client.query('ROLLBACK').catch(() => {});
+        }
         if (error instanceof EquivalencePostgresRuntimeError) throw error;
+        if (aborted || signal?.aborted) {
+          fail('bundle_chain_commit_aborted');
+        }
         if (POSTGRES_TIMEOUT_CODES.has(error?.code)) {
           fail('bundle_chain_commit_timeout');
         }
         fail('bundle_chain_commit_failed');
       } finally {
-        client.release();
+        signal?.removeEventListener('abort', destroyTransaction);
+        if (!released) client.release();
       }
     },
   });

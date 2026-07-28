@@ -29,6 +29,33 @@ function nonceInput() {
   };
 }
 
+function noncePool(rowCount) {
+  const client = {
+    query: vi.fn(async (text) => {
+      if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
+      if (/^COMMIT$/i.test(text)) return { rows: [], rowCount: null };
+      if (/^ROLLBACK$/i.test(text)) return { rows: [], rowCount: null };
+      if (/set_config\('statement_timeout'/i.test(text)) {
+        return { rows: [{}], rowCount: 1 };
+      }
+      if (/INSERT INTO kernel_equivalence_execution_nonces/i.test(text)) {
+        return {
+          rows: rowCount === 1
+            ? [{ grant_id: nonceInput().grant_id }]
+            : [],
+          rowCount,
+        };
+      }
+      throw new Error(`unexpected SQL: ${text}`);
+    }),
+    release: vi.fn(),
+  };
+  return {
+    pool: { connect: vi.fn(async () => client) },
+    client,
+  };
+}
+
 function audit() {
   return {
     schema_version: 'kernel-equivalence-denial-audit/v1',
@@ -127,16 +154,13 @@ function transactionPool({ updateRows, readbackBundle, updateError = null }) {
 
 describe('PostgreSQL Kernel equivalence runtime authorities', () => {
   it('consumes a grant nonce with one conflict-safe INSERT statement', async () => {
-    const pool = {
-      query: vi.fn(async () => ({
-        rows: [{ grant_id: nonceInput().grant_id }],
-        rowCount: 1,
-      })),
-    };
-    const consume = createPostgresNonceConsumer({ pool });
+    const runtime = noncePool(1);
+    const consume = createPostgresNonceConsumer({ pool: runtime.pool });
 
     await expect(consume(nonceInput())).resolves.toEqual({ consumed: true });
-    const [text, params] = pool.query.mock.calls[0];
+    const [text, params] = runtime.client.query.mock.calls.find(([sql]) => (
+      /INSERT INTO kernel_equivalence_execution_nonces/i.test(sql)
+    ));
     expect(text).toMatch(/INSERT INTO kernel_equivalence_execution_nonces/i);
     expect(text).toMatch(/ON CONFLICT DO NOTHING/i);
     expect(text).toMatch(/RETURNING grant_id/i);
@@ -145,12 +169,57 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
   });
 
   it('returns a replay denial when the atomic INSERT loses its conflict', async () => {
-    const pool = {
-      query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
-    };
-    const consume = createPostgresNonceConsumer({ pool });
+    const runtime = noncePool(0);
+    const consume = createPostgresNonceConsumer({ pool: runtime.pool });
 
     await expect(consume(nonceInput())).resolves.toEqual({ consumed: false });
+  });
+
+  it('destroys an in-flight nonce transaction on abort before it can commit', async () => {
+    const controller = new AbortController();
+    let resolveInsert;
+    const insert = new Promise((resolve) => {
+      resolveInsert = resolve;
+    });
+    const client = {
+      query: vi.fn(async (text) => {
+        if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
+        if (/set_config\('statement_timeout'/i.test(text)) {
+          return { rows: [{}], rowCount: 1 };
+        }
+        if (/INSERT INTO kernel_equivalence_execution_nonces/i.test(text)) {
+          return insert;
+        }
+        if (/^COMMIT$/i.test(text)) {
+          throw new Error('commit must not run');
+        }
+        throw new Error(`unexpected SQL: ${text}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      connect: vi.fn(async () => client),
+      query: vi.fn(),
+    };
+    const consume = createPostgresNonceConsumer({ pool });
+    const running = consume(nonceInput(), {
+      signal: controller.signal,
+      timeoutMs: 100,
+    });
+    await vi.waitFor(() => {
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringMatching(/INSERT INTO kernel_equivalence_execution_nonces/i),
+        expect.any(Array),
+      );
+    });
+    controller.abort();
+    resolveInsert({ rows: [{ grant_id: nonceInput().grant_id }], rowCount: 1 });
+
+    await expect(running).rejects.toMatchObject({
+      code: 'nonce_consumer_aborted',
+    });
+    expect(client.release).toHaveBeenCalledWith(true);
+    expect(client.query).not.toHaveBeenCalledWith('COMMIT');
   });
 
   it('persists only the denial audit allowlist', async () => {
@@ -210,6 +279,69 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
       /UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)
     )).text).toMatch(/revision = \$4/i);
     expect(runtime.client.release).toHaveBeenCalledOnce();
+  });
+
+  it('destroys an in-flight bundle transaction on abort before COMMIT', async () => {
+    const value = bundleFixture();
+    let resolveAdvance;
+    const advance = new Promise((resolve) => {
+      resolveAdvance = resolve;
+    });
+    const runtime = transactionPool({
+      updateRows: [],
+      readbackBundle: value.bundle,
+    });
+    runtime.client.query.mockImplementation(async (text, params) => {
+      runtime.calls.push({ text, params });
+      if (/^BEGIN$/i.test(text)) return { rows: [], rowCount: null };
+      if (/^ROLLBACK$/i.test(text)) return { rows: [], rowCount: null };
+      if (/^COMMIT$/i.test(text)) {
+        throw new Error('commit must not run');
+      }
+      if (/set_config\('statement_timeout'/i.test(text)) {
+        return { rows: [{}], rowCount: 1 };
+      }
+      if (/INSERT INTO kernel_equivalence_receipt_bundles/i.test(text)) {
+        return { rows: [{ bundle_hash: params[1] }], rowCount: 1 };
+      }
+      if (/UPDATE kernel_equivalence_bundle_chain_heads/i.test(text)) {
+        return advance;
+      }
+      throw new Error(`unexpected SQL: ${text}`);
+    });
+    const store = createPostgresBundleChainStore({ pool: runtime.pool });
+    await store.getCheckpoint();
+    const controller = new AbortController();
+    const running = store.commit({
+      bundle: value.bundle,
+      bundle_hash: value.hash,
+      previous_head_hash: null,
+      signal: controller.signal,
+      timeout_ms: 100,
+    });
+    await vi.waitFor(() => {
+      expect(runtime.client.query).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /UPDATE kernel_equivalence_bundle_chain_heads/i,
+        ),
+        expect.any(Array),
+      );
+    });
+    controller.abort();
+    resolveAdvance({
+      rows: [{
+        genesis_hash: value.hash,
+        head_hash: value.hash,
+        revision: 1,
+      }],
+      rowCount: 1,
+    });
+
+    await expect(running).rejects.toMatchObject({
+      code: 'bundle_chain_commit_aborted',
+    });
+    expect(runtime.client.release).toHaveBeenCalledWith(true);
+    expect(runtime.client.query).not.toHaveBeenCalledWith('COMMIT');
   });
 
   it('rolls back an inserted loser when compare-and-swap head advancement fails', async () => {

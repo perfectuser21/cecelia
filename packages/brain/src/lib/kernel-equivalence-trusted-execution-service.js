@@ -5,6 +5,9 @@ import {
 import {
   sha256Canonical,
 } from './kernel-equivalence-receipts.js';
+import {
+  isCanonicalTrustedExecutionPlan,
+} from './kernel-equivalence-canonical-plan.js';
 
 const REQUEST_FIELDS = Object.freeze(['cell_id', 'grant_ref']);
 const GRANT_AUTHORITY_FIELDS = Object.freeze([
@@ -90,6 +93,9 @@ function pinPlan(plan, expectedPlanDigest) {
   }
   if (digestTrustedExecutionPlan(pinned) !== expectedPlanDigest) {
     fail('trusted_execution_plan_digest_mismatch');
+  }
+  if (!isCanonicalTrustedExecutionPlan(pinned)) {
+    fail('trusted_execution_plan_not_canonical');
   }
   const cellIds = new Set();
   const axesByBehavior = new Map();
@@ -262,12 +268,22 @@ export function createBrainTrustedExecutionService({
     if (signal?.aborted || remainingAfterResolution < 1) {
       fail('trusted_execution_request_aborted');
     }
-    return runtime.executeCell({
+    const result = await runtime.executeCell({
       cell,
       grant: deepFreeze(structuredClone(resolution.grant)),
       signal,
       timeoutMs: remainingAfterResolution,
     });
+    if (signal?.aborted) {
+      const reasonCode = signal.reason?.code;
+      fail(
+        typeof reasonCode === 'string'
+          && reasonCode.startsWith('trusted_execution_')
+          ? reasonCode
+          : 'trusted_execution_request_aborted',
+      );
+    }
+    return result;
   };
 
   return Object.freeze({
