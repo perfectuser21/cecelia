@@ -12,10 +12,82 @@
  */
 
 import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
+import { sha256Canonical } from '../../../packages/brain/src/lib/kernel-equivalence-receipts.js';
 
 // ---- helpers ----
 
 const BASE_COUNTERS = { hops: 5, fixRound: 0, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 };
+const JUDGE_RUN_ID = '10000000-0000-4000-8000-000000000001';
+const JUDGE_TASK_ID = '20000000-0000-4000-8000-000000000002';
+const JUDGE_ATTEMPT_ID = '30000000-0000-4000-8000-000000000003';
+const EVALUATOR_ATTEMPT_ID = '40000000-0000-4000-8000-000000000004';
+const EVALUATOR_RECEIPT_ID = '50000000-0000-4000-8000-000000000005';
+const EVALUATOR_RESULT_SHA256 = 'a'.repeat(64);
+const JUDGE_HEAD_SHA = 'b'.repeat(40);
+
+function independentEvaluatorAuthority({
+  failureClass = 'evidence_invalid',
+} = {}) {
+  const evaluatorResult = {
+    contract_version: '1.0',
+    attempt_id: EVALUATOR_ATTEMPT_ID,
+    status: 'completed',
+    summary: 'evaluator result is fenced',
+    checks: [],
+    decision: {
+      outcome: 'PASS',
+      reason: 'mechanical evidence verified',
+      pr_head_sha: JUDGE_HEAD_SHA,
+      failure_class: failureClass,
+    },
+  };
+  const evaluateVerdict = {
+    attempt_id: EVALUATOR_ATTEMPT_ID,
+    verdict: 'PASS',
+    pr_head_sha: JUDGE_HEAD_SHA,
+    feedback: evaluatorResult.decision.reason,
+    failure_class: failureClass,
+    executor_kind: 'fleet-worker',
+    result_digest: sha256Canonical(evaluatorResult),
+    result_receipt_id: EVALUATOR_RECEIPT_ID,
+    result_sha256: EVALUATOR_RESULT_SHA256,
+  };
+  const attemptStore = {
+    complete: async () => ({ deduped: false }),
+    getById: async (id) => {
+      if (id === JUDGE_ATTEMPT_ID) {
+        return {
+          id,
+          run_id: JUDGE_RUN_ID,
+          role: 'judge',
+          status: 'running',
+        };
+      }
+      if (id === EVALUATOR_ATTEMPT_ID) {
+        return {
+          id,
+          run_id: JUDGE_RUN_ID,
+          role: 'evaluator',
+          status: 'completed',
+          execution_transport: 'fleet-worker',
+          lease_owner: 'worker-1',
+          lease_generation: 4,
+          completed_at: new Date('2026-07-29T00:00:00.000Z'),
+          task_bundle: {
+            inputs: {
+              pull_request: { head_sha: JUDGE_HEAD_SHA },
+            },
+          },
+          result_receipt_id: EVALUATOR_RECEIPT_ID,
+          result_sha256: EVALUATOR_RESULT_SHA256,
+          result: evaluatorResult,
+        };
+      }
+      return null;
+    },
+  };
+  return { evaluatorResult, evaluateVerdict, attemptStore };
+}
 
 function makeObserved(failureClass) {
   return {
@@ -194,17 +266,21 @@ describe('[BEHAVIOR] B-04 Judge 落库保留 failure_class', () => {
       },
     };
 
-    // 模拟带 failure_class 的 evaluateVerdict
+    const authority = independentEvaluatorAuthority();
     const mockCtx = {
-      runId: 'run-1',
-      taskId: 'task-1',
+      runId: JUDGE_RUN_ID,
+      taskId: JUDGE_TASK_ID,
       observed: {
-        pr: { head_sha: 'sha-abc' },
-        evaluateVerdict: { verdict: 'FAIL', pr_head_sha: 'sha-abc', failure_class: 'evidence_invalid' },
-        evaluateResult: null,
+        pr: { head_sha: JUDGE_HEAD_SHA },
+        evaluateVerdict: authority.evaluateVerdict,
+        evaluateResult: authority.evaluatorResult,
         callbackResult: null,
       },
-      attempt: { id: 'attempt-1' },
+      attempt: {
+        id: JUDGE_ATTEMPT_ID,
+        run_id: JUDGE_RUN_ID,
+        role: 'judge',
+      },
       bundle: { inputs: { worktree_path: '/tmp/wt', sprint_dir: 'sprints/test' } },
     };
 
@@ -218,14 +294,16 @@ describe('[BEHAVIOR] B-04 Judge 落库保留 failure_class', () => {
         feedback: 'test',
         failure_class: 'evidence_invalid',
       }),
-      attemptStore: { complete: async () => {} },
+      attemptStore: authority.attemptStore,
     });
 
-    await handlers['spawn:judge'](mockCtx);
+    await expect(handlers['spawn:judge'](mockCtx)).resolves.toEqual({
+      status: 'DONE',
+      detail: 'judge:FAIL',
+    });
 
-    // 实现后期望：writtenDetail 含 failure_class
-    // 当前（先红）：writtenDetail.failure_class 为 undefined
     expect(writtenDetail).not.toBeNull();
     expect(writtenDetail.failure_class).toBe('evidence_invalid');
+    expect(writtenDetail.evaluator_failure_class).toBe('evidence_invalid');
   });
 });
