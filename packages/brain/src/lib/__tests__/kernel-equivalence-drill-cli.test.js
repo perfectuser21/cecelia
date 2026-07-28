@@ -23,10 +23,11 @@ const scriptPath = fileURLToPath(new URL(
 ));
 const repositoryRoot = dirname(dirname(dirname(scriptPath)));
 
-function run(args) {
+function run(args, env = {}) {
   return spawnSync(process.execPath, [scriptPath, ...args], {
     cwd: repositoryRoot,
     encoding: 'utf8',
+    env: { ...process.env, ...env },
   });
 }
 
@@ -170,6 +171,40 @@ describe('kernel equivalence drill CLI', () => {
       });
       expect(existsSync(stateDir)).toBe(false);
       expect(existsSync(receiptDir)).toBe(false);
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('invokes trusted loading only behind the explicit opt-in flag', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'kernel-eq-cli-trusted-'));
+    try {
+      const secret = 'credential-must-not-escape';
+      const result = run([
+        '--execute',
+        '--cell',
+        'KERNEL-P0-01-BRANCH-PROTECTION::codex::normal',
+        '--grant',
+        join(temporaryRoot, 'missing.grant.json'),
+        '--state-dir',
+        join(temporaryRoot, 'state'),
+        '--receipt-dir',
+        join(temporaryRoot, 'receipts'),
+        '--trusted-runtime',
+      ], {
+        KERNEL_EQ_COLLECTOR_PRIVATE_KEY: secret,
+      });
+
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        mode: 'execute',
+        status: 'blocked',
+        code: 'trusted_runtime_raw_secret_forbidden',
+        execution_ready: false,
+      });
+      expect(`${result.stdout}${result.stderr}`).not.toContain(secret);
+      expect(existsSync(join(temporaryRoot, 'state'))).toBe(false);
+      expect(existsSync(join(temporaryRoot, 'receipts'))).toBe(false);
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });
     }
