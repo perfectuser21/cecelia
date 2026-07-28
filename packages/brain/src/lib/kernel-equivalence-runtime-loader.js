@@ -16,9 +16,6 @@ import {
   createPostgresPredecessorResolver,
 } from './kernel-equivalence-postgres-runtime.js';
 import {
-  createServerOwnedRuntimeRegistry,
-} from './kernel-equivalence-runtime-registry.js';
-import {
   loadCollectorSigner,
 } from './kernel-equivalence-signers.js';
 
@@ -155,7 +152,7 @@ export async function loadTrustedEquivalenceRuntime({
   env = process.env,
   trustRegistry,
   pool,
-  runtimeRegistry = createServerOwnedRuntimeRegistry(),
+  runtimeRegistry,
   now = Date.now,
 } = {}) {
   const metadata = validateTrustedRuntimeEnvironment(env);
