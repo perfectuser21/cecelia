@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# PostToolUse Hook: post-pr-create v2.1
-# 在 gh pr create 成功后触发 auto-merge；rewrite/* 分支 / harness relay 模式跳过。
-#
-# v2.1: harness relay 守门 — HARNESS_TASK_ID 非空时跳过 auto-merge；
-#       evaluator PASS 后由 harness-controller 手动 merge，禁止 hook 绕过 evaluator gate
-#       (P0 a638f840 根治：headed relay 的 tmux innerCmd export HARNESS_TASK_ID 配套)。
-# v2.0: fail-closed — gh 失败时用 git branch --show-current 兜底；
-#       两者均失败 → 保守跳过 auto-merge（不因信息缺失静默放行）。
-# v1.0: fail-open（已废弃）
+# PostToolUse Hook: post-pr-create v3.0
+# PR 创建后只做审计提示；所有分支一律交给 Kernel exact-SHA merge gate。
+# 标题、分支、环境变量与 provider 输出都不能授予 merge authority。
 
 set -uo pipefail
 
@@ -43,56 +37,6 @@ if [[ -z "$PR_NUMBER" ]]; then
   exit 0
 fi
 
-# ===== 解析 --repo 参数 =====
-REPO=""
-if [[ "$COMMAND" =~ --repo[=[:space:]]+([^[:space:]\"\']+) ]]; then
-  REPO="${BASH_REMATCH[1]}"
-elif [[ "$COMMAND" =~ -R[[:space:]]+([^[:space:]\"\']+) ]]; then
-  REPO="${BASH_REMATCH[1]}"
-fi
-
-# ===== 获取分支名（fail-closed 兜底） =====
-HEAD_BRANCH=""
-
-# 优先：gh pr view（最权威）
-if [[ -n "$REPO" ]]; then
-  HEAD_BRANCH=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefName -q .headRefName 2>/dev/null || echo "")
-else
-  HEAD_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName -q .headRefName 2>/dev/null || echo "")
-fi
-
-# 兜底：本地 git branch --show-current
-if [[ -z "$HEAD_BRANCH" ]]; then
-  HEAD_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
-fi
-
-# 两者均失败 → fail-closed
-if [[ -z "$HEAD_BRANCH" ]]; then
-  echo "[post-pr-create] 无法获取分支名（gh 和 git 均失败），保守跳过 auto-merge (fail-closed)" >&2
-  exit 0
-fi
-
-# ===== Harness relay 模式守门 =====
-# evaluator PASS 后由 harness-controller 手动 merge，禁止 auto-merge 绕过 evaluator gate。
-# HARNESS_TASK_ID 由 headed relay 的 tmux innerCmd `export HARNESS_TASK_ID=<id>` 注入；
-# headless docker relay 由 spawnDockerDetached 的 -e 参数注入——两条路径均覆盖。
-if [[ -n "${HARNESS_TASK_ID:-}" ]]; then
-  echo "[post-pr-create] HARNESS_TASK_ID=${HARNESS_TASK_ID}: harness relay 模式——跳过 auto-merge（evaluator PASS 后由 controller merge）" >&2
-  exit 0
-fi
-
-# ===== rewrite/* 跳过 auto-merge =====
-if [[ "$HEAD_BRANCH" == rewrite/* ]]; then
-  echo "[post-pr-create] rewrite/* 分支（${HEAD_BRANCH}）：跳过 auto-merge，等主理人批准。" >&2
-  exit 0
-fi
-
-# ===== 触发 auto-merge =====
-echo "[post-pr-create] PR #${PR_NUMBER}（${HEAD_BRANCH}）→ 触发 auto-merge" >&2
-if [[ -n "$REPO" ]]; then
-  gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash >&2 2>&1 || true
-else
-  gh pr merge "$PR_NUMBER" --auto --squash >&2 2>&1 || true
-fi
-
+# ===== 永久 Kernel-only =====
+echo "[post-pr-create] PR #${PR_NUMBER} 已创建；auto-merge authority 已撤销，等待 Kernel exact-SHA merge gate。" >&2
 exit 0

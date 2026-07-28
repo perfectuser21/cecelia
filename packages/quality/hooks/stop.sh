@@ -346,22 +346,18 @@ if command -v gh &>/dev/null; then
             echo "    1. 写 docs/learnings/${CURRENT_BRANCH}.md（根本原因 + 下次预防 + checklist）" >&2
             echo "    2. git add + commit + push Learning 到功能分支（在合并前 push 到 PR）" >&2
             echo "    3. 在 .dev-mode 中写 step_4_ship: done" >&2
-            echo "    4. 然后执行合并: gh pr merge ${PR_NUMBER} --squash" >&2
+            echo "    4. 等待 Kernel evaluator + judge + exact-SHA merge authorization" >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
             exit 2
         fi
 
-        # step_4_ship: done，PR 未合并 → 执行合并
-        echo "  ✅ Step 12: step_4_ship: done，PR 未合并 → 执行合并" >&2
+        # step_4_ship: done，PR 未合并 → 交还 Kernel；Stop Hook 无 merge authority
+        echo "  ✅ Step 12: step_4_ship: done，PR 等待 Kernel merge authorization" >&2
         echo "" >&2
-        if [[ -n "$PR_NUMBER" ]]; then
-            echo "  执行: gh pr merge $PR_NUMBER --squash --auto" >&2
-            gh pr merge "$PR_NUMBER" --squash --auto 2>/dev/null || true
-        fi
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  ⏳ 合并已发起，等待下次 Stop Hook 检查合并结果" >&2
+        echo "  ⏳ Session 职责已完成；Kernel 将继续 evaluator / judge / merge gate" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        exit 2
+        exit 0
     else
         # 未知状态
         echo "  ⚠️  Step 9: CI 状态未知" >&2

@@ -52,6 +52,20 @@ if text_contains_token "$CMD"; then
     exit 2
 fi
 
+# ─── 规则 1c: Merge authority 只能由 Kernel exact-SHA effect executor 持有 ───
+MERGE_COMMAND_PATTERN='(^|[;&|[:space:]])gh[[:space:]]+pr[[:space:]]+merge([;&|[:space:]]|$)'
+if echo "$CMD" | grep -qE "$MERGE_COMMAND_PATTERN"; then
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  [BASH GUARD] MERGE AUTHORITY 被拒绝" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "PR merge 只能由 Kernel exact-SHA authorization/effect receipt 执行。" >&2
+    echo "Agent、hook、skill 与普通 Bash session 都没有 merge authority。" >&2
+    echo "" >&2
+    exit 2
+fi
+
 # ─── 规则 1b: 凭据文件暴露检测（~2ms）─────────────────────────
 # 拦截从 ~/.credentials/ 复制/重定向凭据到其他位置
 # 允许: source, ls, test, cat（无重定向）, grep（无重定向）

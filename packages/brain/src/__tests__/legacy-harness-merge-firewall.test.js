@@ -23,11 +23,13 @@ describe('legacy harness execution callback merge firewall', () => {
     'packages/brain/src/harness-promote-regression.js',
   ])('%s cannot retain an executable legacy merge path', (path) => {
     expect(repoFile(path)).not.toMatch(/\bgh\s+pr\s+merge\b/);
+    expect(repoFile(path)).not.toMatch(/\[\s*['"]pr['"]\s*,\s*['"]merge['"]/);
   });
 
   it('Claude Bash guard rejects direct gh pr merge commands', () => {
     const guard = repoFile('packages/engine/hooks/bash-guard.sh');
     expect(guard).toContain('MERGE AUTHORITY');
-    expect(guard).toMatch(/gh\\s\+pr\\s\+merge/);
+    expect(guard).toContain('MERGE_COMMAND_PATTERN');
+    expect(guard).toContain('gh[[:space:]]+pr[[:space:]]+merge');
   });
 });

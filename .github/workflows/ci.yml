@@ -1845,24 +1845,20 @@ jobs:
           fi
           echo ""; echo "✅ CI PASSED"
 
-  # ─── Auto-merge（所有 cp-* 分支 PR，CI 通过后自动合并）────────
+  # ─── 兼容 job id：只观察 merge eligibility，不执行外部 effect ───
   auto-merge:
     needs: [ci-passed]
     if: always() && needs.ci-passed.result == 'success' && github.event_name == 'pull_request'
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout（取 should-auto-merge.sh 决策脚本）
         uses: actions/checkout@v4
-      - name: Auto-merge cp-* PR（排队等待分支保护 + Brain 失败回写）
+      - name: Kernel merge eligibility（只读）
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRAIN_URL: ${{ vars.BRAIN_URL || 'http://localhost:5221' }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_BODY: ${{ github.event.pull_request.body }}
           # PR_TITLE / HEAD_BRANCH 走 env 而非内联 ${{ }}：分支名和标题是用户可控输入，
           # 直接内联进 run 脚本存在 shell 注入面（GHA 已知问题）。
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -1877,22 +1873,7 @@ jobs:
             exit 0
           fi
 
-          if gh pr merge "$PR_NUMBER" --auto --squash --delete-branch --repo "$GITHUB_REPOSITORY"; then
-            echo "✅ Auto-merge 已排队；GitHub 将在全部分支保护条件满足后合并"
-            exit 0
-          fi
-
-          echo "❌ Auto-merge 排队失败"
-          TASK_ID=$(echo "$PR_BODY" | grep -oE 'task[_-]id[: ]+[a-f0-9-]{36}' | head -1 | grep -oE '[a-f0-9-]{36}' || echo "")
-          if [ -n "$TASK_ID" ]; then
-            curl -s -X PATCH "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" \
-              -H "Content-Type: application/json" \
-              -d "{\"status\":\"failed\",\"result\":{\"error\":\"auto-merge enqueue failed\",\"pr_number\":${PR_NUMBER}}}" || true
-            echo "已回写 Brain 任务 $TASK_ID 失败状态"
-          else
-            echo "⚠️  未能提取 task_id，跳过 Brain 回写"
-          fi
-          exit 1
+          echo "Kernel-only：CI workflow 不持有 merge authority；等待 exact-SHA effect receipt。"
 
   # ─── dispatch-worker 纯函数层单测（scripts/ 测试无 glob 自动收集，不接=假绿）──────
   dispatch-worker-test:

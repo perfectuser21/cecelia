@@ -212,9 +212,9 @@ export async function promoteToRegression(deps = {}, params = {}) {
     return { ok: true, dbWritten, yamlPrUrl: null, reason: 'dod_not_committed' };
   }
 
-  // ── ③ yaml 冻结 + 专属 auto-PR ──
+  // ── ③ yaml 冻结 + 专属 draft PR ──
   try {
-    // 专属 auto-PR（reportNode 时 sub-task PR 已 merge，yaml 没有别的顺风车上 main）。
+    // 专属 draft PR（reportNode 时 sub-task PR 已 merge，yaml 没有别的顺风车上 main）。
     // 分支必须基于 origin/main 而非当前 contract 分支——否则 PR 会把 contract 分支上
     // 尚未进 main 的差异悄悄带上 main；先切分支再读 yaml，保证读到的是 main 最新版本
     // （并发 promotion 不会互相覆盖）。
@@ -239,17 +239,19 @@ export async function promoteToRegression(deps = {}, params = {}) {
     // pathspec 限定提交范围，防止 worktree index 里残留的其他暂存文件搭车
     await run(['commit', '-m', `feat(regression): freeze golden path GP-${String(taskId).slice(0, 8)} (A3 promotion)`, '--', 'regression-contract.yaml']);
     await run(['push', '-u', 'origin', branch]);
-    const pr = await execFile('gh', ['pr', 'create', '--fill', '--title', `feat(regression): A3 冻结 ${String(taskId).slice(0, 8)} 验收卡片`], { cwd: worktreePath });
+    const pr = await execFile('gh', [
+      'pr',
+      'create',
+      '--draft',
+      '--fill',
+      '--title',
+      `feat(regression): A3 冻结 ${String(taskId).slice(0, 8)} 验收卡片`,
+    ], { cwd: worktreePath });
     const yamlPrUrl = String(pr.stdout || '').trim().split('\n').pop() || null;
-    try {
-      await execFile('gh', ['pr', 'merge', '--auto', '--squash', yamlPrUrl], { cwd: worktreePath });
-    } catch (mergeErr) {
-      console.warn(`[promote-regression] auto-merge 设置失败（PR 已开，需人工 merge）${yamlPrUrl}: ${mergeErr.message}`);
-    }
-    console.log(`[promote-regression] 冻结完成 task=${taskId} → ${yamlPrUrl}`);
+    console.log(`[promote-regression] draft 冻结完成，等待 Kernel merge gate task=${taskId} → ${yamlPrUrl}`);
     return { ok: true, dbWritten, yamlPrUrl };
   } catch (err) {
-    console.error(`[promote-regression] yaml 冻结/auto-PR 失败（DB 已写）task=${taskId}: ${err.message}`);
+    console.error(`[promote-regression] yaml 冻结/draft PR 失败（DB 已写）task=${taskId}: ${err.message}`);
     await _alert(`A3 yaml 冻结失败（DB 已登记）：task=${taskId} ${err.message}`);
     return { ok: true, dbWritten, yamlPrUrl: null, reason: 'yaml_freeze_failed' };
   }
