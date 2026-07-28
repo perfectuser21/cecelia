@@ -342,6 +342,37 @@ describe('quality equivalence adapter registry', () => {
     })).resolves.toEqual({ confirmed: false });
   });
 
+  it('attempts isolation compensation even when seam cleanup fails', async () => {
+    const value = fixture();
+    const registry = createQualityEquivalenceAdapterRegistry(value);
+    const target = cell(QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS[0]);
+    const authorization = grant(target);
+    const compensations = [];
+    const adapter = registry.get(target.adapter_id);
+    const prepared = await adapter.prepare({
+      cell: target,
+      grant: authorization,
+      predecessor: null,
+      signal: new AbortController().signal,
+      registerCompensation: (resource) => compensations.push(resource),
+    });
+    value.seams[target.seam_id].cleanup.mockRejectedValueOnce(
+      new Error('seam cleanup failed'),
+    );
+
+    await expect(adapter.cleanup({
+      cell: target,
+      grant: authorization,
+      predecessor: null,
+      prepared,
+      compensations,
+    })).rejects.toMatchObject({
+      code: 'adapter_cleanup_failed',
+    });
+    expect(value.isolation.cleanup).toHaveBeenCalledOnce();
+    expect(value.resources.has(authorization.resource_ref)).toBe(false);
+  });
+
   it('uses an independent inspection hook to verify all cleanup targets are absent', async () => {
     const value = fixture();
     const registry = createQualityEquivalenceAdapterRegistry(value);
