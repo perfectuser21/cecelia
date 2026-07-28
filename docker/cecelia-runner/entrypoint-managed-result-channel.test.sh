@@ -14,6 +14,19 @@ MANAGED_SECTION="$(
 }
 eval "$MANAGED_SECTION"
 
+# Managed evidence is not authoritative until every provider descendant is
+# frozen and reaped. This test launches a real background process and requires
+# the production helper (in bounded test mode) to kill it before returning.
+sleep 30 &
+ROGUE_PROVIDER_PID=$!
+CECELIA_DRAIN_TEST_MODE=1 managed_drain_provider_descendants
+if kill -0 "$ROGUE_PROVIDER_PID" 2>/dev/null; then
+  echo 'managed descendant drain left a provider background process alive' >&2
+  kill -KILL "$ROGUE_PROVIDER_PID" 2>/dev/null || true
+  exit 1
+fi
+wait "$ROGUE_PROVIDER_PID" 2>/dev/null || true
+
 # Presence, not truthiness, selects Fleet managed mode. Empty and unknown values
 # still select managed and must then fail closed during validation.
 unset BRAIN_RESULT_CHANNEL_VERSION
@@ -107,11 +120,21 @@ grep -q 'write_managed_provider_session "\$live_session"' <<<"$PROVIDER_SECTION"
 grep -q 'configure_managed_bundle_runtime' <<<"$PROVIDER_SECTION"
 grep -q 'unset HARNESS_CALLBACK_TOKEN HARNESS_CALLBACK_URL' <<<"$MANAGED_SECTION"
 grep -q 'export BRAIN_TASK_BUNDLE_SHA256=' <<<"$MANAGED_SECTION"
+grep -q 'write_managed_canary_result' <<<"$MANAGED_SECTION"
 
 # The legacy proposer transport effect writes /workspace/.brain-result.json.
 # Managed mode must skip that function completely.
 grep -A6 'if ! managed_result_channel_active; then' <<<"$PROVIDER_SECTION" \
   | grep -q 'finalize_proposer_output'
+
+# Direct canary must terminate before every provider command branch, and the
+# same exact result is independent of the selected provider name.
+CANARY_LINE="$(grep -n 'write_managed_canary_result' <<<"$PROVIDER_SECTION" | head -n1 | cut -d: -f1)"
+CODEX_LINE="$(grep -n 'if \[\[ "\$provider" == "codex" \]\]' <<<"$PROVIDER_SECTION" | head -n1 | cut -d: -f1)"
+CLAUDE_LINE="$(grep -n 'elif \[\[ "\$provider" == "claude" \]\]' <<<"$PROVIDER_SECTION" | head -n1 | cut -d: -f1)"
+GROK_LINE="$(grep -n 'elif \[\[ "\$provider" == "grok" \]\]' <<<"$PROVIDER_SECTION" | head -n1 | cut -d: -f1)"
+(( CANARY_LINE < CODEX_LINE && CANARY_LINE < CLAUDE_LINE && CANARY_LINE < GROK_LINE ))
+grep -q 'managed_drain_provider_descendants' <<<"$PROVIDER_SECTION"
 
 # Once provider execution returns, managed mode exits before callback body/URL,
 # callback token, retry loop, or any legacy callback HTTP can be evaluated.
