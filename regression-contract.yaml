@@ -162,6 +162,7 @@ golden_paths:
 behavior_equivalence:
   schema_version: "1.0.0"
   contract_version: "kernel-equivalence-2026-07-28"
+  required_behavior_count: 11
   report_as_of: "2026-07-28T00:00:00.000Z"
 
   journey:
@@ -417,7 +418,7 @@ behavior_equivalence:
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Unknown liveness fails open for destructive cleanup; confirmed host-local ESRCH may mark dead and recover."
       partial_behavioral_evidence:
-        - "cd packages/brain && npx vitest run src/lib/__tests__/harness-orphan-guard.test.js src/__tests__/harness-relay-watchdog-kernel-fleet.test.js"
+        - "cd packages/brain && npx vitest run src/lib/__tests__/harness-orphan-guard.test.js"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
       freshness: { verified_at: null, expires_at: null }
       proof_matrix: *missing_provider_matrix
@@ -486,7 +487,7 @@ behavior_equivalence:
       legacy_behavior: "Completion emits evidence-backed report and learning artifacts only after verified effects."
       legacy_evidence:
         - packages/brain/scripts/__tests__/harness-report.test.mjs
-        - packages/brain/src/__tests__/learning-effectiveness.test.js
+        - packages/brain/src/__tests__/auto-learning.test.js
       unified_constructs:
         - "Kernel result/effect evidence envelope"
         - "report and learning closure checkpoint"
@@ -495,7 +496,7 @@ behavior_equivalence:
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Missing or stale effect evidence prevents a green completion report and learning closure."
       partial_behavioral_evidence:
-        - "cd packages/brain && npx vitest run src/__tests__/learning-effectiveness.test.js && node scripts/__tests__/harness-report.test.mjs"
+        - "cd packages/brain && npx vitest run src/__tests__/auto-learning.test.js scripts/__tests__/harness-report.test.mjs"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
       freshness: { verified_at: null, expires_at: null }
       proof_matrix: *missing_provider_matrix

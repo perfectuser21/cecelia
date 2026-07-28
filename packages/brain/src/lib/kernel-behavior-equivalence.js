@@ -73,6 +73,48 @@ function commandIsPseudoProof(command) {
 }
 
 function validateCatalog(section, findings) {
+  if (!nonEmpty(section?.schema_version)) {
+    addFinding(
+      findings,
+      null,
+      'schema_version_missing',
+      'behavior_equivalence.schema_version',
+      'behavior equivalence schema_version is required',
+    );
+  }
+  if (!nonEmpty(section?.contract_version)) {
+    addFinding(
+      findings,
+      null,
+      'equivalence_contract_version_missing',
+      'behavior_equivalence.contract_version',
+      'behavior equivalence contract_version is required',
+    );
+  }
+  if (!nonEmpty(section?.journey?.key)) {
+    addFinding(
+      findings,
+      null,
+      'journey_key_missing',
+      'behavior_equivalence.journey.key',
+      'journey key is required',
+    );
+  }
+  const requiredBehaviorCount = section?.required_behavior_count;
+  const behaviorCount = asArray(section?.behaviors).length;
+  if (
+    !Number.isInteger(requiredBehaviorCount)
+    || requiredBehaviorCount < 1
+    || behaviorCount !== requiredBehaviorCount
+  ) {
+    addFinding(
+      findings,
+      null,
+      'behavior_inventory_count_mismatch',
+      'behavior_equivalence.required_behavior_count',
+      `expected ${requiredBehaviorCount ?? 'declared count'}, found ${behaviorCount} behaviors`,
+    );
+  }
   const stepIds = asArray(section?.journey?.steps).map((step) => step?.id);
   for (const step of GOLDEN_PATH_STEPS) {
     if (!stepIds.includes(step)) {
@@ -357,13 +399,15 @@ function validateSupersession(behaviors, findings) {
     while (next.has(current)) {
       if (localIndex.has(current)) {
         const cycle = localPath.slice(localIndex.get(current)).concat(current);
-        addFinding(
-          findings,
-          current,
-          'supersession_cycle',
-          'superseded_by',
-          `supersession cycle: ${cycle.join(' -> ')}`,
-        );
+        for (const behaviorId of new Set(cycle.slice(0, -1))) {
+          addFinding(
+            findings,
+            behaviorId,
+            'supersession_cycle',
+            'superseded_by',
+            `supersession cycle: ${cycle.join(' -> ')}`,
+          );
+        }
         break;
       }
       if (globallyVisited.has(current)) break;
@@ -422,7 +466,18 @@ export function validateBehaviorEquivalence(contract, { now = Date.now() } = {})
       findings: behaviorFindings,
     };
   });
+  const supersessionFindingStart = findings.length;
   validateSupersession(normalizedBehaviors, findings);
+  const supersessionFindings = findings.slice(supersessionFindingStart);
+  for (const behavior of normalizedBehaviors) {
+    const behaviorSupersessionFindings = supersessionFindings.filter(
+      (finding) => finding.behavior_id === behavior.behavior_id,
+    );
+    if (behaviorSupersessionFindings.length > 0) {
+      behavior.findings.push(...behaviorSupersessionFindings);
+      behavior.effective_status = 'gap';
+    }
+  }
 
   return {
     valid: findings.length === 0,

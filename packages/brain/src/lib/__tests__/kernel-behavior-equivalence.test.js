@@ -72,6 +72,7 @@ function contract(behaviors = [provenBehavior()]) {
     behavior_equivalence: {
       schema_version: '1.0.0',
       contract_version: '2026-07-28.1',
+      required_behavior_count: behaviors.length,
       journey: {
         key: 'kernel-harness-delivery',
         steps: steps(),
@@ -94,6 +95,18 @@ describe('canonical behavior equivalence axes', () => {
 });
 
 describe('validateBehaviorEquivalence', () => {
+  it('rejects a silently truncated behavior inventory', () => {
+    const truncated = contract();
+    truncated.behavior_equivalence.required_behavior_count = 2;
+
+    const result = validateBehaviorEquivalence(truncated, { now: NOW });
+
+    expect(result.valid).toBe(false);
+    expect(result.findings).toContainEqual(expect.objectContaining({
+      code: 'behavior_inventory_count_mismatch',
+    }));
+  });
+
   it('accepts only a complete, fresh 3x3 proven contract', () => {
     const result = validateBehaviorEquivalence(contract(), { now: NOW });
 
@@ -208,20 +221,14 @@ describe('validateBehaviorEquivalence', () => {
   it('finds dangling supersession references and cycles', () => {
     const first = provenBehavior({
       behavior_id: 'B-FIRST',
-      status: 'gap',
-      gap: { reason: 'first', owner: 'o', closure_plan: 'close first' },
       superseded_by: 'B-SECOND',
     });
     const second = provenBehavior({
       behavior_id: 'B-SECOND',
-      status: 'gap',
-      gap: { reason: 'second', owner: 'o', closure_plan: 'close second' },
       superseded_by: 'B-FIRST',
     });
     const dangling = provenBehavior({
       behavior_id: 'B-DANGLING',
-      status: 'gap',
-      gap: { reason: 'dangling', owner: 'o', closure_plan: 'close dangling' },
       superseded_by: 'B-MISSING',
     });
 
@@ -234,6 +241,7 @@ describe('validateBehaviorEquivalence', () => {
     expect(result.findings).toContainEqual(expect.objectContaining({
       code: 'supersession_cycle',
     }));
+    expect(result.behaviors.every((behavior) => behavior.effective_status === 'gap')).toBe(true);
   });
 });
 

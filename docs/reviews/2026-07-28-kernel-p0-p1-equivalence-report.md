@@ -131,7 +131,7 @@ R = 有真实缺口；P = 证据过期；G = 完整证明；— = 尚未映射�
 - Unified constructs：executor-kind-aware Kernel liveness resolver; attempt heartbeat/PID recovery contract
 - 失败语义：Unknown liveness fails open for destructive cleanup; confirmed host-local ESRCH may mark dead and recover.
 - Freshness：verified — / expires —
-- 部分行为证据（不等于 proven）：`cd packages/brain && npx vitest run src/lib/__tests__/harness-orphan-guard.test.js src/__tests__/harness-relay-watchdog-kernel-fleet.test.js`
+- 部分行为证据（不等于 proven）：`cd packages/brain && npx vitest run src/lib/__tests__/harness-orphan-guard.test.js`
 
 ### KERNEL-P1-09-DEVGATE-TDD-DOD
 
@@ -154,11 +154,11 @@ R = 有真实缺口；P = 证据过期；G = 完整证明；— = 尚未映射�
 ### KERNEL-P1-11-REPORT-LEARNING-CLOSURE
 
 - 旧行为：Completion emits evidence-backed report and learning artifacts only after verified effects.
-- 旧证据：`packages/brain/scripts/__tests__/harness-report.test.mjs`, `packages/brain/src/__tests__/learning-effectiveness.test.js`
+- 旧证据：`packages/brain/scripts/__tests__/harness-report.test.mjs`, `packages/brain/src/__tests__/auto-learning.test.js`
 - Unified constructs：Kernel result/effect evidence envelope; report and learning closure checkpoint
 - 失败语义：Missing or stale effect evidence prevents a green completion report and learning closure.
 - Freshness：verified — / expires —
-- 部分行为证据（不等于 proven）：`cd packages/brain && npx vitest run src/__tests__/learning-effectiveness.test.js && node scripts/__tests__/harness-report.test.mjs`
+- 部分行为证据（不等于 proven）：`cd packages/brain && npx vitest run src/__tests__/auto-learning.test.js scripts/__tests__/harness-report.test.mjs`
 
 ## Proven-to-fire 命令
 

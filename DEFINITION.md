@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.268.2
+**Brain 版本**: 1.268.6
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.6 — Kernel P0/P1 behavior equivalence contract
+
+- 根 regression contract 现在唯一登记旧 Claude Code P0/P1 行为、Kernel unified
+  construct、S0–S12 × 11 要素投影与三 Provider × 三场景证据矩阵。
+- 只有 exact SHA/version、freshness、effect receipt 和真实 behavioral
+  normal/violation/recovery 全覆盖才可 effective proven；缺证自动降为 gap，
+  静态文档/grep/文件存在/smoke-only 不可伪绿。
+- 当前 11 条行为全部诚实保留为 gap（0/99 provider 场景 receipts）；报告同时列出
+  legacy evidence、部分行为测试与逐项 closure plan。
+- 实现是纯 validator/projector，复用现有 journey cell vocabulary，不建
+  `behavior_ledger` 表、不新增 lifecycle、不触碰 ReleaseRun/risk 执行控制流。
+- Brain 回退目标：`1.268.5`。
 
 ## Brain 1.268.2 — Kernel controller guard migration
 
