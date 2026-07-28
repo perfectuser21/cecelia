@@ -270,3 +270,47 @@ test('maintenance heartbeats only owned live or callback-pending attempts', asyn
     failed: 0,
   });
 });
+
+test('rejects oversized and invalid-UTF8 ACK streams before JSON parsing', async () => {
+  const delivery = {
+    delivery_id: DELIVERY_ID,
+    result_nonce: RESULT_NONCE,
+    result_sha256: require('node:crypto').createHash('sha256').update(RESULT).digest('hex'),
+    result_bytes: RESULT.length,
+    terminal_status: 'completed',
+  };
+  let oversizedBodyRead = false;
+  const oversizedClient = createResultDeliveryClient({
+    secret: SECRET,
+    fetchFn: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-length': '65537' }),
+      text: async () => {
+        oversizedBodyRead = true;
+        return '{}';
+      },
+    }),
+  });
+  await assert.rejects(
+    oversizedClient.deliver({
+      state: STATE,
+      resultBytes: RESULT,
+      terminalStatus: 'completed',
+      delivery,
+    }),
+    /response_invalid/,
+  );
+  assert.equal(oversizedBodyRead, false);
+
+  const invalidUtf8Client = createFleetHeartbeatClient({
+    secret: SECRET,
+    fetchFn: async () => new Response(Uint8Array.from([0xff]), { status: 200 }),
+    randomUuid: () => '88888888-8888-4888-8888-888888888888',
+    now: () => new Date('2026-07-28T01:00:00.000Z'),
+  });
+  await assert.rejects(
+    invalidUtf8Client.deliver({ state: STATE, session: null }),
+    /response_invalid/,
+  );
+});
