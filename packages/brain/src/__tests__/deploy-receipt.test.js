@@ -17,28 +17,34 @@ import request from 'supertest';
 let capturedSpawnArgs = null;
 let spawnCloseHandler = null;
 
-const { recordActionReceipt, resolveActionReceipt, execSyncMock } = vi.hoisted(() => ({
+const {
+  recordActionReceipt,
+  resolveActionReceipt,
+  execFileMock,
+  claimReleaseEffect,
+} = vi.hoisted(() => ({
   recordActionReceipt: vi.fn().mockResolvedValue('r-dep'),
   resolveActionReceipt: vi.fn().mockResolvedValue(true),
-  execSyncMock: vi.fn().mockReturnValue(Buffer.from('ok')),
+  execFileMock: vi.fn((_file, _args, _options, callback) => callback(null, { stdout: 'ok', stderr: '' })),
+  claimReleaseEffect: vi.fn(),
 }));
 vi.mock('../receipt-collector.js', () => ({ recordActionReceipt, resolveActionReceipt }));
+vi.mock('../orchestrator/release-run-authorization.js', () => ({
+  authorizeReleaseEffect: vi.fn(),
+  appendDispatchOutcome: vi.fn().mockResolvedValue(true),
+  claimReleaseEffect,
+  claimReleaseVerification: vi.fn(),
+}));
+vi.mock('../orchestrator/release-run-routing.js', () => ({
+  planReleaseArtifactRoutes: vi.fn(() => [{
+    artifact: 'brain',
+    command: '/fixture/deploy-brain.sh',
+    args: [],
+    env: {},
+  }]),
+}));
 
-vi.mock('../db.js', () => ({ default: { query: vi.fn(async (sql, params = []) => {
-  if (/INSERT INTO kernel_release_effect_dispatch_claims/.test(sql)) {
-    return { rows: [{ id: 91, generation: 1 }], rowCount: 1 };
-  }
-  if (/INSERT INTO kernel_release_effect_dispatch_outcomes/.test(sql)) {
-    return { rows: [], rowCount: 1 };
-  }
-  return { rows: [{
-    state: params[1] === 'staging' ? 'staging_running' : 'production_deploying',
-    merge_sha: 'f'.repeat(40),
-    expected_merge_sha: 'f'.repeat(40),
-    effect_kind: params[1] === 'staging' ? 'staging' : 'production',
-    idempotency_key: '55555555-5555-4555-8555-555555555555',
-  }], rowCount: 1 };
-}) } }));
+vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(), callLLMStream: vi.fn() }));
 vi.mock('../orchestrator-chat.js', () => ({ handleChat: vi.fn() }));
@@ -79,7 +85,7 @@ vi.mock('child_process', () => ({
       on: (event, handler) => { if (event === 'close') spawnCloseHandler = handler; },
     };
   },
-  execSync: execSyncMock,
+  execFile: (...args) => execFileMock(...args),
 }));
 
 describe('deploy webhook 回执接线（T4）', () => {
@@ -96,7 +102,20 @@ describe('deploy webhook 回执接线（T4）', () => {
     vi.clearAllMocks();
     recordActionReceipt.mockResolvedValue('r-dep');
     resolveActionReceipt.mockResolvedValue(true);
-    execSyncMock.mockReturnValue(Buffer.from('ok'));
+    execFileMock.mockImplementation(
+      (_file, _args, _options, callback) => callback(null, { stdout: 'ok', stderr: '' }),
+    );
+    claimReleaseEffect.mockResolvedValue({
+      claimed: true,
+      deduped: false,
+      dispatch_claim_id: 91,
+      generation: 1,
+      artifact_versions: [{
+        name: 'brain',
+        version: '1.268.15',
+        digest: `sha256:${'a'.repeat(64)}`,
+      }],
+    });
     capturedSpawnArgs = null;
     spawnCloseHandler = null;
     process.env.DEPLOY_TOKEN = 'tok';
@@ -177,8 +196,8 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect(resolveActionReceipt).toHaveBeenCalledWith('r-dep', 'confirmed', expect.anything());
   });
 
-  it('staging execSync 抛错 → 核销 failed（含 error）', async () => {
-    execSyncMock.mockImplementation(() => { throw new Error('boom'); });
+  it('staging worker 失败 → 核销 failed（含稳定 error_code）', async () => {
+    execFileMock.mockImplementation((_file, _args, _options, callback) => callback(new Error('boom')));
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
@@ -188,12 +207,17 @@ describe('deploy webhook 回执接线（T4）', () => {
       expect.objectContaining({ kind: 'deploy', target: 'staging' })
     );
     expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'failed', expect.objectContaining({ error: 'boom' })
+      'r-dep', 'failed', expect.objectContaining({ error_code: 'staging_dispatch_failed' })
     );
   });
 
   it('staging 输出 STAGING_SKIP_REASON=no_docker → failed 且 evidence 含 skip_reason', async () => {
-    execSyncMock.mockReturnValue(Buffer.from('STAGING_SKIP_REASON=no_docker\n'));
+    execFileMock.mockImplementation(
+      (_file, _args, _options, callback) => callback(
+        null,
+        { stdout: 'STAGING_SKIP_REASON=no_docker\n', stderr: '' },
+      ),
+    );
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')

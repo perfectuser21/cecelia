@@ -10,8 +10,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+const { claimReleaseEffect } = vi.hoisted(() => ({
+  claimReleaseEffect: vi.fn(),
+}));
+
 // Mock ops.js 的所有重依赖，确保测试轻量
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+vi.mock('../orchestrator/release-run-authorization.js', () => ({
+  authorizeReleaseEffect: vi.fn(),
+  appendDispatchOutcome: vi.fn().mockResolvedValue(true),
+  claimReleaseEffect,
+  claimReleaseVerification: vi.fn(),
+}));
+vi.mock('../orchestrator/release-run-routing.js', () => ({
+  planReleaseArtifactRoutes: vi.fn(() => [{
+    artifact: 'brain',
+    command: '/fixture/deploy-brain.sh',
+    args: [],
+    env: {},
+  }]),
+}));
 vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(), callLLMStream: vi.fn() }));
 vi.mock('../orchestrator-chat.js', () => ({ handleChat: vi.fn() }));
@@ -50,12 +68,28 @@ vi.mock('./shared.js', () => ({
 vi.mock('child_process', () => ({ exec: vi.fn(), execSync: vi.fn() }));
 
 describe('deploy-status', () => {
+  const authority = {
+    release_run_id: '44444444-4444-4444-8444-444444444444',
+    merge_sha: 'f'.repeat(40),
+    release_authorization: '55555555-5555-4555-8555-555555555555',
+  };
   let app;
   let deployState;
 
   beforeEach(async () => {
     // 设置 DEPLOY_TOKEN 使 POST /deploy 能通过 token 校验
     process.env.DEPLOY_TOKEN = 'test-token';
+    claimReleaseEffect.mockResolvedValue({
+      claimed: true,
+      deduped: false,
+      dispatch_claim_id: 91,
+      generation: 1,
+      artifact_versions: [{
+        name: 'brain',
+        version: '1.268.15',
+        digest: `sha256:${'a'.repeat(64)}`,
+      }],
+    });
     vi.resetModules();
     const mod = await import('../routes/ops.js');
     deployState = mod.deployState;
@@ -134,7 +168,7 @@ describe('deploy-status', () => {
     const res = await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer test-token')
-      .send({ changed_paths: ['packages/brain/'] });
+      .send({ ...authority, changed_paths: ['packages/brain/'] });
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('Deploy already in progress');
@@ -149,7 +183,7 @@ describe('deploy-status', () => {
     const res = await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer test-token')
-      .send({});
+      .send(authority);
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('Deploy already in progress');
