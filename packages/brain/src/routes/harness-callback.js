@@ -183,6 +183,45 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
   );
 }
 
+export async function appendCommanderProposal(attempt, result, db = pool) {
+  if (attempt.role !== 'commander') return;
+  if (result.status !== 'completed' || !result.decision) return;
+  await db.query(
+    `WITH lock AS (
+       SELECT pg_advisory_xact_lock(hashtext($1::text))
+     ), next_hop AS (
+       SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid
+     )
+     INSERT INTO orchestrator_decision_log
+       (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+     SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, NULL,
+            'commander.directive_proposed', $4::jsonb
+       FROM lock, next_hop
+      WHERE NOT EXISTS (
+        SELECT 1
+          FROM orchestrator_decision_log
+         WHERE run_id=$1::uuid
+           AND action='commander.directive_proposed'
+           AND detail->>'attempt_id'=$5::text
+      )`,
+    [
+      attempt.run_id,
+      JSON.stringify({
+        commander_attempt_id: attempt.id,
+        event_cursor: result.decision.event_cursor,
+      }),
+      attempt.phase,
+      JSON.stringify({
+        attempt_id: attempt.id,
+        directive: result.decision,
+      }),
+      attempt.id,
+    ],
+  );
+}
+
 export async function appendGeneratorFixCallback(
   attempt,
   result,
@@ -488,6 +527,7 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
         completedAttempt = current;
         persistedResult = current.result ?? result;
       }
+      await appendCommanderProposal(attempt, persistedResult, db);
       await appendAttemptVerdict(attempt, persistedResult, db);
       const resolver = req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver;
       await appendGeneratorFixCallback(attempt, persistedResult, db, resolver);

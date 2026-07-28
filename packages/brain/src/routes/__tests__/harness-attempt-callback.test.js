@@ -236,6 +236,18 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       }),
       { leaseOwner },
     );
+    const proposalCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
+      sql.includes('commander.directive_proposed')
+    ));
+    expect(proposalCalls).toHaveLength(1);
+    expect(JSON.parse(proposalCalls[0][1][3])).toMatchObject({
+      attempt_id: attemptId,
+      directive: {
+        schema: 'commander-directive/v1',
+        run_id: runId,
+        event_cursor: 5,
+      },
+    });
   });
 
   it.each([

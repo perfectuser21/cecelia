@@ -62,9 +62,10 @@ export function createCommanderCoordinator({
     reasonCode = null,
     directive = null,
   }) {
+    const hop = await nextHop(input.run.id);
     await appendDecision({
       runId: input.run.id,
-      hop: await nextHop(input.run.id),
+      hop,
       observed: {
         commander_attempt_id: attemptId,
         event_cursor: directive?.event_cursor ?? null,
@@ -78,6 +79,7 @@ export function createCommanderCoordinator({
         ...(directive ? { directive } : {}),
       },
     });
+    return hop;
   }
 
   async function actorMessages(runId) {
@@ -190,7 +192,7 @@ export function createCommanderCoordinator({
     });
     const nextCursor = maxCursor(newEvents, currentState.event_cursor);
     if (staleEvents.length > 0) {
-      await appendCommanderDecision(input, {
+      const authoritativeHop = await appendCommanderDecision(input, {
         action: 'commander.directive_rejected',
         gateVerdict: 'deny:stale_event_cursor',
         attemptId: latestAttempt.id,
@@ -205,23 +207,17 @@ export function createCommanderCoordinator({
       if (!advanced) {
         return { kind: 'wait', reason: 'commander_cursor_conflict' };
       }
-      return replacement;
+      return {
+        ...replacement,
+        authoritative_hop: authoritativeHop,
+      };
     }
 
-    await appendCommanderDecision(input, {
-      action: 'commander.directive_accepted',
-      gateVerdict: 'allow',
-      attemptId: latestAttempt.id,
-      directive,
-    });
     await commanderStore.updateMemory(runId, {
       expectedCursor: currentState.event_cursor,
       provider: latestAttempt.provider,
       accountId: latestAttempt.account_id,
       providerSessionId: latestAttempt.provider_session_id,
-      latestGuidance: directive.guidance
-        ? { text: directive.guidance }
-        : undefined,
       status: 'ready',
     });
     const advanced = await commanderStore.advanceCursor(runId, {
@@ -231,7 +227,12 @@ export function createCommanderCoordinator({
     if (!advanced) {
       return { kind: 'wait', reason: 'commander_cursor_conflict' };
     }
-    return { kind: 'control', decision: directive };
+    return {
+      kind: 'control',
+      decision: directive,
+      attempt_id: latestAttempt.id,
+      event_cursor: bundleCursor,
+    };
   }
 
   return Object.freeze({ reconcile });

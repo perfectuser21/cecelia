@@ -13,6 +13,11 @@ import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { runLoop } from './loop.js';
 import { createAttemptStore } from './attempt-store.js';
+import { createActorInbox } from './actor-inbox.js';
+import { createCommanderCoordinator } from './commander-coordinator.js';
+import { createCommanderDirectiveExecutor } from './commander-directive-executor.js';
+import { createCommanderStore } from './commander-store.js';
+import { appendHop, nextHop } from './decision-log.js';
 import {
   createDispatcher,
   resolveProviderAccountHome,
@@ -36,6 +41,7 @@ import {
   DEFAULT_WORKER_BRAIN_URL,
 } from './production-transport.js';
 import { createWorkspaceSpecResolver } from './workspace-spec.js';
+import { createRunEventStore } from './run-event-store.js';
 
 const CANONICAL_MACHINE_IDS = new Set([
   'us-mac-m4',
@@ -124,6 +130,48 @@ export async function buildRealDeps(overrides = {}) {
   const execCmd = overrides.execCmd
     ?? ((cmd) => execSync(cmd, { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 60_000 }));
   const attemptStore = overrides.attemptStore ?? createAttemptStore(pool);
+  const commanderStore = overrides.commanderStore ?? createCommanderStore(pool);
+  const eventStore = overrides.eventStore ?? createRunEventStore(pool);
+  const commanderAttemptStore = {
+    getLatestCommanderAttempt: (...args) => {
+      if (typeof attemptStore.getLatestCommanderAttempt !== 'function') {
+        throw new Error('attemptStore.getLatestCommanderAttempt unavailable');
+      }
+      return attemptStore.getLatestCommanderAttempt(...args);
+    },
+    listCommanderFailoverLineage: (...args) => {
+      if (typeof attemptStore.listCommanderFailoverLineage !== 'function') {
+        throw new Error('attemptStore.listCommanderFailoverLineage unavailable');
+      }
+      return attemptStore.listCommanderFailoverLineage(...args);
+    },
+    getById: (...args) => {
+      if (typeof attemptStore.getById !== 'function') {
+        throw new Error('attemptStore.getById unavailable');
+      }
+      return attemptStore.getById(...args);
+    },
+  };
+  const actorInbox = overrides.actorInbox ?? {
+    list: (...args) => createActorInbox(pool).list(...args),
+    getCursor: (...args) => createActorInbox(pool).getCursor(...args),
+  };
+  const commanderCoordinator = overrides.commanderCoordinator
+    ?? createCommanderCoordinator({
+      commanderStore,
+      eventStore,
+      actorInbox,
+      attemptStore: commanderAttemptStore,
+      appendDecision: (input) => appendHop(pool, input),
+      nextHop: (runId) => nextHop(pool, runId),
+      now: overrides.now ?? (() => new Date()),
+    });
+  const commanderDirectiveExecutor = overrides.commanderDirectiveExecutor
+    ?? createCommanderDirectiveExecutor({
+      eventStore,
+      attemptStore: commanderAttemptStore,
+      commanderStore,
+    });
   const env = overrides.env ?? process.env;
   const leaseOwner = overrides.leaseOwner ?? `${os.hostname()}:${process.pid}`;
   const brainUrl = overrides.brainUrl ?? env.BRAIN_URL ?? DEFAULT_WORKER_BRAIN_URL;
@@ -254,6 +302,8 @@ export async function buildRealDeps(overrides = {}) {
     readFile: overrides.readFile ?? ((p) => readFileSync(p, 'utf-8')),
     readGitFile: overrides.readGitFile ?? ((sha, p) => readGitArtifact(sha, p)),
     dispatch,
+    commanderCoordinator,
+    commanderDirectiveExecutor,
     host: os.hostname(),
     pid: process.pid,
   };

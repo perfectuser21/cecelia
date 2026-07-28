@@ -14,13 +14,22 @@
  *        collectGroundTruth?, appendHop?, nextHop?, writeHeartbeat?}（后四者可注入 fake）
  */
 import { derive } from './derive.js';
+import { COMMANDER_ACTIONS } from './commander-contract.js';
+import { parseCommanderProfile } from './commander-profile.js';
 import { isPassVerdict, mergeGate } from './gates.js';
 import { deriveCounters } from './counters.js';
 import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
-import { ACTION, LOG_ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
+import {
+  ACTION,
+  LOG_ACTION,
+  BLOCKED_SAME_STATE_CAP,
+  POLL_INTERVAL_MS,
+  BUDGET_CAP_USD,
+  MAX_HOPS,
+} from './constants.js';
 import {
   asStructuredJson,
   failureSetKey,
@@ -47,6 +56,21 @@ function asPayload(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch { return {}; }
+}
+
+function jsonValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function boundedText(value) {
+  return String(value ?? '').slice(0, 4_000);
+}
+
+function commanderRetryCount(decisionLog) {
+  return decisionLog.filter((row) => (
+    row.action === 'commander.directive_accepted'
+    && asPayload(row.detail)?.directive?.action === 'retry_attempt'
+  )).length;
 }
 
 function frozenContractArtifacts(deps, observed, groundTruthPaths, approvedSha) {
@@ -249,6 +273,16 @@ async function markRunFailed(pool, runId, reason) {
   );
 }
 
+async function markRunPaused(pool, runId) {
+  await pool.query(
+    `UPDATE initiative_runs
+        SET phase = 'paused', updated_at = NOW()
+      WHERE id = $1
+        AND phase NOT IN ('done', 'failed')`,
+    [runId],
+  );
+}
+
 async function loadRunDeadlineState(pool, runId) {
   const deadlineResult = await pool.query(
     'SELECT deadline_at FROM initiative_runs WHERE id = $1',
@@ -339,15 +373,22 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     // pollCount 从 DB 持久化推导（Sprint 07231527 Blocking 2：进程内变量改为 DB 推导）
     const pollCount = counters.pollCount;
     const fullCounters = { ...counters, pollCount, ganCostUsd: Number(observed.run.cost_usd ?? 0) };
-    const decision = derive({
+    const defaultDecision = derive({
       ...observed,
       noProgress: counters.noProgress,
       noProgressReason: counters.noProgressReason,
       counters: fullCounters,
     });
+    let decision = defaultDecision;
+    let commanderDispatchContext = null;
+    let retryDispatchContext = null;
+    let latestKnownHop = observed.decisionLog.reduce(
+      (max, row) => Math.max(max, Number(row.hop) || 0),
+      0,
+    );
     // collect 前只凭“有开放 request”允许进行一次外部对账；collect 后必须确认
     // request 仍锚定当前 GitHub head，旧 SHA 的人审不能暂停新 SHA 的活动时钟。
-    let deadlinePaused = decision.action === ACTION.WAIT_HUMAN_REVIEW
+    let deadlinePaused = defaultDecision.action === ACTION.WAIT_HUMAN_REVIEW
       && hasOpenHumanReview
       && Boolean(observed.pr?.head_sha)
       && deadlineState.review_head_sha === observed.pr.head_sha;
@@ -355,7 +396,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       ACTION.EXIT,
       ACTION.MARK_FAILED,
       ACTION.REPORT,
-    ].includes(decision.action);
+    ].includes(defaultDecision.action);
 
     // ---- Deadline fence 2：derive 后 ----
     // wait/control 分支都在此 fence 之后，不能绕开硬上限。
@@ -365,8 +406,134 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     }
 
     if (dryRun) {
-      log(`[orchestrator][dry-run] run=${resolvedRunId} phase=${decision.phase} action=${decision.action} reason=${decision.reason}`);
-      return { exitReason: 'dry_run', hops, decision };
+      log(`[orchestrator][dry-run] run=${resolvedRunId} phase=${defaultDecision.phase} action=${defaultDecision.action} reason=${defaultDecision.reason}`);
+      return { exitReason: 'dry_run', hops, decision: defaultDecision };
+    }
+
+    if (deps.commanderCoordinator) {
+      const commanderMode = observed.run.commander_mode ?? 'kernel-only';
+      const payload = asPayload(observed.task?.payload);
+      const runProfile = payload.commander
+        ? parseCommanderProfile({ commanderMode, payload })
+        : { mode: commanderMode, commander: null };
+      const configuredRetryBudget = Number.isSafeInteger(payload.commander_retry_budget)
+        ? Math.max(0, Math.min(8, payload.commander_retry_budget))
+        : 2;
+      const remainingRetryBudget = Math.max(
+        0,
+        configuredRetryBudget - commanderRetryCount(observed.decisionLog),
+      );
+      const effectiveDeadline = observed.run.deadline_at
+        ?? '9999-12-31T23:59:59.999Z';
+      const commanderResult = await deps.commanderCoordinator.reconcile({
+        run: {
+          id: resolvedRunId,
+          phase: observed.run.phase,
+          commander_mode: commanderMode,
+        },
+        commanderMode,
+        runProfile,
+        objective: {
+          task_id: observed.task?.id ?? taskId,
+          title: boundedText(observed.task?.title),
+          description: boundedText(observed.task?.description),
+        },
+        observed: jsonValue(buildSnapshot(
+          observed,
+          fullCounters,
+          defaultDecision.action,
+          defaultDecision.reason,
+        )),
+        defaultDecision,
+        historySummary: {
+          counters: jsonValue(fullCounters),
+        },
+        budgets: {
+          spent_usd: Number(observed.run.cost_usd ?? 0),
+          max_usd: BUDGET_CAP_USD,
+          remaining_hops: Math.max(0, MAX_HOPS - latestKnownHop),
+          remaining_retry_attempts: remainingRetryBudget,
+          deadline_at: effectiveDeadline,
+        },
+        allowedActions: COMMANDER_ACTIONS,
+      });
+
+      if (Number.isSafeInteger(commanderResult.authoritative_hop)) {
+        latestKnownHop = commanderResult.authoritative_hop;
+        hops++;
+      }
+      if (commanderResult.kind === 'wait') {
+        await beat();
+        await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
+      if (commanderResult.kind === 'dispatch') {
+        decision = {
+          phase: defaultDecision.phase,
+          action: commanderResult.action,
+          reason: commanderResult.context?.wakeup_reasons?.join(',')
+            || 'commander_material_boundary',
+        };
+        commanderDispatchContext = commanderResult.context;
+      } else if (commanderResult.kind === 'continue') {
+        decision = commanderResult.decision ?? defaultDecision;
+      } else if (commanderResult.kind === 'control') {
+        if (!deps.commanderDirectiveExecutor) {
+          throw new Error('commander_directive_executor_unavailable');
+        }
+        const adjudicationHop = await next(deps.pool, resolvedRunId);
+        const directiveResult = await deps.commanderDirectiveExecutor.execute({
+          directive: commanderResult.decision,
+          defaultDecision,
+          validation: {
+            runId: resolvedRunId,
+            eventCursor: commanderResult.event_cursor
+              ?? commanderResult.decision?.event_cursor,
+            phase: defaultDecision.phase,
+            allowedActions: COMMANDER_ACTIONS,
+            nextHop: adjudicationHop,
+            maxHops: MAX_HOPS,
+            duplicateHop: adjudicationHop <= latestKnownHop,
+            spentUsd: Number(observed.run.cost_usd ?? 0),
+            maxUsd: BUDGET_CAP_USD,
+            deadlineAt: effectiveDeadline,
+            now: now(),
+            strictMachine: payload.commander_strict_machine ?? null,
+            capabilityAllowed: true,
+            evidenceOwned: true,
+            remainingRetryBudget,
+          },
+        });
+        const directiveAction = directiveResult.accepted
+          ? 'commander.directive_accepted'
+          : 'commander.directive_rejected';
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: adjudicationHop,
+          observed: {
+            commander_attempt_id: commanderResult.attempt_id ?? null,
+            event_cursor: commanderResult.decision?.event_cursor ?? null,
+          },
+          derivedPhase: defaultDecision.phase,
+          gateVerdict: directiveResult.accepted
+            ? 'allow'
+            : `deny:${directiveResult.reason_code}`,
+          action: directiveAction,
+          detail: {
+            attempt_id: commanderResult.attempt_id ?? null,
+            ...(directiveResult.reason_code
+              ? { reason_code: directiveResult.reason_code }
+              : {}),
+            directive: commanderResult.decision,
+          },
+        });
+        hops++;
+        latestKnownHop = adjudicationHop;
+        decision = directiveResult.accepted
+          ? directiveResult.decision
+          : defaultDecision;
+        retryDispatchContext = directiveResult.dispatch_context ?? null;
+      }
     }
 
     // ---- 控制 action 自消费（不派 dispatcher、不 append hop）----
@@ -375,6 +542,10 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     }
     if (decision.action === ACTION.MARK_FAILED) {
       await markRunFailed(deps.pool, resolvedRunId, decision.reason);
+      return { exitReason: decision.reason, hops };
+    }
+    if (decision.action === 'pause_run') {
+      await markRunPaused(deps.pool, resolvedRunId);
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.PERSIST_CONTRACT_APPROVAL) {
@@ -524,19 +695,15 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
 
     // ---- 派发 action：intent-log-before-dispatch ----
     const hop = await next(deps.pool, resolvedRunId);
-    const observedMaxHop = observed.decisionLog.reduce(
-      (max, row) => Math.max(max, Number(row.hop) || 0),
-      0,
-    );
     // collectGroundTruth 在读 decision log 后还会做 gh/git/docker IO。外部
     // callback 可能在这段窗口追加 verdict，使当前 decision 已经过期。nextHop
     // 看到的数据库版本若领先于 observed 快照，就必须丢弃快照重新观测；否则
     // 会在 PASS 已落库后重复 spawn 同一角色。hop=0 的初始兼容路径继续交给
     // appendHop UNIQUE(run_id,hop) 做最终并发栅栏。
-    if (observedMaxHop > 0 && hop !== observedMaxHop + 1) {
+    if (latestKnownHop > 0 && hop !== latestKnownHop + 1) {
       log(
         `[orchestrator] stale observation on run ${resolvedRunId}: ` +
-        `observed max hop ${observedMaxHop}, database next hop ${hop}; re-observing`,
+        `observed max hop ${latestKnownHop}, database next hop ${hop}; re-observing`,
       );
       await beat();
       continue;
@@ -593,7 +760,15 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
     // gateVerdict deny（derive 与 mergeGate 意见不一致 = 观测竞态）→ 不派发，按 BLOCKED 同态处理
     const result = gateVerdict?.startsWith('deny:')
       ? { status: 'BLOCKED', detail: gateVerdict }
-      : await deps.dispatch(decision.action, { taskId, runId: resolvedRunId, hop, observed, decision });
+      : await deps.dispatch(decision.action, {
+          taskId,
+          runId: resolvedRunId,
+          hop,
+          observed,
+          decision,
+          ...(commanderDispatchContext ? { commander: commanderDispatchContext } : {}),
+          ...(retryDispatchContext ? { retry: retryDispatchContext } : {}),
+        });
     const controlStatus = result.control_status ?? result.status;
 
     if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {

@@ -337,8 +337,10 @@ export function createDispatcher(deps) {
     const payload = asObject(ctx.observed.task.payload);
     const attemptMetadata = {
       logicalCycleId: commanderContext?.logical_cycle_id
+        ?? ctx.retry?.logical_cycle_id
         ?? `intent:${ctx.runId}:${ctx.hop}`,
       attemptKind: commanderContext?.retry_of_attempt_id
+        || ctx.retry?.retry_of_attempt_id
         ? 'retry'
         : (action === 'spawn:generator-fix' ? 'fix' : 'initial'),
       workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
@@ -543,8 +545,11 @@ export function createDispatcher(deps) {
       callbackSecretHash: hashCallbackSecret(callbackSecret),
       logicalCycleId: attemptMetadata.logicalCycleId,
       attemptKind: attemptMetadata.attemptKind,
-      retryOfAttemptId: commanderContext?.retry_of_attempt_id ?? null,
+      retryOfAttemptId: commanderContext?.retry_of_attempt_id
+        ?? ctx.retry?.retry_of_attempt_id
+        ?? null,
       restartReason: commanderContext?.restart_reason
+        ?? ctx.retry?.restart_reason
         ?? (action === 'spawn:generator-fix' ? 'evaluator_failed' : null),
       workstreamKey: attemptMetadata.workstreamKey,
       timeDerived: ['judge', 'reporter'].includes(spec.role),

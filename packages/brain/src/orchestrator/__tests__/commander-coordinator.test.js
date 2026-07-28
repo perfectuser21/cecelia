@@ -221,11 +221,7 @@ describe('Commander coordinator', () => {
       kind: 'continue',
       decision: context().defaultDecision,
     });
-    expect(deps.appendDecision).toHaveBeenCalledTimes(1);
-    expect(deps.appendDecision).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'commander.directive_accepted',
-      detail: expect.objectContaining({ attempt_id: commanderAttemptId }),
-    }));
+    expect(deps.appendDecision).not.toHaveBeenCalled();
     expect(deps.commanderStore.advanceCursor).toHaveBeenCalledWith(runId, {
       expectedCursor: 5,
       nextCursor: 7,

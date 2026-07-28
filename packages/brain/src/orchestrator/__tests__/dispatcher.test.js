@@ -430,6 +430,39 @@ describe('createDispatcher', () => {
     expect(evaluatedBundle.inputs.logical_cycle_id).toBe(created.logicalCycleId);
   });
 
+  it('preserves the source logical cycle for an L0-authorized role retry', async () => {
+    const deps = makeDeps();
+    const sourceAttemptId = '33333333-3333-4333-8333-333333333333';
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 13,
+      observed,
+      decision: { phase: 'gan', reason: 'commander_retry' },
+      retry: {
+        retry_of_attempt_id: sourceAttemptId,
+        logical_cycle_id: 'intent:contract-review',
+        restart_reason: 'commander_retry',
+      },
+    });
+
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logicalCycleId: 'intent:contract-review',
+        attemptKind: 'retry',
+        retryOfAttemptId: sourceAttemptId,
+        restartReason: 'commander_retry',
+        bundle: expect.objectContaining({
+          inputs: expect.objectContaining({
+            logical_cycle_id: 'intent:contract-review',
+            attempt_kind: 'retry',
+          }),
+        }),
+      }),
+    );
+  });
+
   it('先持久化 attempt，再生成 adapter spec，最后 launch', async () => {
     const order = [];
     const deps = makeDeps(order);
