@@ -920,6 +920,7 @@ describe('Fleet Worker production runtime assembly', () => {
         runtime: path.join(dataRoot, 'runtime'),
         credentials: path.join(dataRoot, 'credential-consumption'),
         githubAudit: path.join(dataRoot, 'github-mutation-audit'),
+        githubReadAudit: path.join(dataRoot, 'github-read-audit'),
       });
       expect(JSON.stringify(runtime)).not.toContain(
         'https://github.com/perfectuser21/cecelia.git',
