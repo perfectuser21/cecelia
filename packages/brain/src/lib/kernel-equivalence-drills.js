@@ -987,19 +987,16 @@ export async function executeDrillCell({
   }
   let committed;
   try {
-    const commitResult = await withTimeout(
-      () => bundleChainStore.commit({
-        bundle,
-        bundle_hash: verifiedBundle.bundle_hash,
-        previous_head_hash: chainCheckpoint.head_hash,
-      }),
-      timeoutMs,
-      'bundle_chain_commit_timeout',
-    );
+    const commitResult = await bundleChainStore.commit({
+      bundle,
+      bundle_hash: verifiedBundle.bundle_hash,
+      previous_head_hash: chainCheckpoint.head_hash,
+      timeout_ms: timeoutMs,
+    });
     committed = structuredClone(commitResult);
   } catch (error) {
     return deny(
-      isInternalTimeout(error, 'bundle_chain_commit_timeout')
+      error?.code === 'bundle_chain_commit_timeout'
         ? 'bundle_chain_commit_timeout'
         : 'bundle_chain_commit_failed',
       'bundle_chain',

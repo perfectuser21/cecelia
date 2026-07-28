@@ -320,7 +320,7 @@ describe('trusted equivalence runtime on real PostgreSQL', () => {
         blocker.release();
         released = true;
         resolve();
-      }, 150);
+      }, 500);
     });
 
     await expect(store.commit({

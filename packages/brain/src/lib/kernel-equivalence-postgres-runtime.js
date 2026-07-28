@@ -11,6 +11,9 @@ const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const CELL_PATTERN = /^KERNEL-P[01]-[0-9A-Z-]+::(claude|codex|grok)::(normal|violation|recovery)$/;
 const CODE_PATTERN = /^[a-z][a-z0-9_]{0,127}$/;
 const CHAIN_ID = 'kernel-equivalence-v1';
+const DEFAULT_TRANSACTION_TIMEOUT_MS = 30_000;
+const MAXIMUM_TRANSACTION_TIMEOUT_MS = 300_000;
+const POSTGRES_TIMEOUT_CODES = new Set(['25P03', '55P03', '57014']);
 const NONCE_FIELDS = Object.freeze([
   'attempt_id',
   'cell_id',
@@ -268,6 +271,14 @@ function validBundleCommit(bundle, hash, previousHead) {
   );
 }
 
+function validTransactionTimeout(value) {
+  return (
+    Number.isInteger(value)
+    && value >= 1
+    && value <= MAXIMUM_TRANSACTION_TIMEOUT_MS
+  );
+}
+
 export function createPostgresBundleChainStore({
   pool,
   chainId = CHAIN_ID,
@@ -334,8 +345,12 @@ export function createPostgresBundleChainStore({
       bundle,
       bundle_hash: bundleHash,
       previous_head_hash: previousHead,
+      timeout_ms: timeoutMs = DEFAULT_TRANSACTION_TIMEOUT_MS,
     } = {}) {
-      if (!validBundleCommit(bundle, bundleHash, previousHead)) {
+      if (
+        !validBundleCommit(bundle, bundleHash, previousHead)
+        || !validTransactionTimeout(timeoutMs)
+      ) {
         fail('bundle_chain_commit_invalid');
       }
       if (
@@ -352,6 +367,13 @@ export function createPostgresBundleChainStore({
       try {
         await client.query('BEGIN');
         began = true;
+        await client.query(
+          `SELECT
+             set_config('statement_timeout', $1, true),
+             set_config('lock_timeout', $1, true),
+             set_config('idle_in_transaction_session_timeout', $1, true)`,
+          [`${timeoutMs}ms`],
+        );
         await client.query(
           `INSERT INTO kernel_equivalence_receipt_bundles
              (chain_id, bundle_hash, previous_bundle_hash, bundle_id, cell_id,
@@ -425,6 +447,9 @@ export function createPostgresBundleChainStore({
       } catch (error) {
         if (began) await client.query('ROLLBACK').catch(() => {});
         if (error instanceof EquivalencePostgresRuntimeError) throw error;
+        if (POSTGRES_TIMEOUT_CODES.has(error?.code)) {
+          fail('bundle_chain_commit_timeout');
+        }
         fail('bundle_chain_commit_failed');
       } finally {
         client.release();
