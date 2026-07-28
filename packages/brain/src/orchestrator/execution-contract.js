@@ -93,6 +93,197 @@ const taskBundleSchema = z.object({
 // normalized and validated in parseHarnessResult below.
 const decisionSchema = z.object({}).passthrough();
 
+const gitShaSchema = z.string().regex(/^[a-f0-9]{40}$/);
+const sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const rawSha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+const boundedPathSchema = z.string().min(1).max(1024);
+const boundedTextSchema = z.string().max(32768);
+const rubricScoresSchema = z.object({
+  dod_machineability: z.number().min(0).max(10),
+  scope_match_prd: z.number().min(0).max(10),
+  test_is_red: z.number().min(0).max(10),
+  internal_consistency: z.number().min(0).max(10),
+  risk_registered: z.number().min(0).max(10),
+  verification_oracle_completeness: z.number().min(0).max(10),
+  ci_workflow_alignment: z.number().min(0).max(10),
+}).strict();
+const artifactDigestSchema = z.object({
+  path: boundedPathSchema,
+  sha256: sha256DigestSchema,
+}).strict();
+const behaviorTestSchema = z.object({
+  command: z.string().min(1).max(16384),
+  exit_code: z.number().int().min(0).max(255),
+  log_tail: z.string().max(32768),
+  verification_level: z.enum(['L1', 'L2', 'L3']).optional(),
+  action: z.string().min(1).max(8192).optional(),
+  expected: z.string().min(1).max(8192).optional(),
+}).strict();
+const cascadeAssertionSchema = z.object({
+  link_id: z.string().min(1).max(128),
+  assertion_ref: z.string().max(8192),
+  ran: z.boolean(),
+  result: z.enum(['pass', 'fail', 'skip']),
+}).strict();
+
+const plannerRoleResultSchema = z.object({
+  kind: z.literal('planner'),
+  raw_sha256: rawSha256Schema,
+  claimed: z.object({
+    verdict: z.enum(['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED']),
+    branch: z.string().min(1).max(255),
+    sprint_dir: boundedPathSchema,
+    planner_branch: z.string().min(1).max(255),
+    review_required: z.boolean(),
+    status: z.enum(['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED']),
+  }).strict(),
+  verified: z.object({
+    branch: z.string().min(1).max(255),
+    sprint_dir: boundedPathSchema,
+    planner_branch: z.string().min(1).max(255),
+    prd_sha256: sha256DigestSchema,
+    effective_review_required: z.boolean(),
+  }).strict(),
+}).strict();
+
+const proposerRoleResultSchema = z.object({
+  kind: z.literal('proposer'),
+  raw_sha256: rawSha256Schema,
+  claimed: z.object({
+    propose_branch: z.string().min(1).max(255),
+    workstream_count: z.literal(1),
+    task_plan_path: boundedPathSchema,
+  }).strict(),
+  verified: z.object({
+    propose_branch: z.string().min(1).max(255),
+    head_sha: gitShaSchema,
+    artifacts: z.object({
+      contract_draft: artifactDigestSchema,
+      contract_dod: artifactDigestSchema,
+      task_plan: artifactDigestSchema,
+      contract_tests: artifactDigestSchema,
+    }).strict(),
+  }).strict(),
+}).strict();
+
+const reviewerRoleResultSchema = z.object({
+  kind: z.literal('reviewer'),
+  raw_sha256: rawSha256Schema,
+  claimed: z.object({
+    verdict: z.enum(['APPROVED', 'REVISION']),
+    rubric_scores: rubricScoresSchema,
+    judgments_written: z.number().int().nonnegative(),
+    feedback: boundedTextSchema,
+  }).strict(),
+  verified: z.object({
+    contract_sha: gitShaSchema,
+    verdict: z.enum(['APPROVED', 'REVISION']),
+    rubric_scores: rubricScoresSchema,
+    judgments_written: z.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+
+const generatorClaimSchema = z.discriminatedUnion('verdict', [
+  z.object({
+    verdict: z.literal('DONE'),
+    pr_url: z.string().url(),
+  }).strict(),
+  z.object({
+    verdict: z.literal('FIXED'),
+    pr_url: z.string().url(),
+    fixes: z.array(z.string().min(1).max(4096)).min(1).max(100),
+  }).strict(),
+  z.object({
+    verdict: z.literal('FAILED'),
+    pr_url: z.string().url(),
+    reason: boundedTextSchema.min(1),
+  }).strict(),
+]);
+const generatorRoleResultSchema = z.object({
+  kind: z.literal('generator'),
+  raw_sha256: rawSha256Schema,
+  claimed: generatorClaimSchema,
+  verified: z.object({
+    pull_request: z.object({
+      type: z.literal('pull_request'),
+      url: z.string().url(),
+      number: z.number().int().positive(),
+      head_ref: z.string().min(1).max(255),
+      head_sha: gitShaSchema,
+      state: z.literal('OPEN'),
+    }).strict(),
+  }).strict(),
+}).strict();
+
+const evaluatorRoleResultSchema = z.object({
+  kind: z.literal('evaluator'),
+  raw_sha256: rawSha256Schema,
+  claimed: z.object({
+    verdict: z.enum(['PASS', 'FAIL']),
+    task_id: z.string().min(1).max(128),
+    attempt_id: z.string().uuid(),
+    failed_step: boundedTextSchema.nullable().optional(),
+    log_excerpt: boundedTextSchema.nullable().optional(),
+    behavior_tests: z.array(behaviorTestSchema).max(256).optional(),
+    unverifiable: z.array(z.object({
+      item: z.string().min(1).max(8192),
+      reason: z.string().min(1).max(8192),
+    }).strict()).max(256).optional(),
+    verification_level: z.enum(['L1', 'L2', 'L3']).optional(),
+    screenshots: z.array(z.string().url().max(4096)).max(256).optional(),
+    cascade_assertions: z.array(cascadeAssertionSchema).max(256).optional(),
+    notes: boundedTextSchema.optional(),
+  }).strict(),
+  verified: z.object({
+    pr_head_sha: gitShaSchema,
+    behavior_tests: z.array(behaviorTestSchema).max(256),
+  }).strict(),
+}).strict();
+
+const reporterRoleResultSchema = z.object({
+  kind: z.literal('reporter'),
+  raw_sha256: rawSha256Schema,
+  claimed: z.object({
+    verdict: z.enum(['DONE', 'DONE_WITH_CONCERNS']),
+    task_id: z.string().min(1).max(128),
+    report_path: boundedPathSchema,
+    pr_url: z.string().url(),
+    screenshots: z.array(boundedPathSchema).max(256),
+    concerns: boundedTextSchema,
+  }).strict(),
+  verified: z.object({
+    pull_request_url: z.string().url(),
+    report: artifactDigestSchema,
+    learning: artifactDigestSchema,
+    screenshots: z.array(artifactDigestSchema).max(256),
+    learnings_inserted: z.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+
+const roleResultSchema = z.discriminatedUnion('kind', [
+  plannerRoleResultSchema,
+  proposerRoleResultSchema,
+  reviewerRoleResultSchema,
+  generatorRoleResultSchema,
+  evaluatorRoleResultSchema,
+  reporterRoleResultSchema,
+]).superRefine((value, context) => {
+  if (
+    value.kind === 'reviewer'
+    && value.claimed.verdict === 'APPROVED'
+    && (
+      value.claimed.judgments_written < 1
+      || value.verified.judgments_written < 1
+    )
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'APPROVED reviewer role_result requires an observed judgment write',
+      path: ['verified', 'judgments_written'],
+    });
+  }
+});
+
 const harnessResultSchema = z.object({
   contract_version: z.literal(RESULT_CONTRACT_VERSION),
   attempt_id: z.string().uuid(),
@@ -106,6 +297,7 @@ const harnessResultSchema = z.object({
     provider: z.string().min(1),
     session_id: z.string().min(1).nullable().optional(),
   }).passthrough(),
+  role_result: roleResultSchema.optional(),
 });
 
 function resultPathForAttempt(attemptId) {
@@ -216,6 +408,17 @@ export function parseHarnessResult(
   expectedIdentity = {},
 ) {
   const parsed = harnessResultSchema.parse(value);
+  if (parsed.role_result) {
+    if (parsed.role_result.kind !== role) {
+      throw new Error(`role_result kind mismatch: result=${parsed.role_result.kind} attempt=${role}`);
+    }
+    const roleExpectedOutput = `harness-result/${parsed.role_result.kind}-v1`;
+    if (expectedOutput && expectedOutput !== roleExpectedOutput) {
+      throw new Error(
+        `role_result expected_output mismatch: result=${roleExpectedOutput} expected=${expectedOutput}`,
+      );
+    }
+  }
   const failureClass = (() => {
     if (['blocked', 'needs_context'].includes(parsed.status)) {
       return 'semantic_refusal';
@@ -329,6 +532,7 @@ export function toKernelStatus(status) {
 export const __test__ = {
   taskBundleSchema,
   harnessResultSchema,
+  roleResultSchema,
   resultChannelDescriptorSchema,
   PROVIDER_NATIVE_INSTRUCTION,
 };
