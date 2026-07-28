@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.116
+**版本**: 1.267.117
+
+## Fleet Worker preflight OrbStack home propagation
+
+- installer 的低权限生产 preflight 显式把 reconciler 提供的 OrbStack home
+  作为 `CECELIA_ORBSTACK_HOME` 传给 node probe，确保写入 LaunchDaemon 前的
+  同一 pinned-version 检查不再因 `_cecelia` 默认 `/var/empty` 误报。
+- 该值仍仅由 node probe 用于 `orbctl` 子进程；不传给 Codex/Docker，不复制
+  凭据，失败继续恢复 drain。
+- 回退：节点保持 drain，Brain 使用
+  `bash scripts/brain-rollback.sh 1.267.116`。
 
 ## Fleet Worker production admission stabilization
 
