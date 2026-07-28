@@ -17,9 +17,7 @@ services:
     working_dir: /app
     volumes:
       - ./packages/brain:/app
-      # npm workspaces 把大部分依赖(含 dotenv)提升到仓库根 node_modules，
-      # 只挂 packages/brain 会导致容器内 ESM resolve 找不到这些包。
-      - ./node_modules:/node_modules:ro
+      - ./node_modules:/node_modules:ro  # npm workspaces 提升依赖(含dotenv)到根，需只读挂载
     env_file:
       - .env.docker
     environment:
