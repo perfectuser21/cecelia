@@ -76,6 +76,7 @@ describe('readKernelAttemptEvidence', () => {
         role: 'reviewer',
         status: 'running',
         heartbeat_at: '2026-07-28T04:00:00.000Z',
+        error_message: 'provider failed: Bearer should-not-leak',
         result: { decision: { outcome: 'REVISION' }, token: 'must-not-leak' },
         result_receipt_id: null,
       }],
@@ -93,6 +94,8 @@ describe('readKernelAttemptEvidence', () => {
     expect(evidence).toContain('"role":"reviewer"');
     expect(evidence).toContain('"token":"[REDACTED]"');
     expect(evidence).not.toContain('must-not-leak');
+    expect(evidence).toContain('Bearer [REDACTED]');
+    expect(evidence).not.toContain('should-not-leak');
   });
 });
 
