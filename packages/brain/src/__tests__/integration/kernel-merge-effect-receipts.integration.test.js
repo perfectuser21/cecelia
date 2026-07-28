@@ -4,6 +4,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
+import { createPostgresMergeEffectStore } from '../../orchestrator/merge-effect-store.js';
 
 const migration = readFileSync(
   new URL('../../../migrations/372_kernel_merge_effect_receipts.sql', import.meta.url),
@@ -121,6 +122,71 @@ describe('migration 372 exact-SHA merge ledger on PostgreSQL', () => {
        VALUES ($1, 'confirmed', $2, false)`,
       [intentId, headSha],
     )).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('persists and idempotently receipts the real store SQL', async () => {
+    const store = createPostgresMergeEffectStore({});
+    const secondTaskId = randomUUID();
+    const secondRunId = randomUUID();
+    const secondPrUrl = 'https://github.com/perfectuser21/cecelia/pull/4401';
+    await client.query('INSERT INTO tasks (id) VALUES ($1)', [secondTaskId]);
+    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [secondRunId]);
+
+    const intent = await store.createAuthorizationIntent(client, {
+      proof: {
+        run_id: secondRunId,
+        task_id: secondTaskId,
+        repository: 'perfectuser21/cecelia',
+        pr_number: 4401,
+        pr_url: secondPrUrl,
+        head_ref: 'cp-safe-second',
+        head_sha: headSha,
+        policy_version: 'kernel-merge/v1',
+        review_required: false,
+        evaluator_hop: 1,
+        judge_hop: 2,
+        human_review_hop: null,
+        merge_intent_hop: 3,
+      },
+      currentPr: {
+        url: secondPrUrl,
+        repository: 'perfectuser21/cecelia',
+        number: 4401,
+        head_ref: 'cp-safe-second',
+        head_sha: headSha,
+        state: 'OPEN',
+        ci: 'pass',
+        merged: false,
+      },
+    });
+    expect(intent).toMatchObject({
+      requested_head_sha: headSha,
+      confirmed_receipt: null,
+    });
+
+    const receipt = {
+      intent_id: intent.intent_id,
+      receipt_status: 'confirmed',
+      observed_head_sha: headSha,
+      merged: true,
+      evidence: { source: 'integration' },
+    };
+    await store.appendReceipt(client, receipt);
+    await store.appendReceipt(client, receipt);
+
+    const receipts = await client.query(
+      `SELECT COUNT(*)::int AS count
+         FROM kernel_merge_effect_receipts
+        WHERE intent_id = $1
+          AND receipt_status = 'confirmed'`,
+      [intent.intent_id],
+    );
+    expect(receipts.rows[0].count).toBe(1);
+    await expect(store.findIntent(client, { runId: secondRunId })).resolves.toMatchObject({
+      intent_id: intent.intent_id,
+      requested_head_sha: headSha,
+      confirmed_receipt: expect.any(String),
+    });
   });
 
   it.each([

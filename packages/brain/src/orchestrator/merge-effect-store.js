@@ -30,8 +30,8 @@ async function selectIntent(client, runId) {
             intent.requested_head_sha,
             receipt.id AS confirmed_receipt
        FROM kernel_merge_effect_intents intent
-       JOIN kernel_merge_authorizations authorization
-         ON authorization.id = intent.authorization_id
+       JOIN kernel_merge_authorizations merge_auth
+         ON merge_auth.id = intent.authorization_id
        LEFT JOIN LATERAL (
          SELECT id
            FROM kernel_merge_effect_receipts
