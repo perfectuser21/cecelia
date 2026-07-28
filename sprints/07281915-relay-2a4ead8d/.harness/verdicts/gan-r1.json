@@ -1,0 +1,81 @@
+{
+  "task_id": "2a4ead8d-a979-48e6-b317-676129e45f6a",
+  "sprint_dir": "sprints/07281915-relay-2a4ead8d",
+  "reviewer": "harness-contract-reviewer",
+  "round": 1,
+  "date": "2026-07-28",
+  "verdict": "REVISION",
+  "judgments_written": 7,
+  "critical_findings": [
+    {
+      "id": "F-01",
+      "severity": "P1",
+      "dimension": "completeness + e2e_executability",
+      "title": "D2 (.conversation-mode 写/删机制) 缺行为测试和 E2E 验证命令",
+      "detail": "contract-dod.md [ARTIFACT] 列出了 conversation-agent.js 含 .conversation-mode 写入/删除逻辑，但 tests/ 目录中无对应测试文件验证此行为。GP-2 验证命令仅 grep 静态代码，不验证 spawn 时写、resolve 时删的时序正确性。已确认 packages/brain/src/lib/conversation-agent.js 当前代码无任何 .conversation-mode 写/删逻辑（D2 尚未实现），但合同未将此标注为 TDD Red，存在误导 proposer 认为已实现的风险。",
+      "required_fix": "在 contract-dod.md 中新增 B-08 BEHAVIOR 断言（或将 GP-2 升级），测试文件中新增对 conversation-agent.js spawn/resolve 路径写/删 .conversation-mode 文件的断言，明确标注 TDD Red（D2 待实现）。"
+    },
+    {
+      "id": "F-02",
+      "severity": "P1",
+      "dimension": "e2e_executability",
+      "title": "E2E-4 全流程（Playwright mac_web）在 contract-e2e.sh 中完全缺失",
+      "detail": "PRD 明确要求 E2E-4：WarRoomLineCommandPage → 开对话 → 输入决策 → agent 回 pending_user → 确认 → 等 agent 回 decision_saved → DB 验证。contract-e2e.sh 中无对应步骤，GP-5 无可执行命令体。contract-draft.md 的 E2E 验收脚本中 E2E-4 实际对应的是「无标记 + .conversation-mode → exit 2」，PRD 中的全流程 Playwright 验收完全未落入合同。",
+      "required_fix": "新增 Playwright E2E 脚本或在 contract-e2e.sh 中补充 E2E-4 全流程步骤，或明确在合同中声明「E2E-4 全流程延至 staging 阶段由 evaluator 执行，此阶段只交付 shell/unit 层验收」，并在 staging 预览闸步骤 B 中补具体命令。"
+    },
+    {
+      "id": "F-03",
+      "severity": "P2",
+      "dimension": "clarity",
+      "title": "无标记 block（D3 第二分支）缺独立 BEHAVIOR 断言",
+      "detail": "PRD D3 明确要求两个 block 分支：① pending_user → exit 2；② .conversation-mode 存在但末轮无任何 [TURN:...] → exit 2。contract-e2e.sh 中 E2E-4 覆盖了第②分支的脚本，但 contract-dod.md 的 [BEHAVIOR] 断言区中没有对应的 B-0x 条目（B-01 到 B-07 无「无标记 + conversation-mode → exit 2」断言）。evaluator 无法对此分支进行独立的 judgment 判定。",
+      "required_fix": "在 contract-dod.md 新增 B-08 断言：末轮无 [TURN:...] + .conversation-mode 存在 → exit 2，Test 命令引用 E2E-4 脚本，明确标注 TDD Red（D3 待实现）。"
+    },
+    {
+      "id": "F-04",
+      "severity": "P2",
+      "dimension": "test_first",
+      "title": "合同测试与已有单测存在重叠，未声明差异化价值",
+      "detail": "tests/conversation-ttl-archiver-contract.test.ts 中的 B-03a/B-03b/B-03c/B-05 与 packages/brain/src/__tests__/conversation-ttl-archiver.test.js 中的 B1/B2/B3/B4 高度重叠（相同的 makePool mock + 相同的 result 断言）。合同测试的存在价值应是「合同视角的集成断言」而非重复单测。",
+      "required_fix": "在 conversation-ttl-archiver-contract.test.ts 文件头注释中说明与既有单测的差异化价值（如：合同层关注 SQL 字面量 + INV-7 软归档语义，单测层关注函数行为），或合并并标注差异。"
+    }
+  ],
+  "summary": "合同整体结构完整，PRD 四个交付物均有对应断言，铁律覆盖（INV-5/6/7）逻辑清晰，shell 脚本直接调用方式实现了真实行为验证（非 mock 穿透）。但存在两个 P1 阻塞项：D2 的行为测试和 E2E-4 全流程 Playwright 验收完全缺失。需 Proposer 第2轮修复后重新提交。",
+  "rubric_scores": {
+    "completeness": {
+      "score": 8,
+      "max": 10,
+      "comment": "PRD 四个交付物 D1-D4 在合同中均有对应 GP 和 BEHAVIOR 断言。缺陷：contract-draft.md 中 GP-2 验证命令仅做 grep 静态检查（grep -q 'conversation-mode'），未验证写/删时机（spawn 时写、resolve 时删）；D2 在 contract-dod.md 判定点表中有提及真实文件 stat，但 tests/ 目录中缺少对应的 D2 单元测试文件（stop-conversation-hook.test.ts 未覆盖 conversation-mode 写/删生命周期）。"
+    },
+    "verifiability": {
+      "score": 7,
+      "max": 10,
+      "comment": "B-01/B-02/B-07 通过真实调用 shell 脚本 + exit code 验证，可验证性强。B-03/B-05 通过 mock pool SQL capture 验证，SQL 字面量匹配可接受（INV-7）。B-04 通过文件存在性 + grep 内容验证，正确。主要缺陷：(1) B-01 当 Brain 不可达时 curl 超时返回 exit code 000，脚本走 else 分支 exit 2，但 test 注释仅说「两种情况都应 exit 2」——实际上 stop-conversation.sh 没有 .conversation-mode 路由检查，而是在 python3 parse 完 UUID 后直接 curl，这一路径是正确的；(2) B-02 断言 exit 2，但 stop-conversation.sh 当前代码在找到 pending_user 时走「末轮无 decision_saved 标记，放行」分支，exit 0，D3 尚未实现——测试已标注 TDD Red，合同明确为 pending 态，此处合理；(3) B-05 测试检查 `!grep -q DELETE packages/brain/src/conversation-ttl-archiver.js`——已确认源码无 DELETE，正确。"
+    },
+    "clarity": {
+      "score": 8,
+      "max": 10,
+      "comment": "合同结构清晰，八要素 checklist、判定点表、铁律覆盖段、失败语义声明均完整。接缝清单三个接缝点描述准确。不足：contract-draft.md E2E-4（无标记 block）被标注为 PENDING/logic-done-pending，但 contract-dod.md 无对应 BEHAVIOR 条目（B-01 到 B-07 无「无标记 block」的独立断言），需补 B-08 或在 B-01 说明无标记场景。"
+    },
+    "test_first": {
+      "score": 8,
+      "max": 10,
+      "comment": "三个测试文件已提交，覆盖 B-01/B-02/B-03/B-04/B-05/B-06/B-07。B-02 明确标注 TDD Red（D3 实现前 FAIL）符合测试先行精神。缺陷：(1) conversation-ttl-archiver-contract.test.ts 与已有的 conversation-ttl-archiver.test.js 存在覆盖重叠（B1/B2/B3/B4 与 B-03a/B-03b/B-03c/B-05 基本等价），合同测试应注明差异化价值或去重；(2) 缺少 D2（.conversation-mode 写/删）对应的测试文件，conversation-agent.js 锁文件机制未有测试断言。"
+    },
+    "nfr": {
+      "score": 8,
+      "max": 10,
+      "comment": "NFR 四条均在合同中有映射：(1) <10s 执行 — B-01 等待预算 10s，curl timeout ≤ 8s，合理；(2) TTL gate 10min — B-03c 测试覆盖；(3) SKILL.md 独立文件 — B-04 验证存在性；(4) 清除 console.log — 合同未显式断言，属代码审查层面，可接受。轻微缺陷：contract-dod.md 中 NFR 未形成独立的 NFR 断言段，仅在 PRD 中列出，建议合同显式引用。"
+    },
+    "invariant_coverage": {
+      "score": 9,
+      "max": 10,
+      "comment": "INV-5（decisions 唯一落库）→ B-03 mock pool + E2E-1 curl 对账覆盖；INV-6（decision_saved 原子性）→ B-01 exit 2 on DB miss 强制原子性，设计合理；INV-7（只软归档）→ B-05 SQL grep 不含 DELETE，已确认源码无 DELETE。INV-1/2/3/4/8/9 标注 N/A 理由充分（本 PR 不修改相应逻辑）。小缺陷：INV-6 的「不允许窗口期」覆盖方式为「exit 2 强制重试」，理论上只覆盖了 hook 阻断层面，但 decision 落库是否真的原子（事务）未在测试中断言；合同层面接受此说明。"
+    },
+    "e2e_executability": {
+      "score": 6,
+      "max": 10,
+      "comment": "E2E-1/E2E-2/E2E-4（shell 脚本直接调用）可在本地立即执行，命令完整可复现。E2E-3（vitest TTL archiver）可执行。严重缺陷：(1) contract-draft.md GP-2 验证命令仅做 grep 静态检查，D2 功能（spawn 时写 .conversation-mode、resolve 时删）缺乏行为验证命令；(2) E2E-4 全流程（mac_web Playwright localhost:5174）在 contract-e2e.sh 中完全缺失，contract-draft.md GP-5 仅写「Dashboard 对话回路全流程验证（Playwright，localhost:5174）」无实际命令体；(3) SKILL.md E2E-5 验证存在性正确，但存在性验证不等同于规程内容被 agent 实际遵守的行为验证（可接受于本 PR 范围，需在后续 E2E 中补全）。"
+    }
+  }
+}
