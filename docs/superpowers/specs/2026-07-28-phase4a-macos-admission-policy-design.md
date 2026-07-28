@@ -41,4 +41,3 @@ Tests must prove the following Red-to-Green behavior:
 - Reconciliation reports `15.6.1` as supported while recommending `15.7.4`.
 - All three canonical profiles publish the same `15.6.1` minimum.
 - The Phase 4A production smoke asserts the corrected minimum.
-
