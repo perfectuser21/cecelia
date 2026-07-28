@@ -3,6 +3,7 @@ import {
   chmodSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -22,6 +23,8 @@ import {
 } from 'vitest';
 import * as productionWiring
   from '../kernel-equivalence-production-wiring.js';
+import * as trustedExecutionBoot
+  from '../kernel-equivalence-trusted-execution-boot.js';
 import {
   compileDrillPlan,
 } from '../kernel-equivalence-drills.js';
@@ -67,6 +70,11 @@ function fixture() {
     mkdtempSync(join(tmpdir(), 'kernel-eq-production-wiring-')),
   );
   roots.push(root);
+  const socketRoot = realpathSync(
+    mkdtempSync('/tmp/keq-socket-'),
+  );
+  roots.push(socketRoot);
+  chmodSync(socketRoot, 0o700);
   const grantRoot = join(root, 'grants');
   mkdirSync(grantRoot, { mode: 0o700 });
   chmodSync(grantRoot, 0o700);
@@ -155,7 +163,7 @@ function fixture() {
     effect_signing_keys: effectSigningKeys,
     grant_root: grantRoot,
     grant_ttl_seconds: 300,
-    socket_path: join(root, 'socket', 'trusted-execution.sock'),
+    socket_path: join(socketRoot, 'trusted-execution.sock'),
     resource_ports: {
       schema_version:
         'kernel-equivalence-resource-ports/v1',
@@ -530,5 +538,63 @@ describe('kernel equivalence production wiring', () => {
     )).toThrowError(expect.objectContaining({
       code: 'trusted_execution_config_file_unsafe',
     }));
+  });
+
+  it('boots fail closed from production configuration without creating a socket', async () => {
+    expect(
+      typeof trustedExecutionBoot
+        .bootProductionBrainTrustedExecution,
+    ).toBe('function');
+    const boot = await trustedExecutionBoot
+      .bootProductionBrainTrustedExecution({
+        env: {},
+        pool: databasePort(),
+      });
+
+    expect(boot.getReadiness()).toEqual({
+      ready: false,
+      code: 'trusted_execution_config_file_missing',
+      socket_path: null,
+    });
+    await expect(boot.close()).resolves.toBeUndefined();
+  });
+
+  it('boots a complete isolated production assembly through a mode-0600 Unix listener', async () => {
+    const value = fixture();
+    const boot = await trustedExecutionBoot
+      .bootProductionBrainTrustedExecution({
+        env: value.env,
+        pool: databasePort(),
+        assemblyPorts: assemblyPorts(),
+        now: () => NOW,
+      });
+
+    expect(boot.getReadiness()).toEqual({
+      ready: true,
+      code: null,
+      socket_path: value.manifest.socket_path,
+    });
+    const status = lstatSync(value.manifest.socket_path);
+    expect(status.isSocket()).toBe(true);
+    expect(status.mode & 0o777).toBe(0o600);
+    await boot.close();
+    expect(existsSync(value.manifest.socket_path)).toBe(false);
+  });
+
+  it('wires server boot through the production loader and shared pool', () => {
+    const serverSource = readFileSync(
+      new URL('../../../server.js', import.meta.url),
+      'utf8',
+    );
+
+    expect(serverSource).toMatch(
+      /bootProductionBrainTrustedExecution/,
+    );
+    expect(serverSource).toMatch(
+      /bootProductionBrainTrustedExecution\(\{\s*env:\s*process\.env,\s*pool,/s,
+    );
+    expect(serverSource).not.toMatch(
+      /__trustedExecutionBoot\s*=\s*await\s+bootBrainTrustedExecution\(\)/,
+    );
   });
 });
