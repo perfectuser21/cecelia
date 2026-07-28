@@ -11,6 +11,7 @@
  * TASK_ID: 50170af2-fefa-41a7-b0b4-dcf1a5d7b077
  */
 
+import { describe, expect, test } from 'vitest';
 import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
 import { sha256Canonical } from '../../../packages/brain/src/lib/kernel-equivalence-receipts.js';
 
