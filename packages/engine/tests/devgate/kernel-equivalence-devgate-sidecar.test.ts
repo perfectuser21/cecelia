@@ -131,9 +131,21 @@ function fixture(scenario: 'normal' | 'violation' | 'recovery') {
     })),
   };
   const effectSigner = {
-    signEffectResult: vi.fn(async (effect) => ({
+    signEffectResult: vi.fn(async ({
+      cell: signedCell,
+      grant: signedGrant,
+      observation,
+      predecessor,
+    }) => ({
       schema_version: 'kernel-equivalence-effect-receipt/v1',
-      ...effect,
+      seam_id: signedCell.seam_id,
+      adapter_id: signedCell.adapter_id,
+      grant_id: signedGrant.grant_id,
+      nonce: signedGrant.nonce,
+      resource_id: signedGrant.resource_id,
+      resource_ref: signedGrant.resource_ref,
+      ...observation,
+      predecessor,
       signature: 'test-signature',
     })),
   };
@@ -193,12 +205,17 @@ describe('DevGate equivalence guarded sidecar', () => {
       signature: 'test-signature',
     });
     expect(value.effectSigner.signEffectResult).toHaveBeenCalledWith(
-      expect.objectContaining({
-        service_id: 'kernel.quality.devgate',
-        observed_outcome: observedOutcome,
-        effect_code: effectCode,
+      {
+        cell: value.cell,
+        grant: value.grant,
+        observation: {
+          observed_outcome: observedOutcome,
+          effect_code: effectCode,
+          before_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          after_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
         predecessor,
-      }),
+      },
     );
     expect(value.devgateAuthority.loadTarget).toHaveBeenCalledWith(
       expect.objectContaining({

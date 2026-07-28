@@ -517,9 +517,21 @@ describe('independent judge equivalence seam', () => {
   function seamFixture(scenario) {
     const d = deps();
     const effectSigner = {
-      signEffectResult: vi.fn(async (effect) => ({
+      signEffectResult: vi.fn(async ({
+        cell: signedCell,
+        grant: signedGrant,
+        observation,
+        predecessor,
+      }) => ({
         schema_version: 'kernel-equivalence-effect-receipt/v1',
-        ...effect,
+        seam_id: signedCell.seam_id,
+        adapter_id: signedCell.adapter_id,
+        grant_id: signedGrant.grant_id,
+        nonce: signedGrant.nonce,
+        resource_id: signedGrant.resource_id,
+        resource_ref: signedGrant.resource_ref,
+        ...observation,
+        predecessor,
         signature: 'test-signature',
       })),
     };
@@ -631,18 +643,17 @@ describe('independent judge equivalence seam', () => {
       signature: 'test-signature',
     });
     expect(value.effectSigner.signEffectResult).toHaveBeenCalledWith(
-      expect.objectContaining({
-        service_id: value.cell.seam_id,
+      {
         cell: value.cell,
         grant: value.grant,
-        resource_id: value.grant.resource_id,
-        resource_ref: value.grant.resource_ref,
-        observed_outcome: observedOutcome,
-        effect_code: effectCode,
+        observation: {
+          observed_outcome: observedOutcome,
+          effect_code: effectCode,
+          before_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          after_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
         predecessor,
-        before_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        after_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
-      }),
+      },
     );
     expect(value.judgeAuthority.loadContext).toHaveBeenCalledOnce();
     expect(value.judgeAuthority.snapshot).toHaveBeenCalledTimes(2);
