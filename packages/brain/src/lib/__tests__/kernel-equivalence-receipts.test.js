@@ -13,7 +13,7 @@ import {
   verifyReceiptBundle,
 } from '../kernel-equivalence-receipts.js';
 
-const NOW = Date.parse('2026-07-28T12:00:00.000Z');
+const NOW = Date.parse('2026-07-28T12:02:00.000Z');
 const SHA = '8e034654d196221ddca25a7f032612b526bad031';
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';

@@ -1,0 +1,575 @@
+import {
+  createHash,
+  createPublicKey,
+  verify as verifyBytes,
+} from 'node:crypto';
+
+const SHA_PATTERN = /^[a-f0-9]{40}$/;
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/;
+const SAFE_RESOURCE_REF = /^(?:refs\/heads\/)?equivalence-drill\/[A-Za-z0-9_{}./:-]+$/;
+const FORBIDDEN_RESOURCE = /(?:^|[/_.:-])(?:main|master|production|prod|release)(?:$|[/_.:-])/i;
+const DENIAL_OUTCOMES = new Set(['denied', 'blocked', 'rejected', 'failed']);
+
+const KEY_FIELDS = Object.freeze([
+  'key_id',
+  'not_after',
+  'not_before',
+  'public_key_pem',
+  'purpose',
+  'revoked_at',
+  'rotates_key_id',
+  'service_id',
+]);
+
+const GRANT_FIELDS = Object.freeze([
+  'adapter_id',
+  'artifact_sha',
+  'attempt_id',
+  'behavior_id',
+  'brain_version',
+  'cell_id',
+  'engine_version',
+  'environment',
+  'expires_at',
+  'grant_id',
+  'issued_at',
+  'key_id',
+  'nonce',
+  'provider',
+  'resource_id',
+  'resource_prefix',
+  'resource_ref',
+  'run_id',
+  'scenario',
+  'schema_version',
+  'scopes',
+  'seam_id',
+  'signature',
+]);
+
+const EFFECT_FIELDS = Object.freeze([
+  'adapter_id',
+  'after_hash',
+  'artifact_sha',
+  'attempt_id',
+  'before_hash',
+  'behavior_id',
+  'brain_version',
+  'cell_id',
+  'effect_code',
+  'engine_version',
+  'environment',
+  'execution_mode',
+  'expires_at',
+  'grant_id',
+  'issued_at',
+  'key_id',
+  'nonce',
+  'observed_outcome',
+  'predecessor_cell_id',
+  'predecessor_receipt_hash',
+  'predecessor_receipt_id',
+  'provider',
+  'receipt_id',
+  'resource_id',
+  'resource_ref',
+  'run_id',
+  'scenario',
+  'schema_version',
+  'seam_id',
+  'service_id',
+  'signature',
+]);
+
+const BUNDLE_FIELDS = Object.freeze([
+  'adapter_id',
+  'artifact_sha',
+  'attempt_id',
+  'behavior_id',
+  'brain_version',
+  'bundle_id',
+  'bundle_payload_hash',
+  'cell_id',
+  'collector_service_id',
+  'effect_receipts',
+  'engine_version',
+  'environment',
+  'expires_at',
+  'grant_id',
+  'issued_at',
+  'key_id',
+  'nonce',
+  'previous_bundle_hash',
+  'provider',
+  'receipt_hashes',
+  'resource_id',
+  'resource_ref',
+  'run_id',
+  'scenario',
+  'schema_version',
+  'seam_id',
+  'signature',
+]);
+
+export class EquivalenceReceiptError extends Error {
+  constructor(code, detail = null) {
+    super(code);
+    this.name = 'EquivalenceReceiptError';
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+function fail(code, detail = null) {
+  throw new EquivalenceReceiptError(code, detail);
+}
+
+function asObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+function nonEmpty(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function canonicalValue(value) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  const object = asObject(value);
+  if (!object) fail('canonical_value_invalid');
+  return Object.fromEntries(
+    Object.keys(object)
+      .sort()
+      .map((key) => {
+        if (object[key] === undefined) fail('canonical_value_invalid', key);
+        return [key, canonicalValue(object[key])];
+      }),
+  );
+}
+
+export function canonicalJson(value) {
+  return JSON.stringify(canonicalValue(value));
+}
+
+export function sha256Canonical(value) {
+  return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
+}
+
+function exactFields(value, allowed, code) {
+  const object = asObject(value);
+  if (!object) fail(code);
+  const actual = Object.keys(object).sort();
+  const expected = [...allowed].sort();
+  if (
+    actual.length !== expected.length
+    || actual.some((field, index) => field !== expected[index])
+  ) {
+    fail(code);
+  }
+}
+
+function parseTime(value, code) {
+  if (!nonEmpty(value)) fail(code);
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) fail(code);
+  return parsed;
+}
+
+function verifyWindow(value, now, maximumAgeSeconds, prefix) {
+  const issuedAt = parseTime(value.issued_at, `${prefix}_time_invalid`);
+  const expiresAt = parseTime(value.expires_at, `${prefix}_time_invalid`);
+  if (issuedAt > now) fail(`${prefix}_not_yet_valid`);
+  if (expiresAt <= now) fail(`${prefix}_expired`);
+  if (
+    expiresAt <= issuedAt
+    || !Number.isInteger(maximumAgeSeconds)
+    || maximumAgeSeconds < 1
+    || expiresAt - issuedAt > maximumAgeSeconds * 1000
+  ) {
+    fail(`${prefix}_freshness_invalid`);
+  }
+}
+
+function findKey(registry, {
+  keyId,
+  purpose,
+  serviceId = null,
+  now,
+  code,
+}) {
+  if (
+    registry?.schema_version !== 'kernel-equivalence-trust-registry/v1'
+    || registry?.algorithm !== 'ed25519'
+    || !Array.isArray(registry?.keys)
+  ) {
+    fail('trust_registry_invalid');
+  }
+  const key = registry.keys.find((candidate) => candidate?.key_id === keyId);
+  if (!key) fail(code);
+  exactFields(key, KEY_FIELDS, 'trust_key_fields_invalid');
+  const notBefore = parseTime(key.not_before, 'trust_key_time_invalid');
+  const notAfter = parseTime(key.not_after, 'trust_key_time_invalid');
+  const revokedAt = key.revoked_at == null
+    ? null
+    : parseTime(key.revoked_at, 'trust_key_time_invalid');
+  if (
+    key.purpose !== purpose
+    || (serviceId != null && key.service_id !== serviceId)
+    || now < notBefore
+    || now >= notAfter
+    || (revokedAt != null && now >= revokedAt)
+    || !nonEmpty(key.public_key_pem)
+  ) {
+    fail(code);
+  }
+  return key;
+}
+
+function unsignedPayload(value) {
+  const payload = structuredClone(value);
+  delete payload.signature;
+  return payload;
+}
+
+function verifySignature(value, key, code) {
+  if (
+    !nonEmpty(value.signature)
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(value.signature)
+  ) {
+    fail(code);
+  }
+  let publicKey;
+  try {
+    publicKey = createPublicKey(key.public_key_pem);
+  } catch {
+    fail(code);
+  }
+  const valid = verifyBytes(
+    null,
+    Buffer.from(canonicalJson(unsignedPayload(value)), 'utf8'),
+    publicKey,
+    Buffer.from(value.signature, 'base64'),
+  );
+  if (!valid) fail(code);
+}
+
+function expectedPrefix(cell, runId, attemptId) {
+  return cell?.isolation?.resource_prefix
+    ?.replaceAll('{run_id}', runId)
+    .replaceAll('{attempt_id}', attemptId);
+}
+
+function validResource(value, prefix) {
+  return (
+    value.environment === 'isolated'
+    && nonEmpty(value.resource_id)
+    && nonEmpty(value.resource_ref)
+    && nonEmpty(prefix)
+    && SAFE_RESOURCE_REF.test(prefix)
+    && SAFE_RESOURCE_REF.test(value.resource_ref)
+    && value.resource_ref.startsWith(prefix)
+    && !FORBIDDEN_RESOURCE.test(prefix)
+    && !FORBIDDEN_RESOURCE.test(value.resource_ref)
+  );
+}
+
+function matchesAxes(value, expected) {
+  const cell = expected?.cell;
+  return (
+    value.cell_id === cell?.cell_id
+    && value.behavior_id === cell?.behavior_id
+    && value.provider === cell?.provider
+    && value.scenario === cell?.scenario
+    && value.seam_id === cell?.seam_id
+    && value.adapter_id === cell?.adapter_id
+    && value.run_id === expected?.run_id
+    && value.attempt_id === expected?.attempt_id
+    && value.artifact_sha === expected?.artifact_sha
+    && value.brain_version === expected?.brain_version
+    && value.engine_version === expected?.engine_version
+  );
+}
+
+function validateIdentity(value, prefix) {
+  if (
+    !UUID_PATTERN.test(value.run_id ?? '')
+    || !UUID_PATTERN.test(value.attempt_id ?? '')
+    || !SHA_PATTERN.test(value.artifact_sha ?? '')
+    || !VERSION_PATTERN.test(value.brain_version ?? '')
+    || !VERSION_PATTERN.test(value.engine_version ?? '')
+  ) {
+    fail(`${prefix}_identity_invalid`);
+  }
+}
+
+export function verifyExecutionGrant(grant, registry, expected, { now = Date.now() } = {}) {
+  exactFields(grant, GRANT_FIELDS, 'grant_fields_invalid');
+  if (
+    grant.schema_version !== 'kernel-equivalence-execution-grant/v1'
+    || !UUID_PATTERN.test(grant.grant_id ?? '')
+    || !UUID_PATTERN.test(grant.nonce ?? '')
+    || !matchesAxes(grant, expected)
+  ) {
+    fail('grant_axis_mismatch');
+  }
+  validateIdentity(grant, 'grant');
+  const prefix = expectedPrefix(expected.cell, grant.run_id, grant.attempt_id);
+  if (
+    grant.resource_prefix !== prefix
+    || !validResource(grant, prefix)
+    || !Array.isArray(grant.scopes)
+    || grant.scopes.length !== 1
+    || grant.scopes[0] !== 'isolated_effect'
+  ) {
+    fail('grant_environment_unsafe');
+  }
+  verifyWindow(grant, now, registry?.grant_max_age_seconds, 'grant');
+  const key = findKey(registry, {
+    keyId: grant.key_id,
+    purpose: 'execution_grant',
+    serviceId: 'brain.authority',
+    now,
+    code: 'grant_key_invalid',
+  });
+  verifySignature(grant, key, 'grant_signature_invalid');
+  return Object.freeze(structuredClone(grant));
+}
+
+function expectedViolationCell(recoveryCell) {
+  return {
+    ...recoveryCell,
+    cell_id: recoveryCell.cell_id.replace(/::recovery$/, '::violation'),
+    scenario: 'violation',
+  };
+}
+
+function verifyRecoveryLineage(receipt, expected) {
+  const predecessor = expected?.predecessor;
+  const violationCell = expectedViolationCell(expected.cell);
+  if (
+    !predecessor
+    || receipt.predecessor_cell_id !== violationCell.cell_id
+    || receipt.predecessor_receipt_id !== predecessor.receipt_id
+    || receipt.predecessor_receipt_hash !== sha256Canonical(predecessor)
+    || predecessor.cell_id !== violationCell.cell_id
+    || predecessor.behavior_id !== receipt.behavior_id
+    || predecessor.provider !== receipt.provider
+    || predecessor.scenario !== 'violation'
+    || predecessor.run_id !== receipt.run_id
+    || predecessor.resource_id !== receipt.resource_id
+    || predecessor.resource_ref !== receipt.resource_ref
+    || predecessor.artifact_sha !== receipt.artifact_sha
+    || predecessor.seam_id !== receipt.seam_id
+    || !DENIAL_OUTCOMES.has(predecessor.observed_outcome)
+  ) {
+    fail('recovery_lineage_invalid');
+  }
+}
+
+export function verifyEffectReceipt(receipt, registry, expected, { now = Date.now() } = {}) {
+  exactFields(receipt, EFFECT_FIELDS, 'effect_fields_invalid');
+  if (
+    receipt.schema_version !== 'kernel-equivalence-effect-receipt/v1'
+    || !UUID_PATTERN.test(receipt.receipt_id ?? '')
+    || !matchesAxes(receipt, expected)
+  ) {
+    fail('effect_axis_mismatch');
+  }
+  validateIdentity(receipt, 'effect');
+  if (
+    (expected.grant_id != null && receipt.grant_id !== expected.grant_id)
+    || (expected.nonce != null && receipt.nonce !== expected.nonce)
+    || (expected.resource_id != null && receipt.resource_id !== expected.resource_id)
+    || (expected.resource_ref != null && receipt.resource_ref !== expected.resource_ref)
+  ) {
+    fail('effect_axis_mismatch');
+  }
+  verifyWindow(
+    receipt,
+    now,
+    registry?.effect_receipt_max_age_seconds,
+    'effect',
+  );
+  const key = findKey(registry, {
+    keyId: receipt.key_id,
+    purpose: 'effect_receipt',
+    serviceId: receipt.seam_id,
+    now,
+    code: 'effect_key_invalid',
+  });
+  if (receipt.service_id !== key.service_id) fail('effect_key_invalid');
+  verifySignature(receipt, key, 'effect_signature_invalid');
+
+  if (
+    receipt.execution_mode !== 'live_effect'
+    || !HASH_PATTERN.test(receipt.before_hash ?? '')
+    || !HASH_PATTERN.test(receipt.after_hash ?? '')
+    || !nonEmpty(receipt.effect_code)
+    || !validResource(receipt, receipt.resource_ref)
+  ) {
+    fail('effect_outcome_invalid');
+  }
+  if (receipt.scenario === 'normal') {
+    if (
+      receipt.observed_outcome !== 'confirmed'
+      || receipt.predecessor_cell_id != null
+      || receipt.predecessor_receipt_id != null
+      || receipt.predecessor_receipt_hash != null
+    ) {
+      fail('effect_outcome_invalid');
+    }
+  } else if (receipt.scenario === 'violation') {
+    if (
+      !DENIAL_OUTCOMES.has(receipt.observed_outcome)
+      || receipt.predecessor_cell_id != null
+      || receipt.predecessor_receipt_id != null
+      || receipt.predecessor_receipt_hash != null
+    ) {
+      fail('effect_outcome_invalid');
+    }
+  } else if (receipt.scenario === 'recovery') {
+    if (receipt.observed_outcome !== 'recovered') fail('effect_outcome_invalid');
+    verifyRecoveryLineage(receipt, expected);
+  } else {
+    fail('effect_outcome_invalid');
+  }
+  return Object.freeze(structuredClone(receipt));
+}
+
+function bundlePayload(previousBundleHash, receiptHashes) {
+  return {
+    previous_bundle_hash: previousBundleHash,
+    receipt_hashes: receiptHashes,
+  };
+}
+
+export function assembleUnsignedBundle({
+  keyId,
+  collectorServiceId,
+  issuedAt,
+  expiresAt,
+  expected,
+  receipts,
+  previousBundleHash = null,
+}) {
+  const receiptHashes = receipts.map(sha256Canonical);
+  const payloadHash = sha256Canonical(bundlePayload(previousBundleHash, receiptHashes));
+  return {
+    schema_version: 'kernel-equivalence-receipt-bundle/v1',
+    bundle_id: `bundle:${payloadHash}`,
+    key_id: keyId,
+    collector_service_id: collectorServiceId,
+    issued_at: issuedAt,
+    expires_at: expiresAt,
+    cell_id: expected.cell.cell_id,
+    behavior_id: expected.cell.behavior_id,
+    provider: expected.cell.provider,
+    scenario: expected.cell.scenario,
+    run_id: expected.run_id,
+    attempt_id: expected.attempt_id,
+    grant_id: expected.grant_id,
+    nonce: expected.nonce,
+    artifact_sha: expected.artifact_sha,
+    brain_version: expected.brain_version,
+    engine_version: expected.engine_version,
+    environment: expected.cell.isolation.environment,
+    resource_id: expected.resource_id,
+    resource_ref: expected.resource_ref,
+    seam_id: expected.cell.seam_id,
+    adapter_id: expected.cell.adapter_id,
+    previous_bundle_hash: previousBundleHash,
+    effect_receipts: structuredClone(receipts),
+    receipt_hashes: receiptHashes,
+    bundle_payload_hash: payloadHash,
+  };
+}
+
+export function verifyReceiptBundle(bundle, registry, expected, { now = Date.now() } = {}) {
+  exactFields(bundle, BUNDLE_FIELDS, 'bundle_fields_invalid');
+  if (
+    bundle.schema_version !== 'kernel-equivalence-receipt-bundle/v1'
+    || !matchesAxes(bundle, expected)
+    || bundle.grant_id !== expected.grant_id
+    || bundle.nonce !== expected.nonce
+    || bundle.resource_id !== expected.resource_id
+    || bundle.resource_ref !== expected.resource_ref
+    || !Array.isArray(bundle.effect_receipts)
+    || !Array.isArray(bundle.receipt_hashes)
+  ) {
+    fail('bundle_axis_mismatch');
+  }
+  validateIdentity(bundle, 'bundle');
+  verifyWindow(
+    bundle,
+    now,
+    registry?.collector_bundle_max_age_seconds,
+    'bundle',
+  );
+  const key = findKey(registry, {
+    keyId: bundle.key_id,
+    purpose: 'collector_bundle',
+    serviceId: 'kernel.equivalence.collector',
+    now,
+    code: 'bundle_key_invalid',
+  });
+  if (bundle.collector_service_id !== key.service_id) fail('bundle_key_invalid');
+  verifySignature(bundle, key, 'bundle_signature_invalid');
+
+  let verifiedReceipts;
+  if (expected.cell.scenario === 'recovery') {
+    if (bundle.effect_receipts.length !== 2) fail('bundle_recovery_receipts_invalid');
+    const violation = verifyEffectReceipt(
+      bundle.effect_receipts[0],
+      registry,
+      {
+        ...expected,
+        cell: expectedViolationCell(expected.cell),
+        grant_id: null,
+        nonce: null,
+        predecessor: null,
+      },
+      { now },
+    );
+    const recovery = verifyEffectReceipt(
+      bundle.effect_receipts[1],
+      registry,
+      { ...expected, predecessor: violation },
+      { now },
+    );
+    verifiedReceipts = [violation, recovery];
+  } else {
+    if (bundle.effect_receipts.length !== 1) fail('bundle_receipt_count_invalid');
+    verifiedReceipts = [
+      verifyEffectReceipt(bundle.effect_receipts[0], registry, expected, { now }),
+    ];
+  }
+
+  const hashes = verifiedReceipts.map(sha256Canonical);
+  const payloadHash = sha256Canonical(
+    bundlePayload(bundle.previous_bundle_hash, hashes),
+  );
+  if (
+    hashes.length !== bundle.receipt_hashes.length
+    || hashes.some((hash, index) => hash !== bundle.receipt_hashes[index])
+    || bundle.bundle_payload_hash !== payloadHash
+    || bundle.bundle_id !== `bundle:${payloadHash}`
+    || (
+      bundle.previous_bundle_hash != null
+      && !HASH_PATTERN.test(bundle.previous_bundle_hash)
+    )
+  ) {
+    fail('bundle_hash_chain_invalid');
+  }
+
+  return Object.freeze({
+    bundle_id: bundle.bundle_id,
+    bundle_hash: sha256Canonical(bundle),
+    receipt_ids: verifiedReceipts.map((receipt) => receipt.receipt_id),
+    effect_receipts: verifiedReceipts,
+  });
+}
