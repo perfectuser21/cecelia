@@ -233,6 +233,7 @@ export function validateTrustRegistry(registry) {
     }
 
     const keyIds = new Set();
+    const publicKeyMaterials = new Set();
     for (const key of registry.keys) {
       exactFields(key, KEY_FIELDS, 'trust_registry_invalid');
       const notBefore = parseTime(key.not_before, 'trust_registry_invalid');
@@ -274,6 +275,14 @@ export function validateTrustRegistry(registry) {
       if (publicKey.asymmetricKeyType !== 'ed25519') {
         fail('trust_registry_invalid');
       }
+      const publicKeyMaterial = publicKey.export({
+        type: 'spki',
+        format: 'der',
+      }).toString('base64');
+      if (publicKeyMaterials.has(publicKeyMaterial)) {
+        fail('trust_registry_invalid');
+      }
+      publicKeyMaterials.add(publicKeyMaterial);
       keyIds.add(key.key_id);
     }
     const keysById = new Map(registry.keys.map((key) => [key.key_id, key]));
