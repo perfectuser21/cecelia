@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.268.23
+**Brain 版本**: 1.268.24
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.24 — Kernel exact-image boot graph closure
+
+- Brain image 保留 `/app` 唯一源码，以 `/brain -> /app` 提供跨 workspace
+  canonical runtime identity，并完整复制 Engine package 与 Brain scripts，
+  闭合 DevGate sidecar、receipt primitive、fleet mutation broker 的二级 import。
+- Docker CI 将 checkout exact `${{ github.sha }}` 作为 build arg 烙入镜像；runtime
+  contract 重新读取 image ID/SHA、导入完整 production seam graph，并用隔离
+  pgvector 数据库在有界时间内启动真实 Brain 和读取 health。
+- contract 对 Docker 缺失、SHA 漂移、graph 缺失、启动超时与清理残留全部
+  fail-closed；原 Alpine `acl/attr` 与 normal/ACL/xattr exact-image 合同保持独立。
 
 ## Brain 1.268.23 — Kernel Alpine metadata runtime closure
 

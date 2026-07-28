@@ -67,6 +67,15 @@ COPY packages/brain/src/ ./src/
 COPY packages/brain/config/ ./config/
 COPY packages/brain/migrations/ ./migrations/
 COPY packages/brain/package.json ./
+# Brain 的 production seam builder 会加载 package-owned fleet-worker
+# mutation broker；完整复制 scripts runtime，避免首个缺文件修好后继续在二级
+# require/import 上启动失败。
+COPY packages/brain/scripts/ ./scripts/
+# Kernel DevGate seam 是跨 workspace 的生产依赖。它从 /engine 反向引用 /brain，
+# 因此保留 /app 为唯一 Brain copy，以 immutable alias 提供 /brain 身份，并复制
+# 完整 Engine package（包括 sidecar 的同目录 shell/CJS runtime），禁止单文件补洞。
+COPY packages/engine/ /engine/
+RUN ln -s /app /brain
 
 # Root user: 容器内需要访问 /var/run/docker.sock 调 dockerd spawn 兄弟容器。
 # macOS 宿主没有 docker group，gid 映射不稳定；direct root 最简单。

@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.268.23
+**版本**: 1.268.24
+
+## Kernel exact-image boot graph closure
+
+- `/app` 继续是唯一 Brain source copy；immutable `/brain -> /app` 与完整
+  `/engine` package 恢复 production seam 原有的跨 workspace 相对 import，
+  完整 `/app/scripts` 同时提供 fleet mutation broker 与 server runtime。
+- CI build 必须注入 exact 40-hex `GIT_SHA`。Docker runtime contract 在镜像内
+  回读 image ID/SHA、导入 Brain→Engine→Brain production graph，并通过隔离
+  pgvector 实例验证真实 migration、listen 与 health 的有界启动。
+- 无 Docker只有显式 allow-skip；required 模式、SHA mismatch、import/startup
+  failure 或任何 container/network residue 均失败。既有 ACL/xattr contract
+  保持不变。
+- 回退：`bash scripts/brain-rollback.sh 1.268.23`；无数据库迁移。
 
 ## Kernel Alpine metadata runtime closure
 
