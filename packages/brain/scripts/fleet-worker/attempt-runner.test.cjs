@@ -325,6 +325,12 @@ describe('Fleet Worker Attempt runner', () => {
         bindings: { ...RESULT_CHANNEL.bindings, attacker: true },
       },
     }, /attempt_result_channel_binding_unknown_field/],
+    ['target unknown field', {
+      target: { ...request().target, attacker: true },
+    }, /attempt_target_unknown_field/],
+    ['workspace unknown field', {
+      workspace_spec: { ...request().workspace_spec, attacker: true },
+    }, /attempt_workspace_spec_unknown_field/],
     ['wrong version', {
       result_channel: { ...RESULT_CHANNEL, version: 'attempt-result-file/v2' },
     }, /attempt_result_channel_version_invalid/],
@@ -341,6 +347,12 @@ describe('Fleet Worker Attempt runner', () => {
     ['task mismatch', { task_id: 'another-task' }, /attempt_result_channel_task_id_mismatch/],
     ['run mismatch', { run_id: OTHER_ATTEMPT_ID }, /attempt_result_channel_run_id_mismatch/],
     ['attempt mismatch', { attempt_id: OTHER_ATTEMPT_ID }, /attempt_result_channel_attempt_id_mismatch/],
+    ['worker Brain URL with a path', {
+      brain_url: `${BRAIN_URL}/api/brain`,
+    }, /attempt_brain_url_invalid/],
+    ['provider and target mismatch', {
+      provider_spec: { ...request().provider_spec, provider: 'claude' },
+    }, /attempt_provider_target_mismatch/],
     ['role mismatch', {
       target: { ...request().target, role: 'reviewer' },
     }, /attempt_result_channel_role_mismatch/],
