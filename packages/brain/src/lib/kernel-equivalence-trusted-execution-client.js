@@ -1,6 +1,7 @@
 import {
   lstatSync,
 } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { createConnection } from 'node:net';
 import {
   dirname,
@@ -8,6 +9,9 @@ import {
   parse,
   resolve,
 } from 'node:path';
+import {
+  assertPathAclFree,
+} from './kernel-equivalence-protected-filesystem.js';
 
 const DEFAULT_SOCKET_PATH =
   '/var/run/cecelia/kernel-equivalence.sock';
@@ -15,6 +19,17 @@ const REQUEST_FIELDS = Object.freeze(['cell_id', 'grant_ref']);
 const GRANT_REF_PATTERN =
   /^kernel-equivalence-grant:[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const MAXIMUM_RESPONSE_BYTES = 262_144;
+const MAXIMUM_READINESS_RESPONSE_BYTES = 1_024;
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const READINESS_RESPONSE_FIELDS = Object.freeze([
+  'brain_identity',
+  'challenge',
+  'plan_digest',
+  'schema_version',
+  'service_identity',
+  'service_schema_version',
+  'status',
+]);
 // Server execution may consume its 30s budget, then use bounded cancellation,
 // settlement, cleanup verification, and denial-audit windows before replying.
 const DEFAULT_CLIENT_DEADLINE_MS = 185_000;
@@ -138,6 +153,14 @@ function inspectSocket(socketPath) {
     || directoryStatus.uid === currentUid
     || directoryStatus.uid === 0
   );
+  assertPathAclFree(
+    socketPath,
+    () => fail('trusted_execution_socket_unsafe'),
+  );
+  assertPathAclFree(
+    dirname(socketPath),
+    () => fail('trusted_execution_socket_unsafe'),
+  );
   if (
     !socketStatus.isSocket()
     || socketStatus.nlink !== 1
@@ -170,6 +193,10 @@ function sameSocket(socketPath, expected) {
   ) {
     fail('trusted_execution_socket_unsafe');
   }
+  assertPathAclFree(
+    socketPath,
+    () => fail('trusted_execution_socket_unsafe'),
+  );
 }
 
 export function inspectBrainTrustedExecutionSocketReadiness({
@@ -200,6 +227,7 @@ export function inspectBrainTrustedExecutionSocketReadiness({
 
 export async function probeBrainTrustedExecutionSocketReadiness({
   socketPath = DEFAULT_SOCKET_PATH,
+  expectedPlanDigest,
   timeoutMs = 1_000,
 } = {}) {
   let identity;
@@ -213,6 +241,9 @@ export async function probeBrainTrustedExecutionSocketReadiness({
       fail('trusted_execution_transport_configuration_invalid');
     }
     identity = inspectSocket(socketPath);
+    if (!HASH_PATTERN.test(expectedPlanDigest ?? '')) {
+      fail('trusted_execution_plan_digest_unconfigured');
+    }
   } catch (error) {
     const code = (
       error instanceof KernelTrustedExecutionClientError
@@ -229,6 +260,20 @@ export async function probeBrainTrustedExecutionSocketReadiness({
 
   return new Promise((resolveReadiness) => {
     let settled = false;
+    let ended = false;
+    let response = Buffer.alloc(0);
+    const challenge = randomBytes(32).toString('hex');
+    const request = Object.freeze({
+      schema_version:
+        'kernel-equivalence-trusted-execution-readiness-challenge/v1',
+      challenge,
+      expected_plan_digest: expectedPlanDigest,
+      brain_identity: 'cecelia.brain',
+      service_identity:
+        'brain.kernel_equivalence.trusted_execution',
+      service_schema_version:
+        'kernel-equivalence-trusted-execution-service/v1',
+    });
     const socket = createConnection({ path: socketPath });
     const finish = (value) => {
       if (settled) return;
@@ -247,6 +292,54 @@ export async function probeBrainTrustedExecutionSocketReadiness({
     socket.once('connect', () => {
       try {
         sameSocket(socketPath, identity);
+        socket.end(`${JSON.stringify(request)}\n`);
+      } catch {
+        unavailable();
+      }
+    });
+    socket.on('data', (chunk) => {
+      response = Buffer.concat([response, chunk]);
+      if (response.length > MAXIMUM_READINESS_RESPONSE_BYTES) {
+        unavailable();
+      }
+    });
+    socket.once('end', () => {
+      ended = true;
+      if (
+        response.length < 2
+        || response.at(-1) !== 0x0a
+        || response.indexOf(0x0a) !== response.length - 1
+      ) {
+        unavailable();
+        return;
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(
+          response.subarray(0, response.length - 1).toString('utf8'),
+        );
+      } catch {
+        unavailable();
+        return;
+      }
+      if (
+        !exactKeys(parsed, READINESS_RESPONSE_FIELDS)
+        || parsed.schema_version
+          !== 'kernel-equivalence-trusted-execution-readiness-response/v1'
+        || parsed.status !== 'ready'
+        || parsed.challenge !== challenge
+        || parsed.brain_identity !== 'cecelia.brain'
+        || parsed.service_identity
+          !== 'brain.kernel_equivalence.trusted_execution'
+        || parsed.service_schema_version
+          !== 'kernel-equivalence-trusted-execution-service/v1'
+        || parsed.plan_digest !== expectedPlanDigest
+      ) {
+        unavailable();
+        return;
+      }
+      try {
+        sameSocket(socketPath, identity);
         finish({
           ready: true,
           code: null,
@@ -255,6 +348,9 @@ export async function probeBrainTrustedExecutionSocketReadiness({
       } catch {
         unavailable();
       }
+    });
+    socket.once('close', () => {
+      if (!settled && !ended) unavailable();
     });
   });
 }

@@ -28,6 +28,9 @@ import {
   verifyExecutionGrant,
   verifyReceiptBundle,
 } from './kernel-equivalence-receipts.js';
+import {
+  assertPathAclFree,
+} from './kernel-equivalence-protected-filesystem.js';
 
 const MAXIMUM_KEY_BYTES = 8_192;
 const DEFAULT_MAXIMUM_KEY_BYTES = MAXIMUM_KEY_BYTES;
@@ -125,6 +128,10 @@ function readProtectedPrivateKey(
 
   let descriptor;
   try {
+    assertPathAclFree(
+      secretFile,
+      () => fail('signer_secret_permissions_invalid'),
+    );
     descriptor = openSync(
       secretFile,
       constants.O_RDONLY | constants.O_NOFOLLOW,
@@ -151,7 +158,12 @@ function readProtectedPrivateKey(
     ) {
       fail('signer_secret_size_invalid');
     }
-    return readFileSync(descriptor);
+    const secret = readFileSync(descriptor);
+    assertPathAclFree(
+      secretFile,
+      () => fail('signer_secret_permissions_invalid'),
+    );
+    return secret;
   } catch (error) {
     if (error instanceof EquivalenceReceiptError) throw error;
     if (error?.code === 'ELOOP') fail('signer_secret_file_unsafe');

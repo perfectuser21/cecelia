@@ -39,6 +39,9 @@ import {
 import {
   digestTrustedExecutionPlan,
 } from './kernel-equivalence-trusted-execution-service.js';
+import {
+  assertPathAclFree,
+} from './kernel-equivalence-protected-filesystem.js';
 
 const RAW_SECRET_ENVIRONMENT =
   /^KERNEL_EQ_.*(?:PRIVATE_KEY|SECRET|KEY_PEM|KEY_VALUE)$/;
@@ -160,6 +163,10 @@ function protectedManifest(path) {
     if (realpathSync(path) !== path) {
       fail('trusted_execution_config_file_unsafe');
     }
+    assertPathAclFree(
+      path,
+      () => fail('trusted_execution_config_file_unsafe'),
+    );
     const pathStatus = lstatSync(path);
     if (
       !pathStatus.isFile()
@@ -191,6 +198,10 @@ function protectedManifest(path) {
     bytes = readFileSync(descriptor);
     const completed = fstatSync(descriptor);
     const finalPathStatus = lstatSync(path);
+    assertPathAclFree(
+      path,
+      () => fail('trusted_execution_config_file_unsafe'),
+    );
     if (
       completed.dev !== opened.dev
       || completed.ino !== opened.ino
@@ -402,6 +413,42 @@ function pinAssemblyPorts(value, profileId) {
   return snapshot;
 }
 
+function findDataMethod(value, name) {
+  let cursor = value;
+  try {
+    while (cursor != null) {
+      const descriptor = Object.getOwnPropertyDescriptor(cursor, name);
+      if (descriptor) {
+        return (
+          Object.hasOwn(descriptor, 'value')
+          && typeof descriptor.value === 'function'
+        )
+          ? descriptor.value
+          : null;
+      }
+      cursor = Object.getPrototypeOf(cursor);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function createBrainOwnedDatabasePort(pool) {
+  if (!pool || typeof pool !== 'object' || Array.isArray(pool)) {
+    fail('production_trusted_execution_database_port_invalid');
+  }
+  const connect = findDataMethod(pool, 'connect');
+  const query = findDataMethod(pool, 'query');
+  if (!connect || !query) {
+    fail('production_trusted_execution_database_port_invalid');
+  }
+  return Object.freeze({
+    connect: (...args) => Reflect.apply(connect, pool, args),
+    query: (...args) => Reflect.apply(query, pool, args),
+  });
+}
+
 export function loadProductionTrustedExecutionWiring({
   env = process.env,
   pool,
@@ -457,7 +504,7 @@ export function loadProductionTrustedExecutionWiring({
     grantAuthority,
     now,
     plan: manifest.plan,
-    pool,
+    pool: createBrainOwnedDatabasePort(pool),
     qualityIsolation: ports.qualityIsolation,
     runtimeEnvironment: {
       KERNEL_EQ_COLLECTOR_KEY_FILE:

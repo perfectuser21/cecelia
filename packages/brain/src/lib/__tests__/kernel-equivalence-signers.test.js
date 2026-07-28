@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   linkSync,
   mkdirSync,
   mkdtempSync,
@@ -7,6 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import {
   generateKeyPairSync,
 } from 'node:crypto';
@@ -94,6 +96,65 @@ function expected(cell, grant) {
 }
 
 describe('protected Ed25519 equivalence signers', () => {
+  it.runIf(process.platform === 'darwin')(
+    'rejects an ACL-bearing private key even when mode is 0600',
+    () => {
+      const root = temporaryRoot();
+      const keys = createTrustFixture();
+      const secretFile = writePrivateKey(
+        root,
+        'acl-grant-authority.pem',
+        keys.authority.privateKey,
+      );
+      execFileSync('/bin/chmod', [
+        '+a',
+        'everyone allow read',
+        secretFile,
+      ]);
+
+      expect(() => loadExecutionGrantAuthority({
+        secretFile,
+        keyId: keys.authority.record.key_id,
+        trustRegistry: keys.registry,
+        now: () => FIXTURE_NOW,
+      })).toThrowError(expect.objectContaining({
+        code: 'signer_secret_permissions_invalid',
+      }));
+    },
+  );
+
+  it.runIf(
+    process.platform === 'linux'
+    && (
+      existsSync('/usr/bin/setfacl')
+      || existsSync('/bin/setfacl')
+    ),
+  )(
+    'rejects a Linux ACL-bearing private key when setfacl is available',
+    () => {
+      const root = temporaryRoot();
+      const keys = createTrustFixture();
+      const secretFile = writePrivateKey(
+        root,
+        'acl-grant-authority.pem',
+        keys.authority.privateKey,
+      );
+      const setfacl = existsSync('/usr/bin/setfacl')
+        ? '/usr/bin/setfacl'
+        : '/bin/setfacl';
+      execFileSync(setfacl, ['-m', 'u:nobody:r', secretFile]);
+
+      expect(() => loadExecutionGrantAuthority({
+        secretFile,
+        keyId: keys.authority.record.key_id,
+        trustRegistry: keys.registry,
+        now: () => FIXTURE_NOW,
+      })).toThrowError(expect.objectContaining({
+        code: 'signer_secret_permissions_invalid',
+      }));
+    },
+  );
+
   it('loads the grant authority from a protected file and issues an exact verified grant', () => {
     const root = temporaryRoot();
     const keys = createTrustFixture();

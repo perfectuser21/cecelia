@@ -78,10 +78,49 @@ describe('kernel equivalence drill CLI', () => {
     });
   });
 
-  it('reports live wiring readiness from an exact mode-0600 Brain socket', async () => {
+  it('keeps check informational but makes gate fail closed on every readiness field', () => {
+    const information = run(['--check', '--format=json']);
+    const gate = run(['--gate', '--format=json']);
+
+    expect(information.status).toBe(0);
+    expect(JSON.parse(information.stdout)).toMatchObject({
+      mode: 'check',
+      contract_valid: true,
+      execution_ready: false,
+      proof_matrix_ready: false,
+      execution_wiring_ready: false,
+    });
+    expect(gate.status).toBe(1);
+    expect(gate.stderr).toBe('');
+    expect(JSON.parse(gate.stdout)).toMatchObject({
+      mode: 'gate',
+      contract_valid: true,
+      execution_ready: false,
+      proof_matrix_ready: false,
+      execution_wiring_ready: false,
+    });
+  });
+
+  it('uses the fail-closed gate in the P0 regression contract', () => {
+    const contract = readFileSync(
+      join(repositoryRoot, 'regression-contract.yaml'),
+      'utf8',
+    );
+
+    expect(contract).toContain(
+      'run-kernel-equivalence-drill.mjs --gate --format=json',
+    );
+    expect(contract).not.toContain(
+      'run-kernel-equivalence-drill.mjs --check --format=json',
+    );
+  });
+
+  it('does not treat a connect-only mode-0600 listener as Brain readiness', async () => {
     const temporaryRoot = mkdtempSync('/tmp/keq-cli-');
     const socketPath = join(temporaryRoot, 'brain.sock');
-    const listener = createServer();
+    const listener = createServer((socket) => {
+      socket.resume();
+    });
     await new Promise((resolve, reject) => {
       listener.once('error', reject);
       listener.listen(socketPath, resolve);
@@ -90,13 +129,16 @@ describe('kernel equivalence drill CLI', () => {
     try {
       const result = run(['--check', '--format=json'], {
         KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH: socketPath,
+        KERNEL_EQ_TRUSTED_EXECUTION_PLAN_DIGEST: 'a'.repeat(64),
       });
 
       expect(result.status).toBe(0);
       expect(JSON.parse(result.stdout)).toMatchObject({
         execution_ready: false,
-        execution_wiring_ready: true,
-        execution_wiring_blockers: [],
+        execution_wiring_ready: false,
+        execution_wiring_blockers: [
+          'trusted_execution_socket_unavailable',
+        ],
         proof_matrix_ready: false,
       });
     } finally {
@@ -129,6 +171,7 @@ describe('kernel equivalence drill CLI', () => {
 
       const result = run(['--check', '--format=json'], {
         KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH: socketPath,
+        KERNEL_EQ_TRUSTED_EXECUTION_PLAN_DIGEST: 'a'.repeat(64),
       });
 
       expect(result.status).toBe(0);
@@ -191,6 +234,7 @@ describe('kernel equivalence drill CLI', () => {
   it.each([
     [[]],
     [['--plan', '--check']],
+    [['--check', '--gate']],
     [['--plan', '--unknown']],
     [['--plan', '--cell', 'anything']],
     [['--execute']],

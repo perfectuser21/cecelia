@@ -3,10 +3,11 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
+  renameSync,
   unlinkSync,
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { createServer } from 'node:net';
+import { createConnection, createServer } from 'node:net';
 import {
   dirname,
   isAbsolute,
@@ -16,11 +17,23 @@ import {
 import {
   BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
 } from './kernel-equivalence-trusted-execution-client.js';
+import {
+  assertPathAclFree,
+} from './kernel-equivalence-protected-filesystem.js';
 
 const MAXIMUM_REQUEST_BYTES = 65_536;
 const MAXIMUM_RESPONSE_BYTES = 262_144;
 const MAXIMUM_REQUEST_DEADLINE_MS = 30_000;
 const MAXIMUM_TOTAL_DEADLINE_MS = 30_000;
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const READINESS_REQUEST_FIELDS = Object.freeze([
+  'brain_identity',
+  'challenge',
+  'expected_plan_digest',
+  'schema_version',
+  'service_identity',
+  'service_schema_version',
+]);
 
 export class KernelTrustedExecutionSocketServerError extends Error {
   constructor(code) {
@@ -48,6 +61,7 @@ function validateConfiguration({
       !== 'kernel-equivalence-trusted-execution-service/v1'
     || service.cell_count !== 99
     || service.adapter_count !== 10
+    || !HASH_PATTERN.test(service.plan_digest ?? '')
     || typeof service.execute !== 'function'
   ) {
     fail('trusted_execution_service_invalid');
@@ -109,6 +123,15 @@ function protectedParentDirectory(socketPath) {
   ) {
     fail('trusted_execution_socket_parent_unsafe');
   }
+  assertPathAclFree(
+    parent,
+    () => fail('trusted_execution_socket_parent_unsafe'),
+  );
+  return Object.freeze({
+    path: parent,
+    device: status.dev,
+    inode: status.ino,
+  });
 }
 
 function assertTargetAbsent(socketPath) {
@@ -140,10 +163,158 @@ function socketIdentity(socketPath, { secureMode = false } = {}) {
   ) {
     fail('trusted_execution_socket_unsafe');
   }
+  assertPathAclFree(
+    socketPath,
+    () => fail('trusted_execution_socket_unsafe'),
+  );
   return Object.freeze({
     device: status.dev,
     inode: status.ino,
   });
+}
+
+function sameParentDirectory(expected) {
+  let actual;
+  try {
+    actual = lstatSync(expected.path);
+  } catch {
+    fail('trusted_execution_socket_parent_unsafe');
+  }
+  assertPathAclFree(
+    expected.path,
+    () => fail('trusted_execution_socket_parent_unsafe'),
+  );
+  if (
+    !actual.isDirectory()
+    || actual.dev !== expected.device
+    || actual.ino !== expected.inode
+  ) {
+    fail('trusted_execution_socket_parent_unsafe');
+  }
+}
+
+function recoverableSocketIdentity(socketPath) {
+  let status;
+  try {
+    status = lstatSync(socketPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    fail('trusted_execution_socket_path_unavailable');
+  }
+  const uid = typeof process.getuid === 'function'
+    ? process.getuid()
+    : null;
+  if (
+    !status.isSocket()
+    || status.isSymbolicLink()
+    || status.nlink !== 1
+    || (status.mode & 0o777) !== 0o600
+    || (uid != null && status.uid !== uid)
+  ) {
+    fail('trusted_execution_socket_path_occupied');
+  }
+  assertPathAclFree(
+    socketPath,
+    () => fail('trusted_execution_socket_path_occupied'),
+  );
+  return Object.freeze({
+    device: status.dev,
+    inode: status.ino,
+  });
+}
+
+function sameRecoverableSocket(socketPath, expected) {
+  const actual = recoverableSocketIdentity(socketPath);
+  if (
+    actual == null
+    || actual.device !== expected.device
+    || actual.inode !== expected.inode
+  ) {
+    fail('trusted_execution_socket_path_occupied');
+  }
+}
+
+function proveSocketInactive(socketPath, timeoutMs = 250) {
+  return new Promise((resolveInactive) => {
+    let settled = false;
+    const socket = createConnection({ path: socketPath });
+    const finish = (inactive) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolveInactive(inactive);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.once('connect', () => finish(false));
+    socket.once('error', (error) => {
+      finish(error?.code === 'ECONNREFUSED');
+    });
+  });
+}
+
+function restoreQuarantinedReplacement(
+  quarantinePath,
+  socketPath,
+) {
+  try {
+    lstatSync(socketPath);
+    return;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') return;
+  }
+  try {
+    renameSync(quarantinePath, socketPath);
+  } catch {
+    // Never unlink an inode that stopped matching the pinned stale socket.
+  }
+}
+
+async function recoverPinnedStaleSocket(socketPath, parentIdentity) {
+  const stale = recoverableSocketIdentity(socketPath);
+  if (stale == null) return;
+  if (!await proveSocketInactive(socketPath)) {
+    fail('trusted_execution_socket_path_occupied');
+  }
+  sameParentDirectory(parentIdentity);
+  sameRecoverableSocket(socketPath, stale);
+  const quarantinePath = resolve(
+    dirname(socketPath),
+    `.stale-${process.pid.toString(36)}-${randomBytes(6).toString('hex')}`,
+  );
+  assertTargetAbsent(quarantinePath);
+  try {
+    renameSync(socketPath, quarantinePath);
+  } catch {
+    fail('trusted_execution_socket_path_occupied');
+  }
+  await new Promise((resolveRaceWindow) => {
+    setTimeout(resolveRaceWindow, 25);
+  });
+  try {
+    sameRecoverableSocket(quarantinePath, stale);
+    sameParentDirectory(parentIdentity);
+  } catch (error) {
+    restoreQuarantinedReplacement(quarantinePath, socketPath);
+    throw error;
+  }
+  try {
+    unlinkSync(quarantinePath);
+  } catch {
+    fail('trusted_execution_socket_path_unavailable');
+  }
+  try {
+    lstatSync(quarantinePath);
+    fail('trusted_execution_socket_path_unavailable');
+  } catch (error) {
+    if (error instanceof KernelTrustedExecutionSocketServerError) {
+      throw error;
+    }
+    if (error?.code !== 'ENOENT') {
+      fail('trusted_execution_socket_path_unavailable');
+    }
+  }
+  sameParentDirectory(parentIdentity);
 }
 
 function unlinkOwnedSocket(socketPath, identity) {
@@ -205,6 +376,41 @@ function succeeded(binding, result) {
     cell_id: binding.cell_id,
     grant_ref: binding.grant_ref,
     result,
+  };
+}
+
+function validReadinessChallenge(value, service) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const fields = Object.keys(value).sort();
+  return (
+    fields.length === READINESS_REQUEST_FIELDS.length
+    && fields.every(
+      (field, index) => field === READINESS_REQUEST_FIELDS[index],
+    )
+    && value.schema_version
+      === 'kernel-equivalence-trusted-execution-readiness-challenge/v1'
+    && /^[a-f0-9]{64}$/.test(value.challenge ?? '')
+    && value.expected_plan_digest === service.plan_digest
+    && value.brain_identity === 'cecelia.brain'
+    && value.service_identity
+      === 'brain.kernel_equivalence.trusted_execution'
+    && value.service_schema_version === service.schema_version
+  );
+}
+
+function readinessSucceeded(request, service) {
+  return {
+    schema_version:
+      'kernel-equivalence-trusted-execution-readiness-response/v1',
+    status: 'ready',
+    challenge: request.challenge,
+    brain_identity: 'cecelia.brain',
+    service_identity:
+      'brain.kernel_equivalence.trusted_execution',
+    service_schema_version: service.schema_version,
+    plan_digest: service.plan_digest,
   };
 }
 
@@ -405,6 +611,10 @@ export function createBrainTrustedExecutionSocketServer({
         writeResponse(blocked('trusted_execution_request_invalid'));
         return;
       }
+      if (validReadinessChallenge(request, service)) {
+        writeResponse(readinessSucceeded(request, service));
+        return;
+      }
       if (!validBinding(request)) {
         writeResponse(blocked('trusted_execution_request_invalid'));
         return;
@@ -435,7 +645,8 @@ export function createBrainTrustedExecutionSocketServer({
     if (state !== 'created') {
       fail('trusted_execution_socket_state_invalid');
     }
-    protectedParentDirectory(socketPath);
+    const parentIdentity = protectedParentDirectory(socketPath);
+    await recoverPinnedStaleSocket(socketPath, parentIdentity);
     assertTargetAbsent(socketPath);
     assertTargetAbsent(bindPath);
     state = 'starting';

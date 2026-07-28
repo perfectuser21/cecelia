@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.268.20
+**Brain 版本**: 1.268.21
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.21 — Kernel boot control review closure
+
+- production wiring 通过 Brain-owned wrapper 接受真实 `pg.Pool`，但只向
+  trusted runtime 暴露冻结且绑定的 `connect/query` 最小 capability。
+- UDS readiness 改为有界 challenge-response，精确绑定随机 challenge、
+  service schema、canonical plan digest 与 Brain/service identity；空 listener、
+  错 digest、畸形、超长及 timeout 均 fail-closed，且探针不触发执行。
+- `--check` 保持信息模式，新增 `--gate`；P0 regression contract 只有在
+  execution/proof-matrix/wiring 三项均为 true 时才允许零退出。
+- manifest、private keys、grant 与 UDS parent/socket/client 复用 ACL-free
+  校验；stale UDS 仅在 bounded connect 证明 inactive 且 inode/parent 重验后
+  恢复，active、symlink 与 replacement race 均不删除。
 
 ## Brain 1.268.20 — Kernel production boot and grant control plane
 

@@ -20,7 +20,9 @@ import {
   parse,
   resolve,
 } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import {
+  assertPathAclFree,
+} from './kernel-equivalence-protected-filesystem.js';
 
 const GRANT_REF =
   /^kernel-equivalence-grant:([a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/;
@@ -66,27 +68,6 @@ function ownedByTrustedPrincipal(status) {
   );
 }
 
-function assertAclFree(path, code) {
-  try {
-    const output = execFileSync('/bin/ls', ['-ld', path], {
-      encoding: 'utf8',
-      env: { LC_ALL: 'C' },
-      maxBuffer: 4_096,
-      timeout: 1_000,
-    });
-    const permissions = output.trimStart().split(/\s+/, 1)[0];
-    if (
-      !/^[bcdlps-][rwxStTs-]{9}[+@.]?$/.test(permissions)
-      || permissions.endsWith('+')
-    ) {
-      fail(code);
-    }
-  } catch (error) {
-    if (error instanceof ProtectedGrantAuthorityError) throw error;
-    fail(code);
-  }
-}
-
 function deepFreeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     for (const child of Object.values(value)) deepFreeze(child);
@@ -109,7 +90,10 @@ function validateRoot(grantRoot) {
     if (realpathSync(grantRoot) !== grantRoot) {
       fail('protected_grant_root_unsafe');
     }
-    assertAclFree(grantRoot, 'protected_grant_root_unsafe');
+    assertPathAclFree(
+      grantRoot,
+      () => fail('protected_grant_root_unsafe'),
+    );
     rootStatus = lstatSync(grantRoot);
     if (
       !rootStatus.isDirectory()
@@ -121,7 +105,10 @@ function validateRoot(grantRoot) {
     }
     let ancestor = dirname(grantRoot);
     while (ancestor !== parse(ancestor).root) {
-      assertAclFree(ancestor, 'protected_grant_root_unsafe');
+      assertPathAclFree(
+        ancestor,
+        () => fail('protected_grant_root_unsafe'),
+      );
       const ancestorStatus = lstatSync(ancestor);
       if (
         ancestorStatus.isSymbolicLink()
@@ -152,7 +139,10 @@ function readGrantFile(grantPath, {
   let descriptor;
   let bytes;
   try {
-    assertAclFree(grantPath, 'protected_grant_file_unsafe');
+    assertPathAclFree(
+      grantPath,
+      () => fail('protected_grant_file_unsafe'),
+    );
     const pathStatus = lstatSync(grantPath);
     if (
       !pathStatus.isFile()
@@ -193,7 +183,10 @@ function readGrantFile(grantPath, {
     ) {
       fail('protected_grant_file_unsafe');
     }
-    assertAclFree(grantPath, 'protected_grant_file_unsafe');
+    assertPathAclFree(
+      grantPath,
+      () => fail('protected_grant_file_unsafe'),
+    );
     let grant;
     try {
       grant = JSON.parse(bytes.toString('utf8'));

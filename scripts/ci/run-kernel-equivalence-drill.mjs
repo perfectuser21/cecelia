@@ -38,7 +38,7 @@ function usage(message) {
 function parseArguments(argv) {
   if (argv.length === 0) usage('exactly one mode is required');
   const modeArguments = argv.filter((argument) => (
-    ['--plan', '--check', '--execute'].includes(argument)
+    ['--plan', '--check', '--gate', '--execute'].includes(argument)
   ));
   if (modeArguments.length !== 1) usage('exactly one mode is required');
   const mode = modeArguments[0].slice(2);
@@ -60,7 +60,10 @@ function parseArguments(argv) {
     };
   }
 
-  if (mode === 'check' && argv[0] === '--check') {
+  if (
+    ['check', 'gate'].includes(mode)
+    && argv[0] === `--${mode}`
+  ) {
     const bundleDirIndex = argv.indexOf('--bundle-dir');
     const formatArgument = argv.find((argument) => argument.startsWith('--format='));
     const allowedLength =
@@ -79,7 +82,7 @@ function parseArguments(argv) {
         && argument !== formatArgument
       ))
     ) {
-      usage('check accepts --bundle-dir <absolute-dir> and --format=json|markdown');
+      usage(`${mode} accepts --bundle-dir <absolute-dir> and --format=json|markdown`);
     }
     return {
       mode,
@@ -184,6 +187,7 @@ function configuredBundleReferenceCount(contract) {
 function checkReport(contract, plan, {
   bundleDir = null,
   executionReadiness,
+  mode = 'check',
   now,
 } = {}) {
   const configuredBundleRefs = configuredBundleReferenceCount(contract);
@@ -205,7 +209,7 @@ function checkReport(contract, plan, {
   const executionWiringReady = executionReadiness.ready;
   return {
     schema_version: 'kernel-equivalence-drill-cli/v1',
-    mode: 'check',
+    mode,
     contract_valid: validation.valid,
     execution_ready:
       validation.valid
@@ -261,21 +265,36 @@ async function main() {
   const options = parseArguments(process.argv.slice(2));
   const contract = loadContract();
 
-  if (options.mode === 'check') {
+  if (['check', 'gate'].includes(options.mode)) {
     const { now, plan } = compileReportDrillPlan(contract);
     const executionReadiness =
       await probeBrainTrustedExecutionSocketReadiness({
         socketPath:
           process.env.KERNEL_EQ_TRUSTED_EXECUTION_SOCKET_PATH
             || BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
+        expectedPlanDigest:
+          process.env.KERNEL_EQ_TRUSTED_EXECUTION_PLAN_DIGEST,
       });
     const report = checkReport(contract, plan, {
       bundleDir: options.bundleDir,
       executionReadiness,
+      mode: options.mode,
       now,
     });
     output(report, options.format);
-    if (!report.contract_valid) process.exitCode = 1;
+    if (
+      !report.contract_valid
+      || (
+        options.mode === 'gate'
+        && (
+          report.execution_ready !== true
+          || report.proof_matrix_ready !== true
+          || report.execution_wiring_ready !== true
+        )
+      )
+    ) {
+      process.exitCode = 1;
+    }
     return;
   }
 

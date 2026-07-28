@@ -1,6 +1,24 @@
 # Brain 模块定义
 
-**版本**: 1.268.20
+**版本**: 1.268.21
+
+## Kernel boot control review closure
+
+- production manifest loader 将真实 `pg.Pool` 的 prototype methods 与内部状态
+  封装成冻结、绑定、恰含 `connect/query` 的 Brain-owned capability，再交给
+  trusted runtime factory。
+- UDS readiness 使用 0600/owner/ACL/inode 检查和有界 challenge-response，
+  精确匹配 challenge、service schema、plan digest、Brain/service identity；
+  探针不解析 grant、不消费 nonce、不执行 effect。
+- UDS server pin parent/socket inode，以 bounded connect 区分 active 与
+  `ECONNREFUSED` stale；stale 经 quarantine、重验和精确 unlink 后才复用路径，
+  symlink、ACL、unknown、active 及 replacement race 一律保留并 fail-closed。
+- CLI 把 `--check` 信息报告与 `--gate` 阻断语义分开；P0 regression contract
+  改用 gate，execution/proof-matrix/wiring 任一非 true 都非零退出。
+- manifest、全部 signer private key、grant root/file、UDS parent/server/client
+  共用跨 macOS/Linux 的 ACL-free 验证；production boot 保留安全且具体的
+  `trusted_runtime_*` / `production_trusted_execution_*` 错误码。
+- 回退：`bash scripts/brain-rollback.sh 1.268.20`；无数据库迁移。
 
 ## Kernel production boot and grant control plane
 

@@ -14,7 +14,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { load } from 'js-yaml';
+import pg from 'pg';
 import {
   afterEach,
   describe,
@@ -382,6 +384,70 @@ afterEach(() => {
 });
 
 describe('kernel equivalence production wiring', () => {
+  it('wraps a real pg.Pool as a frozen two-method Brain capability', async () => {
+    const value = fixture();
+    const pool = new pg.Pool({
+      connectionString:
+        'postgresql://kernel-equivalence.invalid/unused',
+      connectionTimeoutMillis: 10,
+    });
+    try {
+      expect(Object.hasOwn(pool, 'connect')).toBe(false);
+      expect(Object.hasOwn(pool, 'query')).toBe(false);
+      expect(Object.keys(pool).length).toBeGreaterThan(2);
+
+      const database =
+        productionWiring.createBrainOwnedDatabasePort(pool);
+
+      expect(Object.isFrozen(database)).toBe(true);
+      expect(Object.keys(database).sort()).toEqual([
+        'connect',
+        'query',
+      ]);
+      expect(Object.hasOwn(database, 'connect')).toBe(true);
+      expect(Object.hasOwn(database, 'query')).toBe(true);
+
+      const wiring =
+        productionWiring.loadProductionTrustedExecutionWiring({
+          env: value.env,
+          pool,
+          assemblyPorts: assemblyPorts(),
+          now: () => NOW,
+        });
+      expect(wiring).toMatchObject({
+        createService: expect.any(Function),
+        grantIssuer: expect.any(Object),
+        resource_port_profile_id: 'local-isolated-test',
+      });
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('binds prototype database methods to the original Brain receiver', async () => {
+    class PoolLike {
+      constructor() {
+        this.marker = 'brain-owned';
+        this.internal = { secret: 'not-exported' };
+      }
+
+      async connect() {
+        return this.marker;
+      }
+
+      async query() {
+        return this.internal.secret;
+      }
+    }
+    const database =
+      productionWiring.createBrainOwnedDatabasePort(new PoolLike());
+
+    await expect(database.connect()).resolves.toBe('brain-owned');
+    await expect(database.query()).resolves.toBe('not-exported');
+    expect(Object.keys(database).sort()).toEqual(['connect', 'query']);
+    expect(JSON.stringify(database)).not.toContain('not-exported');
+  });
+
   it('provides one dedicated production wiring boundary', () => {
     expect(existsSync(new URL(
       '../kernel-equivalence-production-wiring.js',
@@ -539,6 +605,57 @@ describe('kernel equivalence production wiring', () => {
       code: 'trusted_execution_config_file_unsafe',
     }));
   });
+
+  it.runIf(process.platform === 'darwin')(
+    'rejects an ACL-bearing production manifest even when mode is 0600',
+    () => {
+      const value = fixture();
+      execFileSync('/bin/chmod', [
+        '+a',
+        'everyone allow read',
+        value.configFile,
+      ]);
+
+      expect(() => (
+        productionWiring.loadProductionTrustedExecutionWiring({
+          env: value.env,
+          pool: databasePort(),
+          assemblyPorts: assemblyPorts(),
+          now: () => NOW,
+        })
+      )).toThrowError(expect.objectContaining({
+        code: 'trusted_execution_config_file_unsafe',
+      }));
+    },
+  );
+
+  it.runIf(
+    process.platform === 'linux'
+    && (
+      existsSync('/usr/bin/setfacl')
+      || existsSync('/bin/setfacl')
+    ),
+  )(
+    'rejects a Linux ACL-bearing production manifest when setfacl is available',
+    () => {
+      const value = fixture();
+      const setfacl = existsSync('/usr/bin/setfacl')
+        ? '/usr/bin/setfacl'
+        : '/bin/setfacl';
+      execFileSync(setfacl, ['-m', 'u:nobody:r', value.configFile]);
+
+      expect(() => (
+        productionWiring.loadProductionTrustedExecutionWiring({
+          env: value.env,
+          pool: databasePort(),
+          assemblyPorts: assemblyPorts(),
+          now: () => NOW,
+        })
+      )).toThrowError(expect.objectContaining({
+        code: 'trusted_execution_config_file_unsafe',
+      }));
+    },
+  );
 
   it('boots fail closed from production configuration without creating a socket', async () => {
     expect(

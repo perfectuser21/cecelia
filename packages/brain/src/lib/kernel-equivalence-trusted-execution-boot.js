@@ -16,6 +16,17 @@ function readiness(ready, code, socketPath) {
   });
 }
 
+function stableProductionFailureCode(error, fallback) {
+  const code = error?.code;
+  return (
+    typeof code === 'string'
+    && code.length <= 128
+    && /^(?:trusted_execution|trusted_runtime|production_trusted_execution)_[a-z0-9_]+$/.test(code)
+  )
+    ? code
+    : fallback;
+}
+
 export async function bootBrainTrustedExecution({
   createService,
   socketPath = BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
@@ -39,12 +50,10 @@ export async function bootBrainTrustedExecution({
       socketPath,
     });
   } catch (error) {
-    const code = (
-      typeof error?.code === 'string'
-      && error.code.startsWith('trusted_execution_')
-    )
-      ? error.code
-      : 'trusted_execution_assembly_unavailable';
+    const code = stableProductionFailureCode(
+      error,
+      'trusted_execution_assembly_unavailable',
+    );
     return Object.freeze({
       getReadiness: () => readiness(false, code, null),
       close: async () => {},
@@ -72,12 +81,10 @@ export async function bootProductionBrainTrustedExecution({
       now,
     });
   } catch (error) {
-    const code = (
-      typeof error?.code === 'string'
-      && error.code.startsWith('trusted_execution_')
-    )
-      ? error.code
-      : 'trusted_execution_config_unavailable';
+    const code = stableProductionFailureCode(
+      error,
+      'trusted_execution_config_unavailable',
+    );
     return Object.freeze({
       getReadiness: () => readiness(false, code, null),
       close: async () => {},
