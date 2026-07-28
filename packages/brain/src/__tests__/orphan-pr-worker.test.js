@@ -201,7 +201,7 @@ describe('orphan-pr-worker', () => {
     expect(execSync.mock.calls.map((call) => call[0]).some((cmd) => cmd.startsWith('gh pr merge'))).toBe(false);
   });
 
-  it('case 4: PR > 2h 无 Brain task，CI 全绿 → merge', async () => {
+  it('case 4: PR > 2h 无 Brain task，CI 全绿 → no merge without authorization receipt', async () => {
     const merged = [];
     execSync.mockImplementation(
       routeExec({
@@ -228,18 +228,15 @@ describe('orphan-pr-worker', () => {
 
     const r = await scanOrphanPrs(pool);
     expect(r.scanned).toBe(1);
-    expect(r.merged).toBe(1);
+    expect(r.merged).toBe(0);
     expect(r.labeled).toBe(0);
-    expect(r.skipped).toBe(0);
+    expect(r.skipped).toBe(1);
     expect(r.details[0]).toMatchObject({
       pr: 300,
-      action: 'merged',
-      reason: 'ci_green',
+      action: 'skipped',
+      reason: 'ci_green_requires_merge_authorization',
     });
-    expect(merged).toHaveLength(1);
-    expect(merged[0].n).toBe(300);
-    expect(merged[0].cmd).toContain('--squash');
-    expect(merged[0].cmd).toContain('--delete-branch');
+    expect(merged).toHaveLength(0);
   });
 
   it('case 5: PR > 2h 无 Brain task，CI 有 fail → label needs-attention', async () => {
@@ -319,7 +316,7 @@ describe('orphan-pr-worker', () => {
     expect(cmds.some((c) => c.startsWith('gh pr edit'))).toBe(false);
   });
 
-  it('case 7: 单 PR merge 挂不阻止其他 PR', async () => {
+  it('case 7: multiple green orphans never reach merge while red orphan is still labeled', async () => {
     const merged = [];
     const labeled = [];
     execSync.mockImplementation(
@@ -354,7 +351,7 @@ describe('orphan-pr-worker', () => {
           ],
           603: [{ name: 'ci', state: 'SUCCESS', conclusion: 'SUCCESS' }],
         },
-        throwOn: { 601: 'merge', 602: 'checks' }, // 601 merge 抛错，602 checks 非零仍有 stdout
+        throwOn: { 602: 'checks' },
         onMerge: (n, cmd) => merged.push({ n, cmd }),
         onLabel: (n, cmd) => labeled.push({ n, cmd }),
       })
@@ -364,17 +361,12 @@ describe('orphan-pr-worker', () => {
 
     const r = await scanOrphanPrs(pool);
     expect(r.scanned).toBe(3);
-    // 601 merge 挂 → error 记入 skipped 计数
-    // 602 fail → labeled
-    // 603 success → merged
-    expect(r.merged).toBe(1);
+    expect(r.merged).toBe(0);
     expect(r.labeled).toBe(1);
-    expect(r.skipped).toBe(1);
-    expect(merged.map((m) => m.n)).toContain(603);
+    expect(r.skipped).toBe(2);
+    expect(merged).toHaveLength(0);
     expect(labeled.map((l) => l.n)).toContain(602);
-    const errDetail = r.details.find((d) => d.action === 'error');
-    expect(errDetail).toBeTruthy();
-    expect(errDetail.pr).toBe(601);
+    expect(r.details.filter((d) => d.reason === 'ci_green_requires_merge_authorization')).toHaveLength(2);
   });
 
   it('case 8: dryRun=true 不触发 merge/label CLI', async () => {
@@ -401,7 +393,8 @@ describe('orphan-pr-worker', () => {
     pool.query.mockResolvedValueOnce({ rows: [] });
 
     const r = await scanOrphanPrs(pool, { dryRun: true });
-    expect(r.merged).toBe(1);
+    expect(r.merged).toBe(0);
+    expect(r.skipped).toBe(1);
     // dry-run 不调 gh pr merge
     expect(merged).toHaveLength(0);
     expect(labeled).toHaveLength(0);
@@ -430,10 +423,11 @@ describe('orphan-pr-worker', () => {
     const r1 = await scanOrphanPrs(pool);
     expect(r1.scanned).toBe(0);
 
-    // 阈值 1h → 入候选并被 merge
+    // 阈值 1h → 入候选，但仍不能绕过 merge authorization
     const r2 = await scanOrphanPrs(pool, { ageThresholdHours: 1 });
     expect(r2.scanned).toBe(1);
-    expect(r2.merged).toBe(1);
+    expect(r2.merged).toBe(0);
+    expect(r2.skipped).toBe(1);
   });
 
   it('case 10: gh pr list 抛错 → 非致命，返回 zero summary', async () => {
