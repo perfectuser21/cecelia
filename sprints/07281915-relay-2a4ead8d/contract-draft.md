@@ -373,3 +373,14 @@ curl -X PATCH localhost:5221/api/brain/tasks/2a4ead8d-a979-48e6-b317-676129e45f6
   -H "Content-Type: application/json" \
   -d '{"metadata":{"staging_deployed":true,"promote_after":"'"$(date -u -d '+24 hours' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v +24H '+%Y-%m-%dT%H:%M:%SZ')"'","staging_url":"http://localhost:5212"}}' || true
 ```
+
+---
+
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| Stop Hook 路由与 pending_user 阻断 | `sprints/07281915-relay-2a4ead8d/tests/stop-conversation-hook.test.ts` | B-01(decision_saved fake uuid → exit 2)、B-02(pending_user → exit 2 + stdout 含阻断提示)、B-07(无锁文件 → exit 0) | → stop-conversation.sh 无 pending_user block 时 B-02 FAIL |
+| TTL archiver 归档合同断言 | `sprints/07281915-relay-2a4ead8d/tests/conversation-ttl-archiver-contract.test.ts` | B-03(TTL archiver 5 用例全过)、B-05(SQL 不含 DELETE) | → 归档逻辑缺失时 B-03 FAIL |
+| SKILL.md 存在性与关键词校验 | `sprints/07281915-relay-2a4ead8d/tests/skill-md-artifact.test.ts` | B-04(SKILL.md 存在且含 decision_saved/pending_user/turn_marker 三关键词) | → SKILL.md 未创建前 B-04 FAIL |
+| 锁文件生命周期（spawn/resolve） | `sprints/07281915-relay-2a4ead8d/tests/conversation-agent-lock.test.ts` | B-08(.conversation-mode 锁文件 spawn 时写入、resolve 时删除) | → spawnConversationAgent 未写锁文件时 B-08 FAIL |
