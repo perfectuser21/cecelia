@@ -1,4 +1,4 @@
-name: Authorized Brain Production Effect
+name: Brain PR Guards and Authorized Production Effect
 
 on:
   workflow_dispatch:
@@ -12,13 +12,107 @@ on:
       release_authorization:
         description: Persisted production effect authorization UUID
         required: true
+  pull_request:
+    paths:
+      - 'packages/workflows/skills/**'
+      - 'packages/brain/scripts/ci/**'
+      - 'packages/brain/src/**'
+      - '.github/workflows/brain-ci-deploy.yml'
 
 concurrency:
-  group: kernel-release
+  group: kernel-release-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  skill-contract-guard:
+    name: Skill Contract Guard (PR)
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Changed tests and skill contract invariants
+        run: |
+          set -euo pipefail
+          BASE="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --depth=1 || true
+          CHANGED=$(git diff --name-only "$BASE"...HEAD 2>/dev/null || echo "")
+          node packages/brain/scripts/ci/changed-test-router.mjs $CHANGED || true
+          npx vitest run packages/brain/scripts/ci/__tests__/skill-contract.test.mjs --reporter=verbose
+      - name: Harness contract existence
+        run: |
+          set -euo pipefail
+          BASE="origin/${{ github.base_ref }}"
+          git diff --name-only "$BASE"...HEAD > /tmp/pr-diff.txt 2>/dev/null || true
+          node packages/brain/scripts/ci/contract-exists.mjs --fixture /tmp/pr-diff.txt
+
+  island-gate:
+    name: Island Gate (PR)
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD || 'cecelia' }}
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Apply migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD || 'cecelia' }}
+        run: cd packages/brain && node src/migrate.js
+      - name: Reject new source islands
+        run: |
+          set -euo pipefail
+          BASE="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --depth=1 || true
+          ADDED_FILES=$(git diff --diff-filter=A --name-only "${BASE}...HEAD" 2>/dev/null | grep '^packages/brain/src/' | tr '\n' ',' | sed 's/,$//' || echo "")
+          node packages/brain/scripts/ci/island-gate.mjs --fixture-files="${ADDED_FILES}"
+
+  sha-account-l1:
+    name: L1 SHA Account Tests
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: bash tests/regression/gate3-sha-truth/sha-account.test.sh
+        env:
+          BRAIN_URL: ''
+
   deploy:
+    name: Authorized Brain Production Effect
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/deploy.yml
     with:
       release_run_id: ${{ inputs.release_run_id }}

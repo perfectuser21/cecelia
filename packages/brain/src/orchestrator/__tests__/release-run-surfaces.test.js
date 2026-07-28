@@ -30,6 +30,19 @@ describe('legacy release surfaces fail closed', () => {
     expect(source).not.toMatch(/视为成功|production 部署不受阻断|Fast Lane/);
   });
 
+  it('keeps independent PR quality contracts while removing push deploy authority', () => {
+    const source = workflow('brain-ci-deploy.yml');
+    expect(source).toMatch(/pull_request:/);
+    expect(source).toMatch(/skill-contract-guard:/);
+    expect(source).toMatch(/contract-exists\.mjs/);
+    expect(source).toMatch(/skill-contract\.test\.mjs/);
+    expect(source).toMatch(/island-gate:/);
+    expect(source).toMatch(/island-gate\.mjs/);
+    expect(source).toMatch(/sha-account-l1:/);
+    expect(source).toMatch(/sha-account\.test\.sh/);
+    expect(source).not.toMatch(/push:/);
+  });
+
   it('staging deploy requires the same exact ReleaseRun axes', () => {
     const source = workflow('auto-staging-deploy.yml');
     expect(source).toMatch(/release_run_id:/);
