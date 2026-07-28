@@ -299,7 +299,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe('migrations 374-380 ReleaseRun ledger on PostgreSQL', () => {
+describe('migrations 374-381 ReleaseRun ledger on PostgreSQL', () => {
   it('persists first-release and path risk as immutable server-owned review authority', async () => {
     const mergeStore = createPostgresMergeEffectStore({});
     const firstTaskId = randomUUID();
@@ -365,7 +365,7 @@ describe('migrations 374-380 ReleaseRun ledger on PostgreSQL', () => {
     });
   });
 
-  it('uses the canonical runner to upgrade an N-1 schema from 368 through 380', async () => {
+  it('uses the canonical runner to upgrade an N-1 schema from 368 through 381', async () => {
     const upgradeSchema = `kernel_release_upgrade_${randomUUID().replaceAll('-', '')}`;
     const quotedUpgradeSchema = `"${upgradeSchema}"`;
     await client.query(`CREATE SCHEMA ${quotedUpgradeSchema}`);
@@ -424,7 +424,7 @@ describe('migrations 374-380 ReleaseRun ledger on PostgreSQL', () => {
       }
       await expect(runMigrations(upgradePool)).resolves.toEqual([
         '369', '370', '371', '372', '373', '374', '375',
-        '376', '377', '378', '379', '380',
+        '376', '377', '378', '379', '380', '381',
       ]);
     } finally {
       await upgradePool.end();

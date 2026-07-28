@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.268.27
+**Brain 版本**: 1.268.28
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.28 — Kernel production controller A1
+
+- Brain boot 现在保留 canonical plan、protected grant issuer 与 TTL，并在 trusted
+  UDS ready 后创建 server-owned production controller；reconcile 失败会关闭
+  listener，HTTP 入口也在 auth/runtime 未 ready 时 fail-closed。
+- effect 入口只接受 `case_id`，provider/session/machine/artifact/resource 均从
+  PostgreSQL Attempt、result receipt 与 production case 权威关系推导。
+- Migration 381 固化 append-only binding/settlement、Attempt 不可变、跨 cell
+  receipt 复用、数据库时间 lease/execution fence 与可重复显式重启接管；真实
+  HTTP→PostgreSQL→protected grant→UDS 回归覆盖四段 settlement。
+- 本 A1 仅落 `ephemeral_run` authority；其余 effect/isolation ports 属于 A2，
+  production readiness 与 live proof 仍保持 0/99，尚未部署。
 
 ## Brain 1.268.27 — Unified Kernel Golden Path exact-image candidate
 

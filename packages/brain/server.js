@@ -117,6 +117,9 @@ import { bootDurable } from './src/durable/dbos-runtime.js';
 import {
   bootProductionBrainTrustedExecution,
 } from './src/lib/kernel-equivalence-trusted-execution-boot.js';
+import {
+  createKernelEquivalenceControllerRouter,
+} from './src/routes/kernel-equivalence-controller.js';
 
 // 容器 git 凭据初始化（必须在任何 git clone/fetch/push 之前）：
 // 宿主 ~/.gitconfig 只读挂载进容器、配了容器内不存在的 credential.helper，
@@ -274,6 +277,13 @@ app.use((_req, res, next) => {
 // 路径级 express.json 覆盖无效（PR #2514 踩坑），必须在全局就放宽。
 // Brain 是内部服务（有 CECELIA_INTERNAL_TOKEN 鉴权），DoS 风险可接受。
 app.use(express.json({ limit: '4mb' }));
+app.use(
+  '/api/brain/kernel-equivalence',
+  createKernelEquivalenceControllerRouter({
+    getController: () => __trustedExecutionBoot?.controller ?? null,
+    getToken: () => process.env.CECELIA_INTERNAL_TOKEN,
+  }),
+);
 
 // Mount memory routes (before brain routes to avoid conflicts)
 app.use('/api/brain/memory', memoryRoutes);

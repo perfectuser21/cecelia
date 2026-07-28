@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import {
   BRAIN_TRUSTED_EXECUTION_SOCKET_PATH,
 } from './kernel-equivalence-trusted-execution-client.js';
@@ -7,6 +9,18 @@ import {
 import {
   loadProductionTrustedExecutionWiring,
 } from './kernel-equivalence-production-wiring.js';
+import {
+  createPostgresKernelEquivalenceCoordinator,
+} from './kernel-equivalence-production-coordinator.js';
+
+const BRAIN_VERSION = JSON.parse(readFileSync(
+  new URL('../../package.json', import.meta.url),
+  'utf8',
+)).version;
+const ENGINE_VERSION = readFileSync(
+  new URL('../../../engine/VERSION', import.meta.url),
+  'utf8',
+).trim();
 
 function readiness(ready, code, socketPath) {
   return Object.freeze({
@@ -92,9 +106,41 @@ export async function bootProductionBrainTrustedExecution({
       close: async () => {},
     });
   }
-  return bootBrainTrustedExecution({
+  const listener = await bootBrainTrustedExecution({
     createService: wiring.createService,
     readinessSigner: wiring.readinessSigner,
     socketPath: wiring.socket_path,
+  });
+  if (!listener.getReadiness().ready) return listener;
+
+  let controller;
+  try {
+    controller = createPostgresKernelEquivalenceCoordinator({
+      pool,
+      grantIssuer: wiring.grantIssuer,
+      plan: wiring.plan,
+      socketPath: wiring.socket_path,
+      brainVersion: BRAIN_VERSION,
+      engineVersion: ENGINE_VERSION,
+      grantTtlSeconds: wiring.grant_ttl_seconds,
+      now,
+    });
+    await controller.reconcileStartup();
+  } catch (error) {
+    await listener.close();
+    const code = stableProductionFailureCode(
+      error,
+      'trusted_execution_controller_unavailable',
+    );
+    return Object.freeze({
+      getReadiness: () => readiness(false, code, null),
+      close: async () => {},
+    });
+  }
+  return Object.freeze({
+    getReadiness: listener.getReadiness,
+    close: listener.close,
+    grantIssuer: wiring.grantIssuer,
+    controller,
   });
 }

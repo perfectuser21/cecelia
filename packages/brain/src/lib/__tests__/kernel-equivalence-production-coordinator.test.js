@@ -1,0 +1,273 @@
+import { readFileSync } from 'node:fs';
+import { load as loadYaml } from 'js-yaml';
+import { describe, expect, it } from 'vitest';
+
+import { compileDrillPlan } from '../kernel-equivalence-drills.js';
+import { computeFleetAuthoritySha256 } from '../../orchestrator/fleet-callback-auth.js';
+import {
+  createPostgresKernelEquivalenceCoordinator,
+} from '../kernel-equivalence-production-coordinator.js';
+
+const contract = loadYaml(readFileSync(
+  new URL('../../../../../regression-contract.yaml', import.meta.url),
+  'utf8',
+));
+const plan = compileDrillPlan(contract, {
+  now: Date.parse('2026-07-29T00:00:00.000Z'),
+});
+
+function grantIssuer() {
+  return Object.freeze({
+    owner_service: 'brain.kernel_equivalence.grant_issuer',
+    capability_id:
+      'brain.kernel_equivalence.protected_grant_issuer.v1',
+    issueProtectedGrant: async () => {
+      throw new Error('not reached without an authoritative case');
+    },
+    cleanupExpiredGrants: async () => ({ removed: 0, retained: 0 }),
+  });
+}
+
+function emptyPool() {
+  const statements = [];
+  return {
+    statements,
+    query: async (text, values = []) => {
+      statements.push({ text, values });
+      return { rows: [], rowCount: 0 };
+    },
+  };
+}
+
+function coordinator(
+  pool = emptyPool(),
+  issuer = grantIssuer(),
+  randomUUID = () =>
+    '11111111-1111-4111-8111-111111111111',
+) {
+  return createPostgresKernelEquivalenceCoordinator({
+    pool,
+    grantIssuer: issuer,
+    plan,
+    socketPath: '/var/run/cecelia/kernel-equivalence.sock',
+    brainVersion: '1.268.28',
+    engineVersion: '19.7.1',
+    grantTtlSeconds: 60,
+    randomUUID,
+    now: () => Date.parse('2026-07-29T00:00:00.000Z'),
+  });
+}
+
+describe('production Kernel equivalence coordinator', () => {
+  it('exposes only case identity operations and rejects caller-supplied axes', async () => {
+    const pool = emptyPool();
+    const value = coordinator(pool);
+
+    expect(Object.isFrozen(value)).toBe(true);
+    expect(value).toMatchObject({
+      owner_service: 'brain.kernel_equivalence.controller',
+      capability_id:
+        'brain.kernel_equivalence.production_controller.v1',
+      schema_version:
+        'kernel-equivalence-production-controller/v1',
+      executeCase: expect.any(Function),
+      reconcileStartup: expect.any(Function),
+    });
+    expect(Object.keys(value).sort()).toEqual([
+      'capability_id',
+      'executeCase',
+      'owner_service',
+      'reconcileStartup',
+      'schema_version',
+    ]);
+    await expect(value.executeCase({
+      case_id: '22222222-2222-4222-8222-222222222222',
+      provider: 'grok',
+      artifact_sha: 'a'.repeat(40),
+    })).rejects.toMatchObject({
+      code: 'production_controller_case_id_invalid',
+    });
+    expect(pool.statements).toHaveLength(0);
+  });
+
+  it('performs read-only startup settlement reconciliation from durable bindings', async () => {
+    const pool = emptyPool();
+    const value = coordinator(pool);
+
+    await expect(value.reconcileStartup()).resolves.toEqual({
+      inspected: 0,
+      settled: 0,
+      retained_unknown: 0,
+    });
+    expect(pool.statements).toHaveLength(1);
+    expect(pool.statements[0].text).toMatch(
+      /kernel_equivalence_production_case_bindings/i,
+    );
+    expect(pool.statements[0].text).toMatch(
+      /kernel_equivalence_production_execution_events/i,
+    );
+    expect(pool.statements[0].text).toMatch(
+      /kernel_equivalence_receipt_bundles/i,
+    );
+    expect(pool.statements[0].text).toMatch(
+      /WHERE latest\.state IN \(\s*'claimed',\s*'grant_issued',\s*'executing',\s*'reconciling',\s*'settlement_unknown'/is,
+    );
+    expect(pool.statements[0].text).not.toMatch(
+      /WHERE events\.state IN/i,
+    );
+    expect(pool.statements[0].text).not.toMatch(
+      /\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/i,
+    );
+  });
+
+  it('revalidates current lease and Attempt state for an existing binding', async () => {
+    const pool = emptyPool();
+    const value = coordinator(pool);
+
+    await expect(
+      value.executeCase('22222222-2222-4222-8222-222222222222'),
+    ).rejects.toMatchObject({
+      code: 'production_controller_authority_unavailable',
+    });
+    expect(pool.statements).toHaveLength(1);
+    expect(pool.statements[0].text).toMatch(
+      /JOIN kernel_equivalence_production_case_bindings bindings[\s\S]*JOIN kernel_equivalence_production_case_leases leases[\s\S]*leases\.owner_id[\s\S]*brain\.kernel_equivalence\.production_cases[\s\S]*leases\.state = 'prepared'[\s\S]*leases\.lease_expires_at > clock_timestamp\(\)/i,
+    );
+    expect(pool.statements[0].text).toMatch(
+      /attempts\.machine_attestation_status = 'verified'[\s\S]*attempts\.status IN \('completed', 'completed_with_concerns'\)/i,
+    );
+  });
+
+  it('takes over an expired controller lease explicitly before retaining unknown settlement', async () => {
+    const statements = [];
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        if (statements.length === 1) {
+          return {
+            rows: [{
+              case_id: '22222222-2222-4222-8222-222222222222',
+              generation: '3',
+              state: 'executing',
+              lease_expired: true,
+              bundle_hash: null,
+            }],
+            rowCount: 1,
+          };
+        }
+        return {
+          rows: [{ generation: values[2], state: values[4] }],
+          rowCount: 1,
+        };
+      },
+    };
+    const ids = [
+      '11111111-1111-4111-8111-111111111111',
+      '33333333-3333-4333-8333-333333333333',
+      '44444444-4444-4444-8444-444444444444',
+    ];
+    const value = coordinator(pool, grantIssuer(), () => ids.shift());
+
+    await expect(value.reconcileStartup()).resolves.toEqual({
+      inspected: 1,
+      settled: 0,
+      retained_unknown: 1,
+    });
+    expect(statements.slice(1).map(({ values }) => values[4])).toEqual([
+      'reconciling',
+      'settlement_unknown',
+    ]);
+    expect(statements[1].values[3]).toBe(
+      '11111111-1111-4111-8111-111111111111',
+    );
+    expect(statements[2].values[3]).toBe(
+      '11111111-1111-4111-8111-111111111111',
+    );
+  });
+
+  it('persists a terminal denial when the protected issuer returns malformed metadata', async () => {
+    const caseId = '22222222-2222-4222-8222-222222222222';
+    const runId = '33333333-3333-4333-8333-333333333333';
+    const attemptId = '44444444-4444-4444-8444-444444444444';
+    const cell = plan.cells.find(({ cell_id: cellId }) => (
+      cellId
+        === 'KERNEL-P1-10-CONTROLLER-SESSION-ISOLATION::codex::normal'
+    ));
+    const resourcePrefix = cell.isolation.resource_prefix
+      .replaceAll('{run_id}', runId)
+      .replaceAll('{attempt_id}', attemptId);
+    const taskBundle = {
+      inputs: {
+        workspace_spec: {
+          expected_head_sha: 'a'.repeat(40),
+        },
+      },
+    };
+    const statements = [];
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        if (statements.length === 1) {
+          return {
+            rows: [{
+              case_id: caseId,
+              cell_id: cell.cell_id,
+              behavior_id: cell.behavior_id,
+              provider: cell.provider,
+              scenario: cell.scenario,
+              seam_id: cell.seam_id,
+              adapter_id: cell.adapter_id,
+              run_id: runId,
+              attempt_id: attemptId,
+              artifact_sha: 'a'.repeat(40),
+              brain_version: '1.268.28',
+              engine_version: '19.7.1',
+              resource_type: 'ephemeral_run',
+              resource_prefix: resourcePrefix,
+              resource_id: attemptId,
+              resource_ref: `${resourcePrefix}${attemptId}`,
+              expires_at: '2026-07-29T00:10:00.000Z',
+              result_receipt_id:
+                '55555555-5555-4555-8555-555555555555',
+              provider_session_id: 'codex-session-1',
+              actual_machine_id: 'xian-mac-m4',
+              execution_transport: 'fleet-worker',
+              remote_job_id: 'job-1',
+              task_bundle_sha256:
+                computeFleetAuthoritySha256(taskBundle),
+              task_bundle: taskBundle,
+            }],
+            rowCount: 1,
+          };
+        }
+        return {
+          rows: [{ generation: values[2], state: values[4] }],
+          rowCount: 1,
+        };
+      },
+    };
+    const malformedIssuer = Object.freeze({
+      ...grantIssuer(),
+      issueProtectedGrant: async () => ({
+        grant_ref: 'not-an-opaque-grant',
+        expires_at: null,
+      }),
+    });
+    const ids = [
+      '11111111-1111-4111-8111-111111111111',
+      '66666666-6666-4666-8666-666666666666',
+      '77777777-7777-4777-8777-777777777777',
+    ];
+    const value = coordinator(
+      pool,
+      malformedIssuer,
+      () => ids.shift(),
+    );
+
+    await expect(value.executeCase(caseId)).rejects.toMatchObject({
+      code: 'production_controller_grant_issue_invalid',
+    });
+    expect(statements.at(-1).values[4]).toBe('blocked');
+    expect(statements.at(-1).values[8]).toBe('grant_issue_invalid');
+  });
+});

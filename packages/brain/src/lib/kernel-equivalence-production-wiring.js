@@ -555,6 +555,8 @@ export function loadProductionTrustedExecutionWiring({
   return Object.freeze({
     createService,
     grantIssuer,
+    grant_ttl_seconds: manifest.grantTtlSeconds,
+    plan: manifest.plan,
     readinessSigner,
     readinessTrustAnchor: manifest.readinessTrustAnchor,
     resource_port_profile_id:

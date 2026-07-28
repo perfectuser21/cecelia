@@ -376,14 +376,18 @@ function assemblyPorts(profileId = 'local-isolated-test') {
 function databasePort() {
   return {
     connect: operation(),
-    query: async () => ({
-      rows: [{
-        genesis_hash: null,
-        head_hash: null,
-        revision: 0,
-      }],
-      rowCount: 1,
-    }),
+    query: async (text) => (
+      /kernel_equivalence_bundle_chain_heads/i.test(text)
+        ? {
+            rows: [{
+              genesis_hash: null,
+              head_hash: null,
+              revision: 0,
+            }],
+            rowCount: 1,
+          }
+        : { rows: [], rowCount: 0 }
+    ),
   };
 }
 
@@ -540,6 +544,12 @@ describe('kernel equivalence production wiring', () => {
       socket_path: expect.stringMatching(
         /trusted-execution\.sock$/,
       ),
+      grant_ttl_seconds: 300,
+      plan: expect.objectContaining({
+        schema_version: 'kernel-equivalence-drill-plan/v1',
+        behavior_count: 11,
+        cells: expect.any(Array),
+      }),
       resource_port_profile_id: 'local-isolated-test',
       createService: expect.any(Function),
       grantIssuer: expect.objectContaining({
@@ -555,6 +565,7 @@ describe('kernel equivalence production wiring', () => {
           'brain.kernel_equivalence.trusted_execution',
       }),
     });
+    expect(wiring.plan.cells).toHaveLength(99);
     expect(Object.isFrozen(wiring)).toBe(true);
     expect(JSON.stringify(wiring)).not.toMatch(
       /secret_file|BEGIN PRIVATE KEY|production-wiring\.json/,
@@ -757,6 +768,14 @@ describe('kernel equivalence production wiring', () => {
       code: null,
       socket_path: value.manifest.socket_path,
     });
+    expect(boot.grantIssuer).toMatchObject({
+      owner_service: 'brain.kernel_equivalence.grant_issuer',
+    });
+    expect(boot.controller).toMatchObject({
+      owner_service: 'brain.kernel_equivalence.controller',
+      executeCase: expect.any(Function),
+      reconcileStartup: expect.any(Function),
+    });
     const status = lstatSync(value.manifest.socket_path);
     expect(status.isSocket()).toBe(true);
     expect(status.mode & 0o777).toBe(0o600);
@@ -778,6 +797,15 @@ describe('kernel equivalence production wiring', () => {
     );
     expect(serverSource).not.toMatch(
       /__trustedExecutionBoot\s*=\s*await\s+bootBrainTrustedExecution\(\)/,
+    );
+    expect(serverSource).toMatch(
+      /createKernelEquivalenceControllerRouter/,
+    );
+    expect(serverSource).toMatch(
+      /getController:\s*\(\)\s*=>\s*__trustedExecutionBoot\?\.controller\s*\?\?\s*null/,
+    );
+    expect(serverSource).toMatch(
+      /getToken:\s*\(\)\s*=>\s*process\.env\.CECELIA_INTERNAL_TOKEN/,
     );
   });
 

@@ -1,6 +1,26 @@
 # Brain 模块定义
 
-**版本**: 1.268.27
+**版本**: 1.268.28
+
+## Kernel production controller A1
+
+- production boot 在 trusted UDS ready 后创建 Brain-owned controller，并完整
+  保留 canonical 99-cell plan、protected grant issuer 与 manifest TTL；controller
+  启动 reconcile 失败会关闭 listener 并维持 fail-closed readiness。
+- controller 的公开执行输入只有 `case_id`。provider、session、machine、
+  transport、artifact、resource 与 task-bundle hash 全部从 PostgreSQL 的
+  Attempt/result receipt/case 权威关系推导，不接受 caller label。
+- Brain 提供受内部 token 保护的 exact-body 执行入口；token 缺失时不采用开发
+  放行，trusted runtime/controller 未 ready 时也不触发 effect。
+- Migration 381 新增 append-only authority binding、settlement ledger 与数据库
+  execution fence；绑定后 Attempt 权威字段不可修改，同一权威 receipt 可供不同
+  cell 使用，malformed grant 必须落 blocked 终态。
+- 重启只允许在数据库时间 lease 到期后，经显式 `reconciling` 接管；再次崩溃可由
+  下一实例重复显式接管。真正 latest 已是 terminal 的 case 不会从旧 active event
+  复活，exact bundle readback 才能跨 controller 单调 settle。
+- 本 A1 的 durable authority binding 仅支持 `ephemeral_run`。其余 production
+  effect/isolation ports 属于 A2，`server.js` 仍不提供这些 ports，因此 production
+  readiness 与 live equivalence proof 继续诚实保持 0/99；尚未部署。
 
 ## Unified Kernel Golden Path exact-image candidate
 
