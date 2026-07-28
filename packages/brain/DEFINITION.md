@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.268.13
+**版本**: 1.268.14
 
 ## Kernel zero-Attempt patrol coverage
 
@@ -29,9 +29,12 @@
 - 顶层配置、plan、trust registry 与 collector 元数据在装配时固定；isolation、
   cleanup、grant ports 必须是各自 owner 创建的冻结最小 capability。accessor、
   schema 外字段、可变 capability、raw secret env、错 owner 均 fail-closed。
+- PostgreSQL 只接受 exact `{connect, query}` 最小 capability；factory 在返回前
+  固定两个 operation，并绑定到不含额外 receiver state 的冻结 receiver。后续
+  改写调用方 port 不会切换 nonce、audit 或 receipt-bundle 的数据库边界。
 - factory 对成功和失败都只装配一次，不能在首次启动失败后通过热突变配置重试；
   本版本尚未把 factory 接入 `server.js`，也未创建 production isolation/keys。
-  回退：`bash scripts/brain-rollback.sh 1.268.12`；没有数据库迁移。
+  回退：`bash scripts/brain-rollback.sh 1.268.13`；没有数据库迁移。
 
 ## Kernel production effect signer set
 

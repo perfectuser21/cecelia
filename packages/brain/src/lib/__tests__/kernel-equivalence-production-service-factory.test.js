@@ -171,7 +171,10 @@ describe('production trusted execution service factory', () => {
         KERNEL_EQ_COLLECTOR_KEY_ID: 'collector-2026-07',
       },
       trustRegistry: originalRegistry,
-      pool: value.pool,
+      pool: expect.objectContaining({
+        connect: expect.any(Function),
+        query: expect.any(Function),
+      }),
       runtimeRegistry:
         createBrainOwnedTrustedRuntimeRegistry.mock.results[0].value,
       now: value.now,
@@ -207,6 +210,35 @@ describe('production trusted execution service factory', () => {
     expect(createBrainTrustedExecutionService).not.toHaveBeenCalled();
   });
 
+  it('pins the minimal database capability before lazy assembly', async () => {
+    const value = fixture();
+    const originalConnect = value.pool.connect;
+    const originalQuery = value.pool.query;
+    const attackerConnect = fn();
+    const attackerQuery = fn();
+    const createService =
+      createProductionTrustedExecutionServiceFactory(value);
+
+    value.pool.connect = attackerConnect;
+    value.pool.query = attackerQuery;
+    await createService();
+    const pinnedPool =
+      loadTrustedEquivalenceRuntime.mock.calls[0][0].pool;
+    await pinnedPool.connect('before-second-mutation');
+    await pinnedPool.query('before-second-mutation');
+    value.pool.connect = fn();
+    value.pool.query = fn();
+    await pinnedPool.connect('after-second-mutation');
+    await pinnedPool.query('after-second-mutation');
+
+    expect(pinnedPool).not.toBe(value.pool);
+    expect(Object.isFrozen(pinnedPool)).toBe(true);
+    expect(originalConnect).toHaveBeenCalledTimes(2);
+    expect(originalQuery).toHaveBeenCalledTimes(2);
+    expect(attackerConnect).not.toHaveBeenCalled();
+    expect(attackerQuery).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['missing field', (value) => {
       delete value.grantAuthority;
@@ -227,6 +259,18 @@ describe('production trusted execution service factory', () => {
         ...value.grantAuthority,
       };
     }, 'production_trusted_execution_grant_authority_invalid'],
+    ['accessor-backed database port', (value) => {
+      Object.defineProperty(value.pool, 'query', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          return fn();
+        },
+      });
+    }, 'production_trusted_execution_database_port_invalid'],
+    ['database receiver state', (value) => {
+      value.pool.options = {};
+    }, 'production_trusted_execution_database_port_invalid'],
   ])('fails closed for %s', (_label, mutate, code) => {
     const value = fixture();
     mutate(value);

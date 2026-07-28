@@ -49,6 +49,7 @@ const RUNTIME_ENVIRONMENT_FIELDS = Object.freeze([
   'KERNEL_EQ_COLLECTOR_KEY_FILE',
   'KERNEL_EQ_COLLECTOR_KEY_ID',
 ]);
+const DATABASE_PORT_FIELDS = Object.freeze(['connect', 'query']);
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 
 export class KernelProductionTrustedExecutionFactoryError extends Error {
@@ -168,6 +169,33 @@ function runtimeEnvironment(value) {
   return snapshot;
 }
 
+function databasePort(value) {
+  const code = 'production_trusted_execution_database_port_invalid';
+  const snapshot = dataSnapshot(value, DATABASE_PORT_FIELDS, code);
+  if (
+    typeof snapshot.connect !== 'function'
+    || typeof snapshot.query !== 'function'
+  ) {
+    fail(code);
+  }
+  const receiver = Object.freeze(Object.assign(Object.create(null), {
+    connect: snapshot.connect,
+    query: snapshot.query,
+  }));
+  return Object.freeze({
+    connect: (...args) => Reflect.apply(
+      snapshot.connect,
+      receiver,
+      args,
+    ),
+    query: (...args) => Reflect.apply(
+      snapshot.query,
+      receiver,
+      args,
+    ),
+  });
+}
+
 export function createProductionTrustedExecutionServiceFactory(input = {}) {
   const value = dataSnapshot(
     input,
@@ -189,6 +217,7 @@ export function createProductionTrustedExecutionServiceFactory(input = {}) {
     'production_trusted_execution_trust_registry_invalid',
   );
   const env = runtimeEnvironment(value.runtimeEnvironment);
+  const pool = databasePort(value.pool);
   const securityIsolation = capabilityPort(value.securityIsolation, {
     fields: ISOLATION_FIELDS,
     functions: ['prepare', 'cancel', 'cleanup'],
@@ -238,7 +267,7 @@ export function createProductionTrustedExecutionServiceFactory(input = {}) {
       const runtime = await loadTrustedEquivalenceRuntime({
         env,
         trustRegistry,
-        pool: value.pool,
+        pool,
         runtimeRegistry,
         now: value.now,
       });
