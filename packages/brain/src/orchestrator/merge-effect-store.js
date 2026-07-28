@@ -61,13 +61,16 @@ export function createPostgresMergeEffectStore(pool) {
         locked = true;
         return await callback(client);
       } finally {
-        if (locked) {
-          await client.query(
-            'SELECT pg_advisory_unlock(hashtextextended($1::text, 0)) AS unlocked',
-            [runId],
-          );
+        try {
+          if (locked) {
+            await client.query(
+              'SELECT pg_advisory_unlock(hashtextextended($1::text, 0)) AS unlocked',
+              [runId],
+            );
+          }
+        } finally {
+          client.release();
         }
-        client.release();
       }
     },
 
