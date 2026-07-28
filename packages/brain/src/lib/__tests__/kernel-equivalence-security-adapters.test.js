@@ -215,4 +215,28 @@ describe('Kernel security equivalence adapters', () => {
       });
     }
   });
+
+  it('attempts isolation cleanup even when seam cleanup fails', async () => {
+    const descriptor = SECURITY_EQUIVALENCE_ADAPTER_DESCRIPTORS[0];
+    const value = fixture();
+    value.seams[descriptor.seam_id].cleanup.mockRejectedValue(
+      new Error('seam cleanup unavailable'),
+    );
+    const adapter = createSecurityEquivalenceAdapters(value)[0];
+    const context = {
+      cell: cell(descriptor),
+      grant: grant(descriptor),
+      prepared: {
+        resource: {
+          resource_id: RESOURCE_ID,
+          resource_ref: grant(descriptor).resource_ref,
+        },
+      },
+      compensations: [],
+    };
+    await expect(adapter.cleanup(context)).rejects.toMatchObject({
+      code: 'security_adapter_cleanup_failed',
+    });
+    expect(value.isolation.cleanup).toHaveBeenCalledOnce();
+  });
 });
