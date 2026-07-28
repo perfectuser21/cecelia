@@ -76,6 +76,38 @@ vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn().mockResolvedValue(null) }
 vi.mock('../actions.js', () => ({ updateTask: vi.fn() }));
 vi.mock('../shepherd.js', () => ({ shepherdOpenPRs: vi.fn().mockResolvedValue({ processed: 0, merged: 0, failed: 0, pending: 0 }) }));
 vi.mock('../zombie-sweep.js', () => ({ zombieSweep: vi.fn().mockResolvedValue({}), getZombieSweepStatus: vi.fn().mockResolvedValue(null) }));
+vi.mock('../zombie-cleaner.js', () => ({
+  runZombieCleanup: vi.fn().mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }),
+}));
+vi.mock('../cleanup-worker-plugin.js', () => ({
+  tick: vi.fn().mockResolvedValue({ success: true, stdout: '', stderr: '' }),
+}));
+vi.mock('../harness-worktree.js', () => ({
+  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0, errors: 0 }),
+}));
+vi.mock('../watchdog.js', () => ({
+  checkRunaways: vi.fn().mockReturnValue({ actions: [] }),
+  cleanupMetrics: vi.fn(),
+  checkIdleSessions: vi.fn().mockReturnValue({ actions: [] }),
+}));
+vi.mock('../emergency-cleanup.js', () => ({
+  emergencyCleanup: vi.fn().mockReturnValue({
+    worktree: false,
+    lock: false,
+    devMode: false,
+    errors: [],
+  }),
+}));
+vi.mock('../orphan-pr-worker.js', () => ({
+  scanOrphanPrs: vi.fn().mockResolvedValue({
+    scanned: 0,
+    merged: 0,
+    labeled: 0,
+    closed: 0,
+    skipped: 0,
+    details: [],
+  }),
+}));
 vi.mock('../progress-ledger.js', () => ({ evaluateProgressInTick: vi.fn().mockResolvedValue({ evaluated: 0, alertCount: 0 }), recordProgressStep: vi.fn(), getProgressSteps: vi.fn().mockResolvedValue([]), updateProgressStep: vi.fn(), getTaskProgressSummary: vi.fn().mockResolvedValue(null), getProgressAnomalies: vi.fn().mockResolvedValue([]) }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn().mockResolvedValue(''), callLLMStream: vi.fn().mockResolvedValue(''), _resetMinimaxKey: vi.fn(), _resetAnthropicKey: vi.fn(), _resetOpenAIKey: vi.fn() }));
 

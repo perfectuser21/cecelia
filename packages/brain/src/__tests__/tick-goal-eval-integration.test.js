@@ -78,6 +78,43 @@ vi.mock('../zombie-cleaner.js', () => ({
     worktreesRemoved: 0,
   }),
 }));
+vi.mock('../cleanup-worker-plugin.js', () => ({
+  tick: vi.fn().mockResolvedValue({ success: true, stdout: '', stderr: '' }),
+}));
+vi.mock('../harness-worktree.js', () => ({
+  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0, errors: 0 }),
+}));
+vi.mock('../watchdog.js', () => ({
+  checkRunaways: vi.fn().mockReturnValue({ actions: [] }),
+  cleanupMetrics: vi.fn(),
+  checkIdleSessions: vi.fn().mockReturnValue({ actions: [] }),
+}));
+vi.mock('../emergency-cleanup.js', () => ({
+  emergencyCleanup: vi.fn().mockReturnValue({
+    worktree: false,
+    lock: false,
+    devMode: false,
+    errors: [],
+  }),
+}));
+vi.mock('../orphan-pr-worker.js', () => ({
+  scanOrphanPrs: vi.fn().mockResolvedValue({
+    scanned: 0,
+    merged: 0,
+    labeled: 0,
+    closed: 0,
+    skipped: 0,
+    details: [],
+  }),
+}));
+vi.mock('../shepherd.js', () => ({
+  shepherdOpenPRs: vi.fn().mockResolvedValue({
+    processed: 0,
+    merged: 0,
+    failed: 0,
+    pending: 0,
+  }),
+}));
 vi.mock('../daily-review-scheduler.js', () => ({ triggerDailyReview: vi.fn().mockResolvedValue({}) }));
 vi.mock('../desire/index.js', () => ({ runDesireSystem: vi.fn().mockResolvedValue({}) }));
 vi.mock('../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({}) }));
