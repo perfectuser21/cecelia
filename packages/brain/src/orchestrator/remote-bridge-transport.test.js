@@ -10,11 +10,25 @@ const CALLBACK_TOKEN = 'callback-token-that-must-never-leak';
 const BRIDGE_URL = 'http://100.86.57.69:3458';
 const BRAIN_URL = 'http://brain.internal:5221';
 const MACHINE = 'xian-mac-m4';
+const TASK_ID = 'task-true-id';
+const RUN_ID = '11111111-1111-4111-8111-111111111111';
+const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
+const RESULT_CHANNEL = Object.freeze({
+  version: 'attempt-result-file/v1',
+  path: `/tmp/cecelia-prompts/${ATTEMPT_ID}.result.json`,
+  max_bytes: 1024 * 1024,
+  bindings: Object.freeze({
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    attempt_id: ATTEMPT_ID,
+    role: 'generator',
+  }),
+});
 const NOW_MS = Date.parse('2026-07-27T12:00:00.000Z');
 const ENVELOPE = Object.freeze({
   contract_version: 'credential-envelope/v1',
   credential_ref: '33333333-3333-4333-8333-333333333333',
-  attempt_id: 'attempt-1',
+  attempt_id: ATTEMPT_ID,
   account_id: 'team3',
   machine_id: MACHINE,
   issued_at: '2026-07-27T12:00:00.000Z',
@@ -33,8 +47,8 @@ function jsonResponse(status, body) {
 
 function launchInput(overrides = {}) {
   const attempt = {
-    id: 'attempt-1',
-    run_id: 'run-1',
+    id: ATTEMPT_ID,
+    run_id: RUN_ID,
     lease_owner: 'dispatcher-1',
     lease_generation: 3,
     callbackSecret: CALLBACK_TOKEN,
@@ -42,8 +56,12 @@ function launchInput(overrides = {}) {
   };
   const bundle = {
     opaque: 'must-not-be-sent',
+    run_id: RUN_ID,
+    attempt_id: ATTEMPT_ID,
     role: 'generator',
+    result_channel: RESULT_CHANNEL,
     inputs: {
+      task_id: TASK_ID,
       execution_surface: 'fleet-worker',
       workspace_spec: {
         repo: 'perfectuser21/cecelia',
@@ -51,8 +69,8 @@ function launchInput(overrides = {}) {
         branch: 'cp-07272050-remote-worker',
         expected_head_sha: null,
         mode: 'read-write',
-        run_id: 'run-1',
-        attempt_id: 'attempt-1',
+        run_id: RUN_ID,
+        attempt_id: ATTEMPT_ID,
       },
     },
     constraints: { timeout_seconds: 3600 },
@@ -87,7 +105,7 @@ function acceptedLaunchResponse(overrides = {}) {
     ...values,
     attestation: overrides.attestation ?? signMachineAttestation({
       secret: SHARED_SECRET,
-      attemptId: 'attempt-1',
+      attemptId: ATTEMPT_ID,
       machineId: values.actual_machine_id,
       jobId: values.job_id,
     }),
@@ -183,8 +201,9 @@ describe('remote Bridge launch', () => {
     );
     const requestBody = JSON.parse(fetchFn.mock.calls[0][1].body);
     expect(requestBody).toEqual({
-      attempt_id: 'attempt-1',
-      run_id: 'run-1',
+      attempt_id: ATTEMPT_ID,
+      task_id: TASK_ID,
+      run_id: RUN_ID,
       lease_owner: 'dispatcher-1',
       lease_generation: 3,
       target: {
@@ -199,8 +218,8 @@ describe('remote Bridge launch', () => {
         branch: 'cp-07272050-remote-worker',
         expected_head_sha: null,
         mode: 'read-write',
-        run_id: 'run-1',
-        attempt_id: 'attempt-1',
+        run_id: RUN_ID,
+        attempt_id: ATTEMPT_ID,
       },
       provider_spec: {
         provider: 'codex',
@@ -210,10 +229,13 @@ describe('remote Bridge launch', () => {
         output: { format: 'jsonl' },
       },
       credential_envelope: ENVELOPE,
-      callback_url: `${BRAIN_URL}/api/brain/harness/attempts/attempt-1/callback`,
-      callback_token: CALLBACK_TOKEN,
+      result_channel: RESULT_CHANNEL,
+      brain_url: BRAIN_URL,
     });
     expect(requestBody).not.toHaveProperty('bundle');
+    expect(requestBody).not.toHaveProperty('callback_url');
+    expect(requestBody).not.toHaveProperty('callback_token');
+    expect(JSON.stringify(requestBody)).not.toContain(CALLBACK_TOKEN);
     expect(requestBody.provider_spec).not.toHaveProperty('environment');
   });
 
@@ -225,10 +247,20 @@ describe('remote Bridge launch', () => {
 
     expect(issue).toHaveBeenCalledOnce();
     expect(issue).toHaveBeenCalledWith({
-      attemptId: 'attempt-1',
+      attemptId: ATTEMPT_ID,
       accountId: 'team3',
       machineId: MACHINE,
       deadlineAt: '2026-07-27T13:00:00.000Z',
+    });
+  });
+
+  it('does not require a per-Attempt callback secret', async () => {
+    const input = launchInput();
+    delete input.attempt.callbackSecret;
+    const transport = createTransport();
+
+    await expect(transport.launch(input)).resolves.toMatchObject({
+      executionTransport: 'fleet-worker',
     });
   });
 
@@ -304,7 +336,10 @@ describe('remote Bridge launch', () => {
 
     await transport.launch(launchInput({
       bundle: {
+        role: 'generator',
+        result_channel: RESULT_CHANNEL,
         inputs: {
+          task_id: TASK_ID,
           worktree_path: '/var/empty/kernel-fleet-canary',
         },
       },
@@ -320,7 +355,7 @@ describe('remote Bridge launch', () => {
     const requestBody = JSON.parse(fetchFn.mock.calls[0][1].body);
     expect(requestBody.provider_spec.workspace).toEqual({
       kind: 'disposable-canary-v1',
-      attempt_id: 'attempt-1',
+      attempt_id: ATTEMPT_ID,
     });
     expect(JSON.stringify(requestBody.provider_spec)).not.toContain('/Users/attacker');
     expect(requestBody.provider_spec).not.toHaveProperty('cwd');
@@ -332,7 +367,10 @@ describe('remote Bridge launch', () => {
 
     await transport.launch(launchInput({
       bundle: {
+        role: 'generator',
+        result_channel: RESULT_CHANNEL,
         inputs: {
+          task_id: TASK_ID,
           worktree_path: '/Users/operator/repos/cecelia',
         },
       },
@@ -380,6 +418,7 @@ describe('remote Bridge launch', () => {
     ['missing machine URL', { bridgeUrls: {} }, 'remote_bridge_unknown_machine'],
     ['invalid machine URL', { bridgeUrls: { [MACHINE]: 'file:///tmp/bridge.sock' } }, 'remote_bridge_invalid_bridge_url'],
     ['invalid Brain URL', { brainUrl: 'ftp://brain.internal' }, 'remote_bridge_invalid_brain_url'],
+    ['non-origin Brain URL', { brainUrl: 'http://brain.internal/base' }, 'remote_bridge_invalid_brain_url'],
   ])('fails closed for %s without making a request', async (_case, config, errorCode) => {
     const fetchFn = vi.fn();
     const transport = createTransport({ fetchFn, ...config });
@@ -403,7 +442,7 @@ describe('remote Bridge launch', () => {
     ['attempt id', { attempt: { id: '' } }, 'remote_bridge_invalid_attempt_id'],
     ['run id', { attempt: { run_id: '' } }, 'remote_bridge_invalid_run_id'],
     ['lease owner', { attempt: { lease_owner: '' } }, 'remote_bridge_invalid_lease_owner'],
-    ['callback token', { attempt: { callbackSecret: '' } }, 'remote_bridge_invalid_callback_token'],
+    ['task id', { bundle: { inputs: { task_id: '' } } }, 'remote_bridge_invalid_task_id'],
     ['machine', { target: { machine: '' } }, 'remote_bridge_invalid_machine'],
   ])('requires a nonempty %s before launch', async (_field, inputOverride, errorCode) => {
     const fetchFn = vi.fn();
@@ -442,7 +481,7 @@ describe('remote Bridge launch', () => {
     ['uppercase attestation', {
       attestation: signMachineAttestation({
         secret: SHARED_SECRET,
-        attemptId: 'attempt-1',
+        attemptId: ATTEMPT_ID,
         machineId: MACHINE,
         jobId: 'job-1',
       }).toUpperCase(),

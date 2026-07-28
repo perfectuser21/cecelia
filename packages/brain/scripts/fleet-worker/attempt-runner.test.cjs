@@ -8,8 +8,21 @@ const path = require('node:path');
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const OTHER_ATTEMPT_ID = '33333333-3333-4333-8333-333333333333';
+const TASK_ID = 'task-true-id';
 const WORKER_ID = 'us-mac-m4';
 const IMAGE_DIGEST = `cecelia/runner@sha256:${'a'.repeat(64)}`;
+const BRAIN_URL = 'http://brain.internal:5221';
+const RESULT_CHANNEL = Object.freeze({
+  version: 'attempt-result-file/v1',
+  path: `/tmp/cecelia-prompts/${ATTEMPT_ID}.result.json`,
+  max_bytes: 1024 * 1024,
+  bindings: Object.freeze({
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    attempt_id: ATTEMPT_ID,
+    role: 'generator',
+  }),
+});
 const CREDENTIAL_ENVELOPE = Object.freeze({
   contract_version: 'credential-envelope/v1',
   credential_ref: '33333333-3333-4333-8333-333333333333',
@@ -43,6 +56,7 @@ function loadAttemptRunner() {
 function request(overrides = {}) {
   return {
     attempt_id: ATTEMPT_ID,
+    task_id: TASK_ID,
     run_id: RUN_ID,
     lease_owner: 'dispatcher-1',
     lease_generation: 0,
@@ -69,9 +83,9 @@ function request(overrides = {}) {
       model: 'gpt-5',
       role: 'generator',
     },
+    result_channel: RESULT_CHANNEL,
+    brain_url: BRAIN_URL,
     credential_envelope: CREDENTIAL_ENVELOPE,
-    callback_url: 'http://brain.internal:5221/api/brain/harness/callback',
-    callback_token: 'callback-secret',
     ...overrides,
   };
 }
@@ -238,7 +252,41 @@ describe('Fleet Worker Attempt runner', () => {
     expect(state.credential).toEqual(CREDENTIAL.metadata);
     expect(JSON.stringify(state)).not.toContain('sensitive');
     expect(state.credential).not.toHaveProperty('payload');
+    expect(JSON.stringify(state)).not.toMatch(/callback|callback-secret/i);
   });
+
+  it.each(['claude', 'codex', 'grok'])(
+    'carries the same true identity and result channel to the %s Docker seam',
+    async (provider) => {
+      const deps = dependencies();
+      const runner = createRunner(deps);
+      const launchRequest = request({
+        provider_spec: {
+          ...request().provider_spec,
+          provider,
+          command: provider,
+        },
+        target: {
+          ...request().target,
+          provider,
+          account: provider === 'codex' ? 'team1' : `${provider}-team1`,
+        },
+        credential_envelope: provider === 'codex'
+          ? CREDENTIAL_ENVELOPE
+          : undefined,
+      });
+
+      await runner.launch(launchRequest);
+
+      expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: TASK_ID,
+        runId: RUN_ID,
+        attemptId: ATTEMPT_ID,
+        brainUrl: BRAIN_URL,
+        resultChannel: RESULT_CHANNEL,
+      }));
+    },
+  );
 
   it('rejects a Codex launch without an envelope before workspace or Docker side effects', async () => {
     const deps = dependencies();
@@ -264,6 +312,52 @@ describe('Fleet Worker Attempt runner', () => {
     }))).rejects.toThrow(/attempt_provider_spec_unknown_field/);
     expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
     expect(deps.docker.launch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['top-level unknown field', { attacker: true }, /attempt_launch_request_unknown_field/],
+    ['descriptor unknown field', {
+      result_channel: { ...RESULT_CHANNEL, attacker: true },
+    }, /attempt_result_channel_unknown_field/],
+    ['binding unknown field', {
+      result_channel: {
+        ...RESULT_CHANNEL,
+        bindings: { ...RESULT_CHANNEL.bindings, attacker: true },
+      },
+    }, /attempt_result_channel_binding_unknown_field/],
+    ['wrong version', {
+      result_channel: { ...RESULT_CHANNEL, version: 'attempt-result-file/v2' },
+    }, /attempt_result_channel_version_invalid/],
+    ['oversized max', {
+      result_channel: { ...RESULT_CHANNEL, max_bytes: 1024 * 1024 + 1 },
+    }, /attempt_result_channel_max_bytes_invalid/],
+    ['path traversal', {
+      result_channel: {
+        ...RESULT_CHANNEL,
+        path: `/tmp/cecelia-prompts/../${ATTEMPT_ID}.result.json`,
+      },
+    }, /attempt_result_channel_path_mismatch/],
+    ['task CRLF', { task_id: `${TASK_ID}\r\nforged` }, /attempt_task_id_invalid/],
+    ['task mismatch', { task_id: 'another-task' }, /attempt_result_channel_task_id_mismatch/],
+    ['run mismatch', { run_id: OTHER_ATTEMPT_ID }, /attempt_result_channel_run_id_mismatch/],
+    ['attempt mismatch', { attempt_id: OTHER_ATTEMPT_ID }, /attempt_result_channel_attempt_id_mismatch/],
+    ['role mismatch', {
+      target: { ...request().target, role: 'reviewer' },
+    }, /attempt_result_channel_role_mismatch/],
+  ])('rejects %s before credential, workspace, Docker, or state side effects', async (
+    _case,
+    override,
+    error,
+  ) => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await expect(runner.launch(request(override))).rejects.toThrow(error);
+
+    expect(deps.credentialConsumer.consume).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+    expect(deps.docker.launch).not.toHaveBeenCalled();
+    expect(deps.stateStore.save).not.toHaveBeenCalled();
   });
 
   it('terminal cleanup removes the container before its worktree and state', async () => {
@@ -502,10 +596,9 @@ describe('Fleet Worker durable runtime adapters', () => {
           'cecelia.fleet.run_id': RUN_ID,
           'cecelia.fleet.worker_id': WORKER_ID,
         },
-        callback: {
-          url: request().callback_url,
-          token: request().callback_token,
-        },
+        taskId: TASK_ID,
+        brainUrl: BRAIN_URL,
+        resultChannel: RESULT_CHANNEL,
         lease: { owner: 'dispatcher-1', generation: 0 },
         credential: CREDENTIAL,
       })).rejects.toThrow(/attempt_container_id_missing/);
@@ -582,10 +675,9 @@ describe('Fleet Worker durable runtime adapters', () => {
           'cecelia.fleet.run_id': RUN_ID,
           'cecelia.fleet.worker_id': WORKER_ID,
         },
-        callback: {
-          url: request().callback_url,
-          token: request().callback_token,
-        },
+        taskId: TASK_ID,
+        brainUrl: BRAIN_URL,
+        resultChannel: RESULT_CHANNEL,
         lease: { owner: 'dispatcher-1', generation: 0 },
         credential: CREDENTIAL,
       })).resolves.toEqual({ containerId: 'container-created' });
@@ -600,6 +692,9 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(createArgs).toContain(
         'type=bind,src=/controlled/mirrors/perfectuser21__cecelia.git,dst=/controlled/mirrors/perfectuser21__cecelia.git,readonly',
       );
+      expect(createArgs).toContain(
+        `type=bind,src=${runtimeRoot}/${ATTEMPT_ID},dst=/tmp/cecelia-prompts`,
+      );
       expect(createArgs.join(' ')).not.toContain('/Users/operator');
       expect(createArgs).toEqual(expect.arrayContaining([
         '--tmpfs', '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700',
@@ -608,10 +703,17 @@ describe('Fleet Worker durable runtime adapters', () => {
         '--label', `cecelia.fleet.worker_id=${WORKER_ID}`,
         '--env', 'HARNESS_NODE=generator',
         '--env', 'HARNESS_MODEL=gpt-5',
+        '--env', `CECELIA_TASK_ID=${TASK_ID}`,
+        '--env', `HARNESS_TASK_ID=${TASK_ID}`,
+        '--env', `BRAIN_RESULT_FILE=${RESULT_CHANNEL.path}`,
+        '--env', `BRAIN_RESULT_MAX_BYTES=${RESULT_CHANNEL.max_bytes}`,
+        '--env', `BRAIN_RESULT_CHANNEL_VERSION=${RESULT_CHANNEL.version}`,
+        '--env', `BRAIN_URL=${BRAIN_URL}`,
         '--env', 'CECELIA_CREDENTIAL_FIFO=/tmp/cecelia-prompts/credential.fifo',
         '--env', `CECELIA_CREDENTIAL_REF=${CREDENTIAL.credentialRef}`,
       ]));
       expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
+      expect(createArgs.join(' ')).not.toMatch(/callback|callback-secret/i);
       expect(runCommand.mock.calls[1]).toEqual([
         'mkfifo',
         ['-m', '600', path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo')],
@@ -628,6 +730,11 @@ describe('Fleet Worker durable runtime adapters', () => {
       );
       const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
       expect(fs.existsSync(attemptRuntime)).toBe(true);
+      const resultTarget = path.join(attemptRuntime, `${ATTEMPT_ID}.result.json`);
+      const resultStat = fs.lstatSync(resultTarget);
+      expect(resultStat.isFile()).toBe(true);
+      expect(resultStat.mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(resultTarget, 'utf8')).toBe('');
 
       await docker.remove({
         containerId: 'container-created',
@@ -637,6 +744,124 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(fs.existsSync(attemptRuntime)).toBe(false);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a symlink result target and freshens a stale regular target', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-result-target-'));
+    const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
+    const target = path.join(attemptRuntime, `${ATTEMPT_ID}.result.json`);
+    const outside = path.join(runtimeRoot, 'outside.json');
+    const runCommand = vi.fn(async (_command, args) => (
+      args[0] === 'create' ? { stdout: 'container-created\n' } : { stdout: '' }
+    ));
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const launchInput = {
+      attemptId: ATTEMPT_ID,
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      workerId: WORKER_ID,
+      brainUrl: BRAIN_URL,
+      resultChannel: RESULT_CHANNEL,
+      image: IMAGE_DIGEST,
+      providerSpec: {
+        ...request().provider_spec,
+        provider: 'claude',
+        command: 'claude',
+      },
+      role: 'generator',
+      model: 'claude-opus',
+      workspaceMount: {
+        source: `/controlled/worktrees/${ATTEMPT_ID}`,
+        target: '/workspace',
+        readOnly: true,
+      },
+      workspaceAdminMount: {
+        source: '/controlled/mirrors/perfectuser21__cecelia.git',
+        target: '/controlled/mirrors/perfectuser21__cecelia.git',
+        readOnly: true,
+      },
+      labels: {
+        'cecelia.fleet.attempt_id': ATTEMPT_ID,
+        'cecelia.fleet.run_id': RUN_ID,
+        'cecelia.fleet.worker_id': WORKER_ID,
+      },
+      lease: { owner: 'dispatcher-1', generation: 0 },
+      credential: null,
+    };
+
+    try {
+      fs.mkdirSync(attemptRuntime, { recursive: true });
+      fs.writeFileSync(outside, 'do-not-touch');
+      fs.symlinkSync(outside, target);
+      await expect(docker.launch(launchInput)).rejects.toThrow(
+        /attempt_result_target_symlink/,
+      );
+      expect(fs.readFileSync(outside, 'utf8')).toBe('do-not-touch');
+      expect(runCommand).not.toHaveBeenCalled();
+
+      fs.rmSync(target);
+      fs.writeFileSync(target, 'x'.repeat(RESULT_CHANNEL.max_bytes + 1), {
+        mode: 0o644,
+      });
+      await expect(docker.launch(launchInput)).resolves.toEqual({
+        containerId: 'container-created',
+      });
+      expect(fs.readFileSync(target, 'utf8')).toBe('');
+      expect(fs.lstatSync(target).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a symlink Attempt runtime before creating a result outside the runtime root', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-runtime-link-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-runtime-outside-'));
+    fs.symlinkSync(outside, path.join(runtimeRoot, ATTEMPT_ID));
+    const runCommand = vi.fn();
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+
+    try {
+      await expect(docker.launch({
+        attemptId: ATTEMPT_ID,
+        taskId: TASK_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        brainUrl: BRAIN_URL,
+        resultChannel: RESULT_CHANNEL,
+        image: IMAGE_DIGEST,
+        providerSpec: {
+          ...request().provider_spec,
+          provider: 'grok',
+          command: 'grok',
+        },
+        role: 'generator',
+        model: 'grok-4',
+        workspaceMount: {
+          source: `/controlled/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: true,
+        },
+        workspaceAdminMount: {
+          source: '/controlled/mirrors/perfectuser21__cecelia.git',
+          target: '/controlled/mirrors/perfectuser21__cecelia.git',
+          readOnly: true,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: null,
+      })).rejects.toThrow(/attempt_runtime_symlink/);
+      expect(fs.readdirSync(outside)).toEqual([]);
+      expect(runCommand).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
     }
   });
 

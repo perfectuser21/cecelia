@@ -10,7 +10,19 @@ const CALLBACK_URL = 'http://brain.internal:5221';
 const SHARED_SECRET = 'fleet-worker-secret-at-least-32-bytes';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
+const TASK_ID = 'task-local';
 const BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
+const RESULT_CHANNEL = Object.freeze({
+  version: 'attempt-result-file/v1',
+  path: `/tmp/cecelia-prompts/${ATTEMPT_ID}.result.json`,
+  max_bytes: 1024 * 1024,
+  bindings: Object.freeze({
+    task_id: TASK_ID,
+    run_id: RUN_ID,
+    attempt_id: ATTEMPT_ID,
+    role: 'generator',
+  }),
+});
 const ENVELOPE = Object.freeze({
   contract_version: 'credential-envelope/v1',
   credential_ref: '33333333-3333-4333-8333-333333333333',
@@ -51,8 +63,12 @@ function launchInput(machine) {
       lease_generation: 0,
     },
     bundle: {
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+      role: 'generator',
+      result_channel: RESULT_CHANNEL,
       inputs: {
-        task_id: 'task-local',
+        task_id: TASK_ID,
         execution_surface: 'fleet-worker',
         workspace_spec: {
           repo: 'perfectuser21/cecelia',
@@ -75,7 +91,7 @@ function launchInput(machine) {
       cwd: '/Users/operator/must-not-cross-machines',
       environment: { MUST_NOT: 'cross the Worker boundary' },
     },
-    task: { id: 'task-local' },
+    task: { id: TASK_ID },
     target: {
       provider: 'codex',
       account: 'team1',
@@ -154,12 +170,15 @@ describe('production execution transport', () => {
       expect(body.workspace_spec).toEqual(
         launchInput(machine).bundle.inputs.workspace_spec,
       );
+      expect(body.task_id).toBe(TASK_ID);
+      expect(body.result_channel).toEqual(RESULT_CHANNEL);
+      expect(body.brain_url).toBe(CALLBACK_URL);
       expect(body.credential_envelope).toEqual({
         ...ENVELOPE,
         machine_id: machine,
       });
       expect(JSON.stringify(body)).not.toMatch(
-        /worktree_path|workspace_path|\/Users\/operator/,
+        /callback_token|callback_url|worktree_path|workspace_path|\/Users\/operator/,
       );
       expect(spawnDetached).not.toHaveBeenCalled();
     },
