@@ -4,7 +4,9 @@ import {
   GOLDEN_PATH_STEPS,
   PROOF_PROVIDERS,
   PROOF_SCENARIOS,
+  buildEquivalenceReport,
   buildEvidenceEnvelopes,
+  formatEquivalenceMarkdown,
   projectJourneyCells,
   validateBehaviorEquivalence,
 } from '../kernel-behavior-equivalence.js';
@@ -267,5 +269,89 @@ describe('evidence envelope and journey projection', () => {
       assertion_ref: 'KERNEL-MERGE-AUTHORITY-01',
     }));
     expect(cells.every((cell) => cell.write_database === false)).toBe(true);
+  });
+});
+
+describe('honest equivalence report', () => {
+  it('accounts for priority, effective status, axes, matrix, fire commands, and gaps', () => {
+    const gap = provenBehavior({
+      behavior_id: 'KERNEL-P1-REPORT-CLOSURE',
+      priority: 'P1',
+      status: 'gap',
+      steps: ['S12'],
+      dimensions: ['ledger_freshness', 'axis_alignment'],
+      proof_matrix: {},
+      gap: {
+        reason: 'No live production receipt exists.',
+        owner: 'kernel.reports',
+        closure_plan: 'Run the production closure drill.',
+      },
+    });
+    const validation = validateBehaviorEquivalence(
+      contract([provenBehavior(), gap]),
+      { now: NOW },
+    );
+
+    const report = buildEquivalenceReport(validation, {
+      evaluatedAt: '2026-07-28T12:00:00.000Z',
+    });
+
+    expect(report.summary).toEqual({
+      total: 2,
+      by_priority: { P0: 1, P1: 1 },
+      by_effective_status: { proven: 1, gap: 1, intentional_replacement: 0 },
+      findings: 0,
+    });
+    expect(report.axes).toMatchObject({
+      steps: GOLDEN_PATH_STEPS,
+      dimensions: BEHAVIOR_DIMENSIONS,
+      providers: PROOF_PROVIDERS,
+      scenarios: PROOF_SCENARIOS,
+      possible_cells: 143,
+    });
+    expect(report.provider_matrix).toMatchObject({
+      required_cells: 18,
+      receipted_cells: 9,
+      missing_cells: 9,
+    });
+    expect(report.proven_to_fire_commands).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        behavior_id: 'KERNEL-P0-MERGE-AUTHORITY',
+        provider: 'claude',
+        scenario: 'violation',
+      }),
+    ]));
+    expect(report.gaps).toEqual([
+      expect.objectContaining({
+        behavior_id: 'KERNEL-P1-REPORT-CLOSURE',
+        owner: 'kernel.reports',
+        closure_plan: 'Run the production closure drill.',
+      }),
+    ]);
+  });
+
+  it('renders deterministic Markdown that says gaps are not proof', () => {
+    const gap = provenBehavior({
+      status: 'gap',
+      proof_matrix: {},
+      gap: {
+        reason: 'No real Grok recovery receipt exists.',
+        owner: 'kernel.fleet',
+        closure_plan: 'Run the Grok recovery drill.',
+      },
+    });
+    const validation = validateBehaviorEquivalence(contract([gap]), { now: NOW });
+    const report = buildEquivalenceReport(validation, {
+      evaluatedAt: '2026-07-28T12:00:00.000Z',
+    });
+
+    const first = formatEquivalenceMarkdown(report);
+    const second = formatEquivalenceMarkdown(report);
+
+    expect(second).toBe(first);
+    expect(first).toContain('11 项行为维度');
+    expect(first).toContain('缺口不是证明');
+    expect(first).toContain('No real Grok recovery receipt exists.');
+    expect(first).toContain('Run the Grok recovery drill.');
   });
 });
