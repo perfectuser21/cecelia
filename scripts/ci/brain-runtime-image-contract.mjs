@@ -180,6 +180,8 @@ const required = [
   '/app/scripts/cecelia-bridge.cjs',
   '/app/scripts/fleet-worker/github-mutation-broker.cjs',
   '/brain/src/lib/kernel-equivalence-receipts.js',
+  '/scripts/lib/release-run-worker-runtime.mjs',
+  '/scripts/lib/release-run-tree-digest.mjs',
   '/engine/scripts/devgate/kernel-equivalence-devgate-sidecar.mjs',
   '/engine/scripts/devgate/check-tdd-commit-order.sh',
   '/engine/scripts/devgate/check-dod-purity.cjs',
@@ -193,8 +195,20 @@ if (!lstatSync('/brain').isSymbolicLink()) {
 if (realpathSync('/brain') !== '/app') {
   throw new Error('brain_runtime_alias_wrong_target');
 }
+if (!lstatSync('/scripts').isSymbolicLink()) {
+  throw new Error('root_scripts_runtime_alias_not_symlink');
+}
+if (realpathSync('/scripts') !== '/repo/scripts') {
+  throw new Error('root_scripts_runtime_alias_wrong_target');
+}
 await import(
   'file:///app/src/lib/kernel-equivalence-production-seam-builders.js'
+);
+await import(
+  'file:///app/src/orchestrator/release-run-adapters.js'
+);
+await import(
+  'file:///app/src/routes/ops.js'
 );
 await import(
   'file:///engine/scripts/devgate/kernel-equivalence-devgate-sidecar.mjs'
@@ -346,14 +360,17 @@ async function verifyServerStartup(image) {
           '{{.State.Running}} {{.State.ExitCode}}',
           resources.brain,
         ]);
-        if (
-          state.status !== 0
-          || !state.stdout.trim().startsWith('true ')
-        ) {
-          return {
-            ready: false,
-            detail: outputFor(state),
-          };
+        if (state.status !== 0) {
+          throw new ContractFailure(
+            'brain_container_disappeared',
+            outputFor(state),
+          );
+        }
+        if (!state.stdout.trim().startsWith('true ')) {
+          throw new ContractFailure(
+            'brain_exited_before_health',
+            state.stdout.trim(),
+          );
         }
         const result = docker([
           'exec',

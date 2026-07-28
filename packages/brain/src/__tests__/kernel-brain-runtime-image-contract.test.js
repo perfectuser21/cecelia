@@ -19,12 +19,14 @@ function job(name, nextName) {
 }
 
 describe('Brain exact runtime image contract wiring', () => {
-  it('keeps one Brain copy while closing the complete Engine package graph', () => {
+  it('keeps one copy per runtime root while closing all monorepo import graphs', () => {
     expect(dockerfile).toContain('COPY packages/engine/ /engine/');
     expect(dockerfile).toMatch(
       /WORKDIR \/app[\s\S]*RUN ln -s \/app \/brain/,
     );
+    expect(dockerfile).toContain('RUN ln -s /repo/scripts /scripts');
     expect(dockerfile).not.toContain('COPY packages/brain/ /brain/');
+    expect(dockerfile).not.toMatch(/COPY scripts\/\s+\/scripts\//);
   });
 
   it('builds and verifies the same exact Git SHA in Docker CI', () => {

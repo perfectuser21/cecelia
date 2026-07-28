@@ -6,13 +6,13 @@
 
 
 
-**Brain 版本**: 1.268.25
+**Brain 版本**: 1.268.26
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.268.25 — Unified Kernel Golden Path exact-image candidate
+## Brain 1.268.26 — Unified Kernel Golden Path exact-image candidate
 
 - Kernel Codex reviewer、11 要素等价合同与 durable ReleaseRun 已在同一候选树完成
   本地语义集成；confirmed exact-head merge receipt 是 ReleaseRun 的唯一根凭证。
@@ -23,6 +23,9 @@
 - Exact-image 同时保留 ReleaseRun controller/rollback runtime、完整 Brain
   scripts、完整 Engine package 与 immutable `/brain -> /app`，关闭跨 workspace
   production import graph 缺口。
+- `/app/src` 的 monorepo-relative ReleaseRun imports 通过 immutable
+  `/scripts -> /repo/scripts` 复用 controller runtime；启动合同在 Brain 提前退出
+  时立即保留日志并 fail-closed，不再等待到 health timeout。
 - 旧 relay/Claude fixture 已迁到 Kernel lease、post-diff risk、独立 Attempt
   authority 与 ReleaseRun-only deploy 合同，测试残留不再造成共享数据库假红。
 - 本版本仍是未发布的本地集成候选；未 push、未 merge、未 deploy，且 99 个 live

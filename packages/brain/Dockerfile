@@ -89,6 +89,10 @@ COPY scripts/lib/release-run-tree-digest-cli.mjs /repo/scripts/lib/
 COPY scripts/lib/release-run-dashboard-receipt.mjs /repo/scripts/lib/
 COPY packages/workflows/scripts/deploy-workflow-skills.sh /repo/packages/workflows/scripts/
 COPY docker-compose.yml /repo/docker-compose.yml
+# `/app/src/**` 的 monorepo-relative production imports resolve 到根 `/scripts`.
+# Release workers 仍以 `/repo/scripts` 作为 sibling-controller entrypoint；用唯一
+# immutable alias 共享同一份 bytes，避免两份 runtime 漂移。
+RUN ln -s /repo/scripts /scripts
 # Brain 的 production seam builder 会加载 package-owned fleet-worker
 # mutation broker；完整复制 scripts runtime，避免首个缺文件修好后继续在二级
 # require/import 上启动失败。

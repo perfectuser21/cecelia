@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.268.25
+**版本**: 1.268.26
 
 ## Unified Kernel Golden Path exact-image candidate
 
@@ -21,6 +21,9 @@
   与 typed rollback；当前仅为本地候选，未部署，live proof 仍诚实为 0/99。
 - Exact-image 合并保留 ReleaseRun sibling controllers 与 rollback runtime，同时
   提供完整 Brain scripts、Engine package 和 immutable `/brain -> /app`。
+- `/scripts -> /repo/scripts` 让 `/app/src` 的 ReleaseRun 生产 import 与 sibling
+  controller 共用同一份 immutable bytes；exact-image graph 同时加载 ops 和
+  ReleaseRun adapter，Brain 提前退出会立即携带日志 fail-closed。
 
 ## Kernel exact-image boot graph closure
 
