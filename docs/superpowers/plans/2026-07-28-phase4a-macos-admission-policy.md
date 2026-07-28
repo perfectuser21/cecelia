@@ -123,4 +123,3 @@ git status --short
 
 Expected: no whitespace errors and only the files listed by this plan are
 modified or added.
-
