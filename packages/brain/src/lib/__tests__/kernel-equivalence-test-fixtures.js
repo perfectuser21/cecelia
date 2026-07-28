@@ -84,6 +84,14 @@ export function fixtureCell({
         : scenario === 'violation'
           ? 'stale_sha_merge_denied'
           : 'exact_sha_merge_confirmed',
+      ...(scenario === 'recovery'
+        ? {
+          predecessor_expected: {
+            expected_outcome: 'denied',
+            effect_code: 'stale_sha_merge_denied',
+          },
+        }
+        : {}),
     },
     isolation: {
       environment: 'isolated',

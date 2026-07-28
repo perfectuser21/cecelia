@@ -569,8 +569,8 @@ export function createPostgresPredecessorResolver({ pool } = {}) {
       fail('recovery_predecessor_invalid');
     }
     return Object.freeze({
-      grant: Object.freeze(structuredClone(bundle.execution_grants[0])),
-      receipt: Object.freeze(structuredClone(bundle.effect_receipts[0])),
+      bundle_hash: result.rows[0].bundle_hash,
+      bundle: Object.freeze(structuredClone(bundle)),
     });
   };
 }

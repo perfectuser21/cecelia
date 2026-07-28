@@ -4,6 +4,7 @@ import {
 } from './kernel-equivalence-axes.js';
 import {
   preloadReceiptBundleAncestry,
+  sha256Canonical,
   verifyEffectReceipt,
   verifyExecutionGrant,
   verifyReceiptBundle,
@@ -247,7 +248,15 @@ export function compileDrillPlan(
         effect_key_id: descriptor.effect_key_id,
         blocked_by: descriptor.blocked_by,
         isolation: structuredClone(descriptor.isolation),
-        expected: structuredClone(descriptor.scenarios[scenario]),
+        expected: {
+          ...structuredClone(descriptor.scenarios[scenario]),
+          ...(scenario === 'recovery'
+            ? {
+              predecessor_expected:
+                structuredClone(descriptor.scenarios.violation),
+            }
+            : {}),
+        },
       }))
     ))
   )).sort((left, right) => left.cell_id.localeCompare(right.cell_id));
@@ -443,6 +452,9 @@ function violationCellFor(recoveryCell) {
     ...recoveryCell,
     cell_id: recoveryCell.cell_id.replace(/::recovery$/, '::violation'),
     scenario: 'violation',
+    expected: structuredClone(
+      recoveryCell?.expected?.predecessor_expected ?? {},
+    ),
   };
 }
 
@@ -691,15 +703,58 @@ export async function executeDrillCell({
       );
     }
     try {
-      const predecessorVerificationNow = sampleTrustedClock(now);
-      if (predecessorVerificationNow == null) {
+      const ancestryVerificationNow = sampleTrustedClock(now);
+      if (ancestryVerificationNow == null) {
         return deny('verification_time_invalid', 'clock_validation');
       }
       const violationCell = violationCellFor(cell);
+      if (
+        chainCheckpoint.head_hash == null
+        || !HASH_PATTERN.test(predecessor?.bundle_hash ?? '')
+        || sha256Canonical(predecessor?.bundle) !== predecessor.bundle_hash
+      ) {
+        return deny(
+          'recovery_predecessor_unavailable',
+          'recovery_predecessor',
+        );
+      }
+      const ancestry = await withTimeout(
+        () => preloadReceiptBundleAncestry({
+          headHash: chainCheckpoint.head_hash,
+          genesisHash: chainCheckpoint.genesis_hash,
+          readBundle: bundleChainStore.readBundle,
+          trustRegistry,
+          now: ancestryVerificationNow,
+        }),
+        timeoutMs,
+        'recovery_predecessor_timeout',
+      );
+      if (!ancestry.bundle_hashes.includes(predecessor.bundle_hash)) {
+        return deny(
+          'recovery_predecessor_unavailable',
+          'recovery_predecessor',
+        );
+      }
+      const trustedPredecessorBundle =
+        ancestry.readBundle(predecessor.bundle_hash);
+      if (
+        sha256Canonical(trustedPredecessorBundle)
+          !== sha256Canonical(predecessor.bundle)
+      ) {
+        return deny(
+          'recovery_predecessor_unavailable',
+          'recovery_predecessor',
+        );
+      }
+      const predecessorVerificationNow =
+        Date.parse(trustedPredecessorBundle.issued_at);
       predecessorGrant = verifyExecutionGrant(
-        predecessor?.grant,
+        trustedPredecessorBundle.execution_grants?.[0],
         trustRegistry,
-        expectedFromGrant(violationCell, predecessor?.grant),
+        expectedFromGrant(
+          violationCell,
+          trustedPredecessorBundle.execution_grants?.[0],
+        ),
         { now: predecessorVerificationNow },
       );
       if (!sameRecoveryBoundary(predecessorGrant, verifiedGrant)) {
@@ -709,11 +764,22 @@ export async function executeDrillCell({
         );
       }
       predecessorReceipt = verifyEffectReceipt(
-        predecessor?.receipt,
+        trustedPredecessorBundle.effect_receipts?.[0],
         trustRegistry,
         expectedFromGrant(violationCell, predecessorGrant),
         { now: predecessorVerificationNow },
       );
+      if (
+        predecessorReceipt.observed_outcome
+          !== violationCell.expected.expected_outcome
+        || predecessorReceipt.effect_code
+          !== violationCell.expected.effect_code
+      ) {
+        return deny(
+          'recovery_predecessor_contract_mismatch',
+          'recovery_predecessor',
+        );
+      }
     } catch (error) {
       return deny(
         errorCode(error, 'recovery_predecessor_unavailable', { trusted: true }),
