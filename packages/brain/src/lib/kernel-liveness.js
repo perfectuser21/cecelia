@@ -204,16 +204,26 @@ export async function assessKernelLiveness({
 
 export function createKernelLivenessEquivalenceSeam({
   effectSigner,
-  recoverDeadAttempt,
+  livenessAuthority,
 } = {}) {
   if (typeof effectSigner?.signEffectResult !== 'function') {
     throw livenessSeamError('seam_effect_signer_unavailable');
   }
-  if (typeof recoverDeadAttempt !== 'function') {
-    throw livenessSeamError('liveness_recovery_port_unavailable');
+  if (
+    livenessAuthority?.owner_service !== LIVENESS_SEAM_ID
+    || typeof livenessAuthority?.loadTarget !== 'function'
+    || typeof livenessAuthority?.snapshot !== 'function'
+    || typeof livenessAuthority?.recoverDeadAttempt !== 'function'
+    || typeof livenessAuthority?.now !== 'function'
+    || typeof livenessAuthority?.hostFn !== 'function'
+    || typeof livenessAuthority?.killFn !== 'function'
+  ) {
+    throw livenessSeamError('liveness_authority_port_unavailable');
   }
 
   return Object.freeze({
+    owner_service: LIVENESS_SEAM_ID,
+
     async invoke({
       cell,
       grant,
@@ -224,8 +234,8 @@ export function createKernelLivenessEquivalenceSeam({
       signal?.throwIfAborted();
       if (
         cell?.seam_id !== LIVENESS_SEAM_ID
-        || typeof resource?.snapshot !== 'function'
-        || !resource?.liveness_input
+        || resource?.resource_id !== grant?.resource_id
+        || resource?.resource_ref !== grant?.resource_ref
       ) {
         throw livenessSeamError('liveness_equivalence_resource_invalid');
       }
@@ -234,11 +244,40 @@ export function createKernelLivenessEquivalenceSeam({
         throw livenessSeamError('liveness_equivalence_scenario_invalid');
       }
 
-      const before = await resource.snapshot({ phase: 'before', signal });
+      const authoritativeResource = Object.freeze({
+        resource_id: resource.resource_id,
+        resource_ref: resource.resource_ref,
+      });
+      const target = await livenessAuthority.loadTarget({
+        cell,
+        grant,
+        resource: authoritativeResource,
+        signal,
+      });
       signal?.throwIfAborted();
-      const assessment = await assessKernelLiveness(
-        resource.liveness_input,
-      );
+      if (!target?.task || !target?.run) {
+        throw livenessSeamError('liveness_equivalence_target_unavailable');
+      }
+
+      const before = await livenessAuthority.snapshot({
+        phase: 'before',
+        cell,
+        grant,
+        resource: authoritativeResource,
+        target,
+        signal,
+      });
+      signal?.throwIfAborted();
+      const assessment = await assessKernelLiveness({
+        pool: livenessAuthority.pool ?? null,
+        task: target.task,
+        run: target.run,
+        now: livenessAuthority.now,
+        staleMs:
+          livenessAuthority.staleMs ?? KERNEL_HEARTBEAT_STALE_MS,
+        hostFn: livenessAuthority.hostFn,
+        killFn: livenessAuthority.killFn,
+      });
       signal?.throwIfAborted();
       if (assessment.verdict !== effect.verdict) {
         throw livenessSeamError('liveness_equivalence_outcome_unexpected');
@@ -246,11 +285,12 @@ export function createKernelLivenessEquivalenceSeam({
 
       let recovery = null;
       if (cell.scenario === 'recovery') {
-        recovery = await recoverDeadAttempt({
+        recovery = await livenessAuthority.recoverDeadAttempt({
+          target,
           assessment,
           cell,
           grant,
-          resource,
+          resource: authoritativeResource,
           signal,
         });
         signal?.throwIfAborted();
@@ -260,8 +300,12 @@ export function createKernelLivenessEquivalenceSeam({
           );
         }
       }
-      const after = await resource.snapshot({
+      const after = await livenessAuthority.snapshot({
         phase: 'after',
+        cell,
+        grant,
+        resource: authoritativeResource,
+        target,
         assessment,
         recovery,
         signal,
