@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.268.11
+**版本**: 1.268.12
+
+## Kernel watchdog credential authority
+
+- Codex watchdog resume 与 Kernel `run.js` 共用 controller-owned
+  `KERNEL_FLEET_BRIDGE_TOKEN` 作为中央 Credential Broker 的签名 authority；
+  不生成默认、伪造或硬编码 secret，也不从远端 worker 读取长期凭据。
+- secret 缺失或不合法时在读取 provider credential、inspect/cancel/launch 之前
+  fail-closed；调用方注入完整 launcher 时不额外构造未使用的 broker。
+- 恢复请求只向 fleet worker 发送有界签名 envelope，测试同时约束 controller
+  secret 不进入请求 JSON 或诊断文本。
+- 回退：`bash scripts/brain-rollback.sh 1.268.11`；没有数据库迁移。
 
 ## Brain-owned Kernel production seam builders
 

@@ -479,9 +479,10 @@ export async function resumeKernelAttempt(attempt, {
     execution,
   });
   const credentialBroker = injectedCredentialBroker
-    ?? (originalParentAttempt.provider === 'codex'
+    ?? (!injectedLauncher && originalParentAttempt.provider === 'codex'
       ? createCredentialBroker({
         controllerMachineId: env.CECELIA_MACHINE_ID ?? DEFAULT_LOCAL_MACHINE_ID,
+        signingSecret: env.KERNEL_FLEET_BRIDGE_TOKEN,
         loadCredential: injectedLoadCredential
           ?? createFileCredentialLoader({
             accountHomeResolver: (accountId) => (

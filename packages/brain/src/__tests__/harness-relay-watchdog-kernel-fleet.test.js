@@ -12,6 +12,8 @@ const RUN_ID = '33333333-3333-4333-8333-333333333333';
 const SECRET = 'watchdog-fleet-secret-at-least-32-bytes';
 const CALLBACK_TOKEN = 'watchdog-child-callback-token';
 const BRIDGE_URL = 'http://xian-m4.internal:3458';
+const PR_HEAD_SHA = 'b'.repeat(40);
+const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4380';
 
 function testCredentialPayload() {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
@@ -51,10 +53,27 @@ function bundle() {
         repo: 'perfectuser21/cecelia',
         base_sha: '0123456789abcdef0123456789abcdef01234567',
         branch: 'cp-watchdog-fleet',
-        expected_head_sha: null,
+        expected_head_sha: PR_HEAD_SHA,
         mode: 'read-only',
         run_id: RUN_ID,
         attempt_id: CHILD_ID,
+      },
+      pull_request: {
+        type: 'pull_request',
+        url: PR_URL,
+        number: 4380,
+        head_ref: 'cp-watchdog-fleet',
+        head_sha: PR_HEAD_SHA,
+        state: 'OPEN',
+      },
+      github_read_policy: {
+        version: 'github-read/v1',
+        repo: 'perfectuser21/cecelia',
+        url: PR_URL,
+        number: 4380,
+        head_ref: 'cp-watchdog-fleet',
+        head_sha: PR_HEAD_SHA,
+        allowed_states: ['OPEN'],
       },
     },
     constraints: {
@@ -63,6 +82,17 @@ function bundle() {
       timeout_seconds: 300,
     },
     expected_output: 'harness-result/evaluator-v1',
+    result_channel: {
+      version: 'attempt-result-file/v1',
+      path: `/tmp/cecelia-prompts/${CHILD_ID}.result.json`,
+      max_bytes: 1024 * 1024,
+      bindings: {
+        task_id: 'task-1',
+        run_id: RUN_ID,
+        attempt_id: CHILD_ID,
+        role: 'evaluator',
+      },
+    },
   };
 }
 
@@ -185,6 +215,7 @@ describe('kernel fleet watchdog recovery', () => {
       actual_machine_id: 'xian-mac-m1',
     };
     const fetchFn = successfulWorkerFetch('xian-mac-m1');
+    const loadCredential = vi.fn(async () => testCredentialPayload());
 
     await expect(resumeKernelAttempt({
       ...childAttempt(),
@@ -198,15 +229,45 @@ describe('kernel fleet watchdog recovery', () => {
         lease_generation: 4,
       },
       fetchFn,
+      loadCredential,
     }))).resolves.toMatchObject({ ok: true, resumed: true });
 
-    expect(JSON.parse(fetchFn.mock.calls[2][1].body)).toMatchObject({
+    const launchBodyText = fetchFn.mock.calls[2][1].body;
+    const launchBody = JSON.parse(launchBodyText);
+    expect(launchBody).toMatchObject({
       target: {
         provider: 'codex',
         account: 'team3',
         machine: 'xian-mac-m1',
       },
+      credential_envelope: {
+        contract_version: 'provider-credential-envelope/v2',
+        attempt_id: CHILD_ID,
+        run_id: RUN_ID,
+        provider: 'codex',
+        account_id: 'team3',
+        machine_id: 'xian-mac-m1',
+        lease_owner: 'watchdog:test',
+        lease_generation: 0,
+        signature: expect.stringMatching(/^hmac-sha256:[a-f0-9]{64}$/),
+      },
     });
+    expect(loadCredential).toHaveBeenCalledWith('codex', 'team3');
+    expect(launchBodyText).not.toContain(SECRET);
+  });
+
+  it('fails closed before credential reads or fleet effects when controller signing authority is absent', async () => {
+    const loadCredential = vi.fn(async () => testCredentialPayload());
+    const fetchFn = vi.fn();
+
+    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+      env: remoteEnv({ KERNEL_FLEET_BRIDGE_TOKEN: undefined }),
+      loadCredential,
+      fetchFn,
+    }))).rejects.toThrow('credential_signing_secret_invalid');
+
+    expect(loadCredential).not.toHaveBeenCalled();
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it('resumes a xian parent through inspect/cancel/launch and persists the child receipt', async () => {
@@ -267,8 +328,9 @@ describe('kernel fleet watchdog recovery', () => {
         account: 'team3',
         machine: 'xian-mac-m4',
       },
-      callback_url: `https://brain.public.example/api/brain/harness/attempts/${CHILD_ID}/callback`,
+      brain_url: 'https://brain.public.example',
     });
+    expect(JSON.parse(fetchFn.mock.calls[2][1].body)).not.toHaveProperty('callback_url');
     expect(store.recordLaunchReceipt).toHaveBeenCalledWith(CHILD_ID, {
       leaseOwner: 'watchdog:test',
       leaseGeneration: 0,
