@@ -77,6 +77,9 @@ describe('compileDrillPlan', () => {
     ['production environment', (drill) => { drill.isolation.environment = 'production'; }],
     ['main ref prefix', (drill) => { drill.isolation.resource_prefix = 'refs/heads/main'; }],
     ['protected ref prefix', (drill) => { drill.isolation.resource_prefix = 'refs/heads/release'; }],
+    ['path traversal prefix', (drill) => { drill.isolation.resource_prefix = 'equivalence-drill/{run_id}/{attempt_id}/../'; }],
+    ['empty path segment', (drill) => { drill.isolation.resource_prefix = 'equivalence-drill/{run_id}/{attempt_id}//'; }],
+    ['ambiguous delimiter', (drill) => { drill.isolation.resource_prefix = 'equivalence-drill/{run_id}/{attempt_id}/case:/'; }],
   ])('rejects unsafe default isolation: %s', (_label, mutate) => {
     const contract = clone(rootContract());
     mutate(contract.behavior_equivalence.behaviors[0].drill);

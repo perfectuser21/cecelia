@@ -231,6 +231,10 @@ describe('canonical signed envelopes', () => {
     ['axis mismatch', (value) => { value.provider = 'grok'; }, 'grant_axis_mismatch'],
     ['unsafe environment', (value) => { value.environment = 'production'; }, 'grant_environment_unsafe'],
     ['protected resource id', (value) => { value.resource_id = 'production'; }, 'grant_environment_unsafe'],
+    ['protected token in resource id', (value) => { value.resource_id = 'eq:production'; }, 'grant_environment_unsafe'],
+    ['path-like resource id', (value) => { value.resource_id = 'eq/case'; }, 'grant_environment_unsafe'],
+    ['traversal resource ref', (value) => { value.resource_ref = `${value.resource_prefix}../../victim`; }, 'grant_environment_unsafe'],
+    ['empty resource ref segment', (value) => { value.resource_ref = `${value.resource_prefix}case//victim`; }, 'grant_environment_unsafe'],
     ['expired grant', (value) => { value.expires_at = '2026-07-28T11:59:59.000Z'; }, 'grant_expired'],
   ])('rejects %s even when the object remains signed', (_label, mutate, code) => {
     const keys = trustFixture();

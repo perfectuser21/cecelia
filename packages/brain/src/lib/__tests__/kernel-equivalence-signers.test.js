@@ -165,6 +165,14 @@ describe('protected Ed25519 equivalence signers', () => {
     })).toThrowError(expect.objectContaining({
       code: 'grant_environment_unsafe',
     }));
+
+    expect(() => authority.issue({
+      ...grantInput(fixtureCell()),
+      resource_ref:
+        `refs/heads/equivalence-drill/${FIXTURE_RUN_ID}/${FIXTURE_ATTEMPT_ID}/../../victim`,
+    })).toThrowError(expect.objectContaining({
+      code: 'grant_environment_unsafe',
+    }));
   });
 
   it('loads a separate collector key and emits a verifiable bundle', async () => {
