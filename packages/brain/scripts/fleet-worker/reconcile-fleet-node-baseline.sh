@@ -27,6 +27,8 @@ TAR="${FLEET_BASELINE_TAR:-/usr/bin/tar}"
 HDIUTIL="${FLEET_BASELINE_HDIUTIL:-/usr/bin/hdiutil}"
 DITTO="${FLEET_BASELINE_DITTO:-/usr/bin/ditto}"
 CODESIGN="${FLEET_BASELINE_CODESIGN:-/usr/bin/codesign}"
+LAUNCHCTL="${FLEET_BASELINE_LAUNCHCTL:-/bin/launchctl}"
+SUDO="${FLEET_BASELINE_SUDO:-/usr/bin/sudo}"
 TAILSCALE="${FLEET_BASELINE_TAILSCALE:-$(command -v tailscale || true)}"
 DOCKER="${FLEET_BASELINE_DOCKER-$(command -v docker || true)}"
 GIT="${FLEET_BASELINE_GIT:-$(command -v git || true)}"
@@ -44,6 +46,8 @@ RUNNER_ARCHIVE="${FLEET_BASELINE_RUNNER_ARCHIVE:-}"
 WORKER_TOKEN_SOURCE="${FLEET_BASELINE_WORKER_TOKEN_FILE:-}"
 WORKER_DATA_ROOT="$SYSTEM_ROOT/var/lib/cecelia/fleet-worker"
 WORKER_TOKEN_FILE="$WORKER_DATA_ROOT/worker-auth"
+ORBSTACK_OWNER="${FLEET_BASELINE_ORBSTACK_OWNER:-${SUDO_USER:-}}"
+ORBSTACK_OWNER_UID=''
 
 TEMP_ROOT=''
 ORBSTACK_MOUNTED=false
@@ -83,6 +87,8 @@ cleanup() {
     ORBSTACK_MOUNTED=false
   fi
   if [[ "$ORBSTACK_REPLACED" == true && "$ORBSTACK_INSTALL_SUCCEEDED" != true ]]; then
+    run_orbstack_command \
+      "$orb_app/Contents/MacOS/bin/orb" stop >/dev/null 2>&1 || true
     /bin/rm -rf -- "$orb_app"
     if [[ -n "$ORBSTACK_BACKUP" && -d "$ORBSTACK_BACKUP" ]]; then
       /bin/mv "$ORBSTACK_BACKUP" "$orb_app" || true
@@ -287,13 +293,34 @@ ensure_codex_toolchain() {
   /bin/ln -sfn "$codex_bin" "$TOOLCHAIN_BIN/codex"
 }
 
+resolve_orbstack_owner() {
+  [[ "$ORBSTACK_OWNER" =~ ^[A-Za-z0-9._-]+$ \
+    && "$ORBSTACK_OWNER" != root \
+    && "$ORBSTACK_OWNER" != _cecelia ]] \
+    || die "orbstack_owner_required"
+  ORBSTACK_OWNER_UID="$("$ID_COMMAND" -u "$ORBSTACK_OWNER" 2>/dev/null)" \
+    || die "orbstack_owner_invalid"
+  [[ "$ORBSTACK_OWNER_UID" =~ ^[0-9]+$ \
+    && "$ORBSTACK_OWNER_UID" -gt 0 ]] \
+    || die "orbstack_owner_invalid"
+}
+
+run_orbstack_command() {
+  local orb="$1"
+  shift
+
+  [[ -n "$ORBSTACK_OWNER_UID" ]] || resolve_orbstack_owner
+  "$LAUNCHCTL" asuser "$ORBSTACK_OWNER_UID" \
+    "$SUDO" -H -u "$ORBSTACK_OWNER" "$orb" "$@"
+}
+
 start_orbstack() {
   local orb="$1"
   local attempt
 
-  "$orb" start >/dev/null 2>&1 || true
+  run_orbstack_command "$orb" start >/dev/null 2>&1 || true
   for (( attempt = 1; attempt <= 30; attempt += 1 )); do
-    if "$orb" status >/dev/null 2>&1; then
+    if run_orbstack_command "$orb" status >/dev/null 2>&1; then
       return 0
     fi
     if [[ "$attempt" -lt 30 ]]; then
@@ -343,7 +370,8 @@ ensure_orbstack() {
   "$DITTO" "$source_app" "$stage_app"
 
   if [[ -d "$orb_app" && ! -L "$orb_app" ]]; then
-    "$orb_app/Contents/MacOS/bin/orb" stop >/dev/null 2>&1 || true
+    run_orbstack_command \
+      "$orb_app/Contents/MacOS/bin/orb" stop >/dev/null 2>&1 || true
     ORBSTACK_BACKUP="$TEMP_ROOT/OrbStack.previous.app"
     /bin/mv "$orb_app" "$ORBSTACK_BACKUP"
   elif [[ -e "$orb_app" || -L "$orb_app" ]]; then
@@ -439,6 +467,7 @@ verify_regular_input "$RUNNER_ARCHIVE" "runner_archive_required"
 verify_regular_input "$WORKER_TOKEN_SOURCE" "worker_token_file_required"
 [[ -n "$GIT" && -x "$GIT" ]] || die "git_command_unavailable"
 [[ -x "$INSTALLER" ]] || die "fleet_worker_installer_unavailable"
+resolve_orbstack_owner
 
 current_orbstack="$(read_orbstack_version || true)"
 if [[ -n "$current_orbstack" \
