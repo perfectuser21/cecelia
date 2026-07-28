@@ -135,6 +135,12 @@ function webUrl(value, path) {
   return parsed;
 }
 
+function evidenceLocation(value, path) {
+  const parsed = string(value, path, { max: 4096 });
+  if (/^https?:\/\//.test(parsed)) return webUrl(parsed, path);
+  return relativePath(parsed, path);
+}
+
 function canonicalize(value, seen) {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number') {
@@ -154,7 +160,9 @@ function canonicalize(value, seen) {
   assertObject(value, 'canonical JSON value');
   if (seen.has(value)) invalid('canonical JSON rejects cycles');
   seen.add(value);
-  const result = {};
+  // A normal object treats an own "__proto__" assignment as a prototype
+  // mutation. Preserve every JSON key in the canonical byte stream.
+  const result = Object.create(null);
   for (const key of Object.keys(value).sort()) {
     if (value[key] === undefined) invalid(`canonical JSON rejects undefined field: ${key}`);
     result[key] = canonicalize(value[key], seen);
@@ -518,6 +526,8 @@ function validateEvaluator(raw, verified, binding) {
       'screenshots',
       'cascade_assertions',
       'notes',
+      'feedback',
+      'segment_eval',
     ],
     'rawEnvelope',
   );
@@ -536,12 +546,18 @@ function validateEvaluator(raw, verified, binding) {
     enumeration(raw.verification_level, ['L1', 'L2', 'L3'], 'rawEnvelope.verification_level');
   }
   if (Object.hasOwn(raw, 'notes')) string(raw.notes, 'rawEnvelope.notes', { max: 32768 });
+  if (Object.hasOwn(raw, 'feedback')) {
+    string(raw.feedback, 'rawEnvelope.feedback', { max: 32768 });
+  }
+  if (Object.hasOwn(raw, 'segment_eval')) {
+    string(raw.segment_eval, 'rawEnvelope.segment_eval', { max: 128 });
+  }
   if (Object.hasOwn(raw, 'screenshots')) {
     if (!Array.isArray(raw.screenshots) || raw.screenshots.length > 256) {
       invalid('rawEnvelope.screenshots must be bounded');
     }
     raw.screenshots.forEach(
-      (item, index) => webUrl(item, `rawEnvelope.screenshots[${index}]`),
+      (item, index) => evidenceLocation(item, `rawEnvelope.screenshots[${index}]`),
     );
   }
   if (Object.hasOwn(raw, 'cascade_assertions')) {
@@ -586,7 +602,7 @@ function validateEvaluator(raw, verified, binding) {
     checks: cloneCanonical(verified.behavior_tests),
     decision: {
       outcome: raw.verdict,
-      reason: raw.log_excerpt ?? raw.failed_step ?? '',
+      reason: raw.feedback ?? raw.log_excerpt ?? raw.failed_step ?? '',
       pr_head_sha: verified.pr_head_sha,
       unverifiable: cloneCanonical(unverifiable),
     },

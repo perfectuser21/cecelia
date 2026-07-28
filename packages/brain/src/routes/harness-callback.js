@@ -117,6 +117,17 @@ function attemptCommanderCursor(attempt) {
   return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : undefined;
 }
 
+function attemptTaskId(attempt) {
+  const value = attempt?.task_bundle;
+  if (value && typeof value === 'object') return value.inputs?.task_id ?? null;
+  if (typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value)?.inputs?.task_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeVerdict(role, outcome) {
   const value = String(outcome ?? '').trim().toUpperCase();
   if (role === 'reviewer') {
@@ -421,6 +432,7 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
       attempt.role,
       attemptExpectedOutput(attempt),
       {
+        taskId: attemptTaskId(attempt),
         runId: attempt.run_id,
         attemptId,
         eventCursor: attemptCommanderCursor(attempt),
