@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { signMachineAttestation } from '../machine-attestation.js';
-import { buildRealDeps, parseArgs } from '../run.js';
+import { buildDefaultHandlers, buildRealDeps, parseArgs } from '../run.js';
 
 describe('parseArgs', () => {
   it('--task-id 必填，缺失即抛用法错误', () => {
@@ -380,5 +380,33 @@ describe('buildRealDeps', () => {
       if (previous === undefined) delete process.env.CECELIA_MACHINE_ID;
       else process.env.CECELIA_MACHINE_ID = previous;
     }
+  });
+});
+
+describe('buildDefaultHandlers merge authority', () => {
+  it('wires merge_pr only to the receipted merge effect', async () => {
+    const mergeEffect = vi.fn(async () => ({ status: 'DONE', detail: 'merge confirmed' }));
+    const handlers = await buildDefaultHandlers({
+      pool: { query: vi.fn() },
+      execCmd: vi.fn(),
+      attemptStore: { complete: vi.fn() },
+      judgeGate: vi.fn(),
+      mergeEffect,
+    });
+
+    await expect(handlers.merge_pr({
+      runId: '11111111-1111-4111-8111-111111111111',
+      taskId: '22222222-2222-4222-8222-222222222222',
+      observed: {
+        pr: {
+          url: 'https://github.com/perfectuser21/cecelia/pull/4400',
+          state: 'OPEN',
+          merged: false,
+          mergeStateStatus: 'CLEAN',
+        },
+        decisionLog: [],
+      },
+    })).resolves.toEqual({ status: 'DONE', detail: 'merge confirmed' });
+    expect(mergeEffect).toHaveBeenCalledOnce();
   });
 });
