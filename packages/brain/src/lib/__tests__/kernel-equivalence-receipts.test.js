@@ -294,6 +294,25 @@ describe('canonical signed envelopes', () => {
       .toThrowError(expect.objectContaining({ code: 'trust_registry_invalid' }));
   });
 
+  it.each([
+    ['purposes', (keys) => {
+      keys.effect.record.public_key_pem = keys.authority.record.public_key_pem;
+    }],
+    ['authorities', (keys) => {
+      keys.registry.keys.push({
+        ...keys.effect.record,
+        key_id: 'other-effect-2026-07',
+        service_id: 'kernel.other.effect_executor',
+      });
+    }],
+  ])('rejects public-key material reused across %s', (_axis, reuseKey) => {
+    const keys = trustFixture();
+    reuseKey(keys);
+
+    expect(() => validateTrustRegistry(keys.registry))
+      .toThrowError(expect.objectContaining({ code: 'trust_registry_invalid' }));
+  });
+
   it('binds the effect receipt to the manifest-pinned signer key', () => {
     const current = trustFixture();
     const old = keyPair(
