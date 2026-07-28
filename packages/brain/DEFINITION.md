@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.268.28
+**版本**: 1.268.29
+
+## Kernel execution grant runtime expiry fence
+
+- Trusted runtime 在 adapter `prepare` 完成后、actual seam 调用前，以同一
+  server-owned trust registry 与 trusted clock 重新验证冻结 grant；过期或失效时
+  先完成并独立验证 cleanup，再拒绝执行。
+- Trusted execution service 的 runtime timeout 与完成 deadline 取 caller/service
+  deadline 和 protected grant `expires_at` 的较早者，避免 nonce、predecessor 或
+  prepare 消耗掉授权窗口后仍获得更长执行预算。
+- 未新增 A2 effect/isolation port；live equivalence proof 继续保持 0/99。
 
 ## Kernel production controller A1
 

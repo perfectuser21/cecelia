@@ -1038,6 +1038,39 @@ export async function executeDrillCell({
     return deny('execution_aborted', 'request_cancellation');
   }
 
+  const seamAuthorizationNow = sampleTrustedClock(now);
+  let seamAuthorizationError = null;
+  if (seamAuthorizationNow == null) {
+    seamAuthorizationError = 'verification_time_invalid';
+  } else {
+    try {
+      verifyExecutionGrant(
+        verifiedGrant,
+        trustRegistry,
+        expectedFromGrant(cell, verifiedGrant),
+        { now: seamAuthorizationNow },
+      );
+    } catch (error) {
+      seamAuthorizationError = errorCode(
+        error,
+        'grant_invalid',
+        { trusted: true },
+      );
+    }
+  }
+  if (seamAuthorizationError) {
+    const cleanupResult = await confirmCleanup(
+      adapter,
+      { ...context, prepared, compensations },
+      timeoutMs,
+      selectedCleanupVerifier,
+    );
+    if (cleanupResult.error) {
+      return deny(cleanupResult.error, 'adapter_cleanup');
+    }
+    return deny(seamAuthorizationError, 'grant_revalidation');
+  }
+
   let receipt;
   let executionError = null;
   let executionStage = 'invoke';

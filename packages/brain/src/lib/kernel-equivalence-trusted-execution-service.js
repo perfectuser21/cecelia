@@ -261,9 +261,13 @@ export function createBrainTrustedExecutionService({
     if (!Number.isFinite(resolutionNow)) {
       fail('trusted_execution_deadline_invalid');
     }
+    const grantExpiry = Date.parse(resolution.grant.expires_at);
+    const executionDeadline = Number.isFinite(grantExpiry)
+      ? Math.min(effectiveDeadline, grantExpiry)
+      : effectiveDeadline;
     const remainingAfterResolution = Math.min(
       remainingMs,
-      Math.floor(effectiveDeadline - resolutionNow),
+      Math.floor(executionDeadline - resolutionNow),
     );
     if (signal?.aborted || remainingAfterResolution < 1) {
       fail('trusted_execution_request_aborted');
@@ -287,7 +291,7 @@ export function createBrainTrustedExecutionService({
     if (!Number.isFinite(completionNow)) {
       fail('trusted_execution_deadline_invalid');
     }
-    if (completionNow >= effectiveDeadline) {
+    if (completionNow >= executionDeadline) {
       fail('trusted_execution_deadline_exceeded');
     }
     return result;

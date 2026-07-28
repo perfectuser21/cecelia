@@ -358,6 +358,38 @@ describe('Brain trusted execution service', () => {
       code: 'trusted_execution_deadline_exceeded',
     });
   });
+
+  it('constrains the runtime deadline to the protected grant expiry', async () => {
+    const value = fixture();
+    const clockNow = Date.parse('2026-07-29T02:55:00.000Z');
+    value.grantAuthority.resolveProtectedGrant = vi.fn(async ({
+      cellId,
+      grantRef,
+    }) => ({
+      cell_id: cellId,
+      grant_ref: grantRef,
+      grant: {
+        grant_id: grantRef.slice(
+          'kernel-equivalence-grant:'.length,
+        ),
+        cell_id: cellId,
+        expires_at: new Date(clockNow + 1_000).toISOString(),
+      },
+    }));
+    const service = createBrainTrustedExecutionService({
+      ...value,
+      now: () => clockNow,
+    });
+
+    await service.execute({
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+    });
+
+    expect(value.executeCell).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 1_000 }),
+    );
+  });
 });
 
 describe('Brain trusted execution client', () => {

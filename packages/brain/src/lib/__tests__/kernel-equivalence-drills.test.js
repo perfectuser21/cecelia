@@ -17,6 +17,7 @@ import {
   fixtureCleanupEvidence,
   fixtureGrant,
   fixtureReceipt,
+  signFixture,
 } from './kernel-equivalence-test-fixtures.js';
 
 function rootContract() {
@@ -321,6 +322,56 @@ describe('executeDrillCell', () => {
       code: 'drill_receipt_collected',
     });
     expect(clock.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('blocks the actual seam when a one-second grant expires during prepare', async () => {
+    const value = executionFixture();
+    let clockNow = FIXTURE_NOW;
+    let effectCount = 0;
+    value.grant = signFixture({
+      ...value.grant,
+      issued_at: new Date(clockNow - 1_000).toISOString(),
+      expires_at: new Date(clockNow + 1_000).toISOString(),
+      signature: undefined,
+    }, value.keys.authority.privateKey);
+    value.receipt = fixtureReceipt(
+      value.keys,
+      value.grant,
+      value.cell,
+    );
+    value.bundle = fixtureBundle(
+      value.keys,
+      value.cell,
+      value.grant,
+      [value.receipt],
+    );
+    value.adapter.prepare.mockImplementation(async () => {
+      clockNow += 1_000;
+      return { resource_id: value.grant.resource_id };
+    });
+    value.adapter.invokeActualSeam.mockImplementation(async () => {
+      effectCount += 1;
+      return value.receipt;
+    });
+    value.collector.mockResolvedValue(value.bundle);
+    value.cleanupVerifier.mockImplementation(async (context) => ({
+      confirmed: context.cleanup?.confirmed === true,
+      evidence: fixtureCleanupEvidence(
+        value.cell,
+        value.grant,
+        context,
+      ),
+    }));
+
+    await expect(execute(value, {
+      now: () => clockNow,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'grant_expired',
+    });
+    expect(effectCount).toBe(0);
+    expect(value.adapter.cleanup).toHaveBeenCalledOnce();
+    expect(value.collector).not.toHaveBeenCalled();
   });
 
   it('blocks invalid grants without consuming nonce', async () => {

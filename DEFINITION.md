@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.268.28
+**Brain 版本**: 1.268.29
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.29 — Kernel execution grant runtime expiry fence
+
+- Trusted runtime 在 `prepare` 完成后、actual seam 前重新验证同一份冻结的
+  execution grant；若 grant 已过期或失效，先验证 cleanup 再 fail-closed，
+  不允许副作用先发生、再由 bundle 校验补报过期。
+- Trusted execution service 将有效执行 deadline 约束为 caller/service deadline
+  与 protected grant `expires_at` 的较早者，同时保留原有 cancellation、settlement
+  与 cleanup 语义。
+- 本版本仍是未发布的本地集成候选；未 push、未 merge、未 deploy，且 99 个 live
+  equivalence drill 未完成前保持 `0/99 proven`。
 
 ## Brain 1.268.28 — Kernel production controller A1
 
