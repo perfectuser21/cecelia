@@ -56,7 +56,7 @@ write_executable "$fake_bin/git" \
   '      if [[ "$1" == "--output" ]]; then output="$2"; shift 2; continue; fi' \
   '      shift' \
   '    done' \
-  '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/scripts/fleet-worker' \
+  '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/src/orchestrator/fleet-node/node-admission.js packages/brain/scripts/fleet-worker' \
   '  fi' \
   '  if [[ "${1:-}" == "init" && "${2:-}" == "--bare" ]]; then mkdir -p "$3"; exit 0; fi' \
   '  if [[ "$*" == *" fetch --no-tags "* || "$*" == *" update-ref "* || "$*" == *" symbolic-ref HEAD "* ]]; then exit 0; fi' \
@@ -305,6 +305,10 @@ grep -Fq -- '-c tar.umask=0022 archive --format=tar' "$artifact_log" \
 grep -Eq 'archive --format=tar --output .* 0000000000000000000000000000000000000001 ' \
   "$artifact_log" \
   || fail "rollout archive did not use the frozen commit"
+grep -Fq \
+  'packages/brain/src/orchestrator/fleet-node/node-admission.js' \
+  "$artifact_log" \
+  || fail "rollout archive omitted the admission evaluator consumed by fleet-nodectl"
 grep -Fq 'bundle create' "$artifact_log" \
   || fail "rollout did not create a Git bundle"
 grep -Eq 'symbolic-ref HEAD refs/heads/fleet-rollout$' "$artifact_log" \
