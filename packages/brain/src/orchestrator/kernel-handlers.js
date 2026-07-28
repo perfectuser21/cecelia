@@ -1,4 +1,27 @@
 import { normalizeFailureSignature } from './convergence-signatures.js';
+import { sha256Canonical } from '../lib/kernel-equivalence-receipts.js';
+
+const INDEPENDENT_JUDGE_SEAM_ID = 'kernel.evaluation.independent_judge';
+const INDEPENDENT_JUDGE_EFFECTS = Object.freeze({
+  normal: Object.freeze({
+    observed_outcome: 'confirmed',
+    effect_code: 'independent_verdict_recorded',
+  }),
+  violation: Object.freeze({
+    observed_outcome: 'denied',
+    effect_code: 'self_certification_denied',
+  }),
+  recovery: Object.freeze({
+    observed_outcome: 'recovered',
+    effect_code: 'reassigned_evaluator_verdict_recorded',
+  }),
+});
+
+function seamError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
 
 function prNumber(prUrl) {
   const value = String(prUrl ?? '').match(/\/pull\/(\d+)(?:\/|$)/)?.[1];
@@ -64,6 +87,16 @@ export function createKernelHandlers(deps) {
     async 'spawn:judge'(ctx) {
       const evaluator = ctx.observed.evaluateVerdict ?? {};
       const evaluateResult = ctx.observed.evaluateResult ?? null;
+      const evaluatorAttemptId =
+        evaluateResult?.attempt_id
+        ?? evaluator.attempt_id
+        ?? null;
+      if (evaluatorAttemptId && evaluatorAttemptId === ctx.attempt.id) {
+        return {
+          status: 'BLOCKED',
+          detail: 'self-certification denied',
+        };
+      }
       const brainResult = evaluatorBrainResult(evaluateResult) ?? ctx.observed.callbackResult;
       const result = await deps.judgeGate({
         agentVerdict: evaluator.verdict ?? evaluateResult?.decision?.outcome,
@@ -231,6 +264,82 @@ export function createKernelHandlers(deps) {
         client.release();
       }
       return { status: 'DONE', detail: 'report chain completed' };
+    },
+  });
+}
+
+export function createIndependentJudgeEquivalenceSeam({
+  handlerDeps,
+  effectSigner,
+} = {}) {
+  if (typeof effectSigner?.signEffectResult !== 'function') {
+    throw seamError('seam_effect_signer_unavailable');
+  }
+  const handler = createKernelHandlers(handlerDeps)?.['spawn:judge'];
+  if (typeof handler !== 'function') {
+    throw seamError('judge_handler_unavailable');
+  }
+
+  return Object.freeze({
+    async invoke({
+      cell,
+      grant,
+      resource,
+      predecessor = null,
+      signal,
+    }) {
+      signal?.throwIfAborted();
+      if (
+        cell?.seam_id !== INDEPENDENT_JUDGE_SEAM_ID
+        || typeof resource?.snapshot !== 'function'
+        || !resource?.handler_context
+      ) {
+        throw seamError('judge_equivalence_resource_invalid');
+      }
+      const effect = INDEPENDENT_JUDGE_EFFECTS[cell.scenario];
+      if (!effect) throw seamError('judge_equivalence_scenario_invalid');
+
+      const before = await resource.snapshot({ phase: 'before', signal });
+      signal?.throwIfAborted();
+      const result = await handler(resource.handler_context);
+      signal?.throwIfAborted();
+      const after = await resource.snapshot({
+        phase: 'after',
+        result,
+        signal,
+      });
+      signal?.throwIfAborted();
+
+      const expectedResult = cell.scenario === 'violation'
+        ? result?.status === 'BLOCKED'
+          && result?.detail === 'self-certification denied'
+        : result?.status === 'DONE'
+          && /^judge:/.test(result?.detail ?? '');
+      if (!expectedResult) {
+        throw seamError('judge_equivalence_outcome_unexpected');
+      }
+
+      return effectSigner.signEffectResult({
+        service_id: INDEPENDENT_JUDGE_SEAM_ID,
+        cell,
+        grant,
+        resource_id: grant.resource_id,
+        resource_ref: grant.resource_ref,
+        observed_outcome: effect.observed_outcome,
+        effect_code: effect.effect_code,
+        before_hash: sha256Canonical(before),
+        after_hash: sha256Canonical(after),
+        predecessor,
+        signal,
+      });
+    },
+
+    async cancel({ signal } = {}) {
+      return { confirmed: signal?.aborted === true };
+    },
+
+    async cleanup() {
+      return { confirmed: true };
     },
   });
 }
