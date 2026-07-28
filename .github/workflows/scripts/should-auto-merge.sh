@@ -14,16 +14,15 @@
 #   ci.yml。通道1 几乎总是比「真跑 E2E + LLM 裁判复核」的通道2 快，抢先合并，把裁判的
 #   裁决权架空——用户曾亲眼见到「裁判说不放行，代码还是被 merge 了」。
 #
-# 判据：用 PR 标题而非分支名区分（cp-* 两边都用，无法区分）。harness generator 的 PR
-#   标题固定 `feat(harness): ...` 前缀（见 zenithjoy-skills/harness-generator/SKILL.md
-#   的 gh pr create --title），是 generator 独有的可靠标记；手动 /dev 的 PR 走
-#   fix(xxx):/feat(xxx): 等其它前缀，绝不会用 feat(harness):。命中该前缀 → 跳过通用
-#   auto-merge，把 merge 决定权完全交还给 harness 自己的 evaluator+裁判 gate。
+# Phase 0 判据：所有 cp-* PR 都跳过这个历史通用 auto-merge 通道。标题、分支和 PR body
+#   都是 PR 作者可变的 metadata，不能充当 evaluator/judge/human 的 merge authorization。
+#   后续只有统一 Kernel controller 签发、绑定 exact head SHA 的授权 receipt 才能恢复自动
+#   merge；在 receipt 尚未接入 GitHub workflow 前必须 fail-closed。
 #
 # ⚠️ 未来维护者注意：
-#   - 不要删掉 feat(harness): 判断当「多余代码」——删了会让裁判 gate 再次被架空。
-#   - 不要把这个跳过逻辑错误地套到手动 /dev 的 fix/feat PR 上——那些 PR 就该被通用
-#     auto-merge 正常合并，误拦会让所有 /dev 流程卡住。
+#   - 不要重新使用 title prefix / branch regex / PR body 作为 merge authority。
+#   - 自动合并恢复前，必须先有 SHA-bound、server-owned、single-use authorization receipt，
+#     并由独立测试证明 evaluator、judge 和所需人审缺一不可。
 set -euo pipefail
 
 HEAD_BRANCH="${1:-}"
@@ -35,10 +34,6 @@ if ! printf '%s' "$HEAD_BRANCH" | grep -qE '^cp-'; then
   exit 0
 fi
 
-# harness-owned PR：交给 harness 自己的 evaluator+DeepSeek 裁判 gate 决定 merge。
-if printf '%s' "$PR_TITLE" | grep -qE '^feat\(harness\):'; then
-  echo "SKIP: harness-owned PR（标题匹配 feat(harness): 前缀），跳过 CI 通用 auto-merge，交给 harness 自己的 evaluator+裁判 gate 处理 merge"
-  exit 0
-fi
-
-echo "MERGE"
+# PR_TITLE 暂保留为兼容参数，但绝不参与授权判断。
+: "$PR_TITLE"
+echo "SKIP: cp-* PR 缺少 Kernel 签发的 SHA-bound merge authorization receipt"

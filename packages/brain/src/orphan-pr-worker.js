@@ -19,7 +19,7 @@
  *   - 确认是孤儿后，标题与某个已 MERGED 的 PR 高度相似（superseded）→ 直接 close
  *     （不看 CI 状态、不受 age 阈值限制；无 keep label 才生效；判断顺序在
  *     hasActiveBrainTask 之后，避免误关正被 Brain task 追踪的 PR）
- *   - CI 全绿  → gh pr merge --squash --delete-branch
+ *   - CI 全绿  → 标记为等待统一 merge authorization（本 worker 永不 merge）
  *   - CI 有 fail → gh pr edit --add-label needs-attention
  *   - CI 还在跑 → skip (等下 tick 再查)
  *
@@ -120,7 +120,10 @@ function listOrphanCandidates(ageThresholdHours) {
 }
 
 /**
- * 查询 Brain 里是否有 in_progress 任务盯着这个 PR。
+ * 查询 Brain 是否拥有这个 PR。
+ *
+ * Kernel run 的 PR 权威落在 initiative_runs.pr_url；旧 one-session 则主要写
+ * tasks.result.pr_url。两者任一命中都必须视为受保护，不能被孤儿 worker 合并或关闭。
  *
  * @param {import('pg').Pool} pool
  * @param {string} prUrl
@@ -129,10 +132,18 @@ function listOrphanCandidates(ageThresholdHours) {
 async function hasActiveBrainTask(pool, prUrl) {
   const { rows } = await pool.query(
     `
-    SELECT id
-      FROM tasks
-     WHERE status = 'in_progress'
-       AND result->>'pr_url' = $1
+    SELECT 'brain_owned' AS owner_kind
+     WHERE EXISTS (
+       SELECT 1
+         FROM tasks
+        WHERE status = 'in_progress'
+          AND result->>'pr_url' = $1
+     )
+        OR EXISTS (
+       SELECT 1
+         FROM initiative_runs
+        WHERE pr_url = $1
+     )
      LIMIT 1
     `,
     [prUrl]
@@ -215,17 +226,6 @@ function classifyChecks(prNumber) {
   if (hasPending) return 'pending';
   if (hasSuccess) return 'success';
   return 'unknown';
-}
-
-/**
- * 合并 PR。
- */
-function mergePr(prNumber, dryRun) {
-  if (dryRun) {
-    console.log(`[orphan-pr-worker] [dry-run] would merge PR #${prNumber}`);
-    return;
-  }
-  gh(`gh pr merge ${prNumber} --squash --delete-branch`);
 }
 
 /**
@@ -402,17 +402,18 @@ export async function scanOrphanPrs(pool, opts = {}) {
       const ciStatus = classifyChecks(pr.number);
 
       if (ciStatus === 'success') {
-        mergePr(pr.number, dryRun);
-        result.merged++;
+        // Orphan worker 没有 evaluator/judge/human 的 SHA-bound authorization
+        // receipt，因此无论 CI 多绿都没有 merge authority。只观察、不执行。
+        result.skipped++;
         result.details.push({
           pr: pr.number,
           url: pr.url,
           branch: pr.headRefName,
-          action: 'merged',
-          reason: 'ci_green',
+          action: 'skipped',
+          reason: 'ci_green_requires_merge_authorization',
         });
         console.log(
-          `[orphan-pr-worker] merged orphan PR #${pr.number} (${pr.headRefName}) age=${pr.ageHours}h${dryRun ? ' [dry-run]' : ''}`
+          `[orphan-pr-worker] green orphan PR #${pr.number} requires merge authorization (${pr.headRefName}) age=${pr.ageHours}h`
         );
         continue;
       }
@@ -495,7 +496,6 @@ export const _internals = {
   listOrphanCandidates,
   hasActiveBrainTask,
   classifyChecks,
-  mergePr,
   labelPr,
   closePr,
   hasKeepLabel,

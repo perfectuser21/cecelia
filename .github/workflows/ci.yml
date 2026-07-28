@@ -1784,7 +1784,14 @@ jobs:
         run: |
           FAILED=false
 
-          check() { local n=$1 r=$2; if [ "$r" = "failure" ]; then echo "❌ $n"; FAILED=true; elif [ "$r" = "skipped" ]; then echo "⏭️  $n (skipped)"; else echo "✅ $n"; fi; }
+          check() {
+            local n=$1 r=$2
+            case "$r" in
+              success) echo "✅ $n" ;;
+              skipped) echo "⏭️  $n (skipped)" ;;
+              *) echo "❌ $n ($r)"; FAILED=true ;;
+            esac
+          }
 
           check "secrets-scan"      "${{ needs.secrets-scan.result }}"
           check "dod-format-check"  "${{ needs.dod-format-check.result }}"
@@ -1862,10 +1869,8 @@ jobs:
           HEAD_BRANCH: ${{ github.head_ref }}
         run: |
           # 合并决策抽到 should-auto-merge.sh（可单测，见 __tests__/should-auto-merge.test.sh）。
-          # 关键：harness generator 产出的 PR 也用 cp-* 分支，但走 harness 自己的
-          # evaluator+DeepSeek 裁判 gate 决定 merge。若此处仍按「cp-* + CI 绿」抢先合并，会
-          # 架空裁判裁决权（用户曾见「裁判说不放行，代码还是被 merge」）。脚本按 PR 标题
-          # feat(harness): 前缀识别 harness-owned PR 并跳过，把 merge 交还给 harness gate。
+          # Phase 0：cp-* 一律停在统一 Kernel merge gate。标题/分支/body 都不是授权。
+          # SHA-bound、server-owned receipt 接入前，此 job 保持 fail-closed。
           DECISION="$(bash .github/workflows/scripts/should-auto-merge.sh "$HEAD_BRANCH" "$PR_TITLE")"
           echo "$DECISION"
           if [[ "$DECISION" == SKIP:* ]]; then
