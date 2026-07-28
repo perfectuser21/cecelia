@@ -40,7 +40,8 @@ describe('createTrustedReceiptResolver', () => {
       bundle_hash: value.hash,
       receipt_ids: [value.receipt.receipt_id],
     });
-    expect(readBundle).toHaveBeenCalledExactlyOnceWith(value.hash);
+    expect(readBundle).toHaveBeenCalledTimes(1);
+    expect(readBundle).toHaveBeenCalledWith(value.hash);
   });
 
   it.each([

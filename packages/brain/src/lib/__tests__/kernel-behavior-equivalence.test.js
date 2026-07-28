@@ -10,9 +10,20 @@ import {
   projectJourneyCells,
   validateBehaviorEquivalence,
 } from '../kernel-behavior-equivalence.js';
+import { createTrustedReceiptResolver } from '../kernel-equivalence-receipt-resolver.js';
+import { sha256Canonical } from '../kernel-equivalence-receipts.js';
+import {
+  FIXTURE_NOW,
+  FIXTURE_SHA,
+  createTrustFixture,
+  fixtureBundle,
+  fixtureCell,
+  fixtureGrant,
+  fixtureReceipt,
+} from './kernel-equivalence-test-fixtures.js';
 
-const NOW = Date.parse('2026-07-28T12:00:00.000Z');
-const SHA = '8e034654d196221ddca25a7f032612b526bad031';
+const NOW = FIXTURE_NOW;
+const SHA = FIXTURE_SHA;
 
 function completeProof(provider, scenario) {
   return {
@@ -58,8 +69,37 @@ function provenBehavior(overrides = {}) {
     },
     proof_identity: {
       artifact_sha: SHA,
-      version: '1.268.2',
+      version: '1.268.7',
       effect_receipt_id: `receipt:test:merge-authority:${SHA}`,
+    },
+    drill: {
+      seam_id: 'kernel.merge.effect_executor',
+      seam_ref: 'packages/brain/src/orchestrator/merge-effect-executor.js',
+      adapter_id: 'kernel.drill.ci_merge_authority.v1',
+      effect_signer_status: 'available',
+      effect_key_purpose: 'effect_receipt',
+      effect_key_id: 'effect-2026-07',
+      blocked_by: null,
+      isolation: {
+        environment: 'isolated',
+        resource_type: 'ephemeral_branch',
+        resource_prefix: 'refs/heads/equivalence-drill/{run_id}/{attempt_id}/',
+      },
+      scenarios: {
+        normal: {
+          expected_outcome: 'confirmed',
+          effect_code: 'exact_sha_merge_confirmed',
+        },
+        violation: {
+          expected_outcome: 'denied',
+          effect_code: 'stale_sha_merge_denied',
+        },
+        recovery: {
+          expected_outcome: 'recovered',
+          effect_code: 'renewed_authority_merge_confirmed',
+          predecessor_scenario: 'violation',
+        },
+      },
     },
     proof_matrix: completeMatrix(),
     ...overrides,
@@ -81,6 +121,69 @@ function contract(behaviors = [provenBehavior()]) {
       behaviors,
     },
   };
+}
+
+function trustedContract(extraBehaviors = [], behaviorOverrides = {}) {
+  const behavior = provenBehavior(behaviorOverrides);
+  const keys = createTrustFixture(behavior.drill.seam_id);
+  behavior.drill.effect_key_id = keys.effect.record.key_id;
+  const bundles = new Map();
+  const matrix = {};
+
+  for (const provider of PROOF_PROVIDERS) {
+    matrix[provider] = {};
+    let violationReceipt = null;
+    for (const scenario of PROOF_SCENARIOS) {
+      const target = fixtureCell({
+        behaviorId: behavior.behavior_id,
+        provider,
+        scenario,
+        seamId: behavior.drill.seam_id,
+        adapterId: behavior.drill.adapter_id,
+      });
+      const executionGrant = fixtureGrant(keys, target);
+      const receipt = fixtureReceipt(
+        keys,
+        executionGrant,
+        target,
+        scenario === 'recovery' ? violationReceipt : null,
+      );
+      if (scenario === 'violation') violationReceipt = receipt;
+      const receipts = scenario === 'recovery'
+        ? [violationReceipt, receipt]
+        : [receipt];
+      const bundle = fixtureBundle(keys, target, executionGrant, receipts);
+      const bundleHash = sha256Canonical(bundle);
+      const bundleReference = `receipt-bundle:${bundleHash}`;
+      bundles.set(bundleHash, bundle);
+      matrix[provider][scenario] = {
+        test_command: `node scripts/ci/run-kernel-equivalence-drill.mjs --execute --cell ${target.cell_id} --grant /var/lib/cecelia/equivalence/${provider}-${scenario}.grant.json --state-dir /var/lib/cecelia/equivalence/state --receipt-dir /var/lib/cecelia/equivalence/receipts`,
+        expected_result: scenario === 'violation' ? 'denied' : 'pass',
+        observed_result: scenario === 'violation' ? 'denied' : 'pass',
+        evidence_refs: [bundleReference],
+        effect_receipt_id: receipt.receipt_id,
+        receipt_bundle_ref: bundleReference,
+        run_id: executionGrant.run_id,
+        attempt_id: executionGrant.attempt_id,
+        grant_id: executionGrant.grant_id,
+        nonce: executionGrant.nonce,
+        resource_id: executionGrant.resource_id,
+        resource_ref: executionGrant.resource_ref,
+        engine_version: '1.42.0',
+      };
+    }
+  }
+
+  behavior.proof_matrix = matrix;
+  behavior.proof_identity.effect_receipt_id = 'signed-3x3-bundle-set';
+  const value = contract([behavior, ...extraBehaviors]);
+  value.behavior_equivalence.drill_trust_registry = keys.registry;
+  const receiptResolver = createTrustedReceiptResolver({
+    readBundle: (hash) => bundles.get(hash),
+    trustRegistry: keys.registry,
+    now: NOW,
+  });
+  return { contract: value, receiptResolver, behavior };
 }
 
 describe('canonical behavior equivalence axes', () => {
@@ -118,7 +221,11 @@ describe('validateBehaviorEquivalence', () => {
   });
 
   it('accepts only a complete, fresh 3x3 proven contract', () => {
-    const result = validateBehaviorEquivalence(contract(), { now: NOW });
+    const trusted = trustedContract();
+    const result = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      receiptResolver: trusted.receiptResolver,
+    });
 
     expect(result.valid).toBe(true);
     expect(result.findings).toEqual([]);
@@ -197,13 +304,16 @@ describe('validateBehaviorEquivalence', () => {
   });
 
   it('auto-demotes expired proof and never projects it green', () => {
-    const stale = provenBehavior({
+    const trusted = trustedContract([], {
       freshness: {
         verified_at: '2026-07-01T00:00:00.000Z',
         expires_at: '2026-07-20T00:00:00.000Z',
       },
     });
-    const result = validateBehaviorEquivalence(contract([stale]), { now: NOW });
+    const result = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      receiptResolver: trusted.receiptResolver,
+    });
     const cells = projectJourneyCells(result);
 
     expect(result.behaviors[0].effective_status).toBe('gap');
@@ -276,7 +386,11 @@ describe('evidence envelope and journey projection', () => {
   });
 
   it('projects proven evidence into existing journey_step_links cell vocabulary', () => {
-    const result = validateBehaviorEquivalence(contract(), { now: NOW });
+    const trusted = trustedContract();
+    const result = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      receiptResolver: trusted.receiptResolver,
+    });
     const cells = projectJourneyCells(result);
 
     expect(cells).toHaveLength(BEHAVIOR_DIMENSIONS.length);
@@ -305,10 +419,11 @@ describe('honest equivalence report', () => {
         closure_plan: 'Run the production closure drill.',
       },
     });
-    const validation = validateBehaviorEquivalence(
-      contract([provenBehavior(), gap]),
-      { now: NOW },
-    );
+    const trusted = trustedContract([gap]);
+    const validation = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      receiptResolver: trusted.receiptResolver,
+    });
 
     const report = buildEquivalenceReport(validation, {
       evaluatedAt: '2026-07-28T12:00:00.000Z',

@@ -36,7 +36,8 @@ const PSEUDO_PROOF = [
   /(?:^|\s)(?:README(?:\.md)?|docs\/)/i,
   /(?:^|[/_-])smoke(?:[/_.-]|$)/i,
 ];
-const EXECUTABLE_TEST = /(?:vitest|(?:^|\s|\/)__tests__\/|(?:^|\s|\/)tests?\/|\.test\.[cm]?[jt]s\b)/i;
+const LIVE_PROOF_CELL = /^[A-Z0-9-]+::(?:claude|codex|grok)::(?:normal|violation|recovery)$/;
+const LIVE_PROOF_PATH = /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/;
 
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -66,10 +67,28 @@ function addFinding(findings, behaviorId, code, path, message) {
   });
 }
 
-function commandIsPseudoProof(command) {
-  return !nonEmpty(command)
-    || PSEUDO_PROOF.some((pattern) => pattern.test(command))
-    || !EXECUTABLE_TEST.test(command);
+function classifyProofCommand(command, expectedCellId) {
+  if (!nonEmpty(command)) return 'non_live';
+  if (PSEUDO_PROOF.some((pattern) => pattern.test(command))) return 'pseudo';
+  const tokens = command.trim().split(/\s+/);
+  if (
+    tokens.length !== 11
+    || tokens[0] !== 'node'
+    || tokens[1] !== 'scripts/ci/run-kernel-equivalence-drill.mjs'
+    || tokens[2] !== '--execute'
+    || tokens[3] !== '--cell'
+    || !LIVE_PROOF_CELL.test(tokens[4])
+    || tokens[4] !== expectedCellId
+    || tokens[5] !== '--grant'
+    || !LIVE_PROOF_PATH.test(tokens[6])
+    || tokens[7] !== '--state-dir'
+    || !LIVE_PROOF_PATH.test(tokens[8])
+    || tokens[9] !== '--receipt-dir'
+    || !LIVE_PROOF_PATH.test(tokens[10])
+  ) {
+    return 'non_live';
+  }
+  return 'live';
 }
 
 function validateCatalog(section, findings) {
@@ -275,7 +294,7 @@ function validateProofIdentity(behavior, behaviorFindings, now) {
   }
 }
 
-function validateProofMatrix(behavior, behaviorFindings) {
+function validateProofMatrix(behavior, behaviorFindings, receiptResolver) {
   const id = behavior.behavior_id;
   const matrix = asObject(behavior.proof_matrix);
   for (const provider of PROOF_PROVIDERS) {
@@ -293,13 +312,26 @@ function validateProofMatrix(behavior, behaviorFindings) {
         );
         continue;
       }
-      if (commandIsPseudoProof(proof.test_command)) {
+      const expectedCellId = `${id}::${provider}::${scenario}`;
+      const commandClassification = classifyProofCommand(
+        proof.test_command,
+        expectedCellId,
+      );
+      if (commandClassification === 'pseudo') {
         addFinding(
           behaviorFindings,
           id,
           'pseudo_proof_command',
           `${path}.test_command`,
           'proof command must execute a behavioral test, not docs/static grep/smoke-only checks',
+        );
+      } else if (commandClassification !== 'live') {
+        addFinding(
+          behaviorFindings,
+          id,
+          'non_live_proof_command',
+          `${path}.test_command`,
+          'proof command must be the formal single-cell live-effect drill runner',
         );
       }
       if (!nonEmpty(proof.expected_result) || !nonEmpty(proof.observed_result)) {
@@ -336,6 +368,66 @@ function validateProofMatrix(behavior, behaviorFindings) {
           'violation_not_proven_to_fire',
           `${path}.observed_result`,
           'violation proof must observe blocked/denied/failed/rejected',
+        );
+      }
+      const receiptReference = proof.receipt_bundle_ref;
+      if (
+        !nonEmpty(receiptReference)
+        || !asArray(proof.evidence_refs).includes(receiptReference)
+        || typeof receiptResolver !== 'function'
+      ) {
+        addFinding(
+          behaviorFindings,
+          id,
+          'trusted_receipt_bundle_required',
+          `${path}.receipt_bundle_ref`,
+          'a content-addressed bundle and trusted resolver are required',
+        );
+        continue;
+      }
+
+      const drill = asObject(behavior.drill);
+      const expected = {
+        cell: {
+          cell_id: expectedCellId,
+          behavior_id: id,
+          provider,
+          scenario,
+          seam_id: drill.seam_id,
+          adapter_id: drill.adapter_id,
+          isolation: structuredClone(asObject(drill.isolation)),
+        },
+        run_id: proof.run_id,
+        attempt_id: proof.attempt_id,
+        artifact_sha: behavior.proof_identity?.artifact_sha,
+        brain_version: behavior.proof_identity?.version,
+        engine_version: proof.engine_version,
+        grant_id: proof.grant_id,
+        nonce: proof.nonce,
+        resource_id: proof.resource_id,
+        resource_ref: proof.resource_ref,
+      };
+      try {
+        const verified = receiptResolver(receiptReference, expected);
+        const finalReceipt = asArray(verified?.effect_receipts).at(-1);
+        const expectedOutcome = scenario === 'violation'
+          ? 'denied'
+          : scenario === 'recovery' ? 'recovered' : 'confirmed';
+        if (
+          !asArray(verified?.receipt_ids).includes(proof.effect_receipt_id)
+          || finalReceipt?.receipt_id !== proof.effect_receipt_id
+          || finalReceipt?.observed_outcome !== expectedOutcome
+          || finalReceipt?.effect_code !== drill.scenarios?.[scenario]?.effect_code
+        ) {
+          throw new Error('trusted receipt outcome mismatch');
+        }
+      } catch (error) {
+        addFinding(
+          behaviorFindings,
+          id,
+          'trusted_receipt_bundle_invalid',
+          `${path}.receipt_bundle_ref`,
+          `trusted receipt verification failed: ${error?.code ?? 'invalid_bundle'}`,
         );
       }
     }
@@ -419,7 +511,10 @@ function validateSupersession(behaviors, findings) {
   }
 }
 
-export function validateBehaviorEquivalence(contract, { now = Date.now() } = {}) {
+export function validateBehaviorEquivalence(
+  contract,
+  { now = Date.now(), receiptResolver = null } = {},
+) {
   const findings = [];
   const section = contract?.behavior_equivalence;
   if (!section || typeof section !== 'object') {
@@ -450,7 +545,7 @@ export function validateBehaviorEquivalence(contract, { now = Date.now() } = {})
       validateGap(behavior, behaviorFindings);
     } else {
       validateProofIdentity(behavior, behaviorFindings, now);
-      validateProofMatrix(behavior, behaviorFindings);
+      validateProofMatrix(behavior, behaviorFindings, receiptResolver);
       if (behavior.status === 'intentional_replacement') {
         validateReplacement(behavior, behaviorFindings);
       }
