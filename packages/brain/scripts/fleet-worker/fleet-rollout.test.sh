@@ -12,6 +12,12 @@ fail() {
 
 [[ -x "$ROLLOUT" ]] || fail "missing fleet-rollout.sh entrypoint"
 
+if grep -Fq \
+  '"$staged_root/source/packages/brain/scripts/fleet-worker/"*.sh' \
+  "$ROLLOUT"; then
+  fail "root-only staging expands the Fleet script glob before sudo"
+fi
+
 test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
 fake_bin="$test_root/bin"
