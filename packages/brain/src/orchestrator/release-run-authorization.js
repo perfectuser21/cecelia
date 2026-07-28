@@ -36,7 +36,7 @@ export async function authorizeReleaseEffect(pool, request) {
          SELECT state
            FROM kernel_release_transitions
           WHERE release_run_id = release.id
-          ORDER BY created_at DESC, id DESC
+          ORDER BY append_seq DESC
           LIMIT 1
        ) transition ON TRUE
        JOIN kernel_release_effect_intents intent
@@ -66,6 +66,58 @@ export async function authorizeReleaseEffect(pool, request) {
     effect_kind: effectKind,
     idempotency_key: idempotencyKey,
   };
+}
+
+export async function claimReleaseEffect(pool, request) {
+  const authorization = await authorizeReleaseEffect(pool, request);
+  const inserted = await pool.query(
+    `INSERT INTO kernel_release_effect_dispatch_claims
+       (intent_id, generation, idempotency_key, effect_kind, lease_expires_at)
+     SELECT intent.id,
+            COALESCE(MAX(claim.generation), 0) + 1,
+            intent.idempotency_key,
+            intent.effect_kind,
+            clock_timestamp() + INTERVAL '5 minutes'
+       FROM kernel_release_effect_intents intent
+       LEFT JOIN kernel_release_effect_dispatch_claims claim
+         ON claim.intent_id = intent.id
+      WHERE intent.release_run_id = $1
+        AND intent.effect_kind = $2
+        AND intent.idempotency_key = $3
+        AND NOT EXISTS (
+          SELECT 1
+            FROM kernel_release_effect_dispatch_claims active
+           WHERE active.intent_id = intent.id
+             AND active.lease_expires_at > clock_timestamp()
+        )
+      GROUP BY intent.id, intent.idempotency_key, intent.effect_kind
+     ON CONFLICT (intent_id, generation) DO NOTHING
+     RETURNING id, generation`,
+    [
+      authorization.release_run_id,
+      authorization.effect_kind,
+      authorization.idempotency_key,
+    ],
+  );
+  return {
+    ...authorization,
+    claimed: inserted.rowCount === 1,
+    deduped: inserted.rowCount !== 1,
+    dispatch_claim_id: inserted.rows[0]?.id ?? null,
+    generation: inserted.rows[0]?.generation ?? null,
+  };
+}
+
+export async function appendDispatchOutcome(pool, claimId, outcome, evidence = {}) {
+  if (!claimId || !['dispatched', 'failed'].includes(outcome)) {
+    throw new ReleaseRunError('release_dispatch_outcome_invalid');
+  }
+  await pool.query(
+    `INSERT INTO kernel_release_effect_dispatch_outcomes
+       (dispatch_claim_id, outcome, evidence)
+     VALUES ($1, $2, $3::jsonb)`,
+    [claimId, outcome, JSON.stringify(evidence)],
+  );
 }
 
 export const __test__ = { REQUIRED_STATE };

@@ -52,7 +52,8 @@ describe('migration 374 Kernel ReleaseRun', () => {
 
   it('makes every ledger table immutable', () => {
     expect(sql).toMatch(/kernel_release_ledger_append_only/i);
-    expect(sql.match(/BEFORE UPDATE OR DELETE/gi)).toHaveLength(4);
+    expect(sql.match(/BEFORE UPDATE OR DELETE/gi)).toHaveLength(6);
+    expect(sql).toMatch(/append_seq BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE/i);
   });
 
   it('registers migration 374', () => {

@@ -37,6 +37,7 @@ import { createMergeEffectExecutor } from './merge-effect-executor.js';
 import { createPostgresMergeEffectStore } from './merge-effect-store.js';
 import { createReleaseRunExecutor } from './release-run-executor.js';
 import { createPostgresReleaseRunStore } from './release-run-store.js';
+import { createReleaseRunAdapters } from './release-run-adapters.js';
 import { readGitArtifact } from './git-artifact-reader.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
@@ -82,6 +83,7 @@ export async function buildDefaultHandlers({
   runProduction,
   githubExecFile,
 }) {
+  const defaultReleaseAdapters = createReleaseRunAdapters();
   const [
     judge,
     previewManager,
@@ -122,11 +124,12 @@ export async function buildDefaultHandlers({
 
   const resolvedReleaseEffect = releaseEffect ?? createReleaseRunExecutor({
     store: createPostgresReleaseRunStore(pool),
-    resolveArtifactVersions,
-    observeStaging,
-    runStaging,
-    observeProduction,
-    runProduction,
+    resolveArtifactVersions: resolveArtifactVersions
+      ?? defaultReleaseAdapters.resolveArtifactVersions,
+    observeStaging: observeStaging ?? defaultReleaseAdapters.observeStaging,
+    runStaging: runStaging ?? defaultReleaseAdapters.runStaging,
+    observeProduction: observeProduction ?? defaultReleaseAdapters.observeProduction,
+    runProduction: runProduction ?? defaultReleaseAdapters.runProduction,
   });
 
   return createKernelHandlers({

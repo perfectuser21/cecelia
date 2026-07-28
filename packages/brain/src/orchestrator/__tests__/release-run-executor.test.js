@@ -168,6 +168,57 @@ describe('ReleaseRun executor', () => {
     expect(d.order).toContain('receipt:production-intent:confirmed');
   });
 
+  it('re-observes external truth after a confirmed receipt but before transition', async () => {
+    const d = deps();
+    d.setRelease({
+      id: RELEASE_ID,
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      state: 'staging_running',
+      source_head_sha: HEAD_SHA,
+      merge_sha: MERGE_SHA,
+      artifact_versions: artifacts,
+    });
+    d.store.findOrCreateIntent.mockResolvedValueOnce({
+      id: 'staging-intent',
+      idempotency_key: 'staging-key',
+      confirmed_receipt: 'old-receipt',
+    });
+    d.observeStaging = vi.fn(async () => stagingPass());
+
+    await createReleaseRunExecutor(d)({ runId: RUN_ID, taskId: TASK_ID });
+
+    expect(d.observeStaging).toHaveBeenCalledOnce();
+    expect(d.runStaging).not.toHaveBeenCalled();
+    expect(d.order).toContain('state:staging_passed');
+  });
+
+  it('persists complete production verification evidence', async () => {
+    const d = deps();
+    await createReleaseRunExecutor(d)({ runId: RUN_ID, taskId: TASK_ID });
+    const receipt = d.store.appendReceipt.mock.calls
+      .map((call) => call[1])
+      .find((value) => value.intent_id === 'production-intent'
+        && value.receipt_status === 'confirmed');
+    expect(receipt.evidence.verification).toEqual({
+      status: 'pass',
+      health: 'pass',
+      required_e2e: 'pass',
+      rollback_metadata: {
+        anchor: 'prod-cecelia-v4401',
+        previous_version: 'prod-cecelia-v4400',
+      },
+    });
+    const transition = d.store.appendTransition.mock.calls
+      .map((call) => call[1])
+      .find((value) => value.state === 'production_verified');
+    expect(transition.evidence.verification).toMatchObject({
+      health: 'pass',
+      required_e2e: 'pass',
+      rollback_metadata: expect.any(Object),
+    });
+  });
+
   it.each(['skipped', 'idle', 'unknown', 'unavailable', 'fail'])(
     'blocks ambiguous staging %s without production or blind replay',
     async (status) => {

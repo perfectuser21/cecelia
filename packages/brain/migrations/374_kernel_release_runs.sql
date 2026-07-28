@@ -36,6 +36,7 @@ CREATE INDEX IF NOT EXISTS idx_kernel_release_runs_task
 
 CREATE TABLE IF NOT EXISTS kernel_release_transitions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  append_seq BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
   release_run_id UUID NOT NULL REFERENCES kernel_release_runs(id),
   state TEXT NOT NULL CHECK (state IN (
     'merged',
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS kernel_release_effect_intents (
 
 CREATE TABLE IF NOT EXISTS kernel_release_effect_receipts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  append_seq BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
   intent_id UUID NOT NULL REFERENCES kernel_release_effect_intents(id),
   receipt_status TEXT NOT NULL CHECK (
     receipt_status IN ('confirmed', 'failed', 'observed_unconfirmed')
@@ -96,6 +98,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_kernel_release_effect_confirmed
   ON kernel_release_effect_receipts (intent_id)
   WHERE receipt_status = 'confirmed';
 
+CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_claims (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  intent_id UUID NOT NULL REFERENCES kernel_release_effect_intents(id),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  idempotency_key UUID NOT NULL,
+  effect_kind TEXT NOT NULL CHECK (effect_kind IN ('staging', 'production')),
+  claimed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  lease_expires_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (intent_id, generation)
+);
+
+CREATE TABLE IF NOT EXISTS kernel_release_effect_dispatch_outcomes (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  dispatch_claim_id BIGINT NOT NULL REFERENCES kernel_release_effect_dispatch_claims(id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('dispatched', 'failed')),
+  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE OR REPLACE FUNCTION kernel_release_transition_guard()
 RETURNS trigger AS $$
 DECLARE
@@ -108,7 +129,7 @@ BEGIN
     INTO previous_state
     FROM kernel_release_transitions
    WHERE release_run_id = NEW.release_run_id
-   ORDER BY created_at DESC, id DESC
+   ORDER BY append_seq DESC
    LIMIT 1;
 
   expected_state := CASE
@@ -161,6 +182,18 @@ CREATE TRIGGER trg_kernel_release_effect_intents_append_only
 DROP TRIGGER IF EXISTS trg_kernel_release_effect_receipts_append_only ON kernel_release_effect_receipts;
 CREATE TRIGGER trg_kernel_release_effect_receipts_append_only
   BEFORE UPDATE OR DELETE ON kernel_release_effect_receipts
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_dispatch_claims_append_only
+  ON kernel_release_effect_dispatch_claims;
+CREATE TRIGGER trg_kernel_release_effect_dispatch_claims_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_effect_dispatch_claims
+  FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_kernel_release_effect_dispatch_outcomes_append_only
+  ON kernel_release_effect_dispatch_outcomes;
+CREATE TRIGGER trg_kernel_release_effect_dispatch_outcomes_append_only
+  BEFORE UPDATE OR DELETE ON kernel_release_effect_dispatch_outcomes
   FOR EACH ROW EXECUTE FUNCTION kernel_release_ledger_append_only();
 
 INSERT INTO schema_version (version, description, applied_at)

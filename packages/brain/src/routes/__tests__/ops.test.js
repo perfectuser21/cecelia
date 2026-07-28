@@ -13,13 +13,21 @@ import request from 'supertest';
 let capturedSpawnArgs = null;
 
 vi.mock('../../db.js', () => ({ default: {
-  query: vi.fn(async () => ({ rows: [{
+  query: vi.fn(async (sql) => {
+    if (/INSERT INTO kernel_release_effect_dispatch_claims/.test(sql)) {
+      return { rows: [{ id: 91, generation: 1 }], rowCount: 1 };
+    }
+    if (/INSERT INTO kernel_release_effect_dispatch_outcomes/.test(sql)) {
+      return { rows: [], rowCount: 1 };
+    }
+    return { rows: [{
     state: 'production_deploying',
     merge_sha: 'f'.repeat(40),
     expected_merge_sha: 'f'.repeat(40),
     effect_kind: 'production',
     idempotency_key: '55555555-5555-4555-8555-555555555555',
-  }] })),
+    }], rowCount: 1 };
+  }),
 } }));
 vi.mock('../../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
 vi.mock('../../llm-caller.js', () => ({ callLLM: vi.fn(), callLLMStream: vi.fn() }));

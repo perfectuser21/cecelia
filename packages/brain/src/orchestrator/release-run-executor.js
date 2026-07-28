@@ -40,6 +40,16 @@ function publicStatus(value) {
 }
 
 function receiptFor(intent, status, observation, evidence) {
+  const verification = observation?.status === 'pass'
+    ? {
+        status: 'pass',
+        ...(observation.health == null ? {} : { health: observation.health }),
+        ...(observation.required_e2e == null ? {} : { required_e2e: observation.required_e2e }),
+        ...(observation.rollback_metadata == null
+          ? {}
+          : { rollback_metadata: observation.rollback_metadata }),
+      }
+    : null;
   return {
     intent_id: intent.id,
     receipt_status: status,
@@ -48,7 +58,10 @@ function receiptFor(intent, status, observation, evidence) {
       observation?.artifact_versions
       ?? observation?.deployed_versions
       ?? null,
-    evidence,
+    evidence: {
+      ...evidence,
+      ...(verification == null ? {} : { verification }),
+    },
   };
 }
 
@@ -82,8 +95,6 @@ async function reconcileEffect({
     releaseRun: release,
     effectKind,
   });
-  if (intent.confirmed_receipt) return { confirmed: true };
-
   const expected = {
     merge_sha: release.merge_sha,
     artifact_versions: release.artifact_versions,
@@ -109,7 +120,7 @@ async function reconcileEffect({
         status: 'pass',
       }),
     );
-    return { confirmed: true };
+    return { confirmed: true, observation: verified };
   } catch (error) {
     if (observation?.status !== 'not_applied') {
       const status = publicStatus(observation?.status);
@@ -166,7 +177,7 @@ async function reconcileEffect({
         command_status: commandFailed ? 'error_but_confirmed' : 'ok',
       }),
     );
-    return { confirmed: true };
+    return { confirmed: true, observation: verified };
   } catch (error) {
     const status = publicStatus(observation?.status);
     await store.appendReceipt(
@@ -263,6 +274,7 @@ export function createReleaseRunExecutor({
           release = await transition(store, client, release, 'staging_passed', {
             merge_sha: release.merge_sha,
             artifact_versions: release.artifact_versions,
+            verification: staging.observation,
           });
         }
 
@@ -300,6 +312,7 @@ export function createReleaseRunExecutor({
             {
               merge_sha: release.merge_sha,
               deployed_versions: release.artifact_versions,
+              verification: production.observation,
             },
           );
         }

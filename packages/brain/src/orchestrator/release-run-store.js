@@ -120,7 +120,7 @@ export function createPostgresReleaseRunStore(pool) {
              SELECT state, evidence
                FROM kernel_release_transitions
               WHERE release_run_id = release.id
-              ORDER BY created_at DESC, id DESC
+              ORDER BY append_seq DESC
               LIMIT 1
            ) transition ON TRUE
           WHERE release.run_id = $1`,
@@ -171,7 +171,7 @@ export function createPostgresReleaseRunStore(pool) {
                   transition.evidence AS transition_evidence
              FROM kernel_release_transitions transition
             WHERE transition.release_run_id = $1
-            ORDER BY transition.created_at DESC, transition.id DESC
+            ORDER BY transition.append_seq DESC
             LIMIT 1`,
           [row.id],
         );
@@ -220,14 +220,14 @@ export function createPostgresReleaseRunStore(pool) {
                FROM kernel_release_effect_receipts
               WHERE intent_id = intent.id
                 AND receipt_status = 'confirmed'
-              ORDER BY observed_at DESC
+              ORDER BY append_seq DESC
               LIMIT 1
            ) confirmed ON TRUE
            LEFT JOIN LATERAL (
              SELECT receipt_status
                FROM kernel_release_effect_receipts
               WHERE intent_id = intent.id
-              ORDER BY observed_at DESC
+              ORDER BY append_seq DESC
               LIMIT 1
            ) latest ON TRUE
           WHERE intent.release_run_id = $1

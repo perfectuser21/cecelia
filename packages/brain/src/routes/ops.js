@@ -26,7 +26,11 @@ import {
 import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from '../pr-callback-handler.js';
 import { getAllStates as getAllCBStates } from '../circuit-breaker.js';
 import { getActiveExecutionPaths, INVENTORY_CONFIG } from './shared.js';
-import { authorizeReleaseEffect } from '../orchestrator/release-run-authorization.js';
+import {
+  authorizeReleaseEffect,
+  appendDispatchOutcome,
+  claimReleaseEffect,
+} from '../orchestrator/release-run-authorization.js';
 
 const router = Router();
 
@@ -2769,17 +2773,27 @@ router.post('/deploy', async (req, res) => {
     release_run_id,
     merge_sha,
     release_authorization,
+    artifact_versions,
   } = req.body || {};
   const isStagingDeploy = staging === true || mode === 'staging';
   const effectKind = isStagingDeploy ? 'staging' : 'production';
+  let dispatchClaim;
 
   try {
-    await authorizeReleaseEffect(pool, {
+    dispatchClaim = await claimReleaseEffect(pool, {
       release_run_id,
       merge_sha,
       release_authorization,
       effect_kind: effectKind,
     });
+    if (dispatchClaim.deduped) {
+      return res.status(202).json({
+        status: 'accepted',
+        deduped: true,
+        release_run_id,
+        merge_sha,
+      });
+    }
   } catch (error) {
     return res.status(403).json({
       error: error?.code ?? 'release_effect_unauthorized',
@@ -2802,6 +2816,10 @@ router.post('/deploy', async (req, res) => {
     stagingDeployState.elapsed_ms = null;
     stagingDeployState.error = null;
     stagingDeployState.skip_reason = null;
+    stagingDeployState.release_run_id = release_run_id;
+    stagingDeployState.merge_sha = merge_sha;
+    stagingDeployState.release_authorization = release_authorization;
+    stagingDeployState.artifact_versions = artifact_versions;
 
     res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging' });
 
@@ -2841,7 +2859,19 @@ router.post('/deploy', async (req, res) => {
 
       console.log(`[staging-deploy] 开始 staging 部署: ${cmd}`);
       // 捕获输出以检测 STAGING_SKIP_REASON（脚本 exit 0 时正常完成，但可能是跳过）
-      const output = execSync(cmd, { cwd: repoRoot, timeout: 600_000, shell: true }).toString();
+      const output = execSync(cmd, {
+        cwd: repoRoot,
+        timeout: 600_000,
+        shell: true,
+        env: {
+          ...process.env,
+          KERNEL_RELEASE_RUN_ID: release_run_id,
+          KERNEL_RELEASE_MERGE_SHA: merge_sha,
+          KERNEL_RELEASE_AUTHORIZATION: release_authorization,
+          KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifact_versions ?? []),
+        },
+      }).toString();
+      await appendDispatchOutcome(pool, dispatchClaim.dispatch_claim_id, 'dispatched');
       console.log(output);
 
       const elapsed = Date.now() - startTime;
@@ -2855,8 +2885,8 @@ router.post('/deploy', async (req, res) => {
         stagingDeployState.finished_at = new Date().toISOString();
         stagingDeployState.elapsed_ms = elapsed;
         stagingDeployState.skip_reason = skipReason;
-        await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed, skip_reason: skipReason });
-        console.log(`[staging-deploy] ⚠️ Staging 部署已跳过 (${skipReason}): production 部署不受阻断 (${(elapsed / 1000).toFixed(1)}s)`);
+        await resolveActionReceipt(stagingReceiptId, 'failed', { elapsed_ms: elapsed, skip_reason: skipReason });
+        console.log(`[staging-deploy] Staging 部署已跳过 (${skipReason})，ReleaseRun 保持阻断`);
       } else {
         stagingDeployState.status = 'success';
         stagingDeployState.finished_at = new Date().toISOString();
@@ -2865,6 +2895,12 @@ router.post('/deploy', async (req, res) => {
         console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
       }
     } catch (err) {
+      await appendDispatchOutcome(
+        pool,
+        dispatchClaim.dispatch_claim_id,
+        'failed',
+        { error_code: 'staging_dispatch_failed' },
+      ).catch(() => {});
       const elapsed = Date.now() - startTime;
       stagingDeployState.status = 'failed';
       stagingDeployState.finished_at = new Date().toISOString();
@@ -2894,6 +2930,10 @@ router.post('/deploy', async (req, res) => {
   deployState.elapsed_ms = null;
   deployState.error = null;
   deployState.log_path = null;
+  deployState.release_run_id = release_run_id;
+  deployState.merge_sha = merge_sha;
+  deployState.release_authorization = release_authorization;
+  deployState.artifact_versions = artifact_versions;
 
   res.status(202).json({ status: 'accepted', message: 'Deploy triggered' });
 
@@ -2953,8 +2993,10 @@ router.post('/deploy', async (req, res) => {
       KERNEL_RELEASE_RUN_ID: release_run_id,
       KERNEL_RELEASE_MERGE_SHA: merge_sha,
       KERNEL_RELEASE_AUTHORIZATION: release_authorization,
+      KERNEL_RELEASE_ARTIFACT_VERSIONS: JSON.stringify(artifact_versions ?? []),
     },
   });
+  await appendDispatchOutcome(pool, dispatchClaim.dispatch_claim_id, 'dispatched');
   // log fd 被子进程接管后父进程可以关闭（数据继续写入文件）
   if (typeof logFd === 'number') {
     try { closeSync(logFd); } catch { /* noop */ }
