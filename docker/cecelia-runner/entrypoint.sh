@@ -586,7 +586,8 @@ persist_provider_session() {
 CREDENTIAL_REF=""
 CREDENTIAL_INITIAL_HASH=""
 CREDENTIAL_COPY_MUTATED=false
-MAX_CODEX_CREDENTIAL_BYTES=196608
+CREDENTIAL_FILE=""
+MAX_PROVIDER_CREDENTIAL_BYTES=196608
 
 credential_file_hash() {
   local file="$1"
@@ -617,10 +618,10 @@ credential_file_size() {
   printf '%s\n' "$size"
 }
 
-redact_codex_credential_text() {
-  local auth_file="${CODEX_HOME:-/home/cecelia/.codex}/auth.json"
+redact_provider_credential_text() {
+  local auth_file="${CREDENTIAL_FILE:-}"
   local redacted
-  if [[ ! -f "$auth_file" ]] || ! redacted="$(
+  if [[ -z "$auth_file" ]] || [[ ! -f "$auth_file" ]] || ! redacted="$(
     jq -Rr --slurpfile credential "$auth_file" '
       ($credential[0] // {}) as $auth
       | reduce (
@@ -640,13 +641,13 @@ redact_codex_credential_text() {
   printf '%s\n' "$redacted"
 }
 
-redact_codex_credential_file() {
+redact_provider_credential_file() {
   local file="$1"
   local redacted_file="${file}.redacted"
   [[ -f "$file" ]] || return 0
   : > "$redacted_file"
   while IFS= read -r line || [[ -n "$line" ]]; do
-    printf '%s\n' "$line" | redact_codex_credential_text \
+    printf '%s\n' "$line" | redact_provider_credential_text \
       >> "$redacted_file" || {
         rm -f "$redacted_file"
         return 1
@@ -656,10 +657,15 @@ redact_codex_credential_file() {
   mv "$redacted_file" "$file"
 }
 
-prepare_codex_credential() {
-  local codex_home="${1:-/home/cecelia/.codex}"
+prepare_provider_credential() {
+  local provider="$1"
+  local provider_home="${2:-}"
   local fifo="${CECELIA_CREDENTIAL_FIFO:-}"
   local credential_size=""
+  local validation_filter=""
+  CREDENTIAL_COPY_MUTATED=false
+  CREDENTIAL_INITIAL_HASH=""
+  CREDENTIAL_FILE=""
   CREDENTIAL_REF="${CECELIA_CREDENTIAL_REF:-}"
   if [[ -z "$fifo" ]] \
       || [[ ! "$fifo" = /* ]] \
@@ -667,44 +673,97 @@ prepare_codex_credential() {
     return 1
   fi
 
-  export CODEX_HOME="$codex_home"
+  case "$provider" in
+    codex)
+      provider_home="${provider_home:-/home/cecelia/.codex}"
+      export CODEX_HOME="$provider_home"
+      CREDENTIAL_FILE="$CODEX_HOME/auth.json"
+      validation_filter='
+        type == "object"
+        and (.tokens | type == "object")
+        and (.tokens.access_token | type == "string" and length > 0)
+      '
+      ;;
+    claude)
+      provider_home="${provider_home:-/home/cecelia/.claude}"
+      export CLAUDE_CONFIG_DIR="$provider_home"
+      CREDENTIAL_FILE="$CLAUDE_CONFIG_DIR/.credentials.json"
+      validation_filter='
+        type == "object"
+        and (.claudeAiOauth | type == "object")
+        and (.claudeAiOauth.accessToken | type == "string" and length > 0)
+        and (.claudeAiOauth.refreshToken | type == "string" and length > 0)
+      '
+      ;;
+    grok)
+      provider_home="${provider_home:-/home/cecelia/.grok}"
+      export GROK_HOME="$provider_home"
+      CREDENTIAL_FILE="$GROK_HOME/auth.json"
+      validation_filter='
+        type == "object"
+        and any(.[];
+          type == "object"
+          and (.key | type == "string" and length > 0)
+          and (.refresh_token | type == "string" and length > 0)
+        )
+      '
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
   umask 077
-  mkdir -p "$CODEX_HOME"
-  chmod 700 "$CODEX_HOME"
-  if ! cat -- "$fifo" > "$CODEX_HOME/auth.json"; then
-    rm -f "$CODEX_HOME/auth.json"
+  mkdir -p "$provider_home"
+  chmod 700 "$provider_home"
+  if ! cat -- "$fifo" > "$CREDENTIAL_FILE"; then
+    rm -f "$CREDENTIAL_FILE"
     return 1
   fi
-  chmod 600 "$CODEX_HOME/auth.json"
+  chmod 600 "$CREDENTIAL_FILE"
   unset CECELIA_CREDENTIAL_FIFO
-  credential_size="$(credential_file_size "$CODEX_HOME/auth.json")" || {
-    rm -f "$CODEX_HOME/auth.json"
+  credential_size="$(credential_file_size "$CREDENTIAL_FILE")" || {
+    rm -f "$CREDENTIAL_FILE"
     return 1
   }
-  if (( credential_size > MAX_CODEX_CREDENTIAL_BYTES )); then
-    rm -f "$CODEX_HOME/auth.json"
+  if (( credential_size > MAX_PROVIDER_CREDENTIAL_BYTES )); then
+    rm -f "$CREDENTIAL_FILE"
     return 1
   fi
-  if ! jq -e \
-      'type == "object"
-       and (.tokens | type == "object")
-       and (.tokens.access_token | type == "string" and length > 0)' \
-      "$CODEX_HOME/auth.json" >/dev/null 2>&1; then
-    rm -f "$CODEX_HOME/auth.json"
+  if ! jq -e "$validation_filter" "$CREDENTIAL_FILE" >/dev/null 2>&1; then
+    rm -f "$CREDENTIAL_FILE"
     return 1
   fi
-  CREDENTIAL_INITIAL_HASH="$(credential_file_hash "$CODEX_HOME/auth.json")"
+  CREDENTIAL_INITIAL_HASH="$(credential_file_hash "$CREDENTIAL_FILE")"
   [[ "$CREDENTIAL_INITIAL_HASH" =~ ^[a-f0-9]{64}$ ]]
 }
 
-record_codex_credential_mutation() {
+record_provider_credential_mutation() {
   CREDENTIAL_COPY_MUTATED=false
   if [[ -z "$CREDENTIAL_INITIAL_HASH" ]] \
-      || [[ ! -f "${CODEX_HOME:-/home/cecelia/.codex}/auth.json" ]] \
-      || [[ "$(credential_file_mode "${CODEX_HOME:-/home/cecelia/.codex}/auth.json")" != "600" ]] \
-      || [[ "$(credential_file_hash "${CODEX_HOME:-/home/cecelia/.codex}/auth.json")" != "$CREDENTIAL_INITIAL_HASH" ]]; then
+      || [[ -z "$CREDENTIAL_FILE" ]] \
+      || [[ ! -f "$CREDENTIAL_FILE" ]] \
+      || [[ "$(credential_file_mode "$CREDENTIAL_FILE")" != "600" ]] \
+      || [[ "$(credential_file_hash "$CREDENTIAL_FILE")" != "$CREDENTIAL_INITIAL_HASH" ]]; then
     CREDENTIAL_COPY_MUTATED=true
   fi
+}
+
+# Compatibility wrappers for the existing Codex contract test and older images.
+prepare_codex_credential() {
+  prepare_provider_credential codex "${1:-/home/cecelia/.codex}"
+}
+
+redact_codex_credential_text() {
+  redact_provider_credential_text
+}
+
+redact_codex_credential_file() {
+  redact_provider_credential_file "$1"
+}
+
+record_codex_credential_mutation() {
+  record_provider_credential_mutation
 }
 # codex-credential-envelope:end
 
@@ -837,7 +896,7 @@ run_provider_contract() {
     return 0
   fi
 
-  if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
+  if ! prepare_provider_credential "$provider"; then
     jq -n \
       --arg attempt "$HARNESS_ATTEMPT_ID" \
       --arg provider "$provider" \
@@ -1001,7 +1060,6 @@ run_provider_contract() {
         done
     provider_exit=${PIPESTATUS[0]}
     drain_managed_provider_once || return 1
-    redact_codex_credential_file "$result_file" || provider_exit=1
     provider_session_id=$(jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' "$STDOUT_FILE" 2>/dev/null | head -n 1)
   elif [[ "$provider" == "claude" ]]; then
     local claude_args=(-p --output-format json --json-schema "$result_schema_json")
@@ -1024,7 +1082,12 @@ run_provider_contract() {
       fi
     fi
     claude_args+=("${model_args[@]}")
-    claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"
+    : > "$STDOUT_FILE"
+    claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 \
+      | while IFS= read -r line || [[ -n "$line" ]]; do
+          safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
+          printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
+        done
     provider_exit=${PIPESTATUS[0]}
     drain_managed_provider_once || return 1
     if [[ $provider_exit -eq 0 ]]; then
@@ -1055,7 +1118,12 @@ run_provider_contract() {
       fi
     fi
     grok_args+=("${model_args[@]}")
-    grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 | tee "$STDOUT_FILE"
+    : > "$STDOUT_FILE"
+    grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 \
+      | while IFS= read -r line || [[ -n "$line" ]]; do
+          safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
+          printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
+        done
     provider_exit=${PIPESTATUS[0]}
     drain_managed_provider_once || return 1
     if [[ $provider_exit -eq 0 ]]; then
@@ -1074,6 +1142,10 @@ run_provider_contract() {
     printf '{"error":"unsupported provider: %s"}\n' "$provider" > "$STDOUT_FILE"
   fi
 
+  if [[ -n "$CREDENTIAL_FILE" ]]; then
+    redact_provider_credential_file "$result_file" || provider_exit=1
+  fi
+
   # Persist the session before the terminal callback. If callback delivery fails after
   # the CLI exits, watchdog can still reclaim and resume this exact attempt/session.
   if [[ -n "$provider_session_id" ]]; then
@@ -1089,8 +1161,8 @@ run_provider_contract() {
     wait "$heartbeat_pid" 2>/dev/null || true
   fi
 
-  if [[ "$provider" == "codex" ]]; then
-    record_codex_credential_mutation
+  if [[ -n "$CREDENTIAL_REF" ]]; then
+    record_provider_credential_mutation
   fi
   export BRAIN_PROVIDER_SESSION_ID="$provider_session_id"
   if [[ -n "$CREDENTIAL_REF" ]]; then
