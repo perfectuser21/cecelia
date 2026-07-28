@@ -300,6 +300,39 @@ export function createAttemptStore(pool) {
       ));
     },
 
+    async getLatestCommanderAttempt(runId) {
+      return firstRow(await pool.query(
+        `SELECT id,run_id,hop,phase,role,provider,account_id,
+                machine_id,requested_machine_id,actual_machine_id,
+                task_bundle,result,status,provider_session_id,
+                failure_class,error_code,logical_cycle_id,attempt_kind,
+                retry_of_attempt_id,restart_reason,workstream_key,
+                created_at,updated_at,completed_at
+           FROM harness_attempts
+          WHERE run_id=$1
+            AND role='commander'
+          ORDER BY hop DESC
+          LIMIT 1`,
+        [runId],
+      ));
+    },
+
+    async listCommanderFailoverLineage(runId, logicalCycleId) {
+      const result = await pool.query(
+        `SELECT id,run_id,hop,provider,account_id,requested_machine_id,
+                actual_machine_id,status,failure_class,error_code,
+                logical_cycle_id,attempt_kind,retry_of_attempt_id,
+                restart_reason,created_at,completed_at
+           FROM harness_attempts
+          WHERE run_id=$1
+            AND role='commander'
+            AND logical_cycle_id=$2
+          ORDER BY hop ASC`,
+        [runId, logicalCycleId],
+      );
+      return result.rows;
+    },
+
     async listFailedExecutionTargets(runId, role) {
       const result = await pool.query(
         `SELECT provider, account_id, requested_machine_id
