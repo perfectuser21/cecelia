@@ -21,6 +21,18 @@
   secret 不进入请求 JSON 或诊断文本。
 - 回退：`bash scripts/brain-rollback.sh 1.268.11`；没有数据库迁移。
 
+## Kernel production trusted service factory
+
+- server-owned one-shot factory 把 production seam builders、10 个 effect signer、
+  trusted registry、两类 isolation、cleanup inspector、PostgreSQL runtime、
+  protected grant authority 与 canonical plan 装配成唯一 `createService`。
+- 顶层配置、plan、trust registry 与 collector 元数据在装配时固定；isolation、
+  cleanup、grant ports 必须是各自 owner 创建的冻结最小 capability。accessor、
+  schema 外字段、可变 capability、raw secret env、错 owner 均 fail-closed。
+- factory 对成功和失败都只装配一次，不能在首次启动失败后通过热突变配置重试；
+  本版本尚未把 factory 接入 `server.js`，也未创建 production isolation/keys。
+  回退：`bash scripts/brain-rollback.sh 1.268.12`；没有数据库迁移。
+
 ## Kernel production effect signer set
 
 - production signer loader 只接受与 canonical 10 个 non-release seam 精确对应的
