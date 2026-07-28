@@ -71,6 +71,46 @@ const validResult = {
   provider_metadata: { provider: 'codex', session_id: 'thread-1' },
 };
 
+function commanderAttempt(overrides = {}) {
+  return {
+    ...attempt,
+    role: 'commander',
+    task_bundle: {
+      expected_output: 'commander-directive/v1',
+      inputs: {
+        commander_bundle: {
+          run_id: runId,
+          commander_attempt_id: attemptId,
+          event_cursor: 5,
+        },
+      },
+    },
+    ...overrides,
+  };
+}
+
+function commanderResult(overrides = {}) {
+  return {
+    contract_version: '1.0',
+    attempt_id: attemptId,
+    status: 'completed',
+    summary: 'Continue the current Kernel decision.',
+    artifacts: [],
+    checks: [],
+    decision: {
+      schema: 'commander-directive/v1',
+      run_id: runId,
+      event_cursor: 5,
+      action: 'continue_default',
+      reason: 'Continue the current Kernel decision.',
+      evidence_refs: ['event:5'],
+    },
+    error: null,
+    provider_metadata: { provider: 'codex', session_id: 'commander-session' },
+    ...overrides,
+  };
+}
+
 function remoteAttempt(overrides = {}) {
   return {
     ...attempt,
@@ -176,6 +216,63 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ ok: true, deduped: false });
     expect(mocks.store.complete).toHaveBeenCalledOnce();
+  });
+
+  it('persists a valid Commander Directive as the terminal Attempt result', async () => {
+    mocks.store.getById.mockResolvedValue(commanderAttempt());
+
+    const response = await postCallback(app, commanderResult());
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.complete).toHaveBeenCalledWith(
+      attemptId,
+      expect.objectContaining({
+        status: 'completed',
+        decision: expect.objectContaining({
+          schema: 'commander-directive/v1',
+          run_id: runId,
+          event_cursor: 5,
+        }),
+      }),
+      { leaseOwner },
+    );
+  });
+
+  it.each([
+    [
+      'unknown Directive field',
+      commanderResult({
+        decision: {
+          ...commanderResult().decision,
+          raw_provider_output: 'must not persist',
+        },
+      }),
+    ],
+    [
+      'foreign Run identity',
+      commanderResult({
+        decision: {
+          ...commanderResult().decision,
+          run_id: '44444444-4444-4444-8444-444444444444',
+        },
+      }),
+    ],
+    [
+      'mismatched bundle cursor',
+      commanderResult({
+        decision: {
+          ...commanderResult().decision,
+          event_cursor: 4,
+        },
+      }),
+    ],
+  ])('rejects Commander callback with %s before persistence', async (_name, body) => {
+    mocks.store.getById.mockResolvedValue(commanderAttempt());
+
+    const response = await postCallback(app, body);
+
+    expect(response.status).toBe(400);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
   });
 
   it('接受已确认 Fleet Worker receipt 的 bounded credential callback', async () => {

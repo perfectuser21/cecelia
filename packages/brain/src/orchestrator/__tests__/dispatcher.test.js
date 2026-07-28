@@ -120,6 +120,7 @@ describe('resolveAction', () => {
     ['spawn:generator-fix', 'generator', 'harness-generator'],
     ['spawn:evaluator', 'evaluator', 'harness-evaluator'],
     ['spawn:judge', 'judge', null],
+    ['spawn:commander', 'commander', null],
   ])('%s 映射为隔离的 %s/%s', (action, role, skill) => {
     expect(resolveAction(action)).toMatchObject({ role, skill });
   });
@@ -130,6 +131,189 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('dispatches the frozen CommanderBundle through preflight before Attempt creation', async () => {
+    const order = [];
+    const deps = makeDeps(order);
+    const target = {
+      role: 'commander',
+      provider: 'codex',
+      account: 'team4',
+      model: 'GPT-5.5',
+      machine: 'us-mac-m4',
+    };
+    const commanderBundle = {
+      schema: 'commander-bundle/v1',
+      run_id: runId,
+      commander_attempt_id: attemptId,
+      event_cursor: 6,
+      run_profile: { commander: { primary: target, fallbacks: [] } },
+      objective: { summary: 'Adjudicate the next Kernel boundary.' },
+      observed: { phase: 'planning' },
+      history_summary: {},
+      new_events: [],
+      actor_messages: [],
+      active_risks: [],
+      budgets: { remaining_attempts: 2 },
+      allowed_actions: ['continue_default'],
+      output_schema: 'commander-directive/v1',
+    };
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => {
+        order.push('preflight.evaluate');
+        return {
+          status: 'ok',
+          snapshot: {
+            provider: 'codex',
+            account: 'team4',
+            machine: 'us-mac-m4',
+            capability_snapshot_id: 'snapshot-commander',
+          },
+          evidence: { structured_output: true },
+        };
+      }),
+      validateSnapshotForDispatch: vi.fn(async () => {
+        order.push('preflight.validate');
+        return { status: 'ok' };
+      }),
+    };
+    deps.launcher.launch.mockImplementationOnce(async ({ target: launchedTarget }) => {
+      order.push('launcher.launch');
+      return {
+        actualMachineId: launchedTarget.machine,
+        executionTransport: 'local-docker',
+        remoteJobId: null,
+        attestationStatus: 'local',
+        containerId: 'commander-container',
+        jobId: null,
+      };
+    });
+
+    await createDispatcher(deps)('spawn:commander', {
+      taskId,
+      runId,
+      hop: 12,
+      observed,
+      decision: { phase: 'planning', reason: 'commander_material_wakeup' },
+      commander: {
+        target,
+        candidate_targets: [target],
+        bundle: commanderBundle,
+        logical_cycle_id: 'commander-wakeup:6',
+      },
+    });
+
+    expect(order).toEqual([
+      'preflight.evaluate',
+      'preflight.validate',
+      'attempt.create',
+      'attempt.claim',
+      'adapter.start',
+      'launcher.launch',
+      'attempt.receipt',
+    ]);
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created).toMatchObject({
+      id: attemptId,
+      role: 'commander',
+      provider: 'codex',
+      accountId: 'team4',
+      machineId: 'us-mac-m4',
+      logicalCycleId: 'commander-wakeup:6',
+      retryOfAttemptId: null,
+      bundle: {
+        role: 'commander',
+        skill: null,
+        inputs: { commander_bundle: commanderBundle },
+        constraints: { read_only: true, fresh_session: true },
+        expected_output: 'commander-directive/v1',
+      },
+    });
+    expect(deps.loadSkill).not.toHaveBeenCalled();
+    expect(deps.preflightGate.evaluate).toHaveBeenCalledWith(expect.objectContaining({
+      preferred_target: {
+        provider: 'codex',
+        account: 'team4',
+        model: 'GPT-5.5',
+        machine: 'us-mac-m4',
+      },
+      candidate_targets: [{
+        provider: 'codex',
+        account: 'team4',
+        model: 'GPT-5.5',
+        machine: 'us-mac-m4',
+      }],
+    }));
+  });
+
+  it.each([
+    [
+      'missing capability gate',
+      null,
+    ],
+    [
+      'expired capability snapshot',
+      {
+        evaluate: vi.fn(async () => ({
+          status: 'ok',
+          snapshot: {
+            provider: 'codex',
+            account: 'team4',
+            machine: 'brain-1',
+            capability_snapshot_id: 'expired',
+          },
+          evidence: {},
+        })),
+        validateSnapshotForDispatch: vi.fn(async () => ({
+          status: 'blocked',
+          fallback_reason: 'capability_snapshot_expired',
+        })),
+      },
+    ],
+  ])('creates no Commander Attempt for %s', async (_name, preflightGate) => {
+    const deps = makeDeps();
+    deps.preflightGate = preflightGate;
+    const target = {
+      role: 'commander',
+      provider: 'codex',
+      account: 'team4',
+      machine: 'brain-1',
+    };
+    const result = await createDispatcher(deps)('spawn:commander', {
+      taskId,
+      runId,
+      hop: 12,
+      observed,
+      decision: { phase: 'planning' },
+      commander: {
+        target,
+        candidate_targets: [target],
+        logical_cycle_id: 'commander-wakeup:6',
+        bundle: {
+          schema: 'commander-bundle/v1',
+          run_id: runId,
+          commander_attempt_id: attemptId,
+          event_cursor: 6,
+          run_profile: {},
+          objective: {},
+          observed: {},
+          history_summary: {},
+          new_events: [],
+          actor_messages: [],
+          active_risks: [],
+          budgets: {},
+          allowed_actions: ['continue_default'],
+          output_schema: 'commander-directive/v1',
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+  });
+
   it('replaces caller paths with a resolved WorkspaceSpec before Fleet launch', async () => {
     const deps = makeDeps();
     deps.machineId = 'us-mac-m4';
