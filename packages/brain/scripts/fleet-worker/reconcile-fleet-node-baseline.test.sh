@@ -202,6 +202,13 @@ write_executable "$fake_bin/orbstack-orbctl" \
 write_executable "$fake_bin/orbstack-orb" \
   '#!/usr/bin/env bash' \
   'printf "orb %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"' \
+  'if [[ "${1:-}" == start ]]; then' \
+  '  socket="${FLEET_TEST_SOCKET_ROOT:?}/Users/fleet-admin/.orbstack/run/docker.sock"' \
+  '  mkdir -p "$(dirname "$socket")"' \
+  '  if [[ ! -S "$socket" ]]; then' \
+  '    python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()" "$socket"' \
+  '  fi' \
+  'fi' \
   'if [[ "${FLEET_TEST_ORB_ASYNC_START:-0}" == 1 ]]; then' \
   '  if [[ "${1:-}" == start ]]; then' \
   '    touch "${FLEET_TEST_ORB_STATE:?}"' \
@@ -329,6 +336,7 @@ run_reconciler() {
   FLEET_TEST_FAKE_NPM="$fake_bin/toolchain-npm" \
   FLEET_TEST_FAKE_CODEX="$fake_bin/toolchain-codex" \
   FLEET_TEST_EXPECTED_NODE="$root/usr/local/libexec/cecelia/toolchain/bin/node" \
+  FLEET_TEST_SOCKET_ROOT="$root" \
   FLEET_TEST_FAKE_ORBCTL="$fake_bin/orbstack-orbctl" \
   FLEET_TEST_FAKE_ORB="$fake_bin/orbstack-orb" \
   FLEET_TEST_FAKE_DOCKER="$fake_bin/docker" \
@@ -488,6 +496,11 @@ grep -Fq 'installer xian-mac-m1 --apply home=/Users/fleet-admin' "$mutation_log"
   || fail "stable OrbStack Docker command was not installed"
 [[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/tailscale" ]] \
   || fail "stable Tailscale command was not installed"
+[[ -L "$system_root/var/run/docker.sock" ]] \
+  || fail "clean OrbStack bootstrap did not create the global Docker socket link"
+[[ "$(readlink "$system_root/var/run/docker.sock")" \
+  == '/Users/fleet-admin/.orbstack/run/docker.sock' ]] \
+  || fail "global Docker socket link does not target the rollout owner's socket"
 [[ "$(
   readlink "$system_root/usr/local/libexec/cecelia/toolchain/bin/orbctl"
 )" == "$system_root/Applications/OrbStack.app/Contents/MacOS/bin/orbctl" ]] \
