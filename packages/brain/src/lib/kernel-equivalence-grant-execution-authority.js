@@ -624,6 +624,7 @@ export function createPostgresGrantExecutionAuthority({
       abortCode: 'grant_nonce_consumption_aborted',
       timeoutMs,
     });
+    let committed = false;
     let outcome;
     let operationError;
     try {
@@ -661,6 +662,7 @@ export function createPostgresGrantExecutionAuthority({
         fail('grant_nonce_consumption_aborted');
       }
       await commitTransaction(session);
+      committed = true;
       if (signal?.aborted || session.aborted || session.destroyed) {
         failUnknown('grant_nonce_cancellation_unconfirmed');
       }
@@ -678,6 +680,19 @@ export function createPostgresGrantExecutionAuthority({
       await closeLockedSession(session);
     } catch (error) {
       closeError = error;
+    }
+    if (
+      committed
+      && (signal?.aborted || session.aborted || session.destroyed)
+    ) {
+      operationError = new GrantExecutionAuthorityError(
+        'grant_nonce_cancellation_unconfirmed',
+        {
+          disposition: 'effect_unknown',
+          effectPossible: true,
+          safeNoEffect: false,
+        },
+      );
     }
     if (closeError) throw closeError;
     if (operationError) throw operationError;
