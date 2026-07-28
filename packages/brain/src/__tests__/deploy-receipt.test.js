@@ -14,19 +14,18 @@ import { join } from 'node:path';
 import express from 'express';
 import request from 'supertest';
 
-let capturedSpawnArgs = null;
-let spawnCloseHandler = null;
-
 const {
   recordActionReceipt,
   resolveActionReceipt,
   execFileMock,
   claimReleaseEffect,
+  launchProductionController,
 } = vi.hoisted(() => ({
   recordActionReceipt: vi.fn().mockResolvedValue('r-dep'),
   resolveActionReceipt: vi.fn().mockResolvedValue(true),
   execFileMock: vi.fn((_file, _args, _options, callback) => callback(null, { stdout: 'ok', stderr: '' })),
   claimReleaseEffect: vi.fn(),
+  launchProductionController: vi.fn().mockResolvedValue({ name: 'controller' }),
 }));
 vi.mock('../receipt-collector.js', () => ({ recordActionReceipt, resolveActionReceipt }));
 vi.mock('../orchestrator/release-run-authorization.js', () => ({
@@ -42,6 +41,14 @@ vi.mock('../orchestrator/release-run-routing.js', () => ({
     args: [],
     env: {},
   }]),
+}));
+vi.mock('../orchestrator/release-run-controller-launcher.js', () => ({
+  launchProductionController,
+  launchRollbackController: vi.fn(),
+  resolveRollbackControllerRuntime: vi.fn(() => ({
+    image: `sha256:${'a'.repeat(64)}`,
+    network: 'fixture',
+  })),
 }));
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
@@ -78,13 +85,7 @@ vi.mock('./shared.js', () => ({
   INVENTORY_CONFIG: {},
 }));
 vi.mock('child_process', () => ({
-  spawn: (...args) => {
-    capturedSpawnArgs = args;
-    return {
-      unref: vi.fn(),
-      on: (event, handler) => { if (event === 'close') spawnCloseHandler = handler; },
-    };
-  },
+  spawn: vi.fn(),
   execFile: (...args) => execFileMock(...args),
 }));
 
@@ -116,8 +117,7 @@ describe('deploy webhook 回执接线（T4）', () => {
         digest: `sha256:${'a'.repeat(64)}`,
       }],
     });
-    capturedSpawnArgs = null;
-    spawnCloseHandler = null;
+    launchProductionController.mockResolvedValue({ name: 'controller' });
     process.env.DEPLOY_TOKEN = 'tok';
     // 用临时目录做 REPO_ROOT，避免 production 分支在真实仓库里落 log 文件
     tmpRepoRoot = mkdtempSync(join(tmpdir(), 'deploy-receipt-test-'));
@@ -145,7 +145,7 @@ describe('deploy webhook 回执接线（T4）', () => {
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
   });
 
-  it('production deploy → 写 pending(kind=deploy/target=production)，close(0) 核销 confirmed', async () => {
+  it('production deploy writes pending and delegates exact receipt identity to the durable controller', async () => {
     const res = await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
@@ -155,22 +155,26 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect(recordActionReceipt).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'deploy', target: 'production' })
     );
-    expect(spawnCloseHandler).toBeTypeOf('function');
-    spawnCloseHandler(0, null);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'confirmed', expect.objectContaining({ exit_code: 0 })
+    expect(launchProductionController).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workerEnvironment: expect.objectContaining({
+          KERNEL_RELEASE_ACTION_RECEIPT_ID: 'r-dep',
+        }),
+      }),
     );
+    expect(resolveActionReceipt).not.toHaveBeenCalled();
   });
 
-  it('production deploy close(1) → 核销 failed', async () => {
-    await request(app).post('/api/brain/deploy').set('Authorization', 'Bearer tok').send(authority);
+  it('production controller launch failure immediately核销 failed', async () => {
+    launchProductionController.mockRejectedValueOnce(new Error('launch failed'));
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer tok')
+      .send(authority);
+    expect(res.status).toBe(202);
     await new Promise((r) => setTimeout(r, 50));
-    expect(spawnCloseHandler).toBeTypeOf('function');
-    spawnCloseHandler(1, null);
-    await new Promise((r) => setTimeout(r, 20));
     expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'failed', expect.objectContaining({ exit_code: 1 })
+      'r-dep', 'failed', expect.objectContaining({ error: 'launch failed' })
     );
   });
 

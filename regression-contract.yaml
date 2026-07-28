@@ -32,6 +32,24 @@ ci:
     method: "POST"
     trigger: [PR, Release]
 
+  - id: brain-api-release-runs-authorize
+    description: "Exact ReleaseRun staging/production effect authorization"
+    endpoint: "/release-runs/authorize"
+    method: "POST"
+    trigger: [PR, Release]
+
+  - id: brain-api-release-runs-verification-claim
+    description: "Leased server-owned ReleaseRun verification claim"
+    endpoint: "/release-runs/verification-claim"
+    method: "POST"
+    trigger: [PR, Release]
+
+  - id: brain-api-deploy-rollback-authorityid
+    description: "Durable typed rollback settlement observation"
+    endpoint: "/deploy/rollback/:authorityId"
+    method: "GET"
+    trigger: [PR, Release]
+
 # ============================================================================
 # Golden Paths（must-never-break 核心断言）
 # ============================================================================

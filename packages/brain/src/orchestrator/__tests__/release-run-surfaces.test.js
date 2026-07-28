@@ -75,8 +75,6 @@ describe('legacy release surfaces fail closed', () => {
 
     const directProductionScripts = [
       'brain-deploy.sh',
-      'brain-rollback.sh',
-      'rollback-cecelia.sh',
       'rolling-update.sh',
       'promote-dashboard.sh',
       'post-merge-deploy.sh',
@@ -93,6 +91,27 @@ describe('legacy release surfaces fail closed', () => {
       });
       expect(denied.status, `${file} must fail closed`).not.toBe(0);
       expect(`${denied.stdout}${denied.stderr}`).toMatch(/ReleaseRun authority required/);
+    }
+
+    const rollbackGuard = resolve(root, 'scripts/lib/release-run-rollback-guard.sh');
+    const deniedRollbackGuard = spawnSync('bash', [rollbackGuard], {
+      env: { PATH: process.env.PATH },
+      encoding: 'utf8',
+    });
+    expect(deniedRollbackGuard.status).toBe(78);
+    expect(`${deniedRollbackGuard.stdout}${deniedRollbackGuard.stderr}`)
+      .toMatch(/Dedicated ReleaseRun rollback authority required/);
+    for (const file of ['brain-rollback.sh', 'rollback-cecelia.sh']) {
+      const source = readFileSync(resolve(root, 'scripts', file), 'utf8');
+      expect(source).toContain('release-run-rollback-guard.sh');
+      expect(source).not.toContain('require_release_run_authority production');
+      const denied = spawnSync('bash', [resolve(root, 'scripts', file)], {
+        env: { PATH: process.env.PATH },
+        encoding: 'utf8',
+      });
+      expect(denied.status, `${file} must fail closed`).toBe(78);
+      expect(`${denied.stdout}${denied.stderr}`)
+        .toMatch(/Dedicated ReleaseRun rollback authority required/);
     }
   });
 
@@ -138,13 +157,17 @@ describe('legacy release surfaces fail closed', () => {
     expect(unauthorized.stderr).toMatch(/ReleaseRun authority required/);
   });
 
-  it('does not expose the legacy token-only rollback endpoint', () => {
+  it('exposes only the durable typed rollback endpoint', () => {
     const source = readFileSync(resolve(root, 'packages/brain/src/routes/ops.js'), 'utf8');
     const rollbackRoute = source.slice(
       source.indexOf("router.post('/deploy/rollback'"),
-      source.indexOf("router.post('/deploy/rollback'") + 900,
+      source.indexOf("router.get('/deploy/rollback/:authorityId'"),
     );
-    expect(rollbackRoute).toContain('release_rollback_authority_required');
+    expect(rollbackRoute).toContain('createRollbackAuthority');
+    expect(rollbackRoute).toContain('claimRollbackExecution');
+    expect(rollbackRoute).toContain('launchRollbackController');
+    expect(rollbackRoute).not.toContain('KERNEL_RELEASE_ROLLBACK_AUTHORIZATION');
+    expect(rollbackRoute).not.toContain('KERNEL_RELEASE_AUTHORIZATION');
     expect(rollbackRoute).not.toMatch(/git (?:fetch|checkout)/);
     expect(rollbackRoute).not.toMatch(/pm2 restart/);
   });
@@ -418,7 +441,7 @@ describe('legacy release surfaces fail closed', () => {
       resolve(root, 'packages/brain/src/routes/ops.js'),
       'utf8',
     );
-    const productionSpawnStart = ops.indexOf('child = spawn(args[0]');
+    const productionSpawnStart = ops.indexOf('const productionWorkerEnvironment');
     const productionSpawn = ops.slice(
       productionSpawnStart,
       ops.indexOf('  } catch (error)', productionSpawnStart),
@@ -427,6 +450,24 @@ describe('legacy release surfaces fail closed', () => {
     expect(productionSpawn).toContain('KERNEL_RELEASE_PRIVATE_CONFIG_FILE');
     expect(productionSpawn).not.toContain('...process.env');
     expect(productionSpawn).not.toContain('appendDispatchOutcome');
+    expect(productionSpawn)
+      .toContain("productionWorkerEnvironment.BRAIN_URL = 'http://node-brain:5221'");
+
+    const dockerfile = readFileSync(
+      resolve(root, 'packages/brain/Dockerfile'),
+      'utf8',
+    );
+    expect(dockerfile)
+      .toContain('COPY scripts/lib/release-run-effect-worker.mjs /repo/scripts/lib/');
+    expect(dockerfile)
+      .toContain('COPY scripts/lib/release-run-rollback-worker.mjs /repo/scripts/lib/');
+    expect(dockerfile)
+      .toContain('COPY scripts/lib/release-run-production-progress.mjs /repo/scripts/lib/');
+    expect(dockerfile).toContain('COPY scripts/brain-rollback.sh /repo/scripts/');
+    expect(dockerfile).toContain('COPY scripts/promote-dashboard.sh /repo/scripts/');
+    expect(dockerfile)
+      .toContain('COPY packages/workflows/scripts/deploy-workflow-skills.sh /repo/packages/workflows/scripts/');
+    expect(dockerfile).toContain('COPY docker-compose.yml /repo/docker-compose.yml');
 
     const deployLocal = readFileSync(resolve(root, 'scripts/deploy-local.sh'), 'utf8');
     expect(deployLocal).not.toContain('release-run-checkout.sh');
@@ -440,7 +481,12 @@ describe('legacy release surfaces fail closed', () => {
     );
     expect(workflow).toContain('KERNEL_RELEASE_ARTIFACT_ROOT');
     expect(workflow).not.toContain('source_dir="$workflow_root/packages/workflows/skills"');
-    expect(workflow).toMatch(/ln -s "\$skill_dir" "\$temporary_link"/);
+    expect(workflow).toContain(
+      'persistent_release_root="$account_root/.kernel-releases/workflow-skills/$release_run_id"',
+    );
+    expect(workflow).toMatch(
+      /ln -s "\$persistent_skill_dir" "\$temporary_link"/,
+    );
   });
 
   it('fences legacy production image recreation behind ReleaseRun authority', () => {
@@ -478,6 +524,18 @@ describe('legacy release surfaces fail closed', () => {
     expect(deploy).not.toContain('e2e_receipt');
     expect(deploy).toContain('deployed_artifact_versions');
     expect(deploy).toMatch(/logs\/cecelia-deploy-status\.json/);
+    expect(deploy.lastIndexOf('DEPLOY_SUCCESS=true'))
+      .toBeGreaterThan(deploy.lastIndexOf('[11/11] Post-deploy smoke'));
+    expect(deploy).toContain(
+      'current image identity conflicts with ReleaseRun merge SHA',
+    );
+    expect(deploy).toContain('PRESERVED_ROLLBACK_IMAGE');
+    expect(deploy).toMatch(
+      /status: "running"[\s\S]+?bash "\$SCRIPT_DIR\/brain-build\.sh"/,
+    );
+    expect(deploy).toMatch(
+      /status: "failed"[\s\S]+?rollback_image_digest/,
+    );
 
     const ops = readFileSync(resolve(root, 'packages/brain/src/routes/ops.js'), 'utf8');
     expect(ops).not.toContain("const DEPLOY_STATUS_FILE = '/tmp/cecelia-deploy-status.json'");

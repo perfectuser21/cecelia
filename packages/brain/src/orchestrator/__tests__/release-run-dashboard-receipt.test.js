@@ -9,6 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { digestTree } from '../../../../../scripts/lib/release-run-tree-digest.mjs';
 
 const helper = resolve(
   import.meta.dirname,
@@ -27,9 +28,12 @@ describe('dashboard ReleaseRun rollback receipt', () => {
     const fixture = mkdtempSync(join(tmpdir(), 'dashboard-rollback-fixture-'));
     temporaryRoots.push(fixture);
     const oldRoot = join(fixture, 'prod-cecelia-v41');
+    const newRoot = join(fixture, 'dist');
     const receiptPath = join(fixture, 'receipts/release.json');
     mkdirSync(oldRoot);
+    mkdirSync(newRoot);
     writeFileSync(join(oldRoot, 'index.html'), '<h1>old</h1>\n');
+    writeFileSync(join(newRoot, 'index.html'), '<h1>new</h1>\n');
 
     execFileSync(process.execPath, [helper], {
       env: {
@@ -40,7 +44,9 @@ describe('dashboard ReleaseRun rollback receipt', () => {
         KERNEL_RELEASE_ARTIFACT_DIGEST: `sha256:${'7'.repeat(64)}`,
         RELEASE_DASHBOARD_OLD_TAG: 'prod-cecelia-v41',
         RELEASE_DASHBOARD_NEW_TAG: 'prod-cecelia-v42',
+        RELEASE_DASHBOARD_OLD_COMMIT: 'a'.repeat(40),
         RELEASE_DASHBOARD_OLD_ROOT: oldRoot,
+        RELEASE_DASHBOARD_NEW_ROOT: newRoot,
         RELEASE_DASHBOARD_RECEIPT: receiptPath,
       },
     });
@@ -52,11 +58,13 @@ describe('dashboard ReleaseRun rollback receipt', () => {
       artifact_name: 'workspace',
       current_version: 'b'.repeat(12),
       current_digest: `sha256:${'7'.repeat(64)}`,
+      current_deployed_digest: digestTree(newRoot),
       old_tag: 'prod-cecelia-v41',
       new_tag: 'prod-cecelia-v42',
       anchor: `workspace:sha256:${'7'.repeat(64)}`,
       previous_version: 'dashboard:prod-cecelia-v41',
       previous_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      previous_merge_sha: 'a'.repeat(40),
     });
   });
 });

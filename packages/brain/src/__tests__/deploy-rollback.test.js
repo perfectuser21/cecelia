@@ -84,12 +84,12 @@ describe('deploy-rollback', () => {
     { stable_sha: 'abc12' },
     { stable_sha: 'abc1234', reason: 'deploy_failed_in_ci' },
     { stable_sha: 'a'.repeat(40) },
-  ])('409 — token-only rollback never mutates production (%j)', async (body) => {
+  ])('403 — token-only rollback never mutates production (%j)', async (body) => {
     const res = await request(app)
       .post('/api/brain/deploy/rollback')
       .set('Authorization', 'Bearer test-secret-token')
       .send(body);
-    expect(res.status).toBe(409);
-    expect(res.body.error).toBe('release_rollback_authority_required');
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('release_rollback_authority_request_invalid');
   });
 });

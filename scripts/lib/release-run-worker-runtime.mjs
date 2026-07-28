@@ -30,6 +30,7 @@ const SAFE_RELEASE_ENV = new Set([
   'KERNEL_RELEASE_STARTED_AT',
   'KERNEL_RELEASE_DISPATCH_CLAIM_ID',
   'KERNEL_RELEASE_DISPATCH_GENERATION',
+  'KERNEL_RELEASE_ACTION_RECEIPT_ID',
   'KERNEL_RELEASE_PRIVATE_CONFIG_FILE',
   'KERNEL_RELEASE_ARTIFACT_STORE',
   'KERNEL_RELEASE_ARTIFACT_ROOT',
@@ -37,7 +38,19 @@ const SAFE_RELEASE_ENV = new Set([
   'KERNEL_RELEASE_ARTIFACT_VERSION',
   'KERNEL_RELEASE_ARTIFACT_DIGEST',
   'KERNEL_RELEASE_SKILLS_STAGING_ROOT',
+  'KERNEL_RELEASE_ROLLBACK_WORKER',
+  'KERNEL_RELEASE_ROLLBACK_AUTHORITY_ID',
+  'KERNEL_RELEASE_ROLLBACK_CLAIM_ID',
+  'KERNEL_RELEASE_ROLLBACK_GENERATION',
+  'KERNEL_RELEASE_ROLLBACK_EXPECTED_DIGEST',
+  'KERNEL_RELEASE_ROLLBACK_EXPECTED_CURRENT_DIGEST',
+  'KERNEL_RELEASE_ROLLBACK_EXPECTED_CURRENT_VERSION',
+  'KERNEL_RELEASE_ROLLBACK_EXPECTED_CURRENT_MERGE_SHA',
+  'KERNEL_RELEASE_ROLLBACK_TARGET_MERGE_SHA',
+  'KERNEL_RELEASE_ROLLBACK_TARGETS',
+  'KERNEL_RELEASE_EXTERNAL_CONTROLLER',
   'CECELIA_SKIP_BRAIN_PROMOTE',
+  'CECELIA_SKIP_FINGERPRINT',
   'CECELIA_PROD_GIT_SHA',
   'CECELIA_PROD_DASHBOARD_SHA',
 ]);
@@ -72,6 +85,7 @@ export async function runLeasedReleaseRoutes({
   runRoute,
   beforeTerminal = async () => {},
   afterTerminal = async () => {},
+  abortSignal,
   renewalIntervalMs = 60_000,
 }) {
   if (
@@ -89,6 +103,11 @@ export async function runLeasedReleaseRoutes({
   }
 
   const abortController = new AbortController();
+  const abortFromCaller = () => abortController.abort(
+    abortSignal.reason ?? workerError('release_production_mutation_lock_lost'),
+  );
+  if (abortSignal?.aborted) abortFromCaller();
+  else abortSignal?.addEventListener('abort', abortFromCaller, { once: true });
   let renewalFailure = null;
   let renewalChain = Promise.resolve();
   const renewExactClaim = async () => {
@@ -110,10 +129,13 @@ export async function runLeasedReleaseRoutes({
   await renewExactClaim();
   const renewalTimer = setInterval(enqueueRenewal, renewalIntervalMs);
   renewalTimer.unref?.();
+  let effectStarted = false;
   try {
     for (const route of routes) {
       if (renewalFailure) throw renewalFailure;
+      if (abortController.signal.aborted) throw abortController.signal.reason;
       await renewExactClaim();
+      effectStarted = true;
       await runRoute(route, { signal: abortController.signal });
       await renewalChain;
       if (renewalFailure) throw renewalFailure;
@@ -140,15 +162,21 @@ export async function runLeasedReleaseRoutes({
     const code = renewalFailure?.code
       ?? error?.code
       ?? 'release_worker_route_failed';
+    const outcome = effectStarted
+      || code === 'release_worker_lease_lost'
+      || code === 'release_production_mutation_lock_lost'
+      ? 'unknown'
+      : 'failed';
     await appendOutcome(
       Number(claimId),
       Number(generation),
-      'failed',
+      outcome,
       { error_code: code },
     ).catch(() => {});
     throw workerError(code, error);
   } finally {
     clearInterval(renewalTimer);
+    abortSignal?.removeEventListener('abort', abortFromCaller);
   }
 }
 

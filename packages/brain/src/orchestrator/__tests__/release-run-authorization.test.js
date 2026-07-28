@@ -114,6 +114,8 @@ describe('server-owned ReleaseRun authorization consumer', () => {
     const client = await pool.connect.mock.results[0].value;
     const sql = client.query.mock.calls.map(([statement]) => statement).join('\n');
     expect(sql).toMatch(/BEGIN[\s\S]+?pg_advisory_xact_lock[\s\S]+?COMMIT/);
+    expect(client.query.mock.calls[1][1])
+      .toEqual(['kernel-release/production-mutation/v1']);
     expect(sql).toContain("INTERVAL '15 minutes'");
     expect(sql).toMatch(/effective_lease_expires_at > clock_timestamp\(\)/);
     expect(sql).toMatch(/MAX\(claim\.generation\)/);
@@ -182,6 +184,10 @@ describe('server-owned ReleaseRun authorization consumer', () => {
   it('CAS-fences outcomes by exact claim generation and active lease', async () => {
     const pool = { query: vi.fn(async () => ({ rows: [{ id: 12 }], rowCount: 1 })) };
     await appendDispatchOutcome(pool, 10, 2, 'dispatched', { route: 'brain' });
+    await appendDispatchOutcome(pool, 11, 3, 'unknown', {
+      error_code: 'release_controller_launch_outcome_unknown',
+    });
+    expect(pool.query.mock.calls[1][1]).toContain('unknown');
     expect(pool.query.mock.calls[0][0]).toMatch(
       /INSERT INTO kernel_release_effect_dispatch_outcomes[\s\S]+?claim\.generation = \$2[\s\S]+?effective_lease_expires_at > clock_timestamp\(\)[\s\S]+?ON CONFLICT \(dispatch_claim_id\) DO NOTHING/,
     );

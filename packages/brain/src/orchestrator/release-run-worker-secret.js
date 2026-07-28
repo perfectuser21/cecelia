@@ -126,6 +126,41 @@ export function readPrivateReleaseWorkerConfig(file) {
   return value;
 }
 
+export function createPrivateRollbackWorkerConfig(value, options) {
+  if (
+    !value
+    || typeof value.rollback_authorization !== 'string'
+    || !value.database
+    || typeof value.database !== 'object'
+    || Object.hasOwn(value, 'deploy_token')
+    || Object.hasOwn(value, 'authorization')
+  ) {
+    throw new Error('release_rollback_worker_private_config_invalid');
+  }
+  return createPrivateReleaseWorkerConfig(value, options);
+}
+
+export function readPrivateRollbackWorkerConfig(file) {
+  const { descriptor } = openPrivateReference(file);
+  let value;
+  try {
+    value = JSON.parse(readFileSync(descriptor, 'utf8'));
+  } finally {
+    closeSync(descriptor);
+  }
+  if (
+    !value
+    || typeof value.rollback_authorization !== 'string'
+    || !value.database
+    || typeof value.database !== 'object'
+    || Object.hasOwn(value, 'deploy_token')
+    || Object.hasOwn(value, 'authorization')
+  ) {
+    throw new Error('release_rollback_worker_private_config_invalid');
+  }
+  return value;
+}
+
 export function cleanupPrivateReleaseWorkerConfig(file) {
   const opened = openPrivateReference(file);
   closeSync(opened.descriptor);
@@ -156,6 +191,7 @@ export function cleanupStalePrivateReleaseWorkerConfigs({
   } catch {
     return { removed };
   }
+  if (!Array.isArray(entries)) return { removed };
   const nowMs = now().getTime();
   for (const entry of entries) {
     if (!entry.startsWith(PRIVATE_DIRECTORY_PREFIX)) continue;

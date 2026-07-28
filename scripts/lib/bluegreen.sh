@@ -253,7 +253,9 @@ bluegreen_swap() {
   local env_region="${ENV_REGION:-us}"
   local sidecar_name="cecelia-bluegreen-sidecar"
 
-  if [[ -n "$root_dir" ]]; then
+  if [[ "${KERNEL_RELEASE_EXTERNAL_CONTROLLER:-0}" == "1" ]]; then
+    echo "[bluegreen] external release controller owns compose continuation; skip suicide sidecar"
+  elif [[ -n "$root_dir" ]]; then
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
     # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────

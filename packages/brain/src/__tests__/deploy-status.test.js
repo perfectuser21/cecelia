@@ -6,11 +6,20 @@
  * - 状态字段包含 idle/running/success/failed 四态
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  afterAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { unlinkSync, writeFileSync } from 'node:fs';
 
-const { claimReleaseEffect } = vi.hoisted(() => ({
+const { appendDispatchOutcome, claimReleaseEffect } = vi.hoisted(() => ({
+  appendDispatchOutcome: vi.fn().mockResolvedValue(true),
   claimReleaseEffect: vi.fn(),
 }));
 
@@ -18,7 +27,7 @@ const { claimReleaseEffect } = vi.hoisted(() => ({
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../orchestrator/release-run-authorization.js', () => ({
   authorizeReleaseEffect: vi.fn(),
-  appendDispatchOutcome: vi.fn().mockResolvedValue(true),
+  appendDispatchOutcome,
   claimReleaseEffect,
   claimReleaseVerification: vi.fn(),
 }));
@@ -68,6 +77,8 @@ vi.mock('./shared.js', () => ({
 vi.mock('child_process', () => ({ exec: vi.fn(), execSync: vi.fn() }));
 
 describe('deploy-status', () => {
+  const deployStatusFile = '/tmp/cecelia-release-deploy-status-test.json';
+  const originalDeployStatusFile = process.env.DEPLOY_STATUS_FILE;
   const authority = {
     release_run_id: '44444444-4444-4444-8444-444444444444',
     merge_sha: 'f'.repeat(40),
@@ -79,6 +90,10 @@ describe('deploy-status', () => {
   beforeEach(async () => {
     // 设置 DEPLOY_TOKEN 使 POST /deploy 能通过 token 校验
     process.env.DEPLOY_TOKEN = 'test-token';
+    process.env.DEPLOY_STATUS_FILE = deployStatusFile;
+    try { unlinkSync(deployStatusFile); } catch { /* absent */ }
+    claimReleaseEffect.mockClear();
+    appendDispatchOutcome.mockClear();
     claimReleaseEffect.mockResolvedValue({
       claimed: true,
       deduped: false,
@@ -96,6 +111,12 @@ describe('deploy-status', () => {
     app = express();
     app.use(express.json());
     app.use('/api/brain', mod.default);
+  });
+
+  afterAll(() => {
+    try { unlinkSync(deployStatusFile); } catch { /* absent */ }
+    if (originalDeployStatusFile == null) delete process.env.DEPLOY_STATUS_FILE;
+    else process.env.DEPLOY_STATUS_FILE = originalDeployStatusFile;
   });
 
   it('deployState 初始状态为 idle', () => {
@@ -174,6 +195,7 @@ describe('deploy-status', () => {
     expect(res.body.error).toBe('Deploy already in progress');
     expect(res.body.current_status).toBe('running');
     expect(res.body.started_at).toBeDefined();
+    expect(claimReleaseEffect).not.toHaveBeenCalled();
   });
 
   it('POST /api/brain/deploy 在 rolling_back 时也返回 409', async () => {
@@ -188,5 +210,66 @@ describe('deploy-status', () => {
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('Deploy already in progress');
     expect(res.body.current_status).toBe('rolling_back');
+    expect(claimReleaseEffect).not.toHaveBeenCalled();
+  });
+
+  it('POST deploy refreshes a completed durable status before checking the memory guard', async () => {
+    deployState.status = 'running';
+    deployState.started_at = new Date().toISOString();
+    writeFileSync(deployStatusFile, JSON.stringify({
+      status: 'success',
+      finished_at: new Date().toISOString(),
+    }));
+    claimReleaseEffect.mockResolvedValueOnce({
+      claimed: false,
+      deduped: true,
+      dispatch_claim_id: 91,
+      generation: 1,
+      artifact_versions: [{
+        name: 'brain',
+        version: '1.268.15',
+        digest: `sha256:${'a'.repeat(64)}`,
+      }],
+    });
+
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer test-token')
+      .send(authority);
+
+    expect(res.status).toBe(202);
+    expect(claimReleaseEffect).toHaveBeenCalledOnce();
+  });
+
+  it('terminalizes a claim if another request becomes busy during claim acquisition', async () => {
+    claimReleaseEffect.mockImplementationOnce(async () => {
+      deployState.status = 'running';
+      deployState.started_at = new Date().toISOString();
+      return {
+        claimed: true,
+        deduped: false,
+        dispatch_claim_id: 92,
+        generation: 2,
+        artifact_versions: [{
+          name: 'brain',
+          version: '1.268.15',
+          digest: `sha256:${'a'.repeat(64)}`,
+        }],
+      };
+    });
+
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer test-token')
+      .send(authority);
+
+    expect(res.status).toBe(409);
+    expect(appendDispatchOutcome).toHaveBeenCalledWith(
+      expect.anything(),
+      92,
+      2,
+      'failed',
+      { error_code: 'release_deploy_busy_before_dispatch' },
+    );
   });
 });

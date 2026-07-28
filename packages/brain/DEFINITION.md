@@ -1,6 +1,35 @@
 # Brain 模块定义
 
-**版本**: 1.268.16
+**版本**: 1.268.18
+
+## Exact production recovery readback
+
+- Brain and dashboard restart detection separates source-tree artifact identity
+  from image/dist deployment digests and verifies route-owned durable receipts.
+- External production/rollback controllers are accepted only after an exact
+  running-container readback of image, command, environment, owner nonce,
+  mounts, tmpfs, healthcheck, resource, network, and security policy.
+- Production generations greater than one remain launchable; staging receipts
+  cannot stale a production rollback, and deploy busy races terminalize every
+  claimed-but-not-launched generation.
+- 回退：`bash scripts/brain-rollback.sh 1.268.17`（保留 ReleaseRun 账本）。
+
+## Durable typed post-production rollback
+
+- Migration 380 adds an append-only rollback execution authority, one-shot
+  claim/lease, terminal settlement, and exact readback receipt, independently
+  bound to the already-confirmed `production_verified` ReleaseRun evidence.
+- Brain, dashboard, and Workflow Skills rollback through fixed typed routes;
+  production deploy intents and legacy/manual token-only calls cannot authorize
+  rollback.
+- Forward and rollback mutations run in restartable sibling controllers from
+  immutable image-owned routes under one PostgreSQL production-mutation lock.
+- Timeout, abort, lease loss, and post-effect readback mismatch settle
+  fail-closed with durable `late_effect_risk`; expired claims are observed as
+  `unknown` after Brain restart and never create a replacement claim. A bounded
+  controller restart may only resume the same still-live claim and recover its
+  Workflow WAL before ordinary CAS preflight.
+- 回退：`bash scripts/brain-rollback.sh 1.268.16`（保留 rollback execution ledger）。
 
 ## Crash-safe immutable ReleaseRun effects
 

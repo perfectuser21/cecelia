@@ -13,11 +13,20 @@ import { join } from 'node:path';
 import express from 'express';
 import request from 'supertest';
 
-let capturedSpawnArgs = null;
-const { claimReleaseEffect, recordActionReceipt, resolveActionReceipt } = vi.hoisted(() => ({
+let capturedControllerOptions = null;
+const {
+  claimReleaseEffect,
+  recordActionReceipt,
+  resolveActionReceipt,
+  launchProductionController,
+} = vi.hoisted(() => ({
   claimReleaseEffect: vi.fn(),
   recordActionReceipt: vi.fn().mockResolvedValue('r-dep'),
   resolveActionReceipt: vi.fn().mockResolvedValue(true),
+  launchProductionController: vi.fn(async (options) => {
+    capturedControllerOptions = options;
+    return { name: 'controller' };
+  }),
 }));
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
@@ -35,6 +44,14 @@ vi.mock('../orchestrator/release-run-routing.js', () => ({
     args: [],
     env: {},
   }]),
+}));
+vi.mock('../orchestrator/release-run-controller-launcher.js', () => ({
+  launchProductionController,
+  launchRollbackController: vi.fn(),
+  resolveRollbackControllerRuntime: vi.fn(() => ({
+    image: `sha256:${'a'.repeat(64)}`,
+    network: 'fixture',
+  })),
 }));
 vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(), callLLMStream: vi.fn() }));
@@ -69,16 +86,13 @@ vi.mock('./shared.js', () => ({
   INVENTORY_CONFIG: {},
 }));
 vi.mock('child_process', () => ({
-  spawn: (...args) => {
-    capturedSpawnArgs = args;
-    return { unref: vi.fn(), on: vi.fn() };
-  },
+  spawn: vi.fn(),
   execFile: vi.fn(),
 }));
 
 async function waitForProductionWorker(timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs;
-  while (capturedSpawnArgs === null && Date.now() < deadline) {
+  while (capturedControllerOptions === null && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
@@ -93,7 +107,7 @@ describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
   let tmpRepoRoot;
 
   beforeEach(async () => {
-    capturedSpawnArgs = null;
+    capturedControllerOptions = null;
     process.env.DEPLOY_TOKEN = 'test-token';
     claimReleaseEffect.mockResolvedValue({
       claimed: true,
@@ -124,7 +138,7 @@ describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
     try { rmSync(tmpRepoRoot, { recursive: true, force: true }); } catch {}
   });
 
-  it('spawn stdio 不再用 "ignore"，改为数组 [ignore, fd, fd] 让 stdout/stderr 落盘', async () => {
+  it('passes the durable host log path to the external controller', async () => {
     const mod = await import('../routes/ops.js');
     const app = express();
     app.use(express.json());
@@ -137,18 +151,9 @@ describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
 
     expect(res.status).toBe(202);
     await waitForProductionWorker();
-    expect(capturedSpawnArgs).not.toBeNull();
-
-    const opts = capturedSpawnArgs[2];
-    // 关键断言：stdio 不再是 'ignore' 字符串
-    expect(opts.stdio).not.toBe('ignore');
-    // 应该是数组形式 [stdin, stdout, stderr]
-    expect(Array.isArray(opts.stdio)).toBe(true);
-    expect(opts.stdio.length).toBe(3);
-    // stdin 仍 ignore，stdout/stderr 是 file descriptor (number) 落盘
-    expect(opts.stdio[0]).toBe('ignore');
-    expect(typeof opts.stdio[1]).toBe('number');
-    expect(typeof opts.stdio[2]).toBe('number');
+    expect(capturedControllerOptions).not.toBeNull();
+    expect(capturedControllerOptions.logFile)
+      .toMatch(new RegExp(`^${tmpRepoRoot}/logs/cecelia-deploy-.*\\.log$`));
   });
 
   it('内部 deploy 状态保留 log_path，但公共状态端点不泄露主机路径', async () => {

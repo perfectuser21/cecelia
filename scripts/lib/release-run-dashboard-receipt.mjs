@@ -14,7 +14,9 @@ const {
   KERNEL_RELEASE_ARTIFACT_DIGEST: artifactDigest,
   RELEASE_DASHBOARD_OLD_TAG: oldTag,
   RELEASE_DASHBOARD_NEW_TAG: newTag,
+  RELEASE_DASHBOARD_OLD_COMMIT: previousMergeSha,
   RELEASE_DASHBOARD_OLD_ROOT: oldRoot,
+  RELEASE_DASHBOARD_NEW_ROOT: newRoot,
   RELEASE_DASHBOARD_RECEIPT: receiptPath,
 } = process.env;
 
@@ -24,7 +26,9 @@ if (
   || !/^sha256:[0-9a-f]{64}$/.test(artifactDigest ?? '')
   || !/^prod-cecelia-v[0-9]+$/.test(oldTag ?? '')
   || !/^prod-cecelia-v[0-9]+$/.test(newTag ?? '')
+  || !/^[0-9a-f]{40}$/.test(previousMergeSha ?? '')
   || !oldRoot
+  || !newRoot
   || !receiptPath
 ) {
   throw new Error('release_dashboard_rollback_receipt_request_invalid');
@@ -37,11 +41,13 @@ const receipt = {
   artifact_name: 'workspace',
   current_version: process.env.KERNEL_RELEASE_ARTIFACT_VERSION,
   current_digest: artifactDigest,
+  current_deployed_digest: digestTree(newRoot),
   old_tag: oldTag,
   new_tag: newTag,
   anchor: `workspace:${artifactDigest}`,
   previous_version: `dashboard:${oldTag}`,
   previous_digest: digestTree(oldRoot),
+  previous_merge_sha: previousMergeSha,
 };
 mkdirSync(dirname(receiptPath), { recursive: true, mode: 0o700 });
 const temporaryPath = `${receiptPath}.next-${process.pid}`;

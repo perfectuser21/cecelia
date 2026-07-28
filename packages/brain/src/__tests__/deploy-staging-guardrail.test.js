@@ -13,7 +13,14 @@
  *     （历史问题：staging-verify.sh 只在注释里，从未被执行 → verification 级失败漏判）
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  afterAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { readFileSync, unlinkSync } from 'fs';
@@ -96,6 +103,10 @@ async function waitStagingSettled(stagingDeployState, timeoutMs = 2000) {
 }
 
 describe('deploy-staging-guardrail（蓝绿部署 staging 验证护栏）', () => {
+  const deployStatusFile = '/tmp/cecelia-deploy-status.json';
+  const stagingStatusFile = '/tmp/cecelia-staging-deploy-status.json';
+  const originalDeployStatusFile = process.env.DEPLOY_STATUS_FILE;
+  const originalStagingStatusFile = process.env.STAGING_DEPLOY_STATUS_FILE;
   const authority = {
     release_run_id: '44444444-4444-4444-8444-444444444444',
     merge_sha: 'f'.repeat(40),
@@ -106,6 +117,8 @@ describe('deploy-staging-guardrail（蓝绿部署 staging 验证护栏）', () =
 
   beforeEach(async () => {
     process.env.DEPLOY_TOKEN = 'test-token';
+    process.env.DEPLOY_STATUS_FILE = deployStatusFile;
+    process.env.STAGING_DEPLOY_STATUS_FILE = stagingStatusFile;
     stagingExecImpl = (_file, _args, _options, callback) => callback(
       null,
       { stdout: '', stderr: '' },
@@ -121,12 +134,25 @@ describe('deploy-staging-guardrail（蓝绿部署 staging 验证护栏）', () =
         digest: `sha256:${'a'.repeat(64)}`,
       }],
     });
-    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
+    try { unlinkSync(deployStatusFile); } catch { /* noop */ }
+    try { unlinkSync(stagingStatusFile); } catch { /* noop */ }
     vi.resetModules();
     mod = await import('../routes/ops.js');
     app = express();
     app.use(express.json());
     app.use('/api/brain', mod.default);
+  });
+
+  afterAll(() => {
+    try { unlinkSync(deployStatusFile); } catch { /* noop */ }
+    try { unlinkSync(stagingStatusFile); } catch { /* noop */ }
+    if (originalDeployStatusFile == null) delete process.env.DEPLOY_STATUS_FILE;
+    else process.env.DEPLOY_STATUS_FILE = originalDeployStatusFile;
+    if (originalStagingStatusFile == null) {
+      delete process.env.STAGING_DEPLOY_STATUS_FILE;
+    } else {
+      process.env.STAGING_DEPLOY_STATUS_FILE = originalStagingStatusFile;
+    }
   });
 
   it('staging 脚本失败（exit 非 0）→ status=failed，且 production deployState 保持 idle（生产未触碰）', async () => {

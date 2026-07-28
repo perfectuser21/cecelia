@@ -5,7 +5,7 @@
  *
  * 1. GET /api/brain/deploy/status — 初始状态为 idle，字段结构正确
  * 2. POST /api/brain/deploy — 缺少 DEPLOY_TOKEN 或 token 不匹配时拒绝
- * 3. POST /api/brain/deploy/rollback — stable_sha 格式校验（缺失/非法/合法）
+ * 3. POST /api/brain/deploy/rollback — legacy stable_sha 无 durable authority 必拒
  * 4. GET /api/brain/deploy/staging/status — staging 状态端点可访问
  *
  * 不进行真实部署（mock child_process.exec/execSync），只测 API 合约和 in-memory 状态机。
@@ -16,6 +16,13 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const deployStatusRoot = mkdtempSync(join(tmpdir(), 'deploy-flow-status-'));
+process.env.DEPLOY_STATUS_FILE = join(deployStatusRoot, 'production.json');
+process.env.STAGING_DEPLOY_STATUS_FILE = join(deployStatusRoot, 'staging.json');
 
 // ─── Mock 外部依赖 ────────────────────────────────────────────────────────────
 
@@ -161,6 +168,12 @@ describe('Deploy / Rollback Flow — API 合约测试（in-memory 状态机，�
     app = await makeApp();
   }, 20000);
 
+  afterAll(() => {
+    delete process.env.DEPLOY_STATUS_FILE;
+    delete process.env.STAGING_DEPLOY_STATUS_FILE;
+    rmSync(deployStatusRoot, { recursive: true, force: true });
+  });
+
   // ── Path 1: GET /api/brain/deploy/status — 初始状态查询 ──────────────────
 
   describe('GET /api/brain/deploy/status — 状态查询', () => {
@@ -251,9 +264,9 @@ describe('Deploy / Rollback Flow — API 合约测试（in-memory 状态机，�
     });
   });
 
-  // ── Path 3: POST /api/brain/deploy/rollback — stable_sha 校验 ────────────
+  // ── Path 3: POST /api/brain/deploy/rollback — legacy authority denial ───
 
-  describe('POST /api/brain/deploy/rollback — stable_sha 参数校验', () => {
+  describe('POST /api/brain/deploy/rollback — durable authority only', () => {
     beforeAll(() => {
       process.env.DEPLOY_TOKEN = 'test-rollback-token';
     });
@@ -262,55 +275,18 @@ describe('Deploy / Rollback Flow — API 合约测试（in-memory 状态机，�
       delete process.env.DEPLOY_TOKEN;
     });
 
-    it('缺少 stable_sha 返回 400', async () => {
+    it.each([
+      {},
+      { stable_sha: 'dc4f493' },
+      { stable_sha: 'dc4f493fe1234567890abcdef1234567890abcde' },
+    ])('rejects legacy payload without exact ReleaseRun rollback axes', async (body) => {
       const res = await request(app)
         .post('/api/brain/deploy/rollback')
         .set('Authorization', 'Bearer test-rollback-token')
-        .send({ reason: 'smoke test failure' })
-        .expect(400);
+        .send(body)
+        .expect(403);
 
-      expect(res.body.error).toContain('stable_sha');
-    });
-
-    it('stable_sha 格式非法（含非十六进制字符）返回 400', async () => {
-      const res = await request(app)
-        .post('/api/brain/deploy/rollback')
-        .set('Authorization', 'Bearer test-rollback-token')
-        .send({ stable_sha: 'INVALID_SHA_XYZ', reason: 'test' })
-        .expect(400);
-
-      expect(res.body.error).toContain('stable_sha');
-    });
-
-    it('stable_sha 过短（< 7 字符）返回 400', async () => {
-      const res = await request(app)
-        .post('/api/brain/deploy/rollback')
-        .set('Authorization', 'Bearer test-rollback-token')
-        .send({ stable_sha: 'abc12', reason: 'test' })
-        .expect(400);
-
-      expect(res.body.error).toContain('stable_sha');
-    });
-
-    it('合法 stable_sha（7 位十六进制）且认证通过时返回 202', async () => {
-      const res = await request(app)
-        .post('/api/brain/deploy/rollback')
-        .set('Authorization', 'Bearer test-rollback-token')
-        .send({ stable_sha: 'dc4f493', reason: 'integration test rollback' })
-        .expect(202);
-
-      expect(res.body.status).toBe('accepted');
-      expect(res.body.message).toContain('dc4f493');
-    });
-
-    it('合法 stable_sha（40 位）且认证通过时返回 202', async () => {
-      const res = await request(app)
-        .post('/api/brain/deploy/rollback')
-        .set('Authorization', 'Bearer test-rollback-token')
-        .send({ stable_sha: 'dc4f493fe1234567890abcdef1234567890abcde', reason: 'full sha test' })
-        .expect(202);
-
-      expect(res.body.status).toBe('accepted');
+      expect(res.body.error).toBe('release_rollback_authority_request_invalid');
     });
   });
 

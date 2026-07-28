@@ -382,6 +382,7 @@ describe('production ReleaseRun adapters', () => {
         deployed_artifact_versions: mixedArtifacts,
         workflow_rollback_metadata: {
           anchor: `workflow-skills:${workflowArtifact.digest}`,
+          current_links_digest: `sha256:${'7'.repeat(64)}`,
           previous_version: `workflow-skills:sha256:${'8'.repeat(64)}`,
           previous_digest: `sha256:${'8'.repeat(64)}`,
         },

@@ -277,6 +277,7 @@ export function createReleaseRunAdapters({
         previous_version: previousVersion,
         previous_digest: status.rollback_image_digest,
         rollback_metadata: {
+          current_image_digest: status.deployed_image_digest,
           image_reference: status.rollback_image_reference,
           image_tag: status.rollback_image_tag,
           rollback_command: status.rollback_command,
@@ -293,10 +294,14 @@ export function createReleaseRunAdapters({
         || rollback.artifact_name !== 'workspace'
         || rollback.current_version !== dashboard.version
         || rollback.current_digest !== dashboard.digest
+        || !/^sha256:[0-9a-f]{64}$/.test(
+          rollback.current_deployed_digest ?? '',
+        )
         || !/^prod-cecelia-v[0-9]+$/.test(rollback.old_tag ?? '')
         || !/^prod-cecelia-v[0-9]+$/.test(rollback.new_tag ?? '')
         || rollback.anchor !== `workspace:${dashboard.digest}`
         || rollback.previous_version !== `dashboard:${rollback.old_tag}`
+        || !/^[0-9a-f]{40}$/.test(rollback.previous_merge_sha ?? '')
         || !/^sha256:[0-9a-f]{64}$/.test(rollback.previous_digest ?? '')
       ) return { status: 'fail' };
       const anchor = `workspace:${dashboard.digest}`;
@@ -321,6 +326,9 @@ export function createReleaseRunAdapters({
         )
         || !/^sha256:[0-9a-f]{64}$/.test(
           workflowRollback?.previous_digest ?? '',
+        )
+        || !/^sha256:[0-9a-f]{64}$/.test(
+          workflowRollback?.current_links_digest ?? '',
         )
         || workflowRollback.previous_version
           !== `workflow-skills:${workflowRollback.previous_digest}`

@@ -76,7 +76,11 @@ async function claimReleaseGeneration(pool, request, claimMode, claimOutcome = n
     await client.query('BEGIN');
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))',
-      [`kernel-release/effect/${request?.release_run_id ?? ''}/${request?.effect_kind ?? ''}`],
+      [
+        request?.effect_kind === 'production'
+          ? 'kernel-release/production-mutation/v1'
+          : `kernel-release/effect/${request?.release_run_id ?? ''}/${request?.effect_kind ?? ''}`,
+      ],
     );
     const authorization = await authorizeReleaseEffect(client, request);
     const claimed = await client.query(
@@ -240,7 +244,7 @@ export async function appendDispatchOutcome(
   if (
     !Number.isInteger(Number(claimId))
     || !Number.isInteger(Number(generation))
-    || !['dispatched', 'failed', 'observed'].includes(outcome)
+    || !['dispatched', 'failed', 'observed', 'unknown'].includes(outcome)
   ) {
     throw new ReleaseRunError('release_dispatch_outcome_invalid');
   }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const published374Sql = readFileSync(
@@ -10,6 +10,13 @@ const closureSql = readFileSync(
   new URL('../../../migrations/375_kernel_release_run_closure.sql', import.meta.url),
   'utf8',
 );
+const rollbackMigrationUrl = new URL(
+  '../../../migrations/380_kernel_release_rollback_execution.sql',
+  import.meta.url,
+);
+const rollbackSql = existsSync(rollbackMigrationUrl)
+  ? readFileSync(rollbackMigrationUrl, 'utf8')
+  : '';
 const sql = `${published374Sql}\n${closureSql}`;
 
 describe('migration 374 Kernel ReleaseRun', () => {
@@ -364,6 +371,154 @@ describe('migration 375 installed-v374 reconciliation', () => {
     expect(closureSql).toMatch(/BEFORE TRUNCATE ON kernel_release_effect_receipts/i);
     expect(closureSql).toMatch(
       /VALUES \('375', 'Fence and close Kernel ReleaseRun authority and receipts', NOW\(\)\)/i,
+    );
+  });
+});
+
+describe('migration 380 post-production rollback execution', () => {
+  const rollbackLedgerTables = [
+    'kernel_release_rollback_execution_authorities',
+    'kernel_release_rollback_execution_claims',
+    'kernel_release_rollback_execution_renewals',
+    'kernel_release_rollback_execution_settlements',
+    'kernel_release_rollback_execution_receipts',
+    'kernel_release_rollback_execution_interrupts',
+  ];
+
+  it.each(rollbackLedgerTables)(
+    'creates independent append-only %s',
+    (table) => {
+      expect(rollbackSql).toMatch(
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`, 'i'),
+      );
+      expect(rollbackSql).toMatch(new RegExp(
+        `CREATE TRIGGER[\\s\\S]+?BEFORE UPDATE OR DELETE ON ${table}`,
+        'i',
+      ));
+      expect(rollbackSql).toMatch(new RegExp(
+        `CREATE TRIGGER[\\s\\S]+?BEFORE TRUNCATE ON ${table}`,
+        'i',
+      ));
+    },
+  );
+
+  it('freezes one idempotent rollback authority per exact ReleaseRun', () => {
+    expect(rollbackSql).toMatch(
+      /CREATE TABLE IF NOT EXISTS kernel_release_rollback_execution_authorities[\s\S]+?release_run_id UUID NOT NULL UNIQUE REFERENCES kernel_release_runs\(id\)/i,
+    );
+    expect(rollbackSql).toMatch(/idempotency_key UUID NOT NULL UNIQUE/i);
+    expect(rollbackSql).toMatch(
+      /rollback_intent_id UUID NOT NULL\s+REFERENCES kernel_release_rollback_intents\(id\)/i,
+    );
+    expect(rollbackSql).toMatch(
+      /production_effect_receipt_id UUID NOT NULL\s+REFERENCES kernel_release_effect_receipts\(id\)/i,
+    );
+    expect(rollbackSql).toMatch(
+      /rollback_receipt_id UUID NOT NULL\s+REFERENCES kernel_release_rollback_receipts\(id\)/i,
+    );
+    expect(rollbackSql).toMatch(/expected_merge_sha TEXT NOT NULL/i);
+    expect(rollbackSql).toMatch(/expected_artifact_versions JSONB NOT NULL/i);
+    expect(rollbackSql).toMatch(/rollback_targets JSONB NOT NULL/i);
+  });
+
+  it('derives authority only from the latest exact production evidence chain', () => {
+    expect(rollbackSql).toMatch(/kernel_release_rollback_execution_authority_guard/i);
+    expect(rollbackSql).toMatch(
+      /latest kernel release transition must be production_verified/i,
+    );
+    expect(rollbackSql).toMatch(
+      /rollback execution authority requires exact confirmed production receipt/i,
+    );
+    expect(rollbackSql).toMatch(
+      /newer_receipt\.append_seq > selected_receipt\.append_seq/i,
+    );
+    expect(rollbackSql).toMatch(
+      /rollback execution authority requires latest confirmed production receipt/i,
+    );
+    expect(rollbackSql).toMatch(
+      /rollback execution authority requires exact aggregate rollback receipt/i,
+    );
+    expect(rollbackSql).toMatch(
+      /rollback execution authority requires complete exact artifact rollback targets/i,
+    );
+    expect(rollbackSql).toMatch(
+      /ORDER BY transition\.append_seq DESC[\s\S]+?LIMIT 1/i,
+    );
+    expect(rollbackSql).toMatch(
+      /receipt\.observed_merge_sha = release\.merge_sha/i,
+    );
+    expect(rollbackSql).toMatch(
+      /receipt\.observed_artifact_versions = release\.artifact_versions/i,
+    );
+  });
+
+  it('fences a single generation-one claim, renewals, receipts, and settlement', () => {
+    expect(rollbackSql).toMatch(
+      /generation INTEGER NOT NULL DEFAULT 1 CHECK \(generation = 1\)/i,
+    );
+    expect(rollbackSql).toMatch(/authority_id UUID NOT NULL UNIQUE/i);
+    expect(rollbackSql).toMatch(/kernel_release_rollback_execution_claim_guard/i);
+    expect(rollbackSql).toMatch(/kernel_release_rollback_execution_renewal_guard/i);
+    expect(rollbackSql).toMatch(/kernel_release_rollback_execution_receipt_guard/i);
+    expect(rollbackSql).toMatch(/kernel_release_rollback_execution_settlement_guard/i);
+    expect(rollbackSql).toMatch(/effective_lease_expires_at/i);
+    expect(rollbackSql).toMatch(/rollback execution claim is not live/i);
+    expect(rollbackSql).toMatch(
+      /succeeded rollback settlement requires exact execution receipt/i,
+    );
+  });
+
+  it('allows one terminal settlement and requires late-effect risk for uncertainty', () => {
+    expect(rollbackSql).toMatch(
+      /settlement_status TEXT NOT NULL CHECK \([\s\S]+?'succeeded', 'failed', 'unknown', 'aborted'/i,
+    );
+    expect(rollbackSql).toMatch(/authority_id UUID NOT NULL UNIQUE/i);
+    expect(rollbackSql).toMatch(
+      /settlement_status NOT IN \('unknown', 'aborted'\)[\s\S]+?late_effect_risk = TRUE/i,
+    );
+  });
+
+  it('requires an exact per-artifact target readback receipt for success', () => {
+    expect(rollbackSql).toMatch(
+      /CREATE TABLE IF NOT EXISTS kernel_release_rollback_execution_receipts[\s\S]+?authority_id UUID NOT NULL UNIQUE/i,
+    );
+    expect(rollbackSql).toMatch(/settlement_id UUID NOT NULL UNIQUE/i);
+    expect(rollbackSql).toMatch(/observed_targets JSONB NOT NULL/i);
+    expect(rollbackSql).toMatch(/observed_readbacks JSONB NOT NULL/i);
+    expect(rollbackSql).toMatch(/execution receipt requires exact rollback targets/i);
+    expect(rollbackSql).toMatch(
+      /execution receipt requires exact rollback target readbacks/i,
+    );
+  });
+
+  it('records commit-pending abort ambiguity as an append-only interrupt', () => {
+    expect(rollbackSql).toMatch(
+      /CREATE TABLE IF NOT EXISTS kernel_release_rollback_execution_interrupts[\s\S]+?claim_id BIGINT NOT NULL UNIQUE/i,
+    );
+    expect(rollbackSql).toMatch(
+      /interrupt_kind IN \('abort_during_commit', 'commit_outcome_unknown'\)/i,
+    );
+  });
+
+  it('serializes production claim issuance with the controller mutation lock', () => {
+    expect(rollbackSql).toMatch(
+      /BEFORE INSERT ON kernel_release_effect_dispatch_claims[\s\S]+?kernel_release_production_dispatch_claim_mutation_lock/i,
+    );
+    expect(rollbackSql).toContain('kernel-release/production-mutation/v1');
+  });
+
+  it('never redefines or writes the forward transition ledger', () => {
+    expect(rollbackSql).not.toMatch(
+      /CREATE OR REPLACE FUNCTION kernel_release_transition_guard/i,
+    );
+    expect(rollbackSql).not.toMatch(
+      /INSERT\s+INTO\s+kernel_release_transitions/i,
+    );
+  });
+
+  it('registers migration 380 idempotently', () => {
+    expect(rollbackSql).toMatch(
+      /VALUES \('380', 'Kernel ReleaseRun post-production rollback execution', NOW\(\)\)[\s\S]+?ON CONFLICT \(version\) DO NOTHING/i,
     );
   });
 });

@@ -28,7 +28,7 @@ ENV GIT_SHA=${GIT_SHA}
 # postgresql-client (createdb/dropdb/psql)：WS1 预览闸 preview-env-start.sh 用
 # `createdb -T cecelia cecelia_preview_<PR>` 克隆生产快照做数据隔离，容器内此前没装过，
 # 实测(PR#3801) Step4 直接报 "createdb: command not found" 失败退出。
-RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client \
+RUN apk add --no-cache curl bash jq procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client \
  && adduser -D -u 1001 cecelia
 
 # Install Codex CLI globally so triggerCodexReview() in executor.js can spawn it.
@@ -64,6 +64,28 @@ COPY packages/brain/src/ ./src/
 COPY packages/brain/config/ ./config/
 COPY packages/brain/migrations/ ./migrations/
 COPY packages/brain/package.json ./
+# Release effect controllers run as sibling containers so replacing Brain
+# cannot kill their lease/readback/settlement process. Keep the entrypoints in
+# the immutable image; rollback route code and compose definition are immutable
+# too, while their data targets remain in the mounted deployment root.
+COPY packages/brain/src/ /repo/packages/brain/src/
+COPY packages/brain/package.json /repo/packages/brain/package.json
+COPY scripts/lib/release-run-effect-worker.mjs /repo/scripts/lib/
+COPY scripts/lib/release-run-rollback-worker.mjs /repo/scripts/lib/
+COPY scripts/lib/release-run-worker-runtime.mjs /repo/scripts/lib/
+COPY scripts/lib/release-run-rollback-worker-runtime.mjs /repo/scripts/lib/
+COPY scripts/lib/release-run-production-lock.mjs /repo/scripts/lib/
+COPY scripts/lib/release-run-production-progress.mjs /repo/scripts/lib/
+COPY scripts/lib/release-run-artifact-snapshot.mjs /repo/scripts/lib/
+COPY scripts/lib/release-run-tree-digest.mjs /repo/scripts/lib/
+COPY scripts/brain-rollback.sh /repo/scripts/
+COPY scripts/promote-dashboard.sh /repo/scripts/
+COPY scripts/lib/release-run-rollback-guard.sh /repo/scripts/lib/
+COPY scripts/lib/verify-release-rollback-worker.mjs /repo/scripts/lib/
+COPY scripts/lib/release-run-tree-digest-cli.mjs /repo/scripts/lib/
+COPY scripts/lib/release-run-dashboard-receipt.mjs /repo/scripts/lib/
+COPY packages/workflows/scripts/deploy-workflow-skills.sh /repo/packages/workflows/scripts/
+COPY docker-compose.yml /repo/docker-compose.yml
 
 # Root user: 容器内需要访问 /var/run/docker.sock 调 dockerd spawn 兄弟容器。
 # macOS 宿主没有 docker group，gid 映射不稳定；direct root 最简单。

@@ -6,11 +6,36 @@
 
 
 
-**Brain 版本**: 1.268.16
+**Brain 版本**: 1.268.18
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.18 — Exact production recovery readback
+
+- Production completion now binds source artifact identity to route-owned
+  deployment receipts, then compares live Brain image, dashboard dist, and
+  Workflow links only inside their matching deployment digest domains.
+- Sibling controller acceptance requires a running exact image, command,
+  environment, labels/owner nonce, mounts, tmpfs, healthcheck, and resource
+  policy after every Docker launch result.
+- Production retry generations remain recoverable; rollback currentness ignores
+  staging-only receipts, and busy requests cannot strand an unterminated claim.
+- 回退：`bash scripts/brain-rollback.sh 1.268.17`（保留 ReleaseRun 账本）。
+
+## Brain 1.268.17 — Durable typed post-production rollback
+
+- An independent append-only authority/claim/renewal/settlement/receipt ledger
+  binds rollback to one exact `production_verified` ReleaseRun, merge SHA,
+  deployed artifact set, confirmed production receipt, and verified targets.
+- Server-owned typed routes execute the retained Brain image, dashboard release,
+  and Workflow Skills link manifest; a production deploy intent or legacy token
+  cannot authorize rollback.
+- Timeout, abort, lease loss, and post-effect readback mismatch persist
+  fail-closed late-effect risk and never auto-replay. Durable DB observation
+  survives Brain restart without altering the forward ReleaseRun state.
+- 回退：`bash scripts/brain-rollback.sh 1.268.16`（保留 rollback execution ledger）。
 
 ## Brain 1.268.15 — Exact bootstrap receipt closure
 

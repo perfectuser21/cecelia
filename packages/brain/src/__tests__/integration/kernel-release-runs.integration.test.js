@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -10,6 +10,12 @@ import {
 } from '../../orchestrator/release-run-bootstrap-e2e.js';
 import { createPostgresMergeEffectStore } from '../../orchestrator/merge-effect-store.js';
 import { createReleaseBlockedEscalator } from '../../orchestrator/release-run-escalation.js';
+import {
+  claimRollbackExecution,
+  createRollbackAuthority,
+  renewRollbackClaim,
+  settleRollbackExecution,
+} from '../../orchestrator/release-run-rollback-authorization.js';
 import { createPostgresReleaseRunStore } from '../../orchestrator/release-run-store.js';
 
 const mergeMigration = readFileSync(
@@ -24,6 +30,13 @@ const closureMigration = readFileSync(
   new URL('../../../migrations/375_kernel_release_run_closure.sql', import.meta.url),
   'utf8',
 );
+const rollbackMigrationUrl = new URL(
+  '../../../migrations/380_kernel_release_rollback_execution.sql',
+  import.meta.url,
+);
+const rollbackExecutionMigration = existsSync(rollbackMigrationUrl)
+  ? readFileSync(rollbackMigrationUrl, 'utf8')
+  : '';
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const databaseName = testDatabaseUrl
   ? decodeURIComponent(new URL(testDatabaseUrl).pathname.slice(1))
@@ -199,6 +212,11 @@ beforeAll(async () => {
   await client.query(`CREATE SCHEMA ${quotedSchema}`);
   await client.query(`SET search_path TO ${quotedSchema}, public`);
   await client.query(`
+    CREATE TABLE schema_version (
+      version VARCHAR(10) PRIMARY KEY,
+      description TEXT,
+      applied_at TIMESTAMPTZ DEFAULT NOW()
+    );
     CREATE TABLE tasks (
       id UUID PRIMARY KEY,
       payload JSONB NOT NULL DEFAULT '{}'::jsonb
@@ -220,6 +238,8 @@ beforeAll(async () => {
   await client.query(releaseMigration);
   await client.query(closureMigration);
   await client.query(closureMigration);
+  await client.query(rollbackExecutionMigration);
+  await client.query(rollbackExecutionMigration);
   await client.query('INSERT INTO tasks (id) VALUES ($1)', [taskId]);
   await client.query(
     `INSERT INTO initiative_contracts
@@ -274,7 +294,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
+describe('migrations 374-380 ReleaseRun ledger on PostgreSQL', () => {
   it('persists first-release and path risk as immutable server-owned review authority', async () => {
     const mergeStore = createPostgresMergeEffectStore({});
     const firstTaskId = randomUUID();
@@ -340,7 +360,7 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
     });
   });
 
-  it('uses the canonical runner to upgrade an N-1 schema from 368 through 375', async () => {
+  it('uses the canonical runner to upgrade an N-1 schema from 368 through 380', async () => {
     const upgradeSchema = `kernel_release_upgrade_${randomUUID().replaceAll('-', '')}`;
     const quotedUpgradeSchema = `"${upgradeSchema}"`;
     await client.query(`CREATE SCHEMA ${quotedUpgradeSchema}`);
@@ -365,7 +385,18 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
             applied_at TIMESTAMPTZ DEFAULT NOW()
           );
           CREATE TABLE tasks (id UUID PRIMARY KEY);
-          CREATE TABLE initiative_runs (id UUID PRIMARY KEY);
+          CREATE TABLE initiative_contracts (
+            id UUID PRIMARY KEY,
+            version INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            approved_at TIMESTAMPTZ,
+            contract_content TEXT,
+            e2e_acceptance JSONB
+          );
+          CREATE TABLE initiative_runs (
+            id UUID PRIMARY KEY,
+            contract_id UUID REFERENCES initiative_contracts(id)
+          );
           CREATE TABLE harness_attempts (
             id UUID PRIMARY KEY,
             execution_transport TEXT
@@ -387,7 +418,7 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
         seed.release();
       }
       await expect(runMigrations(upgradePool)).resolves.toEqual([
-        '369', '370', '371', '372', '374', '375',
+        '369', '370', '371', '372', '374', '375', '380',
       ]);
     } finally {
       await upgradePool.end();
@@ -414,6 +445,11 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
       const legacy = await legacyPool.connect();
       try {
         await legacy.query(`
+          CREATE TABLE schema_version (
+            version VARCHAR(10) PRIMARY KEY,
+            description TEXT,
+            applied_at TIMESTAMPTZ DEFAULT NOW()
+          );
           CREATE TABLE tasks (id UUID PRIMARY KEY);
           CREATE TABLE initiative_contracts (
             id UUID PRIMARY KEY,
@@ -432,6 +468,8 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
         await legacy.query(releaseMigration);
 
         await expect(legacy.query(closureMigration)).resolves.toBeDefined();
+        await expect(legacy.query(rollbackExecutionMigration)).resolves.toBeDefined();
+        await expect(legacy.query(rollbackExecutionMigration)).resolves.toBeDefined();
         const columns = (await legacy.query(
           `SELECT table_name, column_name
              FROM information_schema.columns
@@ -463,7 +501,13 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
                   kernel_release_rollback_intents,
                   kernel_release_rollback_artifact_intents,
                   kernel_release_bootstrap_rollback_artifact_intents,
-                  kernel_release_blocked_escalations
+                  kernel_release_blocked_escalations,
+                  kernel_release_rollback_execution_authorities,
+                  kernel_release_rollback_execution_claims,
+                  kernel_release_rollback_execution_renewals,
+                  kernel_release_rollback_execution_settlements,
+                  kernel_release_rollback_execution_receipts,
+                  kernel_release_rollback_execution_interrupts
             LIMIT 1`,
         )).resolves.toBeDefined();
       } finally {
@@ -735,6 +779,249 @@ describe('migrations 374-375 ReleaseRun ledger on PostgreSQL', () => {
         JSON.stringify({ verification: { status: 'pass' } }),
       ],
     )).rejects.toBeTruthy();
+  });
+
+  it('binds rollback execution to exact production evidence and fences one settlement', async () => {
+    const productionEvidence = (await client.query(
+      `SELECT effect_receipt.id AS production_effect_receipt_id,
+              rollback_receipt.id AS rollback_receipt_id
+         FROM kernel_release_effect_intents effect_intent
+         JOIN kernel_release_effect_receipts effect_receipt
+           ON effect_receipt.intent_id = effect_intent.id
+          AND effect_receipt.receipt_status = 'confirmed'
+         JOIN kernel_release_rollback_receipts rollback_receipt
+           ON rollback_receipt.effect_receipt_id = effect_receipt.id
+        WHERE effect_intent.release_run_id = $1
+          AND effect_intent.effect_kind = 'production'`,
+      [release.id],
+    )).rows[0];
+    const rollbackTargets = [{
+      artifact_name: 'brain',
+      current_version: artifacts[0].version,
+      current_digest: artifacts[0].digest,
+      anchor: `brain:${artifacts[0].digest}`,
+      previous_version: `brain-image:sha256:${'f'.repeat(64)}`,
+      previous_digest: `sha256:${'f'.repeat(64)}`,
+      rollback_metadata: {
+        image_reference: `sha256:${'f'.repeat(64)}`,
+      },
+    }];
+    const forwardBefore = (await client.query(
+      `SELECT state, append_seq
+         FROM kernel_release_transitions
+        WHERE release_run_id = $1
+        ORDER BY append_seq`,
+      [release.id],
+    )).rows;
+
+    await expect(client.query(
+      `INSERT INTO kernel_release_rollback_execution_authorities
+         (release_run_id, idempotency_key, rollback_intent_id,
+          production_effect_receipt_id, rollback_receipt_id,
+          expected_merge_sha, expected_artifact_versions, rollback_targets)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)`,
+      [
+        release.id,
+        randomUUID(),
+        rollbackIntent.id,
+        productionEvidence.production_effect_receipt_id,
+        productionEvidence.rollback_receipt_id,
+        '0'.repeat(40),
+        JSON.stringify(artifacts),
+        JSON.stringify(rollbackTargets),
+      ],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client.query(
+      `INSERT INTO kernel_release_rollback_execution_authorities
+         (release_run_id, idempotency_key, rollback_intent_id,
+          production_effect_receipt_id, rollback_receipt_id,
+          expected_merge_sha, expected_artifact_versions, rollback_targets)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)`,
+      [
+        release.id,
+        randomUUID(),
+        rollbackIntent.id,
+        productionEvidence.production_effect_receipt_id,
+        productionEvidence.rollback_receipt_id,
+        mergeSha,
+        JSON.stringify(artifacts),
+        JSON.stringify([{
+          ...rollbackTargets[0],
+          previous_digest: `sha256:${'0'.repeat(64)}`,
+        }]),
+      ],
+    )).rejects.toMatchObject({ code: 'P0001' });
+
+    const rollbackAuthorization = randomUUID();
+    const createdAuthority = await createRollbackAuthority(client, {
+      release_run_id: release.id,
+      merge_sha: mergeSha,
+      rollback_authorization: rollbackAuthorization,
+    });
+    expect(createdAuthority).toMatchObject({
+      release_run_id: release.id,
+      merge_sha: mergeSha,
+      rollback_authorization: rollbackAuthorization,
+      artifact_versions: artifacts,
+      rollback_targets: rollbackTargets,
+    });
+    await expect(createRollbackAuthority(client, {
+      release_run_id: release.id,
+      merge_sha: mergeSha,
+      rollback_authorization: rollbackAuthorization,
+    })).resolves.toEqual(createdAuthority);
+    const authority = { id: createdAuthority.authority_id };
+    await expect(client.query(
+      `INSERT INTO kernel_release_rollback_execution_authorities
+         (release_run_id, idempotency_key, rollback_intent_id,
+          production_effect_receipt_id, rollback_receipt_id,
+          expected_merge_sha, expected_artifact_versions, rollback_targets)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)`,
+      [
+        release.id,
+        randomUUID(),
+        rollbackIntent.id,
+        productionEvidence.production_effect_receipt_id,
+        productionEvidence.rollback_receipt_id,
+        mergeSha,
+        JSON.stringify(artifacts),
+        JSON.stringify(rollbackTargets),
+      ],
+    )).rejects.toMatchObject({ code: '23505' });
+    await expect(client.query(
+      `INSERT INTO kernel_release_rollback_execution_claims
+         (authority_id, generation, lease_expires_at)
+       VALUES ($1, 2, clock_timestamp() + interval '15 minutes')`,
+      [authority.id],
+    )).rejects.toMatchObject({ code: 'P0001' });
+
+    const claimed = await claimRollbackExecution({
+      connect: async () => ({
+        query: client.query.bind(client),
+        release() {},
+      }),
+    }, {
+      release_run_id: release.id,
+      merge_sha: mergeSha,
+      rollback_authorization: rollbackAuthorization,
+    });
+    expect(claimed).toMatchObject({
+      authority_id: authority.id,
+      generation: 1,
+      claimed: true,
+      deduped: false,
+    });
+    const claim = { id: claimed.claim_id };
+    await expect(client.query(
+      `INSERT INTO kernel_release_rollback_execution_claims
+         (authority_id, lease_expires_at)
+       VALUES ($1, clock_timestamp() + interval '15 minutes')`,
+      [authority.id],
+    )).rejects.toMatchObject({ code: '23505' });
+    await expect(client.query(
+      `INSERT INTO kernel_release_rollback_execution_renewals
+         (claim_id, generation, lease_expires_at)
+       VALUES ($1, 2, clock_timestamp() + interval '20 minutes')`,
+      [claim.id],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    await expect(renewRollbackClaim(client, {
+      claim_id: Number(claim.id),
+      generation: 1,
+    })).resolves.toMatchObject({
+      claim_id: Number(claim.id),
+      generation: 1,
+    });
+
+    await expect(client.query(
+      `INSERT INTO kernel_release_rollback_execution_settlements
+         (authority_id, claim_id, settlement_status, late_effect_risk, evidence)
+       VALUES ($1, $2, 'unknown', false, '{"detail":"timeout"}')`,
+      [authority.id, claim.id],
+    )).rejects.toMatchObject({ code: '23514' });
+
+    await client.query('BEGIN');
+    try {
+      const forgedSettlement = (await client.query(
+        `INSERT INTO kernel_release_rollback_execution_settlements
+           (authority_id, claim_id, settlement_status, late_effect_risk, evidence)
+         VALUES ($1, $2, 'succeeded', false, '{"detail":"forged readback"}')
+         RETURNING id`,
+        [authority.id, claim.id],
+      )).rows[0];
+      await expect(client.query(
+        `INSERT INTO kernel_release_rollback_execution_receipts
+           (authority_id, settlement_id, observed_targets, observed_readbacks,
+            evidence)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb,
+                 '{"source":"live_readback"}')`,
+        [
+          authority.id,
+          forgedSettlement.id,
+          JSON.stringify([{
+            ...rollbackTargets[0],
+            previous_digest: `sha256:${'0'.repeat(64)}`,
+          }]),
+          JSON.stringify([{
+            artifact: 'brain',
+            observed_digest: `sha256:${'0'.repeat(64)}`,
+          }]),
+        ],
+      )).rejects.toMatchObject({ code: 'P0001' });
+    } finally {
+      await client.query('ROLLBACK');
+    }
+
+    const settled = await settleRollbackExecution(client, {
+      claim_id: Number(claim.id),
+      generation: 1,
+      status: 'succeeded',
+      late_effect_risk: false,
+      observed_targets: rollbackTargets,
+      observed_readbacks: [{
+        artifact: 'brain',
+        observed_digest: rollbackTargets[0].previous_digest,
+      }],
+      evidence: {
+        detail: 'exact readback confirmed',
+        source: 'live_readback',
+      },
+      abort_signal: new AbortController().signal,
+      interrupt_store: pool,
+    }, { connectionKind: 'client' });
+    expect(settled).toMatchObject({
+      authority_id: authority.id,
+      status: 'succeeded',
+      late_effect_risk: false,
+      receipt_id: expect.any(String),
+    });
+    await expect(renewRollbackClaim(client, {
+      claim_id: Number(claim.id),
+      generation: 1,
+    })).rejects.toMatchObject({
+      code: 'release_rollback_renewal_fenced',
+    });
+
+    const forwardAfter = (await client.query(
+      `SELECT state, append_seq
+         FROM kernel_release_transitions
+        WHERE release_run_id = $1
+        ORDER BY append_seq`,
+      [release.id],
+    )).rows;
+    expect(forwardAfter).toEqual(forwardBefore);
+    await expect(client.query(
+      `UPDATE kernel_release_rollback_execution_authorities
+          SET expected_merge_sha = expected_merge_sha
+        WHERE id = $1`,
+      [authority.id],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client.query(
+      'DELETE FROM kernel_release_rollback_execution_receipts WHERE id = $1',
+      [settled.receipt_id],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client.query(
+      'TRUNCATE kernel_release_rollback_execution_settlements CASCADE',
+    )).rejects.toMatchObject({ code: 'P0001' });
   });
 
   it('blocks UPDATE, DELETE, and TRUNCATE against authoritative ledgers', async () => {

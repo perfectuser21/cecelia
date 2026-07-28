@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   linkSync,
@@ -8,6 +9,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,13 +20,242 @@ import {
   runLeasedReleaseRoutes,
 } from '../../../../../scripts/lib/release-run-worker-runtime.mjs';
 import {
+  acquireProductionMutationLock,
+} from '../../../../../scripts/lib/release-run-production-lock.mjs';
+import {
+  isProductionRouteComplete,
+} from '../../../../../scripts/lib/release-run-production-progress.mjs';
+import {
   cleanupPrivateReleaseWorkerConfig,
+  createPrivateRollbackWorkerConfig,
   createPrivateReleaseWorkerConfig,
   cleanupStalePrivateReleaseWorkerConfigs,
   readPrivateReleaseWorkerConfig,
+  readPrivateRollbackWorkerConfig,
 } from '../release-run-worker-secret.js';
 
 describe('leased ReleaseRun worker runtime', () => {
+  it('recognizes Brain completion from the route-owned deploy receipt and live runtime identity', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'release-progress-brain-'));
+    try {
+      const repoRoot = join(root, 'repo');
+      const releaseRunId = '11111111-1111-4111-8111-111111111111';
+      const mergeSha = 'b'.repeat(40);
+      const deployedImageDigest = `sha256:${'a'.repeat(64)}`;
+      const artifact = {
+        name: 'brain',
+        version: '1.2.3',
+        digest: `sha256:${'9'.repeat(64)}`,
+      };
+      mkdirSync(join(repoRoot, 'logs'), { recursive: true });
+      writeFileSync(
+        join(repoRoot, 'logs/cecelia-deploy-status.json'),
+        JSON.stringify({
+          status: 'success',
+          release_run_id: releaseRunId,
+          merge_sha: mergeSha,
+          deployed_artifact_versions: [artifact],
+          deployed_image_digest: deployedImageDigest,
+        }),
+      );
+
+      await expect(isProductionRouteComplete({
+        route: { artifact: 'brain' },
+        artifact,
+        repoRoot,
+        releaseRunId,
+        mergeSha,
+        inspectBrainDeployment: async () => ({
+          imageDigest: deployedImageDigest,
+          gitSha: mergeSha,
+          running: true,
+        }),
+      })).resolves.toBe(true);
+
+      await expect(isProductionRouteComplete({
+        route: { artifact: 'brain' },
+        artifact,
+        repoRoot,
+        releaseRunId,
+        mergeSha,
+        inspectBrainDeployment: async () => ({
+          imageDigest: artifact.digest,
+          gitSha: mergeSha,
+          running: true,
+        }),
+      })).resolves.toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recognizes Dashboard completion from source identity plus deployed receipt digest', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'release-progress-dashboard-'));
+    try {
+      const repoRoot = join(root, 'repo');
+      const releaseRunId = '22222222-2222-4222-8222-222222222222';
+      const mergeSha = 'c'.repeat(40);
+      const artifact = {
+        name: 'workspace',
+        version: mergeSha.slice(0, 12),
+        digest: `sha256:${'8'.repeat(64)}`,
+      };
+      const distRoot = join(repoRoot, 'apps/dashboard/dist');
+      const receiptRoot = join(repoRoot, 'logs/release-rollbacks/dashboard');
+      mkdirSync(distRoot, { recursive: true });
+      mkdirSync(receiptRoot, { recursive: true });
+      writeFileSync(join(distRoot, 'index.html'), '<h1>deployed</h1>\n');
+      const deployedDigest = `sha256:${createHash('sha256')
+        .update('placeholder').digest('hex')}`;
+      const { digestTree } = await import(
+        '../../../../../scripts/lib/release-run-tree-digest.mjs'
+      );
+      const actualDeployedDigest = digestTree(distRoot);
+      expect(actualDeployedDigest).not.toBe(artifact.digest);
+      expect(actualDeployedDigest).not.toBe(deployedDigest);
+      writeFileSync(join(repoRoot, '.production-release'), [
+        'current=prod-cecelia-v9',
+        `commit=${mergeSha}`,
+        '',
+      ].join('\n'));
+      writeFileSync(
+        join(receiptRoot, `${releaseRunId}.json`),
+        JSON.stringify({
+          schema_version: 1,
+          release_run_id: releaseRunId,
+          merge_sha: mergeSha,
+          artifact_name: 'workspace',
+          current_version: artifact.version,
+          current_digest: artifact.digest,
+          current_deployed_digest: actualDeployedDigest,
+          new_tag: 'prod-cecelia-v9',
+          anchor: `workspace:${artifact.digest}`,
+        }),
+      );
+
+      await expect(isProductionRouteComplete({
+        route: { artifact: 'workspace' },
+        artifact,
+        repoRoot,
+        releaseRunId,
+        mergeSha,
+      })).resolves.toBe(true);
+
+      writeFileSync(join(distRoot, 'index.html'), '<h1>tampered</h1>\n');
+      await expect(isProductionRouteComplete({
+        route: { artifact: 'workspace' },
+        artifact,
+        repoRoot,
+        releaseRunId,
+        mergeSha,
+      })).resolves.toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recognizes persistent Workflow completion after the execution workspace is gone', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'release-progress-workflow-'));
+    try {
+      const repoRoot = join(root, 'repo');
+      const accountRoot = join(root, 'account');
+      const releaseRunId = '44444444-4444-4444-8444-444444444444';
+      const persistentSkill = join(
+        accountRoot,
+        '.kernel-releases/workflow-skills',
+        releaseRunId,
+        'example',
+      );
+      const liveSkill = join(accountRoot, 'skills/example');
+      const rollbackRoot = join(
+        repoRoot,
+        'logs/release-rollbacks/workflow-skills',
+      );
+      const workflowSourceRoot = join(root, 'snapshot/packages/workflows/skills');
+      mkdirSync(persistentSkill, { recursive: true });
+      mkdirSync(join(workflowSourceRoot, 'example'), { recursive: true });
+      mkdirSync(join(accountRoot, 'skills'), { recursive: true });
+      mkdirSync(rollbackRoot, { recursive: true });
+      writeFileSync(join(persistentSkill, 'SKILL.md'), '# persistent\n');
+      writeFileSync(
+        join(workflowSourceRoot, 'example/SKILL.md'),
+        '# persistent\n',
+      );
+      symlinkSync(persistentSkill, liveSkill);
+      writeFileSync(
+        join(rollbackRoot, `${releaseRunId}.links`),
+        `${liveSkill}\tabsent\n`,
+      );
+      const current = `${liveSkill}\t${persistentSkill}\n`;
+      const currentDigest = `sha256:${createHash('sha256')
+        .update(current).digest('hex')}`;
+      const artifact = {
+        name: 'workflow-skills',
+        digest: `sha256:${'9'.repeat(64)}`,
+      };
+      writeFileSync(
+        join(rollbackRoot, `${releaseRunId}.json`),
+        JSON.stringify({
+          anchor: `workflow-skills:${artifact.digest}`,
+          current_links_digest: currentDigest,
+        }),
+      );
+      await expect(isProductionRouteComplete({
+        route: { artifact: 'workflow-skills' },
+        artifact,
+        repoRoot,
+        releaseRunId,
+        mergeSha: 'b'.repeat(40),
+        skillsDeployRoots: accountRoot,
+        workflowSourceRoot,
+      })).resolves.toBe(true);
+      rmSync(persistentSkill, { recursive: true, force: true });
+      await expect(isProductionRouteComplete({
+        route: { artifact: 'workflow-skills' },
+        artifact,
+        repoRoot,
+        releaseRunId,
+        mergeSha: 'b'.repeat(40),
+        skillsDeployRoots: accountRoot,
+        workflowSourceRoot,
+      })).resolves.toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('holds one cross-worker production mutation lock until explicit release', async () => {
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ acquired: true }] })
+        .mockResolvedValueOnce({ rows: [{ released: true }] }),
+      release: vi.fn(),
+    };
+    const lock = await acquireProductionMutationLock({
+      connect: vi.fn(async () => client),
+    });
+    expect(client.query.mock.calls[0][0]).toMatch(/pg_try_advisory_lock/);
+    expect(client.query.mock.calls[0][0])
+      .toMatch(/kernel-release\/production-mutation\/v1/);
+    expect(client.release).not.toHaveBeenCalled();
+    await lock.release();
+    expect(client.query.mock.calls[1][0]).toMatch(/pg_advisory_unlock/);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when another forward or rollback worker owns the mutation lock', async () => {
+    const client = {
+      query: vi.fn(async () => ({ rows: [{ acquired: false }] })),
+      release: vi.fn(),
+    };
+    await expect(acquireProductionMutationLock({
+      connect: vi.fn(async () => client),
+    }, { timeoutMs: 0 })).rejects.toMatchObject({
+      code: 'release_production_mutation_busy',
+    });
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
   it('renews before and throughout routes, then writes one terminal outcome', async () => {
     const order = [];
     let releaseRoute;
@@ -81,7 +312,7 @@ describe('leased ReleaseRun worker runtime', () => {
       renewalIntervalMs: 2,
     })).rejects.toThrow('release_worker_lease_lost');
 
-    expect(appendOutcome).toHaveBeenCalledWith(21, 3, 'failed', {
+    expect(appendOutcome).toHaveBeenCalledWith(21, 3, 'unknown', {
       error_code: 'release_worker_lease_lost',
     });
     expect(appendOutcome).not.toHaveBeenCalledWith(
@@ -100,9 +331,11 @@ describe('leased ReleaseRun worker runtime', () => {
       DEPLOY_TOKEN: 'must-not-leak',
       DB_PASSWORD: 'must-not-leak',
       OPENAI_API_KEY: 'must-not-leak',
+      KERNEL_RELEASE_ROLLBACK_AUTHORIZATION: 'must-not-leak',
     }, {
       KERNEL_RELEASE_RUN_ID: 'run',
       KERNEL_RELEASE_PRIVATE_CONFIG_FILE: '/tmp/private-ref',
+      KERNEL_RELEASE_ROLLBACK_AUTHORIZATION: 'must-not-leak',
     });
     expect(env).toEqual({
       PATH: '/bin',
@@ -135,6 +368,26 @@ describe('leased ReleaseRun worker runtime', () => {
       cleanupPrivateReleaseWorkerConfig(reference.file);
     }
     expect(() => statSync(reference.file)).toThrow();
+  });
+
+  it('uses a rollback-only private schema with no forward deploy authority', () => {
+    const value = {
+      rollback_authorization: '55555555-5555-4555-8555-555555555555',
+      database: { host: 'localhost', user: 'rollback-worker' },
+    };
+    const reference = createPrivateRollbackWorkerConfig(value);
+    try {
+      expect(readPrivateRollbackWorkerConfig(reference.file)).toEqual(value);
+      const serialized = readFileSync(reference.file, 'utf8');
+      expect(serialized).not.toContain('deploy_token');
+      expect(serialized).not.toContain('"authorization"');
+    } finally {
+      cleanupPrivateReleaseWorkerConfig(reference.file);
+    }
+    expect(() => createPrivateRollbackWorkerConfig({
+      ...value,
+      deploy_token: 'forbidden',
+    })).toThrow('release_rollback_worker_private_config_invalid');
   });
 
   it('lets the release guard consume only the hardened private file reference', () => {
