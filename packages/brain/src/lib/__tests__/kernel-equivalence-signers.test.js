@@ -451,6 +451,26 @@ describe('protected Ed25519 equivalence signers', () => {
       previous_bundle_hash: previousHash,
       signature: expect.any(String),
     });
+
+    const durableCollector = loadCollectorSigner({
+      secretFile,
+      keyId: keys.collector.record.key_id,
+      trustRegistry: keys.registry,
+      now: () => FIXTURE_NOW,
+      resolvePreviousBundle: vi.fn(async (hash) => (
+        hash === previousHash ? structuredClone(previous) : null
+      )),
+    });
+    await expect(durableCollector({
+      cell,
+      grant,
+      executionGrants: [grant],
+      receipts: [receipt],
+      previousBundleHash: previousHash,
+    })).resolves.toMatchObject({
+      previous_bundle_hash: previousHash,
+      signature: expect.any(String),
+    });
   });
 
   it.each([

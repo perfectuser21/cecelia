@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createTrustedReceiptResolver,
+  loadTrustedReceiptResolver,
 } from '../kernel-equivalence-receipt-resolver.js';
 import { sha256Canonical } from '../kernel-equivalence-receipts.js';
 import {
@@ -24,6 +25,30 @@ function fixture() {
 }
 
 describe('createTrustedReceiptResolver', () => {
+  it('preloads an async durable chain before exposing a synchronous resolver', async () => {
+    const value = fixture();
+    const readBundle = vi.fn(async () => structuredClone(value.bundle));
+    const resolve = await loadTrustedReceiptResolver({
+      readBundle,
+      trustRegistry: value.keys.registry,
+      bundleChain: {
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: value.hash,
+        head_hash: value.hash,
+      },
+      now: FIXTURE_NOW,
+    });
+
+    expect(resolve(
+      `receipt-bundle:${value.hash}`,
+      fixtureExpected(value.cell, value.grant),
+    )).toMatchObject({
+      bundle_hash: value.hash,
+      receipt_ids: [value.receipt.receipt_id],
+    });
+    expect(readBundle).toHaveBeenCalledOnce();
+  });
+
   it('resolves a content-addressed raw bundle and re-verifies both signatures', () => {
     const value = fixture();
     const readBundle = vi.fn(() => structuredClone(value.bundle));

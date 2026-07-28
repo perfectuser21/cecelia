@@ -8,6 +8,7 @@ import {
 import {
   createServerOwnedRuntimeRegistry,
 } from '../kernel-equivalence-runtime-registry.js';
+import { sha256Canonical } from '../kernel-equivalence-receipts.js';
 import {
   FIXTURE_NOW,
   createTrustFixture,
@@ -574,6 +575,44 @@ describe('executeDrillCell', () => {
       code: 'bundle_previous_head_mismatch',
     });
     expect(value.bundleChainStore.commit).not.toHaveBeenCalled();
+  });
+
+  it('preloads async durable ancestry before synchronous bundle verification', async () => {
+    const value = executionFixture();
+    const previousBundleHash = sha256Canonical(value.bundle);
+    const linkedBundle = fixtureBundle(
+      value.keys,
+      value.cell,
+      value.grant,
+      [value.receipt],
+      [value.grant],
+      previousBundleHash,
+    );
+    const linkedHash = sha256Canonical(linkedBundle);
+    value.collector.mockResolvedValue(linkedBundle);
+    value.bundleChainStore.getCheckpoint.mockResolvedValue({
+      schema_version: 'kernel-equivalence-bundle-chain/v1',
+      genesis_hash: previousBundleHash,
+      head_hash: previousBundleHash,
+    });
+    value.bundleChainStore.readBundle.mockImplementation(async (hash) => (
+      hash === previousBundleHash ? structuredClone(value.bundle) : null
+    ));
+    value.bundleChainStore.commit.mockResolvedValue({
+      committed: true,
+      checkpoint: {
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: previousBundleHash,
+        head_hash: linkedHash,
+      },
+    });
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'collected',
+      bundle: { bundle_hash: linkedHash },
+    });
+    expect(value.bundleChainStore.readBundle)
+      .toHaveBeenCalledWith(previousBundleHash);
   });
 
   it.each([
