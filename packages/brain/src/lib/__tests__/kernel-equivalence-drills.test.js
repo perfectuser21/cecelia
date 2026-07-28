@@ -7,7 +7,7 @@ import {
 
 function rootContract() {
   return load(readFileSync(
-    new URL('../../../../../../regression-contract.yaml', import.meta.url),
+    new URL('../../../../../regression-contract.yaml', import.meta.url),
     'utf8',
   ));
 }

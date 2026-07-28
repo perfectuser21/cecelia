@@ -164,6 +164,18 @@ behavior_equivalence:
   contract_version: "kernel-equivalence-2026-07-28"
   required_behavior_count: 11
   report_as_of: "2026-07-28T00:00:00.000Z"
+  drill_trust_registry:
+    schema_version: "kernel-equivalence-trust-registry/v1"
+    algorithm: ed25519
+    grant_max_age_seconds: 900
+    effect_receipt_max_age_seconds: 86400
+    collector_bundle_max_age_seconds: 86400
+    replay_nonce:
+      single_use: true
+      atomic_consumer_required: true
+    # Public keys are registered only after the owning service deploys a signer.
+    # No private or synthetic key may be committed here.
+    keys: []
 
   journey:
     key: "kernel-harness-golden-path"
@@ -235,6 +247,21 @@ behavior_equivalence:
       dimensions: [invariant, checkpoint, failure_semantics, adversarial_surface]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Deny before any protected ref changes; preserve the attempted mutation receipt."
+      drill:
+        seam_id: kernel.workspace.protected_ref_guard
+        seam_ref: packages/brain/scripts/fleet-worker/github-mutation-broker.cjs
+        adapter_id: kernel.drill.branch_protection.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_branch
+          resource_prefix: "refs/heads/equivalence-drill/{run_id}/{attempt_id}/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: protected_ref_scope_allowed }
+          violation: { expected_outcome: denied, effect_code: protected_ref_mutation_denied }
+          recovery: { expected_outcome: recovered, effect_code: protected_ref_scope_recovered, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/engine && npx vitest run tests/hooks/branch-protect.test.ts tests/hooks/main-repo-write-guard.test.ts"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -261,6 +288,21 @@ behavior_equivalence:
       dimensions: [nfr, invariant, freshness, failure_semantics, effect_confirmation, adversarial_surface]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Fail closed before provider launch and revoke/clean the attempt-scoped credential."
+      drill:
+        seam_id: kernel.credential.attempt_lease
+        seam_ref: packages/brain/src/orchestrator/credential-broker.js
+        adapter_id: kernel.drill.credential_guard.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_credential_lease
+          resource_prefix: "equivalence-drill/{run_id}/{attempt_id}/credential/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: credential_lease_issued }
+          violation: { expected_outcome: denied, effect_code: credential_lease_denied }
+          recovery: { expected_outcome: recovered, effect_code: credential_lease_refreshed, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/brain && npx vitest run src/orchestrator/credential-broker.test.js src/__tests__/harness-credentials.test.js"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -287,6 +329,21 @@ behavior_equivalence:
       dimensions: [fr, invariant, checkpoint, failure_semantics, effect_confirmation, adversarial_surface]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Reject out-of-scope push or merge before network mutation and record the denial."
+      drill:
+        seam_id: kernel.github.mutation_broker
+        seam_ref: packages/brain/scripts/fleet-worker/github-mutation-broker.cjs
+        adapter_id: kernel.drill.branch_push_guard.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_branch
+          resource_prefix: "refs/heads/equivalence-drill/{run_id}/{attempt_id}/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: scoped_push_confirmed }
+          violation: { expected_outcome: denied, effect_code: out_of_scope_push_denied }
+          recovery: { expected_outcome: recovered, effect_code: corrected_ref_push_confirmed, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/brain && npx vitest run src/__tests__/legacy-harness-merge-firewall.test.js"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -313,6 +370,21 @@ behavior_equivalence:
       dimensions: [fr, invariant, checkpoint, freshness, failure_semantics, effect_confirmation, adversarial_surface, ledger_freshness]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "CI success alone never grants merge; stale or mismatched SHA fails closed."
+      drill:
+        seam_id: kernel.merge.effect_executor
+        seam_ref: packages/brain/src/orchestrator/merge-effect-executor.js
+        adapter_id: kernel.drill.ci_merge_authority.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_branch
+          resource_prefix: "refs/heads/equivalence-drill/{run_id}/{attempt_id}/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: exact_sha_merge_confirmed }
+          violation: { expected_outcome: denied, effect_code: stale_sha_merge_denied }
+          recovery: { expected_outcome: recovered, effect_code: renewed_authority_merge_confirmed, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/brain && npx vitest run src/orchestrator/__tests__/merge-authority.test.js src/orchestrator/__tests__/merge-effect-executor.test.js src/orchestrator/__tests__/merge-effect-store.test.js"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -339,6 +411,21 @@ behavior_equivalence:
       dimensions: [fr, nfr, invariant, checkpoint, freshness, failure_semantics, effect_confirmation, axis_alignment]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Missing, stale, or self-authored evaluation prevents merge authorization."
+      drill:
+        seam_id: kernel.evaluation.independent_judge
+        seam_ref: packages/brain/src/harness-judge.js
+        adapter_id: kernel.drill.independent_evaluator_judge.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_run
+          resource_prefix: "equivalence-drill/{run_id}/{attempt_id}/judge/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: independent_verdict_recorded }
+          violation: { expected_outcome: denied, effect_code: self_certification_denied }
+          recovery: { expected_outcome: recovered, effect_code: reassigned_evaluator_verdict_recorded, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/brain && npx vitest run src/__tests__/harness-judge.test.js src/routes/__tests__/harness-judge-verdict-writeback.test.js"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -365,6 +452,21 @@ behavior_equivalence:
       dimensions: [nfr, invariant, checkpoint, freshness, failure_semantics, effect_confirmation, adversarial_surface, axis_alignment]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Unresolved mandatory human review or approval for another SHA blocks merge."
+      drill:
+        seam_id: kernel.merge.human_review_authority
+        seam_ref: packages/brain/src/orchestrator/merge-authority.js
+        adapter_id: kernel.drill.human_review_authority.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_run
+          resource_prefix: "equivalence-drill/{run_id}/{attempt_id}/review/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: exact_sha_human_approval_accepted }
+          violation: { expected_outcome: denied, effect_code: stale_human_approval_denied }
+          recovery: { expected_outcome: recovered, effect_code: renewed_human_approval_accepted, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "node scripts/ci/invariants/core-inv-03-fixed-needs-judge.mjs"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -391,6 +493,21 @@ behavior_equivalence:
       dimensions: [fr, nfr, invariant, checkpoint, freshness, death_alert, failure_semantics, effect_confirmation, ledger_freshness]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Staging failure, unknown health, or SHA drift prevents production promotion."
+      drill:
+        seam_id: kernel.release.staging_promotion
+        seam_ref: packages/brain/src/staging-promote.js
+        adapter_id: kernel.drill.release_promotion.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_staging
+          resource_prefix: "equivalence-drill/{run_id}/{attempt_id}/staging/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: isolated_staging_promotion_confirmed }
+          violation: { expected_outcome: denied, effect_code: staging_sha_drift_denied }
+          recovery: { expected_outcome: recovered, effect_code: corrected_staging_promotion_confirmed, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/brain && npx vitest run src/__tests__/staging-e2e-runner-promote.test.js src/routes/__tests__/release-gate.test.js"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -417,6 +534,21 @@ behavior_equivalence:
       dimensions: [nfr, invariant, checkpoint, freshness, death_alert, failure_semantics, effect_confirmation, adversarial_surface, ledger_freshness]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Unknown liveness fails open for destructive cleanup; confirmed host-local ESRCH may mark dead and recover."
+      drill:
+        seam_id: kernel.liveness.orphan_recovery
+        seam_ref: packages/brain/src/lib/kernel-liveness.js
+        adapter_id: kernel.drill.stop_orphan_liveness.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_run
+          resource_prefix: "equivalence-drill/{run_id}/{attempt_id}/liveness/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: live_attempt_preserved }
+          violation: { expected_outcome: denied, effect_code: uncertain_liveness_cleanup_denied }
+          recovery: { expected_outcome: recovered, effect_code: confirmed_dead_attempt_recovered, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/brain && npx vitest run src/lib/__tests__/harness-orphan-guard.test.js"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -443,6 +575,21 @@ behavior_equivalence:
       dimensions: [fr, nfr, invariant, checkpoint, failure_semantics, adversarial_surface, axis_alignment]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Missing RED evidence, fake tests, or unmet DoD blocks evaluator admission."
+      drill:
+        seam_id: kernel.quality.devgate
+        seam_ref: packages/engine/scripts/devgate/check-tdd-commit-order.sh
+        adapter_id: kernel.drill.devgate_tdd_dod.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_workspace
+          resource_prefix: "equivalence-drill/{run_id}/{attempt_id}/workspace/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: devgate_admission_confirmed }
+          violation: { expected_outcome: denied, effect_code: devgate_invalid_evidence_denied }
+          recovery: { expected_outcome: recovered, effect_code: corrected_devgate_admission_confirmed, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/engine && npx vitest run tests/devgate/check-tdd-commit-order-red-evidence.test.ts tests/devgate/quickcheck-dod-guard.test.ts"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -469,6 +616,21 @@ behavior_equivalence:
       dimensions: [fr, nfr, invariant, checkpoint, freshness, death_alert, failure_semantics, effect_confirmation, adversarial_surface, ledger_freshness, axis_alignment]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Ambiguous controller ownership or cross-session callback fails closed without completing the task."
+      drill:
+        seam_id: kernel.controller.attempt_ownership
+        seam_ref: packages/brain/src/orchestrator/attempt-store.js
+        adapter_id: kernel.drill.controller_session_isolation.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_run
+          resource_prefix: "equivalence-drill/{run_id}/{attempt_id}/controller/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: single_controller_ownership_confirmed }
+          violation: { expected_outcome: denied, effect_code: cross_session_callback_denied }
+          recovery: { expected_outcome: recovered, effect_code: controller_ownership_recovered, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/engine && npx vitest run tests/skills/harness-controller-kernel-contract.test.ts"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
@@ -495,6 +657,21 @@ behavior_equivalence:
       dimensions: [fr, nfr, invariant, checkpoint, freshness, failure_semantics, effect_confirmation, ledger_freshness, axis_alignment]
       assertion_id: KERNEL-BEHAVIOR-EQUIVALENCE-01
       failure_semantics: "Missing or stale effect evidence prevents a green completion report and learning closure."
+      drill:
+        seam_id: kernel.closure.report_learning
+        seam_ref: packages/brain/src/auto-learning.js
+        adapter_id: kernel.drill.report_learning_closure.v1
+        effect_signer_status: missing
+        effect_key_purpose: effect_receipt
+        blocked_by: seam_receipt_signer_missing
+        isolation:
+          environment: isolated
+          resource_type: ephemeral_database_record
+          resource_prefix: "equivalence-drill/{run_id}/{attempt_id}/closure/"
+        scenarios:
+          normal: { expected_outcome: confirmed, effect_code: report_learning_closure_confirmed }
+          violation: { expected_outcome: denied, effect_code: stale_effect_closure_denied }
+          recovery: { expected_outcome: recovered, effect_code: refreshed_effect_closure_confirmed, predecessor_scenario: violation }
       partial_behavioral_evidence:
         - "cd packages/brain && npx vitest run src/__tests__/auto-learning.test.js scripts/__tests__/harness-report.test.mjs"
       proof_identity: { artifact_sha: null, version: null, effect_receipt_id: null }
