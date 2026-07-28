@@ -328,8 +328,8 @@ describe('PostgreSQL Kernel equivalence runtime authorities', () => {
     const resolve = createPostgresPredecessorResolver({ pool });
 
     await expect(resolve(request)).resolves.toEqual({
-      grant: value.grant,
-      receipt: value.receipt,
+      bundle_hash: value.hash,
+      bundle: value.bundle,
     });
     expect(pool.query.mock.calls[0][0]).toMatch(/WITH RECURSIVE trusted_chain/i);
     expect(pool.query.mock.calls[0][0])

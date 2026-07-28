@@ -235,8 +235,8 @@ describe('trusted equivalence runtime on real PostgreSQL', () => {
     const resolvePredecessor = createPostgresPredecessorResolver({ pool });
     await expect(resolvePredecessor(predecessorRequest(violation)))
       .resolves.toEqual({
-      grant: violation.grant,
-      receipt: violation.receipt,
+      bundle_hash: violation.hash,
+      bundle: violation.bundle,
     });
 
     const rogue = bundleValue(

@@ -50,6 +50,15 @@ describe('compileDrillPlan', () => {
       cell.effect_signer_status === 'missing'
       && cell.blocked_by === 'seam_receipt_signer_missing'
     ))).toBe(true);
+    const recovery = plan.cells.find((cell) => cell.scenario === 'recovery');
+    const violation = plan.cells.find((cell) => (
+      cell.behavior_id === recovery.behavior_id
+      && cell.provider === recovery.provider
+      && cell.scenario === 'violation'
+    ));
+    expect(recovery.expected.predecessor_expected).toEqual(
+      violation.expected,
+    );
   });
 
   it('rejects a missing scenario instead of compiling a partial matrix', () => {
@@ -801,12 +810,20 @@ describe('executeDrillCell', () => {
       recoveryCell,
       violationReceipt,
     );
+    const violationBundle = fixtureBundle(
+      keys,
+      violationCell,
+      violationGrant,
+      [violationReceipt],
+    );
+    const violationBundleHash = sha256Canonical(violationBundle);
     const bundle = fixtureBundle(
       keys,
       recoveryCell,
       recoveryGrant,
       [violationReceipt, recoveryReceipt],
       [violationGrant, recoveryGrant],
+      violationBundleHash,
     );
     const calls = [];
     const assertPredecessor = (context) => {
@@ -846,8 +863,8 @@ describe('executeDrillCell', () => {
     const predecessorResolver = vi.fn(async () => {
       calls.push('predecessor');
       return {
-        grant: violationGrant,
-        receipt: violationReceipt,
+        bundle_hash: violationBundleHash,
+        bundle: violationBundle,
       };
     });
     const nonceConsumer = vi.fn(async () => {
@@ -863,15 +880,17 @@ describe('executeDrillCell', () => {
     const bundleChainStore = {
       getCheckpoint: vi.fn(async () => ({
         schema_version: 'kernel-equivalence-bundle-chain/v1',
-        genesis_hash: null,
-        head_hash: null,
+        genesis_hash: violationBundleHash,
+        head_hash: violationBundleHash,
       })),
-      readBundle: vi.fn(() => null),
+      readBundle: vi.fn((hash) => (
+        hash === violationBundleHash ? violationBundle : null
+      )),
       commit: vi.fn(async ({ bundle_hash: hash }) => ({
         committed: true,
         checkpoint: {
           schema_version: 'kernel-equivalence-bundle-chain/v1',
-          genesis_hash: hash,
+          genesis_hash: violationBundleHash,
           head_hash: hash,
         },
       })),
@@ -905,6 +924,116 @@ describe('executeDrillCell', () => {
       'collector',
     ]);
     expect(predecessorResolver).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a collector-signed violation bundle outside current ancestry', async () => {
+    const value = executionFixture();
+    const violationCell = {
+      ...fixtureCell({ scenario: 'violation' }),
+      effect_signer_status: 'available',
+      blocked_by: null,
+    };
+    const recoveryCell = {
+      ...fixtureCell({ scenario: 'recovery' }),
+      effect_signer_status: 'available',
+      blocked_by: null,
+      expected: {
+        ...fixtureCell({ scenario: 'recovery' }).expected,
+        predecessor_expected: violationCell.expected,
+      },
+    };
+    const violationGrant = fixtureGrant(value.keys, violationCell);
+    const violationReceipt = fixtureReceipt(
+      value.keys,
+      violationGrant,
+      violationCell,
+    );
+    const rogue = fixtureBundle(
+      value.keys,
+      violationCell,
+      violationGrant,
+      [violationReceipt],
+    );
+    const rogueHash = sha256Canonical(rogue);
+    const trustedHash = sha256Canonical(value.bundle);
+    value.cell = recoveryCell;
+    value.grant = fixtureGrant(value.keys, recoveryCell);
+    value.predecessorResolver = vi.fn(async () => ({
+      bundle_hash: rogueHash,
+      bundle: rogue,
+    }));
+    value.bundleChainStore.getCheckpoint.mockResolvedValue({
+      schema_version: 'kernel-equivalence-bundle-chain/v1',
+      genesis_hash: trustedHash,
+      head_hash: trustedHash,
+    });
+    value.bundleChainStore.readBundle.mockImplementation(async (hash) => (
+      hash === trustedHash ? value.bundle : null
+    ));
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'recovery_predecessor_unavailable',
+    });
+    expect(value.nonceConsumer).not.toHaveBeenCalled();
+    expect(value.adapter.invokeActualSeam).not.toHaveBeenCalled();
+  });
+
+  it('binds recovery to the exact violation outcome and effect code', async () => {
+    const value = executionFixture();
+    const violationCell = {
+      ...fixtureCell({ scenario: 'violation' }),
+      effect_signer_status: 'available',
+      blocked_by: null,
+    };
+    const recoveryCell = {
+      ...fixtureCell({ scenario: 'recovery' }),
+      effect_signer_status: 'available',
+      blocked_by: null,
+      expected: {
+        ...fixtureCell({ scenario: 'recovery' }).expected,
+        predecessor_expected: violationCell.expected,
+      },
+    };
+    const violationGrant = fixtureGrant(value.keys, violationCell);
+    const wrongReceipt = fixtureReceipt(
+      value.keys,
+      violationGrant,
+      violationCell,
+      null,
+      {
+        observed_outcome: 'blocked',
+        effect_code: 'different_denial',
+      },
+    );
+    const violationBundle = fixtureBundle(
+      value.keys,
+      violationCell,
+      violationGrant,
+      [wrongReceipt],
+    );
+    const violationHash = sha256Canonical(violationBundle);
+    value.cell = recoveryCell;
+    value.grant = fixtureGrant(value.keys, recoveryCell);
+    value.predecessorResolver = vi.fn(async () => ({
+      bundle_hash: violationHash,
+      bundle: violationBundle,
+    }));
+    value.bundleChainStore.getCheckpoint.mockResolvedValue({
+      schema_version: 'kernel-equivalence-bundle-chain/v1',
+      genesis_hash: violationHash,
+      head_hash: violationHash,
+    });
+    value.bundleChainStore.readBundle.mockImplementation(async (hash) => (
+      hash === violationHash ? violationBundle : null
+    ));
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'recovery_predecessor_contract_mismatch',
+    });
+    expect(value.nonceConsumer).not.toHaveBeenCalled();
+    expect(value.adapter.invokeActualSeam).not.toHaveBeenCalled();
   });
 
   it('blocks recovery without a trusted violation predecessor before nonce use', async () => {
