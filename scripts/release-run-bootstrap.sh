@@ -7,13 +7,18 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 merge_sha="${KERNEL_RELEASE_MERGE_SHA:-}"
 approved_sha="${KERNEL_RELEASE_OWNER_APPROVED_SHA:-}"
 approval="${KERNEL_RELEASE_BOOTSTRAP_APPROVAL:-}"
+owner_secret="${KERNEL_RELEASE_BOOTSTRAP_OWNER_SECRET:-}"
 actor="${KERNEL_RELEASE_BOOTSTRAP_ACTOR:-}"
 
 [[ "${KERNEL_RELEASE_BOOTSTRAP:-0}" == "1" ]] || { echo "bootstrap disabled" >&2; exit 78; }
 [[ "$merge_sha" =~ ^[0-9a-f]{40}$ && "$approved_sha" == "$merge_sha" ]] \
   || { echo "bootstrap exact-SHA owner approval required" >&2; exit 78; }
-[[ ${#approval} -ge 32 && -n "$actor" ]] \
+[[ ${#owner_secret} -ge 32 && -n "$actor" ]] \
   || { echo "bootstrap owner approval credential required" >&2; exit 78; }
+expected_approval=$(printf '%s' "${merge_sha}:${actor}" \
+  | openssl dgst -sha256 -hmac "$owner_secret" -r | awk '{print $1}')
+[[ "$approval" == "$expected_approval" ]] \
+  || { echo "bootstrap owner approval signature invalid" >&2; exit 78; }
 command -v psql >/dev/null || { echo "bootstrap requires psql" >&2; exit 78; }
 
 approval_digest=$(printf '%s' "$approval" | shasum -a 256 | awk '{print $1}')

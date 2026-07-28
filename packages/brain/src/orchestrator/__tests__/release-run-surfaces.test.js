@@ -89,6 +89,8 @@ describe('legacy release surfaces fail closed', () => {
     expect(result.status).not.toBe(0);
     const source = readFileSync(script, 'utf8');
     expect(source).toContain('KERNEL_RELEASE_OWNER_APPROVED_SHA');
+    expect(source).toContain('KERNEL_RELEASE_BOOTSTRAP_OWNER_SECRET');
+    expect(source).toMatch(/openssl dgst -sha256 -hmac/);
     expect(source).toContain('kernel_release_bootstrap_receipts');
     expect(source).toContain('kernel_release_bootstrap_consumptions');
     expect(source).toMatch(/singleton BOOLEAN NOT NULL UNIQUE/);
