@@ -54,10 +54,15 @@ function predecessor() {
 
 function fixture(scenario) {
   const execution = { runId: RUN_ID, taskId: TASK_ID };
-  const outcome = scenario === 'violation'
-    ? { status: 'BLOCKED', detail: 'stale merge authority denied' }
-    : { status: 'DONE', detail: 'merge confirmed' };
-  const mergeEffectExecutor = vi.fn(async () => outcome);
+  const outcome = { status: 'DONE', detail: 'merge confirmed' };
+  const mergeEffectExecutor = vi.fn(async () => {
+    if (scenario === 'violation') {
+      const error = new Error('stale_effect_intent');
+      error.code = 'stale_effect_intent';
+      throw error;
+    }
+    return outcome;
+  });
   const snapshots = [
     { head_sha: HEAD_SHA, merged: false, receipt_status: null },
     {
@@ -70,7 +75,7 @@ function fixture(scenario) {
     owner_service: SEAM_ID,
     loadExecution: vi.fn(async () => execution),
     snapshot: vi.fn(async () => snapshots.shift()),
-    confirmDenial: vi.fn(async ({ result }) => result.status === 'BLOCKED'),
+    confirmDenial: vi.fn(async ({ error }) => error?.code === 'stale_effect_intent'),
     confirmSuccess: vi.fn(async ({ result, after }) => (
       ['DONE', 'DONE_WITH_CONCERNS'].includes(result.status)
       && after.receipt_status === 'confirmed'
