@@ -156,6 +156,7 @@ REPLACED_FAKE_ARTIFACT_BUILDERS
 
 write_executable "$fake_bin/toolchain-node" \
   '#!/usr/bin/env bash' \
+  'if [[ "${1:-}" == *"/runner-profile.cjs" ]]; then exec "${FLEET_TEST_REAL_NODE:?}" "$@"; fi' \
   'echo v25.8.0'
 
 write_executable "$fake_bin/toolchain-codex" \
@@ -276,6 +277,7 @@ run_reconciler() {
   FLEET_TEST_FAKE_ORBCTL="$fake_bin/orbstack-orbctl" \
   FLEET_TEST_FAKE_ORB="$fake_bin/orbstack-orb" \
   FLEET_TEST_FAKE_DOCKER="$fake_bin/docker" \
+  FLEET_TEST_REAL_NODE="$(command -v node)" \
   FLEET_TEST_DOCKER_FAIL_INFO="${FLEET_TEST_DOCKER_FAIL_INFO:-0}" \
   FLEET_BASELINE_ID="$fake_bin/id" \
   FLEET_BASELINE_DSCL="$fake_bin/dscl" \

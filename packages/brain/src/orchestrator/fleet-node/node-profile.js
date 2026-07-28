@@ -1,6 +1,20 @@
 import { readFileSync } from 'node:fs';
 
 const REGISTRY_URL = new URL('../../../config/fleet-node-profiles.json', import.meta.url);
+const registry = JSON.parse(readFileSync(REGISTRY_URL, 'utf8'));
+const registryRunnerDigests = new Set(
+  Array.isArray(registry.profiles)
+    ? registry.profiles.map((profile) => profile?.runner_image_digest)
+    : [],
+);
+if (
+  registryRunnerDigests.size !== 1
+  || !/^sha256:[a-f0-9]{64}$/.test([...registryRunnerDigests][0])
+) {
+  throw new Error('invalid_fleet_node_registry');
+}
+const REGISTRY_RUNNER_DIGEST = [...registryRunnerDigests][0];
+
 const CANONICAL_BASELINE = Object.freeze({
   capacities: Object.freeze({
     'us-mac-m4': 7,
@@ -17,7 +31,7 @@ const CANONICAL_BASELINE = Object.freeze({
     'xian-mac-m4': 'http://100.71.151.105:5221/api/brain/health',
     'xian-mac-m1': 'http://100.71.151.105:5221/api/brain/health',
   }),
-  runner_image_digest: 'sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7',
+  runner_image_digest: REGISTRY_RUNNER_DIGEST,
   resources: Object.freeze({
     cpu_cores: 6,
     memory_gib: 8,
@@ -115,7 +129,6 @@ function deepFreeze(value) {
   return value;
 }
 
-const registry = JSON.parse(readFileSync(REGISTRY_URL, 'utf8'));
 validateNodeProfileRegistry(registry.profiles);
 const profiles = deepFreeze(registry.profiles);
 const profilesById = new Map(profiles.map((profile) => [profile.machine_id, profile]));

@@ -22,6 +22,11 @@
 
 FROM node:20-slim
 
+ARG CECELIA_RUNNER_REVISION
+ARG CECELIA_RUNNER_SOURCE_SHA256
+LABEL org.opencontainers.image.revision="${CECELIA_RUNNER_REVISION}" \
+      com.perfect21.cecelia.runner.source-sha256="${CECELIA_RUNNER_SOURCE_SHA256}"
+
 # 基础工具：bash/curl/git/jq/ssh/gh/psql
 # postgresql-client：合同 E2E 的 `psql $DB ...` 数据写入验证命令需要（node:20-slim 不自带 psql，缺它全部 command not found）
 # gh 官方 Debian 源：https://cli.github.com/manual/installation

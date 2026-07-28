@@ -11,7 +11,9 @@ ORBSTACK_VERSION='2.2.1'
 ORBSTACK_URL='https://cdn-updates.orbstack.dev/arm64/OrbStack_v2.2.1_20628_arm64.dmg'
 ORBSTACK_SHA256='5bc1719c3c987c4c60c65be9fdd65b4730990e1697ec1cb1c33e6bba31bf92b5'
 MACOS_VERSION='15.7.4'
-RUNNER_DIGEST='sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7'
+PROFILE_REGISTRY="${FLEET_BASELINE_PROFILE_REGISTRY:-$SCRIPT_DIR/../../config/fleet-node-profiles.json}"
+RUNNER_PROFILE_READER="$SCRIPT_DIR/runner-profile.cjs"
+RUNNER_DIGEST=''
 SERVICE_UID=450
 SERVICE_GID=450
 
@@ -367,6 +369,8 @@ ensure_repository() {
 
 ensure_runner() {
   resolve_docker_command
+  [[ "$RUNNER_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] \
+    || die "runner_profile_invalid"
   if ! "$DOCKER" image inspect "$RUNNER_DIGEST" >/dev/null 2>&1; then
     "$DOCKER" load --input "$RUNNER_ARCHIVE" >/dev/null
   fi
@@ -410,7 +414,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 if [[ "$mode" == 'dry-run' ]]; then
-  echo "dry-run: would reconcile $machine_id with macOS $MACOS_VERSION, OrbStack $ORBSTACK_VERSION, Node $NODE_VERSION, Codex $CODEX_VERSION, and Runner $RUNNER_DIGEST"
+  echo "dry-run: would reconcile $machine_id with macOS $MACOS_VERSION, OrbStack $ORBSTACK_VERSION, Node $NODE_VERSION, Codex $CODEX_VERSION, and Runner from fleet-node-profiles.json"
   exit 0
 fi
 
@@ -419,6 +423,8 @@ fi
 verify_regular_input "$REPOSITORY_BUNDLE" "repository_bundle_required"
 verify_regular_input "$RUNNER_ARCHIVE" "runner_archive_required"
 verify_regular_input "$WORKER_TOKEN_SOURCE" "worker_token_file_required"
+verify_regular_input "$PROFILE_REGISTRY" "runner_profile_invalid"
+verify_regular_input "$RUNNER_PROFILE_READER" "runner_profile_invalid"
 [[ -n "$GIT" && -x "$GIT" ]] || die "git_command_unavailable"
 [[ -x "$INSTALLER" ]] || die "fleet_worker_installer_unavailable"
 
@@ -434,6 +440,8 @@ trap cleanup EXIT
 
 ensure_service_identity
 ensure_node_toolchain
+RUNNER_DIGEST="$("$TOOLCHAIN_BIN/node" "$RUNNER_PROFILE_READER" "$PROFILE_REGISTRY")" \
+  || die "runner_profile_invalid"
 ensure_codex_toolchain
 ensure_orbstack
 install_tailscale_command

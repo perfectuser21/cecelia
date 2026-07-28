@@ -25,6 +25,21 @@ touch "$artifact_log" "$transport_log" "$node_log"
 printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
 chmod 0600 "$worker_token"
 export FLEET_ROLLOUT_WORKER_TOKEN_FILE="$worker_token"
+fake_runner_revision='0000000000000000000000000000000000000001'
+fake_runner_manifest='100644 blob aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	docker/cecelia-runner/Dockerfile'
+fake_runner_source_sha256="$(
+  printf '%s\n' "$fake_runner_manifest" | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}'
+)"
+real_runner_revision="$(
+  /usr/bin/git -C "$SCRIPT_DIR/../../../.." log -1 --format=%H HEAD \
+    -- docker/cecelia-runner
+)"
+real_runner_source_sha256="$(
+  /usr/bin/git -C "$SCRIPT_DIR/../../../.." ls-tree -r --full-tree \
+    "$real_runner_revision" -- docker/cecelia-runner \
+    | /usr/bin/shasum -a 256 \
+    | /usr/bin/awk '{print $1}'
+)"
 
 write_executable() {
   local target="$1"
@@ -50,7 +65,7 @@ write_executable "$fake_bin/git" \
   '      if [[ "$1" == "--output" ]]; then output="$2"; shift 2; continue; fi' \
   '      shift' \
   '    done' \
-  '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/scripts/fleet-worker' \
+  '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/scripts/fleet-worker docker/cecelia-runner' \
   '  fi' \
   '  if [[ "${1:-}" == "init" && "${2:-}" == "--bare" ]]; then mkdir -p "$3"; exit 0; fi' \
   '  if [[ "$*" == *" fetch --no-tags "* || "$*" == *" update-ref "* ]]; then exit 0; fi' \
@@ -79,6 +94,14 @@ write_executable "$fake_bin/git" \
   '  [[ "${FLEET_TEST_DIRTY:-0}" == 1 ]] && echo " M dirty-file"' \
   '  exit 0' \
   'fi' \
+  'if [[ "$*" == *"log -1 --format=%H"* ]]; then' \
+  '  printf "%s\n" "${FLEET_TEST_EXPECTED_RUNNER_REVISION:?}"' \
+  '  exit 0' \
+  'fi' \
+  'if [[ "$*" == *"ls-tree -r --full-tree"* ]]; then' \
+  '  printf "%s\n" "${FLEET_TEST_RUNNER_MANIFEST:?}"' \
+  '  exit 0' \
+  'fi' \
   'if [[ "$*" == *"archive --format=tar"* ]]; then' \
   '  output=""' \
   '  while [[ $# -gt 0 ]]; do' \
@@ -99,6 +122,18 @@ write_executable "$fake_bin/git" \
 write_executable "$fake_bin/docker" \
   '#!/usr/bin/env bash' \
   'printf "docker %s\n" "$*" >> "${FLEET_TEST_ARTIFACT_LOG:?}"' \
+  'if [[ "${1:-} ${2:-}" == "image inspect" ]]; then' \
+  '  [[ "${FLEET_TEST_RUNNER_IMAGE_MISSING:-0}" != 1 ]] || exit 1' \
+  '  if [[ "${3:-}" == "--format" ]]; then' \
+  '    if [[ "${FLEET_TEST_RUNNER_LABEL_MISMATCH:-0}" == 1 ]]; then printf "mismatch\n"; exit 0; fi' \
+  '    case "${4:-}" in' \
+  '      *org.opencontainers.image.revision*) printf "%s\n" "${FLEET_TEST_EXPECTED_RUNNER_REVISION:?}" ;;' \
+  '      *com.perfect21.cecelia.runner.source-sha256*) printf "%s\n" "${FLEET_TEST_EXPECTED_RUNNER_SOURCE_SHA256:?}" ;;' \
+  '      *) exit 2 ;;' \
+  '    esac' \
+  '  fi' \
+  '  exit 0' \
+  'fi' \
   'if [[ "${1:-}" == "save" ]]; then' \
   '  output=""' \
   '  while [[ $# -gt 0 ]]; do' \
@@ -203,9 +238,26 @@ write_executable "$fake_bin/nodectl" \
   'fi'
 
 run_rollout() {
+  local expected_revision="$fake_runner_revision"
+  local expected_source_sha256="$fake_runner_source_sha256"
+  if [[ "${FLEET_TEST_REAL_GIT:-0}" == 1 ]]; then
+    expected_revision="$(
+      /usr/bin/git -C "$SCRIPT_DIR/../../../.." log -1 --format=%H HEAD \
+        -- docker/cecelia-runner
+    )"
+    expected_source_sha256="$(
+      /usr/bin/git -C "$SCRIPT_DIR/../../../.." ls-tree -r --full-tree \
+        "$expected_revision" -- docker/cecelia-runner \
+        | /usr/bin/shasum -a 256 \
+        | /usr/bin/awk '{print $1}'
+    )"
+  fi
   FLEET_TEST_ARTIFACT_LOG="$artifact_log" \
   FLEET_TEST_TRANSPORT_LOG="$transport_log" \
   FLEET_TEST_GIT_STATE="$test_root/git.state" \
+  FLEET_TEST_EXPECTED_RUNNER_REVISION="$expected_revision" \
+  FLEET_TEST_EXPECTED_RUNNER_SOURCE_SHA256="$expected_source_sha256" \
+  FLEET_TEST_RUNNER_MANIFEST="$fake_runner_manifest" \
   FLEET_ROLLOUT_GIT="$fake_bin/git" \
   FLEET_ROLLOUT_DOCKER="$fake_bin/docker" \
   FLEET_ROLLOUT_SSH="$fake_bin/ssh" \
@@ -246,6 +298,22 @@ fi
 grep -Fq 'rollout_source_dirty' "$test_root/dirty.out" \
   || fail "dirty source failure was not explicit"
 
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_TEST_RUNNER_IMAGE_MISSING=1 \
+  run_rollout xian-mac-m4 --apply >"$test_root/image-missing.out" 2>&1; then
+  fail "rollout accepted a missing local Runner image"
+fi
+grep -Fq 'runner_image_missing' "$test_root/image-missing.out" \
+  || fail "missing local Runner image failure was not explicit"
+
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_TEST_RUNNER_LABEL_MISMATCH=1 \
+  run_rollout xian-mac-m4 --apply >"$test_root/image-label.out" 2>&1; then
+  fail "rollout accepted a Runner image built from different source"
+fi
+grep -Fq 'runner_image_source_mismatch' "$test_root/image-label.out" \
+  || fail "Runner source label mismatch was not explicit"
+
 rm -f "$test_root/git.state"
 : > "$transport_log"
 if CECELIA_MACHINE_ID=us-mac-m4 \
@@ -270,6 +338,8 @@ grep -Fq -- '-c tar.umask=0022 archive --format=tar' "$artifact_log" \
 grep -Eq 'archive --format=tar --output .* 0000000000000000000000000000000000000001 ' \
   "$artifact_log" \
   || fail "rollout archive did not use the frozen commit"
+grep -Fq 'docker/cecelia-runner' "$artifact_log" \
+  || fail "rollout source archive omitted the Runner implementation"
 grep -Fq 'bundle create' "$artifact_log" \
   || fail "rollout did not create a Git bundle"
 grep -Eq 'fetch --no-tags .* 0000000000000000000000000000000000000001$' \
@@ -279,6 +349,8 @@ grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
 grep -Fq "$expected_runner_digest" "$artifact_log" \
   || fail "rollout did not export the verified origin/main Runner digest"
+grep -Fq 'image inspect' "$artifact_log" \
+  || fail "rollout did not verify the local Runner image"
 grep -Fq 'jinnuoshengyuan@100.86.57.69' "$transport_log" \
   || fail "Xian M4 SSH target drifted"
 grep -Fq 'BatchMode=yes' "$transport_log" \
@@ -397,6 +469,9 @@ FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
 FLEET_TEST_ARTIFACT_LOG="$artifact_log" \
 FLEET_TEST_TRANSPORT_LOG="$transport_log" \
 FLEET_TEST_GIT_STATE="$test_root/git.state" \
+FLEET_TEST_EXPECTED_RUNNER_REVISION="$real_runner_revision" \
+FLEET_TEST_EXPECTED_RUNNER_SOURCE_SHA256="$real_runner_source_sha256" \
+FLEET_TEST_RUNNER_MANIFEST="$fake_runner_manifest" \
 FLEET_ROLLOUT_GIT="$fake_bin/git" \
 FLEET_ROLLOUT_DOCKER="$fake_bin/docker" \
 FLEET_ROLLOUT_SSH="$fake_bin/ssh" \
@@ -441,6 +516,9 @@ FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
 FLEET_TEST_ARTIFACT_LOG="$artifact_log" \
 FLEET_TEST_TRANSPORT_LOG="$transport_log" \
 FLEET_TEST_GIT_STATE="$test_root/git.state" \
+FLEET_TEST_EXPECTED_RUNNER_REVISION="$real_runner_revision" \
+FLEET_TEST_EXPECTED_RUNNER_SOURCE_SHA256="$real_runner_source_sha256" \
+FLEET_TEST_RUNNER_MANIFEST="$fake_runner_manifest" \
 FLEET_ROLLOUT_GIT="$fake_bin/git" \
 FLEET_ROLLOUT_DOCKER="$fake_bin/docker" \
 FLEET_ROLLOUT_SSH="$fake_bin/ssh" \

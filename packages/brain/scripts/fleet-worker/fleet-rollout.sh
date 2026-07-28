@@ -3,12 +3,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-RUNNER_DIGEST='sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7'
+PROFILE_REGISTRY="$REPO_ROOT/packages/brain/config/fleet-node-profiles.json"
+RUNNER_PROFILE_READER="$SCRIPT_DIR/runner-profile.cjs"
 FLEET_WORKER_LABEL='com.perfect21.fleet-worker'
 FLEET_WORKER_DRAIN_MARKER='/var/run/cecelia/fleet-worker.drain'
 
 GIT="${FLEET_ROLLOUT_GIT:-$(command -v git || true)}"
 DOCKER="${FLEET_ROLLOUT_DOCKER:-$(command -v docker || true)}"
+NODE="${FLEET_ROLLOUT_NODE:-$(command -v node || true)}"
 SSH="${FLEET_ROLLOUT_SSH:-/usr/bin/ssh}"
 TAR="${FLEET_ROLLOUT_TAR:-/usr/bin/tar}"
 SUDO="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
@@ -290,7 +292,11 @@ fi
   || die "controller_machine_mismatch" 65
 [[ -n "$GIT" && -x "$GIT" ]] || die "git_unavailable"
 [[ -n "$DOCKER" && -x "$DOCKER" ]] || die "docker_unavailable"
+[[ -n "$NODE" && -x "$NODE" ]] || die "node_unavailable"
 [[ -x "$SSH" && -x "$TAR" ]] || die "rollout_transport_unavailable"
+[[ -f "$PROFILE_REGISTRY" && ! -L "$PROFILE_REGISTRY" \
+  && -f "$RUNNER_PROFILE_READER" && ! -L "$RUNNER_PROFILE_READER" ]] \
+  || die "runner_profile_invalid"
 [[ -f "$WORKER_TOKEN_SOURCE" && ! -L "$WORKER_TOKEN_SOURCE" ]] \
   || die "worker_token_file_required"
 case "$(local_file_mode "$WORKER_TOKEN_SOURCE")" in
@@ -309,6 +315,37 @@ source_status="$(
 )"
 [[ -z "$source_status" ]] || die "rollout_source_dirty"
 
+RUNNER_DIGEST="$("$NODE" "$RUNNER_PROFILE_READER" "$PROFILE_REGISTRY")" \
+  || die "runner_profile_invalid"
+runner_revision="$(
+  "$GIT" -C "$REPO_ROOT" log -1 --format=%H "$rollout_commit" \
+    -- docker/cecelia-runner
+)"
+runner_source_sha256="$(
+  "$GIT" -C "$REPO_ROOT" ls-tree -r --full-tree "$runner_revision" \
+    -- docker/cecelia-runner \
+    | /usr/bin/shasum -a 256 \
+    | /usr/bin/awk '{print $1}'
+)"
+[[ "$runner_revision" =~ ^[0-9a-f]{40}$ \
+  && "$runner_source_sha256" =~ ^[0-9a-f]{64}$ ]] \
+  || die "runner_source_metadata_invalid"
+"$DOCKER" image inspect "$RUNNER_DIGEST" >/dev/null 2>&1 \
+  || die "runner_image_missing"
+observed_runner_revision="$(
+  "$DOCKER" image inspect --format \
+    '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    "$RUNNER_DIGEST"
+)"
+observed_runner_source_sha256="$(
+  "$DOCKER" image inspect --format \
+    '{{ index .Config.Labels "com.perfect21.cecelia.runner.source-sha256" }}' \
+    "$RUNNER_DIGEST"
+)"
+[[ "$observed_runner_revision" == "$runner_revision" \
+  && "$observed_runner_source_sha256" == "$runner_source_sha256" ]] \
+  || die "runner_image_source_mismatch"
+
 /bin/mkdir -p "$ROLLOUT_TMPDIR"
 TEMP_ROOT="$(mktemp -d "$ROLLOUT_TMPDIR/fleet-rollout.XXXXXX")"
 trap cleanup EXIT
@@ -324,7 +361,8 @@ bundle_repository="$TEMP_ROOT/bundle.git"
   packages/brain/package.json \
   packages/brain/config/fleet-node-profiles.json \
   packages/brain/src/orchestrator/fleet-node/node-profile.js \
-  packages/brain/scripts/fleet-worker
+  packages/brain/scripts/fleet-worker \
+  docker/cecelia-runner
 "$GIT" init --bare "$bundle_repository" >/dev/null
 "$GIT" --git-dir="$bundle_repository" fetch --no-tags \
   "$REPO_ROOT" "$rollout_commit" >/dev/null
