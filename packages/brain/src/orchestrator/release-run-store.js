@@ -286,4 +286,3 @@ export const __test__ = {
   asJson,
   sameIdentity,
 };
-

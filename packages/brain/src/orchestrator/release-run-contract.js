@@ -22,7 +22,6 @@ export class ReleaseRunError extends Error {
     this.code = code;
   }
 }
-
 function deny(code) {
   throw new ReleaseRunError(code);
 }
@@ -180,4 +179,3 @@ export function validateProductionObservation(observation, expected) {
     }),
   });
 }
-
