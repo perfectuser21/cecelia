@@ -1,4 +1,147 @@
 import { normalizeFailureSignature } from './convergence-signatures.js';
+import { sha256Canonical } from '../lib/kernel-equivalence-receipts.js';
+
+const INDEPENDENT_JUDGE_SEAM_ID = 'kernel.evaluation.independent_judge';
+const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const EVALUATOR_EXECUTOR_KINDS = new Set([
+  'local-docker',
+  'remote-bridge',
+  'fleet-worker',
+]);
+const INDEPENDENT_JUDGE_EFFECTS = Object.freeze({
+  normal: Object.freeze({
+    observed_outcome: 'confirmed',
+    effect_code: 'independent_verdict_recorded',
+  }),
+  violation: Object.freeze({
+    observed_outcome: 'denied',
+    effect_code: 'self_certification_denied',
+  }),
+  recovery: Object.freeze({
+    observed_outcome: 'recovered',
+    effect_code: 'reassigned_evaluator_verdict_recorded',
+  }),
+});
+
+function seamError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
+function normalizedOutcome(value) {
+  const outcome = String(value ?? '').trim().toUpperCase();
+  return outcome === 'FIXED' ? 'PASS' : outcome;
+}
+
+function attemptBundle(attempt) {
+  if (attempt?.task_bundle && typeof attempt.task_bundle === 'object') {
+    return attempt.task_bundle;
+  }
+  if (typeof attempt?.task_bundle !== 'string') return null;
+  try {
+    return JSON.parse(attempt.task_bundle);
+  } catch {
+    return null;
+  }
+}
+
+async function validateIndependentAttemptAuthority(ctx, attemptStore) {
+  const judgeAttemptId = ctx?.attempt?.id;
+  const evaluatorVerdict = ctx?.observed?.evaluateVerdict;
+  const evaluatorResult = ctx?.observed?.evaluateResult;
+  const evaluatorAttemptId = evaluatorVerdict?.attempt_id;
+  if (
+    !UUID_PATTERN.test(judgeAttemptId ?? '')
+    || !UUID_PATTERN.test(evaluatorAttemptId ?? '')
+    || evaluatorResult?.attempt_id !== evaluatorAttemptId
+    || typeof attemptStore?.getById !== 'function'
+  ) {
+    return { valid: false, selfCertification: false };
+  }
+  if (judgeAttemptId === evaluatorAttemptId) {
+    return { valid: false, selfCertification: true };
+  }
+
+  const [judgeAttempt, evaluatorAttempt] = await Promise.all([
+    attemptStore.getById(judgeAttemptId),
+    attemptStore.getById(evaluatorAttemptId),
+  ]);
+  const persistedResult = evaluatorAttempt?.result;
+  const executorKind = evaluatorAttempt?.execution_transport;
+  const currentPrHeadSha = ctx?.observed?.pr?.head_sha;
+  let resultDigest = null;
+  let resultExact = false;
+  try {
+    resultDigest = sha256Canonical(persistedResult);
+    resultExact = resultDigest === sha256Canonical(evaluatorResult);
+  } catch {
+    resultDigest = null;
+  }
+  const bundledPrHeadSha =
+    attemptBundle(evaluatorAttempt)?.inputs?.pull_request?.head_sha;
+  const terminalWriteFenced = (
+    typeof evaluatorAttempt?.lease_owner === 'string'
+    && evaluatorAttempt.lease_owner.length > 0
+    && Number.isInteger(evaluatorAttempt.lease_generation)
+    && evaluatorAttempt.lease_generation >= 0
+    && Number.isFinite(Date.parse(evaluatorAttempt.completed_at))
+  );
+  const verdictBoundToResult = (
+    evaluatorVerdict?.executor_kind === executorKind
+    && evaluatorVerdict?.result_digest === resultDigest
+    && evaluatorVerdict?.feedback
+      === (persistedResult?.decision?.reason ?? null)
+    && (evaluatorVerdict?.failure_class ?? null)
+      === (persistedResult?.decision?.failure_class ?? null)
+  );
+  const executorReceiptBound = executorKind === 'fleet-worker'
+    ? (
+        UUID_PATTERN.test(evaluatorAttempt?.result_receipt_id ?? '')
+        && SHA256_PATTERN.test(evaluatorAttempt?.result_sha256 ?? '')
+        && evaluatorVerdict?.result_receipt_id
+          === evaluatorAttempt.result_receipt_id
+        && evaluatorVerdict?.result_sha256
+          === evaluatorAttempt.result_sha256
+      )
+    : (
+        ['local-docker', 'remote-bridge'].includes(executorKind)
+        && (evaluatorVerdict?.result_receipt_id ?? null) === null
+        && (evaluatorVerdict?.result_sha256 ?? null) === null
+      );
+  const exact = (
+    judgeAttempt?.id === judgeAttemptId
+    && judgeAttempt.run_id === ctx.runId
+    && judgeAttempt.role === 'judge'
+    && evaluatorAttempt?.id === evaluatorAttemptId
+    && evaluatorAttempt.run_id === ctx.runId
+    && evaluatorAttempt.role === 'evaluator'
+    && ['completed', 'completed_with_concerns'].includes(
+      evaluatorAttempt.status,
+    )
+    && EVALUATOR_EXECUTOR_KINDS.has(executorKind)
+    && terminalWriteFenced
+    && persistedResult?.attempt_id === evaluatorAttemptId
+    && resultExact
+    && currentPrHeadSha
+    && persistedResult?.decision?.pr_head_sha === currentPrHeadSha
+    && bundledPrHeadSha === currentPrHeadSha
+    && evaluatorVerdict.pr_head_sha === currentPrHeadSha
+    && verdictBoundToResult
+    && executorReceiptBound
+    && normalizedOutcome(evaluatorVerdict.verdict)
+      === normalizedOutcome(persistedResult?.decision?.outcome)
+  );
+  return {
+    valid: exact,
+    selfCertification: false,
+    judgeAttempt,
+    evaluatorAttempt,
+    evaluatorResult: persistedResult,
+    evaluatorVerdict,
+  };
+}
 
 function prNumber(prUrl) {
   const value = String(prUrl ?? '').match(/\/pull\/(\d+)(?:\/|$)/)?.[1];
@@ -62,8 +205,24 @@ async function appendJudgeVerdict(
 export function createKernelHandlers(deps) {
   return Object.freeze({
     async 'spawn:judge'(ctx) {
-      const evaluator = ctx.observed.evaluateVerdict ?? {};
-      const evaluateResult = ctx.observed.evaluateResult ?? null;
+      const attemptAuthority = await validateIndependentAttemptAuthority(
+        ctx,
+        deps.attemptStore,
+      );
+      if (attemptAuthority.selfCertification) {
+        return {
+          status: 'BLOCKED',
+          detail: 'self-certification denied',
+        };
+      }
+      if (!attemptAuthority.valid) {
+        return {
+          status: 'BLOCKED',
+          detail: 'independent judge Attempt authority invalid',
+        };
+      }
+      const evaluator = attemptAuthority.evaluatorVerdict;
+      const evaluateResult = attemptAuthority.evaluatorResult;
       const brainResult = evaluatorBrainResult(evaluateResult) ?? ctx.observed.callbackResult;
       const result = await deps.judgeGate({
         agentVerdict: evaluator.verdict ?? evaluateResult?.decision?.outcome,
@@ -231,6 +390,148 @@ export function createKernelHandlers(deps) {
         client.release();
       }
       return { status: 'DONE', detail: 'report chain completed' };
+    },
+  });
+}
+
+export function createIndependentJudgeEquivalenceSeam({
+  handlerDeps,
+  effectSigner,
+  judgeAuthority,
+} = {}) {
+  if (typeof effectSigner?.signEffectResult !== 'function') {
+    throw seamError('seam_effect_signer_unavailable');
+  }
+  if (
+    judgeAuthority?.owner_service !== INDEPENDENT_JUDGE_SEAM_ID
+    || typeof judgeAuthority?.loadContext !== 'function'
+    || typeof judgeAuthority?.snapshot !== 'function'
+    || typeof judgeAuthority?.loadPredecessorActorBinding !== 'function'
+  ) {
+    throw seamError('judge_authority_port_unavailable');
+  }
+  const handler = createKernelHandlers(handlerDeps)?.['spawn:judge'];
+  if (typeof handler !== 'function') {
+    throw seamError('judge_handler_unavailable');
+  }
+
+  return Object.freeze({
+    owner_service: INDEPENDENT_JUDGE_SEAM_ID,
+
+    async invoke({
+      cell,
+      grant,
+      resource,
+      predecessor = null,
+      signal,
+    }) {
+      signal?.throwIfAborted();
+      if (
+        cell?.seam_id !== INDEPENDENT_JUDGE_SEAM_ID
+        || resource?.resource_id !== grant?.resource_id
+        || resource?.resource_ref !== grant?.resource_ref
+      ) {
+        throw seamError('judge_equivalence_resource_invalid');
+      }
+      const effect = INDEPENDENT_JUDGE_EFFECTS[cell.scenario];
+      if (!effect) throw seamError('judge_equivalence_scenario_invalid');
+
+      const handlerContext = await judgeAuthority.loadContext({
+        cell,
+        grant,
+        resource: {
+          resource_id: resource.resource_id,
+          resource_ref: resource.resource_ref,
+        },
+        signal,
+      });
+      signal?.throwIfAborted();
+      const currentEvaluatorAttemptId =
+        handlerContext?.observed?.evaluateVerdict?.attempt_id;
+      if (!UUID_PATTERN.test(currentEvaluatorAttemptId ?? '')) {
+        throw seamError('judge_equivalence_context_invalid');
+      }
+      if (cell.scenario === 'recovery') {
+        const predecessorActors =
+          await judgeAuthority.loadPredecessorActorBinding({
+            cell,
+            grant,
+            predecessor,
+            current_evaluator_attempt_id: currentEvaluatorAttemptId,
+            signal,
+          });
+        signal?.throwIfAborted();
+        const predecessorReceiptId = predecessor?.receipt?.receipt_id;
+        const predecessorGrantId = predecessor?.grant?.grant_id;
+        if (
+          !UUID_PATTERN.test(predecessorReceiptId ?? '')
+          || !UUID_PATTERN.test(predecessorGrantId ?? '')
+          || predecessorActors?.owner_service
+            !== INDEPENDENT_JUDGE_SEAM_ID
+          || predecessorActors?.predecessor_receipt_id
+            !== predecessorReceiptId
+          || predecessorActors?.predecessor_grant_id
+            !== predecessorGrantId
+          || predecessorActors?.evidence_ref
+            !== `db:kernel-equivalence-receipts/${predecessorReceiptId}`
+          || !UUID_PATTERN.test(
+            predecessorActors?.evaluator_attempt_id ?? '',
+          )
+          || predecessorActors.evaluator_attempt_id
+            === currentEvaluatorAttemptId
+        ) {
+          throw seamError('judge_recovery_reassignment_unproven');
+        }
+      }
+
+      const before = await judgeAuthority.snapshot({
+        phase: 'before',
+        cell,
+        grant,
+        handlerContext,
+        signal,
+      });
+      signal?.throwIfAborted();
+      const result = await handler(handlerContext);
+      signal?.throwIfAborted();
+      const after = await judgeAuthority.snapshot({
+        phase: 'after',
+        cell,
+        grant,
+        handlerContext,
+        result,
+        signal,
+      });
+      signal?.throwIfAborted();
+
+      const expectedResult = cell.scenario === 'violation'
+        ? result?.status === 'BLOCKED'
+          && result?.detail === 'self-certification denied'
+        : result?.status === 'DONE'
+          && /^judge:/.test(result?.detail ?? '');
+      if (!expectedResult) {
+        throw seamError('judge_equivalence_outcome_unexpected');
+      }
+
+      return effectSigner.signEffectResult({
+        cell,
+        grant,
+        observation: {
+          observed_outcome: effect.observed_outcome,
+          effect_code: effect.effect_code,
+          before_hash: sha256Canonical(before),
+          after_hash: sha256Canonical(after),
+        },
+        predecessor,
+      });
+    },
+
+    async cancel({ signal } = {}) {
+      return { confirmed: signal?.aborted === true };
+    },
+
+    async cleanup() {
+      return { confirmed: true };
     },
   });
 }

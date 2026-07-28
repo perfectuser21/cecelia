@@ -1,17 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createKernelHandlers } from '../kernel-handlers.js';
+import {
+  createIndependentJudgeEquivalenceSeam,
+  createKernelHandlers,
+} from '../kernel-handlers.js';
+import { sha256Canonical } from '../../lib/kernel-equivalence-receipts.js';
 
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const runId = '11111111-1111-4111-8111-111111111111';
 const attemptId = '22222222-2222-4222-8222-222222222222';
+const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
+const evaluatorReceiptId = '66666666-6666-4666-8666-666666666666';
+const evaluatorResultSha256 = 'a'.repeat(64);
 
 function context(overrides = {}) {
   return {
     taskId,
     runId,
     hop: 5,
-    attempt: { id: attemptId },
+    attempt: { id: attemptId, run_id: runId, role: 'judge' },
     bundle: { inputs: { worktree_path: '/tmp/wt', sprint_dir: 'sprints/x' } },
     observed: {
       task: { id: taskId, title: 'T', payload: { sprint_dir: 'sprints/x' } },
@@ -24,12 +31,41 @@ function context(overrides = {}) {
         merged: false,
       },
       reviewApproved: false,
-      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+      evaluateResult: {
+        contract_version: '1.0',
+        attempt_id: evaluatorAttemptId,
+        status: 'completed',
+        checks: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
+        decision: {
+          outcome: 'PASS',
+          reason: 'verified',
+          pr_head_sha: 'sha-1',
+        },
+      },
       callbackResult: { verdict: 'PASS', behavior_tests: [{ exit_code: 0, log_tail: 'ok' }] },
       decisionLog: [],
     },
     ...overrides,
   };
+}
+
+function authorizedContext(overrides = {}) {
+  const value = context(overrides);
+  const claimedVerdict = value.observed.evaluateVerdict ?? {};
+  value.observed.evaluateVerdict = {
+    attempt_id: value.observed.evaluateResult.attempt_id,
+    verdict: value.observed.evaluateResult.decision.outcome,
+    pr_head_sha: value.observed.pr.head_sha,
+    feedback: value.observed.evaluateResult.decision.reason,
+    failure_class:
+      value.observed.evaluateResult.decision.failure_class ?? null,
+    executor_kind: 'fleet-worker',
+    result_digest: sha256Canonical(value.observed.evaluateResult),
+    result_receipt_id: evaluatorReceiptId,
+    result_sha256: evaluatorResultSha256,
+    ...claimedVerdict,
+  };
+  return value;
 }
 
 function deps() {
@@ -44,7 +80,35 @@ function deps() {
     },
     execCmd: vi.fn(() => ''),
     mergeEffect: vi.fn(async () => ({ status: 'DONE', detail: 'merge confirmed' })),
-    attemptStore: { complete: vi.fn(async () => ({ deduped: false })) },
+    attemptStore: {
+      complete: vi.fn(async () => ({ deduped: false })),
+      getById: vi.fn(async (id) => {
+        if (id === attemptId) {
+          return { id, run_id: runId, role: 'judge', status: 'running' };
+        }
+        if (id === evaluatorAttemptId) {
+          return {
+            id,
+            run_id: runId,
+            role: 'evaluator',
+            status: 'completed',
+            execution_transport: 'fleet-worker',
+            lease_owner: 'worker-1',
+            lease_generation: 4,
+            completed_at: new Date('2026-07-28T12:00:00.000Z'),
+            task_bundle: {
+              inputs: {
+                pull_request: { head_sha: 'sha-1' },
+              },
+            },
+            result_receipt_id: evaluatorReceiptId,
+            result_sha256: evaluatorResultSha256,
+            result: authorizedContext().observed.evaluateResult,
+          };
+        }
+        return null;
+      }),
+    },
     judgeGate: vi.fn(async () => ({ verdict: 'PASS', feedback: null, judged: true })),
     promptDir: '/host/cecelia-prompts',
     allocatePort: vi.fn(async () => 5301),
@@ -63,7 +127,7 @@ describe('kernel deterministic handlers', () => {
   it('judge receives the host forensics directory and server-derived stage facts', async () => {
     const d = deps();
 
-    await createKernelHandlers(d)['spawn:judge'](context());
+    await createKernelHandlers(d)['spawn:judge'](authorizedContext());
 
     expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
       promptDir: '/host/cecelia-prompts',
@@ -81,7 +145,7 @@ describe('kernel deterministic handlers', () => {
     const d = deps();
     const handlers = createKernelHandlers(d);
 
-    const result = await handlers['spawn:judge'](context());
+    const result = await handlers['spawn:judge'](authorizedContext());
 
     expect(result).toMatchObject({ status: 'DONE', detail: 'judge:PASS' });
     expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
@@ -102,22 +166,152 @@ describe('kernel deterministic handlers', () => {
     expect(d.pool.query.mock.calls.some(([sql]) => /verdict:judge/.test(sql))).toBe(true);
   });
 
+  it('judge blocks an evaluator attempt from certifying itself', async () => {
+    const d = deps();
+    const ctx = authorizedContext({
+      observed: {
+        ...authorizedContext().observed,
+        evaluateVerdict: {
+          ...authorizedContext().observed.evaluateVerdict,
+          attempt_id: attemptId,
+        },
+        evaluateResult: {
+          ...authorizedContext().observed.evaluateResult,
+          attempt_id: attemptId,
+        },
+      },
+    });
+
+    await expect(createKernelHandlers(d)['spawn:judge'](ctx)).resolves.toEqual({
+      status: 'BLOCKED',
+      detail: 'self-certification denied',
+    });
+    expect(d.judgeGate).not.toHaveBeenCalled();
+    expect(d.attemptStore.complete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing evaluator id', (ctx, d) => {
+      delete ctx.observed.evaluateVerdict.attempt_id;
+      delete ctx.observed.evaluateResult.attempt_id;
+    }],
+    ['missing persisted evaluator attempt', (_ctx, d) => {
+      d.attemptStore.getById.mockResolvedValue(null);
+    }],
+    ['wrong persisted evaluator role', (_ctx, d) => {
+      d.attemptStore.getById.mockImplementation(async (id) => (
+        id === attemptId
+          ? { id, run_id: runId, role: 'judge', status: 'running' }
+          : { id, run_id: runId, role: 'generator', status: 'completed' }
+      ));
+    }],
+    ['verdict not tied to evaluator result', (ctx) => {
+      ctx.observed.evaluateResult.attempt_id =
+        '44444444-4444-4444-8444-444444444444';
+    }],
+  ])('judge fails closed for invalid Attempt authority: %s', async (
+    _label,
+    mutate,
+  ) => {
+    const d = deps();
+    const ctx = structuredClone(authorizedContext());
+    mutate(ctx, d);
+
+    await expect(createKernelHandlers(d)['spawn:judge'](ctx)).resolves.toEqual({
+      status: 'BLOCKED',
+      detail: 'independent judge Attempt authority invalid',
+    });
+    expect(d.judgeGate).not.toHaveBeenCalled();
+    expect(d.attemptStore.complete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['checks', (ctx) => {
+      ctx.observed.evaluateResult.checks[0].log_tail = 'forged checks';
+      ctx.observed.evaluateVerdict.result_digest =
+        sha256Canonical(ctx.observed.evaluateResult);
+    }],
+    ['summary', (ctx) => {
+      ctx.observed.evaluateResult.summary = 'forged summary';
+      ctx.observed.evaluateVerdict.result_digest =
+        sha256Canonical(ctx.observed.evaluateResult);
+    }],
+    ['PR head', (ctx) => {
+      ctx.observed.evaluateVerdict.pr_head_sha = 'sha-forged';
+    }],
+    ['Fleet receipt', (ctx) => {
+      ctx.observed.evaluateVerdict.result_receipt_id =
+        '77777777-7777-4777-8777-777777777777';
+    }],
+    ['Fleet result digest', (ctx) => {
+      ctx.observed.evaluateVerdict.result_sha256 = 'b'.repeat(64);
+    }],
+    ['executor kind', (ctx) => {
+      ctx.observed.evaluateVerdict.executor_kind = 'local-docker';
+    }],
+  ])('judge rejects tampered evaluator %s authority', async (_label, mutate) => {
+    const d = deps();
+    const ctx = structuredClone(authorizedContext());
+    mutate(ctx);
+
+    await expect(createKernelHandlers(d)['spawn:judge'](ctx)).resolves.toEqual({
+      status: 'BLOCKED',
+      detail: 'independent judge Attempt authority invalid',
+    });
+    expect(d.judgeGate).not.toHaveBeenCalled();
+  });
+
   it('judge 优先使用 evaluator attempt result，并把 checks 适配为机械闸证据', async () => {
     const d = deps();
     const evaluatorResult = {
+      contract_version: '1.0',
+      attempt_id: evaluatorAttemptId,
       status: 'completed',
       summary: 'all checks passed',
       checks: [{ command: 'npm test', exit_code: 0, log_tail: '12 tests passed' }],
-      decision: { outcome: 'PASS', reason: 'verified' },
+      decision: {
+        outcome: 'PASS',
+        reason: 'verified',
+        pr_head_sha: 'sha-1',
+      },
       judgments_written: 2,
     };
-    const ctx = context({
+    const ctx = authorizedContext({
       observed: {
-        ...context().observed,
+        ...authorizedContext().observed,
         evaluateResult: evaluatorResult,
         callbackResult: null,
       },
     });
+    ctx.observed.evaluateVerdict.result_digest =
+      sha256Canonical(evaluatorResult);
+    d.attemptStore.getById.mockImplementation(async (id) => (
+      id === attemptId
+        ? {
+            id,
+            run_id: runId,
+            role: 'judge',
+            status: 'running',
+          }
+        : {
+            id,
+            run_id: runId,
+            role: 'evaluator',
+            status: 'completed',
+            execution_transport: 'fleet-worker',
+            lease_owner: 'worker-1',
+            lease_generation: 4,
+            completed_at: new Date('2026-07-28T12:00:00.000Z'),
+            task_bundle: {
+              inputs: {
+                pull_request: { head_sha: 'sha-1' },
+              },
+            },
+            result_receipt_id: evaluatorReceiptId,
+            result_sha256: evaluatorResultSha256,
+            result: evaluatorResult,
+          }
+    ));
 
     await createKernelHandlers(d)['spawn:judge'](ctx);
 
@@ -138,7 +332,7 @@ describe('kernel deterministic handlers', () => {
     d.judgeGate.mockResolvedValueOnce({ verdict: 'PASS', judged: false, feedback: null });
     const handlers = createKernelHandlers(d);
 
-    await expect(handlers['spawn:judge'](context())).resolves.toMatchObject({
+    await expect(handlers['spawn:judge'](authorizedContext())).resolves.toMatchObject({
       status: 'NEEDS_CONTEXT',
     });
     expect(d.pool.query.mock.calls.some(([sql]) => /verdict:judge/.test(sql))).toBe(false);
@@ -151,16 +345,50 @@ describe('kernel deterministic handlers', () => {
       judged: true,
       feedback: 'judge omitted classification',
     });
-    const ctx = context({
+    const ctx = authorizedContext({
       observed: {
-        ...context().observed,
+        ...authorizedContext().observed,
         evaluateVerdict: {
+          ...authorizedContext().observed.evaluateVerdict,
           verdict: 'FAIL',
-          pr_head_sha: 'sha-1',
+          feedback: 'product failed',
           failure_class: 'product_failure',
+        },
+        evaluateResult: {
+          ...authorizedContext().observed.evaluateResult,
+          decision: {
+            outcome: 'FAIL',
+            reason: 'product failed',
+            pr_head_sha: 'sha-1',
+            failure_class: 'product_failure',
+          },
         },
       },
     });
+    ctx.observed.evaluateVerdict.result_digest =
+      sha256Canonical(ctx.observed.evaluateResult);
+    d.attemptStore.getById.mockImplementation(async (id) => (
+      id === attemptId
+        ? { id, run_id: runId, role: 'judge', status: 'running' }
+        : {
+            id,
+            run_id: runId,
+            role: 'evaluator',
+            status: 'completed',
+            execution_transport: 'fleet-worker',
+            lease_owner: 'worker-1',
+            lease_generation: 4,
+            completed_at: new Date('2026-07-28T12:00:00.000Z'),
+            task_bundle: {
+              inputs: {
+                pull_request: { head_sha: 'sha-1' },
+              },
+            },
+            result_receipt_id: evaluatorReceiptId,
+            result_sha256: evaluatorResultSha256,
+            result: ctx.observed.evaluateResult,
+          }
+    ));
 
     await createKernelHandlers(d)['spawn:judge'](ctx);
 
@@ -282,5 +510,242 @@ describe('kernel deterministic handlers', () => {
       'ROLLBACK',
     ]);
     expect(d.pool.releaseTransaction).toHaveBeenCalledOnce();
+  });
+});
+
+describe('independent judge equivalence seam', () => {
+  function seamFixture(scenario) {
+    const d = deps();
+    const effectSigner = {
+      signEffectResult: vi.fn(async ({
+        cell: signedCell,
+        grant: signedGrant,
+        observation,
+        predecessor,
+      }) => ({
+        schema_version: 'kernel-equivalence-effect-receipt/v1',
+        seam_id: signedCell.seam_id,
+        adapter_id: signedCell.adapter_id,
+        grant_id: signedGrant.grant_id,
+        nonce: signedGrant.nonce,
+        resource_id: signedGrant.resource_id,
+        resource_ref: signedGrant.resource_ref,
+        ...observation,
+        predecessor,
+        signature: 'test-signature',
+      })),
+    };
+    const currentEvaluatorAttemptId = scenario === 'violation'
+      ? attemptId
+      : evaluatorAttemptId;
+    const handlerContext = authorizedContext({
+      observed: {
+        ...authorizedContext().observed,
+        evaluateVerdict: {
+          ...authorizedContext().observed.evaluateVerdict,
+          attempt_id: currentEvaluatorAttemptId,
+        },
+        evaluateResult: {
+          ...authorizedContext().observed.evaluateResult,
+          attempt_id: currentEvaluatorAttemptId,
+        },
+      },
+    });
+    handlerContext.observed.evaluateVerdict.result_digest =
+      sha256Canonical(handlerContext.observed.evaluateResult);
+    const snapshots = [
+      { judge_status: 'queued' },
+      { judge_status: scenario === 'violation' ? 'blocked' : 'completed' },
+    ];
+    const resource = {
+      resource_id: `eq-${attemptId}`,
+      resource_ref: `equivalence-drill/${runId}/${attemptId}/judge/case`,
+      handler_context: { forged: true },
+      snapshot: vi.fn(async () => ({ forged: true })),
+    };
+    const judgeAuthority = {
+      owner_service: 'kernel.evaluation.independent_judge',
+      loadContext: vi.fn(async () => handlerContext),
+      snapshot: vi.fn(async () => snapshots.shift()),
+      loadPredecessorActorBinding: vi.fn(async () => ({
+        owner_service: 'kernel.evaluation.independent_judge',
+        predecessor_receipt_id:
+          '44444444-4444-4444-8444-444444444444',
+        predecessor_grant_id:
+          '77777777-7777-4777-8777-777777777777',
+        evaluator_attempt_id:
+          '55555555-5555-4555-8555-555555555555',
+        evidence_ref:
+          'db:kernel-equivalence-receipts/44444444-4444-4444-8444-444444444444',
+      })),
+    };
+    const cell = {
+      cell_id: `KERNEL-P0-05-INDEPENDENT-EVALUATOR-JUDGE::codex::${scenario}`,
+      behavior_id: 'KERNEL-P0-05-INDEPENDENT-EVALUATOR-JUDGE',
+      provider: 'codex',
+      scenario,
+      seam_id: 'kernel.evaluation.independent_judge',
+      adapter_id: 'kernel.drill.independent_evaluator_judge.v1',
+    };
+    const grant = {
+      run_id: runId,
+      attempt_id: attemptId,
+      resource_id: resource.resource_id,
+      resource_ref: resource.resource_ref,
+    };
+    return {
+      d,
+      effectSigner,
+      judgeAuthority,
+      resource,
+      cell,
+      grant,
+      seam: createIndependentJudgeEquivalenceSeam({
+        handlerDeps: d,
+        effectSigner,
+        judgeAuthority,
+      }),
+    };
+  }
+
+  it.each([
+    ['normal', 'confirmed', 'independent_verdict_recorded'],
+    ['violation', 'denied', 'self_certification_denied'],
+    ['recovery', 'recovered', 'reassigned_evaluator_verdict_recorded'],
+  ])('signs the exact %s outcome only at the judge seam', async (
+    scenario,
+    observedOutcome,
+    effectCode,
+  ) => {
+    const value = seamFixture(scenario);
+    const predecessor = scenario === 'recovery'
+      ? {
+          grant: {
+            grant_id: '77777777-7777-4777-8777-777777777777',
+          },
+          receipt: {
+            receipt_id: '44444444-4444-4444-8444-444444444444',
+          },
+        }
+      : null;
+
+    const receipt = await value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      predecessor,
+      signal: new AbortController().signal,
+    });
+
+    expect(receipt).toMatchObject({
+      observed_outcome: observedOutcome,
+      effect_code: effectCode,
+      signature: 'test-signature',
+    });
+    expect(value.effectSigner.signEffectResult).toHaveBeenCalledWith(
+      {
+        cell: value.cell,
+        grant: value.grant,
+        observation: {
+          observed_outcome: observedOutcome,
+          effect_code: effectCode,
+          before_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          after_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        predecessor,
+      },
+    );
+    expect(value.judgeAuthority.loadContext).toHaveBeenCalledOnce();
+    expect(value.judgeAuthority.snapshot).toHaveBeenCalledTimes(2);
+    expect(value.resource.snapshot).not.toHaveBeenCalled();
+    if (scenario === 'recovery') {
+      expect(
+        value.judgeAuthority.loadPredecessorActorBinding,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          predecessor,
+          current_evaluator_attempt_id: evaluatorAttemptId,
+        }),
+      );
+    }
+  });
+
+  it('rejects recovery when no newly assigned evaluator is proven', async () => {
+    const value = seamFixture('recovery');
+    value.judgeAuthority.loadPredecessorActorBinding.mockResolvedValue({
+      owner_service: 'kernel.evaluation.independent_judge',
+      predecessor_receipt_id:
+        '44444444-4444-4444-8444-444444444444',
+      predecessor_grant_id:
+        '77777777-7777-4777-8777-777777777777',
+      evaluator_attempt_id: evaluatorAttemptId,
+      evidence_ref:
+        'db:kernel-equivalence-receipts/44444444-4444-4444-8444-444444444444',
+    });
+
+    await expect(value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      predecessor: {
+        grant: {
+          grant_id: '77777777-7777-4777-8777-777777777777',
+        },
+        receipt: {
+          receipt_id: '44444444-4444-4444-8444-444444444444',
+        },
+      },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'judge_recovery_reassignment_unproven',
+    });
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
+  });
+
+  it('rejects recovery evidence not DB-bound to the verified predecessor', async () => {
+    const value = seamFixture('recovery');
+    value.judgeAuthority.loadPredecessorActorBinding.mockResolvedValue({
+      owner_service: 'kernel.evaluation.independent_judge',
+      predecessor_receipt_id:
+        '88888888-8888-4888-8888-888888888888',
+      predecessor_grant_id:
+        '77777777-7777-4777-8777-777777777777',
+      evaluator_attempt_id:
+        '55555555-5555-4555-8555-555555555555',
+      evidence_ref:
+        'db:kernel-equivalence-receipts/88888888-8888-4888-8888-888888888888',
+    });
+
+    await expect(value.seam.invoke({
+      cell: value.cell,
+      grant: value.grant,
+      resource: value.resource,
+      predecessor: {
+        grant: {
+          grant_id: '77777777-7777-4777-8777-777777777777',
+        },
+        receipt: {
+          receipt_id: '44444444-4444-4444-8444-444444444444',
+        },
+      },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'judge_recovery_reassignment_unproven',
+    });
+    expect(value.effectSigner.signEffectResult).not.toHaveBeenCalled();
+  });
+
+  it('requires seam-owned signer and authority ports at construction', () => {
+    expect(() => createIndependentJudgeEquivalenceSeam({
+      handlerDeps: deps(),
+    })).toThrowError(expect.objectContaining({
+      code: 'seam_effect_signer_unavailable',
+    }));
+    expect(() => createIndependentJudgeEquivalenceSeam({
+      handlerDeps: deps(),
+      effectSigner: { signEffectResult: vi.fn() },
+    })).toThrowError(expect.objectContaining({
+      code: 'judge_authority_port_unavailable',
+    }));
   });
 });

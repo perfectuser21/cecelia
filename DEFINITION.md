@@ -6,11 +6,40 @@
 
 
 
-**Brain 版本**: 1.268.4
+**Brain 版本**: 1.268.7
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.7 — Signed Kernel equivalence drills
+
+- 根 11 条行为 descriptor 编译为固定
+  `11 × Claude/Codex/Grok × normal/violation/recovery = 99` 个 drill cell；
+  `--plan/--check` 只读并明确报告 99 个 signer blocker，不能把 gap 误报为 ready。
+- live-effect runner 只接受短期 Ed25519 execution grant，原子消费 nonce，并要求实际
+  seam 签名 effect receipt；collector 签名不能替 seam 证明副作用。
+- bundle 重新验签完整 grant、effect 和 collector envelope，严格绑定 exact
+  SHA、Brain/Engine、Run/Attempt、资源与 scenario；recovery 同时验证 violation
+  grant/receipt lineage，hash chain 不能用任意字符串伪造。
+- prepare 半失败强制 compensation cleanup；timeout 通过 AbortSignal 和 adapter
+  cancellation confirmation 收口，未确认时记录 late-effect risk 并保持 blocked。
+- 根 registry 不含 synthetic/private key，所以本版本仍诚实为 0/99 proven；
+  11 个 seam signer/adapter handoff 见 Phase 5 报告。
+- Brain 回退目标：`1.268.6`。
+
+## Brain 1.268.6 — Kernel P0/P1 behavior equivalence contract
+
+- 根 regression contract 现在唯一登记旧 Claude Code P0/P1 行为、Kernel unified
+  construct、S0–S12 × 11 要素投影与三 Provider × 三场景证据矩阵。
+- 只有 exact SHA/version、freshness、effect receipt 和真实 behavioral
+  normal/violation/recovery 全覆盖才可 effective proven；缺证自动降为 gap，
+  静态文档/grep/文件存在/smoke-only 不可伪绿。
+- 当前 11 条行为全部诚实保留为 gap（0/99 provider 场景 receipts）；报告同时列出
+  legacy evidence、部分行为测试与逐项 closure plan。
+- 实现是纯 validator/projector，复用现有 journey cell vocabulary，不建
+  `behavior_ledger` 表、不新增 lifecycle、不触碰 ReleaseRun/risk 执行控制流。
+- Brain 回退目标：`1.268.5`。
 
 ## Brain 1.268.4 — Kernel post-diff risk and human review authority
 

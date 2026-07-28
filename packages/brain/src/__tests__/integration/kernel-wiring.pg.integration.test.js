@@ -18,6 +18,7 @@ import callbackRouter, {
   appendGeneratorFixCallback,
 } from '../../routes/harness-callback.js';
 import approvalRouter from '../../routes/harness-kernel-approvals.js';
+import { sha256Canonical } from '../../lib/kernel-equivalence-receipts.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -133,6 +134,43 @@ function externalObservation({
   failedChecks = ['ci'],
 } = {}) {
   return {
+    async observePullRequest() {
+      return {
+        url: PR_URL,
+        repository: 'perfectuser21/cecelia',
+        number: 4226,
+        state: 'OPEN',
+        mergeStateStatus: 'CLEAN',
+        merged: false,
+        head_repository: 'perfectuser21/cecelia',
+        head_ref: 'cp-kernel-pg',
+        head_sha: headSha,
+        base_repository: 'perfectuser21/cecelia',
+        base_ref: 'main',
+        base_sha: 'd'.repeat(40),
+        diff_digest: `sha256:${'8'.repeat(64)}`,
+        required_checks: [{
+          context: 'ci-passed',
+          app_slug: 'github-actions',
+          source: 'github-actions',
+          run_id: '123456',
+          job_id: '789012',
+          head_sha: headSha,
+          conclusion: 'SUCCESS',
+        }],
+        files: [{
+          path: 'apps/dashboard/src/App.jsx',
+          previous_path: null,
+          status: 'modified',
+          blob_sha: '7'.repeat(40),
+          patch_digest: `sha256:${'6'.repeat(64)}`,
+          additions: 12,
+          deletions: 3,
+        }],
+        ci,
+        failed_checks: failedChecks,
+      };
+    },
     execCmd(command) {
       if (command.startsWith('gh pr view ')) {
         const state = ci === 'pass' ? 'SUCCESS' : (ci === 'fail' ? 'FAILURE' : 'PENDING');
@@ -412,6 +450,10 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       id: evaluatorAttemptId,
       run_id: run.runId,
       role: 'evaluator',
+      status: 'completed',
+      lease_owner: 'kernel-pg-evaluator:1',
+      lease_generation: 0,
+      execution_transport: 'local-docker',
       task_bundle: { inputs: { pull_request: { head_sha: HEAD_SHA } } },
     }, {
       status: 'completed',
@@ -419,6 +461,7 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
         outcome: 'FAIL',
         reason: 'evidence invalid and requires evaluator repair',
         failure_class: 'evidence_invalid',
+        pr_head_sha: HEAD_SHA,
       },
     }, testPool);
 
@@ -436,22 +479,59 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
     expect(repairDispatches).toEqual(['spawn:evaluator-evidence-repair']);
     await setTaskStatus(run.taskId, 'in_progress');
 
+    const attemptStore = createAttemptStore(testPool);
     const repairedEvaluatorAttemptId = randomUUID();
-    await appendAttemptVerdict({
+    await attemptStore.createAttempt({
       id: repairedEvaluatorAttemptId,
-      run_id: run.runId,
+      runId: run.runId,
+      hop: 20,
+      phase: 'evaluate',
       role: 'evaluator',
-      task_bundle: { inputs: { pull_request: { head_sha: HEAD_SHA } } },
-    }, {
+      provider: 'codex',
+      bundle: { inputs: { pull_request: { head_sha: HEAD_SHA } } },
+      callbackSecretHash: createHash('sha256')
+        .update('repaired-evaluator-secret')
+        .digest('hex'),
+    });
+    const repairedLeaseOwner = 'kernel-pg-evaluator-repair:1';
+    await attemptStore.markStarting(repairedEvaluatorAttemptId, {
+      leaseOwner: repairedLeaseOwner,
+      leaseSeconds: 180,
+    });
+    await attemptStore.recordLaunchReceipt(repairedEvaluatorAttemptId, {
+      leaseOwner: repairedLeaseOwner,
+      leaseGeneration: 0,
+      actualMachineId: 'kernel-pg-evaluator',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+    });
+    const repairedEvaluatorResult = {
+      contract_version: '1.0',
+      attempt_id: repairedEvaluatorAttemptId,
       status: 'completed',
+      summary: 'evidence repaired',
+      artifacts: [],
+      checks: [],
       decision: {
         outcome: 'PASS',
         reason: 'evidence repaired while preserving the original classification',
         failure_class: 'evidence_invalid',
+        pr_head_sha: HEAD_SHA,
       },
-    }, testPool);
+      error: null,
+      provider_metadata: { provider: 'codex', session_id: null },
+    };
+    const repairedCompletion = await attemptStore.complete(
+      repairedEvaluatorAttemptId,
+      repairedEvaluatorResult,
+    );
+    await appendAttemptVerdict(
+      repairedCompletion.attempt,
+      repairedEvaluatorResult,
+      testPool,
+    );
 
-    const attemptStore = createAttemptStore(testPool);
     const judgeAttemptId = randomUUID();
     const judgeAttempt = await attemptStore.createAttempt({
       id: judgeAttemptId,
@@ -487,11 +567,18 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       observed: {
         pr: { head_sha: HEAD_SHA },
         evaluateVerdict: {
+          attempt_id: repairedEvaluatorAttemptId,
           verdict: 'PASS',
           pr_head_sha: HEAD_SHA,
+          feedback:
+            'evidence repaired while preserving the original classification',
           failure_class: 'evidence_invalid',
+          executor_kind: 'local-docker',
+          result_digest: sha256Canonical(repairedEvaluatorResult),
+          result_receipt_id: null,
+          result_sha256: null,
         },
-        evaluateResult: null,
+        evaluateResult: repairedEvaluatorResult,
         callbackResult: null,
       },
     });
@@ -900,14 +987,19 @@ describe('Kernel approval HTTP route on real PostgreSQL', () => {
       gateVerdict: 'allow',
       detail: { verdict: 'PASS', pr_head_sha: HEAD_SHA },
     });
+    const postDiffRisk = (await collect(run)).postDiffRisk;
     await appendLog(run.runId, {
       hop: 3,
       action: 'effect:human_review_requested',
-      observed: { pr: { head_sha: HEAD_SHA } },
+      observed: {
+        pr: { head_sha: HEAD_SHA },
+        post_diff_risk: postDiffRisk,
+      },
       phase: 'review',
       detail: {
         dispatch_hop: 2,
         review_reason: 'awaiting_human_review',
+        post_diff_risk: postDiffRisk,
       },
     });
     // Deterministically widen the existing check-then-insert race. Both HTTP
@@ -943,6 +1035,7 @@ describe('Kernel approval HTTP route on real PostgreSQL', () => {
         pr_head_sha: sha,
         review_request_hop: 3,
         approved_by: 'alex',
+        post_diff_risk: postDiffRisk,
       });
     };
 

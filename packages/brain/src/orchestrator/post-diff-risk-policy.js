@@ -333,6 +333,10 @@ export function assessPostDiffRisk(input = {}) {
     classes: ['unknown'],
   };
   const contract = input.contract ?? {};
+  const contractApprovedAtMs = Date.parse(contract.approved_at);
+  const contractApprovedAt = Number.isFinite(contractApprovedAtMs)
+    ? new Date(contractApprovedAtMs).toISOString()
+    : null;
   const repository = input.repository ?? null;
 
   try {
@@ -370,8 +374,8 @@ export function assessPostDiffRisk(input = {}) {
     && DIGEST_PATTERN.test(contract.digest ?? '')
     && UUID_PATTERN.test(contract.id ?? '')
     && contract.status === 'approved'
-    && Number.isFinite(Date.parse(contract.approved_at))
-    && Date.parse(contract.approved_at) <= nowMs
+    && contractApprovedAt != null
+    && contractApprovedAtMs <= nowMs
     && behavior != null
     && VERSION_PATTERN.test(policyVersion)
     && Number.isFinite(nowMs);
@@ -448,7 +452,7 @@ export function assessPostDiffRisk(input = {}) {
       contract_id: contract.id ?? null,
       contract_version: Number.isInteger(contract.version) ? contract.version : null,
       contract_digest: contract.digest ?? null,
-      contract_approved_at: contract.approved_at ?? null,
+      contract_approved_at: contractApprovedAt,
       behavior_fingerprint: behavior?.behavior_fingerprint ?? null,
       capability_fingerprint: behavior?.capability_fingerprint ?? null,
       path_surface_digest: behavior?.path_surface_digest ?? null,

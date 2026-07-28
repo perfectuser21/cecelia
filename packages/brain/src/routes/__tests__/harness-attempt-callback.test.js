@@ -392,7 +392,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
           event_cursor: 5,
         }),
       }),
-      { leaseOwner },
+      { leaseOwner, leaseGeneration: attempt.lease_generation },
     );
     const proposalCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
       sql.includes('commander.directive_proposed')
@@ -571,7 +571,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       expect.objectContaining({
         role_result: expect.objectContaining({ kind: 'evaluator' }),
       }),
-      { leaseOwner },
+      { leaseOwner, leaseGeneration: attempt.lease_generation },
     );
   });
 
@@ -1029,7 +1029,41 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(200);
     const verdictCall = mocks.pool.query.mock.calls.find(([sql]) => /verdict:evaluate/.test(sql));
     expect(verdictCall).toBeTruthy();
-    expect(verdictCall[1].join(' ')).toContain('sha-1');
+    const detail = JSON.parse(verdictCall[1][4]);
+    expect(detail).toMatchObject({
+      attempt_id: attemptId,
+      pr_head_sha: 'sha-1',
+      executor_kind: 'local-docker',
+      lease_generation: 2,
+      result_receipt_id: null,
+      result_sha256: null,
+    });
+    expect(detail.result_digest).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('Fleet evaluator verdict binds the exact persisted receipt and result SHA', async () => {
+    const receiptId = '77777777-7777-4777-8777-777777777777';
+    const resultSha256 = 'c'.repeat(64);
+    const { appendAttemptVerdict } = await import('../harness-callback.js');
+
+    await appendAttemptVerdict({
+      ...fleetAttempt(),
+      status: 'completed',
+      completed_at: new Date('2026-07-28T12:00:00.000Z'),
+      result_receipt_id: receiptId,
+      result_sha256: resultSha256,
+    }, validResult, mocks.pool);
+
+    const verdictCall = mocks.pool.query.mock.calls.find(([sql]) => (
+      /verdict:evaluate/.test(sql)
+    ));
+    expect(JSON.parse(verdictCall[1][4])).toMatchObject({
+      attempt_id: attemptId,
+      executor_kind: 'fleet-worker',
+      result_receipt_id: receiptId,
+      result_sha256: resultSha256,
+      result_digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
   });
 
   it('reviewer verdict 从服务端 TaskBundle 锚定 round/SHA，不接收 worker 自报 SHA', async () => {

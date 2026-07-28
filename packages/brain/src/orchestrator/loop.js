@@ -62,6 +62,16 @@ function jsonValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(
+      (key) => `${JSON.stringify(key)}:${stableJson(value[key])}`,
+    ).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function boundedText(value) {
   return String(value ?? '').slice(0, 4_000);
 }
@@ -646,8 +656,8 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
             const priorRisk = snapshot.post_diff_risk ?? detail.post_diff_risk;
             if (
               priorRisk?.policy_version !== observed.postDiffRisk.policy_version
-              || JSON.stringify(priorRisk?.bindings)
-                !== JSON.stringify(observed.postDiffRisk.bindings)
+              || stableJson(priorRisk?.bindings)
+                !== stableJson(observed.postDiffRisk.bindings)
             ) {
               return false;
             }

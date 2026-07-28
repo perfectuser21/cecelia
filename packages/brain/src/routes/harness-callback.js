@@ -53,6 +53,7 @@ import {
   normalizeGitSha,
 } from '../orchestrator/pr-head-resolver.js';
 import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
+import { sha256Canonical } from '../lib/kernel-equivalence-receipts.js';
 
 const router = Router();
 const SUCCESS_TERMINAL_STATUSES = new Set([
@@ -200,6 +201,40 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
   const action = attempt.role === 'reviewer' ? 'verdict:reviewer' : 'verdict:evaluate';
   const inputs = attempt.task_bundle?.inputs ?? {};
   const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
+  const evaluatorBinding = attempt.role === 'evaluator'
+    ? {
+        executor_kind: attempt.execution_transport ?? null,
+        lease_generation: attempt.lease_generation ?? null,
+        result_digest: sha256Canonical(result),
+        result_receipt_id: attempt.execution_transport === 'fleet-worker'
+          ? attempt.result_receipt_id ?? null
+          : null,
+        result_sha256: attempt.execution_transport === 'fleet-worker'
+          ? attempt.result_sha256 ?? null
+          : null,
+      }
+    : null;
+  if (
+    attempt.role === 'evaluator'
+    && (
+      !['completed', 'completed_with_concerns'].includes(attempt.status)
+      || typeof attempt.lease_owner !== 'string'
+      || attempt.lease_owner.length === 0
+      || !Number.isInteger(attempt.lease_generation)
+      || !['local-docker', 'remote-bridge', 'fleet-worker'].includes(
+        attempt.execution_transport,
+      )
+      || (
+        attempt.execution_transport === 'fleet-worker'
+        && (
+          !UUID_PATTERN.test(attempt.result_receipt_id ?? '')
+          || !/^[a-f0-9]{64}$/.test(attempt.result_sha256 ?? '')
+        )
+      )
+    )
+  ) {
+    throw new Error('evaluator verdict authority unavailable');
+  }
   const detail = attempt.role === 'reviewer'
     ? {
         attempt_id: attempt.id,
@@ -215,6 +250,7 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
         failure_class: result.decision.failure_class ?? null,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         feedback: result.decision.reason,
+        ...evaluatorBinding,
       };
 
   // One statement + transaction-scoped advisory lock makes callback retries/concurrency
@@ -614,7 +650,11 @@ async function handleFleetResultCallback(req, res) {
     const persistedResult = outcome.attempt?.result ?? result;
     if (SUCCESS_TERMINAL_STATUSES.has(result.status)) {
       await persistFleetResultSideEffects({
-        attempt,
+        attempt: {
+          ...attempt,
+          ...outcome.attempt,
+          result: persistedResult,
+        },
         persistedResult,
         db,
         resolvePrHead: req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver,
@@ -828,7 +868,10 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
         }
       }
     } else {
-      outcome = await attemptStore.complete(attemptId, result, { leaseOwner });
+      outcome = await attemptStore.complete(attemptId, result, {
+        leaseOwner,
+        leaseGeneration: attempt.lease_generation,
+      });
       let completedAttempt = outcome.attempt;
       let persistedResult = completedAttempt?.result ?? result;
       if (!completedAttempt) {
@@ -839,10 +882,24 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
         completedAttempt = current;
         persistedResult = current.result ?? result;
       }
-      await appendCommanderProposal(attempt, persistedResult, db);
-      await appendAttemptVerdict(attempt, persistedResult, db);
+      const terminalAttempt = {
+        ...completedAttempt,
+        ...attempt,
+        status: completedAttempt.status,
+        completed_at: completedAttempt.completed_at,
+        result_receipt_id: completedAttempt.result_receipt_id ?? null,
+        result_sha256: completedAttempt.result_sha256 ?? null,
+        result: persistedResult,
+      };
+      await appendCommanderProposal(terminalAttempt, persistedResult, db);
+      await appendAttemptVerdict(terminalAttempt, persistedResult, db);
       const resolver = req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver;
-      await appendGeneratorFixCallback(attempt, persistedResult, db, resolver);
+      await appendGeneratorFixCallback(
+        terminalAttempt,
+        persistedResult,
+        db,
+        resolver,
+      );
 
       if (attempt.role === 'generator') {
         const pullRequest = persistedResult.artifacts.find(

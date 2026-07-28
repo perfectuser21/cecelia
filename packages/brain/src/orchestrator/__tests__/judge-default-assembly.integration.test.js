@@ -4,11 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { buildJudgePrompt, runJudgeGate } from '../../harness-judge.js';
+import { sha256Canonical } from '../../lib/kernel-equivalence-receipts.js';
 import { buildDefaultHandlers } from '../run.js';
 
 const taskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const runId = '11111111-1111-4111-8111-111111111111';
 const attemptId = '22222222-2222-4222-8222-222222222222';
+const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
 const headSha = 'b'.repeat(40);
 
 describe('independent judge default assembly integration', () => {
@@ -62,7 +64,42 @@ describe('independent judge default assembly integration', () => {
     });
     const judgeGate = (ctx, opts) => runJudgeGate(ctx, { ...opts, judgeFn: modelBoundary });
     const pool = { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) };
-    const attemptStore = { complete: vi.fn(async () => ({ deduped: false })) };
+    const evaluateResult = {
+      contract_version: '1.0',
+      attempt_id: evaluatorAttemptId,
+      status: 'completed',
+      transcript: 'callback tail only',
+      summary: 'contract passed',
+      checks: [{ command: 'bash contract-e2e.sh', exit_code: 0, log_tail: '8 passed' }],
+      decision: {
+        outcome: 'PASS',
+        reason: 'verified',
+        pr_head_sha: headSha,
+      },
+    };
+    const attemptStore = {
+      complete: vi.fn(async () => ({ deduped: false })),
+      getById: vi.fn(async (id) => (
+        id === attemptId
+          ? { id, run_id: runId, role: 'judge', status: 'running' }
+          : {
+              id,
+              run_id: runId,
+              role: 'evaluator',
+              status: 'completed',
+              execution_transport: 'local-docker',
+              lease_owner: 'judge-fixture-worker',
+              lease_generation: 2,
+              completed_at: new Date('2026-07-28T12:00:00.000Z'),
+              task_bundle: {
+                inputs: {
+                  pull_request: { head_sha: headSha },
+                },
+              },
+              result: evaluateResult,
+            }
+      )),
+    };
     const handlers = await buildDefaultHandlers({
       pool,
       execCmd: vi.fn(),
@@ -74,20 +111,24 @@ describe('independent judge default assembly integration', () => {
       taskId,
       runId,
       hop: 9,
-      attempt: { id: attemptId },
+      attempt: { id: attemptId, run_id: runId, role: 'judge' },
       bundle: { inputs: { worktree_path: worktreePath, sprint_dir: 'sprints/r9' } },
       observed: {
         run: { id: runId },
         pr: { state: 'OPEN', merged: false, head_sha: headSha },
         reviewApproved: false,
-        evaluateVerdict: { verdict: 'PASS', pr_head_sha: headSha },
-        evaluateResult: {
-          status: 'completed',
-          transcript: 'callback tail only',
-          summary: 'contract passed',
-          checks: [{ command: 'bash contract-e2e.sh', exit_code: 0, log_tail: '8 passed' }],
-          decision: { outcome: 'PASS', reason: 'verified' },
+        evaluateVerdict: {
+          attempt_id: evaluatorAttemptId,
+          verdict: 'PASS',
+          pr_head_sha: headSha,
+          feedback: 'verified',
+          failure_class: null,
+          executor_kind: 'local-docker',
+          result_digest: sha256Canonical(evaluateResult),
+          result_receipt_id: null,
+          result_sha256: null,
         },
+        evaluateResult,
       },
     });
 

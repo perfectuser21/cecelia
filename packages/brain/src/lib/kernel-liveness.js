@@ -24,6 +24,32 @@
  * 依赖全注入（pool / now / hostFn / killFn），便于单测喂假 db、假 process.kill。
  */
 import os from 'node:os';
+import { sha256Canonical } from './kernel-equivalence-receipts.js';
+
+const LIVENESS_SEAM_ID = 'kernel.liveness.orphan_recovery';
+const LIVENESS_EFFECTS = Object.freeze({
+  normal: Object.freeze({
+    verdict: 'alive',
+    observed_outcome: 'confirmed',
+    effect_code: 'live_attempt_preserved',
+  }),
+  violation: Object.freeze({
+    verdict: 'unknown',
+    observed_outcome: 'denied',
+    effect_code: 'uncertain_liveness_cleanup_denied',
+  }),
+  recovery: Object.freeze({
+    verdict: 'dead',
+    observed_outcome: 'recovered',
+    effect_code: 'confirmed_dead_attempt_recovered',
+  }),
+});
+
+function livenessSeamError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
 
 /**
  * 心跳新鲜阈值 = 3 分钟。
@@ -174,4 +200,137 @@ export async function assessKernelLiveness({
       source: 'pid', runId: row.id,
     };
   }
+}
+
+export function createKernelLivenessEquivalenceSeam({
+  effectSigner,
+  livenessAuthority,
+} = {}) {
+  if (typeof effectSigner?.signEffectResult !== 'function') {
+    throw livenessSeamError('seam_effect_signer_unavailable');
+  }
+  if (
+    livenessAuthority?.owner_service !== LIVENESS_SEAM_ID
+    || typeof livenessAuthority?.loadTarget !== 'function'
+    || typeof livenessAuthority?.snapshot !== 'function'
+    || typeof livenessAuthority?.recoverDeadAttempt !== 'function'
+    || typeof livenessAuthority?.now !== 'function'
+    || typeof livenessAuthority?.hostFn !== 'function'
+    || typeof livenessAuthority?.killFn !== 'function'
+  ) {
+    throw livenessSeamError('liveness_authority_port_unavailable');
+  }
+
+  return Object.freeze({
+    owner_service: LIVENESS_SEAM_ID,
+
+    async invoke({
+      cell,
+      grant,
+      resource,
+      predecessor = null,
+      signal,
+    }) {
+      signal?.throwIfAborted();
+      if (
+        cell?.seam_id !== LIVENESS_SEAM_ID
+        || resource?.resource_id !== grant?.resource_id
+        || resource?.resource_ref !== grant?.resource_ref
+      ) {
+        throw livenessSeamError('liveness_equivalence_resource_invalid');
+      }
+      const effect = LIVENESS_EFFECTS[cell.scenario];
+      if (!effect) {
+        throw livenessSeamError('liveness_equivalence_scenario_invalid');
+      }
+
+      const authoritativeResource = Object.freeze({
+        resource_id: resource.resource_id,
+        resource_ref: resource.resource_ref,
+      });
+      const target = await livenessAuthority.loadTarget({
+        cell,
+        grant,
+        resource: authoritativeResource,
+        signal,
+      });
+      signal?.throwIfAborted();
+      if (!target?.task || !target?.run) {
+        throw livenessSeamError('liveness_equivalence_target_unavailable');
+      }
+
+      const before = await livenessAuthority.snapshot({
+        phase: 'before',
+        cell,
+        grant,
+        resource: authoritativeResource,
+        target,
+        signal,
+      });
+      signal?.throwIfAborted();
+      const assessment = await assessKernelLiveness({
+        pool: livenessAuthority.pool ?? null,
+        task: target.task,
+        run: target.run,
+        now: livenessAuthority.now,
+        staleMs:
+          livenessAuthority.staleMs ?? KERNEL_HEARTBEAT_STALE_MS,
+        hostFn: livenessAuthority.hostFn,
+        killFn: livenessAuthority.killFn,
+      });
+      signal?.throwIfAborted();
+      if (assessment.verdict !== effect.verdict) {
+        throw livenessSeamError('liveness_equivalence_outcome_unexpected');
+      }
+
+      let recovery = null;
+      if (cell.scenario === 'recovery') {
+        recovery = await livenessAuthority.recoverDeadAttempt({
+          target,
+          assessment,
+          cell,
+          grant,
+          resource: authoritativeResource,
+          signal,
+        });
+        signal?.throwIfAborted();
+        if (!['requeued', 'recovered'].includes(recovery?.action)) {
+          throw livenessSeamError(
+            'liveness_equivalence_recovery_unconfirmed',
+          );
+        }
+      }
+      const after = await livenessAuthority.snapshot({
+        phase: 'after',
+        cell,
+        grant,
+        resource: authoritativeResource,
+        target,
+        assessment,
+        recovery,
+        signal,
+      });
+      signal?.throwIfAborted();
+
+      return effectSigner.signEffectResult({
+        cell,
+        grant,
+        observation: {
+          observed_outcome: effect.observed_outcome,
+          effect_code: effect.effect_code,
+          before_hash: sha256Canonical(before),
+          after_hash: sha256Canonical(after),
+        },
+        predecessor,
+      });
+    },
+
+    async cancel({ signal } = {}) {
+      return { confirmed: signal?.aborted === true };
+    },
+
+    async cleanup() {
+      return { confirmed: true };
+    },
+  });
 }

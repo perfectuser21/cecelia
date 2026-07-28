@@ -111,6 +111,23 @@ function input(overrides = {}) {
 }
 
 describe('canonical post-diff evidence', () => {
+  it('normalizes database Date values into the same canonical approval binding', () => {
+    const textInput = input();
+    const dateInput = input({
+      contract: {
+        ...textInput.contract,
+        approved_at: new Date(textInput.contract.approved_at),
+      },
+    });
+
+    const textProof = assessPostDiffRisk(textInput);
+    const dateProof = assessPostDiffRisk(dateInput);
+
+    expect(dateProof).toEqual(textProof);
+    expect(dateProof.bindings.contract_approved_at)
+      .toBe('2026-07-27T07:00:00.000Z');
+  });
+
   it('hashes contract JSON independent of object key order', () => {
     expect(canonicalContractDigest({ b: 2, a: { y: 2, x: 1 } })).toBe(
       canonicalContractDigest({ a: { x: 1, y: 2 }, b: 2 }),
