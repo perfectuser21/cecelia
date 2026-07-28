@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.268.14
+**版本**: 1.268.16
 
 ## Kernel zero-Attempt patrol coverage
 
@@ -63,6 +63,22 @@
   nullish 默认或 1ms–24h 的有限整数。
 - 本版本不读取 env/key、不接 server wiring、不创建 fake authority、不部署；
   回退：`bash scripts/brain-rollback.sh 1.268.10`；没有数据库迁移。
+
+## Kernel equivalence production case ledger
+
+- Migration 377 在 ReleaseRun 374/375 与 trusted runtime 376 之后增加隔离
+  production-case authority；它不覆盖既有 release 或 receipt evidence。
+- 每个 case 绑定 canonical cell、Run、Attempt、artifact SHA、Brain/Engine
+  version、seam/adapter 与唯一 ephemeral resource ref；跨 Run ownership、
+  复用 resource 或 protected/main/production ref 均 fail closed。
+- case identity 与 lifecycle event append-only；event 只保存固定 evidence ref、
+  before/after hash 与 late-effect risk，不接受任意 JSON 或秘密。
+- mutable lease 只能由同一 owner 以 generation +1 和数据库时钟单调迁移；
+  删除、截断、过期续租和非法状态跳转均被数据库 trigger 拒绝。
+- 本版本只建立 authority ledger，不注册 signer、production seam port 或 proof；
+  根合同继续保持 0/99，且未执行任何生产 mutation。
+- 回退：`bash scripts/brain-rollback.sh 1.268.15`；migration evidence 保留，
+  回退代码不得删除或改写 case/event rows。
 
 ## Brain-owned Kernel equivalence trusted execution
 
