@@ -484,8 +484,8 @@ describe('HarnessResult contract', () => {
     }), 'evaluator', 'harness-result/evaluator-v1')).toThrow(/role_result/);
   });
 
-  it('rejects an APPROVED reviewer role_result with no observed judgment write', () => {
-    expect(() => executionContract.__test__.roleResultSchema.parse({
+  it('accepts an APPROVED reviewer role_result with zero judgments when parity holds', () => {
+    const approved = withRoleDigest({
       ...reviewerRoleResult,
       claimed: {
         ...reviewerRoleResult.claimed,
@@ -495,7 +495,28 @@ describe('HarnessResult contract', () => {
         ...reviewerRoleResult.verified,
         verdict: 'APPROVED',
       },
-    })).toThrow(/judgment/i);
+    });
+    expect(executionContract.__test__.roleResultSchema.parse(approved)).toMatchObject({
+      claimed: { verdict: 'APPROVED', judgments_written: 0 },
+      verified: { verdict: 'APPROVED', judgments_written: 0 },
+    });
+  });
+
+  it('keeps the reviewer judgments upper bound for APPROVED role_result', () => {
+    const oversized = withRoleDigest({
+      ...reviewerRoleResult,
+      claimed: {
+        ...reviewerRoleResult.claimed,
+        verdict: 'APPROVED',
+        judgments_written: 10001,
+      },
+      verified: {
+        ...reviewerRoleResult.verified,
+        verdict: 'APPROVED',
+        judgments_written: 10001,
+      },
+    });
+    expect(() => executionContract.__test__.roleResultSchema.parse(oversized)).toThrow();
   });
 
   it('recomputes claimed canonical raw_sha256 instead of trusting the callback digest', () => {

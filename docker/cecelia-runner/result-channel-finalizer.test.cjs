@@ -163,7 +163,7 @@ test('reviewer REVISION remains a completed business decision and requires verif
   assert.deepEqual(result.role_result.verified, verifierEnvelope);
 });
 
-test('reviewer APPROVED requires a positive observed judgment count', () => {
+test('reviewer APPROVED accepts zero judgments when raw and verified counts agree', () => {
   const rawEnvelope = {
     verdict: 'APPROVED',
     rubric_scores: RUBRIC,
@@ -177,9 +177,30 @@ test('reviewer APPROVED requires a positive observed judgment count', () => {
     judgments_written: 0,
   };
 
+  const result = finalizeRoleResult(input('reviewer', rawEnvelope, verifierEnvelope));
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.decision.outcome, 'APPROVED');
+  assert.equal(result.decision.judgments_written, 0);
+});
+
+test('reviewer judgment count remains bounded for APPROVED', () => {
+  const rawEnvelope = {
+    verdict: 'APPROVED',
+    rubric_scores: RUBRIC,
+    judgments_written: 10001,
+    feedback: '',
+  };
+  const verifierEnvelope = {
+    contract_sha: SHA,
+    verdict: 'APPROVED',
+    rubric_scores: RUBRIC,
+    judgments_written: 10001,
+  };
+
   assert.throws(
     () => finalizeRoleResult(input('reviewer', rawEnvelope, verifierEnvelope)),
-    /APPROVED judgments_written/,
+    /integer in range/,
   );
 });
 

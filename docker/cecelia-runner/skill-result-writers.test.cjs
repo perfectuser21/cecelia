@@ -74,6 +74,12 @@ function writerSource(role) {
   return writer.replaceAll(INSTALLED_HELPER, HELPER_SOURCE);
 }
 
+function evaluatorTerminalBodies() {
+  return [...skillSource('evaluator').matchAll(
+    /EVALUATOR_VERDICT=FAIL\n(?:(?!EVALUATOR_VERDICT=FAIL)[\s\S])*?exit [01]/g,
+  )].map((match) => match[0]);
+}
+
 function baseEnv(workspace) {
   return {
     ...process.env,
@@ -128,6 +134,8 @@ function runWriter(role, overrides = {}, { runtime = true, symlink = false } = {
   env.HARNESS_ATTEMPT_ID = attemptId;
   if (runtime) {
     mkdirSync('/tmp/cecelia-prompts', { recursive: true });
+    env.BRAIN_RESULT_CHANNEL_VERSION = 'attempt-result-file/v1';
+    env.BRAIN_RESULT_MAX_BYTES = '1048576';
     env.BRAIN_RESULT_FILE = resultFile;
     if (!symlink) writeFileSync(resultFile, '', { mode: 0o600 });
   }
@@ -178,10 +186,38 @@ test('all six production Skills expose exactly one executable writer marker and 
       1,
       `${role} has a second managed writer path`,
     );
-    assert.match(writer, /if \[ "\$\{BRAIN_RESULT_FILE\+x\}" = x \]/);
+    assert.match(
+      writer,
+      /if \[ "\$\{BRAIN_RESULT_CHANNEL_VERSION\+x\}" = x \] \|\| \[ "\$\{BRAIN_RESULT_FILE\+x\}" = x \]/,
+    );
     assert.match(writer, /printf '%s' "\$RAW_RESULT_JSON" \| node/);
     assert.ok(writer.trim().length > 0);
   }
+});
+
+test('channel-version presence cannot fall back when BRAIN_RESULT_FILE is absent', () => {
+  for (const role of Object.keys(SKILLS)) {
+    for (const channelVersion of ['', 'attempt-result-file/v1', 'unknown']) {
+      const run = runWriter(role, {
+        BRAIN_RESULT_CHANNEL_VERSION: channelVersion,
+        BRAIN_RESULT_MAX_BYTES: '1048576',
+      }, { runtime: false });
+      assert.notEqual(
+        run.execution.status,
+        0,
+        `${role} fell back with explicit channel version ${JSON.stringify(channelVersion)}`,
+      );
+      assert.match(run.execution.stderr, /BRAIN_RESULT_(?:CHANNEL_VERSION|FILE)/);
+    }
+  }
+});
+
+test('generator setup failures never emit legacy ABORTED JSON in an explicit channel', () => {
+  const source = skillSource('generator');
+  const guardedAborts = source.match(
+    /if \[ "\$\{BRAIN_RESULT_CHANNEL_VERSION\+x\}" != x \] && \[ "\$\{BRAIN_RESULT_FILE\+x\}" != x \]; then\n\s+echo "\{\\"verdict\\": \\"ABORTED\\"/g,
+  ) ?? [];
+  assert.equal(guardedAborts.length, 2);
 });
 
 test('evaluator terminal branches cannot directly bypass its unique writer', () => {
@@ -195,6 +231,48 @@ test('evaluator terminal branches cannot directly bypass its unique writer', () 
     withoutWriter,
     /(?:cat\s*>|>\s*)\s*["']?\$WORKSPACE\/\.brain-result\.json/,
   );
+});
+
+test('every executable evaluator early terminal writes through the shared writer before exit', () => {
+  const bodies = evaluatorTerminalBodies();
+  assert.ok(bodies.length >= 14, `only found ${bodies.length} evaluator terminals`);
+  for (const body of bodies) {
+    assert.match(body, /write_evaluator_result\n[\s\S]*exit [01]/);
+  }
+});
+
+test('real evaluator early terminal bodies execute the managed writer before exit', () => {
+  const writer = writerSource('evaluator');
+  for (const [index, body] of evaluatorTerminalBodies().entries()) {
+    const root = mkdtempSync(join(tmpdir(), `evaluator-terminal-${index}-`));
+    const script = join(root, 'terminal.sh');
+    writeFileSync(
+      script,
+      `EVALUATOR_RESULT_WRITER_DEFER=1\n${writer}\n${body}\n`,
+      { mode: 0o700 },
+    );
+    const attemptId = randomUUID();
+    const resultFile = `/tmp/cecelia-prompts/${attemptId}.result.json`;
+    mkdirSync('/tmp/cecelia-prompts', { recursive: true });
+    writeFileSync(resultFile, '', { mode: 0o600 });
+    const execution = spawnSync('bash', [script], {
+      env: {
+        ...baseEnv(root),
+        BRAIN_RESULT_CHANNEL_VERSION: 'attempt-result-file/v1',
+        BRAIN_RESULT_MAX_BYTES: '1048576',
+        BRAIN_RESULT_FILE: resultFile,
+        HARNESS_ATTEMPT_ID: attemptId,
+      },
+      encoding: 'utf8',
+    });
+    assert.ok(
+      execution.status === 0 || execution.status === 1,
+      `terminal ${index}: ${execution.stderr}`,
+    );
+    const result = JSON.parse(readFileSync(resultFile, 'utf8'));
+    assert.equal(result.verdict, 'FAIL', `terminal ${index}`);
+    unlinkSync(resultFile);
+  }
 });
 
 test('BRAIN_RESULT_FILE lets every writer finalize outside a read-only workspace with mode 0600', () => {

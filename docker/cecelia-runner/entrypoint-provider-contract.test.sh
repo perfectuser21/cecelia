@@ -280,6 +280,47 @@ jq -e '.checks == [{"command":"npm test","exit_code":0,"log_tail":"12 tests pass
   exit 1
 }
 
+# Managed mode must read the explicit runtime result file, even when it lives
+# outside the workspace that carries the legacy fallback.
+MANAGED_RESULT_TMP="$(mktemp -d)"
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":["managed provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
+JSON
+cat > "$MANAGED_RESULT_TMP/attempt-result.json" <<'JSON'
+{"verdict":"PASS","task_id":"task-current","attempt_id":"attempt-managed","behavior_tests":[{"command":"managed explicit test","exit_code":0,"log_tail":"explicit result path"}]}
+JSON
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-managed CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
+BRAIN_RESULT_CHANNEL_VERSION=attempt-result-file/v1 \
+BRAIN_RESULT_FILE="$MANAGED_RESULT_TMP/attempt-result.json" \
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-managed CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+jq -e '.checks == [{"command":"managed explicit test","exit_code":0,"log_tail":"explicit result path"}]' \
+  "$EVIDENCE_TMP/result.json" >/dev/null || {
+  echo 'managed evaluator evidence bridge ignored explicit BRAIN_RESULT_FILE' >&2
+  exit 1
+}
+rm -rf "$MANAGED_RESULT_TMP"
+
+# Managed result-channel metadata is presence-sensitive. An invalid explicit
+# BRAIN_RESULT_FILE must fail closed instead of reading a valid-looking legacy
+# workspace fallback.
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":["managed provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
+JSON
+cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
+{"verdict":"PASS","task_id":"task-current","attempt_id":"attempt-managed","behavior_tests":[{"command":"must not merge","exit_code":0,"log_tail":"legacy fallback"}]}
+JSON
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-managed CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
+BRAIN_RESULT_CHANNEL_VERSION=attempt-result-file/v1 BRAIN_RESULT_FILE= \
+HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-managed CECELIA_TASK_ID=task-current \
+  WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json" || true
+jq -e '.checks == ["managed provider summary"]' "$EVIDENCE_TMP/result.json" >/dev/null || {
+  echo 'managed evaluator evidence bridge fell back after invalid BRAIN_RESULT_FILE' >&2
+  exit 1
+}
+
 # A same-task result left by a previous evaluator attempt is not current evidence.
 cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":["current provider summary"],"decision":{"outcome":"PASS","reason":"verified"}}
