@@ -95,7 +95,7 @@ digest and LaunchDaemon assertions unchanged.
 
 - [ ] **Step 2: Version the Brain change**
 
-Bump Brain from `1.267.103` to `1.267.104` in `package.json`,
+Bump Brain from the current `origin/main` version to `1.267.105` in `package.json`,
 `package-lock.json`, and `DEFINITION.md`. Add rollback instructions and state
 explicitly that Phase 4B/4C/4D and Phase 5 remain out of scope.
 

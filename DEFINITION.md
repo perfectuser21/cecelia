@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.104
+**Brain 版本**: 1.267.105
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.105 — Fleet Node macOS admission policy correction
+
+- macOS `15.6.1` 是最低支持版本；同一 macOS 15 major 的更高 minor/patch
+  可以准入，低于 floor、malformed 或未经验证的其他 major 继续 fail closed。
+- `15.7.4` 是非阻塞安全维护建议，不再把两台 M4 的补丁号差异误判为 admission
+  失败；Runner digest、OrbStack/Docker 与 Phase 4A 其余合同不变。
+- Brain 回退目标：`1.267.104`；节点保持 drain 后再回退。
 
 ## Brain 1.267.103 — Fleet rollout transfer-interruption cleanup
 

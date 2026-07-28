@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.104
+**版本**: 1.267.105
 
 ## Fleet Node macOS admission policy correction
 
@@ -11,7 +11,7 @@
 - Runner digest、OrbStack/Docker、Worker LaunchDaemon、NodeProfile capacity 和
   Phase 4A 其他合同不变；Phase 4B/4C/4D 与 Phase 5 均未扩展。
 - 回退：节点保持 drain，Brain 使用
-  `bash scripts/brain-rollback.sh 1.267.103`。
+  `bash scripts/brain-rollback.sh 1.267.104`。
 
 ## Fleet rollout transfer-interruption cleanup hotfix
 
