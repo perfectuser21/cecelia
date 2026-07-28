@@ -6,10 +6,12 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.6.0
+version: 9.8.0
 created: 2026-04-08
-updated: 2026-07-14
+updated: 2026-07-28
 changelog:
+  - 9.8.0: W7 人形验收（RD 2026-07-28，决策 d3021871，与 proposer 9.17.0 配套）——Golden Path 覆盖审查新增第 20 条（新写 [BEHAVIOR] 缺 动作/预期观察/等待预算/留证 任一行或 Test: 非单行完整命令 → 第 1 维 dod_machineability 打回；[legacy] 标记条目豁免）+ 第 21 条（合同缺 ## 探索提示 段，或错输入/重复提交/中途中断/边界值明显适用却未覆盖 → 第 6 维低分打回，feedback 必须直接给出建议的探索提示条目文本供 proposer 原样填入）；7 个维度名不动（ReviewerOutputSchema 接口约定）
+  - 9.7.0: 堵「留给后续 sprint / 技术债清理」逃逸口（decision 8dbe91ee 实证 — os_type/device_platform 语义重叠被记为技术债放行，10天后漂移成生产bug PR#1313，此后也没人回头补前端展示层）— Golden Path 覆盖审查新增第 19 条：新字段与既有字段语义重叠时，合同只写"留给后续sprint/技术债"且无具体跟进机制（无Brain task_id）→ 第 5 维 risk_registered 直接打回，必须当场消解或附可执行跟进项
   - 9.5.0: 真实链路四硬规则审查（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证，与 proposer 9.10.0 对齐）— Golden Path 覆盖审查新增第 14/15/16/17 条：(14) 设备/agent 调服务端缺「真实调用方请求 shape」段或 DoD 认证字段与生产调用方不逐字段一致 → 打回（规则A）；(15) 第三方 API 全 mock 零真调 → 打回（规则B）；(16) DoD 含 force_*/stub/假数据但无「未覆盖真实链路清单」段 → 打回（规则C）；(17) target_environment 与 ability 真实运行环境不匹配 → 第 7 维 0 分打回（规则D：微信 UI/RPA 必 windows_wechat；Android 通道未落地前真机段必登记未覆盖）；第 6 维领域验证核对清单同步补「真实调用方 shape」「第三方真调」两行
   - 9.6.0: EVA v2 审计五修 — (R1) Step 5 判定点写库后必须回读自证，judgments_written 作为必含字段写进最终 verdict JSON，登记表有行但写入 0 条 → verdict 必带 WARN（a85e0582 实证 3 行登记表全静默漏写）；(R2) Step 4 结果文件路径参数化 RESULT_FILE=${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}，headed/relay 由 controller 注入（gan-7b17211.json 实证）；(R3) Golden Path 覆盖审查新增第 18 条：e2e 脚本/manual:bash 必须 bash -n 通过 + 全角标点紧贴 $VAR 检测，命中即第 6 维低分（issue a638f840 实证）；(R4) 第 6 维口径收紧：PRD 无 HTTP 响应不自动满分，改审等价 oracle codify 与 E2E 真执行断言占比（d063b3e5 实证判例）；(R5) Step 3 明确 gan-feedback-rN.md 与 verdict feedback 字段必须简体中文（r4 全英文反馈实证违规）
   - 9.4.0: 判定点写库通电（九要素 T5 — decisions e035dad8）— Step 5 APPROVED 后新增第 2 件事：逐行解析合同「判定点登记表」写入 decisions category=judgment（账本保鲜守卫「判定点活性」指标唯一数据源）；解析跳过表头/分隔线/示例行/N-A；失败只 WARN 不阻塞结果文件
@@ -94,6 +96,11 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 16. **有 mock 豁免但无「未覆盖真实链路清单」→ 打回**（v9.5 强制 — 规则C）：DoD 出现 force_*/stub/假数据时，合同必须附 `## 未覆盖真实链路清单` 段（逐条：被顶替的真实链路点｜原因｜真验证补位计划）；缺段、或清单避重就轻漏列明显被 mock 的链路点 → REVISION。无 mock 时显式写 N/A 才合规。
 17. **target_environment 与 ability 真实运行环境不匹配 → 打回**（v9.5 强制 — 规则D，#1256 实证：windows_wechat 通道存在但 sprint 没路由过去，合并后真机爆 5 个致命 bug——"有枪没上膛"）：Reviewer 必须核对 PRD/合同的 target_environment 与 ability 真实运行环境：Line04 微信 UI/RPA ability → 必须 windows_wechat（xian-rog 真机 e2e-wechat-rpa.yml）；Android agent ability → Android 真机通道落地前必须在「未覆盖真实链路清单」显式登记「真机段未覆盖」；环境选错/漏选 → 第 7 维 0 分 REVISION。
 18. **e2e 脚本与 manual:bash 命令语法必过**（v9.6 强制 — EVA v2）：合同附带的 e2e 脚本与 manual:bash 命令必须 `bash -n` 通过 + 全角标点紧贴 $VAR 检测（`grep -E '[（）：，“”]\$'`）——命中任一即第 6 维低分。issue a638f840 实证：放行了带全角字符 bug 的脚本，跑到 BEHAVIOR-06 崩溃。
+19. **新字段与既有字段语义重叠只写「留给后续 sprint / 技术债清理」→ 打回**（v9.7 强制 — decision 8dbe91ee 实证：`device_platform` 与既有 `agents.os_type` 语义重叠，Proposer 在 Risk 段写「不在本 sprint 合并，留给后续技术债清理 sprint 处理」被放行，此后无任何 sprint 跟进，10 天后两字段实际漂移演变成生产 bug PR #1313）：Reviewer 发现合同新增字段/表与仓库已有字段/表语义重叠或部分重复时，「留给后续 sprint / 记为技术债」**不是合法的风险规避写法**——必须二选一：(a) 合同当场消解重复（改为从既有字段派生，或明确写清两者不可合并的理由并给出双写一致性校验的 DoD 断言）；(b) 若确实无法本 sprint 处理，合同必须附具体可执行的跟进项（新建 Brain task 并写 task_id，而非一句文字承诺）。只写"留给后续 sprint 处理"、"技术债"、"后续再统一"等无跟进机制的表述 → 第 5 维 risk_registered 直接打回。
+
+20. **五行剧本完整性（W7 人形验收 — proposer 9.17.0 五行剧本格式）**：每条**新写** [BEHAVIOR]（无 `[legacy]` 标记）缺 `动作:`/`预期观察:`/`等待预算:`/`留证:` 任一行，或 `Test:` 不是单行完整命令（命令体折到后续行 = promote-regression 只收割到首词，产出假绿回归条目）→ 第 1 维 dod_machineability 打回 REVISION，feedback 指明缺哪行。异步观察类（预期观察含"收到/出现/推送/完成"等异步语义）等待预算写 `0s` 或缺失 → 同样打回；例外：预期观察带"立即/同步"限定词、动作返回时即可确认的同步观察，`0s` 合法（如 proposer 正例 1「页面立即出现 toast」）。
+
+21. **探索提示覆盖（W7 L3 探索层）**：合同缺独立二级段 `## 探索提示`，或其高风险面对本 sprint 明显适用却未覆盖（错输入/重复提交/中途中断/边界值四类逐一核对）→ 第 6 维低分打回。**feedback 必须直接给出建议的探索提示条目文本**（如"补：错输入 — POST /api/xxx 传非法枚举值"），供 proposer 原样填入——这是"探索提示由 GAN reviewer 写进合同"的落地方式，不许只说"覆盖不足"。
 
 少一项 → 第 2 维 scope_match_prd 或第 4 维 internal_consistency 扣分。Golden Path 断链 → 直接 REVISION 不打分。
 

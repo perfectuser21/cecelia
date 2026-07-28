@@ -4,11 +4,12 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.16.0
+version: 9.17.0
 created: 2026-04-08
-updated: 2026-07-17
+updated: 2026-07-28
 changelog:
-  - 9.16.0: target_environment 枚举加 android_realmachine（洞①）— E2E 模板 target_environment 占位符同步补入
+  - 9.17.0: W7 人形验收（RD 2026-07-28，决策 d3021871）——三段式升级五行剧本：每条新写 [BEHAVIOR] 必含 动作/预期观察/等待预算/留证/Test: 五行；Test: 强制单行（长命令 bash -c 包裹，修 #149 多行验证命令被 promote-regression 收割成 cmd="bash" 隐患）；新增 ## 探索提示 合同段模板（L3 探索层输入，默认预算 10 分钟/15 动作）；接缝步骤（真机/异步/第三方）标 [接缝×2] 由 evaluator 重复执行判 FLAKY；补同步/异步正例各一 + 旧命令行长相/缺等待预算反例各一；legacy 标记条目继续豁免
+  - 9.16.0: user_facing 预览闸硬规则：journey_type=user_facing 的 Golden Path 合同末尾必须含 ## staging 预览闸 段（步骤A落staging环境/步骤B Final-E2E在staging跑截图/步骤C Bark推主理人预览链接）；按 BASE_REPO 定模式：cecelia仓=通知式（Bark注明「24h无异议自动放行」，Brain PATCH promote_after时间戳）/zenithjoy仓=阻塞式（Bark注明需主理人放行，prod promote前核查decisions/approval字段，未放行禁promote）；其余journey_type（含autonomous/dev_pipeline/agent_remote）不受约束（零回归保护）
   - 9.15.0: gear 档位：新增 Step 3.1 HARNESS_GEAR=segmented 档位分支（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策6），恢复 v7 前多 workstream task-plan.json schema（tasks[]/depends_on 线性链/estimated_minutes 20-60），段划分依据=Golden Path"后段依赖前段真机产物"接缝；default（缺省或非 segmented）保持单 ws1 现行为不变
   - 9.14.0: 三段式 [BEHAVIOR] 剧本格式升级——每条 BEHAVIOR 须含三段：①「动作」（操作步骤）②「预期观察」（用户/系统可见状态变化）③「验证命令」（可执行断言）；新增 until-loop 等待预算范式（within 预算轮询，如 within 60s 收到消息确认）；legacy 兼容标记（存量纯命令写法保留但标为 legacy，不强制迁移）；样例剧本：点设置 → within 60s 收到消息
   - 9.13.0: [BEHAVIOR] 格式加验证等级标记+锚定父路声明（决策145014a4 W3）——[BEHAVIOR] 条目格式新增 [L1|L2|L3] 标记（与 judge #4004 解析约定一致：behavior_tests[i].verification_level 字段，L1=替身/L2=服务端真验/L3=真机真验）；新增「锚定父路声明」硬规则：sprint GP 段首行必须写「覆盖父路 <golden_path名或id> 第 N-M 步」或「独立小路（无父路）」，禁留空
@@ -152,6 +153,42 @@ echo "$RESP" | grep -q '"ok":true' && echo "$RESP" | grep -q '"exit_code":0' || 
 
 ---
 
+## ⚡ staging 预览闸（user_facing 专属）
+
+**条件**：`journey_type=user_facing` 时强制执行；`autonomous`/`dev_pipeline`/`agent_remote` 类合同不受约束（autonomous 流程零回归保护，无预览闸要求）。
+
+合同末尾必须含 `## staging 预览闸` 段，包含以下三步：
+
+### 步骤 A：落 staging
+
+- **Cecelia 仓**：`localhost:5212`（cecelia staging 环境，只引用现有脚本，不重造逻辑）
+- **ZenithJoy 仓**：ZJ staging 环境（只引用现有脚本，不重造逻辑）
+- 禁止在合同里重造 staging 部署脚本；只写引用方式与环境地址
+
+### 步骤 B：Final E2E 在 staging 跑 + 截图
+
+- Final E2E 必须在 staging 环境上执行（非本地 dev 环境）
+- 截图存至 `${SPRINT_DIR}/screenshots/staging-<step>.png`
+
+### 步骤 C：Bark 推主理人预览链接
+
+调用 `$BARK_URL` 通知主理人，附 staging 预览链接 + 截图 URL。
+
+按 `BASE_REPO` 判模式：
+
+- **cecelia 仓** → **通知式**：Bark 注明「24h 无异议自动放行」；Brain PATCH 写 `promote_after`（UTC+24h 时间戳）
+  ```bash
+  PATCH localhost:5221/api/brain/tasks/$TASK_ID metadata: {staging_deployed:true, promote_after:"<UTC+24h>", staging_url:"..."}
+  ```
+- **zenithjoy 仓** → **阻塞式**：Bark 注明需主理人放行；Brain PATCH 写 `approval_required:true`；prod promote 前核查 decisions/approval 字段，未放行禁 promote
+  ```bash
+  PATCH localhost:5221/api/brain/tasks/$TASK_ID metadata: {staging_deployed:true, approval_required:true, staging_url:"..."}
+  ```
+
+**豁免说明**：`journey_type=autonomous`、`dev_pipeline`、`agent_remote` 的合同不受约束，无需含预览闸段。autonomous 流程享有零回归保护，不纳入预览闸范围。
+
+---
+
 ## ⚡ DoD 必须分两类断言（接缝 vs 逻辑）（核心 — 真环境炸的根因）
 
 **根因：很多"修复"在假环境（CI/mock/开发机）绿了就标 done，碰真环境（真机微信几何/UIA、生产 mmv env、真实 agent 调用方）逐个炸，来回修二十几轮。DoD 的验收标准定在了照不到真实世界的地方。** 解法：写断言时强制区分两类，接缝类必须在真目标验证。
@@ -278,54 +315,116 @@ vitest 测试文件还要写（generator TDD red-green 用），但**不再被 e
 
 ---
 
-## ⚡ 三段式 [BEHAVIOR] 剧本格式（v9.14 新增）
+## ⚡ 五行剧本 [BEHAVIOR] 格式（v9.17 — W7 人形验收，替代 v9.14 三段式）
 
-**每条 [BEHAVIOR] 须按三段式剧本组织，缺任一段 Reviewer 打回：**
+**每条新写 [BEHAVIOR] 必须是五行剧本，缺任一行 Reviewer 打回（[legacy] 标记条目豁免）：**
 
-| 段 | 说明 | 示例 |
-|---|---|---|
-| ①「动作」 | 用户/系统执行的操作步骤（点击/发送/调用等） | 用户点击「设置」按钮 |
-| ②「预期观察」 | 用户或系统可见的状态变化（界面变化/消息出现/DB 写入等） | within 60s 收到消息确认通知 |
-| ③「验证命令」 | 可执行的断言命令（manual:bash 形式，机器可跑） | `curl ... \| jq -e '.status=="ok"'` |
+```
+- [ ] [BEHAVIOR] [L1|L2|L3] B-NN: <步骤名>（接缝步骤加标注 [接缝×2]）
+  动作: <人做什么——点/发/调/等>
+  预期观察: <人应该看到什么——消息到达/页面变化/DB出现记录>
+  等待预算: <N>s（超时=FAIL；同步观察写 0s）
+  留证: <截图路径 / 命令输出 / DB查询结果>
+  Test: manual:bash -c '<单行验证命令>'
+```
 
-### until-loop 等待预算范式
+| 行 | 说明 |
+|---|---|
+| 动作 | 用户/系统执行的操作步骤（点击/发送/调用等），evaluator 照此真实执行 |
+| 预期观察 | 用户或系统可见的状态变化，evaluator 在预算内轮询观察 |
+| 等待预算 | 最多等多久（如 `30s`）；超时未观察到 = 该条 FAIL；同步观察写 `0s` |
+| 留证 | evaluator 必须采集的证据：截图存 `${SPRINT_DIR}/screenshots/`，命令输出/DB 查询结果进 behavior_tests.log_tail 与 evidence 字段（evaluator 1.33.0）|
+| Test | 机器可跑断言，**必须单行完整命令**（见下）|
 
-涉及异步操作（消息发送、任务调度、文件生成等）时，「预期观察」段必须写明等待预算，并在「验证命令」段用 until-loop 实现轮询：
+### Test: 单行铁律（机械闸兼容）
+
+**Test: 行必须是单行完整命令**——三个机械闸都按单行解析：
+- cecelia `harness-contract-lint.mjs`：缺 Test: = MISSING_TEST 红
+- cecelia `harness-promote-regression.js`：`Test:\s*manual:(.+)$` 单行收割进回归合同——多行写法只收割到首词（如 `bash`），产出假绿回归条目（#149 实证隐患）
+- 统一写 `manual:bash -c '<单行命令>'`：lint strip `manual:` 后以 `bash -c` 开头命中白名单快速通道（引号内 grep/echo 不被误伤），evaluator strip 后即为可执行命令；until-loop 等长命令全部包进这一层引号
 
 ```bash
-# within 60s 等待范式（标准写法）
-DEADLINE=$((SECONDS + 60))
-until curl -sf localhost:5221/api/brain/tasks/$TASK_ID | jq -e '.status=="completed"' >/dev/null 2>&1; do
-  [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: timeout after 60s"; exit 1; }
-  sleep 2
-done
-echo "OK: within 60s 任务完成"
+# ✅ 异步 until-loop 单行范式（within 60s 等待预算）
+Test: manual:bash -c 'DEADLINE=$((SECONDS+60)); until psql "$DB_URL" -tAc "SELECT 1 FROM messages WHERE type='"'"'settings_notify'"'"' AND created_at > NOW()-INTERVAL '"'"'5m'"'"'" | grep -q 1; do [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: within 60s 未收到消息"; exit 1; }; sleep 2; done; echo "OK: within 60s 收到消息确认"'
 ```
 
-关键词约定：`within <N>s`（等待预算上限）/ `until`（轮询循环关键词）/ `60s`（样例预算值）。
+### 正例（两条完整剧本）
 
-### 样例剧本（点设置 → within 60s 收到消息）
+**正例 1 — 同步观察（UI 交互类）：**
 
 ```
-[BEHAVIOR] [L2] 用户点设置触发消息推送，within 60s 收到确认消息
+- [ ] [BEHAVIOR] [L2] B-01: 保存设置后页面出现成功提示
+  动作: 在设置页填写通知开关=开，点击「保存」按钮
+  预期观察: 页面立即出现「保存成功」toast，且设置项保持为开
+  等待预算: 0s
+  留证: ${SPRINT_DIR}/screenshots/b01-save-toast.png + DB 查询输出
+  Test: manual:bash -c 'curl -sf localhost:5221/api/settings | jq -e ".notify_enabled==true"'
+```
+
+**正例 2 — 异步等待（消息推送类）：**
+
+```
+- [ ] [BEHAVIOR] [L2] B-02: 点设置触发消息推送，within 60s 收到确认 [接缝×2]
   动作: 调用 POST /api/settings/save 保存配置
-  预期观察: within 60s 消息队列出现新条目，用户侧收到推送确认
-  验证命令: Test: manual:bash
-    DEADLINE=$((SECONDS + 60))
-    until psql $DB_URL -c "SELECT 1 FROM messages WHERE type='settings_notify' AND created_at > NOW()-INTERVAL '5m'" | grep -q '1 row'; do
-      [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: within 60s 未收到消息"; exit 1; }
-      sleep 2
-    done
-    echo "OK: within 60s 收到消息确认"
+  预期观察: within 60s 消息表出现 settings_notify 新条目，用户侧收到推送确认
+  等待预算: 60s
+  留证: until-loop 命令输出末 5 行（含 OK 行）
+  Test: manual:bash -c 'DEADLINE=$((SECONDS+60)); until psql "$DB_URL" -tAc "SELECT 1 FROM messages WHERE type='"'"'settings_notify'"'"'" | grep -q 1; do [ $SECONDS -lt $DEADLINE ] || { echo FAIL; exit 1; }; sleep 2; done; echo OK'
 ```
+
+### 反例（禁止写法）
+
+**反例 1 — 旧命令行长相（缺全部剧本行）→ Reviewer 第 1 维打回：**
+
+```
+- [ ] [BEHAVIOR] [L2] 检查接口响应 Test: manual:bash curl -sf localhost:5221/api/ping | jq -e '.ok==true'
+```
+
+（无 动作/预期观察/等待预算/留证——这是把验收塑造回脚本级的病根。存量合同里这种写法必须带 `[legacy]` 标记才豁免。）
+
+**反例 2 — 异步观察缺等待预算 → Reviewer 第 1 维打回：**
+
+```
+- [ ] [BEHAVIOR] [L2] B-03: 任务完成后收到通知
+  动作: 触发任务执行
+  预期观察: 收到完成通知
+  留证: 命令输出
+  Test: manual:bash -c 'psql "$DB_URL" -tAc "SELECT 1 FROM notifications" | grep -q 1'
+```
+
+（异步观察没写等多久 = evaluator 无法判超时，FAIL 语义不确定。）
+
+### 接缝步骤标注 [接缝×2]
+
+步骤碰真实世界接缝（真机 UIA/RPA、异步消息、第三方 API）→ 步骤名后标 `[接缝×2]`，evaluator 将重复执行 2 次，两次不一致 → 直接判 FLAKY 上报（flaky 即 bug）。**只标可重复执行的步骤**：动作不幂等且合同写不出重置方式的，不标（单次执行），并在留证行写明原因。
 
 ### legacy 兼容标记
 
-存量纯命令写法（未含三段式格式）保留有效，但标为 `[legacy]`，不强制迁移——新写条目必须三段式：
+存量纯命令写法（未含剧本行）保留有效，但标 `[legacy]`，不强制迁移——新写条目必须五行剧本：
 
 ```
 - [ ] [BEHAVIOR] [L2] [legacy] 检查接口响应 Test: manual:bash curl -sf localhost:5221/api/ping | jq -e '.ok==true'
 ```
+
+---
+
+## ⚡ 探索提示合同段（v9.17 — L3 探索层输入）
+
+**contract-draft.md 必须含独立二级段 `## 探索提示`**（平级标题，**禁止塞进 `## E2E 验收` 段内部**——会截断 evaluator 的 E2E 脚本提取）。evaluator 在剧本全过后按此段做带预算的自由测试。模板：
+
+```markdown
+## 探索提示（L3 探索层 — evaluator 剧本全过后执行）
+
+探索预算: 10 分钟 / 15 动作（默认；高风险 sprint 可调大，写明理由）
+高风险面:
+- 错输入: <具体字段/接口 + 非法值，如 POST /api/settings 传 notify_enabled="abc">
+- 重复提交: <可连点/重发的入口，如 连点两次「保存」>
+- 中途中断: <刷新/返回重进/杀进程的位置，如 保存进行中刷新页面>
+- 边界值: <数值/长度/时间边界，如 标题 0 字符 / 10000 字符>
+发现分级: P0/P1（丢数据/直接面客错误）→ 阻塞 merge；P2/P3 → 记 findings 不阻塞
+```
+
+高风险面条目由 Proposer 起草、GAN Reviewer 审查补充（Reviewer 发现缺口时在 feedback 里直接给出条目文本）。
 
 ---
 
@@ -575,7 +674,7 @@ psql $DB -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND crea
 ## E2E 验收（最终 final-e2e 跑 — 按 target_environment 选模板）
 
 **journey_type**: {autonomous|user_facing|dev_pipeline|agent_remote}
-**target_environment**: {local_api|mac_web|windows_cloud|windows_wechat|linux_server|playground|android_realmachine}
+**target_environment**: {local_api|mac_web|windows_cloud|windows_wechat|linux_server|playground}
 
 > **选模板规则**：看 PRD 末尾的 `target_environment` 字段，不是 `journey_type`。evaluator 模式B 按 `target_environment` SSH 派发到正确机器，合同 E2E 脚本必须与目标机器匹配。
 > `windows_wechat` 与 `windows_cloud` 的区别：前者走 xian-rog self-hosted runner（含真实微信 4.1.8），后者走 GHA windows-latest（无微信，适合 Agent 安装包/Publisher 测试）。

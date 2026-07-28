@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.32.2
+version: 1.33.0
 created: 2026-05-06
-updated: 2026-07-26
+updated: 2026-07-28
 changelog:
+  - 1.33.0: W7 人形验收（RD 2026-07-28，决策 d3021871，与 proposer 9.17.0 配套）——L1 按步执行逐步留证（每条剧本：执行动作 → within 等待预算轮询预期观察 → 采集留证（截图/命令输出/DB结果）→ 跑 Test: 单行命令；behavior_tests 条目新增 wait_budget/evidence 字段）；L2 意外观察（执行中发现卡顿/报错/布局歪/慢响应必录 verdict 顶层 findings[] additive 字段 + SPRINT_DIR/findings.md，P0/P1 即使断言全绿也 FAIL）；L3 探索层（剧本全过后按合同 ## 探索提示 段自由测试，默认 10 分钟/15 动作，legacy 合同无此段则跳过）；[接缝×2] 步骤重复执行 2 次不一致 → FAIL 且 failed_step="FLAKY:<步骤名>"；SEGMENT_EVAL 段验与 [legacy] 条目按旧协议不变
   - 1.32.2: attempt evidence fail-closed 补全——所有最终 PASS/FAIL verdict（含 dispatch/setup、环境/URL/workflow、timeout 与示例模板）都显式写当前 `HARNESS_ATTEMPT_ID`，避免早退失败证据因缺 attempt_id 被 runner 拒收后空转
   - 1.32.1: cross-repo bundled runtime——默认非 Windows Step B-1 用 quoted here-doc 随 Skill 内容落地自包含 extractor，不再依赖目标仓库存在 Cecelia `scripts/`；内嵌资产与 canonical extractor 逐字节契约锁定
   - 1.32.0: 默认非 Windows Step B-1 改走仓库共享 `extract-contract-e2e.cjs`，与 evaluator/过渡登记共用唯一 parser；H2+ E2E 标题、多段歧义、空证据及多 bash block 顺序语义不再由 Skill 内 AWK 自建第二口径
@@ -1104,30 +1105,48 @@ BREOF
 
 **behavior_tests 真跑证据（EVA v2 E1 硬要求）**：verdict JSON 必须带 `behavior_tests` 数组，**每条必须是对象 `{command, exit_code, log_tail}`**——`log_tail` = 该命令输出末 5 行（如 `tail -5 /tmp/e2e-result.log`）。缺 `exit_code` 或 `log_tail` 任一 = 该条视为未跑，**禁 PASS**。a85e0582 实证：verdict 只列命令原文时，"真跑"与"声称跑过"从 verdict 本身无法区分——退出码和真实输出尾巴是唯一能自证真跑的东西。
 
-**behavior_tests 三段式剧本字段（v1.26 新增，与 proposer 9.14 配套）**：合同条目含三段式格式（action/expected/验证命令）时，behavior_tests 条目新增 `action` 和 `expected` 字段，与 `command`/`exit_code`/`log_tail` 共存：
+**behavior_tests 五行剧本字段（v1.33 — W7 人形验收，与 proposer 9.17 配套；v1.26 三段式的超集）**：合同条目含剧本格式时，behavior_tests 条目在 `command`/`exit_code`/`log_tail` 之上新增：
 
-- `action`：对应剧本「动作」段，记录 evaluator 实际执行的操作步骤（字符串）
-- `expected`：对应剧本「预期观察」段，记录期望状态描述（含 `within Ns` 等待预算声明）
-- `command`/`exit_code`/`log_tail`：对应剧本「验证命令」段，执行语义不变
+- `action`：剧本「动作」行，evaluator 实际执行的操作步骤（字符串）
+- `expected`：剧本「预期观察」行，期望状态描述
+- `wait_budget`：剧本「等待预算」行（如 `"60s"`；同步 `"0s"`）
+- `evidence`：剧本「留证」行的实际产物（截图相对路径 或 命令输出/DB 查询结果摘要）
 
-**evaluator 按剧本逐步执行流程（三段式合同）**：
-1. 先执行「动作」（action 字段命令）
-2. 再按「预期观察」中的 `within Ns` 预算 until-loop 轮询状态
-3. 最后跑「验证命令」（command 字段）并记录 exit_code + log_tail
+**L1 按步执行逐步留证（人形执行协议）**（本节 L1/L2/L3 指人形验收三层：剧本/意外观察/探索——与 [BEHAVIOR] 头部的 verification_level [L1|L2|L3]（替身/服务端真验/真机真验）是两套编号，互不相关）——每条剧本依序做四件事，全部条目过才 PASS：
 
-三段式示例条目：
+1. **执行「动作」**：照动作行真实操作（调 API / Playwright 点击 / 发消息）
+2. **在「等待预算」内轮询「预期观察」**：until-loop 轮询，预算耗尽未观察到 → 该条 FAIL（failed_step 写步骤名 + "等待预算 <N>s 超时"）
+3. **采集「留证」**：截图存 `${SPRINT_DIR}/screenshots/`（mac_web 沿用 Step B-2.5 视觉自验），命令输出/DB 查询结果记入该条 `log_tail` 与 `evidence`
+4. **跑 `Test:` 单行命令**：记录真实 `exit_code` + `log_tail`（EVA v2 E1 硬要求不变）
+
+五行剧本示例条目：
+
 ```json
 {
-  "command": "until psql $DB_URL -c \"SELECT 1 FROM messages WHERE type='settings_notify'\" | grep -q '1 row'; do sleep 2; done",
+  "command": "bash -c 'until psql \"$DB_URL\" -tAc \"SELECT 1 FROM messages WHERE type=$$settings_notify$$\" | grep -q 1; do sleep 2; done; echo OK'",
   "exit_code": 0,
-  "log_tail": "1 row\nOK: within 60s 收到消息确认",
+  "log_tail": "OK: within 60s 收到消息确认",
   "verification_level": "L2",
   "action": "POST /api/settings/save",
-  "expected": "within 60s 消息队列出现新条目"
+  "expected": "within 60s 消息队列出现新条目",
+  "wait_budget": "60s",
+  "evidence": "screenshots/b02-notify.png"
 }
 ```
 
-非三段式（legacy 格式）条目只需 `command`/`exit_code`/`log_tail`，`action`/`expected` 可省略。
+三段式（v1.26）条目省略 `wait_budget`/`evidence`；`[legacy]` 条目只需 `command`/`exit_code`/`log_tail`——**存量合同按旧协议原样执行，不因缺剧本行 FAIL**（向后兼容）。
+
+**FLAKY 判定（接缝步骤 ×2）**：步骤名带 `[接缝×2]` 标注的条目重复执行 2 次（动作+观察+Test 全流程）。两次结果不一致（exit_code 或关键观察不同）→ 整体 verdict FAIL，`failed_step` 写 `FLAKY:<步骤名>`，log_excerpt 附两次差异。flaky 即 bug，禁止取"较好的一次"。
+
+**L2 意外观察（findings[] — 断言只回答问的问题，人还报告没人问的问题）**：执行任何步骤（含 L3 探索）时凡"不对劲"——卡顿、控制台报错、布局歪、慢响应、日志异常——**步骤照过，观察必留**：记入 verdict JSON 顶层 `findings[]` 数组（additive 字段，v1 消费方忽略未知字段无害，先例 `unverifiable[]`），同时落 `${SPRINT_DIR}/findings.md` 文件留证：
+
+```json
+{"verdict":"PASS","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","findings":[{"severity":"P2","step":"B-01","observation":"保存按钮点击后 3s 才出 toast，页面无 loading 态","evidence":"screenshots/b01-save-toast.png"}], ...}
+```
+
+分级分流：`P0/P1`（丢数据/直接面客错误）→ **即使剧本断言全绿也整体 FAIL**（feedback 写明 finding）；`P2/P3` → 只记录不阻塞（report 阶段/人工落 issue）。
+
+**L3 探索层（剧本全过后，带预算自由测试）**：剧本全部 PASS 后，读合同 `## 探索提示` 段执行自由测试——错输入/连点两次/中途刷新/返回重进/边界值，按段内高风险面逐条来，预算默认 **10 分钟/15 动作**（合同段内可调，以合同为准）。发现全部进 `findings[]`，分级分流同上（P0/P1 → FAIL 阻塞 merge）。合同无 `## 探索提示` 段（legacy 合同）→ 跳过 L3，verdict notes 注明"legacy 合同无探索提示段，L3 未执行"。**SEGMENT_EVAL 段级轻验收不跑 L2/L3**（段验维持机械断言，三层只作用于终验/总验——设计如此）。
 
 ```json
 {"verdict":"PASS","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","verification_level":"L2","behavior_tests":[{"command":"curl -sf localhost:5221/api/brain/ping | jq -e '.ok==true'","exit_code":0,"log_tail":"{\"ok\":true}","verification_level":"L2"}], ...}

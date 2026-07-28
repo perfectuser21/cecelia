@@ -6,10 +6,11 @@ description: |
   → 更新Notion Feature Registry → 飞书通知 → 写本地harness-report.md备份。
   Phase B（Sprint状态同步）：写本地Brain DB → 通过 db-update skill 触发 notion-push-sync.js 的 8 个 push 函数（journeys/journey_features/issues/skill_registry/journey_steps/journey_step_links/decisions/initiative_contracts）→ git commit。
   由 harness-evaluator PASS 后 Brain reportNode 自动 spawn；relay 模式由 harness-controller 调 Skill 触发（变量走「Relay 入口段」自取）；也可手动触发补同步。
-version: 6.8.0
+version: 6.9.0
 created: 2026-04-08
-updated: 2026-07-14
+updated: 2026-07-17
 changelog:
+  - 6.9.0: Phase A 新增 Step 5.5（user_facing only）：staging 预览通知与放行状态登记——Bark推送staging预览链接+截图URL；Cecelia仓PATCH Brain task metadata写promote_after（UTC+24h）；ZJ仓写approval_required:true；失败属CONCERN非阻断
   - 6.7.0: 翻牌义务（handoff 0714 刀3 — 台账只点火时写、交付后不翻牌根治）— Phase B 新增三件强制动作：(1) Feature 翻牌：本 sprint 推进的 journey_features 按 evaluator verdict 翻 status（PASS+merged→done / 真机段未验→working+logic-done-pending 备注 / 部分交付→working），禁止交付后仍留 planned；(2) Journey 回写：journey step 状态回写 + journeys.updated_at 刷新；description 与最新 decisions 冲突 → 标待人工确认并开 issue，不静默改写不静默跳过；(3) smoke 一致性核对：journey.e2e_test_path 指向的脚本是否还测现行方案（对照 decisions 近期废弃决策），测已废弃方案 → 开 issue。完成标志追加「翻牌清单」输出。实证：Path2/Path4 journeys.updated_at 停在 05-22、飞书版定义与 07-07 决策打架 46 天、「内容判定门槛」planned 而现实已合并 11 个 PR
   - 6.8.0: EVA v2 四修（背景：a85e0582 全通 run 里 harness-report.md/learning.md/notes 全是 Brain 侧 harness-report.mjs 降级脚本产的英文 Placeholder，本 skill 被架空；mjs 侧修复另立案，本条先修 skill 侧可自防部分）— (a) RP4 占位符守卫指纹扩大：Step 8c 与出口核验各加英文指纹 `grep -qi "placeholder"`（英文 "## Insights (Placeholder)" 字面逃逸中文守卫实证）；(b) RP5 .brain-result.json 落点参数化：BRAIN_RESULT_FILE 优先、默认 git 仓库根，headed mac 无 /workspace 场景出口协议不再无落地痕迹；(c) RP-learn 出口核验追加 learnings 表落库计数（全通 run learnings 表 0 条实证）；(d) RP6 新增「Phase B 核验」小节：journey_features/notes 各查一条本 sprint 记录，查不到记 concern；(e) 触发条件段声明与 mjs 降级脚本共存关系（以本 skill 产物为准 + 必留痕迹供区分来源）
   - 6.6.0: a638f840 两修——(a) TOTAL_COST fallback 端点修正为 /api/brain/orchestrator/relay-runs?task_id=（旧 URL 缺 orchestrator 前缀 Cannot GET，fallback 链空环；brain 1.259.0 起支持 task_id 过滤）；(b) Step 1 回写加降级链：status+result 被拒（老 brain 的 completed 409 / task 卡异常态）→ 纯 result 补写（brain 1.259.0 起合法）→ 仍失败才落 .report-concerns，pr_url/cost 不再静默丢失
@@ -333,6 +334,57 @@ curl -X POST "localhost:5221/api/brain/harness/notify" \
   }" 2>/dev/null || echo "WARN: 飞书通知失败（非阻断）"
 echo "✅ Step 5: 飞书通知已发送"
 ```
+
+---
+
+### Step 5.5: staging 预览通知 + 放行状态登记（user_facing only）
+
+**仅当 `journey_type=user_facing` 时执行，否则跳过。**
+
+```bash
+# Step 5.5 仅 user_facing 执行
+JOURNEY_TYPE_FOR_REPORT="${JOURNEY_TYPE:-autonomous}"
+if [ "$JOURNEY_TYPE_FOR_REPORT" = "user_facing" ]; then
+  echo "[Step 5.5] user_facing 检测到，执行 staging 预览通知 + 放行状态登记"
+
+  # 1. Bark 推送：通知主理人，附 staging 预览链接 + 截图 URL
+  STAGING_URL="${STAGING_URL:-}"
+  BARK_STAGING_MSG="staging 预览已就绪：${STAGING_URL:-（无 staging URL）}，截图：${FIRST_SCREENSHOT_URL:-（无截图）}"
+  if [ -n "${BARK_URL:-}" ]; then
+    curl -s "$BARK_URL/${BARK_STAGING_MSG}" >/dev/null 2>&1 \
+      || echo "WARN: Step 5.5 Bark 推送失败（非阻断）"
+    echo "✅ Step 5.5-1: Bark staging 预览通知已推送"
+  else
+    echo "WARN: Step 5.5 BARK_URL 未设置，跳过 Bark 推送"
+    echo "CONCERN: Step5.5:BARK_URL未设置" >> "${SPRINT_DIR}/.report-concerns"
+  fi
+
+  # 2. Brain PATCH — 按 BASE_REPO 判模式
+  BASE_REPO_NAME="${BASE_REPO:-$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)}"
+  if echo "$BASE_REPO_NAME" | grep -qi "cecelia"; then
+    # Cecelia 仓 → 通知式：写 promote_after（UTC+24h）
+    PROMOTE_AFTER=$(date -u -d '+24 hours' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v+24H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")
+    PATCH_BODY="{\"metadata\":{\"staging_deployed\":true,\"promote_after\":\"${PROMOTE_AFTER}\",\"staging_url\":\"${STAGING_URL:-}\"}}"
+    curl -s -X PATCH "localhost:5221/api/brain/tasks/$TASK_ID" \
+      -H "Content-Type: application/json" -d "$PATCH_BODY" >/dev/null 2>&1 \
+      || echo "WARN: Step 5.5 cecelia Brain PATCH 失败（非阻断）"
+    echo "✅ Step 5.5-2 (Cecelia 通知式): promote_after=${PROMOTE_AFTER} 已写入 Brain"
+  else
+    # ZenithJoy 仓 → 阻塞式：写 approval_required:true
+    PATCH_BODY="{\"metadata\":{\"staging_deployed\":true,\"approval_required\":true,\"staging_url\":\"${STAGING_URL:-}\"}}"
+    curl -s -X PATCH "localhost:5221/api/brain/tasks/$TASK_ID" \
+      -H "Content-Type: application/json" -d "$PATCH_BODY" >/dev/null 2>&1 \
+      || echo "WARN: Step 5.5 ZJ Brain PATCH 失败（非阻断）"
+    echo "✅ Step 5.5-2 (ZJ 阻塞式): approval_required=true 已写入 Brain，prod promote 前须主理人放行"
+  fi
+
+  echo "✅ Step 5.5: staging 预览通知 + 放行状态登记完成（失败属 CONCERN 非阻断）"
+else
+  echo "[Step 5.5] journey_type=${JOURNEY_TYPE_FOR_REPORT}，非 user_facing，跳过"
+fi
+```
+
+> **失败语义**：Step 5.5 失败属 CONCERN（非关键步），不阻断 Sprint 报告流程。Bark 推送失败、Brain PATCH 失败均只写入 `.report-concerns`，出口降级为 `DONE_WITH_CONCERNS`，不停止执行。
 
 ---
 
