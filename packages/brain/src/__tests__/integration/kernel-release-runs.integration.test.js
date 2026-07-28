@@ -171,4 +171,109 @@ describe('migration 374 ReleaseRun ledger on PostgreSQL', () => {
       [intent.id, mergeSha, JSON.stringify(artifacts)],
     )).rejects.toMatchObject({ code: '23505' });
   });
+
+  it('enforces the one-time bootstrap staging-before-production ledger', async () => {
+    const bootstrapRunId = (await client.query(
+      `INSERT INTO kernel_release_bootstrap_runs
+         (repository, pr_number, source_head_sha, merge_sha, approved_by,
+          approval_key_id, approval_digest)
+       VALUES ('perfectuser21/cecelia', 4501, $1, $2, 'owner', 'owner-key-v1', $3)
+       RETURNING id`,
+      [headSha, mergeSha, 'd'.repeat(64)],
+    )).rows[0].id;
+
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions (bootstrap_run_id, state)
+       VALUES ($1, 'approved')`,
+      [bootstrapRunId],
+    );
+    await expect(client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions (bootstrap_run_id, state)
+       VALUES ($1, 'production_intent')`,
+      [bootstrapRunId],
+    )).rejects.toMatchObject({ code: 'P0001' });
+
+    for (const state of [
+      'staging_intent',
+      'staging_passed',
+      'production_intent',
+      'production_verified',
+    ]) {
+      await client.query(
+        `INSERT INTO kernel_release_bootstrap_transitions
+           (bootstrap_run_id, state, evidence)
+         VALUES ($1, $2, $3::jsonb)`,
+        [bootstrapRunId, state, JSON.stringify({ merge_sha: mergeSha })],
+      );
+    }
+    const states = await client.query(
+      `SELECT state FROM kernel_release_bootstrap_transitions
+        WHERE bootstrap_run_id = $1 ORDER BY append_seq`,
+      [bootstrapRunId],
+    );
+    expect(states.rows.map(({ state }) => state)).toEqual([
+      'approved',
+      'staging_intent',
+      'staging_passed',
+      'production_intent',
+      'production_verified',
+    ]);
+
+    await expect(client.query(
+      `INSERT INTO kernel_release_bootstrap_transitions (bootstrap_run_id, state)
+       VALUES ($1, 'staging_intent')`,
+      [bootstrapRunId],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client.query(
+      `UPDATE kernel_release_bootstrap_runs
+          SET approved_by = approved_by
+        WHERE id = $1`,
+      [bootstrapRunId],
+    )).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client.query(
+      `INSERT INTO kernel_release_bootstrap_runs
+         (repository, pr_number, source_head_sha, merge_sha, approved_by,
+          approval_key_id, approval_digest)
+       VALUES ('perfectuser21/cecelia', 4502, $1, $2, 'owner', 'owner-key-v1', $3)`,
+      ['e'.repeat(40), 'f'.repeat(40), '1'.repeat(64)],
+    )).rejects.toMatchObject({ code: '23505' });
+  });
+
+  it('allows only a new generation after an expired bootstrap attempt', async () => {
+    const bootstrapRun = await client.query(
+      'SELECT id FROM kernel_release_bootstrap_runs WHERE singleton = TRUE',
+    );
+    const bootstrapRunId = bootstrapRun.rows[0].id;
+    const firstAttemptId = (await client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_attempts
+         (bootstrap_run_id, effect_kind, generation, idempotency_key, lease_expires_at)
+       VALUES ($1, 'staging', 1, $2, clock_timestamp() - interval '1 second')
+       RETURNING id`,
+      [bootstrapRunId, randomUUID()],
+    )).rows[0].id;
+    await client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_receipts
+         (effect_attempt_id, receipt_status, evidence)
+       VALUES ($1, 'observed_unconfirmed', $2::jsonb)`,
+      [firstAttemptId, JSON.stringify({
+        reason: 'crash recovery',
+        observed_merge_sha: mergeSha,
+      })],
+    );
+
+    await expect(client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_attempts
+         (bootstrap_run_id, effect_kind, generation, idempotency_key, lease_expires_at)
+       VALUES ($1, 'staging', 1, $2, clock_timestamp() + interval '5 minutes')`,
+      [bootstrapRunId, randomUUID()],
+    )).rejects.toMatchObject({ code: '23505' });
+    const replay = await client.query(
+      `INSERT INTO kernel_release_bootstrap_effect_attempts
+         (bootstrap_run_id, effect_kind, generation, idempotency_key, lease_expires_at)
+       VALUES ($1, 'staging', 2, $2, clock_timestamp() + interval '5 minutes')
+       RETURNING generation`,
+      [bootstrapRunId, randomUUID()],
+    );
+    expect(replay.rows[0].generation).toBe(2);
+  });
 });
