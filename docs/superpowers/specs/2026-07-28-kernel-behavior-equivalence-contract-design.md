@@ -44,7 +44,8 @@ identity。自由文本不能代替证明。
   以及三 Provider 三场景可执行证据全部有效时成立；
 - 文档、静态 grep、`test -f`、只检查关键词或未证明违规路径会真实失败的命令，不得将
   P0/P1 标为 proven；
-- 声明 `proven` 但缺证据是 validation error，不允许静默降级；
+- 声明 `proven` 但缺证据时，`effective_status` 必须自动变为 `gap`，同时产生
+  fail-closed validation finding；既不能伪绿，也不能因抛错而从最终报告消失；
 - 合同本来声明 `gap` 时保留 gap，并要求 owner、reason、closure plan；
 - `intentional_replacement` 要求旧行为、替代行为、理由和替代证明。
 
