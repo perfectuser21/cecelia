@@ -19,7 +19,6 @@ import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
 import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from '../lib/callback-postprocess.js';
-import { writeCascadeCellStatuses } from '../lib/cascade-writeback.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
@@ -2262,112 +2261,28 @@ ${resultStr.substring(0, 2000)}
           console.log(`[execution-callback] harness: harness_evaluate ${task_id} verdict=${evalVerdict} eval_round=${evalRound}`);
 
           if (evalVerdict === 'PASS') {
-            // PASS → merge PR + deploy + smoke test + 创建 report
-
-            // Step 1: Merge PR
-            if (prUrl) {
-              try {
-                execSync(`gh pr merge "${prUrl}" --squash --delete-branch`, { encoding: 'utf-8', timeout: 30000 });
-                console.log(`[execution-callback] harness: Evaluator PASS → PR merged: ${prUrl}`);
-              } catch (mergeErr) {
-                // Merge 失败（冲突等）→ 尝试 rebase
-                console.warn(`[execution-callback] harness: PR merge failed, attempting rebase: ${mergeErr.message}`);
-                try {
-                  const prBranch = execSync(`gh pr view "${prUrl}" --json headRefName -q '.headRefName'`, { encoding: 'utf-8', timeout: 10000 }).trim();
-                  execSync(`git fetch origin && git checkout ${prBranch} && git rebase origin/main && git push -f origin ${prBranch}`, { encoding: 'utf-8', timeout: 30000 });
-                  execSync(`gh pr merge "${prUrl}" --squash --delete-branch`, { encoding: 'utf-8', timeout: 30000 });
-                  console.log(`[execution-callback] harness: PR rebased and merged: ${prUrl}`);
-                } catch (rebaseErr) {
-                  console.error(`[execution-callback] harness: PR rebase+merge failed: ${rebaseErr.message}`);
-                  // 创建 fix 任务处理冲突
-                  await createHarnessTask({
-                    title: `[Fix] Merge 冲突 — ${plannerShort}`,
-                    task_type: 'harness_fix',
-                    trigger_source: 'execution_callback_harness',
-                    payload: {
-                      ...harnessPayload,
-                      ci_fail_context: 'merge_conflict_after_evaluator_pass',
-                      eval_round: evalRound,
-                    },
-                  });
-                  console.log(`[execution-callback] harness: merge conflict → harness_fix created`);
-                  return; // 不继续到 deploy/report
-                }
-              }
-            }
-
-            // Step 2: Deploy（重启 Brain + Dashboard）
-            try {
-              execSync('bash scripts/post-merge-deploy.sh', {
-                cwd: execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim(),
-                encoding: 'utf-8',
-                timeout: 120000
-              });
-              console.log(`[execution-callback] harness: post-merge deploy completed`);
-            } catch (deployErr) {
-              console.warn(`[execution-callback] harness: deploy warning (non-fatal): ${deployErr.message}`);
-            }
-
-            // Step 3: Smoke test（验证生产 Brain healthy）
-            try {
-              const healthResp = execSync('curl -sf http://localhost:5221/api/brain/health', { encoding: 'utf-8', timeout: 10000 });
-              const health = JSON.parse(healthResp);
-              if (health.status !== 'healthy') {
-                console.warn(`[execution-callback] harness: smoke test warning: Brain status=${health.status}`);
-              } else {
-                console.log(`[execution-callback] harness: smoke test PASS — Brain healthy`);
-              }
-            } catch (smokeErr) {
-              console.warn(`[execution-callback] harness: smoke test failed (non-fatal): ${smokeErr.message}`);
-            }
-
-            // Step 3.5: 回写 Feature thickness（thin → medium）
-            const featureId = harnessPayload.feature_id;
-            if (featureId) {
-              try {
-                const patchResp = await fetch(`http://localhost:5221/api/brain/journey_features/${featureId}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ thickness: 'medium' }),
-                });
-                if (patchResp.ok) {
-                  console.log(`[execution-callback] harness: Feature ${featureId} thickness → medium (evaluator PASS)`);
-                } else {
-                  console.warn(`[execution-callback] harness: thickness PATCH failed ${patchResp.status} (non-fatal)`);
-                }
-              } catch (thickErr) {
-                console.warn(`[execution-callback] harness: thickness PATCH error (non-fatal): ${thickErr.message}`);
-              }
-            }
-
-            // Step 3.6: 回写 cascade cell_status（S3 联动清单）
-            const cascadeAssertions = result?.cascade_assertions;
-            if (Array.isArray(cascadeAssertions) && cascadeAssertions.length > 0) {
-              const { written, skipped } = await writeCascadeCellStatuses(cascadeAssertions);
-              console.log(`[execution-callback] harness: cascade writeback complete (written=${written}, skipped=${skipped})`);
-            }
-
-            // Step 4: 创建 Report
+            // Legacy callback 只有 Evaluator verdict，没有 exact-SHA Judge 与适用的人审
+            // receipt，因此没有 merge/deploy/report authority。转成显式 intervention，
+            // 由统一 Kernel controller 重新建立 merge authorization。
             await createHarnessTask({
-              title: `[Report] ${plannerShort}`,
-              description: `Evaluator PASS → merged → deployed → 生成报告。\npr_url: ${prUrl}`,
-              priority: 'P1',
+              title: `[Review] Merge authorization — ${plannerShort}`,
+              description: `Legacy Evaluator PASS 已记录，但缺少 Kernel Judge/人审的 SHA-bound merge authorization。\npr_url: ${prUrl}`,
+              priority: 'P0',
               project_id: harnessTask.project_id,
               goal_id: harnessTask.goal_id,
-              task_type: 'harness_report',
+              task_type: 'harness_intervention',
               trigger_source: 'execution_callback_harness',
               payload: {
+                ...harnessPayload,
                 sprint_dir: harnessPayload.sprint_dir,
                 pr_url: prUrl,
-                dev_task_id: harnessPayload.dev_task_id,
-                planner_task_id: harnessPayload.planner_task_id,
-                contract_branch: harnessPayload.contract_branch,
-                project_id: harnessTask.project_id,
                 eval_round: evalRound,
-                harness_mode: true
-              }
+                evaluator_verdict: 'PASS',
+                intervention_type: 'merge_authorization_required',
+                harness_mode: true,
+              },
             });
-            console.log(`[execution-callback] harness: Evaluator PASS → merged → deployed → harness_report created`);
+            console.warn(`[execution-callback] harness: Evaluator PASS paused — merge_authorization_required`);
           } else {
             // FAIL → 无上限，一直 Fix 直到 PASS（AI-native 全自动，跟 GAN 一样无上限）
             const failedFeatures = result?.failed_features || [];

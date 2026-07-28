@@ -1,11 +1,11 @@
 /**
- * PR Shepherd（牧羊人）- 主动追踪 open PR 的 CI 状态并触发自动合并
+ * PR Shepherd（牧羊人）- 主动追踪 open PR 的 CI 状态
  *
  * 职责：
  * 1. 查询所有 pr_url IS NOT NULL AND pr_status IN ('open', 'ci_pending') 的任务
  * 2. 调用 gh CLI 检查每个 PR 的 CI 状态和 mergeable 属性
  * 3. 根据结果更新 pr_status：
- *    - CI 全通过 + mergeable → ci_passed，执行 gh pr merge --squash
+ *    - CI 全通过 + mergeable → ci_passed，等待 Kernel merge authorization
  *    - CI 失败 → ci_failed，提取失败类型，重派 /dev（最多 2 次）或 quarantine
  *    - 已合并 → merged，更新 pr_merged_at
  *    - 已关闭 → closed
@@ -109,24 +109,6 @@ export function classifyFailedChecks(failedChecks) {
 }
 
 /**
- * 对单个 PR 任务执行 auto-merge
- * @param {string} prUrl
- * @returns {boolean} 是否执行成功
- */
-export function executeMerge(prUrl) {
-  try {
-    execSync(`gh pr merge "${prUrl}" --squash`, {
-      encoding: 'utf-8',
-      timeout: 30000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return true;
-  } catch (err) {
-    throw new Error(`gh pr merge failed for ${prUrl}: ${err.message}`);
-  }
-}
-
-/**
  * PR Shepherd 主函数 - 在 tick maintenance 阶段调用
  *
  * @param {import('pg').Pool} pool - PostgreSQL 连接池
@@ -146,6 +128,7 @@ export async function shepherdOpenPRs(pool) {
         AND status NOT IN ('quarantined', 'cancelled')
         -- Sprint 1: harness_mode PR 由 sub-graph merge_pr node 自管，shepherd 不动
         AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
+        AND COALESCE(payload->>'harness_runtime', '') != 'kernel-v1'
       ORDER BY updated_at ASC
       LIMIT 20
     `);
@@ -184,47 +167,14 @@ export async function shepherdOpenPRs(pool) {
         console.log(`[shepherd] PR 已关闭: ${task.title}`);
 
       } else if (prInfo.ciStatus === 'ci_passed' && prInfo.mergeable === 'MERGEABLE') {
-        // CI 全通过且可合并 → 执行 auto-merge，再 reload PR state 推进 status
-        try {
-          executeMerge(task.pr_url);
-          // 重读 PR 最新 state；若已 MERGED 则推进 status=completed
-          let merged = false;
-          try {
-            const after = checkPrStatus(task.pr_url);
-            merged = after.state === 'MERGED' || after.ciStatus === 'merged';
-          } catch (reloadErr) {
-            console.warn(`[shepherd] reload PR state 失败 (non-fatal): ${reloadErr.message}`);
-          }
-          if (merged) {
-            await pool.query(
-              `UPDATE tasks
-                 SET pr_status = 'merged',
-                     pr_merged_at = COALESCE(pr_merged_at, NOW()),
-                     status = 'completed',
-                     completed_at = COALESCE(completed_at, NOW())
-               WHERE id = $1`,
-              [task.id]
-            );
-            console.log(`[shepherd] auto-merge 成功并推进 completed: ${task.title}`);
-          } else {
-            await pool.query(
-              `UPDATE tasks SET pr_status = 'ci_passed' WHERE id = $1`,
-              [task.id]
-            );
-            console.log(`[shepherd] auto-merge 已触发但 PR 还未 MERGED: ${task.title}`);
-          }
-          result.merged++;
-        } catch (mergeErr) {
-          // merge 失败不阻断，保持 ci_passed，下次 tick 重试
-          console.error(`[shepherd] auto-merge 失败 (non-fatal): ${mergeErr.message}`);
-          await pool.query(
-            `UPDATE tasks SET pr_status = 'ci_passed',
-              payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-             WHERE id = $1`,
-            [task.id, JSON.stringify({ shepherd_merge_error: mergeErr.message })]
-          );
-          result.errors++;
-        }
+        // Shepherd 只拥有观察权。CI green/mergeable 不是 merge authorization；
+        // evaluator、judge 和所需人审必须由 Kernel 对 exact SHA 签发 receipt。
+        await pool.query(
+          `UPDATE tasks SET pr_status = 'ci_passed' WHERE id = $1`,
+          [task.id]
+        );
+        result.pending++;
+        console.log(`[shepherd] CI passed; waiting for Kernel merge authorization: ${task.title}`);
 
       } else if (prInfo.ciStatus === 'ci_failed') {
         const failType = classifyFailedChecks(prInfo.failedChecks);
