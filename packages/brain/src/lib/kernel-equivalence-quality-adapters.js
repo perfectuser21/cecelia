@@ -80,24 +80,64 @@ function assertResourceBoundary(descriptor, cell, grant) {
   }
 }
 
-function violationCellId(cellId) {
-  return String(cellId ?? '').replace(/::recovery$/, '::violation');
+function plainSerializable(value) {
+  if (
+    value === null
+    || typeof value === 'string'
+    || typeof value === 'boolean'
+    || (typeof value === 'number' && Number.isFinite(value))
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(plainSerializable);
+  if (
+    !value
+    || typeof value !== 'object'
+    || Object.getPrototypeOf(value) !== Object.prototype
+  ) {
+    return false;
+  }
+  return Object.entries(value).every(([key, entry]) => (
+    typeof key === 'string'
+    && entry !== undefined
+    && plainSerializable(entry)
+  ));
 }
 
-function predecessorRequest(cell, grant) {
-  return {
-    cell_id: violationCellId(cell.cell_id),
-    behavior_id: cell.behavior_id,
-    provider: cell.provider,
-    scenario: 'violation',
-    run_id: grant.run_id,
-    attempt_id: grant.attempt_id,
-    artifact_sha: grant.artifact_sha,
-    resource_id: grant.resource_id,
-    resource_ref: grant.resource_ref,
-    seam_id: cell.seam_id,
-    adapter_id: cell.adapter_id,
-  };
+function cloneResource(value) {
+  if (!plainSerializable(value)) fail('adapter_prepared_resource_invalid');
+  try {
+    return structuredClone(value);
+  } catch {
+    fail('adapter_prepared_resource_invalid');
+  }
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
+  }
+  for (const entry of Object.values(value)) deepFreeze(entry);
+  return Object.freeze(value);
+}
+
+function assertPredecessor(cell, predecessor) {
+  if (cell?.scenario !== 'recovery') {
+    if (predecessor !== null) fail('adapter_recovery_predecessor_invalid');
+    return;
+  }
+  if (
+    !predecessor
+    || typeof predecessor !== 'object'
+    || Array.isArray(predecessor)
+    || Object.keys(predecessor).sort().join(',') !== 'grant,receipt'
+    || predecessor.grant?.schema_version
+      !== 'kernel-equivalence-execution-grant/v1'
+    || predecessor.receipt?.schema_version
+      !== 'kernel-equivalence-effect-receipt/v1'
+  ) {
+    fail('adapter_recovery_predecessor_unavailable');
+  }
 }
 
 function cleanupResources(context) {
@@ -135,42 +175,31 @@ function createAdapter({
   descriptor,
   seam,
   isolation,
-  predecessorLoader,
 }) {
   return Object.freeze({
+    adapter_id: descriptor.adapter_id,
+    owner_service: descriptor.seam_id,
+
     async prepare({
       cell,
       grant,
+      predecessor = null,
       signal,
       registerCompensation,
     }) {
       assertSignal(signal);
       assertResourceBoundary(descriptor, cell, grant);
       requireFunction(registerCompensation, 'adapter_compensation_registrar_required');
-
-      let predecessor = null;
-      if (cell.scenario === 'recovery') {
-        if (typeof predecessorLoader !== 'function') {
-          fail('adapter_recovery_predecessor_unavailable');
-        }
-        const loaded = await predecessorLoader(predecessorRequest(cell, grant));
-        signal.throwIfAborted();
-        if (
-          !loaded?.receipt
-          || loaded.receipt.schema_version
-            !== 'kernel-equivalence-effect-receipt/v1'
-        ) {
-          fail('adapter_recovery_predecessor_unavailable');
-        }
-        predecessor = structuredClone(loaded.receipt);
-      }
+      assertPredecessor(cell, predecessor);
 
       const resource = await isolation.prepare({
         descriptor,
         cell,
         authorization: grant,
         signal,
-        registerCompensation,
+        registerCompensation: (compensation) => {
+          registerCompensation(deepFreeze(cloneResource(compensation)));
+        },
       });
       signal.throwIfAborted();
       if (
@@ -180,9 +209,9 @@ function createAdapter({
       ) {
         fail('adapter_prepared_resource_invalid');
       }
+      const preparedResource = deepFreeze(cloneResource(resource));
       return Object.freeze({
-        resource: structuredClone(resource),
-        predecessor,
+        resource: preparedResource,
       });
     },
 
@@ -190,15 +219,17 @@ function createAdapter({
       cell,
       grant,
       prepared,
+      predecessor = null,
       signal,
     }) {
       assertSignal(signal);
       assertResourceBoundary(descriptor, cell, grant);
+      assertPredecessor(cell, predecessor);
       return seam.invoke({
         cell,
         grant,
         resource: prepared?.resource,
-        predecessor: prepared?.predecessor ?? null,
+        predecessor,
         signal,
       });
     },
@@ -253,14 +284,22 @@ function createAdapter({
 export function createQualityEquivalenceAdapterRegistry({
   seams,
   isolation,
-  predecessorLoader = null,
 } = {}) {
+  if (
+    typeof isolation?.owner_service !== 'string'
+    || !isolation.owner_service.startsWith('kernel.')
+  ) {
+    fail('adapter_isolation_port_unavailable');
+  }
   requireFunction(isolation?.prepare, 'adapter_isolation_port_unavailable');
   requireFunction(isolation?.cancel, 'adapter_isolation_port_unavailable');
   requireFunction(isolation?.cleanup, 'adapter_isolation_port_unavailable');
 
   const entries = QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS.map((descriptor) => {
     const seam = seams?.[descriptor.seam_id];
+    if (seam?.owner_service !== descriptor.seam_id) {
+      fail('adapter_actual_seam_owner_mismatch');
+    }
     requireFunction(seam?.invoke, 'adapter_actual_seam_unavailable');
     requireFunction(seam?.cancel, 'adapter_actual_seam_unavailable');
     requireFunction(seam?.cleanup, 'adapter_actual_seam_unavailable');
@@ -270,27 +309,86 @@ export function createQualityEquivalenceAdapterRegistry({
         descriptor,
         seam,
         isolation,
-        predecessorLoader,
       }),
     ];
   });
   return new Map(entries);
 }
 
-export function createQualityCleanupVerifier({ isolation } = {}) {
-  requireFunction(isolation?.inspect, 'cleanup_inspection_port_unavailable');
-  return async function verifyQualityCleanup(context) {
-    const resources = cleanupResources(context);
-    const inspections = await Promise.all(resources.map((resource) => (
-      isolation.inspect({
-        ...context,
-        resource,
-      })
-    )));
-    return Object.freeze({
-      confirmed:
+export function createQualityCleanupVerifier({
+  descriptor,
+  inspector,
+} = {}) {
+  const knownDescriptor = DESCRIPTORS.find((candidate) => (
+    candidate.behavior_id === descriptor?.behavior_id
+    && candidate.seam_id === descriptor?.seam_id
+    && candidate.adapter_id === descriptor?.adapter_id
+  ));
+  if (!knownDescriptor) {
+    fail('cleanup_descriptor_invalid');
+  }
+  if (
+    typeof inspector?.owner_service !== 'string'
+    || !inspector.owner_service.startsWith('kernel.')
+  ) {
+    fail('cleanup_inspection_port_unavailable');
+  }
+  if (inspector.owner_service === knownDescriptor.seam_id) {
+    fail('cleanup_inspector_not_independent');
+  }
+  requireFunction(inspector?.inspect, 'cleanup_inspection_port_unavailable');
+  const verifierId = knownDescriptor.adapter_id.replace(
+    /^kernel\.drill\./,
+    'kernel.cleanup.',
+  );
+  return Object.freeze({
+    verifier_id: verifierId,
+    adapter_id: knownDescriptor.adapter_id,
+    owner_service: inspector.owner_service,
+    async verifyCleanup(context) {
+      const resources = cleanupResources(context);
+      const inspections = await Promise.all(resources.map(async (resource) => ({
+        resource_ref: resource.resource_ref,
+        result: await inspector.inspect({
+          ...context,
+          descriptor: knownDescriptor,
+          resource,
+        }),
+      })));
+      const valid = (
         resources.length > 0
-        && inspections.every((inspection) => inspection?.exists === false),
-    });
-  };
+        && inspections.every(({ result }) => (
+          typeof result?.exists === 'boolean'
+          && /^cleanup-evidence:[a-f0-9]{64}$/.test(
+            result.evidence_ref ?? '',
+          )
+        ))
+      );
+      const confirmed = (
+        valid
+        && inspections.every(({ result }) => result.exists === false)
+      );
+      return Object.freeze({
+        confirmed,
+        evidence_ref: confirmed
+          ? `cleanup-evidence:${sha256Canonical({
+              adapter_id: knownDescriptor.adapter_id,
+              inspections: inspections.map(({ resource_ref, result }) => ({
+                resource_ref,
+                evidence_ref: result.evidence_ref,
+              })),
+            })}`
+          : null,
+      });
+    },
+  });
 }
+
+export function createQualityCleanupVerifiers({ inspector } = {}) {
+  return Object.freeze(
+    QUALITY_EQUIVALENCE_ADAPTER_DESCRIPTORS.map((descriptor) => (
+      createQualityCleanupVerifier({ descriptor, inspector })
+    )),
+  );
+}
+import { sha256Canonical } from './kernel-equivalence-receipts.js';
