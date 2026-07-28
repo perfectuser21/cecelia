@@ -6,11 +6,25 @@
 
 
 
-**Brain 版本**: 1.268.19
+**Brain 版本**: 1.268.20
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.20 — Kernel production boot and grant control plane
+
+- Brain server boot 通过受保护 production manifest 装配唯一 trusted-execution
+  factory；无配置、坏配置与 Phase 5 B ports 未接线分别给出精确 fail-closed
+  readiness，均不建立 Unix listener。
+- manifest 固定 canonical plan digest、public trust registry、collector /
+  execution-grant / 十个 effect signer 的 key ID 与 protected file metadata；
+  raw `KERNEL_EQ_*` secret environment 被拒绝。
+- execution-grant issuer 与 reader 分权；issuer 以 mode-0600 临时文件执行
+  file fsync → atomic rename → directory fsync，并仅由 issuer 对过期且 inode
+  未变化的 grant 做清理。
+- CLI `--check` 读取真实 mode-0600 Brain UDS readiness，不再返回硬编码 wiring
+  blocker；listener ready 与 0/99 proof readiness 仍严格分离。
 
 ## Brain 1.268.18 — Production case authority additive upgrade
 

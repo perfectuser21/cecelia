@@ -1,6 +1,26 @@
 # Brain 模块定义
 
-**版本**: 1.268.19
+**版本**: 1.268.20
+
+## Kernel production boot and grant control plane
+
+- `server.js` 不再以空参数启动 trusted execution；它把 production environment
+  与 shared PostgreSQL pool 交给 outer wiring loader。protected manifest
+  缺失、不可用、不安全、digest/key/registry 漂移或 Phase 5 B ports 未配置时
+  返回各自稳定 readiness code，且不创建 UDS。
+- manifest 只允许 public trust registry、canonical assembled-plan digest、
+  collector/execution-grant/十个 effect signer 的 key ID 与 absolute protected
+  secret-file path、grant root/TTL、socket path 和 resource-port profile。配置
+  通过单个 `O_NOFOLLOW` descriptor 读取并固定；raw Kernel secret env 禁止。
+- grant issuer 独占 signer 与写/清理 authority，签名 grant 以 mode-0600
+  exclusive temp file 落盘，执行 file fsync → rename → directory fsync 后只
+  返回 opaque ref；reader 只有 exact-ref read authority，并拒绝已过期 grant。
+  cleanup 对每个候选重验 regular/owner/single-link/mode/inode，未知或被替换的
+  文件保留而不扩大删除。
+- CLI `--check` 共用 client 的 UDS owner/mode/directory 安全检查，动态报告
+  wiring readiness。真实 listener 仍不代表 proof matrix ready；本版本未配置
+  Phase 5 B production ports、未接 ReleaseRun、未执行 drill、未部署。
+- 回退：`bash scripts/brain-rollback.sh 1.268.19`；无数据库迁移。
 
 ## Kernel Codex review trust boundary
 
