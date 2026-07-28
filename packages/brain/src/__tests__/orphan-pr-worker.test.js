@@ -169,6 +169,38 @@ describe('orphan-pr-worker', () => {
     expect(cmds.some((c) => c.startsWith('gh pr edit'))).toBe(false);
   });
 
+  it('case 3b: arbitrary-title PR owned by initiative_runs is protected from orphan merge', async () => {
+    execSync.mockImplementation(
+      routeExec({
+        prList: [
+          {
+            number: 201,
+            url: 'https://github.com/o/r/pull/201',
+            headRefName: 'cp-07280905-kernel-result',
+            title: 'fix(ci): mutable title must not grant merge authority',
+            createdAt: hoursAgoIso(5),
+            updatedAt: hoursAgoIso(4),
+          },
+        ],
+        prChecks: {
+          201: [{ name: 'ci', state: 'SUCCESS', conclusion: 'SUCCESS' }],
+        },
+      })
+    );
+    pool.query.mockResolvedValueOnce({ rows: [{ owner_kind: 'initiative_run' }] });
+
+    const r = await scanOrphanPrs(pool);
+
+    expect(r).toMatchObject({ scanned: 1, merged: 0, skipped: 1 });
+    expect(r.details[0]).toMatchObject({
+      pr: 201,
+      action: 'skipped',
+      reason: 'brain_task_active',
+    });
+    expect(pool.query.mock.calls[0][0]).toContain('initiative_runs');
+    expect(execSync.mock.calls.map((call) => call[0]).some((cmd) => cmd.startsWith('gh pr merge'))).toBe(false);
+  });
+
   it('case 4: PR > 2h 无 Brain task，CI 全绿 → merge', async () => {
     const merged = [];
     execSync.mockImplementation(

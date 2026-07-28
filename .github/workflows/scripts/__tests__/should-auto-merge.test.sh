@@ -32,16 +32,17 @@ assert_decision() {
 assert_decision "SKIP" "harness PR（feat(harness):）→ 跳过 auto-merge" \
   "cp-0704084753-abc" "feat(harness): 抖音发布 skeleton"
 
-# 普通手动 /dev 的 fix 类 PR → 正常走 auto-merge（不能误伤 /dev 流程，关键）。
-assert_decision "MERGE" "普通 fix(brain) PR → 正常 auto-merge" \
+# Phase 0 fail-closed：在统一的 SHA-bound merge authorization receipt 上线前，
+# 标题、分支和 PR body 都不是可信授权。所有 cp-* 都必须停在显式 merge gate。
+assert_decision "SKIP" "普通 fix(brain) PR → 无授权 receipt 时不得 auto-merge" \
   "cp-0704084753-abc" "fix(brain): 修复调度队头阻塞"
 
-# 手动 /dev 的 fix(ci) PR（就是本次这个 PR 的类型）→ 正常走 auto-merge。
-assert_decision "MERGE" "fix(ci) PR → 正常 auto-merge" \
+# 改标题不能把 Kernel/Harness PR 洗成普通 PR。
+assert_decision "SKIP" "标题漂移不能绕过 merge gate" \
   "cp-0704084753-abc" "fix(ci): auto-merge 跳过 harness PR"
 
-# feat 类但非 harness 的手动 PR → 正常走 auto-merge（只拦 feat(harness): 精确前缀）。
-assert_decision "MERGE" "普通 feat(dashboard) PR → 正常 auto-merge" \
+# 普通 feat 也先 fail-closed，后续只能由统一风险策略签发 SHA-bound receipt 解锁。
+assert_decision "SKIP" "普通 feat(dashboard) PR → 无授权 receipt 时不得 auto-merge" \
   "cp-0704084753-abc" "feat(dashboard): 新增设备页字段"
 
 # 非 cp-* 分支 → 跳过（保留原有行为，stop hook 删除后统一由 cp-* 判据处理）。
@@ -69,6 +70,17 @@ if echo "$AUTO_MERGE_JOB" | grep -Fq "contents: write" \
   echo "PASS: auto-merge job 具备最小写权限"; PASS=$((PASS+1))
 else
   echo "FAIL: auto-merge job 缺少启用原生 auto-merge 所需的写权限"; FAIL=$((FAIL+1))
+fi
+
+# 聚合门必须只把 success / 显式允许的 skipped 当绿；cancelled、timed_out、
+# action_required、空值和未来新增状态一律 fail-closed。
+if grep -Fq 'case "$r" in' "$WORKFLOW" \
+  && grep -Fq 'success)' "$WORKFLOW" \
+  && grep -Fq 'skipped)' "$WORKFLOW" \
+  && grep -Fq '*) echo "❌ $n ($r)"; FAILED=true ;;' "$WORKFLOW"; then
+  echo "PASS: ci-passed 对非 success/skipped 状态 fail-closed"; PASS=$((PASS+1))
+else
+  echo "FAIL: ci-passed 仍可能把 cancelled/timed_out/unknown 当绿"; FAIL=$((FAIL+1))
 fi
 
 echo ""
