@@ -5,6 +5,29 @@ import { createCommanderCoordinator } from '../commander-coordinator.js';
 
 const runId = randomUUID();
 const commanderAttemptId = randomUUID();
+const replacementAttemptId = randomUUID();
+
+const commanderTargets = Object.freeze([
+  {
+    role: 'commander',
+    provider: 'codex',
+    account: 'team4',
+    model: 'GPT-5.5',
+    machine: 'us-mac-m4',
+  },
+  {
+    role: 'commander',
+    provider: 'claude',
+    account: 'account1',
+    machine: 'us-mac-m4',
+  },
+  {
+    role: 'commander',
+    provider: 'grok',
+    account: 'grok',
+    machine: 'us-mac-m4',
+  },
+]);
 
 function event(cursor, eventType, overrides = {}) {
   return {
@@ -40,14 +63,8 @@ function context(overrides = {}) {
     commanderMode: 'hybrid',
     runProfile: {
       commander: {
-        primary: {
-          role: 'commander',
-          provider: 'codex',
-          account: 'team4',
-          model: 'GPT-5.5',
-          machine: 'us-mac-m4',
-        },
-        fallbacks: [],
+        primary: commanderTargets[0],
+        fallbacks: commanderTargets.slice(1),
       },
     },
     objective: { summary: 'Finish this Run.' },
@@ -124,6 +141,7 @@ describe('Commander coordinator', () => {
           model: 'GPT-5.5',
           machine: 'us-mac-m4',
         },
+        candidate_targets: commanderTargets,
         bundle: {
           schema: 'commander-bundle/v1',
           run_id: runId,
@@ -282,6 +300,197 @@ describe('Commander coordinator', () => {
         attempt_id: commanderAttemptId,
         reason_code: 'stale_event_cursor',
       }),
+    }));
+  });
+
+  it('fails over an allowlisted infrastructure Attempt to the next declared target', async () => {
+    const failedAttempt = {
+      id: commanderAttemptId,
+      run_id: runId,
+      role: 'commander',
+      status: 'failed',
+      provider: 'codex',
+      account_id: 'team4',
+      requested_machine_id: 'us-mac-m4',
+      failure_class: 'infrastructure_blocked',
+      error_code: 'provider_unavailable',
+      logical_cycle_id: 'commander-wakeup:5',
+      attempt_kind: 'initial',
+      task_bundle: {
+        inputs: { commander_bundle: { event_cursor: 5 } },
+      },
+      result: null,
+    };
+    const failedEvent = event(6, 'attempt.failed', {
+      source_type: 'harness_attempt',
+      source_id: commanderAttemptId,
+      payload: {
+        role: 'commander',
+        failure_class: 'infrastructure_blocked',
+        error_code: 'provider_unavailable',
+      },
+    });
+    const deps = dependencies({
+      randomUUID: () => replacementAttemptId,
+    });
+    deps.attemptStore.getLatestCommanderAttempt.mockResolvedValue(failedAttempt);
+    deps.attemptStore.listCommanderFailoverLineage.mockResolvedValue([failedAttempt]);
+    deps.eventStore.list.mockResolvedValue([failedEvent]);
+
+    const outcome = await createCommanderCoordinator(deps).reconcile(context());
+
+    expect(outcome).toMatchObject({
+      kind: 'dispatch',
+      action: 'spawn:commander',
+      context: {
+        target: commanderTargets[1],
+        candidate_targets: commanderTargets.slice(1),
+        bundle: {
+          commander_attempt_id: expect.not.stringMatching(commanderAttemptId),
+          event_cursor: 6,
+        },
+        logical_cycle_id: 'commander-wakeup:5',
+        retry_of_attempt_id: commanderAttemptId,
+        restart_reason: 'commander_failover:provider_unavailable',
+      },
+    });
+    expect(JSON.stringify(outcome)).not.toContain('provider_session_id');
+    expect(deps.appendDecision).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'commander.failover_started',
+      gateVerdict: 'allow',
+      detail: expect.objectContaining({
+        attempt_id: commanderAttemptId,
+        reason_code: 'provider_unavailable',
+      }),
+    }));
+  });
+
+  it('records completion when a fresh replacement returns a Directive', async () => {
+    const directive = {
+      schema: 'commander-directive/v1',
+      run_id: runId,
+      event_cursor: 6,
+      action: 'continue_default',
+      reason: 'Fallback recovered the bounded observation.',
+      evidence_refs: ['event:6'],
+    };
+    const replacement = {
+      id: replacementAttemptId,
+      run_id: runId,
+      role: 'commander',
+      status: 'completed',
+      provider: 'claude',
+      account_id: 'account1',
+      requested_machine_id: 'us-mac-m4',
+      provider_session_id: 'fresh-fallback-session',
+      logical_cycle_id: 'commander-wakeup:5',
+      attempt_kind: 'retry',
+      retry_of_attempt_id: commanderAttemptId,
+      restart_reason: 'commander_failover:provider_unavailable',
+      task_bundle: {
+        inputs: { commander_bundle: { event_cursor: 6 } },
+      },
+      result: { status: 'completed', decision: directive },
+    };
+    const deps = dependencies();
+    deps.attemptStore.getLatestCommanderAttempt.mockResolvedValue(replacement);
+    deps.eventStore.list.mockResolvedValue([
+      event(7, 'attempt.completed', {
+        source_type: 'harness_attempt',
+        source_id: replacementAttemptId,
+        payload: { role: 'commander' },
+      }),
+    ]);
+
+    const outcome = await createCommanderCoordinator(deps).reconcile(context());
+
+    expect(outcome).toMatchObject({
+      kind: 'control',
+      decision: directive,
+      authoritative_hop: 12,
+    });
+    expect(deps.appendDecision).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'commander.failover_completed',
+      gateVerdict: 'allow',
+      detail: expect.objectContaining({
+        attempt_id: replacementAttemptId,
+      }),
+    }));
+  });
+
+  it.each([
+    ['semantic refusal', 'blocked', 'semantic_refusal', 'needs_context'],
+    ['unknown runner text', 'failed', 'runner_failure', 'unclassified_failure'],
+  ])('does not cross Provider for %s', async (_name, status, failureClass, errorCode) => {
+    const deps = dependencies();
+    deps.attemptStore.getLatestCommanderAttempt.mockResolvedValue({
+      id: commanderAttemptId,
+      run_id: runId,
+      role: 'commander',
+      status,
+      provider: 'codex',
+      account_id: 'team4',
+      requested_machine_id: 'us-mac-m4',
+      failure_class: failureClass,
+      error_code: errorCode,
+      logical_cycle_id: 'commander-wakeup:5',
+      task_bundle: {
+        inputs: { commander_bundle: { event_cursor: 5 } },
+      },
+      result: null,
+    });
+
+    const outcome = await createCommanderCoordinator(deps).reconcile(context());
+
+    expect(outcome).toMatchObject({
+      kind: 'continue',
+      decision: {
+        action: 'wait:human_review',
+        reason: expect.stringContaining('commander_'),
+      },
+    });
+    expect(deps.appendDecision).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'commander.failover_started' }),
+    );
+  });
+
+  it('requests human review after every declared target is exhausted', async () => {
+    const lineage = commanderTargets.map((target, index) => ({
+      id: index === 2 ? commanderAttemptId : randomUUID(),
+      run_id: runId,
+      role: 'commander',
+      status: 'failed',
+      provider: target.provider,
+      account_id: target.account,
+      requested_machine_id: target.machine,
+      failure_class: 'infrastructure_blocked',
+      error_code: index === 2 ? 'http_503' : 'provider_unavailable',
+      logical_cycle_id: 'commander-wakeup:5',
+      attempt_kind: index === 0 ? 'initial' : 'retry',
+    }));
+    const latest = {
+      ...lineage[2],
+      task_bundle: {
+        inputs: { commander_bundle: { event_cursor: 5 } },
+      },
+    };
+    const deps = dependencies();
+    deps.attemptStore.getLatestCommanderAttempt.mockResolvedValue(latest);
+    deps.attemptStore.listCommanderFailoverLineage.mockResolvedValue(lineage);
+
+    const outcome = await createCommanderCoordinator(deps).reconcile(context());
+
+    expect(outcome).toMatchObject({
+      kind: 'continue',
+      decision: {
+        action: 'wait:human_review',
+        reason: 'commander_failover_exhausted',
+      },
+      authoritative_hop: 12,
+    });
+    expect(deps.appendDecision).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'commander.failover_completed',
+      gateVerdict: 'deny:all_execution_targets_exhausted',
     }));
   });
 });

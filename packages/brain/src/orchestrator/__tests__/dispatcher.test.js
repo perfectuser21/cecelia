@@ -245,6 +245,100 @@ describe('createDispatcher', () => {
     }));
   });
 
+  it('keeps one failover retry on the declared fallback lineage with a fresh session', async () => {
+    const deps = makeDeps();
+    const fallbackAdapter = {
+      name: 'claude',
+      start: vi.fn(() => ({
+        provider: 'claude',
+        command: 'claude',
+        args: ['--print'],
+        stdin: '{}',
+      })),
+    };
+    deps.registry.resolve.mockReturnValue(fallbackAdapter);
+    deps.resolveAccountHome = vi.fn(() => '/tmp/claude-account1');
+    deps.launcher.launch.mockResolvedValue({
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+      containerId: 'commander-fallback',
+      jobId: null,
+    });
+    const sourceAttemptId = '33333333-3333-4333-8333-333333333333';
+    const target = {
+      role: 'commander',
+      provider: 'claude',
+      account: 'account1',
+      machine: 'us-mac-m4',
+    };
+    const bundle = {
+      schema: 'commander-bundle/v1',
+      run_id: runId,
+      commander_attempt_id: attemptId,
+      event_cursor: 7,
+      run_profile: {},
+      objective: {},
+      observed: {},
+      history_summary: {},
+      new_events: [],
+      actor_messages: [],
+      active_risks: [],
+      budgets: {},
+      allowed_actions: ['continue_default'],
+      output_schema: 'commander-directive/v1',
+    };
+    deps.preflightGate = {
+      evaluate: vi.fn(async ({ preferred_target: preferredTarget }) => ({
+        status: 'ok',
+        snapshot: {
+          ...preferredTarget,
+          capability_snapshot_id: 'snapshot-fallback',
+        },
+        evidence: {},
+        to_target: preferredTarget,
+      })),
+      validateSnapshotForDispatch: vi.fn(async (snapshot) => ({
+        status: 'ok',
+        snapshot,
+      })),
+    };
+
+    await createDispatcher(deps)('spawn:commander', {
+      taskId,
+      runId,
+      hop: 14,
+      observed,
+      decision: { phase: 'planning' },
+      commander: {
+        target,
+        candidate_targets: [target],
+        bundle,
+        logical_cycle_id: 'commander-wakeup:5',
+        retry_of_attempt_id: sourceAttemptId,
+        restart_reason: 'commander_failover:provider_unavailable',
+      },
+    });
+
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: attemptId,
+        provider: 'claude',
+        logicalCycleId: 'commander-wakeup:5',
+        attemptKind: 'retry',
+        retryOfAttemptId: sourceAttemptId,
+        restartReason: 'commander_failover:provider_unavailable',
+      }),
+    );
+    expect(fallbackAdapter.start)
+      .toHaveBeenCalledWith(expect.objectContaining({
+        execution: expect.not.objectContaining({
+          resume_session: expect.anything(),
+        }),
+      }));
+  });
+
   it.each([
     [
       'missing capability gate',

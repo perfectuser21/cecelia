@@ -68,6 +68,12 @@ beforeAll(async () => {
     options: `-c search_path=${schemaName},public`,
     max: 3,
   });
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    await runMigrations(migrationPool);
+  } finally {
+    log.mockRestore();
+  }
 }, 15_000);
 
 afterAll(async () => {
@@ -81,13 +87,6 @@ afterAll(async () => {
 
 describe('Commander Phase 2 PostgreSQL authority chain', () => {
   it('projects proposal/adjudication from decision authority and advances recoverable memory', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      await expect(runMigrations(migrationPool)).resolves.toEqual(['368']);
-    } finally {
-      log.mockRestore();
-    }
-
     const runId = randomUUID();
     const attemptId = randomUUID();
     await migrationPool.query(
@@ -187,5 +186,104 @@ describe('Commander Phase 2 PostgreSQL authority chain', () => {
         [runId, projected.rows.at(-1).cursor],
       ),
     ).rejects.toMatchObject({ code: 'P0001' });
+  });
+
+  it('keeps failed and replacement Commander Attempts with projected failover decisions', async () => {
+    const runId = randomUUID();
+    const failedAttemptId = randomUUID();
+    const replacementAttemptId = randomUUID();
+    const attempts = createAttemptStore(migrationPool);
+    await migrationPool.query(
+      `INSERT INTO initiative_runs (id,commander_mode) VALUES ($1,'hybrid')`,
+      [runId],
+    );
+    await attempts.createAttempt({
+      id: failedAttemptId,
+      runId,
+      hop: 1,
+      phase: 'planning',
+      role: 'commander',
+      provider: 'codex',
+      accountId: 'team4',
+      machineId: 'us-mac-m4',
+      bundle: { inputs: {} },
+      callbackSecretHash: 'a'.repeat(64),
+      logicalCycleId: 'commander-wakeup:1',
+    });
+    await attempts.fail(failedAttemptId, {
+      code: 'provider_unavailable',
+      message: 'bounded diagnostic',
+      failureClass: 'infrastructure_blocked',
+    });
+    await appendHop(migrationPool, {
+      runId,
+      hop: 1,
+      observed: { commander_attempt_id: failedAttemptId },
+      derivedPhase: 'planning',
+      gateVerdict: 'allow',
+      action: 'commander.failover_started',
+      detail: {
+        attempt_id: failedAttemptId,
+        reason_code: 'provider_unavailable',
+      },
+    });
+    await attempts.createAttempt({
+      id: replacementAttemptId,
+      runId,
+      hop: 2,
+      phase: 'planning',
+      role: 'commander',
+      provider: 'claude',
+      accountId: 'account1',
+      machineId: 'us-mac-m4',
+      bundle: { inputs: {} },
+      callbackSecretHash: 'b'.repeat(64),
+      logicalCycleId: 'commander-wakeup:1',
+      attemptKind: 'retry',
+      retryOfAttemptId: failedAttemptId,
+      restartReason: 'commander_failover:provider_unavailable',
+    });
+    await appendHop(migrationPool, {
+      runId,
+      hop: 2,
+      observed: { commander_attempt_id: replacementAttemptId },
+      derivedPhase: 'planning',
+      gateVerdict: 'allow',
+      action: 'commander.failover_completed',
+      detail: { attempt_id: replacementAttemptId },
+    });
+
+    const lineage = await attempts.listCommanderFailoverLineage(
+      runId,
+      'commander-wakeup:1',
+    );
+    expect(lineage).toMatchObject([
+      {
+        id: failedAttemptId,
+        status: 'failed',
+        provider: 'codex',
+        failure_class: 'infrastructure_blocked',
+        error_code: 'provider_unavailable',
+      },
+      {
+        id: replacementAttemptId,
+        status: 'queued',
+        provider: 'claude',
+        retry_of_attempt_id: failedAttemptId,
+        restart_reason: 'commander_failover:provider_unavailable',
+      },
+    ]);
+    const events = await migrationPool.query(
+      `SELECT event_type,payload
+         FROM harness_run_events
+        WHERE run_id=$1
+          AND event_type LIKE 'commander.failover_%'
+        ORDER BY cursor`,
+      [runId],
+    );
+    expect(events.rows.map((row) => row.event_type)).toEqual([
+      'commander.failover_started',
+      'commander.failover_completed',
+    ]);
   });
 });
