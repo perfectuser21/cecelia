@@ -10,7 +10,8 @@
 # 不依赖真实 Brain 进程 / DB，只验证文件系统和 Shell Hook 行为
 
 set -e
-cd "$(dirname "$0")/../../../.."
+REPO_ROOT="$(cd "$(dirname "$0")/../../../.."; pwd)"
+cd "$REPO_ROOT"
 
 echo "[smoke] conversation-agent-lock D2/D3 冒烟验证"
 
@@ -34,7 +35,7 @@ touch "$TMP_DIR/.conversation-mode"
 
 set +e
 CLAUDE_HOOK_TRANSCRIPT_PATH="$TRANSCRIPT" \
-  bash -c "cd '$TMP_DIR' && bash /workspace/packages/engine/hooks/stop-conversation.sh" \
+  bash -c "cd '$TMP_DIR' && bash '$REPO_ROOT/packages/engine/hooks/stop-conversation.sh'" \
   > "$TMP_DIR/hook_out.txt" 2>&1
 RC=$?
 set -e

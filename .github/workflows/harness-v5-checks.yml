@@ -159,6 +159,9 @@ jobs:
               echo "TESTFILES"
             } >> $GITHUB_OUTPUT
           fi
+      - name: Setup /workspace symlink
+        if: steps.check-tests.outputs.has_tests == 'true'
+        run: sudo ln -sf "$GITHUB_WORKSPACE" /workspace
       - name: Install dependencies (root workspaces)
         if: steps.check-tests.outputs.has_tests == 'true'
         run: npm ci
