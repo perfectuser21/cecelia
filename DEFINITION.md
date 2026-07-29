@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.267.130
+**Brain 版本**: 1.267.131
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.131 — Finalized Golden Path governance decisions
+
+- Migration 370 把 Owner 定版的两条封版判据、拒绝话术、产权变更 B、高风险
+  清单、向上默认分类和让路顺序写入 `decisions`，以稳定 `source_ref` 和
+  `context.policy_key/policy_version` 供后续合同 Gate 读取。
+- `decisions.level` 新增 `global`；Harness line context 一次读取 global 与 area
+  invariant，并按 step、journey_feature、global、area 的优先级去重注入。
+- 本版本只完成治理 SSOT 与继承入口，不启用产权变更，不包含 GP 合同签字、
+  断言盖章或其他 PRD ④机制。
+- 回退：部署 Brain `1.267.130`。Migration 370 的 policy rows 可保留为审计记录；
+  旧 Brain 不读取 `level='global'`。
 
 ## Brain 1.267.128 — Provider-neutral attempt timeout terminal
 
