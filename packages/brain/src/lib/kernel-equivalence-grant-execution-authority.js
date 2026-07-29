@@ -710,7 +710,9 @@ export function createPostgresGrantExecutionAuthority({
 
   async function consumeNonceIfActive(request = {}) {
     const signal = request?.signal ?? null;
-    const timeoutMs = request?.timeoutMs ?? lockTimeoutMs;
+    const timeoutMs = request?.timeoutMs === undefined
+      ? lockTimeoutMs
+      : request.timeoutMs;
     const grantSnapshot = snapshotGrant(request?.grant);
     if (
       !validSignal(signal)
@@ -843,7 +845,9 @@ export function createPostgresGrantExecutionAuthority({
   async function invokeWhileActive(request = {}) {
     const invoke = request?.invoke;
     const signal = request?.signal ?? null;
-    const timeoutMs = request?.timeoutMs ?? lockTimeoutMs;
+    const timeoutMs = request?.timeoutMs === undefined
+      ? lockTimeoutMs
+      : request.timeoutMs;
     const grantSnapshot = snapshotGrant(request?.grant);
     if (
       typeof invoke !== 'function'

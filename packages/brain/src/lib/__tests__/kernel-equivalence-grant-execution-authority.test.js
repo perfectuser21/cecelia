@@ -386,6 +386,32 @@ describe('PostgreSQL grant execution authority', () => {
     expect(pool.connect).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['consumeNonceIfActive', () => ({
+      grant: grantFixture(),
+      timeoutMs: null,
+    })],
+    ['invokeWhileActive', () => ({
+      grant: grantFixture(),
+      invoke: vi.fn(),
+      timeoutMs: null,
+    })],
+  ])('rejects an explicit null timeout in %s before connecting', async (
+    method,
+    request,
+  ) => {
+    const pool = { connect: vi.fn() };
+    const authority = createPostgresGrantExecutionAuthority({
+      pool,
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority[method](request())).rejects.toMatchObject({
+      code: 'grant_authority_request_invalid',
+    });
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
   it('fails closed on malformed identity and mismatched DB revalidation', async () => {
     const grantSha256 = sha256Canonical(grantFixture());
     const cellId = grantFixture().cell_id;
