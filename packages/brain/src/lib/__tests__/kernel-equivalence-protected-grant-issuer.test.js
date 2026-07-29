@@ -259,6 +259,28 @@ describe('protected execution grant issuer', () => {
     expect(protectedIssuer.resolveProtectedGrant).toBeUndefined();
   });
 
+  it('accepts pending registration expiry returned as a PostgreSQL Date', async () => {
+    const value = fixture();
+    value.grantExecutionAuthority.registerPendingGrant
+      .mockImplementationOnce(async ({
+        grant,
+        grant_sha256: grantSha256,
+      }) => ({
+        grant_id: grant.grant_id,
+        grant_ref: `kernel-equivalence-grant:${grant.grant_id}`,
+        grant_sha256: grantSha256,
+        cell_id: grant.cell_id,
+        expires_at: new Date(grant.expires_at),
+      }));
+
+    await expect(issuer(value).issueProtectedGrant(
+      grantInput(value.cell),
+    )).resolves.toMatchObject({
+      grant_id: value.grantId,
+      expires_at: new Date(FIXTURE_NOW + 300_000).toISOString(),
+    });
+  });
+
   it('requires durable DB authority and a case_id before signing or touching transport', async () => {
     const value = fixture();
     expect(() => protectedGrants.createProtectedGrantFileIssuer({
@@ -440,7 +462,7 @@ describe('protected execution grant issuer', () => {
     }
   });
 
-  it('retains the published orphan and reports uncertain when DB publication fails', async () => {
+  it('retains an unusable orphan for maintenance to avoid deleting a replacement inode', async () => {
     const value = fixture();
     value.grantExecutionAuthority.markGrantPublished
       .mockRejectedValueOnce(new Error('fixture DB unavailable'));

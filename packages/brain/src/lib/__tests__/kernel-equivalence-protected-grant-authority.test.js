@@ -46,8 +46,26 @@ function fixture() {
   const grant = {
     schema_version: 'kernel-equivalence-execution-grant/v1',
     grant_id: GRANT_ID,
+    key_id: 'fixture-grant-key',
+    issued_at: '2026-07-28T12:00:00.000Z',
     cell_id: CELL_ID,
     expires_at: '2999-01-01T00:00:00.000Z',
+    nonce: '11111111-1111-4111-8111-111111111111',
+    behavior_id: 'KERNEL-P0-01-BRANCH-PROTECTION',
+    provider: 'codex',
+    scenario: 'normal',
+    run_id: '22222222-2222-4222-8222-222222222222',
+    attempt_id: '33333333-3333-4333-8333-333333333333',
+    artifact_sha: 'a'.repeat(64),
+    brain_version: '1.268.30',
+    engine_version: '19.7.1',
+    environment: 'isolated',
+    resource_id: 'fixture-resource',
+    resource_ref: 'refs/heads/fixture',
+    resource_prefix: 'fixture-prefix',
+    seam_id: 'kernel.security.branch_protection',
+    adapter_id: 'branch-protection-adapter',
+    scopes: ['isolated_effect'],
     signature: 'protected-signature',
   };
   writeFileSync(grantPath, `${JSON.stringify(grant)}\n`, { mode: 0o600 });
@@ -117,9 +135,28 @@ describe('protected execution grant file authority', () => {
   it('exports the Node-canonical grant digest', () => {
     const value = fixture();
 
+    expect(Object.keys(value.grant)).toHaveLength(23);
     expect(typeof protectedGrants.canonicalGrantSha256).toBe('function');
     expect(protectedGrants.canonicalGrantSha256(value.grant))
       .toBe(sha256Canonical(value.grant));
+  });
+
+  it.each([
+    ['a missing signed field', (grant) => {
+      delete grant.adapter_id;
+    }],
+    ['an extra signed field', (grant) => {
+      grant.case_id = '44444444-4444-4444-8444-444444444444';
+    }],
+  ])('rejects canonical digest input with %s', (_label, mutate) => {
+    const value = fixture();
+    const grant = structuredClone(value.grant);
+    mutate(grant);
+
+    expect(() => protectedGrants.canonicalGrantSha256(grant))
+      .toThrowError(expect.objectContaining({
+        code: 'protected_grant_invalid',
+      }));
   });
 
   it('single-opens transport, resolves DB authority, and returns an exact frozen grant plus digest', async () => {
@@ -133,13 +170,7 @@ describe('protected execution grant file authority', () => {
       cell_id: CELL_ID,
       grant_ref: GRANT_REF,
       grant_sha256: value.grantSha256,
-      grant: {
-        schema_version: 'kernel-equivalence-execution-grant/v1',
-        grant_id: GRANT_ID,
-        cell_id: CELL_ID,
-        expires_at: '2999-01-01T00:00:00.000Z',
-        signature: 'protected-signature',
-      },
+      grant: value.grant,
     });
     expect(value.grantExecutionAuthority.resolveActiveGrant)
       .toHaveBeenCalledWith({
@@ -435,19 +466,22 @@ describe('protected execution grant file authority', () => {
 
   it.each([
     ['different grant id', {
-      schema_version: 'kernel-equivalence-execution-grant/v1',
       grant_id: '11111111-1111-4111-8111-111111111111',
-      cell_id: CELL_ID,
       signature: 'valid-but-different-grant',
     }],
     ['different cell', {
-      schema_version: 'kernel-equivalence-execution-grant/v1',
-      grant_id: GRANT_ID,
       cell_id: 'KERNEL-P0-02-CREDENTIAL-GUARD::codex::normal',
       signature: 'valid-but-different-cell',
     }],
-  ])('rejects a signed-looking grant bound to a %s', async (_label, grant) => {
+  ])('rejects a signed-looking grant bound to a %s', async (
+    _label,
+    override,
+  ) => {
     const value = fixture();
+    const grant = {
+      ...value.grant,
+      ...override,
+    };
     writeFileSync(value.grantPath, JSON.stringify(grant), { mode: 0o600 });
     const authority = reader(value);
 
@@ -472,11 +506,45 @@ describe('protected execution grant file authority', () => {
     });
   });
 
-  it('closes the opened inode when canonical digest validation fails', async () => {
+  it.each([
+    ['missing field', (grant) => {
+      delete grant.adapter_id;
+    }],
+    ['extra field', (grant) => {
+      grant.case_id = '44444444-4444-4444-8444-444444444444';
+    }],
+  ])('rejects a transport grant with an exact-schema %s', async (
+    _label,
+    mutate,
+  ) => {
     const value = fixture();
+    const grant = structuredClone(value.grant);
+    mutate(grant);
     writeFileSync(
       value.grantPath,
-      `{"schema_version":"kernel-equivalence-execution-grant/v1","grant_id":"${GRANT_ID}","cell_id":"${CELL_ID}","expires_at":"2999-01-01T00:00:00.000Z","signature":"protected-signature","overflow":1e400}\n`,
+      `${JSON.stringify(grant)}\n`,
+      { mode: 0o600 },
+    );
+
+    await expect(reader(value).resolveProtectedGrant({
+      cellId: CELL_ID,
+      grantRef: GRANT_REF,
+    })).rejects.toMatchObject({
+      code: 'protected_grant_file_invalid',
+    });
+    expect(value.grantExecutionAuthority.resolveActiveGrant)
+      .not.toHaveBeenCalled();
+  });
+
+  it('closes the opened inode when canonical digest validation fails', async () => {
+    const value = fixture();
+    const canonicalInvalid = JSON.stringify({
+      ...value.grant,
+      brain_version: 'OVERFLOW',
+    }).replace('"brain_version":"OVERFLOW"', '"brain_version":1e400');
+    writeFileSync(
+      value.grantPath,
+      `${canonicalInvalid}\n`,
       { mode: 0o600 },
     );
     const actualFs = await vi.importActual('node:fs');

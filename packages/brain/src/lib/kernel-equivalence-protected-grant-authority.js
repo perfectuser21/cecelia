@@ -35,6 +35,31 @@ const CELL_ID =
   /^KERNEL-P[01]-[0-9]{2}-[A-Z0-9-]+::(?:claude|codex|grok)::(?:normal|violation|recovery)$/;
 const REQUEST_FIELDS = Object.freeze(['cellId', 'grantRef']);
 const REVOKE_FIELDS = Object.freeze(['grant_ref']);
+const SIGNED_GRANT_FIELDS = Object.freeze([
+  'adapter_id',
+  'artifact_sha',
+  'attempt_id',
+  'behavior_id',
+  'brain_version',
+  'cell_id',
+  'engine_version',
+  'environment',
+  'expires_at',
+  'grant_id',
+  'issued_at',
+  'key_id',
+  'nonce',
+  'provider',
+  'resource_id',
+  'resource_prefix',
+  'resource_ref',
+  'run_id',
+  'scenario',
+  'schema_version',
+  'scopes',
+  'seam_id',
+  'signature',
+]);
 const MAXIMUM_GRANT_BYTES = 65_536;
 
 export class ProtectedGrantAuthorityError extends Error {
@@ -83,6 +108,9 @@ function deepFreeze(value) {
 }
 
 export function canonicalGrantSha256(grant) {
+  if (!exactFields(grant, SIGNED_GRANT_FIELDS)) {
+    fail('protected_grant_invalid');
+  }
   return sha256Canonical(grant);
 }
 
@@ -272,6 +300,7 @@ function readGrantFile(grantPath, {
       !grant
       || typeof grant !== 'object'
       || Array.isArray(grant)
+      || !exactFields(grant, SIGNED_GRANT_FIELDS)
       || grant.schema_version
         !== 'kernel-equivalence-execution-grant/v1'
       || typeof grant.signature !== 'string'
@@ -524,13 +553,23 @@ export function createProtectedGrantFileIssuer({
       } catch {
         fail('protected_grant_registration_failed');
       }
+      let registrationExpiry;
+      let grantExpiry;
+      try {
+        registrationExpiry = Date.parse(registration?.expires_at);
+        grantExpiry = Date.parse(grant.expires_at);
+      } catch {
+        fail('protected_grant_registration_failed');
+      }
       if (
         registration?.grant_id !== grantId
         || registration.grant_ref
           !== `kernel-equivalence-grant:${grantId}`
         || registration.grant_sha256 !== grantSha256
         || registration.cell_id !== grant.cell_id
-        || registration.expires_at !== grant.expires_at
+        || !Number.isFinite(registrationExpiry)
+        || !Number.isFinite(grantExpiry)
+        || registrationExpiry !== grantExpiry
       ) {
         fail('protected_grant_registration_failed');
       }
@@ -652,6 +691,9 @@ export function createProtectedGrantFileIssuer({
       } catch (error) {
         closeBestEffort(descriptor);
         removeExactFile(temporaryPath, temporaryIdentity);
+        // Node cannot atomically unlink a pathname by an already-verified
+        // inode. Retain any published, DB-unusable orphan for maintenance
+        // rather than risk deleting a replacement inode.
         if (markAttempted) {
           fail('protected_grant_publication_uncertain');
         }
