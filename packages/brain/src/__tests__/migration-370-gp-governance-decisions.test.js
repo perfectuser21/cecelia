@@ -69,11 +69,11 @@ describe('migration 370 — PostgreSQL execution and idempotency', () => {
 
   beforeAll(async () => {
     pool = new pg.Pool({
-      host: process.env.PGHOST || 'localhost',
-      port: Number(process.env.PGPORT || 5432),
-      database: process.env.PGDATABASE || 'cecelia_test',
-      user: process.env.PGUSER || 'cecelia',
-      password: process.env.PGPASSWORD || undefined,
+      host: process.env.PGHOST || process.env.DB_HOST || 'localhost',
+      port: Number(process.env.PGPORT || process.env.DB_PORT || 5432),
+      database: process.env.PGDATABASE || process.env.DB_NAME || 'cecelia_test',
+      user: process.env.PGUSER || process.env.DB_USER || 'cecelia',
+      password: process.env.PGPASSWORD || process.env.DB_PASSWORD || undefined,
       max: 1,
     });
     client = await pool.connect();
