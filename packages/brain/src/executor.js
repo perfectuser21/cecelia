@@ -2984,6 +2984,28 @@ async function _driveHarnessInitiative(task, opts = {}) {
     return { ok: false, error: 'invalid_gear', terminal: true };
   }
 
+  // gp_anchor 硬校验（GP锚定闭环刀4 — 仅当 base_repo 含 zenithjoy-workspace 时生效，
+  // 不误伤 cecelia 自己或 zenithjoy-skills 等其他项目的 harness_initiative 任务。
+  // 与 orchestrator/gear 同一处理形态：drive-time terminal failed，不在 POST /tasks
+  // 创建时拦——创建接口是所有项目共用的，不能无差别要求 gp_anchor 字段）。
+  const baseRepoForAnchor = String(task?.payload?.base_repo ?? '');
+  if (baseRepoForAnchor.toLowerCase().includes('zenithjoy-workspace')) {
+    const gpAnchor = task?.payload?.gp_anchor;
+    const GP_ANCHOR_FORMAT = /^([a-z0-9_]+\/[a-z0-9_]+(#step\d+|\s+keep-green)|none\((infra|docs|config|backlog)\))$/;
+    if (!gpAnchor || !GP_ANCHOR_FORMAT.test(String(gpAnchor).trim())) {
+      await markInitiativeTerminalFailed(
+        dbPool,
+        task.id,
+        'missing_gp_anchor',
+        `zenithjoy-workspace 的 harness_initiative 任务必须在 payload.gp_anchor 声明合法的 GP-Anchor（<line>/<gp>#stepN、<line>/<gp> keep-green、或 none(infra|docs|config|backlog)）；got: ${gpAnchor ?? '(missing)'}`
+      );
+      console.error(
+        `[executor] task=${task.id} 缺少/非法 gp_anchor（值=${gpAnchor ?? '(missing)'}），标 terminal failed`
+      );
+      return { ok: false, error: 'missing_gp_anchor', terminal: true };
+    }
+  }
+
   // 2b-2b: harness 开跑 → 镜像同步对应 okr_initiative → running（non-fatal，best-effort，
   // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）。
   // 刀4阶段3发现：此调用原本躺在物理不可达的旧图调用死代码块里（orchestrator 硬校验后

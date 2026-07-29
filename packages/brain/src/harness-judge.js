@@ -734,6 +734,56 @@ export async function runMechanicalGate(ctx, deps = {}) {
     }
   }
 
+  // ⑥ GP-Anchor 一致性核查（GP锚定闭环刀4 — file-existence gated，与刀3 skill层同一哲学）
+  // product-map/generated/product-map.json 不存在（非zenithjoy-workspace项目的sprint）→ 完全跳过
+  let productMapRaw = null;
+  try {
+    productMapRaw = await readFileFn(path.join(ctx.worktreePath || '', 'product-map/generated/product-map.json'));
+  } catch { /* 不存在 → 跳过本项检查 */ }
+
+  if (productMapRaw) {
+    let contractTextForAnchor = '';
+    try {
+      contractTextForAnchor = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', 'contract-draft.md'));
+    } catch { /* 缺失走下方"无GP-Anchor声明"分支 */ }
+
+    const skippedDeclared = /gp-anchor:\s*skipped/i.test(contractTextForAnchor);
+    // 排除 "gp-anchor: skipped ..." 本身被误认成一条待解析的 GP-Anchor 声明
+    // （两者共享 "gp-anchor:" 前缀，大小写不敏感匹配下会互相命中）。
+    const anchorMatch = skippedDeclared
+      ? null
+      : contractTextForAnchor.match(/GP-Anchor:\s*(\S.*)\s*$/im);
+
+    if (!skippedDeclared && !anchorMatch) {
+      reasons.push(
+        'gp_anchor_missing: 本sprint所在仓库存在 product-map.json，但 contract-draft.md 既无 「## GP-Anchor」声明也无 「gp-anchor: skipped」说明。'
+      );
+    } else if (anchorMatch) {
+      const decl = anchorMatch[1].trim();
+      const progMatch = decl.match(/^([a-z0-9_]+)\/([a-z0-9_]+)#step\d+$/);
+      const keepGreenMatch = decl.match(/^([a-z0-9_]+)\/([a-z0-9_]+)\s+keep-green$/);
+      const noneMatch = decl.match(/^none\((infra|docs|config|backlog)\)/);
+
+      if (progMatch || keepGreenMatch) {
+        const [, lineId, gpId] = progMatch || keepGreenMatch;
+        try {
+          const map = JSON.parse(productMapRaw);
+          const exists = Array.isArray(map.golden_paths) &&
+            map.golden_paths.some((g) => g.line_id === lineId && g.id === gpId);
+          if (!exists) {
+            reasons.push(`gp_anchor_id_notfound: 声明的 ${lineId}/${gpId} 在 product-map.json 里查无。`);
+          }
+        } catch (err) {
+          reasons.push(`gp_anchor_env_fail: product-map.json 解析失败（${err.message}），无法核对 id 存在性。`);
+        }
+      } else if (!noneMatch) {
+        reasons.push(
+          `gp_anchor_format_invalid: GP-Anchor 声明「${decl}」不合法（须为 <line>/<gp>#stepN、<line>/<gp> keep-green、或 none(infra|docs|config|backlog)）。`
+        );
+      }
+    }
+  }
+
   return { pass: reasons.length === 0, reasons, env };
 }
 
