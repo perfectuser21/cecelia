@@ -4,11 +4,13 @@ import {
   readFileSync,
 } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import {
   validateBehaviorEquivalence,
 } from '../../packages/brain/src/lib/kernel-behavior-equivalence.js';
 import {
+  compileAtomicRequirementSummary,
   compileDrillPlan,
 } from '../../packages/brain/src/lib/kernel-equivalence-drills.js';
 import {
@@ -186,6 +188,27 @@ function configuredBundleReferenceCount(contract) {
   );
 }
 
+export function atomicCutoverGateReady(report) {
+  return (
+    report?.contract_valid === true
+    && report?.schema_valid === true
+    && report?.proof_complete === true
+    && report?.atomic_cutover_ready === true
+    && report?.atomic_proven_family_cell_count === 99
+    && report?.execution_wiring_ready === true
+  );
+}
+
+export function kernelEquivalenceReportExitCode(report, mode) {
+  if (
+    report?.contract_valid !== true
+    || report?.schema_valid !== true
+  ) {
+    return 1;
+  }
+  return mode === 'gate' && !atomicCutoverGateReady(report) ? 1 : 0;
+}
+
 function checkReport(contract, plan, {
   bundleDir = null,
   executionReadiness,
@@ -204,20 +227,39 @@ function checkReport(contract, plan, {
     readBundle,
   });
   const blockerCount = plan.cells.filter((cell) => cell.blocked_by != null).length;
-  const verifiedCellCount = validation.verified_proof_cell_count ?? 0;
-  const proofMatrixReady =
+  const legacyVerifiedFamilyReceiptCount =
+    validation.legacy_verified_family_receipt_count ?? 0;
+  const legacyFamilyReceiptMatrixReady =
     plan.cells.length === 99
-    && verifiedCellCount === plan.cells.length;
+    && legacyVerifiedFamilyReceiptCount === plan.cells.length;
+  const atomicRequirements = compileAtomicRequirementSummary(validation);
+  const proofRequiredProbeCount = atomicRequirements.atom_count > 0
+    ? validation.atomic_metrics?.proof_required_probe_definition_count ?? 0
+    : 0;
+  const atomicProvenFamilyCellCount = (
+    Number.isInteger(validation.atomic_proven_family_cell_count)
+    && validation.atomic_proven_family_cell_count >= 0
+    && validation.atomic_proven_family_cell_count <= plan.cells.length
+  )
+    ? validation.atomic_proven_family_cell_count
+    : 0;
   const executionWiringReady = executionReadiness.ready;
-  return {
+  const report = {
     schema_version: 'kernel-equivalence-drill-cli/v1',
     mode,
     contract_valid: validation.valid,
-    execution_ready:
-      validation.valid
-      && blockerCount === 0
-      && proofMatrixReady
-      && executionWiringReady,
+    schema_valid: validation.schema_valid === true,
+    proof_complete: validation.proof_complete === true,
+    atomic_cutover_ready: validation.atomic_cutover_ready === true,
+    atom_count: atomicRequirements.atom_count,
+    proof_required_atom_count: atomicRequirements.proof_required_atom_count,
+    probe_count: atomicRequirements.probe_count,
+    proof_required_probe_count: proofRequiredProbeCount,
+    provider_probe_required:
+      atomicRequirements.provider_probe_assertion_count,
+    provider_probe_proven: 0,
+    atomic_proven_family_cell_count: atomicProvenFamilyCellCount,
+    execution_ready: false,
     execution_wiring_ready: executionWiringReady,
     execution_wiring_blockers: executionReadiness.ready
       ? []
@@ -229,13 +271,17 @@ function checkReport(contract, plan, {
     cell_count: plan.cells.length,
     cell_blocker_count: blockerCount,
     configured_bundle_ref_count: configuredBundleRefs,
-    trusted_bundle_count: verifiedCellCount,
-    verified_cell_count: verifiedCellCount,
-    proof_matrix_ready: proofMatrixReady,
+    trusted_bundle_count: legacyVerifiedFamilyReceiptCount,
+    legacy_verified_family_receipt_count:
+      legacyVerifiedFamilyReceiptCount,
+    legacy_family_receipt_matrix_ready:
+      legacyFamilyReceiptMatrixReady,
     trust_key_count:
       contract.behavior_equivalence?.drill_trust_registry?.keys?.length ?? 0,
     findings: validation.findings,
   };
+  report.execution_ready = atomicCutoverGateReady(report);
+  return report;
 }
 
 function markdown(report) {
@@ -301,19 +347,10 @@ async function main() {
       now,
     });
     output(report, options.format);
-    if (
-      !report.contract_valid
-      || (
-        options.mode === 'gate'
-        && (
-          report.execution_ready !== true
-          || report.proof_matrix_ready !== true
-          || report.execution_wiring_ready !== true
-        )
-      )
-    ) {
-      process.exitCode = 1;
-    }
+    process.exitCode = kernelEquivalenceReportExitCode(
+      report,
+      options.mode,
+    );
     return;
   }
 
@@ -358,15 +395,20 @@ async function main() {
   }
 }
 
-try {
-  await main();
-} catch (error) {
-  if (error instanceof UsageError) {
-    process.stderr.write(`kernel_equivalence_cli_usage: ${error.message}\n`);
-    process.exitCode = 2;
-  } else {
-    const code = error?.code ?? error?.message ?? 'kernel_equivalence_cli_failed';
-    process.stderr.write(`kernel_equivalence_cli_failed: ${code}\n`);
-    process.exitCode = 1;
+if (
+  process.argv[1]
+  && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  try {
+    await main();
+  } catch (error) {
+    if (error instanceof UsageError) {
+      process.stderr.write(`kernel_equivalence_cli_usage: ${error.message}\n`);
+      process.exitCode = 2;
+    } else {
+      const code = error?.code ?? error?.message ?? 'kernel_equivalence_cli_failed';
+      process.stderr.write(`kernel_equivalence_cli_failed: ${code}\n`);
+      process.exitCode = 1;
+    }
   }
 }

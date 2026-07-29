@@ -33,6 +33,42 @@ function run(args, env = {}) {
   });
 }
 
+function evaluateGateReports(reports) {
+  const result = spawnSync(process.execPath, [
+    '--input-type=module',
+    '--eval',
+    [
+      `import { atomicCutoverGateReady } from ${JSON.stringify(`file://${scriptPath}`)};`,
+      `const reports = ${JSON.stringify(reports)};`,
+      'process.stdout.write(JSON.stringify(reports.map(atomicCutoverGateReady)));',
+    ].join('\n'),
+  ], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  });
+  expect(result.stderr).toBe('');
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout);
+}
+
+function evaluateReportExitCodes(cases) {
+  const result = spawnSync(process.execPath, [
+    '--input-type=module',
+    '--eval',
+    [
+      `import { kernelEquivalenceReportExitCode } from ${JSON.stringify(`file://${scriptPath}`)};`,
+      `const cases = ${JSON.stringify(cases)};`,
+      'process.stdout.write(JSON.stringify(cases.map(({ report, mode }) => kernelEquivalenceReportExitCode(report, mode))));',
+    ].join('\n'),
+  ], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  });
+  expect(result.stderr).toBe('');
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout);
+}
+
 describe('kernel equivalence drill CLI', () => {
   it('prints a deterministic 99-cell plan with eleven signer handoffs', () => {
     const first = run(['--plan', '--format=json']);
@@ -63,14 +99,25 @@ describe('kernel equivalence drill CLI', () => {
     expect(report).toMatchObject({
       mode: 'check',
       contract_valid: true,
+      schema_valid: true,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atom_count: 43,
+      proof_required_atom_count: 42,
+      probe_count: 446,
+      proof_required_probe_count: 442,
+      provider_probe_required: 1326,
+      provider_probe_proven: 0,
+      cell_count: 99,
+      legacy_verified_family_receipt_count: 0,
+      atomic_proven_family_cell_count: 0,
       execution_ready: false,
       behavior_gap_count: 11,
       cell_blocker_count: 99,
       configured_bundle_ref_count: 0,
       trusted_bundle_count: 0,
       trust_key_count: 0,
-      verified_cell_count: 0,
-      proof_matrix_ready: false,
+      legacy_family_receipt_matrix_ready: false,
       execution_wiring_ready: false,
       execution_wiring_blockers: [
         'trusted_execution_config_file_missing',
@@ -87,7 +134,11 @@ describe('kernel equivalence drill CLI', () => {
       mode: 'check',
       contract_valid: true,
       execution_ready: false,
-      proof_matrix_ready: false,
+      schema_valid: true,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_proven_family_cell_count: 0,
+      legacy_family_receipt_matrix_ready: false,
       execution_wiring_ready: false,
     });
     expect(gate.status).toBe(1);
@@ -96,9 +147,102 @@ describe('kernel equivalence drill CLI', () => {
       mode: 'gate',
       contract_valid: true,
       execution_ready: false,
-      proof_matrix_ready: false,
+      schema_valid: true,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_proven_family_cell_count: 0,
+      legacy_family_receipt_matrix_ready: false,
       execution_wiring_ready: false,
     });
+  });
+
+  it('never treats 99 legacy family receipts as atomic cutover proof', () => {
+    const atomicReady = {
+      contract_valid: true,
+      schema_valid: true,
+      proof_complete: true,
+      atomic_cutover_ready: true,
+      atomic_proven_family_cell_count: 99,
+      execution_wiring_ready: true,
+    };
+    const legacyOnly = {
+      ...atomicReady,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_proven_family_cell_count: 0,
+      legacy_verified_family_receipt_count: 99,
+      verified_cell_count: 99,
+      legacy_family_receipt_matrix_ready: true,
+      proof_matrix_ready: true,
+    };
+
+    expect(evaluateGateReports([legacyOnly, atomicReady])).toEqual([false, true]);
+  });
+
+  it('fails closed when each atomic gate field is false or missing', () => {
+    const ready = {
+      contract_valid: true,
+      schema_valid: true,
+      proof_complete: true,
+      atomic_cutover_ready: true,
+      atomic_proven_family_cell_count: 99,
+      execution_wiring_ready: true,
+    };
+    const fieldCases = [
+      'schema_valid',
+      'proof_complete',
+      'atomic_cutover_ready',
+      'atomic_proven_family_cell_count',
+      'execution_wiring_ready',
+    ].flatMap((field) => {
+      const falseReport = { ...ready };
+      falseReport[field] = field === 'atomic_proven_family_cell_count'
+        ? 98
+        : false;
+      const missingReport = { ...ready };
+      delete missingReport[field];
+      return [falseReport, missingReport];
+    });
+
+    expect(evaluateGateReports([ready, ...fieldCases])).toEqual([
+      true,
+      ...Array(fieldCases.length).fill(false),
+    ]);
+  });
+
+  it('keeps check informational for incomplete proof but rejects invalid contracts', () => {
+    const incomplete = run(['--check', '--format=json']);
+
+    expect(incomplete.status).toBe(0);
+    expect(JSON.parse(incomplete.stdout)).toMatchObject({
+      contract_valid: true,
+      schema_valid: true,
+      proof_complete: false,
+    });
+    expect(evaluateReportExitCodes([
+      {
+        mode: 'check',
+        report: {
+          contract_valid: true,
+          schema_valid: true,
+          proof_complete: false,
+        },
+      },
+      {
+        mode: 'check',
+        report: {
+          contract_valid: false,
+          schema_valid: false,
+        },
+      },
+      {
+        mode: 'check',
+        report: {
+          contract_valid: false,
+          schema_valid: true,
+        },
+      },
+    ])).toEqual([0, 1, 1]);
   });
 
   it('uses the fail-closed gate in the P0 regression contract', () => {
@@ -139,7 +283,7 @@ describe('kernel equivalence drill CLI', () => {
         execution_wiring_blockers: [
           'trusted_execution_config_file_missing',
         ],
-        proof_matrix_ready: false,
+        legacy_family_receipt_matrix_ready: false,
       });
     } finally {
       await new Promise((resolve) => listener.close(resolve));
