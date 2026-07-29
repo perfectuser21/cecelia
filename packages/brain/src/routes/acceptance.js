@@ -88,3 +88,99 @@ export function createAcceptanceInternalRouter({ pool }) {
 
   return router;
 }
+
+export function createAcceptancePublicRouter({ pool }) {
+  const router = express.Router();
+
+  router.get('/acceptance/pending', async (_req, res) => {
+    try {
+      const { rows: runs } = await pool.query(
+        `SELECT * FROM acceptance_runs WHERE status IN ('pending','in_review') ORDER BY created_at`
+      );
+      const ids = runs.map((r) => r.id);
+      let checkRows = [];
+      if (ids.length > 0) {
+        const { rows } = await pool.query(
+          'SELECT * FROM acceptance_checks WHERE run_id = ANY($1) ORDER BY check_key',
+          [ids]
+        );
+        checkRows = rows;
+      }
+      const byRun = new Map(runs.map((r) => [r.id, { ...r, checks: [] }]));
+      for (const c of checkRows) byRun.get(c.run_id)?.checks.push(c);
+      return res.json({ runs: [...byRun.values()] });
+    } catch (err) {
+      console.error('[acceptance] GET /pending error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/acceptance/results', async (req, res) => {
+    const { results } = req.body || {};
+    if (!Array.isArray(results) || results.length === 0) {
+      return res.status(400).json({ error: 'results must be a non-empty array' });
+    }
+    const invalid = [];
+    for (const [i, r] of results.entries()) {
+      if (!r || !r.check_key) invalid.push({ index: i, error: 'check_key required' });
+      else if (!ACCEPTANCE_RESULTS.includes(r.result)) {
+        invalid.push({ index: i, check_key: r.check_key, error: `result must be one of: ${ACCEPTANCE_RESULTS.join(',')}` });
+      }
+    }
+    if (invalid.length > 0) return res.status(400).json({ error: 'invalid results', invalid });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const keys = results.map((r) => r.check_key);
+      const { rows: found } = await client.query(
+        'SELECT check_key, run_id FROM acceptance_checks WHERE check_key = ANY($1)',
+        [keys]
+      );
+      const foundKeys = new Set(found.map((r) => r.check_key));
+      const missing = keys.filter((k) => !foundKeys.has(k));
+      if (missing.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'unknown check_key', missing });
+      }
+      for (const r of results) {
+        await client.query(
+          `UPDATE acceptance_checks SET result = $1, note = $2, decided_at = NOW(), updated_at = NOW()
+           WHERE check_key = $3`,
+          [r.result, r.note || null, r.check_key]
+        );
+      }
+      const runIds = [...new Set(found.map((r) => r.run_id))];
+      const updatedRuns = [];
+      for (const runId of runIds) {
+        const { rows: counts } = await client.query(
+          `SELECT COUNT(*)::int AS total,
+                  COUNT(*) FILTER (WHERE result = '通过')::int AS pass,
+                  COUNT(*) FILTER (WHERE result = '不通过')::int AS fail,
+                  COUNT(*) FILTER (WHERE result IS NULL)::int AS pending
+             FROM acceptance_checks WHERE run_id = $1`,
+          [runId]
+        );
+        const { total, pass, fail, pending } = counts[0];
+        const passRate = total > 0 ? pass / total : 0;
+        const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : 'passed';
+        const { rows: updated } = await client.query(
+          `UPDATE acceptance_runs SET pass_rate = $1, status = $2, updated_at = NOW()
+           WHERE id = $3 RETURNING run_key, pass_rate, status`,
+          [passRate, status, runId]
+        );
+        updatedRuns.push(updated[0]);
+      }
+      await client.query('COMMIT');
+      return res.json({ updated: results.length, runs: updatedRuns });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('[acceptance] POST /results error:', err.message);
+      return res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  return router;
+}
