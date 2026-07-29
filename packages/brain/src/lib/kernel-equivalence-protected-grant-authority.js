@@ -61,6 +61,7 @@ const SIGNED_GRANT_FIELDS = Object.freeze([
   'signature',
 ]);
 const MAXIMUM_GRANT_BYTES = 65_536;
+const MAXIMUM_AUTHORITY_TIMEOUT_MS = 300_000;
 
 export class ProtectedGrantAuthorityError extends Error {
   constructor(code) {
@@ -124,6 +125,31 @@ function assertGrantExecutionAuthority(value) {
   }
 }
 
+function validAuthorityTimeout(value) {
+  return (
+    Number.isInteger(value)
+    && value >= 1
+    && value <= MAXIMUM_AUTHORITY_TIMEOUT_MS
+  );
+}
+
+async function resolveWithTimeout(operation, timeoutMs) {
+  let timer;
+  const underlying = Promise.resolve().then(operation);
+  underlying.catch(() => {});
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('protected_grant_authority_timeout')),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([underlying, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function validateRoot(grantRoot) {
   if (
     typeof grantRoot !== 'string'
@@ -184,9 +210,9 @@ function grantFileStatusMatches(pathStatus, openedStatus, identity) {
   return (
     pathStatus.isFile()
     && !pathStatus.isSymbolicLink()
-    && pathStatus.nlink === 1
+    && pathStatus.nlink === identity.nlink
     && openedStatus.isFile()
-    && openedStatus.nlink === 1
+    && openedStatus.nlink === identity.nlink
     && pathStatus.dev === identity.dev
     && pathStatus.ino === identity.ino
     && pathStatus.size === identity.size
@@ -195,10 +221,24 @@ function grantFileStatusMatches(pathStatus, openedStatus, identity) {
     && openedStatus.ino === identity.ino
     && openedStatus.size === identity.size
     && openedStatus.ctimeMs === identity.ctimeMs
+    && pathStatus.uid === identity.uid
+    && openedStatus.uid === identity.uid
     && ownedByService(pathStatus)
     && ownedByService(openedStatus)
-    && [0o400, 0o600].includes(pathStatus.mode & 0o777)
-    && [0o400, 0o600].includes(openedStatus.mode & 0o777)
+    && (pathStatus.mode & 0o777) === identity.mode
+    && (openedStatus.mode & 0o777) === identity.mode
+  );
+}
+
+function sameGrantFileIdentity(left, right) {
+  return (
+    left.dev === right.dev
+    && left.ino === right.ino
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.ctimeMs === right.ctimeMs
+    && left.mode === right.mode
+    && left.uid === right.uid
   );
 }
 
@@ -286,8 +326,11 @@ function readGrantFile(grantPath, {
     const identity = Object.freeze({
       dev: openedStatus.dev,
       ino: openedStatus.ino,
+      nlink: openedStatus.nlink,
       size: openedStatus.size,
       ctimeMs: openedStatus.ctimeMs,
+      mode: openedStatus.mode & 0o777,
+      uid: openedStatus.uid,
     });
     assertOpenGrantFileUnchanged(grantPath, descriptor, identity);
     let grant;
@@ -344,9 +387,13 @@ function readGrantFile(grantPath, {
 export function createProtectedGrantFileAuthority({
   grantRoot,
   grantExecutionAuthority,
+  authorityTimeoutMs = 2_000,
   now = Date.now,
 } = {}) {
-  if (typeof now !== 'function') {
+  if (
+    typeof now !== 'function'
+    || !validAuthorityTimeout(authorityTimeoutMs)
+  ) {
     fail('protected_grant_configuration_invalid');
   }
   assertGrantExecutionAuthority(grantExecutionAuthority);
@@ -387,11 +434,14 @@ export function createProtectedGrantFileAuthority({
       try {
         let durable;
         try {
-          durable = await grantExecutionAuthority.resolveActiveGrant({
-            grant_id: match[1],
-            grant_sha256: transport.grant_sha256,
-            cell_id: request.cellId,
-          });
+          durable = await resolveWithTimeout(
+            () => grantExecutionAuthority.resolveActiveGrant({
+              grant_id: match[1],
+              grant_sha256: transport.grant_sha256,
+              cell_id: request.cellId,
+            }),
+            authorityTimeoutMs,
+          );
         } catch {
           fail('protected_grant_authority_denied');
         }
@@ -580,6 +630,7 @@ export function createProtectedGrantFileIssuer({
       );
       let descriptor;
       let markAttempted = false;
+      let publishedIdentity;
       let temporaryIdentity;
       const encoded = Buffer.from(`${JSON.stringify(grant)}\n`, 'utf8');
       try {
@@ -647,6 +698,15 @@ export function createProtectedGrantFileIssuer({
         ) {
           fail('protected_grant_file_unsafe');
         }
+        publishedIdentity = Object.freeze({
+          dev: published.dev,
+          ino: published.ino,
+          nlink: published.nlink,
+          size: published.size,
+          ctimeMs: published.ctimeMs,
+          mode: published.mode & 0o777,
+          uid: published.uid,
+        });
         const verified = readGrantFile(finalPath, {
           expectedCellId: grant.cell_id,
           expectedGrantId: grantId,
@@ -679,6 +739,21 @@ export function createProtectedGrantFileIssuer({
         if (
           publication?.grant_id !== grantId
           || publication.state !== 'published'
+        ) {
+          fail('protected_grant_publication_uncertain');
+        }
+        assertRootUnchanged(trustedRoot);
+        const postMark = readGrantFile(finalPath, {
+          expectedCellId: grant.cell_id,
+          expectedGrantId: grantId,
+          now,
+        });
+        if (
+          !sameGrantFileIdentity(
+            postMark.identity,
+            publishedIdentity,
+          )
+          || postMark.grant_sha256 !== grantSha256
         ) {
           fail('protected_grant_publication_uncertain');
         }

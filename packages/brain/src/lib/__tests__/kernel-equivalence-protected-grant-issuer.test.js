@@ -302,7 +302,7 @@ describe('protected execution grant issuer', () => {
     expect(readdirSync(value.grantRoot)).toEqual([]);
   });
 
-  it('registers pending before temp write, fsync, rename, final verify, directory fsync, and mark', async () => {
+  it('orders registration, durable publish, mark, and post-mark final verification', async () => {
     const value = fixture();
     const actualFs = await vi.importActual('node:fs');
     const events = [];
@@ -384,6 +384,7 @@ describe('protected execution grant issuer', () => {
         'final-verify',
         'directory-fsync',
         'mark',
+        'final-verify',
       ]);
     } finally {
       vi.doUnmock('node:fs');
@@ -475,6 +476,59 @@ describe('protected execution grant issuer', () => {
     expect(readdirSync(value.grantRoot)).toEqual([
       `${value.grantId}.json`,
     ]);
+  });
+
+  it.each([
+    ['replacement', (grantPath) => {
+      const displaced = `${grantPath}.displaced`;
+      const bytes = readFileSync(grantPath);
+      renameSync(grantPath, displaced);
+      writeFileSync(grantPath, bytes, { mode: 0o600 });
+    }],
+    ['deletion', (grantPath) => {
+      rmSync(grantPath);
+    }],
+  ])('reports publication uncertain when mark succeeds after final %s', async (
+    _label,
+    mutate,
+  ) => {
+    const value = fixture();
+    let releaseMark;
+    let markStarted;
+    const started = new Promise((resolve) => {
+      markStarted = resolve;
+    });
+    const barrier = new Promise((resolve) => {
+      releaseMark = resolve;
+    });
+    value.grantExecutionAuthority.markGrantPublished
+      .mockImplementationOnce(async ({ grant_id: grantId }) => {
+        markStarted();
+        await barrier;
+        return {
+          grant_id: grantId,
+          generation: 1,
+          state: 'published',
+          actor_instance_id: 'brain-test',
+          actor_kind: 'brain',
+          occurred_at: new Date(FIXTURE_NOW).toISOString(),
+        };
+      });
+    const grantPath = join(
+      value.grantRoot,
+      `${value.grantId}.json`,
+    );
+    const issuance = issuer(value).issueProtectedGrant(
+      grantInput(value.cell),
+    );
+    const assertion = expect(issuance).rejects.toMatchObject({
+      code: 'protected_grant_publication_uncertain',
+    });
+    await started;
+    mutate(grantPath);
+    releaseMark();
+
+    await assertion;
   });
 
   it('preserves a replacement inode while reporting DB publication uncertain', async () => {

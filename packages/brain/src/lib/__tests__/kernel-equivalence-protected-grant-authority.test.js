@@ -132,6 +132,21 @@ describe('protected execution grant file authority', () => {
     }));
   });
 
+  it.each([0, 300_001, 1.5])(
+    'rejects unsafe authority timeout %s',
+    (authorityTimeoutMs) => {
+      const value = fixture();
+
+      expect(() => createProtectedGrantFileAuthority({
+        grantRoot: value.root,
+        grantExecutionAuthority: value.grantExecutionAuthority,
+        authorityTimeoutMs,
+      })).toThrowError(expect.objectContaining({
+        code: 'protected_grant_configuration_invalid',
+      }));
+    },
+  );
+
   it('exports the Node-canonical grant digest', () => {
     const value = fixture();
 
@@ -212,6 +227,59 @@ describe('protected execution grant file authority', () => {
       grant_sha256: value.grantSha256,
       grant: value.grant,
     });
+  });
+
+  it('times out a pending durable resolution and promptly closes its grant fd', async () => {
+    const value = fixture();
+    const actualFs = await vi.importActual('node:fs');
+    let grantDescriptor;
+    const closed = [];
+    value.grantExecutionAuthority.resolveActiveGrant
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        setTimeout(() => resolve({
+          grant_id: GRANT_ID,
+          grant_ref: GRANT_REF,
+          grant_sha256: value.grantSha256,
+          cell_id: CELL_ID,
+          expires_at: value.grant.expires_at,
+          grant: structuredClone(value.grant),
+          active: true,
+        }), 50);
+      }));
+    vi.resetModules();
+    vi.doMock('node:fs', () => ({
+      ...actualFs,
+      openSync: (...args) => {
+        const descriptor = actualFs.openSync(...args);
+        if (args[0] === value.grantPath) grantDescriptor = descriptor;
+        return descriptor;
+      },
+      closeSync: (descriptor) => {
+        closed.push(descriptor);
+        return actualFs.closeSync(descriptor);
+      },
+    }));
+    try {
+      const isolated = await import(
+        '../kernel-equivalence-protected-grant-authority.js'
+      );
+      const authority = isolated.createProtectedGrantFileAuthority({
+        grantRoot: value.root,
+        grantExecutionAuthority: value.grantExecutionAuthority,
+        authorityTimeoutMs: 5,
+      });
+
+      await expect(authority.resolveProtectedGrant({
+        cellId: CELL_ID,
+        grantRef: GRANT_REF,
+      })).rejects.toMatchObject({
+        code: 'protected_grant_authority_denied',
+      });
+      expect(closed).toContain(grantDescriptor);
+    } finally {
+      vi.doUnmock('node:fs');
+      vi.resetModules();
+    }
   });
 
   it('rejects an unpublished transport from durable pending state', async () => {
