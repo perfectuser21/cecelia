@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS acceptance_runs (
   surface TEXT,
   version TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_review','passed','failed')),
-  pass_rate NUMERIC,
+  pass_rate NUMERIC(4,3),
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','harness')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS acceptance_checks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_acceptance_checks_run ON acceptance_checks(run_id);
+CREATE INDEX IF NOT EXISTS idx_acceptance_runs_status ON acceptance_runs(status, created_at);
 
 INSERT INTO schema_version (version, description, applied_at)
 VALUES ('369', 'Acceptance runs/checks tables for Notion Worker loop', NOW())
@@ -527,7 +528,7 @@ export function createAcceptancePublicRouter({ pool }) {
         );
         const { total, pass, fail, pending } = counts[0];
         const passRate = total > 0 ? pass / total : 0;
-        const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : 'passed';
+        const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : pass === total ? 'passed' : 'in_review';
         const { rows: updated } = await client.query(
           `UPDATE acceptance_runs SET pass_rate = $1, status = $2, updated_at = NOW()
            WHERE id = $3 RETURNING run_key, pass_rate, status`,

@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS acceptance_runs (
   surface TEXT,                          -- android/windows/web/api
   version TEXT,                          -- 被验收版本
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_review','passed','failed')),
-  pass_rate NUMERIC,                     -- 0~1，results 回写时重算
+  pass_rate NUMERIC(4,3),                -- 0~1，results 回写时重算（3 位小数，读回需按 3 位比较）
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','harness')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS acceptance_checks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_acceptance_checks_run ON acceptance_checks(run_id);
+CREATE INDEX IF NOT EXISTS idx_acceptance_runs_status ON acceptance_runs(status, created_at);
 ```
 
 结尾按约定 `INSERT INTO schema_version VALUES ('369', ...) ON CONFLICT DO NOTHING`。
@@ -64,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_acceptance_checks_run ON acceptance_checks(run_id
 - `POST /acceptance/results`：body `{ results: [{ check_key, result, note? }] }`
   - 校验：整批先验（check_key 全部存在 + result 枚举合法），任一非法 → 400 列出坏项，整批拒绝
   - 落库：事务内逐条 UPDATE（last-write-wins，写 decided_at/updated_at）
-  - 重算：受影响的每个 run —— pass/fail/pending 计数 → pass_rate = pass/total；status：存在 NULL result → 'in_review'；全部已判且无不通过 → 'passed'；有不通过且全部已判 → 'failed'
+  - 重算：受影响的每个 run —— pass/fail/pending 计数 → pass_rate = pass/total；status：存在 NULL result → 'in_review'；有不通过且全部已判 → 'failed'；全部通过（pass === total）→ 'passed'；全部已判但含"无法验证" → 停在 'in_review'（需人工重验或改判，不会自动变终态）
   - 返回 `{ updated: n, runs: [{ run_key, pass_rate, status }] }`
 
 ### 2. `src/acceptance-public-server.js` — 独立公网 listener
