@@ -159,3 +159,56 @@ describe('POST /acceptance/results', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('验收驳回自动开任务（主理人条件二：转变沿）', () => {
+  function rejectionClient({ oldStatus, existingTask = false }) {
+    const taskInserts = [];
+    const client = makeClient((sql, params) => {
+      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+        return { rows: [{ check_key: 'r1:001', run_id: 'A' }] };
+      }
+      if (sql.includes('UPDATE acceptance_checks')) return { rows: [] };
+      if (sql.includes('SELECT status, title, gp_id, run_key FROM acceptance_runs')) {
+        return { rows: [{ status: oldStatus, title: 'T', gp_id: 'gp1', run_key: 'r1' }] };
+      }
+      if (sql.includes('FILTER')) return { rows: [{ total: 1, pass: 0, fail: 1, pending: 0 }] };
+      if (sql.includes('UPDATE acceptance_runs')) {
+        return { rows: [{ run_key: 'r1', pass_rate: params[0], status: params[1] }] };
+      }
+      if (sql.includes("FROM tasks")) return { rows: existingTask ? [{ ok: 1 }] : [] };
+      if (sql.includes("result = '不通过'") && sql.includes('SELECT check_key, name')) {
+        return { rows: [{ check_key: 'r1:001', name: 'step8', note: '挂了' }] };
+      }
+      if (sql.includes('INSERT INTO tasks')) { taskInserts.push(params); return { rows: [] }; }
+    });
+    return { client, taskInserts };
+  }
+
+  async function postFail(client) {
+    const pool = { connect: vi.fn(async () => client), query: vi.fn() };
+    return request(makeApp(pool)).post('/acceptance/results')
+      .send({ results: [{ check_key: 'r1:001', result: '不通过' }] });
+  }
+
+  it('in_review → failed 转变沿：自动 INSERT 驳回任务', async () => {
+    const { client, taskInserts } = rejectionClient({ oldStatus: 'in_review' });
+    const res = await postFail(client);
+    expect(res.status).toBe(200);
+    expect(taskInserts).toHaveLength(1);
+    expect(taskInserts[0][0]).toContain('[验收驳回]');
+  });
+
+  it('已是 failed（重复提交）→ 不重复开任务', async () => {
+    const { client, taskInserts } = rejectionClient({ oldStatus: 'failed' });
+    const res = await postFail(client);
+    expect(res.status).toBe(200);
+    expect(taskInserts).toHaveLength(0);
+  });
+
+  it('转变沿但已有未终态驳回任务 → 查重跳过', async () => {
+    const { client, taskInserts } = rejectionClient({ oldStatus: 'in_review', existingTask: true });
+    const res = await postFail(client);
+    expect(res.status).toBe(200);
+    expect(taskInserts).toHaveLength(0);
+  });
+});

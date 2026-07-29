@@ -58,4 +58,5 @@ for (const needle of ['acceptance_runs', 'acceptance_checks', \"VALUES ('369'\",
 console.log('migration 369 结构完整 ✓');
 "
 
+
 echo "[acceptance-smoke] 全部通过 ✅"
