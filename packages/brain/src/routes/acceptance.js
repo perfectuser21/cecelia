@@ -89,6 +89,26 @@ export function createAcceptanceInternalRouter({ pool }) {
     }
   });
 
+  // 目录快照上载（zenithjoy CI 在 product-map 合并后推送；Worker 经公网 GET 拉取）
+  router.post('/catalog', async (req, res) => {
+    const { catalog } = req.body || {};
+    if (!catalog || typeof catalog !== 'object' || !Array.isArray(catalog.golden_paths)) {
+      return res.status(400).json({ error: 'catalog.golden_paths must be an array' });
+    }
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO acceptance_catalog (id, payload, updated_at) VALUES (1, $1::jsonb, NOW())
+         ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+         RETURNING updated_at`,
+        [JSON.stringify(catalog)]
+      );
+      return res.json({ updated_at: rows[0]?.updated_at, golden_paths: catalog.golden_paths.length });
+    } catch (err) {
+      console.error('[acceptance] POST /catalog error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   router.get('/runs/:run_key', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -109,6 +129,19 @@ export function createAcceptanceInternalRouter({ pool }) {
 
 export function createAcceptancePublicRouter({ pool }) {
   const router = express.Router();
+
+  router.get('/acceptance/catalog', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        'SELECT payload, updated_at FROM acceptance_catalog WHERE id = 1'
+      );
+      if (rows.length === 0) return res.status(404).json({ error: 'catalog not seeded' });
+      return res.json({ catalog: rows[0].payload, updated_at: rows[0].updated_at });
+    } catch (err) {
+      console.error('[acceptance] GET /catalog error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
+    }
+  });
 
   router.get('/acceptance/pending', async (_req, res) => {
     try {
