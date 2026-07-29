@@ -184,3 +184,4 @@ fleet-credential-envelope-smoke.sh
 harness-commander-phase1-smoke.sh
 harness-commander-phase2-smoke.sh
 provider-neutral-phase4a-node-smoke.sh
+conversation-agent-lock-smoke.sh

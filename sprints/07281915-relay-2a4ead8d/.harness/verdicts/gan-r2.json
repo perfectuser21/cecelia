@@ -1,0 +1,65 @@
+{
+  "task_id": "2a4ead8d-a979-48e6-b317-676129e45f6a",
+  "sprint_dir": "sprints/07281915-relay-2a4ead8d",
+  "reviewer": "harness-contract-reviewer",
+  "round": 2,
+  "date": "2026-07-28",
+  "verdict": "APPROVED",
+  "judgments_written": 9,
+  "r1_fixes_verification": {
+    "F-01": {
+      "status": "RESOLVED",
+      "evidence": "contract-dod.md 新增 B-08（spawn 写/.conversation-mode、resolve/archive 删，TDD Red）；tests/conversation-agent-lock.test.ts 新建，含 B-08a/B-08b/B-08c 三个子测试，禁 mock 边（文件系统真实写/删/检查），TDD Red 标注充分且准确"
+    },
+    "F-02": {
+      "status": "RESOLVED",
+      "evidence": "GP-5 补充完整 Playwright E2E-4 全流程命令体（npx playwright test + 内联 node -e 脚本），staging 预览闸步骤 B 补具体命令；合同明确声明「延至 staging 阶段由 evaluator 执行，generator 交付可运行脚本」，责任归属清晰"
+    },
+    "F-03": {
+      "status": "RESOLVED",
+      "evidence": "contract-dod.md 新增 B-09：.conversation-mode 存在 + 末轮无 [TURN:...] → exit 2，TDD Red 标注，Test 命令为独立 manual bash 脚本，evaluator 可独立 judgment"
+    },
+    "F-04": {
+      "status": "RESOLVED",
+      "evidence": "conversation-ttl-archiver-contract.test.ts 文件头新增三层差异化价值说明（合同层关注 SQL 字面量语义 + INV-7 铁律绑定 + 合同责任归属 vs 单测层关注函数行为返回值），区分清晰"
+    }
+  },
+  "rubric_scores": {
+    "completeness": {
+      "score": 9,
+      "max": 10,
+      "comment": "PRD 四个交付物 D1-D4 均有对应 GP + BEHAVIOR 断言（B-01~B-09）。D2 现有 B-08 独立断言和对应测试文件（conversation-agent-lock.test.ts），TDD Red 标注正确。D3 两个 block 分支各有独立断言（B-02 pending_user + B-09 无标记）。D4 TTL archiver 既有单测（packages/brain/src/__tests__）又有合同层测试（tests/conversation-ttl-archiver-contract.test.ts）。微小缺陷：GP-2 验证命令仍仅做静态 grep（grep -q 'conversation-mode'），行为层验证在 B-08 test 中，两者分离尚可接受，但 GP-2 与 B-08 之间的关联在合同文本中未显式交叉引用（不扣分，仅记录）。"
+    },
+    "verifiability": {
+      "score": 8,
+      "max": 10,
+      "comment": "B-01/B-02/B-07/B-09 通过真实 shell 调用 + exit code 验证，可执行性强。B-08a/B-08b/B-08c 使用真实文件系统操作（mkdtempSync + existsSync），不 mock fs，接缝正确。B-03/B-05 SQL 字面量 capture via mock pool，INV-7 强覆盖。B-04 文件存在性 + grep 内容五分法（B-04a~B-04e）粒度合理。可验证性提升点：B-08 测试依赖 conversation-agent.js 导出特定函数名（spawnConversationAgent / createConversation / startConversation），若 D2 实现使用不同导出名则测试需同步更新——测试已通过 try/catch 给出明确错误信息，此风险已声明在 TDD Red 注释中，可接受。"
+    },
+    "clarity": {
+      "score": 9,
+      "max": 10,
+      "comment": "合同结构清晰，八要素 checklist / 判定点表 / 铁律覆盖 / 失败语义声明 / 输入对抗面均完整。B-08/B-09 新增后 BEHAVIOR 断言从 B-01 到 B-09 完整覆盖 D1-D4 所有功能点。E2E 与 BEHAVIOR 命名现已对齐（contract-e2e.sh 中 E2E-4 对应无标记 block，GP-5 对应 Playwright 全流程）。微小混淆：contract-e2e.sh 内的 E2E-4 是「无标记 block + conversation-mode → exit 2」，而 PRD E2E-4 是「Playwright 全流程」，两者命名相同含义不同。GP-5 和 contract-draft.md 已通过声明「延至 staging」做了语义分离，但 E2E 编号仍存在名称歧义（不影响合同执行，记录备查）。"
+    },
+    "test_first": {
+      "score": 9,
+      "max": 10,
+      "comment": "R2 新增 conversation-agent-lock.test.ts（3 个子测试，TDD Red），全部测试文件总计覆盖 B-01~B-09 共 9 个判定点。conversation-ttl-archiver-contract.test.ts 差异化价值已在文件头明确说明（合同层 SQL 字面量 + INV-7 语义锁定 vs 单测层函数行为）。stop-conversation-hook.test.ts 覆盖 B-01/B-02/B-06/B-07，含 TDD Red 标注。skill-md-artifact.test.ts 覆盖 B-04（5 个断言，粒度细化）。测试先行精神贯彻充分：TDD Red（待实现）与即时可运行（已实现）标注清晰分离。"
+    },
+    "nfr": {
+      "score": 8,
+      "max": 10,
+      "comment": "NFR 四条覆盖状态与 R1 相同（无新增缺陷）：(1) <10s 执行 — B-01 等待预算 10s，curl timeout ≤ 8s；(2) TTL gate 10min — B-03c 测试覆盖（vi.useFakeTimers 正确）；(3) SKILL.md 独立文件 — B-04 覆盖；(4) 清除 console.log — 合同未显式断言，属代码审查层，可接受。持续轻微缺陷：contract-dod.md 中无独立 NFR 断言段，NFR 验证散落在各 BEHAVIOR 断言等待预算字段中，但合同覆盖面完整，不构成阻塞。"
+    },
+    "invariant_coverage": {
+      "score": 9,
+      "max": 10,
+      "comment": "INV-5 → B-03 mock pool + B-01 curl 对账双重覆盖；INV-6 → B-01 exit 2 on DB miss 强制原子性；INV-7 → B-05 SQL 不含 DELETE（更新：conversation-ttl-archiver-contract.test.ts 新增 B-05b 验证 status IN ('active','suspended') 过滤，覆盖更完整）。INV-1~4/8/9 标注 N/A 理由充分。与 R1 相比，B-05b 新增 status IN 条件验证是质量提升。持续小缺陷：INV-6 的原子性覆盖仅在 hook 阻断层面，事务层未在测试中断言（已在 R1 说明，合同层面接受）。"
+    },
+    "e2e_executability": {
+      "score": 8,
+      "max": 10,
+      "comment": "R2 修复显著提升可执行性：GP-5 现有完整 Playwright E2E-4 命令体（含内联脚本和通过标准），staging 预览闸步骤 B 补充了 B-1（shell E2E）+ B-2（Playwright E2E-4）双轨命令。E2E-1~3 + E2E-5 在 contract-e2e.sh 中完整可立即执行。B-09 无标记 block 提供独立 manual 脚本。剩余局限：(1) E2E-4 Playwright 全流程依赖真实 claude headless + Dashboard 运行（localhost:5174），延至 staging 执行的声明合理，但存在 staging 环境未就绪时全流程无法验证的风险（已声明责任归属 evaluator，合同层面接受）；(2) GP-2 D2 行为验证在 B-08 test 中而非 E2E 脚本中，测试路径正确但 E2E 层无 D2 端到端验证（可接受，D2 属内部逻辑非 user_facing 路径）。"
+    }
+  },
+  "summary": "R2 合同质量显著提升，F-01~F-04 全部问题均已有效修复。R1 两个 P1 阻塞项（D2 缺行为测试、E2E-4 Playwright 缺失）已通过新增 conversation-agent-lock.test.ts（B-08，TDD Red）和 GP-5 完整命令体解决。两个 P2 项（无标记 block 缺独立断言、合同测试未声明差异化价值）也已通过新增 B-09 和文件头差异化价值说明解决。总判定点从 7 升至 9（B-08/B-09 新增）。合同结构完整、铁律覆盖充分、TDD Red 标注准确、staging 阶段职责边界清晰。verdict: APPROVED，可进入 generator 实现阶段。"
+}

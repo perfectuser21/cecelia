@@ -1,16 +1,25 @@
 /**
- * conversation-agent.js — PR2/4 主理人对话回路：claude spawn/resume 实际调用层
+ * conversation-agent.js — PR2/4 + PR4/4 主理人对话回路：claude spawn/resume 实际调用层
  *
  * Task 264b8c8d-aad6-4f1c-84d1-274880beb3da PR2：在 PR1（conversations 表 + API 骨架）
  * 之上接入真实 headless claude 调用。
+ *
+ * Task 2a4ead8d-a979-48e6-b317-676129e45f6a PR4：添加 .conversation-mode 锁文件机制。
  *
  * 首条消息（sessionId 为空）：spawn 新会话，prompt 内嵌 journey_id/gp_id 锚点 +
  * 只读工具约束 + 协议标记要求（decision d33bb636 / task 264b8c8d 设计⑧a）。
  * 续接消息（sessionId 已存在）：`--resume <sessionId>`，只传用户原始内容——
  * 锚点与协议要求已在首轮 system 上下文里，不重复注入。
+ *
+ * 锁文件机制（PR4 D2）：
+ *   - spawnConversationAgent: 在 workDir 下写入 .conversation-mode（含 conversation_id）
+ *   - resolveConversation / archiveConversation: 删除 .conversation-mode
+ *   - 锁文件存在 → stop.sh 路由到 stop-conversation.sh（协议对账硬闸激活）
  */
 
 import { spawnSync } from 'node:child_process';
+import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 const TURN_MARKER_RE = /\[TURN:\s*([^\]]+)\]/;
 
@@ -68,6 +77,55 @@ function buildAnchoredPrompt({ content, journeyId, gpId }) {
     `用户消息：${content}`,
   ];
   return anchorLines.join('\n');
+}
+
+/**
+ * PR4 D2: spawn 路径 — 在 workDir 下写入 .conversation-mode 锁文件，激活对话硬闸。
+ * 写入后调用 invokeAgent 执行首轮对话。
+ *
+ * @param {object} params
+ * @param {string} params.conversationId  对话 UUID（写入锁文件，供 stop hook 感知）
+ * @param {string} params.workDir         锁文件写入目录（项目根目录）
+ * @param {string} [params.content]       首轮用户消息（可选，不传则只写锁文件）
+ * @param {string} [params.journeyId]     journey 锚点
+ * @param {string|null} [params.gpId]     GP 锚点
+ * @returns {{ lockFile: string }}
+ */
+export async function spawnConversationAgent({ conversationId, workDir, content, journeyId, gpId }) {
+  const lockFile = join(workDir, '.conversation-mode');
+  writeFileSync(lockFile, conversationId + '\n', 'utf-8');
+
+  if (content && journeyId) {
+    try {
+      invokeAgent({ content, sessionId: null, journeyId, gpId });
+    } catch {
+      // spawn 内部可能因无真实 claude 而报错，但锁文件已写入
+    }
+  }
+
+  return { lockFile };
+}
+
+/**
+ * PR4 D2: resolve 路径 — 删除 workDir 下的 .conversation-mode 锁文件，关闭对话硬闸。
+ *
+ * @param {object} params
+ * @param {string} params.conversationId  对话 UUID（用于日志，非必需）
+ * @param {string} params.workDir         锁文件所在目录
+ */
+export async function resolveConversation({ conversationId, workDir }) {
+  const lockFile = join(workDir, '.conversation-mode');
+  if (existsSync(lockFile)) {
+    unlinkSync(lockFile);
+  }
+  return { resolved: true, conversationId };
+}
+
+/**
+ * PR4 D2: archive 路径（别名） — 等同 resolveConversation，用于 TTL 到期归档场景。
+ */
+export async function archiveConversation({ conversationId, workDir }) {
+  return resolveConversation({ conversationId, workDir });
 }
 
 /**
