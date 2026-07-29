@@ -1406,6 +1406,36 @@ npx vitest run \
 
 Expected: PASS。
 
+- [ ] **Step 5.1: 锁定 hostile scalar 与 Markdown 输出边界**
+
+JSON report projection 和 Markdown formatter 都必须把输入视为不可信：
+
+- 所有复制到报告或 Markdown 的 ID、版本、命令、证据、finding、gap、owner、计划和
+  freshness 标量必须使用有名的长度上限；截断必须确定且不能抛异常。
+- Markdown 单元格必须统一处理 `&`、`<`、`>`、`|`、CR/LF 和反引号，不能注入 raw
+  HTML、闭合 inline-code span、注入新表格行或新标题。
+- display-only prose 可以确定性截断；behavior/invariant/probe/cell/receipt 等 proof
+  semantic identity 不得通过截断改写身份。任何超长、非法或截断后会碰撞的 semantic
+  identity 必须让 v1.1 report 明确 `schema_valid=false`、`proof_complete=false`、
+  `atomic_cutover_ready=false`，不得静默 drop、dedupe 或生成貌似可证明的新 ID。
+- formatter 即使直接收到绕过 builder 的 hostile report，也必须重新限制 11 families、
+  43 atoms、446 probes、99 cells 及嵌套数组，并有最终输出硬预算；超限时只输出一个
+  确定的截断标记。
+- semantic identity audit 必须有基于 root 真实规模、留有显式余量的全局 reference-edge
+  预算；scenario references、recovery bindings/predecessors 和 coverage-gap affected
+  references 都计入。超限立即 fail-closed，使用 streaming/Set 校验，不得把乘法型嵌套
+  输入先展开到全局数组。
+- semantic audit 不能信任 raw Array 的 iterator 或重复读取 `.length`；每个嵌套数组只
+  捕获一次 safe length，在上下文 cap 内用显式索引复制为 plain frozen snapshot。hole、
+  accessor、descriptor 异常或 length-toggle Proxy 都必须在有限访问内 fail-closed。
+- 合法 root `1.1.0` 报告仍完整输出 99 cells、43 atoms 和全部计数；`1.0.0` exact JSON
+  shape 与 legacy Markdown 契约保持不变。
+
+RED 至少覆盖：含 raw HTML/反引号/竖线/CRLF 的 evidence 与 command、超长版本号和
+gap 字段、hostile provider cell、共享 512-char 前缀的 behavior/invariant/probe IDs、
+直接传入 formatter 的超大嵌套 report、两次输出 byte-for-byte 一致、最终输出小于硬
+预算且无异常。
+
 - [ ] **Step 6: 提交**
 
 ```bash
@@ -1443,6 +1473,9 @@ git commit -m "feat(kernel): report atomic equivalence progress"
   proof_complete: false,
   atomic_cutover_ready: false,
   atom_count: 43,
+  proof_required_atom_count: 42,
+  probe_count: 446,
+  proof_required_probe_count: 442,
   provider_probe_required: 1326,
   provider_probe_proven: 0,
   cell_count: 99,
@@ -1455,7 +1488,11 @@ git commit -m "feat(kernel): report atomic equivalence progress"
 `--gate` 必须在 `schema_valid !== true`、`proof_complete !== true`、
 `atomic_cutover_ready !== true` 或 `atomic_proven_family_cell_count !== 99` 任一条件下
 exit 1。现有 `verified_cell_count` 如为兼容而保留，只能明确表示 legacy family receipts，
-cutover gate 不得读取它。
+cutover gate 不得读取它；`proof_matrix_ready` 也不能再表示 atomic readiness，应改为
+`legacy_family_receipt_matrix_ready` 或明确标记 deprecated。
+
+测试必须构造 legacy verified family receipts = 99、atomic proof = 0 的输入，证明
+`--gate` 仍 fail-closed；四个 atomic cutover 条件要分别删除/伪造并逐项失败。
 
 - [ ] **Step 2: 写 root-only SSOT RED**
 
@@ -1463,11 +1500,16 @@ cutover gate 不得读取它。
 `check-kernel-behavior-equivalence.mjs` 消费 helper：
 
 - 只扫描 filesystem 的 `packages/**`；
+- 精确 basename 为 `node_modules` 的依赖安装树在 entry-budget 与 symlink 判断前整树跳过；
+  `node_modules-extra`、大小写变体、`vendor` 和其他自有路径不得借此豁免；
 - basename 含 `regression-contract` 且扩展为 `.yaml` 或 `.yml` 的全部文件，包括
   `foo.regression-contract.yaml`、`regression-contract.template.yaml`；
 - YAML 顶层出现 `behavior_equivalence` 即 finding；
 - 根合同缺 `behavior_equivalence` 即 finding；
 - `docs/**` 和设计文本不进入 runtime contract 扫描。
+- `packages/**` 自有源码中的 file/directory symlink 都 fail-closed；历史
+  `packages/brain/sprints` 与断链 `packages/workflows/.claude/skills/posts` 必须删除，
+  不能加 allowlist。根 `sprints/` 仍由 root Vitest/CI 直接消费。
 
 导出 API：
 
@@ -1508,6 +1550,15 @@ forbidden_behavior_ledger_tables: []
 [schema.]behavior_ledger`。覆盖大小写、引号、schema-qualified、注释和合法文档提及；
 不要因设计文档或 test fixture 提及该词而误报。
 
+Production migration roots 按真实 loader 只扫描直属 lowercase `.sql`；archive/rollback
+子目录不属于执行边界。SQL lexer 还必须覆盖 `GLOBAL|LOCAL TEMP|TEMPORARY`、
+PostgreSQL `U&"..." [UESCAPE 'x']` 与短/长 Unicode escape。普通字符串在 quote 前有
+奇数个连续反斜杠时，因 `standard_conforming_strings` 会话语义不确定而
+`sql_parse_invalid` fail-closed；偶数个、`E''` 和 doubled quote 保持可解析。
+
+遍历用流式 directory handle，在保存/排序前执行 depth/entry budget；文件读取用同一
+fd 的 `O_NOFOLLOW → fstat → limit+1 read → finally close`，不能先 stat 再按路径读取。
+
 - [ ] **Step 4: 分离普通 CI 与 cutover gate**
 
 把根合同 `KERNEL-BEHAVIOR-EQUIVALENCE-01.test_command` 从：
@@ -1543,6 +1594,10 @@ expect(result.repository_policy_valid).toBe(false);
 
 `repository_policy_valid` 与 `schema_valid` 正交；普通 `--check-report` 只有在两者都为
 true 且 report 无 drift 时才能 exit 0。不能只打印 finding 后继续成功。
+
+同一次 check 必须只解析一次 `behavior_equivalence.report_as_of`，把同一个 epoch `now`
+同时传给 validator 和 `compileDrillPlan`，再把同一 ISO 时间传给 report builder。用一个
+“在 report_as_of 尚有效、在当前墙钟已过期”的 trust key fixture 锁定不得混用时钟。
 
 - [ ] **Step 6: 建立显式、非部署的 cutover workflow**
 
