@@ -576,9 +576,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       return { stdout: '' };
     });
     const writeCredential = vi.fn(async () => undefined);
-    const resolveMountSource = vi.fn(
-      (source) => source.startsWith('/var/') ? `/private${source}` : source,
-    );
+    const resolveMountSource = vi.fn((source) => `/canonical${source}`);
     const docker = createDockerAdapter({
       runCommand,
       runtimeRoot,
@@ -628,9 +626,9 @@ describe('Fleet Worker durable runtime adapters', () => {
         '/usr/bin/find',
         [
           '-x',
-          `/private/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
-          `/private/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
-          `/private${path.join(runtimeRoot, ATTEMPT_ID)}`,
+          `/canonical/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
+          `/canonical/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          `/canonical${path.join(runtimeRoot, ATTEMPT_ID)}`,
           '(',
           '-type',
           'd',
@@ -655,13 +653,13 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(createArgs[0]).toBe('create');
       expect(createArgs).toContain(IMAGE_DIGEST);
       expect(createArgs).toContain(
-        `type=bind,src=/private/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`,
+        `type=bind,src=/canonical/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`,
       );
       expect(createArgs).toContain(
-        `type=bind,src=/private/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,dst=/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,readonly`,
+        `type=bind,src=/canonical/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,dst=/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,readonly`,
       );
       expect(createArgs).toContain(
-        `type=bind,src=/private${path.join(runtimeRoot, ATTEMPT_ID)},dst=/tmp/cecelia-prompts`,
+        `type=bind,src=/canonical${path.join(runtimeRoot, ATTEMPT_ID)},dst=/tmp/cecelia-prompts`,
       );
       expect(resolveMountSource).toHaveBeenCalledWith(
         `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
