@@ -1,6 +1,21 @@
 # Brain 模块定义
 
-**版本**: 1.268.30
+**版本**: 1.268.31
+
+## Kernel atomic behavior equivalence gate
+
+- 根 `regression-contract.yaml` 以 schema `1.1.0` 登记 43 个 P0/P1 atomic
+  invariants、446 个 probes；它仍是唯一运行期 SSOT，repository policy 同时拒绝
+  第二份 package contract 与任何 `behavior_ledger` DDL。
+- `schema_valid` 只证明合同结构有效，不能替代 `proof_complete`；当前 42 个
+  proof-required atoms 尚无 live receipt，family cells 继续诚实保持 `0/99 proven`。
+- 每个 Harness Controller 与 Kernel Global Controller 的双层职责及运行时均未在
+  本版本改变。receipt v2 verifier 和 typed production ports 尚未实现，legacy
+  family receipt 不能制造 atomic green。
+- 日常 core regression 只做确定性的 schema/report `--check`；cutover `--gate`
+  只能由只读的人工 `workflow_dispatch` 触发，且在 proof 不完整时 fail-closed。
+- 本版本是未发布的本地候选；未 push、未 merge、未 deploy。回退：
+  `bash scripts/brain-rollback.sh 1.268.30`；无数据库迁移。
 
 ## Kernel controller lease and grant revocation closure
 
