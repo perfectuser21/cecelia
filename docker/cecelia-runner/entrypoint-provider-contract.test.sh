@@ -207,6 +207,10 @@ fi
   echo 'Provider OOM/early KILL was incorrectly normalized to timeout' >&2
   exit 1
 }
+[[ "$(normalize_attempt_timeout_exit 124 0 30)" == "125" ]] || {
+  echo 'Provider-native early exit 124 was incorrectly normalized to timeout' >&2
+  exit 1
+}
 [[ $((SECONDS - timeout_started)) -lt 3 ]] || {
   echo 'Attempt timeout supervisor did not stop the process before natural exit' >&2
   exit 1

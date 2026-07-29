@@ -564,10 +564,37 @@ read_attempt_timeout_seconds() {
   printf '%s' "$value"
 }
 
+normalize_attempt_timeout_exit() {
+  local raw_exit="$1"
+  local elapsed_seconds="$2"
+  local timeout_seconds="$3"
+
+  if [[ "$raw_exit" -eq 137 && "$elapsed_seconds" -ge "$timeout_seconds" ]]; then
+    printf '124'
+    return
+  fi
+  if [[ "$raw_exit" -eq 124 && "$elapsed_seconds" -lt "$timeout_seconds" ]]; then
+    printf '125'
+    return
+  fi
+  printf '%s' "$raw_exit"
+}
+
 run_with_attempt_timeout() {
   local seconds="$1"
   shift
+  local started_at="$SECONDS"
+  local raw_exit
+  local elapsed_seconds
+  local normalized_exit
+
   timeout --signal=TERM --kill-after=10s "${seconds}s" "$@"
+  raw_exit=$?
+  elapsed_seconds=$((SECONDS - started_at))
+  normalized_exit="$(
+    normalize_attempt_timeout_exit "$raw_exit" "$elapsed_seconds" "$seconds"
+  )"
+  return "$normalized_exit"
 }
 
 normalize_provider_failure() {
