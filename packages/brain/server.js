@@ -90,6 +90,8 @@ import deployDevRouter from './src/routes/deploy-dev.js';
 import incidentsRouter from './src/routes/incidents.js';
 import graphRoutes from './src/routes/graph.js';
 import opsPanoramaRoutes from './src/routes/ops-panorama.js';
+import { createAcceptanceInternalRouter } from './src/routes/acceptance.js';
+import { startAcceptancePublicServer } from './src/acceptance-public-server.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -157,6 +159,8 @@ process.on('unhandledRejection', (reason, promise) => {
 // collide with a still-bound socket on 5221.
 let __shuttingDown = false;
 const __startedAtMs = Date.now();
+// Acceptance 公网 listener（5223）；token 未配置时保持 null
+let acceptancePublicServer = null;
 async function gracefulShutdown(signal) {
   if (__shuttingDown) return;
   __shuttingDown = true;
@@ -206,6 +210,10 @@ async function gracefulShutdown(signal) {
     ]);
   } catch (e) {
     console.warn('[shutdown] server.close error:', e && e.message);
+  }
+  if (acceptancePublicServer) {
+    acceptancePublicServer.close(() => console.log('[acceptance-public] listener 已关闭'));
+    acceptancePublicServer = null;
   }
 
   // 2) Close WebSocket server (clients get 1001 Going Away)
@@ -394,6 +402,7 @@ app.use('/api/brain/harness/kernel-reviews', harnessKernelApprovalsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
 app.use('/api/brain/orchestrator', initiativesRoutes);
 app.use('/api/brain/backup', backupRoutes);
+app.use('/api/brain/acceptance', createAcceptanceInternalRouter({ pool }));
 
 // LLM 服务对外入口（供 zenithjoy pipeline-worker 等内部系统调用）
 // 鉴权仅在此路径生效：env CECELIA_INTERNAL_TOKEN 未设置时 dev 放行
@@ -627,6 +636,15 @@ if (!process.env.VITEST) {
   await bootDurable();
 
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
+
+  // Acceptance 公网 listener（刀 1，决策 c08c2173）：token 未配置时静默不启动
+  try {
+    const ACCEPTANCE_PUBLIC_PORT = Number(process.env.ACCEPTANCE_PUBLIC_PORT || 5223);
+    acceptancePublicServer = startAcceptancePublicServer({ pool, port: ACCEPTANCE_PUBLIC_PORT });
+  } catch (err) {
+    console.error('[acceptance-public] 启动失败（不影响主服务）:', err.message);
+  }
+
   // Fire the onListening body now that we own the port.
   await onBrainListening();
 }
