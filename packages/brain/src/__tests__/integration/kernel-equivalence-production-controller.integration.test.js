@@ -349,6 +349,21 @@ async function waitForDatabaseTimeAfter(timestamp) {
   throw new Error('database clock did not cross fixture expiry');
 }
 
+async function waitForLockOrCompletion(backendPid, completed) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const activity = await pool.query(
+      `SELECT wait_event_type
+         FROM pg_stat_activity
+        WHERE pid = $1`,
+      [backendPid],
+    );
+    if (activity.rows[0]?.wait_event_type === 'Lock') return true;
+    if (completed()) return false;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
 async function insertBundle({
   bundleHash,
   caseId,
@@ -372,6 +387,7 @@ async function insertBundle({
 async function registerFixtureGrant({
   caseId,
   grantId,
+  publish = true,
 }) {
   const authority = await pool.query(
     `SELECT cases.*, leases.lease_expires_at,
@@ -420,10 +436,12 @@ async function registerFixtureGrant({
     grant,
     grant_sha256: grantSha256,
   });
-  await controllerAuthority.markGrantPublished({
-    grant_id: grantId,
-    grant_sha256: grantSha256,
-  });
+  if (publish) {
+    await controllerAuthority.markGrantPublished({
+      grant_id: grantId,
+      grant_sha256: grantSha256,
+    });
+  }
   return { grant, grantSha256 };
 }
 
@@ -519,12 +537,6 @@ beforeAll(async () => {
     sessionId: 'active-session',
   });
   await insertAuthority({
-    attemptId: EXPIRED_ATTEMPT,
-    caseId: EXPIRED_CASE,
-    receiptId: EXPIRED_RECEIPT,
-    sessionId: 'expired-session',
-  });
-  await insertAuthority({
     attemptId: TERMINAL_ATTEMPT,
     caseId: TERMINAL_CASE,
     receiptId: TERMINAL_RECEIPT,
@@ -601,27 +613,6 @@ beforeAll(async () => {
     eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     leaseSql: "clock_timestamp() + interval '5 minutes'",
   });
-  const expiredClaimLease = await insertClaim({
-    caseId: EXPIRED_CASE,
-    eventId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    leaseSql: "clock_timestamp() + interval '250 milliseconds'",
-  });
-  await waitForDatabaseTimeAfter(expiredClaimLease);
-  const recovery = await pool.query(
-    `INSERT INTO kernel_equivalence_production_execution_events
-       (event_id, case_id, generation, controller_instance_id, state,
-        late_effect_risk, occurred_at, controller_lease_expires_at)
-     VALUES
-       ('bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc', $1::uuid, 2,
-        $2::uuid, 'reconciling', false,
-        clock_timestamp(),
-        clock_timestamp() + interval '250 milliseconds')
-     RETURNING controller_lease_expires_at`,
-    [EXPIRED_CASE, CRASHED_RECOVERY_CONTROLLER],
-  );
-  await waitForDatabaseTimeAfter(
-    recovery.rows[0].controller_lease_expires_at,
-  );
   await insertClaim({
     caseId: TERMINAL_CASE,
     eventId: 'afafafaf-afaf-4faf-8faf-afafafafafaf',
@@ -647,7 +638,345 @@ afterAll(async () => {
 });
 
 describe('production controller restart fencing on real PostgreSQL', () => {
+  it('rejects a pending grant published after null-ref terminal settlement', async () => {
+    const caseId = randomUUID();
+    const attemptId = randomUUID();
+    const receiptId = randomUUID();
+    const grantId = randomUUID();
+    await insertAuthority({
+      attemptId,
+      caseId,
+      receiptId,
+      sessionId: 'late-publish-after-terminal',
+    });
+    const { grantSha256 } = await registerFixtureGrant({
+      caseId,
+      grantId,
+      publish: false,
+    });
+    await insertClaim({
+      caseId,
+      eventId: randomUUID(),
+      leaseSql: "clock_timestamp() + interval '1 minute'",
+    });
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          code, late_effect_risk)
+       VALUES
+         ($1::uuid, $2::uuid, 2, $3::uuid, 'settlement_unknown',
+          'prepublication_terminal_fixture', true)`,
+      [randomUUID(), caseId, OLD_CONTROLLER],
+    );
+    const controllerAuthority = durableGrantAuthority(OLD_CONTROLLER);
+
+    await expect(controllerAuthority.markGrantPublished({
+      grant_id: grantId,
+      grant_sha256: grantSha256,
+    })).rejects.toMatchObject({
+      code: 'grant_authority_database_failed',
+    });
+    const durable = await pool.query(
+      `SELECT events.state, fences.execution_active
+         FROM kernel_equivalence_production_execution_events events
+         JOIN kernel_equivalence_production_execution_fences fences
+           ON fences.case_id = events.case_id
+        WHERE events.case_id = $1::uuid
+        ORDER BY events.generation DESC
+        LIMIT 1`,
+      [caseId],
+    );
+    expect(durable.rows[0]).toEqual({
+      state: 'settlement_unknown',
+      execution_active: false,
+    });
+    const grantEvents = await pool.query(
+      `SELECT state
+         FROM kernel_equivalence_grant_events
+        WHERE grant_id = $1::uuid`,
+      [grantId],
+    );
+    expect(grantEvents.rows).toHaveLength(0);
+  });
+
+  it.each(['terminal_first', 'publish_first'])(
+    'linearizes null-ref terminal settlement against %s publication',
+    async (order) => {
+      const caseId = randomUUID();
+      const attemptId = randomUUID();
+      const receiptId = randomUUID();
+      const grantId = randomUUID();
+      await insertAuthority({
+        attemptId,
+        caseId,
+        receiptId,
+        sessionId: `publish-terminal-race-${order}`,
+      });
+      const { grantSha256 } = await registerFixtureGrant({
+        caseId,
+        grantId,
+        publish: false,
+      });
+      await insertClaim({
+        caseId,
+        eventId: randomUUID(),
+        leaseSql: "clock_timestamp() + interval '1 minute'",
+      });
+      const publisher = await pool.connect();
+      const terminal = await pool.connect();
+      const publisherPid = Number((
+        await publisher.query('SELECT pg_backend_pid() AS pid')
+      ).rows[0].pid);
+      const terminalPid = Number((
+        await terminal.query('SELECT pg_backend_pid() AS pid')
+      ).rows[0].pid);
+      let publisherCompleted = false;
+      let terminalCompleted = false;
+      try {
+        if (order === 'terminal_first') {
+          await terminal.query('BEGIN');
+          await terminal.query(
+            `INSERT INTO kernel_equivalence_production_execution_events
+               (event_id, case_id, generation, controller_instance_id,
+                state, code, late_effect_risk)
+             VALUES
+               ($1::uuid, $2::uuid, 2, $3::uuid, 'settlement_unknown',
+                'terminal_first_race', true)`,
+            [randomUUID(), caseId, OLD_CONTROLLER],
+          );
+          const publication = publisher.query(
+            `SELECT *
+               FROM kernel_equivalence_append_grant_event(
+                 $1::uuid, $2, 'published', $3::uuid, '{}'::jsonb
+               )`,
+            [grantId, grantSha256, OLD_CONTROLLER],
+          ).then(
+            (value) => {
+              publisherCompleted = true;
+              return { ok: true, value };
+            },
+            (error) => {
+              publisherCompleted = true;
+              return { ok: false, error };
+            },
+          );
+          const blocked = await waitForLockOrCompletion(
+            publisherPid,
+            () => publisherCompleted,
+          );
+          await terminal.query('COMMIT');
+          const outcome = await publication;
+          expect(blocked).toBe(true);
+          expect(outcome.ok).toBe(false);
+          expect(outcome.error?.message).toMatch(
+            /execution fence.*inactive|publication.*fence/i,
+          );
+        } else {
+          await publisher.query('BEGIN');
+          await publisher.query(
+            `SELECT *
+               FROM kernel_equivalence_append_grant_event(
+                 $1::uuid, $2, 'published', $3::uuid, '{}'::jsonb
+               )`,
+            [grantId, grantSha256, OLD_CONTROLLER],
+          );
+          const settlement = terminal.query(
+            `INSERT INTO kernel_equivalence_production_execution_events
+               (event_id, case_id, generation, controller_instance_id,
+                state, code, late_effect_risk)
+             VALUES
+               ($1::uuid, $2::uuid, 2, $3::uuid, 'settlement_unknown',
+                'publish_first_race', true)`,
+            [randomUUID(), caseId, OLD_CONTROLLER],
+          ).then(
+            (value) => {
+              terminalCompleted = true;
+              return { ok: true, value };
+            },
+            (error) => {
+              terminalCompleted = true;
+              return { ok: false, error };
+            },
+          );
+          const blocked = await waitForLockOrCompletion(
+            terminalPid,
+            () => terminalCompleted,
+          );
+          await publisher.query('COMMIT');
+          const outcome = await settlement;
+          expect(blocked).toBe(true);
+          expect(outcome.ok).toBe(false);
+          expect(outcome.error?.message).toMatch(
+            /unique published grant|durable grant revocation/i,
+          );
+          await durableGrantAuthority(OLD_CONTROLLER).revokeGrant({
+            grant_id: grantId,
+            grant_sha256: grantSha256,
+            reason: 'publish_first_race_cleanup',
+            timeoutMs: 1_000,
+          });
+          const authority = await pool.query(
+            `SELECT expires_at
+               FROM kernel_equivalence_grant_authorities
+              WHERE grant_id = $1::uuid`,
+            [grantId],
+          );
+          await pool.query(
+            `INSERT INTO kernel_equivalence_production_execution_events
+               (event_id, case_id, generation, controller_instance_id,
+                state, grant_ref, grant_expires_at, code, late_effect_risk)
+             VALUES
+               ($1::uuid, $2::uuid, 2, $3::uuid, 'blocked',
+                $4, $5::timestamptz, 'publish_first_race_cleanup', false)`,
+            [
+              randomUUID(),
+              caseId,
+              OLD_CONTROLLER,
+              `kernel-equivalence-grant:${grantId}`,
+              authority.rows[0].expires_at,
+            ],
+          );
+        }
+      } finally {
+        await publisher.query('ROLLBACK').catch(() => {});
+        await terminal.query('ROLLBACK').catch(() => {});
+        publisher.release();
+        terminal.release();
+      }
+    },
+  );
+
+  it.each(['settlement_unknown', 'reconciling'])(
+    'revokes a legacy late publication behind null-ref %s',
+    async (controllerState) => {
+      const caseId = randomUUID();
+      const attemptId = randomUUID();
+      const receiptId = randomUUID();
+      const grantId = randomUUID();
+      await insertAuthority({
+        attemptId,
+        caseId,
+        receiptId,
+        sessionId: `legacy-late-publish-${controllerState}`,
+      });
+      const { grantSha256 } = await registerFixtureGrant({
+        caseId,
+        grantId,
+        publish: false,
+      });
+      const claimLease = await insertClaim({
+        caseId,
+        eventId: randomUUID(),
+        leaseSql: controllerState === 'reconciling'
+          ? "clock_timestamp() + interval '250 milliseconds'"
+          : "clock_timestamp() + interval '1 minute'",
+      });
+      if (controllerState === 'reconciling') {
+        await waitForDatabaseTimeAfter(claimLease);
+        const reconciliationLease = await pool.query(
+          `INSERT INTO kernel_equivalence_production_execution_events
+             (event_id, case_id, generation, controller_instance_id, state,
+              late_effect_risk, controller_lease_expires_at)
+           VALUES
+             ($1::uuid, $2::uuid, 2, $3::uuid, 'reconciling', false,
+              clock_timestamp() + interval '250 milliseconds')
+           RETURNING controller_lease_expires_at`,
+          [randomUUID(), caseId, NEW_CONTROLLER],
+        );
+        await waitForDatabaseTimeAfter(
+          reconciliationLease.rows[0].controller_lease_expires_at,
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO kernel_equivalence_production_execution_events
+             (event_id, case_id, generation, controller_instance_id, state,
+              code, late_effect_risk)
+           VALUES
+             ($1::uuid, $2::uuid, 2, $3::uuid, 'settlement_unknown',
+              'legacy_prepublication_terminal', true)`,
+          [randomUUID(), caseId, OLD_CONTROLLER],
+        );
+      }
+      await pool.query(
+        `ALTER TABLE kernel_equivalence_grant_events
+           DISABLE TRIGGER trg_kernel_equivalence_grant_event_insert_guard`,
+      );
+      try {
+        await pool.query(
+          `INSERT INTO kernel_equivalence_grant_events
+             (grant_id, generation, state, actor_instance_id, actor_kind,
+              grant_digest, details)
+           VALUES
+             ($1::uuid, 1, 'published', $2::uuid, 'controller',
+              $3, '{}'::jsonb)`,
+          [grantId, OLD_CONTROLLER, grantSha256],
+        );
+      } finally {
+        await pool.query(
+          `ALTER TABLE kernel_equivalence_grant_events
+             ENABLE TRIGGER trg_kernel_equivalence_grant_event_insert_guard`,
+        );
+      }
+      const runtimeAuthority = durableGrantAuthority(randomUUID());
+      await expect(runtimeAuthority.resolveActiveGrant({
+        grant_id: grantId,
+        grant_sha256: grantSha256,
+        cell_id: CELL_ID,
+      })).resolves.toMatchObject({ active: true });
+      const coordinator = createPostgresKernelEquivalenceCoordinator({
+        pool,
+        grantIssuer: protectedIssuer(),
+        grantExecutionAuthority: durableGrantAuthority(randomUUID()),
+        plan,
+        socketPath: '/var/run/cecelia/kernel-equivalence.sock',
+        brainVersion: '1.268.28',
+        engineVersion: '19.7.1',
+        grantTtlSeconds: 60,
+        randomUUID,
+        now: Date.now,
+      });
+
+      await expect(coordinator.reconcileStartup()).resolves.toMatchObject({
+        inspected: expect.any(Number),
+      });
+      const durable = await pool.query(
+        `SELECT events.state, events.grant_ref,
+                fences.execution_active,
+                revocations.execution_disposition
+           FROM kernel_equivalence_production_execution_events events
+           JOIN kernel_equivalence_production_execution_fences fences
+             ON fences.case_id = events.case_id
+           JOIN kernel_equivalence_grant_revocations revocations
+             ON revocations.grant_id = $2::uuid
+          WHERE events.case_id = $1::uuid
+          ORDER BY events.generation DESC
+          LIMIT 1`,
+        [caseId, grantId],
+      );
+      expect(durable.rows[0]).toEqual({
+        state: controllerState === 'reconciling'
+          ? 'blocked'
+          : 'settlement_unknown',
+        grant_ref: controllerState === 'reconciling'
+          ? `kernel-equivalence-grant:${grantId}`
+          : null,
+        execution_active: false,
+        execution_disposition: 'safe_no_effect',
+      });
+      await expect(runtimeAuthority.resolveActiveGrant({
+        grant_id: grantId,
+        grant_sha256: grantSha256,
+        cell_id: CELL_ID,
+      })).rejects.toBeDefined();
+    },
+  );
+
   it('revokes a published grant before restart settlement and rejects later actual seams', async () => {
+    const controllerLease = await insertClaim({
+      caseId: RESTART_GRANT_CASE,
+      eventId: '37373737-3737-4737-8737-373737373737',
+      leaseSql: "clock_timestamp() + interval '250 milliseconds'",
+    });
     const { grant, grantSha256 } = await registerFixtureGrant({
       caseId: RESTART_GRANT_CASE,
       grantId: RESTART_GRANT_ID,
@@ -660,11 +989,6 @@ describe('production controller restart fencing on real PostgreSQL', () => {
       grant_sha256: grantSha256,
       cell_id: CELL_ID,
     })).resolves.toMatchObject({ active: true });
-    const controllerLease = await insertClaim({
-      caseId: RESTART_GRANT_CASE,
-      eventId: '37373737-3737-4737-8737-373737373737',
-      leaseSql: "clock_timestamp() + interval '250 milliseconds'",
-    });
     await pool.query(
       `INSERT INTO kernel_equivalence_production_execution_events
          (event_id, case_id, generation, controller_instance_id, state,
@@ -738,6 +1062,11 @@ describe('production controller restart fencing on real PostgreSQL', () => {
   });
 
   it('retains effect-possible restart revocation as unknown and fences later actual seams', async () => {
+    const controllerLease = await insertClaim({
+      caseId: RESTART_EFFECT_CASE,
+      eventId: '41414141-4141-4141-8141-414141414141',
+      leaseSql: "clock_timestamp() + interval '1 second'",
+    });
     const { grant, grantSha256 } = await registerFixtureGrant({
       caseId: RESTART_EFFECT_CASE,
       grantId: RESTART_EFFECT_GRANT_ID,
@@ -745,11 +1074,6 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     const runtimeAuthority = durableGrantAuthority(
       '3f3f3f3f-3f3f-4f3f-8f3f-3f3f3f3f3f3f',
     );
-    const controllerLease = await insertClaim({
-      caseId: RESTART_EFFECT_CASE,
-      eventId: '41414141-4141-4141-8141-414141414141',
-      leaseSql: "clock_timestamp() + interval '1 second'",
-    });
     await pool.query(
       `INSERT INTO kernel_equivalence_production_execution_events
          (event_id, case_id, generation, controller_instance_id, state,
@@ -847,6 +1171,11 @@ describe('production controller restart fencing on real PostgreSQL', () => {
         receiptId,
         sessionId: `orphan-published-${disposition}`,
       });
+      const controllerLease = await insertClaim({
+        caseId,
+        eventId: randomUUID(),
+        leaseSql: "clock_timestamp() + interval '250 milliseconds'",
+      });
       const { grant, grantSha256 } = await registerFixtureGrant({
         caseId,
         grantId,
@@ -864,11 +1193,6 @@ describe('production controller restart fencing on real PostgreSQL', () => {
           invoke: async () => {},
         });
       }
-      const controllerLease = await insertClaim({
-        caseId,
-        eventId: randomUUID(),
-        leaseSql: "clock_timestamp() + interval '250 milliseconds'",
-      });
       await waitForDatabaseTimeAfter(controllerLease);
       const coordinator = createPostgresKernelEquivalenceCoordinator({
         pool,
@@ -951,14 +1275,14 @@ describe('production controller restart fencing on real PostgreSQL', () => {
          SELECT expires_at FROM deadline`,
         [caseId],
       );
-      const { grant, grantSha256 } = await registerFixtureGrant({
-        caseId,
-        grantId,
-      });
       const controllerLease = await insertClaim({
         caseId,
         eventId: randomUUID(),
         leaseSql: "clock_timestamp() + interval '700 milliseconds'",
+      });
+      const { grant, grantSha256 } = await registerFixtureGrant({
+        caseId,
+        grantId,
       });
       if (controllerState === 'grant_issued') {
         await pool.query(
@@ -1040,14 +1364,14 @@ describe('production controller restart fencing on real PostgreSQL', () => {
         receiptId,
         sessionId: `same-controller-${disposition}`,
       });
-      const { grant, grantSha256 } = await registerFixtureGrant({
-        caseId,
-        grantId,
-      });
       const controllerLease = await insertClaim({
         caseId,
         eventId: randomUUID(),
         leaseSql: "clock_timestamp() + interval '1 minute'",
+      });
+      const { grant, grantSha256 } = await registerFixtureGrant({
+        caseId,
+        grantId,
       });
       await pool.query(
         `INSERT INTO kernel_equivalence_production_execution_events
@@ -1121,14 +1445,14 @@ describe('production controller restart fencing on real PostgreSQL', () => {
       receiptId,
       sessionId: 'two-step-takeover-tombstone',
     });
-    const { grant, grantSha256 } = await registerFixtureGrant({
-      caseId,
-      grantId,
-    });
     const controllerLease = await insertClaim({
       caseId,
       eventId: randomUUID(),
       leaseSql: "clock_timestamp() + interval '250 milliseconds'",
+    });
+    const { grant, grantSha256 } = await registerFixtureGrant({
+      caseId,
+      grantId,
     });
     await pool.query(
       `INSERT INTO kernel_equivalence_production_execution_events
@@ -2182,6 +2506,33 @@ describe('production controller restart fencing on real PostgreSQL', () => {
   });
 
   it('retakes an expired reconciliation lease after a restart crash', async () => {
+    await insertAuthority({
+      attemptId: EXPIRED_ATTEMPT,
+      caseId: EXPIRED_CASE,
+      receiptId: EXPIRED_RECEIPT,
+      sessionId: 'expired-session',
+    });
+    const expiredClaimLease = await insertClaim({
+      caseId: EXPIRED_CASE,
+      eventId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      leaseSql: "clock_timestamp() + interval '250 milliseconds'",
+    });
+    await waitForDatabaseTimeAfter(expiredClaimLease);
+    const recovery = await pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          late_effect_risk, occurred_at, controller_lease_expires_at)
+       VALUES
+         ('bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc', $1::uuid, 2,
+          $2::uuid, 'reconciling', false,
+          clock_timestamp(),
+          clock_timestamp() + interval '250 milliseconds')
+       RETURNING controller_lease_expires_at`,
+      [EXPIRED_CASE, CRASHED_RECOVERY_CONTROLLER],
+    );
+    await waitForDatabaseTimeAfter(
+      recovery.rows[0].controller_lease_expires_at,
+    );
     const ids = [
       NEW_CONTROLLER,
       'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
@@ -2847,6 +3198,11 @@ describe('production controller restart fencing on real PostgreSQL', () => {
       receiptId,
       sessionId: 'multiple-published-settlement',
     });
+    const controllerLease = await insertClaim({
+      caseId,
+      eventId: randomUUID(),
+      leaseSql: "clock_timestamp() + interval '1 minute'",
+    });
     const first = await registerFixtureGrant({
       caseId,
       grantId: grantA,
@@ -2854,11 +3210,6 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     await registerFixtureGrant({
       caseId,
       grantId: grantB,
-    });
-    const controllerLease = await insertClaim({
-      caseId,
-      eventId: randomUUID(),
-      leaseSql: "clock_timestamp() + interval '1 minute'",
     });
     await pool.query(
       `INSERT INTO kernel_equivalence_production_execution_events

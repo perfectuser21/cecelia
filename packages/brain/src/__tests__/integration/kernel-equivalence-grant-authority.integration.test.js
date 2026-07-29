@@ -207,6 +207,11 @@ beforeAll(async () => {
       case_id UUID PRIMARY KEY
         REFERENCES kernel_equivalence_production_cases(case_id)
     );
+    CREATE TABLE kernel_equivalence_production_execution_fences (
+      case_id UUID PRIMARY KEY
+        REFERENCES kernel_equivalence_production_case_bindings(case_id),
+      execution_active BOOLEAN NOT NULL
+    );
     INSERT INTO kernel_equivalence_production_cases
       (case_id, cell_id, run_id, attempt_id, resource_type, resource_id,
        resource_ref, expires_at)
@@ -221,6 +226,9 @@ beforeAll(async () => {
        'prepared', clock_timestamp() + interval '3 minutes');
     INSERT INTO kernel_equivalence_production_case_bindings (case_id)
     VALUES ('${CASE_ID}');
+    INSERT INTO kernel_equivalence_production_execution_fences
+      (case_id, execution_active)
+    VALUES ('${CASE_ID}', true);
   `);
   await pool.query(integrationMigration);
   await pool.query(integrationMigration);
@@ -321,6 +329,34 @@ describe('migration 382 grant authority on real PostgreSQL', () => {
       { generation: '2', state: 'execution_intent', actor_kind: 'runtime' },
       { generation: '3', state: 'aborted_before_effect', actor_kind: 'runtime' },
     ]);
+  });
+
+  it('rejects publication after the controller fence is terminal', async () => {
+    const grantId = await registerGrant();
+    await pool.query(
+      `UPDATE kernel_equivalence_production_execution_fences
+          SET execution_active = false
+        WHERE case_id = $1::uuid`,
+      [CASE_ID],
+    );
+    try {
+      await expect(appendEvent({ grantId, state: 'published' }))
+        .rejects.toThrow(/execution fence.*inactive|publication.*fence/i);
+      const events = await pool.query(
+        `SELECT state
+           FROM kernel_equivalence_grant_events
+          WHERE grant_id = $1::uuid`,
+        [grantId],
+      );
+      expect(events.rows).toHaveLength(0);
+    } finally {
+      await pool.query(
+        `UPDATE kernel_equivalence_production_execution_fences
+            SET execution_active = true
+          WHERE case_id = $1::uuid`,
+        [CASE_ID],
+      );
+    }
   });
 
   it('uses DB time, not details evidence, for active publication', async () => {

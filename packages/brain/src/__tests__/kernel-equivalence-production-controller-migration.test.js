@@ -164,6 +164,9 @@ describe('migration 381 Kernel equivalence production controller', () => {
       /NEW\.state = 'succeeded'[\s\S]*NEW\.grant_ref IS NULL/i,
     );
     expect(sql).toMatch(
+      /NEW\.generation <> previous_generation \+ 1[\s\S]*SELECT execution_active[\s\S]*FOR UPDATE;[\s\S]*SELECT grant_ref[\s\S]*IF NEW\.state IN \('blocked', 'settlement_unknown'\)[\s\S]*kernel_equivalence_grant_authorities/i,
+    );
+    expect(sql).toMatch(
       /CREATE TRIGGER trg_kernel_equivalence_execution_events_append_only/i,
     );
     expect(sql).toMatch(

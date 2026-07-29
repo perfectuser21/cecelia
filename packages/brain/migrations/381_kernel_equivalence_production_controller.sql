@@ -412,6 +412,19 @@ BEGIN
       'kernel equivalence execution event generation mismatch';
   END IF;
 
+  SELECT execution_active
+    INTO fence_active
+    FROM kernel_equivalence_production_execution_fences
+   WHERE case_id = NEW.case_id
+   FOR UPDATE;
+  IF NOT FOUND
+     OR fence_active IS DISTINCT FROM (
+       previous_state <> 'settlement_unknown'
+     ) THEN
+    RAISE EXCEPTION
+      'kernel equivalence production execution fence mismatch';
+  END IF;
+
   SELECT grant_ref
     INTO lineage_grant_ref
     FROM kernel_equivalence_production_execution_events
@@ -493,7 +506,7 @@ BEGIN
          lineage_grant_ref IS NULL
          AND NEW.grant_ref IS NOT NULL
          AND NOT (
-           previous_state = 'claimed'
+           previous_state IN ('claimed', 'reconciling')
            AND exact_published_grant
          )
        )
@@ -652,19 +665,6 @@ BEGIN
       RAISE EXCEPTION
         'kernel equivalence production execution grant authority unavailable';
     END IF;
-  END IF;
-
-  SELECT execution_active
-    INTO fence_active
-    FROM kernel_equivalence_production_execution_fences
-   WHERE case_id = NEW.case_id
-   FOR UPDATE;
-  IF NOT FOUND
-     OR fence_active IS DISTINCT FROM (
-       previous_state <> 'settlement_unknown'
-     ) THEN
-    RAISE EXCEPTION
-      'kernel equivalence production execution fence mismatch';
   END IF;
 
   IF NEW.state = 'succeeded' AND NOT EXISTS (

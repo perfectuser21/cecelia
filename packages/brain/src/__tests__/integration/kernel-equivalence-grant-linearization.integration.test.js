@@ -740,6 +740,22 @@ async function createProductionCase() {
 
 async function issueGrant() {
   const productionCase = await createProductionCase();
+  await pool.query(
+    `INSERT INTO kernel_equivalence_production_execution_events
+       (event_id, case_id, generation, controller_instance_id, state,
+        late_effect_risk, controller_lease_expires_at)
+     VALUES
+       ($1::uuid, $2::uuid, 1, $3::uuid, 'claimed', false,
+        LEAST(
+          clock_timestamp() + interval '2 minutes',
+          (
+            SELECT lease_expires_at
+              FROM kernel_equivalence_production_case_leases
+             WHERE case_id = $2::uuid
+          )
+        ))`,
+    [randomUUID(), productionCase.caseId, CONTROLLER_ID],
+  );
   const published = await grantFileIssuer.issueProtectedGrant({
     case_id: productionCase.caseId,
     cell: CELL,

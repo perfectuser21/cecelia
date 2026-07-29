@@ -1458,13 +1458,11 @@ export function createPostgresKernelEquivalenceCoordinator({
           fail('production_controller_reconcile_readback_invalid');
         }
         const orphanedPublication = (
-          row.state === 'claimed'
-          && row.grant_ref == null
+          row.grant_ref == null
           && publishedGrantCount > 0
         );
         if (
-          row.state === 'claimed'
-          && row.grant_ref == null
+          row.grant_ref == null
           && publishedGrantCount > 1
         ) {
           fail('production_controller_reconcile_grant_unsafe');
@@ -1542,6 +1540,7 @@ export function createPostgresKernelEquivalenceCoordinator({
         );
         const legacyUnknownWithoutAuthority = (
           row.state === 'settlement_unknown'
+          && !orphanedPublication
           && row.grant_id == null
         );
         if (
@@ -1570,6 +1569,7 @@ export function createPostgresKernelEquivalenceCoordinator({
             row.state !== 'settlement_unknown'
             && row.controller_instance_id === controllerInstanceId
             && row.lease_expired !== true
+            && !orphanedPublication
           ) {
             retainedUnknown += 1;
             continue;

@@ -191,6 +191,12 @@ describe('migration 382 Kernel equivalence grant authority', () => {
       /IF FOUND THEN[\s\S]*existing_revocation\.reason IS DISTINCT FROM p_reason[\s\S]*RETURN QUERY[\s\S]*END IF;[\s\S]*computed_disposition :=/i,
     );
     expect(sql).toMatch(
+      /IF p_state = 'published' THEN[\s\S]*SELECT fences\.execution_active[\s\S]*FOR UPDATE;[\s\S]*publication execution fence is inactive[\s\S]*SELECT authorities\.grant_digest[\s\S]*FOR UPDATE;/i,
+    );
+    expect(sql).toMatch(
+      /IF NEW\.state = 'published' THEN[\s\S]*SELECT fences\.execution_active[\s\S]*FOR UPDATE;[\s\S]*publication execution fence is inactive[\s\S]*SELECT authorities\.grant_digest[\s\S]*FOR UPDATE;/i,
+    );
+    expect(sql).toMatch(
       /VALUES \('382', 'kernel_equivalence_grant_authority'\)/i,
     );
   });

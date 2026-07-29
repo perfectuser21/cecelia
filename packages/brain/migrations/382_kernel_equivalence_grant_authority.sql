@@ -289,6 +289,8 @@ CREATE OR REPLACE FUNCTION kernel_equivalence_grant_event_insert_guard()
 RETURNS trigger AS $$
 DECLARE
   authority_digest TEXT;
+  authority_case_id UUID;
+  execution_fence_active BOOLEAN;
   previous_generation BIGINT;
   previous_state TEXT;
   expected_generation BIGINT;
@@ -308,6 +310,28 @@ BEGIN
   THEN
     RAISE EXCEPTION
       'kernel equivalence grant event input contract mismatch';
+  END IF;
+
+  IF NEW.state = 'published' THEN
+    SELECT authorities.case_id, authorities.grant_digest
+      INTO authority_case_id, authority_digest
+      FROM kernel_equivalence_grant_authorities authorities
+     WHERE authorities.grant_id = NEW.grant_id;
+    IF NOT FOUND
+       OR authority_digest IS DISTINCT FROM NEW.grant_digest
+    THEN
+      RAISE EXCEPTION
+        'kernel equivalence grant event digest contract mismatch';
+    END IF;
+    SELECT fences.execution_active
+      INTO execution_fence_active
+      FROM kernel_equivalence_production_execution_fences fences
+     WHERE fences.case_id = authority_case_id
+     FOR UPDATE;
+    IF NOT FOUND OR execution_fence_active IS DISTINCT FROM true THEN
+      RAISE EXCEPTION
+        'kernel equivalence grant publication execution fence is inactive';
+    END IF;
   END IF;
 
   SELECT authorities.grant_digest
@@ -710,6 +734,8 @@ RETURNS TABLE (
 ) AS $$
 DECLARE
   authority_digest TEXT;
+  authority_case_id UUID;
+  execution_fence_active BOOLEAN;
   previous_generation BIGINT;
   previous_state TEXT;
   next_generation BIGINT;
@@ -730,6 +756,26 @@ BEGIN
   THEN
     RAISE EXCEPTION
       'kernel equivalence grant event input is invalid';
+  END IF;
+
+  IF p_state = 'published' THEN
+    SELECT authorities.case_id, authorities.grant_digest
+      INTO authority_case_id, authority_digest
+      FROM kernel_equivalence_grant_authorities authorities
+     WHERE authorities.grant_id = p_grant_id;
+    IF NOT FOUND OR authority_digest IS DISTINCT FROM p_grant_sha256 THEN
+      RAISE EXCEPTION
+        'kernel equivalence grant event digest mismatch';
+    END IF;
+    SELECT fences.execution_active
+      INTO execution_fence_active
+      FROM kernel_equivalence_production_execution_fences fences
+     WHERE fences.case_id = authority_case_id
+     FOR UPDATE;
+    IF NOT FOUND OR execution_fence_active IS DISTINCT FROM true THEN
+      RAISE EXCEPTION
+        'kernel equivalence grant publication execution fence is inactive';
+    END IF;
   END IF;
 
   SELECT authorities.grant_digest

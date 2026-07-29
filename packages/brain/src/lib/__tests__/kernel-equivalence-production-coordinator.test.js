@@ -845,6 +845,111 @@ describe('production Kernel equivalence coordinator', () => {
     },
   );
 
+  it.each([
+    ['reconciling', 'blocked', 2, true],
+    ['settlement_unknown', null, 2, false],
+  ])(
+    'revokes a unique late publication behind null-ref %s',
+    async (state, expectedAppendState, generation, leaseExpired) => {
+      const statements = [];
+      const pool = {
+        query: async (text, values = []) => {
+          statements.push({ text, values });
+          if (statements.length === 1) {
+            return {
+              rows: [orphanPublishedReconcileRow({
+                generation: String(generation),
+                state,
+                lease_expired: leaseExpired,
+              })],
+              rowCount: 1,
+            };
+          }
+          return {
+            rows: [{ generation: values[2], state: values[4] }],
+            rowCount: 1,
+          };
+        },
+      };
+      const revokeGrant = vi.fn(async () => ({
+        grant_ref: GRANT_REF,
+        revoked: true,
+        safe_no_effect: true,
+        effect_possible: false,
+        disposition: 'safe_no_effect',
+      }));
+      const ids = [
+        '11111111-1111-4111-8111-111111111111',
+        '33333333-3333-4333-8333-333333333333',
+        '44444444-4444-4444-8444-444444444444',
+      ];
+      const value = coordinator(
+        pool,
+        grantIssuer(),
+        () => ids.shift(),
+        60,
+        durableGrantAuthority(revokeGrant),
+      );
+
+      await expect(value.reconcileStartup()).resolves.toMatchObject({
+        inspected: 1,
+      });
+      expect(revokeGrant).toHaveBeenCalledOnce();
+      const inserts = statements.filter(({ text }) => (
+        /INSERT INTO kernel_equivalence_production_execution_events/i
+          .test(text)
+      ));
+      if (expectedAppendState == null) {
+        expect(inserts).toHaveLength(0);
+      } else {
+        expect(inserts.map(({ values }) => values[4])).toEqual([
+          expectedAppendState,
+        ]);
+        expect(inserts[0].values[5]).toBe(GRANT_REF);
+      }
+    },
+  );
+
+  it('fails startup closed when a null-ref late publication cannot be revoked', async () => {
+    const statements = [];
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        return statements.length === 1
+          ? {
+              rows: [orphanPublishedReconcileRow({
+                generation: '2',
+                state: 'settlement_unknown',
+              })],
+              rowCount: 1,
+            }
+          : {
+              rows: [{ generation: values[2], state: values[4] }],
+              rowCount: 1,
+            };
+      },
+    };
+    const revokeGrant = vi.fn(async () => {
+      throw new Error('revocation lock unavailable');
+    });
+    const value = coordinator(
+      pool,
+      grantIssuer(),
+      undefined,
+      60,
+      durableGrantAuthority(revokeGrant),
+    );
+
+    await expect(value.reconcileStartup()).rejects.toMatchObject({
+      code: 'production_controller_reconcile_grant_unsafe',
+    });
+    expect(revokeGrant).toHaveBeenCalledOnce();
+    expect(statements.filter(({ text }) => (
+      /INSERT INTO kernel_equivalence_production_execution_events/i
+        .test(text)
+    ))).toHaveLength(0);
+  });
+
   it('recovers a pre-publication claim with zero published candidates', async () => {
     const statements = [];
     const row = orphanPublishedReconcileRow({
