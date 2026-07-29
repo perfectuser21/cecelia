@@ -2,12 +2,14 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -17,6 +19,10 @@ import {
 } from '../kernel-equivalence-repository-policy.js';
 
 const fixtures = [];
+const REPOSITORY_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../../../',
+);
 
 function fixtureRoot() {
   const root = mkdtempSync(join(tmpdir(), 'kernel-repository-policy-'));
@@ -602,6 +608,29 @@ describe('kernel equivalence repository policy', () => {
     const root = fixtureRoot();
 
     expect(evaluateRepositoryPolicy(root)).toEqual({
+      repository_policy_valid: true,
+      duplicate_behavior_equivalence_contracts: [],
+      forbidden_behavior_ledger_tables: [],
+    });
+  });
+
+  it('returns the exact valid policy shape for the checked-in repository topology', () => {
+    const rootVitestConfig = readFileSync(
+      join(REPOSITORY_ROOT, 'vitest.config.js'),
+      'utf8',
+    );
+    const brainVitestConfig = readFileSync(
+      join(REPOSITORY_ROOT, 'packages/brain/vitest.config.js'),
+      'utf8',
+    );
+
+    expect(rootVitestConfig).toContain(
+      "'sprints/**/*.{test,spec}.?(c|m)[jt]s?(x)'",
+    );
+    expect(brainVitestConfig).not.toContain(
+      "'../../sprints/**/*.{test,spec}.?(c|m)[jt]s?(x)'",
+    );
+    expect(evaluateRepositoryPolicy(REPOSITORY_ROOT)).toEqual({
       repository_policy_valid: true,
       duplicate_behavior_equivalence_contracts: [],
       forbidden_behavior_ledger_tables: [],
