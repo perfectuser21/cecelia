@@ -22,7 +22,7 @@
 - Kernel 将 `provider_timeout` 归类为基础设施故障，保持 provider-neutral
   terminal schema；本版本不扩展 Phase 5。
 - Runner pin：
-  `sha256:26e18689fbff64400861f1378bc7bbbaba477096cf84f3efbde2337b10cf92cd`。
+  `sha256:73753d9bbdc6cf93cac4876d24bb3b397ec81c53f9ec1a9791159af852d7c388`。
 - 回退：节点 drain 后加载上一 Runner digest，并部署 Brain `1.267.126`。
 
 ## Brain 1.267.126 — Writable ephemeral Codex credential tmpfs

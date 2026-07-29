@@ -17,7 +17,7 @@ const CANONICAL_BASELINE = Object.freeze({
     'xian-mac-m4': 'http://100.71.151.105:5221/api/brain/health',
     'xian-mac-m1': 'http://100.71.151.105:5221/api/brain/health',
   }),
-  runner_image_digest: 'sha256:26e18689fbff64400861f1378bc7bbbaba477096cf84f3efbde2337b10cf92cd',
+  runner_image_digest: 'sha256:73753d9bbdc6cf93cac4876d24bb3b397ec81c53f9ec1a9791159af852d7c388',
   resources: Object.freeze({
     cpu_cores: 6,
     memory_gib: 8,
