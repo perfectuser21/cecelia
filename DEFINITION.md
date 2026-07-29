@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.123
+**Brain 版本**: 1.267.124
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.124 — Server-seeded Fleet mirror reuse
+
+- Fleet Worker 先验证 server-owned mirror 已包含精确的 `base_sha` 与
+  `expected_head_sha`；完整时跳过对 GitHub 的无条件 fetch。
+- 任一目标 commit 缺失时仍执行既有 fetch，并继续以精确 SHA fail closed。
+- 回退：部署 Brain `1.267.123`。
 
 ## Brain 1.267.123 — Unified Fleet Worker production transport wiring
 
