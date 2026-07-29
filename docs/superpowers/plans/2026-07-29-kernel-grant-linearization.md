@@ -782,7 +782,6 @@ git commit -m "test(kernel): prove grant revocation linearization"
 - Modify: `packages/brain/package.json`
 - Modify: `packages/brain/package-lock.json`
 - Modify: `package-lock.json`
-- Modify only if generated facts require it: `docs/kernel-equivalence/behavior-ledger.json`
 
 - [ ] **Step 1: Run all focused Kernel unit tests**
 
@@ -790,12 +789,13 @@ Run:
 
 ```bash
 cd packages/brain
-npx vitest run \
-  'src/lib/__tests__/kernel-equivalence-*.test.js' \
-  'src/__tests__/kernel-equivalence-*.test.js'
+rg --files src/lib/__tests__ src/__tests__ \
+  | rg '/kernel-equivalence-.*\.test\.js$' \
+  | rg -v '/integration/' \
+  | xargs npx vitest run
 ```
 
-Expected: all Kernel test files PASS; no new skip.
+Expected: all 30 Kernel unit/static test files PASS; no new skip.
 
 - [ ] **Step 2: Run all real PostgreSQL controller/authority tests**
 
@@ -803,25 +803,38 @@ Run:
 
 ```bash
 cd packages/brain
-npx vitest run \
+npx vitest run --config vitest.integration.config.js \
   src/__tests__/integration/kernel-equivalence-grant-authority.integration.test.js \
-  src/__tests__/integration/kernel-equivalence-production-controller.integration.test.js
+  src/__tests__/integration/kernel-equivalence-production-controller.integration.test.js \
+  src/__tests__/integration/kernel-equivalence-grant-linearization.integration.test.js
 ```
 
 Expected: all tests PASS, including lock ordering, crash, expiry, and barrier cases.
 
 - [ ] **Step 3: Run repository fact and version checks**
 
-Discover the authoritative commands from package scripts and existing CI, then run the exact checked-in commands for:
-
-```text
-Kernel equivalence facts
-behavior-ledger schema/checker
-migration uniqueness/order
-Brain definition/version consistency
+```bash
+node scripts/facts-check.mjs
+bash scripts/check-version-sync.sh
+node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report
+node scripts/ci/run-kernel-equivalence-drill.mjs --check --format=json
+node .github/workflows/scripts/lint-migration-unique-version.cjs
+git diff --check
 ```
 
-Expected: every command exits 0. The behavior ledger remains honest: `execution_ready=false`, `proven=0`, `missing=99` until live A2/99-cell receipts exist.
+Expected: every command above exits 0. The sole behavior ledger remains
+`regression-contract.yaml`, and its generated report remains honest:
+`execution_ready=false`, `proven=0`, `missing=99` until live A2/99-cell
+receipts exist.
+
+Do not substitute the release gate for the A1 check:
+
+```bash
+node scripts/ci/run-kernel-equivalence-drill.mjs --gate --format=json
+```
+
+Expected before A2/99 closure: exit 1 with `execution_ready=false`. A green
+release gate is not an A1 completion criterion.
 
 - [ ] **Step 4: Update versions and definitions**
 
@@ -850,7 +863,8 @@ Review every item in sections 2, 4, 5, 6, 7, and 8 of `docs/superpowers/specs/20
 ```bash
 git add .brain-versions DEFINITION.md package-lock.json \
   packages/brain/DEFINITION.md packages/brain/package.json \
-  packages/brain/package-lock.json docs/kernel-equivalence/behavior-ledger.json
+  packages/brain/package-lock.json \
+  docs/superpowers/plans/2026-07-29-kernel-grant-linearization.md
 git commit -m "docs(kernel): record durable grant authority"
 ```
 

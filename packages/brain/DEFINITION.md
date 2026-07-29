@@ -1,6 +1,26 @@
 # Brain 模块定义
 
-**版本**: 1.268.29
+**版本**: 1.268.30
+
+## Kernel controller lease and grant revocation closure
+
+- controller 从同一数据库 statement 读取 production lease/case 的有效上界；
+  claim、grant-issued、executing、reconciling 与带 expiry 的 terminal evidence
+  均不能越过该上界。
+- protected grant 文件只负责受保护 transport；durable revoke 后 best-effort
+  删除 exact transport，maintenance 仅删除完整重验后的 expired inode；
+  inode/owner/mode/content 校验和删除结果都不是 revocation authority。
+- Migration 382 的 immutable anchor、execution intent/event 与 revocation
+  tombstone 通过 shared/exclusive PostgreSQL advisory lock 线性化 actual seam
+  和 revoke；只有 exact `safe_no_effect` tombstone 才允许 `blocked`。
+- `effect_possible` tombstone 结算为带 late-effect risk 的
+  `settlement_unknown`；没有 durable tombstone 的撤销不确定不得释放 fence，
+  listener/UDS 保持 fail-closed。resolver 对最新 `succeeded`、`blocked` 或
+  `settlement_unknown` 的 controller lineage 一律拒绝旧 grant 再激活。
+- production TTL 最小值提高到 2 秒，拒绝名义合法但必然无法通过重验证的配置。
+- generation-1 并发 claim 即使 winner 已推进后续 generation，也由唯一键稳定
+  仲裁为一条成功、一条 `already_claimed`，不会退化为通用 503。
+- 本地候选未新增 A2 ports，未 push、未 merge、未 deploy，live proof 保持 0/99。
 
 ## Kernel controller authority review closure
 

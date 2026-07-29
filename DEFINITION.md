@@ -6,11 +6,34 @@
 
 
 
-**Brain 版本**: 1.268.29
+**Brain 版本**: 1.268.30
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.268.30 — Kernel controller lease and grant revocation closure
+
+- production controller 的 claim、grant、executing 与 reconciliation lease
+  统一受数据库内 `LEAST(case expiry, production lease expiry)` 上界约束，并在
+  grant 签发前后与 executing 前重读 Attempt、receipt、binding 和 lease 权威。
+- protected grant 文件仅是签名、fsync 的 transport artifact；文件删除与目录
+  fsync 只是非权威 cleanup，不能建立或抹除安全结论。durable revoke 后会
+  best-effort 删除 exact transport，maintenance 也只删除完整重验后的 expired
+  inode；删除失败不改变数据库结论。
+- Migration 382 以 immutable grant anchor、execution intent/event 与 revocation
+  tombstone 建立数据库权威；actual seam 的 shared advisory lock 与 revoke 的
+  exclusive advisory lock 给出唯一线性化顺序。
+- grant 签发后的权威失败只有在 exact PostgreSQL tombstone 证明
+  `safe_no_effect` 后才允许写 `blocked`；`effect_possible` 写
+  `settlement_unknown`，而没有 durable tombstone 的撤销不确定保持 fence 与
+  UDS fail-closed。controller 的最新状态为 `succeeded`、`blocked` 或
+  `settlement_unknown` 时，resolver 不得重新激活旧 grant。
+- production manifest 与 controller 将最小 TTL 提高到 2 秒，拒绝 1 秒配置
+  或有效 authority 不足 2 秒的执行窗口；generation-1 并发 claim 由数据库
+  唯一键确定仲裁为一条成功、一条 409。
+- 本版本仍是未发布的本地集成候选；未 push、未 merge、未 deploy，且 A2 real
+  resource ports 与 99 个 live equivalence drill 未完成前保持 `0/99 proven`。
 
 ## Brain 1.268.29 — Kernel controller authority review closure
 
