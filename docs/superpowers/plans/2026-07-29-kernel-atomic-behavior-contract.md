@@ -1303,6 +1303,22 @@ atom live effect proven
 A2-0 初始每个 cell 的 configured/live arrays 都为空，missing 等于 expected。现有 family
 report 字段保留，避免消费者静默断裂；legacy verified receipt 只能进入 legacy 字段。
 
+schema `1.0.0` report 必须保持 `report_version: 1.0.0` 的 exact legacy shape，不能混入
+1.1-only additive keys。测试锁定：
+
+```text
+top-level:
+  report_version, contract_version, evaluated_at, valid, summary, axes,
+  provider_matrix, proven_to_fire_commands, gaps, behaviors
+
+provider_matrix:
+  required_cells, receipted_cells, missing_cells, cells
+```
+
+`schema_valid`、`proof_complete`、`atomic_cutover_ready`、`atomic_summary`、
+`atomic_details`、`cell_atomic_coverage` 以及 provider matrix 的 atomic/verified 扩展
+只允许出现在 `report_version: 1.1.0`。
+
 报告还必须为每个 atom 输出：
 
 ```js
