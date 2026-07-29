@@ -49,7 +49,27 @@ jobs:
             echo "compose=true" >> $GITHUB_OUTPUT
             exit 0
           fi
+          # 改动 A：push 事件（含 push 到 main）直接全量，不依赖恒空的 diff
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "brain=true"     >> $GITHUB_OUTPUT
+            echo "engine=true"   >> $GITHUB_OUTPUT
+            echo "workspace=true" >> $GITHUB_OUTPUT
+            echo "compose=true"  >> $GITHUB_OUTPUT
+            echo "dod=true"      >> $GITHUB_OUTPUT
+            echo "quality=true"  >> $GITHUB_OUTPUT
+            exit 0
+          fi
           CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
+          # 改动 B：PR 改了 workflow 文件时全量跑，让本修复 PR 自己触发全量测试
+          if echo "$CHANGED" | grep -qE '^\.github/workflows/'; then
+            echo "brain=true"     >> $GITHUB_OUTPUT
+            echo "engine=true"   >> $GITHUB_OUTPUT
+            echo "workspace=true" >> $GITHUB_OUTPUT
+            echo "compose=true"  >> $GITHUB_OUTPUT
+            echo "dod=true"      >> $GITHUB_OUTPUT
+            echo "quality=true"  >> $GITHUB_OUTPUT
+            exit 0
+          fi
           # brain=true 触发 brain-unit 等。sprints/ 的 test 文件不再触发（07-10 断源）：
           # 守活功能测试已升格进 src/__tests__/，sprints/** 已从 vitest include 移除。
           echo "brain=$(echo "$CHANGED" | grep -qE '^packages/brain/' && echo true || echo false)" >> $GITHUB_OUTPUT
@@ -365,6 +385,26 @@ jobs:
             [[ -f "$s" ]] || continue
             echo "::group::$(basename "$s")"
             bash "$s" || exit 1
+            echo "::endgroup::"
+          done
+
+  # 改动 C：brain-tests-shell — 执行 fleet-worker shell 回归测试（失明点② 修复）
+  brain-tests-shell:
+    name: Brain Shell Tests (fleet-worker 套)
+    needs: changes
+    if: needs.changes.outputs.brain == 'true' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run fleet-worker shell tests
+        run: |
+          for t in packages/brain/scripts/fleet-worker/*.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
             echo "::endgroup::"
           done
 
@@ -1776,7 +1816,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1832,6 +1872,7 @@ jobs:
           check "quality-tests"         "${{ needs.quality-tests.result }}"
           check "dispatch-worker-test"   "${{ needs.dispatch-worker-test.result }}"
           check "brain-version-bump-gate" "${{ needs.brain-version-bump-gate.result }}"
+          check "brain-tests-shell"      "${{ needs.brain-tests-shell.result }}"
 
           if [ "$FAILED" = "true" ]; then
             echo ""; echo "❌ CI FAILED"; exit 1

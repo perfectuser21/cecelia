@@ -67,10 +67,10 @@ manual:bash bash packages/engine/tests/integrity/ci-blindspot-contract.test.sh
 
 ## DoD 完成定义
 
-- [ ] contract-draft.md 已写入（本文件同目录）
-- [ ] contract-dod.md 已写入（本文件）
-- [ ] tests/ 目录骨架已创建
-- [ ] packages/engine/tests/integrity/ci-blindspot-contract.test.sh 已创建（三条断言）
-- [ ] 已 push 到分支 cp-07291011-ws-241578ce
-- [ ] Commit-1（红）已在 Commit-2（绿）之前
+- [x] contract-draft.md 已写入（本文件同目录）
+- [x] contract-dod.md 已写入（本文件）
+- [x] tests/ 目录骨架已创建
+- [x] packages/engine/tests/integrity/ci-blindspot-contract.test.sh 已创建（三条断言）
+- [x] 已 push 到分支 cp-07291011-ws-241578ce
+- [x] Commit-1（红）已在 Commit-2（绿）之前
 - [ ] CI 全绿（ci-passed == success）
