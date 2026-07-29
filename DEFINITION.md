@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.122
+**Brain 版本**: 1.267.123
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.123 — Unified Fleet Worker production transport wiring
+
+- 生产 Compose 补齐 `KERNEL_FLEET_REMOTE_ENABLED`、共享 Worker bearer
+  token 与 Tailscale callback base URL，使 US M4、Xian M4、Xian M1
+  都进入 Phase 4B 的同一 authenticated Worker Attempt API。
+- 缺失或过短 token 继续 fail closed；不在 Xian 保存长期 Codex 凭据，
+  不扩展 Phase 4C/4D，也不执行 Phase 5 真实业务 Canary。
+- Brain 回退目标：`1.267.122`。
 
 ## Brain 1.267.122 — Fleet Worker shared TMPDIR hotfix
 
