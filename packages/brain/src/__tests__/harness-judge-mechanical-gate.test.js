@@ -139,6 +139,89 @@ describe('runMechanicalGate（刀B：DeepSeek 前纯代码闸）', () => {
   });
 });
 
+describe('runMechanicalGate — GP-Anchor 一致性核查（刀4，file-existence gated）', () => {
+  const PRODUCT_MAP_JSON = JSON.stringify({
+    golden_paths: [
+      { id: 'customer_smart_acquisition', line_id: 'line02', status: 'active' },
+      { id: 'gp_anchor_enforcement', line_id: 'line00', status: 'proposed' },
+    ],
+  });
+
+  function makeAnchorDeps({ productMap = PRODUCT_MAP_JSON, contractDraft = null, behaviorCount = 3 } = {}) {
+    return {
+      listTestFilesFn: vi.fn(async () => ['a.test.ts']),
+      readFileFn: vi.fn(async (p) => {
+        if (String(p).includes('product-map/generated/product-map.json')) {
+          if (productMap === null) throw new Error('ENOENT');
+          return productMap;
+        }
+        if (String(p).includes('contract-draft')) {
+          if (contractDraft === null) throw new Error('ENOENT');
+          return contractDraft;
+        }
+        if (String(p).includes('contract-dod')) return Array(behaviorCount).fill('- [ ] [BEHAVIOR] x').join('\n');
+        throw new Error('ENOENT');
+      }),
+      dbPool: { query: vi.fn(async (sql) => {
+        if (/FROM tasks/.test(sql)) return { rows: [{ target_environment: 'local_api' }] };
+        if (/COUNT.*FROM decisions/is.test(sql)) return { rows: [{ count: 2 }] };
+        return { rows: [] };
+      }) },
+    };
+  }
+
+  it('product-map.json 不存在（非zenithjoy项目）→ 完全跳过，不新增任何 gp_anchor 相关 FAIL', async () => {
+    const r = await runMechanicalGate(goodCtx(), makeAnchorDeps({ productMap: null, contractDraft: null }));
+    expect(r.pass).toBe(true);
+    expect(r.reasons.join()).not.toMatch(/gp_anchor/);
+  });
+
+  it('product-map.json 存在但 contract-draft.md 既无 GP-Anchor 段也无 skipped 声明 → FAIL', async () => {
+    const deps = makeAnchorDeps({ contractDraft: '## Golden Path\n无关内容，没有GP-Anchor段。' });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join()).toMatch(/gp_anchor_missing/);
+  });
+
+  it('contract 声明 gp-anchor: skipped → 不 FAIL', async () => {
+    const deps = makeAnchorDeps({ contractDraft: 'gp-anchor: skipped (product-map.json not found)' });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(true);
+  });
+
+  it('contract 声明推进 GP-Anchor 且 id 在 product-map.json 里真实存在 → 不 FAIL', async () => {
+    const deps = makeAnchorDeps({ contractDraft: '## GP-Anchor\n\nGP-Anchor: line02/customer_smart_acquisition#step7' });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(true);
+  });
+
+  it('contract 声明推进 GP-Anchor 但 id 在 product-map.json 里查无 → FAIL', async () => {
+    const deps = makeAnchorDeps({ contractDraft: '## GP-Anchor\n\nGP-Anchor: line99/nonexistent_gp#step1' });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join()).toMatch(/gp_anchor_id_notfound/);
+  });
+
+  it('contract 声明 keep-green 且 id 存在 → 不 FAIL（不查 diff，只查存在性）', async () => {
+    const deps = makeAnchorDeps({ contractDraft: '## GP-Anchor\n\nGP-Anchor: line00/gp_anchor_enforcement keep-green' });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(true);
+  });
+
+  it('contract 声明 none(docs) → 不 FAIL', async () => {
+    const deps = makeAnchorDeps({ contractDraft: '## GP-Anchor\n\nGP-Anchor: none(docs)' });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(true);
+  });
+
+  it('contract 声明格式不合法（既非三形态之一）→ FAIL', async () => {
+    const deps = makeAnchorDeps({ contractDraft: '## GP-Anchor\n\nGP-Anchor: 这不是合法格式' });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join()).toMatch(/gp_anchor_format_invalid/);
+  });
+});
+
 describe('runJudgeGate 接线：机械闸 FAIL → 不调 DeepSeek', () => {
   it('contract_tests=0 时 judgeFn 零调用且 verdict=FAIL judged=true', async () => {
     const judgeFn = vi.fn();

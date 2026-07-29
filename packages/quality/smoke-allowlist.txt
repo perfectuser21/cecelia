@@ -36,6 +36,7 @@ features-ledger-smoke.sh
 golden-path-proposal-smoke.sh
 golden-paths-t1-smoke.sh
 golden-paths-t7-e2e-smoke.sh
+gp-anchor-lockdown-smoke.sh
 harness-detail-smoke.sh
 harness-echo-smoke.sh
 harness-evaluator-gate-smoke.sh
