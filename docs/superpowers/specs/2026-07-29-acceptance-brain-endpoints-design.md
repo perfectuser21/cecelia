@@ -88,6 +88,7 @@ CREATE INDEX IF NOT EXISTS idx_acceptance_checks_run ON acceptance_checks(run_id
 | POST /runs 重复 run_key | 200 返回现有单，不覆盖 |
 | Brain 重启 | cloudflared 502，Worker 下轮重试，无丢失 |
 | 公网扫描 | 仅两路由，404 其余；限流 60/min |
+| 公网直连 IP:5223 | listener 只绑 127.0.0.1，必须经 cloudflared |
 
 ## 测试策略
 

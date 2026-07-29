@@ -577,7 +577,7 @@ git commit -m "feat(brain): acceptance 公网 pending/results 端点 + 通过率
 ```js
 import request from 'supertest';
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { createAcceptancePublicApp, startAcceptancePublicServer } from '../acceptance-public-server.js';
+import { createAcceptancePublicApp, createBearerAuth, startAcceptancePublicServer } from '../acceptance-public-server.js';
 
 const TOKEN = 'test-token-abc';
 
@@ -631,6 +631,45 @@ describe('startAcceptancePublicServer fail-closed', () => {
     await new Promise((r) => server.close(r));
   });
 });
+
+describe('安全加固', () => {
+  it('createBearerAuth 空/缺 token → throw', () => {
+    expect(() => createBearerAuth('')).toThrow();
+    expect(() => createBearerAuth(undefined)).toThrow();
+  });
+
+  it('malformed JSON（带对 token）→ 400 bad request 不泄堆栈', async () => {
+    const res = await request(createAcceptancePublicApp({ pool: makePool(), token: TOKEN }))
+      .post('/acceptance/results')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .set('Content-Type', 'application/json')
+      .send('{bad json');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'bad request' });
+  });
+
+  it('响应不带 x-powered-by 指纹', async () => {
+    const res = await request(createAcceptancePublicApp({ pool: makePool(), token: TOKEN }))
+      .get('/acceptance/pending').set('Authorization', `Bearer ${TOKEN}`);
+    expect(res.headers['x-powered-by']).toBeUndefined();
+  });
+
+  it('无 token 的 POST 大 body → 401（json 解析在鉴权之后）', async () => {
+    const res = await request(createAcceptancePublicApp({ pool: makePool(), token: TOKEN }))
+      .post('/acceptance/results')
+      .send({ results: Array.from({ length: 100 }, (_, i) => ({ check_key: `k${i}`, result: '通过' })) });
+    expect(res.status).toBe(401);
+  });
+
+  it('listener 默认绑定 127.0.0.1', async () => {
+    process.env.ACCEPTANCE_API_TOKEN = TOKEN;
+    const server = startAcceptancePublicServer({ pool: makePool(), port: 0 });
+    await new Promise((r) => server.on('listening', r));
+    expect(server.address().address).toBe('127.0.0.1');
+    await new Promise((r) => server.close(r));
+    delete process.env.ACCEPTANCE_API_TOKEN;
+  });
+});
 ```
 
 - [ ] **Step 2: 跑测试确认红**
@@ -662,7 +701,10 @@ import rateLimit from 'express-rate-limit';
 import { createAcceptancePublicRouter } from './routes/acceptance.js';
 
 export function createBearerAuth(expectedToken) {
-  const expectedBuf = Buffer.from(String(expectedToken));
+  if (!expectedToken || typeof expectedToken !== 'string') {
+    throw new Error('createBearerAuth: expectedToken is required');
+  }
+  const expectedBuf = Buffer.from(expectedToken);
   return function bearerAuth(req, res, next) {
     const header = req.headers['authorization'] || '';
     const given = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
@@ -675,11 +717,20 @@ export function createBearerAuth(expectedToken) {
 
 export function createAcceptancePublicApp({ pool, token }) {
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
-  app.use(rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }));
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1);  // 本机 cloudflared 一层反代，req.ip 取真实客户端 IP
+  app.use(rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false }));
   app.use(createBearerAuth(token));
+  app.use(express.json({ limit: '1mb' }));
   app.use(createAcceptancePublicRouter({ pool }));
   app.use((_req, res) => res.status(404).json({ error: 'not found' }));
+  app.use((err, _req, res, _next) => {
+    if (err?.type === 'entity.parse.failed' || err?.status === 400) {
+      return res.status(400).json({ error: 'bad request' });
+    }
+    console.error('[acceptance-public] unhandled error:', err?.message);
+    return res.status(500).json({ error: 'internal_error' });
+  });
   return app;
 }
 
@@ -691,13 +742,16 @@ export function startAcceptancePublicServer({ pool, port }) {
   }
   const app = createAcceptancePublicApp({ pool, token });
   const server = createServer(app);
-  server.on('error', (err) => console.error('[acceptance-public] listener error:', err.message));
-  server.listen(port, () => {
-    console.log(`[acceptance-public] listening on :${port}（仅 /acceptance/pending 与 /acceptance/results）`);
+  server.on('error', (err) => console.error('[acceptance-public][ALERT] listener error:', err.message));
+  const host = process.env.ACCEPTANCE_PUBLIC_HOST || '127.0.0.1';
+  server.listen(port, host, () => {
+    console.log(`[acceptance-public] listening on ${host}:${port}（仅 /acceptance/pending 与 /acceptance/results）`);
   });
   return server;
 }
 ```
+
+**中间件顺序是安全约束，不是风格**：限流 → 鉴权 → JSON 解析。JSON 解析放在鉴权之后，未认证请求才不会消耗解析开销；限流放在最前，未带 token 的暴力猜测同样被限流。错误兜底必须是最后一个 `app.use`（4 参数签名），否则 malformed JSON 会走 express 默认处理器泄漏堆栈。
 
 - [ ] **Step 5: 跑测试确认绿**
 
