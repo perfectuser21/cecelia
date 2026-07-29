@@ -567,8 +567,25 @@ function removeExactFile(path, identity) {
     if (
       current.isFile()
       && !current.isSymbolicLink()
+      && current.nlink === (identity.nlink ?? 1)
       && current.dev === identity.dev
       && current.ino === identity.ino
+      && (
+        identity.size == null
+        || current.size === identity.size
+      )
+      && (
+        identity.ctimeMs == null
+        || current.ctimeMs === identity.ctimeMs
+      )
+      && (
+        identity.mode == null
+        || (current.mode & 0o777) === identity.mode
+      )
+      && (
+        identity.uid == null
+        || current.uid === identity.uid
+      )
     ) {
       unlinkSync(path);
       return true;
@@ -921,9 +938,18 @@ export function createProtectedGrantFileIssuer({
         ) {
           fail('protected_grant_revoke_failed');
         }
+        const transportRemoved = removeExactFile(grantPath, {
+          dev: opened.dev,
+          ino: opened.ino,
+          nlink: opened.nlink,
+          size: opened.size,
+          ctimeMs: opened.ctimeMs,
+          mode: opened.mode & 0o777,
+          uid: opened.uid,
+        });
         return Object.freeze({
           grant_ref: request.grant_ref,
-          transport_removed: false,
+          transport_removed: transportRemoved,
         });
       } catch (error) {
         if (error instanceof ProtectedGrantAuthorityError) throw error;
@@ -945,7 +971,7 @@ export function createProtectedGrantFileIssuer({
       if (!Number.isFinite(operationNow)) {
         fail('protected_grant_configuration_invalid');
       }
-      const removed = 0;
+      let removed = 0;
       let retained = 0;
       let entries;
       try {
@@ -965,6 +991,10 @@ export function createProtectedGrantFileIssuer({
         const grantPath = join(trustedRoot.path, entry.name);
         let descriptor;
         try {
+          assertPathAclFree(
+            grantPath,
+            () => fail('protected_grant_cleanup_unsafe'),
+          );
           const pathStatus = lstatSync(grantPath);
           if (
             !entry.isFile()
@@ -1036,7 +1066,20 @@ export function createProtectedGrantFileIssuer({
             retained += 1;
             continue;
           }
-          retained += 1;
+          const transportRemoved = removeExactFile(grantPath, {
+            dev: opened.dev,
+            ino: opened.ino,
+            nlink: opened.nlink,
+            size: opened.size,
+            ctimeMs: opened.ctimeMs,
+            mode: opened.mode & 0o777,
+            uid: opened.uid,
+          });
+          if (transportRemoved) {
+            removed += 1;
+          } else {
+            retained += 1;
+          }
         } catch {
           retained += 1;
         } finally {

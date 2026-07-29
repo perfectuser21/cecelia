@@ -170,7 +170,6 @@ CREATE OR REPLACE FUNCTION kernel_equivalence_active_execution_lease_guard()
 RETURNS trigger AS $$
 DECLARE
   active BOOLEAN;
-  latest_state TEXT;
   expected_active BOOLEAN;
 BEGIN
   SELECT execution_active
@@ -184,16 +183,36 @@ BEGIN
       'kernel equivalence production execution fence missing';
   END IF;
 
-  SELECT state
-    INTO latest_state
-    FROM kernel_equivalence_production_execution_events
-   WHERE case_id = OLD.case_id
-   ORDER BY generation DESC
+  SELECT (
+      events.state IN (
+        'claimed', 'grant_issued', 'executing', 'reconciling'
+      )
+      OR (
+        events.state = 'settlement_unknown'
+        AND events.code = 'grant_revoke_unconfirmed'
+        AND events.late_effect_risk = true
+        AND events.controller_lease_expires_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+            FROM kernel_equivalence_grant_authorities authorities
+            JOIN kernel_equivalence_grant_events grant_events
+              ON grant_events.grant_id = authorities.grant_id
+             AND grant_events.state = 'published'
+           WHERE authorities.case_id = events.case_id
+             AND events.grant_ref =
+                   'kernel-equivalence-grant:'
+                     || authorities.grant_id::TEXT
+             AND authorities.expires_at
+                   IS NOT DISTINCT FROM events.grant_expires_at
+        )
+      )
+    )
+    INTO expected_active
+    FROM kernel_equivalence_production_execution_events events
+   WHERE events.case_id = OLD.case_id
+   ORDER BY events.generation DESC
    LIMIT 1;
-  expected_active := COALESCE(
-    latest_state IN ('claimed', 'grant_issued', 'executing', 'reconciling'),
-    false
-  );
+  expected_active := COALESCE(expected_active, false);
   IF active IS DISTINCT FROM expected_active THEN
     RAISE EXCEPTION
       'kernel equivalence production execution fence state mismatch';
@@ -278,10 +297,17 @@ CREATE TABLE IF NOT EXISTS kernel_equivalence_production_execution_events (
       AND code IS NOT NULL
       AND late_effect_risk = false)
     OR (state = 'settlement_unknown'
-      AND controller_lease_expires_at IS NULL
       AND bundle_hash IS NULL
       AND code IS NOT NULL
-      AND late_effect_risk = true)
+      AND late_effect_risk = true
+      AND (
+        controller_lease_expires_at IS NULL
+        OR (
+          code = 'grant_revoke_unconfirmed'
+          AND grant_ref IS NOT NULL
+          AND grant_expires_at IS NOT NULL
+        )
+      ))
   )
 );
 
@@ -297,6 +323,10 @@ DECLARE
   previous_controller UUID;
   previous_lease_expires_at TIMESTAMPTZ;
   previous_grant_ref TEXT;
+  previous_grant_expires_at TIMESTAMPTZ;
+  previous_code TEXT;
+  previous_late_effect_risk BOOLEAN;
+  previous_unknown_active BOOLEAN := false;
   lineage_grant_ref TEXT;
   published_grant_count BIGINT := 0;
   exact_published_grant BOOLEAN := false;
@@ -313,13 +343,19 @@ BEGIN
       state,
       controller_instance_id,
       controller_lease_expires_at,
-      grant_ref
+      grant_ref,
+      grant_expires_at,
+      code,
+      late_effect_risk
     INTO
       previous_generation,
       previous_state,
       previous_controller,
       previous_lease_expires_at,
-      previous_grant_ref
+      previous_grant_ref,
+      previous_grant_expires_at,
+      previous_code,
+      previous_late_effect_risk
     FROM kernel_equivalence_production_execution_events
    WHERE case_id = NEW.case_id
    ORDER BY generation DESC
@@ -411,6 +447,21 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  IF NEW.generation = 1
+     AND NEW.state = 'claimed'
+     AND NEW.grant_ref IS NULL
+     AND NEW.grant_expires_at IS NULL
+     AND NEW.controller_lease_expires_at > NEW.occurred_at
+     AND NEW.bundle_hash IS NULL
+     AND NEW.code IS NULL
+     AND NEW.late_effect_risk = false THEN
+    -- A concurrent generation-one claimant can reach this trigger after the
+    -- winner has already advanced the lineage. The existing generation-one
+    -- row remains authoritative; defer to its unique-key conflict so the
+    -- caller deterministically observes ON CONFLICT DO NOTHING.
+    RETURN NEW;
+  END IF;
+
   IF NEW.generation <> previous_generation + 1 THEN
     RAISE EXCEPTION
       'kernel equivalence execution event generation mismatch';
@@ -438,19 +489,6 @@ BEGIN
   END IF;
   authority_now := clock_timestamp();
 
-  SELECT execution_active
-    INTO fence_active
-    FROM kernel_equivalence_production_execution_fences
-   WHERE case_id = NEW.case_id
-   FOR UPDATE;
-  IF NOT FOUND
-     OR fence_active IS DISTINCT FROM (
-       previous_state <> 'settlement_unknown'
-     ) THEN
-    RAISE EXCEPTION
-      'kernel equivalence production execution fence mismatch';
-  END IF;
-
   SELECT grant_ref
     INTO lineage_grant_ref
     FROM kernel_equivalence_production_execution_events
@@ -458,6 +496,43 @@ BEGIN
      AND grant_ref IS NOT NULL
    ORDER BY generation DESC
    LIMIT 1;
+
+  previous_unknown_active := (
+    previous_state = 'settlement_unknown'
+    AND previous_code = 'grant_revoke_unconfirmed'
+    AND previous_late_effect_risk = true
+    AND previous_lease_expires_at IS NOT NULL
+    AND previous_grant_ref IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+        FROM kernel_equivalence_grant_authorities authorities
+        JOIN kernel_equivalence_grant_events grant_events
+          ON grant_events.grant_id = authorities.grant_id
+         AND grant_events.state = 'published'
+       WHERE authorities.case_id = NEW.case_id
+         AND previous_grant_ref =
+               'kernel-equivalence-grant:'
+                 || authorities.grant_id::TEXT
+         AND authorities.expires_at
+               IS NOT DISTINCT FROM previous_grant_expires_at
+    )
+  );
+
+  SELECT execution_active
+    INTO fence_active
+    FROM kernel_equivalence_production_execution_fences
+   WHERE case_id = NEW.case_id
+   FOR UPDATE;
+  IF NOT FOUND
+     OR fence_active IS DISTINCT FROM (
+       previous_state IN (
+         'claimed', 'grant_issued', 'executing', 'reconciling'
+       )
+       OR previous_unknown_active
+     ) THEN
+    RAISE EXCEPTION
+      'kernel equivalence production execution fence mismatch';
+  END IF;
 
   IF NEW.state IN ('blocked', 'settlement_unknown') THEN
     SELECT
@@ -497,13 +572,29 @@ BEGIN
          AND authorities.expires_at
                IS NOT DISTINCT FROM NEW.grant_expires_at;
       IF NOT FOUND
-         OR (
+      THEN
+        durable_revocation_disposition := NULL;
+      END IF;
+      IF (
            NEW.state = 'blocked'
-           AND durable_revocation_disposition <> 'safe_no_effect'
+           AND durable_revocation_disposition
+                 IS DISTINCT FROM 'safe_no_effect'
          )
          OR (
            NEW.state = 'settlement_unknown'
-           AND durable_revocation_disposition <> 'effect_possible'
+           AND NOT (
+             (
+               durable_revocation_disposition
+                 IS NOT DISTINCT FROM 'effect_possible'
+               AND NEW.controller_lease_expires_at IS NULL
+             )
+             OR (
+               durable_revocation_disposition IS NULL
+               AND NEW.code = 'grant_revoke_unconfirmed'
+               AND NEW.late_effect_risk = true
+               AND NEW.controller_lease_expires_at IS NOT NULL
+             )
+           )
          )
       THEN
         RAISE EXCEPTION
@@ -564,7 +655,7 @@ BEGIN
         'reconciling', 'succeeded', 'blocked', 'settlement_unknown'
       ))
     OR (previous_state = 'settlement_unknown'
-      AND NEW.state = 'succeeded')
+      AND NEW.state IN ('succeeded', 'blocked', 'settlement_unknown'))
   ) THEN
     RAISE EXCEPTION
       'kernel equivalence execution event transition mismatch';
@@ -701,10 +792,15 @@ BEGIN
       NULL; -- Exact durable bundle readback is monotonic across restarts.
     ELSIF NEW.state IN ('blocked', 'settlement_unknown')
        AND previous_state IN (
-         'claimed', 'grant_issued', 'executing', 'reconciling'
+         'claimed', 'grant_issued', 'executing', 'reconciling',
+         'settlement_unknown'
        )
        AND previous_lease_expires_at <= authority_now
        AND exact_published_grant
+       AND (
+         previous_state <> 'settlement_unknown'
+         OR previous_unknown_active
+       )
        AND (
          (
            NEW.state = 'blocked'
@@ -713,6 +809,13 @@ BEGIN
          OR (
            NEW.state = 'settlement_unknown'
            AND durable_revocation_disposition = 'effect_possible'
+         )
+         OR (
+           NEW.state = 'settlement_unknown'
+           AND durable_revocation_disposition IS NULL
+           AND NEW.code = 'grant_revoke_unconfirmed'
+           AND NEW.late_effect_risk = true
+           AND NEW.controller_lease_expires_at IS NOT NULL
          )
        ) THEN
       NULL; -- Expired controller replaced only after exact durable revoke.
@@ -756,23 +859,42 @@ CREATE TRIGGER trg_kernel_equivalence_execution_event_guard
 CREATE OR REPLACE FUNCTION kernel_equivalence_execution_fence_update_guard()
 RETURNS trigger AS $$
 DECLARE
-  latest_state TEXT;
   expected_active BOOLEAN;
 BEGIN
   IF NEW.case_id IS DISTINCT FROM OLD.case_id THEN
     RAISE EXCEPTION
       'kernel equivalence production execution fence identity mismatch';
   END IF;
-  SELECT state
-    INTO latest_state
-    FROM kernel_equivalence_production_execution_events
-   WHERE case_id = NEW.case_id
-   ORDER BY generation DESC
+  SELECT (
+      events.state IN (
+        'claimed', 'grant_issued', 'executing', 'reconciling'
+      )
+      OR (
+        events.state = 'settlement_unknown'
+        AND events.code = 'grant_revoke_unconfirmed'
+        AND events.late_effect_risk = true
+        AND events.controller_lease_expires_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+            FROM kernel_equivalence_grant_authorities authorities
+            JOIN kernel_equivalence_grant_events grant_events
+              ON grant_events.grant_id = authorities.grant_id
+             AND grant_events.state = 'published'
+           WHERE authorities.case_id = events.case_id
+             AND events.grant_ref =
+                   'kernel-equivalence-grant:'
+                     || authorities.grant_id::TEXT
+             AND authorities.expires_at
+                   IS NOT DISTINCT FROM events.grant_expires_at
+        )
+      )
+    )
+    INTO expected_active
+    FROM kernel_equivalence_production_execution_events events
+   WHERE events.case_id = NEW.case_id
+   ORDER BY events.generation DESC
    LIMIT 1;
-  expected_active := COALESCE(
-    latest_state IN ('claimed', 'grant_issued', 'executing', 'reconciling'),
-    false
-  );
+  expected_active := COALESCE(expected_active, false);
   IF NEW.execution_active IS DISTINCT FROM expected_active THEN
     RAISE EXCEPTION
       'kernel equivalence production execution fence state mismatch';
@@ -793,8 +915,29 @@ CREATE OR REPLACE FUNCTION kernel_equivalence_set_execution_fence()
 RETURNS trigger AS $$
 BEGIN
   UPDATE kernel_equivalence_production_execution_fences
-     SET execution_active = NEW.state IN (
-       'claimed', 'grant_issued', 'executing', 'reconciling'
+     SET execution_active = (
+       NEW.state IN (
+         'claimed', 'grant_issued', 'executing', 'reconciling'
+       )
+       OR (
+         NEW.state = 'settlement_unknown'
+         AND NEW.code = 'grant_revoke_unconfirmed'
+         AND NEW.late_effect_risk = true
+         AND NEW.controller_lease_expires_at IS NOT NULL
+         AND EXISTS (
+           SELECT 1
+             FROM kernel_equivalence_grant_authorities authorities
+             JOIN kernel_equivalence_grant_events grant_events
+               ON grant_events.grant_id = authorities.grant_id
+              AND grant_events.state = 'published'
+            WHERE authorities.case_id = NEW.case_id
+              AND NEW.grant_ref =
+                    'kernel-equivalence-grant:'
+                      || authorities.grant_id::TEXT
+              AND authorities.expires_at
+                    IS NOT DISTINCT FROM NEW.grant_expires_at
+         )
+       )
      )
    WHERE case_id = NEW.case_id;
   IF NOT FOUND THEN

@@ -162,6 +162,9 @@ describe('migration 382 Kernel equivalence grant authority', () => {
     expect(sql).toMatch(
       /authorities\.expires_at > clock_timestamp\(\)/i,
     );
+    expect(sql).toMatch(
+      /kernel_equivalence_production_execution_events[\s\S]*controller_events\.state IN \(\s*'succeeded',\s*'blocked',\s*'settlement_unknown'\s*\)/i,
+    );
   });
 
   it('uses one documented cross-authority row-lock order', () => {

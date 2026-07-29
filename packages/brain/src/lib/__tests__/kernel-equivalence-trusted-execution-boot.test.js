@@ -153,6 +153,30 @@ describe('production trusted execution boot lifecycle', () => {
     });
   });
 
+  it('keeps the Unix listener closed for an active no-tombstone unknown', async () => {
+    const reconcileStartup = vi.fn(async () => {
+      throw Object.assign(
+        new Error('active grant revocation remains unconfirmed'),
+        { code: 'production_controller_reconcile_grant_unsafe' },
+      );
+    });
+    mocks.createCoordinator.mockReturnValue(controller(reconcileStartup));
+
+    const boot = await bootProductionBrainTrustedExecution({
+      env: {},
+      pool: {},
+      assemblyPorts: {},
+    });
+
+    expect(reconcileStartup).toHaveBeenCalledOnce();
+    expect(mocks.startListener).not.toHaveBeenCalled();
+    expect(boot.getReadiness()).toEqual({
+      ready: false,
+      code: 'trusted_execution_controller_unavailable',
+      socket_path: null,
+    });
+  });
+
   it('fails closed when periodic reconciliation or grant cleanup fails', async () => {
     const reconcileStartup = vi.fn()
       .mockResolvedValueOnce({

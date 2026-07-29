@@ -209,7 +209,16 @@ describe('migration 381 Kernel equivalence production controller', () => {
       /NEW\.state = 'succeeded'[\s\S]*NEW\.grant_ref IS NULL/i,
     );
     expect(sql).toMatch(
-      /NEW\.generation <> previous_generation \+ 1[\s\S]*SELECT execution_active[\s\S]*FOR UPDATE;[\s\S]*SELECT grant_ref[\s\S]*IF NEW\.state IN \('blocked', 'settlement_unknown'\)[\s\S]*kernel_equivalence_grant_authorities/i,
+      /NEW\.generation <> previous_generation \+ 1[\s\S]*SELECT grant_ref[\s\S]*previous_unknown_active :=[\s\S]*SELECT execution_active[\s\S]*FOR UPDATE;[\s\S]*IF NEW\.state IN \('blocked', 'settlement_unknown'\)[\s\S]*kernel_equivalence_grant_authorities/i,
+    );
+    expect(sql).toMatch(
+      /state = 'settlement_unknown'[\s\S]*code = 'grant_revoke_unconfirmed'[\s\S]*grant_ref IS NOT NULL[\s\S]*grant_expires_at IS NOT NULL/i,
+    );
+    expect(sql).toMatch(
+      /durable_revocation_disposition IS NULL[\s\S]*NEW\.code = 'grant_revoke_unconfirmed'[\s\S]*NEW\.late_effect_risk = true[\s\S]*NEW\.controller_lease_expires_at IS NOT NULL/i,
+    );
+    expect(sql).toMatch(
+      /SET execution_active = \([\s\S]*NEW\.state = 'settlement_unknown'[\s\S]*NEW\.code = 'grant_revoke_unconfirmed'[\s\S]*NEW\.controller_lease_expires_at IS NOT NULL/i,
     );
     expect(sql).toMatch(
       /CREATE TRIGGER trg_kernel_equivalence_execution_events_append_only/i,

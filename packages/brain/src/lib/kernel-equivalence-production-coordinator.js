@@ -610,13 +610,19 @@ async function appendPublishedGrantSettlement({
   issued,
   reason,
   disposition,
+  controllerLeaseExpiresAt = null,
 }) {
   if (
     !issued.identity_exact
     || issued.expires_at_ms == null
     || (
-      disposition !== 'safe_no_effect'
+      disposition != null
+      && disposition !== 'safe_no_effect'
       && disposition !== 'effect_possible'
+    )
+    || (
+      disposition == null
+      && timestamp(controllerLeaseExpiresAt) == null
     )
   ) {
     fail('production_controller_grant_settlement_unsafe');
@@ -632,12 +638,11 @@ async function appendPublishedGrantSettlement({
     grantExpiresAt: issued.expires_at,
     code: terminalSafe
       ? reason
-      : (
-          issued.grant_ref
-            ? 'grant_revoke_unconfirmed'
-            : `${reason}_unresolved`
-        ),
+      : 'grant_revoke_unconfirmed',
     lateEffectRisk: !terminalSafe,
+    controllerLeaseExpiresAt: disposition == null
+      ? controllerLeaseExpiresAt
+      : null,
   });
   return terminalSafe;
 }
@@ -676,6 +681,7 @@ async function settleAfterAmbiguousActiveAppend({
   previousGrantRef,
   issued,
   reason,
+  controllerLeaseExpiresAt,
 }) {
   const disposition = await revokePublishedGrant({
     grantExecutionAuthority,
@@ -720,6 +726,7 @@ async function settleAfterAmbiguousActiveAppend({
       issued,
       reason,
       disposition,
+      controllerLeaseExpiresAt,
     });
   }
   return appendPublishedGrantSettlement({
@@ -733,6 +740,7 @@ async function settleAfterAmbiguousActiveAppend({
     issued,
     reason,
     disposition,
+    controllerLeaseExpiresAt,
   });
 }
 
@@ -847,6 +855,16 @@ function authorityExpiry(authority) {
     timestamp(authority?.case_expires_at),
     timestamp(authority?.production_lease_expires_at),
   );
+}
+
+function reconciliationRetryDeadline(row, grantExpiresAt) {
+  const deadlines = [
+    timestamp(row?.case_expires_at),
+    timestamp(row?.production_lease_expires_at),
+    timestamp(grantExpiresAt),
+  ];
+  if (deadlines.some((deadline) => deadline == null)) return null;
+  return new Date(Math.min(...deadlines)).toISOString();
 }
 
 export function createPostgresKernelEquivalenceCoordinator({
@@ -986,6 +1004,7 @@ export function createPostgresKernelEquivalenceCoordinator({
           caseId,
           generation: 2,
           controllerInstanceId,
+          controllerLeaseExpiresAt,
           issued: uncertainIdentity,
           lineageRecorded: false,
           reason: error.code,
@@ -1024,6 +1043,7 @@ export function createPostgresKernelEquivalenceCoordinator({
         caseId,
         generation: 2,
         controllerInstanceId,
+        controllerLeaseExpiresAt,
         issued,
         lineageRecorded: false,
         reason: 'grant_issue_invalid',
@@ -1063,6 +1083,7 @@ export function createPostgresKernelEquivalenceCoordinator({
         caseId,
         generation: 2,
         controllerInstanceId,
+        controllerLeaseExpiresAt,
         issued,
         lineageRecorded: false,
         reason: 'authority_revalidation_failed',
@@ -1093,6 +1114,7 @@ export function createPostgresKernelEquivalenceCoordinator({
         previousState: 'claimed',
         previousGrantRef: null,
         controllerInstanceId,
+        controllerLeaseExpiresAt,
         issued,
         reason: 'grant_issued_append_failed',
       });
@@ -1131,6 +1153,7 @@ export function createPostgresKernelEquivalenceCoordinator({
         caseId,
         generation: 3,
         controllerInstanceId,
+        controllerLeaseExpiresAt,
         issued,
         lineageRecorded: true,
         reason: 'authority_revalidation_failed',
@@ -1161,6 +1184,7 @@ export function createPostgresKernelEquivalenceCoordinator({
         previousState: 'grant_issued',
         previousGrantRef: issued.grant_ref,
         controllerInstanceId,
+        controllerLeaseExpiresAt,
         issued,
         reason: 'executing_append_failed',
       });
@@ -1182,6 +1206,7 @@ export function createPostgresKernelEquivalenceCoordinator({
         caseId,
         generation: 4,
         controllerInstanceId,
+        controllerLeaseExpiresAt,
         issued,
         lineageRecorded: true,
         reason: stableCode(
@@ -1211,6 +1236,7 @@ export function createPostgresKernelEquivalenceCoordinator({
           caseId,
           generation: 4,
           controllerInstanceId,
+          controllerLeaseExpiresAt,
           issued,
           lineageRecorded: true,
           reason: 'bundle_confirmation_failed',
@@ -1239,6 +1265,7 @@ export function createPostgresKernelEquivalenceCoordinator({
             caseId,
             generation: 4,
             controllerInstanceId,
+            controllerLeaseExpiresAt,
             issued,
             lineageRecorded: true,
             reason: 'success_event_append_failed',
@@ -1259,6 +1286,7 @@ export function createPostgresKernelEquivalenceCoordinator({
         caseId,
         generation: 4,
         controllerInstanceId,
+        controllerLeaseExpiresAt,
         issued,
         lineageRecorded: true,
         reason: 'bundle_settlement_unconfirmed',
@@ -1276,6 +1304,7 @@ export function createPostgresKernelEquivalenceCoordinator({
       caseId,
       generation: 4,
       controllerInstanceId,
+      controllerLeaseExpiresAt,
       issued,
       lineageRecorded: true,
       reason: code,
@@ -1295,6 +1324,8 @@ export function createPostgresKernelEquivalenceCoordinator({
            events.case_id,
            events.generation,
            events.state,
+           events.code,
+           events.late_effect_risk,
            events.controller_instance_id,
            lineage.grant_ref,
            lineage.grant_expires_at,
@@ -1500,6 +1531,12 @@ export function createPostgresKernelEquivalenceCoordinator({
         const durableRevocationDisposition = orphanedPublication
           ? row.published_revocation_disposition
           : row.revocation_disposition;
+        const activeUnknown = (
+          row.state === 'settlement_unknown'
+          && row.code === 'grant_revoke_unconfirmed'
+          && row.late_effect_risk === true
+          && timestamp(row.controller_lease_expires_at) != null
+        );
         if (
           orphanedPublication
           && (
@@ -1544,6 +1581,27 @@ export function createPostgresKernelEquivalenceCoordinator({
           && row.grant_id == null
         );
         if (
+          HASH_PATTERN.test(row.bundle_hash ?? '')
+          && GRANT_REF_PATTERN.test(effectiveGrantRef ?? '')
+        ) {
+          const appended = await appendEvent(pool, {
+            randomUUID,
+            caseId: row.case_id,
+            generation: generation + 1,
+            controllerInstanceId,
+            state: 'succeeded',
+            grantRef: effectiveGrantRef,
+            grantExpiresAt: effectiveGrantExpiresAt,
+            bundleHash: row.bundle_hash,
+            lateEffectRisk: false,
+          });
+          if (!appended) {
+            fail('production_controller_reconcile_grant_unsafe');
+          }
+          settled += 1;
+          continue;
+        }
+        if (
           publishedGrantRecoverable
           && legacyUnknownWithoutAuthority
           && !HASH_PATTERN.test(row.bundle_hash ?? '')
@@ -1558,15 +1616,18 @@ export function createPostgresKernelEquivalenceCoordinator({
           publishedGrantRecoverable
           && !legacyUnknownWithoutAuthority
         ) {
+          if (activeUnknown && row.lease_expired !== true) {
+            fail('production_controller_reconcile_grant_unsafe');
+          }
           if (
-            row.state !== 'settlement_unknown'
+            (row.state !== 'settlement_unknown' || activeUnknown)
             && row.controller_instance_id !== controllerInstanceId
             && row.lease_expired !== true
           ) {
             fail('production_controller_reconcile_grant_unsafe');
           }
           if (
-            row.state !== 'settlement_unknown'
+            (row.state !== 'settlement_unknown' || activeUnknown)
             && row.controller_instance_id === controllerInstanceId
             && row.lease_expired !== true
             && (!orphanedPublication || row.state === 'claimed')
@@ -1606,6 +1667,27 @@ export function createPostgresKernelEquivalenceCoordinator({
                 timeoutMs: GRANT_SETTLEMENT_TIMEOUT_MS,
               });
             } catch {
+              if (row.state !== 'settlement_unknown') {
+                const retryDeadline = reconciliationRetryDeadline(
+                  row,
+                  issued.expires_at,
+                );
+                if (retryDeadline == null) {
+                  fail('production_controller_reconcile_grant_unsafe');
+                }
+                await appendRequiredEvent(pool, {
+                  randomUUID,
+                  caseId: row.case_id,
+                  generation: generation + 1,
+                  controllerInstanceId,
+                  state: 'settlement_unknown',
+                  grantRef: issued.grant_ref,
+                  grantExpiresAt: issued.expires_at,
+                  code: 'grant_revoke_unconfirmed',
+                  lateEffectRisk: true,
+                  controllerLeaseExpiresAt: retryDeadline,
+                });
+              }
               fail('production_controller_reconcile_grant_unsafe');
             }
             disposition = exactRevocationDisposition(
@@ -1617,9 +1699,30 @@ export function createPostgresKernelEquivalenceCoordinator({
             disposition !== 'safe_no_effect'
             && disposition !== 'effect_possible'
           ) {
+            if (row.state !== 'settlement_unknown') {
+              const retryDeadline = reconciliationRetryDeadline(
+                row,
+                issued.expires_at,
+              );
+              if (retryDeadline == null) {
+                fail('production_controller_reconcile_grant_unsafe');
+              }
+              await appendRequiredEvent(pool, {
+                randomUUID,
+                caseId: row.case_id,
+                generation: generation + 1,
+                controllerInstanceId,
+                state: 'settlement_unknown',
+                grantRef: issued.grant_ref,
+                grantExpiresAt: issued.expires_at,
+                code: 'grant_revoke_unconfirmed',
+                lateEffectRisk: true,
+                controllerLeaseExpiresAt: retryDeadline,
+              });
+            }
             fail('production_controller_reconcile_grant_unsafe');
           }
-          if (row.state === 'settlement_unknown') {
+          if (row.state === 'settlement_unknown' && !activeUnknown) {
             retainedUnknown += 1;
             continue;
           }

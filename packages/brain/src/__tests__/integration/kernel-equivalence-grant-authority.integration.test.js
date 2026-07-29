@@ -212,6 +212,16 @@ beforeAll(async () => {
         REFERENCES kernel_equivalence_production_case_bindings(case_id),
       execution_active BOOLEAN NOT NULL
     );
+    CREATE TABLE kernel_equivalence_production_execution_events (
+      case_id UUID NOT NULL
+        REFERENCES kernel_equivalence_production_case_bindings(case_id),
+      generation BIGINT NOT NULL,
+      state TEXT NOT NULL,
+      code TEXT,
+      late_effect_risk BOOLEAN NOT NULL,
+      controller_lease_expires_at TIMESTAMPTZ,
+      PRIMARY KEY (case_id, generation)
+    );
     INSERT INTO kernel_equivalence_production_cases
       (case_id, cell_id, run_id, attempt_id, resource_type, resource_id,
        resource_ref, expires_at)

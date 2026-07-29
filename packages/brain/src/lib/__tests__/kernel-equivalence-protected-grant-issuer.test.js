@@ -602,7 +602,7 @@ describe('protected execution grant issuer', () => {
     expect(readFileSync(grantPath, 'utf8')).toBe('replacement\n');
   });
 
-  it('rejects an expired grant while conservative cleanup retains its transport', async () => {
+  it('rejects an expired grant and removes its exact transport during cleanup', async () => {
     const value = fixture();
     const protectedIssuer = issuer(value);
     const issued = await protectedIssuer.issueProtectedGrant(
@@ -627,14 +627,14 @@ describe('protected execution grant issuer', () => {
     });
     expect(typeof protectedIssuer.cleanupExpiredGrants).toBe('function');
     await expect(protectedIssuer.cleanupExpiredGrants()).resolves.toEqual({
-      removed: 0,
-      retained: 1,
+      removed: 1,
+      retained: 0,
     });
-    expect(existsSync(grantPath)).toBe(true);
+    expect(existsSync(grantPath)).toBe(false);
     expect(reader.cleanupExpiredGrants).toBeUndefined();
   });
 
-  it('conservatively retains transport without claiming DB revocation safety', async () => {
+  it('best-effort removes exact transport without making it DB authority', async () => {
     const value = fixture();
     const protectedIssuer = issuer(value);
     const issued = await protectedIssuer.issueProtectedGrant(
@@ -649,9 +649,9 @@ describe('protected execution grant issuer', () => {
       grant_ref: issued.grant_ref,
     })).resolves.toEqual({
       grant_ref: issued.grant_ref,
-      transport_removed: false,
+      transport_removed: true,
     });
-    expect(existsSync(grantPath)).toBe(true);
+    expect(existsSync(grantPath)).toBe(false);
     const reader = protectedGrants.createProtectedGrantFileAuthority({
       grantRoot: value.grantRoot,
       grantExecutionAuthority: value.grantExecutionAuthority,
@@ -663,8 +663,91 @@ describe('protected execution grant issuer', () => {
       cellId: value.cell.cell_id,
       grantRef: issued.grant_ref,
     })).rejects.toMatchObject({
-      code: 'protected_grant_authority_denied',
+      code: 'protected_grant_file_unsafe',
     });
+  });
+
+  it('does not turn best-effort transport removal failure into revocation failure', async () => {
+    const value = fixture();
+    const actualFs = await vi.importActual('node:fs');
+    vi.resetModules();
+    vi.doMock('node:fs', () => ({
+      ...actualFs,
+      unlinkSync: () => {
+        throw new Error('fixture unlink unavailable');
+      },
+    }));
+    try {
+      const isolated = await import(
+        '../kernel-equivalence-protected-grant-authority.js'
+      );
+      const protectedIssuer = isolated.createProtectedGrantFileIssuer({
+        grantRoot: value.grantRoot,
+        executionGrantAuthority: value.authority,
+        grantExecutionAuthority: value.grantExecutionAuthority,
+        now: value.now,
+      });
+      const issued = await protectedIssuer.issueProtectedGrant(
+        grantInput(value.cell),
+      );
+      const grantPath = join(
+        value.grantRoot,
+        `${value.grantId}.json`,
+      );
+
+      await expect(protectedIssuer.revokeProtectedGrant({
+        grant_ref: issued.grant_ref,
+      })).resolves.toEqual({
+        grant_ref: issued.grant_ref,
+        transport_removed: false,
+      });
+      expect(existsSync(grantPath)).toBe(true);
+    } finally {
+      vi.doUnmock('node:fs');
+      vi.resetModules();
+    }
+  });
+
+  it('retains an exact expired transport when best-effort cleanup cannot unlink it', async () => {
+    const value = fixture();
+    const actualFs = await vi.importActual('node:fs');
+    vi.resetModules();
+    vi.doMock('node:fs', () => ({
+      ...actualFs,
+      unlinkSync: () => {
+        throw new Error('fixture unlink unavailable');
+      },
+    }));
+    try {
+      const isolated = await import(
+        '../kernel-equivalence-protected-grant-authority.js'
+      );
+      const protectedIssuer = isolated.createProtectedGrantFileIssuer({
+        grantRoot: value.grantRoot,
+        executionGrantAuthority: value.authority,
+        grantExecutionAuthority: value.grantExecutionAuthority,
+        now: value.now,
+      });
+      await protectedIssuer.issueProtectedGrant(
+        grantInput(value.cell, 1),
+      );
+      const grantPath = join(
+        value.grantRoot,
+        `${value.grantId}.json`,
+      );
+      value.advance(1_001);
+
+      await expect(
+        protectedIssuer.cleanupExpiredGrants(),
+      ).resolves.toEqual({
+        removed: 0,
+        retained: 1,
+      });
+      expect(existsSync(grantPath)).toBe(true);
+    } finally {
+      vi.doUnmock('node:fs');
+      vi.resetModules();
+    }
   });
 
   it('retains an unpublished orphan when directory fsync fails after rename', async () => {

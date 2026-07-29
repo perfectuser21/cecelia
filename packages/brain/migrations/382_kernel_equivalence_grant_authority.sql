@@ -1031,6 +1031,23 @@ BEGIN
      )
      AND NOT EXISTS (
        SELECT 1
+         FROM kernel_equivalence_production_execution_events
+                controller_events
+        WHERE controller_events.case_id = authorities.case_id
+          AND controller_events.generation = (
+            SELECT max(latest_events.generation)
+              FROM kernel_equivalence_production_execution_events
+                     latest_events
+             WHERE latest_events.case_id = authorities.case_id
+          )
+          AND controller_events.state IN (
+            'succeeded',
+            'blocked',
+            'settlement_unknown'
+          )
+     )
+     AND NOT EXISTS (
+       SELECT 1
          FROM kernel_equivalence_grant_revocations revocations
         WHERE revocations.grant_id = authorities.grant_id
      )
