@@ -34,6 +34,16 @@ describe('GET /acceptance/pending', () => {
     expect(res.body.runs).toHaveLength(1);
     expect(res.body.runs[0].checks).toHaveLength(1);
   });
+
+  it('查询抛错 → 500 且不泄漏内部信息', async () => {
+    const pool = {
+      query: vi.fn(async () => { throw new Error('relation "acceptance_runs" does not exist'); }),
+      connect: vi.fn(),
+    };
+    const res = await request(makeApp(pool)).get('/acceptance/pending');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'internal_error' });
+  });
 });
 
 describe('POST /acceptance/results', () => {
@@ -109,6 +119,38 @@ describe('POST /acceptance/results', () => {
       .send({ results: [{ check_key: 'r1:001', result: '通过' }] });
     expect(res.status).toBe(200);
     expect(res.body.runs[0].status).toBe('in_review');
+  });
+
+  it('全部已判但含"无法验证" → status 停在 in_review', async () => {
+    const client = makeClient((sql, params) => {
+      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+        return { rows: [{ check_key: 'r1:003', run_id: 'A' }] };
+      }
+      if (sql.includes('UPDATE acceptance_checks')) return { rows: [] };
+      if (sql.includes('FILTER')) return { rows: [{ total: 3, pass: 2, fail: 0, pending: 0 }] };
+      if (sql.includes('UPDATE acceptance_runs')) {
+        return { rows: [{ run_key: 'r1', pass_rate: params[0], status: params[1] }] };
+      }
+    });
+    const pool = { connect: vi.fn(async () => client), query: vi.fn() };
+    const res = await request(makeApp(pool))
+      .post('/acceptance/results')
+      .send({ results: [{ check_key: 'r1:003', result: '无法验证' }] });
+    expect(res.status).toBe(200);
+    expect(res.body.runs[0].status).toBe('in_review');
+  });
+
+  it('同批出现重复 check_key → 400，且不占用连接', async () => {
+    const pool = { query: vi.fn(), connect: vi.fn() };
+    const res = await request(makeApp(pool))
+      .post('/acceptance/results')
+      .send({ results: [
+        { check_key: 'r1:001', result: '通过' },
+        { check_key: 'r1:001', result: '不通过' },
+      ] });
+    expect(res.status).toBe(400);
+    expect(res.body.check_key).toBe('r1:001');
+    expect(pool.connect).not.toHaveBeenCalled();
   });
 
   it('results 空/非数组 → 400', async () => {

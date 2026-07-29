@@ -55,6 +55,29 @@ describe('POST /api/brain/acceptance/runs', () => {
     expect(res.body.created).toBe(false);
   });
 
+  it('并发撞车：INSERT 抛 23505 → 200 返回已存在的单', async () => {
+    let runSelects = 0;
+    const client = makeClient((sql) => {
+      if (sql.includes('SELECT * FROM acceptance_runs WHERE run_key')) {
+        runSelects += 1;
+        return runSelects === 1 ? { rows: [] } : { rows: [RUN_ROW] };
+      }
+      if (sql.includes('INSERT INTO acceptance_runs')) {
+        throw Object.assign(new Error('dup'), { code: '23505' });
+      }
+      if (sql.includes('SELECT * FROM acceptance_checks WHERE run_id')) {
+        return { rows: [{ check_key: 'r1:001' }] };
+      }
+    });
+    const res = await request(makeApp(makePool(client)))
+      .post('/api/brain/acceptance/runs')
+      .send({ run_key: 'r1', title: 'T', checks: [{ kind: 'FR', name: 'x' }] });
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(false);
+    expect(res.body.checks).toHaveLength(1);
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+  });
+
   it('缺 run_key/title → 400', async () => {
     const res = await request(makeApp(makePool(makeClient(() => undefined))))
       .post('/api/brain/acceptance/runs').send({ title: 'T', checks: [{ kind: 'FR', name: 'x' }] });
