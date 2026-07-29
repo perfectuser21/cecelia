@@ -2089,6 +2089,50 @@ describe('honest equivalence report', () => {
     });
   });
 
+  it('short-circuits amplified semantic reference edges fail-closed', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const atom = validation.behaviors
+      .flatMap((behavior) => behavior.atomic_invariants)
+      .find((candidate) => (
+        candidate.scenario_plan.recovery.bindings.length > 0
+      ));
+    const originalBinding = atom.scenario_plan.recovery.bindings[0];
+    const amplifiedBinding = {
+      ...originalBinding,
+      predecessor_probe_ids: Array(446).fill(
+        originalBinding.predecessor_probe_ids[0],
+      ),
+    };
+    const amplifiedBindings = Array(446).fill(amplifiedBinding);
+    let tailAccessed = false;
+    Object.defineProperty(amplifiedBindings, 10, {
+      configurable: true,
+      get() {
+        tailAccessed = true;
+        throw new Error('semantic edge budget did not short-circuit');
+      },
+    });
+    atom.scenario_plan.recovery.bindings = amplifiedBindings;
+
+    const startedAt = performance.now();
+    const report = buildEquivalenceReport(validation);
+    const elapsedMilliseconds = performance.now() - startedAt;
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
+    expect(tailAccessed).toBe(false);
+    expect(elapsedMilliseconds).toBeLessThan(1_000);
+  });
+
   it('escapes inline-code and table injection from direct formatter input', () => {
     const report = buildEquivalenceReport(
       validateBehaviorEquivalence(contract(), { now: NOW }),
