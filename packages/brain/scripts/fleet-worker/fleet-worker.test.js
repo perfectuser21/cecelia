@@ -932,6 +932,7 @@ describe('Fleet Worker production runtime assembly', () => {
         launch: expect.any(Function),
         reconcile: expect.any(Function),
       });
+      expect(runtime.runnerImageDigest).toBe(`sha256:${'a'.repeat(64)}`);
       expect(runtime.roots).toEqual({
         mirrors: path.join(dataRoot, 'mirrors'),
         worktrees: path.join(dataRoot, 'worktrees'),
@@ -943,6 +944,49 @@ describe('Fleet Worker production runtime assembly', () => {
       expect(JSON.stringify(runtime)).not.toContain(
         'https://github.com/perfectuser21/cecelia.git',
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('separates OrbStack-mountable attempt data from protected state and credentials', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-runtime-'));
+    const tokenFile = path.join(root, 'worker-token');
+    const dataRoot = path.join(root, 'protected-data');
+    const sharedTmp = path.join(root, 'shared-tmp');
+    const mountRoot = path.join(sharedTmp, 'fleet-mounts');
+    fs.writeFileSync(tokenFile, 'fleet-worker-token-at-least-32-bytes\n', {
+      mode: 0o600,
+    });
+    fs.mkdirSync(sharedTmp, { mode: 0o755 });
+
+    try {
+      const runtime = createFleetWorkerRuntime({
+        env: {
+          CECELIA_MACHINE_ID: 'xian-mac-m4',
+          CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+          CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
+          CECELIA_FLEET_DATA_ROOT: dataRoot,
+          CECELIA_ORBSTACK_HOME: '/Users/orbstack-owner',
+          TMPDIR: sharedTmp,
+        },
+        runCommand: vi.fn(),
+      });
+
+      expect(runtime.roots).toEqual({
+        mirrors: path.join(dataRoot, 'mirrors'),
+        worktrees: path.join(mountRoot, 'worktrees'),
+        quarantine: path.join(dataRoot, 'quarantine'),
+        state: path.join(dataRoot, 'state'),
+        runtime: path.join(mountRoot, 'runtime'),
+        credentials: path.join(dataRoot, 'credential-consumption'),
+      });
+      expect(fs.statSync(mountRoot).mode & 0o777).toBe(0o755);
+      expect(fs.statSync(runtime.roots.worktrees).mode & 0o777).toBe(0o755);
+      expect(fs.statSync(runtime.roots.runtime).mode & 0o777).toBe(0o755);
+      expect(runtime.roots.credentials.startsWith(mountRoot)).toBe(false);
+      expect(runtime.roots.state.startsWith(mountRoot)).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
