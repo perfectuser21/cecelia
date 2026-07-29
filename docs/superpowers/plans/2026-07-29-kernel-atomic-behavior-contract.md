@@ -338,8 +338,9 @@ schema finding。retired atom 不允许这些 3×3 receipt requirements。
 - `proof_status: gap` 但配置任何 receipt material，包括看似 v2 的 object/ref，同样 finding
   `atomic_receipt_v2_verifier_unavailable`；
 - retired 只允许 `proof_status: not_applicable`，并以 classification/retirement decision
-  投影 `effective_status: retired`、cell `na`；但四项 absence proof 单独保持
-  `unverified`，因此 family/cutover 不得变绿；
+  投影 `effective_status: retired`、atom projection `na`；`journey_step_links.cell_status`
+  仍只允许既有 `gray/red/pending/green`。四项 absence proof 单独保持 `unverified`，
+  因此 A2-0 对应 cell、family 和 cutover 不得变绿；
 - public A2-0 validator 对全部 proof-required atom 强制 effective `gap`，对 retired
   absence 强制 `unverified`。
 
@@ -1063,7 +1064,7 @@ any proof-required atom gap -> family gap
 all proof-required proven + retired absence current -> family proven
 all non-retired replacement -> family intentional_replacement
 mixed active/drifted/replacement all proven -> family proven
-retired with valid absence -> atom not_applicable / projection na
+retired with valid absence -> atom effective_status retired / projection na
 ```
 
 用人工构造的“已验证状态输入”测试状态机，确保单个 replacement 不会把整族标为
@@ -1129,7 +1130,9 @@ return {
 
 不要在 projector 中读取文件或 DB。family effective status 必须从 atom 计算，不能信任
 family 自报；v1.0 继续走旧 projection。A2-0 public path 的 proof-required atomic
-projection 只能 red/pending；retired 可投影 na，但 absence completeness 是独立红门。
+proof-required projection 只能 red/pending；retired atom 可投影 `na`，但
+`journey_step_links.cell_status` 不新增 `na` enum。A2-0 absence completeness 未闭合时
+cell 必须 `red`；N/A 语义通过 atom projection/`na_reason` 表达。
 任何 v1 receipt 或 contract 自报都不能产生 green。
 
 - [ ] **Step 7: 运行 GREEN 和相邻 tests**
